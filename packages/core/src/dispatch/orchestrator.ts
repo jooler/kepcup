@@ -10,6 +10,7 @@ import {
   RUN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
+  SUBAGENT_FOLLOWUP_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
   TRIAGE_RECENT_MESSAGES,
   type Conversation,
@@ -88,7 +89,13 @@ import type { BrowserHostRpc } from '../browser/facade.js';
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
-import { createSubagentFacade, buildSubagentSystemPrompt } from '../agent/subagent.js';
+import {
+  createSubagentFacade,
+  createSubagentHost,
+  buildSubagentSystemPrompt,
+  type SubagentFollowUp,
+  type SubagentHost,
+} from '../agent/subagent.js';
 import { buildMcpTools, type McpToolFacade } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
 import { FileReadState } from '../tools/fs-state.js';
@@ -292,6 +299,11 @@ export class Orchestrator {
   readonly #chains: ChainsService;
   /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
   readonly #groupTurns: GroupTurnCoordinator;
+  /**
+   * D66 mode B/C：对话级后台子 run 锚点（跨 response run 存活）。结束主 turn
+   * 不级联；显式取消委派 / 关对话 / 删 Bot 时经此 abort；并发封顶也在这里计数。
+   */
+  readonly #subagentHost: SubagentHost = createSubagentHost();
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
@@ -770,6 +782,13 @@ export class Orchestrator {
       void this.#deps.projects.releaseRun(runId).catch(() => {});
       return run;
     }
+    // D66 mode B：后台子 run 不在 #activeRuns（独立于主 turn），显式取消委派
+    // 经对话级锚点 abort；它自己的 unwind 负责 settle 行与审批清理。
+    if (this.#subagentHost.abortOne(runId, 'user cancelled')) {
+      this.#deps.approvals.cancelPendingForRun(runId);
+      void this.#deps.projects.releaseRun(runId).catch(() => {});
+      return run;
+    }
     // Queued but not started: cancel directly.
     this.#cancelledBeforeStart.add(runId);
     this.#deps.approvals.cancelPendingForRun(runId);
@@ -874,6 +893,8 @@ export class Orchestrator {
     // Drop the group-turn state BEFORE settling: a settle during teardown must
     // not advance the turn and start new runs (BR-P05-001).
     this.#groupTurns.clear(conversationId);
+    // D66 mode B：后台子 run 挂对话级锚点，对话关闭才 abort（先于 settle 扫描）。
+    this.#subagentHost.abortForConversation(conversationId, 'conversation deleted');
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.conversationId === conversationId) {
         entry.handle.abort('conversation deleted');
@@ -895,6 +916,8 @@ export class Orchestrator {
   }
 
   async abortRunsForBot(botId: string): Promise<void> {
+    // D66 mode B：Bot 删除 abort 其全部后台子 run（对话级锚点）。
+    this.#subagentHost.abortForBot(botId, 'bot deleted');
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId) {
         entry.handle.abort('bot deleted');
@@ -915,6 +938,8 @@ export class Orchestrator {
    * group) — other conversations of the bot keep running.
    */
   abortRunsForBotInConversation(botId: string, conversationId: string): void {
+    // D66 mode B：该 Bot 在该对话的后台子 run 一并中止（移出群等）。
+    this.#subagentHost.abortForBotInConversation(botId, conversationId, 'removed from group');
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId && entry.conversationId === conversationId) {
         entry.handle.abort('removed from group');
@@ -1050,6 +1075,38 @@ export class Orchestrator {
       reason: 'event',
       extraAttributes: { event },
     });
+  }
+
+  /**
+   * D66 mode B：后台委派子 run 结束后的 follow-up 注入。走与事件/定时共用的
+   * 投递管道（deliverEventToBot → mailbox：在跑的 loop 被 steer，否则开新一轮
+   * 响应 run）；消息带 internal 标记——进入 Bot 上下文与触发，但不作为对话
+   * 内容展示、不冒充用户消息（D48/D54：子过程不刷聊天，只有主 Bot 对用户的
+   * 发言进聊天）。
+   */
+  #injectDelegateFollowUp(followUp: SubagentFollowUp): void {
+    if (followUp.botId === null || followUp.conversationId === null) return;
+    const headline =
+      followUp.conclusion !== null
+        ? followUp.hitLimit
+          ? '后台委派子任务达到时间/token 预算上限，以下为已完成部分的压缩结论：'
+          : '后台委派子任务已完成，以下为压缩结论：'
+        : (followUp.failure ?? '后台委派子任务失败');
+    const text = [
+      `委派任务结束通知（来源：delegate_task，child_run_id: ${followUp.childRunId}；宿主系统注入，不是用户消息）。`,
+      headline,
+      ...(followUp.conclusion !== null
+        ? [`<untrusted>\n${followUp.conclusion}\n</untrusted>`]
+        : []),
+      '请决定是否向用户转述、继续追问或开启新任务；不要把结论重复委派给子代理。',
+    ].join('\n');
+    this.deliverEventToBot(
+      followUp.botId,
+      followUp.conversationId,
+      SUBAGENT_FOLLOWUP_EVENT,
+      text,
+      { internal: true },
+    );
   }
 
   /**
@@ -1536,6 +1593,8 @@ export class Orchestrator {
                 }),
               ),
             onSubRunSettled: (subRunId) => this.#fsState.release(subRunId),
+            host: this.#subagentHost,
+            onFollowUp: (followUp) => this.#injectDelegateFollowUp(followUp),
           },
         ),
       };

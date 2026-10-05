@@ -22,6 +22,7 @@ interface RunRow {
   trigger_message_ids_json: string;
   chain_id: string | null;
   chain_depth: number | null;
+  parent_run_id: string | null;
   provider: string | null;
   model: string | null;
   output_message_ids_json: string;
@@ -82,6 +83,7 @@ function rowToRun(row: RunRow): Run {
     triggerMessageIds: JSON.parse(row.trigger_message_ids_json) as string[],
     chainId: row.chain_id,
     chainDepth: row.chain_depth,
+    parentRunId: row.parent_run_id,
     provider: row.provider,
     model: row.model,
     outputMessageIds: JSON.parse(row.output_message_ids_json) as string[],
@@ -113,6 +115,8 @@ export class RunsService {
     triggerMessageIds: string[];
     chainId?: string | null;
     chainDepth?: number | null;
+    /** SubAgent ownership (D66/D67): the delegating parent run, sub runs only. */
+    parentRunId?: string | null;
     provider?: string | null;
     model?: string | null;
   }): Run {
@@ -120,7 +124,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, provider, model, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -132,6 +136,7 @@ export class RunsService {
         JSON.stringify(input.triggerMessageIds),
         input.chainId ?? null,
         input.chainDepth ?? null,
+        input.parentRunId ?? null,
         input.provider ?? null,
         input.model ?? null,
         now,
@@ -221,6 +226,20 @@ export class RunsService {
       id: string;
     }>;
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * 未 settle 的子 run（D66/D67 ownership，docs/design/24-durable-execution.md
+   * 「父 resume 先收束或恢复子 run」）：按委派父 run 查询，恢复/收束入口的契约
+   * 查询；今天启动恢复仍走整批 markAllActiveInterrupted（D49 ephemeral 路径）。
+   */
+  listActiveByParent(parentRunId: string): Run[] {
+    const rows = this.db
+      .prepare(
+        "select * from runs where parent_run_id = ? and status in ('queued', 'running', 'waiting_approval', 'waiting_lease')",
+      )
+      .all(parentRunId) as RunRow[];
+    return rows.map(rowToRun);
   }
 
   listActiveByBot(botId: string): Run[] {

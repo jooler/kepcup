@@ -26,6 +26,7 @@ D49 不再解读为「一切 run 永不恢复」，而改为「默认 ephemeral 
 - 不改为 Grok 式 hard supersede。续跑中的新消息仍走 D2 soft steer。
 - 不保证「每个副作用只执行一次」的魔法 exactly-once。只保证 **有记录、能续、副作用策略显式**（at-least-once，加上 idempotency，或 unsafe 中断后交给模型）。
 - 群聊不因崩溃自动重跑整轮 triage。仅恢复已判定为 durable 的成员 run。
+- 不为对齐 Pi Durable 示例而做：transcript fork、热替换扩展、多端 late-join、Child Task Graph、专用任务归属树面板（与 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)「非目标」一致）。
 
 ## 3 Run 分级
 
@@ -40,7 +41,7 @@ D49 不再解读为「一切 run 永不恢复」，而改为「默认 ephemeral 
 
 1. 用户或 Bot 显式将本任务标为长任务 / `durable`；或
 2. 已产生工具调用且超过阈值（如工具次数、已运行时长）；或
-3. 存在未 settle 的非 `safe` 工具，或未完成的 `delegate_task` 子 run。
+3. 存在未 settle 的非 `safe` 工具，或未完成的 `delegate_task` 子 run（含后台与 fan-out 各路）。
 
 群聊默认 ephemeral。仅被唤醒且已升为 durable 的该成员 run 可续。
 
@@ -97,7 +98,7 @@ Project 写入继续配合 D30 影子 git。tool settle 记录 before/after oid�
 | Pi Durable 包 | **不**作默认 Runtime。允许日后单 Bot 超长编码车道做对比 spike，藏在 `AgentEngine` 之后 |
 | Soft steer（D2） | resume 后的 run 仍接受 `<new_messages>` |
 | 群聊 | 不重跑 triage。只 resume 已有 durable 成员 run |
-| SubAgent（D66） | 子 run 使用同一 journal。父 abort 级联；父 resume 先收束未完成子 run |
+| SubAgent（D66） | 前台 / 后台 / fan-out 子 run 共用同一 journal。前台：父 abort 级联；后台：结束主 turn 不级联，显式取消或对话关闭才 abort。父 resume 先收束或恢复未完成子 run（含并行多路） |
 | Loop 续接（D56） | 针对**新触发**回放旧 run 的过程。本文针对**同一 run** 崩溃后续跑。二者正交 |
 | 聊天可见性（D48/D54） | 恢复逻辑不往聊天刷 journal。只发系统提示，以及 Bot 对用户的发言 |
 
@@ -114,12 +115,12 @@ Project 写入继续配合 D30 影子 git。tool settle 记录 before/after oid�
 3. 同一 requestId 重试 deliver → 不第二次开 run。
 4. 续跑中用户再发消息 → soft steer 仍生效。
 5. 用户放弃 → 写租约释放，启动不再 resume 该 run。
-6. 未完成的 `delegate_task` → 父 resume 后，子 run 按同一策略恢复，或中止并回报。
+6. 未完成的 `delegate_task`（含后台与 fan-out 多路）→ 父 resume 后，各子 run 按同一策略恢复，或中止并回报；后台子 run 完成后仍可 follow-up 注入。
 
 ## 9 实现分期（文档级）
 
 1. 常量与 schema：`durable` 标记、`effects` 表、工具 `replay` 元数据。
 2. 拆分启动恢复：`finalizeEphemeral`（今日 `orchestrator.recoverInterrupted` 的 ephemeral 路径）与 `resumeDurable`。
 3. 网关三类 replay，以及 `send_message` 的 idempotent。
-4. 杀进程集成测试，再接 SubAgent 级联。
-5. （可选）Pi Durable 单车道对比 spike。
+4. 杀进程集成测试，再接 SubAgent 级联（含后台与 fan-out）。
+5. Pi Durable 单车道对比 spike：**不做**（与 D67「不定为 Runtime」一致；需要时另开评估，不写入本分期）。

@@ -56,6 +56,19 @@ export const SUBAGENT_TOKEN_BUDGET = 150_000;
 export const SUBAGENT_COMPRESS_TIMEOUT_MS = 20_000;
 /** Poll interval for the subagent token-budget check (engine has no budget hook). */
 export const SUBAGENT_TOKEN_POLL_MS = 5_000;
+/**
+ * Max lanes one `delegate_task({ tasks })` fan-out call may start (D66 mode C,
+ * docs/design/23-mcp-and-subagent.md); a larger request is rejected outright.
+ */
+export const SUBAGENT_FANOUT_MAX = 4;
+/**
+ * Max simultaneously *running* background subagent runs per conversation (D66
+ * mode B 的对话级并发封顶). Foreground fan-out lanes must also fit under this
+ * shared cap: N + already-running background sub runs ≤ this constant.
+ */
+export const SUBAGENT_BACKGROUND_CONCURRENCY = 4;
+/** system_event name of the deterministic background-delegation follow-up injection (D66 mode B). */
+export const SUBAGENT_FOLLOWUP_EVENT = 'delegate_result';
 
 // --- MCP (D65, docs/design/23-mcp-and-subagent.md) -------------------------------
 

@@ -171,3 +171,26 @@ Phase A（升级 1.0.2） → Phase C（SubAgent，纯增量、风险小） → 
 - B 依赖 A（`pi-mcp@1.0.2` 要求 1.x core）。
 - C 与 B 独立，C 先行是因为它不动设置存储与 UI，能更快验证嵌套 run 的稳定性；两者可对调或并行（不同文件域）。
 - 群聊唤醒与转交（原方案稿 §4–§6）**不在本计划内**，仍为草案；其决策拍板时编号从 D67 起（D63 已被文件技能路由占用，D64–D66 已被本计划占用）。
+
+## 附录：D66 扩展（本地设计 2026-10-05）
+
+设计已写入 `docs/design/23-mcp-and-subagent.md`（本文件为实现备忘，不替代设计）：
+
+- [x] **后台委派** `mode: "background"`：立即返回 `child_run_id`；主 turn 可继续；完成后 follow-up 注入压缩结论；结束主 turn 不级联 abort。
+- [x] **并行 fan-out**：`tasks: [...]`（或等价多次后台），硬顶（建议 ≤4）；前台等全部 settle / 后台逐路注入。
+- [x] 常量：后台并发上限、fan-out 上限；与 D67 journal / resume 级联对齐。
+- [x] 明确不做：fork、热替换、late-join、task graph、任务树面板、整仓 Pi Durable Runtime（见 23「非目标」）。
+
+### 实现清单（2026-10-05 落地）
+
+- [x] shared 常量：`SUBAGENT_FANOUT_MAX`（4，`tasks` 单次路数硬顶）、`SUBAGENT_BACKGROUND_CONCURRENCY`（4，对话级后台并发封顶；前台 fan-out 的 N 路也必须放得下）、`SUBAGENT_FOLLOWUP_EVENT`（`delegate_result` 注入事件名）。
+- [x] runs 库迁移 0004：`runs.parent_run_id`（D66/D67 ownership：子 run 记录委派父 run；journal「subagent: child_run_id + ownership」落点）；`runs.listActiveByParent`（父 resume 先收束/恢复子 run 的契约查询）。
+- [x] `agent/subagent.ts`：`SubagentToolFacade.delegate` 收 `{ task, mode?, tasks? }`——前台单路（mode A，串行限次、级联 abort，行为不变）、后台单路/后台 fan-out（独立 AbortController + `SubagentHost` 对话级注册表，settle 后经 `onFollowUp` 上报压缩结论/失败；显式取消不注入）、前台 fan-out（`Promise.all` 并行、父 abort 级联、按序结论数组、失败槽位带 error）。超限中止（时限/token 预算）与显式取消区分：超限仍注入已完成部分。
+- [x] orchestrator：`#subagentHost`（跨 response run 存活）；`#injectDelegateFollowUp` 复用 `deliverEventToBot` 投递管道（在跑 loop 被 steer，否则开新一轮响应 run；消息带 `internal` 标记——进 Bot 上下文、不进聊天、不冒充用户消息）；`cancelRun` / `cancelAllActive` / `abortRunsForConversation` / `abortRunsForBot` / `abortRunsForBotInConversation` 均可中止后台子 run；子 run 行 `triggerReason='background'`。
+- [x] 工具面与提示词：`delegate_task` 参数扩为 task/mode/tasks（`buildDelegateTools`），`<platform_rules>` 规则 13 补后台与 fan-out 语义（多路结论分批到达、无需轮询）。
+- [x] 测试：unit 15 个（后台立即返回/注入、显式取消不注入、超限部分结论、失败上报、后台 fan-out 并行、并发封顶、前台 fan-out 数组与级联、参数校验、ownership）+ integration 8 个（前台回归×2、后台不阻塞+注入、显式取消无注入、关对话中止、崩溃后标 interrupted 且不注入、前台 fan-out 数组、后台 fan-out 分批注入）。全量回归：`pnpm typecheck` + `pnpm test`（115 文件 892 passed）。
+
+### 与 D67 的衔接点
+
+- 已落地：`runs.parent_run_id`（ownership 列 + 迁移）、`listActiveByParent`、后台子 run 的对话级归属与中止语义（关对话/删 Bot/显式取消），崩溃后未完成子 run 走 D49 ephemeral 路径标 `interrupted`（测试锁定）。
+- 待 D67 分期：durable 标记 + journal resume 时先收束或恢复未完成子 run（含后台与 fan-out 各路，`effects`/replay 落地后接 `listActiveByParent`）；后台子 run 单独 durable。
