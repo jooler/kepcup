@@ -133,11 +133,16 @@ async function bindProject(app: ElectronApplication, page: Page, dir: string): P
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
   }, dir);
-  // 项目选择器已移入右栏「配置」tab：右栏收起时先展开再切 tab。
-  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+  // 项目选择器在右栏：群对话是群信息面板（选择器直接可见），单聊在「配置」tab
+  // （右栏收起时先展开）。
+  const groupInfo = page.locator('[data-testid="group-info"]');
+  const tabs = page.locator('[data-testid="right-panel-tabs"]');
+  if (!(await groupInfo.isVisible()) && !(await tabs.isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
-  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
+  if (!(await groupInfo.isVisible())) {
+    await tabs.locator('text=配置').click();
+  }
   await page.locator('[data-testid="project-selector-trigger"]').click();
   await page.locator('[data-testid="project-pick-new"]').click();
   await expect(page.locator('[data-testid="project-selector-name"]')).toContainText(

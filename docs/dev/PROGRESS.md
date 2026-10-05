@@ -920,3 +920,4 @@
 - **UI**：设置页新「MCP 服务器」分区（`McpSection.svelte`：增删改、启用开关、免审批开关带风险文案、连接测试列出工具名与缺失密钥）；密钥输入保存即落 secrets、不回显；Bot 编辑（`BotProfileForm`）按应用启用列表勾选；`ApprovalCard` 增 `mcp_tool` 分支（Plug 图标 + 服务器·工具名折叠行）。RPC：`mcp.test` / `mcp.setSecret` / `mcp.removeSecret`（密钥只写不读）。
 - **测试**：单测 `mcp-tools.test.ts`（命名 sanitize/截断、启用交集）；集成 `mcp.test.ts`（真实 stdio 子进程：懒连接列表、工具包装 echo/always_fails/密钥解析、杀进程重连、3 次失败标记 failed、testServer 缺失密钥报告）；集成 `mcp-loop.test.ts`（全栈 4 例：审批卡→批准→`<untrusted>` 结果、拒绝→APPROVAL_DENIED 且模型继续、未勾选不注册、autoApprove 免卡零审批行）。`pnpm --filter core test` **105 文件 797 passed + 2 skipped**；typecheck / eslint 干净。
 - **非目标（首期，未做）**：OAuth（pi-mcp/oauth）、Codemode、deferred tool loading、与 pi CLI 配置互通。
+- **最终验证（三阶段全部完成后）**：desktop build 通过；全量 e2e **57 passed / 0 failed**——含顺手修复基线遗留的 `browser.spec.ts` cookie 隔离用例（根因：右栏改版后群对话的右栏是群信息面板、无「配置」tab，`bindProject` 现按 `group-info` / `right-panel-tabs` 可见性自适应两种形态）。
