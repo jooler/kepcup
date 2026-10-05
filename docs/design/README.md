@@ -33,6 +33,7 @@
 | [21-web-search.md](21-web-search.md) | 联网检索：内置 web_search / web_fetch 工具、检索供应商配置、内联设置引导 |
 | [22-file-skill-routing.md](22-file-skill-routing.md) | 文件技能路由：推荐技能注入、install_skill 授权安装、四级升级阶梯 |
 | [23-mcp-and-subagent.md](23-mcp-and-subagent.md) | MCP 工具服务器接入与宿主 SubAgent（delegate_task 委派执行） |
+| [24-durable-execution.md](24-durable-execution.md) | 长任务可恢复执行 / Host Durable Journal：ephemeral 默认仍按 D49，durable 按 journal 与工具 replay 策略 resume |
 
 ## 尚未讨论（暂不入文档）
 
@@ -90,7 +91,7 @@
 | D46 | 视觉与交互 | 参考 Grok Bot，简单、扁平；用户目光焦点处的反馈重点细致处理 |
 | D47 | 运行时元数据 | Bot Profile、技能安装记录、环境安装记录统一存数据库；文件系统只存文件类内容 |
 | D48 | Bot 发消息的方式 | 最终回复自动发送；中途用 `send_message`；不回复用 `skip_reply`；@ 其他 Bot 只能通过结构化参数 |
-| D49 | 中断的执行 | 应用退出或崩溃时标记为中断，重启后提示，不自动恢复 |
+| D49 | 中断的执行 | 应用退出或崩溃时标记为中断，重启后提示，不自动恢复（D67 修订：仅适用于 ephemeral run；durable 见 [24-durable-execution.md](24-durable-execution.md)） |
 | D50 | 命令交互输入 | bash 支持交互模式（stdin 受控通道）：模型发起，只有用户能写 stdin；非交互优先是默认形态 |
 | D51 | 输入对模型的可见性 | 普通输入回注入工具结果（模型可见）；用户标记敏感的输入只回执不回显（密码类分层处理） |
 | D52 | 凭据注入 | 密码/token 经审批卡片输入后写入命令 stdin，值不进模型上下文与任何持久化；可记住到本对话结束（系统钥匙串） |
@@ -108,3 +109,4 @@
 | D64 | Pi 版本 | 升级并锁定 1.x（1.0.2）：0.87.1 → 1.0.2 为纯版本变更（核心 API 逐字兼容，harness/search/telemetry 移除项宿主未使用），D21 封装不变 |
 | D65 | MCP | 用户在设置页配置 MCP server（stdio / streamable HTTP），按「应用启用 ∩ Bot 勾选」暴露工具；调用走网关审批（autoApprove 默认关）与审计；密钥字段级加密；OAuth 与 Codemode 后续单排（见 23） |
 | D66 | 宿主 SubAgent | `delegate_task` 工具 + 嵌套减配子 run（loopType=subagent，落 run 行、不写消息）：只读研究工具集、结果压缩 ≤4000 字符回主 loop、预算与超时封顶、主 run 中止级联中止；不充当群成员、禁止再委派（见 23） |
+| D67 | 长任务崩溃恢复 | Host Durable Journal；run 分 ephemeral（默认，仍按 D49：标中断、不自动恢复）与 durable（按 journal + 工具 replay 策略 resume）；不把 Pi Durable 包定为全体 Bot Runtime；修订 D49 的适用范围为仅 ephemeral（见 24） |
