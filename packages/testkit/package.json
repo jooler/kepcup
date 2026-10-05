@@ -10,7 +10,9 @@
     "test": "node ../../scripts/run-tests.mjs run --project testkit"
   },
   "dependencies": {
-    "@kepcup/core": "workspace:*",
     "@kepcup/shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "@kepcup/core": "workspace:*"
   }
 }
