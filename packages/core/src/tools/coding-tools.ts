@@ -85,10 +85,15 @@ function imageMimeOf(resolved: string): string | null {
   } catch {
     return null;
   }
-  if (header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+    return 'image/png';
   if (header[0] === 0xff && header[1] === 0xd8) return 'image/jpeg';
   if (header.subarray(0, 3).toString('latin1') === 'GIF') return 'image/gif';
-  if (header.subarray(0, 4).toString('latin1') === 'RIFF' && header.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  if (
+    header.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    header.subarray(8, 12).toString('latin1') === 'WEBP'
+  )
+    return 'image/webp';
   return null;
 }
 
@@ -102,7 +107,16 @@ export function resolveRgPath(bundledBinDir: string | null): string | null {
   return probe.error === undefined ? 'rg' : null;
 }
 
-type PiToolResult = { content: Array<{ type: string; text?: string }>; details?: unknown };
+type PiToolResult = {
+  content: Array<{ type: string; text?: string }>;
+  details?: unknown;
+  /**
+   * pi 1.x 语义（0.87.1 → 1.0.2 行为差异）：工具失败不再 throw，而是返回
+   * `isError: true` 的结果（agent-core types.d.ts "errors come back as
+   * `isError: true`"）。不识别该标志会把失败命令误报为成功。
+   */
+  isError?: boolean;
+};
 
 /** The slice of pi's ToolDefinition the gateway glue relies on. */
 interface PiToolLike {
@@ -124,7 +138,12 @@ interface WrapOptions {
 }
 
 /** Converts a pi tool definition into our ToolDefinition with untrusted wrapping. */
-function wrapPiTool(def: PiToolLike, workspacePath: string, secrets: SecretsService, options?: WrapOptions): ToolDefinition {
+export function wrapPiTool(
+  def: PiToolLike,
+  workspacePath: string,
+  secrets: SecretsService,
+  options?: WrapOptions,
+): ToolDefinition {
   return {
     name: def.name,
     description: def.description,
@@ -136,18 +155,34 @@ function wrapPiTool(def: PiToolLike, workspacePath: string, secrets: SecretsServ
           cwd: workspacePath,
         })) as PiToolResult;
         const text = (result.content ?? [])
-          .map((block) => (block.type === 'text' && typeof block.text === 'string' ? block.text : ''))
+          .map((block) =>
+            block.type === 'text' && typeof block.text === 'string' ? block.text : '',
+          )
           .join('\n')
           .trim();
         // Redact before truncation so a secret at the head cannot push its
         // own redaction past the budget (same order as runs persistence).
         const redacted = secrets.redact(text);
         const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
-        const body = truncated.truncated ? `${truncated.text}\n[输出已截断，共 ${redacted.length} 字符]` : truncated.text;
+        const body = truncated.truncated
+          ? `${truncated.text}\n[输出已截断，共 ${redacted.length} 字符]`
+          : truncated.text;
+        // pi 1.x：非零退出（含被沙箱拦截）返回 isError:true 的结果，不再 throw。
+        if (result.isError === true) {
+          return {
+            ok: false,
+            content: `<untrusted>\n${body}\n</untrusted>`,
+            errorCode: 'COMMAND_FAILED',
+          };
+        }
         return { ok: true, content: `<untrusted>\n${body}\n</untrusted>` };
       } catch (error) {
         if (error instanceof AppError) {
-          return { ok: false, content: `${error.code}: ${secrets.redact(error.message)}`, errorCode: error.code };
+          return {
+            ok: false,
+            content: `${error.code}: ${secrets.redact(error.message)}`,
+            errorCode: error.code,
+          };
         }
         const message = error instanceof Error ? error.message : String(error);
         const code = message.startsWith('PATH_OUT_OF_SCOPE') ? 'PATH_OUT_OF_SCOPE' : 'TOOL_FAILED';
@@ -163,8 +198,7 @@ function shortCommand(command: string): string {
 }
 
 /** srt violation lines: `cat(x) deny(1) file-read-data /path`. */
-const VIOLATION_PATH_PATTERN =
-  /\bfile-(?:read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
+const VIOLATION_PATH_PATTERN = /\bfile-(?:read|write)(?:-data|-metadata|-create)?\s+(.+)$/;
 
 /** Unique paths the sandbox blocked, for the request_access hint. */
 export function extractViolationPaths(violations: Array<{ line: string }>): string[] {
@@ -179,7 +213,17 @@ export function extractViolationPaths(violations: Array<{ line: string }>): stri
 }
 
 /** read / write / edit / ls / find / grep / bash wired through the gateway. */
-export function buildCodingTools(identity: ToolContext['identity'], deps: CodingToolDeps): ToolDefinition[] {
+export function buildCodingTools(
+  identity: ToolContext['identity'],
+  deps: CodingToolDeps,
+  options?: {
+    /**
+     * Subagent 减配（D66）：只读研究集——不含 write / edit，避免子 run 与主
+     * run 的 project 写租约竞争；写需求走主 loop 自己完成。
+     */
+    excludeWriteTools?: boolean;
+  },
+): ToolDefinition[] {
   const { gateway, workspacePath, network, secrets, fsState } = deps;
   // Relative paths and bash default to the project when one is bound
   // (docs/design/08-project.md "上下文注入"); the workspace remains the
@@ -260,7 +304,10 @@ export function buildCodingTools(identity: ToolContext['identity'], deps: Coding
         const resolved = await checked(identity, gateway, cwd, 'read', 'find');
         const entries = globSync(pattern, {
           cwd: resolved,
-          exclude: (entry: string) => options.ignore.some((ignored) => entry.includes(ignored.replaceAll('**/', '').replaceAll('/**', ''))),
+          exclude: (entry: string) =>
+            options.ignore.some((ignored) =>
+              entry.includes(ignored.replaceAll('**/', '').replaceAll('/**', '')),
+            ),
         });
         return entries.slice(0, options.limit).map((entry) => path.join(resolved, entry));
       },
@@ -290,7 +337,9 @@ export function buildCodingTools(identity: ToolContext['identity'], deps: Coding
       ) => {
         void cwd; // commands always run in the workspace
         const timeoutMs = Math.min(
-          options.timeout !== undefined && options.timeout > 0 ? options.timeout * 1000 : BASH_TIMEOUT_DEFAULT_MS,
+          options.timeout !== undefined && options.timeout > 0
+            ? options.timeout * 1000
+            : BASH_TIMEOUT_DEFAULT_MS,
           BASH_TIMEOUT_DEFAULT_MS,
         );
         const result = await gateway.exec(identity, {
@@ -301,7 +350,12 @@ export function buildCodingTools(identity: ToolContext['identity'], deps: Coding
           onOutput: (chunk) => options.onData(Buffer.from(chunk, 'utf8')),
         });
         if (result.timedOut) {
-          options.onData(Buffer.from(`\n[命令超时（${Math.round(timeoutMs / 1000)} 秒），已终止进程树]\n`, 'utf8'));
+          options.onData(
+            Buffer.from(
+              `\n[命令超时（${Math.round(timeoutMs / 1000)} 秒），已终止进程树]\n`,
+              'utf8',
+            ),
+          );
         }
         if (result.violations.length > 0) {
           const samples = result.violations.slice(0, 5).map((v) => v.line);
@@ -323,7 +377,7 @@ export function buildCodingTools(identity: ToolContext['identity'], deps: Coding
     },
   });
 
-  return [
+  const codingTools = [
     wrapPiTool(read, baseDir, secrets),
     wrapPiTool(write, baseDir, secrets, {
       before: (params, ctx) => {
@@ -347,4 +401,8 @@ export function buildCodingTools(identity: ToolContext['identity'], deps: Coding
       },
     }),
   ];
+  if (options?.excludeWriteTools === true) {
+    return codingTools.filter((tool) => tool.name !== 'write' && tool.name !== 'edit');
+  }
+  return codingTools;
 }

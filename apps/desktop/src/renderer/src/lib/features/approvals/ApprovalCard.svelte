@@ -3,6 +3,7 @@
   import {
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
+    mcpToolApprovalPayloadSchema,
     type SkillImportApprovalPayload,
   } from '@kepcup/shared';
   import {
@@ -14,6 +15,7 @@
     Clock,
     Package,
     Puzzle,
+    Plug,
     AlertTriangle,
   } from '@lucide/svelte';
   import { t, type MessageKey } from '$lib/i18n';
@@ -114,6 +116,12 @@
     const parsed = skillPresetApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
+  // D65 mcp_tool payload: MCP 工具调用卡（服务器/工具/参数摘要）。
+  const mcpTool = $derived.by(() => {
+    if (approval.kind !== 'mcp_tool') return null;
+    const parsed = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
   const skillCompatKeys: Record<SkillImportApprovalPayload['scan']['compatibility'], MessageKey> = {
     compatible: 'skills.compat.compatible',
     partial: 'skills.compat.partial',
@@ -133,7 +141,9 @@
               ? t('approvals.skillImportTitle')
               : approval.kind === 'skill_preset'
                 ? t('approvals.skillPresetTitle')
-                : t('approvals.commandTitle'),
+                : approval.kind === 'mcp_tool'
+                  ? t('approvals.mcpToolTitle')
+                  : t('approvals.commandTitle'),
   );
 </script>
 
@@ -182,7 +192,9 @@
               ? `${skillImport?.name ?? ''} ${skillImport?.sourceUrl ?? ''}`.trim()
               : approval.kind === 'skill_preset'
                 ? (skillPreset?.displayName ?? skillPreset?.name ?? '')
-                : command}
+                : approval.kind === 'mcp_tool'
+                  ? `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
+                  : command}
       </code>
     {/if}
   </div>
@@ -208,6 +220,8 @@
         <Package class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'skill_import' || approval.kind === 'skill_preset'}
         <Puzzle class="size-4 text-amber-600" aria-hidden="true" />
+      {:else if approval.kind === 'mcp_tool'}
+        <Plug class="size-4 text-amber-600" aria-hidden="true" />
       {:else}
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}

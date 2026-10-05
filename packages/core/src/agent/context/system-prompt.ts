@@ -85,6 +85,7 @@ const PLATFORM_RULES = [
   '记忆：用户明确要求记住时调用 remember；不要记录密码、密钥等凭据；不要把闲聊当作记忆。',
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
+  '需要通读大量材料（扫描多文件目录/仓库、长日志、多份网页）而只要结论时，调用 delegate_task 委派子代理：交代清楚要什么结论、判断标准与材料位置，大段材料先写入 workspace 文件再给路径；子代理不出现在对话里，由你转述它的结论。需要动手改文件的活不要委派。',
 ].map((rule, index) => `${index + 1}. ${rule}`);
 
 function section(tag: string, body: string): string {

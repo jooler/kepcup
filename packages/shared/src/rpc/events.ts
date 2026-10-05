@@ -159,6 +159,15 @@ export const wikiIngestedPayloadSchema = z.object({
  */
 export const wikiChangedPayloadSchema = z.object({ botId: z.string() });
 
+/** MCP server 连接状态（D65）：设置页状态展示与失败告警。 */
+export const mcpServerStatusPayloadSchema = z.object({
+  serverId: z.string(),
+  serverName: z.string(),
+  status: z.enum(['connecting', 'connected', 'failed', 'closed']),
+  /** 失败/关闭的补充说明（如进程退出原因）。 */
+  detail: z.string().optional(),
+});
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -181,8 +190,9 @@ export const rpcEventSchemas = {
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,
-  'wiki_ingested': wikiIngestedPayloadSchema,
-  'wiki_changed': wikiChangedPayloadSchema,
+  wiki_ingested: wikiIngestedPayloadSchema,
+  wiki_changed: wikiChangedPayloadSchema,
+  'mcp.server_status': mcpServerStatusPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

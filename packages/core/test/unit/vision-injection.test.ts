@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildUserMessageContent } from '../../src/agent/pi-engine.js';
-import { stripImageBlocks } from '../../src/dispatch/orchestrator.js';
+import { stripImageBlocks } from '../../src/infra/redact.js';
 
 /**
  * 视觉注入（docs/design/20-conversation-media.md）：触发批图片按模型能力

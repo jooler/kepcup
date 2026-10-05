@@ -193,6 +193,14 @@ export function providerInfoList(
     // 厂商条目统一在循环外按 settings 合成（含非对话能力的模型）。
     if (isVendorId(provider.id)) continue;
     const isCustom = provider.id.startsWith('custom:');
+    // pi 1.x 起内置目录含非对话 provider（如 typesafe 分类器，0 个对话模型）：
+    // 空模型列表的行对设置页没有意义，跳过。
+    const chatModels = provider.getModels().map((m) => ({
+      id: m.id,
+      name: m.name,
+      contextWindow: Number(m.contextWindow ?? 0),
+    }));
+    if (chatModels.length === 0) continue;
     infos.push({
       id: provider.id,
       name: provider.name,
@@ -200,11 +208,7 @@ export function providerInfoList(
       baseUrl: isCustom
         ? settings.customProviders.find((c) => customProviderId(c.id) === provider.id)?.baseUrl
         : undefined,
-      models: provider.getModels().map((m) => ({
-        id: m.id,
-        name: m.name,
-        contextWindow: Number(m.contextWindow ?? 0),
-      })),
+      models: chatModels,
       hasKey: secrets.hasValue(providerSecretName(provider.id)),
     });
   }

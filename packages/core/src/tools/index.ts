@@ -23,6 +23,9 @@ import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
 import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
+import { buildDelegateTools } from './delegate-tools.js';
+import type { SubagentToolFacade } from '../agent/subagent.js';
+import type { McpToolFacade } from '../mcp/tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 
@@ -102,6 +105,16 @@ export interface ResponseToolDeps {
    * install_skill 工具（预置轻授权 / 外部仓库扫描审批，均阻塞等用户决定）。
    */
   skillInstall?: SkillInstallFacade | undefined;
+  /**
+   * 宿主 SubAgent 门面（docs/design/23-mcp-and-subagent.md D66）：present 时
+   * 注册 delegate_task 工具（嵌套减配子 run，结果压缩回传）。
+   */
+  subagent?: SubagentToolFacade | undefined;
+  /**
+   * MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已按
+   * 「应用 enabled ∩ Bot 选中」构建好的包装工具，直接注册。
+   */
+  mcp?: McpToolFacade | undefined;
 }
 
 /** The slice of SkillsService the create_skill tool needs. */
@@ -772,6 +785,13 @@ export function buildResponseTools(input: {
   const skillTools =
     deps.skillInstall !== undefined ? buildSkillTools({ identity, skills: deps.skillInstall }) : [];
 
+  // 宿主 SubAgent（docs/design/23-mcp-and-subagent.md D66）：门面就绪才注册。
+  const delegateTools =
+    deps.subagent !== undefined ? buildDelegateTools({ identity, subagent: deps.subagent }) : [];
+
+  // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析。
+  const mcpTools = deps.mcp?.tools ?? [];
+
   return [
     sendMessage,
     skipReply,
@@ -795,6 +815,8 @@ export function buildResponseTools(input: {
     ...speechTools,
     ...webTools,
     ...skillTools,
+    ...delegateTools,
+    ...mcpTools,
     ...setupTools,
   ];
 }
@@ -802,4 +824,32 @@ export function buildResponseTools(input: {
 /** Shared no-op result helper for tests. */
 export function emptyToolResult(): ToolResult {
   return { ok: true, content: '' };
+}
+
+/**
+ * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索。
+ * 无 write / edit（避免与主 run 的 project 写租约竞争）、无 send_message /
+ * delegate_task（禁止再委派）、无 memory / schedule / browser / skills 工具。
+ */
+export function buildSubagentResearchTools(input: {
+  identity: RunIdentity;
+  deps: Pick<
+    ResponseToolDeps,
+    'gateway' | 'workspacePath' | 'projectPath' | 'network' | 'secrets' | 'fsState' | 'search'
+  >;
+}): ToolDefinition[] {
+  const coding = buildCodingTools(
+    input.identity,
+    {
+      gateway: input.deps.gateway,
+      workspacePath: input.deps.workspacePath,
+      projectPath: input.deps.projectPath,
+      network: input.deps.network,
+      secrets: input.deps.secrets,
+      fsState: input.deps.fsState,
+    },
+    { excludeWriteTools: true },
+  );
+  const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
+  return [...coding, ...web];
 }

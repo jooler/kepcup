@@ -51,7 +51,7 @@ describe('0013 public_skills 迁移', () => {
 
     // 2) 升级：应用 0013 与其后新增的迁移
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([13, 14]);
+    expect(applied.map((m) => m.version)).toEqual([13, 14, 15]);
 
     // 3) 断言：预置引用 → 一条公共行；bot_skills 的预置行清掉，私有行保留
     const pub = db.prepare('select name, library_id, status from public_skills').all() as Array<{

@@ -17,6 +17,7 @@
     wiki_maintenance: 'usage.loop.wiki_maintenance',
     skill_authoring: 'usage.loop.skill_authoring',
     conversation_summary: 'usage.loop.conversation_summary',
+    subagent: 'usage.loop.subagent',
   };
 
   let budgetTokens = $state<number | null>(null);
@@ -61,13 +62,16 @@
         return {
           botId: id === '' ? null : id,
           name: botName(id === '' ? null : id),
-          rows: rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.loopType < b.loopType ? -1 : 1)),
+          rows: rows.sort((a, b) =>
+            a.date < b.date ? 1 : a.date > b.date ? -1 : a.loopType < b.loopType ? -1 : 1,
+          ),
           backgroundToday,
-          exceeded:
-            budgetTokens !== null && budgetTokens > 0 && backgroundToday >= budgetTokens,
+          exceeded: budgetTokens !== null && budgetTokens > 0 && backgroundToday >= budgetTokens,
         };
       })
-      .sort((a, b) => (a.botId === null ? 1 : b.botId === null ? -1 : a.name.localeCompare(b.name)));
+      .sort((a, b) =>
+        a.botId === null ? 1 : b.botId === null ? -1 : a.name.localeCompare(b.name),
+      );
   });
 
   async function refresh(): Promise<void> {
@@ -138,7 +142,13 @@
         data-testid="budget-input"
       />
     </div>
-    <Button variant="outline" size="sm" disabled={savingBudget} onclick={() => void saveBudget()} data-testid="budget-save">
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={savingBudget}
+      onclick={() => void saveBudget()}
+      data-testid="budget-save"
+    >
       {t('common.save')}
     </Button>
     <p class="text-xs text-muted-foreground">{t('settings.budgetHint')}</p>
@@ -147,7 +157,9 @@
   {#if loading && entries.length === 0}
     <p class="text-sm text-muted-foreground" data-testid="usage-loading">…</p>
   {:else if entries.length === 0}
-    <p class="text-sm text-muted-foreground" data-testid="usage-empty">{t('settings.usageEmpty')}</p>
+    <p class="text-sm text-muted-foreground" data-testid="usage-empty">
+      {t('settings.usageEmpty')}
+    </p>
   {:else}
     <div class="space-y-3" data-testid="usage-rows">
       {#each botRows as row (row.botId ?? 'global')}
@@ -155,7 +167,10 @@
           <div class="flex flex-wrap items-center gap-2">
             <span class="text-sm font-medium" data-testid="usage-bot-name">{row.name}</span>
             {#if row.exceeded}
-              <span class="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400" data-testid="usage-exceeded">
+              <span
+                class="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
+                data-testid="usage-exceeded"
+              >
                 {t('settings.usageExceeded')}
               </span>
             {/if}
@@ -171,10 +186,17 @@
             </thead>
             <tbody>
               {#each row.rows as entry (`${entry.date}|${entry.loopType}`)}
-                <tr class="border-t" data-testid="usage-entry-row" data-loop-type={entry.loopType} data-date={entry.date}>
+                <tr
+                  class="border-t"
+                  data-testid="usage-entry-row"
+                  data-loop-type={entry.loopType}
+                  data-date={entry.date}
+                >
                   <td class="py-1 tabular-nums">{entry.date}</td>
                   <td class="py-1">{t(LOOP_KEYS[entry.loopType])}</td>
-                  <td class="py-1 tabular-nums" data-testid="usage-entry-tokens">{tokenText(entry)}</td>
+                  <td class="py-1 tabular-nums" data-testid="usage-entry-tokens"
+                    >{tokenText(entry)}</td
+                  >
                   <td class="py-1 tabular-nums">{costText(entry)}</td>
                 </tr>
               {/each}

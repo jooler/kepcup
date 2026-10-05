@@ -7,11 +7,7 @@ import { AppError, BASH_TIMEOUT_DEFAULT_MS } from '@kepcup/shared';
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
 import { buildSandboxPolicy } from '../sandbox/policy.js';
 import { executeUnsandboxed } from '../sandbox/confirm-executor.js';
-import type {
-  SandboxBackend,
-  SandboxExecResult,
-  SandboxNetworkPolicy,
-} from '../sandbox/types.js';
+import type { SandboxBackend, SandboxExecResult, SandboxNetworkPolicy } from '../sandbox/types.js';
 import { expandTilde, workspacePathFor, type AppPaths } from '../infra/paths.js';
 import type { AuditService } from '../domain/audit.js';
 import type { SecretsService } from '../domain/secrets.js';
@@ -67,6 +63,11 @@ export interface GatewayDeps {
   skills?: {
     readableDirs(botId: string): string[];
   };
+  /**
+   * D65: the server id → autoApprove lookup for MCP tool calls (settings-
+   * driven). Absent/undefined = never auto-approve (default-deny).
+   */
+  mcpAutoApprove?: ((serverId: string) => boolean) | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -188,8 +189,12 @@ export class ToolGateway {
     this.#deps = deps;
     this.#platform = deps.platform ?? process.platform;
     // Canonicalize roots so comparisons survive symlinked temp dirs.
-    this.#readOnlyRoots = (deps.readOnlyRootsOverride ?? readOnlyRoots(this.#platform)).map(resolveStandingPath);
-    this.#sensitive = (deps.sensitiveOverride ?? sensitivePaths(this.#platform)).map(resolveStandingPath);
+    this.#readOnlyRoots = (deps.readOnlyRootsOverride ?? readOnlyRoots(this.#platform)).map(
+      resolveStandingPath,
+    );
+    this.#sensitive = (deps.sensitiveOverride ?? sensitivePaths(this.#platform)).map(
+      resolveStandingPath,
+    );
   }
 
   /** Canonical skill directories of one bot (library + authored). */
@@ -221,14 +226,20 @@ export class ToolGateway {
   checkPath(identity: RunIdentity, inputPath: string, mode: 'read' | 'write'): PathDecision {
     const workspace = this.workspacePath(identity);
     if (workspace === null) {
-      return { kind: 'forbidden', resolvedPath: inputPath, reason: '当前执行没有可访问的 workspace' };
+      return {
+        kind: 'forbidden',
+        resolvedPath: inputPath,
+        reason: '当前执行没有可访问的 workspace',
+      };
     }
     const paths = this.#deps.paths;
     const expanded = expandTilde(inputPath);
     // Relative paths resolve against the project when one is bound
     // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 project 为基准).
     const base = this.#deps.projects.boundProject(identity.conversationId)?.path ?? workspace;
-    const absolute = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(base, expanded);
+    const absolute = path.isAbsolute(expanded)
+      ? path.resolve(expanded)
+      : path.resolve(base, expanded);
     const resolved = resolveStandingPath(absolute);
 
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
@@ -373,8 +384,8 @@ export class ToolGateway {
     // sensitive locations downstream, so the card must warn whenever the
     // requested path is or covers one — the user approves them knowingly.
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
-    const coversSensitive = this.#sensitive.some(
-      (sensitive) => isInsidePath(norm(sensitive), norm(decision.resolvedPath)),
+    const coversSensitive = this.#sensitive.some((sensitive) =>
+      isInsidePath(norm(sensitive), norm(decision.resolvedPath)),
     );
     const outcome = await this.#deps.approvals.request(
       identity,
@@ -583,7 +594,11 @@ export class ToolGateway {
    */
   async gitRemote(
     identity: RunIdentity,
-    input: { operation: 'push' | 'pull' | 'fetch' | 'clone' | 'remote_add' | 'init'; args: string[]; reason: string },
+    input: {
+      operation: 'push' | 'pull' | 'fetch' | 'clone' | 'remote_add' | 'init';
+      args: string[];
+      reason: string;
+    },
     options: { signal?: AbortSignal } = {},
   ): Promise<{ exitCode: number | null; output: string }> {
     return this.#deps.projects.gitRemote(identity, input, {
@@ -599,7 +614,12 @@ export class ToolGateway {
 
   async #executeUnsandboxedApproved(
     identity: RunIdentity,
-    req: { command: string; timeoutMs?: number; signal?: AbortSignal; onOutput?: (chunk: string) => void },
+    req: {
+      command: string;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      onOutput?: (chunk: string) => void;
+    },
     workspace: string,
     via: string,
     envOverlay?: Record<string, string>,
@@ -620,6 +640,46 @@ export class ToolGateway {
       via,
     });
     return { ...result, policyApplied: false };
+  }
+
+  /**
+   * MCP 工具调用（D65）：与内置工具同管道的审批 + 审计。autoApprove 的
+   * server 免卡（审批卡免了，审计照写）；无人值守模式走 D41 自动批准语义
+   * （approvals.request 的统一路径）。args 在审计 payload 里经 redact。
+   */
+  async mcpToolCall(
+    identity: RunIdentity,
+    server: { id: string; name: string },
+    toolName: string,
+    args: Record<string, unknown>,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const autoApprove = this.#deps.mcpAutoApprove?.(server.id) ?? false;
+    if (!autoApprove) {
+      // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
+      const argsSummary = this.#deps.secrets.redact(JSON.stringify(args));
+      const outcome = await this.#deps.approvals.request(
+        identity,
+        'mcp_tool',
+        {
+          serverId: server.id,
+          serverName: server.name,
+          toolName,
+          argsSummary:
+            argsSummary.length > 400 ? `${argsSummary.slice(0, 400)}…（已截断）` : argsSummary,
+        },
+        options,
+      );
+      if (outcome.decision !== 'approved') {
+        throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该 MCP 工具调用');
+      }
+    }
+    this.audit(identity, 'mcp_tool_call', {
+      serverId: server.id,
+      serverName: server.name,
+      toolName,
+      args,
+    });
   }
 
   /** Append-only audit write; details are redacted like any tool payload. */

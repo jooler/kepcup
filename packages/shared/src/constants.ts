@@ -40,6 +40,36 @@ export const TOOL_OUTPUT_MAX_CHARS = 30_000;
 /** Max turns of a single run. */
 export const RUN_MAX_TURNS = 60;
 
+// --- Host SubAgent (delegate_task, docs/design/23-mcp-and-subagent.md D66) ------
+
+/** Max turns of one delegated subagent run. */
+export const SUBAGENT_MAX_TURNS = 20;
+/** Hard wall-clock budget of one delegated subagent run; over-budget aborts and compresses what exists. */
+export const SUBAGENT_TIMEOUT_MS = 600_000;
+/** Max characters of the compressed conclusion returned to the main loop. */
+export const SUBAGENT_RESULT_MAX_CHARS = 4_000;
+/** Max delegations a single response run may perform (serial execution). */
+export const SUBAGENT_MAX_PER_RUN = 3;
+/** Token budget (input+output) of one delegated subagent run. */
+export const SUBAGENT_TOKEN_BUDGET = 150_000;
+/** Light-model compression call timeout; failure falls back to truncation. */
+export const SUBAGENT_COMPRESS_TIMEOUT_MS = 20_000;
+/** Poll interval for the subagent token-budget check (engine has no budget hook). */
+export const SUBAGENT_TOKEN_POLL_MS = 5_000;
+
+// --- MCP (D65, docs/design/23-mcp-and-subagent.md) -------------------------------
+
+/** Single MCP tool call timeout (callTool). */
+export const MCP_CALL_TIMEOUT_MS = 60_000;
+/** MCP connect + tools/list budget for one (re)connect attempt. */
+export const MCP_CONNECT_TIMEOUT_MS = 15_000;
+/** Per-server tool cap (防失控工具面；与模型侧 64 字符工具名上限对齐的整数). */
+export const MCP_TOOLS_PER_SERVER_MAX = 64;
+/** stdio server crash retry cap before the server is marked failed. */
+export const MCP_RECONNECT_MAX = 3;
+/** Tools list cache TTL for HTTP servers that announce tool-list-change poorly. */
+export const MCP_TOOL_LIST_CACHE_MS = 5 * 60_000;
+
 // --- In-loop interim messages (loop 中间过程投送, todo/loop-interim-updates.md) ---
 
 /**

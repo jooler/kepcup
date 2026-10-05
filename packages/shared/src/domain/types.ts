@@ -45,6 +45,11 @@ export const botRuntimeSchema = z.object({
   network_policy: networkPolicySchema.default('open'),
   /** Domains reachable in `allowlist` mode (ignored by the other modes). */
   network_allowlist: z.array(z.string().max(255)).default([]),
+  /**
+   * 该 Bot 启用的 MCP server 子集（docs/design/23-mcp-and-subagent.md，D65）：
+   * 「应用级 enabled ∩ Bot 选中」才暴露给该 Bot，默认空 = 不启用任何 server。
+   */
+  mcp_server_ids: z.array(z.string()).default([]),
 });
 
 /**
@@ -206,6 +211,39 @@ export const webSearchConfigSchema = z.object({
 });
 export type WebSearchConfig = z.infer<typeof webSearchConfigSchema>;
 
+/**
+ * MCP server 配置（docs/design/23-mcp-and-subagent.md，D65）：存 settings 单行
+ * JSON（对齐 webSearch 先例，无需迁移）。敏感值（stdio env、http headers 中的
+ * key/token）只存 secrets 表（键 `mcp:{serverId}:env|header:{name}`），本结构
+ * 中 env/headers 的值字段写占位符 `secret:<name>`。
+ */
+export const mcpServerTransportSchema = z.enum(['stdio', 'http']);
+export type McpServerTransport = z.infer<typeof mcpServerTransportSchema>;
+
+export const MCP_SECRET_ENV_PREFIX = 'secret:env:';
+export const MCP_SECRET_HEADER_PREFIX = 'secret:header:';
+
+export const mcpServerSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(100),
+  transport: mcpServerTransportSchema,
+  /** stdio：可执行命令（如 npx / node / python）。 */
+  command: z.string().max(2000).optional(),
+  /** stdio：命令参数；值可为 `secret:env:<name>` 占位，实际值从 secrets 取。 */
+  args: z.array(z.string().max(2000)).optional(),
+  /** stdio：环境变量；值可为 `secret:env:<name>` 占位，实际值从 secrets 取。 */
+  env: z.record(z.string(), z.string()).optional(),
+  /** http：streamable HTTP 端点 URL。 */
+  url: z.string().url().optional(),
+  /** http：随请求发送的 header；值可为 `secret:header:<name>` 占位。 */
+  headers: z.record(z.string(), z.string()).optional(),
+  /** 应用级启用开关；关 = 所有 Bot 均不可见（连接与工具注册都跳过）。 */
+  enabled: z.boolean().default(false),
+  /** 免审批开关（默认关）：开启后该 server 的工具调用不再弹审批卡。 */
+  autoApprove: z.boolean().default(false),
+});
+export type McpServer = z.infer<typeof mcpServerSchema>;
+
 /** Unattended-mode state (docs/design/13-permissions.md "无人值守模式"). */
 export const unattendedStateSchema = z.object({
   enabled: z.boolean().default(false),
@@ -263,6 +301,11 @@ export const settingsSchema = z.object({
    * setup 需求，见 18-inline-setup）。
    */
   webSearch: webSearchConfigSchema.prefault({}),
+  /**
+   * MCP server 列表（docs/design/23-mcp-and-subagent.md D65）：整体覆盖 patch；
+   * 密钥在 secrets 表，设置 UI 写占位符。默认空 = 未配置任何 server。
+   */
+  mcpServers: z.array(mcpServerSchema).default([]),
   /**
    * Launch at login (P13 任务 3): default ON per docs/dev/phases/P13-release.md.
    * The value lives in core's settings row; the main process applies it to the
@@ -464,6 +507,8 @@ export const loopTypeSchema = z.enum([
   'wiki_maintenance',
   'skill_authoring',
   'conversation_summary',
+  /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
+  'subagent',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 
@@ -617,6 +662,8 @@ export const approvalKindSchema = z.enum([
   'skill_import',
   'skill_preset',
   'profile_change',
+  /** MCP 工具调用审批（D65）：server 名 + 工具名 + 参数摘要。 */
+  'mcp_tool',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -690,6 +737,19 @@ export const profileChangeApprovalPayloadSchema = z.object({
   reason: z.string().default(''),
 });
 export type ProfileChangeApprovalPayload = z.infer<typeof profileChangeApprovalPayloadSchema>;
+
+/**
+ * Payload of an `mcp_tool` approval（D65）：参数摘要做截断 + 脱敏，完整参数
+ * 只进 run_steps 的 tool_call 记录（同样脱敏）。
+ */
+export const mcpToolApprovalPayloadSchema = z.object({
+  serverId: z.string(),
+  serverName: z.string(),
+  toolName: z.string(),
+  /** 参数摘要（JSON 文本，截断后）。 */
+  argsSummary: z.string().default(''),
+});
+export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 
 export const approvalDecisionSchema = z.object({
   /** Only meaningful for `access` approvals. */

@@ -10,7 +10,9 @@ export type LoopType =
   | 'profile_curation'
   | 'wiki_maintenance'
   | 'skill_authoring'
-  | 'conversation_summary';
+  | 'conversation_summary'
+  /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
+  | 'subagent';
 
 export interface RunIdentity {
   runId: string;

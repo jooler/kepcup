@@ -63,6 +63,11 @@ export const ERROR_CODES = [
   'BROWSER_REF_UNKNOWN',
   'BROWSER_BOT_DELETED',
   'BROWSER_CONVERSATION_DELETED',
+  // MCP (D65)
+  'MCP_CONNECT_FAILED',
+  'MCP_TOOL_NOT_FOUND',
+  'MCP_CALL_FAILED',
+  'MCP_SERVER_FAILED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

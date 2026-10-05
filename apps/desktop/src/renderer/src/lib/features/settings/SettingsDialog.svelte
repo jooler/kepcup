@@ -6,6 +6,7 @@
     BarChart3,
     BookUser,
     Globe,
+    Plug,
     Monitor,
     MoonStar,
     UserRound,
@@ -28,6 +29,7 @@
   import UsageSection from './UsageSection.svelte';
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
+  import McpSection from './McpSection.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
 
@@ -48,6 +50,7 @@
     { id: 'general', label: t('settings.navGeneral'), icon: Settings2 },
     { id: 'models', label: t('settings.navModels'), icon: Cpu },
     { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
+    { id: 'mcp', label: t('settings.navMcp'), icon: Plug },
     { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
     { id: 'contacts', label: t('settings.navContacts'), icon: BookUser },
     { id: 'unattended', label: t('settings.navUnattended'), icon: MoonStar },
@@ -143,6 +146,12 @@
           <div data-settings-section="search" class="space-y-6">
             <div data-settings-anchor="web-search">
               <WebSearchSection testid="settings-web-search" />
+            </div>
+          </div>
+        {:else if activeSection === 'mcp'}
+          <div data-settings-section="mcp" class="space-y-6">
+            <div data-settings-anchor="mcp">
+              <McpSection />
             </div>
           </div>
         {:else if activeSection === 'contacts'}

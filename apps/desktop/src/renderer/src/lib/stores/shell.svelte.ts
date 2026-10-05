@@ -6,6 +6,7 @@ export type SettingsSectionId =
   | 'general'
   | 'models'
   | 'search'
+  | 'mcp'
   | 'profile'
   | 'contacts'
   | 'unattended'

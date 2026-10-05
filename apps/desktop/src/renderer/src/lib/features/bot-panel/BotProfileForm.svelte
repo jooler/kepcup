@@ -5,6 +5,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
+  import { Checkbox } from '$lib/components/ui/checkbox';
   import { settingsStore } from '$lib/stores/settings.svelte';
 
   let {
@@ -28,6 +29,15 @@
       ...stale.map((ref) => ({ ref, label: t('contacts.modelUnavailable', { ref }) })),
     ];
   });
+  // D65：应用级已启用的 MCP server 才出现在勾选列表里。
+  const mcpOptions = $derived(
+    (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled),
+  );
+
+  function toggleMcpServer(id: string, checked: boolean): void {
+    const selected = profile.runtime.mcp_server_ids.filter((entry) => entry !== id);
+    profile.runtime.mcp_server_ids = checked ? [...selected, id] : selected;
+  }
   let boundariesText = $state(profile.boundaries.join('\n'));
   let allowlistText = $state(profile.runtime.network_allowlist.join('\n'));
 
@@ -162,4 +172,25 @@
       </select>
     </div>
   </div>
+  {#if mcpOptions.length > 0}
+    <div class="grid gap-1.5">
+      <Label>{t('contacts.mcpServers')}</Label>
+      <div class="space-y-1.5" data-testid="bot-mcp-servers">
+        {#each mcpOptions as server (server.id)}
+          <label class="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={profile.runtime.mcp_server_ids.includes(server.id)}
+              onCheckedChange={(checked) => toggleMcpServer(server.id, checked === true)}
+              data-testid={`bot-mcp-${server.id}`}
+            />
+            {server.name}
+            {#if server.autoApprove}
+              <span class="text-xs text-muted-foreground">({t('contacts.mcpAutoApproveTag')})</span>
+            {/if}
+          </label>
+        {/each}
+      </div>
+      <p class="text-xs text-muted-foreground">{t('contacts.mcpServersHint')}</p>
+    </div>
+  {/if}
 </div>

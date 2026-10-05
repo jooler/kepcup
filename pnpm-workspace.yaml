@@ -2,6 +2,12 @@ packages:
   - apps/*
   - packages/*
 
+# pi-ai@1.0.2 的传递 peer + pi-coding-agent 精确依赖 8.10.2 与 core 的 ^8.11.2
+# 会把 pi 包分裂成两个实例（双模型目录/双 Agent 类）。统一到 8.11.2 收敛为单实例
+# （Phase A 审查 P1-1，todo/pi-1x-upgrade-mcp-subagent.md）。
+overrides:
+  undici: 8.11.2
+
 allowBuilds:
   electron: true
   esbuild: true

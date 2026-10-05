@@ -3,6 +3,7 @@ import {
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
   skillImportApprovalPayloadSchema,
+  mcpToolApprovalPayloadSchema,
   skillPresetApprovalPayloadSchema,
   type Approval,
   type ApprovalDecision,
@@ -533,6 +534,13 @@ export class ApprovalsService {
         if (!payload.success) return '技能安装请求';
         const data = payload.data;
         return `安装技能 ${data.displayName}（应用内置推荐，v${data.version}${data.missingDeps.length > 0 ? `，缺少依赖 ${data.missingDeps.join('、')}` : ''}）：${data.summary}`;
+      }
+      case 'mcp_tool': {
+        const payload = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
+        if (!payload.success) return 'MCP 工具调用请求';
+        const data = payload.data;
+        const args = data.argsSummary.length > 0 ? `，参数 ${data.argsSummary}` : '';
+        return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${args}）`;
       }
       default:
         return `${botName} 请求确认（${approval.kind}）`;

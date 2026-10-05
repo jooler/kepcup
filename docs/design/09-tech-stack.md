@@ -4,7 +4,7 @@
 
 | 层 | 选择 |
 |---|---|
-| Agent loop | pi（作为库使用）：`@earendil-works/pi-ai`、`@earendil-works/pi-agent-core`，以及 `@earendil-works/pi-coding-agent` 中的工具与 Skills 加载器 |
+| Agent loop | pi（作为库使用）：`@earendil-works/pi-ai`、`@earendil-works/pi-agent-core`，以及 `@earendil-works/pi-coding-agent` 中的工具与 Skills 加载器；MCP 客户端用 `@earendil-works/pi-mcp` |
 | 桌面壳 | Electron + electron-builder + electron-updater |
 | 前端框架 | Svelte 5 + Vite（单页应用） |
 | 组件库 | shadcn-svelte + bits-ui + Tailwind v4，补充 shadcn-svelte-extras |
@@ -32,6 +32,7 @@
 | 持久化执行步骤 | 订阅事件：`message_end`、`tool_execution_end`、`turn_end` 等 |
 | 工具在沙箱中执行 | 替换文件与命令的执行接口（`FileOperations` / `BashOperations`） |
 | Skills | `loadSkills` / `formatSkillsForPrompt` |
+| MCP 工具接入 | `@earendil-works/pi-mcp` 的 `McpClient` + stdio / streamable HTTP 传输；工具包装为宿主 `ToolDefinition` 后进 loop（见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)） |
 | token 统计 | 每条助手消息携带用量与费用 |
 
 ### 需要自行实现
@@ -43,9 +44,10 @@
 
 ### 约束
 
-- 锁定精确版本（pi 仍在 0.x，API 变化较快）。
+- 锁定精确版本（当前 1.0.2，D64；0.87.1 → 1.0.2 核心嵌入 API 逐字兼容）。
 - 封装在我们自己的接口之后，业务代码不直接依赖 pi，便于升级或替换。
 - 不使用 pi 的会话 SDK 层（`createAgentSession`），它自带设置、文件发现与会话存储，与我们的设计冲突。
+- 不使用 pi CLI 的配置面（`mcp.json`、`/mcp` TUI、skills 目录约定）：设置存数据库，桌面用自有设置页。
 
 ### 参考
 

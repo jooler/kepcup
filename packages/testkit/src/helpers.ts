@@ -97,6 +97,7 @@ export function botProfile(overrides: { name: string } & Partial<Bot['profile']>
       light_model: overrides.runtime?.light_model ?? '',
       network_policy: overrides.runtime?.network_policy ?? 'open',
       network_allowlist: overrides.runtime?.network_allowlist ?? [],
+      mcp_server_ids: overrides.runtime?.mcp_server_ids ?? [],
     },
     // P10 guardrails: default profile keeps proactive on; tests override.
     behavior:
@@ -202,7 +203,10 @@ export async function listMessages(core: CoreHarness, conversationId: string): P
  * (INTERNAL_SYSTEM_EVENTS / `internal` 标记) that messages.list filters out
  * — 用户可见性断言走 listMessages，内部事务断言走这里。
  */
-export async function listAllMessages(core: CoreHarness, conversationId: string): Promise<Message[]> {
+export async function listAllMessages(
+  core: CoreHarness,
+  conversationId: string,
+): Promise<Message[]> {
   const domain = core.services.domain;
   if (domain === null) throw new Error('core domain services unavailable');
   return domain.messages.list(conversationId, { limit: 200 });
@@ -265,10 +269,10 @@ export function waitForMessage(
   predicate: (message: Message) => boolean,
   options: { timeoutMs?: number } = {},
 ): Promise<Message> {
-  return waitFor(
-    async () => (await listMessages(core, conversationId)).find(predicate) ?? null,
-    { ...options, label: 'matching message' },
-  );
+  return waitFor(async () => (await listMessages(core, conversationId)).find(predicate) ?? null, {
+    ...options,
+    label: 'matching message',
+  });
 }
 
 /** Resolves when a matching event arrives on the core event bus. */

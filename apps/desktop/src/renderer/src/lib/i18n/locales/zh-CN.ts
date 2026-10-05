@@ -158,6 +158,35 @@ export const zhCN = {
   'settings.providerKeySet': '已配置（不显示明文）',
   'settings.save': '保存',
   'settings.remove': '移除',
+  // --- MCP（docs/design/23-mcp-and-subagent.md D65）-------------------------
+  'settings.navMcp': 'MCP 服务器',
+  'settings.mcpTitle': 'MCP 服务器',
+  'settings.mcpHint':
+    '配置 Model Context Protocol 工具服务器（stdio 命令或 HTTP 端点）。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
+  'settings.mcpAdd': '添加服务器',
+  'settings.mcpEdit': '编辑',
+  'settings.mcpCancel': '取消',
+  'settings.mcpRemove': '删除',
+  'settings.mcpDisabled': '未启用',
+  'settings.mcpEnabled': '启用',
+  'settings.mcpAutoApprove': '免审批',
+  'settings.mcpAutoApproveWarn': '开启后该服务器的工具调用不再询问你，请确认其来源可靠。',
+  'settings.mcpToolsFound': '连接成功，可用工具 {count} 个',
+  'settings.mcpNameLabel': '名称',
+  'settings.mcpTransportLabel': '类型',
+  'settings.mcpCommandLabel': '命令',
+  'settings.mcpArgsLabel': '参数（空格分隔）',
+  'settings.mcpUrlLabel': 'HTTP 端点 URL',
+  'settings.mcpEnvLabel': '环境变量（密钥）',
+  'settings.mcpHeadersLabel': '请求头（密钥）',
+  'settings.mcpSecretHint':
+    '环境变量与请求头的值在保存后加密存储，界面上不回显明文；留空保持已存值不变。',
+  'settings.mcpAddEnvName': '输入变量名后回车，如 API_KEY',
+  'settings.mcpAddHeaderName': '输入请求头名后回车，如 Authorization',
+  'settings.mcpNameRequired': '请填写服务器名称',
+  'settings.mcpCommandRequired': 'stdio 类型需要填写命令',
+  'settings.mcpUrlRequired': 'HTTP 类型需要填写端点 URL',
+  'settings.mcpMissingSecrets': '以下密钥尚未填写：{names}',
   'settings.test': '测试连接',
   'settings.testing': '测试中…',
   'settings.testOk': '连接成功',
@@ -216,6 +245,11 @@ export const zhCN = {
   'contacts.boundaries': '不做的事（每行一条）',
   'contacts.mainModel': '主模型（留空用默认）',
   'contacts.lightModel': '轻量模型（留空用默认）',
+  'contacts.mcpServers': 'MCP 工具服务器',
+  'contacts.mcpServersHint':
+    '勾选后该 Bot 可使用对应服务器的工具（每次调用需批准，除非该服务器开启了免审批）。在 设置 → MCP 服务器 中管理。',
+  'contacts.mcpAutoApproveTag': '免审批',
+
   'contacts.modelUnavailable': '{ref}（该厂商未配置 key）',
   'contacts.cancel': '取消',
   'contacts.deleteTitle': '删除 {name}',
@@ -546,6 +580,7 @@ export const zhCN = {
   'usage.loop.wiki_maintenance': 'Wiki 维护',
   'usage.loop.skill_authoring': '技能编写',
   'usage.loop.conversation_summary': '对话摘要',
+  'usage.loop.subagent': '子代理委派',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
@@ -579,6 +614,7 @@ export const zhCN = {
   'approvals.skillImportNote':
     '导入内容锁定到该 commit，存放于只读技能库，不可修改；所有 Bot 共享，各自独立安装。',
   'approvals.skillPresetTitle': '安装推荐技能',
+  'approvals.mcpToolTitle': '调用 MCP 工具',
   'approvals.skillPresetName': '技能',
   'approvals.skillPresetSummary': '说明',
   'approvals.skillPresetSource': '来源',

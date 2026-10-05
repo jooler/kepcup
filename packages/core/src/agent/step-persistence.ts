@@ -1,0 +1,67 @@
+import { redactStepPayload, stripImageBlocks } from '../infra/redact.js';
+import type { RunsService } from '../domain/runs.js';
+import type { SecretsService } from '../domain/secrets.js';
+import type { RunHandle } from './types.js';
+
+/**
+ * 引擎事件 → run_steps 落库（「模型看到的一切都在日志里」，
+ * docs/dev/03-data-model.md）。response loop（orchestrator）与 subagent 子
+ * run（D66）共用同一条路径；差别只在是否把进度转发给 UI。
+ */
+export function persistEngineSteps(input: {
+  runs: RunsService;
+  secrets: SecretsService;
+  runId: string;
+  handle: RunHandle;
+  /** Progress forwarding (run.progress events); omitted for quiet sub runs. */
+  onProgress?: (progress: { toolName?: string; text?: string }) => void;
+}): () => void {
+  const { runs, secrets, runId, handle, onProgress } = input;
+  return handle.onEvent((event) => {
+    switch (event.type) {
+      case 'request':
+        runs.appendStep({
+          runId,
+          type: 'request',
+          payload: redactStepPayload(
+            (text) => secrets.redact(text),
+            stripImageBlocks(event.payload),
+          ),
+        });
+        return;
+      case 'assistant':
+        runs.appendStep({ runId, type: 'assistant', payload: event.payload });
+        return;
+      case 'tool_call':
+        runs.appendStep({
+          runId,
+          type: 'tool_call',
+          payload: redactStepPayload((text) => secrets.redact(text), event.payload),
+        });
+        if (onProgress !== undefined && event.payload.toolName.length > 0) {
+          onProgress({ toolName: event.payload.toolName });
+        }
+        return;
+      case 'tool_result':
+        runs.appendStep({
+          runId,
+          type: 'tool_result',
+          payload: {
+            ...event.payload,
+            content: secrets.redact(String(event.payload.content)),
+          },
+        });
+        return;
+      case 'progress':
+        runs.appendStep({ runId, type: 'progress', payload: event.payload });
+        if (onProgress !== undefined) {
+          const text = String(event.payload.text);
+          if (text.length > 0) onProgress({ text });
+        }
+        return;
+      case 'steer':
+        runs.appendStep({ runId, type: 'steer', payload: event.payload });
+        return;
+    }
+  });
+}

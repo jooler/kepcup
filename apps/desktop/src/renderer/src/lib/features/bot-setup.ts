@@ -13,7 +13,13 @@ export function emptyProfile(): BotProfile {
     persona: { personality: '', tone: '', style: '', values: '', sample_dialogues: '' },
     role: { expertise: '', responsibilities: '' },
     boundaries: [],
-    runtime: { model: '', light_model: '', network_policy: 'open', network_allowlist: [] },
+    runtime: {
+      model: '',
+      light_model: '',
+      network_policy: 'open',
+      network_allowlist: [],
+      mcp_server_ids: [],
+    },
     // P10 guardrail defaults — mirrors botBehaviorSchema.prefault({}) (proactive
     // on, no quiet hours, the MAX_PROACTIVE_PER_DAY default cap).
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },

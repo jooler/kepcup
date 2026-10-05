@@ -82,6 +82,7 @@ import type { CatalogEntry } from './env/catalog.js';
 import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
+import { McpService } from './mcp/service.js';
 import type { Embedder } from './memory/embedder.js';
 import { BudgetService } from './usage/budget.js';
 import { SkillImporter } from './skills/library.js';
@@ -336,6 +337,8 @@ export interface CoreServices {
   /** 国内厂商媒体网关（图片/语音/视频统一调用，null while locked / errored）。 */
   media: MediaService | null;
   search: SearchService | null;
+  /** MCP 网关（D65）；测试夹具缺省为 null（不注册 MCP 工具）。 */
+  mcp: McpService | null;
   /** P07 per-bot daily background budget (null while locked / errored). */
   budget: BudgetService | null;
   /** P08 skills domain (null while locked / errored). */
@@ -546,6 +549,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     memory: null,
     media: null,
     search: null,
+    mcp: null,
     budget: null,
     skills: null,
     skillImporter: null,
@@ -588,6 +592,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.memory?.closeAll();
       } catch {
         // Connections may already be gone (bot deletion race); nothing to do.
+      }
+      try {
+        await services.mcp?.closeAll();
+      } catch {
+        // MCP servers may already be gone; nothing to do.
       }
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
@@ -757,6 +766,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // 联网检索网关（docs/design/21-web-search.md）：web_search/web_fetch 工具与
     // websearch.test 的后端。
     const search = new SearchService({ settings, secrets, logger });
+    // MCP 网关（docs/design/23-mcp-and-subagent.md D65）：server 连接生命周期
+    // 与 tools 列表缓存；状态经 mcp.server_status 事件出站。
+    const mcp = new McpService({
+      settings,
+      secrets,
+      logger,
+      clock,
+      statusSink: {
+        emit: (payload) => events.emit('mcp.server_status', payload),
+      },
+    });
     const providers = new ProvidersService({ settings, secrets, logger, media });
     const audit = new AuditService({ db: mainDb, clock });
     const grants = new GrantsService({ db: mainDb, clock });
@@ -1008,6 +1028,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills: {
         readableDirs: (botId) => skills.readableDirs(botId),
       },
+      mcpAutoApprove: (serverId) =>
+        settings.get().mcpServers.find((server) => server.id === serverId)?.autoApprove === true,
     });
 
     // --- response loop machinery --------------------------------------------
@@ -1062,6 +1084,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       memory,
       media,
       search,
+      mcp,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
@@ -1359,6 +1382,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.schedules = schedules;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
+    services.mcp = mcp;
     services.appMethods = {
       ...systemMethods,
       ...bindAppMethods(services),

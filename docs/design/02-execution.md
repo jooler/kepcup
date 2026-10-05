@@ -71,6 +71,7 @@ Run
 | Loop       | 触发            | 可写入                                     | 优先级 |
 | ---------- | ------------- | --------------------------------------- | --- |
 | 响应         | 用户消息、定时、事件    | 消息、当前 workspace；另可提交记忆候选、Wiki 入库请求、定时任务 | 高   |
+| SubAgent 委派 | 主 loop 调用 `delegate_task` | 不写消息，过程落执行记录（`loop_type='subagent'`） | 随主 run |
 | 群聊判断       | 群消息未 @ 任何 Bot | 不写，仅返回判断结果                              | 高   |
 | 反思         | 每次响应 loop 结束后 | 本 Bot 记忆、用户画像提案                         | 低   |
 | 记忆整理       | 每天            | 本 Bot 记忆                                | 低   |
@@ -137,6 +138,19 @@ Run
 - 设置最大连锁层数（例如 3 层）和总预算上限，防止无限循环。
 
 
+
+## SubAgent 委派执行
+
+主 loop 遇到「只要结论、材料很长」的任务（扫仓库、读多文件、长日志分析）时调用 `delegate_task({ task })`，宿主嵌套启动一个减配子 run 完成后把结论压缩回传：
+
+- 子 run 同 Bot、同对话：workspace / project / 授权边界原样继承；只给只读研究工具（read / grep / find / ls / bash（沙箱）/ web_search / web_fetch），无写文件、无 `send_message`、无再委派。
+- 子 run 落 `runs` 行（`loop_type='subagent'`）与完整执行记录，但不产生任何对话消息；主 loop 只收到压缩后的结论。
+- 预算、超时、委派次数封顶；主 run 中止时级联中止子 run。
+- 细节见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)；执行方案见 `todo/pi-1x-upgrade-mcp-subagent.md`。
+
+## MCP 工具
+
+用户配置的 MCP server（stdio / streamable HTTP）按「应用启用 ∩ Bot 勾选」把工具并入响应 loop 的工具面：调用统一走网关审批（`autoApprove` 默认关）与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。配置、命名与生命周期见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。
 
 ## 主动消息
 

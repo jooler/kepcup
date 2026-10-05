@@ -21,7 +21,7 @@ import {
 import type { CoreLogger } from '../infra/logger.js';
 import type { Clock } from '../infra/clock.js';
 import type { SqliteDatabase } from '../infra/db.js';
-import { redactStepPayload } from '../infra/redact.js';
+import { persistEngineSteps } from '../agent/step-persistence.js';
 import {
   humanizeLateBy,
   inQuietHours,
@@ -68,6 +68,7 @@ import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
   buildResponseTools,
+  buildSubagentResearchTools,
   type EnvironmentToolFacade,
   type ResponseToolDeps,
 } from '../tools/index.js';
@@ -87,6 +88,9 @@ import type { BrowserHostRpc } from '../browser/facade.js';
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
+import { createSubagentFacade, buildSubagentSystemPrompt } from '../agent/subagent.js';
+import { buildMcpTools, type McpToolFacade } from '../mcp/tools.js';
+import type { McpService } from '../mcp/service.js';
 import { FileReadState } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
@@ -188,6 +192,11 @@ export interface OrchestratorDeps {
    * 的预置安装 / 外部仓库导入（阻塞审批）后端；omitted in stripped test setups。
    */
   skillInstall?: SkillInstallFacade | undefined;
+  /**
+   * MCP 网关（docs/design/23-mcp-and-subagent.md D65）：null = 无 MCP 能力
+   * （无 server 工具注册）。
+   */
+  mcp?: McpService | null;
 }
 
 /** The slice of the wiki domain the response loop consumes. */
@@ -1434,6 +1443,13 @@ export class Orchestrator {
             triggerMessages: () => batch.messages,
           }
         : undefined;
+      // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts）。
+      const identity = {
+        runId,
+        botId: batch.botId,
+        conversationId: batch.conversationId,
+        loopType: 'response' as const,
+      };
       const toolDeps: ResponseToolDeps = {
         messages,
         attachments: this.#deps.attachments,
@@ -1462,15 +1478,69 @@ export class Orchestrator {
         ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),
         batchMessages: batch.messages,
         onBotMessage: (message) => this.#recordBotMessage(runId, message),
+        // D65 MCP：应用 enabled ∩ Bot 选中 的 server → 包装工具（首次使用懒连接）。
+        ...(this.#deps.mcp != null && bot.profile.runtime.mcp_server_ids.length > 0
+          ? {
+              mcp: {
+                tools: await buildMcpTools({
+                  identity,
+                  servers: this.#deps.mcp.serversForBot(bot.profile.runtime.mcp_server_ids),
+                  mcp: this.#deps.mcp,
+                  gateway: this.#deps.gateway,
+                  secrets: this.#deps.secrets,
+                  logger: this.#deps.logger,
+                }),
+              } satisfies McpToolFacade,
+            }
+          : {}),
+        // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts）。
+        subagent: createSubagentFacade(
+          {
+            engine: this.#deps.engine,
+            runs,
+            usage: this.#deps.usage,
+            secrets: this.#deps.secrets,
+            logger: this.#deps.logger,
+            clock: this.#deps.clock,
+            timeZone: this.#deps.timeZone,
+            providerForRef: (ref) => this.#providerForRef(ref),
+            publishRunStatus: (run) => this.#deps.publish('run.status', { run }),
+          },
+          {
+            parent: identity,
+            modelRef,
+            lightModelRef: lightModelRefForBot(this.#deps.bots, this.#deps.settings, batch.botId),
+            buildTools: (subIdentity) =>
+              buildSubagentResearchTools({
+                identity: subIdentity,
+                deps: {
+                  gateway: this.#deps.gateway,
+                  workspacePath,
+                  projectPath:
+                    project !== null && project.status === 'available' ? project.path : null,
+                  network,
+                  secrets: this.#deps.secrets,
+                  fsState: this.#fsState,
+                  ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
+                },
+              }),
+            buildSystemPrompt: () =>
+              Promise.resolve(
+                buildSubagentSystemPrompt({
+                  botName: bot.profile.identity.name || bot.name,
+                  workspacePath,
+                  projectPath:
+                    project !== null && project.status === 'available' ? project.path : null,
+                  timeZone: this.#deps.timeZone,
+                  now: new Date(this.#deps.clock.now()),
+                }),
+              ),
+            onSubRunSettled: (subRunId) => this.#fsState.release(subRunId),
+          },
+        ),
       };
 
       const mailboxKey = this.#mailboxKey(batch.botId, batch.conversationId);
-      const identity = {
-        runId,
-        botId: batch.botId,
-        conversationId: batch.conversationId,
-        loopType: 'response' as const,
-      };
       // P07 injection: relevant memories come from the trigger text plus the
       // last two context messages (docs/dev/phases/P07-memory.md 任务 3).
       const memorySections = memoryFacade
@@ -2046,59 +2116,15 @@ export class Orchestrator {
   }
   /** Persists engine events as (redacted) run steps. */
   #persistSteps(runId: string, conversationId: string, handle: RunHandle): () => void {
-    return handle.onEvent((event) => {
-      switch (event.type) {
-        case 'request':
-          this.#deps.runs.appendStep({
-            runId,
-            type: 'request',
-            payload: redactStepPayload(
-              (text) => this.#deps.secrets.redact(text),
-              stripImageBlocks(event.payload),
-            ),
-          });
-          return;
-        case 'assistant':
-          this.#deps.runs.appendStep({ runId, type: 'assistant', payload: event.payload });
-          return;
-        case 'tool_call':
-          this.#deps.runs.appendStep({
-            runId,
-            type: 'tool_call',
-            payload: redactStepPayload((text) => this.#deps.secrets.redact(text), event.payload),
-          });
-          // Status line: the loop is calling this tool right now (the event
-          // doubles as a run.progress tick with the tool name).
-          if (event.payload.toolName.length > 0) {
-            this.#deps.publish('run.progress', {
-              runId,
-              conversationId,
-              toolName: event.payload.toolName,
-            });
-          }
-          return;
-        case 'tool_result':
-          this.#deps.runs.appendStep({
-            runId,
-            type: 'tool_result',
-            payload: {
-              ...event.payload,
-              content: this.#deps.secrets.redact(String(event.payload.content)),
-            },
-          });
-          return;
-        case 'progress':
-          this.#deps.runs.appendStep({ runId, type: 'progress', payload: event.payload });
-          this.#deps.publish('run.progress', {
-            runId,
-            conversationId,
-            text: String(event.payload.text),
-          });
-          return;
-        case 'steer':
-          this.#deps.runs.appendStep({ runId, type: 'steer', payload: event.payload });
-          return;
-      }
+    return persistEngineSteps({
+      runs: this.#deps.runs,
+      secrets: this.#deps.secrets,
+      runId,
+      handle,
+      onProgress: (progress) => {
+        // Status line: the loop's current tool / progress text.
+        this.#deps.publish('run.progress', { runId, conversationId, ...progress });
+      },
     });
   }
 
@@ -2210,37 +2236,4 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
 function messageText(message: Message): string {
   const content = message.content as { text?: string } | undefined;
   return typeof content?.text === 'string' ? content.text : '';
-}
-
-/**
- * 把请求 payload 中的 image 内容块替换为占位（run_steps.request 不落 base64，
- * docs/design/20-conversation-media.md）。「模型看到什么」仍完整：有占位即
- * 看到了图，mime 与体量保留。
- */
-export function stripImageBlocks(payload: unknown): unknown {
-  if (Array.isArray(payload)) return payload.map(stripImageBlocks);
-  if (payload === null || typeof payload !== 'object') return payload;
-  const record = payload as Record<string, unknown>;
-  if (
-    record['type'] === 'image' &&
-    (typeof record['data'] === 'string' || typeof record['base64'] === 'string')
-  ) {
-    const data =
-      typeof record['data'] === 'string'
-        ? record['data']
-        : typeof record['base64'] === 'string'
-          ? record['base64']
-          : '';
-    return {
-      type: 'image',
-      ...(record['mimeType'] !== undefined ? { mimeType: record['mimeType'] } : {}),
-      approxBytes: Math.round((data.length * 3) / 4),
-      note: '[图片内容已省略：模型输入包含此图片]',
-    };
-  }
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(record)) {
-    result[key] = stripImageBlocks(value);
-  }
-  return result;
 }

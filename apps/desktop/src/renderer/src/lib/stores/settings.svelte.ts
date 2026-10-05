@@ -110,6 +110,41 @@ class SettingsState {
     await core.call('websearch.removeKey', { provider });
   }
 
+  // --- MCP（D65）------------------------------------------------------------
+
+  /** MCP 密钥只写不读：值落 secrets 表，settings 里只留占位符。 */
+  async setMcpSecret(
+    serverId: string,
+    kind: 'env' | 'header',
+    name: string,
+    value: string,
+  ): Promise<void> {
+    await core.call('mcp.setSecret', { serverId, kind, name, value });
+  }
+
+  async removeMcpSecret(serverId: string, kind: 'env' | 'header', name: string): Promise<void> {
+    await core.call('mcp.removeSecret', { serverId, kind, name });
+  }
+
+  /** MCP server 连接测试（设置页「测试连接」）：连接并列出工具名。 */
+  async testMcp(server: {
+    id: string;
+    name: string;
+    transport: 'stdio' | 'http';
+    command?: string | undefined;
+    args?: string[] | undefined;
+    env?: Record<string, string> | undefined;
+    url?: string | undefined;
+    headers?: Record<string, string> | undefined;
+    enabled: boolean;
+    autoApprove: boolean;
+  }): Promise<{ tools: string[]; missingSecrets: string[] }> {
+    return core.call('mcp.test', { server }) as Promise<{
+      tools: string[];
+      missingSecrets: string[];
+    }>;
+  }
+
   /** 检索供应商连通性测试：入参 key 优先（未保存前先测），失败返回错误说明。 */
   async testSearch(
     provider: string,

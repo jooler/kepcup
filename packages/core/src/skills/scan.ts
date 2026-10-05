@@ -91,8 +91,13 @@ const CREDENTIAL_PATTERNS: Array<[RegExp, string]> = [
 /** Host-only capabilities that imported skills cannot rely on here (design 05 兼容性). */
 const HOST_CAPABILITY_PATTERNS: Array<[RegExp, string]> = [
   [/\bmcp__/, '引用 MCP 专有工具（mcp__ 前缀），本宿主不提供'],
-  [/\bTask\s*(工具|tool|subagent|子代理)/i, '引用 Task 子代理工具，本宿主不提供'],
-  [/\bTaskTool\b/, '引用 TaskTool 子代理工具，本宿主不提供'],
+  // 只拒绝 pi CLI / Claude Code 语义的 Task 子代理工具；描述里引用宿主自有的
+  // delegate_task（含「delegate task」「delegate_task」写法）是合法的（D66）。
+  [
+    /(?<!delegate[ _-])(?<![\w-])Task\s*(?:工具|tool|subagent|子代理)/i,
+    '引用 pi CLI 语义的 Task 子代理工具，本宿主以 delegate_task 提供委派',
+  ],
+  [/\bTaskTool\b/, '引用 TaskTool 子代理工具，本宿主以 delegate_task 提供委派'],
   [/\bSlashCommand\b/, '引用 SlashCommand 宿主命令，本宿主不提供'],
   [/\bBashOutput\b|\bKillShell\b/, '引用后台 shell 宿主工具，本宿主不提供'],
   // WebSearch/WebFetch 自 P18 起由宿主内置（web_search/web_fetch 工具，

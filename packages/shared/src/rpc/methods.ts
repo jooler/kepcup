@@ -28,6 +28,7 @@ import {
   scheduleEntrySchema,
   settingsSchema,
   skillCandidateSchema,
+  mcpServerSchema,
   webSearchProviderSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
@@ -179,6 +180,31 @@ export const settingsUpdateInputSchema = z.object({
   launchAtLogin: z.boolean().optional(),
   /** P13 任务 4: first-run wizard completion flags (partial patch). */
   onboarding: onboardingStatePatchSchema.optional(),
+  /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
+  mcpServers: z.array(mcpServerSchema).optional(),
+});
+
+// --- MCP（D65）--------------------------------------------------------------
+
+export const mcpTestInputSchema = z.object({ server: mcpServerSchema });
+export const mcpTestOutputSchema = z.object({
+  tools: z.array(z.string()),
+  /** 未能解析的占位符密钥名（secret:env:x / secret:header:y）。 */
+  missingSecrets: z.array(z.string()).default([]),
+});
+
+/** MCP 密钥（D65）：只写不读——渲染层传明文值，core 落 secrets 表字段级加密。 */
+export const mcpSecretKindSchema = z.enum(['env', 'header']);
+export const mcpSetSecretInputSchema = z.object({
+  serverId: z.string().min(1),
+  kind: mcpSecretKindSchema,
+  name: z.string().min(1).max(200),
+  value: z.string().max(20_000),
+});
+export const mcpRemoveSecretInputSchema = z.object({
+  serverId: z.string().min(1),
+  kind: mcpSecretKindSchema,
+  name: z.string().min(1).max(200),
 });
 
 // --- providers ------------------------------------------------------------
@@ -1014,6 +1040,10 @@ export const rpcMethodSchemas = {
   'providers.setKey': { input: providersSetKeyInputSchema, output: okOutput },
   'providers.removeKey': { input: providerNameInputSchema, output: okOutput },
   'providers.test': { input: providersTestInputSchema, output: okOutput },
+  /** MCP（D65）：设置页连接测试——连接 server 并列出工具名（不落缓存）。 */
+  'mcp.test': { input: mcpTestInputSchema, output: mcpTestOutputSchema },
+  'mcp.setSecret': { input: mcpSetSecretInputSchema, output: okOutput },
+  'mcp.removeSecret': { input: mcpRemoveSecretInputSchema, output: okOutput },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
   'websearch.setKey': { input: webSearchSetKeyInputSchema, output: okOutput },
   'websearch.removeKey': { input: webSearchRemoveKeyInputSchema, output: okOutput },
@@ -1296,6 +1326,9 @@ const APP_METHODS = [
   'media.videoStatus',
   'media.rerank',
   'media.understandImage',
+  'mcp.test',
+  'mcp.setSecret',
+  'mcp.removeSecret',
   'websearch.test',
   'websearch.setKey',
   'websearch.removeKey',

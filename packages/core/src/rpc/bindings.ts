@@ -65,6 +65,10 @@ import {
   attachmentsGetOutputSchema,
   attachmentsDetachInputSchema,
   attachmentsDetachOutputSchema,
+  mcpRemoveSecretInputSchema,
+  mcpSetSecretInputSchema,
+  mcpTestInputSchema,
+  mcpTestOutputSchema,
   webSearchTestInputSchema,
   webSearchTestOutputSchema,
   webSearchSetKeyInputSchema,
@@ -309,6 +313,25 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       mediaUnderstandImageOutputSchema,
       async (input) => services.media!.understandImage(input),
     ),
+
+    // --- MCP（docs/design/23-mcp-and-subagent.md D65） ------------------------
+    'mcp.test': method(mcpTestInputSchema, mcpTestOutputSchema, async (input) => {
+      if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      return services.mcp.testServer(input.server);
+    }),
+    'mcp.setSecret': method(mcpSetSecretInputSchema, okOutputSchema, async (input) => {
+      if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      services.domain!.secrets.setValue(
+        `mcp:${input.serverId}:${input.kind}:${input.name}`,
+        input.value,
+      );
+      return { ok: true as const };
+    }),
+    'mcp.removeSecret': method(mcpRemoveSecretInputSchema, okOutputSchema, async (input) => {
+      if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      services.domain!.secrets.removeValue(`mcp:${input.serverId}:${input.kind}:${input.name}`);
+      return { ok: true as const };
+    }),
 
     // --- 联网检索（docs/design/21-web-search.md） ---------------------------
     'websearch.test': method(webSearchTestInputSchema, webSearchTestOutputSchema, async (input) =>

@@ -28,7 +28,13 @@ function emptyProfile(): BotProfile {
     persona: { personality: '', tone: '', style: '', values: '', sample_dialogues: '' },
     role: { expertise: '', responsibilities: '' },
     boundaries: [],
-    runtime: { model: '', light_model: '', network_policy: 'open', network_allowlist: [] },
+    runtime: {
+      model: '',
+      light_model: '',
+      network_policy: 'open',
+      network_allowlist: [],
+      mcp_server_ids: [],
+    },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
   };
 }
