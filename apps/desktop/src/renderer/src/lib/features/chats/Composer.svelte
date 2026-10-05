@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, Loader2, Paperclip, Reply, X } from '@lucide/svelte';
+  import { ArrowUp, Loader2, Paperclip, Plus, Reply, X } from '@lucide/svelte';
   import type { Bot } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
@@ -9,6 +9,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { resolveComposerAction } from './key-handling';
+  import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import DraftQueue from './DraftQueue.svelte';
 
   let {
@@ -20,8 +21,8 @@
   let text = $state('');
   let isComposing = $state(false);
   /**
-   * 药丸两态（参考 Grok Bot）：单行时按钮与输入同行、输入不占满宽度；
-   * 内容增多即将换行时输入占满整行、按钮移到底部。
+   * 药丸两态（参考 Grok Bot）：单行时附件键在最左、发送键在最右、输入居中
+   * 占余宽；内容换行或有待发送附件时输入占满整行、附件键/发送键沉底两角。
    */
   let multiline = $state(false);
   /** Structured mentions accumulated via the @ popup (P05). */
@@ -43,6 +44,8 @@
     size: number;
     state: 'uploading' | 'ready' | 'error';
     attachmentId: string | null;
+    /** 图片专有：选中当下生成的本地预览 objectURL（缩略图与灯箱共用，不等上传）。 */
+    previewUrl: string | null;
   }
 
   const drafts = $derived(chat.current?.drafts ?? []);
@@ -66,6 +69,12 @@
 
   const hasContent = $derived(text.trim().length > 0 || pendingUploads.length > 0);
 
+  /**
+   * 沉底两态的开关：内容换行（multiline）或有待发送图片/文件时，输入占满
+   * 整行、附件键与发送键沉到底部两角（参考 Grok 的图 2/图 3 形态）。
+   */
+  const stacked = $derived(multiline || pendingUploads.length > 0);
+
   const placeholder = $derived(
     drafts.length > 0
       ? t('composer.queuePlaceholder')
@@ -84,6 +93,7 @@
       if (leftovers.length === 0) return;
       pendingUploads = [];
       for (const entry of leftovers) {
+        releaseLocalPreview(entry);
         void discardUpload(entry).catch(() => {});
       }
     });
@@ -267,6 +277,11 @@
     if (id !== null) await chat.detachAttachment(id);
   }
 
+  /** 图片条目离开待发送区（移除/入草稿/切会话）时释放本地预览字节。 */
+  function releaseLocalPreview(entry: PendingUpload): void {
+    if (entry.previewUrl !== null) URL.revokeObjectURL(entry.previewUrl);
+  }
+
   async function uploadFiles(files: FileList | File[]): Promise<void> {
     const conversationId = chat.current?.conversation.id;
     if (!conversationId) return;
@@ -275,13 +290,15 @@
         toast.error(t('composer.attachmentTooLarge', { name: file.name }));
         continue;
       }
+      const mime = file.type.length > 0 ? file.type : guessMime(file.name);
       const entry: PendingUpload = {
         key: `up_${Math.random().toString(36).slice(2)}_${Date.now()}`,
         fileName: file.name.length > 0 ? file.name : 'pasted-image.png',
-        mime: file.type.length > 0 ? file.type : guessMime(file.name),
+        mime,
         size: file.size,
         state: 'uploading',
         attachmentId: null,
+        previewUrl: mime.startsWith('image/') ? URL.createObjectURL(file) : null,
       };
       pendingUploads = [...pendingUploads, entry];
       const patch = (next: PendingUpload): void => {
@@ -310,8 +327,9 @@
     }
   }
 
-  /** 等待在途上传完成，返回可发送的附件 id。已就绪/失败的条目从 chip 区移除；
-   * 超时仍未完成的保留在原地（随下一条草稿发出或手动移除），不再静默丢弃。 */
+  /** 等待在途上传完成，返回可发送的附件 id。已就绪/失败的条目从 chip 区移除
+   * （本地预览随之释放）；超时仍未完成的保留在原地（随下一条草稿发出或手动
+   * 移除），不再静默丢弃。 */
   async function settlePendingUploads(): Promise<string[]> {
     for (let guard = 0; guard < 600; guard += 1) {
       if (!pendingUploads.some((upload) => upload.state === 'uploading')) break;
@@ -320,6 +338,9 @@
     const ids = pendingUploads
       .filter((upload) => upload.state === 'ready' && upload.attachmentId !== null)
       .map((upload) => upload.attachmentId as string);
+    for (const entry of pendingUploads) {
+      if (entry.state !== 'uploading') releaseLocalPreview(entry);
+    }
     pendingUploads = pendingUploads.filter((upload) => upload.state === 'uploading');
     return ids;
   }
@@ -327,7 +348,29 @@
   function removePendingUpload(key: string): void {
     const entry = pendingUploads.find((upload) => upload.key === key);
     pendingUploads = pendingUploads.filter((upload) => upload.key !== key);
-    if (entry !== undefined) void discardUpload(entry).catch(() => {});
+    if (entry !== undefined) {
+      releaseLocalPreview(entry);
+      void discardUpload(entry).catch(() => {});
+    }
+  }
+
+  /** 待发送图片缩略图 → 灯箱：直接喂本地 objectURL，上传未完成也可预览。 */
+  function openPendingPreview(upload: PendingUpload): void {
+    const items: LocalMedia[] = [];
+    for (const entry of pendingUploads) {
+      if (entry.previewUrl !== null) {
+        items.push({
+          local: true,
+          id: entry.key,
+          fileName: entry.fileName,
+          mime: entry.mime,
+          url: entry.previewUrl,
+        });
+      }
+    }
+    if (items.length === 0) return;
+    const index = items.findIndex((item) => item.id === upload.key);
+    mediaViewer.show(items, Math.max(0, index));
   }
 
   function fileToBase64(file: File): Promise<string> {
@@ -421,11 +464,11 @@
              多行＝输入占满整宽、按钮沉底。背景用 surface-raised（比背景亮一级），
              relative 保证压在抽屉上层；粘贴/拖拽文件即上传附件 -->
         <div
-          class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised pr-1.5 pl-2 shadow-sm transition-colors focus-within:border-ring/40 {dragOver
+          class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5 transition-colors focus-within:border-ring/40 {dragOver
             ? 'border-ring/60'
             : ''}"
           data-testid="composer-pill"
-          data-multiline={multiline ? 'true' : 'false'}
+          data-multiline={stacked ? 'true' : 'false'}
           role="group"
           onpaste={onPaste}
           ondragover={(event) => {
@@ -444,28 +487,70 @@
             data-testid="composer-file-input"
           />
           {#if pendingUploads.length > 0}
-            <div class="flex flex-wrap gap-1 px-1 pt-2" data-testid="composer-pending-attachments">
+            <div
+              class="flex flex-wrap items-center gap-1.5 px-1 pt-2"
+              data-testid="composer-pending-attachments"
+            >
               {#each pendingUploads as upload (upload.key)}
-                <span
-                  class="flex items-center gap-1 rounded-full border bg-background/80 py-1 pr-1 pl-2.5 text-xs text-muted-foreground
-                    {upload.state === 'error' ? 'border-destructive/50 text-destructive' : ''}"
-                  data-testid={`pending-attachment-${upload.state}`}
-                >
-                  {#if upload.state === 'uploading'}
-                    <Loader2 class="size-3 animate-spin" aria-hidden="true" />
-                  {:else}
-                    <Paperclip class="size-3" aria-hidden="true" />
-                  {/if}
-                  <span class="max-w-40 truncate">{upload.fileName}</span>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded-full p-0.5 hover:bg-accent"
-                    onclick={() => removePendingUpload(upload.key)}
-                    aria-label={t('composer.attachmentRemove')}
+                {#if upload.previewUrl !== null}
+                  <!-- 图片：缩略图形态（点击灯箱预览，不等上传完成），悬浮露出移除键 -->
+                  <div class="group relative" data-testid={`pending-attachment-${upload.state}`}>
+                    <button
+                      type="button"
+                      class="block size-18 overflow-hidden rounded-xl border border-border/50 {upload.state ===
+                      'error'
+                        ? 'border-destructive'
+                        : ''}"
+                      onclick={() => openPendingPreview(upload)}
+                      aria-label={t('attachments.openPreview', { name: upload.fileName })}
+                      data-testid="pending-attachment-image"
+                    >
+                      <img
+                        src={upload.previewUrl}
+                        alt={upload.fileName}
+                        class="size-full object-cover"
+                        draggable="false"
+                      />
+                    </button>
+                    {#if upload.state === 'uploading'}
+                      <div
+                        class="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40"
+                      >
+                        <Loader2 class="size-4 animate-spin text-white" aria-hidden="true" />
+                      </div>
+                    {/if}
+                    <button
+                      type="button"
+                      class="absolute -top-1.5 -right-1.5 rounded-full bg-foreground/70 p-0.5 text-background opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                      onclick={() => removePendingUpload(upload.key)}
+                      aria-label={t('composer.attachmentRemove')}
+                      data-testid="pending-attachment-image-remove"
+                    >
+                      <X class="size-3" />
+                    </button>
+                  </div>
+                {:else}
+                  <span
+                    class="flex items-center gap-1 rounded-full border bg-background/80 py-1 pr-1 pl-2.5 text-xs text-muted-foreground
+                      {upload.state === 'error' ? 'border-destructive/50 text-destructive' : ''}"
+                    data-testid={`pending-attachment-${upload.state}`}
                   >
-                    <X class="size-3" />
-                  </button>
-                </span>
+                    {#if upload.state === 'uploading'}
+                      <Loader2 class="size-3 animate-spin" aria-hidden="true" />
+                    {:else}
+                      <Paperclip class="size-3" aria-hidden="true" />
+                    {/if}
+                    <span class="max-w-40 truncate">{upload.fileName}</span>
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-full p-0.5 hover:bg-accent"
+                      onclick={() => removePendingUpload(upload.key)}
+                      aria-label={t('composer.attachmentRemove')}
+                    >
+                      <X class="size-3" />
+                    </button>
+                  </span>
+                {/if}
               {/each}
             </div>
           {/if}
@@ -509,42 +594,57 @@
               {/each}
             </div>
           {/if}
-          <div class="flex {multiline ? 'flex-col' : 'flex-row items-center'}">
+          {#snippet attachButton()}
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-8 shrink-0 rounded-full border-border text-muted-foreground hover:text-foreground"
+              onclick={pickFiles}
+              disabled={readOnly}
+              aria-label={t('composer.attach')}
+              data-testid="composer-attach"
+            >
+              <Plus class="size-4" />
+            </Button>
+          {/snippet}
+          {#snippet sendButton()}
+            <Button
+              size="icon"
+              class="size-8 shrink-0 rounded-full"
+              onclick={onSendClick}
+              disabled={readOnly}
+              data-testid="composer-send"
+              aria-label={t('composer.send')}
+            >
+              <ArrowUp class="size-4" />
+            </Button>
+          {/snippet}
+          <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
+               占满整行，附件键/发送键落到底部两角 -->
+          <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
+            {#if !stacked}
+              {@render attachButton()}
+            {/if}
             <Textarea
               bind:value={text}
               bind:ref={textareaEl}
               {placeholder}
               rows={1}
               class="max-h-40 min-h-10 resize-none border-none bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0 md:text-sm dark:bg-transparent
-                {multiline ? 'w-full' : 'w-auto min-w-0 flex-1'}"
+                {stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}"
               onkeydown={handleKeydown}
               oninput={onInput}
               oncompositionstart={() => (isComposing = true)}
               oncompositionend={() => (isComposing = false)}
               data-testid="composer-input"
             />
-            <div class="flex items-center {multiline ? 'justify-end pt-0.5' : 'pr-0.5'}">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-8 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-                onclick={pickFiles}
-                disabled={readOnly}
-                aria-label={t('composer.attach')}
-                data-testid="composer-attach"
-              >
-                <Paperclip class="size-4" />
-              </Button>
-              <Button
-                size="icon"
-                class="size-8 shrink-0 rounded-full"
-                onclick={onSendClick}
-                disabled={readOnly}
-                data-testid="composer-send"
-                aria-label={t('composer.send')}
-              >
-                <ArrowUp class="size-4" />
-              </Button>
+            <div
+              class="flex items-center {stacked ? 'w-full justify-between pt-0.5 pb-1' : 'pr-0.5'}"
+            >
+              {#if stacked}
+                {@render attachButton()}
+              {/if}
+              {@render sendButton()}
             </div>
           </div>
         </div>

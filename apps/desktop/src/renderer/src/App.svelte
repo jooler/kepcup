@@ -146,9 +146,9 @@
   </div>
 
   <!-- 状态栏是开发/e2e 专用（连通性 ping 与 Node 版本），打包产物经 DCE 剔除。 -->
-  {#if __KEPCUP_TEST_HOOKS__}
+  <!-- {#if __KEPCUP_TEST_HOOKS__}
     <CoreStatusBar />
-  {/if}
+  {/if} -->
 
   <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
   {#if coreReady}

@@ -2,14 +2,15 @@
   import { Download, X, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
-  import { mediaViewer } from './media-viewer.svelte';
+  import { mediaViewer, isLocalMedia } from './media-viewer.svelte';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
 
   /**
    * 媒体灯箱（docs/design/20-conversation-media.md）：全屏遮罩 + 缩放平移
    * （图片）/播放器（音视频）/下载。全局单例，挂 ChatView，状态在
-   * media-viewer.svelte.ts。字节加载用模板级 {#await attachmentUrl(current)}
-   * （attachmentUrl 内置 LRU 缓存，灯箱与消息气泡共享同一份 objectURL）。
+   * media-viewer.svelte.ts。已发送附件的字节加载用模板级
+   * {#await attachmentUrl(current)}（attachmentUrl 内置 LRU 缓存，灯箱与
+   * 消息气泡共享同一份 objectURL）；待发送附件直接用自带本地 objectURL。
    */
 
   // 图片缩放/平移；scale=1 即适配窗口。{#key current?.id} 在切换附件时复位。
@@ -27,6 +28,14 @@
         : current.mime.startsWith('audio/')
           ? 'audio'
           : 'image',
+  );
+  // 待发送附件自带 objectURL，无需按 id 拉字节。
+  const currentUrl = $derived(
+    current === null
+      ? Promise.resolve('')
+      : isLocalMedia(current)
+        ? Promise.resolve(current.url)
+        : attachmentUrl(current),
   );
 
   function zoomBy(factor: number): void {
@@ -84,7 +93,18 @@
   }
 
   async function download(): Promise<void> {
-    if (current !== null) await downloadAttachment(current);
+    if (current === null) return;
+    if (isLocalMedia(current)) {
+      // 本地文件尚未入库：<a download> 指向本地 objectURL 即可。
+      const anchor = document.createElement('a');
+      anchor.href = current.url;
+      anchor.download = current.fileName;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      return;
+    }
+    await downloadAttachment(current);
   }
 </script>
 
@@ -166,7 +186,7 @@
       role="presentation"
     >
       {#key current.id}
-        {#await attachmentUrl(current)}
+        {#await currentUrl}
           <p class="text-sm text-white/50">{t('lightbox.loading')}</p>
         {:then url}
           {#if kind === 'image'}
