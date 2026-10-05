@@ -566,6 +566,12 @@ export const runSchema = z.object({
   /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
   chainId: z.string().nullable(),
   chainDepth: z.number().nullable(),
+  /**
+   * Delegating parent run of a SubAgent sub run（D66/D67 ownership，
+   * docs/design/24-durable-execution.md journal「subagent: child_run_id +
+   * ownership」）；非子 run 为 null。后台子 run 据此在父 run 结束后仍可追溯归属。
+   */
+  parentRunId: z.string().nullable(),
   createdAt: z.number(),
   startedAt: z.number().nullable(),
   endedAt: z.number().nullable(),

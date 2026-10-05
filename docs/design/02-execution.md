@@ -71,7 +71,7 @@ Run
 | Loop       | 触发            | 可写入                                     | 优先级 |
 | ---------- | ------------- | --------------------------------------- | --- |
 | 响应         | 用户消息、定时、事件    | 消息、当前 workspace；另可提交记忆候选、Wiki 入库请求、定时任务 | 高   |
-| SubAgent 委派 | 主 loop 调用 `delegate_task` | 不写消息，过程落执行记录（`loop_type='subagent'`） | 随主 run |
+| SubAgent 委派 | 主 loop 调用 `delegate_task`（前台 / 后台 / fan-out） | 不写用户消息；过程落执行记录（`loop_type='subagent'`）；后台完成走 follow-up 注入 | 前台随主 run；后台可独立于主 turn |
 | 群聊判断       | 群消息未 @ 任何 Bot | 不写，仅返回判断结果                              | 高   |
 | 反思         | 每次响应 loop 结束后 | 本 Bot 记忆、用户画像提案                         | 低   |
 | 记忆整理       | 每天            | 本 Bot 记忆                                | 低   |
@@ -141,12 +141,13 @@ Run
 
 ## SubAgent 委派执行
 
-主 loop 遇到「只要结论、材料很长」的任务（扫仓库、读多文件、长日志分析）时调用 `delegate_task({ task })`，宿主嵌套启动一个减配子 run 完成后把结论压缩回传：
+主 loop 遇到「只要结论、材料很长」或「多路并行检索」的任务时调用 `delegate_task`，宿主启动减配子 run（`loop_type='subagent'`），结论压缩后回传。三种模式：
 
-- 子 run 同 Bot、同对话：workspace / project / 授权边界原样继承；只给只读研究工具（read / grep / find / ls / bash（沙箱）/ web_search / web_fetch），无写文件、无 `send_message`、无再委派。
-- 子 run 落 `runs` 行（`loop_type='subagent'`）与完整执行记录，但不产生任何对话消息；主 loop 只收到压缩后的结论。
-- 预算、超时、委派次数封顶；主 run 中止时级联中止子 run。
-- 细节见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)；执行方案见 `todo/pi-1x-upgrade-mcp-subagent.md`。
+- **前台同步**（默认）：主 loop 阻塞等待结论；主 run 中止级联中止子 run。
+- **后台委派**（`mode: "background"`）：立即返回 `child_run_id`，主 Bot 可继续与用户对话；子 run 结束后由宿主 follow-up 注入压缩结论。普通结束主 turn 不级联 abort 后台子 run。
+- **并行 fan-out**（`tasks: [...]` 或多次后台委派）：多路只读子 run 并行，有硬顶；前台等全部 settle，后台逐路注入。
+
+共用约束：同 Bot / 同对话边界；只读研究工具；无写文件、无 `send_message`、无再委派、无子代理互通；不充当群成员。细节与明确「不做」清单见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)；崩溃恢复见 [24-durable-execution.md](24-durable-execution.md)；执行方案见 `todo/pi-1x-upgrade-mcp-subagent.md`。
 
 ## MCP 工具
 

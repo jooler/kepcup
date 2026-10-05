@@ -32,7 +32,7 @@
 | [20-conversation-media.md](20-conversation-media.md) | 对话附件与媒体：用户上传、草稿附件、内联渲染与灯箱、语音/视频生成工具、图片进视觉通道 |
 | [21-web-search.md](21-web-search.md) | 联网检索：内置 web_search / web_fetch 工具、检索供应商配置、内联设置引导 |
 | [22-file-skill-routing.md](22-file-skill-routing.md) | 文件技能路由：推荐技能注入、install_skill 授权安装、四级升级阶梯 |
-| [23-mcp-and-subagent.md](23-mcp-and-subagent.md) | MCP 工具服务器接入与宿主 SubAgent（delegate_task 委派执行） |
+| [23-mcp-and-subagent.md](23-mcp-and-subagent.md) | MCP 工具服务器接入与宿主 SubAgent（前台 / 后台 / 并行 fan-out） |
 | [24-durable-execution.md](24-durable-execution.md) | 长任务可恢复执行 / Host Durable Journal：ephemeral 默认仍按 D49，durable 按 journal 与工具 replay 策略 resume |
 
 ## 尚未讨论（暂不入文档）
@@ -108,5 +108,5 @@
 | D63 | 文件技能路由 | 模型面对处理不了的文件按四级阶梯升级：已安装技能 → `<recommended_skills>` 段匹配预置技能后 `install_skill(preset_id)`（阻塞审批 `skill_preset`，装为公共技能）→ `web_search` 检索技能仓库后 `install_skill(source_url)`（走既有 `skill_import` 扫描审批，按 Bot 安装）→ 如实告知不支持；两级授权强度与内容信任级对齐（预置轻授权、外部完整扫描审批）；无人值守下两者同属自动批准类；安装后当次 run 即可用（prepareRequest 刷新提示词）（见 22） |
 | D64 | Pi 版本 | 升级并锁定 1.x（1.0.2）：0.87.1 → 1.0.2 为纯版本变更（核心 API 逐字兼容，harness/search/telemetry 移除项宿主未使用），D21 封装不变 |
 | D65 | MCP | 用户在设置页配置 MCP server（stdio / streamable HTTP），按「应用启用 ∩ Bot 勾选」暴露工具；调用走网关审批（autoApprove 默认关）与审计；密钥字段级加密；OAuth 与 Codemode 后续单排（见 23） |
-| D66 | 宿主 SubAgent | `delegate_task` 工具 + 嵌套减配子 run（loopType=subagent，落 run 行、不写消息）：只读研究工具集、结果压缩 ≤4000 字符回主 loop、预算与超时封顶、主 run 中止级联中止；不充当群成员、禁止再委派（见 23） |
+| D66 | 宿主 SubAgent | `delegate_task`：前台同步（默认阻塞等结论）、**后台委派**（立即返回，主 Bot 可继续对话，完成后 follow-up 注入）、**并行 fan-out**（多路只读子 run，有硬顶）；loopType=subagent、落 run 行、不写用户消息、结论 ≤4000 字符；不充当群成员、禁止再委派与子代理互通；fork / 热替换 / 任务树面板等明确不做（见 23） |
 | D67 | 长任务崩溃恢复 | Host Durable Journal；run 分 ephemeral（默认，仍按 D49：标中断、不自动恢复）与 durable（按 journal + 工具 replay 策略 resume）；不把 Pi Durable 包定为全体 Bot Runtime；修订 D49 的适用范围为仅 ephemeral（见 24） |

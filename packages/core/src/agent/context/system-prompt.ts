@@ -70,7 +70,8 @@ const FILE_HANDLING_GUIDANCE = [
  * direct chat), 6 (mentions only via send_message), 7 (untrusted data),
  * 8 (out-of-scope access → request_access, P03),
  * 9 (acquire_project_write before project-mutating commands, P04),
- * 10/11 (memory discipline, P07), 12 (profile change suggestions).
+ * 10/11 (memory discipline, P07), 12 (profile change suggestions),
+ * 13 (delegate_task SubAgent — foreground/background/fan-out, D66).
  */
 const PLATFORM_RULES = [
   '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
@@ -85,7 +86,7 @@ const PLATFORM_RULES = [
   '记忆：用户明确要求记住时调用 remember；不要记录密码、密钥等凭据；不要把闲聊当作记忆。',
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
-  '需要通读大量材料（扫描多文件目录/仓库、长日志、多份网页）而只要结论时，调用 delegate_task 委派子代理：交代清楚要什么结论、判断标准与材料位置，大段材料先写入 workspace 文件再给路径；子代理不出现在对话里，由你转述它的结论。需要动手改文件的活不要委派。',
+  '需要通读大量材料（扫描多文件目录/仓库、长日志、多份网页）而只要结论时，调用 delegate_task 委派子代理：交代清楚要什么结论、判断标准与材料位置，大段材料先写入 workspace 文件再给路径；子代理不出现在对话里，由你转述它的结论。需要动手改文件的活不要委派。多个相互独立的查询用 tasks 参数一次并行委派；耗时的调研想边等边聊时用 mode:"background"——工具立即返回，你可以继续对话或追问用户，子任务结论完成后宿主会自动送回对话（多路结论可能分批到达），不要轮询。',
 ].map((rule, index) => `${index + 1}. ${rule}`);
 
 function section(tag: string, body: string): string {
