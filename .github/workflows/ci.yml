@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint & typecheck (Ubuntu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Sandbox tests (P02) need user namespaces on Ubuntu 24.04 (AppArmor)
+      # and srt's Linux dependencies; see docs/dev/05-testing.md "CI 矩阵".
+      - name: Enable sandboxing (Ubuntu)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat
+      # Unit & integration tests run with Electron as the Node runtime so
+      # native modules load; see docs/dev/05-testing.md.
+      - run: pnpm test
+
+  e2e:
+    name: E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # End-to-end tests from P01 (docs/dev/05-testing.md, CI matrix).
+      # Headless Electron on Linux runs inside xvfb.
+      - name: Install xvfb (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Run e2e (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: xvfb-run --auto-servernum pnpm test:e2e
+      - name: Run e2e (macOS / Windows)
+        if: matrix.os != 'ubuntu-24.04'
+        run: pnpm test:e2e
+
+  # Sandbox tests arrive with P02 (docs/dev/05-testing.md, CI matrix).

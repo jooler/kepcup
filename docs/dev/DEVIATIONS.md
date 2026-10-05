@@ -1,0 +1,130 @@
+# 偏差与待确认问题
+
+记录规则见 [README.md](README.md#偏差与问题)。每条一节，按编号递增，处理后不要删除，只更新状态。
+
+状态取值：`待决定` / `已决定` / `已落实`。
+
+## 模板
+
+```markdown
+### DEV-001 （简短标题）
+
+- 状态：待决定
+- 阶段：Pxx
+- 是否阻塞：是 / 否
+- 问题：（发现了什么，与哪份文档的哪一节冲突）
+- 影响范围：（涉及的模块、阶段）
+- 可选方案：
+  1. （方案）— 优点 / 缺点
+  2. （方案）— 优点 / 缺点
+- 推荐：（方案编号及理由）
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+```
+
+## 条目
+
+### DEV-001 测试用 file keystore（超出 05-testing.md 记载的 memory 实现）
+
+- 状态：待决定
+- 阶段：P00
+- 是否阻塞：否
+- 问题：[05-testing.md](05-testing.md#测试夹具) 只定义了 `KEPCUP_KEYSTORE=memory` 的内存钥匙串。内存实例不能跨进程存活，端到端测试"杀掉核心服务后自动重启并恢复"时，重启出的核心进程拿到的是空钥匙串 + 已存在的数据库，会直接进入 `locked`，无法验证恢复路径（真实场景下系统钥匙串会返回同一把密钥）。
+- 影响范围：`packages/core/src/infra/keystore.ts`、端到端测试（`apps/desktop/test/e2e/lifecycle.spec.ts`）。
+- 可选方案：
+  1. 新增仅 `NODE_ENV=test` 时可用的 `KEPCUP_KEYSTORE=file` 实现（密钥明文写入 `KEPCUP_FILE_KEYSTORE_PATH`，权限 0600；非 test 环境设置该值会拒绝启动）— 实现小、贴近真实行为；代价是密钥明文落盘（仅测试环境）。
+  2. 崩溃重启用例改为不重启核心进程，仅测试主进程重启逻辑 — 无法覆盖真实的"核心崩溃后 UI 恢复"路径。
+- 推荐：方案 1（已在 P00 实现并通过测试）；若人工认为不妥，可改为把 e2e 降级为手工验证并移除 file keystore。
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+
+### DEV-002 pi 的 API key 注入机制：CredentialStore 而非 Agent `getApiKey`
+
+- 状态：已落实
+- 阶段：P01
+- 是否阻塞：否（已实现，等待人工确认）
+- 问题：[04-agent-runtime.md](04-agent-runtime.md#pi-的封装) 的映射表写"API key 通过 `getApiKey` 回调，从 secrets 表解密提供"。pi 0.87.1 中注入密钥的正规入口是 `createModels({ credentials })` 的 `CredentialStore`（`read(providerId)` 在每次请求的鉴权解析时调用）；`Agent` 构造参数虽有 `getApiKey`，但仅用于覆盖请求 options，业务侧自建 `Models` 集合时应使用 CredentialStore。
+- 影响范围：`packages/core/src/agent/models.ts`（唯一接入点）；AgentEngine 接口不变。
+- 可选方案：
+  1. 自定义 `CredentialStore`，`read()` 从 secrets 表按 provider 解密（当前实现）。密钥仅在每次请求的鉴权解析中解密，不落盘、不进环境变量、不写 pi 配置文件，与设计意图一致 — 优点：走 pi 官方路径，支持内建厂商目录；缺点：与文档表格的表述不同。
+  2. 每次请求显式传 `apiKey` options — 需要包装 `streamFn`，绕过 provider 鉴权链路，侵入性更强。
+- 推荐：方案 1（保持现状），并更新 04-agent-runtime.md 的表述为"CredentialStore（每次请求时从 secrets 表解密提供）"。
+- 决定：采纳方案 1（2026-09-30 审查报告 BR-P01-004 确认保持 CredentialStore 并同步文档）。
+- 已更新的文档：04-agent-runtime.md 映射表已改为 CredentialStore 表述（2026-09-30）。
+
+### DEV-003 自带 bwrap / socat（Linux）：无可靠的跨发行版静态构建
+
+- 状态：待决定
+- 阶段：P02
+- 是否阻塞：否（Linux 上当前改用系统 PATH 中的 bwrap / socat，缺失时沙箱探测失败并给出安装提示）
+- 问题：[10-sandbox.md](../design/10-sandbox.md#默认级srt) 要求"应用自带其依赖：rg（所有平台）、bwrap、socat（Linux）"。rg 14.1.1 已按平台落位 `apps/desktop/resources/bin/{platform}-{arch}/`（Linux 为 musl 静态链接，可直接自带）。但 bwrap 与 socat 上游均不发布静态构建：Ubuntu/Debian/Fedora 的发行版包都是动态链接（glibc 版本不一，Ubuntu 24.04 的二进制在 Debian 12 上不可用），复制单个二进制无法覆盖 05-testing.md 要求的三个发行版。
+- 影响范围：`packages/core/src/sandbox/backend-srt.ts`（`bwrapPath`/`socatPath` 仅在自带文件存在时传入，否则走系统 PATH）、Linux 的沙箱可用性探测（缺失时 `probe()` 返回不可用 + 安装命令提示）、CI（Ubuntu 增加 `apt-get install bubblewrap socat`）。
+- 可选方案：
+  1. Linux 上使用系统包管理器安装的 bwrap / socat，缺失时在设置页提示安装命令（当前实现）— 优点：立即可用、无供应链风险；缺点：首次使用需要用户装两个包，与"随应用自带"的设计不符。
+  2. 自行构建静态 bwrap / socat（musl 工具链）并随应用分发 — 优点：符合设计、零依赖；缺点：需要维护构建流水线并跟踪上游安全更新，超出本阶段范围。
+  3. 打包发行版的 .deb/.rpm 并在首次运行时引导安装 — 优点：用户操作少；缺点：引入包管理依赖，跨发行版维护成本高。
+- 推荐：短期维持方案 1；P06（环境管理器）落地后用方案 2 或 3 补齐（环境管理器本就负责宿主层依赖的安装与引导）。
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+
+### DEV-004 大仓库首次检查点快照超过 10 秒
+
+- 状态：待决定
+- 阶段：P04
+- 是否阻塞：否（一次性成本，后续快照实测 0.2 秒；任务书要求的测量已完成并给出方案）
+- 问题：[P04 任务书](phases/P04-project.md#需验证技术点)要求在 5 万文件级别的仓库上测量首次快照耗时，超过 10 秒时记录偏差并提出方案。实测（macOS arm64，200 目录 × 250 文件 = 5 万文件）：首次快照（addAll + writeTree + commit）15.1 秒，其中 addAll 13.7 秒；第二次无改动快照 0.16 秒（libgit2 按 stat 跳过未变文件）。首次快照阻塞在取得租约的工具调用内（`waiting_lease` 语义下不消耗 token），但用户可感知。
+- 影响范围：`packages/core/src/project/checkpoints.ts`（`snapshot()`）。
+- 可选方案：
+  1. 接受现状（当前实现）：首次快照一次性 O(全部文件)，之后每次快照只重刷变化文件 — 优点：实现最简、正确性由 libgit2 保证；缺点：超大仓库首次绑定后第一次写入前的等待明显。
+  2. 首次快照只纳入 git 已跟踪文件 + 本次改动文件（任务书建议的方案）：打开 project 自身 `.git`（只读）读 index 取已跟踪清单，未跟踪文件按需 — 优点：常见大型项目（node_modules 已被 ignore，跟踪文件数千级）秒级完成；缺点：需处理 project 不是 git 仓库的情况（回退方案 1）、与自身 `.git` 只读约束的边界（只读 index，不写）。
+  3. 快照移到后台进行，租约先发放 — 违反"快照必须在第一次写入之前完成"的任务书注意事项，不可取。
+- 推荐：先维持方案 1（正确、可预期），把方案 2 作为 P06+ 的体验优化项；如人工认为 15 秒不可接受，再按方案 2 实施。
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+
+### DEV-005 srt 0.0.78 不支持限制本机端口范围（allowed_ports）
+
+- 状态：待决定
+- 阶段：P04
+- 是否阻塞：否（设计的默认行为"默认不限"完整实现并验证；端口范围是可选的收紧配置）
+- 问题：[08-project.md](../design/08-project.md)（"每个 project 可以限定允许的端口范围（默认不限）"）与 P04 任务 8 要求按 `allowed_ports` 限制沙箱可访问的本机端口。srt 0.0.78 的网络配置只有 `allowLocalBinding` 布尔值（seatbelt 规则 `(allow network-bind (local ip "*:*"))` + `(allow network-outbound (remote ip "localhost:*"))`），不存在端口范围字段；且沙箱子进程环境含 `NO_PROXY=localhost,127.0.0.1,...`，回环访问完全绕过 srt 代理直连（由 seatbelt 规则裁决），代理层的 `filterRequest` 回调对回环流量不可见，无法按端口过滤。
+- 影响范围：`packages/core/src/sandbox/policy.ts`、`packages/core/src/sandbox/backend-srt.ts`、projects 表的 `allowed_ports_json` 列与项目设置界面。
+- 可选方案：
+  1. 端口范围存入 projects 表并在设置界面可配置，当前版本不强制（当前实现；界面注明"当前沙箱版本不强制端口范围，仅记录配置"）— 优点：数据模型与设计一致，升级 srt 后即可接入；缺点：配置了范围的 project 实际不受限。
+  2. 升级 srt 到支持端口范围的版本后接入（关注 srt 上游 issue；P12 增强沙箱阶段可自行生成 seatbelt 规则 `(allow network-outbound (remote ip "localhost: N-M"))`）。
+- 推荐：方案 1（当前实现），srt 版本升级后按方案 2 收口。
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+
+### DEV-006 es-git 0.7.0 的 diff.print() 丢失行前缀；检查点 diff 文本改用系统 git CLI 生成
+
+- 状态：待决定
+- 阶段：P04
+- 是否阻塞：否（检查点 diff 查看功能完整可用，改动仅涉及其文本来源）
+- 问题：P04 任务书指定检查点影子仓库使用 es-git。实现中发现 es-git 0.7.0 的两个绑定缺陷：① `Diff.print()`（含显式 `format: 'Patch'`）输出的 hunk 内容丢失 `+`/`-`/空格 行前缀（如 `+world` 输出为 `world`），产出的文本不是合法 unified patch，@pierre/diffs 无法解析；② `initRepository(path)` 会自动在路径后追加 `/.git/`（即真实 gitdir 是 `checkpoints.git/.git/`），而 `noDotgitDir: true` 又要求显式 workdir 并会在 workdir 中创建 `.git` gitlink 文件——违反"不在 project 目录创建任何应用自己的文件"的底线。
+- 影响范围：`packages/core/src/project/checkpoints.ts`。
+- 处理（当前实现）：
+  - 布局：影子仓库以 `bare: true, noDotgitDir: true` 初始化于 `checkpoints.git`，再经配置 `core.bare=false` + `core.worktree=<project>` 指向工作区（与 git 次级工作树同构）。libgit2 正常读写，project 目录零文件，系统 git CLI 可直接操作该 gitdir。
+  - diff 文本：`Diff.print()` 不可用，改为 `spawnSync('git', ['--git-dir', <shadow>, 'diff', '--no-color', '--no-ext-diff', '--no-textconv', <before>, <after>])` 生成标准 unified patch（外部 diff 驱动已禁用；影子仓库为应用自有数据，不触碰用户仓库）。系统未装 git 时 diff 文本为空，界面显示"该检查点已超出保留期，无法显示 diff"。
+- 可选方案：
+  1. 维持当前实现（系统 git CLI 生成 diff 文本）— 优点：立即正确；缺点：diff 查看依赖系统 git（git_remote 本就依赖系统 git，依赖面未扩大）。
+  2. 自实现 Myers diff 从 es-git 读取的文件内容生成 patch — 优点：零 CLI 依赖；缺点：自写 diff 算法的正确性/性能风险，收益低。
+  3. 向 es-git 上游报告 print() 缺陷，修复后切回 — 与 1 不冲突，可作为后续演进。
+- 推荐：维持 1，同时向 es-git 上游报缺陷（3），升级后可切回纯 es-git。
+- 决定：（由人工填写）
+- 已更新的文档：（落实后填写）
+
+### DEV-007 本地向量模型（embedding-model）的 ONNX 推理运行库：新大型依赖，待人工决定
+
+- 状态：已落实（2026-10-04，按「运行库与模型经环境管理器按需下载、不入应用安装包」的方向实现，见下方"决定"）
+- 阶段：P07
+- 是否阻塞：否（已实现并有测试；三平台实测体积与耗时见 todo/cross-platform-acceptance.md P07 小节——macOS arm64 已实测，Windows/Linux 待复测）
+- 问题：[P07 任务书](phases/P07-memory.md) 任务 2 要求本地向量实现"在核心服务中用 ONNX 推理运行小型多语言向量模型（运行库与模型型号需验证后确定）"。候选运行库（`@huggingface/transformers` / `onnxruntime-node` 及其原生绑定）属[全局纪律](../../todo/handoff-P07-P13.md)定义的**新大型依赖**（原生模块 + 运行时），须先记 DEVIATIONS 等待决定；模型型号选择（要求中英文效果良好、文件 ≤200MB、CPU 单条 ≤50ms）也需在运行库确定后实测三个平台。因此 P07 交付：`Embedder` 接口 + `LocalEmbedder` 占位实现（`ready()` 恒为 false，`embed()` 抛 `NOT_IMPLEMENTED`）+ 环境目录 `embedding-model` 预留条目（`downloadPending` 标记，不下载任何文件）+ 系统发起的 `environment` 审批全流程（botId null）。未启用本地模型期间检索按任务书退化为全文检索（bm25 OR 组合，见 PROGRESS P07 的 Segmenter 结论），厂商向量接口（OpenAI 兼容 `/v1/embeddings`）完整可用。
+- 影响范围：`packages/core/src/memory/embedder.ts`（LocalEmbedder）、`packages/core/src/env/catalog.ts`（embedding-model 条目）、`packages/core/src/memory/manager.ts`（memory_vec 建表已就绪，维度来自 embedder）、设置页向量来源（P07-B 界面）。DEV-007 落实时：在 catalog 条目钉住 url/sha256/version、清除 `downloadPending`、实现 LocalEmbedder（加载 `toolchains/embedding-model/{version}/` 模型）并在三平台实测体积与耗时。
+- 可选方案：
+  1. `@huggingface/transformers`（ONNX Runtime Web/Node 封装）+ 型号如 `jina-embeddings-v2-base-zh` / `bge-m3` 量化版 / `multilingual-e5-small` onnx — 优点：生态成熟、模型仓库可直接拉 ONNX；缺点：依赖体积大（原生 binding + shader 等），需评估打包体积与 utilityProcess 内加载。
+  2. `onnxruntime-node` 直接 + 自管理 tokenizer（tokenizers wasm）— 优点：依赖面最小、可控；缺点：tokenizer 与预处理自行维护，工作量大。
+  3. 放弃本地推理，仅提供厂商向量接口 — 优点：零新依赖；缺点：与 design/14"默认使用本地的小型多语言向量模型"冲突，离线场景不可用。
+- 推荐：方案 1，型号在 Mac（arm64）上以 20 条中英文样例实测召回与耗时后钉死，再于 Windows/Linux 复测（跨系统清单）。
+- 决定：以**方案 2 为基础**落地（2026-10-04）——运行库选 `onnxruntime-node`（方案 1 的核心正是它的封装，直接用可少一层抽象），tokenizer 自实现 BERT WordPiece（`memory/bert-tokenizer.ts`，约 150 行，避开 tokenizers wasm 依赖）。与原推荐的关键差异：**运行库不进应用安装包**，而是新增环境条目 `onnxruntime`（npm 官方 tarball，`registry.npmmirror.com` 分发、与 registry.npmjs.org 字节一致且 integrity 核对一致），与 `embedding-model` 合成**一张审批卡**、批准后链式安装到 `toolchains/`——安装包体积零增长，运行库/模型可独立升级。模型钉 `bge-small-zh-v1.5` ONNX 导出（BAAI 官方权重，Xenova 移植；BAAI 官方仓库无 ONNX，ModelScope 分发），512 维、约 90MB。GPU 加速按平台自动选执行单元（`env/gpu.ts`）：macOS CoreML（随包内置）、Windows DirectML（随包携带 DirectML.dll，任意 DX12 显卡）、Linux CPU（npm 包未携带 CUDA EP），首选 EP 会话创建失败回退 CPU。实现：`env/catalog.ts` 新增 `files` 安装类型（多文件钉住 + 归档解包落位）、`EnvManager` bundle 审批与 `#ensureChainedItem`、`memory/embedder.ts` 真实 `LocalEmbedder`（createRequire 从 toolchains 加载、模块级会话缓存）。macOS arm64 实测：模型+运行库约 200MB、语义方向正确（同义 0.77 / 无关 0.34）、warm 单条 36ms（≤50ms 达标，首条含会话初始化约 2s）。
+- 已更新的文档：design/14（向量模型型号）、design/16（向量来源：本地运行库与 GPU 选型）、design/07（宿主层环境条目）、design/11（toolchains 布局）、dev/phases/P07-memory.md（任务 2 实现记录）、PROGRESS.md（P07 补充交付）。

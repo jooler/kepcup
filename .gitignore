@@ -1,0 +1,29 @@
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+
+# electron / builds
+apps/desktop/resources/icon-*.png.bak
+
+# logs & local state
+*.log
+.electron-builder/
+
+# test artifacts
+test-results/
+playwright-report/
+.blob-storage/
+
+# environment
+.env
+.env.*
+
+# packaging artifacts (P13)
+apps/desktop/release/
+
+# ZCode session-local state (plans etc.) and its sync file
+.zcode/
+.zcodeignore
+
+.apiresearch

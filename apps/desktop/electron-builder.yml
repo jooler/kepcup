@@ -1,0 +1,95 @@
+# 打包配置（P13 任务 1，docs/dev/phases/P13-release.md）。
+# 本机（macOS arm64）验证 dmg/zip；Windows/Linux 目标在 CI 矩阵按平台构建
+# （.github/workflows/release.yml），签名凭据一律走 CI 机密、不入库。
+#
+# 产物剔除（P13 注意事项）：构建入口是 `pnpm dist`（scripts/dist.mjs）——
+# 先 electron-vite build（KEPCUP_PACKAGE_BUILD=1 → __KEPCUP_TEST_HOOKS__=false），
+# 再用 esbuild 把 @kepcup/core 连同测试缝（mock LLM 播种 / KEYSTORE=memory/file /
+# WSL fixture runner）死码剔除后并进 out/main/core-entry/index.js，并把迁移文件拷到
+# out/migrations（打包后的 import.meta.url 相对解析）。本工作区里的
+# packages/core（dist 仍含测试路径）与 testkit（mock 模型服务/夹具）不进产物。
+appId: app.kepcup.desktop
+productName: Kepcup
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - resources/icon.png
+  - resources/trayTemplate.png
+  - resources/trayTemplate@2x.png
+  # core 已并入 out/main/core-entry（并剔除测试路径）；工作区源包不进产物。
+  - "!node_modules/@kepcup/core"
+  - "!node_modules/@kepcup/testkit"
+asar: true
+# 原生模块（better-sqlite3-multiple-ciphers、@napi-rs/keyring、es-git）按目标平台
+# 架构重编译；smartUnpack 自动把 .node 解包出 asar。
+npmRebuild: true
+
+# --- 自动更新源（P13 任务 2：默认 GitHub Releases 占位，可替换） ----------------
+# 运行时可用 KEPCUP_UPDATE_URL 环境变量指向任意 generic HTTPS 源，无需重打包。
+# 正式发布仓库确定后改这里（owner/repo 为占位）。
+publish:
+  provider: github
+  owner: kepcup-app
+  repo: kepcup
+
+# --- macOS：dmg + zip（自动更新走 zip），arm64 与 x64 分别构建 ------------------
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  icon: resources/icon.png
+  # 本机无 Developer ID 证书：显式跳过签名（CSC_IDENTITY_AUTO_DISCOVERY=false
+  # 由 scripts/dist.mjs 设置）。分发前必须签名 + 公证（CI 机密注入），见
+  # todo/cross-platform-acceptance.md P13 小节。
+  identity: null
+  extraResources:
+    # 平台私有二进制（rg）只打包本机架构一份（${arch} 宏按目标展开）。
+    - from: resources/bin/darwin-${arch}
+      to: bin/darwin-${arch}
+    # 技能市场预置目录（与平台无关，三平台同源；core-host 注入
+    # KEPCUP_PRESET_SKILLS 指向 Resources/preset-skills）。
+    - from: resources/preset-skills
+      to: preset-skills
+
+# --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  # 代码签名：CI 注入 CSC_LINK/CSC_KEY_PASSWORD（或 Azure Trusted Signing 三元组）
+  # 时自动签名；无凭据时跳过（登记跨系统清单）。
+  extraResources:
+    - from: resources/bin/win-${arch}
+      to: bin/win-${arch}
+    # WSL 私有发行版 rootfs（CI 产出，P12）：文件不存在时该 glob 不打包任何内容
+    # （existsSync 条件打包等价），不阻塞构建——pack 钩子会给出警告。
+    - from: resources/wsl
+      to: wsl
+    - from: resources/preset-skills
+      to: preset-skills
+
+# --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
+linux:
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]
+  category: Utility
+  maintainer: kepcup-app
+  extraResources:
+    - from: resources/bin/linux-${arch}
+      to: bin/linux-${arch}
+    - from: resources/preset-skills
+      to: preset-skills
+
+# 打包前确保按平台条件的 extraResources 源目录存在（缺文件只警告不阻塞）；
+# 打包后校验产物：测试路径标记必须不存在、@kepcup/core|testkit 不得进 asar、
+# 平台二进制布局正确（scripts/pack-hooks.cjs）。
+beforePack: scripts/pack-hooks.cjs
+afterPack: scripts/pack-hooks.cjs

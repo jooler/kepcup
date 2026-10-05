@@ -1,0 +1,805 @@
+import { Type } from '@earendil-works/pi-ai';
+import { AppError, TOOL_OUTPUT_MAX_CHARS, type Message } from '@kepcup/shared';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { truncateToBudget } from '../agent/tokens.js';
+import { renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
+import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
+import type { AttachmentsService } from '../domain/attachments.js';
+import type { MessagesService } from '../domain/messages.js';
+import type { RunsService } from '../domain/runs.js';
+import type { SecretsService } from '../domain/secrets.js';
+import type { ToolGateway } from '../gateway/index.js';
+import type { SandboxNetworkPolicy } from '../sandbox/types.js';
+import type { ProjectRuntime } from '../project/service.js';
+import type { GitRemoteOperation } from '../project/git-remote.js';
+import { buildCodingTools } from './coding-tools.js';
+import { buildMemoryTools, type MemoryToolFacade } from './memory-tools.js';
+import { buildSetupTools, type SetupToolFacade } from './setup-tools.js';
+import { buildWikiTools, type WikiToolFacade } from './wiki-tools.js';
+import { buildScheduleTools, type ScheduleToolFacade } from './schedule-tools.js';
+import { buildBrowserTools } from './browser.js';
+import { buildImageTools, type MediaToolFacade } from './image-tools.js';
+import { buildSpeechTools } from './speech-tools.js';
+import { buildWebTools, type SearchToolFacade } from './web-tools.js';
+import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
+import type { BrowserHostRpc } from '../browser/facade.js';
+import type { FileReadState } from './fs-state.js';
+
+export interface ResponseToolDeps {
+  messages: MessagesService;
+  attachments: AttachmentsService;
+  runs: RunsService;
+  secrets: SecretsService;
+  renderOptions: RenderMessageOptions;
+  gateway: ToolGateway;
+  /** Created before tools run ("首次执行时创建"). */
+  workspacePath: string;
+  /** Bound project directory (null = none); base for relative paths + bash. */
+  projectPath: string | null;
+  /** Project runtime for lease / git remote tools (P04). */
+  projects: ProjectRuntime;
+  network: SandboxNetworkPolicy;
+  /** Per-run read hashes; released when the run settles. */
+  fsState: FileReadState;
+  /** Called for every message the bot sends (output_message_ids + events). */
+  onBotMessage: (message: Message) => void;
+  /**
+   * P05 group chains: validate mention_bot_ids, extend/create the chain and
+   * deliver to the targets. Returns a suffix note for the tool result.
+   */
+  onMentionBots?: (mentionBotIds: string[], message: Message) => string;
+  /**
+   * P06 environment manager facade: request host-level tool installs.
+   * Narrow interface so tools never touch the DB layer directly.
+   */
+  environment: EnvironmentToolFacade;
+  /**
+   * P07 memory domain (optional so stripped unit setups keep working); when
+   * present the seven memory tools join the response toolset.
+   */
+  memory?: MemoryToolFacade | undefined;
+  /** Trigger messages of the current run (memory evidence). */
+  batchMessages?: Message[] | undefined;
+  /**
+   * P08 skills domain (optional in stripped unit setups): the create_skill
+   * tool registers a skill_authoring background job.
+   */
+  skills?: SkillsToolFacade | undefined;
+  /**
+   * P09 wiki domain (optional in stripped unit setups): the read-only
+   * wiki_search / wiki_read tools and the wiki_enqueue registration tool.
+   */
+  wiki?: WikiToolFacade | undefined;
+  /**
+   * P10 schedule domain (optional in stripped unit setups): the schedule /
+   * list_schedules / cancel_schedule tools.
+   */
+  schedule?: ScheduleToolFacade | undefined;
+  /**
+   * P11 browser capability hosted by the main process (port B). Present in
+   * the real core; tests may omit it (no browser_* tools are registered).
+   */
+  browser?: BrowserHostRpc | undefined;
+  /**
+   * 对话式新建（setup interview，UI 改版）：仅在 bots.setup_state =
+   * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
+   */
+  setup?: SetupToolFacade | undefined;
+  /**
+   * 图像生成后端（docs/design/18-inline-setup.md）：present 时注册
+   * generate_image 工具；未配置能力时工具返回 SETUP_REQUIRED，由
+   * orchestrator 中断 run 并引导设置。
+   */
+  media?: MediaToolFacade | undefined;
+  /**
+   * 联网检索网关（docs/design/21-web-search.md）：present 时注册
+   * web_search / web_fetch 工具；web_search 缺配置返回 SETUP_REQUIRED。
+   */
+  search?: SearchToolFacade | undefined;
+  /**
+   * 技能安装门面（docs/design/22-file-skill-routing.md）：present 时注册
+   * install_skill 工具（预置轻授权 / 外部仓库扫描审批，均阻塞等用户决定）。
+   */
+  skillInstall?: SkillInstallFacade | undefined;
+}
+
+/** The slice of SkillsService the create_skill tool needs. */
+export interface SkillsToolFacade {
+  requestAuthoring(input: {
+    botId: string;
+    conversationId: string;
+    name: string;
+    description: string;
+    reason: string;
+  }): { ok: boolean; message: string };
+}
+
+/** The slice of EnvManager the request_environment tool needs. */
+export interface EnvironmentToolFacade {
+  request(
+    identity: RunIdentity,
+    input: { item: string; version?: string; reason: string },
+  ): Promise<
+    | { status: 'installed'; item: string; version: string; path: string; system: boolean }
+    | { status: 'installing'; item: string }
+    | { status: 'submitted'; item: string; approvalId: string }
+  >;
+  /** Catalog items offered on this platform (for the unknown-item listing). */
+  offeredItems(): string[];
+}
+
+const TEXTUAL_MIME = /^(text\/|application\/(json|xml|javascript|x-yaml|sql))/;
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.json': 'application/json',
+  '.csv': 'text/csv',
+  '.html': 'text/html',
+  '.zip': 'application/zip',
+};
+
+function guessMime(fileName: string): string {
+  return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
+}
+
+/** Response-loop tools (docs/dev/04-agent-runtime.md "工具目录"). */
+export function buildResponseTools(input: {
+  identity: RunIdentity;
+  deps: ResponseToolDeps;
+}): ToolDefinition[] {
+  const { identity, deps } = input;
+  const { gateway } = deps;
+
+  const sendMessage: ToolDefinition<{
+    text: string;
+    mention_bot_ids?: string[];
+    reply_to?: string;
+    attachment_paths?: string[];
+  }> = {
+    name: 'send_message',
+    description:
+      '在当前对话中发送一条消息（用于中途同步进展、确认收到）。最终回复无需调用本工具，直接结束即可。可通过 attachment_paths 附带 workspace 中的文件。',
+    parameters: Type.Object({
+      text: Type.String({ description: '要发送的消息内容' }),
+      mention_bot_ids: Type.Optional(
+        Type.Array(Type.String(), { description: '要 @ 的 Bot id（群聊）' }),
+      ),
+      reply_to: Type.Optional(Type.String({ description: '引用回复的消息 id' })),
+      attachment_paths: Type.Optional(
+        Type.Array(Type.String(), { description: '附件路径（workspace 内的文件）' }),
+      ),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前上下文没有对话，无法发送消息',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      const uploaded = [];
+      for (const filePath of params.attachment_paths ?? []) {
+        const decision = gateway.checkPath(identity, filePath, 'read');
+        if (decision.kind === 'forbidden') {
+          return {
+            ok: false,
+            content: `附件不在可访问范围内：${filePath}（${decision.reason}）`,
+            errorCode: 'PATH_OUT_OF_SCOPE',
+          };
+        }
+        try {
+          const bytes = readFileSync(decision.resolvedPath);
+          uploaded.push(
+            deps.attachments.upload({
+              conversationId: identity.conversationId,
+              fileName: path.basename(filePath),
+              mime: guessMime(filePath),
+              bytes,
+            }),
+          );
+        } catch (error) {
+          return {
+            ok: false,
+            content: `读取附件失败：${filePath}（${error instanceof Error ? error.message : String(error)}）`,
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+      }
+      const message = deps.messages.append({
+        conversationId: identity.conversationId,
+        senderType: 'bot',
+        senderBotId: identity.botId,
+        kind: 'text',
+        text: params.text,
+        replyTo: params.reply_to ?? null,
+        mentions: params.mention_bot_ids ?? [],
+        runId: identity.runId,
+      });
+      if (uploaded.length > 0)
+        deps.attachments.attachToMessage(
+          uploaded.map((a) => a.id),
+          message.id,
+        );
+      deps.onBotMessage(message);
+      const note = uploaded.length > 0 ? `，附件 ${uploaded.length} 个` : '';
+      const mentionIds = params.mention_bot_ids ?? [];
+      const chainNote =
+        mentionIds.length > 0 ? (deps.onMentionBots?.(mentionIds, message) ?? '') : '';
+      return { ok: true, content: `已发送（消息 id：${message.id}${note}）${chainNote}` };
+    },
+  };
+
+  const skipReply: ToolDefinition<{ reason: string }> = {
+    name: 'skip_reply',
+    description: '结束本次执行且不发送最终回复（例如已经有人回答、无需回应）。',
+    parameters: Type.Object({
+      reason: Type.String({ description: '不回复的原因' }),
+    }),
+    execute: async (params) => {
+      void params;
+      return { ok: true, content: '好的，本次执行结束，不发送回复。', terminate: true };
+    },
+  };
+
+  const searchMessages: ToolDefinition<{ query: string; limit?: number }> = {
+    name: 'search_messages',
+    description: '按关键词搜索当前对话中的历史消息。',
+    parameters: Type.Object({
+      query: Type.String({ description: '关键词' }),
+      limit: Type.Optional(Type.Number({ description: '返回条数上限，默认 20' })),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null) {
+        return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
+      }
+      const found = deps.messages.search(identity.conversationId, params.query, {
+        limit: Math.min(50, params.limit ?? 20),
+      });
+      if (found.length === 0) return { ok: true, content: '没有找到匹配的消息。' };
+      const lines = found.map((m) => renderMessageLine(m, deps.renderOptions));
+      return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
+    },
+  };
+
+  const getMessagesAround: ToolDefinition<{ message_id: string; n?: number }> = {
+    name: 'get_messages_around',
+    description: '获取某条消息前后各 N 条消息（N ≤ 20），用于了解上下文。',
+    parameters: Type.Object({
+      message_id: Type.String({ description: '消息 id' }),
+      n: Type.Optional(Type.Number({ description: '前后各取几条，默认 5' })),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null) {
+        return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
+      }
+      const anchor = deps.messages.getById(params.message_id);
+      if (!anchor || anchor.conversationId !== identity.conversationId) {
+        return { ok: false, content: '消息不存在或不属于当前对话', errorCode: 'NOT_FOUND' };
+      }
+      const n = Math.max(1, Math.min(20, Math.floor(params.n ?? 5)));
+      const around = deps.messages.around(identity.conversationId, anchor.seq, n);
+      const lines = around.map((m) => renderMessageLine(m, deps.renderOptions));
+      return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
+    },
+  };
+
+  const getAttachment: ToolDefinition<{ attachment_id: string }> = {
+    name: 'get_attachment',
+    description: '读取当前对话中的附件：文本类返回内容，其他类型复制到 workspace 并返回路径。',
+    parameters: Type.Object({
+      attachment_id: Type.String({ description: '附件 id（形如 att_...）' }),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null) {
+        return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
+      }
+      const attachment = deps.attachments.get(params.attachment_id);
+      if (!attachment || attachment.conversationId !== identity.conversationId) {
+        return { ok: false, content: '附件不存在或不属于当前对话', errorCode: 'NOT_FOUND' };
+      }
+      const bytes = deps.attachments.readBytes(attachment);
+      if (TEXTUAL_MIME.test(attachment.mime)) {
+        const truncated = truncateToBudget(bytes.toString('utf8'), TOOL_OUTPUT_MAX_CHARS);
+        const suffix = truncated.truncated ? '\n[输出已截断]' : '';
+        return {
+          ok: true,
+          content: `<untrusted>附件 ${attachment.fileName}：\n${deps.secrets.redact(truncated.text)}${suffix}</untrusted>`,
+        };
+      }
+      // Non-textual: copy into the workspace so bash / read can use the file.
+      const targetDir = path.join(deps.workspacePath, '.attachments');
+      const target = path.join(targetDir, `${attachment.id}_${attachment.fileName}`);
+      const decision = gateway.checkPath(identity, target, 'write');
+      if (decision.kind === 'forbidden') {
+        return {
+          ok: false,
+          content: `无法复制附件：${decision.reason}`,
+          errorCode: 'PATH_OUT_OF_SCOPE',
+        };
+      }
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(decision.resolvedPath, bytes);
+      gateway.audit(identity, 'fs_write', { path: decision.resolvedPath, tool: 'get_attachment' });
+      return {
+        ok: true,
+        content: `附件已复制到 workspace：${decision.resolvedPath}`,
+      };
+    },
+  };
+
+  const listMyRuns: ToolDefinition<Record<string, never>> = {
+    name: 'list_my_runs',
+    description: '查询自己在当前对话中的执行记录摘要。',
+    parameters: Type.Object({}),
+    execute: async () => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
+      }
+      const runs = deps.runs
+        .listByConversation(identity.conversationId, 20)
+        .filter((r) => r.botId === identity.botId && r.loopType === 'response');
+      if (runs.length === 0) return { ok: true, content: '还没有执行记录。' };
+      const lines = runs.map(
+        (r) =>
+          `${r.id} | ${r.status} | ${r.triggerReason ?? '-'} | ${new Date(r.createdAt).toISOString()} | ${r.summary ?? r.error ?? ''}`,
+      );
+      return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
+    },
+  };
+
+  const getRun: ToolDefinition<{ run_id: string }> = {
+    name: 'get_run',
+    description: '查看某次执行的步骤概要。',
+    parameters: Type.Object({
+      run_id: Type.String({ description: '执行 id（形如 run_...）' }),
+    }),
+    execute: async (params) => {
+      const run = deps.runs.get(params.run_id);
+      if (!run || run.conversationId !== identity.conversationId) {
+        return { ok: false, content: '执行记录不存在', errorCode: 'RUN_NOT_FOUND' };
+      }
+      const steps = deps.runs.stepsFor(run.id);
+      const lines = steps.map((s) => {
+        const payload = s.payload as Record<string, unknown>;
+        switch (s.type) {
+          case 'tool_call':
+            return `${s.seq}. 调用工具 ${payload['toolName']}`;
+          case 'tool_result':
+            return `${s.seq}. 工具返回（${payload['ok'] ? '成功' : '失败'}）`;
+          case 'progress':
+            return `${s.seq}. ${payload['text']}`;
+          case 'assistant':
+            return `${s.seq}. 模型输出（${payload['stopReason']}）`;
+          default:
+            return `${s.seq}. ${s.type}`;
+        }
+      });
+      return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
+    },
+  };
+
+  const requestAccess: ToolDefinition<{
+    path: string;
+    access: 'read' | 'write';
+    reason: string;
+  }> = {
+    name: 'request_access',
+    description:
+      '申请访问 workspace 以外的文件或目录（读或写）。文件工具越界时也会自动发起授权；需要在批量操作前一次性申请时使用本工具。用户批准后授权立即生效；拒绝时你会收到拒绝结果，请调整做法。',
+    parameters: Type.Object({
+      path: Type.String({ description: '要访问的文件或目录（绝对路径或相对 workspace 的路径）' }),
+      access: Type.Union([Type.Literal('read'), Type.Literal('write')], {
+        description: '访问类型：read 只读，write 读写（包含读）',
+      }),
+      reason: Type.String({ description: '申请原因，会展示给用户' }),
+    }),
+    execute: async (params, ctx) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法申请授权',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      if (params.access !== 'read' && params.access !== 'write') {
+        return { ok: false, content: 'access 只能是 read 或 write', errorCode: 'INVALID_INPUT' };
+      }
+      try {
+        const resolved = await gateway.ensurePathAccess(
+          identity,
+          params.path,
+          params.access,
+          params.reason,
+          {
+            signal: ctx.signal,
+          },
+        );
+        return {
+          ok: true,
+          content: `用户已批准${params.access === 'write' ? '读写' : '读取'}：${resolved}`,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          return {
+            ok: false,
+            content: '用户拒绝或取消了该授权请求。请调整做法，例如改用 workspace 内的路径。',
+            errorCode: 'APPROVAL_DENIED',
+          };
+        }
+        if (error instanceof AppError && error.code === 'PATH_OUT_OF_SCOPE') {
+          return { ok: false, content: error.message, errorCode: 'PATH_OUT_OF_SCOPE' };
+        }
+        throw error;
+      }
+    },
+  };
+
+  const requestUnsandboxed: ToolDefinition<{
+    command: string;
+    cwd?: string;
+    reason: string;
+  }> = {
+    name: 'request_unsandboxed',
+    description:
+      '申请在沙箱外执行一条命令（例如需要调用 Docker、系统钥匙串等沙箱内不可用的能力）。每次执行都需要用户逐条确认，没有“一直允许”；沙箱外的改动不保证可以回退。',
+    parameters: Type.Object({
+      command: Type.String({ description: '要在沙箱外执行的完整命令' }),
+      cwd: Type.Optional(
+        Type.String({ description: '工作目录（必须在 workspace 内，默认 workspace）' }),
+      ),
+      reason: Type.String({ description: '执行原因，会展示给用户' }),
+    }),
+    execute: async (params, ctx) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法申请沙箱外执行',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      let cwd: string | undefined;
+      if (params.cwd !== undefined) {
+        const decision = gateway.checkPath(identity, params.cwd, 'read');
+        const base = deps.projectPath ?? deps.workspacePath;
+        if (decision.kind !== 'allowed' || !decision.resolvedPath.startsWith(base)) {
+          return {
+            ok: false,
+            content: 'cwd 必须位于当前 project 或 workspace 内',
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+        cwd = decision.resolvedPath;
+      }
+      try {
+        const result = await gateway.requestUnsandboxed(identity, params.command, params.reason, {
+          signal: ctx.signal,
+          cwd,
+        });
+        const body = [result.stdout, result.stderr]
+          .filter((s) => s.length > 0)
+          .join('\n')
+          .trim();
+        const redacted = deps.secrets.redact(body);
+        const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
+        const suffix = truncated.truncated ? '\n[输出已截断]' : '';
+        return {
+          ok: result.exitCode === 0,
+          content: `<untrusted>命令已在沙箱外执行（退出码 ${result.exitCode ?? 'unknown'}）：\n${truncated.text || '（无输出）'}${suffix}</untrusted>`,
+          ...(result.exitCode === 0 ? {} : { errorCode: 'COMMAND_FAILED' }),
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          return {
+            ok: false,
+            content: '用户未批准沙箱外执行。请改用沙箱内可完成的方案。',
+            errorCode: 'APPROVAL_DENIED',
+          };
+        }
+        throw error;
+      }
+    },
+  };
+
+  const acquireProjectWrite: ToolDefinition<{ reason?: string }> = {
+    name: 'acquire_project_write',
+    description:
+      '申请 project 写入租约。执行会改动 project 文件的命令（安装依赖、格式化等）前必须先调用；使用 write / edit 工具时会自动申请，无需重复调用。租约被其他执行持有时会排队等待。',
+    parameters: Type.Object({
+      reason: Type.Optional(Type.String({ description: '申请原因，会展示给用户' })),
+    }),
+    execute: async (params, ctx) => {
+      const project = deps.projects.boundProject(identity.conversationId);
+      if (project === null) {
+        return {
+          ok: false,
+          content: '当前对话未绑定 project，无需申请写入租约',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      if (project.status === 'missing') {
+        return {
+          ok: false,
+          content: `项目目录不存在（可能被移动或删除）：${project.path}`,
+          errorCode: 'PROJECT_MISSING',
+        };
+      }
+      try {
+        await deps.projects.ensureWriteLease(identity, project.path, {
+          signal: ctx.signal,
+          reason: params.reason ?? '申请 project 写入租约',
+        });
+        return { ok: true, content: `已取得 ${project.name} 的写入租约，可以执行改动项目的命令。` };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
+          return { ok: false, content: '执行已取消，未取得租约', errorCode: 'APPROVAL_DENIED' };
+        }
+        throw error;
+      }
+    },
+  };
+
+  const gitRemote: ToolDefinition<{
+    operation: GitRemoteOperation;
+    args?: string[];
+    reason: string;
+  }> = {
+    name: 'git_remote',
+    description:
+      '申请执行 git 远程操作（push / pull / fetch / clone / remote_add / init）。这类操作无法在沙箱内完成：每次都需要用户确认，由应用在沙箱外调用系统 git（使用你本机已配置的凭据）。args 逐条给出命令行参数，不要包含 shell 引号或命令替换。',
+    parameters: Type.Object({
+      operation: Type.Union(
+        ['push', 'pull', 'fetch', 'clone', 'remote_add', 'init'].map((op) => Type.Literal(op)),
+        { description: 'git 子命令' },
+      ),
+      args: Type.Optional(
+        Type.Array(Type.String(), { description: 'git 命令参数（如 remote 名称与 URL、分支名）' }),
+      ),
+      reason: Type.String({ description: '执行原因，会展示给用户' }),
+    }),
+    execute: async (params, ctx) => {
+      const args = params.args ?? [];
+      try {
+        const result = await gateway.gitRemote(
+          identity,
+          { operation: params.operation, args, reason: params.reason },
+          { signal: ctx.signal },
+        );
+        const redacted = deps.secrets.redact(result.output);
+        const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
+        const suffix = truncated.truncated ? '\n[输出已截断]' : '';
+        return {
+          ok: result.exitCode === 0,
+          content: `<untrusted>git ${params.operation} 已在沙箱外执行（退出码 ${result.exitCode ?? 'unknown'}）：\n${truncated.text || '（无输出）'}${suffix}</untrusted>`,
+          ...(result.exitCode === 0 ? {} : { errorCode: 'COMMAND_FAILED' }),
+        };
+      } catch (error) {
+        if (error instanceof AppError) {
+          const hints: Record<string, string> = {
+            APPROVAL_DENIED: '用户拒绝或取消了该 git 远程操作。不要重试，改为询问用户。',
+            GIT_CLI_MISSING: '本机未安装 git 命令行。请告知用户安装 git 后重试。',
+            PROJECT_MISSING: '项目目录不存在，无法执行 git 操作。',
+            INVALID_INPUT: '当前对话未绑定 project，无法执行 git 远程操作。',
+          };
+          return {
+            ok: false,
+            content: hints[error.code] ?? error.message,
+            errorCode: error.code,
+          };
+        }
+        throw error;
+      }
+    },
+  };
+
+  const requestEnvironment: ToolDefinition<{
+    item: string;
+    version?: string;
+    reason: string;
+  }> = {
+    name: 'request_environment',
+    description:
+      '申请安装宿主层环境（所有 Bot 共享），例如 python、node、uv 或 git 命令行。用户批准后自动下载安装（或打开系统安装器），完成后你会收到事件通知，无需等待或轮询。安装到应用私有目录，不改动系统环境。可先调用本工具查询：已安装会直接返回路径。',
+    parameters: Type.Object({
+      item: Type.String({ description: '环境项名称，例如 python、node、uv、git' }),
+      version: Type.Optional(
+        Type.String({ description: '期望版本（当前固定使用目录版本，仅作提示）' }),
+      ),
+      reason: Type.String({ description: '申请原因，会展示给用户' }),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法申请安装环境',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      try {
+        const outcome = await deps.environment.request(identity, {
+          item: params.item,
+          ...(params.version !== undefined ? { version: params.version } : {}),
+          reason: params.reason,
+        });
+        if (outcome.status === 'installed') {
+          return {
+            ok: true,
+            content: `环境 ${outcome.item}（${outcome.version}）已可用，路径：${outcome.path}${outcome.system ? '（系统安装）' : ''}。可直接在命令中使用。`,
+          };
+        }
+        if (outcome.status === 'installing') {
+          return {
+            ok: true,
+            content: `环境 ${outcome.item} 正在安装中，完成后会通知你。`,
+          };
+        }
+        return {
+          ok: true,
+          content: `已提交 ${outcome.item} 的安装申请（审批 id：${outcome.approvalId}），用户批准后会自动下载安装。批准、拒绝或安装完成/失败都会以事件通知你，无需等待或轮询；收到通知前请先做其他能做的部分。`,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === 'ENV_ITEM_UNKNOWN') {
+          const offered = deps.environment.offeredItems().join('、');
+          return {
+            ok: false,
+            content: `${error.message}。可申请的项：${offered}`,
+            errorCode: 'ENV_ITEM_UNKNOWN',
+          };
+        }
+        if (error instanceof AppError && error.code === 'ENV_ITEM_UNSUPPORTED_PLATFORM') {
+          return { ok: false, content: error.message, errorCode: error.code };
+        }
+        throw error;
+      }
+    },
+  };
+
+  const coding = buildCodingTools(identity, {
+    gateway,
+    workspacePath: deps.workspacePath,
+    projectPath: deps.projectPath,
+    network: deps.network,
+    secrets: deps.secrets,
+    fsState: deps.fsState,
+  });
+
+  // P07 memory tools (evidence = the triggering batch of this run).
+  const memoryTools =
+    deps.memory !== undefined
+      ? buildMemoryTools({
+          identity,
+          memory: {
+            ...deps.memory,
+            triggerMessages: () => deps.batchMessages ?? [],
+          },
+        })
+      : [];
+
+  // P08 create_skill (docs/dev/04-agent-runtime.md 工具目录, R 列).
+  const createSkill: ToolDefinition<{
+    name: string;
+    description: string;
+    reason: string;
+  }> = {
+    name: 'create_skill',
+    description:
+      '登记一个技能生成任务（用户说“以后都这样做”或希望把某类重复工作沉淀为技能时使用）。后台技能生成 loop 会起草稿、验证（语法 + 沙箱跑测试），通过后自动启用并通知；失败时保留草稿不打扰用户。技能名只能用小写字母、数字和连字符。',
+    parameters: Type.Object({
+      name: Type.String({ description: '技能名（小写字母、数字、连字符，例如 deploy-check）' }),
+      description: Type.String({ description: '一句话描述这个技能做什么、何时使用' }),
+      reason: Type.String({ description: '为什么要沉淀这个技能（会帮助生成 loop 理解背景）' }),
+    }),
+    execute: async (params) => {
+      if (identity.botId === null || identity.conversationId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法登记技能生成任务',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      const outcome = deps.skills?.requestAuthoring({
+        botId: identity.botId,
+        conversationId: identity.conversationId,
+        name: params.name,
+        description: params.description,
+        reason: params.reason,
+      });
+      if (outcome === undefined) {
+        return { ok: false, content: '技能模块未就绪', errorCode: 'INTERNAL' };
+      }
+      return outcome.ok
+        ? { ok: true, content: outcome.message }
+        : { ok: false, content: outcome.message, errorCode: 'INVALID_INPUT' };
+    },
+  };
+
+  // P09 wiki tools (docs/dev/04-agent-runtime.md 工具目录, R 列): read-only
+  // towards the wiki + the enqueue registration.
+  const wikiTools = deps.wiki !== undefined ? buildWikiTools({ identity, wiki: deps.wiki }) : [];
+
+  // P10 schedule tools (docs/dev/04-agent-runtime.md 工具目录, R 列).
+  const scheduleTools =
+    deps.schedule !== undefined ? buildScheduleTools({ identity, schedule: deps.schedule }) : [];
+
+  // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
+  // — 公网默认可访问，网络规则在主进程的页面网络上下文中强制).
+  const browserTools =
+    deps.browser !== undefined
+      ? buildBrowserTools({
+          identity,
+          browser: deps.browser,
+          workspacePath: deps.workspacePath,
+          projectPath: deps.projectPath,
+        })
+      : [];
+
+  // 对话式新建（setup interview）：访谈期间才注册，正常运行的 Bot 不可见。
+  const setupTools =
+    deps.setup !== undefined ? buildSetupTools({ identity, setup: deps.setup }) : [];
+
+  // 图像/语音/视频生成（docs/design/18-inline-setup.md、20-conversation-media.md）：
+  // 媒体网关就绪才注册；未配置能力时工具返回 SETUP_REQUIRED，由 orchestrator
+  // 中断 run 并引导设置。
+  const imageTools =
+    deps.media !== undefined
+      ? buildImageTools({
+          identity,
+          media: deps.media,
+          workspacePath: deps.workspacePath,
+        })
+      : [];
+  const speechTools =
+    deps.media !== undefined
+      ? buildSpeechTools({
+          identity,
+          media: deps.media,
+          workspacePath: deps.workspacePath,
+        })
+      : [];
+
+  // 联网检索（docs/design/21-web-search.md）：网关就绪才注册。
+  const webTools = deps.search !== undefined ? buildWebTools({ search: deps.search }) : [];
+
+  // 技能安装（docs/design/22-file-skill-routing.md）：门面就绪才注册。
+  const skillTools =
+    deps.skillInstall !== undefined ? buildSkillTools({ identity, skills: deps.skillInstall }) : [];
+
+  return [
+    sendMessage,
+    skipReply,
+    searchMessages,
+    getMessagesAround,
+    getAttachment,
+    listMyRuns,
+    getRun,
+    requestAccess,
+    requestUnsandboxed,
+    acquireProjectWrite,
+    gitRemote,
+    requestEnvironment,
+    ...coding,
+    ...memoryTools,
+    ...(deps.skills !== undefined ? [createSkill] : []),
+    ...wikiTools,
+    ...scheduleTools,
+    ...browserTools,
+    ...imageTools,
+    ...speechTools,
+    ...webTools,
+    ...skillTools,
+    ...setupTools,
+  ];
+}
+
+/** Shared no-op result helper for tests. */
+export function emptyToolResult(): ToolResult {
+  return { ok: true, content: '' };
+}

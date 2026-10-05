@@ -1,0 +1,135 @@
+#!/bin/bash
+# =============================================================================
+# kepcup-mount — the ONLY mount path inside the private sandbox VM (P12 任务 5).
+# Installed by build-rootfs.sh at /opt/kepcup/bin/kepcup-mount and executed exclusively
+# via `wsl -d Kepcup -u root -- /opt/kepcup/bin/kepcup-mount …` (sandbox/wsl) or
+# provisioned likewise in the Podman image / Lima VM.
+#
+# 安全基线（红线）：
+#   - the host validates every call against the mount registration BEFORE
+#     invoking this script (packages/core/src/sandbox/wsl/mounts.ts);
+#   - this script independently re-validates its own arguments: mountpoint
+#     must match ^/mnt/kepcup/[0-9a-f]{16}$, mode must be ro|rw, and the decoded
+#     source must be an absolute Windows drive/UNC path — a malformed or
+#     missing argument is a hard refusal, never a best effort;
+#   - the source travels base64url-encoded so no shell quoting / encoding
+#     difference (UTF-16 paths, spaces, non-ASCII) can smuggle arguments;
+#   - unmounts only ever touch /mnt/kepcup/*.
+# =============================================================================
+set -euo pipefail
+
+MOUNT_ROOT="/mnt/kepcup"
+
+usage() {
+  echo "usage: kepcup-mount mount --src-b64 <base64url> --mountpoint /mnt/kepcup/<16hex> --mode ro|rw" >&2
+  echo "       kepcup-mount umount --mountpoint /mnt/kepcup/<16hex>" >&2
+  exit 2
+}
+
+validate_mountpoint() {
+  case "$1" in
+    ${MOUNT_ROOT}/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+      return 0
+      ;;
+    *)
+      echo "kepcup-mount: 非法挂载点：$1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_mode() {
+  case "$1" in
+    ro|rw) return 0 ;;
+    *) echo "kepcup-mount: 非法模式：$1" >&2; exit 2 ;;
+  esac
+}
+
+# base64url → base64 → bytes (coreutils base64 handles the alphabet swap via tr + padding).
+decode_src_b64() {
+  local raw="$1"
+  local padded="${raw}"
+  local pad=$(( (4 - ${#raw} % 4) % 4 ))
+  while [ "${pad}" -gt 0 ]; do
+    padded="${padded}="
+    pad=$((pad - 1))
+  done
+  printf '%s' "${padded}" | tr '_-' '/+' | base64 -d
+}
+
+validate_source() {
+  local src="$1"
+  # Absolute Windows drive path (C:\…) or UNC (\\server\share) only — the
+  # registry of legitimate sources lives on the host; here we refuse anything
+  # that is not even shaped like a Windows directory.
+  if ! printf '%s' "${src}" | grep -Eq '^[A-Za-z]:\\.*' && ! printf '%s' "${src}" | grep -Eq '^\\\\[^\\].*'; then
+    echo "kepcup-mount: 非法挂载源（必须是 Windows 绝对路径）" >&2
+    exit 2
+  fi
+}
+
+is_already_mounted() {
+  mountpoint -q "$1"
+}
+
+CMD="${1:-}"
+shift || true
+case "${CMD}" in
+  mount)
+    SRC_B64="" ; MP="" ; MODE=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --src-b64) SRC_B64="${2:-}"; shift 2 ;;
+        --mountpoint) MP="${2:-}"; shift 2 ;;
+        --mode) MODE="${2:-}"; shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    [ -n "${SRC_B64}" ] && [ -n "${MP}" ] && [ -n "${MODE}" ] || usage
+    validate_mountpoint "${MP}"
+    validate_mode "${MODE}"
+    SRC="$(decode_src_b64 "${SRC_B64}")"
+    validate_source "${SRC}"
+    mkdir -p "${MP}"
+    if is_already_mounted "${MP}"; then
+      current="$(findmnt -n -o OPTIONS "${MP}" || true)"
+      case "${current}" in
+        ro|ro,*) current_mode="ro" ;;
+        *) current_mode="rw" ;;
+      esac
+      if [ "${current_mode}" = "${MODE}" ]; then
+        exit 0
+      fi
+      # Mode change (BR-P12-008): remount so the requested mode is
+      # authoritative. Silently keeping rw when ro was requested would widen
+      # access; keeping ro when rw was requested would break writes. A busy
+      # mount fails the umount (set -e) → non-zero exit → the host fails the
+      # command instead of running against the wrong mode.
+      umount "${MP}"
+    fi
+    if [ "${MODE}" = "ro" ]; then
+      mount -t drvfs -o ro "${SRC}" "${MP}"
+    else
+      mount -t drvfs "${SRC}" "${MP}"
+    fi
+    echo "mounted ${MP}"
+    ;;
+  umount)
+    MP=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --mountpoint) MP="${2:-}"; shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    [ -n "${MP}" ] || usage
+    validate_mountpoint "${MP}"
+    if is_already_mounted "${MP}"; then
+      umount "${MP}"
+    fi
+    echo "unmounted ${MP}"
+    ;;
+  *)
+    usage
+    ;;
+esac

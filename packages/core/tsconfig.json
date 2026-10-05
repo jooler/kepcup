@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      // The package's exports map lacks a "types" condition; point tsc at the
+      // shipped declarations directly.
+      "better-sqlite3-multiple-ciphers": ["node_modules/better-sqlite3-multiple-ciphers/index.d.ts"]
+    }
+  },
+  "include": ["src"]
+}

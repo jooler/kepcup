@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "target": "es2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "jsx": "preserve",
+    "types": ["svelte", "vite/client", "node"],
+    "paths": {
+      "$lib": ["./src/renderer/src/lib"],
+      "$lib/*": ["./src/renderer/src/lib/*"]
+    },
+    "noEmit": true
+  },
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.svelte"]
+}

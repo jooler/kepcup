@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "docx",
+      "dir": "docx",
+      "section": "starter",
+      "displayName": "Word 文档",
+      "summary": "写/改报告、方案、合同初稿，支持批注修订与格式转换",
+      "icon": "file-text",
+      "version": "1.0.0",
+      "tryIt": "把这份周报素材丢给我，整理成一份 Word 周报"
+    },
+    {
+      "id": "xlsx",
+      "dir": "xlsx",
+      "section": "starter",
+      "displayName": "Excel 表格",
+      "summary": "汇总、透视、图表与格式转换，做出能交付的数据报表",
+      "icon": "table-2",
+      "version": "1.0.0",
+      "tryIt": "把这份数据整理成带图表的月度汇总表"
+    },
+    {
+      "id": "pptx",
+      "dir": "pptx",
+      "section": "starter",
+      "displayName": "PPT 演示",
+      "summary": "从大纲生成周会/汇报幻灯片，改版式与模板配色",
+      "icon": "presentation",
+      "version": "1.0.0",
+      "tryIt": "按这份报告给我出 8 页汇报 PPT"
+    },
+    {
+      "id": "pdf",
+      "dir": "pdf",
+      "section": "starter",
+      "displayName": "PDF 处理",
+      "summary": "提取文字表格、合并拆分、填表单、生成 PDF",
+      "icon": "file-type",
+      "version": "1.0.0",
+      "tryIt": "把这几份 PDF 合并成一个，并提取里面的表格"
+    },
+    {
+      "id": "meeting-notes",
+      "dir": "meeting-notes",
+      "section": "starter",
+      "displayName": "会议纪要",
+      "summary": "杂乱笔记 → 决议、待办与可追责的纪要",
+      "icon": "notebook-pen",
+      "version": "1.0.0",
+      "tryIt": "这是刚才开会记的草稿，帮我整理成纪要"
+    },
+    {
+      "id": "weekly-report",
+      "dir": "weekly-report",
+      "section": "starter",
+      "displayName": "周报日报",
+      "summary": "按固定模板出向上汇报：进展、数据、风险、计划",
+      "icon": "clipboard-list",
+      "version": "1.0.0",
+      "tryIt": "根据这些素材给我出本周周报"
+    },
+    {
+      "id": "internal-comms",
+      "dir": "internal-comms",
+      "section": "starter",
+      "displayName": "对内沟通稿",
+      "summary": "公告、全员信、变更通知，按场景选体例与正式程度",
+      "icon": "megaphone",
+      "version": "1.0.0",
+      "tryIt": "写一份系统停机升级的通知"
+    },
+    {
+      "id": "doc-coauthoring",
+      "dir": "doc-coauthoring",
+      "section": "starter",
+      "displayName": "协作改稿",
+      "summary": "提纲对齐、分节成稿、批注修订的多轮改稿流程",
+      "icon": "pen-line",
+      "version": "1.0.0",
+      "tryIt": "和我一起把这份方案打磨到能过评审"
+    },
+    {
+      "id": "mineru",
+      "dir": "mineru",
+      "section": "starter",
+      "displayName": "文档解析（MinerU）",
+      "summary": "PDF/扫描件/Office 转 Markdown：公式、表格、OCR 高保真还原，本地解析优先（设计 17）",
+      "icon": "scan-text",
+      "version": "1.0.0",
+      "tryIt": "把这份 PDF 论文解析成 Markdown，再整理进我的知识库",
+      "vendored": true
+    }
+  ]
+}

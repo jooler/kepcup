@@ -1,0 +1,131 @@
+# P13 任务 1：按平台矩阵构建安装包（docs/dev/phases/P13-release.md）。
+#
+# 触发：手动（workflow_dispatch）或推 tag（v*）。tag 推送只产出构建工件
+# （upload-artifact），绝不发布——scripts/dist.mjs 固定传 `--publish never`
+# （BR-P13-003：electron-builder 在 CI + tag + GH_TOKEN 下默认 onTagOrDraft
+# 隐式发布，必须显式钉死）。发布（publish）默认关闭；接入真实发布仓库后
+# 取消注释 publish 步骤并配置机密（该步骤显式调用 --publish）。
+#
+# 签名/公证凭据只存在于 CI 机密（任务书注意事项），全部为占位名：
+#   macOS 签名+公证：CSC_LINK / CSC_KEY_PASSWORD（或 Apple 开发者证书导出）、
+#                    APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（notarytool）
+#   Windows 代码签名：WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD
+#                    （或 Azure Trusted Signing：AZURE_TENANT_ID / AZURE_CLIENT_ID /
+#                     AZURE_CLIENT_SECRET / AZURE_SIGNING_ACCOUNT_NAME / AZURE_SIGNING_ACCOUNT_ENDPOINT）
+#   GitHub Releases 发布凭据：GH_TOKEN
+# 未配置机密时 electron-builder 跳过签名（产物未签名，仅用于测试）。
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to GitHub Releases（需先配置机密与真实 publish 仓库）'
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  # rootfs.tar 是 Windows 安装包的一部分（P12 CI 产出方案接线，P13 落地）。
+  # 脚本本身不在此执行环境重复校验——见 build-rootfs.sh 头注释（产物守卫内置）。
+  rootfs:
+    name: WSL rootfs (Debian 12, for Windows targets)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # 依赖 docker（ubuntu runner 自带）。脚本把 rootfs.tar + rootfs-manifest.json
+      # 直接写入 apps/desktop/resources/wsl/（产物守卫内置：大小下限 + 关键成员校验）。
+      - name: Build rootfs.tar
+        run: bash apps/desktop/scripts/build-wsl-rootfs/build-rootfs.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wsl-rootfs
+          path: apps/desktop/resources/wsl/
+          retention-days: 7
+
+  build:
+    name: ${{ matrix.name }}
+    needs: rootfs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64 (dmg+zip, unsigned locally)
+            os: macos-latest
+            args: --mac --arm64
+          - name: macOS x64 (dmg+zip)
+            os: macos-13
+            args: --mac --x64
+          - name: Windows x64 (nsis)
+            os: windows-latest
+            args: --win --x64
+          - name: Windows arm64 (nsis)
+            os: windows-latest
+            args: --win --arm64
+          - name: Linux x64 (AppImage+deb)
+            os: ubuntu-24.04
+            args: --linux --x64
+          - name: Linux arm64 (AppImage+deb)
+            os: ubuntu-24.04-arm
+            args: --linux --arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      # Windows 安装包需要 rootfs.tar（rootfs job 产出）；其他平台忽略下载失败。
+      - uses: actions/download-artifact@v4
+        with:
+          name: wsl-rootfs
+          path: apps/desktop/resources/wsl
+        continue-on-error: true
+      - name: Build distributable
+        # 签名凭据经机密注入（见文件头占位说明）；环境变量名与 electron-builder
+        # 约定一致，未配置时自动跳过签名。macOS 公证需要 APPLE_* 三元组。
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Azure Trusted Signing（可选替代，占位）：
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @kepcup/desktop dist ${{ matrix.args }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}-${{ strategy.job-index }}
+          path: apps/desktop/release/
+          retention-days: 14
+          if-no-files-found: error
+
+  # 接入真实发布仓库后启用（默认关闭——publish 仓库 owner/repo 目前是占位）。
+  # publish:
+  #   name: Publish to GitHub Releases
+  #   needs: build
+  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || inputs.publish
+  #   runs-on: ubuntu-24.04
+  #   steps:
+  #     - uses: actions/download-artifact@v4
+  #       with:
+  #         path: dist-artifacts
+  #     - name: Publish
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  #       run: |
+  #         npx electron-builder --publish always
+  #       # 或用 gh release create 上传 dist-artifacts 内的 dmg/zip/exe/AppImage/deb 与 latest*.yml

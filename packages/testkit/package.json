@@ -1,0 +1,16 @@
+{
+  "name": "@kepcup/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node ../../scripts/run-tests.mjs run --project testkit"
+  },
+  "dependencies": {
+    "@kepcup/core": "workspace:*",
+    "@kepcup/shared": "workspace:*"
+  }
+}

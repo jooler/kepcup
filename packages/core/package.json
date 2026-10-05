@@ -1,0 +1,37 @@
+{
+  "name": "@kepcup/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../scripts/run-tests.mjs run --project core"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.78",
+    "@kepcup/shared": "workspace:*",
+    "@earendil-works/pi-agent-core": "0.87.1",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@napi-rs/keyring": "2.1.0",
+    "bash-parser": "0.5.0",
+    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "birpc": "4.2.0",
+    "cron-parser": "5.4.0",
+    "es-git": "0.7.0",
+    "pino": "10.3.1",
+    "pino-roll": "4.0.0",
+    "undici": "^8.11.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@kepcup/testkit": "workspace:*",
+    "sqlite-vec": "0.1.9"
+  }
+}

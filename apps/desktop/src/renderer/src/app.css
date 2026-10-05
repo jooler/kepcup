@@ -1,0 +1,272 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  /* 输入坞等「浮在内容之上」的表面：比背景亮一级。浅色下背景已是纯白，
+     提亮到顶即保持白色（靠边框/阴影分层）；深色下取介于 card 与 muted
+     之间的明度，与参考（Grok）输入药丸的抬升观感一致。 */
+  --surface-raised: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --surface-raised: oklch(0.26 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * macOS 毛玻璃（vibrancy: sidebar，见 main/window.ts）：窗口衬了一层原生
+ * 模糊材质，能模糊看到应用下层的内容。渲染层只在左栏透出它：
+ * - html/body 背景透明——不透明背景（body 的 bg-background）会把衬底整个
+ *   盖住，vibrancy 永远不可见；
+ * - --sidebar 换成半透明色叠在材质上，保证侧栏文字可读；
+ * - 侧栏以外的区域显式铺回不透明背景（main 的整块内容区、core 错误页、
+ *   dev 状态栏），横幅保留半透明——玻璃条观感与 macOS 通知横幅一致。
+ * 仅 darwin 窗口有材质，非 mac 平台没有 platform-mac 类，样式完全不变。
+ */
+html.platform-mac,
+html.platform-mac body {
+  background: transparent;
+}
+html.platform-mac {
+  --sidebar: oklch(0.985 0 0 / 65%);
+}
+html.platform-mac.dark {
+  --sidebar: oklch(0.205 0 0 / 60%);
+}
+html.platform-mac main {
+  background-color: var(--background);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface-raised: var(--surface-raised);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /*
+   * 全局滚动条：只保留药丸状滑块，轨道背景/边框全透明（Electron 即
+   * Chromium，webkit 伪元素生效；Firefox 侧用 scrollbar-color 兜底）。
+   */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-track-piece,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+    border: none;
+  }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+  }
+}
+
+/*
+ * 无原生标题栏（macOS hiddenInset）：红绿灯叠在内容左上角，窗口拖拽由
+ * 内容里的 drag 区域承担。
+ *
+ * -webkit-app-region 按元素边框矩形、沿 DOM 顺序收集：后出现的矩形覆盖
+ * 先出现的，z-index 不参与。浮层要能点击，必须自身 no-drag，并且在 DOM 里
+ * 排在 drag 区域之后（bits-ui 的弹层会 portal 到 body 末尾，满足后者）。
+ */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-no-drag,
+[data-slot='dialog-overlay'],
+[data-slot='dialog-content'],
+[data-slot='sheet-overlay'],
+[data-slot='sheet-content'],
+[data-slot='dropdown-menu-content'],
+[data-slot='dropdown-menu-sub-content'],
+[data-slot='select-content'],
+[data-slot='tooltip-content'],
+[data-sonner-toaster] {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * streamdown 列表缩进：包里给 ul/ol 写的工具类（ml-4/list-outside/marker:hidden
+ * 等）位于 node_modules 的 dist，Tailwind 扫描不到、不会生成；preflight 又把
+ * ul/ol 的 margin/padding 清零，outside 标记便悬挂在气泡边框之外。这里按包
+ * 输出的 data 标记直接补齐缩进（消息气泡与 WikiTab 两处 Markdown 均生效）。
+ */
+[data-streamdown-ul],
+[data-streamdown-ol] {
+  margin-block: 0.25rem;
+  padding-inline-start: 1.25rem;
+  list-style-position: outside;
+}
+[data-streamdown-ul] {
+  list-style-type: disc;
+}
+
+/*
+ * 预置 Bot 头像动效（参考 Grok Bot）：眼睛四处看 + 眨眼 + 整体轻缓摇摆。
+ * 动画类挂在 SVG 内部 group 上，但 {@html} 注入的形状节点拿不到 Svelte
+ * scoped class，因此这里的规则必须是全局的；prefers-reduced-motion 时全关。
+ */
+.bot-preset-avatar {
+  display: block;
+}
+.bot-eyes-look,
+.bot-eyes-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.bot-animated .bot-eyes-look {
+  animation: bot-eyes-look 9s ease-in-out infinite;
+}
+.bot-animated .bot-eyes-blink {
+  animation: bot-eyes-blink 9s ease-in-out infinite;
+}
+.bot-animated.bot-preset-avatar {
+  animation: bot-sway 7s ease-in-out infinite;
+}
+@keyframes bot-eyes-look {
+  0%,
+  26%,
+  56%,
+  100% {
+    transform: translateX(0);
+  }
+  12%,
+  20% {
+    transform: translateX(-3.5px);
+  }
+  40%,
+  48% {
+    transform: translateX(3.5px);
+  }
+}
+@keyframes bot-eyes-blink {
+  0%,
+  88%,
+  100% {
+    transform: scaleY(1);
+  }
+  92% {
+    transform: scaleY(0.12);
+  }
+  96% {
+    transform: scaleY(1);
+  }
+}
+@keyframes bot-sway {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(-3deg);
+  }
+  70% {
+    transform: rotate(3deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-animated .bot-eyes-look,
+  .bot-animated .bot-eyes-blink,
+  .bot-animated.bot-preset-avatar {
+    animation: none;
+  }
+}

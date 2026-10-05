@@ -1,0 +1,8 @@
+node_modules
+dist
+out
+pnpm-lock.yaml
+package-lock.json
+docs
+resources
+*.md
