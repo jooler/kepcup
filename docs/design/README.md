@@ -32,6 +32,7 @@
 | [20-conversation-media.md](20-conversation-media.md) | 对话附件与媒体：用户上传、草稿附件、内联渲染与灯箱、语音/视频生成工具、图片进视觉通道 |
 | [21-web-search.md](21-web-search.md) | 联网检索：内置 web_search / web_fetch 工具、检索供应商配置、内联设置引导 |
 | [22-file-skill-routing.md](22-file-skill-routing.md) | 文件技能路由：推荐技能注入、install_skill 授权安装、四级升级阶梯 |
+| [24-durable-execution.md](24-durable-execution.md) | 长任务可恢复执行 / Host Durable Journal：ephemeral 默认仍按 D49，durable 按 journal 与工具 replay 策略 resume |
 
 ## 尚未讨论（暂不入文档）
 
@@ -89,7 +90,7 @@
 | D46 | 视觉与交互 | 参考 Grok Bot，简单、扁平；用户目光焦点处的反馈重点细致处理 |
 | D47 | 运行时元数据 | Bot Profile、技能安装记录、环境安装记录统一存数据库；文件系统只存文件类内容 |
 | D48 | Bot 发消息的方式 | 最终回复自动发送；中途用 `send_message`；不回复用 `skip_reply`；@ 其他 Bot 只能通过结构化参数 |
-| D49 | 中断的执行 | 应用退出或崩溃时标记为中断，重启后提示，不自动恢复 |
+| D49 | 中断的执行 | 应用退出或崩溃时标记为中断，重启后提示，不自动恢复（D67 修订：仅适用于 ephemeral run；durable 见 [24-durable-execution.md](24-durable-execution.md)） |
 | D50 | 命令交互输入 | bash 支持交互模式（stdin 受控通道）：模型发起，只有用户能写 stdin；非交互优先是默认形态 |
 | D51 | 输入对模型的可见性 | 普通输入回注入工具结果（模型可见）；用户标记敏感的输入只回执不回显（密码类分层处理） |
 | D52 | 凭据注入 | 密码/token 经审批卡片输入后写入命令 stdin，值不进模型上下文与任何持久化；可记住到本对话结束（系统钥匙串） |
@@ -104,3 +105,4 @@
 | D61 | 附件与媒体 | 用户附件走既有 attachments 通道（上传即落盘、草稿预挂、flush 转正；`drafts.add` 增 `attachmentIds`、发送前可 `attachments.detach`）；消息附件按 mime 内联渲染（图片缩略图、音视频点击加载播放、灯箱缩放预览）；新增 `generate_speech` / `generate_video` 工具（视频提交+轮询，产物经 send_message 附件发出）；触发批图片附件在模型支持时以 image part 入上下文（≤4 张、单张 ≤5MB），不支持时保持文本行；上下文附件行补充 mime（见 20） |
 | D62 | 联网检索能力 | 以内置宿主工具提供（`web_search` + `web_fetch`），不做默认安装的搜索技能——检索是服务调用，curl 抓搜索页脆弱且不可控，工具层可配置可测试可复用；供应商 `settings.webSearch`（tavily/brave/bocha），key 存 `websearch:{provider}`；未配置走结构化 setup `{kind:'web-search'}` 内联引导；`web_fetch` 带 SSRF 防护独立可用；检索为只读公网操作，无需审批（见 21） |
 | D63 | 文件技能路由 | 模型面对处理不了的文件按四级阶梯升级：已安装技能 → `<recommended_skills>` 段匹配预置技能后 `install_skill(preset_id)`（阻塞审批 `skill_preset`，装为公共技能）→ `web_search` 检索技能仓库后 `install_skill(source_url)`（走既有 `skill_import` 扫描审批，按 Bot 安装）→ 如实告知不支持；两级授权强度与内容信任级对齐（预置轻授权、外部完整扫描审批）；无人值守下两者同属自动批准类；安装后当次 run 即可用（prepareRequest 刷新提示词）（见 22） |
+| D67 | 长任务崩溃恢复 | Host Durable Journal；run 分 ephemeral（默认，仍按 D49：标中断、不自动恢复）与 durable（按 journal + 工具 replay 策略 resume）；不把 Pi Durable 包定为全体 Bot Runtime；修订 D49 的适用范围为仅 ephemeral（见 24） |
