@@ -130,6 +130,7 @@ kepcup/
 | 技能（库中版本） | `skl_` | |
 | 敏感数据 | `sec_` | |
 | 连锁（Bot 间触发链） | `chn_` | |
+| 跨 Bot 委派（D71） | `dlg_` | |
 
 ## 可调参数
 
@@ -141,6 +142,10 @@ kepcup/
 | `RECENT_MESSAGES_TOKEN_BUDGET` | 4000 | 最近消息的 token 预算 |
 | `SUMMARY_TRIGGER_UNSUMMARIZED` | 50 | 未被摘要覆盖的消息超过该数量时更新滚动摘要 |
 | `BOT_CHAIN_MAX_DEPTH` | 3 | Bot 间 @ 连锁的最大层数 |
+| `DELEGATION_MAX_DEPTH` | 1 | 跨 Bot 委派深度（D71；首期一律单跳，被委派 run 不能再委派） |
+| `DELEGATION_RESULT_MAX_CHARS` | 2000 | B 终回复贴回 A 结果卡的截断长度 |
+| `DELEGATION_TASK_MAX_CHARS` | 4000 | 单次 `delegate_to_bot` 的 task 文本上限 |
+| `BUTLER_TEAM_SIZE_MIN` / `BUTLER_TEAM_SIZE_MAX` | 3 / 5 | 管家 `propose_team` 的建议 Bot 数量范围 |
 | `TRIAGE_TIMEOUT_MS` | 20000 | 群聊判断超时 |
 | `TRIAGE_RECENT_MESSAGES` | 10 | 群聊判断看的最近消息条数 |
 | `MEMORY_TOPK` | 8 | 注入的相关记忆条数 |

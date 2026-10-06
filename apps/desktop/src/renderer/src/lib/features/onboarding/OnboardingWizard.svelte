@@ -14,7 +14,6 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Bell } from '@lucide/svelte';
-  import { DEFAULT_AVATAR } from '$lib/avatars/presets';
 
   /**
    * P13 任务 4 首次启动引导（docs/dev/phases/P13-release.md 任务 4）：
@@ -22,8 +21,9 @@
    * 一并选择默认主模型与默认轻量模型写入 settings——新建 Bot 的
    * runtime.model/light_model 为空即分别回退到它们，主模型不选则首对话报
    * 「未配置模型」）→ 权限（自启/系统通知）→ 沙箱（macOS 自动检测；
-   * Windows 复用 P12-B 准备向导，可跳过）→ 创建第一个 Bot（2~3 个人设
-   * 模板）。状态机双向：每一步都可「上一步」。完成状态写既有 settings 行
+   * Windows 复用 P12-B 准备向导，可跳过）→ 认识管家（D70：建立唯一管家并
+   * 进入组队访谈，由管家提议 3~5 个领域 Bot；快速单 Bot 仍走侧栏「新建」）。
+   * 状态机双向：每一步都可「上一步」。完成状态写既有 settings 行
    * （onboarding.*），无新迁移。
    */
 
@@ -48,11 +48,7 @@
   let sandboxStatus = $state<SandboxStatusOutput | null>(null);
   let wslStatus = $state<SandboxWslStatusOutput | null>(null);
 
-  // --- 第一个 Bot 步骤 ---
-  const TEMPLATES = ['coder', 'writer', 'researcher'] as const;
-  type TemplateId = (typeof TEMPLATES)[number];
-  let templateId = $state<TemplateId>('coder');
-  let botName = $state(t('onboarding.template.coder.name'));
+  // --- 管家步骤（D70） ---
   let creating = $state(false);
 
   const stepIndex = $derived(STEPS.indexOf(step));
@@ -163,11 +159,6 @@
     goto('permissions');
   }
 
-  function pickTemplate(id: TemplateId): void {
-    templateId = id;
-    botName = t(`onboarding.template.${id}.name`);
-  }
-
   /** Writes the onboarding patch; steps stay navigable either way. */
   async function persist(patch: {
     onboarding?: { completed?: boolean; modelConfigured?: boolean; modelSkipped?: boolean };
@@ -192,26 +183,20 @@
     onboarding.close();
   }
 
-  async function createBot(): Promise<void> {
-    if (botName.trim().length === 0) return;
+  /**
+   * 认识管家（D70）：建立唯一管家并进入组队访谈（问候 + 固定首问卡由 core
+   * 确定性下发），随后进入管家私聊。butler.ensure 必须先于 completed 落盘：
+   * 否则中途重启时启动补建会建出一个不访谈的管家。
+   */
+  async function startButler(): Promise<void> {
     creating = true;
     try {
-      const result = (await core.call('bots.create', {
-        profile: {
-          identity: {
-            name: botName.trim(),
-            bio: t(`onboarding.template.${templateId}.bio`),
-            avatar: DEFAULT_AVATAR,
-          },
-          persona: { personality: t(`onboarding.template.${templateId}.persona`) },
-        },
-      })) as { bot: { id: string } };
-      const conversation = (await core.call('conversations.openDirect', {
-        botId: result.bot.id,
-      })) as { conversation: { id: string } };
+      const result = (await core.call('butler.ensure', { interview: true })) as {
+        conversationId: string;
+      };
       await persist({ onboarding: { completed: true } });
       onboarding.close();
-      void chat.select(conversation.conversation.id);
+      void chat.select(result.conversationId);
     } catch (error) {
       toast.error(
         t('onboarding.createFailed', {
@@ -458,36 +443,20 @@
       </footer>
     {:else if step === 'bot'}
       <p class="text-sm text-muted-foreground">{t('onboarding.botBody')}</p>
-      <div class="mt-4 grid gap-2 sm:grid-cols-3">
-        {#each TEMPLATES as id (id)}
-          <button
-            type="button"
-            class="rounded-md border p-3 text-left transition-colors {templateId === id
-              ? 'border-primary bg-accent/50'
-              : 'hover:bg-accent/30'}"
-            onclick={() => pickTemplate(id)}
-            data-testid={`onboarding-template-${id}`}
-          >
-            <span class="block text-sm font-medium">{t(`onboarding.template.${id}.name`)}</span>
-            <span class="mt-1 block text-xs text-muted-foreground"
-              >{t(`onboarding.template.${id}.bio`)}</span
-            >
-          </button>
-        {/each}
-      </div>
-      <div class="mt-4 grid gap-1.5">
-        <Label for="onboarding-bot-name">{t('onboarding.botName')}</Label>
-        <Input id="onboarding-bot-name" bind:value={botName} data-testid="onboarding-bot-name" />
-      </div>
+      <ul class="mt-4 grid gap-1.5 text-sm" data-testid="onboarding-butler-points">
+        <li>· {t('onboarding.butlerPoint.team')}</li>
+        <li>· {t('onboarding.butlerPoint.route')}</li>
+        <li>· {t('onboarding.butlerPoint.quick')}</li>
+      </ul>
       <footer class="mt-6 flex items-center justify-between">
         <Button size="sm" variant="ghost" onclick={back} data-testid="onboarding-back"
           >{t('onboarding.back')}</Button
         >
         <Button
           size="sm"
-          disabled={creating || botName.trim().length === 0}
-          onclick={() => void createBot()}
-          data-testid="onboarding-bot-create"
+          disabled={creating}
+          onclick={() => void startButler()}
+          data-testid="onboarding-butler-start"
         >
           {t('onboarding.botCreate')}
         </Button>

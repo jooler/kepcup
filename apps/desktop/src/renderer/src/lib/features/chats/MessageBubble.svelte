@@ -5,6 +5,8 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
   import RunChangesCard from '$lib/features/projects/RunChangesCard.svelte';
+  import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
+  import RouteCard from '$lib/features/delegations/RouteCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
   import GroupSetupCard from './GroupSetupCard.svelte';
@@ -29,11 +31,23 @@
   const isChangesCard = $derived(
     isCard && 'cardType' in message.content && message.content.cardType === 'run_changes',
   );
+  // 跨 Bot 委派卡（D71）：发出卡 / 结果卡，按委派行实时重绘。
+  const delegationCard = $derived(
+    isCard &&
+      'cardType' in message.content &&
+      (message.content.cardType === 'delegation_sent' ||
+        message.content.cardType === 'delegation_result')
+      ? {
+          cardType: message.content.cardType,
+          delegationId: String(message.content.delegationId ?? ''),
+        }
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
   const cardApproval = $derived(
-    isCard && !isChangesCard && 'approvalId' in message.content
+    isCard && !isChangesCard && delegationCard === null && 'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
   );
@@ -73,6 +87,14 @@
       message.content.event === 'group_setup_question',
   );
 
+  // 管家路由卡（D70 §2.4）：建议去哪，一键跳转 / 交给管家转交。
+  const isRouteCard = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      message.content.event === 'route_suggestion',
+  );
+
   function assign(botId: string): void {
     if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
   }
@@ -82,6 +104,11 @@
   <!-- 改动摘要卡片（docs/design/12-ui-layout.md 卡片表）：信息展示，不进 dock -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <RunChangesCard runId={cardRunId} />
+  </div>
+{:else if delegationCard !== null}
+  <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
   </div>
 {:else if isCard}
   <!-- 审批卡片：消息流里显示折叠记录，交互卡片在输入区上方的 dock 中 -->
@@ -110,6 +137,10 @@
   <!-- 对话内群创建问题卡（19/D60）：居中卡片形态（群无 bot 左缘） -->
   <div class="flex w-full justify-center py-1">
     <GroupSetupCard {message} />
+  </div>
+{:else if isRouteCard}
+  <div class="flex w-full justify-center py-1">
+    <RouteCard {message} />
   </div>
 {:else if isSystem}
   <div class="flex flex-col items-center gap-1 py-1" data-testid="system-message">

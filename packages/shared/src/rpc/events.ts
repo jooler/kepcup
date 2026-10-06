@@ -3,6 +3,7 @@ import {
   approvalSchema,
   botSchema,
   conversationSchema,
+  delegationSchema,
   draftSchema,
   envInstallSchema,
   environmentProgressPayloadSchema,
@@ -168,6 +169,9 @@ export const mcpServerStatusPayloadSchema = z.object({
   detail: z.string().optional(),
 });
 
+/** 跨 Bot 委派（D71）状态变化：A 侧发出卡 / 结果卡随之重绘。 */
+export const delegationUpdatedPayloadSchema = z.object({ delegation: delegationSchema });
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -193,6 +197,7 @@ export const rpcEventSchemas = {
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,
+  'delegation.updated': delegationUpdatedPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

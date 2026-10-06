@@ -5,6 +5,7 @@ import {
   attachmentSchema,
   botProfileSchema,
   botSchema,
+  delegationSchema,
   budgetSchema,
   conversationSchema,
   customProviderSchema,
@@ -398,6 +399,19 @@ export const botsDeletionPreviewOutputSchema = z.object({
 export const interviewStartOutputSchema = z.object({
   conversationId: z.string().min(1),
 });
+/**
+ * 管家（D70）：确保唯一管家存在并打开其私聊。`interview`（新用户引导）让
+ * 新建的管家进入组队访谈；存量用户的管家不访谈。幂等。
+ */
+export const butlerEnsureInputSchema = z.object({ interview: z.boolean().optional() });
+/** 路由卡「交给它处理」（D70 §2.4）：以用户消息让管家去委派。 */
+export const butlerAcceptRouteInputSchema = z.object({ messageId: z.string().min(1) });
+export const butlerAcceptRouteOutputSchema = z.object({ message: messageSchema });
+export const butlerEnsureOutputSchema = z.object({
+  bot: botSchema,
+  conversationId: z.string().min(1),
+  created: z.boolean(),
+});
 /** 初始化问询的用户回答：不走草稿，直接落为带 setupAnswer 标记的用户消息。 */
 export const interviewAnswerInputSchema = z.object({
   conversationId: z.string().min(1),
@@ -689,8 +703,18 @@ export const approvalsDecideInputSchema = z.object({
   approve: z.boolean(),
   /** Access approvals only: 仅这一次 / 本对话内一直允许. */
   duration: z.enum(['once', 'conversation']).optional(),
+  /**
+   * `butler_proposal` only (D70): indexes into payload.bots the user kept;
+   * an empty selection with approve=true counts as a denial.
+   */
+  selection: z.array(z.number().int().nonnegative()).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
+
+// --- cross-bot delegation (D71) -------------------------------------------------
+
+export const delegationIdInputSchema = z.object({ id: z.string().min(1) });
+export const delegationGetOutputSchema = z.object({ delegation: delegationSchema.nullable() });
 
 // --- grants (P03) -----------------------------------------------------------
 
@@ -1101,6 +1125,12 @@ export const rpcMethodSchemas = {
   'bots.avatar.data': { input: botsAvatarDataInputSchema, output: botsAvatarDataOutputSchema },
   'bots.delete': { input: botIdInputSchema, output: okOutput },
   'bots.deletionPreview': { input: botIdInputSchema, output: botsDeletionPreviewOutputSchema },
+  /** 管家（D70）：确保唯一管家存在并打开其私聊（幂等）。 */
+  'butler.ensure': { input: butlerEnsureInputSchema, output: butlerEnsureOutputSchema },
+  'butler.acceptRoute': {
+    input: butlerAcceptRouteInputSchema,
+    output: butlerAcceptRouteOutputSchema,
+  },
   /** 对话式创建第二步：打开直聊、投递 setup 起始事件并触发 Bot 首次提问。 */
   'bots.interview.start': { input: botIdInputSchema, output: interviewStartOutputSchema },
   /** 初始化问询的用户回答（不走草稿，落 setupAnswer 标记消息并触发响应 run）。 */
@@ -1179,6 +1209,9 @@ export const rpcMethodSchemas = {
 
   'approvals.list': { input: approvalsListInputSchema, output: approvalsListOutputSchema },
   'approvals.decide': { input: approvalsDecideInputSchema, output: approvalsDecideOutputSchema },
+  /** 跨 Bot 委派（D71）：A 侧卡片按 id 读委派行 / 用户在发出卡上取消。 */
+  'delegations.get': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
+  'delegations.cancel': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
   'grants.list': { input: grantsListInputSchema, output: grantsListOutputSchema },
   'grants.revoke': { input: grantIdInputSchema, output: okOutput },
 
@@ -1352,6 +1385,8 @@ const APP_METHODS = [
   'bots.avatar.data',
   'bots.delete',
   'bots.deletionPreview',
+  'butler.ensure',
+  'butler.acceptRoute',
   'bots.interview.start',
   'bots.interview.answer',
   'bots.interview.answerPath',
@@ -1390,6 +1425,8 @@ const APP_METHODS = [
   'sandbox.wslSkip',
   'approvals.list',
   'approvals.decide',
+  'delegations.get',
+  'delegations.cancel',
   'grants.list',
   'grants.revoke',
   'allowlist.list',

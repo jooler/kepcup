@@ -169,6 +169,7 @@
 | `chain` | 被其他 Bot @ | `from_bot`、`depth` |
 | `scheduled` | 定时任务 | `schedule_id`、`late_by`（迟到时长，未迟到则省略） |
 | `event` | 事件（环境安装完成、Wiki 入库完成等） | `event` |
+| `delegation` | 另一个 Bot 代用户转交的任务（D71，B 私聊里的代发消息；渲染为「用户（由 A 代为转交）」） | `from_bot`、`delegation_id` |
 
 群聊顺序响应中，排在后面的 Bot 的触发段之后追加：“在你之前，{Bot 名字}已经回复（见最近消息）。如果你没有需要补充的，调用 skip_reply。”
 
@@ -217,6 +218,10 @@
 | `install_skill` | host | R | P19 | 请求用户授权安装技能（[design/22-file-skill-routing.md](../../design/22-file-skill-routing.md)）：`preset_id`（内置推荐，阻塞审批 `skill_preset` → 装公共技能）或 `source_url`（外部 git 仓库，clone+静态扫描后阻塞审批 `skill_import` → 按 Bot 安装）；拒绝返回 `APPROVAL_DENIED`，模型降级 |
 | `propose_profile_change` | host | R | P07 | 向用户提出 Profile 修改建议（审批卡片，批准后写入） |
 | `create_skill` | conversation | R | P08 | 登记一个技能生成任务（用户说“以后都这样做”时使用）；参数 `name`、`description`、`reason` |
+| `list_bots` | conversation | R | D70 | 只读通讯录名片（id / 名字 / 简介 / 擅长 / 职责，不含自己）；所有 Bot 注册（委派 / 路由靠它拿 bot_id） |
+| `propose_team` / `propose_bot` / `propose_group` | host | R | D70 | **仅管家**。提交 `butler_proposal` 审批卡（非阻塞、无人值守不自动批、可勾选条目）；用户确认后 core 确定性建 Bot / 群并以 internal follow-up（`butler_proposal_result`）通知管家；`terminate` 结束本轮（[design/27](../design/27-butler-and-delegation.md)） |
+| `suggest_route` | conversation | R | D70 | **仅管家**。路由卡（system_event `route_suggestion`）：`bot` 直聊 / `group` 已有群 / `delegate` 由管家转交——用户点「交给它处理」（`butler.acceptRoute`）落一条用户消息后管家才委派；`terminate` |
+| `delegate_to_bot` / `cancel_delegation` | conversation | R | D71 | 跨 Bot 委派（异步）：B 私聊落代发用户消息（`origin=delegation`）触发 B 的完整响应 loop，B 的终回复截断 ≤ `DELEGATION_RESULT_MAX_CHARS` 贴回 A 为结果卡 + internal follow-up（`delegation_result`）。B 忙 / 免打扰时排队（`submitted`）；被委派 run 不注册且执行时按 run_id 拒绝（单跳）；群聊降级 @；不能委派给管家 / 访谈中的 Bot |
 
 通用规则：
 

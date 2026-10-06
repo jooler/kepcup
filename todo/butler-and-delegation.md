@@ -1,6 +1,6 @@
 # 管家 Bot + 跨 Bot 委派（D70 / D71）
 
-> 状态：**已拍板待实现**（决策 D70 / D71，设计见 `docs/design/27-butler-and-delegation.md`）。分四个阶段 P1→P4；P1 是后续前置。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P1–P4 已实现（2026-10-06，见 docs/dev/PROGRESS.md；e2e 未在本机运行）**（决策 D70 / D71，设计见 `docs/design/27-butler-and-delegation.md`）。分四个阶段 P1→P4；P1 是后续前置。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
 > **硬约束**：只改本地工作树；**不要** `git commit` / `push` / 开 PR（除非用户另行明确要求）。
 >
@@ -67,19 +67,19 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 
 ### 3.1 改动清单
 
-- [ ] **shared**：`botSchema` 增 `systemRole: z.enum(['butler']).nullable().optional()`；Profile 内已有 `role` 对象，DB 列 / API 字段一律叫 `system_role` / `systemRole`，禁止混用
-- [ ] **shared constants**：`DELEGATION_MAX_DEPTH`（= 1，首期唯一取值；`delegations.depth` 列保留，日后放宽再设计「等下游结算」）、`DELEGATION_RESULT_MAX_CHARS`（2000）、`DELEGATION_FOLLOWUP_EVENT`（如 `delegation_result`——勿与 D66 的 `delegate_result` 混淆）、`BUTLER_TEAM_SIZE_MIN/MAX`（3/5）。**不要**加 `DELEGATION_MAX_DEPTH_BUTLER`（管家 2 层已搁置，见设计 §3.3）
-- [ ] **main 迁移** `0016_butler_and_delegation.sql`（号以目录实况为准），一个文件包含：
+- [x] **shared**：`botSchema` 增 `systemRole: z.enum(['butler']).nullable().optional()`；Profile 内已有 `role` 对象，DB 列 / API 字段一律叫 `system_role` / `systemRole`，禁止混用
+- [x] **shared constants**：`DELEGATION_MAX_DEPTH`（= 1，首期唯一取值；`delegations.depth` 列保留，日后放宽再设计「等下游结算」）、`DELEGATION_RESULT_MAX_CHARS`（2000）、`DELEGATION_FOLLOWUP_EVENT`（如 `delegation_result`——勿与 D66 的 `delegate_result` 混淆）、`BUTLER_TEAM_SIZE_MIN/MAX`（3/5）。**不要**加 `DELEGATION_MAX_DEPTH_BUTLER`（管家 2 层已搁置，见设计 §3.3）
+- [x] **main 迁移** `0016_butler_and_delegation.sql`（号以目录实况为准），一个文件包含：
   - `bots.system_role TEXT NULL` + partial unique index：`create unique index ... on bots(system_role) where system_role = 'butler' and status = 'active'`
   - `delegations` 表：`id, from_bot_id, to_bot_id, from_conversation_id, to_conversation_id, task_text, status, depth, to_message_id, run_id, result_excerpt, result_message_id, error_text, created_at, updated_at`；`status` 用 CHECK（`submitted/working/completed/failed/cancelled`，新表加 CHECK 无代价）。**对话 id 不加 `ON DELETE CASCADE` 的外键**——对话删除时委派行要保留并终态化（见 3.1 lifecycle 项），`to_message_id` / `run_id` 同样只存 id（run 在 runs.db，跨库本来就只能存 id）。索引：`(to_bot_id, status)`、`(run_id)`、`(from_conversation_id)`
   - **重建 `approvals` 表**把 `butler_proposal` 加入 `kind` CHECK 列表（SQLite 不能改 CHECK，照 `0015_mcp_approvals.sql` 的标准流程：建 `approvals_new` → 拷数据 → drop → rename → 重建 `approvals_pending` 索引）。当前 CHECK 里已有 `'access','unsandboxed','command','git_remote','environment','skill_import','profile_change','skill_preset','mcp_tool'`，**以最新迁移为准全部带上，别漏**（0010 → 0015 就漏过 `skill_preset`）。这一步不做，后面 P2 的 `butler_proposal` 一落库就触发 CHECK 失败（单测 stub 摸不到，要有真库集成测试）
-- [ ] **shared**：`approvalKindSchema` 增 `'butler_proposal'`；`approvalDecisionSchema` 增可选 `selection`（见 P2）；`jobTypeSchema` 增 `delegation_delivery`（P3 用；jobs 表 `type` 无 CHECK，只改枚举 + jobs-runner 分发）
-- [ ] **core `BotsService`**：`rowToBot` 读 `system_role`；`getButler()` / `ensureButler()`（幂等；并发安全靠 unique index，冲突时回读）；`create(..., { systemRole: 'butler' })`；拒绝第二个 butler；`markDeleted` 不会碰到管家（上层已拒）但对管家直接抛错作双保险
-- [ ] **启动 ensure**：core 启动（迁移之后）若 `onboarding.completed` 为真则 `ensureButler()`——覆盖**存量用户**（升级前已完成引导、没有管家）。新用户走 onboarding 完成后创建（P2）。存量用户的管家**不开访谈**（`setup_state` 为空），首次打开发确定性问候（P2）
-- [ ] **lifecycle**：`deleteBot` 若目标为 butler → `AppError` 拒绝，**放在 `abortRunsForBot` 之前**（否则先把管家的 run 全中止了再报错）
-- [ ] **desktop**：侧栏置顶管家（由 `bot.systemRole` 推导，不另存 pinned）；删除菜单对管家隐藏或弹「不可删除」
-- [ ] **文档**：`docs/dev/03-data-model.md` 补 `bots.system_role`、`delegations` 表、`approvals.kind` 新值与删除级联行（见 P3）
-- [ ] **测试**：唯一约束（含并发 `ensureButler`）、删管家失败且未中止其 run、迁移在**含旧 approvals 数据**的库上可应用（approvals 行拷贝完整）、`butler_proposal` 能真写入 `approvals`（真库，不用 stub）、存量用户启动后恰有一个管家
+- [x] **shared**：`approvalKindSchema` 增 `'butler_proposal'`；`approvalDecisionSchema` 增可选 `selection`（见 P2）；`jobTypeSchema` 增 `delegation_delivery`（P3 用；jobs 表 `type` 无 CHECK，只改枚举 + jobs-runner 分发）
+- [x] **core `BotsService`**：`rowToBot` 读 `system_role`；`getButler()` / `ensureButler()`（幂等；并发安全靠 unique index，冲突时回读）；`create(..., { systemRole: 'butler' })`；拒绝第二个 butler；`markDeleted` 不会碰到管家（上层已拒）但对管家直接抛错作双保险
+- [x] **启动 ensure**：core 启动（迁移之后）若 `onboarding.completed` 为真则 `ensureButler()`——覆盖**存量用户**（升级前已完成引导、没有管家）。新用户走 onboarding 完成后创建（P2）。存量用户的管家**不开访谈**（`setup_state` 为空），首次打开发确定性问候（P2）
+- [x] **lifecycle**：`deleteBot` 若目标为 butler → `AppError` 拒绝，**放在 `abortRunsForBot` 之前**（否则先把管家的 run 全中止了再报错）
+- [x] **desktop**：侧栏置顶管家（由 `bot.systemRole` 推导，不另存 pinned）；删除菜单对管家隐藏或弹「不可删除」
+- [x] **文档**：`docs/dev/03-data-model.md` 补 `bots.system_role`、`delegations` 表、`approvals.kind` 新值与删除级联行（见 P3）
+- [x] **测试**：唯一约束（含并发 `ensureButler`）、删管家失败且未中止其 run、迁移在**含旧 approvals 数据**的库上可应用（approvals 行拷贝完整）、`butler_proposal` 能真写入 `approvals`（真库，不用 stub）、存量用户启动后恰有一个管家
 
 ### 3.2 验收
 
@@ -112,20 +112,20 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 
 ### 4.2 改动清单
 
-- [ ] **shared**：`butler_proposal` payload schema（`proposalType`、条目 `{ name, bio, expertise, responsibilities, reason }`、group 的 `{ title, description, memberBotIds }`）+ 校验（`team` 条目数 `BUTLER_TEAM_SIZE_MIN..MAX`）；`approvalDecisionSchema.selection`；`approvals.decide` RPC input 增可选 `selection`（`methods.ts` + `bindings.ts` + `approvals.decide(id, approve, duration, selection)`）
-- [ ] **approvals.ts**：
-  - `decide`：`butler_proposal` + approve 时校验 `selection` ⊆ payload 条目、`team` 选中数在界内（选 0 个 = 当作拒绝）；落 `decision_json`
+- [x] **shared**：`butler_proposal` payload schema（`proposalType`、条目 `{ name, bio, expertise, responsibilities, reason }`、group 的 `{ title, description, memberBotIds }`）+ 校验（`team` 条目数 `BUTLER_TEAM_SIZE_MIN..MAX`）；`approvalDecisionSchema.selection`；`approvals.decide` RPC input 增可选 `selection`（`methods.ts` + `bindings.ts` + `approvals.decide(id, approve, duration, selection)`）
+- [x] **approvals.ts**：
+  - `decide`：`butler_proposal` + approve 时校验 `selection` ⊆ payload 条目（选 0 个 = 当作拒绝；数量下限只约束模型提议，不约束用户勾选）；落 `decision_json`
   - `#autoDecideSync` 按 kind 排除 `butler_proposal`：无人值守下**不自动批**、走 `#requestAndWait` / 非阻塞挂起路径（注意 `request()` 与 `submitNonBlocking()` 两处入口都先判 `unattended.enabled`，两处都要改）
   - `cancelPendingForRun` 的 `excludeKinds` 加 `butler_proposal`（否则管家 run 一结束卡片就被取消）；`cancelPendingForConversation` / `ForBot` / 启动 `cancelAllPending` 保持
   - `describe` / `renderContextLine`（模型上下文里的那一行）增 `butler_proposal` 分支
-- [ ] **core tools**：`packages/core/src/tools/butler-tools.ts`（新）；`tools/index.ts`：`list_bots` 对所有 bot 注册，`propose_*` / `suggest_route` 仅 `bot.systemRole==='butler'` 注册；`propose_team` 提交后清 `setup_state`
-- [ ] **orchestrator / gateway**：`onDecided` 回调里 `bots.create` 批量 / `groups.create`（`GroupsService.create` 没有 description 入参——补可选 `description`，或建后写一次；D60 `finalizeSetup` 是另一条路径，别误套）；`bot.updated` / `conversation.updated` 发布；批准后的 internal follow-up
-- [ ] **访谈变体**：见 4.1 第 2 条的各落点（`setup-tools` / `setupPathGateClosed` / `beginSetupInterview` / `system-prompt` 访谈段）
-- [ ] **system prompt**：管家专用 `<butler_rules>`（组队只经卡、先路由后执行、不替用户直接建 Bot 等）
-- [ ] **onboarding**：`OnboardingWizard` step `bot` 演进为「创建管家并进入访谈」（保留旧单 Bot 模板仅作为侧栏「新建」路径，不再放在引导里）；`persist({ completed: true })` 之后 ensure 管家
-- [ ] **desktop**：`ApprovalCard.svelte` 增 `butler_proposal` 分支（条目复选 + 确认 / 全部拒绝，确认时带 `selection`）；`ChatView` / `SetupQuestionCard` 对管家访谈态按现状工作（读 `bot.setupState`，无需特判，但要验证）
-- [ ] **i18n**：`zh-CN` 管家 / 组队卡文案（目前只有 `zh-CN` 一个 locale）
-- [ ] **测试**：
+- [x] **core tools**：`packages/core/src/tools/butler-tools.ts`（新）；`tools/index.ts`：`list_bots` 对所有 bot 注册，`propose_*` / `suggest_route` 仅 `bot.systemRole==='butler'` 注册；`propose_team` 提交后清 `setup_state`
+- [x] **orchestrator / gateway**：`onDecided` 回调里 `bots.create` 批量 / `groups.create`（`GroupsService.create` 没有 description 入参——补可选 `description`，或建后写一次；D60 `finalizeSetup` 是另一条路径，别误套）；`bot.updated` / `conversation.updated` 发布；批准后的 internal follow-up
+- [x] **访谈变体**：见 4.1 第 2 条的各落点（`setup-tools` / `setupPathGateClosed` / `beginSetupInterview` / `system-prompt` 访谈段）
+- [x] **system prompt**：管家专用 `<butler_rules>`（组队只经卡、先路由后执行、不替用户直接建 Bot 等）
+- [x] **onboarding**：`OnboardingWizard` step `bot` 演进为「创建管家并进入访谈」（保留旧单 Bot 模板仅作为侧栏「新建」路径，不再放在引导里）；`persist({ completed: true })` 之后 ensure 管家
+- [x] **desktop**：`ApprovalCard.svelte` 增 `butler_proposal` 分支（条目复选 + 确认 / 全部拒绝，确认时带 `selection`）；`ChatView` / `SetupQuestionCard` 对管家访谈态按现状工作（读 `bot.setupState`，无需特判，但要验证）
+- [x] **i18n**：`zh-CN` 管家 / 组队卡文案（目前只有 `zh-CN` 一个 locale）
+- [x] **测试**：
   - 单测：`decide.selection` 校验、无人值守不自动批 `butler_proposal`（且其它 kind 不受影响）、`cancelPendingForRun` 不取消 `butler_proposal`
   - 集成（**真库**）：propose_team 未确认零新 Bot；确认后 N 个 Bot；去掉一项后 N-1 个；全拒绝零 Bot 且管家可再提议；非管家 tools 列表无 `propose_*`、有 `list_bots`；管家访谈不写管家 profile、无目录闸门
 
@@ -161,17 +161,17 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 
 ### 5.2 改动清单
 
-- [ ] **shared**：delegation 类型 / status 枚举；`triggerReasonSchema` 增 `'delegation'`（runs 表无 CHECK，免迁移）；`TriggerBatch.reason` 联合类型同步加 `'delegation'`；`textContentSchema` 增可选 `origin` / `delegationId`；`cardContentSchema` 增可选 `delegationId`；RPC `delegations.get` / `delegations.cancel`；事件 `delegation.updated`（A 的发出卡实时重绘）
-- [ ] **messages.append**：`AppendMessageInput` 增 `origin` / `delegationId`（text）与 `delegationId`（card），并改 `append` 里手工拼 content_json 的分支——只改 zod schema 会让字段在落库时被丢掉
-- [ ] **core**：`packages/core/src/domain/delegations.ts`（新；含状态流转的单一入口，所有 `status` 更新走它并发 `delegation.updated`）；`tools/delegation-tools.ts`（`delegate_to_bot` / `cancel_delegation`），`tools/index.ts` 对所有 bot 注册；`delegate_to_bot` 的 `execute` 里做执行时单跳校验与拒绝清单
-- [ ] **orchestrator**：投递闸门与补投（`#executeResponseRun` `finally` 的 `mailbox.release()` 之后扫 `submitted`）；`delegation_delivery` job 分支（`jobs-runner.ts`：加入「响应触发类」优先级分支，与 `event_delivery` 同）；`#startResponseRun` 优先级：`'delegation'` 按用户触发（0）还是后台（1）显式选定并写进注释；`#settleRun` 钩子；`#injectDelegationFollowUp`（仿 `#injectDelegateFollowUp`）；`recoverInterrupted` 要**单独**处理（它走 `runs.markAllActiveInterrupted`，不经 `#settleRun`）：`working` 且 run 已 `interrupted` → `failed`，`submitted` 保持（下次可投递时补投，注意 quiet hours job 是持久的、邮箱状态是内存的，重启后也要扫一遍 `submitted` 重新触发）
-- [ ] **renderCard**：`#renderOptions.renderCard` 现对所有非 `run_changes` 卡按 `approvalId` 查审批——对委派卡会渲染成「（审批记录已清理）」。补 `delegationId` 分支，输出一行状态 + 摘要（不含 B 全文）
-- [ ] **B 的上下文**：触发段 `from_bot` / `delegation_id` 属性；`renderMessageLine` 对 `origin='delegation'` 的 user 消息标注「由 {A} 代用户转交」；B 的「本轮内完成」提示（放触发上下文或 `<platform_rules>` 里按此触发才出现的一条）
-- [ ] **lifecycle**：见 5.1 生命周期行；`docs/dev/03-data-model.md` 删除级联表补 `delegations` 行
-- [ ] **memory**：反思 / 画像整理的用户证据判定排除 `origin='delegation'`
-- [ ] **desktop**：DelegationSentCard（随 `delegation.updated` 重绘，含 `submitted` 提示与取消按钮）/ DelegationResultCard；B 侧消息气泡标签「由 {A.name} 代你发出」；**不**自动 `openConversation(B)`；i18n
-- [ ] **prompt**：平台规则一条：何时委派 vs `@` vs `delegate_task`、委派是异步的（调用后收尾，结果稍后到）、不要对同一件事重复委派
-- [ ] **测试**：
+- [x] **shared**：delegation 类型 / status 枚举；`triggerReasonSchema` 增 `'delegation'`（runs 表无 CHECK，免迁移）；`TriggerBatch.reason` 联合类型同步加 `'delegation'`；`textContentSchema` 增可选 `origin` / `delegationId`；`cardContentSchema` 增可选 `delegationId`；RPC `delegations.get` / `delegations.cancel`；事件 `delegation.updated`（A 的发出卡实时重绘）
+- [x] **messages.append**：`AppendMessageInput` 增 `origin` / `delegationId`（text）与 `delegationId`（card），并改 `append` 里手工拼 content_json 的分支——只改 zod schema 会让字段在落库时被丢掉
+- [x] **core**：`packages/core/src/domain/delegations.ts`（新；含状态流转的单一入口，所有 `status` 更新走它并发 `delegation.updated`）；`tools/delegation-tools.ts`（`delegate_to_bot` / `cancel_delegation`），`tools/index.ts` 对所有 bot 注册；`delegate_to_bot` 的 `execute` 里做执行时单跳校验与拒绝清单
+- [x] **orchestrator**：投递闸门与补投（`#executeResponseRun` `finally` 的 `mailbox.release()` 之后扫 `submitted`）；`delegation_delivery` job 分支（`jobs-runner.ts`：加入「响应触发类」优先级分支，与 `event_delivery` 同）；`#startResponseRun` 优先级：`'delegation'` 按用户触发（0）还是后台（1）显式选定并写进注释；`#settleRun` 钩子；`#injectDelegationFollowUp`（仿 `#injectDelegateFollowUp`）；`recoverInterrupted` 要**单独**处理（它走 `runs.markAllActiveInterrupted`，不经 `#settleRun`）：`working` 且 run 已 `interrupted` → `failed`，`submitted` 保持（下次可投递时补投，注意 quiet hours job 是持久的、邮箱状态是内存的，重启后也要扫一遍 `submitted` 重新触发）
+- [x] **renderCard**：`#renderOptions.renderCard` 现对所有非 `run_changes` 卡按 `approvalId` 查审批——对委派卡会渲染成「（审批记录已清理）」。补 `delegationId` 分支，输出一行状态 + 摘要（不含 B 全文）
+- [x] **B 的上下文**：触发段 `from_bot` / `delegation_id` 属性；`renderMessageLine` 对 `origin='delegation'` 的 user 消息标注「由 {A} 代用户转交」；B 的「本轮内完成」提示（放触发上下文或 `<platform_rules>` 里按此触发才出现的一条）
+- [x] **lifecycle**：见 5.1 生命周期行；`docs/dev/03-data-model.md` 删除级联表补 `delegations` 行
+- [x] **memory**：反思 / 画像整理的用户证据判定排除 `origin='delegation'`
+- [x] **desktop**：DelegationSentCard（随 `delegation.updated` 重绘，含 `submitted` 提示与取消按钮）/ DelegationResultCard；B 侧消息气泡标签「由 {A.name} 代你发出」；**不**自动 `openConversation(B)`；i18n
+- [x] **prompt**：平台规则一条：何时委派 vs `@` vs `delegate_task`、委派是异步的（调用后收尾，结果稍后到）、不要对同一件事重复委派
+- [x] **测试**：
   - 单测：截断、拒绝清单各项、**执行时单跳**（被委派 run 调 `delegate_to_bot` 被拒——按 `run_id` 反查命中，不依赖 toolset 里有没有这个工具）、同群降级、状态机非法流转、settle 钩子幂等（取消 + settle 不重复通知）
   - 集成（真库）：A→B 全链路（A 消息流有卡、B 有代发用户消息、A UI 会话未切换、follow-up internal、结果卡截断且链到 B 的消息、D66 回归）；**B 忙时排队**（B 正跑用户的任务，委派保持 `submitted`，B 空闲后才投递，结果对应委派而非原任务）；quiet hours 排队；B run 失败 → A 卡 `failed` + `error_text`；A 的 `cancel_delegation`（`submitted` / `working` 各一）；删 B / 删 B 私聊 → 委派 `cancelled`；重启恢复；`renderCard` 对委派卡输出；B 的反思不把代发文本当用户证据
 
@@ -198,13 +198,13 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 
 ### 6.1 改动清单
 
-- [ ] `suggest_route` + **路由卡** UI（去管家 / 去某 Bot / 建群 / 委派）。路由卡不是审批（没有「批准后执行」语义），用 `kind='card'` + 自有 `cardType`，按钮走现有导航 / 触发管家后续对话的通道，不要塞进 `approvals`
-- [ ] 管家 prompt：未知→管家；早期**先卡后办**；用户「你安排」再 `delegate_to_bot`
-- [ ] 核对开放决策默认值已落地（见设计 §4）：quiet hours 提示（P3 已含，复核 UX）、不继承 project、组队必确认、中途不同步、崩溃按 status 重绘卡
-- [ ] Butler 入群策略按开放默认（允许加入；群内委派仍降级 D4）
-- [ ] 开放决策 9：管家工具面首期不裁剪（如要收紧，设置 / Profile 开关，不改契约）
-- [ ] e2e（`apps/desktop/test/e2e/`）：onboarding→管家→组队确认（含勾掉一项）；A 委派 B 主路径快照/断言
-- [ ] 文档：若实现偏离，回写 `27` 与 `docs/dev/PROGRESS.md`；工具目录补进 `docs/dev/04-agent-runtime.md`；`03-data-model.md` 复核（仍不 commit，除非用户要求）
+- [x] `suggest_route` + **路由卡** UI（去管家 / 去某 Bot / 建群 / 委派）。路由卡不是审批（没有「批准后执行」语义），用 `kind='card'` + 自有 `cardType`，按钮走现有导航 / 触发管家后续对话的通道，不要塞进 `approvals`
+- [x] 管家 prompt：未知→管家；早期**先卡后办**；用户「你安排」再 `delegate_to_bot`
+- [x] 核对开放决策默认值已落地（见设计 §4）：quiet hours 提示（P3 已含，复核 UX）、不继承 project、组队必确认、中途不同步、崩溃按 status 重绘卡
+- [x] Butler 入群策略按开放默认（允许加入；群内委派仍降级 D4）
+- [x] 开放决策 9：管家工具面首期不裁剪（如要收紧，设置 / Profile 开关，不改契约）
+- [x] e2e（`apps/desktop/test/e2e/`）：onboarding→管家→组队确认（含勾掉一项）；A 委派 B 主路径快照/断言
+- [x] 文档：若实现偏离，回写 `27` 与 `docs/dev/PROGRESS.md`；工具目录补进 `docs/dev/04-agent-runtime.md`；`03-data-model.md` 复核（仍不 commit，除非用户要求）
 
 ### 6.2 验收
 
@@ -252,7 +252,7 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 
 ## 9. 完成定义（整包）
 
-- [ ] P1–P4 清单勾完，验收口径满足
-- [ ] 设计文档与实现无未记录的硬偏离（有则改 27）
-- [ ] `docs/dev/03-data-model.md` / `04-agent-runtime.md` / `PROGRESS.md` 已同步
-- [ ] **未**执行 git commit / push / 创建 PR
+- [x] P1–P4 清单勾完，验收口径满足
+- [x] 设计文档与实现无未记录的硬偏离（有则改 27）
+- [x] `docs/dev/03-data-model.md` / `04-agent-runtime.md` / `PROGRESS.md` 已同步
+- [ ] **未**执行 git commit / push / 创建 PR（用户本次明确要求提交，例外）

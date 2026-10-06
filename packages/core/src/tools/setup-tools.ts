@@ -79,8 +79,14 @@ export const SETUP_PROFILE_FIELDS = ['identity.name', ...PROFILE_CHANGE_FIELDS] 
 export function buildSetupTools(input: {
   identity: RunIdentity;
   setup: SetupToolFacade;
+  /**
+   * 'butler'（D70）：管家访谈是同一机制的变体——只问用户的领域与场景，以
+   * propose_team 收尾；管家 Profile 是固定模板，不注册 save_profile。
+   */
+  variant?: 'bot' | 'butler';
 }): ToolDefinition[] {
   const { identity, setup } = input;
+  const butler = input.variant === 'butler';
 
   const saveProfile: ToolDefinition<{
     changes: Array<{ field: string; value: string }>;
@@ -170,8 +176,9 @@ export function buildSetupTools(input: {
 
   const finishSetup: ToolDefinition<Record<string, never>> = {
     name: 'finish_setup',
-    description:
-      '结束你的初始化访谈：调用后你进入正常运行状态（访谈指引与 setup 工具随即失效）。请在向用户确认信息已保存后再调用。',
+    description: butler
+      ? '结束管家访谈但不提议组队：仅在用户明确表示现在不需要组建 Bot 团队时使用（正常情况下用 propose_team 提交提议，访谈会自动结束）。'
+      : '结束你的初始化访谈：调用后你进入正常运行状态（访谈指引与 setup 工具随即失效）。请在向用户确认信息已保存后再调用。',
     parameters: Type.Object({}),
     execute: async () => {
       if (identity.botId === null) {
@@ -184,13 +191,19 @@ export function buildSetupTools(input: {
     },
   };
 
-  return [saveProfile, askQuestion, finishSetup];
+  return butler ? [askQuestion, finishSetup] : [saveProfile, askQuestion, finishSetup];
 }
 
 /** Question-cap enforcement message shared by the facade implementations. */
-export function questionCapReached(): { ok: false; message: string } {
+export function questionCapReached(variant: 'bot' | 'butler' = 'bot'): {
+  ok: false;
+  message: string;
+} {
   return {
     ok: false,
-    message: `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请直接调用 save_profile 保存已有信息，然后调用 finish_setup 结束访谈。`,
+    message:
+      variant === 'butler'
+        ? `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请根据已了解的情况直接调用 propose_team 提出组队建议。`
+        : `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请直接调用 save_profile 保存已有信息，然后调用 finish_setup 结束访谈。`,
   };
 }

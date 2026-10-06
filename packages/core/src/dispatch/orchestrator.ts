@@ -13,7 +13,9 @@ import {
   SUBAGENT_FOLLOWUP_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
   TRIAGE_RECENT_MESSAGES,
+  type Bot,
   type Conversation,
+  type Delegation,
   type GroupSetupStep,
   type Message,
   type Run,
@@ -54,6 +56,7 @@ import { Mailbox, MailboxRegistry, type TriggerBatch } from '../scheduler/mailbo
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { GroupsService } from '../domain/groups.js';
+import type { DelegationsService } from '../domain/delegations.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { DraftsService } from '../domain/drafts.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -102,6 +105,19 @@ import { FileReadState } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
+import {
+  BUTLER_SETUP_FIRST_OPTIONS,
+  BUTLER_SETUP_FIRST_QUESTION,
+  BUTLER_SETUP_GREETING,
+  BUTLER_WELCOME_TEXT,
+  butlerProfileTemplate,
+} from '../domain/butler.js';
+import { ButlerHost } from './butler.js';
+import {
+  DELEGATION_RESULT_CARD,
+  DELEGATION_SENT_CARD,
+  DelegationHost,
+} from './delegation.js';
 import { ChainsService } from './chains.js';
 import { GroupTurnCoordinator } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
@@ -137,6 +153,8 @@ export interface OrchestratorDeps {
   conversations: ConversationsService;
   /** 群域服务（P05 成员管理 + 19/D60 对话内群创建的 createSetup/finalizeSetup）。 */
   groups: GroupsService;
+  /** 跨 Bot 委派行（D71，docs/design/27）。 */
+  delegations: DelegationsService;
   messages: MessagesService;
   drafts: DraftsService;
   attachments: AttachmentsService;
@@ -304,10 +322,49 @@ export class Orchestrator {
    * 不级联；显式取消委派 / 关对话 / 删 Bot 时经此 abort；并发封顶也在这里计数。
    */
   readonly #subagentHost: SubagentHost = createSubagentHost();
+  /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 群。 */
+  readonly #butlerHost: ButlerHost;
+  /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
+  readonly #delegationHost: DelegationHost;
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
     this.#mailboxes = new MailboxRegistry((key) => this.#createMailbox(key));
+    this.#butlerHost = new ButlerHost({
+      bots: deps.bots,
+      conversations: deps.conversations,
+      groups: deps.groups,
+      approvals: deps.approvals,
+      messages: deps.messages,
+      logger: deps.logger,
+      publish: (event, payload) => deps.publish(event as never, payload as never),
+      deliverDirect: (conversationId, botId, message) => {
+        const conversation = deps.conversations.getOrThrow(conversationId);
+        this.#deliverDirectThroughGate(conversation, botId, [message], 'direct');
+        this.#publishConversation(conversationId);
+      },
+      deliverEvent: (botId, conversationId, event, text, options) =>
+        this.deliverEventToBot(botId, conversationId, event, text, options),
+    });
+    this.#delegationHost = new DelegationHost({
+      delegations: deps.delegations,
+      bots: deps.bots,
+      conversations: deps.conversations,
+      messages: deps.messages,
+      runs: deps.runs,
+      jobs: deps.jobs,
+      clock: deps.clock,
+      timeZone: deps.timeZone,
+      logger: deps.logger,
+      publish: (event, payload) => deps.publish(event as never, payload as never),
+      isMailboxIdle: (botId, conversationId) => this.isMailboxIdle(botId, conversationId),
+      deliverToBot: (input) => this.#deliverDelegationMessage(input),
+      cancelRun: (runId) => {
+        this.cancelRun(runId);
+      },
+      deliverEvent: (botId, conversationId, event, text, options) =>
+        this.deliverEventToBot(botId, conversationId, event, text, options),
+    });
     this.#chains = new ChainsService({
       db: deps.db,
       clock: deps.clock,
@@ -495,6 +552,8 @@ export class Orchestrator {
   #setupPathGateClosed(conversationId: string, botId: string): boolean {
     const bot = this.#deps.bots.get(botId);
     if (bot?.setupState !== 'interviewing') return false;
+    // 管家访谈（D70）不绑定 project：没有目录卡，首答直接投递。
+    if (bot.systemRole === 'butler') return false;
     // 访谈尚未开始（interview.start 未跑，如创建后立刻打字的极端竞态）：
     // 无首问可缓冲，不设闸。
     if (this.#deps.messages.countSystemEvents(conversationId, SETUP_QUESTION_EVENT) === 0) {
@@ -1173,7 +1232,72 @@ export class Orchestrator {
     if (runs.length > 0) {
       this.#deps.logger.info({ runs: runs.length }, 'recovered interrupted runs');
     }
+    // D71：working 委派的 run 已被标 interrupted → 落 failed（不续跑，D49）；
+    // 未投递的委派重新过投递闸门（启动时邮箱全空）。
+    try {
+      this.#delegationHost.recover();
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'delegation recovery failed',
+      );
+    }
     return runs.length;
+  }
+
+  /** RPC `butler.acceptRoute`: the user agreed to a delegate route card (D70 §2.4). */
+  acceptRoute(messageId: string): Message {
+    return this.#butlerHost.acceptRoute(messageId);
+  }
+
+  // --- cross-bot delegation (D71) ---------------------------------------------
+
+  /** RPC `delegations.get`. */
+  getDelegation(id: string): Delegation | null {
+    return this.#delegationHost.get(id);
+  }
+
+  /** RPC `delegations.cancel` (A-side card button). */
+  cancelDelegation(id: string): Delegation | null {
+    return this.#delegationHost.cancel(id, '用户取消');
+  }
+
+  /** jobs-runner `delegation_delivery`: B's quiet hours ended — re-run the delivery gate. */
+  deliverParkedDelegation(job: JobRow): void {
+    this.#delegationHost.deliverParked(job);
+  }
+
+  /** Lifecycle: a conversation is being deleted — delegations on either side end. */
+  delegationsOnConversationDeleted(conversationId: string): void {
+    this.#delegationHost.onConversationDeleted(conversationId);
+  }
+
+  /** Lifecycle: a bot is being deleted — delegations it sent or received end. */
+  delegationsOnBotDeleted(botId: string): void {
+    this.#delegationHost.onBotDeleted(botId);
+  }
+
+  /**
+   * Hands a delegation's proxied user message to B's mailbox (reason
+   * 'delegation'). The host only calls this when B's mailbox is idle, so the
+   * batch starts a fresh run whose id is returned.
+   */
+  #deliverDelegationMessage(input: {
+    botId: string;
+    conversationId: string;
+    message: Message;
+    extraAttributes: Record<string, string | number>;
+  }): string | null {
+    const conversation = this.#deps.conversations.get(input.conversationId);
+    if (!conversation || conversation.readOnly) return null;
+    if (this.#setupPathGateClosed(conversation.id, input.botId)) return null;
+    return this.#mailboxes.for(input.botId, conversation.id).deliver({
+      conversationId: conversation.id,
+      botId: input.botId,
+      messages: [input.message],
+      reason: 'delegation',
+      extraAttributes: input.extraAttributes,
+    });
   }
 
   // --- internals -------------------------------------------------------------
@@ -1253,10 +1377,47 @@ export class Orchestrator {
     // 幂等守卫：interview.start 重试/重复触发不得重复下发问候与首问（还会
     // 抬高 ask_question 的 5 问计数）。任何已开始的访谈都至少有首问这张卡。
     if (this.#deps.messages.countSystemEvents(conversationId, SETUP_QUESTION_EVENT) > 0) return;
-    this.#appendBotTextMessage(botId, conversationId, SETUP_GREETING);
-    this.#appendSystemMessage(conversationId, SETUP_QUESTION_EVENT, SETUP_FIRST_QUESTION, {
-      options: [...SETUP_FIRST_OPTIONS],
-    });
+    // 管家访谈（D70）是同一机制的变体：问的是用户的领域与场景，不是「这个
+    // 助手要做什么」。
+    const butler = this.#deps.bots.get(botId)?.systemRole === 'butler';
+    this.#appendBotTextMessage(
+      botId,
+      conversationId,
+      butler ? BUTLER_SETUP_GREETING : SETUP_GREETING,
+    );
+    this.#appendSystemMessage(
+      conversationId,
+      SETUP_QUESTION_EVENT,
+      butler ? BUTLER_SETUP_FIRST_QUESTION : SETUP_FIRST_QUESTION,
+      { options: butler ? [...BUTLER_SETUP_FIRST_OPTIONS] : [...SETUP_FIRST_OPTIONS] },
+    );
+  }
+
+  /**
+   * 确保唯一管家存在并有一个打开的私聊（D70，docs/design/27）。幂等。
+   * `interview`（新用户引导）让新建的管家进入访谈：确定性问候 + 固定首问卡；
+   * 否则（存量用户升级）只发一条确定性欢迎语。已存在的管家不再下发任何
+   * 消息——私聊被删过时只重开一个空私聊，保证侧栏置顶入口在。
+   */
+  ensureButler(options: { interview?: boolean } = {}): {
+    bot: Bot;
+    conversationId: string;
+    created: boolean;
+  } {
+    const { bot, created } = this.#deps.bots.ensureButler(
+      butlerProfileTemplate(),
+      options.interview === true ? { interview: true } : {},
+    );
+    if (created) this.#deps.publish('bot.updated', { bot });
+    const { conversation, created: conversationCreated } = this.#deps.conversations.openDirect(
+      bot.id,
+    );
+    if (conversationCreated) this.#publishConversation(conversation.id);
+    if (created) {
+      if (bot.setupState === 'interviewing') this.beginSetupInterview(bot.id, conversation.id);
+      else this.#appendBotTextMessage(bot.id, conversation.id, BUTLER_WELCOME_TEXT);
+    }
+    return { bot, conversationId: conversation.id, created };
   }
 
   /** Environment tool facade: real manager when wired, fail-closed stub otherwise. */
@@ -1319,6 +1480,15 @@ export class Orchestrator {
       renderCard: (message) => {
         if (message.senderType !== 'system' || message.kind !== 'card') return null;
         const content = message.content;
+        if (
+          'cardType' in content &&
+          (content.cardType === DELEGATION_SENT_CARD || content.cardType === DELEGATION_RESULT_CARD)
+        ) {
+          return this.#delegationHost.renderContextLine(
+            content.cardType,
+            String(content.delegationId ?? ''),
+          );
+        }
         if ('runId' in content && content.cardType === 'run_changes') {
           const change = this.#deps.projects.changesOf(String(content.runId ?? ''));
           if (change === null) return '（改动记录已清理）';
@@ -1350,6 +1520,8 @@ export class Orchestrator {
     this.#deps.scheduler.submit({
       // Chain / scheduled / event responses are priority 1; user-triggered
       // responses are 0 (docs/dev/04-agent-runtime.md "各类 loop 的配置").
+      // D71 delegation runs count as user-triggered (0): the user asked A
+      // for it and is waiting in A's conversation.
       priority:
         batch.reason === 'chain' || batch.reason === 'scheduled' || batch.reason === 'event'
           ? 1
@@ -1667,6 +1839,11 @@ export class Orchestrator {
             environment: this.#environmentFacade(),
             onMentionBots: (mentionIds, message) =>
               this.#chains.mention(identity, mentionIds, message),
+            // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
+            butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+            // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主
+            // 执行时按 run_id 反查，这里只是少给模型一个无用工具）。
+            ...(batch.reason === 'delegation' ? {} : { delegation: this.#delegationHost }),
             // 对话式新建（UI 改版）：访谈中的 Bot 额外拿到 save_profile /
             // finish_setup；写入直接生效（本次创建流程的明确目的）并广播
             // bot.updated 让 UI 实时反映新名字与 profile。
@@ -1722,7 +1899,8 @@ export class Orchestrator {
                             batch.conversationId,
                             SETUP_QUESTION_EVENT,
                           ) + 1;
-                        if (asked > SETUP_MAX_QUESTIONS) return questionCapReached();
+                        const variant = bot.systemRole === 'butler' ? 'butler' : 'bot';
+                        if (asked > SETUP_MAX_QUESTIONS) return questionCapReached(variant);
                         if (askInput.acknowledgement !== undefined) {
                           this.#appendBotTextMessage(
                             setupBotId,
@@ -1740,7 +1918,9 @@ export class Orchestrator {
                           ok: true,
                           message:
                             asked >= SETUP_MAX_QUESTIONS
-                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
+                              ? variant === 'butler'
+                                ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_team 提出组队建议，不要再提问。`
+                                : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
                               : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问）。`,
                         };
                       } catch (error) {
@@ -1895,6 +2075,15 @@ export class Orchestrator {
       }
       // A turn waiting for this mailbox to free up delivers now (BR-P05-002).
       this.#groupTurns.onMailboxIdle(batch.botId, batch.conversationId);
+      // D71：B 的私聊邮箱空了——排队中的委派（若有）可以投递了。
+      try {
+        this.#delegationHost.onMailboxIdle(batch.botId, batch.conversationId);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'queued delegation delivery failed',
+        );
+      }
       this.#publishConversation(batch.conversationId);
     }
   }
@@ -2231,6 +2420,17 @@ export class Orchestrator {
     this.#deps.publish('run.status', { run });
     // Group turns advance on any terminal state (cancelled/failed included).
     if (isTerminal(status)) this.#groupTurns.onRunSettled(run);
+    // D71：被委派 run 的终态 → A 侧结果卡 + follow-up（按 run_id 匹配）。
+    if (isTerminal(status)) {
+      try {
+        this.#delegationHost.onRunSettled(run);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { runId, error: error instanceof Error ? error.message : String(error) },
+          'delegation settle failed',
+        );
+      }
+    }
     return run;
   }
 

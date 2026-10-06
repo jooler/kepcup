@@ -4,6 +4,7 @@ import {
   type Message,
 } from '@kepcup/shared';
 import { estimateTokens } from '../tokens.js';
+import type { TriggerBatch } from '../../scheduler/mailbox.js';
 
 function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
@@ -48,9 +49,17 @@ export function renderMessageLine(message: Message, options: RenderMessageOption
   }
   let sender: string;
   switch (message.senderType) {
-    case 'user':
-      sender = '用户';
+    case 'user': {
+      // D71：委派代发消息——另一个 Bot 代用户转交的任务。
+      const content = message.content as { origin?: string; delegatedBy?: string };
+      if (content.origin === 'delegation') {
+        const by = content.delegatedBy ?? '';
+        sender = `用户（由 ${options.botNames.get(by) ?? (by || '其他 Bot')} 代为转交）`;
+      } else {
+        sender = '用户';
+      }
       break;
+    }
     case 'system':
       sender = '系统';
       break;
@@ -116,7 +125,7 @@ export function buildConversationContext(input: {
 }
 
 export interface TriggerSegmentInput {
-  reason: 'direct' | 'mention' | 'broadcast' | 'reply' | 'chain' | 'scheduled' | 'event';
+  reason: TriggerBatch['reason'];
   messages: Message[];
   options: RenderMessageOptions;
   extraAttributes?: Record<string, string | number>;

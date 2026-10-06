@@ -328,13 +328,16 @@ export function reflectionInput(input: {
     senderBotId?: string | null;
     content: unknown;
   }) => {
-    const content = m.content as { text?: string } | undefined;
+    const content = m.content as { text?: string; origin?: string } | undefined;
+    // D71：委派代发消息是其他 Bot 代用户转交的文字，不是用户本人的话。
     const sender =
-      m.senderType === 'user'
-        ? '用户'
-        : m.senderType === 'system'
-          ? '系统'
-          : (m.senderBotId ?? 'Bot');
+      m.senderType === 'user' && content?.origin === 'delegation'
+        ? '其他 Bot 代用户转交（非用户本人的话）'
+        : m.senderType === 'user'
+          ? '用户'
+          : m.senderType === 'system'
+            ? '系统'
+            : (m.senderBotId ?? 'Bot');
     return `[${m.id} | ${sender}] ${content?.text ?? ''}`;
   };
   const body = [

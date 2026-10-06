@@ -45,6 +45,13 @@ const TOOL_VERBS: Record<string, string> = {
   wiki_enqueue: '整理资料入库',
   save_profile: '保存 Profile',
   finish_setup: '完成初始化',
+  list_bots: '查看通讯录',
+  propose_team: '提议组建团队',
+  propose_bot: '提议新建 Bot',
+  propose_group: '提议建群',
+  suggest_route: '给出路由建议',
+  delegate_to_bot: '转交给其他 Bot',
+  cancel_delegation: '取消转交',
 };
 
 export function toolVerb(toolName: string): string | null {

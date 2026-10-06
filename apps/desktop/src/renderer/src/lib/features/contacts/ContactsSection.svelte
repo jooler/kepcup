@@ -79,16 +79,19 @@
               <MessagesSquare class="size-3.5" />
               {t('contacts.openChat')}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              class="gap-1"
-              onclick={() => void askDelete(bot)}
-              data-testid={`bot-delete-${bot.id}`}
-            >
-              <Trash2 class="size-3.5" />
-              {t('contacts.delete')}
-            </Button>
+            <!-- 管家（D70）不可删除：不给删除入口。 -->
+            {#if bot.systemRole !== 'butler'}
+              <Button
+                size="sm"
+                variant="outline"
+                class="gap-1"
+                onclick={() => void askDelete(bot)}
+                data-testid={`bot-delete-${bot.id}`}
+              >
+                <Trash2 class="size-3.5" />
+                {t('contacts.delete')}
+              </Button>
+            {/if}
           </div>
         </li>
       {/each}

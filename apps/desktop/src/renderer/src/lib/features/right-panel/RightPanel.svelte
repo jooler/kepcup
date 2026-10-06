@@ -484,16 +484,23 @@
         hidden={activeTab !== 'other'}
         data-testid="bot-other-section"
       >
-        <!-- 其它分组：移除 Bot（左栏条目不再有「…」删除入口，收拢到这里）。 -->
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-7 w-full gap-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onclick={() => void askRemove()}
-          data-testid="bot-remove"
-        >
-          {t('rightPanel.removeBot')}
-        </Button>
+        <!-- 其它分组：移除 Bot（左栏条目不再有「…」删除入口，收拢到这里）。
+             管家（D70）不可删除：只给说明，不给按钮。 -->
+        {#if bot?.systemRole === 'butler'}
+          <p class="text-xs text-muted-foreground" data-testid="bot-remove-butler-note">
+            {t('rightPanel.butlerUndeletable')}
+          </p>
+        {:else}
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-7 w-full gap-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onclick={() => void askRemove()}
+            data-testid="bot-remove"
+          >
+            {t('rightPanel.removeBot')}
+          </Button>
+        {/if}
       </div>
     </div>
   {/if}

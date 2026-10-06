@@ -65,7 +65,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 - **审批 kind**：用单一 `butler_proposal`（payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分）而非三个 kind——`approvals.kind` 有表级 CHECK，每加一个 kind 都要重建表，且 `describe` / `renderContextLine` / UI 卡片 / 排除名单每处都要多一个分支。
 - **非阻塞提交**（`submitNonBlocking` 范式，同 `environment`）：卡片与管家的 run 脱钩——工具提交后 `terminate`，用户几分钟甚至几天后才决定都不占 run；决定落在 core 回调里，而不是回到模型。因此 `cancelPendingForRun` 要像 `environment` 一样把该 kind 排除（否则管家 run 一结束卡片就被取消）；应用重启仍整体 `cancelAllPending`（决定回调只在内存里，不留悬挂卡）。
 - **无人值守不自动批准**：`#autoDecideSync` 对 kind 一律放行，需新增按 kind 排除——`butler_proposal` 在无人值守下照常挂起等用户（防止无人值守刷出一堆联系人）。
-- **「微调」需要新通道**：`approvals.decide` 目前只有 `approve` / `duration`，表达不了「去掉第 2 项」。给 `approvals.decide` 增可选 `selection`（被勾选的条目下标 / id），仅对 `butler_proposal` 有效，由 core 对照 payload 校验（不得出现 payload 之外的条目、`team` 的选中数仍须在 `BUTLER_TEAM_SIZE_MIN..MAX` 内或为空 = 等价于拒绝）。落库前以 `selection` 过滤后的条目为准；决定记入 `decision_json`。
+- **「微调」需要新通道**：`approvals.decide` 目前只有 `approve` / `duration`，表达不了「去掉第 2 项」。给 `approvals.decide` 增可选 `selection`（被勾选的条目下标 / id），仅对 `butler_proposal` 有效，由 core 对照 payload 校验（不得出现 payload 之外的条目；一项都不留 = 等价于拒绝）。`BUTLER_TEAM_SIZE_MIN..MAX` 只约束模型的提议，不约束用户勾选——用户只想要其中两个就建两个。落库前以 `selection` 过滤后的条目为准；决定记入 `decision_json`。
 - 批准后的回调**确定性**执行（循环 `bots.create`，不经模型）；部分失败时已建的保留、卡片标 `failed` 并列出失败项（对齐 BR-P08-004 的 `approvals.fail`）。成功 / 失败后用 internal follow-up 通知管家（它再对用户说下一步），不另造用户可见消息。
 - `propose_group` 批准后调 `groups.create({ title, memberBotIds })`——**该入参没有 description**（description 只在 D60 的 `finalizeSetup` 路径写入），实现时给 `create` 补可选 `description`，或建后补写一次；成员 ≥ 2 的校验沿用。
 - Onboarding 原 step 5 单 Bot 模板演进为「先落管家，再由管家组队」（设计推荐：**管家优先**）；快速单 Bot 仍可用侧栏「新建」。

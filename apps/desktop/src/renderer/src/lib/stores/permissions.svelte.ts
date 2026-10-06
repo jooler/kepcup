@@ -93,12 +93,19 @@ class PermissionsState {
     this.unattended = (await core.call('unattended.get')) as UnattendedState;
   }
 
-  async decide(approvalId: string, approve: boolean, duration?: 'once' | 'conversation'): Promise<void> {
+  async decide(
+    approvalId: string,
+    approve: boolean,
+    duration?: 'once' | 'conversation',
+    /** butler_proposal only (D70): indexes of the proposed bots the user kept. */
+    selection?: number[],
+  ): Promise<void> {
     try {
       const result = (await core.call('approvals.decide', {
         id: approvalId,
         approve,
         ...(duration !== undefined ? { duration } : {}),
+        ...(selection !== undefined ? { selection } : {}),
       })) as { approval: Approval };
       this.approvals = { ...this.approvals, [approvalId]: result.approval };
       this.#recount(result.approval.conversationId);

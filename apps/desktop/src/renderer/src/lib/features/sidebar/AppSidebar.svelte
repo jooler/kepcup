@@ -20,6 +20,7 @@
   import { shell } from '$lib/stores/shell.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { core } from '$lib/rpc/client.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { createBotConversational, emptyProfile } from '$lib/features/bot-setup';
@@ -168,8 +169,23 @@
     const id = deleteTargetId;
     deleteTargetId = null;
     if (!id) return;
+    const wasButlerChat = isButlerConversation(chat.conversations.find((c) => c.id === id));
     await chat.deleteConversation(id);
+    // 管家（D70）置顶入口不能消失：删的只是聊天记录，随即重开一个空私聊。
+    if (wasButlerChat) await core.call('butler.ensure', {});
   }
+
+  /** 管家（D70）的私聊：侧栏固定置顶。 */
+  function isButlerConversation(conversation: ConversationView | undefined): boolean {
+    return conversation?.type === 'direct' && conversation.bot?.systemRole === 'butler';
+  }
+
+  /** 侧栏顺序：管家私聊置顶，其余保持 store 的时间顺序。 */
+  const orderedConversations = $derived.by(() => {
+    const butler = chat.conversations.filter((c) => isButlerConversation(c));
+    if (butler.length === 0) return chat.conversations;
+    return [...butler, ...chat.conversations.filter((c) => !isButlerConversation(c))];
+  });
 
   function openContextMenu(event: MouseEvent, conversationId: string): void {
     event.preventDefault();
@@ -309,7 +325,7 @@
           <p class="px-3 py-2 text-xs text-muted-foreground">{t('sidebar.chatsEmpty')}</p>
         {:else}
           <Sidebar.Menu>
-            {#each chat.conversations as conversation (conversation.id)}
+            {#each orderedConversations as conversation (conversation.id)}
               <Sidebar.MenuItem>
                 <div
                   class="group/conversation flex w-full items-center"

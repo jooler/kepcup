@@ -70,6 +70,31 @@ export const SUBAGENT_BACKGROUND_CONCURRENCY = 4;
 /** system_event name of the deterministic background-delegation follow-up injection (D66 mode B). */
 export const SUBAGENT_FOLLOWUP_EVENT = 'delegate_result';
 
+// --- Butler & cross-bot delegation (D70 / D71, docs/design/27-butler-and-delegation.md) ---
+
+/**
+ * Max delegation depth (D71). First release is single-hop for every initiator
+ * — the butler included: a delegated run may not delegate again (a 2-hop
+ * chain would paste B's "已委托给 C" as A's result before C finishes).
+ */
+export const DELEGATION_MAX_DEPTH = 1;
+/** B's final reply is truncated to this many characters on A's result card. */
+export const DELEGATION_RESULT_MAX_CHARS = 2000;
+/** Max characters of the task text one delegate_to_bot call may carry. */
+export const DELEGATION_TASK_MAX_CHARS = 4000;
+/**
+ * system_event name of the follow-up injected into A when a delegation ends
+ * (D71). Distinct from D66's `delegate_result` (SUBAGENT_FOLLOWUP_EVENT).
+ */
+export const DELEGATION_FOLLOWUP_EVENT = 'delegation_result';
+/** Bounds of a butler `propose_team` proposal (D70). */
+export const BUTLER_TEAM_SIZE_MIN = 3;
+export const BUTLER_TEAM_SIZE_MAX = 5;
+/** system_event name of the butler's route card (D70 suggest_route). */
+export const ROUTE_SUGGESTION_EVENT = 'route_suggestion';
+/** system_event name of the follow-up injected into the butler after a proposal is decided (D70). */
+export const BUTLER_PROPOSAL_FOLLOWUP_EVENT = 'butler_proposal_result';
+
 // --- MCP (D65, docs/design/23-mcp-and-subagent.md) -------------------------------
 
 /** Single MCP tool call timeout (callTool). */

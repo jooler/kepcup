@@ -49,6 +49,7 @@ import { RunsService } from './domain/runs.js';
 import { UsageService } from './domain/usage.js';
 import { LifecycleService } from './domain/lifecycle.js';
 import { GroupsService } from './domain/groups.js';
+import { DelegationsService } from './domain/delegations.js';
 import { ProvidersService } from './domain/providers.js';
 import { AuditService } from './domain/audit.js';
 import { GrantsService } from './permissions/grants.js';
@@ -293,6 +294,8 @@ export interface CoreDomainServices {
   usage: UsageService;
   lifecycle: LifecycleService;
   groups: GroupsService;
+  /** 跨 Bot 委派行（D71）。 */
+  delegations: DelegationsService;
   providers: ProvidersService;
   grants: GrantsService;
   approvals: ApprovalsService;
@@ -757,6 +760,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     const drafts = new DraftsService(mainDb, clock);
+    const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
     const jobs = new JobsService(mainDb, clock);
     const runs = new RunsService(runsDb, clock);
@@ -1063,6 +1067,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bots,
       conversations,
       groups,
+      delegations,
       messages,
       drafts,
       attachments,
@@ -1178,6 +1183,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         orchestrator.abortRunsForBotInConversation(botId, conversationId),
       onGroupMemberRemoved: (botId, conversationId) =>
         orchestrator.groupMemberRemoved(botId, conversationId),
+      delegations: {
+        onConversationDeleted: (conversationId) =>
+          orchestrator.delegationsOnConversationDeleted(conversationId),
+        prepareBotDeletion: (botId) => orchestrator.delegationsOnBotDeleted(botId),
+      },
       memory: {
         onConversationDeleted: (conversationId, memberBotIds) =>
           memory.onConversationDeleted(conversationId, memberBotIds),
@@ -1245,6 +1255,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
     jobs.resetRunningToPending();
     orchestrator.recoverInterrupted();
+    // D70：存量用户（升级前已完成引导）没有管家——启动时幂等补建（不访谈，
+    // 只发确定性欢迎语）。新用户的管家由引导完成时的 butler.ensure 建立。
+    if (settings.get().onboarding.completed) {
+      try {
+        orchestrator.ensureButler();
+      } catch (error) {
+        logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'butler ensure at startup failed',
+        );
+      }
+    }
     // P06: installs never survive a restart — anything stuck `installing` is
     // a dead process's work. Doctor runs at startup and once a day
     // (docs/dev/phases/P06-environment.md 范围: 体检时机), both best-effort.
@@ -1361,6 +1383,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       usage,
       lifecycle,
       groups,
+      delegations,
       providers,
       audit,
       grants,
