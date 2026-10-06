@@ -138,6 +138,21 @@ export class DelegationsService {
     ).map(rowToDelegation);
   }
 
+  /**
+   * Delivered-but-never-triggered delegations to one bot (`working` without a
+   * run id — the crash hit between the append+working transaction and the
+   * run-id backfill). Recovery re-delivers their existing message.
+   */
+  stalledFor(toBotId: string): Delegation[] {
+    return (
+      this.db
+        .prepare(
+          "select * from delegations where to_bot_id = ? and status = 'working' and run_id is null order by created_at, id",
+        )
+        .all(toBotId) as DelegationRow[]
+    ).map(rowToDelegation);
+  }
+
   /** Every non-terminal delegation (startup recovery). */
   listActive(): Delegation[] {
     return (

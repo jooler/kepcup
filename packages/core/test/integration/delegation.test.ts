@@ -275,6 +275,10 @@ describe('cross-bot delegation A→B (D71)', () => {
       aAll.some((m) => 'event' in m.content && m.content.event === DELEGATION_FOLLOWUP_EVENT),
     ).toBe(false);
     expect(delegationsOf(stack)[0]!.status).toBe('cancelled');
+    // 未知 id 报 NOT_FOUND（不静默返回 null）。
+    await expect(core.rpc.call('delegations.cancel', { id: 'dlg_nope' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   }, 40_000);
 
   it('删除 B / 删除 B 的私聊：活动委派落 cancelled，B 的 run 被中止', async () => {
@@ -377,6 +381,60 @@ describe('cross-bot delegation A→B (D71)', () => {
     const after = second.core.services.domain!.delegations.getOrThrow(working.id);
     expect(after.status).toBe('failed');
     expect(after.errorText).toContain('中断');
+    const aAll = await listAllMessages(second.core, aConv);
+    expect(cards(aAll, 'delegation_result')).toHaveLength(1);
+  }, 40_000);
+
+  it('重启恢复：崩溃在「消息已落、run 未起」窗口 → 复用既有代发消息重投，不重发', async () => {
+    const keystore = createMemoryKeystore();
+    const home = await mkdtemp(path.join(tmpdir(), 'kepcup-delegation-'));
+    homes.push(home);
+    const first = await createTestStack({ home, keystore });
+    stacks.push(first);
+    const { a, b } = await pair(first);
+    // 直接构造崩溃窗口的中间态（与 #tryDeliver 的事务提交后、投递前一致）：
+    // 委派行 working、代发消息已在 B 私聊、run_id 尚未回填。
+    const delegations = first.core.services.domain!.delegations;
+    const messages = first.core.services.domain!.messages;
+    const aConv = (await openDirect(first.core, a.id)).id;
+    const created = delegations.create({
+      fromBotId: a.id,
+      toBotId: b.id,
+      fromConversationId: aConv,
+      taskText: '窗口里的任务',
+      depth: 1,
+      fromRunId: null,
+    });
+    const bConv = (await openDirect(first.core, b.id)).id;
+    const message = messages.append({
+      conversationId: bConv,
+      senderType: 'user',
+      kind: 'text',
+      text: '窗口里的任务',
+      delegation: { delegationId: created.id, delegatedBy: a.id },
+    });
+    delegations.transition(created.id, ['submitted'], 'working', {
+      toConversationId: bConv,
+      toMessageId: message.id,
+    });
+    // 模拟崩溃：不投递直接关掉。
+    await first.core.close();
+    await first.llm.stop();
+    stacks.pop();
+
+    const second = await start({ home, keystore });
+    second.llm.script('mock-main', [
+      step().expect(isDelegatedTrigger).replyText('处理好了。'),
+      step().expect(isFollowUp).replyText('收到，已经告诉用户。'),
+    ]);
+    const done = await waitDelegation(second, (d) => d.id === created.id && d.status === 'completed');
+    expect(done.runId).not.toBeNull();
+    expect(done.resultExcerpt).toBe('处理好了。');
+    // B 私聊仍只有一条代发消息（复用既有消息，不重发）。
+    const bMessages = await listMessages(second.core, bConv);
+    const proxied = bMessages.filter((m) => m.senderType === 'user');
+    expect(proxied).toHaveLength(1);
+    expect(proxied[0]!.id).toBe(message.id);
     const aAll = await listAllMessages(second.core, aConv);
     expect(cards(aAll, 'delegation_result')).toHaveLength(1);
   }, 40_000);

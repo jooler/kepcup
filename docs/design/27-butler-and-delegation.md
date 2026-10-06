@@ -103,7 +103,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | 触发 | A 的响应 loop 调用 `delegate_to_bot({ bot_id, task, … })`；**异步**，工具返回「已委托」后 A 照常收尾，不在 loop 内等 B |
 | 取消 | `cancel_delegation({ delegation_id })` 或用户在 A 侧委派卡（发出卡）上取消 |
 | 持久化 | `delegations` 表（main DB）：id、from_bot_id、to_bot_id、from_conversation_id、to_conversation_id、task、status、to_message_id（B 侧代发消息，「查看原文」链）、run_id（B 侧响应 run，投递时回填——settle 钩子与取消都靠它）、result_message_id、depth、created_at / updated_at … |
-| 状态 | `submitted`（行已写，**尚未向 B 投递**，等 §3.5 闸门）→ `working`（代发消息已落 B 私聊、run 已起）→ `completed` \| `failed` \| `cancelled`。B 的 run `failed` / `interrupted` → `failed`；B 的 run 被 `cancelled`（用户在 B 侧点停止 / B 被删等）→ `cancelled`。启动恢复把 `working` 且 run 已 `interrupted` 的委派落 `failed`（对齐 D49 ephemeral 语义，不自动续跑） |
+| 状态 | `submitted`（行已写，**尚未向 B 投递**，等 §3.5 闸门）→ `working`（代发消息已落 B 私聊——与状态翻转同事务，`run_id` 投递后回填；`working` 且无 run 即「投递前崩溃」，重启复用既有消息重投）→ `completed` \| `failed` \| `cancelled`。B 的 run `failed` / `interrupted` → `failed`；B 的 run 被 `cancelled`（用户在 B 侧点停止 / B 被删等）→ `cancelled`。启动恢复把 `working` 且 run 已 `interrupted` 的委派落 `failed`（对齐 D49 ephemeral 语义，不自动续跑） |
 | UI | **停留在 A 的对话**；不自动切换到 B |
 | 生命周期 | 对话 / Bot 删除不改委派行的存在，只终态化：A 或 B 被删 / B 私聊被删 → 活跃委派落 `cancelled`（并 abort B 的活动 run）；卡片上的「查看原文」链在 B 对话不存在时降级为「对话已删除」 |
 
@@ -148,9 +148,9 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 
 原因：mailbox 的语义是「在跑的 loop 被 steer，否则开新 run」。如果 B 正在回应用户时委派到达，代发消息会被 steer 进那个**已有**的 run——它的 `triggerReason` 不是 `delegation`、`deliver` 返回的 run_id 是别人的任务的 run、终回复是对用户那件事的回答，结果卡会贴错内容，单跳也摘不掉。排队保证每个委派对应**自己起的 run**：`triggerMessageIds = [to_message_id]`、`triggerReason='delegation'`、`run_id` 精确。
 
-- 闸门不通过 → 委派保持 `submitted`，A 的发出卡提示「将在 B 空闲 / 免打扰结束后发送」；**代发消息此时不落 B 私聊**（避免 B 私聊里出现一条没人回应的用户消息），投递瞬间才落库并回填 `to_message_id` / `run_id`、转 `working`。
-- 补投时机：B 邮箱 release 时扫描以该 B 为目标的 `submitted` 委派（FIFO，每次只投一条，下一条等这个 run 释放）；quiet hours 用新 job 类型（参照 `event_delivery` 的 parking，到点重检）。
-- `submitted` 阶段可被 `cancel_delegation` 直接 `cancelled`（无 run 可 abort）。
+- 闸门不通过 → 委派保持 `submitted`，A 的发出卡提示「将在 B 空闲 / 免打扰结束后发送」；**代发消息此时不落 B 私聊**（避免 B 私聊里出现一条没人回应的用户消息），投递瞬间才落库并转 `working`。**崩溃一致性**：「落代发消息 + 转 `working`」在同一个 main.db 事务里提交，`to_message_id` 随事务写入、`run_id` 在投递成功后单独回填——窗口期崩溃重启后，`submitted`（无消息）重走闸门，`working` 且无 run（stalled，消息已在）**复用既有消息重投**，不重发。
+- 补投时机：B 邮箱 release 时扫描以该 B 为目标的 `submitted` 与 stalled 委派（按创建序 FIFO，每次只投一条，下一条等这个 run 释放）；quiet hours 用新 job 类型（参照 `event_delivery` 的 parking，到点重检）。
+- `submitted` 阶段可被 `cancel_delegation` 直接 `cancelled`（无 run 可 abort）。`delegations.cancel` 对未知 id 报 `NOT_FOUND`（UI toast），不静默。
 - 一个 B 同时存在多条 `submitted` 时按创建顺序依次投递；A 侧每条各有一张发出卡。
 - 即便闸门通过，B 的 run 起来之后用户仍可能在 B 私聊里 steer 它（结果混杂风险，见 §4 与 todo 风险节），首期接受。
 
