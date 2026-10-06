@@ -758,15 +758,17 @@ export function buildResponseTools(input: {
   const setupTools =
     deps.setup !== undefined ? buildSetupTools({ identity, setup: deps.setup }) : [];
 
-  // 图像/语音/视频生成（docs/design/18-inline-setup.md、20-conversation-media.md）：
-  // 媒体网关就绪才注册；未配置能力时工具返回 SETUP_REQUIRED，由 orchestrator
-  // 中断 run 并引导设置。
+  // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
+  // 20-conversation-media.md、25-capability-tools.md）：媒体网关就绪才注册；
+  // 未配置能力时工具返回 SETUP_REQUIRED，由 orchestrator 中断 run 并引导设置。
   const imageTools =
     deps.media !== undefined
       ? buildImageTools({
           identity,
           media: deps.media,
           workspacePath: deps.workspacePath,
+          attachments: deps.attachments,
+          gateway,
         })
       : [];
   const speechTools =
@@ -775,6 +777,8 @@ export function buildResponseTools(input: {
           identity,
           media: deps.media,
           workspacePath: deps.workspacePath,
+          attachments: deps.attachments,
+          gateway,
         })
       : [];
 

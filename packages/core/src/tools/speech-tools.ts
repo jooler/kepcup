@@ -1,15 +1,20 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
-import { AppError } from '@kepcup/shared';
+import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
+import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from './image-tools.js';
+import { resolveMediaSource } from './media-source.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
+import type { AttachmentsService } from '../domain/attachments.js';
+import type { ToolGateway } from '../gateway/index.js';
 
 /**
- * 语音合成与视频生成的 Bot 工具（docs/design/20-conversation-media.md）。
- * 与 generate_image 同一模式：能力按 settings.capabilityModels 配置，未配置
- * （能力缺失或厂商缺 Key）返回 SETUP_REQUIRED——orchestrator 监听后中断 run
- * 以结构化 setup 需求 settle，界面内嵌设置卡，完成后原 run 自动重试。
+ * 语音合成、语音转写与视频生成的 Bot 工具（docs/design/20-conversation-media.md、
+ * docs/design/25-capability-tools.md）。与 generate_image 同一模式：能力按
+ * settings.capabilityModels 配置，未配置（能力缺失或厂商缺 Key）返回
+ * SETUP_REQUIRED——orchestrator 监听后中断 run 以结构化 setup 需求 settle，
+ * 界面内嵌设置卡，完成后原 run 自动重试。
  *
  * 产物落盘 workspace 的 .generated/，由模型用 send_message 的 attachment_paths
  * 随消息发出。视频是异步任务：工具内轮询（约 5s）并以 progress 汇报阶段，
@@ -20,11 +25,16 @@ const VIDEO_POLL_INTERVAL_MS = 5_000;
 const VIDEO_TIMEOUT_MS = 10 * 60_000;
 const VIDEO_MAX_BYTES = 200_000_000;
 const VIDEO_DOWNLOAD_TIMEOUT_MS = 120_000;
+/** 单次转写的音频字节上限（qwen3-asr 兼容通道量级内）。 */
+const TRANSCRIBE_MAX_BYTES = 20_000_000;
 
 export function buildSpeechTools(input: {
   identity: RunIdentity;
   media: MediaToolFacade;
   workspacePath: string;
+  /** 素材来源解析（transcribe_audio）：附件字节与路径权限检查。 */
+  attachments: AttachmentsService;
+  gateway: ToolGateway;
   /** 轮询间隔（测试注入缩短）；默认 5s。 */
   videoPollIntervalMs?: number;
 }): ToolDefinition[] {
@@ -237,7 +247,91 @@ export function buildSpeechTools(input: {
     },
   };
 
-  return [generateSpeech, generateVideo];
+  /**
+   * 语音转写（docs/design/25-capability-tools.md）：把对话附件（语音留言/
+   * 录音）或 workspace 内音频文件转成文字。当前模型听不了音频时用它拿到
+   * 内容；渲染层语音消息的音频附件也可由本工具转写（模型侧兜底）。
+   */
+  const transcribeAudio: ToolDefinition<{
+    audio: string;
+    language?: string;
+  }> = {
+    name: 'transcribe_audio',
+    description:
+      '把音频转写为文字（语音识别模型）。用户发来语音/录音附件而当前模型无法听音频时，必须用本工具获取内容后再回答。来源为对话附件 id（att_…）或文件路径，单次一个音频。',
+    parameters: Type.Object({
+      audio: Type.String({ description: '音频来源：附件 id（att_…）或文件路径' }),
+      language: Type.Optional(
+        Type.String({ description: '语言提示（BCP-47，如 zh），可提高识别准确度' }),
+      ),
+    }),
+    execute: async (params) => {
+      if (identity.conversationId === null || identity.botId === null) {
+        return {
+          ok: false,
+          content: '当前执行没有对话上下文，无法转写音频',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      let audioBase64: string;
+      let audioMime: string;
+      try {
+        const resolved = resolveMediaSource({
+          identity,
+          gateway: input.gateway,
+          attachments: input.attachments,
+          source: params.audio,
+        });
+        if (resolved.bytes.length > TRANSCRIBE_MAX_BYTES) {
+          return {
+            ok: false,
+            content: `音频过大（约 ${Math.round(resolved.bytes.length / 1024 / 1024)}MB，上限 20MB）`,
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+        audioBase64 = resolved.bytes.toString('base64');
+        audioMime = resolved.mime;
+      } catch (error) {
+        return {
+          ok: false,
+          content: error instanceof AppError ? error.message : String(error),
+          errorCode: error instanceof AppError ? error.code : 'INVALID_INPUT',
+        };
+      }
+      let result: { text: string };
+      try {
+        result = await media.transcribeSpeech({
+          audioBase64,
+          audioMime,
+          ...(params.language !== undefined ? { language: params.language } : {}),
+        });
+      } catch (error) {
+        if (error instanceof AppError) {
+          if (error.code === 'CAPABILITY_NOT_CONFIGURED' || error.code === 'PROVIDER_AUTH_FAILED') {
+            return setupRequiredResult('语音识别模型未配置');
+          }
+          return { ok: false, content: error.message, errorCode: error.code };
+        }
+        return {
+          ok: false,
+          content: `语音转写失败：${error instanceof Error ? error.message : String(error)}`,
+          errorCode: 'INTERNAL',
+        };
+      }
+      const text = result.text.trim();
+      if (text.length === 0) {
+        return {
+          ok: false,
+          content: '语音识别完成但没有识别出文字内容',
+          errorCode: 'PROVIDER_UNAVAILABLE',
+        };
+      }
+      const truncated = truncateToBudget(text, TOOL_OUTPUT_MAX_CHARS).text;
+      return { ok: true, content: `<untrusted>\n${truncated}\n</untrusted>` };
+    },
+  };
+
+  return [generateSpeech, generateVideo, transcribeAudio];
 }
 
 function setupRequiredResult(reason: string): ToolResult {

@@ -2072,7 +2072,7 @@ export class Orchestrator {
   #mediaFacade(setupHit: { requirement: SetupRequirement | null }): MediaToolFacade {
     const media = this.#deps.media!;
     const setupGuard = async <T>(
-      capability: 'image' | 'tts' | 'video',
+      capability: 'image' | 'tts' | 'video' | 'multimodal' | 'asr',
       run: () => Promise<T>,
     ): Promise<T> => {
       try {
@@ -2089,7 +2089,9 @@ export class Orchestrator {
     };
     return {
       generateImage: (input) => setupGuard('image', () => media.generateImage(input)),
+      understandImage: (input) => setupGuard('multimodal', () => media.understandImage(input)),
       synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input)),
+      transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input)),
       generateVideo: (input) => setupGuard('video', () => media.generateVideo(input)),
       videoStatus: (provider, taskId) => media.videoStatus(provider, taskId),
     };
