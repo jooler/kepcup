@@ -16,7 +16,7 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 | 层 | 位置 | 内容 |
 |---|---|---|
-| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http）、command/args 或 url、`enabled`、`autoApprove` |
+| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http=Streamable / sse=旧版 HTTP+SSE）、command/args 或 url、`enabled`、`autoApprove` |
 | Bot 级 | `botRuntimeSchema.mcp_server_ids` | 该 Bot 启用的 server 子集，默认空 |
 | 密钥 | `secrets` 表 | stdio env / http headers 中的敏感值，键 `mcp:{serverId}:env|header:{name}`，字段级加密（D25），LLM 与日志不可见 |
 

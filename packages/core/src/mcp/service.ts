@@ -1,11 +1,13 @@
 import {
   McpClient,
+  McpHttpError,
   StdioTransport,
   StreamableHttpTransport,
   McpConnectionClosedError,
   type CallToolResult,
   type Tool as McpTool,
 } from '@earendil-works/pi-mcp';
+import { SseTransport } from './sse-transport.js';
 import {
   AppError,
   MCP_CALL_TIMEOUT_MS,
@@ -54,6 +56,12 @@ export interface McpServerStatusSink {
     status: McpServerStatus;
     detail?: string;
   }): void;
+}
+
+/** 草稿态密钥覆盖（设置页保存前测试）：键为变量名，优先于 secrets 表。 */
+export interface McpSecretOverrides {
+  env?: Record<string, string> | undefined;
+  header?: Record<string, string> | undefined;
 }
 
 export interface McpServiceDeps {
@@ -107,32 +115,69 @@ export class McpService {
     return serversForBot(this.listServers(), selectedIds);
   }
 
-  /** 设置页连接测试：用给定配置连接并列出工具（不落缓存，结束后关闭）。 */
-  async testServer(server: McpServer): Promise<{ tools: string[]; missingSecrets: string[] }> {
-    const missingSecrets = this.missingSecrets(server);
+  /**
+   * 设置页连接测试：用给定配置连接并列出工具（不落缓存，结束后关闭）。
+   * secretValues 为表单草稿里新输入的密钥（未保存），仅本次测试生效。
+   */
+  async testServer(
+    server: McpServer,
+    secretValues?: McpSecretOverrides | undefined,
+  ): Promise<{ tools: string[]; missingSecrets: string[] }> {
+    const missingSecrets = this.missingSecrets(server, secretValues);
     const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
     try {
-      await this.#connectClient(client, server);
+      await this.#connectClient(client, server, secretValues);
       const tools = await client.listTools({ timeoutMs: MCP_CONNECT_TIMEOUT_MS });
       // 配置修好后解除 failed 停用：下次 loop 内调用按新配置重新计数。
       this.#failures.delete(server.id);
       return { tools: tools.map((tool) => tool.name), missingSecrets };
+    } catch (error) {
+      const hint = this.#endpointHint(server, error);
+      if (hint !== '') {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new AppError('MCP_CONNECT_FAILED', `${message}（${hint}）`);
+      }
+      throw error;
     } finally {
       await client.close().catch(() => {});
     }
   }
 
-  /** 配置中无法从 secrets 解析的占位符（`secret:env:x` / `secret:header:y`）。 */
-  missingSecrets(server: McpServer): string[] {
+  /**
+   * 401 = 服务端要求 Bearer 认证；404/405 = URL 没命中端点路径或协议类型
+   * 选错（本地服务新旧协议混用很常见）。给设置页一条可操作的提示，而不是
+   * 裸的 HTTP 状态码。
+   */
+  #endpointHint(server: McpServer, error: unknown): string {
+    if (!(error instanceof McpHttpError)) return '';
+    if (error.status === 401) {
+      return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为 Bearer <token>（需带 Bearer 前缀）';
+    }
+    if (error.status !== 404 && error.status !== 405) return '';
+    if (server.transport === 'http') {
+      return '请确认 URL 指向 MCP 端点（通常以 /mcp 结尾）；若服务为旧版 SSE 协议，请把类型改为 SSE';
+    }
+    if (server.transport === 'sse') {
+      return '请确认 URL 指向 SSE 端点（通常以 /sse 结尾）；若服务为新版 Streamable HTTP 协议，请把类型改为 HTTP';
+    }
+    return '';
+  }
+
+  /** 配置中无法从覆盖值或 secrets 解析的占位符（`secret:env:x` / `secret:header:y`）。 */
+  missingSecrets(server: McpServer, secretValues?: McpSecretOverrides | undefined): string[] {
     const missing: string[] = [];
     const check = (value: string) => {
       for (const kind of ['env', 'header'] as const) {
         const prefix = `secret:${kind}:`;
         if (value.startsWith(prefix)) {
           const name = value.slice(prefix.length);
-          if (!this.#deps.secrets.hasValue(`mcp:${server.id}:${kind}:${name}`)) {
-            missing.push(value);
+          if (
+            secretValues?.[kind]?.[name] !== undefined ||
+            this.#deps.secrets.hasValue(`mcp:${server.id}:${kind}:${name}`)
+          ) {
+            continue;
           }
+          missing.push(value);
         }
       }
     };
@@ -226,7 +271,8 @@ export class McpService {
       await client.close().catch(() => {});
       const attempts = failures + 1;
       this.#failures.set(server.id, attempts);
-      const detail = error instanceof Error ? error.message : String(error);
+      const hint = this.#endpointHint(server, error);
+      const detail = `${error instanceof Error ? error.message : String(error)}${hint !== '' ? `（${hint}）` : ''}`;
       if (attempts >= MCP_RECONNECT_MAX) {
         this.#deps.statusSink.emit({
           serverId: server.id,
@@ -269,18 +315,37 @@ export class McpService {
     return state;
   }
 
-  async #connectClient(client: McpClient, server: McpServer): Promise<void> {
+  async #connectClient(
+    client: McpClient,
+    server: McpServer,
+    secretValues?: McpSecretOverrides | undefined,
+  ): Promise<void> {
     const transport =
       server.transport === 'stdio'
         ? new StdioTransport({
             command: server.command ?? '',
-            args: this.#resolveSecretValues(server.id, server.args ?? [], 'env'),
-            env: this.#resolveRecordSecrets(server.id, server.env, 'env'),
+            args: this.#resolveSecretValues(server.id, server.args ?? [], 'env', secretValues),
+            env: this.#resolveRecordSecrets(server.id, server.env, 'env', secretValues),
           })
-        : new StreamableHttpTransport({
-            url: server.url ?? '',
-            headers: this.#resolveRecordSecrets(server.id, server.headers, 'header'),
-          });
+        : server.transport === 'sse'
+          ? new SseTransport({
+              url: server.url ?? '',
+              headers: this.#resolveRecordSecrets(
+                server.id,
+                server.headers,
+                'header',
+                secretValues,
+              ),
+            })
+          : new StreamableHttpTransport({
+              url: server.url ?? '',
+              headers: this.#resolveRecordSecrets(
+                server.id,
+                server.headers,
+                'header',
+                secretValues,
+              ),
+            });
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), MCP_CONNECT_TIMEOUT_MS);
     timer.unref?.();
@@ -319,31 +384,46 @@ export class McpService {
   }
 
   /**
-   * 占位符解析：`secret:env:<name>` / `secret:header:<name>` → secrets 表
-   * `mcp:{serverId}:env|header:{name}`。未找到的占位符保留原样（连接侧会
-   * 报错，设置页可见），绝不明文落日志。
+   * 占位符解析：`secret:env:<name>` / `secret:header:<name>` → 优先取测试
+   * 传入的覆盖值（草稿未保存），否则查 secrets 表 `mcp:{serverId}:env|header:{name}`。
+   * 未找到的占位符保留原样（连接侧会报错，设置页可见），绝不明文落日志。
    */
-  #resolveSecretValues(serverId: string, values: string[], kind: 'env' | 'header'): string[] {
-    return values.map((value) => this.#resolveSecretValue(serverId, value, kind));
+  #resolveSecretValues(
+    serverId: string,
+    values: string[],
+    kind: 'env' | 'header',
+    secretValues?: McpSecretOverrides | undefined,
+  ): string[] {
+    return values.map((value) => this.#resolveSecretValue(serverId, value, kind, secretValues));
   }
 
   #resolveRecordSecrets(
     serverId: string,
     record: Record<string, string> | undefined,
     kind: 'env' | 'header',
+    secretValues?: McpSecretOverrides | undefined,
   ): Record<string, string> | undefined {
     if (record === undefined) return undefined;
     const resolved: Record<string, string> = {};
     for (const [key, value] of Object.entries(record)) {
-      resolved[key] = this.#resolveSecretValue(serverId, value, kind);
+      resolved[key] = this.#resolveSecretValue(serverId, value, kind, secretValues);
     }
     return resolved;
   }
 
-  #resolveSecretValue(serverId: string, value: string, kind: 'env' | 'header'): string {
+  #resolveSecretValue(
+    serverId: string,
+    value: string,
+    kind: 'env' | 'header',
+    secretValues?: McpSecretOverrides | undefined,
+  ): string {
     const prefix = kind === 'env' ? 'secret:env:' : 'secret:header:';
     if (!value.startsWith(prefix)) return value;
     const name = value.slice(prefix.length);
-    return this.#deps.secrets.getValue(`mcp:${serverId}:${kind}:${name}`) ?? value;
+    return (
+      secretValues?.[kind]?.[name] ??
+      this.#deps.secrets.getValue(`mcp:${serverId}:${kind}:${name}`) ??
+      value
+    );
   }
 }

@@ -186,7 +186,19 @@ export const settingsUpdateInputSchema = z.object({
 
 // --- MCP（D65）--------------------------------------------------------------
 
-export const mcpTestInputSchema = z.object({ server: mcpServerSchema });
+export const mcpTestInputSchema = z.object({
+  server: mcpServerSchema,
+  /**
+   * 草稿态密钥覆盖（设置页表单「保存前测试」）：键为 env / header 变量名，
+   * 仅本次连接测试生效，不落 secrets 表；同名占位符优先取这里的值。
+   */
+  secretValues: z
+    .object({
+      env: z.record(z.string(), z.string()).optional(),
+      header: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
+});
 export const mcpTestOutputSchema = z.object({
   tools: z.array(z.string()),
   /** 未能解析的占位符密钥名（secret:env:x / secret:header:y）。 */
