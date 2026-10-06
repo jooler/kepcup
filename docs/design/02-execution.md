@@ -149,6 +149,10 @@ Run
 
 共用约束：同 Bot / 同对话边界；只读研究工具；无写文件、无 `send_message`、无再委派、无子代理互通；不充当群成员。细节与明确「不做」清单见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)；崩溃恢复见 [24-durable-execution.md](24-durable-execution.md)；执行方案见 `todo/pi-1x-upgrade-mcp-subagent.md`。
 
+## 跨 Bot 委派（A→B，D71）
+
+与上节 SubAgent **不同**：`delegate_to_bot` 把任务交给**另一个联系人 Bot** 的完整响应 loop（见 [27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息；UI 留在 A；终回复截断贴回 A。同群且 A/B 均在场时降级为 D4 `@`。管家路由与组队见同文 D70。复用 follow-up / `deliverEventToBot` 管道，**不**用 `delegate_task` 冒充跨 Bot。
+
 ## MCP 工具
 
 用户配置的 MCP server（stdio / streamable HTTP）按「应用启用 ∩ Bot 勾选」把工具并入响应 loop 的工具面：调用统一走网关审批（`autoApprove` 默认关）与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。配置、命名与生命周期见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。

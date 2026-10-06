@@ -36,6 +36,7 @@
 | [24-durable-execution.md](24-durable-execution.md) | 长任务可恢复执行 / Host Durable Journal：ephemeral 默认仍按 D49，durable 按 journal 与工具 replay 策略 resume |
 | [25-capability-tools.md](25-capability-tools.md) | 能力补位工具：understand_image（图片理解）与 transcribe_audio（语音转写），缺配置走对话内设置引导 |
 | [26-voice-input.md](26-voice-input.md) | 输入坞语音化：按录转文字键与语音对话模式（音频附件 + 转写文本），16kHz PCM→WAV 录音管道，缺配置走对话内设置引导 |
+| [27-butler-and-delegation.md](27-butler-and-delegation.md) | 管家 Bot（唯一/置顶/不可删）与跨 Bot 委派 A→B：组队审批卡、路由、delegations、结果回贴（非 SubAgent） |
 
 ## 尚未讨论（暂不入文档）
 
@@ -114,3 +115,5 @@
 | D67 | 长任务崩溃恢复 | Host Durable Journal；run 分 ephemeral（默认，仍按 D49：标中断、不自动恢复）与 durable（按 journal + 工具 replay 策略 resume）；不把 Pi Durable 包定为全体 Bot Runtime；修订 D49 的适用范围为仅 ephemeral（见 24） |
 | D68 | 能力补位工具 | 主模型没有的能力以工具补位（image/tts/video/web_search 已落地）；补齐 `understand_image`（multimodal）与 `transcribe_audio`（asr）：素材 = 附件 id 或 workspace/project 路径转 data URI，未配置走 SETUP_REQUIRED → 结构化 setup 失败 → 对话内设置卡 → 自动续跑；embedding/rerank 保持内部环节不工具化（见 25） |
 | D69 | 语音输入 | 输入坞右侧语音键（白圆 AudioLines）：**点击**开始录音、原位变「■+计时+点点」胶囊、再点停止并转文字填输入框（Esc 取消；60s 上限、500ms 下限）；有内容/队列时该位是发送键（出现逻辑不变），录音中打字则胶囊与发送键并列；未配置 asr 点击置起对话内设置卡；录音 16kHz PCM→WAV（软性采集约束 + OverconstrainedError 回退；worklet 以 `?url&no-inline` 同源资源加载——CSP 拦 blob:/data: 脚本），设备在设置页「硬件」分区选择；macOS TCC 授权门：askForMediaAccess 主动拉框、被拒深链系统设置。语音对话模式（按住发音频消息）暂缓、入口隐藏，设计保留在 26（见 26） |
+| D70 | Butler（管家） | 每用户唯一 `system_role='butler'`：置顶、不可删；访谈后 `propose_team` 审批卡 → 确定性批量 `bots.create`；工具 `list_bots` / `propose_bot` / `propose_group` / `suggest_route` / `delegate_to_bot`；未知→管家、单域→直聊、多角色→群、留在本聊→委派；早期先路由卡，「你安排」再委派（见 27） |
+| D71 | 跨 Bot 委派 A→B | `delegate_to_bot` / `cancel_delegation` + `delegations` 表；B 收用户代发消息（`origin=delegation`「由 A 代你发出」），UI 留在 A；B 终回复截断~2000 贴回 A 为卡+链接，`notify_me` follow-up 禁止复述；防环（深度/禁 A→B→A/默认单跳）；同群降级 D4 `@`；**不是** D66 SubAgent（见 27） |

@@ -1,6 +1,6 @@
 # 23 MCP 与 SubAgent
 
-Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务器；在 loop 内把「只要结论、材料很长」的子任务委派给宿主自有 SubAgent。两者都不改变群聊与消息规则（D2 / D4 / D5），不引入「群里的新联系人」。
+Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务器；在 loop 内把「只要结论、材料很长」的子任务委派给宿主自有 SubAgent。两者都不改变群聊与消息规则（D2 / D4 / D5），不引入「群里的新联系人」。跨联系人 Bot 的代办与管家分诊见 [27-butler-and-delegation.md](27-butler-and-delegation.md)（D70/D71）——**不是**本篇 SubAgent。
 
 决策：D64（Pi 1.x）、D65（MCP）、D66（SubAgent）。执行方案见 [todo/pi-1x-upgrade-mcp-subagent.md](../../todo/pi-1x-upgrade-mcp-subagent.md)。
 
@@ -110,7 +110,7 @@ pi 1.x 无产品级 SubAgent API，宿主以「工具 + 嵌套 Agent」实现；
 
 下列能力**不做**（含原「低优 / 可选」，本轮一并关闭，避免与 Pi Durable 示例表逐项对齐）：
 
-- 子代理间通信、子代理再委派、用户级 SubAgent 角色配置、把 SubAgent 注册为群成员
+- 子代理间通信、子代理再委派、用户级 SubAgent 角色配置、把 SubAgent 注册为群成员、用 SubAgent 模拟另一个 Bot 联系人（跨 Bot 走 D71）
 - Transcript **fork** / 会话树分叉（KepCup 是 IM 联系人模型，用另一 Bot 联系人表达「旁路角色」，不用 fork）
 - 运行中热替换扩展代码、Cloudflare Durable Objects / 多端 late-join 多人操控同一 run
 - Durable 式 Child Task Graph（付款 failFast 等基础设施任务图）
