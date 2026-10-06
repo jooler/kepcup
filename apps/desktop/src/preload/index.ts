@@ -34,6 +34,15 @@ const api = {
   sendTestNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('notify:test', title, body),
   /**
+   * 语音输入（docs/design/26-voice-input.md）的麦克风 TCC 权限：状态查询、
+   * 主动拉起系统授权弹框（仅 macOS not-determined 时有系统反馈）、深链打开
+   * 系统设置的麦克风面板（已拒绝后的唯一去路）。
+   */
+  micStatus: (): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'> =>
+    ipcRenderer.invoke('mic:status'),
+  micRequestAccess: (): Promise<boolean> => ipcRenderer.invoke('mic:request'),
+  micOpenSettings: (): Promise<void> => ipcRenderer.invoke('mic:openSettings'),
+  /**
    * P13 任务 3: verdict of applying the launch-at-login setting to the OS
    * ({ outcome: 'applied' | 'failed', enabled, reason? }); pushed after each
    * settings change (packaged builds only — dev/e2e never touch login items).

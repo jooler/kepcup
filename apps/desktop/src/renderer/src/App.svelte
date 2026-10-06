@@ -17,6 +17,7 @@
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
+  import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
   import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
   import CoreStatusBar from '$lib/features/shell/CoreStatusBar.svelte';
@@ -55,6 +56,8 @@
     if (!coreReady || loaded) return;
     loaded = true;
     chat.start();
+    // 输入框草稿缓存的事件接线（conversation.deleted → 丢弃该会话的缓存条目）。
+    composerDrafts.start();
     contacts.start();
     settingsStore.start();
     permissions.start();

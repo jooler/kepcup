@@ -1,4 +1,5 @@
 import type { Bot, Conversation, Draft, Message, Run, SetupRequirement } from '@kepcup/shared';
+import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
 export interface GroupMemberView {
   bot: Bot;
@@ -62,8 +63,12 @@ class ChatState {
   runningByConversation = $state<Record<string, string[]>>({});
   /** Group turn state (P05), per conversation. */
   turnByConversation = $state<Record<string, GroupTurnState>>({});
-  /** The message being quoted in the composer (引用回复). */
-  replyTo = $state<Message | null>(null);
+  /**
+   * The message being quoted in the composer (引用回复)：轻量引用快照而非
+   * Message 全量——与 composer 草稿缓存（按会话持久化）共用形状，切换会话/
+   * 重启后经缓存水合恢复。
+   */
+  replyTo = $state<ComposerReplyRef | null>(null);
   /** Evidence jump (P07 记忆标签页): flash + scroll to this message after select. */
   highlightMessageId = $state<string | null>(null);
   /**
@@ -82,8 +87,10 @@ class ChatState {
   /**
    * 发送门禁置起的「缺设置」（inline setup，docs/design/18-inline-setup.md）：
    * 单聊 Bot 无可用模型时消息不发（草稿留在队列），先在消息列表里完成设置。
+   * fromVoice 标记置起来源：语音入口（26 号设计）与草稿队列互不相干，完成
+   * 设置后不得触发 flush。
    */
-  #pendingSetup = $state<SetupRequirement | null>(null);
+  #pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
   #started = false;
 
   get current(): CurrentChat | null {
@@ -95,7 +102,7 @@ class ChatState {
    * pendingSetup 优先，否则取最近失败 run 携带的结构化 setup。
    */
   get setupRequirement(): SetupRequirement | null {
-    if (this.#pendingSetup !== null) return this.#pendingSetup;
+    if (this.#pendingSetup !== null) return this.#pendingSetup.requirement;
     return this.#chat?.failedRun?.setup ?? null;
   }
 
@@ -416,7 +423,12 @@ class ChatState {
   }
 
   startReply(message: Message): void {
-    this.replyTo = message;
+    this.replyTo = {
+      id: message.id,
+      senderType: message.senderType,
+      senderBotId: message.senderBotId,
+      text: 'text' in message.content ? message.content.text : '',
+    };
   }
 
   cancelReply(): void {
@@ -522,7 +534,7 @@ class ChatState {
     const settings = settingsStore.settings;
     if (!settings) return false;
     if (settings.defaultMainModel.length > 0) return false;
-    this.#pendingSetup = { kind: 'main-model' };
+    this.#pendingSetup = { requirement: { kind: 'main-model' }, fromVoice: false };
     return true;
   }
 
@@ -534,11 +546,25 @@ class ChatState {
   }
 
   /**
+   * 输入组件的语音功能（docs/design/26-voice-input.md）在缺设置时置起能力
+   * 设置卡：与发送门禁同一层——卡片出现、完成设置后 continueAfterSetup 收卡。
+   * 不阻断任何已排队草稿（语音与草稿队列互不相干）。
+   */
+  requestCapabilitySetup(
+    capability: Extract<SetupRequirement, { kind: 'capability-model' }>['capability'],
+  ): void {
+    if (this.#chat === null) return;
+    this.#pendingSetup = { requirement: { kind: 'capability-model', capability }, fromVoice: true };
+  }
+
+  /**
    * 卡片内完成设置后的继续：core 失败路径（failedRun.setup）→ 收起横幅并
    * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 群聊 / 图像工具）；
-   * 发送门禁路径 → 自动冲掉保留的草稿队列。
+   * 发送门禁路径 → 自动冲掉保留的草稿队列。语音置起的卡片不冲队列——它
+   * 不是发送门禁，完成设置后用户自己决定何时发送（26 号设计：互不相干）。
    */
   async continueAfterSetup(): Promise<void> {
+    const fromVoice = this.#pendingSetup?.fromVoice === true;
     this.#pendingSetup = null;
     const failed = this.#chat?.failedRun;
     if (failed?.setup) {
@@ -546,7 +572,7 @@ class ChatState {
       await this.retryRun(failed.id);
       return;
     }
-    if ((this.#chat?.drafts.length ?? 0) > 0) await this.flush();
+    if (!fromVoice && (this.#chat?.drafts.length ?? 0) > 0) await this.flush();
   }
 
   // --- messages ---------------------------------------------------------------

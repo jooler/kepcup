@@ -1,16 +1,27 @@
 <script lang="ts">
-  import { ArrowUp, Loader2, Paperclip, Plus, Reply, X } from '@lucide/svelte';
+  import { ArrowUp, AudioLines, Loader2, Paperclip, Plus, Reply, X } from '@lucide/svelte';
   import type { Bot } from '@kepcup/shared';
   import { untrack } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { resolveComposerAction } from './key-handling';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
+  import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import DraftQueue from './DraftQueue.svelte';
+  import {
+    MAX_RECORDING_MS,
+    MIN_RECORDING_MS,
+    formatRecordingDuration,
+    startVoiceRecording,
+    type ActiveRecording,
+    type VoiceRecording,
+  } from './voice-recorder';
+  import { ensureMicrophoneAccess, loadMicDeviceId, openMicrophoneSettings } from './mic-access';
 
   let {
     readOnly = false,
@@ -32,21 +43,24 @@
   let mentionQuery = $state('');
   let mentionIndex = $state(0);
   let textareaEl: HTMLTextAreaElement | null = $state(null);
-  /** 待发送附件（docs/design/20-conversation-media.md）：选中即上传，随下一条草稿发出。 */
-  let pendingUploads = $state<PendingUpload[]>([]);
   let fileInputEl: HTMLInputElement | null = $state(null);
   let dragOver = $state(false);
 
-  interface PendingUpload {
-    key: string;
-    fileName: string;
-    mime: string;
-    size: number;
-    state: 'uploading' | 'ready' | 'error';
-    attachmentId: string | null;
-    /** 图片专有：选中当下生成的本地预览 objectURL（缩略图与灯箱共用，不等上传）。 */
-    previewUrl: string | null;
-  }
+  // --- 语音输入（docs/design/26-voice-input.md）-------------------------------
+  // 点击式录音（非长按）：输入框为空时右侧是语音键（点击开始录音），录音中
+  // 原位变成「停止 + 计时 + 点点」胶囊（点击停止并转写填入输入框）。未配置
+  // ASR 时点击置起对话内设置卡（isCapabilityReady 预检，core 错误码兜底）。
+  // 语音对话模式（按住发音频消息）暂缓实现，入口隐藏。
+  /** null = 未在录音。 */
+  let recording = $state<{ level: number; startedAt: number } | null>(null);
+  let recordingElapsed = $state(0);
+  /** 识别进行中（停止后的异步尾巴，期间禁用再次开始）。 */
+  let voiceBusy = $state(false);
+  // 录音会话号：finish 使 in-flight 的 start（getUserMedia 授权等待期）失效。
+  let recordingSession = 0;
+  // 普通变量（刻意非响应式）：录音句柄，没有界面从它派生。
+  let activeRecording: ActiveRecording | null = null;
+  let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
   const drafts = $derived(chat.current?.drafts ?? []);
   const isGroup = $derived(chat.current?.conversation.type === 'group');
@@ -62,10 +76,15 @@
   );
   /** 引用预览去掉常见强调标记（**），其余 Markdown 原样截断。 */
   const replyToText = $derived(
-    replyTo === null || !('text' in replyTo.content)
-      ? ''
-      : replyTo.content.text.slice(0, 60).replace(/\*\*/g, ''),
+    replyTo === null ? '' : replyTo.text.slice(0, 60).replace(/\*\*/g, ''),
   );
+
+  /**
+   * 待发送附件（docs/design/20-conversation-media.md）：选中即上传，随下一
+   * 条草稿发出。数据源在 composerDrafts（按会话缓存），组件只持视图——
+   * 切换会话/重启应用后按会话重载，不再切换即丢弃。
+   */
+  const pendingUploads = $derived(composerDrafts.uploadsOf(chat.current?.conversation.id ?? ''));
 
   const hasContent = $derived(text.trim().length > 0 || pendingUploads.length > 0);
 
@@ -83,20 +102,34 @@
         : t('composer.placeholder'),
   );
 
-  // 切换会话时清掉未发送的附件；已上传/在途的字节调 detach 善后，避免在原
-  // 会话留下无主附件行与文件（untrack：这里不追踪 pendingUploads，否则每次
-  // 上传状态变化都会触发本 effect 清空 chip）。
+  /**
+   * 会话草稿的按会话缓存：进入会话先把缓存水合进本地状态（文本/提及/引用），
+   * 之后内容变化即写回（composerDrafts 负责防抖落盘，附件走它自己的管道）。
+   * 单个 effect 承担水合/保存两个分支：切换会话时水合分支先执行，避免旧
+   * 会话的文本被写进新会话的缓存。
+   */
+  let activeConversationId: string | null = null;
   $effect(() => {
-    void chat.current?.conversation.id;
-    untrack(() => {
-      const leftovers = pendingUploads;
-      if (leftovers.length === 0) return;
-      pendingUploads = [];
-      for (const entry of leftovers) {
-        releaseLocalPreview(entry);
-        void discardUpload(entry).catch(() => {});
-      }
-    });
+    const conversationId = chat.current?.conversation.id ?? null;
+    // 依赖在每次运行都要读取（含水合分支）：Svelte 按次运行追踪，若只在保存
+    // 分支读取，首跑走水合分支后键入将不触发本 effect，草稿永远不落盘。
+    const currentText = text;
+    const currentMentions = mentions;
+    const currentReply = chat.replyTo;
+    if (conversationId !== activeConversationId) {
+      activeConversationId = conversationId;
+      if (conversationId === null) return;
+      untrack(() => {
+        composerDrafts.hydrate(conversationId);
+        const saved = composerDrafts.loadDraft(conversationId);
+        text = saved.text;
+        mentions = [...saved.mentions];
+        chat.replyTo = saved.reply;
+      });
+      return;
+    }
+    if (conversationId === null) return;
+    composerDrafts.saveComposerText(conversationId, currentText, currentMentions, currentReply);
   });
 
   // 内容变化后测量实际行高：field-sizing 让 textarea 随内容增高，
@@ -211,7 +244,9 @@
 
   /** Adds a draft carrying the structured mentions + reply reference + attachments. */
   async function addCurrent(current: string): Promise<void> {
-    const attachmentIds = await settlePendingUploads();
+    const conversationId = chat.current?.conversation.id;
+    if (!conversationId) return;
+    const attachmentIds = await composerDrafts.settle(conversationId);
     const trimmed = current.trim();
     if (trimmed.length === 0 && attachmentIds.length === 0) return;
     await chat.addDraft(trimmed, {
@@ -233,9 +268,153 @@
     }
   }
 
-  // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
+  // --- 语音输入（docs/design/26-voice-input.md）-------------------------------
 
-  const MAX_UPLOAD_BYTES = 30_000_000;
+  $effect(() => {
+    if (recording === null) return;
+    const startedAt = recording.startedAt;
+    const timer = setInterval(() => {
+      recordingElapsed = Date.now() - startedAt;
+    }, 200);
+    return () => clearInterval(timer);
+  });
+
+  // 录音中 Esc 取消；组件卸载（切会话/关窗）丢弃录音并释放麦克风。
+  $effect(() => {
+    if (recording === null) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') void finishRecording(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+  $effect(() => () => {
+    recordingSession += 1;
+    if (maxRecordingTimer !== null) clearTimeout(maxRecordingTimer);
+    activeRecording?.cancel();
+    activeRecording = null;
+  });
+
+  async function startRecording(): Promise<void> {
+    if (readOnly || recording !== null || voiceBusy) return;
+    if (!settingsStore.isCapabilityReady('asr')) {
+      chat.requestCapabilitySetup('asr');
+      return;
+    }
+    const session = ++recordingSession;
+    // TCC 授权门：not-determined 时在这里拉起系统授权弹框；被拒后系统永远
+    // 不会再弹，只能 toast + 深链系统设置（docs/design/26-voice-input.md）。
+    const access = await ensureMicrophoneAccess();
+    if (access !== 'granted') {
+      if (access === 'denied') {
+        toast.error(t('composer.micDenied'), {
+          action: { label: t('composer.micOpenSettings'), onClick: openMicrophoneSettings },
+        });
+      } else {
+        toast.error(t('composer.voiceMicUnavailable'));
+      }
+      return;
+    }
+    try {
+      // 每次按录取当前设定（设置页「硬件」分区可换设备；空 = 系统默认）。
+      activeRecording = await startVoiceRecording((level) => {
+        if (recording !== null) recording.level = level;
+      }, loadMicDeviceId());
+    } catch (error) {
+      // 失败原因透传（getUserMedia / addModule 的底层异常），定位设备问题用。
+      toast.error(
+        t('composer.voiceMicFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return;
+    }
+    if (session !== recordingSession) {
+      // 授权弹框期间组件已卸载（finish 已跑）：立即释放刚拿到的麦克风。
+      activeRecording.cancel();
+      activeRecording = null;
+      return;
+    }
+    recording = { level: 0, startedAt: Date.now() };
+    recordingElapsed = 0;
+    // 60s 上限从真正开始采集起算（授权弹框期间不占时长）。
+    maxRecordingTimer = setTimeout(() => void finishRecording(true), MAX_RECORDING_MS);
+  }
+
+  /** 点击胶囊/到时限=停止并转写（send）；Esc/组件卸载=取消丢弃。 */
+  async function finishRecording(send: boolean): Promise<void> {
+    recordingSession += 1;
+    const current = recording;
+    recording = null;
+    if (maxRecordingTimer !== null) {
+      clearTimeout(maxRecordingTimer);
+      maxRecordingTimer = null;
+    }
+    const active = activeRecording;
+    activeRecording = null;
+    if (current === null || active === null) return;
+    if (!send) {
+      active.cancel();
+      return;
+    }
+    voiceBusy = true;
+    try {
+      const result = await active.stop();
+      if (result.durationMs < MIN_RECORDING_MS) {
+        toast.error(t('composer.voiceTooShort'));
+        return;
+      }
+      // 转写及其错误处理都在 transcribeIntoComposer 内；这里只兜停采/编码的失败。
+      await transcribeIntoComposer(result);
+    } catch (error) {
+      toast.error(
+        t('composer.voiceRecordFailed', {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    } finally {
+      voiceBusy = false;
+    }
+  }
+
+  function isCapabilityError(error: unknown): boolean {
+    const code = (error as { code?: string } | undefined)?.code;
+    return code === 'CAPABILITY_NOT_CONFIGURED' || code === 'PROVIDER_AUTH_FAILED';
+  }
+
+  /** mic 键路径：转写结果填入输入框（已有文本则追加）。 */
+  async function transcribeIntoComposer(rec: VoiceRecording): Promise<void> {
+    try {
+      const result = (await core.call('media.transcribeSpeech', {
+        audioBase64: rec.base64,
+        audioMime: 'audio/wav',
+      })) as { text: string };
+      const transcript = result.text.trim();
+      if (transcript.length === 0) {
+        toast.error(t('composer.voiceNoSpeech'));
+        return;
+      }
+      text = text.trim().length > 0 ? `${text.trimEnd()} ${transcript}` : transcript;
+      textareaEl?.focus();
+    } catch (error) {
+      if (isCapabilityError(error)) {
+        chat.requestCapabilitySetup('asr');
+        return;
+      }
+      toast.error(
+        errorText(
+          (error as { code?: string } | undefined)?.code,
+          t('composer.voiceTranscribeFailed'),
+        ),
+      );
+    }
+  }
+
+  // 语音对话模式（按住发音频消息）暂缓实现：入口已隐藏，逻辑待后续恢复
+  //（sendVoiceMessage / 语音条 UI 的设计见 docs/design/26-voice-input.md）。
+
+  // --- 附件上传（docs/design/20-conversation-media.md） ----------------------
+  // 上传管道在 composerDrafts（按会话缓存）；这里只负责收集文件与视图操作。
 
   function pickFiles(): void {
     fileInputEl?.click();
@@ -243,7 +422,7 @@
 
   function onPickedFiles(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
-    void uploadFiles(input.files ?? []);
+    uploadFiles(input.files ?? []);
     input.value = '';
   }
 
@@ -251,7 +430,7 @@
     const files = event.clipboardData?.files;
     if (files !== undefined && files.length > 0) {
       event.preventDefault();
-      void uploadFiles(files);
+      uploadFiles(files);
     }
   }
 
@@ -260,98 +439,20 @@
     const files = event.dataTransfer?.files;
     if (files !== undefined && files.length > 0) {
       event.preventDefault();
-      void uploadFiles(files);
+      uploadFiles(files);
     }
   }
 
-  // 每个 chip 的上传任务（key → 完成后的 attachmentId，失败为 null）。
-  // 普通 Map（刻意非响应式）：这是任务管道，没有界面从它派生。
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const uploadTasks = new Map<string, Promise<string | null>>();
-
-  /** 移除 chip / 切换会话的善后：等在途上传落定后把附件行与文件清掉，
-   * 不在会话里留无主附件（此前只删本地状态，孤儿要等删会话才级联清理）。 */
-  async function discardUpload(entry: PendingUpload): Promise<void> {
-    const task = uploadTasks.get(entry.key);
-    const id = entry.attachmentId ?? (task !== undefined ? await task.catch(() => null) : null);
-    if (id !== null) await chat.detachAttachment(id);
-  }
-
-  /** 图片条目离开待发送区（移除/入草稿/切会话）时释放本地预览字节。 */
-  function releaseLocalPreview(entry: PendingUpload): void {
-    if (entry.previewUrl !== null) URL.revokeObjectURL(entry.previewUrl);
-  }
-
-  async function uploadFiles(files: FileList | File[]): Promise<void> {
+  function uploadFiles(files: FileList | File[]): void {
     const conversationId = chat.current?.conversation.id;
     if (!conversationId) return;
-    for (const file of files) {
-      if (file.size > MAX_UPLOAD_BYTES) {
-        toast.error(t('composer.attachmentTooLarge', { name: file.name }));
-        continue;
-      }
-      const mime = file.type.length > 0 ? file.type : guessMime(file.name);
-      const entry: PendingUpload = {
-        key: `up_${Math.random().toString(36).slice(2)}_${Date.now()}`,
-        fileName: file.name.length > 0 ? file.name : 'pasted-image.png',
-        mime,
-        size: file.size,
-        state: 'uploading',
-        attachmentId: null,
-        previewUrl: mime.startsWith('image/') ? URL.createObjectURL(file) : null,
-      };
-      pendingUploads = [...pendingUploads, entry];
-      const patch = (next: PendingUpload): void => {
-        // $state 数组里的对象是深代理：必须按 key 替换整个条目才触发更新
-        //（直接改 push 前的原始对象对界面不可见）。
-        pendingUploads = pendingUploads.map((upload) => (upload.key === next.key ? next : upload));
-      };
-      const task = (async (): Promise<string | null> => {
-        try {
-          const bytesBase64 = await fileToBase64(file);
-          const result = (await core.call('attachments.upload', {
-            conversationId,
-            fileName: entry.fileName,
-            mime: entry.mime,
-            bytesBase64,
-          })) as { attachment: { id: string } };
-          patch({ ...entry, state: 'ready', attachmentId: result.attachment.id });
-          return result.attachment.id;
-        } catch {
-          patch({ ...entry, state: 'error' });
-          toast.error(t('composer.attachmentUploadFailed', { name: entry.fileName }));
-          return null;
-        }
-      })();
-      uploadTasks.set(entry.key, task);
-    }
-  }
-
-  /** 等待在途上传完成，返回可发送的附件 id。已就绪/失败的条目从 chip 区移除
-   * （本地预览随之释放）；超时仍未完成的保留在原地（随下一条草稿发出或手动
-   * 移除），不再静默丢弃。 */
-  async function settlePendingUploads(): Promise<string[]> {
-    for (let guard = 0; guard < 600; guard += 1) {
-      if (!pendingUploads.some((upload) => upload.state === 'uploading')) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    const ids = pendingUploads
-      .filter((upload) => upload.state === 'ready' && upload.attachmentId !== null)
-      .map((upload) => upload.attachmentId as string);
-    for (const entry of pendingUploads) {
-      if (entry.state !== 'uploading') releaseLocalPreview(entry);
-    }
-    pendingUploads = pendingUploads.filter((upload) => upload.state === 'uploading');
-    return ids;
+    composerDrafts.uploadFiles(conversationId, files);
   }
 
   function removePendingUpload(key: string): void {
-    const entry = pendingUploads.find((upload) => upload.key === key);
-    pendingUploads = pendingUploads.filter((upload) => upload.key !== key);
-    if (entry !== undefined) {
-      releaseLocalPreview(entry);
-      void discardUpload(entry).catch(() => {});
-    }
+    const conversationId = chat.current?.conversation.id;
+    if (!conversationId) return;
+    void composerDrafts.removeUpload(conversationId, key);
   }
 
   /** 待发送图片缩略图 → 灯箱：直接喂本地 objectURL，上传未完成也可预览。 */
@@ -371,43 +472,6 @@
     if (items.length === 0) return;
     const index = items.findIndex((item) => item.id === upload.key);
     mediaViewer.show(items, Math.max(0, index));
-  }
-
-  function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result);
-        const comma = dataUrl.indexOf(',');
-        resolve(comma >= 0 ? dataUrl.slice(comma + 1) : '');
-      };
-      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
-      reader.readAsDataURL(file);
-    });
-  }
-
-  const MIME_BY_EXTENSION: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.svg': 'image/svg+xml',
-    '.pdf': 'application/pdf',
-    '.txt': 'text/plain',
-    '.md': 'text/markdown',
-    '.json': 'application/json',
-    '.csv': 'text/csv',
-    '.html': 'text/html',
-    '.zip': 'application/zip',
-    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  };
-
-  function guessMime(fileName: string): string {
-    const dot = fileName.lastIndexOf('.');
-    return MIME_BY_EXTENSION[fileName.slice(dot).toLowerCase()] ?? 'application/octet-stream';
   }
 </script>
 
@@ -492,8 +556,9 @@
               data-testid="composer-pending-attachments"
             >
               {#each pendingUploads as upload (upload.key)}
-                {#if upload.previewUrl !== null}
-                  <!-- 图片：缩略图形态（点击灯箱预览，不等上传完成），悬浮露出移除键 -->
+                {#if upload.mime.startsWith('image/')}
+                  <!-- 图片：缩略图形态（点击灯箱预览，不等上传完成），悬浮露出移除键。
+                       重启水合的条目预览字节异步重建，就绪前显示加载态 -->
                   <div class="group relative" data-testid={`pending-attachment-${upload.state}`}>
                     <button
                       type="button"
@@ -505,12 +570,19 @@
                       aria-label={t('attachments.openPreview', { name: upload.fileName })}
                       data-testid="pending-attachment-image"
                     >
-                      <img
-                        src={upload.previewUrl}
-                        alt={upload.fileName}
-                        class="size-full object-cover"
-                        draggable="false"
-                      />
+                      {#if upload.previewUrl !== null}
+                        <img
+                          src={upload.previewUrl}
+                          alt={upload.fileName}
+                          class="size-full object-cover"
+                          draggable="false"
+                        />
+                      {:else}
+                        <Loader2
+                          class="mx-auto size-4 animate-spin text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                      {/if}
                     </button>
                     {#if upload.state === 'uploading'}
                       <div
@@ -644,7 +716,55 @@
               {#if stacked}
                 {@render attachButton()}
               {/if}
-              {@render sendButton()}
+              <div class="flex items-center gap-1">
+                {#if recording !== null || voiceBusy}
+                  <!-- 录音胶囊（点击式录音，参考 Grok）：点击停止并转写填入输入框；
+                       Esc 取消。识别中（voiceBusy）原位显示加载态。 -->
+                  <button
+                    type="button"
+                    class="flex h-8 shrink-0 {voiceBusy
+                      ? 'cursor-default'
+                      : 'cursor-pointer'} items-center gap-2 rounded-full bg-foreground/10 pr-3 pl-2.5"
+                    onclick={() => void finishRecording(true)}
+                    disabled={voiceBusy}
+                    aria-label={t('composer.recordingStop')}
+                    data-testid="composer-recording"
+                  >
+                    {#if voiceBusy}
+                      <Loader2 class="size-3.5 animate-spin text-foreground" aria-hidden="true" />
+                    {:else}
+                      <span class="size-2.5 rounded-[3px] bg-foreground" aria-hidden="true"></span>
+                    {/if}
+                    <span class="text-xs text-foreground tabular-nums">
+                      {formatRecordingDuration(recordingElapsed)}
+                    </span>
+                    <span class="flex items-center gap-0.5" aria-hidden="true">
+                      {#each [0, 1, 2, 3] as dot (dot)}
+                        <span
+                          class="voice-dot size-1 rounded-full bg-foreground/70"
+                          style="animation-delay: {dot * 0.18}s"
+                        ></span>
+                      {/each}
+                    </span>
+                  </button>
+                {:else if !hasContent && drafts.length === 0}
+                  <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容/有队列时
+                       此位让给发送键。语音对话模式暂缓，入口隐藏。 -->
+                  <button
+                    type="button"
+                    class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90"
+                    onclick={() => void startRecording()}
+                    disabled={readOnly}
+                    aria-label={t('composer.voiceStart')}
+                    data-testid="composer-voice-start"
+                  >
+                    <AudioLines class="size-4" />
+                  </button>
+                {/if}
+                {#if hasContent || drafts.length > 0}
+                  {@render sendButton()}
+                {/if}
+              </div>
             </div>
           </div>
         </div>

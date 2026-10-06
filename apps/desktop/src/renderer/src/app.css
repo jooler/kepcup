@@ -270,3 +270,23 @@ html.platform-mac main {
     animation: none;
   }
 }
+
+/* 语音录音胶囊的点点指示（Composer）：错相呼吸（docs/design/26-voice-input.md）。 */
+@keyframes voice-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.voice-dot {
+  animation: voice-dot 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}
