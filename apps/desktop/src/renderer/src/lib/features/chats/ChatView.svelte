@@ -231,7 +231,8 @@
         centered={!hasMessages}
       />
     </div>
-    <!-- 媒体灯箱（docs/design/20-conversation-media.md）：消息附件图片/音视频的放大预览 -->
+    <!-- 媒体灯箱（docs/design/20-conversation-media.md）：消息附件图片/音视频的放大预览。
+         组件内部 portal 到 body 末尾 + no-drag，否则顶部 drag 区矩形会盖住顶栏按钮 -->
     <MediaLightbox />
   </div>
 {/if}

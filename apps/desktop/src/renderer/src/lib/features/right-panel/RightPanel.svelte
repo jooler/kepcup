@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { PanelRightClose, Monitor, Pencil } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
@@ -70,8 +71,9 @@
   let removing = $state(false);
 
   /**
-   * 最近一次确认保存过的完整 profile。头像 / 名称 / 简介的即时保存都以它为
-   * 基准合并，避免 RPC 往返期间连续编辑时用旧数据互相覆盖。
+   * 最近一次保存到 core 的完整 profile。头像 / 名称 / 简介的点按直编以它为
+   * 基准合并，配置表单的自动保存也用它做回声抑制：RPC 回写 store 后 draft
+   * 与它一致则不再触发下一轮保存。
    */
   let savedProfile = $state<BotProfile | null>(null);
 
@@ -85,12 +87,49 @@
     }
   });
 
-  async function save(): Promise<void> {
-    if (!bot || !draft) return;
-    const updated = await contacts.update(bot.id, $state.snapshot(draft) as BotProfile);
-    savedProfile = updated.profile;
-    toast.success(t('rightPanel.savedProfile'));
+  async function saveProfile(id: string, profile: BotProfile): Promise<void> {
+    try {
+      const updated = await contacts.update(id, $state.snapshot(profile) as BotProfile);
+      savedProfile = updated.profile;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }
+
+  /**
+   * 配置表单自动保存：深度监听 draft（stringify 建立全量依赖），变更后防抖
+   * 落盘，无需手动保存按钮。与最近保存结果一致时跳过，避免保存回写 store
+   * 引发的回声循环。
+   */
+  $effect(() => {
+    const currentBot = bot;
+    const currentDraft = draft;
+    if (!currentBot || !currentDraft) return;
+    const snapshot = JSON.stringify($state.snapshot(currentDraft));
+    if (savedProfile && JSON.stringify($state.snapshot(savedProfile)) === snapshot) return;
+    const timer = setTimeout(() => void saveProfile(currentBot.id, currentDraft), 500);
+    return () => {
+      clearTimeout(timer);
+      // 防抖期间切换到其它 Bot（draft 被整体重克隆）会清掉定时器，窗口内的
+      // 未落盘改动在这里立即补救。同一 Bot 的重跑（按键 / save_profile 外部
+      // 更新触发重克隆）不在此列：前者交给新定时器，后者以服务端数据为准；
+      // bot 为空是移除 / 关闭会话，不补写。
+      if (bot && currentBot.id !== bot.id) void saveProfile(currentBot.id, currentDraft);
+    };
+  });
+
+  /** draft 相对最近一次保存仍有未落盘改动时立即保存。 */
+  function flushDirtyDraft(): void {
+    if (!bot || !draft || !savedProfile) return;
+    if (JSON.stringify($state.snapshot(draft)) === JSON.stringify($state.snapshot(savedProfile))) {
+      return;
+    }
+    void saveProfile(bot.id, draft);
+  }
+
+  // 右栏收起是整个卸载（ChatsArea 的 {#if}）：卸载清理里把防抖窗口内的
+  // 未落盘改动立即保存，live draft/bot 就是待保存值。
+  onMount(() => () => flushDirtyDraft());
 
   /** 头像 / 名称 / 简介的点按直编：在最近保存的 profile 上做字段级合并。 */
   async function patchIdentity(patch: Partial<BotProfile['identity']>): Promise<void> {
@@ -329,11 +368,8 @@
               disabled={conversation.readOnly}
             />
           {/if}
-          <!-- 名字/简介走上方头部资料卡的点按直编，配置表单里不再重复。 -->
+          <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
           <BotProfileForm bind:profile={draft} showIdentity={false} />
-          <Button size="sm" class="w-full" onclick={save} data-testid="profile-save">
-            {t('rightPanel.saveProfile')}
-          </Button>
         </div>
       </div>
       <div
