@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMemoryKeystore } from '@kepcup/core';
-import { createTestCore } from '@kepcup/testkit';
+import { createTestCore, waitFor } from '@kepcup/testkit';
 import type { DiagnosticsOutput, Settings } from '@kepcup/shared';
 
 /**
@@ -35,7 +35,16 @@ async function freshCore(): Promise<{
 describe('diagnostics.get (P13 任务 6)', () => {
   it('aggregates core status, databases with migration versions, keystore, sandbox, disk and logs rows', async () => {
     const { home, rpc } = await freshCore();
-    const diag = (await rpc.call('diagnostics.get')) as DiagnosticsOutput;
+    // system 工具链行来自启动时的 fire-and-forget recheck（start.ts 里
+    // `void environment.recheck()`）：满载下 git 探测慢于本调用，这里等它
+    // 就绪再取快照，避免断言与后台探测竞速。
+    const diag = await waitFor(
+      async () => {
+        const snapshot = (await rpc.call('diagnostics.get')) as DiagnosticsOutput;
+        return snapshot.toolchain.some((row) => row.id === 'system:git') ? snapshot : null;
+      },
+      { label: 'system:git toolchain row' },
+    );
 
     expect(diag.core.status).toBe('ready');
     expect(diag.core.platform).toBe(process.platform);

@@ -36,11 +36,14 @@ function compressionStep(): MockLlmStep {
 }
 
 function subRunSteps(core: TestStack['core'], conversationId: string) {
-  return waitFor(async () => {
-    const runs = await listRuns(core, conversationId);
-    const subs = runs.filter((r) => r.loopType === 'subagent');
-    return subs.length > 0 ? subs : null;
-  }, { label: 'subagent runs' });
+  return waitFor(
+    async () => {
+      const runs = await listRuns(core, conversationId);
+      const subs = runs.filter((r) => r.loopType === 'subagent');
+      return subs.length > 0 ? subs : null;
+    },
+    { label: 'subagent runs' },
+  );
 }
 
 async function visibleTexts(core: TestStack['core'], conversationId: string): Promise<string> {
@@ -211,7 +214,8 @@ describe('subagent background delegation (D66 mode B)', () => {
     // 注入本身是内部系统事件：进 Bot 上下文（带 child_run_id 与压缩结论），不进聊天。
     const all = await listAllMessages(core, conv.id);
     const followUp = all.find(
-      (m) => m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
+      (m) =>
+        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
     );
     expect(followUp).toBeDefined();
     const followUpText = 'text' in followUp!.content ? followUp!.content.text : '';
@@ -281,11 +285,21 @@ describe('subagent background delegation (D66 mode B)', () => {
     subStep.release();
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(followUpStep.consumed).toBe(false);
-    expect(llm.requests().length).toBe(before);
+    // 取消后不允许出现「委派任务结束通知」请求。不能断言请求总数不变：测试
+    // 栈里的后台任务（反射 / 摘要）会各自发起 LLM 调用，满载下与取消窗口重叠
+    // 即误报；这里只认注入通知本身的请求。
+    const followUpRequests = llm
+      .requests()
+      .slice(before)
+      .filter((request) => JSON.stringify(request.body).includes('委派任务结束通知'));
+    expect(followUpRequests).toEqual([]);
     const all = await listAllMessages(core, conv.id);
     expect(
       all.filter(
-        (m) => m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
+        (m) =>
+          m.senderType === 'system' &&
+          'event' in m.content &&
+          m.content.event === 'delegate_result',
       ),
     ).toHaveLength(0);
     llm.releaseAll();
@@ -442,7 +456,10 @@ describe('subagent fan-out (D66 mode C)', () => {
     const all = await listAllMessages(core, conv.id);
     expect(
       all.filter(
-        (m) => m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
+        (m) =>
+          m.senderType === 'system' &&
+          'event' in m.content &&
+          m.content.event === 'delegate_result',
       ),
     ).toHaveLength(0);
     const visible = await visibleTexts(core, conv.id);
@@ -510,12 +527,13 @@ describe('subagent fan-out (D66 mode C)', () => {
       { timeoutMs: 30_000 },
     );
     const injectionsAfterFirst = (await listAllMessages(core, conv.id)).filter(
-      (m) => m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
+      (m) =>
+        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
     );
     expect(injectionsAfterFirst).toHaveLength(1);
-    expect('text' in injectionsAfterFirst[0]!.content ? injectionsAfterFirst[0]!.content.text : '').toContain(
-      '天气压缩结论',
-    );
+    expect(
+      'text' in injectionsAfterFirst[0]!.content ? injectionsAfterFirst[0]!.content.text : '',
+    ).toContain('天气压缩结论');
 
     // 再放行交通路：第二批注入。
     trafficStep.release();
@@ -526,7 +544,8 @@ describe('subagent fan-out (D66 mode C)', () => {
       { timeoutMs: 30_000 },
     );
     const injections = (await listAllMessages(core, conv.id)).filter(
-      (m) => m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
+      (m) =>
+        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
     );
     expect(injections).toHaveLength(2);
 
