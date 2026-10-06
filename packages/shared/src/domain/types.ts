@@ -217,7 +217,11 @@ export type WebSearchConfig = z.infer<typeof webSearchConfigSchema>;
  * key/token）只存 secrets 表（键 `mcp:{serverId}:env|header:{name}`），本结构
  * 中 env/headers 的值字段写占位符 `secret:<name>`。
  */
-export const mcpServerTransportSchema = z.enum(['stdio', 'http']);
+/**
+ * http = Streamable HTTP（现行规范，端点一般为 /mcp）；sse = 旧版
+ * 「HTTP with SSE」握手（GET /sse 开流 + POST messages），大量本地服务仍只支持它。
+ */
+export const mcpServerTransportSchema = z.enum(['stdio', 'http', 'sse']);
 export type McpServerTransport = z.infer<typeof mcpServerTransportSchema>;
 
 export const MCP_SECRET_ENV_PREFIX = 'secret:env:';
@@ -233,7 +237,7 @@ export const mcpServerSchema = z.object({
   args: z.array(z.string().max(2000)).optional(),
   /** stdio：环境变量；值可为 `secret:env:<name>` 占位，实际值从 secrets 取。 */
   env: z.record(z.string(), z.string()).optional(),
-  /** http：streamable HTTP 端点 URL。 */
+  /** http / sse：端点 URL（Streamable HTTP 一般 /mcp；SSE 一般 /sse）。 */
   url: z.string().url().optional(),
   /** http：随请求发送的 header；值可为 `secret:header:<name>` 占位。 */
   headers: z.record(z.string(), z.string()).optional(),

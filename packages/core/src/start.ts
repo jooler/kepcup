@@ -1374,6 +1374,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.environment = environment;
     services.memory = memory;
     services.media = media;
+    services.search = search;
     services.budget = budget;
     services.skills = skills;
     services.skillImporter = skillImporter;

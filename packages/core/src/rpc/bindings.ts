@@ -317,7 +317,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // --- MCP（docs/design/23-mcp-and-subagent.md D65） ------------------------
     'mcp.test': method(mcpTestInputSchema, mcpTestOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
-      return services.mcp.testServer(input.server);
+      return services.mcp.testServer(input.server, input.secretValues);
     }),
     'mcp.setSecret': method(mcpSetSecretInputSchema, okOutputSchema, async (input) => {
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
@@ -334,15 +334,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     }),
 
     // --- 联网检索（docs/design/21-web-search.md） ---------------------------
-    'websearch.test': method(webSearchTestInputSchema, webSearchTestOutputSchema, async (input) =>
-      services.search!.test(input.provider, input.key),
-    ),
+    'websearch.test': method(webSearchTestInputSchema, webSearchTestOutputSchema, async (input) => {
+      if (!services.search) throw new AppError('NOT_IMPLEMENTED', '检索模块未就绪');
+      return services.search.test(input.provider, input.key);
+    }),
     'websearch.setKey': method(webSearchSetKeyInputSchema, okOutputSchema, async (input) => {
-      services.search!.setKey(input.provider, input.key);
+      if (!services.search) throw new AppError('NOT_IMPLEMENTED', '检索模块未就绪');
+      services.search.setKey(input.provider, input.key);
       return { ok: true as const };
     }),
     'websearch.removeKey': method(webSearchRemoveKeyInputSchema, okOutputSchema, async (input) => {
-      services.search!.removeKey(input.provider);
+      if (!services.search) throw new AppError('NOT_IMPLEMENTED', '检索模块未就绪');
+      services.search.removeKey(input.provider);
       return { ok: true as const };
     }),
 

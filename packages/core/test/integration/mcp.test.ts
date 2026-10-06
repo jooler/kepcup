@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -63,9 +64,12 @@ rl.on('line', (line) => {
 
 const tempDirs: string[] = [];
 const services: McpService[] = [];
+const servers: Server[] = [];
+const sessions = new Map<string, ServerResponse>();
 
 afterEach(async () => {
   for (const service of services.splice(0)) await service.closeAll().catch(() => {});
+  for (const server of servers.splice(0)) server.close();
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
@@ -205,6 +209,136 @@ describe('mcp stdio integration', () => {
     );
     expect(report.missingSecrets).toEqual(['secret:env:MISSING']);
     expect(report.tools).toContain('echo');
+  });
+
+  it('testServer resolves draft secret overrides without the secrets store', async () => {
+    const scriptPath = await makeScriptPath();
+    const service = new McpService(makeDeps());
+    services.push(service);
+    // 草稿 id 未落过 secrets：占位符只能靠 secretValues 解析（设置页保存前测试）。
+    const draft = serverOf(scriptPath, { id: 'srv_draft', env: { TOKEN: 'secret:env:TOKEN' } });
+    const report = await service.testServer(draft, { env: { TOKEN: 'draft-token' } });
+    expect(report.missingSecrets).toEqual([]);
+    expect(report.tools).toContain('echo');
+    // 未带覆盖时同一占位符照旧上报 missing。
+    const bare = await service.testServer(draft);
+    expect(bare.missingSecrets).toEqual(['secret:env:TOKEN']);
+  });
+
+  it('connects to a legacy HTTP-with-SSE server via the sse transport', async () => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://x');
+      if (req.method === 'GET' && url.pathname === '/sse') {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+        });
+        res.write('event: endpoint\ndata: /messages?sessionId=s1\n\n');
+        sessions.set('s1', res);
+        req.on('close', () => sessions.delete('s1'));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/messages') {
+        const sink = sessions.get(url.searchParams.get('sessionId') ?? '');
+        let raw = '';
+        req.on('data', (chunk) => (raw += chunk));
+        req.on('end', () => {
+          if (!sink) {
+            res.writeHead(404).end();
+            return;
+          }
+          res.writeHead(202).end();
+          const msg = JSON.parse(raw) as { id?: number; method?: string };
+          if (msg.method === 'initialize') {
+            sink.write(`event: message\ndata: ${JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                protocolVersion: '2024-11-05',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'sse-fake', version: '1.0.0' },
+              },
+            })}\n\n`);
+            return;
+          }
+          if (msg.method === 'tools/list') {
+            sink.write(`event: message\ndata: ${JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                tools: [
+                  { name: 'echo', description: '回显', inputSchema: { type: 'object', properties: {} } },
+                ],
+              },
+            })}\n\n`);
+          }
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const service = new McpService(makeDeps());
+    services.push(service);
+    const port = (server.address() as { port: number }).port;
+    const report = await service.testServer({
+      id: 'srv_sse',
+      name: 'sse',
+      transport: 'sse',
+      url: `http://127.0.0.1:${port}/sse`,
+      enabled: true,
+      autoApprove: false,
+    });
+    expect(report.missingSecrets).toEqual([]);
+    expect(report.tools).toContain('echo');
+  });
+
+  it('hints at endpoint path / protocol type when http test hits 404', async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(404).end('nope');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const service = new McpService(makeDeps());
+    services.push(service);
+    const port = (server.address() as { port: number }).port;
+    const error = await service
+      .testServer({
+        id: 'srv_404',
+        name: '404',
+        transport: 'http',
+        url: `http://127.0.0.1:${port}/mcp`,
+        enabled: true,
+        autoApprove: false,
+      })
+      .catch((e: unknown) => e as Error);
+    expect((error as Error).message).toContain('把类型改为 SSE');
+  });
+
+  it('hints at Bearer header setup when http test hits 401', async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' }).end(
+        JSON.stringify({ error: 'Missing or invalid Authorization' }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const service = new McpService(makeDeps());
+    services.push(service);
+    const port = (server.address() as { port: number }).port;
+    const error = await service
+      .testServer({
+        id: 'srv_401',
+        name: '401',
+        transport: 'http',
+        url: `http://127.0.0.1:${port}/mcp`,
+        enabled: true,
+        autoApprove: false,
+      })
+      .catch((e: unknown) => e as Error);
+    expect((error as Error).message).toContain('Bearer');
+    expect((error as Error).message).toContain('Authorization');
   });
 });
 
