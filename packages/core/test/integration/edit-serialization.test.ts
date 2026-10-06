@@ -27,28 +27,27 @@ async function start(): Promise<TestStack> {
 describe('edit', () => {
   it('an edit after the loop ended triggers a new run', async () => {
     const { core, llm } = await start();
-    llm.script('mock-main', [
-      step().replyText('收到第一条'),
-      step().replyText('看到修改了'),
-    ]);
+    llm.script('mock-main', [step().replyText('收到第一条'), step().replyText('看到修改了')]);
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
 
     const [message] = await sendBatch(core, conv.id, ['原始内容']);
     await waitForRun(core, conv.id, 'completed');
 
+    // 编辑前已存在的 run 不算数：首个响应 run 完成后还会跟着触发后台 run
+    // （P07 反射 / P01 摘要，triggerReason='background'），不能按「最新一条」
+    // 取，否则满载下偶发拿到后台 run。只认编辑后新出现的 event run。
+    const runsBefore = new Set((await listRuns(core, conv.id)).map((run) => run.id));
     await core.rpc.call('messages.edit', { id: message!.id, text: '修改后的内容' });
-    const runs = await waitFor(
+    const second = await waitFor(
       async () => {
         const all = await listRuns(core, conv.id);
-        return all.length >= 2 ? all : null;
+        return all.find((run) => run.triggerReason === 'event' && !runsBefore.has(run.id)) ?? null;
       },
-      { label: 'second run' },
+      { label: 'edit-triggered run' },
     );
     await waitForRun(core, conv.id, 'completed');
 
-    const second = runs.sort((a, b) => b.createdAt - a.createdAt)[0]!;
-    expect(second.triggerReason).toBe('event');
     expect(second.triggerMessageIds).toContain(message!.id);
 
     const all = await listMessages(core, conv.id);
@@ -96,12 +95,11 @@ describe('provider concurrency', () => {
     expect(llm.requests().length).toBe(1);
 
     llm.releaseAll();
-    await waitForRun(core, convA.id, 'completed');
-    await waitForRun(core, convB.id, 'completed');
-
-    const runsA = await listRuns(core, convA.id);
-    const runsB = await listRuns(core, convB.id);
-    expect((runsB[0]?.startedAt ?? 0)).toBeGreaterThanOrEqual(runsA[0]!.endedAt ?? 0);
+    // 只认响应 run：响应完成后还会跟后台 run（反射 / 摘要），列表里最新的
+    // run 不再是被测对象，其 endedAt 会晚于 B 的开始，造成满载误报。
+    const runA = await waitForRun(core, convA.id, 'completed');
+    const runB = await waitForRun(core, convB.id, 'completed');
+    expect(runB.startedAt).toBeGreaterThanOrEqual(runA.endedAt ?? 0);
   }, 20_000);
 });
 
@@ -110,7 +108,9 @@ describe('conversation summary', () => {
     const { core, llm } = await start();
     llm.script('mock-main', [
       step().replyText('第一批完成'),
-      step().expect((req) => JSON.stringify(req.body.messages).includes('<summary>')).replyText('带摘要的回复'),
+      step()
+        .expect((req) => JSON.stringify(req.body.messages).includes('<summary>'))
+        .replyText('带摘要的回复'),
     ]);
     // P07 起：每次响应完成后还有一个轻量模型的反思 loop，与摘要任务共用
     // mock-light 队列——用谓词对齐（反思输入含 <trigger_messages>，摘要输入
@@ -123,11 +123,17 @@ describe('conversation summary', () => {
       skillSuggestion: null,
     };
     llm.script('mock-light', [
-      step().expect((req) => req.lastUserText().includes('<trigger_messages>')).replyJson(emptyReflection),
-      step().expect((req) => req.lastUserText().includes('<new_messages>')).replyJson({
-        summary: '用户在测试对话摘要功能。',
-      }),
-      step().expect((req) => req.lastUserText().includes('<trigger_messages>')).replyJson(emptyReflection),
+      step()
+        .expect((req) => req.lastUserText().includes('<trigger_messages>'))
+        .replyJson(emptyReflection),
+      step()
+        .expect((req) => req.lastUserText().includes('<new_messages>'))
+        .replyJson({
+          summary: '用户在测试对话摘要功能。',
+        }),
+      step()
+        .expect((req) => req.lastUserText().includes('<trigger_messages>'))
+        .replyJson(emptyReflection),
     ]);
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
