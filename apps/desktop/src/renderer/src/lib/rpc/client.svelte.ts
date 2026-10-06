@@ -54,7 +54,10 @@ class CoreConnection {
 
   async call(method: string, input?: unknown): Promise<unknown> {
     if (!this.#rpc) throw new Error('not connected');
-    return this.#rpc.call(method, input);
+    // 调用方常直接传 settings $state 里的嵌套对象（表单草稿、bot profile 等），
+    // Svelte 代理无法过 MessagePort 的结构化克隆——在边界统一 snapshot 成纯
+    // 对象（非代理原样通过），各调用点无需自行处理。
+    return this.#rpc.call(method, input === undefined ? undefined : $state.snapshot(input));
   }
 
   async refreshInfo(): Promise<void> {
