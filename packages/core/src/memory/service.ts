@@ -1074,7 +1074,9 @@ export class MemoryService {
           : {
               id: message.id,
               conversationId: message.conversationId,
-              senderType: message.senderType,
+              // D71：委派代发消息虽是 user 发送者，文本却是另一个 Bot 写的——
+              // 不能作为「关于用户」的证据，按 Bot 内容对待。
+              senderType: isDelegationProxy(message) ? 'bot' : message.senderType,
               status: message.status,
             };
       },
@@ -1147,4 +1149,13 @@ export function applyProfileChanges(
     if (setter !== undefined) setter(next, change.value);
   }
   return next;
+}
+
+/** D71 proxied user message (origin = 'delegation'): the text was written by another bot. */
+function isDelegationProxy(message: Message): boolean {
+  return (
+    message.kind === 'text' &&
+    'origin' in message.content &&
+    (message.content as { origin?: string }).origin === 'delegation'
+  );
 }

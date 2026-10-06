@@ -24,6 +24,8 @@ import { buildSpeechTools } from './speech-tools.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
 import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
 import { buildDelegateTools } from './delegate-tools.js';
+import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
+import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
@@ -115,6 +117,18 @@ export interface ResponseToolDeps {
    * 「应用 enabled ∩ Bot 选中」构建好的包装工具，直接注册。
    */
   mcp?: McpToolFacade | undefined;
+  /**
+   * 管家宿主（D70，docs/design/27-butler-and-delegation.md）：present 时所有
+   * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_team /
+   * propose_bot / propose_group。
+   */
+  butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
+  /**
+   * 跨 Bot 委派宿主（D71）：present 时注册 delegate_to_bot / cancel_delegation。
+   * orchestrator 对 triggerReason='delegation' 的 run 不传（少给模型一个无用
+   * 工具）；单跳的真正保障是宿主执行时按 run_id 反查。
+   */
+  delegation?: DelegationToolFacade | undefined;
 }
 
 /** The slice of SkillsService the create_skill tool needs. */
@@ -756,7 +770,13 @@ export function buildResponseTools(input: {
 
   // 对话式新建（setup interview）：访谈期间才注册，正常运行的 Bot 不可见。
   const setupTools =
-    deps.setup !== undefined ? buildSetupTools({ identity, setup: deps.setup }) : [];
+    deps.setup !== undefined
+      ? buildSetupTools({
+          identity,
+          setup: deps.setup,
+          variant: deps.butler?.isButler === true ? 'butler' : 'bot',
+        })
+      : [];
 
   // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
   // 20-conversation-media.md、25-capability-tools.md）：媒体网关就绪才注册；
@@ -796,6 +816,21 @@ export function buildResponseTools(input: {
   // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析。
   const mcpTools = deps.mcp?.tools ?? [];
 
+  // 跨 Bot 委派（D71）：异步转交给另一个联系人 Bot。
+  const delegationTools =
+    deps.delegation !== undefined
+      ? buildDelegationTools({ identity, delegation: deps.delegation })
+      : [];
+
+  // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家。
+  const butlerTools =
+    deps.butler !== undefined
+      ? [
+          buildListBotsTool({ identity, butler: deps.butler.host }),
+          ...(deps.butler.isButler ? buildButlerTools({ identity, butler: deps.butler.host }) : []),
+        ]
+      : [];
+
   return [
     sendMessage,
     skipReply,
@@ -820,6 +855,8 @@ export function buildResponseTools(input: {
     ...webTools,
     ...skillTools,
     ...delegateTools,
+    ...delegationTools,
+    ...butlerTools,
     ...mcpTools,
     ...setupTools,
   ];

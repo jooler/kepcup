@@ -33,7 +33,7 @@ interface MemberRow {
 export class GroupsService {
   constructor(private readonly deps: GroupsDeps) {}
 
-  create(input: { title: string; memberBotIds: string[] }): Conversation {
+  create(input: { title: string; memberBotIds: string[]; description?: string }): Conversation {
     const title = input.title.trim();
     if (title.length === 0) {
       throw new AppError('INVALID_INPUT', '群名称不能为空');
@@ -54,9 +54,9 @@ export class GroupsService {
     const run = this.deps.db.transaction(() => {
       this.deps.db
         .prepare(
-          "insert into conversations (id, type, title, created_at) values (?, 'group', ?, ?)",
+          "insert into conversations (id, type, title, description, created_at) values (?, 'group', ?, ?, ?)",
         )
-        .run(id, title, now);
+        .run(id, title, input.description?.trim() || null, now);
       for (const botId of unique) {
         this.deps.db
           .prepare(

@@ -24,6 +24,8 @@ export const ID_PREFIXES = {
   aud: 'aud_',
   alw: 'alw_',
   prp: 'prp_',
+  /** 跨 Bot 委派（D71）。 */
+  dlg: 'dlg_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

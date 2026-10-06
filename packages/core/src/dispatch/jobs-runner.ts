@@ -145,8 +145,7 @@ export class JobsRunner {
     // event_delivery are priority-1 response triggers, not background loops,
     // so they are exempt.
     if (
-      job.type !== 'schedule_fire' &&
-      job.type !== 'event_delivery' &&
+      !RESPONSE_TRIGGER_JOBS.has(job.type) &&
       this.#deps.budget !== undefined &&
       job.bot_id !== null &&
       this.#deps.budget.exceeded(job.bot_id)
@@ -161,7 +160,7 @@ export class JobsRunner {
       // 1, matching their run-layer priority (orchestrator) — the global
       // background-loop cap (BACKGROUND_LOOP_CONCURRENCY) must not gate a
       // due schedule behind long background loops (BR-P10-004).
-      priority: job.type === 'schedule_fire' || job.type === 'event_delivery' ? 1 : 2,
+      priority: RESPONSE_TRIGGER_JOBS.has(job.type) ? 1 : 2,
       provider: this.#providerFor(job),
       key: `job:${job.id}`,
       run: async () => {
@@ -338,6 +337,10 @@ export class JobsRunner {
         // persistent across restarts; re-checks happen in the orchestrator.
         this.#deps.orchestrator.deliverParkedEvent(job);
         return;
+      case 'delegation_delivery':
+        // D71：跨 Bot 委派在 B 的免打扰时段内排队，到点重新过投递闸门。
+        this.#deps.orchestrator.deliverParkedDelegation(job);
+        return;
       default:
         // Loop types from later phases are registered by then; unknown types
         // fail so they are visible instead of looping forever.
@@ -359,6 +362,17 @@ export class JobsRunner {
     return index > 0 ? ref.slice(0, index) : 'unknown';
   }
 }
+
+/**
+ * Response-trigger jobs (schedule_fire / event_delivery / D71 delegation_delivery):
+ * priority 1 like their run-layer triggers and exempt from the daily background
+ * budget — they are not background loops.
+ */
+const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
+  'schedule_fire',
+  'event_delivery',
+  'delegation_delivery',
+]);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */
 const JOBS_LEFT_PENDING: readonly string[] = [];

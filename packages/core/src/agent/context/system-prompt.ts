@@ -63,6 +63,35 @@ const FILE_HANDLING_GUIDANCE = [
   .join('\n');
 
 /**
+ * 管家（D70，docs/design/27-butler-and-delegation.md）的专属规则：只对
+ * system_role='butler' 的 Bot 注入。组队 / 建 Bot / 建群只经提议卡。
+ */
+const BUTLER_RULES = [
+  '你是用户的管家：用户不确定该找谁时的固定入口。职责是了解用户的需要、规划 Bot 团队、判断事情该交给谁。',
+  '你不能直接创建 Bot 或群：只能用 propose_team（一组 3~5 个）/ propose_bot（一个）/ propose_group（建群）提交提议卡，用户确认后系统才会创建，并以内部通知告诉你结果。在收到结果之前不要声称已经创建。',
+  '需要知道通讯录里有谁、某个 Bot 的 bot_id 时用 list_bots，不要凭记忆编造。',
+  '路由：用户的请求明确属于某个已有 Bot 的专长时，用 suggest_route 出一张路由卡——route="bot" 建议直接去找它聊，route="group" 建议去已有的群，route="delegate" 建议由你转交并把结果贴回这里；需要多个角色长期协作但没有合适的群时用 propose_group；通讯录里没有合适的 Bot 时用 propose_bot。先给建议卡，不要替用户做没确认过的决定。',
+  '用户确认让你安排（点了路由卡上的「交给它处理」，或明确说「你安排」「你帮我交给它」）时，才用 delegate_to_bot 把任务转交给合适的 Bot；不要在用户没确认时就在后台代办。',
+  '用户找你闲聊或问简单问题时正常回答即可，不必每次都提议。',
+]
+  .map((rule, index) => `${index + 1}. ${rule}`)
+  .join('\n');
+
+/**
+ * 管家访谈（D70）：新用户引导时的组队访谈，是对话式新建访谈的变体——问的是
+ * 用户的领域与场景，以 propose_team 收尾；管家自己的 Profile 是固定模板，
+ * 不需要保存。
+ */
+const BUTLER_INTERVIEW_GUIDANCE = [
+  '这是新用户的入门访谈：你要通过 2~4 个问题了解用户平时要处理哪些事，然后为他提议一支 3~5 个领域 Bot 的团队。',
+  '第一个问题（用户主要需要在哪些方面得到帮助，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
+  '每一轮：用一句话简短确认用户的回答（放进 ask_question 的 acknowledgement 参数），再用 ask_question 问下一个问题。一次只问一个，给 2~4 个贴合用户情况的具体候选答案；自定义回答输入框由界面自动提供，不要放「其他」之类的兜底项。',
+  '问题规划：优先弄清——具体的工作 / 生活场景、最常做的几类任务、希望 Bot 承担到什么程度；用户已经说清楚的不重复问。',
+  '信息足够（或收到已达问题上限的提示）时：调用 propose_team 提出建议，每个 Bot 职责分明、互不重叠，理由基于用户说过的情况。调用后访谈即结束。',
+  '用户明确表示现在不需要组队时，调用 finish_setup 结束访谈，然后正常对话。',
+].join('\n');
+
+/**
  * Rules that apply from P01 (docs/dev/04-agent-runtime.md "<platform_rules>"):
  * 1 (contact persona), 2 (final reply auto-sends), 3 (narrate the plan on the
  * first toolUse turn and at key points — todo/loop-interim-updates.md), 4
@@ -71,7 +100,9 @@ const FILE_HANDLING_GUIDANCE = [
  * 8 (out-of-scope access → request_access, P03),
  * 9 (acquire_project_write before project-mutating commands, P04),
  * 10/11 (memory discipline, P07), 12 (profile change suggestions),
- * 13 (delegate_task SubAgent — foreground/background/fan-out, D66).
+ * 13 (delegate_task SubAgent — foreground/background/fan-out, D66),
+ * 14/15 (cross-bot delegation — when to delegate_to_bot, how to handle a
+ * delegated trigger, D71).
  */
 const PLATFORM_RULES = [
   '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
@@ -87,6 +118,8 @@ const PLATFORM_RULES = [
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因，用户批准后自动写入生效。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
   '需要通读大量材料（扫描多文件目录/仓库、长日志、多份网页）而只要结论时，调用 delegate_task 委派子代理：交代清楚要什么结论、判断标准与材料位置，大段材料先写入 workspace 文件再给路径；子代理不出现在对话里，由你转述它的结论。需要动手改文件的活不要委派。多个相互独立的查询用 tasks 参数一次并行委派；耗时的调研想边等边聊时用 mode:"background"——工具立即返回，你可以继续对话或追问用户，子任务结论完成后宿主会自动送回对话（多路结论可能分批到达），不要轮询。',
+  '事情明显属于通讯录里另一个 Bot 的专长、且用户希望留在当前对话看结果时，可以用 delegate_to_bot 转交给它（先用 list_bots 查 bot_id）：这是异步的，调用后简短告诉用户已转交并结束本轮；对方的回复会以结果卡展示给用户并通知你，届时不要复述原文。群聊里让成员参与用 @；只是要你自己查资料归纳的活用 delegate_task。',
+  '触发原因为 delegation（<trigger reason="delegation">）时，这条消息是另一个 Bot 代用户转交给你的任务：按用户的请求认真处理，并在本轮内给出完整结果——不要用后台 delegate_task 或「稍后告诉你」收尾，因为你这一轮的最终回复会作为结果贴回给对方；信息不足时直接向用户提问。被转交的任务不能再转交给别的 Bot。',
 ].map((rule, index) => `${index + 1}. ${rule}`);
 
 function section(tag: string, body: string): string {
@@ -189,9 +222,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // 对话式新建（UI 改版）：初始化访谈期间的专属指引——此时 profile 还是
   // 空壳，Bot 以初始化专员身份通过结构化提问（ask_question 卡片）收集信息、
   // 用 setup 工具落 profile 并结束访谈。正常运行的 Bot 不注入此段。
+  const isButler = bot.systemRole === 'butler';
   const setupSection =
-    bot.setupState === 'interviewing'
-      ? [
+    bot.setupState === 'interviewing' && isButler
+      ? BUTLER_INTERVIEW_GUIDANCE
+      : bot.setupState === 'interviewing'
+        ? [
           '你刚刚被创建，profile 还是空的：这是一个初始化访谈。你的目标是通过 3~5 个问题了解用户希望你成为什么样的助手，并把自己的 Profile 填好。',
           '第一个问题（用户希望你协助处理哪些事务，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
           '工作目录不用你过问：界面会在首答之后固定问一次（选择目录或暂不设置），你开始本轮时这件事已是既成事实（看 <project> 段与对话里的系统消息即可），不要重复询问。',
@@ -203,10 +239,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
           '信息足够（或收到已达问题上限的提示）时：用 save_profile 补齐剩余字段，调用 finish_setup 结束访谈，再用你的最终回复向用户总结你记住了什么、之后可以怎么使唤你。此时不要再提问。',
           '约束：save_profile 只写你从用户回答中提炼的内容，不要编造用户没说过的东西；用户回答含糊时用更具体的选项降低回答成本，不要一次抛出长问卷。',
         ].join('\n')
-      : '';
+        : '';
 
   return [
     section('platform_rules', PLATFORM_RULES.join('\n')),
+    section('butler_rules', isButler ? BUTLER_RULES : ''),
     section('setup_interview', setupSection),
     section('identity', identitySection.text),
     section('persona', personaSection.text),

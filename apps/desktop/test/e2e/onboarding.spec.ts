@@ -80,7 +80,7 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-test('full first-run flow: welcome → skip model → permissions → sandbox → first bot → chat; the skipped-model banner persists until a key is set', async () => {
+test('full first-run flow: welcome → skip model → permissions → sandbox → butler → chat; the skipped-model banner persists until a key is set', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-onb-full-');
   const { page, home, llm } = session;
@@ -121,21 +121,16 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     });
     await page.locator('[data-testid="onboarding-next"]').click();
 
-    // ⑤ 第一个 Bot：三个人设模板 → 选择写作伙伴 → 创建并进入对话。
+    // ⑤ 认识管家（D70）：建立唯一管家并进入组队访谈。
     await expect(wizard).toHaveAttribute('data-step', 'bot');
-    await expect(page.locator('[data-testid="onboarding-template-coder"]')).toBeVisible();
-    await expect(page.locator('[data-testid="onboarding-template-writer"]')).toBeVisible();
-    await expect(page.locator('[data-testid="onboarding-template-researcher"]')).toBeVisible();
-    await page.locator('[data-testid="onboarding-template-writer"]').click();
-    const nameInput = page.locator('[data-testid="onboarding-bot-name"]');
-    await expect(nameInput).not.toHaveValue('');
-    await nameInput.fill('小写');
-    llm.script('mock-main', [step().replyText('你好，我是小写')]);
-    await page.locator('[data-testid="onboarding-bot-create"]').click();
+    await expect(page.locator('[data-testid="onboarding-butler-points"]')).toBeVisible();
+    llm.script('mock-main', [step().replyText('你好，我是你的管家')]);
+    await page.locator('[data-testid="onboarding-butler-start"]').click();
 
-    // 向导关闭，进入第一个 Bot 的对话。
+    // 向导关闭，进入管家的私聊（左栏置顶），首问卡由 core 确定性下发。
     await expect(wizard).toBeHidden({ timeout: 15_000 });
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="conversation-name"]').first()).toHaveText('管家');
 
     // 跳过模型配置后的持续提示（不阻塞其余功能）。
     const banner = page.locator('[data-testid="no-model-banner"]');
@@ -166,8 +161,8 @@ test('full first-run flow: welcome → skip model → permissions → sandbox �
     await composer.fill('第一次对话');
     await composer.press('Meta+Enter');
     await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(1, { timeout: 30_000 });
-    await expect(page.locator('[data-testid="bot-bubble"]').first()).toContainText(
-      '你好，我是小写',
+    await expect(page.locator('[data-testid="bot-bubble"]').last()).toContainText(
+      '你好，我是你的管家',
       { timeout: 30_000 },
     );
   } finally {
@@ -207,19 +202,18 @@ test('model step saves key + default main model: the first bot chats right away 
     });
     await page.locator('[data-testid="onboarding-next"]').click();
 
-    // ⑤ 第一个 Bot：创建后直接可对话——对话走的是向导写入的默认主模型
+    // ⑤ 管家（D70）：建好后直接可对话——对话走的是向导写入的默认主模型
     // （runtime.model 为空回退 settings.defaultMainModel），只编排 mock-light
     // 的脚本：若实现仍落在 mock-main，mock LLM 会因未匹配而失败。
     await expect(wizard).toHaveAttribute('data-step', 'bot');
-    await page.locator('[data-testid="onboarding-template-coder"]').click();
-    await page.locator('[data-testid="onboarding-bot-create"]').click();
+    await page.locator('[data-testid="onboarding-butler-start"]').click();
     await expect(wizard).toBeHidden({ timeout: 15_000 });
     await expect(page.locator('[data-testid="no-model-banner"]')).toHaveCount(0);
     llm.script('mock-light', [step().replyText('默认模型直接可用')]);
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('第一次对话');
     await composer.press('Meta+Enter');
-    await expect(page.locator('[data-testid="bot-bubble"]').first()).toContainText(
+    await expect(page.locator('[data-testid="bot-bubble"]').last()).toContainText(
       '默认模型直接可用',
       {
         timeout: 30_000,

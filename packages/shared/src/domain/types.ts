@@ -82,6 +82,14 @@ export type BotProfile = z.infer<typeof botProfileSchema>;
 export const botStatusSchema = z.enum(['active', 'deleted']);
 export type BotStatus = z.infer<typeof botStatusSchema>;
 
+/**
+ * 系统角色（D70，docs/design/27-butler-and-delegation.md）：目前只有管家
+ * 'butler'。DB 列 bots.system_role；与 Profile 内 role.{expertise,
+ * responsibilities} 人设字段无关，禁止混用。
+ */
+export const botSystemRoleSchema = z.enum(['butler']);
+export type BotSystemRole = z.infer<typeof botSystemRoleSchema>;
+
 export const botSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -97,6 +105,8 @@ export const botSchema = z.object({
    * null/缺省 = 正常运行。旧数据行无此列，反序列化为 undefined。
    */
   setupState: z.literal('interviewing').nullable().optional(),
+  /** 系统角色（D70）：'butler' = 管家（唯一、置顶、不可删）；null/缺省 = 普通 Bot。 */
+  systemRole: botSystemRoleSchema.nullable().optional(),
 });
 export type Bot = z.infer<typeof botSchema>;
 
@@ -373,6 +383,16 @@ export const textContentSchema = z.object({
    * 已答行展示（参考 Grok）。
    */
   setupAnswer: z.boolean().optional(),
+  /**
+   * 跨 Bot 委派（D71）：A 代用户转交给 B 的「用户代发」消息。照常是一条
+   * user 消息（进上下文、触发 B 的响应 run），UI 打「由 A 代你发出」标签；
+   * 记忆反思不把它当作用户本人的话。
+   */
+  origin: z.literal('delegation').optional(),
+  /** origin = 'delegation' 时对应的委派行。 */
+  delegationId: z.string().optional(),
+  /** origin = 'delegation' 时代为转交的 Bot（A）的 id：UI 标签与上下文渲染用。 */
+  delegatedBy: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
@@ -399,6 +419,19 @@ export const systemEventContentSchema = z.object({
    * 过滤掉。Bot 怎么执行任务、怎么整理自己的知识库是对话外的事务。
    */
   internal: z.boolean().optional(),
+  /**
+   * 管家路由卡（D70，event = route_suggestion）：建议去哪——直聊某个 Bot、
+   * 去某个已有群，或由管家转交（delegate，需用户点「交给它处理」确认）。
+   */
+  route: z
+    .object({
+      kind: z.enum(['bot', 'group', 'delegate']),
+      botId: z.string().optional(),
+      conversationId: z.string().optional(),
+      /** delegate 时要转交的事（用户确认后管家据此委派）。 */
+      task: z.string().optional(),
+    })
+    .optional(),
 });
 /**
  * Card message (P03): the payload itself lives in the approvals table; the
@@ -410,6 +443,8 @@ export const cardContentSchema = z.object({
   approvalId: z.string().default(''),
   /** Run-changes cards only: the run the changes belong to. */
   runId: z.string().optional(),
+  /** Delegation cards only (D71, cardType delegation_sent / delegation_result). */
+  delegationId: z.string().optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 export const messageContentSchema = z.union([
@@ -499,6 +534,8 @@ export const triggerReasonSchema = z.enum([
   'scheduled',
   'event',
   'background',
+  /** 跨 Bot 委派（D71）：A 代用户转交给 B 的任务。 */
+  'delegation',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -613,6 +650,8 @@ export const jobTypeSchema = z.enum([
   'skill_suggestion',
   // P07: recompute memory_vec for all bots after the embedding source changed.
   'memory_vec_rebuild',
+  // D71: a cross-bot delegation parked until the target bot's quiet hours end.
+  'delegation_delivery',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
@@ -674,6 +713,8 @@ export const approvalKindSchema = z.enum([
   'profile_change',
   /** MCP 工具调用审批（D65）：server 名 + 工具名 + 参数摘要。 */
   'mcp_tool',
+  /** 管家提议（D70）：组队 / 建 Bot / 建群，用户确认后确定性创建。 */
+  'butler_proposal',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -761,9 +802,51 @@ export const mcpToolApprovalPayloadSchema = z.object({
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 
+/** One bot a butler proposal suggests (D70); maps onto Profile fields on creation. */
+export const butlerProposedBotSchema = z.object({
+  name: z.string(),
+  bio: z.string().default(''),
+  expertise: z.string().default(''),
+  responsibilities: z.string().default(''),
+  /** Why the user needs it (shown on the card). */
+  reason: z.string().default(''),
+});
+export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
+
+/**
+ * Payload of a `butler_proposal` approval (D70, docs/design/27): one kind for
+ * the three proposal shapes — `team` (BUTLER_TEAM_SIZE_MIN..MAX bots), `bot`
+ * (exactly one) and `group` (title / description / existing member bots).
+ */
+export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', [
+  z.object({
+    proposalType: z.literal('team'),
+    bots: z.array(butlerProposedBotSchema),
+    note: z.string().default(''),
+  }),
+  z.object({
+    proposalType: z.literal('bot'),
+    bots: z.array(butlerProposedBotSchema),
+    note: z.string().default(''),
+  }),
+  z.object({
+    proposalType: z.literal('group'),
+    title: z.string(),
+    description: z.string().default(''),
+    memberBotIds: z.array(z.string()),
+    reason: z.string().default(''),
+  }),
+]);
+export type ButlerProposalPayload = z.infer<typeof butlerProposalPayloadSchema>;
+
 export const approvalDecisionSchema = z.object({
   /** Only meaningful for `access` approvals. */
   duration: grantDurationSchema.optional(),
+  /**
+   * `butler_proposal` only (D70): indexes into payload.bots the user kept
+   * (unchecked items are dropped before creation). Absent = all items.
+   */
+  selection: z.array(z.number().int().nonnegative()).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });
@@ -786,6 +869,54 @@ export const approvalSchema = z.object({
   decidedAt: z.number().nullable(),
 });
 export type Approval = z.infer<typeof approvalSchema>;
+
+// ---------------------------------------------------------------------------
+// Cross-bot delegation (D71, docs/design/27-butler-and-delegation.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * A2A-style lifecycle: `submitted` (row written, not yet delivered to B —
+ * waiting for B's mailbox to be idle / quiet hours to end) → `working`
+ * (proxied user message landed in B's chat, B's run started) → terminal.
+ */
+export const delegationStatusSchema = z.enum([
+  'submitted',
+  'working',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type DelegationStatus = z.infer<typeof delegationStatusSchema>;
+
+export const delegationSchema = z.object({
+  id: z.string(),
+  fromBotId: z.string(),
+  toBotId: z.string(),
+  fromConversationId: z.string(),
+  /** B's direct conversation; resolved at delivery time. */
+  toConversationId: z.string().nullable(),
+  taskText: z.string(),
+  status: delegationStatusSchema,
+  depth: z.number(),
+  /** A's run that called delegate_to_bot. */
+  fromRunId: z.string().nullable(),
+  /** A-side "已委托" card message. */
+  sentMessageId: z.string().nullable(),
+  /** B-side proxied user message ("查看原文" anchor of the task). */
+  toMessageId: z.string().nullable(),
+  /** B's response run (set at delivery). */
+  runId: z.string().nullable(),
+  /** B's final reply, truncated to DELEGATION_RESULT_MAX_CHARS. */
+  resultExcerpt: z.string().nullable(),
+  /** B's final reply message ("查看原文" link target). */
+  resultMessageId: z.string().nullable(),
+  /** A-side result card message. */
+  resultCardId: z.string().nullable(),
+  errorText: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+});
+export type Delegation = z.infer<typeof delegationSchema>;
 
 export const grantSchema = z.object({
   id: z.string(),

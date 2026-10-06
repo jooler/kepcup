@@ -1,5 +1,6 @@
 import {
   accessApprovalPayloadSchema,
+  butlerProposalPayloadSchema,
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
   skillImportApprovalPayloadSchema,
@@ -86,6 +87,19 @@ export interface ApprovalsDeps {
 type Resolver = (outcome: ApprovalOutcome) => void;
 
 /**
+ * Kinds unattended mode never decides on its own (D70): a butler proposal
+ * creates contacts / groups — it always waits for the user, unattended or not.
+ */
+const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set(['butler_proposal']);
+
+/**
+ * Non-blocking kinds whose card must outlive the requesting run: the tool
+ * returned immediately and the run usually settles long before the user
+ * decides (`environment` P06, `butler_proposal` D70).
+ */
+const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal'];
+
+/**
  * The approval mechanism (docs/dev/phases/P03-permissions.md "审批框架").
  * Requests persist before anything else happens: approvals row → card message
  * → waiting_approval → user decision → resolved promise. The promise only
@@ -129,7 +143,7 @@ export class ApprovalsService {
       return this.#cancelledOutcome(identity, kind, payload, 'run already aborted');
     }
     const unattended = this.#deps.unattended.effective();
-    if (unattended.enabled) {
+    if (unattended.enabled && !NEVER_AUTO_DECIDED.has(kind)) {
       return this.#autoDecide(identity, kind, payload);
     }
     return this.#requestAndWait(identity, kind, payload, options);
@@ -186,7 +200,7 @@ export class ApprovalsService {
     payload: Record<string, unknown>,
     onDecided: (outcome: ApprovalOutcome) => void,
   ): Approval {
-    if (this.#deps.unattended.effective().enabled) {
+    if (this.#deps.unattended.effective().enabled && !NEVER_AUTO_DECIDED.has(kind)) {
       const outcome = this.#autoDecideSync(identity, kind, payload);
       onDecided(outcome);
       return outcome.approval;
@@ -286,11 +300,28 @@ export class ApprovalsService {
   // --- deciding -------------------------------------------------------------
 
   /** RPC entry: the user's decision on a pending approval. */
-  decide(id: string, approve: boolean, duration?: 'once' | 'conversation'): Approval {
+  decide(
+    id: string,
+    approveInput: boolean,
+    duration?: 'once' | 'conversation',
+    selection?: number[],
+  ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
     if (approval.status !== 'pending') {
       throw new AppError('INVALID_INPUT', '该审批已经处理过了');
+    }
+    let approve = approveInput;
+    let keptSelection: number[] | undefined;
+    if (selection !== undefined) {
+      if (approval.kind !== 'butler_proposal') {
+        throw new AppError('INVALID_INPUT', '只有管家提议卡支持勾选条目');
+      }
+      if (approve) {
+        keptSelection = validateButlerSelection(approval.payload, selection);
+        // 一项都不留 = 拒绝（D70）。
+        if (keptSelection.length === 0) approve = false;
+      }
     }
     if (
       approval.kind === 'access' &&
@@ -302,7 +333,11 @@ export class ApprovalsService {
     }
     const now = this.#deps.clock.now();
     const decision: ApprovalDecision | null =
-      approve && duration !== undefined ? { duration } : null;
+      approve && duration !== undefined
+        ? { duration }
+        : approve && keptSelection !== undefined
+          ? { selection: keptSelection }
+          : null;
     this.#db
       .prepare('update approvals set status = ?, decision_json = ?, decided_at = ? where id = ?')
       .run(approve ? 'approved' : 'denied', decision ? JSON.stringify(decision) : null, now, id);
@@ -378,7 +413,7 @@ export class ApprovalsService {
    * applies).
    */
   cancelPendingForRun(runId: string): void {
-    const rows = this.#listPending({ runId }, { excludeKinds: ['environment'] });
+    const rows = this.#listPending({ runId }, { excludeKinds: SURVIVES_RUN });
     for (const row of rows)
       this.#resolvePending(row.id, {
         approval: this.#markCancelled(row.id),
@@ -461,6 +496,17 @@ export class ApprovalsService {
     ).n;
   }
 
+  /** Pending approvals of one kind in one conversation (butler proposal dedupe, D70). */
+  pendingOfKind(conversationId: string, kind: ApprovalKind): Approval[] {
+    return (
+      this.#db
+        .prepare(
+          "select * from approvals where status = 'pending' and conversation_id = ? and kind = ? order by created_at",
+        )
+        .all(conversationId, kind) as ApprovalRow[]
+    ).map(rowToApproval);
+  }
+
   /**
    * P06 dedupe: the still-pending environment approval for one catalog item,
    * or null. A second request for the same item while the first card is
@@ -535,6 +581,8 @@ export class ApprovalsService {
         const data = payload.data;
         return `安装技能 ${data.displayName}（应用内置推荐，v${data.version}${data.missingDeps.length > 0 ? `，缺少依赖 ${data.missingDeps.join('、')}` : ''}）：${data.summary}`;
       }
+      case 'butler_proposal':
+        return `${botName} ${describeButlerProposal(approval.payload)}`;
       case 'mcp_tool': {
         const payload = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
         if (!payload.success) return 'MCP 工具调用请求';
@@ -637,6 +685,24 @@ export class ApprovalsService {
           return `[系统] 已取消：${label}`;
         case 'failed':
           return `[系统] 处理失败：${label}${failureSuffix(approval)}（内容未安装）`;
+      }
+    }
+    if (approval.kind === 'butler_proposal') {
+      const label = describeButlerProposal(approval.payload);
+      const kept = approval.decision?.selection;
+      const keptNote =
+        kept !== undefined ? `（用户保留了第 ${kept.map((i) => i + 1).join('、')} 项）` : '';
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${botName} ${label}`;
+        case 'approved':
+          return `[系统] 用户确认了${label}${keptNote}`;
+        case 'denied':
+          return `[系统] 用户拒绝了${label}`;
+        case 'cancelled':
+          return `[系统] 已取消：${botName} ${label}`;
+        case 'failed':
+          return `[系统] 处理失败：${label}${failureSuffix(approval)}`;
       }
     }
     if (approval.kind === 'skill_preset') {
@@ -882,6 +948,37 @@ export class ApprovalsService {
       .prepare(`select * from approvals where ${clauses.join(' and ')}`)
       .all(...params) as ApprovalRow[];
   }
+}
+
+/** One-line summary of a butler proposal payload (D70). */
+function describeButlerProposal(payload: Record<string, unknown>): string {
+  const parsed = butlerProposalPayloadSchema.safeParse(payload);
+  if (!parsed.success) return '提议';
+  const data = parsed.data;
+  if (data.proposalType === 'group') {
+    return `提议建群「${data.title}」（${data.memberBotIds.length} 位成员）`;
+  }
+  const names = data.bots.map((bot) => bot.name).join('、');
+  return data.proposalType === 'team' ? `提议组建团队：${names}` : `提议新建 Bot：${names}`;
+}
+
+/**
+ * `approvals.decide` selection of a butler proposal (D70): indexes into
+ * payload.bots, deduplicated and sorted; any index outside the proposal is
+ * rejected. Group proposals have nothing to pick.
+ */
+function validateButlerSelection(payload: Record<string, unknown>, selection: number[]): number[] {
+  const parsed = butlerProposalPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new AppError('INVALID_INPUT', '提议内容无效');
+  if (parsed.data.proposalType === 'group') {
+    throw new AppError('INVALID_INPUT', '建群提议不支持勾选条目');
+  }
+  const count = parsed.data.bots.length;
+  const kept = [...new Set(selection)].sort((a, b) => a - b);
+  if (kept.some((index) => !Number.isInteger(index) || index < 0 || index >= count)) {
+    throw new AppError('INVALID_INPUT', '勾选的条目不在提议之中');
+  }
+  return kept;
 }
 
 /** Failure reason suffix for `renderContextLine` (BR-P08-004). */

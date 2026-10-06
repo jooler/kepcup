@@ -25,6 +25,12 @@
   }: { message: Message; editing?: boolean; merge?: { above: boolean; below: boolean } } = $props();
 
   const isUser = $derived(message.senderType === 'user');
+  /** D71：另一个 Bot 代用户转交的消息（B 的私聊）——标注来源，不可编辑。 */
+  const delegatedBy = $derived(
+    isUser && 'origin' in message.content && message.content.origin === 'delegation'
+      ? (message.content.delegatedBy ?? '')
+      : null,
+  );
   // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
   // （不再渲染名字/时间行）。
   const isGroupChat = $derived(chat.current?.conversation.type === 'group');
@@ -124,6 +130,11 @@
     />
   {/if}
   <div class="flex max-w-[78%] min-w-0 flex-col {isUser ? 'items-end' : 'items-start'}">
+    {#if delegatedBy !== null}
+      <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
+        {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
+      </span>
+    {/if}
     {#if quoted !== null}
       <button
         type="button"
@@ -174,7 +185,7 @@
         </Tooltip.Trigger>
         <Tooltip.Content>{t('messages.quote')}</Tooltip.Content>
       </Tooltip.Root>
-      {#if isUser && editing}
+      {#if isUser && editing && delegatedBy === null}
         <Tooltip.Root>
           <Tooltip.Trigger
             class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

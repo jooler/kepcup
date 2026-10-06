@@ -1,5 +1,6 @@
 import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { AppError } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
 import type { CoreLogger } from '../infra/logger.js';
@@ -31,6 +32,17 @@ export interface LifecycleDeps {
   abortRunsForBotInConversation(botId: string, conversationId: string): void;
   /** Notifies the group turn coordinator that a member left (P05). */
   onGroupMemberRemoved(botId: string, conversationId: string): void;
+  /**
+   * D71 cross-bot delegations: active ones touching the deleted conversation /
+   * bot end as `cancelled` (rows kept; B's run aborted). Runs BEFORE the run
+   * aborts so the settle hook stays silent. No-op when absent.
+   */
+  delegations?:
+    | {
+        onConversationDeleted(conversationId: string): void;
+        prepareBotDeletion(botId: string): void;
+      }
+    | undefined;
   /** P07 memory cascades (承诺 void / 连接关闭), no-op when memory absent. */
   memory?:
     | {
@@ -90,6 +102,17 @@ export class LifecycleService {
   async deleteConversation(conversationId: string): Promise<void> {
     const { mainDb, runsDb } = this.deps;
     const conv = this.deps.conversations.getOrThrow(conversationId);
+
+    // D71: delegations sent from / delivered into this conversation end first
+    // (before the aborts below, so their settle hook does not post cards).
+    try {
+      this.deps.delegations?.onConversationDeleted(conversationId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { conversationId, error: error instanceof Error ? error.message : String(error) },
+        'delegation conversation cascade failed',
+      );
+    }
 
     await this.deps.abortRunsForConversation(conversationId);
 
@@ -173,7 +196,21 @@ export class LifecycleService {
    */
   async deleteBot(botId: string): Promise<void> {
     const { runsDb, paths } = this.deps;
-    this.deps.bots.getOrThrow(botId);
+    const bot = this.deps.bots.getOrThrow(botId);
+    // D70：管家不可删除——在任何级联（含中止 run）之前拒绝。
+    if (bot.systemRole === 'butler') {
+      throw new AppError('BOT_UNDELETABLE', '管家不能删除');
+    }
+
+    // D71: delegations this bot sent or received end before its runs abort.
+    try {
+      this.deps.delegations?.prepareBotDeletion(botId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { botId, error: error instanceof Error ? error.message : String(error) },
+        'delegation bot cascade failed',
+      );
+    }
 
     await this.deps.abortRunsForBot(botId);
 

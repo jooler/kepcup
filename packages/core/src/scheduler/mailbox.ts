@@ -9,7 +9,16 @@ export interface TriggerBatch {
   conversationId: string;
   botId: string;
   messages: Message[];
-  reason: 'direct' | 'mention' | 'broadcast' | 'reply' | 'chain' | 'scheduled' | 'event';
+  /** 'delegation'（D71）：A 代用户转交给 B 的任务（B 私聊里的代发消息）。 */
+  reason:
+    | 'direct'
+    | 'mention'
+    | 'broadcast'
+    | 'reply'
+    | 'chain'
+    | 'scheduled'
+    | 'event'
+    | 'delegation';
   extraAttributes?: Record<string, string | number>;
   /** Bot-to-bot @ chain binding (P05): stored on the created run. */
   chain?: { id: string; depth: number };

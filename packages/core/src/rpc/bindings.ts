@@ -20,6 +20,12 @@ import {
   botIdInputSchema,
   botsDeletionPreviewOutputSchema,
   interviewStartOutputSchema,
+  butlerEnsureInputSchema,
+  butlerEnsureOutputSchema,
+  butlerAcceptRouteInputSchema,
+  butlerAcceptRouteOutputSchema,
+  delegationIdInputSchema,
+  delegationGetOutputSchema,
   interviewAnswerInputSchema,
   interviewAnswerOutputSchema,
   interviewAnswerPathInputSchema,
@@ -365,6 +371,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
      *（含预置候选答案），不触发 LLM run——零延迟出题；用户作答后才由
      * orchestrator 起第一个响应 run。
      */
+    /**
+     * 管家（D70）：确保唯一管家存在并打开其私聊。新用户引导完成时以
+     * interview=true 调用（管家进入组队访谈）；幂等，已存在则原样返回。
+     */
+    'butler.ensure': method(butlerEnsureInputSchema, butlerEnsureOutputSchema, async (input) =>
+      orchestrator.ensureButler(input.interview === true ? { interview: true } : {}),
+    ),
+    'butler.acceptRoute': method(
+      butlerAcceptRouteInputSchema,
+      butlerAcceptRouteOutputSchema,
+      async (input) => ({ message: orchestrator.acceptRoute(input.messageId) }),
+    ),
     'bots.interview.start': method(botIdInputSchema, interviewStartOutputSchema, async (input) => {
       const bot = domain.bots.getOrThrow(input.id);
       if (bot.status !== 'active') {
@@ -736,8 +754,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       approvalsDecideInputSchema,
       approvalsDecideOutputSchema,
       async (input) => ({
-        approval: domain.approvals.decide(input.id, input.approve, input.duration),
+        approval: domain.approvals.decide(
+          input.id,
+          input.approve,
+          input.duration,
+          input.selection,
+        ),
       }),
+    ),
+
+    'delegations.get': method(delegationIdInputSchema, delegationGetOutputSchema, async (input) => ({
+      delegation: orchestrator.getDelegation(input.id),
+    })),
+    'delegations.cancel': method(
+      delegationIdInputSchema,
+      delegationGetOutputSchema,
+      async (input) => ({ delegation: orchestrator.cancelDelegation(input.id) }),
     ),
 
     'grants.list': method(grantsListInputSchema, grantsListOutputSchema, async (input) => ({

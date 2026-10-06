@@ -72,6 +72,7 @@ CREATE TABLE bots (
 ```
 
 - 通讯录即 `status = 'active'` 的 Bot。
+- 后续列（增量迁移）：`setup_state TEXT`（0012，对话式新建访谈中 = `'interviewing'`）；`system_role TEXT`（0016，D70）——系统角色，目前只有 `'butler'`（管家），`bots_one_active_butler` partial unique index 保证至多一个 active 管家。**与 Profile 内 `role.{expertise,responsibilities}` 无关。** 管家不可删除（`lifecycle.deleteBot` 在任何级联前拒绝，`BOT_UNDELETABLE`）。
 - 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`profile_json`（写入 `{}`），`status = 'deleted'`。界面对已删除 Bot 显示其 id。
 
 ### conversations（P01）
@@ -249,7 +250,7 @@ CREATE TABLE approvals (
   kind            TEXT NOT NULL CHECK (kind IN (
                     'access', 'unsandboxed', 'command', 'git_remote',
                     'environment', 'skill_import', 'skill_preset',
-                    'profile_change')),
+                    'profile_change', 'mcp_tool', 'butler_proposal')),
   bot_id          TEXT,
   conversation_id TEXT,
   run_id          TEXT,
@@ -265,6 +266,10 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 ```
 
 `skill_preset`（P19/D63）：payload `{presetId, name, displayName, summary, version, missingDeps}`——`install_skill` 的预置轻授权卡；`skill_import` 既有 payload（P08）不变，工具路径复用同一 kind（阻塞审批）。无人值守模式下两者同属自动批准类。
+
+`butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分（见 `butlerProposalPayloadSchema`）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）。
+
+> 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
 > `failed`：批准后的落位动作失败时的终态（当前仅 skill_import：Bot 已删/同名冲突/库目录异常），decision_json 记 `{ error: 原因 }`——卡片不得停留在 approved 造成「已成功」假象（迁移 `0010_p08_approval_failed.sql`）。
 
@@ -467,6 +472,38 @@ CREATE TABLE schedules (
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
 
+### delegations（D71）
+
+```sql
+CREATE TABLE delegations (
+  id                    TEXT PRIMARY KEY,       -- dlg_...
+  from_bot_id           TEXT NOT NULL,
+  to_bot_id             TEXT NOT NULL,
+  from_conversation_id  TEXT NOT NULL,
+  to_conversation_id    TEXT,                   -- B 私聊；投递时解析
+  task_text             TEXT NOT NULL,
+  status                TEXT NOT NULL CHECK (status IN (
+                          'submitted', 'working', 'completed', 'failed', 'cancelled')),
+  depth                 INTEGER NOT NULL DEFAULT 1,
+  from_run_id           TEXT,                   -- A 发起委派的 run
+  sent_message_id       TEXT,                   -- A 侧发出卡
+  to_message_id         TEXT,                   -- B 侧代发用户消息
+  run_id                TEXT,                   -- B 侧响应 run（投递时回填）
+  result_excerpt        TEXT,
+  result_message_id     TEXT,                   -- B 的终回复消息
+  result_card_id        TEXT,                   -- A 侧结果卡
+  error_text            TEXT,
+  created_at            INTEGER NOT NULL,
+  updated_at            INTEGER NOT NULL
+);
+CREATE INDEX delegations_to_bot_status ON delegations(to_bot_id, status);
+CREATE INDEX delegations_run ON delegations(run_id);
+CREATE INDEX delegations_from_conversation ON delegations(from_conversation_id);
+```
+
+- 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
+- `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
+
 ## runs.db
 
 ### runs（P01）
@@ -583,9 +620,12 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
+| 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
 
 ### 删除 Bot
+
+管家（D70，`system_role = 'butler'`）不可删除：`lifecycle.deleteBot` 在任何级联前拒绝。
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
@@ -599,6 +639,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 的 approvals（待确认的先取消）、grants | 删除 | P03 |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
+| 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
 | usage_ledger | **保留**（用量统计） | — |
 

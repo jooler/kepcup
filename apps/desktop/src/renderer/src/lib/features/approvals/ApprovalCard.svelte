@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Approval } from '@kepcup/shared';
   import {
+    butlerProposalPayloadSchema,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
@@ -17,10 +18,12 @@
     Puzzle,
     Plug,
     AlertTriangle,
+    Users,
   } from '@lucide/svelte';
   import { t, type MessageKey } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
 
@@ -48,7 +51,32 @@
     if (autofocus && pending && cardEl) cardEl.focus();
   });
 
+  // D70 butler_proposal payload: 组队 / 建 Bot / 建群提议（条目可勾选）。
+  const butlerProposal = $derived.by(() => {
+    if (approval.kind !== 'butler_proposal') return null;
+    const parsed = butlerProposalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  /** Indexes of proposed bots the user unchecked (default: keep everything). */
+  let butlerDropped = $state<number[]>([]);
+  const butlerKept = $derived(
+    butlerProposal !== null && butlerProposal.proposalType !== 'group'
+      ? butlerProposal.bots.map((_, index) => index).filter((index) => !butlerDropped.includes(index))
+      : [],
+  );
+
+  function toggleButlerItem(index: number): void {
+    butlerDropped = butlerDropped.includes(index)
+      ? butlerDropped.filter((i) => i !== index)
+      : [...butlerDropped, index];
+  }
+
   function approve(): void {
+    if (butlerProposal !== null && butlerProposal.proposalType !== 'group') {
+      // 一项都不留 = 拒绝（core 同样按拒绝处理）。
+      void permissions.decide(approval.id, butlerKept.length > 0, undefined, butlerKept);
+      return;
+    }
     void permissions.decide(approval.id, true, access !== null ? duration : undefined);
   }
 
@@ -143,7 +171,13 @@
                 ? t('approvals.skillPresetTitle')
                 : approval.kind === 'mcp_tool'
                   ? t('approvals.mcpToolTitle')
-                  : t('approvals.commandTitle'),
+                  : approval.kind === 'butler_proposal'
+                    ? butlerProposal?.proposalType === 'group'
+                      ? t('approvals.butlerGroupTitle')
+                      : butlerProposal?.proposalType === 'bot'
+                        ? t('approvals.butlerBotTitle')
+                        : t('approvals.butlerTeamTitle')
+                    : t('approvals.commandTitle'),
   );
 </script>
 
@@ -194,7 +228,18 @@
                 ? (skillPreset?.displayName ?? skillPreset?.name ?? '')
                 : approval.kind === 'mcp_tool'
                   ? `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
-                  : command}
+                  : approval.kind === 'butler_proposal'
+                    ? butlerProposal?.proposalType === 'group'
+                      ? butlerProposal.title
+                      : (butlerProposal?.bots
+                          .filter(
+                            (_, index) =>
+                              approval.decision?.selection === undefined ||
+                              approval.decision.selection.includes(index),
+                          )
+                          .map((bot) => bot.name)
+                          .join('、') ?? '')
+                    : command}
       </code>
     {/if}
   </div>
@@ -222,6 +267,8 @@
         <Puzzle class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'mcp_tool'}
         <Plug class="size-4 text-amber-600" aria-hidden="true" />
+      {:else if approval.kind === 'butler_proposal'}
+        <Users class="size-4 text-amber-600" aria-hidden="true" />
       {:else}
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}
@@ -451,6 +498,63 @@
       <p class="mt-2 text-xs text-muted-foreground" data-testid="approval-skill-preset-note">
         {t('approvals.skillPresetNote')}
       </p>
+    {:else if approval.kind === 'butler_proposal' && butlerProposal !== null}
+      <!-- 管家提议卡（D70）：组队 / 建 Bot 的条目可勾选，确认后由系统确定性创建 -->
+      {#if butlerProposal.proposalType === 'group'}
+        <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-butler-group">
+          <span class="text-muted-foreground">{t('approvals.butlerGroupName')}</span>
+          <span data-testid="approval-butler-group-title">{butlerProposal.title}</span>
+          {#if butlerProposal.description.length > 0}
+            <span class="text-muted-foreground">{t('approvals.butlerGroupPurpose')}</span>
+            <span class="break-all">{butlerProposal.description}</span>
+          {/if}
+          <span class="text-muted-foreground">{t('approvals.butlerGroupMembers')}</span>
+          <span data-testid="approval-butler-group-members">
+            {butlerProposal.memberBotIds
+              .map((id) => contacts.bots.find((bot) => bot.id === id)?.name ?? id)
+              .join('、')}
+          </span>
+          {#if butlerProposal.reason.length > 0}
+            <span class="text-muted-foreground">{t('approvals.reason')}</span>
+            <span class="break-all">{butlerProposal.reason}</span>
+          {/if}
+        </div>
+      {:else}
+        {#if butlerProposal.note.length > 0}
+          <p class="mb-2 text-xs text-muted-foreground">{butlerProposal.note}</p>
+        {/if}
+        <ul class="grid gap-1.5" data-testid="approval-butler-bots">
+          {#each butlerProposal.bots as bot, index (index)}
+            <li>
+              <label
+                class="flex cursor-pointer items-start gap-2 rounded-md border bg-background/60 p-2"
+                data-testid={`approval-butler-bot-${index}`}
+              >
+                <input
+                  type="checkbox"
+                  class="mt-0.5"
+                  checked={!butlerDropped.includes(index)}
+                  onchange={() => toggleButlerItem(index)}
+                  data-testid={`approval-butler-bot-check-${index}`}
+                />
+                <span class="grid min-w-0 gap-0.5">
+                  <span class="font-medium">{bot.name}</span>
+                  {#if bot.bio.length > 0}<span class="text-xs">{bot.bio}</span>{/if}
+                  <span class="text-xs text-muted-foreground"
+                    >{t('approvals.butlerResponsibilities')}：{bot.responsibilities}</span
+                  >
+                  {#if bot.reason.length > 0}
+                    <span class="text-xs text-muted-foreground"
+                      >{t('approvals.reason')}：{bot.reason}</span
+                    >
+                  {/if}
+                </span>
+              </label>
+            </li>
+          {/each}
+        </ul>
+        <p class="mt-2 text-xs text-muted-foreground">{t('approvals.butlerNote')}</p>
+      {/if}
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.gitRemoteOperation')}</span>
@@ -498,8 +602,17 @@
     {/if}
 
     <div class="mt-3 flex items-center gap-2">
-      <Button size="sm" onclick={approve} data-testid="approval-approve"
-        >{t('approvals.approve')}</Button
+      <Button
+        size="sm"
+        onclick={approve}
+        disabled={approval.kind === 'butler_proposal' &&
+          butlerProposal !== null &&
+          butlerProposal.proposalType !== 'group' &&
+          butlerKept.length === 0}
+        data-testid="approval-approve"
+        >{approval.kind === 'butler_proposal'
+          ? t('approvals.butlerConfirm')
+          : t('approvals.approve')}</Button
       >
       <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
         >{t('approvals.deny')}</Button

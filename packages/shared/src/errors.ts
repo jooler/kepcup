@@ -68,6 +68,8 @@ export const ERROR_CODES = [
   'MCP_TOOL_NOT_FOUND',
   'MCP_CALL_FAILED',
   'MCP_SERVER_FAILED',
+  // butler & delegation (D70 / D71)
+  'BOT_UNDELETABLE',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

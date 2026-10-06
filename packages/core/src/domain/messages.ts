@@ -34,6 +34,11 @@ export interface AppendMessageInput {
   text?: string | undefined;
   /** text messages only: setup-interview answer (hidden bubble in the UI). */
   setupAnswer?: boolean | undefined;
+  /**
+   * text messages only (D71): a user message proxied by another bot (A) on
+   * the user's behalf — `origin: 'delegation'` + the delegation row + A's id.
+   */
+  delegation?: { delegationId: string; delegatedBy: string } | undefined;
   event?: string | undefined;
   /** system_event extras: clickable bot candidates / related batch (P05). */
   botIds?: string[] | undefined;
@@ -48,11 +53,22 @@ export interface AppendMessageInput {
   options?: string[] | undefined;
   /** system_event extras: group-creation question step (group_setup_question). */
   step?: string | undefined;
+  /** system_event extras: butler route card target (route_suggestion, D70). */
+  route?:
+    | {
+        kind: 'bot' | 'group' | 'delegate';
+        botId?: string | undefined;
+        conversationId?: string | undefined;
+        task?: string | undefined;
+      }
+    | undefined;
   /** Card messages only: the approval the card belongs to. */
   cardType?: string | undefined;
   approvalId?: string | undefined;
   /** Run-changes cards only: the run whose changes the card summarizes. */
   cardRunId?: string | undefined;
+  /** Delegation cards only (D71): the delegation the card renders. */
+  cardDelegationId?: string | undefined;
   replyTo?: string | null;
   mentions?: string[];
   batchId?: string | null;
@@ -114,12 +130,22 @@ export class MessagesService {
         ? JSON.stringify({
             text: input.text ?? '',
             ...(input.setupAnswer ? { setupAnswer: true } : {}),
+            ...(input.delegation !== undefined
+              ? {
+                  origin: 'delegation',
+                  delegationId: input.delegation.delegationId,
+                  delegatedBy: input.delegation.delegatedBy,
+                }
+              : {}),
           })
         : input.kind === 'card'
           ? JSON.stringify({
               cardType: input.cardType ?? '',
               approvalId: input.approvalId ?? '',
               ...(input.cardRunId !== undefined ? { runId: input.cardRunId } : {}),
+              ...(input.cardDelegationId !== undefined
+                ? { delegationId: input.cardDelegationId }
+                : {}),
             })
           : JSON.stringify({
               event: input.event ?? '',
@@ -129,6 +155,7 @@ export class MessagesService {
               ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
               ...(input.options !== undefined ? { options: input.options } : {}),
               ...(input.step !== undefined ? { step: input.step } : {}),
+              ...(input.route !== undefined ? { route: input.route } : {}),
             });
     const mentions = input.mentions ?? [];
     let message: Message;

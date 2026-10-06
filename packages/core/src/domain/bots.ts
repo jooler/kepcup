@@ -1,4 +1,11 @@
-import { AppError, botProfileSchema, newId, type Bot, type BotProfile } from '@kepcup/shared';
+import {
+  AppError,
+  botProfileSchema,
+  newId,
+  type Bot,
+  type BotProfile,
+  type BotSystemRole,
+} from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
@@ -16,6 +23,7 @@ interface BotRow {
   profile_json: string;
   status: 'active' | 'deleted';
   setup_state: string | null;
+  system_role: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -50,6 +58,7 @@ function rowToBot(row: BotRow): Bot {
     profile,
     status: row.status,
     setupState: row.setup_state === BOT_SETUP_INTERVIEWING ? BOT_SETUP_INTERVIEWING : null,
+    systemRole: row.system_role === 'butler' ? 'butler' : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -64,27 +73,83 @@ export class BotsService {
 
   create(
     profileInput: Partial<BotProfile> & { identity: { name: string } },
-    options: { interview?: boolean } = {},
+    options: { interview?: boolean; systemRole?: BotSystemRole } = {},
   ): Bot {
     const profile = botProfileSchema.parse(profileInput);
     const now = this.clock.now();
     const id = newId('bot');
     const setupState = options.interview === true ? BOT_SETUP_INTERVIEWING : null;
+    const systemRole = options.systemRole ?? null;
+    if (systemRole === 'butler' && this.getButler() !== null) {
+      throw new AppError('ALREADY_EXISTS', '管家已存在，不能再创建第二个');
+    }
+    try {
+      this.db
+        .prepare(
+          'insert into bots (id, name, avatar, bio, profile_json, status, setup_state, system_role, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          id,
+          profile.identity.name.length > 0 ? profile.identity.name : BOT_SETUP_PLACEHOLDER_NAME,
+          profile.identity.avatar ?? null,
+          profile.identity.bio,
+          JSON.stringify(profile),
+          'active',
+          setupState,
+          systemRole,
+          now,
+          now,
+        );
+    } catch (error) {
+      // bots_one_active_butler (0016) is the race backstop of the check above.
+      if (systemRole === 'butler' && /UNIQUE constraint failed/i.test(String(error))) {
+        throw new AppError('ALREADY_EXISTS', '管家已存在，不能再创建第二个');
+      }
+      throw error;
+    }
+    return this.getOrThrow(id);
+  }
+
+  /** The active butler (D70), or null before it has been ensured. */
+  getButler(): Bot | null {
+    const row = this.db
+      .prepare("select * from bots where system_role = 'butler' and status = 'active'")
+      .get() as BotRow | undefined;
+    return row ? rowToBot(row) : null;
+  }
+
+  /**
+   * Idempotently makes sure the single butler exists (D70). `interview`
+   * starts it in the setup-interview state (new users: the butler interviews
+   * and proposes a team); existing users get a plain butler. A concurrent
+   * creator losing the unique-index race reads the winner back.
+   */
+  ensureButler(
+    profile: Partial<BotProfile> & { identity: { name: string } },
+    options: { interview?: boolean } = {},
+  ): { bot: Bot; created: boolean } {
+    const existing = this.getButler();
+    if (existing !== null) return { bot: existing, created: false };
+    try {
+      return {
+        bot: this.create(profile, {
+          systemRole: 'butler',
+          ...(options.interview === true ? { interview: true } : {}),
+        }),
+        created: true,
+      };
+    } catch (error) {
+      const winner = this.getButler();
+      if (winner !== null) return { bot: winner, created: false };
+      throw error;
+    }
+  }
+
+  /** Clears the setup-interview state without touching the name (butler interview exit, D70). */
+  clearSetupState(id: string): Bot {
     this.db
-      .prepare(
-        'insert into bots (id, name, avatar, bio, profile_json, status, setup_state, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      )
-      .run(
-        id,
-        profile.identity.name.length > 0 ? profile.identity.name : BOT_SETUP_PLACEHOLDER_NAME,
-        profile.identity.avatar ?? null,
-        profile.identity.bio,
-        JSON.stringify(profile),
-        'active',
-        setupState,
-        now,
-        now,
-      );
+      .prepare('update bots set setup_state = NULL, updated_at = ? where id = ?')
+      .run(this.clock.now(), id);
     return this.getOrThrow(id);
   }
 
@@ -195,7 +260,11 @@ export class BotsService {
    * stays reserved for history rendering, but no profile survives.
    */
   markDeleted(id: string): void {
-    this.getOrThrow(id);
+    const bot = this.getOrThrow(id);
+    if (bot.systemRole === 'butler') {
+      // Lifecycle rejects first (before any cascade); this is the backstop.
+      throw new AppError('BOT_UNDELETABLE', '管家不能删除');
+    }
     const now = this.clock.now();
     this.db
       .prepare(
