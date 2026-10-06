@@ -83,9 +83,9 @@ Onboarding / 首次进入
 | 项 | 规定 |
 |---|---|
 | 触发 | A 的响应 loop 调用 `delegate_to_bot({ bot_id, task, … })` |
-| 取消 | `cancel_delegation({ delegation_id })` 或用户在 A 侧结果卡上取消 |
-| 持久化 | `delegations` 表（main DB）：id、from_bot_id、to_bot_id、from_conversation_id、to_conversation_id、task、status、result_message_id、depth、parent_delegation_id、created_at / updated_at … |
-| 状态 | 建议对齐 A2A 风格：`submitted` → `working` → `completed` \| `failed` \| `cancelled` |
+| 取消 | `cancel_delegation({ delegation_id })` 或用户在 A 侧委派卡（发出卡）上取消 |
+| 持久化 | `delegations` 表（main DB）：id、from_bot_id、to_bot_id、from_conversation_id、to_conversation_id、task、status、to_message_id（B 侧代发消息，「查看原文」链）、run_id（B 侧响应 run，投递后回填——settle 钩子与取消都靠它）、result_message_id、depth、parent_delegation_id、created_at / updated_at … |
+| 状态 | 建议对齐 A2A 风格：`submitted` → `working` → `completed` \| `failed` \| `cancelled`。`failed` 覆盖 B 的 run 失败 / 中断；启动恢复把 `working` 且 run 已 `interrupted` 的委派落 `failed`（对齐 D49 ephemeral 语义，不自动续跑） |
 | UI | **停留在 A 的对话**；不自动切换到 B |
 
 ### 3.2 A 侧与 B 侧消息
@@ -93,7 +93,7 @@ Onboarding / 首次进入
 | 侧 | 表现 |
 |---|---|
 | A | 「已委托给 B」发出卡（可含 task 摘要）；完成后「B 的回复」结果卡 |
-| B | 在 B 与用户的**私聊**中插入一条 **user 消息**（用户代发），UI 标签 `origin=delegation`，文案「由 {A.name} 代你发出」；触发 B 的正常响应 loop |
+| B | 在 B 与用户的**私聊**中插入一条 **user 消息**（用户代发），消息持久化带 `origin=delegation`——建议 `textContentSchema` 增可选 `origin` / `delegationId`（参照 `setupAnswer` 前例落 content_json，免加列；`TriggerBatch.extraAttributes` 是运行时附带、不落库，仅用于把标签带进模型上下文），UI 标签文案「由 {A.name} 代你发出」；以 `triggerReason='delegation'` 触发 B 的正常响应 loop |
 | 回贴 | 将 B 的最终回复**截断约 2000 字符**贴入 A 为结果卡；附「查看原文」链到 B 对话中的消息；标记用户/A 可 feedback（有用 / 需重做等，字段首期可简单） |
 | 注入 | 回贴同时用 follow-up（复用 `deliverEventToBot`，`internal`）通知 A：`notify_me`——**不要把 B 的原文再复述一遍**，只做必要转述或下一步 |
 
@@ -101,7 +101,7 @@ Onboarding / 首次进入
 
 - **深度**：委派深度封顶（建议默认 1 对普通 Bot；管家可允许 2，常量如 `DELEGATION_MAX_DEPTH`）；与 D4 `BOT_CHAIN_MAX_DEPTH` 独立计数，但产品语义同类。
 - **禁止 A→B→A**：B 的 run 内若 `to_bot_id == 原 from_bot_id` 直接拒绝。
-- **默认单跳**：普通 Bot 发起的委派，B 侧工具面默认**不**再暴露 `delegate_to_bot`（或暴露但立即失败并说明）；管家发起的链路由常量放宽。
+- **默认单跳**：工具注册是 bot 粒度，不能为单跳把 B 的 `delegate_to_bot` 全局摘掉——否则 B 在自己其他对话里也永远无法委派，与 §2.3「普通 Bot 默认开」矛盾。机制：run 需携带委派来源——`triggerReason` 枚举增 `'delegation'`（runs 表 `trigger_reason` 无 CHECK 约束，纯 shared 枚举改动）；**被委派 run** 构建 toolset 时不注册 `delegate_to_bot`（toolset 本就按 run 构建），`delegations` 深度校验作兜底；管家发起的链路由常量放宽。
 - **群降级**：若当前上下文是群，且 A、B 均为成员 → 工具返回指引，改走 `send_message` `@`（D4），不写 `delegations` 行。
 
 ### 3.4 与 D66 SubAgent 的对照
@@ -123,7 +123,7 @@ Onboarding / 首次进入
 | 3 | B 未绑定 workspace 时是否继承 A 对话的 project | **开放** | 首期建议：不自动继承；B 用自己私聊已绑 project，未绑则走 D59「暂不设置」语义；跨 project 读写仍走 D36 授权 |
 | 4 | Butler 创建 Bot/群的方式 | **采纳推荐** | 仅审批卡确认后确定性创建 |
 | 5 | B 执行中途的过程消息是否同步到 A | **采纳推荐** | 不同步；仅最终回复（+ 失败/取消） |
-| 6 | 委派是否遵守 B 的 quiet hours | **开放** | 首期建议：遵守 `behavior.quiet_hours`；逾期则委派保持 `submitted`，到点再投递，并在 A 卡提示「将在免打扰结束后发送」 |
+| 6 | 委派是否遵守 B 的 quiet hours | **开放** | 首期建议：遵守 `behavior.quiet_hours`；逾期则委派保持 `submitted`，到点再投递，并在 A 卡提示「将在免打扰结束后发送」。实现参照 `deliverEventToBot` 的 quiet-hours parking / `event_delivery` job 模式——注意 user 代发路径当前没有 quiet hours 闸门，需新建 |
 | 7 | 委派中崩溃恢复：ephemeral vs D67 durable | **开放** | 首期建议：委派行本身持久；B 的 run 仍按 D49/D67 分级。A 侧卡根据 `delegations.status` 重绘；不把整段委派默认升 durable |
 | 8 | Butler 是否加入用户群 | **开放** | 首期建议：允许加入；在群内管家可 `suggest_route` / `@`，但 **A→B 委派仍降级 D4**（与 §3.3 一致） |
 
@@ -142,8 +142,8 @@ Onboarding / 首次进入
 
 1. **P1 地基**：`system_role`、管家唯一/置顶/不可删、`delegations` 表与状态枚举、常量、边界测试（与 D4/D66 对照）。
 2. **P2 管家入职与组队**：确保管家存在、访谈、`propose_team` / `propose_bot` / `propose_group` 审批卡、确定性批量创建、`list_bots`。
-3. **P3 A→B 委派主路径**：`delegate_to_bot` / `cancel_delegation`、B 代发消息 + 标签、A 发出/结果卡、截断回贴、`notify_me` 注入、防环与单跳。
-4. **P4 路由与收尾**：`suggest_route` + 路由卡、「你安排」再委派、同群降级 D4、开放决策默认值落地（quiet hours / workspace 继承等按上表）、回归与 e2e。
+3. **P3 A→B 委派主路径**：`delegate_to_bot` / `cancel_delegation`、B 代发消息 + 标签、A 发出/结果卡、截断回贴、`notify_me` 注入、防环与单跳、同群降级 D4。
+4. **P4 路由与收尾**：`suggest_route` + 路由卡、「你安排」再委派、开放决策默认值落地（quiet hours / workspace 继承等按上表）、回归与 e2e。
 
 ## 7 验收锚点（设计级）
 
