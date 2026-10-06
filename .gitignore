@@ -2,6 +2,7 @@ node_modules/
 dist/
 out/
 *.tsbuildinfo
+.omc
 
 # electron / builds
 apps/desktop/resources/icon-*.png.bak
