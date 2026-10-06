@@ -11,7 +11,8 @@
 
   /**
    * 「MCP 服务器」section（docs/design/23-mcp-and-subagent.md，D65）：server
-   * 增删改、启用开关、免审批开关（带风险提示）、连接测试（列出工具名）。
+   * 增删改、启用开关、免审批开关（带风险提示）、连接测试（列出工具名；列表
+   * 里测已保存配置，表单里保存前测草稿、新填密钥仅随本次测试生效）。
    * 密钥只写不读：env / headers 的值输入后即落 secrets 表，settings 只存
    * `secret:env:<name>` / `secret:header:<name>` 占位符。
    */
@@ -25,9 +26,12 @@
   let testing = $state(false);
   let testTools = $state<string[] | null>(null);
   let testError = $state<string | null>(null);
-  let newKind = $state<'stdio' | 'http'>('stdio');
+  let draftTesting = $state(false);
+  let draftTestTools = $state<string[] | null>(null);
+  let draftTestError = $state<string | null>(null);
+  let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
 
-  function emptyDraft(kind: 'stdio' | 'http'): Draft {
+  function emptyDraft(kind: 'stdio' | 'http' | 'sse'): Draft {
     const id = `mcp_${Date.now().toString(36)}`;
     return {
       id,
@@ -44,14 +48,17 @@
     return Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value }));
   }
 
-  function addEnvWithName(name: string): void {
+  function addEnvWithName(name: string, value = ''): void {
     if (draft === null || name.trim().length === 0) return;
     const key = name.trim();
     const env = { ...(draft.env ?? {}) };
-    if (env[key] !== undefined) return;
+    const exists = env[key] !== undefined;
     env[key] = `secret:env:${key}`;
     draft.env = env;
-    draft.secretDrafts = { ...draft.secretDrafts, [key]: '' };
+    // 已存密钥不回显：同名且填了新值 = 覆盖草稿值；留空 = 保持已存值。
+    if (value.length > 0 || !exists) {
+      draft.secretDrafts = { ...draft.secretDrafts, [key]: value };
+    }
   }
 
   function removeEnv(name: string): void {
@@ -65,14 +72,40 @@
     void settingsStore.removeMcpSecret(draft.id, 'env', name).catch(() => {});
   }
 
-  function addHeader(name: string): void {
+  function addHeader(name: string, value = ''): void {
     if (draft === null || name.trim().length === 0) return;
     const key = name.trim();
     const headers = { ...(draft.headers ?? {}) };
-    if (headers[key] !== undefined) return;
+    const exists = headers[key] !== undefined;
     headers[key] = `secret:header:${key}`;
     draft.headers = headers;
-    draft.secretDrafts = { ...draft.secretDrafts, [`h:${key}`]: '' };
+    // 已存密钥不回显：同名且填了新值 = 覆盖草稿值；留空 = 保持已存值。
+    if (value.length > 0 || !exists) {
+      draft.secretDrafts = { ...draft.secretDrafts, [`h:${key}`]: value };
+    }
+  }
+
+  let envDraftName = $state('');
+  let envDraftValue = $state('');
+  let headerDraftName = $state('');
+  let headerDraftValue = $state('');
+
+  function submitEnv(): void {
+    addEnvWithName(envDraftName, envDraftValue);
+    envDraftName = '';
+    envDraftValue = '';
+  }
+
+  function submitHeader(): void {
+    addHeader(headerDraftName, headerDraftValue);
+    headerDraftName = '';
+    headerDraftValue = '';
+  }
+
+  /** 测试/保存前把名称+值输入框里未回车的内容一并收进去：所见即所测。 */
+  function flushPendingEntries(): void {
+    submitEnv();
+    submitHeader();
   }
 
   function removeHeader(name: string): void {
@@ -91,6 +124,8 @@
     editingId = null;
     testTools = null;
     testError = null;
+    draftTestTools = null;
+    draftTestError = null;
   }
 
   function editServer(server: McpServer): void {
@@ -98,6 +133,8 @@
     editingId = server.id;
     testTools = null;
     testError = null;
+    draftTestTools = null;
+    draftTestError = null;
   }
 
   function cancelEdit(): void {
@@ -108,6 +145,7 @@
   /** 落盘：先写新输入的密钥，再整体覆盖 mcpServers。 */
   async function save(): Promise<void> {
     if (draft === null) return;
+    flushPendingEntries();
     if (draft.name.trim().length === 0) {
       toast.error(t('settings.mcpNameRequired'));
       return;
@@ -116,7 +154,7 @@
       toast.error(t('settings.mcpCommandRequired'));
       return;
     }
-    if (draft.transport === 'http' && (draft.url ?? '').trim().length === 0) {
+    if (draft.transport !== 'stdio' && (draft.url ?? '').trim().length === 0) {
       toast.error(t('settings.mcpUrlRequired'));
       return;
     }
@@ -206,6 +244,61 @@
       testing = false;
     }
   }
+
+  /** 草稿里新输入、尚未落 secrets 表的密钥值：仅用于保存前的连接测试。 */
+  function draftSecretValues(draft: Draft): {
+    env: Record<string, string>;
+    header: Record<string, string>;
+  } {
+    const env: Record<string, string> = {};
+    const header: Record<string, string> = {};
+    for (const [name, value] of Object.entries(draft.secretDrafts)) {
+      if (value.length === 0) continue;
+      if (name.startsWith('h:')) header[name.slice(2)] = value;
+      else env[name] = value;
+    }
+    return { env, header };
+  }
+
+  /** 保存前测试草稿配置：新填密钥随本次测试带上，不落盘。 */
+  async function testDraft(): Promise<void> {
+    if (draft === null) return;
+    flushPendingEntries();
+    if (draft.name.trim().length === 0) {
+      toast.error(t('settings.mcpNameRequired'));
+      return;
+    }
+    if (draft.transport === 'stdio' && (draft.command ?? '').trim().length === 0) {
+      toast.error(t('settings.mcpCommandRequired'));
+      return;
+    }
+    if (draft.transport !== 'stdio' && (draft.url ?? '').trim().length === 0) {
+      toast.error(t('settings.mcpUrlRequired'));
+      return;
+    }
+    draftTesting = true;
+    draftTestTools = null;
+    draftTestError = null;
+    try {
+      const { secretDrafts: _ignored, ...server } = draft;
+      void _ignored;
+      const result = await settingsStore.testMcp(
+        server as McpServer,
+        draftSecretValues(draft),
+      );
+      draftTestTools = result.tools;
+      if (result.missingSecrets.length > 0) {
+        draftTestError = t('settings.mcpMissingSecrets', {
+          names: result.missingSecrets.join(', '),
+        });
+      }
+    } catch (error) {
+      draftTestError = String((error as Error).message ?? error);
+      toast.error(t('settings.testFailed', { reason: draftTestError }));
+    } finally {
+      draftTesting = false;
+    }
+  }
 </script>
 
 <section class="space-y-3" data-testid="mcp-section">
@@ -217,7 +310,11 @@
       <div class="flex flex-wrap items-center gap-2">
         <Badge>{server.name}</Badge>
         <Badge variant="outline"
-          >{server.transport === 'stdio' ? server.command || 'stdio' : 'HTTP'}</Badge
+          >{server.transport === 'stdio'
+            ? server.command || 'stdio'
+            : server.transport === 'sse'
+              ? 'SSE'
+              : 'HTTP'}</Badge
         >
         {#if !server.enabled}
           <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
@@ -297,7 +394,8 @@
               bind:value={draft.transport}
             >
               <option value="stdio">stdio</option>
-              <option value="http">HTTP</option>
+              <option value="http">Streamable HTTP</option>
+              <option value="sse">SSE（旧版）</option>
             </select>
           </div>
         {/if}
@@ -328,7 +426,11 @@
             id="mcp-url"
             class="h-9"
             bind:value={draft.url}
-            placeholder="https://mcp.example.com/mcp"
+            placeholder={
+              draft.transport === 'sse'
+                ? 'https://mcp.example.com/sse'
+                : 'https://mcp.example.com/mcp'
+            }
           />
         </div>
       {/if}
@@ -350,16 +452,24 @@
               <Button size="sm" variant="ghost" onclick={() => removeEnv(entry.name)}>✕</Button>
             </div>
           {/each}
-          <Input
-            class="h-8"
-            placeholder={t('settings.mcpAddEnvName')}
-            onkeydown={(event) => {
-              if (event.key === 'Enter') {
-                addEnvWithName(event.currentTarget.value);
-                event.currentTarget.value = '';
-              }
-            }}
-          />
+          <div class="flex items-center gap-2">
+            <Input
+              class="h-8 w-40 shrink-0"
+              placeholder={t('settings.mcpAddEnvName')}
+              bind:value={envDraftName}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') submitEnv();
+              }}
+            />
+            <Input
+              class="h-8 flex-1"
+              placeholder={t('settings.mcpAddEnvValue')}
+              bind:value={envDraftValue}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') submitEnv();
+              }}
+            />
+          </div>
         </div>
       {:else}
         <div class="space-y-1.5">
@@ -376,16 +486,24 @@
               <Button size="sm" variant="ghost" onclick={() => removeHeader(name)}>✕</Button>
             </div>
           {/each}
-          <Input
-            class="h-8"
-            placeholder={t('settings.mcpAddHeaderName')}
-            onkeydown={(event) => {
-              if (event.key === 'Enter') {
-                addHeader(event.currentTarget.value);
-                event.currentTarget.value = '';
-              }
-            }}
-          />
+          <div class="flex items-center gap-2">
+            <Input
+              class="h-8 w-40 shrink-0"
+              placeholder={t('settings.mcpAddHeaderName')}
+              bind:value={headerDraftName}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') submitHeader();
+              }}
+            />
+            <Input
+              class="h-8 flex-1"
+              placeholder={t('settings.mcpAddHeaderValue')}
+              bind:value={headerDraftValue}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') submitHeader();
+              }}
+            />
+          </div>
         </div>
       {/if}
 
@@ -393,8 +511,29 @@
         <Button size="sm" disabled={busy} onclick={() => void save()} data-testid="mcp-save">
           {t('settings.save')}
         </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={draftTesting}
+          onclick={() => void testDraft()}
+          data-testid="mcp-test-draft"
+        >
+          {draftTesting ? t('settings.testing') : t('settings.test')}
+        </Button>
         <Button size="sm" variant="ghost" onclick={cancelEdit}>{t('settings.mcpCancel')}</Button>
       </div>
+
+      {#if draftTestTools !== null && draftTestError === null}
+        <p class="text-xs text-emerald-600 dark:text-emerald-400" data-testid="mcp-draft-test-ok">
+          {t('settings.mcpToolsFound', { count: draftTestTools.length })}: {draftTestTools.join(
+            '、',
+          )}
+        </p>
+      {:else if draftTestError !== null}
+        <p class="text-xs text-destructive" data-testid="mcp-draft-test-error">
+          {draftTestError}
+        </p>
+      {/if}
     </div>
   {:else}
     <div class="flex items-center gap-2">
@@ -404,7 +543,8 @@
         data-testid="mcp-new-kind"
       >
         <option value="stdio">stdio</option>
-        <option value="http">HTTP</option>
+        <option value="http">Streamable HTTP</option>
+        <option value="sse">SSE（旧版）</option>
       </select>
       <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
     </div>

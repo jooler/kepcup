@@ -42,6 +42,19 @@ class SettingsState {
     this.#started = true;
   }
 
+  /**
+   * 能力是否已配置（厂商 + 模型 + Key），输入组件语音按钮等入口的预检
+   * （docs/design/26-voice-input.md）。settings 快照未加载时放行——core 侧
+   * 的 CAPABILITY_NOT_CONFIGURED 错误兜底出设置卡。
+   */
+  isCapabilityReady(capability: Exclude<ModelCapability, 'chat'>): boolean {
+    const settings = this.settings;
+    if (!settings) return true;
+    const config = settings.capabilityModels[capability];
+    if (!config) return false;
+    return this.providers.find((provider) => provider.id === config.vendor)?.hasKey ?? false;
+  }
+
   async refresh(): Promise<void> {
     const [settings, providers] = await Promise.all([
       core.call('settings.get') as Promise<Settings>,
@@ -126,20 +139,29 @@ class SettingsState {
     await core.call('mcp.removeSecret', { serverId, kind, name });
   }
 
-  /** MCP server 连接测试（设置页「测试连接」）：连接并列出工具名。 */
-  async testMcp(server: {
-    id: string;
-    name: string;
-    transport: 'stdio' | 'http';
-    command?: string | undefined;
-    args?: string[] | undefined;
-    env?: Record<string, string> | undefined;
-    url?: string | undefined;
-    headers?: Record<string, string> | undefined;
-    enabled: boolean;
-    autoApprove: boolean;
-  }): Promise<{ tools: string[]; missingSecrets: string[] }> {
-    return core.call('mcp.test', { server }) as Promise<{
+  /**
+   * MCP server 连接测试（设置页「测试连接」）：连接并列出工具名。
+   * secretValues 为表单草稿里新输入、尚未落 secrets 表的密钥值（仅本次测试生效）。
+   */
+  async testMcp(
+    server: {
+      id: string;
+      name: string;
+      transport: 'stdio' | 'http' | 'sse';
+      command?: string | undefined;
+      args?: string[] | undefined;
+      env?: Record<string, string> | undefined;
+      url?: string | undefined;
+      headers?: Record<string, string> | undefined;
+      enabled: boolean;
+      autoApprove: boolean;
+    },
+    secretValues?: { env?: Record<string, string>; header?: Record<string, string> },
+  ): Promise<{ tools: string[]; missingSecrets: string[] }> {
+    return core.call('mcp.test', {
+      server,
+      ...(secretValues !== undefined ? { secretValues } : {}),
+    }) as Promise<{
       tools: string[];
       missingSecrets: string[];
     }>;
