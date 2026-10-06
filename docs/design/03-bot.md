@@ -48,6 +48,12 @@ runtime:     { model, light_model, network_policy, budget }   # 模型配置见 
 
 ## 生命周期
 
+### 管家（Butler，D70）
+
+- 系统角色 `system_role='butler'`：全局唯一、通讯录置顶、**不可删除**（与下方「删除 Bot」流程互斥）。
+- 负责组队提议、意图路由与跨 Bot 委派入口；细节见 [27-butler-and-delegation.md](27-butler-and-delegation.md)。
+- Profile 内 `role.{expertise,responsibilities}` 仍是人设字段，与 `system_role` 不是同一列。
+
 ### Bot id
 
 - 每个 Bot 拥有全局唯一的 id，**删除后永不复用**。

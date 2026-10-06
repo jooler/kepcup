@@ -40,6 +40,7 @@
 - 对话只记录和展示双方交流的消息。
 - Bot 的执行过程（工具调用、中间步骤）存放在执行记录（Run）中，不混入对话。
 - Bot 可以通过工具按条件查询对话内容，见 [02-execution.md](02-execution.md#上下文注入)。
+- 跨 Bot 委派（D71）会在**被委托方**私聊中插入带 `origin=delegation` 标签的用户代发消息（「由 A 代你发出」），并把截断后的终回复以卡片贴回委托方对话；UI 默认留在委托方。详见 [27-butler-and-delegation.md](27-butler-and-delegation.md)。
 
 ## 输入与待发送队列
 
