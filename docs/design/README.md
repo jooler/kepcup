@@ -34,6 +34,8 @@
 | [22-file-skill-routing.md](22-file-skill-routing.md) | 文件技能路由：推荐技能注入、install_skill 授权安装、四级升级阶梯 |
 | [23-mcp-and-subagent.md](23-mcp-and-subagent.md) | MCP 工具服务器接入与宿主 SubAgent（前台 / 后台 / 并行 fan-out） |
 | [24-durable-execution.md](24-durable-execution.md) | 长任务可恢复执行 / Host Durable Journal：ephemeral 默认仍按 D49，durable 按 journal 与工具 replay 策略 resume |
+| [25-capability-tools.md](25-capability-tools.md) | 能力补位工具：understand_image（图片理解）与 transcribe_audio（语音转写），缺配置走对话内设置引导 |
+| [26-voice-input.md](26-voice-input.md) | 输入坞语音化：按录转文字键与语音对话模式（音频附件 + 转写文本），16kHz PCM→WAV 录音管道，缺配置走对话内设置引导 |
 
 ## 尚未讨论（暂不入文档）
 
@@ -110,3 +112,5 @@
 | D65 | MCP | 用户在设置页配置 MCP server（stdio / streamable HTTP），按「应用启用 ∩ Bot 勾选」暴露工具；调用走网关审批（autoApprove 默认关）与审计；密钥字段级加密；OAuth 与 Codemode 后续单排（见 23） |
 | D66 | 宿主 SubAgent | `delegate_task`：前台同步（默认阻塞等结论）、**后台委派**（立即返回，主 Bot 可继续对话，完成后 follow-up 注入）、**并行 fan-out**（多路只读子 run，有硬顶）；loopType=subagent、落 run 行、不写用户消息、结论 ≤4000 字符；不充当群成员、禁止再委派与子代理互通；fork / 热替换 / 任务树面板等明确不做（见 23） |
 | D67 | 长任务崩溃恢复 | Host Durable Journal；run 分 ephemeral（默认，仍按 D49：标中断、不自动恢复）与 durable（按 journal + 工具 replay 策略 resume）；不把 Pi Durable 包定为全体 Bot Runtime；修订 D49 的适用范围为仅 ephemeral（见 24） |
+| D68 | 能力补位工具 | 主模型没有的能力以工具补位（image/tts/video/web_search 已落地）；补齐 `understand_image`（multimodal）与 `transcribe_audio`（asr）：素材 = 附件 id 或 workspace/project 路径转 data URI，未配置走 SETUP_REQUIRED → 结构化 setup 失败 → 对话内设置卡 → 自动续跑；embedding/rerank 保持内部环节不工具化（见 25） |
+| D69 | 语音输入 | 输入坞右侧语音键（白圆 AudioLines）：**点击**开始录音、原位变「■+计时+点点」胶囊、再点停止并转文字填输入框（Esc 取消；60s 上限、500ms 下限）；有内容/队列时该位是发送键（出现逻辑不变），录音中打字则胶囊与发送键并列；未配置 asr 点击置起对话内设置卡；录音 16kHz PCM→WAV（软性采集约束 + OverconstrainedError 回退；worklet 以 `?url&no-inline` 同源资源加载——CSP 拦 blob:/data: 脚本），设备在设置页「硬件」分区选择；macOS TCC 授权门：askForMediaAccess 主动拉框、被拒深链系统设置。语音对话模式（按住发音频消息）暂缓、入口隐藏，设计保留在 26（见 26） |

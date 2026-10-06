@@ -43,6 +43,10 @@ mac:
       arch: [arm64, x64]
   category: public.app-category.productivity
   icon: resources/icon.png
+  # 麦克风用途声明（语音输入：按录转文字 / 发送语音消息，docs/design/26-voice-input.md）；
+  # 缺声明时打包版 getUserMedia 直接被 macOS 拒绝。
+  extendInfo:
+    NSMicrophoneUsageDescription: 语音输入需要使用麦克风，用于把语音转为文字或发送语音消息。
   # 本机无 Developer ID 证书：显式跳过签名（CSC_IDENTITY_AUTO_DISCOVERY=false
   # 由 scripts/dist.mjs 设置）。分发前必须签名 + 公证（CI 机密注入），见
   # todo/cross-platform-acceptance.md P13 小节。

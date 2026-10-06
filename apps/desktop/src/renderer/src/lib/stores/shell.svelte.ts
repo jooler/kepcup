@@ -4,6 +4,7 @@
  */
 export type SettingsSectionId =
   | 'general'
+  | 'hardware'
   | 'models'
   | 'search'
   | 'mcp'

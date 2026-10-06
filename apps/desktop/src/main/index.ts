@@ -10,6 +10,7 @@ import {
   nativeTheme,
   powerMonitor,
   shell,
+  systemPreferences,
   type BrowserWindow,
 } from 'electron';
 import { CORE_SHUTDOWN_TIMEOUT_MS, type UpdateStatusPayload } from '@kepcup/shared';
@@ -167,6 +168,23 @@ function bootstrap(): void {
     if (!Notification.isSupported()) return;
     if (typeof title !== 'string' || typeof body !== 'string' || body.length === 0) return;
     new Notification({ title, body }).show();
+  });
+
+  // 语音输入的麦克风权限（docs/design/26-voice-input.md）：macOS TCC 的状态
+  // 查询、主动拉起系统授权弹框（askForMediaAccess 仅 not-determined 时弹），
+  // 以及已拒绝后的去路——深链系统设置的麦克风面板（被拒后系统不会再弹框，
+  // 只能引导用户到设置里打开）。非 macOS 无 TCC，直接视为已授权。
+  ipcMain.handle('mic:status', () =>
+    process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted',
+  );
+  ipcMain.handle('mic:request', async () =>
+    process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true,
+  );
+  ipcMain.handle('mic:openSettings', () => {
+    if (process.platform !== 'darwin') return;
+    void shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    );
   });
 
   // System directory picker (docs/dev/02-architecture.md: the result goes to

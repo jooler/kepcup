@@ -6,6 +6,7 @@
     BarChart3,
     BookUser,
     Globe,
+    Mic,
     Plug,
     Monitor,
     MoonStar,
@@ -19,6 +20,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import AppearanceSection from './AppearanceSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
+  import HardwareSection from './HardwareSection.svelte';
   import ModelsSection from './ModelsSection.svelte';
   import ContactsSection from '$lib/features/contacts/ContactsSection.svelte';
   import SandboxSection from './SandboxSection.svelte';
@@ -48,6 +50,7 @@
 
   const sections: SectionDef[] = [
     { id: 'general', label: t('settings.navGeneral'), icon: Settings2 },
+    { id: 'hardware', label: t('settings.navHardware'), icon: Mic },
     { id: 'models', label: t('settings.navModels'), icon: Cpu },
     { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
     { id: 'mcp', label: t('settings.navMcp'), icon: Plug },
@@ -131,6 +134,12 @@
             </div>
             <div data-settings-anchor="general">
               <GeneralSection />
+            </div>
+          </div>
+        {:else if activeSection === 'hardware'}
+          <div data-settings-section="hardware" class="space-y-6">
+            <div data-settings-anchor="hardware">
+              <HardwareSection />
             </div>
           </div>
         {:else if activeSection === 'models'}
