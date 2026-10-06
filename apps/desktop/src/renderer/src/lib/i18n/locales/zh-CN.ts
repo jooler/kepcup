@@ -289,8 +289,6 @@ export const zhCN = {
   'rightPanel.tabMemory': '记忆',
   'rightPanel.tabSkills': 'Skills',
   'rightPanel.tabWiki': 'Wiki',
-  'rightPanel.saveProfile': '保存配置',
-  'rightPanel.savedProfile': '已保存',
   'rightPanel.deletedBot': '该 Bot 已被删除',
   'rightPanel.clickToEdit': '点击编辑',
   'rightPanel.bioPlaceholder': '添加简介',

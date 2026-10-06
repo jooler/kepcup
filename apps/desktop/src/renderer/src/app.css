@@ -201,6 +201,36 @@ html.platform-mac main {
 }
 
 /*
+ * streamdown 代码块：包默认渲染一条 h-8 的 header（语言标签）＋一条 sticky
+ * 的 actions-shell（下载/复制按钮），两条各占一行高度，代码上方是一块近乎
+ * 空白的区域。这里把 header 整行隐藏；按钮壳改为绝对定位悬在代码块右上角，
+ * hover 代码块（或按钮获得键盘焦点）时才浮现，平时不占布局高度；上下各留
+ * 8px 与前后文案的间距（包里的 my-4 在 node_modules 里，Tailwind 生成不到，
+ * 且即便生成到也以这里的 8px 为准）。规则写在非 layered 的全局层，优先级
+ * 高于包输出（且 Tailwind 扫不到）的工具类。
+ */
+[data-streamdown='code-block'] {
+  position: relative;
+  margin-block: 0.5rem;
+}
+[data-streamdown='code-block-header'] {
+  display: none;
+}
+[data-streamdown='code-block-actions-shell'] {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  margin-top: 0;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+[data-streamdown='code-block']:hover [data-streamdown='code-block-actions-shell'],
+[data-streamdown='code-block']:focus-within [data-streamdown='code-block-actions-shell'] {
+  opacity: 1;
+}
+
+/*
  * 预置 Bot 头像动效（参考 Grok Bot）：眼睛四处看 + 眨眼 + 整体轻缓摇摆。
  * 动画类挂在 SVG 内部 group 上，但 {@html} 注入的形状节点拿不到 Svelte
  * scoped class，因此这里的规则必须是全局的；prefers-reduced-motion 时全关。
