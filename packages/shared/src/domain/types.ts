@@ -877,7 +877,10 @@ export type Approval = z.infer<typeof approvalSchema>;
 /**
  * A2A-style lifecycle: `submitted` (row written, not yet delivered to B —
  * waiting for B's mailbox to be idle / quiet hours to end) → `working`
- * (proxied user message landed in B's chat, B's run started) → terminal.
+ * (the proxied user message landed in B's chat — appended in the same main.db
+ * transaction that flips the status; the run id is backfilled right after
+ * delivery, so a `working` row without one means "crashed mid-delivery:
+ * recovery re-delivers the existing message") → terminal.
  */
 export const delegationStatusSchema = z.enum([
   'submitted',

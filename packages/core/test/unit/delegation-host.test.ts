@@ -50,13 +50,14 @@ function makeRig() {
   const delivered: Array<{ botId: string; message: Message }> = [];
   let runCounter = 0;
   const logger = { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} };
-  const host = new DelegationHost({
+  const hostDeps = {
     delegations,
     bots,
     conversations,
     messages,
     runs: { get: () => null } as unknown as RunsService,
     jobs,
+    db,
     clock,
     timeZone: 'UTC',
     logger: logger as unknown as CoreLogger,
@@ -69,7 +70,8 @@ function makeRig() {
     },
     cancelRun: () => {},
     deliverEvent: () => {},
-  });
+  };
+  const host = new DelegationHost(hostDeps);
   const a = bots.create({ identity: { name: '甲' } });
   const b = bots.create({ identity: { name: '乙' } });
   const aConv = conversations.openDirect(a.id).conversation.id;
@@ -79,7 +81,20 @@ function makeRig() {
     conversationId,
     loopType: 'response',
   });
-  return { db, bots, conversations, messages, delegations, host, a, b, aConv, identity, delivered };
+  return {
+    db,
+    bots,
+    conversations,
+    messages,
+    delegations,
+    host,
+    hostDeps,
+    a,
+    b,
+    aConv,
+    identity,
+    delivered,
+  };
 }
 
 describe('DelegationHost (D71)', () => {
@@ -173,20 +188,10 @@ describe('DelegationHost (D71)', () => {
   it('B 正忙：保持 submitted 且不落代发消息；cancel_delegation 只认发起方', () => {
     const rig = makeRig();
     const busyHost = new DelegationHost({
-      delegations: rig.delegations,
-      bots: rig.bots,
-      conversations: rig.conversations,
-      messages: rig.messages,
-      runs: { get: () => null } as unknown as RunsService,
-      jobs: new JobsService(rig.db, systemClock),
-      clock: systemClock,
-      timeZone: 'UTC',
-      logger: { warn: () => {}, info: () => {} } as unknown as CoreLogger,
-      publish: () => {},
+      ...rig.hostDeps,
       isMailboxIdle: () => false,
-      deliverToBot: () => 'run_never',
-      cancelRun: () => {},
-      deliverEvent: () => {},
+      publish: () => {},
+      logger: { warn: () => {}, info: () => {} } as unknown as CoreLogger,
     });
     const result = busyHost.delegate(rig.identity('run_a1'), { botId: rig.b.id, task: '排队' });
     expect(result.ok).toBe(true);
@@ -201,6 +206,65 @@ describe('DelegationHost (D71)', () => {
     const own = busyHost.cancelFromTool(rig.identity('run_a2'), row!.id);
     expect(own.ok).toBe(true);
     expect(rig.delegations.getOrThrow(row!.id).status).toBe('cancelled');
+  });
+
+  it('崩溃恢复：working 但 run_id 为空 → 复用既有代发消息重投，不重发', () => {
+    const rig = makeRig();
+    const busyHost = new DelegationHost({
+      ...rig.hostDeps,
+      isMailboxIdle: () => false,
+      publish: () => {},
+    });
+    const result = busyHost.delegate(rig.identity('run_a1'), { botId: rig.b.id, task: '窗口里的任务' });
+    expect(result.ok).toBe(true);
+    const row = rig.delegations.listActive()[0]!;
+    expect(row.status).toBe('submitted');
+    // 手工复现崩溃窗口：事务已提交（消息落库 + 转 working），run_id 尚未回填。
+    const bConv = rig.conversations.openDirect(rig.b.id).conversation.id;
+    const message = rig.messages.append({
+      conversationId: bConv,
+      senderType: 'user',
+      kind: 'text',
+      text: row.taskText,
+      delegation: { delegationId: row.id, delegatedBy: row.fromBotId },
+    });
+    rig.delegations.transition(row.id, ['submitted'], 'working', {
+      toConversationId: bConv,
+      toMessageId: message.id,
+    });
+    // 启动恢复：复用既有消息触发 B，B 私聊不出现第二条代发消息。
+    rig.host.recover();
+    const done = rig.delegations.getOrThrow(row.id);
+    expect(done.status).toBe('working');
+    expect(done.runId).toBe('run_b1');
+    expect(rig.delivered).toHaveLength(1);
+    expect(rig.delivered[0]!.message.id).toBe(message.id);
+    const proxied = rig.messages
+      .list(bConv)
+      .filter((m) => m.senderType === 'user' && (m.content as { origin?: string }).origin === 'delegation');
+    expect(proxied).toHaveLength(1);
+    expect(proxied[0]!.id).toBe(message.id);
+  });
+
+  it('崩溃恢复：stalled 行的代发消息已不存在 → 落 failed', () => {
+    const rig = makeRig();
+    const busyHost = new DelegationHost({
+      ...rig.hostDeps,
+      isMailboxIdle: () => false,
+      publish: () => {},
+    });
+    busyHost.delegate(rig.identity('run_a1'), { botId: rig.b.id, task: '会丢的任务' });
+    const row = rig.delegations.listActive()[0]!;
+    const bConv = rig.conversations.openDirect(rig.b.id).conversation.id;
+    rig.delegations.transition(row.id, ['submitted'], 'working', {
+      toConversationId: bConv,
+      toMessageId: 'msg_gone',
+    });
+    rig.host.recover();
+    const ended = rig.delegations.getOrThrow(row.id);
+    expect(ended.status).toBe('failed');
+    expect(ended.errorText).toContain('代发消息已不存在');
+    expect(rig.delivered).toHaveLength(0);
   });
 
   it('结算按 run_id 匹配；非 working / 非 response 的 run 不处理', () => {

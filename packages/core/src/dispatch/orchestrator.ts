@@ -353,6 +353,7 @@ export class Orchestrator {
       messages: deps.messages,
       runs: deps.runs,
       jobs: deps.jobs,
+      db: deps.db,
       clock: deps.clock,
       timeZone: deps.timeZone,
       logger: deps.logger,
@@ -1257,8 +1258,15 @@ export class Orchestrator {
     return this.#delegationHost.get(id);
   }
 
-  /** RPC `delegations.cancel` (A-side card button). */
+  /**
+   * RPC `delegations.cancel` (A-side card button). 本地单用户应用：委派行不设
+   * 属主作用域，取消只校验存在性——未知 id 报 NOT_FOUND（UI toast），而不是
+   * 静默返回 null；终态行的取消在 host 里静默让路（返回当前行）。
+   */
   cancelDelegation(id: string): Delegation | null {
+    if (this.#delegationHost.get(id) === null) {
+      throw new AppError('NOT_FOUND', `委派 ${id} 不存在`);
+    }
     return this.#delegationHost.cancel(id, '用户取消');
   }
 

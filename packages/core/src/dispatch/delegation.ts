@@ -9,6 +9,7 @@ import {
 } from '@kepcup/shared';
 import type { RunIdentity } from '../agent/types.js';
 import type { Clock } from '../infra/clock.js';
+import type { SqliteDatabase } from '../infra/db.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -26,6 +27,10 @@ import type { DelegationToolFacade } from '../tools/delegation-tools.js';
  *   投递；否则保持 `submitted` 排队。原因：mailbox 在有在跑 loop 时会把批次
  *   steer 进那个已有 run——run_id / triggerReason / 终回复全会错位。排队保证
  *   每个委派都对应**自己起的** run。代发消息在投递瞬间才落 B 私聊。
+ * - **崩溃一致**：「落代发消息 + 转 `working`」在同一个 main.db 事务里提交，
+ *   `run_id` 在投递成功后单独回填——任何一步之间崩溃，恢复端要么看到
+ *   `submitted`（无消息，重走闸门）、要么看到 `working` 但无 run（消息已在，
+ *   复用既有消息重投），不会把代发消息重发一遍。
  * - **结算**：B 的 run 进入终态时（`#settleRun` 钩子）按 `run_id` 匹配
  *   `working` 委派：A 侧贴结果卡（截断）+ internal follow-up 通知 A。
  * - **单跳**：被委派 run 内再调 `delegate_to_bot` 一律拒绝（执行时按 run_id
@@ -39,6 +44,8 @@ export interface DelegationHostDeps {
   messages: MessagesService;
   runs: RunsService;
   jobs: JobsService;
+  /** main.db：投递事务（落代发消息 + 转 working 原子提交）。 */
+  db: SqliteDatabase;
   clock: Clock;
   timeZone: string;
   logger: CoreLogger;
@@ -235,10 +242,17 @@ export class DelegationHost implements DelegationToolFacade {
   /**
    * Delivers the oldest undelivered delegation to `toBotId` if the gate is
    * open; further ones wait for that run to release B's mailbox (FIFO, one at
-   * a time — each delegation gets its own run).
+   * a time — each delegation gets its own run). Covers both `submitted` rows
+   * and stalled ones (`working` without a run id — crash between the append
+   * transaction and the run-id backfill; their message is reused, not
+   * re-sent).
    */
   deliverPending(toBotId: string): void {
-    for (const delegation of this.#deps.delegations.submittedFor(toBotId)) {
+    const queued = [
+      ...this.#deps.delegations.submittedFor(toBotId),
+      ...this.#deps.delegations.stalledFor(toBotId),
+    ].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    for (const delegation of queued) {
       const outcome = this.#tryDeliver(delegation);
       // 'failed' rows are terminal now: move on to the next one.
       if (outcome !== 'failed') return;
@@ -270,21 +284,46 @@ export class DelegationHost implements DelegationToolFacade {
     if (created) this.#deps.publish('conversation.updated', { conversation });
     if (!this.#deps.isMailboxIdle(delegation.toBotId, conversation.id)) return 'busy';
 
-    const fromName = this.#botName(delegation.fromBotId);
-    const message = this.#deps.messages.append({
-      conversationId: conversation.id,
-      senderType: 'user',
-      kind: 'text',
-      text: delegation.taskText,
-      delegation: { delegationId: delegation.id, delegatedBy: delegation.fromBotId },
-      batchId: `batch_${now}_${Math.random().toString(36).slice(2, 8)}`,
-    });
+    // 崩溃恢复重投（working 但 run_id 尚未回填）：代发消息已在 B 私聊，复用
+    // 既有消息触发 B，不重发。正常路径在一个 main.db 事务里原子地「落消息 +
+    // 转 working」，run_id 在投递成功后单独回填；事务外才投递（B 的 run 要
+    // 读已提交的消息）。
+    const stalled = delegation.status === 'working' && delegation.runId === null;
+    let message: Message;
+    if (stalled) {
+      const existing =
+        delegation.toMessageId !== null ? this.#deps.messages.getById(delegation.toMessageId) : null;
+      if (existing === null || existing.conversationId !== conversation.id || existing.status === 'recalled') {
+        this.#fail(delegation, '投递失败：B 私聊里的代发消息已不存在', {
+          toConversationId: conversation.id,
+        });
+        return 'failed';
+      }
+      message = existing;
+    } else {
+      const append = this.#deps.db.transaction(() => {
+        const appended = this.#deps.messages.append({
+          conversationId: conversation.id,
+          senderType: 'user',
+          kind: 'text',
+          text: delegation.taskText,
+          delegation: { delegationId: delegation.id, delegatedBy: delegation.fromBotId },
+          batchId: `batch_${now}_${Math.random().toString(36).slice(2, 8)}`,
+        });
+        this.#deps.delegations.transition(delegation.id, ['submitted'], 'working', {
+          toConversationId: conversation.id,
+          toMessageId: appended.id,
+        });
+        return appended;
+      });
+      message = append.immediate();
+    }
     this.#deps.publish('message.created', { conversationId: conversation.id, message });
     const runId = this.#deps.deliverToBot({
       botId: delegation.toBotId,
       conversationId: conversation.id,
       message,
-      extraAttributes: { from_bot: fromName, delegation_id: delegation.id },
+      extraAttributes: { from_bot: this.#botName(delegation.fromBotId), delegation_id: delegation.id },
     });
     if (runId === null) {
       this.#fail(delegation, '投递失败：B 的对话暂时无法接收消息', {
@@ -293,12 +332,8 @@ export class DelegationHost implements DelegationToolFacade {
       });
       return 'failed';
     }
-    const working = this.#deps.delegations.transition(delegation.id, ['submitted'], 'working', {
-      toConversationId: conversation.id,
-      toMessageId: message.id,
-      runId,
-    });
-    if (working !== null) this.#publish(working);
+    this.#deps.delegations.patch(delegation.id, { runId });
+    this.#publish(this.#deps.delegations.getOrThrow(delegation.id));
     return 'delivered';
   }
 
@@ -420,7 +455,10 @@ export class DelegationHost implements DelegationToolFacade {
   /**
    * Startup (after runs were marked interrupted): working delegations whose
    * run is terminal are settled (interrupted → failed, D49 ephemeral — never
-   * resumed); undelivered ones re-enter the gate (mailboxes are empty now).
+   * resumed); `submitted` and stalled ones (`working` without a run id — the
+   * crash hit between the append transaction and the backfill/delivery) re-enter
+   * the gate; stalled rows re-deliver their EXISTING message (mailboxes are
+   * empty now, so nothing duplicates).
    */
   recover(): void {
     const targets = new Set<string>();
@@ -429,7 +467,11 @@ export class DelegationHost implements DelegationToolFacade {
         targets.add(delegation.toBotId);
         continue;
       }
-      const run = delegation.runId !== null ? this.#deps.runs.get(delegation.runId) : null;
+      if (delegation.runId === null) {
+        targets.add(delegation.toBotId);
+        continue;
+      }
+      const run = this.#deps.runs.get(delegation.runId);
       if (run === null) {
         this.#fail(delegation, '应用重启时执行记录已不存在');
       } else if (isTerminalRun(run.status)) {
