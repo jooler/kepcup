@@ -15,13 +15,14 @@
    - `packages/core/src/domain/bots.ts` — `BotsService.create` / delete 占位
    - `packages/core/src/domain/lifecycle.ts` — 删 Bot
    - `packages/core/src/dispatch/chains.ts` — D4 深度/预算
-   - `packages/core/src/dispatch/orchestrator.ts` — `#injectDelegateFollowUp` / `deliverEventToBot`
+   - `packages/core/src/dispatch/orchestrator.ts` — `#injectDelegateFollowUp` / `deliverEventToBot` / `#settleRun`（settle 钩子挂点）
    - `packages/core/src/agent/subagent.ts` + `packages/core/src/tools/delegate-tools.ts` — D66 工具（勿改语义冒充跨 Bot）
    - `packages/core/src/tools/setup-tools.ts` — `ask_question`
+   - `packages/core/src/permissions/approvals.ts` — 无人值守自动批准 `#autoDecideSync`（P2 需按 kind 排除 butler 卡）
    - `packages/shared/src/constants.ts` — `BOT_CHAIN_*` / `SUBAGENT_FOLLOWUP_EVENT` / `SETUP_MAX_QUESTIONS`
-   - `packages/shared/src/domain/types.ts` — `botSchema` / `messageSchema`
+   - `packages/shared/src/domain/types.ts` — `botSchema` / `messageSchema` / `triggerReasonSchema` / `textContentSchema`（`setupAnswer` 前例）/ `approvalKindSchema` / `cardContentSchema`
    - `apps/desktop/.../onboarding/OnboardingWizard.svelte` — step `bot` 模板
-   - `packages/core/migrations/main/` — 下一号约 `0016_*.sql`；runs 侧若需列则 `0005_*.sql`
+   - `packages/core/migrations/main/` — 下一号约 `0016_*.sql`；runs 侧若需列则 `0005_*.sql`（`trigger_reason` 无 CHECK 约束，枚举增值免迁移）
 
 ## 1. 背景与目标
 
@@ -55,10 +56,10 @@ P1 地基（schema + 管家身份约束）
 ### 3.1 改动清单
 
 - [ ] **shared**：`botSchema` 增 `systemRole: z.enum(['butler']).nullable().optional()`（或等价）；与 Profile `role` 字段名错开文档已强调用 `system_role` 列
-- [ ] **shared constants**：`DELEGATION_MAX_DEPTH`（建议普通 1）、`DELEGATION_RESULT_MAX_CHARS`（2000）、`DELEGATION_FOLLOWUP_EVENT`（如 `delegation_result`）、`BUTLER_TEAM_SIZE_MIN/MAX`（3/5）
+- [ ] **shared constants**：`DELEGATION_MAX_DEPTH`（普通 1）+ `DELEGATION_MAX_DEPTH_BUTLER`（管家放宽至 2，按发起者角色取用）、`DELEGATION_RESULT_MAX_CHARS`（2000）、`DELEGATION_FOLLOWUP_EVENT`（如 `delegation_result`——勿与 D66 的 `delegate_result` 混淆）、`BUTLER_TEAM_SIZE_MIN/MAX`（3/5）
 - [ ] **main 迁移** `0016_butler_and_delegation.sql`（号以目录实况为准）：
   - `bots.system_role TEXT NULL` + partial unique index：至多一个 active butler
-  - `delegations` 表：`id, from_bot_id, to_bot_id, from_conversation_id, to_conversation_id, task_text, status, depth, parent_delegation_id, result_excerpt, result_message_id, error_text, created_at, updated_at`（列名可微调，状态枚举与设计一致）
+  - `delegations` 表：`id, from_bot_id, to_bot_id, from_conversation_id, to_conversation_id, task_text, status, depth, parent_delegation_id, to_message_id, run_id, result_excerpt, result_message_id, error_text, created_at, updated_at`（`to_message_id`=B 侧代发消息（「查看原文」链）、`run_id`=B 侧响应 run（settle 钩子与取消靠它）；列名可微调，状态枚举与设计一致）
 - [ ] **core `BotsService`**：`createButlerIfMissing()` / `getButler()`；`create(..., { systemRole: 'butler' })`；拒绝第二个 butler
 - [ ] **lifecycle**：`deleteBot` 若目标为 butler → `AppError` 拒绝
 - [ ] **desktop**：侧栏置顶管家；删除菜单对管家隐藏或弹「不可删除」
@@ -68,7 +69,7 @@ P1 地基（schema + 管家身份约束）
 
 1. 空库调用 ensure → 恰好一个 butler；再 create butler 失败。
 2. UI/RPC 删除管家被拒；普通 Bot 删除仍按 D18。
-3. `pnpm --filter core test` 相关单测绿；typecheck 过。
+3. `pnpm --filter @kepcup/core test` 相关单测绿；typecheck 过。
 
 ### 3.3 本阶段不做
 
@@ -88,7 +89,7 @@ P1 地基（schema + 管家身份约束）
 
 ### 4.2 改动清单
 
-- [ ] **审批 kind**：shared 增 `butler_propose_team` / `butler_propose_bot` / `butler_propose_group`（payload schema + describe + ApprovalCard 分支）；对齐 D37 / 无人值守策略（组队建议：**即使无人值守也要确认**，或明确写入「组队类不自动批」）
+- [ ] **审批 kind**：shared 增 `butler_propose_team` / `butler_propose_bot` / `butler_propose_group`（payload schema + describe + ApprovalCard 分支）；**无人值守不自动批**——当前 `permissions/approvals.ts` 的 `#autoDecideSync` 对所有 kind 一律自动批准（仅数据目录例外），需新增按 kind 排除：`butler_*` 卡照常挂起等用户确认（对齐设计 §4 决策 4「仅审批卡确认后确定性创建」，防止无人值守刷出一堆联系人）
 - [ ] **core tools**：`packages/core/src/tools/butler-tools.ts`（新）+ `tools/index.ts` 仅当 `bot.systemRole==='butler'` 注册
 - [ ] **orchestrator / gateway**：审批通过回调里调 `bots.create` / `groups.create`（或 `groups.setup` 字段对齐 D60）
 - [ ] **system prompt**：管家专用 `<butler_rules>`（组队只经卡、先路由后执行等）
@@ -114,34 +115,35 @@ P1 地基（schema + 管家身份约束）
 
 | 步骤 | 行为 |
 |---|---|
-| A 调 `delegate_to_bot` | 写 `delegations`=`submitted`；A 对话插「已委托」卡/消息；解析/创建 B 私聊；插入 **user** 消息，`origin=delegation`（或 `extraAttributes`），UI 标签「由 {A} 代你发出」；投递触发 B |
+| A 调 `delegate_to_bot` | 写 `delegations`=`submitted`；A 对话插「已委托」卡/消息；解析/创建 B 私聊；插入 **user** 消息，`origin=delegation`（textContentSchema 可选字段，参照 `setupAnswer` 前例落 content_json），UI 标签「由 {A} 代你发出」；`to_message_id` 落行；以 `triggerReason='delegation'` 投递触发 B，`run_id` 回填 |
 | B 执行 | 正常响应 loop；中途消息**不**同步到 A |
-| B 完成 | 取最终回复，截断 `DELEGATION_RESULT_MAX_CHARS`，在 A 贴结果卡 + link（conversationId + messageId）；status=`completed`；`deliverEventToBot(A, DELEGATION_FOLLOWUP_EVENT, …)` 含「勿复述」指令 |
-| 取消 | `cancel_delegation` 或 A 卡取消 → abort B 活动 run（若有）→ status=`cancelled` |
-| 防环 | depth 超限拒绝；`to_bot_id == from_bot_id` 拒绝；B 默认不注册 `delegate_to_bot`（单跳） |
+| B settle | 在 settle 钩子按 `run_id` 匹配委派行：成功 → 取最终回复截断 `DELEGATION_RESULT_MAX_CHARS`，A 贴结果卡 + link（conversationId + `result_message_id`），status=`completed`；失败/中断 → status=`failed` + `error_text`（A 卡展示失败原因，不贴全文）；随后 `deliverEventToBot(A, DELEGATION_FOLLOWUP_EVENT, …)` 含「勿复述」指令 |
+| 取消 | `cancel_delegation` 或 A 卡取消 → abort B 活动 run（若有，并清 B 邮箱中未消费的该批次）→ status=`cancelled` |
+| 防环 | depth 超限拒绝；`to_bot_id == from_bot_id` 拒绝；**被委派 run**（triggerReason='delegation'）构建 toolset 时不注册 `delegate_to_bot`（run 粒度，勿按 bot 粒度全局摘除——否则 B 在自己其他对话里也无法委派），深度校验兜底 |
 | 同群 | 若当前 conversation 为群且成员含 A、B → 工具错误/指引改 `@`，不写委派 |
 
 ### 5.2 改动清单
 
-- [ ] **shared**：delegation 类型 / status 枚举；message 上 `origin` 或 `extraAttributes.delegation` 字段；RPC 如需 `delegations.get/cancel`
+- [ ] **shared**：delegation 类型 / status 枚举；`triggerReasonSchema` 增 `'delegation'`（runs 表无 CHECK，免迁移）；`textContentSchema` 增可选 `origin` / `delegationId`（B 侧代发标记，参照 `setupAnswer` 前例）；`cardContentSchema` 增 `delegationId`（发出/结果卡用）；RPC 如需 `delegations.get/cancel`
 - [ ] **core**：`packages/core/src/domain/delegations.ts`（新）；`tools/delegation-tools.ts`（`delegate_to_bot` / `cancel_delegation`）
-- [ ] **orchestrator**：委派投递、完成钩子（监听 B run settle）、`#injectDelegationFollowUp`（可仿 `#injectDelegateFollowUp`）
+- [ ] **orchestrator**：委派投递、完成钩子（`#settleRun` 按 `delegations.run_id` 反查——与 D66 per-run `onFollowUp` 回调挂法不同，委派是 settle 时匹配）、`#injectDelegationFollowUp`（可仿 `#injectDelegateFollowUp`）；启动恢复把 `working` 且 run 已 `interrupted` 的委派落 `failed`（对齐 D49 ephemeral、开放决策 7）
 - [ ] **desktop**：DelegationSentCard / DelegationResultCard；B 侧消息气泡标签；**不**自动 `openConversation(B)`
 - [ ] **constants / prompt**：平台规则说明何时委派 vs `@` vs `delegate_task`
 - [ ] **测试**：
-  - 单测：截断、防环、同群降级、单跳
-  - 集成：A→B 全链路（A 消息流有卡、B 有代发用户消息、A UI 会话未切换、follow-up internal、D66 回归）
+  - 单测：截断、防环、同群降级、单跳（被委派 run 的 toolset 无 `delegate_to_bot`）
+  - 集成：A→B 全链路（A 消息流有卡、B 有代发用户消息、A UI 会话未切换、follow-up internal、D66 回归）；B run 失败 → A 卡 `failed` + `error_text`
 
 ### 5.3 验收
 
 1. A 委派后当前会话仍是 A；B 私聊可见带标签代发消息。
 2. B 回复后 A 结果卡 ≤2000 字 + 可点链；A 模型侧收到 internal 事件。
 3. A→B→A、超深、同群路径符合设计。
-4. 现有 `delegate_task` 集成测试仍绿。
+4. B run 失败/中断 → A 卡转 `failed`；重启后 `working` 且 run 已中断的委派落 `failed`（启动恢复）。
+5. 现有 `delegate_task` 集成测试仍绿。
 
 ### 5.4 本阶段不做
 
-- quiet hours 精致调度（可用开放默认：简单遵守或文档标明 TODO）
+- quiet hours 精致调度（P3 不做；P4 按开放默认落地——参照 `deliverEventToBot` 的 parking / `event_delivery` job 模式，注意 user 代发路径当前没有 quiet hours 闸门，需新建）
 - durable 专升（委派行持久即可）
 - workspace 自动继承（默认不继承）
 
@@ -175,6 +177,7 @@ P1 地基（schema + 管家身份约束）
 | shared | `packages/shared/src/domain/types.ts`、`constants.ts`、`rpc/methods.ts`、errors |
 | core domain | `domain/bots.ts`、`domain/lifecycle.ts`、`domain/delegations.ts`（新）、`domain/groups.ts` |
 | core dispatch | `dispatch/orchestrator.ts`、`dispatch/chains.ts` |
+| core permissions | `permissions/approvals.ts`（无人值守按 kind 排除 butler 卡） |
 | core tools | `tools/butler-tools.ts`、`tools/delegation-tools.ts`、`tools/index.ts`、`tools/setup-tools.ts` |
 | prompt | `agent/context/system-prompt.ts` |
 | desktop | `features/onboarding/OnboardingWizard.svelte`、sidebar、chat cards、i18n `zh-CN.ts` |
@@ -183,10 +186,12 @@ P1 地基（schema + 管家身份约束）
 ## 8. 风险与注意
 
 - **命名冲突**：DB/API 用 `system_role`；Profile JSON 里已有 `role` 对象——禁止混用。
-- **消息 sender**：B 侧必须是 `user` 代发，不是 `bot:A`，否则群规则/权限语义错位；标签用独立 origin 字段。
+- **消息 sender**：B 侧必须是 `user` 代发，不是 `bot:A`，否则群规则/权限语义错位；标签用独立 origin 字段（textContentSchema，落 content_json）。
+- **单跳摘除粒度**：勿按 bot 粒度全局摘掉 B 的 `delegate_to_bot`（会连 B 在自己对话里的委派能力一起摘掉）；按 run 粒度（triggerReason='delegation'）+ 深度校验兜底。
+- **结果混杂**：B 的被委派 run 可能被用户在 B 私聊的后续消息 steer，最终回复可能混入对用户说的话——首期接受，靠截断 + 「查看原文」链接缓解，结果卡标注来源。
 - **Follow-up**：必须 `internal: true`，进 A 上下文、不刷用户可见复述指令原文（对齐 D66 `#injectDelegateFollowUp`）。
 - **租约**：B 写 project 仍走 B 对话绑定与 D29 租约；不要静默共用 A 的 project（开放决策默认）。
-- **无人值守**：组队/建 Bot 审批建议排除自动批准，避免管家刷出一堆联系人。
+- **无人值守**：组队/建 Bot 审批排除自动批准（`#autoDecideSync` 按 kind 排除，需新增该机制），避免管家刷出一堆联系人。
 
 ## 9. 完成定义（整包）
 
