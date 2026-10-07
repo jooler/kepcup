@@ -222,19 +222,20 @@ interface AgentCatalogEntry {
 
 ## 7 会话、事件与执行记录
 
-- **会话复用**：每个（Bot, 对话, Agent）至多一个会话，记录在 `agent_sessions`；上一 run 结束不超过 `CONTINUATION_WINDOW_MS`（30 分钟）且会话指纹（会话级提示词、cwd、权限档位、模型、注入能力集合）不变时复用，只发增量；否则新建并走 D56 回放。Agent 不支持 `resume` / `load` 时（如 DeepSeek Harness 无 `load`）按 Provider 能力降级。KepCup 的消息与 `run_steps` 始终是事实来源。
-- **run 之外的输出**：`session/load` 重放静音；无进行中 run 时收到的更新丢弃并记日志（含 Claude 后台任务触发的自主 turn），桥同时拒绝工具调用。
-- **事件映射**：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（子代理内部调用不切分）；原生 `tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`agent_thought_chunk` 不落库；`plan` → `progress`；`stopReason`：`end_turn`→completed、`cancelled`→cancelled（`skip_reply` 例外）、`refusal`/`max_tokens`/`max_turn_requests`→failed。
-- **steering**：Provider 声明支持时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），被拒或出错经 `onSteerRejected` 交还 pending steer；不支持时直接回落。每会话同一时刻只允许一个 prompt 的 Agent（如 DeepSeek Harness）只能回落。
+- **会话复用**（P5 已实现）：每个（Bot, 对话, Agent）至多一个会话，记录在 `agent_sessions`；上一 run 结束不超过 `CONTINUATION_WINDOW_MS`（30 分钟）且会话指纹（会话级提示词、cwd、权限档位、模型 / effort、注入能力与工具集合、桥 server 名）不变时复用：会话留在 Agent 进程里，下一个 run 依次尝试同进程直接复用 → `session/resume` → `session/load`（重放静音）→ 新建；复用 / 恢复时只发增量消息 + 触发段 + run 级动态段，新建则完整上下文 + D56 回放。桥 server 名由会话行 id 派生（换会话即换名），桥 token 随会话（建立 / 恢复时签发、复用时沿用、每个 run 重新绑定，会话被替换 / 删除 / 中毒时吊销）。KepCup 的消息与 `run_steps` 始终是事实来源。
+- **run 之外的输出**：`session/load` / `session/resume` 的重放静音；无进行中 run 时收到的更新丢弃并记日志，桥同时拒绝工具调用；Claude 以进程级 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON` 关闭会在 run 外自主触发 turn 的后台任务与定时任务。
+- **事件映射**：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（带 `parentToolUseId` 的子代理内部调用与文本不切分、不落步骤，只进状态行；状态行文案取 `tool_call.title`）；原生 `tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`agent_thought_chunk` 不落库；`plan` → `progress`；`stopReason`：`end_turn`→completed、`cancelled`→cancelled（`skip_reply` 例外）、`refusal`/`max_tokens`/`max_turn_requests`→failed。
+- **steering**：prompt 进行中且 Provider 声明支持时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），应答 `injected` 才算送达；被拒、出错或 Agent 无视 `promptRequired` 自开新 turn（codex-acp 2.1.1，宿主立即取消该 turn）都经 `onSteerRejected` 交还 pending steer，在 run 结束后续投；不支持时直接回落。prompt 发出前 / 后台工具 follow-up 之前到达的消息并入下一个 prompt。每会话同一时刻只允许一个 prompt 的 Agent（如 DeepSeek Harness）只能回落。
+- **长耗时宿主工具**：桥调用超过 `AGENT_BRIDGE_TOOL_DETACH_MS`（45 s，低于 Codex 不可调的约 60 s MCP 超时）先应答「已转入后台」并继续执行；prompt 结束后 run 等待其完成，再以 follow-up prompt 把结果送回同一会话、同一 run（等待用户审批的工具因此不会被超时取消）。
 - **执行记录**：`runs.engine`（`builtin` | `agent:{id}`）、`runs.agent_session_id`。
-- **中断 / 删除**：进程退出或崩溃 → run 按 D49 标中断，下次尝试恢复会话；对话 / Bot 删除时 `session/delete`（尽力而为）；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
+- **中断 / 删除**：进程退出或崩溃 → 活跃 run 失败（应用退出时按 D49 标中断），会话行保留，下次尝试恢复会话；对话 / Bot 删除或移出群时 `session/delete`（Agent 支持且会话仍开在活进程里时，尽力而为）并删行；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
 
 
 
 ## 8 模型、用量与后台 loop
 
-- **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 2。
-- **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段、按会话累计 → 做差），缺失只记轮数；连锁预算按轮数折算。
+- **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`（2）。
+- **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段；口径由 Provider 声明——Claude / Codex 实为本 turn，其余按会话累计做差），缺失时每个模型轮记一条零 token 行（只记轮数）；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；用量页单列「订阅 / 外部 Agent」。
 - **后台 loop**：有内置模型则照旧；只有外部 Agent 时，`complete()` 用一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`、临时 cwd；其他 Agent 用只读档 + 临时 cwd），只输出 JSON，复用 `structured.ts` 文本 JSON 回退；续接 L2 仲裁关闭；群聊判断超时视为 `no_action`；反思 / 摘要降频，技能生成默认关。设置页「后台任务」可选用哪个 Agent 或关闭。
 
 

@@ -31,7 +31,17 @@
 
 设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。实现位于 `core/src/agent/external/`（通用 ACP 部分 + `providers/` 下各智能体的差异模块），对外仍只暴露 `AgentEngine`（`RunSpec` 的可选扩展见 [02-architecture.md](02-architecture.md#agentenginepi-的封装)）。
 
-**进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）与 P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）已实现，均在实验开关下；steering / 会话复用 / 用量（P5）、`complete()`（P6）未完成——下表中这些行描述的是目标行为。
+**进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）、P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）与 P5（OpenCode / DeepSeek Harness / Cursor / Antigravity Provider；steering、会话复用、用量、并发、长耗时桥工具、删除级联）已实现，均在实验开关下；`complete()`（P6）未完成——下表中该行描述的是目标行为。
+
+P5 落地要点（文件，详见 todo §8.4）：
+
+- `engine.ts` run handle 的 prompt 阶段机（`before / prompting / between / done`）：`steer` 在 prompt 前 / follow-up 之间并入下一个 prompt，prompt 进行中（Provider `features.steering` 且 `initialize._meta.steering` 声明）发 `_session/steering`（`idleBehavior:'promptRequired'`，只认 `injected`；`startedNewTurn` 立即取消），其余经 `RunSpec.onSteerRejected` 交还 orchestrator（run 未释放进 `#pendingSteers`，已释放直接投递邮箱）。
+- 会话复用：`ExternalRunSpec.session = {reuseId, fingerprint}`（orchestrator 读 `agent_sessions`：窗口内、指纹一致才给 reuseId；指纹含会话级提示词、cwd、档位、模型 / effort、能力与工具集合、桥名、loadUserConfig；桥名 = `hostServerNameFor(行 id)`）。引擎 `#openSession`：本进程保留的会话（`AgentLease.openSession`，指纹 + 会话选项哈希一致）直接复用 → `session/resume` → `session/load`（`AcpConnection` 在调用期间静音该会话的更新）→ 新建；复用 / 恢复时 prompt 用 `promptParts.conversationDelta`（orchestrator 的增量对话段 = seen-cutoff 之后、非触发批、非本 Bot 回复的消息 + 触发段），不重发会话级提示词；`onSession(id, mode)` 回写 `agent_sessions`。run 结束会话留在进程里（`keepSession`，含桥 token、模式守卫期望值、用量基线），超时 / 取消不应答 / 建会话后出错则「中毒」关闭；进程退出即全部失效。
+- 宿主桥：token 随会话（建立 / 恢复时签发，复用时沿用），每个 run `bindRun`，结束只解绑；`detachAfterMs`（Provider `bridgeToolDetachMs`，缺省 `AGENT_BRIDGE_TOOL_DETACH_MS`）后应答「已转入后台」，结果经 `onDetachedResult` 进入 follow-up prompt（同一 run）。
+- 用量：`AgentProvider.usageSemantics`（Claude / Codex `turn`，缺省 `session` 做差）；缺失时每轮一条零 token 账本行；`UsageService.sumForRuns` 对 `agent:` 零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；`usage.summary` 条目带 `agentId` / `turns`。
+- 事件：`parentToolUseId`（Claude `_meta.claudeCode`）的调用 / 文本不切分、只进状态行；tool_call 步骤带 `title`，状态行优先显示。权限请求交权限桥前按该调用的 tool_call 更新补全（只带 id 的 Agent，如 dsh）。
+- 调度器 `agent:{id}` 缺省并发 `AGENT_DEFAULT_CONCURRENCY`；删除对话 / Bot / 移出群经 lifecycle → `Orchestrator.agentSessionsOn*` → `ExternalAgentEngine.discardSession`（`session/delete` 或 close，尽力而为）+ 删行。
+- 进程级：Agent 进程 cwd 为 `{数据目录}/agents/{id}/cwd`（0700）；`LaunchContext.loadUserConfig` 让 OpenCode（`XDG_CONFIG_HOME`）/ Cursor（`CURSOR_CONFIG_DIR`）在未开启「加载我的个人配置」时用私有配置根。
 
 P2 落地要点（文件）：
 
@@ -67,13 +77,13 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 |---|---|
 | 创建执行 | `AgentHost` 按智能体维护一个子进程（懒启动、空闲退出），一条连接多个会话；每个 run 取得 / 新建会话（cwd = project 或 workspace）后 `session/prompt` |
 | 系统提示词 | 会话级（ACP 版 `<platform_rules>`、`<tool_policy>`、identity、persona、conversation_info；当前时间放在 run 级段）：Claude `_meta.systemPrompt.append`；其他智能体为会话首个 prompt 的前置段（Codex / OpenCode 的配置环境变量是进程级）；`<platform_rules>` 只写实际注入能力包对应的规则；其余段落随每个 run 的 prompt 首块下发——**只能按 run 刷新**，不能每次请求刷新 |
-| `steer(text)` | Provider 声明支持（如 Claude / Codex）时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`，否则空闲时适配器会自开脱离 run 的 turn），异步被拒经 `onSteerRejected` 交还 pending steer；不支持时返回 `false` |
+| `steer(text)` | prompt 发出前 / follow-up 之间：并入下一个 prompt；prompt 进行中且 Provider 声明支持（如 Claude / Codex）时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`，否则空闲时适配器会自开脱离 run 的 turn），异步被拒经 `onSteerRejected` 交还 pending steer；不支持时返回 `false` |
 | `abort(reason)` | `session/cancel` |
 | 工具 | `RunSpec.tools` 按 Bot 选择的能力包（`HOST_CAPABILITIES`，`core` 必选，默认 = 智能体原生没有的全部注入）过滤，并去掉与原生能力冲突的工具；补位类工具描述加「[补充能力]…优先使用自带能力」前缀，会话级提示词增 `<tool_policy>`（补位类原生优先、点名 Provider 声明的原生工具；宿主语义类宿主优先）（`read/write/edit/grep/find/ls/bash`、`request_access`、`request_unsandboxed`、`acquire_project_write`、`delegate_task`）后，经宿主 MCP 桥暴露（token 按会话签发、绑定当前 run，无 run 时拒绝）；调用照常经网关审批 / 审计 / `<untrusted>` / 截断（截断与图片判定从 pi 包装层抽为共用函数）；桥自己发 `tool_call` / `tool_result`（保留 `errorCode`），忽略 ACP 侧对这些工具的镜像更新 |
 | 原生工具权限 | `session/request_permission` → 权限桥（`mcp__kepcup__*` 直接放行；其余按 `toolCall.kind` + `locations` + Bot 权限档位）→ 自动放行 / `agent_tool` 审批卡 / 拒绝；只按 optionId 白名单选 `allow_once` / `reject_once`，不选 `allow_always` 与切换模式的选项 |
 | 执行步骤持久化 | `session/update` 映射为与 pi 同形的 `EngineEvent`：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（中间说明 D54 照常；带 `parentToolUseId` 的子代理调用不切分）；`tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`plan` → `progress`；`agent_thought_chunk` 不落库；无进行中 run 的更新（`session/load` 重放、自主 turn）丢弃 |
 | 结束判断 | `PromptResponse.stopReason`：`end_turn` → completed；`cancelled` → cancelled（`skip_reply` 引起的取消结算为不发最终文本的 completed）；`refusal` / `max_tokens` / `max_turn_requests` → failed |
-| 用量 | `PromptResponse.usage`（ACP 不稳定字段，按会话累计 → 做差得本 run 增量；缺失只记轮数）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算按轮数折算 |
+| 用量 | `PromptResponse.usage`（ACP 不稳定字段；Provider 声明口径：本 turn 或按会话累计做差；缺失时每轮一条零 token 行）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算 |
 | 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`、临时 cwd），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验；仅外部后端时续接 L2 仲裁关闭 |
 | 模型 | `session/set_config_option`（`model` / `thought_level`），取自 `runtime.agent.model` / `runtime.agent.effort`，空则用智能体默认 |
 

@@ -538,13 +538,14 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - [x] **Cursor**（`providers/cursor.ts`）：目录 binary（6 个平台，sha256 由导入脚本计算锁定）+ `args:['acp']`；认证 terminal（`agent login`）或 API key（`CURSOR_API_KEY`，存 secrets）；`prompt-prefix`；`agentSideConfigFiles: ['.cursor/rules', '.cursor/cli.json', 'AGENTS.md', 'CLAUDE.md']`；`features.osSandbox` 按 P0（未生效则命令逐条确认）；`extRequests`：`cursor/ask_question` 按 P0 结论映射为对话内问题卡（用户作答后回填）或直接返回「请自行决定」，`cursor/create_plan` 按 P0 结论自动确认或映射为卡片；无 `resume` → 会话复用用 `load`（重放静音）；条款提示「计入 Cursor 套餐额度」
 - [x] **Google Antigravity**（`providers/antigravity.ts`）：目录 binary（6 个平台，sha256 由导入脚本计算锁定；审批卡显示约 1 GB 体积）；`authMethods` 过滤掉 `oauth-personal`（及 P0 确认受限的 `oauth-business`），只留 `gemini-api-key`（key 存 secrets 注入）与 `agent-platform`；`tier:'preview'`、`releaseGate`；`prompt-prefix`；`agentSideConfigFiles: ['AGENTS.md', 'GEMINI.md', '.agents/', '.gemini/']`；`features.osSandbox=false`（命令逐条确认）；档位映射：`read_only` / `ask` → `default`，`workspace` → `auto_edit`（仅放宽工作目录内编辑，命令仍询问，以 P0 实测为准）；**禁止 `yolo`**；条款提示「不要在 KepCup 中使用 Google 个人账号登录 Antigravity」。**实现偏差**：源码显示 `auto_edit` 不区分工作区内外地自动批准编辑，档位改为一律 `default` 并禁止 `auto_edit`（见 §8.3）
 - [ ] **ZCode**（`providers/zcode/`；P0 结论：**能完整覆盖**，见附录 A.1——分发只用 `system` 来源（拉起用户已装 ZCode 桌面应用内置的 `app-server --stdio`），`preview` + `releaseGate`，锁 3.14.x）：`transport:'shim'`；`connect(proc)` 返回进程内对象，实现 ACP `Agent` 接口（`initialize` / `newSession` / `prompt` / `cancel` / 权限请求回调 / MCP 注入），内部把 ZCode Protocol 翻译为 ACP 语义；锁定 ZCode 版本并在垫片入口校验协议版本，不符 → `incompatible`；目录 binary 分发 + `zcode login` terminal 认证。P0 结论为放弃时：不实现、目录不收录，本节删除并在设计 28 §9.2 与 `DEVIATIONS.md` 记录放弃原因
-- [ ] **steering**：`provider.features.steering` 为真时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），同步返回 true；被拒 / 出错 → `RunSpec.onSteerRejected` → orchestrator 放回 `#pendingSteers`（在 `#steerRunningRun` 旁加回调入口）
-- [ ] **run 外输出**：`load` / `resume` 重放静音；按 P0 结论关闭 Claude 后台任务
-- [ ] **会话复用**：`agent_sessions` 读写；指纹（会话级提示词、cwd、档位、模型、能力集合）；窗口内复用只发增量 + 触发段 + run 级动态段；按 Provider 能力用 `resume` / `load`，都不支持则新建 + D56 回放
-- [ ] **用量**：不加列（`provider='agent:{id}'`、费用为空）；`PromptResponse.usage` 按会话做差；缺失只记轮数；用量页单列「订阅 / 外部 Agent」；连锁预算按轮数折算
-- [ ] **并发**：调度器 `agent:{id}` 读 `providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`
-- [ ] **崩溃与生命周期**：进程崩溃 → 活跃 run `failed`、会话行保留；删除对话 / Bot → `session/delete`（尽力而为）+ 删行；删除提示说明 Agent 侧磁盘历史不归 KepCup 管理
-- [ ] **中间说明**：带 `parentToolUseId` 的子代理调用不切分；状态行文案取 `tool_call.title`
+- [x] **steering**：`provider.features.steering` 为真时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），同步返回 true；被拒 / 出错 → `RunSpec.onSteerRejected` → orchestrator 放回 `#pendingSteers`（在 `#steerRunningRun` 旁加回调入口）
+- [x] **run 外输出**：`load` / `resume` 重放静音；按 P0 结论关闭 Claude 后台任务
+- [x] **会话复用**：`agent_sessions` 读写；指纹（会话级提示词、cwd、档位、模型、能力集合）；窗口内复用只发增量 + 触发段 + run 级动态段；按 Provider 能力用 `resume` / `load`，都不支持则新建 + D56 回放
+- [x] **用量**：不加列（`provider='agent:{id}'`、费用为空）；`PromptResponse.usage` 按会话做差；缺失只记轮数；用量页单列「订阅 / 外部 Agent」；连锁预算按轮数折算
+- [x] **并发**：调度器 `agent:{id}` 读 `providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`
+- [x] **崩溃与生命周期**：进程崩溃 → 活跃 run `failed`、会话行保留；删除对话 / Bot → `session/delete`（尽力而为）+ 删行；删除提示说明 Agent 侧磁盘历史不归 KepCup 管理
+- [x] **中间说明**：带 `parentToolUseId` 的子代理调用不切分；状态行文案取 `tool_call.title`
+- [x] **长耗时桥工具**（§5.3 遗留）：超过 `AGENT_BRIDGE_TOOL_DETACH_MS` 的桥调用先应答「已转入后台」，结果在 prompt 结束后以 follow-up prompt 送回同一 run（见 §8.4）
 
 ### 8.2 验收
 
@@ -608,6 +609,43 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - **M3** Antigravity `agent-platform` 在配置入口完成前从白名单隐藏（只留 gemini-api-key；UI 与 authenticate 两端测试更新）。**M4** 私有 `GEMINI_HOME` 取不到时抛错（不再回落共享临时目录）。
 - **LOW**：dsh 未配 key 判定精确匹配 `no API key for provider route`；安装下载进度不再把解压后大小 `sizeBytes` 当总字节数（改用响应头长度）；OpenCode 后台插件安装写入在条款提示说明。
 - 测试：新 `unit/agent-review-p5-1.test.ts`（不变量、Cursor 隔离、dsh 精确匹配与只带 id 的请求、chmod 钩子、进程私有 cwd）；契约测试 harness 提供 `stateDirFor`（配置隔离类 Provider 无私有目录即拒绝启动）。
+
+### 8.4 实施记录（P5 第二部分：体验与 ZCode，2026-10-07，分支 `t/d72-p5-2`）
+
+**状态**：§8.1 的 steering / run 外输出 / 会话复用 / 用量 / 并发 / 崩溃与生命周期 / 中间说明，以及 §5.3 遗留的长耗时桥工具完成；ZCode 见文末小节。另含 P5 第一部分独立审查的修复（§8.3 末尾「审查修复」）。
+
+**改动文件**
+- core `agent/external/engine.ts`（重写 run handle）：prompt 阶段机 `before / prompting / between / done`；会话打开 `#openSession`（同进程复用 → `session/resume` → `session/load` → 新建）；`#attachBridge` 支持沿用会话 token；`#prompt` + `#recordUsage`；follow-up 循环；`steer` / `#sendSteering`；`discardSession`；权限请求按 tool_call 更新补全（审查 H2）。`AcpEventMapper`：子代理（`parentToolUseId`）调用与文本、状态行 `title`、轮数计数、`finishInterim`。
+- core `agent/external/acp/client.ts`：`ACP_STEERING_METHOD` / `advertisesSteering`、`loadSession` / `resumeSession`（重放静音）/ `deleteSession` / `extMethod`；`host.ts`：进程内保留会话（`openSession` / `keepSession` / `forgetSession`，进程退出即清空）、`AgentHost.openSession` / `forgetSession`、`processCwdFor` / `loadUserConfigFor`；`mcp-bridge.ts`：`detachAfterMs` / `onToolDetached` / `onDetachedResult`、`detachedToolNotice`；`types.ts`：`AgentProvider.usageSemantics` / `bridgeToolDetachMs`、`connect(proc, client)`、`LaunchContext.loadUserConfig`；`capabilities.ts` `hostServerNameFor`。
+- core `agent/types.ts`：`RunSpec.promptParts.conversationDelta`、`ExternalRunSpec.session`、`onSession(id, mode)`、`AgentSessionMode`、tool_call payload `title?`；`step-persistence.ts`：状态行用 title；`agent/context/conversation.ts` `buildConversationDelta`。
+- core `domain/agent-sessions.ts`（新，`AgentSessionsStore`）；`dispatch/orchestrator.ts`：`#agentRunSetup` 读 `agent_sessions`、按候选行派生桥名并算指纹、增量对话段；`#recordAgentSession` / `touch`、内存 seen-cutoff（重启后由上次 run 的触发 / 输出消息推算）；`#onAgentSteerRejected`；`agentSessionsOn{ConversationDeleted,BotDeleted,GroupMemberRemoved}`；project 配置确认向上到 git 根（审查 H1）。`domain/lifecycle.ts` + `start.ts`：删除级联接入。
+- core `scheduler/scheduler.ts`（`agent:` 缺省并发）、`domain/usage.ts`（`sumForRuns` 轮数折算、`entriesSince` 带 provider）、`rpc/bindings.ts`（`usage.summary` 的 `agentId` / `turns`）；`providers/claude.ts`（进程级 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON`、`usageSemantics:'turn'`）、`providers/codex.ts`（`usageSemantics:'turn'`）。
+- shared：`constants.ts`（`AGENT_TURN_BUDGET_TOKENS` 10 000、`AGENT_BRIDGE_TOOL_DETACH_MS` 45 000）、`ids.ts`（`ags_`）、`domain/types.ts`（用量条目 `agentId` / `turns`）。
+- desktop：用量页「订阅 / 外部 Agent」分表（`UsageSection.svelte`）；删除对话 / Bot 确认框对使用外部智能体的 Bot 追加「智能体自己的会话记录不归 KepCup 管理」；i18n。
+- testkit `fake-acp-agent.ts`：steering 应答（`injected` / `promptRequired` / `startedNewTurn` / 错误）、`echo_steers`、turn `usage`、`resume` / `sessionDelete` 能力与观测、`permission.bare`。
+- 测试：新 `unit/external-agent-p5.test.ts`（25）、`integration/external-agent-p5.test.ts`（3）、`unit/agent-review-p5-1.test.ts`；更新契约（tool_call 带 title）、`integration/external-agent.test.ts`（准备期到达的消息并入 prompt）。
+
+**设计要点与偏差**
+- **steering**：只在 prompt 进行中、Provider `features.steering` 且 Agent `initialize._meta.steering(.supported)` 时发 `_session/steering`；应答 `injected` 才记 steer 步骤，`promptRequired` / 出错 → `onSteerRejected`；`startedNewTurn`（codex-acp 2.1.1 **忽略** `idleBehavior`，无进行中 turn 时自开新 turn——源码核对）→ 立即 `session/cancel` 该 turn 再交还。偏差：prompt 发出**之前**（会话建立中）与 follow-up 之间到达的消息不论 Provider 是否支持 steering 都并入下一个 prompt（同步返回 true）——这比「run 结束后另起 run」更贴近内置引擎；run 在发出 prompt 前失败时交还。orchestrator 记录每个交给外部 run 的批次，被拒时 run 未释放 → `#pendingSteers`（释放时续投），已释放 → 直接投递邮箱。
+- **run 外输出**：`session/load` / `session/resume` 期间该会话的 `session/update` 在连接层静音丢弃（不逐条记日志），会话在返回后才挂 run；其余 run 外更新沿用 P1（丢弃 + 日志、桥 403）。Claude 后台任务：claude-agent-sdk 0.3.287 内置 CLI 认 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`（二进制字符串核对），另关 `CLAUDE_CODE_DISABLE_CRON`（Cron 工具会在 run 外自主触发 turn，且宿主语义要求定时用 `schedule`）。
+- **会话复用**：
+  - 指纹 = sha256(会话级提示词、cwd、档位、模型 ref、effort、能力集合、**工具名集合**、桥名、loadUserConfig)。工具集合入指纹：Agent 连接 MCP 时缓存 `tools/list`，而 `buildResponseTools` 的结果随 run 变化（如被委派 run 无 `delegate_to_bot`）。
+  - **桥名由 `agent_sessions` 行 id 派生**（`kepcup_` + sha256(id) 前 8 位）而非新增列：main 迁移 0018–0020 被 D73 预留且迁移号必须连续，本批不加 main 迁移；换会话 = 新行 id = 新桥名。
+  - 引擎另比较「会话选项哈希」（Provider `sessionNew` 的 `_meta`〔含 Claude 沙箱 / disallowedTools / 系统提示词〕、额外 MCP、桥名、工具名、cwd），不一致就关掉旧会话新建——指纹之外的 run 级差异（技能目录变化引起的隔离设置等）也不会沿用旧会话。
+  - 复用（同进程）不重设档位 / 模型（指纹保证不变），从保留状态恢复模式守卫的期望值；resume / load / 新建都重设。resume / load 失败 → 新建（对话段回落为完整上下文 + D56 回放）。
+  - 增量对话段 = 上次 run 的 seen-cutoff（含被 steer 的批次）之后、不在触发批、不是本 Bot 回复的消息；超出最近 120 条窗口或 cutoff 未知 → 不复用。
+  - 桥 token 随会话：新建 / resume / load 时签发（`issueSessionToken` 吊销同键旧 token），复用时沿用；run 结束只解绑；会话被替换 / 删除 / 进程退出 / 中毒时吊销（中毒 = 超时、取消后 Agent 不应答、建会话后出错）。
+  - 窗口 `CONTINUATION_WINDOW_MS`（30 分钟）从上次 run 结束算；`AGENT_IDLE_SHUTDOWN_MS`（35 分钟）后进程退出，下次 run 走 resume / load。
+- **用量**：规范注释写「across session」，但核对源码 claude-agent-acp 0.86.0 在 turn 激活时清零累计器、codex-acp 2.1.1 报 `lastTokenUsage`——均为**本 turn** 口径 → `AgentProvider.usageSemantics`（Claude / Codex `turn`，缺省 `session` 做差；数值回退视为 Agent 重新计数；resume / load 后的首次报告只作基线）。缺失 → 每个模型轮一条零 token 账本行（「只记轮数」= 行数；不加列）；`sumForRuns` 对 `provider like 'agent:%'` 且零 token 的行按 `AGENT_TURN_BUDGET_TOKENS` 折算，`tokensSoFar` 运行中按轮估算。用量页把 `agent:{id}` 行单列（智能体 / 轮数 / token，费用不显示）。
+- **并发**：`Scheduler.concurrencyFor('agent:{id}')` 无覆盖时取 `AGENT_DEFAULT_CONCURRENCY`（2），不再落到全局 default。
+- **崩溃与生命周期**：进程崩溃 → 活跃 run failed（P1 已有）、行保留，下次 resume / load；删除对话 / Bot / 移出群 → 引擎 `discardSession({deleteHistory:true})`：会话仍开在活进程里才 `session/delete`（Agent 声明 `sessionCapabilities.delete`）或 `session/close`，正被 run 占用则在释放时删除；进程不在时不为删除专门拉起进程（尽力而为，记入偏差）；删行。确认框文案说明 Agent 侧磁盘历史不归 KepCup 管理。
+- **中间说明**：带 `_meta.claudeCode.parentToolUseId`（或通用 `_meta.parentToolUseId`）的调用不切分、不落步骤，只发状态行 `子任务：{title}`；子代理文本忽略。原生调用的 `tool_call` 步骤带 `title`（与 toolName 不同时），状态行显示它。
+- **长耗时桥工具（选择：提交后转入后台 + follow-up，而非 SSE + progress）**：理由——Codex 的 MCP 超时无法经 ACP 调整，progress 是否重置其超时无法离线确认，而转后台不依赖客户端行为。桥对超过 `bridgeToolDetachMs`（缺省 `AGENT_BRIDGE_TOOL_DETACH_MS` 45 s，Provider 可设 null 关闭）仍在执行的调用先应答「已转入后台…完成后结果会作为新消息发给你」（该调用的 `tool_result` 步骤即此通知，配对不变），工具继续执行且不再受 HTTP 请求取消影响（只受 run 取消）；prompt 结束后 run 不结算：本轮文字作为中间说明（`toolUse`）发出，等所有后台调用完成，再以 `<background_tool_results>` 的 follow-up prompt 在同一会话、同一 run 内继续（run 仍可 waiting_approval，审批卡不会因超时被取消）。期间到达的 steer 也并入 follow-up。
+
+**待登录实测**
+- Claude：`_session/steering` 的 `injected` 时序与 `steered: …` 回复；`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON` 经 SDK 传到 CLI 后确实禁用；`session/resume` 带 `_meta`（系统提示词、sandbox）后行为；`PromptResponse.usage` 的口径；`deleteSession` 删除磁盘 transcript。
+- Codex：steering `injected` 与 `startedNewTurn` 后取消的效果；resume 后 `mcp_servers`（新 token）是否重连；`lastTokenUsage` 口径；后台通知后模型是否会结束本轮等待 follow-up（还是反复调用）。
+- 各 Agent：follow-up prompt 的措辞是否被模型正确理解；45 s 阈值对 Claude（其 MCP 超时较长）是否偏保守（可设 `bridgeToolDetachMs: null`）。
 
 ---
 
