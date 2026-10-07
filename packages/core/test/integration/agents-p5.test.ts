@@ -98,13 +98,10 @@ describe('Antigravity login methods (P5)', () => {
       (agent) => agent.authMethods.length > 0,
       'auth methods probed',
     );
-    expect(listed.authMethods.map((method) => method.id)).toEqual([
-      'gemini-api-key',
-      'agent-platform',
-    ]);
+    expect(listed.authMethods.map((method) => method.id)).toEqual(['gemini-api-key']);
     expect(JSON.stringify(await stack.core.rpc.call('agents.list'))).not.toContain('oauth-');
 
-    for (const methodId of ['oauth-personal', 'oauth-business', 'gateway']) {
+    for (const methodId of ['oauth-personal', 'oauth-business', 'gateway', 'agent-platform']) {
       await expect(
         stack.core.rpc.call('agents.login', { id: 'fake-agy', methodId }),
       ).rejects.toMatchObject({ code: 'INVALID_INPUT' });

@@ -345,6 +345,25 @@ export type OrchestratorMemoryFacade = Omit<MemoryToolFacade, 'triggerMessages'>
   }): void;
 };
 
+/** The nearest directory at or above `start` holding `.git` (null = none). */
+function gitRootAbove(start: string): string | null {
+  let dir = nodePath.resolve(start);
+  for (let depth = 0; depth < 64; depth += 1) {
+    if (existsSync(nodePath.join(dir, '.git'))) return dir;
+    const parent = nodePath.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+/** `root`, its descendants on the way to `leaf`, and `leaf` (root must contain leaf). */
+function directoryChain(root: string, leaf: string): string[] {
+  const relative = nodePath.relative(root, leaf);
+  const parts = relative === '' ? [] : relative.split(nodePath.sep);
+  return [root, ...parts.map((_, index) => nodePath.join(root, ...parts.slice(0, index + 1)))];
+}
+
 /** Steers handed to an external agent run (D72 P5, `#onAgentSteerRejected`). */
 interface AgentSteerLog {
   log: Array<{ text: string; batch: TriggerBatch }>;
@@ -1932,13 +1951,25 @@ export class Orchestrator {
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
-    const found = input.configFiles.filter((name) =>
-      existsSync(nodePath.join(input.projectPath, name.replace(/[\\/]+$/, ''))),
-    );
+    // Agents look for their config from the session directory up to the git
+    // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
+    const searchRoot = gitRootAbove(input.projectPath) ?? input.projectPath;
+    const found: string[] = [];
+    for (const dir of directoryChain(searchRoot, input.projectPath)) {
+      for (const name of input.configFiles) {
+        const bare = name.replace(/[\\/]+$/, '');
+        if (!existsSync(nodePath.join(dir, bare))) continue;
+        const relative = nodePath
+          .relative(searchRoot, nodePath.join(dir, bare))
+          .split(nodePath.sep)
+          .join('/');
+        found.push(bare === name ? relative : `${relative}/`);
+      }
+    }
     if (found.length > 0) {
       // Remembered only for the same content: any change to the files (also
       // by the agent itself) asks again (review M2).
-      const configHash = hashAgentConfigFiles(input.projectPath, found);
+      const configHash = hashAgentConfigFiles(searchRoot, found);
       const remembered = this.#deps.approvals
         .approvedAgentConfigs(input.conversationId, input.botId)
         .some((approval) => {
@@ -1957,11 +1988,16 @@ export class Orchestrator {
           title: '加载项目内的智能体配置',
           kind: 'config',
           toolKind: '',
-          locations: found,
+          locations:
+            searchRoot === input.projectPath
+              ? found
+              : found.map((name) => nodePath.join(searchRoot, name)),
           cwd: input.projectPath,
           options: [],
           durations: ['conversation'],
-          reason: '这些文件由智能体自己读取（可能包含指令、钩子或权限规则），KepCup 无法关闭',
+          reason:
+            '这些文件由智能体自己读取（可能包含指令、钩子或权限规则，可能放宽智能体的权限），KepCup 无法关闭' +
+            (searchRoot === input.projectPath ? '' : '；含项目上层直到 git 根目录中的同类文件'),
           sensitive: false,
           exemptDirs: [],
           projectPath: input.projectPath,

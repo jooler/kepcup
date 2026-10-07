@@ -101,6 +101,9 @@ async function createHarness(target: ContractTarget, rawScript: FakeAgentScript)
     redact: (text) => text,
     appVersion: '9.9.9-test',
     resolveLaunch: () => fakeAcpAgentLaunch(scriptFile, recordFile),
+    // Providers that relocate the agent's global config (OpenCode, Cursor,
+    // Antigravity) refuse to start without a private state directory.
+    stateDirFor: (id) => path.join(dir, 'state', id),
     ...(target.providers !== undefined ? { providers: target.providers } : {}),
     ...(target.mode === 'in-process'
       ? { spawn: fakeAgentSpawner({ [target.entry.id]: script }, started) as never }

@@ -28,10 +28,7 @@ import {
   cursorProvider,
 } from '../../src/agent/external/providers/cursor.js';
 import { classifyDshError, dshProvider } from '../../src/agent/external/providers/dsh.js';
-import {
-  opencodePermissionConfig,
-  opencodeProvider,
-} from '../../src/agent/external/providers/opencode.js';
+import { opencodeProvider } from '../../src/agent/external/providers/opencode.js';
 import type { AgentPermissionTier } from '@kepcup/shared';
 import type { RunSpec } from '../../src/agent/types.js';
 
@@ -151,45 +148,123 @@ describe('provider registry', () => {
 });
 
 describe('OpenCode', () => {
-  it('process config: global items only, commands / edits ask, data directory denied', () => {
+  it('process config: string-only ask rules on every layer; project / plugin config off', () => {
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
       target: { command: '/x/opencode', args: ['acp'], env: { OPENCODE_CONFIG_CONTENT: 'evil' } },
       platform: 'linux',
       dataHome: '/home/u/.kepcup',
+      stateDir: '/home/u/.kepcup/agents/opencode',
     });
     expect(launch.command).toBe('/x/opencode');
     expect(launch.args).toEqual(['acp']);
     expect(launch.env).toMatchObject({
+      OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+      OPENCODE_PURE: '1',
       OPENCODE_DISABLE_CLAUDE_CODE: '1',
       OPENCODE_DISABLE_AUTOUPDATE: '1',
+      // The user's global config is not loaded (private config root).
+      XDG_CONFIG_HOME: path.join('/home/u/.kepcup/agents/opencode', 'xdg-config'),
     });
+    const ask = { edit: 'ask', bash: 'ask', external_directory: 'ask', task: 'ask' };
+    const readOnly = { ...ask, edit: 'deny' };
     const content = JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>;
     expect(content).toEqual({
       $schema: 'https://opencode.ai/config.json',
       autoupdate: false,
       share: 'disabled',
-      permission: {
-        edit: 'ask',
-        bash: 'ask',
-        external_directory: {
-          '*': 'ask',
-          '/home/u/.kepcup': 'deny',
-          '/home/u/.kepcup/*': 'deny',
-        },
+      permission: ask,
+      agent: {
+        build: { permission: ask },
+        plan: { permission: readOnly },
+        general: { permission: ask },
+        explore: { permission: readOnly },
       },
+      mode: { build: { permission: ask }, plan: { permission: readOnly } },
     });
-    // Re-applied after every config layer (incl. a project's opencode.json).
-    expect(JSON.parse(launch.env.OPENCODE_PERMISSION!)).toEqual(content.permission);
+    // Re-applied to the top level after every config layer.
+    expect(JSON.parse(launch.env.OPENCODE_PERMISSION!)).toEqual(ask);
+    // String actions only: no object rule whose key order could matter.
+    expect(JSON.stringify(content).includes('{"*"')).toBe(false);
     // No persona / per-session text in the process-level config.
     expect(launch.env.OPENCODE_CONFIG_CONTENT).not.toMatch(/instructions|prompt/);
-    // Windows data directories become forward-slash patterns; deny rules come last.
-    const windows = opencodePermissionConfig('C:\\Users\\u\\.kepcup\\');
-    expect(Object.entries(windows.external_directory as object)).toEqual([
-      ['*', 'ask'],
-      ['C:/Users/u/.kepcup', 'deny'],
-      ['C:/Users/u/.kepcup/*', 'deny'],
-    ]);
+    // 「加载我的个人配置」: the user's own config root stays.
+    const user = opencodeProvider.launch({
+      entry: catalog('opencode'),
+      target: { command: '/x/opencode', args: ['acp'], env: {} },
+      platform: 'linux',
+      loadUserConfig: true,
+    });
+    expect(user.env.XDG_CONFIG_HOME).toBeUndefined();
+    // No private state directory → refuses instead of using the user's config.
+    expect(() =>
+      opencodeProvider.launch({
+        entry: catalog('opencode'),
+        target: { command: '/x/opencode', args: ['acp'], env: {} },
+        platform: 'linux',
+      }),
+    ).toThrow(/私有状态目录/);
+  });
+
+  it('agent-level overrides from project / global / .opencode config lose to the host rules (H1)', () => {
+    // Model of opencode 1.18.35 Config.loadInstanceState: layers merged in
+    // order with remeda mergeDeep (later source wins, objects merge), then
+    // mode.* folded into agent.*, then OPENCODE_PERMISSION into the top level;
+    // an agent's effective rules = top level merged with its own.
+    const isObject = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+    const mergeDeep = (target: unknown, source: unknown): unknown => {
+      if (!isObject(target) || !isObject(source)) return source;
+      const out: Record<string, unknown> = { ...target };
+      for (const [key, value] of Object.entries(source)) out[key] = mergeDeep(out[key], value);
+      return out;
+    };
+    const launch = opencodeProvider.launch({
+      entry: catalog('opencode'),
+      target: { command: 'opencode', args: ['acp'], env: {} },
+      platform: 'linux',
+      loadUserConfig: true,
+      stateDir: '/s',
+    });
+    const permissive = {
+      permission: { bash: 'allow', edit: 'allow', external_directory: { '*': 'allow' } },
+    };
+    const layers: unknown[] = [
+      // user global ~/.config/opencode/opencode.json
+      { permission: { bash: { '*': 'allow' } }, agent: { build: permissive, general: permissive } },
+      // a project's opencode.json (disabled by OPENCODE_DISABLE_PROJECT_CONFIG, modelled anyway)
+      { agent: { build: permissive, plan: permissive }, mode: { build: permissive } },
+      // ~/.opencode/agent/*.md frontmatter
+      { agent: { explore: permissive, general: permissive } },
+      JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!),
+    ];
+    interface Layered {
+      permission: Record<string, unknown>;
+      agent: Record<string, { permission: Record<string, unknown> }>;
+      mode?: Record<string, unknown>;
+    }
+    let config = layers.reduce((acc, layer) => mergeDeep(acc, layer), {}) as Layered;
+    for (const [name, mode] of Object.entries(config.mode ?? {})) {
+      config = mergeDeep(config, {
+        agent: { [name]: { ...(mode as object), mode: 'primary' } },
+      }) as Layered;
+    }
+    config.permission = mergeDeep(
+      config.permission,
+      JSON.parse(launch.env.OPENCODE_PERMISSION!),
+    ) as Record<string, unknown>;
+    for (const name of ['build', 'plan', 'general', 'explore']) {
+      const effective = mergeDeep(config.permission, config.agent[name]!.permission) as Record<
+        string,
+        unknown
+      >;
+      expect(effective.bash, name).toBe('ask');
+      expect(effective.external_directory, name).toBe('ask');
+      expect(effective.task, name).toBe('ask');
+      expect(effective.edit, name).toBe(name === 'plan' || name === 'explore' ? 'deny' : 'ask');
+    }
+    // A custom subagent can only start through `task`, which always asks.
+    expect(config.permission.task).toBe('ask');
   });
 
   it('tier → mode config option (read_only → plan, else build); unknown mode fails closed', async () => {
@@ -218,9 +293,8 @@ describe('OpenCode', () => {
     expect(opencodeProvider.toolName('kepcup_ab12cd34', 'send_message')).toBe(
       'kepcup_ab12cd34_send_message',
     );
-    expect(opencodeProvider.agentSideConfigFiles).toEqual(
-      expect.arrayContaining(['AGENTS.md', 'opencode.json', '.opencode/']),
-    );
+    // Project config is off: AGENTS.md is injected by the host instead.
+    expect(opencodeProvider.agentSideConfigFiles).toEqual([]);
   });
 
   it('works logged out (anonymous free models): a session opens without any authenticate', async () => {
@@ -258,8 +332,9 @@ describe('OpenCode', () => {
       { sessionId: 'fake-session-1', configId: 'mode', value: 'plan' },
     ]);
     expect(JSON.parse(launches[0]!.env.OPENCODE_CONFIG_CONTENT!)).toMatchObject({
-      permission: { external_directory: { '/data/kepcup-home/*': 'deny' } },
+      permission: { external_directory: 'ask', bash: 'ask' },
     });
+    expect(launches[0]!.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('1');
   });
 });
 
@@ -440,10 +515,9 @@ describe('Google Antigravity', () => {
     { id: 'gateway', name: 'AI Gateway' },
   ];
 
-  it('keeps only gemini-api-key and agent-platform', () => {
+  it('keeps only gemini-api-key (agent-platform hidden until its config entry exists, M3)', () => {
     expect(filterAntigravityAuthMethods(advertised).map((method) => method.id)).toEqual([
       'gemini-api-key',
-      'agent-platform',
     ]);
     expect(antigravityProvider.authMethods!(advertised).map((method) => method.id)).not.toContain(
       'oauth-personal',
@@ -493,8 +567,8 @@ describe('Google Antigravity', () => {
     expect(env.GEMINI_HOME).toBe(path.join(stateRoot, 'fake-agy', 'gemini-home'));
     expect(readdirSync(path.join(stateRoot, 'fake-agy'))).toEqual(['gemini-home']);
     expect(env.AGY_ACP_DISABLE_WORKSPACE_TRUST).toBeUndefined();
-    // Without a state dir it still never shares the user's ~/.gemini.
-    expect(antigravityGeminiHome(undefined)).not.toContain('.gemini');
+    // Without a private state dir it refuses (never a shared temp dir, M4).
+    expect(() => antigravityGeminiHome(undefined)).toThrow(/私有状态目录/);
   });
 
   it('recognizes MCP calls by `_meta.mcp` of this bridge only', () => {

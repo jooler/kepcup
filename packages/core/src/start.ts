@@ -24,6 +24,7 @@ import { readdirSync } from 'node:fs';
 import { directoryUsage, fileSizeOrNull } from './infra/disk-usage.js';
 import {
   agentStateDir,
+  ensureAgentProcessCwd,
   resolveBundledBinDir,
   resolvePaths,
   canonicalPath,
@@ -1123,6 +1124,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       ...(options.agentSpawn !== undefined ? { spawn: options.agentSpawn } : {}),
       dataHome: paths.home,
       stateDirFor: (agentId) => agentStateDir(paths, agentId),
+      processCwdFor: (agentId) => ensureAgentProcessCwd(paths, agentId),
+      loadUserConfigFor: (agentId) => settings.get().agents[agentId]?.loadUserConfig === true,
     });
     // D72 宿主 MCP 桥（127.0.0.1 随机端口）：外部 Agent run 的宿主工具经它注入；
     // 随 core 启停（关闭见 close()）。
@@ -1173,6 +1176,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       workDir: path.join(paths.cacheDir, 'agent-probe'),
       dataHome: paths.home,
       stateDirFor: (agentId) => agentStateDir(paths, agentId),
+      processCwdFor: (agentId) => ensureAgentProcessCwd(paths, agentId),
       ...(options.agentLaunch !== undefined
         ? { launchOverride: (entry: AgentCatalogEntry) => options.agentLaunch?.(entry) ?? null }
         : {}),

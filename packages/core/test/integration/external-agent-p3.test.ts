@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -44,7 +51,8 @@ async function startWithFakeAgent(script: FakeAgentScript) {
   const recordFile = path.join(dir, 'record.jsonl');
   writeFakeAgentScript(scriptFile, script);
   const stack = await createTestStack({
-    agentLaunch: (entry) => (entry.id === 'fake' ? fakeAcpAgentLaunch(scriptFile, recordFile) : null),
+    agentLaunch: (entry) =>
+      entry.id === 'fake' ? fakeAcpAgentLaunch(scriptFile, recordFile) : null,
   });
   stacks.push(stack);
   await stack.core.rpc.call('settings.update', {
@@ -175,8 +183,12 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     const target = path.join(outside, 'data.csv');
     const stack = await startWithFakeAgent({
       turns: [
-        agentTurn().permission('r1', 'Read data', { kind: 'read', locations: [target] }).text('一'),
-        agentTurn().permission('r2', 'Read data', { kind: 'read', locations: [target] }).text('二'),
+        agentTurn()
+          .permission('r1', 'Read data', { kind: 'read', locations: [target] })
+          .text('一'),
+        agentTurn()
+          .permission('r2', 'Read data', { kind: 'read', locations: [target] })
+          .text('二'),
       ],
     });
     const bot = await agentBot(stack, '外援');
@@ -240,9 +252,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     const scriptFile = path.join(stack.dir, 'script.json');
     writeFileSync(
       scriptFile,
-      readFileSync(scriptFile, 'utf8')
-        .replaceAll('__HOME__', home)
-        .replaceAll('__WS__', workspace),
+      readFileSync(scriptFile, 'utf8').replaceAll('__HOME__', home).replaceAll('__WS__', workspace),
     );
     await stack.core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
     await sendBatch(stack.core, conv.id, ['动手']);
@@ -260,7 +270,9 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const rows = (await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool');
     expect(
-      rows.map((a) => [a.payload['command'] ?? a.payload['title'], a.status, a.autoApproved]).sort(),
+      rows
+        .map((a) => [a.payload['command'] ?? a.payload['title'], a.status, a.autoApproved])
+        .sort(),
     ).toEqual(
       [
         [`cp ${home}/main.db /tmp/stolen.db`, 'denied', true],
@@ -337,7 +349,10 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
-          .permission('out', 'Write outside', { kind: 'edit', locations: [path.join(outside, 'y')] })
+          .permission('out', 'Write outside', {
+            kind: 'edit',
+            locations: [path.join(outside, 'y')],
+          })
           .waitCancel(),
       ],
     });
@@ -348,10 +363,9 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     const run = (await listRuns(stack.core, conv.id))[0]!;
     await stack.core.rpc.call('runs.cancel', { runId: run.id });
     await waitForRun(stack.core, conv.id, 'cancelled');
-    await waitFor(
-      async () => (stack.record().permissions.length > 0 ? true : null),
-      { label: 'permission answered' },
-    );
+    await waitFor(async () => (stack.record().permissions.length > 0 ? true : null), {
+      label: 'permission answered',
+    });
     expect(outcomes(stack.record())).toEqual({ out: 'cancelled' });
     const rows = (await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool');
     expect(rows.map((a) => a.status)).toEqual(['cancelled']);
@@ -414,7 +428,32 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
           : null,
       { label: 'second run', timeoutMs: 30_000 },
     );
-    expect((await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool')).toHaveLength(1);
+    expect((await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool')).toHaveLength(
+      1,
+    );
+  }, 60_000);
+
+  it('agent config above the project up to the git root is confirmed too (P5 review H1)', async () => {
+    const stack = await startWithFakeAgent({ turns: [agentTurn().text('一')] });
+    const bot = await agentBot(stack, '外援', 'read_only');
+    const conv = await openDirect(stack.core, bot.id);
+    const repo = makeProject();
+    writeFileSync(path.join(repo, 'AGENTS.md'), '# repo-wide agent rules\n');
+    const sub = path.join(repo, 'packages', 'app');
+    mkdirSync(sub, { recursive: true });
+    await bindProject(stack, conv.id, sub);
+
+    await sendBatch(stack.core, conv.id, ['在子目录里干活']);
+    const card = await pendingAgentTool(stack, conv.id);
+    expect(card.payload).toMatchObject({ kind: 'config' });
+    const payload = card.payload as { locations: string[]; reason: string };
+    expect(payload.locations.map((location) => realpathSync(location))).toEqual([
+      realpathSync(path.join(repo, 'AGENTS.md')),
+    ]);
+    expect(payload.reason).toContain('可能放宽');
+    expect(payload.reason).toContain('git 根目录');
+    await stack.core.rpc.call('approvals.decide', { id: card.id, approve: true });
+    await waitForRun(stack.core, conv.id, 'completed');
   }, 60_000);
 
   it('a denied config confirmation fails the run without starting the agent', async () => {
@@ -535,7 +574,9 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       runtime.ensureWriteLease(identity, path.join(realpathSync(other), 'x.txt')),
     ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
     // The project itself is still held by this run.
-    await expect(runtime.ensureWriteLease(identity, path.join(projectPath, 'a'))).resolves.toBeTruthy();
+    await expect(
+      runtime.ensureWriteLease(identity, path.join(projectPath, 'a')),
+    ).resolves.toBeTruthy();
     await waitForRun(stack.core, conv.id, 'completed', { timeoutMs: 30_000 });
   }, 60_000);
 

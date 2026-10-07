@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -101,6 +101,20 @@ export function workspacePathFor(paths: AppPaths, botId: string, conversationId:
  */
 export function agentStateDir(paths: AppPaths, agentId: string): string {
   return path.join(paths.home, 'agents', agentId);
+}
+
+/**
+ * Working directory of an external agent's processes (D72 P5 审查 M1):
+ * `agents/{agentId}/cwd`, private (0700). Never the shared temp directory —
+ * agents resolve configuration relative to their process cwd (Cursor looks
+ * for `.cursor/cli.json` from there, and a world-writable `/tmp/.cursor/`
+ * would become its command allowlist). Created on demand.
+ */
+export function ensureAgentProcessCwd(paths: AppPaths, agentId: string): string {
+  const dir = path.join(agentStateDir(paths, agentId), 'cwd');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(dir, 0o700);
+  return dir;
 }
 
 /** Encrypted per-bot memory database: `bots/{botId}/memory.db` (P07). */

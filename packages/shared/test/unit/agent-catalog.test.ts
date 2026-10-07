@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_INSTALL_RELATIVE_GLOB,
   AGENT_CATALOG,
   agentCatalogEntrySchema,
   agentModelRef,
@@ -177,7 +178,14 @@ describe('agent catalog', () => {
     expect(byId('dsh').distribution.npx).toEqual({
       package: '@deepseek-ai/dsh@0.2.0-rc.2',
       args: ['--profile', 'acp'],
+      // Narrow post-install step instead of install scripts (review H3).
+      postInstall: { chmodExecutable: ['node_modules/node-pty/prebuilds/*/spawn-helper'] },
     });
+    // Install-root relative patterns only.
+    for (const bad of ['../x', '/abs', 'a/../b', 'a/./b', '', 'a//b']) {
+      expect(AGENT_INSTALL_RELATIVE_GLOB.test(bad), bad).toBe(false);
+    }
+    expect(AGENT_INSTALL_RELATIVE_GLOB.test('node_modules/@scope/p/*/bin')).toBe(true);
     expect(byId('dsh').auth).toMatchObject({ kinds: ['api-key'], apiKeyEnv: 'DEEPSEEK_API_KEY' });
     expect(byId('opencode').auth.kinds).toContain('anonymous');
     expect(byId('cursor').auth).toMatchObject({ apiKeyEnv: 'CURSOR_API_KEY' });
