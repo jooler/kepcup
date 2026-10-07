@@ -24,6 +24,8 @@ setupRequirementSchema = z.discriminatedUnion('kind', [
 runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 ```
 
+另有 `web-search`（联网检索供应商，21-web-search）与 `agent`（D72 外部智能体：`{kind:'agent', agentId, reason}`，未开实验 / 未启用 / 未安装 / 未登录 / 版本不兼容 / 暂不可用 / 沙箱不可用（`sandbox_unavailable`，如 Linux 缺 bubblewrap / socat）时由 run 门禁或引擎失败给出，卡片内嵌设置页同一张 Agent 卡片，完成后自动重试原 run，见 28-external-agents-acp §9.1）。
+
 落盘：`runs.error_json` 由 `{message}` 扩展为 `{message, setup?}`（无 DB 迁移）。`run.error` 仍是用户可读文案，`run.setup` 供界面路由到对应表单。
 
 两个触发点（core）：

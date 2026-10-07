@@ -38,7 +38,8 @@ persona:     { personality, tone, style, values, sample_dialogues }
 role:        { expertise, responsibilities }  # 群聊判断“归不归我”主要依据
 boundaries:  [不做的事]
 behavior:    { proactive: true, quiet_hours, max_proactive_per_day }
-runtime:     { model, light_model, network_policy, budget }   # 模型配置见 14-models-and-browser.md
+runtime:     { model, light_model, network_policy, budget,
+               agent: { id, model, effort, permission, capabilities } }   # 模型配置见 14-models-and-browser.md；agent.id 为空=内置引擎，否则为外部智能体，见 28-external-agents-acp.md
 ```
 
 - Profile 由用户掌控，Bot 不能修改自己的核心人格，防止人格漂移。

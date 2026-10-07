@@ -75,23 +75,38 @@ interface AgentEngine {
 
 interface RunSpec {
   identity: RunIdentity;
-  model: ModelRef;                       // { provider, modelId, baseUrl? }
+  model: ModelRef;                       // "provider/modelId"；外部 Agent 为伪 ref "agent:{id}/{model|default}"
   buildSystemPrompt: () => Promise<string>; // 每次请求前调用，可刷新“我的状态”等
   messages: EngineMessage[];             // 上下文消息 + 触发消息
   tools: ToolDefinition[];
   limits: { maxTurns: number };
-  signal: AbortSignal;
+  // 取消走 RunHandle.abort()（无 signal 字段）
+  // —— D72 外部智能体的可选字段，PiEngine 一律忽略 ——
+  workdir?: string;                      // Agent 会话 cwd：绑定的 project，否则 workspace
+  promptParts?: { session: string; run: string; conversation: string }; // 会话级 / run 级 / 对话（增量）
+  external?: {
+    agentId: string;                     // 目录 id
+    permission: 'read_only' | 'workspace' | 'ask';
+    capabilities: string[];              // 注入的能力包（P1 恒为空）
+    sessionKey: string;                  // (Bot, 对话, Agent) 会话复用键
+    effort?: string;                     // thought_level config option
+    onSession?: (agentSessionId: string) => void; // 落 runs.agent_session_id
+  };
+  onSteerRejected?: (text: string) => void; // 异步 steering 被拒时交还 pending steer（P5）
 }
 
 interface RunHandle {
-  steer(text: string): void;             // 下一步注入
+  steer(text: string): boolean;          // 下一步注入；false = loop 已结束（orchestrator 改为缓冲续投）
   abort(reason: string): void;
   onEvent(listener: (e: EngineEvent) => void): () => void;
-  done: Promise<RunOutcome>;             // { status, finalText, usage[] }
+  tokensSoFar(): number;                 // 连锁预算（外部 Agent 恒为 0）
+  done: Promise<RunOutcome>;             // { status, finalText, skipReply, usage[], error? }
 }
 ```
 
 与 pi 机制的对应见 [04-agent-runtime.md](04-agent-runtime.md#pi-的封装)。
+
+**第二实现 `ExternalAgentEngine`（D72，P1 最小闭环已实现，开发开关下可用）**：经 ACP 驱动外部智能体（Claude Agent / Codex / OpenCode / DeepSeek Harness / Cursor / Antigravity 等；不支持 ACP 的经进程内垫片），位于 `core/src/agent/external/`：`engine.ts`（run 编排与事件映射）、`host.ts`（每个 Agent 一个子进程 + ACP 连接，懒启动、空闲退出、崩溃时活跃 run 以 failed 结算、环境变量白名单）、`acp/client.ts`（ACP SDK 只在此目录引用；权限请求 P1 默认拒绝、未处理的 Agent→客户端请求立即报错）、`providers/`（`AgentProvider` 接口实现与 `PROVIDERS` 登记表，P1 只有 `generic-acp`）、`catalog.ts`（生效目录 = `AGENT_CATALOG` 按发行门禁过滤 + 选择 / 运行门禁）。选择点：`#executeResponseRun` 由 `#engineFor(bot)` 按 `bot.profile.runtime.agent.id` 取引擎（空 = pi）；后台 loop 的 `complete()` / `startRun` 将经 `agent/llm-router.ts` 路由（P6；P1 外部引擎 `complete()` 抛 `NOT_SUPPORTED`）。外部引擎的 `RunSpec.tools`（按 Bot 选择的能力包过滤）不直接执行，而是经宿主 MCP 桥（本机 HTTP，会话级 token → 当前 run 的 `RunIdentity`）暴露给智能体（P2；P1 不注入）；`model` 为伪 ref `agent:{id}/{model|default}`，使调度器并发键落到 `agent:{id}`；`runs.engine` 记 `builtin` / `agent:{id}`。`ACP session/update` → `EngineEvent` 与 `PiEngine` 逐字段对齐（`assistant{text,stopReason,errorMessage}`，遇顶层 `tool_call` 以 `toolUse` 切分中间说明；`tool_call` / `tool_result` 以 `toolCallId` 配对）。设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。
 
 ### 工具
 
