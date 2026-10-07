@@ -84,11 +84,11 @@
   {/if}
 {:else}
   <div
-    class="rounded-[22px] bg-muted px-4 py-3 text-sm
+    class="max-w-full min-w-0 rounded-[22px] bg-muted px-4 py-3 text-sm
       {merge.above ? 'rounded-tl-[7px]' : ''} {merge.below ? 'rounded-bl-[7px]' : ''}"
     data-testid="bot-bubble"
   >
-    <div class="streamdown-wrap [&_pre]:overflow-x-auto [&_pre]:rounded-md">
+    <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">
       <Markdown content={'text' in message.content ? message.content.text : ''} />
     </div>
   </div>
