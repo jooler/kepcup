@@ -1,5 +1,6 @@
 import {
   accessApprovalPayloadSchema,
+  agentToolApprovalPayloadSchema,
   butlerProposalPayloadSchema,
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
@@ -12,8 +13,11 @@ import {
   type ApprovalStatus,
   type Run,
 } from '@kepcup/shared';
+import path from 'node:path';
 import { AppError, newId } from '@kepcup/shared';
-import { expandTilde, type AppPaths } from '../infra/paths.js';
+import { canonicalPath, expandTilde, workspacePathFor, type AppPaths } from '../infra/paths.js';
+import { neutralizeUntrusted } from '../infra/data-boundary.js';
+import { literalCommandSegments, optionValuePath } from './allowlist-match.js';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
@@ -235,13 +239,22 @@ export class ApprovalsService {
     kind: ApprovalKind,
     payload: Record<string, unknown>,
   ): ApprovalOutcome {
+    // Security review round 2: unsandboxed / confirm-mode commands are only
+    // auto-approved when a static analysis can vouch for them (literal words,
+    // no context switch, no path into the data directory) — fail closed.
+    const workspace =
+      identity.botId !== null && identity.conversationId !== null
+        ? workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId)
+        : null;
     const touchesDataDir =
       (kind === 'command' || kind === 'unsandboxed') &&
-      commandTouchesDataDir(
-        String(payload['command'] ?? ''),
-        this.#deps.paths.home,
-        this.#deps.homeDir,
-      );
+      !unattendedCommandVerdict(String(payload['command'] ?? ''), {
+        dataHome: this.#deps.paths.home,
+        homeDir: this.#deps.homeDir,
+        cwd:
+          typeof payload['cwd'] === 'string' && payload['cwd'].length > 0 ? payload['cwd'] : null,
+        exemptDirs: workspace !== null ? [workspace] : [],
+      }).safe;
     // git_remote (P04): the command text and the cwd (the project path) both
     // go through the same floor — a data-directory reference in a remote URL
     // or argument must not auto-approve either.
@@ -263,12 +276,30 @@ export class ApprovalsService {
     // the content lands in the app-owned library (deny the data-dir floor is
     // meaningless here — the target IS the data dir), and the scan result is
     // recorded on the card. Nothing escapes the data directory.
-    const touches = touchesDataDir || gitRemoteTouchesDataDir;
+    // agent_tool (D72): the external agent's own tools run outside the
+    // KepCup sandbox — the same data-directory floor as unsandboxed commands
+    // (command text + resolved locations), except the run's workspace and
+    // skill directories (`exemptDirs`, filled by the permission bridge).
+    const agentToolTouches =
+      kind === 'agent_tool' &&
+      (agentToolUnattendedRefusal(payload) ||
+        agentToolTouchesDataDir(
+          payload,
+          this.#deps.paths.home,
+          this.#deps.homeDir,
+          process.platform,
+          workspace !== null ? [workspace] : [],
+        ));
+    const touches = touchesDataDir || gitRemoteTouchesDataDir || agentToolTouches;
     const status: ApprovalStatus = touches ? 'denied' : 'approved';
     const approval = this.#insert(identity, kind, payload, {
       status,
       autoApproved: true,
-      decision: status === 'approved' && kind === 'access' ? { duration: 'once' } : null,
+      // Auto-approved access is「仅这一次」(design 13): no grant outlives the mode.
+      decision:
+        status === 'approved' && (kind === 'access' || kind === 'agent_tool')
+          ? { duration: 'once' }
+          : null,
     });
     const card = this.#insertCard(approval);
     const withCard = this.#updateRow(approval.id, { messageId: card.id });
@@ -330,6 +361,18 @@ export class ApprovalsService {
       duration !== 'conversation'
     ) {
       throw new AppError('INVALID_INPUT', '缺少授权有效期（once / conversation）');
+    }
+    // agent_tool (D72): commands only ever get「仅这一次」; a conversation-wide
+    // decision is honoured only where the card offered it (path requests).
+    if (
+      approval.kind === 'agent_tool' &&
+      duration === 'conversation' &&
+      !(
+        Array.isArray(approval.payload['durations']) &&
+        (approval.payload['durations'] as unknown[]).includes('conversation')
+      )
+    ) {
+      duration = 'once';
     }
     const now = this.#deps.clock.now();
     const decision: ApprovalDecision | null =
@@ -508,6 +551,22 @@ export class ApprovalsService {
   }
 
   /**
+   * D72 project-side agent config confirmations the user approved for one
+   * bot in one conversation (`agent_tool` subtype `config`), newest first.
+   * Targeted by subtype (not capped by other approvals, review L6);
+   * unattended auto-approvals never count as remembered (review M2).
+   */
+  approvedAgentConfigs(conversationId: string, botId: string): Approval[] {
+    return (
+      this.#db
+        .prepare(
+          "select * from approvals where kind = 'agent_tool' and status = 'approved' and auto_approved = 0 and conversation_id = ? and bot_id = ? and json_extract(payload_json, '$.kind') = 'config' order by created_at desc limit 50",
+        )
+        .all(conversationId, botId) as ApprovalRow[]
+    ).map(rowToApproval);
+  }
+
+  /**
    * P06 dedupe: the still-pending environment approval for one catalog item,
    * or null. A second request for the same item while the first card is
    * undecided must reuse it instead of stacking cards.
@@ -590,6 +649,8 @@ export class ApprovalsService {
         const args = data.argsSummary.length > 0 ? `，参数 ${data.argsSummary}` : '';
         return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${args}）`;
       }
+      case 'agent_tool':
+        return `${botName} ${describeAgentTool(approval.payload)}`;
       default:
         return `${botName} 请求确认（${approval.kind}）`;
     }
@@ -703,6 +764,31 @@ export class ApprovalsService {
           return `[系统] 已取消：${botName} ${label}`;
         case 'failed':
           return `[系统] 处理失败：${label}${failureSuffix(approval)}`;
+      }
+    }
+    if (approval.kind === 'agent_tool') {
+      const label = describeAgentTool(approval.payload, true);
+      const actor = botName.length > 0 ? `${botName} ` : '';
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${actor}${label}`;
+        case 'approved': {
+          const suffix =
+            approval.autoApproved === true
+              ? '（无人值守模式自动批准，仅这一次）'
+              : approval.decision?.duration === 'conversation'
+                ? '（本对话内一直允许）'
+                : '（仅这一次）';
+          return `[系统] 用户允许${actor}${label}${suffix}`;
+        }
+        case 'denied':
+          return approval.autoApproved === true
+            ? `[系统] 已拒绝${actor}${label}（无人值守模式：触及应用数据目录）`
+            : `[系统] 用户拒绝${actor}${label}`;
+        case 'cancelled':
+          return `[系统] 已取消：${actor}${label}`;
+        case 'failed':
+          return `[系统] 处理失败：${actor}${label}${failureSuffix(approval)}`;
       }
     }
     if (approval.kind === 'skill_preset') {
@@ -963,6 +1049,267 @@ function describeButlerProposal(payload: Record<string, unknown>): string {
 }
 
 /**
+ * One-line summary of an agent_tool payload (D72): action + target. With
+ * `untrusted` (conversation context, review L1) the agent-supplied parts —
+ * title, command, paths — are wrapped in `<untrusted>` like tool output.
+ */
+function describeAgentTool(payload: Record<string, unknown>, untrusted = false): string {
+  const parsed = agentToolApprovalPayloadSchema.safeParse(payload);
+  if (!parsed.success) return '外部智能体权限请求';
+  const data = parsed.data;
+  const wrap = (text: string) =>
+    untrusted && text.length > 0 ? `<untrusted>${neutralizeUntrusted(text)}</untrusted>` : text;
+  const agent = data.agentName.length > 0 ? data.agentName : data.agentId;
+  const where = wrap(data.locations.join('、'));
+  const title = wrap(data.title);
+  switch (data.kind) {
+    case 'config':
+      return `在此项目中运行智能体「${agent}」（将加载项目内的智能体配置：${where}）`;
+    case 'execute':
+      return `经智能体「${agent}」执行命令：${data.command !== undefined ? wrap(data.command) : title}`;
+    case 'read':
+      return `经智能体「${agent}」读取 ${where.length > 0 ? where : title}`;
+    case 'write':
+      return `经智能体「${agent}」写入 ${where.length > 0 ? where : title}`;
+    default:
+      return `经智能体「${agent}」使用工具：${title}${where.length > 0 ? `（${where}）` : ''}`;
+  }
+}
+
+/**
+ * Unattended floor for agent_tool (D72; security review H3 / L5): refused when
+ * - a location lies in the data directory outside the exempt directories (the
+ *   run's workspace and skill directories), or covers the data home;
+ * - the command's working directory (`payload.cwd`) lies in the data
+ *   directory outside the exempt directories;
+ * - the command text reaches the data directory: absolute tokens, `~` /
+ *   home-variable forms and tokens **relative to the command's cwd** (so
+ *   `../../../skills` from the workspace counts), `--opt=value` values,
+ *   `~user` forms and (Windows) 8.3 short names fail closed.
+ * Comparisons are case-insensitive on macOS / Windows.
+ */
+export function agentToolTouchesDataDir(
+  payload: Record<string, unknown>,
+  dataHome: string,
+  homeDir: string,
+  platform: string = process.platform,
+  /**
+   * Directories a *command* may touch (round 2: only the run's writable
+   * workspace — skill directories are read-only for path requests and must
+   * not become deletable through a command). Defaults to `exemptDirs`.
+   */
+  commandExemptDirs?: readonly string[],
+): boolean {
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  const fold = platform === 'darwin' || platform === 'win32';
+  const norm = (p: string) => {
+    const posix = path.posix.normalize(p.replaceAll('\\', '/'));
+    return fold ? posix.toLowerCase() : posix;
+  };
+  const exempt = strings(payload['exemptDirs']).map(norm);
+  const home = norm(dataHome);
+  const outsideExempt = (candidate: string) =>
+    isInsidePath(candidate, home) && !exempt.some((dir) => isInsidePath(candidate, dir));
+  for (const location of strings(payload['locations']).map(norm)) {
+    if (isInsidePath(home, location) || outsideExempt(location)) return true;
+  }
+  const command = typeof payload['command'] === 'string' ? payload['command'] : '';
+  if (command.length === 0) return false;
+  const rawCwd =
+    typeof payload['cwd'] === 'string' && payload['cwd'].length > 0 ? payload['cwd'] : null;
+  if (rawCwd !== null && outsideExempt(norm(rawCwd))) return true;
+  // Round 2: fail closed — only a statically analyzable command passes.
+  return !unattendedCommandVerdict(command, {
+    dataHome,
+    homeDir,
+    cwd: rawCwd,
+    exemptDirs: commandExemptDirs ?? strings(payload['exemptDirs']),
+    platform,
+  }).safe;
+}
+
+/** Commands that change the directory or run another command line (round 2). */
+const CONTEXT_COMMANDS = new Set([
+  'cd',
+  'pushd',
+  'popd',
+  'chdir',
+  'env',
+  'eval',
+  'source',
+  '.',
+  'exec',
+  'xargs',
+  'sudo',
+  'su',
+  'doas',
+  'chroot',
+  'bash',
+  'sh',
+  'zsh',
+  'dash',
+  'ksh',
+  'fish',
+  'csh',
+  'tcsh',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'set-location',
+  'push-location',
+  'invoke-expression',
+  'iex',
+  'start-process',
+]);
+/** Commands whose `-C <dir>` switches the working directory. */
+const DASH_C_COMMANDS = new Set([
+  'git',
+  'make',
+  'gmake',
+  'tar',
+  'gtar',
+  'ninja',
+  'pnpm',
+  'cargo',
+  'cmake',
+]);
+const CHDIR_OPTION =
+  /^-{1,2}(chdir|directory|cwd|dir|work-tree|git-dir|prefix|manifest-path|exec-path)(=|$)/i;
+
+export interface UnattendedCommandVerdict {
+  safe: boolean;
+  /** Why it cannot be vouched for (shown on cards / audit). */
+  reason?: string;
+}
+
+/**
+ * Fail-closed static analysis of a command for unattended auto-approval
+ * (security review round 2: text matching cannot follow an arbitrary shell).
+ * Safe only when ALL hold:
+ * - it parses (POSIX; on Windows a plain word list without shell
+ *   metacharacters) into simple commands whose words are plain literals —
+ *   no expansion, glob, brace expansion, `~user`, assignment prefix,
+ *   subshell / compound command;
+ * - nothing changes the directory or runs another command line (`cd`,
+ *   `pushd`, `env`, `eval`, `source`, `exec`, `xargs`, shells, `git -C`,
+ *   `make -C`, `--chdir` / `--directory` …);
+ * - the cwd is known and not in the data directory outside `exemptDirs`; a
+ *   cwd inside the data directory forbids any `..` token;
+ * - every word (and option value) resolved against the cwd and canonicalized
+ *   (realpath of the longest existing prefix — symlinks followed) is neither
+ *   inside the data directory (exempt dirs excepted) nor an ancestor of it.
+ */
+export function unattendedCommandVerdict(
+  command: string,
+  options: {
+    dataHome: string;
+    homeDir: string;
+    cwd: string | null;
+    exemptDirs: readonly string[];
+    platform?: string;
+  },
+): UnattendedCommandVerdict {
+  const platform = options.platform ?? process.platform;
+  const fold = platform === 'darwin' || platform === 'win32';
+  const norm = (p: string) => (fold ? p.toLowerCase() : p);
+  const unsafe = (reason: string): UnattendedCommandVerdict => ({ safe: false, reason });
+  if (options.cwd === null) return unsafe('命令的工作目录未知');
+  const home = norm(canonicalPath(options.dataHome));
+  const exempt = options.exemptDirs.map((dir) => norm(canonicalPath(dir)));
+  const inExempt = (candidate: string) => exempt.some((dir) => isInsidePath(candidate, dir));
+  const cwd = canonicalPath(options.cwd);
+  const cwdNorm = norm(cwd);
+  if (isInsidePath(cwdNorm, home) && !inExempt(cwdNorm))
+    return unsafe('工作目录位于应用数据目录内');
+  const cwdInHome = isInsidePath(cwdNorm, home);
+
+  let segments: string[][];
+  if (platform === 'win32') {
+    if (/[`$%;|&<>(){}*?[\]\n^!]/.test(command)) return unsafe('命令包含无法静态分析的结构');
+    const words = command
+      .trim()
+      .split(/\s+/)
+      .filter((word) => word.length > 0)
+      .map((word) => word.replace(/^"(.*)"$/, '$1'));
+    if (words.length === 0 || words.some((word) => word.includes('"'))) {
+      return unsafe('命令包含无法静态分析的引号');
+    }
+    segments = [words];
+  } else {
+    const parsed = literalCommandSegments(command);
+    if (parsed === null) return unsafe('命令包含展开、通配、子 shell 等无法静态分析的结构');
+    segments = parsed.map((segment) => segment.words);
+  }
+
+  for (const words of segments) {
+    const name = path
+      .basename(words[0] ?? '')
+      .toLowerCase()
+      .replace(/\.exe$/, '');
+    if (CONTEXT_COMMANDS.has(name)) return unsafe(`命令 ${name} 会切换目录或执行其他命令`);
+    for (const word of words.slice(1)) {
+      if (CHDIR_OPTION.test(word) || /^-chdir/i.test(word)) {
+        return unsafe(`参数 ${word} 会切换工作目录`);
+      }
+      if (DASH_C_COMMANDS.has(name) && word.startsWith('-C')) {
+        return unsafe(`参数 ${word} 会切换工作目录`);
+      }
+    }
+    for (const word of words) {
+      const candidates = word.startsWith('-')
+        ? [optionValuePath(word)].filter((value): value is string => value !== null)
+        : [word];
+      for (const raw of candidates) {
+        if (/^~[^/\\]/.test(raw)) return unsafe('参数使用了 ~user 形式');
+        if (cwdInHome && raw.split(/[/\\]/).includes('..')) {
+          return unsafe('工作目录在应用数据目录内时不允许 .. 路径');
+        }
+        const expanded =
+          raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
+            ? path.join(options.homeDir, raw.slice(1))
+            : raw;
+        const resolved = norm(
+          canonicalPath(path.isAbsolute(expanded) ? expanded : path.resolve(cwd, expanded)),
+        );
+        if (inExempt(resolved)) continue;
+        if (isInsidePath(resolved, home) || isInsidePath(home, resolved)) {
+          return unsafe(`参数 ${raw} 指向应用数据目录`);
+        }
+      }
+    }
+  }
+  return { safe: true };
+}
+
+/**
+ * Unattended mode never auto-approves what it cannot judge (review M1): an
+ * unrecognized agent tool request (`kind: 'other'`) or a write without any
+ * location.
+ */
+export function agentToolUnattendedRefusal(payload: Record<string, unknown>): boolean {
+  // Judged on the schema-parsed fields; a payload that does not parse is
+  // refused (fail closed).
+  const parsed = AGENT_TOOL_FLOOR_FIELDS.safeParse(payload);
+  if (!parsed.success) return true;
+  const { kind, locations, targetUncertain } = parsed.data;
+  return (
+    kind === 'other' ||
+    (kind === 'write' && locations.length === 0) ||
+    // Round 2: the agent only asks for writes its sandbox refuses and the
+    // real target may differ from the shown paths (Codex move targets).
+    targetUncertain === true
+  );
+}
+
+/** The agent_tool payload fields the unattended floor reads (shared schema). */
+const AGENT_TOOL_FLOOR_FIELDS = agentToolApprovalPayloadSchema.pick({
+  kind: true,
+  locations: true,
+  targetUncertain: true,
+});
+
+/**
  * `approvals.decide` selection of a butler proposal (D70): indexes into
  * payload.bots, deduplicated and sorted; any index outside the proposal is
  * rejected. Group proposals have nothing to pick.
@@ -1012,19 +1359,73 @@ export function replaceHomeVariables(token: string, homeDir: string): string {
  * `$(cmd)`) cannot be judged from text — the audited auto-decision plus the
  * confirm-mode card remain the visible controls (known limit, see PROGRESS).
  */
-export function commandTouchesDataDir(command: string, dataHome: string, homeDir: string): boolean {
+export function commandTouchesDataDir(
+  command: string,
+  dataHome: string,
+  homeDir: string,
+  /**
+   * D72 agent_tool: data-directory subtrees a token may point into (the run's
+   * workspace / skill directories, normalized POSIX form). Only a token whose
+   * path resolves inside one of them is exempt (`..` normalized first).
+   */
+  exemptDirs: readonly string[] = [],
+  options: {
+    /**
+     * D72 agent_tool: the command's working directory — relative tokens are
+     * resolved against it (without it they are not judged as paths; they
+     * would otherwise resolve against the core process' own cwd).
+     */
+    cwd?: string;
+    /** Case-insensitive comparison on macOS / Windows (review L5). */
+    platform?: string;
+  } = {},
+): boolean {
+  const platform = options.platform ?? process.platform;
+  const fold = platform === 'darwin' || platform === 'win32';
+  const caseFold = (text: string) => (fold ? text.toLowerCase() : text);
   // Expand home variables over the whole text, then normalize Windows
   // separators so `%USERPROFILE%\.kepcup` matches the canonical form.
-  const normalizedDataHome = dataHome.replaceAll('\\', '/');
+  const normalizedDataHome = caseFold(dataHome.replaceAll('\\', '/'));
+  const exempt = exemptDirs.map((dir) => caseFold(dir.replaceAll('\\', '/')));
+  const cwd =
+    options.cwd !== undefined
+      ? caseFold(path.posix.normalize(options.cwd.replaceAll('\\', '/')))
+      : null;
   const expanded = expandTilde(replaceHomeVariables(command, homeDir).replaceAll('\\', '/'));
-  const tokens = expanded.split(/[\s'"|;&()<>()]+/).filter((t) => t.length > 0);
+  const tokens = caseFold(expanded)
+    .split(/[\s'"|;&()<>()]+/)
+    .filter((t) => t.length > 0);
+  const homeTilde = caseFold(expandTilde('~').replaceAll('\\', '/'));
   for (const token of tokens) {
-    if (token.includes(normalizedDataHome)) return true;
-    const tildeExpanded = expandTilde(token);
-    if (isInsidePath(tildeExpanded, normalizedDataHome)) return true;
-    // The token is an ancestor of (or equal to) the data home — e.g. a bare
-    // `~`/`$HOME` followed by relative segments elsewhere in the command.
-    if (isInsidePath(normalizedDataHome, tildeExpanded)) return true;
+    // `~user/...` names another home we cannot resolve: fail closed (L5).
+    if (/^~[^/~\s]/.test(token)) return true;
+    // Windows 8.3 short names (`KEPCUP~1`) inside a path: fail closed (L5).
+    if (platform === 'win32' && /(^|[/:])[^/]{1,8}~\d/.test(token) && token.includes('/')) {
+      return true;
+    }
+    // The token itself and, for `--opt=value`, its value.
+    const eq = token.indexOf('=');
+    const candidates = eq > 0 ? [token, token.slice(eq + 1)] : [token];
+    for (const raw of candidates) {
+      if (raw.length === 0) continue;
+      const tilde = raw === '~' || raw.startsWith('~/') ? homeTilde + raw.slice(1) : raw;
+      let resolved: string | null = null;
+      if (path.posix.isAbsolute(tilde)) resolved = path.posix.normalize(tilde);
+      else if (cwd !== null && !raw.startsWith('-')) resolved = path.posix.resolve(cwd, tilde);
+      if (resolved !== null) {
+        if (exempt.some((dir) => isInsidePath(resolved, dir))) continue;
+        if (isInsidePath(resolved, normalizedDataHome)) return true;
+        // An ancestor of (or equal to) the data home — e.g. a bare `~` /
+        // `$HOME`, or `..` climbing out of the workspace.
+        if (isInsidePath(normalizedDataHome, resolved)) return true;
+      }
+      if (raw.includes(normalizedDataHome)) {
+        // `prefix/home/u/.kepcup/…` glued to something else: judge the path part.
+        const at = raw.indexOf(normalizedDataHome);
+        const part = path.posix.normalize(raw.slice(at));
+        if (!exempt.some((dir) => isInsidePath(part, dir))) return true;
+      }
+    }
   }
   return false;
 }

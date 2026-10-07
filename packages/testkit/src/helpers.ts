@@ -1,8 +1,8 @@
 import { rm } from 'node:fs/promises';
-import type { Bot, Conversation, Draft, Message, Run } from '@kepcup/shared';
+import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Draft, type Message, type Run } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 import { startMockLlm, type MockLlmServer } from './mock-llm.js';
-import { createTestCore, createTestHome } from './fixtures.js';
+import { createTestCore, createTestHome, type CreateTestCoreOptions } from './fixtures.js';
 import type { Keystore } from '@kepcup/core';
 import type { TimerScheduler } from '@kepcup/core';
 
@@ -42,6 +42,10 @@ export async function createTestStack(
     distroInstaller?: unknown;
     /** P12 test hook: platform override for the environment manager. */
     platform?: string;
+    /** D72 test hooks (see CreateTestCoreOptions). */
+    agentCatalog?: CreateTestCoreOptions['agentCatalog'];
+    agentLaunch?: CreateTestCoreOptions['agentLaunch'];
+    agentSpawn?: CreateTestCoreOptions['agentSpawn'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -59,6 +63,9 @@ export async function createTestStack(
     ...(options.enhancedSandbox !== undefined ? { enhancedSandbox: options.enhancedSandbox } : {}),
     ...(options.distroInstaller !== undefined ? { distroInstaller: options.distroInstaller } : {}),
     ...(options.platform !== undefined ? { platform: options.platform } : {}),
+    ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog } : {}),
+    ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
+    ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn } : {}),
   });
   return {
     core,
@@ -98,6 +105,7 @@ export function botProfile(overrides: { name: string } & Partial<Bot['profile']>
       network_policy: overrides.runtime?.network_policy ?? 'open',
       network_allowlist: overrides.runtime?.network_allowlist ?? [],
       mcp_server_ids: overrides.runtime?.mcp_server_ids ?? [],
+      agent: { ...BUILTIN_AGENT_RUNTIME, ...overrides.runtime?.agent },
     },
     // P10 guardrails: default profile keeps proactive on; tests override.
     behavior:

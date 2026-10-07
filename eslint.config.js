@@ -41,6 +41,8 @@ export default tseslint.config(
         // Bundler-injected build-time constant (see
         // apps/desktop/src/main/build-constants.d.ts).
         __KEPCUP_TEST_HOOKS__: 'readonly',
+        // D72 agent catalog release gates (apps/desktop/scripts/dist.mjs).
+        __KEPCUP_AGENT_RELEASE_GATES__: 'readonly',
       },
     },
     rules: {

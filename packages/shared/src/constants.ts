@@ -343,3 +343,27 @@ export const UPDATE_CANCEL_SETTLE_POLL_MS = 500;
 
 /** Backup copies of main.db kept before data migrations (P13 任务 5). */
 export const MAIN_DB_BACKUPS_TO_KEEP = 3;
+
+// --- External agents (D72, docs/design/28-external-agents-acp.md) --------------
+
+/**
+ * Upper bound of one external-agent prompt turn (session/prompt). On expiry the
+ * engine sends session/cancel and settles the run failed (TIMEOUT).
+ */
+export const AGENT_RUN_TIMEOUT_MS = 60 * 60_000;
+/**
+ * An agent process with no active session exits after this long. Kept ≥
+ * CONTINUATION_WINDOW_MS so a session reused within the continuation window
+ * (P5) still finds its process alive.
+ */
+export const AGENT_IDLE_SHUTDOWN_MS = 35 * 60_000;
+/** Spawn + ACP `initialize` must complete within this long. */
+export const AGENT_INIT_TIMEOUT_MS = 60_000;
+/** After session/cancel, how long to wait for the cancelled prompt response. */
+export const AGENT_CANCEL_GRACE_MS = 10_000;
+/** Scheduler concurrency for `agent:{id}` when providerConcurrency has no override (P5). */
+export const AGENT_DEFAULT_CONCURRENCY = 2;
+/** After SIGTERM to an agent's process group, SIGKILL follows after this long. */
+export const AGENT_KILL_GRACE_MS = 5_000;
+/** Cap of a partial (newline-less) agent stderr line kept between chunks. */
+export const AGENT_STDERR_TAIL_MAX_CHARS = 4_096;

@@ -19,6 +19,11 @@ export interface ProjectContextInput {
   budget: number;
   /** libgit2 ignore verdict (shadow repo); null = no ignore filtering. */
   isIgnored: ((relativePath: string) => boolean) | null;
+  /**
+   * 项目约定文件中由外部智能体自己读取的（D72 `provider.agentSideConfigFiles`，
+   * 如 Codex 的 `AGENTS.md`）：不再重复注入；其余候选照常注入。
+   */
+  skipGuideFiles?: readonly string[];
 }
 
 export interface ProjectContextSection {
@@ -149,7 +154,12 @@ export async function buildProjectSection(input: ProjectContextInput): Promise<P
     );
   }
 
-  const guideName = ['AGENTS.md', 'CLAUDE.md'].find((name) => existsSync(path.join(projectPath, name)));
+  // Agents that read some guide themselves skip it (D72); the next candidate
+  // is still injected — intended: e.g. Codex reads AGENTS.md but not
+  // CLAUDE.md, so a project with both still shows Codex its CLAUDE.md here.
+  const guideName = ['AGENTS.md', 'CLAUDE.md']
+    .filter((name) => !(input.skipGuideFiles ?? []).includes(name))
+    .find((name) => existsSync(path.join(projectPath, name)));
   if (guideName !== undefined) {
     try {
       const raw = readFileSync(path.join(projectPath, guideName), 'utf8');

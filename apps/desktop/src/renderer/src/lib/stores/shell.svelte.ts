@@ -8,6 +8,7 @@ export type SettingsSectionId =
   | 'models'
   | 'search'
   | 'mcp'
+  | 'agents'
   | 'profile'
   | 'contacts'
   | 'unattended'

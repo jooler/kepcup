@@ -6,3 +6,5 @@ export * from './web-server.js';
 export * from './browser-fake.js';
 export * from './git-fixture.js';
 export * from './clock.js';
+export * from './fake-acp-agent.js';
+export * from './fake-acp-launch.js';

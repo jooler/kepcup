@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import nodePath from 'node:path';
 import {
   AppError,
   BOT_SETUP_PATH_QUESTION_EVENT,
@@ -13,6 +15,18 @@ import {
   SUBAGENT_FOLLOWUP_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
   TRIAGE_RECENT_MESSAGES,
+  BUILTIN_ENGINE,
+  agentEngineKey,
+  agentModelRef,
+  agentSetupReasonForError,
+  agentSetupReasonOf,
+  agentToolApprovalPayloadSchema,
+  findAgentEntry,
+  resolveCapabilities,
+  type AgentCatalogEntry,
+  type AgentToolApprovalPayload,
+  type AgentPermissionTier,
+  type AgentView,
   type Bot,
   type Conversation,
   type Delegation,
@@ -23,6 +37,18 @@ import {
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import type { Clock } from '../infra/clock.js';
+import { agentRunGate, agentSetupMessage } from '../agent/external/catalog.js';
+import {
+  buildExternalAgentTools,
+  hostToolNamer,
+  MAX_AGENT_TOOL_NAME,
+  newHostServerName,
+} from '../agent/external/capabilities.js';
+import { providerFor } from '../agent/external/providers/index.js';
+import {
+  effectiveAgentPermission,
+  hashAgentConfigFiles,
+} from '../agent/external/permission-bridge.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { persistEngineSteps } from '../agent/step-persistence.js';
 import {
@@ -31,7 +57,11 @@ import {
   parseQuietHours,
   quietHoursEndAt,
 } from '../schedule/guard.js';
-import { buildSystemPrompt } from '../agent/context/system-prompt.js';
+import {
+  buildAgentRunContext,
+  buildAgentSessionPrompt,
+  buildSystemPrompt,
+} from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
   buildNewMessagesInjection,
@@ -50,7 +80,7 @@ import {
   type ContinuationPlan,
 } from '../agent/context/continuation.js';
 import { completeStructured } from '../agent/structured.js';
-import type { AgentEngine, RunHandle } from '../agent/types.js';
+import type { AgentEngine, RunHandle, RunIdentity, ToolDefinition } from '../agent/types.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
 import { Mailbox, MailboxRegistry, type TriggerBatch } from '../scheduler/mailbox.js';
 import type { BotsService } from '../domain/bots.js';
@@ -113,11 +143,7 @@ import {
   butlerProfileTemplate,
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
-import {
-  DELEGATION_RESULT_CARD,
-  DELEGATION_SENT_CARD,
-  DelegationHost,
-} from './delegation.js';
+import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { ChainsService } from './chains.js';
 import { GroupTurnCoordinator } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
@@ -145,6 +171,22 @@ export interface OrchestratorEnvironmentFacade {
 
 export interface OrchestratorDeps {
   engine: AgentEngine;
+  /**
+   * D72 外部智能体引擎（`bot.profile.runtime.agent.id` 非空的 Bot 由它驱动）；
+   * 缺省（精简测试装配）时这类 Bot 的 run 以失败结算。
+   */
+  externalEngine?: AgentEngine;
+  /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
+  agentCatalog?: () => readonly AgentCatalogEntry[];
+  /**
+   * D72 P4 本机 Agent 状态（AgentsService）：run 门禁按安装 / 登录状态给出
+   * 结构化 setup（`{kind:'agent'}`），run 因未登录失败时回写登录态。缺省
+   * （精简装配）时门禁只看启用开关。
+   */
+  agents?: {
+    view(agentId: string): AgentView;
+    noteRunError(agentId: string, code: string): void;
+  };
   scheduler: Scheduler;
   db: SqliteDatabase;
   paths: AppPaths;
@@ -1160,13 +1202,9 @@ export class Orchestrator {
         : []),
       '请决定是否向用户转述、继续追问或开启新任务；不要把结论重复委派给子代理。',
     ].join('\n');
-    this.deliverEventToBot(
-      followUp.botId,
-      followUp.conversationId,
-      SUBAGENT_FOLLOWUP_EVENT,
-      text,
-      { internal: true },
-    );
+    this.deliverEventToBot(followUp.botId, followUp.conversationId, SUBAGENT_FOLLOWUP_EVENT, text, {
+      internal: true,
+    });
   }
 
   /**
@@ -1514,7 +1552,11 @@ export class Orchestrator {
   }
 
   #startResponseRun(batch: TriggerBatch): string {
+    const agentId = this.#agentIdOf(this.#deps.bots.get(batch.botId));
     const run = this.#deps.runs.create({
+      // D72: recorded up front so every settle path (cancelled before start,
+      // inactive bot, failed gate) carries the engine the run was meant for.
+      engine: agentId.length > 0 ? agentEngineKey(agentId) : BUILTIN_ENGINE,
       botId: batch.botId,
       conversationId: batch.conversationId,
       loopType: 'response',
@@ -1545,14 +1587,261 @@ export class Orchestrator {
     return `${botId}:${conversationId}`;
   }
 
+  /**
+   * Main model ref of a bot. External-agent bots (D72) get the pseudo ref
+   * `agent:{id}/{model|default}` so #providerForRef and the scheduler's
+   * concurrency key land on `agent:{id}`.
+   */
   #modelRefForBot(botId: string): string {
     try {
       const bot = this.#deps.bots.get(botId);
+      const agent = bot?.profile.runtime.agent;
+      if (agent !== undefined && this.#agentIdOf(bot).length > 0) {
+        return agentModelRef(agent.id, agent.model);
+      }
       const settings = this.#deps.settings.get();
       return bot?.profile.runtime.model || settings.defaultMainModel;
     } catch {
       return '';
     }
+  }
+
+  /**
+   * The external agent driving a bot's response runs ('' = built-in engine).
+   * The conversational setup interview (incl. the butler's) needs the
+   * interview tools (ask_question / save_profile / finish_setup), which are
+   * never injected into agents: it always runs on the built-in engine — a
+   * user without a built-in model gets the structured main-model setup card.
+   */
+  #agentIdOf(bot: Bot | null | undefined): string {
+    if (bot === null || bot === undefined || bot.setupState === 'interviewing') return '';
+    return bot.profile.runtime.agent.id;
+  }
+
+  /** The engine driving a bot's response runs (D72): pi unless an agent is set. */
+  #engineFor(bot: Bot): AgentEngine | null {
+    if (this.#agentIdOf(bot).length === 0) return this.#deps.engine;
+    return this.#deps.externalEngine ?? null;
+  }
+
+  /**
+   * D72 外部 Agent run 的准备（design 28 §4–§5）：按能力包过滤宿主工具，生成
+   * 会话级提示词（ACP 版平台规则 + `<tool_policy>` + 身份 / 人设 / 对话信息，
+   * 工具名经 Provider 映射）与 run 级动态段（只读上下文与能力包解耦，照常
+   * 注入；`<project>` 跳过 Agent 自己会读的约定文件）。
+   */
+  async #agentRunSetup(input: {
+    bot: Bot;
+    conversation: Conversation;
+    agentId: string;
+    identity: RunIdentity & { loopType: 'response' };
+    responseTools: ToolDefinition[];
+    workspacePath: string;
+    hasProject: boolean;
+    memorySections: { userProfile?: string; myState?: string; relevantMemories?: string };
+    wikiTopics: string;
+    skills: string;
+    recommendedSkills: string;
+    conversationText: string;
+  }): Promise<{
+    tools: ToolDefinition[];
+    capabilities: string[];
+    hostServerName: string;
+    loadUserConfig: boolean;
+    permission: AgentPermissionTier;
+    agentSideConfigFiles: readonly string[];
+    agentName: string;
+    promptParts: { session: string; run: string; conversation: string };
+  }> {
+    const { bot, conversation, agentId } = input;
+    const entry = findAgentEntry(this.#deps.agentCatalog?.() ?? [], agentId);
+    if (entry === null) throw new AppError('AGENT_UNAVAILABLE', `智能体「${agentId}」不在目录中`);
+    const provider = providerFor(entry);
+    // D72 P3：Bot 的档位（Windows 下无可依赖沙箱时 workspace → ask）。
+    const permission = effectiveAgentPermission(
+      bot.profile.runtime.agent.permission,
+      provider,
+      process.platform,
+    );
+    const capabilities = resolveCapabilities(bot.profile.runtime.agent.capabilities, entry, {
+      isButler: bot.systemRole === 'butler',
+    });
+    // Per-session bridge server name (no user MCP server can pose as it);
+    // the prompt's tool names are spelled with it.
+    const hostServerName = newHostServerName();
+    const toolName = hostToolNamer(provider, hostServerName);
+    const tools = buildExternalAgentTools({
+      responseTools: input.responseTools,
+      capabilities,
+      maxNameLength: MAX_AGENT_TOOL_NAME - toolName('').length,
+    });
+    const access = await this.#accessPromptInfo(input.identity);
+    const project = input.hasProject
+      ? await this.#deps.projects.promptSection(conversation.id, {
+          skipGuideFiles: provider.agentSideConfigFiles,
+        })
+      : null;
+    return {
+      tools,
+      capabilities,
+      hostServerName,
+      loadUserConfig: this.#deps.settings.get().agents[agentId]?.loadUserConfig === true,
+      permission,
+      agentSideConfigFiles: provider.agentSideConfigFiles,
+      agentName: entry.name,
+      promptParts: {
+        session: buildAgentSessionPrompt({
+          bot,
+          conversation,
+          ...(conversation.type === 'group' ? { members: this.#memberCards(conversation.id) } : {}),
+          tools: {
+            toolNames: tools.map((tool) => tool.name),
+            nativeCapabilities: entry.nativeCapabilities,
+            toolName,
+          },
+        }),
+        run: buildAgentRunContext({
+          timeZone: this.#deps.timeZone,
+          now: new Date(this.#deps.clock.now()),
+          permission,
+          ...(project !== null ? { project } : {}),
+          workspace: {
+            path: input.workspacePath,
+            entries: this.#deps.gateway.workspaceTopLevel(input.workspacePath),
+            toolchains: this.#toolchainPromptLines(),
+          },
+          grants: access.grants,
+          ...input.memorySections,
+          ...(input.wikiTopics.length > 0 ? { wikiTopics: input.wikiTopics } : {}),
+          ...(input.skills.length > 0 ? { skills: input.skills } : {}),
+          ...(input.recommendedSkills.length > 0
+            ? { recommendedSkills: input.recommendedSkills }
+            : {}),
+        }),
+        conversation: input.conversationText,
+      },
+    };
+  }
+
+  /**
+   * D72 P3 project 闸门（design 28 §6）：
+   * 1. Agent 侧配置确认——project 根下有 Provider 声明的、Agent 自己会读且
+   *    无法关闭的配置（AGENTS.md、.codex/ …）时，首次在此 project 运行前弹
+   *    `agent_tool`（子类型 config）卡；批准记住到对话（同 Bot、同 Agent、
+   *    同 project，文件集合未增加即不再问）；
+   * 2. 显式租约——档位可写时 run 开工前取 project 写入租约（排队时 run 进
+   *    waiting_lease），整 run 持有，结算照常 releaseRun（前后快照 → 改动卡 /
+   *    回退可用）。
+   * 返回 'cancelled' 时 run 已被 cancelRun 结算。
+   */
+  async #agentProjectGate(input: {
+    runId: string;
+    identity: RunIdentity;
+    botId: string;
+    conversationId: string;
+    agentId: string;
+    agentName: string;
+    projectPath: string;
+    configFiles: readonly string[];
+    writable: boolean;
+  }): Promise<'ok' | 'denied' | 'cancelled'> {
+    const found = input.configFiles.filter((name) =>
+      existsSync(nodePath.join(input.projectPath, name.replace(/[\\/]+$/, ''))),
+    );
+    if (found.length > 0) {
+      // Remembered only for the same content: any change to the files (also
+      // by the agent itself) asks again (review M2).
+      const configHash = hashAgentConfigFiles(input.projectPath, found);
+      const remembered = this.#deps.approvals
+        .approvedAgentConfigs(input.conversationId, input.botId)
+        .some((approval) => {
+          const payload = agentToolApprovalPayloadSchema.safeParse(approval.payload);
+          return (
+            payload.success &&
+            payload.data.agentId === input.agentId &&
+            payload.data.projectPath === input.projectPath &&
+            payload.data.configHash === configHash
+          );
+        });
+      if (!remembered) {
+        const payload: AgentToolApprovalPayload = {
+          agentId: input.agentId,
+          agentName: input.agentName,
+          title: '加载项目内的智能体配置',
+          kind: 'config',
+          toolKind: '',
+          locations: found,
+          cwd: input.projectPath,
+          options: [],
+          durations: ['conversation'],
+          reason: '这些文件由智能体自己读取（可能包含指令、钩子或权限规则），KepCup 无法关闭',
+          sensitive: false,
+          exemptDirs: [],
+          projectPath: input.projectPath,
+          configHash,
+        };
+        const outcome = await this.#deps.approvals.request(input.identity, 'agent_tool', payload);
+        if (this.#cancelledBeforeStart.delete(input.runId)) return 'cancelled';
+        if (outcome.decision === 'cancelled') return 'cancelled';
+        if (outcome.decision !== 'approved') return 'denied';
+      }
+    }
+    if (!input.writable) return 'ok';
+    try {
+      await this.#deps.projects.ensureWriteLease(input.identity, input.projectPath, {
+        reason: '外部智能体在 project 内执行（整 run 持有写入租约）',
+        // No other lease target may replace it during the run (review M6).
+        pin: true,
+      });
+    } catch (error) {
+      if (this.#cancelledBeforeStart.delete(input.runId)) return 'cancelled';
+      throw error;
+    }
+    if (this.#cancelledBeforeStart.delete(input.runId)) {
+      await this.#deps.projects.releaseRun(input.runId).catch(() => {});
+      return 'cancelled';
+    }
+    return 'ok';
+  }
+
+  /** Whether a run already did visible work (model / tool steps or messages). */
+  #runProducedWork(runId: string): boolean {
+    if ((this.#deps.runs.get(runId)?.outputMessageIds.length ?? 0) > 0) return true;
+    return this.#deps.runs
+      .stepsFor(runId)
+      .some(
+        (step) =>
+          step.type === 'assistant' || step.type === 'tool_call' || step.type === 'tool_result',
+      );
+  }
+
+  /** AgentsService 的状态视图（未装配 → undefined，门禁只看启用开关）。 */
+  #agentView(): ((agentId: string) => AgentView | null) | undefined {
+    const agents = this.#deps.agents;
+    if (agents === undefined) return undefined;
+    return (agentId) => {
+      try {
+        return agents.view(agentId);
+      } catch {
+        return null;
+      }
+    };
+  }
+
+  /**
+   * 外部 Agent run 失败的错误码 → 结构化 setup（null = 普通失败）。先把错误
+   * 回写给 AgentsService（未登录 → 状态 needs_auth，设置卡据此展示登录）。
+   */
+  #agentFailureSetup(agentId: string, code: string | undefined): SetupRequirement | null {
+    if (code === undefined) return null;
+    this.#deps.agents?.noteRunError(agentId, code);
+    const view = this.#agentView();
+    const stateReason =
+      code === 'AGENT_UNAVAILABLE' && view !== undefined
+        ? agentSetupReasonOf(view(agentId), true)
+        : null;
+    const reason = agentSetupReasonForError(code, stateReason);
+    return reason === null ? null : { kind: 'agent', agentId, reason };
   }
 
   #providerForRef(modelRef: string): string {
@@ -1580,7 +1869,32 @@ export class Orchestrator {
       }
 
       const modelRef = this.#modelRefForBot(batch.botId);
-      if (modelRef.length === 0) {
+      // 模型门禁（D58）按 Bot 的引擎判定：内置 Bot 看内置模型；外部 Agent
+      // Bot 看实验开关 + 目录 + 启用 / 安装 / 登录状态（D72 P4：结构化
+      // setup `{kind:'agent'}` → 对话内 Agent 设置卡，完成后自动重试）。
+      const agentId = this.#agentIdOf(bot);
+      const engine = this.#engineFor(bot);
+      if (agentId.length > 0) {
+        if (engine === null) {
+          this.#settleRun(runId, 'failed', '外部智能体引擎不可用');
+          return;
+        }
+        const gate = agentRunGate(
+          this.#deps.settings.get(),
+          this.#deps.agentCatalog?.() ?? [],
+          agentId,
+          this.#agentView(),
+        );
+        if (gate !== null) {
+          this.#settleRun(
+            runId,
+            'failed',
+            gate.message,
+            gate.reason !== null ? { kind: 'agent', agentId, reason: gate.reason } : undefined,
+          );
+          return;
+        }
+      } else if (modelRef.length === 0) {
         this.#settleRun(
           runId,
           'failed',
@@ -1596,6 +1910,7 @@ export class Orchestrator {
         status: 'running',
         provider: this.#providerForRef(modelRef),
         model: modelRef,
+        engine: agentId.length > 0 ? agentEngineKey(agentId) : BUILTIN_ENGINE,
       });
       this.#deps.publish('run.status', { run: runs.getOrThrow(runId) });
 
@@ -1806,9 +2121,190 @@ export class Orchestrator {
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
       const wikiTopicsSection = this.#deps.wiki?.topicsSection(batch.botId) ?? '';
       const triggerImages = this.#triggerImages(batch.messages);
-      const handle = this.#deps.engine.startRun({
+      const responseTools = buildResponseTools({
+        identity,
+        deps: {
+          ...toolDeps,
+          environment: this.#environmentFacade(),
+          onMentionBots: (mentionIds, message) =>
+            this.#chains.mention(identity, mentionIds, message),
+          // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
+          butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+          // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主
+          // 执行时按 run_id 反查，这里只是少给模型一个无用工具）。
+          ...(batch.reason === 'delegation' ? {} : { delegation: this.#delegationHost }),
+          // 对话式新建（UI 改版）：访谈中的 Bot 额外拿到 save_profile /
+          // finish_setup；写入直接生效（本次创建流程的明确目的）并广播
+          // bot.updated 让 UI 实时反映新名字与 profile。
+          ...(bot.setupState === 'interviewing'
+            ? {
+                setup: {
+                  saveProfile: (
+                    setupBotId: string,
+                    changes: Array<{ field: string; value: string }>,
+                  ) => {
+                    try {
+                      const source = this.#deps.bots.get(setupBotId);
+                      if (source === null) return { ok: false, message: 'Bot 不存在' };
+                      const updated = this.#deps.bots.updateDuringSetup(
+                        setupBotId,
+                        applyProfileChanges(source.profile, changes),
+                      );
+                      this.#deps.publish('bot.updated', { bot: updated });
+                      return {
+                        ok: true,
+                        message: `已保存 ${changes.length} 个字段到你的 profile。`,
+                      };
+                    } catch (error) {
+                      return {
+                        ok: false,
+                        message: error instanceof Error ? error.message : String(error),
+                      };
+                    }
+                  },
+                  finishSetup: (setupBotId: string) => {
+                    try {
+                      const updated = this.#deps.bots.finishSetup(setupBotId);
+                      this.#deps.publish('bot.updated', { bot: updated });
+                      return { ok: true, message: '初始化完成，你已进入正常运行状态。' };
+                    } catch (error) {
+                      return {
+                        ok: false,
+                        message: error instanceof Error ? error.message : String(error),
+                      };
+                    }
+                  },
+                  askQuestion: (
+                    setupBotId: string,
+                    askInput: {
+                      acknowledgement?: string;
+                      question: string;
+                      options: string[];
+                    },
+                  ) => {
+                    try {
+                      const asked =
+                        this.#deps.messages.countSystemEvents(
+                          batch.conversationId,
+                          SETUP_QUESTION_EVENT,
+                        ) + 1;
+                      const variant = bot.systemRole === 'butler' ? 'butler' : 'bot';
+                      if (asked > SETUP_MAX_QUESTIONS) return questionCapReached(variant);
+                      if (askInput.acknowledgement !== undefined) {
+                        this.#appendBotTextMessage(
+                          setupBotId,
+                          batch.conversationId,
+                          askInput.acknowledgement,
+                        );
+                      }
+                      this.#appendSystemMessage(
+                        batch.conversationId,
+                        SETUP_QUESTION_EVENT,
+                        askInput.question,
+                        { options: askInput.options },
+                      );
+                      return {
+                        ok: true,
+                        message:
+                          asked >= SETUP_MAX_QUESTIONS
+                            ? variant === 'butler'
+                              ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_team 提出组队建议，不要再提问。`
+                              : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
+                            : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问）。`,
+                      };
+                    } catch (error) {
+                      return {
+                        ok: false,
+                        message: error instanceof Error ? error.message : String(error),
+                      };
+                    }
+                  },
+                },
+              }
+            : {}),
+          ...(this.#deps.wiki !== undefined
+            ? {
+                wiki: {
+                  search: (botId, query, limit) => this.#deps.wiki!.search(botId, query, limit),
+                  readPage: (botId, pagePath) => this.#deps.wiki!.readPage(botId, pagePath),
+                  enqueueIngest: (input) => this.#deps.wiki!.enqueueIngest(input),
+                },
+              }
+            : {}),
+        },
+      });
+      // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
+      // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
+      // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
+      const agentRun =
+        agentId.length > 0
+          ? await this.#agentRunSetup({
+              bot,
+              conversation: conv,
+              agentId,
+              identity,
+              responseTools,
+              workspacePath,
+              hasProject: project !== null && project.status === 'available',
+              memorySections,
+              wikiTopics: wikiTopicsSection,
+              skills: skillsSection,
+              recommendedSkills: recommendedSkillsSection,
+              conversationText: `${contextAndContinuation}\n\n${triggerContent}`,
+            })
+          : null;
+      // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
+      // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
+      // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
+      if (agentRun !== null && project !== null && project.status === 'available') {
+        const gate = await this.#agentProjectGate({
+          runId,
+          identity,
+          botId: batch.botId,
+          conversationId: batch.conversationId,
+          agentId,
+          agentName: agentRun.agentName,
+          projectPath: project.path,
+          configFiles: agentRun.agentSideConfigFiles,
+          writable: agentRun.permission !== 'read_only',
+        });
+        if (gate !== 'ok') {
+          // Cancelled while waiting: cancelRun already settled the run.
+          if (gate === 'denied') {
+            await this.#deps.projects.releaseRun(runId).catch(() => {});
+            this.#settleRun(
+              runId,
+              'failed',
+              '用户未确认在此项目中加载智能体自身的配置文件，本次未执行',
+            );
+          }
+          this.#fsState.release(runId);
+          return;
+        }
+      }
+      const handle = engine!.startRun({
         identity,
         model: modelRef,
+        // D72：外部 Agent 的会话参数（PiEngine 忽略）。
+        ...(agentRun !== null
+          ? {
+              workdir:
+                project !== null && project.status === 'available' ? project.path : workspacePath,
+              promptParts: agentRun.promptParts,
+              external: {
+                agentId,
+                permission: agentRun.permission,
+                capabilities: agentRun.capabilities,
+                sessionKey: `${batch.botId}:${batch.conversationId}:${agentId}`,
+                effort: bot.profile.runtime.agent.effort,
+                loadUserConfig: agentRun.loadUserConfig,
+                hostServerName: agentRun.hostServerName,
+                onSession: (agentSessionId: string) => {
+                  runs.update(runId, { agentSessionId });
+                },
+              },
+            }
+          : {}),
         buildSystemPrompt: async () =>
           buildSystemPrompt({
             bot,
@@ -1840,118 +2336,8 @@ export class Orchestrator {
             ...(triggerImages.length > 0 ? { images: triggerImages } : {}),
           },
         ],
-        tools: buildResponseTools({
-          identity,
-          deps: {
-            ...toolDeps,
-            environment: this.#environmentFacade(),
-            onMentionBots: (mentionIds, message) =>
-              this.#chains.mention(identity, mentionIds, message),
-            // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
-            butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
-            // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主
-            // 执行时按 run_id 反查，这里只是少给模型一个无用工具）。
-            ...(batch.reason === 'delegation' ? {} : { delegation: this.#delegationHost }),
-            // 对话式新建（UI 改版）：访谈中的 Bot 额外拿到 save_profile /
-            // finish_setup；写入直接生效（本次创建流程的明确目的）并广播
-            // bot.updated 让 UI 实时反映新名字与 profile。
-            ...(bot.setupState === 'interviewing'
-              ? {
-                  setup: {
-                    saveProfile: (
-                      setupBotId: string,
-                      changes: Array<{ field: string; value: string }>,
-                    ) => {
-                      try {
-                        const source = this.#deps.bots.get(setupBotId);
-                        if (source === null) return { ok: false, message: 'Bot 不存在' };
-                        const updated = this.#deps.bots.updateDuringSetup(
-                          setupBotId,
-                          applyProfileChanges(source.profile, changes),
-                        );
-                        this.#deps.publish('bot.updated', { bot: updated });
-                        return {
-                          ok: true,
-                          message: `已保存 ${changes.length} 个字段到你的 profile。`,
-                        };
-                      } catch (error) {
-                        return {
-                          ok: false,
-                          message: error instanceof Error ? error.message : String(error),
-                        };
-                      }
-                    },
-                    finishSetup: (setupBotId: string) => {
-                      try {
-                        const updated = this.#deps.bots.finishSetup(setupBotId);
-                        this.#deps.publish('bot.updated', { bot: updated });
-                        return { ok: true, message: '初始化完成，你已进入正常运行状态。' };
-                      } catch (error) {
-                        return {
-                          ok: false,
-                          message: error instanceof Error ? error.message : String(error),
-                        };
-                      }
-                    },
-                    askQuestion: (
-                      setupBotId: string,
-                      askInput: {
-                        acknowledgement?: string;
-                        question: string;
-                        options: string[];
-                      },
-                    ) => {
-                      try {
-                        const asked =
-                          this.#deps.messages.countSystemEvents(
-                            batch.conversationId,
-                            SETUP_QUESTION_EVENT,
-                          ) + 1;
-                        const variant = bot.systemRole === 'butler' ? 'butler' : 'bot';
-                        if (asked > SETUP_MAX_QUESTIONS) return questionCapReached(variant);
-                        if (askInput.acknowledgement !== undefined) {
-                          this.#appendBotTextMessage(
-                            setupBotId,
-                            batch.conversationId,
-                            askInput.acknowledgement,
-                          );
-                        }
-                        this.#appendSystemMessage(
-                          batch.conversationId,
-                          SETUP_QUESTION_EVENT,
-                          askInput.question,
-                          { options: askInput.options },
-                        );
-                        return {
-                          ok: true,
-                          message:
-                            asked >= SETUP_MAX_QUESTIONS
-                              ? variant === 'butler'
-                                ? `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请直接调用 propose_team 提出组队建议，不要再提问。`
-                                : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问，已达上限）。这是最后一个问题：收到回答后请用 save_profile 保存全部信息并调用 finish_setup 结束访谈，不要再提问。`
-                              : `问题已发出（第 ${asked}/${SETUP_MAX_QUESTIONS} 问）。`,
-                        };
-                      } catch (error) {
-                        return {
-                          ok: false,
-                          message: error instanceof Error ? error.message : String(error),
-                        };
-                      }
-                    },
-                  },
-                }
-              : {}),
-            ...(this.#deps.wiki !== undefined
-              ? {
-                  wiki: {
-                    search: (botId, query, limit) => this.#deps.wiki!.search(botId, query, limit),
-                    readPage: (botId, pagePath) => this.#deps.wiki!.readPage(botId, pagePath),
-                    enqueueIngest: (input) => this.#deps.wiki!.enqueueIngest(input),
-                  },
-                }
-              : {}),
-          },
-        }),
+        // D72：外部 Agent 的宿主工具已按能力包过滤，经宿主 MCP 桥注入。
+        tools: agentRun?.tools ?? responseTools,
         limits: { maxTurns: RUN_MAX_TURNS },
       });
 
@@ -1962,11 +2348,19 @@ export class Orchestrator {
         cutoffSeq: Math.max(-1, ...batch.messages.map((m) => m.seq)),
       });
 
-      // Deliver batches that arrived while the run was registering.
+      // Deliver batches that arrived while the run was registering. A batch
+      // the loop cannot take (external agents without steering, D72) goes back
+      // to the buffer: mailbox release re-delivers it as a new run.
       const buffered = this.#pendingSteers.get(mailboxKey);
       if (buffered) {
         this.#pendingSteers.delete(mailboxKey);
-        for (const batch of buffered) handle.steer(this.#renderBatchText(batch));
+        const refused = buffered.filter((pending) => !handle.steer(this.#renderBatchText(pending)));
+        if (refused.length > 0) {
+          this.#pendingSteers.set(mailboxKey, [
+            ...refused,
+            ...(this.#pendingSteers.get(mailboxKey) ?? []),
+          ]);
+        }
       }
 
       const unsubscribe = this.#persistSteps(runId, batch.conversationId, handle);
@@ -2044,6 +2438,20 @@ export class Orchestrator {
           setupRequirementErrorText(setupHit.requirement),
           setupHit.requirement,
         );
+        this.#maybeEnqueueSummary(batch.conversationId);
+        return;
+      }
+
+      // D72 P4：外部 Agent 因未登录 / 未安装 / 版本不兼容 / 桥未启动失败 →
+      // 结构化 setup（对话内 Agent 设置卡），不走普通失败横幅。只在 run 还
+      // 没做任何事（无模型 / 工具步骤、无已发消息）时挂 setup：设置卡完成后
+      // 会整段重试原 run，中途失败的重放会重复中间说明与文件改动。
+      const agentSetup =
+        agentId.length > 0 && outcome.status === 'failed' && !this.#runProducedWork(runId)
+          ? this.#agentFailureSetup(agentId, outcome.error?.code)
+          : null;
+      if (agentSetup !== null) {
+        this.#settleRun(runId, 'failed', outcome.error?.message ?? null, agentSetup);
         this.#maybeEnqueueSummary(batch.conversationId);
         return;
       }
@@ -2179,7 +2587,11 @@ export class Orchestrator {
     input: ContinuationArbiterInput,
   ): Promise<string[] | null> {
     const modelRef = lightModelRefForBot(this.#deps.bots, this.#deps.settings, botId);
-    if (modelRef.length === 0) return null;
+    if (modelRef.length === 0) {
+      // D72 P4：没有内置模型时续接 L2 仲裁关闭（视为不续接）。
+      this.#deps.logger.debug({ runId, botId }, 'continuation arbiter skipped: no built-in model');
+      return null;
+    }
     const provider = modelRef.includes('/') ? modelRef.slice(0, modelRef.indexOf('/')) : 'unknown';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CONTINUATION_ARBITER_TIMEOUT_MS);
@@ -2498,6 +2910,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
       return `未配置${requirement.capability === 'image' ? '图像生成' : requirement.capability}模型：请先完成设置`;
     case 'web-search':
       return '未配置联网检索：请先在设置中选择检索供应商并填写 API key';
+    case 'agent':
+      return agentSetupMessage(requirement.agentId, requirement.reason);
   }
 }
 

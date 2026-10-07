@@ -1,9 +1,11 @@
 import {
   AppError,
+  BUILTIN_AGENT_RUNTIME,
   botProfileSchema,
   newId,
   type Bot,
   type BotProfile,
+  type AgentPermissionTier,
   type BotSystemRole,
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
@@ -42,6 +44,7 @@ function emptyProfile(): BotProfile {
       network_policy: 'open',
       network_allowlist: [],
       mcp_server_ids: [],
+      agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
   };
@@ -64,11 +67,18 @@ function rowToBot(row: BotRow): Bot {
   };
 }
 
+/**
+ * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支）：null = 不设
+ * 或当前不适用（有默认主模型、实验开关关闭、Agent 未启用…，由装配方判定）。
+ */
+export type DefaultAgentResolver = () => { id: string; permission: AgentPermissionTier } | null;
+
 /** Bots CRUD. Deleted bots keep a placeholder row (id never reused). */
 export class BotsService {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
+    private readonly defaultAgent: DefaultAgentResolver = () => null,
   ) {}
 
   create(
@@ -76,6 +86,22 @@ export class BotsService {
     options: { interview?: boolean; systemRole?: BotSystemRole } = {},
   ): Bot {
     const profile = botProfileSchema.parse(profileInput);
+    // 未指定模型与 Agent 的新 Bot（对话式访谈除外：访谈只在内置引擎上跑）
+    // 默认由 onboarding 选定的外部 Agent 驱动。
+    if (
+      options.interview !== true &&
+      profile.runtime.model.length === 0 &&
+      profile.runtime.agent.id.length === 0
+    ) {
+      const fallback = this.defaultAgent();
+      if (fallback !== null) {
+        profile.runtime.agent = {
+          ...profile.runtime.agent,
+          id: fallback.id,
+          permission: fallback.permission,
+        };
+      }
+    }
     const now = this.clock.now();
     const id = newId('bot');
     const setupState = options.interview === true ? BOT_SETUP_INTERVIEWING : null;

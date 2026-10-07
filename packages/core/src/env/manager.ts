@@ -122,6 +122,9 @@ export interface InstalledToolchain {
 }
 
 const LAST_USED_THROTTLE_MS = 60_000;
+/** ensureToolchain: polling cadence / cap while another flow installs the item. */
+const ENSURE_POLL_MS = 1_000;
+const ENSURE_WAIT_MAX_MS = 30 * 60_000;
 
 export class EnvManager {
   readonly #deps: EnvManagerDeps;
@@ -142,6 +145,8 @@ export class EnvManager {
     options?: { internal?: boolean },
   ) => void = () => {};
   #lastUseNote = 0;
+  /** ensureToolchain installs in flight, per item. */
+  readonly #ensuring = new Map<string, Promise<string>>();
 
   constructor(deps: EnvManagerDeps) {
     this.#deps = deps;
@@ -1021,6 +1026,49 @@ export class EnvManager {
       dir: toolchainPathFor(this.#deps.paths, row.item, row.version),
       version: row.version,
     };
+  }
+
+  /**
+   * D72 外部智能体（`agent:{id}` 条目）的前置工具链：npx 来源需要 Node 运行时
+   * 与其自带的 npm。用户在设置页「智能体」的安装确认卡上已看到该前置（体积、
+   * 来源）并同意，这里不再另发审批卡——已安装则复用，否则按 uv→python 的
+   * 链式模式就地安装（自建一行，设置页「环境」可见）。返回主 bin 目录。
+   */
+  async ensureToolchain(item: string): Promise<string> {
+    // Concurrent callers (two agent installs) share one install.
+    const inflight = this.#ensuring.get(item);
+    if (inflight !== undefined) return inflight;
+    const job = this.#ensureToolchainOnce(item).finally(() => {
+      if (this.#ensuring.get(item) === job) this.#ensuring.delete(item);
+    });
+    this.#ensuring.set(item, job);
+    return job;
+  }
+
+  async #ensureToolchainOnce(item: string): Promise<string> {
+    // An install started elsewhere (approval card / reinstall): wait for it.
+    const deadline = Date.now() + ENSURE_WAIT_MAX_MS;
+    while (this.activeRowFor(item)?.status === 'installing') {
+      if (Date.now() > deadline) {
+        throw new AppError('ENV_INSTALL_FAILED', `等待 ${item} 安装超时`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, ENSURE_POLL_MS));
+    }
+    if (this.activeRowFor(item)?.status !== 'installed') {
+      const identity: RunIdentity = {
+        runId: '',
+        botId: null,
+        conversationId: null,
+        loopType: 'response',
+      };
+      await this.#ensureChainedItem(item, identity, `prereq:${item}`);
+    }
+    const row = this.activeRowFor(item);
+    const binDir = row !== null ? this.binDirsForRow(row)[0] : undefined;
+    if (binDir === undefined) {
+      throw new AppError('ENV_VERIFY_FAILED', `${item} 安装后未找到可执行目录`);
+    }
+    return binDir;
   }
 
   binDirsForRow(row: InstallRow): string[] {

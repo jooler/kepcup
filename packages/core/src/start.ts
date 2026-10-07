@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
   AppError,
+  findAgentEntry,
   systemInfoOutputSchema,
   systemPingOutputSchema,
   systemShutdownOutputSchema,
@@ -14,13 +15,20 @@ import {
   updateCancelActiveInputSchema,
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
+  type AgentCatalogEntry,
   type CoreStatus,
   type CustomModel,
 } from '@kepcup/shared';
 import type { DiagnosticsDatabaseRow, DiagnosticsToolRow } from '@kepcup/shared';
 import { readdirSync } from 'node:fs';
 import { directoryUsage, fileSizeOrNull } from './infra/disk-usage.js';
-import { resolveBundledBinDir, resolvePaths, canonicalPath, type AppPaths } from './infra/paths.js';
+import {
+  agentStateDir,
+  resolveBundledBinDir,
+  resolvePaths,
+  canonicalPath,
+  type AppPaths,
+} from './infra/paths.js';
 import path from 'node:path';
 import { createLogger, type CoreLogger } from './infra/logger.js';
 import { selectKeystore, type Keystore } from './infra/keystore.js';
@@ -74,6 +82,14 @@ import { type DistroToolchainInstaller } from './env/distro.js';
 import { shQuote } from './infra/shell.js';
 import { ToolGateway } from './gateway/index.js';
 import { PiEngine } from './agent/pi-engine.js';
+import { ExternalAgentEngine } from './agent/external/engine.js';
+import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
+import { HostMcpBridge } from './agent/external/mcp-bridge.js';
+import { AgentHost, type AgentSpawner } from './agent/external/host.js';
+import { effectiveAgentCatalog } from './agent/external/catalog.js';
+import { AgentInstaller, nodeRuntimeFromBinDir } from './agent/external/installer.js';
+import { AgentsService } from './domain/agents.js';
+import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
@@ -277,6 +293,18 @@ export interface CoreServicesOptions {
    * truncation flag can be exercised without a six-figure file count.
    */
   diskUsageBudget?: number;
+  /**
+   * D72 test hook: extra agent catalog entries (e.g. a second fake agent),
+   * appended to the curated AGENT_CATALOG before the release-gate filter.
+   */
+  agentCatalog?: AgentCatalogEntry[];
+  /**
+   * D72 test hook: how to start an entry (P1 has no installer). Returning null
+   * falls back to the default resolver (system CLI on PATH).
+   */
+  agentLaunch?: (entry: AgentCatalogEntry) => LaunchTarget | null;
+  /** D72 test hook: in-process agents instead of child processes. */
+  agentSpawn?: AgentSpawner;
 }
 
 export interface CoreDomainServices {
@@ -342,6 +370,18 @@ export interface CoreServices {
   search: SearchService | null;
   /** MCP 网关（D65）；测试夹具缺省为 null（不注册 MCP 工具）。 */
   mcp: McpService | null;
+  /**
+   * 外部智能体（D72）：生效目录（按发行门禁过滤）与进程宿主（null while
+   * locked / errored）。
+   */
+  agents: {
+    catalog(): readonly AgentCatalogEntry[];
+    host: AgentHost;
+    /** 宿主 MCP 桥（D72 §4.4）。 */
+    bridge: HostMcpBridge;
+  } | null;
+  /** 外部智能体的安装 / 登录 / 状态服务（D72 P4，设置页「智能体」；null likewise）。 */
+  agentsService: AgentsService | null;
   /** P07 per-bot daily background budget (null while locked / errored). */
   budget: BudgetService | null;
   /** P08 skills domain (null while locked / errored). */
@@ -553,6 +593,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     media: null,
     search: null,
     mcp: null,
+    agents: null,
+    agentsService: null,
     budget: null,
     skills: null,
     skillImporter: null,
@@ -601,6 +643,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       } catch {
         // MCP servers may already be gone; nothing to do.
       }
+      services.agentsService?.dispose();
+      services.agents?.host.dispose();
+      await services.agents?.bridge.stop().catch(() => undefined);
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
       services.mainDb = null;
@@ -740,7 +785,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Test/e2e-only seam: absent from the packaged artifact (P13 产物剔除).
     if (__KEPCUP_TEST_HOOKS__) seedMockLlm(settings, env, logger);
 
-    const bots = new BotsService(mainDb, clock);
+    // D72 P4：onboarding「我有订阅」写入的默认 Agent——仅在没有默认主模型、
+    // 实验开关打开且该 Agent 已启用时用于新建 Bot（预览档默认 ask）。
+    const bots = new BotsService(mainDb, clock, () => {
+      const current = settings.get();
+      const agentId = current.defaultAgentId;
+      if (agentId.length === 0 || current.defaultMainModel.length > 0) return null;
+      if (!current.experimental.externalAgents || current.agents[agentId]?.enabled !== true) {
+        return null;
+      }
+      const entry = findAgentEntry(effectiveAgentCatalog(options.agentCatalog ?? []), agentId);
+      if (entry === null) return null;
+      return { id: agentId, permission: entry.tier === 'preview' ? 'ask' : 'workspace' };
+    });
     const avatars = new BotAvatarService({ paths, clock, bots });
     const conversations = new ConversationsService(mainDb, clock);
     const messages = new MessagesService(mainDb, clock);
@@ -1038,6 +1095,92 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
     // --- response loop machinery --------------------------------------------
     const engine = new PiEngine({ settings, secrets, logger });
+    // D72 外部智能体引擎：进程懒启动，未被 Bot 选用时不产生任何子进程。
+    const agentCatalog = effectiveAgentCatalog(options.agentCatalog ?? []);
+    // D72 P4: installs land in toolchains/agents/{id}@{version}; npx agents
+    // run on the environment manager's Node (installed on demand).
+    const agentInstaller = new AgentInstaller({
+      toolchainsDir: paths.toolchainsDir,
+      downloadsDir: paths.cacheDownloadsDir,
+      npmCacheDir: paths.cacheNpmDir,
+      nodeRuntime: async () =>
+        nodeRuntimeFromBinDir(await environment.ensureToolchain('node'), process.platform),
+      installedNode: () => {
+        const row = environment.activeRowFor('node');
+        const binDir = row !== null ? environment.binDirsForRow(row)[0] : undefined;
+        return binDir !== undefined ? nodeRuntimeFromBinDir(binDir, process.platform).node : null;
+      },
+    });
+    let agentsService: AgentsService | null = null;
+    const agentHost = new AgentHost({
+      logger,
+      redact: (text) => secrets.redact(text),
+      appVersion: options.appVersion ?? '0.0.0',
+      // AgentsService resolves installs / system CLIs, injects API keys and
+      // honours the agentLaunch test seam itself. It is assigned right below,
+      // before any acquire can happen; its errors (not installed …) propagate.
+      resolveLaunch: (entry) => agentsService!.resolveLaunch(entry),
+      ...(options.agentSpawn !== undefined ? { spawn: options.agentSpawn } : {}),
+      dataHome: paths.home,
+      stateDirFor: (agentId) => agentStateDir(paths, agentId),
+    });
+    // D72 宿主 MCP 桥（127.0.0.1 随机端口）：外部 Agent run 的宿主工具经它注入；
+    // 随 core 启停（关闭见 close()）。
+    const hostBridge = new HostMcpBridge({
+      logger,
+      appVersion: options.appVersion ?? '0.0.0',
+      audit: (identity, action, detail) => gateway.audit(identity, action, detail),
+    });
+    try {
+      await hostBridge.start();
+    } catch (error) {
+      // The core (and built-in bots) must still come up; agent runs that need
+      // host tools fail with a readable reason (engine checks bridge.running).
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'host mcp bridge failed to start',
+      );
+    }
+    // D72 P3 权限桥：外部 Agent 的 request_permission 分级 + agent_tool 审批卡。
+    const agentPermissions = new AgentPermissionBridge({
+      paths,
+      gateway,
+      approvals,
+      grants,
+      allowlist,
+      skillDirs: (botId) => skills.readableDirs(botId),
+      redact: (text) => secrets.redact(text),
+      logger,
+    });
+    const externalEngine = new ExternalAgentEngine({
+      host: agentHost,
+      bridge: hostBridge,
+      permissions: agentPermissions,
+      catalog: () => agentCatalog,
+      logger,
+    });
+    services.agents = { catalog: () => agentCatalog, host: agentHost, bridge: hostBridge };
+    agentsService = new AgentsService({
+      settings,
+      secrets,
+      bots,
+      host: agentHost,
+      installer: agentInstaller,
+      catalog: () => agentCatalog,
+      logger,
+      publish: (event, payload) => events.emit(event, payload),
+      appVersion: options.appVersion ?? '0.0.0',
+      workDir: path.join(paths.cacheDir, 'agent-probe'),
+      dataHome: paths.home,
+      stateDirFor: (agentId) => agentStateDir(paths, agentId),
+      ...(options.agentLaunch !== undefined
+        ? { launchOverride: (entry: AgentCatalogEntry) => options.agentLaunch?.(entry) ?? null }
+        : {}),
+      ...(options.agentSpawn !== undefined ? { spawn: options.agentSpawn } : {}),
+      onConcurrencyChanged: () =>
+        services.scheduler?.setConcurrency(settings.get().providerConcurrency),
+    });
+    services.agentsService = agentsService;
     const scheduler = new Scheduler(logger);
     // P10: the schedule service is constructed after the orchestrator (it
     // delivers through the orchestrator's mailboxes); the tool facade
@@ -1060,6 +1203,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     };
     const orchestrator = new Orchestrator({
       engine,
+      externalEngine,
+      agentCatalog: () => agentCatalog,
+      agents: agentsService,
       scheduler,
       db: mainDb,
       paths,
@@ -1093,7 +1239,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
-        requestAuthoring: (input) => skills.requestAuthoring(input),
+        // D72 P4 审查 #3：技能生成 loop 需要内置模型（无内置模型时后台会跳过），
+        // 登记前直接告诉 Bot，而不是回「已登记」后静默不做。
+        requestAuthoring: (input) => {
+          const bot = bots.get(input.botId);
+          if ((bot?.profile.runtime.model || settings.get().defaultMainModel).length === 0) {
+            return {
+              ok: false,
+              message:
+                '需要内置模型：技能生成在后台用内置模型起草并验证，当前没有配置内置模型，未登记。可以把做法直接告诉用户，或请用户先在设置中配置模型。',
+            };
+          }
+          return skills.requestAuthoring(input);
+        },
         recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {

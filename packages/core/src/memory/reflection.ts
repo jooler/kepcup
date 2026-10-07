@@ -1,4 +1,5 @@
 import { AppError } from '@kepcup/shared';
+import { untrustedBlock } from '../infra/data-boundary.js';
 import { completeStructured } from '../agent/structured.js';
 import type { AgentEngine, EngineMessage } from '../agent/types.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -9,6 +10,7 @@ import type { RunsService } from '../domain/runs.js';
 import type { SettingsService } from '../domain/settings.js';
 import type { UsageService } from '../domain/usage.js';
 import type { CoreLogger } from '../infra/logger.js';
+import { builtinModelRefOrNull } from './loop-utils.js';
 import {
   reflectionOutputSchema,
   reflectionParametersSchema,
@@ -49,6 +51,12 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
     continuedFromRunIds?: string[];
   };
   const responseRunId = payload.runId ?? null;
+
+  // D72 P4：没有内置模型（只用外部 Agent）时跳过，不产生失败 run。
+  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
+    deps.logger.info({ botId, conversationId }, 'reflection skipped: no built-in model');
+    return;
+  }
 
   // The conversation may have been deleted between registration and now.
   const run = responseRunId !== null ? deps.runs.get(responseRunId) : null;
@@ -352,7 +360,7 @@ export function reflectionInput(input: {
       : '',
     // 执行步骤概要（04 反思输入契约，BR-P07-009）：数据界定与工具侧一致。
     input.executionSteps.length > 0
-      ? `<execution_steps>\n<untrusted>\n${input.executionSteps}\n</untrusted>\n</execution_steps>`
+      ? `<execution_steps>\n${untrustedBlock(input.executionSteps)}\n</execution_steps>`
       : '',
     `<existing_memories>\n${input.existingMemories || '（无）'}\n</existing_memories>`,
     `<profile_card>\n${input.profileCard || '（空）'}\n</profile_card>`,

@@ -58,6 +58,12 @@ interface RunLeaseState {
   key: string;
   project: Project | null;
   beforeOid: string | null;
+  /**
+   * D72（安全审查 M6）：外部智能体 run 开工前取得、整 run 持有的租约——
+   * 该 run 内不能被别的租约目标替换（否则原 project 的「后」快照过早，而
+   * Agent 仍在写它）。
+   */
+  pinned?: boolean;
 }
 
 /**
@@ -146,7 +152,12 @@ export class ProjectRuntime {
   async ensureWriteLease(
     identity: RunIdentity,
     resolvedPath: string,
-    options: { signal?: AbortSignal; reason?: string } = {},
+    options: {
+      signal?: AbortSignal;
+      reason?: string;
+      /** D72：整 run 持有、不可被替换（外部智能体 run，见 RunLeaseState.pinned）。 */
+      pin?: boolean;
+    } = {},
   ): Promise<LeaseTarget> {
     const target = this.#leaseTarget(identity, resolvedPath);
     if (target === null) {
@@ -154,6 +165,13 @@ export class ProjectRuntime {
     }
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
+    }
+    const current = this.#runLeases.get(identity.runId);
+    if (current?.pinned === true && current.key !== target.key) {
+      throw new AppError(
+        'PATH_OUT_OF_SCOPE',
+        `本次执行整体持有 ${current.key} 的写入租约，不能再写入其他租约目标：${resolvedPath}`,
+      );
     }
 
     // One lease per run: close out the previous window first (after snapshot).
@@ -183,9 +201,15 @@ export class ProjectRuntime {
         key: target.key,
         project: target.project,
         beforeOid: before.oid,
+        ...(options.pin === true ? { pinned: true } : {}),
       });
     } else {
-      this.#runLeases.set(identity.runId, { key: target.key, project: null, beforeOid: null });
+      this.#runLeases.set(identity.runId, {
+        key: target.key,
+        project: null,
+        beforeOid: null,
+        ...(options.pin === true ? { pinned: true } : {}),
+      });
     }
 
     this.#setRunStatus(identity.runId, 'running');
@@ -457,7 +481,10 @@ export class ProjectRuntime {
   // --- prompt --------------------------------------------------------------------
 
   /** `<project>` system prompt section (null when nothing bound). */
-  async promptSection(conversationId: string | null): Promise<string | null> {
+  async promptSection(
+    conversationId: string | null,
+    options: { skipGuideFiles?: readonly string[] } = {},
+  ): Promise<string | null> {
     const project = this.boundProject(conversationId);
     if (project === null || project.status !== 'available') return null;
     // Ignore verdicts come from the shadow repo (libgit2, exact semantics);
@@ -467,7 +494,12 @@ export class ProjectRuntime {
       repo !== null && project.path === (repo.workdir()?.replace(/\/+$/, '') ?? project.path)
         ? (relative: string) => repo.isPathIgnored(relative)
         : null;
-    const section = await buildProjectSection({ path: project.path, budget: PROJECT_SECTION_BUDGET, isIgnored });
+    const section = await buildProjectSection({
+      path: project.path,
+      budget: PROJECT_SECTION_BUDGET,
+      isIgnored,
+      ...(options.skipGuideFiles !== undefined ? { skipGuideFiles: options.skipGuideFiles } : {}),
+    });
     return section?.body ?? null;
   }
 

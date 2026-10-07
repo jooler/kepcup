@@ -56,6 +56,11 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
   }
   const bot = deps.bots.get(job.bot_id);
   if (bot === null || bot.status !== 'active') return; // deleted mid-queue
+  // D72 P4：没有内置模型（只用外部 Agent）时跳过，不产生失败 run。
+  if ((bot.profile.runtime.model || deps.settings.get().defaultMainModel).length === 0) {
+    deps.logger.info({ botId: job.bot_id }, 'skill authoring skipped: no built-in model');
+    return;
+  }
 
   const payload = JSON.parse(job.payload_json) as {
     name?: string;

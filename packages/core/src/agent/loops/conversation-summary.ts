@@ -1,6 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
 import { z } from 'zod';
 import { AppError } from '@kepcup/shared';
+import { builtinModelRefOrNull } from '../../memory/loop-utils.js';
 import { completeStructured } from '../structured.js';
 import type { AgentEngine } from '../types.js';
 import type { JobsService, JobRow } from '../../domain/jobs.js';
@@ -53,6 +54,14 @@ export async function runConversationSummaryJob(deps: {
 
   const payload = JSON.parse(job.payload_json) as { targetSeq?: number };
   const targetSeq = payload.targetSeq ?? conv.lastSeq;
+  // D72 P4：没有内置模型（只用外部 Agent）时跳过，不产生失败 run。
+  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
+    deps.logger.info(
+      { conversationId: job.conversation_id },
+      'conversation summary skipped: no built-in model',
+    );
+    return;
+  }
   const run = deps.runs.create({
     botId: job.bot_id,
     conversationId: job.conversation_id,

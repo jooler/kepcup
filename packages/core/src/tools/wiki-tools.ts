@@ -1,4 +1,5 @@
 import { Type } from '@earendil-works/pi-ai';
+import { untrustedBlock } from '../infra/data-boundary.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 
 /** The slice of WikiService the response-loop tools consume. */
@@ -54,7 +55,7 @@ export function buildWikiTools(input: {
       const lines = hits.map((hit) => `- [${hit.title}]（${hit.path}）：${hit.snippet}`);
       return {
         ok: true,
-        content: `<untrusted>\n${lines.join('\n')}\n</untrusted>`,
+        content: untrustedBlock(lines.join('\n')),
       };
     },
   };
@@ -74,7 +75,7 @@ export function buildWikiTools(input: {
         const page = wiki.readPage(identity.botId, params.path);
         return {
           ok: true,
-          content: `<untrusted>\n# ${page.title}\n\n${page.content}\n</untrusted>`,
+          content: untrustedBlock(`# ${page.title}\n\n${page.content}`),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

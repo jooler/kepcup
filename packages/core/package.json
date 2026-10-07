@@ -9,17 +9,19 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node ../../scripts/run-tests.mjs run --project core"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.7.0",
     "@anthropic-ai/sandbox-runtime": "0.0.78",
     "@earendil-works/pi-agent-core": "1.0.2",
     "@earendil-works/pi-ai": "1.0.2",
     "@earendil-works/pi-coding-agent": "1.0.2",
     "@earendil-works/pi-mcp": "1.0.2",
     "@kepcup/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@napi-rs/keyring": "2.1.0",
     "bash-parser": "0.5.0",
     "better-sqlite3-multiple-ciphers": "13.0.3",

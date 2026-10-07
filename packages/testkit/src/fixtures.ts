@@ -49,6 +49,14 @@ export interface CreateTestCoreOptions {
   platform?: string;
   /** P13 修复轮 test hook (BR-P13-006): diagnostics disk-walk entry budget. */
   diskUsageBudget?: number;
+  /** D72 test hooks: extra catalog entries / launch targets / in-process agents. */
+  agentCatalog?: unknown[];
+  agentLaunch?: (entry: { id: string }) => {
+    command: string;
+    args: string[];
+    env: Record<string, string>;
+  } | null;
+  agentSpawn?: unknown;
 }
 
 /**
@@ -75,5 +83,8 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.distroInstaller !== undefined ? { distroInstaller: options.distroInstaller as never } : {}),
     ...(options.platform !== undefined ? { platform: options.platform } : {}),
     ...(options.diskUsageBudget !== undefined ? { diskUsageBudget: options.diskUsageBudget } : {}),
+    ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog as never } : {}),
+    ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
+    ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn as never } : {}),
   });
 }

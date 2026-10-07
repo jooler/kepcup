@@ -94,6 +94,15 @@ export function workspacePathFor(paths: AppPaths, botId: string, conversationId:
   return path.join(paths.home, 'bots', botId, 'workspaces', conversationId);
 }
 
+/**
+ * Private state of one external agent (D72 P5): `agents/{agentId}/` — e.g. the
+ * relocated config home of an agent whose global config must not be shared
+ * with the user's own installation (Antigravity `GEMINI_HOME`).
+ */
+export function agentStateDir(paths: AppPaths, agentId: string): string {
+  return path.join(paths.home, 'agents', agentId);
+}
+
 /** Encrypted per-bot memory database: `bots/{botId}/memory.db` (P07). */
 export function botMemoryDbPath(paths: AppPaths, botId: string): string {
   return path.join(paths.home, 'bots', botId, 'memory.db');

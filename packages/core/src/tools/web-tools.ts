@@ -1,4 +1,5 @@
 import { Type } from '@earendil-works/pi-ai';
+import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED } from './image-tools.js';
@@ -61,7 +62,7 @@ export function buildWebTools(input: { search: SearchToolFacade }): ToolDefiniti
       );
       return {
         ok: true,
-        content: `<untrusted>\n${lines.join('\n')}\n</untrusted>`,
+        content: untrustedBlock(lines.join('\n')),
       };
     },
   };
@@ -79,7 +80,7 @@ export function buildWebTools(input: { search: SearchToolFacade }): ToolDefiniti
         const truncated = truncateToBudget(text, TOOL_OUTPUT_MAX_CHARS);
         return {
           ok: true,
-          content: `<untrusted>${truncated.text}${truncated.truncated ? '\n[输出已截断]' : ''}</untrusted>`,
+          content: `<untrusted>${neutralizeUntrusted(truncated.text)}${truncated.truncated ? '\n[输出已截断]' : ''}</untrusted>`,
         };
       } catch (error) {
         if (error instanceof AppError) {

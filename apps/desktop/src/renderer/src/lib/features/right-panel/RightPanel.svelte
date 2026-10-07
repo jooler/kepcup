@@ -18,6 +18,7 @@
   } from '$lib/components/ui/dialog';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
+  import AgentBadge from '$lib/features/bot-panel/AgentBadge.svelte';
   import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
   import GroupInfo from './GroupInfo.svelte';
   import MemoryTab from './MemoryTab.svelte';
@@ -321,6 +322,10 @@
             >
               {bot.bio || t('rightPanel.bioPlaceholder')}
             </button>
+          {/if}
+          {#if bot.profile.runtime.agent.id.length > 0 && bot.setupState !== 'interviewing'}
+            <!-- D72：外部智能体驱动的 Bot——徽标 + 隔离说明，点击跳设置页对应 Agent -->
+            <AgentBadge agentId={bot.profile.runtime.agent.id} />
           {/if}
         </div>
         <AvatarPicker bind:open={pickerOpen} {bot} />

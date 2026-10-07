@@ -29,6 +29,11 @@ export async function runWikiLintJob(deps: WikiLintJobDeps): Promise<void> {
   const botId = job.bot_id;
   const bot = deps.bots.get(botId);
   if (bot === null || bot.status !== 'active') return; // deleted mid-queue
+  // D72 P4：没有内置模型（只用外部 Agent）时跳过本周巡检，不产生失败 run。
+  if ((bot.profile.runtime.model || deps.settings.get().defaultMainModel).length === 0) {
+    deps.logger.info({ botId }, 'wiki lint skipped: no built-in model');
+    return;
+  }
 
   await deps.wiki.runExclusively(botId, async () => {
     initWiki(deps.paths, botId, deps.logger);

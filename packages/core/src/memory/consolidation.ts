@@ -16,7 +16,7 @@ import {
 import type { MemoryService } from './service.js';
 import { localDateKey } from './local-date.js';
 import { lightModelRef } from './reflection.js';
-import { recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
+import { builtinModelRefOrNull, recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
 
 export interface ConsolidationJobDeps extends LoopUsageDeps {
   engine: AgentEngine;
@@ -52,6 +52,18 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
   if (!deps.memory.hasMemoryDb(botId)) return; // nothing to consolidate
 
   const store = deps.memory.storeFor(botId);
+  // D72 P4：没有内置模型时只做不经模型的过期失效，跳过合并（不建 run）。
+  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
+    const expired = store.expirePastValidUntil(deps.clock.now());
+    // Recorded like a finished consolidation: the hourly scheduler only
+    // deduplicates pending jobs and would otherwise re-enqueue every hour.
+    store.setMeta(
+      'last_consolidation_date',
+      localDateKey(new Date(deps.clock.now()), deps.timeZone),
+    );
+    deps.logger.info({ botId, expired }, 'memory consolidation skipped: no built-in model');
+    return;
+  }
   const run = deps.runs.create({
     botId,
     conversationId: null,
@@ -94,7 +106,9 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
         schema: consolidationOutputSchema,
         onUsage: (usage) => recordLoopUsage(deps, run.id, 'memory_consolidation', lightRef, usage),
       });
-      applyOperations(deps, botId, output);
+      // Awaited: the job (and the date below) settles only after the merges and
+      // their vector writes; their errors fail the run and the job.
+      await applyOperations(deps, botId, output);
     }
 
     store.setMeta(

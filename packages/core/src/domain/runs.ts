@@ -1,5 +1,6 @@
 import {
   AppError,
+  BUILTIN_ENGINE,
   newId,
   runStepSchema,
   type LoopType,
@@ -23,6 +24,8 @@ interface RunRow {
   chain_id: string | null;
   chain_depth: number | null;
   parent_run_id: string | null;
+  engine: string;
+  agent_session_id: string | null;
   provider: string | null;
   model: string | null;
   output_message_ids_json: string;
@@ -84,6 +87,8 @@ function rowToRun(row: RunRow): Run {
     chainId: row.chain_id,
     chainDepth: row.chain_depth,
     parentRunId: row.parent_run_id,
+    engine: row.engine,
+    agentSessionId: row.agent_session_id,
     provider: row.provider,
     model: row.model,
     outputMessageIds: JSON.parse(row.output_message_ids_json) as string[],
@@ -119,12 +124,14 @@ export class RunsService {
     parentRunId?: string | null;
     provider?: string | null;
     model?: string | null;
+    /** D72: 'builtin' (default) | 'agent:{id}'. */
+    engine?: string;
   }): Run {
     const id = newId('run');
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -139,6 +146,7 @@ export class RunsService {
         input.parentRunId ?? null,
         input.provider ?? null,
         input.model ?? null,
+        input.engine ?? BUILTIN_ENGINE,
         now,
       );
     return this.getOrThrow(id);
@@ -169,6 +177,8 @@ export class RunsService {
         | 'continuedFromRunIds'
         | 'chainId'
         | 'chainDepth'
+        | 'engine'
+        | 'agentSessionId'
       >
     > & {
       /** Structured setup requirement stored inside error_json (inline setup). */
@@ -180,12 +190,14 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, summary = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
         patch.provider ?? existing.provider,
         patch.model ?? existing.model,
+        patch.engine ?? existing.engine,
+        patch.agentSessionId ?? existing.agentSessionId,
         patch.summary ?? existing.summary,
         patch.continuedFromRunIds !== undefined
           ? JSON.stringify(patch.continuedFromRunIds)
