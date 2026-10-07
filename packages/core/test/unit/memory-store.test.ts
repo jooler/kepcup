@@ -39,7 +39,7 @@ function fakeEmbedder(): Embedder {
   };
 }
 
-function newManager(): MemoryDbManager {
+function newManager(masterKey: Buffer = randomBytes(32)): MemoryDbManager {
   return new MemoryDbManager({
     paths: {
       home: dir,
@@ -56,7 +56,7 @@ function newManager(): MemoryDbManager {
       cacheDownloadsDir: dir,
       toolchainsDir: dir,
     },
-    masterKey: randomBytes(32),
+    masterKey,
     clock,
     logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
   });
@@ -310,6 +310,39 @@ describe('memory store (memory.db 领域层)', () => {
     stores[stores.length - 1]!.list(); // the most recent connection still works
     manager.closeAll();
     expect(manager.openCount).toBe(0);
+  });
+
+  it('reopened connection loads vec0 before querying an existing memory_vec', async () => {
+    const key = randomBytes(32);
+    const manager = newManager(key);
+    const store = manager.for('bot_reopen');
+    const embedder = fakeEmbedder();
+    const content = '用户每周五开例会';
+    const [vector] = await embedder.embed([content]);
+    const stored = store.insert({
+      kind: 'fact',
+      content,
+      source: 'explicit',
+      evidence: [],
+      origin: 'private',
+      confidence: 1,
+      sensitivity: 'normal',
+      privateToBot: false,
+    });
+    await store.ensureVecTable(embedder.id, 8);
+    store.upsertVec(store.rowidOf(stored.id)!, vector!);
+    manager.closeAll();
+
+    // A new process (and a pool eviction) opens a connection that has never
+    // called load(). Querying memory_vec first used to throw
+    // "no such module: vec0" and fail the reflection run.
+    const again = newManager(key);
+    const reopened = again.for('bot_reopen');
+    expect(reopened.findSimilar(content, vector!)?.id).toBe(stored.id);
+    expect(reopened.knn(vector!, 3).map((entry) => entry.id)).toContain(stored.id);
+    expect(() => reopened.retract(stored.id)).not.toThrow();
+    expect(reopened.getItem(stored.id)!.status).toBe('retracted');
+    again.closeAll();
   });
 
   it('memory.db cannot be opened without the derived key', () => {
