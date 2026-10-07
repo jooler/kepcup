@@ -93,10 +93,10 @@
 {#if open}
   <div
     bind:this={node}
-    class="absolute top-full left-1/2 z-30 mt-2 w-76 -translate-x-1/2 rounded-2xl border bg-popover p-3 text-sm shadow-xl"
+    class="absolute top-full left-1/2 z-30 mt-2 w-76 -translate-x-1/2 rounded-2xl border bg-popover text-sm shadow-xl"
     data-testid="avatar-picker"
   >
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-1 p-2 border-b">
       <button
         type="button"
         class="rounded-full px-2.5 py-1 font-medium transition-colors {tab === 'preset'
@@ -131,12 +131,12 @@
     </div>
 
     {#if tab === 'preset'}
-      <div class="mt-3 grid grid-cols-5 gap-1.5" data-testid="avatar-shape-grid">
+      <div class="grid grid-cols-5 gap-1.5 p-2" data-testid="avatar-shape-grid">
         {#each AVATAR_SHAPES as shape (shape.id)}
           <button
             type="button"
-            class="flex aspect-square items-center justify-center rounded-xl transition-colors hover:bg-accent {selected.shape.id ===
-              shape.id
+            class="flex aspect-square items-center justify-center rounded-xl transition-colors hover:bg-accent {selected
+              .shape.id === shape.id
               ? 'bg-accent ring-2 ring-ring'
               : ''}"
             title={shape.label}
@@ -152,15 +152,19 @@
           </button>
         {/each}
       </div>
-      <div class="mt-3 grid grid-cols-6 gap-2 px-1" data-testid="avatar-color-grid">
+      <!-- 宽度刚好放下 6 颗，多出的 5 颗换行后由 justify-center 居中，形成 6+5。 -->
+      <div
+        class="mx-auto box-content flex w-[calc(6*1.75rem+5*0.75rem+1px)] flex-wrap justify-center gap-3 p-4"
+        data-testid="avatar-color-grid"
+      >
         {#each AVATAR_COLORS as color (color.id)}
           <button
             type="button"
-            class="flex aspect-square items-center justify-center rounded-full transition-transform hover:scale-110 {selected.color.id ===
-              color.id
+            class="size-7 shrink-0 rounded-full transition-transform hover:scale-110 {selected
+              .color.id === color.id
               ? 'ring-2 ring-ring ring-offset-2 ring-offset-popover'
               : ''}"
-            style="background: {color.hex}"
+            style="background: {color.hex};"
             title={color.label}
             aria-label={color.label}
             onclick={() => void applyAvatar(formatPresetAvatar(selected.shape.id, color.id))}
@@ -169,8 +173,9 @@
         {/each}
       </div>
     {:else}
+    <div class="p-2">
       <label
-        class="mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent {uploading
+        class="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center text-muted-foreground transition-colors hover:bg-accent p-2 {uploading
           ? 'pointer-events-none opacity-60'
           : ''}"
         data-testid="avatar-upload-zone"
@@ -185,6 +190,7 @@
           data-testid="avatar-upload-input"
         />
       </label>
+    </div>
     {/if}
   </div>
 {/if}
