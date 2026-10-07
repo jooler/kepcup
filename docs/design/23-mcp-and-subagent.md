@@ -10,7 +10,7 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 - 用户在设置页配置 MCP server（stdio 命令或 streamable HTTP 端点），其工具按「应用启用 ∩ Bot 勾选」暴露给响应 loop。
 - MCP 是工具来源的扩展，不是独立执行通道：工具调用与内置工具同管道（审批、审计、截断、`<untrusted>`）。
-- 默认不启用任何 server；`autoApprove` 默认关闭，每次调用需用户批准。
+- 默认不启用任何 server；`autoApprove` 默认关闭，每次调用需用户批准。（D73 修订：按工具注解分级，只读工具默认免审、`destructive` 工具永远确认且不受 `autoApprove` 覆盖，见 [29-connected-apps.md](29-connected-apps.md) §8.1。）
 
 ### 配置与存储
 
@@ -37,7 +37,7 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 ### 非目标（首期）
 
-OAuth（`pi-mcp/oauth`，后续单排）、Codemode（`pi-codemode`）、deferred tool loading、与 pi CLI 配置互通。
+OAuth（`pi-mcp/oauth`，已单排为 D73，见 [29-connected-apps.md](29-connected-apps.md)）、Codemode（`pi-codemode`）、deferred tool loading、与 pi CLI 配置互通。
 
 ## SubAgent（D66）
 
