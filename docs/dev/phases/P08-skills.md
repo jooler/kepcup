@@ -90,7 +90,7 @@ P08 的增量落地，形态刻意克制：**不是开放商店，而是随应�
 - **分发**：预置技能随应用打包（`apps/desktop/resources/preset-skills/`，三平台
   `extraResources` → `Resources/preset-skills`，core-host 注入
   `KEPCUP_PRESET_SKILLS`；开发态由 `resolvePresetSkillsDir` 向上查找）。
-  内容以 Kepcup 原创为主——上游 anthropics/skills 的 document skills 是
+  内容以 KepCup 原创为主——上游 anthropics/skills 的 document skills 是
   source-available、不可再分发（见该目录 NOTICE.md）。
 - **vendored 条目**（设计 17，2026-10-04 起）：`mineru/` 逐字引入 opendatalab/MinerU
   官方 Agent Skill（AGPL-3.0，明确允许原样再分发）。正文不得手改，经

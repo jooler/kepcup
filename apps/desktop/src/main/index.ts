@@ -7,6 +7,7 @@ import {
   ipcMain,
   MessageChannelMain,
   Notification,
+  nativeImage,
   nativeTheme,
   powerMonitor,
   shell,
@@ -14,6 +15,7 @@ import {
   type BrowserWindow,
 } from 'electron';
 import { CORE_SHUTDOWN_TIMEOUT_MS, type UpdateStatusPayload } from '@kepcup/shared';
+import { APP_ID, APP_NAME, appIconPath } from './app-brand';
 import { BrowserHost, sessionDataRoot } from './browser-host';
 import { browserMethodSpecs } from './browser-methods';
 import { CoreHost, type CoreProcessState } from './core-host';
@@ -99,6 +101,12 @@ async function quitApp(): Promise<void> {
 }
 
 function bootstrap(): void {
+  // dev 的 Dock 图标：打包版由 .app bundle（icns）/ exe 资源自带；dev 壳
+  // （Electron.app）需要手动指定仓库主图标（名称由 patch-dev-electron.cjs 改）。
+  if (!app.isPackaged && process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(nativeImage.createFromPath(appIconPath()));
+  }
+
   // Bot browser partitions live inside the data home (P11), not userData —
   // must be set before any session is created.
   app.setPath('sessionData', sessionDataRoot(process.env));
@@ -133,9 +141,7 @@ function bootstrap(): void {
     // specs) and the guarded branch is dead code in packaged builds —
     // production is always `true` (the wizard itself is gated by the
     // persisted onboarding setting).
-    onboardingVisible: __KEPCUP_TEST_HOOKS__
-      ? process.env.KEPCUP_ONBOARDING !== 'off'
-      : true,
+    onboardingVisible: __KEPCUP_TEST_HOOKS__ ? process.env.KEPCUP_ONBOARDING !== 'off' : true,
   }));
 
   // macOS 毛玻璃（window.ts 的 vibrancy）：原生材质跟着 nativeTheme 走，
@@ -175,7 +181,9 @@ function bootstrap(): void {
   // 以及已拒绝后的去路——深链系统设置的麦克风面板（被拒后系统不会再弹框，
   // 只能引导用户到设置里打开）。非 macOS 无 TCC，直接视为已授权。
   ipcMain.handle('mic:status', () =>
-    process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted',
+    process.platform === 'darwin'
+      ? systemPreferences.getMediaAccessStatus('microphone')
+      : 'granted',
   );
   ipcMain.handle('mic:request', async () =>
     process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true,
@@ -343,6 +351,14 @@ function bootstrap(): void {
   });
   coreHost.start();
 }
+
+// 用户可见名统一 KepCup（app-brand.ts）：dev/打包的菜单、通知、userData 目录
+// 都跟随该名，与 electron-builder productName、dev 壳 Info.plist 补丁一致。
+// setName 会重定默认 userData 路径——与 KEPCUP_HOME 覆盖一样，必须放在单实例
+// 锁之前。
+app.setName(APP_NAME);
+// Windows toast 通知按 AUMID 归组到开始菜单磁贴；不设置时显示 "Electron"。
+app.setAppUserModelId(APP_ID);
 
 // dev/e2e（KEPCUP_HOME）：把 userData 一并隔离到数据目录下——渲染层
 // localStorage、GPU 缓存与 requestSingleInstanceLock 都以 userData 为作用域，

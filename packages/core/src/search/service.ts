@@ -140,7 +140,7 @@ export class SearchService {
           signal: fetchSignal,
           redirect: 'manual',
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Kepcup/1.0; +https://kepcup.app)',
+            'User-Agent': 'Mozilla/5.0 (compatible; KepCup/1.0; +https://kepcup.app)',
             Accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.1',
           },
         });

@@ -21,6 +21,11 @@ export default tseslint.config(
       // P13 packaging hook: electron-builder contract requires CommonJS
       // (module.exports = { beforePack, afterPack }) — build tooling, not app code.
       'apps/desktop/scripts/pack-hooks.cjs',
+      // P13 品牌图标/dev 壳补丁：generate-icons-electron.cjs 是 Electron 主进程
+      // 脚本（.cjs 由 Electron 拉起），patch-dev-electron.cjs 用 PlistBuddy +
+      // require('electron') 改 dev 壳 Info.plist——均为构建工具链，非应用代码。
+      'apps/desktop/scripts/generate-icons-electron.cjs',
+      'apps/desktop/scripts/patch-dev-electron.cjs',
     ],
   },
   js.configs.recommended,

@@ -9,18 +9,20 @@
 # out/migrations（打包后的 import.meta.url 相对解析）。本工作区里的
 # packages/core（dist 仍含测试路径）与 testkit（mock 模型服务/夹具）不进产物。
 appId: app.kepcup.desktop
-productName: Kepcup
+# 用户可见名（bundle 名、安装名、产物名）唯一来源；主进程 app-brand.ts 的
+# APP_NAME 与 dev 壳补丁（scripts/patch-dev-electron.cjs）保持一致。
+productName: KepCup
+# 发行元数据：description/author/license/homepage 取自 package.json（Linux
+# deb/AppImage 的 maintainer 与描述来自那里，author.email 必填）。
+copyright: Copyright © 2026 kepcup-app
 directories:
   output: release
   buildResources: resources
 files:
   - out/**
-  - resources/icon.png
-  - resources/trayTemplate.png
-  - resources/trayTemplate@2x.png
   # core 已并入 out/main/core-entry（并剔除测试路径）；工作区源包不进产物。
-  - "!node_modules/@kepcup/core"
-  - "!node_modules/@kepcup/testkit"
+  - '!node_modules/@kepcup/core'
+  - '!node_modules/@kepcup/testkit'
 asar: true
 # 原生模块（better-sqlite3-multiple-ciphers、@napi-rs/keyring、es-git）按目标平台
 # 架构重编译；smartUnpack 自动把 .node 解包出 asar。
@@ -42,7 +44,8 @@ mac:
     - target: zip
       arch: [arm64, x64]
   category: public.app-category.productivity
-  icon: resources/icon.png
+  # icon.icns 由 scripts/generate-icons.mjs 从 resources/KepCup.svg 生成。
+  icon: resources/icon.icns
   # 麦克风用途声明（语音输入：按录转文字 / 发送语音消息，docs/design/26-voice-input.md）；
   # 缺声明时打包版 getUserMedia 直接被 macOS 拒绝。
   extendInfo:
@@ -52,6 +55,11 @@ mac:
   # todo/cross-platform-acceptance.md P13 小节。
   identity: null
   extraResources:
+    # 托盘四件套（tray.ts 运行时经 app-brand.trayIconPath 读取，process.resourcesPath/tray）。
+    # 按平台各写一份而非顶层 extraResources：electron-builder 的平台块对同名
+    # 字段是覆盖语义，顶层条目在 mac/win/linux 块存在时不保证生效。
+    - from: resources/tray
+      to: tray
     # 平台私有二进制（rg）只打包本机架构一份（${arch} 宏按目标展开）。
     - from: resources/bin/darwin-${arch}
       to: bin/darwin-${arch}
@@ -67,7 +75,12 @@ win:
       arch: [x64, arm64]
   # 代码签名：CI 注入 CSC_LINK/CSC_KEY_PASSWORD（或 Azure Trusted Signing 三元组）
   # 时自动签名；无凭据时跳过（登记跨系统清单）。
+  # icon.png（1024 圆角母图）由 electron-builder 转 exe 内嵌 ico。
+  icon: resources/icon.png
   extraResources:
+    # 同 mac：托盘四件套（win 用彩色 tray.png，任务栏不识别 template 图）。
+    - from: resources/tray
+      to: tray
     - from: resources/bin/win-${arch}
       to: bin/win-${arch}
     # WSL 私有发行版 rootfs（CI 产出，P12）：文件不存在时该 glob 不打包任何内容
@@ -86,7 +99,13 @@ linux:
       arch: [x64, arm64]
   category: Utility
   maintainer: kepcup-app
+  # resources/icons/{n}x{n}.png（generate-icons 产物）→ deb/AppImage 的 hicolor 集与
+  # .desktop 图标。
+  icon: resources/icons
   extraResources:
+    # 同 mac：托盘四件套。
+    - from: resources/tray
+      to: tray
     - from: resources/bin/linux-${arch}
       to: bin/linux-${arch}
     - from: resources/preset-skills

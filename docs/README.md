@@ -1,4 +1,4 @@
-# Kepcup 文档
+# KepCup 文档
 
 | 目录 | 内容 | 读者 |
 |---|---|---|
@@ -9,7 +9,7 @@
 
 ## 仓库结构
 
-Kepcup 是一个本地优先的 Bot 运行时桌面应用（Electron + Svelte 5 + TypeScript），以 pnpm monorepo 组织。当前实际结构如下（结构意图与模块规则见 [dev/01-conventions.md](dev/01-conventions.md#仓库结构)）：
+KepCup 是一个本地优先的 Bot 运行时桌面应用（Electron + Svelte 5 + TypeScript），以 pnpm monorepo 组织。当前实际结构如下（结构意图与模块规则见 [dev/01-conventions.md](dev/01-conventions.md#仓库结构)）：
 
 ```text
 kepcup/

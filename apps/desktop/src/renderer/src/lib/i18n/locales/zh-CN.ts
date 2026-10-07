@@ -1,6 +1,6 @@
 /** 界面文案统一在此维护，不在组件中硬编码（docs/dev/01-conventions.md）。 */
 export const zhCN = {
-  'app.title': 'Kepcup',
+  'app.title': 'KepCup',
   'shell.reconnecting': '正在重新连接…',
   'shell.coreStarting': '核心服务启动中…',
   'shell.coreFailed': '核心服务未能启动',
@@ -831,7 +831,7 @@ export const zhCN = {
   // --- P13 任务 3: 开机自启（设置页开关 UI 留 P13-B，文案键先备） ------------
   'settings.generalSection': '通用',
   'settings.launchAtLogin': '开机自启动',
-  'settings.launchAtLoginHint': '登录后 Kepcup 在后台运行，Bot 的定时任务与主动消息不中断。',
+  'settings.launchAtLoginHint': '登录后 KepCup 在后台运行，Bot 的定时任务与主动消息不中断。',
   'settings.launchAtLoginFailed': '开机自启设置未生效：{reason}',
 
   // --- P13 任务 2: 自动更新（更新提示 UI 留 P13-B，文案键与契约先备） --------
@@ -853,9 +853,9 @@ export const zhCN = {
   'update.installing': '正在重启以安装新版本…',
 
   // --- P13-B 任务 4: 首次启动引导（features/onboarding） -----------------------
-  'onboarding.welcomeTitle': '欢迎使用 Kepcup',
+  'onboarding.welcomeTitle': '欢迎使用 KepCup',
   'onboarding.welcomeBody':
-    'Kepcup 将协助您创建并管理、调度您的 AI 联系人，每个 AI 联系人都拥有独立的人格、记忆、能力；您与 AI 联系人的数据均会保存在本地，位置如下：',
+    'KepCup 将协助您创建并管理、调度您的 AI 联系人，每个 AI 联系人都拥有独立的人格、记忆、能力；您与 AI 联系人的数据均会保存在本地，位置如下：',
   'onboarding.dataDir': '数据目录：{dataDir}',
   'onboarding.localBadges': '本地存储 · 无账号 · 无云端',
   'onboarding.start': '开始配置',
@@ -876,7 +876,7 @@ export const zhCN = {
   'onboarding.permissionsBody': '以下两项决定应用在系统中的行为，之后可随时在设置中更改。',
   'onboarding.permissionsNotify': '系统通知',
   'onboarding.permissionsAutostartHint':
-    '登录后 Kepcup 在后台运行，Bot 的定时任务与主动消息不中断。',
+    '登录后 KepCup 在后台运行，Bot 的定时任务与主动消息不中断。',
   'onboarding.permissionsNotifyHint': 'Bot 需要你注意时发送系统通知；首次发送时系统可能请求授权。',
   'onboarding.notifyTest': '发送测试通知',
   // BR-P13-008: the notification copy lives here (single copy source); the
