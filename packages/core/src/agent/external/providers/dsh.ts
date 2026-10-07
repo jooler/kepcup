@@ -21,9 +21,9 @@ import { genericAcpProvider } from './generic-acp.js';
  *   postInstall 钩子（todo §8.3 遗留）。
  */
 
-/** `-32603` + 「no API key」（dsh 的未配 key 形态）。 */
+/** `-32603` + 「no API key for provider route」（dsh 的未配 key 形态，精确匹配）。 */
 export function isDshMissingApiKey(error: AgentErrorInfo): boolean {
-  return error.code === -32603 && /no api key/i.test(error.message);
+  return error.code === -32603 && error.message.includes('no API key for provider route');
 }
 
 export function classifyDshError(error: AgentErrorInfo): AgentErrorKind {

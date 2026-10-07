@@ -38,9 +38,16 @@ export interface LaunchContext {
   dataHome?: string;
   /**
    * 该 Agent 的私有状态目录（`{数据目录}/agents/{id}`，P5）：需要把 Agent 的
-   * 全局配置根改到 KepCup 私有位置的 Provider 用（Antigravity `GEMINI_HOME`）。
+   * 全局配置根改到 KepCup 私有位置的 Provider 用（Antigravity `GEMINI_HOME`、
+   * OpenCode `XDG_CONFIG_HOME`、Cursor `CURSOR_CONFIG_DIR`）。
    */
   stateDir?: string;
+  /**
+   * 用户开启了「加载我的个人配置」（`settings.agents[id].loadUserConfig`，
+   * 进程级）：未开启时 Provider 把 Agent 的全局配置根改到私有目录（审查
+   * H1 / M2），开启时沿用用户自己的。
+   */
+  loadUserConfig?: boolean;
 }
 
 export interface SessionContext {

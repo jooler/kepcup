@@ -25,12 +25,27 @@ export type AgentPlatform = z.infer<typeof agentPlatformSchema>;
 /** 目录 id：小写字母数字与 `.-_`；`agent:{id}` 是调度键 / 引擎键 / 伪 ref 前缀。 */
 export const agentIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
 
+/** 安装根内的相对路径（`/` 分隔，段为文件名或 `*`，不含 `.` / `..`）。 */
+export const AGENT_INSTALL_RELATIVE_GLOB =
+  /^(?:\*|(?!\.{1,2}(?:\/|$))[A-Za-z0-9@._-]+)(?:\/(?:\*|(?!\.{1,2}(?:\/|$))[A-Za-z0-9@._-]+))*$/;
+
 export const agentDistributionSchema = z.object({
   npx: z
     .object({
       package: z.string().min(1),
       args: z.array(z.string()).optional(),
       env: z.record(z.string(), z.string()).optional(),
+      /**
+       * 窄化的安装后步骤（P5 审查 H3）：安装器一律 `npm ci --ignore-scripts`，
+       * 个别包的 install 脚本只是恢复预编译文件的可执行位（如 node-pty 的
+       * `spawn-helper`）——这里逐条列出相对安装根的路径（段可为 `*`），安装后
+       * 只对匹配到的普通文件 chmod 0755，不放开任何脚本。
+       */
+      postInstall: z
+        .object({
+          chmodExecutable: z.array(z.string().regex(AGENT_INSTALL_RELATIVE_GLOB)),
+        })
+        .optional(),
     })
     .optional(),
   binary: z
@@ -329,7 +344,13 @@ const DSH_AGENT_ENTRY: AgentCatalogEntry = {
   license: 'MIT',
   icon: 'dsh.svg',
   distribution: {
-    npx: { package: '@deepseek-ai/dsh@0.2.0-rc.2', args: ['--profile', 'acp'] },
+    npx: {
+      package: '@deepseek-ai/dsh@0.2.0-rc.2',
+      args: ['--profile', 'acp'],
+      // @deepseek-ai/dsh-subprocess-local 的 postinstall 只为 node-pty 预编译的
+      // spawn-helper 恢复可执行位（macOS 上缺它命令无法执行，待 Mac 真机验证）。
+      postInstall: { chmodExecutable: ['node_modules/node-pty/prebuilds/*/spawn-helper'] },
+    },
   },
   provider: 'dsh',
   transport: 'acp',

@@ -205,6 +205,8 @@ export interface AgentsServiceDeps {
   /** 应用数据目录与每个 Agent 的私有状态目录（与 AgentHost 相同，P5）。 */
   dataHome?: string;
   stateDirFor?(agentId: string): string;
+  /** Per-agent private process cwd (审查 M1), shared with AgentHost. */
+  processCwdFor?(agentId: string): string;
   providers?: ProviderRegistry;
   /** Same spawner as the AgentHost (tests: in-process fake agents). */
   spawn?: AgentSpawner;
@@ -613,13 +615,19 @@ export class AgentsService {
       ...(this.#deps.stateDirFor !== undefined
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
         : {}),
+      loadUserConfig: this.#deps.settings.get().agents[entry.id]?.loadUserConfig === true,
     });
     const spawn = this.#deps.spawn ?? spawnAgentProcess;
-    mkdirSync(this.#deps.workDir, { recursive: true });
+    // Same private cwd as the run processes (审查 M1).
+    let cwd = this.#deps.processCwdFor?.(entry.id);
+    if (cwd === undefined) {
+      mkdirSync(this.#deps.workDir, { recursive: true });
+      cwd = this.#deps.workDir;
+    }
     return spawn({
       entry,
       launch: { ...launch, env: buildAgentEnv(process.env, launch.env) },
-      cwd: this.#deps.workDir,
+      cwd,
       onStderr: (text) =>
         this.#deps.logger.debug(
           { agentId: entry.id, line: this.#deps.secrets.redact(text).slice(0, 500) },

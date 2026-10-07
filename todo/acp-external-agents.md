@@ -590,6 +590,25 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - steering / 会话复用 / 用量 / ZCode 垫片属 P5 其他部分（本次各 Provider 的 `features` 已按实测填写供其使用）。
 - 内置 zip 解压器对 300 MB+ 归档整读入内存（Antigravity Linux），考虑流式解压。
 
+#### 审查修复（P5 第一部分独立审查 REQUEST CHANGES，2026-10-07，分支 t/d72-p5-2「D72 P5-1 审查修复」）
+
+依据：p5prov 下载产物的离线阅读（OpenCode 1.18.35 二进制内嵌源码 `Config.loadInstanceState` / `ConfigPaths.directories` / `Instruction.systemPaths`；Cursor `dist-package/index.js` 的 `cursor-config/paths`；未运行任何二进制）。
+
+- **H1 OpenCode 权限可被配置覆盖** → `providers/opencode.ts` 重写进程级配置：
+  - `OPENCODE_DISABLE_PROJECT_CONFIG=1`：源码确认它同时关掉 project 的 opencode.json、`ConfigPaths.directories` 里 project 的 `.opencode/`（agent / mode / command / plugin，也就不再往 project 里后台装 `@opencode-ai/plugin`）与 project AGENTS.md 指令 → `agentSideConfigFiles` 改为 `[]`，AGENTS.md 由宿主 `<project>` 注入（不再需要配置确认卡）。
+  - 权限块只用字符串动作（`edit` / `bash` / `external_directory` / `task` 一律 `ask`）——不依赖 remeda mergeDeep 的键序与 `findLast`；同一块写顶层、`agent.{build,plan,general,explore}.permission`（`plan` / `explore` 的 `edit` 保持 `deny`）与 `mode.{build,plan}.permission`（mode 在 CONTENT 之后并入 agent），顶层再经 `OPENCODE_PERMISSION` 合并。数据目录 deny 规则（对象写法）去掉：工作目录外路径一律 ask，数据目录由宿主权限桥拒绝（与网关同一底线）。`task: ask` 让自定义子代理（`~/.opencode/agent/*.md` 等）只能经宿主裁决启动。
+  - `!loadUserConfig` 时 `XDG_CONFIG_HOME` = `{数据目录}/agents/opencode/xdg-config`（登录凭据在 `XDG_DATA_HOME`，不受影响）；没有私有状态目录时拒绝启动（fail closed）。`OPENCODE_PURE=1` 不加载外部插件（沙箱外任意代码）。新增 `LaunchContext.loadUserConfig`（host 经 `loadUserConfigFor`、AgentsService 控制进程读 settings；`agents.configure` 改它时已有的 `host.stop` 让进程按新值重启）。
+  - project 配置确认（P3 闸门，对所有 Provider）改为从 project 向上查到 git worktree 根（OpenCode / Codex 都向上找），卡片原因文案加「可能放宽智能体的权限」与「含项目上层直到 git 根目录中的同类文件」。
+  - 残留（无配置项）：全局配置目录（私有目录或用户的 `~/.config/opencode`）与 `~/.opencode` 仍被后台安装 `@opencode-ai/plugin`；`~/.opencode/` 仍被读取（HOME 不改，否则命令里的 git 等失去用户身份）——条款提示已说明。
+  - 测试：`agent-providers-p5.test.ts` 新增「配置层模型」用例（按源码顺序以 mergeDeep 叠加用户全局 / project / `~/.opencode` 的放宽配置后，四个内置 agent 的有效 bash / external_directory / task 仍为 ask）；P3 集成新增 git 根向上查找用例。
+- **H2 dsh 权限请求只带 `{toolCallId}`** → 引擎记录每个调用的 `tool_call` / `tool_call_update` 字段（kind / title / name / rawInput / locations / content / _meta，每 run 上限 500 条），权限请求交权限桥前按 ACP「请求的 toolCall 即 ToolCallUpdate」补全（请求自带字段优先），对所有 Agent 生效。fake agent 增 `permission.bare`；单测覆盖。
+- **H3 dsh 在 `--ignore-scripts` 下 spawn-helper 无可执行位** → 目录 `distribution.npx.postInstall.chmodExecutable`（相对安装根、段可为 `*`、schema 拒绝 `.` / `..` / 绝对路径），安装器 `npm ci` 后只对匹配的**普通文件** chmod 0755（符号链接、目录、经符号链接目录逃出安装根的一律跳过），不放开任何脚本；dsh 条目登记 `node_modules/node-pty/prebuilds/*/spawn-helper`。**需 Mac 真机验证**（Linux 预编译是否同样需要、koffi 是否另有安装步骤）。
+- **M1 Agent 进程 cwd 为共享 /tmp** → `infra/paths.ts` `ensureAgentProcessCwd` = `{数据目录}/agents/{id}/cwd`（0700），AgentHost（`processCwdFor`）与 AgentsService 控制进程共用；Cursor 从进程 cwd 向上找 `.cursor/cli.json` 不再落到可被他人写入的 `/tmp`。
+- **M2** 注册表不变量测试（所有 `safeModes` ⊆ 全局禁止表且不在自身 `forbiddenModes`，只有 Cursor 为 `['agent']`）；Cursor `!loadUserConfig` 时 `CURSOR_CONFIG_DIR` 指向私有目录（用户 `~/.cursor/cli-config.json` 的命令 allowlist 不生效；`auth.json` 路径不随它变化——**待登录实测**登录态是否保留），条款提示披露。
+- **M3** Antigravity `agent-platform` 在配置入口完成前从白名单隐藏（只留 gemini-api-key；UI 与 authenticate 两端测试更新）。**M4** 私有 `GEMINI_HOME` 取不到时抛错（不再回落共享临时目录）。
+- **LOW**：dsh 未配 key 判定精确匹配 `no API key for provider route`；安装下载进度不再把解压后大小 `sizeBytes` 当总字节数（改用响应头长度）；OpenCode 后台插件安装写入在条款提示说明。
+- 测试：新 `unit/agent-review-p5-1.test.ts`（不变量、Cursor 隔离、dsh 精确匹配与只带 id 的请求、chmod 钩子、进程私有 cwd）；契约测试 harness 提供 `stateDirFor`（配置隔离类 Provider 无私有目录即拒绝启动）。
+
 ---
 
 ## 9. P6 — 无 API key 的后台 loop + 收尾

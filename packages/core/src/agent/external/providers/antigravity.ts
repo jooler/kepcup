@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import type { AgentPermissionTier } from '@kepcup/shared';
+import { AppError, type AgentPermissionTier } from '@kepcup/shared';
 import { defaultBridgeToolFromCall, type AcpAuthMethod } from '../acp/client.js';
 import type { AgentProvider, PermissionTierContext } from '../types.js';
 import { genericAcpProvider } from './generic-acp.js';
@@ -43,8 +42,13 @@ import { switchToMode } from './mode-tier.js';
  * - `initialize.clientInfo` 如实为 KepCup（进入其 User-Agent，宿主统一处理）。
  */
 
-/** 允许的登录方式（白名单；其余一律过滤）。 */
-export const ANTIGRAVITY_AUTH_METHODS: readonly string[] = ['gemini-api-key', 'agent-platform'];
+/**
+ * 允许的登录方式（白名单；其余一律过滤）。`agent-platform`（Vertex AI）需要
+ * `GOOGLE_API_KEY` / `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` /
+ * `GOOGLE_APPLICATION_CREDENTIALS`，宿主环境白名单不透传、也还没有配置入口 →
+ * 在入口做好之前隐藏（审查 M3）。
+ */
+export const ANTIGRAVITY_AUTH_METHODS: readonly string[] = ['gemini-api-key'];
 
 /** 永不进入的模式（`yolo` 另在全局禁止表）。 */
 export const ANTIGRAVITY_FORBIDDEN_MODES: readonly string[] = ['auto_edit', 'yolo'];
@@ -53,12 +57,18 @@ export function antigravityModeForTier(_tier: AgentPermissionTier): string {
   return 'default';
 }
 
-/** 私有 `GEMINI_HOME`（缺省状态目录时退到临时目录，仍不与用户的 `~/.gemini` 共用）。 */
+/**
+ * 私有 `GEMINI_HOME`。没有私有状态目录时拒绝启动（审查 M4，fail closed）：
+ * 共享的临时目录可被本机其他用户预置 settings.json / hooks。
+ */
 export function antigravityGeminiHome(stateDir: string | undefined): string {
-  return path.join(
-    stateDir ?? path.join(os.tmpdir(), 'kepcup-agents', 'antigravity-acp'),
-    'gemini-home',
-  );
+  if (stateDir === undefined) {
+    throw new AppError(
+      'AGENT_UNAVAILABLE',
+      'Google Antigravity 缺少私有状态目录（GEMINI_HOME），拒绝启动',
+    );
+  }
+  return path.join(stateDir, 'gemini-home');
 }
 
 export function filterAntigravityAuthMethods(advertised: AcpAuthMethod[]): AcpAuthMethod[] {

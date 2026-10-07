@@ -1080,11 +1080,12 @@ export const zhCN = {
     '「Claude Agent」使用你本人的 Claude 订阅或 Console 账号，经 Anthropic 官方程序登录；请遵守 Anthropic 的使用条款。',
   'agents.terms.codex': 'Codex 使用你的 ChatGPT 订阅或 OpenAI API key，经 OpenAI 官方程序登录。',
   'agents.terms.opencode':
-    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。',
+    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。KepCup 不让 OpenCode 读取项目内的 opencode.json / .opencode/ 与外部插件；OpenCode 仍会在其全局配置目录后台安装 @opencode-ai/plugin。',
   'agents.terms.dsh': 'DeepSeek Harness 为官方预览版，按 DeepSeek API key 计费。',
-  'agents.terms.cursor': 'Cursor 的用量计入你的 Cursor 套餐额度。',
+  'agents.terms.cursor':
+    'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',
   'agents.terms.antigravity':
-    '不要使用 Google 个人账号登录：Google 条款禁止第三方软件经个人账号访问 Antigravity，违者可能被封号（含 Gemini CLI）。KepCup 只提供 Gemini API key 与 Vertex AI（Agent Platform）两种方式。',
+    '不要使用 Google 个人账号登录：Google 条款禁止第三方软件经个人账号访问 Antigravity，违者可能被封号（含 Gemini CLI）。KepCup 目前只提供 Gemini API key 登录（Vertex AI 需要的项目配置入口尚未提供）。',
   'agents.terms.zcode': 'ZCode 使用你在本机安装的 ZCode 应用与其 GLM Coding Plan 登录。',
   'agents.enable': '启用',
   'agents.update': '更新',

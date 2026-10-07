@@ -1,4 +1,5 @@
-import type { AgentPermissionTier } from '@kepcup/shared';
+import path from 'node:path';
+import { AppError, type AgentPermissionTier } from '@kepcup/shared';
 import { defaultBridgeToolFromCall } from '../acp/client.js';
 import type { AgentProvider, PermissionTierContext } from '../types.js';
 import { genericAcpProvider } from './generic-acp.js';
@@ -54,8 +55,36 @@ async function applyCursorTier(
   await switchToMode('Cursor', cursorModeForTier(tier), ctx);
 }
 
+/**
+ * 未开启「加载我的个人配置」时的私有配置目录（`CURSOR_CONFIG_DIR`，审查 M2）：
+ * 用户的 `~/.cursor/cli-config.json` 里的命令 allowlist 会让命令不经权限请求
+ * 直接执行。登录凭据在 `auth.json`（Linux `$XDG_CONFIG_HOME/cursor`、macOS
+ * `~/.cursor`、Windows `%APPDATA%/Cursor`），路径不随 `CURSOR_CONFIG_DIR`
+ * 变化（bundle `getAuthFilePath`），登录不受影响——待登录实测。project 的
+ * `.cursor/cli.json` 按 Agent **进程** cwd 向上查找（git 根 → process.cwd），
+ * 进程 cwd 是 KepCup 私有目录（审查 M1）。
+ */
+export function cursorConfigDir(stateDir: string): string {
+  return path.join(stateDir, 'cursor-config');
+}
+
 export const cursorProvider: AgentProvider = {
   ...genericAcpProvider,
+  launch: ({ entry, target, stateDir, loadUserConfig }) => {
+    if (loadUserConfig !== true && stateDir === undefined) {
+      throw new AppError('AGENT_UNAVAILABLE', 'Cursor 缺少私有状态目录，无法隔离个人配置');
+    }
+    return {
+      command: target.command,
+      args: [...target.args],
+      env: {
+        ...(entry.distribution.npx?.env ?? {}),
+        ...target.env,
+        // Host-enforced last.
+        ...(loadUserConfig !== true ? { CURSOR_CONFIG_DIR: cursorConfigDir(stateDir!) } : {}),
+      },
+    };
+  },
   id: 'cursor',
   instructionMode: 'prompt-prefix',
   applyPermissionTier: applyCursorTier,

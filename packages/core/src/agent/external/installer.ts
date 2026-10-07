@@ -22,6 +22,7 @@ import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { inflateRawSync } from 'node:zlib';
 import {
+  AGENT_INSTALL_RELATIVE_GLOB,
   AppError,
   agentIdSchema,
   agentVersionSchema,
@@ -594,6 +595,48 @@ export function extractZip(file: string, dest: string): void {
 
 // --- npm lockfiles ---------------------------------------------------------------------
 
+/**
+ * 目录条目的窄化安装后步骤（`npx.postInstall.chmodExecutable`，审查 H3）：
+ * 安装根内匹配 `pattern`（`/` 分隔，段可为 `*`）的**普通文件**改为 0755；
+ * 符号链接、目录、指向安装根之外的一律跳过。返回改动的文件数。
+ */
+export function chmodInstalledFiles(root: string, pattern: string): number {
+  if (!AGENT_INSTALL_RELATIVE_GLOB.test(pattern)) return 0;
+  let current = [root];
+  for (const segment of pattern.split('/')) {
+    const next: string[] = [];
+    for (const dir of current) {
+      if (segment === '*') {
+        let names: string[];
+        try {
+          names = readdirSync(dir);
+        } catch {
+          continue;
+        }
+        for (const name of names) next.push(path.join(dir, name));
+      } else {
+        next.push(path.join(dir, segment));
+      }
+    }
+    current = next;
+  }
+  let changed = 0;
+  for (const file of current) {
+    let stats;
+    try {
+      stats = lstatSync(file);
+    } catch {
+      continue;
+    }
+    if (!stats.isFile()) continue;
+    // A symlinked directory on the way must not lead out of the install root.
+    if (!isInside(realpathSync(root), realpathSync(file))) continue;
+    chmodSync(file, 0o755);
+    changed += 1;
+  }
+  return changed;
+}
+
 /** 随应用发布的 npx 锁文件（`npm ci` 用）：键为 `包名@版本`。 */
 export interface NpxLockfile {
   packageJson: unknown;
@@ -926,6 +969,11 @@ export class AgentInstaller {
         `npm 安装 ${spec.name}@${spec.version} 失败（退出码 ${result.code}）：${detail}`,
       );
     }
+    if (this.#platform !== 'win32') {
+      for (const pattern of npx.postInstall?.chmodExecutable ?? []) {
+        chmodInstalledFiles(staging, pattern);
+      }
+    }
     const packageDir = path.join(staging, 'node_modules', ...spec.name.split('/'));
     const bin = packageBin(packageDir, spec.name);
     if (bin === null) {
@@ -969,10 +1017,9 @@ export class AgentInstaller {
     );
     rmSync(download, { force: true });
     try {
-      progress({
-        stage: 'downloading',
-        ...(entry.sizeBytes ? { totalBytes: entry.sizeBytes } : {}),
-      });
+      // `sizeBytes` is the unpacked size (approval card), not the download:
+      // the progress total comes from the response's Content-Length (审查 LOW).
+      progress({ stage: 'downloading' });
       await (this.#deps.download ?? defaultAgentDownloader)({
         url: target.archive,
         target: download,

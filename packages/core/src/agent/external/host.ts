@@ -107,6 +107,13 @@ export interface AgentHostDeps {
   spawn?: AgentSpawner;
   /** Neutral working directory of agent processes (sessions carry their own cwd). */
   processCwd?: string;
+  /**
+   * Per-agent private process cwd (审查 M1; start.ts: `agents/{id}/cwd`, 0700);
+   * wins over `processCwd`. Never the shared temp directory in production.
+   */
+  processCwdFor?(agentId: string): string;
+  /** 「加载我的个人配置」（进程级，`LaunchContext.loadUserConfig`）。 */
+  loadUserConfigFor?(agentId: string): boolean;
   /** 应用数据目录（Provider 的进程级隔离配置用，`LaunchContext.dataHome`）。 */
   dataHome?: string;
   /** 每个 Agent 的私有状态目录（`LaunchContext.stateDir`）。 */
@@ -578,6 +585,7 @@ export class AgentHost {
       ...(this.#deps.stateDirFor !== undefined
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
         : {}),
+      loadUserConfig: this.#deps.loadUserConfigFor?.(entry.id) === true,
     });
     const spawn = this.#deps.spawn ?? spawnAgentProcess;
     let stderrTail = '';
@@ -591,7 +599,7 @@ export class AgentHost {
     const proc = spawn({
       entry,
       launch: { ...launch, env: buildAgentEnv(process.env, launch.env) },
-      cwd: this.#deps.processCwd ?? os.tmpdir(),
+      cwd: this.#deps.processCwdFor?.(entry.id) ?? this.#deps.processCwd ?? os.tmpdir(),
       onStderr: (text) => {
         const lines = (stderrTail + text).split(/\r?\n/);
         // A newline-less flood must not grow without bound.

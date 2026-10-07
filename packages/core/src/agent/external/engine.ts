@@ -633,6 +633,12 @@ class ExternalRunHandle implements RunHandle {
   readonly #detachedPending = new Set<string>();
   readonly #detachedResults: DetachedResult[] = [];
   #detachedWaiter: (() => void) | null = null;
+  /**
+   * What the agent's `tool_call` / `tool_call_update`s said about each call
+   * (审查 H2): permission requests that carry only the id (DeepSeek Harness)
+   * are completed from it before the permission bridge classifies them.
+   */
+  readonly #toolCalls = new Map<string, Record<string, unknown>>();
   readonly done: Promise<RunOutcome>;
   #resolveDone!: (outcome: RunOutcome) => void;
 
@@ -1252,6 +1258,9 @@ class ExternalRunHandle implements RunHandle {
     return {
       bridge,
       onUpdate: (update) => {
+        if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+          this.#noteToolCall(update);
+        }
         if (update.sessionUpdate === 'current_mode_update') {
           this.#onModeUpdate(update.currentModeId);
         } else if (update.sessionUpdate === 'config_option_update') {
@@ -1263,7 +1272,7 @@ class ExternalRunHandle implements RunHandle {
       ...(this.#deps.permissions !== undefined
         ? {
             requestPermission: (request: AcpRequestPermissionRequest) =>
-              this.#deps.permissions!.decide(request, {
+              this.#deps.permissions!.decide(this.#enrichPermission(request), {
                 identity: this.#spec.identity,
                 entry: this.#entry!,
                 provider: this.#provider!,
@@ -1291,6 +1300,45 @@ class ExternalRunHandle implements RunHandle {
         this.#wakeDetached();
       },
     };
+  }
+
+  /** Upper bound of remembered tool calls per run (oldest dropped). */
+  static readonly MAX_TOOL_CALLS_KEPT = 500;
+
+  #noteToolCall(update: ToolCallLike): void {
+    const known = this.#toolCalls.get(update.toolCallId) ?? {};
+    for (const key of [
+      'kind',
+      'title',
+      'name',
+      'rawInput',
+      'locations',
+      'content',
+      '_meta',
+    ] as const) {
+      const value = (update as Record<string, unknown>)[key];
+      if (value !== undefined && value !== null) known[key] = value;
+    }
+    this.#toolCalls.delete(update.toolCallId);
+    this.#toolCalls.set(update.toolCallId, known);
+    if (this.#toolCalls.size > ExternalRunHandle.MAX_TOOL_CALLS_KEPT) {
+      const oldest = this.#toolCalls.keys().next().value;
+      if (oldest !== undefined) this.#toolCalls.delete(oldest);
+    }
+  }
+
+  /**
+   * ACP defines the request's `toolCall` as a ToolCallUpdate (only changed
+   * fields): fill in what the call's earlier updates said; the request's own
+   * fields win.
+   */
+  #enrichPermission(request: AcpRequestPermissionRequest): AcpRequestPermissionRequest {
+    const known = this.#toolCalls.get(request.toolCall.toolCallId);
+    if (known === undefined) return request;
+    const own = Object.fromEntries(
+      Object.entries(request.toolCall).filter(([, value]) => value !== undefined && value !== null),
+    );
+    return { ...request, toolCall: { ...known, ...own } as typeof request.toolCall };
   }
 
   /** Runs can settle during core shutdown, after the logger closed. */
