@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
   import { t } from '$lib/i18n';
+  import { chat } from '$lib/stores/chat.svelte';
+  import { avatarColorForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -40,6 +42,14 @@
   $effect(() => {
     if (isRenderableText) lazyMarkdown.start();
   });
+  /**
+   * 用户气泡跟随对话 Bot 的预置头像色（单聊取 direct bot，群聊没有单一
+   * Bot，维持默认主色）。第一种「黑白」是 var() 主题变量，亮/暗风格下
+   * 黑白互换，文字用其对比色；其余固定色一律白字。
+   */
+  const userBubbleColor = $derived(
+    parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
+  );
 </script>
 
 {#if message.status === 'recalled'}
@@ -62,8 +72,11 @@
   {#if !('text' in message.content) || message.content.text.length > 0}
     <!-- 纯附件消息（docs/design/20-conversation-media.md）没有文本气泡，附件行即消息体。 -->
     <div
-      class="rounded-[18px] bg-primary px-3 py-2 text-sm whitespace-pre-wrap text-primary-foreground
-        {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}"
+      class="rounded-[18px] px-3 py-2 text-sm whitespace-pre-wrap
+        {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
+        {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
+      style:background={userBubbleColor?.hex}
+      style:color={userBubbleColor ? avatarColorForeground(userBubbleColor) : undefined}
       data-testid="user-bubble"
     >
       {'text' in message.content ? message.content.text : ''}
