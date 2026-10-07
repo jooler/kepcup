@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { PanelRightClose, Monitor, Pencil } from '@lucide/svelte';
+  import { X, Monitor, Pencil } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
@@ -231,7 +231,7 @@
         data-testid="right-panel-hide"
         aria-label={t('shell.rightPanelHide')}
       >
-        <PanelRightClose class="size-4" aria-hidden="true" />
+        <X class="size-4" aria-hidden="true" />
       </Button>
     </div>
   </header>

@@ -82,7 +82,7 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     const picker = page.locator('[data-testid="avatar-picker"]');
     await expect(picker).toBeVisible();
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
-    await expect(page.locator('[data-testid="avatar-color-brown"]')).toHaveClass(/ring-2/);
+    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
 
     // 换形状 + 换颜色即时生效（SVG 预置头像出现在右栏、顶部药丸、左栏）。
     await page.locator('[data-testid="avatar-shape-spark"]').click();
@@ -93,7 +93,7 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     // Reset 回默认（第一个形状 + 第一种颜色）。
     await page.locator('[data-testid="avatar-reset"]').click();
     await expect(page.locator('[data-testid="avatar-shape-orb"]')).toHaveClass(/ring-2/);
-    await expect(page.locator('[data-testid="avatar-color-brown"]')).toHaveClass(/ring-2/);
+    await expect(page.locator('[data-testid="avatar-color-mono"]')).toHaveClass(/ring-2/);
 
     // 上传页签：真实走 core 落盘（bots/{id}/avatar/），右栏出现 <img> 头像。
     await page.locator('[data-testid="avatar-tab-upload"]').click();

@@ -40,7 +40,13 @@ function roundedPolygon(points: Pt[], radius: number): string {
 }
 
 /** 顶点列表：中心 (cx,cy)、外接半径 R、起始角（度，-90 朝上）。 */
-function regularPoints(cx: number, cy: number, radius: number, count: number, startDeg: number): Pt[] {
+function regularPoints(
+  cx: number,
+  cy: number,
+  radius: number,
+  count: number,
+  startDeg: number,
+): Pt[] {
   return Array.from({ length: count }, (_, i) => {
     const a = ((startDeg + (i * 360) / count) * Math.PI) / 180;
     return [cx + radius * Math.cos(a), cy + radius * Math.sin(a)] as const;
@@ -48,7 +54,14 @@ function regularPoints(cx: number, cy: number, radius: number, count: number, st
 }
 
 /** 星形顶点：外内半径交替。 */
-function starPoints(cx: number, cy: number, outer: number, inner: number, spikes: number, startDeg: number): Pt[] {
+function starPoints(
+  cx: number,
+  cy: number,
+  outer: number,
+  inner: number,
+  spikes: number,
+  startDeg: number,
+): Pt[] {
   const points: Pt[] = [];
   for (let i = 0; i < spikes * 2; i++) {
     const r = i % 2 === 0 ? outer : inner;
@@ -181,11 +194,28 @@ export const AVATAR_SHAPES: AvatarPresetShape[] = [
 export interface AvatarPresetColor {
   id: string;
   label: string;
+  /**
+   * 填充色（任意 CSS color，可为 var() 主题变量引用）。第一种「黑白」引用
+   * --avatar-mono（app.css 定义）：亮色风格渲染为黑、暗色风格渲染为白，
+   * 所有 Bot 头像与用户气泡同步翻转。
+   */
   hex: string;
+  /** 填充色之上的前景色（眼睛 / 用户气泡文字）；缺省白色。 */
+  contrast?: string;
 }
 
-/** 取色对齐截图 2 的两行色板；不设黑色——暗色风格下几乎不可见。Reset 回第一种（棕褐）。 */
+/**
+ * 取色对齐截图 2 的两行色板。第一种「黑白」即曾被去掉的黑色——改为随主题
+ * 动态取色（亮色黑 / 暗色白）后，暗色下不再不可见，恢复为第一位；
+ * Reset 回第一种（黑白）。
+ */
 export const AVATAR_COLORS: AvatarPresetColor[] = [
+  {
+    id: 'mono',
+    label: '黑白',
+    hex: 'var(--avatar-mono)',
+    contrast: 'var(--avatar-mono-contrast)',
+  },
   { id: 'brown', label: '棕褐', hex: '#8d6e5b' },
   { id: 'red', label: '绯红', hex: '#e5484d' },
   { id: 'orange', label: '活力橙', hex: '#ee6b2e' },
@@ -220,6 +250,11 @@ export function parsePresetAvatar(value: string | null | undefined): ParsedPrese
   const color = colorById.get(colorId ?? '');
   if (!shape || !color) return null;
   return { shape, color };
+}
+
+/** 填充色之上的前景（眼睛 / 用户气泡文字）：动态色取对比变量，其余一律白。 */
+export function avatarColorForeground(color: AvatarPresetColor): string {
+  return color.contrast ?? '#ffffff';
 }
 
 /** `upload:{fileName}` 的文件名；非上传值返回 null。 */
