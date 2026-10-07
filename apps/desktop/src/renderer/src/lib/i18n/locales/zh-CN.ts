@@ -608,7 +608,7 @@ export const zhCN = {
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
-    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（bge-small-zh-v1.5，512 维）与 ONNX 运行库（约 200MB）经环境申请安装到应用私有目录，所有 Bot 共享；GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
+    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（jina-embeddings-v2-base-zh，768 维，中英双语）与 ONNX 运行库（合计约 276MB）经环境申请安装到应用私有目录，所有 Bot 共享；GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
   'settings.embeddingSourceNone': '未配置',
   'settings.embeddingSourceLocal': '本地模型',
   'settings.embeddingSourceProvider': '厂商接口（使用上方「向量模型」配置）',

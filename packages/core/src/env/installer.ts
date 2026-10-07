@@ -119,8 +119,13 @@ export function resolveBinDir(item: string, targetDir: string, platform: string)
       // the marker (loaded via createRequire by memory/local-embedder).
       return existsSync(path.join(targetDir, 'dist', 'index.js')) ? targetDir : null;
     case 'embedding-model':
-      // P07: bge-small-zh-v1.5 ONNX export (model + vocab + config).
-      return existsSync(path.join(targetDir, 'model.onnx')) ? targetDir : null;
+      // P07: jina-embeddings-v2-base-zh q8 ONNX export (model + vocab/merges/config).
+      return existsSync(path.join(targetDir, 'model.onnx')) &&
+        existsSync(path.join(targetDir, 'vocab.json')) &&
+        existsSync(path.join(targetDir, 'merges.txt')) &&
+        existsSync(path.join(targetDir, 'config.json'))
+        ? targetDir
+        : null;
     default:
       // Named executable at the root, or a uv-python style cpython layout
       // (any item name; python installs land as cpython-*/bin/python3).

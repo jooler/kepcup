@@ -196,7 +196,7 @@
 ## P07（2026-10-01 核心领域层完成于 macOS，界面与 e2e 留 P07-B；以下为跨系统项）
 
 - [ ] **真实模型 20 条标注样例抽查**（任务书验收标准第 2 条）：配一个真实厂商（含真实向量接口或本地模型，见 DEV-007），对 20 条标注样例核对反思输出是否符合"记什么、不记什么"；记录结果补进 PROGRESS.md P07 小节。需真实模型 key，本机未执行。
-- [ ] **本地向量模型三平台实测**（DEV-007 已落实 2026-10-04，运行库=onnxruntime-node 1.30.0、模型=bge-small-zh-v1.5 ONNX 导出，见 DEVIATIONS/PROGRESS）：macOS arm64 已实测（模型 90MB + 运行库 108MB、warm 单条 36ms、语义方向正确）；剩余 **Windows（DirectML 路径 + CPU 回退）与 Linux（纯 CPU）实测**——下载/安装/推理全流程 + 耗时记录；下载源 npmmirror/modelscope 在目标网络环境的可达性复核。
+- [ ] **本地向量模型三平台实测**（DEV-007 已落实 2026-10-04、默认模型 2026-10-07 起 = jina-embeddings-v2-base-zh q8，运行库=onnxruntime-node 1.30.0，见 DEVIATIONS）：macOS arm64 已实测（模型约 163MB + 运行库约 114MB、短句 warm 约 4ms CPU EP / 约 26ms CoreML EP、1024 token 约 367ms、会话创建约 170ms-2s、中英及混说语义方向正确：同义 0.65 / 跨语言 0.68 / 无关 0.04）；剩余 **Windows（DirectML 路径 + CPU 回退）与 Linux（纯 CPU）实测**——下载/安装/推理全流程 + 耗时记录；下载源 npmmirror/modelscope 在目标网络环境的可达性复核。
 - [ ] **厂商向量接口真实联通**：`VendorEmbedder`（OpenAI 兼容 `/v1/embeddings`）对真实厂商（如 OpenAI text-embedding-3-small）跑通：dim 探测、memory_vec 建表、写入/检索、余弦去重（>0.92）实测；更换来源后 `memory_vec_rebuild` 任务实测。本机仅有 mock，未打真实接口。
 - [ ] **sqlite-vec 0.1.9 平台覆盖**：macOS arm64 已验证（加密库下 vec0 建表/写入/KNN/持久化，见 PROGRESS P07）；Ubuntu（x64/arm64）与 Windows（x64）随 CI 首跑确认加载与检索；**Windows arm64 上游不发布 sqlite-vec 扩展**——确认该平台检索正确退化为全文检索（embedding.status 显示未就绪原因）且不崩溃。
 - [ ] **Intl.Segmenter 中文分词的平台一致性**：50 条中文样例召回验证在 macOS 完成（AND 9/50 → OR 38/50 top-1，见 PROGRESS P07）；ICU 版本差异可能影响分词边界，在 Ubuntu/Windows 上重跑 `test/unit/` 中分词相关断言（`memory-store.test.ts` 的中文召回用例）确认召回不劣于 macOS。

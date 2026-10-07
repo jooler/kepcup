@@ -42,7 +42,7 @@ P05、P06。
 1. **记忆库**（`memory/store.ts`）：memory_items、memory_fts 的增删改查；FTS 写入经 `text-segment`；`memory_vec` 在向量模型就绪后按维度创建。
 2. **向量服务**（`memory/embedder.ts`）
    - 接口：`{ id, dim, ready(): boolean, embed(texts: string[]): Promise<Float32Array[]> }`。
-   - 本地实现（DEV-007 已落实）：`onnxruntime-node` 推理 `bge-small-zh-v1.5` ONNX 导出（512 维，模型约 90MB + 运行库约 108MB，经环境管理器合成一张审批卡按需安装到 `toolchains/embedding-model|onnxruntime/{version}/`，不入应用安装包）；GPU 加速按平台自动选执行单元（macOS CoreML / Windows DirectML / Linux CPU，回退 CPU）；分词自实现 BERT WordPiece（`memory/bert-tokenizer.ts`）。macOS arm64 实测 warm 单条 36ms。细节见 [16-capability-models.md](../../design/16-capability-models.md)「向量来源的本地实现」。
+   - 本地实现（DEV-007 已落实）：`onnxruntime-node` 推理 `jina-embeddings-v2-base-zh` q8 量化 ONNX 导出（768 维，中英双语；模型约 163MB + 运行库约 114MB，经环境管理器合成一张审批卡按需安装到 `toolchains/embedding-model|onnxruntime/{version}/`，不入应用安装包）；GPU 加速按平台自动选执行单元（macOS CoreML / Windows DirectML / Linux CPU，回退 CPU）；mean 池化；分词自实现 RoBERTa 字符级 BPE（`memory/bpe-tokenizer.ts`，纯 TS 与 HF tokenizers 逐 id 对齐）。macOS arm64 实测短句 warm 单条约 4ms（CPU EP）/ 约 26ms（CoreML EP）（1024 token 约 367ms，产品截断 512）。细节见 [16-capability-models.md](../../design/16-capability-models.md)「向量来源的本地实现」。
    - 厂商实现：OpenAI 兼容的 `/v1/embeddings` 接口，使用已配置的厂商 key。
    - 设置页选择向量来源；更换来源或模型时，后台任务重建所有 Bot 的 `memory_vec`。
    - 首次需要向量时（第一次写入记忆）若未配置：默认选本地模型，并由系统（不是 Bot）发起一次 `environment` 审批，卡片说明用途（本地栈的卡片含模型与运行库的合计体积与组件明细）。
@@ -97,7 +97,7 @@ P05、P06。
 
 - memory.db：`meta`、`memory_items`、`memory_fts`、`memory_vec`。
 - main.db：`profile_items`、`profile_fts`、`profile_card`、`profile_proposals`（见 [03-data-model.md](../03-data-model.md#profile_proposalsp07)）。
-- 环境目录新增 `embedding-model` 条目（DEV-007 已落实：真实钉住 bge-small-zh-v1.5 ONNX 导出）与 `onnxruntime` 条目（运行库前置）；两者经 `files` 安装类型逐文件钉住下载。
+- 环境目录新增 `embedding-model` 条目（DEV-007 已落实：真实钉住 jina-embeddings-v2-base-zh q8 ONNX 导出）与 `onnxruntime` 条目（运行库前置）；两者经 `files` 安装类型逐文件钉住下载。
 - 审批类型启用 `profile_change`；系统发起的 `environment` 审批（`bot_id` 为空）。
 - RPC：`memory.list`、`memory.update`、`memory.retract`、`profile.list`、`profile.update`、`profile.retract`、`profile.card`、`usage.summary`、`budget.get`、`budget.update`、`embedding.status`、`embedding.configure`。
 
@@ -105,7 +105,7 @@ P05、P06。
 
 | 技术点 | 验证方法 |
 |---|---|
-| 本地向量推理的运行库与模型（在 `utilityProcess` 中运行） | 三个平台上加载模型并完成推理；记录体积与单条耗时。macOS arm64 已实测（模型 90MB + 运行库 108MB，warm 单条 36ms，语义方向正确）；Windows/Linux 复测记入 todo/cross-platform-acceptance.md P07 小节 |
+| 本地向量推理的运行库与模型（在 `utilityProcess` 中运行） | 三个平台上加载模型并完成推理；记录体积与单条耗时。macOS arm64 已实测（模型约 163MB + 运行库约 114MB，短句 warm 约 4ms，语义方向正确）；Windows/Linux 复测记入 todo/cross-platform-acceptance.md P07 小节 |
 | sqlite-vec 在 better-sqlite3-multiple-ciphers 中加载 | 创建 `vec0` 表、写入、检索，加密库下正常 |
 | `Intl.Segmenter` 中文分词质量满足检索 | 用 50 条中文样例验证全文检索召回 |
 

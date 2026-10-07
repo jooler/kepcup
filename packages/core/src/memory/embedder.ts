@@ -3,15 +3,15 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { AppError } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
-import { encodeBert, loadBertVocab } from './bert-tokenizer.js';
+import { encodeBpe, loadBpeVocab, type BpeVocab } from './bpe-tokenizer.js';
 
 /**
  * Vector service (docs/dev/phases/P07-memory.md 任务 2): one interface, two
  * implementations. Vendor sources go through the media gateway
  * (`GatewayEmbedder`)，由各厂商适配器路由端点（百炼多模态/早期向量模型走
  * 原生端点），配置来自 settings.capabilityModels.embedding。本地来源
- * （`LocalEmbedder`）经环境管理器安装 ONNX 运行库 + bge-small-zh-v1.5 到
- * 私有 toolchains 后加载推理（DEV-007 已落实）；任一来源未就绪时检索
+ * （`LocalEmbedder`）经环境管理器安装 ONNX 运行库 + jina-embeddings-v2-base-zh
+ * 到私有 toolchains 后加载推理（DEV-007 已落实）；任一来源未就绪时检索
  * 退化为全文搜索。
  */
 export interface Embedder {
@@ -67,20 +67,25 @@ export class GatewayEmbedder implements Embedder {
 
 /**
  * 本地模型（env 条目 `embedding-model` + 前置 `onnxruntime`，经环境管理器
- * 安装到 toolchains）。bge-small-zh-v1.5 ONNX 导出：BERT 4 层 / 512 维 /
- * 中文词表，CLS 池化 + 单位归一（与本文件 normalize 对齐，余弦即点积）。
- * 运行库经 createRequire 从 toolchains 的 onnxruntime-node 包加载（不经
- * esbuild 打包、不进应用安装包）；执行单元按平台选型（env/gpu.ts），首选
- * EP 创建会话失败时回退 CPU。会话/词表按安装目录做模块级缓存——
- * MemoryService 每次检索都新建 Embedder 实例，缓存必须在实例之外。
+ * 安装到 toolchains）。jina-embeddings-v2-base-zh（Xenova q8 ONNX 导出）：
+ * JinaBERT 12 层（ALiBi）/ 768 维 / 中英双语，mean 池化 + 单位归一（与本
+ * 文件 normalize 对齐，余弦即点积）。运行库经 createRequire 从 toolchains
+ * 的 onnxruntime-node 包加载（不经 esbuild 打包、不进应用安装包）；执行
+ * 单元按平台选型（env/gpu.ts），首选 EP 创建会话失败时回退 CPU。会话/词
+ * 表按安装目录做模块级缓存——MemoryService 每次检索都新建 Embedder 实例，
+ * 缓存必须在实例之外。
  */
 
 /** 与 catalog 条目一致的模型标识（进入 embedder id，变更触发向量重建）。 */
-export const EMBEDDING_MODEL_ID = 'bge-small-zh-v1.5';
-/** bge-small-zh-v1.5 的序列上限（= config.max_position_embeddings）。 */
+export const EMBEDDING_MODEL_ID = 'jina-embeddings-v2-base-zh';
+/**
+ * 序列截断上限。模型 ALiBi 支持 8192；产品截断 512——记忆条目 schema 上限
+ * 2000 字符、典型一行短句远低于此，且 1024 token 单条 warm 约 370ms
+ * （macOS arm64 CPU，实测 2026-10-07），512 兼顾长文覆盖与整理重建吞吐。
+ */
 const MAX_SEQUENCE_LENGTH = 512;
-/** config.json 读取失败时的兜底维度（该模型 hidden_size=512）。 */
-const FALLBACK_DIM = 512;
+/** config.json 读取失败时的兜底维度（该模型 hidden_size=768）。 */
+const FALLBACK_DIM = 768;
 
 /** onnxruntime-node 的最小类型面（不引入编译期依赖）。 */
 export interface OrtTensorLike {
@@ -120,7 +125,7 @@ export interface LocalEmbedderOptions {
 interface SharedSession {
   ort: OrtNamespaceLike;
   session: OrtSessionLike;
-  vocab: ReturnType<typeof loadBertVocab>;
+  vocab: BpeVocab;
 }
 
 // key = `${modelDir}\u0000${runtimeDir}`；失败的创建同样缓存（拒绝），避免
@@ -142,7 +147,7 @@ export class LocalEmbedder implements Embedder {
     return LocalEmbedder.modelDim(this.#options.modelDir);
   }
 
-  /** config.json 的 hidden_size（读取失败回退 512；目录不存在返回 null）。 */
+  /** config.json 的 hidden_size（读取失败回退 768；目录不存在返回 null）。 */
   static modelDim(modelDir: string | null): number | null {
     if (modelDir === null) return null;
     try {
@@ -163,7 +168,8 @@ export class LocalEmbedder implements Embedder {
     try {
       return (
         existsSync(path.join(modelDir, 'model.onnx')) &&
-        existsSync(path.join(modelDir, 'vocab.txt')) &&
+        existsSync(path.join(modelDir, 'vocab.json')) &&
+        existsSync(path.join(modelDir, 'merges.txt')) &&
         existsSync(path.join(runtimeDir, 'dist', 'index.js'))
       );
     } catch {
@@ -187,7 +193,7 @@ export class LocalEmbedder implements Embedder {
   }
 
   async #embedOne(shared: SharedSession, text: string): Promise<Float32Array> {
-    const ids = encodeBert(text, shared.vocab, MAX_SEQUENCE_LENGTH);
+    const ids = encodeBpe(text, shared.vocab, MAX_SEQUENCE_LENGTH);
     const length = ids.length;
     const int64 = (values: number[]): OrtTensorLike =>
       new shared.ort.Tensor('int64', BigInt64Array.from(values.map((value) => BigInt(value))), [
@@ -202,17 +208,25 @@ export class LocalEmbedder implements Embedder {
       feeds.token_type_ids = int64(ids.map(() => 0));
     }
     const output = await shared.session.run(feeds);
-    // sentence_embedding（若导出带池化）优先；否则取首输出（bge 导出为
-    // last_hidden_state [batch, seq, hidden]，CLS 池化取首个位置）。
+    // sentence_embedding（若导出带池化）优先；否则取首输出（jina 的 Xenova
+    // 导出为 last_hidden_state [batch, seq, hidden]，mean 池化取全体位置均值）。
     const name = 'sentence_embedding' in output ? 'sentence_embedding' : Object.keys(output)[0]!;
     const tensor = output[name];
     if (tensor === undefined || tensor.data.length === 0) {
       throw new AppError('PROVIDER_UNAVAILABLE', '推理输出为空');
     }
     if (tensor.dims.length === 3) {
-      // [batch, seq, hidden] → CLS（首个位置，BGE 约定）。
+      // [batch, seq, hidden] → mean pooling（jina / sentence-transformers 约定，
+      // 含特殊符号；batch=1 且无 padding，mask 恒 1）。
+      const seq = tensor.dims[1]!;
       const hidden = tensor.dims[2]!;
-      return normalize(asFloat32(tensor.data).subarray(0, hidden).slice());
+      const data = asFloat32(tensor.data);
+      const pooled = new Float32Array(hidden);
+      for (let s = 0; s < seq; s++) {
+        for (let h = 0; h < hidden; h++) pooled[h] = (pooled[h] ?? 0) + data[s * hidden + h]!;
+      }
+      for (let h = 0; h < hidden; h++) pooled[h] = (pooled[h] ?? 0) / seq;
+      return normalize(pooled);
     }
     return normalize(asFloat32(tensor.data));
   }
@@ -267,7 +281,10 @@ export class LocalEmbedder implements Embedder {
         `ONNX 会话创建失败（已尝试 ${tried.join(' | ')}）`,
       );
     }
-    const vocab = loadBertVocab(readFileSync(path.join(modelDir, 'vocab.txt'), 'utf8'));
+    const vocab = loadBpeVocab(
+      readFileSync(path.join(modelDir, 'vocab.json'), 'utf8'),
+      readFileSync(path.join(modelDir, 'merges.txt'), 'utf8'),
+    );
     return { ort, session, vocab };
   }
 }

@@ -10,7 +10,7 @@
   runs.db                                  -- 执行记录库
   skills-library/{skill}@{hash}/           -- 导入的技能，只读，按内容哈希存放
   toolchains/                              -- 按需安装的运行时与工具
-    embedding-model/{version}/             -- 本地向量模型（model.onnx + vocab.txt + config.json）
+    embedding-model/{version}/             -- 本地向量模型（model.onnx + vocab.json + merges.txt + config.json）
     onnxruntime/{version}/                 -- ONNX Runtime Node 包（含 node_modules/onnxruntime-common）
   cache/                                   -- 依赖包缓存，按内容寻址，多个 workspace 共享
   logs/                                    -- 运行日志（敏感字段脱敏）

@@ -38,16 +38,17 @@ describe('env catalog (P06)', () => {
         true,
       );
     }
-    // 体积 = 文件之和（卡片数字诚实）；模型 ≤200MB（任务书上限）。
+    // 体积 = 文件之和（卡片数字诚实）；jina q8 模型约 163MB，与运行库合计约 276MB。
     const runtime = ENV_CATALOG.find((e) => e.item === 'onnxruntime')!;
     const runtimeTotal = runtime.install.files.reduce((sum, file) => sum + file.sizeBytes, 0);
     expect(runtime.platforms['darwin-arm64']?.sizeBytes).toBe(runtimeTotal);
     const model = ENV_CATALOG.find((e) => e.item === 'embedding-model')!;
     const modelTotal = model.install.files.reduce((sum, file) => sum + file.sizeBytes, 0);
     expect(model.platforms['darwin-arm64']?.sizeBytes).toBe(modelTotal);
-    expect(modelTotal).toBeLessThanOrEqual(200_000_000);
-    expect(model.verify).toEqual({ files: ['model.onnx', 'vocab.txt', 'config.json'] });
-    expect(EMBEDDING_MODEL_VERSION).toBe('1.5');
+    expect(modelTotal).toBe(162_757_192);
+    expect(modelTotal + runtimeTotal).toBe(276_331_875);
+    expect(model.verify).toEqual({ files: ['model.onnx', 'vocab.json', 'merges.txt', 'config.json'] });
+    expect(EMBEDDING_MODEL_VERSION).toBe('2.0.0');
     expect(ONNXRUNTIME_VERSION).toBe(runtime.version);
     // bundle 助手：模型审批的运行前置。
     const bundle = embeddingBundleEntries(ENV_CATALOG);
@@ -67,7 +68,7 @@ describe('env catalog (P06)', () => {
     }
     // 所有下载地址只来自登记过的官方源：github/nodejs/python 官方发布页；
     // registry.npmmirror.com（npm 官方 tarball，字节与 registry.npmjs.org
-    // 一致，sha512 integrity 已核对）；ModelScope（Xenova/bge ONNX 导出的
+    // 一致，sha512 integrity 已核对）；ModelScope（Xenova/jina ONNX 导出的
     // 分发站，见 catalog 内注释与 docs/design/16）。
     for (const entry of ENV_CATALOG) {
       for (const platform of Object.values(entry.platforms)) {
@@ -175,7 +176,7 @@ describe('env catalog (P06)', () => {
         item: 'files-b',
         install: {
           via: 'files',
-          files: [file({ extract: { dest: '/abs/dest' } }), file({ name: 'vocab.txt' })],
+          files: [file({ extract: { dest: '/abs/dest' } }), file({ name: 'vocab.json' })],
         },
       },
       {
@@ -183,7 +184,7 @@ describe('env catalog (P06)', () => {
         item: 'files-c',
         install: {
           via: 'files',
-          files: [file({ extract: { dest: '../escape' } }), file({ name: 'vocab.txt' })],
+          files: [file({ extract: { dest: '../escape' } }), file({ name: 'vocab.json' })],
         },
       },
       {

@@ -190,8 +190,8 @@ export class MemoryService {
       });
     }
     if (config.source === 'local') {
-      // 本地来源（DEV-007 落地）：ONNX 运行库 + bge-small-zh-v1.5 经环境
-      // 管理器安装到 toolchains；未安装时 ready()=false，检索退化为 FTS。
+      // 本地来源（DEV-007 落地）：ONNX 运行库 + jina-embeddings-v2-base-zh 经
+      // 环境管理器安装到 toolchains；未安装时 ready()=false，检索退化为 FTS。
       const environment = this.#deps.environment;
       const model = environment?.installedFor('embedding-model') ?? null;
       const runtime = environment?.installedFor('onnxruntime') ?? null;
@@ -275,7 +275,7 @@ export class MemoryService {
       dim: embedder.dim,
       reason:
         config.source === 'local'
-          ? '本地向量模型或 ONNX 运行库未安装：批准环境安装（含运行库，约 200MB）后自动就绪，未安装时使用全文检索'
+          ? '本地向量模型或 ONNX 运行库未安装：批准环境安装（含运行库，约 276MB）后自动就绪，未安装时使用全文检索'
           : '该厂商缺少 API key，无法调用向量接口',
     };
   }

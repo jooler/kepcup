@@ -44,14 +44,14 @@
 
 | 组件 | 环境条目 | 内容与体积 | 来源 |
 |---|---|---|---|
-| 模型 | `embedding-model` | `bge-small-zh-v1.5` ONNX 导出（512 维 / 中文 BERT 词表 / CLS 池化），`model.onnx` + `vocab.txt` + `config.json`，约 90MB | BAAI 官方权重的 Xenova 移植（BAAI 官方仓库无 ONNX 导出），ModelScope 分发 |
-| 运行库 | `onnxruntime` | `onnxruntime-node` + `onnxruntime-common` npm tarball，约 108MB | npm 官方 tarball（registry.npmmirror.com 与 registry.npmjs.org 字节一致，integrity 已核对） |
+| 模型 | `embedding-model` | `jina-embeddings-v2-base-zh` q8 量化 ONNX 导出（768 维 / 中英双语 / mean 池化），`model.onnx` + `vocab.json` + `merges.txt` + `config.json`，合计约 163MB | jinaai 官方权重（Apache-2.0）的 Xenova 移植，ModelScope 分发 |
+| 运行库 | `onnxruntime` | `onnxruntime-node` + `onnxruntime-common` npm tarball，约 114MB | npm 官方 tarball（registry.npmmirror.com 与 registry.npmjs.org 字节一致，integrity 已核对） |
 
 - **审批与安装**：两个条目合成**一张审批卡**（体积为合计，明细在原因里写全），批准后先装运行库再装模型（`EnvManager#ensureChainedItem`，模式同 uv→python）；安装完成自动触发一次 `memory_vec_rebuild`（旧条目此前只有全文检索）。catalog 用 `files` 安装类型逐文件钉住 url/sha256。
-- **加载**：`LocalEmbedder` 用 `createRequire` 从 `toolchains/onnxruntime/{version}/` 加载 onnxruntime-node，会话与词表按安装目录做模块级缓存；embedder id 为 `local:bge-small-zh-v1.5@{version}`，换模型/版本即换 id，向量索引自动重建。
+- **加载**：`LocalEmbedder` 用 `createRequire` 从 `toolchains/onnxruntime/{version}/` 加载 onnxruntime-node，会话与词表按安装目录做模块级缓存；embedder id 为 `local:jina-embeddings-v2-base-zh@{version}`，换模型/版本即换 id，向量索引自动重建。
 - **GPU 加速按宿主自动选执行单元**（`env/gpu.ts`）：macOS CoreML（随包内置）、Windows DirectML（随包携带 `DirectML.dll`，任意 DX12 显卡：NVIDIA/AMD/Intel，无需 CUDA/cuDNN）、Linux CPU（npm 发行包未携带 CUDA EP——如需 Linux GPU 加速须改用 CUDA 发行包，记跨系统清单）。首选 EP 会话创建失败时回退纯 CPU，推理永不因此失败。
-- **性能预算**（任务书：CPU 单条 ≤50ms）：macOS arm64 warm 实测约 36ms；首条含会话初始化约 2s（一次性）。
-- 分词：自实现 BERT WordPiece（`memory/bert-tokenizer.ts`，CJK 逐字 + 标点切分 + 小写 + `##` 续片贪心匹配），与 HF BertTokenizer(do_lower_case=true) 对齐，序列上限 512。
+- **性能**（macOS arm64 实测，q8）：短句 warm 单条约 4ms（CPU EP）/ 约 26ms（CoreML EP，调度开销所致，仍满足 ≤50ms 预算）；会话创建约 170ms-2s（一次性，CoreML 编译较慢）；1024 token 单条约 367ms——序列截断 512 是主要吞吐护栏。
+- **推理与分词**：JinaBERT（ALiBi，8192 上下文，产品截断 512）输出 `last_hidden_state`，`LocalEmbedder` 对全体位置做 mean 池化后单位归一（余弦即点积）；分词为 RoBERTa 字符级 BPE——自实现纯 TS（`memory/bpe-tokenizer.ts`：NFC + 小写、`\w+|[^\w\s]+` 预切分、按 merges rank 贪心合并、未收录符号 `<unk>`、`<s>…</s>` 包裹），与 HF tokenizers 逐 id 对齐，无新增 npm 依赖。
 
 ## 数据模型
 

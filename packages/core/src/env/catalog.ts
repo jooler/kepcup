@@ -307,8 +307,8 @@ const PYTHON_VERSION = '3.12.11';
 const GIT_VERSION = '2.56.0';
 /** ONNX Runtime（本地向量推理的运行库）版本，与 onnxruntime-common 同版。 */
 export const ONNXRUNTIME_VERSION = '1.30.0';
-/** 本地向量模型（bge-small-zh-v1.5 ONNX 导出）版本。 */
-export const EMBEDDING_MODEL_VERSION = '1.5';
+/** 本地向量模型（jina-embeddings-v2-base-zh 的 Xenova q8 ONNX 导出）版本。 */
+export const EMBEDDING_MODEL_VERSION = '2.0.0';
 
 /** sizeBytes are the exact artifact sizes from the official servers (HEAD). */
 export const ENV_CATALOG: Catalog = [
@@ -539,49 +539,55 @@ export const ENV_CATALOG: Catalog = [
     },
   },
   {
-    // P07 本地向量模型（DEV-007 已落实）：bge-small-zh-v1.5 的 ONNX 导出
-    // （BAAI 官方权重的 Xenova 移植，HF 社区标准转换；MIT 许可）。BAAI
-    // 官方仓库只发布 pytorch/safetensors，未提供 ONNX，故钉住移植导出；
-    // ModelScope 分发（国内可达）。512 维 / 中文 BERT 词表 / CLS 池化 /
-    // 单位归一，规格见 docs/design/16-capability-models.md「向量来源」。
-    // 换模型 = 改本条目 + LocalEmbedder 的 MODEL_ID/维度，向量索引按
-    // embedder id 变化自动重建（memory_vec_rebuild）。
+    // P07 本地向量模型（DEV-007 已落实）：jina-embeddings-v2-base-zh（中英
+    // 双语，JinaBERT/ALiBi，768 维，mean 池化；Apache-2.0）的 Xenova q8 量化
+    // ONNX 导出——HF 社区标准转换，官方仓库不带量化制品。分词是 RoBERTa
+    // 字符级 BPE（vocab.json + merges.txt，memory/bpe-tokenizer.ts 纯 TS 实
+    // 现）。ModelScope 分发（国内可达，与 Xenova/bge 导出同源站）。换模型 =
+    // 改本条目 + LocalEmbedder 的 MODEL_ID/维度，向量索引按 embedder id 变
+    // 化自动重建（memory_vec_rebuild）。
     item: 'embedding-model',
     version: EMBEDDING_MODEL_VERSION,
-    displayName: '本地向量模型（bge-small-zh-v1.5）',
-    source: 'https://www.modelscope.cn/models/Xenova/bge-small-zh-v1.5',
+    displayName: '本地向量模型（jina-embeddings-v2-base-zh）',
+    source: 'https://www.modelscope.cn/models/Xenova/jina-embeddings-v2-base-zh',
     install: {
       via: 'files',
       files: [
         {
           name: 'model.onnx',
-          url: `https://www.modelscope.cn/models/Xenova/bge-small-zh-v1.5/resolve/master/onnx/model.onnx`,
-          sha256: '69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a',
-          sizeBytes: 94_851_877,
+          url: `https://www.modelscope.cn/models/Xenova/jina-embeddings-v2-base-zh/resolve/master/onnx/model_quantized.onnx`,
+          sha256: '0a221ee9e6a6647ccc59cee7bdd26a7b8cf0c0cd3481a65f358d9585a23f02f4',
+          sizeBytes: 161_565_239,
         },
         {
-          name: 'vocab.txt',
-          url: `https://www.modelscope.cn/models/Xenova/bge-small-zh-v1.5/resolve/master/vocab.txt`,
-          sha256: '45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c',
-          sizeBytes: 109_540,
+          name: 'vocab.json',
+          url: `https://www.modelscope.cn/models/Xenova/jina-embeddings-v2-base-zh/resolve/master/vocab.json`,
+          sha256: '62a861857691f39b92935580e929a31e7869056e5de5119ef81f5c62ffa1a4b5',
+          sizeBytes: 854_399,
+        },
+        {
+          name: 'merges.txt',
+          url: `https://www.modelscope.cn/models/Xenova/jina-embeddings-v2-base-zh/resolve/master/merges.txt`,
+          sha256: '34c90c55c32ada402c943c79555515b9eea2cbaf5bbcd970b012a2bc8e0ad331',
+          sizeBytes: 336_141,
         },
         {
           name: 'config.json',
-          url: `https://www.modelscope.cn/models/Xenova/bge-small-zh-v1.5/resolve/master/config.json`,
-          sha256: 'd4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f',
-          sizeBytes: 716,
+          url: `https://www.modelscope.cn/models/Xenova/jina-embeddings-v2-base-zh/resolve/master/config.json`,
+          sha256: '7dd45199b9f70a59a0ada4c126077b1410e1d8b948d5cc08a43f7937a3c010d4',
+          sizeBytes: 1_413,
         },
       ],
     },
     platforms: {
-      'darwin-arm64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
-      'darwin-x64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
-      'linux-x64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
-      'linux-arm64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
-      'win32-x64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
-      'win32-arm64': { url: '', sha256: '', sizeBytes: 94_962_133, kind: 'files' },
+      'darwin-arm64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
+      'darwin-x64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
+      'linux-x64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
+      'linux-arm64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
+      'win32-x64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
+      'win32-arm64': { url: '', sha256: '', sizeBytes: 162_757_192, kind: 'files' },
     },
-    verify: { files: ['model.onnx', 'vocab.txt', 'config.json'] },
+    verify: { files: ['model.onnx', 'vocab.json', 'merges.txt', 'config.json'] },
   },
 ];
 
