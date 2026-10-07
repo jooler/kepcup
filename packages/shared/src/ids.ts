@@ -26,6 +26,8 @@ export const ID_PREFIXES = {
   prp: 'prp_',
   /** 跨 Bot 委派（D71）。 */
   dlg: 'dlg_',
+  /** 外部智能体会话（D72 P5，agent_sessions）。 */
+  ags: 'ags_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

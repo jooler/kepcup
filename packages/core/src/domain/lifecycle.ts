@@ -77,6 +77,18 @@ export interface LifecycleDeps {
       }
     | undefined;
   /**
+   * D72 P5 external-agent sessions (agent_sessions rows + best-effort
+   * `session/delete` on the agent side). The agents' own on-disk history is
+   * not KepCup's to manage. No-op when absent.
+   */
+  agentSessions?:
+    | {
+        onConversationDeleted(conversationId: string): void;
+        prepareBotDeletion(botId: string): void;
+        onGroupMemberRemoved(botId: string, conversationId: string): void;
+      }
+    | undefined;
+  /**
    * P11 browser cascades (close pages / clear the bot's session partition).
    * Runs after the runs of the deleted scope are aborted, so in-flight page
    * operations observe the close and fail cleanly (BR-P11 race protection:
@@ -98,6 +110,18 @@ export interface LifecycleDeps {
 export class LifecycleService {
   constructor(private readonly deps: LifecycleDeps) {}
 
+  /** Runs one optional cascade; a failure is logged, never aborts the deletion. */
+  #cascade(message: string, context: Record<string, string>, run: () => void): void {
+    try {
+      run();
+    } catch (error) {
+      this.deps.logger.warn(
+        { ...context, error: error instanceof Error ? error.message : String(error) },
+        message,
+      );
+    }
+  }
+
   /** Physically deletes a conversation and everything scoped to it. */
   async deleteConversation(conversationId: string): Promise<void> {
     const { mainDb, runsDb } = this.deps;
@@ -115,6 +139,9 @@ export class LifecycleService {
     }
 
     await this.deps.abortRunsForConversation(conversationId);
+    this.#cascade('agent session conversation cascade failed', { conversationId }, () =>
+      this.deps.agentSessions?.onConversationDeleted(conversationId),
+    );
 
     // P07: commitments made in this conversation are void for every member
     // (docs/dev/03-data-model.md 删除级联) — while the member rows still exist.
@@ -177,7 +204,9 @@ export class LifecycleService {
   #deleteConversationWorkspaces(conversationId: string): void {
     const workspacesRoot = path.join(this.deps.paths.home, 'bots');
     try {
-      const botDirs = readdirSync(workspacesRoot, { withFileTypes: true }).filter((e) => e.isDirectory());
+      const botDirs = readdirSync(workspacesRoot, { withFileTypes: true }).filter((e) =>
+        e.isDirectory(),
+      );
       for (const botDir of botDirs) {
         rmSync(path.join(workspacesRoot, botDir.name, 'workspaces', conversationId), {
           recursive: true,
@@ -213,14 +242,15 @@ export class LifecycleService {
     }
 
     await this.deps.abortRunsForBot(botId);
+    this.#cascade('agent session bot cascade failed', { botId }, () =>
+      this.deps.agentSessions?.prepareBotDeletion(botId),
+    );
 
     // Group memberships go first so the turn coordinator skips the bot in
     // every group it was in (docs/dev/03-data-model.md 删除 Bot, P05 row).
     const groupIds = this.groupConversationIdsOf(botId);
     for (const conversationId of groupIds) this.deps.onGroupMemberRemoved(botId, conversationId);
-    this.deps.mainDb
-      .prepare('delete from conversation_members where bot_id = ?')
-      .run(botId);
+    this.deps.mainDb.prepare('delete from conversation_members where bot_id = ?').run(botId);
 
     for (const conv of this.deps.conversations.listDirectByBot(botId)) {
       this.deps.drafts.removeAll(conv.id);
@@ -273,9 +303,7 @@ export class LifecycleService {
     }
     // Approval rows lose their bot context (placeholder bots keep no profile);
     // grants are deleted outright (docs/dev/03-data-model.md 删除级联, P03).
-    this.deps.mainDb
-      .prepare("update approvals set bot_id = null where bot_id = ?")
-      .run(botId);
+    this.deps.mainDb.prepare('update approvals set bot_id = null where bot_id = ?').run(botId);
     this.deps.grants.deleteForBot(botId);
     // P08: bot_skills rows go first; library versions only this bot referenced
     // are collected here (03-data-model.md 删除 Bot, P08 row). The authored
@@ -315,6 +343,9 @@ export class LifecycleService {
     this.deps.conversations.getOrThrow(conversationId);
 
     this.deps.onGroupMemberRemoved(botId, conversationId);
+    this.#cascade('agent session group-removal cascade failed', { botId, conversationId }, () =>
+      this.deps.agentSessions?.onGroupMemberRemoved(botId, conversationId),
+    );
 
     // P07: the bot's commitments made in this group are voided.
     try {
@@ -353,11 +384,12 @@ export class LifecycleService {
       .run(conversationId, botId);
     this.deps.grants.revokeForBotInConversation(botId, conversationId);
     this.deps.mainDb
-      .prepare(
-        "update approvals set bot_id = null where bot_id = ? and conversation_id = ?",
-      )
+      .prepare('update approvals set bot_id = null where bot_id = ? and conversation_id = ?')
       .run(botId, conversationId);
-    rmSync(workspacePathFor(this.deps.paths, botId, conversationId), { recursive: true, force: true });
+    rmSync(workspacePathFor(this.deps.paths, botId, conversationId), {
+      recursive: true,
+      force: true,
+    });
 
     this.deps.logger.info({ conversationId, botId }, 'group member removed');
   }
@@ -387,7 +419,7 @@ export class LifecycleService {
   } {
     const { mainDb } = this.deps;
     const conversations = mainDb
-      .prepare("select count(*) as n from conversations where direct_bot_id = ? and read_only = 0")
+      .prepare('select count(*) as n from conversations where direct_bot_id = ? and read_only = 0')
       .get(botId) as { n: number };
     const messages = mainDb
       .prepare('select count(*) as n from messages where sender_bot_id = ?')

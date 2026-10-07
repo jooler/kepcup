@@ -1346,6 +1346,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           orchestrator.delegationsOnConversationDeleted(conversationId),
         prepareBotDeletion: (botId) => orchestrator.delegationsOnBotDeleted(botId),
       },
+      // D72 P5: kept agent sessions die with their conversation / bot / membership.
+      agentSessions: {
+        onConversationDeleted: (conversationId) =>
+          orchestrator.agentSessionsOnConversationDeleted(conversationId),
+        prepareBotDeletion: (botId) => orchestrator.agentSessionsOnBotDeleted(botId),
+        onGroupMemberRemoved: (botId, conversationId) =>
+          orchestrator.agentSessionsOnGroupMemberRemoved(botId, conversationId),
+      },
       memory: {
         onConversationDeleted: (conversationId, memberBotIds) =>
           memory.onConversationDeleted(conversationId, memberBotIds),

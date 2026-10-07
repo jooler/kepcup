@@ -119,6 +119,15 @@ export function bridgeToolMeta(
  * A fresh bridge server name for one agent session (`kepcup_<8hex>`): a user /
  * project MCP server called `kepcup` cannot pose as the host bridge.
  */
+/**
+ * The bridge server name of a reusable agent session (P5): derived from its
+ * `agent_sessions` row id (random ULID), so it persists with the row and a
+ * replaced session gets a new one.
+ */
+export function hostServerNameFor(sessionRowId: string): string {
+  return `${HOST_MCP_SERVER_PREFIX}_${createHash('sha256').update(sessionRowId).digest('hex').slice(0, 8)}`;
+}
+
 export function newHostServerName(): string {
   return `${HOST_MCP_SERVER_PREFIX}_${randomBytes(4).toString('hex')}`;
 }

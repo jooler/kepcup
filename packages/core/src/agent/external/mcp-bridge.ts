@@ -98,6 +98,24 @@ export interface BridgeRunBinding {
   progress(text: string): void;
   /** A terminating tool (skip_reply) returned; fired once its response was sent. */
   onTerminate(reason: string): void;
+  /**
+   * After this long a call still running is answered "moved to the
+   * background" and keeps running (P5: agents' MCP clients time out — Codex
+   * after ~60 s); null / omitted = always wait.
+   */
+  detachAfterMs?: number | null;
+  /** A call was answered with the background notice (its tool_result is that notice). */
+  onToolDetached?(call: { toolCallId: string; toolName: string }): void;
+  /** A background call finished: the real result, for a follow-up prompt. */
+  onDetachedResult?(result: BridgeToolResultEvent): void;
+}
+
+/** The answer an agent gets for a call moved to the background (P5). */
+export function detachedToolNotice(toolName: string): string {
+  return (
+    `工具「${toolName}」仍在执行（可能在等待用户审批，或生成需要较长时间），已转入后台。` +
+    '完成后结果会作为新消息发给你。不要重复调用它；可以先继续其他工作，或先结束本轮回复。'
+  );
 }
 
 export interface HostMcpBridgeDeps {
@@ -384,15 +402,57 @@ export class HostMcpBridge {
     }
 
     let terminatedBy: string | null = null;
+    // The agent dropping its request (client timeout) aborts the call — unless
+    // it was moved to the background: then only the run's end does.
+    let detached = false;
+    const requestAbort = new AbortController();
+    const forwardAbort = () => {
+      if (!detached) requestAbort.abort();
+    };
+    if (requestSignal.aborted) forwardAbort();
+    else requestSignal.addEventListener('abort', forwardAbort, { once: true });
     const ctx: ToolContext = {
       identity: binding.identity,
-      signal: AbortSignal.any([binding.signal, requestSignal]),
+      signal: AbortSignal.any([binding.signal, requestAbort.signal]),
       terminate: (reason) => {
         terminatedBy = reason ?? 'skip_reply';
       },
       progress: (text) => binding.progress(text),
     };
-    const result = await executeToolSafely(tool, args, ctx);
+    const execution = executeToolSafely(tool, args, ctx);
+    const detachMs = binding.detachAfterMs ?? null;
+    let result: Awaited<typeof execution>;
+    if (detachMs === null || binding.onDetachedResult === undefined) {
+      result = await execution;
+    } else {
+      let timer: NodeJS.Timeout | null = null;
+      const first = await Promise.race([
+        execution.then((value) => ({ done: true as const, value })),
+        new Promise<{ done: false }>((resolve) => {
+          timer = setTimeout(() => resolve({ done: false }), detachMs);
+          timer.unref?.();
+        }),
+      ]);
+      if (timer !== null) clearTimeout(timer);
+      if (!first.done) {
+        detached = true;
+        requestSignal.removeEventListener('abort', forwardAbort);
+        const notice = detachedToolNotice(toolName);
+        binding.onToolResult({ toolCallId, toolName, ok: true, content: notice });
+        binding.onToolDetached?.({ toolCallId, toolName });
+        void execution.then((late) =>
+          binding.onDetachedResult?.({
+            toolCallId,
+            toolName,
+            ok: late.ok,
+            content: late.content,
+            ...(late.errorCode !== undefined ? { errorCode: late.errorCode } : {}),
+          }),
+        );
+        return { content: [{ type: 'text', text: notice }] };
+      }
+      result = first.value;
+    }
     binding.onToolResult({
       toolCallId,
       toolName,

@@ -1595,6 +1595,13 @@ export const usageSummaryEntrySchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
   costUsd: z.number().nullable(),
+  /**
+   * D72 P5「订阅 / 外部 Agent」：外部智能体（`agent:{id}`）的用量单列——
+   * 费用为空、token 常缺失，按轮数计（`turns` = 账本行数 = 模型轮数或
+   * 带用量的 prompt 数）。内置模型的条目不带这两个字段。
+   */
+  agentId: z.string().optional(),
+  turns: z.number().int().optional(),
 });
 export type UsageSummaryEntry = z.infer<typeof usageSummaryEntrySchema>;
 

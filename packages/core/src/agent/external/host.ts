@@ -66,7 +66,26 @@ export interface AgentLease {
   provider: AgentProvider;
   attach(sessionId: string, sink: SessionSink): void;
   detach(sessionId: string): void;
+  /**
+   * P5 会话复用：本进程里仍开着、可被下一个 run 直接复用的会话及引擎为它
+   * 记下的状态（不透明）。进程退出 / 崩溃 / 被替换时随之消失——下一个 run
+   * 只能按 Provider 能力 resume / load 或新建。
+   */
+  openSession<T>(sessionId: string): T | undefined;
+  /** Keeps the session open in this process with the engine's state. */
+  keepSession(sessionId: string, state: unknown): void;
+  /** The session is no longer reusable in this process (closed / poisoned). */
+  forgetSession(sessionId: string): void;
   release(): void;
+}
+
+/** 不持有租约地访问一个仍开着的会话（删除 / 丢弃会话时尽力而为）。 */
+export interface OpenAgentSession {
+  connection: AcpConnection;
+  init: AcpInitializeResponse;
+  state: unknown;
+  /** A run is attached to it right now. */
+  busy: boolean;
 }
 
 export type AgentSpawner = (input: {
@@ -103,6 +122,10 @@ interface LiveAgent {
   connection: AcpConnection;
   ready: Promise<AcpInitializeResponse>;
   sessions: Map<string, SessionSink>;
+  /** Sessions kept open between runs (P5 reuse) → the engine's state. */
+  openSessions: Map<string, unknown>;
+  /** The `initialize` result once known (for lease-less session access). */
+  init: AcpInitializeResponse | null;
   leases: number;
   idleTimer: NodeJS.Timeout | null;
   gone: boolean;
@@ -448,6 +471,14 @@ export class AgentHost {
         agent.sessions.delete(sessionId);
         if (agent.retiring) this.#armIdle(agent);
       },
+      openSession: <T>(sessionId: string) =>
+        agent.gone ? undefined : (agent.openSessions.get(sessionId) as T | undefined),
+      keepSession: (sessionId, state) => {
+        if (!agent.gone) agent.openSessions.set(sessionId, state);
+      },
+      forgetSession: (sessionId) => {
+        agent.openSessions.delete(sessionId);
+      },
       release: () => {
         if (released) return;
         released = true;
@@ -455,6 +486,32 @@ export class AgentHost {
         this.#armIdle(agent);
       },
     };
+  }
+
+  /**
+   * A session still open in the entry's current process — kept between runs
+   * or attached to a run (`busy`) — without taking a lease (P5: conversation /
+   * bot deletion closes or deletes it best effort). Null when no live process
+   * has it.
+   */
+  openSession(agentId: string, sessionId: string): OpenAgentSession | null {
+    const live = this.#agents.get(agentId);
+    if (live === undefined || live.gone || live.init === null) return null;
+    if (!live.openSessions.has(sessionId) && !live.sessions.has(sessionId)) return null;
+    return {
+      connection: live.connection,
+      init: live.init,
+      state: live.openSessions.get(sessionId),
+      busy: live.sessions.has(sessionId),
+    };
+  }
+
+  /** Drops a kept session from the process bookkeeping (it was closed / deleted). */
+  forgetSession(agentId: string, sessionId: string): void {
+    this.#agents.get(agentId)?.openSessions.delete(sessionId);
+    for (const live of this.#retiring) {
+      if (live.entry.id === agentId) live.openSessions.delete(sessionId);
+    }
   }
 
   /** Whether the entry currently has a live process (tests / diagnostics). */
@@ -548,6 +605,8 @@ export class AgentHost {
       provider,
       process: proc,
       sessions: new Map<string, SessionSink>(),
+      openSessions: new Map<string, unknown>(),
+      init: null,
       leases: 0,
       idleTimer: null,
       gone: false,
@@ -597,6 +656,12 @@ export class AgentHost {
     live.ready = Promise.race([live.connection.initialize(), gone, timeout]).finally(() => {
       if (initTimer !== null) clearTimeout(initTimer);
     });
+    void live.ready.then(
+      (init) => {
+        live.init = init;
+      },
+      () => undefined,
+    );
     live.ready.catch(() => undefined);
 
     const onGone = (exit: AgentExit) => {
@@ -620,6 +685,9 @@ export class AgentHost {
       rejectGone(error);
       const sinks = [...live.sessions.values()];
       live.sessions.clear();
+      // Kept sessions die with the process: the next run resumes / loads them
+      // (provider permitting) in a fresh process, or starts over.
+      live.openSessions.clear();
       // During core shutdown the databases are already closed: leave the runs
       // unsettled (restart recovery marks them interrupted, as for pi runs).
       if (!this.#disposed) for (const sink of sinks) sink.onClosed(error);

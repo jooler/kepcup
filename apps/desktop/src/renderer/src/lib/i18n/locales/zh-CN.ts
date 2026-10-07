@@ -281,6 +281,8 @@ export const zhCN = {
   'contacts.deleteBody':
     '将清理：{conversations} 个对话、{messages} 条消息、0 条记忆、0 个 Wiki 页面、0 个技能，以及全部执行记录与 Bot 数据目录。历史消息保留为只读。此操作不可恢复。',
   'contacts.deleteConfirm': '确认删除',
+  'contacts.deleteAgentNote':
+    '该 Bot 使用外部智能体：KepCup 会尽量通知智能体删除对应会话，但智能体自己保存在本机的会话记录不归 KepCup 管理，需要时请在该智能体中自行清理。',
   'rightPanel.title': 'Bot 详情',
   'rightPanel.placeholder': '此区域用于展示当前对话中 Bot 的信息。',
   'rightPanel.otherSection': '其它',
@@ -591,6 +593,11 @@ export const zhCN = {
   'settings.usageColumnLoop': '类型',
   'settings.usageColumnTokens': 'Token（输入/输出）',
   'settings.usageColumnCost': '费用',
+  'settings.usageAgentSection': '订阅 / 外部 Agent',
+  'settings.usageAgentNote':
+    '外部智能体走各自的订阅或账号计费，KepCup 不计算费用；未回报 token 的按模型轮数记录。',
+  'settings.usageColumnAgent': '智能体',
+  'settings.usageColumnTurns': '轮数',
   'settings.usageGlobalBots': '（全局任务，无所属 Bot）',
   'settings.usageExceeded': '已超出今日预算：该 Bot 今天的后台任务已推迟到明天',
   'settings.budgetLabel': '每个 Bot 每天后台用量上限（token）',

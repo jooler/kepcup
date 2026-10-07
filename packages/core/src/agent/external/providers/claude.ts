@@ -117,10 +117,29 @@ function metaToolName(meta: Record<string, unknown> | null | undefined): string 
   return typeof claudeCode?.toolName === 'string' ? claudeCode.toolName : null;
 }
 
+/**
+ * 进程级环境（P5「run 外输出」）：关闭 Claude Code 的后台任务（Bash
+ * `run_in_background`、后台子代理——完成时会触发 run 之外的自主 turn）与
+ * 定时任务（Cron 工具；宿主语义「定时用 schedule」）。claude-agent-sdk
+ * 0.3.287 内置 CLI 认 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` /
+ * `CLAUDE_CODE_DISABLE_CRON`（二进制字符串核对，待登录实测）。
+ */
+export const CLAUDE_PROCESS_ENV: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+  CLAUDE_CODE_DISABLE_CRON: '1',
+};
+
 export const claudeProvider: AgentProvider = {
   ...genericAcpProvider,
   id: 'claude',
+  launch: ({ entry, target }) => ({
+    command: target.command,
+    args: [...target.args],
+    env: { ...(entry.distribution.npx?.env ?? {}), ...target.env, ...CLAUDE_PROCESS_ENV },
+  }),
   instructionMode: 'meta-append',
+  // claude-agent-acp 0.86.0 resets its per-session accumulator on each turn.
+  usageSemantics: 'turn',
   sessionNew: ({ sessionPrompt, maxTurns, loadUserConfig, permission, isolation }) => {
     const disallowedTools = claudeDisallowedTools(permission);
     return {

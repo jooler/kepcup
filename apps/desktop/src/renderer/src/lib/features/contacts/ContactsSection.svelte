@@ -112,6 +112,11 @@
           messages: deletePreview.messages,
         })}
       </p>
+      {#if (deleteTarget?.profile.runtime.agent.id ?? '').length > 0}
+        <p class="text-xs text-muted-foreground" data-testid="bot-delete-body-agent-note">
+          {t('contacts.deleteAgentNote')}
+        </p>
+      {/if}
       <DialogFooter>
         <Button
           variant="outline"
