@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512"
+     role="img" aria-label="KepCup bubble bar">
+  <!-- bg: deep orange -->
+  <rect width="512" height="512" fill="#C2410C"/>
+
+  <!-- hollow message bubble: single stroked centerline path
+       Body visual outer ~(101,100)–(410,348), R≈48; stroke=22 → centerline inset 11
+       Centerline bounds (112,111)–(399,337), R_cl=37
+       Tip centerline (192,400); round linejoin → outer tip ~y=411 rounded, inner V sharp -->
+  <path fill="none" stroke="#FFFFFF" stroke-width="22"
+        stroke-linejoin="round" stroke-linecap="round"
+        d="
+    M 149 111
+    H 362
+    A 37 37 0 0 1 399 148
+    V 300
+    A 37 37 0 0 1 362 337
+    H 286
+    L 192 400
+    L 214 337
+    H 149
+    A 37 37 0 0 1 112 300
+    V 148
+    A 37 37 0 0 1 149 111
+    Z
+  "/>
+
+  <!-- outer pills unchanged: 24×73, rx=12 -->
+  <rect x="56" y="188" width="24" height="73" rx="12" fill="#FFFFFF"/>
+  <rect x="432" y="188" width="24" height="73" rx="12" fill="#FFFFFF"/>
+
+  <!-- inner vertical pill: 24×110 @ (168, 169.5), rx=12 -->
+  <rect x="168" y="169.5" width="24" height="110" rx="12" fill="#FFFFFF"/>
+
+  <!-- center dot: 91×91 @ (244, 177.5), rx=45.5 -->
+  <rect x="244" y="177.5" width="91" height="91" rx="45.5" fill="#FFFFFF"/>
+</svg>

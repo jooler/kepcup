@@ -4,8 +4,16 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "description": "KepCup —— 本地优先的 Bot 运行时桌面应用：创建并调度拥有独立人格、记忆与能力的 AI 联系人，数据全部保存在本地。",
+  "homepage": "https://kepcup.app",
+  "author": {
+    "name": "kepcup-app",
+    "email": "kepcup-app@kepcup.app"
+  },
+  "license": "GPL-3.0",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/patch-dev-electron.cjs && electron-vite dev",
+    "icons": "node scripts/generate-icons.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && svelte-check --tsconfig tsconfig.web.json",

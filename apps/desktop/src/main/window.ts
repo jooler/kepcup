@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron';
+import { app, BrowserWindow, nativeImage, type BrowserWindowConstructorOptions } from 'electron';
+import { APP_NAME, appIconPath } from './app-brand';
 
 export interface MainWindowOptions {
   preloadPath: string;
@@ -20,7 +21,13 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    title: 'Kepcup',
+    title: APP_NAME,
+    // win/linux：dev 窗口图标继承 electron.exe 的通用图标，任务栏/Alt-Tab 会
+    // 显示错误品牌，显式指定仓库主图标；打包版由 exe 资源自带，无需设置
+    //（macOS 窗口无独立图标概念，走 bundle 图标）。
+    ...(process.platform !== 'darwin' && !app.isPackaged
+      ? { icon: nativeImage.createFromPath(appIconPath()) }
+      : {}),
     autoHideMenuBar: true,
     // macOS: hide the native title bar but keep the system traffic lights
     // inset over the content — the window keeps its native border, rounded

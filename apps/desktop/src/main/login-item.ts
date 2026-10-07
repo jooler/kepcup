@@ -33,9 +33,11 @@ export function linuxAutostartDesktopFile(execPath: string): string {
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Name=Kepcup',
+    // 与 app-brand.ts 的 APP_NAME 保持一致（本模块刻意不依赖 electron，
+    // 让单测能在纯 Node 环境跑，故这里保留字面量）。
+    'Name=KepCup',
     `Exec=${execPath}`,
-    'Comment=Kepcup 在登录后自动启动（可在设置页关闭）',
+    'Comment=KepCup 在登录后自动启动（可在设置页关闭）',
     'Terminal=false',
     'X-GNOME-Autostart-enabled=true',
   ].join('\n');

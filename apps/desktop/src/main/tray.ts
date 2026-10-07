@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { app, Menu, nativeImage, Tray } from 'electron';
+import { Menu, Tray } from 'electron';
+import { APP_NAME, loadTrayIcon } from './app-brand';
 
 export interface TrayController {
   destroy(): void;
@@ -19,12 +19,11 @@ export function createTray(options: {
   onToggleUnattended: () => void;
   onCheckUpdates: () => void;
 }): TrayController {
-  const isPackaged = app.isPackaged;
-  const resourcesDir = isPackaged
-    ? join(process.resourcesPath, 'resources')
-    : join(__dirname, '../../resources');
-  const icon = nativeImage.createFromPath(join(resourcesDir, 'trayTemplate.png'));
-  icon.setTemplateImage(true);
+  const icon = loadTrayIcon();
+  if (icon.isEmpty()) {
+    // 产物里由 pack-hooks afterPack 硬校验托盘资源存在；这里只兜 dev 场景。
+    console.warn('[tray] 托盘图标加载为空（resources/tray/ 缺失或损坏）');
+  }
 
   const tray = new Tray(icon);
   let unattended = false;
@@ -35,7 +34,7 @@ export function createTray(options: {
       unattended ? '（无人值守模式开启）' : '',
       updateReadyVersion !== null ? `（新版本 ${updateReadyVersion} 待安装）` : '',
     ].join('');
-    tray.setToolTip(`Kepcup${suffix}`);
+    tray.setToolTip(`${APP_NAME}${suffix}`);
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: '打开窗口', click: () => options.onOpenWindow() },

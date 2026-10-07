@@ -57,7 +57,9 @@ function beforePack(context) {
   const binDir = path.join(projectDir, 'resources', 'bin', `${dirName}-${arch}`);
   if (!existsSync(binDir)) {
     mkdirSync(binDir, { recursive: true });
-    console.warn(`[pack] created empty extraResources source dir: ${path.relative(projectDir, binDir)}`);
+    console.warn(
+      `[pack] created empty extraResources source dir: ${path.relative(projectDir, binDir)}`,
+    );
   }
   if (dirName === 'win') {
     const wslDir = path.join(projectDir, 'resources', 'wsl');
@@ -113,7 +115,18 @@ function afterPack(context) {
     // 目录存在即可，宿主 rg 经系统 PATH 兜底。
     console.warn('[pack] win: resources/bin 下暂无预置二进制（rg 走系统 PATH 兜底）。');
   }
-  console.log(`[pack] afterPack 校验通过（${dirName}-${archName(context)}，无测试路径标记，无工作区包）。`);
+
+  // 托盘四件套（app-brand.trayIconPath 运行时读取 extraResources tray/；
+  // 缺失时托盘静默变空白，这里硬校验兜住）。
+  const trayDir = path.join(resourcesPath, 'tray');
+  for (const name of ['trayTemplate.png', 'trayTemplate@2x.png', 'tray.png', 'tray@2x.png']) {
+    if (!existsSync(path.join(trayDir, name))) {
+      throw new Error(`[pack] 缺少托盘图标资源 ${name}（extraResources resources/tray）`);
+    }
+  }
+  console.log(
+    `[pack] afterPack 校验通过（${dirName}-${archName(context)}，无测试路径标记，无工作区包）。`,
+  );
 }
 
 module.exports = { beforePack, afterPack };

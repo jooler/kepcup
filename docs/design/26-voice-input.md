@@ -62,7 +62,7 @@ macOS 的麦克风授权弹框**只出现一次**：首次 `getUserMedia` 被拒
 | `unknown` | 通用失败提示 |
 
 - 非 macOS 无 TCC：主进程直接返回 granted（Windows 用自己的隐私指示器）。
-- dev 模式的授权归属是**宿主终端应用**（responsible process）——弹框会写「终端/VS Code 想使用麦克风」；打包版归属 Kepcup 自身。
+- dev 模式的授权归属是**宿主终端应用**（responsible process）——弹框会写「终端/VS Code 想使用麦克风」；打包版归属 KepCup 自身。
 - macOS 打包需 `NSMicrophoneUsageDescription`（electron-builder.yml `mac.extendInfo` 已加），否则打包版直接被系统拒绝。
 
 ## 测试锚点

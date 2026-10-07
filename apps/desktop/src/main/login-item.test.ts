@@ -76,13 +76,13 @@ describe('applyLoginItem (macOS/Windows adapter)', () => {
 
 describe('applyLinuxAutostart (XDG desktop file)', () => {
   test('enabling writes the autostart desktop file pointing at the executable', () => {
-    const result = applyLinuxAutostart(true, { execPath: '/opt/Kepcup/kepcup', env });
+    const result = applyLinuxAutostart(true, { execPath: '/opt/KepCup/kepcup', env });
     expect(result).toEqual({ outcome: 'applied', enabled: true });
     const file = path.join(linuxAutostartDir(env), LINUX_AUTOSTART_FILE);
     expect(existsSync(file)).toBe(true);
     const content = readFileSync(file, 'utf8');
     expect(content).toContain('[Desktop Entry]');
-    expect(content).toContain('Exec=/opt/Kepcup/kepcup');
+    expect(content).toContain('Exec=/opt/KepCup/kepcup');
     expect(linuxAutostartDesktopFile('/x')).toContain('X-GNOME-Autostart-enabled=true');
     expect(linuxAutostartExists(env)).toBe(true);
   });
