@@ -1,10 +1,6 @@
 import { Type } from '@earendil-works/pi-ai';
 import { z } from 'zod';
-import {
-  TRIAGE_RECENT_MESSAGES,
-  TRIAGE_TIMEOUT_MS,
-  type Message,
-} from '@kepcup/shared';
+import { TRIAGE_RECENT_MESSAGES, TRIAGE_TIMEOUT_MS, type Message } from '@kepcup/shared';
 import { completeStructured } from '../agent/structured.js';
 import { renderMessageLine } from '../agent/context/conversation.js';
 import type { AgentEngine, RunIdentity } from '../agent/types.js';
@@ -117,6 +113,9 @@ export interface TriageInput {
   timeoutMs?: number;
 }
 
+/** Bots already logged as triage-skipped for lack of a built-in model. */
+const triageSkipLogged = new Set<string>();
+
 /** Light-model ref for triage: profile light → settings light → main model. */
 export function lightModelRefForBot(
   bots: BotsService,
@@ -147,7 +146,15 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
 
     const modelRef = lightModelRefForBot(input.bots, input.settings, input.botId);
     if (modelRef.length === 0) {
-      input.logger.warn({ botId: input.botId }, 'triage skipped: no model configured');
+      // D72 P4：没有内置模型（只用外部 Agent）时群聊判断跳过 = 仅 @ / 回复响应
+      // （每个 Bot 只记一次 info，避免每条群消息刷日志）。
+      if (!triageSkipLogged.has(input.botId)) {
+        triageSkipLogged.add(input.botId);
+        input.logger.info(
+          { botId: input.botId },
+          'triage skipped: no built-in model (mention-only)',
+        );
+      }
       finish(noAction);
       return;
     }
@@ -180,7 +187,9 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
           if (!bot) throw new Error('triage target vanished');
           input.runs.update(run.id, { status: 'running' });
 
-          const recent = input.messages.list(input.conversationId, { limit: TRIAGE_RECENT_MESSAGES });
+          const recent = input.messages.list(input.conversationId, {
+            limit: TRIAGE_RECENT_MESSAGES,
+          });
           const recentFiltered = recent.filter(
             (m) => !input.batchMessages.some((b) => b.id === m.id) && m.status !== 'recalled',
           );
@@ -269,7 +278,8 @@ function buildTriageUserMessage(input: {
   bots: BotsService;
 }): string {
   const names = new Map<string, string>();
-  for (const bot of input.bots.listActive()) names.set(bot.id, bot.profile.identity.name || bot.name);
+  for (const bot of input.bots.listActive())
+    names.set(bot.id, bot.profile.identity.name || bot.name);
   const options = {
     selfBotId: input.botId,
     timeZone: input.timeZone,

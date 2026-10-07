@@ -14,6 +14,55 @@ function ctx(overrides: Partial<Parameters<typeof matchAllowlistCommand>[1]> = {
 }
 
 describe('allowlist matcher (posix)', () => {
+  it('security review H2: options that execute programs or write files are never exempt', () => {
+    // rg --pre runs a program per file (all spellings).
+    expect(matchAllowlistCommand('rg --pre ./evil pattern', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('rg --pre=./evil pattern', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('rg --pre-glob "*.x" pattern', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('rg --pretty pattern', ctx()).exempt).toBe(true);
+    // git: --output writes, --ext-diff / --textconv run configured programs.
+    expect(matchAllowlistCommand('git diff --output=/tmp/x', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git log -p --output /tmp/x', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git show --out=/tmp/x', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git diff --ext-diff', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git log --textconv -p', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git status --exec-path=/tmp', ctx()).exempt).toBe(false);
+    // Regression: the options that were already dangerous, in every spelling.
+    expect(matchAllowlistCommand('git -c core.pager=evil log', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git diff -C/elsewhere', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('find . -execdir rm {} ;', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('sed -i.bak s/a/b/ f', ctx({ entries: [...POSIX, 'sed'] })).exempt).toBe(false);
+    expect(matchAllowlistCommand('sed -ni s/a/b/p f', ctx({ entries: [...POSIX, 'sed'] })).exempt).toBe(false);
+    expect(matchAllowlistCommand('sed --in-place=.bak s/a/b/ f', ctx({ entries: [...POSIX, 'sed'] })).exempt).toBe(false);
+    expect(matchAllowlistCommand('sort -ofile x', ctx({ entries: [...POSIX, 'sort'] })).exempt).toBe(false);
+    expect(matchAllowlistCommand('sort --compress-program=evil x', ctx({ entries: [...POSIX, 'sort'] })).exempt).toBe(false);
+    expect(matchAllowlistCommand('tree -R -H .', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('file -C -m magic', ctx()).exempt).toBe(false);
+    // `--opt=/path` values are path candidates too.
+    expect(
+      matchAllowlistCommand('grep --file=/secret/patterns x', ctx({ isPathAllowed: (p) => !p.startsWith('/secret') }))
+        .exempt,
+    ).toBe(false);
+  });
+
+  it('review round 2: attached short-option paths are checked; git --text is a plain option', () => {
+    const strict = ctx({ isPathAllowed: (p) => !p.startsWith('/etc') });
+    expect(matchAllowlistCommand('git diff -O/etc/passwd', strict).exempt).toBe(false);
+    expect(matchAllowlistCommand('grep -f/etc/patterns x', strict).exempt).toBe(false);
+    expect(matchAllowlistCommand('ls -la', strict).exempt).toBe(true);
+    expect(matchAllowlistCommand('head -n5 a', strict).exempt).toBe(true);
+    expect(matchAllowlistCommand('git diff --text a', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('git diff --textconv a', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git diff --textc a', ctx()).exempt).toBe(false);
+  });
+
+  it('security review H2: the same options are refused on Windows', () => {
+    const win = { platform: 'windows' as const, entries: BUILTIN_PATTERNS.windows, isPathAllowed: () => true };
+    expect(matchAllowlistCommand('git diff --output=C:/x', win).exempt).toBe(false);
+    expect(matchAllowlistCommand('git diff --ext-diff', win).exempt).toBe(false);
+    expect(matchAllowlistCommand('git diff --stat', win).exempt).toBe(true);
+  });
+
   it('exempts simple read-only commands', () => {
     expect(matchAllowlistCommand('cat foo.txt', ctx()).exempt).toBe(true);
     expect(matchAllowlistCommand('ls -la', ctx()).exempt).toBe(true);

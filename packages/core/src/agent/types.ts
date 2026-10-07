@@ -1,4 +1,9 @@
-/** "provider/modelId" reference into the model registry. */
+import type { AgentPermissionTier } from '@kepcup/shared';
+
+/**
+ * "provider/modelId" reference into the model registry; external agents use
+ * the pseudo ref `agent:{id}/{model|default}` (D72).
+ */
 export type ModelRef = string;
 
 /** Execution identity carried by every run and tool call (02-architecture.md). */
@@ -75,6 +80,49 @@ export interface RunSpec {
   limits: { maxTurns: number };
   // Cancellation goes through RunHandle.abort() (pi's agent.abort); a spec
   // signal would be dead wiring — the engine never polls it.
+  //
+  // —— 以下为外部智能体引擎（D72，docs/design/28-external-agents-acp.md）的
+  // 可选字段；PiEngine 一律忽略。——
+  /** Agent 会话的工作目录（`session/new.cwd`）：绑定的 project，否则 workspace。 */
+  workdir?: string;
+  /**
+   * 分层提示词（§5）：会话级（相对静态，按 Provider 的 instructionMode 下发）、
+   * run 级动态段、对话段（首个 prompt 为完整上下文 + 触发段；会话复用时为
+   * 增量）。缺省时引擎以 buildSystemPrompt() + messages 组装。
+   */
+  promptParts?: { session: string; run: string; conversation: string };
+  external?: ExternalRunSpec;
+  /**
+   * ACP steering 是异步的：被 Agent 拒绝 / 出错时把文本交还 orchestrator 的
+   * pending steer（P5）。同步返回 false 的 steer 不经此回调。
+   */
+  onSteerRejected?: (text: string) => void;
+}
+
+/** 外部 Agent run 的选择与会话参数（`RunSpec.external`）。 */
+export interface ExternalRunSpec {
+  /** 目录 id（`AgentCatalogEntry.id`）。 */
+  agentId: string;
+  permission: AgentPermissionTier;
+  /**
+   * 本 run 注入的能力包（`resolveCapabilities` 的结果）；对应工具已在
+   * `RunSpec.tools` 中（经宿主 MCP 桥暴露）。
+   */
+  capabilities: string[];
+  /** 会话复用键（Bot, 对话, Agent）；P1 每 run 新会话，仅作日志关联。 */
+  sessionKey: string;
+  /** 推理强度（config option 类别 `thought_level`）；'' = Agent 默认。 */
+  effort?: string;
+  /** Agent 会话建立后回报其 sessionId（落 `runs.agent_session_id`）。 */
+  onSession?: (agentSessionId: string) => void;
+  /** 「加载我的个人配置」（`settings.agents[id].loadUserConfig`，默认 false）。 */
+  loadUserConfig?: boolean;
+  /**
+   * 本会话宿主 MCP 桥的 server 名（`kepcup_<8hex>`，按会话随机）。会话级
+   * 提示词里的工具名按它映射，所以由 orchestrator 生成并与提示词一同传入；
+   * 缺省时引擎自行生成。
+   */
+  hostServerName?: string;
 }
 
 export interface ToolContext {

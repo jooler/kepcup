@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Approval } from '@kepcup/shared';
   import {
+    agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
@@ -19,6 +20,7 @@
     Plug,
     AlertTriangle,
     Users,
+    Bot,
   } from '@lucide/svelte';
   import { t, type MessageKey } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -47,6 +49,21 @@
   let cardEl: HTMLDivElement | undefined = $state();
   let duration = $state<'once' | 'conversation'>('once');
 
+  // D72 P3 agent_tool payload：外部智能体的工具权限请求 / 项目内 Agent 配置确认。
+  const agentTool = $derived.by(() => {
+    if (approval.kind !== 'agent_tool') return null;
+    const parsed = agentToolApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  /** 路径类 agent_tool 可选「本对话内」（记为访问授权）；命令类只有「仅这一次」。 */
+  const agentToolDurations = $derived(
+    agentTool !== null &&
+      agentTool.kind !== 'config' &&
+      agentTool.durations.includes('conversation'),
+  );
+  /** 卡片是否显示「仅这一次 / 本对话内」选择。 */
+  const choosesDuration = $derived(access !== null || agentToolDurations);
+
   $effect(() => {
     if (autofocus && pending && cardEl) cardEl.focus();
   });
@@ -61,7 +78,9 @@
   let butlerDropped = $state<number[]>([]);
   const butlerKept = $derived(
     butlerProposal !== null && butlerProposal.proposalType !== 'group'
-      ? butlerProposal.bots.map((_, index) => index).filter((index) => !butlerDropped.includes(index))
+      ? butlerProposal.bots
+          .map((_, index) => index)
+          .filter((index) => !butlerDropped.includes(index))
       : [],
   );
 
@@ -77,7 +96,7 @@
       void permissions.decide(approval.id, butlerKept.length > 0, undefined, butlerKept);
       return;
     }
-    void permissions.decide(approval.id, true, access !== null ? duration : undefined);
+    void permissions.decide(approval.id, true, choosesDuration ? duration : undefined);
   }
 
   function deny(): void {
@@ -92,9 +111,9 @@
     } else if (event.key === 'Escape') {
       event.preventDefault();
       deny();
-    } else if (access !== null && event.key === '1') {
+    } else if (choosesDuration && event.key === '1') {
       duration = 'once';
-    } else if (access !== null && event.key === '2') {
+    } else if (choosesDuration && event.key === '2') {
       duration = 'conversation';
     }
   }
@@ -112,6 +131,14 @@
   const envSource = $derived(String(approval.payload['source'] ?? ''));
   const envObtain = $derived(String(approval.payload['obtain'] ?? 'archive'));
   const envSystemCommand = $derived(String(approval.payload['systemCommand'] ?? ''));
+  // D72 外部智能体条目（`agent:{id}`）：许可证与条款提示。
+  const envLicense = $derived(String(approval.payload['license'] ?? ''));
+  const envTermsKey = $derived(String(approval.payload['termsNoticeKey'] ?? ''));
+  const envTermsText = $derived.by(() => {
+    if (envTermsKey.length === 0) return '';
+    const text = t(envTermsKey as MessageKey);
+    return text === envTermsKey ? t('agents.termsGeneric') : text;
+  });
   // Install row linked to this approval (exists once the install started).
   const envProgress = $derived(
     environmentStore.installs.find((install) => install.approvalId === approval.id),
@@ -156,6 +183,23 @@
     incompatible: 'skills.compat.incompatible',
   };
 
+  const agentToolTitle = $derived(
+    agentTool === null
+      ? t('approvals.agentToolTitle')
+      : agentTool.kind === 'config'
+        ? t('approvals.agentToolConfigTitle')
+        : agentTool.kind === 'read'
+          ? t('approvals.agentToolReadTitle')
+          : agentTool.kind === 'write'
+            ? t('approvals.agentToolWriteTitle')
+            : agentTool.kind === 'execute'
+              ? t('approvals.agentToolExecuteTitle')
+              : t('approvals.agentToolTitle'),
+  );
+  const agentToolAgentName = $derived(
+    agentTool !== null ? agentTool.agentName || agentTool.agentId : '',
+  );
+
   const title = $derived(
     approval.kind === 'access'
       ? t('approvals.accessTitle')
@@ -171,13 +215,15 @@
                 ? t('approvals.skillPresetTitle')
                 : approval.kind === 'mcp_tool'
                   ? t('approvals.mcpToolTitle')
-                  : approval.kind === 'butler_proposal'
-                    ? butlerProposal?.proposalType === 'group'
-                      ? t('approvals.butlerGroupTitle')
-                      : butlerProposal?.proposalType === 'bot'
-                        ? t('approvals.butlerBotTitle')
-                        : t('approvals.butlerTeamTitle')
-                    : t('approvals.commandTitle'),
+                  : approval.kind === 'agent_tool'
+                    ? agentToolTitle
+                    : approval.kind === 'butler_proposal'
+                      ? butlerProposal?.proposalType === 'group'
+                        ? t('approvals.butlerGroupTitle')
+                        : butlerProposal?.proposalType === 'bot'
+                          ? t('approvals.butlerBotTitle')
+                          : t('approvals.butlerTeamTitle')
+                      : t('approvals.commandTitle'),
   );
 </script>
 
@@ -192,7 +238,7 @@
       <ShieldCheck class="size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
       {#if approval.autoApproved}
         <span>{title} · {t('approvals.foldedAutoApproved')}</span>
-      {:else if access !== null && approval.decision?.duration === 'conversation'}
+      {:else if choosesDuration && approval.decision?.duration === 'conversation'}
         <span>{title} · {t('approvals.foldedApprovedConversation')}</span>
       {:else}
         <span>{title} · {t('approvals.foldedApprovedOnce')}</span>
@@ -228,18 +274,20 @@
                 ? (skillPreset?.displayName ?? skillPreset?.name ?? '')
                 : approval.kind === 'mcp_tool'
                   ? `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
-                  : approval.kind === 'butler_proposal'
-                    ? butlerProposal?.proposalType === 'group'
-                      ? butlerProposal.title
-                      : (butlerProposal?.bots
-                          .filter(
-                            (_, index) =>
-                              approval.decision?.selection === undefined ||
-                              approval.decision.selection.includes(index),
-                          )
-                          .map((bot) => bot.name)
-                          .join('、') ?? '')
-                    : command}
+                  : approval.kind === 'agent_tool'
+                    ? `${agentToolAgentName} · ${agentTool?.command ?? (agentTool?.locations.join('、') || agentTool?.title) ?? ''}`
+                    : approval.kind === 'butler_proposal'
+                      ? butlerProposal?.proposalType === 'group'
+                        ? butlerProposal.title
+                        : (butlerProposal?.bots
+                            .filter(
+                              (_, index) =>
+                                approval.decision?.selection === undefined ||
+                                approval.decision.selection.includes(index),
+                            )
+                            .map((bot) => bot.name)
+                            .join('、') ?? '')
+                      : command}
       </code>
     {/if}
   </div>
@@ -269,6 +317,9 @@
         <Plug class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'butler_proposal'}
         <Users class="size-4 text-amber-600" aria-hidden="true" />
+      {:else if approval.kind === 'agent_tool'}
+        {#if agentTool?.sensitive}<FileWarning class="size-4 text-destructive" aria-hidden="true" />
+        {:else}<Bot class="size-4 text-amber-600" aria-hidden="true" />{/if}
       {:else}
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}
@@ -332,11 +383,23 @@
           <span class="text-muted-foreground">{t('approvals.environmentSource')}</span>
           <span class="break-all" data-testid="approval-environment-source">{envSource}</span>
         {/if}
+        {#if envLicense.length > 0}
+          <span class="text-muted-foreground">{t('approvals.environmentLicense')}</span>
+          <span data-testid="approval-environment-license">{envLicense}</span>
+        {/if}
         {#if reason.length > 0}
           <span class="text-muted-foreground">{t('approvals.reason')}</span>
           <span class="break-all">{reason}</span>
         {/if}
       </div>
+      {#if envTermsText.length > 0}
+        <p
+          class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+          data-testid="approval-environment-terms"
+        >
+          {envTermsText}
+        </p>
+      {/if}
       {#if envObtain === 'system'}
         {#if envSystemCommand.length > 0}
           <p
@@ -554,6 +617,102 @@
           {/each}
         </ul>
         <p class="mt-2 text-xs text-muted-foreground">{t('approvals.butlerNote')}</p>
+      {/if}
+    {:else if approval.kind === 'agent_tool' && agentTool !== null}
+      <!-- 外部智能体工具权限卡（D72 P3，design 28 §6）：Agent 标识、工具标题、
+           类别、路径 / 命令原文；路径类可选「本对话内」（记为访问授权） -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-agent-tool">
+        <span class="text-muted-foreground">{t('approvals.agentToolAgent')}</span>
+        <span data-testid="approval-agent-tool-agent">{agentToolAgentName}</span>
+        {#if agentTool.kind !== 'config'}
+          {#if agentTool.title.length > 0}
+            <span class="text-muted-foreground">{t('approvals.agentToolTool')}</span>
+            <span class="break-all" data-testid="approval-agent-tool-title">{agentTool.title}</span>
+          {/if}
+          <span class="text-muted-foreground">{t('approvals.agentToolCategory')}</span>
+          <span data-testid="approval-agent-tool-category"
+            >{t(`approvals.agentToolCategory.${agentTool.kind}` as MessageKey)}</span
+          >
+        {/if}
+        {#if agentTool.command !== undefined}
+          <span class="text-muted-foreground">{t('approvals.command')}</span>
+          <code class="break-all whitespace-pre-wrap" data-testid="approval-agent-tool-command"
+            >{agentTool.command}</code
+          >
+          {#if agentTool.cwd.length > 0}
+            <span class="text-muted-foreground">{t('approvals.cwd')}</span>
+            <code class="break-all">{agentTool.cwd}</code>
+          {/if}
+        {/if}
+        {#if agentTool.locations.length > 0}
+          <span class="text-muted-foreground"
+            >{agentTool.kind === 'config'
+              ? t('approvals.agentToolConfigFiles')
+              : t('approvals.agentToolPaths')}</span
+          >
+          <span class="grid gap-0.5" data-testid="approval-agent-tool-paths">
+            {#each agentTool.locations as location, index (index)}
+              <code class="break-all">{location}</code>
+            {/each}
+          </span>
+        {/if}
+        {#if agentTool.kind === 'config' && agentTool.projectPath !== undefined}
+          <span class="text-muted-foreground">{t('approvals.cwd')}</span>
+          <code class="break-all">{agentTool.projectPath}</code>
+        {/if}
+        {#if agentTool.reason.length > 0}
+          <span class="text-muted-foreground">{t('approvals.reason')}</span>
+          <span class="break-all">{agentTool.reason}</span>
+        {/if}
+      </div>
+      {#if agentTool.sensitive}
+        <p
+          class="mt-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
+          data-testid="approval-sensitive-warning"
+        >
+          {t('approvals.sensitiveWarning')}
+        </p>
+      {/if}
+      {#if agentTool.targetUncertain === true}
+        <p
+          class="mt-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
+          data-testid="approval-agent-tool-target-uncertain"
+        >
+          {t('approvals.agentToolTargetUncertain')}
+        </p>
+      {/if}
+      <p
+        class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+        data-testid="approval-agent-tool-note"
+      >
+        {agentTool.kind === 'config'
+          ? t('approvals.agentToolConfigNote')
+          : t('approvals.agentToolRisk')}
+      </p>
+      {#if agentToolDurations}
+        <div class="mt-2 flex items-center gap-2 text-xs" data-testid="approval-duration">
+          <button
+            type="button"
+            class="rounded-md border px-2 py-1 {duration === 'once'
+              ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+              : ''}"
+            onclick={() => (duration = 'once')}
+            data-testid="duration-once"
+          >
+            1 · {t('approvals.once')}
+          </button>
+          <button
+            type="button"
+            class="rounded-md border px-2 py-1 {duration === 'conversation'
+              ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+              : ''}"
+            onclick={() => (duration = 'conversation')}
+            data-testid="duration-conversation"
+          >
+            2 · {t('approvals.conversation')}
+          </button>
+          <span class="text-muted-foreground">{t('approvals.durationHint')}</span>
+        </div>
       {/if}
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">

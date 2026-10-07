@@ -13,6 +13,7 @@ import {
   runSchema,
   unattendedStateSchema,
 } from '../domain/types.js';
+import { agentStatusPayloadSchema } from '../domain/agent-status.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -198,6 +199,8 @@ export const rpcEventSchemas = {
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
+  /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
+  'agent.status': agentStatusPayloadSchema,
 } as const;
 
 export type RpcEventName = keyof typeof rpcEventSchemas;

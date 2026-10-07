@@ -11,7 +11,12 @@ import type { CoreLogger } from '../infra/logger.js';
 import { containsCredential } from './credential-patterns.js';
 import { curationOutputSchema, curationParametersSchema, type CurationOutput } from './schemas.js';
 import type { MemoryService } from './service.js';
-import { mainModelRef, recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
+import {
+  builtinModelRefOrNull,
+  mainModelRef,
+  recordLoopUsage,
+  type LoopUsageDeps,
+} from './loop-utils.js';
 
 export interface CurationJobDeps extends LoopUsageDeps {
   engine: AgentEngine;
@@ -33,6 +38,11 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
   const store = deps.memory.profileStore;
   const pending = store.pendingProposals();
   const activeItems = store.list('active');
+  // D72 P4：没有内置模型时跳过（提议留待下次整理），不产生失败 run。
+  if (pending.length > 0 && builtinModelRefOrNull(deps.settings, 'main') === null) {
+    deps.logger.info({ pending: pending.length }, 'profile curation skipped: no built-in model');
+    return;
+  }
 
   const run = deps.runs.create({
     botId: null, // 全局唯一写入者（画像整理 loop 无所属 Bot）

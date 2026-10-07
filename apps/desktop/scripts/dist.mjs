@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
@@ -19,7 +19,13 @@ import esbuild from 'esbuild';
  *     define __KEPCUP_TEST_HOOKS__=false + minify 死码剔除测试缝
  *     （mock LLM 播种 / KEYSTORE=memory|file / WSL fixture runner——
  *     其余依赖一律 external，留在 asar 的 node_modules）；
+ *     同时注入外部智能体目录的发行门禁放行清单（agent-release-gates.json →
+ *     `__KEPCUP_AGENT_RELEASE_GATES__`，D72）：`releaseGate` 未放行的目录条目
+ *     （Claude Agent 等待定条目、testkit 假 Agent）在发行构建中不收录；开发
+ *     构建与测试不注入该常量，全部条目照常可用；
  *  3. 迁移文件拷到 out/migrations（打包后 core 的 import.meta.url 相对解析到那里）；
+ *     外部智能体的 stdio ↔ HTTP MCP 代理（stdio-proxy.mjs，D72）拷到 bundle
+ *     同目录（asarUnpack 解出，供子进程以 Electron 自带 Node 运行）；
  *  4. electron-builder（本文件传入的目标参数 + `--publish never`——发布永远
  *     由显式的独立 publish 步骤控制，绝不随构建/推 tag 隐式触发，见
  *     BR-P13-003）。无签名凭据时明确跳过签名
@@ -48,7 +54,16 @@ function run(command, args, env = {}) {
 console.log('[dist] electron-vite build (KEPCUP_PACKAGE_BUILD=1)');
 run('pnpm', ['exec', 'electron-vite', 'build'], { KEPCUP_PACKAGE_BUILD: '1' });
 
-// 2. Bundle the core service entry with the test-only paths eliminated.
+// 2. Bundle the core service entry with the test-only paths eliminated and the
+//    agent catalog release gates pinned (D72: entries whose `releaseGate` is
+//    not approved are dropped by core's effectiveAgentCatalog at runtime).
+const releaseGates = JSON.parse(
+  readFileSync(path.join(appDir, 'agent-release-gates.json'), 'utf8'),
+).approved;
+if (!Array.isArray(releaseGates) || releaseGates.some((gate) => typeof gate !== 'string')) {
+  throw new Error('[dist] agent-release-gates.json: "approved" must be an array of strings');
+}
+console.log(`[dist] agent release gates approved: ${JSON.stringify(releaseGates)}`);
 const coreEntry = path.join(appDir, 'src/core-entry/index.ts');
 const outfile = path.join(appDir, 'out/main/core-entry/index.js');
 console.log('[dist] esbuild bundle core-entry (test paths eliminated)');
@@ -67,6 +82,10 @@ await esbuild.build({
   external: [
     'electron',
     '@kepcup/shared',
+    // D72 ACP client: a @kepcup/core dependency like pi-*, resolved from the
+    // asar's node_modules the same way (electron-builder collects core's
+    // production dependency tree).
+    '@agentclientprotocol/sdk',
     '@anthropic-ai/sandbox-runtime',
     '@earendil-works/pi-agent-core',
     '@earendil-works/pi-ai',
@@ -84,7 +103,10 @@ await esbuild.build({
     // core degrades to full-text search (memory/store.ts resolveVecLoader).
     'sqlite-vec',
   ],
-  define: { __KEPCUP_TEST_HOOKS__: 'false' },
+  define: {
+    __KEPCUP_TEST_HOOKS__: 'false',
+    __KEPCUP_AGENT_RELEASE_GATES__: JSON.stringify(releaseGates),
+  },
   logLevel: 'info',
 });
 
@@ -93,6 +115,13 @@ const migrationsOut = path.join(appDir, 'out/migrations');
 rmSync(migrationsOut, { recursive: true, force: true });
 cpSync(path.join(repoDir, 'packages/core/migrations'), migrationsOut, { recursive: true });
 console.log('[dist] migrations copied to out/migrations');
+
+// 3b. D72 stdio ↔ HTTP MCP proxy: run by a child process (Electron's Node),
+//     resolved next to the bundle (core resolveStdioProxyPath) and unpacked
+//     from the asar (electron-builder.yml asarUnpack).
+const stdioProxyOut = path.join(path.dirname(outfile), 'stdio-proxy.mjs');
+cpSync(path.join(repoDir, 'packages/core/src/agent/external/stdio-proxy.mjs'), stdioProxyOut);
+console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
 
 // 4. Build-time sanity probe of the elimination (also asserted post-pack by
 //    scripts/pack-hooks.cjs on the asar itself).
@@ -107,7 +136,15 @@ console.log('[dist] migrations copied to out/migrations');
   if (!existsSync(path.join(migrationsOut, 'main'))) {
     throw new Error('[dist] out/migrations/main missing after copy');
   }
-  console.log('[dist] core-entry bundle verified: no test-path markers');
+  if (!existsSync(stdioProxyOut)) {
+    throw new Error('[dist] out/main/core-entry/stdio-proxy.mjs missing after copy');
+  }
+  // The gate list must have been substituted: a bare reference would leave
+  // the catalog unfiltered in the packaged app.
+  if (bundled.includes('__KEPCUP_AGENT_RELEASE_GATES__')) {
+    throw new Error('[dist] core-entry bundle still references __KEPCUP_AGENT_RELEASE_GATES__');
+  }
+  console.log('[dist] core-entry bundle verified: no test-path markers, release gates pinned');
 }
 
 // 5. electron-builder. Skip code signing unless credentials are provided.

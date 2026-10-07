@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { untrustedBlock } from '../infra/data-boundary.js';
 import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
@@ -229,7 +230,7 @@ export function buildImageTools(input: {
       const note =
         skipped.length > 0 ? `\n（以下图片过大已跳过：${skipped.join('；')}）` : '';
       const truncated = truncateToBudget(result.text, TOOL_OUTPUT_MAX_CHARS).text;
-      return { ok: true, content: `<untrusted>\n${truncated}\n</untrusted>${note}` };
+      return { ok: true, content: `${untrustedBlock(truncated)}${note}` };
     },
   };
 

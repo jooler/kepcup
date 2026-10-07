@@ -70,6 +70,15 @@ export const ERROR_CODES = [
   'MCP_SERVER_FAILED',
   // butler & delegation (D70 / D71)
   'BOT_UNDELETABLE',
+  // external agents (D72)
+  'NOT_SUPPORTED',
+  'AGENT_UNAVAILABLE',
+  'AGENT_AUTH_REQUIRED',
+  'AGENT_INCOMPATIBLE',
+  /** Agent 自身的 OS 沙箱起不来（如 Linux 缺 bubblewrap / socat），run 不降级。 */
+  'AGENT_SANDBOX_UNAVAILABLE',
+  'AGENT_PROCESS_EXITED',
+  'AGENT_FAILED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

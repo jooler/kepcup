@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { z } from 'zod';
 import {
   AppError,
+  agentSettingSchema,
   settingsGetOutputSchema,
   settingsUpdateInputSchema,
   providersSetKeyInputSchema,
@@ -182,6 +183,8 @@ import type { CoreServices } from '../start.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
+import { assertAgentSelectable } from '../agent/external/catalog.js';
+import { bindAgentMethods } from './agents-bindings.js';
 import type { LoopType } from '@kepcup/shared';
 
 const voidInput = z.void();
@@ -253,11 +256,47 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       const previous = domain.settings.get();
       // P13 任务 4: the onboarding patch is partial; store the merged state so
       // a step writing one flag never erases the others.
-      const { onboarding: onboardingPatch, ...rest } = input;
+      const {
+        onboarding: onboardingPatch,
+        experimental: experimentalPatch,
+        agents: agentsPatch,
+        ...rest
+      } = input;
+      if (
+        input.defaultAgentId !== undefined &&
+        input.defaultAgentId.length > 0 &&
+        !(services.agents?.catalog() ?? []).some((entry) => entry.id === input.defaultAgentId)
+      ) {
+        throw new AppError('INVALID_INPUT', `智能体「${input.defaultAgentId}」不在目录中`);
+      }
       const next = domain.settings.update({
         ...rest,
         ...(onboardingPatch !== undefined
           ? { onboarding: { ...previous.onboarding, ...onboardingPatch } }
+          : {}),
+        // agents: merged per id onto the stored value (never a whole-map
+        // overwrite: a stale renderer snapshot must not undo a finished
+        // install). installedVersion / source are core-owned (agents.*).
+        ...(agentsPatch !== undefined
+          ? {
+              agents: {
+                ...previous.agents,
+                ...Object.fromEntries(
+                  Object.entries(agentsPatch).map(([id, value]) => [
+                    id,
+                    agentSettingSchema.parse({ ...(previous.agents[id] ?? {}), ...value }),
+                  ]),
+                ),
+              },
+            }
+          : {}),
+        ...(experimentalPatch !== undefined
+          ? {
+              experimental: {
+                externalAgents:
+                  experimentalPatch.externalAgents ?? previous.experimental.externalAgents,
+              },
+            }
           : {}),
       });
       services.scheduler?.setConcurrency(next.providerConcurrency);
@@ -362,6 +401,19 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       bot: domain.bots.get(input.id),
     })),
     'bots.create': method(botsCreateInputSchema, botGetOutputSchema, async (input) => {
+      assertAgentSelectable(
+        domain.settings.get(),
+        services.agents?.catalog() ?? [],
+        input.profile.runtime.agent.id,
+      );
+      // The setup interview drives save_profile / finish_setup host tools that
+      // an external agent never receives (P1/P2) — it would stay interviewing.
+      if (input.interview && input.profile.runtime.agent.id.length > 0) {
+        throw new AppError(
+          'INVALID_INPUT',
+          '对话式新建暂不支持外部智能体：请先用内置模型创建，再切换',
+        );
+      }
       const bot = domain.bots.create(input.profile, { interview: input.interview });
       publish('bot.updated', { bot });
       return { bot };
@@ -421,6 +473,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
     'bots.update': method(botsUpdateInputSchema, botGetOutputSchema, async (input) => {
+      // D72 实验开关：只拦「改成另一个外部 Agent」，已在用的 Bot 仍可编辑其余字段。
+      const nextAgentId = input.profile.runtime.agent.id;
+      if (nextAgentId !== domain.bots.getOrThrow(input.id).profile.runtime.agent.id) {
+        assertAgentSelectable(domain.settings.get(), services.agents?.catalog() ?? [], nextAgentId);
+      }
       const bot = domain.bots.update(input.id, input.profile);
       publish('bot.updated', { bot });
       return { bot };
@@ -763,18 +820,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       approvalsDecideInputSchema,
       approvalsDecideOutputSchema,
       async (input) => ({
-        approval: domain.approvals.decide(
-          input.id,
-          input.approve,
-          input.duration,
-          input.selection,
-        ),
+        approval: domain.approvals.decide(input.id, input.approve, input.duration, input.selection),
       }),
     ),
 
-    'delegations.get': method(delegationIdInputSchema, delegationGetOutputSchema, async (input) => ({
-      delegation: orchestrator.getDelegation(input.id),
-    })),
+    'delegations.get': method(
+      delegationIdInputSchema,
+      delegationGetOutputSchema,
+      async (input) => ({
+        delegation: orchestrator.getDelegation(input.id),
+      }),
+    ),
     'delegations.cancel': method(
       delegationIdInputSchema,
       delegationGetOutputSchema,
@@ -906,6 +962,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       environmentReinstallOutputSchema,
       async (input) => ({ install: await services.environment!.reinstall(input.id) }),
     ),
+
+    // --- external agents (D72 P4) ---------------------------------------------
+    ...bindAgentMethods(services),
 
     // --- memory & profile (P07) ------------------------------------------
     'memory.list': method(memoryListInputSchema, memoryListOutputSchema, async (input) => ({

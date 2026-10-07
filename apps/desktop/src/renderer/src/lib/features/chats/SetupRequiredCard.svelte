@@ -13,13 +13,15 @@
   import CapabilityModelSection from '$lib/features/settings/CapabilityModelSection.svelte';
   import WebSearchSection from '$lib/features/settings/WebSearchSection.svelte';
   import ModelSelectField from '$lib/features/settings/ModelSelectField.svelte';
+  import AgentSetupBody from './AgentSetupBody.svelte';
 
   /**
    * 消息列表内的「缺设置」引导卡片（docs/design/18-inline-setup.md）：数据源
    * 是 chat.setupRequirement（发送门禁置起，或失败 run 携带的结构化 setup）。
    * main-model：两段式——无已配置厂商时先内嵌供应商表单（与设置页同一份
    * 保存逻辑），之后选默认主模型（可顺带指定 Bot 模型）确认；capability：
-   * 内嵌对应能力模型配置。确认 / 保存后 chat.continueAfterSetup() 自动续跑
+   * 内嵌对应能力模型配置；agent（D72 P4）：内嵌设置页的 Agent 卡片
+   * （AgentSetupBody）。确认 / 保存后 chat.continueAfterSetup() 自动续跑
    * （重试原 run 或冲掉保留的草稿）。
    * 两段切换只认「保存」点击：「测试连接」为完成探测会先落盘 key
    * （providers.test 只读已存 key），availableModelOptions 随之翻转为非空，
@@ -108,7 +110,9 @@
     <X class="size-3.5" aria-hidden="true" />
   </Button>
 
-  {#if requirement.kind === 'web-search'}
+  {#if requirement.kind === 'agent'}
+    <AgentSetupBody {requirement} />
+  {:else if requirement.kind === 'web-search'}
     <div class="space-y-0.5 pr-6">
       <p class="text-sm font-medium" data-testid="setup-card-title">
         {t('setupCard.webSearchTitle')}

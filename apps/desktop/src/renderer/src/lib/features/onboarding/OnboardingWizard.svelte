@@ -8,6 +8,8 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
+  import { agentsStore } from '$lib/stores/agents.svelte';
+  import AgentCard from '$lib/features/settings/AgentCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -25,6 +27,12 @@
    * 进入组队访谈，由管家提议 3~5 个领域 Bot；快速单 Bot 仍走侧栏「新建」）。
    * 状态机双向：每一步都可「上一步」。完成状态写既有 settings 行
    * （onboarding.*），无新迁移。
+   *
+   * 模型步骤的「我有订阅」分支（D72 P4，design 28 §3 / §9.1）：打开实验开关
+   * 「外部智能体」→ 列出支持订阅登录的目录 Agent（设置页同一张卡片：条款
+   * 提示、启用 = 安装确认、登录、测试连接）→ 选用后写 settings.defaultAgentId
+   * ——没有内置模型时，管家与之后新建的 Bot 默认由它驱动。管家的组队访谈
+   * 只在内置引擎上跑，订阅分支下管家直接以欢迎语开场（不访谈）。
    */
 
   type Step = 'welcome' | 'model' | 'permissions' | 'sandbox' | 'bot' | 'done';
@@ -40,6 +48,30 @@
   let lightTouched = $state(false);
   let savingKey = $state(false);
   const providers = $derived(settingsStore.providers);
+
+  // --- 订阅分支（外部智能体） ---
+  /** 首次切到外部 Agent 的告知（与 Bot 运行配置的切换弹框同一记录）。 */
+  const SWITCH_ACK_KEY = 'kepcup.agentSwitchAcknowledged';
+  let modelMode = $state<'key' | 'subscription'>('key');
+  let subscriptionLoading = $state(false);
+  /** 实验开关已开（本流程确认打开或原本就开），可以列目录。 */
+  let subscriptionStarted = $state(false);
+  /** 实验开关是本流程打开的（离开订阅分支时关回）。 */
+  let experimentalByFlow = false;
+  /** 进入订阅分支时已启用的 Agent（离开时据此判断用户是否在分支内启用过）。 */
+  let enabledAtStart: string[] = [];
+  let chosenAgentId = $state('');
+  let savingAgent = $state(false);
+  /** 支持订阅登录的目录 Agent（`auth.kinds` 含 subscription）。 */
+  const subscriptionAgents = $derived(
+    agentsStore.agents.filter((agent) => agent.authKinds.includes('subscription')),
+  );
+  const chosenAgent = $derived(chosenAgentId.length > 0 ? agentsStore.get(chosenAgentId) : null);
+  const agentPathName = $derived(
+    agentsStore.get(settingsStore.settings?.defaultAgentId ?? '')?.name ??
+      settingsStore.settings?.defaultAgentId ??
+      '',
+  );
 
   // --- 权限步骤 ---
   let launchAtLogin = $state(true);
@@ -81,6 +113,13 @@
   }
 
   const providerReady = $derived(providers.some((p) => p.hasKey));
+  /** 订阅分支已选用 Agent 且没有内置模型：管家不访谈，由 Agent 驱动。 */
+  // 与 core 的默认 Agent 解析同一判定（start.ts：defaultAgentId 非空且没有
+  // 默认主模型），审查 #8。
+  const agentPath = $derived(
+    (settingsStore.settings?.defaultAgentId ?? '').length > 0 &&
+      (settingsStore.settings?.defaultMainModel ?? '').length === 0,
+  );
 
   /**
    * 默认模型候选（主/轻量同一份）：已存 key 时列全部已配置 key 的厂商（与
@@ -126,7 +165,14 @@
     try {
       await settingsStore.setKey(providerId, keyDraft);
       keyDraft = '';
-      await settingsStore.update({ defaultMainModel: defaultModel, defaultLightModel: lightModel });
+      await settingsStore.update({
+        defaultMainModel: defaultModel,
+        defaultLightModel: lightModel,
+        // 走了 API key 路径：此前订阅分支选过的默认 Agent 清掉（审查 #8）。
+        ...((settingsStore.settings?.defaultAgentId ?? '').length > 0
+          ? { defaultAgentId: '' }
+          : {}),
+      });
       await persist({ onboarding: { modelConfigured: true } });
       goto('permissions');
     } catch (error) {
@@ -143,7 +189,12 @@
   /** providerReady 分支：默认主/轻量模型有改动则保存，随后进入下一步。 */
   async function saveDefaultAndNext(): Promise<void> {
     const settings = settingsStore.settings;
-    const patch: { defaultMainModel?: string; defaultLightModel?: string } = {};
+    const patch: {
+      defaultMainModel?: string;
+      defaultLightModel?: string;
+      defaultAgentId?: string;
+    } = {};
+    if ((settings?.defaultAgentId ?? '').length > 0) patch.defaultAgentId = '';
     if (defaultModel.length > 0 && defaultModel !== (settings?.defaultMainModel ?? '')) {
       patch.defaultMainModel = defaultModel;
     }
@@ -152,6 +203,96 @@
     }
     if (Object.keys(patch).length > 0) await settingsStore.update(patch);
     goto('permissions');
+  }
+
+  /**
+   * 「我有订阅」：先只显示说明（含「这是实验功能」）；实验开关已开时直接
+   * 加载目录，否则等用户点「开启并继续」才打开（审查 #5）。
+   */
+  function openSubscription(): void {
+    modelMode = 'subscription';
+    subscriptionStarted = settingsStore.settings?.experimental.externalAgents === true;
+    if (subscriptionStarted) void loadSubscriptionAgents();
+  }
+
+  /** 显式确认后打开实验开关；由本流程打开的，返回 API key 时关回。 */
+  async function confirmSubscription(): Promise<void> {
+    subscriptionLoading = true;
+    try {
+      await agentsStore.setExperimental(true);
+      experimentalByFlow = true;
+      subscriptionStarted = true;
+    } catch (error) {
+      toast.error(
+        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      subscriptionLoading = false;
+    }
+    if (subscriptionStarted) await loadSubscriptionAgents();
+  }
+
+  async function loadSubscriptionAgents(): Promise<void> {
+    subscriptionLoading = true;
+    try {
+      agentsStore.start();
+      await agentsStore.refresh();
+      enabledAtStart = agentsStore.agents.filter((agent) => agent.enabled).map((agent) => agent.id);
+      const current = settingsStore.settings?.defaultAgentId ?? '';
+      if (chosenAgentId.length === 0 && current.length > 0) chosenAgentId = current;
+    } catch (error) {
+      toast.error(
+        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      subscriptionLoading = false;
+    }
+  }
+
+  /**
+   * 回到 API key：本流程打开的实验开关关回去——除非用户已在分支内启用（安装）
+   * 了某个 Agent（那是他自己的选择，保留，设置页可见）。
+   */
+  async function leaveSubscription(): Promise<void> {
+    modelMode = 'key';
+    subscriptionStarted = false;
+    if (!experimentalByFlow) return;
+    experimentalByFlow = false;
+    const enabledInFlow = agentsStore.agents.some(
+      (agent) => agent.enabled && !enabledAtStart.includes(agent.id),
+    );
+    if (enabledInFlow) return;
+    try {
+      await agentsStore.setExperimental(false);
+    } catch (error) {
+      toast.error(
+        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
+      );
+    }
+  }
+
+  /** 选用的 Agent 写为新建 Bot（含管家）的默认引擎，进入下一步。 */
+  async function saveAgentAndNext(): Promise<void> {
+    if (chosenAgent === null || !chosenAgent.enabled) return;
+    savingAgent = true;
+    try {
+      await settingsStore.update({ defaultAgentId: chosenAgent.id });
+      // 选用即保留实验开关（不再随返回关回）。
+      experimentalByFlow = false;
+      await persist({ onboarding: { modelConfigured: true, modelSkipped: false } });
+      try {
+        localStorage.setItem(SWITCH_ACK_KEY, '1');
+      } catch {
+        // per-device notice record only
+      }
+      goto('permissions');
+    } catch (error) {
+      toast.error(
+        t('agents.actionFailed', { error: error instanceof Error ? error.message : String(error) }),
+      );
+    } finally {
+      savingAgent = false;
+    }
   }
 
   async function skipModel(): Promise<void> {
@@ -191,7 +332,8 @@
   async function startButler(): Promise<void> {
     creating = true;
     try {
-      const result = (await core.call('butler.ensure', { interview: true })) as {
+      // 订阅分支：管家由外部 Agent 驱动，组队访谈（内置引擎）不开启。
+      const result = (await core.call('butler.ensure', { interview: !agentPath })) as {
         conversationId: string;
       };
       await persist({ onboarding: { completed: true } });
@@ -244,8 +386,97 @@
           {t('onboarding.start')}
         </Button>
       </footer>
+    {:else if step === 'model' && modelMode === 'subscription'}
+      <div data-testid="onboarding-subscription">
+        <p class="text-sm text-muted-foreground">{t('onboarding.subscriptionBody')}</p>
+        <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          {t('onboarding.subscriptionExperimental')}
+        </p>
+        {#if !subscriptionStarted}
+          <Button
+            size="sm"
+            class="mt-3"
+            disabled={subscriptionLoading}
+            onclick={() => void confirmSubscription()}
+            data-testid="onboarding-subscription-enable"
+          >
+            {t('onboarding.subscriptionEnable')}
+          </Button>
+        {:else}
+          <div class="mt-3 max-h-[46vh] space-y-3 overflow-y-auto pr-1">
+            {#if subscriptionLoading}
+              <p class="text-xs text-muted-foreground">{t('setupCard.agentLoading')}</p>
+            {:else if subscriptionAgents.length === 0}
+              <p class="text-xs text-muted-foreground">{t('onboarding.subscriptionEmpty')}</p>
+            {/if}
+            {#each subscriptionAgents as agent (agent.id)}
+              <div class="space-y-1.5">
+                <AgentCard {agent} embedded />
+                <label class="flex items-center gap-2 pl-1 text-sm">
+                  <input
+                    type="radio"
+                    name="onboarding-agent"
+                    value={agent.id}
+                    bind:group={chosenAgentId}
+                    data-testid={`onboarding-agent-choose-${agent.id}`}
+                  />
+                  {t('onboarding.subscriptionChoose', { name: agent.name })}
+                </label>
+              </div>
+            {/each}
+          </div>
+          {#if chosenAgent !== null}
+            <details class="mt-3 text-xs" data-testid="onboarding-agent-notice">
+              <summary class="cursor-pointer text-muted-foreground">
+                {t('contacts.agentSwitchTitle', { name: chosenAgent.name })}
+              </summary>
+              <ul class="mt-1.5 space-y-1 text-muted-foreground">
+                <li>· {t('contacts.agentSwitchTools')}</li>
+                <li>· {t('contacts.agentSwitchReads')}</li>
+                <li>· {t('contacts.agentSwitchPrompt')}</li>
+                <li>· {t('contacts.agentSwitchFeatures')}</li>
+                <li>· {t('contacts.agentSwitchHistory')}</li>
+              </ul>
+            </details>
+            {#if !chosenAgent.enabled}
+              <p class="mt-2 text-xs text-muted-foreground">
+                {t('onboarding.subscriptionEnableFirst')}
+              </p>
+            {/if}
+          {/if}
+        {/if}
+      </div>
+      <footer class="mt-6 flex items-center justify-between">
+        <Button
+          size="sm"
+          variant="ghost"
+          onclick={() => void leaveSubscription()}
+          data-testid="onboarding-subscription-back"
+        >
+          {t('onboarding.subscriptionBack')}
+        </Button>
+        <Button
+          size="sm"
+          disabled={savingAgent || chosenAgent === null || !chosenAgent.enabled}
+          onclick={() => void saveAgentAndNext()}
+          data-testid="onboarding-subscription-save"
+        >
+          {t('onboarding.modelSave')}
+        </Button>
+      </footer>
     {:else if step === 'model'}
       <p class="text-sm text-muted-foreground">{t('onboarding.modelBody')}</p>
+      {#if !providerReady}
+        <Button
+          size="sm"
+          variant="outline"
+          class="mt-3 w-full"
+          onclick={openSubscription}
+          data-testid="onboarding-subscription-open"
+        >
+          {t('onboarding.subscriptionOpen')}
+        </Button>
+      {/if}
       {#if providers.length === 0}
         <p class="mt-3 text-sm text-amber-600">{t('onboarding.modelNoProvider')}</p>
       {:else}
@@ -444,10 +675,17 @@
     {:else if step === 'bot'}
       <p class="text-sm text-muted-foreground">{t('onboarding.botBody')}</p>
       <ul class="mt-4 grid gap-1.5 text-sm" data-testid="onboarding-butler-points">
-        <li>· {t('onboarding.butlerPoint.team')}</li>
+        {#if !agentPath}
+          <li>· {t('onboarding.butlerPoint.team')}</li>
+        {/if}
         <li>· {t('onboarding.butlerPoint.route')}</li>
         <li>· {t('onboarding.butlerPoint.quick')}</li>
       </ul>
+      {#if agentPath}
+        <p class="mt-3 text-xs text-muted-foreground" data-testid="onboarding-butler-agent-note">
+          {t('onboarding.butlerAgentNote', { name: agentPathName })}
+        </p>
+      {/if}
       <footer class="mt-6 flex items-center justify-between">
         <Button size="sm" variant="ghost" onclick={back} data-testid="onboarding-back"
           >{t('onboarding.back')}</Button

@@ -17,6 +17,9 @@ import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 import { permissions } from '$lib/stores/permissions.svelte';
+import { agentsStore } from '$lib/stores/agents.svelte';
+import { sendGateRequirement } from '../features/chats/send-gate';
+import { restoredFailedRun } from '../features/chats/setup-continue';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -85,6 +88,8 @@ class ChatState {
    * still shows. Not persisted — a relaunch lists the failure again.
    */
   #dismissedFailedRunIds = new Set<string>();
+  /** Failed runs already retried by the in-chat setup card (one-shot). */
+  #continuedSetupRunIds = new Set<string>();
   /**
    * 发送门禁置起的「缺设置」（inline setup，docs/design/18-inline-setup.md）：
    * 单聊 Bot 无可用模型时消息不发（草稿留在队列），先在消息列表里完成设置。
@@ -262,9 +267,8 @@ class ChatState {
     const drafts = (await core.call('drafts.list', { conversationId })) as { drafts: Draft[] };
     const runs = (await core.call('runs.list', { conversationId, limit: 5 })) as { runs: Run[] };
     const active = runs.runs.filter((r) => isActive(r.status));
-    const failed =
-      runs.runs.find((r) => r.status === 'failed' && !this.#dismissedFailedRunIds.has(r.id)) ??
-      null;
+    // 带 setup 的旧失败若已被后续响应 run 接手，不再恢复为设置卡（审查 HIGH #1）。
+    const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
     this.#chat = {
       conversation: result.conversation,
       messages,
@@ -532,18 +536,28 @@ class ChatState {
   // --- inline setup（对话内设置引导，docs/design/18-inline-setup.md）-----------
 
   /**
-   * 发送门禁：单聊 Bot 无可用模型（Bot 未指定且全局无默认主模型）时不发送，
-   * 置起 pendingSetup 让消息列表呈现模型设置卡片；草稿原地保留。settings
-   * 快照未加载时放行——core 的结构化失败（run.setup）兜底出卡片。
+   * 发送门禁（send-gate.ts）：单聊 Bot 跑不起来时不发送——内置 Bot 无可用
+   * 模型 → main-model 卡；外部 Agent Bot 未开实验 / 未启用 / 未安装 / 未登录
+   * → Agent 设置卡（D72 P4）。置起 pendingSetup，草稿原地保留；设置完成后
+   * continueAfterSetup 自动冲掉草稿。快照未加载时放行，由 core 的结构化
+   * 失败（run.setup）兜底出卡片。
    */
   #gateForMissingModel(): boolean {
     const chat = this.#chat;
-    if (!chat || chat.conversation.type !== 'direct') return false;
-    if ((chat.conversation.bot?.profile.runtime.model ?? '').length > 0) return false;
-    const settings = settingsStore.settings;
-    if (!settings) return false;
-    if (settings.defaultMainModel.length > 0) return false;
-    this.#pendingSetup = { requirement: { kind: 'main-model' }, fromVoice: false };
+    if (!chat) return false;
+    const bot = chat.conversation.bot;
+    if ((bot?.profile.runtime.agent.id ?? '').length > 0 && !agentsStore.loaded) {
+      agentsStore.start();
+      void agentsStore.refresh().catch(() => undefined);
+    }
+    const requirement = sendGateRequirement({
+      conversationType: chat.conversation.type,
+      bot,
+      settings: settingsStore.settings,
+      agents: agentsStore,
+    });
+    if (requirement === null) return false;
+    this.#pendingSetup = { requirement, fromVoice: false };
     return true;
   }
 
@@ -578,9 +592,14 @@ class ChatState {
     const failed = this.#chat?.failedRun;
     if (failed?.setup) {
       this.dismissFailedRun(failed.id);
-      await this.retryRun(failed.id);
-      return;
+      // 一次性续跑令牌：同一失败 run 只自动重试一次（设置卡的测试连接回调
+      // 与随后迟到的 ready 事件不会把它重放两次）。
+      if (!this.#continuedSetupRunIds.has(failed.id)) {
+        this.#continuedSetupRunIds.add(failed.id);
+        await this.retryRun(failed.id);
+      }
     }
+    // 发送门禁扣下的草稿在设置完成后照常发出（D58），失败重试之后也一样。
     if (!fromVoice && (this.#chat?.drafts.length ?? 0) > 0) await this.flush();
   }
 

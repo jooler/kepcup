@@ -1,5 +1,21 @@
 import { z } from 'zod';
+import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  agentIdInputSchema,
+  agentOutputSchema,
+  agentsAffectingOutputSchema,
+  agentsConfigureInputSchema,
+  agentsConfirmInputSchema,
+  agentsEnableInputSchema,
+  agentsListOutputSchema,
+  agentsLoginInputSchema,
+  agentsLogoutInputSchema,
+  agentsOptionsInputSchema,
+  agentsOptionsOutputSchema,
+  agentsTestOutputSchema,
+} from '../domain/agent-status.js';
+import {
+  agentSettingInputSchema,
   allowlistEntrySchema,
   approvalSchema,
   attachmentSchema,
@@ -42,6 +58,7 @@ import {
   type ProviderInfo,
 } from '../domain/types.js';
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
+import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
@@ -183,6 +200,14 @@ export const settingsUpdateInputSchema = z.object({
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
   mcpServers: z.array(mcpServerSchema).optional(),
+  /** 外部智能体启用状态（D72）：整体覆盖 patch。 */
+  agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
+  /** 实验开关（D72）：部分 patch，与已存值合并。 */
+  experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
+  /** 后台 loop 选用的 Agent（P6）；'' 清除。 */
+  backgroundAgentId: z.string().optional(),
+  /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
+  defaultAgentId: z.string().optional(),
 });
 
 // --- MCP（D65）--------------------------------------------------------------
@@ -815,6 +840,11 @@ export const environmentListOutputSchema = z.object({
 export const environmentInstallIdInputSchema = z.object({ id: z.string().min(1) });
 export const environmentReinstallOutputSchema = z.object({ install: envInstallSchema.nullable() });
 
+// --- external agents (D72, docs/design/28-external-agents-acp.md §2.2) ------
+
+/** 生效目录（按发行门禁过滤后的原始条目）。 */
+export const agentsCatalogOutputSchema = z.object({ entries: z.array(agentCatalogEntrySchema) });
+
 // --- memory & user profile (P07) ---------------------------------------------
 
 export const memoryListInputSchema = z.object({ botId: z.string().min(1) });
@@ -1251,6 +1281,21 @@ export const rpcMethodSchemas = {
     output: environmentReinstallOutputSchema,
   },
 
+  /**
+   * 外部智能体（D72）。enable / login 的安装与登录在后台进行，进度与结果经
+   * `agent.status` 事件推送（RPC 超时 60 s 内立即返回当前视图）。
+   */
+  'agents.catalog': { input: voidInput, output: agentsCatalogOutputSchema },
+  'agents.list': { input: voidInput, output: agentsListOutputSchema },
+  'agents.enable': { input: agentsEnableInputSchema, output: agentOutputSchema },
+  'agents.disable': { input: agentsConfirmInputSchema, output: agentsAffectingOutputSchema },
+  'agents.uninstall': { input: agentsConfirmInputSchema, output: agentsAffectingOutputSchema },
+  'agents.login': { input: agentsLoginInputSchema, output: agentOutputSchema },
+  'agents.logout': { input: agentsLogoutInputSchema, output: agentOutputSchema },
+  'agents.test': { input: agentIdInputSchema, output: agentsTestOutputSchema },
+  'agents.options': { input: agentsOptionsInputSchema, output: agentsOptionsOutputSchema },
+  'agents.configure': { input: agentsConfigureInputSchema, output: agentOutputSchema },
+
   'memory.list': { input: memoryListInputSchema, output: memoryListOutputSchema },
   'memory.update': { input: memoryUpdateInputSchema, output: memoryListOutputSchema },
   'memory.retract': { input: memoryRetractInputSchema, output: memoryListOutputSchema },
@@ -1450,6 +1495,16 @@ const APP_METHODS = [
   'environment.remove',
   'environment.recheck',
   'environment.reinstall',
+  'agents.catalog',
+  'agents.list',
+  'agents.enable',
+  'agents.disable',
+  'agents.uninstall',
+  'agents.login',
+  'agents.logout',
+  'agents.test',
+  'agents.options',
+  'agents.configure',
   'memory.list',
   'memory.update',
   'memory.retract',

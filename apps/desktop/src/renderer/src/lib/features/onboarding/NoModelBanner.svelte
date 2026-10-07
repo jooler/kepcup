@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Settings } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
@@ -17,8 +18,22 @@
   const noKey = $derived(
     settingsStore.settings !== null &&
       settingsStore.settings.onboarding.completed &&
-      !settingsStore.providers.some((provider) => provider.hasKey),
+      !settingsStore.providers.some((provider) => provider.hasKey) &&
+      !agentEngineReady(settingsStore.settings),
   );
+
+  /**
+   * D72 P4：onboarding「我有订阅」选用了外部 Agent（实验开关打开且已启用）时
+   * Bot 可以回复，不再提示「无模型」。
+   */
+  function agentEngineReady(settings: Settings): boolean {
+    const agentId = settings.defaultAgentId;
+    return (
+      agentId.length > 0 &&
+      settings.experimental.externalAgents &&
+      settings.agents[agentId]?.enabled === true
+    );
+  }
 </script>
 
 {#if noKey && !onboarding.open}

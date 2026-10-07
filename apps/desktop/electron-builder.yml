@@ -24,6 +24,10 @@ files:
   - '!node_modules/@kepcup/core'
   - '!node_modules/@kepcup/testkit'
 asar: true
+# D72 外部智能体的 stdio ↔ HTTP MCP 代理由子进程（ELECTRON_RUN_AS_NODE=1）直接
+# 运行：解出 asar，core 的 resolveStdioProxyPath 把路径映射到 app.asar.unpacked。
+asarUnpack:
+  - out/main/core-entry/stdio-proxy.mjs
 # 原生模块（better-sqlite3-multiple-ciphers、@napi-rs/keyring、es-git）按目标平台
 # 架构重编译；smartUnpack 自动把 .node 解包出 asar。
 npmRebuild: true

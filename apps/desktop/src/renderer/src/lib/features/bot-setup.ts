@@ -1,4 +1,4 @@
-import type { Bot, BotProfile } from '@kepcup/shared';
+import { BUILTIN_AGENT_RUNTIME, type Bot, type BotProfile } from '@kepcup/shared';
 import { toast } from 'svelte-sonner';
 import { t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
@@ -19,6 +19,7 @@ export function emptyProfile(): BotProfile {
       network_policy: 'open',
       network_allowlist: [],
       mcp_server_ids: [],
+      agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     // P10 guardrail defaults — mirrors botBehaviorSchema.prefault({}) (proactive
     // on, no quiet hours, the MAX_PROACTIVE_PER_DAY default cap).

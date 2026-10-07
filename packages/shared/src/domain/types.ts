@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { BACKGROUND_DAILY_BUDGET_DEFAULT } from '../constants.js';
 import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.js';
+import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
+import { agentSetupReasonSchema } from './agent-status.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -50,7 +52,35 @@ export const botRuntimeSchema = z.object({
    * 「应用级 enabled ∩ Bot 选中」才暴露给该 Bot，默认空 = 不启用任何 server。
    */
   mcp_server_ids: z.array(z.string()).default([]),
+  /**
+   * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
+   * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。
+   * `model` / `effort` 为空 = Agent 默认；`capabilities` 为 null = 跟随能力包
+   * 默认值（host-capabilities.ts `defaultCapabilities`）。Profile JSON，无迁移。
+   */
+  // Stored profiles must never fail to parse over this block (rowToBot would
+  // fall back to an empty profile): every field tolerates unknown values.
+  agent: z
+    .object({
+      id: z.string().default('').catch(''),
+      model: z.string().default('').catch(''),
+      effort: z.string().default('').catch(''),
+      permission: agentPermissionTierSchema.default('workspace').catch('workspace'),
+      capabilities: z.array(z.string()).nullable().default(null).catch(null),
+    })
+    .prefault({})
+    .catch({ id: '', model: '', effort: '', permission: 'workspace', capabilities: null }),
 });
+export type BotAgentRuntime = z.infer<typeof botRuntimeSchema>['agent'];
+
+/** `runtime.agent` 的默认值（内置引擎），供构造完整 Profile 的调用方复用。 */
+export const BUILTIN_AGENT_RUNTIME: BotAgentRuntime = {
+  id: '',
+  model: '',
+  effort: '',
+  permission: 'workspace',
+  capabilities: null,
+};
 
 /**
  * Proactive-messaging guardrails (P10, docs/design/03-bot.md "Profile").
@@ -289,6 +319,51 @@ export const onboardingStatePatchSchema = z.object({
 });
 export type OnboardingStatePatch = z.infer<typeof onboardingStatePatchSchema>;
 
+/**
+ * 本机已启用的外部智能体（D72，§2.2）：键为目录 id。安装与登录态在 P4 落地；
+ * P1 只用 `enabled` 判定可用。
+ *
+ * 存储形态对未知 / 损坏的值一律容错（`.catch`）：settings 单行解析失败会让
+ * 整个核心服务起不来（domain/settings.ts），而这些字段会随版本演进。RPC 入参
+ * 另用严格的 `agentSettingInputSchema`。
+ */
+export const agentSettingSchema = z
+  .object({
+    enabled: z.boolean().default(false).catch(false),
+    /**
+     * 已安装的目录版本（应用升级后目录版本变化 → update_available）。只由
+     * core（AgentsService）写入；非 semver 的值视为未安装。
+     */
+    installedVersion: agentVersionSchema.optional().catch(undefined),
+    /** managed = 应用私有安装；system = 使用用户已装的官方 CLI。 */
+    source: z.enum(['managed', 'system']).default('managed').catch('managed'),
+    /** 「加载我的个人配置」（默认关，§5）。 */
+    loadUserConfig: z.boolean().default(false).catch(false),
+  })
+  .catch({ enabled: false, source: 'managed', loadUserConfig: false });
+export type AgentSetting = z.infer<typeof agentSettingSchema>;
+
+/**
+ * `settings.update` 的 agents 值：按 id 与已存值**合并**（不整表覆盖），
+ * 只接受用户可直接改的开关；`installedVersion` / `source` 只由 core 的
+ * `agents.*`（安装、探测系统 CLI）写入。
+ */
+export const agentSettingInputSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    loadUserConfig: z.boolean().optional(),
+  })
+  .strict();
+
+/** 实验开关（D72 以「实验」开关发布）。 */
+export const experimentalSettingsSchema = z
+  .object({
+    /** 外部智能体引擎：关时 RPC 拒绝把 Bot 设为外部 Agent，目录不可见。 */
+    externalAgents: z.boolean().default(false).catch(false),
+  })
+  .catch({ externalAgents: false });
+export type ExperimentalSettings = z.infer<typeof experimentalSettingsSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -334,6 +409,24 @@ export const settingsSchema = z.object({
    * 任务 4: 可跳过，但无法与 Bot 对话，界面持续提示).
    */
   onboarding: onboardingStateSchema.prefault({}),
+  /**
+   * 外部智能体（D72）：目录 id → 本机启用状态。并发不另设字段，沿用
+   * `providerConcurrency['agent:{id}']`（catchall）。
+   */
+  agents: z.record(z.string(), agentSettingSchema).default({}).catch({}),
+  /** 用户自定义 Agent 条目（预留，本期 UI 不开放、运行时不读取）。 */
+  // 预留字段的存储形态宽松（条目 schema 由读取方按 agentCatalogEntrySchema
+  // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
+  customAgents: z.array(z.unknown()).default([]).catch([]),
+  experimental: experimentalSettingsSchema.prefault({}),
+  /** 无内置模型时后台 loop 选用的 Agent（P6）；缺省 = 第一个可用 Agent。 */
+  backgroundAgentId: z.string().optional().catch(undefined),
+  /**
+   * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支写入）：没有
+   * 默认主模型时，新建的 Bot（含管家）若未指定模型 / Agent，即以它驱动；
+   * '' = 不设。
+   */
+  defaultAgentId: z.string().default('').catch(''),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -585,6 +678,16 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
    * SETUP_REQUIRED 携带；设置卡内选供应商 + 填 key + 测试后自动续跑。
    */
   z.object({ kind: z.literal('web-search') }),
+  /**
+   * 外部智能体不可用（D72，design 28 §9.1）：未开实验开关 / 未启用 / 未安装 /
+   * 未登录 / 版本不兼容 / 宿主工具桥未启动。设置卡复用设置页 Agent 卡片，
+   * 完成后自动重试原 run。
+   */
+  z.object({
+    kind: z.literal('agent'),
+    agentId: z.string(),
+    reason: agentSetupReasonSchema,
+  }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;
 
@@ -618,6 +721,10 @@ export const runSchema = z.object({
    * ownership」）；非子 run 为 null。后台子 run 据此在父 run 结束后仍可追溯归属。
    */
   parentRunId: z.string().nullable(),
+  /** 执行引擎（D72）：`builtin` | `agent:{id}`。 */
+  engine: z.string().default('builtin'),
+  /** 外部 Agent 侧的会话 id（ACP `sessionId`）；内置引擎为 null。 */
+  agentSessionId: z.string().nullable().default(null),
   createdAt: z.number(),
   startedAt: z.number().nullable(),
   endedAt: z.number().nullable(),
@@ -720,6 +827,12 @@ export const approvalKindSchema = z.enum([
   'mcp_tool',
   /** 管家提议（D70）：组队 / 建 Bot / 建群，用户确认后确定性创建。 */
   'butler_proposal',
+  /**
+   * 外部智能体的工具权限请求（D72 P3，design 28 §6）：ACP
+   * `session/request_permission` 经权限桥分级后需要用户确认的部分；子类型
+   * `config` 是 project 内 Agent 侧配置文件的首次运行确认。
+   */
+  'agent_tool',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -776,10 +889,17 @@ export const environmentApprovalPayloadSchema = z.object({
   sizeBytes: z.number().int().min(0).default(0),
   /** Official source description, e.g. the release page URL. */
   source: z.string().default(''),
-  /** How the item is obtained: download / via uv / system package. */
-  obtain: z.enum(['archive', 'uv-python', 'system']).default('archive'),
+  /**
+   * How the item is obtained: download / via uv / system package / npm
+   * package (外部智能体 `agent:{id}` 条目的 npx 分发，D72).
+   */
+  obtain: z.enum(['archive', 'uv-python', 'system', 'npm']).default('archive'),
   /** kind='system' on Linux: the package-manager command the user runs. */
   systemCommand: z.string().default(''),
+  /** 外部智能体条目（D72）：许可证（目录 `license`）。 */
+  license: z.string().default(''),
+  /** 外部智能体条目（D72）：条款提示文案 key（目录 `terms.noticeKey`）。 */
+  termsNoticeKey: z.string().default(''),
 });
 export type EnvironmentApprovalPayload = z.infer<typeof environmentApprovalPayloadSchema>;
 
@@ -806,6 +926,56 @@ export const mcpToolApprovalPayloadSchema = z.object({
   argsSummary: z.string().default(''),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
+
+/**
+ * Payload of an `agent_tool` approval（D72，design 28 §6）：外部智能体原生工具
+ * 的权限请求（读 / 写 / 执行 / 其他），或子类型 `config`（project 内 Agent
+ * 侧配置文件的首次运行确认）。`locations` 是已解析的绝对路径；`command` 是
+ * 命令原文；`options` 是 Agent 提供的选项（只做展示与审计，宿主只按 Provider
+ * 白名单选 allow_once / reject_once）。`durations` 为空或只含 `once` 时卡片
+ * 只有「仅这一次」（命令类），路径类可选「本对话内」（记为 access 授权）。
+ */
+export const agentToolKindSchema = z.enum(['read', 'write', 'execute', 'other', 'config']);
+export type AgentToolKind = z.infer<typeof agentToolKindSchema>;
+
+export const agentToolApprovalPayloadSchema = z.object({
+  agentId: z.string(),
+  /** 目录中的显示名（如「Claude Agent」）。 */
+  agentName: z.string().default(''),
+  /** Agent 给出的工具标题（自由文本，只展示）。 */
+  title: z.string().default(''),
+  kind: agentToolKindSchema,
+  /** ACP 原始 `toolCall.kind`（read / edit / execute / fetch …）。 */
+  toolKind: z.string().default(''),
+  /** 读写类：访问方式（授权按它记录）。 */
+  access: z.enum(['read', 'write']).optional(),
+  locations: z.array(z.string()).default([]),
+  command: z.string().optional(),
+  cwd: z.string().default(''),
+  options: z
+    .array(z.object({ optionId: z.string(), name: z.string(), kind: z.string() }))
+    .default([]),
+  durations: z.array(grantDurationSchema).default(['once']),
+  /** 为什么需要确认（越界、每次确认档、无 OS 沙箱……）。 */
+  reason: z.string().default(''),
+  /** 涉及敏感位置（卡片醒目警示）。 */
+  sensitive: z.boolean().default(false),
+  /**
+   * 数据目录中允许触及的目录（当前 workspace、技能目录）：无人值守底线据此
+   * 排除，其余数据目录路径 / 命令一律拒绝。
+   */
+  exemptDirs: z.array(z.string()).default([]),
+  /** 子类型 config：project 路径（记住到对话时按它匹配）。 */
+  projectPath: z.string().optional(),
+  /** 子类型 config：配置文件内容哈希（内容变化即重新确认）。 */
+  configHash: z.string().optional(),
+  /**
+   * 写入的真实目标可能与显示的路径不同（Codex 只为越出其沙箱的写入发请求，
+   * move 目标等可能未出现在请求里）：卡片醒目警示，无人值守一律拒绝。
+   */
+  targetUncertain: z.boolean().optional(),
+});
+export type AgentToolApprovalPayload = z.infer<typeof agentToolApprovalPayloadSchema>;
 
 /** One bot a butler proposal suggests (D70); maps onto Profile fields on creation. */
 export const butlerProposedBotSchema = z.object({
@@ -845,7 +1015,7 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
 export type ButlerProposalPayload = z.infer<typeof butlerProposalPayloadSchema>;
 
 export const approvalDecisionSchema = z.object({
-  /** Only meaningful for `access` approvals. */
+  /** Only meaningful for `access` approvals and path-type `agent_tool` ones (D72). */
   duration: grantDurationSchema.optional(),
   /**
    * `butler_proposal` only (D70): indexes into payload.bots the user kept

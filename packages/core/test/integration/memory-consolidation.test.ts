@@ -41,7 +41,9 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null;
+      return (
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null
+      );
     },
     { label: 'completed response run' },
   );
@@ -59,8 +61,8 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
       await completedRun(stack.core, conv.id);
       await waitFor(
         () => {
-          const rows = stack.core.services.mainDb!
-            .prepare("select status from jobs where type = 'reflection'")
+          const rows = stack.core.services
+            .mainDb!.prepare("select status from jobs where type = 'reflection'")
             .all() as Array<{ status: string }>;
           return rows.length >= 1 && rows.every((row) => row.status === 'done') ? true : null;
         },
@@ -110,15 +112,17 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
       // 画像整理的 dedupe 不受影响；登记与真实调度同型的整理任务。
       const preferences = store.activeByKind('preference', 50);
       stack.llm.script('mock-light', [
-        step().expect((req) => req.lastUserText().includes('preference')).replyJson({
-          operations: [
-            {
-              op: 'merge',
-              itemIds: preferences.map((item) => item.id),
-              content: '用户偏好深色主题的界面',
-            },
-          ],
-        }),
+        step()
+          .expect((req) => req.lastUserText().includes('preference'))
+          .replyJson({
+            operations: [
+              {
+                op: 'merge',
+                itemIds: preferences.map((item) => item.id),
+                content: '用户偏好深色主题的界面',
+              },
+            ],
+          }),
       ]);
       stack.core.services.domain!.jobs.enqueue({
         type: 'memory_consolidation',
@@ -129,15 +133,21 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
 
       await waitFor(
         () => {
-          const job = stack.core.services.mainDb!
-            .prepare("select status, attempts, last_error from jobs where type = 'memory_consolidation'")
+          const job = stack.core.services
+            .mainDb!.prepare(
+              "select status, attempts, last_error from jobs where type = 'memory_consolidation'",
+            )
             .get() as { status: string; attempts: number; last_error: string | null } | undefined;
-          return job !== undefined && (job.status === 'done' || job.status === 'failed') ? job : null;
+          return job !== undefined && (job.status === 'done' || job.status === 'failed')
+            ? job
+            : null;
         },
         { label: 'consolidation job settled' },
       );
-      const job = stack.core.services.mainDb!
-        .prepare("select status, attempts, last_error from jobs where type = 'memory_consolidation'")
+      const job = stack.core.services
+        .mainDb!.prepare(
+          "select status, attempts, last_error from jobs where type = 'memory_consolidation'",
+        )
         .get() as { status: string; attempts: number; last_error: string | null };
       expect(job.status).toBe('done');
 
@@ -151,9 +161,15 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
           validUntil: number | null;
         }>;
       };
-      expect(result.items.find((item) => item.content.includes('过期的临时信息'))!.status).toBe('superseded');
-      expect(result.items.find((item) => item.content === '用户偏好深色主题')!.status).toBe('superseded');
-      expect(result.items.find((item) => item.content === '用户喜欢深色界面')!.status).toBe('superseded');
+      expect(result.items.find((item) => item.content.includes('过期的临时信息'))!.status).toBe(
+        'superseded',
+      );
+      expect(result.items.find((item) => item.content === '用户偏好深色主题')!.status).toBe(
+        'superseded',
+      );
+      expect(result.items.find((item) => item.content === '用户喜欢深色界面')!.status).toBe(
+        'superseded',
+      );
       const merged = result.items.find((item) => item.content === '用户偏好深色主题的界面');
       expect(merged).toBeDefined();
       expect(merged!.status).toBe('active');
@@ -173,4 +189,57 @@ describe('P07 记忆整理（consolidation，每 Bot 每天一次）', () => {
       await stack.cleanup();
     }
   }, 40_000);
+
+  it('无内置模型（只用外部 Agent）：跳过合并但照常过期失效并记录日期，避免每小时重复入队（P4-B 审查 #2）', async () => {
+    const stack = await createTestStack({
+      env: { ...TEST_ENV, KEPCUP_MOCK_LLM_URL: '' },
+      memoryEmbedder: fakeEmbedder(),
+    });
+    try {
+      const bot = await makeBot(stack.core, '阿整');
+      const store = stack.core.services.memory!.storeFor(bot.id);
+      store.insert({
+        kind: 'fact',
+        content: '一条已过期的临时信息',
+        source: 'explicit',
+        evidence: [],
+        origin: 'private',
+        confidence: 1,
+        sensitivity: 'normal',
+        privateToBot: false,
+        validUntil: Date.now() - 1000,
+      });
+      stack.core.services.domain!.jobs.enqueue({
+        type: 'memory_consolidation',
+        botId: bot.id,
+        payload: { day: '2026-10-01' },
+        priority: 2,
+      });
+      const job = await waitFor(
+        () => {
+          const row = stack.core.services
+            .mainDb!.prepare(
+              "select status, last_error from jobs where type = 'memory_consolidation'",
+            )
+            .get() as { status: string; last_error: string | null } | undefined;
+          return row !== undefined && (row.status === 'done' || row.status === 'failed')
+            ? row
+            : null;
+        },
+        { label: 'consolidation job settled' },
+      );
+      expect(job).toEqual({ status: 'done', last_error: null });
+      expect(store.getMeta('last_consolidation_date')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      const result = (await stack.core.rpc.call('memory.list', { botId: bot.id })) as {
+        items: Array<{ content: string; status: string }>;
+      };
+      expect(result.items.find((item) => item.content.includes('过期的临时信息'))!.status).toBe(
+        'superseded',
+      );
+      // 已记录当天日期：每小时的调度不再为它入队。
+      expect(stack.core.services.memory!.enqueueDueConsolidations()).toBe(0);
+    } finally {
+      await stack.cleanup();
+    }
+  }, 30_000);
 });

@@ -1,8 +1,7 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Message as PiAgentMessage } from '@earendil-works/pi-ai';
-import { TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
-import { truncateToBudget } from './tokens.js';
+import { executeToolSafely, toolResultBlocks } from './tool-execution.js';
 import { buildModelRegistry, mapProviderError, resolveModel } from './models.js';
 import type {
   AgentEngine,
@@ -82,17 +81,8 @@ export class PiEngine implements AgentEngine {
           progress: (text) => handle.emit({ type: 'progress', payload: { text } }),
         };
         void onUpdate;
-        let result;
-        try {
-          result = await tool.execute(params as never, ctx);
-        } catch (error) {
-          // Tool failures never break the loop: they return as tool output.
-          result = {
-            ok: false,
-            content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
-            errorCode: 'INTERNAL',
-          };
-        }
+        // Tool failures never break the loop: they return as tool output.
+        const result = await executeToolSafely(tool, params, ctx);
         handle.emit({
           type: 'tool_result',
           payload: {
@@ -103,24 +93,8 @@ export class PiEngine implements AgentEngine {
             ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
           },
         });
-        const text = truncateToBudget(result.content, TOOL_OUTPUT_MAX_CHARS).text;
-        const imageBlocks =
-          result.images !== undefined && result.images.length > 0
-            ? acceptsImages
-              ? result.images.map((image) => ({
-                  type: 'image' as const,
-                  data: image.base64,
-                  mimeType: image.mimeType,
-                }))
-              : [
-                  {
-                    type: 'text' as const,
-                    text: '（截图已省略：当前模型不支持图像输入，请使用快照文本了解页面）',
-                  },
-                ]
-            : [];
         return {
-          content: [{ type: 'text', text }, ...imageBlocks],
+          content: toolResultBlocks(result, acceptsImages),
           ...(result.terminate ? { terminate: true } : {}),
         };
       },

@@ -7,7 +7,9 @@
  * read as platform text).
  */
 export function neutralizeUntrusted(text: string): string {
-  return text.replace(/<\/untrusted/gi, (match) => `<\\${match.slice(1)}`);
+  // Opening literals too (security review round 2): a nested `<untrusted>`
+  // must not make the reader pair the real closing tag with it.
+  return text.replace(/<\/?untrusted/gi, (match) => `<\\${match.slice(1)}`);
 }
 
 /** Wraps `text` in the `<untrusted>` boundary (closing literals neutralized). */
