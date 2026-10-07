@@ -1,4 +1,4 @@
-import { newId, type LoopType } from '@kepcup/shared';
+import { AGENT_TURN_BUDGET_TOKENS, newId, type LoopType } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
@@ -54,15 +54,19 @@ export class UsageService {
     return { input: row.i, output: row.o };
   }
 
-  /** Input+output tokens across runs (chain budget aggregation, P05). */
+  /**
+   * Input+output tokens across runs (chain budget aggregation, P05). An
+   * external-agent row without tokens is one model round charged at
+   * AGENT_TURN_BUDGET_TOKENS (D72 P5「连锁预算按轮数折算」).
+   */
   sumForRuns(runIds: string[]): number {
     if (runIds.length === 0) return 0;
     const placeholders = runIds.map(() => '?').join(',');
     const row = this.db
       .prepare(
-        `select coalesce(sum(input_tokens + output_tokens), 0) as n from usage_ledger where run_id in (${placeholders})`,
+        `select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where run_id in (${placeholders})`,
       )
-      .get(...runIds) as { n: number };
+      .get(AGENT_TURN_BUDGET_TOKENS, ...runIds) as { n: number };
     return row.n;
   }
 
@@ -70,6 +74,7 @@ export class UsageService {
   entriesSince(since: number): Array<{
     botId: string | null;
     loopType: LoopType;
+    provider: string;
     inputTokens: number;
     outputTokens: number;
     costUsd: number | null;
@@ -77,11 +82,12 @@ export class UsageService {
   }> {
     const rows = this.db
       .prepare(
-        'select bot_id, loop_type, input_tokens, output_tokens, cost_usd, created_at from usage_ledger where created_at >= ? order by created_at',
+        'select bot_id, loop_type, provider, input_tokens, output_tokens, cost_usd, created_at from usage_ledger where created_at >= ? order by created_at',
       )
       .all(since) as Array<{
       bot_id: string | null;
       loop_type: LoopType;
+      provider: string;
       input_tokens: number;
       output_tokens: number;
       cost_usd: number | null;
@@ -90,6 +96,7 @@ export class UsageService {
     return rows.map((row) => ({
       botId: row.bot_id,
       loopType: row.loop_type,
+      provider: row.provider,
       inputTokens: row.input_tokens,
       outputTokens: row.output_tokens,
       costUsd: row.cost_usd,

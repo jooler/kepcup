@@ -51,7 +51,19 @@ export interface RunOutcome {
 export type EngineEvent =
   | { type: 'request'; payload: unknown }
   | { type: 'assistant'; payload: unknown }
-  | { type: 'tool_call'; payload: { toolCallId: string; toolName: string; args: unknown } }
+  | {
+      type: 'tool_call';
+      payload: {
+        toolCallId: string;
+        toolName: string;
+        args: unknown;
+        /**
+         * Human-readable title (external agents' `tool_call.title`, D72 P5):
+         * the status line shows it instead of the tool name.
+         */
+        title?: string;
+      };
+    }
   | {
       type: 'tool_result';
       payload: { toolCallId: string; toolName: string; ok: boolean; content: string };
@@ -90,7 +102,17 @@ export interface RunSpec {
    * run 级动态段、对话段（首个 prompt 为完整上下文 + 触发段；会话复用时为
    * 增量）。缺省时引擎以 buildSystemPrompt() + messages 组装。
    */
-  promptParts?: { session: string; run: string; conversation: string };
+  promptParts?: {
+    session: string;
+    run: string;
+    conversation: string;
+    /**
+     * P5 会话复用：Agent 会话已有前文时用的对话段——上次 run 之后的增量消息
+     * + 触发段（不含 D56 回放）。引擎实际复用 / 恢复了会话才用它，否则用
+     * `conversation`。
+     */
+    conversationDelta?: string;
+  };
   external?: ExternalRunSpec;
   /**
    * ACP steering 是异步的：被 Agent 拒绝 / 出错时把文本交还 orchestrator 的
@@ -98,6 +120,9 @@ export interface RunSpec {
    */
   onSteerRejected?: (text: string) => void;
 }
+
+/** 外部 Agent 会话的建立方式（P5 会话复用）。 */
+export type AgentSessionMode = 'new' | 'reused' | 'resumed' | 'loaded';
 
 /** 外部 Agent run 的选择与会话参数（`RunSpec.external`）。 */
 export interface ExternalRunSpec {
@@ -109,12 +134,23 @@ export interface ExternalRunSpec {
    * `RunSpec.tools` 中（经宿主 MCP 桥暴露）。
    */
   capabilities: string[];
-  /** 会话复用键（Bot, 对话, Agent）；P1 每 run 新会话，仅作日志关联。 */
+  /** 会话复用键（Bot, 对话, Agent）；宿主 MCP 桥的 token 按它签发。 */
   sessionKey: string;
+  /**
+   * P5 会话复用（design 28 §7）：缺省 = 每 run 一个会话、结束即关闭（P1）。
+   * 给出时会话在 run 结束后保留在 Agent 进程里；`reuseId` 是 orchestrator
+   * 按 `agent_sessions`（窗口内、指纹一致）认为可续用的 Agent 侧会话——引擎
+   * 依次尝试：同进程直接复用 → `session/resume` → `session/load`（重放静音）
+   * → 新建（对话段回落为完整上下文 + D56 回放）。
+   */
+  session?: { reuseId: string | null; fingerprint: string };
   /** 推理强度（config option 类别 `thought_level`）；'' = Agent 默认。 */
   effort?: string;
-  /** Agent 会话建立后回报其 sessionId（落 `runs.agent_session_id`）。 */
-  onSession?: (agentSessionId: string) => void;
+  /**
+   * Agent 会话建立后回报其 sessionId（落 `runs.agent_session_id`）与建立方式
+   * （P5：new / reused / resumed / loaded）。
+   */
+  onSession?: (agentSessionId: string, mode: AgentSessionMode) => void;
   /** 「加载我的个人配置」（`settings.agents[id].loadUserConfig`，默认 false）。 */
   loadUserConfig?: boolean;
   /**

@@ -39,7 +39,12 @@ export function persistEngineSteps(input: {
           payload: redactStepPayload((text) => secrets.redact(text), event.payload),
         });
         if (onProgress !== undefined && event.payload.toolName.length > 0) {
-          onProgress({ toolName: event.payload.toolName });
+          // External agents' human-readable title wins on the status line (D72 P5).
+          const title = event.payload.title;
+          onProgress({
+            toolName: event.payload.toolName,
+            ...(title !== undefined && title.length > 0 ? { text: title } : {}),
+          });
         }
         return;
       case 'tool_result':

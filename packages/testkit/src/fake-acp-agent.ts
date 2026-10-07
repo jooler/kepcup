@@ -71,7 +71,14 @@ export type FakeAgentAction =
       /** `toolCall.locations` (paths relative to the session cwd are resolved). */
       locations?: string[];
       rawInput?: unknown;
+      /**
+       * Send only `{toolCallId}` (+ options) like DeepSeek Harness: the host
+       * must fill kind / title / input from the call's earlier updates.
+       */
+      bare?: boolean;
     }
+  /** Emits `steered: <text>` for every steer injected into this session so far. */
+  | { type: 'echo_steers' }
   /** The agent changes its own permission mode (`current_mode_update`). */
   | { type: 'mode_update'; modeId: string }
   /** The agent pushes its config options (`config_option_update`, e.g. the `mode` option). */
@@ -135,6 +142,14 @@ export type FakeAgentAction =
 export interface FakeAgentTurn {
   actions: FakeAgentAction[];
   stopReason?: StopReason;
+  /** `PromptResponse.usage` (ACP unstable field). */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cachedReadTokens?: number;
+    cachedWriteTokens?: number;
+  };
 }
 
 export interface FakeAgentScript {
@@ -143,10 +158,20 @@ export interface FakeAgentScript {
   /** `session/new` fails with ACP `auth_required` (-32000). */
   requireAuth?: boolean;
   promptCapabilities?: { image?: boolean };
-  /** Advertises `_meta.steering` and accepts `_session/steering`. */
+  /**
+   * Advertises `_meta.steering.supported` and accepts `_session/steering`:
+   * `injected` while a prompt of the session runs, else `promptRequired`
+   * (as claude-agent-acp with `idleBehavior:'promptRequired'`).
+   */
   steering?: boolean;
+  /** Forces the steering answer (`error` = JSON-RPC error). */
+  steeringOutcome?: 'injected' | 'promptRequired' | 'startedNewTurn' | 'error';
   /** Advertises `sessionCapabilities.close`. */
   sessionClose?: boolean;
+  /** Advertises `sessionCapabilities.resume` (`session/resume`). */
+  resume?: boolean;
+  /** Advertises `sessionCapabilities.delete` (`session/delete`). */
+  sessionDelete?: boolean;
   configOptions?: SessionConfigOption[];
   modes?: SessionModeState;
   /** Advertises `loadSession`; `session/load` replays these updates. */
@@ -159,7 +184,9 @@ export interface FakeAgentScript {
 export type FakeAgentEvent =
   | { kind: 'initialize'; params: InitializeRequest }
   | { kind: 'new_session'; sessionId: string; cwd: string; mcpServers: unknown[]; meta: unknown }
-  | { kind: 'load_session'; sessionId: string; cwd: string }
+  | { kind: 'load_session'; sessionId: string; cwd: string; mcpServers: unknown[] }
+  | { kind: 'resume_session'; sessionId: string; cwd: string; mcpServers: unknown[] }
+  | { kind: 'delete_session'; sessionId: string }
   | { kind: 'prompt'; sessionId: string; text: string; blocks: ContentBlock[] }
   | { kind: 'cancel'; sessionId: string }
   | { kind: 'permission'; toolCallId: string; outcome: RequestPermissionOutcome }
@@ -207,6 +234,11 @@ export interface FakeAgentObservation {
   }>;
   configSets: Array<{ sessionId: string; configId: string; value: unknown }>;
   closedSessions: string[];
+  loadedSessions: string[];
+  resumedSessions: Array<{ sessionId: string; mcpServers: unknown[] }>;
+  deletedSessions: string[];
+  /** `_session/steering` requests (params verbatim). */
+  steerings: Array<Record<string, unknown>>;
   /** Every session/update the agent sent (in order), with its session id. */
   emitted: Array<{ sessionId: string; update: string }>;
   /** MCP requests the agent made to session MCP servers. */
@@ -224,6 +256,10 @@ export function emptyObservation(): FakeAgentObservation {
     requests: [],
     configSets: [],
     closedSessions: [],
+    loadedSessions: [],
+    resumedSessions: [],
+    deletedSessions: [],
+    steerings: [],
     emitted: [],
     mcp: [],
   };
@@ -273,6 +309,21 @@ export function observe(observation: FakeAgentObservation, event: FakeAgentEvent
     case 'close_session':
       observation.closedSessions.push(event.sessionId);
       return;
+    case 'load_session':
+      observation.loadedSessions.push(event.sessionId);
+      return;
+    case 'resume_session':
+      observation.resumedSessions.push({
+        sessionId: event.sessionId,
+        mcpServers: event.mcpServers,
+      });
+      return;
+    case 'delete_session':
+      observation.deletedSessions.push(event.sessionId);
+      return;
+    case 'steering':
+      observation.steerings.push(event.params);
+      return;
     case 'emitted':
       observation.emitted.push({ sessionId: event.sessionId, update: event.update });
       return;
@@ -306,6 +357,7 @@ export function readFakeAgentRecord(recordPath: string): FakeAgentObservation {
 export class FakeAgentTurnBuilder {
   readonly actions: FakeAgentAction[] = [];
   stopReason: StopReason = 'end_turn';
+  usageReport: FakeAgentTurn['usage'] = undefined;
 
   text(text: string): this {
     this.actions.push({ type: 'text', text });
@@ -341,6 +393,7 @@ export class FakeAgentTurnBuilder {
       kind?: ToolKind;
       locations?: string[];
       rawInput?: unknown;
+      bare?: boolean;
     } = {},
   ): this {
     this.actions.push({ type: 'permission', toolCallId, title, ...extra });
@@ -402,6 +455,14 @@ export class FakeAgentTurnBuilder {
     this.actions.push({ type: 'mcp_list', ...(server !== undefined ? { server } : {}) });
     return this;
   }
+  echoSteers(): this {
+    this.actions.push({ type: 'echo_steers' });
+    return this;
+  }
+  usage(usage: NonNullable<FakeAgentTurn['usage']>): this {
+    this.usageReport = usage;
+    return this;
+  }
   afterTurn(actions: FakeAgentAction[], delayMs = 20): this {
     this.actions.push({ type: 'after_turn', delayMs, actions });
     return this;
@@ -411,7 +472,11 @@ export class FakeAgentTurnBuilder {
     return this;
   }
   toJSON(): FakeAgentTurn {
-    return { actions: this.actions, stopReason: this.stopReason };
+    return {
+      actions: this.actions,
+      stopReason: this.stopReason,
+      ...(this.usageReport !== undefined ? { usage: this.usageReport } : {}),
+    };
   }
 }
 
@@ -454,6 +519,9 @@ class FakeAcpAgent implements Agent {
   readonly #cwds = new Map<string, string>();
   readonly #cancelWaiters = new Map<string, Array<() => void>>();
   readonly #cancelled = new Set<string>();
+  /** Sessions with a prompt in flight (steering target). */
+  readonly #prompting = new Set<string>();
+  readonly #steers = new Map<string, string[]>();
 
   constructor(script: FakeAgentScript, runtime: AgentRuntime) {
     this.#script = script;
@@ -475,11 +543,15 @@ class FakeAcpAgent implements Agent {
         loadSession: script.history !== undefined,
         promptCapabilities: { image: script.promptCapabilities?.image === true },
         mcpCapabilities: { http: true },
-        sessionCapabilities: script.sessionClose === true ? { close: {} } : {},
+        sessionCapabilities: {
+          ...(script.sessionClose === true ? { close: {} } : {}),
+          ...(script.resume === true ? { resume: {} } : {}),
+          ...(script.sessionDelete === true ? { delete: {} } : {}),
+        },
       },
       authMethods: script.authMethods ?? [],
       agentInfo: script.agentInfo ?? { name: 'fake-acp-agent', version: '0.0.0' },
-      ...(script.steering === true ? { _meta: { steering: true } } : {}),
+      ...(script.steering === true ? { _meta: { steering: { supported: true } } } : {}),
     };
   }
 
@@ -508,11 +580,45 @@ class FakeAcpAgent implements Agent {
     };
   }
 
-  async loadSession(params: { sessionId: string; cwd: string }) {
-    this.#runtime.record({ kind: 'load_session', sessionId: params.sessionId, cwd: params.cwd });
+  async loadSession(params: { sessionId: string; cwd: string; mcpServers: unknown[] }) {
+    this.#runtime.record({
+      kind: 'load_session',
+      sessionId: params.sessionId,
+      cwd: params.cwd,
+      mcpServers: params.mcpServers,
+    });
+    this.#cwds.set(params.sessionId, params.cwd);
+    this.#mcpServers.set(params.sessionId, params.mcpServers);
     for (const action of this.#script.history ?? []) {
       await this.#perform(params.sessionId, action);
     }
+    return {
+      ...(this.#script.configOptions !== undefined
+        ? { configOptions: this.#script.configOptions }
+        : {}),
+      ...(this.#script.modes !== undefined ? { modes: this.#script.modes } : {}),
+    };
+  }
+
+  async resumeSession(params: { sessionId: string; cwd: string; mcpServers?: unknown[] }) {
+    this.#runtime.record({
+      kind: 'resume_session',
+      sessionId: params.sessionId,
+      cwd: params.cwd,
+      mcpServers: params.mcpServers ?? [],
+    });
+    this.#cwds.set(params.sessionId, params.cwd);
+    this.#mcpServers.set(params.sessionId, params.mcpServers ?? []);
+    return {
+      ...(this.#script.configOptions !== undefined
+        ? { configOptions: this.#script.configOptions }
+        : {}),
+      ...(this.#script.modes !== undefined ? { modes: this.#script.modes } : {}),
+    };
+  }
+
+  async deleteSession(params: { sessionId: string }) {
+    this.#runtime.record({ kind: 'delete_session', sessionId: params.sessionId });
     return {};
   }
 
@@ -559,6 +665,16 @@ class FakeAcpAgent implements Agent {
     });
     const turn = this.#turns.shift();
     if (turn === undefined) throw RequestError.internalError({ reason: 'unscripted prompt' });
+    this.#prompting.add(sessionId);
+    try {
+      return await this.#playTurn(sessionId, turn);
+    } finally {
+      this.#prompting.delete(sessionId);
+    }
+  }
+
+  async #playTurn(sessionId: string, turn: FakeAgentTurn) {
+    const usage = turn.usage !== undefined ? { usage: turn.usage } : {};
     for (const action of turn.actions) {
       if (this.#cancelled.has(sessionId)) return { stopReason: 'cancelled' as const };
       if (action.type === 'fail') throw new RequestError(action.code, action.message);
@@ -578,7 +694,7 @@ class FakeAcpAgent implements Agent {
       await this.#perform(sessionId, action);
     }
     if (this.#cancelled.has(sessionId)) return { stopReason: 'cancelled' as const };
-    return { stopReason: turn.stopReason ?? 'end_turn' };
+    return { stopReason: turn.stopReason ?? 'end_turn', ...usage };
   }
 
   async cancel(params: { sessionId: string }) {
@@ -591,7 +707,17 @@ class FakeAcpAgent implements Agent {
   async extMethod(method: string, params: Record<string, unknown>) {
     if (method === '_session/steering' && this.#script.steering === true) {
       this.#runtime.record({ kind: 'steering', params });
-      return {};
+      const sessionId = String(params.sessionId);
+      const outcome =
+        this.#script.steeringOutcome ??
+        (this.#prompting.has(sessionId) ? 'injected' : 'promptRequired');
+      if (outcome === 'error') throw RequestError.internalError({ reason: 'steering failed' });
+      if (outcome === 'injected') {
+        const prompt = (params.prompt ?? []) as Array<{ type: string; text?: string }>;
+        const text = prompt.map((block) => block.text ?? '').join('');
+        this.#steers.set(sessionId, [...(this.#steers.get(sessionId) ?? []), text]);
+      }
+      return outcome === 'promptRequired' ? { outcome, reason: 'noRunningTurn' } : { outcome };
     }
     throw RequestError.methodNotFound(method);
   }
@@ -648,19 +774,26 @@ class FakeAcpAgent implements Agent {
       case 'permission': {
         const response = await this.#conn.requestPermission({
           sessionId,
-          toolCall: {
-            toolCallId: action.toolCallId,
-            title: action.title,
-            ...(action.name !== undefined ? { name: action.name } : {}),
-            ...(action.bridgeTool !== undefined
-              ? { name: `mcp__${this.#bridgeName(sessionId)}__${action.bridgeTool}` }
-              : {}),
-            ...(action.kind !== undefined ? { kind: action.kind } : {}),
-            ...(action.locations !== undefined
-              ? { locations: action.locations.map((p) => ({ path: this.#inCwd(sessionId, p) })) }
-              : {}),
-            ...(action.rawInput !== undefined ? { rawInput: action.rawInput } : {}),
-          },
+          toolCall:
+            action.bare === true
+              ? { toolCallId: action.toolCallId }
+              : {
+                  toolCallId: action.toolCallId,
+                  title: action.title,
+                  ...(action.name !== undefined ? { name: action.name } : {}),
+                  ...(action.bridgeTool !== undefined
+                    ? { name: `mcp__${this.#bridgeName(sessionId)}__${action.bridgeTool}` }
+                    : {}),
+                  ...(action.kind !== undefined ? { kind: action.kind } : {}),
+                  ...(action.locations !== undefined
+                    ? {
+                        locations: action.locations.map((p) => ({
+                          path: this.#inCwd(sessionId, p),
+                        })),
+                      }
+                    : {}),
+                  ...(action.rawInput !== undefined ? { rawInput: action.rawInput } : {}),
+                },
           options: action.options ?? DEFAULT_PERMISSION_OPTIONS,
         });
         this.#runtime.record({
@@ -689,6 +822,14 @@ class FakeAcpAgent implements Agent {
       }
       case 'notify':
         await this.#conn.notify(action.method, action.params ?? {});
+        return;
+      case 'echo_steers':
+        for (const text of this.#steers.get(sessionId) ?? []) {
+          await this.#update(sessionId, {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `steered: ${text}` },
+          });
+        }
         return;
       case 'mode_update':
         return this.#update(sessionId, {

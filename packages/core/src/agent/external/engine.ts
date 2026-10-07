@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
 import {
+  AGENT_BRIDGE_TOOL_DETACH_MS,
   AGENT_CANCEL_GRACE_MS,
   AGENT_RUN_TIMEOUT_MS,
+  AGENT_TURN_BUDGET_TOKENS,
   AppError,
   findAgentEntry,
   parseAgentModelRef,
@@ -11,6 +14,7 @@ import type { CoreLogger } from '../../infra/logger.js';
 import { truncateToBudget } from '../tokens.js';
 import type {
   AgentEngine,
+  AgentSessionMode,
   CompletionResult,
   EngineEvent,
   EngineUsage,
@@ -19,11 +23,14 @@ import type {
   RunSpec,
 } from '../types.js';
 import {
+  ACP_STEERING_METHOD,
+  advertisesSteering,
   hostBridgeToolOf,
   type SessionBridge,
   type AcpContentBlock,
   type AcpInitializeResponse,
   type AcpMcpServer,
+  type AcpPromptResponse,
   type AcpRequestPermissionRequest,
   type AcpSessionConfigOption,
   type AcpSessionModeState,
@@ -40,14 +47,23 @@ import type { AgentProvider } from './types.js';
 
 /**
  * AgentEngine 的第二实现（docs/design/28-external-agents-acp.md，D72）：经
- * ACP 驱动外部智能体。协议无关的 run 编排在这里：会话建立、档位与模型选项、
- * prompt、事件映射、取消与结算；进程与连接在 AgentHost，协议细节在 acp/。
+ * ACP 驱动外部智能体。协议无关的 run 编排在这里：会话建立 / 复用、档位与模型
+ * 选项、prompt、事件映射、steering、取消与结算；进程与连接在 AgentHost，协议
+ * 细节在 acp/。
  *
- * 当前范围（P1 + P2）：每个 run 新建会话、结束即关闭；steer 恒返回 false
- * （run 结束后由 orchestrator 续投）；宿主工具（`RunSpec.tools`，已按能力包
- * 过滤）经宿主 MCP 桥注入，桥调用由桥自己报告、ACP 镜像更新忽略；
- * `skip_reply` 等终止型工具返回后发 `session/cancel`，结算为不发最终文本的
- * completed；complete() 不支持（P6）。
+ * - 会话（P5）：`RunSpec.external.session` 缺省时每 run 一个会话、结束即关闭
+ *   （P1）；给出时会话在 run 结束后留在 Agent 进程里，下一个 run 依次尝试
+ *   同进程复用 → `session/resume` → `session/load`（重放静音）→ 新建；宿主
+ *   MCP 桥的 token 随会话（新建 / 恢复时重签，复用时沿用），每个 run 重新
+ *   绑定；
+ * - steering（P5）：prompt 发出前到达的消息并入该 prompt；进行中的 prompt
+ *   在 Provider 支持时经 `_session/steering`（`idleBehavior:'promptRequired'`）
+ *   注入，被拒 / 出错交还 `RunSpec.onSteerRejected`；
+ * - 宿主工具经宿主 MCP 桥注入（桥自己报告调用，ACP 镜像更新忽略）；超过
+ *   `bridgeToolDetachMs` 的桥调用转入后台，结果在 prompt 结束后以 follow-up
+ *   prompt 送回同一个 run（P5，Codex MCP 超时）；
+ * - `skip_reply` 等终止型工具返回后发 `session/cancel`，结算为不发最终文本的
+ *   completed；complete() 不支持（P6）。
  */
 
 /** 引擎用到的宿主 MCP 桥切片（mcp-bridge.ts 的 HostMcpBridge）。 */
@@ -58,6 +74,18 @@ export interface HostToolBridge {
   bindRun(sessionKey: string, binding: BridgeRunBinding): void;
   unbindRun(sessionKey: string, runId?: string): void;
   revoke(sessionKey: string, token?: string): void;
+}
+
+/** 丢弃一个保留的 Agent 会话（P5：对话 / Bot 删除、会话被替换）。 */
+export interface DiscardAgentSessionInput {
+  agentId: string;
+  agentSessionId: string;
+  sessionKey: string;
+  /**
+   * 也删除 Agent 侧的会话历史（`session/delete`，Agent 声明支持时）；否则
+   * 只关闭（`session/close`）。都只在会话仍开在活着的进程里时进行（尽力而为）。
+   */
+  deleteHistory: boolean;
 }
 
 export interface ExternalAgentEngineDeps {
@@ -78,15 +106,54 @@ export interface ExternalAgentEngineDeps {
 
 export class ExternalAgentEngine implements AgentEngine {
   readonly #deps: ExternalAgentEngineDeps;
+  readonly #control: SessionControl = { discardOnRelease: new Map() };
 
   constructor(deps: ExternalAgentEngineDeps) {
     this.#deps = deps;
   }
 
   startRun(spec: RunSpec): RunHandle {
-    const handle = new ExternalRunHandle(spec, this.#deps);
+    const handle = new ExternalRunHandle(spec, this.#deps, this.#control);
     void handle.start();
     return handle;
+  }
+
+  /**
+   * Gives up a kept agent session (P5): conversation / bot deletion
+   * (`deleteHistory` → `session/delete` when the agent supports it) or a
+   * session replaced by a new one. Only a session still open in a live agent
+   * process can be closed (best effort); its bridge token is revoked either
+   * way. A run still attached to it discards it on release.
+   */
+  async discardSession(input: DiscardAgentSessionInput): Promise<void> {
+    const open = this.#deps.host.openSession(input.agentId, input.agentSessionId);
+    const kept = open?.state as KeptSession | undefined;
+    if (input.deleteHistory) this.#deps.bridge?.revoke(input.sessionKey);
+    else if (kept?.bridge != null) this.#deps.bridge?.revoke(input.sessionKey, kept.bridge.token);
+    if (open === null) return;
+    if (open.busy) {
+      this.#control.discardOnRelease.set(input.agentSessionId, {
+        deleteHistory: input.deleteHistory,
+      });
+      return;
+    }
+    this.#deps.host.forgetSession(input.agentId, input.agentSessionId);
+    await closeAgentSession(
+      open.connection,
+      open.init,
+      input.agentSessionId,
+      input.deleteHistory,
+      (error) => {
+        try {
+          this.#deps.logger.warn(
+            { agentId: input.agentId, sessionId: input.agentSessionId, error },
+            'discarding the agent session failed',
+          );
+        } catch {
+          // Logger already closed (shutdown).
+        }
+      },
+    );
   }
 
   async complete(): Promise<CompletionResult> {
@@ -122,6 +189,21 @@ export type ToolCallLike = Extract<
 
 function toolNameOf(update: ToolCallLike): string {
   return update.name ?? update.title ?? update.kind ?? 'tool';
+}
+
+/**
+ * The subagent a report belongs to (claude-agent-acp stamps
+ * `_meta.claudeCode.parentToolUseId` on its subagents' updates; a plain
+ * `_meta.parentToolUseId` is accepted for other agents), or null for the
+ * top-level model.
+ */
+export function parentToolUseIdOf(update: {
+  _meta?: Record<string, unknown> | null;
+}): string | null {
+  const meta = update._meta as
+    { claudeCode?: { parentToolUseId?: unknown }; parentToolUseId?: unknown } | null | undefined;
+  const id = meta?.claudeCode?.parentToolUseId ?? meta?.parentToolUseId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 /** 工具结果的文本形态（run_steps 与续接回放读取；图片 / diff / 终端只留占位）。 */
@@ -171,12 +253,18 @@ function planProgressText(
  * - `tool_call` → `tool_call`，`tool_call_update`（completed / failed）→
  *   `tool_result`，以 `toolCallId` 配对；未回报结果的调用在结束时补失败结果；
  * - `agent_thought_chunk` 不落库；`plan` → `progress`；
+ * - 子代理（带 `parentToolUseId`）的调用与文本不切分、不落为步骤：调用只
+ *   转成状态行 `progress`（P5）；
  * - 结束时按 stopReason 发最后一条 `assistant`，`finalText` 取自它。
  */
 export class AcpEventMapper {
   #text = '';
   /** A model turn is open: the next tool_call closes it with an assistant event. */
   #turnOpen = true;
+  /** Model rounds (assistant events) since the last `takeRounds()` (usage, P5). */
+  #rounds = 0;
+  /** Tool calls made by subagents (status line only). */
+  readonly #nested = new Set<string>();
   readonly #pending = new Map<string, string>();
   readonly #known = new Set<string>();
   /**
@@ -202,6 +290,8 @@ export class AcpEventMapper {
   map(update: AcpSessionUpdate): EngineEvent[] {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
+        // A subagent's own prose is internal to its tool call.
+        if (parentToolUseIdOf(update) !== null) return [];
         if (update.content.type === 'text') {
           this.#turnOpen = true;
           this.#text += update.content.text;
@@ -258,6 +348,40 @@ export class AcpEventMapper {
   }
 
   /**
+   * Model rounds closed by a tool call since the last `takeRounds()` (the
+   * prompt's closing round comes on top: `#recordUsage` adds it).
+   */
+  get rounds(): number {
+    return this.#rounds;
+  }
+
+  /** Model rounds counted since the previous call (one per assistant event). */
+  takeRounds(): number {
+    const rounds = this.#rounds;
+    this.#rounds = 0;
+    return rounds;
+  }
+
+  /**
+   * A prompt ended but the run continues with a follow-up prompt (background
+   * bridge results, P5): its prose becomes an interim message (stopReason
+   * `toolUse`, delivered like the text before a tool call).
+   */
+  finishInterim(): EngineEvent[] {
+    const events = this.abandon();
+    const text = this.#text;
+    this.#text = '';
+    this.#turnOpen = true;
+    if (text.trim().length > 0) {
+      events.push({
+        type: 'assistant',
+        payload: { text, stopReason: 'toolUse', errorMessage: undefined },
+      });
+    }
+    return events;
+  }
+
+  /**
    * Closes the turn; `finalText` is non-empty only for a normal end. A run a
    * tool terminated (skip_reply) adds no trailing empty assistant (as in pi).
    */
@@ -299,11 +423,22 @@ export class AcpEventMapper {
     };
     this.#text = '';
     this.#turnOpen = false;
+    this.#rounds += 1;
     return [event];
   }
 
   #onToolCall(update: ToolCallLike): EngineEvent[] {
     const id = update.toolCallId;
+    // Subagent calls (design 28 §7「子代理内部调用不切分」): no turn split, no
+    // step — the status line names them.
+    if (this.#nested.has(id)) return [];
+    if (!this.#known.has(id) && !this.#mirrored.has(id) && parentToolUseIdOf(update) !== null) {
+      this.#nested.add(id);
+      const title = update.title ?? update.name ?? null;
+      return typeof title === 'string' && title.trim().length > 0
+        ? [{ type: 'progress', payload: { text: `子任务：${title.trim()}` } }]
+        : [];
+    }
     const terminal = update.status === 'completed' || update.status === 'failed';
     let mirror = this.#mirrored.get(id);
     if (mirror === undefined && !this.#known.has(id)) {
@@ -332,9 +467,16 @@ export class AcpEventMapper {
       events.push(...this.#closeTurn());
       const toolName = toolNameOf(update);
       this.#pending.set(id, toolName);
+      const title = typeof update.title === 'string' ? update.title.trim() : '';
       events.push({
         type: 'tool_call',
-        payload: { toolCallId: id, toolName, args: update.rawInput ?? {} },
+        payload: {
+          toolCallId: id,
+          toolName,
+          args: update.rawInput ?? {},
+          // Status line text (design 28 §7): the agent's human-readable title.
+          ...(title.length > 0 && title !== toolName ? { title } : {}),
+        },
       });
     }
     const toolName = this.#pending.get(id);
@@ -362,18 +504,112 @@ export class AcpEventMapper {
 
 const IMAGE_NOT_SUPPORTED_NOTE = '（用户消息中的图片未注入：该智能体不支持图像输入。）';
 
+interface UsageTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/**
+ * 引擎记在 Agent 进程里、供下一个 run 复用的会话状态（AgentLease.keepSession，
+ * P5）。进程退出时随之消失。
+ */
+interface KeptSession {
+  /** orchestrator's fingerprint (prompt, cwd, tier, model, packs, bridge name …). */
+  fingerprint: string;
+  /** What session/new carried (provider options, bridge, cwd): must match to reuse. */
+  optionsHash: string;
+  sessionKey: string;
+  /** The bridge the agent connected with (token stays valid across runs). */
+  bridge: { serverName: string; token: string } | null;
+  expectedMode: string | null;
+  expectedModeOption: { id: string; value: string } | null;
+  /** Last cumulative usage the agent reported (`usageSemantics: 'session'`). */
+  usage: UsageTotals | null;
+}
+
+/** Engine-wide session bookkeeping shared by the run handles. */
+interface SessionControl {
+  /** Sessions to discard when the run using them releases (deleted meanwhile). */
+  discardOnRelease: Map<string, { deleteHistory: boolean }>;
+}
+
+/**
+ * Where the prompt stands (steering, P5): before it is sent steers merge into
+ * it; while it runs they go through `_session/steering`; between a prompt and
+ * its follow-up (background bridge results) they join the follow-up.
+ */
+type PromptPhase = 'before' | 'prompting' | 'between' | 'done';
+
+interface DetachedResult {
+  toolName: string;
+  ok: boolean;
+  content: string;
+}
+
+function usageTotalsOf(usage: AcpPromptResponse['usage']): UsageTotals | null {
+  if (usage === null || usage === undefined) return null;
+  const count = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+  return {
+    input: count(usage.inputTokens),
+    output: count(usage.outputTokens),
+    cacheRead: count(usage.cachedReadTokens),
+    cacheWrite: count(usage.cachedWriteTokens),
+  };
+}
+
+function hashOf(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/** Follow-up prompt for background bridge results and late steers (P5). */
+function followUpText(results: readonly DetachedResult[], steers: readonly string[]): string {
+  const parts: string[] = [];
+  if (results.length > 0) {
+    parts.push(
+      [
+        '<background_tool_results>',
+        '以下是之前转入后台的工具调用的结果：',
+        ...results.map(
+          (result) =>
+            `<tool_result name="${result.toolName}" ok="${result.ok}">\n${result.content}\n</tool_result>`,
+        ),
+        '</background_tool_results>',
+      ].join('\n'),
+    );
+  }
+  parts.push(...steers);
+  return parts.join('\n\n');
+}
+
 class ExternalRunHandle implements RunHandle {
   readonly #spec: RunSpec;
   readonly #deps: ExternalAgentEngineDeps;
+  readonly #control: SessionControl;
   readonly #listeners = new Set<(e: EngineEvent) => void>();
   #mapper = new AcpEventMapper();
   readonly #usage: EngineUsage[] = [];
+  /** Tokens the agent reported so far (chain budget). */
+  #reportedTokens = 0;
+  /** Model rounds without reported tokens (charged per round, P5). */
+  #unreportedRounds = 0;
   /** Run cancellation as seen by in-flight host-bridge tool calls. */
   readonly #toolAbort = new AbortController();
   #lease: AgentLease | null = null;
   #sessionId: string | null = null;
+  /** The reused session's kept state (mode `reused`). */
+  #kept: KeptSession | null = null;
+  #optionsHash = '';
+  /** The session must not be reused (timeout, unresponsive agent, broken setup). */
+  #poisoned = false;
+  /** Cumulative usage baseline of the session (null = unknown). */
+  #sessionUsage: UsageTotals | null = null;
   /** Session key + token + server bound on the host MCP bridge (null = no bridge). */
   #bridge: { sessionKey: string; token: string; session: SessionBridge } | null = null;
+  /** The bridge the session carries (kept with it for the next run). */
+  #bridgeInfo: { serverName: string; token: string } | null = null;
   #agentName: string;
   #entry: AgentCatalogEntry | null = null;
   #provider: AgentProvider | null = null;
@@ -390,12 +626,20 @@ class ExternalRunHandle implements RunHandle {
   #terminated: string | null = null;
   #resolved = false;
   #graceTimer: NodeJS.Timeout | null = null;
+  #phase: PromptPhase = 'before';
+  /** Steers waiting for the next prompt (before the first / between prompts). */
+  readonly #queuedSteers: string[] = [];
+  /** Bridge calls answered "moved to the background", still running. */
+  readonly #detachedPending = new Set<string>();
+  readonly #detachedResults: DetachedResult[] = [];
+  #detachedWaiter: (() => void) | null = null;
   readonly done: Promise<RunOutcome>;
   #resolveDone!: (outcome: RunOutcome) => void;
 
-  constructor(spec: RunSpec, deps: ExternalAgentEngineDeps) {
+  constructor(spec: RunSpec, deps: ExternalAgentEngineDeps, control: SessionControl) {
     this.#spec = spec;
     this.#deps = deps;
+    this.#control = control;
     this.#agentName = spec.external?.agentId ?? '?';
     this.done = new Promise<RunOutcome>((resolve) => {
       this.#resolveDone = resolve;
@@ -439,62 +683,108 @@ class ExternalRunHandle implements RunHandle {
           ? { isolation: this.#deps.permissions.isolationFor(spec.identity, spec.workdir) }
           : {}),
       });
-      // Bound before session/new: agents connect to their MCP servers while
-      // creating the session, and the bridge refuses sessions without a run.
-      const bridgeServer = this.#attachBridge(entry, provider, init, acceptsImages);
       phase = 'session_new';
-      const session = await connection.newSession({
-        cwd: spec.workdir,
-        mcpServers: [
-          ...(bridgeServer !== null ? [bridgeServer] : []),
-          ...(sessionOptions.extraMcpServers ?? []),
-        ],
-        ...(sessionOptions._meta !== undefined ? { _meta: sessionOptions._meta } : {}),
-      });
-      this.#sessionId = session.sessionId;
+      const opened = await this.#openSession(entry, lease, sessionOptions, acceptsImages);
+      this.#sessionId = opened.sessionId;
       // Only a session that really carries the bridge may have kepcup tool
       // permission requests allowed (acp/client.ts decidePermission).
-      lease.attach(session.sessionId, this.#sink(this.#bridge?.session ?? null));
+      lease.attach(opened.sessionId, this.#sink(this.#bridge?.session ?? null));
       if (this.#resolved) return;
-      external.onSession?.(session.sessionId);
+      external.onSession?.(opened.sessionId, opened.mode);
 
       phase = 'other';
-      const configOptions = session.configOptions ?? [];
-      await this.#applyTier(session.sessionId, session.modes ?? null, configOptions);
-      await this.#applyConfig(session.sessionId, configOptions, {
-        model: parseAgentModelRef(spec.model)?.model ?? '',
-        effort: external.effort ?? '',
-      });
-      if (this.#resolved) return;
-      // An abort that landed during the tier / config calls only queued a
-      // session/cancel: never start the prompt (nor record its request).
-      if (this.#aborted) {
-        this.#settle({ status: 'cancelled', finalText: '', skipReply: false, usage: this.#usage });
-        return;
+      if (opened.mode === 'reused') {
+        // Same process, same fingerprint: tier, model and effort are still in
+        // place — re-arm the mode guard from what the last run left.
+        this.#expectedMode = this.#kept?.expectedMode ?? null;
+        this.#expectedModeOption = this.#kept?.expectedModeOption ?? null;
+        this.#sessionUsage = this.#kept?.usage ?? null;
+      } else {
+        await this.#applyTier(opened.sessionId, opened.modes, opened.configOptions);
+        await this.#applyConfig(opened.sessionId, opened.configOptions, {
+          model: parseAgentModelRef(spec.model)?.model ?? '',
+          effort: external.effort ?? '',
+        });
+        // A restored session's earlier totals are unknown: its first report
+        // only sets the baseline.
+        this.#sessionUsage =
+          opened.mode === 'new' ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } : null;
       }
+      if (this.#resolved) return;
 
-      const prompt = this.#promptBlocks(
-        metaAppend ? { ...parts, session: '' } : parts,
+      // A session that already holds the conversation gets the delta only
+      // (and no session prompt: prompt-prefix sent it with its first prompt).
+      const continued = opened.mode !== 'new';
+      const steers = this.#queuedSteers.splice(0);
+      let prompt = this.#promptBlocks(
+        {
+          session: continued || metaAppend ? '' : parts.session,
+          run: parts.run,
+          conversation: continued
+            ? (parts.conversationDelta ?? parts.conversation)
+            : parts.conversation,
+        },
         acceptsImages,
+        steers,
       );
       this.emit({
         type: 'request',
         payload: {
           agentId: entry.id,
-          sessionId: session.sessionId,
+          sessionId: opened.sessionId,
+          session: opened.mode,
           prompt,
-          ...(metaAppend && parts.session.length > 0 ? { sessionPrompt: parts.session } : {}),
-          ...(bridgeServer !== null ? { hostTools: spec.tools.map((tool) => tool.name) } : {}),
+          ...(metaAppend && !continued && parts.session.length > 0
+            ? { sessionPrompt: parts.session }
+            : {}),
+          ...(this.#bridge !== null ? { hostTools: spec.tools.map((tool) => tool.name) } : {}),
         },
       });
+      for (const text of steers) this.emit({ type: 'steer', payload: { text } });
       phase = 'prompt';
-      const response = await this.#withRunTimeout(connection.prompt(session.sessionId, prompt));
+      let response = await this.#prompt(connection, opened.sessionId, prompt);
+      // Background bridge results / late steers: follow-up prompts in the
+      // same run and session (P5).
+      while (
+        response.stopReason === 'end_turn' &&
+        !this.#aborted &&
+        !this.#resolved &&
+        this.#terminated === null &&
+        (this.#detachedPending.size > 0 ||
+          this.#detachedResults.length > 0 ||
+          this.#queuedSteers.length > 0)
+      ) {
+        for (const event of this.#mapper.finishInterim()) this.emit(event);
+        await this.#awaitDetached();
+        if (this.#aborted || this.#resolved) break;
+        const results = this.#detachedResults.splice(0);
+        const late = this.#queuedSteers.splice(0);
+        prompt = [{ type: 'text', text: followUpText(results, late) }];
+        this.emit({
+          type: 'request',
+          payload: {
+            agentId: entry.id,
+            sessionId: opened.sessionId,
+            session: 'reused',
+            followUp: true,
+            prompt,
+          },
+        });
+        for (const text of late) this.emit({ type: 'steer', payload: { text } });
+        response = await this.#prompt(connection, opened.sessionId, prompt);
+      }
+      this.#phase = 'done';
       const { events, finalText } = this.#mapper.finish(response.stopReason, {
         terminated: this.#terminated !== null,
       });
       for (const event of events) this.emit(event);
       this.#settle(this.#outcomeOf(response.stopReason, finalText));
     } catch (error) {
+      // A session that failed half-way (tier refused, prompt error, timeout)
+      // is not reused.
+      if (this.#sessionId !== null && !this.#aborted && this.#terminated === null) {
+        this.#poisoned = true;
+      }
       const appError = toAgentError(
         error,
         this.#agentName,
@@ -507,7 +797,7 @@ class ExternalRunHandle implements RunHandle {
       );
       this.#settle(
         this.#aborted
-          ? { status: 'cancelled', finalText: '', skipReply: false, usage: this.#usage }
+          ? this.#cancelledOutcome()
           : this.#terminated !== null
             ? this.#terminatedOutcome()
             : {
@@ -524,15 +814,126 @@ class ExternalRunHandle implements RunHandle {
   }
 
   /**
+   * The session this run talks to (P5 reuse, design 28 §7): the kept session
+   * of this process when it matches; else `session/resume` / `session/load`
+   * of the requested one (provider and agent permitting); else a new one.
+   */
+  async #openSession(
+    entry: AgentCatalogEntry,
+    lease: AgentLease,
+    sessionOptions: ReturnType<AgentProvider['sessionNew']>,
+    acceptsImages: boolean,
+  ): Promise<{
+    sessionId: string;
+    mode: AgentSessionMode;
+    modes: AcpSessionModeState | null;
+    configOptions: readonly AcpSessionConfigOption[];
+  }> {
+    const spec = this.#spec;
+    const external = spec.external!;
+    const provider = lease.provider;
+    const serverName = external.hostServerName ?? newHostServerName();
+    this.#optionsHash = hashOf({
+      cwd: spec.workdir,
+      meta: sessionOptions._meta ?? null,
+      extra: sessionOptions.extraMcpServers ?? [],
+      bridge: spec.tools.length > 0 ? serverName : null,
+      tools: spec.tools.map((tool) => tool.name).sort(),
+    });
+    const reuse = external.session;
+    const reuseId = reuse?.reuseId ?? null;
+    let kept: KeptSession | undefined;
+    if (reuseId !== null) {
+      kept = lease.openSession<KeptSession>(reuseId);
+      if (
+        kept !== undefined &&
+        this.#control.discardOnRelease.get(reuseId) === undefined &&
+        kept.fingerprint === reuse!.fingerprint &&
+        kept.optionsHash === this.#optionsHash &&
+        kept.sessionKey === external.sessionKey
+      ) {
+        this.#kept = kept;
+        this.#attachBridge(entry, provider, lease.init, acceptsImages, serverName, kept.bridge);
+        return { sessionId: reuseId, mode: 'reused', modes: null, configOptions: [] };
+      }
+      if (kept !== undefined) {
+        // Kept but no longer matching (or deleted meanwhile): close it.
+        lease.forgetSession(reuseId);
+        void this.#closeSession(lease, reuseId, false);
+      }
+    }
+    // Bound before session/new | resume | load: agents connect to their MCP
+    // servers while setting the session up, and the bridge refuses sessions
+    // without a run.
+    const bridgeServer = this.#attachBridge(
+      entry,
+      provider,
+      lease.init,
+      acceptsImages,
+      serverName,
+      null,
+    );
+    const mcpServers = [
+      ...(bridgeServer !== null ? [bridgeServer] : []),
+      ...(sessionOptions.extraMcpServers ?? []),
+    ];
+    const meta = sessionOptions._meta !== undefined ? { _meta: sessionOptions._meta } : {};
+    if (reuseId !== null && kept === undefined) {
+      const caps = lease.init.agentCapabilities;
+      const canResume = provider.features.resume && caps?.sessionCapabilities?.resume != null;
+      const canLoad = provider.features.loadSession && caps?.loadSession === true;
+      if (canResume || canLoad) {
+        const request = { sessionId: reuseId, cwd: spec.workdir!, mcpServers, ...meta };
+        try {
+          const restored = canResume
+            ? await lease.connection.resumeSession(request)
+            : await lease.connection.loadSession(request);
+          return {
+            sessionId: reuseId,
+            mode: canResume ? 'resumed' : 'loaded',
+            modes: restored.modes ?? null,
+            configOptions: restored.configOptions ?? [],
+          };
+        } catch (error) {
+          // Gone on the agent's side (history deleted, other machine …):
+          // start over; the prompt then carries the full context.
+          this.#warn(
+            {
+              runId: spec.identity.runId,
+              agentSessionId: reuseId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'agent session could not be restored; starting a new one',
+          );
+        }
+      }
+    }
+    const session = await lease.connection.newSession({
+      cwd: spec.workdir!,
+      mcpServers,
+      ...meta,
+    });
+    return {
+      sessionId: session.sessionId,
+      mode: 'new',
+      modes: session.modes ?? null,
+      configOptions: session.configOptions ?? [],
+    };
+  }
+
+  /**
    * Binds this run on the host MCP bridge and returns the `mcpServers` entry,
    * or null when no host tool is injected (no tools, no bridge, or an agent
-   * without http MCP — the stdio proxy is not wired yet, P2).
+   * without http MCP — the stdio proxy is not wired yet, P2). `kept` = the
+   * reused session's bridge: its token stays, the new run is bound to it.
    */
   #attachBridge(
     entry: AgentCatalogEntry,
     provider: AgentProvider,
     init: AcpInitializeResponse,
     acceptsImages: boolean,
+    serverName: string,
+    kept: { serverName: string; token: string } | null,
   ): AcpMcpServer | null {
     const spec = this.#spec;
     const bridge = this.#deps.bridge;
@@ -553,13 +954,21 @@ class ExternalRunHandle implements RunHandle {
       return null;
     }
     const sessionKey = spec.external!.sessionKey;
-    const serverName = spec.external!.hostServerName ?? newHostServerName();
-    const token = bridge.issueSessionToken(sessionKey);
+    const name = kept?.serverName ?? serverName;
+    // Session-level token (P5): issued when the session is set up (new /
+    // resumed / loaded — re-issuing revokes the key's previous token), kept
+    // while the session lives in the agent process.
+    const token = kept?.token ?? bridge.issueSessionToken(sessionKey);
+    const detachMs =
+      provider.bridgeToolDetachMs === undefined
+        ? AGENT_BRIDGE_TOOL_DETACH_MS
+        : provider.bridgeToolDetachMs;
     bridge.bindRun(sessionKey, {
       identity: spec.identity,
       tools: spec.tools,
       signal: this.#toolAbort.signal,
       acceptsImages,
+      detachAfterMs: detachMs,
       meta: (toolName) => bridgeToolMeta(toolName, entry),
       onToolCall: (call) => {
         for (const event of this.#mapper.hostToolCall(call)) this.emit(event);
@@ -567,24 +976,132 @@ class ExternalRunHandle implements RunHandle {
       onToolResult: (result) => {
         for (const event of this.#mapper.hostToolResult(result)) this.emit(event);
       },
+      onToolDetached: (call) => {
+        this.#detachedPending.add(call.toolCallId);
+        this.emit({
+          type: 'progress',
+          payload: { text: `工具「${call.toolName}」转入后台，完成后结果会再交给智能体` },
+        });
+      },
+      onDetachedResult: (result) => this.#onDetachedResult(result),
       progress: (text) => this.emit({ type: 'progress', payload: { text } }),
       onTerminate: (reason) => this.#terminate(reason),
     });
     const sessionBridge: SessionBridge = {
-      serverName,
+      serverName: name,
       toolNames: new Set(spec.tools.map((tool) => tool.name)),
     };
     this.#bridge = { sessionKey, token, session: sessionBridge };
+    this.#bridgeInfo = { serverName: name, token };
     // The agent's own updates about bridge tools are mirrors: drop them.
     this.#mapper = new AcpEventMapper({
       hostToolOf: (update) => hostBridgeToolOf(update, provider, sessionBridge),
     });
     return {
       type: 'http',
-      name: serverName,
+      name,
       url: bridge.url,
       headers: [{ name: 'Authorization', value: `Bearer ${token}` }],
     };
+  }
+
+  /** One `session/prompt` (with the run timeout) and its usage. */
+  async #prompt(
+    connection: AgentLease['connection'],
+    sessionId: string,
+    prompt: AcpContentBlock[],
+  ): Promise<AcpPromptResponse> {
+    this.#phase = 'prompting';
+    try {
+      const response = await this.#withRunTimeout(connection.prompt(sessionId, prompt));
+      this.#recordUsage(response);
+      return response;
+    } finally {
+      if (this.#phase === 'prompting') this.#phase = 'between';
+    }
+  }
+
+  /**
+   * Usage of one prompt (design 28 §8): the agent's report (per session →
+   * diffed, or per turn, `provider.usageSemantics`); without one, one zero
+   * entry per model round (the ledger counts the rounds; the chain budget
+   * charges AGENT_TURN_BUDGET_TOKENS each).
+   */
+  #recordUsage(response: AcpPromptResponse): void {
+    // Rounds closed by tool calls + the prompt's closing round.
+    const rounds = this.#mapper.takeRounds() + 1;
+    const reported = usageTotalsOf(response.usage);
+    let delta: UsageTotals | null = null;
+    if (reported !== null) {
+      if ((this.#provider?.usageSemantics ?? 'session') === 'turn') {
+        delta = reported;
+      } else {
+        const base = this.#sessionUsage;
+        const restarted =
+          base !== null &&
+          (reported.input < base.input ||
+            reported.output < base.output ||
+            reported.cacheRead < base.cacheRead ||
+            reported.cacheWrite < base.cacheWrite);
+        delta =
+          base === null
+            ? null
+            : restarted
+              ? reported
+              : {
+                  input: reported.input - base.input,
+                  output: reported.output - base.output,
+                  cacheRead: reported.cacheRead - base.cacheRead,
+                  cacheWrite: reported.cacheWrite - base.cacheWrite,
+                };
+        this.#sessionUsage = reported;
+      }
+    }
+    if (delta !== null && delta.input + delta.output > 0) {
+      this.#usage.push({
+        input: delta.input,
+        output: delta.output,
+        cacheRead: delta.cacheRead,
+        cacheWrite: delta.cacheWrite,
+        costUsd: null,
+      });
+      this.#reportedTokens += delta.input + delta.output;
+      return;
+    }
+    for (let round = 0; round < rounds; round += 1) {
+      this.#usage.push({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null });
+    }
+    this.#unreportedRounds += rounds;
+  }
+
+  /** A background bridge call finished: its result joins the next follow-up. */
+  #onDetachedResult(result: BridgeToolResultEvent): void {
+    if (!this.#detachedPending.delete(result.toolCallId)) return;
+    if (this.#resolved) return;
+    this.#detachedResults.push({
+      toolName: result.toolName,
+      ok: result.ok,
+      content: result.content,
+    });
+    this.emit({
+      type: 'progress',
+      payload: { text: `后台工具「${result.toolName}」已完成` },
+    });
+    if (this.#detachedPending.size === 0) this.#wakeDetached();
+  }
+
+  /** Resolves once every background bridge call answered (or the run ends). */
+  async #awaitDetached(): Promise<void> {
+    if (this.#detachedPending.size === 0 || this.#aborted || this.#resolved) return;
+    await new Promise<void>((resolve) => {
+      this.#detachedWaiter = resolve;
+    });
+  }
+
+  #wakeDetached(): void {
+    const waiter = this.#detachedWaiter;
+    this.#detachedWaiter = null;
+    waiter?.();
   }
 
   /**
@@ -595,11 +1112,20 @@ class ExternalRunHandle implements RunHandle {
   #terminate(reason: string): void {
     if (this.#terminated !== null || this.#aborted || this.#resolved) return;
     this.#terminated = reason;
+    if (this.#phase !== 'prompting') {
+      this.#settle(this.#terminatedOutcome());
+      this.#wakeDetached();
+      return;
+    }
     this.#cancelPrompt(() => this.#terminatedOutcome());
   }
 
   #terminatedOutcome(): RunOutcome {
     return { status: 'completed', finalText: '', skipReply: true, usage: this.#usage };
+  }
+
+  #cancelledOutcome(): RunOutcome {
+    return { status: 'cancelled', finalText: '', skipReply: false, usage: this.#usage };
   }
 
   /**
@@ -613,16 +1139,81 @@ class ExternalRunHandle implements RunHandle {
     void lease.connection.cancel(sessionId).catch(() => undefined);
     if (this.#graceTimer !== null) clearTimeout(this.#graceTimer);
     this.#graceTimer = setTimeout(() => {
+      // An agent that ignores session/cancel is not trusted with the next run.
+      this.#poisoned = true;
       this.#settle(onGrace());
       this.#release();
     }, this.#deps.cancelGraceMs ?? AGENT_CANCEL_GRACE_MS);
     this.#graceTimer.unref?.();
   }
 
-  steer(_text: string): boolean {
-    // ACP steering lands in P5 (provider.features.steering); until then the
-    // orchestrator re-delivers the batch as a new run after this one ends.
-    return false;
+  /**
+   * Queues the text for the running loop (P5, design 28 §7): before the
+   * prompt / between prompts it joins the next one; while the prompt runs it
+   * is injected through `_session/steering` when the provider supports it
+   * (asynchronous — a refusal hands it back via `RunSpec.onSteerRejected`).
+   */
+  steer(text: string): boolean {
+    if (this.#resolved || this.#aborted || this.#terminated !== null) return false;
+    switch (this.#phase) {
+      case 'before':
+      case 'between':
+        this.#queuedSteers.push(text);
+        return true;
+      case 'done':
+        return false;
+      case 'prompting': {
+        const lease = this.#lease;
+        const sessionId = this.#sessionId;
+        if (lease === null || sessionId === null) return false;
+        if (!lease.provider.features.steering || !advertisesSteering(lease.init)) return false;
+        void this.#sendSteering(lease, sessionId, text);
+        return true;
+      }
+    }
+  }
+
+  async #sendSteering(lease: AgentLease, sessionId: string, text: string): Promise<void> {
+    try {
+      const response = await lease.connection.extMethod(ACP_STEERING_METHOD, {
+        sessionId,
+        prompt: [{ type: 'text', text }],
+        // Never let the agent start a turn of its own (output outside any run).
+        _meta: { steering: { idleBehavior: 'promptRequired' } },
+      });
+      const outcome = (response as { outcome?: unknown } | null | undefined)?.outcome;
+      if (outcome === 'injected') {
+        this.emit({ type: 'steer', payload: { text } });
+        return;
+      }
+      if (outcome === 'startedNewTurn') {
+        // codex-acp 2.1.1 ignores idleBehavior and starts a detached turn when
+        // none is running: stop it — it belongs to no run.
+        void lease.connection.cancel(sessionId).catch(() => undefined);
+      }
+      this.#warn(
+        { runId: this.#spec.identity.runId, outcome: String(outcome) },
+        'agent did not take the steer; handing it back',
+      );
+    } catch (error) {
+      this.#warn(
+        {
+          runId: this.#spec.identity.runId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'steering failed; handing the message back',
+      );
+    }
+    this.#steerRejected(text);
+  }
+
+  #steerRejected(text: string): void {
+    // Still before a follow-up of this run: answer it there.
+    if (!this.#resolved && !this.#aborted && this.#phase === 'between') {
+      this.#queuedSteers.push(text);
+      return;
+    }
+    this.#spec.onSteerRejected?.(text);
   }
 
   abort(_reason: string): void {
@@ -630,17 +1221,13 @@ class ExternalRunHandle implements RunHandle {
     this.#aborted = true;
     // In-flight host-bridge calls observe the cancellation (ToolContext.signal).
     this.#toolAbort.abort();
-    if (this.#lease === null || this.#sessionId === null) {
-      // Not prompting yet: start() notices #resolved at its next step.
-      this.#settle({ status: 'cancelled', finalText: '', skipReply: false, usage: this.#usage });
+    if (this.#phase !== 'prompting' || this.#lease === null || this.#sessionId === null) {
+      // No prompt in flight: start() notices #resolved at its next step.
+      this.#settle(this.#cancelledOutcome());
+      this.#wakeDetached();
       return;
     }
-    this.#cancelPrompt(() => ({
-      status: 'cancelled',
-      finalText: '',
-      skipReply: false,
-      usage: this.#usage,
-    }));
+    this.#cancelPrompt(() => this.#cancelledOutcome());
   }
 
   onEvent(listener: (e: EngineEvent) => void): () => void {
@@ -651,8 +1238,9 @@ class ExternalRunHandle implements RunHandle {
   }
 
   tokensSoFar(): number {
-    // Subscription agents report no per-turn tokens in P1 (usage lands in P5).
-    return 0;
+    // Rounds of the running prompt are charged until its usage arrives.
+    const running = this.#phase === 'prompting' ? this.#mapper.rounds + 1 : 0;
+    return this.#reportedTokens + (this.#unreportedRounds + running) * AGENT_TURN_BUDGET_TOKENS;
   }
 
   emit(event: EngineEvent): void {
@@ -689,7 +1277,7 @@ class ExternalRunHandle implements RunHandle {
       onClosed: (error) => {
         this.#settle(
           this.#aborted
-            ? { status: 'cancelled', finalText: '', skipReply: false, usage: this.#usage }
+            ? this.#cancelledOutcome()
             : this.#terminated !== null
               ? this.#terminatedOutcome()
               : {
@@ -700,6 +1288,7 @@ class ExternalRunHandle implements RunHandle {
                   error: { code: error.code, message: error.message },
                 },
         );
+        this.#wakeDetached();
       },
     };
   }
@@ -887,7 +1476,7 @@ class ExternalRunHandle implements RunHandle {
     });
   }
 
-  async #fallbackPromptParts(): Promise<{ session: string; run: string; conversation: string }> {
+  async #fallbackPromptParts(): Promise<NonNullable<RunSpec['promptParts']>> {
     return {
       session: await this.#spec.buildSystemPrompt(),
       run: '',
@@ -898,8 +1487,10 @@ class ExternalRunHandle implements RunHandle {
   #promptBlocks(
     parts: { session: string; run: string; conversation: string },
     acceptsImages: boolean,
+    steers: readonly string[] = [],
   ): AcpContentBlock[] {
-    const text = [parts.session, parts.run, parts.conversation]
+    // Steers that arrived before the prompt was sent ride along (P5).
+    const text = [parts.session, parts.run, parts.conversation, ...steers]
       .filter((part) => part.trim().length > 0)
       .join('\n\n');
     const images = this.#spec.messages.flatMap((message) => message.images ?? []);
@@ -1003,31 +1594,81 @@ class ExternalRunHandle implements RunHandle {
     this.#resolveDone(outcome);
   }
 
-  /** Detaches the session (later updates are out-of-run) and frees the lease. */
+  /**
+   * Detaches the session (later updates are out-of-run) and frees the lease.
+   * With session reuse (P5) the session stays open in the agent process and
+   * its bridge token stays valid; otherwise (or when it is poisoned / deleted
+   * meanwhile) it is closed and the token revoked.
+   */
   #release(): void {
     // The run is over: bridge calls still running see the abort, later ones
-    // are refused (no run), and the session token stops working (P1/P2 close
-    // the session with the run; P5 session reuse keeps the token).
+    // are refused (no run).
     this.#toolAbort.abort();
+    this.#phase = 'done';
+    this.#wakeDetached();
+    // Steers that never reached a prompt go back to the orchestrator.
+    for (const text of this.#queuedSteers.splice(0)) this.#spec.onSteerRejected?.(text);
+    const lease = this.#lease;
+    const sessionId = this.#sessionId;
+    const discard = sessionId !== null ? this.#control.discardOnRelease.get(sessionId) : undefined;
+    if (sessionId !== null && discard !== undefined)
+      this.#control.discardOnRelease.delete(sessionId);
+    const keep =
+      lease !== null &&
+      sessionId !== null &&
+      this.#spec.external?.session !== undefined &&
+      !this.#poisoned &&
+      discard === undefined;
     const bound = this.#bridge;
     if (bound !== null) {
       this.#bridge = null;
       // Scoped to this run / token: a later run on the same key keeps its own.
       this.#deps.bridge?.unbindRun(bound.sessionKey, this.#spec.identity.runId);
-      this.#deps.bridge?.revoke(bound.sessionKey, bound.token);
+      if (!keep) this.#deps.bridge?.revoke(bound.sessionKey, bound.token);
     }
-    const lease = this.#lease;
     if (lease === null) return;
     this.#lease = null;
-    const sessionId = this.#sessionId;
     if (sessionId !== null) {
       lease.detach(sessionId);
-      // P1: one session per run. Close it when the agent supports that;
-      // otherwise it simply idles inside the agent until the process exits.
-      if (lease.init.agentCapabilities?.sessionCapabilities?.close != null) {
-        void lease.connection.closeSession(sessionId).catch(() => undefined);
+      if (keep) {
+        lease.keepSession(sessionId, {
+          fingerprint: this.#spec.external!.session!.fingerprint,
+          optionsHash: this.#optionsHash,
+          sessionKey: this.#spec.external!.sessionKey,
+          bridge: this.#bridgeInfo,
+          expectedMode: this.#expectedMode,
+          expectedModeOption: this.#expectedModeOption,
+          usage: this.#sessionUsage,
+        } satisfies KeptSession);
+      } else {
+        lease.forgetSession(sessionId);
+        void this.#closeSession(lease, sessionId, discard?.deleteHistory === true);
       }
     }
     lease.release();
+  }
+
+  /** Closes (or deletes) a session the agent supports closing; best effort. */
+  async #closeSession(lease: AgentLease, sessionId: string, deleteHistory: boolean): Promise<void> {
+    await closeAgentSession(lease.connection, lease.init, sessionId, deleteHistory, (error) =>
+      this.#warn({ sessionId, error }, 'closing the agent session failed'),
+    );
+  }
+}
+
+/** `session/delete` (when wanted and supported) else `session/close` (when supported). */
+async function closeAgentSession(
+  connection: AgentLease['connection'],
+  init: AcpInitializeResponse,
+  sessionId: string,
+  deleteHistory: boolean,
+  onError: (message: string) => void,
+): Promise<void> {
+  const caps = init.agentCapabilities?.sessionCapabilities;
+  try {
+    if (deleteHistory && caps?.delete != null) await connection.deleteSession(sessionId);
+    else if (caps?.close != null) await connection.closeSession(sessionId);
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
   }
 }

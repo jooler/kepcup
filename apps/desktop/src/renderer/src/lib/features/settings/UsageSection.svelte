@@ -4,6 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { agentsStore } from '$lib/stores/agents.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -52,7 +53,12 @@
     const ids = [...new Set(entries.map((entry) => entry.botId ?? ''))];
     return ids
       .map((id) => {
-        const rows = entries.filter((entry) => (entry.botId ?? '') === id);
+        const all = entries.filter((entry) => (entry.botId ?? '') === id);
+        // D72 P5: subscription / external-agent usage is listed separately.
+        const rows = all.filter((entry) => entry.agentId === undefined);
+        const agentRows = all
+          .filter((entry) => entry.agentId !== undefined)
+          .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
         const backgroundToday = rows
           .filter(
             (entry) =>
@@ -65,6 +71,7 @@
           rows: rows.sort((a, b) =>
             a.date < b.date ? 1 : a.date > b.date ? -1 : a.loopType < b.loopType ? -1 : 1,
           ),
+          agentRows,
           backgroundToday,
           exceeded: budgetTokens !== null && budgetTokens > 0 && backgroundToday >= budgetTokens,
         };
@@ -107,6 +114,15 @@
 
   function tokenText(entry: UsageSummaryEntry): string {
     return `${entry.inputTokens} / ${entry.outputTokens}`;
+  }
+
+  function agentName(agentId: string | undefined): string {
+    if (agentId === undefined) return '';
+    return agentsStore.get(agentId)?.name ?? agentId;
+  }
+
+  function agentTokenText(entry: UsageSummaryEntry): string {
+    return entry.inputTokens + entry.outputTokens > 0 ? tokenText(entry) : '—';
   }
 
   function costText(entry: UsageSummaryEntry): string {
@@ -175,33 +191,65 @@
               </span>
             {/if}
           </div>
-          <table class="mt-2 w-full text-left text-xs">
-            <thead class="text-muted-foreground">
-              <tr>
-                <th class="py-1 font-normal">{t('settings.usageColumnDay')}</th>
-                <th class="py-1 font-normal">{t('settings.usageColumnLoop')}</th>
-                <th class="py-1 font-normal">{t('settings.usageColumnTokens')}</th>
-                <th class="py-1 font-normal">{t('settings.usageColumnCost')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each row.rows as entry (`${entry.date}|${entry.loopType}`)}
-                <tr
-                  class="border-t"
-                  data-testid="usage-entry-row"
-                  data-loop-type={entry.loopType}
-                  data-date={entry.date}
-                >
-                  <td class="py-1 tabular-nums">{entry.date}</td>
-                  <td class="py-1">{t(LOOP_KEYS[entry.loopType])}</td>
-                  <td class="py-1 tabular-nums" data-testid="usage-entry-tokens"
-                    >{tokenText(entry)}</td
-                  >
-                  <td class="py-1 tabular-nums">{costText(entry)}</td>
+          {#if row.rows.length > 0}
+            <table class="mt-2 w-full text-left text-xs">
+              <thead class="text-muted-foreground">
+                <tr>
+                  <th class="py-1 font-normal">{t('settings.usageColumnDay')}</th>
+                  <th class="py-1 font-normal">{t('settings.usageColumnLoop')}</th>
+                  <th class="py-1 font-normal">{t('settings.usageColumnTokens')}</th>
+                  <th class="py-1 font-normal">{t('settings.usageColumnCost')}</th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {#each row.rows as entry (`${entry.date}|${entry.loopType}`)}
+                  <tr
+                    class="border-t"
+                    data-testid="usage-entry-row"
+                    data-loop-type={entry.loopType}
+                    data-date={entry.date}
+                  >
+                    <td class="py-1 tabular-nums">{entry.date}</td>
+                    <td class="py-1">{t(LOOP_KEYS[entry.loopType])}</td>
+                    <td class="py-1 tabular-nums" data-testid="usage-entry-tokens"
+                      >{tokenText(entry)}</td
+                    >
+                    <td class="py-1 tabular-nums">{costText(entry)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+          {#if row.agentRows.length > 0}
+            <div class="mt-3" data-testid="usage-agent-rows">
+              <p class="text-xs font-medium">{t('settings.usageAgentSection')}</p>
+              <p class="text-xs text-muted-foreground">{t('settings.usageAgentNote')}</p>
+              <table class="mt-1 w-full text-left text-xs">
+                <thead class="text-muted-foreground">
+                  <tr>
+                    <th class="py-1 font-normal">{t('settings.usageColumnDay')}</th>
+                    <th class="py-1 font-normal">{t('settings.usageColumnAgent')}</th>
+                    <th class="py-1 font-normal">{t('settings.usageColumnTurns')}</th>
+                    <th class="py-1 font-normal">{t('settings.usageColumnTokens')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each row.agentRows as entry (`${entry.date}|${entry.loopType}|${entry.agentId}`)}
+                    <tr
+                      class="border-t"
+                      data-testid="usage-agent-row"
+                      data-agent-id={entry.agentId}
+                    >
+                      <td class="py-1 tabular-nums">{entry.date}</td>
+                      <td class="py-1">{agentName(entry.agentId)}</td>
+                      <td class="py-1 tabular-nums">{entry.turns ?? 0}</td>
+                      <td class="py-1 tabular-nums">{agentTokenText(entry)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

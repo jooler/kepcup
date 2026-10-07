@@ -1,8 +1,4 @@
-import {
-  RECENT_MESSAGES_MAX,
-  RECENT_MESSAGES_TOKEN_BUDGET,
-  type Message,
-} from '@kepcup/shared';
+import { RECENT_MESSAGES_MAX, RECENT_MESSAGES_TOKEN_BUDGET, type Message } from '@kepcup/shared';
 import { estimateTokens } from '../tokens.js';
 import type { TriggerBatch } from '../../scheduler/mailbox.js';
 
@@ -122,6 +118,19 @@ export function buildConversationContext(input: {
   }
   parts.push(`<recent_messages>\n${selected.join('\n')}\n</recent_messages>`);
   return `<conversation_context>\n${parts.join('\n')}\n</conversation_context>`;
+}
+
+/**
+ * External-agent session reuse (D72 P5, design 28 §7): the messages of the
+ * conversation the reused agent session has not seen (after its last run,
+ * excluding its own replies and the trigger batch). Empty → ''.
+ */
+export function buildConversationDelta(messages: Message[], options: RenderMessageOptions): string {
+  const lines = messages
+    .filter((message) => message.status !== 'recalled')
+    .map((message) => renderMessageLine(message, options));
+  if (lines.length === 0) return '';
+  return `<conversation_delta>\n（你上次回复之后对话里的新消息）\n${lines.join('\n')}\n</conversation_delta>`;
 }
 
 export interface TriggerSegmentInput {

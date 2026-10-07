@@ -363,6 +363,20 @@ export const AGENT_INIT_TIMEOUT_MS = 60_000;
 export const AGENT_CANCEL_GRACE_MS = 10_000;
 /** Scheduler concurrency for `agent:{id}` when providerConcurrency has no override (P5). */
 export const AGENT_DEFAULT_CONCURRENCY = 2;
+/**
+ * Chain-budget equivalent of one external-agent model round whose tokens the
+ * agent did not report (subscription agents often report none, P5): the bot
+ * chain budget (BOT_CHAIN_TOKEN_BUDGET) then allows about 20 such rounds.
+ */
+export const AGENT_TURN_BUDGET_TOKENS = 10_000;
+/**
+ * A host-bridge tool call still running after this long is answered with a
+ * "moved to the background" result and keeps running; its result reaches the
+ * agent as a follow-up (P5). Below Codex's ~60 s MCP tool timeout, which ACP
+ * cannot raise — tools waiting for the user's approval or generating a video
+ * would otherwise be cut off (and their approval card cancelled).
+ */
+export const AGENT_BRIDGE_TOOL_DETACH_MS = 45_000;
 /** After SIGTERM to an agent's process group, SIGKILL follows after this long. */
 export const AGENT_KILL_GRACE_MS = 5_000;
 /** Cap of a partial (newline-less) agent stderr line kept between chunks. */

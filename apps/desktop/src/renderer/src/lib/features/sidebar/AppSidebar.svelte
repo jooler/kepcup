@@ -101,6 +101,12 @@
       : (conversation.bot?.name ?? conversation.directBotId ?? '');
   });
 
+  // D72 P5: the bot runs an external agent whose own history KepCup does not manage.
+  const deleteTargetUsesAgent = $derived.by(() => {
+    const conversation = chat.conversations.find((c) => c.id === deleteTargetId);
+    return (conversation?.bot?.profile.runtime.agent.id ?? '').length > 0;
+  });
+
   const plusBots = $derived.by(() => {
     const query = plusQuery.trim().toLowerCase();
     if (query.length === 0) return contacts.bots;
@@ -776,6 +782,11 @@
       <DialogTitle>{t('chats.deleteConversationTitle', { name: deleteTargetName })}</DialogTitle>
     </DialogHeader>
     <p class="text-sm text-muted-foreground">{t('chats.deleteConversationBody')}</p>
+    {#if deleteTargetUsesAgent}
+      <p class="text-xs text-muted-foreground" data-testid="conversation-delete-agent-note">
+        {t('contacts.deleteAgentNote')}
+      </p>
+    {/if}
     <DialogFooter>
       <Button
         variant="outline"

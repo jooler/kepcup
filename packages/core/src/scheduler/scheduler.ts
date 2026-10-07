@@ -1,4 +1,4 @@
-import { BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
+import { AGENT_DEFAULT_CONCURRENCY, BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 
 export interface SchedulerJob {
@@ -41,7 +41,12 @@ export class Scheduler {
 
   concurrencyFor(provider: string): number {
     const override = this.#concurrency[provider];
-    return Math.max(1, Math.min(16, override ?? this.#concurrency.default));
+    // External agents (`agent:{id}`, D72 P5) have their own default: each run
+    // is a whole agent session on the user's subscription.
+    const fallback = provider.startsWith('agent:')
+      ? AGENT_DEFAULT_CONCURRENCY
+      : this.#concurrency.default;
+    return Math.max(1, Math.min(16, override ?? fallback));
   }
 
   submit(job: SchedulerJob): void {
@@ -81,7 +86,11 @@ export class Scheduler {
           // (pino's sync write would become an unhandled rejection).
           try {
             this.#logger.error(
-              { key: job.key, provider: job.provider, error: error instanceof Error ? error.message : String(error) },
+              {
+                key: job.key,
+                provider: job.provider,
+                error: error instanceof Error ? error.message : String(error),
+              },
               'scheduled job failed',
             );
           } catch {
@@ -108,7 +117,8 @@ export class Scheduler {
   }
 
   static #runnable(job: QueuedJob, scheduler: Scheduler): boolean {
-    if (job.priority === 2 && scheduler.#backgroundActive >= BACKGROUND_LOOP_CONCURRENCY) return false;
+    if (job.priority === 2 && scheduler.#backgroundActive >= BACKGROUND_LOOP_CONCURRENCY)
+      return false;
     const active = scheduler.#providerActive.get(job.provider) ?? 0;
     return active < scheduler.concurrencyFor(job.provider);
   }

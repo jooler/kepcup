@@ -21,6 +21,7 @@ import {
   waitFor,
   waitForRun,
   writeFakeAgentScript,
+  type FakeAcpAgentHandle,
   type FakeAgentScript,
   type TestStack,
 } from '@kepcup/testkit';
@@ -47,7 +48,8 @@ async function startWithFakeAgent(script: FakeAgentScript) {
   const recordFile = path.join(dir, 'record.jsonl');
   writeFakeAgentScript(scriptFile, script);
   const stack = await createTestStack({
-    agentLaunch: (entry) => (entry.id === 'fake' ? fakeAcpAgentLaunch(scriptFile, recordFile) : null),
+    agentLaunch: (entry) =>
+      entry.id === 'fake' ? fakeAcpAgentLaunch(scriptFile, recordFile) : null,
   });
   stacks.push(stack);
   return { ...stack, record: () => readFakeAgentRecord(recordFile) };
@@ -76,9 +78,7 @@ async function steps(stack: TestStack, runId: string): Promise<RunStep[]> {
 }
 
 function payloadKeys(all: RunStep[], type: RunStep['type']): string[][] {
-  return all
-    .filter((s) => s.type === type)
-    .map((s) => Object.keys(s.payload as object).sort());
+  return all.filter((s) => s.type === type).map((s) => Object.keys(s.payload as object).sort());
 }
 
 describe('external agent engine (P1, fake agent)', () => {
@@ -110,7 +110,11 @@ describe('external agent engine (P1, fake agent)', () => {
       turns: [
         agentTurn()
           .text('我先查一下笔记。')
-          .toolCall('t1', 'Read notes.md', { name: 'Read', kind: 'read', input: { path: 'notes.md' } })
+          .toolCall('t1', 'Read notes.md', {
+            name: 'Read',
+            kind: 'read',
+            input: { path: 'notes.md' },
+          })
           .toolResult('t1', '答案：42')
           .text('查好了：答案是 42。'),
       ],
@@ -202,7 +206,7 @@ describe('external agent engine (P1, fake agent)', () => {
     expect(run.engine).toBe('agent:fake');
   }, 20_000);
 
-  it('a batch sent while the run is still preparing is re-delivered, not lost', async () => {
+  it('a batch sent while the run is still preparing joins its prompt, not lost (P5)', async () => {
     // Hold the run inside its preparation (memory retrieval embeds the query)
     // so the second batch lands between scheduling and run registration.
     let gate: (() => void) | null = null;
@@ -225,13 +229,15 @@ describe('external agent engine (P1, fake agent)', () => {
         });
       },
     };
+    const started: FakeAcpAgentHandle[] = [];
     const stack = await createTestStack({
       memoryEmbedder: embedder,
       env: { KEPCUP_PROFILE_CURATION_DELAY_MS: '60000' },
       agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
-      agentSpawn: fakeAgentSpawner({
-        fake: { turns: [agentTurn().text('第一条收到。'), agentTurn().text('第二条也收到。')] },
-      }),
+      agentSpawn: fakeAgentSpawner(
+        { fake: { turns: [agentTurn().text('两条都收到。')] } },
+        started,
+      ),
     });
     stacks.push(stack);
     await enableAgents(stack, ['fake']);
@@ -252,17 +258,24 @@ describe('external agent engine (P1, fake agent)', () => {
 
     await waitFor(
       async () =>
-        (await listRuns(stack.core, conv.id)).filter(
+        (await listRuns(stack.core, conv.id)).some(
           (r) => r.loopType === 'response' && r.status === 'completed',
-        ).length === 2
+        )
           ? true
           : null,
-      { label: 'two completed response runs' },
+      { label: 'completed response run' },
     );
+    // Not yet prompted: the batch rides along in the same prompt (one run).
+    const prompts = started[0]!.observed.prompts;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]!.text).toContain('第一条');
+    expect(prompts[0]!.text).toContain('第二条');
+    const runs = (await listRuns(stack.core, conv.id)).filter((r) => r.loopType === 'response');
+    expect(runs).toHaveLength(1);
     const botTexts = (await listMessages(stack.core, conv.id))
       .filter((m) => m.senderBotId === bot.id)
       .map((m) => ('text' in m.content ? m.content.text : ''));
-    expect(botTexts).toEqual(['第一条收到。', '第二条也收到。']);
+    expect(botTexts).toEqual(['两条都收到。']);
   }, 20_000);
 
   it('refuses the conversational setup interview for an external-agent bot', async () => {
@@ -306,7 +319,8 @@ describe('external agent capability injection (P2, host MCP bridge)', () => {
       ...bot.profile,
       runtime: { ...bot.profile.runtime, agent: { ...bot.profile.runtime.agent, capabilities } },
     };
-    return ((await stack.core.rpc.call('bots.update', { id: bot.id, profile })) as { bot: Bot }).bot;
+    return ((await stack.core.rpc.call('bots.update', { id: bot.id, profile })) as { bot: Bot })
+      .bot;
   }
 
   it('the agent calls send_message and remember through the bridge (prompt, steps, audit)', async () => {
@@ -339,7 +353,9 @@ describe('external agent capability injection (P2, host MCP bridge)', () => {
     const listed = (record.mcp[0]!.result as Array<{ name: string; description: string }>).map(
       (tool) => tool.name,
     );
-    expect(listed).toEqual(expect.arrayContaining(['send_message', 'skip_reply', 'remember', 'schedule']));
+    expect(listed).toEqual(
+      expect.arrayContaining(['send_message', 'skip_reply', 'remember', 'schedule']),
+    );
     for (const never of ['bash', 'read', 'write', 'request_access', 'delegate_task']) {
       expect(listed).not.toContain(never);
     }
@@ -362,7 +378,10 @@ describe('external agent capability injection (P2, host MCP bridge)', () => {
     const audit = stack.core.services
       .domain!.audit.listByConversation(conv.id, 50)
       .filter((entry) => entry.action === 'agent_bridge_tool_call');
-    expect(audit.map((entry) => entry.detail.toolName).sort()).toEqual(['remember', 'send_message']);
+    expect(audit.map((entry) => entry.detail.toolName).sort()).toEqual([
+      'remember',
+      'send_message',
+    ]);
     for (const entry of audit) {
       expect(entry).toMatchObject({ runId: run.id, botId: bot.id, conversationId: conv.id });
     }
@@ -412,14 +431,19 @@ describe('external agent capability injection (P2, host MCP bridge)', () => {
     await sendBatch(stack.core, conv.id, ['嗯']);
     const run = await waitForRun(stack.core, conv.id, 'completed');
     expect(run.error).toBeNull();
-    const botMessages = (await listMessages(stack.core, conv.id)).filter((m) => m.senderBotId === bot.id);
+    const botMessages = (await listMessages(stack.core, conv.id)).filter(
+      (m) => m.senderBotId === bot.id,
+    );
     expect(botMessages).toEqual([]);
   }, 30_000);
 
   it('a bot still in its setup interview runs on the built-in engine', async () => {
     const stack = await startWithFakeAgent({ turns: [agentTurn().text('不该由智能体回答')] });
     await enableAgents(stack, ['fake']);
-    const created = (await stack.core.rpc.call('bots.create', { profile: {}, interview: true })) as {
+    const created = (await stack.core.rpc.call('bots.create', {
+      profile: {},
+      interview: true,
+    })) as {
       bot: Bot;
     };
     expect(created.bot.setupState).toBe('interviewing');

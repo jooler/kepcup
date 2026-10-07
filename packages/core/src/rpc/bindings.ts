@@ -1018,11 +1018,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           inputTokens: number;
           outputTokens: number;
           costUsd: number | null;
+          agentId?: string;
+          turns?: number;
         }
       >();
       for (const entry of services.domain!.usage.entriesSince(since)) {
         const date = localDateKey(new Date(entry.createdAt), timeZone);
-        const key = `${entry.botId ?? ''}|${entry.loopType}|${date}`;
+        // D72 P5: external agents (subscription usage) get their own rows.
+        const agentId = entry.provider.startsWith('agent:')
+          ? entry.provider.slice('agent:'.length)
+          : null;
+        const key = `${entry.botId ?? ''}|${entry.loopType}|${date}|${agentId ?? ''}`;
         const bucket = buckets.get(key) ?? {
           botId: entry.botId,
           loopType: entry.loopType,
@@ -1030,9 +1036,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           inputTokens: 0,
           outputTokens: 0,
           costUsd: null,
+          ...(agentId !== null ? { agentId, turns: 0 } : {}),
         };
         bucket.inputTokens += entry.inputTokens;
         bucket.outputTokens += entry.outputTokens;
+        if (bucket.turns !== undefined) bucket.turns += 1;
         if (entry.costUsd !== null) bucket.costUsd = (bucket.costUsd ?? 0) + entry.costUsd;
         buckets.set(key, bucket);
       }

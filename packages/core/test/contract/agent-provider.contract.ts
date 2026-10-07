@@ -265,6 +265,8 @@ export function runAgentProviderContract(target: ContractTarget): void {
         toolCallId: 't1',
         toolName: 'Read',
         args: { path: 'README.md' },
+        // The status line shows the agent's title (P5).
+        title: 'Read README.md',
       });
       expect(events[3]!.payload).toEqual({
         toolCallId: 't1',

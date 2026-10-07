@@ -1,5 +1,6 @@
 import type { AgentCatalogEntry, AgentPermissionTier } from '@kepcup/shared';
 import type {
+  AcpAgentClientLike,
   AcpAgentLike,
   AcpAuthMethod,
   AcpByteChannel,
@@ -193,8 +194,25 @@ export interface AgentProvider {
       (params: Record<string, unknown>, ctx: ExtRequestContext) => Promise<Record<string, unknown>>
     >
   >;
-  /** 仅 shim 型 Provider：把私有协议进程包成进程内 ACP Agent（P5）。 */
-  connect?(proc: AgentProcess): AcpAgentLike;
+  /**
+   * `PromptResponse.usage`（ACP 不稳定字段）的口径（P5）：`session` = 会话
+   * 累计（规范字段注释所写，引擎按会话做差）；`turn` = 本次 prompt 的用量
+   * （claude-agent-acp 0.86.0 在 turn 激活时清零累计器；codex-acp 2.1.1 报
+   * `lastTokenUsage`）。缺省 `session`。
+   */
+  usageSemantics?: 'turn' | 'session';
+  /**
+   * 宿主桥工具调用超过多久转入后台（立即应答「仍在执行，结果稍后送达」，
+   * 结果作为 follow-up 注入，P5）；缺省 `AGENT_BRIDGE_TOOL_DETACH_MS`，null =
+   * 从不转入后台（确认 Agent 的 MCP 客户端不会超时时）。
+   */
+  bridgeToolDetachMs?: number | null;
+  /**
+   * 仅 shim 型 Provider（`transport:'shim'`）：把私有协议进程包成进程内 ACP
+   * Agent（P5）。`client` 是垫片向宿主发 `session/update`、权限请求等的一侧
+   * （ACP SDK 的 AgentSideConnection）。
+   */
+  connect?(proc: AgentProcess, client: AcpAgentClientLike): AcpAgentLike;
 }
 
 /** `provider` 字段 → Provider 模块。 */

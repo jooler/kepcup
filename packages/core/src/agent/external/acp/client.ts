@@ -4,10 +4,12 @@ import {
   PROTOCOL_VERSION,
   RequestError,
   type Agent,
+  type AgentSideConnection,
   type AuthMethod,
   type Client,
   type ContentBlock,
   type InitializeResponse,
+  type LoadSessionResponse,
   type McpServer,
   type NewSessionRequest,
   type NewSessionResponse,
@@ -15,6 +17,7 @@ import {
   type PromptResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
+  type ResumeSessionResponse,
   type SessionConfigOption,
   type SessionModeState,
   type SessionNotification,
@@ -44,6 +47,8 @@ export type AcpContentBlock = ContentBlock;
 export type AcpInitializeResponse = InitializeResponse;
 export type AcpMcpServer = McpServer;
 export type AcpNewSessionResponse = NewSessionResponse;
+export type AcpLoadSessionResponse = LoadSessionResponse;
+export type AcpResumeSessionResponse = ResumeSessionResponse;
 export type AcpPermissionOption = PermissionOption;
 export type AcpPromptResponse = PromptResponse;
 export type AcpSessionConfigOption = SessionConfigOption;
@@ -57,8 +62,32 @@ export type AcpRequestPermissionResponse = RequestPermissionResponse;
 export type AcpPermissionToolCall = ToolCallUpdate;
 /** 进程内垫片（shim 型 Provider）实现的 ACP Agent 接口。 */
 export type AcpAgentLike = Agent;
+/** 垫片看到的宿主一侧（发 session/update、权限请求、扩展通知）。 */
+export type AcpAgentClientLike = Pick<
+  AgentSideConnection,
+  'sessionUpdate' | 'requestPermission' | 'extNotification'
+>;
 
 export const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
+/**
+ * ACP steering 扩展请求（claude-agent-acp 0.86.0 / codex-acp 2.1.1 已实现，
+ * 由 `InitializeResponse._meta.steering.supported` 声明）：把消息注入进行中的
+ * turn。宿主固定 `idleBehavior:'promptRequired'`——没有进行中的 turn 时不得
+ * 另起 turn（run 外输出）。
+ */
+export const ACP_STEERING_METHOD = '_session/steering';
+
+/** Whether the agent advertises the steering extension (top-level `_meta`). */
+export function advertisesSteering(init: AcpInitializeResponse): boolean {
+  const steering = (init._meta as { steering?: unknown } | null | undefined)?.steering;
+  return (
+    steering === true ||
+    (typeof steering === 'object' &&
+      steering !== null &&
+      (steering as { supported?: unknown }).supported === true)
+  );
+}
+
 /** 认证状态扩展通知（Claude / Codex 未登录时推 `{authStatus:{kind:'none'}}`）。 */
 export const ACP_AUTH_STATUS_NOTIFICATION = '_auth/status_update';
 
@@ -251,7 +280,9 @@ export function selectPermissionOption(
 ): PermissionVerdict {
   const byWhitelist = (kind: 'allow_once' | 'reject_once', whitelist: readonly string[]) => {
     for (const id of whitelist) {
-      const option = options.find((candidate) => candidate.kind === kind && candidate.optionId === id);
+      const option = options.find(
+        (candidate) => candidate.kind === kind && candidate.optionId === id,
+      );
       if (option !== undefined) return option;
     }
     return undefined;
@@ -288,6 +319,12 @@ function unsupported(method: string): never {
 export class AcpConnection {
   readonly #options: AcpConnectionOptions;
   readonly #connection: ClientSideConnection;
+  /**
+   * Sessions being restored by `session/load`: the agent replays the whole
+   * history as `session/update`s, which belong to no run (design 28 §7「load
+   * 重放静音」) — dropped without a log line each.
+   */
+  readonly #muted = new Set<string>();
 
   constructor(options: AcpConnectionOptions) {
     this.#options = options;
@@ -333,6 +370,53 @@ export class AcpConnection {
     await this.#connection.closeSession({ sessionId });
   }
 
+  /**
+   * `session/load` (P5 会话复用): the replayed history is muted — the caller
+   * attaches its run only after the load returned.
+   */
+  async loadSession(request: {
+    sessionId: string;
+    cwd: string;
+    mcpServers: AcpMcpServer[];
+    _meta?: Record<string, unknown>;
+  }): Promise<AcpLoadSessionResponse> {
+    this.#muted.add(request.sessionId);
+    try {
+      return (await this.#connection.loadSession(request)) ?? {};
+    } finally {
+      // The replay precedes the response on the same ordered stream.
+      this.#muted.delete(request.sessionId);
+    }
+  }
+
+  /** `session/resume` (P5): restores the session without replaying it. */
+  async resumeSession(request: {
+    sessionId: string;
+    cwd: string;
+    mcpServers: AcpMcpServer[];
+    _meta?: Record<string, unknown>;
+  }): Promise<AcpResumeSessionResponse> {
+    this.#muted.add(request.sessionId);
+    try {
+      return await this.#connection.resumeSession(request);
+    } finally {
+      this.#muted.delete(request.sessionId);
+    }
+  }
+
+  /** `session/delete` (P5: conversation / bot deletion, best effort). */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.#connection.deleteSession({ sessionId });
+  }
+
+  /** Agent-side extension request (e.g. `_session/steering`). */
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.#connection.extMethod(method, params);
+  }
+
   async setMode(sessionId: string, modeId: string): Promise<void> {
     await this.#connection.setSessionMode({ sessionId, modeId });
   }
@@ -345,6 +429,7 @@ export class AcpConnection {
     const { agentId, provider, router, logger } = this.#options;
     return {
       sessionUpdate: (notification) => {
+        if (this.#muted.has(notification.sessionId)) return;
         if (router.deliver(notification)) return;
         const kind = notification.update.sessionUpdate;
         // Out-of-run output (autonomous turns, load replays, late chunks after
@@ -378,7 +463,12 @@ export class AcpConnection {
         }
         const { response, decision } = verdict;
         logger.info(
-          { agentId, sessionId: request.sessionId, toolCallId: request.toolCall.toolCallId, decision },
+          {
+            agentId,
+            sessionId: request.sessionId,
+            toolCallId: request.toolCall.toolCallId,
+            decision,
+          },
           'agent permission request decided',
         );
         router.notePermission(
