@@ -37,7 +37,7 @@ pi 返回的每次调用用量，结合模型价格元数据，写入用量账�
 ### 向量模型
 
 - 记忆检索需要向量模型（embedding），不属于对话模型，在「能力模型」的向量 section 配置（厂商 + 模型 + key），向量来源 section 决定用本地模型还是该配置。
-- 本地模型已钉型号（DEV-007 已落实）：`bge-small-zh-v1.5` ONNX 导出（512 维，约 90MB）+ `onnxruntime-node` 运行库（约 108MB），二者合成一张环境审批卡、按需下载到应用私有 `toolchains/`（不入安装包），GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，回退 CPU）。细节见 [16-capability-models.md](16-capability-models.md)「向量来源的本地实现」。
+- 本地模型已钉型号（DEV-007 已落实）：`jina-embeddings-v2-base-zh` q8 量化 ONNX 导出（768 维，中英双语，约 163MB）+ `onnxruntime-node` 运行库（约 114MB），二者合成一张环境审批卡、按需下载到应用私有 `toolchains/`（不入安装包），GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，回退 CPU）。细节见 [16-capability-models.md](16-capability-models.md)「向量来源的本地实现」。
 - 更换向量模型需要重建记忆的向量索引。
 
 ## 国内厂商与能力模型

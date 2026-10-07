@@ -60,11 +60,11 @@ describe('LocalEmbedder（未安装时）', () => {
     const embedder = new LocalEmbedder({
       modelDir: null,
       runtimeDir: null,
-      modelVersion: '1.5',
+      modelVersion: '2.0.0',
       accelerators: ['cpu'],
       logger: noop,
     });
-    expect(embedder.id).toBe('local:bge-small-zh-v1.5@1.5');
+    expect(embedder.id).toBe('local:jina-embeddings-v2-base-zh@2.0.0');
     expect(embedder.ready()).toBe(false);
     expect(embedder.dim).toBeNull();
     await expect(embedder.embed(['x'])).rejects.toMatchObject({ code: 'PROVIDER_UNAVAILABLE' });
