@@ -369,6 +369,11 @@ export const conversationSchema = z.object({
   bot: botSchema.nullable().optional(),
   unreadCount: z.number().optional(),
   runningBotIds: z.array(z.string()).optional(),
+  /**
+   * Present in list output: 该会话最后一条可预览文本消息的原文（左栏单行
+   * 预览的数据源）；渲染端按会话打开/消息事件继续维护同一字段。
+   */
+  lastMessageText: z.string().optional(),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
