@@ -342,6 +342,31 @@ export class MessagesService {
   }
 
   /**
+   * 每个会话最后一条可预览的文本消息（conversations.list 随列表一并下发，
+   * 左栏启动即有「最后一条消息」预览，不必逐个打开会话）。可见性口径与
+   * 渲染端 #noteLastMessage 对齐：text 且未撤回且正文非空。索引
+   * messages_conv_seq 让 group by + max(seq) 走一趟索引扫描。
+   */
+  latestTextByConversation(): Record<string, string> {
+    const rows = this.db
+      .prepare(
+        'select conversation_id, content_json, max(seq) from messages ' +
+          "where kind = 'text' and status != 'recalled' " +
+          // trim 的字符集对齐 JS 的 String#trim（ASCII 部分）：纯空白不算预览，
+          // 且它被排除后 max(seq) 落到上一条真实文本（与打开会话时的重建一致）。
+          "and coalesce(trim(json_extract(content_json, '$.text'), ' \t\n\r'), '') != '' " +
+          'group by conversation_id',
+      )
+      .all() as Array<{ conversation_id: string; content_json: string }>;
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      const content = JSON.parse(row.content_json) as { text?: string };
+      if (typeof content.text === 'string') result[row.conversation_id] = content.text;
+    }
+    return result;
+  }
+
+  /**
    * User messages strictly after `seq`, in order (19/D59 目录闸门放行：访谈
    * 首答与期间自由输入的消息在目录卡作答后一起作为触发批投递)。
    */

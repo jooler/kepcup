@@ -45,6 +45,16 @@ function append(rig: Rig, input: Parameters<MessagesService['append']>[0]): Mess
   return rig.messages.append({ conversationId: rig.conversationId, ...input });
 }
 
+/** 在 rig 上追加一个新会话（latestTextByConversation 的多会话用例）。 */
+let extraConversationCount = 0;
+function addConversation(rig: Rig): string {
+  const id = `conv_extra_${extraConversationCount++}`;
+  rig.db
+    .prepare("insert into conversations (id, type, last_seq, created_at) values (?, 'group', 0, ?)")
+    .run(id, 0);
+  return id;
+}
+
 describe('messages.listVisible（消息原则的存储层过滤）', () => {
   it('SQL 过滤与 isVisibleToUser 谓词在各类消息形态上一致', () => {
     const rig = makeRig();
@@ -156,6 +166,65 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
       append(rig, { senderType: 'system', kind: 'system_event', event: 'run_interrupted', text: '可见' });
       const visible = rig.messages.listVisible(rig.conversationId, { limit: 200 });
       expect(visible.map((m) => (m.content as { event?: string }).event)).toEqual(['run_interrupted']);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+});
+
+describe('latestTextByConversation（左栏「最后一条消息」预览）', () => {
+  it('每个会话取最后一条非空文本消息；卡/系统事件/撤回/空文本不进预览', () => {
+    const rig = makeRig();
+    try {
+      const other = addConversation(rig);
+      // 会话 1：文本 → 卡 → 系统事件（尾部非文本，预览停在文本）。
+      append(rig, { senderType: 'user', kind: 'text', text: '第一条' });
+      append(rig, { senderType: 'bot', kind: 'text', text: '**最后一条**' });
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'environment' });
+      append(rig, {
+        senderType: 'system',
+        kind: 'system_event',
+        event: 'run_interrupted',
+        text: '执行被中断',
+      });
+      // 会话 2：文本 → 撤回（回退到前一条）→ 空文本（跳过）。
+      append(rig, {
+        conversationId: other,
+        senderType: 'user',
+        kind: 'text',
+        text: '会话二的预览',
+      });
+      const recalled = append(rig, {
+        conversationId: other,
+        senderType: 'bot',
+        kind: 'text',
+        text: '会被撤回',
+      });
+      rig.db.prepare("update messages set status = 'recalled' where id = ?").run(recalled.id);
+      append(rig, { conversationId: other, senderType: 'user', kind: 'text', text: '   ' });
+      append(rig, { conversationId: other, senderType: 'user', kind: 'text', text: '\t\n' });
+
+      const result = rig.messages.latestTextByConversation();
+      expect(result[rig.conversationId]).toBe('**最后一条**');
+      expect(result[other]).toBe('会话二的预览');
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('没有任何文本消息的会话不出现在结果里', () => {
+    const rig = makeRig();
+    try {
+      const other = addConversation(rig);
+      append(rig, {
+        conversationId: other,
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'approval',
+      });
+      const result = rig.messages.latestTextByConversation();
+      expect(result[other]).toBeUndefined();
+      expect(result[rig.conversationId]).toBeUndefined();
     } finally {
       closeDatabase(rig.db);
     }

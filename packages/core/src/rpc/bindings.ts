@@ -470,9 +470,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => domain.lifecycle.deletionPreview(input.id),
     ),
 
-    'conversations.list': method(voidInput, conversationsListOutputSchema, async () => ({
-      conversations: domain.conversations.list().map(conversationView),
-    })),
+    'conversations.list': method(voidInput, conversationsListOutputSchema, async () => {
+      // 左栏预览（每个会话最后一条文本消息）随列表一并下发：启动时不逐个
+      // 打开会话也能看到「最后一条消息」。
+      const lastTexts = domain.messages.latestTextByConversation();
+      return {
+        conversations: domain.conversations.list().map((conversation) => {
+          const view = conversationView(conversation);
+          const text = lastTexts[conversation.id];
+          return text === undefined ? view : { ...view, lastMessageText: text };
+        }),
+      };
+    }),
     'conversations.get': method(
       conversationGetInputSchema,
       conversationGetOutputSchema,

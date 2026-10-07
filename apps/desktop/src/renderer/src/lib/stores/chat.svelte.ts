@@ -72,8 +72,9 @@ class ChatState {
   /** Evidence jump (P07 记忆标签页): flash + scroll to this message after select. */
   highlightMessageId = $state<string | null>(null);
   /**
-   * 左栏条目的「最后一条消息」单行预览：本会话内经消息事件/打开会话积累，
-   * 启动时无此数据则回退到会话 summary。
+   * 左栏条目的「最后一条消息」单行预览：启动时由 conversations.list 一并
+   * 下发（最后一条文本消息），之后经消息事件/打开会话增量维护；无文本
+   * 消息的会话回退到会话 summary。
    */
   lastMessageText = $state<Record<string, string>>({});
   #chat = $state<CurrentChat | null>(null);
@@ -209,10 +210,18 @@ class ChatState {
     this.conversations = result.conversations.filter(
       (c) => !(c.type === 'direct' && (c.bot == null || c.bot.status === 'deleted')),
     );
+    // 左栏「最后一条消息」预览：conversations.list 一并下发了库里的最后一条
+    // 文本消息，启动即有预览；之后仍由消息事件/打开会话增量维护（merge 保
+    // 持事件侧可能更新的值）。
+    const lastMessageText = { ...this.lastMessageText };
     for (const conversation of this.conversations) {
       this.runningByConversation[conversation.id] = conversation.runningBotIds ?? [];
       this.#lastSeqByConversation[conversation.id] = conversation.lastSeq;
+      if (conversation.lastMessageText !== undefined) {
+        lastMessageText[conversation.id] = conversation.lastMessageText;
+      }
     }
+    this.lastMessageText = lastMessageText;
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
