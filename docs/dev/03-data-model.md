@@ -528,7 +528,8 @@ CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id
 ```
 
 - 外部智能体会话复用（design 28 §7）：每个 (Bot, 对话, Agent) 至多一行。只存 id、无外键 / CASCADE。
-- P3 只建表、尚无写入方；P5 接入会话复用时须同时把「删除对话 / 删除 Bot / 停用或卸载 Agent」的清理接入 `lifecycle`（下方删除级联表）。
+- 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
+- 删除对话 / 删除 Bot / 移出群经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
 
 ## runs.db
 
@@ -647,7 +648,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该对话的 jobs | 取消 | P01 |
 | 所有 Bot 在该对话的 workspace 目录 | 删除 | P02 |
 | 该对话的 approvals（待确认的先取消）、grants | 删除 | P03 |
-| agent_sessions（外部智能体会话行；Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（P3 仅建表） |
+| agent_sessions（外部智能体会话行；尽力 `session/delete`，Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（`Orchestrator.agentSessionsOnConversationDeleted`） |
 | run_changes | 删除（project 文件与影子仓库不动） | P04 |
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
@@ -669,7 +670,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | `bots/{id}/` 整个目录（workspace、maintenance、memory.db、wiki、skills） | 删除 | P01 起，随各阶段补充 |
 | 该 Bot 的浏览器会话分区 `$KEPCUP_HOME/browser/Partitions/bot-{id}`（Cookie/localStorage/缓存等全部会话数据） | 删除（`browser.clearBotData`：关闭页面 → 清分区存储 → 删分区目录，并 tombstone 该 Bot） | P11 |
 | 该 Bot 的 approvals（待确认的先取消）、grants | 删除 | P03 |
-| 该 Bot 的 agent_sessions | 删除 | D72 P5（P3 仅建表） |
+| 该 Bot 的 agent_sessions（尽力 `session/delete`） | 删除 | D72 P5（`agentSessionsOnBotDeleted`；移出群同理 `agentSessionsOnGroupMemberRemoved`） |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
