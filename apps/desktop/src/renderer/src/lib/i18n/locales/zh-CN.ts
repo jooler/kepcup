@@ -11,6 +11,7 @@ export const zhCN = {
   'sidebar.header': '对话',
   'sidebar.chatsEmpty': '还没有对话，点右上角「+」开始',
   'sidebar.runningSuffix': '正在执行',
+  'sidebar.resizeHandle': '拖拽调节宽度，双击复位',
   'sidebar.userFallback': 'U',
   'sidebar.userName': '本地用户',
   'sidebar.userEmail': '本地账户',
@@ -888,7 +889,8 @@ export const zhCN = {
   'onboarding.sandboxDetected': '已检测：{backend}（{state}）',
   'onboarding.sandboxWizard': '打开沙箱准备向导…',
   'onboarding.botTitle': '认识你的管家',
-  'onboarding.botBody': '管家是你的固定入口：先聊几句了解你的需要，再帮你组建一支各管一摊的 Bot 团队。',
+  'onboarding.botBody':
+    '管家是你的固定入口：先聊几句了解你的需要，再帮你组建一支各管一摊的 Bot 团队。',
   'onboarding.butlerPoint.team': '根据你的工作与生活场景，提议 3~5 个领域 Bot，确认后自动创建',
   'onboarding.butlerPoint.route': '以后不确定该找谁时，直接问管家，它会帮你判断交给哪个 Bot',
   'onboarding.butlerPoint.quick': '想自己建 Bot，随时可以用侧栏的「＋」新建',

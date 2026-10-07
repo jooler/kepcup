@@ -13,6 +13,7 @@
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import AppSidebar from '$lib/features/sidebar/AppSidebar.svelte';
+  import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import ReconnectBanner from '$lib/features/shell/ReconnectBanner.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
@@ -132,7 +133,9 @@
     {#if core.connection === 'failed'}
       <CoreErrorPage />
     {:else}
-      <Sidebar.Provider>
+      <!-- 左栏宽度可拖拽调节：动态 --sidebar-width 经 style 覆盖套件默认值
+           （provider 的 style 拼在默认声明之后，后写胜出）。 -->
+      <Sidebar.Provider style={sidebarLayout.widthStyle}>
         <AppSidebar />
         <main class="flex min-h-0 min-w-0 flex-1 flex-col">
           {#if core.coreStatus?.status === 'locked'}
