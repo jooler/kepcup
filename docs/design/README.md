@@ -37,6 +37,7 @@
 | [25-capability-tools.md](25-capability-tools.md) | 能力补位工具：understand_image（图片理解）与 transcribe_audio（语音转写），缺配置走对话内设置引导 |
 | [26-voice-input.md](26-voice-input.md) | 输入坞语音化：按录转文字键与语音对话模式（音频附件 + 转写文本），16kHz PCM→WAV 录音管道，缺配置走对话内设置引导 |
 | [27-butler-and-delegation.md](27-butler-and-delegation.md) | 管家 Bot（唯一/置顶/不可删）与跨 Bot 委派 A→B：组队审批卡、路由、delegations、结果回贴（非 SubAgent） |
+| [28-external-agents-acp.md](28-external-agents-acp.md) | 外部智能体引擎（ACP）：设置页智能体目录（兼容 ACP Registry 条目）、Bot 在模型 / 智能体间选择、宿主能力按能力包可选注入、Provider 架构；本期 Claude Agent / Codex / OpenCode / DeepSeek Harness / Cursor / Google Antigravity（仅 key / Vertex 登录），ZCode（私有协议垫片，P0 评估可覆盖，preview）；补位能力原生优先；隔离让渡与条款边界（未实现） |
 | [29-connected-apps.md](29-connected-apps.md) | 连接应用（Connect apps）：第三方账号经远程 MCP + OAuth（MCP Authorization 规范、CIMD/DCR/预注册、系统浏览器 + loopback）授权给 Bot；Connector→Connection→Grant 模型、令牌本地加密、按工具风险分级审批与定义锁定、对话内连接卡；开放平台基座（MCP / MCP Apps / Agent Skills / Registry 子注册表、分级信任、开发者流程）（未实现） |
 
 ## 尚未讨论（暂不入文档）
@@ -87,7 +88,7 @@
 | D38 | 沙箱外执行 | 允许 Bot 申请，每次都需用户确认 |
 | D39 | 沙箱不可用时 | 降级为逐条确认模式，取代原先的“直接禁用” |
 | D40 | 只读命令白名单 | 逐条确认模式下豁免确认；严格匹配；不放宽访问范围；用户可自定义 |
-| D41 | 无人值守模式 | 用户确认危险提示后，所有待确认操作一律自动批准；全局开关，可定时关闭；全程审计 |
+| D41 | 无人值守模式 | 用户确认危险提示后，所有待确认操作一律自动批准；全局开关，可定时关闭；全程审计（D72 修订：沙箱外命令的自动批准 fail-closed——无法静态证明不触及应用数据目录的命令自动拒绝，见 13） |
 | D42 | 盲目批准的风险 | 由用户自行把握，产品不额外干预 |
 | D43 | 本机端口 | 对话绑定 project 时，沙箱命令可监听并访问本机端口 |
 | D44 | 浏览器工具 | 每个 Bot 默认具备，使用 Electron 内置 Chromium，每个 Bot 独立会话 |
@@ -118,5 +119,6 @@
 | D69 | 语音输入 | 输入坞右侧语音键（白圆 AudioLines）：**点击**开始录音、原位变「■+计时+点点」胶囊、再点停止并转文字填输入框（Esc 取消；60s 上限、500ms 下限）；有内容/队列时该位是发送键（出现逻辑不变），录音中打字则胶囊与发送键并列；未配置 asr 点击置起对话内设置卡；录音 16kHz PCM→WAV（软性采集约束 + OverconstrainedError 回退；worklet 以 `?url&no-inline` 同源资源加载——CSP 拦 blob:/data: 脚本），设备在设置页「硬件」分区选择；macOS TCC 授权门：askForMediaAccess 主动拉框、被拒深链系统设置。语音对话模式（按住发音频消息）暂缓、入口隐藏，设计保留在 26（见 26） |
 | D70 | Butler（管家） | 每用户唯一 `system_role='butler'`：置顶、不可删；访谈后 `propose_team` 审批卡 → 确定性批量 `bots.create`；工具 `propose_team` / `propose_bot` / `propose_group` / `suggest_route`（仅管家）+ `list_bots` / `delegate_to_bot`（所有 Bot）；审批 kind 单一 `butler_proposal`、非阻塞、无人值守不自动批；未知→管家、单域→直聊、多角色→群、留在本聊→委派；早期先路由卡，「你安排」再委派（见 27） |
 | D71 | 跨 Bot 委派 A→B | `delegate_to_bot` / `cancel_delegation` + `delegations` 表；B 收用户代发消息（`origin=delegation`「由 A 代你发出」），UI 留在 A；B 终回复截断~2000 贴回 A 为卡+链接，internal follow-up 禁止复述（feedback 首期不做）；B 忙 / 免打扰时排队（`submitted`），保证每个委派对应自己的 run；防环：首期一律单跳（执行时校验）、禁 A→B→A、禁委派给管家；同群降级 D4 `@`；**不是** D66 SubAgent（见 27） |
+| D72 | 外部智能体引擎（ACP） | 设置页「智能体」目录（条目与 ACP Registry 同构 + KepCup 扩展字段，随应用锁版本），用户启用 = 按需安装（npx / binary 校验 sha256 / 系统 CLI）+ 官方登录；Bot 运行配置在「模型 / 智能体」间选择（`runtime.agent`），选 Agent 时可设模型、权限档位与**注入的能力包**（默认 = Agent 原生没有的全部注入，`core` 必选；补位类能力**原生优先**——工具描述前缀 + `<tool_policy>` 让 Agent 先用自带工具，宿主语义类能力宿主优先）；`ExternalAgentEngine` 是 `AgentEngine` 第二实现，换 loop 不换 Bot；宿主能力经本机 MCP 桥（会话级 token、绑定当前 run）注入；Agent 原生文件 / 命令工具在其自身沙箱运行，权限请求分级进 `agent_tool` 审批卡（隔离让渡；永不 bypass；无 OS 沙箱的 Agent 命令逐条确认）；写入租约整 run 持有；每个 Agent 是一个 Provider（目录条目 + 差异模块 + 登记 + 契约测试），不支持 ACP 的以进程内垫片接入；本期 Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Google Antigravity（条款禁止第三方用个人 Google 账号登录，只开放 API key / Vertex / Enterprise），ZCode 经私有协议垫片接入（P0 评估可完整覆盖，`system` 来源、preview）；KepCup 不接触订阅凭据；Claude Agent 开发期按启用处理，是否随发行版发布由 `releaseGate` 在发行前决定（见 28） |
 | D73 | 连接应用 | 一个连接应用 = 一个 MCP server + 用户的一个账号授权，首选厂商官方远程 MCP + OAuth，本地 MCPB 为补充；授权完全遵循 MCP Authorization（PKCE、RFC 9728/8414/8707/9207，客户端身份按 预注册 → CIMD → DCR(native) → 手填），系统浏览器 + 本机 loopback 回调；令牌只存本机 `secrets`（`conn:{id}:tokens`、`oauth:client:{issuerHash}`），不进 LLM / 界面 / 外部智能体 / KepCup 服务器；Connector→Connection→Grant（`runtime.app_connection_ids`，同一 Bot 同一应用至多一个账号），工具 `app_{slug}_{tool}`；按注解（规范缺省值取严）分级 read 免审 / write 每次确认 / destructive 永远确认，「对该 Bot 总是允许」以 (Bot, Connection, 工具) 为键；工具定义首连展示并哈希锁定防 rug pull；（Bot, 对话）级污点收紧全部外发通道；运行时永不自行发起授权，缺连接 / 过期 / 权限不足走 `{kind:'connect-app'}` 对话内连接卡后 `runs.retry` 续跑；修订 D65（只读免审、autoApprove 不覆盖 destructive）、D41（destructive 不自动批）、D37（新增按 Bot 总是允许）；设置「MCP」并入「应用」分区（目录 / 已连接 / 自定义）（见 29） |
 | D74 | 开放平台基座 | 不发明协议：工具 MCP、界面 MCP Apps、用法 Agent Skills、元数据 Registry `server.json`、本地包 MCPB，KepCup 仅加 `_meta["app.kepcup/connector"]`；目录为 MCP Registry 子注册表，客户端消费 Ed25519 签名索引 + 打包快照；分级 builtin / verified / community / developer；服务端统一部署在 Cloudflare（`kepcup.com`；CIMD `https://kepcup.com/oauth/client.json` 用 Static Assets，子注册表 Workers + D1，索引 CI 离线 Ed25519 签名，网关 `workers-oauth-provider` + `createMcpHandler`）；开发者模式、`kepcup-app validate`、提交审核、MCP Apps 渲染与托管授权网关（URL 模式 elicitation，仅用于无法本地直连的平台）后续分期（见 29） |

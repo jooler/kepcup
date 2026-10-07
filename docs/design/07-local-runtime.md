@@ -43,7 +43,7 @@
 |---|---|---|
 | 自带 | 核心服务、数据库、内嵌 git 库（es-git）、`srt` 及其依赖（`rg`；Linux 上的 `bwrap`、`socat`）、Windows 的精简 Linux 根文件系统、浏览器工具（Electron 内置 Chromium） | 安装应用时 |
 | 首次启动 | 模型 API key、开机自启与通知权限、沙箱能力检测与一次性系统授权 | 首次启动引导，只询问必需项 |
-| 按需 | Python / Node 运行时、依赖包、git 命令行等工具、本地向量模型与 ONNX 运行库、增强沙箱 | 安装技能时解析依赖，或 Bot 执行中发现缺失（本地向量栈：首次记忆写入时由系统发起一张合并审批卡，含 `embedding-model` + `onnxruntime` 两个条目，型号与 GPU 选型见 [16-capability-models.md](16-capability-models.md)「向量来源的本地实现」） |
+| 按需 | Python / Node 运行时、依赖包、git 命令行等工具、本地向量模型与 ONNX 运行库、增强沙箱、外部智能体（ACP 适配器 / 厂商 CLI，用户在设置页「智能体」启用时安装，D72，见 [28-external-agents-acp.md](28-external-agents-acp.md)） | 安装技能时解析依赖，或 Bot 执行中发现缺失（本地向量栈：首次记忆写入时由系统发起一张合并审批卡，含 `embedding-model` + `onnxruntime` 两个条目，型号与 GPU 选型见 [16-capability-models.md](16-capability-models.md)「向量来源的本地实现」） |
 | 维护 | 环境体检、清理不再使用的运行时、应用升级时的数据迁移 | 启动时及定期 |
 
 首次启动时各平台的沙箱准备：

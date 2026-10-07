@@ -5,7 +5,7 @@
 - Bot 每一次响应都是一个独立的 loop。
 - 对话记录与执行 loop 分离：loop 的过程存入执行记录（Run），只有 Bot 发出的消息进入对话。
 - Loop 在该 Bot 专属于该对话的 workspace 中工作：`{bot_id}/workspaces/{conversation_id}/`；对话绑定了 project 时，处理用户文件默认在 project 中进行。
-- Loop 框架使用 pi，见 [09-tech-stack.md](09-tech-stack.md#agent-looppi)。
+- Loop 框架使用 pi，见 [09-tech-stack.md](09-tech-stack.md#agent-looppi)。Bot 也可选择外部智能体引擎（Claude Agent / Codex 等，经 ACP 驱动，D72）：本文的 mailbox、注入、执行记录、续接、发消息规则对两种引擎一致，差异（工具与隔离、提示词刷新粒度、用量）见 [28-external-agents-acp.md](28-external-agents-acp.md)。
 
 ## 并发：每个“Bot + 对话”一个串行队列
 

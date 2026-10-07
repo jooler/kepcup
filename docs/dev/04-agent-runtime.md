@@ -27,6 +27,64 @@
 - pi 的具体 API 名称以锁定版本的文档为准（**需验证**，P01）。发现与上表不符时，按 [README.md](README.md#偏差与问题) 记录，保持 `AgentEngine` 接口不变。
 - 工具参数 schema 使用 pi 要求的格式（**需验证**：当前为 TypeBox）。
 
+## 外部智能体引擎（ACP，D72，实现中）
+
+设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。实现位于 `core/src/agent/external/`（通用 ACP 部分 + `providers/` 下各智能体的差异模块），对外仍只暴露 `AgentEngine`（`RunSpec` 的可选扩展见 [02-architecture.md](02-architecture.md#agentenginepi-的封装)）。
+
+**进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）与 P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）已实现，均在实验开关下；steering / 会话复用 / 用量（P5）、`complete()`（P6）未完成——下表中这些行描述的是目标行为。
+
+P2 落地要点（文件）：
+
+- `capabilities.ts`：`buildExternalAgentTools` = `buildResponseTools` 结果 → 去掉 `NEVER_INJECTED_TOOLS` → 只留所属能力包被选中的工具（`resolveCapabilities`：`null` 用默认、`core` 恒在、管家恒含 `collaboration`；不属于任何包的工具不注入）→ 补位类描述加 `SUPPLEMENT_TOOL_DESCRIPTION_PREFIX`；`bridgeToolMeta` 给桥调用打 `capability` / `nativeOverlap`。
+- 桥 server 名按会话随机（`kepcup_<8hex>`，orchestrator 生成并用于提示词里的工具名映射）：用户 / 项目里同名的 MCP server 无法冒充宿主桥；权限放行与镜像抑制都要求结构化名指向本会话的桥、且是当前 run 注入的工具（Provider 钩子 `bridgeToolFromCall`）。工具名按 64 字符上限截断 + 哈希。代理环境下 `NO_PROXY` 自动并入回环地址。访谈中的 Bot 一律走内置引擎。Claude 从不用 `plan` 模式（会抑制 MCP 工具），只读档靠 `disallowedTools` 禁写入 / 执行类原生工具（档位映射见下方 P3 要点）。
+- `mcp-bridge.ts` `HostMcpBridge`：`127.0.0.1:0` 上的 Streamable HTTP MCP server，随 core 启停（启动失败只记日志，需要宿主工具的外部 run 以可读原因失败）；**无状态**（每个请求新建 MCP `Server` + transport，JSON 响应、不开 SSE，只收 POST）；`Host` 必须是 `127.0.0.1:{port}`、`Origin` 只认本机（否则 403）；token 按会话签发（256 bit，重签即吊销旧 token，伪造 / 过期 401），会话无绑定 run 时 403；`tools/call` 用 pi 的 `validateToolArguments` 校验参数，以 run 身份与取消信号构造 `ToolContext` 调原 `execute`，结果经 `tool-execution.ts`（与 PiEngine 共用：失败转结果、截断、图片判定）转 MCP content；`tools/list` 带 `readOnlyHint` / `destructiveHint`；每次调用写审计 `agent_bridge_tool_call`（`gateway.audit`，带 RunIdentity，参数超 2000 字符存截断摘要）；终止型工具（`skip_reply`）在响应发出、且同 run 进行中的其他桥调用都应答后才通知引擎。
+- `stdio-proxy.mjs`：stdio ↔ http 转发（Electron Node 运行，`KEPCUP_MCP_URL` / `KEPCUP_MCP_TOKEN` 环境变量），已实现与单测，尚未接线（本期智能体都支持 http MCP）。分发：core build 由 `scripts/copy-assets.mjs` 拷到 `dist/agent/external/`，打包时 `apps/desktop/scripts/dist.mjs` 拷到 `out/main/core-entry/`（bundle 同目录）并经 `asarUnpack` 解出；运行路径 `resolveStdioProxyPath()`（`stdio-proxy-path.ts`，相对模块 URL，`app.asar` → `app.asar.unpacked`，缺失返回 null）。
+- `engine.ts`：`session/new` 前绑定 run 与 token（Agent 建会话时就连接 MCP）；`mcpServers` 带 `{type:'http', name:'kepcup', url, headers:[Authorization]}`；桥的调用经 `AcpEventMapper.hostToolCall / hostToolResult` 成为与 pi 同形的步骤（同样在工具边界切中间说明），ACP 对 `kepcup` 工具的镜像更新按 Provider 的结构化名（`structuredToolName`：通用取 `name`，Claude 取 `_meta.claudeCode.toolName`，Codex 取 `rawInput.{server,tool}`）识别后丢弃；run 取消 / 结束时 abort 进行中的桥调用、解绑并吊销 token。
+- `system-prompt.ts`：`buildAgentSessionPrompt`（ACP 版平台规则——去掉 request_access / acquire_project_write / delegate_task，规则按实际注入的工具增减、工具名映射为 `mcp__kepcup__*`；管家规则；`<tool_policy>`；ACP 版附件阶梯；identity / persona / conversation_info〔不含时间〕）、`buildAgentToolPolicy`、`buildAgentRunContext`（`<current_time>`、画像 / 状态 / 记忆、`<project>`〔跳过 `provider.agentSideConfigFiles`〕、ACP 版 `<workspace>` / `<access>`〔权限档位 + 授权〕、Wiki / 技能）；orchestrator 以 `promptParts` 传入，引擎按 `instructionMode` 下发。
+
+P3 落地要点（文件）：
+
+- `permission-bridge.ts` `AgentPermissionBridge`（start.ts 装配，经 `ExternalAgentEngineDeps.permissions` 注入；`SessionSink.requestPermission` → `AcpSessionRouter.requestPermission` → `acp/client.ts` 异步应答，内部错误一律回 `cancelled`；未接权限桥的会话〔探测 / 测试连接 / 单测〕仍按 P1 默认拒绝）：
+  1. 本会话宿主桥工具（`hostBridgeToolOf`）→ 放行；
+  2. 按 `toolCall.kind` 分级：read / search → 读，edit / delete / move → 写，execute → 执行，fetch → 联网读取（`ask` 档弹卡，其余放行），think → 放行，switch_mode → 拒绝，其余 → 弹卡；路径取 `locations` 与 `rawInput.{file_path,path,…}`，命令取 `rawInput.command`（argv 的 `sh -c` 取脚本），永不看 `title`；
+  3. 路径优先级：工作目录（cwd + 本 run workspace）→ 技能目录（只读）→ 数据目录其余部分（拒绝，不弹卡）→ 网关 `checkPath`（已授权放行 / forbidden 拒绝 / 其余弹卡）；工作目录内 read_only 拒写、workspace 放行、ask 弹卡（已有授权放行）；路径先 `canonicalPath`（`..` 与符号链接）；
+  4. 执行：命令工作目录位于数据目录（workspace / 技能目录除外）→ 拒绝；只有 Provider 确认在其 OS 沙箱内（`hasOsSandbox`〔Windows 恒无〕+ `execSandboxed(toolCall)`）的命令才看只读白名单（D40）并在 workspace 档放行——Codex / 通用 Agent 的命令请求恒弹卡（只有「仅这一次」），read_only 一律拒绝；写入请求 Provider 声明 `writeSandboxed=false`（Codex）时即便路径在 cwd 内也弹卡，cwd 内 `.git/` 与 Agent 侧配置文件的写入也弹卡；网关 `needs_lease` 的路径拒绝（外部 run 的租约钉在 cwd 的 project 上，`ensureWriteLease({pin:true})`）；
+  5. 卡片 = `approvals.request(identity, 'agent_tool', payload, {signal: run 取消})`：run 进 waiting_approval、取消时应答 `cancelled`、无人值守按数据目录底线自动裁决；路径类批准按 duration 记 grants；
+  6. 选项：`selectPermissionOption` 只按 Provider 白名单（按数组顺序）选 allow_once / reject_once；allow 找不到可用选项降为 reject；从不选 allow_always 与切换模式的选项；
+  7. 每次裁决写审计 `agent_permission`（auto / approval / unattended）。
+- 档位：orchestrator 读 `runtime.agent.permission`，`effectiveAgentPermission` 在 Windows 把 workspace 降为 ask；`preview` 档默认 ask 由 Bot 配置界面设定。Claude：read_only / ask → `default`、workspace → `acceptEdits`；`_meta.claudeCode.options.sandbox = {enabled, failIfUnavailable: workspace, autoAllowBashIfSandboxed: workspace, allowUnsandboxedCommands: false, filesystem:{denyRead:[数据目录], allowRead:[workspace, 技能目录], denyWrite}}`（`isolationFor`）；白名单 `allow-once` / `reject`。Codex：workspace → `workspace-write`，read_only / ask → `read-only`（写入先发权限请求）；禁 `agent`（auto review）与 `agent-full-access`；命令请求一律视为沙箱外（`execSandboxed` 恒 false）；白名单 `allow_once` / `decline`→`reject_permissions`→`cancel`。
+- 模式守卫（engine `#applyTier`）：Provider 设模式经宿主包装——`FORBIDDEN_AGENT_MODES` 一律拒绝，记下档位落定的模式 / `mode` 配置值；会话仍处禁止模式则 `AGENT_INCOMPATIBLE`；`current_mode_update` / `config_option_update` 偏离 → `session/set_mode`（或 set_config_option）改回 + 审计 `agent_mode_reverted` + 状态行；同一 run 超过 5 次即中止。
+- orchestrator `#agentProjectGate`（project 绑定时、`startRun` 前）：project 根下有 `provider.agentSideConfigFiles` → `agent_tool`（kind `config`）确认卡，批准按（对话、Bot、Agent、project、配置内容哈希）记住（无人值守的自动批准不算），拒绝则 run 以可读原因 failed、不启动 Agent；档位可写 → `projects.ensureWriteLease(identity, project.path)`（排队时 waiting_lease），整 run 持有，结算照常 `releaseRun`（前后快照、改动卡、回退）；等待期间取消由 `cancelRun` 结算。
+
+P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
+
+- **结构化 setup**：`setupRequirementSchema` 增 `{kind:'agent', agentId, reason}`（`reason` ∈ `experimental_off / not_enabled / not_installed / auth_required / incompatible / unavailable / sandbox_unavailable`，shared `agent-status.ts`）。两个触发点：① run 开工前门禁 `agentRunGate`（`agent/external/catalog.ts`）——实验开关、目录、AgentsService 状态视图（`agentSetupReasonOf`：未启用 / 安装中或损坏 / `needs_auth` / 不兼容）；条目已不在目录中仍是普通失败；② 引擎失败结算——`outcome.error.code` 经 `agentSetupReasonForError` 映射（`AGENT_AUTH_REQUIRED` → auth_required、`AGENT_INCOMPATIBLE` → incompatible、`AGENT_UNAVAILABLE` → 本机状态原因或 `unavailable`〔如宿主工具桥未启动〕），`AGENT_SANDBOX_UNAVAILABLE`（Claude 沙箱起不来，`failIfUnavailable` 不降级）→ sandbox_unavailable（卡片给出 bubblewrap / socat 安装提示），其余失败（`AGENT_FAILED` / 进程退出）走普通失败横幅；run 已有模型 / 工具步骤或已发消息时一律普通失败（重试会整段重放）。失败先回写 `AgentsService.noteRunError`：需要登录的条目记为未登录（`needs_auth` 并推送 `agent.status`），下一次发消息即被门禁拦下、不再启动会话。`_auth/status_update` 的 `none` 经 `AgentHost.authStatus` 同样进入状态视图。
+- **设置卡**（desktop `chats/AgentSetupBody.svelte`，`SetupRequiredCard` 的 agent 分支）：内嵌设置页同一张 `settings/AgentCard.svelte`（`embedded`：启用 = 安装确认 / 登录 / API key / 测试连接）；实验开关关闭时先给「开启」按钮；Agent 状态首次加载后观察到的「不可用 → 可用」转变（`probing` 中的 ready 不算）或测试连接通过即 `chat.continueAfterSetup()`（同一失败 run 只自动重试一次，重试后被门禁扣下的草稿也发出）（失败路径 `runs.retry`，门禁路径冲草稿）。发送门禁 `chats/send-gate.ts` 与 core 共用 `agentSetupReasonOf`（Agent 视图未加载时只看启用开关；访谈期间恒按内置模型判定）。
+- **默认 Agent**：`settings.defaultAgentId`（onboarding「我有订阅」写入，设置 → 智能体可改）——没有默认主模型、实验开关打开且该 Agent 已启用时，`BotsService.create` 给未指定模型与 Agent 的新 Bot（含管家；对话式访谈除外）填 `runtime.agent.id`（预览档 `ask`，否则 `workspace`）。订阅分支下管家不进组队访谈（访谈只在内置引擎上跑）。
+- **后台 loop 最小兜底**（P6 前）：无内置模型时摘要、反思、记忆整理（仍做不经模型的过期失效）、画像整理、Wiki 巡检、技能生成在建 run 之前跳过并记 info 日志（job 记为 done、无失败 run、无错误事件）；群聊判断跳过 = 仅 @ / 回复响应；续接 L2 仲裁视为不续接；SubAgent 结果压缩原本即在无轻量模型时跳过。Wiki 入库（用户显式触发）仍以「未配置主模型」报错。
+
+| AgentEngine 能力 | ACP 机制 |
+|---|---|
+| 创建执行 | `AgentHost` 按智能体维护一个子进程（懒启动、空闲退出），一条连接多个会话；每个 run 取得 / 新建会话（cwd = project 或 workspace）后 `session/prompt` |
+| 系统提示词 | 会话级（ACP 版 `<platform_rules>`、`<tool_policy>`、identity、persona、conversation_info；当前时间放在 run 级段）：Claude `_meta.systemPrompt.append`；其他智能体为会话首个 prompt 的前置段（Codex / OpenCode 的配置环境变量是进程级）；`<platform_rules>` 只写实际注入能力包对应的规则；其余段落随每个 run 的 prompt 首块下发——**只能按 run 刷新**，不能每次请求刷新 |
+| `steer(text)` | Provider 声明支持（如 Claude / Codex）时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`，否则空闲时适配器会自开脱离 run 的 turn），异步被拒经 `onSteerRejected` 交还 pending steer；不支持时返回 `false` |
+| `abort(reason)` | `session/cancel` |
+| 工具 | `RunSpec.tools` 按 Bot 选择的能力包（`HOST_CAPABILITIES`，`core` 必选，默认 = 智能体原生没有的全部注入）过滤，并去掉与原生能力冲突的工具；补位类工具描述加「[补充能力]…优先使用自带能力」前缀，会话级提示词增 `<tool_policy>`（补位类原生优先、点名 Provider 声明的原生工具；宿主语义类宿主优先）（`read/write/edit/grep/find/ls/bash`、`request_access`、`request_unsandboxed`、`acquire_project_write`、`delegate_task`）后，经宿主 MCP 桥暴露（token 按会话签发、绑定当前 run，无 run 时拒绝）；调用照常经网关审批 / 审计 / `<untrusted>` / 截断（截断与图片判定从 pi 包装层抽为共用函数）；桥自己发 `tool_call` / `tool_result`（保留 `errorCode`），忽略 ACP 侧对这些工具的镜像更新 |
+| 原生工具权限 | `session/request_permission` → 权限桥（`mcp__kepcup__*` 直接放行；其余按 `toolCall.kind` + `locations` + Bot 权限档位）→ 自动放行 / `agent_tool` 审批卡 / 拒绝；只按 optionId 白名单选 `allow_once` / `reject_once`，不选 `allow_always` 与切换模式的选项 |
+| 执行步骤持久化 | `session/update` 映射为与 pi 同形的 `EngineEvent`：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（中间说明 D54 照常；带 `parentToolUseId` 的子代理调用不切分）；`tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`plan` → `progress`；`agent_thought_chunk` 不落库；无进行中 run 的更新（`session/load` 重放、自主 turn）丢弃 |
+| 结束判断 | `PromptResponse.stopReason`：`end_turn` → completed；`cancelled` → cancelled（`skip_reply` 引起的取消结算为不发最终文本的 completed）；`refusal` / `max_tokens` / `max_turn_requests` → failed |
+| 用量 | `PromptResponse.usage`（ACP 不稳定字段，按会话累计 → 做差得本 run 增量；缺失只记轮数）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算按轮数折算 |
+| 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`、临时 cwd），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验；仅外部后端时续接 L2 仲裁关闭 |
+| 模型 | `session/set_config_option`（`model` / `thought_level`），取自 `runtime.agent.model` / `runtime.agent.effort`，空则用智能体默认 |
+
+约束：
+
+- 精确锁定适配器版本；只用 ACP v1 稳定字段与已核对的 `_meta` 扩展（`systemPrompt`、`claudeCode.options`、`steering`）。
+- Claude 后端默认 `settingSources: []`：`project` 来源会加载仓库 `.claude/settings.json` 的 hooks（沙箱外执行）与 allow 规则（绕过权限桥）；project 的 CLAUDE.md 已由 `<project>` 段注入。
+- 永不使用 `bypassPermissions` / `auto` / `dontAsk` / `agent-full-access`；传 `allowDangerouslySkipPermissions: false`；`current_mode_update` 偏离档位时改回。
+- project 绑定且档位可写时，run 开工前显式取写入租约（现有租约是首次写工具调用时懒取的，外部智能体的写入不经网关）。
+- 不读取、不存储任何订阅凭据；`api-key` 认证方法的 key 存 secrets，按环境变量注入。
+
 ## Bot 如何发消息
 
 - **最终文本自动发送**：一次响应 loop 结束时，模型的最终文本作为一条 Bot 消息写入对话。

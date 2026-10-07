@@ -41,6 +41,8 @@ CREATE TABLE settings (
 
 已知键：`providers`（厂商与自定义接口配置，不含 key）、`models.default_main`、`models.default_light`、`provider_concurrency`、`unattended`（无人值守模式状态）、`notifications`、`embedding`、`webSearch`（联网检索供应商，P18：`{provider: 'tavily'|'brave'|'bocha'|null}`；key 不在此处，存 secrets）。
 
+外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent）。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
+
 ### secrets（P01）
 
 ```sql
@@ -72,6 +74,7 @@ CREATE TABLE bots (
 ```
 
 - 通讯录即 `status = 'active'` 的 Bot。
+- `profile_json.runtime.agent`（D72，无迁移）：`{id, model, effort, permission: 'read_only'|'workspace'|'ask', capabilities: string[]|null}`。`id = ''` = 内置 pi 引擎（默认，其余字段忽略）；非空 = 由智能体目录中该 Agent 驱动，`model` / `effort` 为空表示 Agent 默认，`capabilities = null` 表示跟随能力包默认值。P3 起运行时按 `permission` 生效（Windows 下 `workspace` 降为 `ask`，见 04-agent-runtime「P3 落地要点」）。
 - 后续列（增量迁移）：`setup_state TEXT`（0012，对话式新建访谈中 = `'interviewing'`）；`system_role TEXT`（0016，D70）——系统角色，目前只有 `'butler'`（管家），`bots_one_active_butler` partial unique index 保证至多一个 active 管家。**与 Profile 内 `role.{expertise,responsibilities}` 无关。** 管家不可删除（`lifecycle.deleteBot` 在任何级联前拒绝，`BOT_UNDELETABLE`）。
 - 删除 Bot 后保留这一行作为 id 占位：清空 `name`、`bio`、`avatar`、`profile_json`（写入 `{}`），`status = 'deleted'`。界面对已删除 Bot 显示其 id。
 
@@ -242,7 +245,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed）
+### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool）
 
 ```sql
 CREATE TABLE approvals (
@@ -250,7 +253,8 @@ CREATE TABLE approvals (
   kind            TEXT NOT NULL CHECK (kind IN (
                     'access', 'unsandboxed', 'command', 'git_remote',
                     'environment', 'skill_import', 'skill_preset',
-                    'profile_change', 'mcp_tool', 'butler_proposal')),
+                    'profile_change', 'mcp_tool', 'butler_proposal',
+                    'agent_tool')),
   bot_id          TEXT,
   conversation_id TEXT,
   run_id          TEXT,
@@ -268,6 +272,8 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 `skill_preset`（P19/D63）：payload `{presetId, name, displayName, summary, version, missingDeps}`——`install_skill` 的预置轻授权卡；`skill_import` 既有 payload（P08）不变，工具路径复用同一 kind（阻塞审批）。无人值守模式下两者同属自动批准类。
 
 `butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分（见 `butlerProposalPayloadSchema`）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）。
+
+`agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, projectPath?, configHash?}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：project 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、project 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -504,6 +510,26 @@ CREATE INDEX delegations_from_conversation ON delegations(from_conversation_id);
 - 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
 
+### agent_sessions（D72，迁移 0017；P5 起使用）
+
+```sql
+CREATE TABLE agent_sessions (
+  id                TEXT PRIMARY KEY,     -- ags_...
+  bot_id            TEXT NOT NULL,
+  conversation_id   TEXT NOT NULL,
+  agent_id          TEXT NOT NULL,        -- 目录 id（如 claude-acp）
+  agent_session_id  TEXT NOT NULL,        -- Agent 侧 ACP sessionId
+  fingerprint       TEXT NOT NULL,        -- 会话级参数指纹（提示词 / 能力集合 / 桥名 / 档位…），变化即新建
+  last_run_id       TEXT,
+  last_used_at      INTEGER NOT NULL,
+  created_at        INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id, agent_id);
+```
+
+- 外部智能体会话复用（design 28 §7）：每个 (Bot, 对话, Agent) 至多一行。只存 id、无外键 / CASCADE。
+- P3 只建表、尚无写入方；P5 接入会话复用时须同时把「删除对话 / 删除 Bot / 停用或卸载 Agent」的清理接入 `lifecycle`（下方删除级联表）。
+
 ## runs.db
 
 ### runs（P01）
@@ -527,6 +553,9 @@ CREATE TABLE runs (
   summary              TEXT,
   continued_from_run_ids_json TEXT,    -- 续接来源 run id 列表（Loop 续接，design/02）；null＝无续接
   error_json           TEXT,           -- {message, setup?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空
+  parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
+  engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
+  agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
   created_at           INTEGER NOT NULL,
   started_at           INTEGER,
   ended_at             INTEGER
@@ -534,6 +563,8 @@ CREATE TABLE runs (
 CREATE INDEX runs_by_conv ON runs(conversation_id, created_at);
 CREATE INDEX runs_by_bot ON runs(bot_id, created_at);
 ```
+
+- 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 
 ### run_steps（P01）
 
@@ -616,6 +647,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该对话的 jobs | 取消 | P01 |
 | 所有 Bot 在该对话的 workspace 目录 | 删除 | P02 |
 | 该对话的 approvals（待确认的先取消）、grants | 删除 | P03 |
+| agent_sessions（外部智能体会话行；Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（P3 仅建表） |
 | run_changes | 删除（project 文件与影子仓库不动） | P04 |
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
@@ -637,6 +669,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | `bots/{id}/` 整个目录（workspace、maintenance、memory.db、wiki、skills） | 删除 | P01 起，随各阶段补充 |
 | 该 Bot 的浏览器会话分区 `$KEPCUP_HOME/browser/Partitions/bot-{id}`（Cookie/localStorage/缓存等全部会话数据） | 删除（`browser.clearBotData`：关闭页面 → 清分区存储 → 删分区目录，并 tombstone 该 Bot） | P11 |
 | 该 Bot 的 approvals（待确认的先取消）、grants | 删除 | P03 |
+| 该 Bot 的 agent_sessions | 删除 | D72 P5（P3 仅建表） |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
