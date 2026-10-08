@@ -277,6 +277,15 @@ export function buildResponseTools(input: {
     },
   };
 
+  // D75 §2.4.3 / §2.4.5: the conversation as this run's bot sees it — shared
+  // rows plus its own private task_event rows; a task reads shared rows only
+  // (it never sees its bot's other task round-trips). Message tools render
+  // task entries in full: they are how the model fetches text the recent
+  // window truncates.
+  // (`string` widening: core's LoopType gains 'task' with the task layer, W1-A.)
+  const loopType: string = identity.loopType;
+  const viewerBotId = loopType === 'task' ? null : identity.botId;
+
   const searchMessages: ToolDefinition<{ query: string; limit?: number }> = {
     name: 'search_messages',
     description: '按关键词搜索当前对话中的历史消息。',
@@ -289,10 +298,11 @@ export function buildResponseTools(input: {
         return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
       }
       const found = deps.messages.search(identity.conversationId, params.query, {
+        viewerBotId,
         limit: Math.min(50, params.limit ?? 20),
       });
       if (found.length === 0) return { ok: true, content: '没有找到匹配的消息。' };
-      const lines = found.map((m) => renderMessageLine(m, deps.renderOptions));
+      const lines = found.map((m) => renderMessageLine(m, deps.renderOptions, 'full'));
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
     },
   };
@@ -309,12 +319,17 @@ export function buildResponseTools(input: {
         return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
       }
       const anchor = deps.messages.getById(params.message_id);
-      if (!anchor || anchor.conversationId !== identity.conversationId) {
+      if (
+        !anchor ||
+        anchor.conversationId !== identity.conversationId ||
+        // Another bot's private row answers exactly like a missing one.
+        (anchor.ownerBotId !== null && anchor.ownerBotId !== viewerBotId)
+      ) {
         return { ok: false, content: '消息不存在或不属于当前对话', errorCode: 'NOT_FOUND' };
       }
       const n = Math.max(1, Math.min(20, Math.floor(params.n ?? 5)));
-      const around = deps.messages.around(identity.conversationId, anchor.seq, n);
-      const lines = around.map((m) => renderMessageLine(m, deps.renderOptions));
+      const around = deps.messages.around(identity.conversationId, anchor.seq, n, viewerBotId);
+      const lines = around.map((m) => renderMessageLine(m, deps.renderOptions, 'full'));
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
     },
   };
