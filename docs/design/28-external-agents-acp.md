@@ -25,8 +25,12 @@
 > - 每次请求前刷新系统提示词「降级」→ **仅任务内降级**，对话轮（人设 / 画像 / 记忆 / Wiki 目录 / Skills）逐轮刷新；
 > - 人设 / 记忆 / 对话上下文 / 群聊 / 委派 / 审批「保留」→ 不再依赖提示词注入的保真度，它们本就运行在内置的对话轮里；
 > - `features.parallelSessions`（**D72 已实现**，2026-10-08）：指同一 Agent 进程里**多个会话**能否同时有 prompt 在途（AgentHost 让同一 Agent 的会话共用一个进程）；「每会话同一时刻一个 prompt」是所有 ACP Agent 的通用行为，与此无关。按锁定版本源码实证：Claude / Codex / OpenCode / DeepSeek Harness 为 true；Cursor（闭源，随包 JS 看似支持但从严）、Antigravity 与通用 ACP 为 false（见 §9.2）；false 的 Agent 并发恒为 1（用户覆盖也钳到 1）、不跑后台任务——D75 的任务并发同样以此为上限；
-> - steering 不支持时 `inject_task` 返回 `queued`（沿用 pending steer）；取消不杀进程，重启优先走会话复用（冷启动有实测代价）；
-> - 无内置模型的用户：对话轮经 `complete()` 跑，或退化为「永远一个任务、新指令排队」——**明确是降级**。
+> - steering 不支持时 `inject_task` 返回 `queued`；异步拒绝（`onSteerRejected`）同样把该条注入记为 `queued`（任务卡显示「未送达」），对话轮可改用 `cancel_task` + `start_task({continues_task_id})`；取消 = `session/cancel`、不杀进程，重启优先走会话继承（冷启动有实测代价）；
+> - **会话按任务分**（main 迁移 0019）：`agent_sessions` 唯一键加 `task_id`（`''` = 非任务 run 的行），每个任务独占会话行、桥 token 与已见记录；任务行的会话键 = `bot:conv:agent:task:{会话行 id}`——键随会话行而不是任务 id，继承只改行的 `task_id`、键与 token 随行沿用（待确认，见 DEV-010）。`continues_task_id` 在旧任务执行结束后单条 `UPDATE` 继承其行，指纹不符照旧新建；仍在执行（含被 reaper 驱逐、尚未退场）的旧任务的会话不被继承。结算后的任务会话保留 `CONTINUATION_WINDOW_MS`（30 分钟），之后由 reaper `session/close` 并删行。任务的对话增量只取共享行；被确认的注入与 `forward_task_result` 原文转发的消息记为该会话已见。
+> - 只读任务强制 `read_only` 档；任务 cwd = `task_workdir`，写任务的租约由任务层在启动前取得；workdir 为 workspace 的任务不注入 `<project>` 段，其沙箱外命令若触及未持租约的 project 一律拒绝（不弹卡）。
+> - 并发：`agent:{id}` 的名额全归任务——不为回复预留、回复也不借用；任务层另按 `agent:{id}` 封顶启动，超出的停在 submitted（「等智能体并发额度」）。
+> - 无内置模型的用户：只实现「关闭路由判断」一级——对话轮不调模型、宿主确定性路由：结果原文转发，新消息注入进行中的任务、注入没送达就另起任务，没有进行中的任务就派一个；经 `complete()` 跑对话轮未实现（待确认，见 DEV-011）。**明确是降级**。
+> - 外部智能体任务没有 `ask_user`（不在任何能力包内）；D56 回放随自动续接一并移除，任务之间只有 `continues_task_id` 的显式回放。
 >
 > 见 [30 §8](30-supervisor-and-tasks.md#8-外部智能体引擎d72-的化简与约束)。
 
@@ -232,7 +236,7 @@ interface AgentCatalogEntry {
 
 ## 7 会话、事件与执行记录
 
-- **会话复用**（P5 已实现）：每个（Bot, 对话, Agent）至多一个会话，记录在 `agent_sessions`；上一 run 结束不超过 `CONTINUATION_WINDOW_MS`（30 分钟）且会话指纹（会话级提示词、cwd、权限档位、模型 / effort、注入能力与工具集合、桥 server 名）不变时复用：会话留在 Agent 进程里，下一个 run 依次尝试同进程直接复用 → `session/resume` → `session/load`（重放静音）→ 新建；复用 / 恢复时只发增量消息 + 触发段 + run 级动态段，新建则完整上下文 + D56 回放。桥 server 名由会话行 id 派生（换会话即换名），桥 token 随会话（建立 / 恢复时签发、复用时沿用、每个 run 重新绑定，会话被替换 / 删除 / 中毒 / 进程退出时吊销）。只有档位已设定、prompt 已发出且未中毒的会话才保留；复用前重设期望模式（会话设置调用有超时上限，期间会话已归本 run、并发的删除在释放时执行，复核被拒而期间已被删除则不再新建）；`session/new` / `resume` / `load` 同样有上限（`AGENT_SESSION_OPEN_TIMEOUT_MS`，120 s：恢复不应答 → 会话中毒，新建不应答 → 晚到的会话被关闭），run 外偏离期望模式的变化即弃用该会话（重复期望模式的通知不算）；增量只含会话没见过的消息（按 `baseCutoff` + 单独展示过的消息记账，应用重启后不复用）。KepCup 的消息与 `run_steps` 始终是事实来源。
+- **会话复用**（P5 已实现；**D75 修订**：会话按任务分、`continues_task_id` 继承，见 §1 修订注与 [30 §8.5](30-supervisor-and-tasks.md#85-外部-agent-会话按任务分修订-d72-的会话复用)——下文「每个（Bot, 对话, Agent）至多一个会话」「新建则完整上下文 + D56 回放」是 D72 期的形态）：每个（Bot, 对话, Agent）至多一个会话，记录在 `agent_sessions`；上一 run 结束不超过 `CONTINUATION_WINDOW_MS`（30 分钟）且会话指纹（会话级提示词、cwd、权限档位、模型 / effort、注入能力与工具集合、桥 server 名）不变时复用：会话留在 Agent 进程里，下一个 run 依次尝试同进程直接复用 → `session/resume` → `session/load`（重放静音）→ 新建；复用 / 恢复时只发增量消息 + 触发段 + run 级动态段，新建则完整上下文 + D56 回放。桥 server 名由会话行 id 派生（换会话即换名），桥 token 随会话（建立 / 恢复时签发、复用时沿用、每个 run 重新绑定，会话被替换 / 删除 / 中毒 / 进程退出时吊销）。只有档位已设定、prompt 已发出且未中毒的会话才保留；复用前重设期望模式（会话设置调用有超时上限，期间会话已归本 run、并发的删除在释放时执行，复核被拒而期间已被删除则不再新建）；`session/new` / `resume` / `load` 同样有上限（`AGENT_SESSION_OPEN_TIMEOUT_MS`，120 s：恢复不应答 → 会话中毒，新建不应答 → 晚到的会话被关闭），run 外偏离期望模式的变化即弃用该会话（重复期望模式的通知不算）；增量只含会话没见过的消息（按 `baseCutoff` + 单独展示过的消息记账，应用重启后不复用）。KepCup 的消息与 `run_steps` 始终是事实来源。
 - **run 之外的输出**：`session/load` / `session/resume` 的重放静音；无进行中 run 时收到的更新丢弃并记日志，桥同时拒绝工具调用；Claude 以进程级 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON` 关闭会在 run 外自主触发 turn 的后台任务与定时任务。
 - **事件映射**：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（带 `parentToolUseId` 的子代理内部调用与文本不切分、不落步骤，只进状态行；状态行文案取 `tool_call.title`）；原生 `tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`agent_thought_chunk` 不落库；`plan` → `progress`；`stopReason`：`end_turn`→completed、`cancelled`→cancelled（`skip_reply` 例外）、`refusal`/`max_tokens`/`max_turn_requests`→failed。
 - **steering**：prompt 进行中且 Provider 声明支持时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），应答 `injected` 才算送达；被拒、出错或 Agent 无视 `promptRequired` 自开新 turn（codex-acp 2.1.1，宿主立即取消该 turn）都经 `onSteerRejected` 交还 pending steer，在 run 结束后续投；不支持时直接回落。prompt 发出前 / 后台工具 follow-up 之前到达的消息并入下一个 prompt。每会话同一时刻只允许一个 prompt 的 Agent（如 DeepSeek Harness）只能回落。
