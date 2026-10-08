@@ -132,4 +132,53 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 
 ## 6. 基线
 
-（调度会话在 `d75@7138daf` 上的容器全量结果，见下方追加。）
+容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。
+
+| 文件 | 失败数 |
+|---|---|
+| `packages/core/test/sandbox/sandbox-isolation.test.ts` | 10 |
+| `packages/core/test/integration/projects.test.ts` | 6 |
+| `packages/core/test/integration/skills-authoring.test.ts` | 4 |
+| `packages/core/test/integration/env-distro-toolchain.test.ts` | 3 |
+| `packages/core/test/integration/skills.test.ts` | 3 |
+| `packages/core/test/integration/workspace-tools.test.ts` | 3 |
+| `packages/core/test/sandbox/toolchain-sandbox.test.ts` | 2 |
+| `packages/core/test/integration/wiki-url.test.ts` | 2 |
+
+<details><summary>逐条清单</summary>
+
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) blocks reading ~/.ssh, ~/.aws and the data home database from inside the sandbox
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) denies reading arbitrary locations of the user home from inside the sandbox
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) blocks writing outside the workspace
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) keeps the two workspaces of the test suite isolated from each other
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) reports violations for denied file reads
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) kills the whole process tree on timeout and leaves no leftovers
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) aborts the running command when the abort signal fires
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) points package-manager caches into the app cache directory
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) network modes denies loopback, intranet and metadata addresses in every mode
+- packages/core/test/sandbox/sandbox-isolation.test.ts :: sandbox escape cases (P02 安全用例集) network modes reaches the internet in open mode but not in none/allowlist modes without the domain
+- packages/core/test/sandbox/toolchain-sandbox.test.ts :: toolchain sandbox cases (P06) executes an installed toolchain binary inside the sandbox via the PATH prefix
+- packages/core/test/sandbox/toolchain-sandbox.test.ts :: toolchain sandbox cases (P06) keeps the toolchains directory read-only inside the sandbox
+- packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） node：linux 产物 → 校验 → 移入发行版 → 行 rel_path 为发行版 bin → 前缀注入
+- packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） 发行版未就绪：行 failed 且不产生任何提取/验证调用
+- packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） 发行版行的 remove 走 removeDir（发行版内删除）
+- packages/core/test/integration/projects.test.ts :: projects (P04) serializes writes of two conversations on one project; the second waits with waiting_lease
+- packages/core/test/integration/projects.test.ts :: projects (P04) blocks bash writes without the lease and allows them after acquire_project_write
+- packages/core/test/integration/projects.test.ts :: projects (P04) summarizes command-made changes, diffs them and reverts the whole run (with conflict detection)
+- packages/core/test/integration/projects.test.ts :: projects (P04) allows localhost ports in project conversations and blocks them otherwise
+- packages/core/test/integration/projects.test.ts :: projects (P04) blocks switching projects while a bot is executing
+- packages/core/test/integration/projects.test.ts :: projects (P04) force revoke closes the holder window: each run keeps its own changes (BR-P04-001)
+- packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 成功路径：验证通过 → active + 通知消息；草稿目录不在仓库历史中
+- packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 启用 + 通知
+- packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 改进已有自建技能：生成 loop 携 <existing_skill> 当前版本，全程产出新版本（BR-P08-009⑤）
+- packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 改进已有自建技能 → 新版本提交；skills.rollback 只动目标技能、失败回滚不脏工作区（BR-P08-002）
+- packages/core/test/integration/skills.test.ts :: P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执行 下一次执行：提示词出现技能描述；模型读 SKILL.md 并沙箱执行脚本
+- packages/core/test/integration/skills.test.ts :: P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执行 沙箱内写技能目录失败（只读）
+- packages/core/test/integration/skills.test.ts :: P08 Skills：多技能仓库列出候选；ref 锁定 ref 指定分支/标签：锁定对应提交而非默认分支 tip；不存在的 ref 报错（BR-P08-001）
+- packages/core/test/integration/wiki-url.test.ts :: P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具） HTML 页面抓取后转 markdown 入 raw/，维护 loop 写页面并提交
+- packages/core/test/integration/wiki-url.test.ts :: P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具） allowlist 网络策略下非名单内主机直接拒绝（任务失败，无抓取）
+- packages/core/test/integration/workspace-tools.test.ts :: workspace and coding tools writes a script, executes it in the sandbox and reads the output
+- packages/core/test/integration/workspace-tools.test.ts :: workspace and coding tools records exec and fs_write entries in audit_log
+- packages/core/test/integration/workspace-tools.test.ts :: workspace and coding tools surfaces sandbox violations inside the bash tool result step
+
+</details>
