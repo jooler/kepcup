@@ -260,7 +260,10 @@ describe('D75 task layer (TaskHost)', () => {
       sourceMessageIds: [],
       writes: true,
     });
-    expect(w1.state).toBe('running');
+    // W1 still takes its write lease when start returns: its true state is
+    // submitted (审查 LOW-7); w2 waits behind w1.
+    expect(w1.state).toBe('submitted');
+    expect(w1.queueReason).toContain('写入租约');
     expect(w2.state).toBe('submitted');
     expect(w2.queueReason).toContain(`等写入租约（任务 ${w1.taskId} 持有）`);
     expect(runOf(stack, w1.taskId).taskWorkdir).toBe(runOf(stack, w2.taskId).taskWorkdir);
