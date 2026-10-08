@@ -8,6 +8,8 @@ Journal 与 resume 落在 KepCup 自有 `runs` / `run_steps` 与工具网关之�
 
 ## 决策
 
+> **D75 修订**：durable / ephemeral 的分级对象由「响应 run」改为「**任务**」——对话轮一律 ephemeral（秒级，崩溃即中断、不恢复），需要 journal 与工具 replay 的本来就是长任务。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
+
 - **D67 长任务崩溃恢复**：Host Durable Journal。run 分两级——**ephemeral**（默认；崩溃仍走 `orchestrator.recoverInterrupted`，标 `interrupted`、对话提示、取消未决审批，**不**自动继续，即 D49，适用范围收窄到这一级）与 **durable**（长任务；启动扫描后按 journal + 工具 `replay` 策略 resume）。不把 `@earendil-works/pi-durable` 定为全体 Bot Runtime。续跑中的新消息仍走 D2 soft steer（`<new_messages>`）。群聊不因崩溃重跑整轮 triage，只恢复已升为 durable 的成员 run。
 
 ## 1 与 D49 的关系
