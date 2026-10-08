@@ -212,6 +212,7 @@ export function buildResponseTools(input: {
   const { identity, deps } = input;
   const { gateway } = deps;
 
+  const isTask = identity.loopType === 'task';
   const sendMessage: ToolDefinition<{
     text: string;
     mention_bot_ids?: string[];
@@ -221,11 +222,16 @@ export function buildResponseTools(input: {
     name: 'send_message',
     description:
       '在当前对话中发送一条消息（用于中途同步进展、确认收到）。最终回复无需调用本工具，直接结束即可。可通过 attachment_paths 附带 workspace 中的文件。',
+    // A task cannot @ group members (D75 §6.2): the parameter is not offered.
     parameters: Type.Object({
       text: Type.String({ description: '要发送的消息内容' }),
-      mention_bot_ids: Type.Optional(
-        Type.Array(Type.String(), { description: '要 @ 的 Bot id（群聊）' }),
-      ),
+      ...(isTask
+        ? {}
+        : {
+            mention_bot_ids: Type.Optional(
+              Type.Array(Type.String(), { description: '要 @ 的 Bot id（群聊）' }),
+            ),
+          }),
       reply_to: Type.Optional(Type.String({ description: '引用回复的消息 id' })),
       attachment_paths: Type.Optional(
         Type.Array(Type.String(), { description: '附件路径（workspace 内的文件）' }),
@@ -241,11 +247,24 @@ export function buildResponseTools(input: {
       }
       const uploaded = [];
       for (const filePath of params.attachment_paths ?? []) {
+        // Only a path this run may read right now: a grantable one (outside the
+        // workspace / project, sensitive locations) is never read and uploaded
+        // without the user's approval (审查 pre-existing HIGH).
         const decision = gateway.checkPath(identity, filePath, 'read');
         if (decision.kind === 'forbidden') {
           return {
             ok: false,
             content: `附件不在可访问范围内：${filePath}（${decision.reason}）`,
+            errorCode: 'PATH_OUT_OF_SCOPE',
+          };
+        }
+        if (decision.kind !== 'allowed') {
+          return {
+            ok: false,
+            content:
+              identity.loopType === 'turn'
+                ? `附件不在授权范围内：${filePath}（${decision.reason}）。需要发送它请派任务（start_task），在任务里先用 request_access 申请读取。`
+                : `附件不在授权范围内：${filePath}（${decision.reason}）。先用 request_access 申请读取该路径，用户批准后再发送。`,
             errorCode: 'PATH_OUT_OF_SCOPE',
           };
         }
@@ -267,6 +286,9 @@ export function buildResponseTools(input: {
           };
         }
       }
+      // D75 §6.2: a task is no group member — it never @-mentions bots (no
+      // chain either; chain budgets count turns only).
+      const mentionIds = isTask ? [] : (params.mention_bot_ids ?? []);
       const message = deps.messages.append({
         conversationId: identity.conversationId,
         senderType: 'bot',
@@ -274,10 +296,10 @@ export function buildResponseTools(input: {
         kind: 'text',
         text: params.text,
         replyTo: params.reply_to ?? null,
-        mentions: params.mention_bot_ids ?? [],
+        mentions: mentionIds,
         runId: identity.runId,
         // D75 §6.1: a task's messages are progress, attributed to the task.
-        ...(identity.loopType === 'task' ? { taskOrigin: { taskId: identity.runId } } : {}),
+        ...(isTask ? { taskOrigin: { taskId: identity.runId } } : {}),
       });
       if (uploaded.length > 0)
         deps.attachments.attachToMessage(
@@ -286,7 +308,6 @@ export function buildResponseTools(input: {
         );
       deps.onBotMessage(message);
       const note = uploaded.length > 0 ? `，附件 ${uploaded.length} 个` : '';
-      const mentionIds = params.mention_bot_ids ?? [];
       const chainNote =
         mentionIds.length > 0 ? (deps.onMentionBots?.(mentionIds, message) ?? '') : '';
       return { ok: true, content: `已发送（消息 id：${message.id}${note}）${chainNote}` };
@@ -438,7 +459,13 @@ export function buildResponseTools(input: {
     }),
     execute: async (params) => {
       const run = deps.runs.get(params.run_id);
-      if (!run || run.conversationId !== identity.conversationId) {
+      // Only this bot's own runs in this conversation (审查 L2): another
+      // member's turns / tasks are its private process.
+      if (
+        !run ||
+        run.conversationId !== identity.conversationId ||
+        run.botId !== identity.botId
+      ) {
         return { ok: false, content: '执行记录不存在', errorCode: 'RUN_NOT_FOUND' };
       }
       const steps = deps.runs.stepsFor(run.id);

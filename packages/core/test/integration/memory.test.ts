@@ -294,7 +294,7 @@ describe('P07 记忆与画像（集成）', () => {
     }
   }, 40_000);
 
-  it('propose_profile_change 阻塞等待用户决定，批准后写入 Profile', async () => {
+  it('propose_profile_change 在对话轮里不阻塞：提交审批卡即结算，批准后写入 Profile 并通知 Bot（D75 审查 M4）', async () => {
     const stack = await createTestStack({ env: TEST_ENV });
     try {
       const bot = await makeBot(stack.core, '阿改');
@@ -304,51 +304,59 @@ describe('P07 记忆与画像（集成）', () => {
           changes: [{ field: 'persona.tone', value: '更正式一些' }],
           reason: '用户要求更正式',
         }),
-        step().replyText('谢谢确认'),
+        step()
+          .expect((req) => JSON.stringify(req.body.messages).includes('修改建议已作为审批卡发给用户'))
+          .replyText('建议已提交，等你确认'),
+        step()
+          .expect((req) => req.lastUserText().includes('profile_change_result'))
+          .replyText('语气已经改好了'),
       ]);
-      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      stack.llm.script('mock-light', [
+        step().replyJson(emptyReflection()),
+        step().replyJson(emptyReflection()),
+      ]);
 
       await sendDrafts(stack.core, conv.id, [{ text: '你以后语气正式一点吧' }]);
-      const run = await waitFor(
-        async () => {
-          const result = (await stack.core.rpc.call('runs.list', {
-            conversationId: conv.id,
-            limit: 10,
-          })) as {
-            runs: Run[];
-          };
-          return result.runs.find((r) => r.status === 'waiting_approval') ?? null;
-        },
-        { label: 'waiting_approval run' },
-      );
-      expect(run.loopType).toBe('turn');
+      // The turn settles without waiting for the user's decision.
+      const turn = await completedRun(stack.core, conv.id);
+      expect(turn.loopType).toBe('turn');
 
       const approvals = (await stack.core.rpc.call('approvals.list', {
         conversationId: conv.id,
       })) as {
-        approvals: Array<{ id: string; kind: string; payload: Record<string, unknown> }>;
+        approvals: Array<{
+          id: string;
+          kind: string;
+          status: string;
+          payload: Record<string, unknown>;
+        }>;
       };
       const approval = approvals.approvals.find((a) => a.kind === 'profile_change');
-      expect(approval).toBeDefined();
+      // The card outlived the turn (not cancelled with it).
+      expect(approval).toMatchObject({ status: 'pending' });
       expect(approval!.payload['changes']).toEqual([
         { field: 'persona.tone', value: '更正式一些' },
       ]);
       await stack.core.rpc.call('approvals.decide', { id: approval!.id, approve: true });
 
-      await waitFor(
+      const updated = (await stack.core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
+      expect(updated.bot.profile.persona.tone).toBe('更正式一些');
+      // The decision wakes the bot with an internal event (next turn).
+      const followUp = await waitFor(
         async () => {
           const result = (await stack.core.rpc.call('runs.list', {
             conversationId: conv.id,
             limit: 10,
-          })) as {
-            runs: Run[];
-          };
-          return result.runs.find((r) => r.id === run.id && r.status === 'completed') ?? null;
+          })) as { runs: Run[] };
+          return (
+            result.runs.find(
+              (r) => r.loopType === 'turn' && r.triggerReason === 'event' && r.status === 'completed',
+            ) ?? null
+          );
         },
-        { label: 'profile-change run completed' },
+        { label: 'follow-up turn completed' },
       );
-      const updated = (await stack.core.rpc.call('bots.get', { id: bot.id })) as { bot: Bot };
-      expect(updated.bot.profile.persona.tone).toBe('更正式一些');
+      expect(followUp.id).not.toBe(turn.id);
     } finally {
       await stack.cleanup();
     }
