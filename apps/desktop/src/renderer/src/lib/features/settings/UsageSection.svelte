@@ -19,6 +19,8 @@
     skill_authoring: 'usage.loop.skill_authoring',
     conversation_summary: 'usage.loop.conversation_summary',
     subagent: 'usage.loop.subagent',
+    turn: 'usage.loop.turn',
+    task: 'usage.loop.task',
   };
 
   let budgetTokens = $state<number | null>(null);

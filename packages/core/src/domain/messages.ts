@@ -1,9 +1,15 @@
 import {
   AppError,
   INTERNAL_SYSTEM_EVENTS,
+  TERMINAL_TASK_EVENT_PHASES,
   newId,
+  taskEventContentSchema,
   type Message,
+  type MessageKind,
   type MessageStatus,
+  type RunStatus,
+  type TaskEventContent,
+  type TaskEventPhase,
 } from '@kepcup/shared';
 import { buildFtsQuery, segmentForFts } from '../infra/text-segment.js';
 import type { SqliteDatabase } from '../infra/db.js';
@@ -15,7 +21,7 @@ interface MessageRow {
   seq: number;
   sender_type: 'user' | 'bot' | 'system';
   sender_bot_id: string | null;
-  kind: 'text' | 'system_event' | 'card';
+  kind: MessageKind;
   content_json: string;
   reply_to: string | null;
   mentions_json: string;
@@ -24,13 +30,15 @@ interface MessageRow {
   status: MessageStatus;
   edited_at: number | null;
   created_at: number;
+  owner_bot_id: string | null;
+  task_id: string | null;
 }
 
 export interface AppendMessageInput {
   conversationId: string;
   senderType: 'user' | 'bot' | 'system';
   senderBotId?: string | null;
-  kind: 'text' | 'system_event' | 'card';
+  kind: MessageKind;
   text?: string | undefined;
   /** text messages only: setup-interview answer (hidden bubble in the UI). */
   setupAnswer?: boolean | undefined;
@@ -39,6 +47,23 @@ export interface AppendMessageInput {
    * the user's behalf — `origin: 'delegation'` + the delegation row + A's id.
    */
   delegation?: { delegationId: string; delegatedBy: string } | undefined;
+  /**
+   * text messages only (D75): a visible interim message sent by a task —
+   * `origin: 'task'` + the task's run id (rendered as 「你（任务 t_x）」).
+   */
+  taskOrigin?: { taskId: string } | undefined;
+  /**
+   * task_event messages only (D75 §2.4.1): the entry payload; required for
+   * kind 'task_event'. Prefer `appendTaskEvent` (idempotent terminal phases).
+   */
+  taskEvent?: TaskEventContent | undefined;
+  /**
+   * Private-row owner (D75 §2.4.2): only this bot sees the row; null/omitted =
+   * shared with the conversation. Used for task_event only.
+   */
+  ownerBotId?: string | null | undefined;
+  /** task_id column (task_event only); defaults to `taskEvent.taskId`. */
+  taskId?: string | null | undefined;
   event?: string | undefined;
   /** system_event extras: clickable bot candidates / related batch (P05). */
   botIds?: string[] | undefined;
@@ -95,8 +120,31 @@ export function messageRowToMessage(row: MessageRow): Message {
     editedAt: row.edited_at,
     createdAt: row.created_at,
     attachments: [],
+    ownerBotId: row.owner_bot_id,
+    taskId: row.task_id,
   };
 }
+
+/** Input of `MessagesService.appendTaskEvent` (D75 §2.4.1). */
+export interface AppendTaskEventInput {
+  conversationId: string;
+  ownerBotId: string;
+  taskId: string;
+  phase: TaskEventPhase;
+  text: string;
+  sourceMessageIds?: string[] | undefined;
+  status?: RunStatus | undefined;
+  error?: string | undefined;
+  delivery?: 'delivered' | 'queued' | undefined;
+  questionMessageId?: string | undefined;
+  title?: string | undefined;
+  writes?: boolean | undefined;
+  continuesTaskId?: string | undefined;
+  /** Overrides the creation time (defaults to the clock). */
+  at?: number | undefined;
+}
+
+const TERMINAL_PHASES_SQL = [...TERMINAL_TASK_EVENT_PHASES].map((p) => `'${p}'`).join(', ');
 
 /**
  * 用户可见性（docs/design/01-conversation.md 消息原则）：Bot 的内部事务——
@@ -106,6 +154,8 @@ export function messageRowToMessage(row: MessageRow): Message {
  * （用户/Bot 发言、审批卡、访谈卡、群聊认领提示、执行中断等）都可见。
  */
 export function isVisibleToUser(message: Message): boolean {
+  // D75 §2.4.3: task_event rows and bot-owned private rows never reach the user.
+  if (message.kind === 'task_event' || (message.ownerBotId ?? null) !== null) return false;
   if (message.senderType !== 'system' || message.kind !== 'system_event') return true;
   const content = message.content as { internal?: boolean; event?: string };
   if (content.internal === true) return false;
@@ -125,38 +175,48 @@ export class MessagesService {
   append(input: AppendMessageInput): Message {
     const now = input.at ?? this.clock.now();
     const id = newId('msg');
+    if (input.kind === 'task_event' && input.taskEvent === undefined) {
+      throw new AppError('INVALID_INPUT', 'task_event messages require a taskEvent payload');
+    }
+    const ownerBotId = input.ownerBotId ?? null;
+    const taskId = input.taskId ?? input.taskEvent?.taskId ?? null;
     const contentJson =
-      input.kind === 'text'
-        ? JSON.stringify({
-            text: input.text ?? '',
-            ...(input.setupAnswer ? { setupAnswer: true } : {}),
-            ...(input.delegation !== undefined
-              ? {
-                  origin: 'delegation',
-                  delegationId: input.delegation.delegationId,
-                  delegatedBy: input.delegation.delegatedBy,
-                }
-              : {}),
-          })
-        : input.kind === 'card'
+      input.kind === 'task_event'
+        ? JSON.stringify(taskEventContentSchema.parse(input.taskEvent))
+        : input.kind === 'text'
           ? JSON.stringify({
-              cardType: input.cardType ?? '',
-              approvalId: input.approvalId ?? '',
-              ...(input.cardRunId !== undefined ? { runId: input.cardRunId } : {}),
-              ...(input.cardDelegationId !== undefined
-                ? { delegationId: input.cardDelegationId }
+              text: input.text ?? '',
+              ...(input.setupAnswer ? { setupAnswer: true } : {}),
+              ...(input.delegation !== undefined
+                ? {
+                    origin: 'delegation',
+                    delegationId: input.delegation.delegationId,
+                    delegatedBy: input.delegation.delegatedBy,
+                  }
+                : {}),
+              ...(input.taskOrigin !== undefined
+                ? { origin: 'task', taskId: input.taskOrigin.taskId }
                 : {}),
             })
-          : JSON.stringify({
-              event: input.event ?? '',
-              text: input.text ?? '',
-              ...(input.botIds !== undefined ? { botIds: input.botIds } : {}),
-              ...(input.internal ? { internal: true } : {}),
-              ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
-              ...(input.options !== undefined ? { options: input.options } : {}),
-              ...(input.step !== undefined ? { step: input.step } : {}),
-              ...(input.route !== undefined ? { route: input.route } : {}),
-            });
+          : input.kind === 'card'
+            ? JSON.stringify({
+                cardType: input.cardType ?? '',
+                approvalId: input.approvalId ?? '',
+                ...(input.cardRunId !== undefined ? { runId: input.cardRunId } : {}),
+                ...(input.cardDelegationId !== undefined
+                  ? { delegationId: input.cardDelegationId }
+                  : {}),
+              })
+            : JSON.stringify({
+                event: input.event ?? '',
+                text: input.text ?? '',
+                ...(input.botIds !== undefined ? { botIds: input.botIds } : {}),
+                ...(input.internal ? { internal: true } : {}),
+                ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
+                ...(input.options !== undefined ? { options: input.options } : {}),
+                ...(input.step !== undefined ? { step: input.step } : {}),
+                ...(input.route !== undefined ? { route: input.route } : {}),
+              });
     const mentions = input.mentions ?? [];
     let message: Message;
     const run = this.db.transaction(() => {
@@ -168,7 +228,7 @@ export class MessagesService {
       const seq = row.last_seq + 1;
       this.db
         .prepare(
-          'insert into messages (id, conversation_id, seq, sender_type, sender_bot_id, kind, content_json, reply_to, mentions_json, batch_id, run_id, status, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'insert into messages (id, conversation_id, seq, sender_type, sender_bot_id, kind, content_json, reply_to, mentions_json, batch_id, run_id, status, created_at, owner_bot_id, task_id) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           id,
@@ -184,18 +244,28 @@ export class MessagesService {
           input.runId ?? null,
           'normal',
           now,
+          ownerBotId,
+          taskId,
         );
       this.db
         .prepare(
           'update conversations set last_seq = ?, last_message_at = max(coalesce(last_message_at, 0), ?) where id = ?',
         )
         .run(seq, now, input.conversationId);
-      if (input.kind === 'text' && (input.text ?? '').length > 0) {
+      // task_event text is indexed too; per-bot filtering of search results
+      // joins messages.owner_bot_id at query time (D75 §2.4.3, W1-B).
+      const ftsText =
+        input.kind === 'text'
+          ? (input.text ?? '')
+          : input.kind === 'task_event'
+            ? (input.taskEvent?.text ?? '')
+            : '';
+      if (ftsText.length > 0) {
         this.db
           .prepare(
             'insert into messages_fts (segmented_text, message_id, conversation_id) values (?, ?, ?)',
           )
-          .run(segmentForFts(input.text ?? ''), id, input.conversationId);
+          .run(segmentForFts(ftsText), id, input.conversationId);
       }
       message = {
         id,
@@ -213,10 +283,83 @@ export class MessagesService {
         editedAt: null,
         createdAt: now,
         attachments: [],
+        ownerBotId,
+        taskId,
       };
     });
     run.immediate();
     return message!;
+  }
+
+  /**
+   * Writes one private task_event entry (D75 §2.4.1, `sender_type='system'`,
+   * owned by the task's bot). Terminal phases (result / failure) are
+   * idempotent per task (§3.2, unique index messages_task_terminal): a second
+   * terminal write does not throw and returns the existing entry with
+   * `created: false`.
+   */
+  appendTaskEvent(input: AppendTaskEventInput): { message: Message; created: boolean } {
+    const terminal = TERMINAL_TASK_EVENT_PHASES.has(input.phase);
+    const taskEvent: TaskEventContent = {
+      taskId: input.taskId,
+      phase: input.phase,
+      text: input.text,
+      ...(input.sourceMessageIds !== undefined ? { sourceMessageIds: input.sourceMessageIds } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.error !== undefined ? { error: input.error } : {}),
+      ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+      ...(input.questionMessageId !== undefined
+        ? { questionMessageId: input.questionMessageId }
+        : {}),
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.writes !== undefined ? { writes: input.writes } : {}),
+      ...(input.continuesTaskId !== undefined ? { continuesTaskId: input.continuesTaskId } : {}),
+    };
+    const write = this.db.transaction((): { message: Message; created: boolean } => {
+      if (terminal) {
+        const existing = this.terminalTaskEvent(input.taskId);
+        if (existing) return { message: existing, created: false };
+      }
+      const message = this.append({
+        conversationId: input.conversationId,
+        senderType: 'system',
+        kind: 'task_event',
+        ownerBotId: input.ownerBotId,
+        taskId: input.taskId,
+        taskEvent,
+        at: input.at,
+      });
+      return { message, created: true };
+    });
+    try {
+      return write.immediate();
+    } catch (error) {
+      // Backstop for a writer outside this transaction (another connection):
+      // the unique index still guarantees a single terminal entry.
+      if (terminal && isUniqueViolation(error)) {
+        const existing = this.terminalTaskEvent(input.taskId);
+        if (existing) return { message: existing, created: false };
+      }
+      throw error;
+    }
+  }
+
+  /** The task's terminal entry (result / failure), or null (D75 §3.2 recovery). */
+  terminalTaskEvent(taskId: string): Message | null {
+    const row = this.db
+      .prepare(
+        `select * from messages where task_id = ? and kind = 'task_event' and json_extract(content_json, '$.phase') in (${TERMINAL_PHASES_SQL}) limit 1`,
+      )
+      .get(taskId) as MessageRow | undefined;
+    return row ? messageRowToMessage(row) : null;
+  }
+
+  /** All task_event entries of one task, in seq order. */
+  taskEvents(taskId: string): Message[] {
+    const rows = this.db
+      .prepare("select * from messages where task_id = ? and kind = 'task_event' order by seq")
+      .all(taskId) as MessageRow[];
+    return rows.map(messageRowToMessage);
   }
 
   getById(id: string): Message | null {
@@ -268,7 +411,8 @@ export class MessagesService {
     const eventNames = [...INTERNAL_SYSTEM_EVENTS];
     const params: Array<string | number> = [conversationId, ...eventNames];
     let where =
-      `conversation_id = ? and not (sender_type = 'system' and kind = 'system_event' and (` +
+      "conversation_id = ? and kind != 'task_event' and owner_bot_id is null and " +
+      `not (sender_type = 'system' and kind = 'system_event' and (` +
       `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
       `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')})))`;
     if (options.beforeSeq !== undefined) {
@@ -470,4 +614,12 @@ export class MessagesService {
       createdAt: r['created_at'] as number,
     }));
   }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE'
+  );
 }
