@@ -41,6 +41,8 @@ OAuth（`pi-mcp/oauth`，已单排为 D73，见 [29-connected-apps.md](29-connec
 
 ## SubAgent（D66）
 
+> **D75 修订**：`delegate_task` 降级为「**任务内部**的嵌套子代理」。三种模式（前台 / 后台 / fan-out）在任务内照旧可用，但「后台委派 + 对话级锚点 + follow-up 结算」这一组职责**移交 D75 的任务层**（否则有两套对话级并发计数与两套结算路径）：`SubagentHost` 提升为 `TaskHost`，后台模式退回「父任务内的并行分支」。对话轮派活用 `start_task`，不用 `delegate_task`。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
+
 ### 动机
 
 主 loop 上下文会累积对话与工具结果。扫仓库、读多文件、长日志分析、并行多路检索这类「只要结论」的任务若在主 loop 执行，会污染上下文、抬高费用与注意力噪声。宿主提供 `delegate_task`：嵌套减配子 run，结果压缩后回传。

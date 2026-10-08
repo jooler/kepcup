@@ -22,7 +22,9 @@ export const reflectionOutputSchema = z.object({
       subject: z.string().max(200).nullable().optional(),
       source: memorySourceSchema,
       evidenceMessageIds: z.array(z.string()),
-      confidence: z.number().min(0).max(1),
+      // Omitted confidence must not fail the whole reflection: the model
+      // often leaves it out, and the write path drops that one item.
+      confidence: z.number().min(0).max(1).nullish(),
       sensitivity: memorySensitivitySchema,
       privateToBot: z.boolean(),
       dueAt: z.string().nullable().optional(),
@@ -35,7 +37,7 @@ export const reflectionOutputSchema = z.object({
       content: z.string().min(1).max(2000),
       source: memorySourceSchema,
       evidenceMessageIds: z.array(z.string()),
-      confidence: z.number().min(0).max(1),
+      confidence: z.number().min(0).max(1).nullish(),
       validUntil: z.string().nullable().optional(),
     }),
   ),
