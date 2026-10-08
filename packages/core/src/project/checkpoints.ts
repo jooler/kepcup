@@ -122,8 +122,16 @@ export class CheckpointService {
     return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  /** Unified diff text between two snapshot commits (empty when unavailable). */
-  async diffText(projectId: string, beforeOid: string, afterOid: string): Promise<string> {
+  /**
+   * Unified diff text between two snapshot commits (empty when unavailable);
+   * `filePath` limits it to one file.
+   */
+  async diffText(
+    projectId: string,
+    beforeOid: string,
+    afterOid: string,
+    filePath?: string,
+  ): Promise<string> {
     const dir = this.checkpointsPath(projectId);
     if (!existsSync(dir)) return '';
     // es-git's diff.print() drops the +/-/space line prefixes (verified on
@@ -148,6 +156,7 @@ export class CheckpointService {
         '--dst-prefix=b/',
         beforeOid,
         afterOid,
+        ...(filePath !== undefined ? ['--', filePath] : []),
       ],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     );

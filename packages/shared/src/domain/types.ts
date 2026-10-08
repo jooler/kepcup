@@ -1287,6 +1287,15 @@ export type Project = z.infer<typeof projectSchema>;
 export const runChangeFileSchema = z.object({
   path: z.string(),
   change: z.enum(['added', 'modified', 'deleted']),
+  /**
+   * A run with several lease windows (D75 审查批 E: a force revoke closes
+   * one): the snapshot before the run first changed this file / after it
+   * last did. Absent = the record's own beforeOid / afterOid (one window).
+   */
+  beforeOid: z.string().optional(),
+  afterOid: z.string().optional(),
+  /** Someone else changed the file between two of the run's windows (revert = conflict). */
+  interleaved: z.boolean().optional(),
 });
 export type RunChangeFile = z.infer<typeof runChangeFileSchema>;
 

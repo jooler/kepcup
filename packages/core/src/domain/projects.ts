@@ -214,7 +214,7 @@ export class ProjectsService {
   }): RunChange {
     this.#db
       .prepare(
-        'insert into run_changes (run_id, project_id, conversation_id, before_oid, after_oid, files_json, created_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(run_id) do update set project_id = excluded.project_id, conversation_id = excluded.conversation_id, before_oid = excluded.before_oid, after_oid = excluded.after_oid, files_json = excluded.files_json',
+        'insert into run_changes (run_id, project_id, conversation_id, before_oid, after_oid, files_json, created_at) values (?, ?, ?, ?, ?, ?, ?) on conflict(run_id) do update set project_id = excluded.project_id, conversation_id = excluded.conversation_id, before_oid = excluded.before_oid, after_oid = excluded.after_oid, files_json = excluded.files_json, reverted_at = null',
       )
       .run(
         change.runId,
