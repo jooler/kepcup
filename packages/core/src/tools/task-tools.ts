@@ -48,7 +48,11 @@ export interface InjectTaskInput {
 }
 
 export interface InjectTaskResult {
-  /** delivered = the running task sees it; queued = takes effect after the current run (§8.2). */
+  /**
+   * delivered = the task sees it (steered now, or folded into its brief / the
+   * next steer); queued = the run could not take it (it is ending, or an
+   * engine without steering, §8.2) — recorded only, no later delivery here.
+   */
   delivery: 'delivered' | 'queued';
 }
 
@@ -225,7 +229,7 @@ export function buildTaskTools(input: {
   }> = {
     name: 'inject_task',
     description:
-      '把新的指令或用户的补充转给一条进行中的任务（例如用户改了要求、回答了任务的问题）。返回 delivered（任务已收到）或 queued（当前执行结束后才生效，可改用 cancel_task + start_task）。转交后告诉用户你把话转给了哪条任务。',
+      '把新的指令或用户的补充转给一条排队中或进行中的任务（例如用户改了要求、回答了任务的问题）。返回 delivered（任务会收到）或 queued（任务正在收尾、没能转入，需要时等结果回来后接续）。转交后告诉用户你把话转给了哪条任务。',
     parameters: Type.Object(
       {
         task_id: Type.String({ description: '目标任务 id' }),
@@ -250,7 +254,7 @@ export function buildTaskTools(input: {
           content:
             result.delivery === 'delivered'
               ? `已转给任务 ${params.task_id}。`
-              : `任务 ${params.task_id} 当前无法即时接收，指令将在本次执行结束后生效；如需立即改变方向，请 cancel_task 后重新 start_task。`,
+              : `任务 ${params.task_id} 正在收尾，这条指令没能转入当前执行（已记在你与任务的往返里）。如仍需要，等它的结果回来后用 start_task + continues_task_id 接着做。`,
         };
       }),
   };

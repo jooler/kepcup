@@ -6,6 +6,8 @@ import {
   TASK_FAILURE_DIGEST_TOKEN_BUDGET,
   TASK_LIST_SETTLED_WINDOW_MS,
   TASK_MAX_WALL_MS,
+  TASK_REDELIVER_AFTER_MS,
+  TASK_SETTLE_SWEEP_MS,
   TASK_START_MAX_PER_TURN,
   TASK_TOKEN_BUDGET,
   type Message,
@@ -87,6 +89,11 @@ export interface TaskRunControl {
   attach(handle: TaskRunHandle): void;
   /** The engine run ended. */
   detach(): void;
+  /**
+   * The execution is over (every path, after its lease release): the slot and
+   * the write target are freed and submitted tasks may start.
+   */
+  finish(): void;
 }
 
 /** What an execution reports to `settle`. */
@@ -132,8 +139,14 @@ export interface TaskHostDeps {
     conversationId: string,
     requested?: 'workspace' | 'project',
   ): string;
-  /** Terminal cleanup of the run (once-grants, pending approvals, write lease, run.status). */
-  onSettled(run: Run): void;
+  /**
+   * Terminal cleanup of the run (once-grants, pending approvals, run.status).
+   * `executorActive`: the execution is still unwinding — it releases its own
+   * write lease when it ends; otherwise the cleanup releases it.
+   */
+  onSettled(run: Run, executorActive: boolean): void;
+  /** Releases an execution's write lease / per-run state (an evicted stuck executor). */
+  releaseExecution(runId: string): void;
   /** A visible message sent on behalf of a run (forward_task_result): output + push. */
   recordVisibleMessage(runId: string, message: Message): void;
   /** Test overrides of the D75 constants. */
@@ -148,6 +161,12 @@ interface LaunchedTask {
   workdir: string | null;
   launchedAt: number;
   attachedAt: number | null;
+  /**
+   * Settled while the execution was still unwinding (host stop or the
+   * executor's own settle): it keeps counting toward the caps and holding its
+   * write target until `finish()` — or until the reaper evicts it.
+   */
+  settledAt: number | null;
   controller: AbortController;
   handle: TaskRunHandle | null;
   briefBuilt: boolean;
@@ -284,9 +303,11 @@ export class TaskHost implements TaskToolFacade {
   readonly #limits: TaskHostLimits;
   readonly #launched = new Map<string, LaunchedTask>();
   /** Delivered terminal entries waiting for a consuming turn (sweep skips them). */
-  readonly #pendingConsumption = new Set<string>();
+  readonly #pendingConsumption = new Map<string, number>();
   #pumping = false;
   #pumpAgain = false;
+  /** >0 while a lifecycle abort loops over tasks (pump once at the end). */
+  #pumpHeld = 0;
 
   constructor(deps: TaskHostDeps) {
     this.#deps = deps;
@@ -526,14 +547,12 @@ export class TaskHost implements TaskToolFacade {
   settle(taskId: string, outcome: TaskOutcome): Run | null {
     const task = this.#deps.runs.get(taskId);
     if (task === null || task.loopType !== 'task') return null;
-    if (isTerminalStatus(task.status)) {
-      this.#forget(taskId);
-      return task;
-    }
-    const error = outcome.error ?? null;
+    if (isTerminalStatus(task.status)) return task;
+    let error = outcome.error ?? null;
     let entry: Message | null = null;
+    let created = true;
     if (task.botId !== null && task.conversationId !== null) {
-      entry = this.#safeAppend(
+      const written = this.#safeAppend(
         outcome.status === 'completed'
           ? {
               conversationId: task.conversationId,
@@ -553,17 +572,24 @@ export class TaskHost implements TaskToolFacade {
               ...(error !== null ? { error } : {}),
             },
       );
+      entry = written?.message ?? null;
+      created = written?.created ?? true;
     }
     // An earlier writer may have won the unique index: the stored entry is
-    // the source of truth for the final status.
+    // the source of truth for the final status (and its error).
     const status = entry !== null ? statusOfTerminalEntry(entry) : outcome.status;
+    if (!created && entry !== null) error = taskEventOf(entry)?.error ?? null;
     const updated = this.#deps.runs.update(taskId, {
       status,
       ...(status !== 'completed' && error !== null ? { error } : {}),
       ...(outcome.setup !== undefined ? { setup: outcome.setup } : {}),
     });
-    this.#forget(taskId);
-    this.#cleanup(updated);
+    const launched = this.#launched.get(taskId);
+    if (launched !== undefined) {
+      launched.settledAt ??= this.#deps.clock.now();
+      launched.controller.abort();
+    }
+    this.#cleanup(updated, launched !== undefined);
     this.#afterTerminal(updated, entry);
     this.#pump();
     return updated;
@@ -631,7 +657,7 @@ export class TaskHost implements TaskToolFacade {
         );
       }
     }
-    for (const run of repaired) this.#cleanup(run);
+    for (const run of repaired) this.#cleanup(run, false);
     if (repaired.length > 0) {
       this.#deps.logger.info({ tasks: repaired.length }, 'repaired unsettled tasks');
     }
@@ -655,6 +681,16 @@ export class TaskHost implements TaskToolFacade {
    */
   sweep(now: number = this.#deps.clock.now()): void {
     for (const launched of [...this.#launched.values()]) {
+      if (launched.settledAt !== null) {
+        // Settled but its execution never came back (a stuck tool / engine):
+        // stop holding the slot and the write lease.
+        if (now - launched.settledAt > TASK_SETTLE_SWEEP_MS) {
+          this.#deps.logger.warn({ taskId: launched.taskId }, 'evicting a stuck task execution');
+          this.#launched.delete(launched.taskId);
+          this.#safely(() => this.#deps.releaseExecution(launched.taskId));
+        }
+        continue;
+      }
       const since = launched.attachedAt ?? this.#runningSince(launched);
       if (since !== null && now - since > this.#limits.maxWallMs) {
         this.#stop(
@@ -672,23 +708,20 @@ export class TaskHost implements TaskToolFacade {
         );
       }
     }
-    this.#reconcile();
+    this.#pump();
+    this.#reconcile(now);
   }
 
   // --- lifecycle --------------------------------------------------------------
 
   /** Conversation deleted: its tasks are cancelled (no wake: nobody to wake). */
   abortForConversation(conversationId: string, reason = 'conversation deleted'): void {
-    for (const task of this.#deps.runs.listTasks({ conversationId, statuses: ACTIVE_STATUSES })) {
-      this.#stop(task.id, 'cancelled', reason);
-    }
+    this.#stopAll(this.#deps.runs.listTasks({ conversationId, statuses: ACTIVE_STATUSES }), reason);
   }
 
   /** Bot deleted: all its tasks are cancelled. */
   abortForBot(botId: string, reason = 'bot deleted'): void {
-    for (const task of this.#deps.runs.listTasks({ botId, statuses: ACTIVE_STATUSES })) {
-      this.#stop(task.id, 'cancelled', reason);
-    }
+    this.#stopAll(this.#deps.runs.listTasks({ botId, statuses: ACTIVE_STATUSES }), reason);
   }
 
   /** Bot removed from a group: its tasks in that conversation are cancelled. */
@@ -697,16 +730,24 @@ export class TaskHost implements TaskToolFacade {
     conversationId: string,
     reason = 'removed from group',
   ): void {
-    for (const task of this.#deps.runs.listTasks({
-      botId,
-      conversationId,
-      statuses: ACTIVE_STATUSES,
-    })) {
-      this.#stop(task.id, 'cancelled', reason);
-    }
+    this.#stopAll(
+      this.#deps.runs.listTasks({ botId, conversationId, statuses: ACTIVE_STATUSES }),
+      reason,
+    );
   }
 
-  /** Tasks launched in this process (executing or about to). */
+  /** Cancels a set of tasks without starting their queued siblings mid-loop. */
+  #stopAll(tasks: Run[], reason: string): void {
+    this.#pumpHeld += 1;
+    try {
+      for (const task of tasks) this.#stop(task.id, 'cancelled', reason);
+    } finally {
+      this.#pumpHeld -= 1;
+    }
+    this.#pump();
+  }
+
+  /** Tasks launched in this process (executing, about to, or still unwinding). */
   launchedCount(conversationId?: string): number {
     let count = 0;
     for (const launched of this.#launched.values()) {
@@ -767,6 +808,7 @@ export class TaskHost implements TaskToolFacade {
 
   /** Starts submitted tasks while the concurrency caps and write targets allow (FIFO). */
   #pump(): void {
+    if (this.#pumpHeld > 0) return;
     if (this.#pumping) {
       this.#pumpAgain = true;
       return;
@@ -827,6 +869,7 @@ export class TaskHost implements TaskToolFacade {
       workdir: task.taskWorkdir,
       launchedAt: this.#deps.clock.now(),
       attachedAt: null,
+      settledAt: null,
       controller: new AbortController(),
       handle: null,
       briefBuilt: false,
@@ -840,7 +883,12 @@ export class TaskHost implements TaskToolFacade {
       attach: (handle) => this.#attach(task.id, handle),
       detach: () => {
         const current = this.#launched.get(task.id);
-        if (current !== undefined) current.handle = null;
+        if (current === launched) current.handle = null;
+      },
+      finish: () => {
+        if (this.#launched.get(task.id) !== launched) return;
+        this.#launched.delete(task.id);
+        this.#pump();
       },
     };
     try {
@@ -850,6 +898,7 @@ export class TaskHost implements TaskToolFacade {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
       });
+      control.finish();
     }
   }
 
@@ -889,7 +938,7 @@ export class TaskHost implements TaskToolFacade {
 
   #attach(taskId: string, handle: TaskRunHandle): void {
     const launched = this.#launched.get(taskId);
-    if (launched === undefined) {
+    if (launched === undefined || launched.settledAt !== null) {
       // Stopped while starting: the host already settled it.
       handle.abort('task stopped');
       return;
@@ -928,20 +977,17 @@ export class TaskHost implements TaskToolFacade {
     return this.settle(taskId, { status, error: reason });
   }
 
-  #forget(taskId: string): void {
-    const launched = this.#launched.get(taskId);
-    if (launched === undefined) return;
-    this.#launched.delete(taskId);
-    launched.controller.abort();
+  #cleanup(run: Run, executorActive: boolean): void {
+    this.#safely(() => this.#deps.onSettled(run, executorActive));
   }
 
-  #cleanup(run: Run): void {
+  #safely(run: () => void): void {
     try {
-      this.#deps.onSettled(run);
+      run();
     } catch (error) {
       this.#deps.logger.warn(
-        { taskId: run.id, error: error instanceof Error ? error.message : String(error) },
-        'task settle cleanup failed',
+        { error: error instanceof Error ? error.message : String(error) },
+        'task cleanup failed',
       );
     }
   }
@@ -971,7 +1017,7 @@ export class TaskHost implements TaskToolFacade {
       this.markConsumed([run.id]);
       return;
     }
-    this.#pendingConsumption.add(run.id);
+    this.#pendingConsumption.set(run.id, this.#deps.clock.now());
     try {
       this.#deps.wake(run.botId, run.conversationId, entry);
     } catch (error) {
@@ -984,24 +1030,28 @@ export class TaskHost implements TaskToolFacade {
   }
 
   /** Re-delivers terminal, unconsumed results (startup and reaper, §3.2 对账). */
-  #reconcile(): void {
+  #reconcile(now: number = this.#deps.clock.now()): void {
     for (const task of this.#deps.runs.listUnconsumedTerminalTasks()) {
-      if (this.#pendingConsumption.has(task.id)) continue;
+      // Delivered and awaiting its consuming turn — unless that was long ago
+      // (the delivery got lost): then deliver again (at-least-once).
+      const deliveredAt = this.#pendingConsumption.get(task.id);
+      if (deliveredAt !== undefined && now - deliveredAt <= TASK_REDELIVER_AFTER_MS) continue;
       try {
         let entry = this.#deps.messages.terminalTaskEvent(task.id);
         if (entry === null && task.botId !== null && task.conversationId !== null) {
           // Settled outside the task host (should not happen): give the bot a
           // failure entry rather than silence.
           const status = task.status === 'completed' ? 'failed' : task.status;
-          entry = this.#safeAppend({
-            conversationId: task.conversationId,
-            ownerBotId: task.botId,
-            taskId: task.id,
-            phase: 'failure',
-            text: this.#failureText(task, status, task.error ?? '任务的结算记录缺失'),
-            status,
-            error: task.error ?? '任务的结算记录缺失',
-          });
+          entry =
+            this.#safeAppend({
+              conversationId: task.conversationId,
+              ownerBotId: task.botId,
+              taskId: task.id,
+              phase: 'failure',
+              text: this.#failureText(task, status, task.error ?? '任务的结算记录缺失'),
+              status,
+              error: task.error ?? '任务的结算记录缺失',
+            })?.message ?? null;
         }
         this.#afterTerminal(task, entry);
       } catch (error) {
@@ -1032,9 +1082,11 @@ export class TaskHost implements TaskToolFacade {
   }
 
   /** appendTaskEvent that never throws (a conversation deleted under us). */
-  #safeAppend(input: Parameters<MessagesService['appendTaskEvent']>[0]): Message | null {
+  #safeAppend(
+    input: Parameters<MessagesService['appendTaskEvent']>[0],
+  ): { message: Message; created: boolean } | null {
     try {
-      return this.#deps.messages.appendTaskEvent(input).message;
+      return this.#deps.messages.appendTaskEvent(input);
     } catch (error) {
       this.#deps.logger.warn(
         {

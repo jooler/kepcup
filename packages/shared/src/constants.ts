@@ -494,3 +494,9 @@ export const TASK_TITLE_MAX_CHARS = 80;
 export const TASK_INSTRUCTION_MAX_CHARS = 8_000;
 /** Max source_message_ids per start_task / inject_task (§2.4.5 verbatim originals). */
 export const TASK_SOURCE_MESSAGES_MAX = 20;
+/**
+ * A delivered task result whose consuming turn never reached a terminal state
+ * (the delivery got lost in-process) is re-delivered by the reaper after this
+ * long (§3.2 at-least-once).
+ */
+export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
