@@ -366,7 +366,7 @@ describe('triageOneBot through the router (P6)', () => {
           },
           listActive: () => [],
         } as never,
-        messages: { list: () => [] } as never,
+        messages: { listForBot: () => [] } as never,
         botId: 'bot_1',
         conversationId: 'conv_1',
         batchId: 'b1',

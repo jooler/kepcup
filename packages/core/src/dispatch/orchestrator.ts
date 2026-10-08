@@ -1704,9 +1704,9 @@ export class Orchestrator {
    * goes through here so the viewer rule lives in one place.
    */
   #contextMessages(conversationId: string, viewerBotId: string | null, limit: number): Message[] {
-    return this.#deps.messages
-      .list(conversationId, { limit })
-      .filter((m) => m.ownerBotId === null || m.ownerBotId === viewerBotId);
+    return viewerBotId === null
+      ? this.#deps.messages.listShared(conversationId, { limit })
+      : this.#deps.messages.listForBot(conversationId, viewerBotId, { limit });
   }
 
   #mailboxKey(botId: string, conversationId: string): string {

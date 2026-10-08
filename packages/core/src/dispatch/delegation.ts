@@ -434,7 +434,9 @@ export class DelegationHost implements DelegationToolFacade {
   /** B's last text reply in the delegated run (the final reply lands before settle). */
   #finalReply(delegation: Delegation, runId: string): Message | null {
     if (delegation.toConversationId === null) return null;
-    const messages = this.#deps.messages.list(delegation.toConversationId, { limit: 200 });
+    // Shared rows only (D75 §2.4.3): the final reply is a visible bot message;
+    // private task entries must not crowd the window.
+    const messages = this.#deps.messages.listShared(delegation.toConversationId, { limit: 200 });
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i]!;
       if (

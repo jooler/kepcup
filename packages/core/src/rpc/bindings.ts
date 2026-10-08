@@ -242,7 +242,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
 
   const conversationView = (conversation: Conversation): Conversation => ({
     ...conversation,
-    unreadCount: Math.max(0, conversation.lastSeq - conversation.lastReadSeq),
+    // D75 §2.4.3: only user-visible rows count (private task entries and
+    // internal events advance last_seq but are never shown).
+    unreadCount:
+      conversation.lastSeq > conversation.lastReadSeq
+        ? domain.messages.countVisibleAfter(conversation.id, conversation.lastReadSeq)
+        : 0,
     runningBotIds: orchestrator.runningBotIds(conversation.id),
     bot:
       conversation.directBotId !== null
