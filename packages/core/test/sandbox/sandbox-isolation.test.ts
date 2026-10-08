@@ -63,7 +63,7 @@ beforeAll(async () => {
   const logger = { info() {}, warn() {}, error() {}, debug() {} } as never;
   backend = createSandboxBackend({ paths, logger, env: process.env });
   const audit = new AuditService({ db: { prepare: () => ({ run: () => {} }) } as never, clock: { now: () => Date.now() } });
-  gateway = new ToolGateway({ paths, sandbox: backend, audit, secrets: { redact: (t) => t } as never, logger });
+  gateway = new ToolGateway({ paths, sandbox: backend, audit, secrets: { redact: (t) => t } as never, grants: {} as never, logger });
 }, TIMEOUT);
 
 afterAll(() => {
