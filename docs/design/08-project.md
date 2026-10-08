@@ -53,7 +53,12 @@ Bot 的文件工具以 project 为默认工作目录。
 
 ## 并发：写入租约
 
-> **D75 修订**：租约的适用面从 project 扩到 **workspace**（新增租约键 `ws:{botId}:{conversationId}`）。原先同一对话内的 workspace 并发写由串行 mailbox 兜底，D75 拆分后该兜底消失，改由租约承担：同一 workdir 同时最多一个写任务，只读任务不限。workspace 没有影子仓库检查点，故其写任务被取消时只给改动清单、**不提供整次回退**。见 [30 §5.2](30-supervisor-and-tasks.md#52-租约要扩到-workspace)。
+> **D75 修订**：
+> - 租约的适用面从 project 扩到 **workspace**（租约键 `ws:{botId}:{conversationId}`）。原先同一对话内的 workspace 并发写由串行 mailbox 兜底，D75 拆分后该兜底消失，改由租约承担：同一 workdir 同时最多一个写任务，只读任务不限。workspace 没有影子仓库检查点，故其写任务被取消时只列出文件工具写过的文件、**不提供整次回退**。
+> - 写只发生在**写任务**里：对话轮与只读任务由网关硬拒一切写路径（`RUN_READ_ONLY`），不申请租约。写任务在启动前取 workdir 根的租约并**整个任务持有**（`pin`，与外部智能体的 run 同一语义），等租约期间不占调度名额；下文「写入类工具自动申请」「`acquire_project_write`」仍适用于写任务在其 workdir 之外的写入。
+> - 同一 workdir 的第二个写任务在**任务层**排队（停在 submitted，任务卡与状态行显示「等写入租约（任务 … 持有）」），不在租约上等；对它「强制收回」无效，放行方式是取消持有方任务。强制收回只对租约层的等待（被非任务持有者挡住）出现（待确认，见 DEV-015）。
+>
+> 见 [30 §5](30-supervisor-and-tasks.md#5-并发与写互斥)。
 
 多个 loop（同群的多个 Bot，或选用同一目录的多个对话）可能同时要修改同一个 project。
 

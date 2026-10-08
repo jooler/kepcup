@@ -37,7 +37,7 @@ flowchart LR
   - `events.ts`：核心服务推送给界面的事件及其载荷 schema。
 - 方法命名 `领域.动作`，例如 `conversations.list`、`drafts.add`、`drafts.flush`、`messages.recall`、`runs.cancel`、`approvals.decide`。
 - 核心服务在 RPC 层用 zod 校验所有输入；校验失败返回 `INVALID_INPUT`。
-- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。
+- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`。
 - 界面只通过事件更新状态，不轮询。
 
 ## 核心服务模块
@@ -50,8 +50,11 @@ flowchart LR
 
 ```ts
 type LoopType =
-  | 'response' | 'triage' | 'reflection' | 'memory_consolidation'
-  | 'profile_curation' | 'wiki_maintenance' | 'skill_authoring' | 'conversation_summary';
+  | 'turn' | 'task'                       // D75：对话轮（只读）/ 任务（task_writes=false 时只读）
+  | 'subagent'                            // D66：任务内 delegate_task 的嵌套子 run
+  | 'triage' | 'reflection' | 'memory_consolidation'
+  | 'profile_curation' | 'wiki_maintenance' | 'skill_authoring' | 'conversation_summary'
+  | 'host';                               // 仅 core：宿主伪身份（回退、系统安装、技能导入审批），不落 runs 行，可写
 
 interface RunIdentity {
   runId: string;
@@ -62,6 +65,9 @@ interface RunIdentity {
   chainDepth?: number;
 }
 ```
+
+- shared 的 `loopTypeSchema` 没有 `'host'`（它从不出现在 runs 行与 RPC 里）；`'response'` 已改名 `'turn'`、不保留别名（runs 迁移 0007、main 迁移 0020 改写旧行）。
+- 写权限由 `ProjectRuntime.writeDenial(identity)` 统一裁决：`turn` 恒只读；`task` 仅 `task_writes === true` 可写（行缺失或为 null 时 fail closed）；`subagent` 沿 `parentRunId` 继承根 run 的规则；被拒的写返回 `RUN_READ_ONLY`。
 
 ### AgentEngine（pi 的封装）
 
@@ -88,26 +94,26 @@ interface RunSpec {
     agentId: string;                     // 目录 id
     permission: 'read_only' | 'workspace' | 'ask';
     capabilities: string[];              // 注入的能力包（P1 恒为空）
-    sessionKey: string;                  // (Bot, 对话, Agent) 会话复用键
+    sessionKey: string;                  // 会话复用 / 桥 token 键：非任务 run 为 bot:conv:agent；任务为 bot:conv:agent:task:{会话行 id}（D75，DEV-010）
     effort?: string;                     // thought_level config option
     onSession?: (agentSessionId: string) => void; // 落 runs.agent_session_id
     background?: boolean;                // P6 后台精简会话：只读、空私有临时 cwd、不复用、只放行桥工具（llm-router 用）
   };
-  onSteerRejected?: (text: string) => void; // 异步 steering 被拒时交还 pending steer（P5）
+  onSteerRejected?: (text: string) => void; // 异步 steering 被拒时交还该条注入（D75：任务层把对应 inject 条目记为 queued）
 }
 
 interface RunHandle {
-  steer(text: string): boolean;          // 下一步注入；false = loop 已结束（orchestrator 改为缓冲续投）
+  steer(text: string): boolean;          // 下一步注入（D75：只用于任务的 inject）；false = 收不下（任务层把 inject 记为 queued）
   abort(reason: string): void;
   onEvent(listener: (e: EngineEvent) => void): () => void;
-  tokensSoFar(): number;                 // 连锁预算（外部 Agent 恒为 0）
+  tokensSoFar(): number;                 // 连锁预算与任务的 TASK_TOKEN_BUDGET（外部 Agent：已报用量 + 未报轮数 × AGENT_TURN_BUDGET_TOKENS）
   done: Promise<RunOutcome>;             // { status, finalText, skipReply, usage[], error? }
 }
 ```
 
 与 pi 机制的对应见 [04-agent-runtime.md](04-agent-runtime.md#pi-的封装)。
 
-**第二实现 `ExternalAgentEngine`（D72，P1 最小闭环已实现，开发开关下可用）**：经 ACP 驱动外部智能体（Claude Agent / Codex / OpenCode / DeepSeek Harness / Cursor / Antigravity 等；不支持 ACP 的经进程内垫片），位于 `core/src/agent/external/`：`engine.ts`（run 编排与事件映射）、`host.ts`（每个 Agent 一个子进程 + ACP 连接，懒启动、空闲退出、崩溃时活跃 run 以 failed 结算、环境变量白名单）、`acp/client.ts`（ACP SDK 只在此目录引用；权限请求 P1 默认拒绝、未处理的 Agent→客户端请求立即报错）、`providers/`（`AgentProvider` 接口实现与 `PROVIDERS` 登记表，P1 只有 `generic-acp`）、`catalog.ts`（生效目录 = `AGENT_CATALOG` 按发行门禁过滤 + 选择 / 运行门禁）。选择点：`#executeResponseRun` 由 `#engineFor(bot)` 按 `bot.profile.runtime.agent.id` 取引擎（空 = pi）；后台 loop 的 `complete()` / `startRun` 经 `agent/llm-router.ts` 路由（P6：有内置模型 → `PiEngine`；否则 → 外部引擎的一次性 / 后台精简会话，见 04-agent-runtime「P6 落地要点」）。外部引擎的 `RunSpec.tools`（按 Bot 选择的能力包过滤）不直接执行，而是经宿主 MCP 桥（本机 HTTP，会话级 token → 当前 run 的 `RunIdentity`）暴露给智能体（P2；P1 不注入）；`model` 为伪 ref `agent:{id}/{model|default}`，使调度器并发键落到 `agent:{id}`；`runs.engine` 记 `builtin` / `agent:{id}`。`ACP session/update` → `EngineEvent` 与 `PiEngine` 逐字段对齐（`assistant{text,stopReason,errorMessage}`，遇顶层 `tool_call` 以 `toolUse` 切分中间说明；`tool_call` / `tool_result` 以 `toolCallId` 配对）。设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。
+**第二实现 `ExternalAgentEngine`（D72，P1 最小闭环已实现，开发开关下可用）**：经 ACP 驱动外部智能体（Claude Agent / Codex / OpenCode / DeepSeek Harness / Cursor / Antigravity 等；不支持 ACP 的经进程内垫片），位于 `core/src/agent/external/`：`engine.ts`（run 编排与事件映射）、`host.ts`（每个 Agent 一个子进程 + ACP 连接，懒启动、空闲退出、崩溃时活跃 run 以 failed 结算、环境变量白名单）、`acp/client.ts`（ACP SDK 只在此目录引用；权限请求 P1 默认拒绝、未处理的 Agent→客户端请求立即报错）、`providers/`（`AgentProvider` 接口实现与 `PROVIDERS` 登记表，P1 只有 `generic-acp`）、`catalog.ts`（生效目录 = `AGENT_CATALOG` 按发行门禁过滤 + 选择 / 运行门禁）。选择点：共用执行骨架 `#executeRun` 只对**任务**由 `#engineFor(bot)` 按 `bot.profile.runtime.agent.id` 取引擎（空 = pi）——D75 起 `runtime.agent` 是 Bot 的**任务引擎**，对话轮固定走内置引擎；后台 loop 的 `complete()` / `startRun` 经 `agent/llm-router.ts` 路由（P6：有内置模型 → `PiEngine`；否则 → 外部引擎的一次性 / 后台精简会话，见 04-agent-runtime「P6 落地要点」）。外部引擎的 `RunSpec.tools`（按 Bot 选择的能力包过滤）不直接执行，而是经宿主 MCP 桥（本机 HTTP，会话级 token → 当前 run 的 `RunIdentity`）暴露给智能体（P2；P1 不注入）；`model` 为伪 ref `agent:{id}/{model|default}`，使调度器并发键落到 `agent:{id}`；`runs.engine` 记 `builtin` / `agent:{id}`。`ACP session/update` → `EngineEvent` 与 `PiEngine` 逐字段对齐（`assistant{text,stopReason,errorMessage}`，遇顶层 `tool_call` 以 `toolUse` 切分中间说明；`tool_call` / `tool_result` 以 `toolCallId` 配对）。设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。
 
 ### 工具
 
@@ -154,6 +160,12 @@ interface Gateway {
 }
 ```
 
+D75 补充：
+
+- **只读 run 硬拒写**：`writeDenial(identity)` 非空（对话轮、只读任务及其子代理）时，文件写返回 `forbidden` + `readOnlyRun`（工具错误码 `RUN_READ_ONLY`），命令以只读挂载的策略执行，沙箱外执行 / git 远程 / 租约申请一律拒绝；媒体生成、浏览器下载、技能安装、环境申请经 `tools/read-only.ts` `readOnlyRefusal` 同样拒绝（只读 run 的浏览器下载改落应用缓存 `readOnlyDownloadsDir`）。`checkHostCopyPath(identity, path, hostDir)` 让只读 run 的宿主代复制（`get_attachment`）限定在 workspace 的该子目录。
+- **「仅这一次」= 单次工具调用**（DEV-009，待确认）：每次工具调用在 `permissions/tool-call-scope.ts` 的 `AsyncLocalStorage` 作用域里执行；once 授权归属于使用它的调用（`GrantsService.noteOnceUse`），调用结束即撤销；`request_access` 走 `ensurePathAccess(…, { preauthorize: true })`，预授权由第一次用到它的调用认领；另有 `GRANT_ABSOLUTE_TTL_MS` 与 run 结束兜底，自动撤销经 `GrantsService.onAutoRevoke` 发布 `grant.changed`。
+- **对话轮不等用户**（DEV-014，待确认）：对话轮的越界读取不发起审批，当场返回 `PATH_OUT_OF_SCOPE`。
+
 ### 沙箱
 
 ```ts
@@ -181,60 +193,95 @@ interface SandboxPolicy {
 
 策略由 `sandbox/policy.ts` 根据执行身份、workspace、project（及写入租约）、有效授权、Profile 的网络配置生成，每条命令重新生成。
 
-### 调度
+### 调度（`scheduler/scheduler.ts`）
 
 ```ts
 type Priority = 0 | 1 | 2;
-// 0：用户触发的响应与群聊判断；1：定时与事件触发的响应；2：后台 loop
+// 0：用户触发的对话轮（任一来源批为 direct / mention / reply / broadcast / delegation / task）、群聊判断、已持租约的写任务
+// 1：定时 / 事件 / 连锁触发的对话轮、只读任务；2：后台 loop
 
-interface Scheduler {
-  submit(job: { priority: Priority; provider: string; key: string; run: () => Promise<void> }): void;
+interface SchedulerJob {
+  priority: Priority;
+  provider: string;        // 厂商并发键；外部智能体为 agent:{id}
+  key: string;             // 对话轮 = mailbox 键 botId:conversationId；任务 = task:{id}
+  runId?: string;          // 该作业执行的 run：它等写租约时让出名额（yieldSlotWhile）
+  leaseHeld?: boolean;     // 写任务提交前已取得租约
+  run(signal: AbortSignal): Promise<void>;
+}
+class Scheduler {
+  submit(job: SchedulerJob): void;
+  cancelQueued(key: string): boolean;                       // 撤出尚未开始的作业（排队中被取消的任务）
+  yieldSlotWhile<T>(runId: string, wait: Promise<T>): Promise<T>; // 等租约期间让出名额，取得后优先拿回
+  concurrencyFor(provider: string): number;
 }
 ```
 
-- 每个模型厂商有并发上限（默认 4，可在设置中调整）；后台 loop 全局并发上限 2。
-- 同优先级先进先出；高优先级任务不打断正在执行的低优先级任务。
+- 每个模型厂商有并发上限（默认 4，可在设置中调整）；后台 loop 全局并发上限 `BACKGROUND_LOOP_CONCURRENCY`（2）。同优先级先进先出；运行中的作业不被抢占；某厂商满额时跳过其候选、不阻塞其他厂商的作业。
+- **为回复留名额**（内置厂商，上限 N > 1）：只读任务（`task:*`、无 `leaseHeld`）只在占用 < N−1 时启动；已持租约的写任务在占用 < N 且任务合计占用 < N−1 时启动。N = 1 不预留。
+- **借用（D75 审查 M3）**：厂商占满且全部被任务占用时，优先级 0 的非任务作业可再启动一个——配置上限 N 在全被任务占用时实际可到 N+1。
+- **外部智能体（`agent:{id}`）**：上限 = `agentConcurrency(agentId, 设置)`（`features.parallelSessions` 为假恒为 1，未装解析器也是 1）。任务作业用满上限：不为回复预留、回复也不借用（对话轮从不跑在 `agent:*` 上）；后台作业在上限 > 1 时为非后台工作留一个。若将来对话轮再跑在 Agent 上（设计 30 §8.4 第 1 级），必须恢复回复预留。
+- **等租约让出名额**：`SlotYieldingLeaseService`（`scheduler/slot-yielding-lease.ts`，start.ts 装配为租约服务）在申请需要排队时经 `yieldSlotWhile` 等待：作业交回名额（同一作业的并行等待按深度计数，0→1 交回、1→0 拿回），取得租约后进入 `#resuming`，先于排队作业拿回名额。同一 run 对同一键的并行 `ensureWriteLease` 并入进行中的申请。
 
-### Mailbox（每个“Bot + 对话”一个）
+### Mailbox（每个“Bot + 对话”一个，`scheduler/mailbox.ts`）
 
 ```ts
-interface Mailbox {
-  deliver(batch: TriggerBatch): void;    // 一批消息或一个事件
+class Mailbox {
+  deliver(batch: TriggerBatch): string | null;   // 空闲：建对话轮（返回 run id）；运行中：缓冲，返回 null
+  bufferMessageEdit(input): boolean;             // 运行中的对话轮读过的消息被编辑 → 缓冲一条 message_edited 事件
+  takeBuffered(): TriggerBatch[];                // 对话轮开始执行时吸收已缓冲的批
+  release(): string | null;                      // 对话轮终态：缓冲的批合并为一批，启动下一轮
+  clear(): void;
+}
+interface TriggerBatch {
+  conversationId; botId; messages: Message[];    // 全部触发消息（去重，按 seq）
+  reason: TriggerReason;                         // 合并批取第一个面向用户的来源段的 reason
+  parts?: TriggerPart[];                         // 合并批的各来源段（各自 reason / extraAttributes，各占一个 <trigger>）
+  chain?; retryOf?; afterNote?; extraAttributes?;
 }
 ```
 
-- 没有正在执行的响应 loop：创建执行（Run），提交给调度器。
-- 有正在执行的响应 loop：把批次格式化为注入消息，调用 `steer()`。
-- 同一 mailbox 同一时刻最多一个响应 loop。
+- 同一 mailbox 同一时刻最多一个对话轮；对话轮运行中到达的批**不 steer**，缓冲到下一轮（D2 修订）。`mergeTriggerBatches`：同 reason 与属性的段合并，同一消息只出现一次且取最新快照，`chain` 取第一个、`afterNote` 取最后一个。
+- 对话轮开始执行（`#executeRun` 先 `await Promise.resolve()` 让同一时刻的投递落进缓冲）时 `#absorbIntoTurn`：`takeBuffered` + 合并 + `refreshTriggerBatch`（重读每条消息，撤回的移除），触发变化时 `runs.setTrigger` 更新行（`trigger_parts_json`）。
+- 对话轮终态时 `#releaseTurnMailbox`：先按 DEV-014 规则 `TaskHost.markConsumed`，再 `release()`，然后通知群轮次与 D71 投递闸门「邮箱空闲」。
+- `deliver` 的调用方：用户批（单聊直投、群聊经 `GroupTurnCoordinator`）、事件 / 定时（`deliverEventToBot` / `deliverScheduleToBot`）、D71 代发、任务结算唤醒（`TaskHost` 的 `wake` = 以 `reason:'task'` 投递结果 / 失败条目）、`runs.retry`（按 `trigger_parts_json` 重建）。
 
-### TaskHost（D75 任务层，W1-A 落地；实现 `core/src/dispatch/tasks.ts`）
+### TaskHost（D75 任务层，`core/src/dispatch/tasks.ts`，`orchestrator.tasks`）
 
-任务 = `loop_type='task'` 的 runs 行（[design/30](../design/30-supervisor-and-tasks.md) §3）。宿主负责「任务必有结算」，执行由 orchestrator 的共用执行骨架（`#executeRun`，`kind:'task'`）完成。
+任务 = `loop_type='task'` 的 runs 行（[design/30](../design/30-supervisor-and-tasks.md) §3）。宿主负责「任务必有结算」，执行由 orchestrator 的共用执行骨架完成。
 
 ```ts
 class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的门面
+  // 路由（对话轮的工具；深度 1：任务内调用一律 NOT_SUPPORTED）
   start(identity, { title, instruction, sourceMessageIds, writes, workdir?, continuesTaskId? })
-    : { taskId; state: 'running' | 'submitted'; queueReason: string | null };
-  inject(identity, { taskId, text, sourceMessageIds? }): { delivery: 'delivered' | 'queued' };
+    : { taskId; state: 'running' | 'submitted'; queueReason: string | null; alreadyStarted? };
+  inject(identity, { taskId, text, sourceMessageIds? }, { onNotDelivered? }): { delivery: 'delivered' | 'queued' };
   cancel(identity, { taskId, reason }): { taskId; state; message };
   list(identity): TaskSummary[];
   forwardResult(identity, taskId): { messageId };
-  cancelById(taskId, reason): Run | null;            // runs.cancel RPC / 更新闸门
-  recordQuestion(taskId, { text, questionMessageId }): void;   // §2.4.6
+  // 任务侧（§2.4.6）
+  ask(identity, { question, options }, signal): Promise<string>;  // ask_user：问题卡 + question 条目，阻塞到回答
+  answerQuestion(messageId, answer): void;                        // tasks.answer：点选直注任务
+  // 宿主 / RPC
+  cancelById(taskId, reason): Run | null;            // runs.cancel / 更新闸门
+  retry(taskId): Run;                                // runs.retry：失败任务 → 接续它的新任务（同简报）
+  view(taskId): TaskView | null; activeViews(conversationId): TaskView[]; publishUpdate(taskId): void;
   settle(taskId, { status, resultText?, error?, setup? }): Run | null;  // 幂等
-  markConsumed(taskIds): void;                       // 对话层终态时调用（§3.2 消费）
+  markConsumed(taskIds): void;                       // 对话轮终态（§3.2 消费）
   recover(): Run[];                                  // 启动修复，先于整批 interrupted
   resume(): void;                                    // 启动：重排 submitted + 对账补投
-  sweep(now?): void;                                 // reaper：时限 / token 预算 + 对账
+  sweep(now?): void;                                 // reaper
+  isExecuting(taskId): boolean;                      // 含被 reaper 驱逐、尚未退场的执行（会话继承据此判断）
   abortForConversation(id) / abortForBot(id) / abortForBotInConversation(botId, id);
 }
 ```
 
-- `start`：先写 `queued`（= submitted）行，再写私有 `brief` 条目，再按配额启动（对话级 / 全局并发、同一 workdir 一个写任务；每个发起轮按 `origin_run_id` 计数，超限报 `TASK_LIMIT_REACHED`）；任务内调用一律拒绝（深度 1）。
-- 结算次序：终态条目（`appendTaskEvent` 幂等）→ runs 终态 → 唤醒判定（§3.3）→ 注入的 `wake(botId, conversationId, entry)`。本波默认 `wake` = 把条目作为 `TriggerBatch{reason:'task'}` 交给 mailbox；响应 run 终态时对其触发批 / 已注入批中的任务条目 `markConsumed`（W2 改挂对话轮终态）。
-- 宿主停下的任务（取消 / reaper / 删除）当场结算，但其执行在退场（`TaskRunControl.finish()`）前仍占并发名额与写入目标、自己释放租约；退场不回来的执行由 reaper 在 `TASK_SETTLE_SWEEP_MS` 后驱逐。已投递待消费的结果超过 `TASK_REDELIVER_AFTER_MS` 未消费时 reaper 重投。
-- 执行骨架（`RunExecution = {kind:'response', batch} | {kind:'task', batch, task, brief, control}`）：`#startTask` 先取简报、写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（整任务持有；等待期间行仍是 `queued`，不占调度名额），再以调度键 `task:{id}`、优先级 1 提交（调度器对 `task:` 作业总给对话回复留一个厂商名额）；`loop_type='task'`；触发段 = `buildTaskBriefSegment`（交代 + 原消息原文，图片照触发批进视觉通道）；对话层只取共享行；中间说明带 `origin:'task'`；最终文本 → `result` 条目，`skip_reply` → 空结果；失败 / 取消 / 中断 → `failure` 条目（尾部 `buildRunDigest`）。
-- 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 等 → `resume()`；`sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次（start.ts）。
+- **配额与排队**（`#blockedBy`，FIFO 启动）：全局 `TASK_CONCURRENCY_GLOBAL`、对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（计已启动、含等租约 / 等名额的执行）；同一 `task_workdir` 已有写任务在执行 → 「等写入租约（任务 … 持有）」；`launchSlot`（外部智能体 `agent:{id}` 的并发上限）已满 → 「等智能体并发额度」。每个发起对话轮（`origin_run_id`）最多 `TASK_START_MAX_PER_TURN` 个，超限 `TASK_LIMIT_REACHED`；重试出来的对话轮（`retry_of_run_id` 链）再派同名任务时返回已有任务（`alreadyStarted`）。
+- **启动**（orchestrator `#startTask`，`TaskRunControl`）：取简报（缺失 = 派出时崩溃 → `failed`）；写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（排队原因「等写入租约」，行仍是 `queued`），再以 `task:{id}` 提交调度器（写任务优先级 0 + `leaseHeld`，只读任务优先级 1；provider 为 Bot 的任务引擎）；排队期间被取消 → `cancelQueued` 并释放租约。执行用 `#executeRun(runId, { kind: 'task', batch, task, brief, control })`：触发段 = `buildTaskBriefSegment`，对话层只取共享行，`continues_task_id` 时 `buildTaskReplaySegment`；引擎 run 启动后 `control.attach(handle)`（之前缓冲的注入此时 steer），结束 `detach` / `finish`。
+- **注入**：已 attach → `handle.steer(buildTaskInjection(...))`，失败即 `queued`；启动前 → 并入简报（`TaskBrief.injects`）；已收尾 → `queued`。外部智能体异步拒绝 / 确认经 `control.steerRefused` / `steerConfirmed`（FIFO 按文本匹配），未送达的条目改写为 `queued` 并运行调用方的 `onNotDelivered`（§8.4 降级用它另起任务）。任务正在 `ask_user` 时，注入就是回答。
+- **结算次序**：终态条目（`appendTaskEvent`，唯一索引幂等；写失败而对话仍在 → 留在 `#unsettled`，由 sweep 重试，任务保持非终态）→ runs 终态 → `onSettled`（once 授权、挂起审批、未在执行时释放租约）→ 唤醒判定 → `wake(botId, conversationId, entry)`（orchestrator：`mailbox.deliver({ reason: 'task', messages: [entry] })`）或直接 `markConsumed`。宿主主动停下的任务当场结算，其执行在 `finish()` 前仍占名额与写入目标。
+- **sweep**（start.ts 每 `TASK_SETTLE_SWEEP_MS`）：重试 `#unsettled`；驱逐结算后超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行（`releaseExecution`）；`TASK_MAX_WALL_MS` / `TASK_TOKEN_BUDGET` 超限强制 `failed`；`#pump`；对账（未消费终态任务重投，已投递未消费超过 `TASK_REDELIVER_AFTER_MS` 才重投）；`onSweep`（orchestrator 关闭超过 `CONTINUATION_WINDOW_MS` 的任务外部智能体会话）。
+- **界面**：`start` / `retry` 写一张共享任务卡（`kind='card'`，`cardType='task'`，`TASK_CARD`）；`ask` 写问题卡（`system_event`，`TASK_QUESTION_EVENT='task_question'`）；每次可见变化（`run.status`、注入、注入降级、排队原因变化、回答）推送 `task.updated`（`TaskView`）。
+- 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 与审批取消、委派恢复 → `resume()`（orchestrator `recoverInterrupted`）。
 
 ### 分发器
 
@@ -253,23 +300,32 @@ sequenceDiagram
   participant MB as Mailbox
   participant S as 调度器
   participant E as AgentEngine
+  participant T as TaskHost
   U->>C: drafts.flush(conversationId)
   C->>C: 草稿转为消息（一批），写入 main.db
   C-->>U: message.created（每条）
   C->>MB: deliver(批次)
-  alt 没有正在执行的 loop
-    MB->>S: submit(响应 loop, 优先级 0)
-    S->>E: startRun(上下文 + 触发消息)
+  alt 没有正在执行的对话轮
+    MB->>S: submit(对话轮, 优先级 0, 内置厂商)
+    S->>E: startRun(上下文 + <tasks> + 触发段；对话轮工具面)
     C-->>U: run.status = running
-    E->>C: 工具调用（经工具网关）
-    C-->>U: run.progress
+    E->>C: start_task(...)
+    C->>T: start：runs 行 queued + brief 条目 + 任务卡
+    C-->>U: message.created（任务卡）、task.updated
     E-->>C: 完成（最终文本）
-    C->>C: 最终文本写为 Bot 消息；写执行记录
+    C->>C: 最终文本写为 Bot 消息；对话轮终态；mailbox release
     C-->>U: message.created、run.status = completed
-    C->>C: 登记反思任务（后台）
   else 正在执行
-    MB->>E: steer(格式化后的批次)
+    MB->>MB: 缓冲，release 时合并为下一轮的一个批
   end
+  T->>S: submit(task:{id}；写任务先取租约)
+  S->>E: startRun(任务简报；任务工具面)
+  E-->>C: 中间说明（origin:'task'）、步骤
+  C-->>U: message.created、task.updated
+  E-->>C: 完成（最终文本）
+  C->>T: settle：result 条目（私有）→ runs 终态
+  T->>MB: deliver(reason='task', [result 条目])
+  MB->>S: submit(对话轮)，转述或 forward_task_result，终态时 markConsumed
 ```
 
 ## 执行（Run）状态机
@@ -294,8 +350,9 @@ stateDiagram-v2
 ```
 
 - 等待状态下不消耗 token。
-- 核心服务启动时，把所有 `running`、`waiting_*`、`queued` 状态的执行改为 `interrupted`，对应的待确认审批改为 `cancelled`，并在对应对话中插入系统消息“上次执行因应用退出而中断”。**不自动恢复执行**。
-- 进入 `cancelled`、`failed`、`interrupted` 时释放写入租约、取消该执行的待确认审批。
+- 核心服务启动时，先修复任务（`TaskHost.recover()`：已有终态条目的补成对应终态，已有取消条目的补成 `cancelled`，已启动无条目的先写 `failure` 条目再标 `interrupted`，submitted 的保留待重排），再把其余 `running`、`waiting_*`、`queued` 状态的执行改为 `interrupted`，对应的待确认审批改为 `cancelled`，并在对应对话中插入系统消息“上次执行因应用退出而中断”；最后重排 submitted 任务并补投未消费的任务结果（被中断的任务因此唤醒一个对话轮）。**不自动恢复执行**。
+- 任务的 submitted 用 `queued` 表示；任务在 `running` 下可带 `awaiting_input`（等问题卡回答）。
+- 进入 `cancelled`、`failed`、`interrupted` 时释放写入租约、取消该执行的待确认审批（非阻塞提交、需比 run 活得久的审批卡除外，如对话轮的 `profile_change`）；once 授权随之失效。
 
 ## 启动、退出与崩溃恢复
 
