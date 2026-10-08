@@ -363,19 +363,24 @@ export class RunsService {
     return rows.map(rowToRun);
   }
 
-  /** Startup recovery: unfinished runs -> interrupted (docs/dev/02-architecture.md). */
-  markAllActiveInterrupted(): Run[] {
+  /**
+   * Startup recovery: unfinished runs -> interrupted (docs/dev/02-architecture.md).
+   * `exceptLoopTypes` leaves those rows alone — tasks (D75 §3.2 / §7.4) are
+   * repaired by TaskHost first and their submitted (`queued`) rows re-queued.
+   */
+  markAllActiveInterrupted(options: { exceptLoopTypes?: LoopType[] } = {}): Run[] {
+    const except = options.exceptLoopTypes ?? [];
+    const exceptSql =
+      except.length > 0 ? ` and loop_type not in (${except.map(() => '?').join(', ')})` : '';
     const rows = this.db
-      .prepare(
-        "select * from runs where status in ('queued', 'running', 'waiting_approval', 'waiting_lease')",
-      )
-      .all() as RunRow[];
+      .prepare(`select * from runs where status in ${ACTIVE_STATUSES_SQL}${exceptSql}`)
+      .all(...except) as RunRow[];
     const now = this.clock.now();
     this.db
       .prepare(
-        "update runs set status = 'interrupted', ended_at = ? where status in ('queued', 'running', 'waiting_approval', 'waiting_lease')",
+        `update runs set status = 'interrupted', ended_at = ? where status in ${ACTIVE_STATUSES_SQL}${exceptSql}`,
       )
-      .run(now);
+      .run(now, ...except);
     return rows.map(rowToRun);
   }
 
