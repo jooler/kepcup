@@ -189,7 +189,8 @@
         {:else if model.changes.kind === 'workspace'}
           <p>{t('task.changesWorkspace')}</p>
           {#if model.changes.files.length > 0}
-            <ul class="mt-1 space-y-0.5" data-testid="task-changes-files">
+            <p class="mt-1 text-muted-foreground">{t('task.changesWorkspaceFiles')}</p>
+            <ul class="mt-0.5 space-y-0.5" data-testid="task-changes-files">
               {#each model.changes.files as file (file)}
                 <li><code class="break-all">{file}</code></li>
               {/each}

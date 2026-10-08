@@ -748,6 +748,7 @@ export const zhCN = {
   'task.changesProject': '它已产生的改动：新增 {added}、修改 {modified}、删除 {deleted}。可以整次回退。',
   'task.changesReverted': '它产生的改动已整次回退。',
   'task.changesWorkspace': '它在 Bot 工作区里做的改动不会自动撤销；工作区没有检查点，无法整次回退。',
+  'task.changesWorkspaceFiles': '它用文件工具写过的文件（命令造成的改动不在此列）：',
   'task.changesMore': '另有 {count} 个文件',
   'task.changesNone': '没有产生文件改动。',
   'task.setupHint': '缺少设置：在下方完成设置后会自动重试这个任务。',
@@ -975,16 +976,16 @@ export const zhCN = {
   'onboarding.modelNoProvider': '尚无可用厂商：可在设置页添加自定义厂商后再配置。',
   'onboarding.subscriptionOpen': '我有订阅（Claude / ChatGPT / Copilot / GLM…）',
   'onboarding.subscriptionBody':
-    '用你已有的订阅驱动 Bot：选一个智能体，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
+    '用你已有的订阅给 Bot 干活：选一个智能体作为 Bot 的任务引擎，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
   'onboarding.subscriptionEnable': '开启外部智能体（实验）并继续',
   'onboarding.subscriptionExperimental':
     '这是实验功能：继续会开启「外部智能体（实验）」（改用 API key 时会关回）。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
   'onboarding.subscriptionEmpty': '当前版本没有支持订阅登录的智能体。',
-  'onboarding.subscriptionChoose': '用 {name} 驱动管家和新建的 Bot',
+  'onboarding.subscriptionChoose': '由 {name} 执行管家和新建 Bot 的任务',
   'onboarding.subscriptionEnableFirst': '先在上方卡片中启用并登录这个智能体，再继续。',
   'onboarding.subscriptionBack': '改用 API key',
   'onboarding.butlerAgentNote':
-    '管家将由 {name} 驱动，直接开始对话。按场景组建 Bot 团队的访谈需要内置模型，之后在设置页配置 API key 即可使用。',
+    '管家的任务将由 {name} 执行，直接开始对话。没有内置模型时对话本身会简化：你的消息直接转给进行中的任务或派成新任务，结果原文发回。按场景组建 Bot 团队的访谈需要内置模型，之后在设置页配置 API key 即可使用。',
   'onboarding.permissionsTitle': '权限',
   'onboarding.permissionsBody': '以下两项决定应用在系统中的行为，之后可随时在设置中更改。',
   'onboarding.permissionsNotify': '系统通知',
@@ -1086,7 +1087,7 @@ export const zhCN = {
   'setupCard.dismiss': '暂不设置',
   'setupCard.agentTitle': '{name} 还不能用，设置好后对话会自动继续',
   'setupCard.agentReason.experimental_off':
-    '这个 Bot 由外部智能体驱动，而「外部智能体（实验）」尚未开启。',
+    '这个 Bot 的任务由外部智能体执行，而「外部智能体（实验）」尚未开启。',
   'setupCard.agentReason.not_enabled': '这个智能体还没有启用：启用会先安装它（需要你确认）。',
   'setupCard.agentReason.not_installed': '这个智能体尚未安装完成：请启用或重新安装。',
   'setupCard.agentReason.auth_required':
@@ -1125,7 +1126,7 @@ export const zhCN = {
   'agents.defaultAgent': '新建 Bot 默认使用的智能体',
   'agents.defaultAgentNone': '不设（使用内置模型）',
   'agents.defaultAgentHint':
-    '仅在没有设置默认主模型时生效：新建的 Bot（含管家，对话式新建除外）若未指定模型，即由这个智能体驱动；停用后新 Bot 回到内置模型。',
+    '仅在没有设置默认主模型时生效：新建的 Bot（含管家，对话式新建除外）若未指定模型，即由这个智能体执行它的任务；停用后新 Bot 回到内置模型。',
   'agents.defaultAgentAffected':
     '它也是新建 Bot 的默认智能体：停用 / 卸载后，新建的 Bot 不再默认使用它。',
   'agents.hint':
