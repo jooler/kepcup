@@ -54,6 +54,8 @@ mac:
   # 缺声明时打包版 getUserMedia 直接被 macOS 拒绝。
   extendInfo:
     NSMicrophoneUsageDescription: 语音输入需要使用麦克风，用于把语音转为文字或发送语音消息。
+    # 摄像头用途声明（传感器 D76，docs/design/31-sensors.md）：设置页预览摄像头及将来的监看。
+    NSCameraUsageDescription: 需要使用摄像头，用于在设置中预览画面，以及将来让 Bot 协助监看。
   # 本机无 Developer ID 证书：显式跳过签名（CSC_IDENTITY_AUTO_DISCOVERY=false
   # 由 scripts/dist.mjs 设置）。分发前必须签名 + 公证（CI 机密注入），见
   # todo/cross-platform-acceptance.md P13 小节。

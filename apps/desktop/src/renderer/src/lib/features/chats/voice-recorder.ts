@@ -41,54 +41,28 @@ export function levelToHeight(level: number): number {
   return Math.min(1, Math.pow(level * 4, 0.6));
 }
 
-/** 采集处理约束：都是 ideal/软性——精确约束（如 channelCount: 1）在部分
- * 设备上会直接 OverconstrainedError（stereo-only 的 USB 麦克风、显示器拾音等）。 */
-const CAPTURE_CONSTRAINTS: MediaTrackConstraints = {
-  channelCount: { ideal: 1 },
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-};
-
 /** 把底层异常转成可直接展示的技术性原因（调试定位用，headline 由调用方 i18n）。 */
-function describeMicError(error: unknown): string {
+function describeError(error: unknown): string {
   if (error instanceof DOMException) return `${error.name}: ${error.message}`;
   return error instanceof Error ? error.message : String(error);
 }
 
-async function openMicStream(deviceId: string): Promise<MediaStream> {
-  const audio: MediaTrackConstraints =
-    deviceId.length > 0
-      ? { ...CAPTURE_CONSTRAINTS, deviceId: { exact: deviceId } }
-      : { ...CAPTURE_CONSTRAINTS };
-  try {
-    return await navigator.mediaDevices.getUserMedia({ audio });
-  } catch (error) {
-    // 设备不满足软约束组合时的兜底：裸设备再试一次（放弃回声消除等处理）。
-    if (error instanceof DOMException && error.name === 'OverconstrainedError') {
-      try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (retryError) {
-        throw new Error(describeMicError(retryError), { cause: retryError });
-      }
-    }
-    throw new Error(describeMicError(error), { cause: error });
-  }
-}
-
+/**
+ * 在已打开的麦克风流上开始采集。流由传感器层打开（`sensors.open('microphone')`：
+ * 设备偏好、启用开关、设备回退都在那里，docs/design/31-sensors.md）；本模块只管
+ * AudioContext / worklet / WAV 编码，并在失败或结束时负责停掉传入的轨道。
+ */
 export async function startVoiceRecording(
+  stream: MediaStream,
   onLevel?: (level: number) => void,
-  /** 指定输入设备（设置页「硬件」分区的选择）；空串 = 系统默认。 */
-  deviceId?: string,
 ): Promise<ActiveRecording> {
-  const stream = await openMicStream(deviceId ?? '');
   let context: AudioContext;
   try {
     context = new AudioContext({ sampleRate: SAMPLE_RATE });
   } catch (error) {
     // 采样率等参数不被设备支持时构造即抛：先释放刚拿到的麦克风再报错。
     for (const track of stream.getTracks()) track.stop();
-    throw new Error(`AudioContext init failed: ${describeMicError(error)}`, { cause: error });
+    throw new Error(`AudioContext init failed: ${describeError(error)}`, { cause: error });
   }
   // worklet 以同源静态资源加载（blob: 脚本会被渲染层 CSP 拦掉，见模块注释）。
   try {
@@ -96,7 +70,7 @@ export async function startVoiceRecording(
   } catch (error) {
     for (const track of stream.getTracks()) track.stop();
     void context.close().catch(() => {});
-    throw new Error(`AudioWorklet module load failed: ${describeMicError(error)}`, {
+    throw new Error(`AudioWorklet module load failed: ${describeError(error)}`, {
       cause: error,
     });
   }
@@ -104,21 +78,30 @@ export async function startVoiceRecording(
   let totalSamples = 0;
   let lastLevelEmit = 0;
 
-  const worklet = new AudioWorkletNode(context, 'kepcup-voice-capture');
-  worklet.port.onmessage = (event: MessageEvent<{ pcm: Float32Array; level: number }>) => {
-    chunks.push(event.data.pcm);
-    totalSamples += event.data.pcm.length;
-    const now = performance.now();
-    if (onLevel !== undefined && now - lastLevelEmit > 50) {
-      lastLevelEmit = now;
-      onLevel(levelToHeight(event.data.level));
-    }
-  };
-  const mute = context.createGain();
-  mute.gain.value = 0;
-  context.createMediaStreamSource(stream).connect(worklet);
-  worklet.connect(mute);
-  mute.connect(context.destination);
+  let worklet: AudioWorkletNode;
+  let mute: GainNode;
+  try {
+    worklet = new AudioWorkletNode(context, 'kepcup-voice-capture');
+    worklet.port.onmessage = (event: MessageEvent<{ pcm: Float32Array; level: number }>) => {
+      chunks.push(event.data.pcm);
+      totalSamples += event.data.pcm.length;
+      const now = performance.now();
+      if (onLevel !== undefined && now - lastLevelEmit > 50) {
+        lastLevelEmit = now;
+        onLevel(levelToHeight(event.data.level));
+      }
+    };
+    mute = context.createGain();
+    mute.gain.value = 0;
+    context.createMediaStreamSource(stream).connect(worklet);
+    worklet.connect(mute);
+    mute.connect(context.destination);
+  } catch (error) {
+    // 节点装配失败：释放麦克风与 AudioContext 再上抛，兑现「失败时负责停轨」的契约。
+    for (const track of stream.getTracks()) track.stop();
+    void context.close().catch(() => {});
+    throw new Error(`Audio graph setup failed: ${describeError(error)}`, { cause: error });
+  }
 
   const cleanup = (): void => {
     worklet.port.onmessage = null;

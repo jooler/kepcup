@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { SensorKind } from '@kepcup/shared';
 
 // The renderer asks for the core MessagePort through this bridge; the port
 // itself is forwarded via window.postMessage because contextBridge cannot
@@ -34,14 +35,18 @@ const api = {
   sendTestNotification: (title: string, body: string): Promise<void> =>
     ipcRenderer.invoke('notify:test', title, body),
   /**
-   * 语音输入（docs/design/26-voice-input.md）的麦克风 TCC 权限：状态查询、
-   * 主动拉起系统授权弹框（仅 macOS not-determined 时有系统反馈）、深链打开
-   * 系统设置的麦克风面板（已拒绝后的唯一去路）。
+   * 传感器系统权限（docs/design/31-sensors.md，D76；由 26 号的 mic* 泛化）：
+   * 状态查询、主动拉起系统授权弹框（仅 macOS not-determined 时有系统反馈）、
+   * 深链打开系统设置对应面板（已拒绝后的唯一去路）。
    */
-  micStatus: (): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'> =>
-    ipcRenderer.invoke('mic:status'),
-  micRequestAccess: (): Promise<boolean> => ipcRenderer.invoke('mic:request'),
-  micOpenSettings: (): Promise<void> => ipcRenderer.invoke('mic:openSettings'),
+  sensorPermissionStatus: (
+    kind: SensorKind,
+  ): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'> =>
+    ipcRenderer.invoke('sensor:permission:status', kind),
+  sensorPermissionRequest: (kind: SensorKind): Promise<boolean> =>
+    ipcRenderer.invoke('sensor:permission:request', kind),
+  sensorOpenSettings: (kind: SensorKind): Promise<void> =>
+    ipcRenderer.invoke('sensor:permission:openSettings', kind),
   /**
    * P13 任务 3: verdict of applying the launch-at-login setting to the OS
    * ({ outcome: 'applied' | 'failed', enabled, reason? }); pushed after each

@@ -947,3 +947,13 @@
 - **P6（无 API key 的后台 loop + 收尾）**：`ExternalAgentEngine.complete()` 一次性精简会话（只读、空私有临时 cwd、不挂桥、不复用、结束 `session/close`；Claude 替换式系统提示词 + `tools: []`）+ `completeStructured` 只输出 JSON；`agent/llm-router.ts` 让群聊判断、续接、摘要、反思、整理、画像、Wiki、技能生成、SubAgent 压缩在无内置模型时改走外部 Agent（续接 L2 仍关、技能生成默认关、反思 / 摘要每 5 次一跑、可选群聊仅 @），用量记 `agent:{id}`、连锁 / 每日后台预算按轮折算；设置「后台任务」；原生优先遵守度真机 harness（`agent-spike/adherence.mjs`，措辞 fixture 由单测守护）；e2e `external-agents.spec.ts`（fake Agent，经 core 测试缝）。审查修复（todo §9.3.1，待用户确认的保守默认）：后台会话只用能完全关闭原生工具的 Agent（本期 Claude）、开启个人配置或并发 < 2 不可用；「自动」只用 Bot 自己的 Agent、画像整理需明确指定；群聊判断默认不经 Agent（开启后 60 s 时限、每群 2 分钟一次、计入每日预算）；调度器为对话保留一个 Agent 名额、后台 run 10 分钟封顶；核心关闭时后台会话结算。
 - **验证**：见 todo §9.3（容器全量测试、typecheck / lint、e2e 运行情况）。
 - **未验证 / 需真实账号**：各 Agent 登录后的 P0 spike 与原生优先遵守度（设计 28 §9.2 末）、三平台人工验收（todo §9.1 末项）；开发会话不代为登录。
+
+### D76 传感器统一管理（2026-10-08）
+
+设计 `docs/design/31-sensors.md`，执行方案 `todo/sensors.md`（P1–P4 代码已完成）。
+
+- 交付：shared 注册表 `SENSOR_KINDS`；主进程 `sensor:permission:*` IPC 泛化（`sensor-permission.ts`）与 default session 权限白名单（`app-permissions.ts`）；渲染层 `lib/sensors/`（webmedia 基座、SensorHub、$state 镜像、偏好迁移）；设置页「硬件」数据驱动（`SensorCard` + 麦克风电平测试 + 摄像头预览）；语音键取流改走传感器层；`NSCameraUsageDescription`。
+- 验证：shared + desktop 单测 174 例通过（Docker `kepcup-test:trixie`）；`apps/desktop/test/e2e/sensors.spec.ts` 2 例 + skeleton / attachments / direct-chat / diagnostics 共 11 例通过（`kepcup-test:trixie-xvfb`）；typecheck / svelte-check / eslint 通过。
+- 独立评审（code-reviewer）后修复：停用即切断已打开 / 等待中的流（hub 追踪流、`open` 等待后复核 enabled、Composer 录音中停用即取消）；voice-recorder 节点装配失败释放 AudioContext；设置页展示回退告警；授权调用异常 toast；刷新序号防乱序；旧版本不覆盖新版偏好；store 快照改 `$state.raw` 只读；e2e 去掉 `--use-fake-ui-for-media-stream` 让 media 授权真正走权限白名单。
+- 未做 / 待办：语音键录音胶囊 e2e（需 asr 配置夹具）；三平台实机验收（见 `todo/cross-platform-acceptance.md` 末节）；全量 e2e 未重跑。
+

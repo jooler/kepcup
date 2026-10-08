@@ -40,6 +40,7 @@ getUserMedia({audio: 单声道 + 回声消除 + 降噪 + 自动增益})
 - 不用 MediaRecorder：Chromium 只产 `audio/webm;codecs=opus`，qwen3-asr 等兼容通道不收 webm；WAV 16k mono 全厂商兼容，60s 约 1.9MB。
 - **采集约束全是软性（ideal）**：`channelCount: 1` 这类精确约束在部分设备上会直接 `OverconstrainedError`（stereo-only 的 USB 麦克风、显示器拾音等），此时回退裸设备（放弃回声消除等处理）再试一次——授权通过却「无法访问麦克风」的典型根因。
 - **worklet 必须同源资源加载，不能内联**：渲染层 CSP（`index.html` meta）`script-src 'self'` 拦 blob: 与 data: 脚本——最初用 blob URL 内联，`addModule` 直接被 CSP 拒绝（症状：授权正常但永远「无法开始录音」）；改 `?url` 后又因文件 <4KB 被 Vite 内联成 data: URL，打包版复发。最终 `?url&no-inline` 强制独立文件（`assets/voice-capture-worklet-*.js`），dev 与打包版同源加载。失败原因（getUserMedia / addModule 的底层异常）现在透传到 toast（`composer.voiceMicFailed`）便于定位。
+- **（D76 修订）硬件部分已收编进传感器层**：设备枚举、授权门、设备偏好、启停与「硬件」分区改由 [31-sensors.md](31-sensors.md) 统一管理，本节的设备选择描述为现状，实现后以 31 为准；本管道只保留 WAV 采集 / 编码。
 - **输入设备可选**：设置页新增「硬件」分区（`HardwareSection`），枚举 `enumerateDevices()` 的音频输入（未授权时浏览器不给设备名，提示先按录一次授权后刷新）；选择持久化在 localStorage（`kepcup.micDeviceId`，渲染层本机偏好不进 core），空 = 跟随系统默认。
 - worklet 节点接零增益 GainNode 落地——不接目的地不会被音频 graph 拉动，直接接 destination 会回声。
 - 单测锚纯函数：`encodeWav`（容器头/夹紧）、`formatRecordingDuration`、`levelToHeight`；采集链路需真实麦克风，不在单测内。
