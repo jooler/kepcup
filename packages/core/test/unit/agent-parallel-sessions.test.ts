@@ -187,7 +187,7 @@ describe('the clamp end to end (fake agent refusing concurrent prompts)', () => 
         runId: `run_${conversationId}`,
         botId: 'bot_1',
         conversationId,
-        loopType: 'response',
+        loopType: 'turn',
       },
       model: agentModelRef(SERIAL.id, ''),
       buildSystemPrompt: async () => 'SYSTEM',

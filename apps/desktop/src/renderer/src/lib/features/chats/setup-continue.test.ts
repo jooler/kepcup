@@ -9,7 +9,7 @@ function run(id: string, overrides: Partial<Run> = {}): Run {
     id,
     botId: 'bot_a',
     conversationId: 'conv',
-    loopType: 'response',
+    loopType: 'turn',
     status: 'completed',
     setup: null,
     ...overrides,

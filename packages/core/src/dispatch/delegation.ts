@@ -353,11 +353,11 @@ export class DelegationHost implements DelegationToolFacade {
 
   /**
    * Settle hook (`#settleRun`, any terminal status): the `working` delegation
-   * B's run was executing gets its result. Non-response runs and runs without
+   * B's turn was executing gets its result. Non-turn runs and runs without
    * a working delegation are ignored.
    */
   onRunSettled(run: Run): void {
-    if (run.loopType !== 'response') return;
+    if (run.loopType !== 'turn') return;
     const delegation = this.#deps.delegations.workingByRun(run.id);
     if (delegation === null) return;
     this.#settle(delegation, run);

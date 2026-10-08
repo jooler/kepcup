@@ -30,7 +30,7 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null;
+      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null;
     },
     { label: 'completed response run' },
   );

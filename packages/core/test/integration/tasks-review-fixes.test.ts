@@ -54,7 +54,7 @@ function tasksOf(stack: TestStack) {
 }
 
 function turnIdentity(botId: string, conversationId: string, runId = 'run_turn_1'): RunIdentity {
-  return { runId, botId, conversationId, loopType: 'response' };
+  return { runId, botId, conversationId, loopType: 'turn' };
 }
 
 function runOf(stack: TestStack, id: string): Run {
@@ -182,7 +182,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         () =>
           domain(stack)
             .runs.listByConversation(convB.id, 10)
-            .find((run) => run.loopType === 'response') ?? null,
+            .find((run) => run.loopType === 'turn') ?? null,
         { label: 'R run' },
       );
       // Every other slot is taken too (a write task holding its lease starts
@@ -627,7 +627,7 @@ describe('LOW-2: a refused steer carrying a task result is not consumed early', 
       () => {
         const done = runs
           .listByConversation(conv.id, 20)
-          .filter((run) => run.loopType === 'response' && run.status === 'completed')
+          .filter((run) => run.loopType === 'turn' && run.status === 'completed')
           .sort((a, b) => a.createdAt - b.createdAt);
         return done.length >= 2 ? done : null;
       },
@@ -662,12 +662,12 @@ describe('round 2 (审查复核)', () => {
       const run = runs.create({
         botId,
         conversationId,
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: [],
       });
       runs.update(run.id, { status: 'running' });
-      return { runId: run.id, botId, conversationId, loopType: 'response' };
+      return { runId: run.id, botId, conversationId, loopType: 'turn' };
     };
     const runtime = core.services.projectRuntime!;
     const holder = runFor(otherBot.id, other.id);

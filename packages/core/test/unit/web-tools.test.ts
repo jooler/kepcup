@@ -223,7 +223,7 @@ describe('SearchService', () => {
 
 describe('web 工具', () => {
   const ctx: ToolContext = {
-    identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' },
+    identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' },
     signal: new AbortController().signal,
     terminate: () => {},
     progress: () => {},

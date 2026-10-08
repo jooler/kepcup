@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { LeaseService, leaseKeysConflict } from '../../src/project/lease.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 
-const idA: RunIdentity = { runId: 'run_a', botId: 'bot_a', conversationId: 'conv_a', loopType: 'response' };
-const idB: RunIdentity = { runId: 'run_b', botId: 'bot_b', conversationId: 'conv_b', loopType: 'response' };
+const idA: RunIdentity = { runId: 'run_a', botId: 'bot_a', conversationId: 'conv_a', loopType: 'turn' };
+const idB: RunIdentity = { runId: 'run_b', botId: 'bot_b', conversationId: 'conv_b', loopType: 'turn' };
 
 describe('lease conflict rule (相同 / 祖先 / 兄弟)', () => {
   it('treats identical keys as conflicting', () => {

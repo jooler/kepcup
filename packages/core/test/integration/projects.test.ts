@@ -171,7 +171,7 @@ describe('projects (P04)', () => {
     const aMtime = readFileSync(path.join(project.path, 'a.txt'));
     expect(readFileSync(path.join(project.path, 'b.txt'), 'utf8')).toBe('B-wrote');
     expect(aMtime).toBeDefined();
-    const steps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'response')!.id);
+    const steps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'turn')!.id);
     const writeResult = toolResult(steps, 'write');
     expect(writeResult?.ok).toBe(true);
   }, 240_000);
@@ -247,7 +247,7 @@ describe('projects (P04)', () => {
     // The secret never reached the model.
     expect(llm.requestBodiesContain('abc123')).toBe(false);
     const runs = await listRuns(core, conv.id);
-    const firstRead = toolResult(await stepsOf(core, runs.find((r) => r.botId === bot.id && r.loopType === 'response')!.id), 'read');
+    const firstRead = toolResult(await stepsOf(core, runs.find((r) => r.botId === bot.id && r.loopType === 'turn')!.id), 'read');
     expect(firstRead?.ok).toBe(false);
     expect(firstRead?.content).toContain('PATH_OUT_OF_SCOPE');
 
@@ -481,7 +481,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, convA.id, ['起个开发服务器试试']);
     await waitForRun(core, convA.id, 'completed', { timeoutMs: 180_000 });
-    const boundSteps = await stepsOf(core, (await listRuns(core, convA.id)).find((r) => r.botId === botA.id && r.loopType === 'response')!.id);
+    const boundSteps = await stepsOf(core, (await listRuns(core, convA.id)).find((r) => r.botId === botA.id && r.loopType === 'turn')!.id);
     const boundBash = toolResult(boundSteps, 'bash');
     expect(boundBash?.content).toContain('200');
 
@@ -491,7 +491,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, convB.id, ['起个开发服务器试试']);
     await waitForRun(core, convB.id, 'completed', { timeoutMs: 180_000 });
-    const unboundSteps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'response')!.id);
+    const unboundSteps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'turn')!.id);
     const unboundBash = toolResult(unboundSteps, 'bash');
     expect(unboundBash?.content).not.toContain('200');
   }, 400_000);
@@ -576,7 +576,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, conv.id, ['占住执行']);
     await waitFor(
-      async () => (await listRuns(core, conv.id)).find((r) => r.status === 'running' && r.loopType === 'response') ?? null,
+      async () => (await listRuns(core, conv.id)).find((r) => r.status === 'running' && r.loopType === 'turn') ?? null,
       { label: 'running run', timeoutMs: 30_000 },
     );
 

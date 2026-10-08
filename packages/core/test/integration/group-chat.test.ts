@@ -50,7 +50,7 @@ function waitForBotRun(
   return waitFor(
     async () =>
       (await listRuns(core, conversationId)).find(
-        (r) => r.botId === botId && r.loopType === 'response' && r.status === status,
+        (r) => r.botId === botId && r.loopType === 'turn' && r.status === status,
       ) ?? null,
     { ...options, label: `response run of ${botId} in ${status}` },
   );
@@ -61,7 +61,7 @@ async function botRuns(
   conversationId: string,
   botId: string,
 ): Promise<Run[]> {
-  return (await listRuns(core, conversationId)).filter((r) => r.botId === botId && r.loopType === 'response');
+  return (await listRuns(core, conversationId)).filter((r) => r.botId === botId && r.loopType === 'turn');
 }
 
 async function stepsOf(core: TestStack['core'], runId: string): Promise<Array<Record<string, unknown>>> {
@@ -123,10 +123,10 @@ describe('group conversations', () => {
     // P07 起：响应之后还有一个后台反思 run（loopType=reflection）。响应 run
     // 只有一个，且没有发送任何群聊判断请求（triage 的输入含 <triage_batch>；
     // 反思的输入含 <trigger_messages>，两者共用轻量模型）。
-    const responseRuns = runs.filter((r) => r.loopType === 'response');
+    const responseRuns = runs.filter((r) => r.loopType === 'turn');
     expect(responseRuns).toHaveLength(1);
     expect(responseRuns[0]).toMatchObject({ botId: a.id, triggerReason: 'mention' });
-    expect(runs.filter((r) => r.loopType !== 'response').every((r) => r.loopType === 'reflection')).toBe(true);
+    expect(runs.filter((r) => r.loopType !== 'turn').every((r) => r.loopType === 'reflection')).toBe(true);
     expect(llm.requestsFor('mock-light').filter((req) => req.lastUserText().includes('<triage_batch>'))).toHaveLength(0);
   });
 
@@ -160,7 +160,7 @@ describe('group conversations', () => {
     // 只在响应 run 里断言：P07 起每个响应 run 还有一个同 Bot 的反思 run
     // （triggerReason=background，created_at 更新排在前），find 命中它会得到
     // 'background'——套件高负载下反思先落库时此断言偶发翻车。
-    const responseRuns = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const responseRuns = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     for (const id of [a.id, b.id]) {
       expect(responseRuns.find((r) => r.botId === id)?.triggerReason).toBe('mention');
     }
@@ -214,8 +214,8 @@ describe('group conversations', () => {
     expect(bMessages).toHaveLength(0); // skip_reply: no message
 
     const runs = await listRuns(core, conv.id);
-    expect(runs.find((r) => r.botId === a.id && r.loopType === 'response')?.triggerReason).toBe('broadcast');
-    expect(runs.find((r) => r.botId === b.id && r.loopType === 'response')?.triggerReason).toBe('broadcast');
+    expect(runs.find((r) => r.botId === a.id && r.loopType === 'turn')?.triggerReason).toBe('broadcast');
+    expect(runs.find((r) => r.botId === b.id && r.loopType === 'turn')?.triggerReason).toBe('broadcast');
     expect(runs.filter((r) => r.loopType === 'triage')).toHaveLength(3);
   }, 30_000);
 

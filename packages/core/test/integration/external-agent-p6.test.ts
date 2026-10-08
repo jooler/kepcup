@@ -115,7 +115,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       null,
     ]);
     const background = (await listRuns(stack.core, conv.id)).filter(
-      (run) => run.loopType !== 'response',
+      (run) => run.loopType !== 'turn',
     );
     expect(background.map((run) => [run.loopType, run.status]).sort()).toEqual([
       ['conversation_summary', 'completed'],
@@ -168,7 +168,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     await waitFor(
       async () =>
         (await listRuns(stack.core, conv.id)).filter(
-          (run) => run.loopType === 'response' && run.status === 'completed',
+          (run) => run.loopType === 'turn' && run.status === 'completed',
         ).length === 2
           ? true
           : null,

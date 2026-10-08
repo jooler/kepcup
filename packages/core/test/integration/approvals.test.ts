@@ -112,7 +112,7 @@ describe('access approvals for file tools (P03)', () => {
     const runs2 = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
       runs: Run[];
     };
-    const steps = await stepsOf(core, runs2.runs.find((r) => r.loopType === 'response')!.id);
+    const steps = await stepsOf(core, runs2.runs.find((r) => r.loopType === 'turn')!.id);
     const denied = steps.filter((s) => s.type === 'tool_result' && s.payload['ok'] === false);
     expect(denied.length).toBe(1);
     expect(String(denied[0]!.payload['content'])).toContain('APPROVAL_DENIED');
@@ -239,7 +239,7 @@ describe('access approvals for file tools (P03)', () => {
     const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
       runs: Run[];
     };
-    const runId = runs.runs.find((r) => r.loopType === 'response')!.id;
+    const runId = runs.runs.find((r) => r.loopType === 'turn')!.id;
 
     // Cancel while waiting: approval -> cancelled, run -> cancelled.
     await core.rpc.call('runs.cancel', { runId });
@@ -281,7 +281,7 @@ describe('access approvals for file tools (P03)', () => {
       const runs2 = (await restarted.core.rpc.call('runs.list', { conversationId: conv2.id, limit: 5 })) as {
         runs: Run[];
       };
-      expect(runs2.runs.find((r) => r.loopType === 'response')!.status).toBe('interrupted');
+      expect(runs2.runs.find((r) => r.loopType === 'turn')!.status).toBe('interrupted');
       const services = restarted.core.services.domain!;
       const cancelled = approvals.approvals.find((a) => a.status === 'cancelled')!;
       expect(services.approvals.renderContextLine(cancelled)).toContain('已取消');
@@ -308,7 +308,7 @@ describe('access approvals for file tools (P03)', () => {
     await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
 
     const runsDb = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 }) as { runs: Run[] }).runs;
-    const steps = await stepsOf(core, runsDb.find((r) => r.loopType === 'response')!.id);
+    const steps = await stepsOf(core, runsDb.find((r) => r.loopType === 'turn')!.id);
     const readResult = steps.find((s) => s.type === 'tool_result' && s.payload['toolName'] === 'read');
     expect(readResult!.payload['ok']).toBe(false);
     expect(String(readResult!.payload['content'])).toContain('PATH_OUT_OF_SCOPE');

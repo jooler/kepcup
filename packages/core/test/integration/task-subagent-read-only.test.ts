@@ -36,7 +36,7 @@ const isSubRequest = (marker: string) => (req: MockChatRequest) =>
   !req.lastUserText().includes('<task_brief') && req.lastUserText().includes(marker);
 
 function turnIdentity(botId: string, conversationId: string): RunIdentity {
-  return { runId: 'run_turn_h1', botId, conversationId, loopType: 'response' };
+  return { runId: 'run_turn_h1', botId, conversationId, loopType: 'turn' };
 }
 
 function subIdentity(sub: Run): RunIdentity {

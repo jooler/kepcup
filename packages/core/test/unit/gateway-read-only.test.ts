@@ -32,7 +32,8 @@ const ids = {
   readTask: { runId: 'run_read_task', botId: BOT, conversationId: CONV, loopType: 'task' },
   writeTask: { runId: 'run_write_task', botId: BOT, conversationId: CONV, loopType: 'task' },
   unknownTask: { runId: 'run_missing', botId: BOT, conversationId: CONV, loopType: 'task' },
-  response: { runId: 'run_resp', botId: BOT, conversationId: CONV, loopType: 'response' },
+  // A writable non-D75 loop (formerly the response run, now renamed 'turn' and read-only).
+  response: { runId: 'run_resp', botId: BOT, conversationId: CONV, loopType: 'skill_authoring' },
   // delegate_task sub runs (loop type subagent) owned by the runs above.
   subOfReadTask: { runId: 'run_sub_read', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfWriteTask: { runId: 'run_sub_write', botId: BOT, conversationId: CONV, loopType: 'subagent' },
@@ -63,7 +64,7 @@ const runRows = new Map<string, RunRow>(
       ['run_write_task', 'task', true, null],
       ['run_ended_write_task', 'task', true, null, 'completed'],
       ['run_unleased_write_task', 'task', true, null],
-      ['run_resp', 'response', null, null],
+      ['run_resp', 'skill_authoring', null, null],
       ['run_sub_read', 'subagent', null, 'run_read_task'],
       ['run_sub_write', 'subagent', null, 'run_write_task'],
       ['run_sub_ended', 'subagent', null, 'run_ended_write_task'],

@@ -134,7 +134,7 @@ async function setup(
         runId: `run_${counter}`,
         botId: 'bot_1',
         conversationId: 'conv_1',
-        loopType: 'response',
+        loopType: 'turn',
       },
       model: agentModelRef(FAKE.id, ''),
       buildSystemPrompt: async () => 'SYSTEM',
@@ -578,7 +578,7 @@ describe('external agent usage (P5)', () => {
     try {
       runMigrations(db, migrationsUrl('main'));
       const usage = new UsageService(db, { now: () => 1 } as never);
-      const base = { botId: null, conversationId: null, loopType: 'response' as const };
+      const base = { botId: null, conversationId: null, loopType: 'turn' as const };
       usage.record({
         ...base,
         runId: 'r1',
@@ -854,7 +854,7 @@ describe('shim transport (design 28 §10 `connect`)', () => {
     hosts.push(host);
     const engine = new ExternalAgentEngine({ host, catalog: () => [entry], logger });
     const outcome = await engine.startRun({
-      identity: { runId: 'run_shim', botId: 'b', conversationId: 'c', loopType: 'response' },
+      identity: { runId: 'run_shim', botId: 'b', conversationId: 'c', loopType: 'turn' },
       model: agentModelRef(entry.id, ''),
       buildSystemPrompt: async () => 'S',
       messages: [{ role: 'user', content: '经垫片', timestamp: 0 }],
@@ -1120,7 +1120,7 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
       runTimeoutMs: 1_500,
     });
     const handle = engine.startRun({
-      identity: { runId: 'run_dl', botId: 'b', conversationId: 'c', loopType: 'response' },
+      identity: { runId: 'run_dl', botId: 'b', conversationId: 'c', loopType: 'turn' },
       model: agentModelRef(FAKE.id, ''),
       buildSystemPrompt: async () => 'S',
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],

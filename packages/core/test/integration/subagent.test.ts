@@ -199,7 +199,7 @@ describe('subagent background delegation (D66 mode B)', () => {
     await waitFor(
       async () => {
         const runs = await listRuns(core, conv.id);
-        const done = runs.filter((r) => r.loopType === 'response' && r.status === 'completed');
+        const done = runs.filter((r) => r.loopType === 'turn' && r.status === 'completed');
         return done.length >= 2 ? true : null;
       },
       { label: 'follow-up response run', timeoutMs: 30_000 },

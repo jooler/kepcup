@@ -404,7 +404,7 @@ describe('ExternalAgentEngine', () => {
       cancelGraceMs: options.cancelGraceMs ?? 200,
     });
     const spec = (overrides: Partial<RunSpec> = {}): RunSpec => ({
-      identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' },
+      identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' },
       model: agentModelRef(entry.id, ''),
       buildSystemPrompt: async () => 'SYSTEM',
       messages: [{ role: 'user', content: 'HELLO', timestamp: 0 }],

@@ -162,7 +162,7 @@ describe('mcp response loop', () => {
 
     await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
     const steps = (await core.rpc.call('runs.steps', {
-      runId: ((await listRuns(core, conv.id)) as Run[]).find((r) => r.loopType === 'response')!.id,
+      runId: ((await listRuns(core, conv.id)) as Run[]).find((r) => r.loopType === 'turn')!.id,
     })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };

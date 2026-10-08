@@ -203,7 +203,7 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       const runs = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 50 })) as {
         runs: Run[];
       };
-      expect(runs.runs.filter((r) => r.loopType === 'response')).toHaveLength(0);
+      expect(runs.runs.filter((r) => r.loopType === 'turn')).toHaveLength(0);
       // 单聊已只读，drafts.flush 被拒
       await expect(
         stack.core.rpc.call('drafts.flush', { conversationId: conv.id }),

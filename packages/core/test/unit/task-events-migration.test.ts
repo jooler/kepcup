@@ -155,9 +155,10 @@ describe('runs 0006 tasks 迁移', () => {
       "insert into runs (id, bot_id, conversation_id, loop_type, status, created_at) values ('run_old', 'bot_x', 'conv_a', 'response', 'completed', 1)",
     );
     const applied = runMigrations(db, migrationsUrl('runs'));
-    expect(applied.map((m) => m.version)).toEqual([6]);
+    // 0007 (D75 W2) renames the old 'response' loop type to 'turn'.
+    expect(applied.map((m) => m.version)).toEqual([6, 7]);
     expect(db.prepare("select * from runs where id = 'run_old'").get()).toMatchObject({
-      loop_type: 'response',
+      loop_type: 'turn',
       engine: 'builtin',
       task_title: null,
       task_writes: null,

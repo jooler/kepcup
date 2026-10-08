@@ -130,7 +130,7 @@ describe('workspace and coding tools', () => {
 
     // P07：runs.list 里还有后台反思 run，取最新的响应 run。
     const runsA = (await core.rpc.call('runs.list', { conversationId: convA.id, limit: 5 }) as { runs: Array<{ id: string; loopType: string }> }).runs;
-    const steps = await stepsOf(core, runsA.find((r) => r.loopType === 'response')!.id);
+    const steps = await stepsOf(core, runsA.find((r) => r.loopType === 'turn')!.id);
     const readResult = steps.find(
       (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
     );

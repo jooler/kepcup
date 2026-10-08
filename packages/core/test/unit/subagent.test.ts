@@ -128,7 +128,7 @@ const parentIdentity = {
   runId: 'run_parent',
   botId: 'bot_1',
   conversationId: 'conv_1',
-  loopType: 'response' as const,
+  loopType: 'turn' as const,
 };
 
 function makeInput(

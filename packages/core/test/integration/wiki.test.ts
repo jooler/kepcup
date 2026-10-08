@@ -66,7 +66,7 @@ async function waitForNewRun(
         runs: Run[];
       };
       const responseRuns = result.runs
-        .filter((r) => r.loopType === 'response' && r.status === status)
+        .filter((r) => r.loopType === 'turn' && r.status === status)
         .sort((a, b) => a.id.localeCompare(b.id));
       const newest = responseRuns[responseRuns.length - 1];
       if (newest === undefined) return null;
