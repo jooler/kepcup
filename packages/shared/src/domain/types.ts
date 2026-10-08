@@ -54,7 +54,9 @@ export const botRuntimeSchema = z.object({
   mcp_server_ids: z.array(z.string()).default([]),
   /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
-   * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。
+   * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
+   * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
+   * 引擎」：任务在该 Agent 上执行（每任务一个会话），对话轮固定内置引擎。
    * `model` / `effort` 为空 = Agent 默认；`capabilities` 为 null = 跟随能力包
    * 默认值（host-capabilities.ts `defaultCapabilities`）。Profile JSON，无迁移。
    */
