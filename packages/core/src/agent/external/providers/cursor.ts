@@ -117,14 +117,16 @@ export const cursorProvider: AgentProvider = {
   // `handlePrompt`；`newSession` 为每个会话各建 agentStore、执行资源
   // （session-resources.ts）与 AgentSession；在途 prompt 的取消句柄
   // `pendingPromptCancel` 在 AgentSession 上。Agent 类本身没有「当前 prompt」
-  // 字段（只有 connection / sessions / sharedServices 等）。闭源，待真机确认。
+  // 字段（只有 connection / sessions / sharedServices 等）。但它闭源、随包 JS
+  // 经压缩且无兼容承诺，sharedServices 在会话间共享——按「未真机实测即保守」
+  // 取 false（并发钳为 1、不参与后台），真机确认后再放开。
   features: {
     steering: false,
     loadSession: true,
     resume: false,
     osSandbox: false,
     httpMcp: true,
-    parallelSessions: true,
+    parallelSessions: false,
   },
   // project 内 Cursor 会读的配置：.cursor/（rules、cli.json 权限、mcp.json、
   // hooks）、AGENTS.md、CLAUDE.md。
