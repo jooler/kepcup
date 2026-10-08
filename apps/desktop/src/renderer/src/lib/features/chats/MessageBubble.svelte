@@ -7,6 +7,8 @@
   import RunChangesCard from '$lib/features/projects/RunChangesCard.svelte';
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
+  import TaskCard from '$lib/features/tasks/TaskCard.svelte';
+  import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
   import GroupSetupCard from './GroupSetupCard.svelte';
@@ -43,11 +45,21 @@
         }
       : null,
   );
+  // D75 任务卡（design 30 §4.3）：start_task 时出现，随 task.updated 重绘。
+  const taskCardId = $derived(
+    isCard && 'cardType' in message.content && message.content.cardType === 'task'
+      ? String(('runId' in message.content ? message.content.runId : null) ?? message.taskId ?? '')
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
   const cardApproval = $derived(
-    isCard && !isChangesCard && delegationCard === null && 'approvalId' in message.content
+    isCard &&
+      !isChangesCard &&
+      delegationCard === null &&
+      taskCardId === null &&
+      'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
   );
@@ -87,6 +99,13 @@
       message.content.event === 'group_setup_question',
   );
 
+  // D75 任务提问卡（design 30 §2.4.6）：绑定任务，点选直注任务。
+  const isTaskQuestion = $derived(
+    message.kind === 'system_event' &&
+      'event' in message.content &&
+      message.content.event === 'task_question',
+  );
+
   // 管家路由卡（D70 §2.4）：建议去哪，一键跳转 / 交给管家转交。
   const isRouteCard = $derived(
     isSystem &&
@@ -109,6 +128,11 @@
   <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
+  </div>
+{:else if taskCardId !== null}
+  <!-- D75 任务卡：信息卡，居中；进行中可取消，失败可重试，取消后附改动摘要 -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <TaskCard taskId={taskCardId} />
   </div>
 {:else if isCard}
   <!-- 审批卡片：消息流里显示折叠记录，交互卡片在输入区上方的 dock 中 -->
@@ -137,6 +161,10 @@
   <!-- 对话内群创建问题卡（19/D60）：居中卡片形态（群无 bot 左缘） -->
   <div class="flex w-full justify-center py-1">
     <GroupSetupCard {message} />
+  </div>
+{:else if isTaskQuestion}
+  <div class="flex w-full justify-center py-1">
+    <TaskQuestionCard {message} />
   </div>
 {:else if isRouteCard}
   <div class="flex w-full justify-center py-1">

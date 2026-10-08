@@ -19,7 +19,9 @@ import { contacts } from '$lib/stores/contacts.svelte';
 import { permissions } from '$lib/stores/permissions.svelte';
 import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
-import { restoredFailedRun } from '../features/chats/setup-continue';
+import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
+import { mergeUnreadCount } from '../features/chats/unread';
+import { tasks } from '$lib/stores/tasks.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -41,6 +43,8 @@ export interface ActiveRunView {
    * progress) — todo/loop-interim-updates.md 的「状态提示消失 → 新状态提示」节奏。
    */
   muted: boolean;
+  /** Time of the latest activity (status line: most recent task first). */
+  at: number;
 }
 
 interface CurrentChat {
@@ -162,6 +166,7 @@ class ChatState {
           entry.progress = data.text;
         }
         entry.muted = false;
+        entry.at = Date.now();
         chat.activeRuns = [...chat.activeRuns];
       }
     });
@@ -265,7 +270,9 @@ class ChatState {
     this.#upsertConversation(result.conversation);
     const messages = await this.#loadLatest(conversationId);
     const drafts = (await core.call('drafts.list', { conversationId })) as { drafts: Draft[] };
-    const runs = (await core.call('runs.list', { conversationId, limit: 5 })) as { runs: Run[] };
+    // D75: several tasks may be in flight next to the turns — look further back.
+    const runs = (await core.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
+    void tasks.loadActive(conversationId);
     const active = runs.runs.filter((r) => isActive(r.status));
     // 带 setup 的旧失败若已被后续响应 run 接手，不再恢复为设置卡（审查 HIGH #1）。
     const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
@@ -273,7 +280,13 @@ class ChatState {
       conversation: result.conversation,
       messages,
       drafts: drafts.drafts,
-      activeRuns: active.map((run) => ({ run, progress: '', toolName: '', muted: false })),
+      activeRuns: active.map((run) => ({
+        run,
+        progress: '',
+        toolName: '',
+        muted: false,
+        at: run.startedAt ?? run.createdAt,
+      })),
       failedRun: failed,
       loadingEarlier: false,
       hasEarlier: messages.length >= PAGE_SIZE,
@@ -671,9 +684,9 @@ class ChatState {
       conversationId: chat.conversation.id,
       seq: lastSeq,
     });
-    chat.conversation = { ...chat.conversation, lastReadSeq: lastSeq };
+    chat.conversation = { ...chat.conversation, lastReadSeq: lastSeq, unreadCount: 0 };
     this.conversations = this.conversations.map((c) =>
-      c.id === chat.conversation.id ? { ...c, lastReadSeq: lastSeq } : c,
+      c.id === chat.conversation.id ? { ...c, lastReadSeq: lastSeq, unreadCount: 0 } : c,
     );
   }
 
@@ -722,10 +735,13 @@ class ChatState {
 
   #upsertConversation(conversation: ConversationView): void {
     const index = this.conversations.findIndex((c) => c.id === conversation.id);
+    const unread = mergeUnreadCount(conversation, this.conversations[index]);
+    // A conversation first seen through an event without a count (D75: seq
+    // math would count private task rows): ask the server for its count.
+    if (unread.refetch) void this.#refreshUnread(conversation.id);
     const merged: ConversationView = {
       ...conversation,
-      unreadCount:
-        conversation.unreadCount ?? Math.max(0, conversation.lastSeq - conversation.lastReadSeq),
+      unreadCount: unread.count,
       runningBotIds:
         this.runningByConversation[conversation.id] ?? conversation.runningBotIds ?? [],
     };
@@ -758,6 +774,21 @@ class ChatState {
     }
   }
 
+  async #refreshUnread(conversationId: string): Promise<void> {
+    try {
+      const result = (await core.call('conversations.get', { id: conversationId })) as {
+        conversation: ConversationView | null;
+      };
+      const count = result.conversation?.unreadCount;
+      if (count === undefined) return;
+      this.conversations = this.conversations.map((c) =>
+        c.id === conversationId ? { ...c, unreadCount: count } : c,
+      );
+    } catch {
+      // Keeps the provisional count.
+    }
+  }
+
   #applyRun(run: Run): void {
     if (run.conversationId === null) return;
     const current = this.runningByConversation[run.conversationId] ?? [];
@@ -780,13 +811,16 @@ class ChatState {
         existing.run = run;
         chat.activeRuns = [...chat.activeRuns];
       } else {
-        chat.activeRuns = [...chat.activeRuns, { run, progress: '', toolName: '', muted: false }];
+        chat.activeRuns = [
+          ...chat.activeRuns,
+          { run, progress: '', toolName: '', muted: false, at: Date.now() },
+        ];
       }
     } else {
       chat.activeRuns = chat.activeRuns.filter((a) => a.run.id !== run.id);
     }
     chat.failedRun =
-      run.status === 'failed' && !this.#dismissedFailedRunIds.has(run.id)
+      run.status === 'failed' && showsFailure(run) && !this.#dismissedFailedRunIds.has(run.id)
         ? run
         : chat.failedRun?.id === run.id
           ? null

@@ -6,6 +6,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { tasks } from '$lib/stores/tasks.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
@@ -30,6 +31,25 @@
     isUser && 'origin' in message.content && message.content.origin === 'delegation'
       ? (message.content.delegatedBy ?? '')
       : null,
+  );
+  /**
+   * D75 §6.1：任务发出的可见消息（origin = 'task'）——任务执行中的进度
+   * （run_id = 任务）或对话轮原文转发的任务结果（forward_task_result）——
+   * 标出所属任务，与 Bot 的直接回复区分。
+   */
+  const taskOrigin = $derived(
+    !isUser && 'origin' in message.content && message.content.origin === 'task'
+      ? {
+          taskId: message.content.taskId ?? '',
+          forwarded: message.runId !== null && message.runId !== message.content.taskId,
+        }
+      : null,
+  );
+  $effect(() => {
+    if (taskOrigin !== null && taskOrigin.taskId.length > 0) void tasks.ensure(taskOrigin.taskId);
+  });
+  const taskTitle = $derived(
+    taskOrigin !== null ? (tasks.byId[taskOrigin.taskId]?.title ?? '') : '',
   );
   // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
   // （不再渲染名字/时间行）。
@@ -133,6 +153,17 @@
     {#if delegatedBy !== null}
       <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
         {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
+      </span>
+    {/if}
+    {#if taskOrigin !== null}
+      <span
+        class="mb-0.5 text-[11px] text-muted-foreground"
+        data-testid="task-origin"
+        data-task-id={taskOrigin.taskId}
+      >
+        {taskOrigin.forwarded
+          ? t('task.originResult', { title: taskTitle })
+          : t('task.originProgress', { title: taskTitle })}
       </span>
     {/if}
     {#if quoted !== null}
