@@ -133,9 +133,13 @@ describe('access approvals for file tools (P03)', () => {
     await core.rpc.call('approvals.decide', { id: again.id, approve: true, duration: 'once' });
     await waitForRelay(core, conv.id, 'RELAY-READ-1');
 
-    // Two cards for run 1 (one per tool call); nothing outlives the calls.
+    // Two approval cards for run 1 (one per tool call); nothing outlives the
+    // calls. (The task's own card — D75 W3 — is not an approval card.)
     const messages1 = await listMessages(core, conv.id);
-    expect(messages1.filter((m) => m.kind === 'card').length).toBe(2);
+    const approvalCards = messages1.filter(
+      (m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType !== 'task',
+    );
+    expect(approvalCards.length).toBe(2);
     const left = (await core.rpc.call('grants.list', { conversationId: conv.id })) as {
       grants: unknown[];
     };
