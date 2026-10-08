@@ -137,6 +137,20 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - 验证：新增 4 个测试文件 23 例；容器全量 1582 例，失败 34 = 基线 33 + `web-tools.test.ts` 一条负载超时（单跑 3/3 通过，判为偶发）；调度会话合并后复跑新增测试 + `create-core` 32/32、三包 typecheck 通过。
 - 合并后调度会话追加 `505f5f9`：上下文消息读取收敛到 orchestrator `#contextMessages(conversationId, viewerBotId, limit)`（W1-A 与 W1-B 的接缝：W1-B 只改其实现，W1-A 的任务对话层用 `viewerBotId = null`）。
 
+### W1 三路（2026-10-08，合入 `d75`：W1-C `20b8689`、W1-B `1f6a38f`、W1-A `81ff891`，接缝修正 `65433d9`）
+
+- **W1-C 写互斥与只读**（`c80506c`、`e3ba8a2`）：`ensureWriteLease` 支持 Bot 自己的 workspace（键 `ws:{botId}:{conversationId}`，无检查点）；`writeDenial(identity)`：`turn` 恒只读，`task` 仅 `taskWrites === true` 可写（行缺失或 null **fail closed**，严于方案）；网关文件写 / bash 沙箱策略（只读挂载）/ 沙箱外 / git / 租约全部硬拒，错误码 `RUN_READ_ONLY`；切换 / 移除 project 也被进行中的 `turn` / `task` 阻止。D37 收紧见 **DEV-009（待用户确认）**：「仅这一次」由用到它的那次工具调用消耗（`AsyncLocalStorage` 工具调用作用域），`request_access` 预授权给下一次用到它的调用，`GRANT_ABSOLUTE_TTL_MS` 兜底，外部智能体「仅这一次」不再生成授权。普通 run 写 workspace 不取租约（只有写任务显式取）。新增测试 `workspace-lease`（4）、`gateway-read-only`（12）及 `permissions` / `policy` / `approvals` 用例。
+- **W1-B 私有时间线读路径**（`3b726cb`）：`listForBot` / `listShared`（SQL 过滤、整页）、`search`（`viewerBotId` 必填，FTS join `messages`）、`around`（语义改为「前后各 N 条可见行」）、`unsummarized` 只摘共享、`countVisibleAfter`（未读只数用户可见行，内部事务也不再计入）、预览排除私有行；私有行推进 `last_seq` 但不推进 `last_message_at`。`renderMessageLine` 增第三参数 `'context' | 'trigger' | 'full'`。任务视角下 `search_messages` / `get_messages_around` 只看共享行。泄露契约测试 `task-timeline-visibility`：真实 core，去掉过滤的变异检查会报 9 个泄露标记。
+- **W1-A 任务层**（`5dea3a2`、`26b1249`、`e67a746`）：`dispatch/tasks.ts` `TaskHost`（`orchestrator.tasks`）、`tools/task-tools.ts` `buildTaskTools`（未注册，W2 注册）；`#executeResponseRun` 抽为 `#executeRun(runId, RunExecution)`（`kind: 'response' | 'task'`，W2 加 `turn`）；启动恢复 `tasks.recover()` 先于 `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })`；reaper 由 `start.ts` 定时；调度器为对话回复保留一个 provider 名额。作者自行安排了一轮独立审查并修复 10 处。过渡行为：本波唤醒仍经旧 mailbox 起响应 run，看过任务条目的响应 run 结算后 `markConsumed`（W2 移到对话轮终态）；外部智能体 Bot 的任务暂时失败关闭（W4）；`inject` 也接受 `submitted` 任务（并入简报）。
+- **接缝修正**（调度会话）：W1-C 合入后 workspace 已有租约目标，任务写租约失败不再把 `INVALID_INPUT` 当作「暂无租约」无锁继续；去掉 W1-B 的 `LoopType` 类型放宽。
+
+**交接给后续工作流**
+
+- **W2**：注册 `buildTaskTools`；`markConsumed` 从 `#releaseResponseMailbox` 移到对话轮终态；`RunExecution` 加 `turn`；对话轮工具面去掉 MCP / 媒体生成 / 浏览器（不在只读检查覆盖范围）；`get_attachment` 复制非文本附件到 workspace 在对话轮会被拒，决定对话轮是否保留该路径；任务唤醒的触发段用 `buildTriggerSegment`（`'trigger'` 模式，全文 + 硬顶）；D66 降级（原 W1-A 第 5 项）。
+- **W3**：`RUN_READ_ONLY` 等错误码的 zh-CN 文案；渲染端 `#upsertConversation` 缺 `unreadCount` 时回退 `lastSeq - lastReadSeq` 会算入私有行；取消卡改动摘要（W1-A 的 `cancel_task` 只说明不回退）；W0 已在 `UsageSection` / `zh-CN.ts` 补 `turn` / `task`。
+- **W4**：外部智能体只读任务必须强制 `read_only` 档位（Agent 在工作目录内的写入先被桥的档位逻辑放行，走不到网关）；外部智能体任务当前失败关闭，W4 接通。
+- **W5**：设计 13 补一句预授权的消费方式；DEV-009 结论落字。
+
 ## 6. 基线
 
 容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。
