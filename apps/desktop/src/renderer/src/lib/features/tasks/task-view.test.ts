@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { TaskView } from '@kepcup/shared';
-import { clipLine, isActiveTask, taskCardModel, taskStatusSummary } from './task-view';
+import type { Run, TaskView } from '@kepcup/shared';
+import {
+  activeRunsOf,
+  applyFetchedViews,
+  clipLine,
+  isActiveTask,
+  pruneTaskViews,
+  taskCardModel,
+  taskStatusSummary,
+} from './task-view';
 
 /** 任务卡 / 状态行的展示逻辑（D75 W3，design 30 §4.3 / §6.3）。 */
 
@@ -160,5 +168,46 @@ describe('status line helpers', () => {
   it('clips long inject / progress lines to one line', () => {
     expect(clipLine('  a\n b  ')).toBe('a b');
     expect(clipLine('x'.repeat(200), 10)).toBe(`${'x'.repeat(10)}…`);
+  });
+});
+
+describe('task view cache (审查 L2 / L3)', () => {
+  it('a fetched view does not overwrite a newer task.updated push', () => {
+    const pushed = view({ taskId: 'run_a', state: 'completed', status: 'completed' });
+    const other = view({ taskId: 'run_b' });
+    const byId = { run_a: pushed };
+    // tasks.active answered with a stale running view of run_a (pushed meanwhile)
+    // and a view of run_b nobody pushed.
+    const next = applyFetchedViews(
+      byId,
+      [view({ taskId: 'run_a' }), other],
+      (taskId) => taskId === 'run_a',
+    );
+    expect(next['run_a']).toBe(pushed);
+    expect(next['run_b']).toBe(other);
+    // Without a newer push the fetched view replaces the cached one.
+    const fresh = view({ taskId: 'run_a', lastProgress: '新进度' });
+    expect(applyFetchedViews(byId, [fresh], () => false)['run_a']).toBe(fresh);
+    // Nothing applicable: the same object (no reactive churn).
+    expect(applyFetchedViews(byId, [view({ taskId: 'run_a' })], () => true)).toBe(byId);
+  });
+
+  it('pruning keeps the open conversation and in-flight tasks only', () => {
+    const byId = {
+      here: view({ taskId: 'here', conversationId: 'c1', state: 'completed', status: 'completed' }),
+      live: view({ taskId: 'live', conversationId: 'c2' }),
+      old: view({ taskId: 'old', conversationId: 'c2', state: 'failed', status: 'failed' }),
+    };
+    expect(Object.keys(pruneTaskViews(byId, 'c1')).sort()).toEqual(['here', 'live']);
+    const kept = { here: byId.here };
+    expect(pruneTaskViews(kept, 'c1')).toBe(kept);
+  });
+
+  it('the status line seed includes active runs older than the latest page', () => {
+    const run = (id: string, status: Run['status']) => ({ id, status }) as unknown as Run;
+    const active = (r: Run) => r.status === 'running' || r.status === 'queued';
+    const latest = [run('turn_new', 'completed'), run('task_new', 'running')];
+    const all = [run('task_old', 'running'), run('task_new', 'running')];
+    expect(activeRunsOf(latest, all, active).map((r) => r.id)).toEqual(['task_new', 'task_old']);
   });
 });

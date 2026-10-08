@@ -1265,6 +1265,11 @@ export class Orchestrator {
     return this.#deps.runs.listByConversation(conversationId, limit);
   }
 
+  /** Every active run of the conversation (status line seed, D75 审查 L3). */
+  listActiveByConversation(conversationId: string) {
+    return this.#deps.runs.listActiveByConversation(conversationId);
+  }
+
   /** Bot ids with an active run per conversation (sidebar indicator). */
   runningBotIds(conversationId: string): string[] {
     const ids = new Set<string>();
