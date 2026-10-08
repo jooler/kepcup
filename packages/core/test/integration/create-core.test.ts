@@ -90,8 +90,8 @@ describe('createCore (integration)', () => {
       expect(tables.map((t) => t.name)).toContain(table);
     }
     // 0001 init + 0002 runs + 0003 run continuation (D56) + 0004 subagent parent (D66/D67)
-    // + 0005 run engine (D72)。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(5);
+    // + 0005 run engine (D72) + 0006 tasks (D75)。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(6);
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

@@ -495,7 +495,25 @@ export const conversationSchema = z.object({
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
-export const messageKindSchema = z.enum(['text', 'system_event', 'card']);
+// Defined ahead of the Runs section: taskEventContentSchema (below) uses it.
+export const runStatusSchema = z.enum([
+  'queued',
+  'running',
+  'waiting_approval',
+  'waiting_lease',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+export type RunStatus = z.infer<typeof runStatusSchema>;
+
+/**
+ * `task_event`（D75，docs/design/30-supervisor-and-tasks.md §2.4）：Bot 与其
+ * 任务之间的私有往返条目（交代 / 追加 / 取消 / 提问 / 结果 / 失败），
+ * `owner_bot_id` 归属该 Bot，用户不可见。
+ */
+export const messageKindSchema = z.enum(['text', 'system_event', 'card', 'task_event']);
 export type MessageKind = z.infer<typeof messageKindSchema>;
 
 export const textContentSchema = z.object({
@@ -511,11 +529,17 @@ export const textContentSchema = z.object({
    * user 消息（进上下文、触发 B 的响应 run），UI 打「由 A 代你发出」标签；
    * 记忆反思不把它当作用户本人的话。
    */
-  origin: z.literal('delegation').optional(),
+  /**
+   * `task`（D75 §2.4.2）：任务发出的可见中间说明（进度），渲染为「你（任务
+   * t_x）」；`taskId` 指向任务 run。
+   */
+  origin: z.enum(['delegation', 'task']).optional(),
   /** origin = 'delegation' 时对应的委派行。 */
   delegationId: z.string().optional(),
   /** origin = 'delegation' 时代为转交的 Bot（A）的 id：UI 标签与上下文渲染用。 */
   delegatedBy: z.string().optional(),
+  /** origin = 'task' 时发出该消息的任务（run id）。 */
+  taskId: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
@@ -570,10 +594,52 @@ export const cardContentSchema = z.object({
   delegationId: z.string().optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
+
+/** task_event 条目的阶段（D75 §2.4.1）；result / failure 是终态条目，每任务至多一条。 */
+export const taskEventPhaseSchema = z.enum([
+  'brief',
+  'inject',
+  'cancel',
+  'question',
+  'result',
+  'failure',
+]);
+export type TaskEventPhase = z.infer<typeof taskEventPhaseSchema>;
+/** 终态 phase：受 messages_task_terminal 唯一索引约束（§3.2 幂等写入）。 */
+export const TERMINAL_TASK_EVENT_PHASES: ReadonlySet<TaskEventPhase> = new Set([
+  'result',
+  'failure',
+]);
+
+/**
+ * task_event 内容（D75 §2.4.1）。`sourceMessageIds` 指向用户原消息（简报 /
+ * 追加带原文兜底）；`status` / `error` 用于 failure；`delivery` 用于 inject；
+ * `questionMessageId` 用于 question（对应的可见问题卡）；`title` / `writes` /
+ * `continuesTaskId` 用于 brief。
+ */
+export const taskEventContentSchema = z.object({
+  taskId: z.string(),
+  phase: taskEventPhaseSchema,
+  text: z.string(),
+  sourceMessageIds: z.array(z.string()).optional(),
+  status: runStatusSchema.optional(),
+  error: z.string().optional(),
+  delivery: z.enum(['delivered', 'queued']).optional(),
+  questionMessageId: z.string().optional(),
+  title: z.string().optional(),
+  writes: z.boolean().optional(),
+  continuesTaskId: z.string().optional(),
+});
+export type TaskEventContent = z.infer<typeof taskEventContentSchema>;
+
 export const messageContentSchema = z.union([
   // system_event first: its shape requires `event`, while a system event's
   // {event, text} would also satisfy textContentSchema (which strips `event`).
   systemEventContentSchema,
+  // task_event before text for the same reason: {taskId, phase, text} would
+  // satisfy textContentSchema and lose taskId/phase. A text message with
+  // origin 'task' carries taskId but never phase, so it does not match here.
+  taskEventContentSchema,
   textContentSchema,
   cardContentSchema,
 ]);
@@ -612,6 +678,13 @@ export const messageSchema = z.object({
   editedAt: z.number().nullable(),
   createdAt: z.number(),
   attachments: z.array(attachmentSchema).default([]),
+  /**
+   * 私有条目的归属 Bot（D75 §2.4.2）：null = 对话共享（全部既有行）；非空 =
+   * 仅该 Bot 可见（目前只用于 task_event）。
+   */
+  ownerBotId: z.string().nullable().default(null),
+  /** task_event 所属任务（run id）；其余为 null。 */
+  taskId: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof messageSchema>;
 
@@ -636,18 +709,6 @@ export type Draft = z.infer<typeof draftSchema>;
 // Runs
 // ---------------------------------------------------------------------------
 
-export const runStatusSchema = z.enum([
-  'queued',
-  'running',
-  'waiting_approval',
-  'waiting_lease',
-  'completed',
-  'failed',
-  'cancelled',
-  'interrupted',
-]);
-export type RunStatus = z.infer<typeof runStatusSchema>;
-
 export const triggerReasonSchema = z.enum([
   'direct',
   'mention',
@@ -659,6 +720,8 @@ export const triggerReasonSchema = z.enum([
   'background',
   /** 跨 Bot 委派（D71）：A 代用户转交给 B 的任务。 */
   'delegation',
+  /** 任务结算唤醒对话轮（D75 §3.2）：触发批是任务的终态条目。 */
+  'task',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -673,6 +736,12 @@ export const loopTypeSchema = z.enum([
   'conversation_summary',
   /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
   'subagent',
+  /**
+   * D75（docs/design/30-supervisor-and-tasks.md）：对话轮（沟通与调度，只读，
+   * 秒级）与任务（执行，可并行）。'response' 暂留，由 W2 改名为 'turn' 后移除。
+   */
+  'turn',
+  'task',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 
@@ -752,6 +821,18 @@ export const runSchema = z.object({
   engine: z.string().default('builtin'),
   /** 外部 Agent 侧的会话 id（ACP `sessionId`）；内置引擎为 null。 */
   agentSessionId: z.string().nullable().default(null),
+  /** 任务字段（D75 §3.4，loop_type = 'task'）；非任务 run 为 null。 */
+  taskTitle: z.string().nullable().default(null),
+  /** 写任务（租约与网关裁决）；非任务为 null。 */
+  taskWrites: z.boolean().nullable().default(null),
+  /** 解析后的任务工作目录。 */
+  taskWorkdir: z.string().nullable().default(null),
+  /** 派出该任务的对话轮。 */
+  originRunId: z.string().nullable().default(null),
+  /** 任务结果被对话轮消费的时间（§3.2）；未消费为 null。 */
+  resultConsumedAt: z.number().nullable().default(null),
+  /** 任务在 running 下等待用户输入（§2.4.6）。 */
+  awaitingInput: z.boolean().default(false),
   createdAt: z.number(),
   startedAt: z.number().nullable(),
   endedAt: z.number().nullable(),
