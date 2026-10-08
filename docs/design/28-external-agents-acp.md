@@ -2,7 +2,7 @@
 
 许多用户已经订阅了 Claude Pro/Max、ChatGPT Plus/Pro、GitHub Copilot、GLM Coding Plan 等，却拿不到通用的 `base_url` / `api_key`，无法使用基于 pi 的内置 loop。本文规定：**用户可在设置中像 ACP Registry 那样启用外部编码智能体（Agent），并为某个 Bot 指定由哪个 Agent 驱动其执行 loop**；外部 Agent 主要通过 [ACP（Agent Client Protocol）](https://agentclientprotocol.com) 驱动，内置 pi loop 保持默认与不变。
 
-决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**尚未实现**。
+决策：D72。执行方案见 [todo/acp-external-agents.md](../../todo/acp-external-agents.md)。**状态（2026-10-08）**：P1–P6 已实现（实验开关下）；待办只剩需要真实账号的人工项——各 Agent 登录后的 P0 spike、原生优先遵守度真机运行（§9.2 末）与三平台人工验收（todo §9.1 末项）。
 
 相关：D2（执行中注入）、D4（@ 连锁预算）、D21（pi 封装在 `AgentEngine` 之后）、D35/D36（访问范围）、D27（沙箱）、D29/D30（写入租约 / 检查点）、D41（无人值守）、D45（模型配置）、D48/D54（Bot 发消息 / 中间说明）、D56（Loop 续接）、D58（对话内设置引导）、D62/D68（检索与能力补位工具）、D65（MCP）、D66（SubAgent）、D67（durable）、D71（跨 Bot 委派）。
 
@@ -236,7 +236,7 @@ interface AgentCatalogEntry {
 
 - **并发**：调度器 provider 键 `agent:{id}`，并发沿用 `settings.providerConcurrency`，缺省 `AGENT_DEFAULT_CONCURRENCY`（2）。
 - **用量**：`usage_ledger` 沿用现有列（`provider='agent:{id}'`、费用为空）；token 取 `PromptResponse.usage`（ACP 不稳定字段；口径由 Provider 声明——Claude / Codex 实为本 turn，其余按会话累计做差），缺失时每个模型轮记一条零 token 行（只记轮数）；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算；用量页单列「订阅 / 外部 Agent」。
-- **后台 loop**：有内置模型则照旧；只有外部 Agent 时，`complete()` 用一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`、临时 cwd；其他 Agent 用只读档 + 临时 cwd），只输出 JSON，复用 `structured.ts` 文本 JSON 回退；续接 L2 仲裁关闭；群聊判断超时视为 `no_action`；反思 / 摘要降频，技能生成默认关。设置页「后台任务」可选用哪个 Agent 或关闭。
+- **后台 loop**（P6 已实现）：有内置模型则照旧；只有外部 Agent 时由 `agent/llm-router.ts` 改走外部 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；其他 Agent 只读档；均以新建的空私有临时目录作 cwd、结束即删，永不是用户 workspace；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod + 重试 1 次（重试提示「只输出 JSON」）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`，工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。续接 L2 仲裁关闭；群聊判断超时视为 `no_action`（可选「群聊仅 @ 响应」，不跑判断）；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内）；技能生成默认关。设置页「后台任务」可选用哪个 Agent（缺省「自动」：该 Bot 自己的 Agent 可用就用它，否则目录顺序第一个就绪的；指定的 Agent 不可用时跳过、不擅自换用别家）或关闭。用量照常记 `agent:{id}`（未报 token 记零行），连锁预算与每日后台预算都把零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算。
 
 
 
@@ -264,6 +264,8 @@ interface AgentCatalogEntry {
 | Cursor             | 原生 `cursor-agent acp`（2026.10.01）| binary（downloads.cursor.com；Registry 无 sha256 → 导入脚本计算，6 平台已锁定）| `cursor_login`（ACP authenticate，Agent 自行开浏览器；Cursor 套餐额度：Cursor Models / Other Models 两个池）；或 `CURSOR_API_KEY` | `prompt-prefix`（无 ACP 提示词字段；会读 `.cursor/`、`AGENTS.md`、`CLAUDE.md`） | 有（Linux Landlock + seccomp，需内核 ≥ 6.2；macOS Seatbelt）——ACP 模式下是否生效未核实，按无处理（命令逐条确认） | 不支持 | **P5 已实现**（`providers/cursor.ts`，契约通过；真机待登录实测）。档位 read_only → `ask`、其余 → `agent`（`agent` 对 Cursor 豁免全局禁止表）；阻塞式扩展请求：`cursor/ask_question` 应答 `skipped`（用户不在线，请自行决定）、`cursor/create_plan` 应答 `rejected`（不替用户声明已审阅）；`loadSession` 有、无 `resume`；MCP 权限请求无结构化名（桥工具审批可能逐条弹卡，待实测）；官方文档明确鼓励自建 ACP 客户端 |
 | Google Antigravity | 原生 `agy_acp_server`（1.3.0）| binary（dl.google.com；无 sha256 → 导入脚本计算，6 平台已锁定；Linux 包解压约 1 GB）| **仅** `gemini-api-key`（`GEMINI_API_KEY`）、`agent-platform`（Vertex）；`oauth-personal`（个人 Google 账号 / AI Pro·Ultra 订阅）与 `oauth-business`（受限与否待合规确认）**均过滤**，UI 与 authenticate 都无法触发 | `prompt-prefix`（读 `AGENTS.md`、`GEMINI.md`、`.agents/`、`.gemini/`） | 个人 / key 方式**无**（仅 Enterprise 管理开关启用 exebox）→ 命令逐条确认 | 不支持 | **P5 已实现**（`providers/antigravity.ts`，契约通过；真机待配 key 实测）。私有 `GEMINI_HOME`（`{数据目录}/agents/antigravity-acp/gemini-home`：防止按用户 `~/.gemini` 的 `auth.type` 推断出个人账号，并隔离全局 MCP 配置 / hooks / 信任表）；不设 `AGY_ACP_DISABLE_WORKSPACE_TRUST`（未知信任的工作区 hooks 被抑制）；**档位一律 `default`**，`auto_edit`（非 Enterprise 下不分工作区内外自动批准编辑）与 `yolo` 禁止；条款第 6 条：第三方软件经 Antigravity OAuth 访问属违规，可封 Antigravity 与 Gemini CLI 账号；客户端名称如实为 KepCup（进入 User-Agent）；`preview` 档 + `releaseGate`；Windows 支持待实测 |
 | ZCode（智谱）          | **放弃**（2026-10-08，`docs/dev/DEVIATIONS.md` DEV-008）：无 ACP，私有 `app-server --stdio`（ZCode Protocol） | — | app-server 模式的订阅登录由宿主经 `interaction/requestProviderRuntimeHeaders` 提供鉴权头（不读 `zcode login` 的凭据）→ 接入必须读取 / 中转用户凭据，违反 §9.1 | — | 无 OS 沙箱；`edit` 模式不分工作区内外自动批准写入，用户级 allowedTools / 项目规则无法关闭 | — | 目录不收录；通用的 `connect` / `transport:'shim'` 接线保留（有测试），供日后确有协议垫片的 Agent 使用 |
+
+**原生优先遵守度（P6，§4.2）**：真机回归脚本 `packages/core/scripts/agent-spike/adherence.mjs`（spike 的 `adherence` step）以产品实际下发的措辞（`fixtures/native-first-wording.json`，由 core 单测按产品代码生成、措辞变动即失败；契约测试保证每个 Provider 经引擎 + 宿主桥送达的就是它）对每个 Agent 跑 web / vision 两个用例（各 10 次，目标原生 ≥ 0.9）。**结果：待真实账号运行**（需各 Agent 登录，开发会话不代为登录）；运行后把 `adherence-summary.md` 的表贴在这里，未达标的 Agent 在其 Provider 中加强点名措辞，或把该补位包默认值改为不注入。
 
 
 

@@ -27,11 +27,21 @@
 - pi 的具体 API 名称以锁定版本的文档为准（**需验证**，P01）。发现与上表不符时，按 [README.md](README.md#偏差与问题) 记录，保持 `AgentEngine` 接口不变。
 - 工具参数 schema 使用 pi 要求的格式（**需验证**：当前为 TypeBox）。
 
-## 外部智能体引擎（ACP，D72，实现中）
+## 外部智能体引擎（ACP，D72）
 
 设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。实现位于 `core/src/agent/external/`（通用 ACP 部分 + `providers/` 下各智能体的差异模块），对外仍只暴露 `AgentEngine`（`RunSpec` 的可选扩展见 [02-architecture.md](02-architecture.md#agentenginepi-的封装)）。
 
-**进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）、P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）与 P5（OpenCode / DeepSeek Harness / Cursor / Antigravity Provider；steering、会话复用、用量、并发、长耗时桥工具、删除级联）已实现，均在实验开关下；`complete()`（P6）未完成——下表中该行描述的是目标行为。
+**进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）、P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）、P5（OpenCode / DeepSeek Harness / Cursor / Antigravity Provider；steering、会话复用、用量、并发、长耗时桥工具、删除级联）与 P6（`complete()`、后台调用路由 `llm-router`、设置「后台任务」、原生优先遵守度 harness、e2e）已实现，均在实验开关下；需要真实账号的人工项（各 Agent 登录后的 spike / 遵守度 / 三平台验收）见 todo §9.1。
+
+P6 落地要点（文件，详见 todo §9.3）：
+
+- `engine.ts` `ExternalAgentEngine.complete(req)`：以 `external.background = true` 的 run handle 跑一次性精简会话——强制只读档、`mkdtemp` 新建空私有目录作 cwd（结束删除，忽略 `RunSpec.workdir`）、不挂桥（`tools: []`）、不复用（忽略 `session`，结束 `session/close`）；会话的 `requestPermission` 不接权限桥（P1 规则：只放行本 run 的桥工具，其余拒绝，永不弹卡）；Provider `sessionNew` 收到 `oneShot`（Claude：`_meta.systemPrompt` 为替换式字符串、`claudeCode.options.tools: []`、`settingSources: []`）。时限 `AGENT_COMPLETE_TIMEOUT_MS`（3 分钟，调用方自己的时限在上层另算），轮数 `AGENT_COMPLETE_MAX_TURNS`；`req.signal` → `session/cancel`；失败按引擎码抛 `AppError`；用量为各轮之和，Agent 未报 token 时返回零 token 用量（记一行）。`toolCalls` 恒为空。
+- `structured.ts`：`agent:` 模型不下发 `submit` 工具，`jsonOnlyInstruction(Schema)` 追加到系统提示词，结果走文本 JSON 回退 + zod；重试提示「只输出 JSON」。
+- `agent/llm-router.ts` `LlmRouter`（start.ts 装配，`services.llmRouter`）：`resolveForBot(bot, purpose)` / `resolveDefault(purpose)` → `{engine, modelRef, provider, agentId}`。内置取法与 P6 前各调用点一致（群聊判断 / 续接 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主；Wiki / 技能：Bot 主 → 全局主；摘要 / 反思 / 整理：全局轻量 → 全局主；画像：全局主）。无内置模型 → 外部 Agent（实验开关 + `agentRunGate` 就绪才算可用；`backgroundAgentId` 指定者不可用即跳过；自动 = 该 Bot 自己的 Agent → 目录第一个可用的；模型取 Bot 自己的 Agent 模型或 Agent 默认）；`backgroundTasks.agentEnabled=false` / 续接 / 未允许的技能生成 / 选了仅 @ 的群聊判断 → null（照旧跳过）。`admit(route, purpose, key)`：Agent 路由上的反思（按 Bot）/ 摘要（按对话）每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次放行一次。`routeFor(deps, …)`：后台 loop 未装配路由器时等价于只用内置模型。`backgroundRunSpec(route, spec)`：Agent 路由的带工具 loop 补后台精简会话参数。
+- 调用点：`dispatcher.triageOneBot`（`router` 入参，超时照旧 `no_action`）、orchestrator 续接仲裁与 SubAgent 压缩（`lightEngine`）、`conversation-summary` / `reflection` / `consolidation` / `profile-curation`（经 `JobsRunner.router` 传入）、`wiki/maintenance`（lint / ingest）与 `skills/authoring`（`startRun(backgroundRunSpec(...))`，`runs.engine` 记 `agent:{id}`）、start.ts 的 `requestAuthoring` 预检；`JobsRunner.#providerFor` 按路由取调度器并发键（`agent:{id}`）。P4 的 `builtinModelRefOrNull` 兜底移除。
+- 用量：后台调用照常 `provider='agent:{id}'`；`BudgetService.usedToday` 与 `UsageService.sumForRuns` 同样把 `agent:` 零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 计。
+- 设置（JSON 设置行，无迁移）：`backgroundAgentId`（'' / 缺省 = 自动）、`backgroundTasks {agentEnabled=true, agentSkillAuthoring=false, groupMentionOnly=false}`；`settings.update` 部分 patch 合并、`backgroundAgentId` 须在目录中。desktop `settings/BackgroundTasksSection.svelte`（智能体分区，实验开关打开时）。
+- 测试缝（仅测试构建）：`KEPCUP_FAKE_ACP_AGENT_BIN` + `_SCRIPT`（+ `_RECORD`）让目录 `fake` 与额外的 `fake-sub`（订阅登录）条目以 testkit 假 Agent 子进程运行（e2e）。
 
 P5 落地要点（文件，详见 todo §8.4）：
 
@@ -71,7 +81,7 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 - **结构化 setup**：`setupRequirementSchema` 增 `{kind:'agent', agentId, reason}`（`reason` ∈ `experimental_off / not_enabled / not_installed / auth_required / incompatible / unavailable / sandbox_unavailable`，shared `agent-status.ts`）。两个触发点：① run 开工前门禁 `agentRunGate`（`agent/external/catalog.ts`）——实验开关、目录、AgentsService 状态视图（`agentSetupReasonOf`：未启用 / 安装中或损坏 / `needs_auth` / 不兼容）；条目已不在目录中仍是普通失败；② 引擎失败结算——`outcome.error.code` 经 `agentSetupReasonForError` 映射（`AGENT_AUTH_REQUIRED` → auth_required、`AGENT_INCOMPATIBLE` → incompatible、`AGENT_UNAVAILABLE` → 本机状态原因或 `unavailable`〔如宿主工具桥未启动〕），`AGENT_SANDBOX_UNAVAILABLE`（Claude 沙箱起不来，`failIfUnavailable` 不降级）→ sandbox_unavailable（卡片给出 bubblewrap / socat 安装提示），其余失败（`AGENT_FAILED` / 进程退出）走普通失败横幅；run 已有模型 / 工具步骤或已发消息时一律普通失败（重试会整段重放）。失败先回写 `AgentsService.noteRunError`：需要登录的条目记为未登录（`needs_auth` 并推送 `agent.status`），下一次发消息即被门禁拦下、不再启动会话。`_auth/status_update` 的 `none` 经 `AgentHost.authStatus` 同样进入状态视图。
 - **设置卡**（desktop `chats/AgentSetupBody.svelte`，`SetupRequiredCard` 的 agent 分支）：内嵌设置页同一张 `settings/AgentCard.svelte`（`embedded`：启用 = 安装确认 / 登录 / API key / 测试连接）；实验开关关闭时先给「开启」按钮；Agent 状态首次加载后观察到的「不可用 → 可用」转变（`probing` 中的 ready 不算）或测试连接通过即 `chat.continueAfterSetup()`（同一失败 run 只自动重试一次，重试后被门禁扣下的草稿也发出）（失败路径 `runs.retry`，门禁路径冲草稿）。发送门禁 `chats/send-gate.ts` 与 core 共用 `agentSetupReasonOf`（Agent 视图未加载时只看启用开关；访谈期间恒按内置模型判定）。
 - **默认 Agent**：`settings.defaultAgentId`（onboarding「我有订阅」写入，设置 → 智能体可改）——没有默认主模型、实验开关打开且该 Agent 已启用时，`BotsService.create` 给未指定模型与 Agent 的新 Bot（含管家；对话式访谈除外）填 `runtime.agent.id`（预览档 `ask`，否则 `workspace`）。订阅分支下管家不进组队访谈（访谈只在内置引擎上跑）。
-- **后台 loop 最小兜底**（P6 前）：无内置模型时摘要、反思、记忆整理（仍做不经模型的过期失效）、画像整理、Wiki 巡检、技能生成在建 run 之前跳过并记 info 日志（job 记为 done、无失败 run、无错误事件）；群聊判断跳过 = 仅 @ / 回复响应；续接 L2 仲裁视为不续接；SubAgent 结果压缩原本即在无轻量模型时跳过。Wiki 入库（用户显式触发）仍以「未配置主模型」报错。
+- **后台 loop 最小兜底**（P6 前；P6 起由 `llm-router` 改走外部 Agent，只在无可用后台 Agent / 已关闭时仍按此跳过）：无内置模型时摘要、反思、记忆整理（仍做不经模型的过期失效）、画像整理、Wiki 巡检、技能生成在建 run 之前跳过并记 info 日志（job 记为 done、无失败 run、无错误事件）；群聊判断跳过 = 仅 @ / 回复响应；续接 L2 仲裁视为不续接；SubAgent 结果压缩原本即在无轻量模型时跳过。Wiki 入库（用户显式触发）仍以「未配置主模型」报错。
 
 | AgentEngine 能力 | ACP 机制 |
 |---|---|
@@ -84,7 +94,7 @@ P4 B 落地要点（对话内设置 / onboarding / 后台兜底）：
 | 执行步骤持久化 | `session/update` 映射为与 pi 同形的 `EngineEvent`：文本块累积，遇顶层 `tool_call` 以 `stopReason=toolUse` 发 `assistant`（中间说明 D54 照常；带 `parentToolUseId` 的子代理调用不切分）；`tool_call` / `tool_call_update` → `tool_call` / `tool_result`；`plan` → `progress`；`agent_thought_chunk` 不落库；无进行中 run 的更新（`session/load` 重放、自主 turn）丢弃 |
 | 结束判断 | `PromptResponse.stopReason`：`end_turn` → completed；`cancelled` → cancelled（`skip_reply` 引起的取消结算为不发最终文本的 completed）；`refusal` / `max_tokens` / `max_turn_requests` → failed |
 | 用量 | `PromptResponse.usage`（ACP 不稳定字段；Provider 声明口径：本 turn 或按会话累计做差；缺失时每轮一条零 token 行）；`provider='agent:{id}'`、无费用；`usage_update.used` 是上下文占用，只展示；连锁预算对零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算 |
-| 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`、临时 cwd），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验；仅外部后端时续接 L2 仲裁关闭 |
+| 单次调用 `complete()` | 一次性精简会话（Claude 替换式系统提示词、`tools: []`、`settingSources: []`；其他只读档；空私有临时 cwd；不挂桥、不复用、结束 `session/close`），要求只输出 JSON，复用 `structured.ts` 的文本 JSON 回退 + zod 校验 + 重试 1 次；后台 loop 经 `llm-router` 在无内置模型时使用；仅外部后端时续接 L2 仲裁关闭 |
 | 模型 | `session/set_config_option`（`model` / `thought_level`），取自 `runtime.agent.model` / `runtime.agent.effort`，空则用智能体默认 |
 
 约束：

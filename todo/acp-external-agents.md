@@ -1,6 +1,6 @@
 # 外部智能体引擎（ACP）— 执行方案（D72）
 
-> 状态：**未开始**（2026-10-07 调研完成，设计见 `docs/design/28-external-agents-acp.md`）。分 P0→P6 七个阶段；**P0 是门禁**（技术验证 + 合规确认），不通过不进入 P1。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P1–P6 已实现（2026-10-08）**；剩余为需要真实账号的人工项（P0 登录后 spike、原生优先遵守度真机运行、三平台人工验收，见 §9.1 / §9.3）。（2026-10-07 调研完成，设计见 `docs/design/28-external-agents-acp.md`。）分 P0→P6 七个阶段；**P0 是门禁**（技术验证 + 合规确认），不通过不进入 P1。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
 > **硬约束**：只改本地工作树；**不要** `git commit` / `push` / 开 PR（除非用户另行明确要求）。内置 pi 引擎的行为与测试**零回归**。
 >
@@ -682,17 +682,48 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 
 ### 9.1 改动清单
 
-- [ ] **`ExternalAgentEngine.complete()`**：一次性精简会话（Claude：替换式 `systemPrompt` 字符串、`tools: []`、`settingSources: []`；其他：只读档；均用空临时目录作 cwd）；只输出 JSON；结束即 `session/close`；复用 `structured.ts` 文本 JSON 回退 + zod + 重试 1 次（重试提示「只输出 JSON」）
-- [ ] **`agent/llm-router.ts`**：`resolveForBot(bot, purpose)` / `resolveDefault(purpose)` → `{ engine, modelRef }`：有内置模型 → 内置；否则 → `settings.backgroundAgentId`（默认第一个 `ready` Agent）；改造调用点（triage、续接、摘要、反思、整理、画像、Wiki、技能生成、SubAgent 压缩），替换 P4 的「跳过」兜底
-- [ ] **设置页「后台任务」**：选用 Agent / 关闭；仅外部 Agent 时反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑，技能生成默认关，续接 L2 保持关闭，群聊判断超时视为 `no_action`（可选「群聊仅 @ 响应」）
-- [ ] **原生优先遵守度回归**：对每个 Agent 跑 P0 的遵守度用例，结果记入设计 28 §9.2（不达标的 Agent 在其 Provider 中加强点名措辞，或把该补位包默认值改为不注入）
-- [ ] **文档同步**：`docs/dev/02/03/04/05`、`PROGRESS.md`、设计 28 状态与适配矩阵实测值
-- [ ] **e2e**（Playwright，fake Agent）：设置页目录启用、Bot 切换 Agent 与能力包、`agent_tool` 审批卡、对话内 Agent 设置卡、onboarding 订阅分支
-- [ ] **人工跨平台验收**（真实账号）：macOS / Windows / Linux × 本期全部 Agent：启用、登录、单聊、能力包注入、project 内改代码 + 回退、越界审批、steering（支持者）、群聊混合引擎、委派
+- [x] **`ExternalAgentEngine.complete()`**：一次性精简会话（Claude：替换式 `systemPrompt` 字符串、`tools: []`、`settingSources: []`；其他：只读档；均用空临时目录作 cwd）；只输出 JSON；结束即 `session/close`；复用 `structured.ts` 文本 JSON 回退 + zod + 重试 1 次（重试提示「只输出 JSON」）
+- [x] **`agent/llm-router.ts`**：`resolveForBot(bot, purpose)` / `resolveDefault(purpose)` → `{ engine, modelRef }`：有内置模型 → 内置；否则 → `settings.backgroundAgentId`（默认第一个 `ready` Agent）；改造调用点（triage、续接、摘要、反思、整理、画像、Wiki、技能生成、SubAgent 压缩），替换 P4 的「跳过」兜底
+- [x] **设置页「后台任务」**：选用 Agent / 关闭；仅外部 Agent 时反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑，技能生成默认关，续接 L2 保持关闭，群聊判断超时视为 `no_action`（可选「群聊仅 @ 响应」）
+- [ ] **原生优先遵守度回归**：对每个 Agent 跑 P0 的遵守度用例，结果记入设计 28 §9.2（不达标的 Agent 在其 Provider 中加强点名措辞，或把该补位包默认值改为不注入）——**harness 已完成（§9.3），真机运行需真实账号登录：待用户执行**（`node packages/core/scripts/agent-spike/adherence.mjs --runs 10`）
+- [x] **文档同步**：`docs/dev/02/03/04/05`、`PROGRESS.md`、设计 28 状态与适配矩阵实测值
+- [x] **e2e**（Playwright，fake Agent）：设置页目录启用、Bot 切换 Agent 与能力包、`agent_tool` 审批卡、对话内 Agent 设置卡、onboarding 订阅分支
+- [ ] **人工跨平台验收**（真实账号，**待用户执行**，开发会话不代为登录）：macOS / Windows / Linux × 本期全部 Agent：启用、登录、单聊、能力包注入、project 内改代码 + 回退、越界审批、steering（支持者）、群聊混合引擎、委派
 
 ### 9.2 验收
 
 设计 28 §13 的 10 条全部满足；内置引擎回归全绿。
+
+### 9.3 实施记录（P6，2026-10-08，分支 `t/d72-p6`，基于 b576eac）
+
+**提交**（每项一个）：P6-1 `complete()` + 后台精简会话；P6-2 `llm-router` 与调用点；P6-3 设置「后台任务」；P6-4 原生优先遵守度 harness；P6-5 e2e + core 测试缝 + 凭据扫描用例；P6-6 文档。
+
+**1. `ExternalAgentEngine.complete()`**（`agent/external/engine.ts`、`providers/claude.ts`、`external/types.ts`、`agent/types.ts`、`agent/structured.ts`）
+- `RunSpec.external.background`：引擎强制只读档、`mkdtemp(os.tmpdir()/kepcup-agent-bg-*)`（0700）作 cwd（忽略 `workdir`，release 时删除）、不复用（忽略 `session`，结束 `session/close`）；会话 sink 不带 `requestPermission` → P1 规则（只放行本 run 的桥工具，其余拒绝，无审批卡、无人值守安全）；`SessionContext.oneShot` → Claude `_meta.systemPrompt` 为替换式字符串、`claudeCode.options.tools: []`、`settingSources: []`（个人配置也不加载），`disallowedTools` / 沙箱 / `allowDangerouslySkipPermissions:false` 照旧。其余 Provider 不变（宿主已强制只读 + 临时 cwd + 无桥；进程级配置如 Codex `CODEX_CONFIG` 沿用进程）。
+- `complete(req)` = 用上述 run handle 跑一个 prompt：`tools: []`（不挂桥）、`promptParts.session = systemPrompt`（meta-append 进 `_meta`，否则前置段）；时限 `min(runTimeoutMs, AGENT_COMPLETE_TIMEOUT_MS=3min)`、`AGENT_COMPLETE_MAX_TURNS=3`；`req.signal` → `handle.abort` → `session/cancel`；失败按引擎错误码抛 `AppError`（未登录 `AGENT_AUTH_REQUIRED` 等，取消 `TIMEOUT`）；`usage` = 各轮之和（未报 token 返回零 token 用量，账本照记一行）；`toolCalls` 恒空。进程经 AgentHost 正常租用 / 空闲退出。
+- `completeStructured`：`agent:` 模型不下发 `submit`，`jsonOnlyInstruction(parametersSchema)` 追加到系统提示词（说明 submit 在此不可用、直接输出参数 JSON）；文本 JSON 回退 + zod；重试提示「只输出 JSON」。
+- 测试：`unit/external-agent-p6.test.ts`（临时 cwd 新建且删除、两次调用两个会话都 close、无桥、Claude meta、用量、失败码、取消、后台 run 不经权限桥）；`external-agent-engine.test.ts` 原「refuses complete()」改为未知 Agent → `AGENT_UNAVAILABLE`。
+
+**2. `agent/llm-router.ts`**
+- `LlmRouter.resolveForBot(bot|id|null, purpose)` / `resolveDefault(purpose)` → `{engine, modelRef, provider, agentId}`；`purpose` ∈ triage / continuation / summary / reflection / consolidation / profile_curation / wiki_maintenance / skill_authoring / subagent_compaction。内置取法逐一沿用 P6 前各调用点（见 04-agent-runtime「P6 落地要点」），保证内置引擎零回归。无内置模型 → `backgroundTasks.agentEnabled` 且实验开关开 → `settings.backgroundAgentId`（须 `agentRunGate` 通过，否则跳过、不换用别家）或自动（**扩展**：先该 Bot 自己的 Agent，再目录顺序第一个就绪的；Bot 自己的 Agent 时沿用其模型）；续接 → 只用内置；技能生成需 `agentSkillAuthoring`；群聊判断在 `groupMentionOnly` 时跳过。`admit()`：Agent 路由上反思（按 Bot）/ 摘要（按对话）每 `AGENT_BACKGROUND_EVERY_N_RUNS=5` 次放行一次（进程内计数，重启从头计；摘要跳过的消息留给下一次）。
+- 调用点：群聊判断（`dispatcher.triageOneBot` 新 `router` 入参；超时照旧 `no_action`）、续接 L2 仲裁、SubAgent 结果压缩（`SubagentFacadeInput.lightEngine`）、摘要（直聊按其 Bot 选 Agent）、反思、整理（无路由仍只做过期失效）、画像、Wiki 维护（lint / ingest）、技能生成 + start.ts 的 `requestAuthoring` 预检；`routeFor(deps, …)` 让未装配路由器的旧调用方 / 单测保持「只用内置」。Wiki / 技能的 Agent 路由用 `backgroundRunSpec`（后台精简会话 `startRun`，维护 / 起草工具经宿主桥，`runs.engine/provider = agent:{id}`）。`JobsRunner.#providerFor` 按路由取调度器并发键。P4 的 `builtinModelRefOrNull` / `mainModelRef` / `reflection.lightModelRef` 删除。
+- 用量：后台调用记 `provider='agent:{id}'`（零 token 行照记）；连锁预算本就折算；**每日后台预算 `BudgetService.usedToday` 同样把 `agent:` 零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 计**（否则订阅 Agent 的后台 loop 永不触顶）。
+- 设置（JSON 设置行，**无迁移**）：`backgroundTasks {agentEnabled=true, agentSkillAuthoring=false, groupMentionOnly=false}`；`backgroundAgentId` 语义改为 ''/缺省 = 自动；`settings.update` 对 `backgroundTasks` 部分 patch 合并，`backgroundAgentId` 须在目录中。
+- 测试：`unit/llm-router.test.ts`（内置取法逐用途、Agent 选择、降配、降频、`backgroundRunSpec`、无路由器回退；triage 经 Agent：并发键 / 只输出 JSON / 用量 `agent:alpha`、超时 `no_action`）；`integration/external-agent-p6.test.ts`（只有 fake Agent：反思 + 摘要一次性会话完成、用量行、每日预算折算、第二次反思被降频；设置开关与 RPC 校验；Wiki 巡检经后台会话 + 宿主桥写页面、`runs.engine`；**数据目录凭据扫描**〔P4 遗留：API key 登录 + 对话 + 后台调用后，数据目录任何文件都不含明文 key〕）；`external-agent-p4b.test.ts` 的 P4 兜底用例改为「后台任务关闭时」。
+
+**3. 设置「后台任务」**：`apps/desktop/.../settings/BackgroundTasksSection.svelte`（智能体分区，实验开关打开时显示）：用于后台的智能体（自动 / 已启用的 Agent〔不可用的标注〕/ 关闭）、降频说明、允许生成技能、群聊仅 @ 响应；有内置模型时提示暂不生效。i18n `agents.background.*`。
+
+**4. 原生优先遵守度回归**（真机待登录）：
+- `packages/core/test/support/native-first-wording.ts` 按 Provider 生成产品措辞（`buildExternalAgentTools` 的「[补充能力]」前缀 + `buildAgentToolPolicy`，server 名固定 `kepcup_adherence`）→ `scripts/agent-spike/fixtures/native-first-wording.json`；`unit/native-first-wording.test.ts` 保证 fixture = 产品措辞（`KEPCUP_UPDATE_WORDING=1` 重新生成）并以 spike 假 Agent 跑通 harness（无需登录）；契约测试新增用例：每个 Provider 经引擎 + 宿主桥实际送达 Agent 的 `<tool_policy>` / 工具描述与 fixture 一致。
+- spike 新 step `adherence`（web / vision〔Agent 声明图片时〕两个用例，按产品方式下发：meta-append → `_meta.systemPrompt.append`，否则前置段）+ `adherence.mjs`（逐 Agent 调 spike、汇总 `adherence-summary.md`，可直接贴设计 28 §9.2）。**需要真实账号：用户登录后运行 `node packages/core/scripts/agent-spike/adherence.mjs --runs 10`（dsh 加 `-- --pass-env DEEPSEEK_API_KEY`），结果贴设计 28 §9.2；不达标的 Agent 调 Provider 措辞或补位包默认值。**
+
+**5. e2e**（`apps/desktop/test/e2e/external-agents.spec.ts`，4 例）：设置页开实验开关 + 目录启用（安装确认卡）+ 后台任务关闭 → Bot 切换智能体（让渡说明框）+ 能力包（core 必选、勾掉图像生成、工具数变化、桥上不再列出）→ 对话由假 Agent 回复；`agent_tool` 审批卡（越出数据目录与 workspace 的写入 → 卡片列出路径 → 批准 → Agent 收到 allow 并继续）；对话内 Agent 设置卡（停用后发消息 → 门禁扣下草稿 + 设置卡 → 卡内启用 → 自动发出 → 回复）；onboarding「我有订阅」（开启 → 只列订阅登录条目 → 启用 fake-sub → 选为驱动 → 管家由它驱动并回复）。core 测试缝 `KEPCUP_FAKE_ACP_AGENT_BIN/_SCRIPT/_RECORD`（`__KEPCUP_TEST_HOOKS__` 守卫，打包剔除）：目录 `fake` 与额外 `fake-sub`（订阅登录）以 Electron 的 Node 跑 testkit 假 Agent。运行：本机 glibc 2.35 跑不了 Electron e2e → 在 `kepcup-test:trixie` 派生镜像（加 xvfb / xauth / CJK 字体，`kepcup-test:trixie-xvfb`）里 `xvfb-run` 运行，见下「验证」。
+
+**验证**：`pnpm -r typecheck` 0 error（1 条既有 svelte warning）；`pnpm lint` 0 problem；容器全量测试（`kepcup-test:trixie`，`node scripts/run-tests.mjs run`，即 `pnpm test` 的实际命令）153 文件 / 1454 用例：1418 passed、2 skipped、34 failed——其中 33 条与环境基线逐条一致，另 1 条为负载下偶发超时（两次全量各出现一条不同的：`agents-service`「agent-type login」、`memory`「两个 Bot 同时产生画像提案」，单独各跑 3 次均通过）。e2e（派生镜像 `kepcup-test:trixie-xvfb` + `xvfb-run`）：`external-agents.spec.ts` 4/4 通过，连同 setup-card / onboarding / group-chat / memory / direct-chat 共 21/21 通过。注意：容器里直接 `pnpm test` 会触发 pnpm 的依赖状态检查并尝试 `pnpm install`（容器无 Python，原生模块构建失败，会破坏 worktree 的 `node_modules/.bin`）；应直接跑 `node scripts/run-tests.mjs run`。`integration/agents-service.test.ts` 的「agent-type login」在全量负载下偶发失败（logout 与登录后探测竞态，单跑 3/3 通过，与 P6 无关，P4 既有）。
+
+**偏离**：无硬偏离。两处在设计允许范围内的取舍已写进设计 28 §8：自动选择先用 Bot 自己的 Agent；指定的后台 Agent 不可用时跳过而不换用别家。
+
+**需要人工 / 真实账号**：原生优先遵守度真机运行（上文 4）；§9.1 末项三平台人工验收；各 Agent 登录后的 P0 spike（§3）。
 
 ---
 
@@ -752,7 +783,7 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - [ ] P1–P6 清单勾完，验收口径满足
 - [ ] 「新增 Agent 只需目录条目 + Provider 差异模块 + 登记 + 契约测试」经 fake 第二条目验证
 - [ ] 设计 28 与实现无未记录的硬偏离（有则改 28 或记 `DEVIATIONS.md`）
-- [ ] `docs/dev/02/03/04/05`、`PROGRESS.md` 已同步
+- [x] `docs/dev/02/03/04/05`、`PROGRESS.md` 已同步（P6，2026-10-08）
 - [ ] 内置引擎回归全绿
 - [ ] **未**执行 git commit / push / 创建 PR（除非用户另行明确要求）
 
