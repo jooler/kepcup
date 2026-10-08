@@ -158,6 +158,7 @@ import { ButlerHost } from './butler.js';
 import {
   buildTaskBriefSegment,
   buildTaskReplaySegment,
+  isTerminalStatus as isTerminalTaskStatus,
   TaskHost,
   type TaskBrief,
   type TaskOutcome,
@@ -568,6 +569,9 @@ export class Orchestrator {
         deps.publish('message.created', { conversationId: message.conversationId, message });
         this.#publishConversation(message.conversationId);
       },
+      // D75 §8.5: kept sessions of settled tasks outlive them only for the
+      // continuation window.
+      onSweep: (now) => this.#sweepTaskAgentSessions(now),
     });
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
@@ -1917,6 +1921,13 @@ export class Orchestrator {
     modelRef: string;
     /** Highest seq of the conversation context shown to a new session. */
     contextCutoff: number;
+    /**
+     * D75 task run (design 30 §8.5): the task owning the session row, the
+     * task it continues (inherits that task's row), and whether it may write
+     * (a read-only task is forced onto the `read_only` tier — the agent's
+     * writes inside the workdir would pass the tier logic before any gateway).
+     */
+    task?: { id: string; continuesTaskId: string | null; writes: boolean };
   }): Promise<{
     tools: ToolDefinition[];
     capabilities: string[];
@@ -1931,18 +1942,29 @@ export class Orchestrator {
       conversation: string;
       conversationDelta?: string;
     };
-    session: { rowId: string; reuseId: string | null; fingerprint: string; seen: AgentSeen };
+    session: {
+      rowId: string;
+      sessionKey: string;
+      reuseId: string | null;
+      fingerprint: string;
+      seen: AgentSeen;
+    };
   }> {
     const { bot, conversation, agentId } = input;
     const entry = findAgentEntry(this.#deps.agentCatalog?.() ?? [], agentId);
     if (entry === null) throw new AppError('AGENT_UNAVAILABLE', `智能体「${agentId}」不在目录中`);
     const provider = providerFor(entry);
-    // D72 P3：Bot 的档位（Windows 下无可依赖沙箱时 workspace → ask）。
-    const permission = effectiveAgentPermission(
-      bot.profile.runtime.agent.permission,
-      provider,
-      process.platform,
-    );
+    // D72 P3：Bot 的档位（Windows 下无可依赖沙箱时 workspace → ask）；D75
+    // 只读任务一律 read_only（§5.1 只读任务硬拒写）。
+    const permission =
+      input.task !== undefined && !input.task.writes
+        ? 'read_only'
+        : effectiveAgentPermission(
+            bot.profile.runtime.agent.permission,
+            provider,
+            process.platform,
+          );
+    const taskId = input.task?.id ?? null;
     const capabilities = resolveCapabilities(bot.profile.runtime.agent.capabilities, entry, {
       isButler: bot.systemRole === 'butler',
     });
@@ -1950,11 +1972,32 @@ export class Orchestrator {
     // D72 P5 会话复用（design 28 §7）：窗口内、指纹一致的会话只发增量。桥
     // server 名由会话行 id 派生（换会话 = 换名字），会话级提示词里的工具名
     // 随之变化，所以按候选行先算一遍、指纹不符再按新行重算。
-    const previous = this.#agentSessions.get(bot.id, conversation.id, agentId);
+    // D75 §8.5：任务各占自己的行；continues_task_id 在旧任务的执行结束后
+    // 继承它的行（单条 UPDATE，失败 = 新建会话）——仍在释放的旧任务不交出。
+    let previous = this.#agentSessions.get(bot.id, conversation.id, agentId, taskId);
+    const continuesTaskId = input.task?.continuesTaskId ?? null;
+    if (previous === null && taskId !== null && continuesTaskId !== null) {
+      if (!this.#taskHost.isExecuting(continuesTaskId)) {
+        previous = this.#agentSessions.inheritTask(
+          bot.id,
+          conversation.id,
+          agentId,
+          continuesTaskId,
+          taskId,
+        );
+      }
+    }
     const now = this.#deps.clock.now();
     const continued =
       previous !== null && now - previous.lastUsedAt <= CONTINUATION_WINDOW_MS
-        ? this.#agentConversationDelta(previous, input.batch, input.renderOptions)
+        ? this.#agentConversationDelta(
+            previous,
+            input.batch,
+            input.renderOptions,
+            // A task reads shared rows only, and nothing reaches it as a steer
+            // but injects: its delta runs up to the context it would get anew.
+            taskId !== null ? { viewerBotId: null, upTo: input.contextCutoff } : undefined,
+          )
         : null;
     const delta = continued?.text ?? null;
     const sessionFor = (rowId: string) => {
@@ -2022,6 +2065,13 @@ export class Orchestrator {
       agentName: entry.name,
       session: {
         rowId: session.rowId,
+        sessionKey: this.#agentSessionKey({
+          id: session.rowId,
+          botId: bot.id,
+          conversationId: conversation.id,
+          agentId,
+          taskId,
+        }),
         reuseId,
         fingerprint: session.fingerprint,
         // Committed only once the prompt is really sent (onPromptSent).
@@ -2074,12 +2124,17 @@ export class Orchestrator {
     row: AgentSessionRow,
     batch: TriggerBatch,
     renderOptions: RenderMessageOptions,
+    task?: { viewerBotId: null; upTo: number },
   ): { text: string; seen: AgentSeen } | null {
     const seen = this.#agentSessionSeen.get(row.id);
     if (seen === undefined) return null;
-    const upTo = Math.max(-1, ...batch.messages.map((message) => message.seq));
+    const upTo = task?.upTo ?? Math.max(-1, ...batch.messages.map((message) => message.seq));
     const limit = 120;
-    const recent = this.#contextMessages(batch.conversationId, batch.botId, limit);
+    const recent = this.#contextMessages(
+      batch.conversationId,
+      task !== undefined ? task.viewerBotId : batch.botId,
+      limit,
+    );
     if (recent.length === limit && recent[0]!.seq > seen.baseCutoff + 1) return null;
     const batchIds = new Set(batch.messages.map((message) => message.id));
     const text = buildConversationDelta(
@@ -2089,7 +2144,10 @@ export class Orchestrator {
           message.seq <= upTo &&
           !seen.ids.has(message.id) &&
           !batchIds.has(message.id) &&
-          !(message.senderType === 'bot' && message.senderBotId === batch.botId),
+          // The session wrote the bot's replies of a response run; a task's
+          // session did not write the bot's turn replies.
+          (task !== undefined ||
+            !(message.senderType === 'bot' && message.senderBotId === batch.botId)),
       ),
       renderOptions,
     );
@@ -2102,9 +2160,27 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Bridge / engine key of an agent session (`RunSpec.external.sessionKey`:
+   * bridge token, run binding, kept-session match). D72 rows: one per
+   * (Bot, conversation, Agent). D75 task rows (design 30 §8.5): the key also
+   * names the row — every task has its own row, so its own key and bridge
+   * token, and a `continues_task_id` inheritance keeps the row (and so the
+   * key and token the kept session was opened with).
+   */
+  #agentSessionKey(
+    row: Pick<AgentSessionRow, 'id' | 'agentId' | 'botId' | 'conversationId' | 'taskId'>,
+  ): string {
+    const base = `${row.botId}:${row.conversationId}:${row.agentId}`;
+    return row.taskId === null ? base : `${base}:task:${row.id}`;
+  }
+
   /** Gives up a kept agent session (best effort, asynchronous). */
   #discardAgentSession(
-    row: Pick<AgentSessionRow, 'id' | 'agentId' | 'agentSessionId' | 'botId' | 'conversationId'>,
+    row: Pick<
+      AgentSessionRow,
+      'id' | 'agentId' | 'agentSessionId' | 'botId' | 'conversationId' | 'taskId'
+    >,
     deleteHistory: boolean,
   ): void {
     this.#agentSessionSeen.delete(row.id);
@@ -2114,7 +2190,7 @@ export class Orchestrator {
       .call(this.#deps.externalEngine, {
         agentId: row.agentId,
         agentSessionId: row.agentSessionId,
-        sessionKey: `${row.botId}:${row.conversationId}:${row.agentId}`,
+        sessionKey: this.#agentSessionKey(row),
         deleteHistory,
       })
       .catch((error: unknown) => {
@@ -2141,6 +2217,23 @@ export class Orchestrator {
   agentSessionsOnBotDeleted(botId: string): void {
     for (const row of this.#agentSessions.listByBot(botId)) {
       this.#discardAgentSession(row, true);
+      this.#agentSessions.delete(row.id);
+    }
+  }
+
+  /**
+   * D75 §8.5 生命周期: a settled task's kept session stays for
+   * `continues_task_id` only within CONTINUATION_WINDOW_MS of its last run;
+   * then it is closed (not deleted — crash recovery may still resume a live
+   * task's row) and its row removed. Rows of tasks still executing stay.
+   */
+  #sweepTaskAgentSessions(now: number): void {
+    for (const row of this.#agentSessions.listTaskSessions()) {
+      if (now - row.lastUsedAt <= CONTINUATION_WINDOW_MS) continue;
+      const task = this.#deps.runs.get(row.taskId!);
+      if (task !== null && !isTerminalTaskStatus(task.status)) continue;
+      if (this.#taskHost.isExecuting(row.taskId!)) continue;
+      this.#discardAgentSession(row, false);
       this.#agentSessions.delete(row.id);
     }
   }
@@ -2465,18 +2558,13 @@ export class Orchestrator {
       // 模型门禁（D58）按 Bot 的引擎判定：内置 Bot 看内置模型；外部 Agent
       // Bot 看实验开关 + 目录 + 启用 / 安装 / 登录状态（D72 P4：结构化
       // setup `{kind:'agent'}` → 对话内 Agent 设置卡，完成后自动重试）。
+      // D75 §8.1: `runtime.agent` is the bot's task engine — a task of an
+      // external-agent bot runs on the agent in a session of its own (§8.5).
       const agentId = this.#agentIdOf(bot);
       const engine = this.#engineFor(bot);
-      if (isTask && agentId.length > 0) {
-        // External agents as the task engine (per-task sessions, design 30
-        // §8.5) land with D75 W4; a task must not share the bot's response
-        // session row meanwhile.
-        settle('failed', '外部智能体暂不能作为任务引擎（D75 后续接入），请改用内置模型的 Bot');
-        return;
-      }
       if (agentId.length > 0) {
         if (engine === null) {
-          this.#settleRun(runId, 'failed', '外部智能体引擎不可用');
+          settle('failed', '外部智能体引擎不可用');
           return;
         }
         const gate = agentRunGate(
@@ -2486,8 +2574,7 @@ export class Orchestrator {
           this.#agentView(),
         );
         if (gate !== null) {
-          this.#settleRun(
-            runId,
+          settle(
             'failed',
             gate.message,
             gate.reason !== null ? { kind: 'agent', agentId, reason: gate.reason } : undefined,
@@ -2833,6 +2920,13 @@ export class Orchestrator {
       // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
+      // The agent's cwd: the bound project, else the workspace; a D75 task
+      // works in its resolved workdir (§3.4 task_workdir).
+      const projectPath = project !== null && project.status === 'available' ? project.path : null;
+      const agentWorkdir =
+        exec.kind === 'task' && exec.task.taskWorkdir !== null
+          ? exec.task.taskWorkdir
+          : (projectPath ?? workspacePath);
       const agentRun =
         agentId.length > 0
           ? await this.#agentRunSetup({
@@ -2851,21 +2945,31 @@ export class Orchestrator {
               batch,
               renderOptions,
               triggerContent,
-              workdir:
-                project !== null && project.status === 'available' ? project.path : workspacePath,
+              workdir: agentWorkdir,
               modelRef,
               contextCutoff: Math.max(
                 -1,
                 ...recent.map((message) => message.seq),
                 ...batch.messages.map((message) => message.seq),
               ),
+              ...(exec.kind === 'task'
+                ? {
+                    task: {
+                      id: runId,
+                      continuesTaskId: exec.brief.continuesTaskId,
+                      writes: exec.task.taskWrites === true,
+                    },
+                  }
+                : {}),
             })
           : null;
       if (agentRun !== null) agentSteer.seen = agentRun.session.seen;
       // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
       // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
-      if (agentRun !== null && project !== null && project.status === 'available') {
+      // A D75 task runs there only when its workdir is the project; a write
+      // task already holds its (pinned) write lease from #startTask (§5.1).
+      if (agentRun !== null && projectPath !== null && agentWorkdir === projectPath) {
         const gate = await this.#agentProjectGate({
           runId,
           identity,
@@ -2873,19 +2977,18 @@ export class Orchestrator {
           conversationId: batch.conversationId,
           agentId,
           agentName: agentRun.agentName,
-          projectPath: project.path,
+          projectPath,
           configFiles: agentRun.agentSideConfigFiles,
-          writable: agentRun.permission !== 'read_only',
+          writable: !isTask && agentRun.permission !== 'read_only',
         });
         if (gate !== 'ok') {
-          // Cancelled while waiting: cancelRun already settled the run.
+          // Cancelled while waiting: cancelRun already settled a response run;
+          // a stopped task is settled by its host (this settle is a no-op then).
           if (gate === 'denied') {
             await this.#deps.projects.releaseRun(runId).catch(() => {});
-            this.#settleRun(
-              runId,
-              'failed',
-              '用户未确认在此项目中加载智能体自身的配置文件，本次未执行',
-            );
+            settle('failed', '用户未确认在此项目中加载智能体自身的配置文件，本次未执行');
+          } else if (isTask) {
+            settle('cancelled', null);
           }
           this.#fsState.release(runId);
           return;
@@ -2897,14 +3000,13 @@ export class Orchestrator {
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {
-              workdir:
-                project !== null && project.status === 'available' ? project.path : workspacePath,
+              workdir: agentWorkdir,
               promptParts: agentRun.promptParts,
               external: {
                 agentId,
                 permission: agentRun.permission,
                 capabilities: agentRun.capabilities,
-                sessionKey: `${batch.botId}:${batch.conversationId}:${agentId}`,
+                sessionKey: agentRun.session.sessionKey,
                 effort: bot.profile.runtime.agent.effort,
                 loadUserConfig: agentRun.loadUserConfig,
                 hostServerName: agentRun.hostServerName,
@@ -2928,6 +3030,7 @@ export class Orchestrator {
                     botId: batch.botId,
                     conversationId: batch.conversationId,
                     agentId,
+                    taskId: isTask ? runId : null,
                     agentSessionId,
                     fingerprint: agentRun.session.fingerprint,
                     runId,
@@ -2945,8 +3048,12 @@ export class Orchestrator {
                 },
               },
               // ACP steering is asynchronous: a refused steer's batch goes
-              // back to the buffer (re-delivered as a new run on release).
-              onSteerRejected: (text: string) => this.#onAgentSteerRejected(agentSteer, text),
+              // back to the buffer (re-delivered as a new run on release); a
+              // task's refused inject is downgraded to `queued` (design 30 §8.2).
+              onSteerRejected: (text: string) => {
+                if (exec.kind === 'task') exec.control.steerRefused(text);
+                else this.#onAgentSteerRejected(agentSteer, text);
+              },
             }
           : {}),
         buildSystemPrompt: async () =>
@@ -3120,7 +3227,7 @@ export class Orchestrator {
           ? this.#agentFailureSetup(agentId, outcome.error?.code, outcome.error?.message)
           : null;
       if (agentSetup !== null) {
-        this.#settleRun(runId, 'failed', outcome.error?.message ?? null, agentSetup);
+        settle('failed', outcome.error?.message ?? null, agentSetup);
         this.#maybeEnqueueSummary(batch.conversationId);
         return;
       }
@@ -3272,12 +3379,16 @@ export class Orchestrator {
     return this.#agentSessions.getById(rowId) !== null;
   }
 
-  /** Upserts the (Bot, conversation, Agent) session row once the session exists (P5). */
+  /**
+   * Upserts the (Bot, conversation, Agent, task) session row once the session
+   * exists (P5; D75 §8.5 — `taskId` null for a non-task run).
+   */
   #recordAgentSession(input: {
     rowId: string;
     botId: string;
     conversationId: string;
     agentId: string;
+    taskId: string | null;
     agentSessionId: string;
     fingerprint: string;
     runId: string;
@@ -3300,7 +3411,12 @@ export class Orchestrator {
         this.#discardAgentSession({ ...input, id: input.rowId }, true);
         return;
       }
-      const previous = this.#agentSessions.get(input.botId, input.conversationId, input.agentId);
+      const previous = this.#agentSessions.get(
+        input.botId,
+        input.conversationId,
+        input.agentId,
+        input.taskId,
+      );
       const now = this.#deps.clock.now();
       // A different agent session behind the same row (new session after a
       // failed resume): its seen-state restarts with this run.
@@ -3312,6 +3428,7 @@ export class Orchestrator {
         botId: input.botId,
         conversationId: input.conversationId,
         agentId: input.agentId,
+        taskId: input.taskId,
         agentSessionId: input.agentSessionId,
         fingerprint: input.fingerprint,
         lastRunId: input.runId,
