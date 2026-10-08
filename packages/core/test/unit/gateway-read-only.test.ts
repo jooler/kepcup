@@ -632,7 +632,13 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
 
   it('media generation, install_skill and request_environment return RUN_READ_ONLY before any side effect', async () => {
     const gateway = makeGateway();
-    for (const identity of [ids.turn, ids.readTask]) {
+    // D75 W2: a turn is not even offered these tools (its toolset is
+    // read-only + task management); the execution-time refusal guards tasks.
+    const turnTools = responseTools(gateway, ids.turn).tools;
+    for (const name of ['generate_image', 'generate_speech', 'generate_video', 'install_skill', 'request_environment', 'browser_open']) {
+      expect(turnTools.has(name), name).toBe(false);
+    }
+    for (const identity of [ids.readTask]) {
       const { tools, called } = responseTools(gateway, identity);
       const cases: Array<[string, unknown]> = [
         ['generate_image', { prompt: '猫' }],
@@ -685,7 +691,7 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
       const ensure = browser.calls.find((c) => c.method === 'browser.ensurePage');
       return (ensure?.input as { downloadsDir: string }).downloadsDir;
     };
-    expect(await downloadsDirOf(ids.turn)).toBe(gateway.readOnlyDownloadsDir(ids.turn));
+    // (A turn has no browser tools at all, D75 W2.)
     expect(await downloadsDirOf(ids.readTask)).toBe(gateway.readOnlyDownloadsDir(ids.readTask));
     expect(await downloadsDirOf(ids.writeTask)).toBe(path.join(workspace(), 'downloads'));
   });
