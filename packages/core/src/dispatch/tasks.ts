@@ -90,6 +90,13 @@ export interface TaskRunControl {
   /** The engine run ended: later injects can no longer reach this execution. */
   detach(): void;
   /**
+   * The engine handed a steered inject back after `steer()` accepted it (an
+   * external agent refusing `_session/steering` asynchronously, design 30
+   * §8.2): its entry is downgraded to `queued`, like a synchronous refusal.
+   * Valid after `detach` / `finish` too (late refusals).
+   */
+  steerRefused(text: string): void;
+  /**
    * Why the launched task is still `queued` (waiting for its write lease / a
    * provider slot); null once it runs. Shown as the queue reason (§3.1).
    */
@@ -156,6 +163,8 @@ export interface TaskHostDeps {
   recordVisibleMessage(runId: string, message: Message): void;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
+  /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
+  onSweep?: (now: number) => void;
 }
 
 interface LaunchedTask {
@@ -181,6 +190,8 @@ interface LaunchedTask {
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
   buffered: Array<{ text: string; entryId: string }>;
+  /** Injects the engine run accepted (`steer()` true): an async refusal finds its entry here. */
+  steered: Array<{ text: string; entryId: string }>;
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
@@ -422,8 +433,11 @@ export class TaskHost implements TaskToolFacade {
       buildTaskInjection(text, sources, this.#deps.renderOptions(botId));
     let delivery: 'delivered' | 'queued' = 'delivered';
     let buffer = false;
+    let steered: string | null = null;
     if (launched?.handle) {
-      delivery = launched.handle.steer(steerText()) ? 'delivered' : 'queued';
+      const text = steerText();
+      if (launched.handle.steer(text)) steered = text;
+      else delivery = 'queued';
     } else if (launched !== undefined && (launched.closing || launched.settledAt !== null)) {
       // The engine run is over (the execution is settling): nothing will take
       // it in — it only takes effect after the task ends (§4.1 queued).
@@ -444,6 +458,10 @@ export class TaskHost implements TaskToolFacade {
     });
     // Steered at attach; a failure there downgrades the entry to queued.
     if (buffer && launched !== undefined) launched.buffered.push({ text: steerText(), entryId: entry.id });
+    // An engine that refuses asynchronously (external agents) reports back by text.
+    if (steered !== null && launched !== undefined) {
+      launched.steered.push({ text: steered, entryId: entry.id });
+    }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     return { delivery };
   }
@@ -884,6 +902,17 @@ export class TaskHost implements TaskToolFacade {
     }
     this.#pump();
     this.#reconcile(now);
+    const onSweep = this.#deps.onSweep;
+    if (onSweep !== undefined) this.#safely(() => onSweep(now));
+  }
+
+  /**
+   * Whether an execution of the task is still live (launched and not yet
+   * finished — its engine run may still hold resources, e.g. an external
+   * agent session, design 30 §8.5).
+   */
+  isExecuting(taskId: string): boolean {
+    return this.#launched.has(taskId);
   }
 
   // --- lifecycle --------------------------------------------------------------
@@ -1055,6 +1084,7 @@ export class TaskHost implements TaskToolFacade {
       waitReason: null,
       briefBuilt: false,
       buffered: [],
+      steered: [],
     };
     this.#launched.set(task.id, launched);
     const control: TaskRunControl = {
@@ -1068,6 +1098,11 @@ export class TaskHost implements TaskToolFacade {
       },
       waiting: (reason) => {
         launched.waitReason = reason;
+      },
+      steerRefused: (text) => {
+        const index = launched.steered.findIndex((item) => item.text === text);
+        if (index === -1) return;
+        this.#injectsNotDelivered(launched.steered.splice(index, 1));
       },
       finish: () => {
         // Buffered injects that never reached an engine run.
@@ -1132,7 +1167,11 @@ export class TaskHost implements TaskToolFacade {
     }
     launched.handle = handle;
     launched.attachedAt = this.#deps.clock.now();
-    const refused = launched.buffered.splice(0).filter((item) => !handle.steer(item.text));
+    const refused = launched.buffered.splice(0).filter((item) => {
+      if (!handle.steer(item.text)) return true;
+      launched.steered.push(item);
+      return false;
+    });
     if (refused.length > 0) {
       this.#deps.logger.warn({ taskId }, 'buffered task inject could not be steered');
       this.#injectsNotDelivered(refused);

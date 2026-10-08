@@ -62,13 +62,12 @@ export const SUBAGENT_TOKEN_POLL_MS = 5_000;
  */
 export const SUBAGENT_FANOUT_MAX = 4;
 /**
- * Max simultaneously *running* background subagent runs per conversation (D66
- * mode B 的对话级并发封顶). Foreground fan-out lanes must also fit under this
- * shared cap: N + already-running background sub runs ≤ this constant.
+ * Max simultaneously *running* background branches per parent run (D66 mode B;
+ * D75 §1.2: branches live inside the parent run — conversation-level
+ * concurrency belongs to the task layer). Foreground fan-out lanes must also
+ * fit under this cap: N + the parent's running background branches ≤ this.
  */
 export const SUBAGENT_BACKGROUND_CONCURRENCY = 4;
-/** system_event name of the deterministic background-delegation follow-up injection (D66 mode B). */
-export const SUBAGENT_FOLLOWUP_EVENT = 'delegate_result';
 
 // --- Butler & cross-bot delegation (D70 / D71, docs/design/27-butler-and-delegation.md) ---
 
@@ -84,7 +83,8 @@ export const DELEGATION_RESULT_MAX_CHARS = 2000;
 export const DELEGATION_TASK_MAX_CHARS = 4000;
 /**
  * system_event name of the follow-up injected into A when a delegation ends
- * (D71). Distinct from D66's `delegate_result` (SUBAGENT_FOLLOWUP_EVENT).
+ * (D71). (D66's former `delegate_result` injection is gone since D75: older
+ * conversations may still hold such internal system messages.)
  */
 export const DELEGATION_FOLLOWUP_EVENT = 'delegation_result';
 /** Bounds of a butler `propose_team` proposal (D70). */
