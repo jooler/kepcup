@@ -820,6 +820,8 @@ describe('DeepSeek Harness', () => {
       resume: true,
       osSandbox: false,
       httpMcp: true,
+      // dsh-acp 0.2.0-rc.2: one fresh harness Agent and in-flight state per session.
+      parallelSessions: true,
     });
     expect(dshProvider.permissionOptions).toEqual({
       allowOnce: ['allow-once'],

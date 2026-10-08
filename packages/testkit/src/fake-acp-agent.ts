@@ -188,6 +188,12 @@ export interface FakeAgentScript {
   modes?: SessionModeState;
   /** Advertises `loadSession`; `session/load` replays these updates. */
   history?: FakeAgentAction[];
+  /**
+   * Refuses a `session/prompt` while another session of this process has one
+   * in flight — an adapter without parallel sessions (D72
+   * `features.parallelSessions`). The refused prompt consumes no turn.
+   */
+  serialPrompts?: boolean;
   /** Consumed one per `session/prompt`, across sessions. */
   turns: Array<FakeAgentTurn | FakeAgentTurnBuilder>;
 }
@@ -693,6 +699,9 @@ class FakeAcpAgent implements Agent {
         .join('\n'),
       blocks: params.prompt,
     });
+    if (this.#script.serialPrompts === true && this.#prompting.size > 0) {
+      throw RequestError.internalError({ reason: 'another session has a prompt in flight' });
+    }
     const turn = this.#turns.shift();
     if (turn === undefined) throw RequestError.internalError({ reason: 'unscripted prompt' });
     this.#prompting.add(sessionId);

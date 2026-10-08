@@ -90,6 +90,7 @@ import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
 import { HostMcpBridge } from './agent/external/mcp-bridge.js';
 import { AgentHost, type AgentSpawner } from './agent/external/host.js';
 import { effectiveAgentCatalog } from './agent/external/catalog.js';
+import { agentConcurrency } from './agent/external/providers/index.js';
 import { AgentInstaller, nodeRuntimeFromBinDir } from './agent/external/installer.js';
 import { AgentsService } from './domain/agents.js';
 import type { LaunchTarget } from './agent/external/types.js';
@@ -1214,7 +1215,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       budgetExceeded: (botId) => budget.exceeded(botId),
     });
     services.llmRouter = llmRouter;
-    const scheduler = new Scheduler(logger);
+    // D72: `agent:{id}` limits follow features.parallelSessions (unverified
+    // agents run one session at a time, overrides clamped — design 28 §7).
+    const scheduler = new Scheduler(logger, {
+      agentConcurrency: (agentId, config) => {
+        const entry = agentCatalog.find((candidate) => candidate.id === agentId);
+        return entry === undefined ? 1 : agentConcurrency(config, entry);
+      },
+    });
     // P10: the schedule service is constructed after the orchestrator (it
     // delivers through the orchestrator's mailboxes); the tool facade
     // delegates lazily.

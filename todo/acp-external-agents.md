@@ -724,6 +724,28 @@ OpenCode 用户配置扫描（`providers/opencode.ts`）一律 fail closed——
 - Codex：steering `injected` 与 `startedNewTurn` 后取消的效果；resume 后 `mcp_servers`（新 token）是否重连；`lastTokenUsage` 口径；后台通知后模型是否会结束本轮等待 follow-up（还是反复调用）。
 - 各 Agent：follow-up prompt 的措辞是否被模型正确理解；45 s 阈值对 Claude（其 MCP 超时较长）是否偏保守（可设 `bridgeToolDetachMs: null`）。
 
+### 8.5 并行会话能力（2026-10-08，分支 `t/d72-parallel-sessions`）
+
+**问题**：AgentHost 让同一 Agent 的多个 ACP 会话共用一个进程，调度器却按 `agent:{id}` 缺省并发 `AGENT_DEFAULT_CONCURRENCY`（2）——两个对话用同一 Agent 时，同一进程的两个会话会同时有 prompt 在途，而各家适配器是否支持从未核对。（「每会话同一时刻一个 prompt」是 ACP 通用行为，不是这里的问题。）
+
+**做法**：`AgentProviderFeatures.parallelSessions`（one process can have prompts in flight on several sessions at once），**只凭锁定版本源码实证**声明 true：会话表、逐会话的取消 / 轮次状态，且没有会被另一会话的 prompt 覆盖或拒绝的进程级「当前 prompt」。`providers/index.ts` `agentConcurrency(providerConcurrency, entry)` 为唯一来源：true → 用户覆盖或 `AGENT_DEFAULT_CONCURRENCY`（1..16）；false → 恒为 1，**用户覆盖 > 1 也钳到 1**（fail-safe，选钳制而非放行加警告：错放会让两个对话互相打断，钳制只损失吞吐；设置页显示生效值）。调度器经 `SchedulerOptions.agentConcurrency` 解析器（start.ts 按目录装配；未装 / 目录外 = 1）、`agentBackgroundBlocker`（false →「该智能体未验证可并行会话」，不可用于后台）、`AgentView.concurrency` 共用它。testkit 假 Agent 按会话分表，与 `backgroundToolFree` 同样豁免。
+
+**逐家证据**（读锁定版本的包内文件，不运行；行号为包内文件行）
+
+| Agent | 值 | 证据 |
+| --- | --- | --- |
+| Claude（`@agentclientprotocol/claude-agent-acp@0.86.0`） | true | `dist/acp-agent.js`：`this.sessions = {}`（:1168）；每个会话 `query()` 各拉起一个 Claude Code 子进程（:7273）并登记独立记录 query / input / cancelled / 用量累计器（:7441）；`startTurn` 按 sessionId 取会话、轮次进该会话的 `turnQueue`（:1944、:2011-2013）；`cancelTurns` 只动该会话（:5262-5268） |
+| Codex（`@agentclientprotocol/codex-acp@2.1.1`） | true | `dist/index.js`：`sessions` / `pendingTurnStarts` / `activePrompts` 均为按 sessionId 的 Map（:37377-37380）；`prompt` 取本会话状态并 `trackActivePrompt(sessionId)`（:39527-39543；:39339 每个 prompt 自己的 AbortController）；事件按会话串行分发（`subscribeToSessionEvents` / `enqueueSessionNotification`，:34297-34330）；换 Provider 前等待所有会话的在途 prompt（:38084-38087） |
+| OpenCode 1.18.35（`opencode acp`） | true | 二进制内 bundle（strings 核对）：ACP 层 `ACP.Session` 以 `Map<sessionId, Info>` 存会话，`ACP.prompt` 按 sessionId 取会话后调内置服务器 `session.prompt({sessionID})`，经 `runUntilIdle(sessionId, …)` 只等该会话 idle（`idleWaiters` 按会话），`ACP.cancel` 只 abort 该会话；服务器侧 `SessionRunState.runner` 每个 sessionID 一个 runner（`runners` Map），`SessionRunState.assertNotBusy` 只在同一会话已忙时抛 `SessionBusyError` |
+| DeepSeek Harness（`@deepseek-ai/dsh@0.2.0-rc.2` → `@deepseek-ai/dsh-acp@0.2.0-rc.2`） | true | `lib/index.js`：`sessions = new Map()`（:1077）；每个 ACP 会话 `AcpSession.create` 经 `ctx.agents.create` 建一个全新 harness Agent（:693-705）；在途状态 `this.inflight` 属于会话（:796-798「a prompt is already in flight for this session」）；prompt / cancel 按 sessionId 分派（:1309-1314） |
+| Cursor（agent-cli 2026.10.01） | true | 随包 JS `dist-package/6136.index.js`（模块 `./src/acp/cursor-acp-agent.ts`、`agent-session.ts`、`session-resources.ts`）：`this.sessions = new Map`；`prompt` 按 sessionId 取该会话 AgentSession 后 `handlePrompt`；`newSession` 每会话各建 agentStore、执行资源与 AgentSession；在途取消句柄 `pendingPromptCancel` 在 AgentSession 上；Agent 类无「当前 prompt」字段（共享的只有 `sharedServices`：配置 / 模型管理）。闭源 |
+| Google Antigravity（agy-acp-server 1.3.0） | false | 原生 Mach-O / ELF 二进制，无可读源码，strings 中无可判定证据 |
+| 通用 ACP（`generic-acp`） | false | 未知 Agent 未经核对 |
+
+**测试**：`test/unit/agent-parallel-sessions.test.ts`——每个 Provider 都声明且取值与上表一致；`agentConcurrency` 缺省按特性、覆盖在 true 时生效 / false 时钳到 1、未登记 Provider 为 1；调度器经解析器取值、无解析器时 Agent 为 1；后台阻断原因；端到端：假 Agent 新选项 `serialPrompts`（另一会话有 prompt 在途时拒绝 prompt）——不钳制时两个对话一成一败，钳制后依次完成。`scheduler.test.ts` / `external-agent-p5.test.ts` 改为注入解析器。
+
+**待真机确认**：各家两个对话同时用同一 Agent 跑 prompt（同一进程两个会话并发），确认互不打断；Antigravity 若实测可并行，改 `providers/antigravity.ts` 并补证据。设置页对 false 的 Agent 仍显示可编辑的并发输入（保存后显示生效值 1），是否改为只读 + 说明留待 UI 跟进。
+
 ---
 
 ## 9. P6 — 无 API key 的后台 loop + 收尾

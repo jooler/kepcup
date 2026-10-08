@@ -31,12 +31,15 @@ export const genericAcpProvider: AgentProvider = {
     rejectOnce: ['reject_once', 'reject-once'],
   },
   toolName: (server, tool) => `mcp__${server}__${tool}`,
+  // parallelSessions：未知 Agent 未经核对 → false（并发恒为 1）。testkit 假
+  // Agent 走本 Provider，但它按会话分表（`parallelSessionsFor` 的 testkit 豁免）。
   features: {
     steering: false,
     loadSession: false,
     resume: false,
     osSandbox: false,
     httpMcp: true,
+    parallelSessions: false,
   },
   agentSideConfigFiles: ['AGENTS.md'],
   classifyError: (error) => defaultClassifyError(error),

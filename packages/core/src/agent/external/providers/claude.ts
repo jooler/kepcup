@@ -197,12 +197,19 @@ export const claudeProvider: AgentProvider = {
       ? name.slice(prefix.length)
       : null;
   },
+  // parallelSessions（同进程并行会话）：claude-agent-acp 0.86.0 dist/acp-agent.js
+  // —— `this.sessions = {}`（:1168）按 sessionId 存会话；每个会话在 session/new
+  // 时各自 `query()`（:7273，各拉起一个 Claude Code 子进程）并登记独立记录
+  // （:7441：query / input / cancelled / 用量累计器）；`startTurn` 按 sessionId
+  // 取会话、把轮次压进该会话自己的 `turnQueue`（:1944、:2011-2013）；
+  // `cancelTurns` 只动该会话（:5262-5268）。没有进程级「当前 prompt」。
   features: {
     steering: true,
     loadSession: true,
     resume: true,
     osSandbox: true,
     httpMcp: true,
+    parallelSessions: true,
   },
   // settingSources: [] → Claude 不读仓库内的 CLAUDE.md / .claude/：由 <project> 段注入。
   agentSideConfigFiles: [],

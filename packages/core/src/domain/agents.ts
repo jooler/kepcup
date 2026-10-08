@@ -1,6 +1,5 @@
 import { mkdirSync } from 'node:fs';
 import {
-  AGENT_DEFAULT_CONCURRENCY,
   AGENT_KILL_GRACE_MS,
   AppError,
   agentApiKeySecretName,
@@ -35,7 +34,7 @@ import {
 import { AcpControlSession } from '../agent/external/acp/control-session.js';
 import type { AcpSessionConfigOption } from '../agent/external/acp/client.js';
 import { agentErrorInfo, classifierFor, toAgentError } from '../agent/external/errors.js';
-import { PROVIDERS, providerFor } from '../agent/external/providers/index.js';
+import { agentConcurrency, PROVIDERS, providerFor } from '../agent/external/providers/index.js';
 import { agentBackgroundBlocker } from '../agent/llm-router.js';
 import type { AgentInstaller, AgentInvocation } from '../agent/external/installer.js';
 import {
@@ -443,10 +442,12 @@ export class AgentsService {
       installedVersion: setting?.installedVersion ?? installedVersion,
       source,
       loadUserConfig: setting?.loadUserConfig === true,
-      concurrency:
-        (settings.providerConcurrency as Record<string, number | undefined>)[
-          agentEngineKey(agentId)
-        ] ?? AGENT_DEFAULT_CONCURRENCY,
+      // Effective limit (the scheduler's): 1 for agents without parallel sessions.
+      concurrency: agentConcurrency(
+        settings.providerConcurrency,
+        entry,
+        this.#deps.providers ?? PROVIDERS,
+      ),
       hasApiKey: this.#hasApiKey(entry),
       install: {
         item: agentEngineKey(entry.id),

@@ -1,6 +1,5 @@
 import {
   AGENT_BACKGROUND_EVERY_N_RUNS,
-  AGENT_DEFAULT_CONCURRENCY,
   AGENT_TRIAGE_MIN_INTERVAL_MS,
   agentEngineKey,
   agentModelRef,
@@ -11,7 +10,13 @@ import {
   type Settings,
 } from '@kepcup/shared';
 import { agentRunGate } from './external/catalog.js';
-import { backgroundToolFree, PROVIDERS, providerFor } from './external/providers/index.js';
+import {
+  agentConcurrency,
+  backgroundToolFree,
+  parallelSessionsFor,
+  PROVIDERS,
+  providerFor,
+} from './external/providers/index.js';
 import type { ProviderRegistry } from './external/types.js';
 import type { AgentEngine, RunSpec } from './types.js';
 
@@ -25,7 +30,8 @@ import type { AgentEngine, RunSpec } from './types.js';
  *
  * 合格（`agentBackgroundBlocker`，审查 S1 / C1）：Provider 能为后台会话完全关闭
  * 原生工具；未开启「加载我的个人配置」（OpenCode / Cursor 等按进程加载个人
- * 配置）；并发上限至少 2（调度器给后台任务至多 并发-1 个名额）。
+ * 配置）；能同进程并行会话（`features.parallelSessions`，否则并发恒为 1）；
+ * 并发上限至少 2（调度器给后台任务至多 并发-1 个名额）。
  *
  * 只有外部 Agent 时的降配：续接 L2 仲裁保持关闭；技能生成默认关
  * （`backgroundTasks.agentSkillAuthoring`）；群聊判断默认不跑
@@ -98,10 +104,14 @@ export function agentBackgroundBlocker(
   registry: ProviderRegistry = PROVIDERS,
 ): string | null {
   let toolFree: boolean;
+  let parallel: boolean;
   try {
-    toolFree = backgroundToolFree(entry, providerFor(entry, registry));
+    const provider = providerFor(entry, registry);
+    toolFree = backgroundToolFree(entry, provider);
+    parallel = parallelSessionsFor(entry, provider);
   } catch {
     toolFree = false;
+    parallel = false;
   }
   if (!toolFree) {
     return '无法为后台任务完全关闭它的原生工具（文件 / 命令 / 联网）';
@@ -109,11 +119,12 @@ export function agentBackgroundBlocker(
   if (settings.agents[entry.id]?.loadUserConfig === true) {
     return '已开启「加载我的个人配置」（后台任务不加载个人配置）';
   }
-  const concurrency =
-    (settings.providerConcurrency as Record<string, number | undefined>)[
-      agentEngineKey(entry.id)
-    ] ?? AGENT_DEFAULT_CONCURRENCY;
-  if (concurrency < 2) {
+  // Same limit the scheduler applies (`agentConcurrency`): agents without
+  // parallel sessions always run one session at a time.
+  if (!parallel) {
+    return '该智能体未验证可并行会话（并发上限恒为 1，后台任务需至少 2）';
+  }
+  if (agentConcurrency(settings.providerConcurrency, entry, registry) < 2) {
     return '并发上限为 1（后台任务需至少 2，为对话保留一个名额）';
   }
   return null;

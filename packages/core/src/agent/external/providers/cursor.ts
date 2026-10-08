@@ -111,12 +111,20 @@ export const cursorProvider: AgentProvider = {
       genericAcpProvider.toolName(server, tool),
     );
   },
+  // parallelSessions：cursor agent-cli 2026.10.01 随包 JS（dist-package/
+  // 6136.index.js，模块 ./src/acp/cursor-acp-agent.ts / agent-session.ts）——
+  // `this.sessions = new Map`，`prompt` 按 sessionId 取该会话的 AgentSession 再
+  // `handlePrompt`；`newSession` 为每个会话各建 agentStore、执行资源
+  // （session-resources.ts）与 AgentSession；在途 prompt 的取消句柄
+  // `pendingPromptCancel` 在 AgentSession 上。Agent 类本身没有「当前 prompt」
+  // 字段（只有 connection / sessions / sharedServices 等）。闭源，待真机确认。
   features: {
     steering: false,
     loadSession: true,
     resume: false,
     osSandbox: false,
     httpMcp: true,
+    parallelSessions: true,
   },
   // project 内 Cursor 会读的配置：.cursor/（rules、cli.json 权限、mcp.json、
   // hooks）、AGENTS.md、CLAUDE.md。

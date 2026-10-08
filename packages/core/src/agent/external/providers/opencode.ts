@@ -632,12 +632,20 @@ export const opencodeProvider: AgentProvider = {
     `${server.replace(/[^a-zA-Z0-9_-]/g, '_')}_${tool.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
   // 无 OS 沙箱：命令一律逐条确认（宿主看不出的一律当沙箱外）。
   execSandboxed: () => false,
+  // parallelSessions：opencode 1.18.35 二进制内的 bundle（`opencode acp`）——
+  // ACP 层 `ACP.Session` 用 `Map<sessionId, Info>` 存会话，`ACP.prompt` 按
+  // sessionId 取会话后调内置服务器的 `session.prompt({sessionID})`，并经
+  // `runUntilIdle(sessionId, …)` 只等**该会话**的 idle（`idleWaiters` 按会话分）；
+  // `ACP.cancel` 只 abort 该会话的 backing session。服务器侧
+  // `SessionRunState.runner` 每个 sessionID 一个 runner（`runners` Map），
+  // `SessionRunState.assertNotBusy` 只在**同一会话**已忙时抛 SessionBusyError。
   features: {
     steering: false,
     loadSession: true,
     resume: true,
     osSandbox: false,
     httpMcp: true,
+    parallelSessions: true,
   },
   // OPENCODE_DISABLE_PROJECT_CONFIG：project 内的配置（opencode.json、.opencode/、
   // AGENTS.md）一概不读——AGENTS.md 由宿主 <project> 段注入。
