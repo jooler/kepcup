@@ -1,7 +1,7 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentModelRef, AGENT_CATALOG, type AgentCatalogEntry } from '@kepcup/shared';
 import {
   agentTurn,
@@ -28,7 +28,11 @@ import {
   cursorProvider,
 } from '../../src/agent/external/providers/cursor.js';
 import { classifyDshError, dshProvider } from '../../src/agent/external/providers/dsh.js';
-import { opencodeProvider } from '../../src/agent/external/providers/opencode.js';
+import {
+  opencodeConfigHome,
+  opencodeProvider,
+  opencodeUserConfigIssues,
+} from '../../src/agent/external/providers/opencode.js';
 import type { AgentPermissionTier } from '@kepcup/shared';
 import type { RunSpec } from '../../src/agent/types.js';
 
@@ -147,7 +151,79 @@ describe('provider registry', () => {
   });
 });
 
+// Model of opencode 1.18.35 (bundled source, 复审 #8): config layers merged
+// with remeda mergeDeep ({...target, ...source}: existing keys keep their
+// position, new keys are appended, objects merge recursively), mode.* folded
+// into agent.* after every layer, OPENCODE_PERMISSION merged into the top
+// level; Permission.fromConfig expands each object in key order into rules,
+// merge concatenates [defaults, top level, agent], and evaluate takes the
+// findLast rule whose permission (wildcard) matches.
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const mergeDeep = (target: unknown, source: unknown): unknown => {
+  if (!isObject(target) || !isObject(source)) return source;
+  const out: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(source)) out[key] = mergeDeep(out[key], value);
+  return out;
+};
+const wildcard = (pattern: string, value: string) =>
+  new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(value);
+const fromConfig = (permission: Record<string, unknown>) =>
+  Object.entries(permission).flatMap(([name, action]) =>
+    typeof action === 'string'
+      ? [{ permission: name, pattern: '*', action }]
+      : Object.entries(action as Record<string, string>).map(([pattern, inner]) => ({
+          permission: name,
+          pattern,
+          action: inner,
+        })),
+  );
+const evaluate = (permission: string, rules: ReturnType<typeof fromConfig>) =>
+  rules.findLast((rule) => wildcard(rule.permission, permission))?.action ?? 'ask';
+interface Layered {
+  permission: Record<string, unknown>;
+  agent: Record<string, { permission: Record<string, unknown> }>;
+  mode?: Record<string, unknown>;
+}
+function resolveConfig(layers: unknown[], opencodePermission: string): Layered {
+  let config = layers.reduce((acc, layer) => mergeDeep(acc, layer), {}) as Layered;
+  for (const [name, mode] of Object.entries(config.mode ?? {})) {
+    config = mergeDeep(config, {
+      agent: { [name]: { ...(mode as object), mode: 'primary' } },
+    }) as Layered;
+  }
+  config.permission = mergeDeep(config.permission, JSON.parse(opencodePermission)) as Record<
+    string,
+    unknown
+  >;
+  return config;
+}
+function rulesFor(config: Layered, agent: string) {
+  return [
+    ...fromConfig({ '*': 'allow', question: 'deny' }),
+    ...fromConfig(config.permission),
+    ...fromConfig(config.agent[agent]!.permission),
+  ];
+}
+
 describe('OpenCode', () => {
+  // The launch scans the user's OpenCode config layers (复审 #8): keep the
+  // tests independent of the machine's real ~/.opencode / ~/.config.
+  const savedEnv = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  let fakeHome = '';
+  beforeEach(() => {
+    fakeHome = mkdtempSync(path.join(tmpdir(), 'kepcup-oc-home-'));
+    process.env.HOME = fakeHome;
+    delete process.env.XDG_CONFIG_HOME;
+  });
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
   it('process config: string-only rules led by "*":"ask" on every layer; project / plugin config off', () => {
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
@@ -212,37 +288,7 @@ describe('OpenCode', () => {
     ).toThrow(/私有状态目录/);
   });
 
-  it('permissive layers (incl. {"bash":"allow","*":"allow"}) lose to the host rules (H1, 审查 #7)', () => {
-    // Model of opencode 1.18.35: config layers merged with remeda mergeDeep
-    // (later source wins, objects merge, target key order kept), mode.* folded
-    // into agent.*, OPENCODE_PERMISSION merged into the top level; then
-    // Permission.fromConfig expands each object in key order into rules,
-    // merge concatenates [defaults, top level, agent], and evaluate takes the
-    // findLast rule whose permission (wildcard) matches.
-    const isObject = (value: unknown): value is Record<string, unknown> =>
-      typeof value === 'object' && value !== null && !Array.isArray(value);
-    const mergeDeep = (target: unknown, source: unknown): unknown => {
-      if (!isObject(target) || !isObject(source)) return source;
-      const out: Record<string, unknown> = { ...target };
-      for (const [key, value] of Object.entries(source)) out[key] = mergeDeep(out[key], value);
-      return out;
-    };
-    const wildcard = (pattern: string, value: string) =>
-      new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(
-        value,
-      );
-    const fromConfig = (permission: Record<string, unknown>) =>
-      Object.entries(permission).flatMap(([name, action]) =>
-        typeof action === 'string'
-          ? [{ permission: name, pattern: '*', action }]
-          : Object.entries(action as Record<string, string>).map(([pattern, inner]) => ({
-              permission: name,
-              pattern,
-              action: inner,
-            })),
-      );
-    const evaluate = (permission: string, rules: ReturnType<typeof fromConfig>) =>
-      rules.findLast((rule) => wildcard(rule.permission, permission))?.action ?? 'ask';
+  it('layers overriding our named keys (incl. {"bash":"allow","*":"allow"}) lose to the host rules (H1, 审查 #7)', () => {
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
       target: { command: 'opencode', args: ['acp'], env: {} },
@@ -270,28 +316,9 @@ describe('OpenCode', () => {
       { agent: { explore: permissive, general: { permission: { bash: 'allow', '*': 'allow' } } } },
       JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!),
     ];
-    interface Layered {
-      permission: Record<string, unknown>;
-      agent: Record<string, { permission: Record<string, unknown> }>;
-      mode?: Record<string, unknown>;
-    }
-    let config = layers.reduce((acc, layer) => mergeDeep(acc, layer), {}) as Layered;
-    for (const [name, mode] of Object.entries(config.mode ?? {})) {
-      config = mergeDeep(config, {
-        agent: { [name]: { ...(mode as object), mode: 'primary' } },
-      }) as Layered;
-    }
-    config.permission = mergeDeep(
-      config.permission,
-      JSON.parse(launch.env.OPENCODE_PERMISSION!),
-    ) as Record<string, unknown>;
-    const defaults = fromConfig({ '*': 'allow', question: 'deny' });
+    const config = resolveConfig(layers, launch.env.OPENCODE_PERMISSION!);
     for (const name of ['build', 'plan', 'general', 'explore']) {
-      const rules = [
-        ...defaults,
-        ...fromConfig(config.permission),
-        ...fromConfig(config.agent[name]!.permission),
-      ];
+      const rules = rulesFor(config, name);
       expect(evaluate('bash', rules), name).toBe('ask');
       expect(evaluate('external_directory', rules), name).toBe('ask');
       expect(evaluate('task', rules), name).toBe('ask');
@@ -302,6 +329,101 @@ describe('OpenCode', () => {
       // later "*" key in their object (then the host still decides: ask).
       expect(evaluate('edit', rules), name).not.toBe('allow');
     }
+  });
+
+  it('unnamed user keys ("b*", "**") would win by key order → the launch refuses them (复审 #8)', () => {
+    const launch = (loadUserConfig: boolean) =>
+      opencodeProvider.launch({
+        entry: catalog('opencode'),
+        target: { command: '/x/opencode', args: ['acp'], env: {} },
+        platform: 'linux',
+        stateDir: path.join(fakeHome, 'state'),
+        loadUserConfig,
+      });
+    const ours = launch(false);
+    // Why a scan is needed: the model lets such a layer win.
+    for (const [agent, layer] of [
+      ['build', { mode: { build: { permission: { 'b*': 'allow' } } } }],
+      [
+        'general',
+        { agent: { general: { permission: { '*': 'ask', bash: 'ask', '**': 'allow' } } } },
+      ],
+      ['build', { agent: { build: { permission: { '*': 'ask', bash: 'ask', 'b*': 'allow' } } } }],
+    ] as const) {
+      const config = resolveConfig(
+        [layer, JSON.parse(ours.env.OPENCODE_CONFIG_CONTENT!)],
+        ours.env.OPENCODE_PERMISSION!,
+      );
+      expect(evaluate('bash', rulesFor(config, agent)), JSON.stringify(layer)).toBe('allow');
+    }
+    // Layers that only ask / deny never produce an allow, whatever the order.
+    const strict = resolveConfig(
+      [
+        { permission: { '*': 'ask', bash: 'ask', 'b*': 'deny', '**': 'ask' } },
+        { mode: { build: { permission: { 'b*': 'ask', '**': 'deny' } } } },
+        JSON.parse(ours.env.OPENCODE_CONFIG_CONTENT!),
+      ],
+      ours.env.OPENCODE_PERMISSION!,
+    );
+    for (const permission of ['bash', 'edit', 'external_directory', 'task', 'webfetch', 'skill']) {
+      expect(evaluate(permission, rulesFor(strict, 'build')), permission).not.toBe('allow');
+    }
+
+    const dotDir = path.join(fakeHome, '.opencode');
+    mkdirSync(dotDir, { recursive: true });
+    // Read-only allows and ask / deny rules are fine.
+    writeFileSync(
+      path.join(dotDir, 'opencode.json'),
+      JSON.stringify({ permission: { read: 'allow', bash: 'ask', '*': 'deny' } }),
+    );
+    expect(() => launch(false)).not.toThrow();
+    for (const loadUserConfig of [false, true]) {
+      writeFileSync(
+        path.join(dotDir, 'opencode.jsonc'),
+        '// mine\n{ "mode": { "build": { "permission": { "b*": "allow", } } }, }',
+      );
+      expect(() => launch(loadUserConfig)).toThrow(/mode\.build\.permission\.b\*/);
+      try {
+        launch(loadUserConfig);
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'AGENT_INCOMPATIBLE' });
+      }
+      rmSync(path.join(dotDir, 'opencode.jsonc'));
+    }
+    // ~/.opencode agent markdown (frontmatter) and custom tools.
+    mkdirSync(path.join(dotDir, 'agent', 'nested'), { recursive: true });
+    writeFileSync(
+      path.join(dotDir, 'agent', 'nested', 'helper.md'),
+      '---\ndescription: helper\npermission:\n  "**": allow\n---\nbody',
+    );
+    expect(() => launch(false)).toThrow(/helper\.md/);
+    rmSync(path.join(dotDir, 'agent'), { recursive: true });
+    mkdirSync(path.join(dotDir, 'tools'));
+    writeFileSync(path.join(dotDir, 'tools', 'x.ts'), 'export default {}');
+    expect(() => launch(false)).toThrow(/自定义工具/);
+    rmSync(path.join(dotDir, 'tools'), { recursive: true });
+
+    // 「加载我的个人配置」: the user's global config is scanned too; off, it is not read.
+    const userConfig = path.join(fakeHome, '.config', 'opencode');
+    mkdirSync(userConfig, { recursive: true });
+    writeFileSync(
+      path.join(userConfig, 'opencode.json'),
+      JSON.stringify({ permission: { '**': 'allow' }, tools: { bash: true } }),
+    );
+    expect(() => launch(false)).not.toThrow();
+    expect(() => launch(true)).toThrow(/permission\.\*\*/);
+    expect(
+      opencodeUserConfigIssues({ home: fakeHome, configHome: userConfig }).map((issue) =>
+        issue.slice(userConfig.length + 1),
+      ),
+    ).toEqual(['opencode.json: permission.**', 'opencode.json: tools.bash']);
+    process.env.XDG_CONFIG_HOME = path.join(fakeHome, 'xdg');
+    expect(() => launch(true)).not.toThrow();
+    // The private config root is scanned as well; unparsable files fail closed.
+    const privateDir = path.join(opencodeConfigHome(path.join(fakeHome, 'state')), 'opencode');
+    mkdirSync(privateDir, { recursive: true });
+    writeFileSync(path.join(privateDir, 'config.json'), '{ not json');
+    expect(() => launch(false)).toThrow(/无法解析/);
   });
 
   it('tier → mode config option (read_only → plan, else build); unknown mode fails closed', async () => {
