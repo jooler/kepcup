@@ -3064,7 +3064,15 @@ export class Orchestrator {
         // the engine really took in confirms its inject entry (审查 L4).
         const control = exec.control;
         unsubscribeSteerConfirm = handle.onEvent((event) => {
-          if (event.type === 'steer') control.steerConfirmed(event.payload.text);
+          if (event.type !== 'steer') return;
+          const shown = control.steerConfirmed(event.payload.text);
+          // The agent session saw the inject's source messages: a continuation's
+          // delta does not repeat them (P5 审查 #3).
+          if (agentRun === null) return;
+          for (const id of shown) {
+            const message = messages.getById(id);
+            if (message !== null) agentRun.session.seen.ids.set(message.id, message.seq);
+          }
         });
         control.attach(handle);
       } else {
