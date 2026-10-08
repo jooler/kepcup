@@ -103,7 +103,6 @@ describe('LlmRouter', () => {
     const b = bot({ model: 'custom:b/main', light_model: 'custom:b/light' });
     const cases: Array<[LlmPurpose, string]> = [
       ['triage', 'custom:b/light'],
-      ['continuation', 'custom:b/light'],
       ['subagent_compaction', 'custom:b/light'],
       ['wiki_maintenance', 'custom:b/main'],
       ['skill_authoring', 'custom:b/main'],
@@ -196,9 +195,8 @@ describe('LlmRouter', () => {
     ).toBeNull();
   });
 
-  it('agent-only degradations: L2 off, skill authoring opt-in, triage opt-in + budget, off switch', () => {
+  it('agent-only degradations: skill authoring opt-in, triage opt-in + budget, off switch', () => {
     const r = router(CHOSEN);
-    expect(r.resolveDefault('continuation')).toBeNull();
     expect(r.resolveDefault('skill_authoring')).toBeNull();
     // Agent triage is off by default (groupMentionOnly defaults to on).
     expect(r.resolveDefault('triage')).toBeNull();

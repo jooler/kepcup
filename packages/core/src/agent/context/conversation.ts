@@ -316,28 +316,3 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
     .map((m) => renderMessageLine(m, input.options, 'trigger'));
   return `<trigger reason="${input.reason}"${attrs}>\n${lines.join('\n')}\n</trigger>`;
 }
-
-/** The injection (steer) message for a batch delivered mid-run. */
-export function buildNewMessagesInjection(
-  messages: Message[],
-  options: RenderMessageOptions,
-): string {
-  const lines = messages
-    .filter((m) => m.status !== 'recalled')
-    .map((m) => renderMessageLine(m, options, 'trigger'));
-  return [
-    '<new_messages>',
-    ...lines,
-    '</new_messages>',
-    '你工作期间收到了新消息。判断是否需要调整当前的工作：需要就调整，不需要就继续。',
-  ].join('\n');
-}
-
-/** Edit notifications injected into a running loop. */
-export function buildMessageEventInjection(input: {
-  type: 'edited';
-  messageId: string;
-  newText?: string | undefined;
-}): string {
-  return `<message_event type="edited" message_id="${input.messageId}"/>\n用户编辑了这条消息，新内容：${input.newText ?? ''}`;
-}
