@@ -46,7 +46,7 @@ const EXPECTED: Readonly<Record<string, boolean>> = {
   codex: true,
   opencode: true,
   dsh: true,
-  cursor: true,
+  cursor: false,
   antigravity: false,
 };
 
