@@ -14,6 +14,7 @@ import {
 import type { CoreLogger } from '../../infra/logger.js';
 import {
   AcpConnection,
+  createShimChannel,
   type AcpInitializeResponse,
   type AcpLogger,
   type AcpRequestPermissionRequest,
@@ -576,6 +577,10 @@ export class AgentHost {
   #start(entry: AgentCatalogEntry): LiveAgent {
     const logger = this.#log;
     const provider = providerFor(entry, this.#deps.providers ?? PROVIDERS);
+    if (entry.transport === 'shim' && provider.connect === undefined) {
+      // Checked before anything is spawned.
+      throw new AppError('AGENT_INCOMPATIBLE', `智能体「${entry.name}」缺少协议垫片`);
+    }
     const target = this.#deps.resolveLaunch(entry);
     const launch = provider.launch({
       entry,
@@ -635,9 +640,21 @@ export class AgentHost {
       requestPermission: (sessionId, request) =>
         live.sessions.get(sessionId)?.requestPermission?.(request) ?? null,
     };
+    // shim 型 Provider（无 ACP 的 Agent，如 ZCode）：进程讲私有协议，垫片在
+    // 进程内把它翻译为 ACP，宿主照常经 ACP 连接驱动。
+    let channel = proc.channel;
+    if (entry.transport === 'shim' && provider.connect !== undefined) {
+      const shim = createShimChannel((client) => provider.connect!(proc, client));
+      channel = shim.channel;
+      void proc.exited.then(() => shim.close());
+      void shim.closed.then(
+        () => proc.kill(),
+        () => proc.kill(),
+      );
+    }
     live.connection = new AcpConnection({
       agentId: entry.id,
-      channel: proc.channel,
+      channel,
       provider,
       router,
       appVersion: this.#deps.appVersion,

@@ -128,3 +128,22 @@
 - 推荐：方案 1，型号在 Mac（arm64）上以 20 条中英文样例实测召回与耗时后钉死，再于 Windows/Linux 复测（跨系统清单）。
 - 决定：以**方案 2 为基础**落地（2026-10-04）——运行库选 `onnxruntime-node`（方案 1 的核心正是它的封装，直接用可少一层抽象），tokenizer 自实现纯 TS（`memory/bpe-tokenizer.ts`，RoBERTa 字符级 BPE，避开 tokenizers wasm 依赖；与 HF tokenizers 逐 id 对齐）。与原推荐的关键差异：**运行库不进应用安装包**，而是新增环境条目 `onnxruntime`（npm 官方 tarball，`registry.npmmirror.com` 分发、与 registry.npmjs.org 字节一致且 integrity 核对一致），与 `embedding-model` 合成**一张审批卡**、批准后链式安装到 `toolchains/`——安装包体积零增长，运行库/模型可独立升级。模型钉 `jina-embeddings-v2-base-zh` q8 量化 ONNX 导出（jinaai 官方权重 Apache-2.0，Xenova 移植；ModelScope 分发），768 维、中英双语、约 163MB。GPU 加速按平台自动选执行单元（`env/gpu.ts`）：macOS CoreML（随包内置）、Windows DirectML（随包携带 DirectML.dll，任意 DX12 显卡）、Linux CPU（npm 包未携带 CUDA EP），首选 EP 会话创建失败回退 CPU。实现：`env/catalog.ts` 新增 `files` 安装类型（多文件钉住 + 归档解包落位）、`EnvManager` bundle 审批与 `#ensureChainedItem`、`memory/embedder.ts` 真实 `LocalEmbedder`（createRequire 从 toolchains 加载、模块级会话缓存、mean 池化）。macOS arm64 实测：模型+运行库合计 276,331,875 字节（约 276MB）、语义方向正确（同义 0.65 / 跨语言 0.68 / 无关 0.04）、短句 warm 约 4ms（CPU EP）/ 约 26ms（CoreML EP），≤50ms 达标；会话创建约 170ms-2s；1024 token 单条约 367ms，产品截断 512。
 - 已更新的文档：design/14（向量模型型号）、design/16（向量来源：本地运行库与 GPU 选型）、design/07（宿主层环境条目）、design/11（toolchains 布局）、dev/phases/P07-memory.md（任务 2 实现记录）、PROGRESS.md（P07 补充交付）。
+
+### DEV-008 ZCode（智谱）外部智能体放弃接入（D72 P5）
+
+- 状态：已落实（2026-10-08，放弃；目录不收录）
+- 阶段：D72 P5（外部智能体引擎第二部分）
+- 是否阻塞：否（其余 Agent 不受影响；ZCode 不进目录）
+- 问题：todo/acp-external-agents.md 附录 A.1 的 P0 只读评估认为 ZCode Protocol 的门禁项都能映射，计划以进程内垫片（`transport:'shim'`）拉起用户已装 ZCode 桌面应用自带的 `resources/glm/zcode.cjs app-server --stdio`。P5 实现前逐项核对 v3.14.3 源码（未运行任何程序）发现：
+  1. **认证无法在不碰凭据的前提下映射（决定性）**：app-server 模式下 ZCode 的订阅登录（`zcode login` / GLM Coding Plan）由宿主提供：进程级 Provider Registry 不带凭据（`startProcessProviderRegistryRuntime(env)` 不传 `standalone`），账号模型的配置经 `provider/updateAccountConfig` 由宿主推送、每次模型请求前经反向请求 `interaction/requestProviderRuntimeHeaders` 向宿主索取鉴权头；KepCup 若接入就必须自己读取 / 中转用户的 ZCode 凭据，违反「不读取、不中转任何凭据」（design 28 §9.1）（`bootstrap/src/zcode-protocol-entrypoint.ts`、`app/process-provider-registry-runtime.ts` `startProcessProviderRegistryRuntime`、`zcode-protocol/provider-runtime-headers.ts`、`zcode-protocol/workspace-model-runtime.ts`）。`zcode login` 写入的 `~/.zcode/v2/credentials.json` 只被 CLI 的独立模式（`prompt` / TUI 的 `createStandaloneProviderRuntimeHeadersPort`）使用，app-server 不读。不提供鉴权头时账号模型请求失败；只有用户在 ZCode 里自配的 API key Provider 可用——这不是目录条目承诺的「GLM Coding Plan 登录」。
+  2. **档位只能部分映射**：`edit` 模式对写入「不区分工作区内外」自动批准（`core/src/tool/path-policy.ts`），`auto` 一律拒绝、`yolo` 全放行；可用的只有 `plan`（只读）与 `build`（写入 / 命令询问）。但 `build` 之前还会被用户级 `~/.zcode/cli/config.json` 的 `permission.allowedTools`、SQLite 中「在此项目中始终允许」的规则、用户级 PreToolUse hooks 自动放行，没有关闭开关（只能以 `ZCODE_DATA_BASE_DIR` 整体迁走数据根，这又会连带丢掉 1 中本就不可用的登录态）；project 的 `zcode.json` / `.zcode/config.json` 也可携带 allowedTools 与自动连接的 stdio MCP server。
+  3. 协议无版本握手、`session/send` / `session/stop` 已标废弃，`zcode-protocol-legacy-types.ts` 注明旧协议将被删除（v4 未冻结）。
+- 影响范围：目录不收录 `zcode`，不新增 `providers/zcode/`。保留通用部分：`AgentProvider.connect(proc, client)` + `acp/client.ts` `createShimChannel` + AgentHost 的 `transport:'shim'` 接线（单测覆盖，供日后确有协议垫片的 Agent 使用）。
+- 可选方案：
+  1. 放弃（当前）——不碰凭据、不承诺不可用的登录方式。
+  2. 由 KepCup 充当 ZCode 桌面宿主：读取 / 刷新 ZCode 账号凭据并在 `requestProviderRuntimeHeaders` 中返回——违反 §9.1 与条款审慎原则，不采纳。
+  3. 只支持 ZCode 内自配的 API key Provider——体验与目录描述不符、仍有 2 的权限残留，不采纳。
+  4. 等 ZCode 提供 ACP 或在 app-server 中支持 CLI 凭据（standalone 账号源）后重新评估。
+- 推荐：1，并跟踪 4。
+- 决定：按用户既定原则（「ZCode 评估不能完整覆盖即放弃」）放弃。
+- 已更新的文档：design/28 §9.2（ZCode 行）、todo/acp-external-agents.md §8.1 / §8.4 / 附录 A.1（补充核对结论）。
