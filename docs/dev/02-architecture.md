@@ -106,7 +106,7 @@ interface RunHandle {
   steer(text: string): boolean;          // 下一步注入（D75：只用于任务的 inject）；false = 收不下（任务层把 inject 记为 queued）
   abort(reason: string): void;
   onEvent(listener: (e: EngineEvent) => void): () => void;
-  tokensSoFar(): number;                 // 连锁预算（外部 Agent 恒为 0）
+  tokensSoFar(): number;                 // 连锁预算与任务的 TASK_TOKEN_BUDGET（外部 Agent：已报用量 + 未报轮数 × AGENT_TURN_BUDGET_TOKENS）
   done: Promise<RunOutcome>;             // { status, finalText, skipReply, usage[], error? }
 }
 ```
