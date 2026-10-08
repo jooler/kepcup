@@ -72,6 +72,8 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 
 ### 2.3 管家工具面
 
+> **D75 说明（非修订）**：`propose_bot` / `propose_team` / `propose_group` / `suggest_route` / `list_bots` / `delegate_to_bot` / `cancel_delegation` 全部属于**对话轮**的工具面——它们正是「立即返回、宿主干活」的那一类，与 D75 的 `start_task` 并列。D71 的异步契约、状态机与结果卡范式被 D75 的任务层直接照搬，§3.5 投递闸门中「B 邮箱空闲」的判定对象是 B 的**对话轮**。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
+
 | 工具 | 作用 |
 |---|---|
 | `list_bots` | 列出用户 Bot 名片（id / name / bio / 职责摘要），只读；与 `delegate_to_bot` 同注册范围（所有 Bot） |
