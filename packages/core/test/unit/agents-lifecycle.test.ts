@@ -383,6 +383,38 @@ describe('AgentHost retiring', () => {
     second.release();
     expect(host.inUse('busy')).toBe(false);
   });
+
+  it('openSession also finds sessions on a retiring process (deleting a conversation discards them)', async () => {
+    const entry = fakeAgentEntry('busy');
+    const host = new AgentHost({
+      logger,
+      redact: (text) => text,
+      appVersion: '1.0.0',
+      resolveLaunch: () => ({ command: 'unused', args: [], env: {} }),
+      spawn: fakeAgentSpawner({ busy: { turns: [] } }, []) as never,
+    });
+    cleanups.push(() => host.dispose());
+    const first = await host.acquire(entry);
+    first.attach('attached', {} as never);
+    first.keepSession('kept', { marker: 1 });
+    expect(host.stop('busy')).toBe(false);
+    const second = await host.acquire(entry);
+    expect(host.openSession('busy', 'attached')).toMatchObject({
+      connection: first.connection,
+      busy: true,
+    });
+    expect(host.openSession('busy', 'kept')).toMatchObject({
+      connection: first.connection,
+      state: { marker: 1 },
+      busy: false,
+    });
+    host.forgetSession('busy', 'kept');
+    expect(host.openSession('busy', 'kept')).toBeNull();
+    expect(host.openSession('busy', 'unknown')).toBeNull();
+    first.detach('attached');
+    first.release();
+    second.release();
+  });
 });
 
 describe('P4-B review: run-noted logout and post-change probing', () => {
