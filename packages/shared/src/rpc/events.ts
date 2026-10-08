@@ -11,6 +11,7 @@ import {
   messageSchema,
   projectSchema,
   runSchema,
+  taskViewSchema,
   unattendedStateSchema,
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
@@ -173,6 +174,13 @@ export const mcpServerStatusPayloadSchema = z.object({
 /** 跨 Bot 委派（D71）状态变化：A 侧发出卡 / 结果卡随之重绘。 */
 export const delegationUpdatedPayloadSchema = z.object({ delegation: delegationSchema });
 
+/**
+ * D75 任务（design 30 §4.3）：任务的任何可见变化——派出、排队原因、开始执行、
+ * 注入（含之后降级为未送达）、提问、结算——都推一次完整视图；任务卡与
+ * 状态行据此重绘。
+ */
+export const taskUpdatedPayloadSchema = z.object({ task: taskViewSchema });
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -199,6 +207,7 @@ export const rpcEventSchemas = {
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
+  'task.updated': taskUpdatedPayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;

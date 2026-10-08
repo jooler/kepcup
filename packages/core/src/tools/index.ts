@@ -27,7 +27,7 @@ import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
-import { buildTaskTools, type TaskToolFacade } from './task-tools.js';
+import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
@@ -962,6 +962,10 @@ export function buildResponseTools(input: {
     ...webTools,
     ...skillTools,
     ...delegateTools,
+    // §2.4.6: a task asks the user on a question card bound to it.
+    ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
+      ? [buildAskUserTool({ identity, ask: deps.tasks.ask.bind(deps.tasks) })]
+      : []),
     // Tasks keep list_bots (read-only cards); routing to other bots and the
     // butler's proposals are the turn's (design 30 §1.2).
     ...(deps.butler !== undefined ? [buildListBotsTool({ identity, butler: deps.butler.host })] : []),

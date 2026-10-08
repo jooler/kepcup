@@ -51,7 +51,8 @@ class ProjectsState {
     });
     core.onEvent('run.status', (payload) => {
       const data = payload as { run: { id: string; status: string } };
-      if (data.run.status !== 'waiting_lease') {
+      // D75: a write task waits for its (pinned) lease while still `queued`.
+      if (data.run.status !== 'waiting_lease' && data.run.status !== 'queued') {
         const { [data.run.id]: _gone, ...rest } = this.leaseWaiting;
         void _gone;
         if (_gone !== undefined) this.leaseWaiting = rest;

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -153,11 +153,18 @@ test('project selection, switching block while running, changes card, diff and r
     await expect(page.locator('[data-testid="project-selector-trigger"]')).toBeEnabled();
 
     // 一次有改动的执行 → 改动摘要卡片 → 查看 diff → 整次回退
-    llm.script('mock-main', [
-      step().replyToolCall('acquire_project_write', { reason: '写入演示文件' }),
-      step().replyToolCall('write', { path: 'demo.txt', content: 'demo-content-v1' }),
-      step().replyText('写好了'),
-    ]);
+    // D75：写在写任务里（任务启动前整任务持有项目写租约），结果经对话轮转述。
+    llm.script(
+      'mock-main',
+      viaTask({
+        title: '写演示文件',
+        taskSteps: [
+          step().replyToolCall('write', { path: 'demo.txt', content: 'demo-content-v1' }),
+          step().replyText('demo.txt 已写入'),
+        ],
+        relay: '写好了',
+      }),
+    );
     await page.locator('[data-testid="composer-input"]').fill('写一个文件');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
@@ -183,7 +190,10 @@ test('project selection, switching block while running, changes card, diff and r
   }
 });
 
-test('lease waiting shows in the status line and can be force revoked', async () => {
+// D75（DEV-015）：同一 project 的写任务在任务层排队（还没去申请写租约），
+// 状态行与任务卡显示「等写入租约（任务 … 持有）」；「强制收回」对这种排队
+// 不起作用——放行方式是取消（或等完）持有它的那条任务。
+test('a write task queued behind another conversation\'s write task shows the wait and runs once that task is cancelled', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-lease-');
   const { page, app, llm } = session;
@@ -202,13 +212,19 @@ test('lease waiting shows in the status line and can be force revoked', async ()
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="project-picker-dialog"]')).not.toBeVisible();
 
-    llm.script('mock-main', [
-      step().replyToolCall('acquire_project_write', { reason: '占用' }),
-      step().hold().replyToolCall('bash', { command: 'sleep 30' }),
-    ]);
+    // D75：甲的写任务启动前取得项目租约并整任务持有（挂在工具调用上保持执行中）。
+    const held = step().hold().replyToolCall('bash', { command: 'sleep 30' });
+    llm.script(
+      'mock-main',
+      viaTask({ title: '占用项目', ack: '甲开始工作', taskSteps: [held] }),
+    );
     await page.locator('[data-testid="composer-input"]').fill('开始工作');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
-    await expect(page.locator('[data-testid="run-status"]')).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.locator('[data-testid="run-status"]').filter({ hasText: '占用项目' }),
+    ).toBeVisible({ timeout: 30_000 });
+    // The task's request is parked on the held step (the script is replaced next).
+    await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
 
     // 乙：第二个对话绑定同一项目，触发写入 → 排队等待租约
     await createBotAndOpenChat(page, '乙');
@@ -220,22 +236,49 @@ test('lease waiting shows in the status line and can be force revoked', async ()
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="project-picker-dialog"]')).not.toBeVisible();
 
-    llm.script('mock-main', [
-      step().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
-      step().replyText('写完了'),
-    ]);
+    // 乙的写任务排队等同一项目的租约（任务仍是 submitted，状态行显示等待）。
+    llm.script(
+      'mock-main',
+      viaTask({
+        title: '也写一个',
+        ack: '乙去写',
+        taskSteps: [
+          step().replyToolCall('write', { path: '乙.txt', content: 'from-b' }),
+          step().replyText('乙.txt 已写入'),
+        ],
+        relay: '写完了',
+      }),
+    );
     await page.locator('[data-testid="composer-input"]').fill('也写一个');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
-    const waiting = page.locator('[data-testid="lease-waiting-text"]');
-    await expect(waiting).toContainText('等待 甲 完成对项目的修改', { timeout: 60_000 });
-    await expect(page.locator('[data-testid="lease-revoke"]')).toBeVisible();
+    const status = page.locator('[data-testid="run-status-text"]').filter({ hasText: '也写一个' });
+    await expect(status).toContainText('等写入租约', { timeout: 60_000 });
+    const card = page.locator('[data-testid^="task-card-"]').filter({ hasText: '也写一个' });
+    await expect(card).toHaveAttribute('data-task-state', 'submitted');
+    await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写入租约');
 
-    // 强制收回：乙取得租约并完成写入
-    await page.locator('[data-testid="lease-revoke"]').click();
-    await expect(waiting).not.toBeVisible({ timeout: 60_000 });
-    await expect(page.locator('[data-testid="run-status"]')).not.toBeVisible({ timeout: 120_000 });
+    // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入
+    await page
+      .locator('[data-testid^="conversation-item-"]', { hasText: '甲' })
+      .first()
+      .click();
+    const holder = page.locator('[data-testid^="task-card-"]').filter({ hasText: '占用项目' });
+    await expect(holder).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
+    await holder.locator('[data-testid="task-cancel"]').click();
+    await expect(holder).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
+    await expect
+      .poll(() => existsSync(path.join(project, '乙.txt')), { timeout: 60_000 })
+      .toBe(true);
     expect(readFileSync(path.join(project, '乙.txt'), 'utf8')).toBe('from-b');
+    await page
+      .locator('[data-testid^="conversation-item-"]', { hasText: '乙' })
+      .first()
+      .click();
+    await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
+    ).toBeVisible({ timeout: 60_000 });
   } finally {
     rmSync(project, { recursive: true, force: true });
     await closeSession(session);

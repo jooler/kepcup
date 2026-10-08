@@ -14,6 +14,7 @@ import {
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
+  TASK_CHANGED_FILES_SHOWN,
   TURN_MAX_TURNS,
   BUILTIN_ENGINE,
   CONTINUATION_WINDOW_MS,
@@ -36,7 +37,9 @@ import {
   type Message,
   type Run,
   type SetupRequirement,
+  type TaskChanges,
   type TaskEventContent,
+  type TaskStateView,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import type { Clock } from '../infra/clock.js';
@@ -157,7 +160,9 @@ import {
   buildTaskBriefSegment,
   buildTaskReplaySegment,
   isTerminalStatus as isTerminalTaskStatus,
+  TASK_CARD,
   TaskHost,
+  taskState,
   type TaskBrief,
   type TaskOutcome,
   type TaskRunControl,
@@ -587,6 +592,17 @@ export class Orchestrator {
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
       onSweep: (now) => this.#sweepTaskAgentSessions(now),
+      // D75 W3 (design 30 §4.3 / §6.3): task cards, question cards and the
+      // status line follow `task.updated`.
+      publishTask: (view) => deps.publish('task.updated', { task: view }),
+      publishMessage: (message, change) => {
+        deps.publish(change === 'created' ? 'message.created' : 'message.updated', {
+          conversationId: message.conversationId,
+          message,
+        });
+        if (change === 'created') this.#publishConversation(message.conversationId);
+      },
+      describeWorkdir: (task) => this.#describeTaskWorkdir(task),
       // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
       // task slot) only while `agent:{id}` has room; the rest stay submitted.
       // A task of an external-agent bot is recorded on its engine from the
@@ -1784,6 +1800,9 @@ export class Orchestrator {
             content.cardType,
             String(content.delegationId ?? ''),
           );
+        }
+        if ('runId' in content && content.cardType === TASK_CARD) {
+          return this.#renderTaskCard(String(content.runId ?? ''));
         }
         if ('runId' in content && content.cardType === 'run_changes') {
           const change = this.#deps.projects.changesOf(String(content.runId ?? ''));
@@ -3953,6 +3972,77 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * D75 W3: one context line for a task card (§4.3 — status + title, never
+   * the brief or the result: those live in the owner's private entries).
+   */
+  #renderTaskCard(taskId: string): string {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || task.loopType !== 'task') return '（任务记录已清理）';
+    const owner =
+      task.botId !== null ? (this.#deps.bots.get(task.botId)?.name ?? task.botId) : '';
+    const state = TASK_CARD_STATE_TEXT[taskState(task.status)];
+    const extra =
+      task.status === 'queued'
+        ? (this.#taskHost.view(taskId)?.queueReason ?? '')
+        : task.awaitingInput
+          ? '等待用户回答'
+          : '';
+    return `[系统] 任务卡 ${task.id}（${owner}）「${task.taskTitle ?? ''}」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
+  }
+
+  /** Where a task works and what it left behind (TaskHost.describeWorkdir). */
+  #describeTaskWorkdir(task: Run): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
+    const workspace =
+      task.botId !== null && task.conversationId !== null
+        ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
+        : null;
+    if (task.taskWorkdir !== null && task.taskWorkdir !== workspace) {
+      const change = this.#deps.projects.changesOf(task.id);
+      if (change === null || change.files.length === 0) return { kind: 'project', changes: null };
+      const counts = { added: 0, modified: 0, deleted: 0 };
+      for (const file of change.files) counts[file.change] += 1;
+      return {
+        kind: 'project',
+        changes: { kind: 'project', ...counts, reverted: change.revertedAt !== null },
+      };
+    }
+    if (task.taskWrites !== true || workspace === null) return { kind: 'workspace', changes: null };
+    // No checkpoint in the workspace (§5.2): the files its file tools wrote.
+    const rows = this.#deps.db
+      .prepare(
+        "select detail_json from audit_log where run_id = ? and action = 'fs_write' order by created_at",
+      )
+      .all(task.id) as Array<{ detail_json: string }>;
+    const files: string[] = [];
+    for (const row of rows) {
+      let detail: { path?: unknown; op?: unknown };
+      try {
+        detail = JSON.parse(row.detail_json) as { path?: unknown; op?: unknown };
+      } catch {
+        continue;
+      }
+      const target = detail.path;
+      // Parent directories the write tool created are not changes of their own.
+      if (typeof target !== 'string' || detail.op === 'mkdir') continue;
+      const relative = nodePath.relative(workspace, target);
+      const shown =
+        relative.length > 0 && !relative.startsWith('..') && !nodePath.isAbsolute(relative)
+          ? relative
+          : target;
+      if (!files.includes(shown)) files.push(shown);
+    }
+    if (files.length === 0) return { kind: 'workspace', changes: null };
+    return {
+      kind: 'workspace',
+      changes: {
+        kind: 'workspace',
+        files: files.slice(0, TASK_CHANGED_FILES_SHOWN),
+        more: Math.max(0, files.length - TASK_CHANGED_FILES_SHOWN),
+      },
+    };
+  }
+
   #publishConversation(conversationId: string): void {
     const conversation = this.#deps.conversations.get(conversationId);
     if (conversation) {
@@ -3967,6 +4057,16 @@ export class Orchestrator {
     });
   }
 }
+
+/** Task card states in the bots' context (design 30 §4.3). */
+const TASK_CARD_STATE_TEXT: Record<TaskStateView, string> = {
+  submitted: '排队中',
+  running: '进行中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  interrupted: '已中断',
+};
 
 function isTerminal(status: Run['status']): boolean {
   return (

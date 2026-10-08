@@ -479,14 +479,14 @@ test('usage page: per bot/loop/day tokens, budget edit, exceeded hint', async ()
       await section.locator('[data-testid="usage-refresh"]').click();
       await expect(botRow).toBeVisible({ timeout: 3000 });
       const pollRows = botRow.locator('[data-testid="usage-entry-row"]');
-      await expect(pollRows.filter({ hasText: '对话响应' })).toHaveCount(1);
+      await expect(pollRows.filter({ hasText: '对话轮' })).toHaveCount(1);
       await expect(pollRows.filter({ hasText: '反思' })).toHaveCount(1);
     }).toPass({ timeout: 60_000, intervals: [500, 1000] });
     await expect(botRow.locator('[data-testid="usage-bot-name"]')).toContainText('阿量');
     const rows = botRow.locator('[data-testid="usage-entry-row"]');
     await expect(rows.first()).toHaveAttribute('data-date', /\d{4}-\d{2}-\d{2}/);
     await expect(
-      rows.filter({ hasText: '对话响应' }).locator('[data-testid="usage-entry-tokens"]'),
+      rows.filter({ hasText: '对话轮' }).locator('[data-testid="usage-entry-tokens"]'),
     ).toHaveText('400 / 100');
 
     // Budget: the default 200000 is shown; saving a new limit persists.
