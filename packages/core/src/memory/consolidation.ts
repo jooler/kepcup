@@ -15,11 +15,13 @@ import {
 } from './schemas.js';
 import type { MemoryService } from './service.js';
 import { localDateKey } from './local-date.js';
-import { lightModelRef } from './reflection.js';
-import { builtinModelRefOrNull, recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
+import { recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
+import { routeFor, type LlmRouter } from '../agent/llm-router.js';
 
 export interface ConsolidationJobDeps extends LoopUsageDeps {
   engine: AgentEngine;
+  /** D72 P6：无内置模型时改走外部 Agent；缺省只用内置模型。 */
+  router?: LlmRouter | undefined;
   settings: SettingsService;
   runs: RunsService;
   usage: UsageService;
@@ -52,8 +54,10 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
   if (!deps.memory.hasMemoryDb(botId)) return; // nothing to consolidate
 
   const store = deps.memory.storeFor(botId);
-  // D72 P4：没有内置模型时只做不经模型的过期失效，跳过合并（不建 run）。
-  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
+  // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent 时只做不经模型的
+  // 过期失效，跳过合并（不建 run）。
+  const route = routeFor(deps, 'consolidation', botId);
+  if (route === null) {
     const expired = store.expirePastValidUntil(deps.clock.now());
     // Recorded like a finished consolidation: the hourly scheduler only
     // deduplicates pending jobs and would otherwise re-enqueue every hour.
@@ -61,7 +65,10 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
       'last_consolidation_date',
       localDateKey(new Date(deps.clock.now()), deps.timeZone),
     );
-    deps.logger.info({ botId, expired }, 'memory consolidation skipped: no built-in model');
+    deps.logger.info(
+      { botId, expired },
+      'memory consolidation skipped: no model for background calls',
+    );
     return;
   }
   const run = deps.runs.create({
@@ -81,12 +88,12 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
       deps.logger.info({ botId, expired }, 'consolidation expired items');
     }
 
-    const lightRef = lightModelRef(deps.settings);
+    const lightRef = route.modelRef;
     for (const kind of CONSOLIDATION_KINDS) {
       const batch = store.activeByKind(kind, MEMORY_CONSOLIDATION_BATCH);
       if (batch.length < 2) continue; // nothing to merge in this batch
       const output = await completeStructured<ConsolidationOutput>({
-        complete: (req) => deps.engine.complete(req),
+        complete: (req) => route.engine.complete(req),
         identity: { runId: run.id, botId, conversationId: null, loopType: 'memory_consolidation' },
         model: lightRef,
         systemPrompt: CONSOLIDATION_PROMPT,

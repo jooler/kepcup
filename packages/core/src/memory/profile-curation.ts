@@ -11,15 +11,13 @@ import type { CoreLogger } from '../infra/logger.js';
 import { containsCredential } from './credential-patterns.js';
 import { curationOutputSchema, curationParametersSchema, type CurationOutput } from './schemas.js';
 import type { MemoryService } from './service.js';
-import {
-  builtinModelRefOrNull,
-  mainModelRef,
-  recordLoopUsage,
-  type LoopUsageDeps,
-} from './loop-utils.js';
+import { recordLoopUsage, type LoopUsageDeps } from './loop-utils.js';
+import { routeFor, type LlmRouter } from '../agent/llm-router.js';
 
 export interface CurationJobDeps extends LoopUsageDeps {
   engine: AgentEngine;
+  /** D72 P6：无内置模型时改走外部 Agent；缺省只用内置模型。 */
+  router?: LlmRouter | undefined;
   settings: SettingsService;
   runs: RunsService;
   usage: UsageService;
@@ -38,9 +36,14 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
   const store = deps.memory.profileStore;
   const pending = store.pendingProposals();
   const activeItems = store.list('active');
-  // D72 P4：没有内置模型时跳过（提议留待下次整理），不产生失败 run。
-  if (pending.length > 0 && builtinModelRefOrNull(deps.settings, 'main') === null) {
-    deps.logger.info({ pending: pending.length }, 'profile curation skipped: no built-in model');
+  // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent 时跳过（提议
+  // 留待下次整理），不产生失败 run。
+  const route = pending.length > 0 ? routeFor(deps, 'profile_curation', null) : null;
+  if (pending.length > 0 && route === null) {
+    deps.logger.info(
+      { pending: pending.length },
+      'profile curation skipped: no model for background calls',
+    );
     return;
   }
 
@@ -58,9 +61,9 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
       deps.runs.update(run.id, { status: 'completed' });
       return;
     }
-    const mainRef = mainModelRef(deps.settings);
+    const { engine, modelRef: mainRef } = route!;
     const output = await completeStructured<CurationOutput>({
-      complete: (req) => deps.engine.complete(req),
+      complete: (req) => engine.complete(req),
       identity: { runId: run.id, botId: null, conversationId: null, loopType: 'profile_curation' },
       model: mainRef,
       systemPrompt: CURATION_PROMPT,

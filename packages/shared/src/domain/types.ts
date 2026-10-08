@@ -364,6 +364,22 @@ export const experimentalSettingsSchema = z
   .catch({ externalAgents: false });
 export type ExperimentalSettings = z.infer<typeof experimentalSettingsSchema>;
 
+/**
+ * 后台任务（D72 P6，design 28 §8）：只配了外部 Agent、没有内置模型时，后台
+ * loop 是否改用外部 Agent 以及降配项。有内置模型时这些开关不起作用。
+ */
+export const backgroundTasksSettingsSchema = z
+  .object({
+    /** 无内置模型时后台任务改用外部 Agent（关 = 跳过，同 P4 兜底）。 */
+    agentEnabled: z.boolean().default(true).catch(true),
+    /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
+    agentSkillAuthoring: z.boolean().default(false).catch(false),
+    /** 只有外部 Agent 时群聊只在被 @ / 回复时响应（不跑群聊判断）。 */
+    groupMentionOnly: z.boolean().default(false).catch(false),
+  })
+  .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: false });
+export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -419,8 +435,13 @@ export const settingsSchema = z.object({
   // 逐条 safeParse），避免未来格式变化让 settings 整体解析失败。
   customAgents: z.array(z.unknown()).default([]).catch([]),
   experimental: experimentalSettingsSchema.prefault({}),
-  /** 无内置模型时后台 loop 选用的 Agent（P6）；缺省 = 第一个可用 Agent。 */
+  /**
+   * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动（该 Bot 自己的
+   * Agent 可用就用它，否则目录中第一个可用的 Agent）。
+   */
   backgroundAgentId: z.string().optional().catch(undefined),
+  /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */
+  backgroundTasks: backgroundTasksSettingsSchema.prefault({}),
   /**
    * 新建 Bot 的默认外部 Agent（D72 P4，onboarding「我有订阅」分支写入）：没有
    * 默认主模型时，新建的 Bot（含管家）若未指定模型 / Agent，即以它驱动；

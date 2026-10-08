@@ -1,7 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
 import { z } from 'zod';
 import { AppError } from '@kepcup/shared';
-import { builtinModelRefOrNull } from '../../memory/loop-utils.js';
+import { routeFor, type LlmRouter } from '../llm-router.js';
 import { completeStructured } from '../structured.js';
 import type { AgentEngine } from '../types.js';
 import type { JobsService, JobRow } from '../../domain/jobs.js';
@@ -35,6 +35,8 @@ const SUMMARY_PROMPT = [
  */
 export async function runConversationSummaryJob(deps: {
   engine: AgentEngine;
+  /** D72 P6：无内置模型时改走外部 Agent（降频）；缺省只用内置模型。 */
+  router?: LlmRouter | undefined;
   settings: SettingsService;
   bots: BotsService;
   conversations: ConversationsService;
@@ -54,11 +56,22 @@ export async function runConversationSummaryJob(deps: {
 
   const payload = JSON.parse(job.payload_json) as { targetSeq?: number };
   const targetSeq = payload.targetSeq ?? conv.lastSeq;
-  // D72 P4：没有内置模型（只用外部 Agent）时跳过，不产生失败 run。
-  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
+  // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过，
+  // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次触发
+  // 一跑（未摘要的消息留给下一次，摘要覆盖到届时的 targetSeq）。
+  // 直聊的摘要按该 Bot 选后台 Agent（自动模式下优先它自己的 Agent）。
+  const route = routeFor(deps, 'summary', job.bot_id ?? conv.directBotId ?? null);
+  if (route === null) {
     deps.logger.info(
       { conversationId: job.conversation_id },
-      'conversation summary skipped: no built-in model',
+      'conversation summary skipped: no model for background calls',
+    );
+    return;
+  }
+  if (deps.router !== undefined && !deps.router.admit(route, 'summary', job.conversation_id)) {
+    deps.logger.info(
+      { conversationId: job.conversation_id },
+      'conversation summary skipped: agent background throttle',
     );
     return;
   }
@@ -78,14 +91,9 @@ export async function runConversationSummaryJob(deps: {
       return;
     }
 
-    const settings = deps.settings.get();
-    const lightRef = settings.defaultLightModel || settings.defaultMainModel;
-    if (lightRef.length === 0) {
-      throw new AppError('PROVIDER_UNAVAILABLE', '未配置轻量模型');
-    }
-
+    const lightRef = route.modelRef;
     const result = await completeStructured({
-      complete: (req) => deps.engine.complete(req),
+      complete: (req) => route.engine.complete(req),
       identity: {
         runId: run.id,
         botId: job.bot_id,
@@ -110,8 +118,8 @@ export async function runConversationSummaryJob(deps: {
           botId: job.bot_id,
           conversationId: job.conversation_id,
           loopType: 'conversation_summary',
-          provider: lightRef.slice(0, lightRef.indexOf('/')),
-          model: lightRef.slice(lightRef.indexOf('/') + 1),
+          provider: route.provider,
+          model: lightRef.slice(route.provider.length + 1),
           inputTokens: usage.input,
           outputTokens: usage.output,
           cacheReadTokens: usage.cacheRead,
@@ -133,11 +141,23 @@ export async function runConversationSummaryJob(deps: {
   }
 }
 
-function renderForSummary(messages: Array<{ id: string; createdAt: number; senderType: string; senderBotId: string | null; content: unknown }>): string {
+function renderForSummary(
+  messages: Array<{
+    id: string;
+    createdAt: number;
+    senderType: string;
+    senderBotId: string | null;
+    content: unknown;
+  }>,
+): string {
   return messages
     .map((m) => {
       const sender =
-        m.senderType === 'user' ? '用户' : m.senderType === 'system' ? '系统' : (m.senderBotId ?? 'bot');
+        m.senderType === 'user'
+          ? '用户'
+          : m.senderType === 'system'
+            ? '系统'
+            : (m.senderBotId ?? 'bot');
       const content = m.content as { text?: string } | null;
       return `[${m.id} | ${new Date(m.createdAt).toISOString()} | ${sender}] ${content?.text ?? ''}`;
     })

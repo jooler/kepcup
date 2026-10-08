@@ -84,6 +84,7 @@ import { shQuote } from './infra/shell.js';
 import { ToolGateway } from './gateway/index.js';
 import { PiEngine } from './agent/pi-engine.js';
 import { ExternalAgentEngine } from './agent/external/engine.js';
+import { LlmRouter } from './agent/llm-router.js';
 import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
 import { HostMcpBridge } from './agent/external/mcp-bridge.js';
 import { AgentHost, type AgentSpawner } from './agent/external/host.js';
@@ -383,6 +384,8 @@ export interface CoreServices {
   } | null;
   /** 外部智能体的安装 / 登录 / 状态服务（D72 P4，设置页「智能体」；null likewise）。 */
   agentsService: AgentsService | null;
+  /** D72 P6 后台调用路由（null while locked / errored）。 */
+  llmRouter: LlmRouter | null;
   /** P07 per-bot daily background budget (null while locked / errored). */
   budget: BudgetService | null;
   /** P08 skills domain (null while locked / errored). */
@@ -596,6 +599,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     mcp: null,
     agents: null,
     agentsService: null,
+    llmRouter: null,
     budget: null,
     skills: null,
     skillImporter: null,
@@ -1186,6 +1190,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.scheduler?.setConcurrency(settings.get().providerConcurrency),
     });
     services.agentsService = agentsService;
+    // D72 P6 后台调用路由：有内置模型照旧；没有时后台 loop 改走外部 Agent
+    // （设置「后台任务」；就绪状态取 AgentsService 的状态视图）。
+    const llmRouter = new LlmRouter({
+      settings,
+      bots,
+      builtin: engine,
+      external: externalEngine,
+      catalog: () => agentCatalog,
+      agentView: (agentId) => {
+        try {
+          return agentsService!.view(agentId);
+        } catch {
+          return null;
+        }
+      },
+    });
+    services.llmRouter = llmRouter;
     const scheduler = new Scheduler(logger);
     // P10: the schedule service is constructed after the orchestrator (it
     // delivers through the orchestrator's mailboxes); the tool facade
@@ -1209,6 +1230,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const orchestrator = new Orchestrator({
       engine,
       externalEngine,
+      llmRouter,
       agentCatalog: () => agentCatalog,
       agents: agentsService,
       scheduler,
@@ -1244,15 +1266,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
-        // D72 P4 审查 #3：技能生成 loop 需要内置模型（无内置模型时后台会跳过），
-        // 登记前直接告诉 Bot，而不是回「已登记」后静默不做。
+        // D72 P4 审查 #3 / P6：技能生成 loop 需要内置模型，或在设置「后台任务」
+        // 里允许外部 Agent 生成技能（默认关）；都没有时登记前直接告诉 Bot，而不是
+        // 回「已登记」后静默不做。
         requestAuthoring: (input) => {
-          const bot = bots.get(input.botId);
-          if ((bot?.profile.runtime.model || settings.get().defaultMainModel).length === 0) {
+          if (llmRouter.resolveForBot(input.botId, 'skill_authoring') === null) {
             return {
               ok: false,
               message:
-                '需要内置模型：技能生成在后台用内置模型起草并验证，当前没有配置内置模型，未登记。可以把做法直接告诉用户，或请用户先在设置中配置模型。',
+                '需要内置模型：技能生成在后台起草并验证，当前没有配置内置模型（也未在设置「后台任务」中允许外部智能体生成技能），未登记。可以把做法直接告诉用户，或请用户先在设置中配置模型。',
             };
           }
           return skills.requestAuthoring(input);
@@ -1399,6 +1421,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     const jobsRunner = new JobsRunner({
       engine,
+      router: llmRouter,
       scheduler,
       jobs,
       settings,

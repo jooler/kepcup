@@ -260,14 +260,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         onboarding: onboardingPatch,
         experimental: experimentalPatch,
         agents: agentsPatch,
+        backgroundTasks: backgroundTasksPatch,
         ...rest
       } = input;
-      if (
-        input.defaultAgentId !== undefined &&
-        input.defaultAgentId.length > 0 &&
-        !(services.agents?.catalog() ?? []).some((entry) => entry.id === input.defaultAgentId)
-      ) {
-        throw new AppError('INVALID_INPUT', `智能体「${input.defaultAgentId}」不在目录中`);
+      for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
+        if (
+          agentId !== undefined &&
+          agentId.length > 0 &&
+          !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
+        ) {
+          throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
+        }
       }
       const next = domain.settings.update({
         ...rest,
@@ -297,6 +300,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                   experimentalPatch.externalAgents ?? previous.experimental.externalAgents,
               },
             }
+          : {}),
+        // P6 后台任务：部分 patch，与已存值合并。
+        ...(backgroundTasksPatch !== undefined
+          ? { backgroundTasks: { ...previous.backgroundTasks, ...backgroundTasksPatch } }
           : {}),
       });
       services.scheduler?.setConcurrency(next.providerConcurrency);

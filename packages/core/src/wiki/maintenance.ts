@@ -18,9 +18,16 @@ import { pageTitleOf } from './topics.js';
 import type { WikiService } from './service.js';
 import { redactStepPayload } from '../infra/redact.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
+import { backgroundRunSpec, engineKeyOf, routeFor } from '../agent/llm-router.js';
+import type { LlmRouter } from '../agent/llm-router.js';
 
 export interface WikiMaintenanceDeps {
   engine: AgentEngine;
+  /**
+   * D72 P6：无内置模型时维护 loop 改走外部 Agent（后台精简会话：只读、空临时
+   * cwd，Wiki 文件只经注入的维护工具读写）；缺省只用内置模型。
+   */
+  router?: LlmRouter | undefined;
   paths: AppPaths;
   bots: BotsService;
   runs: RunsService;
@@ -87,7 +94,9 @@ export async function runWikiMaintenance(
 ): Promise<MaintenanceOutcome> {
   const { botId } = task.input;
   const root = botWikiRoot(deps.paths, botId);
-  const modelRef = mainModelRef(deps, botId);
+  const route = routeFor(deps, 'wiki_maintenance', botId);
+  if (route === null) throw new AppError('PROVIDER_UNAVAILABLE', '未配置主模型');
+  const modelRef = route.modelRef;
   const run = deps.runs.create({
     botId,
     conversationId: task.input.conversationId,
@@ -95,24 +104,31 @@ export async function runWikiMaintenance(
     triggerReason: 'background',
     triggerMessageIds: [],
   });
-  deps.runs.update(run.id, { status: 'running', provider: providerOf(modelRef), model: modelRef });
+  deps.runs.update(run.id, {
+    status: 'running',
+    provider: route.provider,
+    model: modelRef,
+    engine: engineKeyOf(route),
+  });
 
   const logPath = path.join(root, 'log.md');
   const logBefore = existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';
 
-  const handle: RunHandle = deps.engine.startRun({
-    identity: {
-      runId: run.id,
-      botId,
-      conversationId: task.input.conversationId,
-      loopType: 'wiki_maintenance',
-    },
-    model: modelRef,
-    buildSystemPrompt: async () => MAINTENANCE_PROMPT,
-    messages: [{ role: 'user', timestamp: Date.now(), content: taskMessage(task) }],
-    tools: buildMaintenanceTools({ wikiRoot: root }),
-    limits: { maxTurns: RUN_MAX_TURNS },
-  });
+  const handle: RunHandle = route.engine.startRun(
+    backgroundRunSpec(route, {
+      identity: {
+        runId: run.id,
+        botId,
+        conversationId: task.input.conversationId,
+        loopType: 'wiki_maintenance',
+      },
+      model: modelRef,
+      buildSystemPrompt: async () => MAINTENANCE_PROMPT,
+      messages: [{ role: 'user', timestamp: Date.now(), content: taskMessage(task) }],
+      tools: buildMaintenanceTools({ wikiRoot: root }),
+      limits: { maxTurns: RUN_MAX_TURNS },
+    }),
+  );
   persistSteps(run.id, handle, deps.runs, deps.secrets);
 
   let outcome;
@@ -253,13 +269,6 @@ function safeRead(filePath: string): string {
   } catch {
     return '';
   }
-}
-
-function mainModelRef(deps: WikiMaintenanceDeps, botId: string): string {
-  const bot = deps.bots.get(botId);
-  const ref = bot?.profile.runtime.model || deps.settings.get().defaultMainModel;
-  if (ref.length === 0) throw new AppError('PROVIDER_UNAVAILABLE', '未配置主模型');
-  return ref;
 }
 
 function providerOf(modelRef: string): string {

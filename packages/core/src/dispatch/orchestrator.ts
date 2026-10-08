@@ -159,6 +159,12 @@ import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './
 import { ChainsService } from './chains.js';
 import { GroupTurnCoordinator } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
+import {
+  builtinRoute,
+  type LlmPurpose,
+  type LlmRoute,
+  type LlmRouter,
+} from '../agent/llm-router.js';
 import type { BotCard } from '@kepcup/shared';
 import type { InstalledToolchain } from '../env/manager.js';
 
@@ -197,6 +203,11 @@ export interface OrchestratorDeps {
   };
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
+  /**
+   * D72 P6 后台调用路由（群聊判断、续接仲裁、SubAgent 压缩）：无内置模型时
+   * 改走外部 Agent。缺省 = 只用内置模型（P6 之前的行为）。
+   */
+  llmRouter?: LlmRouter;
   /**
    * D72 P4 本机 Agent 状态（AgentsService）：run 门禁按安装 / 登录状态给出
    * 结构化 setup（`{kind:'agent'}`），run 因未登录失败时回写登录态。缺省
@@ -529,6 +540,7 @@ export class Orchestrator {
       triage: (input) =>
         triageOneBot({
           engine: deps.engine,
+          ...(deps.llmRouter !== undefined ? { router: deps.llmRouter } : {}),
           scheduler: deps.scheduler,
           runs: deps.runs,
           usage: deps.usage,
@@ -1667,6 +1679,24 @@ export class Orchestrator {
     return run.id;
   }
 
+  /** D72 P6：后台调用的模型路由（未装配路由器时只用内置模型）。 */
+  #backgroundRoute(botId: string, purpose: LlmPurpose): LlmRoute | null {
+    if (this.#deps.llmRouter !== undefined) {
+      return this.#deps.llmRouter.resolveForBot(botId, purpose);
+    }
+    return builtinRoute(
+      this.#deps.engine,
+      lightModelRefForBot(this.#deps.bots, this.#deps.settings, botId),
+    );
+  }
+
+  /** SubAgent 结果压缩的模型与引擎（'' = 不压缩、截断兜底）。 */
+  #compactionRoute(botId: string): { lightModelRef: string; lightEngine?: AgentEngine } {
+    const route = this.#backgroundRoute(botId, 'subagent_compaction');
+    if (route === null) return { lightModelRef: '' };
+    return { lightModelRef: route.modelRef, lightEngine: route.engine };
+  }
+
   #mailboxKey(botId: string, conversationId: string): string {
     return `${botId}:${conversationId}`;
   }
@@ -2328,7 +2358,7 @@ export class Orchestrator {
           {
             parent: identity,
             modelRef,
-            lightModelRef: lightModelRefForBot(this.#deps.bots, this.#deps.settings, batch.botId),
+            ...this.#compactionRoute(batch.botId),
             buildTools: (subIdentity) =>
               buildSubagentResearchTools({
                 identity: subIdentity,
@@ -3005,19 +3035,20 @@ export class Orchestrator {
     conversationId: string,
     input: ContinuationArbiterInput,
   ): Promise<string[] | null> {
-    const modelRef = lightModelRefForBot(this.#deps.bots, this.#deps.settings, botId);
-    if (modelRef.length === 0) {
-      // D72 P4：没有内置模型时续接 L2 仲裁关闭（视为不续接）。
+    const route = this.#backgroundRoute(botId, 'continuation');
+    if (route === null) {
+      // D72 P4 / P6：没有内置模型时续接 L2 仲裁关闭（视为不续接；外部 Agent
+      // 冷启动远超仲裁时限，路由不给 Agent 兜底）。
       this.#deps.logger.debug({ runId, botId }, 'continuation arbiter skipped: no built-in model');
       return null;
     }
-    const provider = modelRef.includes('/') ? modelRef.slice(0, modelRef.indexOf('/')) : 'unknown';
+    const { modelRef, provider } = route;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), CONTINUATION_ARBITER_TIMEOUT_MS);
     timeout.unref?.();
     try {
       const result = await completeStructured({
-        complete: (req) => this.#deps.engine.complete(req),
+        complete: (req) => route.engine.complete(req),
         identity: { runId, botId, conversationId, loopType: 'response' },
         model: modelRef,
         systemPrompt: CONTINUATION_ARBITER_SYSTEM_PROMPT,
