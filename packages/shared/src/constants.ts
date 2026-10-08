@@ -101,6 +101,12 @@ export const BUTLER_TEAM_SIZE_MAX = 5;
 export const ROUTE_SUGGESTION_EVENT = 'route_suggestion';
 /** system_event name of the follow-up injected into the butler after a proposal is decided (D70). */
 export const BUTLER_PROPOSAL_FOLLOWUP_EVENT = 'butler_proposal_result';
+/**
+ * system_event name of the follow-up injected into a bot after the user
+ * decided on the propose_profile_change card a supervisor turn submitted
+ * without waiting (D75 审查 M4).
+ */
+export const PROFILE_CHANGE_FOLLOWUP_EVENT = 'profile_change_result';
 
 // --- MCP (D65, docs/design/23-mcp-and-subagent.md) -------------------------------
 

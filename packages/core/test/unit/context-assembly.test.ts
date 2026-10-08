@@ -110,11 +110,13 @@ describe('system prompt assembly', () => {
     // 平台规则 9~11（P07 起；自我迭代条随对话式创建一并加入；过程沟通规则
     // 3/4 为 loop 中间过程投送新增，todo/loop-interim-updates.md）。D75 W2：
     // 缺省是任务版规则，去掉了群聊 skip_reply 一条（任务的 skip_reply 并入
-    // 第 2 条「没有需要交回的内容」），编号前移一位。
-    expect(prompt).toContain('9. 记忆：用户明确要求记住时调用 remember');
-    expect(prompt).toContain('10. 用户可以要求你更新你自己的 Profile');
+    // 第 2 条「没有需要交回的内容」），编号前移一位；审查 L1：任务不 @ 群成员，
+    // 「只能用 mention_bot_ids」一条也去掉，再前移一位。
+    expect(prompt).toContain('8. 记忆：用户明确要求记住时调用 remember');
+    expect(prompt).toContain('9. 用户可以要求你更新你自己的 Profile');
     expect(prompt).toContain('propose_profile_change');
-    expect(prompt).toContain('11. 注入的记忆可能已过时');
+    expect(prompt).toContain('10. 注入的记忆可能已过时');
+    expect(prompt).not.toContain('mention_bot_ids');
     expect(prompt).toContain('memory_feedback');
     // 段落顺序：persona → user_profile → my_state → relevant_memories → conversation_info。
     const personaIndex = prompt.indexOf('<persona>');

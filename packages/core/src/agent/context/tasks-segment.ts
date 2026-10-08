@@ -8,12 +8,21 @@ function ago(ms: number): string {
   return `${hours} 小时${minutes % 60 > 0 ? ` ${minutes % 60} 分钟` : ''}前`;
 }
 
+/**
+ * Model-chosen / task-produced text (the title start_task was given, the
+ * task's latest progress line) is data, not instructions (审查 L4): wrapped in
+ * <untrusted> like other bots' words, a stray closing tag neutralized.
+ */
+function untrusted(text: string): string {
+  return `<untrusted>${text.replace(/<\/?untrusted>/gi, (tag) => tag.replace('<', '‹').replace('>', '›'))}</untrusted>`;
+}
+
 function taskLine(task: TaskSummary, now: number): string {
-  const parts = [`[${task.taskId}] ${task.title}`, task.state, task.writes ? '写' : '只读'];
+  const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, task.writes ? '写' : '只读'];
   parts.push(`派出 ${ago(now - task.createdAt)}`);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入（问题卡已发给用户）');
-  if (task.lastProgress !== null) parts.push(`最近：${task.lastProgress}`);
+  if (task.lastProgress !== null) parts.push(`最近：${untrusted(task.lastProgress)}`);
   parts.push(`可注入：${task.injectable ? '是' : '否'}`);
   return parts.join('  ');
 }

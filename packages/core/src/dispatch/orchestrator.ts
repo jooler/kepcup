@@ -9,6 +9,7 @@ import {
   INTERIM_TEXT_MAX_CHARS,
   INTERIM_TEXT_MAX_PER_RUN,
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
+  PROFILE_CHANGE_FOLLOWUP_EVENT,
   RUN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
@@ -339,7 +340,17 @@ export interface OrchestratorSkillsFacade {
  * `triggerMessages` (the orchestrator supplies the current batch to the tools
  * itself) plus the prompt-section builders and the reflection hook.
  */
-export type OrchestratorMemoryFacade = Omit<MemoryToolFacade, 'triggerMessages'> & {
+export type OrchestratorMemoryFacade = Omit<
+  MemoryToolFacade,
+  'triggerMessages' | 'submitProfileChange'
+> & {
+  /** A turn's non-blocking propose_profile_change (D75 审查 M4); decision → `onDecided`. */
+  submitProfileChange(
+    identity: RunIdentity,
+    changes: Array<{ field: string; value: string }>,
+    reason: string,
+    onDecided: (outcome: { approved: boolean; note: string }) => void,
+  ): void;
   profileCardSection(): string;
   myStateSection(botId: string, currentConversationId: string | null): string;
   relevantMemoriesSection(input: {
@@ -2642,6 +2653,20 @@ export class Orchestrator {
             forget: (botId, itemIds) => memoryFacade.forget(botId, itemIds),
             requestProfileChange: (ident, changes, reason, signal) =>
               memoryFacade.requestProfileChange(ident, changes, reason, signal),
+            // D75 审查 M4: a turn's proposal never waits — the user's decision
+            // reaches the bot later as an internal event (next turn).
+            submitProfileChange: (ident, changes, reason) =>
+              memoryFacade.submitProfileChange(ident, changes, reason, (outcome) => {
+                this.deliverEventToBot(
+                  batch.botId,
+                  batch.conversationId,
+                  PROFILE_CHANGE_FOLLOWUP_EVENT,
+                  outcome.approved
+                    ? 'Profile 修改处理结果（宿主系统注入，不是用户消息）：用户批准了你的 Profile 修改建议，已写入生效。可以简短告诉用户。'
+                    : `Profile 修改处理结果（宿主系统注入，不是用户消息）：${outcome.note === '已拒绝' ? '用户没有批准你的 Profile 修改建议' : `用户批准了修改，但没能写入（${outcome.note}）`}。不要原样重复同一个提议，可以在自我笔记（self_note）里记下你的想法。`,
+                  { internal: true },
+                );
+              }),
             triggerMessages: () => batch.messages,
           }
         : undefined;
@@ -2771,8 +2796,14 @@ export class Orchestrator {
         deps: {
           ...toolDeps,
           environment: this.#environmentFacade(),
-          onMentionBots: (mentionIds, message) =>
-            this.#chains.mention(identity, mentionIds, message),
+          // P05 chains are a turn's (D75 §6.2: a task never @-mentions group
+          // members, so chain budgets — counted over active turns — stay whole).
+          ...(isTask
+            ? {}
+            : {
+                onMentionBots: (mentionIds: string[], message: Message) =>
+                  this.#chains.mention(identity, mentionIds, message),
+              }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
           // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主

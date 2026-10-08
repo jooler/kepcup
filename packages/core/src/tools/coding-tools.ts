@@ -60,6 +60,24 @@ async function checked(
 }
 
 /**
+ * ls / find existence probe: a path outside the authorized range reads as
+ * missing — except in a supervisor turn, which gets the gateway's fail-fast
+ * explanation (start a task) instead of a misleading "not found" (审查 M4).
+ */
+async function existsChecked(
+  identity: ToolContext['identity'],
+  gateway: ToolGateway,
+  p: string,
+  toolName: string,
+): Promise<boolean> {
+  const decision = gateway.checkPath(identity, p, 'read');
+  if (decision.kind === 'needs_grant' && identity.loopType === 'turn') {
+    await checked(identity, gateway, p, 'read', toolName);
+  }
+  return decision.kind === 'allowed' && existsSync(decision.resolvedPath);
+}
+
+/**
  * D75 read-only runs: refuse write / edit up front so the result carries
  * RUN_READ_ONLY (pi's edit tool re-wraps errors from its file operations as
  * plain Errors). The gateway still refuses the write itself either way.
@@ -288,10 +306,7 @@ export function buildCodingTools(
 
   const ls = createLsToolDefinition(baseDir, {
     operations: {
-      exists: async (p: string) => {
-        const decision = gateway.checkPath(identity, p, 'read');
-        return decision.kind === 'allowed' && existsSync(decision.resolvedPath);
-      },
+      exists: async (p: string) => existsChecked(identity, gateway, p, 'ls'),
       stat: async (p: string) => {
         const resolved = await checked(identity, gateway, p, 'read', 'ls');
         const stats = statSync(resolved);
@@ -306,10 +321,7 @@ export function buildCodingTools(
 
   const find = createFindToolDefinition(baseDir, {
     operations: {
-      exists: async (p: string) => {
-        const decision = gateway.checkPath(identity, p, 'read');
-        return decision.kind === 'allowed' && existsSync(decision.resolvedPath);
-      },
+      exists: async (p: string) => existsChecked(identity, gateway, p, 'find'),
       glob: async (pattern: string, cwd: string, options: { ignore: string[]; limit: number }) => {
         const resolved = await checked(identity, gateway, cwd, 'read', 'find');
         const entries = globSync(pattern, {

@@ -42,6 +42,16 @@ export interface MemoryToolFacade {
     reason: string,
     signal: AbortSignal,
   ): Promise<{ approved: boolean; note: string }>;
+  /**
+   * Non-blocking `profile_change` for supervisor turns (D75 审查 M4): submits
+   * the card and returns; the decision reaches the bot later as an event.
+   * Absent = a turn cannot propose (it never waits for the user).
+   */
+  submitProfileChange?(
+    identity: RunIdentity,
+    changes: Array<{ field: string; value: string }>,
+    reason: string,
+  ): void;
   /** Trigger messages of the current run (evidence for explicit writes). */
   triggerMessages(): Message[];
 }
@@ -231,7 +241,9 @@ export function buildMemoryTools(input: {
   }> = {
     name: 'propose_profile_change',
     description:
-      '向用户提出修改你自己 Profile 的建议（性格、语气、职责等），用户批准后写入。field 只能是：identity.bio、persona.personality、persona.tone、persona.style、persona.values、persona.sample_dialogues、role.expertise、role.responsibilities。执行会等待用户决定。',
+      identity.loopType === 'turn'
+        ? '向用户提出修改你自己 Profile 的建议（性格、语气、职责等），用户批准后写入。field 只能是：identity.bio、persona.personality、persona.tone、persona.style、persona.values、persona.sample_dialogues、role.expertise、role.responsibilities。提交后立即返回，不等待用户决定；用户决定后宿主会通知你结果。'
+        : '向用户提出修改你自己 Profile 的建议（性格、语气、职责等），用户批准后写入。field 只能是：identity.bio、persona.personality、persona.tone、persona.style、persona.values、persona.sample_dialogues、role.expertise、role.responsibilities。执行会等待用户决定。',
     parameters: Type.Object({
       changes: Type.Array(
         Type.Object({ field: Type.String(), value: Type.String() }),
@@ -250,6 +262,23 @@ export function buildMemoryTools(input: {
           ok: false,
           content: `field 只能是：${PROFILE_CHANGE_FIELDS.join('、')}`,
           errorCode: 'INVALID_INPUT',
+        };
+      }
+      // D75 审查 M4: a turn never parks on the user's decision — that would
+      // hold the (bot, conversation) mailbox. Submit and move on.
+      if (identity.loopType === 'turn') {
+        if (memory.submitProfileChange === undefined) {
+          return {
+            ok: false,
+            content: '当前无法提交 Profile 修改建议（审批服务未就绪）。',
+            errorCode: 'NOT_SUPPORTED',
+          };
+        }
+        memory.submitProfileChange(identity, params.changes, params.reason);
+        return {
+          ok: true,
+          content:
+            '修改建议已作为审批卡发给用户，等用户决定（可能需要一段时间）。用户决定后宿主会通知你结果；在此之前不要声称已经修改，也不要重复提议。',
         };
       }
       try {
