@@ -9,6 +9,7 @@ import {
   startFileServer,
   startMockLlm,
   step,
+  viaTask,
   type MockLlmServer,
   type TestFileServer,
 } from '@kepcup/testkit';
@@ -154,10 +155,22 @@ test('environment approval card shows size and source, install progress, setting
     await waitReady(page);
     await createBotAndOpenChat(page, '小环');
 
+    // D75: installs change the host — request_environment runs in a write task;
+    // its result wakes a turn, the install outcome arrives as an event turn.
     llm.script('mock-main', [
-      step().replyToolCall('request_environment', { item: ITEM, reason: 'e2e 需要构建工具' }),
-      step().replyText('已提交申请'),
-      step().replyText('装好了，继续干活'),
+      ...viaTask({
+        title: '装环境',
+        ack: '好的，我去申请',
+        taskSteps: [
+          step().replyToolCall('request_environment', { item: ITEM, reason: 'e2e 需要构建工具' }),
+          step().replyText('已提交申请'),
+        ],
+        relay: '申请已提交，等你批准',
+      }),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('environment_installed'))
+        .replyText('装好了，继续干活'),
     ]);
 
     const composer = page.locator('[data-testid="composer-input"]');

@@ -13,9 +13,11 @@ import {
 } from '@playwright/test';
 import type { WebContentsView } from 'electron';
 import {
+  isTaskRequest,
   startMockLlm,
   startTestWebServer,
   step,
+  viaTask,
   type MockChatRequest,
   type MockLlmServer,
   type MockLlmStep,
@@ -25,6 +27,8 @@ import {
 // P11 浏览器工具 e2e（docs/dev/phases/P11-browser.md 测试要求）：真实 Electron +
 // 本地网页夹具（startTestWebServer），经 mock 模型的工具调用环驱动真实主进程
 // 浏览器宿主（隐藏 WebContentsView + CDP + 网络拦截）。
+// D75：浏览器只在任务里用（对话轮只读、不给浏览器工具）——每一步都是「对话轮
+// start_task → 任务调用浏览器工具 → 任务结果唤醒对话轮转述」。
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -187,12 +191,29 @@ async function runOnce(
   ).toBeVisible({ timeout: 90_000 });
 }
 
-/** Tool-call step + gated confirmation step (the gate proves what the model saw). */
-function toolRun(toolName: string, args: unknown, gateSub: string, reply: string): MockLlmStep[] {
-  return [
-    step().replyToolCall(toolName, args),
-    step().expect(bodyContains(gateSub)).replyText(reply),
-  ];
+/**
+ * D75: the turn starts a (read-only by default) task; the task calls the tool
+ * and its gated final text (the gate proves what the model saw) is the result
+ * the waking turn relays as `reply`.
+ */
+function toolRun(
+  toolName: string,
+  args: unknown,
+  gateSub: string,
+  reply: string,
+  options: { writes?: boolean } = {},
+): MockLlmStep[] {
+  return viaTask({
+    title: `浏览：${reply}`,
+    writes: options.writes ?? false,
+    // The ack must not contain `reply`: runOnce waits for the relay bubble.
+    ack: '好的，我去浏览器里看看',
+    taskSteps: [
+      step().replyToolCall(toolName, args),
+      step().expect(bodyContains(gateSub)).replyText(`任务结果：${reply}`),
+    ],
+    relay: reply,
+  });
 }
 
 /**
@@ -202,7 +223,8 @@ function toolRun(toolName: string, args: unknown, gateSub: string, reply: string
  */
 function lastToolContent(llm: MockLlmServer): string {
   const texts: string[] = [];
-  for (const request of [...llm.requests()].reverse()) {
+  // D75: browser tools run in tasks (the turns' tool messages are start_task's).
+  for (const request of [...llm.requests()].reverse().filter(isTaskRequest)) {
     const messages = (request.body.messages ?? []) as Array<{ role: string; content?: unknown }>;
     for (const message of [...messages].reverse()) {
       if (message.role !== 'tool') continue;
@@ -526,7 +548,9 @@ test('下载链接的文件落到 workspace/downloads', async () => {
     await runOnce(
       page,
       llm,
-      toolRun('browser_click', { ref: 'e2' }, '已点击 e2', '点击完成'),
+      // A write task: its downloads land in the workspace (read-only executions
+      // download into the app cache, D75 审查 M4).
+      toolRun('browser_click', { ref: 'e2' }, '已点击 e2', '点击完成', { writes: true }),
       '点击完成',
     );
 
@@ -601,10 +625,15 @@ test('不同 Bot 的 cookie 互不可见；同一 Bot 跨对话共享登录', as
     // 同一 Bot（阿甲）跨对话：群对话共享同一分区。
     await createGroupViaUi(page, '浏览组', ['阿甲', '阿乙']);
     await bindProject(session.app, page, project); // 群对话
-    llm.script('mock-main', [
-      step().replyToolCall('browser_open', { url: `${web.url}/cookie-read` }),
-      step().expect(bodyContains('fixture_sid=SID1234')).replyText('群里也共享'),
-    ]);
+    llm.script(
+      'mock-main',
+      toolRun(
+        'browser_open',
+        { url: `${web.url}/cookie-read` },
+        'fixture_sid=SID1234',
+        '群里也共享',
+      ),
+    );
     await mentionAndType(page, '阿甲', ' 再读一次');
     await page.locator('[data-testid="composer-input"]').press('Meta+Enter');
     await expect(
@@ -742,14 +771,26 @@ test('查看窗口显示 Bot 当前页面；关闭后回到隐藏托管且不中
     );
 
     // 第二个执行挂起期间打开查看窗口：证明不中断 Bot 正在进行的操作。
-    llm.script('mock-main', [
-      step().replyToolCall('browser_snapshot', {}),
-      step().expect(bodyContains('fixture-home-marker')).hold().replyText('后台还在跑'),
-    ]);
+    llm.script(
+      'mock-main',
+      viaTask({
+        title: '看看页面',
+        writes: false,
+        ack: '我去看看页面',
+        taskSteps: [
+          step().replyToolCall('browser_snapshot', {}),
+          step().expect(bodyContains('fixture-home-marker')).hold().replyText('任务：后台还在跑'),
+        ],
+        relay: '后台还在跑',
+      }),
+    );
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('看看页面');
     await composer.press('ControlOrMeta+Enter');
-    await expect(page.locator('[data-testid="run-status"]')).toBeVisible({ timeout: 30_000 });
+    // The task's status line (the turn that started it has its own, briefly).
+    await expect(
+      page.locator('[data-testid="run-status"]').filter({ hasText: '看看页面' }),
+    ).toBeVisible({ timeout: 30_000 });
 
     // 「查看浏览器」按钮在右栏头部（右栏默认收起，先经顶部药丸展开）。
     if (!(await page.locator('[data-testid="browser-show"]').isVisible())) {
