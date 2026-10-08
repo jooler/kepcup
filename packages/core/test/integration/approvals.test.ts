@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { step, type TestStack } from '@kepcup/testkit';
+import { step, viaTask, type TestStack } from '@kepcup/testkit';
 import {
   createTestStack,
   listMessages,
@@ -45,6 +45,20 @@ async function pendingApproval(core: TestStack, conversationId: string): Promise
     };
     return result.approvals.find((a) => a.status === 'pending') ?? null;
   }, { label: 'pending approval' });
+}
+
+/**
+ * D75 W2: access requests, commands and unsandboxed runs are a task's work (a
+ * turn is read-only and has none of these tools): the steps run in a task the
+ * turn starts; `relay` is the waking turn's reply to the task's result.
+ */
+function inTask(taskSteps: ReturnType<typeof step>[], relay = '好了'): ReturnType<typeof step>[] {
+  return viaTask({ taskSteps, relay });
+}
+
+/** The latest settled task of the conversation (D75 W2 migration helper). */
+function waitForTask(core: TestStack['core'], conversationId: string, status: Run['status']) {
+  return waitForRun(core, conversationId, status, { loopType: 'task', timeoutMs: 120_000 });
 }
 
 async function stepsOf(core: TestStack, runId: string) {
@@ -156,15 +170,22 @@ describe('access approvals for file tools (P03)', () => {
     const dir = fsMkdtemp();
     writeFileSync(path.join(dir, 'note.txt'), 'grant-me');
 
-    llm.script('mock-main', [
-      step().replyToolCall('request_access', { path: dir, access: 'read', reason: '批量读取前申请' }),
-      step().replyText('申请好了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('request_access', { path: dir, access: 'read', reason: '批量读取前申请' }),
+          step().replyText('申请好了'),
+        ],
+        'RELAY-GRANT',
+      ),
+    );
     await sendBatch(core, conv.id, ['申请访问']);
     const approval = await pendingApproval(core, conv.id);
     expect(approval.kind).toBe('access');
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true, duration: 'conversation' });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id, 'completed');
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-GRANT');
 
     // The grant is listed and scoped to bot + conversation. The stored path is
     // the canonical (realpath) form, so compare through canonicalPath.
@@ -324,12 +345,15 @@ describe('access approvals for file tools (P03)', () => {
 
     // The command targets the data directory; the unattended floor must refuse
     // the auto-approval instead of executing it unsandboxed.
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: `cat "${dataHome}/main.db" | wc -c` }),
-      step().replyText('拿不到'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('bash', { command: `cat "${dataHome}/main.db" | wc -c` }),
+        step().replyText('拿不到'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['统计数据库大小']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id, 'completed');
 
     const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Array<{ kind: string; status: string; autoApproved: boolean; payload: Record<string, unknown> }>;
@@ -360,14 +384,17 @@ describe('access approvals for file tools (P03)', () => {
     expect(((await core.rpc.call('unattended.get')) as { enabled: boolean }).enabled).toBe(true);
 
     // access + unsandboxed + command (confirm mode) all auto-approve.
-    llm.script('mock-main', [
-      step().replyToolCall('request_access', { path: outside, access: 'read', reason: 'r' }),
-      step().replyToolCall('request_unsandboxed', { command: 'echo unattended-ok', reason: '需要沙箱外' }),
-      step().replyToolCall('bash', { command: 'echo confirm-ok' }),
-      step().replyText('都批准了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('request_access', { path: outside, access: 'read', reason: 'r' }),
+        step().replyToolCall('request_unsandboxed', { command: 'echo unattended-ok', reason: '需要沙箱外' }),
+        step().replyToolCall('bash', { command: 'echo confirm-ok' }),
+        step().replyText('都批准了'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['无人值守跑一轮']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    const run = await waitForTask(core, conv.id, 'completed');
 
     const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Approval[];
@@ -398,10 +425,16 @@ describe('access approvals for file tools (P03)', () => {
     const bot = await makeBot(core, '小卡');
     const conv = await openDirect(core, bot.id);
     const dir = fsMkdtemp();
-    llm.script('mock-main', [
-      step().replyToolCall('request_access', { path: dir, access: 'write', reason: '要写文件' }),
-      step().replyText('请求已发'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('request_access', { path: dir, access: 'write', reason: '要写文件' }),
+          step().replyText('请求已发'),
+        ],
+        'RELAY-CARD',
+      ),
+    );
     const first = await (async () => {
       await core.rpc.call('drafts.add', { conversationId: conv.id, text: '申请写权限' });
       return (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
@@ -420,6 +453,8 @@ describe('access approvals for file tools (P03)', () => {
       },
       { label: 'first run completes', timeoutMs: 60_000 },
     );
+    await waitForTask(core, conv.id, 'completed');
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-CARD');
 
     // The folded line appears in the next run's request context.
     llm.script('mock-main', [step().replyText('看到卡片记录了')]);
@@ -449,17 +484,20 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
     const bot = await makeBot(core, '小确');
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: 'touch confirm-marker' }),
-      step().replyText('执行过了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('bash', { command: 'touch confirm-marker' }),
+        step().replyText('执行过了'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['建个文件']);
     const approval = await pendingApproval(core, conv.id);
     expect(approval.kind).toBe('command');
     expect(String(approval.payload['command'])).toBe('touch confirm-marker');
 
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id, 'completed');
     const workspace = workspaceOf(core, bot.id, conv.id);
     expect(existsSync(path.join(workspace, 'confirm-marker'))).toBe(true);
   }, 120_000);
@@ -473,12 +511,13 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
     writeFileSync(path.join(workspace, 'in.txt'), 'workspace-file');
 
     // Allowlisted + paths inside workspace -> runs directly.
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: 'cat in.txt' }),
-      step().replyText('读到了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([step().replyToolCall('bash', { command: 'cat in.txt' }), step().replyText('读到了')], 'RELAY-IN'),
+    );
     await sendBatch(core, conv.id, ['看下文件']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id, 'completed');
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-IN');
     const approvals1 = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Approval[];
     };
@@ -486,15 +525,28 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
 
     // Allowlisted command but path outside scope -> needs approval.
     const outsideDir = fsMkdtemp();
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: `cat ${outsideDir}/out.txt` }),
-      step().replyText('需要确认'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('bash', { command: `cat ${outsideDir}/out.txt` }),
+        step().replyText('需要确认'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['读外面的']);
     const approval = await pendingApproval(core, conv.id);
     expect(approval.kind).toBe('command');
     await core.rpc.call('approvals.decide', { id: approval.id, approve: false });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitFor(
+      async () => {
+        const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 20 })) as {
+          runs: Run[];
+        };
+        return runs.runs.filter((r) => r.loopType === 'task' && r.status === 'completed').length === 2
+          ? true
+          : null;
+      },
+      { label: 'second task completes', timeoutMs: 60_000 },
+    );
   }, 120_000);
 });
 
@@ -504,17 +556,20 @@ describe('unsandboxed execution (P03)', () => {
     const bot = await makeBot(core, '小沙');
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('request_unsandboxed', { command: 'echo direct-$(date +%s)', reason: 'Docker 需要' }),
-      step().replyText('沙箱外执行完成'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('request_unsandboxed', { command: 'echo direct-$(date +%s)', reason: 'Docker 需要' }),
+        step().replyText('沙箱外执行完成'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['帮我在沙箱外跑一条命令']);
     const approval = await pendingApproval(core, conv.id);
     expect(approval.kind).toBe('unsandboxed');
     expect(String(approval.payload['command'])).toContain('echo direct-');
 
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id, 'completed');
 
     const audit = core.services.domain!.audit.listByConversation(conv.id, 100);
     expect(audit.some((a) => a.action === 'exec_unsandboxed')).toBe(true);
