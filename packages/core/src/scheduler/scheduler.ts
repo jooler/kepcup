@@ -65,6 +65,7 @@ interface ResumingJob {
 }
 
 const isTaskJob = (job: SchedulerJob): boolean => job.key.startsWith('task:');
+const isAgentProvider = (provider: string): boolean => provider.startsWith('agent:');
 
 /**
  * Priority scheduler with per-provider model-call concurrency limits
@@ -299,7 +300,11 @@ export class Scheduler {
     // whenever a slot is free and tasks leave one free for replies: writers
     // queued behind that lease wait on it, so replies must not starve it, yet
     // tasks together still never take the provider's last slot (审查复核).
-    if (isTaskJob(job) && limit > 1) {
+    // Not on an external agent (`agent:*`, design 30 §8.1 / §8.5): replies
+    // (conversation turns) run on the built-in engine, so the agent's slots
+    // are its tasks' — task concurrency = the agent's limit, which follows
+    // `features.parallelSessions` (1 without parallel sessions).
+    if (isTaskJob(job) && limit > 1 && !isAgentProvider(job.provider)) {
       if (job.leaseHeld !== true) return active < limit - 1;
       const taskActive = scheduler.#providerTaskActive.get(job.provider) ?? 0;
       return active < limit && taskActive < limit - 1;
@@ -308,10 +313,13 @@ export class Scheduler {
     // D75 审查 M3: tasks run for hours and are never preempted. When every
     // occupied slot of the provider is held by a task (a limit of 1 reserves
     // nothing above), a conversation reply (priority 0) may borrow one slot
-    // beyond the limit rather than starve behind them.
+    // beyond the limit rather than starve behind them. Never on an external
+    // agent: its limit is what its process can run at once (a limit of 1 =
+    // no parallel sessions, design 30 §8.2), not a budget to borrow against.
     return (
       job.priority === 0 &&
       !isTaskJob(job) &&
+      !isAgentProvider(job.provider) &&
       active === limit &&
       (scheduler.#providerTaskActive.get(job.provider) ?? 0) === active
     );
