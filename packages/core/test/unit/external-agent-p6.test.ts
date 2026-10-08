@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';
+import { AppError, agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';
 import {
   agentTurn,
   fakeAgentEntry,
@@ -194,6 +194,30 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
       code: 'AGENT_UNAVAILABLE',
       message: expect.stringContaining('原生工具'),
     });
+    expect(started[0]?.observed.sessions ?? []).toHaveLength(0);
+  });
+
+  it('background sessions pass the provider config check before opening (P5-2 第三轮 checkConfig)', async () => {
+    const entry = fakeAgentEntry('fake-chk', { provider: 'checked', releaseGate: 'other' });
+    let checks = 0;
+    const checked = {
+      ...genericAcpProvider,
+      id: 'checked',
+      backgroundNoNativeTools: true,
+      // First check: process launch; second: before the session opens.
+      checkConfig: () => {
+        checks += 1;
+        if (checks > 1) throw new AppError('AGENT_CONFIG_UNSAFE', '配置放行了原生工具');
+      },
+    };
+    const { engine, started, request } = setup(
+      { turns: [agentTurn().text('{}')] },
+      { entry, providers: { ...PROVIDERS, checked } },
+    );
+    await expect(engine.complete(request())).rejects.toMatchObject({
+      code: 'AGENT_CONFIG_UNSAFE',
+    });
+    expect(checks).toBe(2);
     expect(started[0]?.observed.sessions ?? []).toHaveLength(0);
   });
 
