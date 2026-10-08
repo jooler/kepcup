@@ -514,6 +514,23 @@ export const TASK_SOURCE_MESSAGES_MAX = 20;
  */
 export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
 /**
+ * A delivered task result is handed to the bot at most this many times
+ * (D75 审查 M4): turns that keep failing before they handle it (e.g. a throw
+ * while building the context) would otherwise be woken every
+ * TASK_REDELIVER_AFTER_MS forever. Past the cap the result is consumed with a
+ * visible notice in the conversation.
+ */
+export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
+/**
+ * How long a task waits on its open `ask_user` question (design 30 §2.4.6,
+ * D75 审查 M3). The wait gives its provider slot back and does not count
+ * toward TASK_MAX_WALL_MS; after this long the task is told 「用户未回答」 and
+ * continues on its own judgement.
+ */
+export const TASK_QUESTION_TTL_MS = 24 * 60 * 60_000;
+/** Max characters of one ask_user candidate answer (the card renders each as a button). */
+export const ASK_USER_OPTION_MAX_CHARS = 200;
+/**
  * Cancel card of a workspace write task (D75 W3, design 30 §5.2): at most this
  * many changed files are listed (the workspace has no checkpoint, so the card
  * lists what the task's file tools wrote instead of offering a revert).
