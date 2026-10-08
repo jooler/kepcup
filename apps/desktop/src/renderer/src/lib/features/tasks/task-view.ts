@@ -1,4 +1,4 @@
-import type { TaskChanges, TaskView } from '@kepcup/shared';
+import type { Run, TaskChanges, TaskView } from '@kepcup/shared';
 
 /**
  * 任务卡与状态行的纯展示逻辑（D75，docs/design/30-supervisor-and-tasks.md
@@ -103,4 +103,63 @@ export function taskStatusSummary(activities: TaskActivity[]): {
 } {
   const sorted = [...activities].sort((a, b) => b.at - a.at);
   return { count: activities.length, latest: sorted[0] ?? null };
+}
+
+/**
+ * Applies views fetched over RPC (tasks.get / tasks.active) to the cache
+ * (D75 审查 L2): a task whose `task.updated` push arrived after the fetch
+ * started keeps the pushed view — it is newer. Returns the same object when
+ * nothing changed.
+ */
+export function applyFetchedViews(
+  byId: Record<string, TaskView>,
+  fetched: TaskView[],
+  pushedSinceFetch: (taskId: string) => boolean,
+): Record<string, TaskView> {
+  let next: Record<string, TaskView> | null = null;
+  for (const view of fetched) {
+    if (pushedSinceFetch(view.taskId)) continue;
+    next ??= { ...byId };
+    next[view.taskId] = view;
+  }
+  return next ?? byId;
+}
+
+/**
+ * Bounds the cache (D75 审查 L3): keeps the open conversation's views and
+ * every in-flight task; settled tasks of other conversations are dropped
+ * (their cards reload them when they mount again).
+ */
+export function pruneTaskViews(
+  byId: Record<string, TaskView>,
+  keepConversationId: string,
+): Record<string, TaskView> {
+  const next: Record<string, TaskView> = {};
+  let dropped = false;
+  for (const [taskId, view] of Object.entries(byId)) {
+    if (view.conversationId === keepConversationId || isActiveTask(view)) next[taskId] = view;
+    else dropped = true;
+  }
+  return dropped ? next : byId;
+}
+
+/**
+ * The runs the status line starts from on conversation open (D75 审查 L3):
+ * the active ones among the latest runs (their order) plus every other active
+ * run of the conversation (tasks may be older than the latest page).
+ */
+export function activeRunsOf(
+  latest: Run[],
+  allActive: Run[],
+  isActive: (run: Run) => boolean,
+): Run[] {
+  const result = latest.filter(isActive);
+  const seen = new Set(result.map((run) => run.id));
+  for (const run of allActive) {
+    if (isActive(run) && !seen.has(run.id)) {
+      seen.add(run.id);
+      result.push(run);
+    }
+  }
+  return result;
 }

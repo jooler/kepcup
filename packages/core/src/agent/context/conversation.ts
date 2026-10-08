@@ -115,6 +115,52 @@ function clipTaskBody(
   return `${body.slice(0, max)}…${hint}`;
 }
 
+/** The visible question card of a task waiting for the user (design 30 §2.4.6). */
+export const TASK_QUESTION_EVENT = 'task_question';
+/**
+ * Visible notice: a task's result could not be handed to the bot (D75 审查
+ * M4). Its text quotes the model-chosen task title for the user; bots get a
+ * fixed line instead (the title is not a system statement, 审查 L1).
+ */
+export const TASK_UNDELIVERED_EVENT = 'task_result_undelivered';
+
+/**
+ * A task question card's line (D75 审查 H1). The question and its options are
+ * a task's model output — possibly steered by what the task read — so the
+ * line is attributed to the asking bot's task, never to 「系统」, and the
+ * content is wrapped in <untrusted> for every viewer (the owner included:
+ * its own task may have been prompt-injected).
+ */
+function renderTaskQuestionLine(
+  message: Message,
+  options: RenderMessageOptions,
+  taskLines: TaskLineMode,
+  time: string,
+): string {
+  const content = message.content as {
+    text?: unknown;
+    options?: unknown;
+    answer?: unknown;
+    taskBotId?: unknown;
+  };
+  const taskId = message.taskId ?? message.runId ?? '';
+  const botId = typeof content.taskBotId === 'string' ? content.taskBotId : '';
+  const asker =
+    botId.length === 0
+      ? '某个 Bot'
+      : options.selfBotId === botId
+        ? '你'
+        : (options.botNames.get(botId) ?? botId);
+  const choices = Array.isArray(content.options)
+    ? content.options.filter((option): option is string => typeof option === 'string')
+    : [];
+  const parts = [typeof content.text === 'string' ? content.text : ''];
+  if (choices.length > 0) parts.push(`选项：${choices.join(' / ')}`);
+  if (typeof content.answer === 'string') parts.push(`回答：${content.answer}`);
+  const body = clipTaskBody(parts.join('\n'), message, taskLines, null);
+  return `[${message.id} | ${time} | ${asker}（任务 ${taskId}）向用户提问] <untrusted>${body}</untrusted>`;
+}
+
 /** Renders one message line: [msg_... | time | sender] body. */
 export function renderMessageLine(
   message: Message,
@@ -132,6 +178,18 @@ export function renderMessageLine(
       : `任务 ${content.taskId}→你（${label}）`;
     const body = clipTaskBody(taskEventBody(content), message, taskLines, content.phase);
     return `[${message.id} | ${time} | ${direction}] ${body}`;
+  }
+  if (
+    message.kind === 'system_event' &&
+    (message.content as { event?: unknown }).event === TASK_QUESTION_EVENT
+  ) {
+    return renderTaskQuestionLine(message, options, taskLines, time);
+  }
+  if (
+    message.kind === 'system_event' &&
+    (message.content as { event?: unknown }).event === TASK_UNDELIVERED_EVENT
+  ) {
+    return `[${message.id} | ${time} | 系统] 任务 ${message.taskId ?? ''} 的结算结果多次没能交给 Bot 处理，宿主已停止重试（用户已看到这条提示）`;
   }
   if (message.kind === 'card') {
     const rendered = options.renderCard?.(message) ?? null;
@@ -257,29 +315,4 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
     .filter((m) => m.status !== 'recalled')
     .map((m) => renderMessageLine(m, input.options, 'trigger'));
   return `<trigger reason="${input.reason}"${attrs}>\n${lines.join('\n')}\n</trigger>`;
-}
-
-/** The injection (steer) message for a batch delivered mid-run. */
-export function buildNewMessagesInjection(
-  messages: Message[],
-  options: RenderMessageOptions,
-): string {
-  const lines = messages
-    .filter((m) => m.status !== 'recalled')
-    .map((m) => renderMessageLine(m, options, 'trigger'));
-  return [
-    '<new_messages>',
-    ...lines,
-    '</new_messages>',
-    '你工作期间收到了新消息。判断是否需要调整当前的工作：需要就调整，不需要就继续。',
-  ].join('\n');
-}
-
-/** Edit notifications injected into a running loop. */
-export function buildMessageEventInjection(input: {
-  type: 'edited';
-  messageId: string;
-  newText?: string | undefined;
-}): string {
-  return `<message_event type="edited" message_id="${input.messageId}"/>\n用户编辑了这条消息，新内容：${input.newText ?? ''}`;
 }

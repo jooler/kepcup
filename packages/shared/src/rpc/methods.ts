@@ -656,6 +656,11 @@ export const runsStepsOutputSchema = z.object({ steps: z.array(runStepSchema) })
 export const runsListInputSchema = z.object({
   conversationId: z.string().min(1),
   limit: z.number().int().min(1).max(100).default(20),
+  /**
+   * D75 审查 L3: every active run of the conversation instead (no limit) —
+   * the status line must see all in-flight tasks, not only the latest runs.
+   */
+  active: z.boolean().optional(),
 });
 export const runsListOutputSchema = z.object({ runs: z.array(runSchema) });
 

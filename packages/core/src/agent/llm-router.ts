@@ -33,7 +33,7 @@ import type { AgentEngine, RunSpec } from './types.js';
  * 配置）；能同进程并行会话（`features.parallelSessions`，否则并发恒为 1）；
  * 并发上限至少 2（调度器给后台任务至多 并发-1 个名额）。
  *
- * 只有外部 Agent 时的降配：续接 L2 仲裁保持关闭；技能生成默认关
+ * 只有外部 Agent 时的降配：技能生成默认关
  * （`backgroundTasks.agentSkillAuthoring`）；群聊判断默认不跑
  * （`backgroundTasks.groupMentionOnly` 默认开），用户关掉后也受每日后台预算
  * 与节流约束（`admit`）；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑。
@@ -41,7 +41,6 @@ import type { AgentEngine, RunSpec } from './types.js';
 
 export type LlmPurpose =
   | 'triage'
-  | 'continuation'
   | 'summary'
   | 'reflection'
   | 'consolidation'
@@ -64,9 +63,8 @@ export interface LlmRoute {
 type BuiltinRule = 'light_for_bot' | 'main_for_bot' | 'app_light' | 'app_main';
 
 const BUILTIN_RULES: Readonly<Record<LlmPurpose, BuiltinRule>> = {
-  // 群聊判断 / 续接仲裁 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
+  // 群聊判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
   triage: 'light_for_bot',
-  continuation: 'light_for_bot',
   subagent_compaction: 'light_for_bot',
   // Wiki 维护 / 技能生成：Bot 主模型 → 全局主模型。
   wiki_maintenance: 'main_for_bot',
@@ -232,8 +230,6 @@ export class LlmRouter {
     if (external === undefined || catalog.length === 0) return null;
     const tasks = settings.backgroundTasks;
     if (!tasks.agentEnabled) return null;
-    // 续接 L2 仲裁只用内置模型（外部 Agent 冷启动远超仲裁时限，design 28 §8）。
-    if (purpose === 'continuation') return null;
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
     if (purpose === 'triage') {
       // Opt-in only (审查 C2), and charged to the bot's daily background budget.

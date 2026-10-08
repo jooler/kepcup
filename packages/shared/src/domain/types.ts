@@ -567,6 +567,12 @@ export const systemEventContentSchema = z.object({
    */
   answer: z.string().optional(),
   /**
+   * 任务提问卡（event = task_question）：提问任务所属的 Bot。上下文渲染据此把
+   * 问题标成「某 Bot 的任务提问」而不是系统消息（问题文字来自任务的模型输出，
+   * 不可信，D75 审查 H1）。
+   */
+  taskBotId: z.string().optional(),
+  /**
    * Bot 内部事务事件（wiki 入库、环境安装、技能导入、调度触发等，见
    * INTERNAL_SYSTEM_EVENTS）：消息照常落库并进入 Bot 的上下文/触发，但不算
    * 对话内容——用户可见读路径（messages.list、message.created 推送）把它
@@ -636,6 +642,11 @@ export const taskEventContentSchema = z.object({
   title: z.string().optional(),
   writes: z.boolean().optional(),
   continuesTaskId: z.string().optional(),
+  /**
+   * Terminal entries (result / failure): how many times the host handed the
+   * entry to the bot (D75 审查 M4, capped by TASK_REDELIVER_MAX_ATTEMPTS).
+   */
+  deliveries: z.number().int().optional(),
 });
 export type TaskEventContent = z.infer<typeof taskEventContentSchema>;
 
@@ -1276,6 +1287,15 @@ export type Project = z.infer<typeof projectSchema>;
 export const runChangeFileSchema = z.object({
   path: z.string(),
   change: z.enum(['added', 'modified', 'deleted']),
+  /**
+   * A run with several lease windows (D75 审查批 E: a force revoke closes
+   * one): the snapshot before the run first changed this file / after it
+   * last did. Absent = the record's own beforeOid / afterOid (one window).
+   */
+  beforeOid: z.string().optional(),
+  afterOid: z.string().optional(),
+  /** Someone else changed the file between two of the run's windows (revert = conflict). */
+  interleaved: z.boolean().optional(),
 });
 export type RunChangeFile = z.infer<typeof runChangeFileSchema>;
 

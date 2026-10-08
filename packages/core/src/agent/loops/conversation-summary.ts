@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '@kepcup/shared';
 import { routeFor, type LlmRouter } from '../llm-router.js';
 import { completeStructured } from '../structured.js';
+import { TASK_QUESTION_EVENT } from '../context/conversation.js';
 import type { AgentEngine } from '../types.js';
 import type { JobsService, JobRow } from '../../domain/jobs.js';
 import type { MessagesService } from '../../domain/messages.js';
@@ -151,10 +152,18 @@ function renderForSummary(
     senderType: string;
     senderBotId: string | null;
     content: unknown;
+    taskId?: string | null;
   }>,
 ): string {
   return messages
     .map((m) => {
+      const event = m.content as { event?: unknown; text?: unknown; taskBotId?: unknown } | null;
+      if (m.senderType === 'system' && event?.event === TASK_QUESTION_EVENT) {
+        // A task's question is its model output, not the system's (D75 审查 H1).
+        const botId = typeof event.taskBotId === 'string' ? event.taskBotId : 'bot';
+        const text = typeof event.text === 'string' ? event.text : '';
+        return `[${m.id} | ${new Date(m.createdAt).toISOString()} | ${botId}（任务 ${m.taskId ?? ''}）向用户提问] <untrusted>${text}</untrusted>`;
+      }
       const sender =
         m.senderType === 'user'
           ? '用户'
