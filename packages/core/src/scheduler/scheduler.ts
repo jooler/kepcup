@@ -140,12 +140,21 @@ export class Scheduler {
   }
 
   /**
-   * Awaits `wait` (a write-lease acquisition of `runId`) without occupying a
-   * provider slot: when called inside the job executing `runId`, the job gives
-   * its slot back for the wait, then takes one again before this resolves
-   * (yielded jobs go ahead of queued ones). Anywhere else it just awaits.
+   * Awaits `wait` (a write-lease acquisition or an ask_user wait of `runId`)
+   * without occupying a provider slot: when called inside the job executing
+   * `runId`, the job gives its slot back for the wait, then takes one again
+   * before this resolves (yielded jobs go ahead of queued ones). Anywhere else
+   * it just awaits.
+   *
+   * A run that stopped meanwhile does not take a slot back (D75 审查 M-1):
+   * when `wait` rejects (callers' waits reject only when the run stops) or
+   * `signal` — the run's own abort signal — is aborted, the job unwinds
+   * without a slot (an aborted engine makes no further model call), so a
+   * cancelled task frees its write lease and its place at once instead of
+   * queueing behind the jobs that took its slot. An abort while queued to
+   * take the slot back lets the job go on slotless too.
    */
-  async yieldSlotWhile<T>(runId: string, wait: Promise<T>): Promise<T> {
+  async yieldSlotWhile<T>(runId: string, wait: Promise<T>, signal?: AbortSignal): Promise<T> {
     const running = this.#current.getStore();
     if (running === undefined || running.job.runId !== runId || running.finished) return wait;
     running.yieldDepth += 1;
@@ -157,20 +166,48 @@ export class Scheduler {
       this.#giveSlot(running);
       this.#drain();
     }
+    let rejected = false;
     try {
       return await wait;
+    } catch (error) {
+      rejected = true;
+      throw error;
     } finally {
       running.yieldDepth -= 1;
       // The last wait of the job to end takes the slot back; earlier ones
       // continue without it (their tool work needs no model slot, and the
       // engine's next model call awaits every parallel tool call).
-      if (running.yieldDepth === 0 && !running.finished && !this.#stopped) {
-        await new Promise<void>((resolve) => {
-          this.#resuming.push({ running, resolve });
-          this.#drain();
-        });
+      if (
+        running.yieldDepth === 0 &&
+        !running.finished &&
+        !this.#stopped &&
+        !rejected &&
+        signal?.aborted !== true
+      ) {
+        await this.#resume(running, signal);
       }
     }
+  }
+
+  /** Queues a yielded job to take a slot again; an abort of `signal` lets it go on without one. */
+  #resume(running: RunningJob, signal: AbortSignal | undefined): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const entry: ResumingJob = {
+        running,
+        resolve: () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        },
+      };
+      const onAbort = (): void => {
+        const index = this.#resuming.indexOf(entry);
+        if (index !== -1) this.#resuming.splice(index, 1);
+        entry.resolve();
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.#resuming.push(entry);
+      this.#drain();
+    });
   }
 
   stop(): void {

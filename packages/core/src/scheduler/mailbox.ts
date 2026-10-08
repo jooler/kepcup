@@ -273,6 +273,11 @@ export class Mailbox {
     return this.#buffer.length;
   }
 
+  /** Whether a buffered batch carries a message matching `match` (held for the next turn). */
+  hasBuffered(match: (message: Message) => boolean): boolean {
+    return this.#buffer.some((batch) => batch.messages.some(match));
+  }
+
   /**
    * Delivers the batch: starts a turn when idle (returns its run id), else
    * buffers it for the next turn (returns null).

@@ -25,6 +25,6 @@ export class SlotYieldingLeaseService extends LeaseService {
     if (this.holderOf(key)?.runId === identity.runId || hooks.signal?.aborted === true) {
       return pending;
     }
-    return this.#scheduler?.yieldSlotWhile(identity.runId, pending) ?? pending;
+    return this.#scheduler?.yieldSlotWhile(identity.runId, pending, hooks.signal) ?? pending;
   }
 }

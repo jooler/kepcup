@@ -613,11 +613,20 @@ export class Orchestrator {
       describeWorkdir: (task, withChanges) => this.#describeTaskWorkdir(task, withChanges),
       // 审查 M3: an ask_user wait gives the task job's provider slot back (the
       // tool runs inside that job, so the scheduler finds it by run id).
-      yieldSlotWhile: (runId, wait) => deps.scheduler.yieldSlotWhile(runId, wait),
-      // 审查 M4: a begun turn carrying a result consumes it; no re-delivery.
+      yieldSlotWhile: (runId, wait, signal) => deps.scheduler.yieldSlotWhile(runId, wait, signal),
+      // 审查 M4 / L-3: a live turn carrying a result (begun, or still queued
+      // for a slot) consumes it, and so does the next turn of a mailbox
+      // buffering it; no re-delivery meanwhile.
       heldByTurn: (taskId) => {
         for (const held of this.#turnTaskHolds.values()) if (held.has(taskId)) return true;
-        return false;
+        const task = deps.runs.get(taskId);
+        if (task?.botId == null || task.conversationId === null) return false;
+        return (
+          this.#mailboxes
+            .get(task.botId, task.conversationId)
+            ?.hasBuffered((message) => message.kind === 'task_event' && message.taskId === taskId) ??
+          false
+        );
       },
       // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
       // task slot) only while `agent:{id}` has room; the rest stay submitted.
@@ -1862,6 +1871,19 @@ export class Orchestrator {
         : {}),
     });
     this.#deps.publish('run.status', { run });
+    // The turn holds its trigger's task results from now on (审查 L-3): one
+    // still queued for a slot is not handed them again — nor counted again.
+    this.#holdTaskEntries(run.id, batch);
+    try {
+      this.#submitTurn(run.id, batch);
+    } catch (error) {
+      this.#turnTaskHolds.delete(run.id);
+      throw error;
+    }
+    return run.id;
+  }
+
+  #submitTurn(runId: string, batch: TriggerBatch): void {
     this.#deps.scheduler.submit({
       // Chain / scheduled / event turns are priority 1; user-facing ones are 0
       // (docs/dev/04-agent-runtime.md "各类 loop 的配置") — D71 delegations
@@ -1871,10 +1893,9 @@ export class Orchestrator {
       provider: this.#providerForRef(this.#turnModelRef(batch.botId)),
       key: this.#mailboxKey(batch.botId, batch.conversationId),
       // Lease waits of this run give the slot back (D75 审查 H2).
-      runId: run.id,
-      run: () => this.#executeRun(run.id, { kind: 'turn', batch }),
+      runId,
+      run: () => this.#executeRun(runId, { kind: 'turn', batch }),
     });
-    return run.id;
   }
 
   /** D72 P6：后台调用的模型路由（未装配路由器时只用内置模型）。 */
