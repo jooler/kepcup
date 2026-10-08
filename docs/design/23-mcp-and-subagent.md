@@ -41,9 +41,9 @@ OAuth（`pi-mcp/oauth`，已单排为 D73，见 [29-connected-apps.md](29-connec
 
 ## SubAgent（D66）
 
-> **D75 修订**：`delegate_task` 降级为「**任务内部**的嵌套子代理」。三种模式（前台 / 后台 / fan-out）在任务内照旧可用，但「后台委派 + 对话级锚点 + follow-up 结算」这一组职责**移交 D75 的任务层**（否则有两套对话级并发计数与两套结算路径）：`SubagentHost` 提升为 `TaskHost`，后台模式退回「父任务内的并行分支」。对话轮派活用 `start_task`，不用 `delegate_task`。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
+> **D75 修订**：`delegate_task` 降级为「**任务内部**的嵌套子代理」。三种模式（前台 / 后台 / fan-out）在任务内照旧可用，但「后台委派 + 对话级锚点 + follow-up 结算」这一组职责**移交 D75 的任务层**（否则有两套对话级并发计数与两套结算路径）：`SubagentHost`（对话级锚点、`runningCount`、`abortFor*`）、`SubagentFollowUp`、orchestrator 的 follow-up 注入与 `SUBAGENT_FOLLOWUP_EVENT` **已删除**，对话级的注册、并发与结算由 `dispatch/tasks.ts` `TaskHost` 承担；后台模式退回「父任务内的并行分支」。对话轮派活用 `start_task`，不用 `delegate_task`（对话轮的工具面里没有它，执行期也拒绝）。MCP 工具同样只在**任务**的工具面（对话轮不提供）。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
 >
-> **后台分支的实现（D75 W2）**：`mode:"background"` 立即返回 `child_run_id`，分支在父 run（任务）内并行推进；父 loop 需要结论时调用 `collect_delegate_results({ child_run_ids? })`——等待所列分支（缺省为全部未取回的）结束，按委派顺序返回各分支的压缩结论或失败原因，每条只交付一次。结论**只回到父 run**：不写对话消息、不投递 mailbox、不唤醒新一轮（下文 B / C 节的「follow-up 注入」「对话级锚点」「对话级并发封顶」均已废止）。生命周期全部挂父 run：父 run abort（含任务取消、对话删除、删 Bot）级联中止分支；父 run 结束时宿主中止仍在跑的分支并等它们 settle（先于释放写租约与任务结算），未取回的结论作废——结论没有别的去处，等下去只会白占父任务的名额与租约。单条子 run 仍可经 `runs.cancel` 中止（`collect` 中该槽位报取消）。并发封顶 `SUBAGENT_BACKGROUND_CONCURRENCY` 改为按父 run 计。对话轮（`loop_type='turn'`）与子代理调用 `delegate_task` 在执行期被拒（`NOT_SUPPORTED`）。
+> **后台分支的实现（D75 W2）**：`mode:"background"` 立即返回 `child_run_id`，分支在父 run（任务）内并行推进；父 loop 需要结论时调用 `collect_delegate_results({ child_run_ids? })`——等待所列分支（缺省为全部未取回的）结束，按委派顺序返回各分支的压缩结论或失败原因，每条只交付一次（两次并发的 collect 不会拿到同一条：调用先认领分支再等待，被取消的 collect 释放认领）。结论**只回到父 run**：不写对话消息、不投递 mailbox、不唤醒新一轮（下文 B / C 节的「follow-up 注入」「对话级锚点」「对话级并发封顶」均已废止）。生命周期全部挂父 run：父 run abort（含任务取消、对话删除、删 Bot）级联中止分支；父 run 结束时宿主中止仍在跑的分支并等它们 settle（最长 `SUBAGENT_CLOSE_GRACE_MS`，10 秒；先于释放写租约与任务结算，超时后父 run 照常结算，迟到分支的写入已被拒），未取回的结论作废——结论没有别的去处，等下去只会白占父任务的名额与租约。单条子 run 仍可经 `runs.cancel` 中止（`collect` 中该槽位报取消）。并发封顶 `SUBAGENT_BACKGROUND_CONCURRENCY` 改为按父 run 计。对话轮（`loop_type='turn'`）与子代理调用 `delegate_task` 在执行期被拒（`NOT_SUPPORTED`）。
 
 ### 动机
 
