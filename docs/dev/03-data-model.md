@@ -18,6 +18,18 @@
 - 用 `PRAGMA user_version` 记录已执行到的编号；启动时按顺序执行未执行的迁移，每个迁移一个事务。
 - **已合并的迁移文件不得修改**，只能新增。
 - 每个阶段新增的表写在该阶段自己的迁移文件中。下文每张表标注了引入阶段。
+- **编号连续**：`infra/migrate.ts` 对缺号报错，新迁移取各目录的下一个号（以目录实况为准）。D75 占用了 main `0018`–`0020`、runs `0006`–`0008`：
+
+| 库 | 迁移 | 内容 |
+|---|---|---|
+| main | `0018_task_events.sql` | `messages` 重建（`kind` 增 `task_event`，增 `owner_bot_id` / `task_id`，终态条目唯一索引），`attachments` 随之重建 |
+| main | `0019_agent_sessions_per_task.sql` | `agent_sessions` 重建：增 `task_id`（`''` = 非任务 run），唯一键改四元组；D72 期旧行清空 |
+| main | `0020_usage_turn_loop_type.sql` | `usage_ledger.loop_type` 的 `'response'` → `'turn'` |
+| runs | `0006_tasks.sql` | `runs` 增任务列与 `(conversation_id, loop_type, status)` 索引 |
+| runs | `0007_turn_loop_type.sql` | `runs.loop_type` 的 `'response'` → `'turn'` |
+| runs | `0008_turn_trigger.sql` | `runs` 增 `trigger_parts_json`、`retry_of_run_id` |
+
+  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延：D73 从 main `0021`、runs `0009` 起编号。
 
 ### 全文检索与中文
 
@@ -138,7 +150,7 @@ CREATE TABLE messages (
   edited_at        INTEGER,
   created_at       INTEGER NOT NULL,
   owner_bot_id     TEXT,                  -- 0018：NULL = 对话共享；非空 = 仅该 Bot 可见（目前只用于 task_event）
-  task_id          TEXT,                  -- 0018：task_event 所属任务（run id）；其余为 NULL
+  task_id          TEXT,                  -- 0018：所属任务（run id）：task_event、任务卡、任务问题卡；其余为 NULL
   UNIQUE (conversation_id, seq)
 );
 CREATE INDEX messages_conv_seq ON messages(conversation_id, seq);
@@ -156,7 +168,10 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - 撤回：`status = 'recalled'`，清空正文，从 `messages_fts` 删除；Bot 不可见。
 - 编辑：更新正文与 `edited_at`，`status = 'edited'`，同步更新 `messages_fts`。
 - 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId? }`。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
-- 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）。
+- 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
+- 任务卡（D75 W3）：共享的 `card` 行，`content_json = { cardType: 'task', runId: <任务 id> }`，`task_id` = 任务；`start_task` 与失败任务的重试各写一张。上下文中渲染为一行状态（[design/30](../design/30-supervisor-and-tasks.md) §4.3）。
+- 任务问题卡（`ask_user`）：共享的 `system_event` 行，`event = 'task_question'`，`content_json` 带 `text`（问题）、`options`，回答后写入 `answer`；`task_id` 与 `run_id` = 任务。
+- `MessagesService` 的读法（D75 W1-B）：`listForBot(conversationId, botId)`（共享行 + 该 Bot 的私有行，Bot 上下文）、`listShared`（只共享行：任务的对话层、摘要）、`search(…, viewerBotId)`（FTS join `messages` 按 owner 过滤）、`around`（前后各 N 条可见行）、`unsummarized`（只摘共享行）、`countVisibleAfter`（未读只数用户可见行）；`terminalTaskEvent(taskId)` / `taskEvents(taskId)` 只查 `kind = 'task_event'`。私有行推进对话的 `last_seq`，不推进 `last_message_at`。
 - 0018 重建方式：`messages` 被 `attachments.message_id`（`ON DELETE CASCADE`）引用，迁移又在 `foreign_keys=ON` 的事务内执行，直接 `DROP TABLE messages` 会级联删光附件；因此 `attachments` 一并重建（先建两张新表并复制，先删旧 `attachments` 再删旧 `messages`，再改名——外键开启时改名会同步改写引用）。表结构与本节 / 下节一致。
 
 ### attachments（P01；D75 迁移 0018 随 messages 重建，结构不变）
@@ -228,7 +243,7 @@ CREATE TABLE usage_ledger (
   run_id          TEXT NOT NULL,
   bot_id          TEXT,
   conversation_id TEXT,
-  loop_type       TEXT NOT NULL,
+  loop_type       TEXT NOT NULL,         -- 与 runs.loop_type 同值（turn / task / subagent / triage / …；main 0020 已把旧的 response 改为 turn）
   provider        TEXT NOT NULL,
   model           TEXT NOT NULL,
   input_tokens    INTEGER NOT NULL,
@@ -520,7 +535,7 @@ CREATE INDEX delegations_from_conversation ON delegations(from_conversation_id);
 - 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
 
-### agent_sessions（D72，迁移 0017；P5 起使用）
+### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
 ```sql
 CREATE TABLE agent_sessions (
@@ -528,16 +543,18 @@ CREATE TABLE agent_sessions (
   bot_id            TEXT NOT NULL,
   conversation_id   TEXT NOT NULL,
   agent_id          TEXT NOT NULL,        -- 目录 id（如 claude-acp）
+  task_id           TEXT NOT NULL DEFAULT '',  -- 0019：任务 run id；'' = 非任务 run 的会话
   agent_session_id  TEXT NOT NULL,        -- Agent 侧 ACP sessionId
   fingerprint       TEXT NOT NULL,        -- 会话级参数指纹（提示词 / 能力集合 / 桥名 / 档位…），变化即新建
   last_run_id       TEXT,
   last_used_at      INTEGER NOT NULL,
   created_at        INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id, agent_id);
+CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id, agent_id, task_id);  -- 0019
 ```
 
-- 外部智能体会话复用（design 28 §7）：每个 (Bot, 对话, Agent) 至多一行。只存 id、无外键 / CASCADE。
+- 外部智能体会话按任务分（D75，[design/30](../design/30-supervisor-and-tasks.md) §8.5）：唯一键是四元组 `(bot_id, conversation_id, agent_id, task_id)`；`task_id = ''` 是哨兵值——SQLite 唯一索引把 NULL 视为互不相同，用 `''` 才能让非任务 run 的行仍按三元组唯一。每个任务独占自己的行；`continues_task_id` 接续时 `AgentSessionsStore.inheritTask` 单条 `UPDATE` 把旧任务的行改挂新任务（旧任务的执行须已结束）。任务行的会话 / 桥键 = `bot:conv:agent:task:{行 id}`，随行而不随任务 id（DEV-010，待确认）；非任务行为 `bot:conv:agent`。只存 id、无外键 / CASCADE。
+- 结算后的任务会话行保留 `CONTINUATION_WINDOW_MS`（自 `last_used_at` 起），之后 reaper（`TaskHost.sweep` 的 `onSweep`）`session/close` 并删行。
 - 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
 - 删除对话 / 删除 Bot / 移出群经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。
 
@@ -550,7 +567,7 @@ CREATE TABLE runs (
   id                   TEXT PRIMARY KEY,  -- run_...
   bot_id               TEXT,
   conversation_id      TEXT,
-  loop_type            TEXT NOT NULL,
+  loop_type            TEXT NOT NULL,     -- turn | task | subagent | triage | reflection | …（无 CHECK；0007 把 response 改为 turn）
   status               TEXT NOT NULL CHECK (status IN (
                          'queued', 'running', 'waiting_approval', 'waiting_lease',
                          'completed', 'failed', 'cancelled', 'interrupted')),
@@ -573,6 +590,8 @@ CREATE TABLE runs (
   origin_run_id        TEXT,           -- 0006：派出该任务的对话轮
   result_consumed_at   INTEGER,        -- 0006：任务结果被对话轮消费的时间（design/30 §3.2）
   awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
+  trigger_parts_json   TEXT,           -- 0008：对话轮触发批的各来源段 [{reason, messageIds, extraAttributes?}]；NULL = 旧行或单段批
+  retry_of_run_id      TEXT,           -- 0008：重试出来的对话轮指向被重试的那一轮
   created_at           INTEGER NOT NULL,
   started_at           INTEGER,
   ended_at             INTEGER
@@ -582,7 +601,8 @@ CREATE INDEX runs_by_bot ON runs(bot_id, created_at);
 CREATE INDEX runs_by_conv_loop_status ON runs(conversation_id, loop_type, status);  -- 0006
 ```
 
-- 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。
+- 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
+- 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 
 ### run_steps（P01）
@@ -663,6 +683,8 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | messages、messages_fts、attachments（含文件）、drafts | 删除 | P01 |
 | conversation_members、conversations 行 | 删除 | P01 |
 | 该对话的执行（runs、run_steps） | 删除；正在执行的先取消 | P01 |
+| 该对话的任务（D75） | 未结束的经 `TaskHost.abortForConversation` 结算为 `cancelled`（不唤醒），随后按上行删除；私有任务条目随 messages 删除 | D75 |
+| agent_sessions 中该对话的任务会话行（一对话可有多行） | 同下行，逐行处理 | D75 |
 | 该对话的 jobs | 取消 | P01 |
 | 所有 Bot 在该对话的 workspace 目录 | 删除 | P02 |
 | 该对话的 approvals（待确认的先取消）、grants | 删除 | P03 |
@@ -680,7 +702,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
-| 该 Bot 所有正在执行、排队的执行 | 取消 | P01 |
+| 该 Bot 所有正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBot` 结算为 `cancelled`，不唤醒） | P01 / D75 |
 | bots 行 | 改为占位（见 bots 表说明） | P01 |
 | 单聊对话 | `read_only = 1`，清空其待发送队列 | P01 |
 | 群成员关系 | 删除成员行（历史消息保留，发送者显示为 id） | P05 |
@@ -710,7 +732,8 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
-| 该 Bot 在此群正在执行、排队的执行 | 取消 | P05 |
+| 该 Bot 在此群正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBotInConversation` 结算为 `cancelled`，不唤醒） | P05 / D75 |
+| 该 Bot 在此群的 agent_sessions 行（含各任务的行） | 尽力 `session/delete` 并删除 | D72 P5 / D75 |
 | 成员行 | 删除 | P05 |
 | 该 Bot 在此群的 workspace | 删除 | P05 |
 | 该 Bot 在此群的 grants、待确认 approvals | 撤销 / 取消 | P05 |
