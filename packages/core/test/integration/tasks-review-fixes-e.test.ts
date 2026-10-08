@@ -125,7 +125,12 @@ function questionCard(messages: Message[], taskId: string): Message | null {
 }
 
 /** A settled, unconsumed task result of `botId` (the reconciliation re-delivers it). */
-function settledTask(stack: TestStack, botId: string, conversationId: string, text: string): string {
+function settledTask(
+  stack: TestStack,
+  botId: string,
+  conversationId: string,
+  text: string,
+): string {
   const d = domain(stack);
   const task = d.runs.create({
     botId,
@@ -356,9 +361,8 @@ describe('M2: a delegation has a turn of its own', () => {
     await waitVisible(stack, bConv, 'EXTRA-REPLY');
     const delegation = await waitFor(
       () => {
-        const row = stack.core.services
-          .mainDb!.prepare('select id from delegations')
-          .get() as { id: string } | undefined;
+        const row = stack.core.services.mainDb!.prepare('select id from delegations').get() as
+          { id: string } | undefined;
         const found: Delegation | null =
           row !== undefined ? domain(stack).delegations.getOrThrow(row.id) : null;
         return found !== null && found.status === 'completed' ? found : null;
@@ -502,11 +506,7 @@ describe('M4: bounded re-delivery; no re-delivery to a live turn', () => {
     const { core, llm } = stack;
     const bot = await makeBot(core, '阿慢');
     const conv = await openDirect(core, bot.id);
-    const held = step()
-      .inTurn()
-      .expect(turnWith('RESULT-L'))
-      .hold()
-      .replyText('RELAY-L 结果如下');
+    const held = step().inTurn().expect(turnWith('RESULT-L')).hold().replyText('RELAY-L 结果如下');
     llm.script('mock-main', [held]);
     const taskId = settledTask(stack, bot.id, conv.id, 'RESULT-L 结果');
     orchestrator(stack).tasks.sweep();
@@ -550,7 +550,9 @@ describe('M5: a relayed answer carries the user originals', () => {
         writes: false,
       }),
       step().inTurn().replyText('ACK'),
-      step().inTask().replyToolCall('ask_user', { question: '按哪份规格？', options: ['旧的'] }),
+      step()
+        .inTask()
+        .replyToolCall('ask_user', { question: '按哪份规格？', options: ['旧的'] }),
       step()
         .inTurn()
         .expect(turnWith('看附件'))
@@ -641,11 +643,17 @@ describe('L4: the downgraded inject line holds only what the user can see', () =
     await sendBatch(stack.core, conv.id, ['先办第一件']);
     await waitFor(
       () =>
-        started.find((handle) => handle.observed.prompts.some((p) => p.text.includes('先办第一件'))) ??
-        null,
+        started.find((handle) =>
+          handle.observed.prompts.some((p) => p.text.includes('先办第一件')),
+        ) ?? null,
       { label: 'first task prompted' },
     );
-    orchestrator(stack).deliverEventToBot(bot.id, conv.id, 'wiki_ingested', 'SYS-INTERNAL 入库完成');
+    orchestrator(stack).deliverEventToBot(
+      bot.id,
+      conv.id,
+      'wiki_ingested',
+      'SYS-INTERNAL 入库完成',
+    );
     const [first] = runsOf(stack, conv.id, 'task');
     const inject = await waitFor(
       () =>
@@ -740,7 +748,9 @@ describe('L5 / L6: task views and question cards', () => {
         writes: false,
       }),
       step().inTurn().replyText('ACK'),
-      step().inTask().replyToolCall('ask_user', { question: '选哪个？', options: ['甲'] }),
+      step()
+        .inTask()
+        .replyToolCall('ask_user', { question: '选哪个？', options: ['甲'] }),
       step()
         .inTask()
         .expect((req) => bodyText(req).includes('disk full'))
