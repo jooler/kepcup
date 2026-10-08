@@ -68,6 +68,13 @@ export const SUBAGENT_FANOUT_MAX = 4;
  * fit under this cap: N + the parent's running background branches ≤ this.
  */
 export const SUBAGENT_BACKGROUND_CONCURRENCY = 4;
+/**
+ * How long a parent run's end (`close()`) waits for its aborted sub runs to
+ * settle before moving on (lease release, settle). A sub run that ignores the
+ * abort keeps unwinding on its own; its writes are already refused once the
+ * parent is terminal / released its lease (D75 writeDenial).
+ */
+export const SUBAGENT_CLOSE_GRACE_MS = 10_000;
 
 // --- Butler & cross-bot delegation (D70 / D71, docs/design/27-butler-and-delegation.md) ---
 

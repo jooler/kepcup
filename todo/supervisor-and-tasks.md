@@ -161,6 +161,8 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 
 **已知缺口（审查复核 #5，留给 W2 / W3）**：浏览器下载目录与页面共享冲突。页面按（Bot, 对话）共用一个（desktop `browser-host.ts`），`ensurePage` 每次把该页面的 `downloadsDir` 改成本次执行的目录，`will-download`（`browser-host.ts` ~497）在下载**开始时**才读 `page.downloadsDir`。同一对话里只读执行（对话轮 / 只读任务，目录 = 应用缓存 `readOnlyDownloadsDir`）与写任务（目录 = workspace `downloads/`，core `tools/browser.ts` ~96 / `tools/index.ts` ~789 在构建工具时固定）并发使用浏览器时：只读执行 ensure → 写任务 ensure（改回 workspace）→ 只读执行 click 触发的下载落进 workspace。core 侧加锁只能覆盖 ensure + click，覆盖不了点击返回后才开始的下载，因此 core 内无法闭合。修法需要 desktop / shared RPC 改动二选一：① 下载目录随触发动作（click / open）下发并绑定到该次导航，`will-download` 用动作时刻的目录；② 只读执行与写执行不共用页面（页面键加上执行的写入能力）。W2 注册对话轮工具面时若去掉浏览器（见上 W2 项）可先消除对话轮这一侧，只读任务仍有此缺口。
 
+**硬次序约束（W4 审查 M1，W2 必须遵守）**：调度器对外部 Agent（`agent:*`）的任务不留回复名额、回复也不能借名额（`scheduler.ts` `#runnable`），前提是对话轮固定内置引擎（§8.1）。W2 落地前外部 Agent Bot 的响应 run 仍走 `agent:*`——上限 1 的 Agent 上一个任务会让该 Agent 的回复饿死数小时。目前不可达（`start_task` 尚未注册进任何工具面），因此 **`start_task` 注册与「对话轮 = 内置引擎」必须在 W2 的同一变更里落地**；以后若有对话轮再跑在 Agent 上（设计 30 §8.4 经 `complete()` 的降级），须恢复 Agent provider 的回复保留名额。
+
 ## 6. 基线
 
 容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。

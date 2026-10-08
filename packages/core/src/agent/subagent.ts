@@ -1,5 +1,6 @@
 import {
   SUBAGENT_BACKGROUND_CONCURRENCY,
+  SUBAGENT_CLOSE_GRACE_MS,
   SUBAGENT_COMPRESS_TIMEOUT_MS,
   SUBAGENT_FANOUT_MAX,
   SUBAGENT_MAX_PER_RUN,
@@ -86,6 +87,7 @@ export interface SubagentRunnerDeps {
   /** DI overrides for tests (real defaults are the SUBAGENT_* constants). */
   timeoutMs?: number;
   tokenPollMs?: number;
+  closeGraceMs?: number;
 }
 
 /** delegate_task 的委派模式（docs/design/23 三种模式 A/B）。 */
@@ -114,11 +116,17 @@ export interface SubagentToolFacade {
   delegate(input: DelegateTaskParams, ctx: ToolContext): Promise<ToolResult>;
   /** collect_delegate_results 执行体：等待并取回后台分支的结论（每条只取一次）。 */
   collect(input: CollectDelegateParams, ctx: ToolContext): Promise<ToolResult>;
-  /** Aborts one in-flight sub run of this parent (runs.cancel); false = not ours / settled. */
+  /**
+   * Aborts one sub run of this parent (runs.cancel): an in-flight one, or a
+   * foreground lane still queued behind another (settled `cancelled` at once,
+   * never started). false = not ours / settled.
+   */
   abortSubRun(runId: string, reason: string): boolean;
   /**
    * The parent run ended: aborts every sub run still in flight and resolves
-   * once they all settled. Uncollected conclusions are dropped. Idempotent.
+   * once they all settled — or after SUBAGENT_CLOSE_GRACE_MS (a sub run
+   * ignoring the abort unwinds on its own). Uncollected conclusions are
+   * dropped. Idempotent.
    */
   close(reason: string): Promise<void>;
 }
@@ -221,8 +229,16 @@ interface Lane {
   background: boolean;
   controller: AbortController;
   settled: boolean;
+  /** A collect call is waiting for it (each conclusion is handed over once). */
+  claimed: boolean;
   done: Promise<SubagentLaneOutcome>;
 }
+
+const CANCELLED_BEFORE_START: SubagentLaneOutcome = {
+  result: { ok: false, content: '执行已取消，子任务未开始', errorCode: 'CANCELLED' },
+  conclusion: null,
+  partial: false,
+};
 
 /**
  * Creates the per-parent-run facade. Mode A serializes (at most one foreground
@@ -240,9 +256,13 @@ export function createSubagentFacade(
   let closed = false;
   /** In-flight lanes + settled background branches not yet collected. */
   const lanes = new Map<string, Lane>();
+  /** Foreground rows created but not started yet (queued behind `tail`). */
+  const notStarted = new Set<string>();
+  /** Of those, the ones runs.cancel stopped: never started (row already settled). */
+  const cancelledBeforeStart = new Set<string>();
 
-  const createSubRunRow = (background: boolean): Run =>
-    deps.runs.create({
+  const createSubRunRow = (background: boolean): Run => {
+    const row = deps.runs.create({
       botId: input.parent.botId,
       conversationId: input.parent.conversationId,
       loopType: 'subagent',
@@ -252,6 +272,9 @@ export function createSubagentFacade(
       // 写租约规则也沿 parent_run_id 继承）。
       parentRunId: input.parent.runId,
     });
+    if (!background) notStarted.add(row.id);
+    return row;
+  };
 
   /** No awaiter must ever see a rejection: a crash settles the row failed. */
   const crashOutcome = (subRunId: string, error: unknown): SubagentLaneOutcome => {
@@ -276,7 +299,22 @@ export function createSubagentFacade(
     background: boolean,
     parentSignal: AbortSignal,
   ): Lane => {
+    notStarted.delete(subRun.id);
     const controller = new AbortController();
+    if (cancelledBeforeStart.delete(subRun.id)) {
+      // runs.cancel settled the row while it waited: never start it.
+      controller.abort('user cancelled');
+      const lane: Lane = {
+        runId: subRun.id,
+        background,
+        controller,
+        settled: true,
+        claimed: false,
+        done: Promise.resolve(CANCELLED_BEFORE_START),
+      };
+      input.onSubRunSettled?.(subRun.id);
+      return lane;
+    }
     const onParentAbort = () => controller.abort('parent run aborted');
     if (closed) controller.abort('parent run ended');
     else if (parentSignal.aborted) onParentAbort();
@@ -291,7 +329,14 @@ export function createSubagentFacade(
         // background branches wait here to be collected.
         if (!background) lanes.delete(subRun.id);
       });
-    const lane: Lane = { runId: subRun.id, background, controller, settled: false, done };
+    const lane: Lane = {
+      runId: subRun.id,
+      background,
+      controller,
+      settled: false,
+      claimed: false,
+      done,
+    };
     lanes.set(subRun.id, lane);
     return lane;
   };
@@ -406,16 +451,19 @@ export function createSubagentFacade(
           return invalidResult('child_run_ids 不能为空；要取回全部分支就省略该参数', 'INVALID_INPUT');
         }
         const ids = [...new Set(params.child_run_ids)];
-        const unknown = ids.filter((id) => lanes.get(id)?.background !== true);
+        const unknown = ids.filter((id) => {
+          const lane = lanes.get(id);
+          return lane?.background !== true || lane.claimed;
+        });
         if (unknown.length > 0) {
           return invalidResult(
-            `不是本次执行中待取回的后台分支（id 有误或已取回过）：${unknown.join(', ')}`,
+            `不是本次执行中待取回的后台分支（id 有误、已取回过或正在另一次取回中）：${unknown.join(', ')}`,
             'INVALID_INPUT',
           );
         }
         targets = ids.map((id) => lanes.get(id)!);
       } else {
-        targets = [...lanes.values()].filter((lane) => lane.background);
+        targets = [...lanes.values()].filter((lane) => lane.background && !lane.claimed);
         if (targets.length === 0) {
           return invalidResult(
             '没有待取回的后台分支（都已取回，或本次执行还没有用 mode:"background" 委派）',
@@ -423,19 +471,37 @@ export function createSubagentFacade(
           );
         }
       }
+      // Each conclusion is handed over exactly once: claimed before awaiting,
+      // so a concurrent collect never waits for (and returns) the same lanes.
+      for (const lane of targets) lane.claimed = true;
       const outcomes = await untilAborted(
         Promise.all(targets.map((lane) => lane.done)),
         ctx.signal,
       );
       if (outcomes === null) {
+        // Not handed over: a later collect may still take them.
+        for (const lane of targets) lane.claimed = false;
         return invalidResult('执行已取消，未取回分支结论', 'CANCELLED');
       }
-      // Each conclusion is handed over exactly once.
       for (const lane of targets) lanes.delete(lane.runId);
       return branchResult(targets.map((lane) => lane.runId), outcomes);
     },
 
     abortSubRun: (runId, reason) => {
+      if (notStarted.has(runId) && !cancelledBeforeStart.has(runId)) {
+        // A foreground lane queued behind another: settle its row now; the
+        // lane resolves as cancelled without starting (startLane).
+        cancelledBeforeStart.add(runId);
+        try {
+          deps.publishRunStatus(deps.runs.update(runId, { status: 'cancelled' }));
+        } catch (error) {
+          deps.logger.warn(
+            { runId, error: error instanceof Error ? error.message : String(error) },
+            'subagent cancel before start failed',
+          );
+        }
+        return true;
+      }
       const lane = lanes.get(runId);
       if (lane === undefined || lane.settled) return false;
       lane.controller.abort(reason);
@@ -446,7 +512,27 @@ export function createSubagentFacade(
       closed = true;
       const pending = [...lanes.values()].filter((lane) => !lane.settled);
       for (const lane of pending) lane.controller.abort(reason);
-      await Promise.allSettled(pending.map((lane) => lane.done));
+      // Bounded: a sub run ignoring the abort must not hold the parent's
+      // settlement (and its lease / slot) forever (D75 审查 L3).
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const graceOver = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), deps.closeGraceMs ?? SUBAGENT_CLOSE_GRACE_MS);
+        timer.unref?.();
+      });
+      const result = await Promise.race([
+        Promise.allSettled(pending.map((lane) => lane.done)),
+        graceOver,
+      ]);
+      clearTimeout(timer);
+      if (result === 'timeout') {
+        deps.logger.warn(
+          {
+            parentRunId: input.parent.runId,
+            runIds: pending.filter((lane) => !lane.settled).map((lane) => lane.runId),
+          },
+          'sub runs did not settle within the close grace period; parent run moves on',
+        );
+      }
       lanes.clear();
     },
   };

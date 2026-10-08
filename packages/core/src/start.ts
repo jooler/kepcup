@@ -1172,6 +1172,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       allowlist,
       skillDirs: (botId) => skills.readableDirs(botId),
       redact: (text) => secrets.redact(text),
+      // D75 审查 M2: the bound project when this run does not hold its lease.
+      unleasedProject: (identity) => {
+        const project = projectRuntime.boundProject(identity.conversationId);
+        if (project === null || project.status !== 'available') return null;
+        return projectRuntime.holdsLease(identity, project.path) ? null : project.path;
+      },
       logger,
     });
     const externalEngine = new ExternalAgentEngine({
