@@ -39,7 +39,7 @@
 
 ### 2.1 迁移
 
-- **迁移号连续**（`infra/migrate.ts` 对缺号报错）：D73 预留的 main `0018`–`0020` 尚未创建，**D75 取 main `0018`、runs `0006`**；D73 开工时按其方案「号以目录实况为准」顺延（调度会话负责告知）。
+- **迁移号连续**（`infra/migrate.ts` 对缺号报错）：W0 时 D73 预留的 main `0018`–`0020` 尚未创建，**D75 W0 取 main `0018`、runs `0006`**；之后 D75 又用了 main `0019`、`0020` 与 runs `0007`、`0008`，D73 开工时 main 从 `0021`、runs 从 `0009` 起（现状见 §5 修复批 D「迁移号」）。
 - `main/0018_task_events.sql`：
   - `messages` 重建（`kind` CHECK 增 `'task_event'`），新增 `owner_bot_id TEXT`、`task_id TEXT`；重建方式参照 `0015` / `0016` / `0017` 的既有重建写法，保留全部列、索引、外键（`attachments.message_id` 等）与 FTS 同步。
   - 唯一索引：每个任务至多一条终态条目——`CREATE UNIQUE INDEX messages_task_terminal ON messages(task_id) WHERE kind = 'task_event' AND json_extract(content_json, '$.phase') IN ('result', 'failure')`（若表达式索引在本库加密构建下不可用，改加 `task_terminal INTEGER` 列，记入 DEVIATIONS）。
