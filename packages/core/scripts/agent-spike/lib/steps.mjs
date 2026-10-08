@@ -509,6 +509,130 @@ export async function native(ctx) {
   };
 }
 
+// —— P6 原生优先遵守度回归（todo §9.1）：用产品的真实措辞 ————————————————
+// fixtures/native-first-wording.json 由 core 单测按产品代码生成（措辞一改单测
+// 就失败）：补位工具的「[补充能力]」描述前缀 + <tool_policy>（按 Provider 的
+// 工具名写法、点名该 Agent 自带的原生工具）。本 step 照产品方式下发（meta-append
+// → session/new._meta.systemPrompt.append；prompt-prefix → prompt 前置段），
+// 注入同名 MCP 工具，统计 Agent 选原生工具的比例（目标 ≥ 0.9）。
+
+const ADHERENCE_FIXTURE = new URL('../fixtures/native-first-wording.json', import.meta.url);
+// 1×1 PNG（纯色），vision 用例的图片块。
+const TINY_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+const ADHERENCE_TASKS = {
+  web: '请联网搜索并告诉我 Node.js 目前的 LTS 版本号，引用来源。',
+  vision: '这张图片是什么颜色？一句话回答。',
+};
+
+export function loadAdherenceWording(agentId) {
+  const fixture = JSON.parse(fs.readFileSync(ADHERENCE_FIXTURE, 'utf8'));
+  const wording = fixture.agents[agentId];
+  if (!wording) throw new Error(`fixtures/native-first-wording.json 没有「${agentId}」的措辞`);
+  return { serverName: fixture.serverName, wording };
+}
+
+/** 一次运行的选择：native / injected / both / none（MCP 以服务端实际收到的调用为准）。 */
+export function classifyAdherence(caseId, toolCalls, mcpCalls) {
+  const injectedNames = new Set(['web_search', 'web_fetch', 'understand_image']);
+  const isInjected = (t) => injectedNames.has(String(t.name ?? '')) ||
+    [...injectedNames].some((name) => `${t.title ?? ''} ${JSON.stringify(t.rawInput ?? '')}`.includes(name));
+  const nativeTools = toolCalls.filter((t) => !isInjected(t) && (caseId === 'web'
+    ? t.kind === 'search' || t.kind === 'fetch' || /web|fetch|search|browse/i.test(t.title ?? '')
+    : t.kind === 'read' || /image|read|view/i.test(t.title ?? '')));
+  // vision：模型直接看图回答（不调任何工具）也算原生。
+  const nativeAnswer = caseId === 'vision' && toolCalls.length === 0;
+  const native = nativeTools.length > 0 || nativeAnswer;
+  return {
+    choice: native && !mcpCalls ? 'native' : mcpCalls && !native ? 'injected' : mcpCalls && native ? 'both' : 'none',
+    nativeTools: nativeTools.map((t) => ({ title: t.title, kind: t.kind })),
+  };
+}
+
+export async function adherence(ctx) {
+  const runs = ctx.opts.runs ?? 5;
+  const { serverName, wording } = loadAdherenceWording(ctx.agent.id);
+  const metaAppend = wording.instructionMode === 'meta-append';
+  const acceptsImages = ctx.agentCaps().promptCapabilities?.image === true;
+  const cases = {};
+  for (const [caseId, testCase] of Object.entries(wording.cases)) {
+    if (caseId === 'vision' && !acceptsImages) {
+      cases[caseId] = { skipped: 'Agent 未声明 promptCapabilities.image' };
+      continue;
+    }
+    const server = await startMcpServer({
+      name: serverName,
+      tools: testCase.tools.map((tool) => ({
+        ...tool,
+        handler: () => `ADHERENCE-STUB ${tool.name}: 注入工具的占位结果（真机遵守度测试）。`,
+      })),
+    });
+    registerSecret(server.token);
+    const policy = `<tool_policy>\n${testCase.policy}\n</tool_policy>`;
+    const results = [];
+    try {
+      for (let i = 0; i < runs; i += 1) {
+        server.reset();
+        const rec = { run: i + 1 };
+        try {
+          const s = await ctx.newSession({
+            mcpServers: [server.acpServer],
+            ...(metaAppend ? { meta: { systemPrompt: { append: policy } } } : {}),
+          });
+          const task = ADHERENCE_TASKS[caseId];
+          const text = metaAppend ? task : `${policy}\n\n${task}`;
+          const blocks = caseId === 'vision'
+            ? [{ type: 'text', text }, { type: 'image', data: TINY_PNG, mimeType: 'image/png' }]
+            : undefined;
+          const r = await ctx.prompt(s.sessionId, text, { policy: 'allow_once', step: 'adherence', blocks });
+          const sum = summarizeUpdates(r.updates);
+          const mcpCalls = server.toolCalls.length;
+          const verdict = classifyAdherence(caseId, sum.toolCalls, mcpCalls);
+          rec.ms = r.ms;
+          rec.error = r.error;
+          rec.mcpCalls = server.toolCalls.map((c) => c.name);
+          rec.nativeToolCalls = verdict.nativeTools;
+          rec.allTools = sum.toolCalls.map((t) => ({ title: t.title, kind: t.kind }));
+          rec.choice = r.error ? 'error' : verdict.choice;
+          rec.mcpListed = server.summary().toolsListed;
+          rec.textHead = sum.text.slice(0, 160);
+        } catch (e) {
+          rec.error = errInfo(e);
+          rec.choice = 'error';
+        }
+        results.push(rec);
+        ctx.log(`adherence ${caseId} ${i + 1}/${runs}: ${rec.choice}`);
+      }
+    } finally {
+      await server.close();
+    }
+    const count = (c) => results.filter((r) => r.choice === c).length;
+    cases[caseId] = {
+      runs,
+      native: count('native'),
+      injected: count('injected'),
+      both: count('both'),
+      none: count('none'),
+      error: count('error'),
+      nativeFirstRatio: count('native') / runs,
+      pass: count('native') / runs >= 0.9,
+      results,
+    };
+  }
+  return {
+    keepTrace: ctx.opts.traceAll === true,
+    data: {
+      fixture: 'fixtures/native-first-wording.json',
+      catalogId: wording.catalogId,
+      instructionMode: wording.instructionMode,
+      nativeCapabilities: wording.nativeCapabilities,
+      target: '>= 0.9',
+      classificationNote: '启发式：web 按 tool_call 的 kind(search/fetch)/title 判断原生；vision 不调工具直接作答也算原生；注入以 MCP 服务端收到的调用为准。请人工复核 results[].allTools。',
+      cases,
+    },
+  };
+}
+
 export async function resume(ctx) {
   const caps = ctx.agentCaps();
   const s = await ctx.newSession();
@@ -541,4 +665,4 @@ export async function resume(ctx) {
   return { data };
 }
 
-export const STEPS = { initialize, auth, session, prompt, steer, cancel, permission, mcp, modes, complete, native, resume };
+export const STEPS = { initialize, auth, session, prompt, steer, cancel, permission, mcp, modes, complete, native, resume, adherence };
