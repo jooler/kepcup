@@ -167,10 +167,11 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 
 - 撤回：`status = 'recalled'`，清空正文，从 `messages_fts` 删除；Bot 不可见。
 - 编辑：更新正文与 `edited_at`，`status = 'edited'`，同步更新 `messages_fts`。
-- 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId? }`。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
+- 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, deliveries? }`（`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
 - 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
 - 任务卡（D75 W3）：共享的 `card` 行，`content_json = { cardType: 'task', runId: <任务 id> }`，`task_id` = 任务；`start_task` 与失败任务的重试各写一张。上下文中渲染为一行状态（[design/30](../design/30-supervisor-and-tasks.md) §4.3）。
-- 任务问题卡（`ask_user`）：共享的 `system_event` 行，`event = 'task_question'`，`content_json` 带 `text`（问题）、`options`，回答后写入 `answer`；`task_id` 与 `run_id` = 任务。
+- 任务问题卡（`ask_user`）：共享的 `system_event` 行，`event = 'task_question'`，`content_json` 带 `text`（问题）、`options`、`taskBotId`（提问任务所属的 Bot；上下文渲染为「Bot（任务 t）向用户提问」并包 `<untrusted>`），回答后写入 `answer`（超时为「（超时未回答）」，提问失败作废为「（提问没有成功，问题作废）」）；`task_id` 与 `run_id` = 任务。
+- 结果放弃提示：共享的 `system_event` 行，`event = 'task_result_undelivered'`，`task_id` / `run_id` = 任务；用户可见，Bot 上下文渲染为固定文案（不含任务标题）。
 - `MessagesService` 的读法（D75 W1-B）：`listForBot(conversationId, botId)`（共享行 + 该 Bot 的私有行，Bot 上下文）、`listShared`（只共享行：任务的对话层、摘要）、`search(…, viewerBotId)`（FTS join `messages` 按 owner 过滤）、`around`（前后各 N 条可见行）、`unsummarized`（只摘共享行）、`countVisibleAfter`（未读只数用户可见行）；`terminalTaskEvent(taskId)` / `taskEvents(taskId)` 只查 `kind = 'task_event'`。私有行推进对话的 `last_seq`，不推进 `last_message_at`。
 - 0018 重建方式：`messages` 被 `attachments.message_id`（`ON DELETE CASCADE`）引用，迁移又在 `foreign_keys=ON` 的事务内执行，直接 `DROP TABLE messages` 会级联删光附件；因此 `attachments` 一并重建（先建两张新表并复制，先删旧 `attachments` 再删旧 `messages`，再改名——外键开启时改名会同步改写引用）。表结构与本节 / 下节一致。
 
@@ -359,11 +360,13 @@ CREATE TABLE run_changes (
   conversation_id TEXT,
   before_oid      TEXT NOT NULL,          -- 影子仓库中的提交
   after_oid       TEXT,
-  files_json      TEXT,                   -- [{ path, change: 'added'|'modified'|'deleted' }]
+  files_json      TEXT,                   -- [{ path, change: 'added'|'modified'|'deleted', beforeOid?, afterOid?, interleaved? }]
   reverted_at     INTEGER,
   created_at      INTEGER NOT NULL
 );
 ```
+
+- 一个 run 多次持有租约（D75 审查批 E：被强制收回后不钉住的执行再次写入）时记录**累积**：`before_oid` 是第一个窗口前、`after_oid` 是最后一个窗口后；跨窗口的文件带各自的 `beforeOid`（run 第一次改它之前）/ `afterOid`（run 最后一次改它之后），净改动按两端内容重算；别人在 run 的两个窗口之间改过的文件标 `interleaved`，回退时按冲突处理。回退按文件恢复 `beforeOid ?? before_oid`、冲突检测比对 `afterOid ?? after_oid`；diff 按文件取各自区间。重新记录已回退的 run 时清空 `reverted_at`。
 
 ### chains（P05）
 
@@ -602,7 +605,7 @@ CREATE INDEX runs_by_conv_loop_status ON runs(conversation_id, loop_type, status
 ```
 
 - 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
-- 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
+- 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录（吸收了 @ 连锁批时一并写 `chain_id` / `chain_depth`，审查批 E）。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 
 ### run_steps（P01）
