@@ -97,6 +97,11 @@ export interface TaskRunControl {
    */
   steerRefused(text: string): void;
   /**
+   * The engine run took a steered inject in (its `steer` event): the entry
+   * stays `delivered` and a later refusal of the same text no longer finds it.
+   */
+  steerConfirmed(text: string): void;
+  /**
    * Why the launched task is still `queued` (waiting for its write lease / a
    * provider slot); null once it runs. Shown as the queue reason (§3.1).
    */
@@ -161,6 +166,15 @@ export interface TaskHostDeps {
   releaseExecution(runId: string): void;
   /** A visible message sent on behalf of a run (forward_task_result): output + push. */
   recordVisibleMessage(runId: string, message: Message): void;
+  /**
+   * The engine slot a task occupies beyond the task caps (design 30 §8.5:
+   * task concurrency = min(TASK_CONCURRENCY_*, `agent:{id}` concurrency)):
+   * an external-agent task takes `{ key: 'agent:{id}', limit }`; null = no
+   * engine cap (built-in tasks share the provider with replies, the
+   * scheduler reserves a slot for them). Tasks over the limit stay submitted
+   * — no write lease, no task slot — instead of launching to wait.
+   */
+  launchSlot?(task: Run): { key: string; limit: number } | null;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -173,6 +187,8 @@ interface LaunchedTask {
   conversationId: string;
   writes: boolean;
   workdir: string | null;
+  /** The engine slot key (`launchSlot`), null = none. */
+  slotKey: string | null;
   launchedAt: number;
   attachedAt: number | null;
   /**
@@ -190,11 +206,24 @@ interface LaunchedTask {
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
   buffered: Array<{ text: string; entryId: string }>;
-  /** Injects the engine run accepted (`steer()` true): an async refusal finds its entry here. */
+  /**
+   * Injects the engine run accepted (`steer()` true) but has not confirmed
+   * yet, oldest first: an async refusal or a confirmation takes the oldest
+   * entry with its text (FIFO).
+   */
   steered: Array<{ text: string; entryId: string }>;
+  /** Confirmations that arrived before their entry was noted (engines confirming inside `steer()`). */
+  confirmedEarly: string[];
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
+
+/** Records an accepted steer awaiting its confirmation (unless it was confirmed already). */
+function noteSteered(launched: LaunchedTask, item: { text: string; entryId: string }): void {
+  const early = launched.confirmedEarly.indexOf(item.text);
+  if (early !== -1) launched.confirmedEarly.splice(early, 1);
+  else launched.steered.push(item);
+}
 
 export function isTerminalStatus(status: RunStatus): boolean {
   return (
@@ -322,6 +351,12 @@ export class TaskHost implements TaskToolFacade {
   readonly #deps: TaskHostDeps;
   readonly #limits: TaskHostLimits;
   readonly #launched = new Map<string, LaunchedTask>();
+  /**
+   * Executions the reaper evicted (settled but never came back) that have not
+   * called `finish()` yet: their engine run — an external agent session —
+   * may still be busy (审查 L5).
+   */
+  readonly #evicted = new Set<string>();
   /** Delivered terminal entries waiting for a consuming turn (sweep skips them). */
   readonly #pendingConsumption = new Map<string, number>();
   /**
@@ -460,7 +495,7 @@ export class TaskHost implements TaskToolFacade {
     if (buffer && launched !== undefined) launched.buffered.push({ text: steerText(), entryId: entry.id });
     // An engine that refuses asynchronously (external agents) reports back by text.
     if (steered !== null && launched !== undefined) {
-      launched.steered.push({ text: steered, entryId: entry.id });
+      noteSteered(launched, { text: steered, entryId: entry.id });
     }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     return { delivery };
@@ -879,6 +914,7 @@ export class TaskHost implements TaskToolFacade {
         if (now - launched.settledAt > TASK_SETTLE_SWEEP_MS) {
           this.#deps.logger.warn({ taskId: launched.taskId }, 'evicting a stuck task execution');
           this.#launched.delete(launched.taskId);
+          this.#evicted.add(launched.taskId);
           this.#safely(() => this.#deps.releaseExecution(launched.taskId));
         }
         continue;
@@ -909,10 +945,11 @@ export class TaskHost implements TaskToolFacade {
   /**
    * Whether an execution of the task is still live (launched and not yet
    * finished — its engine run may still hold resources, e.g. an external
-   * agent session, design 30 §8.5).
+   * agent session, design 30 §8.5). An execution the reaper evicted counts
+   * until it really finishes: its slot and lease are freed, its session is not.
    */
   isExecuting(taskId: string): boolean {
-    return this.#launched.has(taskId);
+    return this.#launched.has(taskId) || this.#evicted.has(taskId);
   }
 
   // --- lifecycle --------------------------------------------------------------
@@ -1052,7 +1089,31 @@ export class TaskHost implements TaskToolFacade {
         }
       }
     }
+    const slot = this.#launchSlot(task);
+    if (slot !== null) {
+      let onSlot = 0;
+      for (const launched of this.#launched.values()) {
+        if (launched.slotKey === slot.key) onSlot += 1;
+      }
+      if (onSlot >= slot.limit) {
+        return `等智能体并发额度（${slot.key} ${onSlot}/${slot.limit}）`;
+      }
+    }
     return null;
+  }
+
+  #launchSlot(task: Run): { key: string; limit: number } | null {
+    const resolve = this.#deps.launchSlot;
+    if (resolve === undefined) return null;
+    try {
+      return resolve(task);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { taskId: task.id, error: error instanceof Error ? error.message : String(error) },
+        'task launch slot lookup failed',
+      );
+      return null;
+    }
   }
 
   #queueReason(task: Run): string | null {
@@ -1075,6 +1136,7 @@ export class TaskHost implements TaskToolFacade {
       conversationId: task.conversationId,
       writes: task.taskWrites === true,
       workdir: task.taskWorkdir,
+      slotKey: this.#launchSlot(task)?.key ?? null,
       launchedAt: this.#deps.clock.now(),
       attachedAt: null,
       settledAt: null,
@@ -1085,6 +1147,7 @@ export class TaskHost implements TaskToolFacade {
       briefBuilt: false,
       buffered: [],
       steered: [],
+      confirmedEarly: [],
     };
     this.#launched.set(task.id, launched);
     const control: TaskRunControl = {
@@ -1104,9 +1167,15 @@ export class TaskHost implements TaskToolFacade {
         if (index === -1) return;
         this.#injectsNotDelivered(launched.steered.splice(index, 1));
       },
+      steerConfirmed: (text) => {
+        const index = launched.steered.findIndex((item) => item.text === text);
+        if (index !== -1) launched.steered.splice(index, 1);
+        else launched.confirmedEarly.push(text);
+      },
       finish: () => {
         // Buffered injects that never reached an engine run.
         this.#injectsNotDelivered(launched.buffered.splice(0));
+        this.#evicted.delete(task.id);
         if (this.#launched.get(task.id) !== launched) return;
         this.#launched.delete(task.id);
         this.#pump();
@@ -1169,7 +1238,7 @@ export class TaskHost implements TaskToolFacade {
     launched.attachedAt = this.#deps.clock.now();
     const refused = launched.buffered.splice(0).filter((item) => {
       if (!handle.steer(item.text)) return true;
-      launched.steered.push(item);
+      noteSteered(launched, item);
       return false;
     });
     if (refused.length > 0) {
