@@ -248,6 +248,14 @@ describe('turn version of <platform_rules>', () => {
 
   it('task (default): the working rules stay', () => {
     const prompt = buildSystemPrompt(base);
+    // The final text is the task's result, not a chat message (D75 §2.2).
+    expect(prompt).toContain('作为任务结果交回给对话中的你');
+    expect(prompt).not.toContain('最终回复会自动作为一条聊天消息发出');
+    // D66 as revised: background branches live within this execution only.
+    expect(prompt).toContain('collect_delegate_results');
+    expect(prompt).toContain('本次执行结束时未取回的分支会被中止');
+    expect(prompt).not.toContain('自动送回对话');
+    expect(prompt).not.toContain('delegate_to_bot');
     expect(prompt).toContain('acquire_project_write');
     expect(prompt).toContain('沙箱状态：可用');
     expect(prompt).toContain('<recommended_skills>');
