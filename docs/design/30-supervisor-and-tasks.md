@@ -8,7 +8,7 @@
 
 本文把这两个角色拆开：**对话轮（supervisor turn）负责沟通与调度，任务（task）负责执行**。决策：D75。设计上这是对 D66（SubAgent）、D71（委派）、D72（外部引擎）三套机制的**归并与化简**，不是第四套机制。
 
-执行方案待编（`todo/supervisor-and-tasks.md`）。**尚未实现**。
+执行方案见 [todo/supervisor-and-tasks.md](../../todo/supervisor-and-tasks.md)。**实现中**。
 
 相关：D2（执行中注入，本文修订）、D5（群聊顺序响应，本文修订）、D29/D30（写入租约与检查点，本文扩展）、D37（授权有效期，本文收紧）、D48/D54/D55（Bot 发消息、中间说明、状态行）、D49/D67（中断与 durable，本文改适用对象）、D56（Loop 续接，本文修订）、D58（对话内设置）、D66（SubAgent，本文降级其定位）、D70/D71（管家与跨 Bot 委派，本文照搬其状态机与回贴范式）、D72（外部智能体引擎，本文化简其让渡面）、[01-conversation.md](01-conversation.md)「消息原则」（内部事务，本文扩展为按 Bot 归属的私有条目）。
 
@@ -20,7 +20,7 @@
   3. **串行的是对话轮，不是执行**。每个（Bot, 对话）同时最多一个对话轮（mailbox 不变，D2 的「执行中收到新消息」语义由「无条件注入当前 loop」改为「进入下一个对话轮，由 Bot 决定」）；任务在对话轮之外，受对话级与全局并发封顶。
   4. **路由决策是枚举化的工具调用**，不是自由文本：`start_task` / `inject_task` / `cancel_task` / `list_tasks`，宿主逐项校验归属与配额。「重新执行」= `cancel_task` + `start_task({continues_task_id})`，不设独立原语。
   5. **写互斥用租约，不用物理隔离**：同一 workdir 同时最多一个写任务（写租约扩到 workspace），只读任务不限并发。**git worktree 隔离明确不做**（§9.1 四条理由），任务模型只留 `workdir` 这一个口子，日后换隔离策略不动执行模型。
-  6. **可靠性的全部是「任务必有结算」**：任务先落盘再启动；终态与私有结果条目**同一事务**写入——结果条目本身就是持久化的结算通知；唤醒对话轮按 at-least-once 投递，对话轮终态时标记消费，启动对账 + reaper 补投未消费的结果（宁可重复一次，不可静默丢失）。拆分后最严重的用户可见故障不是慢，而是沉默——整个状态机围绕消除沉默设计。
+  6. **可靠性的全部是「任务必有结算」**：任务先落盘再启动；结果条目是结算的事实来源——**先写私有结果 / 失败条目（main.db），再写任务终态（runs.db）**，两库不能同一事务，靠「每任务至多一条终态条目」的唯一索引幂等 + 启动修复补齐；唤醒对话轮按 at-least-once 投递，对话轮终态时标记消费，启动对账 + reaper 补投未消费的结果（宁可重复一次，不可静默丢失）。拆分后最严重的用户可见故障不是慢，而是沉默——整个状态机围绕消除沉默设计。
   7. **消息所有权：进度直达，结果经对话轮转述**。任务的中间说明（过程叙事）直接进对话，带任务归属；任务的最终结果**不直接发给用户**，而是写入 Bot 的私有时间线（§2.4）并唤醒对话轮，由对话轮结合历史决定怎么告诉用户——转述、`forward_task_result` 原文转发，或连同下一步一起说。正式交付永远只从对话轮这一个出口出，不需要「不要复述」之类的补救指令。**对话轮被唤醒是宿主确定性判断**（§3.3）。
   8. **路由必须留痕**：`start_task` / `inject_task` / `cancel_task` 在对话中生成并重绘任务卡。无声路由是禁止的——用户发出的指令去了哪里，必须看得见。
   9. **对 D72 的化简**：**对话轮固定走内置引擎，外部 Agent 只作任务引擎**。`runtime.agent` 的语义从「Bot 的引擎」变为「Bot 的任务引擎」。人设 / 记忆 / 路由 / 审批 / 群聊 / 委派 / 提示词逐轮刷新不再让渡；「`delegate_task` 不提供」这条让渡消失（并行由宿主任务层提供，不依赖 Agent 自身支持）。无内置模型的用户按 §8.4 两级降级，并显式承认那是降级。
@@ -138,7 +138,7 @@
     对话轮 #2 结算。
 
 task A 的中间说明「先跑一遍现有测试，看看覆盖率」               → 可见消息（带任务归属，直达）
-task B 完成 → 私有时间线记「任务 B→你（结果）」（与终态同一事务）→ 唤醒对话轮
+task B 完成 → 私有时间线记「任务 B→你（结果）」（先于终态写入）→ 唤醒对话轮
   → 对话轮 #3（触发 = 这条结果条目）
       结合时间线：用户问的是「过期的地方」，结果列了 3 处
       forward_task_result(B) + 最终回复：「README 有 3 处过期，详情如上；要我顺手改掉吗？」
@@ -169,18 +169,19 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 
 | 条目 | 方向 | 写入时机 | 内容 |
 |---|---|---|---|
-| 交代（`brief`） | X → 任务 | `start_task` 写 `submitted` 行的同一事务 | 标题、`instruction`、`source_message_ids`、`writes`、`continues_task_id` |
+| 交代（`brief`） | X → 任务 | `start_task` 写 `submitted` 行之后、返回 task_id 之前（两库各自写，见 §3.2） | 标题、`instruction`、`source_message_ids`、`writes`、`continues_task_id` |
 | 追加（`inject`） | X → 任务 | `inject_task` | 文本、`source_message_ids`、`delivered` / `queued` |
 | 取消（`cancel`） | X → 任务 | `cancel_task` | 理由、已产生改动的摘要 |
 | 提问（`question`） | 任务 → X | 任务需要用户输入（提问、凭据、setup） | 问题、对应可见问题卡的消息 id |
-| 结果（`result`） | 任务 → X | 任务 `completed`，与终态**同一事务** | 最终结果全文（`skip_reply` 时为空） |
-| 失败（`failure`） | 任务 → X | 任务 `failed` / `cancelled` / `interrupted`，与终态同一事务 | 状态、错误、最后几步的摘要（`buildRunDigest`） |
+| 结果（`result`） | 任务 → X | 任务 `completed`，**先于**终态写入（§3.2） | 最终结果全文（`skip_reply` 时为空） |
+| 失败（`failure`） | 任务 → X | 任务 `failed` / `cancelled` / `interrupted`，先于终态写入 | 状态、错误、最后几步的摘要（`buildRunDigest`） |
 
 **不写入**：任务内部的工具调用与模型往返——那是过程，留在 `run_steps`，需要时经 `get_run` 查；任务的中间说明——它直达可见流（§6.1），本来就在时间线里。
 
 #### 2.4.2 数据模型
 
 - `messages` 增列 `owner_bot_id TEXT NULL`：`NULL` = 对话共享（现有全部行）；非空 = 仅该 Bot 可见。
+- `messages` 增列 `task_id TEXT NULL`（仅 `task_event` 填）：按任务查条目，并建唯一索引 `(task_id) WHERE kind='task_event' AND task_terminal=1`（或等价的表达式索引）保证**每个任务至多一条终态条目**（`result` / `failure`），供 §3.2 的幂等写入与启动修复使用。
 - `messages.kind` 增 `'task_event'`（表级 CHECK 需重建表，早期阶段可接受）。内容 `{ taskId, phase: 'brief'|'inject'|'cancel'|'question'|'result'|'failure', text, sourceMessageIds?, status?, error? }`，`sender_type='system'`。
 - 可见的任务进度消息：`textContentSchema` 增 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例落 `content_json`，免加列）。
 - **范围**：`owner_bot_id` 只用于 `task_event`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享、不迁移——它们多数影响群共享的 project / 环境，不是某个 Bot 的思考过程。
@@ -192,7 +193,7 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 | 用户（UI 列表、实时推送、未读数、会话预览） | `owner_bot_id IS NULL` 且非内部事务；`task_event` 一律不推送 `message.created` |
 | Bot X（上下文、触发、工具查询） | `owner_bot_id IS NULL OR owner_bot_id = X` |
 
-必须覆盖的读路径：上下文构建（`list` → `listForBot`）、`search_messages`（FTS 表加 `owner_bot_id` UNINDEXED 列，查询时过滤）、`get_messages_around`、外部 Agent 会话增量（`buildConversationDelta`）、群聊判断输入、反思输入、会话列表预览与未读数。**任何一处漏掉都是 Bot 间泄露**——群里 Y 用 `search_messages` 就能搜出 X 与任务的往返。因此加一组契约测试：构造多 Bot 群对话，断言每条私有条目在 owner 以外的所有视角、所有读路径下都不可见。
+必须覆盖的读路径：上下文构建（`list` → `listForBot`）、`search_messages`（FTS 查询 join `messages` 按 `owner_bot_id` 过滤，FTS 表结构不变）、`get_messages_around`、外部 Agent 会话增量（`buildConversationDelta`）、群聊判断输入、反思输入、会话列表预览与未读数。**任何一处漏掉都是 Bot 间泄露**——群里 Y 用 `search_messages` 就能搜出 X 与任务的往返。因此加一组契约测试：构造多 Bot 群对话，断言每条私有条目在 owner 以外的所有视角、所有读路径下都不可见。
 
 **对话滚动摘要只摘共享行**（`owner_bot_id IS NULL`）：摘要是对话级的一份、群里所有 Bot 共用，摘进私有条目就等于泄露。私有条目滑出最近窗口后，历史任务的事实由任务登记（`list_tasks` / `get_run`）与反思记忆承担（§12 第 3 点）。
 
@@ -251,22 +252,24 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 **不变量：每个进入终态的任务，其结果至少被对话轮消费一次；宁可重复一次，不可静默丢失。**
 
-拆分前「loop 结束 ⇒ 必有消息」是天然成立的，用户不可能被静默忽略。拆分后这个保证必须显式构造。私有时间线（§2.4）让构造变得简单：**结果条目本身就是持久化的通知**，不需要另一张通知表或「已通知」标记。
+拆分前「loop 结束 ⇒ 必有消息」是天然成立的，用户不可能被静默忽略。拆分后这个保证必须显式构造。私有时间线（§2.4）让构造变得简单：**结果条目本身就是持久化的通知**，也是结算的事实来源，不需要另一张通知表或「已通知」标记。
 
-- **写**：任务终态与私有 `result` / `failure` 条目在**同一事务**写入。不存在「终态已写、通知没落盘」的窗口。
+- **写**：`runs` 在 runs.db、`messages` 在 main.db，是两个 SQLite 文件，**不能同一事务**。次序固定为：**先写终态条目（`result` / `failure`，main.db），再写任务终态（runs.db）**。终态条目受「每任务至多一条」唯一索引约束，重复写入按冲突忽略（幂等）。
+- **修复**：启动时对每个非终态任务先查有无终态条目——**有**，按条目把任务行补成对应终态（`result` → `completed`，`failure` → 条目记录的状态），不是 `interrupted`；**没有**，才按 D49 标 `interrupted` 并补写 `failure` 条目。两步之间任意一处崩溃都收敛到一致状态。
 - **投**：事务提交后，把该条目作为触发批交给该（Bot, 对话）的 mailbox（`TriggerBatch.reason='task'`）。条目是一条真实消息，`mailbox.deliver` 对空批的直接返回不会吞掉它。对话轮运行中到达的条目进待投队列，release 时合并为下一轮的一个批——多个任务同时结算只唤醒一轮。
 - **消费**：触发批里含该条目的对话轮到达终态（含 `skip_reply` 与 `failed`）时，宿主写任务行的 `result_consumed_at`。
 - **对账**：启动时与 reaper 周期（`TASK_SETTLE_SWEEP_MS`）扫描「终态 AND `result_consumed_at IS NULL`」且应唤醒（§3.3）的任务，重新投递其结果条目。
 
 | 故障 | 处置 |
 |---|---|
-| 终态事务提交后、投递前崩溃 | 对账补投（条目已在库里） |
+| 写完终态条目、任务行未写终态时崩溃 | 启动修复按条目补齐任务终态，再走对账补投 |
+| 任务终态已写、投递前崩溃 | 对账补投（条目已在库里） |
 | 对话轮消费途中崩溃 | `result_consumed_at` 仍为空 → 对账补投；对话轮可能已说过一部分，重复一次可接受 |
 | 任务在对话轮运行期间结算 | 进待投队列，release 时排空（**不是**丢弃——今天 `#steerRunningRun` 已在处理同类问题：steer 落在 `agent_end` 之后会静默消失） |
-| 任务挂死（Agent 无响应、工具卡住） | reaper 扫描 `running` 超 `TASK_MAX_WALL_MS` → 强制 `failed`，同事务写 `failure` 条目 |
+| 任务挂死（Agent 无响应、工具卡住） | reaper 扫描 `running` 超 `TASK_MAX_WALL_MS` → 强制 `failed`，先写 `failure` 条目再写终态 |
 | 免打扰时段 | 任务结果**不停放**：任务由用户发起，交付结果不是主动消息（`deliverEventToBot` 的 quiet-hours 停放不适用） |
 
-实现次序固定为：**终态 + 结果条目同事务 → 投递 → 对话轮终态时标记消费**。语义是 at-least-once；重复消费时对话轮从时间线看得到自己已经转述过（上一条回复就在那里），通常只会得到「没有新话要说」。反过来（先标记再投递）会把丢失变成沉默，禁止。
+实现次序固定为：**终态条目（main.db）→ 任务终态（runs.db）→ 投递 → 对话轮终态时标记消费**。语义是 at-least-once；重复消费时对话轮从时间线看得到自己已经转述过（上一条回复就在那里），通常只会得到「没有新话要说」。反过来（先标记再投递）会把丢失变成沉默，禁止。
 
 ### 3.3 唤醒条件（宿主确定性判断，不是模型判断）
 
@@ -457,7 +460,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 启动恢复次序：
 
-1. `running` 的对话轮与任务 → `interrupted`；被中断的任务**同一事务**写 `failure` 条目（§3.2）；
+1. 非终态的对话轮 → `interrupted`；非终态的任务按 §3.2「修复」处理：已有终态条目的补齐为对应终态，没有的先写 `failure` 条目再标 `interrupted`；
 2. 释放写租约、取消挂起审批、撤销会话 token；
 3. `submitted` 的任务重新排队；
 4. 对账扫描「终态 AND `result_consumed_at IS NULL`」且应唤醒的任务，补投其结果 / 失败条目。
@@ -606,8 +609,8 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `agent_sessions`（main 迁移）+ `domain/agent-sessions.ts` + `mcp-bridge.ts` + `domain/lifecycle.ts` | 加 `task_id`、唯一索引与 `upsert` 冲突键含任务；`sessionKey` / 桥 token 按任务键（删除级联已逐行处理，§8.5） |
 | `packages/core/src/agent/context/continuation.ts` | 自动续接对对话轮关闭；`buildRunDigest` 改由 `start_task({continues_task_id})` 调用                                                                                                                            |
 | runs 迁移                                           | `loop_type` 枚举（`response` → `turn`，新增 `task`）+ §3.4 新列                                                                                                                                         |
-| main 迁移（`messages`） | 增 `owner_bot_id`；`kind` 增 `task_event`（重建表）；`messages_fts` 增 `owner_bot_id` UNINDEXED 列 |
-| `packages/core/src/domain/messages.ts` | `list` → `listForBot(conversationId, botId)`；`listVisible` / `search` / `around` / `unsummarized` / 预览与未读按视角过滤；新增 `appendTaskEvent`（可在外部事务内调用，供终态同事务写入） |
+| main 迁移（`messages`） | 增 `owner_bot_id`、`task_id` 与终态条目唯一索引；`kind` 增 `task_event`（重建表） |
+| `packages/core/src/domain/messages.ts` | `list` → `listForBot(conversationId, botId)`；`listVisible` / `search` / `around` / `unsummarized` / 预览与未读按视角过滤；新增 `appendTaskEvent`（终态条目按唯一索引冲突忽略，返回已存在的条目）、`terminalTaskEvent(taskId)`（启动修复用） |
 | `packages/core/src/agent/context/conversation.ts` | `renderMessageLine` 增 `task_event` 与 `origin: 'task'` 分支；任务行截断；触发段全文 |
 | `packages/core/src/tools/index.ts` | `search_messages` / `get_messages_around` 按 Bot 视角；对话轮新增 `forward_task_result` |
 | `packages/core/src/agent/loops/conversation-summary.ts` | 只摘共享行 |
@@ -622,7 +625,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 
 | 阶段           | 内容                                                                       | 为什么在这个位置                 |
 | ------------ | ------------------------------------------------------------------------ | ------------------------ |
-| **T1 地基**    | `runs` 迁移、`messages` 迁移（`owner_bot_id` / `task_event`）、任务状态机、`submitted` 先落盘、终态 + 结果条目同事务、`result_consumed_at` 消费标记、启动对账、reaper | 可靠性先行：先保证「任务必有结算」，再谈谁来决策 |
+| **T1 地基**    | `runs` 迁移、`messages` 迁移（`owner_bot_id` / `task_event`）、任务状态机、`submitted` 先落盘、终态条目先写 + 唯一索引幂等 + 启动修复、`result_consumed_at` 消费标记、启动对账、reaper | 可靠性先行：先保证「任务必有结算」，再谈谁来决策 |
 | **T2 对话轮**   | `loop_type='turn'`、精简提示词、只读工具面（执行期校验）、`<tasks>` 段、四个任务管理工具 + `forward_task_result`；**按 Bot 视角的统一读法 + 多 Bot 泄露契约测试**、`task_event` 渲染、任务简报带原文（私有时间线约 +0.5–1 周，分摊在 T1/T2） | 有了地基才有可派的任务 |
 | **T3 写互斥**   | 租约扩到 workspace、并发封顶、网关对只读任务硬拒写                                           | 并行开闸前必须先有互斥              |
 | **T4 消息与界面** | 任务进度的归属标记与截断渲染、结果转述链路与条件唤醒、问题卡直注任务、任务卡 + `task.updated` 事件、状态行改造 | 用户可见面，依赖 T1–T3 的状态 |
