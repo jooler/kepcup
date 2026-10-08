@@ -535,14 +535,23 @@ describe('group conversations', () => {
     await waitForBotRun(core, conv.id, a.id, 'completed');
 
     // B runs once: reads an out-of-workspace path -> approval -> approved for
-    // the conversation (grant), then finishes.
+    // the conversation (grant), then finishes. D75 审查 M4: access approvals
+    // are a task's (a turn fails fast), so B's turn starts a task for it.
     const outsideDir = mkdtempSync(path.join(tmpdir(), 'group-outside-'));
     const outsideFile = path.join(outsideDir, 'secret.txt');
     writeFileSync(outsideFile, '机密内容');
-    llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('read', { path: outsideFile }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('读到了'),
-    ]);
+    const isB = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿乙');
+    llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().expect(isB).replyToolCall('read', { path: outsideFile }),
+          step().expect(isB).replyText('读到了'),
+        ],
+        writes: false,
+        relay: 'B-RELAY 读到了',
+      }).map((s) => s.expect(isB)),
+    );
     await sendDrafts(core, conv.id, [{ text: '读一下那个文件', mentions: [b.id] }]);
     await waitForEvent(core, 'approval.created', (p) => p.approval.botId === b.id);
     const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
@@ -551,7 +560,7 @@ describe('group conversations', () => {
     const pending = approvals.approvals.find((x) => x.status === 'pending');
     expect(pending).toBeTruthy();
     await core.rpc.call('approvals.decide', { id: pending!.id, approve: true, duration: 'conversation' });
-    await waitForBotRun(core, conv.id, b.id, 'completed');
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'B-RELAY 读到了');
 
     const workspaceDir = path.join(paths.home, 'bots', b.id, 'workspaces', conv.id);
     expect(existsSync(workspaceDir)).toBe(true);
@@ -563,10 +572,16 @@ describe('group conversations', () => {
     // Second run leaves a pending approval behind when the member is removed.
     const outsideFile2 = path.join(outsideDir, 'another.txt');
     writeFileSync(outsideFile2, '其他内容');
-    llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('read', { path: outsideFile2 }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('不会走到这里'),
-    ]);
+    llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().expect(isB).replyToolCall('read', { path: outsideFile2 }),
+          step().expect(isB).replyText('不会走到这里'),
+        ],
+        writes: false,
+      }).map((s) => s.expect(isB)),
+    );
     await sendDrafts(core, conv.id, [{ text: '再读一个文件', mentions: [b.id] }]);
     await waitForEvent(
       core,
@@ -603,7 +618,8 @@ describe('group conversations', () => {
       async () => {
         const runs = await botRuns(core, conv.id, b.id);
         const newest = runs[0];
-        return newest && newest.status === 'completed' && runs.length >= 3 ? newest : null;
+        // B's turns so far: start task 1, relay its result, start task 2.
+        return newest && newest.status === 'completed' && runs.length >= 4 ? newest : null;
       },
       { label: 'search run completed' },
     );

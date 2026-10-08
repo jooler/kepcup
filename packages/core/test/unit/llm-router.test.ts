@@ -402,6 +402,25 @@ describe('triageOneBot through the router (P6)', () => {
     );
   });
 
+  it('the timeout counts from submission: a triage queued behind busy slots fails open and leaves the queue (审查 M6)', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn();
+    const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
+    const { input } = triageDeps(r);
+    // The agent's slots are all busy (long tasks): the job never starts.
+    const queued: Array<{ key: string }> = [];
+    const cancelQueued = vi.fn((key: string) => queued.some((job) => job.key === key));
+    const scheduler = {
+      submit: vi.fn((job: { key: string }) => void queued.push(job)),
+      cancelQueued,
+    };
+    const pending = triageOneBot({ ...input, scheduler: scheduler as never });
+    await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS + 1);
+    expect(await pending).toEqual({ botId: 'bot_1', decision: 'no_action', confidence: 0 });
+    expect(cancelQueued).toHaveBeenCalledWith(queued[0]!.key);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it('a slow agent times out into no_action', async () => {
     const agentEngine = {
       startRun: vi.fn(),
