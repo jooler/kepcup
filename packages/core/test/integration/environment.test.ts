@@ -14,6 +14,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createTestStack,
+  isTaskRequest,
   listAllMessages,
   listMessages,
   makeBot,
@@ -25,6 +26,8 @@ import {
   waitForEvent,
   waitForMessage,
   waitForRun,
+  type MockChatRequest,
+  type MockLlmStep,
   type TestStack,
 } from '@kepcup/testkit';
 import type { Approval, EnvInstall, Run } from '@kepcup/shared';
@@ -130,14 +133,50 @@ async function pendingEnvironmentApproval(
   );
 }
 
+/**
+ * D75 W2: request_environment is a task's tool (installs change the host; a
+ * turn is read-only). The turn whose user text contains `marker` starts a task
+ * running `taskSteps`; the task's result wakes a turn that acknowledges it.
+ * The install outcome still arrives as an `event` turn.
+ */
+function envTask(marker: string, taskSteps: MockLlmStep[]): MockLlmStep[] {
+  const isMarkerTurn = (req: MockChatRequest) =>
+    req.lastUserText().includes(marker) && !req.lastUserText().includes('<trigger reason="task"');
+  return [
+    step()
+      .inTurn()
+      .expect(isMarkerTurn)
+      .replyToolCall('start_task', {
+        title: '装环境',
+        instruction: marker,
+        source_message_ids: [],
+        writes: true,
+      }),
+    step().inTurn().expect(isMarkerTurn).replyText('好的，我去申请'),
+    ...taskSteps.map((taskStep) => taskStep.inTask()),
+    step()
+      .inTurn()
+      .expect((req) => req.lastUserText().includes('<trigger reason="task"'))
+      .replyText('申请结果收到了'),
+  ];
+}
+
+const isEventTurn = (event: string) => (req: MockChatRequest) =>
+  !isTaskRequest(req) && req.lastUserText().includes(event);
+
+function waitForTask(core: TestStack['core'], conversationId: string) {
+  return waitForRun(core, conversationId, 'completed', { loopType: 'task', timeoutMs: 60_000 });
+}
+
 async function lastToolResult(
   core: TestStack['core'],
   conversationId: string,
 ): Promise<Record<string, unknown>> {
   const runs = (await core.rpc.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
   // created_at 同毫秒并列时 order by 不稳定；run id 是 ULID，字典序即时间序。
+  // D75 W2: the request_environment call runs in a task.
   const run = runs.runs
-    .filter((r) => r.loopType === 'turn' && r.triggerReason !== 'event')
+    .filter((r) => r.loopType === 'task')
     .sort((a, b) => (a.id < b.id ? 1 : -1))[0]!;
   const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
     steps: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -155,14 +194,16 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
 
     llm.script('mock-main', [
-      step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '构建需要' }),
-      step().replyText('已申请，等通知'),
-      step().replyText('装好了，继续干活'),
+      ...envTask('装一下 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '构建需要' }),
+        step().replyText('已申请，等通知'),
+      ]),
+      step().inTurn().expect(isEventTurn('environment_installed')).replyText('装好了，继续干活'),
     ]);
     await sendBatch(core, conv.id, ['装一下 fakeuv']);
 
     // 工具立即返回，不阻塞 run（任务书：提交后立即返回）。
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
     const submitted = await lastToolResult(core, conv.id);
     expect(submitted['ok']).toBe(true);
     expect(String(submitted['content'])).toContain('已提交');
@@ -228,12 +269,14 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
 
     llm.script('mock-main', [
-      step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '需要' }),
-      step().replyText('已申请'),
-      step().replyText('好的，失败了我知道了'),
+      ...envTask('装 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '需要' }),
+        step().replyText('已申请'),
+      ]),
+      step().inTurn().expect(isEventTurn('reason="event"')).replyText('好的，失败了我知道了'),
     ]);
     await sendBatch(core, conv.id, ['装 fakeuv']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
     const approval = await pendingEnvironmentApproval(core, conv.id);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
 
@@ -263,25 +306,19 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
 
     llm.script('mock-main', [
-      step()
-        .expect((req) => req.lastUserText().includes('装一下 fakeuv'))
-        .replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第一次' }),
-      step()
-        .expect((req) => req.lastUserText().includes('装一下 fakeuv'))
-        .replyText('第一次申请'),
+      ...envTask('装一下 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第一次' }),
+        step().replyText('第一次申请'),
+      ]),
       // event 触发的续跑（安装完成通知）。
-      step()
-        .expect((req) => req.lastUserText().includes('environment_installed'))
-        .replyText('装好了，继续干活'),
-      step()
-        .expect((req) => req.lastUserText().includes('再要一次 fakeuv'))
-        .replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第二次' }),
-      step()
-        .expect((req) => req.lastUserText().includes('再要一次 fakeuv'))
-        .replyText('第二次直接拿到'),
+      step().inTurn().expect(isEventTurn('environment_installed')).replyText('装好了，继续干活'),
+      ...envTask('再要一次 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第二次' }),
+        step().replyText('第二次直接拿到'),
+      ]),
     ]);
     await sendBatch(core, conv.id, ['装一下 fakeuv']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
     const approval = await pendingEnvironmentApproval(core, conv.id);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
     await installOf(core, FAKE_ITEM);
@@ -302,13 +339,13 @@ describe('environment manager (P06)', () => {
           runs: Run[];
         };
         const mine = runs.runs
-          .filter((r) => r.loopType === 'turn' && r.triggerReason !== 'event')
+          .filter((r) => r.loopType === 'task')
           .sort((a, b) => (a.id < b.id ? 1 : -1));
         return mine.length >= 2 && ['completed', 'failed'].includes(mine[0]!.status)
           ? mine[0]
           : null;
       },
-      { label: 'second run terminal', timeoutMs: 60_000 },
+      { label: 'second task terminal', timeoutMs: 60_000 },
     );
     const second = await lastToolResult(core, conv.id);
     expect(second['ok']).toBe(true);
@@ -331,15 +368,18 @@ describe('environment manager (P06)', () => {
       const bot = await makeBot(core, '小知');
       const conv = await openDirect(core, bot.id);
 
-      llm.script('mock-main', [
-        step().replyToolCall('request_environment', {
-          item: 'definitely-not-a-tool',
-          reason: '试试',
-        }),
-        step().replyText('好吧'),
-      ]);
+      llm.script(
+        'mock-main',
+        envTask('装个不存在的', [
+          step().replyToolCall('request_environment', {
+            item: 'definitely-not-a-tool',
+            reason: '试试',
+          }),
+          step().replyText('好吧'),
+        ]),
+      );
       await sendBatch(core, conv.id, ['装个不存在的']);
-      await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+      await waitForTask(core, conv.id);
       const result = await lastToolResult(core, conv.id);
       expect(result['ok']).toBe(false);
       expect(result['errorCode']).toBe('ENV_ITEM_UNKNOWN');
@@ -363,12 +403,14 @@ describe('environment manager (P06)', () => {
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
 
     llm.script('mock-main', [
-      step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '无人值守' }),
-      step().replyText('已自动提交'),
-      step().replyText('无人值守装好了'),
+      ...envTask('装 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '无人值守' }),
+        step().replyText('已自动提交'),
+      ]),
+      step().inTurn().expect(isEventTurn('reason="event"')).replyText('无人值守装好了'),
     ]);
     await sendBatch(core, conv.id, ['装 fakeuv']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
 
     // 不做任何人工决定，安装照样完成。
     const install = await installOf(core, FAKE_ITEM);
@@ -390,12 +432,14 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
 
     llm.script('mock-main', [
-      step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '申请后立刻结束' }),
-      step().replyText('先走了'),
-      step().replyText('回来了'),
+      ...envTask('装 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '申请后立刻结束' }),
+        step().replyText('先走了'),
+      ]),
+      step().inTurn().expect(isEventTurn('reason="event"')).replyText('回来了'),
     ]);
     await sendBatch(core, conv.id, ['装 fakeuv']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
 
     // run 已结束，审批仍然 pending（非阻塞路径；run 终态不取消 environment 审批）。
     const approval = await pendingEnvironmentApproval(core, conv.id);
@@ -631,18 +675,14 @@ describe('environment manager (P06)', () => {
     const bot = await makeBot(core, '小拒');
     const conv = await openDirect(core, bot.id);
     llm.script('mock-main', [
-      step()
-        .expect((req) => req.lastUserText().includes('装一下 fakeuv'))
-        .replyToolCall('request_environment', { item: FAKE_ITEM, reason: '会被拒' }),
-      step()
-        .expect((req) => req.lastUserText().includes('装一下 fakeuv'))
-        .replyText('已申请'),
-      step()
-        .expect((req) => req.lastUserText().includes('environment_install_denied'))
-        .replyText('知道了，不装了'),
+      ...envTask('装一下 fakeuv', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '会被拒' }),
+        step().replyText('已申请'),
+      ]),
+      step().inTurn().expect(isEventTurn('environment_install_denied')).replyText('知道了，不装了'),
     ]);
     await sendBatch(core, conv.id, ['装一下 fakeuv']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
     const approval = await pendingEnvironmentApproval(core, conv.id);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: false });
 
@@ -666,21 +706,17 @@ describe('environment manager (P06)', () => {
     const bot = await makeBot(core, '小复');
     const conv = await openDirect(core, bot.id);
     llm.script('mock-main', [
-      step()
-        .expect((req) => req.lastUserText().includes('第一次'))
-        .replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第一次' }),
-      step()
-        .expect((req) => req.lastUserText().includes('第一次'))
-        .replyText('第一次申请'),
-      step()
-        .expect((req) => req.lastUserText().includes('第二次'))
-        .replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第二次' }),
-      step()
-        .expect((req) => req.lastUserText().includes('第二次'))
-        .replyText('第二次复用'),
+      ...envTask('第一次申请环境', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第一次' }),
+        step().replyText('第一次申请'),
+      ]),
+      ...envTask('第二次申请环境', [
+        step().replyToolCall('request_environment', { item: FAKE_ITEM, reason: '第二次' }),
+        step().replyText('第二次复用'),
+      ]),
     ]);
     await sendBatch(core, conv.id, ['第一次申请环境']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForTask(core, conv.id);
     const first = await pendingEnvironmentApproval(core, conv.id);
 
     // 首张卡未决定时再次申请：复用同一审批，不开新卡。
@@ -692,7 +728,7 @@ describe('environment manager (P06)', () => {
           runs: Run[];
         };
         const mine = runs.runs
-          .filter((r) => r.loopType === 'turn')
+          .filter((r) => r.loopType === 'task')
           .sort((a, b) => (a.id < b.id ? 1 : -1));
         return mine.length >= 2 && ['completed', 'failed'].includes(mine[0]!.status)
           ? mine[0]
