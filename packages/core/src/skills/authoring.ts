@@ -82,10 +82,7 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
   };
   const name = sanitizeSkillName(payload.name ?? '');
   if (name === null) {
-    deps.logger.warn(
-      { botId: job.bot_id, raw: payload.name },
-      'skill suggestion has no usable name',
-    );
+    deps.logger.warn({ botId: job.bot_id, raw: payload.name }, 'skill suggestion has no usable name');
     return;
   }
   // 导入的技能不可修改（design/05 修改规则）：同名导入技能存在时丢弃建议。
@@ -126,56 +123,56 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
   });
 
   const existingSkillPath = botSkillDir(deps.paths, job.bot_id, name);
-  const existingMarkdown = existsSync(path.join(existingSkillPath, 'SKILL.md'))
-    ? readFileSync(path.join(existingSkillPath, 'SKILL.md'), 'utf8')
-    : '';
+  const existingMarkdown =
+    existsSync(path.join(existingSkillPath, 'SKILL.md'))
+      ? readFileSync(path.join(existingSkillPath, 'SKILL.md'), 'utf8')
+      : '';
 
   const tools = buildAuthoringTools({
     paths: deps.paths,
     sandbox: deps.sandbox,
     draftsDir,
   });
-  const handle: RunHandle = route.engine.startRun(
-    backgroundRunSpec(route, {
-      identity: {
-        runId: run.id,
-        botId: job.bot_id,
-        conversationId: triggerConversationId,
-        loopType: 'skill_authoring',
+  // P6：外部 Agent 路由时补上后台精简会话参数（backgroundRunSpec）。
+  const handle: RunHandle = route.engine.startRun(backgroundRunSpec(route, {
+    identity: {
+      runId: run.id,
+      botId: job.bot_id,
+      conversationId: triggerConversationId,
+      loopType: 'skill_authoring',
+    },
+    model: modelRef,
+    buildSystemPrompt: async () => AUTHORING_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        timestamp: Date.now(),
+        content: [
+          `<task>把下面这件事整理成一个可复用的技能，写入草稿目录 ${draftsDir}。</task>`,
+          `<suggestion><name>${name}</name><description>${escapeXml(description || reason)}</description><reason>${escapeXml(reason)}</reason></suggestion>`,
+          existingMarkdown.length > 0
+            ? `<existing_skill><untrusted>\n${existingMarkdown}\n</untrusted></existing_skill>\n这是该技能的当前版本；产出改进后的完整新版本（不要只给增量）。`
+            : '',
+          responseRunId !== null
+            ? `<execution_steps><untrusted>\n${executionStepsSummary(deps.runs, responseRunId) || '（执行记录已清理）'}\n</untrusted></execution_steps>`
+            : '',
+          [
+            '要求：',
+            `- 技能目录名必须是 ${name}，SKILL.md 放在 ${draftsDir}/SKILL.md。`,
+            '- frontmatter 只需 name 与 description（description 一句话说清何时使用，≤1024 字符）。',
+            '- 正文是给模型看的使用说明；可以有 scripts/ 脚本（bash/python/node）与可选的 tests/ 目录。',
+            `- 有 tests/ 目录时，在 frontmatter 写 test 字段（一条可在草稿目录运行的命令，例如 test: bash tests/run.sh），测试必须能通过。`,
+            '- 脚本保持简单自包含，不访问网络；不要引用宿主专有工具（mcp__、Task 等）。',
+            '写完所有文件后直接结束（不要额外解释）。',
+          ].join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
       },
-      model: modelRef,
-      buildSystemPrompt: async () => AUTHORING_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          timestamp: Date.now(),
-          content: [
-            `<task>把下面这件事整理成一个可复用的技能，写入草稿目录 ${draftsDir}。</task>`,
-            `<suggestion><name>${name}</name><description>${escapeXml(description || reason)}</description><reason>${escapeXml(reason)}</reason></suggestion>`,
-            existingMarkdown.length > 0
-              ? `<existing_skill><untrusted>\n${existingMarkdown}\n</untrusted></existing_skill>\n这是该技能的当前版本；产出改进后的完整新版本（不要只给增量）。`
-              : '',
-            responseRunId !== null
-              ? `<execution_steps><untrusted>\n${executionStepsSummary(deps.runs, responseRunId) || '（执行记录已清理）'}\n</untrusted></execution_steps>`
-              : '',
-            [
-              '要求：',
-              `- 技能目录名必须是 ${name}，SKILL.md 放在 ${draftsDir}/SKILL.md。`,
-              '- frontmatter 只需 name 与 description（description 一句话说清何时使用，≤1024 字符）。',
-              '- 正文是给模型看的使用说明；可以有 scripts/ 脚本（bash/python/node）与可选的 tests/ 目录。',
-              `- 有 tests/ 目录时，在 frontmatter 写 test 字段（一条可在草稿目录运行的命令，例如 test: bash tests/run.sh），测试必须能通过。`,
-              '- 脚本保持简单自包含，不访问网络；不要引用宿主专有工具（mcp__、Task 等）。',
-              '写完所有文件后直接结束（不要额外解释）。',
-            ].join('\n'),
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      ],
-      tools,
-      limits: { maxTurns: RUN_MAX_TURNS },
-    }),
-  );
+    ],
+    tools,
+    limits: { maxTurns: RUN_MAX_TURNS },
+  }));
   persistSteps(run.id, handle, deps.runs, deps.secrets);
 
   let outcome;
@@ -259,10 +256,7 @@ export async function validateDraft(input: {
 }): Promise<DraftVerdict> {
   const parsed = parseSkillDir(input.draftsDir);
   if (parsed === null) {
-    return {
-      ok: false,
-      reason: '草稿缺少可识别的 SKILL.md（frontmatter 需要 name 与 description）',
-    };
+    return { ok: false, reason: '草稿缺少可识别的 SKILL.md（frontmatter 需要 name 与 description）' };
   }
   if (parsed.name !== input.name) {
     return {
@@ -276,20 +270,14 @@ export async function validateDraft(input: {
 
   const availability = await input.sandbox.probe();
   if (!availability.available) {
-    return {
-      ok: false,
-      reason: `沙箱不可用（${availability.reason ?? '未知原因'}），无法安全验证草稿`,
-    };
+    return { ok: false, reason: `沙箱不可用（${availability.reason ?? '未知原因'}），无法安全验证草稿` };
   }
 
   const checks: Array<{ command: string; label: string }> = [];
   for (const file of listFilesRecursive(input.draftsDir)) {
     const rel = path.relative(input.draftsDir, file);
     if (rel.endsWith('.py')) {
-      checks.push({
-        command: `python3 -m py_compile ${shQuote(rel)}`,
-        label: `Python 语法检查：${rel}`,
-      });
+      checks.push({ command: `python3 -m py_compile ${shQuote(rel)}`, label: `Python 语法检查：${rel}` });
     } else if (/\.(mjs|cjs|js)$/.test(rel)) {
       checks.push({ command: `node --check ${shQuote(rel)}`, label: `Node 语法检查：${rel}` });
     } else if (/\.(sh|bash)$/.test(rel)) {
@@ -344,10 +332,7 @@ async function runInSandbox(
     }),
     timeoutMs: 120_000,
   });
-  const detail = [result.stdout, result.stderr]
-    .filter((s) => s.length > 0)
-    .join('\n')
-    .trim();
+  const detail = [result.stdout, result.stderr].filter((s) => s.length > 0).join('\n').trim();
   return { ok: result.exitCode === 0, detail: detail.slice(0, 500) };
 }
 
@@ -376,16 +361,14 @@ function providerOf(modelRef: string): string {
 }
 
 function escapeXml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /** Persists engine events as redacted run steps (orchestrator pattern). */
-function persistSteps(
-  runId: string,
-  handle: RunHandle,
-  runs: RunsService,
-  secrets: SecretsService,
-): void {
+function persistSteps(runId: string, handle: RunHandle, runs: RunsService, secrets: SecretsService): void {
   handle.onEvent((event) => {
     try {
       persistStep(runId, runs, secrets, event);
