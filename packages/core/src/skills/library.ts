@@ -108,7 +108,7 @@ export class SkillImporter {
       runId: '',
       botId: request.botId,
       conversationId: request.conversationId,
-      loopType: 'response',
+      loopType: 'host',
     };
     const approval = this.#deps.approvals.submitNonBlocking(
       identity,

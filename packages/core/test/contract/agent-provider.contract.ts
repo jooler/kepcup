@@ -153,7 +153,7 @@ function runSpec(
       runId: 'run_contract',
       botId: 'bot_x',
       conversationId: 'conv_x',
-      loopType: 'response',
+      loopType: 'turn',
     },
     model: agentModelRef(entry.id, ''),
     buildSystemPrompt: async () => '<identity>契约测试 Bot</identity>',

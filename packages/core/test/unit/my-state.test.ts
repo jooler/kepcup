@@ -37,7 +37,7 @@ function run(overrides: Partial<Run> & { id: string }): Run {
   return {
     botId: 'bot_1',
     conversationId: 'conv_2',
-    loopType: 'response',
+    loopType: 'turn',
     status: 'running',
     triggerReason: 'direct',
     triggerMessageIds: ['msg_t1'],

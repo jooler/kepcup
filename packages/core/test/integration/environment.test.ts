@@ -137,7 +137,7 @@ async function lastToolResult(
   const runs = (await core.rpc.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
   // created_at 同毫秒并列时 order by 不稳定；run id 是 ULID，字典序即时间序。
   const run = runs.runs
-    .filter((r) => r.loopType === 'response' && r.triggerReason !== 'event')
+    .filter((r) => r.loopType === 'turn' && r.triggerReason !== 'event')
     .sort((a, b) => (a.id < b.id ? 1 : -1))[0]!;
   const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
     steps: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -302,7 +302,7 @@ describe('environment manager (P06)', () => {
           runs: Run[];
         };
         const mine = runs.runs
-          .filter((r) => r.loopType === 'response' && r.triggerReason !== 'event')
+          .filter((r) => r.loopType === 'turn' && r.triggerReason !== 'event')
           .sort((a, b) => (a.id < b.id ? 1 : -1));
         return mine.length >= 2 && ['completed', 'failed'].includes(mine[0]!.status)
           ? mine[0]
@@ -483,7 +483,7 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
     await core.services.environment!.request(
-      { runId: 'run_uvpy', botId: bot.id, conversationId: conv.id, loopType: 'response' },
+      { runId: 'run_uvpy', botId: bot.id, conversationId: conv.id, loopType: 'turn' },
       { item: 'fakepy', reason: '链式安装' },
     );
 
@@ -537,7 +537,7 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
     await core.services.environment!.request(
-      { runId: 'run_sys', botId: bot.id, conversationId: conv.id, loopType: 'response' },
+      { runId: 'run_sys', botId: bot.id, conversationId: conv.id, loopType: 'turn' },
       { item: 'fakegit', reason: '系统引导' },
     );
     await waitFor(
@@ -600,7 +600,7 @@ describe('environment manager (P06)', () => {
     const conv = await openDirect(core, bot.id);
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
     await core.services.environment!.request(
-      { runId: 'run_orphan', botId: bot.id, conversationId: conv.id, loopType: 'response' },
+      { runId: 'run_orphan', botId: bot.id, conversationId: conv.id, loopType: 'turn' },
       { item: 'orphanpy', reason: '前置失败' },
     );
     const install = await waitFor(
@@ -692,7 +692,7 @@ describe('environment manager (P06)', () => {
           runs: Run[];
         };
         const mine = runs.runs
-          .filter((r) => r.loopType === 'response')
+          .filter((r) => r.loopType === 'turn')
           .sort((a, b) => (a.id < b.id ? 1 : -1));
         return mine.length >= 2 && ['completed', 'failed'].includes(mine[0]!.status)
           ? mine[0]
@@ -748,7 +748,7 @@ describe('environment manager (P06)', () => {
     // 无人值守下经工具路径申请（自动批准 → 安装完成）。
     await core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
     await core.services.environment!.request(
-      { runId: 'run_seed', botId: bot.id, conversationId: conv.id, loopType: 'response' },
+      { runId: 'run_seed', botId: bot.id, conversationId: conv.id, loopType: 'turn' },
       { item: FAKE_ITEM, reason: 'seed' },
     );
     const install = await installOf(core, FAKE_ITEM);

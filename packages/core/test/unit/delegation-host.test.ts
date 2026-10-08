@@ -79,7 +79,7 @@ function makeRig() {
     runId,
     botId,
     conversationId,
-    loopType: 'response',
+    loopType: 'turn',
   });
   return {
     db,
@@ -280,7 +280,7 @@ describe('DelegationHost (D71)', () => {
       text: '完成了',
       runId: 'run_b1',
     });
-    const run = { id: 'run_b1', loopType: 'response', status: 'completed', error: null } as Run;
+    const run = { id: 'run_b1', loopType: 'turn', status: 'completed', error: null } as Run;
     rig.host.onRunSettled({ ...run, loopType: 'reflection' });
     expect(rig.delegations.getOrThrow(row!.id).status).toBe('working');
     rig.host.onRunSettled(run);

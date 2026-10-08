@@ -250,8 +250,8 @@ export async function listRuns(core: CoreHarness, conversationId: string): Promi
 }
 
 /**
- * Waits for a run in `status`. Defaults to RESPONSE runs: since P07 every
- * completed response also spawns a fast `reflection` run, and since P01 the
+ * Waits for a run in `status`. Defaults to supervisor TURNS (D75; formerly
+ * response runs): since P07 every completed turn also spawns a fast `reflection` run, and since P01 the
  * summary/triage loops create rows too — an unfiltered status match would be
  * satisfied by those instead of the run under test.
  */
@@ -261,7 +261,7 @@ export function waitForRun(
   status: Run['status'],
   options: { timeoutMs?: number; loopType?: Run['loopType'] } = {},
 ): Promise<Run> {
-  const loopType = options.loopType ?? 'response';
+  const loopType = options.loopType ?? 'turn';
   return waitFor(
     async () =>
       (await listRuns(core, conversationId)).find(

@@ -487,7 +487,7 @@ export class ProjectRuntime {
       runId: `revert_${newId('run').slice(4)}`,
       botId: null,
       conversationId: change.conversationId,
-      loopType: 'response',
+      loopType: 'host',
     };
     const holder = this.#deps.leases.holderOf(project.path);
     if (holder !== null) {
@@ -656,13 +656,13 @@ export class ProjectRuntime {
   }
 
   #assertNoActiveRuns(conversationId: string): void {
-    // P07 起：响应 run 之外还有后台反思 run（轻量模型、无工具、不触碰
-    // project）——只有响应 loop 应阻止切换/移除 project。D75：对话轮与任务
-    // 同理（任务可能正写 project）。
+    // P07 起：对话 run 之外还有后台反思 run（轻量模型、无工具、不触碰
+    // project）——只有对话轮与任务（D75，任务可能正写 project）应阻止切换 /
+    // 移除 project。
     const active = this.#deps.runs
       .listActiveByConversation(conversationId)
       .filter(
-        (run) => run.loopType === 'response' || run.loopType === 'turn' || run.loopType === 'task',
+        (run) => run.loopType === 'turn' || run.loopType === 'task',
       );
     if (active.length > 0) {
       throw new AppError(

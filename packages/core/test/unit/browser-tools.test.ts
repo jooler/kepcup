@@ -8,7 +8,7 @@ const identity: RunIdentity = {
   runId: 'run_01TEST',
   botId: 'bot_01TEST',
   conversationId: 'conv_01TEST',
-  loopType: 'response',
+  loopType: 'turn',
 };
 
 function makeContext(): ToolContext & { progressTexts: string[] } {

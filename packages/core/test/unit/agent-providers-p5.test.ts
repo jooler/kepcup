@@ -86,7 +86,7 @@ function setup(entry: AgentCatalogEntry, script: FakeAgentScript) {
   });
   const workdir = tempDir('kepcup-p5-work-');
   const spec = (permission: AgentPermissionTier = 'read_only'): RunSpec => ({
-    identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' },
+    identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' },
     model: agentModelRef(entry.id, ''),
     buildSystemPrompt: async () => 'SYSTEM',
     messages: [{ role: 'user', content: 'HELLO', timestamp: 0 }],

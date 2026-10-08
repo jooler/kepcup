@@ -183,7 +183,7 @@ export interface OrchestratorEnvironmentFacade {
       runId: string;
       botId: string | null;
       conversationId: string | null;
-      loopType: 'response' | 'task';
+      loopType: 'turn' | 'task';
     },
     input: { item: string; version?: string; reason: string },
   ): Promise<
@@ -435,7 +435,7 @@ interface ActiveRunEntry {
  * W2 adds the `turn` variant here.
  */
 type RunExecution =
-  | { kind: 'response'; batch: TriggerBatch }
+  | { kind: 'turn'; batch: TriggerBatch }
   | {
       kind: 'task';
       /** Synthesized: the brief's source messages, reason 'task'. */
@@ -1136,7 +1136,7 @@ export class Orchestrator {
 
   /**
    * Retries a failed run with the same trigger messages. The mailbox owns
-   * run creation (#startResponseRun is the only create path), so this only
+   * run creation (#startTurn is the only create path), so this only
    * validates and delivers; the returned run is the one the mailbox actually
    * started. When a loop is already running for the mailbox the batch is
    * injected as a steer instead and no new run is created (null is returned).
@@ -1743,7 +1743,7 @@ export class Orchestrator {
 
   #createMailbox(key: string): Mailbox {
     return new Mailbox(key, {
-      startRun: (batch) => this.#startResponseRun(batch),
+      startRun: (batch) => this.#startTurn(batch),
       steer: (batch, text) => this.#steerRunningRun(batch, text),
       injectEvent: (batch, text) => this.#steerRunningRun(batch, text),
       renderOptions: () => this.#renderOptions(),
@@ -1785,7 +1785,7 @@ export class Orchestrator {
     };
   }
 
-  #startResponseRun(batch: TriggerBatch): string {
+  #startTurn(batch: TriggerBatch): string {
     const agentId = this.#agentIdOf(this.#deps.bots.get(batch.botId));
     const run = this.#deps.runs.create({
       // D72: recorded up front so every settle path (cancelled before start,
@@ -1793,7 +1793,7 @@ export class Orchestrator {
       engine: agentId.length > 0 ? agentEngineKey(agentId) : BUILTIN_ENGINE,
       botId: batch.botId,
       conversationId: batch.conversationId,
-      loopType: 'response',
+      loopType: 'turn',
       triggerReason: batch.reason,
       triggerMessageIds: batch.messages.map((m) => m.id),
       ...(batch.chain !== undefined
@@ -1814,7 +1814,7 @@ export class Orchestrator {
       key: this.#mailboxKey(batch.botId, batch.conversationId),
       // Lease waits of this run give the slot back (D75 审查 H2).
       runId: run.id,
-      run: () => this.#executeRun(run.id, { kind: 'response', batch }),
+      run: () => this.#executeRun(run.id, { kind: 'turn', batch }),
     });
     return run.id;
   }
@@ -2411,7 +2411,7 @@ export class Orchestrator {
   async #executeRun(runId: string, exec: RunExecution): Promise<void> {
     const { batch } = exec;
     const isTask = exec.kind === 'task';
-    const loopType = isTask ? ('task' as const) : ('response' as const);
+    const loopType = isTask ? ('task' as const) : ('turn' as const);
     const { runs, messages } = this.#deps;
     // D75 §3.2 消费 (this wave; W2 moves it to the turn's terminal state):
     // task entries in the trigger batch / steered into this response run.
@@ -3163,14 +3163,14 @@ export class Orchestrator {
         exec.control.finish();
       } else {
         // Mailbox, group-turn and D71 bookkeeping belong to response runs only.
-        this.#releaseResponseMailbox(batch, consumesTaskIds, agentSteer);
+        this.#releaseTurnMailbox(batch, consumesTaskIds, agentSteer);
       }
       this.#publishConversation(batch.conversationId);
     }
   }
 
   /** Response-run epilogue (#executeRun finally): consumption, mailbox release, hooks. */
-  #releaseResponseMailbox(
+  #releaseTurnMailbox(
     batch: TriggerBatch,
     consumesTaskIds: Set<string>,
     agentSteer: AgentSteerLog,
@@ -3382,7 +3382,7 @@ export class Orchestrator {
       // rows before filtering to keep CONTINUATION_ARBITER_MAX_RUNS reachable.
       .listByConversation(input.conversationId, 20)
       .filter(
-        (run) => run.botId === input.botId && run.loopType === 'response' && isTerminal(run.status),
+        (run) => run.botId === input.botId && run.loopType === 'turn' && isTerminal(run.status),
       )
       .map((run) => ({ run, summaryLine: this.#runSummaryLine(run) }));
     if (candidates.length === 0) return Promise.resolve(null);
@@ -3446,7 +3446,7 @@ export class Orchestrator {
     try {
       const result = await completeStructured({
         complete: (req) => route.engine.complete(req),
-        identity: { runId, botId, conversationId, loopType: 'response' },
+        identity: { runId, botId, conversationId, loopType: 'turn' },
         model: modelRef,
         systemPrompt: CONTINUATION_ARBITER_SYSTEM_PROMPT,
         messages: [
@@ -3461,7 +3461,7 @@ export class Orchestrator {
             runId,
             botId,
             conversationId,
-            loopType: 'response',
+            loopType: 'turn',
             provider,
             model: modelRef.slice(provider.length + 1),
             inputTokens: usage.input,

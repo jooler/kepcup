@@ -32,7 +32,7 @@ async function waitForNewRun(
       };
       const found = result.runs.find(
         (run) =>
-          run.loopType === 'response' &&
+          run.loopType === 'turn' &&
           run.status === 'completed' &&
           (afterRunId === null || run.id > afterRunId),
       );
@@ -50,7 +50,7 @@ async function latestResponseRunId(
     runs: Run[];
   };
   const ids = result.runs
-    .filter((r) => r.loopType === 'response')
+    .filter((r) => r.loopType === 'turn')
     .map((r) => r.id)
     .sort();
   return ids.at(-1) ?? null;

@@ -12,7 +12,8 @@ const identity: RunIdentity = {
   runId: 'run_test',
   botId: 'bot_test',
   conversationId: 'conv_test',
-  loopType: 'response',
+  // A writable loop: the supervisor turn ('turn', formerly 'response') is read-only (D75).
+  loopType: 'skill_authoring',
 };
 
 let home: string; // the data home (~/.kepcup equivalent)

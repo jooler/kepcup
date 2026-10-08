@@ -392,11 +392,14 @@ export function buildResponseTools(input: {
       }
       const runs = deps.runs
         .listByConversation(identity.conversationId, 20)
-        .filter((r) => r.botId === identity.botId && r.loopType === 'response');
+        // D75: the bot's turns and tasks (a task's process is read via get_run).
+        .filter(
+          (r) => r.botId === identity.botId && (r.loopType === 'turn' || r.loopType === 'task'),
+        );
       if (runs.length === 0) return { ok: true, content: '还没有执行记录。' };
       const lines = runs.map(
         (r) =>
-          `${r.id} | ${r.status} | ${r.triggerReason ?? '-'} | ${new Date(r.createdAt).toISOString()} | ${r.summary ?? r.error ?? ''}`,
+          `${r.id} | ${r.loopType === 'task' ? `任务「${r.taskTitle ?? ''}」` : '对话轮'} | ${r.status} | ${r.triggerReason ?? '-'} | ${new Date(r.createdAt).toISOString()} | ${r.summary ?? r.error ?? ''}`,
       );
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
     },

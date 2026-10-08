@@ -38,7 +38,7 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
       const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
         runs: Run[];
       };
-      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null;
+      return result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null;
     },
     { label: 'completed response run' },
   );
@@ -126,7 +126,7 @@ describe('P07 反思（集成，mock 反思 JSON）', () => {
       const fresh = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 10 })) as {
         runs: Run[];
       };
-      const responseRuns = fresh.runs.filter((r) => r.loopType === 'response');
+      const responseRuns = fresh.runs.filter((r) => r.loopType === 'turn');
       expect(responseRuns.some((r) => r.summary === '用户介绍了自己的部署流程')).toBe(true);
       void run;
 

@@ -43,7 +43,7 @@ describe('response loop', () => {
     const run = await waitForRun(core, conv.id, 'completed');
     expect(run.triggerMessageIds).toEqual(messages.map((m) => m.id));
     // P07：响应之后还有后台反思 run——响应 run 本身仍只有一个。
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(1);
 
     const all = await listMessages(core, conv.id);
@@ -79,7 +79,7 @@ describe('response loop', () => {
     expect(JSON.stringify(secondRequest.body.messages)).toContain('<new_messages>');
     expect(JSON.stringify(secondRequest.body.messages)).toContain('等一下，先别改配置');
 
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(1);
   }, 20_000);
 
@@ -169,7 +169,7 @@ describe('response loop', () => {
     expect(completed.id).toBe(result.run!.id);
     expect(completed.triggerMessageIds).toEqual(failed.triggerMessageIds);
     // The retry path adds exactly one run record (failed + retried).
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(2);
   });
 
@@ -239,7 +239,7 @@ describe('response loop', () => {
     };
     expect(retried.run).not.toBeNull();
     await waitForRun(core, conv.id, 'completed');
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs.filter((r) => r.setup !== null)).toHaveLength(1);
   }, 30_000);
 
@@ -269,7 +269,7 @@ describe('response loop', () => {
 
     const botMessage = await waitForMessage(core, convB.id, (m) => m.senderBotId === botB.id);
     expect(botMessage.content).toMatchObject({ text: 'B 完成' });
-    const runsB = (await listRuns(core, convB.id)).filter((r) => r.loopType === 'response');
+    const runsB = (await listRuns(core, convB.id)).filter((r) => r.loopType === 'turn');
     expect(runsB[0]?.status).toBe('completed');
     void llm;
   }, 20_000);
@@ -283,7 +283,7 @@ describe('response loop', () => {
     await sendBatch(core, conv.id, ['记录检查']);
     await waitForRun(core, conv.id, 'completed');
 
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     const stepsResult = (await core.rpc.call('runs.steps', { runId: runs[0]!.id })) as {
       steps: Array<{ type: string; payload: unknown }>;
     };
@@ -313,7 +313,7 @@ describe('response loop', () => {
     await waitForRun(core, conv.id, 'completed');
 
     const responseRunId = (await listRuns(core, conv.id)).find(
-      (r) => r.loopType === 'response',
+      (r) => r.loopType === 'turn',
     )!.id;
     const rows = core.services
       .mainDb!.prepare('select * from usage_ledger where run_id = ?')
@@ -472,7 +472,7 @@ describe('loop continuation (Loop 续接, D56)', () => {
         const runs = await listRuns(core, conv.id);
         return (
           runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
+            (r) => r.id !== runA.id && r.loopType === 'turn' && r.status === 'completed',
           ) ?? null
         );
       },
@@ -517,7 +517,7 @@ describe('loop continuation (Loop 续接, D56)', () => {
         const runs = await listRuns(core, conv.id);
         return (
           runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
+            (r) => r.id !== runA.id && r.loopType === 'turn' && r.status === 'completed',
           ) ?? null
         );
       },
@@ -556,7 +556,7 @@ describe('loop continuation (Loop 续接, D56)', () => {
         const runs = await listRuns(core, conv.id);
         return (
           runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
+            (r) => r.id !== runA.id && r.loopType === 'turn' && r.status === 'completed',
           ) ?? null
         );
       },

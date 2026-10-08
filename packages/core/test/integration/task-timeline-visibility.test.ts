@@ -192,7 +192,7 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
 
     // --- Y: context construction + search_messages + get_messages_around -------
     await sendDrafts(core, cid, [{ text: 'ask_y 你怎么看', mentions: [y.id] }]);
-    await waitForBotRun(core, cid, y.id, 'response');
+    await waitForBotRun(core, cid, y.id, 'turn');
     const yRequests = llm.requestsFor('mock-main').filter(isY);
     expect(yRequests).toHaveLength(4);
     for (const request of yRequests) expect(leaksIn(bodyText(request))).toEqual([]);
@@ -273,7 +273,7 @@ describe('私有时间线泄露契约（D75 §2.4.3）', () => {
 
     // --- X: own entries interleaved by seq with the user's messages ----------
     await sendDrafts(core, cid, [{ text: 'ask_x 结论呢', mentions: [x.id] }]);
-    await waitForBotRun(core, cid, x.id, 'response');
+    await waitForBotRun(core, cid, x.id, 'turn');
     const xRequest = llm.requestsFor('mock-main').find(isX)!;
     const xText = xRequest.lastUserText();
     const order = [

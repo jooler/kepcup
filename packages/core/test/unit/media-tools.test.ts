@@ -23,7 +23,7 @@ const identity: RunIdentity = {
   runId: 'run_1',
   botId: 'bot_1',
   conversationId: 'conv_1',
-  loopType: 'response',
+  loopType: 'turn',
 };
 
 const ctx = (signal = new AbortController().signal): ToolContext => ({

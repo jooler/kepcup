@@ -470,7 +470,7 @@ describe('AgentPermissionBridge decisions', () => {
     runId: 'run_a',
     botId: 'bot_a',
     conversationId: 'conv_a',
-    loopType: 'response' as const,
+    loopType: 'turn' as const,
   };
   const requested: Array<Record<string, unknown>> = [];
   let answer: 'approved' | 'denied' | 'cancelled' = 'denied';

@@ -20,7 +20,7 @@ function makeRun(overrides: Partial<Run> & Pick<Run, 'id'>): Run {
   return {
     botId: 'bot_a',
     conversationId: 'conv_1',
-    loopType: 'response',
+    loopType: 'turn',
     status: 'completed',
     triggerReason: 'direct',
     triggerMessageIds: [],

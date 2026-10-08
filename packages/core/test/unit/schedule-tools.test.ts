@@ -57,7 +57,7 @@ function makeFacade(overrides: Partial<ScheduleToolFacade> = {}): ScheduleToolFa
   return facade as never;
 }
 
-const identity = { runId: 'run_1', botId: 'bot_a', conversationId: 'conv_1', loopType: 'response' as const };
+const identity = { runId: 'run_1', botId: 'bot_a', conversationId: 'conv_1', loopType: 'turn' as const };
 const ctx = { identity } as never;
 
 function toolsWith(facade: ReturnType<typeof makeFacade>) {

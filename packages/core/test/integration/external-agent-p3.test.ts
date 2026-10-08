@@ -557,7 +557,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       runId: run.id,
       botId: bot.id,
       conversationId: conv.id,
-      loopType: 'response' as const,
+      loopType: 'turn' as const,
     };
     await waitFor(async () => (stack.record().prompts.length > 0 ? true : null), {
       label: 'agent prompted',

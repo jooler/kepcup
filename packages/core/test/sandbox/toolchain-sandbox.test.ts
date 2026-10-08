@@ -111,7 +111,8 @@ beforeAll(async () => {
     runId: 'run_sandbox_env',
     botId: `bot_${'C'.repeat(26)}`,
     conversationId: `conv_${'D'.repeat(26)}`,
-    loopType: 'response',
+    // A writable loop: the supervisor turn ('turn', formerly 'response') is read-only (D75).
+    loopType: 'skill_authoring',
   };
   mkdirSync(workspace(), { recursive: true });
 }, TIMEOUT);

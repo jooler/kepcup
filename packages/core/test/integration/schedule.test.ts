@@ -46,7 +46,7 @@ function waitForScheduledRun(core: CoreHarness, conversationId: string, timeoutM
       };
       return (
         result.runs.find(
-          (r) => r.triggerReason === 'scheduled' && r.loopType === 'response' && r.status === 'completed',
+          (r) => r.triggerReason === 'scheduled' && r.loopType === 'turn' && r.status === 'completed',
         ) ?? null
       );
     },
@@ -73,7 +73,7 @@ async function expectNoScheduledRun(
   expect(
     result.runs.filter(
       (r) =>
-        r.triggerReason === 'scheduled' && r.loopType === 'response' && !excludeRunIds.includes(r.id),
+        r.triggerReason === 'scheduled' && r.loopType === 'turn' && !excludeRunIds.includes(r.id),
     ),
   ).toHaveLength(0);
 }
@@ -118,7 +118,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
           const result = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 50 })) as {
             runs: Run[];
           };
-          return result.runs.find((r) => r.status === 'completed' && r.loopType === 'response') ?? null;
+          return result.runs.find((r) => r.status === 'completed' && r.loopType === 'turn') ?? null;
         },
         { label: 'creation run completed' },
       );
@@ -180,7 +180,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
           const result = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 50 })) as {
             runs: Run[];
           };
-          return result.runs.find((r) => r.status === 'completed' && r.loopType === 'response') ?? null;
+          return result.runs.find((r) => r.status === 'completed' && r.loopType === 'turn') ?? null;
         },
         { label: 'remember run completed' },
       );
@@ -280,7 +280,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
         runs: Run[];
       };
       expect(
-        cronRuns.runs.filter((r) => r.triggerReason === 'scheduled' && r.loopType === 'response'),
+        cronRuns.runs.filter((r) => r.triggerReason === 'scheduled' && r.loopType === 'turn'),
       ).toHaveLength(1);
       // 周期任务从 now 之后的第一个整点继续。
       const cronRow = service.listForBotInConversation(cronBot.id, cronConv.id)[0];
@@ -412,7 +412,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       const seed = stack.core.services.domain!.runs.create({
         botId: capBot.id,
         conversationId: capConv.id,
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'scheduled',
         triggerMessageIds: [],
       });
@@ -480,7 +480,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
             runs: Run[];
           };
           const scheduled = result.runs.filter(
-            (r) => r.triggerReason === 'scheduled' && r.loopType === 'response' && r.status === 'completed',
+            (r) => r.triggerReason === 'scheduled' && r.loopType === 'turn' && r.status === 'completed',
           );
           return scheduled.length >= 2 ? true : null;
         },
@@ -756,7 +756,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
               runs: Run[];
             };
             const run = result.runs.find(
-              (r) => r.triggerReason === 'scheduled' && r.loopType === 'response' && r.status === 'completed',
+              (r) => r.triggerReason === 'scheduled' && r.loopType === 'turn' && r.status === 'completed',
             );
             if (run) return { convId, run };
           }

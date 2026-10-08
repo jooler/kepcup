@@ -29,7 +29,13 @@ let backend: SandboxBackend;
 let gateway: ToolGateway;
 const botId = `bot_${'A'.repeat(26)}`;
 const conversationId = `conv_${'B'.repeat(26)}`;
-const identity: RunIdentity = { runId: 'run_sandbox_test', botId, conversationId, loopType: 'response' };
+// A writable loop: the supervisor turn ('turn', formerly 'response') is read-only (D75).
+const identity: RunIdentity = {
+  runId: 'run_sandbox_test',
+  botId,
+  conversationId,
+  loopType: 'skill_authoring',
+};
 
 function workspace(): string {
   return gateway.ensureWorkspace(identity);

@@ -12,7 +12,7 @@ import type { ToolContext } from '../../src/agent/types.js';
 const secrets = { redact: (text: string) => text } as never;
 
 const ctx: ToolContext = {
-  identity: { runId: 'run_1', botId: 'bot', conversationId: 'conv', loopType: 'response' },
+  identity: { runId: 'run_1', botId: 'bot', conversationId: 'conv', loopType: 'turn' },
   signal: new AbortController().signal,
   terminate: () => {},
   progress: () => {},

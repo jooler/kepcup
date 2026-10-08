@@ -100,7 +100,7 @@ describe('setup path gate (D59)', () => {
     expect(body).toContain('暂不设置工作目录');
 
     // 一次投递一次 run，触发批含首答与目录决定两条。
-    const run = (await listRuns(core, conversationId)).find((r) => r.loopType === 'response')!;
+    const run = (await listRuns(core, conversationId)).find((r) => r.loopType === 'turn')!;
     expect(run.triggerMessageIds).toHaveLength(2);
   }, 20_000);
 
@@ -152,7 +152,7 @@ describe('setup path gate (D59)', () => {
     const body = JSON.stringify(llm.requestsFor('mock-main')[0]!.body.messages);
     expect(body).toContain('做我的写作助手');
     expect(body).toContain('顺便每天九点提醒我');
-    const run = (await listRuns(core, conversationId)).find((r) => r.loopType === 'response')!;
+    const run = (await listRuns(core, conversationId)).find((r) => r.loopType === 'turn')!;
     expect(run.triggerMessageIds).toHaveLength(3);
   }, 20_000);
 
@@ -248,7 +248,7 @@ describe('conversational group creation (D60)', () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(llm.requestsFor('mock-main')).toHaveLength(0);
     expect(
-      (await listRuns(core, conversationId)).filter((r) => r.loopType === 'response'),
+      (await listRuns(core, conversationId)).filter((r) => r.loopType === 'turn'),
     ).toHaveLength(0);
 
     // 完成系统消息落库（后续入群的 Bot 可从历史读到）。

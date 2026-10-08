@@ -64,7 +64,7 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
         runs: Run[];
       };
       return (
-        result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null
       );
     },
     { label: 'completed response run' },
@@ -321,7 +321,7 @@ describe('P07 记忆与画像（集成）', () => {
         },
         { label: 'waiting_approval run' },
       );
-      expect(run.loopType).toBe('response');
+      expect(run.loopType).toBe('turn');
 
       const approvals = (await stack.core.rpc.call('approvals.list', {
         conversationId: conv.id,
@@ -571,7 +571,7 @@ describe('P07 记忆与画像（集成）', () => {
         }>;
       };
       const responseRow = summary.entries.find(
-        (entry) => entry.botId === bot.id && entry.loopType === 'response',
+        (entry) => entry.botId === bot.id && entry.loopType === 'turn',
       );
       expect(responseRow).toBeDefined();
       expect(responseRow!.inputTokens).toBeGreaterThanOrEqual(100);

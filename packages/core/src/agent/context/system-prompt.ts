@@ -288,8 +288,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
 
 export function loopTypeLabel(loopType: LoopType): string {
   switch (loopType) {
-    case 'response':
-      return 'response';
+    case 'turn':
+      return 'turn';
     default:
       return loopType;
   }
