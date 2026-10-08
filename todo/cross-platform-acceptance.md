@@ -268,3 +268,13 @@
 - [ ] **开机自启真机验证**：macOS **签名后** `app.setLoginItemSettings` 的注册/注销真机行为（任务书明示「macOS 需签名后验证」；未生效时 login-item 的 failed + reason 路径在此复核）；Windows（Run 注册表键）与 Linux（XDG autostart desktop 文件 `~/.config/autostart/app.kepcup.desktop`）真机注销/重登验证；设置页开关（P13-B UI）与系统侧状态的一致性。
 - [ ] **CI release 矩阵首跑**：release.yml rootfs job（docker 构建rootfs.tar 落 resources/wsl/）+ 6 组平台×架构构建全绿；arm64 runner（macos-13〔x64〕/ubuntu-24.04-arm〔arm64〕）可用性确认；原生模块在每平台的 rebuild（better-sqlite3-multiple-ciphers/es-git/@napi-rs/keyring）。
 - [ ] **中端机性能口径**：任务书「冷启动 ≤3s（中端机器）」的中端机实测（本机 M1 Max 实测 1417ms，见 PROGRESS P13）；「输入框按键到字符显示无可感知延迟」的人工验证；空闲 ≤300MB 达标确认（P13-B 优化后的结果在此复核）。
+
+## D76 传感器 / 硬件分区（2026-10-08 代码完成于 Linux dev 环境，e2e 用 Chromium 伪设备）
+
+- [ ] **macOS 摄像头授权**（dev + 打包版）：设置 → 硬件 → 摄像头启用 → 预览，首次弹出系统授权框；拒绝后卡片显示「已拒绝」并出现「打开系统设置」，深链打开「隐私与安全性 → 摄像头」；打包版 Info.plist 含 `NSCameraUsageDescription`。
+- [ ] **macOS 签名构建的 entitlements**：当前无 entitlements 文件（`mac.identity: null`）；分发签名时需同时加 `com.apple.security.device.audio-input` 与 `com.apple.security.device.camera`，否则 hardened runtime 下麦克风 / 摄像头都会被拒。
+- [ ] **Windows 摄像头 / 麦克风隐私开关**：系统「摄像头隐私」关闭时，预览 / 测试的报错文案可读（`无法打开设备：NotAllowedError…`）。
+- [ ] **Linux 无设备 / 无 `/dev/video*` 权限**：卡片显示「未检测到摄像头」；有设备但无权限时的报错可读。
+- [ ] **真实设备热插拔**：拔掉所选麦克风 / 摄像头后，设备列表自动刷新、卡片出现「已选设备不可用」告警，语音键录音时 toast「已改用系统默认设备」。
+- [ ] **default session 权限白名单回归**：三平台真机上复制按钮、消息内视频全屏、语音输入、摄像头预览均正常；控制台无意外的 `[permissions] denied request`。
+

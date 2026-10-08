@@ -21,7 +21,9 @@
     type ActiveRecording,
     type VoiceRecording,
   } from './voice-recorder';
-  import { ensureMicrophoneAccess, loadMicDeviceId, openMicrophoneSettings } from './mic-access';
+  import { sensors } from '$lib/sensors/sensors.svelte';
+  import { SensorDisabledError } from '$lib/sensors/types';
+  import { shell } from '$lib/stores/shell.svelte';
 
   let {
     readOnly = false,
@@ -295,6 +297,15 @@
     activeRecording = null;
   });
 
+  // 录音中麦克风被停用（设置页取消勾选）：立即取消，hub 同时已切断轨道（D76-5）。
+  $effect(() => {
+    if (!sensors.state.microphone.enabled && recording !== null) void finishRecording(false);
+  });
+
+  function openHardwareSettings(): void {
+    shell.openSettings('hardware');
+  }
+
   async function startRecording(): Promise<void> {
     if (readOnly || recording !== null || voiceBusy) return;
     if (!settingsStore.isCapabilityReady('asr')) {
@@ -302,25 +313,55 @@
       return;
     }
     const session = ++recordingSession;
+    // 启用开关是隐私总闸（D76-5）：停用时不采集，提示去「设置 → 硬件」启用。
+    if (!sensors.state.microphone.enabled) {
+      toast.error(t('composer.micDisabled'), {
+        action: { label: t('composer.micOpenHardware'), onClick: openHardwareSettings },
+      });
+      return;
+    }
     // TCC 授权门：not-determined 时在这里拉起系统授权弹框；被拒后系统永远
     // 不会再弹，只能 toast + 深链系统设置（docs/design/26-voice-input.md）。
-    const access = await ensureMicrophoneAccess();
+    let access: Awaited<ReturnType<typeof sensors.ensureAccess>>;
+    try {
+      access = await sensors.ensureAccess('microphone');
+    } catch {
+      toast.error(t('composer.voiceMicUnavailable'));
+      return;
+    }
     if (access !== 'granted') {
       if (access === 'denied') {
         toast.error(t('composer.micDenied'), {
-          action: { label: t('composer.micOpenSettings'), onClick: openMicrophoneSettings },
+          action: {
+            label: t('composer.micOpenSettings'),
+            onClick: () => sensors.openSettings('microphone'),
+          },
         });
       } else {
         toast.error(t('composer.voiceMicUnavailable'));
       }
       return;
     }
+    let fellBack: boolean;
     try {
-      // 每次按录取当前设定（设置页「硬件」分区可换设备；空 = 系统默认）。
-      activeRecording = await startVoiceRecording((level) => {
-        if (recording !== null) recording.level = level;
-      }, loadMicDeviceId());
+      // 每次按录取当前设备偏好（设置页「硬件」分区可换设备；空 = 系统默认）。
+      const opened = await sensors.open('microphone');
+      try {
+        activeRecording = await startVoiceRecording(opened.stream, (level) => {
+          if (recording !== null) recording.level = level;
+        });
+      } catch (error) {
+        for (const track of opened.stream.getTracks()) track.stop();
+        throw error;
+      }
+      fellBack = opened.fellBack;
     } catch (error) {
+      if (error instanceof SensorDisabledError) {
+        toast.error(t('composer.micDisabled'), {
+          action: { label: t('composer.micOpenHardware'), onClick: openHardwareSettings },
+        });
+        return;
+      }
       // 失败原因透传（getUserMedia / addModule 的底层异常），定位设备问题用。
       toast.error(
         t('composer.voiceMicFailed', {
@@ -335,6 +376,8 @@
       activeRecording = null;
       return;
     }
+    // 所选设备不可用已回退系统默认：显式告知，不静默（D76）。
+    if (fellBack) toast.warning(t('composer.micFellBack'));
     recording = { level: 0, startedAt: Date.now() };
     recordingElapsed = 0;
     // 60s 上限从真正开始采集起算（授权弹框期间不占时长）。

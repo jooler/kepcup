@@ -10,6 +10,7 @@ import {
   nativeImage,
   nativeTheme,
   powerMonitor,
+  session,
   shell,
   systemPreferences,
   type BrowserWindow,
@@ -22,6 +23,13 @@ import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
 import { applyLoginItem } from './login-item';
+import { isPermissionAllowed } from './app-permissions';
+import {
+  parseSensorKind,
+  sensorPermissionRequest,
+  sensorPermissionStatus,
+  sensorSettingsUrl,
+} from './sensor-permission';
 import { wireUpdater } from './updater';
 
 let window: BrowserWindow | null = null;
@@ -176,24 +184,52 @@ function bootstrap(): void {
     new Notification({ title, body }).show();
   });
 
-  // 语音输入的麦克风权限（docs/design/26-voice-input.md）：macOS TCC 的状态
-  // 查询、主动拉起系统授权弹框（askForMediaAccess 仅 not-determined 时弹），
-  // 以及已拒绝后的去路——深链系统设置的麦克风面板（被拒后系统不会再弹框，
-  // 只能引导用户到设置里打开）。非 macOS 无 TCC，直接视为已授权。
-  ipcMain.handle('mic:status', () =>
-    process.platform === 'darwin'
-      ? systemPreferences.getMediaAccessStatus('microphone')
-      : 'granted',
+  // 传感器系统权限（docs/design/31-sensors.md，D76；由 26 号的 mic:* 泛化）：
+  // macOS TCC 的状态查询、主动拉起系统授权弹框（askForMediaAccess 仅
+  // not-determined 时弹）、已拒绝后的去路——深链系统设置对应面板（被拒后系统
+  // 不会再弹框，只能引导用户到设置里打开）。非 macOS 无 TCC，视为已授权。
+  // kind 在此校验，未知 kind 拒绝。
+  ipcMain.handle('sensor:permission:status', (_event, kind: unknown) =>
+    sensorPermissionStatus(parseSensorKind(kind), systemPreferences),
   );
-  ipcMain.handle('mic:request', async () =>
-    process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true,
+  ipcMain.handle('sensor:permission:request', (_event, kind: unknown) =>
+    sensorPermissionRequest(parseSensorKind(kind), systemPreferences),
   );
-  ipcMain.handle('mic:openSettings', () => {
-    if (process.platform !== 'darwin') return;
-    void shell.openExternal(
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
-    );
+  ipcMain.handle('sensor:permission:openSettings', (_event, kind: unknown) => {
+    const url = sensorSettingsUrl(parseSensorKind(kind));
+    if (url !== null) void shell.openExternal(url);
   });
+
+  // 主窗口 default session 的权限白名单（D76-7，docs/design/31-sensors.md）：Electron
+  // 未设置处理器时默认放行一切权限请求；这里只放行应用自身界面的 media /
+  // 复制 / 全屏，其余拒绝并记 warn 便于发现遗漏的合法依赖。
+  const appUrl = (): string =>
+    !app.isPackaged && process.env['ELECTRON_RENDERER_URL']
+      ? process.env['ELECTRON_RENDERER_URL']
+      : 'file:///';
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    const allowed = isPermissionAllowed({
+      permission,
+      requestingUrl: details.requestingUrl,
+      mediaTypes: 'mediaTypes' in details ? (details.mediaTypes ?? []) : undefined,
+      appUrl: appUrl(),
+    });
+    if (!allowed)
+      console.warn(`[permissions] denied request: ${permission} (${details.requestingUrl})`);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>
+    isPermissionAllowed({
+      permission,
+      requestingUrl: details.requestingUrl ?? requestingOrigin,
+      // enumerateDevices 等检查的 mediaType 为 'unknown'：不带轨道类型，按来源 + 权限判定。
+      mediaTypes:
+        'mediaType' in details && (details.mediaType === 'audio' || details.mediaType === 'video')
+          ? [details.mediaType]
+          : undefined,
+      appUrl: appUrl(),
+    }),
+  );
 
   // System directory picker (docs/dev/02-architecture.md: the result goes to
   // the core through port A as a plain path; the main process only dialogs).

@@ -1,4 +1,4 @@
-import type { CoreStatusPayload } from '@kepcup/shared';
+import type { CoreStatusPayload, SensorKind } from '@kepcup/shared';
 
 export interface PlatformInfo {
   version: string;
@@ -34,10 +34,12 @@ declare global {
       openLogsDir(): Promise<void>;
       /** P13 任务 4 引导: posts a test notification (macOS permission prompt). */
       sendTestNotification(title: string, body: string): Promise<void>;
-      /** 语音输入（26 号设计）的麦克风 TCC 权限三件套。 */
-      micStatus(): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>;
-      micRequestAccess(): Promise<boolean>;
-      micOpenSettings(): Promise<void>;
+      /** 传感器（31 号设计）的系统权限三件套（macOS TCC；其他平台恒 granted）。 */
+      sensorPermissionStatus(
+        kind: SensorKind,
+      ): Promise<'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'>;
+      sensorPermissionRequest(kind: SensorKind): Promise<boolean>;
+      sensorOpenSettings(kind: SensorKind): Promise<void>;
       /** P13 任务 3: verdict of applying the launch-at-login setting to the OS. */
       onAutostartResult(callback: (result: AutostartResult) => void): () => void;
       /** P13 任务 2 update gate surface. */
