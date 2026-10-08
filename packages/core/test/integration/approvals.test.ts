@@ -61,6 +61,27 @@ function waitForTask(core: TestStack['core'], conversationId: string, status: Ru
   return waitForRun(core, conversationId, status, { loopType: 'task', timeoutMs: 120_000 });
 }
 
+/** Resolves once the waking turn relayed a task result with exactly `text`. */
+function waitForRelay(core: TestStack['core'], conversationId: string, text: string) {
+  return waitForMessage(
+    core,
+    conversationId,
+    (m) => 'text' in m.content && m.content.text === text,
+    { timeoutMs: 60_000 },
+  );
+}
+
+/** The conversation's newest task run. */
+async function latestTask(core: TestStack['core'], conversationId: string): Promise<Run> {
+  const result = (await core.rpc.call('runs.list', { conversationId, limit: 20 })) as {
+    runs: Run[];
+  };
+  const tasks = result.runs
+    .filter((r) => r.loopType === 'task')
+    .sort((a, b) => b.createdAt - a.createdAt);
+  return tasks[0]!;
+}
+
 async function stepsOf(core: TestStack, runId: string) {
   const result = (await core.rpc.call('runs.steps', { runId })) as {
     steps: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -79,11 +100,18 @@ describe('access approvals for file tools (P03)', () => {
     // Run 1: read triggers the approval; approving 仅这一次 lets it through.
     // D75 (D37 tightened): 仅这一次 = one tool call — the second read in the
     // same run needs a second approval (it used to ride on the run-long grant).
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: `${dir}/secret.txt` }),
-      step().replyToolCall('read', { path: `${dir}/secret.txt` }),
-      step().replyText('读完两次'),
-    ]);
+    // D75 审查 M4: access approvals are a task's (a turn fails fast instead).
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
+          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
+          step().replyText('读完两次'),
+        ],
+        'RELAY-READ-1',
+      ),
+    );
     await sendBatch(core, conv.id, ['读一下外部文件']);
 
     await waitFor(
@@ -103,7 +131,7 @@ describe('access approvals for file tools (P03)', () => {
     expect(again.id).not.toBe(approval.id);
     expect(again.kind).toBe('access');
     await core.rpc.call('approvals.decide', { id: again.id, approve: true, duration: 'once' });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForRelay(core, conv.id, 'RELAY-READ-1');
 
     // Two cards for run 1 (one per tool call); nothing outlives the calls.
     const messages1 = await listMessages(core, conv.id);
@@ -114,19 +142,22 @@ describe('access approvals for file tools (P03)', () => {
     expect(left.grants).toEqual([]);
 
     // Run 2: the once-grant died with run 1 -> a new approval appears.
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: `${dir}/secret.txt` }),
-      step().replyText('第二次需要重新申请'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('read', { path: `${dir}/secret.txt` }),
+          step().replyText('第二次需要重新申请'),
+        ],
+        'RELAY-READ-2',
+      ),
+    );
     await sendBatch(core, conv.id, ['再读一次']);
     const second = await pendingApproval(core, conv.id);
     expect(second.id).not.toBe(approval.id);
     await core.rpc.call('approvals.decide', { id: second.id, approve: false });
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
-    const runs2 = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
-      runs: Run[];
-    };
-    const steps = await stepsOf(core, runs2.runs.find((r) => r.loopType === 'turn')!.id);
+    await waitForRelay(core, conv.id, 'RELAY-READ-2');
+    const steps = await stepsOf(core, (await latestTask(core, conv.id)).id);
     const denied = steps.filter((s) => s.type === 'tool_result' && s.payload['ok'] === false);
     expect(denied.length).toBe(1);
     expect(String(denied[0]!.payload['content'])).toContain('APPROVAL_DENIED');
@@ -139,12 +170,18 @@ describe('access approvals for file tools (P03)', () => {
     const dir = fsMkdtemp();
     writeFileSync(path.join(dir, 'data.txt'), 'pre-authorized');
 
-    llm.script('mock-main', [
-      step().replyToolCall('request_access', { path: dir, access: 'read', reason: '先申请' }),
-      step().replyToolCall('read', { path: `${dir}/data.txt` }),
-      step().replyToolCall('read', { path: `${dir}/data.txt` }),
-      step().replyText('完成'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('request_access', { path: dir, access: 'read', reason: '先申请' }),
+          step().replyToolCall('read', { path: `${dir}/data.txt` }),
+          step().replyToolCall('read', { path: `${dir}/data.txt` }),
+          step().replyText('完成'),
+        ],
+        'RELAY-PRE',
+      ),
+    );
     await sendBatch(core, conv.id, ['读目录']);
     const first = await pendingApproval(core, conv.id);
     expect(first.kind).toBe('access');
@@ -153,7 +190,8 @@ describe('access approvals for file tools (P03)', () => {
     const second = await pendingApproval(core, conv.id);
     expect(second.id).not.toBe(first.id);
     await core.rpc.call('approvals.decide', { id: second.id, approve: false });
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForRelay(core, conv.id, 'RELAY-PRE');
+    const run = await latestTask(core, conv.id);
     const results = (await stepsOf(core, run.id)).filter(
       (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
     );
@@ -197,7 +235,8 @@ describe('access approvals for file tools (P03)', () => {
     expect(grants.grants[0]!.botId).toBe(bot.id);
     expect(grants.grants[0]!.path).toBe(canonicalPath(dir));
 
-    // A later run of the SAME bot reads the file without a new approval.
+    // A later run of the SAME bot reads the file without a new approval —
+    // a turn too (no approval needed, so no fail-fast either).
     llm.script('mock-main', [
       step().replyToolCall('read', { path: `${dir}/note.txt` }),
       step().replyText('读到了'),
@@ -206,7 +245,7 @@ describe('access approvals for file tools (P03)', () => {
     const second = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
       runId: string | null;
     };
-    await waitFor(
+    const covered = await waitFor(
       async () => {
         const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
           runs: Run[];
@@ -216,6 +255,10 @@ describe('access approvals for file tools (P03)', () => {
       },
       { label: 'grant-covered run completes', timeoutMs: 60_000 },
     );
+    const coveredRead = (await stepsOf(core, covered.id)).find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
+    );
+    expect(String(coveredRead!.payload['content'])).toContain('grant-me');
     const approvalsAfter = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Approval[];
     };
@@ -223,22 +266,31 @@ describe('access approvals for file tools (P03)', () => {
 
     // Another bot in its own conversation is NOT covered by the grant
     // (grants belong to bot + conversation): a fresh approval appears there.
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: `${dir}/note.txt` }),
-      step().replyText('另一个对话读不到'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask(
+        [
+          step().replyToolCall('read', { path: `${dir}/note.txt` }),
+          step().replyText('另一个对话读不到'),
+        ],
+        'RELAY-OTHER',
+      ),
+    );
     await sendBatch(core, otherConv.id, ['读外部文件']);
     const otherApproval = await pendingApproval(core, otherConv.id);
     expect(otherApproval).toBeDefined();
     await core.rpc.call('approvals.decide', { id: otherApproval.id, approve: false });
-    await waitForRun(core, otherConv.id, 'completed', { timeoutMs: 60_000 });
+    await waitForRelay(core, otherConv.id, 'RELAY-OTHER');
 
     // Revoke -> immediate effect: the next run needs a new approval.
     await core.rpc.call('grants.revoke', { id: grants.grants[0]!.id });
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: `${dir}/note.txt` }),
-      step().replyText('撤销后读不到了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inTask([
+        step().replyToolCall('read', { path: `${dir}/note.txt` }),
+        step().replyText('撤销后读不到了'),
+      ]),
+    );
     await sendBatch(core, conv.id, ['撤销后再读']);
     const finalApproval = await pendingApproval(core, conv.id);
     expect(finalApproval).toBeDefined();
@@ -251,16 +303,10 @@ describe('access approvals for file tools (P03)', () => {
     const bot = await makeBot(core, '小取');
     const conv = await openDirect(core, bot.id);
     const dir = fsMkdtemp();
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: dir }),
-      step().replyText('不该到达'),
-    ]);
+    llm.script('mock-main', inTask([step().replyToolCall('read', { path: dir }), step().replyText('不该到达')]));
     await sendBatch(core, conv.id, ['读外部']);
     const approval = await pendingApproval(core, conv.id);
-    const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
-      runs: Run[];
-    };
-    const runId = runs.runs.find((r) => r.loopType === 'turn')!.id;
+    const runId = (await latestTask(core, conv.id)).id;
 
     // Cancel while waiting: approval -> cancelled, run -> cancelled.
     await core.rpc.call('runs.cancel', { runId });
@@ -273,14 +319,17 @@ describe('access approvals for file tools (P03)', () => {
       },
       { label: 'approval cancelled' },
     );
-    const cancelledRun = await waitForRun(core, conv.id, 'cancelled', { timeoutMs: 30_000 });
+    const cancelledRun = await waitForRun(core, conv.id, 'cancelled', {
+      timeoutMs: 30_000,
+      loopType: 'task',
+    });
     expect(cancelledRun.id).toBe(runId);
 
     // Restart on the same home: pending approvals never survive.
     const bot2 = await makeBot(core, '小启');
     const conv2 = await openDirect(core, bot2.id);
     const dir2 = fsMkdtemp();
-    llm.script('mock-main', [step().replyToolCall('read', { path: dir2 }), step().replyText('x')]);
+    llm.script('mock-main', inTask([step().replyToolCall('read', { path: dir2 }), step().replyText('x')]));
     await sendBatch(core, conv2.id, ['再来一次']);
     await pendingApproval(core, conv2.id);
 
@@ -302,7 +351,7 @@ describe('access approvals for file tools (P03)', () => {
       const runs2 = (await restarted.core.rpc.call('runs.list', { conversationId: conv2.id, limit: 5 })) as {
         runs: Run[];
       };
-      expect(runs2.runs.find((r) => r.loopType === 'turn')!.status).toBe('interrupted');
+      expect(runs2.runs.find((r) => r.loopType === 'task')!.status).toBe('interrupted');
       const services = restarted.core.services.domain!;
       const cancelled = approvals.approvals.find((a) => a.status === 'cancelled')!;
       expect(services.approvals.renderContextLine(cancelled)).toContain('已取消');

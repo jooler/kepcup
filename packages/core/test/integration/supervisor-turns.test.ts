@@ -224,7 +224,7 @@ describe('D75 supervisor turns (W2)', () => {
     const turn2Request = llm.requestsFor('mock-main').find(turnWith('今天星期几'))!;
     // <tasks> lists the in-flight task; no D56 auto continuation for turns.
     expect(firstUserText(turn2Request)).toContain('<tasks>');
-    expect(firstUserText(turn2Request)).toContain(`[${taskId}] 写报告  running`);
+    expect(firstUserText(turn2Request)).toContain(`[${taskId}] <untrusted>写报告</untrusted>  running`);
     expect(firstUserText(turn2Request)).not.toContain('<continuation>');
     // The task's interim narration reached the user directly.
     const progress = await waitVisible(stack, conv.id, 'TASK-PROGRESS');

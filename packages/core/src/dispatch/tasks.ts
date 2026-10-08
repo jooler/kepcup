@@ -177,6 +177,12 @@ export interface TaskHostDeps {
    * — no write lease, no task slot — instead of launching to wait.
    */
   launchSlot?(task: Run): { key: string; limit: number } | null;
+  /**
+   * The engine a task of the bot will run on (`agent:{id}` for an external
+   * agent; null = built-in): recorded on the row at creation so a task that
+   * fails before its engine starts still shows the right engine.
+   */
+  taskEngine?(botId: string): string | null;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -207,21 +213,29 @@ interface LaunchedTask {
   waitReason: string | null;
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
-  buffered: Array<{ text: string; entryId: string }>;
+  buffered: PendingInject[];
   /**
    * Injects the engine run accepted (`steer()` true) but has not confirmed
    * yet, oldest first: an async refusal or a confirmation takes the oldest
    * entry with its text (FIFO).
    */
-  steered: Array<{ text: string; entryId: string }>;
+  steered: PendingInject[];
   /** Confirmations that arrived before their entry was noted (engines confirming inside `steer()`). */
   confirmedEarly: string[];
+}
+
+/** An inject on its way into an engine run (its entry id + the caller's fallback). */
+interface PendingInject {
+  text: string;
+  entryId: string;
+  /** Runs when the inject turns out not to reach any engine run (审查 M5). */
+  onNotDelivered?: () => void;
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
 
 /** Records an accepted steer awaiting its confirmation (unless it was confirmed already). */
-function noteSteered(launched: LaunchedTask, item: { text: string; entryId: string }): void {
+function noteSteered(launched: LaunchedTask, item: PendingInject): void {
   const early = launched.confirmedEarly.indexOf(item.text);
   if (early !== -1) launched.confirmedEarly.splice(early, 1);
   else launched.steered.push(item);
@@ -398,9 +412,30 @@ export class TaskHost implements TaskToolFacade {
     if (title.length === 0 || instruction.length === 0) {
       throw new AppError('INVALID_INPUT', 'title 与 instruction 不能为空');
     }
-    const startedThisTurn = this.#deps.runs
-      .listTasks({ conversationId, botId })
-      .filter((task) => task.originRunId === identity.runId).length;
+    const ownTasks = this.#deps.runs.listTasks({ conversationId, botId });
+    // A retried turn (审查 L6: e.g. it failed on TURN_MAX_TURNS after its
+    // start_task calls) does not start again what the turn it re-runs already
+    // started: the same title from a turn of its retry chain is that task —
+    // unless that one ended without a result (failed / cancelled / interrupted).
+    const retried = this.#retryChain(identity.runId);
+    if (retried.length > 0) {
+      const existing = ownTasks.find(
+        (task) =>
+          task.originRunId !== null &&
+          retried.includes(task.originRunId) &&
+          (task.taskTitle ?? '').trim() === title &&
+          (!isTerminalStatus(task.status) || task.status === 'completed'),
+      );
+      if (existing !== undefined) {
+        return {
+          taskId: existing.id,
+          state: existing.status === 'queued' ? 'submitted' : taskState(existing.status),
+          queueReason: existing.status === 'queued' ? this.#queueReason(existing) : null,
+          alreadyStarted: true,
+        };
+      }
+    }
+    const startedThisTurn = ownTasks.filter((task) => task.originRunId === identity.runId).length;
     if (startedThisTurn >= this.#limits.perTurn) {
       throw new AppError(
         'TASK_LIMIT_REACHED',
@@ -431,6 +466,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: input.writes,
       taskWorkdir: workdir,
       originRunId: identity.runId,
+      ...this.#engineFields(botId),
       ...(continues !== null ? { continuedFromRunIds: [continues.id] } : {}),
     });
     this.#deps.publishRunStatus(task);
@@ -456,7 +492,17 @@ export class TaskHost implements TaskToolFacade {
     return { taskId: task.id, state: taskState(current.status), queueReason: null };
   }
 
-  inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult {
+  /**
+   * `options.onNotDelivered` (host callers, e.g. the §8.4 downgrade): runs
+   * when an inject reported `delivered` turns out not to reach the engine
+   * run after all — refused asynchronously, or buffered for an engine run
+   * that never took it. A synchronous `queued` is the caller's to handle.
+   */
+  inject(
+    identity: RunIdentity,
+    input: InjectTaskInput,
+    options: { onNotDelivered?: () => void } = {},
+  ): InjectTaskResult {
     const { botId, conversationId } = this.#scope(identity);
     const task = this.#ownTask(botId, conversationId, input.taskId);
     if (isTerminalStatus(task.status)) {
@@ -493,11 +539,14 @@ export class TaskHost implements TaskToolFacade {
       sourceMessageIds: sources.map((message) => message.id),
       delivery,
     });
+    const fallback = options.onNotDelivered !== undefined ? { onNotDelivered: options.onNotDelivered } : {};
     // Steered at attach; a failure there downgrades the entry to queued.
-    if (buffer && launched !== undefined) launched.buffered.push({ text: steerText(), entryId: entry.id });
+    if (buffer && launched !== undefined) {
+      launched.buffered.push({ text: steerText(), entryId: entry.id, ...fallback });
+    }
     // An engine that refuses asynchronously (external agents) reports back by text.
     if (steered !== null && launched !== undefined) {
-      noteSteered(launched, { text: steered, entryId: entry.id });
+      noteSteered(launched, { text: steered, entryId: entry.id, ...fallback });
     }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     return { delivery };
@@ -706,23 +755,6 @@ export class TaskHost implements TaskToolFacade {
   }
 
   /**
-   * A turn did not see these results after all (an external agent refused the
-   * steer that carried them after its run already marked them consumed): the
-   * consumption is undone so a crash before the re-delivered batch is consumed
-   * cannot lose them (§3.2 — at-least-once). The re-delivery is the caller's.
-   */
-  reopenConsumption(taskIds: Iterable<string>): void {
-    const now = this.#deps.clock.now();
-    for (const taskId of new Set(taskIds)) {
-      const task = this.#deps.runs.get(taskId);
-      if (task === null || task.loopType !== 'task' || task.resultConsumedAt === null) continue;
-      this.#deps.runs.update(taskId, { resultConsumedAt: null });
-      // Delivered just now (by the caller): the reconciliation waits for it.
-      this.#pendingConsumption.set(taskId, now);
-    }
-  }
-
-  /**
    * Retries a failed task (design 30 §7.5: after the setup it failed on is
    * completed — the setup card's automatic retry): a new task continuing it
    * (`continues_task_id`) with the same brief, source messages and pre-start
@@ -773,6 +805,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: writes,
       taskWorkdir: task.taskWorkdir,
       originRunId: task.originRunId,
+      ...this.#engineFields(botId),
       continuedFromRunIds: [task.id],
     });
     this.#deps.publishRunStatus(retried);
@@ -999,6 +1032,28 @@ export class TaskHost implements TaskToolFacade {
   }
 
   // --- internals --------------------------------------------------------------
+
+  /** Engine / provider of a new task row (an external agent's key, else the default). */
+  #engineFields(botId: string): { engine?: string; provider?: string } {
+    let engine: string | null;
+    try {
+      engine = this.#deps.taskEngine?.(botId) ?? null;
+    } catch {
+      engine = null;
+    }
+    return engine !== null ? { engine, provider: engine } : {};
+  }
+
+  /** The turns `runId` re-runs (its retry chain, nearest first; [] = not a retry). */
+  #retryChain(runId: string): string[] {
+    const chain: string[] = [];
+    let current = this.#deps.runs.retryOfRunId(runId);
+    while (current !== null && !chain.includes(current) && chain.length < 16) {
+      chain.push(current);
+      current = this.#deps.runs.retryOfRunId(current);
+    }
+    return chain;
+  }
 
   #scope(identity: RunIdentity): { botId: string; conversationId: string } {
     if (identity.botId === null || identity.conversationId === null) {
@@ -1257,9 +1312,10 @@ export class TaskHost implements TaskToolFacade {
 
   /**
    * Buffered injects that reached no engine run after all: their entries are
-   * downgraded to `queued` (§4.1 — the bot sees they did not take effect).
+   * downgraded to `queued` (§4.1 — the bot sees they did not take effect) and
+   * the caller's fallback runs (审查 M5).
    */
-  #injectsNotDelivered(items: Array<{ entryId: string }>): void {
+  #injectsNotDelivered(items: PendingInject[]): void {
     for (const item of items) {
       this.#safely(() => {
         this.#deps.db
@@ -1268,6 +1324,8 @@ export class TaskHost implements TaskToolFacade {
           )
           .run(item.entryId);
       });
+      const fallback = item.onNotDelivered;
+      if (fallback !== undefined) this.#safely(fallback);
     }
   }
 
