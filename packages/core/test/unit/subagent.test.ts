@@ -308,6 +308,32 @@ describe('subagent facade', () => {
     const [run] = runs.listByConversation('conv_1', 10);
     expect(row.run_id).toBe(run!.id);
   });
+
+  it('a failed external agent compaction is charged as a zero-token row; built-in failures are not', async () => {
+    const rowsFor = async (lightModelRef: string) => {
+      const engine = new FakeEngine();
+      engine.completeShouldFail = true;
+      const mainDb = openMainDb();
+      const usage = new UsageService(mainDb, new TestClock(1_000));
+      const facade = createSubagentFacade(
+        { ...makeDeps(engine), usage },
+        makeInput(engine, { lightModelRef }),
+      );
+      // A process record to compress (an empty digest skips the light call).
+      engine.completed.push({
+        outcome: { status: 'completed', finalText: '结论', skipReply: false, usage: [] },
+        events: [{ type: 'assistant', payload: { text: '过程输出', stopReason: 'stop' } }],
+      });
+      await facade.delegate({ task: '任务' }, makeCtx().ctx);
+      return mainDb
+        .prepare('select provider, loop_type, input_tokens, output_tokens from usage_ledger')
+        .all();
+    };
+    expect(await rowsFor('agent:codex-acp/default')).toEqual([
+      { provider: 'agent:codex-acp', loop_type: 'subagent', input_tokens: 0, output_tokens: 0 },
+    ]);
+    expect(await rowsFor('mock/light')).toEqual([]);
+  });
 });
 
 /** 让 startBackground 的 void 异步链跑到 settle。 */

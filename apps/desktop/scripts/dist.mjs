@@ -63,6 +63,10 @@ const releaseGates = JSON.parse(
 if (!Array.isArray(releaseGates) || releaseGates.some((gate) => typeof gate !== 'string')) {
   throw new Error('[dist] agent-release-gates.json: "approved" must be an array of strings');
 }
+// The testkit fake agent (scripted, test seams only) never ships (D72 P6).
+if (releaseGates.includes('testkit')) {
+  throw new Error('[dist] agent-release-gates.json: "testkit" must never be approved');
+}
 console.log(`[dist] agent release gates approved: ${JSON.stringify(releaseGates)}`);
 const coreEntry = path.join(appDir, 'src/core-entry/index.ts');
 const outfile = path.join(appDir, 'out/main/core-entry/index.js');

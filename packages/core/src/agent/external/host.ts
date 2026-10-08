@@ -663,9 +663,14 @@ export class AgentHost {
     this.#disposeListeners.clear();
   }
 
+  /** The entry's Provider from this host's registry (throws when unregistered). */
+  providerFor(entry: AgentCatalogEntry): AgentProvider {
+    return providerFor(entry, this.#deps.providers ?? PROVIDERS);
+  }
+
   #start(entry: AgentCatalogEntry): LiveAgent {
     const logger = this.#log;
-    const provider = providerFor(entry, this.#deps.providers ?? PROVIDERS);
+    const provider = this.providerFor(entry);
     if (entry.transport === 'shim' && provider.connect === undefined) {
       // Checked before anything is spawned.
       throw new AppError('AGENT_INCOMPATIBLE', `智能体「${entry.name}」缺少协议垫片`);

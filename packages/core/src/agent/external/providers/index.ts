@@ -1,4 +1,7 @@
 import { AppError, type AgentCatalogEntry } from '@kepcup/shared';
+// Registers the dev-time global default for __KEPCUP_TEST_HOOKS__ (tsc output).
+import '../../../infra/test-hooks.js';
+import { approvedReleaseGates } from '../catalog.js';
 import type { AgentProvider, ProviderRegistry } from '../types.js';
 import { antigravityProvider } from './antigravity.js';
 import { claudeProvider } from './claude.js';
@@ -40,8 +43,16 @@ export function providerFor(
  * Whether a background session (`SessionContext.oneShot`) of this entry runs
  * without any native tool (审查 S1): the provider declares it
  * (`backgroundNoNativeTools`), or the entry is a testkit fake agent (scripted,
- * no native tools, never shipped).
+ * no native tools, never shipped). The testkit exemption holds only in test /
+ * dev builds — test hooks on and no release gates pinned; the packaged build
+ * (`__KEPCUP_TEST_HOOKS__=false`, gates injected, dist.mjs refuses a
+ * `testkit` gate) never grants it.
  */
 export function backgroundToolFree(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
-  return provider.backgroundNoNativeTools === true || entry.releaseGate === 'testkit';
+  if (provider.backgroundNoNativeTools === true) return true;
+  return (
+    entry.releaseGate === 'testkit' &&
+    __KEPCUP_TEST_HOOKS__ === true &&
+    approvedReleaseGates() === null
+  );
 }

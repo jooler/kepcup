@@ -896,10 +896,14 @@ class ExternalRunHandle implements RunHandle {
         this.#settleDisposed();
         return;
       }
-      this.#offDispose = this.#deps.host.onDispose(() => this.#settleDisposed());
+      const offDispose = this.#deps.host.onDispose(() => this.#settleDisposed());
+      this.#offDispose = offDispose;
       try {
         this.#prepareBackground();
       } catch (error) {
+        // Settled without #release: drop the dispose listener here.
+        offDispose();
+        this.#offDispose = null;
         this.#settle({
           status: 'failed',
           finalText: '',
@@ -928,19 +932,23 @@ class ExternalRunHandle implements RunHandle {
       }
       this.#agentName = entry.name;
       this.#entry = entry;
-      const lease = await this.#deps.host.acquire(entry);
-      this.#lease = lease;
-      if (this.#resolved) return;
-      const { connection, provider, init } = lease;
-      this.#provider = provider;
       // Background sessions must have no native tools (审查 S1): the router
-      // never sends one to such an agent; refuse here as a second line.
-      if (external.background === true && !backgroundToolFree(entry, provider)) {
+      // never sends one to such an agent; refuse here as a second line —
+      // before acquire, so such an agent is never spawned for it.
+      if (
+        external.background === true &&
+        !backgroundToolFree(entry, this.#deps.host.providerFor(entry))
+      ) {
         throw new AppError(
           'AGENT_UNAVAILABLE',
           `智能体「${entry.name}」无法为后台任务完全关闭原生工具，不能用于后台任务`,
         );
       }
+      const lease = await this.#deps.host.acquire(entry);
+      this.#lease = lease;
+      if (this.#resolved) return;
+      const { connection, provider, init } = lease;
+      this.#provider = provider;
 
       const parts = spec.promptParts ?? (await this.#fallbackPromptParts());
       const metaAppend = provider.instructionMode === 'meta-append';

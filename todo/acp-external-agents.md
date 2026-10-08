@@ -797,6 +797,15 @@ OpenCode 用户配置扫描（`providers/opencode.ts`）一律 fail closed——
 
 随后合并 `t/d72-p5-2` 的 aa80a78（第三轮审查修复，无冲突；宿主机 `pnpm install --offline --frozen-lockfile` 同步 js-yaml）。一致性：后台会话与对话会话走同一 `#openSession`，同样在建会话前过 Provider 的 `checkConfig`（新用例：声明 `backgroundNoNativeTools` 的 Provider 若 `checkConfig` 报 `AGENT_CONFIG_UNSAFE`，`complete()` 照此失败、不建会话）；`config_unsafe` 是设置卡原因，`agentRunGate` 不通过 → 路由器本就跳过该 Agent。合并后复验：typecheck 0 error、lint 0；容器全量 153 文件 / 1488 用例，失败恰为基线 33 条；e2e `external-agents.spec.ts` 4/4。
 
+**收尾（2026-10-08）**：合并 `t/d72-p5-2` 的 811a03c（OpenCode 配置扫描 jsonc-parser 解析与 env 中和，无冲突；只动 `providers/opencode.ts` 的 `checkConfig` / `launch` 与 `host.openSession` 兼查退役进程——后台资格判定 `backgroundToolFree` 与引擎 `#openSession` 前的 `checkConfig` 不受影响，OpenCode 仍未声明 `backgroundNoNativeTools`）。随后一个提交「D72 P6 收尾修复」处理 P6 验证复审的 LOW 项：
+
+- **a**：后台会话的私有临时目录建不出来（`#prepareBackground` 抛错）时，`start()` 不经 `#release` 结算——在该分支注销 `host.onDispose` 监听，避免泄漏。
+- **b**：引擎的 S1 第二道防线移到 `host.acquire(entry)` 之前（`AgentHost.providerFor(entry)` 按宿主自己的 Provider 登记表取），不合格 Agent 不再为后台任务被拉起进程。
+- **c**：testkit 假 Agent 的后台豁免只在测试 / 开发构建成立：`backgroundToolFree` 要求 `__KEPCUP_TEST_HOOKS__` 为真且未注入发行门禁（`approvedReleaseGates() === null`）；`dist.mjs` 发现 `approved` 含 `testkit` 时构建失败。
+- **d**：经 Agent 的 `complete()` 失败 / 超时 / 取消（如群聊判断 60 s 超时）也记一行零 token 用量（与成功同一归属：`completeStructured` 的 `onUsage`，SubAgent 压缩的 `recordSubagentUsage`），每日后台预算按一轮折算；记账本身失败（核心关闭）不掩盖原错误。内置模型的失败照旧不记。
+- **e（已知、外观性）**：C10 的核心关闭结算发生在数据库关闭之前——后台会话以 `AGENT_UNAVAILABLE` 结算后，调用方可能把 run 记为 failed、把任务退回待处理（重启后照常重跑），不是数据问题。另：在 C2 修复前的开发构建里保存过设置的，`backgroundTasks.groupMentionOnly` 可能仍为已保存的 `false`（默认值改为 true 只作用于未保存过的设置），需要时在设置「后台任务」中重新打开。
+- 测试：`unit/external-agent-p6.test.ts`（临时目录失败时注销监听、不合格 Agent 不拉起进程、testkit 豁免随构建常量、jsonOnly 失败记零行而内置不记）、`unit/subagent.test.ts`（Agent 压缩失败记零行、内置不记）。
+
 ---
 
 ## 10. 并行调研项（不阻塞本方案）
