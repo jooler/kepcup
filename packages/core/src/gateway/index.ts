@@ -200,6 +200,17 @@ export class ToolGateway {
     this.#sensitive = (deps.sensitiveOverride ?? sensitivePaths(this.#platform)).map(
       resolveStandingPath,
     );
+    // Once grants the grants service revokes on its own (consumed by their
+    // tool call, TTL, run end) must reach the right panel too (D75).
+    // Stubbed grants in unit tests may not implement it.
+    if (typeof deps.grants.onAutoRevoke === 'function') {
+      deps.grants.onAutoRevoke((conversationId) => {
+        deps.approvals.publishEvent('grant.changed', {
+          conversationId,
+          grants: deps.grants.listActive(conversationId),
+        });
+      });
+    }
   }
 
   /** Canonical skill directories of one bot (library + authored). */
@@ -230,12 +241,31 @@ export class ToolGateway {
 
   /**
    * D75 §2.1 / §5.1: null when the identity may write, else the readable
-   * reason. Only turns and tasks can be read-only; the run lookup lives with
-   * the write-lease authority (ProjectRuntime.writeDenial).
+   * reason. Only turns, tasks and the sub runs they own (`subagent`, resolved
+   * to the owning run) can be read-only; the run lookup lives with the
+   * write-lease authority (ProjectRuntime.writeDenial).
    */
   writeDenial(identity: RunIdentity): string | null {
-    if (identity.loopType !== 'turn' && identity.loopType !== 'task') return null;
+    const { loopType } = identity;
+    if (loopType !== 'turn' && loopType !== 'task' && loopType !== 'subagent') return null;
     return this.#deps.projects.writeDenial(identity);
+  }
+
+  /**
+   * Download directory of a read-only run's browser page (D75): a host-owned
+   * directory in the app cache — outside every workspace and never readable
+   * by the model (the data home is off limits) — instead of the workspace's
+   * `downloads/`, which a page click would otherwise write to behind the
+   * gateway's back. The page is shared per bot + conversation; every browser
+   * tool call re-sends its own run's directory before acting.
+   */
+  readOnlyDownloadsDir(identity: RunIdentity): string {
+    return path.join(
+      this.#deps.paths.cacheDir,
+      'readonly-downloads',
+      identity.botId ?? '_',
+      identity.conversationId ?? '_',
+    );
   }
 
   checkPath(identity: RunIdentity, inputPath: string, mode: 'read' | 'write'): PathDecision {
@@ -377,6 +407,38 @@ export class ToolGateway {
   }
 
   /**
+   * Write check for a copy the host itself makes into a fixed directory of
+   * the identity's workspace (`get_attachment` → `.attachments/`): the bytes
+   * and the file name come from the host, not the model, so the D75 read-only
+   * rule does not apply — a read-only run must still be able to read a PDF or
+   * image attachment by id. The exemption is confined: the resolved target
+   * must stay inside `<workspace>/<hostDir>/` (a symlinked `hostDir` or file
+   * resolving elsewhere is refused) and must not be a hard link with entries
+   * outside the workspace. Runs that may write get the ordinary write check.
+   */
+  checkHostCopyPath(identity: RunIdentity, inputPath: string, hostDir: string): PathDecision {
+    const decision = this.checkPath(identity, inputPath, 'write');
+    if (decision.kind !== 'forbidden' || decision.readOnlyRun !== true) return decision;
+    const workspace = this.workspacePath(identity);
+    if (workspace === null) return decision;
+    const norm = (p: string) => normalizeForCompare(p, this.#platform);
+    const dir = path.join(workspace, hostDir);
+    if (
+      norm(decision.resolvedPath) !== norm(dir) &&
+      isInsidePath(norm(decision.resolvedPath), norm(dir)) &&
+      !hasExternalHardlink(decision.resolvedPath, workspace)
+    ) {
+      return { kind: 'allowed', resolvedPath: decision.resolvedPath };
+    }
+    return {
+      kind: 'forbidden',
+      resolvedPath: decision.resolvedPath,
+      reason: `${decision.reason}（宿主只能把文件复制到 workspace 的 ${hostDir} 目录）`,
+      readOnlyRun: true,
+    };
+  }
+
+  /**
    * Gateway verdict as a path the caller may touch: allowed paths pass
    * through, grantable paths raise an access approval (blocking until the
    * user decides), forbidden paths throw PATH_OUT_OF_SCOPE (RUN_READ_ONLY for
@@ -495,9 +557,16 @@ export class ToolGateway {
       this.#deps.environment?.noteToolchainUse();
     }
     if (availability.available) {
+      // Effective = conversation grants + once grants this tool call owns or
+      // may claim (unclaimed request_access pre-authorizations); once grants
+      // owned by a parallel call of the same run are not visible here (D75).
       const grants = this.#deps.grants.listEffective(identity);
-      // Every grant in the policy is usable by this command: once grants are
-      // consumed by this tool call (D75).
+      // Every grant in the policy is usable by this command, so every once
+      // grant in it is consumed by this tool call. Which mounts a command
+      // actually touches is not observable (and parsing the command for paths
+      // would miss scripts, cd and variables), so a claimable pre-authorization
+      // for an unrelated path is consumed too: the safe side — a mounted grant
+      // must never stay usable for further commands.
       for (const grant of grants) this.#deps.grants.noteOnceUse(grant);
       const policy = buildSandboxPolicy({
         platform: this.#platform,

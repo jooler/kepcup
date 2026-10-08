@@ -24,6 +24,11 @@ export interface BrowserToolDeps {
   browser: BrowserHostRpc;
   /** The run's workspace; downloads land in `downloads/` below it. */
   workspacePath: string;
+  /**
+   * D75: download directory override — a read-only run's downloads go to a
+   * host-owned directory outside the workspace (ToolGateway.readOnlyDownloadsDir).
+   */
+  downloadsDir?: string | undefined;
   /** Bound project directory (null = loopback blocked for this page). */
   projectPath: string | null;
 }
@@ -88,7 +93,7 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
   if (identity.botId === null || identity.conversationId === null) return [];
 
   const pair = { botId: identity.botId, conversationId: identity.conversationId };
-  const downloadsDir = path.join(deps.workspacePath, 'downloads');
+  const downloadsDir = deps.downloadsDir ?? path.join(deps.workspacePath, 'downloads');
 
   /** ensurePage re-sent before every action: idempotent, refreshes context. */
   async function ensure(): Promise<void> {

@@ -74,6 +74,22 @@ export const TURN_READ_ONLY_REASON =
 /** D75 §5.1: why a read-only task may not write (tool error text). */
 export const TASK_READ_ONLY_REASON =
   '这是只读任务（派出时未声明写入）：不能写文件、执行会改动文件的命令或申请写入。请在结果中说明需要的改动，由对话轮另派写任务';
+/** A sub run (delegate_task) whose owning run cannot be resolved fails closed. */
+export const SUBAGENT_UNRESOLVED_READ_ONLY_REASON =
+  '无法确认这个子代理所属的执行是否允许写入，按只读处理：不能写文件、执行会改动文件的命令或申请写入';
+/** A write task's sub run that outlives the task (its pinned lease is gone). */
+export const SUBAGENT_PARENT_ENDED_READ_ONLY_REASON =
+  '这个子代理所属的写任务已经结束（写入租约已释放），子代理不能再写文件或执行会改动文件的命令';
+
+/** Bound on the sub run → parent run walk (sub runs do not nest today). */
+const SUBAGENT_PARENT_MAX_DEPTH = 4;
+
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
 
 interface RunLeaseState {
   key: string;
@@ -123,12 +139,31 @@ export class ProjectRuntime {
    * D75 §2.1 / §5.1 execution-time read-only rule: null when the identity may
    * write, else the readable reason. A supervisor turn never writes; a task
    * writes only when it was created with `task_writes = true` (a missing run
-   * row or null fails closed). Every other loop type is unaffected.
+   * row or null fails closed). A sub run (`delegate_task`, loop type
+   * `subagent`) follows the rule of the run that owns it — resolved through
+   * `parent_run_id` up to the root, bounded and failing closed when the chain
+   * breaks — so a read-only task cannot write through a delegated `bash`, and
+   * a write task's sub run stops writing once the task (and its pinned lease)
+   * has ended. Every other loop type is unaffected.
    */
   writeDenial(identity: RunIdentity): string | null {
-    if (identity.loopType === 'turn') return TURN_READ_ONLY_REASON;
-    if (identity.loopType === 'task') {
-      return this.#deps.runs.get(identity.runId)?.taskWrites === true ? null : TASK_READ_ONLY_REASON;
+    let loopType = identity.loopType;
+    let runId = identity.runId;
+    for (let depth = 0; loopType === 'subagent'; depth += 1) {
+      const parentId =
+        depth < SUBAGENT_PARENT_MAX_DEPTH ? (this.#deps.runs.get(runId)?.parentRunId ?? null) : null;
+      const parent = parentId !== null ? this.#deps.runs.get(parentId) : null;
+      if (parent === null) return SUBAGENT_UNRESOLVED_READ_ONLY_REASON;
+      loopType = parent.loopType;
+      runId = parent.id;
+    }
+    if (loopType === 'turn') return TURN_READ_ONLY_REASON;
+    if (loopType === 'task') {
+      const task = this.#deps.runs.get(runId);
+      if (task?.taskWrites !== true) return TASK_READ_ONLY_REASON;
+      if (runId !== identity.runId && TERMINAL_RUN_STATUSES.has(task.status)) {
+        return SUBAGENT_PARENT_ENDED_READ_ONLY_REASON;
+      }
     }
     return null;
   }

@@ -114,7 +114,7 @@ function facade(overrides: {
 }
 
 function installTool(facadeImpl: SkillInstallFacade) {
-  const tools = buildSkillTools({ identity, skills: facadeImpl });
+  const tools = buildSkillTools({ identity, skills: facadeImpl, gateway: { writeDenial: () => null } });
   return tools.find((tool) => tool.name === 'install_skill')!;
 }
 
