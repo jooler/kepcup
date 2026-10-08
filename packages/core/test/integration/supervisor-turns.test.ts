@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Message, Run, RunStep, TaskEventContent } from '@kepcup/shared';
+import type { Bot, Message, Run, RunStep, TaskEventContent } from '@kepcup/shared';
 import {
+  agentTurn,
   createTestStack,
+  fakeAgentSpawner,
   isTaskRequest,
   listMessages,
   makeBot,
@@ -14,6 +16,7 @@ import {
   step,
   waitFor,
   type CoreHarness,
+  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';
@@ -509,5 +512,74 @@ describe('D75 supervisor turns (W2)', () => {
     // Only the task's owner was woken.
     const wakeTurns = runsOf(stack, conv.id, 'turn').filter((t) => t.triggerReason === 'task');
     expect(wakeTurns.map((t) => t.botId)).toEqual([x.id]);
+  }, 60_000);
+
+  it('a turn that runs out of steps (TURN_MAX_TURNS) settles failed with a hint', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    llm.script(
+      'mock-main',
+      Array.from({ length: 8 }, () => step().inTurn().replyToolCall('list_tasks', {})),
+    );
+    await sendBatch(core, conv.id, ['一直查']);
+    const [turn] = await waitTurns(stack, conv.id, 1, 'turn settled');
+    expect(turn).toMatchObject({ status: 'failed' });
+    expect(turn!.error).toContain('步上限');
+    expect(llm.requestsFor('mock-main')).toHaveLength(8);
+  }, 30_000);
+
+  it('§8.4 downgrade: an agent-only bot without a built-in model routes messages to a task and forwards its result', async () => {
+    const started: FakeAcpAgentHandle[] = [];
+    const stack = await createTestStack({
+      env: { KEPCUP_MOCK_LLM_URL: '' },
+      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
+      agentSpawn: fakeAgentSpawner(
+        { fake: { turns: [agentTurn().text('RESULT-AGENT 已经整理好了')] } },
+        started,
+      ) as never,
+    });
+    stacks.push(stack);
+    const { core } = stack;
+    await core.rpc.call('settings.update', {
+      experimental: { externalAgents: true },
+      agents: { fake: { enabled: true } },
+      backgroundTasks: { agentEnabled: false },
+    });
+    const created = await makeBot(core, '外援');
+    const bot = (
+      (await core.rpc.call('bots.update', {
+        id: created.id,
+        profile: {
+          ...created.profile,
+          runtime: {
+            ...created.profile.runtime,
+            agent: { ...created.profile.runtime.agent, id: 'fake' },
+          },
+        },
+      })) as { bot: Bot }
+    ).bot;
+    const conv = await openDirect(core, bot.id);
+
+    const [source] = await sendBatch(core, conv.id, ['帮我整理一下资料']);
+    const task = await waitFor(() => runsOf(stack, conv.id, 'task')[0] ?? null, {
+      label: 'task started by the downgraded turn',
+    });
+    expect(task.triggerMessageIds).toEqual([source!.id]);
+    const [turn1] = await waitTurns(stack, conv.id, 1, 'downgraded turn settled');
+    expect(turn1).toMatchObject({ status: 'completed', engine: 'builtin' });
+    expect(task.originRunId).toBe(turn1!.id);
+
+    const done = await waitRun(stack, task.id, ['completed'], 'agent task completed');
+    expect(done.engine).toBe('agent:fake');
+    const forwarded = await waitVisible(stack, conv.id, 'RESULT-AGENT');
+    expect(forwarded.content).toMatchObject({ origin: 'task', taskId: task.id });
+    expect(forwarded.senderBotId).toBe(bot.id);
+    await waitFor(
+      () => (domain(stack).runs.getOrThrow(task.id).resultConsumedAt !== null ? true : null),
+      { label: 'result consumed' },
+    );
+    expect(started[0]!.observed.prompts[0]!.text).toContain('帮我整理一下资料');
   }, 60_000);
 });
