@@ -36,8 +36,9 @@ export interface StartTaskInput {
 
 export interface StartTaskResult {
   taskId: string;
-  state: 'running' | 'submitted';
-  /** Why a submitted task waits (concurrency / write lease); null when running. */
+  /** The row's true state: terminal when it settled synchronously. */
+  state: TaskState;
+  /** Why a submitted task waits (concurrency / write lease); null otherwise. */
   queueReason: string | null;
 }
 
@@ -214,7 +215,9 @@ export function buildTaskTools(input: {
         const line =
           started.state === 'running'
             ? `已派出任务 ${started.taskId}，正在执行。`
-            : `已派出任务 ${started.taskId}，排队中：${started.queueReason ?? '等待启动'}。`;
+            : started.state === 'submitted'
+              ? `已派出任务 ${started.taskId}，排队中：${started.queueReason ?? '等待启动'}。`
+              : `已派出任务 ${started.taskId}，但它已经结束（${started.state}），详见它的结算条目。`;
         return {
           ok: true,
           content: `${line}\n${JSON.stringify({ task_id: started.taskId, state: started.state, queue_reason: started.queueReason })}`,

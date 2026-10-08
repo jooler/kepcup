@@ -87,8 +87,13 @@ export interface TaskRunControl {
   brief(): TaskBrief | null;
   /** The engine run started: injects are steered into it from now on. */
   attach(handle: TaskRunHandle): void;
-  /** The engine run ended. */
+  /** The engine run ended: later injects can no longer reach this execution. */
   detach(): void;
+  /**
+   * Why the launched task is still `queued` (waiting for its write lease / a
+   * provider slot); null once it runs. Shown as the queue reason (§3.1).
+   */
+  waiting(reason: string | null): void;
   /**
    * The execution is over (every path, after its lease release): the slot and
    * the write target are freed and submitted tasks may start.
@@ -169,9 +174,13 @@ interface LaunchedTask {
   settledAt: number | null;
   controller: AbortController;
   handle: TaskRunHandle | null;
+  /** The engine run ended (detach): injects can no longer be steered in. */
+  closing: boolean;
+  /** Why the execution has not started yet (`control.waiting`). */
+  waitReason: string | null;
   briefBuilt: boolean;
-  /** Injects that arrived after the brief was built but before attach. */
-  buffered: string[];
+  /** Injects that arrived after the brief was built but before attach (+ their entries). */
+  buffered: Array<{ text: string; entryId: string }>;
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
@@ -304,6 +313,12 @@ export class TaskHost implements TaskToolFacade {
   readonly #launched = new Map<string, LaunchedTask>();
   /** Delivered terminal entries waiting for a consuming turn (sweep skips them). */
   readonly #pendingConsumption = new Map<string, number>();
+  /**
+   * Outcomes whose terminal entry could not be written (main.db error while
+   * the conversation still exists): the task stays non-terminal and `sweep`
+   * retries the settlement — never a terminal task without its entry.
+   */
+  readonly #unsettled = new Map<string, TaskOutcome>();
   #pumping = false;
   #pumpAgain = false;
   /** >0 while a lifecycle abort loops over tasks (pump once at the end). */
@@ -344,7 +359,7 @@ export class TaskHost implements TaskToolFacade {
         `本轮最多派出 ${this.#limits.perTurn} 个任务；其余的请等这些任务有结果后再派，或合并成一个任务`,
       );
     }
-    const sources = this.#sourceMessages(conversationId, botId, input.sourceMessageIds);
+    const sources = this.#sourceMessages(conversationId, input.sourceMessageIds);
     let continues: Run | null = null;
     if (input.continuesTaskId !== undefined) {
       continues = this.#ownTask(botId, conversationId, input.continuesTaskId);
@@ -383,18 +398,14 @@ export class TaskHost implements TaskToolFacade {
       ...(continues !== null ? { continuesTaskId: continues.id } : {}),
     });
     this.#pump();
-    const launched = this.#launched.has(task.id);
+    // The row's true state: launched tasks still wait for their write lease /
+    // a provider slot while `queued`; one settled synchronously reports its
+    // terminal state (its entry tells the rest).
     const current = this.#deps.runs.get(task.id) ?? task;
-    if (isTerminalStatus(current.status)) {
-      // Settled synchronously (bot vanished between checks, …): report it as
-      // started — its terminal entry tells the rest.
-      return { taskId: task.id, state: 'running', queueReason: null };
+    if (current.status === 'queued') {
+      return { taskId: task.id, state: 'submitted', queueReason: this.#queueReason(current) };
     }
-    return {
-      taskId: task.id,
-      state: launched ? 'running' : 'submitted',
-      queueReason: launched ? null : this.#queueReason(current),
-    };
+    return { taskId: task.id, state: taskState(current.status), queueReason: null };
   }
 
   inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult {
@@ -405,18 +416,24 @@ export class TaskHost implements TaskToolFacade {
     }
     const text = input.text.trim();
     if (text.length === 0) throw new AppError('INVALID_INPUT', 'text 不能为空');
-    const sources = this.#sourceMessages(conversationId, botId, input.sourceMessageIds ?? []);
+    const sources = this.#sourceMessages(conversationId, input.sourceMessageIds ?? []);
     const launched = this.#launched.get(task.id);
+    const steerText = (): string =>
+      buildTaskInjection(text, sources, this.#deps.renderOptions(botId));
     let delivery: 'delivered' | 'queued' = 'delivered';
+    let buffer = false;
     if (launched?.handle) {
-      const steerText = buildTaskInjection(text, sources, this.#deps.renderOptions(botId));
-      delivery = launched.handle.steer(steerText) ? 'delivered' : 'queued';
+      delivery = launched.handle.steer(steerText()) ? 'delivered' : 'queued';
+    } else if (launched !== undefined && (launched.closing || launched.settledAt !== null)) {
+      // The engine run is over (the execution is settling): nothing will take
+      // it in — it only takes effect after the task ends (§4.1 queued).
+      delivery = 'queued';
     } else if (launched?.briefBuilt) {
-      launched.buffered.push(buildTaskInjection(text, sources, this.#deps.renderOptions(botId)));
+      buffer = true;
     }
     // Not launched / brief not built yet: the entry below is folded into the
     // brief when the task starts (TaskBrief.injects).
-    this.#deps.messages.appendTaskEvent({
+    const { message: entry } = this.#deps.messages.appendTaskEvent({
       conversationId,
       ownerBotId: botId,
       taskId: task.id,
@@ -425,6 +442,8 @@ export class TaskHost implements TaskToolFacade {
       sourceMessageIds: sources.map((message) => message.id),
       delivery,
     });
+    // Steered at attach; a failure there downgrades the entry to queued.
+    if (buffer && launched !== undefined) launched.buffered.push({ text: steerText(), entryId: entry.id });
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     return { delivery };
   }
@@ -544,10 +563,17 @@ export class TaskHost implements TaskToolFacade {
    * decision → delivery. Idempotent: a task already terminal is left as is
    * (a host-stopped task's executor lands here afterwards).
    */
-  settle(taskId: string, outcome: TaskOutcome): Run | null {
+  settle(taskId: string, reported: TaskOutcome): Run | null {
     const task = this.#deps.runs.get(taskId);
     if (task === null || task.loopType !== 'task') return null;
-    if (isTerminalStatus(task.status)) return task;
+    if (isTerminalStatus(task.status)) {
+      this.#unsettled.delete(taskId);
+      return task;
+    }
+    // A settlement whose entry write failed earlier keeps its outcome (the
+    // host's decision — cancel, forced failure — wins over the unwinding
+    // executor's report).
+    const outcome = this.#unsettled.get(taskId) ?? reported;
     let error = outcome.error ?? null;
     let entry: Message | null = null;
     let created = true;
@@ -572,9 +598,22 @@ export class TaskHost implements TaskToolFacade {
               ...(error !== null ? { error } : {}),
             },
       );
+      if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {
+        // §3.2: no terminal status (and no consumption) without the terminal
+        // entry while there is a conversation to hold it — the result would be
+        // lost. Stop the execution, keep the outcome, let `sweep` retry.
+        this.#unsettled.set(taskId, outcome);
+        const launched = this.#launched.get(taskId);
+        if (launched !== undefined) {
+          launched.settledAt ??= this.#deps.clock.now();
+          launched.controller.abort();
+        }
+        return task;
+      }
       entry = written?.message ?? null;
       created = written?.created ?? true;
     }
+    this.#unsettled.delete(taskId);
     // An earlier writer may have won the unique index: the stored entry is
     // the source of truth for the final status (and its error).
     const status = entry !== null ? statusOfTerminalEntry(entry) : outcome.status;
@@ -611,6 +650,104 @@ export class TaskHost implements TaskToolFacade {
     }
   }
 
+  /**
+   * A turn did not see these results after all (an external agent refused the
+   * steer that carried them after its run already marked them consumed): the
+   * consumption is undone so a crash before the re-delivered batch is consumed
+   * cannot lose them (§3.2 — at-least-once). The re-delivery is the caller's.
+   */
+  reopenConsumption(taskIds: Iterable<string>): void {
+    const now = this.#deps.clock.now();
+    for (const taskId of new Set(taskIds)) {
+      const task = this.#deps.runs.get(taskId);
+      if (task === null || task.loopType !== 'task' || task.resultConsumedAt === null) continue;
+      this.#deps.runs.update(taskId, { resultConsumedAt: null });
+      // Delivered just now (by the caller): the reconciliation waits for it.
+      this.#pendingConsumption.set(taskId, now);
+    }
+  }
+
+  /**
+   * Retries a failed task (design 30 §7.5: after the setup it failed on is
+   * completed — the setup card's automatic retry): a new task continuing it
+   * (`continues_task_id`) with the same brief, source messages and pre-start
+   * injects, attributed to the same originating turn (the per-turn cap does
+   * not apply: it is the same dispatch). Idempotent: an existing continuation
+   * of the task is returned instead of a second one.
+   */
+  retry(taskId: string): Run {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || task.loopType !== 'task') {
+      throw new AppError('RUN_NOT_FOUND', `任务 ${taskId} 不存在`);
+    }
+    if (task.status !== 'failed') {
+      throw new AppError('INVALID_INPUT', `任务 ${task.id} 不是失败状态（${task.status}）`);
+    }
+    if (task.botId === null || task.conversationId === null) {
+      throw new AppError('INVALID_INPUT', '任务缺少 Bot 或对话，无法重试');
+    }
+    const { botId, conversationId } = task;
+    const existing = this.#deps.runs
+      .listTasks({ conversationId, botId })
+      .find((candidate) => candidate.continuedFromRunIds.includes(task.id));
+    if (existing !== undefined) return existing;
+    if (!this.#canWake(botId, conversationId)) {
+      throw new AppError('INVALID_INPUT', '对话不可用（只读、已删除，或 Bot 已不在其中）');
+    }
+    const events = this.#deps.messages
+      .taskEvents(task.id)
+      .map((event) => taskEventOf(event))
+      .filter((content): content is TaskEventContent => content !== null);
+    const brief = events.find((content) => content.phase === 'brief');
+    if (brief === undefined) {
+      throw new AppError('INVALID_INPUT', '任务的交代条目缺失，无法重试：请让 Bot 重新派出');
+    }
+    const sourceIds = (brief.sourceMessageIds ?? []).filter((id) => {
+      const message = this.#deps.messages.getById(id);
+      return message !== null && message.status !== 'recalled';
+    });
+    const title = task.taskTitle ?? brief.title ?? '';
+    const writes = task.taskWrites === true;
+    const retried = this.#deps.runs.create({
+      botId,
+      conversationId,
+      loopType: 'task',
+      triggerReason: null,
+      triggerMessageIds: sourceIds,
+      taskTitle: title,
+      taskWrites: writes,
+      taskWorkdir: task.taskWorkdir,
+      originRunId: task.originRunId,
+      continuedFromRunIds: [task.id],
+    });
+    this.#deps.publishRunStatus(retried);
+    this.#deps.messages.appendTaskEvent({
+      conversationId,
+      ownerBotId: botId,
+      taskId: retried.id,
+      phase: 'brief',
+      text: brief.text,
+      sourceMessageIds: sourceIds,
+      title,
+      writes,
+      continuesTaskId: task.id,
+    });
+    // Later instructions the failed task got (folded into the new brief).
+    for (const inject of events) {
+      if (inject.phase !== 'inject') continue;
+      this.#deps.messages.appendTaskEvent({
+        conversationId,
+        ownerBotId: botId,
+        taskId: retried.id,
+        phase: 'inject',
+        text: inject.text,
+        sourceMessageIds: inject.sourceMessageIds ?? [],
+      });
+    }
+    this.#pump();
+    return this.#deps.runs.get(retried.id) ?? retried;
+  }
+
   // --- recovery, reconciliation, reaper (§3.2, §7.4) --------------------------
 
   /**
@@ -634,6 +771,28 @@ export class TaskHost implements TaskToolFacade {
               ...(status !== 'completed' && error !== undefined ? { error } : {}),
             }),
           );
+          continue;
+        }
+        // Cancelled (cancel entry written) but the crash came before the
+        // settlement: honour the cancel — never re-launch or wake for it.
+        const cancelEntry = this.#deps.messages
+          .taskEvents(task.id)
+          .find((event) => taskEventOf(event)?.phase === 'cancel');
+        if (cancelEntry !== undefined) {
+          const reason = `已取消：${taskEventOf(cancelEntry)?.text ?? ''}`;
+          if (task.botId !== null && task.conversationId !== null) {
+            this.#safeAppend({
+              conversationId: task.conversationId,
+              ownerBotId: task.botId,
+              taskId: task.id,
+              phase: 'failure',
+              text: this.#failureText(task, 'cancelled', reason),
+              status: 'cancelled',
+              error: reason,
+            });
+          }
+          // Consumed by the reconciliation in resume() (cancelled never wakes).
+          repaired.push(this.#deps.runs.update(task.id, { status: 'cancelled', error: reason }));
           continue;
         }
         if (task.status === 'queued') continue;
@@ -680,6 +839,16 @@ export class TaskHost implements TaskToolFacade {
    * `now` overrides the clock (tests).
    */
   sweep(now: number = this.#deps.clock.now()): void {
+    for (const [taskId, outcome] of [...this.#unsettled]) {
+      try {
+        this.settle(taskId, outcome);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { taskId, error: error instanceof Error ? error.message : String(error) },
+          'task settlement retry failed',
+        );
+      }
+    }
     for (const launched of [...this.#launched.values()]) {
       if (launched.settledAt !== null) {
         // Settled but its execution never came back (a stuck tool / engine):
@@ -778,17 +947,19 @@ export class TaskHost implements TaskToolFacade {
     return task;
   }
 
-  /** Source messages must belong to the conversation and be visible to the bot. */
-  #sourceMessages(conversationId: string, botId: string, ids: string[]): Message[] {
+  /**
+   * Source messages must be shared rows of the conversation (§2.4.5: the
+   * brief carries the user's originals, never private task entries).
+   */
+  #sourceMessages(conversationId: string, ids: string[]): Message[] {
     const messages: Message[] = [];
     for (const id of [...new Set(ids)]) {
       const message = this.#deps.messages.getById(id);
-      if (
-        message === null ||
-        message.conversationId !== conversationId ||
-        (message.ownerBotId !== null && message.ownerBotId !== botId)
-      ) {
+      if (message === null || message.conversationId !== conversationId) {
         throw new AppError('INVALID_INPUT', `消息 ${id} 不属于本对话`);
+      }
+      if (message.ownerBotId !== null) {
+        throw new AppError('INVALID_INPUT', `消息 ${id} 是任务的私有条目，不能作为原消息`);
       }
       messages.push(message);
     }
@@ -850,8 +1021,9 @@ export class TaskHost implements TaskToolFacade {
 
   #queueReason(task: Run): string | null {
     if (isTerminalStatus(task.status)) return null;
-    if (this.#launched.has(task.id)) {
-      return task.status === 'queued' ? '等写入租约 / 启动中' : null;
+    const launched = this.#launched.get(task.id);
+    if (launched !== undefined) {
+      return task.status === 'queued' ? (launched.waitReason ?? '启动中') : null;
     }
     return this.#blockedBy(task) ?? '等待启动';
   }
@@ -872,6 +1044,8 @@ export class TaskHost implements TaskToolFacade {
       settledAt: null,
       controller: new AbortController(),
       handle: null,
+      closing: false,
+      waitReason: null,
       briefBuilt: false,
       buffered: [],
     };
@@ -882,10 +1056,15 @@ export class TaskHost implements TaskToolFacade {
       brief: () => this.#brief(task.id),
       attach: (handle) => this.#attach(task.id, handle),
       detach: () => {
-        const current = this.#launched.get(task.id);
-        if (current === launched) current.handle = null;
+        launched.handle = null;
+        launched.closing = true;
+      },
+      waiting: (reason) => {
+        launched.waitReason = reason;
       },
       finish: () => {
+        // Buffered injects that never reached an engine run.
+        this.#injectsNotDelivered(launched.buffered.splice(0));
         if (this.#launched.get(task.id) !== launched) return;
         this.#launched.delete(task.id);
         this.#pump();
@@ -940,17 +1119,34 @@ export class TaskHost implements TaskToolFacade {
     const launched = this.#launched.get(taskId);
     if (launched === undefined || launched.settledAt !== null) {
       // Stopped while starting: the host already settled it.
+      this.#injectsNotDelivered(launched?.buffered.splice(0) ?? []);
       handle.abort('task stopped');
       return;
     }
     launched.handle = handle;
     launched.attachedAt = this.#deps.clock.now();
-    for (const text of launched.buffered.splice(0)) {
-      if (!handle.steer(text)) {
-        this.#deps.logger.warn({ taskId }, 'buffered task inject could not be steered');
-      }
+    const refused = launched.buffered.splice(0).filter((item) => !handle.steer(item.text));
+    if (refused.length > 0) {
+      this.#deps.logger.warn({ taskId }, 'buffered task inject could not be steered');
+      this.#injectsNotDelivered(refused);
     }
     if (launched.controller.signal.aborted) handle.abort('task stopped');
+  }
+
+  /**
+   * Buffered injects that reached no engine run after all: their entries are
+   * downgraded to `queued` (§4.1 — the bot sees they did not take effect).
+   */
+  #injectsNotDelivered(items: Array<{ entryId: string }>): void {
+    for (const item of items) {
+      this.#safely(() => {
+        this.#deps.db
+          .prepare(
+            "update messages set content_json = json_set(content_json, '$.delivery', 'queued') where id = ? and kind = 'task_event'",
+          )
+          .run(item.entryId);
+      });
+    }
   }
 
   #runningSince(launched: LaunchedTask): number | null {
@@ -994,6 +1190,16 @@ export class TaskHost implements TaskToolFacade {
 
   /** Wake decision (§3.3) + delivery, or consumption right away. */
   #afterTerminal(run: Run, entry: Message | null): void {
+    if (
+      entry === null &&
+      run.botId !== null &&
+      run.conversationId !== null &&
+      this.#deps.conversations.get(run.conversationId) !== null
+    ) {
+      // The entry is missing but could still be written: never consume
+      // without it — the reconciliation writes it and delivers (§3.2).
+      return;
+    }
     if (entry === null || !this.#shouldWake(run, entry)) {
       this.markConsumed([run.id]);
       return;

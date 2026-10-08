@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { LeaseService } from '../../src/project/lease.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
+import { SlotYieldingLeaseService } from '../../src/scheduler/slot-yielding-lease.js';
 
 const logger = { info() {}, warn() {}, error() {}, debug() {} } as never;
 
@@ -181,6 +183,225 @@ describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
     blockers[0]!.release();
     await waitUntil(() => started.includes('task:t2'));
     for (const blocker of blockers) blocker.release();
+    scheduler.stop();
+  });
+});
+
+describe('Scheduler × write leases: no hold-and-wait (D75 审查 H2)', () => {
+  const key = '/proj';
+  const identity = (runId: string) => ({ runId, botId: 'b', conversationId: 'c', loopType: 'response' as const });
+
+  /**
+   * The reviewed deadlock: a write task T took the project lease and queues
+   * for a slot; a response run R holds the slot and then waits for the lease.
+   */
+  async function contend(limit: number, leases: LeaseService, scheduler: Scheduler) {
+    scheduler.setConcurrency({ default: limit });
+    const order: string[] = [];
+    const rStarted = deferred();
+    const rMayWrite = deferred();
+    let rDone = false;
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'bot:conv-b',
+      runId: 'run_r',
+      run: async () => {
+        rStarted.release();
+        await rMayWrite.promise;
+        order.push('r-waits');
+        await leases.acquire(identity('run_r'), key);
+        order.push('r-has-lease');
+        leases.release('run_r');
+        rDone = true;
+      },
+    });
+    await rStarted.promise;
+    // T: lease first (outside any slot, like #startTask), then its job.
+    await leases.acquire(identity('task_t'), key);
+    let tDone = false;
+    scheduler.submit({
+      priority: 1,
+      provider: 'p',
+      key: 'task:task_t',
+      runId: 'task_t',
+      run: async () => {
+        order.push('t-runs');
+        leases.release('task_t');
+        tDone = true;
+      },
+    });
+    rMayWrite.release();
+    await waitUntil(() => rDone && tDone, 2_000);
+    return order;
+  }
+
+  for (const limit of [1, 2]) {
+    it(`provider limit ${limit}: the waiting run yields its slot, the task runs, then the run resumes`, async () => {
+      const scheduler = new Scheduler(logger);
+      const leases = new SlotYieldingLeaseService();
+      leases.attachScheduler(scheduler);
+      expect(await contend(limit, leases, scheduler)).toEqual(['r-waits', 't-runs', 'r-has-lease']);
+      scheduler.stop();
+    });
+
+    it(`provider limit ${limit}: without the yield the same schedule deadlocks (reproduction)`, async () => {
+      const scheduler = new Scheduler(logger);
+      await expect(contend(limit, new LeaseService(), scheduler)).rejects.toThrow(
+        'scheduler condition not met',
+      );
+      scheduler.stop();
+    });
+  }
+
+  it('a lease granted at once keeps the slot; a wait of another run (not the job’s) does not yield', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const leases = new SlotYieldingLeaseService();
+    leases.attachScheduler(scheduler);
+    const started: string[] = [];
+    const hold = deferred();
+    await leases.acquire(identity('holder'), key);
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'a',
+      runId: 'run_a',
+      run: async () => {
+        started.push('a');
+        await leases.acquire(identity('run_a'), '/other'); // immediate: no yield
+        // A wait by some other run inside this job's async context: no yield.
+        void leases.acquire(identity('run_x'), key);
+        await hold.promise;
+      },
+    });
+    scheduler.submit({ priority: 0, provider: 'p', key: 'b', run: async () => void started.push('b') });
+    await waitUntil(() => started.includes('a'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['a']);
+    hold.release();
+    await waitUntil(() => started.includes('b'));
+    leases.release('holder');
+    scheduler.stop();
+  });
+
+  it('a yielded job resumes ahead of queued jobs once its lease is granted', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const leases = new SlotYieldingLeaseService();
+    leases.attachScheduler(scheduler);
+    const events: string[] = [];
+    const holdOther = deferred();
+    await leases.acquire(identity('holder'), key);
+    scheduler.submit({
+      priority: 1,
+      provider: 'p',
+      key: 'r',
+      runId: 'run_r',
+      run: async () => {
+        await leases.acquire(identity('run_r'), key);
+        events.push('r-resumed');
+      },
+    });
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'other',
+      run: async () => {
+        events.push('other');
+        await holdOther.promise;
+      },
+    });
+    // r yielded its slot: the queued job runs meanwhile.
+    await waitUntil(() => events.includes('other'));
+    scheduler.submit({ priority: 0, provider: 'p', key: 'late', run: async () => void events.push('late') });
+    leases.release('holder'); // r's lease granted; it waits for the slot …
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events).toEqual(['other']);
+    holdOther.release(); // … and takes it before the queued job.
+    await waitUntil(() => events.includes('late'));
+    expect(events).toEqual(['other', 'r-resumed', 'late']);
+    scheduler.stop();
+  });
+
+  it('cancelQueued removes a job that has not started (its signal aborts)', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const hold = deferred();
+    let ran = false;
+    scheduler.submit({ priority: 0, provider: 'p', key: 'busy', run: () => hold.promise });
+    scheduler.submit({ priority: 1, provider: 'p', key: 'task:t', run: async () => void (ran = true) });
+    expect(scheduler.pendingForKey('task:t')).toBe(1);
+    expect(scheduler.cancelQueued('task:t')).toBe(true);
+    expect(scheduler.pendingForKey('task:t')).toBe(0);
+    expect(scheduler.cancelQueued('busy')).toBe(false); // already running
+    hold.release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ran).toBe(false);
+    scheduler.stop();
+  });
+});
+
+describe('Scheduler: tasks never starve conversation replies (D75 审查 M3)', () => {
+  it('provider limit 1: a reply borrows one slot while a task holds the only one', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const started: string[] = [];
+    const task = deferred();
+    const reply = deferred();
+    scheduler.submit({
+      priority: 1,
+      provider: 'p',
+      key: 'task:long',
+      run: async () => {
+        started.push('task');
+        await task.promise;
+      },
+    });
+    await waitUntil(() => started.includes('task'));
+    const job = (priority: 0 | 1, name: string, wait?: Promise<void>) =>
+      scheduler.submit({
+        priority,
+        provider: 'p',
+        key: name,
+        run: async () => {
+          started.push(name);
+          if (wait) await wait;
+        },
+      });
+    job(1, 'scheduled'); // priority 1 does not borrow
+    job(0, 'reply-1', reply.promise);
+    await waitUntil(() => started.includes('reply-1'));
+    job(0, 'reply-2'); // the borrowed slot is taken: no second borrow
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['task', 'reply-1']);
+    reply.release();
+    await waitUntil(() => started.includes('reply-2'));
+    expect(started).not.toContain('scheduled');
+    task.release();
+    await waitUntil(() => started.includes('scheduled'));
+    scheduler.stop();
+  });
+
+  it('no borrowing while a non-task job holds a slot', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const started: string[] = [];
+    const hold = deferred();
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'reply-a',
+      run: async () => {
+        started.push('reply-a');
+        await hold.promise;
+      },
+    });
+    scheduler.submit({ priority: 0, provider: 'p', key: 'reply-b', run: async () => void started.push('reply-b') });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['reply-a']);
+    hold.release();
+    await waitUntil(() => started.includes('reply-b'));
     scheduler.stop();
   });
 });

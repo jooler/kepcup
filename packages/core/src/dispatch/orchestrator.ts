@@ -391,6 +391,11 @@ interface AgentSteerLog {
   released: boolean;
   /** The run's seen-state (steered batches are added; refused ones removed). */
   seen?: AgentSeen;
+  /**
+   * D75 §3.2: the run's consumed-task set — a refused batch's task entries
+   * were not seen after all (their consumption moves to the re-delivery).
+   */
+  consumes?: Set<string>;
 }
 
 /** What an agent session has seen of its conversation (P5 审查 #2). */
@@ -1141,11 +1146,9 @@ export class Orchestrator {
     if (!original) throw new AppError('RUN_NOT_FOUND', `Run ${runId} does not exist`);
     if (original.status !== 'failed') return original;
     if (original.conversationId === null || original.botId === null) return original;
-    // D75: a task is not a mailbox run — re-running it is the bot's decision
-    // (start_task with continues_task_id), not a replay of its source messages.
-    if (original.loopType === 'task') {
-      throw new AppError('NOT_SUPPORTED', '任务不能直接重试：请让 Bot 重新派出（接续原任务）');
-    }
+    // D75 §7.5: a task is not a mailbox run — retrying it (the setup card,
+    // after the setup it failed on is done) starts a new task continuing it.
+    if (original.loopType === 'task') return this.#taskHost.retry(original.id);
     const triggerMessages = original.triggerMessageIds
       .map((id) => this.#deps.messages.getById(id))
       .filter((m): m is Message => m !== null && m.status !== 'recalled');
@@ -1809,6 +1812,8 @@ export class Orchestrator {
           : 0,
       provider: this.#providerForRef(this.#modelRefForBot(batch.botId)),
       key: this.#mailboxKey(batch.botId, batch.conversationId),
+      // Lease waits of this run give the slot back (D75 审查 H2).
+      runId: run.id,
       run: () => this.#executeRun(run.id, { kind: 'response', batch }),
     });
     return run.id;
@@ -2328,6 +2333,7 @@ export class Orchestrator {
       const conversationId = task.conversationId;
       if (task.taskWrites === true) {
         const root = task.taskWorkdir ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        control.waiting('等写入租约');
         try {
           await this.#deps.projects.ensureWriteLease(
             { runId: task.id, botId, conversationId, loopType: 'task' },
@@ -2343,22 +2349,40 @@ export class Orchestrator {
         }
         if (control.signal.aborted) return;
       }
+      const key = `task:${task.id}`;
+      let started = false;
+      // Stopped while still queued for a slot: the job never runs — free the
+      // write lease and the task's place now, not when the job would start.
+      const onAbort = (): void => {
+        if (started || !this.#deps.scheduler.cancelQueued(key)) return;
+        void this.#deps.projects
+          .releaseRun(task.id)
+          .catch(() => {})
+          .finally(() => control.finish());
+      };
+      control.waiting('等模型并发额度');
       this.#deps.scheduler.submit({
         // Below user-triggered responses (0); the scheduler also keeps one
         // provider slot free of tasks for conversation replies.
         priority: 1,
         provider: this.#providerForRef(this.#modelRefForBot(botId)),
-        key: `task:${task.id}`,
-        run: () =>
-          this.#executeRun(task.id, {
+        key,
+        runId: task.id,
+        run: () => {
+          started = true;
+          control.signal.removeEventListener('abort', onAbort);
+          control.waiting(null);
+          return this.#executeRun(task.id, {
             kind: 'task',
             batch: { conversationId, botId, messages: brief.sourceMessages, reason: 'task' },
             task,
             brief,
             control,
-          }),
+          });
+        },
       });
       submitted = true;
+      if (!started) control.signal.addEventListener('abort', onAbort, { once: true });
     } catch (error) {
       this.#taskHost.settle(task.id, {
         status: 'failed',
@@ -2412,7 +2436,7 @@ export class Orchestrator {
     const setupHit: { requirement: SetupRequirement | null } = { requirement: null };
     // D72 P5: batches steered into an external agent run (a refused steer
     // comes back by its text) and whether the mailbox was already released.
-    const agentSteer: AgentSteerLog = { log: [], released: false };
+    const agentSteer: AgentSteerLog = { log: [], released: false, consumes: consumesTaskIds };
     let agentSessionRowId: string | null = null;
     let agentPromptSent = false;
     try {
@@ -3193,6 +3217,21 @@ export class Orchestrator {
     const [{ batch }] = steer.log.splice(index, 1) as [{ text: string; batch: TriggerBatch }];
     // Not shown after all: the next delta / batch carries it.
     for (const message of batch.messages) steer.seen?.ids.delete(message.id);
+    // D75 §3.2: neither were its task results — the run that re-delivers the
+    // batch consumes them. Already marked by this run's release: undo it.
+    const refusedTaskIds = new Set<string>();
+    this.#noteTaskEntries(refusedTaskIds, batch);
+    for (const taskId of refusedTaskIds) steer.consumes?.delete(taskId);
+    if (steer.released && refusedTaskIds.size > 0) {
+      try {
+        this.#taskHost.reopenConsumption(refusedTaskIds);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'reopening task result consumption failed',
+        );
+      }
+    }
     // The bot was deleted / left the group meanwhile (审查 #12).
     const conversation = this.#deps.conversations.get(batch.conversationId);
     const bot = this.#deps.bots.get(batch.botId);

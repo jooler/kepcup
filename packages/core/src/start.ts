@@ -67,7 +67,6 @@ import { GrantsService } from './permissions/grants.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
-import { LeaseService } from './project/lease.js';
 import { CheckpointService } from './project/checkpoints.js';
 import { ProjectRuntime } from './project/service.js';
 import { ProjectsService } from './domain/projects.js';
@@ -96,6 +95,7 @@ import { AgentInstaller, nodeRuntimeFromBinDir } from './agent/external/installe
 import { AgentsService } from './domain/agents.js';
 import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
+import { SlotYieldingLeaseService } from './scheduler/slot-yielding-lease.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
 import { EnvManager } from './env/manager.js';
@@ -900,6 +900,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         );
       },
     });
+    // D75 审查 H2: lease waits give their scheduler slot back (attached below).
+    const leases = new SlotYieldingLeaseService();
     const projectRuntime = new ProjectRuntime({
       db: mainDb,
       paths,
@@ -911,7 +913,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runs,
       bots,
       grants,
-      leases: new LeaseService(),
+      leases,
       checkpoints: new CheckpointService({ paths, logger }),
       publish: (event, payload) => events.emit(event, payload as never),
       // P11: binding changes retarget the network rules of open pages at once
@@ -1229,6 +1231,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         return entry === undefined ? 1 : agentConcurrency(config, entry);
       },
     });
+    leases.attachScheduler(scheduler);
     // P10: the schedule service is constructed after the orchestrator (it
     // delivers through the orchestrator's mailboxes); the tool facade
     // delegates lazily.
@@ -1469,6 +1472,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
 
     jobs.resetRunningToPending();
+    // Provider limits apply before recovery launches anything (re-queued
+    // tasks, wake runs — D75 审查 LOW-5).
+    scheduler.setConcurrency(settings.get().providerConcurrency);
     // D75 §7.4: task repair → blanket interruption → re-queue + reconciliation.
     orchestrator.recoverInterrupted();
     // D75 §3.2 reaper: re-deliver unconsumed task results, enforce the
@@ -1638,7 +1644,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       ...systemMethods,
       ...bindAppMethods(services),
     };
-    scheduler.setConcurrency(settings.get().providerConcurrency);
 
     setStatus('ready');
     services.status = status;
