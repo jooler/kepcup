@@ -127,7 +127,15 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
 //    scripts/pack-hooks.cjs on the asar itself).
 {
   const bundled = await import('node:fs').then((fs) => fs.readFileSync(outfile, 'utf8'));
-  const markers = ['KEPCUP_MOCK_LLM_URL', 'KEPCUP_WSL_TEST_FIXTURE', 'Mock LLM'];
+  const markers = [
+    'KEPCUP_MOCK_LLM_URL',
+    'KEPCUP_WSL_TEST_FIXTURE',
+    'Mock LLM',
+    // D72 P6 external-agent e2e seam (fake ACP agent).
+    'KEPCUP_FAKE_ACP_AGENT_BIN',
+    'KEPCUP_FAKE_ACP_AGENT_SCRIPT',
+    'KEPCUP_FAKE_ACP_AGENT_RECORD',
+  ];
   for (const marker of markers) {
     if (bundled.includes(marker)) {
       throw new Error(`[dist] core-entry bundle still contains test marker "${marker}"`);

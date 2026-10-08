@@ -1,6 +1,11 @@
 import { Type } from '@earendil-works/pi-ai';
 import { z } from 'zod';
-import { TRIAGE_RECENT_MESSAGES, TRIAGE_TIMEOUT_MS, type Message } from '@kepcup/shared';
+import {
+  AGENT_TRIAGE_TIMEOUT_MS,
+  TRIAGE_RECENT_MESSAGES,
+  TRIAGE_TIMEOUT_MS,
+  type Message,
+} from '@kepcup/shared';
 import { completeStructured } from '../agent/structured.js';
 import { renderMessageLine } from '../agent/context/conversation.js';
 import type { AgentEngine, RunIdentity } from '../agent/types.js';
@@ -115,7 +120,7 @@ export interface TriageInput {
   batchMessages: Message[];
   timeZone: string;
   logger: CoreLogger;
-  /** Test override of TRIAGE_TIMEOUT_MS (default from constants). */
+  /** Test override of TRIAGE_TIMEOUT_MS / AGENT_TRIAGE_TIMEOUT_MS (default from constants). */
   timeoutMs?: number;
 }
 
@@ -168,8 +173,20 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
       finish(noAction);
       return;
     }
+    // Agent triage (审查 C2): throttled per (bot, group) — in between the bot
+    // answers @ / replies only.
+    if (
+      input.router !== undefined &&
+      !input.router.admit(route, 'triage', `${input.botId}:${input.conversationId}`)
+    ) {
+      finish(noAction);
+      return;
+    }
     const { modelRef, provider } = route;
     const bot = input.bots.get(input.botId);
+    // A one-shot agent session (cold start included) needs longer (审查 C2).
+    const timeoutMs =
+      input.timeoutMs ?? (route.agentId !== null ? AGENT_TRIAGE_TIMEOUT_MS : TRIAGE_TIMEOUT_MS);
 
     input.scheduler.submit({
       priority: 0,
@@ -191,7 +208,7 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
             'triage timed out -> no_action',
           );
           finish(noAction);
-        }, input.timeoutMs ?? TRIAGE_TIMEOUT_MS);
+        }, timeoutMs);
         timeout.unref?.();
         try {
           if (!bot) throw new Error('triage target vanished');

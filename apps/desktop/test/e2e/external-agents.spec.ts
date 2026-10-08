@@ -118,12 +118,17 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await expect(page.locator(`[data-testid="agent-status-${agentId}"]`)).toHaveText('就绪', {
     timeout: 30_000,
   });
-  // 后台任务（P6）：选「关闭」并确认已保存。
+  // 后台任务（P6）：选「关闭」并确认已保存——降配项只随保存成功后的设置
+  // 消失；重新打开设置页仍为「关闭」（选择框取自已保存的设置，保存失败会
+  // 复原，审查 C9）。
   const background = page.locator('[data-testid="background-tasks-agent-select"]');
   await expect(background).toBeVisible();
   await background.selectOption('off');
-  await expect(background).toHaveValue('off');
   await expect(page.locator('[data-testid="background-tasks-skill-authoring"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="background-tasks-group-mention-only"]')).toHaveCount(0);
+  await closeSettings(page);
+  await openSettings(page, 'agents');
+  await expect(page.locator('[data-testid="background-tasks-agent-select"]')).toHaveValue('off');
   await closeSettings(page);
 }
 

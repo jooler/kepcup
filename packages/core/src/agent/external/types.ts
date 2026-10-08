@@ -181,6 +181,13 @@ export interface AgentProvider {
   bridgeToolFromCall?(toolCall: AcpToolCallLike, serverName: string): string | null;
   features: AgentProviderFeatures;
   /**
+   * 后台精简会话（`SessionContext.oneShot`）能否**完全关闭原生工具**、只留
+   * 宿主桥工具（审查 S1）：只有经核对确实能做到的 Provider 才声明 true
+   * （Claude：`tools: []` + `settingSources: []`，会话级）。未声明的 Agent 不参与
+   * 后台路由（llm-router `agentBackgroundBlocker`），引擎也拒绝为它开后台会话。
+   */
+  backgroundNoNativeTools?: boolean;
+  /**
    * 该 Agent 额外禁止的模式（叠加在全局 `FORBIDDEN_AGENT_MODES` 之上，P5）：
    * 宿主永不切入，Agent 自行切入则判为偏离（如 Antigravity 的 `auto_edit`
    * 会自动批准工作目录之外的写入）。

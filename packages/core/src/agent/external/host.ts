@@ -430,6 +430,7 @@ export class AgentHost {
   /** Processes retired by `stop()` while still serving runs. */
   readonly #retiring = new Set<LiveAgent>();
   #disposed = false;
+  readonly #disposeListeners = new Set<() => void>();
   /**
    * Process exits and stderr arrive asynchronously, possibly after core
    * shutdown closed the logger (pino would throw): log quietly then.
@@ -614,12 +615,32 @@ export class AgentHost {
     return this.#authStatus.get(agentId) ?? null;
   }
 
+  /**
+   * Called once on `dispose()` (审查 C10): background sessions — `complete()`
+   * and background runs, which write nothing on their own — settle (failed)
+   * instead of hanging forever.
+   */
+  onDispose(listener: () => void): () => void {
+    this.#disposeListeners.add(listener);
+    return () => {
+      this.#disposeListeners.delete(listener);
+    };
+  }
+
   /** Kills every agent process (core shutdown); active runs are not settled. */
   dispose(): void {
     this.#disposed = true;
     for (const live of [...this.#agents.values(), ...this.#retiring]) {
       this.#shutdown(live, 'core shutdown');
     }
+    for (const listener of [...this.#disposeListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener must not keep the others from running.
+      }
+    }
+    this.#disposeListeners.clear();
   }
 
   #start(entry: AgentCatalogEntry): LiveAgent {

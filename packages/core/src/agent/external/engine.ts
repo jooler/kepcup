@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  AGENT_BACKGROUND_RUN_TIMEOUT_MS,
   AGENT_BRIDGE_TOOL_DETACH_MS,
   AGENT_CANCEL_GRACE_MS,
   AGENT_COMPLETE_MAX_TURNS,
@@ -51,6 +52,7 @@ import { classifierFor, toAgentError, type AgentErrorPhase } from './errors.js';
 import type { AgentHost, AgentLease, SessionSink } from './host.js';
 import type { BridgeRunBinding, BridgeToolCallEvent, BridgeToolResultEvent } from './mcp-bridge.js';
 import { isForbiddenAgentMode, type AgentPermissionHandler } from './permission-bridge.js';
+import { backgroundToolFree } from './providers/index.js';
 import type { AgentProvider } from './types.js';
 
 /**
@@ -160,7 +162,19 @@ export class ExternalAgentEngine implements AgentEngine {
   }
 
   startRun(spec: RunSpec): RunHandle {
-    const handle = new ExternalRunHandle(spec, this.#deps, this.#control);
+    // Background runs (Wiki maintenance / skill authoring) hold one of the
+    // agent's scheduler slots: capped far below a conversation run (审查 C1).
+    const deps =
+      spec.external?.background === true
+        ? {
+            ...this.#deps,
+            runTimeoutMs: Math.min(
+              this.#deps.runTimeoutMs ?? AGENT_BACKGROUND_RUN_TIMEOUT_MS,
+              AGENT_BACKGROUND_RUN_TIMEOUT_MS,
+            ),
+          }
+        : this.#deps;
+    const handle = new ExternalRunHandle(spec, deps, this.#control);
     void handle.start();
     return handle;
   }
@@ -760,6 +774,8 @@ class ExternalRunHandle implements RunHandle {
   #spec: RunSpec;
   /** Private empty cwd of a background session (P6), removed on release. */
   #tempDir: string | null = null;
+  /** Background sessions settle on host dispose (审查 C10); unsubscribe. */
+  #offDispose: (() => void) | null = null;
   readonly #deps: ExternalAgentEngineDeps;
   readonly #control: SessionControl;
   readonly #listeners = new Set<(e: EngineEvent) => void>();
@@ -847,6 +863,11 @@ class ExternalRunHandle implements RunHandle {
 
   async start(): Promise<void> {
     if (this.#spec.external?.background === true) {
+      if (this.#deps.host.disposed) {
+        this.#settleDisposed();
+        return;
+      }
+      this.#offDispose = this.#deps.host.onDispose(() => this.#settleDisposed());
       try {
         this.#prepareBackground();
       } catch (error) {
@@ -883,6 +904,14 @@ class ExternalRunHandle implements RunHandle {
       if (this.#resolved) return;
       const { connection, provider, init } = lease;
       this.#provider = provider;
+      // Background sessions must have no native tools (审查 S1): the router
+      // never sends one to such an agent; refuse here as a second line.
+      if (external.background === true && !backgroundToolFree(entry, provider)) {
+        throw new AppError(
+          'AGENT_UNAVAILABLE',
+          `智能体「${entry.name}」无法为后台任务完全关闭原生工具，不能用于后台任务`,
+        );
+      }
 
       const parts = spec.promptParts ?? (await this.#fallbackPromptParts());
       const metaAppend = provider.instructionMode === 'meta-append';
@@ -2077,8 +2106,12 @@ class ExternalRunHandle implements RunHandle {
   #settle(outcome: RunOutcome): void {
     if (this.#resolved) return;
     // Core shutdown: the databases are closed; restart recovery marks the run
-    // interrupted (as for pi runs), so the run must not settle now.
-    if (this.#deps.host.disposed) return;
+    // interrupted (as for pi runs), so the run must not settle now — except a
+    // background session, which settles failed without events (审查 C10).
+    if (this.#deps.host.disposed) {
+      if (this.#spec.external?.background === true) this.#settleDisposed();
+      return;
+    }
     // Abnormal ends (crash, timeout, cancel grace, agent gone) never reach
     // mapper.finish: pair the dangling tool calls before settling.
     for (const event of this.#mapper.abandon()) this.emit(event);
@@ -2089,6 +2122,42 @@ class ExternalRunHandle implements RunHandle {
       this.#deps.bridge?.unbindRun(this.#bridge.sessionKey, this.#spec.identity.runId);
     }
     this.#resolveDone(outcome);
+  }
+
+  /**
+   * Core shutdown under a background session (`complete()`, background
+   * loops; 审查 C10): its caller must not wait forever — settle failed (no
+   * events: nothing is persisted from here) and remove the private cwd.
+   */
+  #settleDisposed(): void {
+    this.#offDispose?.();
+    this.#offDispose = null;
+    this.#removeTempDir();
+    if (this.#resolved) return;
+    this.#resolved = true;
+    if (this.#graceTimer !== null) clearTimeout(this.#graceTimer);
+    this.#toolAbort.abort();
+    this.#resolveDone({
+      status: 'failed',
+      finalText: '',
+      skipReply: false,
+      usage: this.#usage,
+      error: { code: 'AGENT_UNAVAILABLE', message: '核心服务正在关闭' },
+    });
+  }
+
+  #removeTempDir(): void {
+    if (this.#tempDir === null) return;
+    const dir = this.#tempDir;
+    this.#tempDir = null;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      this.#warn(
+        { dir, error: error instanceof Error ? error.message : String(error) },
+        'removing the background session directory failed',
+      );
+    }
   }
 
   /**
@@ -2105,18 +2174,9 @@ class ExternalRunHandle implements RunHandle {
     this.#wakeDetached();
     // Steers that never reached a prompt go back to the orchestrator.
     for (const text of this.#queuedSteers.splice(0)) this.#spec.onSteerRejected?.(text);
-    if (this.#tempDir !== null) {
-      const dir = this.#tempDir;
-      this.#tempDir = null;
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch (error) {
-        this.#warn(
-          { dir, error: error instanceof Error ? error.message : String(error) },
-          'removing the background session directory failed',
-        );
-      }
-    }
+    this.#offDispose?.();
+    this.#offDispose = null;
+    this.#removeTempDir();
     const lease = this.#lease;
     const sessionId = this.#sessionId;
     const discard = sessionId !== null ? this.#control.discardOnRelease.get(sessionId) : undefined;

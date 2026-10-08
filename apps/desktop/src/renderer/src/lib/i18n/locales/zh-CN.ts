@@ -1060,19 +1060,23 @@ export const zhCN = {
   // --- 后台任务（D72 P6，design 28 §8）----------------------------------------
   'agents.background.title': '后台任务',
   'agents.background.hint':
-    '摘要、反思、记忆整理、画像整理、群聊判断、Wiki 维护等后台任务：有内置模型时照旧使用内置模型；只配置了智能体时改用这里选择的智能体（会消耗该订阅的额度）。',
+    '摘要、反思、记忆整理、画像整理、群聊判断、Wiki 维护等后台任务：有内置模型时照旧使用内置模型；只配置了智能体时改用智能体。选用智能体后，这些任务会把相应内容发给该智能体的厂商：Bot 的记忆、你的画像（跨 Bot 的全局画像）、对话内容与摘要、Wiki 资料，并消耗该订阅的额度。后台任务在全新的私有临时目录里运行，智能体自带的文件 / 命令 / 联网工具一律不给（只有 KepCup 为该任务提供的工具）；只有能做到这一点的智能体可选。',
   'agents.background.builtinActive': '当前已配置内置模型：后台任务使用内置模型，以下设置暂不生效。',
+  'agents.background.builtinLightOnly':
+    '当前只配置了内置轻量模型：摘要、反思、记忆整理与群聊判断使用它；画像整理、Wiki 维护与技能生成（需主模型）仍按以下设置使用智能体。',
   'agents.background.agent': '用于后台任务的智能体',
-  'agents.background.auto': '自动（优先 Bot 自己的智能体，否则第一个可用的）',
+  'agents.background.auto': '自动（只用各 Bot 自己的智能体；画像整理与群聊摘要不运行）',
   'agents.background.off': '关闭（跳过后台任务）',
   'agents.background.unavailable': '（暂不可用）',
+  'agents.background.notInCatalog': '（不在目录中，后台任务跳过）',
+  'agents.background.blocked': '「{name}」不能用于后台任务：{reason}',
   'agents.background.degraded':
-    '只用智能体时会降频：反思与对话摘要每 {n} 次触发运行一次，续接判断保持关闭。',
+    '只用智能体时会降频：反思与对话摘要每 {n} 次触发运行一次，续接判断保持关闭；指定的智能体会处理所有 Bot 的后台任务（含跨 Bot 的画像整理）。',
   'agents.background.skillAuthoring': '允许智能体在后台生成技能',
   'agents.background.skillAuthoringHint': '起草并验证技能需要多轮调用，较耗额度，默认关闭。',
   'agents.background.groupMentionOnly': '群聊只在被 @ 或回复时响应',
   'agents.background.groupMentionOnlyHint':
-    '不再让智能体判断是否接话（群聊判断超时也按不响应处理）。',
+    '默认开启。关闭后由智能体判断是否接话：每条群消息批次一次会话（同一群每 2 分钟至多一次），计入每日后台预算；判断超时按不响应处理。',
   'agents.experimental': '外部智能体（实验）',
   'agents.experimentalHint':
     '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',

@@ -741,6 +741,28 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 
 **需要人工 / 真实账号**：原生优先遵守度真机运行（上文 4）；§9.1 末项三平台人工验收；各 Agent 登录后的 P0 spike（§3）。
 
+#### 9.3.1 P6 审查修复（2026-10-08，分支 `t/d72-p6`）
+
+先合并 `t/d72-p5-2` 的 86fb460（P5-2 复审修复，冲突只在 engine.ts 的常量 import），合并后容器全量与基线 33 条逐条一致。随后一个提交「D72 P6 审查修复」（含测试）。以下决定由协调会话按「保守优先」作出，**均为待用户确认的默认**（设计 28 §8 同步）：
+
+- **S1 后台会话无原生工具**：Provider 新能力 `backgroundNoNativeTools`（`external/types.ts`），本期只有 Claude 声明（`tools: []` + `settingSources: []`，会话级）；testkit 假 Agent（`releaseGate:'testkit'`，剧本化、无原生工具）同样合格（`providers/index.ts` `backgroundToolFree`）。`llm-router.ts` `agentBackgroundBlocker(settings, entry)`：不能关原生工具 / 开启了「加载我的个人配置」/ 并发 < 2 → 不参与后台路由，原因经 `AgentView.backgroundBlocker` 在设置「后台任务」中逐个列出（选项也标「暂不可用」）。引擎第二道防线：后台会话（`complete()` 与 `external.background`）落到不合格 Provider 时直接 `AGENT_UNAVAILABLE`。OpenCode：离线核对 1.18.35 内嵌源码，`Permission.disabled` 对「末条命中规则为 `"*"` + deny」的工具直接从工具表下架，`"*":"deny"` + `"{server}_*":"allow"` 理论上可做到只留宿主桥工具；但其权限是进程级配置（`OPENCODE_CONFIG_CONTENT`），需另起一个干净的后台进程（AgentHost 进程变体），且用户层只读权限键会以 mergeDeep 键序留在前面——本期不做，记为后续项。其余 Agent 未核实，不可用于后台。
+- **S2 不跨厂商**：「自动」只用该 Bot 自己的 Agent（不可用即跳过，**不再**回落目录第一个就绪的——撤销 §9.3「偏离」中的扩展）；画像整理（跨 Bot 全局画像）与群聊摘要等无所属 Bot 的任务只在 `backgroundAgentId` 明确指定时运行；`agentEnabled` 默认仍为 true。设置页说明写明发给所选厂商的内容（Bot 记忆、全局画像、对话内容与摘要、Wiki 资料）与额度消耗。
+- **S3**：`KEPCUP_FAKE_ACP_AGENT_BIN/_SCRIPT/_RECORD` 加入 `apps/desktop/scripts/dist.mjs` 构建期探针与 `pack-hooks.cjs` `FORBIDDEN_MARKERS`。
+- **S4**：凭据扫描用例注明范围（数据目录明文文件与日志；数据库静态加密，另经已打开的连接检查解密后的 `settings.value_json` 与全部 `run_steps.payload_json` 都不含 key）。
+- **C1**：调度器对 `agent:*` 键的 priority-2 任务只在「在用数 < 并发-1」时启动（为 priority 0/1 留一个名额；并发 1 时不预留——路由器不把后台任务派给并发 1 的 Agent，已排队的仍能跑完）；新常量 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`（10 分钟）封顶后台 `startRun`。
+- **C2 群聊判断**：`backgroundTasks.groupMentionOnly` 默认改为 **true**（经 Agent 的群聊判断须用户关掉此项）；Agent 路由时限 `AGENT_TRIAGE_TIMEOUT_MS`（60 s，超时 `no_action`）；`admit(route,'triage','bot:conv')` 节流：同一 Bot 同一群每 `AGENT_TRIAGE_MIN_INTERVAL_MS`（2 分钟）至多一次，期间仅 @ / 回复；计入每日后台预算（`usedToday` 计入 `agent:` 的 triage 行，预算用完路由器即跳过该 Bot 的 Agent 群聊判断；内置模型的群聊判断仍不计，理由：便宜且有 20 s 上限）。
+- **C3**：`completeStructured` 对 Agent（jsonOnly）只在 `StructuredParseError` 时重试；调用失败 / 超时 / 取消直接抛出（每次重试是一整个订阅会话）。
+- **C4**：`JobsRunner.#providerFor` 只在路由到 Agent 时用 `agent:{id}`，内置路由保持 P6 前的键；摘要任务按 `conversations.get(conversation_id)?.directBotId` 取 Bot（与摘要 loop 一致）。
+- **C5 / C11**：Agent 路由的直聊摘要行与记忆整理行记在所属 Bot 名下（`recordLoopUsage` 新可选 `botId`），`JobsRunner` 也按所属 Bot 检查每日预算并推迟；画像整理 / 群聊摘要无所属 Bot，不计入任何 Bot；内置路由的归属不变。零 token 行的折算口径写进 `BudgetService.usedToday` 注释与设计 28 §8（每行一轮：`complete()` 每次调用一行，多轮也按一轮）。
+- **C6**：设计 28 §8 / 设置页说明改为：私有临时 cwd 只说明工作目录不是 workspace，不等于读不到用户文件——后台会话没有原生工具，只能经宿主桥工具（受网关约束）访问。
+- **C7**：`BackgroundTasksSection.svelte`：按全局主 / 轻量模型逐用途提示哪些仍走内置模型（只有轻量模型时画像整理 / Wiki / 技能生成仍走 Agent）；保存失败把选择框复原为已保存的值；`backgroundAgentId` 指向目录外的 Agent 时仍渲染一项（「不在目录中」）；列出已启用但不能用于后台的 Agent 及原因。
+- **C8**：降频计数回到 0 即删除（不再无限积累键）；群聊节流表按间隔清理。
+- **C9**：e2e `enableFakeAgent`：选「关闭」后断言两个降配项都随保存消失，并关闭、重开设置页确认选择框仍为「关闭」（取自已保存设置）。
+- **C10**：`AgentHost.onDispose()`；后台会话（`complete()` / 后台 run）在核心关闭时以 `AGENT_UNAVAILABLE` 结算并删除临时目录（不发事件），已关闭后的新调用立即失败；对话 run 照旧不结算。
+- 测试：`unit/llm-router.test.ts`（自动只用自己的 Agent / 画像需明确指定 / 合格条件 / 群聊默认不跑 + 预算 + 节流 + 60 s 时限）、`unit/scheduler.test.ts`（agent 名额预留、并发 1 不预留）、`unit/external-agent-p6.test.ts`（不合格 Provider 拒绝后台会话、核心关闭中途 reject 且删临时目录、jsonOnly 失败不重试）、`integration/external-agent-p6.test.ts`（摘要行归属 Bot、预算 2 轮、自动下画像 / 群聊摘要不跑、个人配置使 Agent 不合格且视图带原因、凭据扫描查解密后的设置与 run_steps）。
+
+**验证（审查修复）**：`pnpm -r typecheck` 0 error（1 条既有 svelte warning）；`pnpm lint` 0 problem；合并 86fb460 后与本提交后各跑一次容器全量（`node scripts/run-tests.mjs run`）：153 文件，失败恰为基线 33 条（逐条一致，本提交后 1440 passed / 2 skipped）；e2e（`kepcup-test:trixie-xvfb` + `xvfb-run`，宿主机先 build shared / core / desktop）`external-agents.spec.ts` 4/4 通过；按 dist.mjs 同参数（`__KEPCUP_TEST_HOOKS__=false`）离线 esbuild core-entry，三个 `KEPCUP_FAKE_ACP_AGENT_*` 标记均不在产物中。注意：容器里 `npx playwright` 会挂起，改用 `./node_modules/.bin/playwright`。
+
 ---
 
 ## 10. 并行调研项（不阻塞本方案）

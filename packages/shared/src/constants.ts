@@ -407,3 +407,20 @@ export const AGENT_COMPLETE_MAX_TURNS = 3;
  * (per bot / per conversation) — subscription quota is shared with the user.
  */
 export const AGENT_BACKGROUND_EVERY_N_RUNS = 5;
+/**
+ * Upper bound of one background agent run (Wiki maintenance / skill authoring
+ * on an external agent, 审查 C1): far below AGENT_RUN_TIMEOUT_MS — the run
+ * holds one of the agent's scheduler slots.
+ */
+export const AGENT_BACKGROUND_RUN_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Group-chat triage on an external agent (审查 C2): a one-shot session incl.
+ * a possible cold start of the agent process needs longer than
+ * TRIAGE_TIMEOUT_MS; still answered as `no_action` on expiry.
+ */
+export const AGENT_TRIAGE_TIMEOUT_MS = 60_000;
+/**
+ * Group-chat triage on an external agent runs at most once per this interval
+ * per (bot, group) (审查 C2); in between the bot answers @ / replies only.
+ */
+export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;

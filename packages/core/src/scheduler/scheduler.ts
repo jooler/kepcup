@@ -19,7 +19,9 @@ interface QueuedJob extends SchedulerJob {
 /**
  * Priority scheduler with per-provider model-call concurrency limits
  * (default 4) and a global limit of 2 concurrent background loops.
- * Same priority runs FIFO; a running job is never preempted.
+ * Same priority runs FIFO; a running job is never preempted. Background
+ * loops on an external agent (`agent:*`) keep one of its slots free for
+ * responses (D72 P6 审查 C1).
  */
 export class Scheduler {
   readonly #queue: QueuedJob[] = [];
@@ -120,6 +122,15 @@ export class Scheduler {
     if (job.priority === 2 && scheduler.#backgroundActive >= BACKGROUND_LOOP_CONCURRENCY)
       return false;
     const active = scheduler.#providerActive.get(job.provider) ?? 0;
-    return active < scheduler.concurrencyFor(job.provider);
+    const limit = scheduler.concurrencyFor(job.provider);
+    // External agents (审查 C1): background loops may only start while at
+    // least one of the agent's slots stays free for responses (priority 0/1)
+    // — a whole agent session can hold a slot for minutes. With a limit of 1
+    // (the router never routes background work there) no slot is reserved,
+    // so a job queued before the limit changed still runs.
+    if (job.priority === 2 && job.provider.startsWith('agent:') && limit > 1) {
+      return active < limit - 1;
+    }
+    return active < limit;
   }
 }

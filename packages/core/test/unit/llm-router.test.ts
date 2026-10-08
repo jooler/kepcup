@@ -1,13 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AGENT_BACKGROUND_EVERY_N_RUNS,
+  AGENT_TRIAGE_MIN_INTERVAL_MS,
+  AGENT_TRIAGE_TIMEOUT_MS,
   settingsSchema,
+  TRIAGE_TIMEOUT_MS,
   type AgentView,
   type Bot,
   type Settings,
 } from '@kepcup/shared';
 import { fakeAgentEntry } from '@kepcup/testkit';
 import {
+  agentBackgroundBlocker,
   backgroundRunSpec,
   engineKeyOf,
   LlmRouter,
@@ -50,7 +54,13 @@ function bot(
 
 function router(
   patch: Partial<Settings> = {},
-  options: { bot?: Bot; ready?: string[]; withExternal?: boolean } = {},
+  options: {
+    bot?: Bot;
+    ready?: string[];
+    withExternal?: boolean;
+    budgetExceeded?: (botId: string) => boolean;
+    now?: () => number;
+  } = {},
 ) {
   const settings = settingsSchema.parse({
     experimental: { externalAgents: true },
@@ -72,8 +82,17 @@ function router(
         status: ready.includes(id) ? 'ready' : 'needs_auth',
         statusDetail: null,
       }) as Pick<AgentView, 'enabled' | 'status' | 'statusDetail'>,
+    ...(options.budgetExceeded !== undefined ? { budgetExceeded: options.budgetExceeded } : {}),
+    ...(options.now !== undefined ? { now: options.now } : {}),
   });
 }
+
+/** An explicitly chosen background agent (routes bot-less purposes too). */
+const CHOSEN = { backgroundAgentId: 'alpha' } satisfies Partial<Settings>;
+/** Agent triage opted in (groupMentionOnly is on by default, 审查 C2). */
+const TRIAGE_ON = {
+  backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: false },
+} satisfies Partial<Settings>;
 
 describe('LlmRouter', () => {
   it('built-in models win, with the per-purpose model rules of the old call sites', () => {
@@ -107,52 +126,100 @@ describe('LlmRouter', () => {
     ).toBe('custom:m/main');
   });
 
-  it('no built-in model: the first ready agent, the bot’s own agent first, or the chosen one', () => {
-    expect(router({}, { ready: ['beta'] }).resolveDefault('reflection')).toEqual({
+  it('no built-in model: auto = the bot’s own agent only, never another vendor (审查 S2)', () => {
+    // Auto without a bot: nothing (no cross-vendor fallback to the first agent).
+    expect(router({}, { ready: ['beta'] }).resolveDefault('reflection')).toBeNull();
+    const own = bot({}, { id: 'beta', model: 'beta-pro' });
+    expect(router({}, { bot: own }).resolveForBot(own, 'summary')).toEqual({
       engine: external,
-      modelRef: 'agent:beta/default',
+      modelRef: 'agent:beta/beta-pro',
       provider: 'agent:beta',
       agentId: 'beta',
     });
-    const own = bot({}, { id: 'beta', model: 'beta-pro' });
-    expect(router({}, { bot: own }).resolveForBot(own, 'summary')?.modelRef).toBe(
-      'agent:beta/beta-pro',
-    );
     expect(router({}, { bot: own }).resolveForBot('bot_1', 'summary')?.agentId).toBe('beta');
-    // Explicit choice: used as is; never swapped for another agent when unusable.
-    expect(
-      router({ backgroundAgentId: 'alpha' }, { bot: own }).resolveForBot(own, 'summary'),
-    ).toMatchObject({
+    // The bot's own agent unusable: skipped, alpha (ready) is NOT used instead.
+    expect(router({}, { bot: own, ready: ['alpha'] }).resolveForBot(own, 'summary')).toBeNull();
+    // A bot without an agent of its own: skipped.
+    expect(router().resolveForBot(bot(), 'reflection')).toBeNull();
+    // Global profile curation (cross-bot): only with an explicit choice.
+    expect(router({}, { bot: own }).resolveForBot(own, 'profile_curation')).toBeNull();
+    expect(router(CHOSEN).resolveDefault('profile_curation')?.agentId).toBe('alpha');
+    // Explicit choice: used as is (bot or not); never swapped when unusable.
+    expect(router(CHOSEN, { bot: own }).resolveForBot(own, 'summary')).toMatchObject({
       modelRef: 'agent:alpha/default',
     });
-    expect(
-      router({ backgroundAgentId: 'alpha' }, { ready: ['beta'] }).resolveDefault('summary'),
-    ).toBeNull();
+    expect(router(CHOSEN).resolveDefault('summary')?.agentId).toBe('alpha');
+    expect(router(CHOSEN, { ready: ['beta'] }).resolveDefault('summary')).toBeNull();
     // Nothing usable / no external engine / experimental off → skip (P4 fallback).
-    expect(router({}, { ready: [] }).resolveDefault('summary')).toBeNull();
-    expect(router({}, { withExternal: false }).resolveDefault('summary')).toBeNull();
+    expect(router(CHOSEN, { ready: [] }).resolveDefault('summary')).toBeNull();
+    expect(router(CHOSEN, { withExternal: false }).resolveDefault('summary')).toBeNull();
     expect(
-      router({ experimental: { externalAgents: false } }).resolveDefault('summary'),
+      router({ ...CHOSEN, experimental: { externalAgents: false } }).resolveDefault('summary'),
     ).toBeNull();
   });
 
-  it('agent-only degradations: L2 off, skill authoring opt-in, mention-only groups, off switch', () => {
-    const r = router();
+  it('background eligibility: no native tools, no personal config, concurrency ≥ 2 (审查 S1 / C1)', () => {
+    const settings = (patch: Partial<Settings> = {}) =>
+      settingsSchema.parse({ experimental: { externalAgents: true }, ...patch });
+    const claude = fakeAgentEntry('claude-x', { provider: 'claude', releaseGate: 'claude' });
+    const opencode = fakeAgentEntry('oc-x', { provider: 'opencode', releaseGate: 'opencode' });
+    const codex = fakeAgentEntry('codex-x', { provider: 'codex', releaseGate: 'codex' });
+    expect(agentBackgroundBlocker(settings(), claude)).toBeNull();
+    // testkit fake agent: scripted, no native tools.
+    expect(agentBackgroundBlocker(settings(), ALPHA)).toBeNull();
+    expect(agentBackgroundBlocker(settings(), opencode)).toMatch(/原生工具/);
+    expect(agentBackgroundBlocker(settings(), codex)).toMatch(/原生工具/);
+    expect(
+      agentBackgroundBlocker(
+        settings({ agents: { 'claude-x': { loadUserConfig: true } } }),
+        claude,
+      ),
+    ).toMatch(/个人配置/);
+    expect(
+      agentBackgroundBlocker(
+        settings({ providerConcurrency: { default: 4, 'agent:claude-x': 1 } }),
+        claude,
+      ),
+    ).toMatch(/并发/);
+    // The router skips blocked agents (explicit or the bot's own).
+    const blocked = router({
+      ...CHOSEN,
+      agents: { alpha: { enabled: true, loadUserConfig: true } },
+    });
+    expect(blocked.resolveDefault('summary')).toBeNull();
+    const own = bot({}, { id: 'beta' });
+    expect(
+      router({ providerConcurrency: { default: 4, 'agent:beta': 1 } }, { bot: own }).resolveForBot(
+        own,
+        'summary',
+      ),
+    ).toBeNull();
+  });
+
+  it('agent-only degradations: L2 off, skill authoring opt-in, triage opt-in + budget, off switch', () => {
+    const r = router(CHOSEN);
     expect(r.resolveDefault('continuation')).toBeNull();
     expect(r.resolveDefault('skill_authoring')).toBeNull();
-    expect(r.resolveDefault('triage')).not.toBeNull();
+    // Agent triage is off by default (groupMentionOnly defaults to on).
+    expect(r.resolveDefault('triage')).toBeNull();
+    expect(router({ ...CHOSEN, ...TRIAGE_ON }).resolveDefault('triage')).not.toBeNull();
+    // Daily background budget used up: agent triage skipped for that bot.
+    const own = bot({}, { id: 'alpha' });
+    expect(
+      router(TRIAGE_ON, { bot: own, budgetExceeded: () => true }).resolveForBot(own, 'triage'),
+    ).toBeNull();
+    expect(
+      router(TRIAGE_ON, { bot: own, budgetExceeded: () => false }).resolveForBot(own, 'triage'),
+    ).not.toBeNull();
     expect(
       router({
+        ...CHOSEN,
         backgroundTasks: { agentEnabled: true, agentSkillAuthoring: true, groupMentionOnly: true },
       }).resolveDefault('skill_authoring'),
     ).not.toBeNull();
     expect(
       router({
-        backgroundTasks: { agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true },
-      }).resolveDefault('triage'),
-    ).toBeNull();
-    expect(
-      router({
+        ...CHOSEN,
         backgroundTasks: {
           agentEnabled: false,
           agentSkillAuthoring: true,
@@ -162,8 +229,25 @@ describe('LlmRouter', () => {
     ).toBeNull();
   });
 
+  it('admit throttles agent triage per (bot, group) to one per AGENT_TRIAGE_MIN_INTERVAL_MS', () => {
+    let now = 1_000_000;
+    const r = router({ ...CHOSEN, ...TRIAGE_ON }, { now: () => now });
+    const route = r.resolveDefault('triage')!;
+    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(true);
+    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(false);
+    expect(r.admit(route, 'triage', 'bot_1:conv_2')).toBe(true);
+    now += AGENT_TRIAGE_MIN_INTERVAL_MS - 1;
+    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(false);
+    now += 1;
+    expect(r.admit(route, 'triage', 'bot_1:conv_1')).toBe(true);
+    // Built-in triage is never throttled.
+    const builtinRoute = router({ defaultMainModel: 'custom:m/main' }).resolveDefault('triage')!;
+    expect(r.admit(builtinRoute, 'triage', 'bot_1:conv_1')).toBe(true);
+    expect(r.admit(builtinRoute, 'triage', 'bot_1:conv_1')).toBe(true);
+  });
+
   it('admit throttles reflection / summary on agents only (1 in AGENT_BACKGROUND_EVERY_N_RUNS)', () => {
-    const r = router();
+    const r = router(CHOSEN);
     const agentRoute = r.resolveDefault('reflection')!;
     const decisions = Array.from({ length: AGENT_BACKGROUND_EVERY_N_RUNS * 2 }, () =>
       r.admit(agentRoute, 'reflection', 'bot_1'),
@@ -194,7 +278,7 @@ describe('LlmRouter', () => {
       tools: [],
       limits: { maxTurns: 5 },
     } satisfies RunSpec;
-    const agentRoute = router().resolveDefault('wiki_maintenance')!;
+    const agentRoute = router(CHOSEN).resolveDefault('wiki_maintenance')!;
     expect(backgroundRunSpec(agentRoute, spec)).toMatchObject({
       model: 'agent:alpha/default',
       external: {
@@ -227,6 +311,29 @@ describe('LlmRouter', () => {
 });
 
 describe('triageOneBot through the router (P6)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A router whose bot_1 runs on alpha, agent triage opted in. */
+  function agentRouter(agentEngine: AgentEngine) {
+    return new LlmRouter({
+      settings: {
+        get: () =>
+          settingsSchema.parse({
+            experimental: { externalAgents: true },
+            agents: { alpha: { enabled: true } },
+            ...TRIAGE_ON,
+          }),
+      },
+      bots: { get: () => bot({}, { id: 'alpha' }) },
+      builtin,
+      external: agentEngine,
+      catalog: () => [ALPHA],
+      agentView: () => ({ enabled: true, status: 'ready', statusDetail: null }) as never,
+    });
+  }
+
   function triageDeps(r: LlmRouter, timeoutMs?: number) {
     const runs = { create: vi.fn(() => ({ id: 'run_t' })), update: vi.fn() };
     const usage = { record: vi.fn() };
@@ -279,20 +386,7 @@ describe('triageOneBot through the router (P6)', () => {
       stopReason: 'stop',
     }));
     const agentEngine = { startRun: vi.fn(), complete } as unknown as AgentEngine;
-    const r = new LlmRouter({
-      settings: {
-        get: () =>
-          settingsSchema.parse({
-            experimental: { externalAgents: true },
-            agents: { alpha: { enabled: true } },
-          }),
-      },
-      bots: { get: () => bot() },
-      builtin,
-      external: agentEngine,
-      catalog: () => [ALPHA],
-      agentView: () => ({ enabled: true, status: 'ready', statusDetail: null }) as never,
-    });
+    const r = agentRouter(agentEngine);
     const { input, scheduler, usage } = triageDeps(r);
     const decision = await triageOneBot(input);
     expect(decision).toEqual({ botId: 'bot_1', decision: 'respond', confidence: 0.9 });
@@ -313,25 +407,31 @@ describe('triageOneBot through the router (P6)', () => {
       startRun: vi.fn(),
       complete: vi.fn(() => new Promise(() => {})),
     } as unknown as AgentEngine;
-    const r = new LlmRouter({
-      settings: {
-        get: () =>
-          settingsSchema.parse({
-            experimental: { externalAgents: true },
-            agents: { alpha: { enabled: true } },
-          }),
-      },
-      bots: { get: () => bot() },
-      builtin,
-      external: agentEngine,
-      catalog: () => [ALPHA],
-      agentView: () => ({ enabled: true, status: 'ready', statusDetail: null }) as never,
-    });
+    const r = agentRouter(agentEngine);
     const { input } = triageDeps(r, 30);
     expect(await triageOneBot(input)).toEqual({
       botId: 'bot_1',
       decision: 'no_action',
       confidence: 0,
     });
+  });
+
+  it('agent triage: longer default timeout; a second batch within the interval is not triaged', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn(() => new Promise(() => {}));
+    const r = agentRouter({ startRun: vi.fn(), complete } as unknown as AgentEngine);
+    const { input } = triageDeps(r);
+    let decided = false;
+    const pending = triageOneBot(input).then((decision) => {
+      decided = true;
+      return decision;
+    });
+    await vi.advanceTimersByTimeAsync(TRIAGE_TIMEOUT_MS + 1);
+    expect(decided).toBe(false);
+    await vi.advanceTimersByTimeAsync(AGENT_TRIAGE_TIMEOUT_MS - TRIAGE_TIMEOUT_MS);
+    expect(await pending).toMatchObject({ decision: 'no_action' });
+    // Same bot + group right after: throttled — no second agent call.
+    expect(await triageOneBot(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 });

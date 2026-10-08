@@ -31,16 +31,23 @@ export class BudgetService {
   }
 
   /**
-   * Non-response tokens a bot consumed today (local day, UTC ms window). An
-   * external-agent row without tokens (subscription agents often report none)
-   * counts as one model round of AGENT_TURN_BUDGET_TOKENS (D72 P6, same rule
-   * as the chain budget) — agent-backed background loops stay budgeted.
+   * Non-response tokens a bot consumed today (local day, UTC ms window).
+   * External-agent rows (D72 P6, 审查 C2 / C5):
+   * - a row without tokens (subscription agents often report none) counts as
+   *   AGENT_TURN_BUDGET_TOKENS — one row per agent call (`complete()` attempt)
+   *   or per reported model round of a background run, the same rule as the
+   *   chain budget — so agent-backed background loops stay budgeted;
+   * - group-chat triage on an agent counts too (built-in triage stays exempt:
+   *   it is cheap and bounded by TRIAGE_TIMEOUT_MS; an agent triage is a whole
+   *   one-shot session on the user's subscription).
+   * Rows without a bot (global profile curation, group-chat summaries) are
+   * charged to no bot.
    */
   usedToday(botId: string): number {
     const since = localDayStart(this.#deps.clock.now(), this.#deps.timeZone);
     const row = this.#deps.db
       .prepare(
-        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type != 'response' and loop_type != 'triage' and created_at >= ?",
+        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type != 'response' and (loop_type != 'triage' or provider like 'agent:%') and created_at >= ?",
       )
       .get(AGENT_TURN_BUDGET_TOKENS, botId, since) as { n: number };
     return row.n;

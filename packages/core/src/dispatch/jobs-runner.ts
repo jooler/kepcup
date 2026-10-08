@@ -150,14 +150,18 @@ export class JobsRunner {
     // 每日预算超出后当天推迟该 Bot 的后台任务（任务 12）。schedule_fire /
     // event_delivery are priority-1 response triggers, not background loops,
     // so they are exempt.
+    // A job routed to an external agent is charged to (and gated by) its
+    // owning bot where determinable — a direct chat's summary (审查 C5).
+    const provider = this.#providerFor(job);
+    const budgetBotId = provider.startsWith('agent:') ? this.#routeBotId(job) : job.bot_id;
     if (
       !RESPONSE_TRIGGER_JOBS.has(job.type) &&
       this.#deps.budget !== undefined &&
-      job.bot_id !== null &&
-      this.#deps.budget.exceeded(job.bot_id)
+      budgetBotId !== null &&
+      this.#deps.budget.exceeded(budgetBotId)
     ) {
       this.#deps.jobs.defer(job.id, this.#deps.budget.nextDayStart());
-      this.#deps.logger.info({ botId: job.bot_id, jobId: job.id }, 'job deferred: daily budget');
+      this.#deps.logger.info({ botId: budgetBotId, jobId: job.id }, 'job deferred: daily budget');
       return;
     }
     this.#inFlight.add(job.id);
@@ -167,7 +171,7 @@ export class JobsRunner {
       // background-loop cap (BACKGROUND_LOOP_CONCURRENCY) must not gate a
       // due schedule behind long background loops (BR-P10-004).
       priority: RESPONSE_TRIGGER_JOBS.has(job.type) ? 1 : 2,
-      provider: this.#providerFor(job),
+      provider,
       key: `job:${job.id}`,
       run: async () => {
         try {
@@ -365,20 +369,30 @@ export class JobsRunner {
   }
 
   /**
-   * Scheduler concurrency key of a job: the provider its loop will call —
-   * `agent:{id}` when the D72 P6 router sends it to an external agent.
+   * Scheduler concurrency key of a job: `agent:{id}` only when the D72 P6
+   * router sends its model calls to an external agent; built-in routes keep
+   * the pre-P6 key (the app light / main model's provider) exactly (审查 C4).
    */
   #providerFor(job: JobRow): string {
     const purpose = JOB_PURPOSES[job.type];
     const router = this.#deps.router;
     if (purpose !== undefined && router !== undefined) {
-      const route = router.resolveForBot(job.bot_id, purpose);
-      if (route !== null) return route.provider;
+      const route = router.resolveForBot(this.#routeBotId(job), purpose);
+      if (route !== null && route.agentId !== null) return route.provider;
     }
     const settings = this.#deps.settings.get();
     const ref = settings.defaultLightModel || settings.defaultMainModel;
     const index = ref.indexOf('/');
     return index > 0 ? ref.slice(0, index) : 'unknown';
+  }
+
+  /** The bot a job's loop routes for (a direct chat's summary: its bot, as the loop does). */
+  #routeBotId(job: JobRow): string | null {
+    if (job.bot_id !== null) return job.bot_id;
+    if (job.type === 'conversation_summary' && job.conversation_id !== null) {
+      return this.#deps.conversations.get(job.conversation_id)?.directBotId ?? null;
+    }
+    return null;
   }
 }
 
