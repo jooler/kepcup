@@ -31,16 +31,24 @@ import type { Clock } from '../infra/clock.js';
  * 宿主 SubAgent（D66，docs/design/23-mcp-and-subagent.md）：delegate_task 把
  * 「只要结论、材料很长」的子任务交给一个嵌套的减配子 run。子 run 落 runs 行
  * （loopType='subagent'，可审计、用量独立）但不产生任何对话消息；结束后由
- * 轻量模型把过程记录压缩为 ≤ SUBAGENT_RESULT_MAX_CHARS 的结论回传主 loop，
+ * 轻量模型把过程记录压缩为 ≤ SUBAGENT_RESULT_MAX_CHARS 的结论回传父 run，
  * 压缩失败回退为子 run 最终文本截断。子 transcript 全文只落 run_steps。
  *
- * 三种模式（D66）：
- * - A 前台同步（默认）：主 loop 阻塞等结论，串行、限次，父 abort 级联 abort。
- * - B 后台委派：立即返回 child_run_id，子 run 挂对话级锚点（SubagentHost），
- *   独立于主 turn 推进；settle 后经 onFollowUp 回调由宿主注入压缩结论（不冒充
- *   用户消息）。结束主 turn 不级联 abort；显式取消委派 / 关对话 / 删 Bot 才 abort。
+ * D75 降级（设计 30 §1.2）：delegate_task 是「任务内部的嵌套子代理」。对话级
+ * 的后台锚点、并发计数与 follow-up 结算只归任务层（dispatch/tasks.ts
+ * TaskHost）；这里的每条子 run 都挂在发起它的父 run 上，结论只回到父 run。
+ *
+ * 三种模式：
+ * - A 前台同步（默认）：父 loop 阻塞等结论，串行、限次。
+ * - B 后台分支：立即返回 child_run_id，分支在父 run 内并行推进，父 loop 继续
+ *   做别的；结论由父 loop 调 collect_delegate_results 取回（等待未结束的
+ *   分支）。从不投递到对话、不唤醒新一轮。
  * - C 并行 fan-out：tasks 一次多路并行，前台等全部 settle 返回结论数组，
- *   后台逐路注入；与 B 共用对话级并发封顶（SUBAGENT_BACKGROUND_CONCURRENCY）。
+ *   后台同 B。
+ * 生命周期：父 run abort 级联到全部子 run；父 run 结束时 orchestrator 调
+ * close()——未结束的分支被中止，未取回的结论作废（结论没有别的去处，等它们
+ * 只会白占父 run 的名额与租约）。单条子 run 可经 abortSubRun（runs.cancel）
+ * 中止。后台并发封顶 SUBAGENT_BACKGROUND_CONCURRENCY 按父 run 计。
  */
 
 /** The slice of the orchestrator wiring one parent run hands to the facade. */
@@ -62,13 +70,6 @@ export interface SubagentFacadeInput {
   buildSystemPrompt: () => Promise<string>;
   /** Aftermath hook (per-run read hashes release). */
   onSubRunSettled?: (runId: string) => void;
-  /**
-   * D66 mode B/C：对话级后台子 run 注册表——并发计数与「显式取消 / 关对话 /
-   * 删 Bot 才 abort」的入口；前台子 run 不注册（仍随父 run 级联）。
-   */
-  host: SubagentHost;
-  /** D66 mode B：后台子 run settle 后的注入回调（orchestrator → 投递管道）。 */
-  onFollowUp: (followUp: SubagentFollowUp) => void;
 }
 
 export interface SubagentRunnerDeps {
@@ -103,98 +104,23 @@ export interface DelegateTaskParams {
   tasks?: SubagentTaskInput[];
 }
 
-/** In-flight background sub run anchor（对话级后台锚点，D66 mode B 归属）。 */
-export interface BackgroundSubRunEntry {
-  runId: string;
-  botId: string | null;
-  conversationId: string | null;
-  abort: (reason: string) => void;
-}
-
-/**
- * Conversation-level registry of in-flight background sub runs. Foreground sub
- * runs never register here — they cascade with their parent; background ones
- * outlive the parent turn, so aborts must come from the explicit paths only
- * (user cancel, conversation close, bot deletion — docs/design/23 mode B).
- */
-export interface SubagentHost {
-  register(entry: BackgroundSubRunEntry): void;
-  unregister(runId: string): void;
-  /** Background sub runs currently in flight for one conversation. */
-  runningCount(conversationId: string): number;
-  abortForConversation(conversationId: string, reason: string): string[];
-  abortForBotInConversation(botId: string, conversationId: string, reason: string): string[];
-  abortForBot(botId: string, reason: string): string[];
-  abortOne(runId: string, reason: string): boolean;
-}
-
-export function createSubagentHost(): SubagentHost {
-  const entries = new Map<string, BackgroundSubRunEntry>();
-  const abortWhere = (
-    predicate: (entry: BackgroundSubRunEntry) => boolean,
-    reason: string,
-  ): string[] => {
-    const aborted: string[] = [];
-    for (const entry of entries.values()) {
-      if (!predicate(entry)) continue;
-      entry.abort(reason);
-      aborted.push(entry.runId);
-    }
-    return aborted;
-  };
-  return {
-    register: (entry) => {
-      entries.set(entry.runId, entry);
-    },
-    unregister: (runId) => {
-      entries.delete(runId);
-    },
-    runningCount: (conversationId) => {
-      let count = 0;
-      for (const entry of entries.values()) {
-        if (entry.conversationId === conversationId) count += 1;
-      }
-      return count;
-    },
-    abortForConversation: (conversationId, reason) =>
-      abortWhere((entry) => entry.conversationId === conversationId, reason),
-    abortForBotInConversation: (botId, conversationId, reason) =>
-      abortWhere(
-        (entry) => entry.botId === botId && entry.conversationId === conversationId,
-        reason,
-      ),
-    abortForBot: (botId, reason) => abortWhere((entry) => entry.botId === botId, reason),
-    abortOne: (runId, reason) => {
-      const entry = entries.get(runId);
-      if (entry === undefined) return false;
-      entry.abort(reason);
-      return true;
-    },
-  };
-}
-
-/**
- * 后台子 run settle 后交给宿主的 follow-up 载荷（D66 mode B）：orchestrator
- * 把它渲染为内部系统事件（不冒充用户消息、不进聊天展示）并投递到同一对话的
- * 下一轮响应 loop。显式取消（无 hitLimit 的 cancelled）不产生回调。
- */
-export interface SubagentFollowUp {
-  childRunId: string;
-  botId: string | null;
-  conversationId: string | null;
-  /** 子 run 终态；'cancelled' 仅代表达到时限 / token 预算被中止。 */
-  status: 'completed' | 'failed' | 'cancelled';
-  /** 达到预算上限被中止：结论为已完成部分。 */
-  hitLimit: boolean;
-  /** 压缩结论（已 ≤ SUBAGENT_RESULT_MAX_CHARS）；失败且无可用产出时为 null。 */
-  conclusion: string | null;
-  /** conclusion 为 null 时的失败原因。 */
-  failure: string | null;
+/** collect_delegate_results 工具参数：缺省 = 本次执行全部未取回的后台分支。 */
+export interface CollectDelegateParams {
+  child_run_ids?: string[];
 }
 
 export interface SubagentToolFacade {
-  /** delegate_task 执行体：前台串行限次、后台/fan-out 共用并发封顶。 */
+  /** delegate_task 执行体：前台串行限次、后台 / fan-out 共用父 run 内并发封顶。 */
   delegate(input: DelegateTaskParams, ctx: ToolContext): Promise<ToolResult>;
+  /** collect_delegate_results 执行体：等待并取回后台分支的结论（每条只取一次）。 */
+  collect(input: CollectDelegateParams, ctx: ToolContext): Promise<ToolResult>;
+  /** Aborts one in-flight sub run of this parent (runs.cancel); false = not ours / settled. */
+  abortSubRun(runId: string, reason: string): boolean;
+  /**
+   * The parent run ended: aborts every sub run still in flight and resolves
+   * once they all settled. Uncollected conclusions are dropped. Idempotent.
+   */
+  close(reason: string): Promise<void>;
 }
 
 const COMPRESSOR_SYSTEM_PROMPT = [
@@ -273,7 +199,7 @@ function normalizeLanes(params: DelegateTaskParams): LanesOrError {
   return { lanes: lanes.map((lane) => ({ ...lane, task: lane.task.trim() })) };
 }
 
-/** 后台委派的立即返回（D66 mode B：{ child_run_id(s), status: "running" }）。 */
+/** 后台分支的立即返回（{ child_run_id(s), status: "running" } + 取回方式）。 */
 function backgroundAck(childRunIds: string[]): ToolResult {
   const payload =
     childRunIds.length === 1
@@ -283,17 +209,27 @@ function backgroundAck(childRunIds: string[]): ToolResult {
     ok: true,
     content: [
       JSON.stringify(payload),
-      '后台子任务已启动，不阻塞本轮：你可以继续与用户对话、追问约束或直接结束本轮。',
-      '每路完成后宿主会把压缩结论自动注入本对话（标记来源 child_run_id），多路结论可能分批到达；无需轮询，不要重复委派同一任务。',
+      '后台分支已在本次执行内启动，不阻塞你：可以先用其他工具推进手头的工作。',
+      '需要结论时调用 collect_delegate_results 取回（会等待尚未结束的分支）；本次执行结束时未取回的分支会被中止、结论作废。不要重复委派同一任务。',
     ].join('\n'),
   };
 }
 
+/** One sub run started by this parent (foreground lane or background branch). */
+interface Lane {
+  runId: string;
+  background: boolean;
+  controller: AbortController;
+  settled: boolean;
+  done: Promise<SubagentLaneOutcome>;
+}
+
 /**
  * Creates the per-parent-run facade. Mode A serializes (at most one foreground
- * sub run at a time, capped at SUBAGENT_MAX_PER_RUN); background calls start
- * immediately and fan-out lanes run in parallel under the conversation-level
- * concurrency cap shared with mode B.
+ * sub run at a time, capped at SUBAGENT_MAX_PER_RUN); background branches
+ * start immediately and fan-out lanes run in parallel under the per-parent
+ * concurrency cap. Every sub run belongs to the parent: its abort cascades,
+ * and close() (parent ended) aborts what is still running.
  */
 export function createSubagentFacade(
   deps: SubagentRunnerDeps,
@@ -301,6 +237,9 @@ export function createSubagentFacade(
 ): SubagentToolFacade {
   let delegations = 0;
   let tail: Promise<unknown> = Promise.resolve();
+  let closed = false;
+  /** In-flight lanes + settled background branches not yet collected. */
+  const lanes = new Map<string, Lane>();
 
   const createSubRunRow = (background: boolean): Run =>
     deps.runs.create({
@@ -309,48 +248,59 @@ export function createSubagentFacade(
       loopType: 'subagent',
       triggerReason: background ? 'background' : null,
       triggerMessageIds: [],
-      // D66/D67 ownership：子 run 记录委派父 run（journal 对齐）。
+      // D66/D67 ownership：子 run 记录委派父 run（journal 对齐；D75 只读 /
+      // 写租约规则也沿 parent_run_id 继承）。
       parentRunId: input.parent.runId,
     });
 
-  /** D66 mode B：注册对话级锚点后立刻启动，返回 child_run_id（不等待）。 */
-  function startBackground(task: string): string {
-    const subRun = createSubRunRow(true);
+  /** No awaiter must ever see a rejection: a crash settles the row failed. */
+  const crashOutcome = (subRunId: string, error: unknown): SubagentLaneOutcome => {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.logger.error({ runId: subRunId, error: message }, 'subagent crashed');
+    try {
+      deps.publishRunStatus(deps.runs.update(subRunId, { status: 'failed', error: message }));
+    } catch (updateError) {
+      deps.logger.warn({ runId: subRunId, error: String(updateError) }, 'subagent settle failed');
+    }
+    return {
+      result: { ok: false, content: `子任务执行异常：${message}`, errorCode: 'SUBAGENT_FAILED' },
+      conclusion: null,
+      partial: false,
+    };
+  };
+
+  /** Starts one sub run under its own controller, linked to the parent's signal. */
+  const startLane = (
+    subRun: Run,
+    task: string,
+    background: boolean,
+    parentSignal: AbortSignal,
+  ): Lane => {
     const controller = new AbortController();
-    input.host.register({
-      runId: subRun.id,
-      botId: input.parent.botId,
-      conversationId: input.parent.conversationId,
-      abort: (reason) => controller.abort(reason),
-    });
-    void runSubagent(deps, input, subRun, { task, signal: controller.signal, background: true })
-      .catch((error) => {
-        // 无人 await 的后台路径兜底：落 failed + 注入失败结论，不让进程崩。
-        const message = error instanceof Error ? error.message : String(error);
-        deps.logger.error({ runId: subRun.id, error: message }, 'background subagent crashed');
-        try {
-          deps.publishRunStatus(
-            deps.runs.update(subRun.id, { status: 'failed', error: message }),
-          );
-        } catch (updateError) {
-          deps.logger.warn(
-            { runId: subRun.id, error: String(updateError) },
-            'background subagent settle failed',
-          );
-        }
-        input.onFollowUp({
-          childRunId: subRun.id,
-          botId: input.parent.botId,
-          conversationId: input.parent.conversationId,
-          status: 'failed',
-          hitLimit: false,
-          conclusion: null,
-          failure: `后台委派任务执行异常：${message}`,
-        });
-      })
-      .finally(() => input.host.unregister(subRun.id));
-    return subRun.id;
-  }
+    const onParentAbort = () => controller.abort('parent run aborted');
+    if (closed) controller.abort('parent run ended');
+    else if (parentSignal.aborted) onParentAbort();
+    else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+    // runSubagent is async: the finally below always runs after `lane` exists.
+    const done = runSubagent(deps, input, subRun, { task, signal: controller.signal })
+      .catch((error: unknown) => crashOutcome(subRun.id, error))
+      .finally(() => {
+        lane.settled = true;
+        parentSignal.removeEventListener('abort', onParentAbort);
+        // Foreground results go straight back through the tool call; only
+        // background branches wait here to be collected.
+        if (!background) lanes.delete(subRun.id);
+      });
+    const lane: Lane = { runId: subRun.id, background, controller, settled: false, done };
+    lanes.set(subRun.id, lane);
+    return lane;
+  };
+
+  const runningBranches = (): number => {
+    let count = 0;
+    for (const lane of lanes.values()) if (lane.background && !lane.settled) count += 1;
+    return count;
+  };
 
   return {
     delegate: (params, ctx) => {
@@ -359,23 +309,37 @@ export function createSubagentFacade(
           invalidResult('当前执行没有对话上下文，无法委派子任务', 'INVALID_INPUT'),
         );
       }
+      // D75 §1.2 / 决策 10：对话轮派活用 start_task；子代理不得再委派。
+      if (input.parent.loopType === 'turn' || input.parent.loopType === 'subagent') {
+        return Promise.resolve(
+          invalidResult(
+            input.parent.loopType === 'turn'
+              ? '对话轮不能用 delegate_task：要执行的活用 start_task 派成任务'
+              : '子代理不能再委派子任务',
+            'NOT_SUPPORTED',
+          ),
+        );
+      }
+      if (closed) {
+        return Promise.resolve(invalidResult('本次执行已结束，不能再委派子任务', 'CANCELLED'));
+      }
       const checked = normalizeLanes(params);
       if ('error' in checked) return Promise.resolve(checked.error);
-      const { lanes } = checked;
-      const modes = lanes.map((lane) => lane.mode ?? 'foreground');
+      const { lanes: requested } = checked;
+      const modes = requested.map((lane) => lane.mode ?? 'foreground');
       const allForeground = modes.every((mode) => mode === 'foreground');
       const allBackground = modes.every((mode) => mode === 'background');
       if (!allForeground && !allBackground) {
         return Promise.resolve(
           invalidResult(
-            'tasks 中所有子任务的 mode 必须一致：前台 fan-out 等全部完成后一起返回，后台 fan-out 逐路注入',
+            'tasks 中所有子任务的 mode 必须一致：前台 fan-out 等全部完成后一起返回，后台 fan-out 用 collect_delegate_results 取回',
             'INVALID_INPUT',
           ),
         );
       }
 
       // Mode A：前台同步（默认），串行 + 限次（既有契约，行为不变）。
-      if (allForeground && lanes.length === 1) {
+      if (allForeground && requested.length === 1) {
         if (delegations >= SUBAGENT_MAX_PER_RUN) {
           return Promise.resolve(
             invalidResult(
@@ -388,12 +352,8 @@ export function createSubagentFacade(
         const subRun = createSubRunRow(false);
         // pi executes a turn's tool calls in order, but the facade guarantees
         // serialization even if a caller races two delegate calls.
-        const result = tail.then(() =>
-          runSubagent(deps, input, subRun, {
-            task: lanes[0]!.task,
-            signal: ctx.signal,
-            background: false,
-          }),
+        const result = tail.then(
+          () => startLane(subRun, requested[0]!.task, false, ctx.signal).done,
         );
         tail = result.then(
           () => undefined,
@@ -402,36 +362,33 @@ export function createSubagentFacade(
         return result.then((outcome) => outcome.result);
       }
 
-      // Mode B/C：后台路数与已在跑的后台子 run 共用对话级并发封顶；前台
-      // fan-out 的 N 路也必须放得下（docs/design/23 mode C）。
-      const conversationId = input.parent.conversationId;
-      const running = input.host.runningCount(conversationId);
-      if (lanes.length + running > SUBAGENT_BACKGROUND_CONCURRENCY) {
+      // Mode B/C：后台路数与本 run 已在跑的后台分支共用父 run 内并发封顶；
+      // 前台 fan-out 的 N 路也必须放得下（docs/design/23 mode C）。
+      const running = runningBranches();
+      if (requested.length + running > SUBAGENT_BACKGROUND_CONCURRENCY) {
         return Promise.resolve(
           invalidResult(
-            `后台并发已达上限（进行中 ${running} 个，本次申请 ${lanes.length} 路，上限 ${SUBAGENT_BACKGROUND_CONCURRENCY}）：请减少路数、改串行或等已有任务完成`,
+            `并行子任务已达上限（本次执行进行中的后台分支 ${running} 个，本次申请 ${requested.length} 路，上限 ${SUBAGENT_BACKGROUND_CONCURRENCY}）：请减少路数、改串行，或先用 collect_delegate_results 等已有分支结束`,
             'SUBAGENT_LIMIT_REACHED',
           ),
         );
       }
 
-      // Mode C 后台 fan-out：全部路立即启动，逐路完成时各自 follow-up 注入。
+      // Mode B / C 后台：全部路立即启动，父 loop 继续；结论等 collect 取回。
       if (allBackground) {
-        const ids = lanes.map((lane) => startBackground(lane.task));
+        const ids = requested.map(
+          (lane) => startLane(createSubRunRow(true), lane.task, true, ctx.signal).runId,
+        );
         return Promise.resolve(backgroundAck(ids));
       }
 
       // Mode C 前台 fan-out：N 路并行（互不共享 transcript），父 abort 仍级联；
       // 等全部 settle 后按 task 顺序返回结论数组（失败槽位带 error）。
-      const rows = lanes.map(() => createSubRunRow(false));
+      const rows = requested.map(() => createSubRunRow(false));
       const result = tail.then(() =>
         Promise.all(
-          lanes.map((lane, index) =>
-            runSubagent(deps, input, rows[index]!, {
-              task: lane.task,
-              signal: ctx.signal,
-              background: false,
-            }),
+          requested.map(
+            (lane, index) => startLane(rows[index]!, lane.task, false, ctx.signal).done,
           ),
         ),
       );
@@ -441,14 +398,86 @@ export function createSubagentFacade(
       );
       return result.then((outcomes) => fanOutResult(outcomes));
     },
+
+    collect: async (params, ctx) => {
+      let targets: Lane[];
+      if (params.child_run_ids !== undefined) {
+        if (!Array.isArray(params.child_run_ids) || params.child_run_ids.length === 0) {
+          return invalidResult('child_run_ids 不能为空；要取回全部分支就省略该参数', 'INVALID_INPUT');
+        }
+        const ids = [...new Set(params.child_run_ids)];
+        const unknown = ids.filter((id) => lanes.get(id)?.background !== true);
+        if (unknown.length > 0) {
+          return invalidResult(
+            `不是本次执行中待取回的后台分支（id 有误或已取回过）：${unknown.join(', ')}`,
+            'INVALID_INPUT',
+          );
+        }
+        targets = ids.map((id) => lanes.get(id)!);
+      } else {
+        targets = [...lanes.values()].filter((lane) => lane.background);
+        if (targets.length === 0) {
+          return invalidResult(
+            '没有待取回的后台分支（都已取回，或本次执行还没有用 mode:"background" 委派）',
+            'INVALID_INPUT',
+          );
+        }
+      }
+      const outcomes = await untilAborted(
+        Promise.all(targets.map((lane) => lane.done)),
+        ctx.signal,
+      );
+      if (outcomes === null) {
+        return invalidResult('执行已取消，未取回分支结论', 'CANCELLED');
+      }
+      // Each conclusion is handed over exactly once.
+      for (const lane of targets) lanes.delete(lane.runId);
+      return branchResult(targets.map((lane) => lane.runId), outcomes);
+    },
+
+    abortSubRun: (runId, reason) => {
+      const lane = lanes.get(runId);
+      if (lane === undefined || lane.settled) return false;
+      lane.controller.abort(reason);
+      return true;
+    },
+
+    close: async (reason) => {
+      closed = true;
+      const pending = [...lanes.values()].filter((lane) => !lane.settled);
+      for (const lane of pending) lane.controller.abort(reason);
+      await Promise.allSettled(pending.map((lane) => lane.done));
+      lanes.clear();
+    },
   };
 }
 
-/** 单路子 run 的内部结果：给模型的 ToolResult + fan-out 用的原始结论。 */
+/** Resolves with the promise's value, or null once `signal` aborts first. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | null> {
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise<T | null>((resolve, reject) => {
+    const onAbort = () => resolve(null);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/** 单路子 run 的内部结果：给模型的 ToolResult + fan-out / collect 用的原始结论。 */
 interface SubagentLaneOutcome {
   result: ToolResult;
   /** 原始压缩结论（无 <untrusted> 包裹）；失败/取消为 null。 */
   conclusion: string | null;
+  /** 达到时间 / token 预算被中止：结论只是已完成部分。 */
+  partial: boolean;
 }
 
 /** Mode C 前台 fan-out 的按序结论数组（失败槽位带 error，成功结论照常返回）。 */
@@ -465,11 +494,35 @@ function fanOutResult(lanes: SubagentLaneOutcome[]): ToolResult {
   };
 }
 
+/** collect_delegate_results 的按序结果（与请求的分支顺序一致）。 */
+function branchResult(runIds: string[], outcomes: SubagentLaneOutcome[]): ToolResult {
+  const payload = outcomes.map((outcome, index) =>
+    outcome.result.ok
+      ? {
+          child_run_id: runIds[index],
+          ok: true,
+          conclusion: outcome.conclusion ?? '',
+          ...(outcome.partial ? { partial: true } : {}),
+        }
+      : { child_run_id: runIds[index], ok: false, error: outcome.result.content },
+  );
+  const notes = outcomes.some((outcome) => outcome.partial)
+    ? ['partial=true 的分支达到时间或 token 预算上限，结论只是已完成部分。']
+    : [];
+  return {
+    ok: outcomes.some((outcome) => outcome.result.ok),
+    content: [`<untrusted>\n${JSON.stringify(payload, null, 2)}\n</untrusted>`, ...notes].join(
+      '\n',
+    ),
+    ...(outcomes.every((outcome) => !outcome.result.ok) ? { errorCode: 'SUBAGENT_FAILED' } : {}),
+  };
+}
+
 async function runSubagent(
   deps: SubagentRunnerDeps,
   input: SubagentFacadeInput,
   subRun: Run,
-  params: { task: string; signal: AbortSignal; background: boolean },
+  params: { task: string; signal: AbortSignal },
 ): Promise<SubagentLaneOutcome> {
   const { runs, engine, clock } = deps;
   const identity: RunIdentity = {
@@ -496,9 +549,9 @@ async function runSubagent(
     model: input.modelRef,
   });
 
-  // 级联 abort：前台子 run 随父 run（abort / skip_reply / 用户取消）中止；
-  // 后台子 run 的 signal 是对话级锚点的独立 controller（结束主 turn 不触发）。
-  // 主 run 被 steer 不影响子 run（任务指令已定）。
+  // 级联 abort：signal 是本路自己的 controller——父 run abort、父 run 结束
+  // （close）或 runs.cancel 单独取消都经它中止。主 run 被 steer 不影响子 run
+  // （任务指令已定）。
   if (params.signal.aborted) {
     update({ status: 'cancelled' });
     input.onSubRunSettled?.(subRun.id);
@@ -509,6 +562,7 @@ async function runSubagent(
         errorCode: 'CANCELLED',
       },
       conclusion: null,
+      partial: false,
     };
   }
   // 时限 / token 预算触发的内部中止：与显式取消区分（超限仍要产出已有内容）。
@@ -564,17 +618,6 @@ async function runSubagent(
 
   if (outcome.status === 'failed') {
     const content = `子任务执行失败：${outcome.error?.message ?? '未知错误'}`;
-    if (params.background) {
-      input.onFollowUp({
-        childRunId: subRun.id,
-        botId: subRun.botId,
-        conversationId: subRun.conversationId,
-        status: 'failed',
-        hitLimit: false,
-        conclusion: null,
-        failure: content,
-      });
-    }
     return {
       result: {
         ok: false,
@@ -582,13 +625,15 @@ async function runSubagent(
         errorCode: outcome.error?.code ?? 'SUBAGENT_FAILED',
       },
       conclusion: null,
+      partial: false,
     };
   }
   if (params.signal.aborted && !hitLimit) {
-    // 显式取消（前台：父 run 级联；后台：用户取消委派）——不压缩、不注入。
+    // 显式取消（父 run abort / 结束，或 runs.cancel）——不压缩。
     return {
       result: { ok: false, content: '执行已取消，子任务中止', errorCode: 'CANCELLED' },
       conclusion: null,
+      partial: false,
     };
   }
 
@@ -610,25 +655,13 @@ async function runSubagent(
         : processRecordFallback(deps, subRun.id),
     );
 
-  if (params.background) {
-    // D66 mode B：完成 / 超限 → follow-up 注入载荷（显式取消与失败都不到这）。
-    input.onFollowUp({
-      childRunId: subRun.id,
-      botId: subRun.botId,
-      conversationId: subRun.conversationId,
-      status: hitLimit ? 'cancelled' : 'completed',
-      hitLimit,
-      conclusion: text,
-      failure: null,
-    });
-    return { result: { ok: true, content: text }, conclusion: text };
-  }
-
   return {
     result: { ok: true, content: wrapConclusion(text, outcome.status === 'cancelled') },
     conclusion: text,
+    partial: outcome.status === 'cancelled',
   };
 }
+
 
 /** SUBAGENT_RESULT_MAX_CHARS 是字符上限（D66）——按字符截断而非 token 预算。 */
 function clipChars(text: string): string {
