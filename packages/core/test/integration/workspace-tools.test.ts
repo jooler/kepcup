@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { step } from '@kepcup/testkit';
+import { step, viaTask, waitForMessage } from '@kepcup/testkit';
 import {
   createTestStack,
   listMessages,
@@ -31,6 +31,18 @@ function workspaceOf(stack: { core: TestStack['core'] }, botId: string, conversa
   return workspacePathFor(resolvePaths(stack.core.services.paths.home), botId, conversationId);
 }
 
+/**
+ * D75 W2: writes and commands are a task's work (a turn is read-only): the
+ * scripted steps run in a write task; its result wakes a turn that relays it.
+ */
+function inWriteTask(taskSteps: ReturnType<typeof step>[], relay: string) {
+  return viaTask({ taskSteps, relay });
+}
+
+function waitForTask(core: TestStack['core'], conversationId: string) {
+  return waitForRun(core, conversationId, 'completed', { loopType: 'task', timeoutMs: 120_000 });
+}
+
 async function stepsOf(core: TestStack['core'], runId: string) {
   const result = (await core.rpc.call('runs.steps', { runId })) as {
     steps: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -41,23 +53,29 @@ async function stepsOf(core: TestStack['core'], runId: string) {
 describe('workspace and coding tools', () => {
   it('writes a script, executes it in the sandbox and reads the output', async () => {
     const { core, llm } = await start();
-    llm.script('mock-main', [
-      step().replyToolCall('write', {
-        path: 'hello.sh',
-        content: '#!/bin/sh\necho "hello-from-workspace"\n',
-      }),
-      step().replyToolCall('edit', {
-        path: 'hello.sh',
-        edits: [{ oldText: 'hello-from-workspace', newText: 'edited-from-workspace' }],
-      }),
-      step().replyToolCall('bash', { command: 'sh hello.sh' }),
-      step().replyText('脚本执行完成'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [
+          step().replyToolCall('write', {
+            path: 'hello.sh',
+            content: '#!/bin/sh\necho "hello-from-workspace"\n',
+          }),
+          step().replyToolCall('edit', {
+            path: 'hello.sh',
+            edits: [{ oldText: 'hello-from-workspace', newText: 'edited-from-workspace' }],
+          }),
+          step().replyToolCall('bash', { command: 'sh hello.sh' }),
+          step().replyText('脚本执行完成'),
+        ],
+        '脚本跑完了',
+      ),
+    );
     const bot = await makeBot(core, '小码');
     const conv = await openDirect(core, bot.id);
 
     await sendBatch(core, conv.id, ['写个脚本跑一下']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    const run = await waitForTask(core, conv.id);
 
     const workspace = workspaceOf({ core }, bot.id, conv.id);
     expect(existsSync(path.join(workspace, 'hello.sh'))).toBe(true);
@@ -143,10 +161,13 @@ describe('workspace and coding tools', () => {
 
   it('routes commands into confirm mode when the sandbox is disabled (P03)', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: 'touch sandbox-off-marker' }),
-      step().replyText('好的'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [step().replyToolCall('bash', { command: 'touch sandbox-off-marker' }), step().replyText('好的')],
+        '命令没执行',
+      ),
+    );
     const bot = await makeBot(core, '小停');
     const conv = await openDirect(core, bot.id);
 
@@ -165,7 +186,7 @@ describe('workspace and coding tools', () => {
 
     // Deny: the tool reports APPROVAL_DENIED and nothing executes.
     await core.rpc.call('approvals.decide', { id: approval!.id, approve: false });
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    const run = await waitForTask(core, conv.id);
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
@@ -183,15 +204,21 @@ describe('workspace and coding tools', () => {
 
   it('records exec and fs_write entries in audit_log', async () => {
     const { core, llm } = await start();
-    llm.script('mock-main', [
-      step().replyToolCall('write', { path: 'a.txt', content: 'x' }),
-      step().replyToolCall('bash', { command: 'true' }),
-      step().replyText('完成'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [
+          step().replyToolCall('write', { path: 'a.txt', content: 'x' }),
+          step().replyToolCall('bash', { command: 'true' }),
+          step().replyText('完成'),
+        ],
+        '审计完成',
+      ),
+    );
     const bot = await makeBot(core, '小记');
     const conv = await openDirect(core, bot.id);
     await sendBatch(core, conv.id, ['记录审计']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    await waitForTask(core, conv.id);
 
     const rows = core.services.domain!.audit.listByConversation(conv.id, 50);
     expect(rows.some((r) => r.action === 'fs_write' && String(r.detail['path']).endsWith('a.txt'))).toBe(true);
@@ -204,17 +231,23 @@ describe('workspace and coding tools', () => {
     const bot = await makeBot(core, '小邮');
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('write', { path: 'report.txt', content: '报告内容' }),
-      step().replyToolCall('send_message', {
-        text: '报告好了',
-        attachment_paths: ['report.txt'],
-      }),
-      step().replyText('发完了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [
+          step().replyToolCall('write', { path: 'report.txt', content: '报告内容' }),
+          step().replyToolCall('send_message', {
+            text: '报告好了',
+            attachment_paths: ['report.txt'],
+          }),
+          step().replyText('发完了'),
+        ],
+        'RELAY-REPORT',
+      ),
+    );
     await sendBatch(core, conv.id, ['把报告发我']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
-    void 0;
+    await waitForTask(core, conv.id);
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === 'RELAY-REPORT');
 
     const messages = await listMessages(core, conv.id);
     const botMessage = messages.find(
@@ -276,12 +309,15 @@ describe('workspace and coding tools', () => {
     const bot = await makeBot(core, '小违');
     const conv = await openDirect(core, bot.id);
     const dbPath = core.services.paths.mainDbPath;
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: `cat "${dbPath}"` }),
-      step().replyText('读不了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [step().replyToolCall('bash', { command: `cat "${dbPath}"` }), step().replyText('读不了')],
+        '读不了数据库',
+      ),
+    );
     await sendBatch(core, conv.id, ['读读数据库']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    const run = await waitForTask(core, conv.id);
 
     const steps = await stepsOf(core, run.id);
     const bashResult = steps.find(
