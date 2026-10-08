@@ -1,347 +1,375 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { Message, Run } from '@kepcup/shared';
 import {
   createTestStack,
   listAllMessages,
   listMessages,
-  listRuns,
   makeBot,
   openDirect,
-  sendBatch,
   step,
   waitFor,
-  waitForMessage,
-  waitForRun,
+  type MockChatRequest,
   type MockLlmStep,
   type TestStack,
 } from '@kepcup/testkit';
+import type { RunIdentity } from '../../src/agent/types.js';
 
 /**
- * 宿主 SubAgent（D66）集成：delegate_task 委派 → 减配子 run → 轻量模型压缩
- * 回传；对话流不出现子 run 内容；子 run 完整落 runs/run_steps；主 run 取消
- * 级联取消子 run；后台委派不阻塞主 turn 并在结束后注入压缩结论（follow-up）；
- * fan-out 并行多路；显式取消 / 关对话才中止后台子 run。
+ * 宿主 SubAgent（D66）集成，D75 §1.2 降级后的语义：delegate_task 是任务内部
+ * 的嵌套子代理——减配子 run + 轻量模型压缩回传；对话流不出现子 run 内容；
+ * 子 run 完整落 runs/run_steps 并归属父任务。后台模式是父任务内的并行分支：
+ * 结论经 collect_delegate_results 回到父任务，从不投递到对话、不唤醒新一轮；
+ * 父任务取消 / 结束 / 对话删除都中止分支。任务经 TaskHost 直接派出（对话轮
+ * 工具面由 W2 注册）。
  */
 
-const stacks: Array<{ cleanup(): Promise<void> }> = [];
+const stacks: TestStack[] = [];
 
 afterEach(async () => {
-  for (const stack of stacks.splice(0)) await stack.cleanup();
+  for (const stack of stacks.splice(0)) {
+    stack.llm.releaseAll();
+    await stack.cleanup();
+  }
 });
 
-/** 压缩调用（轻量模型）的谓词：请求携带 <process_record>，避开反射 loop 等其他轻量调用。 */
-function compressionStep(): MockLlmStep {
+const body = (req: MockChatRequest): string => JSON.stringify(req.body);
+const isTaskRequest = (marker: string) => (req: MockChatRequest) =>
+  req.lastUserText().includes('<task_brief') && req.lastUserText().includes(marker);
+const isSubRequest = (marker: string) => (req: MockChatRequest) =>
+  !req.lastUserText().includes('<task_brief') && req.lastUserText().includes(marker);
+/** A task request that already carries `text` (a tool result) in its transcript. */
+const isTaskRequestWith = (marker: string, text: string) => (req: MockChatRequest) =>
+  isTaskRequest(marker)(req) && body(req).includes(text);
+
+/** 压缩调用（轻量模型）：请求携带 <process_record>，避开反射 loop 等其他轻量调用。 */
+function compressionStep(marker?: string, reply = '压缩后的结论'): MockLlmStep {
   return step()
-    .expect((req) => req.lastUserText().includes('<process_record>'))
-    .replyText('压缩后的结论');
+    .expect(
+      (req) =>
+        req.lastUserText().includes('<process_record>') &&
+        (marker === undefined || req.lastUserText().includes(marker)),
+    )
+    .replyText(reply);
 }
 
-function subRunSteps(core: TestStack['core'], conversationId: string) {
+/** The wake turn after the task settles (whatever it says). */
+const wakeStep = (): MockLlmStep => step().replyText('任务结果已知悉');
+
+function turnIdentity(botId: string, conversationId: string): RunIdentity {
+  return { runId: 'run_turn_d66', botId, conversationId, loopType: 'response' };
+}
+
+async function setup(name: string): Promise<{ stack: TestStack; botId: string; convId: string }> {
+  const stack = await createTestStack();
+  stacks.push(stack);
+  const bot = await makeBot(stack.core, name);
+  const conv = await openDirect(stack.core, bot.id);
+  return { stack, botId: bot.id, convId: conv.id };
+}
+
+function startTask(stack: TestStack, botId: string, convId: string, instruction: string): string {
+  return stack.core.services.orchestrator!.tasks.start(turnIdentity(botId, convId), {
+    title: '调研',
+    instruction,
+    sourceMessageIds: [],
+    writes: false,
+  }).taskId;
+}
+
+function runOf(stack: TestStack, runId: string): Run | null {
+  return stack.core.services.domain!.runs.get(runId);
+}
+
+function subRunsOf(stack: TestStack, convId: string, taskId: string): Run[] {
+  return stack.core.services
+    .domain!.runs.listByConversation(convId, 100)
+    .filter((r) => r.loopType === 'subagent' && r.parentRunId === taskId);
+}
+
+async function waitSubRuns(
+  stack: TestStack,
+  convId: string,
+  taskId: string,
+  count = 1,
+): Promise<Run[]> {
   return waitFor(
-    async () => {
-      const runs = await listRuns(core, conversationId);
-      const subs = runs.filter((r) => r.loopType === 'subagent');
-      return subs.length > 0 ? subs : null;
+    () => {
+      const subs = subRunsOf(stack, convId, taskId);
+      return subs.length >= count && subs.every((s) => s.status === 'running') ? subs : null;
     },
-    { label: 'subagent runs' },
+    { label: 'running sub runs of the task', timeoutMs: 20_000 },
   );
 }
 
-async function visibleTexts(core: TestStack['core'], conversationId: string): Promise<string> {
-  const messages = await listMessages(core, conversationId);
-  return messages.map((m) => ('text' in m.content ? m.content.text : '')).join('\n');
+async function waitStatus(stack: TestStack, runId: string, status: Run['status']): Promise<Run> {
+  return waitFor(
+    () => {
+      const run = runOf(stack, runId);
+      return run !== null && run.status === status ? run : null;
+    },
+    { label: `run ${runId} ${status}`, timeoutMs: 20_000 },
+  );
 }
 
-describe('subagent delegate_task', () => {
-  it('delegates a research task, compresses the result and keeps the conversation clean', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    // mock-main 的步骤按请求顺序消耗：主 run 首轮（委派）→ 子 run（子任务
-    // 回复）→ 主 run 次轮（转述最终结论）。
+function toolResult(stack: TestStack, runId: string, toolName: string): string | null {
+  const found = stack.core.services
+    .domain!.runs.stepsFor(runId)
+    .find((s) => s.type === 'tool_result' && s.payload['toolName'] === toolName);
+  return found === undefined ? null : String(found.payload['content']);
+}
+
+function textOf(message: Message): string {
+  return 'text' in message.content ? message.content.text : '';
+}
+
+/** D66's former follow-up injection must never come back (D75 §1.2). */
+async function expectNoFollowUpInjection(stack: TestStack, convId: string): Promise<void> {
+  const all = await listAllMessages(stack.core, convId);
+  expect(
+    all.filter(
+      (m) =>
+        (m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result') ||
+        textOf(m).includes('委派任务结束通知'),
+    ),
+  ).toEqual([]);
+  expect(stack.llm.requestBodiesContain('委派任务结束通知')).toBe(false);
+}
+
+describe('delegate_task inside a task (D66, D75 §1.2)', () => {
+  it('delegates a research task, compresses the result into the task and keeps the conversation clean', async () => {
+    const { stack, botId, convId } = await setup('小委');
+    const { llm, core } = stack;
     llm.script('mock-main', [
-      step().replyTextAndToolCall('材料太多，我让子代理去读', 'delegate_task', {
-        task: '通读材料并给出要点结论',
-      }),
-      step().replyText('子任务自己的最终结论'),
-      step().replyText('主 Bot 转述的最终结论'),
+      step()
+        .expect(isTaskRequest('TASK-FG'))
+        .replyTextAndToolCall('材料太多，我让子代理去读', 'delegate_task', {
+          task: 'SUB-FG 通读材料并给出要点结论',
+        }),
+      step().expect(isSubRequest('SUB-FG')).replyText('子任务自己的最终结论'),
+      step().expect(isTaskRequestWith('TASK-FG', '压缩后的结论')).replyText('RESULT-FG'),
+      wakeStep(),
     ]);
-    llm.script('mock-light', [step().replyText('压缩后的结论')]);
-    const bot = await makeBot(core, '小委');
-    const conv = await openDirect(core, bot.id);
+    llm.script('mock-light', [compressionStep()]);
 
-    await sendBatch(core, conv.id, ['帮我读一下材料']);
-    const run = await waitForRun(core, conv.id, 'completed');
+    const taskId = startTask(stack, botId, convId, 'TASK-FG 帮我读一下材料');
+    await waitStatus(stack, taskId, 'completed');
 
-    // 对话流：只有用户消息 + 主 Bot 的中间说明与最终回复，无子 run 内容。
-    const all = await listAllMessages(core, conv.id);
-    const texts = all.map((m) => ('text' in m.content ? m.content.text : '')).join('\n');
-    expect(texts).toContain('主 Bot 转述的最终结论');
-    expect(texts).not.toContain('子任务自己的最终结论');
-    expect(texts).not.toContain('压缩后的结论');
-
-    // 子 run 落库：loopType=subagent、completed、无输出消息。
-    const runs = await listRuns(core, conv.id);
-    const subRun = runs.find((r) => r.loopType === 'subagent');
+    // 子 run 落库：loopType=subagent、归属父任务、completed、无输出消息。
+    const [subRun] = subRunsOf(stack, convId, taskId);
     expect(subRun).toBeDefined();
     expect(subRun!.status).toBe('completed');
     expect(subRun!.outputMessageIds).toHaveLength(0);
-    expect(subRun!.botId).toBe(bot.id);
+    expect(subRun!.botId).toBe(botId);
+    expect(subRun!.triggerReason).toBeNull();
 
-    // 子 run transcript 完整落 run_steps：有请求与助手输出。
-    const subSteps = (await core.rpc.call('runs.steps', { runId: subRun!.id })) as {
-      steps: Array<{ type: string; payload: Record<string, unknown> }>;
-    };
-    expect(subSteps.steps.map((s) => s.type)).toContain('request');
-    expect(subSteps.steps.map((s) => s.type)).toContain('assistant');
-
-    // 减配工具集：子 run 的请求里没有 write / edit / send_message / delegate_task。
-    const requestPayload = JSON.stringify(
-      subSteps.steps.find((s) => s.type === 'request')!.payload,
-    );
+    // 子 run transcript 完整落 run_steps；减配工具集：无写 / 对话 / 再委派 / 派任务。
+    const subSteps = core.services.domain!.runs.stepsFor(subRun!.id);
+    expect(subSteps.map((s) => s.type)).toContain('request');
+    expect(subSteps.map((s) => s.type)).toContain('assistant');
+    const requestPayload = JSON.stringify(subSteps.find((s) => s.type === 'request')!.payload);
     for (const forbidden of [
       '"write"',
       '"edit"',
       '"send_message"',
       '"delegate_task"',
+      '"collect_delegate_results"',
+      '"start_task"',
       '"skip_reply"',
     ]) {
       expect(requestPayload).not.toContain(forbidden);
     }
-    // 主 loop 收到的工具结果是压缩结论（≤ 4000 字符 + untrusted 包裹）。
-    const mainSteps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
-      steps: Array<{ type: string; payload: Record<string, unknown> }>;
-    };
-    const delegateResult = mainSteps.steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'delegate_task',
-    );
-    expect(delegateResult).toBeDefined();
-    expect(String(delegateResult!.payload['content'])).toContain('压缩后的结论');
-    void llm;
+    // 任务收到的工具结果是压缩结论。
+    expect(toolResult(stack, taskId, 'delegate_task')).toContain('压缩后的结论');
+
+    // 对话流：无子 run 内容，也无压缩结论原文。
+    const visible = (await listMessages(core, convId)).map(textOf).join('\n');
+    expect(visible).not.toContain('子任务自己的最终结论');
+    expect(visible).not.toContain('压缩后的结论');
   }, 60_000);
 
-  it('cascades main-run cancellation into a running subagent run', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    // 主 run 首轮委派；子 run 的请求挂起（模拟长时间研究），等它真正开始后
-    // 取消主 run。script() 是替换语义：两个步骤一次给全。
+  it('cascades task cancellation into a running sub run', async () => {
+    const { stack, botId, convId } = await setup('小取');
+    const { llm, core } = stack;
     llm.script('mock-main', [
-      step().replyTextAndToolCall('委派给子代理', 'delegate_task', { task: '长任务' }),
-      step().hold().replyText('子任务（被取消前不会返回）'),
+      step()
+        .expect(isTaskRequest('TASK-CANCEL'))
+        .replyTextAndToolCall('委派给子代理', 'delegate_task', { task: 'SUB-CANCEL 长任务' }),
+      step().expect(isSubRequest('SUB-CANCEL')).hold().replyText('子任务（被取消前不会返回）'),
     ]);
-    const bot = await makeBot(core, '小取');
-    const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['开始长任务']);
-    const mainRun = await waitForRun(core, conv.id, 'running');
-    const subRunId = await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        const sub = runs.find((r) => r.loopType === 'subagent');
-        return sub && sub.status === 'running' ? sub.id : null;
-      },
-      { label: 'subagent run running', timeoutMs: 20_000 },
-    );
+    const taskId = startTask(stack, botId, convId, 'TASK-CANCEL 开始长任务');
+    const [subRun] = await waitSubRuns(stack, convId, taskId);
 
-    await core.rpc.call('runs.cancel', { runId: mainRun.id });
-    await waitForRun(core, conv.id, 'cancelled', { timeoutMs: 20_000 });
-    // 设计契约（D66）：主 run 取消 → 子 run 同步 cancelled，无悬挂。
-    await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        const sub = runs.find((r) => r.id === subRunId);
-        return sub?.status === 'cancelled' ? 'cancelled' : null;
-      },
-      { label: 'subagent run cancelled', timeoutMs: 20_000 },
-    );
-    llm.releaseAll();
-    void llm;
+    await core.rpc.call('runs.cancel', { runId: taskId });
+    await waitStatus(stack, taskId, 'cancelled');
+    // 设计契约（D66）：父取消 → 子 run cancelled，无悬挂。
+    await waitStatus(stack, subRun!.id, 'cancelled');
   }, 60_000);
 });
 
-describe('subagent background delegation (D66 mode B)', () => {
-  it('ends the main turn while the sub run is still running and injects the conclusion afterwards', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    // 谓词区分并发请求：主 turn 第 2 轮（工具结果）与后台子 run 的请求同时赛跑。
-    const subStep = step()
-      .expect((req) => req.lastUserText().includes('调研材料A'))
-      .hold()
-      .replyText('子任务的最终结论');
+describe('delegate_task background branches inside the task (D66 mode B, D75 §1.2)', () => {
+  it('keeps the task working while the branch runs and returns the conclusion via collect_delegate_results', async () => {
+    const { stack, botId, convId } = await setup('小后');
+    const { llm, core } = stack;
+    const subStep = step().expect(isSubRequest('SUB-BG')).hold().replyText('子任务的最终结论');
     llm.script('mock-main', [
-      step().replyTextAndToolCall('我让子代理在后台查', 'delegate_task', {
-        task: '调研材料A给出要点',
-        mode: 'background',
-      }),
       step()
-        .expect((req) => JSON.stringify(req.body).includes('后台子任务已启动'))
-        .replyText('已转后台调研，结果出来我叫你'),
+        .expect(isTaskRequest('TASK-BG'))
+        .replyTextAndToolCall('我让子代理在后台查', 'delegate_task', {
+          task: 'SUB-BG 调研材料A给出要点',
+          mode: 'background',
+        }),
+      // 父任务不被分支阻塞：拿到 ack 后继续推进，再去取回结论。
+      step()
+        .expect(isTaskRequestWith('TASK-BG', '后台分支已在本次执行内启动'))
+        .replyTextAndToolCall('先做别的，再取回结论', 'collect_delegate_results', {}),
       subStep,
-      step()
-        .expect((req) => JSON.stringify(req.body).includes('委派任务结束通知'))
-        .replyText('后台调研完成了：这是压缩结论的转述'),
+      step().expect(isTaskRequestWith('TASK-BG', '压缩后的结论')).replyText('RESULT-BG'),
+      wakeStep(),
     ]);
     llm.script('mock-light', [compressionStep()]);
-    const bot = await makeBot(core, '小后');
-    const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['帮我盯一下材料A']);
-    // 主 turn 不被子 run 阻塞：先完成并对用户发言。
-    const mainRun = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
-    expect(await visibleTexts(core, conv.id)).toContain('已转后台调研，结果出来我叫你');
-
-    // 后台子 run 仍在跑：独立于主 turn；落库归属正确。
-    const [subRun] = await subRunSteps(core, conv.id);
-    expect(subRun!.status).toBe('running');
+    const taskId = startTask(stack, botId, convId, 'TASK-BG 帮我盯一下材料A');
+    const [subRun] = await waitSubRuns(stack, convId, taskId);
     expect(subRun!.triggerReason).toBe('background');
-    expect(subRun!.parentRunId).toBe(mainRun.id);
-
-    // 子 run 结束 → 压缩 → follow-up 注入 → 新一轮响应 run 转述。
-    subStep.release();
+    // 父任务第二轮（collect）已发出：ack 之后父任务照常推进。
     await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        const done = runs.filter((r) => r.loopType === 'response' && r.status === 'completed');
-        return done.length >= 2 ? true : null;
-      },
-      { label: 'follow-up response run', timeoutMs: 30_000 },
+      () =>
+        llm.requestsFor('mock-main').some(isTaskRequestWith('TASK-BG', '后台分支已在本次执行内启动'))
+          ? true
+          : null,
+      { label: 'task continued after the background ack', timeoutMs: 20_000 },
     );
-    await waitForMessage(
-      core,
-      conv.id,
-      (m) => 'text' in m.content && m.content.text.includes('后台调研完成了'),
-      { timeoutMs: 20_000 },
-    );
+    // collect 在等分支：任务仍在运行。
+    expect(runOf(stack, taskId)?.status).toBe('running');
 
-    // 注入本身是内部系统事件：进 Bot 上下文（带 child_run_id 与压缩结论），不进聊天。
-    const all = await listAllMessages(core, conv.id);
-    const followUp = all.find(
-      (m) =>
-        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
-    );
-    expect(followUp).toBeDefined();
-    const followUpText = 'text' in followUp!.content ? followUp!.content.text : '';
-    expect(followUpText).toContain('委派任务结束通知');
-    expect(followUpText).toContain(subRun!.id);
-    expect(followUpText).toContain('压缩后的结论');
+    subStep.release();
+    await waitStatus(stack, taskId, 'completed');
+    expect(runOf(stack, subRun!.id)?.status).toBe('completed');
 
-    // 可见性（D48/D54）：聊天里只有主 Bot 对用户的发言，无注入原文、无子 transcript。
-    const visible = await visibleTexts(core, conv.id);
-    expect(visible).toContain('后台调研完成了：这是压缩结论的转述');
+    // 结论回到父任务（collect 的工具结果带 child_run_id 与压缩结论）。
+    const collected = toolResult(stack, taskId, 'collect_delegate_results');
+    expect(collected).toContain(subRun!.id);
+    expect(collected).toContain('压缩后的结论');
+
+    // 从不投递到对话、不唤醒新一轮。
+    await expectNoFollowUpInjection(stack, convId);
+    const visible = (await listMessages(core, convId)).map(textOf).join('\n');
     expect(visible).not.toContain('压缩后的结论');
     expect(visible).not.toContain('子任务的最终结论');
-    expect(visible).not.toContain('委派任务结束通知');
-
-    // 子 run settle：completed、无输出消息、transcript 只落 run_steps。
-    const runs = await listRuns(core, conv.id);
-    const settled = runs.find((r) => r.id === subRun!.id);
-    expect(settled?.status).toBe('completed');
-    expect(settled?.outputMessageIds).toHaveLength(0);
-    const subSteps = (await core.rpc.call('runs.steps', { runId: subRun!.id })) as {
-      steps: Array<{ type: string }>;
-    };
-    expect(subSteps.steps.map((s) => s.type)).toContain('request');
-    expect(subSteps.steps.map((s) => s.type)).toContain('assistant');
   }, 60_000);
 
-  it('drops the follow-up injection when the user explicitly cancels the delegation', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    const subStep = step()
-      .expect((req) => req.lastUserText().includes('长任务B'))
+  it('aborts branches still running when the task ends without collecting them', async () => {
+    const { stack, botId, convId } = await setup('小早');
+    const { llm } = stack;
+    const subStep = step().expect(isSubRequest('SUB-EARLY')).hold().replyText('挂着');
+    const compress = compressionStep('SUB-EARLY');
+    // The task's final answer is held until the branch is really running
+    // (otherwise, under load, the task may end before the branch's request).
+    const finalStep = step()
+      .expect(isTaskRequestWith('TASK-EARLY', '后台分支已在本次执行内启动'))
       .hold()
-      .replyText('挂着');
-    const followUpStep = step()
-      .expect((req) => JSON.stringify(req.body).includes('委派任务结束通知'))
-      .replyText('取消后不应触发');
+      .replyText('RESULT-EARLY');
     llm.script('mock-main', [
-      step().replyTextAndToolCall('后台查', 'delegate_task', {
-        task: '长任务B跑一遍',
-        mode: 'background',
-      }),
       step()
-        .expect((req) => JSON.stringify(req.body).includes('后台子任务已启动'))
-        .replyText('已开始后台执行'),
+        .expect(isTaskRequest('TASK-EARLY'))
+        .replyTextAndToolCall('后台查', 'delegate_task', {
+          task: 'SUB-EARLY 长任务',
+          mode: 'background',
+        }),
       subStep,
-      followUpStep,
+      finalStep,
+      wakeStep(),
     ]);
-    llm.script('mock-light', [compressionStep()]);
-    const bot = await makeBot(core, '小取');
-    const conv = await openDirect(core, bot.id);
+    llm.script('mock-light', [compress]);
 
-    await sendBatch(core, conv.id, ['开始长任务B']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
-    const [subRun] = await subRunSteps(core, conv.id);
-    expect(subRun!.status).toBe('running');
-
-    // 显式取消委派（runs.cancel 命中对话级后台锚点）：子 run 中止，且不再注入。
-    const before = llm.requests().length;
-    await core.rpc.call('runs.cancel', { runId: subRun!.id });
+    const taskId = startTask(stack, botId, convId, 'TASK-EARLY 开始');
+    const [subRun] = await waitSubRuns(stack, convId, taskId);
     await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        return runs.find((r) => r.id === subRun!.id)?.status === 'cancelled' ? true : null;
-      },
-      { label: 'background sub run cancelled', timeoutMs: 20_000 },
+      () => (llm.requestsFor('mock-main').some(isSubRequest('SUB-EARLY')) ? true : null),
+      { label: 'sub request held' },
     );
+    finalStep.release();
+    // 父任务结束（未取回）→ 分支被中止，且在任务终态前已 settle。
+    const task = await waitStatus(stack, taskId, 'completed');
+    const sub = runOf(stack, subRun!.id)!;
+    expect(sub.status).toBe('cancelled');
+    expect(sub.endedAt).not.toBeNull();
+    expect(sub.endedAt! <= task.endedAt!).toBe(true);
+
+    // 放行挂起的请求：分支不再推进、不压缩、不注入。
+    const subRequests = () => llm.requestsFor('mock-main').filter(isSubRequest('SUB-EARLY')).length;
+    const before = subRequests();
     subStep.release();
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(followUpStep.consumed).toBe(false);
-    // 取消后不允许出现「委派任务结束通知」请求。不能断言请求总数不变：测试
-    // 栈里的后台任务（反射 / 摘要）会各自发起 LLM 调用，满载下与取消窗口重叠
-    // 即误报；这里只认注入通知本身的请求。
-    const followUpRequests = llm
-      .requests()
-      .slice(before)
-      .filter((request) => JSON.stringify(request.body).includes('委派任务结束通知'));
-    expect(followUpRequests).toEqual([]);
-    const all = await listAllMessages(core, conv.id);
-    expect(
-      all.filter(
-        (m) =>
-          m.senderType === 'system' &&
-          'event' in m.content &&
-          m.content.event === 'delegate_result',
-      ),
-    ).toHaveLength(0);
-    llm.releaseAll();
+    expect(subRequests()).toBe(before);
+    expect(compress.consumed).toBe(false);
+    await expectNoFollowUpInjection(stack, convId);
   }, 60_000);
 
-  it('aborts the background sub run when the conversation is deleted', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    const subStep = step()
-      .expect((req) => req.lastUserText().includes('长任务C'))
-      .hold()
-      .replyText('挂着');
+  it('runs.cancel on one branch stops only that branch; collect reports it and the task goes on', async () => {
+    const { stack, botId, convId } = await setup('小撤');
+    const { llm, core } = stack;
+    const subStep = step().expect(isSubRequest('SUB-ONE')).hold().replyText('挂着');
     llm.script('mock-main', [
-      step().replyTextAndToolCall('后台查', 'delegate_task', {
-        task: '长任务C跑一遍',
-        mode: 'background',
-      }),
       step()
-        .expect((req) => JSON.stringify(req.body).includes('后台子任务已启动'))
-        .replyText('已开始后台执行'),
+        .expect(isTaskRequest('TASK-ONE'))
+        .replyTextAndToolCall('后台查', 'delegate_task', {
+          task: 'SUB-ONE 长任务',
+          mode: 'background',
+        }),
       subStep,
+      step()
+        .expect(isTaskRequestWith('TASK-ONE', '后台分支已在本次执行内启动'))
+        .replyToolCall('collect_delegate_results', {}),
+      step().expect(isTaskRequestWith('TASK-ONE', '执行已取消，子任务中止')).replyText('RESULT-ONE'),
+      wakeStep(),
+    ]);
+
+    const taskId = startTask(stack, botId, convId, 'TASK-ONE 开始');
+    const [subRun] = await waitSubRuns(stack, convId, taskId);
+    await core.rpc.call('runs.cancel', { runId: subRun!.id });
+    await waitStatus(stack, subRun!.id, 'cancelled');
+    await waitStatus(stack, taskId, 'completed');
+    expect(toolResult(stack, taskId, 'collect_delegate_results')).toContain('执行已取消，子任务中止');
+    await expectNoFollowUpInjection(stack, convId);
+  }, 60_000);
+
+  it('aborts the task and its branch when the conversation is deleted', async () => {
+    const { stack, botId, convId } = await setup('小关');
+    const { llm, core } = stack;
+    const subStep = step().expect(isSubRequest('SUB-DEL')).hold().replyText('挂着');
+    llm.script('mock-main', [
+      step()
+        .expect(isTaskRequest('TASK-DEL'))
+        .replyTextAndToolCall('后台查', 'delegate_task', {
+          task: 'SUB-DEL 长任务',
+          mode: 'background',
+        }),
+      subStep,
+      step()
+        .expect(isTaskRequestWith('TASK-DEL', '后台分支已在本次执行内启动'))
+        .replyToolCall('collect_delegate_results', {}),
     ]);
     llm.script('mock-light', [compressionStep()]);
-    const bot = await makeBot(core, '小关');
-    const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['开始长任务C']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
-    const [subRun] = await subRunSteps(core, conv.id);
-    expect(subRun!.status).toBe('running');
+    const taskId = startTask(stack, botId, convId, 'TASK-DEL 开始');
+    await waitSubRuns(stack, convId, taskId);
+    await waitFor(
+      () => (llm.requestsFor('mock-main').some(isSubRequest('SUB-DEL')) ? true : null),
+      { label: 'sub request held' },
+    );
 
-    // 关对话：后台子 run 一并 abort（D66 mode B 归属）；随后释放挂起的请求，
-    // 子 run 不得再推进（无第二轮请求），也不会有注入。
+    // 关对话：任务与分支一并中止；随后释放挂起的请求，分支不得再推进。
+    await core.rpc.call('conversations.delete', { id: convId });
     const requestsBefore = llm.requests().length;
-    await core.rpc.call('conversations.delete', { id: conv.id });
     subStep.release();
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(llm.requests().length).toBe(requestsBefore);
-    expect(await listRuns(core, conv.id)).toHaveLength(0); // 行随对话删除
+    expect(core.services.domain!.runs.listByConversation(convId, 10)).toHaveLength(0); // 行随对话删除
   }, 60_000);
 
-  it('keeps an unfinished background sub run interrupted after a crash without injecting', async () => {
+  it('leaves an unfinished branch interrupted after a crash, without any injection', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { createMemoryKeystore } = await import('@kepcup/core');
@@ -349,46 +377,32 @@ describe('subagent background delegation (D66 mode B)', () => {
     const keystore = createMemoryKeystore();
     const first = await createTestStack({ home, keystore });
     try {
-      const subStep = step()
-        .expect((req) => req.lastUserText().includes('长任务D'))
-        .hold()
-        .replyText('挂着');
+      const subStep = step().expect(isSubRequest('SUB-CRASH')).hold().replyText('挂着');
       first.llm.script('mock-main', [
-        step().replyTextAndToolCall('后台查', 'delegate_task', {
-          task: '长任务D跑一遍',
-          mode: 'background',
-        }),
         step()
-          .expect((req) => JSON.stringify(req.body).includes('后台子任务已启动'))
-          .replyText('已开始后台执行'),
+          .expect(isTaskRequest('TASK-CRASH'))
+          .replyTextAndToolCall('后台查', 'delegate_task', {
+            task: 'SUB-CRASH 长任务',
+            mode: 'background',
+          }),
         subStep,
+        step()
+          .expect(isTaskRequestWith('TASK-CRASH', '后台分支已在本次执行内启动'))
+          .replyToolCall('collect_delegate_results', {}),
       ]);
-      first.llm.script('mock-light', [compressionStep()]);
       const bot = await makeBot(first.core, '小崩');
       const conv = await openDirect(first.core, bot.id);
-      await sendBatch(first.core, conv.id, ['开始长任务D']);
-      await waitForRun(first.core, conv.id, 'completed', { timeoutMs: 30_000 });
-      const [subRun] = await subRunSteps(first.core, conv.id);
-      expect(subRun!.status).toBe('running');
+      const taskId = startTask(first, bot.id, conv.id, 'TASK-CRASH 开始');
+      const [subRun] = await waitSubRuns(first, conv.id, taskId);
 
       // 模拟崩溃：不 settle 直接丢弃 core（D67 未落地：ephemeral 走 D49 标中断）。
       await first.core.close();
       await first.llm.stop();
-      stacks.pop();
 
       const second = await createTestStack({ home, keystore });
       try {
-        const runs = await listRuns(second.core, conv.id);
-        expect(runs.find((r) => r.id === subRun!.id)?.status).toBe('interrupted');
-        const all = await listAllMessages(second.core, conv.id);
-        expect(
-          all.filter(
-            (m) =>
-              m.senderType === 'system' &&
-              'event' in m.content &&
-              m.content.event === 'delegate_result',
-          ),
-        ).toHaveLength(0);
+        expect(runOf(second, subRun!.id)?.status).toBe('interrupted');
+        await expectNoFollowUpInjection(second, conv.id);
       } finally {
         await second.cleanup();
       }
@@ -398,162 +412,82 @@ describe('subagent background delegation (D66 mode B)', () => {
   }, 60_000);
 });
 
-describe('subagent fan-out (D66 mode C)', () => {
+describe('delegate_task fan-out inside the task (D66 mode C)', () => {
   it('runs foreground lanes in parallel and returns the ordered conclusion array', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
+    const { stack, botId, convId } = await setup('小并');
+    const { llm, core } = stack;
     llm.script('mock-main', [
-      step().replyTextAndToolCall('多路并查', 'delegate_task', {
-        tasks: [{ task: '调研A' }, { task: '调研B' }],
-      }),
       step()
-        .expect((req) => req.lastUserText().includes('调研A'))
-        .replyText('A 的子结论'),
-      step()
-        .expect((req) => req.lastUserText().includes('调研B'))
-        .replyText('B 的子结论'),
-      step()
-        .expect((req) => JSON.stringify(req.body).includes('压缩A'))
-        .replyText('两路都完成了，汇总如下'),
+        .expect(isTaskRequest('TASK-FAN'))
+        .replyTextAndToolCall('多路并查', 'delegate_task', {
+          tasks: [{ task: 'SUB-A 调研A' }, { task: 'SUB-B 调研B' }],
+        }),
+      step().expect(isSubRequest('SUB-A')).replyText('A 的子结论'),
+      step().expect(isSubRequest('SUB-B')).replyText('B 的子结论'),
+      step().expect(isTaskRequestWith('TASK-FAN', '压缩A')).replyText('RESULT-FAN'),
+      wakeStep(),
     ]);
-    llm.script('mock-light', [
-      step()
-        .expect((req) => req.lastUserText().includes('调研A'))
-        .replyText('压缩A'),
-      step()
-        .expect((req) => req.lastUserText().includes('调研B'))
-        .replyText('压缩B'),
-    ]);
-    const bot = await makeBot(core, '小并');
-    const conv = await openDirect(core, bot.id);
+    llm.script('mock-light', [compressionStep('SUB-A', '压缩A'), compressionStep('SUB-B', '压缩B')]);
 
-    await sendBatch(core, conv.id, ['同时查A和B']);
-    const mainRun = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const taskId = startTask(stack, botId, convId, 'TASK-FAN 同时查A和B');
+    await waitStatus(stack, taskId, 'completed');
 
-    // 主 loop 拿到按 task 顺序排列的结论数组。
-    const mainSteps = (await core.rpc.call('runs.steps', { runId: mainRun.id })) as {
-      steps: Array<{ type: string; payload: Record<string, unknown> }>;
-    };
-    const delegateResult = mainSteps.steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'delegate_task',
-    );
-    expect(delegateResult).toBeDefined();
-    const content = String(delegateResult!.payload['content']);
+    const content = toolResult(stack, taskId, 'delegate_task')!;
     expect(content).toContain('"index": 0');
     expect(content).toContain('"index": 1');
     expect(content.indexOf('压缩A')).toBeLessThan(content.indexOf('压缩B'));
 
-    // 两路都是独立子 run：并行启动、归属父 run、互不共享 transcript。
-    const runs = await listRuns(core, conv.id);
-    const subs = runs.filter((r) => r.loopType === 'subagent');
+    const subs = subRunsOf(stack, convId, taskId);
     expect(subs).toHaveLength(2);
     for (const sub of subs) {
       expect(sub.status).toBe('completed');
-      expect(sub.parentRunId).toBe(mainRun.id);
       expect(sub.triggerReason).toBeNull();
     }
-    // 前台 fan-out 不注入。
-    const all = await listAllMessages(core, conv.id);
-    expect(
-      all.filter(
-        (m) =>
-          m.senderType === 'system' &&
-          'event' in m.content &&
-          m.content.event === 'delegate_result',
-      ),
-    ).toHaveLength(0);
-    const visible = await visibleTexts(core, conv.id);
+    await expectNoFollowUpInjection(stack, convId);
+    const visible = (await listMessages(core, convId)).map(textOf).join('\n');
     expect(visible).not.toContain('压缩A');
   }, 60_000);
 
-  it('starts background lanes at once and injects each conclusion as it lands', async () => {
-    const { core, llm, cleanup } = await createTestStack();
-    stacks.push({ cleanup });
-    const weatherStep = step()
-      .expect((req) => req.lastUserText().includes('查天气'))
-      .hold()
-      .replyText('天气子结论');
-    const trafficStep = step()
-      .expect((req) => req.lastUserText().includes('查交通'))
-      .hold()
-      .replyText('交通子结论');
+  it('starts background lanes at once and collects every conclusion in order', async () => {
+    const { stack, botId, convId } = await setup('小批');
+    const { llm } = stack;
+    const weatherStep = step().expect(isSubRequest('SUB-WEATHER')).hold().replyText('天气子结论');
+    const trafficStep = step().expect(isSubRequest('SUB-TRAFFIC')).hold().replyText('交通子结论');
     llm.script('mock-main', [
-      step().replyTextAndToolCall('分头去查', 'delegate_task', {
-        tasks: [
-          { task: '查天气三天趋势', mode: 'background' },
-          { task: '查交通管制', mode: 'background' },
-        ],
-      }),
       step()
-        .expect((req) => JSON.stringify(req.body).includes('child_run_ids'))
-        .replyText('两路都转后台了，结果分批来'),
+        .expect(isTaskRequest('TASK-BGFAN'))
+        .replyTextAndToolCall('分头去查', 'delegate_task', {
+          tasks: [
+            { task: 'SUB-WEATHER 查天气三天趋势', mode: 'background' },
+            { task: 'SUB-TRAFFIC 查交通管制', mode: 'background' },
+          ],
+        }),
       weatherStep,
       trafficStep,
       step()
-        .expect((req) => JSON.stringify(req.body).includes('天气压缩结论'))
-        .replyText('天气查完了：转述给用户'),
-      step()
-        .expect((req) => JSON.stringify(req.body).includes('交通压缩结论'))
-        .replyText('交通也查完了：一并汇报'),
+        .expect(isTaskRequestWith('TASK-BGFAN', 'child_run_ids'))
+        .replyToolCall('collect_delegate_results', {}),
+      step().expect(isTaskRequestWith('TASK-BGFAN', '交通压缩结论')).replyText('RESULT-BGFAN'),
+      wakeStep(),
     ]);
     llm.script('mock-light', [
-      step()
-        .expect((req) => req.lastUserText().includes('查天气'))
-        .replyText('天气压缩结论'),
-      step()
-        .expect((req) => req.lastUserText().includes('查交通'))
-        .replyText('交通压缩结论'),
+      compressionStep('SUB-WEATHER', '天气压缩结论'),
+      compressionStep('SUB-TRAFFIC', '交通压缩结论'),
     ]);
-    const bot = await makeBot(core, '小批');
-    const conv = await openDirect(core, bot.id);
 
-    await sendBatch(core, conv.id, ['天气和交通都查一下']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const taskId = startTask(stack, botId, convId, 'TASK-BGFAN 天气和交通都查一下');
+    // 两路立即并行启动。
+    const subs = await waitSubRuns(stack, convId, taskId, 2);
+    for (const sub of subs) expect(sub.triggerReason).toBe('background');
 
-    // 立即返回两路 child_run_id，两路并行在跑。
-    const subs = await subRunSteps(core, conv.id);
-    expect(subs).toHaveLength(2);
-    for (const sub of subs) {
-      expect(sub.status).toBe('running');
-      expect(sub.triggerReason).toBe('background');
-    }
-
-    // 逐路完成、逐路注入：先放行天气路。
-    weatherStep.release();
-    await waitForMessage(
-      core,
-      conv.id,
-      (m) => 'text' in m.content && m.content.text.includes('天气查完了'),
-      { timeoutMs: 30_000 },
-    );
-    const injectionsAfterFirst = (await listAllMessages(core, conv.id)).filter(
-      (m) =>
-        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
-    );
-    expect(injectionsAfterFirst).toHaveLength(1);
-    expect(
-      'text' in injectionsAfterFirst[0]!.content ? injectionsAfterFirst[0]!.content.text : '',
-    ).toContain('天气压缩结论');
-
-    // 再放行交通路：第二批注入。
     trafficStep.release();
-    await waitForMessage(
-      core,
-      conv.id,
-      (m) => 'text' in m.content && m.content.text.includes('交通也查完了'),
-      { timeoutMs: 30_000 },
-    );
-    const injections = (await listAllMessages(core, conv.id)).filter(
-      (m) =>
-        m.senderType === 'system' && 'event' in m.content && m.content.event === 'delegate_result',
-    );
-    expect(injections).toHaveLength(2);
+    weatherStep.release();
+    await waitStatus(stack, taskId, 'completed');
 
-    // 可见性：注入不进聊天；两轮转述都是主 Bot 对用户的发言。
-    const visible = await visibleTexts(core, conv.id);
-    expect(visible).toContain('天气查完了：转述给用户');
-    expect(visible).toContain('交通也查完了：一并汇报');
-    expect(visible).not.toContain('天气压缩结论');
-    expect(visible).not.toContain('交通压缩结论');
+    // collect 按委派顺序返回（与完成先后无关）。
+    const collected = toolResult(stack, taskId, 'collect_delegate_results')!;
+    expect(collected.indexOf('天气压缩结论')).toBeGreaterThan(-1);
+    expect(collected.indexOf('天气压缩结论')).toBeLessThan(collected.indexOf('交通压缩结论'));
+    await expectNoFollowUpInjection(stack, convId);
   }, 60_000);
 });
