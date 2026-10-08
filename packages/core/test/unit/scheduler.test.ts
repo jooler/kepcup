@@ -511,4 +511,32 @@ describe('Scheduler round 2 (D75 审查复核 #1 #3 #4 #7)', () => {
     await waitUntil(() => started.length === 4);
     scheduler.stop();
   });
+
+  it('#4 lease-holding write tasks still leave one slot to replies among tasks', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 2 });
+    const started: string[] = [];
+    const hold = deferred();
+    const job = (key: string, priority: 0 | 1, leaseHeld?: boolean) =>
+      scheduler.submit({
+        priority,
+        provider: 'p',
+        key,
+        ...(leaseHeld ? { leaseHeld } : {}),
+        run: async () => {
+          started.push(key);
+          await hold.promise;
+        },
+      });
+    job('task:w1', 0, true);
+    await waitUntil(() => started.includes('task:w1'));
+    job('task:w2', 0, true); // a slot is free, but it is the replies' one
+    job('reply', 1);
+    await waitUntil(() => started.includes('reply'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['task:w1', 'reply']);
+    hold.release();
+    await waitUntil(() => started.length === 3);
+    scheduler.stop();
+  });
 });

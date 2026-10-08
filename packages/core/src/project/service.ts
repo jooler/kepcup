@@ -256,7 +256,9 @@ export class ProjectRuntime {
     // acquisition would release the run's lease window and cancel the first
     // wait. Another key still replaces the run's one lease (cancelling it).
     const inflight = this.#acquiring.get(identity.runId);
-    if (inflight !== undefined && inflight.key === target.key) return inflight.promise;
+    if (inflight !== undefined && inflight.key === target.key) {
+      return joinUnlessAborted(inflight.promise, options.signal);
+    }
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
     }
@@ -759,3 +761,15 @@ export function globMatch(pattern: string, value: string): boolean {
 }
 
 export type { LeaseHolder };
+
+/** A joined acquisition still honours the joiner's own abort signal. */
+function joinUnlessAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return promise;
+  const denied = () => new AppError('APPROVAL_DENIED', '执行已取消，未取得写入租约');
+  if (signal.aborted) return Promise.reject(denied());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(denied());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
