@@ -27,6 +27,11 @@ import {
   butlerAcceptRouteOutputSchema,
   delegationIdInputSchema,
   delegationGetOutputSchema,
+  taskGetOutputSchema,
+  taskIdInputSchema,
+  tasksActiveInputSchema,
+  tasksActiveOutputSchema,
+  tasksAnswerInputSchema,
   interviewAnswerInputSchema,
   interviewAnswerOutputSchema,
   interviewAnswerPathInputSchema,
@@ -848,6 +853,18 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       delegationGetOutputSchema,
       async (input) => ({ delegation: orchestrator.cancelDelegation(input.id) }),
     ),
+
+    // D75 W3 (design 30 §4.3 / §2.4.6): task cards, the status line, question cards.
+    'tasks.get': method(taskIdInputSchema, taskGetOutputSchema, async (input) => ({
+      task: orchestrator.tasks.view(input.taskId),
+    })),
+    'tasks.active': method(tasksActiveInputSchema, tasksActiveOutputSchema, async (input) => ({
+      tasks: orchestrator.tasks.activeViews(input.conversationId),
+    })),
+    'tasks.answer': method(tasksAnswerInputSchema, okOutputSchema, async (input) => {
+      orchestrator.tasks.answerQuestion(input.messageId, input.answer);
+      return { ok: true as const };
+    }),
 
     'grants.list': method(grantsListInputSchema, grantsListOutputSchema, async (input) => ({
       grants: domain.grants.listActive(input.conversationId),

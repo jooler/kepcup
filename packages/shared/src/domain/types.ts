@@ -562,6 +562,11 @@ export const systemEventContentSchema = z.object({
    */
   step: z.string().optional(),
   /**
+   * 任务提问卡（D75 §2.4.6，event = task_question）：用户的回答（点选的选项，
+   * 或对话轮经 inject_task 转交的自由文本）；未答时缺省。
+   */
+  answer: z.string().optional(),
+  /**
    * Bot 内部事务事件（wiki 入库、环境安装、技能导入、调度触发等，见
    * INTERNAL_SYSTEM_EVENTS）：消息照常落库并进入 Bot 的上下文/触发，但不算
    * 对话内容——用户可见读路径（messages.list、message.created 推送）把它
@@ -1740,3 +1745,83 @@ export const embeddingStatusSchema = z.object({
 });
 export type EmbeddingStatus = z.infer<typeof embeddingStatusSchema>;
 export type EnvironmentProgressPayload = z.infer<typeof environmentProgressPayloadSchema>;
+
+// --- D75 W3: task card view (docs/design/30-supervisor-and-tasks.md §4.3 / §6.3) ---
+
+/** Task state as the user sees it: `queued` rows are `submitted` (§3.1). */
+export const taskStateSchema = z.enum([
+  'submitted',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+export type TaskStateView = z.infer<typeof taskStateSchema>;
+
+/**
+ * Changes a write task left behind (cancel card, §4.3 / §5.2): a project task
+ * has a checkpoint (summary + whole-run revert through `projects.revert` with
+ * the task id); a workspace task has none — only the files its file tools
+ * wrote are listed, and the card says plainly there is no revert.
+ */
+export const taskChangesSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('project'),
+    added: z.number().int(),
+    modified: z.number().int(),
+    deleted: z.number().int(),
+    reverted: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('workspace'),
+    /** Workspace-relative paths written by the task's file tools (capped). */
+    files: z.array(z.string()),
+    /** Files beyond the cap. */
+    more: z.number().int(),
+  }),
+]);
+export type TaskChanges = z.infer<typeof taskChangesSchema>;
+
+/** One `inject_task` line of the card (§4.3), incl. later delivered → queued downgrades. */
+export const taskInjectViewSchema = z.object({
+  messageId: z.string(),
+  text: z.string(),
+  delivery: z.enum(['delivered', 'queued']),
+  at: z.number(),
+});
+
+/** Projection of a task run for its card and the status line (`task.updated`, `tasks.get`). */
+export const taskViewSchema = z.object({
+  taskId: z.string(),
+  botId: z.string().nullable(),
+  conversationId: z.string().nullable(),
+  title: z.string(),
+  state: taskStateSchema,
+  status: runStatusSchema,
+  writes: z.boolean(),
+  /** Where it works: the bound project or the bot's workspace. */
+  workdirKind: z.enum(['project', 'workspace']).nullable(),
+  /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */
+  queueReason: z.string().nullable(),
+  awaitingInput: z.boolean(),
+  /** The visible question card the task waits on (§2.4.6), if any. */
+  questionMessageId: z.string().nullable(),
+  createdAt: z.number(),
+  startedAt: z.number().nullable(),
+  endedAt: z.number().nullable(),
+  error: z.string().nullable(),
+  /** The cancel entry's reason (cancel_task / the user), null when not cancelled that way. */
+  cancelReason: z.string().nullable(),
+  injects: z.array(taskInjectViewSchema),
+  /** Latest visible progress line (clipped). */
+  lastProgress: z.string().nullable(),
+  changes: taskChangesSchema.nullable(),
+  /** Structured setup a failed task needs (D58 §7.5: complete it, then retry). */
+  setup: setupRequirementSchema.nullable(),
+  /** The task this one continues (`continues_task_id` / a retry). */
+  continuesTaskId: z.string().nullable(),
+  /** The task that retried / continued this one, if any. */
+  continuedByTaskId: z.string().nullable(),
+});
+export type TaskView = z.infer<typeof taskViewSchema>;
