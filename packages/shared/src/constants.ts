@@ -143,16 +143,6 @@ export const INTERIM_TEXT_MAX_CHARS = 2_000;
  * long before its end).
  */
 export const CONTINUATION_WINDOW_MS = 30 * 60_000;
-/**
- * Beyond CONTINUATION_WINDOW_MS, candidates within this age may still be
- * selected by the light-model arbiter; older runs fall back to the plain
- * conversation context + list_my_runs.
- */
-export const CONTINUATION_ARBITER_MAX_AGE_MS = 24 * 60 * 60_000;
-/** Max candidate runs offered to the arbiter (newest first). */
-export const CONTINUATION_ARBITER_MAX_RUNS = 5;
-/** Arbiter call timeout; timeout/error/parse failure all mean "no continuation". */
-export const CONTINUATION_ARBITER_TIMEOUT_MS = 10_000;
 /** Token budget for the whole <continuation> segment (all replayed runs). */
 export const CONTINUATION_REPLAY_TOKEN_BUDGET = 3_000;
 /** Tool results longer than this render as "（已省略）" in the replay digest. */

@@ -4,7 +4,6 @@ import { botProfileSchema } from '@kepcup/shared';
 import { buildSystemPrompt } from '../../src/agent/context/system-prompt.js';
 import {
   buildConversationContext,
-  buildNewMessagesInjection,
   buildTriggerSegment,
   type RenderMessageOptions,
 } from '../../src/agent/context/conversation.js';
@@ -268,7 +267,7 @@ describe('conversation context', () => {
   });
 });
 
-describe('trigger and injection segments', () => {
+describe('trigger segment', () => {
   it('renders the trigger batch with its reason', () => {
     const segment = buildTriggerSegment({
       reason: 'direct',
@@ -278,15 +277,5 @@ describe('trigger and injection segments', () => {
     expect(segment).toContain('<trigger reason="direct">');
     expect(segment).toContain('msg_5');
     expect(segment).toContain('触发');
-  });
-
-  it('wraps mid-run batches in <new_messages> with guidance', () => {
-    const injection = buildNewMessagesInjection(
-      [makeMessage({ id: 'msg_6', seq: 6, content: { text: '新消息' } })],
-      renderOptions,
-    );
-    expect(injection).toContain('<new_messages>');
-    expect(injection).toContain('msg_6');
-    expect(injection).toContain('判断是否需要调整当前的工作');
   });
 });

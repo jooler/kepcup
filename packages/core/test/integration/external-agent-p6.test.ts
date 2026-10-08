@@ -204,7 +204,6 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       modelRef: 'agent:fake/default',
     });
     expect(facade.resolveForBot(bot.id, 'skill_authoring')).toBeNull();
-    expect(facade.resolveForBot(bot.id, 'continuation')).toBeNull();
     expect(facade.resolveForBot(bot.id, 'triage')).toBeNull();
     // Auto: bot-less work (global profile curation, group summaries) never
     // goes to an agent the user did not explicitly choose (审查 S2).
