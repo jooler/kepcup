@@ -3,7 +3,24 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
+
+/**
+ * D75: conversation turns never wait on the user — an out-of-scope read fails
+ * fast there and access approvals happen in tasks (修复批 D M4). The turn
+ * starts a read-only task, the task's read raises the approval, its result
+ * wakes a turn that relays it (`relay`, the visible reply).
+ */
+function readInTask(target: string, relay: string) {
+  return viaTask({
+    title: '读外部文件',
+    writes: false,
+    // The ack must not contain `relay`: the tests wait for the relay bubble.
+    ack: '好的，我去读',
+    taskSteps: [step().replyToolCall('read', { path: target }), step().replyText('文件内容已读到')],
+    relay,
+  });
+}
 
 /** A real readable file outside every workspace (read tools must reach the gateway). */
 function externalFile(prefix: string): string {
@@ -105,10 +122,7 @@ test('access approval card appears, keyboard approval works, card folds to a rec
     await createBotAndOpenChat(page, '小授');
 
     const target = externalFile('kepcup-e2e-external-');
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: target }),
-      step().replyText('读完了'),
-    ]);
+    llm.script('mock-main', readInTask(target, '读完了'));
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读一下外部文件');
@@ -123,7 +137,7 @@ test('access approval card appears, keyboard approval works, card folds to a rec
     await card.press('2');
     await card.press('Enter');
 
-    // The card folds into a one-line record and the run completes.
+    // The card folds into a one-line record; the task completes and its result is relayed.
     const record = page.locator('[data-testid^="approval-record-"]');
     await expect(record).toBeVisible({ timeout: 60_000 });
     await expect(record).toContainText('本对话内一直允许');
@@ -154,10 +168,7 @@ test('left sidebar shows the pending marker while an approval waits; Esc denies'
     await createBotAndOpenChat(page, '小待');
 
     const target = externalFile('kepcup-e2e-pending-');
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: target }),
-      step().replyText('被拒了就算了'),
-    ]);
+    llm.script('mock-main', readInTask(target, '被拒了就算了'));
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读外部');
@@ -171,7 +182,7 @@ test('left sidebar shows the pending marker while an approval waits; Esc denies'
       timeout: 15_000,
     });
 
-    // Esc 拒绝；卡片折叠为已拒绝记录，run 继续完成。
+    // Esc 拒绝；卡片折叠为已拒绝记录，任务继续完成，结果由对话轮转述。
     await card.press('Escape');
     await expect(page.locator('[data-testid^="approval-record-"]')).toBeVisible({
       timeout: 60_000,
@@ -212,15 +223,12 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
       timeout: 15_000,
     });
 
-    // 开启期间审批自动批准：让 Bot 发起一次访问授权。
+    // 开启期间审批自动批准：让 Bot 的任务发起一次访问授权。
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
     await createBotAndOpenChat(page, '小无');
     const target = externalFile('kepcup-e2e-unattended-');
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: target }),
-      step().replyText('自动批准了'),
-    ]);
+    llm.script('mock-main', readInTask(target, '自动批准了'));
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('读外部文件');
     await composer.press('ControlOrMeta+Enter');

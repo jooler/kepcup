@@ -14,6 +14,9 @@ apps/desktop/resources/icon-*.png.bak
 # test artifacts
 test-results/
 playwright-report/
+# ad-hoc vitest JSON reports (--reporter=json --outputFile=…)
+.vitest-report.json
+.vitest-*.json
 .blob-storage/
 
 # environment
