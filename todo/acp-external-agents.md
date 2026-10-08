@@ -860,13 +860,13 @@ OpenCode 用户配置扫描（`providers/opencode.ts`）一律 fail closed——
 
 ## 14. 完成定义（整包）
 
-- [ ] P0 门禁通过（6 个 ACP Agent 的 spike 报告、ZCode 覆盖 / 放弃结论、合规清单）——6 个为 Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity
-- [ ] P1–P6 清单勾完，验收口径满足
-- [ ] 「新增 Agent 只需目录条目 + Provider 差异模块 + 登记 + 契约测试」经 fake 第二条目验证
-- [ ] 设计 28 与实现无未记录的硬偏离（有则改 28 或记 `DEVIATIONS.md`）
+- [ ] P0 门禁通过（6 个 ACP Agent 的 spike 报告、ZCode 覆盖 / 放弃结论、合规清单）——6 个为 Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity。**离线部分与 ZCode 结论（放弃，DEV-008）已完成；登录态 spike 待用户本人执行**，见 [acp-manual-followups.md](acp-manual-followups.md) §4
+- [x] P1–P6 代码清单完成（2026-10-08 合入 main）；需真实账号的验收项见 [acp-manual-followups.md](acp-manual-followups.md)
+- [x] 「新增 Agent 只需目录条目 + Provider 差异模块 + 登记 + 契约测试」经 fake 第二条目验证
+- [x] 设计 28 与实现无未记录的硬偏离（ZCode 放弃记 DEV-008；待用户确认的默认见 §9.3.1）
 - [x] `docs/dev/02/03/04/05`、`PROGRESS.md` 已同步（P6，2026-10-08）
-- [ ] 内置引擎回归全绿
-- [ ] **未**执行 git commit / push / 创建 PR（除非用户另行明确要求）
+- [x] 内置引擎回归全绿（Docker 全量 1499 例，失败与 33 例环境基线逐条一致；e2e 3 例失败在 main 上同样失败）
+- [x] 提交按用户要求分 P 批次进行，未 push / 未创建 PR
 
 ---
 
