@@ -214,7 +214,9 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
           if (!bot) throw new Error('triage target vanished');
           input.runs.update(run.id, { status: 'running' });
 
-          const recent = input.messages.list(input.conversationId, {
+          // D75 §2.4.3: the judging bot's view — shared rows + its own
+          // private task entries, never another member's.
+          const recent = input.messages.listForBot(input.conversationId, input.botId, {
             limit: TRIAGE_RECENT_MESSAGES,
           });
           const recentFiltered = recent.filter(
