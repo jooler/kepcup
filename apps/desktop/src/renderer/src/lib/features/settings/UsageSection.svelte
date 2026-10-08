@@ -47,7 +47,8 @@
 
   /**
    * Bot rows in bot-then-name order; background usage vs the budget mirrors
-   * BudgetService (response/triage never count).
+   * BudgetService (turns, tasks and built-in triage never count; agent rows
+   * are listed separately).
    */
   const botRows = $derived.by(() => {
     const today = todayKey();

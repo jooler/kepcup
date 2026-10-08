@@ -86,11 +86,19 @@ function isDelegationBatch(batch: TriggerBatch): boolean {
  *   delegating bot as the result — and a delegation folded into another turn
  *   would get that turn's reply;
  * - batches bound to different bot-to-bot @ chains stay apart (审查 M1): one
- *   turn carries one chain binding (its depth and token budget).
+ *   turn carries one chain binding (its depth and token budget);
+ * - a person's own words (an unchained batch carrying a user message, an edit
+ *   notice included) stay apart from a chain-bound batch (审查 L-5): folded
+ *   into a chain turn they would inherit its depth and budget — at the depth
+ *   limit the bot's @ mentions answering the user would be dropped. Unchained
+ *   system batches (task results, events) may still join a chain turn.
  */
 export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
   if (isDelegationBatch(a) || isDelegationBatch(b)) return false;
-  return a.chain === undefined || b.chain === undefined || a.chain.id === b.chain.id;
+  if (a.chain !== undefined && b.chain !== undefined) return a.chain.id === b.chain.id;
+  if (a.chain === undefined && b.chain === undefined) return true;
+  const unchained = a.chain === undefined ? a : b;
+  return !unchained.messages.some((message) => message.senderType === 'user');
 }
 
 /**
@@ -271,6 +279,11 @@ export class Mailbox {
   /** Batches waiting for the next turn. */
   get bufferedCount(): number {
     return this.#buffer.length;
+  }
+
+  /** Whether a buffered batch carries a message matching `match` (held for the next turn). */
+  hasBuffered(match: (message: Message) => boolean): boolean {
+    return this.#buffer.some((batch) => batch.messages.some(match));
   }
 
   /**

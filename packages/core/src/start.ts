@@ -1112,7 +1112,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         settings.get().mcpServers.find((server) => server.id === serverId)?.autoApprove === true,
     });
 
-    // --- response loop machinery --------------------------------------------
+    // --- turn / task loop machinery ----------------------------------------
     const engine = new PiEngine({ settings, secrets, logger });
     // D72 外部智能体引擎：进程懒启动，未被 Bot 选用时不产生任何子进程。
     const agentCatalog = effectiveAgentCatalog(extraAgentEntries);

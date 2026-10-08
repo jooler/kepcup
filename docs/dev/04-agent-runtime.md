@@ -224,7 +224,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 - 私有任务条目（`renderMessageLine`）：发往任务的 phase（交代 / 追加 / 取消）渲染为 `你→任务 t_…（交代|追加|取消）`，任务交回的（提问 / 结果 / 失败）渲染为 `任务 t_…→你（提问|结果|失败）`；未送达的追加注明「未送达」，失败条目带状态与错误。
 - 任务条目与任务进度在最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断，注明「全文用 get_messages_around 查看 msg_…」（渲染模式 `'context'`）；`search_messages` / `get_messages_around` 返回全文（`'full'`）。
 - 卡片消息渲染为一行说明，例如“[系统] 用户允许 Alice 读取 ~/Desktop/a.txt（仅这一次）”；任务卡渲染为「任务卡 t_…（Bot）「<untrusted>标题</untrusted>」：状态[，排队原因 / 等待用户回答]」，不含交代或结果全文。
-- 任务问题卡（`task_question`）渲染为「[… | Bot（任务 t_…）向用户提问] <untrusted>问题、选项：… / …、回答：…</untrusted>」（提问方自己看到「你（任务 t_…）」），不是「系统」行；最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断。对话摘要的输入同样归属并包裹。结果放弃提示（`task_result_undelivered`）对 Bot 渲染为固定文案。
+- 任务问题卡（`task_question`）渲染为「[… | Bot（任务 t_…）向用户提问] <untrusted>问题、选项：… / …、回答：…</untrusted>」（提问方自己看到「你（任务 t_…）」），不是「系统」行；最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断。对话摘要的输入同样归属并包裹。结果放弃提示（`task_result_undelivered`）对 Bot 与对话摘要输入都渲染为固定文案（不含模型起的标题）。所有 `<untrusted>` 包裹（问题卡、任务卡标题、其他 Bot 的话、`<tasks>` 段）都中和内文里的字面 `</untrusted>` / `<untrusted>`（`infra/data-boundary.ts`，最终审查 L-1）。反思输入的 `<trigger_messages>` 里，Bot 自己任务的结果 / 失败条目标为「任务 t_… 的结果 / 失败报告」并包 `<untrusted>`，不是「系统」（最终审查 L-2）。
 - 已删除的 Bot 显示为其 id。
 - 时间按用户本地时区显示。
 
@@ -372,7 +372,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、不唤醒；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、最近进度、可否注入） |
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
-| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、不计入 `TASK_MAX_WALL_MS`，`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016） |
+| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
 | MCP 工具 `mcp_{serverId}_{toolName}` | 随配置 | K | D65 | 按「应用启用 ∩ Bot 勾选」并入任务工具面；对话轮不提供 |
 
