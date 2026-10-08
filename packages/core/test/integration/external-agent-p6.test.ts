@@ -94,8 +94,11 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const conv = await openDirect(stack.core, bot.id);
+    // D75 §8.4 (DEV-011): no built-in model — the downgraded turn hands the
+    // message to a task on the agent; the agent's first round is the task's.
+    // The summary job is enqueued once it is done so the rounds stay ordered.
     await sendBatch(stack.core, conv.id, ['记一下：我喜欢绿茶']);
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitForRun(stack.core, conv.id, 'completed', { loopType: 'task' });
     stack.core.services.domain!.jobs.enqueue({
       type: 'conversation_summary',
       conversationId: conv.id,
@@ -115,7 +118,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       null,
     ]);
     const background = (await listRuns(stack.core, conv.id)).filter(
-      (run) => run.loopType !== 'turn',
+      (run) => run.loopType !== 'turn' && run.loopType !== 'task',
     );
     expect(background.map((run) => [run.loopType, run.status]).sort()).toEqual([
       ['conversation_summary', 'completed'],
@@ -147,6 +150,7 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     expect(owners).toEqual([{ botId: bot.id }]);
 
     // One-shot sessions: own temp cwd (gone), no MCP bridge, JSON-only prompt.
+    // (The first session is the task's, in the workspace.)
     const record = stack.record();
     const workspace = record.sessions[0]!.cwd;
     const oneShot = record.sessions.slice(1, 3);
@@ -163,16 +167,18 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       label: 'one-shot sessions closed',
     });
 
-    // Second response run: its reflection is throttled (1 in N) — no prompt.
+    // Second task (D75 §7.2: a completed task registers the reflection; the
+    // downgraded turns run no model and register none): its reflection is
+    // throttled (1 in N) — no prompt.
     await sendBatch(stack.core, conv.id, ['今天天气不错']);
     await waitFor(
       async () =>
         (await listRuns(stack.core, conv.id)).filter(
-          (run) => run.loopType === 'turn' && run.status === 'completed',
+          (run) => run.loopType === 'task' && run.status === 'completed',
         ).length === 2
           ? true
           : null,
-      { label: 'second response run' },
+      { label: 'second task' },
     );
     await waitFor(
       () => {
