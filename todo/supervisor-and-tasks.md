@@ -1,7 +1,7 @@
 # D75 对话轮与任务分治：执行方案
 
 > 设计：[docs/design/30-supervisor-and-tasks.md](../docs/design/30-supervisor-and-tasks.md)（D75，以设计为准）。本文只规定**怎么做、谁做、怎么验收**。
-> 状态：**实施完成、待合入**（2026-10-08 开工并完成；偏差 DEV-009、DEV-011～DEV-018 待用户确认，合入 `main` 待用户确认）。集成分支 `d75`（worktree `/home/jyy/wt/kepcup-d75`），各工作流在自己的 worktree / 分支开发，由调度会话合并进 `d75`；合入 `main` 需用户确认。
+> 状态：**已完成并合入 `main`**（2026-10-08 开工并完成；偏差 DEV-009～DEV-018 于 2026-10-08 经用户确认按推荐方案落定）。集成分支 `d75`（worktree `/home/jyy/wt/kepcup-d75`），各工作流在自己的 worktree / 分支开发，由调度会话合并进 `d75`；合入 `main` 需用户确认。
 
 ## 0. 给执行代理的规则（必读）
 
@@ -152,7 +152,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - **W2**：注册 `buildTaskTools`；`markConsumed` 从 `#releaseResponseMailbox` 移到对话轮终态；`RunExecution` 加 `turn`；对话轮工具面去掉 MCP / 媒体生成 / 浏览器（不在只读检查覆盖范围）；`get_attachment` 复制非文本附件到 workspace 在对话轮会被拒，决定对话轮是否保留该路径；任务唤醒的触发段用 `buildTriggerSegment`（`'trigger'` 模式，全文 + 硬顶）；D66 降级（原 W1-A 第 5 项）。
 - **W3**：`RUN_READ_ONLY` 等错误码的 zh-CN 文案；渲染端 `#upsertConversation` 缺 `unreadCount` 时回退 `lastSeq - lastReadSeq` 会算入私有行；取消卡改动摘要（W1-A 的 `cancel_task` 只说明不回退）；W0 已在 `UsageSection` / `zh-CN.ts` 补 `turn` / `task`。
 - **W4**：外部智能体只读任务必须强制 `read_only` 档位（Agent 在工作目录内的写入先被桥的档位逻辑放行，走不到网关）；外部智能体任务当前失败关闭，W4 接通。
-- **W5**：设计 13 补一句预授权的消费方式；DEV-009 结论落字。（W5 已落字：design/13「仅这一次」、design/30 §7.3，标「待确认」。）
+- **W5**：设计 13 补一句预授权的消费方式；DEV-009 结论落字。（W5 已落字：design/13「仅这一次」、design/30 §7.3；2026-10-08 用户确认。）
 
 **审查与修复（2026-10-08）**：独立审查 W1（基 `40cde29`）判 REQUEST CHANGES：H1 只读任务经 `delegate_task` 子代理 bash 可写；H2 写租约先于调度名额 → 持有并等待死锁（provider 上限 1 / 2、D72 固定 run），排队中被取消的任务不放租约；M1 终态条目写失败仍写终态并标消费（结果丢失）；M2 detach 后的注入报「已送达」实则丢弃；M3 上限 1 时任务饿死回复；M4 媒体生成 / 浏览器下载 / 装技能 / 申请环境绕过只读，`get_attachment` 在只读 run 失效；M5「仅这一次」在同 run 并行工具调用间串用；LOW 8 条（LOW-3 写任务顺手写 workspace 不取 ws 租约，**记为已知缺口不修**，同对话「每 workdir 一个写任务」兜底）。
 - 批 A（`7c36bf1`，任务层 / 调度）：`SlotYieldingLeaseService` + `Scheduler.yieldSlotWhile`（等租约期间让出名额，取得后优先拿回）、`cancelQueued`；M3 回复在全部名额被任务占用时可借 1 个；M1 `#unsettled` 由 sweep 重试；M2 `closing` 与注入降级 `queued`；LOW-1/2/4/5/7/8。批 B（`1403248`，只读 / 授权）：子代理沿 `parentRunId` 继承根 run 的只读规则（fail closed）；`readOnlyRefusal` 收口媒体 / 技能 / 环境，浏览器只读下载改到应用缓存，`checkHostCopyPath` 让只读 run 的附件复制限定在 `.attachments/`；once 授权按工具调用作用域归属，预授权由第一个用到的调用认领；`onAutoRevoke` 发布 `grant.changed`；DEV-009 补记。合并 `7456dfa`。
@@ -167,7 +167,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 
 ### W4 外部引擎 + W2-D66（2026-10-08，与 W2 对话轮并行；合入 `d75`：W4 `ad5a749`、W2-D66 `6fdb4a9`）
 
-- **W4**（`0b1ab3e`、`8775170`、`ac61075`）：去掉外部智能体 Bot 任务的失败关闭路径，`runtime.agent` 即任务引擎，门禁 / 引擎缺失 / 项目配置拒绝 / Agent setup 失败经 `TaskHost` 结算。main `0019_agent_sessions_per_task.sql`：`agent_sessions` 重建，唯一键 `(bot, 对话, Agent, task_id)`，`task_id = ''` = 非任务 run，D72 期旧行清空。每个任务独占会话行、桥 / 引擎键与 token——**键随会话行**（`bot:conv:agent:task:{行 id}`，DEV-010，待确认）；`continues_task_id` 在旧任务执行结束后单条 `UPDATE` 继承其行，指纹不符新建；任务的增量只取共享行。只读任务强制 `read_only` 档；任务 cwd = `task_workdir`，写任务租约由 `#startTask` 持有。steering 异步拒绝经 `TaskRunControl.steerRefused` 把 inject 条目降为 `queued`。结算后的任务会话保留 `CONTINUATION_WINDOW_MS`，reaper `session/close` 并删行。调度器：`agent:*` 上的任务用满上限、不为回复预留、回复也不借用（M3 借用不适用于 `agent:*`）。测试 `external-agent-tasks`、`agent-sessions-per-task`，迁移版本断言补 19。
+- **W4**（`0b1ab3e`、`8775170`、`ac61075`）：去掉外部智能体 Bot 任务的失败关闭路径，`runtime.agent` 即任务引擎，门禁 / 引擎缺失 / 项目配置拒绝 / Agent setup 失败经 `TaskHost` 结算。main `0019_agent_sessions_per_task.sql`：`agent_sessions` 重建，唯一键 `(bot, 对话, Agent, task_id)`，`task_id = ''` = 非任务 run，D72 期旧行清空。每个任务独占会话行、桥 / 引擎键与 token——**键随会话行**（`bot:conv:agent:task:{行 id}`，DEV-010）；`continues_task_id` 在旧任务执行结束后单条 `UPDATE` 继承其行，指纹不符新建；任务的增量只取共享行。只读任务强制 `read_only` 档；任务 cwd = `task_workdir`，写任务租约由 `#startTask` 持有。steering 异步拒绝经 `TaskRunControl.steerRefused` 把 inject 条目降为 `queued`。结算后的任务会话保留 `CONTINUATION_WINDOW_MS`，reaper `session/close` 并删行。调度器：`agent:*` 上的任务用满上限、不为回复预留、回复也不借用（M3 借用不适用于 `agent:*`）。测试 `external-agent-tasks`、`agent-sessions-per-task`，迁移版本断言补 19。
 - **W2-D66**（`8dc395f`，原 W1-A 第 5 项）：删除 `SubagentHost`、`SubagentFollowUp`、orchestrator `#injectDelegateFollowUp` 与 `SUBAGENT_FOLLOWUP_EVENT`；`delegate_task` 后台模式改为父 run 内并行分支，结论经新工具 `collect_delegate_results` 取回（等待、按委派顺序、每条一次），从不进对话、不唤醒新一轮；父 run abort 级联、结束时 `facade.close()` 中止并等分支 settle（先于释放租约与任务结算）；`SUBAGENT_BACKGROUND_CONCURRENCY` 按父 run 计；对话轮与子代理调用 `delegate_task` 执行期拒绝。设计 23 补后台分支实现说明。
 - **验证**：两者合入后容器全量（`d75`）1688 例：调度会话判定**无真实新增失败**——另有 `browser`（删 Bot 竞态）、`memory`（两个 Bot 同时产生画像提案）各 1 条偶发，以及 `sandbox-isolation.test.ts` 整文件加载失败（批 B 的 `onAutoRevoke` 订阅缺桩，见下文合并修正 `9661b5d`）。
 
@@ -233,9 +233,9 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - 最终审查（`c3b541a`，覆盖批 E、projects.test 重写与全分支健全性检查）判 **APPROVE**，附 MEDIUM M-1：写任务在 `ask_user` 等待中被取消后，`yieldSlotWhile` 仍排队取回名额，取回前一直占写租约与任务名额；LOW：新 `<untrusted>` 包裹未中和闭合标签、摘要 / 反思把任务文本渲染为「系统」、投递计数在唤醒失败与排队中的对话轮时多算、改动卡第二个租约窗口后不刷新、无链用户批并入 @ 链对话轮继承链深度、注释与说明残留。另：最终 e2e 中 `approvals.spec` 3 例仍从对话轮触发访问审批（批 D M4 之后对话轮越权读直接失败，W3 的 e2e 迁移早于批 D）。
 - 修复（`0ed764a`、`dfedd0a`、`976b6e3`、`1e20f84`、`ee8038d`、`5cc297c`、`1441e21`、`30b1f4a`）：等待被拒或执行已中止时不取回名额、无名额展开；`questionSince` 在名额取回后才清；唤醒成功才计投递，排队中的对话轮与邮箱缓冲里的结果视为持有；问题行 / 其他 Bot 包裹 / 摘要 / 任务卡标题经 `neutralizeUntrusted`；未送达通知在摘要里用固定行，反思把任务结果 / 失败渲染为「任务 t_x 的结果」并包 `<untrusted>`；改动卡收到 `message.updated` 重新加载；含用户消息的无链批不与 @ 链批同轮；`approvals.spec` 迁到任务流程；`.gitignore` 忽略 `.vitest-*.json`。
 - **验证**（批 F 分支）：容器全量 **1795 例、1765 过、28 失败，新增 0**；e2e `approvals.spec` + `tasks.spec` 6/6；typecheck / lint 0 error。合入后的最终全量与 e2e 见下。
-- **最终验证**（`d75@f2f45a8`，2026-10-08）：容器全量 **1795 例、1765 过、28 失败，新增 0**（失败集合 = 基线 28 条）；e2e 全量 **70 例、67 过、3 失败**（`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description while a command executes」、`wiki.spec`「wiki tab: browse the page tree …」，与 main 基线一致）；typecheck / lint 0 error。**D75 实施完成，待用户确认偏差与合入 main。**
+- **最终验证**（`d75@f2f45a8`，2026-10-08）：容器全量 **1795 例、1765 过、28 失败，新增 0**（失败集合 = 基线 28 条）；e2e 全量 **70 例、67 过、3 失败**（`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description while a command executes」、`wiki.spec`「wiki tab: browse the page tree …」，与 main 基线一致）；typecheck / lint 0 error。**D75 实施完成；2026-10-08 用户确认全部偏差按推荐方案落定并同意合入 main。**
 
-**偏差汇总**（全部待用户确认）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015、DEV-016、DEV-017、DEV-018。
+**偏差汇总**（2026-10-08 用户确认，均按推荐方案）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015、DEV-016、DEV-017、DEV-018。
 
 **已知缺口**
 
