@@ -1,4 +1,5 @@
-import { TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
+import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
+import { runInToolCall } from '../permissions/tool-call-scope.js';
 import { truncateToBudget } from './tokens.js';
 import type { ToolContext, ToolDefinition, ToolResult } from './types.js';
 
@@ -9,19 +10,24 @@ import type { ToolContext, ToolDefinition, ToolResult } from './types.js';
  * 截断、图片只给接受图像输入的模型（否则一行提示）。
  */
 
-/** Runs a tool; a thrown error becomes a failed result (never breaks the loop). */
+/**
+ * Runs a tool; a thrown error becomes a failed result (never breaks the loop).
+ * The execution is one tool-call scope (D75：「仅这一次」授权随本次调用结束而
+ * 失效，见 permissions/tool-call-scope.ts). A thrown AppError keeps its code
+ * (e.g. RUN_READ_ONLY) so the model sees why; anything else is INTERNAL.
+ */
 export async function executeToolSafely(
   tool: ToolDefinition,
   params: unknown,
   ctx: ToolContext,
 ): Promise<ToolResult> {
   try {
-    return await tool.execute(params as never, ctx);
+    return await runInToolCall(() => tool.execute(params as never, ctx));
   } catch (error) {
     return {
       ok: false,
       content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
-      errorCode: 'INTERNAL',
+      errorCode: error instanceof AppError ? error.code : 'INTERNAL',
     };
   }
 }

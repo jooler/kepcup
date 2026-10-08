@@ -38,6 +38,11 @@ export const ERROR_CODES = [
   'STALE_FILE',
   'LEASE_TIMEOUT',
   'LEASE_HELD',
+  /**
+   * D75 §2.1 / §5.1：执行期硬拒写——对话轮（loop_type='turn'）与只读任务
+   * （task_writes=false）的写路径（文件写、会写入的命令）一律拒绝。
+   */
+  'RUN_READ_ONLY',
   // projects
   'PROJECT_MISSING',
   'PROJECT_SWITCH_BLOCKED',
