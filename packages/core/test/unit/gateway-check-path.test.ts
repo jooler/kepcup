@@ -36,6 +36,8 @@ function makeGateway(platform = 'linux'): ToolGateway {
     } as unknown as GatewayDeps['approvals'],
     grants: {
       hasEffectiveGrant: () => null,
+      // D75: a grant hit marks once-grant use (consumed with the tool call).
+      noteOnceUse: () => {},
     } as unknown as GatewayDeps['grants'],
     allowlist: {
       match: () => ({ exempt: false, reason: 'stub' }),
