@@ -285,8 +285,7 @@ export function buildResponseTools(input: {
   // task entries in full: they are how the model fetches text the recent
   // window truncates.
   // (`string` widening: core's LoopType gains 'task' with the task layer, W1-A.)
-  const loopType: string = identity.loopType;
-  const viewerBotId = loopType === 'task' ? null : identity.botId;
+  const viewerBotId = identity.loopType === 'task' ? null : identity.botId;
 
   const searchMessages: ToolDefinition<{ query: string; limit?: number }> = {
     name: 'search_messages',

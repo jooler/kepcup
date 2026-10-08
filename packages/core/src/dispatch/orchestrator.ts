@@ -2337,10 +2337,9 @@ export class Orchestrator {
         } catch (error) {
           // Cancelled while waiting: the host already settled the task.
           if (control.signal.aborted) return;
-          // A workspace root has no lease target yet (project/service.ts
-          // #leaseTarget throws INVALID_INPUT); D75 W1-C makes workspace
-          // leases real. Until then a workspace write task runs unleased.
-          if (!(error instanceof AppError && error.code === 'INVALID_INPUT')) throw error;
+          // Project roots and the bot's own workspace both have lease targets
+          // (design 30 §5.2); anything else must fail rather than run unleased.
+          throw error;
         }
         if (control.signal.aborted) return;
       }
