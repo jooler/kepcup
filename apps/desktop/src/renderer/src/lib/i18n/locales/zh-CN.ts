@@ -1057,6 +1057,22 @@ export const zhCN = {
     '它也是新建 Bot 的默认智能体：停用 / 卸载后，新建的 Bot 不再默认使用它。',
   'agents.hint':
     '启用后，可在 Bot 运行配置的「主模型」里改选某个智能体（如 Claude Agent、Codex），由它驱动该 Bot 的执行。登录走厂商官方流程，KepCup 不接触、不保存你的订阅凭据。',
+  // --- 后台任务（D72 P6，design 28 §8）----------------------------------------
+  'agents.background.title': '后台任务',
+  'agents.background.hint':
+    '摘要、反思、记忆整理、画像整理、群聊判断、Wiki 维护等后台任务：有内置模型时照旧使用内置模型；只配置了智能体时改用这里选择的智能体（会消耗该订阅的额度）。',
+  'agents.background.builtinActive': '当前已配置内置模型：后台任务使用内置模型，以下设置暂不生效。',
+  'agents.background.agent': '用于后台任务的智能体',
+  'agents.background.auto': '自动（优先 Bot 自己的智能体，否则第一个可用的）',
+  'agents.background.off': '关闭（跳过后台任务）',
+  'agents.background.unavailable': '（暂不可用）',
+  'agents.background.degraded':
+    '只用智能体时会降频：反思与对话摘要每 {n} 次触发运行一次，续接判断保持关闭。',
+  'agents.background.skillAuthoring': '允许智能体在后台生成技能',
+  'agents.background.skillAuthoringHint': '起草并验证技能需要多轮调用，较耗额度，默认关闭。',
+  'agents.background.groupMentionOnly': '群聊只在被 @ 或回复时响应',
+  'agents.background.groupMentionOnlyHint':
+    '不再让智能体判断是否接话（群聊判断超时也按不响应处理）。',
   'agents.experimental': '外部智能体（实验）',
   'agents.experimentalHint':
     '实验功能。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',

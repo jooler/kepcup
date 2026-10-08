@@ -34,6 +34,8 @@
   import WebSearchSection from './WebSearchSection.svelte';
   import McpSection from './McpSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
+  import BackgroundTasksSection from './BackgroundTasksSection.svelte';
+  import { agentsStore } from '$lib/stores/agents.svelte';
   import SchedulesSection from './SchedulesSection.svelte';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
 
@@ -171,6 +173,11 @@
             <div data-settings-anchor="agents">
               <AgentsSection />
             </div>
+            {#if agentsStore.experimental}
+              <div data-settings-anchor="background-tasks">
+                <BackgroundTasksSection />
+              </div>
+            {/if}
           </div>
         {:else if activeSection === 'contacts'}
           <div data-settings-section="contacts">
