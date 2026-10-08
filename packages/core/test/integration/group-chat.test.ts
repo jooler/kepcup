@@ -11,6 +11,7 @@ import {
   makeGroup,
   sendDrafts,
   step,
+  viaTask,
   waitFor,
   waitForEvent,
   waitForMessage,
@@ -444,13 +445,15 @@ describe('group conversations', () => {
     );
   }, 30_000);
 
-  it('a batch flushed mid-turn is injected into the running bot and re-dispatched after the turn', async () => {
+  // D75 W2 (D2 revised): the mid-round batch is no longer steered into the
+  // running bot (old: A's second request carried <new_messages>) — it waits
+  // and is dispatched after the round to the bots it is for (B only here).
+  it('a batch flushed mid-round waits and is dispatched after the round', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
     llm.script('mock-main', [
       step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('阿甲第一批'),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyText('阿甲看到追加了'),
       step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙第一批'),
       step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('阿乙第二批'),
     ]);
@@ -467,21 +470,16 @@ describe('group conversations', () => {
 
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await waitForBotRun(core, conv.id, b.id, 'completed');
-    // Re-dispatch after the turn: B executes the second batch too.
-    await waitForBotRunCount(core, conv.id, b.id, 2, { timeoutMs: 20_000 });
+    // Dispatched after the round: B executes the second batch too.
+    const bAll = await waitForBotRunCount(core, conv.id, b.id, 2, { timeoutMs: 20_000 });
 
     const requests = llm.requestsFor('mock-main');
-    const aSecond = requests.filter((r) => systemText(r).includes('名字：阿甲'))[1];
-    expect(aSecond).toBeTruthy();
-    expect(aSecond!.lastUserText()).toContain('<new_messages>');
-    expect(aSecond!.lastUserText()).toContain('第二批（追加了）');
-
-    const bAll = await waitForBotRunCount(core, conv.id, b.id, 2);
+    expect(requests.every((r) => !r.lastUserText().includes('<new_messages>'))).toBe(true);
     const secondIds = second.map((m) => m.id);
     const redispatched = bAll.find((r) => r.triggerMessageIds.length === 1 && r.triggerMessageIds[0] === secondIds[0]);
     expect(redispatched).toBeTruthy();
     expect(redispatched!.triggerReason).toBe('mention');
-    // A was injected with the second batch mid-run, so it is not re-triggered.
+    // A is not addressed by the second batch: it never got a turn for it.
     expect(await botRuns(core, conv.id, a.id)).toHaveLength(1);
   }, 40_000);
 
@@ -631,17 +629,35 @@ describe('group conversations', () => {
 
     // One script for the whole scenario: script() replaces the queue, so the
     // held step for A must live in the same queue as B's later steps.
+    // D75 W2: writes happen in write tasks (a turn is read-only) — each bot's
+    // turn starts one; the tasks contend for the project lease.
+    const isA = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿甲');
+    const isB = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿乙');
+    const [aStart, aAck, aWrite, aFinal, aRelay] = viaTask({
+      taskSteps: [
+        step().expect(isA).replyToolCall('write', { path: 'from-group.txt', content: '群聊成员甲写入' }),
+        step().expect(isA).hold().replyText('甲完成'),
+      ],
+      relay: '甲：写好了',
+    });
+    const [bStart, bAck, bWrite, bFinal, bRelay] = viaTask({
+      taskSteps: [
+        step().expect(isB).replyToolCall('write', { path: 'from-direct.txt', content: '乙写入' }),
+        step().expect(isB).replyText('乙完成'),
+      ],
+      relay: '乙：写好了',
+    });
     llm.script('mock-main', [
-      step().expect((r) => systemText(r).includes('名字：阿甲')).replyToolCall('write', {
-        path: 'from-group.txt',
-        content: '群聊成员甲写入',
-      }),
-      step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('甲完成'),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('write', {
-        path: 'from-direct.txt',
-        content: '乙写入',
-      }),
-      step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('乙完成'),
+      aStart!.expect(isA),
+      aAck!.expect(isA),
+      aWrite!,
+      aFinal!,
+      aRelay!.expect(isA),
+      bStart!.expect(isB),
+      bAck!.expect(isB),
+      bWrite!,
+      bFinal!,
+      bRelay!.expect(isB),
     ]);
     await sendDrafts(core, conv.id, [{ text: '建一个文件', mentions: [a.id] }]);
     await waitFor(
@@ -649,8 +665,8 @@ describe('group conversations', () => {
       { label: 'A group write' },
     );
 
-    // While A still holds the lease, a run from B (direct conversation bound to
-    // the same project) waits for the lease.
+    // While A's write task still holds the lease, B's write task (direct
+    // conversation bound to the same project) waits for it, still submitted.
     const direct = await (async () => {
       const result = (await core.rpc.call('conversations.openDirect', { botId: b.id })) as {
         conversation: { id: string };
@@ -658,24 +674,40 @@ describe('group conversations', () => {
       return result.conversation;
     })();
     await core.rpc.call('projects.select', { conversationId: direct.id, path: projectDir });
-    const leaseEventPromise = waitForEvent(core, 'lease.waiting', (p) => p.conversationId === direct.id);
     await sendDrafts(core, direct.id, [{ text: '你也写一个' }]);
-    await waitFor(
-      async () =>
-        (await listRuns(core, direct.id)).find((r) => r.status === 'waiting_lease') ?? null,
-      { label: 'B waiting for lease' },
+    // The task host keeps one write task per workdir (across conversations):
+    // B's task stays submitted, its queue reason names A's task (the old
+    // response run showed waiting_lease + lease.waiting instead).
+    const bTask = await waitFor(
+      async () => (await listRuns(core, direct.id)).find((r) => r.loopType === 'task') ?? null,
+      { label: 'B task submitted' },
     );
-    const leaseEvent = await leaseEventPromise;
+    const aTask = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
+    expect(aTask.botId).toBe(a.id);
+    expect(bTask.status).toBe('queued');
+    const queued = core.services.orchestrator!.tasks.list({
+      runId: bTask.originRunId!,
+      botId: b.id,
+      conversationId: direct.id,
+      loopType: 'turn',
+    });
+    expect(queued[0]?.queueReason).toContain(aTask.id);
+    expect(bWrite!.consumed).toBe(false);
 
     llm.releaseAll();
-    await waitForBotRun(core, conv.id, a.id, 'completed');
+    await waitFor(
+      async () =>
+        (await listRuns(core, conv.id)).find((r) => r.loopType === 'task' && r.status === 'completed') ?? null,
+      { label: 'A task completes' },
+    );
     const bRun = await waitFor(
       async () =>
-        (await listRuns(core, direct.id)).find((r) => r.botId === b.id && r.status === 'completed') ?? null,
-      { label: 'B completes after lease' },
+        (await listRuns(core, direct.id)).find(
+          (r) => r.loopType === 'task' && r.botId === b.id && r.status === 'completed',
+        ) ?? null,
+      { label: 'B task completes after lease' },
     );
     expect(bRun).toBeTruthy();
-    expect(leaseEvent.holder.botId).toBe(a.id);
     expect(existsSync(path.join(projectDir, 'from-direct.txt'))).toBe(true);
     rmSync(projectDir, { recursive: true, force: true });
   }, 60_000);

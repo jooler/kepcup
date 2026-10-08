@@ -2978,11 +2978,19 @@ export class Orchestrator {
         });
       }
 
-      // §2.1 TURN_MAX_TURNS: the engine just stops at the limit; a turn that
-      // ends on a tool call (no final reply) hit it.
+      // §2.1 TURN_MAX_TURNS: the engine just stops at the limit; a turn whose
+      // last allowed model turn still called a tool (other than the
+      // terminating skip_reply) ran out of steps.
+      let assistantTurns = 0;
       let lastStopReason: string | null = null;
+      let skipped = false;
       const unsubscribeStop = handle.onEvent((event) => {
+        if (event.type === 'tool_result') {
+          if ((event.payload as { toolName?: string }).toolName === 'skip_reply') skipped = true;
+          return;
+        }
         if (event.type !== 'assistant') return;
+        assistantTurns += 1;
         lastStopReason = (event.payload as { stopReason?: string }).stopReason ?? null;
       });
       const unsubscribe = this.#persistSteps(runId, batch.conversationId, handle);
@@ -3095,7 +3103,9 @@ export class Orchestrator {
         !isTask &&
         outcome.status === 'completed' &&
         !outcome.skipReply &&
+        !skipped &&
         outcome.finalText.trim().length === 0 &&
+        assistantTurns >= TURN_MAX_TURNS &&
         lastStopReason === 'toolUse'
       ) {
         settle(
