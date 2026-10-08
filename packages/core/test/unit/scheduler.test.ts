@@ -541,6 +541,158 @@ describe('Scheduler round 2 (D75 审查复核 #1 #3 #4 #7)', () => {
   });
 });
 
+describe('Scheduler: a stopped run never takes its slot back (D75 审查 M-1)', () => {
+  function rejectable(): { promise: Promise<void>; reject: (error: Error) => void } {
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((_, rej) => {
+      reject = rej;
+    });
+    return { promise, reject };
+  }
+
+  it('a rejected wait unwinds without a slot while another job holds it; counts stay exact', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const events: string[] = [];
+    const wait = rejectable();
+    const jEnd = deferred();
+    const bHold = deferred();
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'task:j',
+      runId: 'run_j',
+      run: async () => {
+        try {
+          await scheduler.yieldSlotWhile('run_j', wait.promise);
+        } catch {
+          events.push('j-unwound');
+        }
+        await jEnd.promise;
+        events.push('j-done');
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    // J waits slotless: B takes the only slot and keeps it.
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'b',
+      run: async () => {
+        events.push('b');
+        await bHold.promise;
+      },
+    });
+    await waitUntil(() => events.includes('b'));
+    wait.reject(new Error('task stopped'));
+    // J unwinds at once — it does not queue behind B for a slot.
+    await waitUntil(() => events.includes('j-unwound'), 1_000);
+    jEnd.release();
+    await waitUntil(() => events.includes('j-done'), 1_000);
+    // J ended slotless: B still holds the only slot — no slot was freed twice.
+    scheduler.submit({ priority: 0, provider: 'p', key: 'c', run: async () => void events.push('c') });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(events).not.toContain('c');
+    bHold.release();
+    await waitUntil(() => events.includes('c'), 1_000);
+    // And the slot is usable again by a job yielding later.
+    const late = deferred();
+    let lateDone = false;
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'task:k',
+      runId: 'run_k',
+      run: async () => {
+        await scheduler.yieldSlotWhile('run_k', late.promise);
+        lateDone = true;
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    late.release();
+    await waitUntil(() => lateDone, 1_000);
+    scheduler.stop();
+  });
+
+  it('an abort of the run while it waits to take the slot back lets it unwind slotless', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const events: string[] = [];
+    const wait = deferred();
+    const bHold = deferred();
+    const controller = new AbortController();
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'task:j',
+      runId: 'run_j',
+      run: async () => {
+        await scheduler.yieldSlotWhile('run_j', wait.promise, controller.signal);
+        events.push('j-resumed');
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'b',
+      run: async () => {
+        events.push('b');
+        await bHold.promise;
+      },
+    });
+    await waitUntil(() => events.includes('b'));
+    // The wait ends while B holds the slot: J queues to take it back …
+    wait.release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events).not.toContain('j-resumed');
+    // … until its run is aborted: then it goes on (and ends) without one.
+    controller.abort();
+    await waitUntil(() => events.includes('j-resumed'), 1_000);
+    scheduler.submit({ priority: 0, provider: 'p', key: 'c', run: async () => void events.push('c') });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(events).not.toContain('c');
+    bHold.release();
+    await waitUntil(() => events.includes('c'), 1_000);
+    scheduler.stop();
+  });
+
+  it('a wait settling after the run was aborted does not take a slot', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const events: string[] = [];
+    const wait = deferred();
+    const bHold = deferred();
+    const controller = new AbortController();
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'task:j',
+      runId: 'run_j',
+      run: async () => {
+        await scheduler.yieldSlotWhile('run_j', wait.promise, controller.signal);
+        events.push('j-resumed');
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'b',
+      run: async () => {
+        events.push('b');
+        await bHold.promise;
+      },
+    });
+    await waitUntil(() => events.includes('b'));
+    controller.abort();
+    wait.release();
+    await waitUntil(() => events.includes('j-resumed'), 1_000);
+    bHold.release();
+    scheduler.stop();
+  });
+});
+
 describe('Scheduler × external-agent tasks (D75 W4, design 30 §8.1 / §8.5)', () => {
   const resolver = (limit: number) => ({ agentConcurrency: () => limit });
 

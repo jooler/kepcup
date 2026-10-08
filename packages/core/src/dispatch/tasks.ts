@@ -214,13 +214,16 @@ export interface TaskHostDeps {
   /**
    * Awaits `wait` without holding the task's provider slot (Scheduler
    * .yieldSlotWhile with the task's run id; 审查 M3): ask_user waits on the
-   * user. Absent = plain await (unit tests).
+   * user. `signal` is the task's abort signal: a stopped task unwinds without
+   * taking a slot back (审查 M-1). Absent = plain await (unit tests).
    */
-  yieldSlotWhile?<T>(runId: string, wait: Promise<T>): Promise<T>;
+  yieldSlotWhile?<T>(runId: string, wait: Promise<T>, signal?: AbortSignal): Promise<T>;
   /**
-   * Whether a live turn (begun, not yet released) carries the task's
-   * terminal entry in its trigger (审查 M4): the reconciliation leaves it to
-   * that turn. Absent = never.
+   * Whether the bot holds the task's terminal entry already (审查 M4 / L-3):
+   * a live turn (begun or still queued for a slot, not yet released) carries
+   * it in its trigger, or it sits in the bot's mailbox buffer for the next
+   * turn. The reconciliation leaves it there — no re-delivery, no recount,
+   * no give-up while held. Absent = never.
    */
   heldByTurn?(taskId: string): boolean;
   /** Test overrides of the D75 constants. */
@@ -835,20 +838,22 @@ export class TaskHost implements TaskToolFacade {
           resolve(answer);
         },
       });
-    }).finally(() => {
-      // Waiting on the user is not running time (审查 M3): the wall clock
-      // pauses for it.
-      if (launched !== undefined && launched.questionSince !== null) {
-        launched.questionWaitMs += Math.max(0, this.#deps.clock.now() - launched.questionSince);
-        launched.questionSince = null;
-      }
     });
     // Waiting on the user holds no provider slot (审查 M3, like a lease wait):
     // the slot goes back for the wait and is taken again once answered. The
     // task keeps its write lease: it is pinned for the task's whole execution
     // (the task's files are mid-edit — another writer in between would work
-    // on a half-done tree), and the user can cancel the task on its card.
-    return this.#deps.yieldSlotWhile?.(task.id, answered) ?? answered;
+    // on a half-done tree), and the user can cancel the task on its card —
+    // a cancelled task unwinds without waiting for a slot (审查 M-1).
+    const waited = this.#deps.yieldSlotWhile?.(task.id, answered, signal) ?? answered;
+    return waited.finally(() => {
+      // Waiting on the user is not running time (审查 M3): the wall clock
+      // pauses for it — and for taking the slot back after the answer.
+      if (launched !== undefined && launched.questionSince !== null) {
+        launched.questionWaitMs += Math.max(0, this.#deps.clock.now() - launched.questionSince);
+        launched.questionSince = null;
+      }
+    });
   }
 
   /** Marks a question card answered with `text` (void / expired) so it is no longer clickable. */
@@ -1858,6 +1863,18 @@ export class TaskHost implements TaskToolFacade {
       this.#giveUpDelivery(run, attempts);
       return;
     }
+    this.#pendingConsumption.set(run.id, this.#deps.clock.now());
+    try {
+      this.#deps.wake(run.botId, run.conversationId, entry);
+    } catch (error) {
+      // Not handed over (审查 L-3): not a delivery attempt either.
+      this.#pendingConsumption.delete(run.id);
+      this.#deps.logger.warn(
+        { taskId: run.id, error: error instanceof Error ? error.message : String(error) },
+        'task result delivery failed; the reaper retries',
+      );
+      return;
+    }
     this.#safely(() => {
       this.#deps.db
         .prepare(
@@ -1865,16 +1882,6 @@ export class TaskHost implements TaskToolFacade {
         )
         .run(entry.id);
     });
-    this.#pendingConsumption.set(run.id, this.#deps.clock.now());
-    try {
-      this.#deps.wake(run.botId, run.conversationId, entry);
-    } catch (error) {
-      this.#pendingConsumption.delete(run.id);
-      this.#deps.logger.warn(
-        { taskId: run.id, error: error instanceof Error ? error.message : String(error) },
-        'task result delivery failed; the reaper retries',
-      );
-    }
   }
 
   /** How many times the terminal entry was handed to the bot (persisted on the entry). */
