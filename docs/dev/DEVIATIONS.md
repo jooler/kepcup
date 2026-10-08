@@ -147,3 +147,19 @@
 - 推荐：1，并跟踪 4。
 - 决定：按用户既定原则（「ZCode 评估不能完整覆盖即放弃」）放弃。
 - 已更新的文档：design/28 §9.2（ZCode 行）、design/28 第 16 行（本期 Agent 列表）、design/README.md（28 行与 D72 行）、design/09-tech-stack.md（外部智能体引擎行）、todo/acp-external-agents.md §8.1 / §8.4 / 附录 A.1（补充核对结论）。
+
+### DEV-009 「仅这一次」= 单次工具调用：request_access 预授权与外部智能体审批的落法（D75 W1-C）
+
+- 状态：待决定（已按推荐方案实现，可调整）
+- 阶段：D75 W1-C
+- 是否阻塞：否
+- 问题：design/30 §7.3、design/13「授权」把「仅这一次」收紧为**单次工具调用**即失效。字面执行有两处与现有流程冲突：
+  1. `request_access`（design/13「Bot 也可以在批量操作前主动调用 request_access」「命令因沙箱限制失败时……调用 request_access 申请授权，批准后重新执行」）本身就是一次工具调用；若授权在这次调用结束即失效，选「仅这一次」的预申请永远用不上，「批准后重新执行命令」的流程断掉。
+  2. 外部智能体的权限请求（ACP `session/request_permission`，permission-bridge）不经工具网关执行，批准即回答了那一条请求；旧实现仍把它落成 run 级 once 授权，同一路径的后续请求会被它放行。
+- 影响范围：`permissions/grants.ts`（`noteOnceUse`、TTL 惰性过期）、`permissions/tool-call-scope.ts`（新增）、`agent/tool-execution.ts`（每次工具调用开一个作用域）、`gateway/index.ts`（使用即消费、`ensurePathAccess({ preauthorize })`）、`tools/index.ts`（request_access 传 `preauthorize: true`）、`agent/external/permission-bridge.ts`（once 不落授权）。
+- 可选方案：
+  1. 「单次工具调用」= **使用该授权的那一次工具调用**：文件工具越界当场批准的授权在本次调用内有效、调用结束即撤销；`request_access` 的预授权不绑定申请那次调用，而由**随后第一次真正用到它的工具调用**消费（文件工具命中、或进入某条命令的沙箱策略）；外部智能体审批的 once 不落授权（批准即那一次）；所有 once 另受 `GRANT_ABSOLUTE_TTL_MS` 与 run 结束兜底 — 优点：预申请与「批准后重跑命令」流程照旧可用，长任务里不会退化成整任务放行；缺点：预授权在被用到之前最长可悬置 10 分钟。
+  2. 字面执行（申请那次调用结束即失效）— 优点：最简单；缺点：request_access 的「仅这一次」选项形同虚设，沙箱拦截后的重试只能选「本对话内一直允许」，与收紧的初衷相反。
+- 推荐：1。
+- 决定：（待人工确认）
+- 已更新的文档：无（design/13 的「仅这一次」条目建议补一句预授权的消费规则，留给 W5 文档同步）

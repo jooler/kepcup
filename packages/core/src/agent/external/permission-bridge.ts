@@ -767,8 +767,9 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
   }
 
   /**
-   * 路径类批准记为 access 授权（D37 语义：「仅这一次」随 run 失效，「本对话
-   * 内」到对话结束）——同一路径的后续请求经网关授权直接放行。
+   * 路径类批准记为 access 授权——「本对话内」到对话结束，同一路径的后续请求
+   * 经网关授权直接放行。D75（D37 收紧）：「仅这一次」= 单次工具调用，批准本
+   * 身即回答了这一条权限请求，不落授权（否则后续请求会被它放行）。
    */
   #grant(
     identity: RunIdentity,
@@ -778,6 +779,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
   ): void {
     if (identity.botId === null || identity.conversationId === null) return;
     const duration = approval.decision?.duration ?? 'once';
+    if (duration === 'once') return;
     for (const location of locations) {
       this.#deps.grants.create({
         botId: identity.botId,

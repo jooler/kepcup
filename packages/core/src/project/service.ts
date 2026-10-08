@@ -23,7 +23,7 @@ import type { GrantsService } from '../permissions/grants.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
-import type { AppPaths } from '../infra/paths.js';
+import { canonicalPath, workspacePathFor, type AppPaths } from '../infra/paths.js';
 import type { CoreEventsMap } from '../start-types.js';
 
 export interface ProjectRuntimeDeps {
@@ -49,10 +49,31 @@ export interface ProjectRuntimeDeps {
 }
 
 export interface LeaseTarget {
+  /**
+   * The bound project root, an authorized directory, or the workspace key
+   * `ws:{botId}:{conversationId}` (D75 §5.2, see workspaceLeaseKey).
+   */
   key: string;
   /** Set when the lease key is the bound project (checkpoints apply). */
   project: Project | null;
 }
+
+/**
+ * D75 §5.2: lease key of a bot's workspace in one conversation
+ * (`bots/{botId}/workspaces/{conversationId}/`). Not a path, so it never
+ * collides with project / grant keys in leaseKeysConflict; workspaces have
+ * no shadow-repo checkpoints (no `before`/`after`, no revert).
+ */
+export function workspaceLeaseKey(botId: string, conversationId: string): string {
+  return `ws:${botId}:${conversationId}`;
+}
+
+/** D75 §2.1: why a supervisor turn may not write (tool error text). */
+export const TURN_READ_ONLY_REASON =
+  '对话轮是只读的：不能写文件、执行会改动文件的命令或申请写入。需要改动时请用 start_task 派出写任务（writes: true）';
+/** D75 §5.1: why a read-only task may not write (tool error text). */
+export const TASK_READ_ONLY_REASON =
+  '这是只读任务（派出时未声明写入）：不能写文件、执行会改动文件的命令或申请写入。请在结果中说明需要的改动，由对话轮另派写任务';
 
 interface RunLeaseState {
   key: string;
@@ -96,6 +117,20 @@ export class ProjectRuntime {
       this.#deps.publish('project.updated', { project: refreshed });
     }
     return refreshed;
+  }
+
+  /**
+   * D75 §2.1 / §5.1 execution-time read-only rule: null when the identity may
+   * write, else the readable reason. A supervisor turn never writes; a task
+   * writes only when it was created with `task_writes = true` (a missing run
+   * row or null fails closed). Every other loop type is unaffected.
+   */
+  writeDenial(identity: RunIdentity): string | null {
+    if (identity.loopType === 'turn') return TURN_READ_ONLY_REASON;
+    if (identity.loopType === 'task') {
+      return this.#deps.runs.get(identity.runId)?.taskWrites === true ? null : TASK_READ_ONLY_REASON;
+    }
+    return null;
   }
 
   /** True when the run currently holds the given project's write lease. */
@@ -144,10 +179,16 @@ export class ProjectRuntime {
 
   /**
    * Acquires the write lease covering `resolvedPath`: the bound project root,
-   * or the longest covering write grant outside it. Parks the run in
+   * the identity's own workspace (`ws:{botId}:{conversationId}`, D75 §5.2),
+   * or the longest covering write grant outside both. Parks the run in
    * `waiting_lease` (publishing `lease.waiting`) while queued; snapshots the
-   * project `before` once the lease is granted. Aborting the signal leaves
-   * the queue cleanly.
+   * project `before` once the lease is granted (workspace / grant targets
+   * have no checkpoint). Aborting the signal leaves the queue cleanly.
+   * Read-only identities (writeDenial) are refused with RUN_READ_ONLY.
+   *
+   * Workspace writes never *require* the lease (the gateway allows them
+   * outright); only callers that ask for it — D75 write tasks, pinned for the
+   * whole task — take it, so they serialize among themselves.
    */
   async ensureWriteLease(
     identity: RunIdentity,
@@ -159,9 +200,11 @@ export class ProjectRuntime {
       pin?: boolean;
     } = {},
   ): Promise<LeaseTarget> {
+    const denial = this.writeDenial(identity);
+    if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
     const target = this.#leaseTarget(identity, resolvedPath);
     if (target === null) {
-      throw new AppError('INVALID_INPUT', '该路径不涉及 project，无需写入租约');
+      throw new AppError('INVALID_INPUT', '该路径不涉及 project 或 workspace，无需写入租约');
     }
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
@@ -524,6 +567,16 @@ export class ProjectRuntime {
     ) {
       return { key: project.path, project };
     }
+    // D75 §5.2: the identity's own workspace (realpath-normalized on both
+    // sides; the data home is canonical already, the workspace may not exist).
+    if (identity.botId !== null && identity.conversationId !== null) {
+      const workspace = canonicalPath(
+        workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId),
+      );
+      if (isInsidePath(canonicalPath(resolvedPath), workspace)) {
+        return { key: workspaceLeaseKey(identity.botId, identity.conversationId), project: null };
+      }
+    }
     // Outside the project: the longest covering write grant defines the key.
     const grants = this.#deps.grants
       .listEffective(identity)
@@ -535,10 +588,13 @@ export class ProjectRuntime {
 
   #assertNoActiveRuns(conversationId: string): void {
     // P07 起：响应 run 之外还有后台反思 run（轻量模型、无工具、不触碰
-    // project）——只有响应 loop 应阻止切换/移除 project。
+    // project）——只有响应 loop 应阻止切换/移除 project。D75：对话轮与任务
+    // 同理（任务可能正写 project）。
     const active = this.#deps.runs
       .listActiveByConversation(conversationId)
-      .filter((run) => run.loopType === 'response');
+      .filter(
+        (run) => run.loopType === 'response' || run.loopType === 'turn' || run.loopType === 'task',
+      );
     if (active.length > 0) {
       throw new AppError(
         'PROJECT_SWITCH_BLOCKED',

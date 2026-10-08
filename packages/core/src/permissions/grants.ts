@@ -1,5 +1,6 @@
-import { newId, type Grant, type GrantAccess } from '@kepcup/shared';
+import { GRANT_ABSOLUTE_TTL_MS, newId, type Grant, type GrantAccess } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
+import { currentToolCall } from './tool-call-scope.js';
 import type { Clock } from '../infra/clock.js';
 import type { RunIdentity } from '../agent/types.js';
 
@@ -33,8 +34,17 @@ function rowToGrant(row: GrantRow): Grant {
 
 /**
  * Path grants (docs/design/13-permissions.md "授权"). A grant belongs to one
- * bot in one conversation; `once` grants additionally die with their run.
- * There is no authorization beyond "conversation": nothing persists.
+ * bot in one conversation; there is no authorization beyond "conversation":
+ * nothing persists.
+ *
+ * `once`（「仅这一次」，D75 收紧 D37，docs/design/30 §7.3）= 单次工具调用:
+ * - only its own run sees it (listEffective);
+ * - it is consumed by the tool call that uses it — `noteOnceUse` binds it to
+ *   the current tool call and revokes it when that call returns (outside any
+ *   tool call the use itself was the single call: revoked on the spot);
+ * - an unused one (request_access pre-authorization) and every other `once`
+ *   grant also dies after GRANT_ABSOLUTE_TTL_MS, and with its run
+ *   (expireForRun) — whichever comes first.
  */
 export class GrantsService {
   readonly #db: SqliteDatabase;
@@ -88,6 +98,7 @@ export class GrantsService {
 
   /** Active grants of one conversation, newest first (right panel). */
   listActive(conversationId: string): Grant[] {
+    this.#expireOverdueOnce();
     const rows = this.#db
       .prepare(
         'select * from grants where conversation_id = ? and revoked_at is null order by created_at desc',
@@ -102,6 +113,7 @@ export class GrantsService {
    * sandbox VM).
    */
   listActivePaths(): string[] {
+    this.#expireOverdueOnce();
     const rows = this.#db
       .prepare('select distinct path from grants where revoked_at is null')
       .all() as Array<{ path: string }>;
@@ -140,6 +152,25 @@ export class GrantsService {
     return covering.find((g) => g.access === 'write') ?? null;
   }
 
+  /**
+   * D75「仅这一次」= 单次工具调用: the once grant is being used right now.
+   * Inside a tool call it stays usable for the rest of that call and is
+   * revoked when the call returns; outside any tool call (or after the call
+   * already returned) it is revoked immediately. No-op for conversation
+   * grants and already revoked ones.
+   */
+  noteOnceUse(grant: Grant): void {
+    if (grant.duration !== 'once' || grant.revokedAt !== null) return;
+    const scope = currentToolCall();
+    if (scope === undefined || scope.ended) {
+      this.revoke(grant.id);
+      return;
+    }
+    scope.onEnd.set(`grant:${grant.id}`, () => {
+      this.revoke(grant.id);
+    });
+  }
+
   revoke(id: string): Grant | null {
     const grant = this.get(id);
     if (!grant || grant.revokedAt !== null) return grant;
@@ -149,7 +180,20 @@ export class GrantsService {
     return this.get(id);
   }
 
-  /** `once` grants expire when their run ends (success, failure, cancel). */
+  /**
+   * Absolute TTL backstop of `once` grants (GRANT_ABSOLUTE_TTL_MS): lazily
+   * revoked (revoked_at = the moment they expired) before every listing, so
+   * the right panel, the sandbox mounts and the effective set agree.
+   */
+  #expireOverdueOnce(): void {
+    this.#db
+      .prepare(
+        "update grants set revoked_at = created_at + ? where duration = 'once' and revoked_at is null and created_at + ? <= ?",
+      )
+      .run(GRANT_ABSOLUTE_TTL_MS, GRANT_ABSOLUTE_TTL_MS, this.#clock.now());
+  }
+
+  /** `once` grants (still unused ones included) expire when their run ends. */
   expireForRun(runId: string): number {
     const result = this.#db
       .prepare("update grants set revoked_at = ? where run_id = ? and revoked_at is null and duration = 'once'")

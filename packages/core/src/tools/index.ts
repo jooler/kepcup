@@ -446,9 +446,8 @@ export function buildResponseTools(input: {
           params.path,
           params.access,
           params.reason,
-          {
-            signal: ctx.signal,
-          },
+          // D75：主动申请的「仅这一次」留给随后真正使用它的那次工具调用。
+          { signal: ctx.signal, preauthorize: true },
         );
         return {
           ok: true,

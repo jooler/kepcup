@@ -37,6 +37,13 @@ export interface PolicyInput {
    * home (deny-then-allow re-exposure, same as toolchainsRoot).
    */
   skillReadOnlyDirs?: string[];
+  /**
+   * D75 §2.1 / §5.1: the executing run may not write (a supervisor turn, or
+   * a task created with `writes: false`). The workspace and the project are
+   * mounted read-only and write grants only grant reading; the app caches
+   * stay writable (package-manager / bytecode caches, not user files).
+   */
+  readOnlyRun?: boolean;
 }
 
 /**
@@ -57,8 +64,10 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   // the sandbox profile. srt redirects TMPDIR to a sandbox-private location
   // and allows writes there by default.
   const cacheDirs = [paths.cacheNpmDir, paths.cachePipDir, paths.cacheXdgDir, paths.cacheCargoDir];
-  const readWrite = [workspacePath, ...cacheDirs];
+  const readOnlyRun = input.readOnlyRun === true;
+  const readWrite = readOnlyRun ? [...cacheDirs] : [workspacePath, ...cacheDirs];
   const readOnly = readOnlyRoots(platform);
+  if (readOnlyRun) readOnly.push(workspacePath);
   let denyRead: string[] = [canonicalPath(homedir()), paths.home, ...sensitivePaths(platform)];
 
   // Installed toolchains (P06) are visible read-only inside the sandbox and
@@ -79,7 +88,7 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
 
   const project = input.project;
   if (project !== undefined) {
-    if (project.hasLease) readWrite.push(project.path);
+    if (project.hasLease && !readOnlyRun) readWrite.push(project.path);
     else readOnly.push(project.path);
     // The project re-exposes its slice of the denied home; protect-rule globs
     // re-deny inside it (srt read model: deny-then-allow, last match wins).
@@ -90,7 +99,7 @@ export function buildSandboxPolicy(input: PolicyInput): SandboxPolicy {
   }
 
   for (const grant of input.grants ?? []) {
-    if (grant.access === 'write') readWrite.push(grant.path);
+    if (grant.access === 'write' && !readOnlyRun) readWrite.push(grant.path);
     else readOnly.push(grant.path);
     // A granted sensitive location is no longer wholesale denied; srt's
     // read model is deny-then-allow, so the allow entry above re-exposes it.

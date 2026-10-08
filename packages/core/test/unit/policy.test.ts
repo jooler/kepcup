@@ -78,6 +78,41 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readOnly).toContain('/tmp/granted-read');
   });
 
+  it('read-only run (D75): workspace, leased project and write grants are all read-only', () => {
+    const writeGrant = {
+      id: 'grt_w',
+      botId: 'bot_1',
+      conversationId: 'conv_1',
+      path: '/tmp/granted-write',
+      access: 'write' as const,
+      duration: 'conversation' as const,
+      runId: null,
+      approvalId: null,
+      createdAt: 0,
+      revokedAt: null,
+    };
+    const input = {
+      platform: process.platform,
+      paths,
+      workspacePath: workspace(),
+      network: { mode: 'none' as const, allowDomains: [] },
+      grants: [writeGrant],
+      project: { path: '/tmp/ro-project', hasLease: true, denyReadGlobs: [] },
+    };
+    const writable = buildSandboxPolicy(input);
+    expect(writable.readWrite).toEqual(expect.arrayContaining([workspace(), '/tmp/ro-project', '/tmp/granted-write']));
+
+    const policy = buildSandboxPolicy({ ...input, readOnlyRun: true });
+    for (const dir of [workspace(), '/tmp/ro-project', '/tmp/granted-write']) {
+      expect(policy.readWrite).not.toContain(dir);
+      expect(policy.readOnly).toContain(dir);
+    }
+    // Still readable (re-exposed under the denied home) and the app caches
+    // stay writable (package-manager caches, not user files).
+    expect(policy.denyRead).not.toContain(workspace());
+    expect(policy.readWrite).toContain(paths.cacheNpmDir);
+  });
+
   it('removes a granted path from denyRead (policy level)', () => {
     // The data home is always in denyRead; at the policy layer a covering
     // grant removes it (the gateway never creates such a grant for the data

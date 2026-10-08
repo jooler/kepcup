@@ -59,6 +59,16 @@ async function checked(
   return gateway.ensurePathAccess(identity, p, mode, `执行 ${toolName} 需要访问该路径`);
 }
 
+/**
+ * D75 read-only runs: refuse write / edit up front so the result carries
+ * RUN_READ_ONLY (pi's edit tool re-wraps errors from its file operations as
+ * plain Errors). The gateway still refuses the write itself either way.
+ */
+function assertMayWrite(identity: ToolContext['identity'], gateway: ToolGateway): void {
+  const denial = gateway.writeDenial(identity);
+  if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
+}
+
 function assertReadable(resolved: string): void {
   statSync(resolved);
 }
@@ -133,7 +143,7 @@ interface PiToolLike {
 }
 
 interface WrapOptions {
-  /** Runs before the underlying tool; used for status-line progress. */
+  /** Runs before the underlying tool (status-line progress, D75 write guard); an AppError it throws becomes the tool error. */
   before?(params: unknown, ctx: ToolContext): void;
 }
 
@@ -149,8 +159,8 @@ export function wrapPiTool(
     description: def.description,
     parameters: def.parameters,
     execute: async (params, ctx): Promise<ToolResult> => {
-      options?.before?.(params, ctx);
       try {
+        options?.before?.(params, ctx);
         const result = (await def.execute('call', params, ctx.signal, undefined, {
           cwd: workspacePath,
         })) as PiToolResult;
@@ -381,12 +391,14 @@ export function buildCodingTools(
     wrapPiTool(read, baseDir, secrets),
     wrapPiTool(write, baseDir, secrets, {
       before: (params, ctx) => {
+        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
         if (target !== undefined) ctx.progress(`正在写入 ${shortCommand(target)}`);
       },
     }),
     wrapPiTool(edit, baseDir, secrets, {
       before: (params, ctx) => {
+        assertMayWrite(identity, gateway);
         const target = (params as { path?: string }).path;
         if (target !== undefined) ctx.progress(`正在编辑 ${shortCommand(target)}`);
       },
