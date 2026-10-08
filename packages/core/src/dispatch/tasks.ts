@@ -205,21 +205,29 @@ interface LaunchedTask {
   waitReason: string | null;
   briefBuilt: boolean;
   /** Injects that arrived after the brief was built but before attach (+ their entries). */
-  buffered: Array<{ text: string; entryId: string }>;
+  buffered: PendingInject[];
   /**
    * Injects the engine run accepted (`steer()` true) but has not confirmed
    * yet, oldest first: an async refusal or a confirmation takes the oldest
    * entry with its text (FIFO).
    */
-  steered: Array<{ text: string; entryId: string }>;
+  steered: PendingInject[];
   /** Confirmations that arrived before their entry was noted (engines confirming inside `steer()`). */
   confirmedEarly: string[];
+}
+
+/** An inject on its way into an engine run (its entry id + the caller's fallback). */
+interface PendingInject {
+  text: string;
+  entryId: string;
+  /** Runs when the inject turns out not to reach any engine run (审查 M5). */
+  onNotDelivered?: () => void;
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
 
 /** Records an accepted steer awaiting its confirmation (unless it was confirmed already). */
-function noteSteered(launched: LaunchedTask, item: { text: string; entryId: string }): void {
+function noteSteered(launched: LaunchedTask, item: PendingInject): void {
   const early = launched.confirmedEarly.indexOf(item.text);
   if (early !== -1) launched.confirmedEarly.splice(early, 1);
   else launched.steered.push(item);
@@ -475,7 +483,17 @@ export class TaskHost implements TaskToolFacade {
     return { taskId: task.id, state: taskState(current.status), queueReason: null };
   }
 
-  inject(identity: RunIdentity, input: InjectTaskInput): InjectTaskResult {
+  /**
+   * `options.onNotDelivered` (host callers, e.g. the §8.4 downgrade): runs
+   * when an inject reported `delivered` turns out not to reach the engine
+   * run after all — refused asynchronously, or buffered for an engine run
+   * that never took it. A synchronous `queued` is the caller's to handle.
+   */
+  inject(
+    identity: RunIdentity,
+    input: InjectTaskInput,
+    options: { onNotDelivered?: () => void } = {},
+  ): InjectTaskResult {
     const { botId, conversationId } = this.#scope(identity);
     const task = this.#ownTask(botId, conversationId, input.taskId);
     if (isTerminalStatus(task.status)) {
@@ -512,11 +530,14 @@ export class TaskHost implements TaskToolFacade {
       sourceMessageIds: sources.map((message) => message.id),
       delivery,
     });
+    const fallback = options.onNotDelivered !== undefined ? { onNotDelivered: options.onNotDelivered } : {};
     // Steered at attach; a failure there downgrades the entry to queued.
-    if (buffer && launched !== undefined) launched.buffered.push({ text: steerText(), entryId: entry.id });
+    if (buffer && launched !== undefined) {
+      launched.buffered.push({ text: steerText(), entryId: entry.id, ...fallback });
+    }
     // An engine that refuses asynchronously (external agents) reports back by text.
     if (steered !== null && launched !== undefined) {
-      noteSteered(launched, { text: steered, entryId: entry.id });
+      noteSteered(launched, { text: steered, entryId: entry.id, ...fallback });
     }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
     return { delivery };
@@ -1265,9 +1286,10 @@ export class TaskHost implements TaskToolFacade {
 
   /**
    * Buffered injects that reached no engine run after all: their entries are
-   * downgraded to `queued` (§4.1 — the bot sees they did not take effect).
+   * downgraded to `queued` (§4.1 — the bot sees they did not take effect) and
+   * the caller's fallback runs (审查 M5).
    */
-  #injectsNotDelivered(items: Array<{ entryId: string }>): void {
+  #injectsNotDelivered(items: PendingInject[]): void {
     for (const item of items) {
       this.#safely(() => {
         this.#deps.db
@@ -1276,6 +1298,8 @@ export class TaskHost implements TaskToolFacade {
           )
           .run(item.entryId);
       });
+      const fallback = item.onNotDelivered;
+      if (fallback !== undefined) this.#safely(fallback);
     }
   }
 

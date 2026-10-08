@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Message, Run } from '@kepcup/shared';
+import type { Bot, Message, Run } from '@kepcup/shared';
 import {
+  agentTurn,
   createTestStack,
+  fakeAgentEntry,
+  fakeAgentSpawner,
   isTaskRequest,
   listMessages,
   makeBot,
@@ -10,6 +13,7 @@ import {
   step,
   waitFor,
   type CoreHarness,
+  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';
@@ -371,4 +375,104 @@ describe('L3 / L6: retrying a failed turn', () => {
     expect(tasks[0]!.originRunId).toBe(failed.id);
     expect(runsOf(stack, conv.id, 'turn').filter(isTerminal)).toHaveLength(2);
   }, 40_000);
+});
+
+describe('M5: §8.4 downgrade never drops a message', () => {
+  async function downgradedBot(turns: ReturnType<typeof agentTurn>[]) {
+    const started: FakeAcpAgentHandle[] = [];
+    const entry = fakeAgentEntry('fake-steer', { provider: 'claude' });
+    const stack = await createTestStack({
+      env: { KEPCUP_MOCK_LLM_URL: '' },
+      agentCatalog: [entry],
+      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
+      agentSpawn: fakeAgentSpawner(
+        {
+          'fake-steer': {
+            // Takes steering requests but refuses them (asynchronously).
+            steering: true,
+            steeringOutcome: 'promptRequired',
+            modes: {
+              currentModeId: 'default',
+              availableModes: [
+                { id: 'default', name: 'Default' },
+                { id: 'acceptEdits', name: 'Accept Edits' },
+              ],
+            },
+            turns,
+          },
+        },
+        started,
+      ) as never,
+    });
+    stacks.push(stack);
+    await stack.core.rpc.call('settings.update', {
+      experimental: { externalAgents: true },
+      agents: { 'fake-steer': { enabled: true } },
+      backgroundTasks: { agentEnabled: false },
+    });
+    const created = await makeBot(stack.core, '外援');
+    const bot = (
+      (await stack.core.rpc.call('bots.update', {
+        id: created.id,
+        profile: {
+          ...created.profile,
+          runtime: {
+            ...created.profile.runtime,
+            agent: { ...created.profile.runtime.agent, id: 'fake-steer' },
+          },
+        },
+      })) as { bot: Bot }
+    ).bot;
+    const conv = await openDirect(stack.core, bot.id);
+    return { stack, started, bot, conv };
+  }
+
+  it('an inject the agent refuses asynchronously becomes a task of its own', async () => {
+    const { stack, started, conv } = await downgradedBot([
+      agentTurn().sleep(1_500),
+      agentTurn().text('第二件也办了'),
+    ]);
+    await sendBatch(stack.core, conv.id, ['先办第一件']);
+    await waitFor(
+      () => started.find((handle) => handle.observed.prompts.some((p) => p.text.includes('先办第一件'))) ?? null,
+      { label: 'first task prompted' },
+    );
+    const [second] = await sendBatch(stack.core, conv.id, ['再办第二件']);
+    const fallback = await waitFor(
+      () =>
+        runsOf(stack, conv.id, 'task').find((task) => task.triggerMessageIds.includes(second!.id)) ??
+        null,
+      { label: 'refused inject became a task', timeoutMs: 20_000 },
+    );
+    expect(runsOf(stack, conv.id, 'task')).toHaveLength(2);
+    const brief = domain(stack)
+      .messages.taskEvents(fallback.id)
+      .map((event) => event.content as { phase: string; text: string })
+      .find((content) => content.phase === 'brief')!;
+    expect(brief.text).toContain('用户的新消息');
+    expect(brief.text).toContain('再办第二件');
+    const [first] = runsOf(stack, conv.id, 'task');
+    const inject = domain(stack)
+      .messages.taskEvents(first!.id)
+      .map((event) => event.content as { phase: string; delivery?: string })
+      .find((content) => content.phase === 'inject');
+    expect(inject).toMatchObject({ delivery: 'queued' });
+  }, 60_000);
+
+  it('a system event is handed over as a system event, not as the user', async () => {
+    const { stack, bot, conv } = await downgradedBot([agentTurn().text('知道了')]);
+    orchestrator(stack).deliverEventToBot(bot.id, conv.id, 'wiki_ingested', 'SYS-EVENT 入库完成');
+    const task = await waitFor(() => runsOf(stack, conv.id, 'task')[0] ?? null, {
+      label: 'task for the event',
+      timeoutMs: 20_000,
+    });
+    const brief = domain(stack)
+      .messages.taskEvents(task.id)
+      .map((event) => event.content as { phase: string; text: string })
+      .find((content) => content.phase === 'brief')!;
+    expect(brief.text).toContain('系统事件（wiki_ingested）');
+    expect(brief.text).toContain('SYS-EVENT');
+    expect(brief.text).not.toContain('用户的新消息');
+    expect(task.taskTitle).toBe('处理新消息');
+  }, 60_000);
 });
