@@ -16,6 +16,7 @@ import {
   agentTurn,
   createTestStack,
   fakeAcpAgentLaunch,
+  isTaskRequest,
   listRuns,
   makeBot,
   openDirect,
@@ -26,14 +27,23 @@ import {
   waitForRun,
   writeFakeAgentScript,
   type FakeAgentScript,
+  type MockChatRequest,
+  type MockLlmStep,
   type TestStack,
 } from '@kepcup/testkit';
+import type { RunIdentity } from '../../src/agent/types.js';
 
 /**
  * 外部智能体 P3：权限与隔离（todo/acp-external-agents.md §6.2，D72）。真库 +
  * 子进程假 Agent：权限桥分级（工作目录内写放行、越界写弹卡 → 拒绝 →
  * reject_once、数据目录拒绝、无人值守底线、命令白名单、无 OS 沙箱命令逐条
  * 弹卡）、模式纠偏、project 内 Agent 配置确认、显式租约与检查点。
+ *
+ * D75（docs/design/30-supervisor-and-tasks.md §8.1）：外部 Agent 只作任务引擎。
+ * 每批用户消息由内置模型（脚本）的对话轮派出任务，权限桥 / 配置确认 / 租约
+ * 都作用在 Agent 上执行的**任务** run 上：写任务用 Bot 自己的档位、只读任务
+ * 强制 read_only（§5.1）；写任务的 project 租约由任务层在开工前取、整任务
+ * pin 住（§5.1–§5.2），排队的写任务停在 submitted（等写入租约）。
  */
 
 const stacks: TestStack[] = [];
@@ -97,6 +107,77 @@ async function pendingAgentTool(stack: TestStack, conversationId: string): Promi
   );
 }
 
+function domain(stack: TestStack) {
+  return stack.core.services.domain!;
+}
+
+/** A turn woken by a task's terminal entry (design 30 §3.3). */
+const isWake = (req: MockChatRequest): boolean =>
+  !isTaskRequest(req) && req.lastUserText().includes('<trigger reason="task"');
+
+/**
+ * One user batch's turn (built-in mock model): it starts a task for the
+ * latest user message and acknowledges; the task runs on the fake agent; a
+ * non-empty result / a failure wakes a turn that relays it (`relay: false`
+ * when the task is cancelled — no wake).
+ */
+function turnStartsTask(
+  stack: TestStack,
+  conversationId: string,
+  input: { writes: boolean; relay?: boolean },
+): MockLlmStep[] {
+  return [
+    step()
+      .inTurn()
+      .expect((req) => !isWake(req))
+      .replyToolCall('start_task', () => {
+        const source = domain(stack)
+          .messages.listShared(conversationId, { limit: 20 })
+          .filter((message) => message.senderType === 'user')
+          .at(-1)!;
+        return {
+          title: '处理请求',
+          instruction: `按用户的消息完成这件事：${'text' in source.content ? source.content.text : ''}`,
+          source_message_ids: [source.id],
+          writes: input.writes,
+        };
+      }),
+    step()
+      .inTurn()
+      .expect((req) => !isWake(req))
+      .replyText('好的，我去处理。'),
+    ...(input.relay === false ? [] : [step().inTurn().expect(isWake).replyText('任务有结果了。')]),
+  ];
+}
+
+/** The conversation's task runs, oldest first. */
+function tasksIn(stack: TestStack, conversationId: string): Run[] {
+  return domain(stack)
+    .runs.listByConversation(conversationId, 100)
+    .filter((run) => run.loopType === 'task')
+    .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+}
+
+function waitTasksIn(
+  stack: TestStack,
+  conversationId: string,
+  status: Run['status'],
+  count: number,
+  label: string,
+): Promise<Run[]> {
+  return waitFor(
+    () => {
+      const tasks = tasksIn(stack, conversationId).filter((task) => task.status === status);
+      return tasks.length === count ? tasks : null;
+    },
+    { label, timeoutMs: 30_000 },
+  );
+}
+
+function waitTask(stack: TestStack, conversationId: string, status: Run['status']): Promise<Run> {
+  return waitForRun(stack.core, conversationId, status, { loopType: 'task', timeoutMs: 30_000 });
+}
+
 function outcomes(record: ReturnType<typeof readFakeAgentRecord>) {
   return Object.fromEntries(
     record.permissions.map((p) => [
@@ -139,6 +220,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['改文件']);
 
     const card = await pendingAgentTool(stack, conv.id);
@@ -149,12 +231,15 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       locations: [path.join(realpathSync(outside), 'x.txt')],
       durations: ['once', 'conversation'],
     });
-    // The run parks in waiting_approval like a built-in run.
-    await waitFor(
+    // The task parks in waiting_approval like a built-in run; the card is its.
+    const task = await waitFor(
       async () =>
-        (await listRuns(stack.core, conv.id)).find((r) => r.status === 'waiting_approval') ?? null,
+        (await listRuns(stack.core, conv.id)).find(
+          (r) => r.loopType === 'task' && r.status === 'waiting_approval',
+        ) ?? null,
       { label: 'waiting_approval' },
     );
+    expect(card.runId).toBe(task.id);
     // The context line has a real rendering (not「审批记录已清理」).
     const domainApprovals = stack.core.services.domain!.approvals;
     expect(domainApprovals.renderContextLine(card)).toBe(
@@ -164,7 +249,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     expect(domainApprovals.renderContextLine(domainApprovals.get(card.id)!)).toMatch(
       /^\[系统\] 用户拒绝外援 经智能体「Fake Agent」写入 /,
     );
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
 
     expect(outcomes(stack.record())).toEqual({
       in: 'allow_once',
@@ -193,6 +278,10 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
+    stack.llm.script('mock-main', [
+      ...turnStartsTask(stack, conv.id, { writes: true }),
+      ...turnStartsTask(stack, conv.id, { writes: true }),
+    ]);
     await sendBatch(stack.core, conv.id, ['读数据']);
     const card = await pendingAgentTool(stack, conv.id);
     await stack.core.rpc.call('approvals.decide', {
@@ -200,15 +289,11 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       approve: true,
       duration: 'conversation',
     });
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
+    // Another task (another agent session) of the same bot and conversation.
     await sendBatch(stack.core, conv.id, ['再读一次']);
-    await waitFor(
-      async () =>
-        (await listRuns(stack.core, conv.id)).filter((r) => r.status === 'completed').length === 2
-          ? true
-          : null,
-      { label: 'second run completed', timeoutMs: 30_000 },
-    );
+    const [first, second] = await waitTasksIn(stack, conv.id, 'completed', 2, 'second task');
+    expect(second!.agentSessionId).not.toBe(first!.agentSessionId);
     expect(outcomes(stack.record())).toEqual({ r1: 'allow_once', r2: 'allow_once' });
     const rows = (await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool');
     expect(rows).toHaveLength(1);
@@ -255,8 +340,9 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       readFileSync(scriptFile, 'utf8').replaceAll('__HOME__', home).replaceAll('__WS__', workspace),
     );
     await stack.core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['动手']);
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
 
     // main.db: rejected without a card; cp from the data dir: auto-denied by
     // the unattended floor; touching the run's own workspace: auto-approved.
@@ -296,6 +382,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['装依赖']);
     const card = await pendingAgentTool(stack, conv.id);
     expect(card.payload).toMatchObject({
@@ -310,13 +397,13 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
       approve: true,
       duration: 'conversation',
     });
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
     expect(outcomes(stack.record())).toEqual({ npm: 'allow_once' });
     const decided = (await approvals(stack, conv.id)).find((a) => a.id === card.id)!;
     expect(decided.decision).toEqual({ duration: 'once' });
   }, 60_000);
 
-  it('read_only tier: writes and non-allowlisted commands are rejected without cards', async () => {
+  it('read_only tier (even on a write task): writes and commands are rejected without cards', async () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
@@ -331,8 +418,10 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '只读外援', 'read_only');
     const conv = await openDirect(stack.core, bot.id);
+    // A write task runs on the bot's own tier — read_only here.
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['试试']);
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
     expect(outcomes(stack.record())).toEqual({
       w: 'reject_once',
       x: 'reject_once',
@@ -343,7 +432,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     expect((await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool')).toEqual([]);
   }, 60_000);
 
-  it('cancelling the run answers a pending permission request with cancelled', async () => {
+  it('cancelling the task answers a pending permission request with cancelled', async () => {
     const outside = mkdtempSync(path.join(tmpdir(), 'p3-cancel-'));
     dirs.push(outside);
     const stack = await startWithFakeAgent({
@@ -358,11 +447,14 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
+    // A cancelled task does not wake the bot (§3.3): no relay turn.
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true, relay: false }));
     await sendBatch(stack.core, conv.id, ['写']);
-    await pendingAgentTool(stack, conv.id);
-    const run = (await listRuns(stack.core, conv.id))[0]!;
-    await stack.core.rpc.call('runs.cancel', { runId: run.id });
-    await waitForRun(stack.core, conv.id, 'cancelled');
+    const card = await pendingAgentTool(stack, conv.id);
+    const [task] = tasksIn(stack, conv.id);
+    expect(card.runId).toBe(task!.id);
+    await stack.core.rpc.call('runs.cancel', { runId: task!.id });
+    await waitTask(stack, conv.id, 'cancelled');
     await waitFor(async () => (stack.record().permissions.length > 0 ? true : null), {
       label: 'permission answered',
     });
@@ -384,8 +476,9 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['开始']);
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
     await waitFor(
       async () =>
         stack.record().events.some((e) => e.kind === 'mode' && e.modeId === 'default')
@@ -404,7 +497,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
 });
 
 describe('external agents in a project (P3: config confirmation, explicit lease, checkpoints)', () => {
-  it('asks once per conversation before running with project-side agent config', async () => {
+  it('asks once per conversation before a task runs with project-side agent config', async () => {
     const stack = await startWithFakeAgent({
       turns: [agentTurn().text('一'), agentTurn().text('二')],
     });
@@ -412,22 +505,23 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const conv = await openDirect(stack.core, bot.id);
     const project = makeProject();
     writeFileSync(path.join(project, 'AGENTS.md'), '# agent rules\n');
-    await bindProject(stack, conv.id, project);
+    const projectPath = await bindProject(stack, conv.id, project);
+    // Read-only tasks: they work in the bound project (their workdir).
+    stack.llm.script('mock-main', [
+      ...turnStartsTask(stack, conv.id, { writes: false }),
+      ...turnStartsTask(stack, conv.id, { writes: false }),
+    ]);
 
     await sendBatch(stack.core, conv.id, ['第一次']);
     const card = await pendingAgentTool(stack, conv.id);
     expect(card.payload).toMatchObject({ kind: 'config', locations: ['AGENTS.md'] });
     await stack.core.rpc.call('approvals.decide', { id: card.id, approve: true });
-    await waitForRun(stack.core, conv.id, 'completed');
+    const first = await waitTask(stack, conv.id, 'completed');
+    expect(first.taskWorkdir).toBe(projectPath);
+    expect(stack.record().sessions[0]!.cwd).toBe(projectPath);
 
     await sendBatch(stack.core, conv.id, ['第二次']);
-    await waitFor(
-      async () =>
-        (await listRuns(stack.core, conv.id)).filter((r) => r.status === 'completed').length === 2
-          ? true
-          : null,
-      { label: 'second run', timeoutMs: 30_000 },
-    );
+    await waitTasksIn(stack, conv.id, 'completed', 2, 'second task');
     expect((await approvals(stack, conv.id)).filter((a) => a.kind === 'agent_tool')).toHaveLength(
       1,
     );
@@ -443,6 +537,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     mkdirSync(sub, { recursive: true });
     await bindProject(stack, conv.id, sub);
 
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: false }));
     await sendBatch(stack.core, conv.id, ['在子目录里干活']);
     const card = await pendingAgentTool(stack, conv.id);
     expect(card.payload).toMatchObject({ kind: 'config' });
@@ -453,21 +548,26 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     expect(payload.reason).toContain('可能放宽');
     expect(payload.reason).toContain('git 根目录');
     await stack.core.rpc.call('approvals.decide', { id: card.id, approve: true });
-    await waitForRun(stack.core, conv.id, 'completed');
+    await waitTask(stack, conv.id, 'completed');
   }, 60_000);
 
-  it('a denied config confirmation fails the run without starting the agent', async () => {
+  it('a denied config confirmation fails the task without starting the agent', async () => {
     const stack = await startWithFakeAgent({ turns: [agentTurn().text('不该运行')] });
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
     const project = makeProject();
     writeFileSync(path.join(project, 'AGENTS.md'), '# agent rules\n');
     await bindProject(stack, conv.id, project);
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['开始']);
     const card = await pendingAgentTool(stack, conv.id);
     await stack.core.rpc.call('approvals.decide', { id: card.id, approve: false });
-    const run = await waitForRun(stack.core, conv.id, 'failed');
+    const run = await waitTask(stack, conv.id, 'failed');
     expect(run.error).toContain('未确认');
+    // The task's failure entry wakes the bot (a turn relays it).
+    expect(
+      (domain(stack).messages.terminalTaskEvent(run.id)?.content as { phase?: string }).phase,
+    ).toBe('failure');
     expect(stack.record().prompts).toEqual([]);
   }, 60_000);
 
@@ -486,18 +586,18 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const project = makeProject();
     writeFileSync(path.join(project, 'AGENTS.md'), '# v1\n');
     await bindProject(stack, conv.id, project);
+    // Write tasks (the agent's own write to AGENTS.md must reach the bridge).
+    stack.llm.script('mock-main', [
+      ...turnStartsTask(stack, conv.id, { writes: true }),
+      ...turnStartsTask(stack, conv.id, { writes: true }),
+      ...turnStartsTask(stack, conv.id, { writes: true }),
+    ]);
     const configCards = async () =>
       (await approvals(stack, conv.id)).filter(
         (a) => a.kind === 'agent_tool' && a.payload['kind'] === 'config',
       );
     const completed = (n: number) =>
-      waitFor(
-        async () =>
-          (await listRuns(stack.core, conv.id)).filter((r) => r.status === 'completed').length === n
-            ? true
-            : null,
-        { label: `${n} completed`, timeoutMs: 30_000 },
-      );
+      waitTasksIn(stack, conv.id, 'completed', n, `${n} tasks completed`);
 
     // 1) Unattended auto-approval runs the agent but is not remembered.
     await stack.core.rpc.call('unattended.enable', { hours: 1, acknowledgeRisk: true });
@@ -538,7 +638,7 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     expect(outcomes(stack.record())).toEqual({ cfg: 'reject_once' });
   }, 90_000);
 
-  it('review M6: the external run lease is pinned — another lease target is refused during the run', async () => {
+  it('review M6: the agent write task lease is pinned — another lease target is refused during the task', async () => {
     const stack = await startWithFakeAgent({
       turns: [agentTurn().sleep(2_500).text('完成')],
     });
@@ -548,16 +648,14 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const bot = await agentBot(stack, '外援');
     const conv = await openDirect(stack.core, bot.id);
     const projectPath = await bindProject(stack, conv.id, project);
+    stack.llm.script('mock-main', turnStartsTask(stack, conv.id, { writes: true }));
     await sendBatch(stack.core, conv.id, ['开始']);
-    const run = await waitFor(
-      async () => (await listRuns(stack.core, conv.id)).find((r) => r.status === 'running') ?? null,
-      { label: 'running' },
-    );
-    const identity = {
+    const run = await waitTask(stack, conv.id, 'running');
+    const identity: RunIdentity = {
       runId: run.id,
       botId: bot.id,
       conversationId: conv.id,
-      loopType: 'turn' as const,
+      loopType: 'task',
     };
     await waitFor(async () => (stack.record().prompts.length > 0 ? true : null), {
       label: 'agent prompted',
@@ -577,10 +675,10 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     await expect(
       runtime.ensureWriteLease(identity, path.join(projectPath, 'a')),
     ).resolves.toBeTruthy();
-    await waitForRun(stack.core, conv.id, 'completed', { timeoutMs: 30_000 });
+    await waitTask(stack, conv.id, 'completed');
   }, 60_000);
 
-  it('holds the project write lease for the whole run: a built-in bot waits; changes diff and revert', async () => {
+  it('an agent write task holds the project lease throughout: a built-in write task waits; changes diff and revert', async () => {
     const stack = await startWithFakeAgent({
       turns: [agentTurn().writeFile('agent.txt', 'from agent\n').sleep(2_500).text('写好了')],
     });
@@ -592,38 +690,57 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     const builtinConv = await openDirect(stack.core, builtin.id);
     await bindProject(stack, builtinConv.id, project);
 
+    stack.llm.script('mock-main', turnStartsTask(stack, agentConv.id, { writes: true }));
     await sendBatch(stack.core, agentConv.id, ['写一个文件']);
     await waitFor(async () => (existsSync(path.join(project, 'agent.txt')) ? true : null), {
       label: 'agent wrote',
       timeoutMs: 30_000,
     });
+    const agentTask = await waitTask(stack, agentConv.id, 'running');
+    // The agent conversation's turn is over: script the built-in bot (its task
+    // runs on the mock model) plus the relay turns of both results.
+    await waitForRun(stack.core, agentConv.id, 'completed');
     stack.llm.script('mock-main', [
-      step().replyToolCall('write', { path: 'builtin.txt', content: 'from builtin' }),
-      step().replyText('我也写好了'),
+      ...turnStartsTask(stack, builtinConv.id, { writes: true, relay: false }),
+      step().inTask().replyToolCall('write', { path: 'builtin.txt', content: 'from builtin' }),
+      step().inTask().replyText('我也写好了'),
+      step().inTurn().expect(isWake).replyText('任务有结果了。'),
+      step().inTurn().expect(isWake).replyText('任务有结果了。'),
     ]);
     await sendBatch(stack.core, builtinConv.id, ['你也写一个']);
+    const tasks = stack.core.services.orchestrator!.tasks;
+    const builtinTurn: RunIdentity = {
+      runId: 'run_list',
+      botId: builtin.id,
+      conversationId: builtinConv.id,
+      loopType: 'turn',
+    };
+    // The built-in write task stays submitted, waiting for the project lease.
     const waiting = await waitFor(
-      async () =>
-        (await listRuns(stack.core, builtinConv.id)).find((r) => r.status === 'waiting_lease') ??
-        null,
-      { label: 'built-in waiting_lease', timeoutMs: 30_000 },
+      () =>
+        tasks
+          .list(builtinTurn)
+          .find((task) => task.state === 'submitted' && task.queueReason === '等写入租约') ?? null,
+      { label: 'built-in task waiting for the lease', timeoutMs: 30_000 },
     );
-    expect(waiting.botId).toBe(builtin.id);
-    // The agent run still holds the lease: the built-in file is not there yet.
+    expect(domain(stack).runs.getOrThrow(waiting.taskId)).toMatchObject({
+      botId: builtin.id,
+      status: 'queued',
+    });
+    // The agent task still holds the lease: the built-in file is not there yet.
     expect(existsSync(path.join(project, 'builtin.txt'))).toBe(false);
 
-    const agentRun: Run = await waitForRun(stack.core, agentConv.id, 'completed', {
-      timeoutMs: 60_000,
-    });
-    await waitForRun(stack.core, builtinConv.id, 'completed', { timeoutMs: 60_000 });
+    const agentDone: Run = await waitTask(stack, agentConv.id, 'completed');
+    expect(agentDone.id).toBe(agentTask.id);
+    await waitTask(stack, builtinConv.id, 'completed');
     expect(readFileSync(path.join(projectPath, 'builtin.txt'), 'utf8')).toBe('from builtin');
 
-    const diff = (await stack.core.rpc.call('projects.diff', { runId: agentRun.id })) as {
+    const diff = (await stack.core.rpc.call('projects.diff', { runId: agentTask.id })) as {
       change: { files: Array<{ path: string; change: string }> } | null;
     };
     expect(diff.change?.files.map((f) => `${f.path}:${f.change}`)).toEqual(['agent.txt:added']);
     const revert = (await stack.core.rpc.call('projects.revert', {
-      runId: agentRun.id,
+      runId: agentTask.id,
       force: false,
     })) as { ok: boolean };
     expect(revert.ok).toBe(true);
