@@ -218,16 +218,26 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 
 - `docs/design/02-execution.md` 整篇重写；设计 30 折入实现期细化（DEV-009–DEV-015 一律标「待确认」，调度名额规则写进 §5.3）；01 / 04 / 08 / 12 / 13 / 23 / 24 / 27 / 28 与 design README 的 D75 修订注按实现更新；`docs/dev/02` / `03` / `04` / `05`、`PROGRESS.md`、`DEVIATIONS.md`（各条「已更新的文档」）同步。
 
-**偏差汇总**（全部待用户确认）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015。
+### projects.test 重写（2026-10-08，合入 `d75` @ merge of `5aa0d3c`）
+
+- 6 条仍假设「回复 run 持有写租约」的用例按任务语义重写为 18 例（写任务跨对话串行于任务层、对话轮 / 只读任务拒写、写任务开局持租约、检查点按任务 id、localhost 策略拆为网关策略 + OS 沙箱两例、执行中禁止切换 project、强制收回分租约层等待与任务层排队〔DEV-015〕两例）。容器内约 18 s、17 过、1 条 OS 沙箱用例按基线失败；基线由 33 条减为 28 条（`f92f10a`）。发现「被强制收回租约的写任务再写会覆盖首段改动记录」交批 E。
+
+### 修复批 E：W3 / 批 D 审查（`t/d75-fixe`，2026-10-08，合入 `d75` @ `c3b541a`）
+
+- 审查（`26e15f2`）判 REQUEST CHANGES：H1 任务问题卡在所有 Bot 上下文里渲染为无署名、未包 `<untrusted>` 的 `[系统]` 行（任务可冒充系统）；M1 吸收丢失 @ 链绑定（深度上限与链 token 预算可被绕过）；M2 吸收破坏 D71「每个委派对应自己起的 run」；M3 `ask_user` 等待期间占名额与写租约至 4 h 且计入墙钟；M4 引擎启动前失败的对话轮使结果无限重投、持有结果超 10 分钟的对话轮导致重复转述；M5 回答问题的注入丢原文与附件；L1–L7。
+- 修复（`b7e5404`、`c217b28`、`f5210ed`、`2ef65a6`、`aa415f3`、`44faa3b`、`b1205ac`）：问题卡记 `taskBotId`，渲染为「X（任务 t）向用户提问」并对所有视角包 `<untrusted>`（含摘要），选项上限 `ASK_USER_OPTION_MAX_CHARS`；同轮规则 `canShareTurn`（不同 @ 链、委派批不合并），吸收经 `runs.setTrigger` 落 `chain_id` / `chain_depth`；`ask_user` 经 `Scheduler.yieldSlotWhile` 让出名额、等待时间不计墙钟、`TASK_QUESTION_TTL_MS`（24 h）到期回「用户未回答」，写租约保留（DEV-018）；投递次数记在终态条目 `$.deliveries`，达 `TASK_REDELIVER_MAX_ATTEMPTS`（5）消费并发可见通知 `task_result_undelivered`；对话轮持有中的结果不再对账重投（`heldByTurn`），吸收时丢弃已消费结果（重试轮自身触发除外）；回答注入带原文 / 附件（`buildTaskAnswer`）；任务卡标题包 `<untrusted>`；desktop 视图新者为准、按会话裁剪、重连刷新、`runs.list` 加 `active`；降级注入不含内部事件；`describeWorkdir` 只在终态写任务查改动并走 `conversation_id` 索引；问题卡先写私有条目再发布。**强制收回**：被收回的固定租约 run 经 `writeDenial` 失去写权限（`LEASE_REVOKED_READ_ONLY_REASON`），不再静默重取；`run_changes` 跨租约窗口累积（逐文件首改前 / 末改后快照，窗口间被他人改动标 `interleaved` 并作回退冲突）。死代码清理（`b68fca2`：`CONTINUATION_ARBITER_*`、llm-router `'continuation'`、`buildNewMessagesInjection` / `buildMessageEventInjection`）。文档同步（`a02e57d`）。新增 DEV-016（外部智能体任务无 `ask_user`）、DEV-017（W5 发现的四处设计与代码差异）、DEV-018（批 E 的细化）。
+- **验证**：新测试 `tasks-review-fixes-e`（11）、`project-lease-windows`（3）在修复前代码上全部失败；容器全量 **1779 例、1749 过、28 失败，新增失败 0**（基线 28 条）；typecheck / lint 0 error。
+
+**偏差汇总**（全部待用户确认）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015、DEV-016、DEV-017、DEV-018。
 
 **已知缺口**
 
 - 只读任务的浏览器下载目录竞态（上文 W1 已知缺口：页面按（Bot, 对话）共用，`will-download` 在下载开始时才读目录；对话轮已无浏览器工具，只读任务仍有此缺口，需 desktop / shared RPC 改动）。
 - workspace workdir 的写任务写 project 而不取 project 的租约（W1 LOW-3 同类：写任务只持自己 workdir 的租约；`82a289e` 只堵住了外部智能体的沙箱外命令这一路）。
-- 外部智能体任务没有 `ask_user`（不在任何宿主能力包内）。
+- 外部智能体任务没有 `ask_user`（不在任何宿主能力包内，DEV-016）。
 - 设计 30 §6.3 的「Bot 详情栏 / 对话头部的进行中任务数」与「执行记录页任务与对话轮分列」未做。
-- ~~`projects.test.ts` 里仍假设「回复 run 持有写租约」的用例需要按任务语义重新设计~~：已重写（`5aa0d3c`，18 例，容器内 17 过、1 条沙箱用例按基线失败）；重写中发现「被强制收回租约的写任务再写会覆盖首段改动记录」的产品缺陷，交修复批 E。
-- 纯对话轮的反思去抖（设计 30 §7.2）未做：每个 `completed` 对话轮都登记反思。
+- ~~`projects.test.ts` 里仍假设「回复 run 持有写租约」的用例需要按任务语义重新设计~~：已重写（`5aa0d3c`，18 例，容器内 17 过、1 条沙箱用例按基线失败）；重写中发现的「被强制收回租约的写任务再写会覆盖首段改动记录」已由批 E 修复。
+- 纯对话轮的反思去抖（设计 30 §7.2）未做：每个 `completed` 对话轮都登记反思（DEV-017 d）。
 
 ## 6. 基线
 

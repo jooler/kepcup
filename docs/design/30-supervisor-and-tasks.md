@@ -652,7 +652,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/tools/index.ts` | `search_messages` / `get_messages_around` 按 Bot 视角；对话轮新增 `forward_task_result` |
 | `packages/core/src/agent/loops/conversation-summary.ts` | 只摘共享行 |
 | shared types | `textContentSchema.origin` 增 `'task'`（+ `taskId`）；`messageKindSchema` 增 `task_event`；`TriggerBatch.reason` 增 `'task'` |
-| shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS` |
+| shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（待确认，见 DEV-018） |
 
 
 项目处在早期开发阶段，不需要向后兼容、不需要迁移旧数据，因此 `loop_type='response'` 直接改名而不保留别名。
