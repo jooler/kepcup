@@ -9,6 +9,7 @@ import { resolveMediaSource } from './media-source.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
+import { readOnlyRefusal } from './read-only.js';
 
 /**
  * 语音合成、语音转写与视频生成的 Bot 工具（docs/design/20-conversation-media.md、
@@ -76,6 +77,12 @@ export function buildSpeechTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
+      const readOnly = readOnlyRefusal(
+        input.gateway,
+        identity,
+        '生成的语音要保存到 workspace，本次执行不能生成语音',
+      );
+      if (readOnly !== null) return readOnly;
       let result;
       try {
         result = await media.synthesizeSpeech({
@@ -135,6 +142,12 @@ export function buildSpeechTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
+      const readOnly = readOnlyRefusal(
+        input.gateway,
+        identity,
+        '生成的视频要保存到 workspace，本次执行不能生成视频',
+      );
+      if (readOnly !== null) return readOnly;
       let submitted;
       try {
         submitted = await media.generateVideo({ prompt: params.prompt });

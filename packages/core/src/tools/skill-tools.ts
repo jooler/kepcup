@@ -2,6 +2,8 @@ import { Type } from '@earendil-works/pi-ai';
 import { AppError } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { PreparedImport } from '../skills/library.js';
+import type { ToolGateway } from '../gateway/index.js';
+import { readOnlyRefusal } from './read-only.js';
 
 /**
  * install_skill（docs/design/22-file-skill-routing.md，D63）：模型请求安装
@@ -54,6 +56,8 @@ export interface SkillInstallFacade {
 export function buildSkillTools(input: {
   identity: RunIdentity;
   skills: SkillInstallFacade;
+  /** D75: read-only runs may not install skills (execution-time check). */
+  gateway: Pick<ToolGateway, 'writeDenial'>;
 }): ToolDefinition[] {
   const { identity, skills } = input;
 
@@ -88,6 +92,8 @@ export function buildSkillTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
+      const readOnly = readOnlyRefusal(input.gateway, identity, '不能安装技能');
+      if (readOnly !== null) return readOnly;
       if ((params.preset_id === undefined) === (params.source_url === undefined)) {
         return {
           ok: false,
