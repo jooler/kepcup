@@ -149,8 +149,15 @@ export class LlmRouter {
     if (purpose === 'continuation') return null;
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
     if (purpose === 'triage' && tasks.groupMentionOnly) return null;
+    const viewOf = this.#deps.agentView;
+    // No state view for an entry (should not happen) = not usable in the background.
+    const view =
+      viewOf === undefined
+        ? undefined
+        : (id: string) =>
+            viewOf(id) ?? { enabled: false, status: 'error' as const, statusDetail: null };
     const usable = (agentId: string) =>
-      agentId.length > 0 && agentRunGate(settings, catalog, agentId, this.#deps.agentView) === null;
+      agentId.length > 0 && agentRunGate(settings, catalog, agentId, view) === null;
     const chosen = settings.backgroundAgentId ?? '';
     const own = bot?.profile.runtime.agent.id ?? '';
     let agentId: string | null;

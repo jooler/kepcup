@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
+  AGENT_CATALOG,
   AppError,
   findAgentEntry,
   systemInfoOutputSchema,
@@ -490,6 +491,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
    * seam (and this whole module import) is dead-code-eliminated there.
    */
   const wslFixtureScenario = __KEPCUP_TEST_HOOKS__ ? wslFixtureScenarioFromEnv(env) : null;
+  // D72 P6 e2e seam: testkit fake ACP agent from the environment (test builds only).
+  const fakeAgentSeam = __KEPCUP_TEST_HOOKS__ ? fakeAcpAgentSeamFromEnv(env) : null;
+  const extraAgentEntries = options.agentCatalog ?? fakeAgentSeam?.catalog ?? [];
+  const agentLaunch = options.agentLaunch ?? fakeAgentSeam?.launch;
   const wslRunner: WslRunner =
     options.wslRunner ??
     (wslFixtureScenario !== null
@@ -799,7 +804,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (!current.experimental.externalAgents || current.agents[agentId]?.enabled !== true) {
         return null;
       }
-      const entry = findAgentEntry(effectiveAgentCatalog(options.agentCatalog ?? []), agentId);
+      const entry = findAgentEntry(effectiveAgentCatalog(extraAgentEntries), agentId);
       if (entry === null) return null;
       return { id: agentId, permission: entry.tier === 'preview' ? 'ask' : 'workspace' };
     });
@@ -1101,7 +1106,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // --- response loop machinery --------------------------------------------
     const engine = new PiEngine({ settings, secrets, logger });
     // D72 外部智能体引擎：进程懒启动，未被 Bot 选用时不产生任何子进程。
-    const agentCatalog = effectiveAgentCatalog(options.agentCatalog ?? []);
+    const agentCatalog = effectiveAgentCatalog(extraAgentEntries);
     // D72 P4: installs land in toolchains/agents/{id}@{version}; npx agents
     // run on the environment manager's Node (installed on demand).
     const agentInstaller = new AgentInstaller({
@@ -1182,8 +1187,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       dataHome: paths.home,
       stateDirFor: (agentId) => agentStateDir(paths, agentId),
       processCwdFor: (agentId) => ensureAgentProcessCwd(paths, agentId),
-      ...(options.agentLaunch !== undefined
-        ? { launchOverride: (entry: AgentCatalogEntry) => options.agentLaunch?.(entry) ?? null }
+      ...(agentLaunch !== undefined
+        ? { launchOverride: (entry: AgentCatalogEntry) => agentLaunch(entry) ?? null }
         : {}),
       ...(options.agentSpawn !== undefined ? { spawn: options.agentSpawn } : {}),
       onConcurrencyChanged: () =>
@@ -1638,6 +1643,51 @@ function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
   if (raw === undefined || raw.length === 0) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Test/e2e hook (D72 P6, docs/dev/05-testing.md): KEPCUP_FAKE_ACP_AGENT_BIN
+ * (testkit `bin/fake-acp-agent.mjs`) + KEPCUP_FAKE_ACP_AGENT_SCRIPT (scripted
+ * turns, JSON) [+ KEPCUP_FAKE_ACP_AGENT_RECORD (JSONL record)] run the fake
+ * ACP agent on this runtime's Node (Electron with ELECTRON_RUN_AS_NODE, the
+ * target testkit `fakeAcpAgentLaunch` builds) for the catalog's `fake` entry
+ * and an extra `fake-sub` entry that declares subscription login (onboarding
+ * 「我有订阅」branch). Both share one script.
+ */
+function fakeAcpAgentSeamFromEnv(env: NodeJS.ProcessEnv): {
+  catalog: AgentCatalogEntry[];
+  launch: (entry: AgentCatalogEntry) => LaunchTarget | null;
+} | null {
+  const bin = env.KEPCUP_FAKE_ACP_AGENT_BIN;
+  const script = env.KEPCUP_FAKE_ACP_AGENT_SCRIPT;
+  if (bin === undefined || bin.length === 0 || script === undefined || script.length === 0) {
+    return null;
+  }
+  const record = env.KEPCUP_FAKE_ACP_AGENT_RECORD;
+  const fake = AGENT_CATALOG.find((entry) => entry.id === 'fake');
+  const ids = new Set(['fake', 'fake-sub']);
+  return {
+    catalog:
+      fake === undefined
+        ? []
+        : [
+            {
+              ...fake,
+              id: 'fake-sub',
+              name: 'Fake Subscription',
+              tier: 'supported',
+              auth: { kinds: ['subscription'], note: '订阅登录（e2e 假智能体）' },
+            },
+          ],
+    launch: (entry) =>
+      ids.has(entry.id)
+        ? {
+            command: process.execPath,
+            args: [bin, script, ...(record !== undefined && record.length > 0 ? [record] : [])],
+            env: { ELECTRON_RUN_AS_NODE: '1' },
+          }
+        : null,
+  };
 }
 
 /**
