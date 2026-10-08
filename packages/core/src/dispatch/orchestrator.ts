@@ -102,7 +102,7 @@ import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { GroupsService } from '../domain/groups.js';
 import type { DelegationsService } from '../domain/delegations.js';
-import type { MessagesService } from '../domain/messages.js';
+import { isVisibleToUser, type MessagesService } from '../domain/messages.js';
 import type { DraftsService } from '../domain/drafts.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { JobsService, JobRow } from '../domain/jobs.js';
@@ -476,6 +476,14 @@ type RunExecution =
 export class Orchestrator {
   readonly #deps: OrchestratorDeps;
   readonly #mailboxes: MailboxRegistry;
+  /**
+   * Task ids whose terminal entries a begun turn carries in its trigger, by
+   * turn run id (D75 审查 M4): the reconciliation does not re-deliver them
+   * while that turn is live.
+   */
+  readonly #turnTaskHolds = new Map<string, Set<string>>();
+  /** Change summaries of settled workspace write tasks (D75 审查 L5; bounded). */
+  readonly #workspaceChangesCache = new Map<string, TaskChanges | null>();
   readonly #activeRuns = new Map<string, ActiveRunEntry>();
   readonly #cancelledBeforeStart = new Set<string>();
   /** Per-run file-read hashes (staleness detection, P04). */
@@ -602,7 +610,15 @@ export class Orchestrator {
         });
         if (change === 'created') this.#publishConversation(message.conversationId);
       },
-      describeWorkdir: (task) => this.#describeTaskWorkdir(task),
+      describeWorkdir: (task, withChanges) => this.#describeTaskWorkdir(task, withChanges),
+      // 审查 M3: an ask_user wait gives the task job's provider slot back (the
+      // tool runs inside that job, so the scheduler finds it by run id).
+      yieldSlotWhile: (runId, wait) => deps.scheduler.yieldSlotWhile(runId, wait),
+      // 审查 M4: a begun turn carrying a result consumes it; no re-delivery.
+      heldByTurn: (taskId) => {
+        for (const held of this.#turnTaskHolds.values()) if (held.has(taskId)) return true;
+        return false;
+      },
       // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
       // task slot) only while `agent:{id}` has room; the rest stay submitted.
       // A task of an external-agent bot is recorded on its engine from the
@@ -1247,6 +1263,11 @@ export class Orchestrator {
 
   listByConversation(conversationId: string, limit?: number) {
     return this.#deps.runs.listByConversation(conversationId, limit);
+  }
+
+  /** Every active run of the conversation (status line seed, D75 审查 L3). */
+  listActiveByConversation(conversationId: string) {
+    return this.#deps.runs.listActiveByConversation(conversationId);
   }
 
   /** Bot ids with an active run per conversation (sidebar indicator). */
@@ -3496,6 +3517,11 @@ export class Orchestrator {
     // says what it is (a user message, an edit, a system event, a schedule …).
     const options: RenderMessageOptions = { ...this.#renderOptions(), selfBotId: batch.botId };
     const sections: string[] = [];
+    // The inject text is shown on the task card's inject line (§4.3): only
+    // what the user can see goes into it — the bot's internal affairs (wiki
+    // ingest, environment, schedule triggers …, 01-conversation 消息原则)
+    // reach the task as source messages instead (审查 L4).
+    const visibleSections: string[] = [];
     const incoming: Message[] = [];
     for (const part of triggerParts(batch)) {
       const shared = part.messages.filter(
@@ -3503,12 +3529,16 @@ export class Orchestrator {
       );
       if (shared.length === 0) continue;
       incoming.push(...shared);
-      sections.push(
-        `${downgradeLabel(part)}：\n${shared.map((message) => renderMessageLine(message, options)).join('\n')}`,
-      );
+      const render = (list: Message[]): string =>
+        `${downgradeLabel(part)}：\n${list.map((message) => renderMessageLine(message, options)).join('\n')}`;
+      sections.push(render(shared));
+      const visible = shared.filter((message) => isVisibleToUser(message));
+      if (visible.length > 0) visibleSections.push(render(visible));
     }
     if (incoming.length === 0) return;
     const text = sections.join('\n\n');
+    const injectText =
+      visibleSections.length > 0 ? visibleSections.join('\n\n') : '（Bot 内部事务的通知，见原消息）';
     const sourceMessageIds = incoming.map((message) => message.id);
     const startTask = (): void => {
       const first = incoming
@@ -3530,7 +3560,7 @@ export class Orchestrator {
       if (inFlight !== undefined) {
         const injected = this.#taskHost.inject(
           identity,
-          { taskId: inFlight.taskId, text, sourceMessageIds },
+          { taskId: inFlight.taskId, text: injectText, sourceMessageIds },
           {
             // 审查 M5: an inject that never reaches the task's engine run
             // (refused asynchronously, or buffered for a run that never took
@@ -3563,22 +3593,64 @@ export class Orchestrator {
    * recalled message. The run row follows. Null = no trigger message is left.
    */
   #absorbIntoTurn(runId: string, batch: TriggerBatch): TriggerBatch | null {
-    const buffered = this.#mailboxes.get(batch.botId, batch.conversationId)?.takeBuffered() ?? [];
+    // Only batches that can share this turn (审查 M1 / M2: a delegated turn
+    // absorbs nothing, a delegation is never absorbed, different @ chains
+    // stay apart); the rest wait for the next turn.
+    const buffered =
+      this.#mailboxes.get(batch.botId, batch.conversationId)?.takeBuffered(batch) ?? [];
     const merged = buffered.length > 0 ? mergeTriggerBatches([batch, ...buffered]) : batch;
-    const refreshed = refreshTriggerBatch(merged, (id) => this.#deps.messages.getById(id));
+    // A task result consumed meanwhile (a re-delivery of a result an earlier
+    // turn relayed) is not relayed again (审查 M4) — except in the trigger of
+    // a retried turn: the user asked to run that very trigger again.
+    const retried = new Set(
+      batch.retryOf !== undefined ? batch.messages.map((message) => message.id) : [],
+    );
+    const refreshed = refreshTriggerBatch(merged, (id) => {
+      const message = this.#deps.messages.getById(id);
+      if (message === null || retried.has(id)) return message;
+      return this.#consumedTaskEntry(message) ? null : message;
+    });
     if (refreshed === null) return null;
     const before = batch.messages.map((message) => message.id).join(',');
     const after = refreshed.messages.map((message) => message.id).join(',');
-    if (buffered.length > 0 || before !== after) {
+    // An absorbed @-chain trigger binds the turn to its chain at its depth
+    // (审查 M1): without it the turn's own mentions would open a new chain at
+    // depth 1 and bypass BOT_CHAIN_MAX_DEPTH / BOT_CHAIN_TOKEN_BUDGET.
+    const stored = this.#deps.runs.get(runId);
+    const chainChanged =
+      refreshed.chain !== undefined &&
+      (stored?.chainId !== refreshed.chain.id ||
+        (stored.chainDepth ?? 0) < refreshed.chain.depth);
+    if (buffered.length > 0 || before !== after || chainChanged) {
       const run = this.#deps.runs.setTrigger(runId, {
         reason: refreshed.reason,
         messageIds: refreshed.messages.map((message) => message.id),
         parts: storedTriggerParts(refreshed),
         retryOfRunId: refreshed.retryOf ?? null,
+        ...(chainChanged && refreshed.chain !== undefined ? { chain: refreshed.chain } : {}),
       });
       this.#deps.publish('run.status', { run });
     }
+    this.#holdTaskEntries(runId, refreshed);
     return refreshed;
+  }
+
+  /** Records the task entries a begun turn carries (released with its mailbox). */
+  #holdTaskEntries(runId: string, batch: TriggerBatch): void {
+    const taskIds = new Set<string>();
+    for (const message of batch.messages) {
+      if (message.kind === 'task_event' && message.taskId !== null) taskIds.add(message.taskId);
+    }
+    if (taskIds.size > 0) this.#turnTaskHolds.set(runId, taskIds);
+    else this.#turnTaskHolds.delete(runId);
+  }
+
+  /** A terminal task entry whose task's result was consumed already. */
+  #consumedTaskEntry(message: Message): boolean {
+    if (message.kind !== 'task_event' || message.taskId === null) return false;
+    const phase = (message.content as TaskEventContent).phase;
+    if (phase !== 'result' && phase !== 'failure') return false;
+    return (this.#deps.runs.get(message.taskId)?.resultConsumedAt ?? null) !== null;
   }
 
   /**
@@ -3596,6 +3668,7 @@ export class Orchestrator {
    * them (at-least-once). A crash before this point does the same.
    */
   #releaseTurnMailbox(runId: string, batch: TriggerBatch, handled: boolean): void {
+    this.#turnTaskHolds.delete(runId);
     const taskIds = new Set<string>();
     for (const message of batch.messages) {
       if (message.kind === 'task_event' && message.taskId !== null) taskIds.add(message.taskId);
@@ -3988,16 +4061,27 @@ export class Orchestrator {
         : task.awaitingInput
           ? '等待用户回答'
           : '';
-    return `[系统] 任务卡 ${task.id}（${owner}）「${task.taskTitle ?? ''}」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
+    // The title is the model's own words (start_task, possibly steered by
+    // what it read): data, not a system statement (审查 L1).
+    return `[系统] 任务卡 ${task.id}（${owner}）「<untrusted>${task.taskTitle ?? ''}</untrusted>」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
   }
 
-  /** Where a task works and what it left behind (TaskHost.describeWorkdir). */
-  #describeTaskWorkdir(task: Run): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
+  /**
+   * Where a task works and what it left behind (TaskHost.describeWorkdir;
+   * `withChanges` false = the kind only, no lookup).
+   */
+  #describeTaskWorkdir(
+    task: Run,
+    withChanges: boolean,
+  ): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
-    if (task.taskWorkdir !== null && task.taskWorkdir !== workspace) {
+    const kind = task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
+    if (!withChanges) return { kind, changes: null };
+    if (kind === 'project') {
+      // A checkpoint lookup by run id (the revert state can still change).
       const change = this.#deps.projects.changesOf(task.id);
       if (change === null || change.files.length === 0) return { kind: 'project', changes: null };
       const counts = { added: 0, modified: 0, deleted: 0 };
@@ -4007,13 +4091,19 @@ export class Orchestrator {
         changes: { kind: 'project', ...counts, reverted: change.revertedAt !== null },
       };
     }
-    if (task.taskWrites !== true || workspace === null) return { kind: 'workspace', changes: null };
-    // No checkpoint in the workspace (§5.2): the files its file tools wrote.
+    if (task.taskWrites !== true || workspace === null || task.conversationId === null) {
+      return { kind: 'workspace', changes: null };
+    }
+    // A settled task's file list no longer changes: computed once (审查 L5).
+    const cached = this.#workspaceChangesCache.get(task.id);
+    if (cached !== undefined) return { kind: 'workspace', changes: cached };
+    // No checkpoint in the workspace (§5.2): the files its file tools wrote —
+    // through the conversation index (audit_log has none on run_id).
     const rows = this.#deps.db
       .prepare(
-        "select detail_json from audit_log where run_id = ? and action = 'fs_write' order by created_at",
+        "select detail_json from audit_log where conversation_id = ? and run_id = ? and action = 'fs_write' order by created_at",
       )
-      .all(task.id) as Array<{ detail_json: string }>;
+      .all(task.conversationId, task.id) as Array<{ detail_json: string }>;
     const files: string[] = [];
     for (const row of rows) {
       let detail: { path?: unknown; op?: unknown };
@@ -4032,15 +4122,23 @@ export class Orchestrator {
           : target;
       if (!files.includes(shown)) files.push(shown);
     }
-    if (files.length === 0) return { kind: 'workspace', changes: null };
-    return {
-      kind: 'workspace',
-      changes: {
-        kind: 'workspace',
-        files: files.slice(0, TASK_CHANGED_FILES_SHOWN),
-        more: Math.max(0, files.length - TASK_CHANGED_FILES_SHOWN),
-      },
-    };
+    const changes: TaskChanges | null =
+      files.length === 0
+        ? null
+        : {
+            kind: 'workspace',
+            files: files.slice(0, TASK_CHANGED_FILES_SHOWN),
+            more: Math.max(0, files.length - TASK_CHANGED_FILES_SHOWN),
+          };
+    // Only once the execution is over (an unwinding tool may still write).
+    if (!this.#taskHost.isExecuting(task.id)) {
+      if (this.#workspaceChangesCache.size >= 256) {
+        const oldest = this.#workspaceChangesCache.keys().next().value;
+        if (oldest !== undefined) this.#workspaceChangesCache.delete(oldest);
+      }
+      this.#workspaceChangesCache.set(task.id, changes);
+    }
+    return { kind: 'workspace', changes };
   }
 
   #publishConversation(conversationId: string): void {

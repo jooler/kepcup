@@ -749,7 +749,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       steps: orchestrator.stepsFor(input.runId),
     })),
     'runs.list': method(runsListInputSchema, runsListOutputSchema, async (input) => ({
-      runs: orchestrator.listByConversation(input.conversationId, input.limit),
+      runs:
+        input.active === true
+          ? orchestrator.listActiveByConversation(input.conversationId)
+          : orchestrator.listByConversation(input.conversationId, input.limit),
     })),
 
     'sandbox.status': method(sandboxStatusInputSchema, sandboxStatusOutputSchema, async (input) => {

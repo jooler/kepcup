@@ -170,7 +170,10 @@ describe('D75 task cards (W3)', () => {
     });
     // The bot's context renders the card as one status line (never the brief).
     const turn2 = llm.requestsFor('mock-main').find(turnWith('顺便写上日期'))!;
-    expect(contextText(turn2)).toContain(`任务卡 ${taskId}（小卡）「写文件」：进行中`);
+    // 审查 L1: the model-chosen title is data, wrapped.
+    expect(contextText(turn2)).toContain(
+      `任务卡 ${taskId}（小卡）「<untrusted>写文件</untrusted>」：进行中`,
+    );
 
     // The user cancels from the card (runs.cancel): no wake, cancel summary.
     await core.rpc.call('runs.cancel', { runId: taskId });

@@ -143,16 +143,6 @@ export const INTERIM_TEXT_MAX_CHARS = 2_000;
  * long before its end).
  */
 export const CONTINUATION_WINDOW_MS = 30 * 60_000;
-/**
- * Beyond CONTINUATION_WINDOW_MS, candidates within this age may still be
- * selected by the light-model arbiter; older runs fall back to the plain
- * conversation context + list_my_runs.
- */
-export const CONTINUATION_ARBITER_MAX_AGE_MS = 24 * 60 * 60_000;
-/** Max candidate runs offered to the arbiter (newest first). */
-export const CONTINUATION_ARBITER_MAX_RUNS = 5;
-/** Arbiter call timeout; timeout/error/parse failure all mean "no continuation". */
-export const CONTINUATION_ARBITER_TIMEOUT_MS = 10_000;
 /** Token budget for the whole <continuation> segment (all replayed runs). */
 export const CONTINUATION_REPLAY_TOKEN_BUDGET = 3_000;
 /** Tool results longer than this render as "（已省略）" in the replay digest. */
@@ -513,6 +503,23 @@ export const TASK_SOURCE_MESSAGES_MAX = 20;
  * long (§3.2 at-least-once).
  */
 export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
+/**
+ * A delivered task result is handed to the bot at most this many times
+ * (D75 审查 M4): turns that keep failing before they handle it (e.g. a throw
+ * while building the context) would otherwise be woken every
+ * TASK_REDELIVER_AFTER_MS forever. Past the cap the result is consumed with a
+ * visible notice in the conversation.
+ */
+export const TASK_REDELIVER_MAX_ATTEMPTS = 5;
+/**
+ * How long a task waits on its open `ask_user` question (design 30 §2.4.6,
+ * D75 审查 M3). The wait gives its provider slot back and does not count
+ * toward TASK_MAX_WALL_MS; after this long the task is told 「用户未回答」 and
+ * continues on its own judgement.
+ */
+export const TASK_QUESTION_TTL_MS = 24 * 60 * 60_000;
+/** Max characters of one ask_user candidate answer (the card renders each as a button). */
+export const ASK_USER_OPTION_MAX_CHARS = 200;
 /**
  * Cancel card of a workspace write task (D75 W3, design 30 §5.2): at most this
  * many changed files are listed (the workspace has no checkpoint, so the card

@@ -6,6 +6,7 @@ import {
   CHECKPOINT_RETENTION_DAYS,
   newId,
   type Project,
+  type RunChange,
   type RunChangeFile,
 } from '@kepcup/shared';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
@@ -81,6 +82,21 @@ export const SUBAGENT_UNRESOLVED_READ_ONLY_REASON =
 export const SUBAGENT_PARENT_ENDED_READ_ONLY_REASON =
   '这个子代理所属的写任务已经结束（写入租约已释放），子代理不能再写文件或执行会改动文件的命令';
 
+/**
+ * Design 30 §5.1: the user force-revoked the lease a pinned write task held —
+ * the task lost its write permission for the rest of its execution.
+ */
+export const LEASE_REVOKED_READ_ONLY_REASON =
+  '写入租约已被用户收回：这个任务不能再写文件、执行会改动文件的命令或申请写入。请在结果里说明已完成的改动与还没做的部分';
+
+/** Bound on the set of revoked pinned runs remembered (oldest forgotten first). */
+const REVOKED_RUNS_REMEMBERED = 512;
+
+/** Same file content in two snapshots (null = absent). */
+function sameContent(a: Buffer | null, b: Buffer | null): boolean {
+  return a === null || b === null ? a === b : a.equals(b);
+}
+
 /** Bound on the sub run → parent run walk (sub runs do not nest today). */
 const SUBAGENT_PARENT_MAX_DEPTH = 4;
 
@@ -114,6 +130,12 @@ export class ProjectRuntime {
   readonly #deps: ProjectRuntimeDeps;
   /** Lease window currently tracked per run (one entry per acquire). */
   readonly #runLeases = new Map<string, RunLeaseState>();
+  /**
+   * Pinned runs (D75 write tasks, D72 agent runs) whose lease the user
+   * force-revoked: they lost write permission (design 30 §5.1) and never
+   * silently re-take the lease.
+   */
+  readonly #revokedPinned = new Set<string>();
   /**
    * Acquisitions in flight per run: parallel tool calls of one run asking for
    * the same key join the first instead of releasing + cancelling it.
@@ -165,6 +187,7 @@ export class ProjectRuntime {
       runId = parent.id;
     }
     if (loopType === 'turn') return TURN_READ_ONLY_REASON;
+    if (this.#revokedPinned.has(runId)) return LEASE_REVOKED_READ_ONLY_REASON;
     if (loopType === 'task') {
       const task = this.#deps.runs.get(runId);
       if (task?.taskWrites !== true) return TASK_READ_ONLY_REASON;
@@ -345,13 +368,21 @@ export class ProjectRuntime {
       const after = await this.#deps.checkpoints.snapshot(state.project);
       const files = await this.#deps.checkpoints.diffFiles(state.project.id, state.beforeOid, after.oid);
       const conv = this.#deps.runs.get(runId);
+      // A run may hold the lease in several windows (a force revoke closes
+      // one; a non-pinned run re-takes it on its next write): its record
+      // accumulates them — never overwritten by the latest window.
+      const previous = this.#deps.projects.getChange(runId);
+      const accumulate =
+        previous !== null && previous.revertedAt === null && previous.afterOid !== null;
       const change = this.#deps.projects.recordChange({
         runId,
         projectId: state.project.id,
         conversationId: conv?.conversationId ?? null,
-        beforeOid: state.beforeOid,
+        beforeOid: accumulate ? previous.beforeOid : state.beforeOid,
         afterOid: after.oid,
-        files,
+        files: accumulate
+          ? await this.#mergeWindow(previous, state.project.id, state.beforeOid, after.oid, files)
+          : files,
       });
       if (files.length > 0 && change.conversationId !== null) {
         this.#insertChangesCard(change.conversationId, runId);
@@ -441,6 +472,16 @@ export class ProjectRuntime {
     if (project === null) return false;
     const holder = this.#deps.leases.holderOf(project.path);
     if (holder === null) return false;
+    // A pinned holder (a write task) loses its write permission for good
+    // (design 30 §5.1): its next write fails instead of re-taking the lease
+    // as a new window — otherwise the revoke would not take effect.
+    if (this.#runLeases.get(holder.runId)?.pinned === true) {
+      if (this.#revokedPinned.size >= REVOKED_RUNS_REMEMBERED) {
+        const oldest = this.#revokedPinned.values().next().value;
+        if (oldest !== undefined) this.#revokedPinned.delete(oldest);
+      }
+      this.#revokedPinned.add(holder.runId);
+    }
     await this.releaseRun(holder.runId);
     return true;
   }
@@ -457,6 +498,22 @@ export class ProjectRuntime {
     if (change === null) return { change: null, diffText: '' };
     if (change.revertedAt !== null || change.afterOid === null) {
       return { change, diffText: '' };
+    }
+    if (change.files.some((file) => file.beforeOid !== undefined)) {
+      // Several lease windows: each file's own span (before the run first
+      // changed it → after it last did) — never what others changed in between.
+      const parts: string[] = [];
+      for (const file of change.files) {
+        parts.push(
+          await this.#deps.checkpoints.diffText(
+            change.projectId,
+            file.beforeOid ?? change.beforeOid,
+            file.afterOid ?? change.afterOid,
+            file.path,
+          ),
+        );
+      }
+      return { change, diffText: parts.filter((part) => part.length > 0).join('') };
     }
     return {
       change,
@@ -478,6 +535,11 @@ export class ProjectRuntime {
     }
 
     const conflicts = await this.#revertConflicts(project.id, change.files, change.afterOid);
+    // Changed by someone else between two of this run's lease windows:
+    // restoring the run's `before` would undo theirs too.
+    for (const file of change.files) {
+      if (file.interleaved === true && !conflicts.includes(file.path)) conflicts.push(file.path);
+    }
     if (conflicts.length > 0 && !force) {
       return { ok: false, conflicts, reverted: [] };
     }
@@ -502,7 +564,11 @@ export class ProjectRuntime {
         if (file.change === 'added') {
           rmSync(absolute, { force: true });
         } else {
-          const content = await this.#deps.checkpoints.readFileAt(project.id, change.beforeOid, file.path);
+          const content = await this.#deps.checkpoints.readFileAt(
+            project.id,
+            file.beforeOid ?? change.beforeOid,
+            file.path,
+          );
           if (content === null) {
             rmSync(absolute, { force: true });
           } else {
@@ -547,7 +613,7 @@ export class ProjectRuntime {
     for (const file of files) {
       const absolute = path.join(projectPath, file.path);
       const current = existsSync(absolute) ? readFileSync(absolute) : null;
-      const after = await this.#deps.checkpoints.readFileAt(projectId, afterOid, file.path);
+      const after = await this.#deps.checkpoints.readFileAt(projectId, file.afterOid ?? afterOid, file.path);
       if (!((current === null && after === null) || (current !== null && after !== null && current.equals(after)))) {
         conflicts.push(file.path);
       }
@@ -683,7 +749,72 @@ export class ProjectRuntime {
     this.#deps.publish('message.created', { conversationId, message });
   }
 
+  /**
+   * Folds one more lease window (`beforeOid` → `afterOid`, its `files`) into
+   * a run's record. Each file keeps the snapshot before the run first changed
+   * it and the one after the run last changed it (revert restores the first,
+   * conflict detection compares against the last); the net change is
+   * recomputed across the windows (added then deleted = no change). A file
+   * someone else changed between two of the run's windows is marked
+   * `interleaved`: reverting it would also undo their change, so the revert
+   * reports it as a conflict.
+   */
+  async #mergeWindow(
+    previous: RunChange,
+    projectId: string,
+    beforeOid: string,
+    afterOid: string,
+    files: RunChangeFile[],
+  ): Promise<RunChangeFile[]> {
+    const read = (oid: string, file: string) =>
+      this.#deps.checkpoints.readFileAt(projectId, oid, file);
+    const merged = new Map<string, RunChangeFile>();
+    for (const file of previous.files) {
+      merged.set(file.path, {
+        ...file,
+        beforeOid: file.beforeOid ?? previous.beforeOid,
+        afterOid: file.afterOid ?? previous.afterOid ?? beforeOid,
+      });
+    }
+    for (const file of files) {
+      const earlier = merged.get(file.path);
+      if (earlier === undefined) {
+        merged.set(file.path, { path: file.path, change: file.change, beforeOid, afterOid });
+        continue;
+      }
+      const first = earlier.beforeOid ?? previous.beforeOid;
+      const interleaved =
+        earlier.interleaved === true ||
+        !sameContent(await read(earlier.afterOid ?? beforeOid, file.path), await read(beforeOid, file.path));
+      const original = await read(first, file.path);
+      const latest = await read(afterOid, file.path);
+      if (original === null && latest === null && !interleaved) {
+        merged.delete(file.path);
+        continue;
+      }
+      merged.set(file.path, {
+        path: file.path,
+        change: original === null ? 'added' : latest === null ? 'deleted' : 'modified',
+        beforeOid: first,
+        afterOid,
+        ...(interleaved ? { interleaved: true } : {}),
+      });
+    }
+    return [...merged.values()].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
   #insertChangesCard(conversationId: string, runId: string): void {
+    // One card per run: a later lease window updates the record it renders.
+    const existing = this.#deps.db
+      .prepare(
+        "select id from messages where conversation_id = ? and run_id = ? and kind = 'card' and json_extract(content_json, '$.cardType') = 'run_changes' limit 1",
+      )
+      .get(conversationId, runId) as { id: string } | undefined;
+    if (existing !== undefined) {
+      const card = this.#deps.messages.getById(existing.id);
+      if (card !== null) this.#deps.publish('message.updated', { conversationId, message: card });
+      return;
+    }
     const card = this.#deps.messages.append({
       conversationId,
       senderType: 'system',

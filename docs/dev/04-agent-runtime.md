@@ -39,7 +39,7 @@
 - steering：同步 `false` → inject 条目 `queued`；异步拒绝经 `RunSpec.onSteerRejected` → `TaskRunControl.steerRefused` 把条目降为 `queued`；引擎的 `steer` 事件经 `steerConfirmed` 确认（FIFO 按文本匹配），确认的注入的原消息记为会话已见；`forward_task_result` 原文转发的消息同样记为来源任务各会话已见（P5 审查 #3 契约）。
 - 并发：`agent:{id}` 名额全归任务（不预留、不借用，见 [02-architecture](02-architecture.md#调度schedulerschedulerts)）；`TaskHost` 的 `launchSlot` 按 Agent 上限封顶启动。
 - 外部智能体任务没有 `ask_user`（不属于任何宿主能力包）；`collect_delegate_results` 与 `delegate_task` 一起列在 `NEVER_INJECTED_TOOLS`。
-- 下文 P5 / P6 要点里的「响应 run」「续接 / 续接仲裁」「`#pendingSteers`」「投递邮箱」是 D72 期的形态：D75 后注入只针对任务，续接仲裁已移除（`llm-router` 仍保留 `continuation` 用途，但已无调用方）。
+- 下文 P5 / P6 要点里的「响应 run」「续接 / 续接仲裁」「`#pendingSteers`」「投递邮箱」是 D72 期的形态：D75 后注入只针对任务，续接仲裁已移除（`llm-router` 的 `continuation` 用途与 `CONTINUATION_ARBITER_*` 常量已一并删除）。
 
 **进度**：P1（地基 + 最小闭环）、P2（宿主 MCP 桥、能力包、ACP 版提示词、Claude / Codex Provider）、P3（权限桥、`agent_tool` 审批、档位映射、显式租约）、P4（安装器 / 设置页 / 对话内 Agent 设置卡 / onboarding 订阅分支 / 后台 loop 最小兜底）、P5（OpenCode / DeepSeek Harness / Cursor / Antigravity Provider；steering、会话复用、用量、并发、长耗时桥工具、删除级联）与 P6（`complete()`、后台调用路由 `llm-router`、设置「后台任务」、原生优先遵守度 harness、e2e）已实现，均在实验开关下；需要真实账号的人工项（各 Agent 登录后的 spike / 遵守度 / 三平台验收）见 todo §9.1。
 
@@ -207,7 +207,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 [msg_01J... | 2026-09-29 16:08 | 用户] 帮我看看这个报错
 [msg_01J... | 2026-09-29 16:09 | Alice（你）] 收到，我看一下
 [msg_01J... | 2026-09-29 16:09 | 你→任务 run_01J...（交代）] 排查报错：读 error.log 找根因…
-[msg_01J... | 2026-09-29 16:09 | 系统] 任务卡 run_01J...（Alice）「排查报错」：进行中
+[msg_01J... | 2026-09-29 16:09 | 系统] 任务卡 run_01J...（Alice）「<untrusted>排查报错</untrusted>」：进行中
 [msg_01J... | 2026-09-29 16:10 | 你（任务 run_01J...）] 先看一下报错日志
 [msg_01J... | 2026-09-29 16:10 | Bob] <untrusted>我觉得是依赖版本的问题</untrusted>
 [msg_01J... | 2026-09-29 16:11 | 系统] 项目已切换为 kepcup
@@ -223,7 +223,8 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 - 当前 Bot 自己的消息标注“（你）”；任务的中间说明标为「你（任务 t_…）」（其他 Bot 的任务进度为「名字（任务 t_…）」）。其他 Bot 的消息正文包在 `<untrusted>` 中。
 - 私有任务条目（`renderMessageLine`）：发往任务的 phase（交代 / 追加 / 取消）渲染为 `你→任务 t_…（交代|追加|取消）`，任务交回的（提问 / 结果 / 失败）渲染为 `任务 t_…→你（提问|结果|失败）`；未送达的追加注明「未送达」，失败条目带状态与错误。
 - 任务条目与任务进度在最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断，注明「全文用 get_messages_around 查看 msg_…」（渲染模式 `'context'`）；`search_messages` / `get_messages_around` 返回全文（`'full'`）。
-- 卡片消息渲染为一行说明，例如“[系统] 用户允许 Alice 读取 ~/Desktop/a.txt（仅这一次）”；任务卡渲染为「任务卡 t_…（Bot）「标题」：状态[，排队原因 / 等待用户回答]」，不含交代或结果全文。
+- 卡片消息渲染为一行说明，例如“[系统] 用户允许 Alice 读取 ~/Desktop/a.txt（仅这一次）”；任务卡渲染为「任务卡 t_…（Bot）「<untrusted>标题</untrusted>」：状态[，排队原因 / 等待用户回答]」，不含交代或结果全文。
+- 任务问题卡（`task_question`）渲染为「[… | Bot（任务 t_…）向用户提问] <untrusted>问题、选项：… / …、回答：…</untrusted>」（提问方自己看到「你（任务 t_…）」），不是「系统」行；最近窗口里按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断。对话摘要的输入同样归属并包裹。结果放弃提示（`task_result_undelivered`）对 Bot 渲染为固定文案。
 - 已删除的 Bot 显示为其 id。
 - 时间按用户本地时区显示。
 
@@ -330,7 +331,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 对话中的你追加了新的指令：据此调整当前的工作。
 ```
 
-只有任务会被注入（`inject_task` → `buildTaskInjection`）。对话轮运行中到达的消息、编辑都缓冲到下一个对话轮，D2 时代的 `<new_messages>` / `<message_event>` 注入不再使用（`conversation.ts` 里的 `buildNewMessagesInjection` / `buildMessageEventInjection` 只剩单测引用）。
+只有任务会被注入（`inject_task` → `buildTaskInjection`）。对话轮运行中到达的消息、编辑都缓冲到下一个对话轮，D2 时代的 `<new_messages>` / `<message_event>` 注入不再使用（`buildNewMessagesInjection` / `buildMessageEventInjection` 已删除）。
 
 ## 工具目录
 
@@ -371,7 +372,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、不唤醒；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、最近进度、可否注入） |
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
-| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个）；问题卡 + 私有 `question` 条目 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交；外部智能体任务没有 |
+| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、不计入 `TASK_MAX_WALL_MS`，`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
 | MCP 工具 `mcp_{serverId}_{toolName}` | 随配置 | K | D65 | 按「应用启用 ∩ Bot 勾选」并入任务工具面；对话轮不提供 |
 
@@ -418,6 +419,9 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `TASK_MAX_WALL_MS` / `TASK_TOKEN_BUDGET` | 4 h / 2,000,000 | reaper 强制 `failed` 的时长 / 用量上限 |
 | `TASK_SETTLE_SWEEP_MS` | 60 s | reaper 周期；结算后执行体未退场的驱逐阈值 |
 | `TASK_REDELIVER_AFTER_MS` | 10 min | 已投递未消费的结果多久后重投 |
+| `TASK_REDELIVER_MAX_ATTEMPTS` | 5 | 一个结果最多投递次数；超过即标记消费并发用户可见提示（审查批 E） |
+| `TASK_QUESTION_TTL_MS` | 24 h | `ask_user` 问题的等待时限；超时任务收到「用户未回答」并继续（等待不计入 `TASK_MAX_WALL_MS`） |
+| `ASK_USER_OPTION_MAX_CHARS` | 200 | `ask_user` 每个候选答案的长度上限 |
 | `TASK_EVENT_CONTEXT_MAX_CHARS` / `TASK_TRIGGER_RESULT_MAX_CHARS` | 600 / 12,000 | 最近窗口里任务行的截断 / 触发段里结果全文的硬顶 |
 | `TASK_FAILURE_DIGEST_TOKEN_BUDGET` | 600 | 失败条目尾部的过程摘要预算 |
 | `TASK_LIST_SETTLED_WINDOW_MS` | 24 h | `list_tasks` 列出已结算任务的窗口 |
@@ -426,7 +430,6 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `GRANT_ABSOLUTE_TTL_MS` | 10 min | 「仅这一次」授权的绝对时限（DEV-009） |
 | `SUBAGENT_BACKGROUND_CONCURRENCY` / `SUBAGENT_CLOSE_GRACE_MS` | 4 / 10 s | 每个父 run 的后台分支封顶 / 父 run 结束时等分支 settle 的上限 |
 
-`CONTINUATION_ARBITER_*` 常量随续接仲裁一并失去调用方（仍在 constants.ts 中）。
 
 ## 结构化输出
 

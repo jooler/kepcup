@@ -22,6 +22,7 @@ import { sendGateRequirement } from '../features/chats/send-gate';
 import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
 import { mergeUnreadCount } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
+import { activeRunsOf } from '../features/tasks/task-view';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -272,8 +273,13 @@ class ChatState {
     const drafts = (await core.call('drafts.list', { conversationId })) as { drafts: Draft[] };
     // D75: several tasks may be in flight next to the turns — look further back.
     const runs = (await core.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
+    // Every in-flight run, however old (审查 L3: a long task may be older
+    // than the latest page of runs).
+    const inFlight = (await core.call('runs.list', { conversationId, active: true })) as {
+      runs: Run[];
+    };
     void tasks.loadActive(conversationId);
-    const active = runs.runs.filter((r) => isActive(r.status));
+    const active = activeRunsOf(runs.runs, inFlight.runs, (r) => isActive(r.status));
     // 带 setup 的旧失败若已被后续响应 run 接手，不再恢复为设置卡（审查 HIGH #1）。
     const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
     this.#chat = {

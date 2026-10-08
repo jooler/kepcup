@@ -1,6 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
 import {
   AppError,
+  ASK_USER_OPTION_MAX_CHARS,
   TASK_INSTRUCTION_MAX_CHARS,
   TASK_SOURCE_MESSAGES_MAX,
   TASK_TITLE_MAX_CHARS,
@@ -135,7 +136,7 @@ export function buildAskUserTool(input: {
       {
         question: Type.String({ description: '要问用户的问题（说明背景与影响）' }),
         options: Type.Array(Type.String(), {
-          description: `候选答案，1~${ASK_USER_OPTIONS_MAX} 个；用户也可以在对话里另行回答`,
+          description: `候选答案，1~${ASK_USER_OPTIONS_MAX} 个、每个不超过 ${ASK_USER_OPTION_MAX_CHARS} 字；用户也可以在对话里另行回答`,
         }),
       },
       { additionalProperties: false },
@@ -162,6 +163,14 @@ export function buildAskUserTool(input: {
         : [];
       if (options.length < 1 || options.length > ASK_USER_OPTIONS_MAX) {
         return fail('INVALID_INPUT', `options 需要 1~${ASK_USER_OPTIONS_MAX} 个非空候选答案`);
+      }
+      // Each option is a button on the card and a line in every bot's context
+      // (D75 审查 H1): short answers only — the background goes in the question.
+      if (options.some((option) => option.length > ASK_USER_OPTION_MAX_CHARS)) {
+        return fail(
+          'INVALID_INPUT',
+          `每个候选答案最多 ${ASK_USER_OPTION_MAX_CHARS} 字；背景说明写进 question`,
+        );
       }
       try {
         const answer = await ask(identity, { question, options }, ctx.signal);

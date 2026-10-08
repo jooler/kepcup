@@ -1,12 +1,15 @@
 import {
   AppError,
+  ASK_USER_OPTION_MAX_CHARS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
   TASK_CONCURRENCY_GLOBAL,
   TASK_CONCURRENCY_PER_CONVERSATION,
   TASK_FAILURE_DIGEST_TOKEN_BUDGET,
   TASK_LIST_SETTLED_WINDOW_MS,
   TASK_MAX_WALL_MS,
+  TASK_QUESTION_TTL_MS,
   TASK_REDELIVER_AFTER_MS,
+  TASK_REDELIVER_MAX_ATTEMPTS,
   TASK_SETTLE_SWEEP_MS,
   TASK_START_MAX_PER_TURN,
   TASK_TOKEN_BUDGET,
@@ -20,7 +23,12 @@ import {
   type TaskView,
 } from '@kepcup/shared';
 import { buildRunDigest } from '../agent/context/continuation.js';
-import { renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
+import {
+  renderMessageLine,
+  TASK_QUESTION_EVENT,
+  TASK_UNDELIVERED_EVENT,
+  type RenderMessageOptions,
+} from '../agent/context/conversation.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -132,6 +140,8 @@ export interface TaskHostLimits {
   perTurn: number;
   maxWallMs: number;
   tokenBudget: number;
+  questionTtlMs: number;
+  redeliverMaxAttempts: number;
 }
 
 export interface TaskHostDeps {
@@ -197,7 +207,22 @@ export interface TaskHostDeps {
    * project tasks have a checkpoint summary, workspace tasks only the files
    * their file tools wrote. `changes` null = nothing recorded.
    */
-  describeWorkdir?(task: Run): { kind: 'project' | 'workspace'; changes: TaskChanges | null };
+  describeWorkdir?(
+    task: Run,
+    withChanges: boolean,
+  ): { kind: 'project' | 'workspace'; changes: TaskChanges | null };
+  /**
+   * Awaits `wait` without holding the task's provider slot (Scheduler
+   * .yieldSlotWhile with the task's run id; 审查 M3): ask_user waits on the
+   * user. Absent = plain await (unit tests).
+   */
+  yieldSlotWhile?<T>(runId: string, wait: Promise<T>): Promise<T>;
+  /**
+   * Whether a live turn (begun, not yet released) carries the task's
+   * terminal entry in its trigger (审查 M4): the reconciliation leaves it to
+   * that turn. Absent = never.
+   */
+  heldByTurn?(taskId: string): boolean;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -237,6 +262,10 @@ interface LaunchedTask {
   steered: PendingInject[];
   /** Confirmations that arrived before their entry was noted (engines confirming inside `steer()`). */
   confirmedEarly: string[];
+  /** An open ask_user question since (审查 M3: not running time), null = none. */
+  questionSince: number | null;
+  /** Time spent on answered / expired questions so far (excluded from the wall clock). */
+  questionWaitMs: number;
 }
 
 /** An inject on its way into an engine run (its entry id + the caller's fallback). */
@@ -252,7 +281,8 @@ const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', '
 /** The visible card a task gets in its conversation (design 30 §4.3). */
 export const TASK_CARD = 'task';
 /** The visible question card of a task waiting for the user (§2.4.6). */
-export const TASK_QUESTION_EVENT = 'task_question';
+export { TASK_QUESTION_EVENT };
+export { TASK_UNDELIVERED_EVENT };
 
 /** Records an accepted steer awaiting its confirmation (unless it was confirmed already). */
 function noteSteered(launched: LaunchedTask, item: PendingInject): void {
@@ -362,6 +392,26 @@ export function buildTaskInjection(
   ].join('\n');
 }
 
+/**
+ * A free-text answer the turn relayed to a task's open question (§2.4.6,
+ * 审查 M5): the relayed text plus the user's originals, like an inject.
+ */
+export function buildTaskAnswer(
+  text: string,
+  sourceMessages: Message[],
+  options: RenderMessageOptions,
+): string {
+  const sources = sourceLines(sourceMessages, options);
+  if (sources.length === 0) return text;
+  return [
+    text,
+    '<source_messages>',
+    ...sources,
+    '</source_messages>',
+    '（以上是用户的原话；转交的回答与原话不一致时以原话为准）',
+  ].join('\n');
+}
+
 /** `continues_task_id` replay (§7.1): the source task's process, D56 budget. */
 export function buildTaskReplaySegment(input: {
   source: Run;
@@ -405,7 +455,10 @@ export class TaskHost implements TaskToolFacade {
    * Tasks blocked in `ask_user` (§2.4.6): the visible question card and the
    * waiter its answer (a card option, or the turn's inject_task) resolves.
    */
-  readonly #questions = new Map<string, { messageId: string; resolve: (answer: string) => void }>();
+  readonly #questions = new Map<
+    string,
+    { messageId: string; askedAt: number; resolve: (answer: string) => void }
+  >();
   /** Last published queue reason per submitted task (republished only when it changes). */
   readonly #publishedReasons = new Map<string, string | null>();
   #pumping = false;
@@ -421,6 +474,8 @@ export class TaskHost implements TaskToolFacade {
       perTurn: deps.limits?.perTurn ?? TASK_START_MAX_PER_TURN,
       maxWallMs: deps.limits?.maxWallMs ?? TASK_MAX_WALL_MS,
       tokenBudget: deps.limits?.tokenBudget ?? TASK_TOKEN_BUDGET,
+      questionTtlMs: deps.limits?.questionTtlMs ?? TASK_QUESTION_TTL_MS,
+      redeliverMaxAttempts: deps.limits?.redeliverMaxAttempts ?? TASK_REDELIVER_MAX_ATTEMPTS,
     };
   }
 
@@ -553,7 +608,14 @@ export class TaskHost implements TaskToolFacade {
         sourceMessageIds: sources.map((message) => message.id),
         delivery: 'delivered',
       });
-      this.#resolveQuestion(task.id, question, text);
+      // The relayed answer carries the user's originals (attachments,
+      // images as attachment lines) like any inject (审查 M5).
+      this.#resolveQuestion(
+        task.id,
+        question,
+        text,
+        buildTaskAnswer(text, sources, this.#deps.renderOptions(botId)),
+      );
       return { delivery: 'delivered' };
     }
     const launched = this.#launched.get(task.id);
@@ -729,43 +791,77 @@ export class TaskHost implements TaskToolFacade {
     if (this.#questions.has(task.id)) {
       throw new AppError('INVALID_INPUT', '上一个问题还没有回答');
     }
+    if (signal.aborted) throw new AppError('RUN_ALREADY_FINISHED', '任务已停止，问题作废');
     const question = input.question.trim();
     if (question.length === 0) throw new AppError('INVALID_INPUT', 'question 不能为空');
+    // The tool bounds the options; the host caps their length too (each one
+    // is a line in every bot's context, 审查 H1).
+    const options = input.options.map((option) => clip(option.trim(), ASK_USER_OPTION_MAX_CHARS));
     const card = this.#deps.messages.append({
       conversationId,
       senderType: 'system',
       kind: 'system_event',
       event: TASK_QUESTION_EVENT,
       text: question,
-      options: input.options,
+      options,
       taskId: task.id,
+      ...(task.botId !== null ? { taskBotId: task.botId } : {}),
       runId: task.id,
     });
+    // The private entry before the card goes out (审查 L6): when it cannot be
+    // written the card is voided instead of staying clickable for a question
+    // nobody waits on.
+    try {
+      this.recordQuestion(task.id, { text: question, questionMessageId: card.id });
+    } catch (error) {
+      this.#voidQuestionCard(card.id, '（提问没有成功，问题作废）', false);
+      throw error;
+    }
     this.#safely(() => this.#deps.publishMessage?.(card, 'created'));
-    return new Promise<string>((resolve, reject) => {
+    const askedAt = this.#deps.clock.now();
+    const launched = this.#launched.get(task.id);
+    if (launched !== undefined) launched.questionSince = askedAt;
+    const answered = new Promise<string>((resolve, reject) => {
       const onAbort = (): void => {
         if (this.#questions.get(task.id)?.messageId === card.id) this.#questions.delete(task.id);
         reject(new AppError('RUN_ALREADY_FINISHED', '任务已停止，问题作废'));
       };
-      if (signal.aborted) {
-        onAbort();
-        return;
-      }
       signal.addEventListener('abort', onAbort, { once: true });
       this.#questions.set(task.id, {
         messageId: card.id,
+        askedAt,
         resolve: (answer) => {
           signal.removeEventListener('abort', onAbort);
           resolve(answer);
         },
       });
-      try {
-        this.recordQuestion(task.id, { text: question, questionMessageId: card.id });
-      } catch (error) {
-        this.#questions.delete(task.id);
-        signal.removeEventListener('abort', onAbort);
-        reject(error instanceof Error ? error : new Error(String(error)));
+    }).finally(() => {
+      // Waiting on the user is not running time (审查 M3): the wall clock
+      // pauses for it.
+      if (launched !== undefined && launched.questionSince !== null) {
+        launched.questionWaitMs += Math.max(0, this.#deps.clock.now() - launched.questionSince);
+        launched.questionSince = null;
       }
+    });
+    // Waiting on the user holds no provider slot (审查 M3, like a lease wait):
+    // the slot goes back for the wait and is taken again once answered. The
+    // task keeps its write lease: it is pinned for the task's whole execution
+    // (the task's files are mid-edit — another writer in between would work
+    // on a half-done tree), and the user can cancel the task on its card.
+    return this.#deps.yieldSlotWhile?.(task.id, answered) ?? answered;
+  }
+
+  /** Marks a question card answered with `text` (void / expired) so it is no longer clickable. */
+  #voidQuestionCard(messageId: string, text: string, publish: boolean): void {
+    this.#safely(() => {
+      this.#deps.db
+        .prepare(
+          "update messages set content_json = json_set(content_json, '$.answer', ?) where id = ? and kind = 'system_event'",
+        )
+        .run(text, messageId);
+      if (!publish) return;
+      const updated = this.#deps.messages.getById(messageId);
+      if (updated !== null) this.#deps.publishMessage?.(updated, 'updated');
     });
   }
 
@@ -803,28 +899,26 @@ export class TaskHost implements TaskToolFacade {
     this.#resolveQuestion(taskId, question, text);
   }
 
+  /**
+   * `answer` is shown on the card; `forTask` (default: the same) is what the
+   * waiting ask_user call returns — a relayed answer carries the user's
+   * originals (审查 M5).
+   */
   #resolveQuestion(
     taskId: string,
     question: { messageId: string; resolve: (answer: string) => void },
     answer: string,
+    forTask: string = answer,
   ): void {
     this.#questions.delete(taskId);
-    this.#safely(() => {
-      this.#deps.db
-        .prepare(
-          "update messages set content_json = json_set(content_json, '$.answer', ?) where id = ? and kind = 'system_event'",
-        )
-        .run(answer, question.messageId);
-      const updated = this.#deps.messages.getById(question.messageId);
-      if (updated !== null) this.#deps.publishMessage?.(updated, 'updated');
-    });
+    this.#voidQuestionCard(question.messageId, answer, true);
     const task = this.#deps.runs.get(taskId);
     if (task?.awaitingInput === true) {
       this.#safely(() =>
         this.#deps.publishRunStatus(this.#deps.runs.update(taskId, { awaitingInput: false })),
       );
     }
-    question.resolve(answer);
+    question.resolve(forTask);
     this.publishUpdate(taskId);
   }
 
@@ -859,7 +953,9 @@ export class TaskHost implements TaskToolFacade {
     }
     let workdir: { kind: 'project' | 'workspace'; changes: TaskChanges | null } | null = null;
     try {
-      workdir = this.#deps.describeWorkdir?.(task) ?? null;
+      // The change summary is shown on terminal write tasks only (审查 L5:
+      // views are rebuilt on every publish — no change lookup while running).
+      workdir = this.#deps.describeWorkdir?.(task, terminal && task.taskWrites === true) ?? null;
     } catch (error) {
       this.#deps.logger.warn(
         { taskId, error: error instanceof Error ? error.message : String(error) },
@@ -1214,6 +1310,7 @@ export class TaskHost implements TaskToolFacade {
    * `now` overrides the clock (tests).
    */
   sweep(now: number = this.#deps.clock.now()): void {
+    this.#expireQuestions(now);
     for (const [taskId, outcome] of [...this.#unsettled]) {
       try {
         this.settle(taskId, outcome);
@@ -1237,7 +1334,11 @@ export class TaskHost implements TaskToolFacade {
         continue;
       }
       const since = launched.attachedAt ?? this.#runningSince(launched);
-      if (since !== null && now - since > this.#limits.maxWallMs) {
+      // Time spent waiting on the user's answer is not running time (审查 M3).
+      const waited =
+        launched.questionWaitMs +
+        (launched.questionSince !== null ? Math.max(0, now - launched.questionSince) : 0);
+      if (since !== null && now - since - waited > this.#limits.maxWallMs) {
         this.#stop(
           launched.taskId,
           'failed',
@@ -1257,6 +1358,34 @@ export class TaskHost implements TaskToolFacade {
     this.#reconcile(now);
     const onSweep = this.#deps.onSweep;
     if (onSweep !== undefined) this.#safely(() => onSweep(now));
+  }
+
+  /**
+   * Open questions past TASK_QUESTION_TTL_MS (审查 M3): the task is told the
+   * user did not answer and goes on; the card shows it expired.
+   */
+  #expireQuestions(now: number): void {
+    for (const [taskId, question] of [...this.#questions]) {
+      if (now - question.askedAt <= this.#limits.questionTtlMs) continue;
+      const hours = Math.round(this.#limits.questionTtlMs / 3_600_000);
+      const task = this.#deps.runs.get(taskId);
+      if (task?.botId != null && task.conversationId !== null) {
+        this.#safeAppend({
+          conversationId: task.conversationId,
+          ownerBotId: task.botId,
+          taskId,
+          phase: 'inject',
+          text: `（提问超过 ${hours} 小时没有得到回答，任务已按自己的判断继续）`,
+          delivery: 'delivered',
+        });
+      }
+      this.#resolveQuestion(
+        taskId,
+        question,
+        '（超时未回答）',
+        `用户未回答（等了 ${hours} 小时）。按你自己的判断继续：选最稳妥、可撤销的做法，并在结果里说明哪些事需要用户确认。`,
+      );
+    }
   }
 
   /**
@@ -1509,6 +1638,8 @@ export class TaskHost implements TaskToolFacade {
       buffered: [],
       steered: [],
       confirmedEarly: [],
+      questionSince: null,
+      questionWaitMs: 0,
     };
     this.#launched.set(task.id, launched);
     const control: TaskRunControl = {
@@ -1637,6 +1768,14 @@ export class TaskHost implements TaskToolFacade {
     this.publishUpdate(taskId);
   }
 
+  #heldByTurn(taskId: string): boolean {
+    try {
+      return this.#deps.heldByTurn?.(taskId) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
   #runningSince(launched: LaunchedTask): number | null {
     const task = this.#deps.runs.get(launched.taskId);
     // Still queued = waiting for the write lease / a provider slot: not running yet.
@@ -1711,6 +1850,21 @@ export class TaskHost implements TaskToolFacade {
       this.markConsumed([run.id]);
       return;
     }
+    // Bounded at-least-once (审查 M4): a result whose turns keep failing
+    // before they handle it (never consumed) is not re-delivered forever —
+    // past the cap it is consumed with a visible notice.
+    const attempts = this.#deliveryAttempts(entry.id);
+    if (attempts >= this.#limits.redeliverMaxAttempts) {
+      this.#giveUpDelivery(run, attempts);
+      return;
+    }
+    this.#safely(() => {
+      this.#deps.db
+        .prepare(
+          "update messages set content_json = json_set(content_json, '$.deliveries', coalesce(json_extract(content_json, '$.deliveries'), 0) + 1) where id = ? and kind = 'task_event'",
+        )
+        .run(entry.id);
+    });
     this.#pendingConsumption.set(run.id, this.#deps.clock.now());
     try {
       this.#deps.wake(run.botId, run.conversationId, entry);
@@ -1723,9 +1877,45 @@ export class TaskHost implements TaskToolFacade {
     }
   }
 
+  /** How many times the terminal entry was handed to the bot (persisted on the entry). */
+  #deliveryAttempts(entryId: string): number {
+    const row = this.#deps.db
+      .prepare(
+        "select json_extract(content_json, '$.deliveries') as n from messages where id = ? and kind = 'task_event'",
+      )
+      .get(entryId) as { n: number | null } | undefined;
+    return typeof row?.n === 'number' ? row.n : 0;
+  }
+
+  /** The delivery cap was reached (审查 M4): consume, and tell the user in the conversation. */
+  #giveUpDelivery(run: Run, attempts: number): void {
+    this.#deps.logger.warn({ taskId: run.id, attempts }, 'task result delivery given up');
+    this.markConsumed([run.id]);
+    if (run.conversationId === null) return;
+    const conversationId = run.conversationId;
+    const title = run.taskTitle ?? run.id;
+    const what =
+      run.status === 'completed' ? '已经完成，但它的结果' : `${run.status === 'interrupted' ? '中断' : '失败'}了，这个情况`;
+    this.#safely(() => {
+      const notice = this.#deps.messages.append({
+        conversationId,
+        senderType: 'system',
+        kind: 'system_event',
+        event: TASK_UNDELIVERED_EVENT,
+        text: `任务「${title}」${what}没能交给 Bot 处理（已尝试 ${attempts} 次），已停止重试；可以在执行记录里查看这个任务。`,
+        taskId: run.id,
+        runId: run.id,
+      });
+      this.#deps.publishMessage?.(notice, 'created');
+    });
+  }
+
   /** Re-delivers terminal, unconsumed results (startup and reaper, §3.2 对账). */
   #reconcile(now: number = this.#deps.clock.now()): void {
     for (const task of this.#deps.runs.listUnconsumedTerminalTasks()) {
+      // Held by a live turn (it carries the entry in its trigger, 审查 M4):
+      // that turn consumes it — re-delivering would relay it twice.
+      if (this.#heldByTurn(task.id)) continue;
       // Delivered and awaiting its consuming turn — unless that was long ago
       // (the delivery got lost): then deliver again (at-least-once).
       const deliveredAt = this.#pendingConsumption.get(task.id);

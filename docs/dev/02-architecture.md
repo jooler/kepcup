@@ -228,8 +228,8 @@ class Scheduler {
 class Mailbox {
   deliver(batch: TriggerBatch): string | null;   // 空闲：建对话轮（返回 run id）；运行中：缓冲，返回 null
   bufferMessageEdit(input): boolean;             // 运行中的对话轮读过的消息被编辑 → 缓冲一条 message_edited 事件
-  takeBuffered(): TriggerBatch[];                // 对话轮开始执行时吸收已缓冲的批
-  release(): string | null;                      // 对话轮终态：缓冲的批合并为一批，启动下一轮
+  takeBuffered(current?: TriggerBatch): TriggerBatch[];  // 对话轮开始执行时吸收能与 current 同轮的缓冲批
+  release(): string | null;                      // 对话轮终态：能同轮的一组缓冲批合并为一批，启动下一轮（其余留到之后）
   clear(): void;
 }
 interface TriggerBatch {
@@ -240,8 +240,8 @@ interface TriggerBatch {
 }
 ```
 
-- 同一 mailbox 同一时刻最多一个对话轮；对话轮运行中到达的批**不 steer**，缓冲到下一轮（D2 修订）。`mergeTriggerBatches`：同 reason 与属性的段合并，同一消息只出现一次且取最新快照，`chain` 取第一个、`afterNote` 取最后一个。
-- 对话轮开始执行（`#executeRun` 先 `await Promise.resolve()` 让同一时刻的投递落进缓冲）时 `#absorbIntoTurn`：`takeBuffered` + 合并 + `refreshTriggerBatch`（重读每条消息，撤回的移除），触发变化时 `runs.setTrigger` 更新行（`trigger_parts_json`）。
+- 同一 mailbox 同一时刻最多一个对话轮；对话轮运行中到达的批**不 steer**，缓冲到下一轮（D2 修订）。`mergeTriggerBatches`：同 reason 与属性的段合并，同一消息只出现一次且取最新快照，`chain` 取层数最深的、`afterNote` 取最后一个。只有 `canShareTurn` 的批才合并 / 吸收（审查批 E）：委派批（任一段 reason 为 `delegation`）独占一轮；绑定到不同连锁的批不同轮。
+- 对话轮开始执行（`#executeRun` 先 `await Promise.resolve()` 让同一时刻的投递落进缓冲）时 `#absorbIntoTurn`：`takeBuffered` + 合并 + `refreshTriggerBatch`（重读每条消息，撤回的移除），触发变化时 `runs.setTrigger` 更新行（`trigger_parts_json`；吸收了连锁批时连同 `chain_id` / `chain_depth`）。已被消费的任务结果条目在这里丢弃（重试的对话轮自己的触发除外）；吸收后的触发里带的任务 id 记为「被该对话轮持有」，对账不补投它们，直到 `#releaseTurnMailbox`。
 - 对话轮终态时 `#releaseTurnMailbox`：先按 DEV-014 规则 `TaskHost.markConsumed`，再 `release()`，然后通知群轮次与 D71 投递闸门「邮箱空闲」。
 - `deliver` 的调用方：用户批（单聊直投、群聊经 `GroupTurnCoordinator`）、事件 / 定时（`deliverEventToBot` / `deliverScheduleToBot`）、D71 代发、任务结算唤醒（`TaskHost` 的 `wake` = 以 `reason:'task'` 投递结果 / 失败条目）、`runs.retry`（按 `trigger_parts_json` 重建）。
 
@@ -259,7 +259,7 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
   list(identity): TaskSummary[];
   forwardResult(identity, taskId): { messageId };
   // 任务侧（§2.4.6）
-  ask(identity, { question, options }, signal): Promise<string>;  // ask_user：问题卡 + question 条目，阻塞到回答
+  ask(identity, { question, options }, signal): Promise<string>;  // ask_user：question 条目 + 问题卡，阻塞到回答（让出名额，见下）
   answerQuestion(messageId, answer): void;                        // tasks.answer：点选直注任务
   // 宿主 / RPC
   cancelById(taskId, reason): Run | null;            // runs.cancel / 更新闸门
@@ -277,10 +277,10 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
 
 - **配额与排队**（`#blockedBy`，FIFO 启动）：全局 `TASK_CONCURRENCY_GLOBAL`、对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（计已启动、含等租约 / 等名额的执行）；同一 `task_workdir` 已有写任务在执行 → 「等写入租约（任务 … 持有）」；`launchSlot`（外部智能体 `agent:{id}` 的并发上限）已满 → 「等智能体并发额度」。每个发起对话轮（`origin_run_id`）最多 `TASK_START_MAX_PER_TURN` 个，超限 `TASK_LIMIT_REACHED`；重试出来的对话轮（`retry_of_run_id` 链）再派同名任务时返回已有任务（`alreadyStarted`）。
 - **启动**（orchestrator `#startTask`，`TaskRunControl`）：取简报（缺失 = 派出时崩溃 → `failed`）；写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（排队原因「等写入租约」，行仍是 `queued`），再以 `task:{id}` 提交调度器（写任务优先级 0 + `leaseHeld`，只读任务优先级 1；provider 为 Bot 的任务引擎）；排队期间被取消 → `cancelQueued` 并释放租约。执行用 `#executeRun(runId, { kind: 'task', batch, task, brief, control })`：触发段 = `buildTaskBriefSegment`，对话层只取共享行，`continues_task_id` 时 `buildTaskReplaySegment`；引擎 run 启动后 `control.attach(handle)`（之前缓冲的注入此时 steer），结束 `detach` / `finish`。
-- **注入**：已 attach → `handle.steer(buildTaskInjection(...))`，失败即 `queued`；启动前 → 并入简报（`TaskBrief.injects`）；已收尾 → `queued`。外部智能体异步拒绝 / 确认经 `control.steerRefused` / `steerConfirmed`（FIFO 按文本匹配），未送达的条目改写为 `queued` 并运行调用方的 `onNotDelivered`（§8.4 降级用它另起任务）。任务正在 `ask_user` 时，注入就是回答。
+- **注入**：已 attach → `handle.steer(buildTaskInjection(...))`，失败即 `queued`；启动前 → 并入简报（`TaskBrief.injects`）；已收尾 → `queued`。外部智能体异步拒绝 / 确认经 `control.steerRefused` / `steerConfirmed`（FIFO 按文本匹配），未送达的条目改写为 `queued` 并运行调用方的 `onNotDelivered`（§8.4 降级用它另起任务）。任务正在 `ask_user` 时，注入就是回答（`buildTaskAnswer`：转交文本 + 原消息）。
 - **结算次序**：终态条目（`appendTaskEvent`，唯一索引幂等；写失败而对话仍在 → 留在 `#unsettled`，由 sweep 重试，任务保持非终态）→ runs 终态 → `onSettled`（once 授权、挂起审批、未在执行时释放租约）→ 唤醒判定 → `wake(botId, conversationId, entry)`（orchestrator：`mailbox.deliver({ reason: 'task', messages: [entry] })`）或直接 `markConsumed`。宿主主动停下的任务当场结算，其执行在 `finish()` 前仍占名额与写入目标。
-- **sweep**（start.ts 每 `TASK_SETTLE_SWEEP_MS`）：重试 `#unsettled`；驱逐结算后超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行（`releaseExecution`）；`TASK_MAX_WALL_MS` / `TASK_TOKEN_BUDGET` 超限强制 `failed`；`#pump`；对账（未消费终态任务重投，已投递未消费超过 `TASK_REDELIVER_AFTER_MS` 才重投）；`onSweep`（orchestrator 关闭超过 `CONTINUATION_WINDOW_MS` 的任务外部智能体会话）。
-- **界面**：`start` / `retry` 写一张共享任务卡（`kind='card'`，`cardType='task'`，`TASK_CARD`）；`ask` 写问题卡（`system_event`，`TASK_QUESTION_EVENT='task_question'`）；每次可见变化（`run.status`、注入、注入降级、排队原因变化、回答）推送 `task.updated`（`TaskView`）。
+- **sweep**（start.ts 每 `TASK_SETTLE_SWEEP_MS`）：重试 `#unsettled`；驱逐结算后超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行（`releaseExecution`）；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`TASK_MAX_WALL_MS`（扣除等问题回答的时间）/ `TASK_TOKEN_BUDGET` 超限强制 `failed`；`#pump`；对账（未消费终态任务重投，已投递未消费超过 `TASK_REDELIVER_AFTER_MS` 才重投；被进行中的对话轮持有的不投；每次投递在终态条目的 `deliveries` 上计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 标记消费并发可见的 `task_result_undelivered` 提示）；`onSweep`（orchestrator 关闭超过 `CONTINUATION_WINDOW_MS` 的任务外部智能体会话）。
+- **界面**：`start` / `retry` 写一张共享任务卡（`kind='card'`，`cardType='task'`，`TASK_CARD`）；`ask` 先写 `question` 条目再推送问题卡（`system_event`，`TASK_QUESTION_EVENT='task_question'`，`taskBotId` = 提问的 Bot；条目写失败则卡片作废），等待期间经 `yieldSlotWhile`（`Scheduler.yieldSlotWhile`，按任务 run id）让出 provider 名额、写租约保留；每次可见变化（`run.status`、注入、注入降级、排队原因变化、回答）推送 `task.updated`（`TaskView`）。
 - 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 与审批取消、委派恢复 → `resume()`（orchestrator `recoverInterrupted`）。
 
 ### 分发器
