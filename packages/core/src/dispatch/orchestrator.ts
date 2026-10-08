@@ -374,6 +374,33 @@ export type OrchestratorMemoryFacade = Omit<
   }): void;
 };
 
+/**
+ * What a part of a downgraded turn's trigger is (§8.4 / 审查 M5): the task it
+ * is handed to must not mistake a system event or a schedule for the user.
+ */
+function downgradeLabel(part: TriggerPart): string {
+  switch (part.reason) {
+    case 'direct':
+    case 'mention':
+    case 'reply':
+    case 'broadcast':
+      return '用户的新消息';
+    case 'event': {
+      const event = part.extraAttributes?.['event'];
+      if (event === 'message_edited') return '用户编辑了之前的消息（以编辑后的内容为准）';
+      return `系统事件${event !== undefined ? `（${String(event)}）` : ''}，不是用户发的消息`;
+    }
+    case 'scheduled':
+      return '定时任务到点（不是用户此刻发的消息）';
+    case 'delegation':
+      return '另一个 Bot 代用户转交给你的事';
+    case 'chain':
+      return '群里其他 Bot @ 了你';
+    default:
+      return '新消息';
+  }
+}
+
 /** The nearest directory at or above `start` holding `.git` (null = none). */
 function gitRootAbove(start: string): string | null {
   let dir = nodePath.resolve(start);
@@ -3386,7 +3413,9 @@ export class Orchestrator {
    * task" as before D75. Task results in the trigger are forwarded verbatim
    * (a failure as a short notice); the other messages go to the bot's
    * in-flight task (inject_task), or start a new task when there is none or
-   * the task could not take them. Level 1 (running the turn through the
+   * the task could not take them — also when that turns out only later (an
+   * asynchronous steering refusal, 审查 M5). Each part is labelled for what
+   * it is (user message, edit, system event, schedule …). Level 1 (running the turn through the
    * agent's one-shot complete()) is not implemented (DEV-011).
    */
   #routeWithoutModel(runId: string, batch: TriggerBatch, bot: Bot): void {
@@ -3426,33 +3455,63 @@ export class Orchestrator {
         notice(`任务「${title}」${label}${content.error ? `：${content.error}` : ''}`);
       }
     }
-    const incoming = batch.messages.filter(
-      (message) => message.kind !== 'task_event' && message.ownerBotId === null,
-    );
-    if (incoming.length === 0) return;
+    // The rest goes to a task as it is, each source part under a label that
+    // says what it is (a user message, an edit, a system event, a schedule …).
     const options: RenderMessageOptions = { ...this.#renderOptions(), selfBotId: batch.botId };
-    const text = incoming.map((message) => renderMessageLine(message, options)).join('\n');
+    const sections: string[] = [];
+    const incoming: Message[] = [];
+    for (const part of triggerParts(batch)) {
+      const shared = part.messages.filter(
+        (message) => message.kind !== 'task_event' && message.ownerBotId === null,
+      );
+      if (shared.length === 0) continue;
+      incoming.push(...shared);
+      sections.push(
+        `${downgradeLabel(part)}：\n${shared.map((message) => renderMessageLine(message, options)).join('\n')}`,
+      );
+    }
+    if (incoming.length === 0) return;
+    const text = sections.join('\n\n');
     const sourceMessageIds = incoming.map((message) => message.id);
+    const startTask = (): void => {
+      const first = incoming
+        .filter((message) => message.senderType === 'user')
+        .map((message) => messageText(message).trim())
+        .find((t) => t !== '');
+      this.#taskHost.start(identity, {
+        title: first !== undefined ? first.slice(0, 30) : '处理新消息',
+        instruction: `这一轮没有对话模型，下面的消息原样交给你，按它们完成这件事：\n${text}`,
+        sourceMessageIds,
+        writes: bot.profile.runtime.agent.permission !== 'read_only',
+      });
+    };
     try {
       const inFlight = this.#taskHost
         .list(identity)
         .filter((task) => task.state === 'submitted' || task.state === 'running')
         .at(-1);
       if (inFlight !== undefined) {
-        const injected = this.#taskHost.inject(identity, {
-          taskId: inFlight.taskId,
-          text: `用户的新消息：\n${text}`,
-          sourceMessageIds,
-        });
+        const injected = this.#taskHost.inject(
+          identity,
+          { taskId: inFlight.taskId, text, sourceMessageIds },
+          {
+            // 审查 M5: an inject that never reaches the task's engine run
+            // (refused asynchronously, or buffered for a run that never took
+            // it) becomes a task of its own — never silently dropped.
+            onNotDelivered: () => {
+              try {
+                startTask();
+              } catch (error) {
+                notice(
+                  `没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+            },
+          },
+        );
         if (injected.delivery === 'delivered') return;
       }
-      const first = incoming.map((message) => messageText(message).trim()).find((t) => t !== '');
-      this.#taskHost.start(identity, {
-        title: first !== undefined ? first.slice(0, 30) : '处理新消息',
-        instruction: `按用户的消息完成这件事（这一轮没有对话模型，消息原样交给你）：\n${text}`,
-        sourceMessageIds,
-        writes: bot.profile.runtime.agent.permission !== 'read_only',
-      });
+      startTask();
     } catch (error) {
       notice(
         `没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`,
