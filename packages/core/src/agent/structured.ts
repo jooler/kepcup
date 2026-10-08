@@ -11,13 +11,7 @@ export interface CompleteStructuredInput<T> {
   complete(req: CompletionRequest): Promise<{
     text: string;
     toolCalls: CompletionToolCall[];
-    usage?: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      costUsd: number | null;
-    } | null;
+    usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number | null } | null;
   }>;
   identity: RunIdentity;
   model: string;
@@ -30,15 +24,13 @@ export interface CompleteStructuredInput<T> {
   maxTokens?: number;
   signal?: AbortSignal;
   /** Receives usage from every attempt (billing counts each call). */
-  onUsage?: (
-    usage: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      costUsd: number | null;
-    } | null,
-  ) => void;
+  onUsage?: (usage: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    costUsd: number | null;
+  } | null) => void;
 }
 
 /**

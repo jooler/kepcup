@@ -216,11 +216,7 @@ export class JobsRunner {
       case 'skill_suggestion':
         // P08: both task sources run the same generation loop (the reflection
         // already checked the repeat threshold for skill_suggestion).
-        if (
-          this.#deps.skills === undefined ||
-          this.#deps.sandbox === undefined ||
-          this.#deps.paths === undefined
-        ) {
+        if (this.#deps.skills === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined) {
           throw new Error('skills domain not wired; cannot run skill authoring');
         }
         await runSkillAuthoringJob({
@@ -280,13 +276,8 @@ export class JobsRunner {
         return;
       }
       case 'wiki_ingest':
-        if (
-          this.#deps.wiki === undefined ||
-          this.#deps.sandbox === undefined ||
-          this.#deps.paths === undefined ||
-          this.#deps.gateway === undefined ||
-          this.#deps.attachments === undefined
-        ) {
+        if (this.#deps.wiki === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined ||
+            this.#deps.gateway === undefined || this.#deps.attachments === undefined) {
           throw new Error('wiki domain not wired; cannot run wiki ingest');
         }
         await runWikiIngestJob({
@@ -316,12 +307,8 @@ export class JobsRunner {
         });
         return;
       case 'wiki_lint':
-        if (
-          this.#deps.wiki === undefined ||
-          this.#deps.sandbox === undefined ||
-          this.#deps.paths === undefined ||
-          this.#deps.gateway === undefined
-        ) {
+        if (this.#deps.wiki === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined ||
+            this.#deps.gateway === undefined) {
           throw new Error('wiki domain not wired; cannot run wiki lint');
         }
         await runWikiLintJob({
