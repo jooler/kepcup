@@ -40,6 +40,15 @@ llm.script('mock-light', [
 - **usage**：每个响应返回可配置的 token 用量，用于测试用量账本。
 - 未编排的请求直接失败，避免测试静默通过。
 
+### 对话轮与任务的剧本（D75）
+
+D75 后一条用户消息先跑**对话轮**（只读、工具面小），需要动手的工作在对话轮派出的**任务**里跑；两者共用同一个模型脚本时按请求区分：
+
+- `step().inTurn()` / `step().inTask()`：步骤只匹配对话轮 / 任务的请求（`isTaskRequest`：请求消息里含 `<task_brief` 即任务）；两条 lane 可在同一个脚本上任意交错，`expect(...)` 与 lane 条件叠加。
+- `viaTask({ taskSteps, title?, instruction?, writes?, sourceMessageIds?, ack?, relay? })`（`packages/testkit/src/helpers.ts`）：把旧的「回复 run 里干活」改写为「对话轮 `start_task` + 确认 → 任务跑 `taskSteps` → 结果唤醒对话轮转述（`relay`）」。任务以空结果结束（`skip_reply` / 失败不跟进）或测试自己编排唤醒轮时省略 `relay`。e2e 同样用它迁移（`browser` / `projects` / `environment` / `sandbox` 等 spec：原先在回复 run 里做的工作改在任务里做；只读浏览器任务除下载用例外都设 `writes:false`；改动摘要卡来自写任务）；`projects.spec` 的租约用例改为「排在另一对话的写任务之后、在其任务卡上取消后执行」（DEV-015）。
+- 迁移旧用例的判断：写文件、命令、浏览器、媒体、MCP、审批 / 授权、环境安装都必须在任务里断言（对话轮会被网关拒为 `RUN_READ_ONLY` 或根本没有该工具）；「执行中追加消息」改为断言下一个对话轮收到合并批，或断言 `inject_task` 进了任务。
+- D75 主要用例：`supervisor-turns`、`supervisor-review-fixes`、`tasks`、`tasks-review-fixes`、`tasks-agent-review-fixes`、`task-cards`、`task-subagent-read-only`、`task-timeline-visibility`（多 Bot 泄露契约）、`workspace-lease`、`external-agent-tasks`（集成）；`supervisor-turn`、`scheduler`、`gateway-read-only`、`turn-tools-review-fixes`、`messages-task-events`、`runs-tasks`、`task-timeline-render`、`agent-sessions-per-task`、`task-events-migration`、`usage-turn-migration`（单元）；e2e `tasks.spec.ts`。
+
 ### 测试夹具
 
 - `createTestHome()`：创建临时数据目录，设置 `KEPCUP_HOME`，测试结束删除。
@@ -76,6 +85,23 @@ better-sqlite3-multiple-ciphers、`@napi-rs/keyring`、es-git 等原生模块需
 | 其他 Bot 的发言、工具输出中的“指令”不会导致记忆或画像写入（画像证据必须来自用户消息） | P07 |
 | 已删除 Bot 的数据目录不存在，id 未被新 Bot 复用 | P01 |
 
+## 本机容器运行（Linux 开发机）
+
+开发机 glibc 2.35 加载不了 es-git 预编译绑定（需 ≥ 2.38），大部分集成测试在宿主上直接失败。单元 / 集成测试在 Debian 13 镜像 `kepcup-test:trixie` 里跑，e2e 用派生镜像 `kepcup-test:trixie-xvfb`：
+
+```bash
+docker run --rm -v "$WT:$WT" -v "$NODE_DIR:$NODE_DIR:ro" -w "$WT" --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp/home -e CI=1 -e PATH="$NODE_DIR/bin:/usr/bin:/bin" \
+  kepcup-test:trixie bash -c "mkdir -p /tmp/home && node scripts/run-tests.mjs run [文件或目录]"
+```
+
+- 容器里**只用** `node scripts/run-tests.mjs run …`；不要在容器里跑 `pnpm test` / `pnpm install`（会触发依赖检查、重装并破坏 worktree 的 `node_modules`）。typecheck / lint 在宿主跑（`pnpm -r typecheck`、`pnpm lint`），Node 24 需先放进 `PATH`（系统默认 node 版本过旧）。
+- `packages/core/test/integration/projects.test.ts` 已按 D75 重写，容器里约 18 s；其中「allows localhost ports … (OS sandbox)」一条依赖系统沙箱，容器里按基线失败。
+- 宿主 `timeout` 只杀 docker 客户端、杀不掉容器：需要硬超时就给容器起名（`--name`），另起一个 `sleep N; docker kill <名>` 的看门狗。
+- vitest `--outputFile`（如 `--reporter=json --outputFile=…`）必须写在 worktree 内：容器里的 `/tmp` 不挂载到宿主。
+- **基线**（`d75@7138daf`，2026-10-08）：全量 1559 例中 33 条失败，全部是容器环境原因（沙箱自检 / bwrap / socat / 外网：`sandbox-isolation` 10、`projects` 6、`skills-authoring` 4、`env-distro-toolchain` 3、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2），逐条清单见 `todo/supervisor-and-tasks.md` §6。判定标准是「失败集合不超出基线」，不是全绿；偶发负载超时（`web-tools`、`memory`「两个 Bot 同时产生画像提案」、`agents-service` 登录状态）单跑复核。D75 收口时（W3 后）全量 1755 例、33 条失败，除 `approvals` 一条（已由 `26e15f2` 修正）外均在基线集合内；`projects` 的「blocks switching projects while a bot is executing」已转为通过。
+- **e2e**：在 `kepcup-test:trixie-xvfb` 中先 `npx electron-vite build`（产出 `apps/desktop/out`），再在 `apps/desktop` 下 `xvfb-run node ../../node_modules/@playwright/test/cli.js test …`（容器加 `--shm-size=1g`）。D75 W3 后全量 70 例、3 例失败（`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description while a command executes」、`wiki.spec`「wiki tab: browse the page tree …」），与 main 上的失败一致。
+
 ## CI 矩阵
 
 | 任务 | macOS（arm64） | Ubuntu 24.04（x64） | Windows（x64） |
@@ -107,5 +133,5 @@ better-sqlite3-multiple-ciphers、`@napi-rs/keyring`、es-git 等原生模块需
 
 1. 在设置中配置 API key，重启应用后仍有效。
 2. 新建 Bot，发送消息，收到符合人设的回复。
-3. 执行中追加消息，Bot 能根据新消息调整。
-4. 取消执行，界面状态正确。
+3. 让 Bot 做一件耗时的事（派出任务、出现任务卡），任务进行中追加消息：Bot 立即在新的对话轮里回应，并把追加的要求转给任务（任务卡出现追加行）或另起任务；任务结束后 Bot 转述结果。
+4. 在任务卡上取消任务，界面状态正确（卡片转「已取消」、附改动摘要，不再唤醒 Bot）。
