@@ -22,6 +22,7 @@ import {
   botProfileSchema,
   botSchema,
   delegationSchema,
+  taskViewSchema,
   budgetSchema,
   conversationSchema,
   customProviderSchema,
@@ -749,6 +750,19 @@ export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema }
 export const delegationIdInputSchema = z.object({ id: z.string().min(1) });
 export const delegationGetOutputSchema = z.object({ delegation: delegationSchema.nullable() });
 
+// --- tasks (D75 W3, design 30 §4.3 / §2.4.6) --------------------------------
+
+export const taskIdInputSchema = z.object({ taskId: z.string().min(1) });
+export const taskGetOutputSchema = z.object({ task: taskViewSchema.nullable() });
+/** Non-terminal tasks of a conversation (status line seed on conversation open). */
+export const tasksActiveInputSchema = z.object({ conversationId: z.string().min(1) });
+export const tasksActiveOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
+/** The user picked an option on a task question card: injected straight into the task. */
+export const tasksAnswerInputSchema = z.object({
+  messageId: z.string().min(1),
+  answer: z.string().min(1).max(4000),
+});
+
 // --- grants (P03) -----------------------------------------------------------
 
 export const grantsListInputSchema = z.object({ conversationId: z.string().min(1) });
@@ -1250,6 +1264,9 @@ export const rpcMethodSchemas = {
   /** 跨 Bot 委派（D71）：A 侧卡片按 id 读委派行 / 用户在发出卡上取消。 */
   'delegations.get': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
   'delegations.cancel': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
+  'tasks.get': { input: taskIdInputSchema, output: taskGetOutputSchema },
+  'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
+  'tasks.answer': { input: tasksAnswerInputSchema, output: okOutput },
   'grants.list': { input: grantsListInputSchema, output: grantsListOutputSchema },
   'grants.revoke': { input: grantIdInputSchema, output: okOutput },
 
@@ -1480,6 +1497,9 @@ const APP_METHODS = [
   'approvals.decide',
   'delegations.get',
   'delegations.cancel',
+  'tasks.get',
+  'tasks.active',
+  'tasks.answer',
   'grants.list',
   'grants.revoke',
   'allowlist.list',

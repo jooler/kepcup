@@ -1481,6 +1481,20 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // Provider limits apply before recovery launches anything (re-queued
     // tasks, wake runs — D75 审查 LOW-5).
     scheduler.setConcurrency(settings.get().providerConcurrency);
+    // D75 W3 (design 30 §4.3): every status change of a task — whoever
+    // publishes it (task host, executor, lease waits) — redraws its card.
+    events.on('run.status', ({ run }) => {
+      if (run.loopType === 'task') orchestrator.tasks.publishUpdate(run.id);
+    });
+    // A project write task's change summary is final only once its lease is
+    // released (the after-snapshot posts the run-changes card): redraw then.
+    events.on('message.created', ({ message }) => {
+      const content = message.content as { cardType?: unknown; runId?: unknown };
+      if (message.kind === 'card' && content.cardType === 'run_changes') {
+        const runId = typeof content.runId === 'string' ? content.runId : '';
+        if (runs.get(runId)?.loopType === 'task') orchestrator.tasks.publishUpdate(runId);
+      }
+    });
     // D75 §7.4: task repair → blanket interruption → re-queue + reconciliation.
     orchestrator.recoverInterrupted();
     // D75 §3.2 reaper: re-deliver unconsumed task results, enforce the

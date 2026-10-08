@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -121,10 +121,19 @@ test('run status line shows the command description while a command executes', a
     await waitReady(page);
     await createBotAndOpenChat(page, '小执行');
 
-    llm.script('mock-main', [
-      step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
-      step().replyText('执行完了'),
-    ]);
+    // D75: commands run in tasks; the status line shows the task's activity.
+    llm.script(
+      'mock-main',
+      viaTask({
+        title: '跑命令',
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('bash', { command: 'echo sandbox-e2e-probe' }),
+          step().replyText('命令输出 sandbox-e2e-probe'),
+        ],
+        relay: '执行完了',
+      }),
+    );
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('跑个命令');

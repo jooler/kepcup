@@ -327,6 +327,12 @@
           {/each}
         {/if}
       </select>
+      {#if profile.runtime.agent.id.length > 0}
+        <!-- D75 §8.1：runtime.agent 是 Bot 的任务引擎，对话轮固定内置模型 -->
+        <p class="text-xs text-muted-foreground" data-testid="bot-agent-task-engine-hint">
+          {t('contacts.agentTaskEngineHint')}
+        </p>
+      {/if}
     </div>
     {#if showLightModel}
       <div class="grid gap-1.5">

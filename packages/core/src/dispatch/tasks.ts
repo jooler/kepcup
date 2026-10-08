@@ -15,7 +15,9 @@ import {
   type RunStatus,
   type RunStep,
   type SetupRequirement,
+  type TaskChanges,
   type TaskEventContent,
+  type TaskView,
 } from '@kepcup/shared';
 import { buildRunDigest } from '../agent/context/continuation.js';
 import { renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
@@ -183,6 +185,19 @@ export interface TaskHostDeps {
    * fails before its engine starts still shows the right engine.
    */
   taskEngine?(botId: string): string | null;
+  /**
+   * D75 W3 (design 30 §4.3): pushes a task's card / status-line view
+   * (`task.updated`). Absent = no UI (unit tests).
+   */
+  publishTask?(view: TaskView): void;
+  /** Pushes a visible message the host wrote (task card, question card) — created or updated. */
+  publishMessage?(message: Message, change: 'created' | 'updated'): void;
+  /**
+   * Where the task works and what it left behind (cancel card, §4.3 / §5.2):
+   * project tasks have a checkpoint summary, workspace tasks only the files
+   * their file tools wrote. `changes` null = nothing recorded.
+   */
+  describeWorkdir?(task: Run): { kind: 'project' | 'workspace'; changes: TaskChanges | null };
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -233,6 +248,11 @@ interface PendingInject {
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['queued', 'running', 'waiting_approval', 'waiting_lease'];
+
+/** The visible card a task gets in its conversation (design 30 §4.3). */
+export const TASK_CARD = 'task';
+/** The visible question card of a task waiting for the user (§2.4.6). */
+export const TASK_QUESTION_EVENT = 'task_question';
 
 /** Records an accepted steer awaiting its confirmation (unless it was confirmed already). */
 function noteSteered(launched: LaunchedTask, item: PendingInject): void {
@@ -381,6 +401,13 @@ export class TaskHost implements TaskToolFacade {
    * retries the settlement — never a terminal task without its entry.
    */
   readonly #unsettled = new Map<string, TaskOutcome>();
+  /**
+   * Tasks blocked in `ask_user` (§2.4.6): the visible question card and the
+   * waiter its answer (a card option, or the turn's inject_task) resolves.
+   */
+  readonly #questions = new Map<string, { messageId: string; resolve: (answer: string) => void }>();
+  /** Last published queue reason per submitted task (republished only when it changes). */
+  readonly #publishedReasons = new Map<string, string | null>();
   #pumping = false;
   #pumpAgain = false;
   /** >0 while a lifecycle abort loops over tasks (pump once at the end). */
@@ -481,7 +508,9 @@ export class TaskHost implements TaskToolFacade {
       writes: input.writes,
       ...(continues !== null ? { continuesTaskId: continues.id } : {}),
     });
+    this.#appendCard(task);
     this.#pump();
+    this.publishUpdate(task.id);
     // The row's true state: launched tasks still wait for their write lease /
     // a provider slot while `queued`; one settled synchronously reports its
     // terminal state (its entry tells the rest).
@@ -511,6 +540,22 @@ export class TaskHost implements TaskToolFacade {
     const text = input.text.trim();
     if (text.length === 0) throw new AppError('INVALID_INPUT', 'text 不能为空');
     const sources = this.#sourceMessages(conversationId, input.sourceMessageIds ?? []);
+    const question = this.#questions.get(task.id);
+    if (question !== undefined) {
+      // The task is blocked on its question card (§2.4.6): the turn relays the
+      // user's free-text answer — it is the answer, not a steer.
+      this.#deps.messages.appendTaskEvent({
+        conversationId,
+        ownerBotId: botId,
+        taskId: task.id,
+        phase: 'inject',
+        text,
+        sourceMessageIds: sources.map((message) => message.id),
+        delivery: 'delivered',
+      });
+      this.#resolveQuestion(task.id, question, text);
+      return { delivery: 'delivered' };
+    }
     const launched = this.#launched.get(task.id);
     const steerText = (): string =>
       buildTaskInjection(text, sources, this.#deps.renderOptions(botId));
@@ -549,6 +594,7 @@ export class TaskHost implements TaskToolFacade {
       noteSteered(launched, { text: steered, entryId: entry.id, ...fallback });
     }
     if (task.awaitingInput) this.#deps.runs.update(task.id, { awaitingInput: false });
+    this.publishUpdate(task.id);
     return { delivery };
   }
 
@@ -660,6 +706,237 @@ export class TaskHost implements TaskToolFacade {
     this.#deps.publishRunStatus(this.#deps.runs.update(taskId, { awaitingInput: true }));
   }
 
+  /**
+   * `ask_user` (§2.4.6): the task asks the user and waits. A visible question
+   * card (bound to the task) + the private `question` entry; the task stays
+   * running with awaiting_input until the user picks an option on the card
+   * (`answerQuestion`, straight into the task) or the turn relays a free-text
+   * answer with inject_task. Rejects when `signal` aborts (the task stopped).
+   */
+  ask(
+    identity: RunIdentity,
+    input: { question: string; options: string[] },
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (identity.loopType !== 'task') {
+      throw new AppError('NOT_SUPPORTED', '只有任务可以向用户提问（对话轮直接在回复里问）');
+    }
+    const task = this.#deps.runs.get(identity.runId);
+    if (task === null || task.loopType !== 'task' || isTerminalStatus(task.status)) {
+      throw new AppError('RUN_ALREADY_FINISHED', '任务已结束');
+    }
+    const { conversationId } = this.#scope(identity);
+    if (this.#questions.has(task.id)) {
+      throw new AppError('INVALID_INPUT', '上一个问题还没有回答');
+    }
+    const question = input.question.trim();
+    if (question.length === 0) throw new AppError('INVALID_INPUT', 'question 不能为空');
+    const card = this.#deps.messages.append({
+      conversationId,
+      senderType: 'system',
+      kind: 'system_event',
+      event: TASK_QUESTION_EVENT,
+      text: question,
+      options: input.options,
+      taskId: task.id,
+      runId: task.id,
+    });
+    this.#safely(() => this.#deps.publishMessage?.(card, 'created'));
+    return new Promise<string>((resolve, reject) => {
+      const onAbort = (): void => {
+        if (this.#questions.get(task.id)?.messageId === card.id) this.#questions.delete(task.id);
+        reject(new AppError('RUN_ALREADY_FINISHED', '任务已停止，问题作废'));
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.#questions.set(task.id, {
+        messageId: card.id,
+        resolve: (answer) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(answer);
+        },
+      });
+      try {
+        this.recordQuestion(task.id, { text: question, questionMessageId: card.id });
+      } catch (error) {
+        this.#questions.delete(task.id);
+        signal.removeEventListener('abort', onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  /**
+   * The user picked an option on a task question card (§2.4.6): the answer is
+   * injected straight into the task (no turn), recorded as an inject entry.
+   */
+  answerQuestion(messageId: string, answer: string): void {
+    const card = this.#deps.messages.getById(messageId);
+    const content = card?.content as { event?: unknown; answer?: unknown } | undefined;
+    if (card === null || card.kind !== 'system_event' || content?.event !== TASK_QUESTION_EVENT) {
+      throw new AppError('NOT_FOUND', '问题卡不存在');
+    }
+    if (typeof content.answer === 'string') {
+      throw new AppError('INVALID_INPUT', '这个问题已经回答过了');
+    }
+    const taskId = card.taskId ?? '';
+    const question = this.#questions.get(taskId);
+    const task = this.#deps.runs.get(taskId);
+    if (question === undefined || question.messageId !== messageId || task === null) {
+      throw new AppError('RUN_ALREADY_FINISHED', '任务已不再等待这个问题的回答');
+    }
+    const text = answer.trim();
+    if (text.length === 0) throw new AppError('INVALID_INPUT', '回答不能为空');
+    if (task.botId !== null && task.conversationId !== null) {
+      this.#deps.messages.appendTaskEvent({
+        conversationId: task.conversationId,
+        ownerBotId: task.botId,
+        taskId,
+        phase: 'inject',
+        text: `（用户在问题卡上的回答）${text}`,
+        delivery: 'delivered',
+      });
+    }
+    this.#resolveQuestion(taskId, question, text);
+  }
+
+  #resolveQuestion(
+    taskId: string,
+    question: { messageId: string; resolve: (answer: string) => void },
+    answer: string,
+  ): void {
+    this.#questions.delete(taskId);
+    this.#safely(() => {
+      this.#deps.db
+        .prepare(
+          "update messages set content_json = json_set(content_json, '$.answer', ?) where id = ? and kind = 'system_event'",
+        )
+        .run(answer, question.messageId);
+      const updated = this.#deps.messages.getById(question.messageId);
+      if (updated !== null) this.#deps.publishMessage?.(updated, 'updated');
+    });
+    const task = this.#deps.runs.get(taskId);
+    if (task?.awaitingInput === true) {
+      this.#safely(() =>
+        this.#deps.publishRunStatus(this.#deps.runs.update(taskId, { awaitingInput: false })),
+      );
+    }
+    question.resolve(answer);
+    this.publishUpdate(taskId);
+  }
+
+  // --- views (D75 W3, design 30 §4.3 / §6.3) ----------------------------------
+
+  /** The card / status-line projection of a task (null = not a task). */
+  view(taskId: string): TaskView | null {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || task.loopType !== 'task') return null;
+    const terminal = isTerminalStatus(task.status);
+    const injects: TaskView['injects'] = [];
+    let cancelReason: string | null = null;
+    let continuesTaskId: string | null = task.continuedFromRunIds[0] ?? null;
+    let questionMessageId: string | null = null;
+    for (const event of this.#deps.messages.taskEvents(task.id)) {
+      const content = taskEventOf(event);
+      if (content === null) continue;
+      if (content.phase === 'inject') {
+        injects.push({
+          messageId: event.id,
+          text: content.text,
+          delivery: content.delivery ?? 'delivered',
+          at: event.createdAt,
+        });
+      } else if (content.phase === 'cancel') {
+        cancelReason ??= content.text;
+      } else if (content.phase === 'brief') {
+        continuesTaskId = content.continuesTaskId ?? continuesTaskId;
+      } else if (content.phase === 'question') {
+        questionMessageId = content.questionMessageId ?? questionMessageId;
+      }
+    }
+    let workdir: { kind: 'project' | 'workspace'; changes: TaskChanges | null } | null = null;
+    try {
+      workdir = this.#deps.describeWorkdir?.(task) ?? null;
+    } catch (error) {
+      this.#deps.logger.warn(
+        { taskId, error: error instanceof Error ? error.message : String(error) },
+        'task workdir lookup failed',
+      );
+    }
+    const continuedBy =
+      task.botId !== null && task.conversationId !== null
+        ? (this.#deps.runs
+            .listTasks({ conversationId: task.conversationId, botId: task.botId })
+            .find((candidate) => candidate.continuedFromRunIds.includes(task.id))?.id ?? null)
+        : null;
+    const summary = this.#summary(task);
+    return {
+      taskId: task.id,
+      botId: task.botId,
+      conversationId: task.conversationId,
+      title: task.taskTitle ?? '',
+      state: taskState(task.status),
+      status: task.status,
+      writes: task.taskWrites === true,
+      workdirKind: workdir?.kind ?? null,
+      queueReason: terminal ? null : summary.queueReason,
+      awaitingInput: task.awaitingInput,
+      questionMessageId: task.awaitingInput ? questionMessageId : null,
+      createdAt: task.createdAt,
+      startedAt: task.startedAt,
+      endedAt: task.endedAt,
+      error: task.error,
+      cancelReason,
+      injects,
+      lastProgress: summary.lastProgress,
+      changes: task.taskWrites === true && terminal ? (workdir?.changes ?? null) : null,
+      setup: task.setup ?? null,
+      continuesTaskId,
+      continuedByTaskId: continuedBy,
+    };
+  }
+
+  /** Views of a conversation's non-terminal tasks (status line on conversation open). */
+  activeViews(conversationId: string): TaskView[] {
+    return this.#deps.runs
+      .listTasks({ conversationId, statuses: ACTIVE_STATUSES })
+      .map((task) => this.view(task.id))
+      .filter((view): view is TaskView => view !== null);
+  }
+
+  /** Pushes the task's view (`task.updated`); called on every visible change. */
+  publishUpdate(taskId: string): void {
+    const publish = this.#deps.publishTask;
+    if (publish === undefined) return;
+    this.#safely(() => {
+      const view = this.view(taskId);
+      if (view === null) return;
+      if (view.state === 'submitted') this.#publishedReasons.set(taskId, view.queueReason);
+      else this.#publishedReasons.delete(taskId);
+      publish(view);
+    });
+  }
+
+  /** The task's visible card (§4.3): a shared card row bound to the task. */
+  #appendCard(task: Run): void {
+    if (task.conversationId === null) return;
+    const conversationId = task.conversationId;
+    this.#safely(() => {
+      const card = this.#deps.messages.append({
+        conversationId,
+        senderType: 'system',
+        kind: 'card',
+        cardType: TASK_CARD,
+        cardRunId: task.id,
+        taskId: task.id,
+      });
+      this.#deps.publishMessage?.(card, 'created');
+    });
+  }
+
   // --- settlement (§3.2 / §3.3) ----------------------------------------------
 
   /**
@@ -718,6 +995,8 @@ export class TaskHost implements TaskToolFacade {
       created = written?.created ?? true;
     }
     this.#unsettled.delete(taskId);
+    // A question still open dies with the task (its tool call was aborted).
+    this.#questions.delete(taskId);
     // An earlier writer may have won the unique index: the stored entry is
     // the source of truth for the final status (and its error).
     const status = entry !== null ? statusOfTerminalEntry(entry) : outcome.status;
@@ -832,7 +1111,10 @@ export class TaskHost implements TaskToolFacade {
         sourceMessageIds: inject.sourceMessageIds ?? [],
       });
     }
+    this.#appendCard(retried);
     this.#pump();
+    this.publishUpdate(retried.id);
+    this.publishUpdate(task.id);
     return this.#deps.runs.get(retried.id) ?? retried;
   }
 
@@ -1128,6 +1410,28 @@ export class TaskHost implements TaskToolFacade {
     } finally {
       this.#pumping = false;
     }
+    this.#publishQueueReasons();
+  }
+
+  /** Republishes submitted tasks whose queue reason changed (a slot / the lease moved). */
+  #publishQueueReasons(): void {
+    if (this.#deps.publishTask === undefined) return;
+    let queued: Run[];
+    try {
+      queued = this.#deps.runs.listTasks({ statuses: ['queued'] });
+    } catch {
+      return;
+    }
+    const seen = new Set<string>();
+    for (const task of queued) {
+      seen.add(task.id);
+      const reason = this.#queueReason(task);
+      if (this.#publishedReasons.get(task.id) === reason) continue;
+      this.publishUpdate(task.id);
+    }
+    for (const taskId of [...this.#publishedReasons.keys()]) {
+      if (!seen.has(taskId)) this.#publishedReasons.delete(taskId);
+    }
   }
 
   /** Why a submitted task cannot launch right now (null = it can). */
@@ -1218,11 +1522,12 @@ export class TaskHost implements TaskToolFacade {
       },
       waiting: (reason) => {
         launched.waitReason = reason;
+        this.publishUpdate(task.id);
       },
       steerRefused: (text) => {
         const index = launched.steered.findIndex((item) => item.text === text);
         if (index === -1) return;
-        this.#injectsNotDelivered(launched.steered.splice(index, 1));
+        this.#injectsNotDelivered(task.id, launched.steered.splice(index, 1));
       },
       steerConfirmed: (text) => {
         const index = launched.steered.findIndex((item) => item.text === text);
@@ -1236,7 +1541,7 @@ export class TaskHost implements TaskToolFacade {
       },
       finish: () => {
         // Buffered injects that never reached an engine run.
-        this.#injectsNotDelivered(launched.buffered.splice(0));
+        this.#injectsNotDelivered(task.id, launched.buffered.splice(0));
         this.#evicted.delete(task.id);
         if (this.#launched.get(task.id) !== launched) return;
         this.#launched.delete(task.id);
@@ -1292,7 +1597,7 @@ export class TaskHost implements TaskToolFacade {
     const launched = this.#launched.get(taskId);
     if (launched === undefined || launched.settledAt !== null) {
       // Stopped while starting: the host already settled it.
-      this.#injectsNotDelivered(launched?.buffered.splice(0) ?? []);
+      this.#injectsNotDelivered(taskId, launched?.buffered.splice(0) ?? []);
       handle.abort('task stopped');
       return;
     }
@@ -1305,7 +1610,7 @@ export class TaskHost implements TaskToolFacade {
     });
     if (refused.length > 0) {
       this.#deps.logger.warn({ taskId }, 'buffered task inject could not be steered');
-      this.#injectsNotDelivered(refused);
+      this.#injectsNotDelivered(taskId, refused);
     }
     if (launched.controller.signal.aborted) handle.abort('task stopped');
   }
@@ -1315,7 +1620,8 @@ export class TaskHost implements TaskToolFacade {
    * downgraded to `queued` (§4.1 — the bot sees they did not take effect) and
    * the caller's fallback runs (审查 M5).
    */
-  #injectsNotDelivered(items: PendingInject[]): void {
+  #injectsNotDelivered(taskId: string, items: PendingInject[]): void {
+    if (items.length === 0) return;
     for (const item of items) {
       this.#safely(() => {
         this.#deps.db
@@ -1327,6 +1633,8 @@ export class TaskHost implements TaskToolFacade {
       const fallback = item.onNotDelivered;
       if (fallback !== undefined) this.#safely(fallback);
     }
+    // The card's inject line turns into 「未送达」 (§4.3).
+    this.publishUpdate(taskId);
   }
 
   #runningSince(launched: LaunchedTask): number | null {

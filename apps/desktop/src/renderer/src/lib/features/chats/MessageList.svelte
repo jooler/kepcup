@@ -6,6 +6,7 @@
   import GroupTurnStatusLine from './GroupTurnStatusLine.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
+  import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
   let { bottomInset = 0 }: { bottomInset?: number } = $props();
 
@@ -24,7 +25,7 @@
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。
   const statusSignature = $derived(
     (chat.current?.activeRuns ?? [])
-      .map((e) => `${e.run.id}:${e.muted ? 1 : 0}:${e.toolName}:${e.progress}`)
+      .map((e) => `${e.run.id}:${e.run.status}:${e.muted ? 1 : 0}:${e.toolName}:${e.progress}`)
       .join('|'),
   );
 
@@ -52,6 +53,14 @@
     return null;
   }
   const chainKeys = $derived(messages.map(chainKey));
+
+  // D75 §6.3: turns keep their own (short) status line; tasks share one line.
+  const turnEntries = $derived(
+    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType !== 'task'),
+  );
+  const taskEntries = $derived(
+    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'task'),
+  );
 
   // New message handling: follow when pinned, otherwise surface a hint.
   $effect(() => {
@@ -163,9 +172,10 @@
         {#if chat.current.conversation.type === 'group'}
           <GroupTurnStatusLine conversationId={chat.current.conversation.id} />
         {/if}
-        {#each chat.current.activeRuns as entry (entry.run.id)}
+        {#each turnEntries as entry (entry.run.id)}
           <RunStatusLine {entry} />
         {/each}
+        <TaskStatusLine entries={taskEntries} />
       {/if}
     </div>
   </div>

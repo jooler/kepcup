@@ -53,6 +53,13 @@ export const zhCN = {
   'chats.errorCode.STALE_FILE': '文件已被外部修改，请让 Bot 重新读取',
   'chats.errorCode.LEASE_HELD': 'Bot 正在修改该项目，请稍后再试',
   'chats.errorCode.INTERNAL': '内部错误',
+  // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
+  'chats.errorCode.RUN_READ_ONLY':
+    '这次执行是只读的：写文件、运行会写入的命令、生成媒体、安装技能或环境都要在写任务里进行',
+  'chats.errorCode.TASK_LIMIT_REACHED': '任务数已达上限，请等进行中的任务结束后再试',
+  'chats.errorCode.RUN_ALREADY_FINISHED': '这次执行已经结束',
+  'chats.errorCode.RUN_NOT_FOUND': '执行记录不存在或已被清理',
+  'chats.errorCode.NOT_SUPPORTED': '当前不支持这个操作',
   'runStatus.pleaseWait': '请稍等…',
   'runStatus.callingVerb': '正在{verb}…',
   'runStatus.callingTool': '正在调用 {tool}…',
@@ -720,6 +727,44 @@ export const zhCN = {
   'delegation.openOriginal': '在与 {name} 的对话中查看',
   'delegation.conversationGone': '对方的对话已删除',
   'delegation.proxiedBy': '由 {name} 代你发出',
+  // --- 任务（D75，docs/design/30-supervisor-and-tasks.md §4.3 / §6）---------
+  'task.loading': '任务记录加载中…',
+  'task.title': '任务「{title}」',
+  'task.titleWithOwner': '{name} 的任务「{title}」',
+  'task.state.submitted': '排队中',
+  'task.state.running': '进行中',
+  'task.state.completed': '已完成',
+  'task.state.failed': '失败',
+  'task.state.cancelled': '已取消',
+  'task.state.interrupted': '已中断',
+  'task.queued': '排队中：{reason}',
+  'task.waitingStart': '排队中，即将开始',
+  'task.awaitingInput': '等待你回答它的问题',
+  'task.lastProgress': '最近：{text}',
+  'task.injected': '已把新指令转给此任务：{text}',
+  'task.injectNotDelivered': '（未送达：任务已在收尾，需要时可让 Bot 接着重做）',
+  'task.cancelledBecause': '已取消：{reason}',
+  'task.cancelledPlain': '已取消',
+  'task.changesProject': '它已产生的改动：新增 {added}、修改 {modified}、删除 {deleted}。可以整次回退。',
+  'task.changesReverted': '它产生的改动已整次回退。',
+  'task.changesWorkspace': '它在 Bot 工作区里做的改动不会自动撤销；工作区没有检查点，无法整次回退。',
+  'task.changesWorkspaceFiles': '它用文件工具写过的文件（命令造成的改动不在此列）：',
+  'task.changesMore': '另有 {count} 个文件',
+  'task.changesNone': '没有产生文件改动。',
+  'task.setupHint': '缺少设置：在下方完成设置后会自动重试这个任务。',
+  'task.retried': '已重新执行（见下方的新任务卡）',
+  'task.retry': '重试',
+  'task.cancel': '取消任务',
+  'task.revertConflicts': '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',
+  'task.questionFrom': '任务「{title}」需要你决定',
+  'task.questionFromBot': '{name} 的任务需要你决定',
+  'task.questionExpired': '任务已结束，这个问题不再需要回答。',
+  'task.questionFreeText': '也可以直接在输入框里回答，Bot 会转给这个任务。',
+  'task.answerFailed': '回答没有送达',
+  'task.statusOne': '任务「{title}」：{activity}',
+  'task.statusMany': '{count} 个任务进行中 · 「{title}」：{activity}',
+  'task.originProgress': '任务「{title}」的进度',
+  'task.originResult': '任务「{title}」的结果',
   'route.openBot': '去和 {name} 聊',
   'route.openGroup': '打开群「{name}」',
   'route.chatMyself': '我自己去找 {name}',
@@ -931,16 +976,16 @@ export const zhCN = {
   'onboarding.modelNoProvider': '尚无可用厂商：可在设置页添加自定义厂商后再配置。',
   'onboarding.subscriptionOpen': '我有订阅（Claude / ChatGPT / Copilot / GLM…）',
   'onboarding.subscriptionBody':
-    '用你已有的订阅驱动 Bot：选一个智能体，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
+    '用你已有的订阅给 Bot 干活：选一个智能体作为 Bot 的任务引擎，启用（安装）并按厂商官方流程登录。KepCup 不接触、不保存你的订阅凭据。',
   'onboarding.subscriptionEnable': '开启外部智能体（实验）并继续',
   'onboarding.subscriptionExperimental':
     '这是实验功能：继续会开启「外部智能体（实验）」（改用 API key 时会关回）。外部智能体的文件与命令工具在它自己的沙箱中运行，KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
   'onboarding.subscriptionEmpty': '当前版本没有支持订阅登录的智能体。',
-  'onboarding.subscriptionChoose': '用 {name} 驱动管家和新建的 Bot',
+  'onboarding.subscriptionChoose': '由 {name} 执行管家和新建 Bot 的任务',
   'onboarding.subscriptionEnableFirst': '先在上方卡片中启用并登录这个智能体，再继续。',
   'onboarding.subscriptionBack': '改用 API key',
   'onboarding.butlerAgentNote':
-    '管家将由 {name} 驱动，直接开始对话。按场景组建 Bot 团队的访谈需要内置模型，之后在设置页配置 API key 即可使用。',
+    '管家的任务将由 {name} 执行，直接开始对话。没有内置模型时对话本身会简化：你的消息直接转给进行中的任务或派成新任务，结果原文发回。按场景组建 Bot 团队的访谈需要内置模型，之后在设置页配置 API key 即可使用。',
   'onboarding.permissionsTitle': '权限',
   'onboarding.permissionsBody': '以下两项决定应用在系统中的行为，之后可随时在设置中更改。',
   'onboarding.permissionsNotify': '系统通知',
@@ -1042,7 +1087,7 @@ export const zhCN = {
   'setupCard.dismiss': '暂不设置',
   'setupCard.agentTitle': '{name} 还不能用，设置好后对话会自动继续',
   'setupCard.agentReason.experimental_off':
-    '这个 Bot 由外部智能体驱动，而「外部智能体（实验）」尚未开启。',
+    '这个 Bot 的任务由外部智能体执行，而「外部智能体（实验）」尚未开启。',
   'setupCard.agentReason.not_enabled': '这个智能体还没有启用：启用会先安装它（需要你确认）。',
   'setupCard.agentReason.not_installed': '这个智能体尚未安装完成：请启用或重新安装。',
   'setupCard.agentReason.auth_required':
@@ -1081,11 +1126,11 @@ export const zhCN = {
   'agents.defaultAgent': '新建 Bot 默认使用的智能体',
   'agents.defaultAgentNone': '不设（使用内置模型）',
   'agents.defaultAgentHint':
-    '仅在没有设置默认主模型时生效：新建的 Bot（含管家，对话式新建除外）若未指定模型，即由这个智能体驱动；停用后新 Bot 回到内置模型。',
+    '仅在没有设置默认主模型时生效：新建的 Bot（含管家，对话式新建除外）若未指定模型，即由这个智能体执行它的任务；停用后新 Bot 回到内置模型。',
   'agents.defaultAgentAffected':
     '它也是新建 Bot 的默认智能体：停用 / 卸载后，新建的 Bot 不再默认使用它。',
   'agents.hint':
-    '启用后，可在 Bot 运行配置的「主模型」里改选某个智能体（如 Claude Agent、Codex），由它驱动该 Bot 的执行。登录走厂商官方流程，KepCup 不接触、不保存你的订阅凭据。',
+    '启用后，可在 Bot 运行配置里选某个智能体（如 Claude Agent、Codex）作为该 Bot 的任务引擎：由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）。登录走厂商官方流程，KepCup 不接触、不保存你的订阅凭据。',
   // --- 后台任务（D72 P6，design 28 §8）----------------------------------------
   'agents.background.title': '后台任务',
   'agents.background.hint':
@@ -1232,7 +1277,9 @@ export const zhCN = {
   'agents.capabilities.host_ops.description': '申请安装环境、项目的 Git 远程操作',
   'agents.capabilities.mcp.name': 'MCP 工具',
   'agents.capabilities.mcp.description': '该 Bot 已勾选的 MCP 服务器的工具',
-  'contacts.mainModelOrAgent': '主模型 / 智能体（留空用默认模型）',
+  'contacts.mainModelOrAgent': '主模型 / 任务智能体（留空用默认模型）',
+  'contacts.agentTaskEngineHint':
+    '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，结果原文转发。',
   'contacts.engineGroupModels': '模型',
   'contacts.engineGroupAgents': '智能体',
   'contacts.agentNeedsAuthTag': '需要登录',
@@ -1257,19 +1304,19 @@ export const zhCN = {
   'contacts.agentCapabilitiesReset': '恢复默认',
   'contacts.agentIsolationNote':
     '隔离由该智能体自身的沙箱提供：联网读取不逐次确认；部分智能体（如 Codex）的沙箱可读取整台电脑上的文件，包括 KepCup 的应用数据目录。',
-  'contacts.agentSwitchTitle': '改由 {name} 驱动这个 Bot？',
+  'contacts.agentSwitchTitle': '改由 {name} 执行这个 Bot 的任务？',
   'contacts.agentSwitchIntro':
-    '换的是执行引擎，不是 Bot：对话、人设、记忆、审批照旧，但以下几点会改变：',
+    '换的是任务引擎，不是 Bot：由它执行该 Bot 派出的任务（对话本身仍由内置模型进行），人设、记忆、审批照旧，但任务里以下几点会改变：',
   'contacts.agentSwitchTools':
     '文件与命令由智能体自带的工具完成，在它自己的沙箱中运行；KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
   'contacts.agentSwitchPrompt':
-    '系统提示词每次执行只刷新一次；订阅制没有单价，只记录 token 与轮数。',
-  'contacts.agentSwitchFeatures': '不支持 KepCup 的 SubAgent 委派与断点续跑。',
+    '任务的系统提示词每个任务只刷新一次；订阅制没有单价，只记录 token 与轮数。',
+  'contacts.agentSwitchFeatures': '任务不支持断点续跑；部分智能体不支持向进行中的任务追加指令（追加会在任务结束后才生效）。',
   'contacts.agentSwitchHistory': '智能体会在它自己的目录保存会话历史，删除对话不会清除这部分。',
   'contacts.agentSwitchReads':
     '读取不受 KepCup 限制：智能体自带的联网读取（网页抓取、搜索）不逐次确认；部分智能体（如 Codex）的沙箱可以不经请求读取整台电脑上的文件，包括 KepCup 的应用数据目录（其他 Bot 的工作区、技能与日志）。',
   'contacts.agentSwitchConfirm': '我已了解，切换',
-  'contacts.agentBadge': '由 {name} 驱动',
+  'contacts.agentBadge': '任务由 {name} 执行',
   'contacts.agentBadgeOpen': '在设置中查看这个智能体',
   'contacts.agentSwitchCancel': '取消',
 } as const;

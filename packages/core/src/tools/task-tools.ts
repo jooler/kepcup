@@ -101,6 +101,78 @@ export interface TaskToolFacade {
   cancel(identity: RunIdentity, input: { taskId: string; reason: string }): CancelTaskResult;
   list(identity: RunIdentity): TaskSummary[];
   forwardResult(identity: RunIdentity, taskId: string): ForwardTaskResultOutput;
+  /**
+   * §2.4.6 (task side): asks the user on a visible question card and waits for
+   * the answer (a card option, or the turn's inject_task). Optional: only the
+   * task host provides it; `ask_user` is registered for tasks when present.
+   */
+  ask?(
+    identity: RunIdentity,
+    input: { question: string; options: string[] },
+    signal: AbortSignal,
+  ): Promise<string>;
+}
+
+/** Bounds of the ask_user options (the card renders them as buttons). */
+export const ASK_USER_OPTIONS_MAX = 6;
+
+/**
+ * `ask_user` (design 30 §2.4.6): a task that cannot go on without the user's
+ * decision asks on a question card bound to it and waits; the user's pick goes
+ * straight into the task. Tasks only — a turn asks in its reply.
+ */
+export function buildAskUserTool(input: {
+  identity: RunIdentity;
+  ask: NonNullable<TaskToolFacade['ask']>;
+}): ToolDefinition {
+  const { identity, ask } = input;
+  const tool: ToolDefinition<{ question: string; options: string[] }> = {
+    name: 'ask_user',
+    description:
+      '任务无法继续、必须由用户做决定时向用户提问：问题与候选答案以卡片形式出现在对话里，本次调用会一直等到用户回答（用户点选的选项，或在对话里自由回答后由对话中的你转交），返回用户的回答。' +
+      '只问真正需要用户拍板的事，一次一个问题；能自己判断的不要问。',
+    parameters: Type.Object(
+      {
+        question: Type.String({ description: '要问用户的问题（说明背景与影响）' }),
+        options: Type.Array(Type.String(), {
+          description: `候选答案，1~${ASK_USER_OPTIONS_MAX} 个；用户也可以在对话里另行回答`,
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (params, ctx) => {
+      if (identity.loopType !== 'task') {
+        return fail('NOT_SUPPORTED', '只有任务可以用 ask_user；对话中直接在回复里问用户');
+      }
+      let question: string;
+      try {
+        question = nonEmpty(params.question, 'question', TASK_INSTRUCTION_MAX_CHARS);
+      } catch (error) {
+        return fail('INVALID_INPUT', error instanceof Error ? error.message : String(error));
+      }
+      const options = Array.isArray(params.options)
+        ? [
+            ...new Set(
+              params.options
+                .filter((option): option is string => typeof option === 'string')
+                .map((option) => option.trim())
+                .filter((option) => option.length > 0),
+            ),
+          ]
+        : [];
+      if (options.length < 1 || options.length > ASK_USER_OPTIONS_MAX) {
+        return fail('INVALID_INPUT', `options 需要 1~${ASK_USER_OPTIONS_MAX} 个非空候选答案`);
+      }
+      try {
+        const answer = await ask(identity, { question, options }, ctx.signal);
+        return { ok: true, content: `用户的回答：${answer}` };
+      } catch (error) {
+        if (error instanceof AppError) return fail(String(error.code), error.message);
+        return fail('INTERNAL', error instanceof Error ? error.message : String(error));
+      }
+    },
+  };
+  return tool as ToolDefinition;
 }
 
 function fail(code: string, message: string): ToolResult {
