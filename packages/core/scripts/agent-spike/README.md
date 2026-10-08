@@ -47,6 +47,7 @@ node spike.mjs --agent <id> [--home <dir>] [--cwd <dir>] \
 | `modes` | 全部模式（逐个 `session/set_mode`）与 configOptions / 模型选项 → Provider 档位映射 |
 | `complete` | 一次性精简会话「只输出 JSON」跑 N 次：成功率、严格仅 JSON 比例、p50 / p95 |
 | `native` | 原生优先：同时给原生工具与注入的 `web_search`（描述带「[补充能力]」前缀 + 提示词 `<tool_policy>`），统计选原生的比例（目标 ≥ 0.9；启发式分类，须人工复核 `results[].allTools`） |
+| `adherence`（P6，可选，不在默认列表） | 原生优先遵守度回归：用**产品真实措辞**（`fixtures/native-first-wording.json`，由 core 单测 `native-first-wording.test.ts` 按产品代码生成，措辞一改单测即失败、`KEPCUP_UPDATE_WORDING=1` 重新生成）按产品方式下发（meta-append → `_meta.systemPrompt.append`；prompt-prefix → prompt 前置段），注入同名补位工具，分 `web` / `vision`（Agent 声明支持图片时）两个用例统计选原生的比例（目标 ≥ 0.9） |
 | `resume`（可选，不在默认列表） | 重启进程后 `session/resume` / `session/load` 行为、重放更新特征、是否记得上文 |
 
 客户端实现：对所有未处理的 Agent→客户端请求立即回 `-32601`（fs / terminal / 扩展方法；见下「SDK 坑」）；不声明 fs / terminal 能力；`clientInfo = {name:'KepCup-spike', version:'0'}`；声明 `clientCapabilities.auth.terminal = true` 与 `_meta['terminal-auth'] = true`。报告末尾 `agentInitiated` 汇总 Agent 主动发来的请求 / 通知方法（可发现 `cursor/ask_question` 之类扩展）。
@@ -58,6 +59,18 @@ node spike.mjs --agent <id> [--home <dir>] [--cwd <dir>] \
 ```bash
 node spike.mjs --agent fake --work-dir /tmp/spike-fake --steps initialize,auth,session,prompt,steer,cancel,permission,mcp,modes,complete,native,resume --runs 3
 ```
+
+### 原生优先遵守度（P6，`adherence.mjs`）
+
+登录后（与下文同一 `--work-dir`，默认 `$TMPDIR/kepcup-spike/<agent>`）对本期全部 Agent 跑 `adherence` step 并汇总：
+
+```bash
+node adherence.mjs --runs 10                       # 默认 claude,codex,opencode,dsh,cursor,antigravity
+node adherence.mjs --agents dsh --runs 10 -- --pass-env DEEPSEEK_API_KEY
+node adherence.mjs --agents fake --runs 2          # 自测（假 Agent，无需登录）
+```
+
+输出目录里有每个 Agent 的报告（`adherence-<agent>.json`）与 `adherence-summary.md`（可直接贴进设计 28 §9.2「原生优先遵守度」）。未达标的 Agent：在其 Provider 里加强点名措辞，或把对应补位包的默认值改为不注入；分类是启发式，请人工复核 `results[].allTools`。
 
 ## 需要用户登录后再跑的步骤
 

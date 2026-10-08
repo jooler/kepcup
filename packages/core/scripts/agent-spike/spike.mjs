@@ -14,7 +14,7 @@ import { errInfo, now } from './lib/util.mjs';
 const HELP = `node spike.mjs --agent <id> [options]
 
   --agent <id>          ${Object.keys(AGENTS).join(' | ')}
-  --steps <a,b,...>     默认全部（${ALL_STEPS.join(',')}）；另有可选 resume
+  --steps <a,b,...>     默认全部（${ALL_STEPS.join(',')}）；另有可选 resume、adherence（P6，见 adherence.mjs）
   --out <file>          报告 JSON（默认 ./spike-<agent>-<时间>.json）
   --work-dir <dir>      工作根（默认 $TMPDIR/kepcup-spike/<agent>）：home/ cwd/ outside/ bin/
   --home <dir>          Agent 进程的独立 HOME（默认 <work-dir>/home；登录态保存在这里）
@@ -23,7 +23,7 @@ const HELP = `node spike.mjs --agent <id> [options]
   --env KEY=VAL         给 Agent 进程加环境变量（可重复；值自动脱敏）
   --pass-env KEY        把宿主环境变量透传给 Agent（如 DEEPSEEK_API_KEY；可重复）
   --permission <p>      allow_once | reject_once | cancel（默认：permission 步 reject_once，其余 allow_once）
-  --runs <n>            complete / native 的次数（默认 5，正式验收：complete 20、native 10）
+  --runs <n>            complete / native / adherence 的次数（默认 5，正式验收：complete 20、native / adherence 10）
   --prompt <text>       prompt 步的提示词
   --isolate             session/new._meta 带该 Agent 的「尽量不读用户 / 项目配置」预设
   --session-meta <json> 追加到 session/new._meta 的 JSON

@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';
+import { AGENT_CATALOG, agentModelRef, type AgentCatalogEntry } from '@kepcup/shared';
 import {
   agentTurn,
   fakeAcpAgentLaunch,
@@ -18,6 +19,14 @@ import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import { HostMcpBridge } from '../../src/agent/external/mcp-bridge.js';
 import { providerFor } from '../../src/agent/external/providers/index.js';
+import { buildExternalAgentTools } from '../../src/agent/external/capabilities.js';
+import {
+  ADHERENCE_SERVER_NAME,
+  adherenceToolDefinitions,
+  providerWording,
+  type ProviderWording,
+} from '../support/native-first-wording.js';
+
 import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import type {
   EngineEvent,
@@ -233,6 +242,56 @@ export function runAgentProviderContract(target: ContractTarget): void {
       } else {
         expect(prompt.text).toContain('契约测试 Bot');
       }
+    });
+
+    it('delivers the native-first wording of the adherence fixture (P6)', async () => {
+      const harness = await make({ turns: [agentTurn().mcpList().text('好')] });
+      const wording = providerWording(entry);
+      // The real-agent adherence script (agent-spike/adherence.mjs) replays the
+      // fixture for this provider: it must be what the product sends.
+      const fixture = Object.values(
+        (
+          JSON.parse(readFileSync(NATIVE_FIRST_FIXTURE, 'utf8')) as {
+            agents: Record<string, ProviderWording>;
+          }
+        ).agents,
+      ).find(
+        (candidate) =>
+          PROVIDER_OF[candidate.catalogId] === entry.provider &&
+          JSON.stringify(candidate.nativeCapabilities) === JSON.stringify(entry.nativeCapabilities),
+      );
+      if (fixture !== undefined) expect(fixture.cases).toEqual(wording.cases);
+      const policy = wording.cases['web']!.policy;
+      const tools = buildExternalAgentTools({
+        responseTools: adherenceToolDefinitions('web'),
+        capabilities: ['web'],
+      });
+      const spec = runSpec(entry, harness.workdir, '查一下 Node.js 的 LTS 版本', tools);
+      spec.external = {
+        ...spec.external!,
+        capabilities: ['web'],
+        hostServerName: ADHERENCE_SERVER_NAME,
+      };
+      spec.promptParts = {
+        session: `<tool_policy>\n${policy}\n</tool_policy>`,
+        run: '',
+        conversation: '查一下 Node.js 的 LTS 版本',
+      };
+      expect((await harness.engine.startRun(spec).done).status).toBe('completed');
+      const observed = harness.observed();
+      const session = observed.sessions[0]!;
+      const sessionPrompt = metaAppend
+        ? String((session.meta as { systemPrompt?: { append?: string } }).systemPrompt?.append)
+        : observed.prompts[0]!.text;
+      expect(sessionPrompt).toContain(policy);
+      expect((session.mcpServers[0] as { name: string }).name).toBe(ADHERENCE_SERVER_NAME);
+      const listed = observed.mcp.find((entry) => entry.method === 'tools/list')!.result as Array<{
+        name: string;
+        description: string;
+      }>;
+      expect(listed.map(({ name, description }) => ({ name, description }))).toEqual(
+        wording.cases['web']!.tools.map(({ name, description }) => ({ name, description })),
+      );
     });
 
     it('maps text → tool → text → end onto PiEngine-shaped events', async () => {
@@ -642,6 +701,15 @@ export function runAgentProviderContract(target: ContractTarget): void {
     });
   });
 }
+
+const NATIVE_FIRST_FIXTURE = fileURLToPath(
+  new URL('../../scripts/agent-spike/fixtures/native-first-wording.json', import.meta.url),
+);
+
+/** Catalog id → provider (fixture lookup). */
+const PROVIDER_OF: Readonly<Record<string, string>> = Object.fromEntries(
+  AGENT_CATALOG.map((entry) => [entry.id, entry.provider]),
+);
 
 /** Host tools for the bridge cases (stand-ins for buildResponseTools output). */
 function hostTools(): {
