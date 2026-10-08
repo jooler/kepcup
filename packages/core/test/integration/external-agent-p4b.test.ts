@@ -255,11 +255,13 @@ describe('onboarding default agent (P4-B)', () => {
 });
 
 describe('background loops without a built-in model (P4-B minimal fallback)', () => {
-  it('reflection / summary jobs are skipped: no failed run, jobs done', async () => {
+  it('reflection / summary jobs are skipped when background agents are off: no failed run, jobs done', async () => {
     const stack = await start({ turns: [agentTurn().text('收到。')] }, { KEPCUP_MOCK_LLM_URL: '' });
     await stack.core.rpc.call('settings.update', {
       experimental: { externalAgents: true },
       agents: { fake: { enabled: true } },
+      // P6：后台任务默认改走外部 Agent；关闭后回到 P4 的优雅跳过。
+      backgroundTasks: { agentEnabled: false },
     });
     const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake');
     const conv = await openDirect(stack.core, bot.id);

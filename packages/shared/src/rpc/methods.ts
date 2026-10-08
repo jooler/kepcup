@@ -204,8 +204,16 @@ export const settingsUpdateInputSchema = z.object({
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
   experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
-  /** 后台 loop 选用的 Agent（P6）；'' 清除。 */
+  /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
   backgroundAgentId: z.string().optional(),
+  /** 后台任务开关（P6）：部分 patch，与已存值合并。 */
+  backgroundTasks: z
+    .object({
+      agentEnabled: z.boolean().optional(),
+      agentSkillAuthoring: z.boolean().optional(),
+      groupMentionOnly: z.boolean().optional(),
+    })
+    .optional(),
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
   defaultAgentId: z.string().optional(),
 });

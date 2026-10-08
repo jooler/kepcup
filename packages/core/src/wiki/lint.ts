@@ -5,6 +5,7 @@ import type { SandboxBackend } from '../sandbox/types.js';
 import type { Clock } from '../infra/clock.js';
 import { initWiki } from './init.js';
 import { runWikiMaintenance, type WikiMaintenanceDeps } from './maintenance.js';
+import { routeFor } from '../agent/llm-router.js';
 
 export interface WikiLintJobDeps extends WikiMaintenanceDeps {
   sandbox: SandboxBackend;
@@ -29,9 +30,10 @@ export async function runWikiLintJob(deps: WikiLintJobDeps): Promise<void> {
   const botId = job.bot_id;
   const bot = deps.bots.get(botId);
   if (bot === null || bot.status !== 'active') return; // deleted mid-queue
-  // D72 P4：没有内置模型（只用外部 Agent）时跳过本周巡检，不产生失败 run。
-  if ((bot.profile.runtime.model || deps.settings.get().defaultMainModel).length === 0) {
-    deps.logger.info({ botId }, 'wiki lint skipped: no built-in model');
+  // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过本周
+  // 巡检，不产生失败 run。
+  if (routeFor(deps, 'wiki_maintenance', botId) === null) {
+    deps.logger.info({ botId }, 'wiki lint skipped: no model for background calls');
     return;
   }
 

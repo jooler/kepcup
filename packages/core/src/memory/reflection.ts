@@ -10,7 +10,7 @@ import type { RunsService } from '../domain/runs.js';
 import type { SettingsService } from '../domain/settings.js';
 import type { UsageService } from '../domain/usage.js';
 import type { CoreLogger } from '../infra/logger.js';
-import { builtinModelRefOrNull } from './loop-utils.js';
+import { routeFor, type LlmRouter } from '../agent/llm-router.js';
 import {
   reflectionOutputSchema,
   reflectionParametersSchema,
@@ -20,6 +20,8 @@ import type { MemoryService } from './service.js';
 
 export interface ReflectionJobDeps {
   engine: AgentEngine;
+  /** D72 P6：无内置模型时改走外部 Agent（降频）；缺省只用内置模型。 */
+  router?: LlmRouter | undefined;
   settings: SettingsService;
   jobs: JobsService;
   conversations: ConversationsService;
@@ -52,9 +54,18 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   };
   const responseRunId = payload.runId ?? null;
 
-  // D72 P4：没有内置模型（只用外部 Agent）时跳过，不产生失败 run。
-  if (builtinModelRefOrNull(deps.settings, 'light') === null) {
-    deps.logger.info({ botId, conversationId }, 'reflection skipped: no built-in model');
+  // D72 P4 / P6：没有内置模型时改走后台 Agent；也没有（或已关闭）时跳过，
+  // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次一跑。
+  const route = routeFor(deps, 'reflection', botId);
+  if (route === null) {
+    deps.logger.info(
+      { botId, conversationId },
+      'reflection skipped: no model for background calls',
+    );
+    return;
+  }
+  if (deps.router !== undefined && !deps.router.admit(route, 'reflection', botId)) {
+    deps.logger.info({ botId, conversationId }, 'reflection skipped: agent background throttle');
     return;
   }
 
@@ -83,10 +94,10 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   deps.runs.update(reflectionRun.id, { status: 'running' });
 
   try {
-    const lightRef = lightModelRef(deps.settings);
+    const lightRef = route.modelRef;
     const existing = await deps.memory.recall(botId, conversationId, triggerText(triggerMessages));
     const output = await completeStructured<ReflectionOutput>({
-      complete: (req) => deps.engine.complete(req),
+      complete: (req) => route.engine.complete(req),
       identity: {
         runId: reflectionRun.id,
         botId,
@@ -258,13 +269,6 @@ function triggerText(messages: Array<{ content: unknown }>): string {
       return content?.text ?? '';
     })
     .join('\n');
-}
-
-export function lightModelRef(settings: SettingsService): string {
-  const current = settings.get();
-  const ref = current.defaultLightModel || current.defaultMainModel;
-  if (ref.length === 0) throw new AppError('PROVIDER_UNAVAILABLE', '未配置轻量模型');
-  return ref;
 }
 
 export function recordUsage(

@@ -4,6 +4,7 @@ import { TRIAGE_RECENT_MESSAGES, TRIAGE_TIMEOUT_MS, type Message } from '@kepcup
 import { completeStructured } from '../agent/structured.js';
 import { renderMessageLine } from '../agent/context/conversation.js';
 import type { AgentEngine, RunIdentity } from '../agent/types.js';
+import { builtinRoute, type LlmRouter } from '../agent/llm-router.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
 import type { BotsService } from '../domain/bots.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -97,6 +98,11 @@ const TRIAGE_SYSTEM_PROMPT = [
 
 export interface TriageInput {
   engine: AgentEngine;
+  /**
+   * D72 P6 后台路由：无内置模型时群聊判断改走外部 Agent（一次性精简会话；
+   * 超时照旧视为 no_action）。缺省 = 只用内置模型。
+   */
+  router?: LlmRouter;
   scheduler: Scheduler;
   runs: RunsService;
   usage: UsageService;
@@ -144,21 +150,25 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
       }
     };
 
-    const modelRef = lightModelRefForBot(input.bots, input.settings, input.botId);
-    if (modelRef.length === 0) {
-      // D72 P4：没有内置模型（只用外部 Agent）时群聊判断跳过 = 仅 @ / 回复响应
-      // （每个 Bot 只记一次 info，避免每条群消息刷日志）。
+    const route =
+      input.router !== undefined
+        ? input.router.resolveForBot(input.botId, 'triage')
+        : builtinRoute(input.engine, lightModelRefForBot(input.bots, input.settings, input.botId));
+    if (route === null) {
+      // D72 P4 / P6：没有内置模型、也没有可用于后台的外部 Agent（或已关闭 /
+      // 选了「群聊仅 @ 响应」）时群聊判断跳过 = 仅 @ / 回复响应（每个 Bot 只记
+      // 一次 info，避免每条群消息刷日志）。
       if (!triageSkipLogged.has(input.botId)) {
         triageSkipLogged.add(input.botId);
         input.logger.info(
           { botId: input.botId },
-          'triage skipped: no built-in model (mention-only)',
+          'triage skipped: no model for background calls (mention-only)',
         );
       }
       finish(noAction);
       return;
     }
-    const provider = modelRef.includes('/') ? modelRef.slice(0, modelRef.indexOf('/')) : 'unknown';
+    const { modelRef, provider } = route;
     const bot = input.bots.get(input.botId);
 
     input.scheduler.submit({
@@ -194,7 +204,7 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
             (m) => !input.batchMessages.some((b) => b.id === m.id) && m.status !== 'recalled',
           );
           const result = await completeStructured({
-            complete: (req) => input.engine.complete(req),
+            complete: (req) => route.engine.complete(req),
             identity: {
               runId: run.id,
               botId: input.botId,

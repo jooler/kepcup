@@ -4,6 +4,7 @@ import type { JobRow, JobsService } from '../domain/jobs.js';
 import type { SettingsService } from '../domain/settings.js';
 import { runConversationSummaryJob } from '../agent/loops/conversation-summary.js';
 import type { AgentEngine } from '../agent/types.js';
+import type { LlmPurpose, LlmRouter } from '../agent/llm-router.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -39,6 +40,11 @@ const JOB_PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export interface JobsRunnerDeps {
   engine: AgentEngine;
+  /**
+   * D72 P6 后台路由：无内置模型时后台 loop 改走外部 Agent。缺省 = 只用内置
+   * 模型（无内置模型的 loop 照旧跳过）。
+   */
+  router?: LlmRouter | undefined;
   scheduler: Scheduler;
   jobs: JobsService;
   settings: SettingsService;
@@ -210,11 +216,16 @@ export class JobsRunner {
       case 'skill_suggestion':
         // P08: both task sources run the same generation loop (the reflection
         // already checked the repeat threshold for skill_suggestion).
-        if (this.#deps.skills === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined) {
+        if (
+          this.#deps.skills === undefined ||
+          this.#deps.sandbox === undefined ||
+          this.#deps.paths === undefined
+        ) {
           throw new Error('skills domain not wired; cannot run skill authoring');
         }
         await runSkillAuthoringJob({
           engine: this.#deps.engine,
+          router: this.#deps.router,
           sandbox: this.#deps.sandbox,
           paths: this.#deps.paths,
           settings: this.#deps.settings,
@@ -269,12 +280,18 @@ export class JobsRunner {
         return;
       }
       case 'wiki_ingest':
-        if (this.#deps.wiki === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined ||
-            this.#deps.gateway === undefined || this.#deps.attachments === undefined) {
+        if (
+          this.#deps.wiki === undefined ||
+          this.#deps.sandbox === undefined ||
+          this.#deps.paths === undefined ||
+          this.#deps.gateway === undefined ||
+          this.#deps.attachments === undefined
+        ) {
           throw new Error('wiki domain not wired; cannot run wiki ingest');
         }
         await runWikiIngestJob({
           engine: this.#deps.engine,
+          router: this.#deps.router,
           sandbox: this.#deps.sandbox,
           paths: this.#deps.paths,
           settings: this.#deps.settings,
@@ -299,12 +316,17 @@ export class JobsRunner {
         });
         return;
       case 'wiki_lint':
-        if (this.#deps.wiki === undefined || this.#deps.sandbox === undefined || this.#deps.paths === undefined ||
-            this.#deps.gateway === undefined) {
+        if (
+          this.#deps.wiki === undefined ||
+          this.#deps.sandbox === undefined ||
+          this.#deps.paths === undefined ||
+          this.#deps.gateway === undefined
+        ) {
           throw new Error('wiki domain not wired; cannot run wiki lint');
         }
         await runWikiLintJob({
           engine: this.#deps.engine,
+          router: this.#deps.router,
           sandbox: this.#deps.sandbox,
           paths: this.#deps.paths,
           settings: this.#deps.settings,
@@ -355,13 +377,35 @@ export class JobsRunner {
     return this.#deps.wiki;
   }
 
-  #providerFor(_job: JobRow): string {
+  /**
+   * Scheduler concurrency key of a job: the provider its loop will call —
+   * `agent:{id}` when the D72 P6 router sends it to an external agent.
+   */
+  #providerFor(job: JobRow): string {
+    const purpose = JOB_PURPOSES[job.type];
+    const router = this.#deps.router;
+    if (purpose !== undefined && router !== undefined) {
+      const route = router.resolveForBot(job.bot_id, purpose);
+      if (route !== null) return route.provider;
+    }
     const settings = this.#deps.settings.get();
     const ref = settings.defaultLightModel || settings.defaultMainModel;
     const index = ref.indexOf('/');
     return index > 0 ? ref.slice(0, index) : 'unknown';
   }
 }
+
+/** Background job type → the router purpose of its model calls (D72 P6). */
+const JOB_PURPOSES: Readonly<Record<string, LlmPurpose>> = {
+  conversation_summary: 'summary',
+  reflection: 'reflection',
+  profile_curation: 'profile_curation',
+  memory_consolidation: 'consolidation',
+  skill_authoring: 'skill_authoring',
+  skill_suggestion: 'skill_authoring',
+  wiki_ingest: 'wiki_maintenance',
+  wiki_lint: 'wiki_maintenance',
+};
 
 /**
  * Response-trigger jobs (schedule_fire / event_delivery / D71 delegation_delivery):

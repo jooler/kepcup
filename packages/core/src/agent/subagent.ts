@@ -50,6 +50,11 @@ export interface SubagentFacadeInput {
   modelRef: string;
   /** Compression model ('' = no light model → skip compression, truncate instead). */
   lightModelRef: string;
+  /**
+   * Engine for the compression call (D72 P6 router: an external agent when
+   * there is no built-in light model); defaults to the runner's engine.
+   */
+  lightEngine?: AgentEngine;
   /** Reduced toolset for the sub run (read/grep/find/ls/bash/web_search/web_fetch). */
   buildTools: (identity: RunIdentity) => ToolDefinition[];
   /** Compact subagent system prompt (role + rules + workspace), refreshed per request. */
@@ -235,7 +240,12 @@ function invalidResult(content: string, errorCode: string): ToolResult {
 /** task / tasks 参数归一化与校验（D66 三种模式的入参契约）。 */
 function normalizeLanes(params: DelegateTaskParams): LanesOrError {
   if (params.tasks !== undefined && params.task !== undefined) {
-    return { error: invalidResult('task 与 tasks 只能二选一：单任务用 task，多路并行用 tasks', 'INVALID_INPUT') };
+    return {
+      error: invalidResult(
+        'task 与 tasks 只能二选一：单任务用 task，多路并行用 tasks',
+        'INVALID_INPUT',
+      ),
+    };
   }
   let lanes: SubagentTaskInput[];
   if (params.tasks !== undefined) {
@@ -258,10 +268,20 @@ function normalizeLanes(params: DelegateTaskParams): LanesOrError {
   }
   for (const lane of lanes) {
     if (typeof lane.task !== 'string' || lane.task.trim().length === 0) {
-      return { error: invalidResult('每个子任务的 task 都不能为空：说清楚要什么结论、材料在哪', 'INVALID_INPUT') };
+      return {
+        error: invalidResult(
+          '每个子任务的 task 都不能为空：说清楚要什么结论、材料在哪',
+          'INVALID_INPUT',
+        ),
+      };
     }
     if (lane.mode !== undefined && lane.mode !== 'foreground' && lane.mode !== 'background') {
-      return { error: invalidResult(`mode 只能是 foreground 或 background（收到 ${String(lane.mode)}）`, 'INVALID_INPUT') };
+      return {
+        error: invalidResult(
+          `mode 只能是 foreground 或 background（收到 ${String(lane.mode)}）`,
+          'INVALID_INPUT',
+        ),
+      };
     }
   }
   return { lanes: lanes.map((lane) => ({ ...lane, task: lane.task.trim() })) };
@@ -323,9 +343,7 @@ export function createSubagentFacade(
         const message = error instanceof Error ? error.message : String(error);
         deps.logger.error({ runId: subRun.id, error: message }, 'background subagent crashed');
         try {
-          deps.publishRunStatus(
-            deps.runs.update(subRun.id, { status: 'failed', error: message }),
-          );
+          deps.publishRunStatus(deps.runs.update(subRun.id, { status: 'failed', error: message }));
         } catch (updateError) {
           deps.logger.warn(
             { runId: subRun.id, error: String(updateError) },
@@ -676,7 +694,7 @@ async function compressResult(
   const timeout = setTimeout(() => controller.abort(), SUBAGENT_COMPRESS_TIMEOUT_MS);
   timeout.unref?.();
   try {
-    const result = await deps.engine.complete({
+    const result = await (input.lightEngine ?? deps.engine).complete({
       identity,
       model: input.lightModelRef,
       systemPrompt: COMPRESSOR_SYSTEM_PROMPT,
