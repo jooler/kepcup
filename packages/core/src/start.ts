@@ -1486,6 +1486,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     events.on('run.status', ({ run }) => {
       if (run.loopType === 'task') orchestrator.tasks.publishUpdate(run.id);
     });
+    // A project write task's change summary is final only once its lease is
+    // released (the after-snapshot posts the run-changes card): redraw then.
+    events.on('message.created', ({ message }) => {
+      const content = message.content as { cardType?: unknown; runId?: unknown };
+      if (message.kind === 'card' && content.cardType === 'run_changes') {
+        const runId = typeof content.runId === 'string' ? content.runId : '';
+        if (runs.get(runId)?.loopType === 'task') orchestrator.tasks.publishUpdate(runId);
+      }
+    });
     // D75 §7.4: task repair → blanket interruption → re-queue + reconciliation.
     orchestrator.recoverInterrupted();
     // D75 §3.2 reaper: re-deliver unconsumed task results, enforce the
