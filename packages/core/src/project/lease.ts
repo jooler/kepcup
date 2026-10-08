@@ -145,6 +145,11 @@ export class LeaseService {
     return true;
   }
 
+  /** The key the run holds, or null (D75: a write task's sub run writes only meanwhile). */
+  keyOf(runId: string): string | null {
+    return this.#byRun.get(runId) ?? null;
+  }
+
   holderOf(key: string): LeaseHolder | null {
     return this.#holders.get(key) ?? null;
   }

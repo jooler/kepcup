@@ -405,3 +405,110 @@ describe('Scheduler: tasks never starve conversation replies (D75 审查 M3)', (
     scheduler.stop();
   });
 });
+
+describe('Scheduler round 2 (D75 审查复核 #1 #3 #4 #7)', () => {
+  it('#1 parallel waits of one job: the slot comes back only when the last wait ends', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const a = deferred();
+    const b = deferred();
+    const events: string[] = [];
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'j',
+      runId: 'run_j',
+      run: async () => {
+        await Promise.all([
+          scheduler.yieldSlotWhile('run_j', a.promise).then(() => events.push('a-done')),
+          scheduler.yieldSlotWhile('run_j', b.promise).then(() => events.push('b-done')),
+        ]);
+        events.push('j-done');
+      },
+    });
+    a.release();
+    await waitUntil(() => events.includes('a-done'));
+    // b still waits: the job must not hold the slot — the job that ends b's wait can run.
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'l',
+      run: async () => {
+        events.push('l');
+        b.release();
+      },
+    });
+    await waitUntil(() => events.includes('j-done'), 1_000);
+    expect(events).toEqual(['a-done', 'l', 'b-done', 'j-done']);
+    scheduler.stop();
+  });
+
+  it('#3 a job that ends before its yielded wait does not leak a slot', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    const late = deferred();
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'j',
+      runId: 'run_j',
+      run: async () => {
+        void scheduler.yieldSlotWhile('run_j', late.promise);
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    late.release();
+    await new Promise((r) => setTimeout(r, 10));
+    let ran = false;
+    scheduler.submit({ priority: 0, provider: 'p', key: 'next', run: async () => void (ran = true) });
+    await waitUntil(() => ran, 1_000);
+    scheduler.stop();
+  });
+
+  it('#7 a job whose run throws synchronously releases its slot', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 1 });
+    expect(() =>
+      scheduler.submit({
+        priority: 0,
+        provider: 'p',
+        key: 'boom',
+        run: () => {
+          throw new Error('sync boom');
+        },
+      }),
+    ).not.toThrow();
+    let ran = false;
+    scheduler.submit({ priority: 0, provider: 'p', key: 'next', run: async () => void (ran = true) });
+    await waitUntil(() => ran, 1_000);
+    scheduler.stop();
+  });
+
+  it('#4 a task job holding its lease starts under the plain limit; tasks never borrow', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 2 });
+    const started: string[] = [];
+    const hold = deferred();
+    const job = (key: string, priority: 0 | 1, leaseHeld?: boolean) =>
+      scheduler.submit({
+        priority,
+        provider: 'p',
+        key,
+        ...(leaseHeld ? { leaseHeld } : {}),
+        run: async () => {
+          started.push(key);
+          await hold.promise;
+        },
+      });
+    job('reply', 0);
+    job('task:read', 1); // keeps a slot free for replies: waits
+    job('task:write', 0, true); // holds its lease: may take the last slot
+    await waitUntil(() => started.includes('task:write'));
+    job('task:write2', 0, true); // every slot taken: a task never borrows
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['reply', 'task:write']);
+    hold.release();
+    await waitUntil(() => started.length === 4);
+    scheduler.stop();
+  });
+});

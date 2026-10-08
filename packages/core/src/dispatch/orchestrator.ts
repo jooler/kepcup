@@ -2361,18 +2361,23 @@ export class Orchestrator {
           .finally(() => control.finish());
       };
       control.waiting('等模型并发额度');
+      const writes = task.taskWrites === true;
       this.#deps.scheduler.submit({
-        // Below user-triggered responses (0); the scheduler also keeps one
-        // provider slot free of tasks for conversation replies.
-        priority: 1,
+        // A read-only task: below user-triggered responses (0), and the
+        // scheduler keeps one provider slot free of tasks for replies. A write
+        // task already holds its lease — runs that want to write wait on it —
+        // so it queues FIFO with replies and starts under the plain limit
+        // (审查 round 2 #4: bounded, replies still borrow a slot over tasks).
+        priority: writes ? 0 : 1,
         provider: this.#providerForRef(this.#modelRefForBot(botId)),
         key,
         runId: task.id,
-        run: () => {
+        ...(writes ? { leaseHeld: true } : {}),
+        run: async () => {
           started = true;
           control.signal.removeEventListener('abort', onAbort);
           control.waiting(null);
-          return this.#executeRun(task.id, {
+          await this.#executeRun(task.id, {
             kind: 'task',
             batch: { conversationId, botId, messages: brief.sourceMessages, reason: 'task' },
             task,

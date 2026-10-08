@@ -114,6 +114,11 @@ export class ProjectRuntime {
   readonly #deps: ProjectRuntimeDeps;
   /** Lease window currently tracked per run (one entry per acquire). */
   readonly #runLeases = new Map<string, RunLeaseState>();
+  /**
+   * Acquisitions in flight per run: parallel tool calls of one run asking for
+   * the same key join the first instead of releasing + cancelling it.
+   */
+  readonly #acquiring = new Map<string, { key: string; promise: Promise<LeaseTarget> }>();
 
   constructor(deps: ProjectRuntimeDeps) {
     this.#deps = deps;
@@ -143,8 +148,10 @@ export class ProjectRuntime {
    * `subagent`) follows the rule of the run that owns it — resolved through
    * `parent_run_id` up to the root, bounded and failing closed when the chain
    * breaks — so a read-only task cannot write through a delegated `bash`, and
-   * a write task's sub run stops writing once the task (and its pinned lease)
-   * has ended. Every other loop type is unaffected.
+   * a write task's sub run writes only while the task holds its pinned lease
+   * — it stops once the task ended, or released the lease while its
+   * settlement is still pending (审查 round 2 #6). Every other loop type is
+   * unaffected.
    */
   writeDenial(identity: RunIdentity): string | null {
     let loopType = identity.loopType;
@@ -161,7 +168,10 @@ export class ProjectRuntime {
     if (loopType === 'task') {
       const task = this.#deps.runs.get(runId);
       if (task?.taskWrites !== true) return TASK_READ_ONLY_REASON;
-      if (runId !== identity.runId && TERMINAL_RUN_STATUSES.has(task.status)) {
+      if (
+        runId !== identity.runId &&
+        (TERMINAL_RUN_STATUSES.has(task.status) || this.#deps.leases.keyOf(runId) === null)
+      ) {
         return SUBAGENT_PARENT_ENDED_READ_ONLY_REASON;
       }
     }
@@ -241,6 +251,12 @@ export class ProjectRuntime {
     if (target === null) {
       throw new AppError('INVALID_INPUT', '该路径不涉及 project 或 workspace，无需写入租约');
     }
+    // Same run, same key, already being acquired (parallel write / edit
+    // calls): join it — also until its `before` snapshot is taken. A second
+    // acquisition would release the run's lease window and cancel the first
+    // wait. Another key still replaces the run's one lease (cancelling it).
+    const inflight = this.#acquiring.get(identity.runId);
+    if (inflight !== undefined && inflight.key === target.key) return inflight.promise;
     if (this.#deps.leases.heldKey(identity.runId, [target.key]) === target.key) {
       return target;
     }
@@ -252,6 +268,22 @@ export class ProjectRuntime {
       );
     }
 
+    const promise = this.#acquireLease(identity, target, options);
+    this.#acquiring.set(identity.runId, { key: target.key, promise });
+    try {
+      return await promise;
+    } finally {
+      if (this.#acquiring.get(identity.runId)?.promise === promise) {
+        this.#acquiring.delete(identity.runId);
+      }
+    }
+  }
+
+  async #acquireLease(
+    identity: RunIdentity,
+    target: LeaseTarget,
+    options: { signal?: AbortSignal; pin?: boolean },
+  ): Promise<LeaseTarget> {
     // One lease per run: close out the previous window first (after snapshot).
     await this.releaseRun(identity.runId);
 

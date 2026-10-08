@@ -37,6 +37,9 @@ const ids = {
   subOfReadTask: { runId: 'run_sub_read', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfWriteTask: { runId: 'run_sub_write', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfEndedWriteTask: { runId: 'run_sub_ended', botId: BOT, conversationId: CONV, loopType: 'subagent' },
+  // Its write task is still non-terminal but no longer holds its lease
+  // (stopped, settlement pending — 审查复核 #6).
+  subOfUnleasedWriteTask: { runId: 'run_sub_unleased', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfTurn: { runId: 'run_sub_turn', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfResponse: { runId: 'run_sub_resp', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfSubOfReadTask: { runId: 'run_sub_sub', botId: BOT, conversationId: CONV, loopType: 'subagent' },
@@ -59,10 +62,12 @@ const runRows = new Map<string, RunRow>(
       ['run_read_task', 'task', false, null],
       ['run_write_task', 'task', true, null],
       ['run_ended_write_task', 'task', true, null, 'completed'],
+      ['run_unleased_write_task', 'task', true, null],
       ['run_resp', 'response', null, null],
       ['run_sub_read', 'subagent', null, 'run_read_task'],
       ['run_sub_write', 'subagent', null, 'run_write_task'],
       ['run_sub_ended', 'subagent', null, 'run_ended_write_task'],
+      ['run_sub_unleased', 'subagent', null, 'run_unleased_write_task'],
       ['run_sub_turn', 'subagent', null, 'run_turn'],
       ['run_sub_resp', 'subagent', null, 'run_resp'],
       ['run_sub_sub', 'subagent', null, 'run_sub_read'],
@@ -100,6 +105,8 @@ function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('te
   const projects = new ProjectRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
+    // Only the live write task holds its (pinned) lease.
+    leases: { keyOf: (runId: string) => (runId === 'run_write_task' ? `ws:${BOT}:${CONV}` : null) },
   } as never);
   const deps: GatewayDeps = {
     paths: resolvePaths(home),
@@ -382,6 +389,8 @@ describe('sub runs follow the run that owns them (D75 review H1)', () => {
     expect(gateway.writeDenial(ids.subOfResponse)).toBeNull();
     // A write task's sub run that outlives the task loses its write rights.
     expect(gateway.writeDenial(ids.subOfEndedWriteTask)).toContain('写任务已经结束');
+    // … and so does one whose task released the lease before settling.
+    expect(gateway.writeDenial(ids.subOfUnleasedWriteTask)).toContain('写入租约已释放');
     // Broken or cyclic chains fail closed (the walk is bounded).
     expect(gateway.writeDenial(ids.subOrphan)).toContain('按只读处理');
     expect(gateway.writeDenial(ids.subCycle)).toContain('按只读处理');

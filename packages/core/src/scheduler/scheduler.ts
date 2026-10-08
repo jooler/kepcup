@@ -16,6 +16,13 @@ export interface SchedulerJob {
    * provider slot back — lease waits never hold a slot (D75 审查 H2).
    */
   runId?: string;
+  /**
+   * The job's run already holds a write lease (a D75 write task takes it
+   * before submitting): it starts under the plain provider limit, like a
+   * resuming job — runs queued for that lease wait on it — instead of keeping
+   * a slot free for replies (D75 审查 round 2 #4).
+   */
+  leaseHeld?: boolean;
   run: (signal: AbortSignal) => Promise<void>;
 }
 
@@ -41,6 +48,14 @@ interface QueuedJob extends SchedulerJob {
 interface RunningJob {
   job: QueuedJob;
   holdsSlot: boolean;
+  /**
+   * Lease waits of the job's run in progress (parallel tool calls): the slot
+   * is given back on 0 → 1 and taken again on 1 → 0, so no wait ever runs
+   * while the job holds a slot.
+   */
+  yieldDepth: number;
+  /** The job ended: a late-finishing wait must not take a slot for it. */
+  finished: boolean;
 }
 
 /** A yielded job waiting to take a slot again (its lease was granted). */
@@ -131,13 +146,24 @@ export class Scheduler {
    */
   async yieldSlotWhile<T>(runId: string, wait: Promise<T>): Promise<T> {
     const running = this.#current.getStore();
-    if (running === undefined || running.job.runId !== runId || !running.holdsSlot) return wait;
-    this.#giveSlot(running);
-    this.#drain();
+    if (running === undefined || running.job.runId !== runId || running.finished) return wait;
+    running.yieldDepth += 1;
+    if (running.yieldDepth === 1) {
+      // An earlier wait of this job still queued to take the slot back goes
+      // on without it: this wait now owns the re-take.
+      const resuming = this.#resuming.findIndex((r) => r.running === running);
+      if (resuming !== -1) this.#resuming.splice(resuming, 1)[0]?.resolve();
+      this.#giveSlot(running);
+      this.#drain();
+    }
     try {
       return await wait;
     } finally {
-      if (!this.#stopped) {
+      running.yieldDepth -= 1;
+      // The last wait of the job to end takes the slot back; earlier ones
+      // continue without it (their tool work needs no model slot, and the
+      // engine's next model call awaits every parallel tool call).
+      if (running.yieldDepth === 0 && !running.finished && !this.#stopped) {
         await new Promise<void>((resolve) => {
           this.#resuming.push({ running, resolve });
           this.#drain();
@@ -204,10 +230,16 @@ export class Scheduler {
       if (index === -1) return;
       const job = this.#queue[index]!;
       this.#queue.splice(index, 1);
-      const running: RunningJob = { job, holdsSlot: false };
+      const running: RunningJob = { job, holdsSlot: false, yieldDepth: 0, finished: false };
       this.#takeSlot(running);
-      void this.#current
-        .run(running, () => job.run(job.signal.signal))
+      let started: Promise<void>;
+      try {
+        started = this.#current.run(running, () => job.run(job.signal.signal));
+      } catch (error) {
+        // A synchronous throw must still reach the finally below (slot release).
+        started = Promise.reject(error);
+      }
+      void started
         .catch((error) => {
           // A late rejection can land after close() destroyed the logger
           // (pino's sync write would become an unhandled rejection).
@@ -225,6 +257,7 @@ export class Scheduler {
           }
         })
         .finally(() => {
+          running.finished = true;
           // A job that ended while waiting to resume (it did not await the
           // wait) leaves the resume queue.
           const index = this.#resuming.findIndex((r) => r.running === running);
@@ -262,7 +295,9 @@ export class Scheduler {
     // D75 tasks (key `task:{id}`) run for minutes to hours and are never
     // preempted: like background loops on an agent, they may only start while
     // a slot of their provider stays free for conversation replies.
-    if (isTaskJob(job) && limit > 1) {
+    // A write task already holding its lease starts under the plain limit
+    // (`leaseHeld`): writers queued behind that lease wait on it.
+    if (isTaskJob(job) && job.leaseHeld !== true && limit > 1) {
       return active < limit - 1;
     }
     if (active < limit) return true;
@@ -272,6 +307,7 @@ export class Scheduler {
     // beyond the limit rather than starve behind them.
     return (
       job.priority === 0 &&
+      !isTaskJob(job) &&
       active === limit &&
       (scheduler.#providerTaskActive.get(job.provider) ?? 0) === active
     );
