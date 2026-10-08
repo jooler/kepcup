@@ -23,6 +23,8 @@ class TasksState {
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    // Started lazily: a ready core seen before counts as the first connection.
+    this.#sawReady = core.coreStatus?.status === 'ready';
     core.onEvent('task.updated', (payload) => {
       const { task } = payload as { task: TaskView };
       this.#pushes += 1;
