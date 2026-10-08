@@ -582,4 +582,53 @@ describe('D75 supervisor turns (W2)', () => {
     );
     expect(started[0]!.observed.prompts[0]!.text).toContain('帮我整理一下资料');
   }, 60_000);
+
+  it('an external-agent bot with a built-in model: its turns run on the built-in engine, never on an agent:* provider slot', async () => {
+    const started: FakeAcpAgentHandle[] = [];
+    const stack = await createTestStack({
+      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
+      agentSpawn: fakeAgentSpawner({ fake: { turns: [] } }, started) as never,
+    });
+    stacks.push(stack);
+    const { core, llm } = stack;
+    await core.rpc.call('settings.update', {
+      experimental: { externalAgents: true },
+      agents: { fake: { enabled: true } },
+      backgroundTasks: { agentEnabled: false },
+    });
+    const created = await makeBot(core, '外援');
+    const bot = (
+      (await core.rpc.call('bots.update', {
+        id: created.id,
+        profile: {
+          ...created.profile,
+          runtime: {
+            ...created.profile.runtime,
+            agent: { ...created.profile.runtime.agent, id: 'fake' },
+          },
+        },
+      })) as { bot: Bot }
+    ).bot;
+    const conv = await openDirect(core, bot.id);
+    const scheduler = core.services.scheduler!;
+    const submitted: Array<{ provider: string; key: string }> = [];
+    const submit = scheduler.submit.bind(scheduler);
+    scheduler.submit = ((job: Parameters<typeof submit>[0]) => {
+      submitted.push({ provider: job.provider, key: job.key });
+      return submit(job);
+    }) as typeof scheduler.submit;
+
+    llm.script('mock-main', [step().inTurn().replyText('BUILTIN-TURN 我在')]);
+    await sendBatch(core, conv.id, ['在吗']);
+    await waitVisible(stack, conv.id, 'BUILTIN-TURN');
+    const [turn] = await waitTurns(stack, conv.id, 1, 'turn settled');
+    expect(turn).toMatchObject({ status: 'completed', engine: 'builtin' });
+    expect(turn!.provider?.startsWith('agent:')).toBe(false);
+    const turnJobs = submitted.filter((job) => job.key === `${bot.id}:${conv.id}`);
+    expect(turnJobs).toHaveLength(1);
+    expect(turnJobs.every((job) => !job.provider.startsWith('agent:'))).toBe(true);
+    // The agent process was never started for the turn.
+    expect(started).toHaveLength(0);
+  }, 30_000);
 });
+
