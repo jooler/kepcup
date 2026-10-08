@@ -147,6 +147,33 @@ export interface AppendTaskEventInput {
 const TERMINAL_PHASES_SQL = [...TERMINAL_TASK_EVENT_PHASES].map((p) => `'${p}'`).join(', ');
 
 /**
+ * Bot 视角的行过滤（D75 设计 30 §2.4.3）：`viewerBotId` 为某个 Bot 时 = 共享行
+ * + 该 Bot 自己的私有条目；`null` = 只看共享行（对话摘要、任务的对话层）。
+ * `alias` 是 messages 表在查询里的别名前缀（如 `m.`）。
+ */
+function viewerFilter(viewerBotId: string | null, alias = ''): { sql: string; params: string[] } {
+  return viewerBotId === null
+    ? { sql: `${alias}owner_bot_id is null`, params: [] }
+    : { sql: `(${alias}owner_bot_id is null or ${alias}owner_bot_id = ?)`, params: [viewerBotId] };
+}
+
+/**
+ * 用户视角（`isVisibleToUser` 的 SQL 镜像）：非 task_event、非私有，且不是
+ * 内部事务事件（带 internal 标记或属于 INTERNAL_SYSTEM_EVENTS）。
+ */
+function userVisibleFilter(): { sql: string; params: string[] } {
+  const eventNames = [...INTERNAL_SYSTEM_EVENTS];
+  return {
+    sql:
+      "kind != 'task_event' and owner_bot_id is null and " +
+      `not (sender_type = 'system' and kind = 'system_event' and (` +
+      `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
+      `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')})))`,
+    params: eventNames,
+  };
+}
+
+/**
  * 用户可见性（docs/design/01-conversation.md 消息原则）：Bot 的内部事务——
  * wiki 入库、环境安装、技能导入、调度触发、凭据处理——不是对话内容。带
  * `internal` 标记或属于 INTERNAL_SYSTEM_EVENTS（历史存量行没有标记）的
@@ -247,11 +274,20 @@ export class MessagesService {
           ownerBotId,
           taskId,
         );
-      this.db
-        .prepare(
-          'update conversations set last_seq = ?, last_message_at = max(coalesce(last_message_at, 0), ?) where id = ?',
-        )
-        .run(seq, now, input.conversationId);
+      if (ownerBotId === null) {
+        this.db
+          .prepare(
+            'update conversations set last_seq = ?, last_message_at = max(coalesce(last_message_at, 0), ?) where id = ?',
+          )
+          .run(seq, now, input.conversationId);
+      } else {
+        // Private rows (D75 §2.4.3) advance seq but not last_message_at: the
+        // user's conversation order / preview time must not move for a row
+        // the user never sees.
+        this.db
+          .prepare('update conversations set last_seq = ? where id = ?')
+          .run(seq, input.conversationId);
+      }
       // task_event text is indexed too; per-bot filtering of search results
       // joins messages.owner_bot_id at query time (D75 §2.4.3, W1-B).
       const ftsText =
@@ -377,19 +413,56 @@ export class MessagesService {
     return message;
   }
 
+  /**
+   * Every row of the conversation regardless of viewer, private task_event
+   * rows of all bots included (D75). Host-internal / test use only: anything
+   * that feeds a bot reads `listForBot` / `listShared`, the user UI reads
+   * `listVisible` (design 30 §2.4.3).
+   */
   list(conversationId: string, options: { beforeSeq?: number; limit?: number } = {}): Message[] {
+    return this.#listWhere(conversationId, { sql: '1 = 1', params: [] }, options);
+  }
+
+  /**
+   * What bot `botId` sees of the conversation (D75 design 30 §2.4.3): shared
+   * rows plus its own private rows, by seq. Filtered in SQL so a page holds
+   * `limit` rows the bot may see (same paging as `list`).
+   */
+  listForBot(
+    conversationId: string,
+    botId: string,
+    options: { beforeSeq?: number; limit?: number } = {},
+  ): Message[] {
+    return this.#listWhere(conversationId, viewerFilter(botId), options);
+  }
+
+  /**
+   * Shared rows only (`owner_bot_id IS NULL`): what every member may see — a
+   * task's conversation layer, the rolling summary, cross-conversation reads.
+   */
+  listShared(
+    conversationId: string,
+    options: { beforeSeq?: number; limit?: number } = {},
+  ): Message[] {
+    return this.#listWhere(conversationId, viewerFilter(null), options);
+  }
+
+  #listWhere(
+    conversationId: string,
+    filter: { sql: string; params: string[] },
+    options: { beforeSeq?: number; limit?: number },
+  ): Message[] {
     const limit = options.limit ?? 60;
-    const rows = (
-      options.beforeSeq !== undefined
-        ? this.db
-            .prepare(
-              'select * from messages where conversation_id = ? and seq < ? order by seq desc limit ?',
-            )
-            .all(conversationId, options.beforeSeq, limit)
-        : this.db
-            .prepare('select * from messages where conversation_id = ? order by seq desc limit ?')
-            .all(conversationId, limit)
-    ) as MessageRow[];
+    const params: Array<string | number> = [conversationId, ...filter.params];
+    let where = `conversation_id = ? and ${filter.sql}`;
+    if (options.beforeSeq !== undefined) {
+      where += ' and seq < ?';
+      params.push(options.beforeSeq);
+    }
+    params.push(limit);
+    const rows = this.db
+      .prepare(`select * from messages where ${where} order by seq desc limit ?`)
+      .all(...params) as MessageRow[];
     return rows
       .reverse()
       .map(messageRowToMessage)
@@ -407,26 +480,23 @@ export class MessagesService {
     conversationId: string,
     options: { beforeSeq?: number; limit?: number } = {},
   ): Message[] {
-    const limit = options.limit ?? 60;
-    const eventNames = [...INTERNAL_SYSTEM_EVENTS];
-    const params: Array<string | number> = [conversationId, ...eventNames];
-    let where =
-      "conversation_id = ? and kind != 'task_event' and owner_bot_id is null and " +
-      `not (sender_type = 'system' and kind = 'system_event' and (` +
-      `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
-      `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')})))`;
-    if (options.beforeSeq !== undefined) {
-      where += ' and seq < ?';
-      params.push(options.beforeSeq);
-    }
-    params.push(limit);
-    const rows = this.db
-      .prepare(`select * from messages where ${where} order by seq desc limit ?`)
-      .all(...params) as MessageRow[];
-    return rows
-      .reverse()
-      .map(messageRowToMessage)
-      .map((m) => ({ ...m, attachments: this.attachmentsFor(m.id) }));
+    return this.#listWhere(conversationId, userVisibleFilter(), options);
+  }
+
+  /**
+   * Unread count for the user (D75 §2.4.3): user-visible messages after
+   * `afterSeq` (the conversation's last_read_seq). `last_seq - last_read_seq`
+   * would count private task_event rows and internal events the user never
+   * sees — the renderer marks read up to the last VISIBLE message.
+   */
+  countVisibleAfter(conversationId: string, afterSeq: number): number {
+    const filter = userVisibleFilter();
+    const row = this.db
+      .prepare(
+        `select count(*) as n from messages where conversation_id = ? and seq > ? and ${filter.sql}`,
+      )
+      .get(conversationId, afterSeq, ...filter.params) as { n: number };
+    return row.n;
   }
 
   /** Edit a user message: content replaced, marked `edited`, FTS updated. */
@@ -454,24 +524,28 @@ export class MessagesService {
   }
 
   /**
-   * Full-text search inside one conversation. Recalled messages never match
-   * (their FTS rows are deleted).
+   * Full-text search inside one conversation, as seen by `viewerBotId` (D75
+   * §2.4.3: shared rows + the viewer's own private rows; null = shared only).
+   * messages_fts indexes task_event text too, so the owner filter joins
+   * `messages` at query time. Recalled messages never match (their FTS rows
+   * are deleted).
    */
   search(
     conversationId: string,
     query: string,
-    options: { limit?: number; senderBotId?: string | null; fromSeq?: number; toSeq?: number } = {},
+    options: { viewerBotId: string | null; limit?: number },
   ): Message[] {
     const ftsQuery = buildFtsQuery(query);
     if (!ftsQuery) return [];
     const limit = options.limit ?? 20;
+    const viewer = viewerFilter(options.viewerBotId, 'm.');
     const rows = this.db
       .prepare(
         'select m.* from messages_fts f join messages m on m.id = f.message_id ' +
           "where f.conversation_id = ? and messages_fts match ? and m.status != 'recalled' " +
-          'order by m.seq limit ?',
+          `and ${viewer.sql} order by m.seq limit ?`,
       )
-      .all(conversationId, ftsQuery, limit) as MessageRow[];
+      .all(conversationId, ftsQuery, ...viewer.params, limit) as MessageRow[];
     return rows.map(messageRowToMessage);
   }
 
@@ -495,7 +569,8 @@ export class MessagesService {
     const rows = this.db
       .prepare(
         'select conversation_id, content_json, max(seq) from messages ' +
-          "where kind = 'text' and status != 'recalled' " +
+          // D75 §2.4.3: private rows never become the user's preview.
+          "where kind = 'text' and status != 'recalled' and owner_bot_id is null " +
           // trim 的字符集对齐 JS 的 String#trim（ASCII 部分）：纯空白不算预览，
           // 且它被排除后 max(seq) 落到上一条真实文本（与打开会话时的重建一致）。
           "and coalesce(trim(json_extract(content_json, '$.text'), ' \t\n\r'), '') != '' " +
@@ -525,14 +600,23 @@ export class MessagesService {
       .map((m) => ({ ...m, attachments: this.attachmentsFor(m.id) }));
   }
 
-  /** Messages around an anchor (N before + the anchor + N after). */
-  around(conversationId: string, seq: number, n: number): Message[] {
-    const rows = this.db
-      .prepare(
-        "select * from messages where conversation_id = ? and seq >= ? and seq <= ? and status != 'recalled' order by seq",
-      )
-      .all(conversationId, seq - n, seq + n) as MessageRow[];
-    return rows.map(messageRowToMessage);
+  /**
+   * Messages around an anchor as seen by `viewerBotId` (D75 §2.4.3; null =
+   * shared only): up to N viewer-visible, non-recalled rows before, the
+   * anchor itself (when visible to the viewer), and up to N after, by seq.
+   * Rows hidden from the viewer neither appear nor use up the N.
+   */
+  around(conversationId: string, seq: number, n: number, viewerBotId: string | null): Message[] {
+    const viewer = viewerFilter(viewerBotId);
+    const base = `conversation_id = ? and status != 'recalled' and ${viewer.sql}`;
+    const before = this.db
+      .prepare(`select * from messages where ${base} and seq < ? order by seq desc limit ?`)
+      .all(conversationId, ...viewer.params, seq, n) as MessageRow[];
+    const fromAnchor = this.db
+      .prepare(`select * from messages where ${base} and seq >= ? order by seq limit ?`)
+      .all(conversationId, ...viewer.params, seq, n + 1) as MessageRow[];
+    const anchorAndAfter = fromAnchor[0]?.seq === seq ? fromAnchor : fromAnchor.slice(0, n);
+    return [...before.reverse(), ...anchorAndAfter].map(messageRowToMessage);
   }
 
   setSummary(conversationId: string, summary: string, uptoSeq: number): void {
@@ -541,11 +625,16 @@ export class MessagesService {
       .run(summary, uptoSeq, conversationId);
   }
 
-  /** Loads unsummarized messages (between summary_upto_seq and beforeSeq). */
+  /**
+   * Loads unsummarized messages (between summary_upto_seq and beforeSeq).
+   * Shared rows only (D75 §2.4.3): the rolling summary is one per
+   * conversation, read by every member bot — summarizing a private row would
+   * leak it.
+   */
   unsummarized(conversationId: string, beforeSeq: number): Message[] {
     const rows = this.db
       .prepare(
-        "select * from messages where conversation_id = ? and seq > ? and seq <= ? and status != 'recalled' order by seq",
+        "select * from messages where conversation_id = ? and seq > ? and seq <= ? and status != 'recalled' and owner_bot_id is null order by seq",
       )
       .all(conversationId, 0, beforeSeq) as MessageRow[];
     const conv = this.db

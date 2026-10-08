@@ -1,4 +1,4 @@
-import { AppError } from '@kepcup/shared';
+import { AppError, type Message } from '@kepcup/shared';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import { completeStructured } from '../agent/structured.js';
 import type { AgentEngine, EngineMessage } from '../agent/types.js';
@@ -74,15 +74,15 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
   if (responseRunId !== null && run === null) return;
   if (deps.conversations.get(conversationId) === null) return;
 
+  // D75 §7.2 / §2.4.3: private rows feed reflection only for their owner
+  // bot — another member's task entries never reach this bot's memory.
+  const ownView = (m: Message | null): m is Message =>
+    m !== null && (m.ownerBotId === null || m.ownerBotId === botId);
   const triggerMessages = (payload.triggerMessageIds ?? [])
     .map((id) => deps.messages.getById(id))
-    .filter((m): m is NonNullable<typeof m> => m !== null);
+    .filter(ownView);
   const botMessages =
-    run !== null
-      ? run.outputMessageIds
-          .map((id) => deps.messages.getById(id))
-          .filter((m): m is NonNullable<typeof m> => m !== null)
-      : [];
+    run !== null ? run.outputMessageIds.map((id) => deps.messages.getById(id)).filter(ownView) : [];
 
   const reflectionRun = deps.runs.create({
     botId,
