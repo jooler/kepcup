@@ -216,17 +216,24 @@ export class RunsService {
       parts: StoredTriggerPart[];
       /** An absorbed retry batch (null / omitted = keep the stored one). */
       retryOfRunId?: string | null;
+      /**
+       * An absorbed @-chain binding (D75 审查 M1; omitted = keep the stored
+       * one): the turn continues that chain at that depth.
+       */
+      chain?: { id: string; depth: number };
     },
   ): Run {
     this.db
       .prepare(
-        'update runs set trigger_reason = ?, trigger_message_ids_json = ?, trigger_parts_json = ?, retry_of_run_id = coalesce(?, retry_of_run_id) where id = ?',
+        'update runs set trigger_reason = ?, trigger_message_ids_json = ?, trigger_parts_json = ?, retry_of_run_id = coalesce(?, retry_of_run_id), chain_id = coalesce(?, chain_id), chain_depth = coalesce(?, chain_depth) where id = ?',
       )
       .run(
         trigger.reason,
         JSON.stringify(trigger.messageIds),
         trigger.parts.length > 0 ? JSON.stringify(trigger.parts) : null,
         trigger.retryOfRunId ?? null,
+        trigger.chain?.id ?? null,
+        trigger.chain?.depth ?? null,
         id,
       );
     return this.getOrThrow(id);

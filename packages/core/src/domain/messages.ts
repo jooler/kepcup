@@ -76,6 +76,8 @@ export interface AppendMessageInput {
   relatedBatchId?: string | undefined;
   /** system_event extras: setup-question candidate answers (bot_setup_question). */
   options?: string[] | undefined;
+  /** system_event extras: the bot whose task asks (task_question, D75 审查 H1). */
+  taskBotId?: string | undefined;
   /** system_event extras: group-creation question step (group_setup_question). */
   step?: string | undefined;
   /** system_event extras: butler route card target (route_suggestion, D70). */
@@ -241,6 +243,7 @@ export class MessagesService {
                 ...(input.internal ? { internal: true } : {}),
                 ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
                 ...(input.options !== undefined ? { options: input.options } : {}),
+                ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
                 ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),
               });

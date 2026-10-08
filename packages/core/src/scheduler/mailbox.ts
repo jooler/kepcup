@@ -72,6 +72,43 @@ export function triggerParts(batch: TriggerBatch): TriggerPart[] {
   );
 }
 
+/** A D71 delegation batch (a proxied user message from another bot). */
+function isDelegationBatch(batch: TriggerBatch): boolean {
+  return triggerParts(batch).some((part) => part.reason === 'delegation');
+}
+
+/**
+ * Whether two batches may be handled by one turn (merged on release, or
+ * absorbed by a turn as it begins):
+ * - a D71 delegation batch has a turn of its own (审查 M2): the delegation's
+ *   result is that turn's final reply (DelegationHost matches by run), so a
+ *   user message or task result folded into it would be posted back to the
+ *   delegating bot as the result — and a delegation folded into another turn
+ *   would get that turn's reply;
+ * - batches bound to different bot-to-bot @ chains stay apart (审查 M1): one
+ *   turn carries one chain binding (its depth and token budget).
+ */
+export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
+  if (isDelegationBatch(a) || isDelegationBatch(b)) return false;
+  return a.chain === undefined || b.chain === undefined || a.chain.id === b.chain.id;
+}
+
+/**
+ * Removes from `buffer` (in place, order kept) the batches that can share a
+ * turn with `with` (if given) and with each other; returns them.
+ */
+function takeShareable(buffer: TriggerBatch[], withBatch?: TriggerBatch): TriggerBatch[] {
+  const taken: TriggerBatch[] = [];
+  const kept: TriggerBatch[] = [];
+  for (const batch of buffer) {
+    const peers = withBatch !== undefined ? [withBatch, ...taken] : taken;
+    if (peers.every((peer) => canShareTurn(peer, batch))) taken.push(batch);
+    else kept.push(batch);
+  }
+  buffer.splice(0, buffer.length, ...kept);
+  return taken;
+}
+
 /**
  * Merges the batches buffered during a turn into the next turn's one batch
  * (D75 design 30 §3.2: tasks settling together wake a single turn). Parts
@@ -79,8 +116,8 @@ export function triggerParts(batch: TriggerBatch): TriggerPart[] {
  * once, in the first part that carried it, as its latest snapshot (a later
  * batch carrying the same message — an edit notice — holds the newer text,
  * 审查 M3). The turn's reason is the first user-facing part's (else the first
- * part's); the chain binding is the first chained batch's; the group-order
- * hint is the latest one.
+ * part's); the chain binding is the deepest one (callers only merge batches
+ * that `canShareTurn`); the group-order hint is the latest one.
  */
 export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
   const first = batches[0];
@@ -118,7 +155,14 @@ export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
     }
   }
   const primary = parts.find((part) => isUserFacingReason(part.reason)) ?? parts[0];
-  const chain = batches.find((batch) => batch.chain !== undefined)?.chain;
+  // The deepest binding (审查 M1): several triggers of one chain merged into
+  // a turn continue it from its furthest point — never from a shallower one.
+  let chain: TriggerBatch['chain'];
+  for (const batch of batches) {
+    if (batch.chain !== undefined && (chain === undefined || batch.chain.depth > chain.depth)) {
+      chain = batch.chain;
+    }
+  }
   const retryOf = batches.find((batch) => batch.retryOf !== undefined)?.retryOf;
   const afterNote = [...batches].reverse().find((batch) => batch.afterNote !== undefined)?.afterNote;
   return {
@@ -266,21 +310,25 @@ export class Mailbox {
   }
 
   /**
-   * Hands over the batches buffered so far (the running turn absorbs them as
-   * it begins executing, 审查 M1): they will not start another turn.
+   * Hands over the batches buffered so far that can share a turn with
+   * `current` (the running turn's batch — it absorbs them as it begins
+   * executing, 审查 M1): they will not start another turn. The rest stay
+   * buffered for the next turn.
    */
-  takeBuffered(): TriggerBatch[] {
-    return this.#buffer.splice(0);
+  takeBuffered(current?: TriggerBatch): TriggerBatch[] {
+    return takeShareable(this.#buffer, current);
   }
 
   /**
    * The turn reached its terminal state. Buffered batches start the next
    * turn right away, merged into one batch; returns that turn's run id.
+   * Batches that cannot share a turn with them (`canShareTurn`) stay
+   * buffered for the turn after.
    */
   release(): string | null {
     this.#running = false;
     if (this.#buffer.length === 0) return null;
-    const merged = mergeTriggerBatches(this.#buffer.splice(0));
+    const merged = mergeTriggerBatches(takeShareable(this.#buffer));
     return this.deliver(merged);
   }
 
