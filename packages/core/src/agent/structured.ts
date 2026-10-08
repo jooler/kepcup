@@ -70,15 +70,30 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
     : input.systemPrompt;
 
   const attempt = async (messages: EngineMessage[]): Promise<T> => {
-    const result = await input.complete({
-      identity: input.identity,
-      model: input.model,
-      systemPrompt,
-      messages,
-      ...(jsonOnly ? {} : { tools: [submit] }),
-      maxTokens: input.maxTokens,
-      signal: input.signal,
-    });
+    let result: Awaited<ReturnType<CompleteStructuredInput<T>['complete']>>;
+    try {
+      result = await input.complete({
+        identity: input.identity,
+        model: input.model,
+        systemPrompt,
+        messages,
+        ...(jsonOnly ? {} : { tools: [submit] }),
+        maxTokens: input.maxTokens,
+        signal: input.signal,
+      });
+    } catch (error) {
+      // A failed / timed-out external agent call still spent a session of the
+      // subscription: a zero-token row (counted as one round by the budgets),
+      // attributed like a successful one. Built-in calls: unchanged.
+      if (jsonOnly) {
+        try {
+          input.onUsage?.({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null });
+        } catch {
+          // Ledger unavailable (core shutting down): the call's error wins.
+        }
+      }
+      throw error;
+    }
     input.onUsage?.(result.usage ?? null);
     const submitted = result.toolCalls.find((c) => c.name === SUBMIT_TOOL);
     if (submitted) return validate(submitted.arguments, input.schema);

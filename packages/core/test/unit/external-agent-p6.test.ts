@@ -15,7 +15,7 @@ import {
 import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import type { AgentPermissionHandler } from '../../src/agent/external/permission-bridge.js';
-import { PROVIDERS } from '../../src/agent/external/providers/index.js';
+import { backgroundToolFree, PROVIDERS } from '../../src/agent/external/providers/index.js';
 import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
 import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import { completeStructured } from '../../src/agent/structured.js';
@@ -194,7 +194,47 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
       code: 'AGENT_UNAVAILABLE',
       message: expect.stringContaining('原生工具'),
     });
-    expect(started[0]?.observed.sessions ?? []).toHaveLength(0);
+    // Checked before acquire: the agent process is never spawned for it.
+    expect(started).toHaveLength(0);
+  });
+
+  it('testkit agents qualify for background sessions only in test builds without release gates', () => {
+    const entry = fakeAgentEntry('fake-gate');
+    const plain = { ...genericAcpProvider, id: 'plain' };
+    expect(backgroundToolFree(entry, plain)).toBe(true);
+    expect(backgroundToolFree({ ...entry, releaseGate: 'other' }, plain)).toBe(false);
+    try {
+      vi.stubGlobal('__KEPCUP_AGENT_RELEASE_GATES__', ['testkit']);
+      expect(backgroundToolFree(entry, plain)).toBe(false);
+      vi.stubGlobal('__KEPCUP_AGENT_RELEASE_GATES__', undefined);
+      vi.stubGlobal('__KEPCUP_TEST_HOOKS__', false);
+      expect(backgroundToolFree(entry, plain)).toBe(false);
+      // A provider that declares it qualifies in any build.
+      expect(backgroundToolFree(entry, { ...plain, backgroundNoNativeTools: true })).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(backgroundToolFree(entry, plain)).toBe(true);
+  });
+
+  it('a background session whose private cwd cannot be created settles and drops its dispose listener', async () => {
+    const { engine, started, request, host } = setup({ turns: [agentTurn().text('{}')] });
+    const offs: Array<ReturnType<typeof vi.fn>> = [];
+    const onDispose = host.onDispose.bind(host);
+    vi.spyOn(host, 'onDispose').mockImplementation((listener) => {
+      const off = vi.fn(onDispose(listener));
+      offs.push(off);
+      return off;
+    });
+    vi.stubEnv('TMPDIR', path.join(tmpdir(), 'kepcup-p6-missing', 'nested'));
+    try {
+      await expect(engine.complete(request())).rejects.toMatchObject({ code: 'INTERNAL' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(offs).toHaveLength(1);
+    expect(offs[0]).toHaveBeenCalledTimes(1);
+    expect(started).toHaveLength(0);
   });
 
   it('background sessions pass the provider config check before opening (P5-2 第三轮 checkConfig)', async () => {
@@ -342,6 +382,43 @@ describe('completeStructured with an external agent (JSON only, P6)', () => {
       }),
     ).rejects.toMatchObject({ code: 'TIMEOUT' });
     expect(calls).toBe(1);
+  });
+
+  it('a failed external agent call is charged as a zero-token row; built-in failures are not', async () => {
+    const charged: unknown[] = [];
+    const failing = async (): Promise<never> => {
+      throw Object.assign(new Error('超时'), { code: 'TIMEOUT' });
+    };
+    const base = {
+      complete: failing,
+      identity: { runId: 'r', botId: 'b', conversationId: 'c', loopType: 'triage' as const },
+      systemPrompt: 'TRIAGE',
+      messages: [],
+      parametersSchema,
+      schema,
+      onUsage: (usage: unknown) => charged.push(usage),
+    };
+    await expect(
+      completeStructured({ ...base, model: agentModelRef('codex-acp', '') }),
+    ).rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(charged).toEqual([{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null }]);
+
+    // The ledger failing too (core shutting down): the call's error still wins.
+    await expect(
+      completeStructured({
+        ...base,
+        model: agentModelRef('codex-acp', ''),
+        onUsage: () => {
+          throw new Error('db closed');
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'TIMEOUT' });
+
+    charged.length = 0;
+    await expect(
+      completeStructured({ ...base, model: 'custom:mock/mock-light' }),
+    ).rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(charged).toEqual([]);
   });
 
   it('built-in models keep the submit tool', async () => {

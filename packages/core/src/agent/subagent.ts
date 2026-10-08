@@ -8,6 +8,7 @@ import {
   SUBAGENT_TIMEOUT_MS,
   SUBAGENT_TOKEN_BUDGET,
   SUBAGENT_TOKEN_POLL_MS,
+  parseAgentModelRef,
   type Run,
 } from '@kepcup/shared';
 import { buildRunDigest } from './context/continuation.js';
@@ -681,27 +682,41 @@ async function compressResult(
   const timeout = setTimeout(() => controller.abort(), SUBAGENT_COMPRESS_TIMEOUT_MS);
   timeout.unref?.();
   try {
-    const result = await (input.lightEngine ?? deps.engine).complete({
-      identity,
-      model: input.lightModelRef,
-      systemPrompt: COMPRESSOR_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            '<task>',
-            task,
-            '</task>',
-            '<process_record>',
-            digest,
-            '</process_record>',
-            `把过程记录提炼为对该任务的直接结论（≤ ${SUBAGENT_RESULT_MAX_CHARS} 字符）。`,
-          ].join('\n'),
-          timestamp: deps.clock.now(),
-        },
-      ],
-      signal: controller.signal,
-    });
+    const result = await (input.lightEngine ?? deps.engine)
+      .complete({
+        identity,
+        model: input.lightModelRef,
+        systemPrompt: COMPRESSOR_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              '<task>',
+              task,
+              '</task>',
+              '<process_record>',
+              digest,
+              '</process_record>',
+              `把过程记录提炼为对该任务的直接结论（≤ ${SUBAGENT_RESULT_MAX_CHARS} 字符）。`,
+            ].join('\n'),
+            timestamp: deps.clock.now(),
+          },
+        ],
+        signal: controller.signal,
+      })
+      .catch((error: unknown) => {
+        // A failed / timed-out external agent call still spent a session: a
+        // zero-token row, like structured calls (built-in calls: unchanged).
+        if (parseAgentModelRef(input.lightModelRef) !== null) {
+          const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null };
+          try {
+            recordSubagentUsage(deps, input, identity, input.lightModelRef, [zero]);
+          } catch {
+            // Ledger unavailable (core shutting down): the call's error wins.
+          }
+        }
+        throw error;
+      });
     const text = result.text.trim();
     if (text.length === 0) return null;
     // 压缩调用的用量同挂子 run 名下（模型是轻量模型）。
