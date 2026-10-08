@@ -853,3 +853,115 @@ describe('AgentPermissionBridge decisions', () => {
     expect(bridge.isolationFor(identity, project).denyWrite).toEqual([paths.home]);
   });
 });
+
+describe('unsandboxed commands without the bound project lease (D75 审查 M2)', () => {
+  const paths = resolvePaths(path.join(root, 'home-m2'));
+  const workspace = path.join(paths.home, 'bots', 'bot_m2', 'workspaces', 'conv_m2');
+  const project = path.join(root, 'project-m2');
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(path.join(project, 'src'), { recursive: true });
+  // A write task whose workdir is the workspace, in a project-bound conversation.
+  const identity = {
+    runId: 'run_task_m2',
+    botId: 'bot_m2',
+    conversationId: 'conv_m2',
+    loopType: 'task' as const,
+  };
+  const requested: Array<Record<string, unknown>> = [];
+  let unleased: () => string | null = () => project;
+  const bridge = new AgentPermissionBridge({
+    paths,
+    gateway: {
+      checkPath: (_identity, input) => ({
+        kind: 'needs_grant',
+        resolvedPath: input,
+        reason: 'outside',
+        sensitive: false,
+      }),
+      audit: () => undefined,
+      workspacePath: () => workspace,
+    },
+    approvals: {
+      request: async (_identity, _kind, payload) => {
+        requested.push(payload);
+        return {
+          decision: 'approved',
+          approval: { id: 'apr_m2', autoApproved: false, decision: null } as unknown as Approval,
+        };
+      },
+      publishEvent: () => undefined,
+    },
+    grants: { create: () => ({}) as never, listActive: () => [], hasEffectiveGrant: () => null },
+    allowlist: { match: () => ({ exempt: false }) as never },
+    skillDirs: () => [],
+    unleasedProject: () => unleased(),
+    homeDir: path.join(root, 'user-home'),
+    logger: { debug() {}, info() {}, warn() {}, error() {} } as never,
+    platform: 'linux',
+  });
+  const entry = AGENT_CATALOG.find((e) => e.id === 'fake')!;
+  const exec = (command: string, cwd?: string, tier: 'workspace' | 'ask' = 'ask') =>
+    bridge.decide(
+      {
+        sessionId: 's',
+        toolCall: {
+          toolCallId: command,
+          kind: 'execute',
+          rawInput: { command, ...(cwd !== undefined ? { cwd } : {}) },
+        },
+        options: [
+          { optionId: 'allow_once', name: 'y', kind: 'allow_once' },
+          { optionId: 'reject_once', name: 'n', kind: 'reject_once' },
+        ],
+      },
+      {
+        identity,
+        entry,
+        // Codex: its command requests always run outside any sandbox.
+        provider: codexProvider,
+        tier,
+        workdir: workspace,
+        signal: new AbortController().signal,
+        bridge: null,
+      },
+    );
+
+  it('refuses (no card) commands that reach into the project, run in it, or cannot be analysed', async () => {
+    requested.length = 0;
+    unleased = () => project;
+    for (const [command, cwd] of [
+      [`rm -rf ${project}/src`, undefined],
+      ['touch notes.md', project],
+      ['touch src/x', path.join(project, 'src')],
+      [`cp out.txt ${path.dirname(project)}`, undefined],
+      ['cd .. && touch x', undefined],
+      ['rm -rf "$PROJECT"', undefined],
+    ] as const) {
+      expect((await exec(command, cwd)).decision, command).toBe('rejected');
+    }
+    // Also in the workspace tier (Codex: unsandboxed → would have been a card).
+    expect((await exec(`rm ${project}/README.md`, undefined, 'workspace')).decision).toBe(
+      'rejected',
+    );
+    expect(requested).toEqual([]);
+  });
+
+  it('still asks for commands that provably stay out of the project', async () => {
+    requested.length = 0;
+    unleased = () => project;
+    expect((await exec('touch result.md')).decision).toBe('allowed');
+    expect(requested).toHaveLength(1);
+  });
+
+  it('holding the lease (or no bound project) keeps the card; a failing lookup fails closed', async () => {
+    requested.length = 0;
+    unleased = () => null;
+    expect((await exec(`rm -rf ${project}/src`)).decision).toBe('allowed');
+    expect(requested).toHaveLength(1);
+    unleased = () => {
+      throw new Error('db closed');
+    };
+    expect((await exec('touch result.md')).decision).toBe('rejected');
+    expect(requested).toHaveLength(1);
+  });
+});

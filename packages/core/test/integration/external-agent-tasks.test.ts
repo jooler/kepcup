@@ -229,12 +229,14 @@ describe('external agents as the task engine (D75 §8)', () => {
     await waitFor(() => (started[0]?.observed.prompts.length === 1 ? true : null), {
       label: 'first prompt',
     });
-    // The second task is launched but waits for the agent's only slot.
+    // The second task waits for the agent's only slot without launching
+    // (审查 M3: no task slot / write lease held while it waits).
     const waiting = tasksOf(stack)
       .list(turnIdentity(bot.id, conv.id, 'run_list'))
       .filter((task) => task.state === 'submitted');
     expect(waiting).toHaveLength(1);
-    expect(waiting[0]!.queueReason).toBe('等模型并发额度');
+    expect(waiting[0]!.queueReason).toBe('等智能体并发额度（agent:serial 1/1）');
+    expect(tasksOf(stack).launchedCount(conv.id)).toBe(1);
 
     const [doneA, doneB] = await Promise.all([
       waitStatus(stack, a.taskId, ['completed', 'failed'], 'task one settled'),

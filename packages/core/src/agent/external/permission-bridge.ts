@@ -315,6 +315,13 @@ export interface AgentPermissionBridgeDeps {
   skillDirs(botId: string): string[];
   /** secrets.redact：卡片上的命令 / 标题先脱敏（L1）。 */
   redact?(text: string): string;
+  /**
+   * 对话绑定的可用 project 根——仅当该身份**不持有**它的写入租约时（D75 审查
+   * M2：工作目录为 workspace 的写任务、只读 run 等）；持有或没有 project →
+   * null。沙箱外命令一经批准就能写任何地方，可能触及这个 project 的命令
+   * 一律拒绝（不弹卡），否则 project 会在没有租约与检查点的情况下被改写。
+   */
+  unleasedProject?(identity: RunIdentity): string | null;
   /** 用户主目录（`~` 展开；缺省 os.homedir()）。 */
   homeDir?: string;
   logger: CoreLogger;
@@ -658,6 +665,34 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     if (sandboxed && ctx.tier === 'workspace') {
       return allow('auto', 'runs inside the agent sandbox', { command });
     }
+    // Past here the command runs outside any sandbox once approved. Without
+    // the bound project's lease (审查 M2) it must provably stay out of the
+    // project — the same fail-closed analysis, with the project as the
+    // forbidden root (cwd inside it, an argument into / above it, or anything
+    // it cannot vouch for: refused, no card).
+    const unleased = this.#unleasedProject(ctx.identity);
+    if (unleased === 'unknown') {
+      return reject('auto', '无法确认本次执行是否持有 project 写入租约：沙箱外命令不予执行', {
+        command,
+        cwd,
+      });
+    }
+    if (unleased !== null) {
+      const touches = unattendedCommandVerdict(command, {
+        dataHome: unleased,
+        homeDir: this.#deps.homeDir ?? os.homedir(),
+        cwd,
+        exemptDirs: [],
+        platform: this.#platform,
+      });
+      if (!touches.safe) {
+        return reject(
+          'auto',
+          '本次执行没有持有对话 project 的写入租约：可能触及该 project（或无法静态分析）的沙箱外命令不予执行',
+          { command, cwd },
+        );
+      }
+    }
     const base =
       ctx.tier === 'ask'
         ? '「每次确认」档：命令需逐条确认'
@@ -684,6 +719,19 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         ? base
         : `${base}；⚠ 可能触及应用数据目录 / 无法静态分析（${analysis.reason ?? ''}）`,
     });
+  }
+
+  /** The unleased bound project (see deps); 'unknown' = the lookup failed (fail closed). */
+  #unleasedProject(identity: RunIdentity): string | null | 'unknown' {
+    try {
+      return this.#deps.unleasedProject?.(identity) ?? null;
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'agent permission project lookup failed',
+      );
+      return 'unknown';
+    }
   }
 
   /** Raises an `agent_tool` card; approval → allow_once (+ grants for paths). */
