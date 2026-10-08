@@ -233,6 +233,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - 最终审查（`c3b541a`，覆盖批 E、projects.test 重写与全分支健全性检查）判 **APPROVE**，附 MEDIUM M-1：写任务在 `ask_user` 等待中被取消后，`yieldSlotWhile` 仍排队取回名额，取回前一直占写租约与任务名额；LOW：新 `<untrusted>` 包裹未中和闭合标签、摘要 / 反思把任务文本渲染为「系统」、投递计数在唤醒失败与排队中的对话轮时多算、改动卡第二个租约窗口后不刷新、无链用户批并入 @ 链对话轮继承链深度、注释与说明残留。另：最终 e2e 中 `approvals.spec` 3 例仍从对话轮触发访问审批（批 D M4 之后对话轮越权读直接失败，W3 的 e2e 迁移早于批 D）。
 - 修复（`0ed764a`、`dfedd0a`、`976b6e3`、`1e20f84`、`ee8038d`、`5cc297c`、`1441e21`、`30b1f4a`）：等待被拒或执行已中止时不取回名额、无名额展开；`questionSince` 在名额取回后才清；唤醒成功才计投递，排队中的对话轮与邮箱缓冲里的结果视为持有；问题行 / 其他 Bot 包裹 / 摘要 / 任务卡标题经 `neutralizeUntrusted`；未送达通知在摘要里用固定行，反思把任务结果 / 失败渲染为「任务 t_x 的结果」并包 `<untrusted>`；改动卡收到 `message.updated` 重新加载；含用户消息的无链批不与 @ 链批同轮；`approvals.spec` 迁到任务流程；`.gitignore` 忽略 `.vitest-*.json`。
 - **验证**（批 F 分支）：容器全量 **1795 例、1765 过、28 失败，新增 0**；e2e `approvals.spec` + `tasks.spec` 6/6；typecheck / lint 0 error。合入后的最终全量与 e2e 见下。
+- **最终验证**（`d75@f2f45a8`，2026-10-08）：容器全量 **1795 例、1765 过、28 失败，新增 0**（失败集合 = 基线 28 条）；e2e 全量 **70 例、67 过、3 失败**（`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description while a command executes」、`wiki.spec`「wiki tab: browse the page tree …」，与 main 基线一致）；typecheck / lint 0 error。**D75 实施完成，待用户确认偏差与合入 main。**
 
 **偏差汇总**（全部待用户确认）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015、DEV-016、DEV-017、DEV-018。
 
