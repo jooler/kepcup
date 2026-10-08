@@ -181,7 +181,9 @@ export type AgentTestResult = z.infer<typeof agentTestResultSchema>;
  * 安装损坏 / 安装中；`auth_required` 未登录；`incompatible` 版本不兼容；
  * `unavailable` 其余可经设置卡重试的不可用（如宿主工具桥未启动）；
  * `sandbox_unavailable` Agent 自身的 OS 沙箱起不来（如 Linux 缺 bubblewrap /
- * socat）——宿主要求沙箱必须生效（不降级为沙箱外执行）。
+ * socat）——宿主要求沙箱必须生效（不降级为沙箱外执行）；`config_unsafe`
+ * Agent 会读取的用户配置放行了需要宿主确认的操作（文件与键见 setup 的
+ * `detail`），改配置后重试即可，无需重装。
  */
 export const agentSetupReasonSchema = z.enum([
   'experimental_off',
@@ -191,6 +193,7 @@ export const agentSetupReasonSchema = z.enum([
   'incompatible',
   'unavailable',
   'sandbox_unavailable',
+  'config_unsafe',
 ]);
 export type AgentSetupReason = z.infer<typeof agentSetupReasonSchema>;
 
@@ -236,6 +239,8 @@ export function agentSetupReasonForError(
       return 'incompatible';
     case 'AGENT_SANDBOX_UNAVAILABLE':
       return 'sandbox_unavailable';
+    case 'AGENT_CONFIG_UNSAFE':
+      return 'config_unsafe';
     case 'AGENT_UNAVAILABLE':
       return stateReason ?? 'unavailable';
     default:

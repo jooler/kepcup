@@ -1024,6 +1024,8 @@ export const zhCN = {
   'setupCard.agentReason.unavailable': '这个智能体暂时不可用：可先测试连接，通过后继续。',
   'setupCard.agentReason.sandbox_unavailable':
     '这个智能体自带的沙箱无法启动。KepCup 要求它的命令只在沙箱内运行，沙箱不可用时不会降级执行。',
+  'setupCard.agentReason.config_unsafe':
+    '这个智能体的个人配置放行了需要 KepCup 逐条确认的操作（如命令、写文件），为安全起见已拒绝运行。无需重装：按下方列出的文件，把这些权限键改为 ask / deny 或删除，然后点「测试连接」或「完成设置，继续对话」。',
   'setupCard.agentSandboxInstall':
     'Linux 上请先安装沙箱依赖：sudo apt install bubblewrap socat（Debian / Ubuntu）或 sudo dnf install bubblewrap socat（Fedora），装好后可先点「测试连接」，再点「完成设置，继续对话」。',
   'setupCard.agentSandboxAsk':

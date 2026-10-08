@@ -31,6 +31,7 @@ import type {
   AgentExit,
   AgentProcess,
   AgentProvider,
+  ConfigCheckContext,
   LaunchTarget,
   ProviderRegistry,
 } from './types.js';
@@ -74,6 +75,11 @@ export interface AgentLease {
    * 只能按 Provider 能力 resume / load 或新建。
    */
   openSession<T>(sessionId: string): T | undefined;
+  /**
+   * Re-runs the provider's user-config check (`AgentProvider.checkConfig`)
+   * with this process's launch context; throws `AGENT_CONFIG_UNSAFE`.
+   */
+  checkConfig?(): void;
   /** Keeps the session open in this process with the engine's state. */
   keepSession(sessionId: string, state: unknown): void;
   /** The session is no longer reusable in this process (closed / poisoned). */
@@ -133,6 +139,8 @@ interface LiveAgent {
   sessions: Map<string, SessionSink>;
   /** Sessions kept open between runs (P5 reuse) → the engine's state. */
   openSessions: Map<string, unknown>;
+  /** What the process was launched with (`AgentProvider.checkConfig` input). */
+  configContext: ConfigCheckContext;
   /** The `initialize` result once known (for lease-less session access). */
   init: AcpInitializeResponse | null;
   leases: number;
@@ -502,6 +510,9 @@ export class AgentHost {
       forgetSession: (sessionId) => {
         agent.openSessions.delete(sessionId);
       },
+      checkConfig: () => {
+        agent.provider.checkConfig?.(agent.configContext);
+      },
       release: () => {
         if (released) return;
         released = true;
@@ -651,16 +662,18 @@ export class AgentHost {
       throw new AppError('AGENT_INCOMPATIBLE', `智能体「${entry.name}」缺少协议垫片`);
     }
     const target = this.#deps.resolveLaunch(entry);
-    const launch = provider.launch({
+    const configContext: ConfigCheckContext = {
       entry,
-      target,
       platform: process.platform,
       ...(this.#deps.dataHome !== undefined ? { dataHome: this.#deps.dataHome } : {}),
       ...(this.#deps.stateDirFor !== undefined
         ? { stateDir: this.#deps.stateDirFor(entry.id) }
         : {}),
       loadUserConfig: this.#deps.loadUserConfigFor?.(entry.id) === true,
-    });
+    };
+    // User config that would bypass the host's decisions: never start (第三轮 #4).
+    provider.checkConfig?.(configContext);
+    const launch = provider.launch({ ...configContext, target });
     const spawn = this.#deps.spawn ?? spawnAgentProcess;
     let stderrTail = '';
     const logStderrLine = (line: string) => {
@@ -688,6 +701,7 @@ export class AgentHost {
       process: proc,
       sessions: new Map<string, SessionSink>(),
       openSessions: new Map<string, unknown>(),
+      configContext,
       init: null,
       leases: 0,
       idleTimer: null,

@@ -111,5 +111,7 @@ export function agentSetupMessage(
       return `智能体「${agentName}」暂不可用${suffix}`;
     case 'sandbox_unavailable':
       return `智能体「${agentName}」的沙箱无法启动${suffix}`;
+    case 'config_unsafe':
+      return `智能体「${agentName}」的个人配置放行了需要 KepCup 确认的操作，已拒绝运行${suffix}`;
   }
 }

@@ -129,6 +129,14 @@
     {agentsStore.loaded ? t('setupCard.agentMissing') : t('setupCard.agentLoading')}
   </p>
 {:else}
+  {#if requirement.reason === 'config_unsafe' && requirement.detail}
+    <p
+      class="rounded-lg bg-muted/40 px-3 py-2 text-xs break-words whitespace-pre-wrap"
+      data-testid="setup-card-agent-config"
+    >
+      {requirement.detail}
+    </p>
+  {/if}
   {#if requirement.reason === 'sandbox_unavailable'}
     <div
       class="space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs"
