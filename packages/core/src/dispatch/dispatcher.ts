@@ -141,7 +141,8 @@ export function lightModelRefForBot(
 
 /**
  * One bot's group-chat triage: a single structured call through the scheduler
- * (priority 0, provider concurrency applies). Never rejects — every failure
+ * (priority 0, provider concurrency applies; the timeout runs from submission,
+ * 审查 M6). Never rejects — every failure
  * mode (timeout, provider error, unparsable output) resolves as `no_action`.
  */
 export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
@@ -188,11 +189,35 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
     const timeoutMs =
       input.timeoutMs ?? (route.agentId !== null ? AGENT_TRIAGE_TIMEOUT_MS : TRIAGE_TIMEOUT_MS);
 
+    const key = `triage:${input.conversationId}:${input.botId}:${input.batchId}`;
+    const controller = new AbortController();
+    let started = false;
+    // The timeout counts from submission, not from the start (D75 审查 M6):
+    // the group's dispatch waits on this decision, and the triage job may sit
+    // queued for hours behind long tasks filling every slot of its provider
+    // (an agent's slots are its tasks', the scheduler keeps none free). On
+    // expiry the bot fails open to mention-only for this batch (no_action)
+    // and a still-queued job is dropped.
+    const timeout = setTimeout(() => {
+      controller.abort();
+      if (!started) input.scheduler.cancelQueued(key);
+      input.logger.warn(
+        { botId: input.botId, conversationId: input.conversationId, started },
+        'triage timed out -> no_action',
+      );
+      finish(noAction);
+    }, timeoutMs);
+    timeout.unref?.();
     input.scheduler.submit({
       priority: 0,
       provider,
-      key: `triage:${input.conversationId}:${input.botId}:${input.batchId}`,
+      key,
       run: async () => {
+        started = true;
+        if (settled) {
+          clearTimeout(timeout);
+          return;
+        }
         const run = input.runs.create({
           botId: input.botId,
           conversationId: input.conversationId,
@@ -200,16 +225,6 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
           triggerReason: 'broadcast',
           triggerMessageIds: input.batchMessages.map((m) => m.id),
         });
-        const controller = new AbortController();
-        const timeout = setTimeout(() => {
-          controller.abort();
-          input.logger.warn(
-            { botId: input.botId, conversationId: input.conversationId },
-            'triage timed out -> no_action',
-          );
-          finish(noAction);
-        }, timeoutMs);
-        timeout.unref?.();
         try {
           if (!bot) throw new Error('triage target vanished');
           input.runs.update(run.id, { status: 'running' });

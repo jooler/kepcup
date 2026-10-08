@@ -120,12 +120,16 @@ export function agentBackgroundBlocker(
     return '已开启「加载我的个人配置」（后台任务不加载个人配置）';
   }
   // Same limit the scheduler applies (`agentConcurrency`): agents without
-  // parallel sessions always run one session at a time.
+  // parallel sessions always run one session at a time. Background loops
+  // keep one of the agent's slots free (scheduler `#runnable`); since D75 that
+  // slot serves the bot's tasks and its group triage — conversation turns
+  // never run on an agent — and a triage stuck behind tasks anyway times out
+  // into mention-only (审查 M6/L7).
   if (!parallel) {
     return '该智能体未验证可并行会话（并发上限恒为 1，后台任务需至少 2）';
   }
   if (agentConcurrency(settings.providerConcurrency, entry, registry) < 2) {
-    return '并发上限为 1（后台任务需至少 2，为对话保留一个名额）';
+    return '并发上限为 1（后台任务需至少 2，为任务保留一个名额）';
   }
   return null;
 }
