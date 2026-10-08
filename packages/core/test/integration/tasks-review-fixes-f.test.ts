@@ -70,7 +70,12 @@ async function oneSlot(stack: TestStack): Promise<void> {
 }
 
 /** A settled, unconsumed task result of `botId` (the reconciliation delivers it). */
-function settledTask(stack: TestStack, botId: string, conversationId: string, text: string): string {
+function settledTask(
+  stack: TestStack,
+  botId: string,
+  conversationId: string,
+  text: string,
+): string {
   const d = domain(stack);
   const task = d.runs.create({
     botId,
@@ -141,7 +146,10 @@ describe('M-1: a write task cancelled while waiting on the user unwinds without 
         .replyToolCall('ask_user', { question: '改哪个文件？', options: ['a', 'b'] }),
       busy,
       step().inTask().expect(briefWith('TASK-C')).replyText('RESULT-C 写好了'),
-      step().inTurn().expect((req) => req.lastUserText().includes('RESULT-C')).replyText('RELAY-C'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('RESULT-C'))
+        .replyText('RELAY-C'),
     ]);
 
     const workspaceKey = `ws:${bot.id}:${conv.id}`;
@@ -198,10 +206,10 @@ describe('M-1: a write task cancelled while waiting on the user unwinds without 
     expect(busy.consumed).toBe(true);
 
     busy.release();
-    await waitFor(
-      () => (domain(stack).runs.get(c.taskId)?.status === 'completed' ? true : null),
-      { label: 'C completed', timeoutMs: 20_000 },
-    );
+    await waitFor(() => (domain(stack).runs.get(c.taskId)?.status === 'completed' ? true : null), {
+      label: 'C completed',
+      timeoutMs: 20_000,
+    });
   }, 60_000);
 
   it('slot re-acquisition after an answer does not count toward the wall clock', async () => {
@@ -223,7 +231,10 @@ describe('M-1: a write task cancelled while waiting on the user unwinds without 
         .replyToolCall('ask_user', { question: '哪个？', options: ['甲', '乙'] }),
       busy,
       step().inTask().expect(briefWith('TASK-Q')).replyText('RESULT-Q 完成'),
-      step().inTurn().expect((req) => req.lastUserText().includes('RESULT-Q')).replyText('RELAY-Q'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('RESULT-Q'))
+        .replyText('RELAY-Q'),
     ]);
     const q = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
       title: '问',
@@ -249,10 +260,10 @@ describe('M-1: a write task cancelled while waiting on the user unwinds without 
     tasksOf(stack).sweep(Date.now() + TASK_MAX_WALL_MS + 60_000);
     expect(domain(stack).runs.getOrThrow(q.taskId).status).toBe('running');
     busy.release();
-    await waitFor(
-      () => (domain(stack).runs.get(q.taskId)?.status === 'completed' ? true : null),
-      { label: 'Q completed', timeoutMs: 20_000 },
-    );
+    await waitFor(() => (domain(stack).runs.get(q.taskId)?.status === 'completed' ? true : null), {
+      label: 'Q completed',
+      timeoutMs: 20_000,
+    });
   }, 60_000);
 });
 
@@ -263,7 +274,10 @@ describe('L-3: deliveries count only real hand-overs; a queued or buffered resul
     const bot = await makeBot(core, '阿抛');
     const conv = await openDirect(core, bot.id);
     llm.script('mock-main', [
-      step().inTurn().expect((req) => req.lastUserText().includes('RESULT-W')).replyText('RELAY-W'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('RESULT-W'))
+        .replyText('RELAY-W'),
     ]);
     const scheduler = core.services.scheduler!;
     const submit = scheduler.submit.bind(scheduler);
@@ -305,7 +319,10 @@ describe('L-3: deliveries count only real hand-overs; a queued or buffered resul
       .replyText('忙完了');
     llm.script('mock-main', [
       busy,
-      step().inTurn().expect((req) => req.lastUserText().includes('RESULT-Q')).replyText('RELAY-Q'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('RESULT-Q'))
+        .replyText('RELAY-Q'),
     ]);
     await sendBatch(core, other.id, ['BUSY 占住名额']);
     await waitFor(() => (busy.consumed ? true : null), { label: 'slot taken' });
@@ -327,9 +344,9 @@ describe('L-3: deliveries count only real hand-overs; a queued or buffered resul
     );
     const messages = await listMessages(core, conv.id);
     expect(undeliveredNotice(messages)).toBeNull();
-    expect(
-      messages.some((m) => 'text' in m.content && m.content.text.includes('RELAY-Q')),
-    ).toBe(true);
+    expect(messages.some((m) => 'text' in m.content && m.content.text.includes('RELAY-Q'))).toBe(
+      true,
+    );
   }, 40_000);
 
   it('a result buffered behind a running turn past the re-delivery delay is neither recounted nor given up', async () => {
@@ -344,7 +361,10 @@ describe('L-3: deliveries count only real hand-overs; a queued or buffered resul
       .replyText('长回复');
     llm.script('mock-main', [
       running,
-      step().inTurn().expect((req) => req.lastUserText().includes('RESULT-B')).replyText('RELAY-B'),
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('RESULT-B'))
+        .replyText('RELAY-B'),
     ]);
     await sendBatch(core, conv.id, ['LONG 慢慢来']);
     await waitFor(() => (running.consumed ? true : null), { label: 'turn running' });
