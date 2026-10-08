@@ -475,6 +475,16 @@ export class ToolGateway {
       if (after.kind === 'allowed') return after.resolvedPath;
       throw new AppError('PATH_OUT_OF_SCOPE', `${'写入仍被拒绝'}：${inputPath}`);
     }
+    // D75 §2.1 / §7.3 (审查 M4): a supervisor turn never waits for an access
+    // approval — that would hold the (bot, conversation) mailbox until the
+    // user decides. It fails fast; reading outside the authorized range is a
+    // task's work (request_access inside the task).
+    if (identity.loopType === 'turn') {
+      throw new AppError(
+        'PATH_OUT_OF_SCOPE',
+        `${decision.reason}：${inputPath}。对话轮不申请访问授权：需要读取它请用 start_task 派一个任务，在任务里读取（必要时先用 request_access 申请）。`,
+      );
+    }
     // BR-P03-002: a broad grant (e.g. the user home) would silently cover
     // sensitive locations downstream, so the card must warn whenever the
     // requested path is or covers one — the user approves them knowingly.

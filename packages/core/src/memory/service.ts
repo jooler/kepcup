@@ -91,6 +91,13 @@ export interface ApprovalsFacade {
     payload: Record<string, unknown>,
     options?: { signal?: AbortSignal },
   ): Promise<{ decision: 'approved' | 'denied' | 'cancelled' }>;
+  /** Non-blocking variant (a supervisor turn never waits for the user, D75). */
+  submitNonBlocking?(
+    identity: RunIdentity,
+    kind: 'profile_change',
+    payload: Record<string, unknown>,
+    onDecided: (outcome: { decision: 'approved' | 'denied' | 'cancelled' }) => void,
+  ): unknown;
 }
 
 export interface RememberInput {
@@ -782,6 +789,51 @@ export class MemoryService {
       }
     }
     return { approved: true, note: '' };
+  }
+
+  /**
+   * propose_profile_change from a supervisor turn (D75 审查 M4): the card is
+   * submitted without parking the turn (it must not hold the mailbox until
+   * the user decides). An approved proposal is applied when the user decides;
+   * `onDecided` reports approved / denied (never a cancellation) so the bot
+   * hears about it in a later turn.
+   */
+  submitProfileChange(
+    identity: RunIdentity,
+    changes: Array<{ field: string; value: string }>,
+    reason: string,
+    onDecided: (outcome: { approved: boolean; note: string }) => void,
+  ): void {
+    const approvals = this.#deps.approvals;
+    if (approvals?.submitNonBlocking === undefined) {
+      throw new AppError('INTERNAL', '审批服务未就绪');
+    }
+    const payload = profileChangeApprovalPayloadSchema.parse({ changes, reason });
+    approvals.submitNonBlocking(
+      identity,
+      'profile_change',
+      payload as Record<string, unknown>,
+      (outcome) => {
+        if (outcome.decision === 'cancelled') return;
+        if (outcome.decision !== 'approved') {
+          onDecided({ approved: false, note: '已拒绝' });
+          return;
+        }
+        let note = '';
+        const botId = identity.botId;
+        try {
+          const bot = botId !== null ? this.#deps.bots.get(botId) : null;
+          if (bot !== null && botId !== null) {
+            this.#deps.bots.update(botId, applyProfileChanges(bot.profile, changes));
+          } else {
+            note = 'Bot 已不存在，未写入';
+          }
+        } catch (error) {
+          note = `写入失败：${error instanceof Error ? error.message : String(error)}`;
+        }
+        onDecided({ approved: note.length === 0, note });
+      },
+    );
   }
 
   // --- prompt sections --------------------------------------------------------

@@ -456,7 +456,12 @@ export class ApprovalsService {
    * applies).
    */
   cancelPendingForRun(runId: string): void {
-    const rows = this.#listPending({ runId }, { excludeKinds: SURVIVES_RUN });
+    // Non-blocking submissions (`submitNonBlocking`, e.g. a supervisor turn's
+    // propose_profile_change, D75 审查 M4) never hold the run: the tool
+    // returned at once, so the card outlives the run whatever its kind.
+    const rows = this.#listPending({ runId }, { excludeKinds: SURVIVES_RUN }).filter(
+      (row) => !this.#decisionCallbacks.has(row.id),
+    );
     for (const row of rows)
       this.#resolvePending(row.id, {
         approval: this.#markCancelled(row.id),

@@ -304,15 +304,14 @@ export class Scheduler {
     // (conversation turns) run on the built-in engine, so the agent's slots
     // are its tasks' — task concurrency = the agent's limit, which follows
     // `features.parallelSessions` (1 without parallel sessions).
-    // HARD ORDERING CONSTRAINT (D75 审查 M1): this holds only once no
-    // non-task priority 0/1 job targets `agent:*`. Until W2 lands, response
-    // runs of an external-agent bot still run on the agent, so one task on a
-    // limit-1 agent would starve every reply there for hours. Unreachable
-    // today — nothing registers `start_task` yet — so W2 must register
-    // start_task and pin conversation turns to the built-in engine in the
-    // same change; if a turn ever runs on an agent again (design 30 §8.4
-    // degradation through the agent's complete()), restore the reply reserve
-    // for agent providers.
+    // This holds because conversation turns never run on `agent:*` (D75 W2
+    // pins them to the built-in engine; the §8.4 downgrade routes without a
+    // model call). The only priority-0 job left there is an agent-backed
+    // group triage: it is bounded by its own timeout, counted from
+    // submission, and fails open to mention-only (dispatcher.ts, 审查 M6) —
+    // it never waits for these tasks indefinitely. If a turn ever runs on an
+    // agent again (design 30 §8.4 level 1 through the agent's complete()),
+    // restore the reply reserve for agent providers.
     if (isTaskJob(job) && limit > 1 && !isAgentProvider(job.provider)) {
       if (job.leaseHeld !== true) return active < limit - 1;
       const taskActive = scheduler.#providerTaskActive.get(job.provider) ?? 0;

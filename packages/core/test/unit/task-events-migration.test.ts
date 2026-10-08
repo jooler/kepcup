@@ -70,7 +70,7 @@ describe('main 0018 task_events 迁移', () => {
     const attachmentsBefore = db.prepare('select * from attachments order by id').all();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([18, 19]);
+    expect(applied.map((m) => m.version)).toEqual([18, 19, 20]);
 
     // Every old column survives; the new columns are NULL on existing rows.
     const after = db.prepare('select * from messages order by seq').all() as Array<
@@ -156,7 +156,7 @@ describe('runs 0006 tasks 迁移', () => {
     );
     const applied = runMigrations(db, migrationsUrl('runs'));
     // 0007 (D75 W2) renames the old 'response' loop type to 'turn'.
-    expect(applied.map((m) => m.version)).toEqual([6, 7]);
+    expect(applied.map((m) => m.version)).toEqual([6, 7, 8]);
     expect(db.prepare("select * from runs where id = 'run_old'").get()).toMatchObject({
       loop_type: 'turn',
       engine: 'builtin',

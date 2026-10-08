@@ -120,6 +120,16 @@ function rowToRun(row: RunRow): Run {
   };
 }
 
+/**
+ * One source part of a supervisor turn's trigger batch as stored on its run
+ * (`trigger_parts_json`, D75 审查 L3): enough to rebuild the batch on retry.
+ */
+export interface StoredTriggerPart {
+  reason: TriggerReason;
+  messageIds: string[];
+  extraAttributes?: Record<string, string | number>;
+}
+
 /** runs.db persistence: run rows and their (redacted) steps. */
 export class RunsService {
   constructor(
@@ -149,12 +159,16 @@ export class RunsService {
     originRunId?: string | null;
     /** Replay sources (`start_task({continues_task_id})`, D56). */
     continuedFromRunIds?: string[];
+    /** A turn's trigger parts (D75 审查 L3); omitted = single part. */
+    triggerParts?: StoredTriggerPart[];
+    /** A retried turn: the failed turn it re-runs (D75 审查 L6). */
+    retryOfRunId?: string | null;
   }): Run {
     const id = newId('run');
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, origin_run_id, continued_from_run_ids_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -181,9 +195,63 @@ export class RunsService {
         input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
           ? JSON.stringify(input.continuedFromRunIds)
           : null,
+        input.triggerParts !== undefined && input.triggerParts.length > 0
+          ? JSON.stringify(input.triggerParts)
+          : null,
+        input.retryOfRunId ?? null,
         now,
       );
     return this.getOrThrow(id);
+  }
+
+  /**
+   * A supervisor turn absorbed batches buffered for its mailbox when it began
+   * (D75 审查 M1): its trigger becomes the merged batch.
+   */
+  setTrigger(
+    id: string,
+    trigger: {
+      reason: TriggerReason;
+      messageIds: string[];
+      parts: StoredTriggerPart[];
+      /** An absorbed retry batch (null / omitted = keep the stored one). */
+      retryOfRunId?: string | null;
+    },
+  ): Run {
+    this.db
+      .prepare(
+        'update runs set trigger_reason = ?, trigger_message_ids_json = ?, trigger_parts_json = ?, retry_of_run_id = coalesce(?, retry_of_run_id) where id = ?',
+      )
+      .run(
+        trigger.reason,
+        JSON.stringify(trigger.messageIds),
+        trigger.parts.length > 0 ? JSON.stringify(trigger.parts) : null,
+        trigger.retryOfRunId ?? null,
+        id,
+      );
+    return this.getOrThrow(id);
+  }
+
+  /** The stored trigger parts of a turn (null = none stored: a single-part batch). */
+  triggerPartsOf(id: string): StoredTriggerPart[] | null {
+    const row = this.db.prepare('select trigger_parts_json from runs where id = ?').get(id) as
+      | { trigger_parts_json: string | null }
+      | undefined;
+    if (row?.trigger_parts_json == null) return null;
+    try {
+      const parsed = JSON.parse(row.trigger_parts_json) as unknown;
+      return Array.isArray(parsed) ? (parsed as StoredTriggerPart[]) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The turn a retried turn re-runs (null = not a retry). */
+  retryOfRunId(id: string): string | null {
+    const row = this.db.prepare('select retry_of_run_id from runs where id = ?').get(id) as
+      | { retry_of_run_id: string | null }
+      | undefined;
+    return row?.retry_of_run_id ?? null;
   }
 
   get(id: string): Run | null {
