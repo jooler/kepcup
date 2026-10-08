@@ -173,8 +173,33 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
     expect(canShareTurn(delegation, user)).toBe(false);
     expect(canShareTurn(user, delegation)).toBe(false);
     expect(canShareTurn(chainA, chainB)).toBe(false);
-    expect(canShareTurn(chainA, user)).toBe(true);
     expect(canShareTurn(chainA, { ...chainA, messages: [message('A2')] })).toBe(true);
+  });
+
+  it("a person's words never join a chain-bound batch; system batches may (审查 L-5)", () => {
+    const user = batch('direct', [message('用户')]);
+    const edit = batch('event', [message('改过的')], { extraAttributes: { event: 'message_edited' } });
+    const chainA = batch('chain', [message('A', { senderType: 'bot', senderBotId: 'bot_2' })], {
+      chain: { id: 'chn_a', depth: 4 },
+    });
+    const taskResult = batch('task', [
+      message('结果', { senderType: 'system', kind: 'task_event', taskId: 'run_t1' }),
+    ]);
+    expect(canShareTurn(chainA, user)).toBe(false);
+    expect(canShareTurn(user, chainA)).toBe(false);
+    expect(canShareTurn(chainA, edit)).toBe(false);
+    expect(canShareTurn(chainA, taskResult)).toBe(true);
+    expect(canShareTurn(user, taskResult)).toBe(true);
+    // A chain turn that absorbed a task result still keeps the user apart.
+    const merged = mergeTriggerBatches([chainA, taskResult]);
+    expect(canShareTurn(merged, user)).toBe(false);
+    // A chain turn beginning absorbs the buffered task result, not the user's message.
+    const box = mailbox();
+    box.deliver(chainA);
+    box.deliver(user);
+    box.deliver(taskResult);
+    expect(box.takeBuffered(chainA)).toEqual([taskResult]);
+    expect(box.bufferedCount).toBe(1);
   });
 
   it('takeBuffered leaves what cannot join the running turn; release starts one compatible group at a time', () => {
@@ -191,17 +216,19 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
     // The delegated turn absorbs nothing.
     expect(box.takeBuffered(delegated)).toEqual([]);
     expect(box.bufferedCount).toBe(3);
-    // Next turn: the user message with chain A; chain B waits for the turn after.
+    // Next turn: the user message alone (unchained, 审查 L-5); each chain gets a turn after.
     box.release();
     expect(started[1]!.messages.map((m) => (m.content as { text: string }).text)).toEqual([
       '用户插话',
-      'A 接力',
     ]);
-    expect(started[1]!.chain).toEqual({ id: 'chn_a', depth: 1 });
-    expect(box.bufferedCount).toBe(1);
+    expect(started[1]!.chain).toBeUndefined();
+    expect(box.bufferedCount).toBe(2);
     expect(box.takeBuffered(started[1]!)).toEqual([]);
     box.release();
-    expect(started[2]!.chain).toEqual({ id: 'chn_b', depth: 2 });
+    expect(started[2]!.chain).toEqual({ id: 'chn_a', depth: 1 });
+    expect(box.bufferedCount).toBe(1);
+    box.release();
+    expect(started[3]!.chain).toEqual({ id: 'chn_b', depth: 2 });
     expect(box.bufferedCount).toBe(0);
   });
 });
