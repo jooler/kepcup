@@ -537,7 +537,7 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - [x] **DeepSeek Harness**（`providers/dsh.ts`）：目录 npx `@deepseek-ai/dsh@<锁定>` + `args: ['--profile','acp']`；`tier:'preview'`（默认 `ask`）；`auth.kinds:['api-key']`（`DEEPSEEK_API_KEY`，存 secrets 注入）；`features: { steering:false, loadSession:false }`；会话复用只用 `resume`
 - [x] **Cursor**（`providers/cursor.ts`）：目录 binary（6 个平台，sha256 由导入脚本计算锁定）+ `args:['acp']`；认证 terminal（`agent login`）或 API key（`CURSOR_API_KEY`，存 secrets）；`prompt-prefix`；`agentSideConfigFiles: ['.cursor/rules', '.cursor/cli.json', 'AGENTS.md', 'CLAUDE.md']`；`features.osSandbox` 按 P0（未生效则命令逐条确认）；`extRequests`：`cursor/ask_question` 按 P0 结论映射为对话内问题卡（用户作答后回填）或直接返回「请自行决定」，`cursor/create_plan` 按 P0 结论自动确认或映射为卡片；无 `resume` → 会话复用用 `load`（重放静音）；条款提示「计入 Cursor 套餐额度」
 - [x] **Google Antigravity**（`providers/antigravity.ts`）：目录 binary（6 个平台，sha256 由导入脚本计算锁定；审批卡显示约 1 GB 体积）；`authMethods` 过滤掉 `oauth-personal`（及 P0 确认受限的 `oauth-business`），只留 `gemini-api-key`（key 存 secrets 注入）与 `agent-platform`；`tier:'preview'`、`releaseGate`；`prompt-prefix`；`agentSideConfigFiles: ['AGENTS.md', 'GEMINI.md', '.agents/', '.gemini/']`；`features.osSandbox=false`（命令逐条确认）；档位映射：`read_only` / `ask` → `default`，`workspace` → `auto_edit`（仅放宽工作目录内编辑，命令仍询问，以 P0 实测为准）；**禁止 `yolo`**；条款提示「不要在 KepCup 中使用 Google 个人账号登录 Antigravity」。**实现偏差**：源码显示 `auto_edit` 不区分工作区内外地自动批准编辑，档位改为一律 `default` 并禁止 `auto_edit`（见 §8.3）
-- [ ] **ZCode**（`providers/zcode/`；P0 结论：**能完整覆盖**，见附录 A.1——分发只用 `system` 来源（拉起用户已装 ZCode 桌面应用内置的 `app-server --stdio`），`preview` + `releaseGate`，锁 3.14.x）：`transport:'shim'`；`connect(proc)` 返回进程内对象，实现 ACP `Agent` 接口（`initialize` / `newSession` / `prompt` / `cancel` / 权限请求回调 / MCP 注入），内部把 ZCode Protocol 翻译为 ACP 语义；锁定 ZCode 版本并在垫片入口校验协议版本，不符 → `incompatible`；目录 binary 分发 + `zcode login` terminal 认证。P0 结论为放弃时：不实现、目录不收录，本节删除并在设计 28 §9.2 与 `DEVIATIONS.md` 记录放弃原因
+- [x] ~~**ZCode**~~ **已放弃**（2026-10-08，P5 实现前源码核对推翻附录 A.1 的「能完整覆盖」：app-server 模式的订阅登录要由宿主读取 / 中转用户凭据提供鉴权头，且 `edit` 模式不分工作区内外自动批准写入、用户级放行规则无法关闭）：目录不收录、不新增 `providers/zcode/`；原因见 `docs/dev/DEVIATIONS.md` DEV-008 与设计 28 §9.2。通用的 `connect(proc, client)` / `transport:'shim'` 接线保留（有测试）。
 - [x] **steering**：`provider.features.steering` 为真时发 `_session/steering`（固定 `idleBehavior:'promptRequired'`），同步返回 true；被拒 / 出错 → `RunSpec.onSteerRejected` → orchestrator 放回 `#pendingSteers`（在 `#steerRunningRun` 旁加回调入口）
 - [x] **run 外输出**：`load` / `resume` 重放静音；按 P0 结论关闭 Claude 后台任务
 - [x] **会话复用**：`agent_sessions` 读写；指纹（会话级提示词、cwd、档位、模型、能力集合）；窗口内复用只发增量 + 触发段 + run 级动态段；按 Provider 能力用 `resume` / `load`，都不支持则新建 + D56 回放
@@ -612,7 +612,7 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 
 ### 8.4 实施记录（P5 第二部分：体验与 ZCode，2026-10-07，分支 `t/d72-p5-2`）
 
-**状态**：§8.1 的 steering / run 外输出 / 会话复用 / 用量 / 并发 / 崩溃与生命周期 / 中间说明，以及 §5.3 遗留的长耗时桥工具完成；ZCode 见文末小节。另含 P5 第一部分独立审查的修复（§8.3 末尾「审查修复」）。
+**状态**：§8.1 的 steering / run 外输出 / 会话复用 / 用量 / 并发 / 崩溃与生命周期 / 中间说明，以及 §5.3 遗留的长耗时桥工具完成；ZCode 放弃（下方小节）。另含 P5 第一部分独立审查的修复（§8.3 末尾「审查修复」）。
 
 **改动文件**
 - core `agent/external/engine.ts`（重写 run handle）：prompt 阶段机 `before / prompting / between / done`；会话打开 `#openSession`（同进程复用 → `session/resume` → `session/load` → 新建）；`#attachBridge` 支持沿用会话 token；`#prompt` + `#recordUsage`；follow-up 循环；`steer` / `#sendSteering`；`discardSession`；权限请求按 tool_call 更新补全（审查 H2）。`AcpEventMapper`：子代理（`parentToolUseId`）调用与文本、状态行 `title`、轮数计数、`finishInterim`。
@@ -641,6 +641,12 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 - **崩溃与生命周期**：进程崩溃 → 活跃 run failed（P1 已有）、行保留，下次 resume / load；删除对话 / Bot / 移出群 → 引擎 `discardSession({deleteHistory:true})`：会话仍开在活进程里才 `session/delete`（Agent 声明 `sessionCapabilities.delete`）或 `session/close`，正被 run 占用则在释放时删除；进程不在时不为删除专门拉起进程（尽力而为，记入偏差）；删行。确认框文案说明 Agent 侧磁盘历史不归 KepCup 管理。
 - **中间说明**：带 `_meta.claudeCode.parentToolUseId`（或通用 `_meta.parentToolUseId`）的调用不切分、不落步骤，只发状态行 `子任务：{title}`；子代理文本忽略。原生调用的 `tool_call` 步骤带 `title`（与 toolName 不同时），状态行显示它。
 - **长耗时桥工具（选择：提交后转入后台 + follow-up，而非 SSE + progress）**：理由——Codex 的 MCP 超时无法经 ACP 调整，progress 是否重置其超时无法离线确认，而转后台不依赖客户端行为。桥对超过 `bridgeToolDetachMs`（缺省 `AGENT_BRIDGE_TOOL_DETACH_MS` 45 s，Provider 可设 null 关闭）仍在执行的调用先应答「已转入后台…完成后结果会作为新消息发给你」（该调用的 `tool_result` 步骤即此通知，配对不变），工具继续执行且不再受 HTTP 请求取消影响（只受 run 取消）；prompt 结束后 run 不结算：本轮文字作为中间说明（`toolUse`）发出，等所有后台调用完成，再以 `<background_tool_results>` 的 follow-up prompt 在同一会话、同一 run 内继续（run 仍可 waiting_approval，审批卡不会因超时被取消）。期间到达的 steer 也并入 follow-up。
+
+**ZCode：放弃**（详见 `docs/dev/DEVIATIONS.md` DEV-008）
+- 实现前逐项核对 v3.14.3 源码（只读，经两个只读调研子任务 + 主线复核）：线格式为无 `jsonrpc` 字段的 NDJSON（schema strict），无 initialize，`session/create`（必填 `workspace.workspacePath/workspaceKey`，可显式 `mode`、`mcpServers` 含 http + headers + `timeoutMs`）→ 必须 `session/subscribe` 才推 `session/event`；`session/send` 立即 ACK，turn 经 `model.streaming`（`text_delta` / `reasoning_delta`，`part.delta` 实际不发）、`tool.updated`（scheduled / started / progress / result / error，`parentToolCallId` / `source:'subagent'`）、`turn.completed{resultType}` / `turn.failed` 推送；`session/stop` → `turn.completed{resultType:'cancelled'}`；反向请求 `interaction/requestPermission`（应答严格为 `{decision:'allow'|'deny', reason?}`，按 `params.requestId` 去重——服务端会以新 id 重发）；`session/requestRuntimePreferences` 回 -32601 即用缺省；未登录 / 无模型 → `turn.failed`（`turnPhase:'model_creation'` 或 `error.code:'provider_not_configured'` / `model_request_auth_missing`）。会话 / 流式 / 取消 / 权限请求 / 未登录识别都可映射。
+- **决定性阻断**：app-server 不读 `zcode login` 的凭据（进程级 Provider Registry 无 standalone 账号源），账号模型的配置由宿主经 `provider/updateAccountConfig` 推送、每次模型请求前经反向请求 `interaction/requestProviderRuntimeHeaders` 向宿主索取鉴权头——KepCup 接入就必须读取 / 中转用户凭据（违反 design 28 §9.1）。
+- 次要：`edit` 模式不分工作区内外自动批准写入（只能 read_only → `plan`、ask / workspace → `build`）；`build` 前仍会被用户级 `~/.zcode/cli/config.json` allowedTools、SQLite「在此项目中始终允许」规则、用户级 hooks 放行，无关闭开关；无 OS 沙箱。
+- 处理：目录条目、垫片、`locateSystem` 定位钩子等半成品均未提交；保留并以单测覆盖通用的 `createShimChannel` + AgentHost `transport:'shim'` 接线（无 `connect` 的 shim 条目在拉起进程前即 `AGENT_INCOMPATIBLE`）。
 
 **待登录实测**
 - Claude：`_session/steering` 的 `injected` 时序与 `steered: …` 回复；`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON` 经 SDK 传到 CLI 后确实禁用；`session/resume` 带 `_meta`（系统提示词、sandbox）后行为；`PromptResponse.usage` 的口径；`deleteSession` 删除磁盘 transcript。
@@ -733,7 +739,7 @@ P1/P2 期间外部 Agent 只允许 `read_only` 档，且只在开发开关下可
 
 ### A.1 ZCode 协议评估（2026-10-07，只读源码，v3.14.3 commit 29628c9，未实测）
 
-**结论：能完整覆盖（门禁 1–7 项全部可映射）→ 本期支持**；垫片约 6–8 人日。证据路径（缩写 S=`packages/shared/src`，B=`apps/zcode-cli/packages/bootstrap/src/zcode-protocol`，A=`apps/zcode-cli/packages`）：
+**结论：能完整覆盖（门禁 1–7 项全部可映射）→ 本期支持**；垫片约 6–8 人日。**（2026-10-08 补充：P5 实现前复核推翻此结论——app-server 模式的订阅鉴权由宿主经 `interaction/requestProviderRuntimeHeaders` 提供，接入须读取 / 中转用户凭据；`edit` 模式不分工作区内外放行写入。已放弃，见 §8.1 / §8.4 与 DEV-008。）**证据路径（缩写 S=`packages/shared/src`，B=`apps/zcode-cli/packages/bootstrap/src/zcode-protocol`，A=`apps/zcode-cli/packages`）：
 
 | 项 | 映射 | 证据 |
 |---|---|---|

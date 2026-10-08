@@ -1,10 +1,10 @@
 import {
+  AgentSideConnection,
   ClientSideConnection,
   ndJsonStream,
   PROTOCOL_VERSION,
   RequestError,
   type Agent,
-  type AgentSideConnection,
   type AuthMethod,
   type Client,
   type ContentBlock,
@@ -187,6 +187,66 @@ export interface AcpConnectionOptions {
   appVersion: string;
   logger: AcpLogger;
   onAuthStatus?(status: AgentAuthStatus): void;
+}
+
+/** An in-memory byte pipe (shim channels). */
+function memoryPipe(): {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  end(): void;
+} {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let ended = false;
+  const readable = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    try {
+      controller.close();
+    } catch {
+      // Already closed / errored.
+    }
+  };
+  const writable = new WritableStream<Uint8Array>({
+    write(chunk) {
+      if (!ended) controller.enqueue(chunk);
+    },
+    close: end,
+    abort: end,
+  });
+  return { readable, writable, end };
+}
+
+/**
+ * shim 型 Provider（design 28 §10 `connect`）：把一个进程内实现的 ACP `Agent`
+ * 接成与子进程 stdio 同形的字节通道——宿主仍用同一个 `AcpConnection`
+ * （ClientSideConnection）驱动它，垫片经 `AgentSideConnection` 向宿主发
+ * `session/update` / 权限请求。`close()` 结束两个方向（宿主随之看到连接关闭）。
+ */
+export function createShimChannel(factory: (client: AcpAgentClientLike) => AcpAgentLike): {
+  channel: AcpByteChannel;
+  closed: Promise<void>;
+  close(): void;
+} {
+  const toAgent = memoryPipe();
+  const toClient = memoryPipe();
+  const connection = new AgentSideConnection(
+    (client) => factory(client),
+    ndJsonStream(toClient.writable, toAgent.readable),
+  );
+  const close = () => {
+    toAgent.end();
+    toClient.end();
+  };
+  return {
+    channel: { readable: toClient.readable, writable: toAgent.writable },
+    closed: connection.closed,
+    close,
+  };
 }
 
 /**

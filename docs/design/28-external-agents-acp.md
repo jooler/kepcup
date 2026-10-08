@@ -70,7 +70,7 @@ interface AgentCatalogEntry {
     system?: { cmd: string; args?: string[]; detect: string[] }; // KepCup 扩展：复用用户已装的官方 CLI
   };
   // —— KepCup 扩展 ——
-  provider: string;                // Provider 模块 id（'generic-acp' | 'claude' | 'codex' | 'opencode' | 'dsh' | 'zcode' …）
+  provider: string;                // Provider 模块 id（'generic-acp' | 'claude' | 'codex' | 'opencode' | 'dsh' | 'cursor' | 'antigravity' …）
   transport: 'acp' | 'shim';       // shim = 进程内协议垫片
   tier: 'supported' | 'preview';   // 预览档默认权限更严、UI 标注
   nativeCapabilities: Partial<Record<CapabilityId, string[]>>;  // 自带能力 → 原生工具名（用于默认值与 §4.2 原生优先提示）
@@ -206,7 +206,7 @@ interface AgentCatalogEntry {
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 工作目录             | `cwd` = 对话绑定的 project，未绑定则 workspace（位于 `~/.kepcup` 内）；不传 `additionalDirectories`                                                                                              |
 | Agent 自身沙箱       | 有 OS 沙箱的 Agent 必须开启（Claude 原生沙箱 + `denyRead`/`denyWrite` 覆盖 `~/.kepcup` 其余部分；Codex `workspace-write`）；**永不**使用 bypass / auto / dontAsk / full-access 一类模式（Provider 层过滤，UI 不出现） |
-| 无 OS 沙箱的 Agent   | （如 OpenCode，DeepSeek Harness / ZCode 待 P0 确认）`workspace` 档下工作目录内编辑可放行，但**每条命令都弹卡**（等同 D39 逐条确认），经其权限配置（如 `OPENCODE_PERMISSION`）强制命令走询问                                         |
+| 无 OS 沙箱的 Agent   | （如 OpenCode、DeepSeek Harness、Cursor、Antigravity）`workspace` 档下工作目录内编辑可放行，但**每条命令都弹卡**（等同 D39 逐条确认），经其权限配置（如 `OPENCODE_PERMISSION`）强制命令走询问                                         |
 | 权限档位             | `read_only` · `workspace`（默认）· `ask`；`preview` 档 Agent 默认 `ask`；收到 `current_mode_update` 偏离档位时改回并审计                                                                            |
 | PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37：仅这一次 / 本对话内）；命令命中白名单（D40）放行，否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
 | 选项映射             | 只按 Provider 声明的 **optionId 白名单**选 `allow_once` / `reject_once`；不选 `allow_always`、不选任何会切换模式的选项                                                                                  |
@@ -246,7 +246,7 @@ interface AgentCatalogEntry {
 
 ### 9.1 认证与对话内设置
 
-- KepCup 以 `clientCapabilities.auth.terminal = true`（及 `_meta['terminal-auth']`）声明支持 terminal 认证：以子进程运行 Agent 给出的官方登录命令（如 `claude auth login`、`opencode auth login`、`zcode login`），浏览器完成厂商自己的授权；`agent` 类认证（Codex `chat-gpt`）由 Agent 自行处理；API key 类（Codex `api-key`、DeepSeek `DEEPSEEK_API_KEY`）的 key 存 KepCup secrets（键 `agent:{id}:api-key`），以环境变量注入（D25）。
+- KepCup 以 `clientCapabilities.auth.terminal = true`（及 `_meta['terminal-auth']`）声明支持 terminal 认证：以子进程运行 Agent 给出的官方登录命令（如 `claude auth login`、`opencode auth login`），浏览器完成厂商自己的授权；`agent` 类认证（Codex `chat-gpt`）由 Agent 自行处理；API key 类（Codex `api-key`、DeepSeek `DEEPSEEK_API_KEY`）的 key 存 KepCup secrets（键 `agent:{id}:api-key`），以环境变量注入（D25）。
 - UI 不出现自制账号表单，不读取任何 token 文件。
 - 未启用 / 未安装 / 未登录 / 版本不兼容 → 结构化 setup 失败 `{kind:'agent', agentId, reason}`，对话内呈现 Agent 设置卡（D58 范式），完成后自动续跑。
 
@@ -263,7 +263,7 @@ interface AgentCatalogEntry {
 | DeepSeek Harness   | 原生 `dsh --profile acp`（`@deepseek-ai/dsh` 0.2.0-rc.2，官方定位 automation-only，preview）| npx（精确版本 + 随应用锁文件）| DeepSeek API key（`DEEPSEEK_API_KEY`，存 secrets 注入；无订阅制） | `prompt-prefix` | 待配 key 实测（无 modes，只靠宿主权限桥裁决 allow-once / reject-once 请求） | 无（每会话单 prompt） | **P5 已实现**（`providers/dsh.ts`，契约通过；真机待配 key 实测）。`preview` 档；不支持 `session/load` / modes / 图片，有 resume；无登录流程，未配 key 时 prompt 报 `-32603`「no API key …」→ 判为 auth_required；**很重**：npx 冷启动约 77s、约 760MB（安装后预热待安装器 postInstall 钩子）；原生依赖在 `npm ci --ignore-scripts` 下的可用性待实测 |
 | Cursor             | 原生 `cursor-agent acp`（2026.10.01）| binary（downloads.cursor.com；Registry 无 sha256 → 导入脚本计算，6 平台已锁定）| `cursor_login`（ACP authenticate，Agent 自行开浏览器；Cursor 套餐额度：Cursor Models / Other Models 两个池）；或 `CURSOR_API_KEY` | `prompt-prefix`（无 ACP 提示词字段；会读 `.cursor/`、`AGENTS.md`、`CLAUDE.md`） | 有（Linux Landlock + seccomp，需内核 ≥ 6.2；macOS Seatbelt）——ACP 模式下是否生效未核实，按无处理（命令逐条确认） | 不支持 | **P5 已实现**（`providers/cursor.ts`，契约通过；真机待登录实测）。档位 read_only → `ask`、其余 → `agent`（`agent` 对 Cursor 豁免全局禁止表）；阻塞式扩展请求：`cursor/ask_question` 应答 `skipped`（用户不在线，请自行决定）、`cursor/create_plan` 应答 `rejected`（不替用户声明已审阅）；`loadSession` 有、无 `resume`；MCP 权限请求无结构化名（桥工具审批可能逐条弹卡，待实测）；官方文档明确鼓励自建 ACP 客户端 |
 | Google Antigravity | 原生 `agy_acp_server`（1.3.0）| binary（dl.google.com；无 sha256 → 导入脚本计算，6 平台已锁定；Linux 包解压约 1 GB）| **仅** `gemini-api-key`（`GEMINI_API_KEY`）、`agent-platform`（Vertex）；`oauth-personal`（个人 Google 账号 / AI Pro·Ultra 订阅）与 `oauth-business`（受限与否待合规确认）**均过滤**，UI 与 authenticate 都无法触发 | `prompt-prefix`（读 `AGENTS.md`、`GEMINI.md`、`.agents/`、`.gemini/`） | 个人 / key 方式**无**（仅 Enterprise 管理开关启用 exebox）→ 命令逐条确认 | 不支持 | **P5 已实现**（`providers/antigravity.ts`，契约通过；真机待配 key 实测）。私有 `GEMINI_HOME`（`{数据目录}/agents/antigravity-acp/gemini-home`：防止按用户 `~/.gemini` 的 `auth.type` 推断出个人账号，并隔离全局 MCP 配置 / hooks / 信任表）；不设 `AGY_ACP_DISABLE_WORKSPACE_TRUST`（未知信任的工作区 hooks 被抑制）；**档位一律 `default`**，`auto_edit`（非 Enterprise 下不分工作区内外自动批准编辑）与 `yolo` 禁止；条款第 6 条：第三方软件经 Antigravity OAuth 访问属违规，可封 Antigravity 与 Gemini CLI 账号；客户端名称如实为 KepCup（进入 User-Agent）；`preview` 档 + `releaseGate`；Windows 支持待实测 |
-| ZCode（智谱）          | **无 ACP**：私有 `app-server --stdio`（ZCode Protocol，NDJSON JSON-RPC）→ 进程内垫片（P0 已评估：门禁项全部可映射，见 todo 附录 A.1） | **只用** `system`：拉起用户已安装的 ZCode 桌面应用内置的 `app-server`（官方无独立 CLI 二进制）；锁 3.14.x | `zcode login`（Z.ai / BigModel GLM Coding Plan）                                                                                              | `prompt-prefix`（会读 `~/.zcode/AGENTS.md`、`AGENTS.md`、`.zcode/`）                                | 待真机确认                                                                 | 无              | `preview` + `releaseGate`：协议无版本握手、`session/send` / `stop` 已标废弃，垫片校验应用版本、未知反向请求回 `-32601`、未登录错误映射为 `auth_required`                                                                                                                    |
+| ZCode（智谱）          | **放弃**（2026-10-08，`docs/dev/DEVIATIONS.md` DEV-008）：无 ACP，私有 `app-server --stdio`（ZCode Protocol） | — | app-server 模式的订阅登录由宿主经 `interaction/requestProviderRuntimeHeaders` 提供鉴权头（不读 `zcode login` 的凭据）→ 接入必须读取 / 中转用户凭据，违反 §9.1 | — | 无 OS 沙箱；`edit` 模式不分工作区内外自动批准写入，用户级 allowedTools / 项目规则无法关闭 | — | 目录不收录；通用的 `connect` / `transport:'shim'` 接线保留（有测试），供日后确有协议垫片的 Agent 使用 |
 
 
 
@@ -298,8 +298,8 @@ core/src/agent/external/
   └─ providers/
        ├─ index.ts        PROVIDERS 登记表
        ├─ generic-acp.ts  通用实现（只用 ACP 标准 + 已核对扩展）
-       ├─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts
-       └─ zcode/          shim：把 ZCode Protocol 翻译为 ACP Agent 接口（进程内）
+       └─ claude.ts  codex.ts  opencode.ts  dsh.ts  cursor.ts  antigravity.ts
+          （shim 型 Provider 以 `connect(proc, client)` 返回进程内 ACP Agent；ZCode 已放弃，见 §9.2）
 ```
 
 ```ts
@@ -317,7 +317,7 @@ interface AgentProvider {
   authMethods?(advertised: AuthMethod[]): AuthMethod[];            // 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）
   classifyError?(err: unknown, phase: 'initialize' | 'session' | 'prompt'): 'auth_required' | 'not_installed' | 'incompatible' | 'other'; // 各家未登录的错误形态不同（todo 附录 A.4）
   extRequests?: Record<string, (params, ctx) => Promise<unknown>>; // 厂商扩展请求（如 cursor/ask_question、cursor/create_plan）
-  connect?(proc): AcpAgentLike;                                    // 仅 shim 型 Provider 提供
+  connect?(proc, client): AcpAgentLike;                            // 仅 shim 型 Provider 提供（client = 垫片发 session/update / 权限请求的一侧）
 }
 ```
 
@@ -343,7 +343,7 @@ interface AgentProvider {
 | 5   | 后台 loop 走外部 Agent            | 仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关                           |
 | 6   | 管家可否用外部 Agent                | 可以；onboarding 只有订阅的新用户默认如此                                  |
 | 7   | 社区 Agent（运行时同步 ACP Registry） | 本期不做；架构上已支持（通用 Provider）                                    |
-| 8   | ZCode                        | **已决定**：P0 评估可完整覆盖 → 支持（`system` 来源、preview、锁 3.14.x）       |
+| 8   | ZCode                        | **已决定**：放弃（P5 复核：订阅鉴权须由宿主读取 / 中转凭据，见 §9.2、DEV-008） |
 | 9   | 整 run 持有写入租约                 | 接受；Bot 详情提示                                                 |
 
 

@@ -762,3 +762,83 @@ describe('scheduler and providers (P5)', () => {
     expect(claudeProvider.features.steering && codexProvider.features.steering).toBe(true);
   });
 });
+
+describe('shim transport (design 28 §10 `connect`)', () => {
+  it('drives an in-process ACP agent the provider builds over the agent process', async () => {
+    const entry = { ...FAKE, id: 'fake-shim', provider: 'shim-test', transport: 'shim' as const };
+    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-shim-'));
+    dirs.push(workdir);
+    const seen: string[] = [];
+    const procs: Array<{ kill(): void }> = [];
+    const providers: ProviderRegistry = {
+      'shim-test': {
+        ...genericAcpProvider,
+        id: 'shim-test',
+        connect: (proc, client) => {
+          procs.push(proc);
+          return {
+            initialize: async () => ({
+              protocolVersion: 1,
+              agentCapabilities: { loadSession: false },
+              authMethods: [],
+            }),
+            newSession: async () => ({ sessionId: 'shim-1' }),
+            authenticate: async () => ({}),
+            prompt: async (params) => {
+              seen.push(
+                params.prompt.map((block) => (block.type === 'text' ? block.text : '')).join(''),
+              );
+              await client.sessionUpdate({
+                sessionId: params.sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  content: { type: 'text', text: '来自垫片' },
+                },
+              });
+              return { stopReason: 'end_turn' };
+            },
+            cancel: async () => {},
+          };
+        },
+      },
+    };
+    const host = new AgentHost({
+      logger,
+      redact: (text) => text,
+      appVersion: '1.0.0',
+      resolveLaunch: () => ({ command: 'unused', args: [], env: {} }),
+      spawn: fakeAgentSpawner({ 'fake-shim': { turns: [] } }) as never,
+      providers,
+    });
+    hosts.push(host);
+    const engine = new ExternalAgentEngine({ host, catalog: () => [entry], logger });
+    const outcome = await engine.startRun({
+      identity: { runId: 'run_shim', botId: 'b', conversationId: 'c', loopType: 'response' },
+      model: agentModelRef(entry.id, ''),
+      buildSystemPrompt: async () => 'S',
+      messages: [{ role: 'user', content: '经垫片', timestamp: 0 }],
+      tools: [],
+      limits: { maxTurns: 10 },
+      workdir,
+      external: { agentId: entry.id, permission: 'read_only', capabilities: [], sessionKey: 'k' },
+    }).done;
+    expect(outcome).toMatchObject({ status: 'completed', finalText: '来自垫片' });
+    expect(seen[0]).toContain('经垫片');
+    // The process going away closes the shim: the agent is no longer running.
+    procs[0]!.kill();
+    await eventually(() => !host.isRunning(entry.id));
+  });
+
+  it('a shim entry whose provider has no connect fails readably', async () => {
+    const entry = { ...FAKE, id: 'fake-shim2', transport: 'shim' as const };
+    const host = new AgentHost({
+      logger,
+      redact: (text) => text,
+      appVersion: '1.0.0',
+      resolveLaunch: () => ({ command: 'unused', args: [], env: {} }),
+      spawn: fakeAgentSpawner({ 'fake-shim2': { turns: [] } }) as never,
+    });
+    hosts.push(host);
+    await expect(host.acquire(entry)).rejects.toMatchObject({ code: 'AGENT_INCOMPATIBLE' });
+  });
+});
