@@ -3,7 +3,10 @@ import { BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 
 export interface SchedulerJob {
-  /** 0 user-triggered responses, 1 scheduled/event responses, 2 background loops. */
+  /**
+   * 0 user-facing turns and lease-holding write tasks, 1 scheduled / event /
+   * chain turns and read-only tasks, 2 background loops.
+   */
   priority: 0 | 1 | 2;
   /** Provider id for the concurrency limit. */
   provider: string;
@@ -11,7 +14,7 @@ export interface SchedulerJob {
    * not submit a second job with the same key while one is running. */
   key: string;
   /**
-   * The run this job executes (response runs, D75 tasks). While that run waits
+   * The run this job executes (D75 conversation turns and tasks). While that run waits
    * for a write lease inside the job (`yieldSlotWhile`), the job gives its
    * provider slot back — lease waits never hold a slot (D75 审查 H2).
    */
@@ -72,7 +75,7 @@ const isAgentProvider = (provider: string): boolean => provider.startsWith('agen
  * (default 4) and a global limit of 2 concurrent background loops.
  * Same priority runs FIFO; a running job is never preempted. Background
  * loops on an external agent (`agent:*`) keep one of its slots free for
- * responses (D72 P6 审查 C1).
+ * conversation turns (D72 P6 审查 C1).
  *
  * Write leases and slots never form a hold-and-wait cycle (D75 审查 H2): a job
  * whose run waits for a write lease gives its slot back for the wait and takes
@@ -323,7 +326,7 @@ export class Scheduler {
     const active = scheduler.#providerActive.get(job.provider) ?? 0;
     const limit = scheduler.concurrencyFor(job.provider);
     // External agents (审查 C1): background loops may only start while at
-    // least one of the agent's slots stays free for responses (priority 0/1)
+    // least one of the agent's slots stays free for turns / tasks (priority 0/1)
     // — a whole agent session can hold a slot for minutes. With a limit of 1
     // (the router never routes background work there) no slot is reserved,
     // so a job queued before the limit changed still runs.

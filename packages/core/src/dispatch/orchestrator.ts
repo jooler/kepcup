@@ -2233,7 +2233,7 @@ export class Orchestrator {
           message.seq <= upTo &&
           !seen.ids.has(message.id) &&
           !batchIds.has(message.id) &&
-          // The session wrote the bot's replies of a response run; a task's
+          // The session wrote the bot's replies of a turn run; a task's
           // session did not write the bot's turn replies.
           (task !== undefined ||
             !(message.senderType === 'bot' && message.senderBotId === batch.botId)),
@@ -2546,7 +2546,7 @@ export class Orchestrator {
       control.waiting('等模型并发额度');
       const writes = task.taskWrites === true;
       this.#deps.scheduler.submit({
-        // A read-only task: below user-triggered responses (0), and the
+        // A read-only task: below user-facing turns (0), and the
         // scheduler keeps one provider slot free of tasks for replies. A write
         // task already holds its lease — runs that want to write wait on it —
         // so it queues FIFO with replies and starts under the plain limit
@@ -3130,7 +3130,7 @@ export class Orchestrator {
           writable: !isTask && agentRun.permission !== 'read_only',
         });
         if (gate !== 'ok') {
-          // Cancelled while waiting: cancelRun already settled a response run;
+          // Cancelled while waiting: cancelRun already settled a turn;
           // a stopped task is settled by its host (this settle is a no-op then).
           if (gate === 'denied') {
             await this.#deps.projects.releaseRun(runId).catch(() => {});

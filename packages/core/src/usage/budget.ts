@@ -13,10 +13,10 @@ export interface BudgetServiceDeps {
 
 /**
  * Per-bot daily background-loop budget (docs/dev/phases/P07-memory.md 任务 12):
- * once today's non-response usage for a bot reaches the limit, its remaining
- * background jobs (reflection / consolidation / …) defer to the next local
- * day. Response loops — and D75 supervisor turns / tasks, the user's own
- * work — are never throttled.
+ * once today's background usage for a bot (everything but its conversation
+ * turns and tasks — the user's own work, D75 — and built-in triage) reaches
+ * the limit, its remaining background jobs (reflection / consolidation / …)
+ * defer to the next local day. Turns and tasks are never throttled.
  */
 export class BudgetService {
   readonly #deps: BudgetServiceDeps;
@@ -32,7 +32,7 @@ export class BudgetService {
   }
 
   /**
-   * Non-response tokens a bot consumed today (local day, UTC ms window).
+   * Background tokens a bot consumed today (not turn / task rows) (local day, UTC ms window).
    * External-agent rows (D72 P6, 审查 C2 / C5):
    * - a row without tokens (subscription agents often report none) counts as
    *   AGENT_TURN_BUDGET_TOKENS — one row per agent call (`complete()` attempt)
