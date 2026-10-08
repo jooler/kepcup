@@ -30,6 +30,7 @@ import {
 import { classifyDshError, dshProvider } from '../../src/agent/external/providers/dsh.js';
 import {
   opencodeConfigHome,
+  opencodePermissionConfig,
   opencodeProvider,
   opencodeUserConfigIssues,
 } from '../../src/agent/external/providers/opencode.js';
@@ -534,6 +535,126 @@ describe('OpenCode', () => {
     expect(opencodeUserConfigIssues({ home: fakeHome, configHome })).toEqual([
       expect.stringMatching(/agent: 目录过深/),
     ]);
+  });
+
+  it('JSON layers are tokenized like jsonc-parser 3.3.1: CR ends a // comment, BOM, NBSP, __proto__ (第三轮补充 #1)', () => {
+    const dotDir = path.join(fakeHome, '.opencode');
+    mkdirSync(dotDir, { recursive: true });
+    const json = (text: string, name = 'opencode.jsonc') => {
+      writeFileSync(path.join(dotDir, name), text);
+      try {
+        return opencodeUserConfigIssues({
+          home: fakeHome,
+          configHome: path.join(fakeHome, 'cfg'),
+        }).map((issue) => issue.slice(dotDir.length + 1));
+      } finally {
+        rmSync(path.join(dotDir, name));
+      }
+    };
+    // A lone CR ends a line comment for jsonc-parser: the keys after it apply.
+    expect(json('{\n  // note\r  "permission": {"bash": "allow"}\n}')).toEqual([
+      'opencode.jsonc: permission.bash',
+    ]);
+    expect(
+      json('{"agent": {"build": {// x\r"permission": {"*": "allow"}}}}', 'opencode.json'),
+    ).toEqual(['opencode.json: agent.build.permission.*']);
+    expect(json('{ /* a\r\n b */ "permission": "allow", }')).toEqual([
+      'opencode.jsonc: permission',
+    ]);
+    // Strings keep comment markers; CRLF line comments as before.
+    expect(
+      json(
+        '{\r\n  // ok\r\n  "permission": {"bash": "ask", "read": "allow"},\r\n  "x": "// \\"y"\r\n}',
+      ),
+    ).toEqual([]);
+    // OpenCode's TextDecoder drops one leading BOM: such a file is checked, not refused.
+    expect(json('\uFEFF{"permission": {"bash": "ask"}}')).toEqual([]);
+    expect(json('\uFEFF{"permission": {"edit": "allow"}}')).toEqual([
+      'opencode.jsonc: permission.edit',
+    ]);
+    expect(json('')).toEqual([]);
+    // NBSP / a second BOM are not whitespace for jsonc-parser (OpenCode rejects the file too).
+    expect(json('{\u00a0"permission": {"bash": "ask"}}')).toEqual(['opencode.jsonc: 无法解析']);
+    expect(json('\uFEFF\uFEFF{}')).toEqual(['opencode.jsonc: 无法解析']);
+    expect(json('{"permission": {"bash": "ask"} /* open')).toEqual(['opencode.jsonc: 无法解析']);
+    expect(json('{"permission": "ask\r"}')).toEqual(['opencode.jsonc: 无法解析']);
+    // jsonc-parser assigns __proto__ (the keys below become inherited): refused.
+    expect(json('{"__proto__": {"permission": {"bash": "allow"}}}')).toEqual([
+      'opencode.jsonc: 含 __proto__ 键（无法检查）',
+    ]);
+    expect(json('{"agent": {"build": {"__proto__": {"permission": "allow"}}}}')).toEqual([
+      'opencode.jsonc: 含 __proto__ 键（无法检查）',
+    ]);
+  });
+
+  it('config redirects in the catalog / target env are dropped; issues show ~ paths (第三轮补充 #2, #3)', () => {
+    const redirects = {
+      OPENCODE_CONFIG: '/evil/opencode.json',
+      OPENCODE_CONFIG_DIR: '/evil',
+      OPENCODE_TEST_HOME: '/evil-home',
+      OPENCODE_TEST_MANAGED_CONFIG_DIR: '/evil-managed',
+      opencode_config_dir: '/evil-lower',
+      Opencode_Permission: '{"*":"allow"}',
+      XDG_CONFIG_HOME: '/evil-xdg',
+      KEEP_ME: '1',
+    };
+    const entry = catalog('opencode');
+    const withNpxEnv = {
+      ...entry,
+      distribution: {
+        ...entry.distribution,
+        npx: { package: 'opencode-ai@1.0.0', ...entry.distribution.npx, env: redirects },
+      },
+    } as typeof entry;
+    for (const loadUserConfig of [false, true]) {
+      for (const [launchEntry, env] of [
+        [entry, redirects],
+        [withNpxEnv, {}],
+      ] as const) {
+        const launch = opencodeProvider.launch({
+          entry: launchEntry,
+          target: { command: '/x/opencode', args: ['acp'], env },
+          platform: 'linux',
+          stateDir: '/s',
+          loadUserConfig,
+        });
+        const keys = Object.keys(launch.env).map((key) => key.toUpperCase());
+        for (const key of [
+          'OPENCODE_CONFIG',
+          'OPENCODE_CONFIG_DIR',
+          'OPENCODE_TEST_HOME',
+          'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+        ]) {
+          expect(keys, key).not.toContain(key);
+        }
+        expect(keys.filter((key) => key === 'OPENCODE_PERMISSION')).toHaveLength(1);
+        expect(launch.env.OPENCODE_PERMISSION).toBe(JSON.stringify(opencodePermissionConfig()));
+        expect(launch.env.XDG_CONFIG_HOME).toBe(
+          loadUserConfig ? undefined : path.join('/s', 'xdg-config'),
+        );
+        expect(launch.env.KEEP_ME).toBe('1');
+      }
+    }
+
+    // The unsafe-config message names files under the home directory as ~/….
+    const dotDir = path.join(fakeHome, '.opencode');
+    mkdirSync(dotDir, { recursive: true });
+    writeFileSync(path.join(dotDir, 'opencode.json'), '{"permission": {"bash": "allow"}}');
+    let caught: unknown;
+    try {
+      opencodeProvider.checkConfig!({
+        entry,
+        platform: 'linux',
+        stateDir: path.join(fakeHome, 'state'),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    const message = (caught as Error).message;
+    expect(message).toContain(
+      `~${path.sep}${path.join('.opencode', 'opencode.json')}: permission.bash`,
+    );
+    expect(message).not.toContain(fakeHome);
   });
 
   it('the config check runs before the process starts and before every session (第三轮 #4)', async () => {

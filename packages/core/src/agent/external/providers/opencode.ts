@@ -56,12 +56,24 @@ import { switchToMode } from './mode-tier.js';
  *     无法解析、或目录过深 / 文件过多，就拒绝运行（`AGENT_CONFIG_UNSAFE`，列出
  *     文件与键）——fail closed。markdown frontmatter 按 gray-matter 的规则切出
  *     （只接受 `---` / `---yaml`：`---js` 等语言会被 eval）、用 js-yaml 解析后
- *     只看 `permission` / `tools`（第三轮审查 #1 / #2）。扫描在进程启动前和每次
+ *     只看 `permission` / `tools`（第三轮审查 #1 / #2）；JSON / JSONC 按 OpenCode
+ *     所用 jsonc-parser 3.3.1 的词法切分（`//` 注释止于 `\n` 或 `\r`、空白只有
+ *     空格 / 制表符、BOM 按 TextDecoder 去掉一个），`__proto__` 键一律拒绝（第三轮
+ *     补充 #1）。扫描在进程启动前和每次
  *     建 / 恢复会话前各做一次（`checkConfig`，第三轮 #4），探测 / 登录 / 退出的
  *     控制进程不扫。残留：登录 OpenCode 控制台
  *     组织后的远程组织配置、`auth.json` 中 wellknown 远程配置（读取它们须读凭据
  *     文件，宿主不读）与管理员的 `/etc/opencode` 不在扫描范围内（后两者在我们的
  *     层之后合并），记入 todo §8.4 复审修复 #8 残留；
+ *   - **残留（第三轮补充 #5，有意不拒绝）**：同样这些用户层里的 `mcp.<x>`
+ *     （`type:"local"` + `command`）、`formatter.<x>.command`、`lsp.<x>.command`
+ *     会由 OpenCode 直接拉起用户配置的命令，不经宿主裁决——用户真实的 MCP /
+ *     格式化 / LSP 配置很常见，扫描不拒绝它们（只有用户自己能写这些文件），记入
+ *     todo §8.4 第三轮补充修复与 design 28 OpenCode 行；
+ *   - 改指配置位置的环境变量（`OPENCODE_CONFIG`、`OPENCODE_CONFIG_DIR`、
+ *     `OPENCODE_TEST_HOME`、`OPENCODE_TEST_MANAGED_CONFIG_DIR`、`XDG_CONFIG_HOME`）
+ *     与宿主强制的键一样不接受目录 / 启动目标里的值（大小写不敏感剔除；宿主
+ *     环境本就按白名单透传，第三轮补充 #2）；
  *   - `OPENCODE_PURE=1`：不加载外部插件（插件是在沙箱外运行的任意代码）；
  *   - `OPENCODE_DISABLE_CLAUDE_CODE=1`：关闭 CLAUDE.md 回退与 `~/.claude/skills`；
  *     `OPENCODE_DISABLE_AUTOUPDATE=1` + `autoupdate:false`：不得自我升级；
@@ -226,37 +238,89 @@ function configAllows(config: unknown): string[] {
  */
 const SUBSTITUTION = /\{(?:file|env):/;
 
-/** JSONC → JSON: comments and trailing commas out, strings untouched. */
-function stripJsonc(text: string): string {
-  let out = '';
-  for (let i = 0; i < text.length; i += 1) {
+/** Characters that end a jsonc-parser literal / number / unknown token. */
+const JSONC_SEPARATORS = ' \t\n\r{}[]:,"/';
+
+/**
+ * JSONC → JSON the way jsonc-parser 3.3.1 tokenizes it (bundled in opencode
+ * 1.18.35, `ConfigParse.jsonc` = `parse(text, errors, {allowTrailingComma:
+ * true})`, any error → the file is rejected; the package itself is not
+ * available offline here, so its scanner is mirrored — 第三轮补充 #1):
+ * whitespace is only space / tab, line breaks `\n` / `\r` (a `//` comment
+ * ends at either — a comment ended only at `\n` would hide keys after a lone
+ * `\r`), `/* … *\/` comments, a trailing comma before `}` / `]`. Every other
+ * character stays in its token (NBSP / BOM are not whitespace there: invalid
+ * for both parsers) and the tokens are joined with spaces, so JSON.parse sees
+ * jsonc-parser's token stream: wherever jsonc-parser reports no error, the
+ * two read the same value (`__proto__` aside — see `hasProtoKey`). Null = an
+ * unterminated comment / string.
+ */
+function jsoncToJson(text: string): string | null {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < text.length) {
     const char = text[i]!;
-    if (char === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      out += text.slice(i, j + 1);
-      i = j;
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
+      i += 1;
     } else if (char === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i += 1;
-      out += '\n';
+      i += 2;
+      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i += 1;
     } else if (char === '/' && text[i + 1] === '*') {
       const end = text.indexOf('*/', i + 2);
-      i = end < 0 ? text.length : end + 1;
+      if (end < 0) return null;
+      i = end + 2;
+    } else if (char === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        if (text[j] === '\n' || text[j] === '\r') return null;
+        j += text[j] === '\\' ? 2 : 1;
+      }
+      if (j >= text.length) return null;
+      tokens.push(text.slice(i, j + 1));
+      i = j + 1;
+    } else if ('{}[]:,'.includes(char)) {
+      tokens.push(char);
+      i += 1;
     } else {
-      out += char;
+      let j = i + 1;
+      while (j < text.length && !JSONC_SEPARATORS.includes(text[j]!)) j += 1;
+      tokens.push(text.slice(i, j));
+      i = j;
     }
   }
-  return out.replace(/,(\s*[}\]])/g, '$1');
+  return tokens
+    .filter((token, k) => token !== ',' || (tokens[k + 1] !== '}' && tokens[k + 1] !== ']'))
+    .join(' ');
+}
+
+/**
+ * jsonc-parser assigns `__proto__` (setting the object's prototype, so the
+ * keys under it are inherited) where JSON.parse makes an own key: such a
+ * config cannot be checked.
+ */
+function hasProtoKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasProtoKey);
+  if (!isPlainObject(value)) return false;
+  return Object.hasOwn(value, '__proto__') || Object.values(value).some(hasProtoKey);
 }
 
 /** Allowing keys of an opencode.json(c) text (unparsable / substitutions → refused). */
 function jsonConfigAllows(text: string): string[] {
   if (SUBSTITUTION.test(text)) return ['含 {file:…} / {env:…} 替换（无法检查）'];
+  // OpenCode reads the file with TextDecoder: one leading BOM is dropped and
+  // an empty file is an empty config.
+  const content = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  if (content === '') return [];
+  const json = jsoncToJson(content);
+  if (json === null) return ['无法解析'];
+  let config: unknown;
   try {
-    return configAllows(JSON.parse(stripJsonc(text)));
+    config = JSON.parse(json);
   } catch {
     return ['无法解析'];
   }
+  if (hasProtoKey(config)) return ['含 __proto__ 键（无法检查）'];
+  return configAllows(config);
 }
 
 /**
@@ -492,7 +556,10 @@ function checkOpencodeConfig({ stateDir, loadUserConfig }: ConfigCheckContext): 
     loadUserConfig === true
       ? path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')
       : path.join(opencodeConfigHome(stateDir!), 'opencode');
-  const issues = opencodeUserConfigIssues({ home, configHome });
+  // Paths under the home directory as `~/…` (no user name in the setup card).
+  const issues = opencodeUserConfigIssues({ home, configHome }).map((issue) =>
+    issue.startsWith(home + path.sep) ? `~${issue.slice(home.length)}` : issue,
+  );
   if (issues.length > 0) {
     throw new AppError(
       'AGENT_CONFIG_UNSAFE',
@@ -501,6 +568,21 @@ function checkOpencodeConfig({ stateDir, loadUserConfig }: ConfigCheckContext): 
     );
   }
 }
+
+/**
+ * Variables that point OpenCode at another config file / directory / home
+ * (`OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, the test-only home and managed
+ * config overrides) — none of them is scanned, so the catalog
+ * (`distribution.npx.env`) / launch target must not set them (第三轮补充 #2).
+ * `XDG_CONFIG_HOME` likewise: the host's own value (or the private root) only.
+ */
+const OPENCODE_CONFIG_REDIRECT_ENV = [
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_DIR',
+  'OPENCODE_TEST_HOME',
+  'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+  'XDG_CONFIG_HOME',
+];
 
 async function applyOpencodeTier(
   tier: AgentPermissionTier,
@@ -518,21 +600,28 @@ export const opencodeProvider: AgentProvider = {
       // (agent permission overrides) would apply.
       throw new AppError('AGENT_UNAVAILABLE', 'OpenCode 缺少私有状态目录，无法隔离个人配置');
     }
+    const enforced: Record<string, string> = {
+      ...(loadUserConfig !== true ? { XDG_CONFIG_HOME: opencodeConfigHome(stateDir!) } : {}),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeProcessConfig()),
+      OPENCODE_PERMISSION: JSON.stringify(opencodePermissionConfig()),
+      OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+      OPENCODE_PURE: '1',
+      OPENCODE_DISABLE_CLAUDE_CODE: '1',
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+    };
+    // Host-enforced and config-redirect keys never come from the catalog /
+    // target — compared case-insensitively (Windows environment names).
+    const reserved = new Set(
+      [...Object.keys(enforced), ...OPENCODE_CONFIG_REDIRECT_ENV].map((key) => key.toUpperCase()),
+    );
+    const configured = Object.entries({
+      ...(entry.distribution.npx?.env ?? {}),
+      ...target.env,
+    }).filter(([key]) => !reserved.has(key.toUpperCase()));
     return {
       command: target.command,
       args: [...target.args],
-      env: {
-        ...(entry.distribution.npx?.env ?? {}),
-        ...target.env,
-        // Host-enforced keys last: nothing merged above may override them.
-        ...(loadUserConfig !== true ? { XDG_CONFIG_HOME: opencodeConfigHome(stateDir!) } : {}),
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeProcessConfig()),
-        OPENCODE_PERMISSION: JSON.stringify(opencodePermissionConfig()),
-        OPENCODE_DISABLE_PROJECT_CONFIG: '1',
-        OPENCODE_PURE: '1',
-        OPENCODE_DISABLE_CLAUDE_CODE: '1',
-        OPENCODE_DISABLE_AUTOUPDATE: '1',
-      },
+      env: { ...Object.fromEntries(configured), ...enforced },
     };
   },
   checkConfig: checkOpencodeConfig,
