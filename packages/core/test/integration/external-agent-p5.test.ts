@@ -400,7 +400,7 @@ describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)
 
   it('a bot removed from the group before its session exists gets no row (#7)', async () => {
     const { stack, started } = await start({
-      fake: { newSessionDelayMs: 400, turns: [agentTurn().text('答')] },
+      fake: { newSessionDelayMs: 400, sessionDelete: true, turns: [agentTurn().text('答')] },
     });
     const bot = await agentBot(stack, 'fake');
     const other = await makeBot(stack.core, '旁人');
@@ -427,5 +427,90 @@ describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)
       .mainDb!.prepare('select count(*) as n from agent_sessions where conversation_id = ?')
       .get(group.id) as { n: number };
     expect(count.n).toBe(0);
+    // The session opened meanwhile is deleted, never prompted (第三轮 #9).
+    await waitFor(() => (started[0]!.observed.deletedSessions.length === 1 ? true : null), {
+      label: 'session/delete',
+    });
+    expect(started[0]!.observed.deletedSessions).toEqual(['fake-session-1']);
+    expect(started[0]!.observed.prompts).toEqual([]);
   }, 30_000);
+
+  for (const restore of ['resume', 'load'] as const) {
+    it(`a bot removed from the group during session/${restore} gets its session deleted (第三轮 #9)`, async () => {
+      const entry = fakeAgentEntry('fake-restore', { provider: 'claude' });
+      const restoring: FakeAgentScript =
+        restore === 'resume'
+          ? {
+              resume: true,
+              restoreDelayMs: 400,
+              sessionDelete: true,
+              modes: CLAUDE_MODES,
+              turns: [],
+            }
+          : {
+              history: [],
+              restoreDelayMs: 400,
+              sessionDelete: true,
+              modes: CLAUDE_MODES,
+              turns: [],
+            };
+      const { stack, started } = await start(
+        {
+          'fake-restore': [
+            { resume: true, history: [], modes: CLAUDE_MODES, turns: [agentTurn().crash()] },
+            restoring,
+          ],
+        },
+        [entry],
+      );
+      const bot = await agentBot(stack, 'fake-restore');
+      const other = await makeBot(stack.core, '旁人');
+      const group = await makeGroup(stack.core, '群', [bot.id, other.id]);
+      const rows = () =>
+        (
+          stack.core.services
+            .mainDb!.prepare('select count(*) as n from agent_sessions where conversation_id = ?')
+            .get(group.id) as { n: number }
+        ).n;
+      await sendDrafts(stack.core, group.id, [{ text: '第一问', mentions: [bot.id] }]);
+      await waitFor(
+        async () =>
+          (await listRuns(stack.core, group.id)).some(
+            (run) => run.loopType === 'response' && run.status === 'failed',
+          )
+            ? true
+            : null,
+        { label: 'crashed run' },
+      );
+      expect(rows()).toBe(1);
+      await sendDrafts(stack.core, group.id, [{ text: '第二问', mentions: [bot.id] }]);
+      await waitFor(
+        () => {
+          const observed = started[1]?.observed;
+          if (observed === undefined) return null;
+          return (restore === 'resume' ? observed.resumedSessions : observed.loadedSessions)
+            .length === 1
+            ? true
+            : null;
+        },
+        { label: `session/${restore} sent` },
+      );
+      // Removed without reaching the run or the cascade (the race the check closes).
+      stack.core.services
+        .mainDb!.prepare(
+          'delete from conversation_members where conversation_id = ? and bot_id = ?',
+        )
+        .run(group.id, bot.id);
+      stack.core.services
+        .mainDb!.prepare('delete from agent_sessions where conversation_id = ?')
+        .run(group.id);
+      await waitFor(() => (started[1]!.observed.deletedSessions.length === 1 ? true : null), {
+        label: 'session/delete',
+      });
+      expect(started[1]!.observed.deletedSessions).toEqual(['fake-session-1']);
+      expect(started[1]!.observed.prompts).toEqual([]);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(rows()).toBe(0);
+    }, 30_000);
+  }
 });

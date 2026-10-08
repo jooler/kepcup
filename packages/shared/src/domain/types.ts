@@ -687,6 +687,8 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     kind: z.literal('agent'),
     agentId: z.string(),
     reason: agentSetupReasonSchema,
+    /** 原因的具体说明（`config_unsafe`：要改的文件与键）。 */
+    detail: z.string().optional(),
   }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;

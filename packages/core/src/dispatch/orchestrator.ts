@@ -1921,7 +1921,10 @@ export class Orchestrator {
   }
 
   /** Gives up a kept agent session (best effort, asynchronous). */
-  #discardAgentSession(row: AgentSessionRow, deleteHistory: boolean): void {
+  #discardAgentSession(
+    row: Pick<AgentSessionRow, 'id' | 'agentId' | 'agentSessionId' | 'botId' | 'conversationId'>,
+    deleteHistory: boolean,
+  ): void {
     this.#agentSessionSeen.delete(row.id);
     const discard = this.#deps.externalEngine?.discardSession;
     if (discard === undefined) return;
@@ -2094,7 +2097,11 @@ export class Orchestrator {
    * 外部 Agent run 失败的错误码 → 结构化 setup（null = 普通失败）。先把错误
    * 回写给 AgentsService（未登录 → 状态 needs_auth，设置卡据此展示登录）。
    */
-  #agentFailureSetup(agentId: string, code: string | undefined): SetupRequirement | null {
+  #agentFailureSetup(
+    agentId: string,
+    code: string | undefined,
+    message?: string,
+  ): SetupRequirement | null {
     if (code === undefined) return null;
     this.#deps.agents?.noteRunError(agentId, code);
     const view = this.#agentView();
@@ -2103,7 +2110,11 @@ export class Orchestrator {
         ? agentSetupReasonOf(view(agentId), true)
         : null;
     const reason = agentSetupReasonForError(code, stateReason);
-    return reason === null ? null : { kind: 'agent', agentId, reason };
+    if (reason === null) return null;
+    // Which file / key to fix (第三轮审查 #6): the error message lists them.
+    return reason === 'config_unsafe' && message !== undefined && message.length > 0
+      ? { kind: 'agent', agentId, reason, detail: message }
+      : { kind: 'agent', agentId, reason };
   }
 
   #providerForRef(modelRef: string): string {
@@ -2780,7 +2791,7 @@ export class Orchestrator {
       // 会整段重试原 run，中途失败的重放会重复中间说明与文件改动。
       const agentSetup =
         agentId.length > 0 && outcome.status === 'failed' && !this.#runProducedWork(runId)
-          ? this.#agentFailureSetup(agentId, outcome.error?.code)
+          ? this.#agentFailureSetup(agentId, outcome.error?.code, outcome.error?.message)
           : null;
       if (agentSetup !== null) {
         this.#settleRun(runId, 'failed', outcome.error?.message ?? null, agentSetup);
@@ -2895,12 +2906,22 @@ export class Orchestrator {
     mode: AgentSessionMode;
   }): void {
     try {
-      // Deleted meanwhile (conversation / bot / membership): no row (审查 #13).
+      // Deleted meanwhile (conversation / bot / membership): no row (审查 #13),
+      // and the session opened meanwhile is deleted too — the cascade ran
+      // before it existed (第三轮 #9). It belongs to the run right now: the
+      // engine deletes it on release and sends no prompt.
       const conversation = this.#deps.conversations.get(input.conversationId);
       const bot = this.#deps.bots.get(input.botId);
-      if (conversation === null || bot === null || bot.status !== 'active') return;
-      // Removed from the group meanwhile (复审 #7): the cascade already ran.
-      if (!this.#botInConversation(conversation, input.botId)) return;
+      if (
+        conversation === null ||
+        bot === null ||
+        bot.status !== 'active' ||
+        // Removed from the group meanwhile (复审 #7): the cascade already ran.
+        !this.#botInConversation(conversation, input.botId)
+      ) {
+        this.#discardAgentSession({ ...input, id: input.rowId }, true);
+        return;
+      }
       const previous = this.#agentSessions.get(input.botId, input.conversationId, input.agentId);
       const now = this.#deps.clock.now();
       // A different agent session behind the same row (new session after a
