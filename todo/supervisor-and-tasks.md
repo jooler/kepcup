@@ -12,6 +12,7 @@
 5. **测试必须在容器里跑**：宿主 glibc 2.35 加载不了 es-git 预编译绑定（需 ≥ 2.38），大部分集成测试在宿主上直接失败。用：
    `/tmp/claude-1000/-home-jyy-www-kepcup/9137b434-97a0-4439-b938-4ec9b3375ec8/scratchpad/ctest.sh <你的 worktree 绝对路径> "node scripts/run-tests.mjs run <测试文件或目录>"`
    不要在容器里跑 `pnpm test` / `pnpm install`（会触发依赖检查并破坏 `node_modules`）。typecheck / lint 在宿主跑：`pnpm -r typecheck`、`pnpm lint`。
+   `packages/core/test/integration/projects.test.ts` 在容器里约 10 分钟（6 条基线失败各等 60–180 s 超时），看起来像卡住；定向测试不要带它，全量回归照常包含。宿主 `timeout` 只杀 docker 客户端、杀不掉容器，需要硬超时用同目录的 `crun.sh <容器名> <worktree> <秒> "<命令>"`。vitest `--outputFile` 必须写到 worktree 内（容器里的 `/tmp` 不挂载到宿主）。
 6. **基线失败**：容器里沙箱 / bwrap / socat 相关用例本来就失败（见 §6 基线清单）。你的交付标准是「不新增失败」，不是「全绿」。
 7. 提交：Conventional Commits（`feat(core): …`），每个提交可构建；提交信息末尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`。只提交到你自己的分支，不要 push，不要合并别的分支。
 8. 设计与现实冲突、契约不够用、验收无法达成 → 停下受影响部分，写进 `docs/dev/DEVIATIONS.md`（新编号 DEV-xxx），继续不受影响的部分，并在交付说明里点名。不要擅自改设计决策。
@@ -150,6 +151,13 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - **W3**：`RUN_READ_ONLY` 等错误码的 zh-CN 文案；渲染端 `#upsertConversation` 缺 `unreadCount` 时回退 `lastSeq - lastReadSeq` 会算入私有行；取消卡改动摘要（W1-A 的 `cancel_task` 只说明不回退）；W0 已在 `UsageSection` / `zh-CN.ts` 补 `turn` / `task`。
 - **W4**：外部智能体只读任务必须强制 `read_only` 档位（Agent 在工作目录内的写入先被桥的档位逻辑放行，走不到网关）；外部智能体任务当前失败关闭，W4 接通。
 - **W5**：设计 13 补一句预授权的消费方式；DEV-009 结论落字。
+
+**审查与修复（2026-10-08）**：独立审查 W1（基 `40cde29`）判 REQUEST CHANGES：H1 只读任务经 `delegate_task` 子代理 bash 可写；H2 写租约先于调度名额 → 持有并等待死锁（provider 上限 1 / 2、D72 固定 run），排队中被取消的任务不放租约；M1 终态条目写失败仍写终态并标消费（结果丢失）；M2 detach 后的注入报「已送达」实则丢弃；M3 上限 1 时任务饿死回复；M4 媒体生成 / 浏览器下载 / 装技能 / 申请环境绕过只读，`get_attachment` 在只读 run 失效；M5「仅这一次」在同 run 并行工具调用间串用；LOW 8 条（LOW-3 写任务顺手写 workspace 不取 ws 租约，**记为已知缺口不修**，同对话「每 workdir 一个写任务」兜底）。
+- 批 A（`7c36bf1`，任务层 / 调度）：`SlotYieldingLeaseService` + `Scheduler.yieldSlotWhile`（等租约期间让出名额，取得后优先拿回）、`cancelQueued`；M3 回复在全部名额被任务占用时可借 1 个；M1 `#unsettled` 由 sweep 重试；M2 `closing` 与注入降级 `queued`；LOW-1/2/4/5/7/8。批 B（`1403248`，只读 / 授权）：子代理沿 `parentRunId` 继承根 run 的只读规则（fail closed）；`readOnlyRefusal` 收口媒体 / 技能 / 环境，浏览器只读下载改到应用缓存，`checkHostCopyPath` 让只读 run 的附件复制限定在 `.attachments/`；once 授权按工具调用作用域归属，预授权由第一个用到的调用认领；`onAutoRevoke` 发布 `grant.changed`；DEV-009 补记。合并 `7456dfa`。
+- 复核（同一审查者）REQUEST CHANGES 7 条 → 批 A 第二轮 `3850639`：每 job 让出深度计数；同 run 同键 `ensureWriteLease` 并入进行中的申请（根因：并行写调用互相取消）；`#pump` 跳过未结算任务（M1 修复引入的「已取消任务被重新拉起」）；`finished` 防迟到等待泄漏名额；持租约写任务 priority 0；写任务子代理仅在任务持租约期间可写；同步抛出不泄漏名额；`#recoverySettle` 条目先行。#9（外部 Agent MCP 桥中途让出名额）核实不可达。
+- 二次复核 APPROVE，附 MEDIUM：持租约写任务可占满 provider 全部名额 → 调度会话 `3530aea`：持租约写任务需 `active < limit` 且任务占用 `< limit - 1`；并入的租约申请响应调用方自身的 abort。
+- 验证：两批及第二轮各自容器全量 difffail 新增失败仅偶发项（`agents-service` 登录状态、`web-tools` 负载超时，单跑通过）；`3530aea` 定向 `scheduler` / `tasks-review-fixes` / `tasks` / `workspace-lease` / `response-loop` 全过，`projects` 与基线一致；typecheck / lint 0 error。
+- 待定：M3 借用规则（配置上限 N 在全为任务占用时实际可到 N+1）由 W5 写进设计 30 §5 / 调度说明，不另记偏差。
 
 **已知缺口（审查复核 #5，留给 W2 / W3）**：浏览器下载目录与页面共享冲突。页面按（Bot, 对话）共用一个（desktop `browser-host.ts`），`ensurePage` 每次把该页面的 `downloadsDir` 改成本次执行的目录，`will-download`（`browser-host.ts` ~497）在下载**开始时**才读 `page.downloadsDir`。同一对话里只读执行（对话轮 / 只读任务，目录 = 应用缓存 `readOnlyDownloadsDir`）与写任务（目录 = workspace `downloads/`，core `tools/browser.ts` ~96 / `tools/index.ts` ~789 在构建工具时固定）并发使用浏览器时：只读执行 ensure → 写任务 ensure（改回 workspace）→ 只读执行 click 触发的下载落进 workspace。core 侧加锁只能覆盖 ensure + click，覆盖不了点击返回后才开始的下载，因此 core 内无法闭合。修法需要 desktop / shared RPC 改动二选一：① 下载目录随触发动作（click / open）下发并绑定到该次导航，`will-download` 用动作时刻的目录；② 只读执行与写执行不共用页面（页面键加上执行的写入能力）。W2 注册对话轮工具面时若去掉浏览器（见上 W2 项）可先消除对话轮这一侧，只读任务仍有此缺口。
 
