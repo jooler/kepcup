@@ -728,7 +728,6 @@ export const triggerReasonSchema = z.enum([
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
 export const loopTypeSchema = z.enum([
-  'response',
   'triage',
   'reflection',
   'memory_consolidation',
@@ -740,7 +739,7 @@ export const loopTypeSchema = z.enum([
   'subagent',
   /**
    * D75（docs/design/30-supervisor-and-tasks.md）：对话轮（沟通与调度，只读，
-   * 秒级）与任务（执行，可并行）。'response' 暂留，由 W2 改名为 'turn' 后移除。
+   * 秒级，替代原 'response'）与任务（执行，可并行）。
    */
   'turn',
   'task',

@@ -10,7 +10,6 @@
   import { Label } from '$lib/components/ui/label';
 
   const LOOP_KEYS: Record<UsageSummaryEntry['loopType'], MessageKey> = {
-    response: 'usage.loop.response',
     triage: 'usage.loop.triage',
     reflection: 'usage.loop.reflection',
     memory_consolidation: 'usage.loop.memory_consolidation',
@@ -64,7 +63,9 @@
         const backgroundToday = rows
           .filter(
             (entry) =>
-              entry.date === today && entry.loopType !== 'response' && entry.loopType !== 'triage',
+              entry.date === today && entry.loopType !== 'turn' &&
+                entry.loopType !== 'task' &&
+                entry.loopType !== 'triage',
           )
           .reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0);
         return {

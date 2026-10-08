@@ -77,7 +77,7 @@ describe('runs 任务字段', () => {
       const run = runs.create({
         botId: 'bot_x',
         conversationId: 'conv_a',
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: ['msg_1'],
       });
@@ -128,7 +128,7 @@ describe('任务查询', () => {
       runs.create({
         botId: 'bot_x',
         conversationId: 'conv_a',
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: [],
       });
@@ -160,14 +160,14 @@ describe('任务查询', () => {
       const response = runs.create({
         botId: 'bot_x',
         conversationId: 'conv_a',
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: [],
       });
       const doneResponse = runs.create({
         botId: 'bot_x',
         conversationId: 'conv_a',
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: [],
       });

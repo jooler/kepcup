@@ -35,7 +35,7 @@ const IDENTITY: RunIdentity = {
   runId: 'run_bridge',
   botId: 'bot_b',
   conversationId: 'conv_b',
-  loopType: 'response',
+  loopType: 'turn',
 };
 
 interface HttpReply {

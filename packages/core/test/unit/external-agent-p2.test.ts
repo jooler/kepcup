@@ -391,7 +391,7 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
       cancelGraceMs: 200,
     });
     const spec = (overrides: Partial<NonNullable<RunSpec['external']>> = {}): RunSpec => ({
-      identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' },
+      identity: { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' },
       model: agentModelRef(entry.id, ''),
       buildSystemPrompt: async () => 'UNUSED',
       messages: [{ role: 'user', content: 'HELLO', timestamp: 0 }],

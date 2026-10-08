@@ -91,20 +91,20 @@ describe('GrantsService.listEffective (BR-P03-003 once⇒runId predicate)', () =
 
     // listActive orders by created_at desc; same-ms creations make the order
     // unstable, so assert as sets.
-    expect(new Set(grants.listEffective({ runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' }).map((g) => g.id)))
+    expect(new Set(grants.listEffective({ runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' }).map((g) => g.id)))
       .toEqual(new Set([convGrant.id, onceGrant.id]));
     // A different run must NOT inherit the once grant.
-    expect(grants.listEffective({ runId: 'run_2', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' }).map((g) => g.id))
+    expect(grants.listEffective({ runId: 'run_2', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' }).map((g) => g.id))
       .toEqual([convGrant.id]);
     // Another bot gets nothing.
-    expect(grants.listEffective({ runId: 'run_1', botId: 'bot_2', conversationId: 'conv_1', loopType: 'response' }).map((g) => g.id))
+    expect(grants.listEffective({ runId: 'run_1', botId: 'bot_2', conversationId: 'conv_1', loopType: 'turn' }).map((g) => g.id))
       .toEqual([otherBotGrant.id]);
     // No identity → nothing.
-    expect(grants.listEffective({ runId: 'run_1', botId: null, conversationId: null, loopType: 'response' })).toEqual([]);
+    expect(grants.listEffective({ runId: 'run_1', botId: null, conversationId: null, loopType: 'turn' })).toEqual([]);
 
     // Revoked grants drop out everywhere.
     grants.revoke(onceGrant.id);
-    expect(grants.listEffective({ runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'response' }).map((g) => g.id))
+    expect(grants.listEffective({ runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'turn' }).map((g) => g.id))
       .toEqual([convGrant.id]);
   });
 });

@@ -9,6 +9,7 @@ import {
   makeBot,
   openDirect,
   step,
+  viaTask,
   waitFor,
   waitForEvent,
   waitForRun,
@@ -59,6 +60,7 @@ async function waitForNewRun(
   conversationId: string,
   afterRunId: string | null,
   status: 'completed' | 'failed' = 'completed',
+  loopType: Run['loopType'] = 'turn',
 ): Promise<Run> {
   return waitFor(
     async () => {
@@ -66,7 +68,7 @@ async function waitForNewRun(
         runs: Run[];
       };
       const responseRuns = result.runs
-        .filter((r) => r.loopType === 'response' && r.status === status)
+        .filter((r) => r.loopType === loopType && r.status === status)
         .sort((a, b) => a.id.localeCompare(b.id));
       const newest = responseRuns[responseRuns.length - 1];
       if (newest === undefined) return null;
@@ -299,21 +301,39 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
     expect(readResult).toBeDefined();
   }, 60_000);
 
-  it('响应 loop 用 write 工具写 wiki 目录失败（对 Wiki 只读）', async () => {
+  // D75 W2: only a (write) task can call write at all; even it cannot write
+  // into the wiki directory.
+  it('写任务用 write 工具写 wiki 目录失败（对 Wiki 只读）', async () => {
     const target = path.join(wikiRoot(stack.core, botId), 'pages', 'hack.md');
-    stack.llm.script('mock-main', [
-      step()
-        .expect((req) => String(req.lastUserText()).includes('把这句话写进'))
-        .replyToolCall('write', { path: target, content: '不该写入的内容' }),
-      step().replyText('写不进去'),
-    ]);
+    stack.llm.script(
+      'mock-main',
+      viaTask({
+        instruction: `把这句话写进 ${target}`,
+        taskSteps: [
+          step()
+            .expect((req) => String(req.lastUserText()).includes('把这句话写进'))
+            .replyToolCall('write', { path: target, content: '不该写入的内容' }),
+          step().replyText('写不进去'),
+        ],
+        relay: 'WIKI-RELAY 写不进去',
+      }),
+    );
     const baseline = await latestRunId(stack.core, conversationId);
     await stack.core.rpc.call('drafts.add', {
       conversationId,
       text: `把这句话写进 ${target}`,
     });
     await stack.core.rpc.call('drafts.flush', { conversationId });
-    const run = await waitForNewRun(stack.core, conversationId, baseline);
+    const run = await waitForNewRun(stack.core, conversationId, baseline, 'completed', 'task');
+    await waitFor(
+      async () =>
+        (await listMessages(stack.core, conversationId)).some(
+          (m) => 'text' in m.content && m.content.text === 'WIKI-RELAY 写不进去',
+        )
+          ? true
+          : null,
+      { label: 'relay' },
+    );
     const steps = (await stack.core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };

@@ -48,7 +48,7 @@ export class BudgetService {
     const since = localDayStart(this.#deps.clock.now(), this.#deps.timeZone);
     const row = this.#deps.db
       .prepare(
-        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type not in ('response', 'turn', 'task') and (loop_type != 'triage' or provider like 'agent:%') and created_at >= ?",
+        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type not in ('turn', 'task') and (loop_type != 'triage' or provider like 'agent:%') and created_at >= ?",
       )
       .get(AGENT_TURN_BUDGET_TOKENS, botId, since) as { n: number };
     return row.n;

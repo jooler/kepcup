@@ -8,6 +8,7 @@ import {
   sendDrafts,
   step,
   waitFor,
+  viaTask,
 } from '@kepcup/testkit';
 import type { SkillEntry, SkillRepoFixture } from '@kepcup/shared';
 import type {
@@ -154,10 +155,17 @@ describe('P12 增强级：技能门控与执行路由（stub 后端）', () => {
 
       // 存储状态已回写 active：activeSkills/readableDirs/enhancedSandboxRequired
       // 消费同一行 → bash 路由到增强后端执行。
-      stack.llm.script('mock-main', [
-        step().replyToolCall('bash', { command: 'echo routed-after-flip' }),
-        step().replyText('完成'),
-      ]);
+      // D75 W2: commands run in tasks (a turn has no bash).
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          taskSteps: [
+            step().replyToolCall('bash', { command: 'echo routed-after-flip' }),
+            step().replyText('完成'),
+          ],
+          relay: '好了',
+        }),
+      );
       await sendDrafts(stack.core, conversationId, [{ text: '再跑一下命令' }]);
       await waitFor(
         async () => (stub.execs.length > 0 ? stub.execs : null),
@@ -199,10 +207,17 @@ describe('P12 增强级：技能门控与执行路由（stub 后端）', () => {
       expect(sandboxStatus.enhanced).toMatchObject({ backend: 'lima', available: true });
 
       // 一次响应 loop：模型调 bash → 网关路由到增强后端（stub 的 stdout 进工具结果）。
-      stack.llm.script('mock-main', [
-        step().replyToolCall('bash', { command: 'echo routed-check' }),
-        step().replyText('完成'),
-      ]);
+      // D75 W2: commands run in tasks (a turn has no bash).
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          taskSteps: [
+            step().replyToolCall('bash', { command: 'echo routed-check' }),
+            step().replyText('完成'),
+          ],
+          relay: '好了',
+        }),
+      );
       await sendDrafts(stack.core, conversationId, [{ text: '跑一下命令' }]);
       await waitFor(
         async () => (stub.execs.length > 0 ? stub.execs : null),

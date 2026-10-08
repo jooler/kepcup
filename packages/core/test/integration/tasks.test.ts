@@ -61,7 +61,7 @@ function userMessage(stack: TestStack, conversationId: string, text: string): Me
 }
 
 function turnIdentity(botId: string, conversationId: string, runId = 'run_turn_1'): RunIdentity {
-  return { runId, botId, conversationId, loopType: 'response' };
+  return { runId, botId, conversationId, loopType: 'turn' };
 }
 
 function tool(tools: ToolDefinition[], name: string): ToolDefinition {
@@ -72,7 +72,7 @@ function tool(tools: ToolDefinition[], name: string): ToolDefinition {
 
 async function call(t: ToolDefinition, params: unknown): Promise<ToolResult> {
   return t.execute(params, {
-    identity: { runId: 'x', botId: null, conversationId: null, loopType: 'response' },
+    identity: { runId: 'x', botId: null, conversationId: null, loopType: 'turn' },
     signal: new AbortController().signal,
     terminate: () => {},
     progress: () => {},
@@ -107,7 +107,7 @@ function waitRun(stack: TestStack, id: string, statuses: Run['status'][], label:
 function wakeRuns(stack: { core: CoreHarness }, conversationId: string): Run[] {
   return domain(stack)
     .runs.listByConversation(conversationId, 50)
-    .filter((r) => r.loopType === 'response' && r.triggerReason === 'task');
+    .filter((r) => r.loopType === 'turn' && r.triggerReason === 'task');
 }
 
 describe('D75 task layer (TaskHost)', () => {
@@ -601,7 +601,7 @@ describe('D75 task recovery (§3.2 修复, §7.4)', () => {
       // A plain response run left running is still blanket-interrupted.
       const r = runs.create({
         ...scope,
-        loopType: 'response',
+        loopType: 'turn',
         triggerReason: 'direct',
         triggerMessageIds: [],
       });

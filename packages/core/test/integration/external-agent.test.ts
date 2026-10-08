@@ -259,7 +259,7 @@ describe('external agent engine (P1, fake agent)', () => {
     await waitFor(
       async () =>
         (await listRuns(stack.core, conv.id)).some(
-          (r) => r.loopType === 'response' && r.status === 'completed',
+          (r) => r.loopType === 'turn' && r.status === 'completed',
         )
           ? true
           : null,
@@ -270,7 +270,7 @@ describe('external agent engine (P1, fake agent)', () => {
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.text).toContain('第一条');
     expect(prompts[0]!.text).toContain('第二条');
-    const runs = (await listRuns(stack.core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(stack.core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(1);
     const botTexts = (await listMessages(stack.core, conv.id))
       .filter((m) => m.senderBotId === bot.id)

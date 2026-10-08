@@ -304,7 +304,7 @@ export class EnvManager {
       runId: '',
       botId: null,
       conversationId: input.conversationId,
-      loopType: 'response',
+      loopType: 'host',
     };
     if (this.#deps.conversations.get(input.conversationId) === null) {
       throw new AppError('NOT_FOUND', `Conversation ${input.conversationId} does not exist`);
@@ -467,7 +467,7 @@ export class EnvManager {
       runId: '',
       botId: row.requested_by,
       conversationId: null,
-      loopType: 'response',
+      loopType: 'host',
     };
     this.#updateRow(row.id, { status: 'installing' });
     this.#publishChanged();
@@ -1059,7 +1059,7 @@ export class EnvManager {
         runId: '',
         botId: null,
         conversationId: null,
-        loopType: 'response',
+        loopType: 'host',
       };
       await this.#ensureChainedItem(item, identity, `prereq:${item}`);
     }

@@ -74,7 +74,7 @@ async function agentBot(stack: TestStack, agentId: string): Promise<Bot> {
 
 function completedRuns(runs: Run[]): Run[] {
   return runs
-    .filter((run) => run.loopType === 'response' && run.status === 'completed')
+    .filter((run) => run.loopType === 'turn' && run.status === 'completed')
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
@@ -374,7 +374,7 @@ describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)
     await waitFor(
       async () =>
         (await listRuns(stack.core, conv.id)).some(
-          (run) => run.loopType === 'response' && run.status === 'failed',
+          (run) => run.loopType === 'turn' && run.status === 'failed',
         )
           ? true
           : null,
@@ -416,7 +416,7 @@ describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)
     await waitFor(
       async () =>
         (await listRuns(stack.core, group.id)).some(
-          (run) => run.loopType === 'response' && run.agentSessionId === 'fake-session-1',
+          (run) => run.loopType === 'turn' && run.agentSessionId === 'fake-session-1',
         )
           ? true
           : null,
@@ -476,7 +476,7 @@ describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)
       await waitFor(
         async () =>
           (await listRuns(stack.core, group.id)).some(
-            (run) => run.loopType === 'response' && run.status === 'failed',
+            (run) => run.loopType === 'turn' && run.status === 'failed',
           )
             ? true
             : null,

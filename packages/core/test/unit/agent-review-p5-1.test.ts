@@ -152,7 +152,7 @@ describe('DeepSeek Harness (H2 / LOW)', () => {
       logger,
     });
     const outcome = await engine.startRun({
-      identity: { runId: 'run_h2', botId: 'b', conversationId: 'c', loopType: 'response' },
+      identity: { runId: 'run_h2', botId: 'b', conversationId: 'c', loopType: 'turn' },
       model: agentModelRef(entry.id, ''),
       buildSystemPrompt: async () => 'S',
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],

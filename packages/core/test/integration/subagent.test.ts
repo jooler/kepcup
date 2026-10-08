@@ -56,7 +56,7 @@ function compressionStep(marker?: string, reply = '压缩后的结论'): MockLlm
 const wakeStep = (): MockLlmStep => step().replyText('任务结果已知悉');
 
 function turnIdentity(botId: string, conversationId: string): RunIdentity {
-  return { runId: 'run_turn_d66', botId, conversationId, loopType: 'response' };
+  return { runId: 'run_turn_d66', botId, conversationId, loopType: 'turn' };
 }
 
 async function setup(name: string): Promise<{ stack: TestStack; botId: string; convId: string }> {

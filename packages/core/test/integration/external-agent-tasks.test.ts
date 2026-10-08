@@ -73,7 +73,7 @@ function tasksOf(stack: TestStack) {
 }
 
 function turnIdentity(botId: string, conversationId: string, runId: string): RunIdentity {
-  return { runId, botId, conversationId, loopType: 'response' };
+  return { runId, botId, conversationId, loopType: 'turn' };
 }
 
 function userMessage(stack: TestStack, conversationId: string, text: string): Message {

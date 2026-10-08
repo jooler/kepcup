@@ -189,7 +189,7 @@ describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
 
 describe('Scheduler × write leases: no hold-and-wait (D75 审查 H2)', () => {
   const key = '/proj';
-  const identity = (runId: string) => ({ runId, botId: 'b', conversationId: 'c', loopType: 'response' as const });
+  const identity = (runId: string) => ({ runId, botId: 'b', conversationId: 'c', loopType: 'turn' as const });
 
   /**
    * The reviewed deadlock: a write task T took the project lease and queues
