@@ -99,7 +99,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
   2. 任务执行：把 orchestrator 的响应 run 执行抽出可复用的执行骨架，任务以 `loop_type='task'` 运行：触发段 = 简报（`instruction` + `source_message_ids` 原文，附件 / 图片照现有触发批方式带入，§2.4.5）；对话层上下文只取共享行（W1-B 完成前用 `ownerBotId === null` 过滤）；中间说明照 D54 护栏发为可见消息并带 `origin:'task'`；**最终文本不发可见消息**，写 `result` 条目；`skip_reply` → 空结果；失败 / 取消 / 中断 → `failure` 条目（含 `buildRunDigest` 尾部摘要）。
   3. 结算次序严格按 §3.2：终态条目 → runs 终态 → 唤醒判定（§3.3）→ 投递。唤醒通过注入的 `wake(botId, conversationId, entry)` 钩子；本波默认实现 = 把条目作为 `TriggerBatch{reason:'task'}` 交给 mailbox（W2 会改 mailbox 语义，这里不改 mailbox）。
   4. `recover()` 接入启动恢复（§7.4 次序），`sweep()` 按 `TASK_SETTLE_SWEEP_MS` 定时；`abortForConversation` / `abortForBot` 接入生命周期删除路径。
-  5. `SubagentHost` 的对话级后台锚点职责移交 `TaskHost`（D66 降级）：`delegate_task` 后台模式改为父任务内并行分支，不再注册对话级锚点；保持 `subagent.test.ts` 语义（调整断言需说明理由）。
+  5. **（已移至 W2）** `SubagentHost` 的对话级后台锚点职责移交 `TaskHost`（D66 降级）：`delegate_task` 后台模式改为父任务内并行分支，不再注册对话级锚点；保持 `subagent.test.ts` 语义（调整断言需说明理由）。
   6. `tools/task-tools.ts`：`start_task` / `inject_task` / `cancel_task` / `list_tasks` / `forward_task_result` 的工具定义（参数校验、执行期 `loop_type` 校验：任务内调用 `start_task` 拒绝），**不注册**进任何工具面（W2 注册）。
 - 验收（集成测试，用模拟模型服务）：起任务 → 任务执行 → `result` 条目落库且无可见最终消息 → 唤醒钩子收到条目；中间说明带 `origin:'task'`；配额超限返回 `submitted` 与排队原因、名额释放后自动启动；`cancel` 写 `failure(status=cancelled)` 且不唤醒；**崩溃修复**：构造「有终态条目、run 非终态」与「无条目、run 非终态」两种库状态，`recover()` 分别补成对应终态 / `interrupted` + `failure`；未消费终态任务被补投；reaper 超时强制 `failed`；任务内 `start_task` 被拒；删除对话 / Bot 中止任务。
 
@@ -112,7 +112,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - 验收：两个写任务（模拟两个 run identity）抢同一 workspace → 第二个 `waiting_lease`、第一个释放后获得；project 路径行为不变（`projects.test.ts` 基线外不新增失败）；`turn` 与只读任务的写工具调用被拒且返回可读错误；一次性授权第二次调用需重新审批；绝对时限过期单测。
 
 ### W2 对话轮
-- 范围：设计 30 §2.1、§3.3（消费标记接线）、§4、§7.1；`loop_type='response'` 全仓改名 `'turn'`（含测试，`shared` 移除 `'response'`）；对话轮工具面（只读 + 任务管理 + 异步托管 + `forward_task_result`，`TURN_MAX_TURNS`）与提示词（`<platform_rules>` 对话轮版：何时直答、何时派活、何时注入 / 取消、结果转述与原文转发、路由必须告诉用户）；`<tasks>` 段；mailbox：对话轮运行中到达的批**缓冲到下一轮**（不再 steer 进对话轮），release 时合并；触发段渲染 `reason='task'` 的条目；对话轮终态时 `TaskHost.markConsumed`；自动续接对对话轮关闭；群轮次在对话轮终态推进。
+- 范围：设计 30 §2.1、§3.3（消费标记接线）、§4、§7.1；W1-A 移交的 D66 降级（`SubagentHost` 对话级后台锚点职责并入 `TaskHost`，`delegate_task` 后台模式退回父任务内并行分支，见 W1-A 第 5 项）；`loop_type='response'` 全仓改名 `'turn'`（含测试，`shared` 移除 `'response'`）；对话轮工具面（只读 + 任务管理 + 异步托管 + `forward_task_result`，`TURN_MAX_TURNS`）与提示词（`<platform_rules>` 对话轮版：何时直答、何时派活、何时注入 / 取消、结果转述与原文转发、路由必须告诉用户）；`<tasks>` 段；mailbox：对话轮运行中到达的批**缓冲到下一轮**（不再 steer 进对话轮），release 时合并；触发段渲染 `reason='task'` 的条目；对话轮终态时 `TaskHost.markConsumed`；自动续接对对话轮关闭；群轮次在对话轮终态推进。
 - 验收：端到端（模拟模型）——用户消息 → 对话轮派任务并回复 → 对话轮结算后立即能处理新消息 → 任务结果唤醒新一轮 → 对话轮 `forward_task_result` + 衔接回复；两个任务同时结算合并为一轮；对话轮内写工具被拒；新消息在对话轮运行中到达 → 下一轮处理；`inject_task` / `cancel_task` 路径；群聊两 Bot 顺序响应推进不等任务；既有 `response-loop` / `group-chat` / `delegation` / `butler` / `environment` 测试按新语义迁移并说明。
 
 ### W3 消息与界面
@@ -129,6 +129,13 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 ## 5. 实施记录
 
 （各工作流合并后由调度会话追加：提交、验证证据、偏差。）
+
+### W0 地基契约（2026-10-08，合入 `d75` @ `9471818`）
+
+- 提交 `bba0211`。迁移 main `0018_task_events.sql`：重建 `messages`（`kind` 增 `task_event`，增 `owner_bot_id` / `task_id`）；因迁移在 `foreign_keys=ON` 的事务内执行、`DROP TABLE messages` 会级联删光附件，`attachments` 一并重建（先建两张新表并复制，再删旧子表、旧父表，最后改名）；调度会话核对历史迁移：两表此前只有 `messages_conv_seq` 一个索引、无追加列、仅 `attachments` 引用 `messages`，重建完整。终态条目唯一索引用 `json_extract` 表达式部分索引（加密构建下可用，无偏差）。runs `0006_tasks.sql` 加任务列与索引。
+- 领域接口、shared 类型与常量按 §2 落地；`TASK_TOKEN_BUDGET = 2_000_000`（响应 run 本无 token 上限、只有 `RUN_MAX_TURNS=60`，沿用子代理的 150k 会截断长任务；按约 60 轮 × 30k 上下文推得），调度会话采纳。另：`runs.create` 接受 `continuedFromRunIds`（`continues_task_id` 回放来源，复用既有列）；desktop `UsageSection.svelte` 与 `zh-CN.ts` 为满足 `Record<LoopType,…>` 补了 `turn` / `task` 文案（W3 知悉）。
+- 验证：新增 4 个测试文件 23 例；容器全量 1582 例，失败 34 = 基线 33 + `web-tools.test.ts` 一条负载超时（单跑 3/3 通过，判为偶发）；调度会话合并后复跑新增测试 + `create-core` 32/32、三包 typecheck 通过。
+- 合并后调度会话追加 `505f5f9`：上下文消息读取收敛到 orchestrator `#contextMessages(conversationId, viewerBotId, limit)`（W1-A 与 W1-B 的接缝：W1-B 只改其实现，W1-A 的任务对话层用 `viewerBotId = null`）。
 
 ## 6. 基线
 
