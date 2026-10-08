@@ -13,7 +13,6 @@ import {
   RUN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
-  SUBAGENT_FOLLOWUP_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
   TRIAGE_RECENT_MESSAGES,
   BUILTIN_ENGINE,
@@ -136,10 +135,8 @@ import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
 import {
   createSubagentFacade,
-  createSubagentHost,
   buildSubagentSystemPrompt,
-  type SubagentFollowUp,
-  type SubagentHost,
+  type SubagentToolFacade,
 } from '../agent/subagent.js';
 import { buildMcpTools, type McpToolFacade } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
@@ -471,10 +468,11 @@ export class Orchestrator {
   /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
   readonly #groupTurns: GroupTurnCoordinator;
   /**
-   * D66 mode B/C：对话级后台子 run 锚点（跨 response run 存活）。结束主 turn
-   * 不级联；显式取消委派 / 关对话 / 删 Bot 时经此 abort；并发封顶也在这里计数。
+   * D66 子代理门面，按父 run 登记（D75 §1.2：子 run 只属于父 run，无对话级
+   * 锚点）：runs.cancel 单独取消子 run 时据 parent_run_id 找到门面；父 run
+   * 结束时 #closeSubagents 中止仍在跑的分支。
    */
-  readonly #subagentHost: SubagentHost = createSubagentHost();
+  readonly #subagentFacades = new Map<string, SubagentToolFacade>();
   /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
   readonly #taskHost: TaskHost;
   /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 群。 */
@@ -1094,9 +1092,13 @@ export class Orchestrator {
       void this.#deps.projects.releaseRun(runId).catch(() => {});
       return run;
     }
-    // D66 mode B：后台子 run 不在 #activeRuns（独立于主 turn），显式取消委派
-    // 经对话级锚点 abort；它自己的 unwind 负责 settle 行与审批清理。
-    if (this.#subagentHost.abortOne(runId, 'user cancelled')) {
+    // D66：子 run 不在 #activeRuns，经父 run 的门面中止；它自己的 unwind
+    // 负责 settle 行。
+    if (
+      run.loopType === 'subagent' &&
+      run.parentRunId !== null &&
+      this.#subagentFacades.get(run.parentRunId)?.abortSubRun(runId, 'user cancelled') === true
+    ) {
       this.#deps.approvals.cancelPendingForRun(runId);
       void this.#deps.projects.releaseRun(runId).catch(() => {});
       return run;
@@ -1208,8 +1210,6 @@ export class Orchestrator {
     // Drop the group-turn state BEFORE settling: a settle during teardown must
     // not advance the turn and start new runs (BR-P05-001).
     this.#groupTurns.clear(conversationId);
-    // D66 mode B：后台子 run 挂对话级锚点，对话关闭才 abort（先于 settle 扫描）。
-    this.#subagentHost.abortForConversation(conversationId, 'conversation deleted');
     // D75: tasks settle (cancelled, no wake) before the blanket settle below.
     this.#taskHost.abortForConversation(conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
@@ -1233,8 +1233,6 @@ export class Orchestrator {
   }
 
   async abortRunsForBot(botId: string): Promise<void> {
-    // D66 mode B：Bot 删除 abort 其全部后台子 run（对话级锚点）。
-    this.#subagentHost.abortForBot(botId, 'bot deleted');
     this.#taskHost.abortForBot(botId);
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId) {
@@ -1256,8 +1254,6 @@ export class Orchestrator {
    * group) — other conversations of the bot keep running.
    */
   abortRunsForBotInConversation(botId: string, conversationId: string): void {
-    // D66 mode B：该 Bot 在该对话的后台子 run 一并中止（移出群等）。
-    this.#subagentHost.abortForBotInConversation(botId, conversationId, 'removed from group');
     this.#taskHost.abortForBotInConversation(botId, conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId && entry.conversationId === conversationId) {
@@ -1393,34 +1389,6 @@ export class Orchestrator {
       messages: [message],
       reason: 'event',
       extraAttributes: { event },
-    });
-  }
-
-  /**
-   * D66 mode B：后台委派子 run 结束后的 follow-up 注入。走与事件/定时共用的
-   * 投递管道（deliverEventToBot → mailbox：在跑的 loop 被 steer，否则开新一轮
-   * 响应 run）；消息带 internal 标记——进入 Bot 上下文与触发，但不作为对话
-   * 内容展示、不冒充用户消息（D48/D54：子过程不刷聊天，只有主 Bot 对用户的
-   * 发言进聊天）。
-   */
-  #injectDelegateFollowUp(followUp: SubagentFollowUp): void {
-    if (followUp.botId === null || followUp.conversationId === null) return;
-    const headline =
-      followUp.conclusion !== null
-        ? followUp.hitLimit
-          ? '后台委派子任务达到时间/token 预算上限，以下为已完成部分的压缩结论：'
-          : '后台委派子任务已完成，以下为压缩结论：'
-        : (followUp.failure ?? '后台委派子任务失败');
-    const text = [
-      `委派任务结束通知（来源：delegate_task，child_run_id: ${followUp.childRunId}；宿主系统注入，不是用户消息）。`,
-      headline,
-      ...(followUp.conclusion !== null
-        ? [`<untrusted>\n${followUp.conclusion}\n</untrusted>`]
-        : []),
-      '请决定是否向用户转述、继续追问或开启新任务；不要把结论重复委派给子代理。',
-    ].join('\n');
-    this.deliverEventToBot(followUp.botId, followUp.conversationId, SUBAGENT_FOLLOWUP_EVENT, text, {
-      internal: true,
     });
   }
 
@@ -2729,8 +2697,9 @@ export class Orchestrator {
               } satisfies McpToolFacade,
             }
           : {}),
-        // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts）。
-        subagent: createSubagentFacade(
+        // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts），
+        // 子 run 挂在本 run 上，本 run 结束时 #closeSubagents。
+        subagent: this.#registerSubagents(runId, createSubagentFacade(
           {
             engine: this.#deps.engine,
             runs,
@@ -2772,10 +2741,8 @@ export class Orchestrator {
                 }),
               ),
             onSubRunSettled: (subRunId) => this.#fsState.release(subRunId),
-            host: this.#subagentHost,
-            onFollowUp: (followUp) => this.#injectDelegateFollowUp(followUp),
           },
-        ),
+        )),
       };
 
       const mailboxKey = this.#mailboxKey(batch.botId, batch.conversationId);
@@ -3155,6 +3122,9 @@ export class Orchestrator {
         unsubscribeInterim();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
+        // D75 §1.2: sub runs die with their parent — before the lease closes
+        // and the run settles (a write task's sub run writes only under it).
+        await this.#closeSubagents(runId);
       }
       // P5: the reuse window counts from the end of the session's last run;
       // the session has seen everything up to the run's cutoff.
@@ -3259,10 +3229,14 @@ export class Orchestrator {
         { runId, error: error instanceof Error ? error.message : String(error) },
         isTask ? 'task run crashed' : 'response run crashed',
       );
+      // No-op when the run got past handle.done (closed there).
+      await this.#closeSubagents(runId).catch(() => {});
       await this.#deps.projects.releaseRun(runId).catch(() => {});
       this.#fsState.release(runId);
       settle('failed', error instanceof Error ? error.message : String(error));
     } finally {
+      // Early returns before the engine started (no-op once closed).
+      await this.#closeSubagents(runId).catch(() => {});
       if (exec.kind === 'task') {
         // Idempotent; covers the early returns. Then the slot / write target frees.
         await this.#deps.projects.releaseRun(runId).catch(() => {});
@@ -3274,6 +3248,19 @@ export class Orchestrator {
       }
       this.#publishConversation(batch.conversationId);
     }
+  }
+
+  #registerSubagents(runId: string, facade: SubagentToolFacade): SubagentToolFacade {
+    this.#subagentFacades.set(runId, facade);
+    return facade;
+  }
+
+  /** The parent run ended: abort its sub runs still in flight and wait for them (idempotent). */
+  async #closeSubagents(runId: string): Promise<void> {
+    const facade = this.#subagentFacades.get(runId);
+    if (facade === undefined) return;
+    this.#subagentFacades.delete(runId);
+    await facade.close('parent run ended');
   }
 
   /** Response-run epilogue (#executeRun finally): consumption, mailbox release, hooks. */
