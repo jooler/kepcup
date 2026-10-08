@@ -47,6 +47,7 @@
 - [ ] **Cursor**：`CURSOR_CONFIG_DIR` 指向私有目录后登录态是否保留
 - [ ] **Claude**：`_session/steering` 的 injected 时序；`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` / `CLAUDE_CODE_DISABLE_CRON` 是否生效；`session/resume` 带 `_meta` 后行为；usage 口径；`deleteSession` 是否删除磁盘 transcript；后台 `tools: []` 是否保留宿主 MCP 桥工具
 - [ ] **Codex**：steering injected 与 `startedNewTurn` 后取消的效果；resume 后 `mcp_servers`（新 token）是否重连；`lastTokenUsage` 口径；长耗时桥工具转后台后模型是否等待 follow-up
+- [ ] **同进程并行会话**（`features.parallelSessions`）：对每个 Agent 在同一进程的两个会话上同时发 prompt，确认互不干扰；代码按适配器源码实证取值（见 `todo/acp-external-agents.md` §8.5），未实证者 `agent:{id}` 并发钳为 1、不参与后台任务——实测通过后可放开
 - [ ] **各 Agent**：follow-up 措辞是否被正确理解；45 s 桥工具转后台阈值是否合适（Claude 可设 null）；全选能力包时的工具数上限
 - [ ] **人工跨平台验收**（macOS / Windows / Linux × 全部 Agent）：启用、登录、单聊、能力包注入、project 内改代码 + 回退、越界审批、steering、群聊混合引擎、委派、后台任务
 
@@ -59,4 +60,5 @@
 ## 6. 后续设计衔接
 
 - [ ] **D75（设计 30）已修订 D72**：对话轮固定内置引擎，外部 Agent 改为**任务**引擎；`features.parallelSessions`、无内置模型用户两级降级等。实现 D75 时需改造本期的 `runtime.agent` 语义、后台路由（llm-router）与会话复用——D72 代码按「Bot 引擎」语义交付
-- [ ] main 迁移号：D72 未新增迁移（沿用 0017）；0018–0020 仍为 D73 预留
+- [ ] **D75 并行任务与会话复用冲突**（设计 30 §8.5）：D72 的 `agent_sessions` 唯一键 `(bot, conv, agent)` 只适合串行 run（D72 本身由邮箱保证串行，无冲突）；D75 T5 需把键加上 `task_id`、`continues_task_id` 改为继承旧任务会话行，估 +0.5–1 周
+- [ ] main 迁移号：D72 未新增迁移（沿用 0017）；0018–0020 仍为 D73 预留；D75 的 `agent_sessions` 迁移号需协调
