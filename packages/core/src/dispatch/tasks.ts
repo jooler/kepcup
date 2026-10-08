@@ -99,8 +99,10 @@ export interface TaskRunControl {
   /**
    * The engine run took a steered inject in (its `steer` event): the entry
    * stays `delivered` and a later refusal of the same text no longer finds it.
+   * Returns the inject's source message ids — the run has now shown them (an
+   * agent session records them as seen, P5 审查 #3); [] when not known.
    */
-  steerConfirmed(text: string): void;
+  steerConfirmed(text: string): string[];
   /**
    * Why the launched task is still `queued` (waiting for its write lease / a
    * provider slot); null once it runs. Shown as the queue reason (§3.1).
@@ -1169,8 +1171,13 @@ export class TaskHost implements TaskToolFacade {
       },
       steerConfirmed: (text) => {
         const index = launched.steered.findIndex((item) => item.text === text);
-        if (index !== -1) launched.steered.splice(index, 1);
-        else launched.confirmedEarly.push(text);
+        if (index === -1) {
+          launched.confirmedEarly.push(text);
+          return [];
+        }
+        const [item] = launched.steered.splice(index, 1);
+        const entry = this.#deps.messages.getById(item!.entryId);
+        return (entry !== null ? taskEventOf(entry)?.sourceMessageIds : undefined) ?? [];
       },
       finish: () => {
         // Buffered injects that never reached an engine run.
