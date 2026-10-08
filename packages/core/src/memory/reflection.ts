@@ -164,6 +164,13 @@ export async function applyReflectionOutput(
   output: ReflectionOutput,
 ): Promise<void> {
   for (const memory of output.memories) {
+    if (memory.confidence === undefined || memory.confidence === null) {
+      deps.logger.info(
+        { botId, kind: memory.kind },
+        'reflection memory dropped: model omitted confidence',
+      );
+      continue;
+    }
     // BR-P07-006: an inferred candidate with no evidence is unverifiable by
     // construction — with the conversation gone (or the model hallucinating)
     // nothing anchors it, so it is dropped instead of written.
@@ -190,6 +197,10 @@ export async function applyReflectionOutput(
   }
 
   for (const proposal of output.profileProposals) {
+    if (proposal.confidence === undefined || proposal.confidence === null) {
+      deps.logger.info({ botId }, 'profile proposal dropped: model omitted confidence');
+      continue;
+    }
     const result = deps.memory.submitProfileProposal(botId, {
       category: proposal.category,
       content: proposal.content,
@@ -312,6 +323,7 @@ const REFLECTION_PROMPT = [
   '- Sensitive-category facts stay out of the shared profile even when remembered (code downgrades them to your private memory).',
   '- When the user said "only tell you" set privateToBot=true.',
   '- Commitments include dueAt (ISO 8601).',
+  '- Every memory and profileProposal includes confidence as a number from 0 to 1. An item without it is discarded.',
   '- Do not re-state memories already listed as existing.',
   '- <continued_from_runs> lists runs whose process records this execution replayed (loop continuation): facts distilled from them are already stored, so do not re-extract them as new memories.',
   'Call submit with runSummary, memories, profileProposals (facts about the user for the shared profile), wikiSuggestions and skillSuggestion (or null).',

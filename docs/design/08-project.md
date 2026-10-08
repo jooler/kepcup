@@ -53,6 +53,8 @@ Bot 的文件工具以 project 为默认工作目录。
 
 ## 并发：写入租约
 
+> **D75 修订**：租约的适用面从 project 扩到 **workspace**（新增租约键 `ws:{botId}:{conversationId}`）。原先同一对话内的 workspace 并发写由串行 mailbox 兜底，D75 拆分后该兜底消失，改由租约承担：同一 workdir 同时最多一个写任务，只读任务不限。workspace 没有影子仓库检查点，故其写任务被取消时只给改动清单、**不提供整次回退**。见 [30 §5.2](30-supervisor-and-tasks.md#52-租约要扩到-workspace)。
+
 多个 loop（同群的多个 Bot，或选用同一目录的多个对话）可能同时要修改同一个 project。
 
 - 同一 project 同一时刻**只有一个 loop 持有写入租约**；其他 loop 可以读。

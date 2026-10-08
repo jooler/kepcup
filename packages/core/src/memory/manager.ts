@@ -46,7 +46,7 @@ export class MemoryDbManager {
       key: deriveKey(this.#deps.masterKey, memoryDbKeyInfo(botId)),
     });
     runMemoryMigrations(db);
-    const store = new MemoryStore({ db, clock: this.#deps.clock });
+    const store = new MemoryStore({ db, clock: this.#deps.clock, logger: this.#deps.logger });
     store.setBot(botId);
     this.#open.set(botId, store);
     this.#evict();

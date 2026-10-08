@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import type {
   MemoryEvidence,
   MemoryItem,
@@ -7,25 +8,41 @@ import type {
   MemoryStatus,
 } from '@kepcup/shared';
 import { newId } from '@kepcup/shared';
-import { segmentForFts, buildFtsOrQuery } from '../infra/text-segment.js';
 import type { SqliteDatabase } from '../infra/db.js';
+import type { CoreLogger } from '../infra/logger.js';
+import { segmentForFts, buildFtsOrQuery } from '../infra/text-segment.js';
+
+const require = createRequire(import.meta.url);
 
 /**
- * sqlite-vec loads lazily and degrades to full-text search when unavailable
- * (P13): the module is a devDependency, so packaged builds may not contain it
- * at all, and win32-arm64 has no upstream extension — a static import would
- * crash the whole core at module-load time. All callers already treat a
- * missing memory_vec table as "no vectors" (knn → [], upsertVec → no-op).
+ * sqlite-vec loads lazily, per connection, and degrades to full-text search
+ * when it cannot (P13). The module is a devDependency, so packaged builds may
+ * not contain it, and win32-arm64 has no upstream extension — a static import
+ * would crash core at module-load time.
+ *
+ * The load has to be synchronous and happen before every vec0 statement.
+ * memory_vec survives process restarts; a fresh connection that selects from
+ * it before load() throws SQLite's "no such module: vec0". A dynamic import
+ * cannot run on the sync query paths (findSimilar / knn / retract).
  */
 type VecLoad = (db: SqliteDatabase) => void;
 let vecLoader: VecLoad | null | undefined; // undefined = not tried; null = unavailable
-async function resolveVecLoader(): Promise<VecLoad | null> {
+let vecLoaderError: unknown = null;
+let vecUnavailableLogged = false;
+
+function resolveVecLoader(): VecLoad | null {
   if (vecLoader !== undefined) return vecLoader;
   try {
-    const mod = (await import('sqlite-vec')) as { load: VecLoad };
-    vecLoader = mod.load;
-  } catch {
+    const mod = require('sqlite-vec') as { load?: VecLoad };
+    if (typeof mod.load === 'function') {
+      vecLoader = mod.load;
+    } else {
+      vecLoader = null;
+      vecLoaderError = new Error('sqlite-vec did not export load()');
+    }
+  } catch (error) {
     vecLoader = null;
+    vecLoaderError = error;
   }
   return vecLoader;
 }
@@ -96,6 +113,7 @@ export interface NewMemoryItem {
 export interface MemoryStoreDeps {
   db: SqliteDatabase;
   clock: () => number;
+  logger?: CoreLogger;
 }
 
 /**
@@ -107,13 +125,17 @@ export interface MemoryStoreDeps {
 export class MemoryStore {
   readonly #db: SqliteDatabase;
   readonly #clock: () => number;
+  readonly #logger: CoreLogger | undefined;
   #botId: string | null = null;
   /** sqlite-vec is load-once per connection. */
   #vecLoaded = false;
+  /** load() failed on this connection; do not touch memory_vec again. */
+  #vecLoadFailed = false;
 
   constructor(deps: MemoryStoreDeps) {
     this.#db = deps.db;
     this.#clock = deps.clock;
+    this.#logger = deps.logger;
   }
 
   /** The owning bot (set by MemoryDbManager.for via withBot). */
@@ -169,11 +191,17 @@ export class MemoryStore {
    * of inserting.
    */
   findSimilar(content: string, embedding: Float32Array | null): MemoryItem | null {
-    if (embedding !== null) {
+    // Cosine only when THIS connection has vec0 loaded. Otherwise exact text:
+    // querying a leftover memory_vec throws "no such module: vec0".
+    if (embedding !== null && this.#vecQueryable()) {
       const best = this.#bestCosine(embedding);
       if (best !== null) return this.getItem(best);
       return null;
     }
+    return this.#exactActive(content);
+  }
+
+  #exactActive(content: string): MemoryItem | null {
     const row = this.#db
       .prepare(
         "select id from memory_items where status = 'active' and trim(content) = trim(?) order by rowid limit 1",
@@ -183,7 +211,7 @@ export class MemoryStore {
   }
 
   #bestCosine(embedding: Float32Array): string | null {
-    if (!this.#vecTableExists()) return null;
+    if (!this.#vecLoaded || !this.#vecTableExists()) return null;
     const rows = this.#db
       .prepare('select item_rowid, distance from memory_vec where embedding match ? and k = 1')
       .all(this.#toBlob(embedding)) as Array<{ item_rowid: number; distance: number }>;
@@ -389,7 +417,7 @@ export class MemoryStore {
     modelId: string,
     dim: number,
   ): Promise<'created' | 'exists' | 'recreated' | 'unavailable'> {
-    if (!(await this.#ensureVecLoaded())) return 'unavailable';
+    if (!this.#ensureVecLoaded()) return 'unavailable';
     const currentDim = this.vecDim();
     const currentModel = this.vecModelId();
     if (this.#vecTableExists() && currentDim === dim && currentModel === modelId) {
@@ -409,7 +437,7 @@ export class MemoryStore {
   }
 
   upsertVec(itemRowid: number, embedding: Float32Array): void {
-    if (!this.#vecTableExists()) return;
+    if (!this.#vecQueryable()) return;
     this.#db.prepare('delete from memory_vec where item_rowid = ?').run(BigInt(itemRowid));
     this.#db
       .prepare('insert into memory_vec(item_rowid, embedding) values (?, ?)')
@@ -418,7 +446,7 @@ export class MemoryStore {
 
   /** KNN over memory_vec; returns item ids ordered by distance. */
   knn(query: Float32Array, k: number): MemoryItem[] {
-    if (!this.#vecTableExists()) return [];
+    if (!this.#vecQueryable()) return [];
     const rows = this.#db
       .prepare(
         `select m.* from memory_vec v join memory_items m on m.rowid = v.item_rowid
@@ -444,15 +472,44 @@ export class MemoryStore {
     return rows.map((row) => ({ item: rowToItem(this.#id, row), rowid: row._rowid }));
   }
 
-  async #ensureVecLoaded(): Promise<boolean> {
+  /**
+   * Loads sqlite-vec into this connection before any vec0 statement.
+   * Failure is sticky for the connection and degrades to full text; it must
+   * not escape into a conversation run.
+   */
+  #ensureVecLoaded(): boolean {
     if (this.#vecLoaded) return true;
-    // sqlite-vec ships platform loadable extensions; loading into the
-    // encrypted (chacha20) connection is verified in PROGRESS.md P07.
-    const load = await resolveVecLoader();
-    if (load === null) return false;
-    load(this.#db);
+    if (this.#vecLoadFailed) return false;
+    const load = resolveVecLoader();
+    if (load === null) {
+      this.#vecLoadFailed = true;
+      this.#noteVecUnavailable(vecLoaderError ?? new Error('sqlite-vec is not installed'));
+      return false;
+    }
+    try {
+      // Loading into the encrypted (chacha20) connection is verified in PROGRESS.md P07.
+      load(this.#db);
+    } catch (error) {
+      this.#vecLoadFailed = true;
+      this.#noteVecUnavailable(error);
+      return false;
+    }
     this.#vecLoaded = true;
     return true;
+  }
+
+  /** True only when this connection can execute vec0 SQL against memory_vec. */
+  #vecQueryable(): boolean {
+    return this.#ensureVecLoaded() && this.#vecTableExists();
+  }
+
+  #noteVecUnavailable(error: unknown): void {
+    if (vecUnavailableLogged) return;
+    vecUnavailableLogged = true;
+    this.#logger?.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'sqlite-vec unavailable; vector search falls back to full text',
+    );
   }
 
   #toBlob(vector: Float32Array): Buffer {
@@ -470,7 +527,7 @@ export class MemoryStore {
   }
 
   #deleteVecRow(id: string): void {
-    if (!this.#vecTableExists()) return;
+    if (!this.#vecQueryable()) return;
     const rowid = this.rowidOf(id);
     if (rowid === null) return;
     this.#db.prepare('delete from memory_vec where item_rowid = ?').run(BigInt(rowid));
