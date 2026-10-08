@@ -524,19 +524,28 @@ export class AgentHost {
   /**
    * A session still open in the entry's current process — kept between runs
    * or attached to a run (`busy`) — without taking a lease (P5: conversation /
-   * bot deletion closes or deletes it best effort). Null when no live process
-   * has it.
+   * bot deletion closes or deletes it best effort). Retiring processes (still
+   * serving a run after `stop()`) are searched too, so a deleted
+   * conversation's session is discarded there as well. Null when no live
+   * process has it.
    */
   openSession(agentId: string, sessionId: string): OpenAgentSession | null {
-    const live = this.#agents.get(agentId);
-    if (live === undefined || live.gone || live.init === null) return null;
-    if (!live.openSessions.has(sessionId) && !live.sessions.has(sessionId)) return null;
-    return {
-      connection: live.connection,
-      init: live.init,
-      state: live.openSessions.get(sessionId),
-      busy: live.sessions.has(sessionId),
-    };
+    const current = this.#agents.get(agentId);
+    const candidates = [
+      ...(current !== undefined ? [current] : []),
+      ...[...this.#retiring].filter((live) => live.entry.id === agentId),
+    ];
+    for (const live of candidates) {
+      if (live.gone || live.init === null) continue;
+      if (!live.openSessions.has(sessionId) && !live.sessions.has(sessionId)) continue;
+      return {
+        connection: live.connection,
+        init: live.init,
+        state: live.openSessions.get(sessionId),
+        busy: live.sessions.has(sessionId),
+      };
+    }
+    return null;
   }
 
   /** Drops a kept session from the process bookkeeping (it was closed / deleted). */
