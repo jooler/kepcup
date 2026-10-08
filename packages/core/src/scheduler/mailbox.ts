@@ -36,6 +36,8 @@ export interface TriggerBatch {
   parts?: TriggerPart[];
   /** Bot-to-bot @ chain binding (P05): stored on the created run. */
   chain?: { id: string; depth: number };
+  /** A retried failed turn (D75 审查 L6): stored on the created run. */
+  retryOf?: string;
   /**
    * Sequential group-response hint appended after the trigger segment
    * ("在你之前，X 已经回复…", docs/dev/04-agent-runtime.md "触发段").
@@ -74,20 +76,30 @@ export function triggerParts(batch: TriggerBatch): TriggerPart[] {
  * Merges the batches buffered during a turn into the next turn's one batch
  * (D75 design 30 §3.2: tasks settling together wake a single turn). Parts
  * with the same reason and attributes collapse into one; a message shows up
- * once, in the first part that carried it. The turn's reason is the first
- * user-facing part's (else the first part's); the chain binding is the first
- * chained batch's; the group-order hint is the latest one.
+ * once, in the first part that carried it, as its latest snapshot (a later
+ * batch carrying the same message — an edit notice — holds the newer text,
+ * 审查 M3). The turn's reason is the first user-facing part's (else the first
+ * part's); the chain binding is the first chained batch's; the group-order
+ * hint is the latest one.
  */
 export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
   const first = batches[0];
   if (first === undefined) throw new Error('mergeTriggerBatches: no batches');
   if (batches.length === 1) return first;
+  const latest = new Map<string, Message>();
+  for (const batch of batches) {
+    for (const part of triggerParts(batch)) {
+      for (const message of part.messages) latest.set(message.id, message);
+    }
+  }
   const seen = new Set<string>();
   const parts: TriggerPart[] = [];
   const partByKey = new Map<string, TriggerPart>();
   for (const batch of batches) {
     for (const part of triggerParts(batch)) {
-      const fresh = part.messages.filter((message) => !seen.has(message.id));
+      const fresh = part.messages
+        .filter((message) => !seen.has(message.id))
+        .map((message) => latest.get(message.id) ?? message);
       if (fresh.length === 0) continue;
       for (const message of fresh) seen.add(message.id);
       const key = `${part.reason}\u0000${JSON.stringify(part.extraAttributes ?? {})}`;
@@ -107,19 +119,77 @@ export function mergeTriggerBatches(batches: TriggerBatch[]): TriggerBatch {
   }
   const primary = parts.find((part) => isUserFacingReason(part.reason)) ?? parts[0];
   const chain = batches.find((batch) => batch.chain !== undefined)?.chain;
+  const retryOf = batches.find((batch) => batch.retryOf !== undefined)?.retryOf;
   const afterNote = [...batches].reverse().find((batch) => batch.afterNote !== undefined)?.afterNote;
   return {
-    conversationId: first.conversationId,
-    botId: first.botId,
+    ...batchFromParts(first, parts, primary?.reason ?? first.reason),
+    ...(chain !== undefined ? { chain } : {}),
+    ...(retryOf !== undefined ? { retryOf } : {}),
+    ...(afterNote !== undefined ? { afterNote } : {}),
+  };
+}
+
+/** A batch made of `parts` (one part = a plain batch, no `parts` field). */
+function batchFromParts(
+  base: Pick<TriggerBatch, 'conversationId' | 'botId'>,
+  parts: TriggerPart[],
+  reason: TriggerReason,
+): TriggerBatch {
+  return {
+    conversationId: base.conversationId,
+    botId: base.botId,
     messages: parts.flatMap((part) => part.messages).sort((a, b) => a.seq - b.seq),
-    reason: primary?.reason ?? first.reason,
+    reason,
     ...(parts.length > 1 ? { parts } : {}),
     ...(parts.length === 1 && parts[0]?.extraAttributes !== undefined
       ? { extraAttributes: parts[0].extraAttributes }
       : {}),
-    ...(chain !== undefined ? { chain } : {}),
-    ...(afterNote !== undefined ? { afterNote } : {}),
   };
+}
+
+/**
+ * The batch with every message re-read (`lookup`, the database) as the turn
+ * begins (审查 M3): edits made while it waited show their latest text,
+ * recalled or deleted messages drop out (parts left empty go too). Keeps the
+ * chain binding and the group-order hint; null = no trigger message is left.
+ */
+export function refreshTriggerBatch(
+  batch: TriggerBatch,
+  lookup: (id: string) => Message | null,
+): TriggerBatch | null {
+  const parts: TriggerPart[] = [];
+  for (const part of triggerParts(batch)) {
+    const messages = part.messages
+      .map((message) => lookup(message.id))
+      .filter((message): message is Message => message !== null && message.status !== 'recalled');
+    if (messages.length === 0) continue;
+    parts.push({
+      reason: part.reason,
+      messages,
+      ...(part.extraAttributes !== undefined ? { extraAttributes: part.extraAttributes } : {}),
+    });
+  }
+  if (parts.length === 0) return null;
+  const primary = parts.find((part) => isUserFacingReason(part.reason)) ?? parts[0];
+  return {
+    ...batchFromParts(batch, parts, primary?.reason ?? batch.reason),
+    ...(batch.chain !== undefined ? { chain: batch.chain } : {}),
+    ...(batch.retryOf !== undefined ? { retryOf: batch.retryOf } : {}),
+    ...(batch.afterNote !== undefined ? { afterNote: batch.afterNote } : {}),
+  };
+}
+
+/** The batch's parts as stored on its turn's run (`trigger_parts_json`, 审查 L3). */
+export function storedTriggerParts(batch: TriggerBatch): Array<{
+  reason: TriggerReason;
+  messageIds: string[];
+  extraAttributes?: Record<string, string | number>;
+}> {
+  return triggerParts(batch).map((part) => ({
+    reason: part.reason,
+    messageIds: part.messages.map((message) => message.id),
+    ...(part.extraAttributes !== undefined ? { extraAttributes: part.extraAttributes } : {}),
+  }));
 }
 
 export interface MailboxHooks {
@@ -193,6 +263,14 @@ export class Mailbox {
       extraAttributes: { event: 'message_edited' },
     });
     return true;
+  }
+
+  /**
+   * Hands over the batches buffered so far (the running turn absorbs them as
+   * it begins executing, 审查 M1): they will not start another turn.
+   */
+  takeBuffered(): TriggerBatch[] {
+    return this.#buffer.splice(0);
   }
 
   /**
