@@ -163,6 +163,11 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 
 **硬次序约束（W4 审查 M1，W2 必须遵守）**：调度器对外部 Agent（`agent:*`）的任务不留回复名额、回复也不能借名额（`scheduler.ts` `#runnable`），前提是对话轮固定内置引擎（§8.1）。W2 落地前外部 Agent Bot 的响应 run 仍走 `agent:*`——上限 1 的 Agent 上一个任务会让该 Agent 的回复饿死数小时。目前不可达（`start_task` 尚未注册进任何工具面），因此 **`start_task` 注册与「对话轮 = 内置引擎」必须在 W2 的同一变更里落地**；以后若有对话轮再跑在 Agent 上（设计 30 §8.4 经 `complete()` 的降级），须恢复 Agent provider 的回复保留名额。
 
+### W2 审查修复（`t/d75-fixd`，2026-10-08）
+
+- **迁移号**：本轮新增 main `0020_usage_turn_loop_type.sql`（usage_ledger 的 `'response'` → `'turn'`，审查 H1）与 runs `0008_turn_trigger.sql`（`trigger_parts_json` / `retry_of_run_id`，审查 L3 / L6）。D73 原预留的 main `0018`–`0020` 现已全部被 D75 占用（0018 task_events、0019 agent_sessions 按任务、0020 本条），D73 开工时 main 从 `0021` 起、runs 从 `0009` 起顺延（按其方案「号以目录实况为准」）。
+- 消费规则、对话轮不等用户、群聊判断超时的细化见 DEV-014；`create_skill` 留在对话轮见 DEV-013。
+
 ## 6. 基线
 
 容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。
