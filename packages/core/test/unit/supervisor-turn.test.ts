@@ -4,6 +4,7 @@ import {
   Mailbox,
   MailboxRegistry,
   mergeTriggerBatches,
+  refreshTriggerBatch,
   type TriggerBatch,
 } from '../../src/scheduler/mailbox.js';
 import { buildTasksSegment } from '../../src/agent/context/tasks-segment.js';
@@ -141,6 +142,63 @@ describe('mergeTriggerBatches', () => {
     expect(merged.parts).toBeUndefined();
     expect(merged.reason).toBe('task');
     expect(merged.messages).toHaveLength(2);
+  });
+});
+
+describe('edits reach the next turn as their latest snapshot (审查 M3)', () => {
+  it('an edit of a buffered message the running turn never saw: the next turn gets the edited text once', () => {
+    const started: TriggerBatch[] = [];
+    const mailbox = new Mailbox('k', { startRun: (b) => (started.push(b), `run_${started.length}`) });
+    mailbox.deliver(batch('direct', [message('正在处理的')]));
+    const original = message('原文');
+    mailbox.deliver(batch('direct', [original]));
+    const edited = { ...original, content: { text: '改过的原文' }, status: 'edited' } as Message;
+    // editMessage: no running turn saw it → a fresh message_edited trigger (buffered).
+    mailbox.deliver(batch('event', [edited], { extraAttributes: { event: 'message_edited' } }));
+    mailbox.release();
+    const next = started[1]!;
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0]!.content).toEqual({ text: '改过的原文' });
+    expect(next.reason).toBe('direct');
+  });
+
+  it('two edits of a message the running turn saw: the next turn gets the second one', () => {
+    const started: TriggerBatch[] = [];
+    const mailbox = new Mailbox('k', { startRun: (b) => (started.push(b), `run_${started.length}`) });
+    const seen = message('第一版');
+    mailbox.deliver(batch('direct', [seen]));
+    const v2 = { ...seen, content: { text: '第二版' }, status: 'edited' } as Message;
+    const v3 = { ...seen, content: { text: '第三版' }, status: 'edited' } as Message;
+    mailbox.bufferMessageEdit({ conversationId: 'conv_1', botId: 'bot_1', message: v2 });
+    mailbox.bufferMessageEdit({ conversationId: 'conv_1', botId: 'bot_1', message: v3 });
+    mailbox.release();
+    expect(started[1]!.messages.map((m) => m.content)).toEqual([{ text: '第三版' }]);
+    expect(started[1]).toMatchObject({ reason: 'event', extraAttributes: { event: 'message_edited' } });
+  });
+
+  it('refreshTriggerBatch re-reads every message, drops recalled ones and empty parts', () => {
+    const a = message('a');
+    const b = message('b');
+    const r = message('结果', { kind: 'task_event', taskId: 'run_t', ownerBotId: 'bot_1' } as Partial<Message>);
+    const merged = mergeTriggerBatches([batch('direct', [a, b]), batch('task', [r])]);
+    const db = new Map<string, Message>([
+      [a.id, { ...a, content: { text: 'a（已改）' }, status: 'edited' } as Message],
+      [b.id, { ...b, status: 'recalled' } as Message],
+      [r.id, r],
+    ]);
+    const refreshed = refreshTriggerBatch(merged, (id) => db.get(id) ?? null)!;
+    expect(refreshed.messages.map((m) => m.id)).toEqual([a.id, r.id]);
+    expect(refreshed.messages[0]!.content).toEqual({ text: 'a（已改）' });
+    expect(refreshed.parts?.map((p) => p.reason)).toEqual(['direct', 'task']);
+    // Only recalled messages left in a part: the part goes; nothing left: null.
+    const onlyB = refreshTriggerBatch(batch('direct', [b]), (id) => db.get(id) ?? null);
+    expect(onlyB).toBeNull();
+    const withoutDirect = refreshTriggerBatch(
+      mergeTriggerBatches([batch('direct', [b]), batch('task', [r])]),
+      (id) => db.get(id) ?? null,
+    )!;
+    expect(withoutDirect).toMatchObject({ reason: 'task', messages: [r] });
+    expect(withoutDirect.parts).toBeUndefined();
   });
 });
 

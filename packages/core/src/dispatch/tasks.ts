@@ -396,9 +396,30 @@ export class TaskHost implements TaskToolFacade {
     if (title.length === 0 || instruction.length === 0) {
       throw new AppError('INVALID_INPUT', 'title 与 instruction 不能为空');
     }
-    const startedThisTurn = this.#deps.runs
-      .listTasks({ conversationId, botId })
-      .filter((task) => task.originRunId === identity.runId).length;
+    const ownTasks = this.#deps.runs.listTasks({ conversationId, botId });
+    // A retried turn (审查 L6: e.g. it failed on TURN_MAX_TURNS after its
+    // start_task calls) does not start again what the turn it re-runs already
+    // started: the same title from a turn of its retry chain is that task —
+    // unless that one ended without a result (failed / cancelled / interrupted).
+    const retried = this.#retryChain(identity.runId);
+    if (retried.length > 0) {
+      const existing = ownTasks.find(
+        (task) =>
+          task.originRunId !== null &&
+          retried.includes(task.originRunId) &&
+          (task.taskTitle ?? '').trim() === title &&
+          (!isTerminalStatus(task.status) || task.status === 'completed'),
+      );
+      if (existing !== undefined) {
+        return {
+          taskId: existing.id,
+          state: existing.status === 'queued' ? 'submitted' : taskState(existing.status),
+          queueReason: existing.status === 'queued' ? this.#queueReason(existing) : null,
+          alreadyStarted: true,
+        };
+      }
+    }
+    const startedThisTurn = ownTasks.filter((task) => task.originRunId === identity.runId).length;
     if (startedThisTurn >= this.#limits.perTurn) {
       throw new AppError(
         'TASK_LIMIT_REACHED',
@@ -704,23 +725,6 @@ export class TaskHost implements TaskToolFacade {
   }
 
   /**
-   * A turn did not see these results after all (an external agent refused the
-   * steer that carried them after its run already marked them consumed): the
-   * consumption is undone so a crash before the re-delivered batch is consumed
-   * cannot lose them (§3.2 — at-least-once). The re-delivery is the caller's.
-   */
-  reopenConsumption(taskIds: Iterable<string>): void {
-    const now = this.#deps.clock.now();
-    for (const taskId of new Set(taskIds)) {
-      const task = this.#deps.runs.get(taskId);
-      if (task === null || task.loopType !== 'task' || task.resultConsumedAt === null) continue;
-      this.#deps.runs.update(taskId, { resultConsumedAt: null });
-      // Delivered just now (by the caller): the reconciliation waits for it.
-      this.#pendingConsumption.set(taskId, now);
-    }
-  }
-
-  /**
    * Retries a failed task (design 30 §7.5: after the setup it failed on is
    * completed — the setup card's automatic retry): a new task continuing it
    * (`continues_task_id`) with the same brief, source messages and pre-start
@@ -997,6 +1001,17 @@ export class TaskHost implements TaskToolFacade {
   }
 
   // --- internals --------------------------------------------------------------
+
+  /** The turns `runId` re-runs (its retry chain, nearest first; [] = not a retry). */
+  #retryChain(runId: string): string[] {
+    const chain: string[] = [];
+    let current = this.#deps.runs.retryOfRunId(runId);
+    while (current !== null && !chain.includes(current) && chain.length < 16) {
+      chain.push(current);
+      current = this.#deps.runs.retryOfRunId(current);
+    }
+    return chain;
+  }
 
   #scope(identity: RunIdentity): { botId: string; conversationId: string } {
     if (identity.botId === null || identity.conversationId === null) {

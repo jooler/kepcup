@@ -40,6 +40,11 @@ export interface StartTaskResult {
   state: TaskState;
   /** Why a submitted task waits (concurrency / write lease); null otherwise. */
   queueReason: string | null;
+  /**
+   * The turn being retried had already started this very task (审查 L6): it
+   * is returned instead of a duplicate.
+   */
+  alreadyStarted?: boolean;
 }
 
 export interface InjectTaskInput {
@@ -212,8 +217,9 @@ export function buildTaskTools(input: {
             ? { continuesTaskId: params.continues_task_id.trim() }
             : {}),
         });
-        const line =
-          started.state === 'running'
+        const line = started.alreadyStarted
+          ? `任务 ${started.taskId} 在被重试的上一轮里已经派出过（${started.state}），没有重复派出。`
+          : started.state === 'running'
             ? `已派出任务 ${started.taskId}，正在执行。`
             : started.state === 'submitted'
               ? `已派出任务 ${started.taskId}，排队中：${started.queueReason ?? '等待启动'}。`

@@ -88,8 +88,12 @@ import {
   isUserFacingReason,
   Mailbox,
   MailboxRegistry,
+  mergeTriggerBatches,
+  refreshTriggerBatch,
+  storedTriggerParts,
   triggerParts,
   type TriggerBatch,
+  type TriggerPart,
 } from '../scheduler/mailbox.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -1143,22 +1147,42 @@ export class Orchestrator {
     // D75 §7.5: a task is not a mailbox run — retrying it (the setup card,
     // after the setup it failed on is done) starts a new task continuing it.
     if (original.loopType === 'task') return this.#taskHost.retry(original.id);
-    const triggerMessages = original.triggerMessageIds
-      .map((id) => this.#deps.messages.getById(id))
-      .filter((m): m is Message => m !== null && m.status !== 'recalled');
-    if (triggerMessages.length === 0) {
+    // The trigger as the failed turn had it: each source part with its own
+    // reason / attributes (审查 L3), messages re-read (recalled ones dropped).
+    const lookup = (id: string): Message | null => this.#deps.messages.getById(id);
+    const stored = this.#deps.runs.triggerPartsOf(original.id) ?? [
+      {
+        reason: (original.triggerReason ?? 'direct') as TriggerBatch['reason'],
+        messageIds: original.triggerMessageIds,
+      },
+    ];
+    const parts: TriggerPart[] = stored.map((part) => ({
+      reason: part.reason as TriggerBatch['reason'],
+      messages: part.messageIds
+        .map(lookup)
+        .filter((message): message is Message => message !== null),
+      ...(part.extraAttributes !== undefined ? { extraAttributes: part.extraAttributes } : {}),
+    }));
+    const rebuilt = refreshTriggerBatch(
+      {
+        conversationId: original.conversationId,
+        botId: original.botId,
+        messages: parts.flatMap((part) => part.messages),
+        reason: (original.triggerReason ?? 'direct') as TriggerBatch['reason'],
+        parts,
+        // 审查 L6: tasks the failed turn already started are not started again.
+        retryOf: original.id,
+      },
+      lookup,
+    );
+    if (rebuilt === null) {
       throw new AppError('INVALID_INPUT', '原始触发消息已不存在，无法重试');
     }
     const conv = this.#deps.conversations.getOrThrow(original.conversationId);
     if (conv.readOnly) throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     const mailbox = this.#mailboxes.for(original.botId, original.conversationId);
     const wasRunning = mailbox.isRunning;
-    mailbox.deliver({
-      conversationId: original.conversationId,
-      botId: original.botId,
-      messages: triggerMessages,
-      reason: (original.triggerReason ?? 'direct') as TriggerBatch['reason'],
-    });
+    mailbox.deliver(rebuilt);
     if (wasRunning) return null;
     const created = this.#latestRunId(original.conversationId, original.botId);
     return created !== null ? this.#deps.runs.get(created) : null;
@@ -1753,6 +1777,9 @@ export class Orchestrator {
       loopType: 'turn',
       triggerReason: batch.reason,
       triggerMessageIds: batch.messages.map((m) => m.id),
+      // Each source part keeps its reason / attributes for a retry (审查 L3).
+      triggerParts: storedTriggerParts(batch),
+      ...(batch.retryOf !== undefined ? { retryOfRunId: batch.retryOf } : {}),
       ...(batch.chain !== undefined
         ? { chainId: batch.chain.id, chainDepth: batch.chain.depth }
         : {}),
@@ -2466,7 +2493,7 @@ export class Orchestrator {
    * only at the points branching on `exec.kind`.
    */
   async #executeRun(runId: string, exec: RunExecution): Promise<void> {
-    const { batch } = exec;
+    let { batch } = exec;
     const isTask = exec.kind === 'task';
     const loopType = isTask ? ('task' as const) : ('turn' as const);
     const { runs, messages } = this.#deps;
@@ -2496,7 +2523,18 @@ export class Orchestrator {
     let agentPromptSent = false;
     /** The engine run once started: a crash after this point must stop it (审查 L8). */
     let startedHandle: RunHandle | null = null;
+    /**
+     * A turn handled its trigger (审查 M2): its engine run started, the §8.4
+     * downgrade routed it, or it failed on a missing setup whose completion
+     * retries this very trigger. Only then may its task results be consumed.
+     */
+    let handled = false;
     try {
+      if (exec.kind === 'turn') {
+        // 审查 M1: deliveries of the same tick (a reconciliation burst, tasks
+        // settling together) reach the mailbox buffer first …
+        await Promise.resolve();
+      }
       if (
         exec.kind === 'task'
           ? exec.control.signal.aborted
@@ -2504,6 +2542,19 @@ export class Orchestrator {
       ) {
         settle('cancelled', null);
         return;
+      }
+      if (exec.kind === 'turn') {
+        // … then the turn takes everything buffered for its mailbox so far and
+        // re-reads its messages: one turn sees it all (latest edits, no
+        // recalled messages), and nothing in its context triggers the next
+        // turn again. The context below is built synchronously from here on,
+        // so no batch can be buffered in between.
+        const absorbed = this.#absorbIntoTurn(runId, batch);
+        if (absorbed === null) {
+          settle('cancelled', null);
+          return;
+        }
+        batch = absorbed;
       }
 
       const bot = this.#deps.bots.get(batch.botId);
@@ -2548,10 +2599,13 @@ export class Orchestrator {
         // has an external agent as its task engine — routing is deterministic.
         runs.update(runId, { status: 'running', engine: BUILTIN_ENGINE });
         this.#deps.publish('run.status', { run: runs.getOrThrow(runId) });
+        handled = true;
         this.#routeWithoutModel(runId, batch, bot);
         settle('completed', null);
         return;
       } else if (modelRef.length === 0) {
+        // The setup card retries this trigger once a model is configured.
+        handled = true;
         settle('failed', '未配置模型：请在设置页选择默认主模型或在 Bot 配置中指定', {
           kind: 'main-model',
         });
@@ -3088,6 +3142,7 @@ export class Orchestrator {
       });
 
       startedHandle = handle;
+      handled = true;
       let unsubscribeSteerConfirm: () => void = () => {};
       if (exec.kind === 'task') {
         // D75: tasks are not mailbox runs — steering a task is inject_task,
@@ -3305,7 +3360,7 @@ export class Orchestrator {
         exec.control.finish();
       } else {
         // Consumption, mailbox, group-turn and D71 bookkeeping belong to turns.
-        this.#releaseTurnMailbox(batch);
+        this.#releaseTurnMailbox(runId, batch, handled);
       }
       this.#publishConversation(batch.conversationId);
     }
@@ -3406,19 +3461,52 @@ export class Orchestrator {
   }
 
   /**
-   * Turn epilogue (#executeRun finally, the turn is terminal): the task
-   * results its trigger carried are consumed (§3.2 — skip_reply, failed and
-   * cancelled turns included; a crash before this leaves them unconsumed for
-   * the reconciliation to re-deliver), then the mailbox releases — batches
-   * buffered meanwhile start the next turn — and the group-turn / D71 idle
-   * hooks run.
+   * A turn begins executing (审查 M1 / M3): batches buffered for its mailbox
+   * since it was created (it may have queued behind busy provider slots) join
+   * its trigger, and every trigger message is re-read — the latest edit, no
+   * recalled message. The run row follows. Null = no trigger message is left.
    */
-  #releaseTurnMailbox(batch: TriggerBatch): void {
+  #absorbIntoTurn(runId: string, batch: TriggerBatch): TriggerBatch | null {
+    const buffered = this.#mailboxes.get(batch.botId, batch.conversationId)?.takeBuffered() ?? [];
+    const merged = buffered.length > 0 ? mergeTriggerBatches([batch, ...buffered]) : batch;
+    const refreshed = refreshTriggerBatch(merged, (id) => this.#deps.messages.getById(id));
+    if (refreshed === null) return null;
+    const before = batch.messages.map((message) => message.id).join(',');
+    const after = refreshed.messages.map((message) => message.id).join(',');
+    if (buffered.length > 0 || before !== after) {
+      const run = this.#deps.runs.setTrigger(runId, {
+        reason: refreshed.reason,
+        messageIds: refreshed.messages.map((message) => message.id),
+        parts: storedTriggerParts(refreshed),
+        retryOfRunId: refreshed.retryOf ?? null,
+      });
+      this.#deps.publish('run.status', { run });
+    }
+    return refreshed;
+  }
+
+  /**
+   * Turn epilogue (#executeRun finally, the turn is terminal): the task
+   * results its trigger carried are consumed (§3.2), then the mailbox
+   * releases — batches buffered meanwhile start the next turn — and the
+   * group-turn / D71 idle hooks run.
+   *
+   * Consumption (审查 M2) needs a turn that handled its trigger (`handled`:
+   * its engine run started, the §8.4 downgrade routed it, or a missing-setup
+   * failure whose setup card retries it) AND ended `completed` or `failed`
+   * (skip_reply included). A turn cancelled before it started, dropped as
+   * inactive / read-only, cancelled by the user or the update gate, or
+   * interrupted leaves its results unconsumed: the reconciliation re-delivers
+   * them (at-least-once). A crash before this point does the same.
+   */
+  #releaseTurnMailbox(runId: string, batch: TriggerBatch, handled: boolean): void {
     const taskIds = new Set<string>();
     for (const message of batch.messages) {
       if (message.kind === 'task_event' && message.taskId !== null) taskIds.add(message.taskId);
     }
-    if (taskIds.size > 0) {
+    const status = this.#deps.runs.get(runId)?.status;
+    const consume = handled && (status === 'completed' || status === 'failed');
+    if (taskIds.size > 0 && consume) {
       try {
         this.#taskHost.markConsumed(taskIds);
       } catch (error) {
