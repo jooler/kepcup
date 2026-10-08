@@ -146,4 +146,4 @@
   4. 等 ZCode 提供 ACP 或在 app-server 中支持 CLI 凭据（standalone 账号源）后重新评估。
 - 推荐：1，并跟踪 4。
 - 决定：按用户既定原则（「ZCode 评估不能完整覆盖即放弃」）放弃。
-- 已更新的文档：design/28 §9.2（ZCode 行）、todo/acp-external-agents.md §8.1 / §8.4 / 附录 A.1（补充核对结论）。
+- 已更新的文档：design/28 §9.2（ZCode 行）、design/28 第 16 行（本期 Agent 列表）、design/README.md（28 行与 D72 行）、design/09-tech-stack.md（外部智能体引擎行）、todo/acp-external-agents.md §8.1 / §8.4 / 附录 A.1（补充核对结论）。

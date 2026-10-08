@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import {
   AGENT_BRIDGE_TOOL_DETACH_MS,
   AGENT_CANCEL_GRACE_MS,
+  AGENT_FOLLOW_UP_MIN_MS,
   AGENT_RUN_TIMEOUT_MS,
+  AGENT_SESSION_CALL_TIMEOUT_MS,
   AGENT_TURN_BUDGET_TOKENS,
   AppError,
   findAgentEntry,
@@ -102,6 +104,10 @@ export interface ExternalAgentEngineDeps {
   logger: CoreLogger;
   runTimeoutMs?: number;
   cancelGraceMs?: number;
+  /** Bound of one session-setup call (set_mode / set_config_option). */
+  sessionCallTimeoutMs?: number;
+  /** Minimum budget of a follow-up prompt near / past the run deadline. */
+  followUpMinMs?: number;
 }
 
 export class ExternalAgentEngine implements AgentEngine {
@@ -125,6 +131,11 @@ export class ExternalAgentEngine implements AgentEngine {
         if (invalid) notifyInvalidated(this.#control, agentId, sessionId);
       }
     });
+    // Out-of-run mode updates drop a kept session only when they leave its
+    // expected mode (P5-2 复审 #5).
+    deps.host.setKeptSessionGuard?.((state, update) =>
+      keptSessionDeviates(state as KeptSession | undefined, update),
+    );
   }
 
   /**
@@ -556,6 +567,29 @@ interface KeptSession {
   usage: UsageTotals | null;
 }
 
+/**
+ * Whether a mode / config update for a kept session (no run attached) leaves
+ * the mode its last run left it in (P5-2 复审 #5). Mirrors the in-run guard
+ * (`#onModeUpdate` / `#onConfigOptionUpdate`): no expectation → no deviation.
+ */
+function keptSessionDeviates(kept: KeptSession | undefined, update: AcpSessionUpdate): boolean {
+  if (kept === undefined) return true;
+  if (update.sessionUpdate === 'current_mode_update') {
+    return kept.expectedMode !== null && update.currentModeId !== kept.expectedMode;
+  }
+  if (update.sessionUpdate === 'config_option_update') {
+    const expected = kept.expectedModeOption;
+    if (expected === null) return false;
+    const option = update.configOptions.find((candidate) => candidate.id === expected.id);
+    return (
+      option !== undefined &&
+      typeof option.currentValue === 'string' &&
+      option.currentValue !== expected.value
+    );
+  }
+  return false;
+}
+
 /** Engine-wide session bookkeeping shared by the run handles. */
 interface SessionControl {
   /** Sessions to discard when the run using them releases (deleted meanwhile). */
@@ -662,8 +696,16 @@ class ExternalRunHandle implements RunHandle {
   /** The reused session's kept state (mode `reused`). */
   #kept: KeptSession | null = null;
   #optionsHash = '';
-  /** The session must not be reused (timeout, unresponsive agent, broken setup). */
+  /**
+   * The session must not be continued — not kept, its `agent_sessions` row
+   * dropped (no resume / load either): run timeout, an agent ignoring
+   * session/cancel or a setup call, mode fights, a failure of the live agent
+   * after the session existed. Not set when the agent process is gone
+   * (`#hostGone`): that session is resumed / loaded next time (P5-2 复审 #1).
+   */
   #poisoned = false;
+  /** The agent process / connection went away under this run (crash, exit). */
+  #hostClosed = false;
   /** Tier / model applied (or re-confirmed on reuse): only then is the session kept. */
   #tierApplied = false;
   /** A prompt was really sent on the session. */
@@ -672,6 +714,8 @@ class ExternalRunHandle implements RunHandle {
   #sinkObj: SessionSink | null = null;
   /** Background bridge calls are aborted at the run deadline (审查 #4). */
   readonly #detachedAbort = new AbortController();
+  /** The run deadline passed while waiting: one last follow-up, then settle (复审 #4). */
+  #deadlinePassed = false;
   readonly #startedAt = Date.now();
   /** Cumulative usage baseline of the session (null = unknown). */
   #sessionUsage: UsageTotals | null = null;
@@ -822,9 +866,12 @@ class ExternalRunHandle implements RunHandle {
       phase = 'prompt';
       let response = await this.#prompt(connection, opened.sessionId, prompt);
       // Background bridge results / late steers: follow-up prompts in the
-      // same run and session (P5).
+      // same run and session (P5). Past the run deadline only the one
+      // follow-up reporting the timed-out calls is sent (复审 #4).
+      let lastFollowUp = false;
       while (
         response.stopReason === 'end_turn' &&
+        !lastFollowUp &&
         !this.#aborted &&
         !this.#resolved &&
         this.#terminated === null &&
@@ -835,8 +882,10 @@ class ExternalRunHandle implements RunHandle {
         for (const event of this.#mapper.finishInterim()) this.emit(event);
         await this.#awaitDetached();
         if (this.#aborted || this.#resolved) break;
+        lastFollowUp = this.#deadlinePassed || Date.now() >= this.#runDeadline();
         const results = this.#detachedResults.splice(0);
-        const late = this.#queuedSteers.splice(0);
+        // After the deadline late steers are handed back (#release), not answered.
+        const late = lastFollowUp ? [] : this.#queuedSteers.splice(0);
         // Woken with nothing to report (e.g. a steer handed back meanwhile).
         if (results.length === 0 && late.length === 0) continue;
         prompt = [{ type: 'text', text: followUpText(results, late) }];
@@ -861,8 +910,14 @@ class ExternalRunHandle implements RunHandle {
       this.#settle(this.#outcomeOf(response.stopReason, finalText));
     } catch (error) {
       // A session that failed half-way (tier refused, prompt error, timeout)
-      // is not reused.
-      if (this.#sessionId !== null && !this.#aborted && this.#terminated === null) {
+      // is not reused — unless its process died: the session itself is fine
+      // and is resumed / loaded by the next run (复审 #1).
+      if (
+        this.#sessionId !== null &&
+        !this.#aborted &&
+        this.#terminated === null &&
+        !this.#hostGone()
+      ) {
         this.#poisoned = true;
       }
       const appError = toAgentError(
@@ -937,17 +992,37 @@ class ExternalRunHandle implements RunHandle {
         kept.sessionKey === external.sessionKey
       ) {
         // Busy sessions are never handed to another run (审查 #1): taken out of
-        // the process's kept set, put back on release.
+        // the process's kept set, put back on release. From here on the
+        // session is this run's before anything is awaited (复审 #2): attached
+        // (the host reports it busy, a discard waits for the release) and
+        // `#sessionId` set — any failure releases it through #release (closed
+        // + invalidated, its token revoked).
         lease.forgetSession(reuseId);
-        if (await this.#reconfirmModes(lease, reuseId, kept)) {
-          this.#kept = kept;
-          this.#attachBridge(entry, provider, lease.init, acceptsImages, serverName, kept.bridge);
+        this.#sessionId = reuseId;
+        this.#kept = kept;
+        this.#attachBridge(entry, provider, lease.init, acceptsImages, serverName, kept.bridge);
+        this.#sinkObj = this.#sink(this.#bridge?.session ?? null);
+        lease.attach(reuseId, this.#sinkObj);
+        const confirmed = await this.#reconfirmModes(lease, reuseId, kept);
+        if (this.#resolved) throw new AppError('AGENT_FAILED', '执行已结束');
+        if (confirmed) {
           return { sessionId: reuseId, mode: 'reused', modes: null, configOptions: [] };
         }
-        // The agent refused to go back to the tier's mode: never continue it.
+        // The agent refused to go back to the tier's mode: never continue it;
+        // this run starts a new session instead.
+        lease.detach(reuseId, this.#sinkObj);
+        this.#sinkObj = null;
+        this.#sessionId = null;
+        this.#kept = null;
+        if (this.#bridge !== null) {
+          this.#deps.bridge?.unbindRun(this.#bridge.sessionKey, spec.identity.runId);
+          this.#bridge = null;
+        }
         if (kept.bridge !== null) this.#deps.bridge?.revoke(kept.sessionKey, kept.bridge.token);
-        void this.#closeSession(lease, reuseId, false);
-        notifyInvalidated(this.#control, external.agentId, reuseId);
+        const discard = this.#control.discardOnRelease.get(reuseId);
+        this.#control.discardOnRelease.delete(reuseId);
+        void this.#closeSession(lease, reuseId, discard?.deleteHistory === true);
+        if (discard === undefined) notifyInvalidated(this.#control, external.agentId, reuseId);
       } else if (kept !== undefined) {
         // Kept but no longer matching (or deleted meanwhile): close it.
         lease.forgetSession(reuseId);
@@ -1104,24 +1179,36 @@ class ExternalRunHandle implements RunHandle {
    * A reused session goes back to the tier's mode before its prompt
    * (idempotent `set_mode` / `set_config_option`, 审查 #1): whatever happened
    * to it between runs, the run starts in the expected mode. False = the
-   * agent refused — the session is dropped and a new one created.
+   * agent refused — the session is dropped and a new one created; no answer
+   * in time throws (the run fails, the session is poisoned).
    */
   async #reconfirmModes(lease: AgentLease, sessionId: string, kept: KeptSession): Promise<boolean> {
     try {
       if (kept.expectedMode !== null) {
         if (isForbiddenAgentMode(kept.expectedMode, lease.provider)) return false;
-        await lease.connection.setMode(sessionId, kept.expectedMode);
+        await this.#sessionCall(lease.connection.setMode(sessionId, kept.expectedMode));
       }
       if (kept.expectedModeOption !== null) {
         if (isForbiddenAgentMode(kept.expectedModeOption.value, lease.provider)) return false;
-        await lease.connection.setConfigOption(
-          sessionId,
-          kept.expectedModeOption.id,
-          kept.expectedModeOption.value,
+        await this.#sessionCall(
+          lease.connection.setConfigOption(
+            sessionId,
+            kept.expectedModeOption.id,
+            kept.expectedModeOption.value,
+          ),
         );
       }
       return true;
     } catch (error) {
+      // The run ended meanwhile (cancelled, agent gone) or the agent did not
+      // answer (poisoned by start(), 复审 #10): not a refusal — no new session.
+      if (
+        this.#resolved ||
+        this.#toolAbort.signal.aborted ||
+        (error instanceof AppError && error.code === 'TIMEOUT')
+      ) {
+        throw error;
+      }
       this.#warn(
         {
           runId: this.#spec.identity.runId,
@@ -1141,6 +1228,15 @@ class ExternalRunHandle implements RunHandle {
     prompt: AcpContentBlock[],
   ): Promise<AcpPromptResponse> {
     this.#phase = 'prompting';
+    // The first prompt gets the whole run timeout; a follow-up what is left
+    // of it, at least the follow-up minimum (复审 #4).
+    const timeoutMs = this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS;
+    const budgetMs = this.#prompted
+      ? Math.max(
+          Math.min(this.#deps.followUpMinMs ?? AGENT_FOLLOW_UP_MIN_MS, timeoutMs),
+          this.#runDeadline() - Date.now(),
+        )
+      : timeoutMs;
     if (!this.#prompted) {
       this.#prompted = true;
       this.#spec.external?.onPromptSent?.();
@@ -1148,7 +1244,7 @@ class ExternalRunHandle implements RunHandle {
     const prompting = this.#control.prompting;
     prompting.set(sessionId, (prompting.get(sessionId) ?? 0) + 1);
     try {
-      const response = await this.#withRunTimeout(connection.prompt(sessionId, prompt));
+      const response = await this.#withRunTimeout(connection.prompt(sessionId, prompt), budgetMs);
       this.#recordUsage(response);
       return response;
     } finally {
@@ -1238,12 +1334,13 @@ class ExternalRunHandle implements RunHandle {
   async #awaitDetached(): Promise<void> {
     if (this.#detachedPending.size === 0 || this.#aborted || this.#resolved) return;
     if (this.#queuedSteers.length > 0) return;
-    const deadline = this.#startedAt + (this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS);
+    const deadline = this.#runDeadline();
     let timer: NodeJS.Timeout | null = null;
     await new Promise<void>((resolve) => {
       this.#detachedWaiter = resolve;
       timer = setTimeout(
         () => {
+          this.#deadlinePassed = true;
           this.#detachedAbort.abort();
           for (const [, toolName] of this.#detachedPending) {
             this.#detachedResults.push({
@@ -1261,6 +1358,11 @@ class ExternalRunHandle implements RunHandle {
       timer.unref?.();
     });
     if (timer !== null) clearTimeout(timer);
+  }
+
+  /** The run's own deadline: AGENT_RUN_TIMEOUT_MS from its start (审查 #4). */
+  #runDeadline(): number {
+    return this.#startedAt + (this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS);
   }
 
   #wakeDetached(): void {
@@ -1379,6 +1481,8 @@ class ExternalRunHandle implements RunHandle {
     // Still before a follow-up of this run: answer it there.
     if (!this.#resolved && !this.#aborted && this.#phase === 'between') {
       this.#queuedSteers.push(text);
+      // Waiting for background tools: answer it now (复审 #3).
+      this.#wakeDetached();
       return;
     }
     this.#spec.onSteerRejected?.(text);
@@ -1446,6 +1550,7 @@ class ExternalRunHandle implements RunHandle {
           }
         : {}),
       onClosed: (error) => {
+        this.#hostClosed = true;
         this.#settle(
           this.#aborted
             ? this.#cancelledOutcome()
@@ -1578,7 +1683,7 @@ class ExternalRunHandle implements RunHandle {
           this.#expectedModeOption = { ...this.#expectedModeOption, value: modeId };
         }
         try {
-          await lease.connection.setMode(sessionId, modeId);
+          await this.#sessionCall(lease.connection.setMode(sessionId, modeId));
         } catch (error) {
           this.#expectedMode = previous.mode;
           this.#expectedModeOption = previous.option;
@@ -1601,7 +1706,7 @@ class ExternalRunHandle implements RunHandle {
           }
         }
         try {
-          await lease.connection.setConfigOption(sessionId, configId, value);
+          await this.#sessionCall(lease.connection.setConfigOption(sessionId, configId, value));
         } catch (error) {
           this.#expectedMode = previous.mode;
           this.#expectedModeOption = previous.option;
@@ -1752,8 +1857,15 @@ class ExternalRunHandle implements RunHandle {
         continue;
       }
       try {
-        await lease.connection.setConfigOption(sessionId, option.id, value);
+        await this.#sessionCall(lease.connection.setConfigOption(sessionId, option.id, value));
       } catch (error) {
+        // A silent agent (or the run ending) is not "option rejected".
+        if (
+          this.#toolAbort.signal.aborted ||
+          (error instanceof AppError && error.code === 'TIMEOUT')
+        ) {
+          throw error;
+        }
         this.#warn(
           {
             runId: this.#spec.identity.runId,
@@ -1766,7 +1878,43 @@ class ExternalRunHandle implements RunHandle {
     }
   }
 
-  async #withRunTimeout<T>(promise: Promise<T>): Promise<T> {
+  /**
+   * One session-setup call (set_mode / set_config_option) before the prompt,
+   * bounded (复审 #10): an agent that does not answer within
+   * AGENT_SESSION_CALL_TIMEOUT_MS fails the run (TIMEOUT → the session is
+   * poisoned, closed and the lease released), and a run cancelled meanwhile
+   * stops waiting at once — start()'s release always runs.
+   */
+  async #sessionCall<T>(promise: Promise<T>): Promise<T> {
+    const timeoutMs = this.#deps.sessionCallTimeoutMs ?? AGENT_SESSION_CALL_TIMEOUT_MS;
+    const signal = this.#toolAbort.signal;
+    let timer: NodeJS.Timeout | null = null;
+    let onAbort: (() => void) | null = null;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              new AppError(
+                'TIMEOUT',
+                `智能体「${this.#agentName}」未在 ${Math.round(timeoutMs / 1000)} 秒内应答会话设置`,
+              ),
+            );
+          }, timeoutMs);
+          timer.unref?.();
+          onAbort = () => reject(new AppError('AGENT_FAILED', '执行已结束'));
+          if (signal.aborted) onAbort();
+          else signal.addEventListener('abort', onAbort, { once: true });
+        }),
+      ]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+      if (onAbort !== null) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async #withRunTimeout<T>(promise: Promise<T>, budgetMs: number): Promise<T> {
     const timeoutMs = this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS;
     let timer: NodeJS.Timeout | null = null;
     try {
@@ -1780,7 +1928,7 @@ class ExternalRunHandle implements RunHandle {
             reject(
               new AppError('TIMEOUT', `智能体执行超时（${Math.round(timeoutMs / 60_000)} 分钟）`),
             );
-          }, timeoutMs);
+          }, budgetMs);
           timer.unref?.();
         }),
       ]);
@@ -1842,10 +1990,16 @@ class ExternalRunHandle implements RunHandle {
     if (sessionId !== null && discard !== undefined)
       this.#control.discardOnRelease.delete(sessionId);
     const reusable = this.#spec.external?.session !== undefined;
+    // The process died under the run (crash / exit): the session is gone from
+    // it — never kept, its token revoked — but its row stays and the next run
+    // resumes / loads it, unless it was poisoned for its own sake before
+    // (design 28 §7「崩溃」, 复审 #1 / #6).
+    const hostGone = this.#hostGone();
     const keep =
       lease !== null &&
       sessionId !== null &&
       reusable &&
+      !hostGone &&
       !this.#poisoned &&
       this.#tierApplied &&
       this.#prompted &&
@@ -1856,6 +2010,9 @@ class ExternalRunHandle implements RunHandle {
       // Scoped to this run / token: a later run on the same key keeps its own.
       this.#deps.bridge?.unbindRun(bound.sessionKey, this.#spec.identity.runId);
       if (!keep) this.#deps.bridge?.revoke(bound.sessionKey, bound.token);
+    } else if (!keep && this.#kept?.bridge != null) {
+      // A reused session that failed before its bridge was bound (复审 #2).
+      this.#deps.bridge?.revoke(this.#kept.sessionKey, this.#kept.bridge.token);
     }
     if (lease === null) return;
     this.#lease = null;
@@ -1873,14 +2030,20 @@ class ExternalRunHandle implements RunHandle {
         } satisfies KeptSession);
       } else {
         lease.forgetSession(sessionId);
-        void this.#closeSession(lease, sessionId, discard?.deleteHistory === true);
-        // Its agent_sessions row must not be reused / resumed either.
-        if (reusable && discard === undefined) {
+        if (!hostGone) void this.#closeSession(lease, sessionId, discard?.deleteHistory === true);
+        // Its agent_sessions row must not be reused / resumed either — except
+        // a healthy session whose process died (resumed / loaded next time).
+        if (reusable && discard === undefined && (!hostGone || this.#poisoned)) {
           notifyInvalidated(this.#control, this.#spec.external!.agentId, sessionId);
         }
       }
     }
     lease.release();
+  }
+
+  /** The agent process / connection is gone (onClosed, or seen on the connection first). */
+  #hostGone(): boolean {
+    return this.#hostClosed || this.#lease?.connection.isClosed === true;
   }
 
   /** Closes (or deletes) a session the agent supports closing; best effort. */

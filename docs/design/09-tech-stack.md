@@ -5,7 +5,7 @@
 | 层 | 选择 |
 |---|---|
 | Agent loop | pi（作为库使用）：`@earendil-works/pi-ai`、`@earendil-works/pi-agent-core`，以及 `@earendil-works/pi-coding-agent` 中的工具与 Skills 加载器；MCP 客户端用 `@earendil-works/pi-mcp` |
-| 外部智能体引擎（可选，D72，未实现） | ACP 客户端 `@agentclientprotocol/sdk`；本期 Agent：`@agentclientprotocol/claude-agent-acp`、`@agentclientprotocol/codex-acp`、`opencode acp`、`dsh --profile acp`（DeepSeek Harness）、`cursor-agent acp`、`agy_acp_server`（Antigravity）、ZCode（私有协议垫片，P0 评估可覆盖）；目录随应用锁版本、按需安装（见 [28-external-agents-acp.md](28-external-agents-acp.md)） |
+| 外部智能体引擎（可选，D72，未实现） | ACP 客户端 `@agentclientprotocol/sdk`；本期 Agent：`@agentclientprotocol/claude-agent-acp`、`@agentclientprotocol/codex-acp`、`opencode acp`、`dsh --profile acp`（DeepSeek Harness）、`cursor-agent acp`、`agy_acp_server`（Antigravity）；ZCode 已放弃（DEV-008）；目录随应用锁版本、按需安装（见 [28-external-agents-acp.md](28-external-agents-acp.md)） |
 | 桌面壳 | Electron + electron-builder + electron-updater |
 | 前端框架 | Svelte 5 + Vite（单页应用） |
 | 组件库 | shadcn-svelte + bits-ui + Tailwind v4，补充 shadcn-svelte-extras |
