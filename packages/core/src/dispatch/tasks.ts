@@ -780,35 +780,15 @@ export class TaskHost implements TaskToolFacade {
           .find((event) => taskEventOf(event)?.phase === 'cancel');
         if (cancelEntry !== undefined) {
           const reason = `已取消：${taskEventOf(cancelEntry)?.text ?? ''}`;
-          if (task.botId !== null && task.conversationId !== null) {
-            this.#safeAppend({
-              conversationId: task.conversationId,
-              ownerBotId: task.botId,
-              taskId: task.id,
-              phase: 'failure',
-              text: this.#failureText(task, 'cancelled', reason),
-              status: 'cancelled',
-              error: reason,
-            });
-          }
+          const settled = this.#recoverySettle(task, { status: 'cancelled', error: reason });
           // Consumed by the reconciliation in resume() (cancelled never wakes).
-          repaired.push(this.#deps.runs.update(task.id, { status: 'cancelled', error: reason }));
+          if (settled !== null) repaired.push(settled);
           continue;
         }
         if (task.status === 'queued') continue;
         const error = '应用退出，任务中断';
-        if (task.botId !== null && task.conversationId !== null) {
-          this.#safeAppend({
-            conversationId: task.conversationId,
-            ownerBotId: task.botId,
-            taskId: task.id,
-            phase: 'failure',
-            text: this.#failureText(task, 'interrupted', error),
-            status: 'interrupted',
-            error,
-          });
-        }
-        repaired.push(this.#deps.runs.update(task.id, { status: 'interrupted', error }));
+        const settled = this.#recoverySettle(task, { status: 'interrupted', error });
+        if (settled !== null) repaired.push(settled);
       } catch (error) {
         this.#deps.logger.warn(
           { taskId: task.id, error: error instanceof Error ? error.message : String(error) },
@@ -821,6 +801,31 @@ export class TaskHost implements TaskToolFacade {
       this.#deps.logger.info({ tasks: repaired.length }, 'repaired unsettled tasks');
     }
     return repaired;
+  }
+
+  /**
+   * Recovery's settlement of a task this process never launched: the entry
+   * first (§3.2). When it cannot be written while the conversation exists,
+   * the row stays as it is and the outcome waits in #unsettled for `sweep`
+   * (never re-launched meanwhile). Null = left pending.
+   */
+  #recoverySettle(task: Run, outcome: { status: 'cancelled' | 'interrupted'; error: string }): Run | null {
+    if (task.botId !== null && task.conversationId !== null) {
+      const written = this.#safeAppend({
+        conversationId: task.conversationId,
+        ownerBotId: task.botId,
+        taskId: task.id,
+        phase: 'failure',
+        text: this.#failureText(task, outcome.status, outcome.error),
+        status: outcome.status,
+        error: outcome.error,
+      });
+      if (written === null && this.#deps.conversations.get(task.conversationId) !== null) {
+        this.#unsettled.set(task.id, outcome);
+        return null;
+      }
+    }
+    return this.#deps.runs.update(task.id, { status: outcome.status, error: outcome.error });
   }
 
   /**
@@ -990,6 +995,8 @@ export class TaskHost implements TaskToolFacade {
         this.#pumpAgain = false;
         for (const task of this.#deps.runs.listTasks({ statuses: ['queued'] })) {
           if (this.#launched.has(task.id)) continue;
+          // Stopped, its settlement pending (#unsettled): never launched again.
+          if (this.#unsettled.has(task.id)) continue;
           if (this.#launched.size >= this.#limits.global) break;
           if (this.#blockedBy(task) !== null) continue;
           this.#launch(task);

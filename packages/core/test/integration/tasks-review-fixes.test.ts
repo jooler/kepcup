@@ -163,8 +163,11 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         .expect(isR)
         .hold()
         .replyToolCall('acquire_project_write', { reason: 'R 改项目' });
+      const isBusy = (req: MockChatRequest) => req.lastUserText().includes('BUSY-H2');
+      const busyHeld = step().expect(isBusy).hold().replyText('忙完了');
       llm.script('mock-main', [
         rHeld,
+        busyHeld,
         step().expect(isTaskRequest('TASK-H2')).replyText('RESULT-H2 写好了'),
         step().expect(isR).replyText('R 完成'),
         step().expect(isWakeRequest).replyText('任务做完了'),
@@ -182,9 +185,19 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
             .find((run) => run.loopType === 'response') ?? null,
         { label: 'R run' },
       );
+      // Every other slot is taken too (a write task holding its lease starts
+      // under the plain limit, 审查复核 #4).
+      for (let i = 1; i < limit; i += 1) {
+        const busy = await openDirect(core, (await makeBot(core, `忙${i}`)).id);
+        await sendBatch(core, busy.id, ['BUSY-H2 占名额']);
+      }
+      await waitFor(
+        () => (llm.requestsFor('mock-main').filter(isBusy).length === limit - 1 ? true : null),
+        { label: 'all slots taken' },
+      );
 
       // T (conversation A): write task on the same project — takes the lease,
-      // then queues for a slot (limit 1: none free; limit 2: one kept for replies).
+      // then queues for a slot (none free).
       const t = tasksOf(stack).start(turnIdentity(botA.id, convA.id), {
         title: '改项目',
         instruction: 'TASK-H2 改 README',
@@ -209,7 +222,9 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
 
       // R now asks for the lease T holds: R must give its slot back to T.
       rHeld.release();
+      // T runs in the slot R gave back (the other slots stay busy meanwhile).
       const tDone = await waitRun(stack, t.taskId, ['completed'], 'T completed');
+      busyHeld.release();
       const rDone = await waitRun(stack, rRun.id, ['completed'], 'R completed');
       expect(entries(stack, t.taskId).at(-1)).toMatchObject({ phase: 'result' });
       // R got the lease only after T released it.
@@ -626,4 +641,140 @@ describe('LOW-2: a refused steer carrying a task result is not consumed early', 
     // Consumed by the re-delivering run's release — not by the first run's.
     expect(consumedAt).toBeGreaterThanOrEqual(redelivery.endedAt ?? Infinity);
   }, 60_000);
+});
+
+describe('round 2 (审查复核)', () => {
+  it('#1 two parallel write acquisitions of one run on a contested project both succeed after the holder releases', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const bot = await makeBot(core, '甲');
+    const conv = await openDirect(core, bot.id);
+    const otherBot = await makeBot(core, '乙');
+    const other = await openDirect(core, otherBot.id);
+    const dir = makeProjectDir();
+    const bound = (await core.rpc.call('projects.select', { conversationId: conv.id, path: dir })) as {
+      project: { path: string };
+    };
+    await core.rpc.call('projects.select', { conversationId: other.id, path: dir });
+    const projectPath = bound.project.path;
+    const { runs } = domain(stack);
+    const runFor = (botId: string, conversationId: string): RunIdentity => {
+      const run = runs.create({
+        botId,
+        conversationId,
+        loopType: 'response',
+        triggerReason: 'direct',
+        triggerMessageIds: [],
+      });
+      runs.update(run.id, { status: 'running' });
+      return { runId: run.id, botId, conversationId, loopType: 'response' };
+    };
+    const runtime = core.services.projectRuntime!;
+    const holder = runFor(otherBot.id, other.id);
+    await runtime.ensureWriteLease(holder, path.join(projectPath, 'h.txt'));
+    const writer = runFor(bot.id, conv.id);
+    // Two parallel write / edit tool calls of one run (gateway → ensureWriteLease).
+    const first = runtime.ensureWriteLease(writer, path.join(projectPath, 'a.txt'));
+    const second = runtime.ensureWriteLease(writer, path.join(projectPath, 'b.txt'));
+    const settled = Promise.allSettled([first, second]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await runtime.releaseRun(holder.runId);
+    const results = await settled;
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect(runtime.holdsLease(writer, projectPath)).toBe(true);
+    await runtime.releaseRun(writer.runId);
+  }, 60_000);
+
+  it('#2 a stopped queued task whose settlement is pending is never launched again', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    await core.rpc.call('settings.update', {
+      providerConcurrency: { default: 4, 'custom:mock': 1 },
+    });
+    const bot = await makeBot(core, '甲');
+    const conv = await openDirect(core, bot.id);
+    const other = await openDirect(core, (await makeBot(core, '乙')).id);
+    const held = step()
+      .expect((req) => req.lastUserText().includes('BUSY'))
+      .hold()
+      .replyText('忙完了');
+    llm.script('mock-main', [held]);
+    await sendBatch(core, other.id, ['BUSY 占住名额']);
+    await waitFor(() => (llm.requests().length >= 1 ? true : null), { label: 'slot taken' });
+
+    const tasks = tasksOf(stack);
+    const t = tasks.start(turnIdentity(bot.id, conv.id), {
+      title: '只读',
+      instruction: 'TASK-UNSETTLED',
+      sourceMessageIds: [],
+      writes: false,
+    });
+    expect(t).toMatchObject({ state: 'submitted', queueReason: '等模型并发额度' });
+
+    const messages = domain(stack).messages;
+    const original = messages.appendTaskEvent.bind(messages);
+    let failing = true;
+    messages.appendTaskEvent = (input) => {
+      if (failing && input.phase === 'failure') throw new Error('SQLITE_BUSY: database is locked');
+      return original(input);
+    };
+    try {
+      tasks.cancelById(t.taskId, '用户取消');
+      expect(runOf(stack, t.taskId).status).toBe('queued'); // settlement pending (M1)
+      await waitFor(() => (tasks.launchedCount() === 0 ? true : null), { label: 'launch freed' });
+      // The slot frees: nothing may start the stopped task.
+      held.release();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(llm.requests().some(isTaskRequest('TASK-UNSETTLED'))).toBe(false);
+      expect(tasks.launchedCount()).toBe(0);
+      expect(core.services.scheduler!.pendingForKey(`task:${t.taskId}`)).toBe(0);
+      failing = false;
+      tasks.sweep();
+    } finally {
+      messages.appendTaskEvent = original;
+    }
+    expect(runOf(stack, t.taskId).status).toBe('cancelled');
+    expect(entries(stack, t.taskId).map((e) => e.phase)).toEqual(['brief', 'cancel', 'failure']);
+  }, 60_000);
+
+  it('#8 recovery writes the entry first: a failed entry write leaves the task pending, not terminal', async () => {
+    const stack = await start();
+    const bot = await makeBot(stack.core, '小艾');
+    const conv = await openDirect(stack.core, bot.id);
+    const { runs, messages } = domain(stack);
+    const task = runs.create({
+      botId: bot.id,
+      conversationId: conv.id,
+      loopType: 'task',
+      triggerReason: null,
+      triggerMessageIds: [],
+      taskTitle: 'crash',
+      taskWrites: false,
+      originRunId: 'run_turn_old',
+    });
+    const scope = { conversationId: conv.id, ownerBotId: bot.id, taskId: task.id };
+    messages.appendTaskEvent({ ...scope, phase: 'brief', text: 'x', title: 'x', writes: false });
+    messages.appendTaskEvent({ ...scope, phase: 'cancel', text: '不要了' });
+    const { host, controls, woken } = handDrivenHost(stack);
+    const original = messages.appendTaskEvent.bind(messages);
+    let failing = true;
+    messages.appendTaskEvent = (input) => {
+      if (failing && input.phase === 'failure') throw new Error('SQLITE_BUSY: database is locked');
+      return original(input);
+    };
+    try {
+      host.recover();
+      host.resume();
+      expect(runOf(stack, task.id).status).toBe('queued'); // no terminal without its entry
+      expect(controls.size).toBe(0); // and not re-launched
+      failing = false;
+      host.sweep();
+    } finally {
+      messages.appendTaskEvent = original;
+    }
+    expect(runOf(stack, task.id).status).toBe('cancelled');
+    expect(runOf(stack, task.id).resultConsumedAt).not.toBeNull();
+    expect(entries(stack, task.id).map((e) => e.phase)).toEqual(['brief', 'cancel', 'failure']);
+    expect(woken).toHaveLength(0);
+  });
 });
