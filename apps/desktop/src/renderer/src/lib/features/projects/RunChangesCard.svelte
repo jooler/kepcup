@@ -1,6 +1,6 @@
 <script lang="ts">
   import { FilePlus2, FilePen, FileX2, GitCompare, Undo2 } from '@lucide/svelte';
-  import type { RunChange } from '@kepcup/shared';
+  import type { Message, RunChange } from '@kepcup/shared';
   import { t, errorText } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
@@ -8,6 +8,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Dialog from '$lib/components/ui/dialog';
   import DiffDialog from './DiffDialog.svelte';
+  import { isChangesCardOf } from './run-changes';
 
   let { runId }: { runId: string } = $props();
 
@@ -17,16 +18,26 @@
   let conflicts = $state<string[]>([]);
   let reverting = $state(false);
 
+  // Later lease windows of the run add changes (审查 L-4): core re-publishes
+  // this card (`message.updated`) and the summary is loaded again.
   $effect(() => {
+    const id = runId;
     void load();
+    return core.onEvent('message.updated', (payload) => {
+      if (isChangesCardOf((payload as { message?: Message }).message, id)) void load();
+    });
   });
 
+  /** Only the latest load lands (an older, slower answer must not overwrite it). */
+  let loads = 0;
+
   async function load(): Promise<void> {
+    const ticket = ++loads;
     try {
       const result = (await core.call('projects.diff', { runId })) as { change: RunChange | null };
-      change = result.change;
+      if (ticket === loads) change = result.change;
     } catch {
-      change = null;
+      if (ticket === loads) change = null;
     }
   }
 
