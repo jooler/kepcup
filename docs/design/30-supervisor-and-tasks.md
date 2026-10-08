@@ -414,18 +414,18 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 | 能力                                                              | 支持           | 不支持时                                                                                                             |
 | --------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
 | steering（`_session/steering` + `idleBehavior:'promptRequired'`） | Claude、Codex | `inject_task` 返回 `queued`（沿用现有 pending steer，任务结束后生效）；对话轮据此可改用 `cancel_task` + `start_task({continues_task_id})` |
-| 并行会话（新增 `features.parallelSessions`）                            | 待逐家实测        | 该 Bot 的任务并发降为 1（DeepSeek Harness 每会话单 prompt；OpenCode 会话忙时行为尚未实测）                                                |
+| 同进程并行会话（`features.parallelSessions`，D72 已加，按适配器源码实证取值） | 见 D72 适配矩阵「并行会话」列 | 该 Agent 在**全局**（跨 Bot、跨对话）只能有一个进行中的 prompt：`agent:{id}` 并发钳为 1，任务排队；不参与后台任务。注意「每会话同时只有一个 prompt」是所有 ACP Agent 的共性，按任务分会话（§8.5）后不再构成限制，真正的约束是同一进程能否同时服务多个会话 |
 | 会话复用（`resume` / `load`）                                         | 见 D72 适配矩阵   | `cancel + restart` 只能新建会话                                                                                        |
 
 
-注意 `ExternalAgentEngine.steer()` 目前恒返回 `false`（`packages/core/src/agent/external/engine.ts`），steering 在 D72 P5 落地；任务层要能在它返回 `false` 时正确走 `queued` 分支。
+`ExternalAgentEngine.steer()` 已在 D72 P5 落地（`_session/steering`，被拒 / 出错经 `onSteerRejected` 交还；prompt 发出前到达的消息并入下一个 prompt）。不支持 steering 的 Provider 同步返回 `false`，任务层据此走 `queued` 分支；异步拒绝走 `onSteerRejected`，任务层要把它映射为同一个 `queued` 结果。
 
 ### 8.3 取消与重启不是廉价操作
 
 外部 Agent 的冷启动有实测代价（DeepSeek Harness npx 冷启约 77s / 约 760MB；Antigravity 安装体积约 1 GB，见 D72 适配矩阵）。因此：
 
 - `cancel_task` → `session/cancel`，**不杀进程**；进程按 `AGENT_IDLE_SHUTDOWN_MS` 自行空闲退出。
-- `start_task({continues_task_id})` 优先走 D72 P5 的会话复用（`agent_sessions` + 指纹），复用不成才新建会话。
+- `start_task({continues_task_id})`：**新任务继承被取消 / 已结算任务的会话行**（§8.5）——旧任务释放后把该行的 `task_id` 改为新任务，指纹一致才复用，不一致或旧任务仍在释放则新建会话；不再是「按（Bot, 对话, Agent）找唯一会话」。
 - 取消有时延，所以不提供「取消与启动原子化」的 `restart` 原语（§4.1）：新任务取租约时旧任务可能还在释放，排队语义已经正确处理了这个窗口。
 
 
@@ -438,6 +438,18 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 2. **关闭路由判断**：退化为「永远一个任务，新指令排队到任务结束」——等价于今天的行为，不多不少。
 
 同一降级链也适用于群聊判断、摘要、反思等后台 loop（D72 P6 已有安排）。
+
+### 8.5 外部 Agent 会话按任务分（修订 D72 的会话复用）
+
+D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一索引为 `(bot_id, conversation_id, agent_id)`（main 迁移 0017），设计 28 §7 规定「每个（Bot, 对话, Agent）至多一个会话」，`sessionKey = bot:conv:agent`（orchestrator 两处构造），桥 token、已见消息记录、保留会话匹配都挂在这个键上。D72 本身安全——邮箱保证同一（Bot, 对话）同时只有一个响应 run，后台 run 用一次性键（`bg:` / `complete:`）不进 `agent_sessions`。但任务并行后两个外部 Agent 任务会抢同一行：`AgentSessionsStore.upsert` 的 `on conflict (bot_id, conversation_id, agent_id)` 会让任务 B 覆盖任务 A 的行，`get(bot, conv, agent)` 的指纹复用会把任务 B 的增量塞进任务 A 的会话，已见记录与桥 token 也会串。因此：
+
+- **键加任务**：`agent_sessions` 增加 `task_id`，唯一索引改为 `(bot_id, conversation_id, agent_id, task_id)`；`sessionKey = bot:conv:agent:task`。每个任务独占自己的会话、桥 token（`issueSessionToken` / `bindRun` / `revoke` 按新键）与已见记录（已按行 id 存，不变）。
+- **不用并行槽位会话池**：池化会让不同任务的上下文在同一会话里接力，增量与已见记录失去「同一条任务谱系」的含义；只有 `continues_task_id` 这种显式接续才值得复用。
+- **继承**：`start_task({continues_task_id})` 在旧任务释放后（D72 的「占有后才 await / 忙碌会话不可复用」已保证不会与旧任务并用）把旧行的 `task_id` 改为新任务（单条 `UPDATE … WHERE task_id = 旧`，失败即新建）；指纹不一致照旧新建。
+- **生命周期**：任务结算后会话行保留 `CONTINUATION_WINDOW_MS` 供接续，超时由 reaper `session/close` + 删行；删除对话 / Bot / 移出群的级联已按行遍历（`listByConversation` / `listByBot` 逐行 `session/delete` + 删行），一对话多行无需改；进程崩溃仍保留行、下次 resume / load。
+- **并发**：任务并发 = `min(TASK_CONCURRENCY_*, agent:{id} 并发)`；`agent:{id}` 并发缺省由 `features.parallelSessions` 决定（不支持 → 1，见 §8.2）。后台任务仍占 `agent:{id}` 槽位并为对话保留一个。
+- **迁移**：项目早期不保留旧行（D72 期的行直接清空，下次新建会话）；迁移号与 D73（预留 main 0018–0020）协调。
+- **改动面**：迁移、`domain/agent-sessions.ts`（`upsert` 冲突键、`get` 按任务）、orchestrator 两处 `sessionKey` 与 `#agentRunSetup` / `#recordAgentSession`、engine 的保留会话匹配与 `discardSession`、`mcp-bridge` 的 token 键、`lifecycle.ts`；估 **+0.5–1 周，计入 T5**。
 
 ## 9 非目标
 
@@ -483,7 +495,7 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 | [02-execution.md](02-execution.md)                         | **实现期整篇重写**（本文为准）：「每一次响应都是一个独立 loop」整句替换；「并发：每个 Bot + 对话一个串行队列」改为「对话轮串行、任务并行」，并移除「串行队列是 workspace 不冲突的真正保证」这一论断（改由租约承担）；Loop 类型表新增 `turn` / `task`；「Bot 如何发消息」补任务出口；「上下文注入」加 `<tasks>` 段；「Loop 续接」按 §7.1 改写。本期先加修订指针 |
 | [23-mcp-and-subagent.md](23-mcp-and-subagent.md)           | D66 定位修订：`delegate_task` 降为「任务内的嵌套子代理」；后台模式与 fan-out 的对话级锚点、并发计数、follow-up 结算职责移交任务层                                                                                                                                 |
 | [27-butler-and-delegation.md](27-butler-and-delegation.md) | D70/D71 本身不变；补一句：`delegate_to_bot` / `cancel_delegation` / `propose_*` / `suggest_route` / `list_bots` 属于**对话轮**工具面；§3.5 投递闸门的「B 邮箱空闲」判定对象是 B 的对话轮                                                                   |
-| [28-external-agents-acp.md](28-external-agents-acp.md)     | §1 让渡表三行修订（§8.1）；`runtime.agent` 语义改为任务引擎；P5 的 steering / 并发条目与任务层对齐；新增 `features.parallelSessions`；P6 的后台 loop 降级链补对话轮                                                                                              |
+| [28-external-agents-acp.md](28-external-agents-acp.md)     | §1 让渡表三行修订（§8.1）；`runtime.agent` 语义改为任务引擎；P5 的 steering / 并发条目与任务层对齐；§7「每个（Bot, 对话, Agent）至多一个会话」改为按任务分会话 + `continues_task_id` 继承（§8.5）；`features.parallelSessions` 已在 D72 落地，任务层沿用；P6 的后台 loop 降级链补对话轮 |
 | [24-durable-execution.md](24-durable-execution.md)         | D67 适用对象由「响应 run」改为「任务」                                                                                                                                                                                              |
 | [04-memory.md](04-memory.md)                               | 反思登记时机（§7.2）                                                                                                                                                                                                         |
 | [13-permissions.md](13-permissions.md)                     | D37「仅这一次」收紧为单次工具调用 + 绝对时限（§7.3）                                                                                                                                                                                      |
@@ -503,7 +515,8 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 | `packages/core/src/agent/subagent.ts`             | `SubagentHost` 提升为 `TaskHost`（注册表 / 并发 / abort 入口已经是对的形状）；`delegate_task` 的后台模式退回父任务内的并行分支                                                                                                     |
 | `packages/core/src/dispatch/delegation.ts`        | 状态机、settle 钩子、结果卡、禁止复述 follow-up 的**参照实现**                                                                                                                                                     |
 | `packages/core/src/project/service.ts`            | `#leaseTarget` 支持 workspace 键                                                                                                                                                                  |
-| `packages/core/src/agent/external/engine.ts`      | `steer()`（D72 P5）+ `features.parallelSessions`                                                                                                                                                 |
+| `packages/core/src/agent/external/engine.ts`      | `steer()`（D72 P5，已落地）的异步拒绝映射为 `queued`；保留会话匹配与 `discardSession` 按任务键（§8.5）；`features.parallelSessions`（D72 已加）决定 `agent:{id}` 并发 |
+| `agent_sessions`（main 迁移）+ `domain/agent-sessions.ts` + `mcp-bridge.ts` + `domain/lifecycle.ts` | 加 `task_id`、唯一索引与 `upsert` 冲突键含任务；`sessionKey` / 桥 token 按任务键（删除级联已逐行处理，§8.5） |
 | `packages/core/src/agent/context/continuation.ts` | 自动续接对对话轮关闭；`buildRunDigest` 改由 `start_task({continues_task_id})` 调用                                                                                                                            |
 | runs 迁移                                           | `loop_type` 枚举（`response` → `turn`，新增 `task`）+ §3.4 新列                                                                                                                                         |
 | shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`GRANT_ABSOLUTE_TTL_MS` |
@@ -520,7 +533,7 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 | **T2 对话轮**   | `loop_type='turn'`、精简提示词、只读工具面（执行期校验）、`<tasks>` 段、四个任务管理工具               | 有了地基才有可派的任务              |
 | **T3 写互斥**   | 租约扩到 workspace、并发封顶、网关对只读任务硬拒写                                           | 并行开闸前必须先有互斥              |
 | **T4 消息与界面** | 任务中间说明 / 结果的归属标记、「不要复述」follow-up、条件唤醒、任务卡 + `task.updated` 事件、状态行改造      | 用户可见面，依赖 T1–T3 的状态       |
-| **T5 外部引擎**  | 外部 Agent 作任务引擎、`features.parallelSessions`、steering / 会话复用降级、§8.4 降级链    | 依赖 D72 P5；在宿主侧语义稳定后接     |
+| **T5 外部引擎**  | 外部 Agent 作任务引擎、**按任务分会话 + `continues_task_id` 继承（§8.5，+0.5–1 周）**、按 `features.parallelSessions` 定并发、steering 异步拒绝 → `queued`、§8.4 降级链    | 依赖 D72 P5；在宿主侧语义稳定后接     |
 | **T6 文档与清理** | 02 整篇重写、D56/D66/D67/D37/D72 修订落字、`DEVIATIONS.md` 记录实现偏差                  | 收口                       |
 
 
