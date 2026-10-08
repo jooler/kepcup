@@ -228,6 +228,12 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - 修复（`b7e5404`、`c217b28`、`f5210ed`、`2ef65a6`、`aa415f3`、`44faa3b`、`b1205ac`）：问题卡记 `taskBotId`，渲染为「X（任务 t）向用户提问」并对所有视角包 `<untrusted>`（含摘要），选项上限 `ASK_USER_OPTION_MAX_CHARS`；同轮规则 `canShareTurn`（不同 @ 链、委派批不合并），吸收经 `runs.setTrigger` 落 `chain_id` / `chain_depth`；`ask_user` 经 `Scheduler.yieldSlotWhile` 让出名额、等待时间不计墙钟、`TASK_QUESTION_TTL_MS`（24 h）到期回「用户未回答」，写租约保留（DEV-018）；投递次数记在终态条目 `$.deliveries`，达 `TASK_REDELIVER_MAX_ATTEMPTS`（5）消费并发可见通知 `task_result_undelivered`；对话轮持有中的结果不再对账重投（`heldByTurn`），吸收时丢弃已消费结果（重试轮自身触发除外）；回答注入带原文 / 附件（`buildTaskAnswer`）；任务卡标题包 `<untrusted>`；desktop 视图新者为准、按会话裁剪、重连刷新、`runs.list` 加 `active`；降级注入不含内部事件；`describeWorkdir` 只在终态写任务查改动并走 `conversation_id` 索引；问题卡先写私有条目再发布。**强制收回**：被收回的固定租约 run 经 `writeDenial` 失去写权限（`LEASE_REVOKED_READ_ONLY_REASON`），不再静默重取；`run_changes` 跨租约窗口累积（逐文件首改前 / 末改后快照，窗口间被他人改动标 `interleaved` 并作回退冲突）。死代码清理（`b68fca2`：`CONTINUATION_ARBITER_*`、llm-router `'continuation'`、`buildNewMessagesInjection` / `buildMessageEventInjection`）。文档同步（`a02e57d`）。新增 DEV-016（外部智能体任务无 `ask_user`）、DEV-017（W5 发现的四处设计与代码差异）、DEV-018（批 E 的细化）。
 - **验证**：新测试 `tasks-review-fixes-e`（11）、`project-lease-windows`（3）在修复前代码上全部失败；容器全量 **1779 例、1749 过、28 失败，新增失败 0**（基线 28 条）；typecheck / lint 0 error。
 
+### 最终审查与修复批 F（2026-10-08，合入 `d75` @ `f2f45a8`）
+
+- 最终审查（`c3b541a`，覆盖批 E、projects.test 重写与全分支健全性检查）判 **APPROVE**，附 MEDIUM M-1：写任务在 `ask_user` 等待中被取消后，`yieldSlotWhile` 仍排队取回名额，取回前一直占写租约与任务名额；LOW：新 `<untrusted>` 包裹未中和闭合标签、摘要 / 反思把任务文本渲染为「系统」、投递计数在唤醒失败与排队中的对话轮时多算、改动卡第二个租约窗口后不刷新、无链用户批并入 @ 链对话轮继承链深度、注释与说明残留。另：最终 e2e 中 `approvals.spec` 3 例仍从对话轮触发访问审批（批 D M4 之后对话轮越权读直接失败，W3 的 e2e 迁移早于批 D）。
+- 修复（`0ed764a`、`dfedd0a`、`976b6e3`、`1e20f84`、`ee8038d`、`5cc297c`、`1441e21`、`30b1f4a`）：等待被拒或执行已中止时不取回名额、无名额展开；`questionSince` 在名额取回后才清；唤醒成功才计投递，排队中的对话轮与邮箱缓冲里的结果视为持有；问题行 / 其他 Bot 包裹 / 摘要 / 任务卡标题经 `neutralizeUntrusted`；未送达通知在摘要里用固定行，反思把任务结果 / 失败渲染为「任务 t_x 的结果」并包 `<untrusted>`；改动卡收到 `message.updated` 重新加载；含用户消息的无链批不与 @ 链批同轮；`approvals.spec` 迁到任务流程；`.gitignore` 忽略 `.vitest-*.json`。
+- **验证**（批 F 分支）：容器全量 **1795 例、1765 过、28 失败，新增 0**；e2e `approvals.spec` + `tasks.spec` 6/6；typecheck / lint 0 error。合入后的最终全量与 e2e 见下。
+
 **偏差汇总**（全部待用户确认）：DEV-009、DEV-010、DEV-011、DEV-012、DEV-013（调度会话已决定）、DEV-014、DEV-015、DEV-016、DEV-017、DEV-018。
 
 **已知缺口**
