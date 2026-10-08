@@ -155,6 +155,14 @@ import {
   butlerProfileTemplate,
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
+import {
+  buildTaskBriefSegment,
+  buildTaskReplaySegment,
+  TaskHost,
+  type TaskBrief,
+  type TaskOutcome,
+  type TaskRunControl,
+} from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { ChainsService } from './chains.js';
 import { GroupTurnCoordinator } from './group-turn.js';
@@ -175,7 +183,7 @@ export interface OrchestratorEnvironmentFacade {
       runId: string;
       botId: string | null;
       conversationId: string | null;
-      loopType: 'response';
+      loopType: 'response' | 'task';
     },
     input: { item: string; version?: string; reason: string },
   ): Promise<
@@ -404,7 +412,33 @@ interface ActiveRunEntry {
    * ACP steering is asynchronous; a refused one comes back by its text.
    */
   steerLog?: AgentSteerLog;
+  /**
+   * D75 §3.2 消费: task ids whose terminal entries this run saw (trigger batch
+   * or steered); marked consumed when the run reaches a terminal state.
+   */
+  consumesTaskIds?: Set<string>;
 }
+
+/**
+ * How one execution of the shared run skeleton (`#executeRun`) is used:
+ * - `response`: today's mailbox-driven response run (visible final reply,
+ *   mailbox release, group turns, D71 hooks, D56 auto continuation);
+ * - `task` (D75, design 30 §2.2 / §2.4.5): a task — scheduler key
+ *   `task:{id}`, loop_type 'task', brief as the trigger segment, shared-only
+ *   conversation layer, interim texts with `origin:'task'`, final text → the
+ *   private `result` entry via TaskHost.settle, never a visible message.
+ * W2 adds the `turn` variant here.
+ */
+type RunExecution =
+  | { kind: 'response'; batch: TriggerBatch }
+  | {
+      kind: 'task';
+      /** Synthesized: the brief's source messages, reason 'task'. */
+      batch: TriggerBatch;
+      task: Run;
+      brief: TaskBrief;
+      control: TaskRunControl;
+    };
 
 /**
  * Drives the single-chat response loop end to end: draft flush -> message
@@ -435,6 +469,8 @@ export class Orchestrator {
    * 不级联；显式取消委派 / 关对话 / 删 Bot 时经此 abort；并发封顶也在这里计数。
    */
   readonly #subagentHost: SubagentHost = createSubagentHost();
+  /** D75 任务层（dispatch/tasks.ts）：派出、注入、取消、结算、修复、对账、reaper。 */
+  readonly #taskHost: TaskHost;
   /** 管家提议的宿主侧（D70）：提议卡提交、确认后确定性创建 Bot / 群。 */
   readonly #butlerHost: ButlerHost;
   /** 跨 Bot 委派的宿主侧（D71）：投递闸门、结算、取消、恢复。 */
@@ -467,6 +503,67 @@ export class Orchestrator {
       }
     });
     this.#mailboxes = new MailboxRegistry((key) => this.#createMailbox(key));
+    this.#taskHost = new TaskHost({
+      db: deps.db,
+      runs: deps.runs,
+      messages: deps.messages,
+      conversations: deps.conversations,
+      bots: deps.bots,
+      clock: deps.clock,
+      logger: deps.logger,
+      timeZone: deps.timeZone,
+      renderOptions: (selfBotId) => ({ ...this.#renderOptions(), selfBotId }),
+      publishRunStatus: (run) => deps.publish('run.status', { run }),
+      execute: (task, control) => {
+        deps.scheduler.submit({
+          // Below user-triggered responses (0): a long task must not take the
+          // provider slot a conversation reply is waiting for.
+          priority: 1,
+          provider: this.#providerForRef(this.#modelRefForBot(task.botId ?? '')),
+          key: `task:${task.id}`,
+          run: () => this.#executeTask(task, control),
+        });
+      },
+      // This wave (D75 W1-A): the entry reaches the bot as a `reason:'task'`
+      // trigger batch through its mailbox (W2 changes the mailbox semantics).
+      wake: (botId, conversationId, entry) => {
+        this.#mailboxes.for(botId, conversationId).deliver({
+          conversationId,
+          botId,
+          messages: [entry],
+          reason: 'task',
+        });
+      },
+      resolveWorkdir: (botId, conversationId, requested) => {
+        const project = deps.projects.boundProject(conversationId);
+        const available = project !== null && project.status === 'available';
+        if (requested === 'project') {
+          if (!available) throw new AppError('INVALID_INPUT', '本对话没有可用的 project');
+          return project.path;
+        }
+        if (requested === 'workspace' || !available) {
+          return workspacePathFor(deps.paths, botId, conversationId);
+        }
+        return project.path;
+      },
+      onSettled: (run) => {
+        deps.grants.expireForRun(run.id);
+        deps.approvals.cancelPendingForRun(run.id);
+        this.#fsState.release(run.id);
+        // Idempotent with the executor's own release (lease + after-snapshot).
+        void deps.projects.releaseRun(run.id).catch(() => {});
+        deps.publish('run.status', { run });
+        if (run.conversationId !== null) this.#publishConversation(run.conversationId);
+      },
+      recordVisibleMessage: (runId, message) => {
+        if (deps.runs.get(runId) !== null) {
+          this.#recordBotMessage(runId, message);
+          return;
+        }
+        deps.publish('message.created', { conversationId: message.conversationId, message });
+        this.#publishConversation(message.conversationId);
+      },
+    });
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
       conversations: deps.conversations,
@@ -965,10 +1062,18 @@ export class Orchestrator {
 
   // --- runs ----------------------------------------------------------------
 
+  /** D75 task layer: start / inject / cancel / list / settle / recover / sweep. */
+  get tasks(): TaskHost {
+    return this.#taskHost;
+  }
+
   cancelRun(runId: string): Run | null {
     const run = this.#deps.runs.get(runId);
     if (!run) return null;
     if (isTerminal(run.status)) return run;
+    // D75: a task is cancelled through its host (cancel entry → failure entry
+    // → terminal; no wake — it is the user's decision, §3.3).
+    if (run.loopType === 'task') return this.#taskHost.cancelById(runId, '用户取消');
     const entry = this.#activeRuns.get(runId);
     if (entry) {
       entry.handle.abort('user cancelled');
@@ -1036,6 +1141,11 @@ export class Orchestrator {
     if (!original) throw new AppError('RUN_NOT_FOUND', `Run ${runId} does not exist`);
     if (original.status !== 'failed') return original;
     if (original.conversationId === null || original.botId === null) return original;
+    // D75: a task is not a mailbox run — re-running it is the bot's decision
+    // (start_task with continues_task_id), not a replay of its source messages.
+    if (original.loopType === 'task') {
+      throw new AppError('NOT_SUPPORTED', '任务不能直接重试：请让 Bot 重新派出（接续原任务）');
+    }
     const triggerMessages = original.triggerMessageIds
       .map((id) => this.#deps.messages.getById(id))
       .filter((m): m is Message => m !== null && m.status !== 'recalled');
@@ -1093,6 +1203,8 @@ export class Orchestrator {
     this.#groupTurns.clear(conversationId);
     // D66 mode B：后台子 run 挂对话级锚点，对话关闭才 abort（先于 settle 扫描）。
     this.#subagentHost.abortForConversation(conversationId, 'conversation deleted');
+    // D75: tasks settle (cancelled, no wake) before the blanket settle below.
+    this.#taskHost.abortForConversation(conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.conversationId === conversationId) {
         entry.handle.abort('conversation deleted');
@@ -1116,6 +1228,7 @@ export class Orchestrator {
   async abortRunsForBot(botId: string): Promise<void> {
     // D66 mode B：Bot 删除 abort 其全部后台子 run（对话级锚点）。
     this.#subagentHost.abortForBot(botId, 'bot deleted');
+    this.#taskHost.abortForBot(botId);
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId) {
         entry.handle.abort('bot deleted');
@@ -1138,6 +1251,7 @@ export class Orchestrator {
   abortRunsForBotInConversation(botId: string, conversationId: string): void {
     // D66 mode B：该 Bot 在该对话的后台子 run 一并中止（移出群等）。
     this.#subagentHost.abortForBotInConversation(botId, conversationId, 'removed from group');
+    this.#taskHost.abortForBotInConversation(botId, conversationId);
     for (const entry of [...this.#activeRuns.values()]) {
       if (entry.botId === botId && entry.conversationId === conversationId) {
         entry.handle.abort('removed from group');
@@ -1346,7 +1460,18 @@ export class Orchestrator {
    * them (docs/dev/02-architecture.md).
    */
   recoverInterrupted(): number {
-    const runs = this.#deps.runs.markAllActiveInterrupted();
+    // D75 §7.4 step 1: tasks are repaired first — one with a terminal entry
+    // adopts its status instead of being blanket-interrupted (§3.2 修复);
+    // submitted tasks stay queued and are re-queued below.
+    try {
+      this.#taskHost.recover();
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'task repair failed',
+      );
+    }
+    const runs = this.#deps.runs.markAllActiveInterrupted({ exceptLoopTypes: ['task'] });
     this.#deps.approvals.cancelAllPending();
     for (const run of runs) {
       this.#deps.grants.expireForRun(run.id);
@@ -1375,6 +1500,15 @@ export class Orchestrator {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
         'delegation recovery failed',
+      );
+    }
+    // D75 §7.4 steps 3–4: re-queue submitted tasks, re-deliver unconsumed results.
+    try {
+      this.#taskHost.resume();
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'task resume failed',
       );
     }
     return runs.length;
@@ -1586,12 +1720,7 @@ export class Orchestrator {
   }
 
   /** <access> prompt section input: sandbox state + this bot's active grants. */
-  async #accessPromptInfo(identity: {
-    runId: string;
-    botId: string | null;
-    conversationId: string | null;
-    loopType: 'response';
-  }) {
+  async #accessPromptInfo(identity: RunIdentity) {
     const availability = await this.#deps.sandbox.probe();
     const grants = this.#deps.grants.listEffective(identity);
     const isWindows = process.platform === 'win32';
@@ -1674,7 +1803,7 @@ export class Orchestrator {
           : 0,
       provider: this.#providerForRef(this.#modelRefForBot(batch.botId)),
       key: this.#mailboxKey(batch.botId, batch.conversationId),
-      run: () => this.#executeResponseRun(run.id, batch),
+      run: () => this.#executeRun(run.id, { kind: 'response', batch }),
     });
     return run.id;
   }
@@ -1760,7 +1889,7 @@ export class Orchestrator {
     bot: Bot;
     conversation: Conversation;
     agentId: string;
-    identity: RunIdentity & { loopType: 'response' };
+    identity: RunIdentity;
     responseTools: ToolDefinition[];
     workspacePath: string;
     hasProject: boolean;
@@ -2164,8 +2293,73 @@ export class Orchestrator {
     return index > 0 ? modelRef.slice(0, index) : 'unknown';
   }
 
-  async #executeResponseRun(runId: string, batch: TriggerBatch): Promise<void> {
+  /**
+   * D75 task executor (TaskHost `execute`, scheduler key `task:{id}`): the
+   * brief is rebuilt from the task's private entries, then the shared run
+   * skeleton runs with `kind: 'task'`.
+   */
+  async #executeTask(task: Run, control: TaskRunControl): Promise<void> {
+    // Stopped while waiting for a scheduler slot: the host already settled it.
+    if (control.signal.aborted) return;
+    if (task.botId === null || task.conversationId === null) {
+      this.#taskHost.settle(task.id, { status: 'failed', error: '任务缺少 Bot 或对话' });
+      return;
+    }
+    const brief = control.brief();
+    if (brief === null) {
+      this.#taskHost.settle(task.id, {
+        status: 'failed',
+        error: '任务的交代条目缺失（派出时应用退出），请重新派出',
+      });
+      return;
+    }
+    await this.#executeRun(task.id, {
+      kind: 'task',
+      batch: {
+        conversationId: task.conversationId,
+        botId: task.botId,
+        messages: brief.sourceMessages,
+        reason: 'task',
+      },
+      task,
+      brief,
+      control,
+    });
+  }
+
+  /**
+   * The shared run skeleton (response runs and D75 tasks, see RunExecution):
+   * gates → context / trigger → tools → engine run → interim texts → outcome
+   * → usage → lease release → settle. The variants differ only at the points
+   * branching on `exec.kind`.
+   */
+  async #executeRun(runId: string, exec: RunExecution): Promise<void> {
+    const { batch } = exec;
+    const isTask = exec.kind === 'task';
+    const loopType = isTask ? ('task' as const) : ('response' as const);
     const { runs, messages } = this.#deps;
+    // D75 §3.2 消费 (this wave; W2 moves it to the turn's terminal state):
+    // task entries in the trigger batch / steered into this response run.
+    const consumesTaskIds = new Set<string>();
+    if (!isTask) this.#noteTaskEntries(consumesTaskIds, batch);
+    const settle = (
+      status: Run['status'],
+      error: string | null,
+      setup?: SetupRequirement,
+      resultText?: string,
+    ): void => {
+      if (exec.kind === 'task') {
+        // A host-stopped task is terminal already: this is a no-op then.
+        this.#taskHost.settle(runId, {
+          status: status as TaskOutcome['status'],
+          error,
+          ...(setup !== undefined ? { setup } : {}),
+          ...(resultText !== undefined ? { resultText } : {}),
+        });
+        return;
+      }
+      this.#settleRun(runId, status, error, setup);
+    };
     // 本 run 命中的设置前置需求（inline setup，docs/design/18-inline-setup.md）：
     // media facade 在能力缺失时记下 requirement，工具结果以 SETUP_REQUIRED
     // 返回，abort 监听器随即中断 run——settle 时改判 failed 并携带 setup。
@@ -2176,15 +2370,19 @@ export class Orchestrator {
     let agentSessionRowId: string | null = null;
     let agentPromptSent = false;
     try {
-      if (this.#cancelledBeforeStart.delete(runId)) {
-        this.#settleRun(runId, 'cancelled', null);
+      if (
+        exec.kind === 'task'
+          ? exec.control.signal.aborted
+          : this.#cancelledBeforeStart.delete(runId)
+      ) {
+        settle('cancelled', null);
         return;
       }
 
       const bot = this.#deps.bots.get(batch.botId);
       const conv = this.#deps.conversations.get(batch.conversationId);
       if (!bot || !conv || bot.status !== 'active' || conv.readOnly) {
-        this.#settleRun(runId, 'cancelled', null);
+        settle('cancelled', null);
         return;
       }
 
@@ -2194,6 +2392,13 @@ export class Orchestrator {
       // setup `{kind:'agent'}` → 对话内 Agent 设置卡，完成后自动重试）。
       const agentId = this.#agentIdOf(bot);
       const engine = this.#engineFor(bot);
+      if (isTask && agentId.length > 0) {
+        // External agents as the task engine (per-task sessions, design 30
+        // §8.5) land with D75 W4; a task must not share the bot's response
+        // session row meanwhile.
+        settle('failed', '外部智能体暂不能作为任务引擎（D75 后续接入），请改用内置模型的 Bot');
+        return;
+      }
       if (agentId.length > 0) {
         if (engine === null) {
           this.#settleRun(runId, 'failed', '外部智能体引擎不可用');
@@ -2215,15 +2420,38 @@ export class Orchestrator {
           return;
         }
       } else if (modelRef.length === 0) {
-        this.#settleRun(
-          runId,
-          'failed',
-          '未配置模型：请在设置页选择默认主模型或在 Bot 配置中指定',
-          {
-            kind: 'main-model',
-          },
-        );
+        settle('failed', '未配置模型：请在设置页选择默认主模型或在 Bot 配置中指定', {
+          kind: 'main-model',
+        });
         return;
+      }
+
+      const identity: RunIdentity = {
+        runId,
+        botId: batch.botId,
+        conversationId: batch.conversationId,
+        loopType,
+      };
+      // D75 §5.1: a write task holds its workdir root's write lease for the
+      // whole run and stays submitted (`queued`) while it waits.
+      if (exec.kind === 'task' && exec.task.taskWrites === true) {
+        const root =
+          exec.task.taskWorkdir ??
+          workspacePathFor(this.#deps.paths, batch.botId, batch.conversationId);
+        try {
+          await this.#deps.projects.ensureWriteLease(identity, root, {
+            pin: true,
+            signal: exec.control.signal,
+            reason: `任务「${exec.brief.title}」`,
+          });
+        } catch (error) {
+          // A workspace root has no lease target yet (project/service.ts
+          // #leaseTarget throws INVALID_INPUT); D75 W1-C makes workspace
+          // leases real. Until then a workspace write task runs unleased.
+          if (!(error instanceof AppError && error.code === 'INVALID_INPUT')) throw error;
+        }
+        // Cancelled while waiting: the host already settled the task.
+        if (exec.control.signal.aborted) return;
       }
 
       runs.update(runId, {
@@ -2236,7 +2464,8 @@ export class Orchestrator {
 
       // Conversation context: rolling summary + recent window (batch excluded;
       // it arrives separately through the trigger segment).
-      const recent = this.#contextMessages(batch.conversationId, batch.botId, 120);
+      // D75 §2.4.5: a task's conversation layer is shared rows only.
+      const recent = this.#contextMessages(batch.conversationId, isTask ? null : batch.botId, 120);
       const recentFiltered = recent.filter((m) => !batch.messages.some((b) => b.id === m.id));
       const renderOptions: RenderMessageOptions = {
         ...this.#renderOptions(),
@@ -2247,12 +2476,15 @@ export class Orchestrator {
         recent: recentFiltered,
         options: renderOptions,
       });
-      const triggerSegment = buildTriggerSegment({
-        reason: batch.reason,
-        messages: batch.messages,
-        options: renderOptions,
-        extraAttributes: batch.extraAttributes,
-      });
+      const triggerSegment =
+        exec.kind === 'task'
+          ? buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskWorkdir)
+          : buildTriggerSegment({
+              reason: batch.reason,
+              messages: batch.messages,
+              options: renderOptions,
+              extraAttributes: batch.extraAttributes,
+            });
       // Sequential group response: the later bot is told who already replied
       // (docs/dev/04-agent-runtime.md "触发段").
       const triggerContent = batch.afterNote
@@ -2264,21 +2496,25 @@ export class Orchestrator {
       // failure here means "no continuation", never a failed run.
       let continuation: ContinuationPlan | null = null;
       try {
-        continuation = await this.#resolveContinuation({
-          runId,
-          botId: batch.botId,
-          conversationId: batch.conversationId,
-          batch,
-          recentFiltered,
-          renderOptions,
-        });
+        // D75 §7.1: tasks replay only on explicit continues_task_id.
+        continuation =
+          exec.kind === 'task'
+            ? this.#taskContinuation(exec.brief)
+            : await this.#resolveContinuation({
+                runId,
+                botId: batch.botId,
+                conversationId: batch.conversationId,
+                batch,
+                recentFiltered,
+                renderOptions,
+              });
       } catch (error) {
         this.#deps.logger.warn(
           { runId, error: error instanceof Error ? error.message : String(error) },
           'continuation resolution failed; starting without replay',
         );
       }
-      if (continuation !== null) {
+      if (continuation !== null && !isTask) {
         this.#deps.runs.update(runId, { continuedFromRunIds: continuation.continuedFromRunIds });
       }
       const contextAndContinuation = [contextSegment, continuation?.segment]
@@ -2286,12 +2522,7 @@ export class Orchestrator {
         .join('\n\n');
 
       const workspacePath = workspacePathFor(this.#deps.paths, batch.botId, batch.conversationId);
-      this.#deps.gateway.ensureWorkspace({
-        runId,
-        botId: batch.botId,
-        conversationId: batch.conversationId,
-        loopType: 'response',
-      });
+      this.#deps.gateway.ensureWorkspace(identity);
       const project = this.#deps.projects.boundProject(batch.conversationId);
       const network = {
         mode: bot.profile.runtime.network_policy,
@@ -2315,13 +2546,6 @@ export class Orchestrator {
             triggerMessages: () => batch.messages,
           }
         : undefined;
-      // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts）。
-      const identity = {
-        runId,
-        botId: batch.botId,
-        conversationId: batch.conversationId,
-        loopType: 'response' as const,
-      };
       const toolDeps: ResponseToolDeps = {
         messages,
         attachments: this.#deps.attachments,
@@ -2708,32 +2932,40 @@ export class Orchestrator {
         limits: { maxTurns: RUN_MAX_TURNS },
       });
 
-      const activeEntry: ActiveRunEntry = {
-        handle,
-        conversationId: batch.conversationId,
-        botId: batch.botId,
-        cutoffSeq: Math.max(-1, ...batch.messages.map((m) => m.seq)),
-        ...(agentRun !== null ? { steerLog: agentSteer } : {}),
-      };
-      this.#activeRuns.set(runId, activeEntry);
+      if (exec.kind === 'task') {
+        // D75: tasks are not mailbox runs — steering a task is inject_task,
+        // through the task host (buffered injects are flushed here).
+        exec.control.attach(handle);
+      } else {
+        const activeEntry: ActiveRunEntry = {
+          handle,
+          conversationId: batch.conversationId,
+          botId: batch.botId,
+          cutoffSeq: Math.max(-1, ...batch.messages.map((m) => m.seq)),
+          ...(agentRun !== null ? { steerLog: agentSteer } : {}),
+          consumesTaskIds,
+        };
+        this.#activeRuns.set(runId, activeEntry);
 
-      // Deliver batches that arrived while the run was registering. A batch
-      // the loop cannot take (external agents without steering, D72) goes back
-      // to the buffer: mailbox release re-delivers it as a new run.
-      const buffered = this.#pendingSteers.get(mailboxKey);
-      if (buffered) {
-        this.#pendingSteers.delete(mailboxKey);
-        const refused = buffered.filter((pending) => {
-          const text = this.#renderBatchText(pending);
-          if (!handle.steer(text)) return true;
-          this.#noteAgentSteer(agentSteer, text, pending);
-          return false;
-        });
-        if (refused.length > 0) {
-          this.#pendingSteers.set(mailboxKey, [
-            ...refused,
-            ...(this.#pendingSteers.get(mailboxKey) ?? []),
-          ]);
+        // Deliver batches that arrived while the run was registering. A batch
+        // the loop cannot take (external agents without steering, D72) goes back
+        // to the buffer: mailbox release re-delivers it as a new run.
+        const buffered = this.#pendingSteers.get(mailboxKey);
+        if (buffered) {
+          this.#pendingSteers.delete(mailboxKey);
+          const refused = buffered.filter((pending) => {
+            const text = this.#renderBatchText(pending);
+            if (!handle.steer(text)) return true;
+            this.#noteAgentSteer(agentSteer, text, pending);
+            this.#noteTaskEntries(consumesTaskIds, pending);
+            return false;
+          });
+          if (refused.length > 0) {
+            this.#pendingSteers.set(mailboxKey, [
+              ...refused,
+              ...(this.#pendingSteers.get(mailboxKey) ?? []),
+            ]);
+          }
         }
       }
 
@@ -2752,6 +2984,7 @@ export class Orchestrator {
         batch,
         conv.type === 'group',
         handle,
+        isTask ? runId : null,
       );
       let outcome;
       try {
@@ -2760,7 +2993,8 @@ export class Orchestrator {
         unsubscribe();
         unsubscribeSetup();
         unsubscribeInterim();
-        this.#activeRuns.delete(runId);
+        if (exec.kind === 'task') exec.control.detach();
+        else this.#activeRuns.delete(runId);
       }
       // P5: the reuse window counts from the end of the session's last run;
       // the session has seen everything up to the run's cutoff.
@@ -2774,7 +3008,9 @@ export class Orchestrator {
         this.#agentSessions.touch(agentSessionRowId, runId, this.#deps.clock.now());
       }
 
-      if (outcome.status === 'completed' && outcome.finalText.trim().length > 0) {
+      // D75 §6.1: a task's final text is its private result entry (settle
+      // below), never a visible message.
+      if (!isTask && outcome.status === 'completed' && outcome.finalText.trim().length > 0) {
         const message = messages.append({
           conversationId: batch.conversationId,
           senderType: 'bot',
@@ -2791,7 +3027,7 @@ export class Orchestrator {
           runId,
           botId: batch.botId,
           conversationId: batch.conversationId,
-          loopType: 'response',
+          loopType,
           provider: this.#providerForRef(modelRef),
           model: modelRef.slice(this.#providerForRef(modelRef).length + 1),
           inputTokens: usage.input,
@@ -2817,12 +3053,7 @@ export class Orchestrator {
       // 缺设置中断（setupHit 非空且 run 非正常完成）：统一改判 failed 并携带
       // 结构化 setup，界面上是可引导的设置卡片而非普通失败。
       if (setupHit.requirement !== null && outcome.status !== 'completed') {
-        this.#settleRun(
-          runId,
-          'failed',
-          setupRequirementErrorText(setupHit.requirement),
-          setupHit.requirement,
-        );
+        settle('failed', setupRequirementErrorText(setupHit.requirement), setupHit.requirement);
         this.#maybeEnqueueSummary(batch.conversationId);
         return;
       }
@@ -2841,9 +3072,16 @@ export class Orchestrator {
         return;
       }
 
-      this.#settleRun(runId, outcome.status, outcome.error?.message ?? null);
+      settle(
+        outcome.status,
+        outcome.error?.message ?? null,
+        undefined,
+        // skip_reply → an empty result (no wake, §3.3).
+        outcome.status === 'completed' && !outcome.skipReply ? outcome.finalText.trim() : '',
+      );
       // P07: a completed response registers its reflection job (dedupe
-      // run:{runId}). Background work — failures never touch this run.
+      // run:{runId}); D75 §7.2: so does a completed task. Background work —
+      // failures never touch this run.
       if (outcome.status === 'completed') {
         this.#deps.memory?.registerReflection({
           runId,
@@ -2858,35 +3096,47 @@ export class Orchestrator {
     } catch (error) {
       this.#deps.logger.error(
         { runId, error: error instanceof Error ? error.message : String(error) },
-        'response run crashed',
+        isTask ? 'task run crashed' : 'response run crashed',
       );
       await this.#deps.projects.releaseRun(runId).catch(() => {});
       this.#fsState.release(runId);
-      this.#settleRun(runId, 'failed', error instanceof Error ? error.message : String(error));
+      settle('failed', error instanceof Error ? error.message : String(error));
     } finally {
-      const mailbox = this.#mailboxes.for(batch.botId, batch.conversationId);
-      mailbox.release();
-      // Batches buffered during the closing window (settled run, mailbox not
-      // yet released) never reached a loop: re-deliver them as new runs.
-      const key = this.#mailboxKey(batch.botId, batch.conversationId);
-      const buffered = this.#pendingSteers.get(key);
-      if (buffered !== undefined && buffered.length > 0) {
-        this.#pendingSteers.delete(key);
-        for (const pending of buffered) mailbox.deliver(pending);
-      }
-      agentSteer.released = true;
-      // A turn waiting for this mailbox to free up delivers now (BR-P05-002).
-      this.#groupTurns.onMailboxIdle(batch.botId, batch.conversationId);
-      // D71：B 的私聊邮箱空了——排队中的委派（若有）可以投递了。
-      try {
-        this.#delegationHost.onMailboxIdle(batch.botId, batch.conversationId);
-      } catch (error) {
-        this.#deps.logger.warn(
-          { error: error instanceof Error ? error.message : String(error) },
-          'queued delegation delivery failed',
-        );
-      }
+      // Mailbox, group-turn and D71 bookkeeping belong to response runs only.
+      if (exec.kind === 'response')
+        this.#releaseResponseMailbox(batch, consumesTaskIds, agentSteer);
       this.#publishConversation(batch.conversationId);
+    }
+  }
+
+  /** Response-run epilogue (#executeRun finally): consumption, mailbox release, hooks. */
+  #releaseResponseMailbox(
+    batch: TriggerBatch,
+    consumesTaskIds: Set<string>,
+    agentSteer: AgentSteerLog,
+  ): void {
+    if (consumesTaskIds.size > 0) this.#taskHost.markConsumed(consumesTaskIds);
+    const mailbox = this.#mailboxes.for(batch.botId, batch.conversationId);
+    mailbox.release();
+    // Batches buffered during the closing window (settled run, mailbox not
+    // yet released) never reached a loop: re-deliver them as new runs.
+    const key = this.#mailboxKey(batch.botId, batch.conversationId);
+    const buffered = this.#pendingSteers.get(key);
+    if (buffered !== undefined && buffered.length > 0) {
+      this.#pendingSteers.delete(key);
+      for (const pending of buffered) mailbox.deliver(pending);
+    }
+    agentSteer.released = true;
+    // A turn waiting for this mailbox to free up delivers now (BR-P05-002).
+    this.#groupTurns.onMailboxIdle(batch.botId, batch.conversationId);
+    // D71：B 的私聊邮箱空了——排队中的委派（若有）可以投递了。
+    try {
+      this.#delegationHost.onMailboxIdle(batch.botId, batch.conversationId);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'queued delegation delivery failed',
+      );
     }
   }
 
@@ -2992,6 +3242,26 @@ export class Orchestrator {
         'recording the agent session failed',
       );
     }
+  }
+
+  /** Task ids of the task_event entries in a batch (D75 §3.2 消费 bookkeeping). */
+  #noteTaskEntries(target: Set<string>, batch: TriggerBatch): void {
+    for (const message of batch.messages) {
+      if (message.kind === 'task_event' && message.taskId !== null) target.add(message.taskId);
+    }
+  }
+
+  /** `continues_task_id` replay of a task (D75 §7.1, D56 budget). */
+  #taskContinuation(brief: TaskBrief): ContinuationPlan | null {
+    if (brief.continuesTaskId === null) return null;
+    const source = this.#deps.runs.get(brief.continuesTaskId);
+    if (source === null) return null;
+    const segment = buildTaskReplaySegment({
+      source,
+      steps: this.#deps.runs.stepsFor(source.id),
+      timeZone: this.#deps.timeZone,
+    });
+    return segment.length > 0 ? { continuedFromRunIds: [source.id], segment } : null;
   }
 
   /** Formats a buffered batch into the steer text the mailbox hook produced. */
@@ -3250,6 +3520,8 @@ export class Orchestrator {
     batch: TriggerBatch,
     isGroup: boolean,
     handle: RunHandle,
+    /** D75 §6.1: a task's interim texts carry `origin:'task'` (same guardrails). */
+    taskId: string | null = null,
   ): () => void {
     let delivered = 0;
     const max = isGroup ? INTERIM_TEXT_MAX_PER_RUN_GROUP : INTERIM_TEXT_MAX_PER_RUN;
@@ -3271,6 +3543,7 @@ export class Orchestrator {
             ? `${trimmed.slice(0, INTERIM_TEXT_MAX_CHARS)}…`
             : trimmed,
         runId,
+        ...(taskId !== null ? { taskOrigin: { taskId } } : {}),
       });
       this.#recordBotMessage(runId, message);
     });
@@ -3302,6 +3575,8 @@ export class Orchestrator {
       // the buffer and re-deliver the batch as a new run on release.
       if (entry.handle.steer(text)) {
         if (entry.steerLog !== undefined) this.#noteAgentSteer(entry.steerLog, text, batch);
+        if (entry.consumesTaskIds !== undefined)
+          this.#noteTaskEntries(entry.consumesTaskIds, batch);
         return runId; // the engine's steer event persists the step
       }
       break;

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   AGENT_CATALOG,
   AppError,
+  TASK_SETTLE_SWEEP_MS,
   findAgentEntry,
   systemInfoOutputSchema,
   systemPingOutputSchema,
@@ -572,6 +573,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     events.emit('core.status', reason === undefined ? { status } : { status, reason });
   };
 
+  /** D75 §3.2 task reaper (armed after startup recovery, cleared by close()). */
+  let taskSweepTimer: NodeJS.Timeout | null = null;
+
   /** Never logs after close: pino's sync write throw would reject unhandled. */
   const warnQuietly = (message: string, error: unknown) => {
     if (servicesClosed.closed) return;
@@ -644,6 +648,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (envDoctorTimerRef.timer) clearInterval(envDoctorTimerRef.timer);
       if (consolidationTimerRef.timer) clearInterval(consolidationTimerRef.timer);
       if (wikiLintTimerRef.timer) clearInterval(wikiLintTimerRef.timer);
+      if (taskSweepTimer !== null) clearInterval(taskSweepTimer);
+      taskSweepTimer = null;
       try {
         services.memory?.closeAll();
       } catch {
@@ -1463,7 +1469,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
 
     jobs.resetRunningToPending();
+    // D75 §7.4: task repair → blanket interruption → re-queue + reconciliation.
     orchestrator.recoverInterrupted();
+    // D75 §3.2 reaper: re-deliver unconsumed task results, enforce the
+    // wall-clock / token caps.
+    taskSweepTimer = setInterval(() => {
+      if (taskSweepTimer === null) return;
+      try {
+        orchestrator.tasks.sweep();
+      } catch (error) {
+        warnQuietly('task sweep failed', error);
+      }
+    }, TASK_SETTLE_SWEEP_MS);
+    taskSweepTimer.unref?.();
     // D70：存量用户（升级前已完成引导）没有管家——启动时幂等补建（不访谈，
     // 只发确定性欢迎语）。新用户的管家由引导完成时的 butler.ensure 建立。
     if (settings.get().onboarding.completed) {
