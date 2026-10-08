@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_RUNTIME, TURN_MAX_TURNS, type Bot, type Conversation, type Message } from '@kepcup/shared';
 import {
+  canShareTurn,
   Mailbox,
   MailboxRegistry,
   mergeTriggerBatches,
@@ -142,6 +143,66 @@ describe('mergeTriggerBatches', () => {
     expect(merged.parts).toBeUndefined();
     expect(merged.reason).toBe('task');
     expect(merged.messages).toHaveLength(2);
+  });
+});
+
+describe('which batches share a turn (D75 审查 M1 / M2)', () => {
+  const started: TriggerBatch[] = [];
+  const mailbox = (): Mailbox =>
+    new Mailbox('bot_1:conv_1', {
+      startRun: (b) => {
+        started.push(b);
+        return `run_${started.length}`;
+      },
+    });
+
+  it('a merged chain binding is the deepest one of that chain', () => {
+    const merged = mergeTriggerBatches([
+      batch('chain', [message('浅')], { chain: { id: 'chn_1', depth: 1 } }),
+      batch('direct', [message('用户')]),
+      batch('chain', [message('深')], { chain: { id: 'chn_1', depth: 3 } }),
+    ]);
+    expect(merged.chain).toEqual({ id: 'chn_1', depth: 3 });
+  });
+
+  it('delegations and different chains never share a turn', () => {
+    const delegation = batch('delegation', [message('代发')]);
+    const user = batch('direct', [message('用户')]);
+    const chainA = batch('chain', [message('A')], { chain: { id: 'chn_a', depth: 1 } });
+    const chainB = batch('chain', [message('B')], { chain: { id: 'chn_b', depth: 2 } });
+    expect(canShareTurn(delegation, user)).toBe(false);
+    expect(canShareTurn(user, delegation)).toBe(false);
+    expect(canShareTurn(chainA, chainB)).toBe(false);
+    expect(canShareTurn(chainA, user)).toBe(true);
+    expect(canShareTurn(chainA, { ...chainA, messages: [message('A2')] })).toBe(true);
+  });
+
+  it('takeBuffered leaves what cannot join the running turn; release starts one compatible group at a time', () => {
+    started.length = 0;
+    const box = mailbox();
+    const delegated = batch('delegation', [message('代发')]);
+    box.deliver(delegated);
+    const user = batch('direct', [message('用户插话')]);
+    const chainA = batch('chain', [message('A 接力')], { chain: { id: 'chn_a', depth: 1 } });
+    const chainB = batch('chain', [message('B 接力')], { chain: { id: 'chn_b', depth: 2 } });
+    box.deliver(user);
+    box.deliver(chainA);
+    box.deliver(chainB);
+    // The delegated turn absorbs nothing.
+    expect(box.takeBuffered(delegated)).toEqual([]);
+    expect(box.bufferedCount).toBe(3);
+    // Next turn: the user message with chain A; chain B waits for the turn after.
+    box.release();
+    expect(started[1]!.messages.map((m) => (m.content as { text: string }).text)).toEqual([
+      '用户插话',
+      'A 接力',
+    ]);
+    expect(started[1]!.chain).toEqual({ id: 'chn_a', depth: 1 });
+    expect(box.bufferedCount).toBe(1);
+    expect(box.takeBuffered(started[1]!)).toEqual([]);
+    box.release();
+    expect(started[2]!.chain).toEqual({ id: 'chn_b', depth: 2 });
+    expect(box.bufferedCount).toBe(0);
   });
 });
 
