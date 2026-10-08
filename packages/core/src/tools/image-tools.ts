@@ -9,6 +9,7 @@ import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js'
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
 import { resolveMediaSource } from './media-source.js';
+import { readOnlyRefusal } from './read-only.js';
 
 /**
  * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
@@ -95,6 +96,13 @@ export function buildImageTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
+      // The image is saved into the workspace: refused before paying for it.
+      const readOnly = readOnlyRefusal(
+        input.gateway,
+        identity,
+        '生成的图片要保存到 workspace，本次执行不能生成图片',
+      );
+      if (readOnly !== null) return readOnly;
       // 未配置（能力缺失 / 厂商缺 Key）由 MediaService 抛
       // CAPABILITY_NOT_CONFIGURED / PROVIDER_AUTH_FAILED——orchestrator 的
       // facade 借这两个错误码记下 setup 需求后原样抛回，这里转 SETUP_REQUIRED。

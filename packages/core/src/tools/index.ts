@@ -23,6 +23,7 @@ import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
 import { buildWebTools, type SearchToolFacade } from './web-tools.js';
 import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
+import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
@@ -359,14 +360,16 @@ export function buildResponseTools(input: {
         };
       }
       // Non-textual: copy into the workspace so bash / read can use the file.
+      // The copy is host-owned (D75): read-only runs may make it too, confined
+      // to `.attachments/` (gateway.checkHostCopyPath).
       const targetDir = path.join(deps.workspacePath, '.attachments');
       const target = path.join(targetDir, `${attachment.id}_${attachment.fileName}`);
-      const decision = gateway.checkPath(identity, target, 'write');
+      const decision = gateway.checkHostCopyPath(identity, target, '.attachments');
       if (decision.kind === 'forbidden') {
         return {
           ok: false,
           content: `无法复制附件：${decision.reason}`,
-          errorCode: 'PATH_OUT_OF_SCOPE',
+          errorCode: decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
         };
       }
       mkdirSync(targetDir, { recursive: true });
@@ -665,6 +668,9 @@ export function buildResponseTools(input: {
           errorCode: 'INVALID_INPUT',
         };
       }
+      // Installs change the host environment shared by every bot.
+      const readOnly = readOnlyRefusal(gateway, identity, '不能申请安装环境');
+      if (readOnly !== null) return readOnly;
       try {
         const outcome = await deps.environment.request(identity, {
           item: params.item,
@@ -780,6 +786,11 @@ export function buildResponseTools(input: {
           browser: deps.browser,
           workspacePath: deps.workspacePath,
           projectPath: deps.projectPath,
+          // D75: a page click can start a download; a read-only run's
+          // downloads never land in the workspace.
+          ...(gateway.writeDenial(identity) !== null
+            ? { downloadsDir: gateway.readOnlyDownloadsDir(identity) }
+            : {}),
         })
       : [];
 
@@ -822,7 +833,9 @@ export function buildResponseTools(input: {
 
   // 技能安装（docs/design/22-file-skill-routing.md）：门面就绪才注册。
   const skillTools =
-    deps.skillInstall !== undefined ? buildSkillTools({ identity, skills: deps.skillInstall }) : [];
+    deps.skillInstall !== undefined
+      ? buildSkillTools({ identity, skills: deps.skillInstall, gateway })
+      : [];
 
   // 宿主 SubAgent（docs/design/23-mcp-and-subagent.md D66）：门面就绪才注册。
   const delegateTools =

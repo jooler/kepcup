@@ -62,6 +62,8 @@ function attachmentsFake(byId: Record<string, FakeAttachment>): AttachmentsServi
 
 function gatewayFake(allowedPrefix: string): ToolGateway {
   return {
+    // D75: generation tools refuse read-only runs up front (covered in gateway-read-only).
+    writeDenial: () => null,
     checkPath: (_identity: RunIdentity, target: string) =>
       path.resolve(target).startsWith(path.resolve(allowedPrefix))
         ? { kind: 'allowed', resolvedPath: path.resolve(target) }
