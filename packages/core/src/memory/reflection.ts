@@ -1,5 +1,5 @@
 import { AppError, type Message } from '@kepcup/shared';
-import { untrustedBlock } from '../infra/data-boundary.js';
+import { neutralizeUntrusted, untrustedBlock } from '../infra/data-boundary.js';
 import { completeStructured } from '../agent/structured.js';
 import type { AgentEngine, EngineMessage } from '../agent/types.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -336,6 +336,8 @@ export function reflectionInput(input: {
     senderType: string;
     senderBotId: string | null;
     content: unknown;
+    /** D75: a `task_event` row is the owner's own task's result entry. */
+    kind?: string;
   }>;
   botMessages: Array<{ id: string; createdAt: number; content: unknown }>;
   runId: string | null;
@@ -351,8 +353,16 @@ export function reflectionInput(input: {
     senderType?: string;
     senderBotId?: string | null;
     content: unknown;
+    kind?: string;
   }) => {
     const content = m.content as { text?: string; origin?: string } | undefined;
+    if (m.kind === 'task_event') {
+      // D75 审查 L-2: the bot's own task's result / failure report (stored as
+      // senderType system) is the task's model output, not a system statement.
+      const event = m.content as { taskId?: string; phase?: string } | undefined;
+      const what = event?.phase === 'failure' ? '失败报告' : '结果';
+      return `[${m.id} | 任务 ${event?.taskId ?? ''} 的${what}] <untrusted>${neutralizeUntrusted(content?.text ?? '')}</untrusted>`;
+    }
     // D71：委派代发消息是其他 Bot 代用户转交的文字，不是用户本人的话。
     const sender =
       m.senderType === 'user' && content?.origin === 'delegation'

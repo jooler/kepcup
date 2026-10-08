@@ -8,6 +8,7 @@ import {
   type TaskEventContent,
   type TaskEventPhase,
 } from '@kepcup/shared';
+import { neutralizeUntrusted } from '../../infra/data-boundary.js';
 import { estimateTokens } from '../tokens.js';
 import type { TriggerBatch } from '../../scheduler/mailbox.js';
 
@@ -124,6 +125,11 @@ export const TASK_QUESTION_EVENT = 'task_question';
  */
 export const TASK_UNDELIVERED_EVENT = 'task_result_undelivered';
 
+/** The fixed line bots (and the summarizer) see for a TASK_UNDELIVERED_EVENT notice. */
+export function taskUndeliveredLine(taskId: string): string {
+  return `任务 ${taskId} 的结算结果多次没能交给 Bot 处理，宿主已停止重试（用户已看到这条提示）`;
+}
+
 /**
  * A task question card's line (D75 审查 H1). The question and its options are
  * a task's model output — possibly steered by what the task read — so the
@@ -158,7 +164,7 @@ function renderTaskQuestionLine(
   if (choices.length > 0) parts.push(`选项：${choices.join(' / ')}`);
   if (typeof content.answer === 'string') parts.push(`回答：${content.answer}`);
   const body = clipTaskBody(parts.join('\n'), message, taskLines, null);
-  return `[${message.id} | ${time} | ${asker}（任务 ${taskId}）向用户提问] <untrusted>${body}</untrusted>`;
+  return `[${message.id} | ${time} | ${asker}（任务 ${taskId}）向用户提问] <untrusted>${neutralizeUntrusted(body)}</untrusted>`;
 }
 
 /** Renders one message line: [msg_... | time | sender] body. */
@@ -189,7 +195,7 @@ export function renderMessageLine(
     message.kind === 'system_event' &&
     (message.content as { event?: unknown }).event === TASK_UNDELIVERED_EVENT
   ) {
-    return `[${message.id} | ${time} | 系统] 任务 ${message.taskId ?? ''} 的结算结果多次没能交给 Bot 处理，宿主已停止重试（用户已看到这条提示）`;
+    return `[${message.id} | ${time} | 系统] ${taskUndeliveredLine(message.taskId ?? '')}`;
   }
   if (message.kind === 'card') {
     const rendered = options.renderCard?.(message) ?? null;
@@ -247,7 +253,7 @@ export function renderMessageLine(
     message.senderType === 'bot' &&
     options.selfBotId !== null &&
     message.senderBotId !== options.selfBotId
-      ? `<untrusted>${body}</untrusted>`
+      ? `<untrusted>${neutralizeUntrusted(body)}</untrusted>`
       : body;
   return `[${message.id} | ${time} | ${sender}]${statusSuffix} ${wrapped}${attachmentSuffix}`;
 }

@@ -148,6 +148,7 @@ import { FileReadState } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
 import { workspacePathFor } from '../infra/paths.js';
+import { neutralizeUntrusted } from '../infra/data-boundary.js';
 import {
   BUTLER_SETUP_FIRST_OPTIONS,
   BUTLER_SETUP_FIRST_QUESTION,
@@ -4084,7 +4085,7 @@ export class Orchestrator {
           : '';
     // The title is the model's own words (start_task, possibly steered by
     // what it read): data, not a system statement (审查 L1).
-    return `[系统] 任务卡 ${task.id}（${owner}）「<untrusted>${task.taskTitle ?? ''}</untrusted>」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
+    return `[系统] 任务卡 ${task.id}（${owner}）「<untrusted>${neutralizeUntrusted(task.taskTitle ?? '')}</untrusted>」：${state}${extra.length > 0 ? `，${extra}` : ''}`;
   }
 
   /**
