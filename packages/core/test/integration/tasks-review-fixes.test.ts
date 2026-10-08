@@ -2,18 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Bot, Message, Run, TaskEventContent } from '@kepcup/shared';
+import type { Message, Run, TaskEventContent } from '@kepcup/shared';
 import {
-  agentTurn,
   createTestStack,
-  fakeAgentEntry,
-  fakeAgentSpawner,
   makeBot,
   openDirect,
   sendBatch,
   step,
   waitFor,
-  type FakeAcpAgentHandle,
   type MockChatRequest,
   type TestStack,
 } from '@kepcup/testkit';
@@ -54,7 +50,7 @@ function tasksOf(stack: TestStack) {
 }
 
 function turnIdentity(botId: string, conversationId: string, runId = 'run_turn_1'): RunIdentity {
-  return { runId, botId, conversationId, loopType: 'response' };
+  return { runId, botId, conversationId, loopType: 'turn' };
 }
 
 function runOf(stack: TestStack, id: string): Run {
@@ -140,7 +136,13 @@ function fakeHandle(steerOk: boolean): TaskRunHandle & { steered: string[] } {
 
 describe('H2: write lease × scheduler slot never deadlock', () => {
   for (const limit of [1, 2]) {
-    it(`provider limit ${limit}: a response run waiting for the project lease held by a queued write task`, async () => {
+    // D75 W2: the old competitor — a response run calling acquire_project_write
+    // and waiting for the lease while holding a slot — is now a turn, which is
+    // read-only and never waits on a lease. Its closest task counterpart, a
+    // write task pinned to its workspace asking for the project lease mid-run,
+    // is refused at once (one pinned lease target per task), so the
+    // hold-and-wait cycle cannot form: T still gets its slot.
+    it(`provider limit ${limit}: no hold-and-wait between a queued write task and other runs`, async () => {
       const stack = await start();
       const { core, llm } = stack;
       await core.rpc.call('settings.update', {
@@ -158,7 +160,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
       await core.rpc.call('projects.select', { conversationId: convB.id, path: dir });
       const projectPath = bound.project.path;
 
-      const isR = (req: MockChatRequest) => req.lastUserText().includes('R-WRITE');
+      const isR = isTaskRequest('R-WRITE');
       const rHeld = step()
         .expect(isR)
         .hold()
@@ -171,20 +173,22 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         step().expect(isTaskRequest('TASK-H2')).replyText('RESULT-H2 写好了'),
         step().expect(isR).replyText('R 完成'),
         step().expect(isWakeRequest).replyText('任务做完了'),
+        step().expect(isWakeRequest).replyText('任务做完了'),
       ]);
 
-      // R (conversation B) takes the provider slot; its model call is held.
-      await sendBatch(core, convB.id, ['R-WRITE 请改一下项目']);
+      // R (conversation B, a write task in its workspace) takes the provider
+      // slot; its model call is held.
+      const r = tasksOf(stack).start(turnIdentity(botB.id, convB.id), {
+        title: 'R',
+        instruction: 'R-WRITE 请改一下项目',
+        sourceMessageIds: [],
+        writes: true,
+        workdir: 'workspace',
+      });
       await waitFor(() => (llm.requestsFor('mock-main').some(isR) ? true : null), {
         label: 'R holds a slot',
       });
-      const rRun = await waitFor(
-        () =>
-          domain(stack)
-            .runs.listByConversation(convB.id, 10)
-            .find((run) => run.loopType === 'response') ?? null,
-        { label: 'R run' },
-      );
+      const rRun = runOf(stack, r.taskId);
       // Every other slot is taken too (a write task holding its lease starts
       // under the plain limit, 审查复核 #4).
       for (let i = 1; i < limit; i += 1) {
@@ -220,15 +224,18 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
       expect(runOf(stack, t.taskId).status).toBe('queued'); // waiting for a slot
       expect(llm.requests().some(isTaskRequest('TASK-H2'))).toBe(false);
 
-      // R now asks for the lease T holds: R must give its slot back to T.
+      // R asks for the lease T holds: refused right away, R finishes and
+      // frees its slot; T runs in it (the other slots stay busy meanwhile).
       rHeld.release();
-      // T runs in the slot R gave back (the other slots stay busy meanwhile).
-      const tDone = await waitRun(stack, t.taskId, ['completed'], 'T completed');
+      await waitRun(stack, rRun.id, ['completed'], 'R completed');
+      const refusal = domain(stack)
+        .runs.stepsFor(rRun.id)
+        .find((s) => s.type === 'tool_result')?.payload as { ok?: boolean } | undefined;
+      expect(refusal?.ok).toBe(false);
+      await waitRun(stack, t.taskId, ['completed'], 'T completed');
       busyHeld.release();
-      const rDone = await waitRun(stack, rRun.id, ['completed'], 'R completed');
       expect(entries(stack, t.taskId).at(-1)).toMatchObject({ phase: 'result' });
-      // R got the lease only after T released it.
-      expect(rDone.endedAt ?? 0).toBeGreaterThanOrEqual(tDone.endedAt ?? Infinity);
+      expect(runtime.holdsLease(tIdentity, projectPath)).toBe(false);
     }, 60_000);
   }
 
@@ -554,94 +561,10 @@ describe('LOW-8: a failed task can be retried (setup card auto-continue, design 
   }, 60_000);
 });
 
-describe('LOW-2: a refused steer carrying a task result is not consumed early', () => {
-  it('the result counts as consumed only by the run that re-delivers it', async () => {
-    const entry = fakeAgentEntry('fake-steer', { provider: 'claude' });
-    const started: FakeAcpAgentHandle[] = [];
-    const stack = await start({
-      agentCatalog: [entry],
-      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
-      agentSpawn: fakeAgentSpawner(
-        {
-          'fake-steer': {
-            steering: true,
-            steeringOutcome: 'promptRequired',
-            modes: {
-              currentModeId: 'default',
-              availableModes: [
-                { id: 'default', name: 'Default' },
-                { id: 'acceptEdits', name: 'Accept Edits' },
-              ],
-            },
-            turns: [agentTurn().sleep(800).text('先答第一条'), agentTurn().text('知道任务失败了')],
-          },
-        },
-        started,
-      ) as never,
-    });
-    const { core } = stack;
-    await core.rpc.call('settings.update', {
-      experimental: { externalAgents: true },
-      agents: { 'fake-steer': { enabled: true } },
-    });
-    const plain = await makeBot(core, '外援');
-    const profile = {
-      ...plain.profile,
-      runtime: { ...plain.profile.runtime, agent: { ...plain.profile.runtime.agent, id: 'fake-steer' } },
-    };
-    const bot = ((await core.rpc.call('bots.update', { id: plain.id, profile })) as { bot: Bot }).bot;
-    const conv = await openDirect(core, bot.id);
-    await sendBatch(core, conv.id, ['第一条']);
-    await waitFor(() => (started[0]?.observed.prompts.length === 1 ? true : null), {
-      label: 'first prompt',
-    });
-    // A task settled (failed) but unconsumed: the reconciliation wakes the bot
-    // with its failure entry while the agent run is busy → steered into it →
-    // the agent refuses the steer.
-    const { runs, messages } = domain(stack);
-    const task = runs.create({
-      botId: bot.id,
-      conversationId: conv.id,
-      loopType: 'task',
-      triggerReason: null,
-      triggerMessageIds: [],
-      taskTitle: '外部任务',
-      taskWrites: false,
-      originRunId: 'run_turn_old',
-    });
-    const scope = { conversationId: conv.id, ownerBotId: bot.id, taskId: task.id };
-    messages.appendTaskEvent({ ...scope, phase: 'brief', text: 'x', title: 'x', writes: false });
-    messages.appendTaskEvent({
-      ...scope,
-      phase: 'failure',
-      text: '任务失败：TASK-EXT-FAILED',
-      status: 'failed',
-      error: 'TASK-EXT-FAILED',
-    });
-    runs.update(task.id, { status: 'failed', error: 'TASK-EXT-FAILED' });
-    tasksOf(stack).sweep();
-    await waitFor(() => (started[0]!.observed.steerings.length === 1 ? true : null), {
-      label: 'steering attempted',
-    });
-    const responses = await waitFor(
-      () => {
-        const done = runs
-          .listByConversation(conv.id, 20)
-          .filter((run) => run.loopType === 'response' && run.status === 'completed')
-          .sort((a, b) => a.createdAt - b.createdAt);
-        return done.length >= 2 ? done : null;
-      },
-      { label: 'two completed response runs', timeoutMs: 20_000 },
-    );
-    const consumedAt = await waitFor(() => runOf(stack, task.id).resultConsumedAt, {
-      label: 'task result consumed',
-    });
-    const redelivery = responses[1]!;
-    expect(started[0]!.observed.prompts[1]!.text).toContain('TASK-EXT-FAILED');
-    // Consumed by the re-delivering run's release — not by the first run's.
-    expect(consumedAt).toBeGreaterThanOrEqual(redelivery.endedAt ?? Infinity);
-  }, 60_000);
-});
+// D75 W2: the former 'LOW-2: a refused steer carrying a task result is not
+// consumed early' case is gone with its premise — turns never run on external
+// agents and are never steered; a task result is consumed only by the turn
+// whose trigger carried it (supervisor-turns.test.ts).
 
 describe('round 2 (审查复核)', () => {
   it('#1 two parallel write acquisitions of one run on a contested project both succeed after the holder releases', async () => {
@@ -658,16 +581,21 @@ describe('round 2 (审查复核)', () => {
     await core.rpc.call('projects.select', { conversationId: other.id, path: dir });
     const projectPath = bound.project.path;
     const { runs } = domain(stack);
+    // D75 W2: writers are write tasks (a turn — the old response run — is
+    // read-only and refused by ensureWriteLease).
     const runFor = (botId: string, conversationId: string): RunIdentity => {
       const run = runs.create({
         botId,
         conversationId,
-        loopType: 'response',
-        triggerReason: 'direct',
+        loopType: 'task',
+        triggerReason: null,
         triggerMessageIds: [],
+        taskTitle: 'w',
+        taskWrites: true,
+        originRunId: 'run_turn_x',
       });
       runs.update(run.id, { status: 'running' });
-      return { runId: run.id, botId, conversationId, loopType: 'response' };
+      return { runId: run.id, botId, conversationId, loopType: 'task' };
     };
     const runtime = core.services.projectRuntime!;
     const holder = runFor(otherBot.id, other.id);

@@ -115,7 +115,7 @@ const identity = {
   runId: 'run_1',
   botId: 'bot_1',
   conversationId: 'conv_1',
-  loopType: 'response' as const,
+  loopType: 'turn' as const,
 };
 
 describe('mcp stdio integration', () => {

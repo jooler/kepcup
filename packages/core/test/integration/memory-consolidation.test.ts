@@ -42,7 +42,7 @@ async function completedRun(core: CoreHarness, conversationId: string): Promise<
         runs: Run[];
       };
       return (
-        result.runs.find((run) => run.status === 'completed' && run.loopType === 'response') ?? null
+        result.runs.find((run) => run.status === 'completed' && run.loopType === 'turn') ?? null
       );
     },
     { label: 'completed response run' },

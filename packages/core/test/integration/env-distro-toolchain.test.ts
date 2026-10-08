@@ -100,7 +100,7 @@ function distroCatalog(archiveUrl: string, sha256: string, sizeBytes: number): C
 
 async function requestNodeInstall(core: CoreHarness, botId: string, conversationId: string): Promise<void> {
   const outcome = await core.services.environment!.request(
-    { runId: 'run_distro', botId, conversationId, loopType: 'response' },
+    { runId: 'run_distro', botId, conversationId, loopType: 'turn' },
     { item: 'node', reason: 'distro toolchain' },
   );
   if (outcome.status === 'submitted') {

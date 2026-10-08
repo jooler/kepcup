@@ -79,6 +79,11 @@ function taskEventBody(content: TaskEventContent): string {
       return content.title !== undefined && content.title.length > 0
         ? `${content.title}：${content.text}`
         : content.text;
+    case 'inject':
+      // W4 / §8.2: an inject the task could not take is recorded as queued.
+      return content.delivery === 'queued'
+        ? `${content.text}（未送达：任务没能接收这条追加指令）`
+        : content.text;
     case 'result':
       return content.text.length > 0 ? content.text : '（任务结束，没有结果内容）';
     case 'failure': {

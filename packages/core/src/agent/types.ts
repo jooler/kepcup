@@ -8,7 +8,6 @@ export type ModelRef = string;
 
 /** Execution identity carried by every run and tool call (02-architecture.md). */
 export type LoopType =
-  | 'response'
   | 'triage'
   | 'reflection'
   | 'memory_consolidation'
@@ -18,10 +17,15 @@ export type LoopType =
   | 'conversation_summary'
   /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
   | 'subagent'
-  /** D75 对话轮（只读，执行期由工具网关硬拒写）；'response' 由 W2 改名后移除。 */
+  /** D75 对话轮（替代原 'response'；只读，执行期由工具网关硬拒写）。 */
   | 'turn'
   /** D75 任务（task_writes=false 时只读）。 */
-  | 'task';
+  | 'task'
+  /**
+   * Host-side pseudo identity (never a runs row): a project revert, an install
+   * or skill import the system requests on the user's behalf. Not read-only.
+   */
+  | 'host';
 
 export interface RunIdentity {
   runId: string;

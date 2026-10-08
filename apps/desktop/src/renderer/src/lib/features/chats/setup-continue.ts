@@ -18,7 +18,7 @@ export function stepAutoContinue(
 
 /**
  * 打开会话时恢复的失败 run（`runs.list` 新→旧）：普通失败照旧取最近一条未
- * 关闭的；带 setup 的失败只有在它之后没有更新的同 Bot 响应 run 时才恢复——
+ * 关闭的；带 setup 的失败只有在它之后没有更新的同 Bot 对话轮 时才恢复——
  * 已被后续 run 接手的旧失败不再出现可续跑的设置卡（审查 HIGH #1）。
  */
 export function restoredFailedRun(
@@ -31,6 +31,6 @@ export function restoredFailedRun(
   if (failed.setup === null) return failed;
   const superseded = runs
     .slice(0, index)
-    .some((run) => run.loopType === 'response' && run.botId === failed.botId);
+    .some((run) => run.loopType === 'turn' && run.botId === failed.botId);
   return superseded ? null : failed;
 }

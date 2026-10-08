@@ -86,7 +86,7 @@ async function nextSettledRun(stack: TestStack, conversationId: string, seen: st
     async () =>
       (await listRuns(stack.core, conversationId)).find(
         (run) =>
-          run.loopType === 'response' &&
+          run.loopType === 'turn' &&
           !seen.includes(run.id) &&
           (run.status === 'failed' || run.status === 'completed'),
       ) ?? null,
@@ -289,7 +289,7 @@ describe('background loops without a built-in model (P4-B minimal fallback)', ()
     );
     expect(jobs.every((row) => row.lastError === null)).toBe(true);
     const background = (await listRuns(stack.core, conv.id)).filter(
-      (run) => run.loopType !== 'response',
+      (run) => run.loopType !== 'turn',
     );
     expect(background).toEqual([]);
   }, 30_000);

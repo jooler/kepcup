@@ -9,7 +9,8 @@ import {
   sendBatch,
   sendDrafts,
   step,
-  TestClock,
+  isTaskRequest,
+  viaTask,
   waitFor,
   waitForEvent,
   waitForMessage,
@@ -43,7 +44,7 @@ describe('response loop', () => {
     const run = await waitForRun(core, conv.id, 'completed');
     expect(run.triggerMessageIds).toEqual(messages.map((m) => m.id));
     // P07：响应之后还有后台反思 run——响应 run 本身仍只有一个。
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(1);
 
     const all = await listMessages(core, conv.id);
@@ -52,7 +53,9 @@ describe('response loop', () => {
     expect(botMessage?.content).toMatchObject({ text: '收到，三条都看到了' });
   });
 
-  it('a batch flushed mid-run is injected as <new_messages> without a second run', async () => {
+  // D75 W2: turns are never steered (was: injected as <new_messages> into the
+  // running loop) — the batch waits in the mailbox and starts the next turn.
+  it('a batch flushed mid-turn waits for the next turn instead of being injected', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
@@ -71,16 +74,22 @@ describe('response loop', () => {
     // Wait for the first request to actually reach the mock before releasing.
     await waitFor(() => (llm.requests().length >= 1 ? true : null), { label: 'first request' });
     llm.releaseAll();
-    await waitForRun(core, conv.id, 'completed');
+    const runs = await waitFor(
+      async () => {
+        const turns = (await listRuns(core, conv.id)).filter(
+          (r) => r.loopType === 'turn' && r.status === 'completed',
+        );
+        return turns.length === 2 ? turns : null;
+      },
+      { label: 'two turns completed' },
+    );
 
     const requests = llm.requestsFor('mock-main');
     expect(requests.length).toBe(2);
     const secondRequest = requests[1]!;
-    expect(JSON.stringify(secondRequest.body.messages)).toContain('<new_messages>');
-    expect(JSON.stringify(secondRequest.body.messages)).toContain('等一下，先别改配置');
-
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
-    expect(runs).toHaveLength(1);
+    expect(JSON.stringify(secondRequest.body.messages)).not.toContain('<new_messages>');
+    expect(secondRequest.lastUserText()).toMatch(/<trigger reason="direct">[\s\S]*等一下，先别改配置/);
+    expect(runs.map((r) => r.triggerMessageIds).sort()).toContainEqual(second.map((m) => m.id));
   }, 20_000);
 
   it('cancelling keeps send_message output and marks the run cancelled', async () => {
@@ -169,7 +178,7 @@ describe('response loop', () => {
     expect(completed.id).toBe(result.run!.id);
     expect(completed.triggerMessageIds).toEqual(failed.triggerMessageIds);
     // The retry path adds exactly one run record (failed + retried).
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(2);
   });
 
@@ -211,16 +220,22 @@ describe('response loop', () => {
     expect(completed.triggerMessageIds).toEqual(failed.triggerMessageIds);
   });
 
-  it('generate_image without a configured image capability aborts the run into a capability-model setup failure', async () => {
+  // D75 W2: media generation is a task's work (a turn has no generate_image);
+  // the task fails with the structured setup and the retry (setup card) starts
+  // a task continuing it.
+  it('generate_image (in a task) without a configured image capability fails the task into a capability-model setup failure', async () => {
     const { core, llm } = await start();
     llm.script('mock-main', [
-      step().replyToolCall('generate_image', { prompt: '一只在窗台晒太阳的猫' }),
+      ...viaTask({
+        taskSteps: [step().replyToolCall('generate_image', { prompt: '一只在窗台晒太阳的猫' })],
+        relay: '画图前需要先配置图像模型',
+      }),
     ]);
     const bot = await makeBot(core, '画师');
     const conv = await openDirect(core, bot.id);
 
     await sendBatch(core, conv.id, ['帮我画一张图']);
-    const failed = await waitForRun(core, conv.id, 'failed');
+    const failed = await waitForRun(core, conv.id, 'failed', { loopType: 'task' });
     expect(failed.setup).toEqual({ kind: 'capability-model', capability: 'image' });
 
     // 设置卡片完成图像模型配置后重试：工具不再报 SETUP_REQUIRED，对话继续。
@@ -233,14 +248,18 @@ describe('response loop', () => {
         image: { vendor: 'dashscope', model: 'qwen-image' },
       },
     });
-    llm.script('mock-main', [step().replyText('图像能力已就绪')]);
+    llm.script('mock-main', [
+      step().inTask().replyText('图像能力已就绪'),
+      step().inTurn().replyText('画好了'),
+    ]);
     const retried = (await core.rpc.call('runs.retry', { runId: failed.id })) as {
-      run: { id: string } | null;
+      run: { id: string; loopType: string } | null;
     };
-    expect(retried.run).not.toBeNull();
-    await waitForRun(core, conv.id, 'completed');
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
-    expect(runs.filter((r) => r.setup !== null)).toHaveLength(1);
+    expect(retried.run).toMatchObject({ loopType: 'task' });
+    await waitForRun(core, conv.id, 'completed', { loopType: 'task' });
+    const tasks = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'task');
+    expect(tasks.filter((r) => r.setup !== null)).toHaveLength(1);
+    expect(tasks.find((r) => r.id === retried.run!.id)?.continuedFromRunIds).toEqual([failed.id]);
   }, 30_000);
 
   it('deleting one conversation leaves a running loop in another conversation alone', async () => {
@@ -269,7 +288,7 @@ describe('response loop', () => {
 
     const botMessage = await waitForMessage(core, convB.id, (m) => m.senderBotId === botB.id);
     expect(botMessage.content).toMatchObject({ text: 'B 完成' });
-    const runsB = (await listRuns(core, convB.id)).filter((r) => r.loopType === 'response');
+    const runsB = (await listRuns(core, convB.id)).filter((r) => r.loopType === 'turn');
     expect(runsB[0]?.status).toBe('completed');
     void llm;
   }, 20_000);
@@ -283,7 +302,7 @@ describe('response loop', () => {
     await sendBatch(core, conv.id, ['记录检查']);
     await waitForRun(core, conv.id, 'completed');
 
-    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'response');
+    const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     const stepsResult = (await core.rpc.call('runs.steps', { runId: runs[0]!.id })) as {
       steps: Array<{ type: string; payload: unknown }>;
     };
@@ -313,7 +332,7 @@ describe('response loop', () => {
     await waitForRun(core, conv.id, 'completed');
 
     const responseRunId = (await listRuns(core, conv.id)).find(
-      (r) => r.loopType === 'response',
+      (r) => r.loopType === 'turn',
     )!.id;
     const rows = core.services
       .mainDb!.prepare('select * from usage_ledger where run_id = ?')
@@ -378,21 +397,28 @@ describe('response loop', () => {
     void llm;
   });
 
+  // D75 W2: a turn has at most TURN_MAX_TURNS steps, so long narrated work is
+  // a task's — the cap (8 per run) applies to the task's interim texts; its
+  // final text is the private result the waking turn relays.
   it('interim delivery is capped at eight per run and the overflow stays in run steps only', async () => {
     const { core, llm } = await start();
     const script = Array.from({ length: 9 }, (_, i) =>
       step().replyTextAndToolCall(`中间说明 ${i + 1}`, 'search_messages', { query: `q${i + 1}` }),
     );
     script.push(step().replyText('最终结果'));
-    llm.script('mock-main', script);
+    llm.script('mock-main', viaTask({ taskSteps: script, ack: '开始', relay: '最终结果' }));
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
 
     await sendBatch(core, conv.id, ['长任务']);
-    const run = await waitForRun(core, conv.id, 'completed');
+    const run = await waitForRun(core, conv.id, 'completed', { loopType: 'task' });
+    await waitForMessage(core, conv.id, (m) => 'text' in m.content && m.content.text === '最终结果');
 
     const botMessages = (await listMessages(core, conv.id)).filter((m) => m.senderBotId === bot.id);
-    expect(botMessages.map((m) => ('text' in m.content ? m.content.text : ''))).toEqual([
+    const texts = botMessages.map((m) => ('text' in m.content ? m.content.text : ''));
+    // The turn's acknowledgement races the task's first narration.
+    expect(texts).toContain('开始');
+    expect(texts.filter((t) => t !== '开始')).toEqual([
       ...Array.from({ length: 8 }, (_, i) => `中间说明 ${i + 1}`),
       '最终结果',
     ]);
@@ -451,8 +477,11 @@ describe('response loop', () => {
   });
 });
 
-describe('loop continuation (Loop 续接, D56)', () => {
-  it('replays the previous run deterministically when the next batch arrives within the window', async () => {
+// D75 W2 (design 30 §7.1): automatic continuation (L1 window + L2 arbiter) is
+// off for turns and removed — the former three replay / arbiter tests became
+// this one; tasks replay explicitly via continues_task_id (tasks.test.ts).
+describe('loop continuation (Loop 续接, D56 revised by D75)', () => {
+  it('a turn never replays the previous turn and never consults the arbiter', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
@@ -464,7 +493,6 @@ describe('loop continuation (Loop 续接, D56)', () => {
     ]);
     await sendBatch(core, conv.id, ['帮我看下报错']);
     const runA = await waitForRun(core, conv.id, 'completed');
-    expect(runA.continuedFromRunIds).toEqual([]);
 
     await sendBatch(core, conv.id, ['接着刚才继续']);
     const runB = await waitFor(
@@ -472,102 +500,22 @@ describe('loop continuation (Loop 续接, D56)', () => {
         const runs = await listRuns(core, conv.id);
         return (
           runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
+            (r) => r.id !== runA.id && r.loopType === 'turn' && r.status === 'completed',
           ) ?? null
         );
       },
       { label: 'run B completed' },
     );
-    expect(runB.continuedFromRunIds).toEqual([runA.id]);
-
-    // Run B's first request carries the replay of run A's process record:
-    // the tool call and the final reply are visible, big outputs elided.
+    expect(runB.continuedFromRunIds).toEqual([]);
     const runBFirstRequest = llm
       .requestsFor('mock-main')
       .find((r) => r.lastUserText().includes('接着刚才继续'));
-    expect(runBFirstRequest).toBeDefined();
-    const body = JSON.stringify(runBFirstRequest!.body.messages);
-    expect(body).toContain('<continuation>');
-    expect(body).toContain(runA.id);
-    expect(body).toContain('read(');
-    expect(body).toContain('（最终回复） 已经定位到超时原因');
-  });
-
-  it('beyond the window the light-model arbiter picks what to replay', async () => {
-    const clock = new TestClock();
-    const { core, llm } = await start({ clock, timers: clock });
-    const bot = await makeBot(core, '小艾');
-    const conv = await openDirect(core, bot.id);
-
-    llm.script('mock-main', [step().replyText('第一轮完成')]);
-    await sendBatch(core, conv.id, ['开始干活']);
-    const runA = await waitForRun(core, conv.id, 'completed');
-
-    // 2h later: outside the deterministic window, inside the arbiter window.
-    clock.advance(2 * 60 * 60 * 1000);
-    llm.script('mock-light', [
-      step()
-        .expect((req) => JSON.stringify(req.body).includes('<candidates>'))
-        .replyToolCall('submit', { continueRunIds: [runA.id], reason: '用户在继续上一轮' }),
-    ]);
-    llm.script('mock-main', [step().replyText('继续第二轮')]);
-    await sendBatch(core, conv.id, ['接着刚才继续']);
-    const runB = await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        return (
-          runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
-          ) ?? null
-        );
-      },
-      { label: 'run B completed' },
-    );
-    expect(runB.continuedFromRunIds).toEqual([runA.id]);
-
-    const runBFirstRequest = llm
-      .requestsFor('mock-main')
-      .find((r) => r.lastUserText().includes('接着刚才继续'));
-    expect(runBFirstRequest).toBeDefined();
-    expect(JSON.stringify(runBFirstRequest!.body.messages)).toContain('<continuation>');
-    // The arbiter really consulted the light model with the candidate list.
+    expect(JSON.stringify(runBFirstRequest!.body.messages)).not.toContain('<continuation>');
+    // The visible exchange is still there (conversation context).
+    expect(JSON.stringify(runBFirstRequest!.body.messages)).toContain('已经定位到超时原因');
     expect(
       llm.requestsFor('mock-light').some((r) => JSON.stringify(r.body).includes('<candidates>')),
-    ).toBe(true);
-  });
-
-  it('an arbiter failure degrades to a normal run without replay', async () => {
-    const clock = new TestClock();
-    const { core, llm } = await start({ clock, timers: clock });
-    const bot = await makeBot(core, '小艾');
-    const conv = await openDirect(core, bot.id);
-
-    llm.script('mock-main', [step().replyText('第一轮完成')]);
-    await sendBatch(core, conv.id, ['开始干活']);
-    const runA = await waitForRun(core, conv.id, 'completed');
-
-    clock.advance(2 * 60 * 60 * 1000);
-    // No mock-light script: every arbiter request gets a 500 (twice, with the
-    // structured-call retry) -> fail-open, run B starts without replay.
-    llm.script('mock-main', [step().replyText('继续第二轮')]);
-    await sendBatch(core, conv.id, ['接着刚才继续']);
-    await waitFor(
-      async () => {
-        const runs = await listRuns(core, conv.id);
-        return (
-          runs.find(
-            (r) => r.id !== runA.id && r.loopType === 'response' && r.status === 'completed',
-          ) ?? null
-        );
-      },
-      { label: 'run B completed' },
-    );
-
-    const runBFirstRequest = llm
-      .requestsFor('mock-main')
-      .find((r) => r.lastUserText().includes('接着刚才继续'));
-    expect(runBFirstRequest).toBeDefined();
-    expect(JSON.stringify(runBFirstRequest!.body.messages)).not.toContain('<continuation>');
-    expect(llm.requestsFor('mock-light').length).toBeGreaterThanOrEqual(2);
+    ).toBe(false);
+    expect(llm.requests().some(isTaskRequest)).toBe(false);
   });
 });

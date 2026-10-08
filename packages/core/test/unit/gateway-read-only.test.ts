@@ -32,7 +32,8 @@ const ids = {
   readTask: { runId: 'run_read_task', botId: BOT, conversationId: CONV, loopType: 'task' },
   writeTask: { runId: 'run_write_task', botId: BOT, conversationId: CONV, loopType: 'task' },
   unknownTask: { runId: 'run_missing', botId: BOT, conversationId: CONV, loopType: 'task' },
-  response: { runId: 'run_resp', botId: BOT, conversationId: CONV, loopType: 'response' },
+  // A writable non-D75 loop (formerly the response run, now renamed 'turn' and read-only).
+  response: { runId: 'run_resp', botId: BOT, conversationId: CONV, loopType: 'skill_authoring' },
   // delegate_task sub runs (loop type subagent) owned by the runs above.
   subOfReadTask: { runId: 'run_sub_read', botId: BOT, conversationId: CONV, loopType: 'subagent' },
   subOfWriteTask: { runId: 'run_sub_write', botId: BOT, conversationId: CONV, loopType: 'subagent' },
@@ -63,7 +64,7 @@ const runRows = new Map<string, RunRow>(
       ['run_write_task', 'task', true, null],
       ['run_ended_write_task', 'task', true, null, 'completed'],
       ['run_unleased_write_task', 'task', true, null],
-      ['run_resp', 'response', null, null],
+      ['run_resp', 'skill_authoring', null, null],
       ['run_sub_read', 'subagent', null, 'run_read_task'],
       ['run_sub_write', 'subagent', null, 'run_write_task'],
       ['run_sub_ended', 'subagent', null, 'run_ended_write_task'],
@@ -631,7 +632,13 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
 
   it('media generation, install_skill and request_environment return RUN_READ_ONLY before any side effect', async () => {
     const gateway = makeGateway();
-    for (const identity of [ids.turn, ids.readTask]) {
+    // D75 W2: a turn is not even offered these tools (its toolset is
+    // read-only + task management); the execution-time refusal guards tasks.
+    const turnTools = responseTools(gateway, ids.turn).tools;
+    for (const name of ['generate_image', 'generate_speech', 'generate_video', 'install_skill', 'request_environment', 'browser_open']) {
+      expect(turnTools.has(name), name).toBe(false);
+    }
+    for (const identity of [ids.readTask]) {
       const { tools, called } = responseTools(gateway, identity);
       const cases: Array<[string, unknown]> = [
         ['generate_image', { prompt: '猫' }],
@@ -684,7 +691,7 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
       const ensure = browser.calls.find((c) => c.method === 'browser.ensurePage');
       return (ensure?.input as { downloadsDir: string }).downloadsDir;
     };
-    expect(await downloadsDirOf(ids.turn)).toBe(gateway.readOnlyDownloadsDir(ids.turn));
+    // (A turn has no browser tools at all, D75 W2.)
     expect(await downloadsDirOf(ids.readTask)).toBe(gateway.readOnlyDownloadsDir(ids.readTask));
     expect(await downloadsDirOf(ids.writeTask)).toBe(path.join(workspace(), 'downloads'));
   });

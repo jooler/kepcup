@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Draft, type Message, type Run } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
-import { startMockLlm, type MockLlmServer } from './mock-llm.js';
+import { startMockLlm, step, type MockLlmServer, type MockLlmStep } from './mock-llm.js';
 import { createTestCore, createTestHome, type CreateTestCoreOptions } from './fixtures.js';
 import type { Keystore } from '@kepcup/core';
 import type { TimerScheduler } from '@kepcup/core';
@@ -250,8 +250,8 @@ export async function listRuns(core: CoreHarness, conversationId: string): Promi
 }
 
 /**
- * Waits for a run in `status`. Defaults to RESPONSE runs: since P07 every
- * completed response also spawns a fast `reflection` run, and since P01 the
+ * Waits for a run in `status`. Defaults to supervisor TURNS (D75; formerly
+ * response runs): since P07 every completed turn also spawns a fast `reflection` run, and since P01 the
  * summary/triage loops create rows too — an unfiltered status match would be
  * satisfied by those instead of the run under test.
  */
@@ -261,7 +261,7 @@ export function waitForRun(
   status: Run['status'],
   options: { timeoutMs?: number; loopType?: Run['loopType'] } = {},
 ): Promise<Run> {
-  const loopType = options.loopType ?? 'response';
+  const loopType = options.loopType ?? 'turn';
   return waitFor(
     async () =>
       (await listRuns(core, conversationId)).find(
@@ -304,4 +304,39 @@ export function waitForEvent<P>(
       }
     });
   });
+}
+
+/**
+ * D75 scripting helper: the work a reply run used to do now happens in a
+ * task. Returns the steps of "the turn starts a task and acknowledges → the
+ * task runs `taskSteps` (lane `inTask`) → its result wakes a turn that
+ * relays it". Turn steps are lane `inTurn`, so the two lanes may interleave
+ * freely on one model script. Omit `relay` when the task ends with an empty
+ * result (skip_reply / failure the test does not follow), or when the test
+ * scripts the waking turn itself.
+ */
+export function viaTask(input: {
+  taskSteps: MockLlmStep[];
+  title?: string;
+  instruction?: string;
+  writes?: boolean;
+  sourceMessageIds?: string[];
+  /** The turn's reply after start_task (default '好的，我去处理。'). */
+  ack?: string;
+  /** The waking turn's reply relaying the result. */
+  relay?: string;
+}): MockLlmStep[] {
+  return [
+    step()
+      .inTurn()
+      .replyToolCall('start_task', {
+        title: input.title ?? '处理请求',
+        instruction: input.instruction ?? '按用户的消息完成这件事',
+        source_message_ids: input.sourceMessageIds ?? [],
+        writes: input.writes ?? true,
+      }),
+    step().inTurn().replyText(input.ack ?? '好的，我去处理。'),
+    ...input.taskSteps.map((taskStep) => taskStep.inTask()),
+    ...(input.relay !== undefined ? [step().inTurn().replyText(input.relay)] : []),
+  ];
 }

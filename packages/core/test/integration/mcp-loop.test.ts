@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Run } from '@kepcup/shared';
 import {
   createTestStack,
+  isTaskRequest,
   listRuns,
   makeBot,
   openDirect,
   sendBatch,
   step,
+  viaTask,
   waitFor,
   waitForRun,
   type TestStack,
@@ -96,10 +98,19 @@ describe('mcp response loop', () => {
     });
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('mcp_srv1_echo', { text: '审批测试' }),
-      step().replyText('工具结果已收到'),
-    ]);
+    // D75 W2: MCP tools are a task's (a turn has none) — the turn starts a
+    // task that calls the tool.
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_srv1_echo', { text: '审批测试' }),
+          step().replyText('工具结果已收到'),
+        ],
+        relay: '收到了',
+      }),
+    );
     await sendBatch(core, conv.id, ['调用那个工具']);
 
     // 阻塞审批卡出现（mcp_tool）。
@@ -114,7 +125,12 @@ describe('mcp response loop', () => {
     );
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
 
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    // The turn was not offered the MCP tool; the (read-only) task was.
+    const [turnRequest] = llm.requestsFor('mock-main').filter((r) => !isTaskRequest(r));
+    expect(JSON.stringify(turnRequest!.body.tools ?? [])).not.toContain('mcp_srv1_echo');
+    const taskRequest = llm.requestsFor('mock-main').find(isTaskRequest);
+    expect(JSON.stringify(taskRequest!.body.tools ?? [])).toContain('mcp_srv1_echo');
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
@@ -143,10 +159,17 @@ describe('mcp response loop', () => {
     });
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('mcp_srv1_echo', { text: '再试' }),
-      step().replyText('好的，我不调用它了'),
-    ]);
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_srv1_echo', { text: '再试' }),
+          step().replyText('好的，我不调用它了'),
+        ],
+        relay: '没调用成',
+      }),
+    );
     await sendBatch(core, conv.id, ['再调用一次']);
 
     const approval = await waitFor(
@@ -160,9 +183,9 @@ describe('mcp response loop', () => {
     );
     await core.rpc.call('approvals.decide', { id: approval.id, approve: false });
 
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
     const steps = (await core.rpc.call('runs.steps', {
-      runId: ((await listRuns(core, conv.id)) as Run[]).find((r) => r.loopType === 'response')!.id,
+      runId: ((await listRuns(core, conv.id)) as Run[]).find((r) => r.loopType === 'task')!.id,
     })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
@@ -206,12 +229,26 @@ describe('mcp response loop', () => {
     });
     const conv = await openDirect(core, bot.id);
 
-    llm.script('mock-main', [
-      step().replyToolCall('mcp_srv1_echo', { text: '免审批' }),
-      step().replyText('完成'),
-    ]);
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_srv1_echo', { text: '免审批' }),
+          step().replyText('完成'),
+        ],
+        relay: '好了',
+      }),
+    );
     await sendBatch(core, conv.id, ['直接调用']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    expect(
+      steps.steps.find((s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_echo')
+        ?.payload['ok'],
+    ).toBe(true);
 
     const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Array<{ kind: string }>;

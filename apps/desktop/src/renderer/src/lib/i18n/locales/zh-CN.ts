@@ -629,7 +629,6 @@ export const zhCN = {
   'settings.budgetLabel': '每个 Bot 每天后台用量上限（token）',
   'settings.budgetHint': '0 表示不限制；超出后当天不再执行该 Bot 的后台任务。',
   'settings.budgetSaved': '已保存',
-  'usage.loop.response': '对话响应',
   'usage.loop.triage': '群聊判断',
   'usage.loop.reflection': '反思',
   'usage.loop.memory_consolidation': '记忆整理',

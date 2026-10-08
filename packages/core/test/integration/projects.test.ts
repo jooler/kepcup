@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { step } from '@kepcup/testkit';
+import { step, viaTask, waitForMessage } from '@kepcup/testkit';
 import {
   createTestStack,
   listMessages,
@@ -106,6 +106,20 @@ function toolResult(
   };
 }
 
+/**
+ * D75 W2: edits, writes and git remote operations are a write task's work (a
+ * turn is read-only); the waking turn relays the task's result as `relay`.
+ */
+function inWriteTask(taskSteps: ReturnType<typeof step>[], relay: string) {
+  return viaTask({ taskSteps, relay });
+}
+
+async function waitRelay(core: TestStack['core'], conversationId: string, relay: string) {
+  await waitForMessage(core, conversationId, (m) => 'text' in m.content && m.content.text === relay, {
+    timeoutMs: 120_000,
+  });
+}
+
 async function runChangesRow(core: TestStack['core'], runId: string) {
   const result = (await core.rpc.call('projects.diff', { runId })) as {
     change: { files: Array<{ path: string; change: string }>; revertedAt: number | null } | null;
@@ -171,7 +185,7 @@ describe('projects (P04)', () => {
     const aMtime = readFileSync(path.join(project.path, 'a.txt'));
     expect(readFileSync(path.join(project.path, 'b.txt'), 'utf8')).toBe('B-wrote');
     expect(aMtime).toBeDefined();
-    const steps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'response')!.id);
+    const steps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'turn')!.id);
     const writeResult = toolResult(steps, 'write');
     expect(writeResult?.ok).toBe(true);
   }, 240_000);
@@ -209,19 +223,21 @@ describe('projects (P04)', () => {
       path: 'notes.txt',
       edits: [{ oldText: 'version-1', newText: 'version-3' }],
     });
-    llm.script('mock-main', [
-      step().replyToolCall('read', { path: 'notes.txt' }),
-      heldEdit,
-      step().replyText('改不了就算了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [step().replyToolCall('read', { path: 'notes.txt' }), heldEdit, step().replyText('改不了就算了')],
+        'RELAY-STALE',
+      ),
+    );
     await sendBatch(core, conv.id, ['看看笔记然后改一下']);
     await waitFor(
-      async () => (llm.requests().length >= 2 ? true : null),
+      async () => (heldEdit.consumed ? true : null),
       { label: 'edit request held', timeoutMs: 30_000 },
     );
     writeFileSync(path.join(project.path, 'notes.txt'), 'version-2-user-edit\n');
     heldEdit.release();
-    const staleRun = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    const staleRun = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
 
     const steps = await stepsOf(core, staleRun.id);
     const editResult = toolResult(steps, 'edit');
@@ -247,7 +263,7 @@ describe('projects (P04)', () => {
     // The secret never reached the model.
     expect(llm.requestBodiesContain('abc123')).toBe(false);
     const runs = await listRuns(core, conv.id);
-    const firstRead = toolResult(await stepsOf(core, runs.find((r) => r.botId === bot.id && r.loopType === 'response')!.id), 'read');
+    const firstRead = toolResult(await stepsOf(core, runs.find((r) => r.botId === bot.id && r.loopType === 'turn')!.id), 'read');
     expect(firstRead?.ok).toBe(false);
     expect(firstRead?.content).toContain('PATH_OUT_OF_SCOPE');
 
@@ -365,12 +381,16 @@ describe('projects (P04)', () => {
     const project = await bindProject(core, conv.id, makeProject());
     const before = hashDir(path.join(project.path, '.git'));
 
-    llm.script('mock-main', [
-      step().replyToolCall('write', { path: 'shadow.txt', content: 'checkpointed' }),
-      step().replyText('写好了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [step().replyToolCall('write', { path: 'shadow.txt', content: 'checkpointed' }), step().replyText('写好了')],
+        'RELAY-SHADOW',
+      ),
+    );
     await sendBatch(core, conv.id, ['写文件']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
+    await waitRelay(core, conv.id, 'RELAY-SHADOW');
 
     expect(hashDir(path.join(project.path, '.git'))).toBe(before);
     // The shadow repo lives in the data directory; the project only gained the bot's file.
@@ -388,15 +408,21 @@ describe('projects (P04)', () => {
     const project = await bindProject(core, conv.id, makeProject());
 
     // Approve `git init` and `git remote add`.
-    llm.script('mock-main', [
-      step().replyToolCall('git_remote', { operation: 'init', args: [], reason: '初始化仓库' }),
-      step().replyToolCall('git_remote', {
-        operation: 'remote_add',
-        args: ['origin', 'https://example.com/demo.git'],
-        reason: '配置远程',
-      }),
-      step().replyText('配好了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [
+          step().replyToolCall('git_remote', { operation: 'init', args: [], reason: '初始化仓库' }),
+          step().replyToolCall('git_remote', {
+            operation: 'remote_add',
+            args: ['origin', 'https://example.com/demo.git'],
+            reason: '配置远程',
+          }),
+          step().replyText('配好了'),
+        ],
+        'RELAY-GIT',
+      ),
+    );
     await sendBatch(core, conv.id, ['配置 git']);
     for (let i = 0; i < 2; i++) {
       const pending = await waitFor(
@@ -410,7 +436,8 @@ describe('projects (P04)', () => {
       );
       await core.rpc.call('approvals.decide', { id: pending!.id, approve: true });
     }
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
+    await waitRelay(core, conv.id, 'RELAY-GIT');
 
     const approvals = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
       approvals: Array<{ kind: string; status: string; payload: Record<string, unknown> }>;
@@ -424,12 +451,19 @@ describe('projects (P04)', () => {
     expect(config).toContain('example.com/demo.git');
 
     // Deny the push: the tool reports APPROVAL_DENIED, nothing executes.
-    llm.script('mock-main', [
-      step().replyToolCall('git_remote', { operation: 'push', args: ['origin', 'main'], reason: '推送' }),
-      step().replyText('不推了'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [
+          step().replyToolCall('git_remote', { operation: 'push', args: ['origin', 'main'], reason: '推送' }),
+          step().replyText('不推了'),
+        ],
+        'RELAY-PUSH',
+      ),
+    );
+    const firstTaskIds = new Set((await listRuns(core, conv.id)).filter((r) => r.loopType === 'task').map((r) => r.id));
     await core.rpc.call('drafts.add', { conversationId: conv.id, text: '推一下' });
-    const flushed = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as { runId: string | null };
+    await core.rpc.call('drafts.flush', { conversationId: conv.id });
     const pushApproval = await waitFor(
       async () => {
         const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
@@ -444,14 +478,14 @@ describe('projects (P04)', () => {
       { label: 'push approval', timeoutMs: 30_000 },
     );
     await core.rpc.call('approvals.decide', { id: pushApproval!.id, approve: false });
-    await waitFor(
-      async () => {
-        const run = (await listRuns(core, conv.id)).find((r) => r.id === flushed.runId);
-        return run !== undefined && run.status === 'completed' ? run : null;
-      },
-      { label: 'push run', timeoutMs: 120_000 },
+    const pushTask = await waitFor(
+      async () =>
+        (await listRuns(core, conv.id)).find(
+          (r) => r.loopType === 'task' && !firstTaskIds.has(r.id) && r.status === 'completed',
+        ) ?? null,
+      { label: 'push task', timeoutMs: 120_000 },
     );
-    const steps = await stepsOf(core, flushed.runId!);
+    const steps = await stepsOf(core, pushTask.id);
     const pushResult = toolResult(steps, 'git_remote');
     expect(pushResult?.ok).toBe(false);
     expect(pushResult?.content).toContain('拒绝');
@@ -481,7 +515,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, convA.id, ['起个开发服务器试试']);
     await waitForRun(core, convA.id, 'completed', { timeoutMs: 180_000 });
-    const boundSteps = await stepsOf(core, (await listRuns(core, convA.id)).find((r) => r.botId === botA.id && r.loopType === 'response')!.id);
+    const boundSteps = await stepsOf(core, (await listRuns(core, convA.id)).find((r) => r.botId === botA.id && r.loopType === 'turn')!.id);
     const boundBash = toolResult(boundSteps, 'bash');
     expect(boundBash?.content).toContain('200');
 
@@ -491,7 +525,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, convB.id, ['起个开发服务器试试']);
     await waitForRun(core, convB.id, 'completed', { timeoutMs: 180_000 });
-    const unboundSteps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'response')!.id);
+    const unboundSteps = await stepsOf(core, (await listRuns(core, convB.id)).find((r) => r.botId === botB.id && r.loopType === 'turn')!.id);
     const unboundBash = toolResult(unboundSteps, 'bash');
     expect(unboundBash?.content).not.toContain('200');
   }, 400_000);
@@ -533,12 +567,16 @@ describe('projects (P04)', () => {
     const conv = await openDirect(core, bot.id);
     const project = await bindProject(core, conv.id, makeProject());
 
-    llm.script('mock-main', [
-      step().replyToolCall('write', { path: 'gone.txt', content: 'x' }),
-      step().replyText('好'),
-    ]);
+    llm.script(
+      'mock-main',
+      inWriteTask(
+        [step().replyToolCall('write', { path: 'gone.txt', content: 'x' }), step().replyText('好')],
+        'RELAY-GONE',
+      ),
+    );
     await sendBatch(core, conv.id, ['写一个']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000 });
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
+    await waitRelay(core, conv.id, 'RELAY-GONE');
     expect((await runChangesRow(core, run.id)).change).not.toBeNull();
 
     await core.rpc.call('conversations.delete', { id: conv.id });
@@ -576,7 +614,7 @@ describe('projects (P04)', () => {
     ]);
     await sendBatch(core, conv.id, ['占住执行']);
     await waitFor(
-      async () => (await listRuns(core, conv.id)).find((r) => r.status === 'running' && r.loopType === 'response') ?? null,
+      async () => (await listRuns(core, conv.id)).find((r) => r.status === 'running' && r.loopType === 'turn') ?? null,
       { label: 'running run', timeoutMs: 30_000 },
     );
 
@@ -696,7 +734,9 @@ describe('projects (P04)', () => {
     expect(llm.requestBodiesContain('<project>')).toBe(true);
     expect(llm.requestBodiesContain('ALWAYS-run-tests-first')).toBe(true);
     expect(llm.requestBodiesContain('README.md')).toBe(true);
-    // node_modules stays hidden by .gitignore; platform rule 7 is present.
-    expect(llm.requestBodiesContain('acquire_project_write')).toBe(true);
+    // D75 W2: a turn gets the turn version of <platform_rules> (no
+    // acquire_project_write — writes happen in tasks; it routes with start_task).
+    expect(llm.requestBodiesContain('start_task')).toBe(true);
+    expect(llm.requestBodiesContain('acquire_project_write')).toBe(false);
   }, 240_000);
 });

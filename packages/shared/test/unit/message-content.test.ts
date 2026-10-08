@@ -59,7 +59,9 @@ describe('messageContentSchema（D75 task_event 不串型）', () => {
 describe('D75 shared 枚举与默认值', () => {
   it('新枚举值', () => {
     expect(messageKindSchema.options).toContain('task_event');
-    expect(loopTypeSchema.options).toEqual(expect.arrayContaining(['response', 'turn', 'task']));
+    expect(loopTypeSchema.options).toEqual(expect.arrayContaining(['turn', 'task']));
+    // W2 renamed 'response' to 'turn' (no alias, design 30 §10.2).
+    expect(loopTypeSchema.options).not.toContain('response');
     expect(triggerReasonSchema.options).toContain('task');
   });
 
@@ -85,7 +87,7 @@ describe('D75 shared 枚举与默认值', () => {
       id: 'run_1',
       botId: null,
       conversationId: null,
-      loopType: 'response',
+      loopType: 'turn',
       status: 'queued',
       triggerReason: null,
       triggerMessageIds: [],

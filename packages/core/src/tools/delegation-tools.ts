@@ -32,7 +32,7 @@ export function buildDelegationTools(input: {
     name: 'delegate_to_bot',
     description:
       '把一件事转交给通讯录里更合适的另一个 Bot 去做（用 list_bots 查 bot_id）：它会在自己和用户的私聊里收到一条「由你代用户发出」的消息，用它自己的能力完整处理；用户留在当前对话，它的回复会以结果卡贴回这里，并以内部通知告诉你。' +
-      '适合：事情明显属于另一个 Bot 的专长、用户希望留在当前对话看结果。不适合：群聊里（直接 @ 群成员）、只是要你自己查资料归纳（用 delegate_task）。' +
+      '适合：事情明显属于另一个 Bot 的专长、用户希望留在当前对话看结果。不适合：群聊里（直接 @ 群成员）、你自己能做的事（用 start_task 派任务）。' +
       `task 要写成可以直接交给对方执行的完整请求（背景、要什么结果、约束），≤ ${DELEGATION_TASK_MAX_CHARS} 字。` +
       '这是异步的：调用后简短告诉用户已转交，然后结束本轮，不要等待、不要轮询、不要对同一件事重复委派。',
     parameters: Type.Object(

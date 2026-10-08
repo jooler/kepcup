@@ -51,7 +51,7 @@ describe('startup recovery', () => {
       try {
         const runs = await listRuns(second.core, conv.id);
         // P07：可能还有后台反思 run——响应 run 才是被中断的那个。
-        expect(runs.find((r) => r.loopType === 'response')?.status).toBe('interrupted');
+        expect(runs.find((r) => r.loopType === 'turn')?.status).toBe('interrupted');
 
         const messages = await listMessages(second.core, conv.id);
         const systemMessage = messages.find(

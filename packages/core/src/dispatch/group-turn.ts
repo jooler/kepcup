@@ -79,18 +79,19 @@ interface PendingBatch {
 
 /**
  * Group-chat dispatch (docs/dev/phases/P05-group-chat.md): one conversation
- * holds at most one turn ("轮次") — an ordered list of targets delivered one
- * after another, each only after the previous run reached a terminal state.
- * Batches flushed mid-turn are injected into the running bot right away and
- * re-dispatched after the turn; bots already injected with a batch are not
- * re-triggered for it. Removed/deleted members are skipped, their runs cancelled.
+ * holds at most one round ("轮次") — an ordered list of targets delivered one
+ * after another, each only after the previous bot's supervisor turn reached a
+ * terminal state (D75 design 30 §6.2: a round never waits for the tasks a turn
+ * started; tasks take no part in rounds). Batches flushed mid-round wait and
+ * are dispatched (mentions / triage) after the round — D75 retired the copy
+ * steered into the running bot (D2 revised: a new message goes to the next
+ * turn of the bots it is for, and the running bot sees it in its context).
+ * Removed/deleted members are skipped, their runs cancelled.
  */
 export class GroupTurnCoordinator {
   readonly #deps: GroupTurnDeps;
   readonly #turns = new Map<string, Turn>();
   readonly #pending = new Map<string, PendingBatch[]>();
-  /** `${conversationId}:${batchId}` -> bots injected with that batch mid-run. */
-  readonly #injected = new Map<string, Set<string>>();
   readonly #triaging = new Set<string>();
 
   constructor(deps: GroupTurnDeps) {
@@ -101,8 +102,6 @@ export class GroupTurnCoordinator {
   onUserBatch(conversationId: string, batchId: string, messages: Message[]): void {
     const turn = this.#turns.get(conversationId);
     if (turn) {
-      const current = turn.targets[turn.index];
-      if (current) this.#injectIntoRunning(conversationId, batchId, current.botId, messages);
       this.#enqueuePending(conversationId, { batchId, messages });
       this.#publishTurnState(conversationId);
       return;
@@ -121,8 +120,6 @@ export class GroupTurnCoordinator {
     if (messages.length === 0) return;
     const turn = this.#turns.get(conversationId);
     if (turn) {
-      const current = turn.targets[turn.index];
-      if (current) this.#injectIntoRunning(conversationId, batchId, current.botId, messages);
       this.#enqueuePending(conversationId, { batchId, messages, forcedTarget: botId });
       this.#publishTurnState(conversationId);
       return;
@@ -202,9 +199,6 @@ export class GroupTurnCoordinator {
     this.#turns.delete(conversationId);
     this.#pending.delete(conversationId);
     this.#triaging.delete(conversationId);
-    for (const key of [...this.#injected.keys()]) {
-      if (key.startsWith(`${conversationId}:`)) this.#injected.delete(key);
-    }
     this.#publishTurnState(conversationId);
   }
 
@@ -233,10 +227,7 @@ export class GroupTurnCoordinator {
   #dispatch(conversationId: string, pending: PendingBatch): void {
     const members = this.#activeMembers(conversationId);
     if (pending.forcedTarget !== undefined) {
-      // Same no-repeat rule as explicit targets: a bot already injected with
-      // this batch mid-run is not re-triggered (BR-P05-006).
-      const alreadyInjected = this.#injected.get(this.#injectedKey(conversationId, pending.batchId))?.has(pending.forcedTarget) ?? false;
-      if (members.has(pending.forcedTarget) && !alreadyInjected) {
+      if (members.has(pending.forcedTarget)) {
         this.#startTurn(conversationId, pending.batchId, pending.messages, [
           { botId: pending.forcedTarget, reason: 'mention' },
         ]);
@@ -245,10 +236,9 @@ export class GroupTurnCoordinator {
       }
       return;
     }
-    const exclude = this.#injected.get(this.#injectedKey(conversationId, pending.batchId)) ?? new Set<string>();
     const targets = explicitTargets(pending.messages, members, (id) =>
       this.#deps.messages.getById(id),
-    ).filter((t) => !exclude.has(t.botId));
+    );
     if (targets.length > 0) {
       this.#startTurn(conversationId, pending.batchId, pending.messages, targets);
       return;
@@ -257,9 +247,7 @@ export class GroupTurnCoordinator {
   }
 
   #startTriage(conversationId: string, pending: PendingBatch, members: Set<string>): void {
-    const exclude =
-      this.#injected.get(this.#injectedKey(conversationId, pending.batchId)) ?? new Set<string>();
-    const candidates = [...members].filter((botId) => !exclude.has(botId));
+    const candidates = [...members];
     this.#triaging.add(conversationId);
     this.#publishTurnState(conversationId);
     if (candidates.length === 0) {
@@ -413,24 +401,6 @@ export class GroupTurnCoordinator {
     const queue = this.#pending.get(conversationId) ?? [];
     queue.push(pending);
     this.#pending.set(conversationId, queue);
-  }
-
-  /** Copy of a fresh batch into the bot currently executing in a turn. */
-  #injectIntoRunning(
-    conversationId: string,
-    batchId: string,
-    botId: string,
-    messages: Message[],
-  ): void {
-    const key = this.#injectedKey(conversationId, batchId);
-    const injected = this.#injected.get(key) ?? new Set<string>();
-    injected.add(botId);
-    this.#injected.set(key, injected);
-    this.#deps.deliver({ conversationId, botId, messages, reason: 'broadcast' });
-  }
-
-  #injectedKey(conversationId: string, batchId: string): string {
-    return `${conversationId}:${batchId}`;
   }
 
   #activeMembers(conversationId: string): Set<string> {

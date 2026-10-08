@@ -27,10 +27,29 @@ export interface MockUsage {
   completion_tokens?: number;
 }
 
+/**
+ * D75: a request of a task execution (its user message carries the task
+ * brief) — as opposed to a supervisor turn's.
+ */
+export function isTaskRequest(req: MockChatRequest): boolean {
+  return JSON.stringify(req.body.messages ?? []).includes('<task_brief');
+}
+
 export interface MockLlmStep {
   /** Optional predicate; the step only matches requests passing it. */
   expect(check: (req: MockChatRequest) => boolean): MockLlmStep;
+  /**
+   * D75 lanes: the step only matches a supervisor turn's request (`inTurn`)
+   * or a task's (`inTask`), on top of any `expect` predicate — turns and
+   * tasks run concurrently on the same model, so their scripts interleave.
+   */
+  inTurn(): MockLlmStep;
+  inTask(): MockLlmStep;
   replyText(text: string, usage?: MockUsage): MockLlmStep;
+  /**
+   * `args` may be a function `(req) => args`: it is evaluated when the
+   * response is written (after a hold), for ids only known at run time.
+   */
   replyToolCall(name: string, args: unknown, usage?: MockUsage): MockLlmStep;
   /**
    * One assistant turn carrying both prose and a tool call (finish_reason
@@ -49,6 +68,10 @@ export interface MockLlmStep {
 
 interface StepState {
   check?: (req: MockChatRequest) => boolean;
+  /** The `expect` predicate alone (composed with `lane` into `check`). */
+  userCheck?: (req: MockChatRequest) => boolean;
+  /** D75 turn / task lane predicate. */
+  lane?: (req: MockChatRequest) => boolean;
   kind?: 'text' | 'tool' | 'json' | 'fail';
   text?: string;
   /** Prose accompanying a tool-call reply (replyTextAndToolCall). */
@@ -72,7 +95,24 @@ class Step implements MockLlmStep {
   }
 
   expect(check: (req: MockChatRequest) => boolean): this {
-    this.state.check = check;
+    const lane = this.state.lane;
+    this.state.check = lane === undefined ? check : (req) => lane(req) && check(req);
+    this.state.userCheck = check;
+    return this;
+  }
+
+  inTurn(): this {
+    return this.#lane((req) => !isTaskRequest(req));
+  }
+
+  inTask(): this {
+    return this.#lane(isTaskRequest);
+  }
+
+  #lane(lane: (req: MockChatRequest) => boolean): this {
+    this.state.lane = lane;
+    const user = this.state.userCheck;
+    this.state.check = user === undefined ? lane : (req) => lane(req) && user(req);
     return this;
   }
 
@@ -181,6 +221,9 @@ export async function startMockLlm(): Promise<MockLlmServer> {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ error: { message: step.state.text ?? 'injected error' } }));
         return;
+      }
+      if (typeof step.state.toolArgs === 'function') {
+        step.state.toolArgs = (step.state.toolArgs as (r: MockChatRequest) => unknown)(req);
       }
       writeCompletion(res, step, model, req.body.stream === true);
     };
