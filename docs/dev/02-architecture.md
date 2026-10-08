@@ -207,6 +207,35 @@ interface Mailbox {
 - 有正在执行的响应 loop：把批次格式化为注入消息，调用 `steer()`。
 - 同一 mailbox 同一时刻最多一个响应 loop。
 
+### TaskHost（D75 任务层，W1-A 落地；实现 `core/src/dispatch/tasks.ts`）
+
+任务 = `loop_type='task'` 的 runs 行（[design/30](../design/30-supervisor-and-tasks.md) §3）。宿主负责「任务必有结算」，执行由 orchestrator 的共用执行骨架（`#executeRun`，`kind:'task'`）完成。
+
+```ts
+class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的门面
+  start(identity, { title, instruction, sourceMessageIds, writes, workdir?, continuesTaskId? })
+    : { taskId; state: 'running' | 'submitted'; queueReason: string | null };
+  inject(identity, { taskId, text, sourceMessageIds? }): { delivery: 'delivered' | 'queued' };
+  cancel(identity, { taskId, reason }): { taskId; state; message };
+  list(identity): TaskSummary[];
+  forwardResult(identity, taskId): { messageId };
+  cancelById(taskId, reason): Run | null;            // runs.cancel RPC / 更新闸门
+  recordQuestion(taskId, { text, questionMessageId }): void;   // §2.4.6
+  settle(taskId, { status, resultText?, error?, setup? }): Run | null;  // 幂等
+  markConsumed(taskIds): void;                       // 对话层终态时调用（§3.2 消费）
+  recover(): Run[];                                  // 启动修复，先于整批 interrupted
+  resume(): void;                                    // 启动：重排 submitted + 对账补投
+  sweep(now?): void;                                 // reaper：时限 / token 预算 + 对账
+  abortForConversation(id) / abortForBot(id) / abortForBotInConversation(botId, id);
+}
+```
+
+- `start`：先写 `queued`（= submitted）行，再写私有 `brief` 条目，再按配额启动（对话级 / 全局并发、同一 workdir 一个写任务；每个发起轮按 `origin_run_id` 计数，超限报 `TASK_LIMIT_REACHED`）；任务内调用一律拒绝（深度 1）。
+- 结算次序：终态条目（`appendTaskEvent` 幂等）→ runs 终态 → 唤醒判定（§3.3）→ 注入的 `wake(botId, conversationId, entry)`。本波默认 `wake` = 把条目作为 `TriggerBatch{reason:'task'}` 交给 mailbox；响应 run 终态时对其触发批 / 已注入批中的任务条目 `markConsumed`（W2 改挂对话轮终态）。
+- 宿主停下的任务（取消 / reaper / 删除）当场结算，但其执行在退场（`TaskRunControl.finish()`）前仍占并发名额与写入目标、自己释放租约；退场不回来的执行由 reaper 在 `TASK_SETTLE_SWEEP_MS` 后驱逐。已投递待消费的结果超过 `TASK_REDELIVER_AFTER_MS` 未消费时 reaper 重投。
+- 执行骨架（`RunExecution = {kind:'response', batch} | {kind:'task', batch, task, brief, control}`）：`#startTask` 先取简报、写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（整任务持有；等待期间行仍是 `queued`，不占调度名额），再以调度键 `task:{id}`、优先级 1 提交（调度器对 `task:` 作业总给对话回复留一个厂商名额）；`loop_type='task'`；触发段 = `buildTaskBriefSegment`（交代 + 原消息原文，图片照触发批进视觉通道）；对话层只取共享行；中间说明带 `origin:'task'`；最终文本 → `result` 条目，`skip_reply` → 空结果；失败 / 取消 / 中断 → `failure` 条目（尾部 `buildRunDigest`）。
+- 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 等 → `resume()`；`sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次（start.ts）。
+
 ### 分发器
 
 负责把用户发出的一批消息分配给目标 Bot，详见 [phases/P05-group-chat.md](phases/P05-group-chat.md)。单聊时目标固定为对话中的 Bot。
