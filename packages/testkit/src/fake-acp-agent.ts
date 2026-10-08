@@ -166,6 +166,10 @@ export interface FakeAgentScript {
   steering?: boolean;
   /** Forces the steering answer (`error` = JSON-RPC error). */
   steeringOutcome?: 'injected' | 'promptRequired' | 'startedNewTurn' | 'error';
+  /** Delays the steering answer (it may then arrive after the prompt ended). */
+  steeringDelayMs?: number;
+  /** `session/set_mode` to these ids fails (an agent refusing a mode). */
+  rejectModes?: string[];
   /** Advertises `sessionCapabilities.close`. */
   sessionClose?: boolean;
   /** Advertises `sessionCapabilities.resume` (`session/resume`). */
@@ -644,6 +648,9 @@ class FakeAcpAgent implements Agent {
 
   async setSessionMode(params: { sessionId: string; modeId: string }) {
     this.#runtime.record({ kind: 'mode', sessionId: params.sessionId, modeId: params.modeId });
+    if (this.#script.rejectModes?.includes(params.modeId) === true) {
+      throw RequestError.invalidParams({ reason: `mode ${params.modeId} refused` });
+    }
     return {};
   }
 
@@ -708,6 +715,9 @@ class FakeAcpAgent implements Agent {
     if (method === '_session/steering' && this.#script.steering === true) {
       this.#runtime.record({ kind: 'steering', params });
       const sessionId = String(params.sessionId);
+      if (this.#script.steeringDelayMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, this.#script.steeringDelayMs));
+      }
       const outcome =
         this.#script.steeringOutcome ??
         (this.#prompting.has(sessionId) ? 'injected' : 'promptRequired');

@@ -66,7 +66,8 @@ export interface AgentLease {
   init: AcpInitializeResponse;
   provider: AgentProvider;
   attach(sessionId: string, sink: SessionSink): void;
-  detach(sessionId: string): void;
+  /** Removes the session's sink — only `sink` when given (a later run may own it). */
+  detach(sessionId: string, sink?: SessionSink): void;
   /**
    * P5 会话复用：本进程里仍开着、可被下一个 run 直接复用的会话及引擎为它
    * 记下的状态（不透明）。进程退出 / 崩溃 / 被替换时随之消失——下一个 run
@@ -410,8 +411,19 @@ export const spawnAgentProcess: AgentSpawner = ({ launch, cwd, onStderr }) => {
 
 const STDERR_LINE_MAX_CHARS = 500;
 
+/** A kept session that is gone (process exit) or must not be continued. */
+export interface LostAgentSession {
+  agentId: string;
+  sessionId: string;
+  /** The engine's kept state. */
+  state: unknown;
+  /** Not just gone with its process: it must never be resumed either. */
+  invalid: boolean;
+}
+
 export class AgentHost {
   readonly #deps: AgentHostDeps;
+  readonly #lostListeners = new Set<(lost: LostAgentSession[]) => void>();
   readonly #agents = new Map<string, LiveAgent>();
   readonly #authStatus = new Map<string, AgentAuthStatus & { at: number }>();
   /** Processes retired by `stop()` while still serving runs. */
@@ -475,7 +487,8 @@ export class AgentHost {
       attach: (sessionId, sink) => {
         agent.sessions.set(sessionId, sink);
       },
-      detach: (sessionId) => {
+      detach: (sessionId, sink) => {
+        if (sink !== undefined && agent.sessions.get(sessionId) !== sink) return;
         agent.sessions.delete(sessionId);
         if (agent.retiring) this.#armIdle(agent);
       },
@@ -519,6 +532,29 @@ export class AgentHost {
     this.#agents.get(agentId)?.openSessions.delete(sessionId);
     for (const live of this.#retiring) {
       if (live.entry.id === agentId) live.openSessions.delete(sessionId);
+    }
+  }
+
+  /**
+   * Kept sessions that disappeared: their process exited (crash, idle exit,
+   * stop) or a mode / config change arrived for them outside any run (P5
+   * 审查 #1 / #18). The engine revokes their bridge tokens.
+   */
+  onSessionsLost(listener: (lost: LostAgentSession[]) => void): () => void {
+    this.#lostListeners.add(listener);
+    return () => {
+      this.#lostListeners.delete(listener);
+    };
+  }
+
+  #notifyLost(lost: LostAgentSession[]): void {
+    if (lost.length === 0) return;
+    for (const listener of [...this.#lostListeners]) {
+      try {
+        listener(lost);
+      } catch {
+        // Never let a listener break the host.
+      }
     }
   }
 
@@ -628,7 +664,18 @@ export class AgentHost {
     const router: AcpSessionRouter = {
       deliver: (notification) => {
         const sink = live.sessions.get(notification.sessionId);
-        if (sink === undefined) return false;
+        if (sink === undefined) {
+          // A kept session changing its permission mode / config between runs
+          // can no longer be trusted with the next run (审查 #1).
+          const kind = notification.update.sessionUpdate;
+          if (
+            (kind === 'current_mode_update' || kind === 'config_option_update') &&
+            live.openSessions.has(notification.sessionId)
+          ) {
+            this.#dropOpenSession(live, notification.sessionId);
+          }
+          return false;
+        }
         sink.onUpdate(notification.update);
         return true;
       },
@@ -712,7 +759,14 @@ export class AgentHost {
       live.sessions.clear();
       // Kept sessions die with the process: the next run resumes / loads them
       // (provider permitting) in a fresh process, or starts over.
+      const lost = [...live.openSessions.entries()].map(([sessionId, state]) => ({
+        agentId: entry.id,
+        sessionId,
+        state,
+        invalid: false,
+      }));
       live.openSessions.clear();
+      this.#notifyLost(lost);
       // During core shutdown the databases are already closed: leave the runs
       // unsettled (restart recovery marks them interrupted, as for pi runs).
       if (!this.#disposed) for (const sink of sinks) sink.onClosed(error);
@@ -731,6 +785,20 @@ export class AgentHost {
     this.#agents.set(entry.id, live);
     logger.info({ agentId: entry.id, version: entry.version }, 'agent process started');
     return live;
+  }
+
+  /** Closes and forgets a kept session that must not be continued. */
+  #dropOpenSession(live: LiveAgent, sessionId: string): void {
+    const state = live.openSessions.get(sessionId);
+    live.openSessions.delete(sessionId);
+    this.#log.info(
+      { agentId: live.entry.id, sessionId },
+      'kept agent session changed its mode outside a run; dropped',
+    );
+    if (live.init?.agentCapabilities?.sessionCapabilities?.close != null) {
+      void live.connection.closeSession(sessionId).catch(() => undefined);
+    }
+    this.#notifyLost([{ agentId: live.entry.id, sessionId, state, invalid: true }]);
   }
 
   #armIdle(live: LiveAgent): void {

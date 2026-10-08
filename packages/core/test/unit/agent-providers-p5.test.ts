@@ -148,7 +148,7 @@ describe('provider registry', () => {
 });
 
 describe('OpenCode', () => {
-  it('process config: string-only ask rules on every layer; project / plugin config off', () => {
+  it('process config: string-only rules led by "*":"ask" on every layer; project / plugin config off', () => {
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
       target: { command: '/x/opencode', args: ['acp'], env: { OPENCODE_CONFIG_CONTENT: 'evil' } },
@@ -166,26 +166,32 @@ describe('OpenCode', () => {
       // The user's global config is not loaded (private config root).
       XDG_CONFIG_HOME: path.join('/home/u/.kepcup/agents/opencode', 'xdg-config'),
     });
-    const ask = { edit: 'ask', bash: 'ask', external_directory: 'ask', task: 'ask' };
-    const readOnly = { ...ask, edit: 'deny' };
-    const content = JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!) as Record<string, unknown>;
-    expect(content).toEqual({
-      $schema: 'https://opencode.ai/config.json',
-      autoupdate: false,
-      share: 'disabled',
-      permission: ask,
-      agent: {
-        build: { permission: ask },
-        plan: { permission: readOnly },
-        general: { permission: ask },
-        explore: { permission: readOnly },
-      },
-      mode: { build: { permission: ask }, plan: { permission: readOnly } },
+    const content = JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!) as {
+      permission: Record<string, unknown>;
+      agent: Record<string, { permission: Record<string, unknown> }>;
+      mode: Record<string, { permission: Record<string, unknown> }>;
+    };
+    const top = content.permission;
+    // Every action is a string; "*" comes first (findLast: later keys win).
+    expect(Object.keys(top)[0]).toBe('*');
+    expect(top['*']).toBe('ask');
+    expect(Object.values(top).every((value) => typeof value === 'string')).toBe(true);
+    expect(top).toMatchObject({
+      edit: 'ask',
+      bash: 'ask',
+      external_directory: 'ask',
+      task: 'ask',
+      webfetch: 'ask',
+      read: 'allow',
+      question: 'deny',
     });
+    expect(Object.keys(content.agent).sort()).toEqual(['build', 'explore', 'general', 'plan']);
+    expect(Object.keys(content.mode).sort()).toEqual(['build', 'plan']);
+    expect(content.agent.build!.permission).toEqual(top);
+    expect(content.agent.plan!.permission).toEqual({ ...top, edit: 'deny' });
+    expect(content.agent.explore!.permission.edit).toBe('deny');
     // Re-applied to the top level after every config layer.
-    expect(JSON.parse(launch.env.OPENCODE_PERMISSION!)).toEqual(ask);
-    // String actions only: no object rule whose key order could matter.
-    expect(JSON.stringify(content).includes('{"*"')).toBe(false);
+    expect(JSON.parse(launch.env.OPENCODE_PERMISSION!)).toEqual(top);
     // No persona / per-session text in the process-level config.
     expect(launch.env.OPENCODE_CONFIG_CONTENT).not.toMatch(/instructions|prompt/);
     // 「加载我的个人配置」: the user's own config root stays.
@@ -206,11 +212,13 @@ describe('OpenCode', () => {
     ).toThrow(/私有状态目录/);
   });
 
-  it('agent-level overrides from project / global / .opencode config lose to the host rules (H1)', () => {
-    // Model of opencode 1.18.35 Config.loadInstanceState: layers merged in
-    // order with remeda mergeDeep (later source wins, objects merge), then
-    // mode.* folded into agent.*, then OPENCODE_PERMISSION into the top level;
-    // an agent's effective rules = top level merged with its own.
+  it('permissive layers (incl. {"bash":"allow","*":"allow"}) lose to the host rules (H1, 审查 #7)', () => {
+    // Model of opencode 1.18.35: config layers merged with remeda mergeDeep
+    // (later source wins, objects merge, target key order kept), mode.* folded
+    // into agent.*, OPENCODE_PERMISSION merged into the top level; then
+    // Permission.fromConfig expands each object in key order into rules,
+    // merge concatenates [defaults, top level, agent], and evaluate takes the
+    // findLast rule whose permission (wildcard) matches.
     const isObject = (value: unknown): value is Record<string, unknown> =>
       typeof value === 'object' && value !== null && !Array.isArray(value);
     const mergeDeep = (target: unknown, source: unknown): unknown => {
@@ -219,6 +227,22 @@ describe('OpenCode', () => {
       for (const [key, value] of Object.entries(source)) out[key] = mergeDeep(out[key], value);
       return out;
     };
+    const wildcard = (pattern: string, value: string) =>
+      new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`).test(
+        value,
+      );
+    const fromConfig = (permission: Record<string, unknown>) =>
+      Object.entries(permission).flatMap(([name, action]) =>
+        typeof action === 'string'
+          ? [{ permission: name, pattern: '*', action }]
+          : Object.entries(action as Record<string, string>).map(([pattern, inner]) => ({
+              permission: name,
+              pattern,
+              action: inner,
+            })),
+      );
+    const evaluate = (permission: string, rules: ReturnType<typeof fromConfig>) =>
+      rules.findLast((rule) => wildcard(rule.permission, permission))?.action ?? 'ask';
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
       target: { command: 'opencode', args: ['acp'], env: {} },
@@ -227,15 +251,23 @@ describe('OpenCode', () => {
       stateDir: '/s',
     });
     const permissive = {
-      permission: { bash: 'allow', edit: 'allow', external_directory: { '*': 'allow' } },
+      permission: {
+        bash: 'allow',
+        edit: 'allow',
+        '*': 'allow',
+        external_directory: { '*': 'allow' },
+      },
     };
     const layers: unknown[] = [
       // user global ~/.config/opencode/opencode.json
-      { permission: { bash: { '*': 'allow' } }, agent: { build: permissive, general: permissive } },
+      {
+        permission: { bash: 'allow', '*': 'allow', webfetch: 'allow' },
+        agent: { build: permissive, general: permissive },
+      },
       // a project's opencode.json (disabled by OPENCODE_DISABLE_PROJECT_CONFIG, modelled anyway)
       { agent: { build: permissive, plan: permissive }, mode: { build: permissive } },
       // ~/.opencode/agent/*.md frontmatter
-      { agent: { explore: permissive, general: permissive } },
+      { agent: { explore: permissive, general: { permission: { bash: 'allow', '*': 'allow' } } } },
       JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT!),
     ];
     interface Layered {
@@ -253,18 +285,23 @@ describe('OpenCode', () => {
       config.permission,
       JSON.parse(launch.env.OPENCODE_PERMISSION!),
     ) as Record<string, unknown>;
+    const defaults = fromConfig({ '*': 'allow', question: 'deny' });
     for (const name of ['build', 'plan', 'general', 'explore']) {
-      const effective = mergeDeep(config.permission, config.agent[name]!.permission) as Record<
-        string,
-        unknown
-      >;
-      expect(effective.bash, name).toBe('ask');
-      expect(effective.external_directory, name).toBe('ask');
-      expect(effective.task, name).toBe('ask');
-      expect(effective.edit, name).toBe(name === 'plan' || name === 'explore' ? 'deny' : 'ask');
+      const rules = [
+        ...defaults,
+        ...fromConfig(config.permission),
+        ...fromConfig(config.agent[name]!.permission),
+      ];
+      expect(evaluate('bash', rules), name).toBe('ask');
+      expect(evaluate('external_directory', rules), name).toBe('ask');
+      expect(evaluate('task', rules), name).toBe('ask');
+      expect(evaluate('webfetch', rules), name).toBe('ask');
+      // A permission nobody named (e.g. a future tool) asks too.
+      expect(evaluate('some_new_tool', rules), name).toBe('ask');
+      // Never auto-allowed; plan / explore deny unless a permissive layer put a
+      // later "*" key in their object (then the host still decides: ask).
+      expect(evaluate('edit', rules), name).not.toBe('allow');
     }
-    // A custom subagent can only start through `task`, which always asks.
-    expect(config.permission.task).toBe('ask');
   });
 
   it('tier → mode config option (read_only → plan, else build); unknown mode fails closed', async () => {

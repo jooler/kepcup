@@ -106,6 +106,7 @@ export interface AgentInstallerDeps {
   installTimeoutMs?: number;
   /** 随应用发布的锁文件（缺省 AGENT_NPX_LOCKFILES）；null = 没有，拒绝安装。 */
   lockfileFor?(spec: string): NpxLockfile | null;
+  logger?: { warn(obj: object, message: string): void };
 }
 
 function defaultLockfileFor(spec: string): NpxLockfile | null {
@@ -602,6 +603,12 @@ export function extractZip(file: string, dest: string): void {
  */
 export function chmodInstalledFiles(root: string, pattern: string): number {
   if (!AGENT_INSTALL_RELATIVE_GLOB.test(pattern)) return 0;
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    return 0;
+  }
   let current = [root];
   for (const segment of pattern.split('/')) {
     const next: string[] = [];
@@ -630,7 +637,13 @@ export function chmodInstalledFiles(root: string, pattern: string): number {
     }
     if (!stats.isFile()) continue;
     // A symlinked directory on the way must not lead out of the install root.
-    if (!isInside(realpathSync(root), realpathSync(file))) continue;
+    let real: string;
+    try {
+      real = realpathSync(file);
+    } catch {
+      continue;
+    }
+    if (!isInside(rootReal, real)) continue;
     chmodSync(file, 0o755);
     changed += 1;
   }
@@ -971,7 +984,14 @@ export class AgentInstaller {
     }
     if (this.#platform !== 'win32') {
       for (const pattern of npx.postInstall?.chmodExecutable ?? []) {
-        chmodInstalledFiles(staging, pattern);
+        // Zero matches = the package layout changed: the step silently did
+        // nothing, worth a look (审查 #15).
+        if (chmodInstalledFiles(staging, pattern) === 0) {
+          this.#deps.logger?.warn(
+            { agentId: entry.id, pattern },
+            'agent post-install chmod matched no file',
+          );
+        }
       }
     }
     const packageDir = path.join(staging, 'node_modules', ...spec.name.split('/'));

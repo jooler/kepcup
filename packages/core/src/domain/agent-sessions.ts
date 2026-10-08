@@ -58,6 +58,23 @@ export class AgentSessionsStore {
     return row !== undefined ? toRow(row) : null;
   }
 
+  getById(id: string): AgentSessionRow | null {
+    const row = this.db.prepare('select * from agent_sessions where id = ?').get(id) as
+      Row | undefined;
+    return row !== undefined ? toRow(row) : null;
+  }
+
+  /** Removes the rows of one agent session (invalidated by the engine); returns them. */
+  deleteByAgentSession(agentId: string, agentSessionId: string): AgentSessionRow[] {
+    const rows = (
+      this.db
+        .prepare('select * from agent_sessions where agent_id = ? and agent_session_id = ?')
+        .all(agentId, agentSessionId) as Row[]
+    ).map(toRow);
+    for (const row of rows) this.delete(row.id);
+    return rows;
+  }
+
   /** Inserts or replaces the (Bot, conversation, Agent) row. */
   upsert(row: AgentSessionRow): void {
     this.db

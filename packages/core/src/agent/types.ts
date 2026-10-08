@@ -151,6 +151,11 @@ export interface ExternalRunSpec {
    * （P5：new / reused / resumed / loaded）。
    */
   onSession?: (agentSessionId: string, mode: AgentSessionMode) => void;
+  /**
+   * 第一个 prompt 实际发出（P5 审查 #1）：orchestrator 此时才把本 run 的已展示
+   * 消息记为会话已见、推进复用状态。
+   */
+  onPromptSent?: () => void;
   /** 「加载我的个人配置」（`settings.agents[id].loadUserConfig`，默认 false）。 */
   loadUserConfig?: boolean;
   /**

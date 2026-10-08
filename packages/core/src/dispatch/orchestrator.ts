@@ -193,6 +193,7 @@ export interface OrchestratorDeps {
    */
   externalEngine?: AgentEngine & {
     discardSession?(input: DiscardAgentSessionInput): Promise<void>;
+    onSessionInvalidated?(listener: (agentId: string, agentSessionId: string) => void): () => void;
   };
   /** D72 生效目录（已按发行门禁过滤）；缺省 = 空目录。 */
   agentCatalog?: () => readonly AgentCatalogEntry[];
@@ -369,6 +370,16 @@ interface AgentSteerLog {
   log: Array<{ text: string; batch: TriggerBatch }>;
   /** The run's mailbox was released: a refused batch is delivered directly. */
   released: boolean;
+  /** The run's seen-state (steered batches are added; refused ones removed). */
+  seen?: AgentSeen;
+}
+
+/** What an agent session has seen of its conversation (P5 审查 #2). */
+interface AgentSeen {
+  /** Every message with seq ≤ this was shown (context / delta / trigger). */
+  baseCutoff: number;
+  /** Later messages shown individually (steered batches): id → seq. */
+  ids: Map<string, number>;
 }
 
 interface ActiveRunEntry {
@@ -381,7 +392,7 @@ interface ActiveRunEntry {
    * External-agent runs (D72 P5): batches handed to the engine as steers —
    * ACP steering is asynchronous; a refused one comes back by its text.
    */
-  steered?: Array<{ text: string; batch: TriggerBatch }>;
+  steerLog?: AgentSteerLog;
 }
 
 /**
@@ -420,15 +431,30 @@ export class Orchestrator {
   /** D72 P5 外部 Agent 会话复用记录（agent_sessions）。 */
   readonly #agentSessions: AgentSessionsStore;
   /**
-   * Highest message seq a kept agent session has seen (row id → seq), exact
-   * while the app runs; after a restart it is recomputed from the last run's
-   * trigger / output messages.
+   * What a kept agent session has seen (row id → state, P5 审查 #2/#3): the
+   * conversation up to `baseCutoff` plus the listed later messages (steered
+   * batches). In memory only — after an app restart a session is not reused
+   * (full context + D56 replay instead of a guessed delta).
    */
-  readonly #agentSessionCutoffs = new Map<string, number>();
+  readonly #agentSessionSeen = new Map<string, AgentSeen>();
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
     this.#agentSessions = new AgentSessionsStore(deps.db);
+    // Sessions the engine gave up (poisoned, closed before use, changed mode
+    // outside a run) are neither reused nor resumed (P5 审查 #1).
+    deps.externalEngine?.onSessionInvalidated?.((agentId, agentSessionId) => {
+      try {
+        for (const row of this.#agentSessions.deleteByAgentSession(agentId, agentSessionId)) {
+          this.#agentSessionSeen.delete(row.id);
+        }
+      } catch (error) {
+        deps.logger.warn(
+          { agentId, error: error instanceof Error ? error.message : String(error) },
+          'dropping an invalidated agent session failed',
+        );
+      }
+    });
     this.#mailboxes = new MailboxRegistry((key) => this.#createMailbox(key));
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
@@ -1707,6 +1733,8 @@ export class Orchestrator {
     triggerContent: string;
     workdir: string;
     modelRef: string;
+    /** Highest seq of the conversation context shown to a new session. */
+    contextCutoff: number;
   }): Promise<{
     tools: ToolDefinition[];
     capabilities: string[];
@@ -1721,7 +1749,7 @@ export class Orchestrator {
       conversation: string;
       conversationDelta?: string;
     };
-    session: { rowId: string; reuseId: string | null; fingerprint: string };
+    session: { rowId: string; reuseId: string | null; fingerprint: string; seen: AgentSeen };
   }> {
     const { bot, conversation, agentId } = input;
     const entry = findAgentEntry(this.#deps.agentCatalog?.() ?? [], agentId);
@@ -1742,10 +1770,11 @@ export class Orchestrator {
     // 随之变化，所以按候选行先算一遍、指纹不符再按新行重算。
     const previous = this.#agentSessions.get(bot.id, conversation.id, agentId);
     const now = this.#deps.clock.now();
-    const delta =
+    const continued =
       previous !== null && now - previous.lastUsedAt <= CONTINUATION_WINDOW_MS
         ? this.#agentConversationDelta(previous, input.batch, input.renderOptions)
         : null;
+    const delta = continued?.text ?? null;
     const sessionFor = (rowId: string) => {
       // Per-session bridge server name (no user MCP server can pose as it);
       // the prompt's tool names are spelled with it.
@@ -1809,7 +1838,16 @@ export class Orchestrator {
       permission,
       agentSideConfigFiles: provider.agentSideConfigFiles,
       agentName: entry.name,
-      session: { rowId: session.rowId, reuseId, fingerprint: session.fingerprint },
+      session: {
+        rowId: session.rowId,
+        reuseId,
+        fingerprint: session.fingerprint,
+        // Committed only once the prompt is really sent (onPromptSent).
+        seen:
+          reuseId !== null && continued !== null
+            ? continued.seen
+            : { baseCutoff: input.contextCutoff, ids: new Map() },
+      },
       promptParts: {
         session: session.sessionPrompt,
         run: buildAgentRunContext({
@@ -1843,47 +1881,48 @@ export class Orchestrator {
   }
 
   /**
-   * What a reused agent session has not seen (P5): messages after its cutoff,
-   * minus the trigger batch and the bot's own replies (the session produced
-   * them). Null when the cutoff is unknown or the gap exceeds the recent
-   * window — the session is then not reused (full context + D56 replay).
+   * What a reused agent session has not seen (P5, 审查 #2/#3/#5): messages
+   * after its `baseCutoff` up to the trigger batch (later ones arrive as
+   * steers or the next batch), minus those shown individually (steered), the
+   * batch itself and the bot's own replies (the session produced them). Null
+   * when the seen-state is unknown (app restarted) or the gap exceeds the
+   * recent window — the session is then not reused.
    */
   #agentConversationDelta(
     row: AgentSessionRow,
     batch: TriggerBatch,
     renderOptions: RenderMessageOptions,
-  ): string | null {
-    const cutoff = this.#agentSessionCutoffs.get(row.id) ?? this.#cutoffOfRun(row.lastRunId);
-    if (cutoff === null) return null;
+  ): { text: string; seen: AgentSeen } | null {
+    const seen = this.#agentSessionSeen.get(row.id);
+    if (seen === undefined) return null;
+    const upTo = Math.max(-1, ...batch.messages.map((message) => message.seq));
     const limit = 120;
     const recent = this.#deps.messages.list(batch.conversationId, { limit });
-    if (recent.length === limit && recent[0]!.seq > cutoff + 1) return null;
+    if (recent.length === limit && recent[0]!.seq > seen.baseCutoff + 1) return null;
     const batchIds = new Set(batch.messages.map((message) => message.id));
-    return buildConversationDelta(
+    const text = buildConversationDelta(
       recent.filter(
         (message) =>
-          message.seq > cutoff &&
+          message.seq > seen.baseCutoff &&
+          message.seq <= upTo &&
+          !seen.ids.has(message.id) &&
           !batchIds.has(message.id) &&
           !(message.senderType === 'bot' && message.senderBotId === batch.botId),
       ),
       renderOptions,
     );
-  }
-
-  /** Highest seq among a run's trigger / output messages (restart fallback). */
-  #cutoffOfRun(runId: string | null): number | null {
-    if (runId === null) return null;
-    const run = this.#deps.runs.get(runId);
-    if (run === null) return null;
-    const seqs = [...run.triggerMessageIds, ...run.outputMessageIds]
-      .map((id) => this.#deps.messages.getById(id)?.seq)
-      .filter((seq): seq is number => typeof seq === 'number');
-    return seqs.length > 0 ? Math.max(...seqs) : null;
+    return {
+      text,
+      seen: {
+        baseCutoff: Math.max(seen.baseCutoff, upTo),
+        ids: new Map([...seen.ids].filter(([, seq]) => seq > upTo)),
+      },
+    };
   }
 
   /** Gives up a kept agent session (best effort, asynchronous). */
   #discardAgentSession(row: AgentSessionRow, deleteHistory: boolean): void {
-    this.#agentSessionCutoffs.delete(row.id);
+    this.#agentSessionSeen.delete(row.id);
     const discard = this.#deps.externalEngine?.discardSession;
     if (discard === undefined) return;
     void discard
@@ -2082,6 +2121,7 @@ export class Orchestrator {
     // comes back by its text) and whether the mailbox was already released.
     const agentSteer: AgentSteerLog = { log: [], released: false };
     let agentSessionRowId: string | null = null;
+    let agentPromptSent = false;
     try {
       if (this.#cancelledBeforeStart.delete(runId)) {
         this.#settleRun(runId, 'cancelled', null);
@@ -2484,8 +2524,14 @@ export class Orchestrator {
               workdir:
                 project !== null && project.status === 'available' ? project.path : workspacePath,
               modelRef,
+              contextCutoff: Math.max(
+                -1,
+                ...recent.map((message) => message.seq),
+                ...batch.messages.map((message) => message.seq),
+              ),
             })
           : null;
+      if (agentRun !== null) agentSteer.seen = agentRun.session.seen;
       // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
       // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
@@ -2539,6 +2585,14 @@ export class Orchestrator {
                 },
                 onSession: (agentSessionId: string, mode: AgentSessionMode) => {
                   runs.update(runId, { agentSessionId });
+                  // A new session got the full context, not the delta.
+                  if (mode === 'new') {
+                    agentRun.session.seen.baseCutoff = Math.max(
+                      -1,
+                      ...recent.map((message) => message.seq),
+                      ...batch.messages.map((message) => message.seq),
+                    );
+                  }
                   this.#recordAgentSession({
                     rowId: agentRun.session.rowId,
                     botId: batch.botId,
@@ -2550,6 +2604,14 @@ export class Orchestrator {
                     mode,
                   });
                   agentSessionRowId = agentRun.session.rowId;
+                },
+                // Only a prompt that really went out moves the session's
+                // seen-state and reuse window (审查 #1).
+                onPromptSent: () => {
+                  agentPromptSent = true;
+                  if (this.#agentSessionRowExists(agentRun.session.rowId)) {
+                    this.#agentSessionSeen.set(agentRun.session.rowId, agentRun.session.seen);
+                  }
                 },
               },
               // ACP steering is asynchronous: a refused steer's batch goes
@@ -2598,7 +2660,7 @@ export class Orchestrator {
         conversationId: batch.conversationId,
         botId: batch.botId,
         cutoffSeq: Math.max(-1, ...batch.messages.map((m) => m.seq)),
-        ...(agentRun !== null ? { steered: agentSteer.log } : {}),
+        ...(agentRun !== null ? { steerLog: agentSteer } : {}),
       };
       this.#activeRuns.set(runId, activeEntry);
 
@@ -2611,7 +2673,7 @@ export class Orchestrator {
         const refused = buffered.filter((pending) => {
           const text = this.#renderBatchText(pending);
           if (!handle.steer(text)) return true;
-          agentSteer.log.push({ text, batch: pending });
+          this.#noteAgentSteer(agentSteer, text, pending);
           return false;
         });
         if (refused.length > 0) {
@@ -2649,9 +2711,14 @@ export class Orchestrator {
       }
       // P5: the reuse window counts from the end of the session's last run;
       // the session has seen everything up to the run's cutoff.
-      if (agentSessionRowId !== null) {
+      // (Not for a row deleted meanwhile — conversation / bot deletion or an
+      // invalidated session, 审查 #13.)
+      if (
+        agentSessionRowId !== null &&
+        agentPromptSent &&
+        this.#agentSessionRowExists(agentSessionRowId)
+      ) {
         this.#agentSessions.touch(agentSessionRowId, runId, this.#deps.clock.now());
-        this.#agentSessionCutoffs.set(agentSessionRowId, activeEntry.cutoffSeq);
       }
 
       if (outcome.status === 'completed' && outcome.finalText.trim().length > 0) {
@@ -2779,13 +2846,35 @@ export class Orchestrator {
     const index = steer.log.findIndex((item) => item.text === text);
     if (index === -1) return;
     const [{ batch }] = steer.log.splice(index, 1) as [{ text: string; batch: TriggerBatch }];
-    if (this.#deps.conversations.get(batch.conversationId) === null) return;
+    // Not shown after all: the next delta / batch carries it.
+    for (const message of batch.messages) steer.seen?.ids.delete(message.id);
+    // The bot was deleted / left the group meanwhile (审查 #12).
+    const conversation = this.#deps.conversations.get(batch.conversationId);
+    const bot = this.#deps.bots.get(batch.botId);
+    if (conversation === null || conversation.readOnly) return;
+    if (bot === null || bot.status !== 'active') return;
+    if (
+      conversation.directBotId !== batch.botId &&
+      !this.#deps.conversations.memberBotIds(batch.conversationId).includes(batch.botId)
+    ) {
+      return;
+    }
     if (!steer.released) {
       const key = this.#mailboxKey(batch.botId, batch.conversationId);
       this.#pendingSteers.set(key, [...(this.#pendingSteers.get(key) ?? []), batch]);
       return;
     }
     this.#mailboxes.for(batch.botId, batch.conversationId).deliver(batch);
+  }
+
+  /** A batch handed to an external run as a steer: shown to its session (P5 审查 #2). */
+  #noteAgentSteer(steer: AgentSteerLog, text: string, batch: TriggerBatch): void {
+    steer.log.push({ text, batch });
+    for (const message of batch.messages) steer.seen?.ids.set(message.id, message.seq);
+  }
+
+  #agentSessionRowExists(rowId: string): boolean {
+    return this.#agentSessions.getById(rowId) !== null;
   }
 
   /** Upserts the (Bot, conversation, Agent) session row once the session exists (P5). */
@@ -2800,12 +2889,16 @@ export class Orchestrator {
     mode: AgentSessionMode;
   }): void {
     try {
+      // Deleted meanwhile (conversation / bot / membership): no row (审查 #13).
+      const conversation = this.#deps.conversations.get(input.conversationId);
+      const bot = this.#deps.bots.get(input.botId);
+      if (conversation === null || bot === null || bot.status !== 'active') return;
       const previous = this.#agentSessions.get(input.botId, input.conversationId, input.agentId);
       const now = this.#deps.clock.now();
       // A different agent session behind the same row (new session after a
-      // failed resume): its seen-cutoff restarts with this run.
+      // failed resume): its seen-state restarts with this run.
       if (previous !== null && previous.agentSessionId !== input.agentSessionId) {
-        this.#agentSessionCutoffs.delete(previous.id);
+        this.#agentSessionSeen.delete(previous.id);
       }
       this.#agentSessions.upsert({
         id: input.rowId,
@@ -3136,7 +3229,7 @@ export class Orchestrator {
       // settling — a steer queued then would silently drop. Fall through to
       // the buffer and re-deliver the batch as a new run on release.
       if (entry.handle.steer(text)) {
-        entry.steered?.push({ text, batch });
+        if (entry.steerLog !== undefined) this.#noteAgentSteer(entry.steerLog, text, batch);
         return runId; // the engine's steer event persists the step
       }
       break;
