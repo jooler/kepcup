@@ -359,6 +359,18 @@ export const AGENT_RUN_TIMEOUT_MS = 60 * 60_000;
 export const AGENT_IDLE_SHUTDOWN_MS = 35 * 60_000;
 /** Spawn + ACP `initialize` must complete within this long. */
 export const AGENT_INIT_TIMEOUT_MS = 60_000;
+/**
+ * Upper bound of one session-setup call before the prompt (`session/set_mode`,
+ * `session/set_config_option`): an agent that does not answer is not trusted
+ * with the session (P5-2 复审 #10).
+ */
+export const AGENT_SESSION_CALL_TIMEOUT_MS = 30_000;
+/**
+ * Minimum time a follow-up prompt gets when the run's own deadline
+ * (AGENT_RUN_TIMEOUT_MS from the run start) is close or already past — e.g.
+ * the single follow-up reporting timed-out background tools (P5-2 复审 #4).
+ */
+export const AGENT_FOLLOW_UP_MIN_MS = 5 * 60_000;
 /** After session/cancel, how long to wait for the cancelled prompt response. */
 export const AGENT_CANCEL_GRACE_MS = 10_000;
 /** Scheduler concurrency for `agent:{id}` when providerConcurrency has no override (P5). */

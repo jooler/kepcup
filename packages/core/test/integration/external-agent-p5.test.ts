@@ -13,8 +13,10 @@ import {
   listMessages,
   listRuns,
   makeBot,
+  makeGroup,
   openDirect,
   sendBatch,
+  sendDrafts,
   waitFor,
   type FakeAcpAgentHandle,
   type FakeAgentScript,
@@ -345,5 +347,85 @@ describe('reused-session delta (P5-2 review #2, #3, #5, #12)', () => {
     await stack.core.rpc.call('bots.delete', { id: bot.id });
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(started[0]!.observed.prompts).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('agent sessions through the orchestrator (P5-2 re-review 复审 #1, #7)', () => {
+  it('a crash mid-prompt keeps the agent_sessions row; the next run resumes the session', async () => {
+    const entry = fakeAgentEntry('fake-crash', { provider: 'claude' });
+    const { stack, started } = await start(
+      {
+        'fake-crash': [
+          { resume: true, modes: CLAUDE_MODES, turns: [agentTurn().text('半截').crash()] },
+          { resume: true, modes: CLAUDE_MODES, turns: [agentTurn().text('恢复了')] },
+        ],
+      },
+      [entry],
+    );
+    const bot = await agentBot(stack, 'fake-crash');
+    const conv = await openDirect(stack.core, bot.id);
+    const rows = () =>
+      stack.core.services
+        .mainDb!.prepare(
+          'select id, agent_session_id from agent_sessions where conversation_id = ?',
+        )
+        .all(conv.id) as Array<{ id: string; agent_session_id: string }>;
+    await sendBatch(stack.core, conv.id, ['第一问']);
+    await waitFor(
+      async () =>
+        (await listRuns(stack.core, conv.id)).some(
+          (run) => run.loopType === 'response' && run.status === 'failed',
+        )
+          ? true
+          : null,
+      { label: 'crashed run' },
+    );
+    // Give the release a moment: the row must survive it.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const before = rows();
+    expect(before).toEqual([{ id: expect.any(String), agent_session_id: 'fake-session-1' }]);
+
+    await sendBatch(stack.core, conv.id, ['第二问']);
+    const [run] = await waitForCompleted(stack, conv.id, 1);
+    expect(run!.agentSessionId).toBe('fake-session-1');
+    expect(started[1]!.observed.resumedSessions.map((s) => s.sessionId)).toEqual([
+      'fake-session-1',
+    ]);
+    expect(started[1]!.observed.sessions).toHaveLength(0);
+    const prompt = started[1]!.observed.prompts[0]!.text;
+    expect(prompt).not.toContain('<platform_rules');
+    expect(prompt).toContain('第二问');
+    expect(rows()).toEqual(before);
+  }, 30_000);
+
+  it('a bot removed from the group before its session exists gets no row (#7)', async () => {
+    const { stack, started } = await start({
+      fake: { newSessionDelayMs: 400, turns: [agentTurn().text('答')] },
+    });
+    const bot = await agentBot(stack, 'fake');
+    const other = await makeBot(stack.core, '旁人');
+    const group = await makeGroup(stack.core, '群', [bot.id, other.id]);
+    await sendDrafts(stack.core, group.id, [{ text: '问一下', mentions: [bot.id] }]);
+    await waitFor(() => (started[0]?.observed.sessions.length === 1 ? true : null), {
+      label: 'session/new sent',
+    });
+    // Removed without reaching the run (the race the check closes).
+    stack.core.services
+      .mainDb!.prepare('delete from conversation_members where conversation_id = ? and bot_id = ?')
+      .run(group.id, bot.id);
+    await waitFor(
+      async () =>
+        (await listRuns(stack.core, group.id)).some(
+          (run) => run.loopType === 'response' && run.agentSessionId === 'fake-session-1',
+        )
+          ? true
+          : null,
+      { label: 'session reported' },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const count = stack.core.services
+      .mainDb!.prepare('select count(*) as n from agent_sessions where conversation_id = ?')
+      .get(group.id) as { n: number };
+    expect(count.n).toBe(0);
   }, 30_000);
 });

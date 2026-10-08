@@ -84,7 +84,11 @@ afterEach(async () => {
 
 async function setup(
   scripts: FakeAgentScript | FakeAgentScript[],
-  options: { providers?: ProviderRegistry; bridge?: boolean } = {},
+  options: {
+    providers?: ProviderRegistry;
+    bridge?: boolean;
+    engine?: { sessionCallTimeoutMs?: number; runTimeoutMs?: number; followUpMinMs?: number };
+  } = {},
 ) {
   const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
   dirs.push(workdir);
@@ -110,6 +114,7 @@ async function setup(
     catalog: () => [FAKE],
     logger,
     cancelGraceMs: 300,
+    ...options.engine,
   });
   let counter = 0;
   const spec = (
@@ -1206,6 +1211,349 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
     expect(late.ok).toBe(false);
     expect(late.status).toBe(403);
     expect(calls).toBe(0);
+  });
+});
+
+describe('kept session lifecycle (P5-2 re-review 复审 #1–#6, #10)', () => {
+  const MODES = {
+    currentModeId: 'default',
+    availableModes: [
+      { id: 'default', name: 'Default' },
+      { id: 'other', name: 'Other' },
+    ],
+  };
+  const slowTool = (name: string, ms: number): ToolDefinition => ({
+    name,
+    description: 'slow',
+    parameters: Type.Object({}),
+    // Ignores the abort: only the clock ends it.
+    execute: async () =>
+      new Promise((resolve) => setTimeout(() => resolve({ ok: true, content: 'late' }), ms)),
+  });
+  const sessions = () => {
+    const ids: string[] = [];
+    const modes: AgentSessionMode[] = [];
+    return {
+      ids,
+      modes,
+      onSession: (id: string, mode: AgentSessionMode) => {
+        ids.push(id);
+        modes.push(mode);
+      },
+    };
+  };
+  const tokenPost = (handle: FakeAcpAgentHandle) => {
+    const server = (
+      handle.observed.sessions[0]!.mcpServers as Array<{
+        url: string;
+        headers: Array<{ name: string; value: string }>;
+      }>
+    )[0]!;
+    return () =>
+      fetch(server.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          Authorization: server.headers[0]!.value,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      });
+  };
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('a crash mid-prompt keeps the session (no invalidation); the next run resumes it (#1)', async () => {
+    const { engine, started, spec } = await setup(
+      [
+        { resume: true, turns: [agentTurn().text('半截').crash()] },
+        { resume: true, turns: [agentTurn().text('恢复了')] },
+      ],
+      { providers: withFeatures({ resume: true }) },
+    );
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, modes, onSession } = sessions();
+    const first = await engine.startRun(
+      spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }),
+    ).done;
+    expect(first).toMatchObject({ status: 'failed', error: { code: 'AGENT_PROCESS_EXITED' } });
+    await pause(50);
+    expect(invalidated).toEqual([]);
+    const second = await engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    ).done;
+    expect(second).toMatchObject({ status: 'completed', finalText: '恢复了' });
+    expect(modes).toEqual(['new', 'resumed']);
+    expect(started[1]!.observed.resumedSessions.map((s) => s.sessionId)).toEqual([ids[0]]);
+  });
+
+  it('process exit while waiting for a background tool: token revoked, row kept (#6)', async () => {
+    const { engine, started, spec } = await setup(
+      { turns: [agentTurn().mcpCall('m1', 'generate_video', {}).text('稍等')] },
+      { bridge: true, providers: withFeatures({}, { bridgeToolDetachMs: 40 }) },
+    );
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const handle = engine.startRun(
+      spec(
+        { tools: [slowTool('generate_video', 5_000)] },
+        {
+          capabilities: ['media'],
+          session: { reuseId: null, fingerprint: 'fp' },
+          hostServerName: 'kepcup_abab0000',
+        },
+      ),
+    );
+    const events = collect(handle);
+    await eventually(() =>
+      events.some((e) => e.type === 'assistant' && JSON.stringify(e.payload).includes('稍等')),
+    );
+    const post = tokenPost(started[0]!);
+    started[0]!.kill();
+    expect(await handle.done).toMatchObject({
+      status: 'failed',
+      error: { code: 'AGENT_PROCESS_EXITED' },
+    });
+    await pause(50);
+    expect(invalidated).toEqual([]);
+    expect((await post()).status).toBe(401);
+  });
+
+  it('a discard during the reuse re-confirmation waits for the release (#2a)', async () => {
+    const { engine, started, spec } = await setup({
+      modes: MODES,
+      sessionDelete: true,
+      modeDelayMs: 300,
+      turns: [agentTurn().text('一'), agentTurn().text('二')],
+    });
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, modes, onSession } = sessions();
+    await engine.startRun(spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }))
+      .done;
+    const second = engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    );
+    await eventually(() => started[0]!.observed.events.some((event) => event.kind === 'mode'));
+    await engine.discardSession({
+      agentId: FAKE.id,
+      agentSessionId: ids[0]!,
+      sessionKey: 'bot_1:conv_1:fake',
+      deleteHistory: true,
+    });
+    await second.done;
+    expect(modes).toEqual(['new', 'reused']);
+    await eventually(() => (started[0]!.observed.deletedSessions.length === 1 ? true : null));
+    expect(started[0]!.observed.deletedSessions).toEqual([ids[0]]);
+    expect(invalidated).toEqual([]);
+  });
+
+  it('a reused session whose bridge cannot be bound is closed and invalidated (#2b)', async () => {
+    const tool: ToolDefinition = {
+      name: 'remember',
+      description: 'r',
+      parameters: Type.Object({}),
+      execute: async () => ({ ok: true, content: 'ok' }),
+    };
+    const { engine, started, spec, bridge, host } = await setup(
+      { sessionClose: true, turns: [agentTurn().text('一'), agentTurn().text('二')] },
+      { bridge: true },
+    );
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, onSession } = sessions();
+    const external = (reuseId: string | null) => ({
+      session: { reuseId, fingerprint: 'fp' },
+      hostServerName: 'kepcup_cdcd0000',
+      onSession,
+    });
+    await engine.startRun(spec({ tools: [tool] }, external(null))).done;
+    await bridge!.stop();
+    const second = await engine.startRun(spec({ tools: [tool] }, external(ids[0]!))).done;
+    expect(second).toMatchObject({ status: 'failed', error: { code: 'AGENT_UNAVAILABLE' } });
+    await eventually(() => (invalidated.length === 1 ? true : null));
+    expect(invalidated).toEqual([ids[0]]);
+    await eventually(() => (started[0]!.observed.closedSessions.length === 1 ? true : null));
+    expect(host.openSession(FAKE.id, ids[0]!)).toBeNull();
+  });
+
+  it('a steer refused while waiting for background tools is answered at once (#3)', async () => {
+    const { engine, started, spec } = await setup(
+      {
+        steering: true,
+        steeringOutcome: 'promptRequired',
+        steeringDelayMs: 300,
+        turns: [
+          agentTurn().mcpCall('m1', 'generate_video', {}).sleep(150).text('稍等'),
+          agentTurn().text('收到补充'),
+        ],
+      },
+      {
+        bridge: true,
+        providers: withFeatures({ steering: true }, { bridgeToolDetachMs: 40 }),
+        engine: { runTimeoutMs: 20_000 },
+      },
+    );
+    const handle = engine.startRun(
+      spec(
+        { tools: [slowTool('generate_video', 30_000)] },
+        { capabilities: ['media'], hostServerName: 'kepcup_efef0000' },
+      ),
+    );
+    const events = collect(handle);
+    await eventually(() =>
+      events.some((e) => e.type === 'progress' && String(e.payload.text).includes('转入后台')),
+    );
+    expect(handle.steer('补充一句')).toBe(true);
+    // Refused after the prompt ended: answered in a follow-up, not at the deadline.
+    await eventually(() => (started[0]!.observed.prompts.length === 2 ? true : null), 2_000);
+    expect(started[0]!.observed.prompts[1]!.text).toContain('补充一句');
+    handle.abort('done');
+    expect((await handle.done).status).toBe('cancelled');
+  });
+
+  it('a follow-up gets only what is left of the run budget (#4)', async () => {
+    const { engine, spec } = await setup(
+      {
+        turns: [
+          agentTurn().mcpCall('m1', 'generate_video', {}).text('稍等'),
+          agentTurn().sleep(10_000).text('太慢'),
+        ],
+      },
+      {
+        bridge: true,
+        providers: withFeatures({}, { bridgeToolDetachMs: 40 }),
+        engine: { runTimeoutMs: 1_500, followUpMinMs: 100 },
+      },
+    );
+    const startedAt = Date.now();
+    const outcome = await engine.startRun(
+      spec(
+        { tools: [slowTool('generate_video', 1_200)] },
+        { capabilities: ['media'], hostServerName: 'kepcup_1a1a0000' },
+      ),
+    ).done;
+    expect(outcome).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    // The whole run timeout again from the follow-up would end at ~2.7 s.
+    expect(Date.now() - startedAt).toBeLessThan(2_200);
+  });
+
+  it('past the run deadline only the one timeout follow-up is sent (#4)', async () => {
+    const { engine, started, spec } = await setup(
+      {
+        turns: [
+          agentTurn().mcpCall('m1', 'generate_video', {}).text('稍等'),
+          agentTurn().mcpCall('m2', 'generate_video', {}).text('再等'),
+          agentTurn().text('不该有'),
+        ],
+      },
+      {
+        bridge: true,
+        providers: withFeatures({}, { bridgeToolDetachMs: 40 }),
+        engine: { runTimeoutMs: 400, followUpMinMs: 5_000 },
+      },
+    );
+    const outcome = await engine.startRun(
+      spec(
+        { tools: [slowTool('generate_video', 3_000)] },
+        { capabilities: ['media'], hostServerName: 'kepcup_2b2b0000' },
+      ),
+    ).done;
+    expect(outcome).toMatchObject({ status: 'completed', finalText: '再等' });
+    await pause(100);
+    const prompts = started[0]!.observed.prompts;
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]!.text).toContain('error_code="TIMEOUT"');
+  });
+
+  it('an out-of-run update repeating the expected mode keeps the session (#5)', async () => {
+    const { engine, started, spec } = await setup({
+      modes: MODES,
+      sessionClose: true,
+      turns: [
+        agentTurn()
+          .text('一')
+          .afterTurn([{ type: 'mode_update', modeId: 'default' }], 30),
+        agentTurn().text('二'),
+      ],
+    });
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, modes, onSession } = sessions();
+    await engine.startRun(spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }))
+      .done;
+    await pause(120);
+    expect(invalidated).toEqual([]);
+    expect(started[0]!.observed.closedSessions).toEqual([]);
+    await engine.startRun(spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }))
+      .done;
+    expect(modes).toEqual(['new', 'reused']);
+  });
+
+  it('a set_mode the agent never answers on reuse fails the run and drops the session (#10)', async () => {
+    const { engine, host, started, spec } = await setup(
+      {
+        modes: MODES,
+        sessionClose: true,
+        hangModes: ['default'],
+        turns: [agentTurn().text('一'), agentTurn().text('二')],
+      },
+      { engine: { sessionCallTimeoutMs: 200 } },
+    );
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, onSession } = sessions();
+    await engine.startRun(spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }))
+      .done;
+    const second = await engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    ).done;
+    expect(second).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    await eventually(() => (invalidated.length === 1 ? true : null));
+    expect(invalidated).toEqual([ids[0]]);
+    await eventually(() => (started[0]!.observed.closedSessions.length === 1 ? true : null));
+    expect(host.inUse(FAKE.id)).toBe(false);
+    expect(started[0]!.observed.prompts).toHaveLength(1);
+  });
+
+  it('a hanging tier switch times out; a cancel while it hangs releases at once (#10)', async () => {
+    const providers = withFeatures(
+      {},
+      {
+        applyPermissionTier: async (_tier, ctx) => {
+          await ctx.setMode('default');
+        },
+      },
+    );
+    const script: FakeAgentScript = {
+      modes: MODES,
+      sessionClose: true,
+      hangModes: ['default'],
+      turns: [agentTurn().text('一')],
+    };
+    const timed = await setup(script, { providers, engine: { sessionCallTimeoutMs: 200 } });
+    const invalidated: string[] = [];
+    timed.engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const outcome = await timed.engine.startRun(
+      timed.spec({}, { session: { reuseId: null, fingerprint: 'fp' } }),
+    ).done;
+    expect(outcome).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    await eventually(() => (invalidated.length === 1 ? true : null));
+    expect(timed.started[0]!.observed.prompts).toEqual([]);
+
+    const cancelled = await setup(script, {
+      providers,
+      engine: { sessionCallTimeoutMs: 60_000 },
+    });
+    const handle = cancelled.engine.startRun(
+      cancelled.spec({}, { session: { reuseId: null, fingerprint: 'fp' } }),
+    );
+    await eventually(() =>
+      cancelled.started[0]?.observed.events.some((event) => event.kind === 'mode'),
+    );
+    handle.abort('user');
+    expect((await handle.done).status).toBe('cancelled');
+    await eventually(() => (!cancelled.host.inUse(FAKE.id) ? true : null), 1_000);
   });
 });
 

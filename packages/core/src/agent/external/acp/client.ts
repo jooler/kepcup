@@ -397,6 +397,15 @@ export class AcpConnection {
     return this.#connection.closed;
   }
 
+  /**
+   * The connection is closed (process exit / crash). Set synchronously before
+   * the pending requests reject, so a failed request can tell a dead agent
+   * from an agent error (P5-2 复审 #1).
+   */
+  get isClosed(): boolean {
+    return this.#connection.signal.aborted;
+  }
+
   async initialize(): Promise<AcpInitializeResponse> {
     const response = await this.#connection.initialize({
       protocolVersion: PROTOCOL_VERSION,
