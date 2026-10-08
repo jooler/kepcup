@@ -18,7 +18,9 @@ export interface TriggerBatch {
     | 'chain'
     | 'scheduled'
     | 'event'
-    | 'delegation';
+    | 'delegation'
+    /** D75 §3.2：任务结算条目（result / failure）唤醒 Bot。 */
+    | 'task';
   extraAttributes?: Record<string, string | number>;
   /** Bot-to-bot @ chain binding (P05): stored on the created run. */
   chain?: { id: string; depth: number };

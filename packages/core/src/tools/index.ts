@@ -250,6 +250,8 @@ export function buildResponseTools(input: {
         replyTo: params.reply_to ?? null,
         mentions: params.mention_bot_ids ?? [],
         runId: identity.runId,
+        // D75 §6.1: a task's messages are progress, attributed to the task.
+        ...(identity.loopType === 'task' ? { taskOrigin: { taskId: identity.runId } } : {}),
       });
       if (uploaded.length > 0)
         deps.attachments.attachToMessage(

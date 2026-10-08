@@ -152,4 +152,35 @@ describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
     });
     await waitUntil(() => ran);
   });
+  it('D75 task jobs keep one provider slot free for conversation replies', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 3 });
+    const started: string[] = [];
+    const blockers = [deferred(), deferred(), deferred()];
+    for (const [index, blocker] of blockers.entries()) {
+      scheduler.submit({
+        priority: 1,
+        provider: 'p',
+        key: `task:t${index}`,
+        run: async () => {
+          started.push(`task:t${index}`);
+          await blocker.promise;
+        },
+      });
+    }
+    await waitUntil(() => started.length === 2);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started).toEqual(['task:t0', 'task:t1']); // the third slot stays free
+    scheduler.submit({
+      priority: 0,
+      provider: 'p',
+      key: 'bot:conv',
+      run: async () => void started.push('reply'),
+    });
+    await waitUntil(() => started.includes('reply'));
+    blockers[0]!.release();
+    await waitUntil(() => started.includes('task:t2'));
+    for (const blocker of blockers) blocker.release();
+    scheduler.stop();
+  });
 });

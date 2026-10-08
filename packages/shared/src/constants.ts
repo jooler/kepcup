@@ -480,3 +480,23 @@ export const TASK_TRIGGER_RESULT_MAX_CHARS = 12_000;
  * a backstop on top of "expires after the single tool call".
  */
 export const GRANT_ABSOLUTE_TTL_MS = 10 * 60_000;
+/**
+ * Token budget of the process digest (`buildRunDigest`, tail kept) appended to
+ * a task's failure entry (D75 §2.4.1): the last steps before it failed /
+ * was cancelled / was interrupted.
+ */
+export const TASK_FAILURE_DIGEST_TOKEN_BUDGET = 600;
+/** list_tasks (§4.1): settled tasks ended within this window are listed with the live ones. */
+export const TASK_LIST_SETTLED_WINDOW_MS = 24 * 60 * 60_000;
+/** start_task title cap (§4.1; the card / <tasks> line shows it). */
+export const TASK_TITLE_MAX_CHARS = 80;
+/** start_task / inject_task instruction cap (§4.1). */
+export const TASK_INSTRUCTION_MAX_CHARS = 8_000;
+/** Max source_message_ids per start_task / inject_task (§2.4.5 verbatim originals). */
+export const TASK_SOURCE_MESSAGES_MAX = 20;
+/**
+ * A delivered task result whose consuming turn never reached a terminal state
+ * (the delivery got lost in-process) is re-delivered by the reaper after this
+ * long (§3.2 at-least-once).
+ */
+export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;

@@ -148,6 +148,12 @@ export class Scheduler {
     if (job.priority === 2 && job.provider.startsWith('agent:') && limit > 1) {
       return active < limit - 1;
     }
+    // D75 tasks (key `task:{id}`) run for minutes to hours and are never
+    // preempted: like background loops on an agent, they may only start while
+    // a slot of their provider stays free for conversation replies.
+    if (job.key.startsWith('task:') && limit > 1) {
+      return active < limit - 1;
+    }
     return active < limit;
   }
 }
