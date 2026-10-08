@@ -540,3 +540,52 @@ describe('Scheduler round 2 (D75 审查复核 #1 #3 #4 #7)', () => {
     scheduler.stop();
   });
 });
+
+describe('Scheduler × external-agent tasks (D75 W4, design 30 §8.1 / §8.5)', () => {
+  const resolver = (limit: number) => ({ agentConcurrency: () => limit });
+
+  function harness(limit: number) {
+    const scheduler = new Scheduler(logger, resolver(limit));
+    scheduler.setConcurrency({ default: 4 });
+    const started: string[] = [];
+    const hold = deferred();
+    const job = (key: string, priority: 0 | 1 | 2) =>
+      scheduler.submit({
+        priority,
+        provider: 'agent:a',
+        key,
+        run: async () => {
+          started.push(key);
+          await hold.promise;
+        },
+      });
+    return { scheduler, started, hold, job };
+  }
+
+  it('tasks on an agent may use all of its slots (replies run on the built-in engine)', async () => {
+    const { scheduler, started, hold, job } = harness(2);
+    job('task:t1', 1);
+    job('task:t2', 1);
+    await waitUntil(() => started.length === 2);
+    expect(started).toEqual(['task:t1', 'task:t2']);
+    // A background loop still keeps one slot free (here: none free at all).
+    job('bg', 2);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).not.toContain('bg');
+    hold.release();
+    await waitUntil(() => started.includes('bg'));
+    scheduler.stop();
+  });
+
+  it('nothing borrows past an agent limit: without parallel sessions one prompt at a time', async () => {
+    const { scheduler, started, hold, job } = harness(1);
+    job('task:t1', 1);
+    await waitUntil(() => started.includes('task:t1'));
+    job('bot:conv', 0); // a reply would borrow on a model provider (M3), never here
+    await new Promise((r) => setTimeout(r, 30));
+    expect(started).toEqual(['task:t1']);
+    hold.release();
+    await waitUntil(() => started.includes('bot:conv'));
+    scheduler.stop();
+  });
+});

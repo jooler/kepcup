@@ -8,9 +8,7 @@ import { UsageService } from '../../src/domain/usage.js';
 import type { SqliteDatabase } from '../../src/infra/db.js';
 import {
   createSubagentFacade,
-  createSubagentHost,
   type SubagentFacadeInput,
-  type SubagentFollowUp,
 } from '../../src/agent/subagent.js';
 import type {
   EngineEvent,
@@ -21,9 +19,11 @@ import type {
 } from '../../src/agent/types.js';
 
 /**
- * 宿主 SubAgent（D66）单元：预算/限次/回退/级联取消/后台委派/fan-out——用假
+ * 宿主 SubAgent（D66）单元：预算/限次/回退/级联取消/后台分支/fan-out——用假
  * 引擎驱动 facade，落库走真实 RunsService / UsageService（内存 runs 库 +
- * usage_ledger）。
+ * usage_ledger）。D75 §1.2 降级后后台分支属于父 run：结论经
+ * collect_delegate_results 回到父 run，父 run abort / 结束（close）中止分支，
+ * 并发封顶按父 run 计（对话级计数归任务层）。
  */
 
 const logger = { info() {}, warn() {}, error() {}, debug() {} } as never;
@@ -66,7 +66,14 @@ class FakeEngine {
   completed: FakeRunScript[] = [];
   maxConcurrent = 0;
   completeShouldFail = false;
+  /** Settles of held (holdUntilAbort) runs, in start order: release() completes one normally. */
+  readonly #held: Array<() => void> = [];
   #active = 0;
+
+  /** Lets the oldest held run finish with its scripted outcome (not an abort). */
+  release(): void {
+    this.#held.shift()?.();
+  }
 
   startRun(spec: RunSpec): RunHandle {
     this.specs.push(spec);
@@ -91,6 +98,7 @@ class FakeEngine {
       resolveDone(script.outcome);
     };
     if (script.holdUntilAbort !== true) queueMicrotask(settle);
+    else this.#held.push(settle);
     return {
       steer: () => false,
       abort: () => settle(),
@@ -128,23 +136,17 @@ const parentIdentity = {
   runId: 'run_parent',
   botId: 'bot_1',
   conversationId: 'conv_1',
-  loopType: 'turn' as const,
+  loopType: 'task' as const,
 };
 
-function makeInput(
-  engine: FakeEngine,
-  overrides?: Partial<SubagentFacadeInput>,
-): SubagentFacadeInput & { followUps: SubagentFollowUp[] } {
-  const followUps: SubagentFollowUp[] = [];
+function makeInput(engine: FakeEngine, overrides?: Partial<SubagentFacadeInput>): SubagentFacadeInput {
+  void engine;
   return {
     parent: parentIdentity,
     modelRef: 'mock/main',
     lightModelRef: 'mock/light',
     buildTools: () => [],
     buildSystemPrompt: async () => '子代理提示',
-    host: createSubagentHost(),
-    onFollowUp: (followUp) => followUps.push(followUp),
-    followUps,
     ...overrides,
   };
 }
@@ -336,88 +338,148 @@ describe('subagent facade', () => {
   });
 });
 
-/** 让 startBackground 的 void 异步链跑到 settle。 */
+/** 让后台分支的异步链跑到 settle。 */
 async function flushAsync(times = 6): Promise<void> {
   for (let i = 0; i < times; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
-describe('subagent background delegation (D66 mode B)', () => {
-  it('returns child_run_id immediately, settles independently and reports via onFollowUp', async () => {
+interface BranchSlot {
+  child_run_id: string;
+  ok: boolean;
+  conclusion?: string;
+  partial?: boolean;
+  error?: string;
+}
+
+function branchSlots(content: string): BranchSlot[] {
+  const json = content.slice(content.indexOf('<untrusted>') + 11, content.indexOf('</untrusted>'));
+  return JSON.parse(json) as BranchSlot[];
+}
+
+function childRunIds(content: string): string[] {
+  const payload = JSON.parse(content.split('\n')[0]!) as {
+    child_run_id?: string;
+    child_run_ids?: string[];
+  };
+  return payload.child_run_ids ?? [payload.child_run_id!];
+}
+
+const completedScript = (text: string, hold = false): FakeRunScript => ({
+  outcome: { status: 'completed', finalText: text, skipReply: false, usage: [] },
+  events: [{ type: 'assistant', payload: { text, stopReason: 'stop' } }],
+  ...(hold ? { holdUntilAbort: true } : {}),
+});
+
+const heldCancelled = (): FakeRunScript => ({
+  outcome: { status: 'cancelled', finalText: '', skipReply: false, usage: [] },
+  holdUntilAbort: true,
+});
+
+describe('subagent background branches (D66 mode B, D75 §1.2)', () => {
+  it('returns child_run_id immediately; collect waits for the branch and hands its conclusion back once', async () => {
     const engine = new FakeEngine();
     const deps = makeDeps(engine);
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
+    engine.completed.push(completedScript('子任务原始结论', true));
 
-    engine.completed.push({
-      outcome: { status: 'completed', finalText: '子任务原始结论', skipReply: false, usage: [] },
-      events: [{ type: 'assistant', payload: { text: '过程输出', stopReason: 'stop' } }],
-    });
-
-    const result = await facade.delegate({ task: '长调研', mode: 'background' }, ctx);
-    // 立即返回，不阻塞：结果带 child_run_id + running；子 run 不消费 FakeEngine 脚本也无关。
-    expect(result.ok).toBe(true);
-    expect(result.content).toContain('"status":"running"');
-    expect(result.content).toMatch(/"child_run_id":"run_/);
-    expect(input.host.runningCount('conv_1')).toBe(1);
+    const ack = await facade.delegate({ task: '长调研', mode: 'background' }, ctx);
+    // 立即返回，不阻塞：带 child_run_id + running，并告诉父 loop 如何取回。
+    expect(ack.ok).toBe(true);
+    expect(ack.content).toContain('"status":"running"');
+    expect(ack.content).toContain('collect_delegate_results');
+    const [childId] = childRunIds(ack.content);
 
     const [run] = deps.runs.listByConversation('conv_1', 10);
+    expect(run?.id).toBe(childId);
     expect(run?.loopType).toBe('subagent');
     expect(run?.triggerReason).toBe('background');
     expect(run?.parentRunId).toBe('run_parent');
+    expect(run?.status).toBe('running');
 
-    await flushAsync();
-    expect(input.host.runningCount('conv_1')).toBe(0);
-    // 后台子 run 的结论经 onFollowUp 上报（orchestrator 负责注入），压缩后 ≤4000 字符。
-    expect(input.followUps).toHaveLength(1);
-    expect(input.followUps[0]).toMatchObject({
-      childRunId: run!.id,
-      botId: 'bot_1',
-      conversationId: 'conv_1',
-      status: 'completed',
-      hitLimit: false,
-      conclusion: '压缩后的结论',
+    // collect 等待未结束的分支。
+    let collected = false;
+    const pending = facade.collect({}, ctx).then((result) => {
+      collected = true;
+      return result;
     });
+    await flushAsync();
+    expect(collected).toBe(false);
+
+    engine.release();
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(branchSlots(result.content)).toEqual([
+      { child_run_id: childId, ok: true, conclusion: '压缩后的结论' },
+    ]);
+    expect(deps.runs.getOrThrow(childId!).status).toBe('completed');
+
+    // 每条结论只交一次：再取回报错，不重复交付。
+    const again = await facade.collect({ child_run_ids: [childId!] }, ctx);
+    expect(again.ok).toBe(false);
+    expect(again.errorCode).toBe('INVALID_INPUT');
+    const none = await facade.collect({}, ctx);
+    expect(none.ok).toBe(false);
+    expect(none.errorCode).toBe('INVALID_INPUT');
   });
 
-  it('does not consume the parent signal: main-turn abort leaves the background run alone', async () => {
+  it('cascades a parent abort into its background branches', async () => {
+    // 旧语义（D66 mode B）：后台子 run 挂对话级锚点，主 turn abort 不影响它。
+    // D75 §1.2：分支属于父 run——父 run 被中止，分支一并中止。
     const engine = new FakeEngine();
     const deps = makeDeps(engine);
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx, signal } = makeCtx();
-
-    engine.completed.push({
-      // abort() 后 FakeEngine 按 scripted outcome 结算：真实引擎 abort → cancelled。
-      outcome: { status: 'cancelled', finalText: '', skipReply: false, usage: [] },
-      holdUntilAbort: true,
-    });
+    engine.completed.push(heldCancelled());
 
     await facade.delegate({ task: '任务', mode: 'background' }, ctx);
-    signal.abort('main turn ended');
-    await flushAsync();
-    expect(deps.runs.listByConversation('conv_1', 10)[0]?.status).toBe('running');
-    expect(input.followUps).toHaveLength(0);
-
-    // 显式取消委派（对话级锚点）才中止；取消不产生 follow-up。
-    expect(input.host.abortOne(
-      deps.runs.listByConversation('conv_1', 10)[0]!.id,
-      'user cancelled',
-    )).toBe(true);
+    const collecting = facade.collect({}, ctx);
+    signal.abort('parent cancelled');
+    // collect 随父 run 的 signal 返回，不等分支。
+    const result = await collecting;
+    expect(result.errorCode).toBe('CANCELLED');
     await flushAsync();
     expect(deps.runs.listByConversation('conv_1', 10)[0]?.status).toBe('cancelled');
-    expect(input.followUps).toHaveLength(0);
   });
 
-  it('reports the partial conclusion with hitLimit when the budget aborts a background run', async () => {
+  it('abortSubRun cancels one branch (runs.cancel); collect reports it as a failed slot', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(deps, makeInput(engine));
+    const { ctx } = makeCtx();
+    engine.completed.push(heldCancelled(), completedScript('另一路结论'));
+
+    const ack = await facade.delegate(
+      {
+        tasks: [
+          { task: '会被取消', mode: 'background' },
+          { task: '正常完成', mode: 'background' },
+        ],
+      },
+      ctx,
+    );
+    const [cancelledId, okId] = childRunIds(ack.content);
+    expect(facade.abortSubRun(cancelledId!, 'user cancelled')).toBe(true);
+    expect(facade.abortSubRun('run_not_mine', 'user cancelled')).toBe(false);
+
+    const result = await facade.collect({ child_run_ids: [cancelledId!, okId!] }, ctx);
+    expect(result.ok).toBe(true);
+    const slots = branchSlots(result.content);
+    expect(slots.map((slot) => slot.child_run_id)).toEqual([cancelledId, okId]);
+    expect(slots[0]).toMatchObject({ ok: false, error: '执行已取消，子任务中止' });
+    expect(slots[1]).toMatchObject({ ok: true, conclusion: '压缩后的结论' });
+    expect(deps.runs.getOrThrow(cancelledId!).status).toBe('cancelled');
+    // 已结束的分支不能再取消。
+    expect(facade.abortSubRun(okId!, 'late')).toBe(false);
+  });
+
+  it('marks a budget-aborted branch as partial', async () => {
     const engine = new FakeEngine();
     const deps = makeDeps(engine, { tokenPollMs: 5 });
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
-
     engine.completed.push({
       outcome: { status: 'cancelled', finalText: '已完成部分', skipReply: false, usage: [] },
       tokensSoFar: 1_000_000_000,
@@ -426,22 +488,21 @@ describe('subagent background delegation (D66 mode B)', () => {
     });
 
     await facade.delegate({ task: '任务', mode: 'background' }, ctx);
-    await flushAsync();
-    expect(input.followUps).toHaveLength(1);
-    expect(input.followUps[0]).toMatchObject({
-      status: 'cancelled',
-      hitLimit: true,
+    const result = await facade.collect({}, ctx);
+    expect(result.ok).toBe(true);
+    expect(branchSlots(result.content)[0]).toMatchObject({
+      ok: true,
       conclusion: '压缩后的结论',
+      partial: true,
     });
+    expect(result.content).toContain('预算上限');
   });
 
-  it('reports failure via onFollowUp when the sub run fails', async () => {
+  it('reports a failed branch as an error slot', async () => {
     const engine = new FakeEngine();
     const deps = makeDeps(engine);
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
-
     engine.completed.push({
       outcome: {
         status: 'failed',
@@ -453,30 +514,23 @@ describe('subagent background delegation (D66 mode B)', () => {
     });
 
     await facade.delegate({ task: '任务', mode: 'background' }, ctx);
-    await flushAsync();
-    expect(input.followUps).toHaveLength(1);
-    expect(input.followUps[0]).toMatchObject({
-      status: 'failed',
-      conclusion: null,
-      failure: '子任务执行失败：模型不可用',
+    const result = await facade.collect({}, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.errorCode).toBe('SUBAGENT_FAILED');
+    expect(branchSlots(result.content)[0]).toMatchObject({
+      ok: false,
+      error: '子任务执行失败：模型不可用',
     });
   });
 
-  it('fans out background lanes in parallel and reports each lane separately', async () => {
+  it('fans out background lanes in parallel and collects them in request order', async () => {
     const engine = new FakeEngine();
     const deps = makeDeps(engine);
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
+    for (const text of ['结论一', '结论二', '结论三']) engine.completed.push(completedScript(text));
 
-    for (const text of ['结论一', '结论二', '结论三']) {
-      engine.completed.push({
-        outcome: { status: 'completed', finalText: text, skipReply: false, usage: [] },
-        events: [{ type: 'assistant', payload: { text, stopReason: 'stop' } }],
-      });
-    }
-
-    const result = await facade.delegate(
+    const ack = await facade.delegate(
       {
         tasks: [
           { task: '查天气', mode: 'background' },
@@ -486,59 +540,132 @@ describe('subagent background delegation (D66 mode B)', () => {
       },
       ctx,
     );
-    expect(result.ok).toBe(true);
-    expect(result.content).toContain('"child_run_ids"');
-    expect(result.content).toContain('"status":"running"');
+    expect(ack.ok).toBe(true);
+    expect(ack.content).toContain('"child_run_ids"');
     expect(engine.maxConcurrent).toBe(3); // 并行
-    expect(input.host.runningCount('conv_1')).toBe(3);
+    const ids = childRunIds(ack.content);
 
-    await flushAsync();
-    expect(input.followUps).toHaveLength(3);
-    expect(new Set(input.followUps.map((f) => f.conclusion))).toEqual(
-      new Set(['压缩后的结论', '压缩后的结论', '压缩后的结论']),
-    );
-    const runs = deps.runs.listByConversation('conv_1', 10);
-    expect(runs).toHaveLength(3);
-    for (const run of runs) {
+    const result = await facade.collect({}, ctx);
+    expect(branchSlots(result.content).map((slot) => slot.child_run_id)).toEqual(ids);
+    for (const run of deps.runs.listByConversation('conv_1', 10)) {
       expect(run.parentRunId).toBe('run_parent');
       expect(run.triggerReason).toBe('background');
+      expect(run.status).toBe('completed');
     }
   });
 
-  it('rejects lanes beyond the shared background concurrency cap', async () => {
+  it('caps running branches per parent run, not per conversation', async () => {
     const engine = new FakeEngine();
     const deps = makeDeps(engine);
-    const input = makeInput(engine);
-    const facade = createSubagentFacade(deps, input);
+    const facade = createSubagentFacade(deps, makeInput(engine));
     const { ctx } = makeCtx();
+    for (let i = 0; i < 6; i += 1) engine.completed.push(heldCancelled());
 
-    for (let i = 0; i < 4; i += 1) {
-      engine.completed.push({
-        outcome: { status: 'completed', finalText: 'x', skipReply: false, usage: [] },
-        holdUntilAbort: true,
-      });
+    for (const task of ['一', '二', '三', '四']) {
+      expect((await facade.delegate({ task, mode: 'background' }, ctx)).ok).toBe(true);
     }
-    await facade.delegate({ task: '一', mode: 'background' }, ctx);
-    await facade.delegate({ task: '二', mode: 'background' }, ctx);
-    await facade.delegate({ task: '三', mode: 'background' }, ctx);
-    await facade.delegate({ task: '四', mode: 'background' }, ctx);
-    expect(input.host.runningCount('conv_1')).toBe(4);
-
     const fifth = await facade.delegate({ task: '五', mode: 'background' }, ctx);
     expect(fifth.ok).toBe(false);
     expect(fifth.errorCode).toBe('SUBAGENT_LIMIT_REACHED');
 
-    // 前台 fan-out 的 N 路也必须放得下（与后台共用封顶）。
+    // 前台 fan-out 的 N 路也必须放得下（与后台分支共用封顶）。
     const fanOut = await facade.delegate(
       { tasks: [{ task: 'a' }, { task: 'b' }, { task: 'c' }, { task: 'd' }] },
       ctx,
     );
     expect(fanOut.ok).toBe(false);
     expect(fanOut.errorCode).toBe('SUBAGENT_LIMIT_REACHED');
-    // 前台串行委派不受后台并发封顶约束（mode A 契约不变）：不被拒，仅受次数上限。
+
+    // 旧语义（对话级封顶）：同对话另一个父 run 也会被挡。D75：对话级并发归
+    // 任务层，另一个父 run（另一个任务）有自己的封顶。
+    const otherParent = createSubagentFacade(
+      deps,
+      makeInput(engine, { parent: { ...parentIdentity, runId: 'run_parent_2' } }),
+    );
+    const otherCtx = makeCtx();
+    expect((await otherParent.delegate({ task: '别的任务的分支', mode: 'background' }, otherCtx.ctx)).ok).toBe(true);
+
+    // 前台串行委派不受后台并发封顶约束（mode A 契约不变）。
+    engine.completed.unshift(completedScript('前台结论'));
     const foreground = await facade.delegate({ task: '前台单路' }, ctx);
-    expect(foreground.errorCode).not.toBe('SUBAGENT_LIMIT_REACHED');
-    expect(deps.runs.listByConversation('conv_1', 10)).toHaveLength(5);
+    expect(foreground.ok).toBe(true);
+    await facade.close('test end');
+    await otherParent.close('test end');
+  });
+
+  it('close() (parent run ended) aborts branches still running, waits for them and drops uncollected results', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(deps, makeInput(engine));
+    const { ctx } = makeCtx();
+    engine.completed.push(heldCancelled(), completedScript('已完成但没取回'));
+
+    const ack = await facade.delegate(
+      {
+        tasks: [
+          { task: '还在跑', mode: 'background' },
+          { task: '已结束', mode: 'background' },
+        ],
+      },
+      ctx,
+    );
+    const [runningId, doneId] = childRunIds(ack.content);
+    await flushAsync();
+    expect(deps.runs.getOrThrow(doneId!).status).toBe('completed');
+    expect(deps.runs.getOrThrow(runningId!).status).toBe('running');
+
+    await facade.close('parent run ended');
+    // close 返回时分支已 settle（不留悬挂的子 run）。
+    expect(deps.runs.getOrThrow(runningId!).status).toBe('cancelled');
+    // 之后既不能再委派，也取不回任何结论。
+    const late = await facade.delegate({ task: '迟到', mode: 'background' }, ctx);
+    expect(late.ok).toBe(false);
+    expect(late.errorCode).toBe('CANCELLED');
+    expect((await facade.collect({}, ctx)).errorCode).toBe('INVALID_INPUT');
+    expect(deps.runs.listByConversation('conv_1', 10)).toHaveLength(2);
+  });
+
+  it('abortSubRun and close also stop foreground lanes', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(deps, makeInput(engine));
+    const { ctx } = makeCtx();
+    engine.completed.push(heldCancelled());
+
+    const pending = facade.delegate({ task: '前台长任务' }, ctx);
+    await flushAsync();
+    const [run] = deps.runs.listByConversation('conv_1', 10);
+    expect(facade.abortSubRun(run!.id, 'user cancelled')).toBe(true);
+    const result = await pending;
+    expect(result.errorCode).toBe('CANCELLED');
+    expect(deps.runs.getOrThrow(run!.id).status).toBe('cancelled');
+  });
+
+  it('refuses delegation from a supervisor turn or a subagent (D75 depth / role)', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    for (const loopType of ['turn', 'subagent'] as const) {
+      const facade = createSubagentFacade(
+        deps,
+        makeInput(engine, { parent: { ...parentIdentity, loopType } }),
+      );
+      const result = await facade.delegate({ task: '任务' }, makeCtx().ctx);
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe('NOT_SUPPORTED');
+    }
+    expect(deps.runs.listByConversation('conv_1', 10)).toHaveLength(0);
+    expect(engine.specs).toHaveLength(0);
+  });
+
+  it('rejects collecting ids that are not this run\'s branches', async () => {
+    const engine = new FakeEngine();
+    const facade = createSubagentFacade(makeDeps(engine), makeInput(engine));
+    const { ctx } = makeCtx();
+    const unknown = await facade.collect({ child_run_ids: ['run_elsewhere'] }, ctx);
+    expect(unknown.errorCode).toBe('INVALID_INPUT');
+    expect(unknown.content).toContain('run_elsewhere');
+    const empty = await facade.collect({ child_run_ids: [] }, ctx);
+    expect(empty.errorCode).toBe('INVALID_INPUT');
   });
 });
 
@@ -591,8 +718,6 @@ describe('subagent foreground fan-out (D66 mode C)', () => {
     const runs = deps.runs.listByConversation('conv_1', 10);
     expect(runs).toHaveLength(3);
     for (const run of runs) expect(run.triggerReason).toBeNull();
-    expect(input.followUps).toHaveLength(0); // 前台不注入
-    void input;
   });
 
   it('cascades parent cancellation into every foreground lane', async () => {
@@ -622,7 +747,6 @@ describe('subagent foreground fan-out (D66 mode C)', () => {
     for (const run of deps.runs.listByConversation('conv_1', 10)) {
       expect(run.status).toBe('cancelled');
     }
-    expect(input.followUps).toHaveLength(0);
   });
 
   it('rejects mixed modes, oversized fan-outs and empty tasks', async () => {

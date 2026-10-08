@@ -72,7 +72,7 @@ describe('0016 butler_and_delegation 迁移', () => {
     expect(() => insertApproval(db, 'apr_too_early', 'butler_proposal')).toThrow(/CHECK/);
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([16, 17, 18]);
+    expect(applied.map((m) => m.version)).toEqual([16, 17, 18, 19]);
 
     const kinds = (
       db.prepare('select kind from approvals order by id').all() as Array<{ kind: string }>

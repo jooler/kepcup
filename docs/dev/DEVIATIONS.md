@@ -164,3 +164,17 @@
 - 决定：（待人工确认）
 - 已更新的文档：无（design/13 的「仅这一次」条目建议补一句预授权的消费规则，留给 W5 文档同步）
 - 补充（D75 审查修复 M5 / LOW-6，`t/d75-fixb`）：「使用该授权的那一次工具调用」落实为**归属**——每条 once 授权在内存里记录它的所属工具调用（`grantId → ToolCallScope`，撤销即清除）：当场批准的归批准它的那次调用；`request_access` 预授权在被用到前不属于任何调用，**第一次用到它的调用认领**。`listEffective` / `hasEffectiveGrant` / 沙箱策略只把 once 授权算给它的所属调用（未认领的对任何调用可见、用即认领），同一 run 内并行的工具调用不再共享 once 授权，长调用也不会让它对别的调用持续有效。`bash` 仍把它看得见的 once 授权（自己的 + 可认领的）全部并入策略并消费：命令实际碰了哪些挂载不可观测，按命令文本猜路径会漏掉脚本 / `cd` / 变量，挂进策略即视为使用是安全的一侧；代价是 `request_access` 之后、重跑之前若先跑了一条无关命令，预授权会被它用掉（需重新申请）。once 授权的自动撤销（调用结束消费、`GRANT_ABSOLUTE_TTL_MS`、run 结束）现在经 `GrantsService.onAutoRevoke` 发布 `grant.changed`（按对话在微任务内合并），右侧面板不再停留在过期状态。影响范围追加：`permissions/grants.ts`（归属、`onAutoRevoke`、TTL 定时推送）、`gateway/index.ts`（订阅并发布）。
+
+### DEV-010 任务会话的桥 / 引擎键按会话行而非任务 id（D75 W4）
+
+- 状态：已按推荐方案实现（不阻塞，可调整）
+- 阶段：D75 W4
+- 是否阻塞：否
+- 问题：design/30 §8.5 写「`sessionKey = bot:conv:agent:task`」，同时要求 `continues_task_id` 把旧任务的会话行**继承**给新任务（`UPDATE … SET task_id = 新`）。引擎复用保留会话时要求 `kept.sessionKey === RunSpec.external.sessionKey`，桥 token 也按 `sessionKey` 签发：若键含任务 id，继承后新任务的键与保留会话开会话时的键不同，引擎会把它当作不匹配而关闭（继承落空），或需要给引擎 / 桥加一套「换键」逻辑。
+- 影响范围：`dispatch/orchestrator.ts`（`#agentSessionKey`）、`domain/agent-sessions.ts`（`inheritTask`）。
+- 可选方案：
+  1. 任务行的键 = `bot:conv:agent:task:{会话行 id}`：每个任务新建的会话各有一行 → 各有自己的键与桥 token（与「按任务」等价）；继承只改行的 `task_id`、行 id 不变，键与 token 随行沿用；指纹变化换新行 = 换新键。引擎、桥零改动 — 优点：改动面最小、继承天然成立；缺点：键里不直接出现任务 id（日志里按行 id 对应）。
+  2. 键 = 任务 id，引擎在复用时接受「上一个键」并重签 token、重绑 run — 缺点：引擎与桥都要改，复用路径多一处失败模式。
+- 推荐：1。非任务 run（D72 期的响应 run，`task_id = ''`）的键保持 `bot:conv:agent` 不变。
+- 决定：（待人工确认）
+- 已更新的文档：无（design/30 §8.5「键加任务」一句建议改为「键随任务的会话行」，留给 W5）
