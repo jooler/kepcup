@@ -15,7 +15,6 @@ class TasksState {
   /** Counter of `task.updated` pushes, and the last one per task (newer-wins, 审查 L2). */
   #pushes = 0;
   // Plain Map: bookkeeping, not UI state.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   readonly #pushedAt = new Map<string, number>();
   #sawReady = false;
   /** The open conversation (the cache keeps its views, 审查 L3). */
