@@ -162,6 +162,15 @@ kepcup/
 | `SKILL_AUTHOR_REPEAT_THRESHOLD` | 2 | 同类任务成功多少次后建议自建技能 |
 | `CHECKPOINT_RETENTION_DAYS` | 30 | 检查点保留天数 |
 | `MAX_PROACTIVE_PER_DAY` | 5 | 每个 Bot 每天主动消息上限（Profile 可覆盖） |
+| `TURN_MAX_TURNS` | 8 | 对话轮（D75）的最大轮数 |
+| `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 任务并发：对话级 / 全局 |
+| `TASK_START_MAX_PER_TURN` | 2 | 单个对话轮最多起的任务数 |
+| `TASK_MAX_WALL_MS` | 4 小时 | 单个任务的墙钟上限（reaper 强制 `failed`） |
+| `TASK_TOKEN_BUDGET` | 2000000 | 单个任务的 token 预算（输入 + 输出累计） |
+| `TASK_SETTLE_SWEEP_MS` | 60000 | 任务结算对账 / reaper 周期 |
+| `TASK_EVENT_CONTEXT_MAX_CHARS` | 600 | 最近窗口里任务进度与较早任务条目的截断长度 |
+| `TASK_TRIGGER_RESULT_MAX_CHARS` | 12000 | 触发段里任务结果全文的硬顶 |
+| `GRANT_ABSOLUTE_TTL_MS` | 10 分钟 | 一次性授权的绝对时限（D37 收紧） |
 
 ## 日志
 

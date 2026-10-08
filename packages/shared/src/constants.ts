@@ -434,3 +434,49 @@ export const AGENT_TRIAGE_TIMEOUT_MS = 60_000;
  * per (bot, group) (审查 C2); in between the bot answers @ / replies only.
  */
 export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;
+
+// --- Supervisor turns & tasks (D75, docs/design/30-supervisor-and-tasks.md) -----
+
+/**
+ * Max model turns of one supervisor turn (`loop_type='turn'`, §2.1): a turn
+ * talks and dispatches, it should never run a long tool chain; over the cap it
+ * settles as failed.
+ */
+export const TURN_MAX_TURNS = 8;
+/** Max simultaneously running tasks per conversation (§2.2); more wait as `queued` (submitted). */
+export const TASK_CONCURRENCY_PER_CONVERSATION = 3;
+/** Max simultaneously running tasks across all conversations (§2.2). */
+export const TASK_CONCURRENCY_GLOBAL = 8;
+/** Max tasks one supervisor turn may start (§4.1, counted by `origin_run_id`). */
+export const TASK_START_MAX_PER_TURN = 2;
+/** Wall-clock cap of one task (§3.2 reaper): a running task over it is forced to `failed`. */
+export const TASK_MAX_WALL_MS = 4 * 60 * 60_000;
+/**
+ * Token budget (input+output, cumulative over all model calls) of one task
+ * (§2.2). A task takes over today's long response run, which has no token cap
+ * and is bounded only by RUN_MAX_TURNS (60); SUBAGENT_TOKEN_BUDGET (150k for
+ * 20 turns) is far too small for that. 60 turns × ~30k context tokens per
+ * call ≈ 1.8M, so the cap sits just above what a full-length run can consume.
+ */
+export const TASK_TOKEN_BUDGET = 2_000_000;
+/**
+ * Settlement reconciliation period (§3.2): the reaper re-delivers terminal,
+ * unconsumed task results and enforces TASK_MAX_WALL_MS.
+ */
+export const TASK_SETTLE_SWEEP_MS = 60_000;
+/**
+ * Truncation of task progress / older task_event rows in the recent-message
+ * window (§2.4.4); the full text stays reachable via get_messages_around.
+ */
+export const TASK_EVENT_CONTEXT_MAX_CHARS = 600;
+/**
+ * Hard cap of a task result rendered in full into the trigger segment of the
+ * waking turn (§2.4.4, §12 item 6); beyond it the turn gets the head plus a
+ * hint to use forward_task_result.
+ */
+export const TASK_TRIGGER_RESULT_MAX_CHARS = 12_000;
+/**
+ * Absolute lifetime of a one-time ("仅这一次") grant (D37 tightened, §7.3):
+ * a backstop on top of "expires after the single tool call".
+ */
+export const GRANT_ABSOLUTE_TTL_MS = 10 * 60_000;

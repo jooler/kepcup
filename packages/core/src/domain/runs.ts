@@ -32,10 +32,19 @@ interface RunRow {
   summary: string | null;
   continued_from_run_ids_json: string | null;
   error_json: string | null;
+  task_title: string | null;
+  task_writes: number | null;
+  task_workdir: string | null;
+  origin_run_id: string | null;
+  result_consumed_at: number | null;
+  awaiting_input: number;
   created_at: number;
   started_at: number | null;
   ended_at: number | null;
 }
+
+const ACTIVE_STATUSES_SQL = "('queued', 'running', 'waiting_approval', 'waiting_lease')";
+const TERMINAL_STATUSES_SQL = "('completed', 'failed', 'cancelled', 'interrupted')";
 
 interface StepRow {
   id: string;
@@ -99,6 +108,12 @@ function rowToRun(row: RunRow): Run {
         : [],
     error: error?.message ?? null,
     setup: error?.setup ?? null,
+    taskTitle: row.task_title,
+    taskWrites: row.task_writes === null ? null : row.task_writes === 1,
+    taskWorkdir: row.task_workdir,
+    originRunId: row.origin_run_id,
+    resultConsumedAt: row.result_consumed_at,
+    awaitingInput: row.awaiting_input === 1,
     createdAt: row.created_at,
     startedAt: row.started_at,
     endedAt: row.ended_at,
@@ -126,12 +141,20 @@ export class RunsService {
     model?: string | null;
     /** D72: 'builtin' (default) | 'agent:{id}'. */
     engine?: string;
+    /** Task fields (D75 §3.4, loop_type 'task'); a task's submitted state is `queued`. */
+    taskTitle?: string | null;
+    taskWrites?: boolean | null;
+    taskWorkdir?: string | null;
+    /** The supervisor turn that started the task. */
+    originRunId?: string | null;
+    /** Replay sources (`start_task({continues_task_id})`, D56). */
+    continuedFromRunIds?: string[];
   }): Run {
     const id = newId('run');
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, origin_run_id, continued_from_run_ids_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -147,6 +170,17 @@ export class RunsService {
         input.provider ?? null,
         input.model ?? null,
         input.engine ?? BUILTIN_ENGINE,
+        input.taskTitle ?? null,
+        input.taskWrites === undefined || input.taskWrites === null
+          ? null
+          : input.taskWrites
+            ? 1
+            : 0,
+        input.taskWorkdir ?? null,
+        input.originRunId ?? null,
+        input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
+          ? JSON.stringify(input.continuedFromRunIds)
+          : null,
         now,
       );
     return this.getOrThrow(id);
@@ -179,6 +213,8 @@ export class RunsService {
         | 'chainDepth'
         | 'engine'
         | 'agentSessionId'
+        | 'resultConsumedAt'
+        | 'awaitingInput'
       >
     > & {
       /** Structured setup requirement stored inside error_json (inline setup). */
@@ -190,7 +226,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
@@ -208,6 +244,8 @@ export class RunsService {
         JSON.stringify(patch.outputMessageIds ?? existing.outputMessageIds),
         patch.chainId ?? existing.chainId,
         patch.chainDepth ?? existing.chainDepth,
+        patch.resultConsumedAt !== undefined ? patch.resultConsumedAt : existing.resultConsumedAt,
+        (patch.awaitingInput ?? existing.awaitingInput) ? 1 : 0,
         now,
         status,
         now,
@@ -229,6 +267,54 @@ export class RunsService {
         "select * from runs where conversation_id = ? and status in ('queued', 'running', 'waiting_approval', 'waiting_lease')",
       )
       .all(conversationId) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
+  /**
+   * Task rows (`loop_type='task'`, D75 §3.4), oldest first, optionally narrowed
+   * by conversation / bot / statuses.
+   */
+  listTasks(
+    filter: { conversationId?: string; botId?: string; statuses?: RunStatus[] } = {},
+  ): Run[] {
+    const clauses = ["loop_type = 'task'"];
+    const params: string[] = [];
+    if (filter.conversationId !== undefined) {
+      clauses.push('conversation_id = ?');
+      params.push(filter.conversationId);
+    }
+    if (filter.botId !== undefined) {
+      clauses.push('bot_id = ?');
+      params.push(filter.botId);
+    }
+    if (filter.statuses !== undefined) {
+      if (filter.statuses.length === 0) return [];
+      clauses.push(`status in (${filter.statuses.map(() => '?').join(', ')})`);
+      params.push(...filter.statuses);
+    }
+    const rows = this.db
+      .prepare(`select * from runs where ${clauses.join(' and ')} order by created_at asc, id asc`)
+      .all(...params) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
+  /** Tasks not yet settled (startup repair, §3.2 / §7.4). */
+  listNonTerminalTasks(): Run[] {
+    const rows = this.db
+      .prepare(
+        `select * from runs where loop_type = 'task' and status in ${ACTIVE_STATUSES_SQL} order by created_at asc, id asc`,
+      )
+      .all() as RunRow[];
+    return rows.map(rowToRun);
+  }
+
+  /** Settled tasks whose result no supervisor turn has consumed yet (§3.2 reconciliation). */
+  listUnconsumedTerminalTasks(): Run[] {
+    const rows = this.db
+      .prepare(
+        `select * from runs where loop_type = 'task' and status in ${TERMINAL_STATUSES_SQL} and result_consumed_at is null order by created_at asc, id asc`,
+      )
+      .all() as RunRow[];
     return rows.map(rowToRun);
   }
 

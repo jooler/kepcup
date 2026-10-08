@@ -119,7 +119,7 @@ CREATE TABLE conversation_members (
 
 单聊也写入一行成员记录，统一成员查询逻辑。
 
-### messages（P01）
+### messages（P01；D75 迁移 0018 重建：增 task_event、owner_bot_id、task_id）
 
 ```sql
 CREATE TABLE messages (
@@ -128,8 +128,8 @@ CREATE TABLE messages (
   seq              INTEGER NOT NULL,
   sender_type      TEXT NOT NULL CHECK (sender_type IN ('user', 'bot', 'system')),
   sender_bot_id    TEXT,
-  kind             TEXT NOT NULL CHECK (kind IN ('text', 'system_event', 'card')),
-  content_json     TEXT NOT NULL,         -- text: { text }；card: { cardType, approvalId? ... }；system_event: { event, ... }
+  kind             TEXT NOT NULL CHECK (kind IN ('text', 'system_event', 'card', 'task_event')),
+  content_json     TEXT NOT NULL,         -- text: { text, origin?, ... }；card: { cardType, approvalId? ... }；system_event: { event, ... }；task_event: { taskId, phase, text, ... }
   reply_to         TEXT,
   mentions_json    TEXT NOT NULL DEFAULT '[]',   -- 被 @ 的 bot id 列表（结构化，不从文本解析）
   batch_id         TEXT,                  -- 同一次发出的一批用户消息共享
@@ -137,9 +137,16 @@ CREATE TABLE messages (
   status           TEXT NOT NULL DEFAULT 'normal' CHECK (status IN ('normal', 'recalled', 'edited')),
   edited_at        INTEGER,
   created_at       INTEGER NOT NULL,
+  owner_bot_id     TEXT,                  -- 0018：NULL = 对话共享；非空 = 仅该 Bot 可见（目前只用于 task_event）
+  task_id          TEXT,                  -- 0018：task_event 所属任务（run id）；其余为 NULL
   UNIQUE (conversation_id, seq)
 );
 CREATE INDEX messages_conv_seq ON messages(conversation_id, seq);
+CREATE INDEX messages_conv_owner_seq ON messages(conversation_id, owner_bot_id, seq);  -- 0018
+CREATE INDEX messages_task ON messages(task_id);                                       -- 0018
+-- 0018：每个任务至多一条终态条目（design/30 §3.2 幂等写入与启动修复）
+CREATE UNIQUE INDEX messages_task_terminal ON messages(task_id)
+  WHERE kind = 'task_event' AND json_extract(content_json, '$.phase') IN ('result', 'failure');
 
 CREATE VIRTUAL TABLE messages_fts USING fts5(
   segmented_text, message_id UNINDEXED, conversation_id UNINDEXED, tokenize = 'unicode61'
@@ -148,8 +155,11 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 
 - 撤回：`status = 'recalled'`，清空正文，从 `messages_fts` 删除；Bot 不可见。
 - 编辑：更新正文与 `edited_at`，`status = 'edited'`，同步更新 `messages_fts`。
+- 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId? }`。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
+- 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）。
+- 0018 重建方式：`messages` 被 `attachments.message_id`（`ON DELETE CASCADE`）引用，迁移又在 `foreign_keys=ON` 的事务内执行，直接 `DROP TABLE messages` 会级联删光附件；因此 `attachments` 一并重建（先建两张新表并复制，先删旧 `attachments` 再删旧 `messages`，再改名——外键开启时改名会同步改写引用）。表结构与本节 / 下节一致。
 
-### attachments（P01）
+### attachments（P01；D75 迁移 0018 随 messages 重建，结构不变）
 
 ```sql
 CREATE TABLE attachments (
@@ -544,7 +554,7 @@ CREATE TABLE runs (
   status               TEXT NOT NULL CHECK (status IN (
                          'queued', 'running', 'waiting_approval', 'waiting_lease',
                          'completed', 'failed', 'cancelled', 'interrupted')),
-  trigger_reason       TEXT,              -- direct | mention | broadcast | reply | chain | scheduled | event | background
+  trigger_reason       TEXT,              -- direct | mention | broadcast | reply | chain | scheduled | event | background | delegation | task（D75：任务结算唤醒对话轮）
   trigger_message_ids_json TEXT NOT NULL DEFAULT '[]',
   chain_id             TEXT,
   chain_depth          INTEGER,
@@ -557,14 +567,22 @@ CREATE TABLE runs (
   parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
   engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
+  task_title           TEXT,           -- 0006（D75）：任务标题；以下任务列在非任务 run 上为 null / 0
+  task_writes          INTEGER,        -- 0006：1 = 写任务，0 = 只读任务
+  task_workdir         TEXT,           -- 0006：解析后的任务工作目录
+  origin_run_id        TEXT,           -- 0006：派出该任务的对话轮
+  result_consumed_at   INTEGER,        -- 0006：任务结果被对话轮消费的时间（design/30 §3.2）
+  awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
   created_at           INTEGER NOT NULL,
   started_at           INTEGER,
   ended_at             INTEGER
 );
 CREATE INDEX runs_by_conv ON runs(conversation_id, created_at);
 CREATE INDEX runs_by_bot ON runs(bot_id, created_at);
+CREATE INDEX runs_by_conv_loop_status ON runs(conversation_id, loop_type, status);  -- 0006
 ```
 
+- 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 
 ### run_steps（P01）
