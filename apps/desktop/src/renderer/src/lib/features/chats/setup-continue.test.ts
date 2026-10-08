@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Run } from '@kepcup/shared';
-import { restoredFailedRun, stepAutoContinue } from './setup-continue';
+import { restoredFailedRun, showsFailure, stepAutoContinue } from './setup-continue';
 
 /** 对话内 Agent 设置卡的自动续跑与失败 run 恢复（P4-B 审查 HIGH #1）。 */
 
@@ -12,6 +12,7 @@ function run(id: string, overrides: Partial<Run> = {}): Run {
     loopType: 'turn',
     status: 'completed',
     setup: null,
+    continuedFromRunIds: [],
     ...overrides,
   } as Run;
 }
@@ -61,5 +62,24 @@ describe('restoredFailedRun', () => {
     const plain = run('p1', { status: 'failed' });
     expect(restoredFailedRun([run('r2'), plain], new Set())).toBe(plain);
     expect(restoredFailedRun([plain], new Set(['p1']))).toBeNull();
+  });
+
+  it('D75: failed tasks surface only with a setup, and only until a task retries them', () => {
+    const setupTask = run('t1', { loopType: 'task', status: 'failed', setup });
+    const plainTask = run('t0', { loopType: 'task', status: 'failed' });
+    expect(showsFailure(plainTask)).toBe(false);
+    expect(showsFailure(setupTask)).toBe(true);
+    expect(showsFailure(run('r1', { status: 'failed' }))).toBe(true);
+    // A plain task failure is the task card's business (no banner).
+    expect(restoredFailedRun([plainTask], new Set())).toBeNull();
+    // The turn its failure woke does not supersede the setup card …
+    expect(restoredFailedRun([run('turn'), setupTask], new Set())).toBe(setupTask);
+    // … the task retrying it does.
+    expect(
+      restoredFailedRun(
+        [run('t2', { loopType: 'task', continuedFromRunIds: ['t1'] }), setupTask],
+        new Set(),
+      ),
+    ).toBeNull();
   });
 });

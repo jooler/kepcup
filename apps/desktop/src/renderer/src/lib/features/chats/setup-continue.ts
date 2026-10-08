@@ -25,12 +25,28 @@ export function restoredFailedRun(
   runs: readonly Run[],
   dismissed: ReadonlySet<string>,
 ): Run | null {
-  const index = runs.findIndex((run) => run.status === 'failed' && !dismissed.has(run.id));
+  const index = runs.findIndex(
+    (run) => run.status === 'failed' && !dismissed.has(run.id) && showsFailure(run),
+  );
   if (index === -1) return null;
   const failed = runs[index]!;
   if (failed.setup === null) return failed;
-  const superseded = runs
-    .slice(0, index)
-    .some((run) => run.loopType === 'turn' && run.botId === failed.botId);
+  const newer = runs.slice(0, index);
+  // D75 §7.5: a task's setup failure is superseded by the task retrying it
+  // (its failure wakes a turn, which must not hide the setup card).
+  const superseded =
+    failed.loopType === 'task'
+      ? newer.some((run) => run.continuedFromRunIds.includes(failed.id))
+      : newer.some((run) => run.loopType === 'turn' && run.botId === failed.botId);
   return superseded ? null : failed;
+}
+
+/**
+ * Whether a failed run surfaces in the conversation (failure banner / setup
+ * card). D75: a failed task has its task card (retry there) and wakes a turn
+ * that tells the user — only a setup failure (§7.5: set up, then retry the
+ * task) uses the conversation-level setup card.
+ */
+export function showsFailure(run: Pick<Run, 'loopType' | 'setup'>): boolean {
+  return run.loopType !== 'task' || run.setup !== null;
 }
