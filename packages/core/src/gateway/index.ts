@@ -79,7 +79,8 @@ export type PathDecision =
   | { kind: 'allowed'; resolvedPath: string }
   | { kind: 'needs_grant'; resolvedPath: string; reason: string; sensitive: boolean }
   | { kind: 'needs_lease'; resolvedPath: string; reason: string }
-  | { kind: 'forbidden'; resolvedPath: string; reason: string };
+  /** `readOnlyRun`: refused because the run may not write at all (D75, RUN_READ_ONLY). */
+  | { kind: 'forbidden'; resolvedPath: string; reason: string; readOnlyRun?: true };
 
 /** Upper bound for the workspace link scan in `hasExternalHardlink`. */
 const HARDLINK_SCAN_ENTRY_CAP = 20_000;
@@ -173,6 +174,10 @@ export function resolveStandingPath(target: string): string {
  * effect goes through here; the model-supplied ids are never trusted, only
  * the RunIdentity of the executing loop.
  *
+ * Writes of a read-only run (D75: supervisor turn, `writes: false` task) are
+ * refused first, at execution time — not just by leaving tools unregistered:
+ * file writes get RUN_READ_ONLY, commands run with a read-only policy.
+ *
  * Access order in checkPath: workspace → data directory (never grantable) →
  * bound project (read per protect rules; write needs the lease) → active
  * grants → sensitive locations (needs_grant, prominent warning) →
@@ -223,6 +228,16 @@ export class ToolGateway {
     return workspace;
   }
 
+  /**
+   * D75 §2.1 / §5.1: null when the identity may write, else the readable
+   * reason. Only turns and tasks can be read-only; the run lookup lives with
+   * the write-lease authority (ProjectRuntime.writeDenial).
+   */
+  writeDenial(identity: RunIdentity): string | null {
+    if (identity.loopType !== 'turn' && identity.loopType !== 'task') return null;
+    return this.#deps.projects.writeDenial(identity);
+  }
+
   checkPath(identity: RunIdentity, inputPath: string, mode: 'read' | 'write'): PathDecision {
     const workspace = this.workspacePath(identity);
     if (workspace === null) {
@@ -245,6 +260,14 @@ export class ToolGateway {
     const norm = (p: string) => normalizeForCompare(p, this.#platform);
     const resolvedNorm = norm(resolved);
     const workspaceNorm = norm(workspace);
+
+    // 0. Read-only runs never write, wherever the path is (D75).
+    if (mode === 'write') {
+      const denial = this.writeDenial(identity);
+      if (denial !== null) {
+        return { kind: 'forbidden', resolvedPath: resolved, reason: denial, readOnlyRun: true };
+      }
+    }
 
     // 1. The current workspace (read and write). Hard links with entries
     //    outside the workspace are rejected here: their realpath stays inside
@@ -314,6 +337,8 @@ export class ToolGateway {
     );
     if (grant !== null) {
       this.#deps.approvals.noteGrantUsed(grant.id, identity);
+      // D75：「仅这一次」随使用它的这次工具调用结束而失效。
+      this.#deps.grants.noteOnceUse(grant);
       return { kind: 'allowed', resolvedPath: resolved };
     }
 
@@ -354,20 +379,28 @@ export class ToolGateway {
   /**
    * Gateway verdict as a path the caller may touch: allowed paths pass
    * through, grantable paths raise an access approval (blocking until the
-   * user decides), forbidden paths throw PATH_OUT_OF_SCOPE. Denials surface
-   * as APPROVAL_DENIED so the bot can adjust.
+   * user decides), forbidden paths throw PATH_OUT_OF_SCOPE (RUN_READ_ONLY for
+   * writes of a read-only run). Denials surface as APPROVAL_DENIED so the bot
+   * can adjust.
+   *
+   * A「仅这一次」grant created here is consumed by the current tool call
+   * (D75); `preauthorize` (request_access) leaves it for the next tool call
+   * that uses it instead — still bounded by GRANT_ABSOLUTE_TTL_MS.
    */
   async ensurePathAccess(
     identity: RunIdentity,
     inputPath: string,
     mode: 'read' | 'write',
     reason: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; preauthorize?: boolean } = {},
   ): Promise<string> {
     const decision = this.checkPath(identity, inputPath, mode);
     if (decision.kind === 'allowed') return decision.resolvedPath;
     if (decision.kind === 'forbidden') {
-      throw new AppError('PATH_OUT_OF_SCOPE', `${decision.reason}：${inputPath}`);
+      throw new AppError(
+        decision.readOnlyRun === true ? 'RUN_READ_ONLY' : 'PATH_OUT_OF_SCOPE',
+        `${decision.reason}：${inputPath}`,
+      );
     }
     // Project writes go through the write lease, not an access approval
     // (docs/design/08-project.md "并发：写入租约") — acquire, then re-check.
@@ -396,7 +429,7 @@ export class ToolGateway {
         reason,
         sensitive: decision.sensitive || coversSensitive,
       },
-      options,
+      { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
     );
     if (outcome.decision !== 'approved') {
       throw new AppError('APPROVAL_DENIED', '用户拒绝或审批已取消，无法访问该路径');
@@ -415,6 +448,7 @@ export class ToolGateway {
       { grantId: grant.id, path: decision.resolvedPath, duration },
       'grant created',
     );
+    if (options.preauthorize !== true) this.#deps.grants.noteOnceUse(grant);
     const conversationId = identity.conversationId ?? '';
     this.#deps.approvals.publishEvent('grant.changed', {
       conversationId,
@@ -431,6 +465,9 @@ export class ToolGateway {
    */
   async exec(identity: RunIdentity, req: GatewayExecRequest): Promise<GatewayExecResult> {
     const workspace = this.ensureWorkspace(identity);
+    // D75: a read-only run's commands get a read-only policy (sandbox) or are
+    // limited to the read-only allowlist (confirm mode).
+    const readOnlyReason = this.writeDenial(identity);
     // P12 routing: a bot with an active enhanced-sandbox skill runs through
     // the enhanced backend; its probe decides availability (the default
     // backend takes over when the enhanced one reports unavailable — the
@@ -459,6 +496,9 @@ export class ToolGateway {
     }
     if (availability.available) {
       const grants = this.#deps.grants.listEffective(identity);
+      // Every grant in the policy is usable by this command: once grants are
+      // consumed by this tool call (D75).
+      for (const grant of grants) this.#deps.grants.noteOnceUse(grant);
       const policy = buildSandboxPolicy({
         platform: this.#platform,
         paths: this.#deps.paths,
@@ -480,6 +520,7 @@ export class ToolGateway {
         ...(toolchainPrefix !== null ? { toolchainPathPrefix: toolchainPrefix } : {}),
         toolchainsRoot: this.#deps.environment?.toolchainsRoot() ?? this.#deps.paths.toolchainsDir,
         skillReadOnlyDirs: identity.botId !== null ? this.#skillDirs(identity.botId) : [],
+        ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
       });
       const result = await backend.exec({
         command: req.command,
@@ -500,6 +541,7 @@ export class ToolGateway {
         project: project !== null,
         lease: project !== null ? project.hasLease : null,
         backend: backend.kind,
+        ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
       });
       return { ...result, policyApplied: true };
     }
@@ -524,6 +566,13 @@ export class ToolGateway {
         sandboxUnavailable: availability.reason ?? '',
       });
       return { ...result, policyApplied: false };
+    }
+    // Without a sandbox nothing keeps an approved command from writing.
+    if (readOnlyReason !== null) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        `${readOnlyReason}。当前沙箱不可用，只能执行只读白名单内的命令：${req.command}`,
+      );
     }
 
     const outcome = await this.#deps.approvals.request(
@@ -560,6 +609,10 @@ export class ToolGateway {
     reason: string,
     options: { signal?: AbortSignal; cwd?: string } = {},
   ): Promise<SandboxExecResult> {
+    const readOnlyReason = this.writeDenial(identity);
+    if (readOnlyReason !== null) {
+      throw new AppError('RUN_READ_ONLY', `${readOnlyReason}（不能申请沙箱外执行）`);
+    }
     const workspace = options.cwd ?? this.ensureWorkspace(identity);
     const outcome = await this.#deps.approvals.request(
       identity,
@@ -601,6 +654,11 @@ export class ToolGateway {
     },
     options: { signal?: AbortSignal } = {},
   ): Promise<{ exitCode: number | null; output: string }> {
+    // Every git remote operation mutates the repository or the remote.
+    const readOnlyReason = this.writeDenial(identity);
+    if (readOnlyReason !== null) {
+      throw new AppError('RUN_READ_ONLY', `${readOnlyReason}（不能执行 git 远程操作）`);
+    }
     return this.#deps.projects.gitRemote(identity, input, {
       signal: options.signal,
       requestApproval: async (payload) => {

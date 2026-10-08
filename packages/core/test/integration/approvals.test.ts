@@ -55,16 +55,16 @@ async function stepsOf(core: TestStack, runId: string) {
 }
 
 describe('access approvals for file tools (P03)', () => {
-  it('runs an access approval for an out-of-workspace read; once-grants expire with the run', async () => {
+  it('runs an access approval for an out-of-workspace read; a once-grant covers a single tool call (D75)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小授');
     const conv = await openDirect(core, bot.id);
     const dir = fsMkdtemp();
     writeFileSync(path.join(dir, 'secret.txt'), 'outside-content');
 
-    // Run 1: read triggers the approval; approving 仅这一次 lets it through,
-    // and the grant stays valid until the RUN ends (repeated reads in the
-    // same run succeed without a second approval).
+    // Run 1: read triggers the approval; approving 仅这一次 lets it through.
+    // D75 (D37 tightened): 仅这一次 = one tool call — the second read in the
+    // same run needs a second approval (it used to ride on the run-long grant).
     llm.script('mock-main', [
       step().replyToolCall('read', { path: `${dir}/secret.txt` }),
       step().replyToolCall('read', { path: `${dir}/secret.txt` }),
@@ -85,11 +85,19 @@ describe('access approvals for file tools (P03)', () => {
     expect(approval.kind).toBe('access');
     expect(approval.payload['sensitive']).toBe(false);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true, duration: 'once' });
+    const again = await pendingApproval(core, conv.id);
+    expect(again.id).not.toBe(approval.id);
+    expect(again.kind).toBe('access');
+    await core.rpc.call('approvals.decide', { id: again.id, approve: true, duration: 'once' });
     await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
 
-    // Exactly one card for run 1: the once-grant covered both reads.
+    // Two cards for run 1 (one per tool call); nothing outlives the calls.
     const messages1 = await listMessages(core, conv.id);
-    expect(messages1.filter((m) => m.kind === 'card').length).toBe(1);
+    expect(messages1.filter((m) => m.kind === 'card').length).toBe(2);
+    const left = (await core.rpc.call('grants.list', { conversationId: conv.id })) as {
+      grants: unknown[];
+    };
+    expect(left.grants).toEqual([]);
 
     // Run 2: the once-grant died with run 1 -> a new approval appears.
     llm.script('mock-main', [
@@ -108,6 +116,35 @@ describe('access approvals for file tools (P03)', () => {
     const denied = steps.filter((s) => s.type === 'tool_result' && s.payload['ok'] === false);
     expect(denied.length).toBe(1);
     expect(String(denied[0]!.payload['content'])).toContain('APPROVAL_DENIED');
+  }, 120_000);
+
+  it('a once-grant from request_access is used by the next tool call only (D75)', async () => {
+    const { core, llm } = await start();
+    const bot = await makeBot(core, '小预');
+    const conv = await openDirect(core, bot.id);
+    const dir = fsMkdtemp();
+    writeFileSync(path.join(dir, 'data.txt'), 'pre-authorized');
+
+    llm.script('mock-main', [
+      step().replyToolCall('request_access', { path: dir, access: 'read', reason: '先申请' }),
+      step().replyToolCall('read', { path: `${dir}/data.txt` }),
+      step().replyToolCall('read', { path: `${dir}/data.txt` }),
+      step().replyText('完成'),
+    ]);
+    await sendBatch(core, conv.id, ['读目录']);
+    const first = await pendingApproval(core, conv.id);
+    expect(first.kind).toBe('access');
+    await core.rpc.call('approvals.decide', { id: first.id, approve: true, duration: 'once' });
+    // The first read consumed the pre-authorization; the second asks again.
+    const second = await pendingApproval(core, conv.id);
+    expect(second.id).not.toBe(first.id);
+    await core.rpc.call('approvals.decide', { id: second.id, approve: false });
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
+    const results = (await stepsOf(core, run.id)).filter(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'read',
+    );
+    expect(results.map((s) => s.payload['ok'])).toEqual([true, false]);
+    expect(String(results[0]!.payload['content'])).toContain('pre-authorized');
   }, 120_000);
 
   it('keeps conversation grants until revoked, scoped to bot + conversation', async () => {

@@ -17,7 +17,11 @@ export type LoopType =
   | 'skill_authoring'
   | 'conversation_summary'
   /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
-  | 'subagent';
+  | 'subagent'
+  /** D75 对话轮（只读，执行期由工具网关硬拒写）；'response' 由 W2 改名后移除。 */
+  | 'turn'
+  /** D75 任务（task_writes=false 时只读）。 */
+  | 'task';
 
 export interface RunIdentity {
   runId: string;
