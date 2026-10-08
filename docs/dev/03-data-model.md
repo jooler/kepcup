@@ -556,7 +556,7 @@ CREATE TABLE agent_sessions (
 CREATE UNIQUE INDEX agent_sessions_key ON agent_sessions(bot_id, conversation_id, agent_id, task_id);  -- 0019
 ```
 
-- 外部智能体会话按任务分（D75，[design/30](../design/30-supervisor-and-tasks.md) §8.5）：唯一键是四元组 `(bot_id, conversation_id, agent_id, task_id)`；`task_id = ''` 是哨兵值——SQLite 唯一索引把 NULL 视为互不相同，用 `''` 才能让非任务 run 的行仍按三元组唯一。每个任务独占自己的行；`continues_task_id` 接续时 `AgentSessionsStore.inheritTask` 单条 `UPDATE` 把旧任务的行改挂新任务（旧任务的执行须已结束）。任务行的会话 / 桥键 = `bot:conv:agent:task:{行 id}`，随行而不随任务 id（DEV-010，待确认）；非任务行为 `bot:conv:agent`。只存 id、无外键 / CASCADE。
+- 外部智能体会话按任务分（D75，[design/30](../design/30-supervisor-and-tasks.md) §8.5）：唯一键是四元组 `(bot_id, conversation_id, agent_id, task_id)`；`task_id = ''` 是哨兵值——SQLite 唯一索引把 NULL 视为互不相同，用 `''` 才能让非任务 run 的行仍按三元组唯一。每个任务独占自己的行；`continues_task_id` 接续时 `AgentSessionsStore.inheritTask` 单条 `UPDATE` 把旧任务的行改挂新任务（旧任务的执行须已结束）。任务行的会话 / 桥键 = `bot:conv:agent:task:{行 id}`，随行而不随任务 id（DEV-010）；非任务行为 `bot:conv:agent`。只存 id、无外键 / CASCADE。
 - 结算后的任务会话行保留 `CONTINUATION_WINDOW_MS`（自 `last_used_at` 起），之后 reaper（`TaskHost.sweep` 的 `onSweep`）`session/close` 并删行。
 - 写入方（P5）：orchestrator 在 Agent 会话建立后 upsert（`AgentSessionsStore`，`domain/agent-sessions.ts`），run 结束 `touch(last_run_id, last_used_at)`；复用窗口从 `last_used_at` 起算。宿主 MCP 桥的 server 名由行 id 派生（`kepcup_` + sha256(id) 前 8 位），不另存列——换会话即换行 id。
 - 删除对话 / 删除 Bot / 移出群经 `lifecycle` 清理（下方删除级联表）；停用 / 卸载 Agent 不删行：进程随之停止，保留的会话随进程失效，下次启用后按窗口与指纹 resume / load 或新建。

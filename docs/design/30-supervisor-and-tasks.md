@@ -8,7 +8,7 @@
 
 本文把这两个角色拆开：**对话轮（supervisor turn）负责沟通与调度，任务（task）负责执行**。决策：D75。设计上这是对 D66（SubAgent）、D71（委派）、D72（外部引擎）三套机制的**归并与化简**，不是第四套机制。
 
-执行方案与实施记录见 [todo/supervisor-and-tasks.md](../../todo/supervisor-and-tasks.md)。**已实现**（2026-10-08，W0–W4 与审查修复；执行模型的现行描述见 [02-execution.md](02-execution.md)）。实现期对本文的细化已折入下文，凡标「（待确认，见 DEV-0xx）」的条目记在 [dev/DEVIATIONS.md](../dev/DEVIATIONS.md)，尚待用户确认；第 1 节的「现有实现」与第 10 节的改动指路保留为实施前的分析。
+执行方案与实施记录见 [todo/supervisor-and-tasks.md](../../todo/supervisor-and-tasks.md)。**已实现**（2026-10-08，W0–W4 与审查修复；执行模型的现行描述见 [02-execution.md](02-execution.md)）。实现期对本文的细化已折入下文，凡标「（见 DEV-0xx）」的条目记在 [dev/DEVIATIONS.md](../dev/DEVIATIONS.md)，2026-10-08 经用户确认；第 1 节的「现有实现」与第 10 节的改动指路保留为实施前的分析。
 
 相关：D2（执行中注入，本文修订）、D5（群聊顺序响应，本文修订）、D29/D30（写入租约与检查点，本文扩展）、D37（授权有效期，本文收紧）、D48/D54/D55（Bot 发消息、中间说明、状态行）、D49/D67（中断与 durable，本文改适用对象）、D56（Loop 续接，本文修订）、D58（对话内设置）、D66（SubAgent，本文降级其定位）、D70/D71（管家与跨 Bot 委派，本文照搬其状态机与回贴范式）、D72（外部智能体引擎，本文化简其让渡面）、[01-conversation.md](01-conversation.md)「消息原则」（内部事务，本文扩展为按 Bot 归属的私有条目）。
 
@@ -69,7 +69,7 @@
 
 **D71 不变**：它本来就是异步 + 结果卡 + 禁止复述的范式，本文照搬其**状态机与 settle 钩子**；「禁止复述」不沿用——D75 的任务结果经对话轮转述，天然只有一个出口（§6.1）。`delegate_to_bot` / `cancel_delegation` / `propose_`* / `suggest_route` 归入**对话轮**工具面——它们正是「立即返回、宿主干活」的那一类（`list_bots` 是只读名片，对话轮与任务都有）。
 
-> **实现期发现（待确认，见 DEV-012）**：B 被委派触发的是**对话轮**（只读、秒级）。需要动手的委派，B 只能派任务并回复「我去做」——这句话就作为结果贴回 A，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」：委派触发的对话轮能用只读查询答复的在本轮给出完整结果，需要动手的照常派任务并说明「结果稍后在这里给出」；「委派跟随任务结算」作为 D75 收口后的独立修订。
+> **实现期发现（见 DEV-012）**：B 被委派触发的是**对话轮**（只读、秒级）。需要动手的委派，B 只能派任务并回复「我去做」——这句话就作为结果贴回 A，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」：委派触发的对话轮能用只读查询答复的在本轮给出完整结果，需要动手的照常派任务并说明「结果稍后在这里给出」；「委派跟随任务结算」作为 D75 收口后的独立修订。
 
 ## 2 两层模型
 
@@ -98,13 +98,13 @@
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
 | 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）             |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
-| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；待确认，见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
+| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；计入 `TURN_MAX_TURNS`                                                                                       |
 
 
 对话轮只读这条**在执行期校验**，不只靠不注册工具：与 D71 单跳同理——注册期摘除是让模型少看到无用工具的优化，工具网关按 `loop_type='turn'` 硬拒一切写路径（`RUN_READ_ONLY`）才是保障。对话轮的工具面里没有 `bash`、浏览器、媒体生成、MCP、`install_skill`、`request_environment`、`request_access`、`delegate_task`；`install_skill`（会落盘）只在任务里。
 
-**对话轮永不等用户**（待确认，见 DEV-014）：阻塞审批会占住（Bot, 对话）的 mailbox，用户再说什么都只能排队。因此 `propose_profile_change` 在对话轮里改为非阻塞提交——审批卡不随对话轮结束而取消，用户决定后以内部事件 `profile_change_result` 唤醒下一轮（任务里仍阻塞）；对话轮的 read / ls / find / grep 越界时当场失败（`PATH_OUT_OF_SCOPE`，提示派任务、在任务里 `request_access`），不发起访问审批，已有授权覆盖的路径照常可读。
+**对话轮永不等用户**（见 DEV-014）：阻塞审批会占住（Bot, 对话）的 mailbox，用户再说什么都只能排队。因此 `propose_profile_change` 在对话轮里改为非阻塞提交——审批卡不随对话轮结束而取消，用户决定后以内部事件 `profile_change_result` 唤醒下一轮（任务里仍阻塞）；对话轮的 read / ls / find / grep 越界时当场失败（`PATH_OUT_OF_SCOPE`，提示派任务、在任务里 `request_access`），不发起访问审批，已有授权覆盖的路径照常可读。
 
 ### 2.2 任务（task）
 
@@ -264,7 +264,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 - **写**：`runs` 在 runs.db、`messages` 在 main.db，是两个 SQLite 文件，**不能同一事务**。次序固定为：**先写终态条目（`result` / `failure`，main.db），再写任务终态（runs.db）**。终态条目受「每任务至多一条」唯一索引约束，重复写入按冲突忽略（幂等）。
 - **修复**：启动时对每个非终态任务先查有无终态条目——**有**，按条目把任务行补成对应终态（`result` → `completed`，`failure` → 条目记录的状态），不是 `interrupted`；**没有**，才按 D49 标 `interrupted` 并补写 `failure` 条目。两步之间任意一处崩溃都收敛到一致状态。
 - **投**：事务提交后，把该条目作为触发批交给该（Bot, 对话）的 mailbox（`TriggerBatch.reason='task'`）。条目是一条真实消息，`mailbox.deliver` 对空批的直接返回不会吞掉它。对话轮运行中到达的条目进 mailbox 缓冲，release 时合并为下一轮的一个批——多个任务同时结算只唤醒一轮；一个对话轮开始执行时还会把创建之后才缓冲进来的批一并吸收（它可能在调度器里排过队），重新投递的一批结果因此也只唤醒一轮。吸收与合并只发生在「能同轮」的批之间（审查批 E）：D71 委派批独占一个对话轮（被委派的对话轮不吸收别的批，委派批也不被吸收进别的轮——委派结果就是那一轮的最终回复）；绑定到不同 @ 连锁的批不同轮；带用户消息（含编辑通知）的未绑定批不与连锁批同轮（否则用户的话继承连锁的层数与预算，到层数上限时回应用户的 @ 被丢，最终审查 L-5；任务结果、事件等系统批可以）；吸收了连锁批的对话轮把连锁绑定（同一连锁取最深层数）写到 run 行，层数上限与连锁 token 预算照常生效。不能同轮的批留在缓冲里，下一轮处理。已被消费的结果条目在吸收时丢弃（重试的对话轮自己的触发除外）。
-- **消费**（待确认，见 DEV-014）：触发批里含该条目的对话轮**处理了这次触发**（引擎已启动；或 §8.4 降级已确定性路由；或因缺设置失败、设置卡完成后会以同一触发重试）**且**终态为 `completed` / `failed`（含 `skip_reply`）时，宿主写任务行的 `result_consumed_at`。启动前被取消、Bot 停用 / 对话只读而直接返回、被用户或更新闸门取消、中断、引擎启动前崩溃的对话轮**不消费**，由对账按 at-least-once 补投——它们根本没有处理这条结果，就此标记消费等于静默丢失。代价：用户取消正在转述结果的对话轮后，结果会在补投窗口后再出现一次。
+- **消费**（见 DEV-014）：触发批里含该条目的对话轮**处理了这次触发**（引擎已启动；或 §8.4 降级已确定性路由；或因缺设置失败、设置卡完成后会以同一触发重试）**且**终态为 `completed` / `failed`（含 `skip_reply`）时，宿主写任务行的 `result_consumed_at`。启动前被取消、Bot 停用 / 对话只读而直接返回、被用户或更新闸门取消、中断、引擎启动前崩溃的对话轮**不消费**，由对账按 at-least-once 补投——它们根本没有处理这条结果，就此标记消费等于静默丢失。代价：用户取消正在转述结果的对话轮后，结果会在补投窗口后再出现一次。
 - **对账**：启动时与 reaper 周期（`TASK_SETTLE_SWEEP_MS`）扫描「终态 AND `result_consumed_at IS NULL`」且应唤醒（§3.3）的任务，重新投递其结果条目；已投递、但 `TASK_REDELIVER_AFTER_MS` 内仍未被消费的不重复投递，超过即重投；Bot 已持有的结果不补投：已开始执行、或已创建但还排在调度器里的对话轮触发里带着的结果，以及缓冲在该 mailbox 里等下一轮的结果（它们会被消费；补投会让下一轮再转述一遍）——持有期间也不计数、不放弃。每次真正交给 mailbox 的投递计数（记在终态条目上；投递时抛错的不算），达到上限按上文放弃（最终审查 L-3）。
 
 | 故障 | 处置 |
@@ -373,7 +373,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 - **只读任务**：不取租约，受对话级与全局并发封顶。
 - **写任务**：启动前取 `workdir` 根的写租约，**整个任务持有**（与 D72 外部 Agent 的 `pin` 语义一致）；取不到就停在 `submitted`，在卡片与 `<tasks>` 段中显示排队原因。
 - **同一 workdir 同时最多一个写任务**，跨对话生效（D29 的语义不变，只是把适用面从 project 扩到 workspace）。实现上第二个写任务在**任务层**就被拦住（`TaskHost` 按 workdir 判定）：它停在 `submitted`、不去申请租约，卡片、状态行与 `<tasks>` 段显示「等写入租约（任务 … 持有）」；持有方任务结束或被取消后才启动。
-- **「强制收回」对任务层排队不起作用**（待确认，见 DEV-015）：D29 / BR-P04-001 的强制收回针对在 `ensureWriteLease` 上排队的等待者；任务层排队的写任务根本不在租约上等，对它点强制收回只会让持有方任务失去写权限，排队任务仍要等持有方结束。因此强制收回只对租约层的等待出现（写任务启动前被非任务持有者——宿主伪身份等——挡住，仍是 `lease.waiting`）；任务层排队的放行方式是在持有方任务的卡片上取消（或等它结束）。跨对话时用户需切到持有方对话去取消；「强制收回 = 取消持有租约的写任务」作为备选。
+- **「强制收回」对任务层排队不起作用**（见 DEV-015）：D29 / BR-P04-001 的强制收回针对在 `ensureWriteLease` 上排队的等待者；任务层排队的写任务根本不在租约上等，对它点强制收回只会让持有方任务失去写权限，排队任务仍要等持有方结束。因此强制收回只对租约层的等待出现（写任务启动前被非任务持有者——宿主伪身份等——挡住，仍是 `lease.waiting`）；任务层排队的放行方式是在持有方任务的卡片上取消（或等它结束）。跨对话时用户需切到持有方对话去取消；「强制收回 = 取消持有租约的写任务」作为备选。
 - **强制收回 = 持有方任务失去写权限**（审查批 E）：收回立刻关掉持有方写任务的租约窗口（改动记录只含它自己的改动），并把该任务记为「租约已被收回」——之后它的写入（文件工具、命令的可写挂载、`acquire_project_write`、它的子代理）由网关以 `RUN_READ_ONLY`「写入租约已被用户收回」拒绝，任务照常跑完（可以读、可以交回结果，说明哪些改动没做成），**不会**在下一次写入时悄悄重新取得租约。只钉住的租约（写任务、D72 外部 Agent 的 run）如此；不钉住的执行（宿主伪身份等）收回后再写会开新窗口，其改动记录跨窗口累积（`run_changes` 每个文件记首个窗口前 / 末个窗口后的快照，回退恢复前者、按后者检测冲突；别人夹在两个窗口之间改过的文件按冲突处理）。
 - 工具网关对 `task_writes=false` 的任务**硬拒写路径**（执行期校验，不只靠不注册工具）。
 
@@ -400,7 +400,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 | 启动封顶 | 对话级 / 全局 / 每对话轮起数 / 同 workdir 一个写任务 | 另按 `agent:{id}` 封顶启动：超出的任务停在 `submitted`（「等智能体并发额度」），不占任务名额、不持租约 |
 
 - **等租约时让出名额**：run 在作业内排队等写租约期间把调度名额让出，取得租约后先于排队作业拿回（`SlotYieldingLeaseService` + `Scheduler.yieldSlotWhile`，同一作业的并行等待按深度计数）。持名额者从不等租约，持租约者只等会前进的作业。写任务在提交调度器**之前**取租约（等待期间行仍是 `queued`），被取消时当场释放租约与位置。
-- **顺序约束**：「`agent:*` 不预留、不借用」只在对话轮从不跑在 Agent 上时成立。唯一还落在 `agent:*` 上的优先级 0 作业是经 Agent 的群聊判断：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（待确认，见 DEV-014）。将来若有对话轮再跑在 Agent 上（§8.4 第 1 级），必须恢复 Agent 的回复预留名额。
+- **顺序约束**：「`agent:*` 不预留、不借用」只在对话轮从不跑在 Agent 上时成立。唯一还落在 `agent:*` 上的优先级 0 作业是经 Agent 的群聊判断：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（见 DEV-014）。将来若有对话轮再跑在 Agent 上（§8.4 第 1 级），必须恢复 Agent 的回复预留名额。
 
 ### 5.4 为什么不是物理隔离
 
@@ -474,10 +474,10 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 ### 7.3 授权与审批（D37 收紧）
 
-- 对话轮只读 → 不触发审批。这是拆分的直接收益：**任务在等审批时，用户仍可以和 Bot 正常说话**。实现上对话轮**永不等用户**（待确认，见 DEV-014）：越界读取当场失败而不发起访问审批，`propose_profile_change` 非阻塞提交（§2.1）。
+- 对话轮只读 → 不触发审批。这是拆分的直接收益：**任务在等审批时，用户仍可以和 Bot 正常说话**。实现上对话轮**永不等用户**（见 DEV-014）：越界读取当场失败而不发起访问审批，`propose_profile_change` 非阻塞提交（§2.1）。
 - 审批卡仍绑任务 run。阻塞审批阻塞任务，不阻塞对话。
 - **D37「仅这一次」的语义收紧**：今天 once-grant 随 run 结束才过期（`grants.expireForRun`），在 2 分钟的 run 里近似「一次」，在 3 小时的任务里就变成「整个任务一直允许」。改为：「仅这一次」= **单次工具调用**；需要整任务有效的用「本对话内一直允许」。另给一次性授权加绝对时限 `GRANT_ABSOLUTE_TTL_MS`（10 分钟）兜底。
-- **「单次工具调用」的落法**（待确认，见 DEV-009）：= **使用该授权的那一次工具调用**。文件工具越界当场批准的授权归批准它的那次调用，调用结束即撤销；`request_access` 的预授权不绑定申请那次调用，在被用到前不属于任何调用，由**随后第一次真正用到它的调用认领并消费**（文件工具命中，或并入某条命令的沙箱策略）；同一 run 内并行的工具调用不共享 once 授权。`bash` 把它看得见的 once 授权（自己的 + 可认领的）全部并入策略并消费——命令实际碰了哪些挂载不可观测，挂进策略即视为使用，代价是预授权之后、重跑之前若先跑了一条无关命令，预授权会被它用掉。外部智能体的权限请求「仅这一次」不落授权（批准即回答那一条请求）。所有 once 授权另受绝对时限与 run 结束兜底；自动撤销经 `grant.changed` 推送给界面。
+- **「单次工具调用」的落法**（见 DEV-009）：= **使用该授权的那一次工具调用**。文件工具越界当场批准的授权归批准它的那次调用，调用结束即撤销；`request_access` 的预授权不绑定申请那次调用，在被用到前不属于任何调用，由**随后第一次真正用到它的调用认领并消费**（文件工具命中，或并入某条命令的沙箱策略）；同一 run 内并行的工具调用不共享 once 授权。`bash` 把它看得见的 once 授权（自己的 + 可认领的）全部并入策略并消费——命令实际碰了哪些挂载不可观测，挂进策略即视为使用，代价是预授权之后、重跑之前若先跑了一条无关命令，预授权会被它用掉。外部智能体的权限请求「仅这一次」不落授权（批准即回答那一条请求）。所有 once 授权另受绝对时限与 run 结束兜底；自动撤销经 `grant.changed` 推送给界面。
 - 无人值守（D41/D53）语义不变。
 
 
@@ -556,8 +556,8 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 
 这类用户拿不到通用 `base_url` / `api_key`，跑不了内置 pi 对话轮。两级降级，**明确是降级而非等价**：
 
-1. **用** `backgroundAgentId` **的** `complete()` **跑对话轮**（D72 P6 的一次性精简会话）：对话轮的决策是结构化的、短的，适合这条路；代价是每轮一次会话冷启。**未实现**：需要为对话轮另造一套结构化决策协议，作为后续独立项（待确认，见 DEV-011）。
-2. **关闭路由判断**（已实现，待确认，见 DEV-011）：对话轮不调模型，`engine='builtin'`、宿主确定性路由后以 `completed` 结算——结果条目经 `forward_task_result` 同一路径原文转发，失败 / 中断发一条简短说明；其余新消息（按来源标注「用户的新消息」「编辑」「系统事件」「定时」等）**注入**进行中的任务，与今天的「执行中注入」一致；注入没送达（Agent 不支持或异步拒绝 steering、缓冲后未被收下）就另起一个任务，没有进行中的任务就派一个（写权限随 Agent 档位，写任务按租约排在后面）。原文「排队到任务结束」会让用户在任务期间说的话完全无效，且与「等价于今天的行为」自相矛盾，故按注入实现。没有「直接回答」「取消」这类判断，路由留痕只靠任务卡。
+1. **用** `backgroundAgentId` **的** `complete()` **跑对话轮**（D72 P6 的一次性精简会话）：对话轮的决策是结构化的、短的，适合这条路；代价是每轮一次会话冷启。**未实现**：需要为对话轮另造一套结构化决策协议，作为后续独立项（见 DEV-011）。
+2. **关闭路由判断**（已实现，见 DEV-011）：对话轮不调模型，`engine='builtin'`、宿主确定性路由后以 `completed` 结算——结果条目经 `forward_task_result` 同一路径原文转发，失败 / 中断发一条简短说明；其余新消息（按来源标注「用户的新消息」「编辑」「系统事件」「定时」等）**注入**进行中的任务，与今天的「执行中注入」一致；注入没送达（Agent 不支持或异步拒绝 steering、缓冲后未被收下）就另起一个任务，没有进行中的任务就派一个（写权限随 Agent 档位，写任务按租约排在后面）。原文「排队到任务结束」会让用户在任务期间说的话完全无效，且与「等价于今天的行为」自相矛盾，故按注入实现。没有「直接回答」「取消」这类判断，路由留痕只靠任务卡。
 
 同一降级链也适用于群聊判断、摘要、反思等后台 loop（D72 P6 已有安排）。
 
@@ -565,11 +565,11 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 
 D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一索引为 `(bot_id, conversation_id, agent_id)`（main 迁移 0017），设计 28 §7 规定「每个（Bot, 对话, Agent）至多一个会话」，`sessionKey = bot:conv:agent`（orchestrator 两处构造），桥 token、已见消息记录、保留会话匹配都挂在这个键上。D72 本身安全——邮箱保证同一（Bot, 对话）同时只有一个响应 run，后台 run 用一次性键（`bg:` / `complete:`）不进 `agent_sessions`。但任务并行后两个外部 Agent 任务会抢同一行：`AgentSessionsStore.upsert` 的 `on conflict (bot_id, conversation_id, agent_id)` 会让任务 B 覆盖任务 A 的行，`get(bot, conv, agent)` 的指纹复用会把任务 B 的增量塞进任务 A 的会话，已见记录与桥 token 也会串。因此：
 
-- **键加任务**：`agent_sessions` 增加 `task_id`（main 迁移 0019；`''` = 非任务 run 的会话行，让这类行仍按三元组唯一），唯一索引改为 `(bot_id, conversation_id, agent_id, task_id)`。每个任务独占自己的会话行、桥 token 与已见记录（已按行 id 存，不变）。**会话键随会话行而不是任务 id**（待确认，见 DEV-010）：任务行的 `sessionKey = bot:conv:agent:task:{会话行 id}`——每个任务新建的会话各有一行，等价于按任务分；继承只改行的 `task_id`、行 id 不变，键与桥 token 随行沿用，引擎的保留会话匹配与桥都不用改；指纹变化换新行即换新键。非任务 run 的键保持 `bot:conv:agent`。
+- **键加任务**：`agent_sessions` 增加 `task_id`（main 迁移 0019；`''` = 非任务 run 的会话行，让这类行仍按三元组唯一），唯一索引改为 `(bot_id, conversation_id, agent_id, task_id)`。每个任务独占自己的会话行、桥 token 与已见记录（已按行 id 存，不变）。**会话键随会话行而不是任务 id**（见 DEV-010）：任务行的 `sessionKey = bot:conv:agent:task:{会话行 id}`——每个任务新建的会话各有一行，等价于按任务分；继承只改行的 `task_id`、行 id 不变，键与桥 token 随行沿用，引擎的保留会话匹配与桥都不用改；指纹变化换新行即换新键。非任务 run 的键保持 `bot:conv:agent`。
 - **不用并行槽位会话池**：池化会让不同任务的上下文在同一会话里接力，增量与已见记录失去「同一条任务谱系」的含义；只有 `continues_task_id` 这种显式接续才值得复用。
 - **继承**：`start_task({continues_task_id})` 在旧任务释放后（D72 的「占有后才 await / 忙碌会话不可复用」已保证不会与旧任务并用）把旧行的 `task_id` 改为新任务（单条 `UPDATE … WHERE task_id = 旧`，失败即新建）；指纹不一致照旧新建。
 - **生命周期**：任务结算后会话行保留 `CONTINUATION_WINDOW_MS` 供接续，超时由 reaper `session/close` + 删行；删除对话 / Bot / 移出群的级联已按行遍历（`listByConversation` / `listByBot` 逐行 `session/delete` + 删行），一对话多行无需改；进程崩溃仍保留行、下次 resume / load。
-- **并发**：任务并发 = `min(TASK_CONCURRENCY_*, agent:{id} 并发)`；`agent:{id}` 并发缺省由 `features.parallelSessions` 决定（不支持 → 1，见 §8.2）。对话轮固定内置，Agent 的名额全归任务、不为回复预留（§5.3）；后台 loop 在上限 > 1 时仍为非后台工作保留一个。经 Agent 的群聊判断从提交起计超时、到时按「仅 @ / 回复响应」放行，不会排在长任务后面几小时（待确认，见 DEV-014）。
+- **并发**：任务并发 = `min(TASK_CONCURRENCY_*, agent:{id} 并发)`；`agent:{id}` 并发缺省由 `features.parallelSessions` 决定（不支持 → 1，见 §8.2）。对话轮固定内置，Agent 的名额全归任务、不为回复预留（§5.3）；后台 loop 在上限 > 1 时仍为非后台工作保留一个。经 Agent 的群聊判断从提交起计超时、到时按「仅 @ / 回复响应」放行，不会排在长任务后面几小时（见 DEV-014）。
 - **迁移**：项目早期不保留旧行（D72 期的行直接清空，下次新建会话）；D73 原预留的 main 0018–0020 已全部被 D75 占用，D73 从 main 0021 / runs 0009 起顺延。
 - **改动面**：迁移、`domain/agent-sessions.ts`（`upsert` 冲突键、`get` 按任务）、orchestrator 两处 `sessionKey` 与 `#agentRunSetup` / `#recordAgentSession`、engine 的保留会话匹配与 `discardSession`、`mcp-bridge` 的 token 键、`lifecycle.ts`；估 **+0.5–1 周，计入 T5**。
 
@@ -652,7 +652,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/tools/index.ts` | `search_messages` / `get_messages_around` 按 Bot 视角；对话轮新增 `forward_task_result` |
 | `packages/core/src/agent/loops/conversation-summary.ts` | 只摘共享行 |
 | shared types | `textContentSchema.origin` 增 `'task'`（+ `taskId`）；`messageKindSchema` 增 `task_event`；`TriggerBatch.reason` 增 `'task'` |
-| shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（待确认，见 DEV-018） |
+| shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（见 DEV-018） |
 
 
 项目处在早期开发阶段，不需要向后兼容、不需要迁移旧数据，因此 `loop_type='response'` 直接改名而不保留别名。
