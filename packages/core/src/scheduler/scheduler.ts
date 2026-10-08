@@ -295,10 +295,14 @@ export class Scheduler {
     // D75 tasks (key `task:{id}`) run for minutes to hours and are never
     // preempted: like background loops on an agent, they may only start while
     // a slot of their provider stays free for conversation replies.
-    // A write task already holding its lease starts under the plain limit
-    // (`leaseHeld`): writers queued behind that lease wait on it.
-    if (isTaskJob(job) && job.leaseHeld !== true && limit > 1) {
-      return active < limit - 1;
+    // A write task already holding its lease (`leaseHeld`) instead starts
+    // whenever a slot is free and tasks leave one free for replies: writers
+    // queued behind that lease wait on it, so replies must not starve it, yet
+    // tasks together still never take the provider's last slot (审查复核).
+    if (isTaskJob(job) && limit > 1) {
+      if (job.leaseHeld !== true) return active < limit - 1;
+      const taskActive = scheduler.#providerTaskActive.get(job.provider) ?? 0;
+      return active < limit && taskActive < limit - 1;
     }
     if (active < limit) return true;
     // D75 审查 M3: tasks run for hours and are never preempted. When every
