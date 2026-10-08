@@ -517,3 +517,83 @@ describe('an external-agent task records its engine even when it fails before st
     expect(failed.provider).toBe('agent:fake-off');
   }, 40_000);
 });
+
+describe('a forwarded task result counts as seen by the source task agent session', () => {
+  it('a continues_task_id task reusing the session does not get its own answer again in the delta', async () => {
+    const started: FakeAcpAgentHandle[] = [];
+    const stack = await createTestStack({
+      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
+      agentSpawn: fakeAgentSpawner(
+        {
+          fake: {
+            turns: [agentTurn().text('RESULT-SRC 原文报告'), agentTurn().text('第二版')],
+          },
+        },
+        started,
+      ) as never,
+    });
+    stacks.push(stack);
+    const { core, llm } = stack;
+    await core.rpc.call('settings.update', {
+      experimental: { externalAgents: true },
+      agents: { fake: { enabled: true } },
+      backgroundTasks: { agentEnabled: false },
+    });
+    const created = await makeBot(core, '外援');
+    const bot = (
+      (await core.rpc.call('bots.update', {
+        id: created.id,
+        profile: {
+          ...created.profile,
+          runtime: {
+            ...created.profile.runtime,
+            agent: { ...created.profile.runtime.agent, id: 'fake' },
+          },
+        },
+      })) as { bot: Bot }
+    ).bot;
+    const conv = await openDirect(core, bot.id);
+    const identity = { runId: 'run_turn_src', botId: bot.id, conversationId: conv.id, loopType: 'turn' as const };
+    let sourceId = '';
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('<trigger reason="task"'))
+        .replyToolCall('forward_task_result', () => ({ task_id: sourceId })),
+      step().inTurn().replyText('BRIDGE 详情如上'),
+      // The continuation's result wakes a turn too.
+      step().inTurn().replyText('BRIDGE-2'),
+    ]);
+    sourceId = orchestrator(stack).tasks.start(identity, {
+      title: '初版',
+      instruction: 'FIRST-PASS 做初版',
+      sourceMessageIds: [],
+      writes: false,
+    }).taskId;
+    await waitVisible(stack, conv.id, 'BRIDGE 详情如上');
+    const forwarded = (await listMessages(core, conv.id)).find((m) => textOf(m).includes('RESULT-SRC'));
+    expect(forwarded?.content).toMatchObject({ origin: 'task', taskId: sourceId });
+    await waitFor(() => (orchestrator(stack).tasks.isExecuting(sourceId) ? null : true), {
+      label: 'source task released',
+    });
+
+    const next = orchestrator(stack).tasks.start(identity, {
+      title: '接着做',
+      instruction: 'SECOND-PASS 在初版基础上继续',
+      sourceMessageIds: [],
+      writes: false,
+      continuesTaskId: sourceId,
+    });
+    await waitFor(
+      () => (domain(stack).runs.get(next.taskId)?.status === 'completed' ? true : null),
+      { label: 'continuation completed', timeoutMs: 20_000 },
+    );
+    const observed = started[0]!.observed;
+    expect(observed.sessions).toHaveLength(1);
+    const second = observed.prompts[1]!;
+    expect(second.text).toContain('SECOND-PASS');
+    // The bridge is new to the session; its own answer is not.
+    expect(second.text).toContain('BRIDGE 详情如上');
+    expect(second.text).not.toContain('RESULT-SRC');
+  }, 60_000);
+});
