@@ -476,3 +476,44 @@ describe('M5: §8.4 downgrade never drops a message', () => {
     expect(task.taskTitle).toBe('处理新消息');
   }, 60_000);
 });
+
+describe('an external-agent task records its engine even when it fails before starting', () => {
+  it('agent not enabled: the failed task row shows agent:{id}, not builtin', async () => {
+    const entry = fakeAgentEntry('fake-off');
+    const stack = await createTestStack({
+      agentCatalog: [entry],
+      agentLaunch: () => ({ command: 'in-process', args: [], env: {} }),
+      agentSpawn: fakeAgentSpawner({ 'fake-off': { turns: [] } }, []) as never,
+    });
+    stacks.push(stack);
+    // The experiment is on, the agent itself is not enabled.
+    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
+    const created = await makeBot(stack.core, '外援');
+    const bot = (
+      (await stack.core.rpc.call('bots.update', {
+        id: created.id,
+        profile: {
+          ...created.profile,
+          runtime: {
+            ...created.profile.runtime,
+            agent: { ...created.profile.runtime.agent, id: 'fake-off' },
+          },
+        },
+      })) as { bot: Bot }
+    ).bot;
+    const conv = await openDirect(stack.core, bot.id);
+    const started = orchestrator(stack).tasks.start(
+      { runId: 'run_turn_x', botId: bot.id, conversationId: conv.id, loopType: 'turn' },
+      { title: '外援的活', instruction: '做点事', sourceMessageIds: [], writes: false },
+    );
+    const failed = await waitFor(
+      () => {
+        const run = domain(stack).runs.get(started.taskId);
+        return run !== null && run.status === 'failed' ? run : null;
+      },
+      { label: 'agent task failed at the gate', timeoutMs: 20_000 },
+    );
+    expect(failed.engine).toBe('agent:fake-off');
+    expect(failed.provider).toBe('agent:fake-off');
+  }, 40_000);
+});

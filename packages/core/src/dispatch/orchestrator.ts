@@ -585,6 +585,12 @@ export class Orchestrator {
       onSweep: (now) => this.#sweepTaskAgentSessions(now),
       // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
       // task slot) only while `agent:{id}` has room; the rest stay submitted.
+      // A task of an external-agent bot is recorded on its engine from the
+      // start: an early gate failure (agent disabled …) still shows it.
+      taskEngine: (botId) => {
+        const agentId = this.#agentIdOf(deps.bots.get(botId));
+        return agentId.length > 0 ? agentEngineKey(agentId) : null;
+      },
       launchSlot: (task) => {
         const agentId = this.#agentIdOf(task.botId !== null ? deps.bots.get(task.botId) : null);
         if (agentId.length === 0) return null;

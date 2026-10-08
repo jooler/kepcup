@@ -175,6 +175,12 @@ export interface TaskHostDeps {
    * — no write lease, no task slot — instead of launching to wait.
    */
   launchSlot?(task: Run): { key: string; limit: number } | null;
+  /**
+   * The engine a task of the bot will run on (`agent:{id}` for an external
+   * agent; null = built-in): recorded on the row at creation so a task that
+   * fails before its engine starts still shows the right engine.
+   */
+  taskEngine?(botId: string): string | null;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -458,6 +464,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: input.writes,
       taskWorkdir: workdir,
       originRunId: identity.runId,
+      ...this.#engineFields(botId),
       ...(continues !== null ? { continuedFromRunIds: [continues.id] } : {}),
     });
     this.#deps.publishRunStatus(task);
@@ -796,6 +803,7 @@ export class TaskHost implements TaskToolFacade {
       taskWrites: writes,
       taskWorkdir: task.taskWorkdir,
       originRunId: task.originRunId,
+      ...this.#engineFields(botId),
       continuedFromRunIds: [task.id],
     });
     this.#deps.publishRunStatus(retried);
@@ -1022,6 +1030,17 @@ export class TaskHost implements TaskToolFacade {
   }
 
   // --- internals --------------------------------------------------------------
+
+  /** Engine / provider of a new task row (an external agent's key, else the default). */
+  #engineFields(botId: string): { engine?: string; provider?: string } {
+    let engine: string | null;
+    try {
+      engine = this.#deps.taskEngine?.(botId) ?? null;
+    } catch {
+      engine = null;
+    }
+    return engine !== null ? { engine, provider: engine } : {};
+  }
 
   /** The turns `runId` re-runs (its retry chain, nearest first; [] = not a retry). */
   #retryChain(runId: string): string[] {
