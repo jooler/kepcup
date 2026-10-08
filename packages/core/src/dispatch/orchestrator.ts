@@ -573,6 +573,10 @@ export class Orchestrator {
         void deps.projects.releaseRun(runId).catch(() => {});
       },
       recordVisibleMessage: (runId, message) => {
+        // forward_task_result: the source task's agent session produced this
+        // text — a continuation reusing that session must not get it again
+        // in its conversation delta.
+        this.#markForwardedSeen(message);
         if (deps.runs.get(runId) !== null) {
           this.#recordBotMessage(runId, message);
           return;
@@ -3615,6 +3619,27 @@ export class Orchestrator {
       conversation.directBotId === botId ||
       this.#deps.conversations.memberBotIds(conversation.id).includes(botId)
     );
+  }
+
+  /**
+   * A task result forwarded verbatim (`origin: 'task'` + taskId) is the
+   * source task's own answer: every agent session of that task records it as
+   * seen (P5 审查 #3 contract — a `continues_task_id` delta skips it).
+   */
+  #markForwardedSeen(message: Message): void {
+    const content = message.content as { origin?: unknown; taskId?: unknown };
+    if (content.origin !== 'task' || typeof content.taskId !== 'string') return;
+    try {
+      for (const row of this.#agentSessions.listByConversation(message.conversationId)) {
+        if (row.taskId !== content.taskId) continue;
+        this.#agentSessionSeen.get(row.id)?.ids.set(message.id, message.seq);
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'marking a forwarded result seen failed',
+      );
+    }
   }
 
   #agentSessionRowExists(rowId: string): boolean {
