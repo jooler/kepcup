@@ -99,8 +99,14 @@ describe('Scheduler #drain', () => {
 });
 
 describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
+  // Agents with parallel sessions: the override is the limit (start.ts wires
+  // `agentConcurrency()` over the catalog).
+  const parallel = {
+    agentConcurrency: (id: string, config: Readonly<Record<string, number | undefined>>) =>
+      config[`agent:${id}`] ?? 2,
+  };
   it('background jobs on agent:* keep one slot free for responses', async () => {
-    const scheduler = new Scheduler(logger);
+    const scheduler = new Scheduler(logger, parallel);
     scheduler.setConcurrency({ default: 4, 'agent:a': 2 });
     const started: string[] = [];
     const hold = deferred();
@@ -133,7 +139,7 @@ describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
   });
 
   it('a limit of 1 reserves nothing (a queued job still runs)', async () => {
-    const scheduler = new Scheduler(logger);
+    const scheduler = new Scheduler(logger, parallel);
     scheduler.setConcurrency({ default: 4, 'agent:a': 1 });
     let ran = false;
     scheduler.submit({

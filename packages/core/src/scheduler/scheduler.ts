@@ -1,4 +1,4 @@
-import { AGENT_DEFAULT_CONCURRENCY, BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
+import { BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 
 export interface SchedulerJob {
@@ -10,6 +10,20 @@ export interface SchedulerJob {
    * not submit a second job with the same key while one is running. */
   key: string;
   run: (signal: AbortSignal) => Promise<void>;
+}
+
+export interface SchedulerOptions {
+  /**
+   * Concurrency limit of external agent `agentId` (`agent:{id}` jobs, D72)
+   * given the provider-concurrency settings — `agentConcurrency()` over the
+   * agent catalog (default per `features.parallelSessions`, overrides clamped
+   * to 1 for agents without parallel sessions). Without it every agent runs
+   * one job at a time (fail-safe).
+   */
+  agentConcurrency?: (
+    agentId: string,
+    config: Readonly<Record<string, number | undefined>>,
+  ) => number;
 }
 
 interface QueuedJob extends SchedulerJob {
@@ -30,9 +44,11 @@ export class Scheduler {
   readonly #logger: CoreLogger;
   #concurrency: { default: number } & Record<string, number> = { default: 4 };
   #stopped = false;
+  readonly #agentConcurrency: SchedulerOptions['agentConcurrency'];
 
-  constructor(logger: CoreLogger) {
+  constructor(logger: CoreLogger, options: SchedulerOptions = {}) {
     this.#logger = logger;
+    this.#agentConcurrency = options.agentConcurrency;
   }
 
   /** Applies the provider-concurrency settings ({ default, [providerId]: n }). */
@@ -42,13 +58,14 @@ export class Scheduler {
   }
 
   concurrencyFor(provider: string): number {
-    const override = this.#concurrency[provider];
-    // External agents (`agent:{id}`, D72 P5) have their own default: each run
-    // is a whole agent session on the user's subscription.
-    const fallback = provider.startsWith('agent:')
-      ? AGENT_DEFAULT_CONCURRENCY
-      : this.#concurrency.default;
-    return Math.max(1, Math.min(16, override ?? fallback));
+    // External agents (`agent:{id}`, D72 P5): each run is a whole agent
+    // session, and all sessions of an agent share one process — the limit
+    // follows the agent's `features.parallelSessions` (resolver above).
+    if (provider.startsWith('agent:')) {
+      const limit = this.#agentConcurrency?.(provider.slice('agent:'.length), this.#concurrency);
+      return Math.max(1, Math.min(16, limit ?? 1));
+    }
+    return Math.max(1, Math.min(16, this.#concurrency[provider] ?? this.#concurrency.default));
   }
 
   submit(job: SchedulerJob): void {

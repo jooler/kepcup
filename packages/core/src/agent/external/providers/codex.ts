@@ -117,12 +117,20 @@ export const codexProvider: AgentProvider = {
       ? input.tool
       : null;
   },
+  // parallelSessions：codex-acp 2.1.1 dist/index.js —— 会话状态全部按 sessionId
+  // 分表（:37377-37380 `sessions` / `pendingTurnStarts` / `activePrompts`）；
+  // `prompt` 取本会话状态并 `trackActivePrompt(sessionId)`（:39527-39543，
+  // :39339 每个 prompt 自己的 AbortController）；事件按会话串行分发
+  // （`subscribeToSessionEvents` / `enqueueSessionNotification`，:34297-34330）；
+  // 换 Provider 前等待**所有**会话的进行中 prompt（:38084-38087）——设计上即
+  // 多会话并发（同一 codex app-server 进程的多个 thread）。
   features: {
     steering: true,
     loadSession: true,
     resume: true,
     osSandbox: true,
     httpMcp: true,
+    parallelSessions: true,
   },
   agentSideConfigFiles: ['AGENTS.md', '.codex/'],
   classifyError: (error) => (error.code === ACP_AUTH_REQUIRED ? 'auth_required' : 'other'),

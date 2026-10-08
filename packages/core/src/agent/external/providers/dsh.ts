@@ -41,12 +41,19 @@ export const dshProvider: AgentProvider = {
   // @deepseek-ai/dsh-acp 0.2.0-rc.2：allow-once / reject-once（一次性）。
   permissionOptions: { allowOnce: ['allow-once'], rejectOnce: ['reject-once'] },
   execSandboxed: () => false,
+  // parallelSessions：@deepseek-ai/dsh-acp 0.2.0-rc.2 lib/index.js —— 桥按
+  // sessionId 存会话（:1077 `sessions = new Map()`）；每个 ACP 会话
+  // `AcpSession.create` 各建一个全新的 harness Agent（:693-705
+  // `ctx.agents.create`）；`prompt` 的在途状态 `this.inflight` 属于该会话
+  // （:796-798，「a prompt is already in flight for this session」）；
+  // prompt / cancel 按 sessionId 分派（:1309-1314）。
   features: {
     steering: false,
     loadSession: false,
     resume: true,
     osSandbox: false,
     httpMcp: true,
+    parallelSessions: true,
   },
   agentSideConfigFiles: ['AGENTS.md'],
   classifyError: (error) => classifyDshError(error),

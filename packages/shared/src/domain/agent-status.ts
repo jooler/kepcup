@@ -125,7 +125,10 @@ export const agentViewSchema = z.object({
   installedVersion: z.string().nullable(),
   source: z.enum(['managed', 'system']),
   loadUserConfig: z.boolean(),
-  /** 并发上限（`settings.providerConcurrency['agent:{id}']`，缺省 2）。 */
+  /**
+   * 生效的并发上限：能同进程并行会话的 Agent（`features.parallelSessions`）取
+   * `settings.providerConcurrency['agent:{id}']`（缺省 2），其余恒为 1。
+   */
   concurrency: z.number().int().min(1),
   hasApiKey: z.boolean(),
   install: agentInstallPlanSchema,

@@ -1,4 +1,9 @@
-import { AppError, type AgentCatalogEntry } from '@kepcup/shared';
+import {
+  AGENT_DEFAULT_CONCURRENCY,
+  AppError,
+  agentEngineKey,
+  type AgentCatalogEntry,
+} from '@kepcup/shared';
 // Registers the dev-time global default for __KEPCUP_TEST_HOOKS__ (tsc output).
 import '../../../infra/test-hooks.js';
 import { approvedReleaseGates } from '../catalog.js';
@@ -42,14 +47,57 @@ export function providerFor(
 /**
  * Whether a background session (`SessionContext.oneShot`) of this entry runs
  * without any native tool (审查 S1): the provider declares it
- * (`backgroundNoNativeTools`), or the entry is a testkit fake agent (scripted,
- * no native tools, never shipped). The testkit exemption holds only in test /
- * dev builds — test hooks on and no release gates pinned; the packaged build
- * (`__KEPCUP_TEST_HOOKS__=false`, gates injected, dist.mjs refuses a
- * `testkit` gate) never grants it.
+ * (`backgroundNoNativeTools`), or the entry is the testkit fake agent
+ * (`testkitExempt`).
  */
 export function backgroundToolFree(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
   if (provider.backgroundNoNativeTools === true) return true;
+  return testkitExempt(entry);
+}
+
+/**
+ * Whether one process of this entry may have prompts in flight on several
+ * sessions at once (`features.parallelSessions`, design 28 §7 / §9.2). The
+ * testkit fake agent keeps all prompt state per session, so it is exempt in
+ * test / dev builds exactly like `backgroundToolFree`.
+ */
+export function parallelSessionsFor(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
+  return provider.features.parallelSessions || testkitExempt(entry);
+}
+
+/**
+ * Effective scheduler concurrency for `agent:{id}` — the single source of
+ * truth for the scheduler, the background-routing blocker and the settings
+ * view. Agents with parallel sessions: the user's override
+ * (`providerConcurrency['agent:{id}']`) or `AGENT_DEFAULT_CONCURRENCY`, 1..16.
+ * Agents without (or whose provider is not registered): always 1 — a user
+ * override above 1 is clamped (fail-safe: their processes run every session
+ * of the agent, and concurrent prompts on two sessions were never verified).
+ */
+export function agentConcurrency(
+  providerConcurrency: Readonly<Record<string, number | undefined>>,
+  entry: AgentCatalogEntry,
+  registry: ProviderRegistry = PROVIDERS,
+): number {
+  let parallel: boolean;
+  try {
+    parallel = parallelSessionsFor(entry, providerFor(entry, registry));
+  } catch {
+    parallel = false;
+  }
+  if (!parallel) return 1;
+  const override = providerConcurrency[agentEngineKey(entry.id)];
+  return Math.max(1, Math.min(16, override ?? AGENT_DEFAULT_CONCURRENCY));
+}
+
+/**
+ * The testkit fake agent (scripted, no native tools, per-session state,
+ * never shipped). The exemption holds only in test / dev builds — test hooks
+ * on and no release gates pinned; the packaged build
+ * (`__KEPCUP_TEST_HOOKS__=false`, gates injected, dist.mjs refuses a
+ * `testkit` gate) never grants it.
+ */
+function testkitExempt(entry: AgentCatalogEntry): boolean {
   return (
     entry.releaseGate === 'testkit' &&
     __KEPCUP_TEST_HOOKS__ === true &&

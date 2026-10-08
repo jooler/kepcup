@@ -116,6 +116,18 @@ export interface AgentProviderFeatures {
   osSandbox: boolean;
   /** 支持 http MCP（否则经 stdio→http 转发脚本，P2）。 */
   httpMcp: boolean;
+  /**
+   * One process can have prompts in flight on several sessions at once
+   * （同进程并行会话）。AgentHost 让同一 Agent 的多个会话共用一个进程，调度器
+   * 的 `agent:{id}` 并发上限因此只对声明 true 的 Provider 生效（缺省
+   * `AGENT_DEFAULT_CONCURRENCY`，用户可调）；false = 并发恒为 1（用户覆盖也
+   * 被钳到 1，fail-safe），也就不合格后台路由。**只凭适配器锁定版本源码的
+   * 实证声明 true**（会话表 + 逐会话的取消 / 轮次状态，且没有会被另一会话的
+   * prompt 覆盖或拒绝的进程级「当前 prompt」），证据写在各 Provider 的
+   * `features` 旁（design 28 §9.2）。注意「每会话同一时刻只有一个 prompt」是
+   * 所有 ACP Agent 的通用行为，与本字段无关。
+   */
+  parallelSessions: boolean;
 }
 
 /** 一个已启动的 Agent（子进程或进程内假 Agent / 垫片）。 */

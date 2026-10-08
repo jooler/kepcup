@@ -26,6 +26,7 @@ import { HostMcpBridge } from '../../src/agent/external/mcp-bridge.js';
 import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
 import { claudeProvider, CLAUDE_PROCESS_ENV } from '../../src/agent/external/providers/claude.js';
 import { codexProvider } from '../../src/agent/external/providers/codex.js';
+import { agentConcurrency } from '../../src/agent/external/providers/index.js';
 import type { AgentProvider, ProviderRegistry } from '../../src/agent/external/types.js';
 import type {
   AgentSessionMode,
@@ -769,7 +770,15 @@ describe('background bridge tools (P5, Codex MCP timeout)', () => {
 
 describe('scheduler and providers (P5)', () => {
   it('agent:{id} defaults to AGENT_DEFAULT_CONCURRENCY unless overridden', () => {
-    const scheduler = new Scheduler(logger);
+    // start.ts wires `agentConcurrency()` (features.parallelSessions; Claude
+    // and Codex have parallel sessions — agent-parallel-sessions.test.ts).
+    const scheduler = new Scheduler(logger, {
+      agentConcurrency: (agentId, config) =>
+        agentConcurrency(
+          config,
+          AGENT_CATALOG.find((entry) => entry.id === agentId)!,
+        ),
+    });
     expect(scheduler.concurrencyFor('agent:claude-acp')).toBe(AGENT_DEFAULT_CONCURRENCY);
     expect(scheduler.concurrencyFor('openai')).toBe(4);
     scheduler.setConcurrency({ default: 6, 'agent:codex-acp': 3 });

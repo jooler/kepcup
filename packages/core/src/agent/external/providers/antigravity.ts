@@ -121,12 +121,15 @@ export const antigravityProvider: AgentProvider = {
       genericAcpProvider.toolName(server, tool),
     );
   },
+  // parallelSessions：agy-acp-server 1.3.0 是原生二进制，无可读源码证实
+  // 多会话并发 → false（fail-safe：并发恒为 1，不跑后台任务）。
   features: {
     steering: false,
     loadSession: true,
     resume: true,
     osSandbox: false,
     httpMcp: true,
+    parallelSessions: false,
   },
   agentSideConfigFiles: ['AGENTS.md', 'GEMINI.md', '.agents/', '.gemini/'],
   authMethods: filterAntigravityAuthMethods,

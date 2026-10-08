@@ -380,7 +380,10 @@ export const AGENT_SESSION_OPEN_TIMEOUT_MS = 120_000;
 export const AGENT_FOLLOW_UP_MIN_MS = 5 * 60_000;
 /** After session/cancel, how long to wait for the cancelled prompt response. */
 export const AGENT_CANCEL_GRACE_MS = 10_000;
-/** Scheduler concurrency for `agent:{id}` when providerConcurrency has no override (P5). */
+/**
+ * Scheduler concurrency for `agent:{id}` when providerConcurrency has no override (P5);
+ * only for agents whose provider declares `features.parallelSessions` (others: 1).
+ */
 export const AGENT_DEFAULT_CONCURRENCY = 2;
 /**
  * Chain-budget equivalent of one external-agent model round whose tokens the
