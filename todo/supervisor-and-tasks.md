@@ -1,7 +1,7 @@
 # D75 对话轮与任务分治：执行方案
 
 > 设计：[docs/design/30-supervisor-and-tasks.md](../docs/design/30-supervisor-and-tasks.md)（D75，以设计为准）。本文只规定**怎么做、谁做、怎么验收**。
-> 状态：**W0–W4 与审查修复已合入 `d75`，W5 文档收口**（2026-10-08 开工）。集成分支 `d75`（worktree `/home/jyy/wt/kepcup-d75`），各工作流在自己的 worktree / 分支开发，由调度会话合并进 `d75`；合入 `main` 需用户确认。
+> 状态：**实施完成、待合入**（2026-10-08 开工并完成；偏差 DEV-009、DEV-011～DEV-018 待用户确认，合入 `main` 待用户确认）。集成分支 `d75`（worktree `/home/jyy/wt/kepcup-d75`），各工作流在自己的 worktree / 分支开发，由调度会话合并进 `d75`；合入 `main` 需用户确认。
 
 ## 0. 给执行代理的规则（必读）
 
