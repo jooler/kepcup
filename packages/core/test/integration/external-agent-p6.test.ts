@@ -136,8 +136,15 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     ]);
 
     // The daily background budget charges a token-less agent round as
-    // AGENT_TURN_BUDGET_TOKENS (the reflection row belongs to the bot).
-    expect(stack.core.services.budget!.usedToday(bot.id)).toBe(AGENT_TURN_BUDGET_TOKENS);
+    // AGENT_TURN_BUDGET_TOKENS — the reflection row and (审查 C5) the direct
+    // chat's summary row, both charged to the bot.
+    expect(stack.core.services.budget!.usedToday(bot.id)).toBe(2 * AGENT_TURN_BUDGET_TOKENS);
+    const owners = stack.core.services
+      .mainDb!.prepare(
+        "select distinct bot_id as botId from usage_ledger where loop_type in ('reflection', 'conversation_summary')",
+      )
+      .all();
+    expect(owners).toEqual([{ botId: bot.id }]);
 
     // One-shot sessions: own temp cwd (gone), no MCP bridge, JSON-only prompt.
     const record = stack.record();
@@ -192,6 +199,27 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     });
     expect(facade.resolveForBot(bot.id, 'skill_authoring')).toBeNull();
     expect(facade.resolveForBot(bot.id, 'continuation')).toBeNull();
+    expect(facade.resolveForBot(bot.id, 'triage')).toBeNull();
+    // Auto: bot-less work (global profile curation, group summaries) never
+    // goes to an agent the user did not explicitly choose (审查 S2).
+    expect(facade.resolveDefault('profile_curation')).toBeNull();
+    expect(facade.resolveDefault('summary')).toBeNull();
+    await stack.core.rpc.call('settings.update', { backgroundAgentId: 'fake' });
+    expect(facade.resolveDefault('profile_curation')).toMatchObject({ agentId: 'fake' });
+    await stack.core.rpc.call('settings.update', { backgroundAgentId: '' });
+    // Personal config loaded per process: not eligible (审查 S1), shown in the view.
+    await stack.core.rpc.call('settings.update', {
+      agents: { fake: { enabled: true, loadUserConfig: true } },
+    });
+    expect(facade.resolveForBot(bot.id, 'reflection')).toBeNull();
+    const view = (await stack.core.rpc.call('agents.list')) as {
+      agents: Array<{ id: string; backgroundBlocker: string | null }>;
+    };
+    expect(view.agents.find((agent) => agent.id === 'fake')?.backgroundBlocker).toMatch(/个人配置/);
+    await stack.core.rpc.call('settings.update', {
+      agents: { fake: { enabled: true, loadUserConfig: false } },
+    });
+    expect(facade.resolveForBot(bot.id, 'reflection')).toMatchObject({ agentId: 'fake' });
     await stack.core.rpc.call('settings.update', {
       backgroundTasks: { agentSkillAuthoring: true },
     });
@@ -205,7 +233,8 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     expect(settings.backgroundTasks).toEqual({
       agentEnabled: false,
       agentSkillAuthoring: true,
-      groupMentionOnly: false,
+      // Agent triage is opt-in (审查 C2).
+      groupMentionOnly: true,
     });
     await expect(
       stack.core.rpc.call('settings.update', { backgroundAgentId: 'nope' }),
@@ -309,5 +338,19 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     };
     walk(stack.core.services.paths!.home);
     expect(hits).toEqual([]);
+    // Scope (审查 S4): the walk above sees plaintext files and logs only — the
+    // databases are encrypted at rest, so their rows are checked decrypted
+    // through the open connections: the key lives in the keystore-backed
+    // secrets store, never in the settings JSON or any run step.
+    const settingsRows = stack.core.services
+      .mainDb!.prepare('select value_json as v from settings')
+      .all() as Array<{ v: string }>;
+    expect(settingsRows.length).toBeGreaterThan(0);
+    expect(settingsRows.filter((row) => row.v.includes(key))).toEqual([]);
+    const steps = stack.core.services
+      .runsDb!.prepare('select payload_json as p from run_steps')
+      .all() as Array<{ p: string }>;
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.filter((row) => row.p.includes(key))).toEqual([]);
   }, 60_000);
 });

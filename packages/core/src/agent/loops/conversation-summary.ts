@@ -60,7 +60,8 @@ export async function runConversationSummaryJob(deps: {
   // 不产生失败 run。只有外部 Agent 时每 AGENT_BACKGROUND_EVERY_N_RUNS 次触发
   // 一跑（未摘要的消息留给下一次，摘要覆盖到届时的 targetSeq）。
   // 直聊的摘要按该 Bot 选后台 Agent（自动模式下优先它自己的 Agent）。
-  const route = routeFor(deps, 'summary', job.bot_id ?? conv.directBotId ?? null);
+  const ownerBotId = job.bot_id ?? conv.directBotId ?? null;
+  const route = routeFor(deps, 'summary', ownerBotId);
   if (route === null) {
     deps.logger.info(
       { conversationId: job.conversation_id },
@@ -115,7 +116,9 @@ export async function runConversationSummaryJob(deps: {
         if (!usage) return;
         deps.usage.record({
           runId: run.id,
-          botId: job.bot_id,
+          // Agent rows are charged to the owning bot (审查 C5); built-in rows
+          // keep the pre-P6 attribution.
+          botId: route.agentId !== null ? ownerBotId : job.bot_id,
           conversationId: job.conversation_id,
           loopType: 'conversation_summary',
           provider: route.provider,

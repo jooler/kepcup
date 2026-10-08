@@ -88,6 +88,10 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
   try {
     return await attempt(input.messages);
   } catch (error) {
+    // External agents (审查 C3): every attempt is a whole one-shot session on
+    // the user's subscription — retry only when the answer failed to parse,
+    // never after a failed / timed-out / cancelled call.
+    if (jsonOnly && !(error instanceof StructuredParseError)) throw error;
     const reason = error instanceof StructuredParseError ? error.message : '调用失败';
     const feedback = jsonOnly
       ? `你上一次的输出无法通过校验：${reason}。请重新输出：只输出 JSON——一个符合 Schema 的 JSON 对象，不要任何其他文字。`

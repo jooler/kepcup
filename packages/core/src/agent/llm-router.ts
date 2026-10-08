@@ -1,5 +1,7 @@
 import {
   AGENT_BACKGROUND_EVERY_N_RUNS,
+  AGENT_DEFAULT_CONCURRENCY,
+  AGENT_TRIAGE_MIN_INTERVAL_MS,
   agentEngineKey,
   agentModelRef,
   BUILTIN_ENGINE,
@@ -9,18 +11,26 @@ import {
   type Settings,
 } from '@kepcup/shared';
 import { agentRunGate } from './external/catalog.js';
+import { backgroundToolFree, PROVIDERS, providerFor } from './external/providers/index.js';
+import type { ProviderRegistry } from './external/types.js';
 import type { AgentEngine, RunSpec } from './types.js';
 
 /**
  * 后台 LLM 调用的路由（D72 P6，design 28 §8「后台 loop」）：有内置模型 → 内置
- * 引擎（行为与 P6 之前完全一致）；没有 → 外部 Agent（`settings.backgroundAgentId`，
- * 缺省自动：该 Bot 自己的 Agent 可用就用它，否则目录顺序里第一个可用的
- * Agent）；都没有或被关闭 → null（调用方照旧优雅跳过 = P4 兜底）。
+ * 引擎（行为与 P6 之前完全一致）；没有 → 外部 Agent：`settings.backgroundAgentId`
+ * 明确指定的那个，或（缺省「自动」）**只用该 Bot 自己的 Agent**——永不换用
+ * 别家（审查 S2：数据只流向用户为该 Bot 选用或明确指定的厂商）；无所属 Bot 的
+ * 任务（画像整理是跨 Bot 的全局画像、群聊摘要）只在明确指定时运行。都没有、
+ * 被关闭或不合格 → null（调用方照旧优雅跳过 = P4 兜底）。
+ *
+ * 合格（`agentBackgroundBlocker`，审查 S1 / C1）：Provider 能为后台会话完全关闭
+ * 原生工具；未开启「加载我的个人配置」（OpenCode / Cursor 等按进程加载个人
+ * 配置）；并发上限至少 2（调度器给后台任务至多 并发-1 个名额）。
  *
  * 只有外部 Agent 时的降配：续接 L2 仲裁保持关闭；技能生成默认关
- * （`backgroundTasks.agentSkillAuthoring`）；可选群聊仅 @ 响应
- * （`backgroundTasks.groupMentionOnly`，不跑群聊判断）；反思 / 摘要每
- * `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑（`admit`）。
+ * （`backgroundTasks.agentSkillAuthoring`）；群聊判断默认不跑
+ * （`backgroundTasks.groupMentionOnly` 默认开），用户关掉后也受每日后台预算
+ * 与节流约束（`admit`）；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑。
  */
 
 export type LlmPurpose =
@@ -76,6 +86,39 @@ export function builtinRoute(engine: AgentEngine, modelRef: string): LlmRoute | 
   return { engine, modelRef, provider: providerOfModelRef(modelRef), agentId: null };
 }
 
+/**
+ * Why an agent may not run background work at all (审查 S1 / C1); null =
+ * eligible. Background sessions must have no native tools: only providers
+ * that declare `backgroundNoNativeTools` qualify — plus testkit entries (the
+ * scripted fake agent has no native tools, never shipped).
+ */
+export function agentBackgroundBlocker(
+  settings: Settings,
+  entry: AgentCatalogEntry,
+  registry: ProviderRegistry = PROVIDERS,
+): string | null {
+  let toolFree: boolean;
+  try {
+    toolFree = backgroundToolFree(entry, providerFor(entry, registry));
+  } catch {
+    toolFree = false;
+  }
+  if (!toolFree) {
+    return '无法为后台任务完全关闭它的原生工具（文件 / 命令 / 联网）';
+  }
+  if (settings.agents[entry.id]?.loadUserConfig === true) {
+    return '已开启「加载我的个人配置」（后台任务不加载个人配置）';
+  }
+  const concurrency =
+    (settings.providerConcurrency as Record<string, number | undefined>)[
+      agentEngineKey(entry.id)
+    ] ?? AGENT_DEFAULT_CONCURRENCY;
+  if (concurrency < 2) {
+    return '并发上限为 1（后台任务需至少 2，为对话保留一个名额）';
+  }
+  return null;
+}
+
 export interface LlmRouterDeps {
   settings: { get(): Settings };
   bots: { get(id: string): Bot | null };
@@ -85,12 +128,23 @@ export interface LlmRouterDeps {
   catalog?: () => readonly AgentCatalogEntry[];
   /** AgentsService 的本机状态视图（就绪判断）；缺省只看启用开关。 */
   agentView?: (agentId: string) => Pick<AgentView, 'enabled' | 'status' | 'statusDetail'> | null;
+  /** Provider 登记表（后台合格判断）；缺省 PROVIDERS。 */
+  providers?: ProviderRegistry;
+  /**
+   * 该 Bot 今日后台预算是否已用完（审查 C2：经 Agent 的群聊判断计入每日后台
+   * 预算，用完即只响应 @ / 回复）；缺省不检查。
+   */
+  budgetExceeded?: (botId: string) => boolean;
+  /** 节流时钟（测试注入）；缺省 Date.now。 */
+  now?: () => number;
 }
 
 export class LlmRouter {
   readonly #deps: LlmRouterDeps;
-  /** 降频计数（进程内；重启后从头计）。 */
+  /** 降频计数（进程内；重启后从头计；回到 0 即删除，审查 C8）。 */
   readonly #counters = new Map<string, number>();
+  /** 经 Agent 的群聊判断上次放行时间（`botId:conversationId`，进程内）。 */
+  readonly #triageAt = new Map<string, number>();
 
   constructor(deps: LlmRouterDeps) {
     this.#deps = deps;
@@ -113,11 +167,29 @@ export class LlmRouter {
    * 路由与其他用途恒放行。
    */
   admit(route: LlmRoute, purpose: LlmPurpose, key: string): boolean {
-    if (route.agentId === null || !THROTTLED.has(purpose)) return true;
+    if (route.agentId === null) return true;
+    if (purpose === 'triage') return this.#admitTriage(key);
+    if (!THROTTLED.has(purpose)) return true;
     const counterKey = `${purpose}:${key}`;
     const count = this.#counters.get(counterKey) ?? 0;
-    this.#counters.set(counterKey, (count + 1) % AGENT_BACKGROUND_EVERY_N_RUNS);
+    const next = (count + 1) % AGENT_BACKGROUND_EVERY_N_RUNS;
+    if (next === 0) this.#counters.delete(counterKey);
+    else this.#counters.set(counterKey, next);
     return count === 0;
+  }
+
+  /**
+   * 经 Agent 的群聊判断（审查 C2）：同一 `botId:conversationId` 每
+   * AGENT_TRIAGE_MIN_INTERVAL_MS 至多放行一次；期间该 Bot 只响应 @ / 回复。
+   */
+  #admitTriage(key: string): boolean {
+    const now = (this.#deps.now ?? Date.now)();
+    for (const [other, at] of this.#triageAt) {
+      if (now - at >= AGENT_TRIAGE_MIN_INTERVAL_MS) this.#triageAt.delete(other);
+    }
+    if (this.#triageAt.has(key)) return false;
+    this.#triageAt.set(key, now);
+    return true;
   }
 
   #safeBot(botId: string): Bot | null {
@@ -148,7 +220,11 @@ export class LlmRouter {
     // 续接 L2 仲裁只用内置模型（外部 Agent 冷启动远超仲裁时限，design 28 §8）。
     if (purpose === 'continuation') return null;
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
-    if (purpose === 'triage' && tasks.groupMentionOnly) return null;
+    if (purpose === 'triage') {
+      // Opt-in only (审查 C2), and charged to the bot's daily background budget.
+      if (tasks.groupMentionOnly) return null;
+      if (bot !== null && this.#deps.budgetExceeded?.(bot.id) === true) return null;
+    }
     const viewOf = this.#deps.agentView;
     // No state view for an entry (should not happen) = not usable in the background.
     const view =
@@ -156,18 +232,27 @@ export class LlmRouter {
         ? undefined
         : (id: string) =>
             viewOf(id) ?? { enabled: false, status: 'error' as const, statusDetail: null };
-    const usable = (agentId: string) =>
-      agentId.length > 0 && agentRunGate(settings, catalog, agentId, view) === null;
+    const usable = (agentId: string) => {
+      if (agentId.length === 0) return false;
+      const entry = catalog.find((candidate) => candidate.id === agentId);
+      return (
+        entry !== undefined &&
+        agentRunGate(settings, catalog, agentId, view) === null &&
+        agentBackgroundBlocker(settings, entry, this.#deps.providers) === null
+      );
+    };
     const chosen = settings.backgroundAgentId ?? '';
     const own = bot?.profile.runtime.agent.id ?? '';
     let agentId: string | null;
     if (chosen.length > 0) {
       // 用户指定的 Agent 不可用时不擅自换用别家（额度归属由用户决定）。
       agentId = usable(chosen) ? chosen : null;
-    } else if (usable(own)) {
-      agentId = own;
+    } else if (purpose === 'profile_curation') {
+      // 跨 Bot 的全局画像：只发给用户明确指定的 Agent（审查 S2）。
+      agentId = null;
     } else {
-      agentId = catalog.find((entry) => usable(entry.id))?.id ?? null;
+      // 自动：只用该 Bot 自己的 Agent，永不换用别家（审查 S2）。
+      agentId = usable(own) ? own : null;
     }
     if (agentId === null) return null;
     const model = agentId === own ? (bot?.profile.runtime.agent.model ?? '') : '';

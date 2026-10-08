@@ -1210,6 +1210,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           return null;
         }
       },
+      // 审查 C2: agent triage is charged to the daily background budget.
+      budgetExceeded: (botId) => budget.exceeded(botId),
     });
     services.llmRouter = llmRouter;
     const scheduler = new Scheduler(logger);

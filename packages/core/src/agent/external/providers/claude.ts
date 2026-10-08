@@ -142,6 +142,9 @@ export const claudeProvider: AgentProvider = {
   instructionMode: 'meta-append',
   // claude-agent-acp 0.86.0 resets its per-session accumulator on each turn.
   usageSemantics: 'turn',
+  // 后台精简会话：`tools: []` 关掉全部原生工具（宿主桥 MCP 工具不受影响），
+  // `settingSources: []` 不加载任何设置（会话级，与进程无关）。
+  backgroundNoNativeTools: true,
   sessionNew: ({ sessionPrompt, maxTurns, loadUserConfig, permission, isolation, oneShot }) => {
     const disallowedTools = claudeDisallowedTools(permission);
     const prompt = sessionPrompt !== null && sessionPrompt.trim().length > 0 ? sessionPrompt : null;

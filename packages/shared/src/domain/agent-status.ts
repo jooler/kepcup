@@ -140,6 +140,11 @@ export const agentViewSchema = z.object({
    * 只是登录态未知，对话内设置卡不据此自动续跑。
    */
   probing: z.boolean().default(false),
+  /**
+   * 不能用于后台任务的原因（审查 S1 / C1：无法关闭原生工具、开启了「加载我的
+   * 个人配置」、并发上限不足 2）；null = 可以。
+   */
+  backgroundBlocker: z.string().nullable().default(null),
 });
 export type AgentView = z.infer<typeof agentViewSchema>;
 

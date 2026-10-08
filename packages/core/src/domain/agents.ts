@@ -36,6 +36,7 @@ import { AcpControlSession } from '../agent/external/acp/control-session.js';
 import type { AcpSessionConfigOption } from '../agent/external/acp/client.js';
 import { agentErrorInfo, classifierFor, toAgentError } from '../agent/external/errors.js';
 import { PROVIDERS, providerFor } from '../agent/external/providers/index.js';
+import { agentBackgroundBlocker } from '../agent/llm-router.js';
 import type { AgentInstaller, AgentInvocation } from '../agent/external/installer.js';
 import {
   describeAuthMethods,
@@ -477,6 +478,7 @@ export class AgentsService {
             },
       usedBy: this.#usedBy(agentId),
       probing: this.#probes.has(agentId),
+      backgroundBlocker: agentBackgroundBlocker(settings, entry, this.#deps.providers ?? PROVIDERS),
     };
   }
 

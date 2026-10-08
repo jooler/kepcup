@@ -374,10 +374,13 @@ export const backgroundTasksSettingsSchema = z
     agentEnabled: z.boolean().default(true).catch(true),
     /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
     agentSkillAuthoring: z.boolean().default(false).catch(false),
-    /** 只有外部 Agent 时群聊只在被 @ / 回复时响应（不跑群聊判断）。 */
-    groupMentionOnly: z.boolean().default(false).catch(false),
+    /**
+     * 只有外部 Agent 时群聊只在被 @ / 回复时响应（不跑群聊判断）。默认开
+     * （审查 C2）：群聊判断经 Agent 只在用户明确关掉此项后运行。
+     */
+    groupMentionOnly: z.boolean().default(true).catch(true),
   })
-  .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: false });
+  .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
 export const settingsSchema = z.object({
@@ -436,8 +439,9 @@ export const settingsSchema = z.object({
   customAgents: z.array(z.unknown()).default([]).catch([]),
   experimental: experimentalSettingsSchema.prefault({}),
   /**
-   * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动（该 Bot 自己的
-   * Agent 可用就用它，否则目录中第一个可用的 Agent）。
+   * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
+   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、群聊
+   * 摘要）只在这里明确指定了 Agent 时运行。
    */
   backgroundAgentId: z.string().optional().catch(undefined),
   /** 后台任务（P6）：改用外部 Agent 的开关与降配项。 */

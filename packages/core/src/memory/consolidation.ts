@@ -111,7 +111,15 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
         ],
         parametersSchema: consolidationParametersSchema,
         schema: consolidationOutputSchema,
-        onUsage: (usage) => recordLoopUsage(deps, run.id, 'memory_consolidation', lightRef, usage),
+        onUsage: (usage) =>
+          recordLoopUsage(
+            deps,
+            run.id,
+            'memory_consolidation',
+            lightRef,
+            usage,
+            route.agentId !== null ? botId : null,
+          ),
       });
       // Awaited: the job (and the date below) settles only after the merges and
       // their vector writes; their errors fail the run and the job.

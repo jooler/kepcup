@@ -97,3 +97,53 @@ describe('Scheduler #drain', () => {
     scheduler.stop();
   });
 });
+
+describe('Scheduler agent slots (D72 P6 审查 C1)', () => {
+  it('background jobs on agent:* keep one slot free for responses', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 4, 'agent:a': 2 });
+    const started: string[] = [];
+    const hold = deferred();
+    const job = (priority: 0 | 2, provider: string, key: string) =>
+      scheduler.submit({
+        priority,
+        provider,
+        key,
+        run: async () => {
+          started.push(key);
+          await hold.promise;
+        },
+      });
+    job(2, 'agent:a', 'bg1');
+    job(2, 'agent:a', 'bg2');
+    await waitUntil(() => started.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    // The second background job waits (2 - 1 slots for background) although
+    // the global background-loop cap would allow it.
+    expect(started).toEqual(['bg1']);
+    job(0, 'agent:a', 'user');
+    await waitUntil(() => started.includes('user'));
+    // Another provider's background job may take the second global slot.
+    job(2, 'p', 'p1');
+    await waitUntil(() => started.includes('p1'));
+    expect(started).not.toContain('bg2');
+    hold.release();
+    await waitUntil(() => started.includes('bg2'));
+    scheduler.stop();
+  });
+
+  it('a limit of 1 reserves nothing (a queued job still runs)', async () => {
+    const scheduler = new Scheduler(logger);
+    scheduler.setConcurrency({ default: 4, 'agent:a': 1 });
+    let ran = false;
+    scheduler.submit({
+      priority: 2,
+      provider: 'agent:a',
+      key: 'bg',
+      run: async () => {
+        ran = true;
+      },
+    });
+    await waitUntil(() => ran);
+  });
+});

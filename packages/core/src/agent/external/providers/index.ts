@@ -35,3 +35,13 @@ export function providerFor(
   }
   return provider;
 }
+
+/**
+ * Whether a background session (`SessionContext.oneShot`) of this entry runs
+ * without any native tool (审查 S1): the provider declares it
+ * (`backgroundNoNativeTools`), or the entry is a testkit fake agent (scripted,
+ * no native tools, never shipped).
+ */
+export function backgroundToolFree(entry: AgentCatalogEntry, provider: AgentProvider): boolean {
+  return provider.backgroundNoNativeTools === true || entry.releaseGate === 'testkit';
+}

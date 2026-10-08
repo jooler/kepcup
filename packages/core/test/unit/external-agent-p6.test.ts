@@ -15,6 +15,9 @@ import {
 import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import type { AgentPermissionHandler } from '../../src/agent/external/permission-bridge.js';
+import { PROVIDERS } from '../../src/agent/external/providers/index.js';
+import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
+import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import { completeStructured } from '../../src/agent/structured.js';
 import type { CompletionRequest, RunSpec } from '../../src/agent/types.js';
 
@@ -44,7 +47,11 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
 
   function setup(
     script: FakeAgentScript,
-    options: { entry?: AgentCatalogEntry; permissions?: AgentPermissionHandler } = {},
+    options: {
+      entry?: AgentCatalogEntry;
+      permissions?: AgentPermissionHandler;
+      providers?: ProviderRegistry;
+    } = {},
   ) {
     const entry = options.entry ?? fakeAgentEntry('fake-bg');
     const workspace = mkdtempSync(path.join(tmpdir(), 'kepcup-p6-ws-'));
@@ -56,6 +63,7 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
       appVersion: '1.0.0',
       resolveLaunch: () => ({ command: 'unused', args: [], env: {} }),
       spawn: fakeAgentSpawner({ [entry.id]: script }, started) as never,
+      ...(options.providers !== undefined ? { providers: options.providers } : {}),
     });
     hosts.push(host);
     const engine = new ExternalAgentEngine({
@@ -72,7 +80,7 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
       messages: [{ role: 'user', content: 'INPUT-MESSAGE', timestamp: 0 }],
       ...overrides,
     });
-    return { engine, started, request, entry, workspace };
+    return { engine, started, request, entry, workspace, host };
   }
 
   it('one-shot session: temp private cwd (removed), system prompt + input, closed afterwards, never reused', async () => {
@@ -173,6 +181,37 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
     expect(slow.started[0]!.observed.cancels).toHaveLength(1);
   });
 
+  it('refuses a background session on an agent that cannot drop its native tools (审查 S1)', async () => {
+    const entry = fakeAgentEntry('fake-tools', { provider: 'with-tools', releaseGate: 'other' });
+    const { engine, started, request } = setup(
+      { turns: [agentTurn().text('{}')] },
+      {
+        entry,
+        providers: { ...PROVIDERS, 'with-tools': { ...genericAcpProvider, id: 'with-tools' } },
+      },
+    );
+    await expect(engine.complete(request())).rejects.toMatchObject({
+      code: 'AGENT_UNAVAILABLE',
+      message: expect.stringContaining('原生工具'),
+    });
+    expect(started[0]?.observed.sessions ?? []).toHaveLength(0);
+  });
+
+  it('core shutdown mid-call: complete() rejects and the private cwd is removed (审查 C10)', async () => {
+    const { engine, started, request, host } = setup({
+      turns: [agentTurn().text('半句').waitCancel().end('cancelled')],
+    });
+    const pending = engine.complete(request());
+    await vi.waitFor(() => expect(started[0]?.observed.prompts.length).toBe(1));
+    const cwd = started[0]!.observed.sessions[0]!.cwd;
+    expect(existsSync(cwd)).toBe(true);
+    host.dispose();
+    await expect(pending).rejects.toMatchObject({ code: 'AGENT_UNAVAILABLE' });
+    expect(existsSync(cwd)).toBe(false);
+    // Already disposed: a new call fails at once instead of hanging.
+    await expect(engine.complete(request())).rejects.toMatchObject({ code: 'AGENT_UNAVAILABLE' });
+  });
+
   it('background runs never reach the permission bridge: bridge-less native requests are rejected', async () => {
     const decide = vi.fn();
     const permissions: AgentPermissionHandler = {
@@ -260,6 +299,25 @@ describe('completeStructured with an external agent (JSON only, P6)', () => {
     }
     expect(requests[1]!.messages.at(-1)!.content).toContain('只输出 JSON');
     expect(requests[1]!.messages.at(-1)!.content).not.toContain('submit');
+  });
+
+  it('retries only when the answer failed to parse, never after a failed call (审查 C3)', async () => {
+    let calls = 0;
+    await expect(
+      completeStructured({
+        complete: async () => {
+          calls += 1;
+          throw Object.assign(new Error('超时'), { code: 'TIMEOUT' });
+        },
+        identity: { runId: 'r', botId: null, conversationId: null, loopType: 'triage' },
+        model: agentModelRef('codex-acp', ''),
+        systemPrompt: 'TRIAGE',
+        messages: [],
+        parametersSchema,
+        schema,
+      }),
+    ).rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(calls).toBe(1);
   });
 
   it('built-in models keep the submit tool', async () => {

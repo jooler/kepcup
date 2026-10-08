@@ -5,7 +5,12 @@ export interface LoopUsageDeps {
   usage: UsageService;
 }
 
-/** Records one structured call's usage against the loop's own run row. */
+/**
+ * Records one structured call's usage against the loop's own run row.
+ * `botId`: the bot the row is charged to (daily background budget) — set for
+ * external-agent rows whose owning bot is known (审查 C5); built-in rows keep
+ * the pre-P6 bot-less attribution.
+ */
 export function recordLoopUsage(
   deps: LoopUsageDeps,
   runId: string,
@@ -18,12 +23,13 @@ export function recordLoopUsage(
     cacheWrite: number;
     costUsd: number | null;
   } | null,
+  botId: string | null = null,
 ): void {
   if (!usage) return;
   const index = modelRef.indexOf('/');
   deps.usage.record({
     runId,
-    botId: null,
+    botId,
     conversationId: null,
     loopType,
     provider: index > 0 ? modelRef.slice(0, index) : 'unknown',
