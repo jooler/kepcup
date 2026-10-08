@@ -94,6 +94,12 @@ better-sqlite3-multiple-ciphers、`@napi-rs/keyring`、es-git 等原生模块需
 - 启动应用时设置：`KEPCUP_HOME`（临时目录）、`NODE_ENV=test`、`KEPCUP_KEYSTORE=memory`、`KEPCUP_MOCK_LLM_URL`（模拟模型服务地址，启动时自动配置为一个厂商）。
 - 界面元素使用 `data-testid` 定位，命名形如 `composer-input`、`draft-queue-item`、`approval-card-approve`。
 - 每个阶段的验收标准中凡是界面行为的，都要有对应的端到端测试。
+- 外部智能体（D72 P6，`external-agents.spec.ts`）：设置 `KEPCUP_FAKE_ACP_AGENT_BIN`（testkit `FAKE_ACP_AGENT_BIN`）+ `KEPCUP_FAKE_ACP_AGENT_SCRIPT`（`writeFakeAgentScript` 写的剧本）[+ `KEPCUP_FAKE_ACP_AGENT_RECORD`（`readFakeAgentRecord` 读）]，core 让目录的 `fake` 与额外的 `fake-sub`（订阅登录，onboarding 分支用）条目以 Electron 的 Node 运行 testkit 假 Agent（仅测试构建，打包产物剔除）；不设 `KEPCUP_MOCK_LLM_URL`（置空）即「只有智能体」的新用户。剧本的回合按 prompt 依次消耗：对话以外的后台任务会占用回合，用例先在设置「后台任务」里关闭。
+
+### 外部智能体的真机项（D72）
+
+- Provider 契约测试（`packages/core/test/contract/`）用假 Agent 剧本覆盖各家差异；真实 Agent 的行为由 `packages/core/scripts/agent-spike/` 的 spike 脚本在**用户登录后**手动执行（README「需要用户登录后再跑的步骤」），开发会话不代为登录、不读取任何凭据文件。
+- 原生优先遵守度回归（P6）：`node packages/core/scripts/agent-spike/adherence.mjs --runs 10`，结果表贴进设计 28 §9.2。措辞 fixture 由 `native-first-wording.test.ts` 守护（产品措辞变动即失败，`KEPCUP_UPDATE_WORDING=1` 重新生成，之后须重跑真机遵守度）。
 
 ## 手工冒烟清单（真实模型）
 

@@ -940,3 +940,10 @@
 - **测试**：新增单测 `butler-delegation-migration`(3)、`delegation-host`(8)；集成 `butler`(4)、`butler-team`(6)、`delegation`(7)、`butler-route`(3)；`public-skills-migration` 适配 0016。core 全量 111 文件 857 测试：822 passed / 33 failed / 2 skipped——失败全部在基线即失败的环境相关文件（本机缺 socat 沙箱、网络、git），无新增；shared/desktop/testkit 91 passed；typecheck / eslint 干净。
 - **未验证**：e2e（`onboarding.spec.ts` 已按新流程改写，但本机为 Linux 无 srt 沙箱/显示环境，未运行）。
 - **环境备注**：本机 Ubuntu 22.04（glibc 2.35）下 es-git 预编译包引用 `__isoc23_strtol`，需 LD_PRELOAD 兼容垫片（见 `~/opt/kepcup-env.sh`）。
+
+## 外部智能体引擎（ACP，2026-10-07 ～ 10-08，todo/acp-external-agents.md P1–P6，D72）
+
+- **范围**：设置页「智能体」目录（兼容 ACP Registry 条目格式，npx / binary〔sha256〕/ system 三种安装来源，官方登录，KepCup 不接触订阅凭据）；Bot 在「模型 / 智能体」间选择，外部 Agent 时可选模型 / 推理强度 / 权限档位 / 能力包（宿主 MCP 桥注入，补位类原生优先）；Provider 架构（Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Antigravity；ZCode 放弃，DEV-008）；权限桥与 `agent_tool` 审批卡、档位映射、显式写入租约；对话内 Agent 设置卡、onboarding「我有订阅」分支；steering、会话复用、用量、并发、长耗时桥工具；全部在「外部智能体（实验）」开关下。逐阶段实施与审查记录见 todo §4.3–§9.3。
+- **P6（无 API key 的后台 loop + 收尾）**：`ExternalAgentEngine.complete()` 一次性精简会话（只读、空私有临时 cwd、不挂桥、不复用、结束 `session/close`；Claude 替换式系统提示词 + `tools: []`）+ `completeStructured` 只输出 JSON；`agent/llm-router.ts` 让群聊判断、续接、摘要、反思、整理、画像、Wiki、技能生成、SubAgent 压缩在无内置模型时改走外部 Agent（续接 L2 仍关、技能生成默认关、反思 / 摘要每 5 次一跑、可选群聊仅 @），用量记 `agent:{id}`、连锁 / 每日后台预算按轮折算；设置「后台任务」；原生优先遵守度真机 harness（`agent-spike/adherence.mjs`，措辞 fixture 由单测守护）；e2e `external-agents.spec.ts`（fake Agent，经 core 测试缝）。
+- **验证**：见 todo §9.3（容器全量测试、typecheck / lint、e2e 运行情况）。
+- **未验证 / 需真实账号**：各 Agent 登录后的 P0 spike 与原生优先遵守度（设计 28 §9.2 末）、三平台人工验收（todo §9.1 末项）；开发会话不代为登录。
