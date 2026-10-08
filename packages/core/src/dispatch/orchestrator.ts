@@ -570,6 +570,14 @@ export class Orchestrator {
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
       onSweep: (now) => this.#sweepTaskAgentSessions(now),
+      // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
+      // task slot) only while `agent:{id}` has room; the rest stay submitted.
+      launchSlot: (task) => {
+        const agentId = this.#agentIdOf(task.botId !== null ? deps.bots.get(task.botId) : null);
+        if (agentId.length === 0) return null;
+        const key = agentEngineKey(agentId);
+        return { key, limit: deps.scheduler.concurrencyFor(key) };
+      },
     });
     this.#butlerHost = new ButlerHost({
       bots: deps.bots,
@@ -2394,6 +2402,7 @@ export class Orchestrator {
       const botId = task.botId;
       const conversationId = task.conversationId;
       if (task.taskWrites === true) {
+        // Same fallback as the execution's workdir (#executeRun, 审查 L6).
         const root = task.taskWorkdir ?? workspacePathFor(this.#deps.paths, botId, conversationId);
         control.waiting('等写入租约');
         try {
@@ -2506,6 +2515,8 @@ export class Orchestrator {
     const agentSteer: AgentSteerLog = { log: [], released: false, consumes: consumesTaskIds };
     let agentSessionRowId: string | null = null;
     let agentPromptSent = false;
+    /** The engine run once started: a crash after this point must stop it (审查 L8). */
+    let startedHandle: RunHandle | null = null;
     try {
       if (
         exec.kind === 'task'
@@ -2891,9 +2902,11 @@ export class Orchestrator {
       // The agent's cwd: the bound project, else the workspace; a D75 task
       // works in its resolved workdir (§3.4 task_workdir).
       const projectPath = project !== null && project.status === 'available' ? project.path : null;
+      // A task without a recorded workdir works in the workspace — the root
+      // #startTask leased — never in an unleased project (审查 L6).
       const agentWorkdir =
-        exec.kind === 'task' && exec.task.taskWorkdir !== null
-          ? exec.task.taskWorkdir
+        exec.kind === 'task'
+          ? (exec.task.taskWorkdir ?? workspacePath)
           : (projectPath ?? workspacePath);
       const agentRun =
         agentId.length > 0
@@ -2904,7 +2917,9 @@ export class Orchestrator {
               identity,
               responseTools,
               workspacePath,
-              hasProject: project !== null && project.status === 'available',
+              // The <project> section only when the agent works in it (a
+              // workspace-workdir task does not, 审查 L10).
+              hasProject: projectPath !== null && agentWorkdir === projectPath,
               memorySections,
               wikiTopics: wikiTopicsSection,
               skills: skillsSection,
@@ -3060,10 +3075,17 @@ export class Orchestrator {
         limits: { maxTurns: RUN_MAX_TURNS },
       });
 
+      startedHandle = handle;
+      let unsubscribeSteerConfirm: () => void = () => {};
       if (exec.kind === 'task') {
         // D75: tasks are not mailbox runs — steering a task is inject_task,
-        // through the task host (buffered injects are flushed here).
-        exec.control.attach(handle);
+        // through the task host (buffered injects are flushed here). A steer
+        // the engine really took in confirms its inject entry (审查 L4).
+        const control = exec.control;
+        unsubscribeSteerConfirm = handle.onEvent((event) => {
+          if (event.type === 'steer') control.steerConfirmed(event.payload.text);
+        });
+        control.attach(handle);
       } else {
         const activeEntry: ActiveRunEntry = {
           handle,
@@ -3121,6 +3143,7 @@ export class Orchestrator {
         unsubscribe();
         unsubscribeSetup();
         unsubscribeInterim();
+        unsubscribeSteerConfirm();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
         // D75 §1.2: sub runs die with their parent — before the lease closes
@@ -3230,6 +3253,13 @@ export class Orchestrator {
         { runId, error: error instanceof Error ? error.message : String(error) },
         isTask ? 'task run crashed' : 'response run crashed',
       );
+      // Thrown after the engine run started (e.g. while wiring it up): stop it
+      // before the lease is released and the run settles — no-op once done.
+      try {
+        startedHandle?.abort('run crashed');
+      } catch {
+        // The settlement below matters more than a failing abort.
+      }
       // No-op when the run got past handle.done (closed there).
       await this.#closeSubagents(runId).catch(() => {});
       await this.#deps.projects.releaseRun(runId).catch(() => {});
