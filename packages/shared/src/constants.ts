@@ -507,3 +507,9 @@ export const TASK_SOURCE_MESSAGES_MAX = 20;
  * long (§3.2 at-least-once).
  */
 export const TASK_REDELIVER_AFTER_MS = 10 * 60_000;
+/**
+ * Cancel card of a workspace write task (D75 W3, design 30 §5.2): at most this
+ * many changed files are listed (the workspace has no checkpoint, so the card
+ * lists what the task's file tools wrote instead of offering a revert).
+ */
+export const TASK_CHANGED_FILES_SHOWN = 20;
