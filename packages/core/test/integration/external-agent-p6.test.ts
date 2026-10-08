@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import {
   agentTurn,
   createTestStack,
   fakeAcpAgentLaunch,
+  fakeAgentEntry,
   listRuns,
   makeBot,
   openDirect,
@@ -261,5 +262,52 @@ describe('background loops on an external agent (P6 llm-router)', () => {
       .runsDb!.prepare("select engine, provider from runs where loop_type = 'wiki_maintenance'")
       .get() as { engine: string; provider: string };
     expect(run).toEqual({ engine: 'agent:fake', provider: 'agent:fake' });
+  }, 60_000);
+
+  it('no plaintext agent credential anywhere in the data directory (design 28 §13.9)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'kepcup-ext-agent-p6-cred-'));
+    dirs.push(dir);
+    const scriptFile = path.join(dir, 'script.json');
+    writeFakeAgentScript(scriptFile, {
+      turns: [agentTurn().text('收到。'), agentTurn().text(BACKGROUND_JSON)],
+    });
+    const entry = fakeAgentEntry('fake-key', {
+      auth: { kinds: ['api-key'], note: 'API key', apiKeyEnv: 'FAKE_AGENT_API_KEY' },
+    });
+    const stack = await createTestStack({
+      env: { KEPCUP_MOCK_LLM_URL: '' },
+      agentCatalog: [entry],
+      agentLaunch: (candidate) =>
+        candidate.id === 'fake-key' ? fakeAcpAgentLaunch(scriptFile) : null,
+    });
+    stacks.push(stack);
+    const key = 'sk-p6-credential-scan-7f3a9c';
+    await stack.core.rpc.call('settings.update', { experimental: { externalAgents: true } });
+    await stack.core.rpc.call('agents.enable', { id: 'fake-key' });
+    await stack.core.rpc.call('agents.login', { id: 'fake-key', apiKey: key });
+    const bot = await useAgent(stack, await makeBot(stack.core, '外援'), 'fake-key');
+    const conv = await openDirect(stack.core, bot.id);
+    await sendBatch(stack.core, conv.id, ['你好']);
+    await waitForRun(stack.core, conv.id, 'completed');
+    // The reflection runs on the agent too (one-shot session, key in its env).
+    await waitFor(
+      () => {
+        const rows = jobRows(stack, ['reflection']);
+        return rows.length === 1 && rows[0]!.status === 'done' ? rows : null;
+      },
+      { label: 'reflection done', timeoutMs: 30_000 },
+    );
+    const hits: string[] = [];
+    const walk = (current: string) => {
+      for (const name of readdirSync(current)) {
+        const full = path.join(current, name);
+        const stat = statSync(full, { throwIfNoEntry: false });
+        if (stat === undefined) continue;
+        if (stat.isDirectory()) walk(full);
+        else if (stat.isFile() && readFileSync(full).includes(key)) hits.push(full);
+      }
+    };
+    walk(stack.core.services.paths!.home);
+    expect(hits).toEqual([]);
   }, 60_000);
 });
