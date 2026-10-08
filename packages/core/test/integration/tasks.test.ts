@@ -265,8 +265,17 @@ describe('D75 task layer (TaskHost)', () => {
     expect(w2.queueReason).toContain(`等写入租约（任务 ${w1.taskId} 持有）`);
     expect(runOf(stack, w1.taskId).taskWorkdir).toBe(runOf(stack, w2.taskId).taskWorkdir);
     await waitRun(stack, w1.taskId, ['running'], 'w1 running');
+    await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
+      label: 'w1 request held',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(runOf(stack, w2.taskId).status).toBe('queued');
+    expect(llm.requests().some(isTaskRequest('TASK-W2'))).toBe(false);
     held.release();
-    await waitRun(stack, w2.taskId, ['completed'], 'w2 completed after w1');
+    const w2Done = await waitRun(stack, w2.taskId, ['completed'], 'w2 completed after w1');
+    const w1Done = runOf(stack, w1.taskId);
+    expect(w1Done.status).toBe('completed');
+    expect(w2Done.startedAt ?? 0).toBeGreaterThanOrEqual(w1Done.endedAt ?? Infinity);
   }, 30_000);
 
   it('cancel_task writes cancel + failure(status=cancelled) entries and never wakes', async () => {
@@ -310,7 +319,10 @@ describe('D75 task layer (TaskHost)', () => {
     expect(phases.map((e) => e.phase)).toEqual(['brief', 'inject', 'cancel', 'failure']);
     expect(phases[1]).toMatchObject({ delivery: 'delivered' });
     expect(phases[3]).toMatchObject({ status: 'cancelled' });
-    expect(tasksOf(stack).launchedCount()).toBe(0);
+    // The slot frees once the aborted execution has unwound.
+    await waitFor(() => (tasksOf(stack).launchedCount() === 0 ? true : null), {
+      label: 'slot freed',
+    });
 
     // Cancelling again is refused; nothing woke the bot.
     const again = await call(tool(tools, 'cancel_task'), { task_id: started.taskId, reason: 'x' });
@@ -412,6 +424,11 @@ describe('D75 task layer (TaskHost)', () => {
     llm.script('mock-main', [
       step().expect(isTaskRequest('TASK-R')).hold().replyText('不会到达'),
       step().expect(isWakeRequest).replyText('那个任务超时了'),
+      // `now` far ahead also makes the reconciliation re-deliver (the first
+      // delivery looks stale) — at-least-once, so allow extra turns.
+      step().replyText('知道了'),
+      step().replyText('知道了'),
+      step().replyText('知道了'),
     ]);
     const started = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
       title: '挂死',
@@ -423,19 +440,24 @@ describe('D75 task layer (TaskHost)', () => {
     await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), {
       label: 'task request held',
     });
-    tasksOf(stack).sweep(Date.now() + TASK_MAX_WALL_MS + 60_000);
+    const later = Date.now() + TASK_MAX_WALL_MS + 60_000;
+    tasksOf(stack).sweep(later);
     const run = runOf(stack, started.taskId);
     expect(run.status).toBe('failed');
     expect(run.error).toContain('超过时限');
     const failure = entries(stack, started.taskId).at(-1);
     expect(failure).toMatchObject({ phase: 'failure', status: 'failed' });
+    const entryId = domain(stack).messages.terminalTaskEvent(started.taskId)!.id;
     const wake = await waitFor(
-      () => wakeRuns(stack, conv.id).find((r) => r.status === 'completed') ?? null,
+      () => wakeRuns(stack, conv.id).find((r) => r.triggerMessageIds[0] === entryId) ?? null,
       { label: 'wake run', timeoutMs: 15_000 },
     );
-    expect(wake.triggerMessageIds).toEqual([
-      domain(stack).messages.terminalTaskEvent(started.taskId)!.id,
-    ]);
+    expect(wake.triggerMessageIds).toEqual([entryId]);
+
+    // The hung execution still holds its slot; a later sweep evicts it.
+    expect(tasksOf(stack).launchedCount()).toBe(1);
+    tasksOf(stack).sweep(later + 2 * 60_000);
+    expect(tasksOf(stack).launchedCount()).toBe(0);
     llm.releaseAll();
   }, 30_000);
 
@@ -446,10 +468,9 @@ describe('D75 task layer (TaskHost)', () => {
     const conv = await openDirect(core, bot.id);
     const bot2 = await makeBot(core, '小贝');
     const conv2 = await openDirect(core, bot2.id);
-    llm.script('mock-main', [
-      step().expect(isTaskRequest('TASK-D1')).hold().replyText('不会到达'),
-      step().expect(isTaskRequest('TASK-D2')).hold().replyText('不会到达'),
-    ]);
+    const heldD1 = step().expect(isTaskRequest('TASK-D1')).hold().replyText('不会到达');
+    const heldD2 = step().expect(isTaskRequest('TASK-D2')).hold().replyText('不会到达');
+    llm.script('mock-main', [heldD1, heldD2]);
     const statuses = new Map<string, string>();
     core.onEvent('run.status', ({ run }) => {
       statuses.set(run.id, run.status);
@@ -472,12 +493,24 @@ describe('D75 task layer (TaskHost)', () => {
 
     await core.rpc.call('conversations.delete', { id: conv.id });
     expect(statuses.get(d1.taskId)).toBe('cancelled');
+    // The engine's abort lands when the in-flight model call returns, and an
+    // execution whose run rows were deleted under it may never come back:
+    // the stopped execution keeps its slot until the reaper evicts it.
+    expect(tasksOf(stack).launchedCount()).toBe(2);
+    heldD1.release();
+    tasksOf(stack).sweep(Date.now() + 2 * 60_000);
     expect(tasksOf(stack).launchedCount()).toBe(1);
 
     await core.rpc.call('bots.delete', { id: bot2.id });
     expect(statuses.get(d2.taskId)).toBe('cancelled');
+    heldD2.release();
+    tasksOf(stack).sweep(Date.now() + 2 * 60_000);
     expect(tasksOf(stack).launchedCount()).toBe(0);
     llm.releaseAll();
+    // Cancelled tasks never wake anyone (and the deleted bot has no runs left).
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(wakeRuns(stack, conv2.id)).toHaveLength(0);
+    expect(llm.requests().filter(isWakeRequest)).toHaveLength(0);
   }, 30_000);
 });
 

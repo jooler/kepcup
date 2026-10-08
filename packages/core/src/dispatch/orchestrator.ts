@@ -515,14 +515,7 @@ export class Orchestrator {
       renderOptions: (selfBotId) => ({ ...this.#renderOptions(), selfBotId }),
       publishRunStatus: (run) => deps.publish('run.status', { run }),
       execute: (task, control) => {
-        deps.scheduler.submit({
-          // Below user-triggered responses (0): a long task must not take the
-          // provider slot a conversation reply is waiting for.
-          priority: 1,
-          provider: this.#providerForRef(this.#modelRefForBot(task.botId ?? '')),
-          key: `task:${task.id}`,
-          run: () => this.#executeTask(task, control),
-        });
+        void this.#startTask(task, control);
       },
       // This wave (D75 W1-A): the entry reaches the bot as a `reason:'task'`
       // trigger batch through its mailbox (W2 changes the mailbox semantics).
@@ -546,14 +539,21 @@ export class Orchestrator {
         }
         return project.path;
       },
-      onSettled: (run) => {
+      onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
         deps.approvals.cancelPendingForRun(run.id);
-        this.#fsState.release(run.id);
-        // Idempotent with the executor's own release (lease + after-snapshot).
-        void deps.projects.releaseRun(run.id).catch(() => {});
+        // A still-unwinding execution keeps its write lease until it ends (an
+        // aborted tool may still be writing); it releases the lease itself.
+        if (!executorActive) {
+          this.#fsState.release(run.id);
+          void deps.projects.releaseRun(run.id).catch(() => {});
+        }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
+      },
+      releaseExecution: (runId) => {
+        this.#fsState.release(runId);
+        void deps.projects.releaseRun(runId).catch(() => {});
       },
       recordVisibleMessage: (runId, message) => {
         if (deps.runs.get(runId) !== null) {
@@ -1463,15 +1463,21 @@ export class Orchestrator {
     // D75 §7.4 step 1: tasks are repaired first — one with a terminal entry
     // adopts its status instead of being blanket-interrupted (§3.2 修复);
     // submitted tasks stay queued and are re-queued below.
+    let tasksRepaired = true;
     try {
       this.#taskHost.recover();
     } catch (error) {
+      tasksRepaired = false;
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'task repair failed',
+        'task repair failed; tasks fall back to the blanket interruption',
       );
     }
-    const runs = this.#deps.runs.markAllActiveInterrupted({ exceptLoopTypes: ['task'] });
+    // Fallback: unrepaired tasks are interrupted with the rest; reconciliation
+    // (resume) then writes their missing failure entries and wakes the bot.
+    const runs = this.#deps.runs.markAllActiveInterrupted(
+      tasksRepaired ? { exceptLoopTypes: ['task'] } : {},
+    );
     this.#deps.approvals.cancelAllPending();
     for (const run of runs) {
       this.#deps.grants.expireForRun(run.id);
@@ -2294,37 +2300,78 @@ export class Orchestrator {
   }
 
   /**
-   * D75 task executor (TaskHost `execute`, scheduler key `task:{id}`): the
-   * brief is rebuilt from the task's private entries, then the shared run
-   * skeleton runs with `kind: 'task'`.
+   * D75 task launch (TaskHost `execute`): rebuilds the brief from the task's
+   * private entries, takes the write lease for a write task (§5.1 — the whole
+   * task holds it; the row stays `queued` = submitted while it waits, and no
+   * scheduler slot is held meanwhile), then submits the shared run skeleton
+   * (`kind: 'task'`) under scheduler key `task:{id}`. Every path ends in
+   * `control.finish()`.
    */
-  async #executeTask(task: Run, control: TaskRunControl): Promise<void> {
-    // Stopped while waiting for a scheduler slot: the host already settled it.
-    if (control.signal.aborted) return;
-    if (task.botId === null || task.conversationId === null) {
-      this.#taskHost.settle(task.id, { status: 'failed', error: '任务缺少 Bot 或对话' });
-      return;
-    }
-    const brief = control.brief();
-    if (brief === null) {
+  async #startTask(task: Run, control: TaskRunControl): Promise<void> {
+    let submitted = false;
+    try {
+      // Stopped before it got here: the host already settled it.
+      if (control.signal.aborted) return;
+      if (task.botId === null || task.conversationId === null) {
+        this.#taskHost.settle(task.id, { status: 'failed', error: '任务缺少 Bot 或对话' });
+        return;
+      }
+      const brief = control.brief();
+      if (brief === null) {
+        this.#taskHost.settle(task.id, {
+          status: 'failed',
+          error: '任务的交代条目缺失（派出时应用退出），请重新派出',
+        });
+        return;
+      }
+      const botId = task.botId;
+      const conversationId = task.conversationId;
+      if (task.taskWrites === true) {
+        const root = task.taskWorkdir ?? workspacePathFor(this.#deps.paths, botId, conversationId);
+        try {
+          await this.#deps.projects.ensureWriteLease(
+            { runId: task.id, botId, conversationId, loopType: 'task' },
+            root,
+            { pin: true, signal: control.signal, reason: `任务「${brief.title}」` },
+          );
+        } catch (error) {
+          // Cancelled while waiting: the host already settled the task.
+          if (control.signal.aborted) return;
+          // A workspace root has no lease target yet (project/service.ts
+          // #leaseTarget throws INVALID_INPUT); D75 W1-C makes workspace
+          // leases real. Until then a workspace write task runs unleased.
+          if (!(error instanceof AppError && error.code === 'INVALID_INPUT')) throw error;
+        }
+        if (control.signal.aborted) return;
+      }
+      this.#deps.scheduler.submit({
+        // Below user-triggered responses (0); the scheduler also keeps one
+        // provider slot free of tasks for conversation replies.
+        priority: 1,
+        provider: this.#providerForRef(this.#modelRefForBot(botId)),
+        key: `task:${task.id}`,
+        run: () =>
+          this.#executeRun(task.id, {
+            kind: 'task',
+            batch: { conversationId, botId, messages: brief.sourceMessages, reason: 'task' },
+            task,
+            brief,
+            control,
+          }),
+      });
+      submitted = true;
+    } catch (error) {
       this.#taskHost.settle(task.id, {
         status: 'failed',
-        error: '任务的交代条目缺失（派出时应用退出），请重新派出',
+        error: error instanceof Error ? error.message : String(error),
       });
-      return;
+    } finally {
+      if (!submitted) {
+        // Lease taken before a stop / failure: release it with the slot.
+        await this.#deps.projects.releaseRun(task.id).catch(() => {});
+        control.finish();
+      }
     }
-    await this.#executeRun(task.id, {
-      kind: 'task',
-      batch: {
-        conversationId: task.conversationId,
-        botId: task.botId,
-        messages: brief.sourceMessages,
-        reason: 'task',
-      },
-      task,
-      brief,
-      control,
-    });
   }
 
   /**
@@ -2432,28 +2479,6 @@ export class Orchestrator {
         conversationId: batch.conversationId,
         loopType,
       };
-      // D75 §5.1: a write task holds its workdir root's write lease for the
-      // whole run and stays submitted (`queued`) while it waits.
-      if (exec.kind === 'task' && exec.task.taskWrites === true) {
-        const root =
-          exec.task.taskWorkdir ??
-          workspacePathFor(this.#deps.paths, batch.botId, batch.conversationId);
-        try {
-          await this.#deps.projects.ensureWriteLease(identity, root, {
-            pin: true,
-            signal: exec.control.signal,
-            reason: `任务「${exec.brief.title}」`,
-          });
-        } catch (error) {
-          // A workspace root has no lease target yet (project/service.ts
-          // #leaseTarget throws INVALID_INPUT); D75 W1-C makes workspace
-          // leases real. Until then a workspace write task runs unleased.
-          if (!(error instanceof AppError && error.code === 'INVALID_INPUT')) throw error;
-        }
-        // Cancelled while waiting: the host already settled the task.
-        if (exec.control.signal.aborted) return;
-      }
-
       runs.update(runId, {
         status: 'running',
         provider: this.#providerForRef(modelRef),
@@ -3082,7 +3107,8 @@ export class Orchestrator {
       // P07: a completed response registers its reflection job (dedupe
       // run:{runId}); D75 §7.2: so does a completed task. Background work —
       // failures never touch this run.
-      if (outcome.status === 'completed') {
+      // (A task stopped by the host meanwhile is not completed after all.)
+      if (outcome.status === 'completed' && (!isTask || runs.get(runId)?.status === 'completed')) {
         this.#deps.memory?.registerReflection({
           runId,
           botId: batch.botId,
@@ -3102,9 +3128,15 @@ export class Orchestrator {
       this.#fsState.release(runId);
       settle('failed', error instanceof Error ? error.message : String(error));
     } finally {
-      // Mailbox, group-turn and D71 bookkeeping belong to response runs only.
-      if (exec.kind === 'response')
+      if (exec.kind === 'task') {
+        // Idempotent; covers the early returns. Then the slot / write target frees.
+        await this.#deps.projects.releaseRun(runId).catch(() => {});
+        this.#fsState.release(runId);
+        exec.control.finish();
+      } else {
+        // Mailbox, group-turn and D71 bookkeeping belong to response runs only.
         this.#releaseResponseMailbox(batch, consumesTaskIds, agentSteer);
+      }
       this.#publishConversation(batch.conversationId);
     }
   }
@@ -3115,7 +3147,6 @@ export class Orchestrator {
     consumesTaskIds: Set<string>,
     agentSteer: AgentSteerLog,
   ): void {
-    if (consumesTaskIds.size > 0) this.#taskHost.markConsumed(consumesTaskIds);
     const mailbox = this.#mailboxes.for(batch.botId, batch.conversationId);
     mailbox.release();
     // Batches buffered during the closing window (settled run, mailbox not
@@ -3137,6 +3168,18 @@ export class Orchestrator {
         { error: error instanceof Error ? error.message : String(error) },
         'queued delegation delivery failed',
       );
+    }
+    // D75 §3.2 消费 (after the mailbox bookkeeping: a failure here must not
+    // leave the mailbox held).
+    if (consumesTaskIds.size > 0) {
+      try {
+        this.#taskHost.markConsumed(consumesTaskIds);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'marking task results consumed failed',
+        );
+      }
     }
   }
 

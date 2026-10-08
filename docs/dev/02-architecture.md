@@ -232,7 +232,8 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
 
 - `start`：先写 `queued`（= submitted）行，再写私有 `brief` 条目，再按配额启动（对话级 / 全局并发、同一 workdir 一个写任务；每个发起轮按 `origin_run_id` 计数，超限报 `TASK_LIMIT_REACHED`）；任务内调用一律拒绝（深度 1）。
 - 结算次序：终态条目（`appendTaskEvent` 幂等）→ runs 终态 → 唤醒判定（§3.3）→ 注入的 `wake(botId, conversationId, entry)`。本波默认 `wake` = 把条目作为 `TriggerBatch{reason:'task'}` 交给 mailbox；响应 run 终态时对其触发批 / 已注入批中的任务条目 `markConsumed`（W2 改挂对话轮终态）。
-- 执行骨架（`RunExecution = {kind:'response', batch} | {kind:'task', batch, task, brief, control}`）：任务走调度键 `task:{id}`、优先级 1、`loop_type='task'`；写任务开工前 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })` 整任务持有（等待期间行仍是 `queued`）；触发段 = `buildTaskBriefSegment`（交代 + 原消息原文，图片照触发批进视觉通道）；对话层只取共享行；中间说明带 `origin:'task'`；最终文本 → `result` 条目，`skip_reply` → 空结果；失败 / 取消 / 中断 → `failure` 条目（尾部 `buildRunDigest`）。
+- 宿主停下的任务（取消 / reaper / 删除）当场结算，但其执行在退场（`TaskRunControl.finish()`）前仍占并发名额与写入目标、自己释放租约；退场不回来的执行由 reaper 在 `TASK_SETTLE_SWEEP_MS` 后驱逐。已投递待消费的结果超过 `TASK_REDELIVER_AFTER_MS` 未消费时 reaper 重投。
+- 执行骨架（`RunExecution = {kind:'response', batch} | {kind:'task', batch, task, brief, control}`）：`#startTask` 先取简报、写任务先 `projects.ensureWriteLease(identity, workdir 根, { pin: true, signal })`（整任务持有；等待期间行仍是 `queued`，不占调度名额），再以调度键 `task:{id}`、优先级 1 提交（调度器对 `task:` 作业总给对话回复留一个厂商名额）；`loop_type='task'`；触发段 = `buildTaskBriefSegment`（交代 + 原消息原文，图片照触发批进视觉通道）；对话层只取共享行；中间说明带 `origin:'task'`；最终文本 → `result` 条目，`skip_reply` → 空结果；失败 / 取消 / 中断 → `failure` 条目（尾部 `buildRunDigest`）。
 - 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 等 → `resume()`；`sweep()` 每 `TASK_SETTLE_SWEEP_MS` 一次（start.ts）。
 
 ### 分发器
