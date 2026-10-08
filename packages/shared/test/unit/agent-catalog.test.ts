@@ -66,6 +66,10 @@ describe('host capability packs', () => {
   });
 
   it('never lists a never-injected tool in any pack', () => {
+    // The host SubAgent pair (D66) never reaches an external agent (D75 §1.2).
+    expect(NEVER_INJECTED_TOOLS).toEqual(
+      expect.arrayContaining(['delegate_task', 'collect_delegate_results']),
+    );
     const packed = HOST_CAPABILITIES.flatMap((c) => [...c.tools, ...c.butlerTools]);
     for (const tool of NEVER_INJECTED_TOOLS) expect(packed).not.toContain(tool);
     expect(new Set(packed).size).toBe(packed.length);

@@ -58,6 +58,8 @@ interface FakeRunScript {
   tokensSoFar?: number;
   /** true = 不自动结算，只有 abort()（预算轮询 / 级联取消）能结束 run。 */
   holdUntilAbort?: boolean;
+  /** true = abort() is ignored (a stuck engine / tool): only release() ends it. */
+  ignoreAbort?: boolean;
 }
 
 /** abort() 立即按 scripted outcome 结算（真实引擎 abort → agent_end → done）。 */
@@ -101,7 +103,9 @@ class FakeEngine {
     else this.#held.push(settle);
     return {
       steer: () => false,
-      abort: () => settle(),
+      abort: () => {
+        if (script.ignoreAbort !== true) settle();
+      },
       onEvent: (listener) => {
         listeners.add(listener);
         return () => listeners.delete(listener);
@@ -784,5 +788,102 @@ describe('subagent foreground fan-out (D66 mode C)', () => {
     expect(blank.ok).toBe(false);
     expect(blank.errorCode).toBe('INVALID_INPUT');
     expect(deps.runs.listByConversation('conv_1', 10)).toHaveLength(0);
+  });
+});
+
+describe('subagent facade review fixes (D75 审查 L1–L3)', () => {
+  it('L1: runs.cancel on a foreground lane queued behind another settles it now and never starts it', async () => {
+    const engine = new FakeEngine();
+    const settled: string[] = [];
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(
+      deps,
+      makeInput(engine, { lightModelRef: '', onSubRunSettled: (id) => settled.push(id) }),
+    );
+    const { ctx } = makeCtx();
+    engine.completed.push(completedScript('第一路', true), completedScript('第二路'));
+
+    const first = facade.delegate({ task: '一' }, ctx);
+    const second = facade.delegate({ task: '二' }, ctx);
+    await flushAsync();
+    expect(engine.specs).toHaveLength(1);
+    const queued = deps.runs
+      .listByConversation('conv_1', 10)
+      .find((run) => run.status === 'queued')!;
+    expect(queued).toBeDefined();
+
+    expect(facade.abortSubRun(queued.id, 'user cancelled')).toBe(true);
+    // Settled right away, while the first lane still runs.
+    expect(deps.runs.getOrThrow(queued.id).status).toBe('cancelled');
+    // A second cancel finds nothing left to stop.
+    expect(facade.abortSubRun(queued.id, 'again')).toBe(false);
+
+    engine.release();
+    expect((await first).ok).toBe(true);
+    const result = await second;
+    expect(result).toMatchObject({ ok: false, errorCode: 'CANCELLED' });
+    // Never started: no engine run, the row was not moved back to running.
+    expect(engine.specs).toHaveLength(1);
+    expect(deps.runs.getOrThrow(queued.id).status).toBe('cancelled');
+    expect(settled).toContain(queued.id);
+  });
+
+  it('L2: two concurrent collect calls never hand the same conclusion over twice', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(deps, makeInput(engine, { lightModelRef: '' }));
+    const { ctx } = makeCtx();
+    engine.completed.push(completedScript('唯一结论', true));
+    const ack = await facade.delegate({ task: '调研', mode: 'background' }, ctx);
+    const [childId] = childRunIds(ack.content);
+
+    const one = facade.collect({}, ctx);
+    const two = facade.collect({ child_run_ids: [childId!] }, ctx);
+    engine.release();
+    const results = await Promise.all([one, two]);
+    const delivered = results.filter((result) => result.ok);
+    expect(delivered).toHaveLength(1);
+    expect(branchSlots(delivered[0]!.content)[0]).toMatchObject({
+      child_run_id: childId,
+      conclusion: '唯一结论',
+    });
+    expect(results.find((result) => !result.ok)?.errorCode).toBe('INVALID_INPUT');
+  });
+
+  it('L2: a collect cancelled while waiting leaves its branches collectable', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine);
+    const facade = createSubagentFacade(deps, makeInput(engine, { lightModelRef: '' }));
+    const { ctx } = makeCtx();
+    engine.completed.push(completedScript('稍后取回', true));
+    await facade.delegate({ task: '调研', mode: 'background' }, ctx);
+
+    const aborted = new AbortController();
+    const waiting = facade.collect({}, { ...ctx, signal: aborted.signal });
+    aborted.abort();
+    expect((await waiting).errorCode).toBe('CANCELLED');
+
+    engine.release();
+    const later = await facade.collect({}, ctx);
+    expect(later.ok).toBe(true);
+    expect(branchSlots(later.content)[0]).toMatchObject({ conclusion: '稍后取回' });
+  });
+
+  it('L3: close() stops waiting for a sub run that ignores the abort after the grace period', async () => {
+    const engine = new FakeEngine();
+    const deps = makeDeps(engine, { closeGraceMs: 30 });
+    const facade = createSubagentFacade(deps, makeInput(engine, { lightModelRef: '' }));
+    const { ctx } = makeCtx();
+    engine.completed.push({ ...completedScript('卡住'), holdUntilAbort: true, ignoreAbort: true });
+    await facade.delegate({ task: '卡住的分支', mode: 'background' }, ctx);
+    await flushAsync();
+
+    const started = Date.now();
+    await facade.close('parent run ended');
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // The stuck branch is still unwinding on its own; releasing it settles its row.
+    engine.release();
+    await flushAsync();
+    expect(deps.runs.listByConversation('conv_1', 10)[0]?.status).toBe('completed');
   });
 });
