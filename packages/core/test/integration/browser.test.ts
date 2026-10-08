@@ -8,13 +8,17 @@ import {
   openDirect,
   sendDrafts,
   step,
+  viaTask,
+  waitFor,
+  waitForMessage,
   waitForRun,
   type FakeBrowserHost,
 } from '@kepcup/testkit';
 import type { Run } from '@kepcup/shared';
 
 /**
- * P11 浏览器工具（集成）：真实响应 loop 通过端口 B facade 驱动 browser_* 工具；
+ * P11 浏览器工具（集成）：真实任务（D75 W2：浏览器是任务的工具，对话轮没有）
+ * 通过端口 B facade 驱动 browser_* 工具；
  * 删除级联（对话 / Bot / 群移除）接入 lifecycle 并有测试；删除与在途页面操作
  * 的竞态由「先取消执行 → 级联 permanent close → 迟到的 ensurePage 被拒」
  * 三层防护（主进程 tombstone 的行为在 e2e 用真实宿主验证）。
@@ -61,14 +65,21 @@ async function openWithTool(
   options?: { mentionBotId?: string },
 ): Promise<void> {
   const { llm } = stack;
-  llm.script('mock-main', [
-    step()
-      .expect((req) => req.lastUserText().includes('打开网页'))
-      .replyToolCall('browser_open', { url }),
-    step()
-      .expect((req) => JSON.stringify(req.body).includes('fixture-home-marker'))
-      .replyText(finalText),
-  ]);
+  // D75 W2: the browser is a task's tool (a turn has none) — the turn starts a
+  // task that opens the page; the waking turn relays the task's result.
+  llm.script(
+    'mock-main',
+    viaTask({
+      instruction: `打开网页 ${url}`,
+      taskSteps: [
+        step().replyToolCall('browser_open', { url }),
+        step()
+          .expect((req) => JSON.stringify(req.body).includes('fixture-home-marker'))
+          .replyText(finalText),
+      ],
+      relay: finalText,
+    }),
+  );
   llm.script('mock-light', [step().replyJson(emptyReflection())]);
   // 群聊必须 @ 具体成员，否则走群聊判断（轻量模型）而不是本脚本的响应 loop。
   await sendDrafts(stack.core, conversationId, [
@@ -77,7 +88,12 @@ async function openWithTool(
       ...(options?.mentionBotId !== undefined ? { mentions: [options.mentionBotId] } : {}),
     },
   ]);
-  await waitForRun(stack.core, conversationId, 'completed');
+  await waitForRun(stack.core, conversationId, 'completed', { loopType: 'task' });
+  await waitForMessage(
+    stack.core,
+    conversationId,
+    (m) => m.senderType === 'bot' && 'text' in m.content && m.content.text === finalText,
+  );
 }
 
 describe('P11 浏览器：响应 loop 工具与删除级联', () => {
@@ -178,12 +194,15 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       // 第二次 run：browser_open 挂起在 navigate 上
       stack.browser.calls.length = 0;
       stack.browser.hold('browser.navigate');
-      stack.llm.script('mock-main', [
-        step()
-          .expect((req) => req.lastUserText().includes('打开网页'))
-          .replyToolCall('browser_open', { url: 'https://fixture.example/second' }),
-        step().replyText('第二次打开'),
-      ]);
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          taskSteps: [
+            step().replyToolCall('browser_open', { url: 'https://fixture.example/second' }),
+            step().replyText('第二次打开'),
+          ],
+        }),
+      );
       stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
       await sendDrafts(stack.core, conv.id, [{ text: '打开网页 https://fixture.example/second' }]);
       await new Promise((r) => setTimeout(r, 600)); // navigate 已在途
@@ -203,7 +222,7 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       const runs = (await stack.core.rpc.call('runs.list', { conversationId: conv.id, limit: 50 })) as {
         runs: Run[];
       };
-      expect(runs.runs.filter((r) => r.loopType === 'turn')).toHaveLength(0);
+      expect(runs.runs.filter((r) => r.loopType === 'turn' || r.loopType === 'task')).toHaveLength(0);
       // 单聊已只读，drafts.flush 被拒
       await expect(
         stack.core.rpc.call('drafts.flush', { conversationId: conv.id }),
@@ -228,17 +247,31 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       mkdirSync(projectDir, { recursive: true });
       await stack.core.rpc.call('projects.select', { conversationId: conv.id, path: projectDir });
 
-      stack.llm.script('mock-main', [
-        step()
-          .expect((req) => req.lastUserText().includes('打开网页'))
-          .replyToolCall('browser_open', { url: 'http://127.0.0.1:8/step' }),
-        step()
-          .expect((req) => JSON.stringify(req.body).includes('fixture-home-marker'))
-          .replyText('本机页面已打开'),
-      ]);
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          taskSteps: [
+            step().replyToolCall('browser_open', { url: 'http://127.0.0.1:8/step' }),
+            step()
+              .expect((req) => JSON.stringify(req.body).includes('fixture-home-marker'))
+              .replyText('本机页面已打开'),
+          ],
+          relay: '本机页面已打开',
+        }),
+      );
       stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
       await sendDrafts(stack.core, conv.id, [{ text: '打开网页 http://127.0.0.1:8/step' }]);
-      await waitForRun(stack.core, conv.id, 'completed');
+      await waitForRun(stack.core, conv.id, 'completed', { loopType: 'task' });
+      // The waking turn must be over too: unbinding is refused while it runs.
+      await waitForMessage(
+        stack.core,
+        conv.id,
+        (m) => m.senderType === 'bot' && 'text' in m.content && m.content.text === '本机页面已打开',
+      );
+      await waitFor(
+        () => (stack.core.services.orchestrator!.isMailboxIdle(bot.id, conv.id) ? true : null),
+        { label: 'turns idle' },
+      );
 
       const ensure = stack.browser.calls.find((c) => c.method === 'browser.ensurePage');
       expect((ensure?.input as { networkContext: { allowLoopback: boolean } }).networkContext).toEqual({
