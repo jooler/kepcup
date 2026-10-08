@@ -12,7 +12,7 @@
 5. **测试必须在容器里跑**：宿主 glibc 2.35 加载不了 es-git 预编译绑定（需 ≥ 2.38），大部分集成测试在宿主上直接失败。用：
    `/tmp/claude-1000/-home-jyy-www-kepcup/9137b434-97a0-4439-b938-4ec9b3375ec8/scratchpad/ctest.sh <你的 worktree 绝对路径> "node scripts/run-tests.mjs run <测试文件或目录>"`
    不要在容器里跑 `pnpm test` / `pnpm install`（会触发依赖检查并破坏 `node_modules`）。typecheck / lint 在宿主跑：`pnpm -r typecheck`、`pnpm lint`。
-   `packages/core/test/integration/projects.test.ts` 在容器里约 10 分钟（6 条基线失败各等 60–180 s 超时），看起来像卡住；定向测试不要带它，全量回归照常包含。宿主 `timeout` 只杀 docker 客户端、杀不掉容器，需要硬超时用同目录的 `crun.sh <容器名> <worktree> <秒> "<命令>"`。vitest `--outputFile` 必须写到 worktree 内（容器里的 `/tmp` 不挂载到宿主）。
+   `projects.test.ts` 已按 D75 重写（`5aa0d3c`），容器里约 18 s，只剩 1 条沙箱用例按基线失败。宿主 `timeout` 只杀 docker 客户端、杀不掉容器，需要硬超时用同目录的 `crun.sh <容器名> <worktree> <秒> "<命令>"`。vitest `--outputFile` 必须写到 worktree 内（容器里的 `/tmp` 不挂载到宿主）。
 6. **基线失败**：容器里沙箱 / bwrap / socat 相关用例本来就失败（见 §6 基线清单）。你的交付标准是「不新增失败」，不是「全绿」。
 7. 提交：Conventional Commits（`feat(core): …`），每个提交可构建；提交信息末尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`。只提交到你自己的分支，不要 push，不要合并别的分支。
 8. 设计与现实冲突、契约不够用、验收无法达成 → 停下受影响部分，写进 `docs/dev/DEVIATIONS.md`（新编号 DEV-xxx），继续不受影响的部分，并在交付说明里点名。不要擅自改设计决策。
@@ -226,17 +226,17 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - workspace workdir 的写任务写 project 而不取 project 的租约（W1 LOW-3 同类：写任务只持自己 workdir 的租约；`82a289e` 只堵住了外部智能体的沙箱外命令这一路）。
 - 外部智能体任务没有 `ask_user`（不在任何宿主能力包内）。
 - 设计 30 §6.3 的「Bot 详情栏 / 对话头部的进行中任务数」与「执行记录页任务与对话轮分列」未做。
-- `projects.test.ts` 里仍假设「回复 run 持有写租约」的用例（基线失败的几条）需要按任务语义重新设计。
+- ~~`projects.test.ts` 里仍假设「回复 run 持有写租约」的用例需要按任务语义重新设计~~：已重写（`5aa0d3c`，18 例，容器内 17 过、1 条沙箱用例按基线失败）；重写中发现「被强制收回租约的写任务再写会覆盖首段改动记录」的产品缺陷，交修复批 E。
 - 纯对话轮的反思去抖（设计 30 §7.2）未做：每个 `completed` 对话轮都登记反思。
 
 ## 6. 基线
 
-容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。
+容器（`kepcup-test:trixie`）全量，`d75@7138daf`，2026-10-08，614 s：**1559 用例，1524 通过 / 33 失败 / 2 跳过**，1 个 unhandled error（`projects.test.ts` 的 `lease.waiting` 等待超时，基线既有）。33 条失败全部是容器环境原因（沙箱自检 / bwrap / socat / 外网），与 D72 记录的基线一致。判定标准：**失败集合不超出下表**。2026-10-08 `projects.test.ts` 重写后基线由 33 条减为 28 条（该文件 6 → 1）。
 
 | 文件 | 失败数 |
 |---|---|
 | `packages/core/test/sandbox/sandbox-isolation.test.ts` | 10 |
-| `packages/core/test/integration/projects.test.ts` | 6 |
+| `packages/core/test/integration/projects.test.ts` | 1 |
 | `packages/core/test/integration/skills-authoring.test.ts` | 4 |
 | `packages/core/test/integration/env-distro-toolchain.test.ts` | 3 |
 | `packages/core/test/integration/skills.test.ts` | 3 |
@@ -261,12 +261,7 @@ TaskHost、任何 orchestrator 行为变化、读路径过滤、UI、工具。W0
 - packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） node：linux 产物 → 校验 → 移入发行版 → 行 rel_path 为发行版 bin → 前缀注入
 - packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） 发行版未就绪：行 failed 且不产生任何提取/验证调用
 - packages/core/test/integration/env-distro-toolchain.test.ts :: P12 发行版内工具链安装（fake distroInstaller + platform win32 注入） 发行版行的 remove 走 removeDir（发行版内删除）
-- packages/core/test/integration/projects.test.ts :: projects (P04) serializes writes of two conversations on one project; the second waits with waiting_lease
-- packages/core/test/integration/projects.test.ts :: projects (P04) blocks bash writes without the lease and allows them after acquire_project_write
-- packages/core/test/integration/projects.test.ts :: projects (P04) summarizes command-made changes, diffs them and reverts the whole run (with conflict detection)
-- packages/core/test/integration/projects.test.ts :: projects (P04) allows localhost ports in project conversations and blocks them otherwise
-- packages/core/test/integration/projects.test.ts :: projects (P04) blocks switching projects while a bot is executing
-- packages/core/test/integration/projects.test.ts :: projects (P04) force revoke closes the holder window: each run keeps its own changes (BR-P04-001)
+- packages/core/test/integration/projects.test.ts :: projects (P04) allows localhost ports in project conversations and blocks them otherwise (OS sandbox)
 - packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 成功路径：验证通过 → active + 通知消息；草稿目录不在仓库历史中
 - packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 启用 + 通知
 - packages/core/test/integration/skills-authoring.test.ts :: P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 通知 改进已有自建技能：生成 loop 携 <existing_skill> 当前版本，全程产出新版本（BR-P08-009⑤）
