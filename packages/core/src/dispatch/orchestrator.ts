@@ -3600,10 +3600,15 @@ export class Orchestrator {
       this.#mailboxes.get(batch.botId, batch.conversationId)?.takeBuffered(batch) ?? [];
     const merged = buffered.length > 0 ? mergeTriggerBatches([batch, ...buffered]) : batch;
     // A task result consumed meanwhile (a re-delivery of a result an earlier
-    // turn relayed) is not relayed again (审查 M4).
+    // turn relayed) is not relayed again (审查 M4) — except in the trigger of
+    // a retried turn: the user asked to run that very trigger again.
+    const retried = new Set(
+      batch.retryOf !== undefined ? batch.messages.map((message) => message.id) : [],
+    );
     const refreshed = refreshTriggerBatch(merged, (id) => {
       const message = this.#deps.messages.getById(id);
-      return message !== null && this.#consumedTaskEntry(message) ? null : message;
+      if (message === null || retried.has(id)) return message;
+      return this.#consumedTaskEntry(message) ? null : message;
     });
     if (refreshed === null) return null;
     const before = batch.messages.map((message) => message.id).join(',');
