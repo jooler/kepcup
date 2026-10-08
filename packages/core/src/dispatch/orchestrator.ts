@@ -35,6 +35,7 @@ import {
   type Message,
   type Run,
   type SetupRequirement,
+  type TaskEventContent,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import type { Clock } from '../infra/clock.js';
@@ -69,6 +70,7 @@ import {
   buildConversationContext,
   buildConversationDelta,
   buildTriggerSegment,
+  renderMessageLine,
   type RenderMessageOptions,
 } from '../agent/context/conversation.js';
 import type { ContinuationPlan } from '../agent/context/continuation.js';
@@ -2518,6 +2520,14 @@ export class Orchestrator {
           );
           return;
         }
+      } else if (modelRef.length === 0 && !isTask && this.#agentIdOf(bot).length > 0) {
+        // §8.4 explicit downgrade: no built-in model for the turn, but the bot
+        // has an external agent as its task engine — routing is deterministic.
+        runs.update(runId, { status: 'running', engine: BUILTIN_ENGINE });
+        this.#deps.publish('run.status', { run: runs.getOrThrow(runId) });
+        this.#routeWithoutModel(runId, batch, bot);
+        settle('completed', null);
+        return;
       } else if (modelRef.length === 0) {
         settle('failed', '未配置模型：请在设置页选择默认主模型或在 Bot 配置中指定', {
           kind: 'main-model',
@@ -3250,6 +3260,87 @@ export class Orchestrator {
     if (facade === undefined) return;
     this.#subagentFacades.delete(runId);
     await facade.close('parent run ended');
+  }
+
+  /**
+   * Design 30 §8.4, level 2 (the explicit downgrade for a bot whose only
+   * engine is an external agent — no built-in model to run its turns): the
+   * turn makes no model call and routes deterministically, i.e. "always one
+   * task" as before D75. Task results in the trigger are forwarded verbatim
+   * (a failure as a short notice); the other messages go to the bot's
+   * in-flight task (inject_task), or start a new task when there is none or
+   * the task could not take them. Level 1 (running the turn through the
+   * agent's one-shot complete()) is not implemented (DEV-011).
+   */
+  #routeWithoutModel(runId: string, batch: TriggerBatch, bot: Bot): void {
+    const identity: RunIdentity = {
+      runId,
+      botId: batch.botId,
+      conversationId: batch.conversationId,
+      loopType: 'turn',
+    };
+    const notice = (text: string): void => {
+      const message = this.#deps.messages.append({
+        conversationId: batch.conversationId,
+        senderType: 'bot',
+        senderBotId: batch.botId,
+        kind: 'text',
+        text,
+        runId,
+      });
+      this.#recordBotMessage(runId, message);
+    };
+    for (const entry of batch.messages) {
+      if (entry.kind !== 'task_event' || entry.taskId === null) continue;
+      const content = entry.content as TaskEventContent;
+      if (content.phase === 'result' && content.text.trim().length > 0) {
+        try {
+          this.#taskHost.forwardResult(identity, entry.taskId);
+        } catch (error) {
+          // Already forwarded (a re-delivery): nothing to add.
+          this.#deps.logger.info(
+            { taskId: entry.taskId, error: error instanceof Error ? error.message : String(error) },
+            'downgraded turn: result not forwarded',
+          );
+        }
+      } else if (content.phase === 'failure') {
+        const title = this.#deps.runs.get(entry.taskId)?.taskTitle ?? entry.taskId;
+        const label = content.status === 'interrupted' ? '中断了' : '失败了';
+        notice(`任务「${title}」${label}${content.error ? `：${content.error}` : ''}`);
+      }
+    }
+    const incoming = batch.messages.filter(
+      (message) => message.kind !== 'task_event' && message.ownerBotId === null,
+    );
+    if (incoming.length === 0) return;
+    const options: RenderMessageOptions = { ...this.#renderOptions(), selfBotId: batch.botId };
+    const text = incoming.map((message) => renderMessageLine(message, options)).join('\n');
+    const sourceMessageIds = incoming.map((message) => message.id);
+    try {
+      const inFlight = this.#taskHost
+        .list(identity)
+        .filter((task) => task.state === 'submitted' || task.state === 'running')
+        .at(-1);
+      if (inFlight !== undefined) {
+        const injected = this.#taskHost.inject(identity, {
+          taskId: inFlight.taskId,
+          text: `用户的新消息：\n${text}`,
+          sourceMessageIds,
+        });
+        if (injected.delivery === 'delivered') return;
+      }
+      const first = incoming.map((message) => messageText(message).trim()).find((t) => t !== '');
+      this.#taskHost.start(identity, {
+        title: first !== undefined ? first.slice(0, 30) : '处理新消息',
+        instruction: `按用户的消息完成这件事（这一轮没有对话模型，消息原样交给你）：\n${text}`,
+        sourceMessageIds,
+        writes: bot.profile.runtime.agent.permission !== 'read_only',
+      });
+    } catch (error) {
+      notice(
+        `没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**
