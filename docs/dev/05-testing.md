@@ -96,7 +96,7 @@ docker run --rm -v "$WT:$WT" -v "$NODE_DIR:$NODE_DIR:ro" -w "$WT" --user "$(id -
 ```
 
 - 容器里**只用** `node scripts/run-tests.mjs run …`；不要在容器里跑 `pnpm test` / `pnpm install`（会触发依赖检查、重装并破坏 worktree 的 `node_modules`）。typecheck / lint 在宿主跑（`pnpm -r typecheck`、`pnpm lint`），Node 24 需先放进 `PATH`（系统默认 node 版本过旧）。
-- `packages/core/test/integration/projects.test.ts` 在容器里约 10 分钟（基线失败的几条各等 60–180 s 超时），看起来像卡住；定向测试不要带它，全量回归照常包含。
+- `packages/core/test/integration/projects.test.ts` 已按 D75 重写，容器里约 18 s；其中「allows localhost ports … (OS sandbox)」一条依赖系统沙箱，容器里按基线失败。
 - 宿主 `timeout` 只杀 docker 客户端、杀不掉容器：需要硬超时就给容器起名（`--name`），另起一个 `sleep N; docker kill <名>` 的看门狗。
 - vitest `--outputFile`（如 `--reporter=json --outputFile=…`）必须写在 worktree 内：容器里的 `/tmp` 不挂载到宿主。
 - **基线**（`d75@7138daf`，2026-10-08）：全量 1559 例中 33 条失败，全部是容器环境原因（沙箱自检 / bwrap / socat / 外网：`sandbox-isolation` 10、`projects` 6、`skills-authoring` 4、`env-distro-toolchain` 3、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2），逐条清单见 `todo/supervisor-and-tasks.md` §6。判定标准是「失败集合不超出基线」，不是全绿；偶发负载超时（`web-tools`、`memory`「两个 Bot 同时产生画像提案」、`agents-service` 登录状态）单跑复核。D75 收口时（W3 后）全量 1755 例、33 条失败，除 `approvals` 一条（已由 `26e15f2` 修正）外均在基线集合内；`projects` 的「blocks switching projects while a bot is executing」已转为通过。
