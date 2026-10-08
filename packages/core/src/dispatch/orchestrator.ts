@@ -2883,12 +2883,7 @@ export class Orchestrator {
     const bot = this.#deps.bots.get(batch.botId);
     if (conversation === null || conversation.readOnly) return;
     if (bot === null || bot.status !== 'active') return;
-    if (
-      conversation.directBotId !== batch.botId &&
-      !this.#deps.conversations.memberBotIds(batch.conversationId).includes(batch.botId)
-    ) {
-      return;
-    }
+    if (!this.#botInConversation(conversation, batch.botId)) return;
     if (!steer.released) {
       const key = this.#mailboxKey(batch.botId, batch.conversationId);
       this.#pendingSteers.set(key, [...(this.#pendingSteers.get(key) ?? []), batch]);
@@ -2901,6 +2896,17 @@ export class Orchestrator {
   #noteAgentSteer(steer: AgentSteerLog, text: string, batch: TriggerBatch): void {
     steer.log.push({ text, batch });
     for (const message of batch.messages) steer.seen?.ids.set(message.id, message.seq);
+  }
+
+  /** The bot is the direct conversation's bot or still a member of the group. */
+  #botInConversation(
+    conversation: { id: string; directBotId: string | null },
+    botId: string,
+  ): boolean {
+    return (
+      conversation.directBotId === botId ||
+      this.#deps.conversations.memberBotIds(conversation.id).includes(botId)
+    );
   }
 
   #agentSessionRowExists(rowId: string): boolean {
@@ -2923,6 +2929,8 @@ export class Orchestrator {
       const conversation = this.#deps.conversations.get(input.conversationId);
       const bot = this.#deps.bots.get(input.botId);
       if (conversation === null || bot === null || bot.status !== 'active') return;
+      // Removed from the group meanwhile (复审 #7): the cascade already ran.
+      if (!this.#botInConversation(conversation, input.botId)) return;
       const previous = this.#agentSessions.get(input.botId, input.conversationId, input.agentId);
       const now = this.#deps.clock.now();
       // A different agent session behind the same row (new session after a

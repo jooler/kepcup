@@ -424,6 +424,7 @@ export interface LostAgentSession {
 export class AgentHost {
   readonly #deps: AgentHostDeps;
   readonly #lostListeners = new Set<(lost: LostAgentSession[]) => void>();
+  #keptGuard: ((state: unknown, update: AcpSessionUpdate) => boolean) | null = null;
   readonly #agents = new Map<string, LiveAgent>();
   readonly #authStatus = new Map<string, AgentAuthStatus & { at: number }>();
   /** Processes retired by `stop()` while still serving runs. */
@@ -547,6 +548,17 @@ export class AgentHost {
     };
   }
 
+  /**
+   * Whether an out-of-run mode / config update of a kept session means it
+   * must be dropped (P5-2 复审 #5): the engine compares it with the mode it
+   * expects for the session (its opaque kept state) — an update that only
+   * repeats the expected mode keeps the session. Without a guard every such
+   * update drops it (fail closed).
+   */
+  setKeptSessionGuard(guard: (state: unknown, update: AcpSessionUpdate) => boolean): void {
+    this.#keptGuard = guard;
+  }
+
   #notifyLost(lost: LostAgentSession[]): void {
     if (lost.length === 0) return;
     for (const listener of [...this.#lostListeners]) {
@@ -665,14 +677,19 @@ export class AgentHost {
       deliver: (notification) => {
         const sink = live.sessions.get(notification.sessionId);
         if (sink === undefined) {
-          // A kept session changing its permission mode / config between runs
-          // can no longer be trusted with the next run (审查 #1).
+          // A kept session leaving its permission mode between runs can no
+          // longer be trusted with the next run (审查 #1); an update repeating
+          // the expected mode is harmless (复审 #5).
           const kind = notification.update.sessionUpdate;
           if (
             (kind === 'current_mode_update' || kind === 'config_option_update') &&
             live.openSessions.has(notification.sessionId)
           ) {
-            this.#dropOpenSession(live, notification.sessionId);
+            const guard = this.#keptGuard;
+            const state = live.openSessions.get(notification.sessionId);
+            if (guard === null || guard(state, notification.update)) {
+              this.#dropOpenSession(live, notification.sessionId);
+            }
           }
           return false;
         }

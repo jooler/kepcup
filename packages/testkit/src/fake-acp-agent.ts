@@ -170,6 +170,12 @@ export interface FakeAgentScript {
   steeringDelayMs?: number;
   /** `session/set_mode` to these ids fails (an agent refusing a mode). */
   rejectModes?: string[];
+  /** `session/set_mode` to these ids is never answered (an agent hanging). */
+  hangModes?: string[];
+  /** Delays every `session/set_mode` answer. */
+  modeDelayMs?: number;
+  /** Delays the `session/new` answer (the session is recorded first). */
+  newSessionDelayMs?: number;
   /** Advertises `sessionCapabilities.close`. */
   sessionClose?: boolean;
   /** Advertises `sessionCapabilities.resume` (`session/resume`). */
@@ -575,6 +581,9 @@ class FakeAcpAgent implements Agent {
       mcpServers: params.mcpServers,
       meta: params._meta ?? null,
     });
+    if (this.#script.newSessionDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, this.#script.newSessionDelayMs));
+    }
     return {
       sessionId,
       ...(this.#script.configOptions !== undefined
@@ -650,6 +659,12 @@ class FakeAcpAgent implements Agent {
     this.#runtime.record({ kind: 'mode', sessionId: params.sessionId, modeId: params.modeId });
     if (this.#script.rejectModes?.includes(params.modeId) === true) {
       throw RequestError.invalidParams({ reason: `mode ${params.modeId} refused` });
+    }
+    if (this.#script.hangModes?.includes(params.modeId) === true) {
+      await new Promise<never>(() => undefined);
+    }
+    if (this.#script.modeDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, this.#script.modeDelayMs));
     }
     return {};
   }
