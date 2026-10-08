@@ -10,6 +10,7 @@ import {
   sendDrafts,
   skillFiles,
   step,
+  viaTask,
   waitFor,
 } from '@kepcup/testkit';
 import type { SkillRepoFixture } from '@kepcup/testkit';
@@ -24,6 +25,7 @@ async function waitForNewRun(
   core: CoreHarness,
   conversationId: string,
   afterRunId: string | null,
+  loopType: Run['loopType'] = 'turn',
 ): Promise<Run> {
   return waitFor(
     async () => {
@@ -32,7 +34,7 @@ async function waitForNewRun(
       };
       const found = result.runs.find(
         (run) =>
-          run.loopType === 'turn' &&
+          run.loopType === loopType &&
           run.status === 'completed' &&
           (afterRunId === null || run.id > afterRunId),
       );
@@ -45,12 +47,13 @@ async function waitForNewRun(
 async function latestResponseRunId(
   core: CoreHarness,
   conversationId: string,
+  loopType: Run['loopType'] = 'turn',
 ): Promise<string | null> {
   const result = (await core.rpc.call('runs.list', { conversationId, limit: 50 })) as {
     runs: Run[];
   };
   const ids = result.runs
-    .filter((r) => r.loopType === 'turn')
+    .filter((r) => r.loopType === loopType)
     .map((r) => r.id)
     .sort();
   return ids.at(-1) ?? null;
@@ -128,18 +131,36 @@ describe('P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执
     };
     const skillDir = path.join(stack.core.services.paths.home, list.skills[0]!.relPath!);
 
-    stack.llm.script('mock-main', [
-      step()
-        .expect((req) => String(req.lastUserText()).includes('技能'))
-        .replyToolCall('read', { path: path.join(skillDir, 'SKILL.md') }),
-      step().replyToolCall('bash', {
-        command: `bash ${path.join(skillDir, 'scripts', 'greet.sh')}`,
+    // D75 W2: running the skill's script is a task's work (a turn has no bash).
+    stack.llm.script(
+      'mock-main',
+      viaTask({
+        instruction: '按技能流程做一次检查',
+        writes: false,
+        taskSteps: [
+          step()
+            .expect((req) => String(req.lastUserText()).includes('技能'))
+            .replyToolCall('read', { path: path.join(skillDir, 'SKILL.md') }),
+          step().replyToolCall('bash', {
+            command: `bash ${path.join(skillDir, 'scripts', 'greet.sh')}`,
+          }),
+          step().replyText('已按技能完成检查'),
+        ],
+        relay: 'SKILL-RELAY-1',
       }),
-      step().replyText('已按技能完成检查'),
-    ]);
-    const beforeRunId = await latestResponseRunId(stack.core, conversationId);
+    );
+    const beforeRunId = await latestResponseRunId(stack.core, conversationId, 'task');
     await sendDrafts(stack.core, conversationId, [{ text: '按技能流程做一次检查' }]);
-    const run = await waitForNewRun(stack.core, conversationId, beforeRunId);
+    const run = await waitForNewRun(stack.core, conversationId, beforeRunId, 'task');
+    await waitFor(
+      async () =>
+        (await listMessages(stack.core, conversationId)).some(
+          (m) => 'text' in m.content && m.content.text === 'SKILL-RELAY-1',
+        )
+          ? true
+          : null,
+      { label: 'relay 1' },
+    );
 
     // 技能描述进入系统提示词（发给模型的请求体，含 system 段）
     expect(stack.llm.requestBodiesContain('<skills>')).toBe(true);
@@ -168,15 +189,31 @@ describe('P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执
       skills: SkillEntry[];
     };
     const skillDir = path.join(stack.core.services.paths.home, list.skills[0]!.relPath!);
-    const beforeRunId = await latestResponseRunId(stack.core, conversationId);
-    stack.llm.script('mock-main', [
-      step().replyToolCall('bash', {
-        command: `echo hacked > ${path.join(skillDir, 'attack.txt')}`,
+    const beforeRunId = await latestResponseRunId(stack.core, conversationId, 'task');
+    // D75 W2: a write task (a turn has no bash at all).
+    stack.llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().replyToolCall('bash', {
+            command: `echo hacked > ${path.join(skillDir, 'attack.txt')}`,
+          }),
+          step().replyText('好的'),
+        ],
+        relay: 'SKILL-RELAY-2',
       }),
-      step().replyText('好的'),
-    ]);
+    );
     await sendDrafts(stack.core, conversationId, [{ text: '试试写入技能目录' }]);
-    const run = await waitForNewRun(stack.core, conversationId, beforeRunId);
+    const run = await waitForNewRun(stack.core, conversationId, beforeRunId, 'task');
+    await waitFor(
+      async () =>
+        (await listMessages(stack.core, conversationId)).some(
+          (m) => 'text' in m.content && m.content.text === 'SKILL-RELAY-2',
+        )
+          ? true
+          : null,
+      { label: 'relay 2' },
+    );
     const steps = (await stack.core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: RunStep[];
     };
