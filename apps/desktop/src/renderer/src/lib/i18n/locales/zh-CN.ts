@@ -638,6 +638,8 @@ export const zhCN = {
   'usage.loop.skill_authoring': '技能编写',
   'usage.loop.conversation_summary': '对话摘要',
   'usage.loop.subagent': '子代理委派',
+  'usage.loop.turn': '对话轮',
+  'usage.loop.task': '任务',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
