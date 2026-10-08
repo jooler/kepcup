@@ -5,6 +5,7 @@ import {
   AGENT_FOLLOW_UP_MIN_MS,
   AGENT_RUN_TIMEOUT_MS,
   AGENT_SESSION_CALL_TIMEOUT_MS,
+  AGENT_SESSION_OPEN_TIMEOUT_MS,
   AGENT_TURN_BUDGET_TOKENS,
   AppError,
   findAgentEntry,
@@ -106,6 +107,8 @@ export interface ExternalAgentEngineDeps {
   cancelGraceMs?: number;
   /** Bound of one session-setup call (set_mode / set_config_option). */
   sessionCallTimeoutMs?: number;
+  /** Bound of opening a session (session/new | resume | load). */
+  sessionOpenTimeoutMs?: number;
   /** Minimum budget of a follow-up prompt near / past the run deadline. */
   followUpMinMs?: number;
 }
@@ -653,6 +656,32 @@ function fencedContent(content: string): string {
   return content.replace(/<(\/?)(tool_result|background_tool_results)/gi, '&lt;$1$2');
 }
 
+/** `90 秒` / `5 分钟` (rounded; at least 1 s). */
+function formatDuration(ms: number): string {
+  return ms >= 60_000
+    ? `${Math.round(ms / 60_000)} 分钟`
+    : `${Math.max(1, Math.round(ms / 1000))} 秒`;
+}
+
+/**
+ * Agents treat a prompt whose text starts with `/` as a slash command
+ * (OpenCode 1.18.35: all text blocks joined and trimmed, `/name args` → a
+ * user / MCP / skill command, whose template may run `` !`shell` `` without
+ * any permission request; claude-agent-acp likewise). KepCup never sends
+ * one (第三轮 #7): such a prompt gets a neutral first line.
+ */
+export function slashSafePrompt(prompt: AcpContentBlock[]): AcpContentBlock[] {
+  const text = prompt
+    .map((block) => (block.type === 'text' ? block.text : ''))
+    .join('')
+    .trimStart();
+  if (!text.startsWith('/')) return prompt;
+  const index = prompt.findIndex((block) => block.type === 'text');
+  return prompt.map((block, i) =>
+    i === index && block.type === 'text' ? { ...block, text: `（消息）\n${block.text}` } : block,
+  );
+}
+
 /** Follow-up prompt for background bridge results and late steers (P5). */
 export function followUpText(
   results: readonly DetachedResult[],
@@ -804,6 +833,12 @@ class ExternalRunHandle implements RunHandle {
       });
       phase = 'session_new';
       const opened = await this.#openSession(entry, lease, sessionOptions, acceptsImages);
+      if (opened === null) {
+        // Its conversation / bot went away while the kept session was being
+        // re-confirmed: nothing to answer (第三轮 #9).
+        this.#settle(this.#cancelledOutcome());
+        return;
+      }
       this.#sessionId = opened.sessionId;
       // Only a session that really carries the bridge may have kepcup tool
       // permission requests allowed (acp/client.ts decidePermission).
@@ -811,6 +846,13 @@ class ExternalRunHandle implements RunHandle {
       lease.attach(opened.sessionId, this.#sinkObj);
       if (this.#resolved) return;
       external.onSession?.(opened.sessionId, opened.mode);
+      // The orchestrator refused to record it (conversation / bot / membership
+      // gone during session/new | resume | load) and discarded it: it is
+      // deleted on release, no prompt is sent (第三轮 #9).
+      if (this.#control.discardOnRelease.has(opened.sessionId)) {
+        this.#settle(this.#cancelledOutcome());
+        return;
+      }
 
       phase = 'other';
       if (opened.mode === 'reused') {
@@ -883,6 +925,9 @@ class ExternalRunHandle implements RunHandle {
         await this.#awaitDetached();
         if (this.#aborted || this.#resolved) break;
         lastFollowUp = this.#deadlinePassed || Date.now() >= this.#runDeadline();
+        // Past the deadline without the wait's timer (a queued steer woke it):
+        // the background calls still end here (第三轮 #11).
+        if (lastFollowUp && !this.#deadlinePassed) this.#timeOutDetached();
         const results = this.#detachedResults.splice(0);
         // After the deadline late steers are handed back (#release), not answered.
         const late = lastFollowUp ? [] : this.#queuedSteers.splice(0);
@@ -963,10 +1008,14 @@ class ExternalRunHandle implements RunHandle {
     mode: AgentSessionMode;
     modes: AcpSessionModeState | null;
     configOptions: readonly AcpSessionConfigOption[];
-  }> {
+  } | null> {
     const spec = this.#spec;
     const external = spec.external!;
     const provider = lease.provider;
+    // The agent may read its user config again per session (OpenCode: per
+    // instance / directory): checked before every open, reuse included
+    // (第三轮 #4).
+    lease.checkConfig?.();
     const serverName = external.hostServerName ?? newHostServerName();
     this.#optionsHash = hashOf({
       cwd: spec.workdir,
@@ -1022,7 +1071,9 @@ class ExternalRunHandle implements RunHandle {
         const discard = this.#control.discardOnRelease.get(reuseId);
         this.#control.discardOnRelease.delete(reuseId);
         void this.#closeSession(lease, reuseId, discard?.deleteHistory === true);
-        if (discard === undefined) notifyInvalidated(this.#control, external.agentId, reuseId);
+        // Deleted meanwhile (conversation / bot): no new session either (第三轮 #9).
+        if (discard !== undefined) return null;
+        notifyInvalidated(this.#control, external.agentId, reuseId);
       } else if (kept !== undefined) {
         // Kept but no longer matching (or deleted meanwhile): close it.
         lease.forgetSession(reuseId);
@@ -1053,10 +1104,11 @@ class ExternalRunHandle implements RunHandle {
       const canLoad = provider.features.loadSession && caps?.loadSession === true;
       if (canResume || canLoad) {
         const request = { sessionId: reuseId, cwd: spec.workdir!, mcpServers, ...meta };
+        const restoring = canResume
+          ? lease.connection.resumeSession(request)
+          : lease.connection.loadSession(request);
         try {
-          const restored = canResume
-            ? await lease.connection.resumeSession(request)
-            : await lease.connection.loadSession(request);
+          const restored = await this.#sessionCall(restoring, this.#openBound('恢复会话'));
           return {
             sessionId: reuseId,
             mode: canResume ? 'resumed' : 'loaded',
@@ -1064,6 +1116,21 @@ class ExternalRunHandle implements RunHandle {
             configOptions: restored.configOptions ?? [],
           };
         } catch (error) {
+          // Not "gone on the agent's side": the run ended, the agent died or
+          // did not answer (第三轮 #10) — no new session. A silent agent's
+          // session is poisoned (closed + its row dropped on release).
+          if (this.#resolved || this.#toolAbort.signal.aborted || this.#hostGone()) {
+            // Restored after the run ended: not left open in the process.
+            void restoring.then(
+              () => this.#closeSession(lease, reuseId, false),
+              () => undefined,
+            );
+            throw error;
+          }
+          if (error instanceof AppError && error.code === 'TIMEOUT') {
+            this.#sessionId = reuseId;
+            throw error;
+          }
           // Gone on the agent's side (history deleted, other machine …):
           // start over; the prompt then carries the full context.
           this.#warn(
@@ -1077,11 +1144,18 @@ class ExternalRunHandle implements RunHandle {
         }
       }
     }
-    const session = await lease.connection.newSession({
-      cwd: spec.workdir!,
-      mcpServers,
-      ...meta,
-    });
+    const creating = lease.connection.newSession({ cwd: spec.workdir!, mcpServers, ...meta });
+    let session: Awaited<typeof creating>;
+    try {
+      session = await this.#sessionCall(creating, this.#openBound('建立会话'));
+    } catch (error) {
+      // Timed out / run ended: a session the agent creates later is closed.
+      void creating.then(
+        (late) => this.#closeSession(lease, late.sessionId, false),
+        () => undefined,
+      );
+      throw error;
+    }
     return {
       sessionId: session.sessionId,
       mode: 'new',
@@ -1200,11 +1274,14 @@ class ExternalRunHandle implements RunHandle {
       }
       return true;
     } catch (error) {
-      // The run ended meanwhile (cancelled, agent gone) or the agent did not
-      // answer (poisoned by start(), 复审 #10): not a refusal — no new session.
+      // The run ended meanwhile (cancelled) or the agent did not answer
+      // (poisoned by start(), 复审 #10): not a refusal — no new session.
+      // A crash meanwhile is not a refusal either: the row stays, the next
+      // run resumes / loads the session (第三轮 #8).
       if (
         this.#resolved ||
         this.#toolAbort.signal.aborted ||
+        this.#hostGone() ||
         (error instanceof AppError && error.code === 'TIMEOUT')
       ) {
         throw error;
@@ -1231,7 +1308,8 @@ class ExternalRunHandle implements RunHandle {
     // The first prompt gets the whole run timeout; a follow-up what is left
     // of it, at least the follow-up minimum (复审 #4).
     const timeoutMs = this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS;
-    const budgetMs = this.#prompted
+    const followUp = this.#prompted;
+    const budgetMs = followUp
       ? Math.max(
           Math.min(this.#deps.followUpMinMs ?? AGENT_FOLLOW_UP_MIN_MS, timeoutMs),
           this.#runDeadline() - Date.now(),
@@ -1244,7 +1322,11 @@ class ExternalRunHandle implements RunHandle {
     const prompting = this.#control.prompting;
     prompting.set(sessionId, (prompting.get(sessionId) ?? 0) + 1);
     try {
-      const response = await this.#withRunTimeout(connection.prompt(sessionId, prompt), budgetMs);
+      const response = await this.#withRunTimeout(
+        connection.prompt(sessionId, slashSafePrompt(prompt)),
+        budgetMs,
+        followUp,
+      );
       this.#recordUsage(response);
       return response;
     } finally {
@@ -1340,17 +1422,7 @@ class ExternalRunHandle implements RunHandle {
       this.#detachedWaiter = resolve;
       timer = setTimeout(
         () => {
-          this.#deadlinePassed = true;
-          this.#detachedAbort.abort();
-          for (const [, toolName] of this.#detachedPending) {
-            this.#detachedResults.push({
-              toolName,
-              ok: false,
-              content: '后台执行超时，已取消（超过本次执行的时间上限）',
-              errorCode: 'TIMEOUT',
-            });
-          }
-          this.#detachedPending.clear();
+          this.#timeOutDetached();
           this.#wakeDetached();
         },
         Math.max(0, deadline - Date.now()),
@@ -1358,6 +1430,25 @@ class ExternalRunHandle implements RunHandle {
       timer.unref?.();
     });
     if (timer !== null) clearTimeout(timer);
+  }
+
+  /**
+   * The run deadline passed: background calls still running are aborted and
+   * reported as timed out in the last follow-up (审查 #4; also when a queued
+   * steer woke the wait past the deadline, 第三轮 #11).
+   */
+  #timeOutDetached(): void {
+    this.#deadlinePassed = true;
+    this.#detachedAbort.abort();
+    for (const [, toolName] of this.#detachedPending) {
+      this.#detachedResults.push({
+        toolName,
+        ok: false,
+        content: '后台执行超时，已取消（超过本次执行的时间上限）',
+        errorCode: 'TIMEOUT',
+      });
+    }
+    this.#detachedPending.clear();
   }
 
   /** The run's own deadline: AGENT_RUN_TIMEOUT_MS from its start (审查 #4). */
@@ -1885,8 +1976,14 @@ class ExternalRunHandle implements RunHandle {
    * poisoned, closed and the lease released), and a run cancelled meanwhile
    * stops waiting at once — start()'s release always runs.
    */
-  async #sessionCall<T>(promise: Promise<T>): Promise<T> {
-    const timeoutMs = this.#deps.sessionCallTimeoutMs ?? AGENT_SESSION_CALL_TIMEOUT_MS;
+  async #sessionCall<T>(
+    promise: Promise<T>,
+    bound: { timeoutMs: number; what: string } = {
+      timeoutMs: this.#deps.sessionCallTimeoutMs ?? AGENT_SESSION_CALL_TIMEOUT_MS,
+      what: '会话设置',
+    },
+  ): Promise<T> {
+    const { timeoutMs, what } = bound;
     const signal = this.#toolAbort.signal;
     let timer: NodeJS.Timeout | null = null;
     let onAbort: (() => void) | null = null;
@@ -1898,7 +1995,7 @@ class ExternalRunHandle implements RunHandle {
             reject(
               new AppError(
                 'TIMEOUT',
-                `智能体「${this.#agentName}」未在 ${Math.round(timeoutMs / 1000)} 秒内应答会话设置`,
+                `智能体「${this.#agentName}」未在 ${formatDuration(timeoutMs)}内应答${what}`,
               ),
             );
           }, timeoutMs);
@@ -1914,8 +2011,16 @@ class ExternalRunHandle implements RunHandle {
     }
   }
 
-  async #withRunTimeout<T>(promise: Promise<T>, budgetMs: number): Promise<T> {
-    const timeoutMs = this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS;
+  /** session/new | resume | load bound (第三轮 #10). */
+  #openBound(what: string): { timeoutMs: number; what: string } {
+    return {
+      timeoutMs: this.#deps.sessionOpenTimeoutMs ?? AGENT_SESSION_OPEN_TIMEOUT_MS,
+      what,
+    };
+  }
+
+  async #withRunTimeout<T>(promise: Promise<T>, budgetMs: number, followUp: boolean): Promise<T> {
+    // The message names the budget this prompt really had (第三轮 #12).
     let timer: NodeJS.Timeout | null = null;
     try {
       return await Promise.race([
@@ -1926,7 +2031,12 @@ class ExternalRunHandle implements RunHandle {
               void this.#lease?.connection.cancel(this.#sessionId).catch(() => undefined);
             }
             reject(
-              new AppError('TIMEOUT', `智能体执行超时（${Math.round(timeoutMs / 60_000)} 分钟）`),
+              new AppError(
+                'TIMEOUT',
+                followUp
+                  ? `智能体执行超时（后续处理超过 ${formatDuration(budgetMs)}）`
+                  : `智能体执行超时（${formatDuration(budgetMs)}）`,
+              ),
             );
           }, budgetMs);
           timer.unref?.();

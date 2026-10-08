@@ -50,6 +50,9 @@ export interface LaunchContext {
   loadUserConfig?: boolean;
 }
 
+/** `AgentProvider.checkConfig` 的输入：与该进程启动时的 LaunchContext 相同（不含命令）。 */
+export type ConfigCheckContext = Omit<LaunchContext, 'target'>;
+
 export interface SessionContext {
   entry: AgentCatalogEntry;
   cwd: string;
@@ -128,6 +131,14 @@ export interface AgentProvider {
   id: string;
   /** 进程级配置在此（命令、参数、环境变量）。 */
   launch(ctx: LaunchContext): LaunchTarget;
+  /**
+   * 运行前检查 Agent 会读取的用户配置（第三轮审查 #4 / #6）：配置会绕过宿主
+   * 裁决时抛 `AGENT_CONFIG_UNSAFE`。AgentHost 在拉起 run 进程前调用，引擎在
+   * 每次 `session/new` / `resume` / `load`（及同进程复用）前再调用一次——
+   * Agent 可能按会话重新读取配置。探测 / 登录 / 退出的控制进程不调用（不建
+   * 会话、不跑工具，不应因此无法退出登录）。
+   */
+  checkConfig?(ctx: ConfigCheckContext): void;
   instructionMode: 'meta-append' | 'prompt-prefix';
   /** 会话级选项（`session/new` 的 `_meta`、额外 MCP server）。 */
   sessionNew(ctx: SessionContext): {

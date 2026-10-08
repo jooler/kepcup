@@ -19,6 +19,7 @@ import {
   AcpEventMapper,
   ExternalAgentEngine,
   followUpText,
+  slashSafePrompt,
 } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import { HostMcpBridge } from '../../src/agent/external/mcp-bridge.js';
@@ -87,7 +88,12 @@ async function setup(
   options: {
     providers?: ProviderRegistry;
     bridge?: boolean;
-    engine?: { sessionCallTimeoutMs?: number; runTimeoutMs?: number; followUpMinMs?: number };
+    engine?: {
+      sessionCallTimeoutMs?: number;
+      sessionOpenTimeoutMs?: number;
+      runTimeoutMs?: number;
+      followUpMinMs?: number;
+    };
   } = {},
 ) {
   const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
@@ -1554,6 +1560,281 @@ describe('kept session lifecycle (P5-2 re-review 复审 #1–#6, #10)', () => {
     handle.abort('user');
     expect((await handle.done).status).toBe('cancelled');
     await eventually(() => (!cancelled.host.inUse(FAKE.id) ? true : null), 1_000);
+  });
+});
+
+describe('P5-2 third review (第三轮 #7–#12)', () => {
+  const MODES = {
+    currentModeId: 'default',
+    availableModes: [
+      { id: 'default', name: 'Default' },
+      { id: 'other', name: 'Other' },
+    ],
+  };
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const sessions = () => {
+    const ids: string[] = [];
+    const modes: AgentSessionMode[] = [];
+    return {
+      ids,
+      modes,
+      onSession: (id: string, mode: AgentSessionMode) => {
+        ids.push(id);
+        modes.push(mode);
+      },
+    };
+  };
+
+  it('a crash during the reuse re-confirmation keeps the row (no invalidation) (#8)', async () => {
+    const { engine, host, started, spec } = await setup(
+      [
+        { modes: MODES, resume: true, modeDelayMs: 2_000, turns: [agentTurn().text('一')] },
+        { modes: MODES, resume: true, turns: [agentTurn().text('二')] },
+      ],
+      { providers: withFeatures({ resume: true }) },
+    );
+    // The failed request is seen before the host reports the process gone
+    // (onClosed comes later — the order a real child can produce).
+    const acquire = host.acquire.bind(host);
+    host.acquire = async (entry) => {
+      const lease = await acquire(entry);
+      return {
+        ...lease,
+        attach: (sessionId, sink) =>
+          lease.attach(sessionId, {
+            ...sink,
+            onClosed: (error) => setTimeout(() => sink.onClosed(error), 100),
+          }),
+      };
+    };
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, modes, onSession } = sessions();
+    await engine.startRun(spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }))
+      .done;
+    const second = engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    );
+    await eventually(() => started[0]!.observed.events.some((event) => event.kind === 'mode'));
+    started[0]!.kill();
+    expect(await second.done).toMatchObject({ status: 'failed' });
+    await pause(300);
+    expect(invalidated).toEqual([]);
+    // Not taken for a refusal: no new session on the dead process.
+    expect(started[0]!.observed.sessions).toHaveLength(1);
+    const third = await engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    ).done;
+    expect(third).toMatchObject({ status: 'completed', finalText: '二' });
+    expect(modes).toEqual(['new', 'resumed']);
+    expect(started[1]!.observed.resumedSessions.map((s) => s.sessionId)).toEqual([ids[0]]);
+  });
+
+  it('a refused re-confirmation with a discard pending creates no new session (#9)', async () => {
+    const { engine, started, spec } = await setup({
+      modes: MODES,
+      sessionDelete: true,
+      rejectModes: ['default'],
+      modeDelayMs: 300,
+      turns: [agentTurn().text('一'), agentTurn().text('不该有')],
+    });
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, onSession } = sessions();
+    await engine.startRun(spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }))
+      .done;
+    const second = engine.startRun(
+      spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    );
+    await eventually(() => started[0]!.observed.events.some((event) => event.kind === 'mode'));
+    await engine.discardSession({
+      agentId: FAKE.id,
+      agentSessionId: ids[0]!,
+      sessionKey: 'bot_1:conv_1:fake',
+      deleteHistory: true,
+    });
+    expect((await second.done).status).toBe('cancelled');
+    await eventually(() => (started[0]!.observed.deletedSessions.length === 1 ? true : null));
+    expect(started[0]!.observed.deletedSessions).toEqual([ids[0]]);
+    expect(started[0]!.observed.sessions).toHaveLength(1);
+    expect(started[0]!.observed.prompts).toHaveLength(1);
+    expect(invalidated).toEqual([]);
+  });
+
+  it('a session discarded from onSession gets no prompt and is deleted on release (#9)', async () => {
+    const { engine, started, spec } = await setup({
+      sessionDelete: true,
+      turns: [agentTurn().text('不该有')],
+    });
+    const invalidated: string[] = [];
+    engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const outcome = await engine.startRun(
+      spec(
+        {},
+        {
+          session: { reuseId: null, fingerprint: 'fp' },
+          // What the orchestrator does when the conversation went away meanwhile.
+          onSession: (id) => {
+            void engine.discardSession({
+              agentId: FAKE.id,
+              agentSessionId: id,
+              sessionKey: 'bot_1:conv_1:fake',
+              deleteHistory: true,
+            });
+          },
+        },
+      ),
+    ).done;
+    expect(outcome.status).toBe('cancelled');
+    expect(started[0]!.observed.prompts).toEqual([]);
+    await eventually(() => (started[0]!.observed.deletedSessions.length === 1 ? true : null));
+    expect(started[0]!.observed.deletedSessions).toEqual(['fake-session-1']);
+    expect(invalidated).toEqual([]);
+  });
+
+  it('session/new and session/resume are bounded; a late session is closed (#10)', async () => {
+    const slowNew = await setup(
+      { newSessionDelayMs: 800, sessionClose: true, turns: [agentTurn().text('一')] },
+      { engine: { sessionOpenTimeoutMs: 200 } },
+    );
+    const startedAt = Date.now();
+    const outcome = await slowNew.engine.startRun(
+      slowNew.spec({}, { session: { reuseId: null, fingerprint: 'fp' } }),
+    ).done;
+    expect(outcome).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    expect(outcome.error?.message).toContain('建立会话');
+    expect(Date.now() - startedAt).toBeLessThan(700);
+    expect(slowNew.host.inUse(FAKE.id)).toBe(false);
+    await eventually(() =>
+      slowNew.started[0]!.observed.closedSessions.length === 1 ? true : null,
+    );
+    expect(slowNew.started[0]!.observed.prompts).toEqual([]);
+
+    const slowResume = await setup(
+      [
+        { resume: true, turns: [agentTurn().text('半截').crash()] },
+        { resume: true, restoreDelayMs: 5_000, sessionClose: true, turns: [agentTurn()] },
+      ],
+      { providers: withFeatures({ resume: true }), engine: { sessionOpenTimeoutMs: 200 } },
+    );
+    const invalidated: string[] = [];
+    slowResume.engine.onSessionInvalidated((_agentId, id) => invalidated.push(id));
+    const { ids, onSession } = sessions();
+    await slowResume.engine.startRun(
+      slowResume.spec({}, { session: { reuseId: null, fingerprint: 'fp' }, onSession }),
+    ).done;
+    const resumed = await slowResume.engine.startRun(
+      slowResume.spec({}, { session: { reuseId: ids[0]!, fingerprint: 'fp' }, onSession }),
+    ).done;
+    expect(resumed).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    expect(resumed.error?.message).toContain('恢复会话');
+    // Poisoned: its row goes, no new session is tried on the silent agent.
+    await eventually(() => (invalidated.length === 1 ? true : null));
+    expect(invalidated).toEqual([ids[0]]);
+    expect(slowResume.started[1]!.observed.sessions).toEqual([]);
+    expect(slowResume.host.inUse(FAKE.id)).toBe(false);
+  });
+
+  it('a steer queued past the deadline still reports the background calls as timed out (#11)', async () => {
+    const slowTool: ToolDefinition = {
+      name: 'generate_video',
+      description: 'slow',
+      parameters: Type.Object({}),
+      execute: async (_args, ctx) =>
+        new Promise((resolve) => {
+          const timer = setTimeout(() => resolve({ ok: true, content: 'late' }), 10_000);
+          ctx.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            resolve({ ok: false, content: 'aborted' });
+          });
+        }),
+    };
+    const { engine, started, spec } = await setup(
+      {
+        newSessionDelayMs: 500,
+        turns: [
+          agentTurn().mcpCall('m1', 'generate_video', {}).sleep(700).text('稍等'),
+          agentTurn().text('收尾'),
+        ],
+      },
+      {
+        bridge: true,
+        providers: withFeatures({}, { bridgeToolDetachMs: 40 }),
+        engine: { runTimeoutMs: 1_000, followUpMinMs: 3_000 },
+      },
+    );
+    const rejected: string[] = [];
+    const handle = engine.startRun(
+      spec(
+        { tools: [slowTool], onSteerRejected: (text) => rejected.push(text) },
+        { capabilities: ['media'], hostServerName: 'kepcup_3c3c0000' },
+      ),
+    );
+    // Queued the moment the prompt ended (its interim text), past the deadline.
+    let steered = false;
+    handle.onEvent(() => {
+      if (!steered) steered = handle.steer('补充一句');
+    });
+    const outcome = await handle.done;
+    expect(steered).toBe(true);
+    expect(outcome).toMatchObject({ status: 'completed', finalText: '收尾' });
+    const prompts = started[0]!.observed.prompts;
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]!.text).toContain('error_code="TIMEOUT"');
+    expect(prompts[1]!.text).not.toContain('补充一句');
+    expect(rejected).toEqual(['补充一句']);
+  });
+
+  it('a first prompt timing out names the run timeout (#12)', async () => {
+    const { engine, spec } = await setup(
+      { turns: [agentTurn().sleep(10_000).text('太慢')] },
+      { engine: { runTimeoutMs: 300 } },
+    );
+    const outcome = await engine.startRun(spec()).done;
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      error: { code: 'TIMEOUT', message: '智能体执行超时（1 秒）' },
+    });
+  });
+
+  it('a follow-up timing out names its own budget, not the run timeout (#12)', async () => {
+    const { engine, spec } = await setup(
+      {
+        turns: [
+          agentTurn().mcpCall('m1', 'generate_video', {}).text('稍等'),
+          agentTurn().sleep(10_000).text('太慢'),
+        ],
+      },
+      {
+        bridge: true,
+        providers: withFeatures({}, { bridgeToolDetachMs: 40 }),
+        engine: { runTimeoutMs: 1_500, followUpMinMs: 100 },
+      },
+    );
+    const quickTool: ToolDefinition = {
+      name: 'generate_video',
+      description: 'slow',
+      parameters: Type.Object({}),
+      execute: async () =>
+        new Promise((resolve) => setTimeout(() => resolve({ ok: true, content: 'done' }), 300)),
+    };
+    const outcome = await engine.startRun(
+      spec({ tools: [quickTool] }, { capabilities: ['media'], hostServerName: 'kepcup_5e5e0000' }),
+    ).done;
+    expect(outcome).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT' } });
+    expect(outcome.error?.message).toMatch(/^智能体执行超时（后续处理超过 \d+ 秒）$/);
+  });
+
+  it('a prompt never starts with "/" (agents run it as a slash command) (#7)', async () => {
+    expect(slashSafePrompt([{ type: 'text', text: '  /init now' }])).toEqual([
+      { type: 'text', text: '（消息）\n  /init now' },
+    ]);
+    const plain = [{ type: 'text' as const, text: '<run>/x</run>' }];
+    expect(slashSafePrompt(plain)).toBe(plain);
+    const { engine, started, spec } = await setup({ turns: [agentTurn().text('好')] });
+    await engine.startRun(spec({ promptParts: { session: '', run: '', conversation: '/compact' } }))
+      .done;
+    expect(started[0]!.observed.prompts[0]!.text).toBe('（消息）\n/compact');
   });
 });
 

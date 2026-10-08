@@ -172,10 +172,12 @@ export interface FakeAgentScript {
   rejectModes?: string[];
   /** `session/set_mode` to these ids is never answered (an agent hanging). */
   hangModes?: string[];
-  /** Delays every `session/set_mode` answer. */
+  /** Delays every `session/set_mode` answer (refusals included). */
   modeDelayMs?: number;
   /** Delays the `session/new` answer (the session is recorded first). */
   newSessionDelayMs?: number;
+  /** Delays the `session/load` / `session/resume` answer (recorded first). */
+  restoreDelayMs?: number;
   /** Advertises `sessionCapabilities.close`. */
   sessionClose?: boolean;
   /** Advertises `sessionCapabilities.resume` (`session/resume`). */
@@ -605,6 +607,9 @@ class FakeAcpAgent implements Agent {
     for (const action of this.#script.history ?? []) {
       await this.#perform(params.sessionId, action);
     }
+    if (this.#script.restoreDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, this.#script.restoreDelayMs));
+    }
     return {
       ...(this.#script.configOptions !== undefined
         ? { configOptions: this.#script.configOptions }
@@ -622,6 +627,9 @@ class FakeAcpAgent implements Agent {
     });
     this.#cwds.set(params.sessionId, params.cwd);
     this.#mcpServers.set(params.sessionId, params.mcpServers ?? []);
+    if (this.#script.restoreDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, this.#script.restoreDelayMs));
+    }
     return {
       ...(this.#script.configOptions !== undefined
         ? { configOptions: this.#script.configOptions }
@@ -657,14 +665,14 @@ class FakeAcpAgent implements Agent {
 
   async setSessionMode(params: { sessionId: string; modeId: string }) {
     this.#runtime.record({ kind: 'mode', sessionId: params.sessionId, modeId: params.modeId });
+    if (this.#script.modeDelayMs !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, this.#script.modeDelayMs));
+    }
     if (this.#script.rejectModes?.includes(params.modeId) === true) {
       throw RequestError.invalidParams({ reason: `mode ${params.modeId} refused` });
     }
     if (this.#script.hangModes?.includes(params.modeId) === true) {
       await new Promise<never>(() => undefined);
-    }
-    if (this.#script.modeDelayMs !== undefined) {
-      await new Promise((resolve) => setTimeout(resolve, this.#script.modeDelayMs));
     }
     return {};
   }

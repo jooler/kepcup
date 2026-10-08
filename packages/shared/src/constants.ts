@@ -366,6 +366,13 @@ export const AGENT_INIT_TIMEOUT_MS = 60_000;
  */
 export const AGENT_SESSION_CALL_TIMEOUT_MS = 30_000;
 /**
+ * Upper bound of opening a session (`session/new` / `session/resume` /
+ * `session/load`; agents connect their MCP servers and may replay history
+ * meanwhile): no answer → the run fails TIMEOUT and the lease is released
+ * (P5-2 第三轮审查 #10).
+ */
+export const AGENT_SESSION_OPEN_TIMEOUT_MS = 120_000;
+/**
  * Minimum time a follow-up prompt gets when the run's own deadline
  * (AGENT_RUN_TIMEOUT_MS from the run start) is close or already past — e.g.
  * the single follow-up reporting timed-out background tools (P5-2 复审 #4).

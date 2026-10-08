@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { load as loadYaml } from 'js-yaml';
 import { AppError, type AgentPermissionTier } from '@kepcup/shared';
-import type { AgentProvider, PermissionTierContext } from '../types.js';
+import type { AgentProvider, ConfigCheckContext, PermissionTierContext } from '../types.js';
 import { genericAcpProvider } from './generic-acp.js';
 import { switchToMode } from './mode-tier.js';
 
@@ -50,10 +51,14 @@ import { switchToMode } from './mode-tier.js';
  *     `{tool,tools}/*.{js,ts}`；开启「加载我的个人配置」时另加
  *     `$XDG_CONFIG_HOME/opencode/` 的 `config.json` / `opencode.json(c)` / 旧版
  *     `config` 与同样的子目录；私有配置目录也扫），只要有一处对非只读权限给出
- *     `allow`（含通配键、`tools: {x: true}`、整个 `permission:"allow"`）、存在
- *     自定义工具代码、或文件无法解析，就拒绝启动（`AGENT_INCOMPATIBLE`，列出
- *     文件与键）——fail closed。markdown frontmatter 不做完整 YAML 解析：出现
- *     `allow` 或 `tools` 下的 `true` 即视为放行。残留：登录 OpenCode 控制台
+ *     `ask` / `deny` 以外的动作（含通配键、`tools: {x: true}`、整个 `permission`
+ *     字符串；`{file:…}` / `{env:…}` 替换一律拒绝）、存在自定义工具代码、文件
+ *     无法解析、或目录过深 / 文件过多，就拒绝运行（`AGENT_CONFIG_UNSAFE`，列出
+ *     文件与键）——fail closed。markdown frontmatter 按 gray-matter 的规则切出
+ *     （只接受 `---` / `---yaml`：`---js` 等语言会被 eval）、用 js-yaml 解析后
+ *     只看 `permission` / `tools`（第三轮审查 #1 / #2）。扫描在进程启动前和每次
+ *     建 / 恢复会话前各做一次（`checkConfig`，第三轮 #4），探测 / 登录 / 退出的
+ *     控制进程不扫。残留：登录 OpenCode 控制台
  *     组织后的远程组织配置、`auth.json` 中 wellknown 远程配置（读取它们须读凭据
  *     文件，宿主不读）与管理员的 `/etc/opencode` 不在扫描范围内（后两者在我们的
  *     层之后合并），记入 todo §8.4 复审修复 #8 残留；
@@ -72,7 +77,10 @@ import { switchToMode } from './mode-tier.js';
  *   无法识别（会多出一条原生步骤），待登录实测；
  * - 未登录不报错：自带匿名免费模型（目录 `auth.kinds` 含 `anonymous`）；terminal
  *   登录只在 `_meta['terminal-auth']`，由 terminal-auth.ts 改写为已安装路径；
- * - steering 视为不支持（spike 未见声明）；load / resume 有。
+ * - steering 视为不支持（spike 未见声明）；load / resume 有；
+ * - 斜杠命令：ACP prompt 的文本（各 text 块拼接、trim）以 `/` 开头且命中命令
+ *   名时走 `session.command`（命令模板可含 `` !`shell` ``，不经权限确认）——
+ *   引擎保证发出的 prompt 从不以 `/` 开头（`slashSafePrompt`，第三轮 #7）。
  */
 
 export function opencodeModeForTier(tier: AgentPermissionTier): string {
@@ -158,53 +166,65 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Keys of one `permission` value that allow something only the host may
  * decide (复审 #8). A key is safe only when it names a read-only permission
  * exactly — wildcard keys ("*", "b*", "**") may match bash / edit / task …
+ * Any action other than exactly `ask` / `deny` counts as allowing (第三轮 #3:
+ * `{env:…}` / `{file:…}` or an unknown value may turn into `allow`).
  */
 function permissionAllows(value: unknown): string[] {
-  if (value === undefined) return [];
-  if (typeof value === 'string') return value === 'allow' ? ['permission'] : [];
+  if (value === undefined || value === null) return [];
+  if (typeof value === 'string') return isAskOrDeny(value) ? [] : ['permission'];
   if (!isPlainObject(value)) return ['permission'];
   const keys: string[] = [];
   for (const [name, action] of Object.entries(value)) {
-    const allows =
-      typeof action === 'string'
-        ? action === 'allow'
-        : isPlainObject(action)
-          ? Object.values(action).some((inner) => inner !== 'ask' && inner !== 'deny')
-          : true;
+    const allows = isPlainObject(action)
+      ? Object.values(action).some((inner) => !isAskOrDeny(inner))
+      : !isAskOrDeny(action);
     if (allows && !OPENCODE_READ_ONLY_PERMISSIONS.has(name)) keys.push(`permission.${name}`);
   }
   return keys;
 }
 
+function isAskOrDeny(action: unknown): boolean {
+  return action === 'ask' || action === 'deny';
+}
+
 /** `tools: {name: true}` turns into an allow rule (write / patch → edit). */
 function toolsAllow(value: unknown): string[] {
-  if (value === undefined) return [];
+  if (value === undefined || value === null) return [];
   if (!isPlainObject(value)) return ['tools'];
   return Object.entries(value)
     .filter(([name, enabled]) => enabled !== false && !OPENCODE_READ_ONLY_PERMISSIONS.has(name))
     .map(([name]) => `tools.${name}`);
 }
 
+/** One agent's own settings (`agent.<name>` / markdown frontmatter): permission + tools only. */
+function agentAllows(agent: Record<string, unknown>): string[] {
+  return [...permissionAllows(agent.permission), ...toolsAllow(agent.tools)];
+}
+
 /** Allowing keys of a parsed opencode.json(c): top level, `agent.*`, `mode.*`. */
 function configAllows(config: unknown): string[] {
   if (!isPlainObject(config)) return ['（不是 JSON 对象）'];
-  const keys = [...permissionAllows(config.permission), ...toolsAllow(config.tools)];
+  const keys = agentAllows(config);
   for (const section of ['agent', 'mode'] as const) {
     const entries = config[section];
-    if (entries === undefined) continue;
+    if (entries === undefined || entries === null) continue;
     if (!isPlainObject(entries)) {
       keys.push(section);
       continue;
     }
     for (const [name, agent] of Object.entries(entries)) {
       if (!isPlainObject(agent)) continue;
-      for (const key of [...permissionAllows(agent.permission), ...toolsAllow(agent.tools)]) {
-        keys.push(`${section}.${name}.${key}`);
-      }
+      for (const key of agentAllows(agent)) keys.push(`${section}.${name}.${key}`);
     }
   }
   return keys;
 }
+
+/**
+ * `{file:…}` / `{env:…}` are substituted into the raw config text before it
+ * is parsed (第三轮 #3): what they expand to cannot be checked here.
+ */
+const SUBSTITUTION = /\{(?:file|env):/;
 
 /** JSONC → JSON: comments and trailing commas out, strings untouched. */
 function stripJsonc(text: string): string {
@@ -229,21 +249,92 @@ function stripJsonc(text: string): string {
   return out.replace(/,(\s*[}\]])/g, '$1');
 }
 
+/** Allowing keys of an opencode.json(c) text (unparsable / substitutions → refused). */
+function jsonConfigAllows(text: string): string[] {
+  if (SUBSTITUTION.test(text)) return ['含 {file:…} / {env:…} 替换（无法检查）'];
+  try {
+    return configAllows(JSON.parse(stripJsonc(text)));
+  } catch {
+    return ['无法解析'];
+  }
+}
+
 /**
- * Agent / mode markdown frontmatter (no YAML parser here): any `allow` value,
- * or `true` under a `tools` key, counts as allowing — fail closed.
+ * opencode 1.18.35 `ConfigMarkdown.sanitize` (verbatim logic): when the
+ * frontmatter fails to parse, OpenCode retries with top-level `key: a:b`
+ * values turned into block scalars.
+ */
+function sanitizeFrontmatter(text: string): string {
+  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (match === null) return text;
+  const frontmatter = match[1]!;
+  const lines = frontmatter.split(/\r?\n/).flatMap((line) => {
+    if (line.trim().startsWith('#') || line.trim() === '' || /^\s+/.test(line)) return [line];
+    const entry = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+    if (entry === null) return [line];
+    const value = entry[2]!.trim();
+    if (value === '' || value === '>' || value === '|' || value.startsWith('"')) return [line];
+    if (value.startsWith("'") || !value.includes(':')) return [line];
+    return [`${entry[1]}: |-`, `  ${value}`];
+  });
+  return text.replace(frontmatter, () => lines.join('\n'));
+}
+
+/**
+ * gray-matter 4 (as bundled in opencode 1.18.35): BOM stripped; frontmatter
+ * only when the text starts with `---` not followed by a fourth `-`; the
+ * rest of the opening line names the language (yaml when empty — `js` /
+ * `javascript` would be eval'ed, `json`, `coffee` … other engines); the
+ * matter runs to the next `\n---`. Null = no frontmatter.
+ */
+function grayMatterBlock(text: string): { language: string; matter: string } | null {
+  const content = text.charAt(0) === '\uFEFF' ? text.slice(1) : text;
+  if (!content.startsWith('---') || content.charAt(3) === '-') return null;
+  let rest = content.slice(3);
+  const languageRaw = rest.slice(0, rest.search(/\r?\n/));
+  const language = languageRaw.trim();
+  if (language.length > 0) rest = rest.slice(languageRaw.length);
+  const close = rest.indexOf('\n---');
+  return { language, matter: close < 0 ? rest : rest.slice(0, close) };
+}
+
+/** Allowing keys of one markdown text's frontmatter as gray-matter + js-yaml parse it. */
+function frontmatterTextAllows(text: string): string[] {
+  const block = grayMatterBlock(text);
+  if (block === null) return [];
+  if (block.language !== '' && block.language.toLowerCase() !== 'yaml') {
+    return [`frontmatter 语言「${block.language}」（只接受 YAML）`];
+  }
+  if (SUBSTITUTION.test(block.matter)) return ['frontmatter 含 {file:…} / {env:…}'];
+  // Comment-only matter is empty for gray-matter.
+  if (block.matter.replace(/^\s*#[^\n]+/gm, '').trim() === '') return [];
+  let data: unknown;
+  try {
+    data = loadYaml(block.matter);
+  } catch {
+    return ['frontmatter 无法解析'];
+  }
+  if (data === null || data === undefined) return [];
+  if (!isPlainObject(data)) return ['frontmatter 不是键值映射'];
+  return agentAllows(data).map((key) => `frontmatter ${key}`);
+}
+
+/**
+ * Agent / mode markdown (第三轮 #1, #2): the frontmatter is parsed with a
+ * real YAML parser (js-yaml — OpenCode uses gray-matter + js-yaml 3
+ * `safeLoad`) and checked like an `agent.<name>` entry (`permission` /
+ * `tools` only — prose elsewhere is irrelevant). OpenCode re-parses a
+ * sanitized text when the first parse fails: both readings are checked;
+ * neither parsing → refused.
  */
 function frontmatterAllows(text: string): string[] {
-  const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
-  if (!normalized.startsWith('---')) return [];
-  const end = normalized.indexOf('\n---', 3);
-  const frontmatter = end < 0 ? normalized : normalized.slice(3, end);
-  const keys: string[] = [];
-  if (/\ballow\b/.test(frontmatter)) keys.push('frontmatter: allow');
-  if (/^\s*tools\s*:/m.test(frontmatter) && /\btrue\b/.test(frontmatter)) {
-    keys.push('frontmatter: tools … true');
-  }
-  return keys;
+  const raw = frontmatterTextAllows(text);
+  const sanitizedText = sanitizeFrontmatter(text);
+  if (sanitizedText === text) return raw;
+  const sanitized = frontmatterTextAllows(sanitizedText);
+  const unparsable = (keys: string[]) => keys.includes('frontmatter 无法解析');
+  if (unparsable(raw) && !unparsable(sanitized)) return sanitized;
+  return [...new Set([...raw, ...(unparsable(sanitized) ? [] : sanitized)])];
 }
 
 function existingFile(file: string): boolean {
@@ -262,24 +353,55 @@ function listDir(dir: string): string[] {
   }
 }
 
-/** Markdown files under `dir` (recursive when `deep`). */
-function markdownFiles(dir: string, deep: boolean): string[] {
+/** Walk bounds (第三轮 #5): beyond them the scan is incomplete → refused. */
+const MARKDOWN_SCAN_MAX_DEPTH = 8;
+const MARKDOWN_SCAN_MAX_FILES = 2_000;
+
+/**
+ * Markdown files under `dir` (recursive when `deep`; `.md` in any case).
+ * Symlinks are followed once (real paths visited at most once); `truncated`
+ * = the depth or file cap was hit.
+ */
+function markdownFiles(dir: string, deep: boolean): { files: string[]; truncated: boolean } {
   const files: string[] = [];
-  for (const name of listDir(dir)) {
-    const full = path.join(dir, name);
-    let stat;
+  const visited = new Set<string>();
+  let truncated = false;
+  const walk = (current: string, depth: number) => {
+    let real: string;
     try {
-      stat = statSync(full);
+      real = realpathSync(current);
     } catch {
-      continue;
+      return;
     }
-    if (stat.isDirectory()) {
-      if (deep) files.push(...markdownFiles(full, true));
-    } else if (name.endsWith('.md')) {
-      files.push(full);
+    if (visited.has(real)) return;
+    visited.add(real);
+    for (const name of listDir(current)) {
+      if (truncated) return;
+      const full = path.join(current, name);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        if (!deep) continue;
+        if (depth >= MARKDOWN_SCAN_MAX_DEPTH) {
+          truncated = true;
+          return;
+        }
+        walk(full, depth + 1);
+      } else if (name.toLowerCase().endsWith('.md')) {
+        if (files.length >= MARKDOWN_SCAN_MAX_FILES) {
+          truncated = true;
+          return;
+        }
+        files.push(full);
+      }
     }
-  }
-  return files;
+  };
+  walk(dir, 0);
+  return { files, truncated };
 }
 
 /**
@@ -303,9 +425,9 @@ export function opencodeUserConfigIssues(input: { home: string; configHome: stri
       if (!existingFile(file)) continue;
       let keys: string[];
       try {
-        keys = configAllows(JSON.parse(stripJsonc(readFileSync(file, 'utf8'))));
+        keys = jsonConfigAllows(readFileSync(file, 'utf8'));
       } catch {
-        keys = ['无法解析'];
+        keys = ['无法读取'];
       }
       for (const key of keys) issues.push(`${file}: ${key}`);
     }
@@ -314,23 +436,33 @@ export function opencodeUserConfigIssues(input: { home: string; configHome: stri
   const legacy = path.join(input.configHome, 'config');
   if (existingFile(legacy)) issues.push(`${legacy}: 旧版 TOML 配置（无法检查）`);
   for (const dir of [dotDir, input.configHome]) {
-    const markdown = [
-      ...['agent', 'agents'].flatMap((sub) => markdownFiles(path.join(dir, sub), true)),
-      ...['mode', 'modes'].flatMap((sub) => markdownFiles(path.join(dir, sub), false)),
-    ];
-    for (const file of markdown) {
-      let keys: string[];
-      try {
-        keys = frontmatterAllows(readFileSync(file, 'utf8'));
-      } catch {
-        keys = ['无法读取'];
+    for (const [sub, deep] of [
+      ['agent', true],
+      ['agents', true],
+      ['mode', false],
+      ['modes', false],
+    ] as const) {
+      const root = path.join(dir, sub);
+      const { files, truncated } = markdownFiles(root, deep);
+      if (truncated) {
+        issues.push(
+          `${root}: 目录过深（>${MARKDOWN_SCAN_MAX_DEPTH} 层）或文件过多（>${MARKDOWN_SCAN_MAX_FILES}），无法完整检查`,
+        );
       }
-      for (const key of keys) issues.push(`${file}: ${key}`);
+      for (const file of files) {
+        let keys: string[];
+        try {
+          keys = frontmatterAllows(readFileSync(file, 'utf8'));
+        } catch {
+          keys = ['无法读取'];
+        }
+        for (const key of keys) issues.push(`${file}: ${key}`);
+      }
     }
     // Custom tools are imported and run without any permission request.
     for (const sub of ['tool', 'tools']) {
       for (const name of listDir(path.join(dir, sub))) {
-        if (/\.(js|ts|mjs|cjs|mts|cts)$/.test(name)) {
+        if (/\.(js|ts|mjs|cjs|mts|cts)$/i.test(name)) {
           issues.push(`${path.join(dir, sub, name)}: 自定义工具（不经权限确认执行）`);
         }
       }
@@ -342,6 +474,32 @@ export function opencodeUserConfigIssues(input: { home: string; configHome: stri
 /** 未开启「加载我的个人配置」时的私有全局配置根（`XDG_CONFIG_HOME`）。 */
 export function opencodeConfigHome(stateDir: string): string {
   return path.join(stateDir, 'xdg-config');
+}
+
+/**
+ * Fail closed (复审 #8 / 第三轮 #4, #6): a user layer allowing what only the
+ * host may decide would win over our rules (key order + findLast). Run before
+ * the run process starts and again before every session is opened (OpenCode
+ * reads its config per instance / directory, so a later edit applies to the
+ * next session) — not for control processes (probe / login / logout).
+ */
+function checkOpencodeConfig({ stateDir, loadUserConfig }: ConfigCheckContext): void {
+  if (loadUserConfig !== true && stateDir === undefined) {
+    throw new AppError('AGENT_UNAVAILABLE', 'OpenCode 缺少私有状态目录，无法隔离个人配置');
+  }
+  const home = os.homedir();
+  const configHome =
+    loadUserConfig === true
+      ? path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')
+      : path.join(opencodeConfigHome(stateDir!), 'opencode');
+  const issues = opencodeUserConfigIssues({ home, configHome });
+  if (issues.length > 0) {
+    throw new AppError(
+      'AGENT_CONFIG_UNSAFE',
+      `OpenCode 的配置放行了需要 KepCup 逐条确认的操作，已拒绝运行。请把下列文件中的这些键改为 ask / deny 或删除后重试：${issues.slice(0, 8).join('；')}${issues.length > 8 ? ` 等 ${issues.length} 处` : ''}`,
+      { issues },
+    );
+  }
 }
 
 async function applyOpencodeTier(
@@ -360,21 +518,6 @@ export const opencodeProvider: AgentProvider = {
       // (agent permission overrides) would apply.
       throw new AppError('AGENT_UNAVAILABLE', 'OpenCode 缺少私有状态目录，无法隔离个人配置');
     }
-    // Fail closed (复审 #8): a user layer allowing what only the host may
-    // decide would win over our rules (key order + findLast).
-    const home = os.homedir();
-    const configHome =
-      loadUserConfig === true
-        ? path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')
-        : path.join(opencodeConfigHome(stateDir!), 'opencode');
-    const issues = opencodeUserConfigIssues({ home, configHome });
-    if (issues.length > 0) {
-      throw new AppError(
-        'AGENT_INCOMPATIBLE',
-        `OpenCode 的配置放行了需要 KepCup 逐条确认的操作，已拒绝启动（请改为 ask / deny 或移除后重试）：${issues.slice(0, 8).join('；')}${issues.length > 8 ? ` 等 ${issues.length} 处` : ''}`,
-        { issues },
-      );
-    }
     return {
       command: target.command,
       args: [...target.args],
@@ -392,6 +535,7 @@ export const opencodeProvider: AgentProvider = {
       },
     };
   },
+  checkConfig: checkOpencodeConfig,
   instructionMode: 'prompt-prefix',
   applyPermissionTier: applyOpencodeTier,
   permissionOptions: { allowOnce: ['once'], rejectOnce: ['reject'] },

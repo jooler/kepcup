@@ -77,6 +77,8 @@ export const ERROR_CODES = [
   'AGENT_INCOMPATIBLE',
   /** Agent 自身的 OS 沙箱起不来（如 Linux 缺 bubblewrap / socat），run 不降级。 */
   'AGENT_SANDBOX_UNAVAILABLE',
+  /** Agent 会读取的用户配置会绕过宿主的逐条确认（OpenCode 放行规则等），拒绝运行。 */
+  'AGENT_CONFIG_UNSAFE',
   'AGENT_PROCESS_EXITED',
   'AGENT_FAILED',
 ] as const;
