@@ -1080,7 +1080,7 @@ export const zhCN = {
     '「Claude Agent」使用你本人的 Claude 订阅或 Console 账号，经 Anthropic 官方程序登录；请遵守 Anthropic 的使用条款。',
   'agents.terms.codex': 'Codex 使用你的 ChatGPT 订阅或 OpenAI API key，经 OpenAI 官方程序登录。',
   'agents.terms.opencode':
-    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。KepCup 不让 OpenCode 读取项目内的 opencode.json / .opencode/ 与外部插件；OpenCode 仍会在其全局配置目录后台安装 @opencode-ai/plugin。',
+    '不要在 OpenCode 中登录 Claude 订阅（Anthropic 条款明令禁止）；其它订阅受各厂商条款约束。KepCup 不让 OpenCode 读取项目内的 opencode.json / .opencode/ 与外部插件；OpenCode 仍会在其全局配置目录后台安装 @opencode-ai/plugin。未开启「加载我的个人配置」时，OpenCode 及其执行的命令（如 gh、git）使用独立的配置目录（XDG_CONFIG_HOME），读不到你 ~/.config 下的配置。',
   'agents.terms.dsh': 'DeepSeek Harness 为官方预览版，按 DeepSeek API key 计费。',
   'agents.terms.cursor':
     'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',

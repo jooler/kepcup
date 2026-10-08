@@ -1101,6 +1101,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D72 P4: installs land in toolchains/agents/{id}@{version}; npx agents
     // run on the environment manager's Node (installed on demand).
     const agentInstaller = new AgentInstaller({
+      logger,
       toolchainsDir: paths.toolchainsDir,
       downloadsDir: paths.cacheDownloadsDir,
       npmCacheDir: paths.cacheNpmDir,

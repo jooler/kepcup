@@ -23,8 +23,9 @@ import { switchToMode } from './mode-tier.js';
  *     目录（含 agent / plugin，也就不再往 project 里装插件）与 AGENTS.md 一概
  *     不读（`ConfigPaths.directories` / `Instruction.systemPaths` 均受它控制）——
  *     AGENTS.md 改由宿主 `<project>` 段注入（`agentSideConfigFiles` 为空）；
- *   - 权限块只用**字符串**动作（不依赖 mergeDeep 的键序与 `findLast`）：
- *     `edit` / `bash` / `external_directory` / `task` 一律 `ask`——写入、命令、
+ *   - 权限块只用**字符串**动作、`"*":"ask"` 打头（`findLast` 下未点名的权限
+ *     一律询问）：`edit` / `bash` / `external_directory` / `task` / 联网一律
+ *     `ask`——写入、命令、
  *     工作目录外的路径（数据目录由宿主权限桥拒绝）与子代理启动都经 ACP
  *     `request_permission` 交宿主按档位裁决；同一权限块既写顶层，也写进
  *     `agent.{build,plan,general,explore}.permission` 与 `mode.{build,plan}.permission`
@@ -32,7 +33,8 @@ import { switchToMode } from './mode-tier.js';
  *     agent，也带同样的块）；`plan` / `explore` 的 `edit` 保持 `deny`（不放宽其
  *     只读语义）；顶层再经 `OPENCODE_PERMISSION` 合并一次；
  *   - 未开启「加载我的个人配置」时 `XDG_CONFIG_HOME` 指向私有目录（登录凭据在
- *     `XDG_DATA_HOME`，不受影响）；`~/.opencode/` 仍会被读（HOME 不改，否则
+ *     `XDG_DATA_HOME`，不受影响；它也作用于 OpenCode 执行的命令——gh / git
+ *     等读 `~/.config` 的工具看不到用户配置，设置页条款提示中披露）；`~/.opencode/` 仍会被读（HOME 不改，否则
  *     命令里的 git 等也失去用户身份）——其中的自定义子代理只能经 `task`（ask）
  *     启动，内置 agent 的权限被上面的块覆盖；
  *   - `OPENCODE_PURE=1`：不加载外部插件（插件是在沙箱外运行的任意代码）；
@@ -57,9 +59,36 @@ export function opencodeModeForTier(tier: AgentPermissionTier): string {
   return tier === 'read_only' ? 'plan' : 'build';
 }
 
-/** 顶层权限块（只用字符串动作：与键序无关）。 */
+/**
+ * 顶层权限块（只用字符串动作）。1.18.35 `Permission.fromConfig` 按对象键序
+ * 展开成规则、`merge` 直接拼接、`evaluate` 取 `findLast` 命中（权限名与
+ * pattern 都按通配匹配）——所以 `"*":"ask"` 放在最前：未点名的权限（含将来
+ * 新增的）一律询问，点名的在其后覆盖（审查 #7）。点名放行的只有工作区内的
+ * 只读与会话内部工具（`read` 读工作区外的路径时 OpenCode 另走
+ * `external_directory`）；`question` / `plan_*` 拒绝（无人在线答题，模式只由
+ * 宿主切换）。
+ */
 export function opencodePermissionConfig(): Record<string, string> {
-  return { edit: 'ask', bash: 'ask', external_directory: 'ask', task: 'ask' };
+  return {
+    '*': 'ask',
+    read: 'allow',
+    list: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    lsp: 'allow',
+    todoread: 'allow',
+    todowrite: 'allow',
+    question: 'deny',
+    plan_enter: 'deny',
+    plan_exit: 'deny',
+    edit: 'ask',
+    bash: 'ask',
+    external_directory: 'ask',
+    task: 'ask',
+    webfetch: 'ask',
+    websearch: 'ask',
+    codesearch: 'ask',
+  };
 }
 
 /** 内置 agent 的权限块（plan / explore 保持只读：`edit: deny`）。 */

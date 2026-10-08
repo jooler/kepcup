@@ -106,10 +106,37 @@ export interface ExternalAgentEngineDeps {
 
 export class ExternalAgentEngine implements AgentEngine {
   readonly #deps: ExternalAgentEngineDeps;
-  readonly #control: SessionControl = { discardOnRelease: new Map() };
+  readonly #control: SessionControl = {
+    discardOnRelease: new Map(),
+    prompting: new Map(),
+    invalidated: new Set(),
+  };
 
   constructor(deps: ExternalAgentEngineDeps) {
     this.#deps = deps;
+    // Kept sessions die with their process (crash, idle exit, out-of-run mode
+    // change): their bridge tokens stop working at once (P5 审查 #18).
+    deps.host.onSessionsLost?.((lost) => {
+      for (const { state } of lost) {
+        const kept = state as KeptSession | undefined;
+        if (kept?.bridge != null) deps.bridge?.revoke(kept.sessionKey, kept.bridge.token);
+      }
+      for (const { agentId, sessionId, invalid } of lost) {
+        if (invalid) notifyInvalidated(this.#control, agentId, sessionId);
+      }
+    });
+  }
+
+  /**
+   * A kept agent session must not be continued any more (poisoned, closed
+   * before it was usable, mode changed outside a run): the orchestrator drops
+   * its `agent_sessions` row so it is neither reused nor resumed (P5 审查 #1).
+   */
+  onSessionInvalidated(listener: (agentId: string, agentSessionId: string) => void): () => void {
+    this.#control.invalidated.add(listener);
+    return () => {
+      this.#control.invalidated.delete(listener);
+    };
   }
 
   startRun(spec: RunSpec): RunHandle {
@@ -533,6 +560,20 @@ interface KeptSession {
 interface SessionControl {
   /** Sessions to discard when the run using them releases (deleted meanwhile). */
   discardOnRelease: Map<string, { deleteHistory: boolean }>;
+  /** Prompts in flight per agent session (any run; steering cleanup, 审查 #6). */
+  prompting: Map<string, number>;
+  /** `ExternalAgentEngine.onSessionInvalidated` listeners. */
+  invalidated: Set<(agentId: string, agentSessionId: string) => void>;
+}
+
+function notifyInvalidated(control: SessionControl, agentId: string, sessionId: string): void {
+  for (const listener of [...control.invalidated]) {
+    try {
+      listener(agentId, sessionId);
+    } catch {
+      // A listener's failure never affects the engine.
+    }
+  }
 }
 
 /**
@@ -546,6 +587,7 @@ interface DetachedResult {
   toolName: string;
   ok: boolean;
   content: string;
+  errorCode?: string;
 }
 
 function usageTotalsOf(usage: AcpPromptResponse['usage']): UsageTotals | null {
@@ -564,8 +606,24 @@ function hashOf(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
+/** Attribute-safe text (tool names come from the run's own tool set, but be strict). */
+function attributeText(value: string): string {
+  return value.replace(/[^\w.:-]/g, '_');
+}
+
+/**
+ * Tool output inside the follow-up: a tool's text must not be able to close
+ * the wrapper and pose as host text (P5 审查 #10).
+ */
+function fencedContent(content: string): string {
+  return content.replace(/<(\/?)(tool_result|background_tool_results)/gi, '&lt;$1$2');
+}
+
 /** Follow-up prompt for background bridge results and late steers (P5). */
-function followUpText(results: readonly DetachedResult[], steers: readonly string[]): string {
+export function followUpText(
+  results: readonly DetachedResult[],
+  steers: readonly string[],
+): string {
   const parts: string[] = [];
   if (results.length > 0) {
     parts.push(
@@ -574,7 +632,9 @@ function followUpText(results: readonly DetachedResult[], steers: readonly strin
         '以下是之前转入后台的工具调用的结果：',
         ...results.map(
           (result) =>
-            `<tool_result name="${result.toolName}" ok="${result.ok}">\n${result.content}\n</tool_result>`,
+            `<tool_result name="${attributeText(result.toolName)}" ok="${result.ok}"` +
+            `${result.errorCode !== undefined ? ` error_code="${attributeText(result.errorCode)}"` : ''}>` +
+            `\n${fencedContent(result.content)}\n</tool_result>`,
         ),
         '</background_tool_results>',
       ].join('\n'),
@@ -604,6 +664,15 @@ class ExternalRunHandle implements RunHandle {
   #optionsHash = '';
   /** The session must not be reused (timeout, unresponsive agent, broken setup). */
   #poisoned = false;
+  /** Tier / model applied (or re-confirmed on reuse): only then is the session kept. */
+  #tierApplied = false;
+  /** A prompt was really sent on the session. */
+  #prompted = false;
+  /** This run's sink (detach only removes our own registration). */
+  #sinkObj: SessionSink | null = null;
+  /** Background bridge calls are aborted at the run deadline (审查 #4). */
+  readonly #detachedAbort = new AbortController();
+  readonly #startedAt = Date.now();
   /** Cumulative usage baseline of the session (null = unknown). */
   #sessionUsage: UsageTotals | null = null;
   /** Session key + token + server bound on the host MCP bridge (null = no bridge). */
@@ -630,7 +699,7 @@ class ExternalRunHandle implements RunHandle {
   /** Steers waiting for the next prompt (before the first / between prompts). */
   readonly #queuedSteers: string[] = [];
   /** Bridge calls answered "moved to the background", still running. */
-  readonly #detachedPending = new Set<string>();
+  readonly #detachedPending = new Map<string, string>();
   readonly #detachedResults: DetachedResult[] = [];
   #detachedWaiter: (() => void) | null = null;
   /**
@@ -694,17 +763,19 @@ class ExternalRunHandle implements RunHandle {
       this.#sessionId = opened.sessionId;
       // Only a session that really carries the bridge may have kepcup tool
       // permission requests allowed (acp/client.ts decidePermission).
-      lease.attach(opened.sessionId, this.#sink(this.#bridge?.session ?? null));
+      this.#sinkObj = this.#sink(this.#bridge?.session ?? null);
+      lease.attach(opened.sessionId, this.#sinkObj);
       if (this.#resolved) return;
       external.onSession?.(opened.sessionId, opened.mode);
 
       phase = 'other';
       if (opened.mode === 'reused') {
         // Same process, same fingerprint: tier, model and effort are still in
-        // place — re-arm the mode guard from what the last run left.
+        // place (re-confirmed in #openSession) — re-arm the mode guard.
         this.#expectedMode = this.#kept?.expectedMode ?? null;
         this.#expectedModeOption = this.#kept?.expectedModeOption ?? null;
         this.#sessionUsage = this.#kept?.usage ?? null;
+        this.#tierApplied = true;
       } else {
         await this.#applyTier(opened.sessionId, opened.modes, opened.configOptions);
         await this.#applyConfig(opened.sessionId, opened.configOptions, {
@@ -715,6 +786,7 @@ class ExternalRunHandle implements RunHandle {
         // only sets the baseline.
         this.#sessionUsage =
           opened.mode === 'new' ? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } : null;
+        this.#tierApplied = true;
       }
       if (this.#resolved) return;
 
@@ -765,6 +837,8 @@ class ExternalRunHandle implements RunHandle {
         if (this.#aborted || this.#resolved) break;
         const results = this.#detachedResults.splice(0);
         const late = this.#queuedSteers.splice(0);
+        // Woken with nothing to report (e.g. a steer handed back meanwhile).
+        if (results.length === 0 && late.length === 0) continue;
         prompt = [{ type: 'text', text: followUpText(results, late) }];
         this.emit({
           type: 'request',
@@ -849,8 +923,12 @@ class ExternalRunHandle implements RunHandle {
     const reuse = external.session;
     const reuseId = reuse?.reuseId ?? null;
     let kept: KeptSession | undefined;
+    // Open in this process (then never resumed / loaded: it is either reused
+    // here or was just found unusable).
+    let wasOpen = false;
     if (reuseId !== null) {
       kept = lease.openSession<KeptSession>(reuseId);
+      wasOpen = kept !== undefined;
       if (
         kept !== undefined &&
         this.#control.discardOnRelease.get(reuseId) === undefined &&
@@ -858,14 +936,24 @@ class ExternalRunHandle implements RunHandle {
         kept.optionsHash === this.#optionsHash &&
         kept.sessionKey === external.sessionKey
       ) {
-        this.#kept = kept;
-        this.#attachBridge(entry, provider, lease.init, acceptsImages, serverName, kept.bridge);
-        return { sessionId: reuseId, mode: 'reused', modes: null, configOptions: [] };
-      }
-      if (kept !== undefined) {
+        // Busy sessions are never handed to another run (审查 #1): taken out of
+        // the process's kept set, put back on release.
+        lease.forgetSession(reuseId);
+        if (await this.#reconfirmModes(lease, reuseId, kept)) {
+          this.#kept = kept;
+          this.#attachBridge(entry, provider, lease.init, acceptsImages, serverName, kept.bridge);
+          return { sessionId: reuseId, mode: 'reused', modes: null, configOptions: [] };
+        }
+        // The agent refused to go back to the tier's mode: never continue it.
+        if (kept.bridge !== null) this.#deps.bridge?.revoke(kept.sessionKey, kept.bridge.token);
+        void this.#closeSession(lease, reuseId, false);
+        notifyInvalidated(this.#control, external.agentId, reuseId);
+      } else if (kept !== undefined) {
         // Kept but no longer matching (or deleted meanwhile): close it.
         lease.forgetSession(reuseId);
+        if (kept.bridge !== null) this.#deps.bridge?.revoke(kept.sessionKey, kept.bridge.token);
         void this.#closeSession(lease, reuseId, false);
+        notifyInvalidated(this.#control, external.agentId, reuseId);
       }
     }
     // Bound before session/new | resume | load: agents connect to their MCP
@@ -884,7 +972,7 @@ class ExternalRunHandle implements RunHandle {
       ...(sessionOptions.extraMcpServers ?? []),
     ];
     const meta = sessionOptions._meta !== undefined ? { _meta: sessionOptions._meta } : {};
-    if (reuseId !== null && kept === undefined) {
+    if (reuseId !== null && !wasOpen) {
       const caps = lease.init.agentCapabilities;
       const canResume = provider.features.resume && caps?.sessionCapabilities?.resume != null;
       const canLoad = provider.features.loadSession && caps?.loadSession === true;
@@ -982,8 +1070,9 @@ class ExternalRunHandle implements RunHandle {
       onToolResult: (result) => {
         for (const event of this.#mapper.hostToolResult(result)) this.emit(event);
       },
+      detachedSignal: this.#detachedAbort.signal,
       onToolDetached: (call) => {
-        this.#detachedPending.add(call.toolCallId);
+        this.#detachedPending.set(call.toolCallId, call.toolName);
         this.emit({
           type: 'progress',
           payload: { text: `工具「${call.toolName}」转入后台，完成后结果会再交给智能体` },
@@ -1011,6 +1100,40 @@ class ExternalRunHandle implements RunHandle {
     };
   }
 
+  /**
+   * A reused session goes back to the tier's mode before its prompt
+   * (idempotent `set_mode` / `set_config_option`, 审查 #1): whatever happened
+   * to it between runs, the run starts in the expected mode. False = the
+   * agent refused — the session is dropped and a new one created.
+   */
+  async #reconfirmModes(lease: AgentLease, sessionId: string, kept: KeptSession): Promise<boolean> {
+    try {
+      if (kept.expectedMode !== null) {
+        if (isForbiddenAgentMode(kept.expectedMode, lease.provider)) return false;
+        await lease.connection.setMode(sessionId, kept.expectedMode);
+      }
+      if (kept.expectedModeOption !== null) {
+        if (isForbiddenAgentMode(kept.expectedModeOption.value, lease.provider)) return false;
+        await lease.connection.setConfigOption(
+          sessionId,
+          kept.expectedModeOption.id,
+          kept.expectedModeOption.value,
+        );
+      }
+      return true;
+    } catch (error) {
+      this.#warn(
+        {
+          runId: this.#spec.identity.runId,
+          agentSessionId: sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'kept agent session refused its permission mode; starting a new one',
+      );
+      return false;
+    }
+  }
+
   /** One `session/prompt` (with the run timeout) and its usage. */
   async #prompt(
     connection: AgentLease['connection'],
@@ -1018,11 +1141,20 @@ class ExternalRunHandle implements RunHandle {
     prompt: AcpContentBlock[],
   ): Promise<AcpPromptResponse> {
     this.#phase = 'prompting';
+    if (!this.#prompted) {
+      this.#prompted = true;
+      this.#spec.external?.onPromptSent?.();
+    }
+    const prompting = this.#control.prompting;
+    prompting.set(sessionId, (prompting.get(sessionId) ?? 0) + 1);
     try {
       const response = await this.#withRunTimeout(connection.prompt(sessionId, prompt));
       this.#recordUsage(response);
       return response;
     } finally {
+      const left = (prompting.get(sessionId) ?? 1) - 1;
+      if (left > 0) prompting.set(sessionId, left);
+      else prompting.delete(sessionId);
       if (this.#phase === 'prompting') this.#phase = 'between';
     }
   }
@@ -1043,22 +1175,19 @@ class ExternalRunHandle implements RunHandle {
         delta = reported;
       } else {
         const base = this.#sessionUsage;
+        // Only the input + output total counts (cache fields come and go, 审查 #16).
         const restarted =
-          base !== null &&
-          (reported.input < base.input ||
-            reported.output < base.output ||
-            reported.cacheRead < base.cacheRead ||
-            reported.cacheWrite < base.cacheWrite);
+          base !== null && reported.input + reported.output < base.input + base.output;
         delta =
           base === null
             ? null
             : restarted
               ? reported
               : {
-                  input: reported.input - base.input,
-                  output: reported.output - base.output,
-                  cacheRead: reported.cacheRead - base.cacheRead,
-                  cacheWrite: reported.cacheWrite - base.cacheWrite,
+                  input: Math.max(0, reported.input - base.input),
+                  output: Math.max(0, reported.output - base.output),
+                  cacheRead: Math.max(0, reported.cacheRead - base.cacheRead),
+                  cacheWrite: Math.max(0, reported.cacheWrite - base.cacheWrite),
                 };
         this.#sessionUsage = reported;
       }
@@ -1084,10 +1213,14 @@ class ExternalRunHandle implements RunHandle {
   #onDetachedResult(result: BridgeToolResultEvent): void {
     if (!this.#detachedPending.delete(result.toolCallId)) return;
     if (this.#resolved) return;
+    // errorCode reaches the agent in the follow-up; a terminating result
+    // (skip_reply) no longer ends the run — the agent already moved on and
+    // decides itself (审查 #11).
     this.#detachedResults.push({
       toolName: result.toolName,
       ok: result.ok,
       content: result.content,
+      ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
     });
     this.emit({
       type: 'progress',
@@ -1096,12 +1229,38 @@ class ExternalRunHandle implements RunHandle {
     if (this.#detachedPending.size === 0) this.#wakeDetached();
   }
 
-  /** Resolves once every background bridge call answered (or the run ends). */
+  /**
+   * Resolves once every background bridge call answered, a steer is queued
+   * (it is answered without waiting for the tools), the run ends, or the run
+   * deadline passes — then the remaining calls are aborted and reported as
+   * timed out (审查 #4).
+   */
   async #awaitDetached(): Promise<void> {
     if (this.#detachedPending.size === 0 || this.#aborted || this.#resolved) return;
+    if (this.#queuedSteers.length > 0) return;
+    const deadline = this.#startedAt + (this.#deps.runTimeoutMs ?? AGENT_RUN_TIMEOUT_MS);
+    let timer: NodeJS.Timeout | null = null;
     await new Promise<void>((resolve) => {
       this.#detachedWaiter = resolve;
+      timer = setTimeout(
+        () => {
+          this.#detachedAbort.abort();
+          for (const [, toolName] of this.#detachedPending) {
+            this.#detachedResults.push({
+              toolName,
+              ok: false,
+              content: '后台执行超时，已取消（超过本次执行的时间上限）',
+              errorCode: 'TIMEOUT',
+            });
+          }
+          this.#detachedPending.clear();
+          this.#wakeDetached();
+        },
+        Math.max(0, deadline - Date.now()),
+      );
+      timer.unref?.();
     });
+    if (timer !== null) clearTimeout(timer);
   }
 
   #wakeDetached(): void {
@@ -1165,6 +1324,8 @@ class ExternalRunHandle implements RunHandle {
       case 'before':
       case 'between':
         this.#queuedSteers.push(text);
+        // Waiting for background tools: answer the steer now (审查 #4).
+        if (this.#phase === 'between') this.#wakeDetached();
         return true;
       case 'done':
         return false;
@@ -1192,9 +1353,10 @@ class ExternalRunHandle implements RunHandle {
         this.emit({ type: 'steer', payload: { text } });
         return;
       }
-      if (outcome === 'startedNewTurn') {
+      if (outcome === 'startedNewTurn' && (this.#control.prompting.get(sessionId) ?? 0) === 0) {
         // codex-acp 2.1.1 ignores idleBehavior and starts a detached turn when
-        // none is running: stop it — it belongs to no run.
+        // none is running: stop it — it belongs to no run. Never when a prompt
+        // (this run's follow-up or a later run) is in flight (审查 #6).
         void lease.connection.cancel(sessionId).catch(() => undefined);
       }
       this.#warn(
@@ -1352,6 +1514,9 @@ class ExternalRunHandle implements RunHandle {
 
   #notePermission(title: string, decision: PermissionDecision): void {
     if (decision === 'allowed') return;
+    // Requests carrying only the id (dsh): name the call by its earlier title.
+    const known = this.#toolCalls.get(title)?.title;
+    if (typeof known === 'string' && known.length > 0) title = known;
     this.emit({
       type: 'progress',
       payload: {
@@ -1461,7 +1626,12 @@ class ExternalRunHandle implements RunHandle {
   /** `current_mode_update` away from the tier's mode → switch back + audit. */
   #onModeUpdate(modeId: string): void {
     const expected = this.#expectedMode;
-    if (expected === null || modeId === expected || this.#resolved) return;
+    if (expected === null || modeId === expected) return;
+    if (this.#resolved) {
+      // After settling nobody switches it back: the session is not kept.
+      this.#poisoned = true;
+      return;
+    }
     this.#revertMode(modeId, expected, (lease, sessionId) =>
       lease.connection.setMode(sessionId, expected),
     );
@@ -1470,10 +1640,14 @@ class ExternalRunHandle implements RunHandle {
   /** The same through the `mode` config option (Codex exposes both). */
   #onConfigOptionUpdate(options: readonly AcpSessionConfigOption[]): void {
     const expected = this.#expectedModeOption;
-    if (expected === null || this.#resolved) return;
+    if (expected === null) return;
     const option = options.find((candidate) => candidate.id === expected.id);
     if (option === undefined || typeof option.currentValue !== 'string') return;
     if (option.currentValue === expected.value) return;
+    if (this.#resolved) {
+      this.#poisoned = true;
+      return;
+    }
     this.#revertMode(option.currentValue, expected.value, (lease, sessionId) =>
       lease.connection.setConfigOption(sessionId, expected.id, expected.value),
     );
@@ -1501,6 +1675,7 @@ class ExternalRunHandle implements RunHandle {
       'agent left its permission mode; switching back',
     );
     if (this.#modeReverts > ExternalRunHandle.MAX_MODE_REVERTS) {
+      this.#poisoned = true;
       this.emit({
         type: 'progress',
         payload: { text: `智能体反复切换权限模式（${actual}），已中止本次执行` },
@@ -1520,6 +1695,7 @@ class ExternalRunHandle implements RunHandle {
         },
         'switching the permission mode back failed; aborting the run',
       );
+      this.#poisoned = true;
       this.abort('permission mode could not be restored');
     });
   }
@@ -1639,6 +1815,10 @@ class ExternalRunHandle implements RunHandle {
     for (const event of this.#mapper.abandon()) this.emit(event);
     this.#resolved = true;
     if (this.#graceTimer !== null) clearTimeout(this.#graceTimer);
+    // No bridge call is accepted for a settled run, even before release (审查 #9).
+    if (this.#bridge !== null) {
+      this.#deps.bridge?.unbindRun(this.#bridge.sessionKey, this.#spec.identity.runId);
+    }
     this.#resolveDone(outcome);
   }
 
@@ -1661,11 +1841,14 @@ class ExternalRunHandle implements RunHandle {
     const discard = sessionId !== null ? this.#control.discardOnRelease.get(sessionId) : undefined;
     if (sessionId !== null && discard !== undefined)
       this.#control.discardOnRelease.delete(sessionId);
+    const reusable = this.#spec.external?.session !== undefined;
     const keep =
       lease !== null &&
       sessionId !== null &&
-      this.#spec.external?.session !== undefined &&
+      reusable &&
       !this.#poisoned &&
+      this.#tierApplied &&
+      this.#prompted &&
       discard === undefined;
     const bound = this.#bridge;
     if (bound !== null) {
@@ -1677,7 +1860,7 @@ class ExternalRunHandle implements RunHandle {
     if (lease === null) return;
     this.#lease = null;
     if (sessionId !== null) {
-      lease.detach(sessionId);
+      lease.detach(sessionId, this.#sinkObj ?? undefined);
       if (keep) {
         lease.keepSession(sessionId, {
           fingerprint: this.#spec.external!.session!.fingerprint,
@@ -1691,6 +1874,10 @@ class ExternalRunHandle implements RunHandle {
       } else {
         lease.forgetSession(sessionId);
         void this.#closeSession(lease, sessionId, discard?.deleteHistory === true);
+        // Its agent_sessions row must not be reused / resumed either.
+        if (reusable && discard === undefined) {
+          notifyInvalidated(this.#control, this.#spec.external!.agentId, sessionId);
+        }
       }
     }
     lease.release();

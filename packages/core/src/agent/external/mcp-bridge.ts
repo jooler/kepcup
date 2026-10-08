@@ -104,6 +104,8 @@ export interface BridgeRunBinding {
    * after ~60 s); null / omitted = always wait.
    */
   detachAfterMs?: number | null;
+  /** Aborts calls already moved to the background (run deadline, 审查 #4). */
+  detachedSignal?: AbortSignal;
   /** A call was answered with the background notice (its tool_result is that notice). */
   onToolDetached?(call: { toolCallId: string; toolName: string }): void;
   /** A background call finished: the real result, for a follow-up prompt. */
@@ -437,6 +439,11 @@ export class HostMcpBridge {
       if (!first.done) {
         detached = true;
         requestSignal.removeEventListener('abort', forwardAbort);
+        const detachedSignal = binding.detachedSignal;
+        if (detachedSignal !== undefined) {
+          if (detachedSignal.aborted) requestAbort.abort();
+          else detachedSignal.addEventListener('abort', () => requestAbort.abort(), { once: true });
+        }
         const notice = detachedToolNotice(toolName);
         binding.onToolResult({ toolCallId, toolName, ok: true, content: notice });
         binding.onToolDetached?.({ toolCallId, toolName });

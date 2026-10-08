@@ -40,10 +40,12 @@ export function persistEngineSteps(input: {
         });
         if (onProgress !== undefined && event.payload.toolName.length > 0) {
           // External agents' human-readable title wins on the status line (D72 P5).
+          // Agent titles are free text (often the command itself): redacted
+          // like the persisted payload (P5 审查 #8).
           const title = event.payload.title;
           onProgress({
             toolName: event.payload.toolName,
-            ...(title !== undefined && title.length > 0 ? { text: title } : {}),
+            ...(title !== undefined && title.length > 0 ? { text: secrets.redact(title) } : {}),
           });
         }
         return;
@@ -57,13 +59,13 @@ export function persistEngineSteps(input: {
           },
         });
         return;
-      case 'progress':
-        runs.appendStep({ runId, type: 'progress', payload: event.payload });
-        if (onProgress !== undefined) {
-          const text = String(event.payload.text);
-          if (text.length > 0) onProgress({ text });
-        }
+      case 'progress': {
+        // Progress text can quote agent titles / tool output: redacted (审查 #8).
+        const text = secrets.redact(String(event.payload.text));
+        runs.appendStep({ runId, type: 'progress', payload: { ...event.payload, text } });
+        if (onProgress !== undefined && text.length > 0) onProgress({ text });
         return;
+      }
       case 'steer':
         runs.appendStep({ runId, type: 'steer', payload: event.payload });
         return;

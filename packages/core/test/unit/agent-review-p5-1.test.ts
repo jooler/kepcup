@@ -205,6 +205,9 @@ describe('narrow post-install chmod (H3)', () => {
     expect(statSync(path.join(outside, 'victim')).mode & 0o777).toBe(0o600);
     expect(statSync(path.join(outside, 'spawn-helper')).mode & 0o777).toBe(0o600);
     expect(chmodInstalledFiles(root, '../x')).toBe(0);
+    // No match (layout changed) and a missing root: 0, no throw (P5-2 审查 #15).
+    expect(chmodInstalledFiles(root, 'node_modules/nope/*/spawn-helper')).toBe(0);
+    expect(chmodInstalledFiles(path.join(root, 'missing'), 'a/*')).toBe(0);
   });
 });
 
