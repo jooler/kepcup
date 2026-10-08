@@ -67,6 +67,14 @@ export interface SessionContext {
    * 探测 / 测试连接会话不带。
    */
   isolation?: AgentIsolation;
+  /**
+   * 后台精简会话（P6：`complete()` 与无内置模型时的后台 loop，design 28 §8）：
+   * `sessionPrompt` 是该任务的完整系统提示词（不是 Bot 的会话级提示词），
+   * 能替换 Agent 预设提示词、关掉原生工具的 Provider 在此照做（Claude：
+   * 替换式 `systemPrompt` 字符串 + `tools: []`）；其余 Provider 不变（宿主
+   * 已强制只读档、空临时目录、只放行桥工具）。
+   */
+  oneShot?: boolean;
 }
 
 /** 数据目录隔离（权限桥按 run 计算，见 permission-bridge.ts `isolationFor`）。 */

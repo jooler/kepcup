@@ -164,6 +164,16 @@ export interface ExternalRunSpec {
    * 缺省时引擎自行生成。
    */
   hostServerName?: string;
+  /**
+   * 后台精简会话（P6，design 28 §8）：`complete()` 与无内置模型时改走外部
+   * Agent 的后台 loop（Wiki 维护、技能生成）。引擎强制：只读档（忽略
+   * `permission`）；cwd 为引擎新建的空私有临时目录（忽略 `RunSpec.workdir`，
+   * 结束即删除——永不是用户的 workspace / project）；不复用会话（忽略
+   * `session`，结束即 `session/close`）；权限请求不走权限桥与审批卡——只放行
+   * 本 run 注入的桥工具，其余一律拒绝（无人值守）；Provider 收到
+   * `oneShot`（Claude：替换式系统提示词、`tools: []`）。
+   */
+  background?: boolean;
 }
 
 export interface ToolContext {

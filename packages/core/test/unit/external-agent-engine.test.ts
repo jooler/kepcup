@@ -664,7 +664,7 @@ describe('ExternalAgentEngine', () => {
     expect(host.isRunning(FAKE.id)).toBe(false);
   });
 
-  it('fails unknown agents, never steers, reports no tokens and refuses complete()', async () => {
+  it('fails unknown agents, never steers, reports no tokens; complete() too', async () => {
     const { engine, spec } = setup({ turns: [] });
     const handle = engine.startRun(
       spec({ external: { agentId: 'nope', permission: 'read_only', capabilities: [], sessionKey: 'k' } }),
@@ -678,11 +678,11 @@ describe('ExternalAgentEngine', () => {
     await expect(
       engine.complete({
         identity: { runId: 'r', botId: null, conversationId: null, loopType: 'triage' },
-        model: 'agent:fake/default',
+        model: 'agent:nope/default',
         systemPrompt: '',
         messages: [],
       }),
-    ).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });
+    ).rejects.toMatchObject({ code: 'AGENT_UNAVAILABLE' });
   });
 });
 

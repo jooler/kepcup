@@ -1,7 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   AGENT_BRIDGE_TOOL_DETACH_MS,
   AGENT_CANCEL_GRACE_MS,
+  AGENT_COMPLETE_MAX_TURNS,
+  AGENT_COMPLETE_TIMEOUT_MS,
   AGENT_RUN_TIMEOUT_MS,
   AGENT_TURN_BUDGET_TOKENS,
   AppError,
@@ -15,6 +20,7 @@ import { truncateToBudget } from '../tokens.js';
 import type {
   AgentEngine,
   AgentSessionMode,
+  CompletionRequest,
   CompletionResult,
   EngineEvent,
   EngineUsage,
@@ -63,7 +69,10 @@ import type { AgentProvider } from './types.js';
  *   `bridgeToolDetachMs` 的桥调用转入后台，结果在 prompt 结束后以 follow-up
  *   prompt 送回同一个 run（P5，Codex MCP 超时）；
  * - `skip_reply` 等终止型工具返回后发 `session/cancel`，结算为不发最终文本的
- *   completed；complete() 不支持（P6）。
+ *   completed；
+ * - 后台精简会话（P6，`external.background`）：`complete()` 与无内置模型时的
+ *   后台 loop 用——只读档、空私有临时目录作 cwd、不复用会话、权限请求只放行
+ *   本 run 的桥工具（无审批卡），结束即 `session/close` 并删除临时目录。
  */
 
 /** 引擎用到的宿主 MCP 桥切片（mcp-bridge.ts 的 HostMcpBridge）。 */
@@ -183,8 +192,77 @@ export class ExternalAgentEngine implements AgentEngine {
     );
   }
 
-  async complete(): Promise<CompletionResult> {
-    throw new AppError('NOT_SUPPORTED', '外部智能体暂不支持单次补全（后台任务请使用内置模型）');
+  /**
+   * 单次补全（P6，design 28 §8「后台 loop」）：一次性精简会话——Claude 用替换式
+   * 系统提示词 + `tools: []` + `settingSources: []`，其他 Agent 用只读档；cwd
+   * 为空私有临时目录（永不是用户 workspace）；不挂宿主 MCP 桥、不复用任何
+   * 对话会话；结束即 `session/close`。进程照常经 AgentHost 租用（懒启动、
+   * 空闲退出）。Agent 没有可供提交的工具：`req.tools` 不下发，`toolCalls`
+   * 恒为空——结构化输出由调用方以「只输出 JSON」文本约定（`completeStructured`
+   * 的文本 JSON 回退）。用量：各轮之和；Agent 未报 token 时仍返回零 token
+   * 用量（记一行，连锁 / 后台预算按 AGENT_TURN_BUDGET_TOKENS 折算）。
+   */
+  async complete(req: CompletionRequest): Promise<CompletionResult> {
+    const ref = parseAgentModelRef(req.model);
+    if (ref === null) {
+      throw new AppError('INVALID_INPUT', `不是外部智能体的模型引用：${req.model}`);
+    }
+    if (req.signal?.aborted === true) throw new AppError('TIMEOUT', '补全请求已取消');
+    const timeoutMs = Math.min(
+      this.#deps.runTimeoutMs ?? AGENT_COMPLETE_TIMEOUT_MS,
+      AGENT_COMPLETE_TIMEOUT_MS,
+    );
+    const handle = new ExternalRunHandle(
+      {
+        identity: req.identity,
+        model: req.model,
+        buildSystemPrompt: async () => req.systemPrompt,
+        messages: req.messages,
+        tools: [],
+        limits: { maxTurns: AGENT_COMPLETE_MAX_TURNS },
+        promptParts: {
+          session: req.systemPrompt,
+          run: '',
+          conversation: req.messages.map((message) => message.content).join('\n\n'),
+        },
+        external: {
+          agentId: ref.agentId,
+          permission: 'read_only',
+          capabilities: [],
+          sessionKey: `complete:${randomUUID()}`,
+          background: true,
+        },
+      },
+      { ...this.#deps, runTimeoutMs: timeoutMs },
+      this.#control,
+    );
+    const onAbort = () => handle.abort('completion aborted');
+    req.signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      void handle.start();
+      const outcome = await handle.done;
+      if (outcome.status !== 'completed') {
+        throw new AppError(
+          outcome.status === 'cancelled' ? 'TIMEOUT' : (outcome.error?.code ?? 'AGENT_FAILED'),
+          outcome.status === 'cancelled'
+            ? '补全请求已取消'
+            : (outcome.error?.message ?? '智能体补全失败'),
+        );
+      }
+      const usage = outcome.usage.reduce<EngineUsage>(
+        (sum, entry) => ({
+          input: sum.input + entry.input,
+          output: sum.output + entry.output,
+          cacheRead: sum.cacheRead + entry.cacheRead,
+          cacheWrite: sum.cacheWrite + entry.cacheWrite,
+          costUsd: null,
+        }),
+        { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null },
+      );
+      return { text: outcome.finalText, toolCalls: [], usage, stopReason: 'stop' };
+    } finally {
+      req.signal?.removeEventListener('abort', onAbort);
+    }
   }
 }
 
@@ -645,7 +723,9 @@ export function followUpText(
 }
 
 class ExternalRunHandle implements RunHandle {
-  readonly #spec: RunSpec;
+  #spec: RunSpec;
+  /** Private empty cwd of a background session (P6), removed on release. */
+  #tempDir: string | null = null;
   readonly #deps: ExternalAgentEngineDeps;
   readonly #control: SessionControl;
   readonly #listeners = new Set<(e: EngineEvent) => void>();
@@ -722,6 +802,23 @@ class ExternalRunHandle implements RunHandle {
   }
 
   async start(): Promise<void> {
+    if (this.#spec.external?.background === true) {
+      try {
+        this.#prepareBackground();
+      } catch (error) {
+        this.#settle({
+          status: 'failed',
+          finalText: '',
+          skipReply: false,
+          usage: this.#usage,
+          error: {
+            code: 'INTERNAL',
+            message: `无法创建后台会话的临时目录：${error instanceof Error ? error.message : String(error)}`,
+          },
+        });
+        return;
+      }
+    }
     const spec = this.#spec;
     // Where a failure happened: providers classify errors per phase (each
     // agent reports "not logged in" at a different step, todo 附录 A.4).
@@ -754,6 +851,7 @@ class ExternalRunHandle implements RunHandle {
         sessionPrompt: metaAppend ? parts.session : null,
         maxTurns: spec.limits.maxTurns,
         loadUserConfig: external.loadUserConfig === true,
+        ...(external.background === true ? { oneShot: true } : {}),
         ...(this.#deps.permissions !== undefined
           ? { isolation: this.#deps.permissions.isolationFor(spec.identity, spec.workdir) }
           : {}),
@@ -1416,7 +1514,30 @@ class ExternalRunHandle implements RunHandle {
     for (const listener of [...this.#listeners]) listener(event);
   }
 
+  /**
+   * Background session (P6, `external.background`): read-only tier, a fresh
+   * private empty directory as cwd (never the user's workspace / project),
+   * no session reuse. Permission requests skip the permission bridge (see
+   * `#sink`): only this run's bridge tools are allowed, nothing asks the user.
+   */
+  #prepareBackground(): void {
+    const { session: _session, ...external } = this.#spec.external!;
+    void _session;
+    // mkdtemp creates the directory 0700 (owner only).
+    this.#tempDir = mkdtempSync(path.join(os.tmpdir(), 'kepcup-agent-bg-'));
+    this.#spec = {
+      ...this.#spec,
+      workdir: this.#tempDir,
+      external: { ...external, permission: 'read_only' },
+    };
+  }
+
   #sink(bridge: SessionBridge | null): SessionSink {
+    // Background sessions never reach the permission bridge (no approval
+    // card for unattended loops): the P1 rule decides — this run's bridge
+    // tools only, everything else rejected.
+    const permissions =
+      this.#spec.external?.background === true ? undefined : this.#deps.permissions;
     return {
       bridge,
       onUpdate: (update) => {
@@ -1431,10 +1552,10 @@ class ExternalRunHandle implements RunHandle {
         for (const event of this.#mapper.map(update)) this.emit(event);
       },
       onPermission: (title, decision) => this.#notePermission(title, decision),
-      ...(this.#deps.permissions !== undefined
+      ...(permissions !== undefined
         ? {
             requestPermission: (request: AcpRequestPermissionRequest) =>
-              this.#deps.permissions!.decide(this.#enrichPermission(request), {
+              permissions.decide(this.#enrichPermission(request), {
                 identity: this.#spec.identity,
                 entry: this.#entry!,
                 provider: this.#provider!,
@@ -1836,6 +1957,18 @@ class ExternalRunHandle implements RunHandle {
     this.#wakeDetached();
     // Steers that never reached a prompt go back to the orchestrator.
     for (const text of this.#queuedSteers.splice(0)) this.#spec.onSteerRejected?.(text);
+    if (this.#tempDir !== null) {
+      const dir = this.#tempDir;
+      this.#tempDir = null;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (error) {
+        this.#warn(
+          { dir, error: error instanceof Error ? error.message : String(error) },
+          'removing the background session directory failed',
+        );
+      }
+    }
     const lease = this.#lease;
     const sessionId = this.#sessionId;
     const discard = sessionId !== null ? this.#control.discardOnRelease.get(sessionId) : undefined;

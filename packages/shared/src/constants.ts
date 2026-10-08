@@ -381,3 +381,17 @@ export const AGENT_BRIDGE_TOOL_DETACH_MS = 45_000;
 export const AGENT_KILL_GRACE_MS = 5_000;
 /** Cap of a partial (newline-less) agent stderr line kept between chunks. */
 export const AGENT_STDERR_TAIL_MAX_CHARS = 4_096;
+/**
+ * Upper bound of one background `complete()` on an external agent (P6: one-shot
+ * minimal session — cold start of the agent process included). The callers'
+ * own deadlines (triage, compaction …) still apply on top.
+ */
+export const AGENT_COMPLETE_TIMEOUT_MS = 3 * 60_000;
+/** Model-turn cap of a one-shot `complete()` session (no tools: one turn suffices). */
+export const AGENT_COMPLETE_MAX_TURNS = 3;
+/**
+ * Background loops running on an external agent only (no built-in model, P6):
+ * reflection and conversation summary run once every this many triggers
+ * (per bot / per conversation) — subscription quota is shared with the user.
+ */
+export const AGENT_BACKGROUND_EVERY_N_RUNS = 5;

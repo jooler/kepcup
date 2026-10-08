@@ -30,6 +30,8 @@ import { genericAcpProvider } from './generic-acp.js';
  *   `allowDangerouslySkipPermissions: allowBypass`（我方传 false 即 false）与
  *   `permissionMode` 覆盖（claude-agent-acp 0.86.0 `acp-agent.js` ~7110–7135）；
  *   我方自己的 options 里强制项也放在最后，日后合入用户自定义项不能覆盖；
+ * - 后台精简会话（P6 `oneShot`）：`systemPrompt` 为替换式字符串、`tools: []`
+ *   （无原生工具），`settingSources: []` 与沙箱照旧；
  * - 未登录：`session/new` 成功、`session/prompt` 才报 -32000（todo 附录 A.4）；
  * - MCP 工具的结构化名在 `_meta.claudeCode.toolName`（适配器不填 `name`）。
  */
@@ -140,20 +142,26 @@ export const claudeProvider: AgentProvider = {
   instructionMode: 'meta-append',
   // claude-agent-acp 0.86.0 resets its per-session accumulator on each turn.
   usageSemantics: 'turn',
-  sessionNew: ({ sessionPrompt, maxTurns, loadUserConfig, permission, isolation }) => {
+  sessionNew: ({ sessionPrompt, maxTurns, loadUserConfig, permission, isolation, oneShot }) => {
     const disallowedTools = claudeDisallowedTools(permission);
+    const prompt = sessionPrompt !== null && sessionPrompt.trim().length > 0 ? sessionPrompt : null;
     return {
       _meta: {
-        ...(sessionPrompt !== null && sessionPrompt.trim().length > 0
-          ? { systemPrompt: { append: sessionPrompt } }
+        // 后台精简会话（P6）：替换式字符串——不带 Claude Code 预设提示词；
+        // 否则只追加。
+        ...(prompt !== null
+          ? { systemPrompt: oneShot === true ? prompt : { append: prompt } }
           : {}),
         claudeCode: {
           options: {
             maxTurns,
+            // 后台精简会话不给任何原生工具（宿主 MCP 桥的工具不受影响）。
+            ...(oneShot === true ? { tools: [] } : {}),
             ...(disallowedTools.length > 0 ? { disallowedTools } : {}),
             // Host-enforced keys last: nothing merged above may override them.
             sandbox: claudeSandboxSettings(permission, isolation),
-            settingSources: loadUserConfig ? ['user'] : [],
+            // 后台精简会话一律不加载任何设置（含个人配置）。
+            settingSources: loadUserConfig && oneShot !== true ? ['user'] : [],
             allowDangerouslySkipPermissions: false,
           },
         },
