@@ -1697,6 +1697,18 @@ export class Orchestrator {
     return { lightModelRef: route.modelRef, lightEngine: route.engine };
   }
 
+  /**
+   * Messages a bot sees in a conversation (D75, design 30 §2.4.3): shared rows
+   * plus the viewer's own private `task_event` rows; `viewerBotId === null`
+   * means shared rows only (a task's conversation layer). Every context read
+   * goes through here so the viewer rule lives in one place.
+   */
+  #contextMessages(conversationId: string, viewerBotId: string | null, limit: number): Message[] {
+    return this.#deps.messages
+      .list(conversationId, { limit })
+      .filter((m) => m.ownerBotId === null || m.ownerBotId === viewerBotId);
+  }
+
   #mailboxKey(botId: string, conversationId: string): string {
     return `${botId}:${conversationId}`;
   }
@@ -1927,7 +1939,7 @@ export class Orchestrator {
     if (seen === undefined) return null;
     const upTo = Math.max(-1, ...batch.messages.map((message) => message.seq));
     const limit = 120;
-    const recent = this.#deps.messages.list(batch.conversationId, { limit });
+    const recent = this.#contextMessages(batch.conversationId, batch.botId, limit);
     if (recent.length === limit && recent[0]!.seq > seen.baseCutoff + 1) return null;
     const batchIds = new Set(batch.messages.map((message) => message.id));
     const text = buildConversationDelta(
@@ -2224,7 +2236,7 @@ export class Orchestrator {
 
       // Conversation context: rolling summary + recent window (batch excluded;
       // it arrives separately through the trigger segment).
-      const recent = messages.list(batch.conversationId, { limit: 120 });
+      const recent = this.#contextMessages(batch.conversationId, batch.botId, 120);
       const recentFiltered = recent.filter((m) => !batch.messages.some((b) => b.id === m.id));
       const renderOptions: RenderMessageOptions = {
         ...this.#renderOptions(),
