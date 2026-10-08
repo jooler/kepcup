@@ -1093,15 +1093,16 @@ export class Orchestrator {
       return run;
     }
     // D66：子 run 不在 #activeRuns，经父 run 的门面中止；它自己的 unwind
-    // 负责 settle 行。
-    if (
-      run.loopType === 'subagent' &&
-      run.parentRunId !== null &&
-      this.#subagentFacades.get(run.parentRunId)?.abortSubRun(runId, 'user cancelled') === true
-    ) {
+    // 负责 settle 行（排在另一路之后、尚未开始的前台子 run 由门面当场结算）。
+    // 门面已不在（父 run 正在 close）：close 中止全部子 run 并由它们各自
+    // settle——绝不走下面「排队未开始」的分支（审查 L1）。
+    if (run.loopType === 'subagent') {
+      if (run.parentRunId !== null) {
+        this.#subagentFacades.get(run.parentRunId)?.abortSubRun(runId, 'user cancelled');
+      }
       this.#deps.approvals.cancelPendingForRun(runId);
       void this.#deps.projects.releaseRun(runId).catch(() => {});
-      return run;
+      return this.#deps.runs.get(runId) ?? run;
     }
     // Queued but not started: cancel directly.
     this.#cancelledBeforeStart.add(runId);

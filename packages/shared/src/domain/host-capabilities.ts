@@ -228,6 +228,8 @@ export const NEVER_INJECTED_TOOLS: readonly string[] = [
   'request_unsandboxed',
   'acquire_project_write',
   'delegate_task',
+  // D66 后台分支的取回（D75 §1.2）：与 delegate_task 成对，外部 Agent 无分支可取。
+  'collect_delegate_results',
 ];
 
 export function hostCapability(id: HostCapabilityId): HostCapabilityDescriptor {
