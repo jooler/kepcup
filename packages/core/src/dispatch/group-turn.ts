@@ -79,10 +79,12 @@ interface PendingBatch {
 
 /**
  * Group-chat dispatch (docs/dev/phases/P05-group-chat.md): one conversation
- * holds at most one turn ("轮次") — an ordered list of targets delivered one
- * after another, each only after the previous run reached a terminal state.
- * Batches flushed mid-turn are injected into the running bot right away and
- * re-dispatched after the turn; bots already injected with a batch are not
+ * holds at most one round ("轮次") — an ordered list of targets delivered one
+ * after another, each only after the previous bot's supervisor turn reached a
+ * terminal state (D75 design 30 §6.2: a round never waits for the tasks a turn
+ * started; tasks take no part in rounds). Batches flushed mid-round go to the
+ * running bot's mailbox right away (it handles them in its next turn) and are
+ * re-dispatched after the round; bots already handed a batch are not
  * re-triggered for it. Removed/deleted members are skipped, their runs cancelled.
  */
 export class GroupTurnCoordinator {
@@ -415,7 +417,11 @@ export class GroupTurnCoordinator {
     this.#pending.set(conversationId, queue);
   }
 
-  /** Copy of a fresh batch into the bot currently executing in a turn. */
+  /**
+   * Copy of a fresh batch for the bot currently executing in a round: it waits
+   * in that bot's mailbox and is merged into its next supervisor turn (D75 —
+   * turns are never steered).
+   */
   #injectIntoRunning(
     conversationId: string,
     batchId: string,

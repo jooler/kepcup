@@ -27,6 +27,7 @@ import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
+import { buildTaskTools, type TaskToolFacade } from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
@@ -130,7 +131,18 @@ export interface ResponseToolDeps {
    * 工具）；单跳的真正保障是宿主执行时按 run_id 反查。
    */
   delegation?: DelegationToolFacade | undefined;
+  /**
+   * 任务层（D75）：present 时对话轮注册 start_task / inject_task / cancel_task /
+   * list_tasks / forward_task_result（任务内不注册：深度 1）。
+   */
+  tasks?: TaskToolFacade | undefined;
 }
+
+/**
+ * Read-only file tools a supervisor turn keeps (design 30 §2.1 只读查询): no
+ * write / edit, no bash — commands only run inside tasks.
+ */
+const TURN_FILE_TOOLS: ReadonlySet<string> = new Set(['read', 'ls', 'find', 'grep']);
 
 /** The slice of SkillsService the create_skill tool needs. */
 export interface SkillsToolFacade {
@@ -179,7 +191,20 @@ function guessMime(fileName: string): string {
   return MIME_BY_EXTENSION[path.extname(fileName).toLowerCase()] ?? 'application/octet-stream';
 }
 
-/** Response-loop tools (docs/dev/04-agent-runtime.md "工具目录"). */
+/**
+ * Conversation-loop tools (docs/dev/04-agent-runtime.md "工具目录"), by loop
+ * type (D75 design 30 §2.1 / §2.2):
+ * - `turn` (supervisor turn, read-only): conversation core, read-only queries
+ *   (message / attachment / run lookups, read / ls / find / grep), task
+ *   management + forward_task_result, async hosted actions (delegate_to_bot,
+ *   schedules, wiki ingest, memory candidates, skill authoring, butler
+ *   proposals) and web_search / web_fetch. No writes, commands, browser,
+ *   media generation, MCP, skill / environment installs, access requests or
+ *   delegate_task — those are a task's work. (The gateway refuses writes of a
+ *   turn at execution time as well; this list only keeps useless tools away.)
+ * - otherwise (a task): the full working toolset, minus what belongs to the
+ *   turn (task management, cross-bot delegation, butler proposals).
+ */
 export function buildResponseTools(input: {
   identity: RunIdentity;
   deps: ResponseToolDeps;
@@ -862,6 +887,30 @@ export function buildResponseTools(input: {
         ]
       : [];
 
+  if (identity.loopType === 'turn') {
+    const taskTools =
+      deps.tasks !== undefined ? buildTaskTools({ identity, tasks: deps.tasks }) : [];
+    return [
+      sendMessage,
+      skipReply,
+      searchMessages,
+      getMessagesAround,
+      getAttachment,
+      listMyRuns,
+      getRun,
+      ...coding.filter((tool) => TURN_FILE_TOOLS.has(tool.name)),
+      ...taskTools,
+      ...memoryTools,
+      ...(deps.skills !== undefined ? [createSkill] : []),
+      ...wikiTools,
+      ...scheduleTools,
+      ...webTools,
+      ...delegationTools,
+      ...butlerTools,
+      ...setupTools,
+    ];
+  }
+
   return [
     sendMessage,
     skipReply,
@@ -886,8 +935,9 @@ export function buildResponseTools(input: {
     ...webTools,
     ...skillTools,
     ...delegateTools,
-    ...delegationTools,
-    ...butlerTools,
+    // Tasks keep list_bots (read-only cards); routing to other bots and the
+    // butler's proposals are the turn's (design 30 §1.2).
+    ...(deps.butler !== undefined ? [buildListBotsTool({ identity, butler: deps.butler.host })] : []),
     ...mcpTools,
     ...setupTools,
   ];
