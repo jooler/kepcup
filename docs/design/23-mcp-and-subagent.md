@@ -16,11 +16,27 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 | 层 | 位置 | 内容 |
 |---|---|---|
-| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http=Streamable / sse=旧版 HTTP+SSE）、command/args 或 url、`enabled`、`autoApprove`、`toolPolicies?`（逐工具策略，W5） |
+| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http=Streamable / sse=旧版 HTTP+SSE）、command/args 或 url、`enabled`、`autoApprove`、`toolPolicies?`（逐工具策略，W5）、`auth`（认证方式，D73，见下） |
 | Bot 级 | `botRuntimeSchema.mcp_server_ids` | 该 Bot 启用的 server 子集，默认空 |
 | 密钥 | `secrets` 表 | stdio env / http headers 中的敏感值，键 `mcp:{serverId}:env|header:{name}`，字段级加密（D25），LLM 与日志不可见 |
 
 不兼容 pi CLI 的 `mcp.json` 与 `/mcp` TUI；桌面端用自有设置页。
+
+### 认证方式（D73，连接应用 P0）
+
+HTTP / SSE server 的 `auth` 字段（缺省按同级 `headers` 推断：有 `headers` → `headers`，否则 `none`，存量配置无需迁移）：
+
+| `auth` | 含义 | 适用 transport |
+|---|---|---|
+| `none` | 无认证 | 全部 |
+| `headers` | 静态请求头（含 `secret:header:<name>` 占位，即原有的「请求头（密钥）」） | http / sse |
+| `oauth` | 标准 MCP Authorization：KepCup 作为 OAuth 公共客户端走授权码 + PKCE，令牌由宿主保管并自动刷新 | **仅 http（Streamable HTTP）** |
+
+- **OAuth 的用法**：在设置页把认证方式设为 OAuth，点「连接」→ 界面展示授权域名并等用户确认 → 系统浏览器授权 → 回到 KepCup。令牌（access / refresh）只存加密的 `secrets` 表（逐值，`redact` 可掩码），永不进入 RPC 返回、界面、日志、`runs.db`、审计明细、模型上下文或外部智能体进程。客户端身份按「已有 > CIMD > DCR > 手填 client id」自动选择；手填时界面给出需在其平台登记的回调地址（`http://127.0.0.1:{端口}/callback`，固定候选端口）。
+- **运行时只读令牌**：run 里 MCP 连接用的提供者只做「读取 + 临近过期主动刷新 + 401 后刷新一次」，授权失效（无令牌、刷新失败、仍 401、权限不足）**不会**弹浏览器，而是：run 开头 listTools 失败 → 工具不暴露、`<connected_apps>` 提示、不中断；run 中途失败 → `SETUP_REQUIRED` → 对话里的连接卡 → 连接后 `runs.retry` 续跑。授权错误不计入重连失败次数（不会被永久停用），状态为 `mcp.server_status: needs_auth`。
+- **改认证方式或 URL = 断开旧连接**：令牌的受众绑定该 server 的 URL，所以 `auth` 从 `oauth` 改成别的、或 `oauth` 的 URL 变了，旧连接先吊销（RFC 7009）并清除令牌，再保存新配置；进行中的授权流程同时取消。
+- **断开与删除**：`apps.disconnect` 吊销并清令牌，自定义 server 的连接行保留为 `not_connected`；删除 server 用 `mcp.removeServer`（连同 `mcp:{id}:*` 密钥、令牌与连接行一并清理）。
+- 风险分级、审批与审计与其他 MCP 工具一致；完整设计见 [29-connected-apps.md](29-connected-apps.md) §5 / §6，实现与偏差见 `docs/dev/02-architecture.md`「连接应用」与 DEV-019。
 
 ### 工具映射
 
@@ -52,7 +68,7 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 ### 非目标（首期）
 
-OAuth（`pi-mcp/oauth`，已单排为 D73，见 [29-connected-apps.md](29-connected-apps.md)）、Codemode（`pi-codemode`）、deferred tool loading、与 pi CLI 配置互通。
+OAuth（首期不做；已单排为 D73，P0 已实现自定义 HTTP server 的 OAuth，见上文「认证方式」与 [29-connected-apps.md](29-connected-apps.md)）、Codemode（`pi-codemode`）、deferred tool loading、与 pi CLI 配置互通。
 
 ## SubAgent（D66）
 

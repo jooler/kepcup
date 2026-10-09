@@ -22,6 +22,7 @@
 | P12 Windows WSL2 与增强沙箱 | 已验收 | 2026-10-01 | 2026-10-01 | 经自动审查流程验收（见审查修复记录 BR-P12-001～009 已全部修复）；WSL 真机全套等 13 项列跨系统清单 |
 | P13 打包发布与首次启动          | 已验收 | 2026-10-01 | 2026-10-02 | 经自动审查流程验收（见审查修复记录 BR-P13-001～008 已全部修复，最终代码 dist 真实构建 + afterPack/asar 双架构校验通过）；签名/公证、三平台安装、自动更新端到端等 10 项列跨系统清单 |
 | P14 命令行交互执行          | 未开始 | —          | —          | 任务书已就绪（2026-10-03），设计见 design/15-interactive-execution.md |
+| 连接应用 P0（D73） | 待验收 | 2026-10-09 | — | 自定义 HTTP MCP server 的 OAuth 地基：CIMD / DCR / 手填三条注册路径的真实交互流程、运行时令牌刷新、断开吊销、对话内重连卡；自动化门禁已通过（228 例），待用户待办 U1（部署 CIMD 并跑 `verify.mjs`、Notion / Linear 手工走通一次）。详见文末「连接应用 P0」 |
 
 
 ## 验收记录
@@ -969,3 +970,24 @@
 - **验证**：容器全量（`kepcup-test:trixie`）W3 后 1755 例、33 失败，除 `approvals` 一条（`26e15f2` 已修正）外均在基线集合内；e2e（`kepcup-test:trixie-xvfb`）70 例、3 例失败，与 main 相同。W1、W2、W4 / D66 经独立审查并修复（批 A–D），修复与合并修正见 todo §5。
 - **偏差（均待用户确认）**：DEV-009（「仅这一次」= 使用它的那次工具调用）、DEV-010（任务会话键随会话行）、DEV-011（无内置模型只做第 2 级降级）、DEV-012（D71 委派结果仍取被委派方那一个对话轮的回复）、DEV-013（`create_skill` 留在对话轮，调度会话已决定）、DEV-014（消费规则、对话轮不等用户、群聊判断超时从提交起算）、DEV-015（强制收回对任务层排队不起作用）。
 - **已知缺口**：只读任务的浏览器下载目录竞态（需 desktop / RPC 改动）；workspace workdir 的写任务写 project 不取其租约（W1 LOW-3 同类）；外部智能体任务没有 `ask_user`；设计 30 §6.3 的进行中任务数与执行记录分列未做；`projects.test.ts` 里仍假设回复 run 持租约的用例需要重新设计；纯对话轮的反思去抖未做（每个 `completed` 对话轮都登记反思）。
+
+
+## 连接应用 P0 — MCP OAuth 地基（2026-10-09，todo/connected-apps.md §4，D73）
+
+设计 `docs/design/29-connected-apps.md`，执行方案 `todo/connected-apps.md`。分支 `t/d73-connected-apps`，工作树未提交、未合入 `main`（需用户确认）。
+
+- **交付**：
+  - testkit 假授权 + MCP 服务器 `fake-oauth-mcp-server.ts`（发现 / CIMD / DCR / 预注册 / PKCE / 吊销，行为开关与记录齐全）与 `simulateBrowser`、`publishCimdDocument`。
+  - shared：`mcpServer.auth`（`none | headers | oauth`，缺省按 `headers` 推断）、`appConnection*` 类型、`approvalDurationSchema`、`connect-app` setup 需求、`apps.*` / `mcp.removeServer` / 主进程 `shell.openExternal` RPC、`apps.connect_flow` / `apps.connection_status` 事件、`needs_auth` 状态、OAuth 常量与错误码。
+  - main `0022_app_connections.sql`（`app_connections`、`oauth_clients`）。
+  - core `apps/`：Token Vault（令牌逐值存 secrets）、连接行存取、交互流程 `ConnectFlowManager`（自建回调服务、SSRF 防护的 fetch，`infra/safe-dispatcher.ts` 从 `search/service.ts` 抽出）、运行时 `ConnectionAuthProvider` / `ConnectionAuthRegistry`（只刷新、不授权）、`AppDisconnector`（吊销 + 清理 + 改认证方式 / URL 时断开旧连接）、审计。
+  - `McpService` / `buildMcpTools` / orchestrator 接线：授权错误不计失败、`needs_auth`、`SETUP_REQUIRED` → `connect-app` 卡 → `runs.retry`；`<connected_apps>` 段与 `app_request_connection` 工具；`SecretsService` 轮换 / 删除后旧值仍参与 `redact`、`removeByPrefix`。
+  - 渲染端：`ConnectAppPanel`（设置页与对话卡共用）、`stores/apps.svelte.ts`、`McpSection` 认证方式与连接 / 断开、`SetupRequiredCard` 的 `connect-app` 分支、`mcp.removeServer`；主进程 `shell-methods.ts`。
+  - `infra/cloudflare/oauth-cimd/`（`client.json`、`_headers`、`wrangler.jsonc`、README、`verify.mjs`）。
+- **验证**：Docker `kepcup-test:trixie` 定向跑 D73 全部新增 / 改动测试文件，**20 文件 228 例全绿**（shared 18、testkit 43、core 单测 125 / 集成 22 / 安全 1、desktop 19）；另跑 `mcp.test.ts`（17）等既有 MCP 测试无回归。门禁自动化部分 `connected-apps-e2e.test.ts`：CIMD / DCR / 手填三条路径各走真实交互流程 → Bot 调用 → 强制过期 + 透明刷新 → `apps.disconnect`（吊销记录在假授权服务器）→ 工具再次不可用。安全测试 `connected-apps-tokens.test.ts`：完整生命周期后 `runs.db`、`audit_log`、日志、模型请求体、全部 RPC 返回与事件均无令牌明文。shared / core 构建、core / desktop typecheck、eslint 通过。全量回归按约定留到交付前一次。
+- **复查修复（2026-10-09）**：P0 评审的 9 项发现已修（SSRF IP 字面量判定、`mcp.test` 令牌外发、`app_request_connection` 效果登记、按连接记录 DCR 客户端、流程计时 / 主机复确认、`listTools` 授权失败映射、启动收拾 `connecting` 行、断开取消在途流程与刷新），各带回归测试；明细见 DEV-019 第 11 项。迁移号冲突（第 4 项）合并时处理。
+- **偏差**：DEV-019（见 DEVIATIONS）。
+- **未做 / 待办**：
+  - **门禁里需要用户的部分（用户待办 U1）**：部署 `infra/cloudflare/oauth-cimd` 到 `kepcup.com/oauth/*` 并运行 `verify.mjs`；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（连接 → 调用 → 过期重连 → 断开），结果补记在此。
+  - **迁移号**：本分支取 main `0022`，`t/schedule-nudges`（D80）的 `0022_schedule_title_origin.sql` 同号——后合入的一方须顺延重编号（D73 改 `0023`；`app-connections-migration.test.ts` 等按版本号断言的测试同步改，既有迁移测试已用 `test/support/migration-versions.ts` 的 `mainVersionsAfter` 不受影响）。
+  - P1（目录、Bot 授权、风险分级审批与工具锁定、设置「应用」分区、ACP `apps` 能力包）、P2 起不在本期。

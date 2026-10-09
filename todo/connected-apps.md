@@ -1,6 +1,6 @@
 # 连接应用（Connected Apps）与开放平台基座 — 执行方案（D73 / D74）
 
-> 状态：**未开始**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P0 实现完成待门禁（用户待办 U1）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09 在 `t/d73-connected-apps` 实现，P1 起未开始）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
 > **硬约束**：
 >
@@ -75,10 +75,10 @@
 
 - [x] **开工前置（用户决定，2026-10-07）**：等 D72 检查点提交后再开工——已满足（`551fb7e`）。开工时 `git log` 确认 HEAD 包含 `551fb7e`，并用 `ListAgents` / `SendMessage` 通知 kepcup-03（若已不在则问用户）D73 已开始。
 - [ ] 为减少与 D72 P5 第二部分的合并冲突：对 `orchestrator.ts` / `start.ts` / `types.ts` 的改动尽量集中、少动既有代码（新逻辑放新模块，主文件只加接线），并在附录 B 记录改动过的段落。
-- [ ] 开工前 `git status`，并用 `ListAgents` / `SendMessage` 询问是否有其他 kepcup 会话正在执行 `todo/acp-external-agents.md` 或其他计划，确认文件归属。
-- [ ] **不要** `git checkout` / `reset` / 覆盖任何不是你写的改动；与他人改动同文件时只做增量编辑。
+- [x] 开工前 `git status`，并用 `ListAgents` / `SendMessage` 询问是否有其他 kepcup 会话正在执行 `todo/acp-external-agents.md` 或其他计划，确认文件归属。
+- [x] **不要** `git checkout` / `reset` / 覆盖任何不是你写的改动；与他人改动同文件时只做增量编辑。
 - [ ] **迁移编号（2026-10-09 定：不预留）**：多个并行工作（D75、borrowings、D80 等）都在新增 main 迁移，且迁移必须连续（`infra/migrate.ts` 校验），D73 **不预留具体编号**——每次写迁移时 `ls packages/core/migrations/main/` 取当时的下一个空号（本文用 `{N}` / `{N+1}` / `{N+2}` 指代三个 D73 迁移，P0/P1/P2 之间若他人又占了号则继续顺延），写之前用 `ListAgents` 问一下有无会话即将合入新迁移（如 D80 的 worktree `t/schedule-nudges`），合入 main 前再核对一次不冲突。截至 2026-10-09 main 已用到 `0021_delegation_intent`。D73 不改 runs 库（runs `0006`–`0008` 归 D75、`0009_tool_effects` 归 borrowings W2）。另：D75 的 `0018` 重建了 `messages`（新增 `owner_bot_id` / `task_id`，`kind` 含 `task_event`）与 `attachments`，未动 `approvals`；loop_type `'response'` 已改名 `'turn'`（runs `0007`、main `0020`）。
-- [ ] **已落地的相关工作（开工前必读其实现，D73 在其上扩展，不重复实现）**：borrowings W5（提交 `60e57d7`）——`core/mcp/risk.ts`（`classifyRisk` / `classifyRiskDetailed`：注解 + 名字推断，写动词一票否决）、`core/mcp/policy.ts`（逐工具策略：工具策略 > server `autoApprove` > 风险档默认，read→auto、其余→ask）、`mcpServerSchema.toolPolicies`（settings 单行 JSON）、审批 payload 带 `risk`、RPC `mcp.toolRisks`、网关 `mcpToolDecision`（对话轮与只读子代理只能调「只读 + auto」工具）、系统提示 `<mcp_tools>` 段、审批卡 `McpRiskBadge`、设置页 `McpToolPolicies.svelte`；**无人值守下 `mcp_tool` 所有风险档自动批准（用户决定，见 borrowings W5「目标 3」）**。D75（对话轮 / 任务分治，`docs/design/30-supervisor-and-tasks.md`）重构了 orchestrator——§0 第 7 条的行号锚点早于 D75 与 borrowings，**全部按函数名重新定位**。borrowings 的其余工作项由会话 kepcup-81 在主工作树推进，开工前用 `ListAgents` 确认文件归属。
+- [x] **已落地的相关工作（开工前必读其实现，D73 在其上扩展，不重复实现）**：borrowings W5（提交 `60e57d7`）——`core/mcp/risk.ts`（`classifyRisk` / `classifyRiskDetailed`：注解 + 名字推断，写动词一票否决）、`core/mcp/policy.ts`（逐工具策略：工具策略 > server `autoApprove` > 风险档默认，read→auto、其余→ask）、`mcpServerSchema.toolPolicies`（settings 单行 JSON）、审批 payload 带 `risk`、RPC `mcp.toolRisks`、网关 `mcpToolDecision`（对话轮与只读子代理只能调「只读 + auto」工具）、系统提示 `<mcp_tools>` 段、审批卡 `McpRiskBadge`、设置页 `McpToolPolicies.svelte`；**无人值守下 `mcp_tool` 所有风险档自动批准（用户决定，见 borrowings W5「目标 3」）**。D75（对话轮 / 任务分治，`docs/design/30-supervisor-and-tasks.md`）重构了 orchestrator——§0 第 7 条的行号锚点早于 D75 与 borrowings，**全部按函数名重新定位**。borrowings 的其余工作项由会话 kepcup-81 在主工作树推进，开工前用 `ListAgents` 确认文件归属。
 - [ ] `approvals` CHECK 重建（P2 的 `egress`）须以 `0017_external_agents.sql` 的 CHECK 列表（含 `agent_tool`）为基础，并包含届时全部 kind。
 
 ### 2.2 测试环境
@@ -117,27 +117,27 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 4.1 testkit：假授权 + MCP 服务器（先做，后续全部测试依赖它）
 
-- [ ] 新 `packages/testkit/src/fake-oauth-mcp-server.ts`：一个本机 HTTP 服务，同时是 **MCP Streamable HTTP 资源服务器**（用 `@modelcontextprotocol/sdk` 的 server；testkit 补依赖并锁与 core 相同的版本 1.32.1）与 **OAuth 授权服务器**。可配置项：
+- [x] 新 `packages/testkit/src/fake-oauth-mcp-server.ts`：一个本机 HTTP 服务，同时是 **MCP Streamable HTTP 资源服务器**（用 `@modelcontextprotocol/sdk` 的 server；testkit 补依赖并锁与 core 相同的版本 1.32.1）与 **OAuth 授权服务器**。可配置项：
   - 资源侧：`/mcp` 无令牌返回 401 + `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`；`/.well-known/oauth-protected-resource`（RFC 9728，可配置 `authorization_servers`、`scopes_supported`）；按工具配置所需 scope，不足返回 `403` + `error="insufficient_scope", scope="…"`；校验令牌 audience 与 `resource`；工具列表可在运行中修改并发 `notifications/tools/list_changed`；工具可带任意注解。
   - 授权侧：`/.well-known/oauth-authorization-server`（可切换为仅 OIDC 发现路径）；`client_id_metadata_document_supported` 开关（CIMD：服务端抓取 `client_id` URL 并校验 `client_id`/`redirect_uris`）；`registration_endpoint` 开关（DCR，记录收到的 `application_type` 与 `redirect_uris`）；预注册客户端表；`/authorize`（**无 UI**：校验参数后直接 302 回 `redirect_uri?code&state&iss`；可配置不回 `iss` / 回错误 `iss` / 返回 `error=access_denied`；redirect 匹配可选「精确」或「回环端口无关」）；`/token`（授权码 + PKCE S256 校验、`resource` 必填开关、刷新令牌轮换开关、`invalid_grant` 注入、`expires_in` 可配）；`/revoke`（RFC 7009，记录调用）。
   - 测试辅助：`simulateBrowser(url)`——在测试中替代系统浏览器：GET 授权 URL、跟随一次 302 到回调地址（即 KepCup 的本机回调服务）。
-- [ ] `packages/testkit/test/fake-oauth-mcp-server.test.ts`：自测上述每个开关。
-- [ ] 测试用 CIMD：testkit 的 `file-server.ts` 托管一份测试 CIMD JSON；core 读取 CIMD URL 的常量在 `NODE_ENV=test` 下允许经 `CoreServicesOptions` 覆盖（非测试环境无效，照 `KEPCUP_KEYSTORE` 的做法）。因本方案不走 pi-mcp 的 CIMD 钩子，http 的测试 URL 不受其 https 校验限制；生产代码自行断言 CIMD URL 为 https。
-- [ ] 测试注入点（`CoreServicesOptions`，照 `browserRpc`）：`shellRpc`（替换主进程 `shell.openExternal`，测试里接 `simulateBrowser` 并记录调用次数）、`oauthLoopbackAllowlist`（测试中允许目录条目指向假服务器的 http 回环地址；非测试环境无效）。
+- [x] `packages/testkit/test/fake-oauth-mcp-server.test.ts`：自测上述每个开关。
+- [x] 测试用 CIMD：testkit 的 `file-server.ts` 托管一份测试 CIMD JSON；core 读取 CIMD URL 的常量在 `NODE_ENV=test` 下允许经 `CoreServicesOptions` 覆盖（非测试环境无效，照 `KEPCUP_KEYSTORE` 的做法）。因本方案不走 pi-mcp 的 CIMD 钩子，http 的测试 URL 不受其 https 校验限制；生产代码自行断言 CIMD URL 为 https。
+- [x] 测试注入点（`CoreServicesOptions`，照 `browserRpc`）：`shellRpc`（替换主进程 `shell.openExternal`，测试里接 `simulateBrowser` 并记录调用次数）、`oauthLoopbackAllowlist`（测试中允许目录条目指向假服务器的 http 回环地址；非测试环境无效）。
 
 ### 4.2 shared：类型、常量、错误码、RPC
 
-- [ ] `constants.ts`：
+- [x] `constants.ts`：
   - `KEPCUP_OAUTH_CLIENT_ID = 'https://kepcup.com/oauth/client.json'`（CIMD URL，**永不更改**）
   - `OAUTH_CALLBACK_PORTS`（3 个固定候选端口，建议 47615–47617，实现时检查与常见开发工具无冲突）、`OAUTH_CALLBACK_PATH = '/callback'`
   - `OAUTH_FLOW_TIMEOUT_MS`（5 分钟）、`OAUTH_REFRESH_SKEW_MS`（60 秒）、`OAUTH_METADATA_MAX_BYTES`（如 64 KB）
-- [ ] `errors.ts`：`APP_AUTH_REQUIRED`、`OAUTH_FLOW_FAILED`、`OAUTH_FLOW_CANCELLED`、`OAUTH_FLOW_TIMEOUT`、`OAUTH_CLIENT_REQUIRED`（无任何注册途径，需用户填 client id）、`OAUTH_ISSUER_MISMATCH`、`OAUTH_INSECURE_ENDPOINT`、`APP_CONNECTION_NOT_FOUND`。
-- [ ] `types.ts`：
+- [x] `errors.ts`：`APP_AUTH_REQUIRED`、`OAUTH_FLOW_FAILED`、`OAUTH_FLOW_CANCELLED`、`OAUTH_FLOW_TIMEOUT`、`OAUTH_CLIENT_REQUIRED`（无任何注册途径，需用户填 client id）、`OAUTH_ISSUER_MISMATCH`、`OAUTH_INSECURE_ENDPOINT`、`APP_CONNECTION_NOT_FOUND`。
+- [x] `types.ts`：
   - `mcpServerSchema` 增 `auth: z.enum(['none','headers','oauth'])`；缺省值须由同级 `headers` 推断（有 headers → `headers`，否则 `none`），字段级 `.catch()` 看不到兄弟字段——用对象级 `z.preprocess`；`superRefine`：`oauth` 只允许 `transport === 'http'`。
   - 新 `appConnectionSchema`（对应 §4.3 表，**不含任何令牌字段**）、`appConnectionStatusSchema`（`not_connected | connecting | connected | expired | needs_scope | tools_changed | error | disabled`）。
   - 新 `approvalDurationSchema = z.enum(['once','conversation','bot'])`，只用于 `ApprovalDecision.duration` 与 `mcp_tool` 的 `payload.durations`；`grantDurationSchema`（`grants` 表与 `agent_tool`）**保持不变**。
   - `setupRequirementSchema` 增 `{ kind: 'connect-app', target: { kind: 'custom', serverId } | { kind: 'catalog', connectorId }, connectionId?: string, scopes?: string[], reason: 'not_connected' | 'expired' | 'scope' }`（P0 只产生 `custom` 目标；`catalog` 形状先定好，P1 使用）。
-- [ ] `rpc/methods.ts`（命名遵循 `domain.verb`）：
+- [x] `rpc/methods.ts`（命名遵循 `domain.verb`）：
   - `apps.connect`：`{ target, scopes?, grantBotId? }` → `{ flowId }`（P0 只接受 `custom`）
   - `apps.connect.continue`：`{ flowId }`（用户在界面确认打开授权页后调用，见 §4.6）
   - `apps.connect.cancel`：`{ flowId }`
@@ -147,32 +147,32 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
   - `mcp.removeServer`：`{ serverId }`——显式删除自定义 server 并清理其 `mcp:{id}:*`、令牌与连接（不再依赖 `settings.update` 整体替换的差集，陈旧快照会误删）
   - 主进程服务方法 `shell.openExternal`：`{ url }` → `{ ok }`；新增 `SHELL_RPC_METHODS` 清单（类型照 `BROWSER_RPC_METHODS`）
   - 以上加入 `APP_METHODS` 白名单（`shell.openExternal` 除外，它只由 core 经 Port B 调主进程）
-- [ ] `rpc/events.ts`：`apps.connect_flow`（`{ flowId, phase: 'discovering'|'awaiting_consent'|'awaiting_browser'|'exchanging'|'done'|'failed'|'cancelled', authorizationHost?, authorizationUrl?, connectionId?, error? }`——`authorizationUrl` 仅在 `awaiting_consent` 下发供用户核对，不含任何令牌）、`apps.connection_status`（`{ connectionId, status }`）；`mcp.server_status` 的 status 增 `needs_auth`。
+- [x] `rpc/events.ts`：`apps.connect_flow`（`{ flowId, phase: 'discovering'|'awaiting_consent'|'awaiting_browser'|'exchanging'|'done'|'failed'|'cancelled', authorizationHost?, authorizationUrl?, connectionId?, error? }`——`authorizationUrl` 仅在 `awaiting_consent` 下发供用户核对，不含任何令牌）、`apps.connection_status`（`{ connectionId, status }`）；`mcp.server_status` 的 status 增 `needs_auth`。
 
 ### 4.3 数据：迁移 `{N}_app_connections.sql`
 
-- [ ] 建 `app_connections`（设计 29 §12 字段：`id, connector_id, connector_ver NULL, label, account_sub NULL, server_url NULL, issuer NULL, scopes, token_expires_at NULL, discovery_json NULL, status, created_at, updated_at, last_used_at NULL` + 部分唯一索引 `(connector_id, account_sub) WHERE account_sub IS NOT NULL`）。自定义 server 的连接 `connector_id = 'custom:{serverId}'`、`id` 同为 `custom:{serverId}`（每个自定义 server 唯一一行）；stdio server 的行 `server_url` 为 NULL（P1 工具锁定用）。**自定义行不随断开删除**（改 `not_connected`），只随 `mcp.removeServer` 删除；`apps.connections.list` 默认不返回 `custom:` 行（`includeCustom` 参数）。
-- [ ] 迁移测试（真库，照 `external-agents-migration.test.ts`）。
-- [ ] 同步 `docs/dev/03-data-model.md`。
+- [x] 建 `app_connections`（设计 29 §12 字段：`id, connector_id, connector_ver NULL, label, account_sub NULL, server_url NULL, issuer NULL, scopes, token_expires_at NULL, discovery_json NULL, status, created_at, updated_at, last_used_at NULL` + 部分唯一索引 `(connector_id, account_sub) WHERE account_sub IS NOT NULL`）。自定义 server 的连接 `connector_id = 'custom:{serverId}'`、`id` 同为 `custom:{serverId}`（每个自定义 server 唯一一行）；stdio server 的行 `server_url` 为 NULL（P1 工具锁定用）。**自定义行不随断开删除**（改 `not_connected`），只随 `mcp.removeServer` 删除；`apps.connections.list` 默认不返回 `custom:` 行（`includeCustom` 参数）。
+- [x] 迁移测试（真库，照 `external-agents-migration.test.ts`）。
+- [x] 同步 `docs/dev/03-data-model.md`。
 
 ### 4.4 SecretsService 改造（`domain/secrets.ts`）
 
-- [ ] `setValue` 覆盖已有名称时，把旧值移入「仅脱敏」集合（进程结束前一直参与 `redact`）；`removeValue` 同理。集合设上限（如 512 条，LRU 淘汰最旧），防止长期运行时随令牌轮换无限增长。
-- [ ] 新增 `removeByPrefix(prefix)`（返回删除的名称列表；被删值进入仅脱敏集合）。
-- [ ] 单测：令牌轮换后旧值、新值都被 `redact` 掩码；删除后仍被掩码；名称正则不变（`conn:{id}:access` 等合法）。
+- [x] `setValue` 覆盖已有名称时，把旧值移入「仅脱敏」集合（进程结束前一直参与 `redact`）；`removeValue` 同理。集合设上限（如 512 条，LRU 淘汰最旧），防止长期运行时随令牌轮换无限增长。
+- [x] 新增 `removeByPrefix(prefix)`（返回删除的名称列表；被删值进入仅脱敏集合）。
+- [x] 单测：令牌轮换后旧值、新值都被 `redact` 掩码；删除后仍被掩码；名称正则不变（`conn:{id}:access` 等合法）。
 
 ### 4.5 Token Vault（新 `packages/core/src/apps/token-vault.ts`）
 
-- [ ] 机密**逐值**存放（设计 29 §5.3）：`conn:{connectionId}:access`、`conn:{connectionId}:refresh`、`oauth:client:{issuerHash}:id`、`oauth:client:{issuerHash}:secret`（`issuerHash` = sha256(issuer) hex 前 24 位）。非机密的 `token_expires_at`、`scopes`、`discovery_json`、`issuer` 存 `app_connections` 行。
-- [ ] 自有 API（不实现 pi-mcp 的 `McpOAuthStateStore`）：`getTokens(connectionId)` / `saveTokens(connectionId, OAuthTokens)`（拆值写 secrets，`expires_in` 换算成 `token_expires_at` 写行）、`getClient(issuer)` / `saveClient(issuer, info)`（DCR 结果含 `redirect_uris`，一并存行以便端口预判，见 §4.6）、`saveDiscovery(connectionId, OAuthServerInfo)`；code verifier **只放流程内存**，不持久化。
-- [ ] `clearConnection(connectionId)`、`clearIssuerClientIfUnused(issuer)`（无其他连接引用该 issuer 且客户端来自 DCR 时删除）。
-- [ ] 单测：落库内容中不出现 JSON 打包的令牌；跨连接共享同 issuer 客户端。
+- [x] 机密**逐值**存放（设计 29 §5.3）：`conn:{connectionId}:access`、`conn:{connectionId}:refresh`、`oauth:client:{issuerHash}:id`、`oauth:client:{issuerHash}:secret`（`issuerHash` = sha256(issuer) hex 前 24 位）。非机密的 `token_expires_at`、`scopes`、`discovery_json`、`issuer` 存 `app_connections` 行。
+- [x] 自有 API（不实现 pi-mcp 的 `McpOAuthStateStore`）：`getTokens(connectionId)` / `saveTokens(connectionId, OAuthTokens)`（拆值写 secrets，`expires_in` 换算成 `token_expires_at` 写行）、`getClient(issuer)` / `saveClient(issuer, info)`（DCR 结果含 `redirect_uris`，一并存行以便端口预判，见 §4.6）、`saveDiscovery(connectionId, OAuthServerInfo)`；code verifier **只放流程内存**，不持久化。
+- [x] `clearConnection(connectionId)`、`clearIssuerClientIfUnused(issuer)`（无其他连接引用该 issuer 且客户端来自 DCR 时删除）。
+- [x] 单测：落库内容中不出现 JSON 打包的令牌；跨连接共享同 issuer 客户端。
 
 ### 4.6 授权引擎：交互流程（新 `packages/core/src/apps/auth/`）
 
-- [ ] `callback-server.ts`：**自建**本机回调服务（不用 `OAuthCallbackServer`，它不校验 `Host`）：`node:http` 监听 `127.0.0.1`，端口依次尝试 `OAUTH_CALLBACK_PORTS`，全占用再用 0（随机）；只接受 `GET {OAUTH_CALLBACK_PATH}`；校验 `Host` 头等于 `127.0.0.1:{port}`；按 `state` 匹配等待者；一次性；`OAUTH_FLOW_TIMEOUT_MS` 超时；回给浏览器一个**无脚本**的本地化结果页（成功：「已连接，可回到 KepCup」；失败：原因）。
-- [ ] `safe-fetch.ts`：给 pi-mcp 发现 / 令牌请求注入的 `McpFetch`：只允许 `https:`；把 `search/service.ts` 的 `#connectGuard`（undici `Agent`，连接时逐跳校验地址）抽到 `packages/core/src/infra/safe-dispatcher.ts` 供两处共用，作为 `dispatcher` 使用（不要只做 DNS 预查，存在重绑定窗口）；**唯一例外**——自定义 server 的 URL 本身是回环地址时，允许访问同一回环主机（本机开发），以及测试注入的 `oauthLoopbackAllowlist`；响应体上限 `OAUTH_METADATA_MAX_BYTES`；不跟随跨源重定向。
-- [ ] `flow.ts`（`ConnectFlowManager`）——**只用 pi-mcp 低层函数**（`discoverOAuthServerInfo` → 选客户端 → `registerClient`（DCR 时）→ `startAuthorization` → 自建回调 → `exchangeAuthorizationCode`），不使用 `McpOAuthProvider` / `authorizeMcp`；CIMD 时以 `clientInformation: { client_id: CIMD URL }` 调用低层函数：
+- [x] `callback-server.ts`：**自建**本机回调服务（不用 `OAuthCallbackServer`，它不校验 `Host`）：`node:http` 监听 `127.0.0.1`，端口依次尝试 `OAUTH_CALLBACK_PORTS`，全占用再用 0（随机）；只接受 `GET {OAUTH_CALLBACK_PATH}`；校验 `Host` 头等于 `127.0.0.1:{port}`；按 `state` 匹配等待者；一次性；`OAUTH_FLOW_TIMEOUT_MS` 超时；回给浏览器一个**无脚本**的本地化结果页（成功：「已连接，可回到 KepCup」；失败：原因）。
+- [x] `safe-fetch.ts`：给 pi-mcp 发现 / 令牌请求注入的 `McpFetch`：只允许 `https:`；把 `search/service.ts` 的 `#connectGuard`（undici `Agent`，连接时逐跳校验地址）抽到 `packages/core/src/infra/safe-dispatcher.ts` 供两处共用，作为 `dispatcher` 使用（不要只做 DNS 预查，存在重绑定窗口）；**唯一例外**——自定义 server 的 URL 本身是回环地址时，允许访问同一回环主机（本机开发），以及测试注入的 `oauthLoopbackAllowlist`；响应体上限 `OAUTH_METADATA_MAX_BYTES`；不跟随跨源重定向。
+- [x] `flow.ts`（`ConnectFlowManager`）——**只用 pi-mcp 低层函数**（`discoverOAuthServerInfo` → 选客户端 → `registerClient`（DCR 时）→ `startAuthorization` → 自建回调 → `exchangeAuthorizationCode`），不使用 `McpOAuthProvider` / `authorizeMcp`；CIMD 时以 `clientInformation: { client_id: CIMD URL }` 调用低层函数：
 
   1. 发现：`discoverOAuthServerInfo(serverUrl, { fetch: safeFetch })`；记录 issuer。
   2. 客户端身份（设计 29 §5.1 第 3 步的顺序）：本机已有该 issuer 的客户端 → 用；（P1 起）预注册 `clientRef` → 用；AS 声明 `client_id_metadata_document_supported` → CIMD（`clientMetadataDocument` 钩子返回 `{ url: KEPCUP_OAUTH_CLIENT_ID, redirectUrl }`）；有 `registration_endpoint` → DCR（`clientMetadata` 带 `application_type: 'native'`——扩展类型后传入、`redirect_uris` 登记**全部固定端口**、`token_endpoint_auth_method: 'none'`、`grant_types: ['authorization_code','refresh_token']`、`client_name: 'KepCup'`）；都没有 → 失败 `OAUTH_CLIENT_REQUIRED`（界面引导手填）。
@@ -183,63 +183,65 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
   - **并发去重**：同一目标（custom serverId / 后续 connectorId / connectionId）进程内同时至多一个流程；重复 `apps.connect` 返回同一 `flowId`。
   - 取消 / 超时 / 应用退出：关闭回调服务、丢弃 verifier。
-- [ ] `shell.openExternal` 全链路：shared 方法定义 + `SHELL_RPC_METHODS`；main 新 `shell-methods.ts`（`new URL()` 解析；只允许 `https:` 与主机为 `127.0.0.1` / `[::1]` 的 `http:`；调用 Electron `shell.openExternal`，不经 shell 命令），在 `index.ts:221` 与 `browserMethodSpecs` 合并进 `serverMethods`；core 新 `apps/shell-facade.ts`（照 `browser/facade.ts`），在 `process-entry.ts:109` 旁 `services.shellRpc.bind(platformServer)`；`CoreServicesOptions.shellRpc` 注入点（§4.1）。
-- [ ] 单测 / 集成（全部用假服务器）：CIMD 路径、DCR 路径（断言 `application_type: native` 与固定端口）、手填路径、`iss` 缺失 / 不符、`state` 不符、`Host` 头伪造、端口全占用回落随机、PKCE 校验失败、用户拒绝（`access_denied`）、超时、取消、并发去重、非 https 端点拒绝、私网地址拒绝与回环例外。
+- [x] `shell.openExternal` 全链路：shared 方法定义 + `SHELL_RPC_METHODS`；main 新 `shell-methods.ts`（`new URL()` 解析；只允许 `https:` 与主机为 `127.0.0.1` / `[::1]` 的 `http:`；调用 Electron `shell.openExternal`，不经 shell 命令），在 `index.ts:221` 与 `browserMethodSpecs` 合并进 `serverMethods`；core 新 `apps/shell-facade.ts`（照 `browser/facade.ts`），在 `process-entry.ts:109` 旁 `services.shellRpc.bind(platformServer)`；`CoreServicesOptions.shellRpc` 注入点（§4.1）。
+- [x] 单测 / 集成（全部用假服务器）：CIMD 路径、DCR 路径（断言 `application_type: native` 与固定端口）、手填路径、`iss` 缺失 / 不符、`state` 不符、`Host` 头伪造、端口全占用回落随机、PKCE 校验失败、用户拒绝（`access_denied`）、超时、取消、并发去重、非 https 端点拒绝、私网地址拒绝与回环例外。
 
 ### 4.7 授权引擎：运行时（`apps/auth/runtime-provider.ts`）
 
-- [ ] `ConnectionAuthProvider implements AuthProvider`：
+- [x] `ConnectionAuthProvider implements AuthProvider`：
   - `token()`：读缓存的 access token；距过期 < `OAUTH_REFRESH_SKEW_MS` 且有 refresh token → **single-flight** 调 `refreshAuthorization` 主动刷新并保存；无令牌 → 抛 `AppAuthRequiredError{ reason: 'not_connected' }`。
   - `onUnauthorized(ctx)`：`ctx.token` 与当前令牌不同 → 直接返回（他处已刷新）；`parseWwwAuthenticate`：`403 insufficient_scope` → 状态 `needs_scope`，抛 `AppAuthRequiredError{ reason: 'scope', scopes: stepUpScope(granted, challenged) }`；401 → 有 refresh token 则刷新一次，成功返回、失败（`invalid_grant` 等）→ 状态 `expired`，抛 `AppAuthRequiredError{ reason: 'expired' }`。**绝不**调用 `authorizeMcp` / 打开浏览器。
-- [ ] `ConnectionAuthRegistry`：每个连接进程内唯一实例；run、设置页「测试」、工具清单刷新共用；交互流程完成后 `invalidate(connectionId)`。
-- [ ] **先验证**（写测试锁住）：① `onUnauthorized` / `token()` 抛出的错误能否原样穿出 `StreamableHttpTransport` → `client.connect` / `listTools` / `callTool`，被包装则在 `McpService` 侧解包识别；② GET 事件流（`openGetStream` 默认开启）收到 401 时错误走向——若触发 `onClose` 并被当作连接失败，须同样识别为授权错误、不计失败（必要时对 OAuth 连接关闭 GET 流）。
-- [ ] `ConnectionAuthRegistry.invalidate(connectionId)` 同时调用 `McpService.resetFailures(serverKey)` 并丢弃该连接的缓存客户端，使重连后立即可用。
+- [x] `ConnectionAuthRegistry`：每个连接进程内唯一实例；run、设置页「测试」、工具清单刷新共用；交互流程完成后 `invalidate(connectionId)`。
+- [x] **先验证**（写测试锁住）：① `onUnauthorized` / `token()` 抛出的错误能否原样穿出 `StreamableHttpTransport` → `client.connect` / `listTools` / `callTool`，被包装则在 `McpService` 侧解包识别；② GET 事件流（`openGetStream` 默认开启）收到 401 时错误走向——若触发 `onClose` 并被当作连接失败，须同样识别为授权错误、不计失败（必要时对 OAuth 连接关闭 GET 流）。
+- [x] `ConnectionAuthRegistry.invalidate(connectionId)` 同时调用 `McpService.resetFailures(serverKey)` 并丢弃该连接的缓存客户端，使重连后立即可用。
 
 ### 4.8 McpService / MCP 工具接线
 
-- [ ] `#connectClient`：`server.auth === 'oauth'` 时给 `StreamableHttpTransport` 传 `authProvider`（来自 Registry，连接 id = `custom:{serverId}` 对应行）；`sse` 不支持 OAuth（schema 已拒绝）。
-- [ ] `#ensureConnected` **的 catch（:269-285）**：识别 `AppAuthRequiredError`（含被包装的情况）→ 不累计 `#failures`、不发 `failed`、发 `mcp.server_status: needs_auth`、**原样重抛**（不包成 `MCP_CONNECT_FAILED`）；新增 `resetFailures(serverId)`。`#isTransportFailure` 同样排除授权错误。`#endpointHint` 对 `oauth` server 改为提示「请在设置中连接」。
-- [ ] `testServer`：`oauth` 且无令牌 → 返回可读结果「尚未连接」，不发起授权。
-- [ ] `mcp/tools.ts`：
+- [x] `#connectClient`：`server.auth === 'oauth'` 时给 `StreamableHttpTransport` 传 `authProvider`（来自 Registry，连接 id = `custom:{serverId}` 对应行）；`sse` 不支持 OAuth（schema 已拒绝）。
+- [x] `#ensureConnected` **的 catch（:269-285）**：识别 `AppAuthRequiredError`（含被包装的情况）→ 不累计 `#failures`、不发 `failed`、发 `mcp.server_status: needs_auth`、**原样重抛**（不包成 `MCP_CONNECT_FAILED`）；新增 `resetFailures(serverId)`。`#isTransportFailure` 同样排除授权错误。`#endpointHint` 对 `oauth` server 改为提示「请在设置中连接」。
+- [x] `testServer`：`oauth` 且无令牌 → 返回可读结果「尚未连接」，不发起授权。
+- [x] `mcp/tools.ts`：
   - `buildMcpTools` 返回值改为 `{ tools, unavailable: Array<{ serverId, reason: 'expired'|'not_connected'|'scope' }> }`（listTools 因授权失败时收集，**不再只记日志**）；`McpToolFacade` 与 orchestrator 调用点同步，`unavailable` 须同时送到 `buildSystemPrompt` 闭包（:2305 一带）与 `buildAgentRunContext`（:1711 一带）。
   - `wrapMcpTool`：捕获 `AppAuthRequiredError` → 经门面回调 `onSetupRequired(requirement)` 记下 `{kind:'connect-app', target:{kind:'custom', serverId}, connectionId, reason, scopes?}`，工具结果 `errorCode = TOOL_SETUP_REQUIRED`、文本「需要重新连接 X」。
-- [ ] `orchestrator.ts`（:2031 一带）：`McpToolFacade` 增 `onSetupRequired`，写入同一个 `setupHit`（照 `#mediaFacade(setupHit)`），复用既有 abort → failed + `run.setup` → 卡片 → `runs.retry` 链路。
-- [ ] 提示词：新 `section('connected_apps', …)`（`buildSystemPrompt`，放在 `skills` 附近）：P0 只列出**需要重新连接**的自定义 server（名称 + 原因）与一句规则「需要时调用 `app_request_connection`，不要让用户粘贴令牌」；无内容则整段省略。
-- [ ] 新工具 `app_request_connection`（`packages/core/src/tools/app-tools.ts`，P0 只接受 `connection_id` / 自定义 `server_id`）：校验目标存在且属于该 Bot 已勾选的 server → 记 setup 需求、返回 `SETUP_REQUIRED`。（P0 时 ACP Bot 拿不到它——`apps` 能力包在 P1 才加，属预期。）
-- [ ] 删除自定义 server：`McpSection.removeServer`（:215）改调 `mcp.removeServer`（§4.2），core 侧删除 settings 条目并清理 `mcp:{id}:*`、`custom:{id}` 连接行与 `conn:*`、必要时 issuer 客户端、断开连接——修复设计 29 §2 所列遗留泄漏。
+- [x] `orchestrator.ts`（:2031 一带）：`McpToolFacade` 增 `onSetupRequired`，写入同一个 `setupHit`（照 `#mediaFacade(setupHit)`），复用既有 abort → failed + `run.setup` → 卡片 → `runs.retry` 链路。
+- [x] 提示词：新 `section('connected_apps', …)`（`buildSystemPrompt`，放在 `skills` 附近）：P0 只列出**需要重新连接**的自定义 server（名称 + 原因）与一句规则「需要时调用 `app_request_connection`，不要让用户粘贴令牌」；无内容则整段省略。
+- [x] 新工具 `app_request_connection`（`packages/core/src/tools/app-tools.ts`，P0 只接受 `connection_id` / 自定义 `server_id`）：校验目标存在且属于该 Bot 已勾选的 server → 记 setup 需求、返回 `SETUP_REQUIRED`。（P0 时 ACP Bot 拿不到它——`apps` 能力包在 P1 才加，属预期。）
+- [x] 删除自定义 server：`McpSection.removeServer`（:215）改调 `mcp.removeServer`（§4.2），core 侧删除 settings 条目并清理 `mcp:{id}:*`、`custom:{id}` 连接行与 `conn:*`、必要时 issuer 客户端、断开连接——修复设计 29 §2 所列遗留泄漏。
 
 ### 4.9 断开与吊销
 
-- [ ] `apps.disconnect`：AS 有 `revocation_endpoint` → 先吊销 refresh token（再 access token），失败只记日志不阻断；删除 `conn:{id}:*`；目录连接删除 `app_connections` 行（工具锁定行级联删除，重连时重新复核），自定义 server 的行保留并置 `not_connected`（保留工具锁定）；`clearIssuerClientIfUnused`；`McpService` 断开该连接；发 `apps.connection_status`。
-- [ ] 审计：`app_connect`、`app_disconnect`（明细只含 connectionId / connector / issuer / scopes，经 `redact`）。
+- [x] `apps.disconnect`：AS 有 `revocation_endpoint` → 先吊销 refresh token（再 access token），失败只记日志不阻断；删除 `conn:{id}:*`；目录连接删除 `app_connections` 行（工具锁定行级联删除，重连时重新复核），自定义 server 的行保留并置 `not_connected`（保留工具锁定）；`clearIssuerClientIfUnused`；`McpService` 断开该连接；发 `apps.connection_status`。
+- [x] 审计：`app_connect`、`app_disconnect`（明细只含 connectionId / connector / issuer / scopes，经 `redact`）。
 
 ### 4.10 渲染端
 
-- [ ] `McpSection.svelte`：HTTP server 增「认证方式」选择（无 / Header / OAuth）；OAuth 时显示连接状态（未连接 / 已连接（账号）/ 需重新连接 / 权限不足）与「连接 / 重新连接 / 断开」；`awaiting_consent` 时展示完整授权 URL、突出域名、「在浏览器中继续」与取消；`OAUTH_CLIENT_REQUIRED` 时展开 client id / secret 输入（`apps.setClientCredentials`）。
-- [ ] 新 `stores/apps.svelte.ts`：订阅 `apps.connect_flow` / `apps.connection_status`，持有连接列表与进行中流程（照 `stores/agents.svelte.ts`）。
-- [ ] 新共享组件 `features/apps/ConnectAppPanel.svelte`（设置页与对话卡共用；P1 扩展目录形态）：按 phase 显示进度；`OAUTH_CLIENT_REQUIRED` 时显示 issuer、需登记的回调地址与 client id / secret 输入。
-- [ ] `SetupRequiredCard.svelte` 增 `connect-app` 分支（用 `ConnectAppPanel`）；完成后走既有「dismiss + `runs.retry`」。
-- [ ] i18n 键（zh-CN）。
+- [x] `McpSection.svelte`：HTTP server 增「认证方式」选择（无 / Header / OAuth）；OAuth 时显示连接状态（未连接 / 已连接（账号）/ 需重新连接 / 权限不足）与「连接 / 重新连接 / 断开」；`awaiting_consent` 时展示完整授权 URL、突出域名、「在浏览器中继续」与取消；`OAUTH_CLIENT_REQUIRED` 时展开 client id / secret 输入（`apps.setClientCredentials`）。
+- [x] 新 `stores/apps.svelte.ts`：订阅 `apps.connect_flow` / `apps.connection_status`，持有连接列表与进行中流程（照 `stores/agents.svelte.ts`）。
+- [x] 新共享组件 `features/apps/ConnectAppPanel.svelte`（设置页与对话卡共用；P1 扩展目录形态）：按 phase 显示进度；`OAUTH_CLIENT_REQUIRED` 时显示 issuer、需登记的回调地址与 client id / secret 输入。
+- [x] `SetupRequiredCard.svelte` 增 `connect-app` 分支（用 `ConnectAppPanel`）；完成后走既有「dismiss + `runs.retry`」。
+- [x] i18n 键（zh-CN）。
 
 ### 4.11 CIMD 文档与 Cloudflare 部署材料
 
-- [ ] 新 `infra/cloudflare/oauth-cimd/`：`wrangler.jsonc`（仅静态资源，路由 `kepcup.com/oauth/*`）、`public/oauth/client.json`、`public/_headers`（`/oauth/*`：`Content-Type: application/json`、`Cache-Control: public, max-age=86400`、`Access-Control-Allow-Origin: *`）、`README.md`（部署步骤、Bot Fight Mode 注意事项、验证命令）。
-- [ ] `client.json`：`client_id` = `KEPCUP_OAUTH_CLIENT_ID`（逐字相等）、`client_name: "KepCup"`、`redirect_uris`（`http://127.0.0.1/callback` + 每个固定端口的完整地址）、`grant_types`、`response_types: ["code"]`、`token_endpoint_auth_method: "none"`、`logo_uri`、`client_uri: "https://kepcup.com"`、`policy_uri`（隐私政策 URL 用户确认）；≤5 KB。
-- [ ] 单测 `shared/test/unit/cimd-document.test.ts`：读取该文件，断言 `client_id === KEPCUP_OAUTH_CLIENT_ID`、`redirect_uris` 覆盖全部 `OAUTH_CALLBACK_PORTS`、体积 ≤5 KB、无 `localhost`。
-- [ ] 外部验证脚本 `infra/cloudflare/oauth-cimd/verify.mjs`：对线上地址检查 200、`application/json`、无重定向、内容与仓库文件一致（**用户待办 U1** 部署后运行）。
+- [x] 新 `infra/cloudflare/oauth-cimd/`：`wrangler.jsonc`（仅静态资源，路由 `kepcup.com/oauth/*`）、`public/oauth/client.json`、`public/_headers`（`/oauth/*`：`Content-Type: application/json`、`Cache-Control: public, max-age=86400`、`Access-Control-Allow-Origin: *`）、`README.md`（部署步骤、Bot Fight Mode 注意事项、验证命令）。
+- [x] `client.json`：`client_id` = `KEPCUP_OAUTH_CLIENT_ID`（逐字相等）、`client_name: "KepCup"`、`redirect_uris`（`http://127.0.0.1/callback` + 每个固定端口的完整地址）、`grant_types`、`response_types: ["code"]`、`token_endpoint_auth_method: "none"`、`logo_uri`、`client_uri: "https://kepcup.com"`、`policy_uri`（隐私政策 URL 用户确认）；≤5 KB。
+- [x] 单测 `shared/test/unit/cimd-document.test.ts`：读取该文件，断言 `client_id === KEPCUP_OAUTH_CLIENT_ID`、`redirect_uris` 覆盖全部 `OAUTH_CALLBACK_PORTS`、体积 ≤5 KB、无 `localhost`。
+- [ ] 外部验证脚本 `infra/cloudflare/oauth-cimd/verify.mjs`：对线上地址检查 200、`application/json`、无重定向、内容与仓库文件一致（**用户待办 U1** 部署后运行）。*（脚本已写好并有 README 说明；线上运行待 U1。）*
 
 ### 4.12 文档与测试汇总
 
-- [ ] 安全测试（`packages/core/test/security/`）：完整连接—调用—刷新—过期—重连—断开流程后，扫描 `runs.db`、`audit_log`、日志文件、所有 RPC 返回与事件负载，均不含任何令牌明文。
-- [ ] 集成测试：Bot 勾选一个 OAuth 自定义 server → run 中调用成功；令牌过期且刷新失败 → 工具结果 SETUP_REQUIRED → run failed + `setup.kind === 'connect-app'` → 模拟完成连接 → `runs.retry` 成功；run 开头 listTools 授权失败 → 不中断 run、`<connected_apps>` 列出该 server；run 中途 401 时**没有**调用 `shell.openExternal`。
-- [ ] 同步 `docs/dev/02-architecture.md`（apps 模块、主进程方法）、`03-data-model.md`、`04-agent-runtime.md`（新提示段与工具）、`05-testing.md`（假授权服务器）、`23-mcp-and-subagent.md`（认证方式）。
+- [x] 安全测试（`packages/core/test/security/`）：完整连接—调用—刷新—过期—重连—断开流程后，扫描 `runs.db`、`audit_log`、日志文件、所有 RPC 返回与事件负载，均不含任何令牌明文。
+- [x] 集成测试：Bot 勾选一个 OAuth 自定义 server → run 中调用成功；令牌过期且刷新失败 → 工具结果 SETUP_REQUIRED → run failed + `setup.kind === 'connect-app'` → 模拟完成连接 → `runs.retry` 成功；run 开头 listTools 授权失败 → 不中断 run、`<connected_apps>` 列出该 server；run 中途 401 时**没有**调用 `shell.openExternal`。
+- [x] 同步 `docs/dev/02-architecture.md`（apps 模块、主进程方法）、`03-data-model.md`、`04-agent-runtime.md`（新提示段与工具）、`05-testing.md`（假授权服务器）、`23-mcp-and-subagent.md`（认证方式）。
 
 ### 4.13 P0 验收（门禁）
 
-- 自定义 OAuth server 在假服务器的 CIMD / DCR / 手填三条路径上均可连接、调用、刷新、断开（含吊销）。
-- run 中授权失效只出现对话内卡片，不弹浏览器；重连后 `runs.retry` 完成任务。
-- 安全测试通过（令牌零泄露）；D65 既有 MCP 测试全绿（跑 MCP 相关测试文件即可，全量留到交付前一次）。
-- （用户待办 U1 完成后）`verify.mjs` 对 `https://kepcup.com/oauth/client.json` 通过；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（记录在 PROGRESS）。
+- [x] 自定义 OAuth server 在假服务器的 CIMD / DCR / 手填三条路径上均可连接、调用、刷新、断开（含吊销）。（`connected-apps-e2e.test.ts`）
+- [x] run 中授权失效只出现对话内卡片，不弹浏览器；重连后 `runs.retry` 完成任务。（`connected-apps-runtime.test.ts`）
+- [x] 安全测试通过（令牌零泄露）；D65 既有 MCP 测试全绿（跑 MCP 相关测试文件即可，全量留到交付前一次）。（`connected-apps-tokens.test.ts`、`mcp.test.ts` 等）
+- [ ] （用户待办 U1 完成后）`verify.mjs` 对 `https://kepcup.com/oauth/client.json` 通过；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（记录在 PROGRESS）。
+
+**实施记录（2026-10-09）**：P0 代码与自动化测试已完成（20 文件 228 例，见 `docs/dev/PROGRESS.md`「连接应用 P0」）；偏差与补充见 `docs/dev/DEVIATIONS.md` DEV-019；文档已同步 `docs/dev/02 / 03 / 04 / 05`、`docs/design/23`。剩余仅门禁里需要用户的部分（U1）。
 
 ---
 
@@ -262,25 +264,27 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 5.3 数据：迁移 `{N+1}_app_tools.sql`
 
-- [ ] `app_connection_tools`（设计 29 §12：`connection_id, tool_name, approved_hash NULL, current_hash, risk, user_policy NULL, definition_json`，PK `(connection_id, tool_name)`）。
-- [ ] `app_tool_grants`（`id, bot_id, connection_id, tool_name, conversation_id NULL, approval_id, created_at, revoked_at`；`conversation_id` NULL = 对该 Bot 总是允许；索引 `(bot_id, connection_id, tool_name) WHERE revoked_at IS NULL`）。
-- [ ] 清理：Bot 删除时撤销其全部 `app_tool_grants`（接入 `domain/lifecycle.ts`）；对话删除由外键 `ON DELETE CASCADE` 处理（`foreign_keys=ON`，`infra/db.ts:37`）；Bot 被移出群时撤销其在该对话的 `app_tool_grants`。
+- [x] `app_connection_tools`（设计 29 §12：`connection_id, tool_name, approved_hash NULL, current_hash, risk, user_policy NULL, definition_json`，PK `(connection_id, tool_name)`）。
+- [x] `app_tool_grants`（`id, bot_id, connection_id, tool_name, conversation_id NULL, approval_id, created_at, revoked_at`；`conversation_id` NULL = 对该 Bot 总是允许；索引 `(bot_id, connection_id, tool_name) WHERE revoked_at IS NULL`）。
+- [x] 清理：Bot 删除时撤销其全部 `app_tool_grants`（接入 `domain/lifecycle.ts`）；对话删除由外键 `ON DELETE CASCADE` 处理（`foreign_keys=ON`，`infra/db.ts:37`）；Bot 被移出群时撤销其在该对话的 `app_tool_grants`。
 
 ### 5.4 连接服务（`packages/core/src/apps/connections.ts`）
 
-- [ ] 目录连接：`apps.connect({ target: { kind: 'catalog', connectorId }, grantBotId? })`；`server_url` 取 `remotes[0].url`；`connector_ver` 记录目录版本；多账号 = 同一 connector 多行。`grantBotId` 由 **core** 在流程完成时写入该 Bot 的 `app_connection_ids`（不由渲染端改 Profile）。
-- [ ] **进入 McpService**：`McpService` 的服务器来源从「只有 settings」改为 `settings.mcpServers` ∪ 目录连接合成的 `McpServer`（`id = connectionId`、`name = 应用名（账号）`、`transport: 'http'`、`url = server_url`、`auth: 'oauth'`、`enabled: true`）；`listServers` / `#connections` / `closeAll` / `mcp.server_status` 均按此 id；授权提供者统一按「连接 id」从 `ConnectionAuthRegistry` 取（自定义为 `custom:{serverId}`，目录为 `connectionId`）；`mcpAutoApprove` 只对 settings 中的自定义 server 生效。
-- [ ] 账号识别（设计 29 §5.1 第 6 步）：有 `id_token` / userinfo → `account_sub` + 显示名；否则条目 `whoami` 只读工具；否则 `label = "{title} #{n}"`。`account_sub` 冲突（同账号重复连接）→ 复用旧行（更新令牌）而非新建。
-- [ ] **首连工具复核**：交换令牌后进入 `phase: 'reviewing_tools'`（事件带工具清单：名称、标题、描述、计算出的风险）；用户在面板确认 → `apps.connect.confirmTools({ flowId })` → 写 `app_connection_tools` 的 `approved_hash` → `connected`。拒绝 = 取消并吊销。
-- [ ] RPC：`apps.catalog.list`（含每个条目的已连接账号数）、`apps.connections.update`（标签、停用 / 启用）、`apps.connections.setToolPolicy({ connectionId, toolName, policy })`（`policy` 与 W5 的 `mcpToolPolicy` 同形：`{ approval?: 'auto'|'ask', enabled?: boolean }`；自定义 server 继续用 W5 的 `settings.mcpServers[].toolPolicies`，目录连接存 `app_connection_tools.user_policy` JSON）、`apps.connections.reviewTools({ connectionId, accept: string[] })`、`apps.connections.grants({ connectionId })` / `apps.grants.revoke({ grantId })`；事件 `apps.connection_status` 增 `tools_changed` 详情。
+- [x] 目录连接：`apps.connect({ target: { kind: 'catalog', connectorId }, grantBotId? })`；`server_url` 取 `remotes[0].url`；`connector_ver` 记录目录版本；多账号 = 同一 connector 多行。`grantBotId` 由 **core** 在流程完成时写入该 Bot 的 `app_connection_ids`（不由渲染端改 Profile）。
+- [x] **进入 McpService**：`McpService` 的服务器来源从「只有 settings」改为 `settings.mcpServers` ∪ 目录连接合成的 `McpServer`（`id = connectionId`、`name = 应用名（账号）`、`transport: 'http'`、`url = server_url`、`auth: 'oauth'`、`enabled: true`）；`listServers` / `#connections` / `closeAll` / `mcp.server_status` 均按此 id；授权提供者统一按「连接 id」从 `ConnectionAuthRegistry` 取（自定义为 `custom:{serverId}`，目录为 `connectionId`）；`mcpAutoApprove` 只对 settings 中的自定义 server 生效。
+- [x] 账号识别（设计 29 §5.1 第 6 步）：有 `id_token` / userinfo → `account_sub` + 显示名；否则条目 `whoami` 只读工具；否则 `label = "{title} #{n}"`。`account_sub` 冲突（同账号重复连接）→ 复用旧行（更新令牌）而非新建。
+- [x] **首连工具复核**：交换令牌后进入 `phase: 'reviewing_tools'`（事件带工具清单：名称、标题、描述、计算出的风险）；用户在面板确认 → `apps.connect.confirmTools({ flowId })` → 写 `app_connection_tools` 的 `approved_hash` → `connected`。拒绝 = 取消并吊销。
+- [x] RPC：`apps.catalog.list`（含每个条目的已连接账号数）、`apps.connections.update`（标签、停用 / 启用）、`apps.connections.setToolPolicy({ connectionId, toolName, policy })`（`policy` 与 W5 的 `mcpToolPolicy` 同形：`{ approval?: 'auto'|'ask', enabled?: boolean }`；自定义 server 继续用 W5 的 `settings.mcpServers[].toolPolicies`，目录连接存 `app_connection_tools.user_policy` JSON）、`apps.connections.reviewTools({ connectionId, accept: string[] })`、`apps.connections.grants({ connectionId })` / `apps.grants.revoke({ grantId })`；事件 `apps.connection_status` 增 `tools_changed` 详情。
+
+**实施记录（2026-10-09，§5.4 后端）**：`apps/connections.ts`（目录视图 / 流程目录端 / 连接管理）、`apps/auth/flow.ts`（目录目标、`reviewing_tools`、`confirmTools`、id_token / userinfo 账号标识、同站点授权服务器免确认直开）、`mcp/service.ts`（目录连接合成 server：`connectionToMcpServer`、`serverFor`、`listServers` = settings ∪ 目录连接）、`rpc/apps-connections-bindings.ts`；迁移 0023 增 `approved_definition_json`（复核 diff 的“旧”）。`apps.connect` 增可选 `connectionId`（重新授权已有连接，账号必须一致）；自定义 server 的“测试 → 保存”经 `mcp.test` 的 `toolHashes` + `apps.tools.approveAfterTest` 只批准测试时看到的定义；`settings.update` 删除 server 时一并清 `custom:` 行与工具锁定行，并拒绝以 `conn_` 开头的自定义 server id（保留给目录连接）。测试：`catalog-connect.test.ts`、`catalog-connections-rpc.test.ts`、`catalog-connect-units.test.ts`、`app-recovery.test.ts`、`security/catalog-connect-tokens.test.ts`。
 
 ### 5.5 策略：风险分级与工具锁定（`packages/core/src/apps/policy.ts`，纯函数为主）
 
-- [ ] **分级复用 W5**：直接调用 `core/mcp/risk.ts` 的 `classifyRiskDetailed`（若 D73 需要在 shared / 校验器中复用，再把纯函数移到共享位置并保持 W5 测试全绿）。D73 只在其外层叠加目录 `toolPolicy`：只能调高；`builtin` 条目可为**未声明注解且名字推断不出只读**的工具给出分级，不能放宽 W5 的判定结果。`openWorldHint` 不参与分级（只用于 §6.2 污点）。补表驱动单测覆盖「W5 结果 × 目录覆盖」。
-- [ ] `toolDefinitionHash(tool)`：对 `{ name, title, description, inputSchema, annotations }` 做规范化 JSON（键排序）后 sha256。
-- [ ] 工具刷新（`tools/list_changed` 或缓存过期）时：新增工具 → `approved_hash NULL`；定义变化 → `current_hash ≠ approved_hash`；二者都**不暴露**；连接状态 `tools_changed` 并发事件；删除的工具直接删行。
-- [ ] 锁定对**所有** MCP server 生效：过滤点在 `buildMcpTools`（注入 `toolFilter(serverKey, tools)`），自定义 server（含 stdio、无 OAuth）用 `custom:{serverId}` 行承载工具锁定（`server_url` 可为 NULL）。
-- [ ] **存量基线**：core 启动时若 `settings.apps.toolLockBaselineDone` 不为真，则为当时**已存在**的每个自定义 server 建 `custom:` 行并标记「首次拉取到的工具直接批准」（`app_connections.baseline_pending` 列，`{N+1}` 以 `ALTER TABLE … ADD COLUMN` 加入），完成后置位标记——只作用一次。之后新加的自定义 server：设置页「测试」成功后展示工具清单，保存即批准；未批准前工具不暴露。
+- [x] **分级复用 W5**：直接调用 `core/mcp/risk.ts` 的 `classifyRiskDetailed`（若 D73 需要在 shared / 校验器中复用，再把纯函数移到共享位置并保持 W5 测试全绿）。D73 只在其外层叠加目录 `toolPolicy`：只能调高；`builtin` 条目可为**未声明注解且名字推断不出只读**的工具给出分级，不能放宽 W5 的判定结果。`openWorldHint` 不参与分级（只用于 §6.2 污点）。补表驱动单测覆盖「W5 结果 × 目录覆盖」。
+- [x] `toolDefinitionHash(tool)`：对 `{ name, title, description, inputSchema, annotations }` 做规范化 JSON（键排序）后 sha256。
+- [x] 工具刷新（`tools/list_changed` 或缓存过期）时：新增工具 → `approved_hash NULL`；定义变化 → `current_hash ≠ approved_hash`；二者都**不暴露**；连接状态 `tools_changed` 并发事件；删除的工具直接删行。
+- [x] 锁定对**所有** MCP server 生效：过滤点在 `buildMcpTools`（注入 `toolFilter(serverKey, tools)`），自定义 server（含 stdio、无 OAuth）用 `custom:{serverId}` 行承载工具锁定（`server_url` 可为 NULL）。
+- [x] **存量基线**：core 启动时若 `settings.apps.toolLockBaselineDone` 不为真，则为当时**已存在**的每个自定义 server 建 `custom:` 行并标记「首次拉取到的工具直接批准」（`app_connections.baseline_pending` 列，`{N+1}` 以 `ALTER TABLE … ADD COLUMN` 加入），完成后置位标记——只作用一次。之后新加的自定义 server：设置页「测试」成功后展示工具清单，保存即批准；未批准前工具不暴露。
 
 ### 5.6 网关与审批
 
@@ -437,3 +441,75 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 - [ ] `todo/enterprise-ema.md`：MCP Enterprise-Managed Authorization（ID-JAG / Okta XAA）客户端支持。
 
 ---
+
+## 附录 B — 首批应用实测结论（P1 §5.1，2026-10-09）
+
+> **范围声明（用户决定）**：真实账号相关步骤（U1 / U2 / U3）由用户自行完成，本附录**只含无登录探测**——`packages/core/scripts/connector-spike/probe.mjs` 只发 `POST initialize`（无凭据）与若干 `GET` 发现请求，**未登录、未注册、未发 DCR POST**。「带登录模式」（用 P0 引擎完整连接、导出工具清单与注解覆盖率、账号识别可行性）**整体跳过，等 U2**。
+>
+> **发行门禁：目录中全部条目的 `releaseGate` 在 `apps/desktop/connector-release-gates.json`（`approved: []`）里保持关闭**，直到用户完成带登录实测后再逐家放行；开发构建 / 测试不注入门禁常量，条目全部可见，发行构建（`pnpm dist`）一条都不收录。
+
+### B.1 探测方法与复现
+
+```
+node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--out report.json] [--timeout 10000]
+```
+
+- 每家：`POST <url>`（`initialize`，无 `Authorization`）→ 记录 401 与 `WWW-Authenticate`；按 `resource_metadata`（缺省走 RFC 9728 well-known 路径插入式 URL）取 PRM；对 `authorization_servers[0]` 依次试 RFC 8414 与 OIDC 发现 URL，取 AS 元数据。
+- 判定：`client_id_metadata_document_supported === true` → CIMD；否则有 `registration_endpoint` → DCR；否则 → 无自动注册。**DCR 只凭 `registration_endpoint` 判断，不实际注册**。
+- 超时 10 s、仅 https（重定向逐跳校验）、失败只记录不重试。主机上 Node 默认的 250 ms 逐地址连接超时过紧（本机无 IPv6、RTT 高会整批 ETIMEDOUT），脚本里已调到 3 s。
+- 原始报告：`packages/core/scripts/connector-spike/reports/2026-10-09.json`（探测时间 2026-10-09，本机出站网络可用）。契约 / 解析逻辑有单测 `packages/core/test/unit/connector-spike-probe.test.ts`（假 fetch，不联网）。
+
+### B.2 候选 URL 核对（均对照厂商当前文档）
+
+| 应用 | URL | 文档依据 / 备注 |
+| --- | --- | --- |
+| Notion | `https://mcp.notion.com/mcp` | developers.notion.com/docs/mcp；Registry `com.notion/mcp`（另有 `/sse`，不用） |
+| Linear | `https://mcp.linear.app/mcp` | linear.app/docs/mcp；Registry `app.linear/linear`（`/sse` 已弃用） |
+| Atlassian | `https://mcp.atlassian.com/v1/mcp/authv2` | Atlassian 支持文档（自定义客户端）；开发者文档写 `/v1/mcp`，Registry 2.0.0 另列 `/v2/mcp`（探测同样 401 + 同一 AS）。**目录先用 `authv2`，带登录实测时一并确认 `/v2/mcp`**；SSE 端点 2026-06-30 起停用 |
+| Sentry | `https://mcp.sentry.dev/mcp` | docs.sentry.io/ai/mcp；Registry `io.github.getsentry/sentry-mcp` |
+| Asana | `https://mcp.asana.com/v2/mcp` | developers.asana.com「Integrating with Asana's MCP Server」；旧 `/sse` 已于 2026-08 前后下线，`/v2/mcp` 才是现行；文档明确写「V2 不支持动态客户端注册」，须在 Asana 开发者控制台建「MCP app」预注册 |
+| HubSpot | `https://mcp.hubspot.com` | developers.hubspot.com「Integrate with the remote HubSpot MCP server」（2026-04 GA）；须在「Development > MCP Connectors」建连接器取 client id/secret，PKCE S256 必需 |
+| Canva | `https://mcp.canva.com/mcp` | canva.dev/docs/mcp；Registry `com.canva.mcp/mcp`（Canva 称部分接入有等候名单，见 B.4） |
+| Stripe | `https://mcp.stripe.com` | docs.stripe.com/mcp；Registry `com.stripe/mcp` |
+| GitHub | `https://api.githubcopilot.com/mcp/` | github/github-mcp-server `docs/host-integration.md` |
+
+### B.3 探测结果
+
+| 应用 | 无凭据 initialize | PRM | AS（issuer） | 自动注册 | `code_challenge_methods` | `iss` 参数 (RFC 9207) | `revocation_endpoint` | `scopes_supported` | 令牌端点认证 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Notion | 401，`scope="default"` | 有 | `https://mcp.notion.com` | **CIMD + DCR** | S256 | 是 | 有（与 token 同 URL） | `default` | none / secret_basic / secret_post |
+| Linear | 401，`scope="read write"` | 有 | `https://mcp.linear.app` | **CIMD + DCR** | S256 | 是 | 有（与 token 同 URL） | `read write openid email` | none / secret_basic / secret_post |
+| Atlassian | 401，`invalid_token` | 有 | `https://auth.atlassian.com/<租户前缀>` | **CIMD + DCR** | S256 | 未声明 | 有（`/oauth/revoke`） | AS 未列；PRM 列 22 项（`read:jira-work`、`write:jira-work`、`offline_access` 等） | none / secret_post / secret_basic / private_key_jwt |
+| Sentry | 401 | 有 | `https://mcp.sentry.dev` | **CIMD + DCR** | S256 | 是 | 有（与 token 同 URL） | `org:read project:write team:write event:write alerts:write` | none / secret_basic / secret_post |
+| Asana | 401，`invalid_request` | 有 | `https://app.asana.com` | **无**（无 `registration_endpoint`、无 CIMD） | S256 | 未声明 | 有（`/-/oauth_revoke`） | PRM 仅 `default` | secret_post / secret_basic（**必须带 secret**） |
+| HubSpot | 401 | 有（`scopes_supported: []`） | `https://mcp.hubspot.com` | **无** | S256 | 未声明 | **无** | 空 | secret_post（**必须带 secret**） |
+| Canva | 401，`invalid_token` | 有 | `https://mcp.canva.com` | **CIMD + DCR** | `plain`、S256 | 未声明 | 有（与 token 同 URL） | PRM 列 16 项（`design:content:write` 等） | none / secret_basic / secret_post |
+| Stripe | 401 | 有 | `https://access.stripe.com/mcp` | **DCR**（无 CIMD 声明） | S256 | 未声明 | 有（`/oauth2/revoke`） | `mcp` | none |
+| GitHub | 401，`invalid_request` | 有 | `https://github.com/login/oauth` | **无**（据报 2026-07 支持 CIMD——**AS 元数据里没有声明，未证实**） | S256 | 是 | **无** | AS 仅 `offline_access`；PRM 列 10 项（`repo`、`read:org` 等） | 未声明 |
+
+> 「revocation 与 token 同 URL」是厂商把 RFC 7009 吊销合并到令牌端点的写法，能否真正吊销要带登录实测（P0 的断开流程按「尽力吊销、失败不阻塞」，不受影响）。
+
+### B.4 每家结论
+
+图例：**可上目录** = 无登录探测满足「CIMD 或 DCR + PKCE S256」，P1 目录收录；但**一律仍待登录实测**（U2）后才放行。**需预注册** = 无自动注册，按计划走 P2 预注册客户端（§6.4），**不进 P1 目录**、不做半套。**暂不支持** = 当前无可行路径。
+
+| 应用 | 结论 | 进 P1 目录 | 依据与待办 |
+| --- | --- | --- | --- |
+| Notion | **可上目录**（待登录实测） | 是（`notion`） | CIMD + DCR，`iss` 与 S256 齐全。登录实测要看：工具注解覆盖率、`notion-update-page` 等写工具的风险、账号识别（`whoami`） |
+| Linear | **可上目录**（待登录实测） | 是（`linear`） | CIMD + DCR，`iss` 齐全；文档另提到 API key 方式，目录只用 OAuth |
+| Atlassian | **可上目录**（待登录实测） | 是（`atlassian`） | CIMD + DCR。PRM 的 scope 很多且分读写，适合 step-up（P2）；**风险**：Atlassian 有管理员「已批准客户端 / 域名」限制，无登录探测看不出，须用真实站点验证 CIMD 客户端是否被允许；`authv2` 与 `/v2/mcp` 择一 |
+| Sentry | **可上目录**（待登录实测） | 是（`sentry`） | CIMD + DCR，`iss` 齐全；授权时需选组织 |
+| Canva | **可上目录**（待登录实测） | 是（`canva`） | CIMD + DCR；AS 同时接受 `plain` PKCE（我们恒用 S256）。**风险**：Canva 称私有访问有等候名单，需确认 KepCup 不在受限客户端之外 |
+| Stripe | **可上目录**（待登录实测） | 是（`stripe`） | 仅 DCR（无 CIMD 声明）；令牌端点认证 `none`（公共客户端）。涉及资金，**风险分级务必取严**：登录实测后逐工具补 `toolPolicy`，并确认测试模式 / 受限权限 |
+| Asana | **需预注册** | 否 | 文档明确 V2 不支持 DCR；元数据无 `registration_endpoint`。且令牌端点**只支持带 secret 的认证**（`client_secret_post/basic`）——桌面应用无法安全持有 secret，预注册能否以公共客户端 + PKCE 使用须先问 Asana。入 P2 §6.4 评估 |
+| HubSpot | **需预注册** | 否 | 无 DCR / CIMD；须在 HubSpot 账号内建「MCP Connector」（client id + secret）；令牌端点仅 `client_secret_post`；**无吊销端点**。与 Asana 同样有 secret 难题，且需 HubSpot 侧批准分发——P2 评估，无进展前视为**暂不支持** |
+| GitHub | **需预注册**（U3） | 否 | AS 元数据未声明 CIMD / DCR，且无吊销端点；`iss` 与 S256 具备。需用户注册 KepCup 的 GitHub App（U3）+ P2 预注册客户端机制。若 GitHub 后续在元数据里声明 `client_id_metadata_document_supported`，重跑探测即可改判 |
+
+**P1 目录（6 家）**：`notion`、`linear`、`atlassian`、`sentry`、`canva`、`stripe`——对应 `apps/desktop/resources/connectors/catalog.json`；图标为中性占位（圆角方块 + 首字母），不含厂商商标图形。`toolPolicy` 与 `whoami` 暂空，待登录实测后补；`auth.scopes` 暂空（按服务端 `WWW-Authenticate` / PRM 取）。**当前没有「暂不支持」的厂商**（HubSpot 视 P2 进展）。
+
+### B.5 门禁与后续
+
+- 放行流程：用户完成 U1（CIMD 文档部署）与 U2（各家测试账号）后，对每家用 P0 引擎连接并导出工具清单 → 补 `toolPolicy` / `whoami` / 修正 URL → 在 `connector-release-gates.json` 的 `approved` 里加入该条目的 `releaseGate` 值（= slug）。**在此之前不要放行任何一家。**
+- 探测的局限：无登录探测不能证明 (a) KepCup 的 CIMD URL 会被各家接受（vendors 可有客户端白名单 / 域名限制，且 U1 尚未部署）、(b) 工具注解质量、(c) 账号识别可行性——这些都是「待登录实测」的内容。
+- 工具与脚本：`scripts/import-mcp-registry.mjs <registry-name>` 可导出新应用的 `server.json` 骨架（`privacyPolicy: "TODO"` 故意让契约测试失败，须人工补全）；契约测试 `packages/core/test/contract/connector-catalog.contract.ts`（入口 `test/unit/connector-catalog.test.ts`）覆盖目录所有条目。
+- 打包：`apps/desktop/electron-builder.yml` 三平台 `extraResources` 增加 `resources/connectors → connectors`，`core-host.ts` 注入 `KEPCUP_CONNECTORS`；`dist.mjs` 注入 `__KEPCUP_CONNECTOR_RELEASE_GATES__`（与 D72 同款，`testkit` 门禁禁止放行）。

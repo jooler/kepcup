@@ -163,9 +163,22 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 10 | `<access>` | 有效授权；沙箱状态（正常 / 逐条确认模式）只在任务版出现 | — | P03 |
 | 11 | `<wiki_topics>` | Wiki 主题目录 | `WIKI_TOPICS_TOKEN_BUDGET` | P09 |
 | 12 | `<skills>` | 技能名字与描述（`formatSkillsForPrompt`） | `SKILLS_LIST_TOKEN_BUDGET` | P08 |
+| 12.5 | `<connected_apps>` | D73：需要（重新）连接的已勾选 OAuth 应用（名称、`connection_id`、原因）+ 一条规则；没有需要重连的应用则整段省略 | — | D73 P0 |
 | 13 | `<recommended_skills>` / `<file_handling>` | 任务版：预置技能与附件处理阶梯（P19）；对话轮版：只有「附件派任务处理」的简短指引，无 `<recommended_skills>` | — | P19 |
 
 管家另有 `<butler_rules>`，初始化访谈期间另有 `<setup_interview>`（访谈只在内置引擎上跑）。对话轮版在 `<recommended_skills>` 与 `<file_handling>` 之间另有 `<mcp_tools>`（D65 修订，borrowings W5；`turnMcpNote`）：Bot 有「应用启用 ∩ Bot 勾选」的 MCP server（`mcp/service.ts` `serversForBot` 非空）就注入，取工具超时也照样注入（让提示在各轮间稳定），说明写入 / 需确认的 MCP 工具只在任务中可用、需要时 `start_task`，本轮取到工具列表时再附可直接调用 / 只在任务中可用的个数。
+
+**`<connected_apps>` 段（D73 P0，`apps/prompt.ts` `connectedAppsSectionBody`；`buildSystemPrompt` 与 ACP 版 `buildAgentSessionPrompt` 都有，位于 `<recommended_skills>` 之后、`<mcp_tools>` 之前）**：来源是 `buildMcpTools` 返回的 `unavailable`——run 开始解析工具面时，Bot 勾选的 `auth:'oauth'` server 因 `not_connected` / `expired` / `scope`（需追加权限）listTools 失败，**不中断 run**，工具不暴露，而是在此列出：
+
+```
+<connected_apps>
+以下已授权给你的应用需要（重新）连接，当前没有可用工具：
+- {名称}（connection_id: custom:{serverId}）：尚未连接 | 授权已失效 | 需要追加权限
+用户的请求需要用到这些应用时，调用 app_request_connection({ connection_id, reason }) 请用户在对话里完成连接（连接后会自动继续）；不要让用户粘贴令牌或密钥，也不要自己尝试其他认证方式。
+</connected_apps>
+```
+
+名称折成单行、截 80 字符；已连接的应用不出现在此段。
 
 **对话轮版 `<platform_rules>`**（`system-prompt.ts` `TURN_PLATFORM_RULES`，措辞可调整、含义不变）：
 
@@ -377,6 +390,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
 | `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016） |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
+| `app_request_connection` | none | T、K | D73 P0 | 请用户（重新）连接一个应用：`connection_id`（形如 `custom:{serverId}`）或 `server_id`，`reason?`。目标须是该 Bot 已勾选的 OAuth 自定义 server，否则 `INVALID_INPUT` 且不出卡；有效则宿主记下 `connect-app` setup 需求并返回 `SETUP_REQUIRED`（链路见下）。仅当 Bot 勾选了应用级启用的 OAuth 自定义 server 时注册（其余 Bot 的工具集不变）；工具名 `app_` 前缀留给 P1 的 `apps` 能力包，P0 的外部智能体（ACP）Bot 拿不到它 |
 | MCP 工具 `mcp_{serverId}_{toolName}` | 随配置 | T（仅只读 + 免审）、K | D65 | 按「应用启用 ∩ Bot 勾选」并入任务工具面（`toolPolicies` 停用的不注册）；风险为 `read` 且有效审批为免审的至多 `TURN_MCP_READ_TOOLS_MAX` 个也进对话轮与只读子代理（对话轮解析最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS`），调用时不符 → `RUN_READ_ONLY`（[design/23](../design/23-mcp-and-subagent.md)「风险分级与逐工具策略」） |
 
 通用规则：
@@ -385,6 +399,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 - 返回给模型的文件内容、命令输出、网页内容，包在 `<untrusted>` 中。
 - 路径参数统一支持绝对路径与相对路径；相对路径以 project 为基准（未绑定 project 时以 workspace 为基准）。
 - 工具失败返回 `ok: false` 与错误码、中文说明（模型可读），不抛出。
+- **连接应用的授权失效链（D73 P0，复用 D58 / [design/18](../design/18-inline-setup.md) 的 setup 链路）**：run 中 MCP 工具遇到 `AppAuthRequiredError`（无令牌、刷新失败 `invalid_grant`、服务端仍回 401、`insufficient_scope`）或模型调用 `app_request_connection` → 工具结果 `errorCode='SETUP_REQUIRED'` → orchestrator 把需求写入 `setupHit`（`{kind:'connect-app', target:{kind:'custom', serverId}, connectionId, reason, scopes?}`）并中断 run → run `failed` 且带 `run.setup`（任务失败会唤醒对话轮告知用户）→ 渲染端 `SetupRequiredCard` 的 `connect-app` 分支用 `ConnectAppPanel` 就地完成交互授权（`apps.connect`，同设置页）→ 完成后走既有「dismiss + `runs.retry`」续跑。**run 里永远不会打开浏览器**，也不会发起授权请求（`shell.openExternal` 只由 `apps.connect.continue` 触发；`connected-apps-runtime.test.ts` 断言这一点）。
 
 ## 视觉注入（P17）
 

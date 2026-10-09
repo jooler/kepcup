@@ -132,6 +132,7 @@ kepcup/
 | 连锁（Bot 间触发链） | `chn_` | |
 | 跨 Bot 委派（D71） | `dlg_` | |
 | 外部副作用台账行（D78） | `eff_` | |
+| 应用连接（D73） | `conn_` | 自定义 MCP server 的连接 id 固定为 `custom:{serverId}` |
 
 ## 可调参数
 

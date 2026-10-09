@@ -78,8 +78,36 @@ D75 后一条用户消息先跑**对话轮**（只读、工具面小），需要
 
 - `createTestHome()`：创建临时数据目录，设置 `KEPCUP_HOME`，测试结束删除。
 - 钥匙串：`NODE_ENV=test` 且 `KEPCUP_KEYSTORE=memory` 时使用内存实现；**非测试环境下该变量无效**，启动时检测到则拒绝启动。
-- `createCore(options)`：在测试进程内启动核心服务（不经过 Electron 主进程），返回可直接调用的 RPC 客户端与事件监听器。
+- `createCore(options)`：在测试进程内启动核心服务（不经过 Electron 主进程），返回可直接调用的 RPC 客户端与事件监听器。D73 起的注入点 `shellRpc` / `oauthLoopbackAllowlist` / `oauthCimdUrl` / `oauthCallbackPorts` / `oauthFlowTimeoutMs` 见下文「假授权 + MCP 服务器与连接应用测试」。
 - 工厂函数：`makeBot()`、`makeGroup()`、`sendBatch()`、`waitForRun()`、`waitForEvent()`。
+
+### 假授权 + MCP 服务器与连接应用测试（D73）
+
+连接应用（OAuth）的所有测试只用 testkit 的**假服务**，不访问真实网络（真实平台验证放在手工项里，见下）。
+
+**`startFakeOAuthMcpServer(options)`**（`packages/testkit/src/fake-oauth-mcp-server.ts`）：一个 `127.0.0.1` 随机端口的 HTTP 服务，同时是 MCP Streamable HTTP 资源服务器（`@modelcontextprotocol/sdk` server，`/mcp`，RFC 9728 元数据，Bearer 校验含 audience 与逐工具 scope，工具列表可运行中修改并发 `list_changed`）和 OAuth 授权服务器（RFC 8414 / OIDC 发现、CIMD、DCR、预注册客户端、**无 UI** 的 `/authorize`、带 PKCE 的 `/token`、RFC 7009 `/revoke`）。真实服务器会变化的行为都是 `configure()` 可在运行中切换的开关：`discovery`（oauth / oidc / both / none）、`cimdSupported`、`dcrEnabled`、`issMode`（correct / omit / wrong）与 `authorizeError`、`redirectMatch`（exact / loopback）、`requireResource`、`rotateRefreshTokens`、`issueRefreshToken`、`expiresIn`、`grantScope`、`revokeStatus` 等。辅助：
+
+- 令牌：`issueToken()`（绕过流程直接签发，Vault 种子用）、`expireToken()`（令牌仍在但过期 → 401）、`revokeToken()` / `revokeAllTokens()`、`isAccessTokenValid()` / `isRefreshTokenValid()`、`failToken()`（注入 `invalid_grant` 等）。
+- 记录（断言用，`resetRecords()` 清空）：`requests`、`authorizeRequests`（含 `clientSource`：preregistered / dcr / cimd 与 `outcome`）、`tokenRequests`、`revokeRequests`、`registrations`（DCR 收到的 `application_type` / `redirect_uris`）、`cimdFetches`、`mcpRequests`、`toolCalls`。
+- `simulateBrowser(url)`：替代系统浏览器——GET 授权 URL、跟随一次 302 到 KepCup 的本机回调服务，返回回调页的状态与正文。
+- CIMD：`file-server.ts` 的 `publishCimdDocument(server)` 在测试文件服务上托管一份自引用的 CIMD 文档，返回的 URL 即 `client_id`（传给 `oauthCimdUrl`）。
+
+自测在 `packages/testkit/test/fake-oauth-mcp-server.test.ts`（每个开关一个用例）。
+
+**`CoreServicesOptions` 新注入点**（`createCore` / `createTestStack` / `createTestCore` 透传；`oauth*` 只在 `NODE_ENV=test` 且打包产物含测试钩子时生效——`__KEPCUP_TEST_HOOKS__` 在发布构建里折叠为 `false`，生产恒为常量 / 空）：
+
+| 选项 | 作用 |
+|---|---|
+| `shellRpc` | 替换主进程 `shell.openExternal`（core 侧 `services.shellRpc.bindFacade`，优先于端口 B 客户端）。测试里记录调用并接 `simulateBrowser`；断言「run 中从不打开浏览器」就是断言它没被调用 |
+| `oauthLoopbackAllowlist` | 允许 OAuth 发现 / 令牌 / 吊销请求访问的额外回环主机（`['127.0.0.1']`）；生产恒为空 |
+| `oauthCimdUrl` | 覆盖 CIMD `client_id`（http 的测试文件服务 URL）；生产恒为 `KEPCUP_OAUTH_CLIENT_ID`，且非测试环境要求 https |
+| `oauthCallbackPorts` | 回调服务的固定候选端口（并行用例各取空闲端口，避免争用） |
+| `oauthFlowTimeoutMs` | 交互流程总时限（超时用例用小值） |
+| `toolLockTrustFirstList` | D73 P1 工具定义锁定：首次见到的工具直接批准（行为同存量基线），**定义变化仍锁定**。`createTestCore` / `createTestStack` 默认 `true`，使经 `settings.update` 加 MCP server 的既有用例不必逐个批准工具；验证真实默认（新 server 的工具未批准前不暴露）的用例显式传 `false`（`integration/app-tool-lock.test.ts`）。同样只在 `NODE_ENV=test` 且含测试钩子的构建里生效 |
+
+**用例分布（D73 P0，228 例 / 20 文件）**：`packages/shared/test/unit/`（`connected-apps.test.ts` 类型 / RPC / 事件契约，`cimd-document.test.ts` 读 `infra/cloudflare/oauth-cimd/public/oauth/client.json`）；`packages/core/test/unit/`（`app-connections-migration` / `connection-store` / `token-vault` / `secrets-redact` / `oauth-callback-server` / `oauth-safe-fetch` / `oauth-connect-flow`（CIMD、DCR、手填、`iss` / `state` / `Host` 伪造、端口回落、PKCE、拒绝、超时、取消、去重、私网拒绝）/ `runtime-provider` / `mcp-auth-transport`（锁定 pi-mcp 的真实传输层行为）/ `mcp-service-auth` / `mcp-tools-auth`）；`packages/core/test/security/connected-apps-tokens.test.ts`（完整连接—调用—刷新—过期—重连—断开之后扫描 `runs.db`、`audit_log`、日志、全部 RPC 返回与事件，令牌零明文）；`packages/core/test/integration/`（`oauth-connect-rpc`：RPC 链路 + 注入点 + `shell.openExternal` 门面；`connected-apps-runtime`：Bot 运行中刷新 / 失效 → SETUP_REQUIRED → `runs.retry`、`<connected_apps>`、断开与 `mcp.removeServer`、`settings.update` 改认证方式 / URL 时的断开；`connected-apps-e2e`：**P0 门禁的自动化部分**，CIMD / DCR / 手填三条注册路径各走一遍真实交互流程 → Bot 调用 → 强制过期 + 透明刷新 → `apps.disconnect` 吊销 → 工具不可用）；`apps/desktop/src/main/shell-methods.test.ts`（URL 白名单）与渲染端 `features/apps/connect-flow.test.ts`。
+
+**真机项（用户待办 U1，不在自动化里）**：部署 `infra/cloudflare/oauth-cimd`（见该目录 README）后运行 `node infra/cloudflare/oauth-cimd/verify.mjs` 对线上 `https://kepcup.com/oauth/client.json` 做检查；再用 Notion 或 Linear 的官方 MCP 以「自定义」方式手工走通一次（连接 → 调用 → 过期重连 → 断开），结果记 PROGRESS。开发会话不代为登录。
 
 ## 原生模块
 
