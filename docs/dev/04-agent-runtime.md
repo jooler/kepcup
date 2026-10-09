@@ -296,6 +296,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `event` | 事件（环境安装完成、Wiki 入库完成、`profile_change_result`、对话轮读过的消息被编辑 `message_edited` 等） | `event` |
 | `delegation` | 另一个 Bot 代用户转交的任务（D71，B 私聊里的代发消息；渲染为「用户（由 A 代为转交）」；段末追加按 intent 的宿主说明 `delegationWakeHint`） | `from_bot`、`delegation_id`、`intent` |
 | `task` | 本 Bot 的任务结算条目（`result` / `failure`，D75） | — |
+| `watch` | 本 Bot 创建的网页监看条件边沿触发（D79）；触发消息是内部事件 `watch_alert`：网址、条件与 `<untrusted>` 内的增删改摘要 | — |
 
 群聊顺序响应中，排在后面的 Bot 的触发段之后追加：“在你之前，{Bot 名字}已经回复（见最近消息）。如果你没有需要补充的，调用 skip_reply。”
 
@@ -360,6 +361,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `wiki_search` / `wiki_read` / `wiki_enqueue` | conversation | T、K | P09 | 见 [phases/P09-wiki.md](phases/P09-wiki.md) |
 | `schedule` / `list_schedules` / `cancel_schedule` | conversation | T、K | P10 / D80 | 见 [phases/P10-proactive.md](phases/P10-proactive.md)；D80：`schedule` 增 `title?`，返回人话时间与护栏提示，创建后对话里出回执卡 |
 | `offer_schedule` | conversation | T | D80 | 定时提议卡：参数 `when`、`title`、`note`、`question`、`timezone?`；宿主校验时间、同名重复与拒绝退避（7 天 2 次），旧的待定提议标为 superseded；用户点「设置」由宿主确定性创建（`origin='offer'`），不唤醒 Bot（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)） |
+| `watch_create` / `watch_list` / `watch_stop` | conversation | T、K | D79 | 网页监看（异步托管动作）：`watch_create{url, selector?, condition{kind, text?, value?, selector?}, interval_minutes}`（≥5 分钟，每 Bot 20 个），创建出监看卡、不需审批，条件边沿触发时以 `watch` 唤醒对话轮；`watch_list` 输出包 `<untrusted>`；只能停止自己的监看（[design/02](../design/02-execution.md#网页监看d79)） |
 | `browser_*` | network | K | P11 / D77 | 见 [phases/P11-browser.md](phases/P11-browser.md)；只读任务的下载落应用缓存（`readOnlyDownloadsDir`）。D77：动作结果带 `outcome`（`not_started` / `completed` / `uncertain`），新错误码 `BROWSER_REF_STALE` / `BROWSER_OUTCOME_UNKNOWN` / `BROWSER_NO_PROGRESS`；`browser_type` 增 `sensitive?`；相同截图不重复附图（[design/14](../design/14-models-and-browser.md#动作结局与防护d77)） |
 | `generate_image` | network（厂商 API） | K | P15 | 文生图，结果落 workspace `.generated/`（用 `send_message` 的 `attachment_paths` 发出）；参数 `prompt`、`file_name?`、`n?`。能力未配置 / 厂商缺 Key 时返回 `SETUP_REQUIRED`，orchestrator 中断本 run 并以结构化 setup 失败 settle（见 [design/18-inline-setup.md](../design/18-inline-setup.md)） |
 | `generate_speech` / `generate_video` | network（厂商 API） | K | P17 | 语音合成（TTS）与文生视频；产物同落 `.generated/`。视频为异步任务：工具内轮询（约 5s 间隔、经 progress 汇报阶段、总时限 10 分钟）后下载字节落盘。未配置能力同 `SETUP_REQUIRED` → `{kind:'capability-model', capability:'tts'/'video'}`（见 [design/20-conversation-media.md](../design/20-conversation-media.md)） |

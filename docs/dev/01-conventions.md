@@ -132,6 +132,7 @@ kepcup/
 | 连锁（Bot 间触发链） | `chn_` | |
 | 跨 Bot 委派（D71） | `dlg_` | |
 | 外部副作用台账行（D78） | `eff_` | |
+| 网页监看（D79） | `wat_` | |
 
 ## 可调参数
 
@@ -176,6 +177,16 @@ kepcup/
 | `TURN_MCP_READ_TOOLS_MAX` | 20 | 进对话轮 / 只读子代理工具面的只读 MCP 工具数上限（D65 修订，W5） |
 | `TURN_MCP_RESOLVE_TIMEOUT_MS` | 3000 | 对话轮等待解析 MCP 工具面的上限，超时本轮不带 MCP 工具（W5） |
 | `BROWSER_NO_PROGRESS_LIMIT` | 3 | 同一浏览器动作连续几次页面不变后拦下下一次（D77） |
+| `WATCH_MIN_INTERVAL_SEC` / `WATCH_MAX_INTERVAL_SEC` | 300 / 604800 | 网页监看检查间隔下限 / 上限（秒，D79） |
+| `WATCH_MAX_PER_BOT` / `WATCH_MAX_GLOBAL` | 20 / 100 | 每个 Bot / 全局未停止（进行中 + 已暂停）的监看上限（D79） |
+| `WATCH_PAUSE_AFTER_FAILURES` | 5 | 监看连续失败几次后暂停并发卡片（D79） |
+| `WATCH_BACKOFF_MAX_MINUTES` | 60 | 监看失败退避上限：`max(5, min(60, 2^failures))` 分钟，即 5 / 5 / 8 / 16 / 32 / 60（重试不早于 `WATCH_MIN_INTERVAL_SEC`，D79） |
+| `WATCH_HOST_UNAVAILABLE_RETRY_MS` | 60000 | 浏览器宿主未连接时监看的重试间隔（不计失败；宿主绑定后立即重查，D79） |
+| `WATCH_MAX_ALERTS_PER_DAY` | 24 | 每个监看滚动 24 小时内的提醒上限；超出即暂停并发「提醒过于频繁」卡（D79） |
+| `WATCH_FETCH_DEADLINE_MS` | 45000 | 后台页一次取正文的总时限（宿主侧，超时关页并计失败，D79） |
+| `WATCH_DIFF_SUMMARY_MAX_CHARS` | 1500 | 监看提醒里增删改摘要的长度上限（D79） |
+| `WATCH_FETCH_TEXT_MAX_CHARS` / `WATCH_STORED_TEXT_MAX_CHARS` | 200000 / 50000 | 后台页返回的正文上限 / 为下次 diff 保存的上一版文本上限（D79） |
+| `WATCH_CONDITION_TEXT_MAX_CHARS` / `WATCH_SELECTOR_MAX_CHARS` | 200 / 300 | 监看条件文字 / CSS 选择器长度上限（D79） |
 
 ## 日志
 

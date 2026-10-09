@@ -83,11 +83,11 @@
 | 项           | 规定                                               |
 | ----------- | ------------------------------------------------ |
 | `loop_type` | `'turn'`（替代今天的 `'response'`）                     |
-| 触发          | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑 |
+| 触发          | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑、网页监看条件满足（D79，`watch`） |
 | 并发          | 每（Bot, 对话）同时最多一个（mailbox 不变）；调度优先级沿用今天的响应 run 规则 |
 | 引擎          | **固定内置 pi**（§8.4 降级除外）                           |
 | 轮次上限        | `TURN_MAX_TURNS`（建议 8）——对话轮不该出现长工具链；超限按失败结算并提示   |
-| 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、技能生成请求（异步托管动作）  |
+| 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、网页监看、技能生成请求（异步托管动作）  |
 | 不可写         | 文件、命令、浏览器、媒体生成、技能安装、环境安装——一律经任务                  |
 | 结束          | 最终回复自动发送（D48 不变）；无话可说时 `skip_reply`              |
 
@@ -100,9 +100,11 @@
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
 | 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65 修订，见 [23](23-mcp-and-subagent.md)） |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
-| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
+| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；计入 `TURN_MAX_TURNS`                                                                                       |
 
+
+**网页监看（D79）放在哪一面**：与定时任务同理——创建监看只是登记一个由宿主确定性执行的只读检查（不写文件、不跑命令、不操作页面，取页在宿主的隐藏后台页里完成），属于异步托管动作，所以对话轮就能直接 `watch_create`，不必为此派任务；任务的完整工具面也保留这三个工具（与 `schedule` 一致），任务做完调研后可以顺手留一个监看。创建出用户可见的监看卡，不需审批。条件满足时唤醒的是对话轮（`trigger_reason=watch`），要进一步操作网页仍由对话轮派任务。
 
 对话轮只读这条**在执行期校验**，不只靠不注册工具：与 D71 单跳同理——注册期摘除是让模型少看到无用工具的优化，工具网关按 `loop_type='turn'` 硬拒一切写路径（`RUN_READ_ONLY`）才是保障。对话轮的工具面里没有 `bash`、浏览器、媒体生成、写入 / 需确认的 MCP 工具（网关调用时再校验，不符 → `RUN_READ_ONLY`）、`install_skill`、`request_environment`、`request_access`、`delegate_task`；`install_skill`（会落盘）只在任务里。
 
