@@ -320,5 +320,23 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
   const lines = input.messages
     .filter((m) => m.status !== 'recalled')
     .map((m) => renderMessageLine(m, input.options, 'trigger'));
+  // W6: a delegated turn is told what the delegating bot expects back.
+  if (input.reason === 'delegation') {
+    lines.push(delegationWakeHint(input.extraAttributes?.['intent']));
+  }
   return `<trigger reason="${input.reason}"${attrs}>\n${lines.join('\n')}\n</trigger>`;
+}
+
+/**
+ * The delegated turn's instruction per intent (W6; adapted from Rakazo's
+ * bot-message wake prompts). Rows from before W6 carry no intent: request.
+ */
+export function delegationWakeHint(intent: unknown): string {
+  if (intent === 'fyi') {
+    return '（宿主说明：这是另一个 Bot 代用户转告给你的信息，不需要回复对方，你的回复也不会贴回给它。只有需要让用户知道或需要用户决定时才在这里回复，否则调用 skip_reply。）';
+  }
+  if (intent === 'question') {
+    return '（宿主说明：这是另一个 Bot 代用户转交给你的提问。你这一轮的最终回复会作为答复贴回给对方：直接给出完整答复，不要只说「我去查」。信息不足时直接向用户提问。）';
+  }
+  return '（宿主说明：这是另一个 Bot 代用户转交给你的请求。能用只读查询完成的，在这一轮的最终回复里给出完整结果，它会贴回给对方；需要动手的用 start_task 派任务——任务结束后，它们的结果会自动贴回给对方，你这一轮只需简短说明去做了什么。不要只回复「收到」。）';
 }

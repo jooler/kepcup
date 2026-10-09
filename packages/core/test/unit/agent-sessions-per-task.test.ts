@@ -63,7 +63,7 @@ describe('main 0019 agent_sessions per task', () => {
       "insert into agent_sessions (id, bot_id, conversation_id, agent_id, agent_session_id, fingerprint, last_run_id, last_used_at, created_at) values ('ags_old', 'bot_a', 'conv_a', 'claude-acp', 'sess', 'fp', null, 1, 1)",
     );
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([19, 20]);
+    expect(applied.map((m) => m.version)).toEqual([19, 20, 21]);
     expect(db.prepare('select count(*) as n from agent_sessions').get()).toEqual({ n: 0 });
     const columns = (
       db.prepare('pragma table_info(agent_sessions)').all() as Array<{ name: string }>
