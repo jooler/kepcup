@@ -408,6 +408,40 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).not.toContain('acquire_project_write');
   });
 
+  it('D80: the turn nudges schedules via offer_schedule; <schedules> is injected; the task only reports', () => {
+    const turn = buildSystemPrompt({
+      ...base,
+      loop: 'turn',
+      schedules: '你在本对话中的有效定时任务：\n- [sch_1] 工作日早报：每个工作日 09:00',
+    });
+    expect(turn).toContain('offer_schedule');
+    expect(turn).toContain('不要介绍功能本身');
+    expect(turn).toContain('一件事只提一次');
+    expect(turn).toContain('<schedules>\n你在本对话中的有效定时任务');
+    const task = buildSystemPrompt(base);
+    expect(task).not.toContain('offer_schedule');
+    expect(task).toContain('由对话中的你决定要不要向用户提议提醒或定时');
+    expect(task).not.toContain('<schedules>');
+  });
+
+  it('D80: interviews ask about recurring duties; the butler puts them into routines', () => {
+    const interviewing = buildSystemPrompt({
+      ...base,
+      loop: 'turn',
+      bot: { ...bot, setupState: 'interviewing' } as Bot,
+    });
+    expect(interviewing).toContain('周期性的事');
+    expect(interviewing).toContain('在 finish_setup 之前用 schedule 建好');
+    const butler = buildSystemPrompt({
+      ...base,
+      loop: 'turn',
+      bot: { ...bot, systemRole: 'butler', setupState: 'interviewing' } as Bot,
+    });
+    expect(butler).toContain('routines');
+    expect(butler).toContain('不要单独问「需不需要定时任务」');
+    expect(butler).toContain('才提议一个专门负责例行事项的 Bot');
+  });
+
   it('task (default): the working rules stay', () => {
     const prompt = buildSystemPrompt(base);
     // The final text is the task's result, not a chat message (D75 §2.2).

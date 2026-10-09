@@ -36,6 +36,13 @@
 
   let draft = $state<BotProfile | null>(null);
   let activeTab = $state('profile');
+  // D80: a card / message tag asked for the schedules tab.
+  $effect(() => {
+    const requested = shell.rightPanelTabRequest;
+    if (requested === null) return;
+    if (tabItems.some((tab) => tab.value === requested)) activeTab = requested;
+    shell.rightPanelTabRequest = null;
+  });
 
   /**
    * 手写切换条：组件库 Tabs 的样式变体写在 `data-active:` 上，而 bits-ui 实际

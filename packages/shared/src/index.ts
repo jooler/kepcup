@@ -12,3 +12,4 @@ export * from './browser/net-rules.js';
 export * from './browser/axtree.js';
 export * from './browser/ref-fingerprint.js';
 export * from './update.js';
+export * from './schedule-describe.js';

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ScheduleEntry } from '@kepcup/shared';
+  import { describeScheduleWhen, scheduleDisplayTitle, type ScheduleEntry } from '@kepcup/shared';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
@@ -29,11 +29,20 @@
   let cancelTarget = $state<string | null>(null);
   let cancelling = $state(false);
 
-  // P10 has no schedule-change RPC event, so there is no live refresh — load
-  // on every activation and via the refresh button (profile-page precedent).
+  // Load on every activation and via the refresh button; D80 adds the
+  // schedules.changed event, so visible lists also follow creations / cancels.
   $effect(() => {
     if (active) void refresh();
   });
+  $effect(() => {
+    if (!active) return;
+    return core.onEvent('schedules.changed', (payload) => {
+      const changed = (payload as { conversationId?: string }).conversationId;
+      if (conversationId === undefined || changed === conversationId) void refresh();
+    });
+  });
+
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   async function refresh(): Promise<void> {
     loading = true;
@@ -72,7 +81,15 @@
   }
 
   function fireTime(entry: ScheduleEntry): string {
-    return entry.nextFireAt === null ? '—' : new Date(entry.nextFireAt).toLocaleString();
+    if (entry.nextFireAt === null) return '—';
+    return describeScheduleWhen(
+      { kind: 'once', runAt: entry.nextFireAt, cron: null, timezone: localTimeZone },
+      { now: Date.now() },
+    );
+  }
+
+  function whenText(entry: ScheduleEntry): string {
+    return describeScheduleWhen(entry, { localTimeZone, now: Date.now() });
   }
 </script>
 
@@ -101,7 +118,9 @@
       {#each entries as entry (entry.id)}
         <li class="rounded-md border p-2 text-sm" data-testid={`schedule-item-${entry.id}`}>
           <div class="flex items-center gap-2">
-            <p class="min-w-0 flex-1 font-medium" data-testid="schedule-note">{entry.note}</p>
+            <p class="min-w-0 flex-1 font-medium" data-testid="schedule-title">
+              {scheduleDisplayTitle(entry)}
+            </p>
             {#if entry.commitmentId !== null}
               <span
                 class="shrink-0 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400"
@@ -112,14 +131,18 @@
               </span>
             {/if}
           </div>
+          {#if entry.title.trim().length > 0}
+            <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-note">
+              {entry.note}
+            </p>
+          {/if}
           <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-bot">
             {entry.botName ?? entry.botId}
           </p>
           <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-when">
-            {#if entry.kind === 'cron'}{t('schedules.cron', { expr: entry.cron ?? '', tz: entry.timezone })} · {/if}{t(
-              'schedules.nextFire',
-              { time: fireTime(entry) },
-            )}
+            {whenText(entry)}{#if entry.kind === 'cron'} · {t('schedules.nextFire', {
+                time: fireTime(entry),
+              })}{/if}
           </p>
           {#if entry.deferredReason !== null}
             <p

@@ -122,6 +122,7 @@ import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
+import type { ScheduleToolFacade } from './tools/schedule-tools.js';
 import {
   createBrowserHostRpc,
   type BrowserHostRpc,
@@ -1325,20 +1326,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // delivers through the orchestrator's mailboxes); the tool facade
     // delegates lazily.
     let scheduleService: ScheduleService | null = null;
-    const scheduleFacade = {
-      createOnce: (input: { botId: string; conversationId: string; runAt: number; note: string }) =>
-        scheduleService!.createOnce(input),
-      createCron: (input: {
-        botId: string;
-        conversationId: string;
-        expression: string;
-        timezone?: string;
-        note: string;
-      }) => scheduleService!.createCron(input),
-      listForBotInConversation: (botId: string, conversationId: string) =>
+    const scheduleFacade: ScheduleToolFacade = {
+      createFromWhen: (input) => scheduleService!.createFromWhen(input),
+      validateWhen: (when, timezone) => scheduleService!.validateWhen(when, timezone),
+      describeWhen: (row) => scheduleService!.describeWhen(row),
+      fireabilityWarnings: (row) => scheduleService!.fireabilityWarnings(row),
+      listForBotInConversation: (botId, conversationId) =>
         scheduleService!.listForBotInConversation(botId, conversationId),
-      cancelOwn: (botId: string, scheduleId: string) =>
-        scheduleService!.cancelOwn(botId, scheduleId),
+      cancelOwn: (botId, scheduleId) => scheduleService!.cancelOwn(botId, scheduleId),
+      createOffer: (input) => scheduleService!.createOffer(input),
+      contextSection: (botId, conversationId) =>
+        scheduleService?.contextSection(botId, conversationId) ?? '',
+      displayTitle: (scheduleId) => scheduleService?.displayTitle(scheduleId) ?? null,
     };
     const orchestrator = new Orchestrator({
       engine,
@@ -1456,6 +1455,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runs,
       memory,
       orchestrator,
+      // D80: receipt / offer cards and the schedules.changed refresh event.
+      messages,
+      publish: (event, payload) => events.emit(event as never, payload as never),
     });
     scheduleService = schedules;
     // Commitment linkage (docs/design/04-memory.md): a due-dated commitment

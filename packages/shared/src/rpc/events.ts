@@ -139,6 +139,15 @@ export const environmentChangedPayloadSchema = z.object({
  */
 export const skillsChangedPayloadSchema = z.object({ botId: z.string() });
 
+/**
+ * A schedule of the conversation was created / cancelled / finished (D80):
+ * the schedule lists refetch (there was no live refresh before).
+ */
+export const schedulesChangedPayloadSchema = z.object({
+  conversationId: z.string(),
+  scheduleId: z.string(),
+});
+
 // --- P09 events (docs/dev/phases/P09-wiki.md) ----------------------------------
 
 /**
@@ -214,6 +223,7 @@ export const rpcEventSchemas = {
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,
+  'schedules.changed': schedulesChangedPayloadSchema,
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,

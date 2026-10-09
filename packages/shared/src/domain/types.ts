@@ -590,6 +590,12 @@ export const textContentSchema = z.object({
   delegatedBy: z.string().optional(),
   /** origin = 'task' 时发出该消息的任务（run id）。 */
   taskId: z.string().optional(),
+  /**
+   * 定时触发的对话轮发出的消息（D80）：来源定时任务与其标题快照，气泡下方
+   * 显示「⏰ 标题」，点开定时任务列表。
+   */
+  scheduleId: z.string().optional(),
+  scheduleTitle: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
@@ -640,7 +646,46 @@ export const systemEventContentSchema = z.object({
       task: z.string().optional(),
     })
     .optional(),
+  /**
+   * 定时任务回执卡（D80，event = schedule_created）：创建时的快照；`status`
+   * 随取消 / 完成回写。
+   */
+  schedule: z
+    .object({
+      id: z.string(),
+      botId: z.string(),
+      title: z.string(),
+      note: z.string(),
+      kind: z.enum(['once', 'cron']),
+      runAt: z.number().nullable(),
+      cron: z.string().nullable(),
+      timezone: z.string(),
+      origin: z.enum(['tool', 'offer', 'proposal', 'commitment']),
+      status: z.enum(['active', 'done', 'cancelled']),
+    })
+    .optional(),
+  /**
+   * 定时提议卡（D80，event = schedule_offer）：Bot 用 offer_schedule 提出的
+   * 具体时间；用户点「设置」后宿主确定性创建（scheduleId），点「不用了」记为
+   * declined；同一 Bot 的新提议把旧的待定提议标为 superseded。
+   */
+  offer: z
+    .object({
+      botId: z.string(),
+      title: z.string(),
+      note: z.string(),
+      when: z.string(),
+      timezone: z.string().nullable(),
+      question: z.string(),
+      status: z.enum(['pending', 'accepted', 'declined', 'superseded', 'expired']),
+      scheduleId: z.string().optional(),
+      decidedAt: z.number().optional(),
+    })
+    .optional(),
 });
+export type SystemEventContent = z.infer<typeof systemEventContentSchema>;
+export type ScheduleReceiptSnapshot = NonNullable<SystemEventContent['schedule']>;
+export type ScheduleOfferContent = NonNullable<SystemEventContent['offer']>;
 /**
  * Card message (P03): the payload itself lives in the approvals table; the
  * message row only links to it so collapsed/updated rendering follows the
@@ -1210,6 +1255,15 @@ export const agentToolApprovalPayloadSchema = z.object({
 });
 export type AgentToolApprovalPayload = z.infer<typeof agentToolApprovalPayloadSchema>;
 
+/** One routine of a proposed bot (D80, todo/schedule-nudges.md §3.7). */
+export const butlerProposedRoutineSchema = z.object({
+  title: z.string(),
+  when: z.string(),
+  timezone: z.string().nullable().default(null),
+  note: z.string(),
+});
+export type ButlerProposedRoutine = z.infer<typeof butlerProposedRoutineSchema>;
+
 /** One bot a butler proposal suggests (D70); maps onto Profile fields on creation. */
 export const butlerProposedBotSchema = z.object({
   name: z.string(),
@@ -1218,6 +1272,11 @@ export const butlerProposedBotSchema = z.object({
   responsibilities: z.string().default(''),
   /** Why the user needs it (shown on the card). */
   reason: z.string().default(''),
+  /**
+   * 例行事项（D80）：确认后建到新 Bot 私聊里的定时任务。`when` 同 schedule
+   * 工具（ISO 8601 一次性 / cron 周期）。
+   */
+  routines: z.array(butlerProposedRoutineSchema).default([]),
 });
 export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
 
@@ -1280,6 +1339,11 @@ export const approvalDecisionSchema = z.object({
    * (unchecked items are dropped before creation). Absent = all items.
    */
   selection: z.array(z.number().int().nonnegative()).optional(),
+  /**
+   * `butler_proposal` only (D80): routines the user kept, as
+   * `"{botIndex}:{routineIndex}"`. Absent = every routine of the kept bots.
+   */
+  routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });
@@ -1844,6 +1908,15 @@ export type ScheduleKind = z.infer<typeof scheduleKindSchema>;
 export const scheduleStatusSchema = z.enum(['active', 'done', 'cancelled']);
 export type ScheduleStatus = z.infer<typeof scheduleStatusSchema>;
 
+/**
+ * Where a schedule came from (D80, todo/schedule-nudges.md §3.1): `tool` = the
+ * bot called `schedule`; `offer` = the user clicked 设置 on an offer card;
+ * `proposal` = a routine of a butler team / bot proposal; `commitment` = the
+ * commitment linkage (P10 任务 6).
+ */
+export const scheduleOriginSchema = z.enum(['tool', 'offer', 'proposal', 'commitment']);
+export type ScheduleOrigin = z.infer<typeof scheduleOriginSchema>;
+
 /** One row of the schedules table (docs/dev/03-data-model.md "schedules"). */
 export const scheduleSchema = z.object({
   id: z.string(),
@@ -1857,6 +1930,9 @@ export const scheduleSchema = z.object({
   /** IANA time zone the cron expression (and quiet hours) evaluate in. */
   timezone: z.string(),
   note: z.string(),
+  /** User-facing short name (D80); '' on pre-D80 rows (display falls back to the note). */
+  title: z.string(),
+  origin: scheduleOriginSchema,
   /** Commitment (memory.db) this task was created for, if any. */
   commitmentId: z.string().nullable(),
   status: scheduleStatusSchema,

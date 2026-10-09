@@ -176,10 +176,14 @@ test('schedules tab and settings overview: list display and two-step cancel', as
     const tab = page.locator('[data-testid="schedules-tab"]');
     const item = tab.locator('[data-testid^="schedule-item-"]').filter({ hasText: '看报表' });
     await expect(item).toBeVisible({ timeout: 15_000 });
-    await expect(item.locator('[data-testid="schedule-note"]')).toHaveText('提醒用户看报表');
+    // D80: no title given → the note is the display title; one-shot times in words.
+    await expect(item.locator('[data-testid="schedule-title"]')).toHaveText('提醒用户看报表');
     await expect(item.locator('[data-testid="schedule-bot"]')).toHaveText('阿点');
-    await expect(item.locator('[data-testid="schedule-when"]')).toContainText('下次触发');
-    await expect(item.locator('[data-testid="schedule-when"]')).toContainText(/\d{4}/);
+    await expect(item.locator('[data-testid="schedule-when"]')).toContainText(/今天|明天|\d+月\d+日/);
+    // D80: the creation left a visible receipt card in the chat.
+    await expect(
+      page.locator('[data-testid^="schedule-receipt-msg_"]').filter({ hasText: '提醒用户看报表' }),
+    ).toBeVisible();
     // Nothing defers this task (no quiet hours, daily cap not reached).
     await expect(item.locator('[data-testid="schedule-deferred"]')).toHaveCount(0);
 
@@ -262,12 +266,81 @@ test('due task fires: the bot posts proactively and the task leaves the list', a
     await expect(
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '到点啦，该看报表了' }).first(),
     ).toBeVisible({ timeout: 120_000 });
+    // D80: the scheduled turn's reply carries the 「⏰ 标题」 source tag.
+    await expect(
+      page.locator('[data-testid="schedule-source"]').filter({ hasText: '提醒用户看报表' }),
+    ).toBeVisible();
 
     // A fired one-shot task is done: the list empties on refresh.
     await tab.locator('[data-testid="schedules-tab-refresh"]').click();
     await expect(tab.locator('[data-testid="schedules-tab-empty"]')).toBeVisible({
       timeout: 15_000,
     });
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('D80 offer card: the bot offers a time, one click creates it, the card becomes the receipt', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-schedules-offer-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '阿约');
+
+    const when = new Date(Date.now() + 60 * 60_000).toISOString();
+    llm.script('mock-main', [
+      step()
+        .expect((req) => req.lastUserText().includes('明天再说'))
+        .replyToolCall('offer_schedule', {
+          when,
+          title: '周报提醒',
+          note: '提醒用户整理周报',
+          question: '要我一小时后提醒你整理周报吗？',
+        }),
+      step()
+        .expect((req) => JSON.stringify(req.body).includes('提议卡已展示给用户'))
+        .replyText('好，那先放一放。'),
+    ]);
+    llm.script('mock-light', [step().replyJson(emptyReflection())]);
+
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('周报的事明天再说吧');
+    await composer.press('ControlOrMeta+Enter');
+
+    const card = page.locator('[data-testid^="schedule-offer-msg_"]');
+    await expect(card).toContainText('要我一小时后提醒你整理周报吗？', { timeout: 30_000 });
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '先放一放' }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // One click: the host creates it deterministically (no extra model call).
+    await card.locator('[data-testid="schedule-offer-accept"]').click();
+    await expect(card.locator('[data-testid="schedule-receipt"]')).toHaveAttribute(
+      'data-schedule-status',
+      'active',
+      { timeout: 15_000 },
+    );
+    await expect(card).toContainText('周报提醒');
+
+    // The list follows live (schedules.changed), titled as offered.
+    await openSchedulesTab(page);
+    const item = page
+      .locator('[data-testid="schedules-tab"] [data-testid^="schedule-item-"]')
+      .filter({ hasText: '周报提醒' });
+    await expect(item).toBeVisible({ timeout: 15_000 });
+    await expect(item.locator('[data-testid="schedule-note"]')).toHaveText('提醒用户整理周报');
+
+    // Cancelling from the card writes the status back onto it.
+    await card.locator('[data-testid="schedule-receipt-cancel"]').click();
+    await card.locator('[data-testid="schedule-receipt-cancel-confirm"]').click();
+    await expect(card.locator('[data-testid="schedule-receipt"]')).toHaveAttribute(
+      'data-schedule-status',
+      'cancelled',
+      { timeout: 15_000 },
+    );
+    await expect(item).toHaveCount(0, { timeout: 15_000 });
   } finally {
     await closeSession(session);
   }

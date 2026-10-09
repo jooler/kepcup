@@ -411,6 +411,7 @@ export class ApprovalsService {
     selection?: number[],
     /** W4: the hash of the payload the renderer showed; a mismatch → APPROVAL_STALE. */
     payloadHash?: string,
+    routineSelection?: string[],
   ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
@@ -430,6 +431,18 @@ export class ApprovalsService {
         keptSelection = validateButlerSelection(approval.payload, selection);
         // 一项都不留 = 拒绝（D70）。
         if (keptSelection.length === 0) approve = false;
+      }
+    }
+    // D80: routines the user kept ("{bot}:{routine}"); only meaningful with approve.
+    let keptRoutines: string[] | undefined;
+    if (routineSelection !== undefined) {
+      if (approval.kind !== 'butler_proposal') {
+        throw new AppError('INVALID_INPUT', '只有管家提议卡支持勾选例行事项');
+      }
+      if (approve) {
+        keptRoutines = validateRoutineSelection(approval.payload, routineSelection);
+        // Routines without a bot selection keep every bot (validated above: not a group).
+        keptSelection ??= (approval.payload['bots'] as unknown[]).map((_, index) => index);
       }
     }
     if (
@@ -457,7 +470,10 @@ export class ApprovalsService {
       approve && duration !== undefined
         ? { duration }
         : approve && keptSelection !== undefined
-          ? { selection: keptSelection }
+          ? {
+              selection: keptSelection,
+              ...(keptRoutines !== undefined ? { routineSelection: keptRoutines } : {}),
+            }
           : null;
     this.#db
       .prepare('update approvals set status = ?, decision_json = ?, decided_at = ? where id = ?')
@@ -1526,6 +1542,31 @@ function validateButlerSelection(payload: Record<string, unknown>, selection: nu
     throw new AppError('INVALID_INPUT', '勾选的条目不在提议之中');
   }
   return kept;
+}
+
+/**
+ * `approvals.decide` routine selection of a butler proposal (D80):
+ * `"{botIndex}:{routineIndex}"` keys, deduplicated; a key outside the
+ * proposal is rejected.
+ */
+function validateRoutineSelection(payload: Record<string, unknown>, selection: string[]): string[] {
+  const parsed = butlerProposalPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new AppError('INVALID_INPUT', '提议内容无效');
+  if (parsed.data.proposalType === 'group') {
+    throw new AppError('INVALID_INPUT', '建群提议没有例行事项');
+  }
+  const bots = parsed.data.bots;
+  const kept = new Set<string>();
+  for (const key of selection) {
+    const match = /^(\d+):(\d+)$/.exec(key);
+    const bot = match ? bots[Number(match[1])] : undefined;
+    if (match === null || bot === undefined || Number(match[2]) >= bot.routines.length) {
+      throw new AppError('INVALID_INPUT', '勾选的例行事项不在提议之中');
+    }
+    // Canonical form ("01:0" → "1:0"): #createBots looks keys up verbatim.
+    kept.add(`${Number(match[1])}:${Number(match[2])}`);
+  }
+  return [...kept];
 }
 
 /** W5: MCP risk tiers as shown in context lines, summaries and audit notes. */

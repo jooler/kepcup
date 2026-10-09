@@ -42,6 +42,9 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table bots drop column system_role;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
+    // 0022（D80）的 schedules 新列同样摘除。
+    db.exec('alter table schedules drop column title;');
+    db.exec('alter table schedules drop column origin;');
     db.exec(
       `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
        values ('skl_preset', 'docx', 'preset://docx', '1.0.0', 'hashpreset', 'skills-library/docx@hashpreset', '{}', 1),
@@ -57,7 +60,7 @@ describe('0013 public_skills 迁移', () => {
 
     // 2) 升级：应用 0013 与其后新增的迁移
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([13, 14, 15, 16, 17, 18, 19, 20, 21]);
+    expect(applied.map((m) => m.version)).toEqual([13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
 
     // 3) 断言：预置引用 → 一条公共行；bot_skills 的预置行清掉，私有行保留
     const pub = db.prepare('select name, library_id, status from public_skills').all() as Array<{
