@@ -1,7 +1,8 @@
 # 从三个开源 Personal Agent 借鉴：实施方案
 
 > 状态：**已定稿，待实施**（2026-10-09；Pengfei 已对全部待决问题拍板，结论已写进各工作项，见各节「已定」标注）。D 编号已确认（§6）。
-> **硬约束**：只改本地工作树；**不要** git commit/push/开 PR。每个工作项完成后在本文件对应 `- [ ]` 打勾并写一行完成日期。
+> **提交约定**：原硬约束为“只改工作树、不 commit”；2026-10-09 用户授权提交（P0 已分批提交）。仍**不 push、不开 PR**（除非用户另行要求）。每个工作项完成后在本文件对应 `- [ ]` 打勾并写一行完成日期。
+> **范围调整（2026-10-09 用户决定）**：P1 只做 W3-P1 与 W6（W4、W8 暂缓）；W6 委派结果取“各任务结果摘要拼接”；原 W9（记忆导出 / 历史 / 导入）**确定不做，已从本文件删除**；W7 **延期**。
 > **测试纪律**（AGENTS.md / `docs/dev/05-testing.md`）：开发中**只跑定向测试**（本文件每项都给了命令）；全量 `pnpm test` 只在阶段收尾/交付时跑**一次**，或改了共享契约（`packages/shared` schema）、testkit、迁移、vitest 配置时跑一次。不要反复全量。
 > Mac 上 PATH 里的 node 是 v12，先 `export PATH=$HOME/.nvm/versions/node/v24.13.0/bin:$PATH`；改了 `packages/shared` 后先重建 `packages/shared/dist`。
 
@@ -51,9 +52,8 @@
 | 3 | MCP / 连接应用审批默认值（只读自动、动词正则） | W5（含只读 MCP 工具进对话轮；无人值守下 MCP 自动批准 + 风险提示） | **P0** |
 | 4 | 草稿/审批幂等 + 精确审批卡 | W4（基于 W2） | P1 |
 | 5 | 中断 → 检查后重试 | W3（基于 W2；含“运行中撤销授权 → 立即中断”） | P0/P1 |
-| 6 | 监看：去重 + 退避 | W7（本轮只做网页来源） | P2 |
+| 6 | 监看：去重 + 退避 | W7（本轮只做网页来源）——**延期** | P2 |
 | 7 | Team / Private 电脑 → 浏览器资料与接管 | W8（自动接管租约 + 显式共享浏览器资料） | P1 |
-| 8 | 可携带记忆（导出 + 版本历史 + 导入） | W9（导入纳入本轮） | P2 |
 | 9 | 语音前端 + 计算 Agent 配对 | —（**暂不立项**，只在 §4 记下分工原则） | — |
 
 ## 2. 实施顺序
@@ -66,8 +66,7 @@ P1:  W2 ─→ W3 (P1 部分：检查后重试面板 + 撤销授权立即中断)
      W2 ─→ W4 审批幂等与回执
      W6 Bot 间消息 intent + DEV-012 方案二   (独立；开工前确认 D75 已收尾)
      W1 ─→ W8 浏览器自动接管 + 共享浏览器资料
-P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
-     W9 记忆导出 / 版本历史 / 导入            (独立)
+P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延期
 ```
 
 粗略工作量（编程 Agent 人日，含定向测试，不含设计文档回写）：
@@ -82,8 +81,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 | W6 | 3 | DEV-012 方案二是大头；含 delegations 表重建 |
 | W8 | 3.5 | 接管租约 1.5 + 共享浏览器资料 2 |
 | W7 | 3.5–4 | 新服务 + 新表 + UI；不含传感器来源 |
-| W9 | 4 | 导出 + 历史 2，导入 2（含 memory.db 迁移） |
-| 合计 | 约 25–28 | P0 ≈ 7.5–9；P1 ≈ 11；P2 ≈ 7.5–8 |
+| 合计 | 约 21–24（W9 已删除） | P0 ≈ 7.5–9；P1 ≈ 11（本轮只做 W3-P1 + W6 ≈ 5.5）；P2 = W7 ≈ 3.5–4（延期） |
 
 ## 3. 现状地图（以代码为准，2026-10-09 读取）
 
@@ -193,13 +191,13 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ### 改动清单
 
-- [ ] `packages/shared/src/rpc/methods.ts`：browser 动作输出 schema 增 `outcome`、`snapshotError?`、`navigated?`；错误码枚举（若有）增 `BROWSER_REF_STALE` / `BROWSER_OUTCOME_UNKNOWN` / `BROWSER_NO_PROGRESS`
-- [ ] `packages/shared/src/constants.ts`：`BROWSER_NO_PROGRESS_LIMIT = 3`
-- [ ] `apps/desktop/src/main/browser-host.ts`：refs 指纹、预检、phase 标记、`#settle` 内异常归为 post
-- [ ] `packages/core/src/browser/facade.ts`：透传 outcome；每页无进展计数器
-- [ ] `packages/core/src/tools/browser.ts`：拆开“动作 / 快照”两个 try；outcome 映射；`browserErrorHint` 新码；screenshot 去重；`browser_type.sensitive`
-- [ ] `packages/core/src/agent/step-persistence.ts`：按工具参数脱敏表
-- [ ] `packages/core/src/agent/context/continuation.ts`：渲染 `uncertain` 结果时带“结果未知”标记（与 W3 共用渲染函数）
+- [x] `packages/shared/src/rpc/methods.ts`：browser 动作输出 schema 增 `outcome`、`snapshotError?`、`navigated?`；错误码枚举（若有）增 `BROWSER_REF_STALE` / `BROWSER_OUTCOME_UNKNOWN` / `BROWSER_NO_PROGRESS` （2026-10-09 完成）
+- [x] `packages/shared/src/constants.ts`：`BROWSER_NO_PROGRESS_LIMIT = 3` （2026-10-09 完成）
+- [x] `apps/desktop/src/main/browser-host.ts`：refs 指纹、预检、phase 标记、`#settle` 内异常归为 post （2026-10-09 完成）
+- [x] `packages/core/src/browser/facade.ts`：透传 outcome；每页无进展计数器 （2026-10-09 完成）
+- [x] `packages/core/src/tools/browser.ts`：拆开“动作 / 快照”两个 try；outcome 映射；`browserErrorHint` 新码；screenshot 去重；`browser_type.sensitive` （2026-10-09 完成）
+- [x] `packages/core/src/agent/step-persistence.ts`：按工具参数脱敏表 （2026-10-09 完成）
+- [x] `packages/core/src/agent/context/continuation.ts`：渲染 `uncertain` 结果时带“结果未知”标记（与 W3 共用渲染函数） （2026-10-09 完成）
 
 ### 迁移 / 兼容
 
@@ -229,6 +227,28 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 - 指纹校验对“名字随内容变化”的元素（计数徽章、时间）可能误判 stale → 只比 role + 名字前 40 字符，且名字比较前去数字；误判代价只是多一次快照。
 - `phase` 划分不准会把真失败标成 uncertain → 宁可多报 uncertain（安全侧），在测试里覆盖每个 CDP 调用点。
+
+### 实施记录（2026-10-09）
+
+- **continuation.ts 未改**（留给 W3-P0 一并做）：`uncertain` 已落在 `run_steps` 的 tool_result payload——`{ toolCallId, toolName, ok:false, content, errorCode:'BROWSER_OUTCOME_UNKNOWN', outcome:'uncertain' }`；其它浏览器动作结果带 `outcome:'not_started' | 'completed'`。`ToolResult` 新增 `outcome?` 与 `sensitiveParams?`（pi-engine 与外部智能体宿主桥都透传进 tool_result 事件）。
+- `snapshotError` / `navigated` **不落结构化字段**：只体现在结果文本里（“动作已执行，但随后获取页面快照失败……不要重复该动作”、“（页面已跳转）”）。RPC 层：click/type/press/scroll/back 输出改为 `browserActionOutputSchema = { ok, outcome?, navigated?, passwordField? }`；快照输出增 `elementsOmitted?`；错误码进 `ERROR_CODES`。宿主错误的 `details.phase` 经 port B 的 AppError 序列化原样到达 core（`rpc/channel.ts` 带 details）。
+- phase 归类：宿主在 click/type/press/scroll/back 里打 `pre`/`post`；**navigate 不打标签**——`browser_open` 失败按 not_started（GET 导航可安全重做）。未打标签的错误：`INVALID_INPUT / REF_UNKNOWN / REF_STALE / PAGE_CLOSED / BLOCKED / BOT_DELETED / CONVERSATION_DELETED / UNAVAILABLE` 视为 not_started，其余在 click/type/press/back 上记 uncertain（安全侧），open/scroll 上记 not_started。`type` 的 focus/select 视为派发前，`Input.insertText` 起为派发后；click 的 `callFunctionOn` 若返回 `exceptionDetails`（我们的函数在 `click()` 前就抛了）按派发前处理。
+- 指纹比较做成 shared 纯函数（`packages/shared/src/browser/ref-fingerprint.ts`：名字去数字、比前 40 字符、允许前缀关系以兼容 80 字截断）；可见性用 `checkVisibility()`（`<option>` 豁免：关着的 select 里没有自己的盒子）；`disabled` / `aria-disabled` 也报 `REF_STALE`（文案说明是禁用）；AX 单节点查询失败不算 stale（尽力而为）。
+- 无进展熔断：状态按 host 句柄 + `botId|conversationId` 存在 `browser/facade.ts`（`browserPageState`，WeakMap，每 host 至多 256 页）。**偏离**：熔断计数与截图去重是 **run 级**的——另一个 run 触碰该页即清零（新 run 的模型没见过上一张图；用户换一轮让重试不是死循环）。只计 click / type（签名含文本 sha256）/ Enter、Escape 两个键；scroll、其它键（Tab、方向键、Backspace 改的是焦点/值，快照看不出）、back、open 不计并重置连续计数。“页面没变”= 动作后快照（去 ref 编号）hash 与动作前最后一次快照相同。
+- 敏感输入：`browser_type.sensitive=true` 时 tool_call 步骤里 `text` 写成 `«redacted:N chars»`；值登记为本 run 敏感值，之后落盘的 request / assistant / tool_result / progress / tool_call 步骤里的原文与 JSON 转义形式都替换成 `«redacted»`（长度 < 4 的值只脱敏它自己的参数，不全局替换）。**密码框强制**：tool_call 步骤在执行前已落盘（pi `tool_execution_start`），宿主报 `passwordField` 后工具结果带 `sensitiveParams:['text']`，step-persistence 用新增的 `RunsService.replaceStepPayload` 改写那条 tool_call 步骤。**残留**：执行期间（tool_call 落盘到 tool_result 之间）明文在 runs.db 里短暂存在，此间崩溃则留存；外部智能体（ACP）自身进程/会话里的参数不受控；`wiki/maintenance.ts`、`skills/authoring.ts` 自己的步骤记录不走这张表（它们没有浏览器工具）。结果文本不回显：声明敏感或密码框时，陈述句不含文本，回程快照里出现的该值（≥4 字符）替换为 `«已隐藏»`。
+- e2e：`browser.spec.ts` 新增「SPA 重渲染后点旧 ref → REF_STALE 且无副作用；密码框输入不回显」（testkit `web-server.ts` 新增 `/spa` 夹具），大页面用例补断言「还有 250 个元素未列出」。
+
+#### 复查后修正（2026-10-09）
+
+- **阻断：字符串 `sensitive` 泄漏**：pi 用 `Value.Convert` 把 `"true"` 强转给工具，但 tool_call 步骤看的是原始参数。现在 `browser_type` 只要声明敏感或命中密码框就**总是**回报 `sensitiveParams:['text']`（含 ensurePage 失败、熔断拦截等早退路径），落盘侧据此改写；脱敏表接受 `true / 1 / "true" / "1" / "yes" / "y" / "on"`。pi 参数校验失败时回显的 `Received arguments: …` 不经工具（pi 直接回错误结果），其中的 `"text": "…"` 在之后的 request 步骤里按下条结构化规则抹掉（前提是值已登记——校验失败且只有密码框能证明敏感时无从得知，记为残留）。
+- 宿主桥审计：`agent_bridge_tool_call` 审计行改记 `redactToolArgs(toolName, rawArgs)` 之后的参数（声明敏感的输入不进审计库；只有执行期才发现的密码框在审计行里仍是明文——审计行写在执行前且只追加，记为残留）。
+- 短值（CVV / PIN）：除 ≥4 字符的子串抹除外，新增**结构化**抹除（任意长度）：对象里同名参数字段恰为该值 → `«redacted»`；JSON 文本里的 `"text": "<值>"`（provider 的 `arguments` 字符串、pi 校验回显）及再转义一层的形式。标识字段（`id / call_id / tool_call_id / tool_use_id / toolCallId / toolName`）一律不改写，tool_call 步骤只抹 `args` / `title`。
+- 指纹：只去掉 ≤3 位的数字串（“删除 订单 10023”与“…10024”不再相等）；前缀匹配只在快照名被截断（以“…”结尾）时允许（“Pay”≠“Pay $500 now”）；空名只等于空名；纯短数字名（分页“2”/“3”）按原文比较。
+- 无进展熔断：宿主快照输出新增 `stateDigest`（列出元素的 AX value + checked / expanded / selected / pressed 的 sha256，只出 hash），并入页面 hash——步进器“+”、勾选框不再被误拦。
+- 先写后登记：登记新敏感值时，回写本 run 最近一条 assistant 步骤和最近 50 条（单条 ≤64KB）tool_call 步骤；REF_STALE / 禁用 / 焦点失败的错误 details 带 `passwordField`，失败的密码框尝试也会回报 `sensitiveParams`。
+- 宿主动作流程抽到 `apps/desktop/src/main/browser-actions.ts`（无 Electron 依赖），每个 CDP 调用点有 pre/post 单测（`browser-actions.test.ts`）。点击函数在同一 JS 回合里再查 isConnected / 可见 / 禁用（返回 `{clicked:false}` → pre，关掉预检→点击的 TOCTOU）；`type` 校验焦点确实落在目标上（`activeElement`），否则 pre 失败、不 `insertText`；AX 单节点查询只比对 backendDOMNodeId 精确命中的节点；“Execution context was destroyed”不再映射成 PAGE_CLOSED（改为“页面在操作过程中跳转或重载”）；`toPageError` 先判 `instanceof AppError`；uncertain 文案用原始错误消息，不带“可 browser_open 重新打开”。
+- 删除级联：`browser.close({permanent:true})` 与 `clearBotData` 同时清掉 core 侧该页 / 该 Bot 的 W1 页面状态。
+- 残留（仍未覆盖）：密码框（模型未标注）的明文在 tool_call 落盘到 tool_result 之间短暂存在于 runs.db；用户自己在对话里发出的敏感值、更早 request 步骤里已有的值不追溯；外部智能体自身会话不受控。
 
 ---
 
@@ -291,13 +311,13 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ### 改动清单
 
-- [ ] `packages/shared/src/domain/types.ts`：`toolEffectSchema`、`effectStatusSchema`
-- [ ] `packages/shared/src/rpc/methods.ts`：`effects.list`（加进 renderer 白名单数组，照 `tasks.get` 的写法）
-- [ ] `packages/core/migrations/runs/00xx_tool_effects.sql`
-- [ ] `packages/core/src/agent/effects/{classify,key,recorder,store}.ts`
-- [ ] `packages/core/src/agent/tool-execution.ts`、`pi-engine.ts`、`external/mcp-bridge.ts`、`types.ts`（ToolContext.toolCallId、ToolResult.effect）
-- [ ] `packages/core/src/dispatch/tasks.ts` `recover()`：executing → uncertain
-- [ ] `packages/core/src/agent/external/capabilities.ts`：与 classify 词表一致性断言
+- [x] `packages/shared/src/domain/types.ts`：`toolEffectSchema`、`effectStatusSchema` （2026-10-09 完成）
+- [x] `packages/shared/src/rpc/methods.ts`：`effects.list`（加进 renderer 白名单数组，照 `tasks.get` 的写法） （2026-10-09 完成）
+- [x] `packages/core/migrations/runs/0009_tool_effects.sql` （2026-10-09 完成）
+- [x] `packages/core/src/agent/effects/{classify,key,recorder,store}.ts` （2026-10-09 完成）
+- [x] `packages/core/src/agent/tool-execution.ts`、`pi-engine.ts`、`external/mcp-bridge.ts`、`types.ts`（ToolContext.toolCallId、ToolResult.effect） （2026-10-09 完成）
+- [x] `packages/core/src/dispatch/tasks.ts` `recover()`：executing → uncertain（实际落在 `orchestrator.recoverInterrupted()` 第 0 步，见实施记录） （2026-10-09 完成）
+- [x] `packages/core/src/agent/external/capabilities.ts`：与 classify 词表一致性断言 （2026-10-09 完成）
 
 ### 迁移 / 兼容
 
@@ -317,6 +337,29 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 - 一个任务点了两次外部按钮、调用了一次 MCP 写工具，`effects.list` 返回 3 行且状态正确。
 - 强杀进程重启后，执行中的那行变为 `uncertain`。
 - 只读工具不产生任何行（台账不膨胀）。
+
+### 实施记录（2026-10-09）
+
+- **文件**：新 `packages/core/src/agent/effects/{classify,key,store,recorder}.ts`、`packages/core/migrations/runs/0009_tool_effects.sql`（表与索引照设计；FK `runs(id) ON DELETE CASCADE`，runs.db 开着 `foreign_keys`）；shared `domain/types.ts` 增 `effectStatusSchema` / `effectReceiptSchema` / `toolEffectSchema`（类型 `EffectStatus` / `EffectReceipt` / `ToolEffect`），`ids.ts` 增前缀 `eff_`；RPC `effects.list`（输入复用 `taskIdInputSchema`，输出 `effectsListOutputSchema`，已进 `APP_METHODS` 白名单），绑定在 `rpc/bindings.ts`；`CoreDomainServices.effects`（`ToolEffectsStore`）。
+- **钩子**：`executeToolSafely(tool, params, ctx, effects?)`；`PiEngine` 与 `HostMcpBridge` 的 deps 增可选 `effects`（start.ts 用同一个 `createEffectRecorder` 注入）。`ToolContext.toolCallId` 为**可选**（偏差：pi 与桥都会填；做成可选是为了不改几十处直接调 `execute` 的测试）；桥用它自己的 `kc_<uuid>`。`ToolResult.effect?: { outcome?, receipt?, summary? }` 只进台账，本轮**只有 MCP 包装工具**在 `callTool` 抛错时报 `outcome:'uncertain'`（请求可能已到 server）；浏览器沿用 W1 的 `outcome`，git_remote 暂不报回执（留给 W4）。
+- **分类**（`effectClassOf(toolName, params, ctx)`）：全部 69 个内置工具名逐个登记（单测扫描工具源码断言无遗漏、无陈旧项），未登记 → external。偏差 / 细化：`send_message` 平时 local，`mention_bot_ids` 非空（会触发其他 Bot）→ external；`browser_open/scroll/back/close` → none（与 W1 一致：GET 导航可重做）；`generate_*` 媒体 → local（重做只多花费用）；`delegate_task`（只读 SubAgent）→ local，子 run 自己的外部调用按子 run 入账。MCP 工具：`ToolDefinition.mcp = {serverId, toolName, risk}`（mcp/tools.ts 包装时写入，外部智能体改名后仍在），记录器取它与 `McpService.riskOf` 实时值中更严的一档。
+- **bash**：沙箱内 → local（不记）；沙箱外由网关判定——`ToolCallScope` 增 `effect` 钩子，`gateway #executeUnsandboxedApproved`（确认模式下已批准的命令、`request_unsandboxed`）执行前 `escalate('unsandboxed')`，记录器此时才写 `executing` 行（摘要「bash（沙箱外执行） …」）。确认模式的白名单只读命令不记。审批关联同理：`ApprovalsService #insert` 调 `noteApproval(id)`，行的 `approval_id` = 本次调用最近一次审批。
+- **状态**：执行前 `executing`；ok → completed；`effect.outcome/outcome==='uncertain'` 或 `BROWSER_OUTCOME_UNKNOWN` → uncertain；`APPROVAL_DENIED`（返回或抛出）→ denied；`outcome:'not_started'` → failed；其它失败 → failed，**但 run 已被中止时 → uncertain**（细化）；抛异常 → uncertain。`settle` 只改 executing / uncertain 行（恢复改成 uncertain 后真实结果仍可落定）。记录器任何异常只 `logger.warn`，不影响工具（含 run 不存在时 FK 拒绝）。
+- **脱敏**：摘要与 `args_hash` 的输入 = W1 参数脱敏表（`redactToolArgs`）+ 台账专用表（`browser_type.text` **一律**不入台账——密码框是执行中才知道的，行在执行前已写）+ `secrets.redact`；`args_hash` 是脱敏后 canonical JSON 的完整 sha256，`effect_key` 取前 16 位。摘要 ≤200 字。
+- **键**：`effect_key = runId:tool:hash16:occurrence`，occurrence 在写入事务里按（run、工具、args_hash）计数。**发现**：mock 模型（以及部分 OpenAI 兼容服务）每轮复用同一个 tool call id，`UNIQUE(run_id, tool_call_id)` 冲突时改存 `id#2`、`id#3`…而不是丢行；此时与 run_steps 按 id 关联有歧义（W3 面板按时间顺序对齐即可）。
+- **恢复**：没有放进 `TaskHost.recover()`，而是 `Orchestrator.recoverInterrupted()` 的第 0 步（任务修复之前）执行一条 `UPDATE … WHERE status='executing'`（`ToolEffectsStore.markExecutingUncertain()`，幂等）：启动时没有任何活着的 run，所有 executing 行都属于已死的进程；一条语句同时覆盖任务、对话轮、子 run、外部智能体 run 与任务修复失败的兜底路径，且先于任务修复写失败摘要（摘要可据此标注）。W3-P1 的 `interrupt(taskId)` 用带 runIds 的同一方法。
+- **读取**：`listForRun(runId)`、`listForRuns(ids)`、`chainRunIds(taskId)` / `listForTask(taskId)`——沿 `continued_from_run_ids_json` 向前追溯（重试的重试）并带上各 run 的 SubAgent 子 run（`parent_run_id`），按创建时间排序；只向前不向后（给出的是最新任务时即全链）。
+- **一致性**：`capabilities.ts` 的 `READ_ONLY_TOOLS` 改为导出，单测断言其每一项分类为 none、任何 external 工具都不带只读注解（注解集合本身未改，避免改变外部智能体的审批行为）。
+- **W3-P0 / W1 续接项**：`buildRunDigest` 增可选 `effects`（台账行）；未配对的 tool_call 若有副作用（分类非 none）或台账 uncertain → `[结果未知] 工具(参数) —— 中断时仍在执行、没有返回结果，可能已经生效：先核实页面 / 外部状态，勿直接重做`，只读的未配对调用只标「→（未返回结果）」；结果 `outcome==='uncertain'` / `BROWSER_OUTCOME_UNKNOWN`（旧行无 outcome 也认）/ 台账 uncertain → `[结果未知] 工具(参数) —— 动作可能已经生效（结果不确定）：… → 失败：<untrusted>…</untrusted>`。任务续接回放（orchestrator `#taskContinuation`）与任务失败摘要（`TaskHost #failureText`）传入台账；SubAgent 的摘要不传（只读）。无台账的旧 run 只靠步骤配对。
+- **测试**：`packages/core/test/unit/tool-effects.test.ts`（17）、`packages/core/test/unit/tool-effects-migration.test.ts`、`packages/core/test/integration/tool-effects.test.ts`（真实任务：两次点击 + 输入 + MCP 写工具 → 4 行、只读浏览器 / 只读 MCP 不产生行、审批关联；uncertain 点击 + 拒绝的 MCP；重启恢复 + 失败摘要 + `effects.list` 续接链）、`continuation.test.ts` 增 3 例；`task-events-migration.test.ts` 的 runs 迁移期望改为 `[6, 7, 8, 9]`。改了迁移与 shared 契约，P0 收尾需跑一次全量。
+
+- **复查后修正（2026-10-09）**：
+  - **审批串到别的 run**：`Scheduler.submit()` → `#drain()` 在提交方的异步上下文里同步启动 job，委派 / @ 提及 / 任务派出 / 工具里设的定时器启动的另一个 run 会继承该工具调用的 ALS scope（它的 agent_tool 审批会改写委派行的 approval_id；once 授权的归属同理）。根治：`#drain` 用新的 `outsideToolCall()`（`storage.exit`）启动 job——核实过没有合法依赖：once 授权本就按 `grant.runId === identity.runId` 过滤，别的 run 拿不到；子 run 自己的工具调用各自开新 scope。另加两道护栏：钩子改用 `activeEffectHooks()`（scope 已结束则不给），`escalate` / `noteApproval` 带 `identity.runId`，记录器忽略别的 run；`store.noteApproval` 只改 `executing` 行。
+  - **结果未知写进步骤**：`executeToolSafely` 在台账结为 uncertain（抛错、MCP 传输失败、中止期间失败）且工具没给 outcome 时，给结果补 `outcome:'uncertain'`；pi-engine 与桥的 tool_result 报 `outcome ?? effect.outcome`。续接摘要因此不依赖台账也能标注；台账兜底按基础 id（去掉 `#n`）匹配，且只作用于失败结果（同 id 的成功调用不被牵连）。`settle` 移出 try，记录器出错不会替换真实结果。
+  - **工具自报的 summary / receipt** 与参数摘要同样过 W1 敏感值擦除（本次调用的敏感参数值 + 执行时报告的 `sensitiveParams`）再 `secrets.redact`。
+  - **沙箱内联网命令维持 local（已定）**：逐条记录会让几乎每个编程任务都触发 W3-P1 的检查门。台账**不覆盖沙箱内执行的命令**——W3-P1 面板文案须写明「沙箱内执行的命令不在此清单中，请查看执行记录」（classify.ts 注释已写）。
+  - 0009 增 `CREATE INDEX IF NOT EXISTS runs_by_parent ON runs(parent_run_id)`（续接链收集子 run 用）。
+  - 测试：tool-effects 单测 +5（跨 run / 已结束 scope 的审批与 escalate 被忽略、调度器 job 不继承 scope、步骤补 outcome、记录器抛错不影响结果、自报摘要擦除），continuation +2（`id#2` 基础 id 匹配、步骤自带 outcome），host-mcp-bridge +1（effect.outcome / 台账 uncertain 进 tool_result 报告），迁移测试断言新索引。
 
 ### 风险
 
@@ -358,7 +401,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ### 改动清单
 
-- [ ] P0 `packages/core/src/agent/context/continuation.ts`：未配对 tool_call / uncertain 标注
+- [x] P0 `packages/core/src/agent/context/continuation.ts`：未配对 tool_call / uncertain 标注 （2026-10-09 完成）
 - [ ] P1 `packages/core/src/dispatch/tasks.ts`：`retry` 放宽 + `REVIEW_REQUIRED` + brief 前置段；新增 `interrupt(taskId, reason)` 与 `permission.revoked` 订阅
 - [ ] P1 `packages/core/src/permissions/grants.ts`：用户撤销时发事件（区分自动失效）
 - [ ] P1 MCP 设置写入路径（`packages/core/src/mcp/service.ts` 或 settings 写入处）与 `bots.update`（`mcp_server_ids` 变化）：计算差集后发事件
@@ -514,15 +557,15 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ### 改动清单
 
-- [ ] `packages/core/src/mcp/risk.ts` + 单测
-- [ ] `packages/shared/src/domain/types.ts`：`mcpServerSchema.toolPolicies?`、`mcpToolApprovalPayloadSchema.risk?`；新 RPC（若渲染端要拿风险档）`mcp.toolRisks: { input:{ serverId }, output:{ tools: {name, risk, source}[] } }`
-- [ ] `packages/shared/src/constants.ts`：`TURN_MCP_READ_TOOLS_MAX = 20`
-- [ ] `packages/core/src/mcp/service.ts`：缓存每工具 annotations，暴露 `riskOf(serverId, toolName)`
-- [ ] `packages/core/src/mcp/tools.ts`：`enabled:false` 的工具不注册；调用时重新解析风险
-- [ ] `packages/core/src/tools/index.ts`：对话轮 / 只读子代理工具面加入只读 MCP 工具
-- [ ] `packages/core/src/gateway/index.ts` `mcpToolCall`：决定顺序 + payload.risk + 审计写风险档
-- [ ] `packages/core/src/permissions/approvals.ts`：`#autoDecideSync` 显式 mcp_tool 自动批准分支；`renderContextLine` / `describe` 显示风险
-- [ ] 渲染端：`BotProfileForm.svelte` 风险提示、MCP 设置组件工具列表、`ApprovalCard.svelte` 风险徽标、`zh-CN.ts`
+- [x] `packages/core/src/mcp/risk.ts` + 单测 （2026-10-09 完成）
+- [x] `packages/shared/src/domain/types.ts`：`mcpServerSchema.toolPolicies?`、`mcpToolApprovalPayloadSchema.risk?`；新 RPC（若渲染端要拿风险档）`mcp.toolRisks: { input:{ serverId }, output:{ tools: {name, risk, source}[] } }` （2026-10-09 完成）
+- [x] `packages/shared/src/constants.ts`：`TURN_MCP_READ_TOOLS_MAX = 20` （2026-10-09 完成）
+- [x] `packages/core/src/mcp/service.ts`：缓存每工具 annotations，暴露 `riskOf(serverId, toolName)` （2026-10-09 完成）
+- [x] `packages/core/src/mcp/tools.ts`：`enabled:false` 的工具不注册；调用时重新解析风险 （2026-10-09 完成）
+- [x] `packages/core/src/tools/index.ts`：对话轮 / 只读子代理工具面加入只读 MCP 工具 （2026-10-09 完成）
+- [x] `packages/core/src/gateway/index.ts` `mcpToolCall`：决定顺序 + payload.risk + 审计写风险档 （2026-10-09 完成）
+- [x] `packages/core/src/permissions/approvals.ts`：`#autoDecideSync` 显式 mcp_tool 自动批准分支；`renderContextLine` / `describe` 显示风险 （2026-10-09 完成）
+- [x] 渲染端：`BotProfileForm.svelte` 风险提示、MCP 设置组件工具列表、`ApprovalCard.svelte` 风险徽标、`zh-CN.ts` （2026-10-09 完成）
 
 ### 迁移 / 兼容
 
@@ -554,6 +597,25 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 - 恶意 server 自报 `readOnlyHint` → 名字一票否决只能挡住名字诚实的；结果仍包 `<untrusted>`。
 - 对话轮工具面变大 → 每轮 token 增加，且对话轮可读外部数据（外部内容注入面增大）：结果一律 `<untrusted>`；数量上限 20。
 - 无人值守自动批准写 / 破坏性 MCP 工具是有意保留的风险，靠提示与审计兜底（§5 护栏 7）。
+
+### 实施记录（2026-10-09）
+
+- **分级器**：`packages/core/src/mcp/risk.ts` 导出 `ToolRisk` / `ToolRiskSource`（= shared `McpToolRisk` / `McpToolRiskSource`）、`ToolRiskInput`、`ToolRiskDetail`、`classifyRisk`、`classifyRiskDetailed`（另带判定来源 annotation / name / default）、`normalizeToolName`、`nameLooksMutating`、`nameLooksReadOnly`。**偏差（只会更严）**：名字先归一化（camelCase / kebab / 点号 → 下划线小写）再套动词正则，`deleteFile`、`send-mail` 同样被否决（原方案只认下划线）；相应地 `getUser` 这类无注解驼峰只读名也按名字推断为 read。
+- **策略**：新 `packages/core/src/mcp/policy.ts`（`effectiveMcpApproval` / `decideMcpTool` / `mcpToolEnabled` / `allowedOnReadOnlySurface`）。shared 增 `mcpToolRiskSchema`、`mcpToolRiskSourceSchema`、`mcpToolPolicySchema`；`mcpServerSchema.toolPolicies?` 存在 settings 单行 JSON（`settings.value_json`，已核实），零迁移。
+- **调用时重新解析**：网关依赖由 `mcpAutoApprove(serverId)` 换成 `mcpToolDecision(serverId, toolName)`（start.ts：每次调用重读 settings + `mcp.resolveRisk`——工具列表失效 / 过期则先刷新）。停用的工具调用时拒绝（`MCP_TOOL_NOT_FOUND`）；对话轮 / 子代理（loopType `turn` / `subagent`）调用非「只读 + auto」工具 → `RUN_READ_ONLY`（对话轮文案「该工具需要在任务中执行，请用 start_task」）。审计 `mcp_tool_call` 记 `risk / riskSource / approval(auto|user|unattended) / approvalSource / unattendedAutoApproved`，无人值守时另记 `note:「无人值守自动批准（写入 / 破坏性）」`；`approval_auto` 审计记 `risk`；mcp_tool 的折叠上下文行写「无人值守自动批准（写入）」。
+- **工具面**：orchestrator 对话轮也解析 MCP 工具，但最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS = 3000`（新常量；对话轮是秒级的，超时本轮不带 MCP 工具，连接后台继续）；只读子代理拿同一份只读工具（按子 run 身份包装）。对话轮系统提示新增 `<mcp_tools>` 段（仅 Bot 选了 MCP server 时）：本轮可直接调用的只读工具数 + 「更多 MCP 工具在任务中可用，用 start_task」。注：对话轮现在会触发 MCP server 懒连接，连接失败计入 `MCP_RECONNECT_MAX`。
+- **未改**：`writes:false` 的只读任务仍拿全部 MCP 工具（写工具照常弹卡）——本项只收紧对话轮与子代理；是否让只读任务也只用只读 MCP 工具另行决定。
+- **渲染端**：`features/approvals/McpRiskBadge.svelte`、`features/approvals/mcp-risk.ts`（纯函数）；设置页每个 server 增「工具与审批」展开（`features/settings/McpToolPolicies.svelte`：风险徽标、判定来源、审批 默认 / 免审批 / 每次确认、启用；已消失的工具标灰）；新 RPC `mcp.toolRisks`（输出另含 `description`、`missing`、可选 `error`；应用级未启用的 server 用一次性连接）。`ApprovalCard` 的 mcp_tool 卡原先落到通用「命令」分支（显示空命令），现有专用正文（服务器 · 工具、参数）+ 风险徽标，破坏性加警示条。
+- **测试**：BotProfileForm 提示没有组件测试设施（渲染端只有纯 .ts 单测），改为 `apps/desktop/src/renderer/src/lib/features/approvals/mcp-risk.test.ts` 锁定提示逻辑；**e2e 未加**（与并行的 W1 会话共用 `apps/desktop/out` 构建产物，未跑 `pnpm build`）。改了 shared 契约，按约定需跑一次全量——留到 P0 收尾统一跑。
+- **复查后修正（2026-10-09）**：
+  - `McpService` 连接去重：进行中的连接按 server 存 `#pending`，并发的 listTools / callTool / resolveRisk 共用一次连接（不再起第二个进程、留下孤儿 client）；`closeAll` 先等进行中的连接落定。
+  - 重连预算（`MCP_RECONNECT_MAX`）只由任务与工具调用消耗：对话轮解析工具面（`resolveMcpToolEntries({countFailures:false})`）与设置页 / Bot 详情的 `mcp.toolRisks` 不计数；`resolveRisk` 只在连接在线时刷新注解（随调用 signal 中止、最多 5 s），离线时直接用已知注解（没见过的工具按 destructive），不为判定风险去连接；已停用（failed）的 server 对所有路径都不再连。
+  - `mcpToolDecision` 改为 `{botId, serverId, toolName, signal}`：server 应用级已停用、或 Bot 已不再勾选它 → `enabled:false`（进行中的任务也不能再调）。
+  - 写动词否决表扩充：execute / invoke / trigger / drop / insert / edit / modify / clear / reset / revoke / kill / save / toggle / enable / disable / buy / check_in（checkIn）任意位置否决；也常作名词的 commit / push / deploy / install / import / sync / start / stop / mark / order / book / grant 只在名字开头否决（`get_commit`、`get_order`、`get_sync_status` 仍是读）。
+  - 对话轮 `<mcp_tools>` 段改为稳定注入：Bot 选了 MCP server 就有（含本轮未能及时取到工具列表时），数量已知时再附可直接调用 / 只在任务中可用的个数。
+  - Bot 详情提示：`mcp.toolRisks` 出错或请求失败按「无法确认工具风险」处理（无人值守时警示样式），不再当作 0 个风险工具；只在选中的 server 集合或无人值守状态变化时重新查询。
+  - 设置页编辑表单保存时合并当前的 `toolPolicies`（表单不编辑逐工具策略，不再用打开表单时的快照覆盖）。
+  - 测试：mcp.test 增并发连接只起一个进程、预算计数；mcp-loop 的对话轮用例先预热连接（不依赖 3 s 内完成 stdio 连接），增「无人值守 → 真实网关 + ApprovalsService：写工具自动批准、auto_approved、payload.risk=write、审计 note」用例。
 
 ---
 
@@ -592,7 +654,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
    - B 的委派对话轮结束时，查该轮 run 起的任务（runs.db `0006_tasks.sql` 的 `origin_run_id = 委派轮 run_id`）。
      - 无任务 → 现状：取对话轮回复作为结果。
      - 有任务 → 委派状态改 `awaiting_tasks`，记下任务 id 列表；对话轮的“我去做”**不**作为结果回贴（但仍在 B 的对话里显示）。
-   - TaskHost 任务终态钩子：属于某委派的任务全部终态后，结果 = 各任务结果摘要拼接（每个截断，总长仍 ≤2000），失败/取消的任务标注状态；然后走既有的结果卡 + internal follow-up 给 A。
+   - TaskHost 任务终态钩子：属于某委派的任务全部终态后，结果 = 各任务结果摘要拼接（每个截断，总长仍 ≤2000）（**已定** 2026-10-09；注意 DEV-012 方案二原文为“消费任务结果的下一个对话轮的最终回复”，本方案以拼接为准，回写 DEVIATIONS 时同步），失败/取消的任务标注状态；然后走既有的结果卡 + internal follow-up 给 A。
    - 任务被 `inject_task` 续接 / 重试（W3）产生的新任务：通过 `continuedByTaskId` 链跟随最终那个。
    - 超时：沿用委派现有超时（若无，按任务 4h 墙钟自然兜底）。
    - `cancel_delegation`：同时取消关联任务（调用既有 `cancel_task` 路径）。
@@ -634,7 +696,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ---
 
-## W7. 确定性监看原语（P2，借鉴点 6；本轮仅网页来源）
+## W7. 确定性监看原语（P2，借鉴点 6；本轮仅网页来源）——延期（2026-10-09 用户决定）
 
 ### 目标
 
@@ -784,72 +846,6 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ---
 
-## W9. 记忆导出、版本历史与导入（P2，借鉴点 8）
-
-### 目标
-
-用户能把某个 Bot 的记忆与画像**导出为人可读的 Markdown + 机器可读的 JSONL**，在记忆 UI 中看到一条记忆的修订历史，并能把导出的 JSONL **导入**到同一个或另一个 Bot（已定：导入纳入本轮）。
-
-> 解读（决定原文“纳入”）：该问题含两问——“默认排除敏感 / 私有 / 已撤回是否同意”与“导入是否纳入本轮”。“纳入”直接回答后者；前者没有异议，按默认排除执行。
-
-### 借鉴什么 / 刻意不同
-
-- 借 [R] `MarkdownMemoryStore`：documents + revisions、`exportMarkdown` / `importMarkdown`、`expectedRevision` 冲突检测。
-- **不同**：
-  - 不把存储换成 Markdown 文件；存储仍是加密 memory.db，Markdown 只是导出格式。**导入只接受 JSONL**（无损、带版本号）；Markdown 只用于阅读，不做解析导入（从带注释的 Markdown 反解析太脆弱）。
-  - [R] 的检索是子串匹配；我们保留 FTS + 向量，**不学**它的 `'simple'` 风格分词（§5 护栏 5）。
-  - [R] 导出 “all” 实际映射到 user 范围的怪行为不学：我们明确按 Bot 导出。
-  - 导出 / 导入都是**用户显式动作**，不自动外发，不做云同步。
-  - 冲突不静默覆盖（对应 [R] `expectedRevision`），由用户在导入预览里逐条决定。
-
-### 设计
-
-1. **导出** RPC `memory.export: { input: { botId, includeSensitive?: false, includePrivate?: false, includeHistory?: false, format: 'markdown'|'jsonl'|'both' }, output: { path } }`：写到用户在保存对话框选的路径（main 进程 `dialog.showSaveDialog`；开工时 `rg -n "showSaveDialog" apps/desktop/src/main` 核实现有附件下载的做法并照搬）。
-   - 默认排除（已定）：`sensitivity='sensitive'`、`private_to_bot=1`、`status ∈ retracted/void`。`includeHistory` 时沿 `supersedes` 链输出历史版本（`status='superseded'`）。
-   - JSONL 结构：首行 manifest `{ type:'kepcup-memory', version:1, botId, botName, exportedAt, options }`；其后每行 `{ type:'memory_item', ...memory_items 全列 }` 或 `{ type:'profile_item', ... }`。不导出向量与 FTS（导入后重建）。
-   - Markdown：按 kind 分节，每条带 `<!-- id, created_at, source -->` 注释，便于人工对照。
-2. **版本历史**：记忆列表项“历史”按钮 → `memory.history{ botId, id }` 沿 `supersedes` 链返回；profile 同理（`profile-store` 已有 supersedes 链）。
-3. **导入**（两步，先预览后应用）：
-   - `memory.importPreview{ botId, path } → { previewId, counts:{ new, identical, conflict, skippedPrivate }, conflicts: Array<{ id, existing, incoming }> }`：校验 manifest 版本；按 `id` 对账：不存在 → new；内容与状态相同 → identical（跳过）；同 id 不同内容 → conflict。
-   - `memory.importApply{ previewId, resolutions: Record<id, 'keep_existing'|'use_incoming'> }`：new 插入、conflict 按决定处理；**走 `memory/store.ts` 的正常写入 API**（保证分词入 FTS、进向量重建队列），不写裸 SQL。
-   - 跨 Bot 导入（目标 Bot ≠ manifest.botId）：`private_to_bot` 条目默认跳过（它们是“只告诉那个 Bot”的），预览里显示数量，用户可勾选“一并导入”；`origin_conversation_id` / `evidence_json` 中的会话引用在目标机器上可能不存在，保留原值，UI 显示为“来自导入”。
-   - 画像（profile）条目不直接写入，**一律进 profile proposals**，由用户在现有画像审阅界面确认。
-   - 来源标记：memory.db 新迁移 `0003_memory_import.sql`：`ALTER TABLE memory_items ADD COLUMN imported_from TEXT`（存 `{manifest.botId}:{exportedAt}`），无 CHECK、不重建表。
-   - 预览结果在内存里保存 10 分钟（`previewId`），过期需重新预览。
-
-### 改动清单
-
-- [ ] `packages/shared/src/rpc/methods.ts`：`memory.export`、`memory.history`、`memory.importPreview`、`memory.importApply`（加入渲染端白名单）
-- [ ] `packages/core/migrations/memory/0003_memory_import.sql`
-- [ ] `packages/core/src/memory/export.ts`、`import.ts`（新）；`store.ts` / `profile-store.ts` 的历史查询与导入写入
-- [ ] 渲染端记忆面板：导出按钮 + 选项弹框、历史抽屉、导入按钮 + 预览 / 冲突决定弹框；main 保存 / 打开对话框
-
-### 迁移 / 兼容
-
-- memory.db 迁移 0003（每个 Bot 的 memory.db 都会跑；forward-only，ADD COLUMN）。改迁移 → 收尾全量一次。
-- 老数据 `imported_from` 为 NULL。
-
-### 测试
-
-- 新单测：`node scripts/run-tests.mjs run packages/core/test/unit/memory-export.test.ts`（默认排除项、历史链、manifest、Markdown 快照）
-- 新单测：`node scripts/run-tests.mjs run packages/core/test/unit/memory-import.test.ts`（new / identical / conflict 分类；版本不符拒绝；跨 Bot 跳过 private；profile 进 proposals）
-- 新集成：`node scripts/run-tests.mjs run packages/core/test/integration/memory-import.test.ts`（导出 → 导入另一个 Bot → 检索可命中（FTS 与向量队列）；previewId 过期）
-- 迁移：仿 `task-events-migration.test.ts` 写 `memory-import-migration.test.ts`，定向跑
-- `node scripts/run-tests.mjs run packages/core/test/unit/memory-store.test.ts`
-- 改 shared 契约 + 迁移 → 收尾全量一次。
-
-### 验收
-
-- 导出文件里没有敏感 / 私有 / 已撤回条目（默认）；勾选后才有。
-- 一条被更新过两次的记忆，历史里能看到 3 个版本。
-- 把 Bot A 的导出导入到 Bot B：新条目可被 B 检索到；同一文件再导一次全部 identical；画像条目出现在 B 的画像待审列表。
-
-### 风险
-
-- 导出文件是明文：导出弹框明确提示“导出文件未加密”。
-- 导入的是外部文件、会进入 Bot 的长期上下文（记忆注入面）：只接受 KepCup manifest；单文件上限 5 MB / 1 万条；条目内容长度沿用 store 的校验；导入前预览由用户确认。
-
----
 
 ## 4. 本方案不做（非目标）
 
@@ -861,7 +857,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 - 不做团队工作区 / 多用户。
 - 不做无人值守下 MCP 的拒绝 / 排队 / 逐工具白名单（已定：无人值守下 MCP 自动批准，靠提示与审计）；不为老配置做迁移期过渡。
 - 不做 Bot 侧传感器能力与传感器监看来源（摄像头等后期处理）；现有麦克风能力维持不动。
-- 不做记忆云同步、不把记忆存储换成文件、不做 Markdown 导入（导入只收 JSONL）。
+- 不做记忆导出 / 版本历史 / 导入（原 W9，2026-10-09 用户决定不做，已删除）；不做记忆云同步、不把记忆存储换成文件。
 - **语音对话模式暂不立项**（不写代码、不出设计稿）。仅记下以后立项时的分工原则：实时语音层 = 对话轮（快、只读、可打断），重活 = 任务（`start_task`，完成后 `generate_speech` 播报摘要），不另造 [D] `voice.ts` 的 `ask_compute`；不默认依赖云端实时语音（§5 护栏 1）。
 - 不改 D73 连接应用的 OAuth / 目录部分；W5 只提前落地分级器与 MCP 审批策略。
 
@@ -873,7 +869,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 2. **不照搬 Rakazo 的 shell / write 免审批**（`APPROVAL_EXEMPT_TOOLS`）。它的边界是一次性容器；KepCup 在主机上跑，srt 沙箱 + 路径授权 + 数据目录底线一个都不放松。W5 的“只读免审批”只适用于 MCP 只读工具；W5 的“无人值守自动批准”只适用于 `mcp_tool`，不外溢到 command / unsandboxed / git_remote / agent_tool 的数据目录底线。
 3. **不把待办队列放在客户端**。follow-up / 委派结果 / 监看唤醒 / 导入预览全部由 core 持有（持久化的进 SQLite），渲染端只展示；渲染进程刷新或崩溃不能丢消息。
 4. **桌面应用不引入 Docker / Postgres 依赖**。新表进既有加密 SQLite（main / runs / memory）；测试可用 Docker 镜像，产品运行时不行。
-5. **中文检索不用 `'simple'` 类分词**。新增的任何全文检索沿用现有 FTS 配置（unicode61 + 现有分词入库）+ 向量检索，或不做 FTS（W7 用行 diff）；W9 导入走 store 正常写入路径。
+5. **中文检索不用 `'simple'` 类分词**。新增的任何全文检索沿用现有 FTS 配置（unicode61 + 现有分词入库）+ 向量检索，或不做 FTS（W7 用行 diff）。
 6. **共享不等于安全边界**。不引入“团队工作区”的模型。W8 的共享浏览器资料是**用户显式选择、默认关闭**的例外，只共享浏览器存储；挂在同一资料上的 Bot 之间**不视为隔离**（界面明示）；其他隔离（`private_to_bot`、单跳委派、对端内容 `<untrusted>`、按 Bot 的网络策略）保持为硬边界。
 7. 额外：**server 自报的注解只能放宽到只读、且受名字一票否决**（W5）；**任何“结果未知”都不得自动重放**（W1/W2/W3）；**无人值守自动批准的 MCP 调用必须带风险档进审计**（W5），Bot 详情 MCP 区必须常驻风险提示。
 
@@ -888,7 +884,6 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 | —（D65 修订） | MCP 工具风险分级、逐工具策略、只读 MCP 工具进对话轮 / 只读子代理、无人值守自动批准 + Bot 详情风险提示（W5） | 不新开号；D73 引用同一分级器，并按本决定修正其无人值守规则 |
 | —（D71 修订） | 委派 intent（request / question / fyi）+ 跟随任务（W6） | 对应 DEV-012 方案二 |
 | D79 | 确定性监看原语，本轮仅网页来源（W7） | P2 |
-| —（P07 记忆修订） | 记忆导出 / 版本历史 / 导入（W9） | 不单独占号 |
 | — | 语音前端分工 | 暂不立项，无编号（§4） |
 
 ## 文件路径速查
@@ -916,7 +911,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 ## 风险与注意
 
 - **工作树很脏 / 有并行会话**：另一会话在改大量 docs / todo / 代码与测试。实施时不要顺手“修”别人的改动；跑定向测试遇到无关文件的失败先确认是否与本项相关。
-- **迁移编号冲突**：W2（runs）、W6 / W7（main）与 D73 抢号，写迁移前 `ls` 一次取实况；W9 的 memory 0003 目前无人预定。
+- **迁移编号冲突**：W2（runs）、W6 / W7（main）与 D73 抢号，写迁移前 `ls` 一次取实况。
 - **approvals 表 CHECK**：本方案刻意不加新 kind；若实施中发现非加不可，照 0015/0016 重建并带上全部 11 个既有 kind。
 - **delegations 表 CHECK**：W6 必须重建（status 加 `awaiting_tasks`），照 0016 写法带全列。
 - **D75 收尾依赖**：W6 的跟随任务依赖 D75 任务模型稳定，开工前确认 `todo/supervisor-and-tasks.md` 状态。
@@ -925,8 +920,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）
 
 ## 完成定义
 
-- [ ] P0（W1、W2、W5、W3-P0）全部 `- [ ]` 打勾，定向测试通过，P0 收尾跑一次全量 `pnpm test` 通过。
-- [ ] P1（W3-P1、W4、W6、W8）同上，收尾全量一次。
-- [ ] P2（W7、W9）同上，收尾全量一次。
+- [x] P0（W1、W2、W5、W3-P0）全部 `- [ ]` 打勾，定向测试通过，P0 收尾跑一次全量 `pnpm test` 通过。（2026-10-09 完成：每项均经独立复查并修正；收尾全量 1986 例 / 28 条失败，失败集合与 D75 后容器基线一致（sandbox-isolation 10、skills-authoring 4、env-distro-toolchain 3、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1）；另 1 条 `create-core`「applies the settings migration」因 runs 版本号写死为 8，已改为 9 并单跑通过。`pnpm typecheck` / `pnpm lint` 通过；W1 e2e `browser.spec` 10/11，失败为基线「删除 Bot 后其浏览器分区数据不存在」。）
+- [ ] P1（本轮：W3-P1、W6；W4、W8 暂缓）同上，收尾全量一次。
+- [ ] P2（W7）同上，收尾全量一次。——W7 延期；原 W9 已删除（2026-10-09）
 - [ ] 交付说明列出每项新增 / 修改的文件，供 Pengfei 回写设计文档（D 编号见 §6）。
-- [ ] 全程无 git commit / push / PR。
+- [ ] 全程无 push / PR（提交已获用户授权，见文首）。
