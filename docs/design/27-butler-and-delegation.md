@@ -54,6 +54,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 
 **访谈机制（实现必须按此落，不要临场发明）**：既有访谈整套机制都绑定 `bots.setup_state='interviewing'`（`ask_question` 与 `save_profile` / `finish_setup` 同一组注册、`bots.interview.*` RPC 与 `answerSetupQuestion` 校验该态、问题卡可点击性由 UI 读该态、目录闸门 D59 对该态扣下投递）。管家访谈复用同一状态位，但是一个**变体**：
 
+- **例行事项（D80）**：访谈问「最常做的几类任务」时候选里带一两个有周期的选项，不单独问「要不要定时任务」；用户说过的周期事项作为对应 Bot 的 `routines: [{title, when, timezone?, note}]`（每 Bot ≤ 3）放进 `propose_team` / `propose_bot`，默认挂到负责这件事的领域 Bot 上，只有跨领域或用户明确要求时才提议专门的例行 Bot。提交时预校验 `when`；卡片上每个 Bot 下列出「例行：每个工作日 09:00 · 工作日早报」可单独勾掉（`approvals.decide.routineSelection`，`"{bot}:{routine}"`）；确认后 `#createBots` 在新 Bot 私聊里建任务（`origin='proposal'`，回执卡就是用户打开该私聊看到的第一样东西），失败只记日志并在给管家的结果通知里列出，不影响建 Bot。
 - 工具面：`ask_question` + `propose_team`；**不注册** `save_profile` / `finish_setup`（管家 Profile 是固定模板，不被访谈改写）。
 - **跳过目录闸门**（D59）：管家不绑定 project，首答后直接投递。
 - 首问卡 / 候选项 / 访谈指引用管家版文案（领域与场景，而非「协助哪些事务」）；问题上限沿用 `SETUP_MAX_QUESTIONS`（含固定首问）。

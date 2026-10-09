@@ -503,10 +503,16 @@ CREATE TABLE schedules (
   status          TEXT NOT NULL CHECK (status IN ('active', 'done', 'cancelled')),
   next_fire_at    INTEGER,
   last_fired_at   INTEGER,
-  created_at      INTEGER NOT NULL
+  created_at      INTEGER NOT NULL,
+  -- D80（main 0022）：
+  title           TEXT NOT NULL DEFAULT '',     -- 给用户看的短名；空 = 展示回退到 note 截断
+  origin          TEXT NOT NULL DEFAULT 'tool'
+                  CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment'))
 );
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
+
+D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。
 
 ### delegations（D71；W6 main 0021 重建）
 
