@@ -392,7 +392,7 @@
                   <Tooltip.Trigger
                     class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.32_0_0)]"
+                      dark:data-active:bg-[oklch(0.16_0_0)]"
                     data-active={chat.currentId === conversation.id ? 'true' : undefined}
                     onclick={() => void selectConversation(conversation.id)}
                     oncontextmenu={(event) => openContextMenu(event, conversation.id)}
@@ -450,11 +450,13 @@
                 >
                   <!-- [&_svg]:size-auto 解开 MenuButton 基础样式 [&_svg]:size-4 的钉死：
                        否则预置头像 svg 被压成 16px，盖过自身的 size-full。
-                       激活态背景本地覆盖：--sidebar-accent 与 hover 共用、对比不够，
-                       亮色压暗/暗色提亮一档（侧栏底色 0.985/0.205）。 -->
+                       激活态背景本地覆盖：--sidebar-accent 与 hover 共用、对比不够。
+                       亮色相对侧栏（0.985）压到 0.93。暗色侧栏在 macOS 上是半透明
+                       毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
+                       比侧栏底色 0.205 再暗一档。 -->
                   <Sidebar.MenuButton
                     class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.32_0_0)] [&_svg]:size-auto"
+                      dark:data-active:bg-[oklch(0.16_0_0)] [&_svg]:size-auto"
                     isActive={chat.currentId === conversation.id}
                     onclick={() => void selectConversation(conversation.id)}
                     data-testid={`conversation-item-${conversation.id}`}
