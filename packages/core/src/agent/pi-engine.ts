@@ -18,11 +18,27 @@ import type {
 import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
+import { createRetryingFetch, retryProgressText, type ModelRetryPolicy } from './model-retry.js';
 
 interface Deps {
   settings: SettingsService;
   secrets: SecretsService;
   logger: CoreLogger;
+  /** Model request retry policy (model-retry.ts); defaults to MODEL_RETRY_*. */
+  modelRetry?: ModelRetryPolicy;
+}
+
+function retryContext(
+  model: { provider: string; id: string },
+  runId: string | null,
+): { runId: string | null; provider: string; model: string; baseUrl?: string } {
+  const baseUrl = (model as { baseUrl?: unknown }).baseUrl;
+  return {
+    runId,
+    provider: model.provider,
+    model: model.id,
+    ...(typeof baseUrl === 'string' ? { baseUrl } : {}),
+  };
 }
 
 interface UsageShape {
@@ -111,7 +127,22 @@ export class PiEngine implements AgentEngine {
           timestamp: m.timestamp,
         })),
       },
-      streamFn: models.streamSimple.bind(models),
+      streamFn: (m, context, options) =>
+        models.streamSimple(m, context, {
+          ...options,
+          // Retries (network + 408/409/429/5xx, Retry-After, backoff) happen
+          // before the first token; each one shows on the run status line.
+          fetch: createRetryingFetch({
+            ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
+            logger: this.#deps.logger,
+            context: retryContext(model, spec.identity.runId),
+            ...(options?.fetch ? { inner: options.fetch } : {}),
+            onRetry: (notice) =>
+              handleRef?.emit({ type: 'progress', payload: { text: retryProgressText(notice) } }),
+            onRecovered: () =>
+              handleRef?.emit({ type: 'progress', payload: { text: '已重新连接模型服务' } }),
+          }),
+        }),
       steeringMode: 'all',
     });
 
@@ -172,7 +203,15 @@ export class PiEngine implements AgentEngine {
           })),
           tools: (req.tools ?? []) as never,
         },
-        { maxTokens: req.maxTokens, signal: req.signal },
+        {
+          maxTokens: req.maxTokens,
+          signal: req.signal,
+          fetch: createRetryingFetch({
+            ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
+            logger: this.#deps.logger,
+            context: retryContext(model, null),
+          }),
+        },
       );
       return {
         text: textOf(result.content),

@@ -37,6 +37,7 @@ llm.script('mock-light', [
 - **记录全部请求**：测试结束后可以检查“某段内容是否出现在发给模型的请求中”（例如 API key 绝不出现）。
 - **可控延迟与闸门**：`step().hold()` 让响应挂起，直到测试调用 `release()`；用于测试执行中注入、取消、租约等待。
 - **错误注入**：返回 401、429、500、中途断流。
+  `failWith` 默认带 `x-should-retry: false`，引擎的模型请求重试（`packages/core/src/agent/model-retry.ts`）不会重试，脚本失败即失败；要测重试路径传 `{ retryable: true }`（可带 `Retry-After` 等 headers），并用 `KEPCUP_MODEL_RETRY_BASE_DELAY_MS` 压短退避。
 - **usage**：每个响应返回可配置的 token 用量，用于测试用量账本。
 - 未编排的请求直接失败，避免测试静默通过。
 

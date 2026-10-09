@@ -1226,6 +1226,12 @@ export class Orchestrator {
     // D75 §7.5: a task is not a mailbox run — retrying it (the setup card,
     // after the setup it failed on is done) starts a new task continuing it.
     if (original.loopType === 'task') return this.#taskHost.retry(original.id);
+    // Background loops (reflection / summary / triage / subagent) carry a
+    // conversation id but are not mailbox turns: replaying their trigger
+    // messages as a turn would answer the user a second time.
+    if (original.loopType !== 'turn') {
+      throw new AppError('INVALID_INPUT', '后台任务的失败不支持重试');
+    }
     // The trigger as the failed turn had it: each source part with its own
     // reason / attributes (审查 L3), messages re-read (recalled ones dropped).
     const lookup = (id: string): Message | null => this.#deps.messages.getById(id);
@@ -3441,10 +3447,7 @@ export class Orchestrator {
       }
       this.#maybeEnqueueSummary(batch.conversationId);
     } catch (error) {
-      this.#deps.logger.error(
-        { runId, error: error instanceof Error ? error.message : String(error) },
-        isTask ? 'task run crashed' : 'turn crashed',
-      );
+      this.#deps.logger.error({ runId, err: error }, isTask ? 'task run crashed' : 'turn crashed');
       // Thrown after the engine run started (e.g. while wiring it up): stop it
       // before the lease is released and the run settles — no-op once done.
       try {

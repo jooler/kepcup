@@ -282,6 +282,7 @@ class ChatState {
     const active = activeRunsOf(runs.runs, inFlight.runs, (r) => isActive(r.status));
     // 带 setup 的旧失败若已被后续响应 run 接手，不再恢复为设置卡（审查 HIGH #1）。
     const failed = restoredFailedRun(runs.runs, this.#dismissedFailedRunIds);
+    if (failed !== null) logFailedRun(failed);
     this.#chat = {
       conversation: result.conversation,
       messages,
@@ -825,6 +826,7 @@ class ChatState {
     } else {
       chat.activeRuns = chat.activeRuns.filter((a) => a.run.id !== run.id);
     }
+    if (run.status === 'failed' && chat.failedRun?.id !== run.id) logFailedRun(run);
     chat.failedRun =
       run.status === 'failed' && showsFailure(run) && !this.#dismissedFailedRunIds.has(run.id)
         ? run
@@ -842,6 +844,21 @@ class ChatState {
     }
     return true;
   }
+}
+
+/**
+ * Dev builds: a failed run's full error goes to the DevTools console (the
+ * banner truncates it; the core also logs it to the `pnpm dev` terminal).
+ */
+function logFailedRun(run: Run): void {
+  if (!import.meta.env.DEV) return;
+  console.warn('[kepcup] run failed', {
+    runId: run.id,
+    loopType: run.loopType,
+    botId: run.botId,
+    error: run.error,
+    setup: run.setup,
+  });
 }
 
 function isActive(status: Run['status']): boolean {

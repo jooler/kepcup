@@ -84,6 +84,7 @@ import { type DistroToolchainInstaller } from './env/distro.js';
 import { shQuote } from './infra/shell.js';
 import { ToolGateway } from './gateway/index.js';
 import { PiEngine } from './agent/pi-engine.js';
+import { modelRetryPolicyFromEnv } from './agent/model-retry.js';
 import { ExternalAgentEngine } from './agent/external/engine.js';
 import { LlmRouter } from './agent/llm-router.js';
 import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
@@ -837,7 +838,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
     const jobs = new JobsService(mainDb, clock);
-    const runs = new RunsService(runsDb, clock);
+    const runs = new RunsService(runsDb, clock, logger);
     const usage = new UsageService(mainDb, clock);
     // 国内厂商媒体网关先建（providers 按能力测试要路由到这里）。
     const media = new MediaService({ settings, secrets, logger });
@@ -1113,7 +1114,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
 
     // --- turn / task loop machinery ----------------------------------------
-    const engine = new PiEngine({ settings, secrets, logger });
+    const engine = new PiEngine({
+      settings,
+      secrets,
+      logger,
+      modelRetry: modelRetryPolicyFromEnv(env),
+    });
     // D72 外部智能体引擎：进程懒启动，未被 Bot 选用时不产生任何子进程。
     const agentCatalog = effectiveAgentCatalog(extraAgentEntries);
     // D72 P4: installs land in toolchains/agents/{id}@{version}; npx agents

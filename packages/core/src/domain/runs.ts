@@ -12,6 +12,7 @@ import {
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import type { CoreLogger } from '../infra/logger.js';
 
 interface RunRow {
   id: string;
@@ -135,6 +136,12 @@ export class RunsService {
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
+    /**
+     * Logs every transition into `failed`, whatever the loop (turn / task /
+     * reflection / summary …): run.error is otherwise only in runs.db and the
+     * failure banner, never in the log or the dev terminal.
+     */
+    private readonly logger?: Pick<CoreLogger, 'warn'>,
   ) {}
 
   create(input: {
@@ -326,7 +333,21 @@ export class RunsService {
         now,
         id,
       );
-    return this.getOrThrow(id);
+    const updated = this.getOrThrow(id);
+    if (updated.status === 'failed' && existing.status !== 'failed') {
+      this.logger?.warn(
+        {
+          runId: id,
+          loopType: updated.loopType,
+          botId: updated.botId,
+          conversationId: updated.conversationId,
+          error: updated.error,
+          ...(updated.setup !== null ? { setup: updated.setup } : {}),
+        },
+        'run failed',
+      );
+    }
+    return updated;
   }
 
   listByConversation(conversationId: string, limit = 20): Run[] {

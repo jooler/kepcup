@@ -152,7 +152,11 @@
             class="pointer-events-auto flex items-center gap-2 rounded-full border border-destructive/30 bg-background/95 py-1 pr-1.5 pl-3 text-xs text-destructive shadow-sm backdrop-blur"
             data-testid="run-failed-banner"
           >
-            <span class="max-w-md min-w-0 truncate">
+            <!-- 原因常被截断：悬停可看完整原因。 -->
+            <span
+              class="max-w-md min-w-0 truncate"
+              title={t('chats.runFailed', { reason: current.failedRun.error ?? '' })}
+            >
               {t('chats.runFailed', { reason: current.failedRun.error ?? '' })}
             </span>
             <Button
