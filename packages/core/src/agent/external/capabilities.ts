@@ -62,8 +62,15 @@ export function fitToolName(name: string, max: number): string {
  * MCP tool annotations for `tools/list` (Codex and others decide approval /
  * parallelism from them): read-only queries, and tools whose effect cannot be
  * undone. Everything else is a non-destructive write (send_message, remember…).
+ *
+ * W2: must stay consistent with the effect classifier (agent/effects/
+ * classify.ts) — every tool here classifies as `none` and nothing external is
+ * annotated read-only (asserted in tool-effects.test.ts). Some `none` tools are
+ * deliberately not annotated (browser_open / scroll / back / close navigate,
+ * skip_reply ends the run, ask_user waits for the user, read / ls / find /
+ * grep are agents' native abilities and never bridged).
  */
-const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'search_messages',
   'get_messages_around',
   'list_my_runs',

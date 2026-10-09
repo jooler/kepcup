@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Run, RunStep } from '@kepcup/shared';
-import { buildRunDigest } from '../../src/agent/context/continuation.js';
+import {
+  buildRunDigest,
+  UNCERTAIN_RESULT_NOTE,
+  UNRETURNED_CALL_NOTE,
+} from '../../src/agent/context/continuation.js';
 
 /**
  * Loop 续接单元测试（D56，按 D75 design 30 §7.1 修订）：自动续接（L1 窗口 +
@@ -106,5 +110,155 @@ describe('buildRunDigest', () => {
       budgetTokens: 1,
     });
     expect(digest).toContain('唯一的一步');
+  });
+});
+
+describe('buildRunDigest「结果未知」标注（W3-P0 / W1）', () => {
+  const run = makeRun({ id: 'run_a', loopType: 'task', status: 'interrupted' });
+  const digestOf = (
+    steps: RunStep[],
+    effects?: Array<{ toolCallId: string; status: 'uncertain' | 'completed' }>,
+  ) =>
+    buildRunDigest({
+      run,
+      steps,
+      timeZone: TZ,
+      budgetTokens: 4000,
+      ...(effects !== undefined ? { effects } : {}),
+    });
+
+  it('flags a side-effecting call that never returned; a read-only one only says so', () => {
+    const digest = digestOf([
+      makeStep(0, 'tool_call', { toolCallId: 't1', toolName: 'read', args: { path: 'a.txt' } }),
+      makeStep(1, 'tool_call', {
+        toolCallId: 't2',
+        toolName: 'browser_click',
+        args: { ref: 'e12' },
+      }),
+    ]);
+    expect(digest).toContain(
+      `[15:56] [结果未知] browser_click({"ref":"e12"}) ${UNRETURNED_CALL_NOTE}`,
+    );
+    expect(digest).toContain('read({"path":"a.txt"}) →（未返回结果）');
+    expect(digest).not.toContain('[结果未知] read');
+  });
+
+  it('flags an uncertain browser result (W1 outcome, or only the error code on old rows) and keeps it untrusted', () => {
+    const digest = digestOf([
+      makeStep(0, 'tool_call', {
+        toolCallId: 't1',
+        toolName: 'browser_click',
+        args: { ref: 'e1' },
+      }),
+      makeStep(1, 'tool_result', {
+        toolCallId: 't1',
+        toolName: 'browser_click',
+        ok: false,
+        content: '动作可能已生效：先 browser_snapshot 核实',
+        errorCode: 'BROWSER_OUTCOME_UNKNOWN',
+        outcome: 'uncertain',
+      }),
+      makeStep(2, 'tool_call', {
+        toolCallId: 't2',
+        toolName: 'browser_press',
+        args: { key: 'Enter' },
+      }),
+      makeStep(3, 'tool_result', {
+        toolCallId: 't2',
+        ok: false,
+        content: '旧格式',
+        errorCode: 'BROWSER_OUTCOME_UNKNOWN',
+      }),
+      makeStep(4, 'tool_call', {
+        toolCallId: 't3',
+        toolName: 'browser_click',
+        args: { ref: 'e2' },
+      }),
+      makeStep(5, 'tool_result', {
+        toolCallId: 't3',
+        ok: false,
+        content: '页面已变化',
+        errorCode: 'BROWSER_REF_STALE',
+        outcome: 'not_started',
+      }),
+    ]);
+    expect(digest).toContain(
+      `[结果未知] browser_click({"ref":"e1"}) ${UNCERTAIN_RESULT_NOTE} → 失败：<untrusted>动作可能已生效：先 browser_snapshot 核实</untrusted>`,
+    );
+    expect(digest).toContain('[结果未知] browser_press({"key":"Enter"})');
+    // not_started is a plain failure (safe to retry).
+    expect(digest).toContain(
+      'browser_click({"ref":"e2"}) → 失败：<untrusted>页面已变化</untrusted>',
+    );
+    expect(digest).not.toContain('[结果未知] browser_click({"ref":"e2"})');
+  });
+
+  it('uses the W2 ledger when given: a thrown call recorded uncertain is flagged', () => {
+    const steps = [
+      makeStep(0, 'tool_call', {
+        toolCallId: 't1',
+        toolName: 'git_remote',
+        args: { operation: 'push' },
+      }),
+      makeStep(1, 'tool_result', {
+        toolCallId: 't1',
+        ok: false,
+        content: '工具执行失败：boom',
+        errorCode: 'INTERNAL',
+      }),
+    ];
+    expect(digestOf(steps)).not.toContain('[结果未知]');
+    expect(digestOf(steps, [{ toolCallId: 't1', status: 'uncertain' }])).toContain(
+      `[结果未知] git_remote({"operation":"push"}) ${UNCERTAIN_RESULT_NOTE}`,
+    );
+    expect(digestOf(steps, [{ toolCallId: 't1', status: 'completed' }])).not.toContain(
+      '[结果未知]',
+    );
+  });
+
+  it('matches ledger rows by base id when the run reused a tool-call id (`id#2`)', () => {
+    const steps = [
+      makeStep(0, 'tool_call', {
+        toolCallId: 'call_x',
+        toolName: 'browser_click',
+        args: { ref: 'e1' },
+      }),
+      makeStep(1, 'tool_result', { toolCallId: 'call_x', ok: true, content: '已点击' }),
+      makeStep(2, 'tool_call', {
+        toolCallId: 'call_x',
+        toolName: 'git_remote',
+        args: { operation: 'push' },
+      }),
+      makeStep(3, 'tool_result', {
+        toolCallId: 'call_x',
+        ok: false,
+        content: '工具执行失败：boom',
+        errorCode: 'INTERNAL',
+      }),
+    ];
+    const digest = digestOf(steps, [
+      { toolCallId: 'call_x', status: 'completed' },
+      { toolCallId: 'call_x#2', status: 'uncertain' },
+    ]);
+    expect(digest).toContain(
+      `[结果未知] git_remote({"operation":"push"}) ${UNCERTAIN_RESULT_NOTE}`,
+    );
+    // The successful sibling with the same id is not dragged along.
+    expect(digest).toContain('browser_click({"ref":"e1"}) → ok：<untrusted>已点击</untrusted>');
+    expect(digest).not.toContain('[结果未知] browser_click');
+  });
+
+  it('a step stamped outcome:uncertain (thrown / MCP transport failure) is flagged without the ledger', () => {
+    const digest = digestOf([
+      makeStep(0, 'tool_call', { toolCallId: 't1', toolName: 'mcp_srv_post', args: { text: 'x' } }),
+      makeStep(1, 'tool_result', {
+        toolCallId: 't1',
+        ok: false,
+        content: 'MCP 调用失败：socket hang up',
+        errorCode: 'MCP_CALL_FAILED',
+        outcome: 'uncertain',
+      }),
+    ]);
+    expect(digest).toContain(`[结果未知] mcp_srv_post({"text":"x"}) ${UNCERTAIN_RESULT_NOTE}`);
   });
 });

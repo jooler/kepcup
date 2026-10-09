@@ -19,6 +19,7 @@ import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { createRetryingFetch, retryProgressText, type ModelRetryPolicy } from './model-retry.js';
+import type { EffectRecorder } from './effects/recorder.js';
 
 interface Deps {
   settings: SettingsService;
@@ -26,6 +27,8 @@ interface Deps {
   logger: CoreLogger;
   /** Model request retry policy (model-retry.ts); defaults to MODEL_RETRY_*. */
   modelRetry?: ModelRetryPolicy;
+  /** W2 外部副作用台账（runs.db tool_effects）；缺省不记账。 */
+  effects?: EffectRecorder;
 }
 
 function retryContext(
@@ -92,13 +95,14 @@ export class PiEngine implements AgentEngine {
         const handle = handleRef!;
         const ctx: ToolContext = {
           identity: spec.identity,
+          toolCallId: String(toolCallId),
           signal,
           terminate: (reason) => handle.markTerminated(reason),
           progress: (text) => handle.emit({ type: 'progress', payload: { text } }),
         };
         void onUpdate;
         // Tool failures never break the loop: they return as tool output.
-        const result = await executeToolSafely(tool, params, ctx);
+        const result = await executeToolSafely(tool, params, ctx, this.#deps.effects);
         handle.emit({
           type: 'tool_result',
           payload: {
@@ -107,7 +111,10 @@ export class PiEngine implements AgentEngine {
             ok: result.ok,
             content: result.content,
             ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
-            ...(result.outcome !== undefined ? { outcome: result.outcome } : {}),
+            // W2: a tool-reported effect outcome (MCP transport failure) counts too.
+            ...((result.outcome ?? result.effect?.outcome) !== undefined
+              ? { outcome: result.outcome ?? result.effect?.outcome }
+              : {}),
             ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
               ? { sensitiveParams: result.sensitiveParams }
               : {}),

@@ -2,6 +2,8 @@ import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { runInToolCall } from '../permissions/tool-call-scope.js';
 import { truncateToBudget } from './tokens.js';
 import type { ToolContext, ToolDefinition, ToolResult } from './types.js';
+import type { EffectRecorder } from './effects/recorder.js';
+import type { SettledEffectStatus } from './effects/store.js';
 
 /**
  * 工具执行与结果文本化的共用部分：内置 pi 引擎的工具包装层与外部智能体的
@@ -15,21 +17,62 @@ import type { ToolContext, ToolDefinition, ToolResult } from './types.js';
  * The execution is one tool-call scope (D75：「仅这一次」授权随本次调用结束而
  * 失效，见 permissions/tool-call-scope.ts). A thrown AppError keeps its code
  * (e.g. RUN_READ_ONLY) so the model sees why; anything else is INTERNAL.
+ *
+ * W2: with an `effects` recorder, a call with an external side effect is
+ * written to the ledger (runs.db tool_effects) as `executing` before it runs
+ * and settled from its result (a throw settles as uncertain); the scope's
+ * effect hooks let the gateway escalate a call that leaves the sandbox and
+ * link its approval. The recorder never fails the call.
  */
 export async function executeToolSafely(
   tool: ToolDefinition,
   params: unknown,
   ctx: ToolContext,
+  effects?: EffectRecorder,
 ): Promise<ToolResult> {
+  const effect = effects?.begin({ tool, params, ctx }) ?? null;
+  let result: ToolResult;
   try {
-    return await runInToolCall(() => tool.execute(params as never, ctx));
+    result = await runInToolCall(
+      () => tool.execute(params as never, ctx),
+      effect !== null ? { effect } : {},
+    );
   } catch (error) {
-    return {
-      ok: false,
-      content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
-      errorCode: error instanceof AppError ? error.code : 'INTERNAL',
-    };
+    const status = settleQuietly(() => effect?.settleThrown(error) ?? null);
+    return withLedgerOutcome(
+      {
+        ok: false,
+        content: `工具执行失败：${error instanceof Error ? error.message : String(error)}`,
+        errorCode: error instanceof AppError ? error.code : 'INTERNAL',
+      },
+      status,
+    );
   }
+  // Outside the try: a ledger failure can never replace the real result.
+  return withLedgerOutcome(
+    result,
+    settleQuietly(() => effect?.settle(result) ?? null),
+  );
+}
+
+function settleQuietly(settle: () => SettledEffectStatus | null): SettledEffectStatus | null {
+  try {
+    return settle();
+  } catch {
+    return null; // the recorder logs its own failures; never the tool's problem
+  }
+}
+
+/**
+ * W2 → run_steps: a call the ledger settled as uncertain (thrown tool, MCP
+ * transport failure, failure during an abort) carries `outcome:'uncertain'`
+ * in its tool_result step too, so the continuation digest sees it even
+ * without the ledger (or when tool-call ids repeat).
+ */
+function withLedgerOutcome(result: ToolResult, status: SettledEffectStatus | null): ToolResult {
+  return status === 'uncertain' && result.outcome === undefined
+    ? { ...result, outcome: 'uncertain' }
+    : result;
 }
 
 export const SCREENSHOT_OMITTED_NOTE =

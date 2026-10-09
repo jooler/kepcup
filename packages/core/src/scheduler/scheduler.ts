@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BACKGROUND_LOOP_CONCURRENCY } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
+import { outsideToolCall } from '../permissions/tool-call-scope.js';
 
 export interface SchedulerJob {
   /**
@@ -275,7 +276,14 @@ export class Scheduler {
       this.#takeSlot(running);
       let started: Promise<void>;
       try {
-        started = this.#current.run(running, () => job.run(job.signal.signal));
+        // A job belongs to its own run: started from inside a tool call (a
+        // delegation, an @-mention, a task launch, a timer the call armed) it
+        // must not inherit that call's scope — once-grant ownership, effect
+        // ledger hooks (W2 复查). #drain runs synchronously in the submitter's
+        // async context, so leave the tool-call store explicitly.
+        started = outsideToolCall(() =>
+          this.#current.run(running, () => job.run(job.signal.signal)),
+        );
       } catch (error) {
         // A synchronous throw must still reach the finally below (slot release).
         started = Promise.reject(error);

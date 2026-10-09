@@ -1,4 +1,4 @@
-import type { AgentPermissionTier } from '@kepcup/shared';
+import type { AgentPermissionTier, McpToolRisk } from '@kepcup/shared';
 
 /**
  * "provider/modelId" reference into the model registry; external agents use
@@ -196,6 +196,12 @@ export interface ExternalRunSpec {
 
 export interface ToolContext {
   identity: RunIdentity;
+  /**
+   * The engine's id of this call (W2 外部副作用台账 `tool_effects.tool_call_id`):
+   * pi's toolCallId in the built-in engine, the bridge's `kc_…` id for
+   * external agents. Optional only for direct test invocations.
+   */
+  toolCallId?: string;
   signal: AbortSignal;
   /** Sent by skip_reply; ends the run without a final message. */
   terminate(reason?: string): void;
@@ -227,9 +233,32 @@ export interface ToolResult {
    * 的步骤里抹掉这些值（agent/step-persistence.ts）。
    */
   sensitiveParams?: string[];
+  /**
+   * W2 外部副作用台账：工具可主动报告的结局 / 回执 / 人读摘要（只进
+   * `tool_effects`，不给模型看）。`outcome:'uncertain'` 把台账行结为 uncertain
+   * （即使 ok:false 的其它错误码）；`summary` 替换执行前写入的参数摘要（同样
+   * 脱敏、截断）。
+   */
+  effect?: ToolEffectReport;
 }
 
 export type ToolOutcome = 'not_started' | 'completed' | 'uncertain';
+
+export interface ToolEffectReport {
+  outcome?: 'completed' | 'uncertain';
+  receipt?: { url?: string; externalId?: string; note?: string };
+  summary?: string;
+}
+
+/**
+ * MCP 包装工具的来源（W2 副作用分类用 W5 的风险档）：server、原始工具名与
+ * 构建时判定的风险档。内置工具没有。
+ */
+export interface McpToolOrigin {
+  serverId: string;
+  toolName: string;
+  risk: McpToolRisk;
+}
 
 export interface ToolDefinition<P = unknown> {
   name: string;
@@ -237,6 +266,8 @@ export interface ToolDefinition<P = unknown> {
   /** TypeBox schema (pi's parameter format). */
   parameters: unknown;
   execute(params: P, ctx: ToolContext): Promise<ToolResult>;
+  /** Set on wrapped MCP tools (mcp/tools.ts); survives renames for external agents. */
+  mcp?: McpToolOrigin;
 }
 
 export interface RunHandle {

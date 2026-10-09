@@ -23,6 +23,7 @@ import {
   botSchema,
   delegationSchema,
   taskViewSchema,
+  toolEffectSchema,
   budgetSchema,
   conversationSchema,
   customProviderSchema,
@@ -782,6 +783,11 @@ export const delegationGetOutputSchema = z.object({ delegation: delegationSchema
 
 export const taskIdInputSchema = z.object({ taskId: z.string().min(1) });
 export const taskGetOutputSchema = z.object({ task: taskViewSchema.nullable() });
+/**
+ * W2 外部副作用台账：任务（沿续接链 continuedFromRunIds 回溯，含各 run 的
+ * SubAgent 子 run）的 tool_effects 行，按创建时间排序（W3 检查后重试面板）。
+ */
+export const effectsListOutputSchema = z.object({ effects: z.array(toolEffectSchema) });
 /** Non-terminal tasks of a conversation (status line seed on conversation open). */
 export const tasksActiveInputSchema = z.object({ conversationId: z.string().min(1) });
 export const tasksActiveOutputSchema = z.object({ tasks: z.array(taskViewSchema) });
@@ -1325,6 +1331,7 @@ export const rpcMethodSchemas = {
   'tasks.get': { input: taskIdInputSchema, output: taskGetOutputSchema },
   'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
   'tasks.answer': { input: tasksAnswerInputSchema, output: okOutput },
+  'effects.list': { input: taskIdInputSchema, output: effectsListOutputSchema },
   'grants.list': { input: grantsListInputSchema, output: grantsListOutputSchema },
   'grants.revoke': { input: grantIdInputSchema, output: okOutput },
 
@@ -1559,6 +1566,7 @@ const APP_METHODS = [
   'tasks.get',
   'tasks.active',
   'tasks.answer',
+  'effects.list',
   'grants.list',
   'grants.revoke',
   'allowlist.list',
