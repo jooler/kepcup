@@ -48,5 +48,10 @@ export function restoredFailedRun(
  * task) uses the conversation-level setup card.
  */
 export function showsFailure(run: Pick<Run, 'loopType' | 'setup'>): boolean {
-  return run.loopType !== 'task' || run.setup !== null;
+  // Background loops (reflection / conversation_summary / triage / subagent)
+  // also carry the conversation id, but their failures are not the user's
+  // turn failing — and retrying one would replay it as a turn. The core logs
+  // them instead.
+  if (run.loopType === 'turn') return true;
+  return run.loopType === 'task' && run.setup !== null;
 }

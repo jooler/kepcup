@@ -70,6 +70,12 @@ describe('restoredFailedRun', () => {
     expect(showsFailure(plainTask)).toBe(false);
     expect(showsFailure(setupTask)).toBe(true);
     expect(showsFailure(run('r1', { status: 'failed' }))).toBe(true);
+    // Background loops carry the conversation id too, but a failed reflection /
+    // summary / triage is not the user's turn failing (no banner, no retry).
+    for (const loopType of ['reflection', 'conversation_summary', 'triage', 'subagent'] as const) {
+      expect(showsFailure(run('bg', { loopType, status: 'failed' }))).toBe(false);
+      expect(restoredFailedRun([run('bg', { loopType, status: 'failed' })], new Set())).toBeNull();
+    }
     // A plain task failure is the task card's business (no banner).
     expect(restoredFailedRun([plainTask], new Set())).toBeNull();
     // The turn its failure woke does not supersede the setup card …

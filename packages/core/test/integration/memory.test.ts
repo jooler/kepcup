@@ -1,3 +1,6 @@
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { localDateKey } from '../../src/memory/local-date.js';
 import {
@@ -553,6 +556,62 @@ describe('P07 记忆与画像（集成）', () => {
       expect(job.attempts).toBeLessThanOrEqual(1);
     } finally {
       await stack.cleanup();
+    }
+  }, 40_000);
+
+  it('a failed reflection run is logged and is not retryable as a turn', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-refl-fail-'));
+    const stack = await createTestStack({ home, env: TEST_ENV });
+    let closed = false;
+    try {
+      const bot = await makeBot(stack.core, '阿反');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script('mock-main', [step().replyText('好的')]);
+      stack.llm.script('mock-light', [step().failWith(500, 'light model exploded')]);
+      await sendDrafts(stack.core, conv.id, [{ text: '记住我喜欢美式' }]);
+      const turn = await completedRun(stack.core, conv.id);
+      const failed = await waitFor(
+        async () => {
+          const result = (await stack.core.rpc.call('runs.list', {
+            conversationId: conv.id,
+            limit: 20,
+          })) as { runs: Run[] };
+          return (
+            result.runs.find((run) => run.loopType === 'reflection' && run.status === 'failed') ??
+            null
+          );
+        },
+        { label: 'failed reflection run' },
+      );
+      // Retrying it would replay the trigger as a second turn (duplicate reply).
+      await expect(stack.core.rpc.call('runs.retry', { runId: failed.id })).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+      });
+      const runs = (await stack.core.rpc.call('runs.list', {
+        conversationId: conv.id,
+        limit: 20,
+      })) as { runs: Run[] };
+      expect(runs.runs.filter((run) => run.loopType === 'turn').map((run) => run.id)).toEqual([
+        turn.id,
+      ]);
+
+      await stack.cleanup();
+      closed = true;
+      const logsDir = path.join(home, 'logs');
+      const text = readdirSync(logsDir)
+        .map((file) => readFileSync(path.join(logsDir, file), 'utf8'))
+        .join('\n');
+      const record = text
+        .split('\n')
+        .filter((line) => line.includes('"run failed"'))
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((entry) => entry['runId'] === failed.id);
+      expect(record).toMatchObject({ level: 'warn', loopType: 'reflection' });
+      expect(String(record!['error'])).toBe(failed.error);
+      expect(text).toContain('"job failed"');
+    } finally {
+      if (!closed) await stack.cleanup();
+      rmSync(home, { recursive: true, force: true });
     }
   }, 40_000);
 

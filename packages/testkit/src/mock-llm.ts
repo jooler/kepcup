@@ -58,8 +58,18 @@ export interface MockLlmStep {
   replyTextAndToolCall(text: string, name: string, args: unknown, usage?: MockUsage): MockLlmStep;
   /** Reply with a JSON payload as text (structured outputs in tests). */
   replyJson(payload: unknown, usage?: MockUsage): MockLlmStep;
-  /** Respond with an HTTP error (docs/dev/05-testing.md "错误注入"). */
-  failWith(status: number, message: string): MockLlmStep;
+  /**
+   * Respond with an HTTP error (docs/dev/05-testing.md "错误注入"). The
+   * response carries `x-should-retry: false` so the engine's model retry
+   * (core agent/model-retry.ts) fails at once, as scripted; pass
+   * `{ retryable: true }` (optionally with headers such as Retry-After) to
+   * exercise the retry path instead.
+   */
+  failWith(
+    status: number,
+    message: string,
+    options?: { retryable?: boolean; headers?: Record<string, string> },
+  ): MockLlmStep;
   /** Suspend the response until `release()` is called. */
   hold(): MockLlmStep;
   release(): void;
@@ -80,6 +90,8 @@ interface StepState {
   toolArgs?: unknown;
   usage?: MockUsage;
   failStatus?: number;
+  failRetryable?: boolean;
+  failHeaders?: Record<string, string>;
   hold?: boolean;
   claimed?: boolean;
   /** release() before the request arrived: skip the hold entirely. */
@@ -141,9 +153,15 @@ class Step implements MockLlmStep {
     return this.replyText(JSON.stringify(payload), usage);
   }
 
-  failWith(status: number, message: string): this {
+  failWith(
+    status: number,
+    message: string,
+    options?: { retryable?: boolean; headers?: Record<string, string> },
+  ): this {
     this.state.kind = 'fail';
     this.state.failStatus = status;
+    this.state.failRetryable = options?.retryable === true;
+    this.state.failHeaders = options?.headers;
     this.state.text = message;
     return this;
   }
@@ -219,6 +237,10 @@ export async function startMockLlm(): Promise<MockLlmServer> {
       if (step.state.kind === 'fail') {
         res.statusCode = step.state.failStatus ?? 500;
         res.setHeader('Content-Type', 'application/json');
+        if (!step.state.failRetryable) res.setHeader('x-should-retry', 'false');
+        for (const [name, value] of Object.entries(step.state.failHeaders ?? {})) {
+          res.setHeader(name, value);
+        }
         res.end(JSON.stringify({ error: { message: step.state.text ?? 'injected error' } }));
         return;
       }
@@ -311,6 +333,8 @@ export async function startMockLlm(): Promise<MockLlmServer> {
       const step = queue?.find((s) => !s.consumed && (!s.state.check || s.state.check(mockReq)));
       if (!step) {
         res.statusCode = 500;
+        // Unscripted: fail loudly once, never retried into more misses.
+        res.setHeader('x-should-retry', 'false');
         res.end(
           JSON.stringify({
             error: {
@@ -416,7 +440,11 @@ function writeCompletion(res: ServerResponse, step: Step, model: string, stream:
       send({
         ...base,
         choices: [
-          { index: 0, delta: { role: 'assistant', content: step.state.toolText }, finish_reason: null },
+          {
+            index: 0,
+            delta: { role: 'assistant', content: step.state.toolText },
+            finish_reason: null,
+          },
         ],
       });
     }

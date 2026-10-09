@@ -181,6 +181,10 @@ export class JobsRunner {
           if (error instanceof DeferredJobError) {
             this.#deps.jobs.defer(job.id, this.#deps.clock.now() + 60_000);
           } else {
+            this.#deps.logger.warn(
+              { jobId: job.id, type: job.type, botId: job.bot_id, err: error },
+              'job failed',
+            );
             this.#deps.jobs.fail(job.id, error instanceof Error ? error.message : String(error));
           }
         } finally {
