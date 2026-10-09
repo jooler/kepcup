@@ -1,9 +1,9 @@
 # 从三个开源 Personal Agent 借鉴：实施方案
 
-> 状态：**P0 + P1（W3-P1、W6）已实施并提交，设计文档已回写**（2026-10-09）；W4、W8 暂缓，W7 延期，原 W9 已删除。方案定稿时 Pengfei 已对全部待决问题拍板（见各节「已定」标注），D 编号见 §6。
+> 状态：**全部实施完成**（2026-10-09）：P0（W1、W2、W3-P0、W5）、P1（W3-P1、W4、W6、W8）、P2（W7）均已实施、独立复查并提交，设计文档已回写；原 W9 已删除。方案定稿时 Pengfei 已对全部待决问题拍板（见各节「已定」标注），D 编号见 §6。
 > **提交约定**：原硬约束为“只改工作树、不 commit”；2026-10-09 用户授权提交（P0 已分批提交）。仍**不 push、不开 PR**（除非用户另行要求）。每个工作项完成后在本文件对应 `- [ ]` 打勾并写一行完成日期。
 > **范围调整（2026-10-09 用户决定）**：P1 只做 W3-P1 与 W6（W4、W8 暂缓）；W6 委派结果取“各任务结果摘要拼接”；原 W9（记忆导出 / 历史 / 导入）**确定不做，已从本文件删除**；W7 **延期**。
-> **范围再调整（2026-10-09 用户决定）**：继续完成 W4、W7、W8（撤销上一条中 W4 / W8 暂缓、W7 延期的决定）；W9 仍删除。顺序：W4 ∥ W8 → W7（W7 的后台页使用 W8 的生效浏览器资料）。
+> **范围再调整（2026-10-09 用户决定）**：继续完成 W4、W7、W8（撤销上一条中 W4 / W8 暂缓、W7 延期的决定）；W9 仍删除。顺序：W4 ∥ W8 → W7（W7 的后台页使用 W8 的生效浏览器资料）。W4 / W8 已提交；W7 已在 `t/borrowings-w7` 实施（D79，main 0023），待收尾全量与合入。
 > **测试纪律**（AGENTS.md / `docs/dev/05-testing.md`）：开发中**只跑定向测试**（本文件每项都给了命令）；全量 `pnpm test` 只在阶段收尾/交付时跑**一次**，或改了共享契约（`packages/shared` schema）、testkit、迁移、vitest 配置时跑一次。不要反复全量。
 > Mac 上 PATH 里的 node 是 v12，先 `export PATH=$HOME/.nvm/versions/node/v24.13.0/bin:$PATH`；改了 `packages/shared` 后先重建 `packages/shared/dist`。
 
@@ -970,11 +970,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ### 改动清单（概要，开工前细化）
 
-- [ ] main.db 迁移 `watches`；`packages/shared` schema + RPC `watches.list/pause/resume/stop`
-- [ ] `packages/core/src/watch/{service,page-diff,conditions}.ts`
-- [ ] `packages/core/src/tools/watch-tools.ts`；工具面注册
-- [ ] `apps/desktop/src/main/browser-host.ts`：后台页 `fetchText(url)`（不显示、遵守 `decideBrowserRequest`）
-- [ ] 渲染端：对话内监看卡 + 右侧面板列表
+- [x] main.db 迁移 `watches`；`packages/shared` schema + RPC `watches.list/pause/resume/stop` （2026-10-09 完成；迁移为 main `0023_watches.sql`（`0022` 已被 D80 占用），另加 `watches.get`）
+- [x] `packages/core/src/watch/{service,page-diff,conditions}.ts` （2026-10-09 完成；另有 `watch/store.ts`）
+- [x] `packages/core/src/tools/watch-tools.ts`；工具面注册 （2026-10-09 完成；对话轮与任务两面都有）
+- [x] `apps/desktop/src/main/browser-host.ts`：后台页 `fetchText(url)`（不显示、遵守 `decideBrowserRequest`） （2026-10-09 完成；端口 B `browser.fetchText`）
+- [x] 渲染端：对话内监看卡 + 右侧面板列表 （2026-10-09 完成）
 
 
 
@@ -997,6 +997,38 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 ### 风险
 
 - 后台抓页可能触发反爬 / 登录过期：失败退避 + 暂停通知已覆盖；间隔下限 5 分钟。
+
+
+
+### 实施记录（2026-10-09）
+
+- **编号**：决策 **D79**；main 迁移取 `0023_watches.sql`（rebase 到含 D80 的 main 后，`0022` 已是 D80 的 `schedule_title_origin`）。新 ID 前缀 `wat_`；常量 `WATCH_*`（`packages/shared/src/constants.ts`）。
+- **数据**：`watches` 按计划列建表，status / `interval_sec >= 300` 带 CHECK，`conversation_id` 外键级联，索引 `watches_due(status, next_check_at)`、`watches_conversation`、`watches_bot(bot_id, status)`。**偏差**：另加 `last_text`（上一版页面行，≤5 万字符——没有上一版就做不出增删改摘要）、`last_error`、`last_checked_at`（列表与暂停卡展示）。shared `domain/watches.ts`：来源 zod 只接受 `{kind:'web_page', url(http/https), selector?}`（判别联合留口）、五种条件、`watchEntrySchema`；card 内容加 `watchId / watchEvent / watchSeq / watchKey / watchSummary`；`triggerReason` 增 `watch`；job 类型增 `watch_alert`；内部事件 `watch_alert` 进 `INTERNAL_SYSTEM_EVENTS`；错误码增 `BROWSER_SELECTOR_NOT_FOUND`。
+- **纯模块**：`page-diff.ts`（`pageLines` 规整行；`withoutRelativeTimes` 覆盖中文「N 秒 / 分钟 / 小时 / 天 / 周 / 月 / 年 前 / 后」含汉字数字与「半 / 几」、刚刚 / 刚才 / 昨天 / 今天 / 明天…，英文「N minutes ago」「an hour ago」「a few seconds ago」「5m ago」「in 3 days」「just now / yesterday / today」；`pageHash` / `quietHash`；`diffPage` 按多重集比行（不做 LCS），相似行（公共前后缀 ≥ 较长行一半）配成「修改」；`describePageDiff` ≤1500 字、超出写「另有 N 处变化未列出」）。`conditions.ts`：数字提取支持 ¥ ￥ $ € £、三位一组的 `,` / `，` 千分位、小数点，紧跟字母数字的「-」视为连字符；**不支持**欧式「1.299,00」、汉字数字、万 / 亿 / k、科学计数——无选择器时取第一个带货币符号的数，没有则第一个数；`isEdge`（`changed`：有上次安静 hash 且不同；其余：上次假、这次真——首检即满足也提醒一次）；`failureBackoffMs = min(60, 2^failures)` 分钟；`shouldPause(failures >= 5)`。
+- **服务**（`watch/service.ts` + `store.ts`）：进程内单 worker，`TimerScheduler` 按最早 `next_check_at` 布一个定时器（测试用 TestClock），一次 pass 顺序检查到期行，pass 期间再触发只记「再来一遍」。成功检查与边沿在**同一个 main.db 事务**里 CAS 写行（`alert_seq + 1`）并登记 `watch_alert` 作业（`dedupe_key = watch:{id}:{seq}:{quietHash 前 16 位}`，作业载荷带摘要）；作业（jobs-runner，响应类、免每日预算）贴提醒卡（`watchKey` 同键）并经 `Orchestrator.deliverWatchAlertToBot` 以内部事件 `watch_alert` 唤醒（`reason='watch'`；同事件一样不计每日主动上限、免打扰时段停放到 `event_delivery`）。作业重跑先查同键提醒卡，有则不再发。失败：`failures + 1`、退避、`last_error`；第 5 次同一事务里改 `paused` 并贴暂停卡（`watch-error:{id}:{streak}:paused`，streak = 该监看第几次暂停）。用户暂停 / 恢复 / 停止与检查都走 CAS：检查期间用户动过，检查结果作废（日志 `version changed`）。检查前 Bot / 对话 / 成员关系不在 → 删除监看；删除对话 / Bot、移出群经 `LifecycleService` 同样删除。首检在创建后立即执行。
+- **网络与资料**：fetcher 就是 core 的浏览器门面（端口 B `browser.fetchText`），`profileKey` 取 W8 的 `BrowserProfilesService.profileKeyFor`（每次检查现取），`networkContext.allowLoopback` = 对话绑定了可用 project（与浏览器工具同一规则）；全局网络规则由宿主 `decideBrowserRequest` 拦截。**解读**：「全局网络策略」即 design/14 的浏览器网络表；Bot 的 `network_policy` 只管沙箱命令，浏览器工具本来也不看它，监看保持一致。无人值守无关（只读）。
+- **后台页**（`browser-host.ts fetchText`）：键 `botId|watch:{id}`，复用 `ensurePage`（同一 partition 派生、同一请求拦截），标 `background`：`show()` 拒绝、下载一律取消；`#load`（导航 30 秒超时，`-20` → `BROWSER_BLOCKED`）后等 1 秒渲染，`executeJavaScript` 取 `document.body.innerText` 或选择器文本（选择器 JSON 字面量注入，10 秒超时），选择器无匹配 → `BROWSER_SELECTOR_NOT_FOUND`；正文截到 20 万字符；`finally` 关页。
+- **工具**（`tools/watch-tools.ts`）：`watch_create{url, selector?, condition{kind, text?, value?, selector?}, interval_minutes}`、`watch_list`（输出 `<untrusted>`）、`watch_stop{id}`（只能停自己的）。**放在哪一面**：核实 schedule 工具在对话轮与任务两面都有（`tools/index.ts`），监看照做——创建只是登记宿主的只读检查，属异步托管动作（design/30 已写明理由）。不需审批，创建即出监看卡。W2 台账分类：`watch_create` / `watch_stop` = local、`watch_list` = none；外部智能体注解：`watch_list` 只读、`watch_stop` destructive。提示词：宿主政策行「盯网页用 watch_*，不要用定时任务反复打开网页」，对话轮规则说明 `reason="watch"`；上下文新增 `<watches>` 段（本 Bot 在本对话未停止的监看，`<untrusted>`），与 D80 的 `<schedules>` 并列。
+- **上限**：每 Bot `WATCH_MAX_PER_BOT = 20`、全局 `WATCH_MAX_GLOBAL = 100`，按**未停止**（active + paused）计，避免「暂停再恢复」绕过上限；间隔 5 分钟–7 天。
+- **RPC / 事件**：`watches.list{conversationId?} / get / pause / resume / stop`（进渲染端白名单 `APP_RPC_METHODS`）；事件 `watch.updated{watch, removed?}`（每次检查、提醒、用户动作、删除都推）。
+- **渲染端**：`features/watches/WatchCard.svelte`（`cardType:'watch'`：创建卡 / 提醒卡带摘要可展开 / 暂停卡带最近错误与「恢复」；都可「全部监看」与两步「停止监看」），按监看行实时重绘（`stores/watches.svelte.ts`）——**与 D80 的不同**：D80 回执卡是带快照的 system_event、状态回写到消息；监看每次检查都在变，卡片照委派 / 任务卡的做法按 id 现取。`WatchesPanel.svelte` 放在右栏「定时任务」标签与群信息里、紧跟定时任务列表（条件、间隔、上次检查、提醒次数、连续失败与原因；暂停 / 恢复 / 停止）；「全部监看」复用 D80 的 `shell.openSchedules()`。i18n 在 `zh-CN.ts`（`watches.*`）。纯展示逻辑 `watch-view.ts` 有单测。
+- **测试**：
+  - 单元 `watch-page-diff.test.ts`（行规整、20 种相对时间、安静 hash、diff / 摘要上限）、`watch-conditions.test.ts`（数字提取、条件求值、边沿、退避 2/4/8/16/32/60、5 次暂停、schema 拒绝非 web_page / 非 http(s)、间隔下限）、`watches-migration.test.ts`（旧库升级只加表、默认值、CHECK、索引、对话级联；版本号从文件名读，重编号不用改）；既有迁移列表测试（public-skills / external-agents / butler-delegation / agent-sessions-per-task / task-events）补 23，`public-skills-migration` 回拨时同样 drop `watches`；`create-core` 增 `watches` 表与 main `user_version = 23`；`tool-effects` 扫描列表加 `watch-tools.ts`。
+  - 集成 `watch.test.ts`（8 例，TestClock + testkit 假后台页 `pageTexts`）：价格 100→90（<95）唤醒一次、保持 90 不唤醒、回 100 再 90 再唤醒，提醒卡键与摘要、触发段 `<untrusted>`、唤醒消息内部不可见；只有「3 分钟前」→「4 分钟前」不唤醒、真实变化唤醒一次、作业重跑不重复；同 home 重启不重复提醒；连续失败退避与第 5 次暂停 + 暂停卡键 + 暂停期间不检查 + 恢复立即检查 + 暂停 / 停止 RPC；CAS 冲突（检查进行中暂停 → 结果作废、无作业）；删对话 / 移出群 / 删 Bot 删监看；间隔下限 / 非 http(s) / 非 web_page / 每 Bot 上限；对话轮 `watch_create` 工具 + 监看卡 + 下一轮 `<watches>`。
+  - 渲染端单元 `watch-view.test.ts`；e2e `browser.spec.ts`「W7 监看后台页」：对话轮建监看内网地址 → 列表显示失败（拦截）、夹具服务器未被访问、可见窗口数不变；绑定 project 后监看本机页 → 提醒卡带摘要、唤醒轮回复，期间无新增可见窗口、夹具页面没有残留的 webContents。
+- **残留 / 未做**：只有网页来源（传感器后期）；正文按 `innerText` 取，纯 canvas / 需滚动加载的内容取不到；无「立即检查」按钮（恢复即立即检查）；全局上限按未停止计，已停止行不清理（只是不显示）；SPA 只多等 1 秒渲染；暂停卡里的「恢复」不校验网页已可达（恢复后立即检查，失败照常计数）。
+
+#### 复查后修正（2026-10-09，独立复查意见）
+
+- **启动 / 宿主断开不计失败**：`start.ts` 的 `watches.start()` 早于 `process-entry` 绑定端口 B，原先每个到期监看都会记一次 `BROWSER_UNAVAILABLE` 失败。现在 `isBrowserHostUnavailable`（`BROWSER_UNAVAILABLE`，或端口掉线时挂起调用被拒的 `INTERNAL "browser host disconnected"`）→ 本轮 pass 停下、行不动（不计数、不写 `last_error`、不 bump version），`WATCH_HOST_UNAVAILABLE_RETRY_MS`（1 分钟）后重试；门面新增 `onBound` 钩子，`start.ts` 注册 `watches.wake()`，端口 B（或测试替身）一绑定立即重查。集成测：重启时宿主未绑定 → 失败 0、无错误；`bindFacade` 后立即检查；端口掉线同样不计失败。
+- **错误页 / 登录跳转不算内容**：宿主 `fetchText` 监听 `did-navigate` 记主框架 HTTP 状态，≥ 400 → `BROWSER_NAVIGATION_FAILED`（`details.status`）；最终地址按 shared `watchRedirectAllowed` 判同站（主机名相同、忽略 `www.`；协议相同或 http → https 且默认端口；路径 / 查询随意），否则「页面被重定向到 {origin+path}（可能需要登录）」。载入后与读取后各判一次（覆盖渲染等待期间的脚本跳转）。testkit 假宿主加 `pageStatuses`，`redirects` 也套用同一规则；集成测覆盖 403、跨站跳转与同站带斜杠跳转。规则写进 design/14。
+- **后台页不再可能卡死**：标题随取正文的脚本一起返回（去掉无超时的 `executeJavaScript('document.title')`）；整次取页套 `WATCH_FETCH_DEADLINE_MS`（45 秒，小于端口 B 的 60 秒 RPC 超时），`finally` 一定关页。取正文改在隔离环境 `executeJavaScriptInIsolatedWorld(1007, …, userGesture=false)`。
+- **休眠唤醒补查**：`power.resume` 在 `schedules.catchUpMissed()` 后调 `watches.wake()`（不等待）。
+- **批次快照过期**：pass 里每行检查前 `store.get` 重读，要求仍 `active`、`next_check_at <= now`、版本未变，否则跳过（变了的若仍到期，下一次到期查询会带回新版本）。集成测：同批 A 取页挂起时暂停 B → B 不再取页。
+- **提醒上限（决定）**：`WATCH_MAX_ALERTS_PER_DAY = 24`（滚动 24 小时）。`0023_watches.sql`（未发布）直接加列 `alert_times_json TEXT NOT NULL DEFAULT '[]'`（迁移测试同步）；边沿时先数窗口内的提醒，已满 → 不登记作业，同一事务改 `paused`、`last_error` = 「提醒过于频繁（24 小时内超过 24 次），已暂停；可放宽条件或延长间隔后恢复」并贴暂停卡（键 `watch-error:{id}:{streak}:too_frequent`，`watchPauseReason: 'too_frequent'`）；这次观察照常落库（恢复后不补发）；恢复时清空窗口。集成测：预置 23 次 + 5 次过期 → 第 24 次照常唤醒、第 25 次暂停出卡、作业只有 1 个；恢复后窗口为 `[]`、下一次变化照常提醒。
+- **小项**：`rowToWatch` 改 `safeParse`，坏行在列表 / 上下文跳过并记日志，到期查询遇坏行直接改 `paused`（否则永远到期空转），删除级联补 `deleteRemaining`；pass 因存储出错结束时按 `TICK_ERROR_RETRY_MS` 重布定时器（不再 0 ms 热循环）。退避改为 `max(5 分钟, min(60, 2^failures) 分钟)` = 5 / 5 / 8 / 16 / 32 / 60（单测与集成测同步）。暂停卡内容带 `watchPauseReason` / `watchFailures`，`WatchCard` 标题用卡上记的次数（恢复后旧卡仍读得对），提醒过频有单独标题与提示。`stopOwn` 同时要求同一对话。`WatchesPanel` 刷新加请求序号，只采用最新一次的结果。diff：上一版被截断（或这次超长）时两边都截到 `WATCH_STORED_TEXT_MAX_CHARS` 再比，摘要注明「页面过长，仅比较前 N 字」，截断范围内无变化时说「变化可能在页面后部」；只有行序变化时说「页面内容顺序有变化」。相对时间正则收紧：裸「日 / 月」后面紧跟汉字不算（「10日前发货」「3月前完成」），裸「分」只认 1–2 位数（「100分后」不算），原 20 个正例照过、新增 4 个反例与 3 个仍需剥离的例子。`close()` 里 `schedules.stop()` 与 `watches.stop()` 分开 try。`runAlertJob` 分别查提醒卡与已记录的唤醒（内部 `watch_alert` 消息、文本前缀「监看提醒（{id}，第 {seq} 次）」），只补缺的一步——贴卡后、唤醒前崩溃不再丢唤醒（集成测删掉唤醒消息后重跑：补唤醒一次、不重复贴卡）。
+- **文档**：design/14 写明 `watch_create` 让只读对话轮登记了用 Bot 生效（可能已登录）浏览器资料的无人值守 GET，以及 DNS 重绑定是既有缺口、监看会反复触发它；design/02、README D79 行、03-data-model（新列、坏行处理、卡片字段）、01-conventions（`WATCH_HOST_UNAVAILABLE_RETRY_MS` / `WATCH_MAX_ALERTS_PER_DAY` / `WATCH_FETCH_DEADLINE_MS`、退避公式）同步。
+- **仍未做**：唤醒消息已落库但进程在投递进信箱前崩溃时，这一轮是否补跑取决于对话轮的通用恢复（与其他内部事件相同，未专门处理）；DNS 重绑定无针对性防护；HTTP 状态只看主框架、不看 SPA 内部接口的错误。
 
 ---
 
@@ -1179,7 +1211,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 | D78       | 外部副作用台账 `tool_effects`、中断任务检查后重试、运行中撤销授权立即中断、审批幂等与回执（W2 + W3 + W4）                                      | 标注为 D67 第一步；修订 D49 中断任务的重试规则；本轮 W2 + W3，W4 暂缓 |
 | —（D65 修订） | MCP 工具风险分级、逐工具策略、只读 MCP 工具进对话轮 / 只读子代理、无人值守自动批准 + Bot 详情风险提示（W5）                                        | 不新开号；D73 引用同一分级器，并按本决定修正其无人值守规则               |
 | —（D71 修订） | 委派 intent（request / question / fyi）+ 跟随任务（W6）                                                           | 对应 DEV-012 方案二                                |
-| —（原拟 D79） | 确定性监看原语，本轮仅网页来源（W7）                                                                                     | W7 延期，**暂不分配编号**；立项时取届时决策表的下一个空号              |
+| D79       | 确定性监看原语，本轮仅网页来源（W7）                                                                                     | 2026-10-09 W7 恢复实施时分配（D80 已被定时任务自然引导占用，D79 仍空）；已写入 `docs/design/README.md` |
 | —         | 语音前端分工                                                                                                  | 暂不立项，无编号（§4）                                  |
 
 
@@ -1228,7 +1260,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [x] P0（W1、W2、W5、W3-P0）全部 `- [ ]` 打勾，定向测试通过，P0 收尾跑一次全量 `pnpm test` 通过。（2026-10-09 完成：每项均经独立复查并修正；收尾全量 1986 例 / 28 条失败，失败集合与 D75 后容器基线一致（sandbox-isolation 10、skills-authoring 4、env-distro-toolchain 3、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1）；另 1 条 `create-core`「applies the settings migration」因 runs 版本号写死为 8，已改为 9 并单跑通过。`pnpm typecheck` / `pnpm lint` 通过；W1 e2e `browser.spec` 10/11，失败为基线「删除 Bot 后其浏览器分区数据不存在」。）
 - [x] P1（本轮：W3-P1、W6；W4、W8 暂缓）同上，收尾全量一次。（2026-10-09 完成：两项均经独立复查并修正；收尾全量 2029 例 / 29 条失败，其中 28 条为容器基线（同 P0），1 条 `agents-service`「agent-type login」为已知负载偶发、单跑 4/4 通过。`pnpm typecheck` / `pnpm lint` 通过。e2e 未新增。）
   - P1 补做（W4、W8，2026-10-09 用户决定继续）：两项均经独立复查并修正（W4 修正 2 个阻断：非用户拒绝不算拒绝、超时未答的 ask_user 不算同意）；新增 runs 迁移 `0010`；收尾全量 2094 例 / 28 条失败，与容器基线一致（原基线 e2e「删除 Bot 后其浏览器分区数据不存在」已由 W8 修复）；`pnpm typecheck` / `pnpm lint` 通过；e2e `browser.spec` 13/13、`approvals.spec` 3/3。
-- [ ] P2（W7）同上，收尾全量一次。——W7 已恢复实施（2026-10-09 用户决定），在独立 worktree `t/borrowings-w7` 进行；原 W9 已删除
+- [x] P2（W7）同上，收尾全量一次。（2026-10-09 完成：W7 经独立复查并修正（0c864de）；收尾全量 2224 例 / 28 条失败，全部为容器基线；`pnpm typecheck` / `pnpm lint` 通过；e2e `browser.spec` 14/14 通过（含 W1 / W7 / W8 用例）。原 W9 已删除。）
 - [x] 交付说明列出每项新增 / 修改的文件，供 Pengfei 回写设计文档（D 编号见 §6）。（2026-10-09 完成：各项文件清单见对应实施记录与提交 60e57d7 / 9e81194 / 68c6522 / a43ffe5 / 8cb925b）
   - 设计 / 开发文档回写已于 2026-10-09 由回写会话完成（清单见 §6 末段），Pengfei 复核即可。
 - [x] 全程无 push / PR（提交已获用户授权，见文首）。（截至 2026-10-09：本方案提交均在本地 main，未 push、未开 PR）
