@@ -28,8 +28,10 @@
 | runs | `0006_tasks.sql` | `runs` 增任务列与 `(conversation_id, loop_type, status)` 索引 |
 | runs | `0007_turn_loop_type.sql` | `runs.loop_type` 的 `'response'` → `'turn'` |
 | runs | `0008_turn_trigger.sql` | `runs` 增 `trigger_parts_json`、`retry_of_run_id` |
+| runs | `0009_tool_effects.sql` | D78（borrowings W2）：新表 `tool_effects`；`runs` 增索引 `runs_by_parent` |
+| main | `0021_delegation_intent.sql` | D71 修订（borrowings W6）：`delegations` 重建（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`，增索引 `delegations_status`） |
 
-  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延：D73 从 main `0021`、runs `0009` 起编号。
+  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，D73 从 main `0022` 起编号（不改 runs 库，以目录实况为准）。
 
 ### 全文检索与中文
 
@@ -588,7 +590,7 @@ CREATE TABLE runs (
   output_message_ids_json TEXT NOT NULL DEFAULT '[]',
   summary              TEXT,
   continued_from_run_ids_json TEXT,    -- 续接来源 run id 列表（Loop 续接，design/02）；null＝无续接
-  error_json           TEXT,           -- {message, setup?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空
+  error_json           TEXT,           -- {message, setup?, reason?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（D78：`permission_revoked`，`Run.errorReason`）
   parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
   engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
@@ -607,6 +609,7 @@ CREATE TABLE runs (
 CREATE INDEX runs_by_conv ON runs(conversation_id, created_at);
 CREATE INDEX runs_by_bot ON runs(bot_id, created_at);
 CREATE INDEX runs_by_conv_loop_status ON runs(conversation_id, loop_type, status);  -- 0006
+CREATE INDEX runs_by_parent ON runs(parent_run_id);  -- 0009：台账沿续接链收集子代理子 run
 ```
 
 - 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
@@ -629,6 +632,38 @@ CREATE TABLE run_steps (
 ```
 
 `request` 类型记录每次发给模型的完整上下文（“模型看到的一切都在日志里”），便于排查；写入前脱敏。
+
+- 浏览器敏感输入（D77）：`browser_type` 声明 `sensitive` 或命中密码框时，tool_call 步骤的 `text` 写成 `«redacted:N chars»`（执行中才发现的密码框经 `RunsService.replaceStepPayload` 改写已落盘的那条 tool_call），该值登记为本 run 的敏感值，之后落盘的各类步骤里出现的原文替换为 `«redacted»`（`agent/step-persistence.ts` 的按工具参数脱敏表）。浏览器动作的 tool_result payload 带 `outcome`（`not_started` / `completed` / `uncertain`，旧行没有）；台账结为 uncertain 而工具未给出结局的调用，宿主补 `outcome:'uncertain'`。
+
+### tool_effects（D78，runs 0009）
+
+外部副作用台账（[design/24 §10](../design/24-durable-execution.md#10-第一步外部副作用台账d78已实现)）：有外部副作用（`external`）的工具调用执行前写一行、结束后结。只读与本地可撤销的调用不记，沙箱内命令不记。
+
+```sql
+CREATE TABLE tool_effects (
+  id            TEXT PRIMARY KEY,                -- eff_...
+  run_id        TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  tool_call_id  TEXT NOT NULL,                   -- 同一 run 内重复的 id 存为 id#2、id#3…
+  tool_name     TEXT NOT NULL,
+  effect_key    TEXT NOT NULL,                   -- runId:tool:args_hash[:16]:occurrence
+  args_hash     TEXT NOT NULL,                   -- 脱敏后规范化参数 JSON 的 sha256
+  summary       TEXT NOT NULL,                   -- 已脱敏、≤200 字
+  approval_id   TEXT,                            -- main.approvals.id（跨库，无外键）
+  status        TEXT NOT NULL CHECK (status IN (
+                  'intended', 'executing', 'completed', 'failed', 'uncertain', 'denied')),
+  receipt_json  TEXT,                            -- 工具自报回执 {url?, externalId?, note?}（目前无工具填写）
+  created_at    INTEGER NOT NULL,
+  settled_at    INTEGER,
+  UNIQUE (run_id, tool_call_id)
+);
+CREATE INDEX tool_effects_by_run ON tool_effects(run_id, created_at);
+CREATE INDEX tool_effects_by_key ON tool_effects(effect_key);
+```
+
+- 写入：`agent/effects/recorder.ts`（`executeToolSafely` 的可选记录器，内置引擎与外部智能体宿主桥共用）；确认模式下批准的 `bash` 命令只在网关决定沙箱外执行时经 tool-call scope 的 `escalate` 才写行；`request_unsandboxed` 在 `agent/effects/classify.ts` 归 `external`，审批前就写行，被拒结为 `denied`。审批经 `noteApproval` 回填 `approval_id`（只认同一 run、仍在 `executing` 的行）。记录器出错只记日志。
+- `occurrence` 在写入事务里按（run、工具、`args_hash`）计数。`settle` 只改 `executing` / `uncertain` 行；`intended` 预留未用。
+- 恢复：`ToolEffectsStore.markExecutingUncertain()`（启动恢复第 0 步，全表；撤销授权中断时按 run 列表）；`settleUnapproved(runIds, approvalIds)` 把审批被取消的 `executing` 行结为 `denied`。
+- 读取：`listForRun`、`listForRuns`、`chainRunIds(taskId)` / `listForTask(taskId)`（沿 `continued_from_run_ids_json` 向前追溯，并带上各 run 的 `parent_run_id` 子 run）；RPC `effects.list({ taskId })`。
 
 ## memory.db（每个 Bot 一个，P07 起）
 

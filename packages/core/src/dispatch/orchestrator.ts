@@ -1645,7 +1645,9 @@ export class Orchestrator {
     if (runs.length > 0) {
       this.#deps.logger.info({ runs: runs.length }, 'recovered interrupted runs');
     }
-    // D71：working 委派的 run 已被标 interrupted → 落 failed（不续跑，D49）；
+    // D71：working 委派的 run 已被标 interrupted → 按该 run 结算（已派出任务的
+    // request 进 awaiting_tasks 跟随任务，否则落 failed；不续跑，D49）；
+    // awaiting_tasks 委派按已修复的任务终态重新判定（W6）；
     // 未投递的委派重新过投递闸门（启动时邮箱全空）。
     try {
       this.#delegationHost.recover();

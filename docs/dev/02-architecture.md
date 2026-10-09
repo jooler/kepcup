@@ -37,7 +37,7 @@ flowchart LR
   - `events.ts`：核心服务推送给界面的事件及其载荷 schema。
 - 方法命名 `领域.动作`，例如 `conversations.list`、`drafts.add`、`drafts.flush`、`messages.recall`、`runs.cancel`、`approvals.decide`。
 - 核心服务在 RPC 层用 zod 校验所有输入；校验失败返回 `INVALID_INPUT`。
-- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。
+- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）。
 - 界面只通过事件更新状态，不轮询。
 
 ## 核心服务模块
@@ -263,7 +263,9 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
   answerQuestion(messageId, answer): void;                        // tasks.answer：点选直注任务
   // 宿主 / RPC
   cancelById(taskId, reason): Run | null;            // runs.cancel / 更新闸门
-  retry(taskId): Run;                                // runs.retry：失败任务 → 接续它的新任务（同简报）
+  retry(taskId, { reviewed? }): Run;                 // runs.retry：失败 / 中断任务 → 接续它的新任务（同简报）；中断且有待核实的台账行时须 reviewed，否则 REVIEW_REQUIRED（D78）
+  interrupt(taskId, reason): Run | null;             // D78：撤销授权 → 中止、取消待决审批、台账 executing → uncertain、结算 interrupted
+  interruptForRevocation(event): number;             // 撤销事件（permissions/revocations.ts）→ 受影响的进行中任务
   view(taskId): TaskView | null; activeViews(conversationId): TaskView[]; publishUpdate(taskId): void;
   settle(taskId, { status, resultText?, error?, setup? }): Run | null;  // 幂等
   markConsumed(taskIds): void;                       // 对话轮终态（§3.2 消费）
@@ -281,7 +283,7 @@ class TaskHost implements TaskToolFacade {           // tools/task-tools.ts 的�
 - **结算次序**：终态条目（`appendTaskEvent`，唯一索引幂等；写失败而对话仍在 → 留在 `#unsettled`，由 sweep 重试，任务保持非终态）→ runs 终态 → `onSettled`（once 授权、挂起审批、未在执行时释放租约）→ 唤醒判定 → `wake(botId, conversationId, entry)`（orchestrator：`mailbox.deliver({ reason: 'task', messages: [entry] })`）或直接 `markConsumed`。宿主主动停下的任务当场结算，其执行在 `finish()` 前仍占名额与写入目标。
 - **sweep**（start.ts 每 `TASK_SETTLE_SWEEP_MS`）：重试 `#unsettled`；驱逐结算后超过 `TASK_SETTLE_SWEEP_MS` 仍未退场的执行（`releaseExecution`）；超过 `TASK_QUESTION_TTL_MS` 的未答问题按「用户未回答」解除；`TASK_MAX_WALL_MS`（扣除等问题回答的时间）/ `TASK_TOKEN_BUDGET` 超限强制 `failed`；`#pump`；对账（未消费终态任务重投，已投递未消费超过 `TASK_REDELIVER_AFTER_MS` 才重投；被 Bot 持有的不投——进行中或已创建仍在调度器排队的对话轮的触发（`#startTurn` 起记入 `#turnTaskHolds`）、或该 mailbox 的缓冲（`heldByTurn`）；每次成功的投递（`wake` 未抛错）在终态条目的 `deliveries` 上计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 标记消费并发可见的 `task_result_undelivered` 提示）；`onSweep`（orchestrator 关闭超过 `CONTINUATION_WINDOW_MS` 的任务外部智能体会话）。
 - **界面**：`start` / `retry` 写一张共享任务卡（`kind='card'`，`cardType='task'`，`TASK_CARD`）；`ask` 先写 `question` 条目再推送问题卡（`system_event`，`TASK_QUESTION_EVENT='task_question'`，`taskBotId` = 提问的 Bot；条目写失败则卡片作废），等待期间经 `yieldSlotWhile`（`Scheduler.yieldSlotWhile`，按任务 run id，带任务的中止信号）让出 provider 名额、写租约保留，墙钟在拿回名额后才恢复，被取消时不拿回名额直接收尾；每次可见变化（`run.status`、注入、注入降级、排队原因变化、回答）推送 `task.updated`（`TaskView`）。
-- 启动恢复（§7.4）：`recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 与审批取消、委派恢复 → `resume()`（orchestrator `recoverInterrupted`）。
+- 启动恢复（§7.4）：台账 `markExecutingUncertain()`（D78 第 0 步）→ `recover()` → `markAllActiveInterrupted({ exceptLoopTypes: ['task'] })` 与审批取消、委派恢复 → `resume()`（orchestrator `recoverInterrupted`）。
 
 ### 分发器
 

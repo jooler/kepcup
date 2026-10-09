@@ -196,7 +196,7 @@
 
 ### DEV-012 跨 Bot 委派（D71）的结果仍取被委派方「那一个对话轮」的回复（D75 W2）
 
-- 状态：已决定（用户 2026-10-08 确认，按推荐方案）
+- 状态：已落实（2026-10-09，方案二按用户决定修订后实现，borrowings W6，commit `8cb925b`）
 - 阶段：D75 W2
 - 是否阻塞：否
 - 问题：D71 把 B 的「被委派 run」终态时的最终回复贴回 A 作结果卡。D75 后 B 被委派触发的是**对话轮**（只读、秒级）：需要动手的委派，B 只能派任务并回复「我去做」，这句话就会作为结果贴回 A，真正的结果之后出现在 B 的私聊里、不回到 A。design/30 §1.2 说「D71 不变」，没有覆盖这一点。
@@ -207,6 +207,10 @@
 - 推荐：2，作为 D75 收口后的独立修订；本期按 1。
 - 决定：用户确认（2026-10-08），按推荐方案。
 - 已更新的文档（W5，2026-10-08，原标「待确认」，用户确认后已去掉）：design/30 §1.2、design/27 D75 说明、design/02「跨 Bot 委派」、docs/dev/04-agent-runtime（对话轮版平台规则第 11 条）。
+- 修订决定（用户 2026-10-09）：方案二的结果规则改为「**各任务结果摘要拼接**」，不再是原文的「消费任务结果的下一个对话轮的最终回复」；同时 `delegate_to_bot` 增 `intent`（`request` / `question` / `fyi`），只有 `request` 跟随任务。
+- 实现（borrowings W6，`todo/borrowings-from-personal-agents.md`）：main `0021_delegation_intent.sql` 重建 `delegations`（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`）；`request` 的委派轮派出了任务（`origin_run_id`）时委派转 `awaiting_tasks`，沿续接链跟到最新一环，全部终态后按派出顺序拼接结果（总长 ≤ `DELEGATION_RESULT_MAX_CHARS`，未完成的标注状态；失败 / 中断的任务等 B 消费过结果再定局）；任务终态挂在 TaskHost 既有的 `onSettled` 回调与新增的 `onConsumed` 上（`tasks.ts` 只动 deps 接口与 `markConsumed`）；取消委派一并停任务，A 侧删除除外（用户决定）；等待没有单独超时，靠任务墙钟兜底。
+- 代价（随修订决定一并记录）：B 的任务原始结果不经 B 的对话轮整理就直接到 A（以 `<untrusted>` 交给 A、结果卡给用户看）；此前 B 有机会先筛一遍。
+- 已更新的文档（2026-10-09 回写）：design/27（文件头、D71 决策、§2.3 说明、§3.1 / §3.2、新增 §3.6）、design/30 §1.2、design/02「跨 Bot 委派」、design/README（D71 行）、docs/dev/04-agent-runtime（对话轮版平台规则、工具目录、触发段）、docs/dev/03-data-model（delegations，W6 实施时已同步）。
 
 ### DEV-013 `create_skill` 留在对话轮工具面（D75 W2 审查 L5）
 

@@ -9,6 +9,8 @@ Journal 与 resume 落在 KepCup 自有 `runs` / `run_steps` 与工具网关之�
 ## 决策
 
 > **D75 修订**：durable / ephemeral 的分级对象由「响应 run」改为「**任务**」——对话轮一律 ephemeral（秒级，崩溃即中断、不恢复），需要 journal 与工具 replay 的本来就是长任务。D67 尚未实现：目前任务也一律 ephemeral，崩溃后按 D75 的启动修复补成 `interrupted` 并写失败条目，唤醒对话轮告诉用户（[02 崩溃与恢复](02-execution.md#崩溃与恢复)）。下文「续跑中的新消息仍走 D2 soft steer（`<new_messages>`）」随 D2 修订而变：新消息进入下一个对话轮，由 Bot 用 `inject_task` 转给任务（注入格式为 `<task_inject>`）。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
+>
+> **D78（D67 第一步，已实现）**：外部副作用台账 `tool_effects`——只记账、不续跑，回答「中断时哪些外部动作可能已经发生」，并支撑中断任务的「检查后重试」。见 §10。journal、工具 `replay` 声明与 durable resume 仍未实现。
 
 - **D67 长任务崩溃恢复**：Host Durable Journal。run 分两级——**ephemeral**（默认；崩溃仍走 `orchestrator.recoverInterrupted`，标 `interrupted`、对话提示、取消未决审批，**不**自动继续，即 D49，适用范围收窄到这一级）与 **durable**（长任务；启动扫描后按 journal + 工具 `replay` 策略 resume）。不把 `@earendil-works/pi-durable` 定为全体 Bot Runtime。续跑中的新消息仍走 D2 soft steer（`<new_messages>`）。群聊不因崩溃重跑整轮 triage，只恢复已升为 durable 的成员 run。
 
@@ -121,8 +123,52 @@ Project 写入继续配合 D30 影子 git。tool settle 记录 before/after oid�
 
 ## 9 实现分期（文档级）
 
-1. 常量与 schema：`durable` 标记、`effects` 表、工具 `replay` 元数据。
+1. 常量与 schema：`durable` 标记、`effects` 表、工具 `replay` 元数据。（`effects` 表的一部分已由 §10 的 `tool_effects` 台账（D78）落地：只记外部副作用、不支撑续跑。）
 2. 拆分启动恢复：`finalizeEphemeral`（今日 `orchestrator.recoverInterrupted` 的 ephemeral 路径）与 `resumeDurable`。
 3. 网关三类 replay，以及 `send_message` 的 idempotent。
 4. 杀进程集成测试，再接 SubAgent 级联（含后台与 fan-out）。
 5. Pi Durable 单车道对比 spike：**不做**（与 D67「不定为 Runtime」一致；需要时另开评估，不写入本分期）。
+
+## 10 第一步：外部副作用台账（D78，已实现）
+
+D67 的 tool 生命周期 `opened → running → settled` 先落一个最小子集：只给**有外部副作用**的工具调用记「执行前写、结束后结」的一行，不续跑。D67 落地时并入 journal / receipt。
+
+### 10.1 副作用类别
+
+`agent/effects/classify.ts` `effectClassOf`，与 §5 的 replay 类对齐：
+
+| 类别 | 含义 | 例 | 台账 |
+|---|---|---|---|
+| `none` | 只读、重做安全（≈ `safe`） | read / grep、`web_*`、`browser_snapshot` / `screenshot` / `open` / `scroll` / `back`、只读 MCP | 不记 |
+| `local` | 只改本机或应用内状态，可撤销 / 可重做 | write / edit、记忆、定时、普通 `send_message`、任务管理、**沙箱内的 `bash`**、媒体生成、`delegate_task` | 不记 |
+| `external` | 离开本机或不可撤销（≈ `unsafe`） | `browser_click` / `type` / `press`、写入 / 破坏性 MCP（按调用时风险档，取更严一档）、`git_remote`、`request_unsandboxed` 与确认模式下批准后在沙箱外执行的命令、`delegate_to_bot`、带 `mention_bot_ids` 的 `send_message` | 记 |
+
+- 全部内置工具名逐个登记（单测扫描工具源码断言无遗漏），**未登记的工具名一律按 `external`**（只多记一行）。外部智能体宿主桥上的工具同样经此记录。
+- 沙箱内执行的命令（含联网命令）按 `local`、不进台账——逐条记录会让几乎每个编程任务都要求「检查后重试」。检查面板与 `<effects_before_interrupt>` 都写明「沙箱内执行的命令不在此清单中」。
+
+### 10.2 表与状态
+
+runs.db `0009_tool_effects.sql`（字段见 [dev/03-data-model.md](../dev/03-data-model.md#tool_effectsd78runs-0009)）：一次调用一行，`run_id` 外键随 run 清理；`summary` 是脱敏后（参数脱敏表 + `secrets.redact`，`browser_type.text` 一律不入）≤200 字的「做了什么」；`effect_key = runId:tool:sha256(规范化脱敏参数)[:16]:occurrence`；`approval_id` 关联本次调用最近一次审批（跨库，无外键）。
+
+| 状态 | 何时 |
+|---|---|
+| `executing` | 执行前写入（确认模式下批准的 `bash` 命令只在网关决定沙箱外执行时经 `escalate` 才写；`request_unsandboxed` 本身归 `external`，审批前就写，被拒则结为 `denied`） |
+| `completed` | 工具返回 `ok:true` |
+| `failed` | 其它失败，含 `not_started`；但 run 已被中止时的失败记 `uncertain` |
+| `uncertain` | 工具报告结果不确定（浏览器 `BROWSER_OUTCOME_UNKNOWN`、MCP 调用传输失败）、工具抛异常、中断时仍在执行 |
+| `denied` | 审批被拒，或中断时其审批被取消 |
+| `intended` | 预留（D78 未使用） |
+
+- `settle` 只改 `executing` / `uncertain` 行：恢复改成 `uncertain` 之后真实结果仍可落定。记录器出错只记日志，不影响工具结果。
+- 台账结为 `uncertain` 而工具没给出结局时，宿主给工具结果补 `outcome:'uncertain'` 写入执行记录，续接摘要不依赖台账也能标注。
+
+### 10.3 恢复、读取与使用
+
+- **启动恢复第 0 步**：`orchestrator.recoverInterrupted` 在修复任务之前执行一条 `UPDATE … SET status='uncertain' WHERE status='executing'`（幂等）——启动时没有活着的 run，同时覆盖任务、对话轮、子代理与外部智能体的 run，且先于任务失败摘要的生成。撤销授权中断任务时对该任务及其子 run 做同样的事（先把被取消审批的行结为 `denied`）。
+- **读取**：`effects.list({ taskId })` 沿 `continued_from_run_ids` 向前收集整条重试 / 接续链及各 run 的子代理子 run，按时间排序（给任务卡的检查面板用）。
+- **使用**：续接摘要与任务失败摘要把未返回结果或结果不确定的外部调用标「[结果未知]」；`interrupted` 任务的重试闸门与接续任务的 `<effects_before_interrupt>` 段见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
+
+### 10.4 未实现
+
+- 审批幂等（同一外部动作已完成 / 已拒绝时不再弹卡）与审批卡上的执行回执——原计划同属 D78，暂缓；`ToolResult.effect.receipt` 已留口，但目前没有工具填写，`receipt_json` 恒为空。
+- 本节之外的 D67 全部内容：journal、工具 `replay` 声明、durable 分级与 resume。

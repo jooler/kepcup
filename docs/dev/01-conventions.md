@@ -131,6 +131,7 @@ kepcup/
 | 敏感数据 | `sec_` | |
 | 连锁（Bot 间触发链） | `chn_` | |
 | 跨 Bot 委派（D71） | `dlg_` | |
+| 外部副作用台账行（D78） | `eff_` | |
 
 ## 可调参数
 
@@ -143,7 +144,8 @@ kepcup/
 | `SUMMARY_TRIGGER_UNSUMMARIZED` | 50 | 未被摘要覆盖的消息超过该数量时更新滚动摘要 |
 | `BOT_CHAIN_MAX_DEPTH` | 3 | Bot 间 @ 连锁的最大层数 |
 | `DELEGATION_MAX_DEPTH` | 1 | 跨 Bot 委派深度（D71；首期一律单跳，被委派 run 不能再委派） |
-| `DELEGATION_RESULT_MAX_CHARS` | 2000 | B 终回复贴回 A 结果卡的截断长度 |
+| `DELEGATION_RESULT_MAX_CHARS` | 2000 | 贴回 A 结果卡的截断长度（B 的终回复，或 W6 跟随任务时各任务结果拼接的总长） |
+| `DELEGATION_FYI_MAX_PER_RUN` | 3 | A 的同一轮给同一个 Bot 最多发几条 `fyi` 告知（W6，`dispatch/delegation.ts`） |
 | `DELEGATION_TASK_MAX_CHARS` | 4000 | 单次 `delegate_to_bot` 的 task 文本上限 |
 | `BUTLER_TEAM_SIZE_MIN` / `BUTLER_TEAM_SIZE_MAX` | 3 / 5 | 管家 `propose_team` 的建议 Bot 数量范围 |
 | `TRIAGE_TIMEOUT_MS` | 20000 | 群聊判断超时 |
@@ -171,6 +173,9 @@ kepcup/
 | `TASK_EVENT_CONTEXT_MAX_CHARS` | 600 | 最近窗口里任务进度与较早任务条目的截断长度 |
 | `TASK_TRIGGER_RESULT_MAX_CHARS` | 12000 | 触发段里任务结果全文的硬顶 |
 | `GRANT_ABSOLUTE_TTL_MS` | 10 分钟 | 一次性授权的绝对时限（D37 收紧） |
+| `TURN_MCP_READ_TOOLS_MAX` | 20 | 进对话轮 / 只读子代理工具面的只读 MCP 工具数上限（D65 修订，W5） |
+| `TURN_MCP_RESOLVE_TIMEOUT_MS` | 3000 | 对话轮等待解析 MCP 工具面的上限，超时本轮不带 MCP 工具（W5） |
+| `BROWSER_NO_PROGRESS_LIMIT` | 3 | 同一浏览器动作连续几次页面不变后拦下下一次（D77） |
 
 ## 日志
 
