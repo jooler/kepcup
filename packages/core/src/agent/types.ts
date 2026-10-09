@@ -74,7 +74,17 @@ export type EngineEvent =
     }
   | {
       type: 'tool_result';
-      payload: { toolCallId: string; toolName: string; ok: boolean; content: string };
+      payload: {
+        toolCallId: string;
+        toolName: string;
+        ok: boolean;
+        content: string;
+        errorCode?: string;
+        /** W1: browser action outcome (persisted in run_steps; see ToolResult.outcome). */
+        outcome?: ToolOutcome;
+        /** W1: params found sensitive at execution time (see ToolResult.sensitiveParams). */
+        sensitiveParams?: string[];
+      };
     }
   | { type: 'progress'; payload: { text: string } }
   | { type: 'steer'; payload: { text: string } };
@@ -204,7 +214,22 @@ export interface ToolResult {
   images?: Array<{ mimeType: string; base64: string }>;
   errorCode?: string;
   terminate?: boolean;
+  /**
+   * W1 浏览器动作三态结局（browser_open / click / type / press / scroll /
+   * back 填写，其它工具不填）：not_started = 没做（可重试）、completed = 做了
+   * （别重放）、uncertain = 派发后出错（errorCode BROWSER_OUTCOME_UNKNOWN，先
+   * 快照核实）。随 tool_result 步骤落盘，续接摘要据此标「结果未知」。
+   */
+  outcome?: ToolOutcome;
+  /**
+   * W1：执行时才发现敏感的参数名（browser_type 的目标是密码框而模型没标
+   * sensitive）。步骤落盘据此把已写入的 tool_call 参数改成脱敏占位，并从此后
+   * 的步骤里抹掉这些值（agent/step-persistence.ts）。
+   */
+  sensitiveParams?: string[];
 }
+
+export type ToolOutcome = 'not_started' | 'completed' | 'uncertain';
 
 export interface ToolDefinition<P = unknown> {
   name: string;

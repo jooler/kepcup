@@ -323,6 +323,11 @@ export const BROWSER_PRESS_KEYS = [
   'End',
 ] as const;
 export type BrowserPressKey = (typeof BROWSER_PRESS_KEYS)[number];
+/**
+ * W1 重复动作熔断：同一动作签名连续这么多次执行后页面快照都没变，下一次同签名
+ * 动作直接拒绝（BROWSER_NO_PROGRESS），提示换做法或 ask_user。
+ */
+export const BROWSER_NO_PROGRESS_LIMIT = 3;
 
 // --- Auto-update gate (P13 任务 2) ----------------------------------------------
 

@@ -59,6 +59,12 @@ describe('buildSnapshotSummary', () => {
     expect(summary.elements).toHaveLength(BROWSER_SNAPSHOT_MAX_ELEMENTS);
     expect(summary.elements[0]?.ref).toBe('e1');
     expect(summary.elementsTruncated).toBe(true);
+    // W1: the cap stays at 150; the note tells the model how many are left.
+    expect(summary.elementsOmitted).toBe(400 - BROWSER_SNAPSHOT_MAX_ELEMENTS);
+    const rendered = formatSnapshot(summary, { title: 't', url: 'http://x/' });
+    expect(rendered).toContain(
+      `还有 ${400 - BROWSER_SNAPSHOT_MAX_ELEMENTS} 个元素未列出，可 browser_scroll 或缩小范围`,
+    );
   });
 
   test('caps page text and marks it truncated', () => {

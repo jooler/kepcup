@@ -14,7 +14,8 @@ import {
   waitForRun,
   type FakeBrowserHost,
 } from '@kepcup/testkit';
-import type { Run } from '@kepcup/shared';
+import type { Run, RunStep } from '@kepcup/shared';
+import { buildRunDigest } from '../../src/agent/context/continuation.js';
 
 /**
  * P11 浏览器工具（集成）：真实任务（D75 W2：浏览器是任务的工具，对话轮没有）
@@ -311,4 +312,57 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
       await stack.cleanup();
     }
   });
+
+  it('W1 敏感输入：密码框（未标 sensitive）与字符串 "true" 的短值，经引擎落盘后 run_steps / 续接摘要都无明文', async () => {
+    const stack = await startStack();
+    try {
+      // e1 is a password field (host-detected); e2 a plain field typed with a
+      // coerced flag and a 3-char value (CVV-like).
+      const fakeType = stack.browser.type.bind(stack.browser);
+      stack.browser.type = async (input) => {
+        await fakeType(input);
+        return { ok: true, outcome: 'completed', ...(input.ref === 'e1' ? { passwordField: true } : {}) };
+      };
+      const bot = await makeBot(stack.core, '阿密');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          instruction: '登录',
+          writes: false,
+          taskSteps: [
+            step().replyToolCall('browser_type', { ref: 'e1', text: 'Hunter-77pw' }),
+            step().replyToolCall('browser_type', { ref: 'e2', text: '739', sensitive: 'true' }),
+            step()
+              .expect((req) => JSON.stringify(req.body).includes('不回显'))
+              .replyText('已登录'),
+          ],
+          relay: '已登录',
+        }),
+      );
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '帮我登录' }]);
+      const task = await waitForRun(stack.core, conv.id, 'completed', { loopType: 'task' });
+      // The host really received the text (only the records are redacted).
+      expect(
+        stack.browser.calls.filter((c) => c.method === 'browser.type').map((c) => (c.input as { text: string }).text),
+      ).toEqual(['Hunter-77pw', '739']);
+
+      const { steps } = (await stack.core.rpc.call('runs.steps', { runId: task.id })) as { steps: RunStep[] };
+      expect(steps.some((s) => s.type === 'request')).toBe(true);
+      const all = JSON.stringify(steps);
+      expect(all).not.toContain('Hunter-77pw');
+      expect(all).not.toMatch(/\\*"text\\*":\s*\\*"739\\*"/);
+      expect(all).toContain('«redacted:11 chars»');
+      expect(all).toContain('«redacted:3 chars»');
+
+      const digest = buildRunDigest({ run: task, steps, timeZone: 'UTC', budgetTokens: 20_000 });
+      expect(digest.length).toBeGreaterThan(0);
+      expect(digest).not.toContain('Hunter-77pw');
+      expect(digest).not.toMatch(/739/);
+    } finally {
+      await stack.cleanup();
+    }
+  });
 });
+

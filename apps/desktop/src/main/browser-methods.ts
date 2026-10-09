@@ -1,5 +1,6 @@
 import type { BROWSER_RPC_METHODS } from '@kepcup/shared';
 import {
+  browserActionOutputSchema,
   browserClickInputSchema,
   browserClearBotDataInputSchema,
   browserCloseInputSchema,
@@ -48,22 +49,22 @@ export function browserMethodSpecs(
     },
     'browser.click': {
       input: browserClickInputSchema,
-      output: okOutputSchema,
+      output: browserActionOutputSchema,
       handle: (input) => host.click(input as never),
     },
     'browser.type': {
       input: browserTypeInputSchema,
-      output: okOutputSchema,
+      output: browserActionOutputSchema,
       handle: (input) => host.type(input as never),
     },
     'browser.press': {
       input: browserPressInputSchema,
-      output: okOutputSchema,
+      output: browserActionOutputSchema,
       handle: (input) => host.press(input as never),
     },
     'browser.scroll': {
       input: browserScrollInputSchema,
-      output: okOutputSchema,
+      output: browserActionOutputSchema,
       handle: (input) => host.scroll(input as never),
     },
     'browser.screenshot': {
@@ -73,7 +74,7 @@ export function browserMethodSpecs(
     },
     'browser.back': {
       input: browserPairInputSchema,
-      output: okOutputSchema,
+      output: browserActionOutputSchema,
       handle: (input) => host.back(input as never),
     },
     'browser.close': {

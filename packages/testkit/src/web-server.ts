@@ -79,6 +79,23 @@ const POPUP_TRAP_PAGE = page(`
 <button id="http-open" type="button" onclick="window.open('/form')">打开表单页</button>
 `);
 
+/**
+ * W1 stale-ref fixture: the button keeps its DOM node (same backendNodeId) but
+ * is re-rendered with another name shortly after load — a click on the old ref
+ * must be refused (BROWSER_REF_STALE) without running the handler. The
+ * password field drives the forced-sensitive browser_type path.
+ */
+const SPA_PAGE = page(`
+<title>P11 SPA 重渲染</title>
+<h1>fixture-spa-marker</h1>
+<p id="status">SPA_STATUS=idle</p>
+<button id="target" type="button" onclick="document.getElementById('status').textContent = 'SPA_STATUS=clicked'">删除 张三</button>
+<label>登录密码 <input id="pw" name="pw" type="password"/></label>
+<script>
+  setTimeout(function () { document.getElementById('target').textContent = '删除 李四'; }, 1500);
+</script>
+`);
+
 function submitPage(query: string): string {
   return page(`<title>P11 提交完成</title><h1>fixture-submitted-marker</h1><p>SUBMITTED_QUERY=${query}</p>`);
 }
@@ -150,6 +167,9 @@ export async function startTestWebServer(): Promise<TestWebServer> {
         return;
       case '/large':
         send(largePage());
+        return;
+      case '/spa':
+        send(SPA_PAGE);
         return;
       case '/files/report.txt':
         send('fixture download payload — P11\n', 'text/plain; charset=utf-8');

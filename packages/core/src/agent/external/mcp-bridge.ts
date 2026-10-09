@@ -15,9 +15,10 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { executeToolSafely, toolResultBlocks } from '../tool-execution.js';
+import { redactToolArgs } from '../step-persistence.js';
 import { HOST_MCP_SERVER_PREFIX } from './acp/client.js';
 import { toolAnnotations } from './capabilities.js';
-import type { RunIdentity, ToolContext, ToolDefinition } from '../types.js';
+import type { RunIdentity, ToolContext, ToolDefinition, ToolOutcome, ToolResult } from '../types.js';
 
 /**
  * 宿主 MCP 桥（docs/design/28-external-agents-acp.md §4.4，D72）：把一个外部
@@ -82,6 +83,22 @@ export interface BridgeToolResultEvent {
   ok: boolean;
   content: string;
   errorCode?: string;
+  /** W1: browser action outcome / execution-time sensitive params (ToolResult). */
+  outcome?: ToolOutcome;
+  sensitiveParams?: string[];
+}
+
+/** ToolResult → the optional fields a bridge result report carries along. */
+function resultExtras(
+  result: ToolResult,
+): Pick<BridgeToolResultEvent, 'errorCode' | 'outcome' | 'sensitiveParams'> {
+  return {
+    ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+    ...(result.outcome !== undefined ? { outcome: result.outcome } : {}),
+    ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
+      ? { sensitiveParams: result.sensitiveParams }
+      : {}),
+  };
 }
 
 /** 一个 run 在桥上的绑定（由 ExternalAgentEngine 提供）。 */
@@ -381,7 +398,9 @@ export class HostMcpBridge {
     this.#deps.audit?.(binding.identity, 'agent_bridge_tool_call', {
       toolName,
       capability: meta.capability,
-      ...auditArgs(rawArgs),
+      // W1: sensitive params (browser_type.text with sensitive) never reach
+      // the audit row — the same redaction table as run_steps.
+      ...auditArgs(redactToolArgs(toolName, rawArgs).args as Record<string, unknown>),
     });
 
     let args: unknown;
@@ -453,7 +472,7 @@ export class HostMcpBridge {
             toolName,
             ok: late.ok,
             content: late.content,
-            ...(late.errorCode !== undefined ? { errorCode: late.errorCode } : {}),
+            ...resultExtras(late),
           }),
         );
         return { content: [{ type: 'text', text: notice }] };
@@ -465,7 +484,7 @@ export class HostMcpBridge {
       toolName,
       ok: result.ok,
       content: result.content,
-      ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+      ...resultExtras(result),
     });
     if (terminatedBy !== null) onTerminate(terminatedBy);
     else if (result.terminate === true) onTerminate(toolName);

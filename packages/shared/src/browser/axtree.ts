@@ -13,6 +13,8 @@ export interface AxtreeNode {
   role?: { value?: string };
   name?: { value?: string };
   value?: { value?: unknown };
+  /** AX properties (checked, expanded, selected, pressed, …). */
+  properties?: Array<{ name: string; value?: { value?: unknown } }>;
   backendDOMNodeId?: number;
 }
 
@@ -34,6 +36,8 @@ export interface SnapshotSummary {
   elements: SnapshotElement[];
   /** True when the element list hit the cap (a note is appended by the caller). */
   elementsTruncated: boolean;
+  /** Interactive elements beyond the cap (W1 截断提示「还有 N 个元素未列出」). */
+  elementsOmitted: number;
   text: string;
   textTruncated: boolean;
   /** ref → backendDOMNodeId for every emitted element. */
@@ -77,6 +81,7 @@ export function buildSnapshotSummary(nodes: AxtreeNode[], options: SnapshotOptio
   const textParts: string[] = [];
   let textChars = 0;
   let textTruncated = false;
+  let elementsOmitted = 0;
   let seenNodeIds: Set<string> | null = null;
 
   for (const node of nodes) {
@@ -99,6 +104,10 @@ export function buildSnapshotSummary(nodes: AxtreeNode[], options: SnapshotOptio
           });
           refs.set(ref, node.backendDOMNodeId);
         }
+      } else if (seenNodeIds === null || !seenNodeIds.has(node.nodeId)) {
+        if (seenNodeIds === null) seenNodeIds = new Set();
+        seenNodeIds.add(node.nodeId);
+        elementsOmitted += 1;
       }
       continue;
     }
@@ -120,6 +129,7 @@ export function buildSnapshotSummary(nodes: AxtreeNode[], options: SnapshotOptio
   return {
     elements,
     elementsTruncated: elements.length >= options.maxElements,
+    elementsOmitted,
     text: textParts.join('\n'),
     textTruncated,
     refs,
@@ -132,7 +142,9 @@ export function buildSnapshotSummary(nodes: AxtreeNode[], options: SnapshotOptio
  * re-snapshots instead of guessing.
  */
 export function formatSnapshot(
-  summary: Pick<SnapshotSummary, 'elements' | 'elementsTruncated' | 'text' | 'textTruncated'>,
+  summary: Pick<SnapshotSummary, 'elements' | 'elementsTruncated' | 'text' | 'textTruncated'> & {
+    elementsOmitted?: number | undefined;
+  },
   meta: { title: string; url: string },
 ): string {
   const lines: string[] = [];
@@ -147,7 +159,12 @@ export function formatSnapshot(
     lines.push('可交互元素：无');
   }
   if (summary.elementsTruncated) {
-    lines.push(`（元素列表已达上限 ${summary.elements.length} 个，已截断——可滚动或关闭弹层后再快照）`);
+    const omitted = summary.elementsOmitted ?? 0;
+    lines.push(
+      omitted > 0
+        ? `（元素列表已达上限 ${summary.elements.length} 个：还有 ${omitted} 个元素未列出，可 browser_scroll 或缩小范围（关闭弹层、进入子页面）后再快照）`
+        : `（元素列表已达上限 ${summary.elements.length} 个，可能还有元素未列出，可 browser_scroll 或缩小范围（关闭弹层、进入子页面）后再快照）`,
+    );
   }
   lines.push('页面文本：');
   lines.push(summary.text || '（无文本）');

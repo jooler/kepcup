@@ -68,6 +68,11 @@ export const ERROR_CODES = [
   'BROWSER_REF_UNKNOWN',
   'BROWSER_BOT_DELETED',
   'BROWSER_CONVERSATION_DELETED',
+  // W1 浏览器动作确定性：ref 指纹不符（派发前）、动作结果未知（派发后出错）、
+  // 同一动作反复执行页面不变（熔断）。
+  'BROWSER_REF_STALE',
+  'BROWSER_OUTCOME_UNKNOWN',
+  'BROWSER_NO_PROGRESS',
   // MCP (D65)
   'MCP_CONNECT_FAILED',
   'MCP_TOOL_NOT_FOUND',

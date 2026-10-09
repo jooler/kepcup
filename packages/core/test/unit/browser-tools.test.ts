@@ -3,6 +3,8 @@ import type { RunIdentity, ToolContext } from '@kepcup/core';
 import { buildBrowserTools } from '../../src/tools/browser.js';
 import type { ToolDefinition, ToolResult } from '@kepcup/core';
 import { createFakeBrowserHost } from '@kepcup/testkit';
+import { BROWSER_NO_PROGRESS_LIMIT, type BrowserSnapshotOutput } from '@kepcup/shared';
+import type { BrowserHostRpc } from '../../src/browser/facade.js';
 
 const identity: RunIdentity = {
   runId: 'run_01TEST',
@@ -44,6 +46,31 @@ function makeTools(host = fake) {
 }
 
 const fake = createFakeBrowserHost();
+
+function toolOn(host: BrowserHostRpc, name: string, runId = identity.runId): ToolDefinition {
+  const found = buildBrowserTools({
+    identity: { ...identity, runId },
+    browser: host,
+    workspacePath: '/tmp/ws',
+    projectPath: null,
+  }).find((t) => t.name === name);
+  if (!found) throw new Error(`missing tool ${name}`);
+  return found as ToolDefinition;
+}
+
+function page(button: string): BrowserSnapshotOutput {
+  return {
+    title: 'T',
+    url: 'https://x.example/',
+    elements: [
+      { ref: 'e1', role: 'button', name: button },
+      { ref: 'e2', role: 'link', name: '帮助' },
+    ],
+    elementsTruncated: false,
+    text: '正文',
+    textTruncated: false,
+  };
+}
 
 async function execute(def: ToolDefinition, params: unknown): Promise<ToolResult> {
   return def.execute(params as never, makeContext());
@@ -219,7 +246,7 @@ describe('browser tools (tool layer on a fake host)', () => {
     expect(result.content).toContain('绑定 project');
   });
 
-  test('a closed page mid-operation yields BROWSER_PAGE_CLOSED with reopen hint', async () => {
+  test('a page closed right after the action: ok (action done), PAGE_CLOSED reopen hint, no replay (W1)', async () => {
     const { AppError } = await import('@kepcup/shared');
     const host = createFakeBrowserHost();
     host.failWith('browser.snapshot', new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭'));
@@ -229,9 +256,235 @@ describe('browser tools (tool layer on a fake host)', () => {
       )!,
       { url: 'https://x.example/' },
     );
+    // Navigation went through; only the follow-up snapshot failed.
+    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe('completed');
+    expect(result.content).toContain('browser_open');
+    expect(result.content).toContain('不要重复');
+  });
+
+  test('a closed page before dispatch is a plain retryable failure (not_started)', async () => {
+    const { AppError } = await import('@kepcup/shared');
+    const host = createFakeBrowserHost();
+    host.failWith('browser.ensurePage', new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭'));
+    const result = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
     expect(result.ok).toBe(false);
     expect(result.errorCode).toBe('BROWSER_PAGE_CLOSED');
-    expect(result.content).toContain('browser_open');
+    expect(result.outcome).toBe('not_started');
+    expect(host.calls.some((c) => c.method === 'browser.click')).toBe(false);
+  });
+
+  describe('W1 action outcome (not_started / completed / uncertain)', () => {
+    test('action ok + snapshot throws → ok:true, completed, tells the model not to repeat', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith('browser.snapshot', new AppError('INTERNAL', 'Accessibility.getFullAXTree failed'));
+      const result = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      expect(result.ok).toBe(true);
+      expect(result.outcome).toBe('completed');
+      expect(result.errorCode).toBeUndefined();
+      expect(result.content).toContain('已点击 e1');
+      expect(result.content).toContain('动作已执行');
+      expect(result.content).toContain('browser_snapshot');
+      expect(result.content).toContain('不要重复');
+      expect(host.calls.filter((c) => c.method === 'browser.click')).toHaveLength(1);
+    });
+
+    test('host error tagged phase=post → BROWSER_OUTCOME_UNKNOWN (uncertain), snapshot first', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith('browser.click', new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭', { phase: 'post' }));
+      const result = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe('BROWSER_OUTCOME_UNKNOWN');
+      expect(result.outcome).toBe('uncertain');
+      expect(result.content).toContain('先 browser_snapshot 核实');
+      expect(result.content).toContain('ask_user');
+      // No follow-up snapshot is attempted on an uncertain action.
+      expect(host.calls.some((c) => c.method === 'browser.snapshot')).toBe(false);
+    });
+
+    test('host error tagged phase=pre → retryable failure with its own code (not_started)', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith(
+        'browser.type',
+        new AppError('BROWSER_REF_STALE', '元素 e3 的名称已变化，页面可能已变化', { phase: 'pre' }),
+      );
+      const result = await execute(toolOn(host, 'browser_type'), { ref: 'e3', text: 'x' });
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe('BROWSER_REF_STALE');
+      expect(result.outcome).toBe('not_started');
+      expect(result.content).toContain('动作未执行');
+    });
+
+    test('untagged errors: pre-dispatch codes are not_started, others on mutating actions uncertain', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const stale = createFakeBrowserHost();
+      stale.failWith('browser.click', new AppError('BROWSER_REF_UNKNOWN', '引用 e9 不存在'));
+      const a = await execute(toolOn(stale, 'browser_click'), { ref: 'e9' });
+      expect([a.errorCode, a.outcome]).toEqual(['BROWSER_REF_UNKNOWN', 'not_started']);
+
+      const lost = createFakeBrowserHost();
+      lost.failWith('browser.press', new AppError('INTERNAL', 'browser host disconnected'));
+      const b = await execute(toolOn(lost, 'browser_press'), { key: 'Enter' });
+      expect([b.errorCode, b.outcome]).toEqual(['BROWSER_OUTCOME_UNKNOWN', 'uncertain']);
+
+      // Navigation is safe to redo: an untagged failure stays a plain failure.
+      const nav = createFakeBrowserHost();
+      nav.failWith('browser.navigate', new AppError('BROWSER_NAVIGATION_FAILED', '超时'));
+      const c = await execute(toolOn(nav, 'browser_open'), { url: 'https://x.example/' });
+      expect([c.errorCode, c.outcome]).toEqual(['BROWSER_NAVIGATION_FAILED', 'not_started']);
+    });
+
+    test('action descriptions carry the no-replay rule', () => {
+      for (const name of ['browser_click', 'browser_type', 'browser_press', 'browser_back']) {
+        expect(toolOn(fake, name).description).toContain('不要重放');
+      }
+    });
+  });
+
+  describe('W1 no-progress breaker and screenshot dedupe', () => {
+    test('same click 3x on an unchanged page → the 4th is refused without dispatch', async () => {
+      const host = createFakeBrowserHost();
+      host.setSnapshot(page('提交'));
+      await execute(toolOn(host, 'browser_snapshot'), {});
+      for (let i = 0; i < BROWSER_NO_PROGRESS_LIMIT; i += 1) {
+        const ok = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+        expect(ok.ok).toBe(true);
+      }
+      const clicksBefore = host.calls.filter((c) => c.method === 'browser.click').length;
+      const blocked = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      expect(blocked.ok).toBe(false);
+      expect(blocked.errorCode).toBe('BROWSER_NO_PROGRESS');
+      expect(blocked.outcome).toBe('not_started');
+      expect(blocked.content).toContain('ask_user');
+      expect(host.calls.filter((c) => c.method === 'browser.click')).toHaveLength(clicksBefore);
+
+      // A different action is not blocked.
+      expect((await execute(toolOn(host, 'browser_click'), { ref: 'e2' })).ok).toBe(true);
+    });
+
+    test('the page changing resets the streak; a new run starts fresh', async () => {
+      const host = createFakeBrowserHost();
+      host.setSnapshot(page('提交'));
+      await execute(toolOn(host, 'browser_snapshot'), {});
+      for (let i = 0; i < BROWSER_NO_PROGRESS_LIMIT; i += 1) {
+        await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      }
+      // Another run (the user asked to try again) is not a loop.
+      const other = toolOn(host, 'browser_click', 'run_02OTHER');
+      expect((await execute(other, { ref: 'e1' })).ok).toBe(true);
+
+      // Same run: the page changed in between → allowed again.
+      for (let i = 0; i < BROWSER_NO_PROGRESS_LIMIT; i += 1) {
+        await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      }
+      expect((await execute(toolOn(host, 'browser_click'), { ref: 'e1' })).errorCode).toBe(
+        'BROWSER_NO_PROGRESS',
+      );
+      host.setSnapshot(page('已提交'));
+      await execute(toolOn(host, 'browser_snapshot'), {});
+      expect((await execute(toolOn(host, 'browser_click'), { ref: 'e1' })).ok).toBe(true);
+    });
+
+    test('ref renumbering alone does not count as a page change', async () => {
+      const { stripSnapshotRefs } = await import('@kepcup/shared');
+      expect(stripSnapshotRefs('- [e1] button “提交”')).toBe(stripSnapshotRefs('- [e7] button “提交”'));
+    });
+
+    test('an identical screenshot is not attached again in the same run', async () => {
+      const host = createFakeBrowserHost();
+      const first = await execute(toolOn(host, 'browser_screenshot'), {});
+      expect(first.images).toHaveLength(1);
+      const second = await execute(toolOn(host, 'browser_screenshot'), {});
+      expect(second.ok).toBe(true);
+      expect(second.images).toBeUndefined();
+      expect(second.content).toContain('截图与上一张相同，上一张仍有效');
+      // The snapshot text still rides along.
+      expect(second.content).toContain('<untrusted>');
+      // A new run never saw the earlier image.
+      const third = await execute(toolOn(host, 'browser_screenshot', 'run_03NEXT'), {});
+      expect(third.images).toHaveLength(1);
+    });
+  });
+
+  describe('W1 review fixes', () => {
+    test('uncertain wording carries no reopen hint', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith('browser.click', new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭', { phase: 'post' }));
+      const result = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      expect(result.errorCode).toBe('BROWSER_OUTCOME_UNKNOWN');
+      expect(result.content).not.toContain('browser_open');
+    });
+
+    test('a failed type into a password field still reports the param for redaction', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith(
+        'browser.type',
+        new AppError('BROWSER_REF_STALE', '元素 e2 当前处于禁用状态', { phase: 'pre', passwordField: true }),
+      );
+      const result = await execute(toolOn(host, 'browser_type'), { ref: 'e2', text: 'pw-9' });
+      expect(result.outcome).toBe('not_started');
+      expect(result.sensitiveParams).toEqual(['text']);
+    });
+
+    test('a changed AX state digest (stepper value, checkbox) counts as progress', async () => {
+      const base = createFakeBrowserHost();
+      base.setSnapshot(page('+'));
+      let n = 0;
+      const host = { ...base, snapshot: async () => ({ ...page('+'), stateDigest: `d${n++}` }) };
+      await execute(toolOn(host, 'browser_snapshot'), {});
+      for (let i = 0; i < BROWSER_NO_PROGRESS_LIMIT + 2; i += 1) {
+        expect((await execute(toolOn(host, 'browser_click'), { ref: 'e1' })).ok).toBe(true);
+      }
+    });
+
+    test('deletion cascade forgets the page state (permanent close / clearBotData)', async () => {
+      const { createBrowserHostRpc, browserPageState } = await import('../../src/browser/facade.js');
+      const rpc = createBrowserHostRpc();
+      rpc.bindFacade(createFakeBrowserHost());
+      const key = { botId: identity.botId!, conversationId: identity.conversationId! };
+      browserPageState(rpc, key, 'run_a').screenshotHash = 'h';
+      await rpc.close({ ...key, permanent: true });
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBeNull();
+      browserPageState(rpc, key, 'run_a').screenshotHash = 'h';
+      await rpc.clearBotData({ botId: key.botId });
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBeNull();
+    });
+  });
+
+  describe('W1 sensitive input', () => {
+    test('sensitive=true: the text is never echoed (statement or snapshot)', async () => {
+      const host = createFakeBrowserHost();
+      host.setSnapshot({ ...page('登录'), text: '回显：hunter2-secret' });
+      const result = await execute(toolOn(host, 'browser_type'), {
+        ref: 'e1',
+        text: 'hunter2-secret',
+        sensitive: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.content).not.toContain('hunter2-secret');
+      expect(result.content).toContain('不回显');
+      // Always reported, even when declared: pi may have coerced a string
+      // "true" the persistence table did not see as sensitive.
+      expect(result.sensitiveParams).toEqual(['text']);
+      // The host still received the real text (params object untouched).
+      const typed = host.calls.find((c) => c.method === 'browser.type')?.input as { text: string };
+      expect(typed.text).toBe('hunter2-secret');
+    });
+
+    test('a password field forces sensitive handling and reports the param for late redaction', async () => {
+      const base = createFakeBrowserHost();
+      const host = { ...base, type: async () => ({ ok: true as const, outcome: 'completed' as const, passwordField: true }) };
+      base.setSnapshot({ ...page('密码'), text: 'pw: s3cret-pass' });
+      const result = await execute(toolOn(host, 'browser_type'), { ref: 'e1', text: 's3cret-pass' });
+      expect(result.ok).toBe(true);
+      expect(result.content).not.toContain('s3cret-pass');
+      expect(result.sensitiveParams).toEqual(['text']);
+    });
   });
 
   test('no conversation context → no tools (background loops never browse)', () => {
