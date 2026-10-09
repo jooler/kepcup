@@ -6,6 +6,8 @@ import {
   profileChangeApprovalPayloadSchema,
   skillImportApprovalPayloadSchema,
   mcpToolApprovalPayloadSchema,
+  mcpToolRiskSchema,
+  type McpToolRisk,
   skillPresetApprovalPayloadSchema,
   type Approval,
   type ApprovalDecision,
@@ -290,7 +292,18 @@ export class ApprovalsService {
           process.platform,
           workspace !== null ? [workspace] : [],
         ));
-    const touches = touchesDataDir || gitRemoteTouchesDataDir || agentToolTouches;
+    // mcp_tool（W5，D65 修订；todo/borrowings-from-personal-agents.md W5
+    // 设计 4，已定「自动豁免」）：无人值守下 MCP 工具调用**所有风险档**
+    // （read / write / destructive）都自动批准——无人值守是用户开关（D53），
+    // 开了即接受自动批准；不拒绝、不排队、不设逐工具无人值守白名单。收紧手段
+    // 只有 Bot 详情 MCP 区的常驻风险提示与审计：payload 带 risk（网关写入），
+    // approval_auto 审计记风险档，网关的 mcp_tool_call 审计记
+    // unattendedAutoApproved（§5 护栏 7）。MCP 工具不经宿主文件系统，数据目录
+    // 底线不适用；这一豁免只属于 mcp_tool，不外溢到其他 kind（§5 护栏 2）。
+    const mcpToolUnattended = kind === 'mcp_tool';
+    const touches = mcpToolUnattended
+      ? false
+      : touchesDataDir || gitRemoteTouchesDataDir || agentToolTouches;
     const status: ApprovalStatus = touches ? 'denied' : 'approved';
     const approval = this.#insert(identity, kind, payload, {
       status,
@@ -316,6 +329,7 @@ export class ApprovalsService {
       kind,
       approved: status === 'approved',
       refused: touches,
+      ...(mcpToolUnattended ? { risk: mcpRiskOf(payload) ?? 'unknown' } : {}),
     });
     this.#deps.logger.info(
       { approvalId: approval.id, kind, approved: status === 'approved' },
@@ -652,7 +666,8 @@ export class ApprovalsService {
         if (!payload.success) return 'MCP 工具调用请求';
         const data = payload.data;
         const args = data.argsSummary.length > 0 ? `，参数 ${data.argsSummary}` : '';
-        return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${args}）`;
+        const risk = data.risk !== undefined ? `，${MCP_RISK_LABELS[data.risk]}` : '';
+        return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${risk}${args}）`;
       }
       case 'agent_tool':
         return `${botName} ${describeAgentTool(approval.payload)}`;
@@ -790,6 +805,31 @@ export class ApprovalsService {
           return approval.autoApproved === true
             ? `[系统] 已拒绝${actor}${label}（无人值守模式：触及应用数据目录）`
             : `[系统] 用户拒绝${actor}${label}`;
+        case 'cancelled':
+          return `[系统] 已取消：${actor}${label}`;
+        case 'failed':
+          return `[系统] 处理失败：${actor}${label}${failureSuffix(approval)}`;
+      }
+    }
+    if (approval.kind === 'mcp_tool') {
+      const parsed = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
+      const toolName = parsed.success
+        ? parsed.data.toolName
+        : String(approval.payload['toolName'] ?? '');
+      const serverName = parsed.success ? parsed.data.serverName : '';
+      const risk = parsed.success && parsed.data.risk !== undefined ? parsed.data.risk : null;
+      const label = `调用 MCP 工具 ${toolName}${serverName.length > 0 ? `（服务器「${serverName}」）` : ''}`;
+      const riskNote = risk !== null ? MCP_RISK_LABELS[risk] : null;
+      const actor = botName.length > 0 ? `${botName} ` : '';
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${actor}${label}${riskNote !== null ? `（${riskNote}）` : ''}`;
+        case 'approved':
+          return approval.autoApproved === true
+            ? `[系统] 无人值守自动批准${riskNote !== null ? `（${riskNote}）` : ''}：${actor}${label}`
+            : `[系统] 用户允许${actor}${label}${riskNote !== null ? `（${riskNote}）` : ''}`;
+        case 'denied':
+          return `[系统] 用户拒绝${actor}${label}`;
         case 'cancelled':
           return `[系统] 已取消：${actor}${label}`;
         case 'failed':
@@ -1331,6 +1371,18 @@ function validateButlerSelection(payload: Record<string, unknown>, selection: nu
     throw new AppError('INVALID_INPUT', '勾选的条目不在提议之中');
   }
   return kept;
+}
+
+/** W5: MCP risk tiers as shown in context lines, summaries and audit notes. */
+const MCP_RISK_LABELS: Record<McpToolRisk, string> = {
+  read: '只读',
+  write: '写入',
+  destructive: '破坏性',
+};
+
+function mcpRiskOf(payload: Record<string, unknown>): McpToolRisk | null {
+  const parsed = mcpToolRiskSchema.safeParse(payload['risk']);
+  return parsed.success ? parsed.data : null;
 }
 
 /** Failure reason suffix for `renderContextLine` (BR-P08-004). */

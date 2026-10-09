@@ -269,6 +269,25 @@ export type McpServerTransport = z.infer<typeof mcpServerTransportSchema>;
 export const MCP_SECRET_ENV_PREFIX = 'secret:env:';
 export const MCP_SECRET_HEADER_PREFIX = 'secret:header:';
 
+/**
+ * MCP 工具风险档（W5，D65 修订；D73 连接应用复用同一分级器，见
+ * packages/core/src/mcp/risk.ts）。
+ */
+export const mcpToolRiskSchema = z.enum(['read', 'write', 'destructive']);
+export type McpToolRisk = z.infer<typeof mcpToolRiskSchema>;
+/** 风险判定来源：server 注解 / 按工具名推断（含名字一票否决）/ 缺省取严。 */
+export const mcpToolRiskSourceSchema = z.enum(['annotation', 'name', 'default']);
+export type McpToolRiskSource = z.infer<typeof mcpToolRiskSourceSchema>;
+/** 逐工具审批策略：auto = 免审批，ask = 每次确认。 */
+export const mcpToolApprovalModeSchema = z.enum(['auto', 'ask']);
+export type McpToolApprovalMode = z.infer<typeof mcpToolApprovalModeSchema>;
+export const mcpToolPolicySchema = z.object({
+  approval: mcpToolApprovalModeSchema.optional(),
+  /** 默认 true；false = 不暴露给模型（任务与对话轮都不注册）。 */
+  enabled: z.boolean().optional(),
+});
+export type McpToolPolicy = z.infer<typeof mcpToolPolicySchema>;
+
 export const mcpServerSchema = z.object({
   id: z.string().min(1).max(64),
   name: z.string().min(1).max(100),
@@ -285,8 +304,18 @@ export const mcpServerSchema = z.object({
   headers: z.record(z.string(), z.string()).optional(),
   /** 应用级启用开关；关 = 所有 Bot 均不可见（连接与工具注册都跳过）。 */
   enabled: z.boolean().default(false),
-  /** 免审批开关（默认关）：开启后该 server 的工具调用不再弹审批卡。 */
+  /**
+   * 免审批开关（默认关）：开启后该 server 的工具调用不再弹审批卡（W5：等价于
+   * 所有工具 approval:'auto'，逐工具 toolPolicies 的 'ask' 可再收回）。
+   */
   autoApprove: z.boolean().default(false),
+  /**
+   * 逐工具策略（W5，D65 修订）：键为 MCP 原始工具名。approval 覆盖默认
+   * （默认：只读→auto，写入 / 破坏性→ask；server autoApprove→auto）；
+   * enabled:false 则不暴露给模型。按名字存：刷新工具列表后保留，工具消失时
+   * 配置保留（设置页标灰）。
+   */
+  toolPolicies: z.record(z.string(), mcpToolPolicySchema).optional(),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;
 
@@ -1049,6 +1078,8 @@ export const mcpToolApprovalPayloadSchema = z.object({
   toolName: z.string(),
   /** 参数摘要（JSON 文本，截断后）。 */
   argsSummary: z.string().default(''),
+  /** 调用时解析出的风险档（W5；旧行没有）。卡片据此显示徽标。 */
+  risk: mcpToolRiskSchema.optional(),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 

@@ -6,6 +6,7 @@ import {
   McpConnectionClosedError,
   type CallToolResult,
   type Tool as McpTool,
+  type ToolAnnotations,
 } from '@earendil-works/pi-mcp';
 import { SseTransport } from './sse-transport.js';
 import {
@@ -16,11 +17,13 @@ import {
   MCP_TOOL_LIST_CACHE_MS,
   MCP_TOOLS_PER_SERVER_MAX,
   type McpServer,
+  type McpToolRisksOutput,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import type { Clock } from '../infra/clock.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { SettingsService } from '../domain/settings.js';
+import { classifyRiskDetailed, type ToolRiskDetail } from './risk.js';
 
 /**
  * MCP 接入（D65，docs/design/23-mcp-and-subagent.md）：管理用户配置的 MCP
@@ -28,6 +31,9 @@ import type { SettingsService } from '../domain/settings.js';
  * 超限标记 failed 并发 `mcp.server_status` 事件）；tools 列表缓存 +
  * `notifications/tools/list_changed` 失效；core 关停统一 close。
  */
+
+/** W5：调用时刷新工具注解的上限（在线连接上的 tools/list；超时用已知注解）。 */
+const MCP_RISK_REFRESH_TIMEOUT_MS = 5_000;
 
 export type McpServerStatus = 'connecting' | 'connected' | 'failed' | 'closed';
 
@@ -100,6 +106,18 @@ export class McpService {
   readonly #connections = new Map<string, ConnectionState>();
   /** 连续连接/断开失败计数（serverId → failures）；成功连接后清零。 */
   readonly #failures = new Map<string, number>();
+  /**
+   * W5：每个 server 最近一次 tools/list 的注解（serverId → toolName →
+   * annotations）。连接断开 / 列表失效后仍保留，供 riskOf 同步查询；下一次
+   * listTools 整体替换（工具消失即移出）。
+   */
+  readonly #annotations = new Map<string, Map<string, ToolAnnotations | undefined>>();
+  /**
+   * W5 复查：进行中的连接（serverId → 连接中）。并发的 listTools / callTool /
+   * resolveRisk 共用同一次连接，不再各起一个进程互相覆盖、留下孤儿 client。
+   * `countFailure` 只要有一个等待者要计数（任务 / 工具调用）就计入重连预算。
+   */
+  readonly #pending = new Map<string, { promise: Promise<ConnectionState>; countFailure: boolean }>();
 
   constructor(deps: McpServiceDeps) {
     this.#deps = deps;
@@ -191,14 +209,21 @@ export class McpService {
    * server 的工具列表（懒连接 + 缓存；`tools/list_changed` 或 TTL 失效）。
    * 抛 MCP_CONNECT_FAILED（含重试超限）/ MCP_SERVER_FAILED。
    */
-  async listTools(server: McpServer): Promise<McpTool[]> {
-    const state = await this.#ensureConnected(server);
+  async listTools(
+    server: McpServer,
+    options: { countFailure?: boolean; signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<McpTool[]> {
+    const state = await this.#ensureConnected(server, options.countFailure ?? true);
     if (state.tools !== null && this.#deps.clock.now() - state.toolsCachedAt <= MCP_TOOL_LIST_CACHE_MS) {
       return state.tools;
     }
-    const tools = await state.client.listTools({ timeoutMs: MCP_CONNECT_TIMEOUT_MS });
+    const tools = await state.client.listTools({
+      timeoutMs: options.timeoutMs ?? MCP_CONNECT_TIMEOUT_MS,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
     state.tools = tools.slice(0, MCP_TOOLS_PER_SERVER_MAX);
     state.toolsCachedAt = this.#deps.clock.now();
+    this.#rememberAnnotations(server.id, state.tools);
     if (tools.length > MCP_TOOLS_PER_SERVER_MAX) {
       this.#deps.logger.warn(
         { serverId: server.id, total: tools.length, cap: MCP_TOOLS_PER_SERVER_MAX },
@@ -206,6 +231,104 @@ export class McpService {
       );
     }
     return state.tools;
+  }
+
+  /**
+   * W5：按最近一次工具列表的注解 + 工具名判定风险（同步，不连接）。未见过的
+   * 工具（列表里没有 / 从未列出）按缺省取严：destructive。
+   */
+  riskOf(serverId: string, toolName: string): ToolRiskDetail {
+    const known = this.#annotations.get(serverId);
+    if (known === undefined || !known.has(toolName)) {
+      return { risk: 'destructive', source: 'default' };
+    }
+    return classifyRiskDetailed({ name: toolName, annotations: known.get(toolName) });
+  }
+
+  /**
+   * W5：调用时重新解析风险——连接在线且工具列表已失效（`tools/list_changed`）
+   * 或过期时先刷新（随调用的 signal 中止、最多 MCP_RISK_REFRESH_TIMEOUT_MS），
+   * 注解变化在下一次调用即生效。连接不在线时**不**为判定风险去连接（不消耗
+   * 重连预算；连接由随后的 callTool 负责），直接用最近一次已知注解（没见过
+   * 的工具按 destructive）；刷新失败同样退回已知注解。
+   */
+  async resolveRisk(
+    server: McpServer,
+    toolName: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ToolRiskDetail> {
+    if (this.#connections.get(server.id)?.status === 'connected') {
+      try {
+        await this.listTools(server, {
+          countFailure: false,
+          timeoutMs: MCP_RISK_REFRESH_TIMEOUT_MS,
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+        });
+      } catch {
+        // 刷新失败：只用已知注解判定；连接问题由随后的 callTool 报出。
+      }
+    }
+    return this.riskOf(server.id, toolName);
+  }
+
+  /**
+   * W5 设置页：server 的工具及风险档。应用级启用的 server 走缓存连接；未启用
+   * 的用一次性连接（不落连接缓存，只更新注解）。
+   */
+  async describeTools(server: McpServer): Promise<
+    Array<{ name: string; description: string } & ToolRiskDetail>
+  > {
+    let tools: McpTool[];
+    if (server.enabled) {
+      // 设置页 / Bot 详情的查询不计入重连预算（只有任务与工具调用计数）。
+      tools = await this.listTools(server, { countFailure: false });
+    } else {
+      const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
+      try {
+        await this.#connectClient(client, server);
+        tools = (await client.listTools({ timeoutMs: MCP_CONNECT_TIMEOUT_MS })).slice(
+          0,
+          MCP_TOOLS_PER_SERVER_MAX,
+        );
+      } finally {
+        await client.close().catch(() => {});
+      }
+      this.#rememberAnnotations(server.id, tools);
+    }
+    return tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description ?? tool.title ?? '',
+      ...classifyRiskDetailed({ name: tool.name, annotations: tool.annotations }),
+    }));
+  }
+
+  /**
+   * W5 `mcp.toolRisks`：已保存 server 的工具风险档。toolPolicies 里有、列表里
+   * 已没有的工具以 missing:true 附在后面（设置页标灰，配置保留）；连接失败时
+   * 返回 error 与这些已配置工具。
+   */
+  async toolRisks(serverId: string): Promise<McpToolRisksOutput> {
+    const server = this.listServers().find((entry) => entry.id === serverId);
+    if (server === undefined) throw new AppError('NOT_FOUND', `MCP 服务器 ${serverId} 不存在`);
+    let listed: Array<{ name: string; description: string } & ToolRiskDetail> = [];
+    let error: string | undefined;
+    try {
+      listed = await this.describeTools(server);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    const seen = new Set(listed.map((tool) => tool.name));
+    const missing = Object.keys(server.toolPolicies ?? {})
+      .filter((name) => !seen.has(name))
+      .map((name) => ({ name, description: '', ...this.riskOf(server.id, name), missing: true }));
+    return {
+      tools: [...listed.map((tool) => ({ ...tool, missing: false })), ...missing],
+      ...(error !== undefined ? { error } : {}),
+    };
+  }
+
+  #rememberAnnotations(serverId: string, tools: McpTool[]): void {
+    this.#annotations.set(serverId, new Map(tools.map((tool) => [tool.name, tool.annotations])));
   }
 
   /** 调用 MCP 工具（审批/审计在网关层，见 ../gateway/index.ts mcpToolCall）。 */
@@ -236,6 +359,8 @@ export class McpService {
 
   /** core 关停：统一 close，全部标记 closed。 */
   async closeAll(): Promise<void> {
+    // Connects still in flight settle first so none outlives the shutdown.
+    await Promise.allSettled([...this.#pending.values()].map((entry) => entry.promise));
     for (const [serverId, state] of [...this.#connections.entries()]) {
       const server = this.listServers().find((entry) => entry.id === serverId);
       await state.client.close().catch(() => {});
@@ -250,9 +375,29 @@ export class McpService {
     this.#failures.clear();
   }
 
-  async #ensureConnected(server: McpServer): Promise<ConnectionState> {
+  /**
+   * 连接（或复用在线 / 进行中的连接）。`countFailure:false`（对话轮解析工具面、
+   * 设置页查询）的连接失败不计入 MCP_RECONNECT_MAX——否则对话轮与界面会把
+   * 预算耗光，任务也跟着显示「已停用」；已停用的 server 对所有路径都不再连。
+   */
+  async #ensureConnected(server: McpServer, countFailure = true): Promise<ConnectionState> {
     const existing = this.#connections.get(server.id);
     if (existing?.status === 'connected') return existing;
+    const inFlight = this.#pending.get(server.id);
+    if (inFlight !== undefined) {
+      if (countFailure) inFlight.countFailure = true;
+      return inFlight.promise;
+    }
+    const entry = { countFailure, promise: null as unknown as Promise<ConnectionState> };
+    entry.promise = this.#connect(server, () => entry.countFailure).finally(() => {
+      if (this.#pending.get(server.id) === entry) this.#pending.delete(server.id);
+    });
+    this.#pending.set(server.id, entry);
+    return entry.promise;
+  }
+
+  async #connect(server: McpServer, countFailure: () => boolean): Promise<ConnectionState> {
+    const existing = this.#connections.get(server.id);
     existing?.offNotification?.();
     this.#connections.delete(server.id);
     const failures = this.#failures.get(server.id) ?? 0;
@@ -269,11 +414,12 @@ export class McpService {
       await this.#connectClient(client, server);
     } catch (error) {
       await client.close().catch(() => {});
-      const attempts = failures + 1;
-      this.#failures.set(server.id, attempts);
+      const counted = countFailure();
+      const attempts = counted ? failures + 1 : failures;
+      if (counted) this.#failures.set(server.id, attempts);
       const hint = this.#endpointHint(server, error);
       const detail = `${error instanceof Error ? error.message : String(error)}${hint !== '' ? `（${hint}）` : ''}`;
-      if (attempts >= MCP_RECONNECT_MAX) {
+      if (counted && attempts >= MCP_RECONNECT_MAX) {
         this.#deps.statusSink.emit({
           serverId: server.id,
           serverName: server.name,

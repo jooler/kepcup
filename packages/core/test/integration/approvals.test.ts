@@ -473,6 +473,46 @@ describe('access approvals for file tools (P03)', () => {
     expect(state.enabled).toBe(false);
   }, 180_000);
 
+  it('auto-approves mcp_tool calls of every risk tier in unattended mode, risk in payload + audit (W5)', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小控');
+    const conv = await openDirect(core, bot.id);
+    await core.rpc.call('unattended.enable', { hours: null, acknowledgeRisk: true });
+    const approvals = core.services.domain!.approvals;
+    const identity = { runId: 'run_mcp_unattended', botId: bot.id, conversationId: conv.id, loopType: 'task' as const };
+    const outcomes = [];
+    for (const risk of ['read', 'write', 'destructive'] as const) {
+      outcomes.push(
+        await approvals.request(identity, 'mcp_tool', {
+          serverId: 'srv1',
+          serverName: '笔记服务器',
+          toolName: `tool_${risk}`,
+          argsSummary: '{}',
+          risk,
+        }),
+      );
+    }
+    // Every tier is approved on its own: no pending card, no refusal.
+    expect(outcomes.map((o) => o.decision)).toEqual(['approved', 'approved', 'approved']);
+    expect(outcomes.every((o) => o.approval.autoApproved === true)).toBe(true);
+    expect(outcomes.map((o) => o.approval.payload['risk'])).toEqual(['read', 'write', 'destructive']);
+    const listed = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+      approvals: Approval[];
+    };
+    expect(listed.approvals.filter((a) => a.kind === 'mcp_tool' && a.autoApproved)).toHaveLength(3);
+    expect(listed.approvals.some((a) => a.status === 'pending')).toBe(false);
+    // auto_approved=1 rows carry the risk into the audit trail and the summary.
+    const audit = core.services.domain!.audit.listByConversation(conv.id, 50);
+    const autoEntries = audit.filter((a) => a.action === 'approval_auto' && a.detail['kind'] === 'mcp_tool');
+    expect(autoEntries.map((a) => a.detail['risk']).sort()).toEqual(['destructive', 'read', 'write']);
+    const summary = approvals.summary();
+    expect(summary.find((row) => row.detail.includes('tool_destructive'))?.detail).toContain('破坏性');
+    // The folded context line says it was auto-approved and names the tier.
+    const line = approvals.renderContextLine(outcomes[1]!.approval);
+    expect(line).toContain('无人值守自动批准（写入）');
+    expect(line).toContain('tool_write');
+  }, 60_000);
+
   it('returns approval cards in conversation context lines (system render)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小卡');

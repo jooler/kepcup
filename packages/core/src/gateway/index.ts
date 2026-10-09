@@ -18,6 +18,7 @@ import type { GrantsService } from '../permissions/grants.js';
 import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import type { ProjectRuntime } from '../project/service.js';
+import type { McpToolDecision } from '../mcp/policy.js';
 
 export interface GatewayDeps {
   paths: AppPaths;
@@ -64,10 +65,19 @@ export interface GatewayDeps {
     readableDirs(botId: string): string[];
   };
   /**
-   * D65: the server id → autoApprove lookup for MCP tool calls (settings-
-   * driven). Absent/undefined = never auto-approve (default-deny).
+   * D65 / W5: call-time decision for an MCP tool — risk re-resolved from the
+   * server's current annotations + the saved tool policy / server autoApprove
+   * (settings-driven, re-read on every call). Absent = destructive + ask
+   * (default-deny).
    */
-  mcpAutoApprove?: ((serverId: string) => boolean) | undefined;
+  mcpToolDecision?:
+    | ((input: {
+        botId: string | null;
+        serverId: string;
+        toolName: string;
+        signal?: AbortSignal | undefined;
+      }) => Promise<McpToolDecision>)
+    | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -168,6 +178,12 @@ export function resolveStandingPath(target: string): string {
     }
   }
 }
+
+const MCP_RISK_LABELS: Record<McpToolDecision['risk'], string> = {
+  read: '只读',
+  write: '写入',
+  destructive: '破坏性',
+};
 
 /**
  * Tool gateway (docs/dev/02-architecture.md "工具网关"). Every tool side
@@ -780,9 +796,14 @@ export class ToolGateway {
   }
 
   /**
-   * MCP 工具调用（D65）：与内置工具同管道的审批 + 审计。autoApprove 的
-   * server 免卡（审批卡免了，审计照写）；无人值守模式走 D41 自动批准语义
-   * （approvals.request 的统一路径）。args 在审计 payload 里经 redact。
+   * MCP 工具调用（D65 / W5）：与内置工具同管道的审批 + 审计。
+   *
+   * 每次调用都重新解析风险与策略（工具列表刷新后注解可能变、设置可能改）：
+   * 停用的工具拒绝（MCP_TOOL_NOT_FOUND）；只读工具面（对话轮 / 子代理）上只能
+   * 调「只读 + 有效审批 auto」的工具，否则 RUN_READ_ONLY（该去任务里做）。
+   * 决定顺序 tool policy > server autoApprove > 风险档默认（read→auto，其余→ask）；
+   * 需要审批时 payload 带 risk，无人值守模式由 approvals 的 mcp_tool 显式分支
+   * 自动批准（所有风险档，§5 护栏 7：审计写风险档）。args 在审计里经 redact。
    */
   async mcpToolCall(
     identity: RunIdentity,
@@ -790,9 +811,38 @@ export class ToolGateway {
     toolName: string,
     args: Record<string, unknown>,
     options: { signal?: AbortSignal } = {},
-  ): Promise<void> {
-    const autoApprove = this.#deps.mcpAutoApprove?.(server.id) ?? false;
-    if (!autoApprove) {
+  ): Promise<{ decision: McpToolDecision; approvedBy: 'auto' | 'user' | 'unattended' }> {
+    const decision: McpToolDecision = (await this.#deps.mcpToolDecision?.({
+      botId: identity.botId,
+      serverId: server.id,
+      toolName,
+      signal: options.signal,
+    })) ?? {
+      risk: 'destructive',
+      riskSource: 'default',
+      approval: 'ask',
+      approvalSource: 'default',
+      enabled: true,
+    };
+    if (!decision.enabled) {
+      throw new AppError(
+        'MCP_TOOL_NOT_FOUND',
+        `MCP 工具 ${toolName} 已被用户停用（或其服务器已停用 / 不再分配给该 Bot），不能调用`,
+      );
+    }
+    if (
+      (identity.loopType === 'turn' || identity.loopType === 'subagent') &&
+      !(decision.risk === 'read' && decision.approval === 'auto')
+    ) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        identity.loopType === 'turn'
+          ? '该工具需要在任务中执行，请用 start_task'
+          : '该工具需要在任务中执行（子代理只能调用只读且免审批的 MCP 工具），请在结论中说明，由任务本身调用',
+      );
+    }
+    let approvedBy: 'auto' | 'user' | 'unattended' = 'auto';
+    if (decision.approval === 'ask') {
       // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
       const argsSummary = this.#deps.secrets.redact(JSON.stringify(args));
       const outcome = await this.#deps.approvals.request(
@@ -804,19 +854,30 @@ export class ToolGateway {
           toolName,
           argsSummary:
             argsSummary.length > 400 ? `${argsSummary.slice(0, 400)}…（已截断）` : argsSummary,
+          risk: decision.risk,
         },
         options,
       );
       if (outcome.decision !== 'approved') {
         throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该 MCP 工具调用');
       }
+      approvedBy = outcome.approval.autoApproved === true ? 'unattended' : 'user';
     }
     this.audit(identity, 'mcp_tool_call', {
       serverId: server.id,
       serverName: server.name,
       toolName,
       args,
+      risk: decision.risk,
+      riskSource: decision.riskSource,
+      approval: approvedBy,
+      approvalSource: decision.approvalSource,
+      unattendedAutoApproved: approvedBy === 'unattended',
+      ...(approvedBy === 'unattended'
+        ? { note: `无人值守自动批准（${MCP_RISK_LABELS[decision.risk]}）` }
+        : {}),
     });
+    return { decision, approvedBy };
   }
 
   /** Append-only audit write; details are redacted like any tool payload. */

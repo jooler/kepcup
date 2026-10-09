@@ -81,6 +81,8 @@ import {
   mcpSetSecretInputSchema,
   mcpTestInputSchema,
   mcpTestOutputSchema,
+  mcpToolRisksInputSchema,
+  mcpToolRisksOutputSchema,
   webSearchTestInputSchema,
   webSearchTestOutputSchema,
   webSearchSetKeyInputSchema,
@@ -393,6 +395,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
       services.domain!.secrets.removeValue(`mcp:${input.serverId}:${input.kind}:${input.name}`);
       return { ok: true as const };
+    }),
+    // W5：设置页逐工具策略——工具名、风险档与判定来源。
+    'mcp.toolRisks': method(mcpToolRisksInputSchema, mcpToolRisksOutputSchema, async (input) => {
+      if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      return services.mcp.toolRisks(input.serverId);
     }),
 
     // --- 联网检索（docs/design/21-web-search.md） ---------------------------

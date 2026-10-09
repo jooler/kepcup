@@ -1,5 +1,6 @@
 <script lang="ts">
   /** Shared profile form fields for bot create (dialog) and edit (right panel). */
+  import { untrack } from 'svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { Input } from '$lib/components/ui/input';
@@ -19,6 +20,8 @@
   import type { MessageKey } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
+  import { permissions } from '$lib/stores/permissions.svelte';
+  import { countRiskyTools, mcpUnattendedNotice } from '../approvals/mcp-risk';
   import {
     capabilityRows,
     engineValue,
@@ -53,6 +56,54 @@
   // D65：应用级已启用的 MCP server 才出现在勾选列表里。
   const mcpOptions = $derived(
     (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled),
+  );
+
+  // W5（§5 护栏 7）：选了任一 MCP server 就常驻风险提示；无人值守生效时取选中
+  // server 的工具风险档，含写入 / 破坏性工具则升级为警示并列出数量。
+  const selectedMcpServers = $derived(
+    mcpOptions.filter((server) => profile.runtime.mcp_server_ids.includes(server.id)),
+  );
+  let mcpRiskyCount = $state<number | null>(null);
+  let mcpRiskUnknown = $state(false);
+  // Refetch only when the selection itself changes (ids), not on every
+  // settings write — the queries connect to the servers.
+  const selectedMcpKey = $derived(selectedMcpServers.map((server) => server.id).join(','));
+  $effect(() => {
+    const key = selectedMcpKey;
+    const unattendedOn = permissions.unattended.enabled;
+    if (!unattendedOn || key.length === 0) {
+      mcpRiskyCount = null;
+      mcpRiskUnknown = false;
+      return;
+    }
+    const servers = untrack(() => selectedMcpServers);
+    let cancelled = false;
+    // An unreachable server (error / rejection) is unknown, never "0 risky".
+    void Promise.all(
+      servers.map((server) =>
+        settingsStore
+          .mcpToolRisks(server.id)
+          .then((report) =>
+            report.error !== undefined ? null : countRiskyTools(server, report.tools),
+          )
+          .catch(() => null),
+      ),
+    ).then((counts) => {
+      if (cancelled) return;
+      mcpRiskyCount = counts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
+      mcpRiskUnknown = counts.some((count) => count === null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+  const mcpNotice = $derived(
+    mcpUnattendedNotice({
+      selectedServerCount: selectedMcpServers.length,
+      unattendedEnabled: permissions.unattended.enabled,
+      riskyCount: mcpRiskyCount,
+      riskUnknown: mcpRiskUnknown,
+    }),
   );
 
   // --- 外部智能体（D72 §3）：主模型选择器扩展为「模型 / 智能体」 -----------------
@@ -492,6 +543,22 @@
         {/each}
       </div>
       <p class="text-xs text-muted-foreground">{t('contacts.mcpServersHint')}</p>
+      {#if mcpNotice.show}
+        <p
+          class={mcpNotice.warning
+            ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
+            : 'text-xs text-amber-700 dark:text-amber-400'}
+          data-testid="bot-mcp-unattended-notice"
+          data-warning={mcpNotice.warning}
+        >
+          {t('contacts.mcpUnattendedNotice')}
+          {#if mcpNotice.unknown}
+            {t('contacts.mcpUnattendedUnknown')}
+          {:else if mcpNotice.warning}
+            {t('contacts.mcpUnattendedActive', { count: mcpNotice.riskyCount })}
+          {/if}
+        </p>
+      {/if}
     </div>
   {/if}
 </div>
