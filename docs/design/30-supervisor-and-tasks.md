@@ -58,10 +58,10 @@
 
 |     | D66 `delegate_task`   | D71 `delegate_to_bot`   | D75 任务             |
 | --- | --------------------- | ----------------------- | ------------------ |
-| 执行者 | 同 Bot 的减配子 run（只读研究集） | 另一个联系人 Bot 的完整对话轮       | 同 Bot 的完整执行体       |
+| 执行者 | 同 Bot 的减配子 run（只读研究集） | 另一个联系人 Bot 的对话轮（及其为此派出的任务） | 同 Bot 的完整执行体       |
 | 发起者 | 执行中的 loop（任务内部）       | 对话轮                     | 对话轮                |
 | 消息  | 不写用户消息                | B 私聊出现代发消息              | 中间说明直达本对话；结果进 Bot 私有时间线 |
-| 回传  | 压缩结论进父 loop           | 截断原文贴回 A 为卡 + follow-up | 私有结果条目 → 对话轮转述 / 原文转发 |
+| 回传  | 压缩结论进父 loop           | 对话轮回复或各任务结果拼接，截断贴回 A 为卡 + follow-up | 私有结果条目 → 对话轮转述 / 原文转发 |
 | 并发  | 后台 / fan-out，对话级封顶    | 异步单跳                    | 对话级封顶，1 写 N 读      |
 
 
@@ -70,6 +70,8 @@
 **D71 不变**：它本来就是异步 + 结果卡 + 禁止复述的范式，本文照搬其**状态机与 settle 钩子**；「禁止复述」不沿用——D75 的任务结果经对话轮转述，天然只有一个出口（§6.1）。`delegate_to_bot` / `cancel_delegation` / `propose_`* / `suggest_route` 归入**对话轮**工具面——它们正是「立即返回、宿主干活」的那一类（`list_bots` 是只读名片，对话轮与任务都有）。
 
 > **实现期发现（见 DEV-012）**：B 被委派触发的是**对话轮**（只读、秒级）。需要动手的委派，B 只能派任务并回复「我去做」——这句话就作为结果贴回 A，真正的结果之后出现在 B 的私聊里、不回到 A。本期按「现状 + 提示词约束」：委派触发的对话轮能用只读查询答复的在本轮给出完整结果，需要动手的照常派任务并说明「结果稍后在这里给出」；「委派跟随任务结算」作为 D75 收口后的独立修订。
+>
+> **已修订（D71 修订，borrowings W6，2026-10-09）**：`delegate_to_bot` 增 `intent`（`request` / `question` / `fyi`）。`request` 的委派轮派出了任务（`origin_run_id` = 委派轮）时，委派转 `awaiting_tasks` 跟随这些任务（沿 `continued_from_run_ids` 跟到最新一环），全部终态后结果 = **各任务结果拼接**（按用户决定，替代 DEV-012 方案二原文的「消费任务结果的下一个对话轮的回复」），失败 / 中断的任务要等 B 消费过它的结果再定局；`question` 仍取对话轮回复；`fyi` 不回贴。任务终态经 TaskHost 既有的 `onSettled` 回调与新的 `onConsumed` 通知 DelegationHost。见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务d71-修订borrowings-w6)。
 
 ## 2 两层模型
 
@@ -96,13 +98,13 @@
 | 组        | 工具                                                                                                                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
-| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）             |
+| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65 修订，见 [23](23-mcp-and-subagent.md)） |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
 | 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；计入 `TURN_MAX_TURNS`                                                                                       |
 
 
-对话轮只读这条**在执行期校验**，不只靠不注册工具：与 D71 单跳同理——注册期摘除是让模型少看到无用工具的优化，工具网关按 `loop_type='turn'` 硬拒一切写路径（`RUN_READ_ONLY`）才是保障。对话轮的工具面里没有 `bash`、浏览器、媒体生成、MCP、`install_skill`、`request_environment`、`request_access`、`delegate_task`；`install_skill`（会落盘）只在任务里。
+对话轮只读这条**在执行期校验**，不只靠不注册工具：与 D71 单跳同理——注册期摘除是让模型少看到无用工具的优化，工具网关按 `loop_type='turn'` 硬拒一切写路径（`RUN_READ_ONLY`）才是保障。对话轮的工具面里没有 `bash`、浏览器、媒体生成、写入 / 需确认的 MCP 工具（网关调用时再校验，不符 → `RUN_READ_ONLY`）、`install_skill`、`request_environment`、`request_access`、`delegate_task`；`install_skill`（会落盘）只在任务里。
 
 **对话轮永不等用户**（见 DEV-014）：阻塞审批会占住（Bot, 对话）的 mailbox，用户再说什么都只能排队。因此 `propose_profile_change` 在对话轮里改为非阻塞提交——审批卡不随对话轮结束而取消，用户决定后以内部事件 `profile_change_result` 唤醒下一轮（任务里仍阻塞）；对话轮的 read / ls / find / grep 越界时当场失败（`PATH_OUT_OF_SCOPE`，提示派任务、在任务里 `request_access`），不发起访问审批，已有授权覆盖的路径照常可读。
 
@@ -246,7 +248,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
       → completed    正常结束（结果已写入私有时间线；skip_reply 时结果为空）
       → failed       执行失败（含结构化 setup 失败，D58）
       → cancelled    对话轮 cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot
-      → interrupted  进程退出或崩溃（D49）
+      → interrupted  进程退出或崩溃（D49）；运行中用户撤销授权（D78，§7.4）
 ```
 
 - **先落盘再启动**：`start_task` 工具在返回 task_id 之前就写入 `submitted` 行。崩在工具返回之前 = 没有任务；崩在之后 = 有一行 `submitted`，重启后重新排队（它还没开始，重排是安全的）。不存在「幽灵任务」这个中间态。
@@ -360,7 +362,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 [m_231 | 10:03 | 系统] 任务卡 t_91cc（Alice）「<untrusted>检查 README</untrusted>」：排队中，等写入租约（任务 t_7f3a 持有）
 ```
 
-标题是模型在 `start_task` 里起的，包在 `<untrusted>` 里（审查批 E L1）。状态取 排队中 / 进行中 / 已完成 / 失败 / 已取消 / 已中断；排队中附排队原因，等待用户回答时附「等待用户回答」。任务卡由 `start_task`（与失败任务的重试）写入，是共享行（`kind='card'`、`cardType='task'`，`task_id` = 任务），所有 Bot 与用户都看得到。`inject_task` 的追加行在卡片上标出注入状态，引擎没收下的显示「未送达」。
+标题是模型在 `start_task` 里起的，包在 `<untrusted>` 里（审查批 E L1）。状态取 排队中 / 进行中 / 已完成 / 失败 / 已取消 / 已中断；排队中附排队原因，等待用户回答时附「等待用户回答」。任务卡由 `start_task`（与失败 / 中断任务的重试）写入，是共享行（`kind='card'`、`cardType='task'`，`task_id` = 任务），所有 Bot 与用户都看得到。`inject_task` 的追加行在卡片上标出注入状态，引擎没收下的显示「未送达」。
 
 **无声路由是禁止的。** 用户发出的新指令究竟进了哪条任务、还是另起了一条，必须在对话里看得见；否则这套机制比今天的无条件注入更让人不安。
 
@@ -442,7 +444,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 ### 6.3 界面
 
-- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：project 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败任务可重试，缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
+- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：project 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败或中断的任务可重试——中断且续接链有已完成 / 结果未知的外部副作用时为「检查后重试」，§7.4；缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
 - 状态行（D55）：对话轮保留自己的一行；进行中的任务合并为另一行——一个任务显示标题 + 当前活动，多个任务显示条数 + 最近活动、可展开；排队中的写任务在**租约层**等待时保留「强制收回」按钮（任务层排队不给，见 §5.1）。任务的中间说明在消息流中标为该任务的进度。**已实现**。
 - Bot 详情栏 / 对话头部：进行中任务数。**未实现**。
 - 执行记录页：任务与对话轮分列（`loop_type` 已有），任务详情显示 `origin_run_id` 与 `continues_task_id` 的链路。**未实现**（任务卡已显示接续关系）。
@@ -478,7 +480,8 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 - 审批卡仍绑任务 run。阻塞审批阻塞任务，不阻塞对话。
 - **D37「仅这一次」的语义收紧**：今天 once-grant 随 run 结束才过期（`grants.expireForRun`），在 2 分钟的 run 里近似「一次」，在 3 小时的任务里就变成「整个任务一直允许」。改为：「仅这一次」= **单次工具调用**；需要整任务有效的用「本对话内一直允许」。另给一次性授权加绝对时限 `GRANT_ABSOLUTE_TTL_MS`（10 分钟）兜底。
 - **「单次工具调用」的落法**（见 DEV-009）：= **使用该授权的那一次工具调用**。文件工具越界当场批准的授权归批准它的那次调用，调用结束即撤销；`request_access` 的预授权不绑定申请那次调用，在被用到前不属于任何调用，由**随后第一次真正用到它的调用认领并消费**（文件工具命中，或并入某条命令的沙箱策略）；同一 run 内并行的工具调用不共享 once 授权。`bash` 把它看得见的 once 授权（自己的 + 可认领的）全部并入策略并消费——命令实际碰了哪些挂载不可观测，挂进策略即视为使用，代价是预授权之后、重跑之前若先跑了一条无关命令，预授权会被它用掉。外部智能体的权限请求「仅这一次」不落授权（批准即回答那一条请求）。所有 once 授权另受绝对时限与 run 结束兜底；自动撤销经 `grant.changed` 推送给界面。
-- 无人值守（D41/D53）语义不变。
+- 无人值守（D41/D53）语义不变；MCP 工具在无人值守下所有风险档自动批准、审计记风险档（D65 修订，见 [13](13-permissions.md#无人值守模式)）。
+- 用户在任务运行中撤销授权（路径授权、MCP 设置收紧）会立即中断受影响的任务，见 §7.4 与 [13](13-permissions.md#授权)。
 
 
 
@@ -488,15 +491,27 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 | 对象  | 规则                                                                                                             |
 | --- | -------------------------------------------------------------------------------------------------------------- |
 | 对话轮 | ephemeral，崩溃 → `interrupted`，不自动恢复，重启后提示一次                                                                     |
-| 任务  | 默认 ephemeral（同上）；可标 durable（D67 journal + 工具 replay）——**D67 的适用对象由「响应 run」改为「任务」**，这比原来更贴切：需要 journal 的本来就是长任务。D67 尚未实现，任务目前一律 ephemeral |
+| 任务  | 默认 ephemeral（同上）；可标 durable（D67 journal + 工具 replay）——**D67 的适用对象由「响应 run」改为「任务」**，这比原来更贴切：需要 journal 的本来就是长任务。D67 尚未实现，任务目前一律 ephemeral（D78 第一步台账已实现；中断任务可检查后重试，见下） |
 
 
 启动恢复次序：
 
+0. 外部副作用台账（D78，[24 §10](24-durable-execution.md#10-第一步外部副作用台账d78已实现)）里所有 `executing` 行 → `uncertain`；
 1. 非终态的对话轮 → `interrupted`；非终态的任务按 §3.2「修复」处理：已有终态条目的补齐为对应终态，没有的先写 `failure` 条目再标 `interrupted`；
 2. 释放写租约、取消挂起审批、撤销会话 token；
 3. `submitted` 的任务重新排队；
 4. 对账扫描「终态 AND `result_consumed_at IS NULL`」且应唤醒的任务，补投其结果 / 失败条目。
+
+**中断任务检查后重试（D78，修订 D49）**：
+
+- `runs.retry` / `TaskHost.retry(taskId, { reviewed? })` 接受 `failed` 与 `interrupted` 的任务，派出接续它的新任务（同一简报，幂等：已有接续任务直接返回）。`interrupted` 且续接链（`effects.list`，含子代理子 run）有 `completed` / `uncertain` / `executing` 台账行时，不带 `reviewed:true` 抛 `REVIEW_REQUIRED`、不建任务；只有 `failed` / `denied` 行或没有台账（旧任务）时直接重试。同一判定以 `TaskView.reviewRequired` 给渲染端。
+- 只有用户能传 `reviewed`：任务卡在需要检查时显示「检查后重试」，展开外部操作清单（已完成 / 结果未知 / 失败 / 已拒绝，注明「沙箱内执行的命令不在此清单中，请查看执行记录」），勾「我已核实」后才可重试。模型没有重试工具：对话轮的 `start_task({continues_task_id})` 不经这道闸门（那是用户在对话里要求的），因撤销授权而中断的任务的失败条目告诉 Bot 不要自行重新派出或接续。
+- 接续一个未完成（失败 / 取消 / 中断）的任务时——无论经用户重试还是 `continues_task_id`——宿主在任务触发段的 `<task_brief>` 前加 `<effects_before_interrupt>`：逐行列出 completed / uncertain 的外部操作（摘要包 `<untrusted>`），写明 completed 的不要重做、uncertain 的先核实；放在触发段而非上下文段，复用会话的外部智能体也能收到。续接回放与失败摘要中，没有返回或结果不确定的外部调用标「[结果未知]」。
+
+**运行中撤销授权 → 立即中断（D78）**：
+
+- 触发源只有用户主动撤销（[13 §授权](13-permissions.md#授权)）：撤销路径授权（受影响的是该授权的 Bot 在该对话里的任务；「仅这一次」授权只影响它所属 run 的任务）；MCP server 删除 / 停用 / 移出 Bot 勾选 / 关闭 `autoApprove`、逐工具停用或有效审批由免审改为确认（勾选了该 server 的 Bot 的任务）。自动失效、到期、任务自然结束、无关设置保存不算。
+- 机制：撤销 RPC（`grants.revoke`、`settings.update`、`bots.update`）在 core 内同步发出撤销事件（`permissions/revocations.ts`），`TaskHost.interruptForRevocation` 对受影响的 `running` / `waiting_approval` / `waiting_lease` 任务调用 `interrupt(taskId, 'permission_revoked')`：中止执行 → 取消任务与子 run 的待决审批（这些审批对应的台账行结为 `denied`）→ 其余 `executing` 台账行改 `uncertain` → 先写 `failure` 条目再结算 `interrupted`（`error_json.reason='permission_revoked'`，条目里也记原因）。已终态的忽略（幂等）；排队中的任务不中断；对话轮不中断。被唤醒的对话轮照常收到失败条目；渲染端收到 `tasks.interrupted { count }` 后提示「已中断 N 个进行中的任务」。
 
 
 

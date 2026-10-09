@@ -14,11 +14,11 @@
 
 | 项 | 对话轮（turn） | 任务（task） |
 |---|---|---|
-| 触发 | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试时由宿主派出接续任务 |
+| 触发 | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
 | 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 workdir 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
 | 轮数 / 时限 | `TURN_MAX_TURNS`（8）；用完仍未回复按 `failed` 结算并提示「较长的工作应派成任务」 | `RUN_MAX_TURNS`（60）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
-| 工具面 | 对话核心 + 只读查询 + 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
+| 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
 | 最终文本 | 自动作为可见消息发出（D48） | 写入私有 `result` 条目，**不直接发给用户** |
 | 深度 | — | 1：任务内 `start_task` 一律拒绝 |
 
@@ -90,7 +90,7 @@ queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额�
       → completed    结果已写入私有时间线（skip_reply 时结果为空）
       → failed       执行失败（含结构化 setup 失败、超时 / 超预算被强制结束）
       → cancelled    cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot / 移出群 / 更新闸门
-      → interrupted  进程退出或崩溃
+      → interrupted  进程退出或崩溃；运行中用户撤销授权（D78）
 ```
 
 ### 「必有结算」
@@ -130,18 +130,21 @@ Run
 
 - 每次 loop 结束都会留下执行记录。表结构见 [dev/03-data-model.md](../dev/03-data-model.md#runsp01)。
 - 重试失败的对话轮按存下的各来源段重建触发批；它派出的任务与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
-- 失败的任务（典型是缺设置）不进 mailbox 重试：设置卡完成后宿主派出一个接续它的新任务（同一简报、原消息与追加指令，`continues_task_id` 指向原任务）。
+- 失败的任务（典型是缺设置）不进 mailbox 重试：设置卡完成后宿主派出一个接续它的新任务（同一简报、原消息与追加指令，`continues_task_id` 指向原任务）。用户也可以在任务卡上重试失败或中断的任务（`runs.retry`），中断任务的检查闸门见下节。
 
 ## 崩溃与恢复
 
 对话轮与任务一律 ephemeral（D49）：不自动续跑。启动恢复次序：
 
+0. **外部副作用台账**（D78）：`tool_effects` 中所有 `executing` 行改为 `uncertain`（启动时没有活着的 run，这些调用的结果未知；先于任务修复，失败摘要据此标注「[结果未知]」）。
 1. **修复任务**（先于整批中断）：非终态任务已有终态条目的，按条目补成对应终态；已有 `cancel` 条目的补成 `cancelled`；已启动、无条目的先写 `failure` 条目再标 `interrupted`；submitted 的保留待重排。
 2. 其余非终态 run（对话轮等）标 `interrupted` 并在对话中提示一次；待确认审批取消；写租约与会话 token 本在内存中，随进程消失。
 3. D71 委派恢复。
 4. 重排 submitted 任务，再对账补投未消费的结果 / 失败条目——被中断的任务因此唤醒一个对话轮，由它告诉用户。
 
-D67（durable journal 与工具 replay，[24-durable-execution.md](24-durable-execution.md)）的适用对象改为**任务**；目前任务一律 ephemeral。
+D67（durable journal 与工具 replay，[24-durable-execution.md](24-durable-execution.md)）的适用对象改为**任务**；目前任务一律 ephemeral，只实现了第一步外部副作用台账（D78，[24 §10](24-durable-execution.md#10-第一步外部副作用台账d78已实现)）。
+
+**中断任务检查后重试**（D78，修订 D49）：被中断的任务（进程退出、运行中撤销授权）不自动续跑，但用户可以在任务卡上重试。该任务的续接链（含子代理）里有 `completed` / `uncertain`（或仍是 `executing`）的台账行时，任务卡的按钮变为「检查后重试」：展开已完成 / 结果未知 / 失败 / 已拒绝的外部操作清单，用户勾「我已核实」后才能重试（`runs.retry {reviewed:true}`，否则 `REVIEW_REQUIRED`）；只有失败 / 已拒绝的行或没有台账（旧任务）时直接重试。接续任务的触发段在任务简报前加 `<effects_before_interrupt>`：completed 的不要重做、uncertain 的先核实。对话轮的 `start_task({continues_task_id})` 不经这道闸门，但同样拿到该段。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
 ## Loop 续接
 
@@ -250,11 +253,11 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 ## 跨 Bot 委派（A→B，D71）
 
-`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。B 那一轮的最终回复截断后贴回 A 为结果卡。需要动手的委派，B 只能派任务并先回复「我去做」——这句话就是贴回 A 的结果，真正的结果之后出现在 B 的私聊里（见 DEV-012）。同群且 A/B 均在场时降级为 D4 `@`。
+`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。委派带 `intent`（D71 修订，borrowings W6）：`request`（默认）——B 那一轮没派任务时取该轮最终回复；派了任务时委派转 `awaiting_tasks`、跟随这些任务（沿续接链跟到最新一环），全部结算后把各任务结果拼接（截断到 `DELEGATION_RESULT_MAX_CHARS`，未完成的标注状态）贴回 A 为结果卡，B 那一轮的「我去做」不作为结果（DEV-012 方案二，按用户决定修订）；`question`——取 B 那一轮的最终回复，不跟随任务；`fyi`——投递即完成，不贴结果卡、不通知 A。同群且 A/B 均在场时降级为 D4 `@`。细节见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务d71-修订borrowings-w6)。
 
 ## MCP 工具
 
-用户配置的 MCP server 按「应用启用 ∩ Bot 勾选」把工具并入**任务**的工具面（对话轮不提供 MCP 工具）：调用统一走网关审批与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。
+用户配置的 MCP server 按「应用启用 ∩ Bot 勾选」把工具并入**任务**的工具面；其中风险为只读且免审批的工具（至多 20 个）也进对话轮与只读子代理（D65 修订，borrowings W5），调用时若已不再是「只读 + 免审」则被拒（`RUN_READ_ONLY`），需要派任务。调用统一走网关审批（按风险档与逐工具策略）与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。
 
 ## 主动消息
 
