@@ -209,7 +209,7 @@ P1 地基（schema + 管家身份约束 + 存量用户 ensure）
 ### 6.2 验收
 
 1. 路由卡可一键跳转；「你安排」后出现委派卡而非默默执行（产品早期）。
-2. 全量 `pnpm typecheck` + `pnpm test`；相关 e2e 绿。
+2. 迭代中跑相关测试文件与 `pnpm --filter @kepcup/core test`；交付前全量 `pnpm typecheck` + `pnpm test` 一次；相关 e2e 绿（见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）。
 3. D4 / D66 / 访谈 / 群创建回归无回归。
 
 ---

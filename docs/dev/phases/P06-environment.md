@@ -76,7 +76,7 @@ P03。
 - [x] Bot 在 workspace 中创建虚拟环境、安装依赖无需确认，缓存写入 `~/.kepcup/cache/`。（P02 机制回归 + policy 单元断言 UV_CACHE_DIR 等）
 - [x] git 命令行在三个平台上都有可用的获取途径（Windows 自动安装；macOS、Linux 引导）。（catalog 单元 + macAction/linuxGuide 实现；真机引导列跨系统清单）
 - [x] 设置页可以查看、删除已安装项；体检能发现被破坏的安装。（集成 settings operations + e2e environment.spec）
-- [x] 本阶段测试全部通过。（`pnpm test` 248 连续 3 轮全绿；`pnpm test:e2e` 17 全绿；lint/build 干净）
+- [x] 本阶段测试全部通过（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）。（`pnpm test` 248 连续 3 轮全绿；`pnpm test:e2e` 17 全绿；lint/build 干净）
 
 ## 注意事项
 

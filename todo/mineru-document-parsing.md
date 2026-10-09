@@ -80,11 +80,11 @@ Bot 需要读到 PDF（及扫描件、Office 文档、EPUB 等）的原文——
 
 ## 6. 测试计划
 
-1. **基线**：改动前全量 `pnpm test`（既有偶发时序用例按 PROGRESS 惯例隔离复跑判定）。
+1. **基线**：不重跑全量，引用 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试) 与 PROGRESS 中已记录的最近一次全量结果；偶发时序用例只单跑该文件复核。
 2. **目录守护**：`preset-skills-catalog` 全绿——catalog schema（含 vendored 字段）、mineru parse/scan 通过、name=id、description 例外生效、compatibility=compatible。
 3. **同步脚本**：`--check` 对 freshly vendored 内容报"一致"（退出码 0）；frontmatter 校验生效（临时改坏 name 应报错）。
 4. **服务层回归**：`skills-presets.test.ts` 既有用例不受 schema 新字段影响。
-5. **交付口径**：改动后全量 `pnpm test` 连续两轮绿 + `pnpm -r build` + `pnpm typecheck`。
+5. **交付口径**：迭代中跑定向测试（`node scripts/run-tests.mjs run packages/core/test/unit/skills-presets.test.ts` 等相关文件）；交付前全量 `pnpm test` 一次 + `pnpm -r build` + `pnpm typecheck`。
 
 ## 7. 已知风险与 spike 清单（运行时验证，登记不在本轮闭合）
 

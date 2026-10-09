@@ -49,7 +49,7 @@ P08（技能库/导入审批）、P17（上下文附件行含 mime）、P18（we
 2. 推荐目录无匹配时，模型用 `web_search` 找到技能仓库 → `install_skill(source_url)` → `skill_import` 卡（含扫描结果）→ 批准后按 Bot 安装并继续。
 3. 已安装的预置技能不出现在 `<recommended_skills>`；安装成功后当次 run 内模型可 `read` 到技能文件。
 4. 无人值守模式下两类安装自动批准（审计可见）；普通模式一律等待用户。
-5. `pnpm test` 全绿。
+5. `pnpm test` 全绿（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）。
 
 ## 备注
 

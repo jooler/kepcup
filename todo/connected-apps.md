@@ -82,7 +82,7 @@
 
 ### 2.2 测试环境
 
-- 命令：`pnpm test`（Electron-as-Node 跑 vitest）、`pnpm lint`、`pnpm typecheck`（已包含 desktop 的 svelte-check）。新增依赖后先 `pnpm install`。
+- 命令：迭代中跑定向测试 `node scripts/run-tests.mjs run <测试文件或目录>`、`pnpm --filter @kepcup/core test`；交付前全量 `pnpm test`（Electron-as-Node 跑 vitest）一次、`pnpm lint`、`pnpm typecheck`（已包含 desktop 的 svelte-check）。详见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)。新增依赖后先 `pnpm install`。
 - 本机 Ubuntu 22.04 的 glibc 与 `es-git` 不兼容、缺 `socat`：按 `todo/acp-external-agents.md` 附录 A.3 在 Debian 13 容器中运行；沙箱类用例超时属环境限制，不计入回归判断。
 - 所有 OAuth 测试只用 testkit 的假服务（P0 §4.1），**不访问真实网络**；真实服务验证放在 spike 脚本里、需用户登录态（附录 A）。
 
@@ -237,7 +237,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 - 自定义 OAuth server 在假服务器的 CIMD / DCR / 手填三条路径上均可连接、调用、刷新、断开（含吊销）。
 - run 中授权失效只出现对话内卡片，不弹浏览器；重连后 `runs.retry` 完成任务。
-- 安全测试通过（令牌零泄露）；D65 既有 MCP 测试全绿。
+- 安全测试通过（令牌零泄露）；D65 既有 MCP 测试全绿（跑 MCP 相关测试文件即可，全量留到交付前一次）。
 - （用户待办 U1 完成后）`verify.mjs` 对 `https://kepcup.com/oauth/client.json` 通过；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（记录在 PROGRESS）。
 
 ---
@@ -331,7 +331,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 - 风险分级：`readOnlyHint:true` 免审；`destructiveHint:false` 写工具弹卡且可选三种时长；缺注解写工具按 destructive 处理且无人值守下挂起。
 - 工具锁定：假服务器修改某工具描述后，该工具从 Bot 工具集消失，复核后恢复。
 - ACP Bot 勾选 `apps` 包后可调用应用工具，审批一致。
-- 安全测试仍通过；D65 / D72 回归全绿。
+- 安全测试仍通过；D65 / D72 回归全绿（跑相关测试文件即可，全量留到交付前一次）。
 
 ---
 

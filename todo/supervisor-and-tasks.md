@@ -13,7 +13,7 @@
    `/tmp/claude-1000/-home-jyy-www-kepcup/9137b434-97a0-4439-b938-4ec9b3375ec8/scratchpad/ctest.sh <你的 worktree 绝对路径> "node scripts/run-tests.mjs run <测试文件或目录>"`
    不要在容器里跑 `pnpm test` / `pnpm install`（会触发依赖检查并破坏 `node_modules`）。typecheck / lint 在宿主跑：`pnpm -r typecheck`、`pnpm lint`。
    `projects.test.ts` 已按 D75 重写（`5aa0d3c`），容器里约 18 s，只剩 1 条沙箱用例按基线失败。宿主 `timeout` 只杀 docker 客户端、杀不掉容器，需要硬超时用同目录的 `crun.sh <容器名> <worktree> <秒> "<命令>"`。vitest `--outputFile` 必须写到 worktree 内（容器里的 `/tmp` 不挂载到宿主）。
-6. **基线失败**：容器里沙箱 / bwrap / socat 相关用例本来就失败（见 §6 基线清单）。你的交付标准是「不新增失败」，不是「全绿」。
+6. **基线失败**：容器里沙箱 / bwrap / socat 相关用例本来就失败（见 §6 基线清单）。你的交付标准是「不新增失败」，不是「全绿」。开发中先跑定向测试，交付前全量一次；不要为建基线在改动前重跑全量。
 7. 提交：Conventional Commits（`feat(core): …`），每个提交可构建；提交信息末尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`。只提交到你自己的分支，不要 push，不要合并别的分支。
 8. 设计与现实冲突、契约不够用、验收无法达成 → 停下受影响部分，写进 `docs/dev/DEVIATIONS.md`（新编号 DEV-xxx），继续不受影响的部分，并在交付说明里点名。不要擅自改设计决策。
 9. 交付说明（你的最终回复）必须包含：提交列表、改动文件、新增 / 修改的测试及容器内结果（通过数 / 失败数，失败是否都在基线内）、typecheck / lint 结果、偏差与遗留。
@@ -31,7 +31,7 @@
 | 3 | **W3 消息与界面** | 任务卡、`task.updated`、状态行、进度渲染、问题卡直注（§4.3、§6、§2.4.6 UI） | W2 | 实际在 W2 与修复批 D 之后 |
 | 4 | **W5 收口** | 02 重写、docs/dev 同步、全量回归、审查修复（§10、§11 T6） | 全部 | 单独 |
 
-每个工作流交付后由调度会话合并进 `d75`，跑一次容器全量回归，并安排独立审查（审查者不是作者）。
+工作流作者在开发中只跑定向测试（相关文件 / 所在包），交付前容器全量一次；调度会话合并一批后再跑一次容器全量回归，并安排独立审查（审查者不是作者）。全量里的偶发失败只单跑该文件复核（见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）。
 
 **实际执行顺序**（`git log --first-parent d75`）：W0 → W1 三路（C、B、A）→ W1 审查批 A / B 与复核 → **W4 与 W2 并行**（W2 拆为 W2 core 与 W2-D66 两个分支）：W4 `ad5a749` → W2-D66 `6fdb4a9` → W2 `4ae4076` → 修复批 C（W4 / D66 审查）`267dc12` → 合并修正 `9661b5d` → 外部智能体测试迁移 xa1 `1d8ed8b`、xa2 `f9fb528` → 修复批 D（W2 审查）`a1bfcd8` → **W3** `da97adc` → 合并修正 `26e15f2` → W5（文档）。W4 先于 W2 合入时 `start_task` 尚未注册到任何工具面，`agent:*` 不留回复名额的前提由 W2 在同一变更里补齐（§5 W4 审查 M1）。
 

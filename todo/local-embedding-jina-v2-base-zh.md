@@ -79,7 +79,7 @@
 2. 中英及中英混杂短句语义方向正确（同义高、无关低）；至少覆盖：纯中、纯英、中英混合各一组。
 3. macOS arm64 warm 单条耗时**实测记录**（原 ≤50ms 预算对 161M 可能偏紧——以实测为准写入 PROGRESS；若 >80ms 在开放项给出截断长度/量化取舍建议，**不擅自换回 bge**）。
 4. 已安装旧 bge 的用户：换 catalog 版本后走既有安装/重建路径，旧向量表按新 embedder id/dim 重建，检索不崩。
-5. `pnpm test` 相关单测/集成更新并通过；catalog sha256/体积校验通过。
+5. 相关单测/集成更新并通过（`node scripts/run-tests.mjs run <相关测试文件>`），交付前全量 `pnpm test` 一次（见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）；catalog sha256/体积校验通过。
 
 
 

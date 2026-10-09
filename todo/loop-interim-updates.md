@@ -147,7 +147,7 @@
 2. 模型被提示词约束后，非关键工具调用不带文字，对话不被无意义中间文本刷屏（护栏兜底）。
 3. 中间过程数据（工具调用/结果）仍只在执行记录（run_steps）中，展开状态行可查，对话流中不出现。
 4. 群聊与直聊行为一致；失败/取消时已有中间消息保留 + 失败横幅可重试（现状行为不回归）。
-5. 既有测试全绿：core `pnpm test`、desktop e2e（含 `direct-chat.spec.ts` 等既有用例无回归）。
+5. 既有测试全绿：迭代中跑相关文件 / `pnpm --filter @kepcup/core test`、相关 e2e spec（含 `direct-chat.spec.ts`）；交付前全量 `pnpm test` 与 e2e 各一次（见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）。
 
 ## 7. 风险
 

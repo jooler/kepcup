@@ -104,7 +104,7 @@ RPC：`approvals.list`、`approvals.decide`、`grants.list`、`grants.revoke`、
 - [x] 无人值守模式开启需勾选风险确认；开启期间所有审批自动通过、横幅与托盘状态可见；`~/.kepcup` 仍不可访问；关闭后显示汇总。 — 证据：PROGRESS.md P03 第 7 条（含 BR-P03-001 修复后的命令路径底线用例）
 - [x] 窗口不在前台时出现待确认审批，收到系统通知，点击后跳转到对应对话。 — 证据：PROGRESS.md P03 第 8 条
 - [x] 左栏显示有待确认操作的对话标记。 — 证据：PROGRESS.md P03 第 9 条
-- [x] 本阶段测试全部通过。 — 证据：PROGRESS.md P03 第 10 条
+- [x] 本阶段测试全部通过（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）。 — 证据：PROGRESS.md P03 第 10 条
 
 ## 注意事项
 

@@ -55,7 +55,7 @@ P01（响应 loop、草稿队列）、P15（SETUP_REQUIRED 内联引导模式）
 3. 音频/视频附件点击后内联播放；文件 chip 点击触发保存。
 4. 配置 tts/video 能力后模型可经工具生成语音/视频并随消息发出、正确内联播放；未配置时出内联设置卡、完成后原 run 续跑。
 5. 用支持视觉的模型发图，run_steps.request 中图片为占位符（无 base64），模型答复内容证明看到了图；不支持视觉的模型收到文本提示。
-6. `pnpm test` 全绿；svelte-check/build 与基线一致。
+6. `pnpm test` 全绿（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）；svelte-check/build 与基线一致。
 
 ## 备注
 

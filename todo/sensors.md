@@ -66,7 +66,7 @@
 - [x] 据审计结果落地处理器：仅放行来源为本应用窗口的 `media`（及审计发现确实需要的其他权限），其余拒绝；dev（localhost）与打包版（实际加载协议）的来源判定都要覆盖。单测处理器纯函数。审计出现意外依赖时**停手上报**，不要硬收紧。
 - [ ] 跨平台实机验收（用户待办 / 配合）：macOS 打包版首次预览弹出授权框、拒绝后「打开系统设置」深链有效；Windows 摄像头隐私开关关闭时的报错可读；Linux 无设备 / 无 `/dev/video*` 权限时的提示。结果记录到 `todo/cross-platform-acceptance.md`。
 - [x] 文档同步（README 的「未实现」标记待实机验收后去掉）：`docs/design/README.md`（已加索引与 D76 行，实现后把「未实现」标记去掉）、`docs/design/26-voice-input.md` 硬件分区一段指向 31、`docs/dev/PROGRESS.md` 增本期小节。
-- **门禁**：全量 typecheck / lint / 单测通过（已达成）；e2e 抽样 11 例通过（sensors / skeleton / attachments / direct-chat / diagnostics；全量 e2e 未重跑）；macOS 实机验收通过（至少 dev 下预览可见）——**待用户**。
+- **门禁**：全量 typecheck / lint / 单测通过（已达成；后续迭代先跑定向测试，交付前全量一次，见 [05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）；e2e 抽样 11 例通过（sensors / skeleton / attachments / direct-chat / diagnostics；全量 e2e 未重跑）；macOS 实机验收通过（至少 dev 下预览可见）——**待用户**。
 
 ## 发现的问题 / 偏差
 
