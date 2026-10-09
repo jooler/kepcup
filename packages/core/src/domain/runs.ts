@@ -529,6 +529,18 @@ export class RunsService {
     return step;
   }
 
+  /**
+   * Rewrites one step's payload in place. The run log is otherwise append-
+   * only; the single caller is W1 sensitive-input redaction (a browser_type
+   * into a password field turns out sensitive only after its tool_call step
+   * was written — agent/step-persistence.ts).
+   */
+  replaceStepPayload(stepId: string, payload: unknown): void {
+    this.db
+      .prepare('update run_steps set payload_json = ? where id = ?')
+      .run(JSON.stringify(payload), stepId);
+  }
+
   stepsFor(runId: string): RunStep[] {
     const rows = this.db
       .prepare('select * from run_steps where run_id = ? order by seq')

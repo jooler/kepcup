@@ -1,11 +1,13 @@
 import type { ZodType } from 'zod';
 import {
   AppError,
+  browserActionOutputSchema,
   browserEnsurePageOutputSchema,
   browserNavigateOutputSchema,
   browserScreenshotOutputSchema,
   browserSnapshotOutputSchema,
   okOutputSchema,
+  type BrowserActionOutput,
   type BrowserNetworkContext,
   type BrowserScreenshotOutput,
   type BrowserSnapshotOutput,
@@ -38,12 +40,17 @@ export interface BrowserHostRpc {
   }): Promise<{ ok: true }>;
   navigate(input: BrowserPageKey & { url: string }): Promise<{ ok: true; title: string; url: string }>;
   snapshot(input: BrowserPageKey): Promise<BrowserSnapshotOutput>;
-  click(input: BrowserPageKey & { ref: string }): Promise<{ ok: true }>;
-  type(input: BrowserPageKey & { ref: string; text: string }): Promise<{ ok: true }>;
-  press(input: BrowserPageKey & { key: string }): Promise<{ ok: true }>;
-  scroll(input: BrowserPageKey & { direction: 'up' | 'down'; amount: number }): Promise<{ ok: true }>;
+  /*
+   * W1: actions resolve with `outcome: 'completed'` (+ `navigated`, and
+   * `passwordField` for type); failures are AppErrors whose `details.phase`
+   * says whether the side-effecting CDP call was already sent.
+   */
+  click(input: BrowserPageKey & { ref: string }): Promise<BrowserActionOutput>;
+  type(input: BrowserPageKey & { ref: string; text: string }): Promise<BrowserActionOutput>;
+  press(input: BrowserPageKey & { key: string }): Promise<BrowserActionOutput>;
+  scroll(input: BrowserPageKey & { direction: 'up' | 'down'; amount: number }): Promise<BrowserActionOutput>;
   screenshot(input: BrowserPageKey): Promise<BrowserScreenshotOutput>;
-  back(input: BrowserPageKey): Promise<{ ok: true }>;
+  back(input: BrowserPageKey): Promise<BrowserActionOutput>;
   close(input: BrowserPageKey & { permanent?: boolean }): Promise<{ ok: true }>;
   setNetworkContext(input: BrowserPageKey & { networkContext: BrowserNetworkContext }): Promise<{ ok: true }>;
   clearBotData(input: { botId: string }): Promise<{ ok: true }>;
@@ -110,19 +117,19 @@ class DeferredRpc implements BrowserHostRpc {
   }
 
   click(input: Parameters<BrowserHostRpc['click']>[0]) {
-    return this.#call('browser.click', input, okOutputSchema);
+    return this.#call('browser.click', input, browserActionOutputSchema);
   }
 
   type(input: Parameters<BrowserHostRpc['type']>[0]) {
-    return this.#call('browser.type', input, okOutputSchema);
+    return this.#call('browser.type', input, browserActionOutputSchema);
   }
 
   press(input: Parameters<BrowserHostRpc['press']>[0]) {
-    return this.#call('browser.press', input, okOutputSchema);
+    return this.#call('browser.press', input, browserActionOutputSchema);
   }
 
   scroll(input: Parameters<BrowserHostRpc['scroll']>[0]) {
-    return this.#call('browser.scroll', input, okOutputSchema);
+    return this.#call('browser.scroll', input, browserActionOutputSchema);
   }
 
   screenshot(input: Parameters<BrowserHostRpc['screenshot']>[0]) {
@@ -130,10 +137,12 @@ class DeferredRpc implements BrowserHostRpc {
   }
 
   back(input: Parameters<BrowserHostRpc['back']>[0]) {
-    return this.#call('browser.back', input, okOutputSchema);
+    return this.#call('browser.back', input, browserActionOutputSchema);
   }
 
   close(input: Parameters<BrowserHostRpc['close']>[0]) {
+    // Deletion cascade (permanent): forget the W1 page state with the page.
+    if (input.permanent === true) dropBrowserPageState(this, input);
     return this.#call('browser.close', input, okOutputSchema);
   }
 
@@ -142,6 +151,7 @@ class DeferredRpc implements BrowserHostRpc {
   }
 
   clearBotData(input: Parameters<BrowserHostRpc['clearBotData']>[0]) {
+    dropBotBrowserPageStates(this, input.botId);
     return this.#call('browser.clearBotData', input, okOutputSchema);
   }
 }
@@ -155,4 +165,71 @@ export type DeferredBrowserHostRpc = BrowserHostRpc & {
 /** The unbound-by-default facade used when no client was injected yet. */
 export function createBrowserHostRpc(): DeferredBrowserHostRpc {
   return new DeferredRpc();
+}
+
+// --- W1 per-page tool state ----------------------------------------------------
+
+/**
+ * Core-side memory of one bot page (W1 浏览器动作确定性, keyed `botId|conversationId`
+ * per host handle): the last snapshot's hash and element fingerprints (action
+ * signatures), the no-progress streak and the last screenshot hash. Run-scoped
+ * parts (streak, screenshot) reset when another run touches the page — a new
+ * run's model never saw the earlier screenshot, and a user-requested retry in a
+ * new turn is not a loop.
+ */
+export interface BrowserPageState {
+  runId: string;
+  /** sha256 of the last rendered snapshot with ref ids stripped (null = none yet). */
+  snapshotHash: string | null;
+  /** ref → "role|name" of the last snapshot (signature of an action on that ref). */
+  elements: Map<string, string>;
+  /** Consecutive executions of one signature that left the snapshot unchanged. */
+  streak: { signature: string; snapshotHash: string; count: number } | null;
+  /** sha256 of the last screenshot returned as an image in this run. */
+  screenshotHash: string | null;
+}
+
+/** Pages remembered per host handle (oldest dropped first). */
+const PAGE_STATE_MAX = 256;
+const pageStates = new WeakMap<object, Map<string, BrowserPageState>>();
+
+export function browserPageState(
+  host: BrowserHostRpc,
+  key: BrowserPageKey,
+  runId: string,
+): BrowserPageState {
+  let pages = pageStates.get(host);
+  if (pages === undefined) {
+    pages = new Map();
+    pageStates.set(host, pages);
+  }
+  const mapKey = `${key.botId}|${key.conversationId}`;
+  let state = pages.get(mapKey);
+  if (state === undefined) {
+    state = { runId, snapshotHash: null, elements: new Map(), streak: null, screenshotHash: null };
+    pages.set(mapKey, state);
+    if (pages.size > PAGE_STATE_MAX) {
+      const oldest = pages.keys().next().value;
+      if (oldest !== undefined) pages.delete(oldest);
+    }
+  } else if (state.runId !== runId) {
+    state.runId = runId;
+    state.streak = null;
+    state.screenshotHash = null;
+  }
+  return state;
+}
+
+/** Forgets a page (browser_close): a reopened page starts clean. */
+export function dropBrowserPageState(host: BrowserHostRpc, key: BrowserPageKey): void {
+  pageStates.get(host)?.delete(`${key.botId}|${key.conversationId}`);
+}
+
+/** Forgets every page of a bot (bot deletion: clearBotData). */
+export function dropBotBrowserPageStates(host: BrowserHostRpc, botId: string): void {
+  const pages = pageStates.get(host);
+  if (pages === undefined) return;
+  for (const key of [...pages.keys()]) {
+    if (key.startsWith(`${botId}|`)) pages.delete(key);
+  }
 }

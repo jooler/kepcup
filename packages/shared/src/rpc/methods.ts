@@ -1092,10 +1092,38 @@ export const browserSnapshotOutputSchema = z.object({
   elements: z.array(browserSnapshotElementSchema),
   /** True when the element list was capped (caller appends a note). */
   elementsTruncated: z.boolean(),
+  /** W1: interactive elements beyond the cap (not listed); absent from older hosts. */
+  elementsOmitted: z.number().int().nonnegative().optional(),
+  /**
+   * W1: sha256 of the listed elements' AX value + checked / expanded /
+   * selected / pressed state (never the values themselves) — state the
+   * snapshot text does not show, folded into the no-progress page hash.
+   */
+  stateDigest: z.string().max(128).optional(),
   text: z.string(),
   textTruncated: z.boolean(),
 });
 export type BrowserSnapshotOutput = z.infer<typeof browserSnapshotOutputSchema>;
+
+/**
+ * W1 浏览器动作三态结局：not_started（派发前失败，可安全重试）/ completed（CDP
+ * 派发成功，不要重放）/ uncertain（派发后出错，先快照核实）。宿主成功返回时恒为
+ * completed；另外两种由 core 工具层按错误的 `details.phase` 映射。
+ */
+export const browserActionOutcomeSchema = z.enum(['not_started', 'completed', 'uncertain']);
+export type BrowserActionOutcome = z.infer<typeof browserActionOutcomeSchema>;
+/** W1: browser-host tags thrown AppErrors with `details.phase` (before / after dispatch). */
+export type BrowserActionPhase = 'pre' | 'post';
+/** click / type / press / scroll / back result (W1; older hosts answer `{ ok: true }`). */
+export const browserActionOutputSchema = z.object({
+  ok: z.literal(true),
+  outcome: browserActionOutcomeSchema.optional(),
+  /** The page navigated (cross-document or same-document) while the action ran. */
+  navigated: z.boolean().optional(),
+  /** browser.type only: the target was `<input type=password>` (forced sensitive). */
+  passwordField: z.boolean().optional(),
+});
+export type BrowserActionOutput = z.infer<typeof browserActionOutputSchema>;
 
 export const browserClickInputSchema = browserPairInputSchema.extend({
   ref: z.string().min(1).max(16),
@@ -1405,12 +1433,12 @@ export const rpcMethodSchemas = {
   },
   'browser.navigate': { input: browserNavigateInputSchema, output: browserNavigateOutputSchema },
   'browser.snapshot': { input: browserPairInputSchema, output: browserSnapshotOutputSchema },
-  'browser.click': { input: browserClickInputSchema, output: okOutput },
-  'browser.type': { input: browserTypeInputSchema, output: okOutput },
-  'browser.press': { input: browserPressInputSchema, output: okOutput },
-  'browser.scroll': { input: browserScrollInputSchema, output: okOutput },
+  'browser.click': { input: browserClickInputSchema, output: browserActionOutputSchema },
+  'browser.type': { input: browserTypeInputSchema, output: browserActionOutputSchema },
+  'browser.press': { input: browserPressInputSchema, output: browserActionOutputSchema },
+  'browser.scroll': { input: browserScrollInputSchema, output: browserActionOutputSchema },
   'browser.screenshot': { input: browserPairInputSchema, output: browserScreenshotOutputSchema },
-  'browser.back': { input: browserPairInputSchema, output: okOutput },
+  'browser.back': { input: browserPairInputSchema, output: browserActionOutputSchema },
   'browser.close': { input: browserCloseInputSchema, output: okOutput },
   'browser.setNetworkContext': {
     input: browserSetNetworkContextInputSchema,

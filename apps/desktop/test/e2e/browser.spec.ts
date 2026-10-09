@@ -950,9 +950,67 @@ test('技术点③：大页面 AXTree 输出按上限截断（150 元素 / 4000 
 
     const toolText = lastToolContent(llm);
     expect(toolText).toContain('元素列表已达上限 150');
+    // W1: the cap stays at 150; the note says how many were left out.
+    expect(toolText).toContain('还有 250 个元素未列出，可 browser_scroll 或缩小范围');
     expect(toolText).toContain('（页面文本已截断）');
     const refs = toolText.match(/- \[e\d+\]/g) ?? [];
     expect(refs.length).toBe(150);
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('W1：SPA 重渲染后点旧 ref → REF_STALE 且无副作用；密码框输入不回显', async () => {
+  const testInfo = test.info();
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-browser-w1-');
+  const { page, llm, web } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '小稳');
+    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-w1-proj-'));
+
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/spa` }, 'fixture-spa-marker', 'SPA 打开了'),
+      'SPA 打开了',
+    );
+    expect(lastToolContent(llm)).toContain('- [e1] button “删除 张三”');
+
+    // The page re-renders the same button node with another name 1.5 s after
+    // load: the old ref now points at different content.
+    await page.waitForTimeout(2_000);
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_click', { ref: 'e1' }, '名称已变化', '旧引用被拒'),
+      '旧引用被拒',
+    );
+    expect(lastToolContent(llm)).toContain('动作未执行');
+
+    // No side effect: the click handler never ran.
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_snapshot', {}, 'fixture-spa-marker', '页面复查完成'),
+      '页面复查完成',
+    );
+    const after = lastToolContent(llm);
+    expect(after).toContain('SPA_STATUS=idle');
+    expect(after).toContain('删除 李四');
+
+    // A password field forces sensitive handling even without sensitive=true.
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_type', { ref: 'e2', text: 'pw-e2e-secret' }, '输入敏感内容', '密码填好了'),
+      '密码填好了',
+    );
+    expect(lastToolContent(llm)).not.toContain('pw-e2e-secret');
   } catch (error) {
     dumpRequests(llm, testInfo);
     throw error;

@@ -10,4 +10,5 @@ export * from './domain/agent-status.js';
 export * from './rpc/index.js';
 export * from './browser/net-rules.js';
 export * from './browser/axtree.js';
+export * from './browser/ref-fingerprint.js';
 export * from './update.js';

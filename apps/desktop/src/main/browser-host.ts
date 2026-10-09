@@ -12,8 +12,10 @@ import {
   buildSnapshotSummary,
   decideBrowserRequest,
   type AxtreeNode,
+  type BrowserActionOutput,
   type BrowserNetworkContext,
   type BrowserSnapshotOutput,
+  type RefFingerprint,
 } from '@kepcup/shared';
 import {
   BrowserWindow,
@@ -22,6 +24,16 @@ import {
   type Session,
   type WebContents,
 } from 'electron';
+import { pageClosed, toPageError } from './browser-action-phase.js';
+import {
+  axStateDigest,
+  backAction,
+  clickAction,
+  pressAction,
+  scrollAction,
+  typeAction,
+  type PageOps,
+} from './browser-actions.js';
 import { HostDnsResolver } from './dns-resolver.js';
 import { uniqueDownloadPath } from './download-name.js';
 
@@ -46,9 +58,14 @@ interface PageEntry {
   wc: WebContents;
   context: BrowserNetworkContext;
   downloadsDir: string;
-  /** ref → backendNodeId, valid until the next navigation or snapshot. */
-  refs: Map<string, number>;
+  /**
+   * ref → fingerprint (backendNodeId + role + name at snapshot time), valid
+   * until the next navigation or snapshot; click/type re-check it (W1).
+   */
+  refs: Map<string, RefFingerprint>;
   refsValid: boolean;
+  /** Bumped on every (cross- or same-document) navigation: `navigated` flag. */
+  navigationSeq: number;
   /** DOM agent re-initialized for the current document. */
   domReady: boolean;
   closed: boolean;
@@ -63,32 +80,6 @@ export function sessionDataRoot(env: NodeJS.ProcessEnv): string {
 export function partitionDir(root: string, botId: string): string {
   return path.join(root, 'Partitions', `bot-${botId}`);
 }
-
-/**
- * Typing keys for browser_press, mapped to CDP Input.dispatchKeyEvent fields.
- * `key` is the DOM key value — CDP has no `keyCode` param, and a key event
- * without `key` never runs Chromium's default actions. Enter carries text
- * "\r" (Playwright's shape): the renderer generates the keypress/char from
- * the text, and implicit form submission only runs from that path.
- */
-const KEY_EVENTS: Record<
-  string,
-  { key: string; code: string; windowsVirtualKeyCode: number; text?: string }
-> = {
-  Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
-  Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 },
-  Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
-  Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
-  Delete: { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 },
-  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
-  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
-  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
-  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
-  PageUp: { key: 'PageUp', code: 'PageUp', windowsVirtualKeyCode: 33 },
-  PageDown: { key: 'PageDown', code: 'PageDown', windowsVirtualKeyCode: 34 },
-  Home: { key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 },
-  End: { key: 'End', code: 'End', windowsVirtualKeyCode: 35 },
-};
 
 export class BrowserHost {
   readonly #sessionRoot: string;
@@ -176,6 +167,7 @@ export class BrowserHost {
       downloadsDir: input.downloadsDir,
       refs: new Map(),
       refsValid: false,
+      navigationSeq: 0,
       domReady: false,
       closed: false,
     };
@@ -282,99 +274,65 @@ export class BrowserHost {
       maxElements: BROWSER_SNAPSHOT_MAX_ELEMENTS,
       maxTextChars: BROWSER_SNAPSHOT_MAX_TEXT_CHARS,
     });
-    page.refs = summary.refs;
+    const fingerprints = new Map<string, RefFingerprint>();
+    for (const element of summary.elements) {
+      const backendNodeId = summary.refs.get(element.ref);
+      if (backendNodeId === undefined) continue;
+      fingerprints.set(element.ref, { backendNodeId, role: element.role, name: element.name });
+    }
+    page.refs = fingerprints;
     page.refsValid = true;
+    const stateDigest = axStateDigest(
+      tree.nodes ?? [],
+      new Set([...fingerprints.values()].map((fp) => fp.backendNodeId)),
+    );
     return {
       title: await this.#title(page),
       url: page.wc.getURL(),
       elements: summary.elements,
       elementsTruncated: summary.elementsTruncated,
+      elementsOmitted: summary.elementsOmitted,
+      stateDigest,
       text: summary.text,
       textTruncated: summary.textTruncated,
     };
   }
 
-  async click(input: { botId: string; conversationId: string; ref: string }): Promise<{ ok: true }> {
-    const page = this.#pageOf(input.botId, input.conversationId);
-    const backendNodeId = this.#refNode(page, input.ref);
-    await this.#settle(page);
-    await this.#initDomAgent(page);
-    await this.#withElement(page, backendNodeId, (objectId) =>
-      this.#send(page, 'Runtime.callFunctionOn', {
-        objectId,
-        functionDeclaration:
-          'function () { this.scrollIntoView({ block: "center" }); this.click(); }',
-      }),
-    );
-    // A click may navigate; give the load a bounded window before returning.
-    await this.#settle(page, 5_000);
-    return { ok: true };
+  /*
+   * W1 动作确定性：click / type / press / scroll / back 的流程在
+   * browser-actions.ts（无 Electron 依赖、逐个 CDP 调用点有单测）；抛出的
+   * AppError 都带 `details.phase`——派发前 'pre'，派发后（含 settle 期间页面
+   * 关闭、debugger detach）'post'。core 据此映射 not_started / uncertain。
+   */
+
+  click(input: { botId: string; conversationId: string; ref: string }): Promise<BrowserActionOutput> {
+    return clickAction(() => this.#ops(input.botId, input.conversationId), input.ref);
   }
 
-  async type(input: {
+  type(input: {
     botId: string;
     conversationId: string;
     ref: string;
     text: string;
-  }): Promise<{ ok: true }> {
-    const page = this.#pageOf(input.botId, input.conversationId);
-    const backendNodeId = this.#refNode(page, input.ref);
-    await this.#settle(page);
-    await this.#initDomAgent(page);
-    await this.#withElement(page, backendNodeId, (objectId) =>
-      this.#send(page, 'Runtime.callFunctionOn', {
-        objectId,
-        functionDeclaration:
-          'function () { this.focus(); if (typeof this.select === "function") this.select(); }',
-      }),
-    );
-    if (input.text.length > 0) {
-      await this.#send(page, 'Input.insertText', { text: input.text });
-    }
-    await delay(100);
-    return { ok: true };
+  }): Promise<BrowserActionOutput> {
+    return typeAction(() => this.#ops(input.botId, input.conversationId), input.ref, input.text);
   }
 
-  async press(input: { botId: string; conversationId: string; key: string }): Promise<{ ok: true }> {
-    const page = this.#pageOf(input.botId, input.conversationId);
-    const keyEvent = KEY_EVENTS[input.key];
-    if (!keyEvent) throw new AppError('INVALID_INPUT', `不支持的按键：${input.key}`);
-    await this.#settle(page);
-    // The exact event shape Playwright presses keys with: text-bearing keys
-    // must dispatch as type "keyDown" (rawKeyDown never yields a keypress),
-    // and keyUp repeats key/code/virtualKey without the text.
-    await this.#send(page, 'Input.dispatchKeyEvent', {
-      type: keyEvent.text === undefined ? 'rawKeyDown' : 'keyDown',
-      ...keyEvent,
-    });
-    await this.#send(page, 'Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: keyEvent.key,
-      code: keyEvent.code,
-      windowsVirtualKeyCode: keyEvent.windowsVirtualKeyCode,
-    });
-    // Enter/Tab commonly navigate or move focus.
-    await this.#settle(page, 5_000);
-    return { ok: true };
+  press(input: { botId: string; conversationId: string; key: string }): Promise<BrowserActionOutput> {
+    return pressAction(() => this.#ops(input.botId, input.conversationId), input.key);
   }
 
-  async scroll(input: {
+  scroll(input: {
     botId: string;
     conversationId: string;
     direction: 'up' | 'down';
     amount: number;
-  }): Promise<{ ok: true }> {
-    const page = this.#pageOf(input.botId, input.conversationId);
-    await this.#settle(page);
-    await this.#send(page, 'Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x: Math.floor(BROWSER_VIEWPORT_WIDTH / 2),
-      y: Math.floor(BROWSER_VIEWPORT_HEIGHT / 2),
-      deltaX: 0,
-      deltaY: input.direction === 'down' ? input.amount : -input.amount,
-    });
-    await delay(150);
-    return { ok: true };
+  }): Promise<BrowserActionOutput> {
+    return scrollAction(
+      () => this.#ops(input.botId, input.conversationId),
+      input.direction,
+      input.amount,
+    );
   }
 
   async screenshot(input: { botId: string; conversationId: string }): Promise<{
@@ -408,16 +366,8 @@ export class BrowserHost {
     };
   }
 
-  async back(input: { botId: string; conversationId: string }): Promise<{ ok: true }> {
-    const page = this.#pageOf(input.botId, input.conversationId);
-    await this.#settle(page);
-    const history = page.wc.navigationHistory;
-    if (!history.canGoBack()) {
-      throw new AppError('INVALID_INPUT', '没有上一页可以返回');
-    }
-    history.goBack();
-    await this.#settle(page, BROWSER_NAVIGATION_TIMEOUT_MS);
-    return { ok: true };
+  back(input: { botId: string; conversationId: string }): Promise<BrowserActionOutput> {
+    return backAction(() => this.#ops(input.botId, input.conversationId));
   }
 
   async close(input: {
@@ -470,6 +420,7 @@ export class BrowserHost {
     if (!page) return;
     page.refs = new Map();
     page.refsValid = false;
+    page.navigationSeq += 1;
     page.domReady = false;
   }
 
@@ -626,32 +577,30 @@ export class BrowserHost {
     page.domReady = true;
   }
 
-  #refNode(page: PageEntry, ref: string): number {
+  #refNode(page: PageEntry, ref: string): RefFingerprint {
     if (!page.refsValid || page.refs.size === 0) {
       throw new AppError('BROWSER_REF_UNKNOWN', '没有可用的元素引用，请先获取快照');
     }
-    const nodeId = page.refs.get(ref);
-    if (nodeId === undefined) {
+    const fingerprint = page.refs.get(ref);
+    if (fingerprint === undefined) {
       throw new AppError('BROWSER_REF_UNKNOWN', `引用 ${ref} 不存在或已失效，请重新获取快照`);
     }
-    return nodeId;
+    return fingerprint;
   }
 
-  async #withElement(
-    page: PageEntry,
-    backendNodeId: number,
-    fn: (objectId: string) => Promise<unknown>,
-  ): Promise<void> {
-    const resolved = (await this.#send(page, 'DOM.resolveNode', { backendNodeId })) as {
-      object?: { objectId?: string };
+  /** The page operations the action flows (browser-actions.ts) drive. */
+  #ops(botId: string, conversationId: string): PageOps {
+    const page = this.#pageOf(botId, conversationId);
+    return {
+      settle: (timeoutMs) => this.#settle(page, timeoutMs),
+      initDom: () => this.#initDomAgent(page),
+      send: (method, params) => this.#send(page, method, params),
+      refFingerprint: (ref) => this.#refNode(page, ref),
+      navigationSeq: () => page.navigationSeq,
+      canGoBack: () => page.wc.navigationHistory.canGoBack(),
+      goBack: () => page.wc.navigationHistory.goBack(),
+      delay,
     };
-    const objectId = resolved.object?.objectId;
-    if (!objectId) throw new AppError('BROWSER_REF_UNKNOWN', '元素已不可用，请重新获取快照');
-    try {
-      await fn(objectId);
-    } catch (error) {
-      throw toPageError(error);
-    }
   }
 
   async #send(page: PageEntry, method: string, params: object): Promise<unknown> {
@@ -715,20 +664,6 @@ export class BrowserHost {
 
 function pairKey(botId: string, conversationId: string): string {
   return `${botId}|${conversationId}`;
-}
-
-function pageClosed(): AppError {
-  return new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭');
-}
-
-
-function toPageError(error: unknown): AppError {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/target closed|detached|destroyed/i.test(message)) {
-    return pageClosed();
-  }
-  if (error instanceof AppError) return error;
-  return new AppError('INTERNAL', message);
 }
 
 /** True when `url` parses and its scheme is http/https (navigate + popups). */

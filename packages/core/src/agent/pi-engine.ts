@@ -107,6 +107,10 @@ export class PiEngine implements AgentEngine {
             ok: result.ok,
             content: result.content,
             ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+            ...(result.outcome !== undefined ? { outcome: result.outcome } : {}),
+            ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
+              ? { sensitiveParams: result.sensitiveParams }
+              : {}),
           },
         });
         return {
