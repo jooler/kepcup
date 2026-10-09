@@ -100,11 +100,12 @@ export function taskCardModel(task: TaskView): TaskCardModel {
 }
 
 /** Status badge of a ledger row on the review panel (W3): its i18n key suffix. */
-export type EffectBadge = 'completed' | 'uncertain' | 'failed' | 'denied';
+export type EffectBadge = 'completed' | 'uncertain' | 'failed' | 'denied' | 'pending';
 
 /**
- * 已完成 / 结果未知 / 失败 / 已拒绝. `executing` left behind (the run is gone)
- * and `intended` are shown as unknown — never as done or not done.
+ * 已完成 / 结果未知 / 失败 / 已拒绝 / 等待审批. `executing` left behind (the run
+ * is gone) is shown as unknown — never as done or not done. W4 `intended`
+ * (waiting on its approval) never ran: 等待审批（未执行）, never 结果未知.
  */
 export function effectBadge(status: EffectStatus): EffectBadge {
   switch (status) {
@@ -112,6 +113,8 @@ export function effectBadge(status: EffectStatus): EffectBadge {
     case 'failed':
     case 'denied':
       return status;
+    case 'intended':
+      return 'pending';
     default:
       return 'uncertain';
   }

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { AppError } from '@kepcup/shared';
+import { AppError, type ToolEffect } from '@kepcup/shared';
 import { closeDatabase, openDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
@@ -16,6 +16,7 @@ import { effectKeyOf, sha256Hex, stableJson } from '../../src/agent/effects/key.
 import { ToolEffectsStore } from '../../src/agent/effects/store.js';
 import {
   createEffectRecorder,
+  duplicateVerdict,
   effectStatusOf,
   EFFECT_SUMMARY_MAX_CHARS,
   ledgerArgsText,
@@ -62,10 +63,13 @@ function rig() {
   const runs = new RunsService(db, clock);
   const store = new ToolEffectsStore(db, clock);
   const warnings: string[] = [];
+  /** W4 复查 B1: approvals the "user" refused by hand (ApprovalsService.userDeniedIds). */
+  const userDenied = new Set<string>();
   const deps: EffectRecorderDeps = {
     store,
     redact: (text) => text.split(SECRET).join('«secret»'),
     logger: { warn: (_obj, msg) => warnings.push(msg) },
+    userDeniedApprovals: (ids) => new Set(ids.filter((id) => userDenied.has(id))),
   };
   const recorder = createEffectRecorder(deps);
   const run = runs.create({
@@ -102,6 +106,7 @@ function rig() {
     identity,
     ctx,
     warnings,
+    userDenied,
     close: () => closeDatabase(db),
   };
 }
@@ -773,6 +778,560 @@ describe('W2 复查后修正', () => {
         receipt: { note: 'value=«redacted»' },
       });
       expect(login!.summary).toBe('login with «redacted» («secret»)');
+    } finally {
+      r.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W4 审批幂等与回执（todo/borrowings-from-personal-agents.md W4）
+
+/**
+ * A fake MCP-like external tool that asks for approval the way the gateway
+ * does through ApprovalsService.request: gate first, then wait (intended),
+ * then run (executing).
+ */
+function approvingTool(
+  identity: RunIdentity,
+  answer: () => 'approved' | 'denied',
+  seen: Array<{ verdict: string | null; statusWhileWaiting?: string }>,
+  store: ToolEffectsStore,
+  kind = 'mcp_tool',
+): ToolDefinition {
+  return fakeTool(
+    'mcp_srv_send',
+    async (_params, ctx) => {
+      const hooks = activeEffectHooks()!;
+      const gate = hooks.approvalGate!(identity.runId, kind);
+      if (gate !== null && (gate.verdict === 'completed' || gate.verdict === 'denied')) {
+        seen.push({ verdict: gate.verdict });
+        // The tool's own denial text — executeToolSafely replaces it.
+        return { ok: false, content: '工具自己的拒绝文案', errorCode: 'APPROVAL_DENIED' };
+      }
+      hooks.noteApproval(`apr_${seen.length}`, identity.runId);
+      hooks.approvalWaiting!(identity.runId);
+      const waiting = store.listForRun(ctx.identity.runId).at(-1)!.status;
+      seen.push({ verdict: gate?.verdict ?? null, statusWhileWaiting: waiting });
+      if (answer() === 'denied') {
+        return { ok: false, content: '拒绝', errorCode: 'APPROVAL_DENIED' };
+      }
+      hooks.approvalGranted!(identity.runId);
+      return {
+        ok: true,
+        content: 'sent',
+        effect: { receipt: { url: 'https://chat.example/m/1' } },
+      };
+    },
+    { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+  );
+}
+
+describe('W4 approval dedupe gate', () => {
+  const row = (patch: Partial<ToolEffect>): ToolEffect => ({
+    id: 'eff_x',
+    runId: 'run_1',
+    toolCallId: 'c',
+    toolName: 'mcp_s_send',
+    effectKey: 'k',
+    argsHash: 'h',
+    summary: 's',
+    approvalId: null,
+    status: 'completed',
+    receipt: null,
+    createdAt: 10,
+    settledAt: 11,
+    ...patch,
+  });
+
+  it('duplicateVerdict: completed wins; else the newest user-denied / uncertain; consent clears completed and user denials only', () => {
+    const none = new Set<string>();
+    const v = (
+      rows: ToolEffect[],
+      consentAt: number | null = null,
+      userDenied = none,
+      kind?: string,
+    ) => duplicateVerdict(rows, { consentAt, userDenied, ...(kind !== undefined ? { kind } : {}) });
+    expect(v([])).toBeNull();
+    expect(v([row({ status: 'failed' })])).toBeNull();
+    expect(v([row({ status: 'executing', settledAt: null })])).toBeNull();
+    expect(v([row({ status: 'intended', settledAt: null })])).toBeNull();
+    // A completed row counts whether or not it had an approval.
+    expect(v([row({ status: 'completed', approvalId: null })])?.verdict).toBe('completed');
+    // S1: only mcp_tool is blocked; other kinds get a flagged card.
+    expect(v([row({ status: 'completed' })], null, none, 'git_remote')?.verdict).toBe('repeat');
+    expect(v([row({ status: 'completed' })], null, none, 'unsandboxed')?.verdict).toBe('repeat');
+    expect(
+      v([
+        row({ id: 'a', status: 'uncertain' }),
+        row({ id: 'b', status: 'completed', createdAt: 5 }),
+      ])?.prior.id,
+    ).toBe('b');
+    // B1: a denied row counts only when the user refused its approval by hand.
+    const deniedRows = [
+      row({ id: 'a', status: 'uncertain', createdAt: 1 }),
+      row({ id: 'b', status: 'denied', createdAt: 2, approvalId: 'apr_b' }),
+    ];
+    expect(v(deniedRows, null, new Set(['apr_b']))?.verdict).toBe('denied');
+    expect(v(deniedRows, null, new Set(['apr_b']))?.prior.approvalId).toBe('apr_b');
+    // Cancelled / interrupted / restarted while waiting, or unattended's floor: not a user denial.
+    expect(v(deniedRows)?.verdict).toBe('uncertain');
+    expect(v([row({ status: 'denied', approvalId: 'apr_x' })])).toBeNull();
+    expect(v([row({ status: 'denied', approvalId: null })], null, new Set(['apr_x']))).toBeNull();
+    expect(
+      v(
+        [
+          row({ id: 'a', status: 'denied', createdAt: 1, approvalId: 'apr_a' }),
+          row({ id: 'b', status: 'uncertain', createdAt: 2 }),
+        ],
+        null,
+        new Set(['apr_a']),
+      )?.verdict,
+    ).toBe('uncertain');
+    // B2: the user's ask_user answer after the row settled clears completed and user-denied rows…
+    expect(v([row({ status: 'completed', settledAt: 11 })], 12)).toBeNull();
+    expect(v([row({ status: 'completed', settledAt: 13 })], 12)?.verdict).toBe('completed');
+    expect(
+      v([row({ status: 'denied', approvalId: 'apr_d', settledAt: 11 })], 12, new Set(['apr_d'])),
+    ).toBeNull();
+    // …but never an uncertain one: it keeps getting the flagged card.
+    expect(v([row({ status: 'uncertain', settledAt: 11 })], 12)?.verdict).toBe('uncertain');
+  });
+
+  it('completed duplicate → DUPLICATE_EFFECT with the receipt, no new row; different args → asks again', async () => {
+    const r = rig();
+    try {
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'approved', seen, r.store);
+      const first = await executeToolSafely(tool, { to: 'ann', text: 'hi' }, r.ctx(), r.recorder);
+      expect(first.ok).toBe(true);
+      expect(seen[0]).toEqual({ verdict: null, statusWhileWaiting: 'intended' });
+      expect(r.store.listForRun(r.run.id)).toEqual([
+        expect.objectContaining({ status: 'completed', approvalId: 'apr_0' }),
+      ]);
+
+      // Same args (any key order): no approval, DUPLICATE_EFFECT, row discarded.
+      const second = await executeToolSafely(tool, { text: 'hi', to: 'ann' }, r.ctx(), r.recorder);
+      expect(second).toMatchObject({ ok: false, errorCode: 'DUPLICATE_EFFECT' });
+      expect(second.content).toContain('相同操作已在本任务中完成');
+      expect(second.content).toContain('<untrusted>https://chat.example/m/1</untrusted>');
+      expect(second.content).toContain('ask_user');
+      expect(seen[1]).toEqual({ verdict: 'completed' });
+      expect(r.store.listForRun(r.run.id)).toHaveLength(1);
+
+      // Different args: a new approval.
+      const third = await executeToolSafely(tool, { to: 'bob', text: 'hi' }, r.ctx(), r.recorder);
+      expect(third.ok).toBe(true);
+      expect(seen[2]!.verdict).toBeNull();
+      expect(r.store.listForRun(r.run.id)).toHaveLength(2);
+
+      // The user agreed through ask_user after it completed: the repeat goes through.
+      r.runs.appendStep({
+        runId: r.run.id,
+        type: 'tool_result',
+        payload: {
+          toolCallId: 'ask',
+          toolName: 'ask_user',
+          ok: true,
+          content: '用户的回答：再发一次',
+        },
+      });
+      const again = await executeToolSafely(tool, { to: 'ann', text: 'hi' }, r.ctx(), r.recorder);
+      expect(again.ok).toBe(true);
+      expect(seen[3]!.verdict).toBeNull();
+      // …once: the next identical call is a duplicate again.
+      const once = await executeToolSafely(tool, { to: 'ann', text: 'hi' }, r.ctx(), r.recorder);
+      expect(once.errorCode).toBe('DUPLICATE_EFFECT');
+    } finally {
+      r.close();
+    }
+  });
+
+  it('denied duplicate → 用户已拒绝相同操作 (ledger denied); turns and other task chains are never gated', async () => {
+    const r = rig();
+    try {
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'denied', seen, r.store);
+      const first = await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(first.errorCode).toBe('APPROVAL_DENIED');
+      // The user refused apr_0 by hand.
+      r.userDenied.add('apr_0');
+      const second = await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(second).toMatchObject({ ok: false, errorCode: 'APPROVAL_DENIED' });
+      expect(second.content).toContain('用户已拒绝相同操作');
+      // The gate's own denial carries the user's original approval (stays a user denial).
+      expect(r.store.listForRun(r.run.id).map((e) => [e.status, e.approvalId])).toEqual([
+        ['denied', 'apr_0'],
+        ['denied', 'apr_0'],
+      ]);
+      const third = await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(third.content).toContain('用户已拒绝相同操作');
+
+      // Another task (not a continuation): its own chain, asks again.
+      const other = r.runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'task',
+        triggerReason: null,
+        triggerMessageIds: [],
+      });
+      const otherIdentity: RunIdentity = { ...r.identity, runId: other.id };
+      const otherSeen: typeof seen = [];
+      const otherTool = approvingTool(otherIdentity, () => 'approved', otherSeen, r.store);
+      const fresh = await executeToolSafely(
+        otherTool,
+        { to: 'ann' },
+        r.ctx({ identity: otherIdentity }),
+        r.recorder,
+      );
+      expect(fresh.ok).toBe(true);
+      expect(otherSeen[0]!.verdict).toBeNull();
+
+      // A continuation of the first task inherits its chain.
+      const cont = r.runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'task',
+        triggerReason: null,
+        triggerMessageIds: [],
+        continuedFromRunIds: [r.run.id],
+      });
+      const contIdentity: RunIdentity = { ...r.identity, runId: cont.id };
+      const contSeen: typeof seen = [];
+      const contTool = approvingTool(contIdentity, () => 'approved', contSeen, r.store);
+      const blocked = await executeToolSafely(
+        contTool,
+        { to: 'ann' },
+        r.ctx({ identity: contIdentity }),
+        r.recorder,
+      );
+      expect(blocked.content).toContain('用户已拒绝相同操作');
+
+      // A turn is never gated.
+      const turnIdentity: RunIdentity = { ...r.identity, loopType: 'turn' };
+      let turnGate: unknown = 'unset';
+      const probe = fakeTool(
+        'mcp_srv_send',
+        async () => {
+          turnGate = activeEffectHooks()?.approvalGate?.(turnIdentity.runId) ?? null;
+          return ok();
+        },
+        { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+      );
+      await executeToolSafely(probe, { to: 'ann' }, r.ctx({ identity: turnIdentity }), r.recorder);
+      expect(turnGate).toBeNull();
+    } finally {
+      r.close();
+    }
+  });
+
+  it('uncertain earlier attempt → gate says uncertain (the card is still created)', async () => {
+    const r = rig();
+    try {
+      const earlier = r.store.open({
+        runId: r.run.id,
+        toolCallId: 'old',
+        toolName: 'mcp_srv_send',
+        argsHash: sha256Hex(ledgerArgsText('mcp_srv_send', { to: 'ann' }, (t) => t)),
+        summary: 'mcp_srv_send {"to":"ann"}',
+      });
+      r.store.markExecutingUncertain([r.run.id]);
+      expect(r.store.get(earlier.id)!.status).toBe('uncertain');
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'approved', seen, r.store);
+      const result = await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(result.ok).toBe(true);
+      expect(seen[0]).toEqual({ verdict: 'uncertain', statusWhileWaiting: 'intended' });
+    } finally {
+      r.close();
+    }
+  });
+});
+
+describe('W4 intended rows', () => {
+  it('intended ⇄ executing; interruption / recovery settle intended as denied, never uncertain', () => {
+    const r = rig();
+    try {
+      const open = (id: string) =>
+        r.store.open({
+          runId: r.run.id,
+          toolCallId: id,
+          toolName: 'mcp_srv_send',
+          argsHash: id,
+          summary: id,
+        });
+      const a = open('a');
+      r.store.markIntended(a.id, true);
+      expect(r.store.get(a.id)!.status).toBe('intended');
+      r.store.noteApproval(a.id, 'apr_a');
+      expect(r.store.get(a.id)!.approvalId).toBe('apr_a');
+      r.store.markIntended(a.id, false);
+      expect(r.store.get(a.id)!.status).toBe('executing');
+      r.store.markIntended(a.id, true);
+
+      // W3 interrupt: cancelled approval → denied (intended too).
+      expect(r.store.settleUnapproved([r.run.id], ['apr_a'])).toBe(1);
+      expect(r.store.get(a.id)!.status).toBe('denied');
+
+      // Recovery: intended → denied, executing → uncertain.
+      const b = open('b');
+      const c = open('c');
+      r.store.markIntended(b.id, true);
+      expect(r.store.markExecutingUncertain()).toBe(2);
+      expect(r.store.get(b.id)!.status).toBe('denied');
+      expect(r.store.get(c.id)!.status).toBe('uncertain');
+
+      // Discard only removes live rows.
+      const d = open('d');
+      r.store.discard(d.id);
+      r.store.discard(c.id);
+      expect(r.store.get(d.id)).toBeNull();
+      expect(r.store.get(c.id)).not.toBeNull();
+    } finally {
+      r.close();
+    }
+  });
+
+  it('a call that returns while still intended settles failed / denied, never uncertain', async () => {
+    const r = rig();
+    try {
+      const waitsThenThrows = fakeTool(
+        'mcp_srv_send',
+        async () => {
+          activeEffectHooks()!.approvalWaiting!(r.identity.runId);
+          throw new Error('transport gone while waiting');
+        },
+        { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+      );
+      const result = await executeToolSafely(waitsThenThrows, { to: 'x' }, r.ctx(), r.recorder);
+      expect(result.ok).toBe(false);
+      expect(result.outcome).toBeUndefined();
+      expect(r.store.listForRun(r.run.id).at(-1)!.status).toBe('failed');
+
+      const aborted = new AbortController();
+      aborted.abort();
+      const waitsThenCancelled = fakeTool(
+        'mcp_srv_send',
+        async () => {
+          activeEffectHooks()!.approvalWaiting!(r.identity.runId);
+          return { ok: false, content: 'cancelled', errorCode: 'APPROVAL_DENIED' };
+        },
+        { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+      );
+      await executeToolSafely(
+        waitsThenCancelled,
+        { to: 'y' },
+        r.ctx({ signal: aborted.signal }),
+        r.recorder,
+      );
+      expect(r.store.listForRun(r.run.id).at(-1)!.status).toBe('denied');
+    } finally {
+      r.close();
+    }
+  });
+
+  it('forApprovals batches the receipt lookup; onSettled fires for approval-linked rows', async () => {
+    const r = rig();
+    try {
+      const settled: string[] = [];
+      const recorder = createEffectRecorder({
+        ...r.deps,
+        onSettled: (effect) => settled.push(effect.approvalId ?? ''),
+      });
+      const tool = fakeTool(
+        'mcp_srv_send',
+        async (params) => {
+          const to = (params as { to: string }).to;
+          if (to !== 'none') activeEffectHooks()!.noteApproval(`apr_${to}`, r.identity.runId);
+          return { ok: true, content: 'ok', effect: { receipt: { externalId: `id-${to}` } } };
+        },
+        { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+      );
+      for (const to of ['a', 'b', 'none']) {
+        await executeToolSafely(tool, { to }, r.ctx(), recorder);
+      }
+      expect(settled).toEqual(['apr_a', 'apr_b']);
+      const map = r.store.forApprovals(['apr_a', 'apr_b', 'apr_missing', '']);
+      expect([...map.keys()].sort()).toEqual(['apr_a', 'apr_b']);
+      expect(map.get('apr_a')).toMatchObject({
+        status: 'completed',
+        receipt: { externalId: 'id-a' },
+      });
+      expect(r.store.forApprovals([]).size).toBe(0);
+    } finally {
+      r.close();
+    }
+  });
+});
+
+describe('W4 复查后修正', () => {
+  it('B1: a denial without a user decision (cancelled / interrupted / restart while waiting) never dedupes', async () => {
+    const r = rig();
+    try {
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'denied', seen, r.store);
+      // apr_0 ends "denied" in the ledger, but nobody refused it (cancelled).
+      await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(r.store.listForRun(r.run.id)[0]!.status).toBe('denied');
+      const again = approvingTool(r.identity, () => 'approved', seen, r.store);
+      const second = await executeToolSafely(again, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(second.ok).toBe(true);
+      expect(seen[1]).toEqual({ verdict: null, statusWhileWaiting: 'intended' });
+
+      // Restart while waiting: intended → denied by recovery; a retry asks again.
+      const waiting = r.store.open({
+        runId: r.run.id,
+        toolCallId: 'w',
+        toolName: 'mcp_srv_send',
+        argsHash: sha256Hex(ledgerArgsText('mcp_srv_send', { to: 'bob' }, (t) => t)),
+        summary: 's',
+        approvalId: 'apr_pending',
+      });
+      r.store.markIntended(waiting.id, true);
+      r.store.markExecutingUncertain();
+      expect(r.store.get(waiting.id)!.status).toBe('denied');
+      const retry = r.runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'task',
+        triggerReason: null,
+        triggerMessageIds: [],
+        continuedFromRunIds: [r.run.id],
+      });
+      const retryIdentity: RunIdentity = { ...r.identity, runId: retry.id };
+      const retrySeen: typeof seen = [];
+      const retryTool = approvingTool(retryIdentity, () => 'approved', retrySeen, r.store);
+      const retried = await executeToolSafely(
+        retryTool,
+        { to: 'bob' },
+        r.ctx({ identity: retryIdentity }),
+        r.recorder,
+      );
+      expect(retried.ok).toBe(true);
+      expect(retrySeen[0]!.verdict).toBeNull();
+    } finally {
+      r.close();
+    }
+  });
+
+  it('B2: an expired ask_user is not consent; consent never clears an uncertain attempt', async () => {
+    const r = rig();
+    try {
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'approved', seen, r.store);
+      await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      // The question expired unanswered (ok:false, ASK_USER_UNANSWERED).
+      r.runs.appendStep({
+        runId: r.run.id,
+        type: 'tool_result',
+        payload: {
+          toolCallId: 'ask',
+          toolName: 'ask_user',
+          ok: false,
+          errorCode: 'ASK_USER_UNANSWERED',
+          content: '用户未回答（等了 24 小时）',
+        },
+      });
+      expect(r.store.lastUserAnswerAt([r.run.id])).toBeNull();
+      const blocked = await executeToolSafely(tool, { to: 'ann' }, r.ctx(), r.recorder);
+      expect(blocked.errorCode).toBe('DUPLICATE_EFFECT');
+
+      // An uncertain attempt + a real answer afterwards: still the flagged card.
+      const earlier = r.store.open({
+        runId: r.run.id,
+        toolCallId: 'u',
+        toolName: 'mcp_srv_send',
+        argsHash: sha256Hex(ledgerArgsText('mcp_srv_send', { to: 'cat' }, (t) => t)),
+        summary: 's',
+      });
+      r.store.markExecutingUncertain([r.run.id]);
+      expect(r.store.get(earlier.id)!.status).toBe('uncertain');
+      r.runs.appendStep({
+        runId: r.run.id,
+        type: 'tool_result',
+        payload: {
+          toolCallId: 'ask2',
+          toolName: 'ask_user',
+          ok: true,
+          content: '用户的回答：再试',
+        },
+      });
+      expect(r.store.lastUserAnswerAt([r.run.id])).not.toBeNull();
+      await executeToolSafely(tool, { to: 'cat' }, r.ctx(), r.recorder);
+      expect(seen.at(-1)!.verdict).toBe('uncertain');
+    } finally {
+      r.close();
+    }
+  });
+
+  it('S1: a completed git_remote / unsandboxed repeat gets a flagged card (repeat), not a block', async () => {
+    const r = rig();
+    try {
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const git = (kind: string) =>
+        approvingTool(r.identity, () => 'approved', seen, r.store, kind);
+      await executeToolSafely(git('git_remote'), { op: 'push' }, r.ctx(), r.recorder);
+      const second = await executeToolSafely(
+        git('git_remote'),
+        { op: 'push' },
+        r.ctx(),
+        r.recorder,
+      );
+      expect(second.ok).toBe(true);
+      expect(seen[1]).toEqual({ verdict: 'repeat', statusWhileWaiting: 'intended' });
+      expect(r.store.listForRun(r.run.id).map((e) => e.status)).toEqual(['completed', 'completed']);
+    } finally {
+      r.close();
+    }
+  });
+
+  it('S2: args holding a redaction placeholder are never compared (two secrets must not look the same)', async () => {
+    const r = rig();
+    try {
+      const recorder = createEffectRecorder({
+        ...r.deps,
+        redact: (text) =>
+          text.split('sk-AAAA1111').join('[REDACTED]').split('sk-BBBB2222').join('[REDACTED]'),
+      });
+      const seen: Array<{ verdict: string | null; statusWhileWaiting?: string }> = [];
+      const tool = approvingTool(r.identity, () => 'approved', seen, r.store);
+      await executeToolSafely(tool, { to: 'ann', token: 'sk-AAAA1111' }, r.ctx(), recorder);
+      const other = await executeToolSafely(
+        tool,
+        { to: 'ann', token: 'sk-BBBB2222' },
+        r.ctx(),
+        recorder,
+      );
+      expect(other.ok).toBe(true);
+      expect(seen[1]!.verdict).toBeNull();
+      // Same placeholder text — still not compared.
+      await executeToolSafely(tool, { to: 'ann', token: 'sk-AAAA1111' }, r.ctx(), recorder);
+      expect(seen[2]!.verdict).toBeNull();
+    } finally {
+      r.close();
+    }
+  });
+
+  it('nit: once an approval of the call was granted the row never goes back to intended', async () => {
+    const r = rig();
+    try {
+      const statuses: string[] = [];
+      const twoApprovals = fakeTool(
+        'mcp_srv_send',
+        async (_params, ctx) => {
+          const hooks = activeEffectHooks()!;
+          hooks.approvalWaiting!(r.identity.runId);
+          hooks.approvalGranted!(r.identity.runId);
+          hooks.approvalWaiting!(r.identity.runId);
+          statuses.push(r.store.listForRun(ctx.identity.runId).at(-1)!.status);
+          throw new Error('boom');
+        },
+        { mcp: { serverId: 'srv', toolName: 'send', risk: 'write' } },
+      );
+      await executeToolSafely(twoApprovals, { to: 'x' }, r.ctx(), r.recorder);
+      expect(statuses).toEqual(['executing']);
+      // It may have acted: a throw is uncertain, not "never ran".
+      expect(r.store.listForRun(r.run.id).at(-1)!.status).toBe('uncertain');
     } finally {
       r.close();
     }

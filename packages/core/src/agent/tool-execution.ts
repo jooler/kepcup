@@ -23,6 +23,13 @@ import type { SettledEffectStatus } from './effects/store.js';
  * and settled from its result (a throw settles as uncertain); the scope's
  * effect hooks let the gateway escalate a call that leaves the sandbox and
  * link its approval. The recorder never fails the call.
+ *
+ * W4: when the approval dedupe gate (ApprovalsService.request → the scope's
+ * `approvalGate`) stopped the call — the same effect already completed / was
+ * denied in the task chain — the model gets the gate's result
+ * (DUPLICATE_EFFECT / 「用户已拒绝相同操作」) whatever the tool made of the
+ * refused approval: tools keep their own denial texts, the gate stays out of
+ * tool code.
  */
 export async function executeToolSafely(
   tool: ToolDefinition,
@@ -39,6 +46,8 @@ export async function executeToolSafely(
     );
   } catch (error) {
     const status = settleQuietly(() => effect?.settleThrown(error) ?? null);
+    const deduped = dedupeQuietly(effect);
+    if (deduped !== null) return deduped;
     return withLedgerOutcome(
       {
         ok: false,
@@ -49,10 +58,16 @@ export async function executeToolSafely(
     );
   }
   // Outside the try: a ledger failure can never replace the real result.
-  return withLedgerOutcome(
-    result,
-    settleQuietly(() => effect?.settle(result) ?? null),
-  );
+  const status = settleQuietly(() => effect?.settle(result) ?? null);
+  return dedupeQuietly(effect) ?? withLedgerOutcome(result, status);
+}
+
+function dedupeQuietly(effect: { dedupeResult?(): ToolResult | null } | null): ToolResult | null {
+  try {
+    return effect?.dedupeResult?.() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function settleQuietly(settle: () => SettledEffectStatus | null): SettledEffectStatus | null {

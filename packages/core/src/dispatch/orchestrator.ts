@@ -615,6 +615,8 @@ export class Orchestrator {
       // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
       cancelPendingApprovals: (runIds) =>
         runIds.flatMap((runId) => deps.approvals.cancelPendingForRun(runId)),
+      // W4 复查 S4: a task over the wall clock on a「上次结果未知」repeat card.
+      pendingUncertainRepeat: (runIds) => deps.approvals.hasPendingUncertainRepeat(runIds),
       recordVisibleMessage: (runId, message) => {
         // forward_task_result: the source task's agent session produced this
         // text — a continuation reusing that session must not get it again

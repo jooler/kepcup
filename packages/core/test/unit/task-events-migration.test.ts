@@ -156,7 +156,7 @@ describe('runs 0006 tasks 迁移', () => {
     );
     const applied = runMigrations(db, migrationsUrl('runs'));
     // 0007 (D75 W2) renames the old 'response' loop type to 'turn'.
-    expect(applied.map((m) => m.version)).toEqual([6, 7, 8, 9]);
+    expect(applied.map((m) => m.version)).toEqual([6, 7, 8, 9, 10]);
     expect(db.prepare("select * from runs where id = 'run_old'").get()).toMatchObject({
       loop_type: 'turn',
       engine: 'builtin',

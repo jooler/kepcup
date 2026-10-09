@@ -599,6 +599,30 @@ describe('mcp risk tiers and per-tool policies (W5)', () => {
     });
   });
 
+  it('W4 exact card: a write tool lists recipient fields in full outside the 400-char argsSummary; read tools do not', async () => {
+    const server = await makeAnnotatedServer({
+      toolPolicies: { list_notes: { approval: 'ask' }, hidden_tool: { enabled: false } },
+    });
+    const h = await makeHarness(server);
+    // Connected: risks come from the annotations (offline, unknown tools are destructive).
+    await h.service.listTools(server);
+    const to = Array.from({ length: 40 }, (_, i) => `member${i}@example.com`);
+    await h.gateway.mcpToolCall(taskIdentity, server, 'create_note', {
+      to,
+      message: { chat_id: 'C-42', body: 'x'.repeat(600) },
+    });
+    const payload = h.approvalRequests[0]!.payload;
+    expect(String(payload['argsSummary'])).toContain('（已截断）');
+    expect(payload['recipients']).toEqual([
+      { key: 'to', value: to.join(', ') },
+      { key: 'message.chat_id', value: 'C-42' },
+    ]);
+    // A read tool switched to ask: its card has no recipients section.
+    await h.gateway.mcpToolCall(taskIdentity, server, 'list_notes', { user: 'u1' });
+    expect(h.approvalRequests[1]!.payload['risk']).toBe('read');
+    expect(h.approvalRequests[1]!.payload['recipients']).toBeUndefined();
+  });
+
   it('a denied write approval maps to APPROVAL_DENIED', async () => {
     const server = await makeAnnotatedServer();
     const h = await makeHarness(server, 'denied');

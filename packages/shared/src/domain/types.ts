@@ -1131,6 +1131,12 @@ export const mcpToolApprovalPayloadSchema = z.object({
   argsSummary: z.string().default(''),
   /** 调用时解析出的风险档（W5；旧行没有）。卡片据此显示徽标。 */
   risk: mcpToolRiskSchema.optional(),
+  /**
+   * W4 精确卡片：写入 / 破坏性工具参数里的收件人类字段（to / cc / bcc /
+   * recipient(s) / channel / email / phone / user / chat_id …，可在嵌套对象里），
+   * 值**完整**列出、不参与 argsSummary 的 400 字截断（已脱敏）。`key` 是参数路径。
+   */
+  recipients: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 
@@ -1221,6 +1227,31 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
 ]);
 export type ButlerProposalPayload = z.infer<typeof butlerProposalPayloadSchema>;
 
+/**
+ * W4（D78）审批回执：审批所属外部调用的台账行（runs.db `tool_effects`，按
+ * approval_id 跨库查）的状态 / 回执 / 落定时间。
+ */
+export const approvalEffectSchema = z.object({
+  status: effectStatusSchema,
+  receipt: effectReceiptSchema.optional(),
+  settledAt: z.number().optional(),
+});
+export type ApprovalEffect = z.infer<typeof approvalEffectSchema>;
+
+/**
+ * W4 去重门：同一任务链里同样的操作上次结果未知（`uncertain`），或非 MCP 的
+ * 操作（git_remote、沙箱外命令…）已经执行过（`completed`）时，新卡的 payload
+ * 带 `priorEffect`；渲染端在卡片顶部提示「上次同样的操作结果未知，请先确认是否
+ * 已生效」/「本任务中已执行过相同操作（回执…），请确认是否需要再次执行」。
+ */
+export const approvalPriorEffectSchema = z.object({
+  status: effectStatusSchema,
+  summary: z.string(),
+  createdAt: z.number(),
+  receipt: effectReceiptSchema.optional(),
+});
+export type ApprovalPriorEffect = z.infer<typeof approvalPriorEffectSchema>;
+
 export const approvalDecisionSchema = z.object({
   /** Only meaningful for `access` approvals and path-type `agent_tool` ones (D72). */
   duration: grantDurationSchema.optional(),
@@ -1249,6 +1280,13 @@ export const approvalSchema = z.object({
   messageId: z.string().nullable(),
   createdAt: z.number(),
   decidedAt: z.number().nullable(),
+  /**
+   * W4：sha256(stableJson(payload))，读取时计算、不落库。渲染端决定时回传它
+   * 渲染的值（`approvals.decide.payloadHash`），不符 → APPROVAL_STALE。
+   */
+  payloadHash: z.string().optional(),
+  /** W4：本审批所属工具调用的台账结局（回执）；旧审批 / 非外部调用没有。 */
+  effect: approvalEffectSchema.optional(),
 });
 export type Approval = z.infer<typeof approvalSchema>;
 

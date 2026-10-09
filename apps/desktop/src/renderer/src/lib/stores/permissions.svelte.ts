@@ -1,5 +1,6 @@
 import type {
   Approval,
+  EffectStatus,
   Grant,
   Run,
   SandboxStatusOutput,
@@ -8,8 +9,20 @@ import type {
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { toast } from 'svelte-sonner';
+import { mergeApprovalUpdate } from '$lib/features/approvals/approval-effect';
 
 export type { Approval, Grant };
+
+/** One auto-approval in the unattended summary (W4: with its ledger outcome). */
+export interface UnattendedSummaryEntry {
+  approvalId: string;
+  kind: string;
+  conversationId: string | null;
+  botId: string | null;
+  detail: string;
+  createdAt: number;
+  effectStatus?: EffectStatus;
+}
 
 /**
  * P03 client state: approvals (cards), grants (right panel), unattended mode
@@ -27,9 +40,7 @@ class PermissionsState {
   sandbox = $state<SandboxStatusOutput | null>(null);
   /** Auto-approval summary of the last unattended period (dialog content). */
   summaryOpen = $state(false);
-  summaryItems = $state<
-    Array<{ approvalId: string; kind: string; conversationId: string | null; botId: string | null; detail: string; createdAt: number }>
-  >([]);
+  summaryItems = $state<Array<UnattendedSummaryEntry>>([]);
   /** Auto-approvals already surfaced to the user (focus reminder). */
   #seenAutoApprovals = 0;
   /** Conversation the grants list currently mirrors. */
@@ -49,12 +60,12 @@ class PermissionsState {
     this.#started = true;
     core.onEvent('approval.created', (payload) => {
       const data = payload as { conversationId: string | null; approval: Approval };
-      this.approvals = { ...this.approvals, [data.approval.id]: data.approval };
+      this.#upsert(data.approval);
       this.#recount(data.approval.conversationId);
     });
     core.onEvent('approval.resolved', (payload) => {
       const data = payload as { conversationId: string | null; approval: Approval };
-      this.approvals = { ...this.approvals, [data.approval.id]: data.approval };
+      this.#upsert(data.approval);
       this.#recount(data.approval.conversationId);
     });
     core.onEvent('grant.changed', (payload) => {
@@ -87,6 +98,21 @@ class PermissionsState {
     this.#recount(conversationId);
   }
 
+  /** Refetches one conversation's approvals (W4: after an APPROVAL_STALE refusal). */
+  async #reloadApprovals(conversationId: string): Promise<void> {
+    try {
+      const result = (await core.call('approvals.list', { conversationId })) as {
+        approvals: Approval[];
+      };
+      const next: Record<string, Approval> = { ...this.approvals };
+      for (const approval of result.approvals) next[approval.id] = approval;
+      this.approvals = next;
+      this.#recount(conversationId);
+    } catch {
+      // The toast already said it; the next event / conversation switch refreshes.
+    }
+  }
+
   async refreshSandbox(probe = false): Promise<void> {
     try {
       this.sandbox = (await core.call('sandbox.status', { probe })) as SandboxStatusOutput;
@@ -105,6 +131,11 @@ class PermissionsState {
     duration?: 'once' | 'conversation',
     /** butler_proposal only (D70): indexes of the proposed bots the user kept. */
     selection?: number[],
+    /**
+     * W4: the payloadHash of the approval the card rendered — core refuses the
+     * decision (APPROVAL_STALE) when the approval no longer matches it.
+     */
+    payloadHash?: string,
   ): Promise<void> {
     try {
       const result = (await core.call('approvals.decide', {
@@ -112,11 +143,19 @@ class PermissionsState {
         approve,
         ...(duration !== undefined ? { duration } : {}),
         ...(selection !== undefined ? { selection } : {}),
+        ...(payloadHash !== undefined ? { payloadHash } : {}),
       })) as { approval: Approval };
-      this.approvals = { ...this.approvals, [approvalId]: result.approval };
+      this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);
     } catch (error) {
-      toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
+      const code = codeOf(error);
+      toast.error(errorText(code, t('chats.errorCode.INTERNAL')));
+      // W4: a stale card — reload the conversation's approvals so the card
+      // shows what the user is actually deciding on.
+      const conversationId = this.approvals[approvalId]?.conversationId ?? null;
+      if (code === 'APPROVAL_STALE' && conversationId !== null) {
+        void this.#reloadApprovals(conversationId);
+      }
     }
   }
 
@@ -180,13 +219,19 @@ class PermissionsState {
     return items.length > this.#seenAutoApprovals;
   }
 
-  async unattendedSummary(since?: number): Promise<
-    Array<{ approvalId: string; kind: string; conversationId: string | null; botId: string | null; detail: string; createdAt: number }>
-  > {
+  async unattendedSummary(since?: number): Promise<Array<UnattendedSummaryEntry>> {
     const result = (await core.call('unattended.summary', since !== undefined ? { since } : {})) as {
-      items: Array<{ approvalId: string; kind: string; conversationId: string | null; botId: string | null; detail: string; createdAt: number }>;
+      items: Array<UnattendedSummaryEntry>;
     };
     return result.items;
+  }
+
+  /** W4 复查: an older copy (decide result) never downgrades a settled receipt. */
+  #upsert(approval: Approval): void {
+    this.approvals = {
+      ...this.approvals,
+      [approval.id]: mergeApprovalUpdate(this.approvals[approval.id], approval),
+    };
   }
 
   #recount(conversationId: string | null): void {

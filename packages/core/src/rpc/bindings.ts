@@ -898,7 +898,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       approvalsDecideInputSchema,
       approvalsDecideOutputSchema,
       async (input) => ({
-        approval: domain.approvals.decide(input.id, input.approve, input.duration, input.selection),
+        approval: domain.approvals.decide(
+          input.id,
+          input.approve,
+          input.duration,
+          input.selection,
+          input.payloadHash,
+        ),
       }),
     ),
 
