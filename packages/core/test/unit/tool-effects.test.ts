@@ -162,6 +162,7 @@ function scannedBuiltinToolNames(): string[] {
       'speech-tools.ts',
       'task-tools.ts',
       'web-tools.ts',
+      'watch-tools.ts',
       'wiki-tools.ts',
     ].map((file) => path.join(root, 'tools', file)),
     path.join(root, 'wiki', 'maintenance-tools.ts'),

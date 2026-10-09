@@ -11,7 +11,9 @@ export type TriggerReason =
   /** 'delegation'（D71）：A 代用户转交给 B 的任务（B 私聊里的代发消息）。 */
   | 'delegation'
   /** D75 §3.2：任务结算条目（result / failure）唤醒 Bot。 */
-  | 'task';
+  | 'task'
+  /** W7：网页监看条件边沿触发（内部事件 watch_alert）。 */
+  | 'watch';
 
 /** One source batch of a merged trigger (its own `<trigger>` segment). */
 export interface TriggerPart {

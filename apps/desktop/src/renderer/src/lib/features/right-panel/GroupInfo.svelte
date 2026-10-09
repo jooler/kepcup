@@ -9,6 +9,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
+  import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import { showBrowser } from './show-browser';
 
   let { conversationId }: { conversationId: string } = $props();
@@ -130,6 +131,12 @@
   <section class="space-y-2">
     <p class="text-xs text-muted-foreground">{t('group.schedulesTitle')}</p>
     <SchedulesPanel {conversationId} testid="group-schedules" />
+  </section>
+
+  <!-- W7: every member bot's web-page watches in this group. -->
+  <section class="space-y-2">
+    <p class="text-xs text-muted-foreground">{t('watches.title')}</p>
+    <WatchesPanel {conversationId} testid="group-watches" />
   </section>
 </div>
 

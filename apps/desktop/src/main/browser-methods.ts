@@ -8,6 +8,8 @@ import {
   browserCloseInputSchema,
   browserEnsurePageInputSchema,
   browserEnsurePageOutputSchema,
+  browserFetchTextInputSchema,
+  browserFetchTextOutputSchema,
   browserNavigateInputSchema,
   browserNavigateOutputSchema,
   browserPairInputSchema,
@@ -104,6 +106,12 @@ export function browserMethodSpecs(
       input: browserClearProfileDataInputSchema,
       output: okOutputSchema,
       handle: (input) => host.clearProfileData(input as never),
+    },
+    // W7 确定性监看：后台页取正文（不显示、取完即关）。
+    'browser.fetchText': {
+      input: browserFetchTextInputSchema,
+      output: browserFetchTextOutputSchema,
+      handle: (input) => host.fetchText(input as never),
     },
   };
 }

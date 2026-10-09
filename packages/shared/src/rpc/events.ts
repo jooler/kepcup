@@ -15,6 +15,7 @@ import {
   unattendedStateSchema,
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
+import { watchEntrySchema } from '../domain/watches.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -201,6 +202,13 @@ export const tasksInterruptedPayloadSchema = z.object({
   scope: z.enum(['path', 'mcp', 'browser_profile']),
 });
 
+/** W7 确定性监看：监看行任何可见变化（创建、检查结果、提醒、暂停 / 恢复 / 停止、删除）。 */
+export const watchUpdatedPayloadSchema = z.object({
+  watch: watchEntrySchema,
+  /** The watch row is gone (its bot or conversation was deleted). */
+  removed: z.boolean().optional(),
+});
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -230,6 +238,7 @@ export const rpcEventSchemas = {
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,
+  'watch.updated': watchUpdatedPayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;

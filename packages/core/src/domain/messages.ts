@@ -107,6 +107,18 @@ export interface AppendMessageInput {
   cardRunId?: string | undefined;
   /** Delegation cards only (D71): the delegation the card renders. */
   cardDelegationId?: string | undefined;
+  /** Watch cards only (W7, cardType `watch`). */
+  cardWatch?:
+    | {
+        watchId: string;
+        watchEvent: 'created' | 'alert' | 'paused';
+        watchSeq?: number | undefined;
+        watchKey?: string | undefined;
+        watchSummary?: string | undefined;
+        watchPauseReason?: 'failures' | 'too_frequent' | undefined;
+        watchFailures?: number | undefined;
+      }
+    | undefined;
   replyTo?: string | null;
   mentions?: string[];
   batchId?: string | null;
@@ -253,6 +265,23 @@ export class MessagesService {
                 ...(input.cardRunId !== undefined ? { runId: input.cardRunId } : {}),
                 ...(input.cardDelegationId !== undefined
                   ? { delegationId: input.cardDelegationId }
+                  : {}),
+                ...(input.cardWatch !== undefined
+                  ? {
+                      watchId: input.cardWatch.watchId,
+                      watchEvent: input.cardWatch.watchEvent,
+                      ...(input.cardWatch.watchSeq !== undefined ? { watchSeq: input.cardWatch.watchSeq } : {}),
+                      ...(input.cardWatch.watchKey !== undefined ? { watchKey: input.cardWatch.watchKey } : {}),
+                      ...(input.cardWatch.watchSummary !== undefined
+                        ? { watchSummary: input.cardWatch.watchSummary }
+                        : {}),
+                      ...(input.cardWatch.watchPauseReason !== undefined
+                        ? { watchPauseReason: input.cardWatch.watchPauseReason }
+                        : {}),
+                      ...(input.cardWatch.watchFailures !== undefined
+                        ? { watchFailures: input.cardWatch.watchFailures }
+                        : {}),
+                    }
                   : {}),
               })
             : JSON.stringify({

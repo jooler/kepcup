@@ -25,6 +25,7 @@
   import SkillsTab from './SkillsTab.svelte';
   import WikiTab from './WikiTab.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
+  import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import { showBrowser } from './show-browser';
 
@@ -500,6 +501,15 @@
             active={activeTab === 'schedules'}
             testid="schedules-tab"
           />
+          <!-- W7: the conversation's web-page watches, next to its schedules. -->
+          <section class="mt-4 space-y-2">
+            <p class="text-xs font-medium">{t('watches.title')}</p>
+            <WatchesPanel
+              conversationId={conversation.id}
+              active={activeTab === 'schedules'}
+              testid="watches-tab"
+            />
+          </section>
         {/if}
       </div>
       <div

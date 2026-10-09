@@ -67,7 +67,8 @@ import {
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
-import { BROWSER_PROFILE_NAME_MAX_CHARS } from '../constants.js';
+import { BROWSER_PROFILE_NAME_MAX_CHARS, WATCH_SELECTOR_MAX_CHARS } from '../constants.js';
+import { watchEntrySchema } from '../domain/watches.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -1074,6 +1075,15 @@ export const schedulesOfferInputSchema = z.object({ messageId: z.string().min(1)
 export const schedulesAcceptOfferOutputSchema = z.object({ schedule: scheduleSchema });
 export const schedulesDeclineOfferOutputSchema = z.object({ ok: z.literal(true) });
 
+// --- watches (W7) -------------------------------------------------------------------
+export const watchesListInputSchema = z.object({
+  conversationId: z.string().min(1).optional(),
+});
+export const watchesListOutputSchema = z.object({ watches: z.array(watchEntrySchema) });
+export const watchIdInputSchema = z.object({ id: z.string().min(1) });
+export const watchGetOutputSchema = z.object({ watch: watchEntrySchema.nullable() });
+export const watchMutateOutputSchema = z.object({ watch: watchEntrySchema });
+
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
 // client (docs/dev/02-architecture.md 端口 B: 核心服务请求平台能力).
@@ -1220,6 +1230,32 @@ export const browserControlReturnedOutputSchema = z.object({
   /** Tasks that received the handback notice. */
   injected: z.number().int().nonnegative(),
 });
+
+/**
+ * W7 确定性监看：后台页取正文（键 `botId|watch:{watchId}`，不显示、用 Bot 的
+ * 生效浏览器资料、受网络规则约束、取完即关）。`selector` 给定时 `text` 只取该
+ * 元素的文本；`extraSelectors`（数字条件的元素）逐个返回，找不到为 null。
+ */
+export const browserFetchTextInputSchema = z.object({
+  botId: z.string().min(1),
+  watchId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  profileKey: browserProfileKeySchema,
+  networkContext: browserNetworkContextSchema,
+  url: z.string().min(1).max(2048),
+  selector: z.string().min(1).max(WATCH_SELECTOR_MAX_CHARS).optional(),
+  extraSelectors: z.array(z.string().min(1).max(WATCH_SELECTOR_MAX_CHARS)).max(4).optional(),
+});
+export const browserFetchTextOutputSchema = z.object({
+  ok: z.literal(true),
+  title: z.string(),
+  /** Final URL after redirects. */
+  url: z.string(),
+  text: z.string(),
+  /** The page text was cut at WATCH_FETCH_TEXT_MAX_CHARS. */
+  truncated: z.boolean().optional(),
+  extraTexts: z.array(z.string().nullable()).optional(),
+});
+export type BrowserFetchTextOutput = z.infer<typeof browserFetchTextOutputSchema>;
 
 // --- browser profiles (W8) ---------------------------------------------------------
 
@@ -1527,6 +1563,13 @@ export const rpcMethodSchemas = {
     output: schedulesDeclineOfferOutputSchema,
   },
 
+  // W7 确定性监看：右侧面板列表与对话内监看卡。
+  'watches.list': { input: watchesListInputSchema, output: watchesListOutputSchema },
+  'watches.get': { input: watchIdInputSchema, output: watchGetOutputSchema },
+  'watches.pause': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'watches.resume': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'watches.stop': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
   'browser.ensurePage': {
@@ -1549,6 +1592,8 @@ export const rpcMethodSchemas = {
   'browser.clearBotData': { input: browserClearBotDataInputSchema, output: okOutput },
   'browser.closeBotPages': { input: browserCloseBotPagesInputSchema, output: okOutput },
   'browser.clearProfileData': { input: browserClearProfileDataInputSchema, output: okOutput },
+  // W7: the watch checker's background page (fetch the text, close the page).
+  'browser.fetchText': { input: browserFetchTextInputSchema, output: browserFetchTextOutputSchema },
   // W8: served by the core on port B (the main process reports a handback).
   'browser.controlReturned': {
     input: browserControlReturnedInputSchema,
@@ -1616,6 +1661,7 @@ export const BROWSER_RPC_METHODS = [
   'browser.clearBotData',
   'browser.closeBotPages',
   'browser.clearProfileData',
+  'browser.fetchText',
 ] as const satisfies readonly RpcMethodName[];
 
 const APP_METHODS = [
@@ -1759,6 +1805,11 @@ const APP_METHODS = [
   'wiki.deletePage',
   'schedules.list',
   'schedules.cancel',
+  'watches.list',
+  'watches.get',
+  'watches.pause',
+  'watches.resume',
+  'watches.stop',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

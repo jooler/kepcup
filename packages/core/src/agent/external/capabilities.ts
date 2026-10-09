@@ -81,6 +81,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'wiki_search',
   'wiki_read',
   'list_schedules',
+  'watch_list',
   'list_bots',
   'web_search',
   'web_fetch',
@@ -92,6 +93,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
 const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([
   'forget',
   'cancel_schedule',
+  'watch_stop',
   'cancel_delegation',
   'git_remote',
 ]);

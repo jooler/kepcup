@@ -181,6 +181,11 @@ import {
   schedulesAcceptOfferOutputSchema,
   schedulesDeclineOfferOutputSchema,
   schedulesCancelOutputSchema,
+  watchesListInputSchema,
+  watchesListOutputSchema,
+  watchIdInputSchema,
+  watchGetOutputSchema,
+  watchMutateOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
@@ -198,6 +203,7 @@ import {
   type Conversation,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
+import type { WatchService } from '../watch/service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
@@ -1300,6 +1306,29 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
 
+    // --- watches (W7) ---------------------------------------------------------
+    'watches.list': method(watchesListInputSchema, watchesListOutputSchema, async (input) => ({
+      watches: services.watches?.listEntries(input.conversationId) ?? [],
+    })),
+    'watches.get': method(watchIdInputSchema, watchGetOutputSchema, async (input) => ({
+      watch: services.watches?.get(input.id) ?? null,
+    })),
+    'watches.pause': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.pauseWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+    'watches.resume': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.resumeWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+    'watches.stop': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.stopWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+
     // --- W8 共享浏览器资料 ---------------------------------------------------
     'browserProfiles.list': method(voidInput, browserProfilesListOutputSchema, async () => ({
       profiles: domain.browserProfiles.list(),
@@ -1356,4 +1385,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
   };
+}
+
+function requireWatches(services: CoreServices): WatchService {
+  if (!services.watches) throw new AppError('NOT_IMPLEMENTED', '监看服务未就绪');
+  return services.watches;
 }

@@ -36,6 +36,8 @@ import {
   type Delegation,
   type GroupSetupStep,
   type Message,
+  WATCH_CARD_TYPE,
+  WATCH_ALERT_EVENT,
   type Run,
   type ToolEffect,
   type SetupRequirement,
@@ -140,6 +142,7 @@ import type { BrowserHostRpc } from '../browser/facade.js';
 import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profiles.js';
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
+import type { WatchToolFacade } from '../tools/watch-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
 import {
   createSubagentFacade,
@@ -210,6 +213,12 @@ export interface OrchestratorEnvironmentFacade {
   >;
   offeredItems(): string[];
   installedToolchains(): InstalledToolchain[];
+}
+
+/** W7: what the orchestrator needs of the watch domain (lazy facade from start.ts). */
+export interface OrchestratorWatchFacade extends WatchToolFacade {
+  contextSection(botId: string, conversationId: string): string;
+  renderContextLine(message: Message): string;
 }
 
 export interface OrchestratorDeps {
@@ -298,6 +307,11 @@ export interface OrchestratorDeps {
    * list_schedules / cancel_schedule tools (lazy facade from start.ts).
    */
   schedule?: ScheduleToolFacade | undefined;
+  /**
+   * W7 确定性监看（optional in stripped setups）：watch_* tools, the
+   * `<watches>` context section and the watch cards' context lines.
+   */
+  watch?: OrchestratorWatchFacade | undefined;
   /**
    * P11 browser capability hosted by the main process (port B); omitted in
    * stripped test setups, which then simply have no browser_* tools.
@@ -415,6 +429,8 @@ function downgradeLabel(part: TriggerPart): string {
     }
     case 'scheduled':
       return '定时任务到点（不是用户此刻发的消息）';
+    case 'watch':
+      return '网页监看条件满足（不是用户此刻发的消息）';
     case 'delegation':
       return '另一个 Bot 代用户转交给你的事';
     case 'chain':
@@ -1545,12 +1561,27 @@ export class Orchestrator {
     event: string,
     message: Message,
   ): void {
+    // W7: a watch alert is its own trigger reason (the bot created the watch).
+    const isWatch = event === WATCH_ALERT_EVENT;
     this.#mailboxes.for(botId, conversationId).deliver({
       conversationId,
       botId,
       messages: [message],
-      reason: 'event',
-      extraAttributes: { event },
+      reason: isWatch ? 'watch' : 'event',
+      ...(isWatch ? {} : { extraAttributes: { event } }),
+    });
+  }
+
+  /**
+   * W7 确定性监看：wakes one turn of the bot with the alert (internal
+   * `watch_alert` event, trigger reason `watch`). Same guard as events: no
+   * daily cap (the user asked for the watch), but quiet hours park the wake
+   * as a persistent `event_delivery` job. The user-visible alert card is
+   * posted by the watch service before this.
+   */
+  deliverWatchAlertToBot(input: { botId: string; conversationId: string; text: string }): void {
+    this.deliverEventToBot(input.botId, input.conversationId, WATCH_ALERT_EVENT, input.text, {
+      internal: true,
     });
   }
 
@@ -2002,6 +2033,9 @@ export class Orchestrator {
             String(content.delegationId ?? ''),
           );
         }
+        if ('cardType' in content && content.cardType === WATCH_CARD_TYPE) {
+          return this.#deps.watch?.renderContextLine(message) ?? '（监看记录已清理）';
+        }
         if ('runId' in content && content.cardType === TASK_CARD) {
           return this.#renderTaskCard(String(content.runId ?? ''));
         }
@@ -2171,6 +2205,7 @@ export class Orchestrator {
       userProfile?: string;
       myState?: string;
       schedules?: string;
+      watches?: string;
       relevantMemories?: string;
     };
     wikiTopics: string;
@@ -3045,6 +3080,7 @@ export class Orchestrator {
             }
           : {}),
         ...(this.#deps.schedule !== undefined ? { schedule: this.#deps.schedule } : {}),
+        ...(this.#deps.watch !== undefined ? { watch: this.#deps.watch } : {}),
         ...(this.#deps.browser !== undefined
           ? {
               browser: this.#deps.browser,
@@ -3134,11 +3170,15 @@ export class Orchestrator {
       // D80 <schedules>: this bot's active schedules here + declined offers.
       const schedulesSection =
         this.#deps.schedule?.contextSection(batch.botId, batch.conversationId) ?? '';
+      // W7 <watches>: this bot's live web-page watches here.
+      const watchesSection =
+        this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
       const memorySections = memoryFacade
         ? {
             userProfile: memoryFacade.profileCardSection(),
             myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
+            ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
             relevantMemories: await memoryFacade.relevantMemoriesSection({
               botId: batch.botId,
               conversationId: batch.conversationId,
@@ -3150,9 +3190,10 @@ export class Orchestrator {
                 .join('\n'),
             }),
           }
-        : schedulesSection.length > 0
-          ? { schedules: schedulesSection }
-          : {};
+        : {
+            ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
+            ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
+          };
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
       const skillsSection = this.#deps.skills?.promptSection(batch.botId) ?? '';

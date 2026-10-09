@@ -698,6 +698,24 @@ export const cardContentSchema = z.object({
   runId: z.string().optional(),
   /** Delegation cards only (D71, cardType delegation_sent / delegation_result). */
   delegationId: z.string().optional(),
+  /**
+   * Watch cards only (W7, cardType `watch`): the watch, which moment the card
+   * marks (created / alert / paused), the alert sequence, the idempotency key
+   * (`watch:{id}:{seq}:{hash}` / `watch-error:{id}:{streak}:paused`) and the
+   * alert's page-diff summary (web content: untrusted when shown to a bot).
+   */
+  watchId: z.string().optional(),
+  watchEvent: z.enum(['created', 'alert', 'paused']).optional(),
+  watchSeq: z.number().int().optional(),
+  watchKey: z.string().optional(),
+  watchSummary: z.string().optional(),
+  /**
+   * Paused cards only: why (`failures` / `too_frequent`) and, for failures,
+   * the streak length at the time — the card keeps reading right after a
+   * resume reset the live counter.
+   */
+  watchPauseReason: z.enum(['failures', 'too_frequent']).optional(),
+  watchFailures: z.number().int().optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 
@@ -835,6 +853,8 @@ export const triggerReasonSchema = z.enum([
   'delegation',
   /** 任务结算唤醒对话轮（D75 §3.2）：触发批是任务的终态条目。 */
   'task',
+  /** 确定性监看（W7，D79）：监看条件边沿触发，触发批是内部事件 watch_alert。 */
+  'watch',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -1034,6 +1054,10 @@ export const jobTypeSchema = z.enum([
   'memory_vec_rebuild',
   // D71: a cross-bot delegation parked until the target bot's quiet hours end.
   'delegation_delivery',
+  // W7 (D79): a watch alert (dedupe key watch:{id}:{seq}:{hash}) — the card +
+  // the bot's wake are posted by the job, so a crash after the edge was
+  // committed never loses the alert.
+  'watch_alert',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
