@@ -240,6 +240,31 @@ export class ToolEffectsStore {
   }
 
   /**
+   * W3 interrupt: `executing` rows whose (latest) approval was just cancelled
+   * never got past their approval gate — nothing reached the outside. They
+   * settle as `denied` before the remaining executing rows turn `uncertain`
+   * (a later settle by the unwinding call leaves them as they are). Returns
+   * the rows changed.
+   */
+  settleUnapproved(runIds: readonly string[], approvalIds: readonly string[]): number {
+    if (runIds.length === 0 || approvalIds.length === 0) return 0;
+    const now = this.#clock.now();
+    let changed = 0;
+    for (let start = 0; start < approvalIds.length; start += 200) {
+      const chunk = approvalIds.slice(start, start + 200);
+      changed += this.#db
+        .prepare(
+          `update tool_effects set status = 'denied', settled_at = ?
+            where status = 'executing'
+              and approval_id in (${chunk.map(() => '?').join(', ')})
+              and run_id in (${runIds.map(() => '?').join(', ')})`,
+        )
+        .run(now, ...chunk, ...runIds).changes;
+    }
+    return changed;
+  }
+
+  /**
    * Recovery: `executing` rows → `uncertain` (the process that ran them is
    * gone, or the run was interrupted). Without `runIds`: every executing row
    * (startup — nothing is live yet). Idempotent. Returns the rows changed.

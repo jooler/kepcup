@@ -167,6 +167,7 @@ import {
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
 import {
+  buildEffectsBeforeInterruptSegment,
   buildTaskBriefSegment,
   buildTaskReplaySegment,
   isTerminalStatus as isTerminalTaskStatus,
@@ -602,6 +603,9 @@ export class Orchestrator {
         this.#fsState.release(runId);
         void deps.projects.releaseRun(runId).catch(() => {});
       },
+      // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
+      cancelPendingApprovals: (runIds) =>
+        runIds.flatMap((runId) => deps.approvals.cancelPendingForRun(runId)),
       recordVisibleMessage: (runId, message) => {
         // forward_task_result: the source task's agent session produced this
         // text — a continuation reusing that session must not get it again
@@ -1234,14 +1238,21 @@ export class Orchestrator {
    * started. When a turn is already running for the mailbox the batch waits
    * for the next turn instead (null is returned).
    */
-  retryRun(runId: string): Run | null {
+  retryRun(runId: string, options: { reviewed?: boolean } = {}): Run | null {
     const original = this.#deps.runs.get(runId);
     if (!original) throw new AppError('RUN_NOT_FOUND', `Run ${runId} does not exist`);
-    if (original.status !== 'failed') return original;
-    if (original.conversationId === null || original.botId === null) return original;
     // D75 §7.5: a task is not a mailbox run — retrying it (the setup card,
     // after the setup it failed on is done) starts a new task continuing it.
-    if (original.loopType === 'task') return this.#taskHost.retry(original.id);
+    // W3 (D78): an interrupted task too — after the user's review when it
+    // left external effects (`reviewed`, only from the task card).
+    if (
+      original.loopType === 'task' &&
+      (original.status === 'failed' || original.status === 'interrupted')
+    ) {
+      return this.#taskHost.retry(original.id, options);
+    }
+    if (original.status !== 'failed') return original;
+    if (original.conversationId === null || original.botId === null) return original;
     // Background loops (reflection / summary / triage / subagent) carry a
     // conversation id but are not mailbox turns: replaying their trigger
     // messages as a turn would answer the user a second time.
@@ -2826,7 +2837,12 @@ export class Orchestrator {
       // task result in it is rendered in full up to the hard cap (§2.4.4).
       const triggerSegment =
         exec.kind === 'task'
-          ? buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskWorkdir)
+          ? [
+              this.#effectsBeforeInterrupt(exec.brief),
+              buildTaskBriefSegment(exec.brief, renderOptions, exec.task.taskWorkdir),
+            ]
+              .filter((part) => part.length > 0)
+              .join('\n\n')
           : triggerParts(batch)
               .map((part) =>
                 buildTriggerSegment({
@@ -3962,6 +3978,24 @@ export class Orchestrator {
       effects: this.#effectsFor(source.id),
     });
     return segment.length > 0 ? { continuedFromRunIds: [source.id], segment } : null;
+  }
+
+  /**
+   * W3 `<effects_before_interrupt>` of a task continuing one that did not
+   * complete (a 检查后重试, or a `continues_task_id`): the external calls of the
+   * source's chain that completed / may have. It goes into the trigger (in
+   * front of the brief), so a reused external-agent session — which only gets
+   * the conversation delta and the trigger — sees it too. '' = none.
+   */
+  #effectsBeforeInterrupt(brief: TaskBrief): string {
+    if (brief.continuesTaskId === null || this.#deps.effects === undefined) return '';
+    try {
+      const source = this.#deps.runs.get(brief.continuesTaskId);
+      if (source === null || source.status === 'completed') return '';
+      return buildEffectsBeforeInterruptSegment(this.#deps.effects.listForTask(source.id));
+    } catch {
+      return '';
+    }
   }
 
   /**

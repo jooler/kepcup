@@ -666,6 +666,8 @@ export const taskEventContentSchema = z.object({
   sourceMessageIds: z.array(z.string()).optional(),
   status: runStatusSchema.optional(),
   error: z.string().optional(),
+  /** failure 条目：机器可读原因（W3 `permission_revoked`），恢复时随状态补回 runs。 */
+  errorReason: z.string().optional(),
   delivery: z.enum(['delivered', 'queued']).optional(),
   questionMessageId: z.string().optional(),
   title: z.string().optional(),
@@ -854,6 +856,11 @@ export const runSchema = z.object({
    * 失败为 null。
    */
   setup: setupRequirementSchema.nullable().default(null),
+  /**
+   * 机器可读的失败 / 中断原因（error_json.reason）：目前只有 W3 的
+   * `permission_revoked`（用户撤销授权 → 运行中的任务被中断）；其余为 null / 缺省。
+   */
+  errorReason: z.string().nullable().optional(),
   /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
   chainId: z.string().nullable(),
   chainDepth: z.number().nullable(),
@@ -1918,5 +1925,12 @@ export const taskViewSchema = z.object({
   continuesTaskId: z.string().nullable(),
   /** The task that retried / continued this one, if any. */
   continuedByTaskId: z.string().nullable(),
+  /** 机器可读的中断原因（Run.errorReason），如 `permission_revoked`（W3）。 */
+  errorReason: z.string().nullable().optional(),
+  /**
+   * W3（D78）：中断的任务沿续接链有外部副作用台账行（已完成 / 结果未知），重试
+   * 须先在「检查后重试」面板核实（runs.retry reviewed:true）。与 core 的重试闸门同一判定。
+   */
+  reviewRequired: z.boolean().optional(),
 });
 export type TaskView = z.infer<typeof taskViewSchema>;

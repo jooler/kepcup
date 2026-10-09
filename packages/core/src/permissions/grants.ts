@@ -3,6 +3,7 @@ import type { SqliteDatabase } from '../infra/db.js';
 import { currentToolCall, type ToolCallScope } from './tool-call-scope.js';
 import type { Clock } from '../infra/clock.js';
 import type { RunIdentity } from '../agent/types.js';
+import type { PermissionRevocations } from './revocations.js';
 
 interface GrantRow {
   id: string;
@@ -62,9 +63,13 @@ export class GrantsService {
   /** Conversations with an auto revocation not yet reported (flushed in a microtask). */
   readonly #pendingAutoRevoke = new Set<string>();
 
-  constructor(deps: { db: SqliteDatabase; clock: Clock }) {
+  /** W3: user revocations are announced here (TaskHost interrupts running tasks). */
+  readonly #revocations: PermissionRevocations | null;
+
+  constructor(deps: { db: SqliteDatabase; clock: Clock; revocations?: PermissionRevocations }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
+    this.#revocations = deps.revocations ?? null;
   }
 
   /**
@@ -232,6 +237,30 @@ export class GrantsService {
       .prepare('update grants set revoked_at = ? where id = ?')
       .run(this.#clock.now(), id);
     return this.get(id);
+  }
+
+  /**
+   * W3（D78）: the user revoked the grant (grants.revoke) — unlike the
+   * service's own revocations (once grants consumed by their call, TTL
+   * expiry, run end), this announces `permission.revoked` so the grant's
+   * bot's running tasks in that conversation are interrupted. Returns the
+   * grant and how many tasks were interrupted (0 when it was not active).
+   */
+  revokeByUser(id: string): { grant: Grant | null; interruptedTasks: number } {
+    const before = this.get(id);
+    const grant = this.revoke(id);
+    if (before === null || before.revokedAt !== null || grant === null) {
+      return { grant, interruptedTasks: 0 };
+    }
+    const interruptedTasks =
+      this.#revocations?.emit({
+        scope: 'path',
+        conversationId: grant.conversationId,
+        botIds: [grant.botId],
+        // A once grant belongs to one run: only that run's task is affected.
+        ...(grant.duration === 'once' && grant.runId !== null ? { runId: grant.runId } : {}),
+      }) ?? 0;
+    return { grant, interruptedTasks };
   }
 
   /** Revocation by the service itself: reported to onAutoRevoke listeners. */

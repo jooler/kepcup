@@ -4,6 +4,7 @@ import {
   activeRunsOf,
   applyFetchedViews,
   clipLine,
+  effectBadge,
   isActiveTask,
   pruneTaskViews,
   taskCardModel,
@@ -131,6 +132,63 @@ describe('taskCardModel', () => {
     );
     expect(setup.canRetry).toBe(false);
     expect(setup.setupHint).toBe(true);
+  });
+
+  it('W3: an interrupted task can be retried; with external effects the retry needs a review', () => {
+    // Old interrupted tasks (no ledger rows) → plain retry.
+    const plain = taskCardModel(
+      view({ state: 'interrupted', status: 'interrupted', error: '应用退出，任务中断' }),
+    );
+    expect(plain).toMatchObject({
+      tone: 'error',
+      canRetry: true,
+      needsReview: false,
+      revoked: false,
+      errorLine: '应用退出，任务中断',
+    });
+    // External effects left behind → 检查后重试.
+    const review = taskCardModel(
+      view({ state: 'interrupted', status: 'interrupted', reviewRequired: true }),
+    );
+    expect(review).toMatchObject({ canRetry: true, needsReview: true });
+    // Already retried / waiting on a setup → no retry at all.
+    expect(
+      taskCardModel(
+        view({
+          state: 'interrupted',
+          status: 'interrupted',
+          reviewRequired: true,
+          continuedByTaskId: 'run_t2',
+        }),
+      ),
+    ).toMatchObject({ canRetry: false, needsReview: false });
+    // A failed task never needs the review (the gate is for interruptions).
+    expect(
+      taskCardModel(view({ state: 'failed', status: 'failed', reviewRequired: true })).needsReview,
+    ).toBe(false);
+  });
+
+  it('W3: a task interrupted by a revoked permission shows the fixed reason', () => {
+    const model = taskCardModel(
+      view({
+        state: 'interrupted',
+        status: 'interrupted',
+        error: '授权已被撤销，任务已中断。请检查已完成的操作后再重试',
+        errorReason: 'permission_revoked',
+      }),
+    );
+    expect(model.revoked).toBe(true);
+    expect(model.errorLine).toBeNull();
+    expect(model.canRetry).toBe(true);
+  });
+
+  it('W3: ledger statuses map to the four review badges', () => {
+    expect(effectBadge('completed')).toBe('completed');
+    expect(effectBadge('uncertain')).toBe('uncertain');
+    expect(effectBadge('executing')).toBe('uncertain');
+    expect(effectBadge('intended')).toBe('uncertain');
+    expect(effectBadge('failed')).toBe('failed');
+    expect(effectBadge('denied')).toBe('denied');
   });
 
   it('a completed task has no change summary (its run-changes card covers project tasks)', () => {

@@ -1,4 +1,4 @@
-import type { Run, TaskChanges, TaskView } from '@kepcup/shared';
+import type { EffectStatus, Run, TaskChanges, TaskView } from '@kepcup/shared';
 
 /**
  * 任务卡与状态行的纯展示逻辑（D75，docs/design/30-supervisor-and-tasks.md
@@ -25,8 +25,13 @@ export interface TaskCardModel {
   progress: string | null;
   /** Why it was cancelled ('' = no reason recorded); null unless cancelled. */
   cancelReason: string | null;
-  /** Failure / interruption error; null otherwise. */
+  /** Failure / interruption error; null otherwise (and when `revoked` says it). */
   errorLine: string | null;
+  /**
+   * W3: interrupted because the user revoked a permission (error_json.reason
+   * `permission_revoked`) — the card shows the fixed localized reason.
+   */
+  revoked: boolean;
   /**
    * Change summary of a write task that ended without completing (§4.3: the
    * cancel card): project → counts + whole-run revert; workspace → the files
@@ -39,6 +44,11 @@ export interface TaskCardModel {
   setupHint: boolean;
   canCancel: boolean;
   canRetry: boolean;
+  /**
+   * W3（D78）: the retry is 「检查后重试」 — the interrupted task left external
+   * effects (completed / unknown outcome); the review panel must be ticked first.
+   */
+  needsReview: boolean;
   canRevert: boolean;
   clip(text: string): string;
 }
@@ -61,17 +71,25 @@ export function taskCardModel(task: TaskView): TaskCardModel {
   }
   const cancelReason =
     task.state === 'cancelled' ? (task.cancelReason ?? task.error ?? '').trim() : null;
-  const errorLine = task.state === 'failed' || task.state === 'interrupted' ? task.error : null;
+  const revoked = task.state === 'interrupted' && task.errorReason === 'permission_revoked';
+  const errorLine =
+    (task.state === 'failed' || task.state === 'interrupted') && !revoked ? task.error : null;
+  const canRetry =
+    (task.state === 'failed' || task.state === 'interrupted') &&
+    task.setup === null &&
+    task.continuedByTaskId === null;
   return {
     tone: task.state === 'failed' || task.state === 'interrupted' ? 'error' : 'normal',
     queueReason: task.state === 'submitted' ? (task.queueReason ?? '') : null,
     progress: task.state === 'running' && task.lastProgress !== null ? task.lastProgress : null,
     cancelReason,
     errorLine,
+    revoked,
     changes,
     setupHint: task.state === 'failed' && task.setup !== null,
     canCancel: active,
-    canRetry: task.state === 'failed' && task.setup === null && task.continuedByTaskId === null,
+    canRetry,
+    needsReview: canRetry && task.state === 'interrupted' && task.reviewRequired === true,
     canRevert:
       changes !== null &&
       changes.kind === 'project' &&
@@ -79,6 +97,24 @@ export function taskCardModel(task: TaskView): TaskCardModel {
       changes.added + changes.modified + changes.deleted > 0,
     clip: (text) => clipLine(text),
   };
+}
+
+/** Status badge of a ledger row on the review panel (W3): its i18n key suffix. */
+export type EffectBadge = 'completed' | 'uncertain' | 'failed' | 'denied';
+
+/**
+ * 已完成 / 结果未知 / 失败 / 已拒绝. `executing` left behind (the run is gone)
+ * and `intended` are shown as unknown — never as done or not done.
+ */
+export function effectBadge(status: EffectStatus): EffectBadge {
+  switch (status) {
+    case 'completed':
+    case 'failed':
+    case 'denied':
+      return status;
+    default:
+      return 'uncertain';
+  }
 }
 
 /** One task line of the status line (D55 → D75: task activity). */

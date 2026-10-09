@@ -16,6 +16,7 @@
   import { tasks } from '$lib/stores/tasks.svelte';
   import { Button } from '$lib/components/ui/button';
   import { taskCardModel } from './task-view';
+  import TaskEffectsReview from './TaskEffectsReview.svelte';
 
   /**
    * 任务卡（D75，docs/design/30-supervisor-and-tasks.md §4.3）：对话轮
@@ -23,6 +24,8 @@
    * 进度、追加的指令（含之后降级为未送达）、取消按钮；结算后转终态：取消卡
    * 附改动摘要（项目写任务可整次回退；工作区没有检查点，如实说明不能回退），
    * 失败卡可重试（新任务接续它）。结果本身由对话轮转述，不在卡上。
+   * W3（D78）：中断卡也可重试；中断前留下外部副作用（已完成 / 结果未知）的，
+   * 按钮是「检查后重试」，展开台账清单、勾「我已核实」后才能重试。
    */
   let { taskId }: { taskId: string } = $props();
 
@@ -39,6 +42,7 @@
   );
   let busy = $state(false);
   let reverted = $state(false);
+  let reviewing = $state(false);
 
   function codeOf(error: unknown): string | undefined {
     return (error as { code?: string } | undefined)?.code;
@@ -55,11 +59,18 @@
     }
   }
 
-  async function retry(): Promise<void> {
+  async function retry(reviewed = false): Promise<void> {
     busy = true;
     try {
-      await tasks.retry(taskId);
+      await tasks.retry(taskId, reviewed);
+      reviewing = false;
     } catch (error) {
+      // The server's gate disagrees with the cached view (effects appeared):
+      // open the review instead of a bare error.
+      if (codeOf(error) === 'REVIEW_REQUIRED') {
+        reviewing = true;
+        return;
+      }
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
     } finally {
       busy = false;
@@ -168,7 +179,15 @@
           : t('task.cancelledPlain')}
       </p>
     {/if}
-    {#if model.errorLine !== null}
+    {#if model.revoked}
+      <p
+        class="mt-1.5 text-xs text-muted-foreground"
+        data-testid="task-error"
+        data-reason="permission_revoked"
+      >
+        {t('task.interruptedRevoked')}
+      </p>
+    {:else if model.errorLine !== null}
       <p class="mt-1.5 text-xs text-muted-foreground" data-testid="task-error">{model.errorLine}</p>
     {/if}
 
@@ -228,7 +247,16 @@
             data-testid="task-revert">{t('changes.revert')}</Button
           >
         {/if}
-        {#if model.canRetry}
+        {#if model.canRetry && model.needsReview}
+          <Button
+            size="sm"
+            variant="outline"
+            class="h-7"
+            disabled={busy || reviewing}
+            onclick={() => (reviewing = true)}
+            data-testid="task-review-open">{t('task.reviewRetry')}</Button
+          >
+        {:else if model.canRetry}
           <Button
             size="sm"
             variant="outline"
@@ -249,6 +277,14 @@
           >
         {/if}
       </div>
+    {/if}
+    {#if reviewing && model.canRetry}
+      <TaskEffectsReview
+        {taskId}
+        {busy}
+        onRetry={() => void retry(true)}
+        onClose={() => (reviewing = false)}
+      />
     {/if}
   </div>
 {/if}

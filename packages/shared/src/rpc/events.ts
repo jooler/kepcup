@@ -181,6 +181,16 @@ export const delegationUpdatedPayloadSchema = z.object({ delegation: delegationS
  */
 export const taskUpdatedPayloadSchema = z.object({ task: taskViewSchema });
 
+/**
+ * W3（D78）：用户撤销授权（路径授权 / MCP 停用、移出、改为每次确认）后，受影响
+ * 的进行中任务被立即中断；只在 count > 0 时推送，渲染端据此提示「已中断 N 个进行中的任务」。
+ */
+export const tasksInterruptedPayloadSchema = z.object({
+  count: z.number().int().positive(),
+  reason: z.literal('permission_revoked'),
+  scope: z.enum(['path', 'mcp']),
+});
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -208,6 +218,7 @@ export const rpcEventSchemas = {
   'mcp.server_status': mcpServerStatusPayloadSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
+  'tasks.interrupted': tasksInterruptedPayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;
