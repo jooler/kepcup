@@ -484,6 +484,10 @@ describe('AgentInstaller — archive safety', () => {
     return { root, installer, promise: installer.install(entry) };
   }
 
+  function tarIsBsd(): boolean {
+    return execFileSync('tar', ['--version'], { encoding: 'utf8' }).includes('bsdtar');
+  }
+
   function tarOf(build: (dir: string) => void, extra: string[] = []): Buffer {
     const dir = tempDir('kepcup-tar-src-');
     build(dir);
@@ -527,7 +531,11 @@ describe('AgentInstaller — archive safety', () => {
           writeFileSync(path.join(dir, 'agent'), '#!/bin/sh\n');
           writeFileSync(path.join(dir, 'evil'), 'pwned');
         },
-        ['--transform', `s,^\\./evil$,../../../../../../../../..${victimDir}/evil,`],
+        // Rename a member on creation: GNU tar `--transform s,old,new,`, bsdtar
+        // (macOS) `-s ,old,new,`; both keep the `../` prefix in the stored name.
+        tarIsBsd()
+          ? ['-s', `,^\\./evil$,../../../../../../../../..${victimDir}/evil,`]
+          : ['--transform', `s,^\\./evil$,../../../../../../../../..${victimDir}/evil,`],
       );
       const { promise } = await installArchive(buffer, 'a.tar.gz', './agent');
       await promise.catch(() => undefined);

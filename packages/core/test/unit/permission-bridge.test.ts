@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { AGENT_CATALOG, type Approval } from '@kepcup/shared';
-import { resolvePaths } from '../../src/infra/paths.js';
+import { canonicalPath, resolvePaths } from '../../src/infra/paths.js';
 import {
   AgentPermissionBridge,
   classifyPermissionRequest,
@@ -773,7 +773,10 @@ describe('AgentPermissionBridge decisions', () => {
       rawInput: { move_path: '/etc/evil' },
       content: [{ type: 'diff', path: '/opt/other.txt', oldText: null, newText: 'x' }],
     });
-    expect(requested[1]).toMatchObject({ locations: ['/opt/other.txt', '/etc/evil'] });
+    // Locations are canonical (realpath): on macOS /etc is /private/etc.
+    expect(requested[1]).toMatchObject({
+      locations: [canonicalPath('/opt/other.txt'), canonicalPath('/etc/evil')],
+    });
     // The repository's .git and the agent's own config files never pass silently.
     await decide({
       toolCallId: 'hook',
@@ -818,7 +821,7 @@ describe('AgentPermissionBridge decisions', () => {
       kind: 'edit',
       locations: [{ path: '/etc/x.conf' }, { path: '/etc/../etc/x.conf' }],
     });
-    expect(requested[0]).toMatchObject({ locations: ['/etc/x.conf'] });
+    expect(requested[0]).toMatchObject({ locations: [canonicalPath('/etc/x.conf')] });
     gatewayKind = 'needs_lease';
     expect(
       (
