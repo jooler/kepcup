@@ -19,6 +19,7 @@ import { redactToolArgs } from '../step-persistence.js';
 import { HOST_MCP_SERVER_PREFIX } from './acp/client.js';
 import { toolAnnotations } from './capabilities.js';
 import type { RunIdentity, ToolContext, ToolDefinition, ToolOutcome, ToolResult } from '../types.js';
+import type { EffectRecorder } from '../effects/recorder.js';
 
 /**
  * 宿主 MCP 桥（docs/design/28-external-agents-acp.md §4.4，D72）：把一个外部
@@ -94,7 +95,10 @@ function resultExtras(
 ): Pick<BridgeToolResultEvent, 'errorCode' | 'outcome' | 'sensitiveParams'> {
   return {
     ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
-    ...(result.outcome !== undefined ? { outcome: result.outcome } : {}),
+    // W2: a tool-reported effect outcome (MCP transport failure) counts too.
+    ...((result.outcome ?? result.effect?.outcome) !== undefined
+      ? { outcome: result.outcome ?? result.effect?.outcome }
+      : {}),
     ...(result.sensitiveParams !== undefined && result.sensitiveParams.length > 0
       ? { sensitiveParams: result.sensitiveParams }
       : {}),
@@ -142,6 +146,8 @@ export interface HostMcpBridgeDeps {
   appVersion: string;
   /** Audit trail of bridge calls (gateway.audit: redacted, RunIdentity rows). */
   audit?(identity: RunIdentity, action: string, detail: Record<string, unknown>): void;
+  /** W2 外部副作用台账（tool_call_id = 桥生成的 `kc_…`）；缺省不记账。 */
+  effects?: EffectRecorder;
 }
 
 /** Rejection reasons, for logs and the JSON-RPC error body. */
@@ -434,13 +440,14 @@ export class HostMcpBridge {
     else requestSignal.addEventListener('abort', forwardAbort, { once: true });
     const ctx: ToolContext = {
       identity: binding.identity,
+      toolCallId,
       signal: AbortSignal.any([binding.signal, requestAbort.signal]),
       terminate: (reason) => {
         terminatedBy = reason ?? 'skip_reply';
       },
       progress: (text) => binding.progress(text),
     };
-    const execution = executeToolSafely(tool, args, ctx);
+    const execution = executeToolSafely(tool, args, ctx, this.#deps.effects);
     const detachMs = binding.detachAfterMs ?? null;
     let result: Awaited<typeof execution>;
     if (detachMs === null || binding.onDetachedResult === undefined) {

@@ -19,6 +19,7 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
+import { activeEffectHooks } from '../permissions/tool-call-scope.js';
 
 export interface GatewayDeps {
   paths: AppPaths;
@@ -777,6 +778,9 @@ export class ToolGateway {
     via: string,
     envOverlay?: Record<string, string>,
   ): Promise<GatewayExecResult> {
+    // W2: an approved command leaves the sandbox — the calling tool (bash in
+    // confirm mode) now has an external effect; the ledger records it from here.
+    activeEffectHooks()?.escalate('unsandboxed', identity.runId);
     const result = await executeUnsandboxed({
       command: req.command,
       cwd: workspace,

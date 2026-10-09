@@ -37,6 +37,7 @@ import {
   type GroupSetupStep,
   type Message,
   type Run,
+  type ToolEffect,
   type SetupRequirement,
   type TaskChanges,
   type TaskEventContent,
@@ -188,6 +189,7 @@ import {
 } from '../agent/llm-router.js';
 import type { BotCard } from '@kepcup/shared';
 import type { InstalledToolchain } from '../env/manager.js';
+import type { ToolEffectsStore } from '../agent/effects/store.js';
 
 export interface OrchestratorEnvironmentFacade {
   /** request_environment backend (docs/dev/phases/P06-environment.md 任务 3). */
@@ -210,6 +212,11 @@ export interface OrchestratorEnvironmentFacade {
 
 export interface OrchestratorDeps {
   engine: AgentEngine;
+  /**
+   * W2 外部副作用台账（runs.db tool_effects）：启动恢复把 executing 行改为
+   * uncertain；续接摘要据此标「结果未知」。缺省（精简测试装配）不记账。
+   */
+  effects?: ToolEffectsStore;
   /**
    * D72 外部智能体引擎（`bot.profile.runtime.agent.id` 非空的 Bot 由它驱动）；
    * 缺省（精简测试装配）时这类 Bot 的 run 以失败结算。
@@ -544,6 +551,7 @@ export class Orchestrator {
     this.#taskHost = new TaskHost({
       db: deps.db,
       runs: deps.runs,
+      ...(deps.effects !== undefined ? { effects: deps.effects } : {}),
       messages: deps.messages,
       conversations: deps.conversations,
       bots: deps.bots,
@@ -1545,6 +1553,21 @@ export class Orchestrator {
    * them (docs/dev/02-architecture.md).
    */
   recoverInterrupted(): number {
+    // W2 (step 0): nothing runs yet at startup, so every `executing` ledger
+    // row belongs to a call the dead process never settled → uncertain. One
+    // idempotent UPDATE covering tasks, turns, sub runs and external-agent
+    // runs alike — before the task repair renders failure digests from it.
+    try {
+      const changed = this.#deps.effects?.markExecutingUncertain() ?? 0;
+      if (changed > 0) {
+        this.#deps.logger.info({ effects: changed }, 'marked interrupted tool effects uncertain');
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'tool effect recovery failed',
+      );
+    }
     // D75 §7.4 step 1: tasks are repaired first — one with a terminal entry
     // adopts its status instead of being blanket-interrupted (§3.2 修复);
     // submitted tasks stay queued and are re-queued below.
@@ -3918,6 +3941,15 @@ export class Orchestrator {
     }
   }
 
+  /** W2 ledger rows of one run for the digest; [] without a ledger / on error. */
+  #effectsFor(runId: string): ToolEffect[] {
+    try {
+      return this.#deps.effects?.listForRun(runId) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   /** `continues_task_id` replay of a task (D75 §7.1, D56 budget). */
   #taskContinuation(brief: TaskBrief): ContinuationPlan | null {
     if (brief.continuesTaskId === null) return null;
@@ -3927,6 +3959,7 @@ export class Orchestrator {
       source,
       steps: this.#deps.runs.stepsFor(source.id),
       timeZone: this.#deps.timeZone,
+      effects: this.#effectsFor(source.id),
     });
     return segment.length > 0 ? { continuedFromRunIds: [source.id], segment } : null;
   }

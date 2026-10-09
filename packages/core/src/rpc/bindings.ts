@@ -28,6 +28,7 @@ import {
   delegationIdInputSchema,
   delegationGetOutputSchema,
   taskGetOutputSchema,
+  effectsListOutputSchema,
   taskIdInputSchema,
   tasksActiveInputSchema,
   tasksActiveOutputSchema,
@@ -875,6 +876,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       orchestrator.tasks.answerQuestion(input.messageId, input.answer);
       return { ok: true as const };
     }),
+    // W2 外部副作用台账（W3 检查后重试面板）：任务沿续接链的 tool_effects 行。
+    'effects.list': method(taskIdInputSchema, effectsListOutputSchema, async (input) => ({
+      effects: domain.effects.listForTask(input.taskId),
+    })),
 
     'grants.list': method(grantsListInputSchema, grantsListOutputSchema, async (input) => ({
       grants: domain.grants.listActive(input.conversationId),

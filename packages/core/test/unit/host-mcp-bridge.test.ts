@@ -14,6 +14,7 @@ import {
   type BridgeToolResultEvent,
 } from '../../src/agent/external/mcp-bridge.js';
 import { SCREENSHOT_OMITTED_NOTE } from '../../src/agent/tool-execution.js';
+import type { EffectRecorder } from '../../src/agent/effects/recorder.js';
 import { truncateToBudget } from '../../src/agent/tokens.js';
 import type {
   RunIdentity,
@@ -311,6 +312,52 @@ describe('HostMcpBridge', () => {
       type: 'image',
       data: 'aGk=',
       mimeType: 'image/png',
+    });
+  });
+
+  it('W2: tool-reported / ledger uncertain outcomes reach the tool_result report', async () => {
+    recorder = { calls: [], results: [], terminated: [], audits: [] };
+    // A ledger that settles every call it sees as uncertain (thrown → uncertain).
+    const effects: EffectRecorder = {
+      begin: () => ({
+        escalate: () => {},
+        noteApproval: () => {},
+        settle: () => null,
+        settleThrown: () => 'uncertain',
+      }),
+    };
+    const bridge = new HostMcpBridge({ logger, appVersion: '9.9.9', effects });
+    await bridge.start();
+    bridges.push(bridge);
+    const token = bridge.issueSessionToken('s1');
+    bridge.bindRun(
+      's1',
+      binding(
+        [
+          tool('mcp_srv_post', async () => ({
+            ok: false,
+            content: 'MCP 调用失败：socket hang up',
+            errorCode: 'MCP_CALL_FAILED',
+            effect: { outcome: 'uncertain' },
+          })),
+          tool('git_remote', async () => {
+            throw new Error('炸了');
+          }),
+        ],
+        recorder,
+      ),
+    );
+    await post(bridge, call('mcp_srv_post', { text: '' }), { token });
+    expect(recorder.results.at(-1)).toMatchObject({
+      toolName: 'mcp_srv_post',
+      errorCode: 'MCP_CALL_FAILED',
+      outcome: 'uncertain',
+    });
+    await post(bridge, call('git_remote', { text: '' }), { token });
+    expect(recorder.results.at(-1)).toMatchObject({
+      toolName: 'git_remote',
+      errorCode: 'INTERNAL',
+      outcome: 'uncertain',
     });
   });
 

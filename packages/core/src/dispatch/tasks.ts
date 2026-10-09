@@ -22,7 +22,8 @@ import {
   type TaskEventContent,
   type TaskView,
 } from '@kepcup/shared';
-import { buildRunDigest } from '../agent/context/continuation.js';
+import { buildRunDigest, type DigestEffect } from '../agent/context/continuation.js';
+import type { ToolEffectsStore } from '../agent/effects/store.js';
 import {
   renderMessageLine,
   TASK_QUESTION_EVENT,
@@ -148,6 +149,8 @@ export interface TaskHostDeps {
   /** main.db (the forward_task_result "already forwarded" lookup). */
   db: SqliteDatabase;
   runs: RunsService;
+  /** W2 外部副作用台账：失败摘要据此标「结果未知」；缺省（单测）不查。 */
+  effects?: ToolEffectsStore;
   messages: MessagesService;
   conversations: ConversationsService;
   bots: BotsService;
@@ -420,12 +423,15 @@ export function buildTaskReplaySegment(input: {
   source: Run;
   steps: RunStep[];
   timeZone: string;
+  /** W2 ledger rows of the source run (uncertain ones are flagged); optional. */
+  effects?: readonly DigestEffect[];
 }): string {
   const digest = buildRunDigest({
     run: input.source,
     steps: input.steps,
     timeZone: input.timeZone,
     budgetTokens: CONTINUATION_REPLAY_TOKEN_BUDGET,
+    ...(input.effects !== undefined ? { effects: input.effects } : {}),
   });
   if (digest.length === 0) return '';
   return [
@@ -1963,6 +1969,9 @@ export class TaskHost implements TaskToolFacade {
         steps: this.#deps.runs.stepsFor(task.id),
         timeZone: this.#deps.timeZone,
         budgetTokens: TASK_FAILURE_DIGEST_TOKEN_BUDGET,
+        ...(this.#deps.effects !== undefined
+          ? { effects: this.#deps.effects.listForRun(task.id) }
+          : {}),
       });
     } catch {
       // The digest is a courtesy: an unreadable step log leaves just the error.

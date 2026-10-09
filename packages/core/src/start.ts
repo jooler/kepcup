@@ -86,6 +86,8 @@ import { type DistroToolchainInstaller } from './env/distro.js';
 import { shQuote } from './infra/shell.js';
 import { ToolGateway } from './gateway/index.js';
 import { PiEngine } from './agent/pi-engine.js';
+import { ToolEffectsStore } from './agent/effects/store.js';
+import { createEffectRecorder } from './agent/effects/recorder.js';
 import { modelRetryPolicyFromEnv } from './agent/model-retry.js';
 import { ExternalAgentEngine } from './agent/external/engine.js';
 import { LlmRouter } from './agent/llm-router.js';
@@ -317,6 +319,8 @@ export interface CoreServicesOptions {
 }
 
 export interface CoreDomainServices {
+  /** W2 外部副作用台账（runs.db tool_effects）。 */
+  effects: ToolEffectsStore;
   settings: SettingsService;
   secrets: SecretsService;
   bots: BotsService;
@@ -849,6 +853,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
     const jobs = new JobsService(mainDb, clock);
     const runs = new RunsService(runsDb, clock, logger);
+    // W2 外部副作用台账（runs.db tool_effects）：store 供恢复 / RPC，recorder
+    // 注入两个工具执行入口（PiEngine、宿主 MCP 桥）。
+    const effects = new ToolEffectsStore(runsDb, clock);
     const usage = new UsageService(mainDb, clock);
     // 国内厂商媒体网关先建（providers 按能力测试要路由到这里）。
     const media = new MediaService({ settings, secrets, logger });
@@ -1146,11 +1153,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
 
     // --- turn / task loop machinery ----------------------------------------
+    const effectRecorder = createEffectRecorder({
+      store: effects,
+      redact: (text) => secrets.redact(text),
+      logger,
+      mcpRiskOf: (serverId, toolName) => mcp.riskOf(serverId, toolName).risk,
+    });
     const engine = new PiEngine({
       settings,
       secrets,
       logger,
       modelRetry: modelRetryPolicyFromEnv(env),
+      effects: effectRecorder,
     });
     // D72 外部智能体引擎：进程懒启动，未被 Bot 选用时不产生任何子进程。
     const agentCatalog = effectiveAgentCatalog(extraAgentEntries);
@@ -1190,6 +1204,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       appVersion: options.appVersion ?? '0.0.0',
       audit: (identity, action, detail) => gateway.audit(identity, action, detail),
+      effects: effectRecorder,
     });
     try {
       await hostBridge.start();
@@ -1297,6 +1312,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     };
     const orchestrator = new Orchestrator({
       engine,
+      effects,
       externalEngine,
       llmRouter,
       agentCatalog: () => agentCatalog,
@@ -1682,6 +1698,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       allowlist,
       unattended,
       projects: projectsService,
+      effects,
     };
     services.orchestrator = orchestrator;
     services.projectRuntime = projectRuntime;

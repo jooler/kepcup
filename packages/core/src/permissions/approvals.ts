@@ -31,6 +31,7 @@ import type { RunsService } from '../domain/runs.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { UnattendedService } from './unattended.js';
+import { activeEffectHooks } from './tool-call-scope.js';
 
 interface ApprovalRow {
   id: string;
@@ -1006,6 +1007,8 @@ export class ApprovalsService {
         opts.autoApproved === true ? 1 : 0,
         this.#deps.clock.now(),
       );
+    // W2: the effect ledger links the calling tool call's row to its approval.
+    activeEffectHooks()?.noteApproval(id, identity.runId);
     return this.getOrThrow(id);
   }
 

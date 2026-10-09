@@ -895,6 +895,50 @@ export const runStepSchema = z.object({
 });
 export type RunStep = z.infer<typeof runStepSchema>;
 
+/**
+ * 外部副作用台账（W2 / D78，D67 durable journal 的第一步；runs.db
+ * `tool_effects`）。状态：`intended`（预留：W4 审批前登记）→ `executing`（执行前
+ * 写入）→ `completed` / `failed` / `uncertain`（派发后出错、抛异常、执行中崩溃
+ * 被恢复改写）/ `denied`（审批被拒）。只记 effect class 为 external 的调用。
+ */
+export const effectStatusSchema = z.enum([
+  'intended',
+  'executing',
+  'completed',
+  'failed',
+  'uncertain',
+  'denied',
+]);
+export type EffectStatus = z.infer<typeof effectStatusSchema>;
+
+/** 工具可选回执（工具结果的 `effect.receipt`；已脱敏）。 */
+export const effectReceiptSchema = z.object({
+  url: z.string().optional(),
+  externalId: z.string().optional(),
+  note: z.string().optional(),
+});
+export type EffectReceipt = z.infer<typeof effectReceiptSchema>;
+
+export const toolEffectSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  /** `runId:tool:sha256(stableJson(args))[:16]:occurrence`（键序无关）。 */
+  effectKey: z.string(),
+  /** sha256(已脱敏的 stableJson(args))，hex。 */
+  argsHash: z.string(),
+  /** 给人看的「做了什么」：已脱敏、≤200 字。 */
+  summary: z.string(),
+  /** 本次调用期间最近一次审批（main.approvals.id，跨库无外键）。 */
+  approvalId: z.string().nullable(),
+  status: effectStatusSchema,
+  receipt: effectReceiptSchema.nullable(),
+  createdAt: z.number(),
+  settledAt: z.number().nullable(),
+});
+export type ToolEffect = z.infer<typeof toolEffectSchema>;
+
 // ---------------------------------------------------------------------------
 // Jobs / usage
 // ---------------------------------------------------------------------------

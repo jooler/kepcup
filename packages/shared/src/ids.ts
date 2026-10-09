@@ -28,6 +28,8 @@ export const ID_PREFIXES = {
   dlg: 'dlg_',
   /** 外部智能体会话（D72 P5，agent_sessions）。 */
   ags: 'ags_',
+  /** 外部副作用台账（W2，runs.db tool_effects）。 */
+  eff: 'eff_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

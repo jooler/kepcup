@@ -154,6 +154,8 @@ function wrapMcpTool(input: {
     decision.risk === 'read' ? '只读' : decision.risk === 'write' ? '写入' : '可能有破坏性';
   return {
     name,
+    // W2: the effect ledger classifies by this risk (and the live one).
+    mcp: { serverId: server.id, toolName: tool.name, risk: decision.risk },
     description:
       `MCP 工具（来自服务器「${server.name}」，${riskLabel}）：${tool.description ?? tool.title ?? tool.name}。` +
       (decision.approval === 'auto' ? '调用无需用户批准。' : '调用会请求用户批准。'),
@@ -177,6 +179,9 @@ function wrapMcpTool(input: {
           ok: false,
           content: `MCP 调用失败：${error instanceof Error ? error.message : String(error)}`,
           errorCode: error instanceof Error && 'code' in error ? String(error.code) : 'MCP_CALL_FAILED',
+          // W2: the request may have reached the server before the transport /
+          // timeout failed — the ledger keeps it as uncertain (safe side).
+          effect: { outcome: 'uncertain' },
         };
       }
       const content = toLlmContent(result);
