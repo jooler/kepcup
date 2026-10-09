@@ -35,6 +35,8 @@ export interface BrowserRpcClient {
 
 export interface BrowserHostRpc {
   ensurePage(input: BrowserPageKey & {
+    /** W8: `bot:{botId}` / `shared:{profileId}` — the host derives the partition. */
+    profileKey: string;
     networkContext: BrowserNetworkContext;
     downloadsDir: string;
   }): Promise<{ ok: true }>;
@@ -54,6 +56,10 @@ export interface BrowserHostRpc {
   close(input: BrowserPageKey & { permanent?: boolean }): Promise<{ ok: true }>;
   setNetworkContext(input: BrowserPageKey & { networkContext: BrowserNetworkContext }): Promise<{ ok: true }>;
   clearBotData(input: { botId: string }): Promise<{ ok: true }>;
+  /** W8: closes every page of the bot (its browser profile was switched). */
+  closeBotPages(input: { botId: string }): Promise<{ ok: true }>;
+  /** W8: wipes a shared profile's storage (`remove` = deleted: tombstone + directory). */
+  clearProfileData(input: { profileId: string; remove?: boolean }): Promise<{ ok: true }>;
 }
 
 function unavailable(): AppError {
@@ -74,6 +80,8 @@ const FACADE_METHODS: Record<string, (facade: BrowserHostRpc, input: unknown) =>
   'browser.close': (f, i) => f.close(i as never),
   'browser.setNetworkContext': (f, i) => f.setNetworkContext(i as never),
   'browser.clearBotData': (f, i) => f.clearBotData(i as never),
+  'browser.closeBotPages': (f, i) => f.closeBotPages(i as never),
+  'browser.clearProfileData': (f, i) => f.clearProfileData(i as never),
 };
 
 class DeferredRpc implements BrowserHostRpc {
@@ -105,6 +113,9 @@ class DeferredRpc implements BrowserHostRpc {
   }
 
   ensurePage(input: Parameters<BrowserHostRpc['ensurePage']>[0]) {
+    // W8: another profile for this page = the host recreates it — the W1
+    // state (no-progress streak, screenshot dedupe) belongs to the old page.
+    if (notePageProfile(this, input, input.profileKey)) dropBrowserPageState(this, input);
     return this.#call('browser.ensurePage', input, browserEnsurePageOutputSchema);
   }
 
@@ -154,6 +165,18 @@ class DeferredRpc implements BrowserHostRpc {
     dropBotBrowserPageStates(this, input.botId);
     return this.#call('browser.clearBotData', input, okOutputSchema);
   }
+
+  closeBotPages(input: Parameters<BrowserHostRpc['closeBotPages']>[0]) {
+    // The pages are gone: a reopened page (new profile) starts clean.
+    dropBotBrowserPageStates(this, input.botId);
+    return this.#call('browser.closeBotPages', input, okOutputSchema);
+  }
+
+  clearProfileData(input: Parameters<BrowserHostRpc['clearProfileData']>[0]) {
+    // The host closes every page on the profile (clear and delete alike).
+    dropProfileBrowserPageStates(this, `shared:${input.profileId}`);
+    return this.#call('browser.clearProfileData', input, okOutputSchema);
+  }
 }
 
 export type DeferredBrowserHostRpc = BrowserHostRpc & {
@@ -192,6 +215,37 @@ export interface BrowserPageState {
 /** Pages remembered per host handle (oldest dropped first). */
 const PAGE_STATE_MAX = 256;
 const pageStates = new WeakMap<object, Map<string, BrowserPageState>>();
+/** W8: the profile key each page was last ensured with (per host handle). */
+const pageProfiles = new WeakMap<object, Map<string, string>>();
+
+/** Records the page's profile key; true when it differs from the last one seen. */
+function notePageProfile(host: BrowserHostRpc, key: BrowserPageKey, profileKey: string): boolean {
+  let profiles = pageProfiles.get(host);
+  if (profiles === undefined) {
+    profiles = new Map();
+    pageProfiles.set(host, profiles);
+  }
+  const mapKey = `${key.botId}|${key.conversationId}`;
+  const previous = profiles.get(mapKey);
+  profiles.delete(mapKey);
+  profiles.set(mapKey, profileKey);
+  if (profiles.size > PAGE_STATE_MAX) {
+    const oldest = profiles.keys().next().value;
+    if (oldest !== undefined) profiles.delete(oldest);
+  }
+  return previous !== undefined && previous !== profileKey;
+}
+
+/** W8: forgets every page on a profile (clearProfileData closes them). */
+export function dropProfileBrowserPageStates(host: BrowserHostRpc, profileKey: string): void {
+  const profiles = pageProfiles.get(host);
+  if (profiles === undefined) return;
+  for (const [key, value] of [...profiles.entries()]) {
+    if (value !== profileKey) continue;
+    profiles.delete(key);
+    pageStates.get(host)?.delete(key);
+  }
+}
 
 export function browserPageState(
   host: BrowserHostRpc,

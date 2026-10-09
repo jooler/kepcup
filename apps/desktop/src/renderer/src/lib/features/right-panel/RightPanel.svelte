@@ -119,6 +119,16 @@
     };
   });
 
+  /**
+   * W8：确认切换浏览器资料后立即保存（不走防抖自动保存）；draft 随之更新，
+   * 保存回写 savedProfile 后自动保存判定为一致，不会再存一次。
+   */
+  async function confirmBrowserProfile(next: string): Promise<void> {
+    if (!bot || !draft) return;
+    draft.runtime.browser_profile = next;
+    await saveProfile(bot.id, draft);
+  }
+
   /** draft 相对最近一次保存仍有未落盘改动时立即保存。 */
   function flushDirtyDraft(): void {
     if (!bot || !draft || !savedProfile) return;
@@ -374,7 +384,11 @@
             />
           {/if}
           <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
-          <BotProfileForm bind:profile={draft} showIdentity={false} />
+          <BotProfileForm
+            bind:profile={draft}
+            showIdentity={false}
+            onBrowserProfileConfirm={confirmBrowserProfile}
+          />
         </div>
       </div>
       <div

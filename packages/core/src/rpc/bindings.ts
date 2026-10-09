@@ -4,6 +4,12 @@ import {
   AppError,
   agentSettingSchema,
   settingsGetOutputSchema,
+  browserProfilesListOutputSchema,
+  browserProfilesCreateInputSchema,
+  browserProfilesCreateOutputSchema,
+  browserProfilesRenameInputSchema,
+  browserProfileIdInputSchema,
+  browserProfilesMutateOutputSchema,
   settingsUpdateInputSchema,
   providersSetKeyInputSchema,
   providerNameInputSchema,
@@ -250,9 +256,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const domain = services.domain!;
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
-  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」. */
-  const publishInterrupted = (count: number, scope: 'path' | 'mcp'): void => {
-    if (count > 0) publish('tasks.interrupted', { count, reason: 'permission_revoked', scope });
+  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」 (W8: also a profile switch). */
+  const publishInterrupted = (count: number, scope: 'path' | 'mcp' | 'browser_profile'): void => {
+    if (count > 0) {
+      publish('tasks.interrupted', {
+        count,
+        reason: scope === 'browser_profile' ? 'browser_profile_changed' : 'permission_revoked',
+        scope,
+      });
+    }
   };
   /** W3: MCP permissions the user took back → interrupt the affected tasks. */
   const revokeMcp = (revoked: Array<{ serverId: string; toolName?: string; botIds: string[] }>) => {
@@ -475,6 +487,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           '对话式新建暂不支持外部智能体：请先用内置模型创建，再切换',
         );
       }
+      // W8: only an existing shared browser profile ('' = private).
+      domain.browserProfiles.assertSelectable(input.profile.runtime.browser_profile);
       const bot = domain.bots.create(input.profile, { interview: input.interview });
       publish('bot.updated', { bot });
       return { bot };
@@ -540,8 +554,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         assertAgentSelectable(domain.settings.get(), services.agents?.catalog() ?? [], nextAgentId);
       }
       const previousServerIds = domain.bots.getOrThrow(input.id).profile.runtime.mcp_server_ids;
+      // W8: the browser profile may only point at an existing shared profile.
+      domain.browserProfiles.assertSelectable(
+        input.profile.runtime.browser_profile,
+        domain.bots.getOrThrow(input.id).profile.runtime.browser_profile,
+      );
+      const previousProfileKey = domain.browserProfiles.profileKeyFor(input.id);
       const bot = domain.bots.update(input.id, input.profile);
       publish('bot.updated', { bot });
+      // W8: a different effective browser profile = the identity changed under
+      // the bot's browser-using tasks → interrupted; its pages are closed.
+      if (domain.browserProfiles.profileKeyFor(bot.id) !== previousProfileKey) {
+        publishInterrupted(
+          await domain.browserProfiles.onBotProfileChanged(bot.id),
+          'browser_profile',
+        );
+      }
       // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
       revokeMcp(
         serversRemovedFromBot(
@@ -1265,6 +1293,44 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => {
         services.schedules?.cancel(input.id);
         return { ok: true as const };
+      },
+    ),
+
+    // --- W8 共享浏览器资料 ---------------------------------------------------
+    'browserProfiles.list': method(voidInput, browserProfilesListOutputSchema, async () => ({
+      profiles: domain.browserProfiles.list(),
+    })),
+    'browserProfiles.create': method(
+      browserProfilesCreateInputSchema,
+      browserProfilesCreateOutputSchema,
+      async (input) => {
+        const profile = domain.browserProfiles.create(input.name);
+        return { profile, profiles: domain.browserProfiles.list() };
+      },
+    ),
+    'browserProfiles.rename': method(
+      browserProfilesRenameInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        const profiles = domain.browserProfiles.rename(input.id, input.name);
+        return { profiles };
+      },
+    ),
+    'browserProfiles.delete': method(
+      browserProfileIdInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        const { movedBotIds, interrupted } = await domain.browserProfiles.delete(input.id);
+        publishInterrupted(interrupted, 'browser_profile');
+        return { profiles: domain.browserProfiles.list(), movedBotIds, interrupted };
+      },
+    ),
+    'browserProfiles.clear': method(
+      browserProfileIdInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        await domain.browserProfiles.clear(input.id);
+        return { profiles: domain.browserProfiles.list() };
       },
     ),
   };

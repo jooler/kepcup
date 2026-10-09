@@ -21,7 +21,7 @@ export interface FakeBrowserHostCall {
  */
 export interface FakeBrowserHost extends BrowserHostRpc {
   calls: FakeBrowserHostCall[];
-  pages: Map<string, { context: BrowserNetworkContext; downloadsDir: string }>;
+  pages: Map<string, { context: BrowserNetworkContext; downloadsDir: string; profileKey: string }>;
   /** Sets the snapshot every browser.snapshot returns. */
   setSnapshot(snapshot: BrowserSnapshotOutput): void;
   /**
@@ -35,11 +35,20 @@ export interface FakeBrowserHost extends BrowserHostRpc {
   failWith(method: string, error: AppError): void;
   clearedBots: string[];
   closedPairs: Array<{ botId: string; conversationId: string; permanent?: boolean }>;
+  /** W8: bots whose pages were closed by a browser profile switch. */
+  closedBotPages: string[];
+  /** W8: shared profiles whose storage was cleared (`remove` = deleted). */
+  clearedProfiles: Array<{ profileId: string; remove?: boolean }>;
 }
 
 export function createFakeBrowserHost(): FakeBrowserHost {
   const calls: FakeBrowserHostCall[] = [];
-  const pages = new Map<string, { context: BrowserNetworkContext; downloadsDir: string }>();
+  const pages = new Map<
+    string,
+    { context: BrowserNetworkContext; downloadsDir: string; profileKey: string }
+  >();
+  const closedBotPages: string[] = [];
+  const clearedProfiles: Array<{ profileId: string; remove?: boolean }> = [];
   const redirects = new Map<string, string>();
   const clearedBots: string[] = [];
   const closedPairs: Array<{ botId: string; conversationId: string; permanent?: boolean }> = [];
@@ -79,6 +88,8 @@ export function createFakeBrowserHost(): FakeBrowserHost {
     redirects,
     clearedBots,
     closedPairs,
+    closedBotPages,
+    clearedProfiles,
     setSnapshot(next) {
       snapshot = next;
     },
@@ -100,6 +111,7 @@ export function createFakeBrowserHost(): FakeBrowserHost {
         pages.set(`${input.botId}|${input.conversationId}`, {
           context: input.networkContext,
           downloadsDir: input.downloadsDir,
+          profileKey: input.profileKey,
         });
         return { ok: true as const };
       });
@@ -168,6 +180,27 @@ export function createFakeBrowserHost(): FakeBrowserHost {
         clearedBots.push(input.botId);
         for (const key of [...pages.keys()]) {
           if (key.startsWith(`${input.botId}|`)) pages.delete(key);
+        }
+        return { ok: true as const };
+      });
+    },
+    async closeBotPages(input) {
+      record('browser.closeBotPages', input);
+      return gated('browser.closeBotPages', () => {
+        closedBotPages.push(input.botId);
+        for (const key of [...pages.keys()]) {
+          if (key.startsWith(`${input.botId}|`)) pages.delete(key);
+        }
+        return { ok: true as const };
+      });
+    },
+    async clearProfileData(input) {
+      record('browser.clearProfileData', input);
+      return gated('browser.clearProfileData', () => {
+        clearedProfiles.push(input);
+        // Like the real host: the profile's pages close on clear and on delete.
+        for (const [key, page] of [...pages.entries()]) {
+          if (page.profileKey === `shared:${input.profileId}`) pages.delete(key);
         }
         return { ok: true as const };
       });

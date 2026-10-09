@@ -118,7 +118,13 @@ function bootstrap(): void {
   // Bot browser partitions live inside the data home (P11), not userData —
   // must be set before any session is created.
   app.setPath('sessionData', sessionDataRoot(process.env));
-  browserHost = new BrowserHost(process.env);
+  browserHost = new BrowserHost(process.env, {
+    // W8 自动接管 · 交还: the core tells the page's running tasks to snapshot
+    // before going on. Best effort — a core restart window just drops it.
+    onControlReturned: (input) => {
+      coreHost?.callPlatform('browser.controlReturned', input).catch(() => {});
+    },
+  });
   // P13 任务 2: assigned once the updater is wired below (tray builds first).
   let checkUpdates: () => void = () => {};
   tray = createTray({
@@ -245,10 +251,11 @@ function bootstrap(): void {
   // P11 任务 5 (查看窗口): moves the bot's page for this conversation into a
   // visible window. Capability only — whether showing is appropriate is the
   // renderer's / core's decision, not the main process's.
+  // W8: the toolbar copy (labels) is localized in the renderer, like the title.
   ipcMain.handle(
     'browser:show',
-    (_event, botId: string, conversationId: string, title?: string) => {
-      browserHost?.show({ botId, conversationId, title });
+    (_event, botId: string, conversationId: string, title?: string, labels?: unknown) => {
+      browserHost?.show({ botId, conversationId, title, labels });
     },
   );
 
@@ -416,6 +423,10 @@ if (!gotLock) {
   app.on('before-quit', () => {
     quitting = true;
     coreHost?.markQuitting();
+    // Pages (and their viewer windows) go first on every quit path, not just
+    // the tray's: a viewer closing mid-quit must not re-adopt its page into a
+    // freshly created hidden host window (that window would keep the app alive).
+    browserHost?.closeAll();
   });
   void app.whenReady().then(bootstrap);
 }

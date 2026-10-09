@@ -88,6 +88,8 @@ export interface ResponseToolDeps {
    * the real core; tests may omit it (no browser_* tools are registered).
    */
   browser?: BrowserHostRpc | undefined;
+  /** W8: the bot's current browser profile key (`bot:{id}` / `shared:{id}`). */
+  browserProfileKey?: ((botId: string) => string) | undefined;
   /**
    * 对话式新建（setup interview，UI 改版）：仅在 bots.setup_state =
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
@@ -845,6 +847,7 @@ export function buildResponseTools(input: {
           browser: deps.browser,
           workspacePath: deps.workspacePath,
           projectPath: deps.projectPath,
+          ...browserProfileKeyOption(deps.browserProfileKey, identity.botId),
           // D75: a page click can start a download; a read-only run's
           // downloads never land in the workspace.
           ...(gateway.writeDenial(identity) !== null
@@ -1014,4 +1017,12 @@ export function buildSubagentResearchTools(input: {
   );
   const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
   return [...coding, ...web, ...(input.deps.mcp?.tools ?? [])];
+}
+
+/** W8: the browser tools' profile-key resolver bound to the run's bot. */
+function browserProfileKeyOption(
+  resolve: ((botId: string) => string) | undefined,
+  botId: string | null,
+): { profileKey?: () => string } {
+  return resolve !== undefined && botId !== null ? { profileKey: () => resolve(botId) } : {};
 }

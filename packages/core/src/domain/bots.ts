@@ -44,6 +44,7 @@ function emptyProfile(): BotProfile {
       network_policy: 'open',
       network_allowlist: [],
       mcp_server_ids: [],
+      browser_profile: '',
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },

@@ -3,6 +3,8 @@ import {
   browserActionOutputSchema,
   browserClickInputSchema,
   browserClearBotDataInputSchema,
+  browserClearProfileDataInputSchema,
+  browserCloseBotPagesInputSchema,
   browserCloseInputSchema,
   browserEnsurePageInputSchema,
   browserEnsurePageOutputSchema,
@@ -91,6 +93,17 @@ export function browserMethodSpecs(
       input: browserClearBotDataInputSchema,
       output: okOutputSchema,
       handle: (input) => host.clearBotData(input as never),
+    },
+    // W8 共享浏览器资料：profile switch / clear / delete.
+    'browser.closeBotPages': {
+      input: browserCloseBotPagesInputSchema,
+      output: okOutputSchema,
+      handle: (input) => Promise.resolve(host.closeBotPages(input as never)),
+    },
+    'browser.clearProfileData': {
+      input: browserClearProfileDataInputSchema,
+      output: okOutputSchema,
+      handle: (input) => host.clearProfileData(input as never),
     },
   };
 }

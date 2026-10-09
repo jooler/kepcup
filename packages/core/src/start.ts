@@ -15,6 +15,8 @@ import {
   unattendedGetOutputSchema,
   updateActiveRunsOutputSchema,
   updateCancelActiveInputSchema,
+  browserControlReturnedInputSchema,
+  browserControlReturnedOutputSchema,
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
   type AgentCatalogEntry,
@@ -67,6 +69,7 @@ import { ProvidersService } from './domain/providers.js';
 import { AuditService } from './domain/audit.js';
 import { GrantsService } from './permissions/grants.js';
 import { PermissionRevocations } from './permissions/revocations.js';
+import { BrowserProfilesService } from './browser/profiles.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
@@ -324,6 +327,8 @@ export interface CoreDomainServices {
   effects: ToolEffectsStore;
   /** W3 用户撤销授权的内部事件（permission.revoked）：TaskHost 据此中断进行中的任务。 */
   revocations: PermissionRevocations;
+  /** W8 共享浏览器资料（settings.browserProfiles）与 Bot 的资料切换。 */
+  browserProfiles: BrowserProfilesService;
   settings: SettingsService;
   secrets: SecretsService;
   bots: BotsService;
@@ -882,6 +887,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // interrupt the affected running tasks — TaskHost subscribes below.
     const revocations = new PermissionRevocations();
     const grants = new GrantsService({ db: mainDb, clock, revocations });
+    // W8 共享浏览器资料：CRUD over settings.browserProfiles + the profile switch
+    // (interrupt the bot's browser-using tasks, close its pages).
+    const browserProfiles = new BrowserProfilesService({
+      settings,
+      bots,
+      browser: services.browserRpc,
+      clock,
+      revocations,
+      logger,
+      publishBotUpdated: (bot) => events.emit('bot.updated', { bot }),
+    });
     const allowlist = new AllowlistService({ db: mainDb, clock, osPlatform: process.platform });
     const projectsService = new ProjectsService({ db: mainDb, clock });
 
@@ -1716,6 +1732,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       projects: projectsService,
       effects,
       revocations,
+      browserProfiles,
     };
     services.orchestrator = orchestrator;
     services.projectRuntime = projectRuntime;
@@ -2091,6 +2108,23 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
             status: run.status,
           })),
         };
+      },
+    },
+    // W8 自动接管 · 交还：the main process reports that the user handed a bot
+    // page back; its running browser-using tasks get "先 browser_snapshot".
+    'browser.controlReturned': {
+      input: browserControlReturnedInputSchema,
+      output: browserControlReturnedOutputSchema,
+      handle: async (input) => {
+        const { botId, conversationId, reason } = input as {
+          botId: string;
+          conversationId: string;
+          reason: string;
+        };
+        if (services.orchestrator === null) return { injected: 0 };
+        const injected = services.orchestrator.tasks.notifyBrowserHandback(botId, conversationId);
+        services.logger.info({ botId, conversationId, reason, injected }, 'browser control returned');
+        return { injected };
       },
     },
     'update.cancelActive': {

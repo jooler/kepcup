@@ -53,6 +53,12 @@ export const botRuntimeSchema = z.object({
    */
   mcp_server_ids: z.array(z.string()).default([]),
   /**
+   * 浏览器资料（W8，docs/design/14-models-and-browser.md）：'' = 私有（默认，
+   * partition `persist:bot-{botId}`）；否则为共享资料 id（settings.browserProfiles，
+   * partition `persist:shared-{id}`）。Profile JSON，无迁移；指向已删除资料时按私有处理。
+   */
+  browser_profile: z.string().default('').catch(''),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -414,6 +420,17 @@ export const backgroundTasksSettingsSchema = z
   .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
+/**
+ * 共享浏览器资料（W8）：用户显式建立、多个 Bot 挂同一份 Electron partition
+ * （cookie / localStorage / IndexedDB），共用登录状态。只经 `browserProfiles.*` 写入。
+ */
+export const browserProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.number(),
+});
+export type BrowserProfile = z.infer<typeof browserProfileSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -445,6 +462,8 @@ export const settingsSchema = z.object({
    * 密钥在 secrets 表，设置 UI 写占位符。默认空 = 未配置任何 server。
    */
   mcpServers: z.array(mcpServerSchema).default([]),
+  /** 共享浏览器资料（W8）：只经 `browserProfiles.*` 写入，settings.update 不接受。 */
+  browserProfiles: z.array(browserProfileSchema).default([]).catch([]),
   /**
    * Launch at login (P13 任务 3): default ON per docs/dev/phases/P13-release.md.
    * The value lives in core's settings row; the main process applies it to the
@@ -857,8 +876,9 @@ export const runSchema = z.object({
    */
   setup: setupRequirementSchema.nullable().default(null),
   /**
-   * 机器可读的失败 / 中断原因（error_json.reason）：目前只有 W3 的
-   * `permission_revoked`（用户撤销授权 → 运行中的任务被中断）；其余为 null / 缺省。
+   * 机器可读的失败 / 中断原因（error_json.reason）：W3 的 `permission_revoked`
+   * （用户撤销授权 → 运行中的任务被中断）、W8 的 `browser_profile_changed`（Bot
+   * 的浏览器资料被切换 → 用过浏览器的运行中任务被中断）；其余为 null / 缺省。
    */
   errorReason: z.string().nullable().optional(),
   /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */

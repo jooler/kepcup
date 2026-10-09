@@ -29,9 +29,12 @@ export interface TaskCardModel {
   errorLine: string | null;
   /**
    * W3: interrupted because the user revoked a permission (error_json.reason
-   * `permission_revoked`) — the card shows the fixed localized reason.
+   * `permission_revoked`) — or, W8, switched the bot's browser profile
+   * (`browser_profile_changed`); the card shows the fixed localized reason.
    */
   revoked: boolean;
+  /** Which host interruption `revoked` stands for (null when not revoked). */
+  interruptReason: 'permission_revoked' | 'browser_profile_changed' | null;
   /**
    * Change summary of a write task that ended without completing (§4.3: the
    * cancel card): project → counts + whole-run revert; workspace → the files
@@ -71,7 +74,12 @@ export function taskCardModel(task: TaskView): TaskCardModel {
   }
   const cancelReason =
     task.state === 'cancelled' ? (task.cancelReason ?? task.error ?? '').trim() : null;
-  const revoked = task.state === 'interrupted' && task.errorReason === 'permission_revoked';
+  const interruptReason =
+    task.state === 'interrupted' &&
+    (task.errorReason === 'permission_revoked' || task.errorReason === 'browser_profile_changed')
+      ? task.errorReason
+      : null;
+  const revoked = interruptReason !== null;
   const errorLine =
     (task.state === 'failed' || task.state === 'interrupted') && !revoked ? task.error : null;
   const canRetry =
@@ -85,6 +93,7 @@ export function taskCardModel(task: TaskView): TaskCardModel {
     cancelReason,
     errorLine,
     revoked,
+    interruptReason,
     changes,
     setupHint: task.state === 'failed' && task.setup !== null,
     canCancel: active,

@@ -33,6 +33,12 @@ export interface PageOps {
   canGoBack(): boolean;
   goBack(): void;
   delay(ms: number): Promise<void>;
+  /**
+   * W8 自动接管: throws BROWSER_USER_CONTROL while the user has the page.
+   * Re-checked right before the side-effecting call (the settle wait may
+   * have let the user take over after `open()` checked).
+   */
+  assertControl?(): void;
 }
 
 /**
@@ -216,6 +222,7 @@ export async function clickAction(open: () => PageOps, ref: string): Promise<Bro
     const target = await preflight(ops, ref, fingerprint);
     const password = target.password;
     const before = ops.navigationSeq();
+    ops.assertControl?.();
     dispatched = true;
     const result = (await ops.send('Runtime.callFunctionOn', {
       objectId: target.objectId,
@@ -258,6 +265,9 @@ export async function typeAction(
     const target = await preflight(ops, ref, fingerprint);
     password = target.password;
     const before = ops.navigationSeq();
+    // W8: focus / select already change the page (and empty text dispatches
+    // nothing else) — the user's lease is re-checked before any of it.
+    ops.assertControl?.();
     const focus = (await ops.send('Runtime.callFunctionOn', {
       objectId: target.objectId,
       returnByValue: true,
@@ -273,6 +283,7 @@ export async function typeAction(
       );
     }
     if (text.length > 0) {
+      ops.assertControl?.();
       dispatched = true;
       await ops.send('Input.insertText', { text });
     }
@@ -296,6 +307,7 @@ export async function pressAction(open: () => PageOps, key: string): Promise<Bro
     if (!keyEvent) throw new AppError('INVALID_INPUT', `不支持的按键：${key}`);
     await ops.settle();
     const before = ops.navigationSeq();
+    ops.assertControl?.();
     dispatched = true;
     // The exact event shape Playwright presses keys with: text-bearing keys
     // must dispatch as type "keyDown" (rawKeyDown never yields a keypress),
@@ -328,6 +340,7 @@ export async function scrollAction(
     const ops = open();
     await ops.settle();
     const before = ops.navigationSeq();
+    ops.assertControl?.();
     dispatched = true;
     await ops.send('Input.dispatchMouseEvent', {
       type: 'mouseWheel',
@@ -352,6 +365,7 @@ export async function backAction(open: () => PageOps): Promise<BrowserActionOutp
       throw new AppError('INVALID_INPUT', '没有上一页可以返回');
     }
     const before = ops.navigationSeq();
+    ops.assertControl?.();
     dispatched = true;
     ops.goBack();
     await ops.settle(BROWSER_NAVIGATION_TIMEOUT_MS);

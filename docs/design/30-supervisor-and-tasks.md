@@ -512,6 +512,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 - 触发源只有用户主动撤销（[13 §授权](13-permissions.md#授权)）：撤销路径授权（受影响的是该授权的 Bot 在该对话里的任务；「仅这一次」授权只影响它所属 run 的任务）；MCP server 删除 / 停用 / 移出 Bot 勾选 / 关闭 `autoApprove`、逐工具停用或有效审批由免审改为确认（勾选了该 server 的 Bot 的任务）。自动失效、到期、任务自然结束、无关设置保存不算。
 - 机制：撤销 RPC（`grants.revoke`、`settings.update`、`bots.update`）在 core 内同步发出撤销事件（`permissions/revocations.ts`），`TaskHost.interruptForRevocation` 对受影响的 `running` / `waiting_approval` / `waiting_lease` 任务调用 `interrupt(taskId, 'permission_revoked')`：中止执行 → 取消任务与子 run 的待决审批（这些审批对应的台账行结为 `denied`）→ 其余 `executing` 台账行改 `uncertain` → 先写 `failure` 条目再结算 `interrupted`（`error_json.reason='permission_revoked'`，条目里也记原因）。已终态的忽略（幂等）；排队中的任务不中断；对话轮不中断。被唤醒的对话轮照常收到失败条目；渲染端收到 `tasks.interrupted { count }` 后提示「已中断 N 个进行中的任务」。
+- 同一机制的另一个触发源（D77，W8）：Bot 的浏览器资料被切换（`bots.update` 或共享资料被删除）→ 撤销事件 `scope:'browser_profile'`，只中断该 Bot 用过浏览器的任务（任务或其子 run 的 `run_steps` 有 `browser_*` 调用；接续任务不继承源任务的用过与否），原因 `browser_profile_changed`（`error_json.reason` 与失败条目同记）；对话轮不中断。
 
 
 

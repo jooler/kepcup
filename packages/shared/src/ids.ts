@@ -30,6 +30,8 @@ export const ID_PREFIXES = {
   ags: 'ags_',
   /** 外部副作用台账（W2，runs.db tool_effects）。 */
   eff: 'eff_',
+  /** 共享浏览器资料（W8，settings.browserProfiles）。 */
+  bpf: 'bpf_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

@@ -6,6 +6,7 @@
     BarChart3,
     BookUser,
     Bot,
+    Compass,
     Globe,
     Mic,
     Plug,
@@ -33,6 +34,7 @@
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import McpSection from './McpSection.svelte';
+  import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -58,6 +60,7 @@
     { id: 'models', label: t('settings.navModels'), icon: Cpu },
     { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
     { id: 'mcp', label: t('settings.navMcp'), icon: Plug },
+    { id: 'browser', label: t('settings.navBrowserProfiles'), icon: Compass },
     { id: 'agents', label: t('settings.navAgents'), icon: Bot },
     { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
     { id: 'contacts', label: t('settings.navContacts'), icon: BookUser },
@@ -166,6 +169,12 @@
           <div data-settings-section="mcp" class="space-y-6">
             <div data-settings-anchor="mcp">
               <McpSection />
+            </div>
+          </div>
+        {:else if activeSection === 'browser'}
+          <div data-settings-section="browser" class="space-y-6">
+            <div data-settings-anchor="browser-profiles">
+              <BrowserProfilesSection />
             </div>
           </div>
         {:else if activeSection === 'agents'}

@@ -27,7 +27,12 @@ declare global {
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;
       /** P11 查看窗口: shows the bot's page for this conversation (任务 5). */
-      showBotBrowser(botId: string, conversationId: string, title: string): Promise<void>;
+      showBotBrowser(
+        botId: string,
+        conversationId: string,
+        title: string,
+        labels?: { agent: string; user: string; handback: string },
+      ): Promise<void>;
       onCoreProcessState(callback: (state: string) => void): () => void;
       onNavigateConversation(callback: (conversationId: string) => void): () => void;
       /** P13 任务 6 诊断: reveals the logs directory in the OS file manager. */

@@ -343,3 +343,41 @@ describe('AX state digest (W1 no-progress)', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe('W8 user control is re-checked right before dispatch', () => {
+  const userControl = new AppError('BROWSER_USER_CONTROL', '用户正在操作', { phase: 'pre' });
+  const taken = (ops: PageOps): PageOps => ({
+    ...ops,
+    assertControl: () => {
+      throw userControl;
+    },
+  });
+
+  test('click / type / press / scroll / back: refused before the side effect (phase pre)', async () => {
+    const cases: Array<[string, (ops: PageOps) => Promise<unknown>, string]> = [
+      ['click', (ops) => clickAction(() => ops, 'e1'), 'click'],
+      ['type', (ops) => typeAction(() => ops, 'e1', 'hello'), 'Input.insertText'],
+      ['press', (ops) => pressAction(() => ops, 'Enter'), 'Input.dispatchKeyEvent'],
+      ['scroll', (ops) => scrollAction(() => ops, 'down', 300), 'Input.dispatchMouseEvent'],
+      ['back', (ops) => backAction(() => ops), 'goBack'],
+    ];
+    for (const [name, run, sideEffect] of cases) {
+      const { ops, sent } = fakeOps();
+      const result = await phaseOf(run(taken(ops)));
+      expect(result.code, name).toBe('BROWSER_USER_CONTROL');
+      expect(result.phase, name).toBe('pre');
+      expect(sent, name).not.toContain(sideEffect);
+    }
+  });
+
+  test('type: control is checked before focus / select — also for empty text', async () => {
+    for (const text of ['hello', '']) {
+      const { ops, sent } = fakeOps();
+      const result = await phaseOf(typeAction(() => taken(ops), 'e1', text));
+      expect(result.code, text).toBe('BROWSER_USER_CONTROL');
+      expect(result.phase, text).toBe('pre');
+      expect(sent, text).not.toContain('focus');
+      expect(sent, text).not.toContain('Input.insertText');
+    }
+  });
+});

@@ -454,6 +454,31 @@ describe('browser tools (tool layer on a fake host)', () => {
       await rpc.clearBotData({ botId: key.botId });
       expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBeNull();
     });
+
+    test('W8: a profile change of the page and clearProfileData forget the page state', async () => {
+      const { createBrowserHostRpc, browserPageState } = await import('../../src/browser/facade.js');
+      const rpc = createBrowserHostRpc();
+      rpc.bindFacade(createFakeBrowserHost());
+      const key = { botId: identity.botId!, conversationId: identity.conversationId! };
+      const ensure = (profileKey: string) =>
+        rpc.ensurePage({
+          ...key,
+          profileKey,
+          networkContext: { allowLoopback: false },
+          downloadsDir: '/tmp/ws/downloads',
+        });
+      await ensure(`bot:${key.botId}`);
+      browserPageState(rpc, key, 'run_a').screenshotHash = 'h';
+      await ensure(`bot:${key.botId}`); // same profile: kept
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBe('h');
+      await ensure('shared:bpf_01A'); // recreated in another profile
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBeNull();
+      browserPageState(rpc, key, 'run_a').screenshotHash = 'h';
+      await rpc.clearProfileData({ profileId: 'bpf_02B' }); // another profile: kept
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBe('h');
+      await rpc.clearProfileData({ profileId: 'bpf_01A' });
+      expect(browserPageState(rpc, key, 'run_a').screenshotHash).toBeNull();
+    });
   });
 
   describe('W1 sensitive input', () => {
@@ -484,6 +509,95 @@ describe('browser tools (tool layer on a fake host)', () => {
       expect(result.ok).toBe(true);
       expect(result.content).not.toContain('s3cret-pass');
       expect(result.sensitiveParams).toEqual(['text']);
+    });
+  });
+
+  describe('W8 BROWSER_USER_CONTROL (自动接管) and profile key', () => {
+    test('USER_CONTROL: actions are refused as not_started with the hand-off hint; nothing dispatched twice', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const userControl = new AppError('BROWSER_USER_CONTROL', '用户正在操作', { phase: 'pre' });
+      for (const [name, method, params] of [
+        ['browser_click', 'browser.click', { ref: 'e1' }],
+        ['browser_type', 'browser.type', { ref: 'e1', text: 'abc' }],
+        ['browser_press', 'browser.press', { key: 'Enter' }],
+        ['browser_scroll', 'browser.scroll', { direction: 'down' }],
+        ['browser_back', 'browser.back', {}],
+        ['browser_open', 'browser.navigate', { url: 'https://x.example/' }],
+      ] as const) {
+        const host = createFakeBrowserHost();
+        host.failWith(method, userControl);
+        const result = await execute(toolOn(host, name), params);
+        expect(result.ok, name).toBe(false);
+        expect(result.errorCode, name).toBe('BROWSER_USER_CONTROL');
+        expect(result.outcome, name).toBe('not_started');
+        expect(result.content, name).toContain('用户正在浏览器窗口里操作');
+        expect(result.content, name).toContain('ask_user');
+        expect(result.content, name).toContain('browser_snapshot');
+      }
+    });
+
+    test('USER_CONTROL: browser_close is refused while the user holds the page (not_started)', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith('browser.close', new AppError('BROWSER_USER_CONTROL', '用户正在操作', { phase: 'pre' }));
+      const result = await execute(toolOn(host, 'browser_close'), {});
+      expect(result.ok).toBe(false);
+      expect(result.errorCode).toBe('BROWSER_USER_CONTROL');
+      expect(result.outcome).toBe('not_started');
+      expect(host.closedPairs).toEqual([]);
+    });
+
+    test('USER_CONTROL: an untagged error is still not_started (pre-dispatch code)', async () => {
+      const { AppError } = await import('@kepcup/shared');
+      const host = createFakeBrowserHost();
+      host.failWith('browser.click', new AppError('BROWSER_USER_CONTROL', '用户正在操作'));
+      const result = await execute(toolOn(host, 'browser_click'), { ref: 'e1' });
+      expect(result.outcome).toBe('not_started');
+      expect(result.errorCode).toBe('BROWSER_USER_CONTROL');
+    });
+
+    test('USER_CONTROL: snapshot and screenshot still work while the user has the page', async () => {
+      const host = createFakeBrowserHost();
+      const { AppError } = await import('@kepcup/shared');
+      host.failWith('browser.click', new AppError('BROWSER_USER_CONTROL', '用户正在操作', { phase: 'pre' }));
+      host.setSnapshot(page('提交'));
+      expect((await execute(toolOn(host, 'browser_snapshot'), {})).ok).toBe(true);
+      expect((await execute(toolOn(host, 'browser_screenshot'), {})).ok).toBe(true);
+    });
+
+    test('USER_CONTROL hand-off hint: ask_user guidance is in the tool descriptions', () => {
+      const tools = makeTools();
+      for (const name of ['browser_open', 'browser_type']) {
+        const description = tools.find((t) => t.name === name)?.description ?? '';
+        expect(description, name).toContain('需要登录 / 验证码时，用 ask_user 请用户在浏览器窗口完成');
+      }
+    });
+
+    test('profile key: default private `bot:{botId}`; the resolver is re-read on every ensurePage', async () => {
+      const host = createFakeBrowserHost();
+      let key = 'shared:bpf_01A';
+      const tools = buildBrowserTools({
+        identity,
+        browser: host,
+        workspacePath: '/tmp/ws',
+        projectPath: null,
+        profileKey: () => key,
+      });
+      const snapshot = tools.find((t) => t.name === 'browser_snapshot') as ToolDefinition;
+      await execute(snapshot, {});
+      key = `bot:${identity.botId}`;
+      await execute(snapshot, {});
+      const keys = host.calls
+        .filter((c) => c.method === 'browser.ensurePage')
+        .map((c) => (c.input as { profileKey: string }).profileKey);
+      expect(keys).toEqual(['shared:bpf_01A', 'bot:bot_01TEST']);
+      // No resolver (stripped setups) → the bot's private profile.
+      const plain = createFakeBrowserHost();
+      await execute(toolOn(plain, 'browser_snapshot'), {});
+      expect(
+        (plain.calls.find((c) => c.method === 'browser.ensurePage')?.input as { profileKey: string })
+          .profileKey,
+      ).toBe('bot:bot_01TEST');
     });
   });
 
