@@ -33,6 +33,40 @@ export interface ToolCallEffectHooks {
   escalate(reason: string, runId?: string): void;
   /** An approval was created for this call (main.approvals.id) by `runId`. */
   noteApproval(approvalId: string, runId?: string): void;
+  /**
+   * W4 审批去重门（ApprovalsService.request 在建卡前调用，`kind` 为审批类别）：
+   * 同一任务链里有没有同工具、同参数的更早台账行，以及按它应当如何处理
+   * （completed → mcp_tool 不建卡、DUPLICATE_EFFECT，其他类别 repeat → 建卡并
+   * 提示「已执行过」；用户拒绝过的 denied → 不建卡、拒绝；uncertain → 照常建卡并
+   * 提示）。null = 照常审批（无台账行、不在任务里、别的 run、参数含脱敏占位、
+   * 没有可比的更早行）。
+   */
+  approvalGate?(runId?: string, kind?: string): EffectApprovalGate | null;
+  /** W4: the call now waits on the user's decision — its ledger row is `intended`. */
+  approvalWaiting?(runId?: string): void;
+  /** W4: the approval was granted — the row goes back to `executing`. */
+  approvalGranted?(runId?: string): void;
+}
+
+/** W4: what the approval dedupe gate found (see ToolCallEffectHooks.approvalGate). */
+export interface EffectApprovalGate {
+  /**
+   * completed / denied: answered without a card. uncertain / repeat (a
+   * completed earlier attempt of a non-MCP kind — git_remote, unsandboxed …
+   * are state-dependent): a card flagged with the earlier attempt.
+   */
+  verdict: 'completed' | 'denied' | 'uncertain' | 'repeat';
+  /** The earlier ledger row the verdict comes from. */
+  prior: {
+    id: string;
+    status: string;
+    /** Its approval (a user-denied one for `denied`). */
+    approvalId: string | null;
+    summary: string;
+    receipt: { url?: string; externalId?: string; note?: string } | null;
+    createdAt: number;
+    settledAt: number | null;
+  };
 }
 
 const storage = new AsyncLocalStorage<ToolCallScope>();

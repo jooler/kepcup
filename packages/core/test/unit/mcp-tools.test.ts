@@ -5,7 +5,12 @@ import {
   enabledServers,
   type McpServer,
 } from '../../src/mcp/service.js';
-import { selectReadOnlyMcpEntries, type McpToolEntry } from '../../src/mcp/tools.js';
+import {
+  mcpReceiptOf,
+  selectReadOnlyMcpEntries,
+  type McpToolEntry,
+} from '../../src/mcp/tools.js';
+import { recipientFields, RECIPIENT_VALUE_MAX_CHARS } from '../../src/mcp/recipients.js';
 import { decideMcpTool } from '../../src/mcp/policy.js';
 import { classifyRiskDetailed } from '../../src/mcp/risk.js';
 
@@ -84,5 +89,85 @@ describe('selectReadOnlyMcpEntries (W5 turn / read-only subagent surface)', () =
     expect(picked.entries[19]!.name).toBe('mcp_s_get_item_19');
     expect(picked.omitted).toBe(5);
     expect(selectReadOnlyMcpEntries(entries, 3).entries).toHaveLength(3);
+  });
+});
+
+describe('W4 exact cards and receipts', () => {
+  it('recipientFields lists recipient-like keys in full (nested, camelCase, arrays), redacted', () => {
+    const long = Array.from({ length: 60 }, (_, i) => `user${i}@example.com`);
+    const fields = recipientFields(
+      {
+        to: long,
+        Cc: 'boss@example.com',
+        body: 'x'.repeat(1000),
+        message: { chatId: 42, text: 'hi', meta: { phoneNumber: '+86 138 0000 0000' } },
+        token: 'sk-SECRET',
+        channel: '',
+        user: { id: 'U1', apiKey: 'sk-SECRET' },
+      },
+      (text) => text.split('sk-SECRET').join('«secret»'),
+    );
+    // 复查: an object under a recipient key is not a value (only strings /
+    // numbers and arrays of them); its own keys are searched instead.
+    expect(fields.map((f) => f.key)).toEqual([
+      'to',
+      'Cc',
+      'message.chatId',
+      'message.meta.phoneNumber',
+    ]);
+    expect(fields[0]!.value).toBe(long.join(', '));
+    expect(fields[0]!.value.length).toBeGreaterThan(400);
+    expect(fields[2]!.value).toBe('42');
+    expect(recipientFields({ to: ['a@x', { b: 1 }] }, (t) => t)).toEqual([]);
+    expect(recipientFields({ to: { email: 'c@x' } }, (t) => t)).toEqual([
+      { key: 'to.email', value: 'c@x' },
+    ]);
+    expect(
+      recipientFields({ to: 'sk-SECRET@x' }, (t) => t.split('sk-SECRET').join('«secret»')),
+    ).toEqual([{ key: 'to', value: '«secret»@x' }]);
+    expect(recipientFields({ text: 'hi', subject: 's' }, (t) => t)).toEqual([]);
+    const huge = recipientFields({ to: 'a'.repeat(RECIPIENT_VALUE_MAX_CHARS + 5) }, (t) => t);
+    expect(huge[0]!.value).toContain('已截断');
+  });
+
+  it('mcpReceiptOf picks url / id from structured content or a lone JSON text block', () => {
+    expect(
+      mcpReceiptOf({ structuredContent: { html_url: 'https://gh.example/i/1', number: 7 } }, []),
+    ).toEqual({ url: 'https://gh.example/i/1', externalId: '7' });
+    expect(mcpReceiptOf({}, ['{"id":"m-1","url":"https://chat.example/m/1"}'])).toEqual({
+      url: 'https://chat.example/m/1',
+      externalId: 'm-1',
+    });
+    // Not an http(s) URL → not a receipt link; nothing usable → null.
+    expect(mcpReceiptOf({ structuredContent: { url: 'javascript:alert(1)' } }, [])).toBeNull();
+    expect(mcpReceiptOf({}, ['发送成功'])).toBeNull();
+    expect(mcpReceiptOf({}, ['{"id":1}', 'more'])).toBeNull();
+    expect(mcpReceiptOf({}, ['[1,2]'])).toBeNull();
+  });
+
+  it('复查 S3: receipts keep id-shaped values only and strip URL query / fragment', () => {
+    // key / uid are not receipt keys any more.
+    expect(mcpReceiptOf({ structuredContent: { key: 'abc', uid: 'u1' } }, [])).toBeNull();
+    // Secret-looking or non-id-shaped values are dropped.
+    for (const id of [
+      'sk-proj-abcdef',
+      'ghp_abcdefghijklmnop',
+      'xoxb-123-456',
+      'AKIAABCDEFGHIJKLMNOP',
+      'has space',
+      'x'.repeat(65),
+      'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3', // > 32 chars, mixed case + digits
+    ]) {
+      expect(mcpReceiptOf({ structuredContent: { id } }, [])).toBeNull();
+    }
+    expect(
+      mcpReceiptOf({ structuredContent: { id: '550e8400-e29b-41d4-a716-446655440000' } }, []),
+    ).toEqual({ externalId: '550e8400-e29b-41d4-a716-446655440000' });
+    expect(
+      mcpReceiptOf(
+        { structuredContent: { url: 'https://user:pw@chat.example/m/1?token=abc#frag', id: 9 } },
+        [],
+      ),
+    ).toEqual({ url: 'https://chat.example/m/1', externalId: '9' });
   });
 });

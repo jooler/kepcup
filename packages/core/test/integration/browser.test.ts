@@ -366,3 +366,171 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
   });
 });
 
+
+describe('W8 共享浏览器资料 / 自动接管（core 侧）', () => {
+  type Core = Stack['core'];
+
+  async function setProfile(core: Core, botId: string, profileId: string): Promise<void> {
+    const bot = core.services.domain!.bots.getOrThrow(botId);
+    await core.rpc.call('bots.update', {
+      id: botId,
+      profile: { ...bot.profile, runtime: { ...bot.profile.runtime, browser_profile: profileId } },
+    });
+  }
+
+  async function createProfile(core: Core, name: string): Promise<string> {
+    const result = (await core.rpc.call('browserProfiles.create', { name })) as {
+      profile: { id: string };
+    };
+    return result.profile.id;
+  }
+
+  function profileKeysOf(stack: Stack, botId: string): string[] {
+    return stack.browser.calls
+      .filter((c) => c.method === 'browser.ensurePage' && (c.input as { botId: string }).botId === botId)
+      .map((c) => (c.input as { profileKey: string }).profileKey);
+  }
+
+  it('profileKey: private bot:{botId} by default; bots on one shared profile both send shared:{id}', async () => {
+    const stack = await startStack();
+    try {
+      const a = await makeBot(stack.core, '共甲');
+      const b = await makeBot(stack.core, '共乙');
+      const c = await makeBot(stack.core, '私丙');
+      const profileId = await createProfile(stack.core, '工作账号');
+      expect(profileId).toMatch(/^bpf_/);
+      await setProfile(stack.core, a.id, profileId);
+      await setProfile(stack.core, b.id, profileId);
+      for (const bot of [a, b, c]) {
+        const conv = await openDirect(stack.core, bot.id);
+        await openWithTool(stack, conv.id, 'https://fixture.example/', `${bot.id} 打开了`);
+      }
+      expect(new Set(profileKeysOf(stack, a.id))).toEqual(new Set([`shared:${profileId}`]));
+      expect(new Set(profileKeysOf(stack, b.id))).toEqual(new Set([`shared:${profileId}`]));
+      expect(new Set(profileKeysOf(stack, c.id))).toEqual(new Set([`bot:${c.id}`]));
+      const list = (await stack.core.rpc.call('browserProfiles.list')) as {
+        profiles: Array<{ id: string; name: string; botIds: string[] }>;
+      };
+      expect(list.profiles).toEqual([
+        expect.objectContaining({ id: profileId, name: '工作账号', botIds: [a.id, b.id] }),
+      ]);
+      // Only an existing profile can be selected.
+      await expect(setProfile(stack.core, c.id, 'bpf_missing')).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    } finally {
+      await stack.cleanup();
+    }
+  });
+
+  it('switching profile closes the bot’s pages; clear keeps the entry; delete moves bots back to private and removes the profile; deleting a bot leaves it alone', async () => {
+    const stack = await startStack();
+    try {
+      const a = await makeBot(stack.core, '切甲');
+      const b = await makeBot(stack.core, '切乙');
+      const conv = await openDirect(stack.core, a.id);
+      await openWithTool(stack, conv.id, 'https://fixture.example/', '先私有打开');
+      expect(stack.browser.pages.get(`${a.id}|${conv.id}`)?.profileKey).toBe(`bot:${a.id}`);
+
+      const profileId = await createProfile(stack.core, '共享 1');
+      await setProfile(stack.core, a.id, profileId);
+      // The switch closed every page of the bot; the next call opens it in the new profile.
+      expect(stack.browser.closedBotPages).toEqual([a.id]);
+      expect(stack.browser.pages.has(`${a.id}|${conv.id}`)).toBe(false);
+      await openWithTool(stack, conv.id, 'https://fixture.example/', '共享打开');
+      expect(stack.browser.pages.get(`${a.id}|${conv.id}`)?.profileKey).toBe(`shared:${profileId}`);
+      // Same profile saved again → no switch.
+      await setProfile(stack.core, a.id, profileId);
+      expect(stack.browser.closedBotPages).toEqual([a.id]);
+
+      // 清除数据: storage wiped, entry and bots kept.
+      await stack.core.rpc.call('browserProfiles.clear', { id: profileId });
+      expect(stack.browser.clearedProfiles).toEqual([{ profileId }]);
+      expect(stack.core.services.domain!.bots.getOrThrow(a.id).profile.runtime.browser_profile).toBe(
+        profileId,
+      );
+
+      // Rename.
+      await stack.core.rpc.call('browserProfiles.rename', { id: profileId, name: '改名后' });
+      expect(stack.core.services.domain!.settings.get().browserProfiles[0]?.name).toBe('改名后');
+
+      // Deleting a bot on the shared profile wipes only its private partition.
+      await setProfile(stack.core, b.id, profileId);
+      await stack.core.rpc.call('bots.delete', { id: b.id });
+      expect(stack.browser.clearedBots).toEqual([b.id]);
+      expect(stack.browser.clearedProfiles).toEqual([{ profileId }]);
+
+      // Delete: bots back to private first (pages closed), then the profile is removed.
+      const result = (await stack.core.rpc.call('browserProfiles.delete', { id: profileId })) as {
+        profiles: unknown[];
+        movedBotIds: string[];
+      };
+      expect(result.movedBotIds).toEqual([a.id]);
+      expect(result.profiles).toEqual([]);
+      expect(stack.core.services.domain!.bots.getOrThrow(a.id).profile.runtime.browser_profile).toBe('');
+      expect(stack.browser.clearedProfiles.at(-1)).toEqual({ profileId, remove: true });
+      expect(stack.browser.closedBotPages.at(-1)).toBe(a.id);
+      await openWithTool(stack, conv.id, 'https://fixture.example/', '回到私有');
+      expect(stack.browser.pages.get(`${a.id}|${conv.id}`)?.profileKey).toBe(`bot:${a.id}`);
+    } finally {
+      await stack.cleanup();
+    }
+  });
+
+  it('handback: browser.controlReturned injects "先 browser_snapshot" into the bot’s running browser-using task', async () => {
+    const stack = await startStack();
+    try {
+      const bot = await makeBot(stack.core, '接管');
+      const conv = await openDirect(stack.core, bot.id);
+      stack.browser.hold('browser.click');
+      stack.llm.script(
+        'mock-main',
+        viaTask({
+          instruction: '去点提交',
+          taskSteps: [
+            step().replyToolCall('browser_open', { url: 'https://fixture.example/' }),
+            step().replyToolCall('browser_click', { ref: 'e1' }),
+            step().replyText('点完了'),
+          ],
+          relay: '点完了',
+        }),
+      );
+      stack.llm.script('mock-light', [step().replyJson(emptyReflection())]);
+      await sendDrafts(stack.core, conv.id, [{ text: '去点提交' }]);
+      const runs = stack.core.services.domain!.runs;
+      const task = await waitFor(
+        () =>
+          stack.browser.calls.some((c) => c.method === 'browser.click')
+            ? (runs.listTasks({ conversationId: conv.id }).at(-1) ?? null)
+            : null,
+        { label: 'task mid-click', timeoutMs: 20_000 },
+      );
+      const handle = stack.core.services.platformMethods['browser.controlReturned']!.handle;
+      // Another conversation / bot: nothing to notify.
+      expect(
+        await handle({ botId: bot.id, conversationId: 'conv_other', reason: 'button' }),
+      ).toEqual({ injected: 0 });
+      expect(
+        await handle({ botId: bot.id, conversationId: conv.id, reason: 'viewer_closed' }),
+      ).toEqual({ injected: 1 });
+      // Taking over and handing back again right away: one notice (coalesced).
+      expect(
+        await handle({ botId: bot.id, conversationId: conv.id, reason: 'button' }),
+      ).toEqual({ injected: 0 });
+      const injects = stack.core.services
+        .domain!.messages.taskEvents(task.id)
+        .map((m) => m.content as { phase: string; text: string })
+        .filter((c) => c.phase === 'inject');
+      expect(injects.map((c) => c.text)).toEqual(['用户已交还浏览器控制，先 browser_snapshot 再继续']);
+      stack.browser.release('browser.click');
+      await waitForRun(stack.core, conv.id, 'completed', { loopType: 'task' });
+      // The steer reached the task's model.
+      const seen = stack.llm
+        .requests()
+        .some((req) => JSON.stringify(req.body).includes('用户已交还浏览器控制，先 browser_snapshot 再继续'));
+      expect(seen).toBe(true);
+    } finally {
+      await stack.cleanup();
+    }
+  });
+});

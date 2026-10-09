@@ -21,6 +21,7 @@ import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
+import { recipientFields } from '../mcp/recipients.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
 
 export interface GatewayDeps {
@@ -908,6 +909,12 @@ export class ToolGateway {
       } else {
         // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
         const argsRedacted = this.#deps.secrets.redact(JSON.stringify(args));
+        // W4 精确卡片：发送类（写入 / 破坏性）工具的收件方字段完整列出，不参与
+        // argsSummary 的截断（同样脱敏）。
+        const recipients =
+          decision.risk !== 'read'
+            ? recipientFields(args, (text) => this.#deps.secrets.redact(text))
+            : [];
         // 应用工具：写入档可选「本对话内 / 对该 Bot 总是允许」，破坏性档只有「仅这一次」。
         const durations: ApprovalDuration[] | undefined =
           connection === undefined
@@ -925,6 +932,7 @@ export class ToolGateway {
             argsSummary:
               argsRedacted.length > 400 ? `${argsRedacted.slice(0, 400)}…（已截断）` : argsRedacted,
             risk: decision.risk,
+            ...(recipients.length > 0 ? { recipients } : {}),
             ...(connection !== undefined
               ? {
                   connectionId: connection.connectionId,

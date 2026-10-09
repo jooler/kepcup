@@ -181,11 +181,10 @@ export class SrtSandboxBackend implements SandboxBackend {
     // bubblewrap end to end, including Linux user-namespace restrictions.
     try {
       const policy = this.#trialPolicy();
-      await this.#initialize({
+      await this.#initialize(this.#baseRuntimeConfig({
         network: srtNetworkConfigFor(policy),
         filesystem: this.#toSrtFilesystem(policy),
-        ...this.#platformPaths(),
-      });
+      }));
       const wrapped = await SandboxManager.wrapWithSandbox('true', undefined, undefined, undefined, {
         commandId: 'kepcup-probe',
         commandText: 'true',
@@ -302,6 +301,22 @@ export class SrtSandboxBackend implements SandboxBackend {
     return { bwrapPath: pick('bwrap'), socatPath: pick('socat') };
   }
 
+  /**
+   * Session-level srt config. `initialize()` re-checks dependencies without the
+   * ripgrep argument we pass to `checkDependenciesAsync`, so the custom rg
+   * path must live on the config (otherwise Linux CI falls back to PATH `rg`
+   * and fails with "ripgrep (rg) not found" even when the bundled binary is
+   * present under apps/desktop/resources/bin/).
+   */
+  #baseRuntimeConfig(partial: SandboxRuntimeConfig): SandboxRuntimeConfig {
+    const rg = this.#ripgrepConfig();
+    return {
+      ...partial,
+      ...this.#platformPaths(),
+      ...(rg !== undefined ? { ripgrep: rg } : {}),
+    };
+  }
+
   #trialPolicy(): SandboxPolicy {
     return {
       readWrite: [os.tmpdir()],
@@ -340,11 +355,10 @@ export class SrtSandboxBackend implements SandboxBackend {
           // the first command after a probe would silently keep the trial
           // network config (this is exactly how allowLocalBinding was lost).
           if (this.#initializePromise === null) {
-            await this.#initialize({
+            await this.#initialize(this.#baseRuntimeConfig({
               network,
               filesystem: this.#toSrtFilesystem(policy),
-              ...this.#platformPaths(),
-            });
+            }));
           } else {
             SandboxManager.updateConfig({ network, filesystem: this.#toSrtFilesystem(policy) });
           }

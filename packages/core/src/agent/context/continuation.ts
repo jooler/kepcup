@@ -34,6 +34,9 @@ export const UNRETURNED_CALL_NOTE =
 export const UNCERTAIN_RESULT_NOTE =
   '—— 动作可能已经生效（结果不确定）：先核实页面 / 外部状态，勿直接重做';
 
+/** W4: a call interrupted while waiting on its approval (ledger: denied) — it never ran. */
+export const NOT_RUN_CALL_NOTE = '→（等待审批时中断，未执行）';
+
 export interface ContinuationPlan {
   /** Runs whose digest actually made it into the segment (chronological). */
   continuedFromRunIds: string[];
@@ -64,7 +67,16 @@ export function buildRunDigest(input: {
       .filter((e) => e.status === 'uncertain')
       .map((e) => baseToolCallId(e.toolCallId)),
   );
-  const lines = renderStepLines(input.steps, input.timeZone, uncertain);
+  // W4: calls whose every ledger row is `denied` were stopped at their
+  // approval (an `intended` row the interruption / recovery settled) — they
+  // never ran, so an unreturned one is not「结果未知」.
+  const byBase = new Map<string, boolean>();
+  for (const effect of input.effects ?? []) {
+    const base = baseToolCallId(effect.toolCallId);
+    byBase.set(base, (byBase.get(base) ?? true) && effect.status === 'denied');
+  }
+  const notRun = new Set([...byBase].filter(([, denied]) => denied).map(([base]) => base));
+  const lines = renderStepLines(input.steps, input.timeZone, uncertain, notRun);
   if (lines.length === 0) return '';
 
   // Keep the tail (the most recent activity) under the budget; at least one
@@ -85,6 +97,7 @@ function renderStepLines(
   steps: RunStep[],
   timeZone: string,
   uncertainCallIds: ReadonlySet<string>,
+  notRunCallIds: ReadonlySet<string> = new Set(),
 ): string[] {
   const lines: string[] = [];
   /** tool_call steps still waiting for their result: line index + rendering parts. */
@@ -196,6 +209,10 @@ function renderStepLines(
   // while they ran. A side-effecting one may have happened — flagged; a
   // read-only one (W2 class `none`, not marked uncertain) just says so.
   for (const [toolCallId, open] of openCalls) {
+    if (notRunCallIds.has(toolCallId) && !uncertainCallIds.has(toolCallId)) {
+      lines[open.index] = `[${open.time}] ${open.call} ${NOT_RUN_CALL_NOTE}`;
+      continue;
+    }
     const flagged =
       uncertainCallIds.has(toolCallId) || effectClassOf(open.toolName, open.args) !== 'none';
     lines[open.index] = flagged

@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/core run build && pnpm -r typecheck",
     "test": "node scripts/run-tests.mjs run",
     "test:watch": "node scripts/run-tests.mjs",
     "test:e2e": "pnpm --filter @kepcup/desktop test:e2e"

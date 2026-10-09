@@ -8,6 +8,7 @@ export type SettingsSectionId =
   | 'models'
   | 'search'
   | 'mcp'
+  | 'browser'
   | 'agents'
   | 'profile'
   | 'contacts'
@@ -51,8 +52,20 @@ class ShellState {
     this.settingsOpen = false;
   }
 
+  /**
+   * 右栏要切到的标签（D80：回执卡 / 提议卡 / 定时消息标签的「全部定时任务」）；
+   * RightPanel 消费后复位。
+   */
+  rightPanelTabRequest = $state<string | null>(null);
+
   toggleRightPanel(): void {
     this.rightPanelCollapsed = !this.rightPanelCollapsed;
+  }
+
+  /** 展开右栏并切到「定时任务」（群聊右栏是群信息，定时任务分区在其中）。 */
+  openSchedules(): void {
+    this.rightPanelCollapsed = false;
+    this.rightPanelTabRequest = 'schedules';
   }
 }
 

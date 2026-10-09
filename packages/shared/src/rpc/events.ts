@@ -17,6 +17,7 @@ import {
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
 import { appConnectReviewToolSchema } from '../domain/app-connections.js';
+import { watchEntrySchema } from '../domain/watches.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -141,6 +142,15 @@ export const environmentChangedPayloadSchema = z.object({
  */
 export const skillsChangedPayloadSchema = z.object({ botId: z.string() });
 
+/**
+ * A schedule of the conversation was created / cancelled / finished (D80):
+ * the schedule lists refetch (there was no live refresh before).
+ */
+export const schedulesChangedPayloadSchema = z.object({
+  conversationId: z.string(),
+  scheduleId: z.string(),
+});
+
 // --- P09 events (docs/dev/phases/P09-wiki.md) ----------------------------------
 
 /**
@@ -246,8 +256,16 @@ export const taskUpdatedPayloadSchema = z.object({ task: taskViewSchema });
  */
 export const tasksInterruptedPayloadSchema = z.object({
   count: z.number().int().positive(),
-  reason: z.literal('permission_revoked'),
-  scope: z.enum(['path', 'mcp']),
+  /** W8: `browser_profile_changed` — a bot's browser profile was switched. */
+  reason: z.enum(['permission_revoked', 'browser_profile_changed']),
+  scope: z.enum(['path', 'mcp', 'browser_profile']),
+});
+
+/** W7 确定性监看：监看行任何可见变化（创建、检查结果、提醒、暂停 / 恢复 / 停止、删除）。 */
+export const watchUpdatedPayloadSchema = z.object({
+  watch: watchEntrySchema,
+  /** The watch row is gone (its bot or conversation was deleted). */
+  removed: z.boolean().optional(),
 });
 
 export const rpcEventSchemas = {
@@ -272,6 +290,7 @@ export const rpcEventSchemas = {
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,
+  'schedules.changed': schedulesChangedPayloadSchema,
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,
@@ -280,6 +299,7 @@ export const rpcEventSchemas = {
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,
+  'watch.updated': watchUpdatedPayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;

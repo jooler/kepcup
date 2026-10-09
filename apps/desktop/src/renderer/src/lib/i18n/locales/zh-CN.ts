@@ -60,6 +60,9 @@ export const zhCN = {
   'chats.errorCode.RUN_ALREADY_FINISHED': '这次执行已经结束',
   'chats.errorCode.RUN_NOT_FOUND': '执行记录不存在或已被清理',
   'chats.errorCode.REVIEW_REQUIRED': '请先检查任务中断前已完成的操作，再重试',
+  // W4（D78）：审批幂等与回执
+  'chats.errorCode.APPROVAL_STALE': '审批内容已变化，请重新查看后再决定',
+  'chats.errorCode.DUPLICATE_EFFECT': '相同操作已在本任务中完成，未重复执行',
   'chats.errorCode.NOT_SUPPORTED': '当前不支持这个操作',
   'runStatus.pleaseWait': '请稍等…',
   'runStatus.callingVerb': '正在{verb}…',
@@ -327,6 +330,18 @@ export const zhCN = {
   'contacts.mcpServersHint':
     '勾选后该 Bot 可使用对应服务器的工具：只读工具默认直接执行（对话中也能直接查询），写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。在 设置 → MCP 服务器 中管理。',
   'contacts.mcpAutoApproveTag': '免审批',
+  // W8 共享浏览器资料
+  'contacts.browserProfile': '浏览器资料',
+  'contacts.browserProfilePrivate': '私有（默认）',
+  'contacts.browserProfileShared': '共享：{name}',
+  'contacts.browserProfileHint':
+    '私有资料只属于这个 Bot；共享资料在 设置 → 浏览器资料 中建立。切换后该 Bot 的浏览器页面会关闭，用过浏览器的进行中任务会被中断。',
+  'contacts.browserProfileSwitchConfirm':
+    '切换后该 Bot 已打开的网页会关闭，正在使用浏览器的任务会被中断；确定切换？',
+  'contacts.browserProfileSwitchYes': '确定切换',
+  'contacts.browserProfileSwitchNo': '取消',
+  'contacts.browserProfileSharedWarning':
+    '同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站',
   // W5：Bot 详情 MCP 区常驻风险提示（§5 护栏 7）
   'contacts.mcpUnattendedNotice':
     '无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作），请注意风险。',
@@ -722,6 +737,17 @@ export const zhCN = {
   'approvals.durationBot': '对该 Bot 总是允许',
   'approvals.durationOnlyOnce': '该操作不可撤销，每次都需要确认',
   'approvals.foldedApprovedBot': '已允许（对该 Bot 总是允许）',
+  // W4（D78）：收件方完整展示、执行回执、去重提示
+  'approvals.mcpRecipient': '收件方',
+  'approvals.priorUncertain': '上次同样的操作结果未知，请先确认是否已生效',
+  'approvals.priorCompleted': '本任务中已执行过相同操作（回执：{receipt}），请确认是否需要再次执行',
+  'approvals.priorCompletedNoReceipt': '无',
+  'approvals.effectLabel': '执行结果：',
+  'approvals.effect.completed': '已完成',
+  'approvals.effect.failed': '失败',
+  'approvals.effect.uncertain': '结果未知',
+  'approvals.effect.denied': '已拒绝',
+  'approvals.effect.executing': '执行中',
   // D72 P3：外部智能体的工具权限请求（agent_tool）
   'approvals.agentToolTitle': '智能体工具权限请求',
   'approvals.agentToolReadTitle': '智能体申请读取',
@@ -752,6 +778,7 @@ export const zhCN = {
   'approvals.butlerGroupMembers': '成员',
   'approvals.butlerResponsibilities': '职责',
   'approvals.butlerNote': '勾掉不需要的再确认；确认后会立即创建，之后可以在通讯录里修改或删除。',
+  'approvals.butlerRoutine': '例行：{when} · {title}',
   'approvals.butlerConfirm': '确认创建',
   'delegation.loading': '委派记录加载中…',
   'delegation.sentTitle': '已委托给 {name}',
@@ -811,6 +838,8 @@ export const zhCN = {
   // W3（D78）检查后重试 / 撤销授权中断
   'task.reviewRetry': '检查后重试',
   'task.interruptedRevoked': '授权已被撤销，任务已中断。请检查已完成的操作后再重试',
+  // W8：切换浏览器资料 → 用过浏览器的进行中任务被中断
+  'task.interruptedBrowserProfile': '浏览器资料已切换，任务已中断。请检查已完成的操作后再重试',
   'task.review.title': '中断前已经发起的外部操作',
   'task.review.hint':
     '「已完成」的操作重试时不会再做；「结果未知」的可能已经生效，请先到对应页面或系统里核实。',
@@ -825,6 +854,7 @@ export const zhCN = {
   'task.effect.uncertain': '结果未知',
   'task.effect.failed': '失败',
   'task.effect.denied': '已拒绝',
+  'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
   'task.revertConflicts': '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',
@@ -954,6 +984,58 @@ export const zhCN = {
   'schedules.cancelConfirm': '确认取消',
   'schedules.cancelled': '已取消定时任务',
   'schedules.actionFailed': '操作失败',
+  'schedules.viewAll': '全部定时任务',
+  'schedules.receiptCancelled': '已取消',
+  'schedules.receiptDone': '已完成',
+  'schedules.sourceHint': '这条消息来自定时任务，点击查看全部定时任务',
+  'schedules.offerAccept': '设置',
+  'schedules.offerDecline': '不用了',
+  'schedules.offerAccepted': '已设置定时任务',
+  'schedules.offerHint': '想换个时间？直接回复就行',
+  'schedules.offer.declined': '没有设置',
+  'schedules.offer.superseded': '已换成新的提议',
+  'schedules.offer.expired': '时间已过，没有设置',
+  'schedules.offer.accepted': '已设置',
+  'schedules.offer.pending': '',
+  // W7 确定性监看
+  'watches.title': '网页监看',
+  'watches.hint':
+    '后台定时检查网页，条件满足时才叫醒 Bot（检查本身不花模型调用）；连续 5 次检查失败、或 24 小时内提醒超过 24 次会自动暂停。',
+  'watches.empty': '当前对话没有网页监看。',
+  'watches.condition.changed': '页面内容有变化',
+  'watches.condition.contains': '页面出现「{text}」',
+  'watches.condition.not_contains': '页面上「{text}」消失',
+  'watches.condition.number_below': '数值低于 {value}',
+  'watches.condition.number_above': '数值高于 {value}',
+  'watches.every': '每 {minutes} 分钟检查',
+  'watches.status.active': '监看中',
+  'watches.status.paused': '已暂停',
+  'watches.status.stopped': '已停止',
+  'watches.lastChecked': '上次检查 {time}',
+  'watches.neverChecked': '尚未检查',
+  'watches.failing': '最近连续失败 {count} 次：{error}',
+  'watches.alerts': '已提醒 {count} 次',
+  'watches.pause': '暂停',
+  'watches.resume': '恢复',
+  'watches.stop': '停止监看',
+  'watches.stopConfirm': '确认停止',
+  'watches.stopped': '已停止监看',
+  'watches.resumed': '已恢复监看',
+  'watches.paused': '已暂停监看',
+  'watches.actionFailed': '操作失败',
+  'watches.viewAll': '全部监看',
+  'watches.expand': '展开',
+  'watches.collapse': '收起',
+  'watches.card.created': '已开始监看网页',
+  'watches.card.alert': '监看提醒 · 第 {seq} 次',
+  'watches.card.paused': '监看已暂停：连续 {count} 次检查失败',
+  'watches.card.pausedFailures': '监看已暂停：连续多次检查失败',
+  'watches.card.pausedTooFrequent': '监看已暂停：提醒过于频繁',
+  'watches.card.pausedTooFrequentHint':
+    '24 小时内提醒超过 24 次，为免打扰已暂停。可放宽条件或延长检查间隔后点「恢复」。',
+  'watches.card.pausedHint': '网页可能打不开、需要在 Bot 的浏览器里重新登录，或被网络规则拦截。处理后点「恢复」。',
+  'watches.card.removed': '该监看已删除',
+  'watches.card.loading': '正在加载监看…',
 
   // --- P11 浏览器工具（查看窗口，任务 5） ----------------------------------------------
   'rightPanel.browserShow': '查看浏览器',
@@ -961,6 +1043,10 @@ export const zhCN = {
     '打开窗口查看该 Bot 在当前对话中的页面，可在其中手动登录；关闭窗口后页面回到后台继续执行。',
   'rightPanel.browserWindowTitle': '{name} 的浏览器',
   'rightPanel.browserShowFailed': '无法打开浏览器窗口（页面未打开或已关闭）',
+  // W8 自动接管：查看窗口工具条
+  'rightPanel.browserToolbarAgent': '{name} 正在使用此页面 · 在页面里点击或键入即可接管',
+  'rightPanel.browserToolbarUser': '你正在操作 · {name} 的浏览器动作已暂停，完成后请交还',
+  'rightPanel.browserToolbarHandback': '交还给 Bot',
 
   // --- P12 Windows 沙箱准备向导与增强沙箱（任务 7） ------------------------------------
   'settings.sandboxBackend': '当前后端：{backend}',
@@ -1134,6 +1220,32 @@ export const zhCN = {
   'settings.navEnvironment': '环境',
   'settings.navUsage': '用量',
   'settings.navDiagnostics': '诊断',
+  // --- W8 共享浏览器资料 ------------------------------------------------------
+  'settings.navBrowserProfiles': '浏览器资料',
+  'settings.browserProfilesTitle': '共享浏览器资料',
+  'settings.browserProfilesHint':
+    '默认每个 Bot 使用私有浏览器资料，登录状态互不相通。共享资料让多个 Bot 共用同一份 cookie 与网站存储：在 Bot 详情里把它们挂到同一份资料，再在任一 Bot 的浏览器窗口里登录即可。网络规则仍按各 Bot 判断。',
+  'settings.browserProfilesWarning':
+    '同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站',
+  'settings.browserProfilesEmpty': '还没有共享浏览器资料。',
+  'settings.browserProfilesNamePlaceholder': '资料名称，如「工作账号」',
+  'settings.browserProfilesCreate': '新建共享资料',
+  'settings.browserProfilesRename': '重命名',
+  'settings.browserProfilesRenameSave': '保存',
+  'settings.browserProfilesRenameCancel': '取消',
+  'settings.browserProfilesBots': '使用它的 Bot：{names}',
+  'settings.browserProfilesNoBots': '还没有 Bot 使用它',
+  'settings.browserProfilesClear': '清除数据',
+  'settings.browserProfilesClearConfirm':
+    '清除「{name}」的全部浏览数据（登录状态、cookie、网站存储）？资料本身保留，挂在上面的 Bot 需要重新登录。',
+  'settings.browserProfilesCleared': '已清除「{name}」的浏览数据',
+  'settings.browserProfilesDelete': '删除',
+  'settings.browserProfilesDeleteConfirm':
+    '删除共享资料「{name}」？使用它的 Bot 会改回私有资料（其浏览器页面关闭、用过浏览器的进行中任务被中断），资料中的登录状态与网站数据一并清除。',
+  'settings.browserProfilesDeleted': '已删除「{name}」',
+  'settings.browserProfilesFailed': '操作失败：{message}',
+  'settings.browserProfilesConfirm': '确认',
+  'settings.browserProfilesCancel': '取消',
   'settings.appearanceSection': '外观',
   'settings.theme': '主题',
   'settings.themeSystem': '跟随系统',

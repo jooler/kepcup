@@ -25,6 +25,7 @@
   import SkillsTab from './SkillsTab.svelte';
   import WikiTab from './WikiTab.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
+  import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import { showBrowser } from './show-browser';
 
@@ -36,6 +37,13 @@
 
   let draft = $state<BotProfile | null>(null);
   let activeTab = $state('profile');
+  // D80: a card / message tag asked for the schedules tab.
+  $effect(() => {
+    const requested = shell.rightPanelTabRequest;
+    if (requested === null) return;
+    if (tabItems.some((tab) => tab.value === requested)) activeTab = requested;
+    shell.rightPanelTabRequest = null;
+  });
 
   /**
    * 手写切换条：组件库 Tabs 的样式变体写在 `data-active:` 上，而 bits-ui 实际
@@ -118,6 +126,16 @@
       if (bot && currentBot.id !== bot.id) void saveProfile(currentBot.id, currentDraft);
     };
   });
+
+  /**
+   * W8：确认切换浏览器资料后立即保存（不走防抖自动保存）；draft 随之更新，
+   * 保存回写 savedProfile 后自动保存判定为一致，不会再存一次。
+   */
+  async function confirmBrowserProfile(next: string): Promise<void> {
+    if (!bot || !draft) return;
+    draft.runtime.browser_profile = next;
+    await saveProfile(bot.id, draft);
+  }
 
   /** draft 相对最近一次保存仍有未落盘改动时立即保存。 */
   function flushDirtyDraft(): void {
@@ -374,7 +392,11 @@
             />
           {/if}
           <!-- 名字/简介走上方头部资料卡的点按直编；表单值变化即自动保存，无需按钮。 -->
-          <BotProfileForm bind:profile={draft} showIdentity={false} />
+          <BotProfileForm
+            bind:profile={draft}
+            showIdentity={false}
+            onBrowserProfileConfirm={confirmBrowserProfile}
+          />
         </div>
       </div>
       <div
@@ -479,6 +501,15 @@
             active={activeTab === 'schedules'}
             testid="schedules-tab"
           />
+          <!-- W7: the conversation's web-page watches, next to its schedules. -->
+          <section class="mt-4 space-y-2">
+            <p class="text-xs font-medium">{t('watches.title')}</p>
+            <WatchesPanel
+              conversationId={conversation.id}
+              active={activeTab === 'schedules'}
+              testid="watches-tab"
+            />
+          </section>
         {/if}
       </div>
       <div

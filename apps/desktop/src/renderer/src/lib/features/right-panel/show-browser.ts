@@ -8,7 +8,17 @@ import { toast } from 'svelte-sonner';
  */
 export async function showBrowser(botId: string, conversationId: string, botName: string): Promise<void> {
   try {
-    await window.kepcup.showBotBrowser(botId, conversationId, t('rightPanel.browserWindowTitle', { name: botName }));
+    // W8: the viewer toolbar copy is localized here, like the window title.
+    await window.kepcup.showBotBrowser(
+      botId,
+      conversationId,
+      t('rightPanel.browserWindowTitle', { name: botName }),
+      {
+        agent: t('rightPanel.browserToolbarAgent', { name: botName }),
+        user: t('rightPanel.browserToolbarUser', { name: botName }),
+        handback: t('rightPanel.browserToolbarHandback'),
+      },
+    );
   } catch {
     toast.error(t('rightPanel.browserShowFailed'));
   }

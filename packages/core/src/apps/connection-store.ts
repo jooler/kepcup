@@ -285,7 +285,7 @@ export class AppConnectionStore {
     return this.update(id, { status });
   }
 
-  /** 存量基线标记（P1 工具锁定，迁移 0023）：true = 首次拉取到的工具直接批准。 */
+  /** 存量基线标记（P1 工具锁定，迁移 0025）：true = 首次拉取到的工具直接批准。 */
   setBaselinePending(id: string, pending: boolean): void {
     this.#db
       .prepare('update app_connections set baseline_pending = ? where id = ?')

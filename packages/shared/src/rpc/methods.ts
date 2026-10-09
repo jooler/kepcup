@@ -34,6 +34,7 @@ import {
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
+  effectStatusSchema,
   budgetSchema,
   conversationSchema,
   customProviderSchema,
@@ -55,7 +56,9 @@ import {
   runSchema,
   runStepSchema,
   scheduleEntrySchema,
+  scheduleSchema,
   settingsSchema,
+  browserProfileSchema,
   skillCandidateSchema,
   mcpServerSchema,
   mcpToolPolicySchema,
@@ -75,6 +78,8 @@ import {
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
+import { BROWSER_PROFILE_NAME_MAX_CHARS, WATCH_SELECTOR_MAX_CHARS } from '../constants.js';
+import { watchEntrySchema } from '../domain/watches.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -896,6 +901,13 @@ export const approvalsDecideInputSchema = z.object({
    * an empty selection with approve=true counts as a denial.
    */
   selection: z.array(z.number().int().nonnegative()).optional(),
+  /**
+   * W4：渲染端显示的审批内容的 `payloadHash`（approval 输出里的同名字段）。
+   * 与服务端不符 → APPROVAL_STALE（可选：旧调用方不传）。
+   */
+  payloadHash: z.string().min(1).optional(),
+  /** `butler_proposal` only (D80): kept routines as `"{botIndex}:{routineIndex}"`. */
+  routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -964,6 +976,8 @@ export const unattendedSummaryItemSchema = z.object({
   /** One-line description of the auto-approved operation. */
   detail: z.string(),
   createdAt: z.number(),
+  /** W4：自动批准的外部调用的台账结局（旧审批 / 非外部调用没有）。 */
+  effectStatus: effectStatusSchema.optional(),
 });
 export const unattendedSummaryOutputSchema = z.object({
   items: z.array(unattendedSummaryItemSchema),
@@ -1176,6 +1190,19 @@ export const schedulesListInputSchema = z.object({
 export const schedulesListOutputSchema = z.object({ schedules: z.array(scheduleEntrySchema) });
 export const schedulesCancelInputSchema = z.object({ id: z.string().min(1) });
 export const schedulesCancelOutputSchema = z.object({ ok: z.literal(true) });
+/** Offer-card actions (D80): the card message id. */
+export const schedulesOfferInputSchema = z.object({ messageId: z.string().min(1) });
+export const schedulesAcceptOfferOutputSchema = z.object({ schedule: scheduleSchema });
+export const schedulesDeclineOfferOutputSchema = z.object({ ok: z.literal(true) });
+
+// --- watches (W7) -------------------------------------------------------------------
+export const watchesListInputSchema = z.object({
+  conversationId: z.string().min(1).optional(),
+});
+export const watchesListOutputSchema = z.object({ watches: z.array(watchEntrySchema) });
+export const watchIdInputSchema = z.object({ id: z.string().min(1) });
+export const watchGetOutputSchema = z.object({ watch: watchEntrySchema.nullable() });
+export const watchMutateOutputSchema = z.object({ watch: watchEntrySchema });
 
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
@@ -1186,9 +1213,18 @@ export const browserNetworkContextSchema: z.ZodType<BrowserNetworkContext> = z.o
   allowLoopback: z.boolean(),
 });
 
+/**
+ * W8 浏览器资料键：`bot:{botId}`（私有，partition `persist:bot-{botId}`）或
+ * `shared:{profileId}`（共享，`persist:shared-{profileId}`）。core 按 Bot 的生效资料
+ * 算出，宿主据此派生 partition；字符集限制在可直接作目录名的范围。
+ */
+export const browserProfileKeySchema = z.string().regex(/^(bot|shared):[A-Za-z0-9_-]{1,64}$/);
+
 export const browserEnsurePageInputSchema = z.object({
   botId: z.string().min(1),
   conversationId: z.string().min(1),
+  /** W8: which browser profile (partition) the page lives in. */
+  profileKey: browserProfileKeySchema,
   /** Network rules for this page; re-sent on every call (idempotent refresh). */
   networkContext: browserNetworkContextSchema,
   /** Download target (the conversation workspace's downloads/), created lazily. */
@@ -1288,6 +1324,88 @@ export const browserSetNetworkContextInputSchema = browserPairInputSchema.extend
 });
 
 export const browserClearBotDataInputSchema = z.object({ botId: z.string().min(1) });
+
+/** W8: closes every page of a bot (its browser profile changed; not a tombstone). */
+export const browserCloseBotPagesInputSchema = z.object({ botId: z.string().min(1) });
+/**
+ * W8: wipes a shared profile's storage. `remove: true` (the profile is deleted)
+ * also tombstones it and removes `Partitions/shared-{id}`; without it (清除数据)
+ * the entry stays usable and only the stored data is cleared.
+ */
+export const browserClearProfileDataInputSchema = z.object({
+  profileId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  remove: z.boolean().optional(),
+});
+
+/**
+ * W8 自动接管：用户把页面控制权交还给 Bot（工具条按钮 / 关闭查看窗口 / 空闲超时）。
+ * 主进程调 core（端口 B），core 向用过浏览器的进行中任务注入「先 browser_snapshot」。
+ */
+export const browserControlReturnedInputSchema = z.object({
+  botId: z.string().min(1),
+  conversationId: z.string().min(1),
+  reason: z.enum(['button', 'viewer_closed', 'idle']),
+});
+export const browserControlReturnedOutputSchema = z.object({
+  /** Tasks that received the handback notice. */
+  injected: z.number().int().nonnegative(),
+});
+
+/**
+ * W7 确定性监看：后台页取正文（键 `botId|watch:{watchId}`，不显示、用 Bot 的
+ * 生效浏览器资料、受网络规则约束、取完即关）。`selector` 给定时 `text` 只取该
+ * 元素的文本；`extraSelectors`（数字条件的元素）逐个返回，找不到为 null。
+ */
+export const browserFetchTextInputSchema = z.object({
+  botId: z.string().min(1),
+  watchId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  profileKey: browserProfileKeySchema,
+  networkContext: browserNetworkContextSchema,
+  url: z.string().min(1).max(2048),
+  selector: z.string().min(1).max(WATCH_SELECTOR_MAX_CHARS).optional(),
+  extraSelectors: z.array(z.string().min(1).max(WATCH_SELECTOR_MAX_CHARS)).max(4).optional(),
+});
+export const browserFetchTextOutputSchema = z.object({
+  ok: z.literal(true),
+  title: z.string(),
+  /** Final URL after redirects. */
+  url: z.string(),
+  text: z.string(),
+  /** The page text was cut at WATCH_FETCH_TEXT_MAX_CHARS. */
+  truncated: z.boolean().optional(),
+  extraTexts: z.array(z.string().nullable()).optional(),
+});
+export type BrowserFetchTextOutput = z.infer<typeof browserFetchTextOutputSchema>;
+
+// --- browser profiles (W8) ---------------------------------------------------------
+
+/** A shared browser profile with the bots currently using it. */
+export const browserProfileEntrySchema = browserProfileSchema.extend({
+  botIds: z.array(z.string()),
+});
+export type BrowserProfileEntry = z.infer<typeof browserProfileEntrySchema>;
+export const browserProfilesListOutputSchema = z.object({
+  profiles: z.array(browserProfileEntrySchema),
+});
+export const browserProfilesCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(BROWSER_PROFILE_NAME_MAX_CHARS),
+});
+export const browserProfilesCreateOutputSchema = z.object({
+  profile: browserProfileEntrySchema,
+  profiles: z.array(browserProfileEntrySchema),
+});
+export const browserProfilesRenameInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(BROWSER_PROFILE_NAME_MAX_CHARS),
+});
+export const browserProfileIdInputSchema = z.object({ id: z.string().min(1) });
+export const browserProfilesMutateOutputSchema = z.object({
+  profiles: z.array(browserProfileEntrySchema),
+  /** delete only: bots moved back to their private profile. */
+  movedBotIds: z.array(z.string()).optional(),
+  /** Running tasks interrupted by the switch (delete only). */
+  interrupted: z.number().int().nonnegative().optional(),
+});
 
 /**
  * Method registry keyed by wire name. Port A (renderer <-> core) and port B
@@ -1598,6 +1716,21 @@ export const rpcMethodSchemas = {
 
   'schedules.list': { input: schedulesListInputSchema, output: schedulesListOutputSchema },
   'schedules.cancel': { input: schedulesCancelInputSchema, output: schedulesCancelOutputSchema },
+  'schedules.acceptOffer': {
+    input: schedulesOfferInputSchema,
+    output: schedulesAcceptOfferOutputSchema,
+  },
+  'schedules.declineOffer': {
+    input: schedulesOfferInputSchema,
+    output: schedulesDeclineOfferOutputSchema,
+  },
+
+  // W7 确定性监看：右侧面板列表与对话内监看卡。
+  'watches.list': { input: watchesListInputSchema, output: watchesListOutputSchema },
+  'watches.get': { input: watchIdInputSchema, output: watchGetOutputSchema },
+  'watches.pause': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'watches.resume': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'watches.stop': { input: watchIdInputSchema, output: watchMutateOutputSchema },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -1619,6 +1752,34 @@ export const rpcMethodSchemas = {
     output: okOutput,
   },
   'browser.clearBotData': { input: browserClearBotDataInputSchema, output: okOutput },
+  'browser.closeBotPages': { input: browserCloseBotPagesInputSchema, output: okOutput },
+  'browser.clearProfileData': { input: browserClearProfileDataInputSchema, output: okOutput },
+  // W7: the watch checker's background page (fetch the text, close the page).
+  'browser.fetchText': { input: browserFetchTextInputSchema, output: browserFetchTextOutputSchema },
+  // W8: served by the core on port B (the main process reports a handback).
+  'browser.controlReturned': {
+    input: browserControlReturnedInputSchema,
+    output: browserControlReturnedOutputSchema,
+  },
+
+  // W8 共享浏览器资料（renderer → core）。
+  'browserProfiles.list': { input: voidInput, output: browserProfilesListOutputSchema },
+  'browserProfiles.create': {
+    input: browserProfilesCreateInputSchema,
+    output: browserProfilesCreateOutputSchema,
+  },
+  'browserProfiles.rename': {
+    input: browserProfilesRenameInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
+  'browserProfiles.delete': {
+    input: browserProfileIdInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
+  'browserProfiles.clear': {
+    input: browserProfileIdInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
   // D73: served by the main process on port B (like browser.*); core calls it to
   // open the system browser for OAuth consent. Not in APP_METHODS.
   'shell.openExternal': {
@@ -1644,9 +1805,15 @@ export type PlatformRpcMethods = {
   'update.activeRuns': () => Promise<UpdateActiveRunsOutput>;
   /** P13 任务 2: user-confirmed interrupt of all active runs before updating. */
   'update.cancelActive': (input: { reason: string }) => Promise<UpdateCancelActiveOutput>;
+  /** W8: the user handed a bot page back (viewer toolbar / close / idle). */
+  'browser.controlReturned': (input: {
+    botId: string;
+    conversationId: string;
+    reason: 'button' | 'viewer_closed' | 'idle';
+  }) => Promise<{ injected: number }>;
 };
 
-/** The 12 browser methods the MAIN process serves on port B (P11). */
+/** The browser methods the MAIN process serves on port B (P11; W8 adds two). */
 export const BROWSER_RPC_METHODS = [
   'browser.ensurePage',
   'browser.navigate',
@@ -1660,6 +1827,9 @@ export const BROWSER_RPC_METHODS = [
   'browser.close',
   'browser.setNetworkContext',
   'browser.clearBotData',
+  'browser.closeBotPages',
+  'browser.clearProfileData',
+  'browser.fetchText',
 ] as const satisfies readonly RpcMethodName[];
 
 /** Methods the MAIN process serves on port B for core's use (D73): system-shell integration. */
@@ -1822,6 +1992,18 @@ const APP_METHODS = [
   'wiki.deletePage',
   'schedules.list',
   'schedules.cancel',
+  'watches.list',
+  'watches.get',
+  'watches.pause',
+  'watches.resume',
+  'watches.stop',
+  'browserProfiles.list',
+  'browserProfiles.create',
+  'browserProfiles.rename',
+  'browserProfiles.delete',
+  'browserProfiles.clear',
+  'schedules.acceptOffer',
+  'schedules.declineOffer',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
@@ -1832,4 +2014,5 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'power.suspend',
   'update.activeRuns',
   'update.cancelActive',
+  'browser.controlReturned',
 ];

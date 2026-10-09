@@ -30,10 +30,12 @@
 | runs | `0008_turn_trigger.sql` | `runs` 增 `trigger_parts_json`、`retry_of_run_id` |
 | runs | `0009_tool_effects.sql` | D78（borrowings W2）：新表 `tool_effects`；`runs` 增索引 `runs_by_parent` |
 | main | `0021_delegation_intent.sql` | D71 修订（borrowings W6）：`delegations` 重建（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`，增索引 `delegations_status`） |
-| main | `0022_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients`；D73 后续迁移（P2 起）顺延取号 |
-| main | `0023_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（合并时与 main 的号冲突则整体顺延，测试用 `mainVersionsAfter()`） |
+| main | `0022_schedule_title_origin.sql` | D80：`schedules` 增 `title`、`origin` |
+| main | `0023_watches.sql` | D79（borrowings W7）：新表 `watches` |
+| main | `0024_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients`；D73 后续迁移（P2 起）顺延取号 |
+| main | `0025_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
 
-  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，D73 从 main `0022` 起编号（不改 runs 库，以目录实况为准）。
+  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，main `0022` / `0023` 又被 D80 / W7 占用，D73 从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
 ### 全文检索与中文
 
@@ -223,7 +225,7 @@ CREATE TABLE drafts (
 CREATE TABLE jobs (
   id            TEXT PRIMARY KEY,
   type          TEXT NOT NULL,            -- conversation_summary | reflection | memory_consolidation | profile_curation
-                                          -- | wiki_ingest | wiki_lint | skill_authoring | schedule_fire ...
+                                          -- | wiki_ingest | wiki_lint | skill_authoring | schedule_fire | watch_alert ...
   bot_id        TEXT,
   conversation_id TEXT,
   payload_json  TEXT NOT NULL,
@@ -507,10 +509,54 @@ CREATE TABLE schedules (
   status          TEXT NOT NULL CHECK (status IN ('active', 'done', 'cancelled')),
   next_fire_at    INTEGER,
   last_fired_at   INTEGER,
-  created_at      INTEGER NOT NULL
+  created_at      INTEGER NOT NULL,
+  -- D80（main 0022）：
+  title           TEXT NOT NULL DEFAULT '',     -- 给用户看的短名；空 = 展示回退到 note 截断
+  origin          TEXT NOT NULL DEFAULT 'tool'
+                  CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment'))
 );
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
+
+D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。
+
+### watches（D79，borrowings W7，main 0023）
+
+确定性监看：宿主按 `next_check_at` 用 Bot 的后台页检查网页，条件边沿触发才唤醒 Bot（[design/02 §网页监看](../design/02-execution.md#网页监看d79)）。
+
+```sql
+CREATE TABLE watches (
+  id              TEXT PRIMARY KEY,       -- wat_...
+  bot_id          TEXT NOT NULL,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  source_json     TEXT NOT NULL,          -- 本轮仅 {kind:'web_page', url, selector?}（zod 只接受 web_page）
+  condition_json  TEXT NOT NULL,          -- {kind:'changed'} | {kind:'contains'|'not_contains', text}
+                                          -- | {kind:'number_below'|'number_above', selector?, value}
+  interval_sec    INTEGER NOT NULL CHECK (interval_sec >= 300),
+  status          TEXT NOT NULL CHECK (status IN ('active', 'paused', 'stopped')),
+  last_hash       TEXT,                   -- 上次成功检查的页面行 sha256
+  last_quiet_hash TEXT,                   -- 同上，去掉相对时间后（changed 比较它）
+  last_text       TEXT,                   -- 上一版页面行（≤ WATCH_STORED_TEXT_MAX_CHARS），下次的增删改摘要用
+  last_matched    INTEGER NOT NULL DEFAULT 0,   -- 上次条件值（边沿触发）
+  alert_seq       INTEGER NOT NULL DEFAULT 0,   -- 已提醒次数（幂等键的一部分）
+  alert_times_json TEXT NOT NULL DEFAULT '[]',  -- 最近 24 小时的提醒时间（ms JSON 数组；提醒上限，恢复时清空）
+  failures        INTEGER NOT NULL DEFAULT 0,   -- 连续失败次数（成功清零，≥5 暂停）
+  last_error      TEXT,
+  last_checked_at INTEGER,
+  next_check_at   INTEGER NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 0,   -- CAS：每次写 +1
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX watches_due ON watches(status, next_check_at);
+CREATE INDEX watches_conversation ON watches(conversation_id);
+CREATE INDEX watches_bot ON watches(bot_id, status);
+```
+
+- 计划稿的列之外增加了 `last_text`（没有上一版文本就做不出增删改摘要）、`last_error` / `last_checked_at`（列表与暂停卡展示）、`alert_times_json`（`WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡）。
+- 读行时 `source_json` / `condition_json` 用 zod `safeParse`：解析不了的行在列表 / 上下文里跳过并记日志；到期查询遇到它时直接改 `paused`（`last_error` 说明记录损坏），避免永远到期、空转 worker；删除级联按 SQL 一并删除。
+- 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
+- `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
 
 ### delegations（D71；W6 main 0021 重建）
 
@@ -549,7 +595,7 @@ CREATE INDEX delegations_status ON delegations(status);
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
 - W6（0021）：`awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
 
-### app_connections（D73 P0，迁移 0022）
+### app_connections（D73 P0，迁移 0024）
 
 连接应用（[design/29](../design/29-connected-apps.md) §12）：一行 = 一个账号对一个 Connector（目录应用或自定义 MCP server）的授权。
 
@@ -592,9 +638,9 @@ CREATE TABLE oauth_clients (
 
   client id / secret 仍逐值存 secrets；该表只记来源与已登记 `redirect_uris`，使「客户端是否来自 DCR（最后一个引用方断开后清除）」与打开浏览器前的回调端口预判不必读机密。CIMD 客户端的 `client_id` 是常量，不落表。
 - 自定义 MCP server 的连接 `id = connector_id = custom:{serverId}`，每个 server 至多一行；断开**不删行**（`status = 'not_connected'`，清令牌），只随 `mcp.removeServer` 删除。`apps.connections.list` 默认不返回 `custom:` 行。
-- P1（迁移 0023）追加列 `baseline_pending INTEGER NOT NULL DEFAULT 0`（见下节）。非 OAuth 的自定义 server 也建 `custom:{serverId}` 行承载工具锁定：`server_url` 可为 NULL（stdio），`status = 'connected'`（无需授权；`apps.connections.list` 默认不返回 `custom:` 行）。
+- P1（迁移 0025）追加列 `baseline_pending INTEGER NOT NULL DEFAULT 0`（见下节）。非 OAuth 的自定义 server 也建 `custom:{serverId}` 行承载工具锁定：`server_url` 可为 NULL（stdio），`status = 'connected'`（无需授权；`apps.connections.list` 默认不返回 `custom:` 行）。
 
-### app_connection_tools / app_tool_grants（D73 P1，迁移 0023）
+### app_connection_tools / app_tool_grants（D73 P1，迁移 0025）
 
 **工具定义锁定**（[design/29](../design/29-connected-apps.md) §8.2；`core/apps/tool-lock.ts`、纯函数在 `core/apps/policy.ts`）：对**所有** MCP server 生效。承载行是 `app_connections`（目录连接 `conn_…`；自定义 server `custom:{serverId}`）。
 
@@ -824,6 +870,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
+| watches | 删除 | D79 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
 
@@ -844,6 +891,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 的 agent_sessions（尽力 `session/delete`） | 删除 | D72 P5（`agentSessionsOnBotDeleted`；移出群同理 `agentSessionsOnGroupMemberRemoved`） |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
+| watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
@@ -872,6 +920,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 在此群的 app_tool_grants（Bot 级授权不受影响） | 撤销（`AppToolGrants.revokeForBotInConversation`） | D73 P1 |
 | 该 Bot 在此群做出的承诺 | 置为 `void` | P07 |
 | 该 Bot 在此群的 schedules | 取消 | P10 |
+| 该 Bot 在此群的 watches | 删除 | D79 |
 
 ### 撤回消息
 
