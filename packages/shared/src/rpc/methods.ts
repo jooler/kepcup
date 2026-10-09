@@ -47,6 +47,8 @@ import {
   settingsSchema,
   skillCandidateSchema,
   mcpServerSchema,
+  mcpToolRiskSchema,
+  mcpToolRiskSourceSchema,
   webSearchProviderSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
@@ -239,6 +241,27 @@ export const mcpTestOutputSchema = z.object({
   /** 未能解析的占位符密钥名（secret:env:x / secret:header:y）。 */
   missingSecrets: z.array(z.string()).default([]),
 });
+
+/**
+ * W5：设置页逐工具策略用的工具风险档。core 按已保存的 server 配置连接并列出
+ * 工具（应用级未启用的 server 用一次性连接，不落缓存）；toolPolicies 里有、
+ * 但工具列表里已没有的工具以 missing:true 返回（设置页标灰，配置保留）。
+ */
+export const mcpToolRisksInputSchema = z.object({ serverId: z.string().min(1) });
+export const mcpToolRisksOutputSchema = z.object({
+  tools: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().default(''),
+      risk: mcpToolRiskSchema,
+      source: mcpToolRiskSourceSchema,
+      missing: z.boolean().default(false),
+    }),
+  ),
+  /** 连接失败时的原因（tools 仍含 missing 的已配置工具）。 */
+  error: z.string().optional(),
+});
+export type McpToolRisksOutput = z.infer<typeof mcpToolRisksOutputSchema>;
 
 /** MCP 密钥（D65）：只写不读——渲染层传明文值，core 落 secrets 表字段级加密。 */
 export const mcpSecretKindSchema = z.enum(['env', 'header']);
@@ -1137,6 +1160,8 @@ export const rpcMethodSchemas = {
   'mcp.test': { input: mcpTestInputSchema, output: mcpTestOutputSchema },
   'mcp.setSecret': { input: mcpSetSecretInputSchema, output: okOutput },
   'mcp.removeSecret': { input: mcpRemoveSecretInputSchema, output: okOutput },
+  /** W5：设置页逐工具策略——列出工具名、风险档与判定来源。 */
+  'mcp.toolRisks': { input: mcpToolRisksInputSchema, output: mcpToolRisksOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
   'websearch.setKey': { input: webSearchSetKeyInputSchema, output: okOutput },
   'websearch.removeKey': { input: webSearchRemoveKeyInputSchema, output: okOutput },
@@ -1449,6 +1474,7 @@ const APP_METHODS = [
   'mcp.test',
   'mcp.setSecret',
   'mcp.removeSecret',
+  'mcp.toolRisks',
   'websearch.test',
   'websearch.setKey',
   'websearch.removeKey',

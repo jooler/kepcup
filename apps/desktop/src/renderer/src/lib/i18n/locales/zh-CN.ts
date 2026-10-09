@@ -245,6 +245,25 @@ export const zhCN = {
   'settings.mcpCommandRequired': 'stdio 类型需要填写命令',
   'settings.mcpUrlRequired': 'HTTP / SSE 类型需要填写端点 URL',
   'settings.mcpMissingSecrets': '以下密钥尚未填写：{names}',
+  // W5：逐工具风险档与策略
+  'settings.mcpTools': '工具与审批',
+  'settings.mcpToolsHide': '收起工具',
+  'settings.mcpToolsLoading': '正在读取工具…',
+  'settings.mcpToolsEmpty': '该服务器没有工具',
+  'settings.mcpToolsHint':
+    '只读工具默认免审批，并可在对话中直接查询；写入 / 破坏性工具默认每次确认。风险按服务器声明的注解或工具名判定：注解只能放宽到只读，名字含写操作动词的一律不算只读。',
+  'settings.mcpToolApproval': '审批',
+  'settings.mcpToolApprovalDefault': '默认（{mode}）',
+  'settings.mcpToolApprovalAuto': '免审批',
+  'settings.mcpToolApprovalAsk': '每次确认',
+  'settings.mcpToolEnabled': '启用',
+  'settings.mcpToolMissing': '已不在工具列表中（配置保留）',
+  'mcp.riskRead': '只读',
+  'mcp.riskWrite': '写入',
+  'mcp.riskDestructive': '破坏性',
+  'mcp.riskSourceAnnotation': '按注解',
+  'mcp.riskSourceName': '按名字推断',
+  'mcp.riskSourceDefault': '未声明，按最严',
   'settings.test': '测试连接',
   'settings.testing': '测试中…',
   'settings.testOk': '连接成功',
@@ -305,8 +324,14 @@ export const zhCN = {
   'contacts.lightModel': '轻量模型（留空用默认）',
   'contacts.mcpServers': 'MCP 工具服务器',
   'contacts.mcpServersHint':
-    '勾选后该 Bot 可使用对应服务器的工具（每次调用需批准，除非该服务器开启了免审批）。在 设置 → MCP 服务器 中管理。',
+    '勾选后该 Bot 可使用对应服务器的工具：只读工具默认直接执行（对话中也能直接查询），写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。在 设置 → MCP 服务器 中管理。',
   'contacts.mcpAutoApproveTag': '免审批',
+  // W5：Bot 详情 MCP 区常驻风险提示（§5 护栏 7）
+  'contacts.mcpUnattendedNotice':
+    '无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作），请注意风险。',
+  'contacts.mcpUnattendedActive': '无人值守模式已开启：其中 {count} 个写入 / 破坏性工具会被自动执行。',
+  'contacts.mcpUnattendedUnknown':
+    '无人值守模式已开启：无法确认工具风险（服务器暂时连不上），请按可能含写入 / 删除类工具对待。',
 
   'contacts.modelUnavailable': '{ref}（该厂商未配置 key）',
   'contacts.cancel': '取消',
@@ -680,6 +705,10 @@ export const zhCN = {
     '导入内容锁定到该 commit，存放于只读技能库，不可修改；所有 Bot 共享，各自独立安装。',
   'approvals.skillPresetTitle': '安装推荐技能',
   'approvals.mcpToolTitle': '调用 MCP 工具',
+  'approvals.mcpTool': '工具',
+  'approvals.mcpArgs': '参数',
+  'approvals.mcpDestructiveRisk':
+    '该工具可能有破坏性（服务器未声明它是只读或非破坏性的），批准前请核对参数。',
   // D72 P3：外部智能体的工具权限请求（agent_tool）
   'approvals.agentToolTitle': '智能体工具权限请求',
   'approvals.agentToolReadTitle': '智能体申请读取',

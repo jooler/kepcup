@@ -120,6 +120,16 @@ export const MCP_TOOLS_PER_SERVER_MAX = 64;
 export const MCP_RECONNECT_MAX = 3;
 /** Tools list cache TTL for HTTP servers that announce tool-list-change poorly. */
 export const MCP_TOOL_LIST_CACHE_MS = 5 * 60_000;
+/**
+ * W5：对话轮 / 只读子代理工具面最多放多少个只读 MCP 工具（按 server 顺序取前
+ * N 个；其余在任务中可用，系统提示里说明）。每轮请求都带这些 schema。
+ */
+export const TURN_MCP_READ_TOOLS_MAX = 20;
+/**
+ * W5：对话轮等待 MCP 工具列表（懒连接 + tools/list）的上限。对话轮是秒级的：
+ * 超时则本轮不带 MCP 工具，连接在后台继续，下一轮命中缓存。
+ */
+export const TURN_MCP_RESOLVE_TIMEOUT_MS = 3_000;
 
 // --- In-loop interim messages (loop 中间过程投送, todo/loop-interim-updates.md) ---
 

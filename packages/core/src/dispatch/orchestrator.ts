@@ -16,6 +16,7 @@ import {
   SUMMARY_TRIGGER_UNSUMMARIZED,
   TASK_CHANGED_FILES_SHOWN,
   TURN_MAX_TURNS,
+  TURN_MCP_RESOLVE_TIMEOUT_MS,
   BUILTIN_ENGINE,
   CONTINUATION_WINDOW_MS,
   agentEngineKey,
@@ -69,6 +70,7 @@ import {
   buildAgentRunContext,
   buildAgentSessionPrompt,
   buildSystemPrompt,
+  turnMcpNote,
 } from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -142,7 +144,13 @@ import {
   buildSubagentSystemPrompt,
   type SubagentToolFacade,
 } from '../agent/subagent.js';
-import { buildMcpTools, type McpToolFacade } from '../mcp/tools.js';
+import {
+  resolveMcpToolEntries,
+  selectReadOnlyMcpEntries,
+  wrapMcpToolEntries,
+  type McpToolEntry,
+  type McpToolFacade,
+} from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
 import { FileReadState } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
@@ -1779,6 +1787,51 @@ export class Orchestrator {
     return { bot, conversationId: conversation.id, created };
   }
 
+  /**
+   * W5: the bot's enabled MCP tools (app-enabled ∩ bot-selected servers,
+   * `enabled:false` tools dropped). A task waits for the lists; a turn waits
+   * at most TURN_MCP_RESOLVE_TIMEOUT_MS and goes without MCP tools otherwise
+   * (the connection keeps going in the background and the next turn hits the
+   * cache).
+   */
+  async #mcpEntriesFor(
+    serverIds: string[],
+    isTask: boolean,
+  ): Promise<{ entries: McpToolEntry[]; hasServers: boolean; resolved: boolean }> {
+    const mcp = this.#deps.mcp;
+    if (mcp == null || serverIds.length === 0) return { entries: [], hasServers: false, resolved: true };
+    const servers = mcp.serversForBot(serverIds);
+    if (servers.length === 0) return { entries: [], hasServers: false, resolved: true };
+    // Only a task's connect failures count toward MCP_RECONNECT_MAX: turns
+    // resolve on every message and must not drain the budget tasks rely on.
+    const resolving = resolveMcpToolEntries({
+      servers,
+      mcp,
+      logger: this.#deps.logger,
+      countFailures: isTask,
+    });
+    if (isTask) return { entries: await resolving, hasServers: true, resolved: true };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), TURN_MCP_RESOLVE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      const entries = await Promise.race([resolving, timeout]);
+      if (entries === null) {
+        resolving.catch(() => {});
+        this.#deps.logger.warn(
+          { serverIds },
+          'mcp tool lists not ready within the turn budget; turn runs without MCP tools',
+        );
+        return { entries: [], hasServers: true, resolved: false };
+      }
+      return { entries, hasServers: true, resolved: true };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   /** Environment tool facade: real manager when wired, fail-closed stub otherwise. */
   #environmentFacade(): EnvironmentToolFacade & { installedToolchains(): InstalledToolchain[] } {
     const environment = this.#deps.environment;
@@ -2798,6 +2851,23 @@ export class Orchestrator {
         allowDomains: bot.profile.runtime.network_allowlist,
       };
       const environmentFacade = this.#environmentFacade();
+      // D65 MCP：应用 enabled ∩ Bot 选中 的 server → 工具（首次使用懒连接）。
+      // W5：任务拿全部已启用工具；对话轮与只读子代理只拿只读 + 免审批的前
+      // TURN_MCP_READ_TOOLS_MAX 个（调用时网关再校验）。对话轮最多等
+      // TURN_MCP_RESOLVE_TIMEOUT_MS：连接慢就本轮不带，下一轮命中缓存。
+      const mcpResolution = await this.#mcpEntriesFor(bot.profile.runtime.mcp_server_ids, isTask);
+      const mcpEntries = mcpResolution.entries;
+      const readOnlyMcp = selectReadOnlyMcpEntries(mcpEntries);
+      const wrapMcp = (ident: RunIdentity, entries: McpToolEntry[]) =>
+        this.#deps.mcp != null
+          ? wrapMcpToolEntries({
+              identity: ident,
+              entries,
+              mcp: this.#deps.mcp,
+              gateway: this.#deps.gateway,
+              secrets: this.#deps.secrets,
+            })
+          : [];
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
       const memoryToolFacade: MemoryToolFacade | undefined = memoryFacade
@@ -2860,20 +2930,14 @@ export class Orchestrator {
         // D75 §4.1: the turn's task management (buildResponseTools registers
         // the task tools for turns only).
         tasks: this.#taskHost,
-        // D65 MCP：应用 enabled ∩ Bot 选中 的 server → 包装工具（首次使用懒连接）。
-        // Tasks only (D75 §2.1: a turn has no MCP tools).
-        ...(isTask && this.#deps.mcp != null && bot.profile.runtime.mcp_server_ids.length > 0
+        ...(mcpEntries.length > 0
           ? {
-              mcp: {
-                tools: await buildMcpTools({
-                  identity,
-                  servers: this.#deps.mcp.serversForBot(bot.profile.runtime.mcp_server_ids),
-                  mcp: this.#deps.mcp,
-                  gateway: this.#deps.gateway,
-                  secrets: this.#deps.secrets,
-                  logger: this.#deps.logger,
-                }),
-              } satisfies McpToolFacade,
+              mcp: (isTask
+                ? { tools: wrapMcp(identity, mcpEntries), omitted: 0 }
+                : {
+                    tools: wrapMcp(identity, readOnlyMcp.entries),
+                    omitted: readOnlyMcp.omitted,
+                  }) satisfies McpToolFacade,
             }
           : {}),
         // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts），
@@ -2906,6 +2970,10 @@ export class Orchestrator {
                   secrets: this.#deps.secrets,
                   fsState: this.#fsState,
                   ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
+                  // W5: read-only MCP tools, wrapped with the sub run's identity.
+                  ...(readOnlyMcp.entries.length > 0
+                    ? { mcp: { tools: wrapMcp(subIdentity, readOnlyMcp.entries) } }
+                    : {}),
                 },
               }),
             buildSystemPrompt: () =>
@@ -3228,6 +3296,17 @@ export class Orchestrator {
             ...(skillsSection.length > 0 ? { skills: skillsSection } : {}),
             ...(recommendedSkillsSection.length > 0
               ? { recommendedSkills: recommendedSkillsSection }
+              : {}),
+            // Stable whenever the bot has MCP servers (even if this turn's
+            // resolution timed out), so the prompt does not flip between turns.
+            ...(!isTask && mcpResolution.hasServers
+              ? {
+                  mcpTurnNote: turnMcpNote(
+                    mcpResolution.resolved
+                      ? { onSurface: readOnlyMcp.entries.length, omitted: readOnlyMcp.omitted }
+                      : null,
+                  ),
+                }
               : {}),
           }),
         messages: [

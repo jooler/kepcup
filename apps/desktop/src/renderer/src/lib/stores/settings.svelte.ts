@@ -1,4 +1,5 @@
 import type {
+  McpToolRisksOutput,
   ModelCapability,
   OnboardingStatePatch,
   ProviderInfo,
@@ -165,6 +166,14 @@ class SettingsState {
       tools: string[];
       missingSecrets: string[];
     }>;
+  }
+
+  /**
+   * W5：已保存 server 的工具风险档（设置页逐工具策略）。连接失败时 error 有值，
+   * tools 里仍有已配置但当前未列出的工具（missing）。
+   */
+  async mcpToolRisks(serverId: string): Promise<McpToolRisksOutput> {
+    return (await core.call('mcp.toolRisks', { serverId })) as McpToolRisksOutput;
   }
 
   /** 检索供应商连通性测试：入参 key 优先（未保存前先测），失败返回错误说明。 */

@@ -108,6 +108,7 @@ import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
 import { McpService } from './mcp/service.js';
+import { decideMcpTool } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { BudgetService } from './usage/budget.js';
 import { SkillImporter } from './skills/library.js';
@@ -1118,8 +1119,30 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       skills: {
         readableDirs: (botId) => skills.readableDirs(botId),
       },
-      mcpAutoApprove: (serverId) =>
-        settings.get().mcpServers.find((server) => server.id === serverId)?.autoApprove === true,
+      // W5: risk re-resolved at call time from the server's current tool
+      // annotations; policy / autoApprove re-read from settings. A server the
+      // user switched off, or the bot no longer selects, is refused (enabled
+      // false) so running tasks stop calling it.
+      mcpToolDecision: async ({ botId, serverId, toolName, signal }) => {
+        const server = settings.get().mcpServers.find((entry) => entry.id === serverId);
+        const selected =
+          botId !== null &&
+          (bots.get(botId)?.profile.runtime.mcp_server_ids.includes(serverId) ?? false);
+        if (server === undefined || !server.enabled || !selected) {
+          return {
+            risk: 'destructive',
+            riskSource: 'default',
+            approval: 'ask',
+            approvalSource: 'default',
+            enabled: false,
+          };
+        }
+        return decideMcpTool(
+          server,
+          toolName,
+          await mcp.resolveRisk(server, toolName, signal !== undefined ? { signal } : {}),
+        );
+      },
     });
 
     // --- turn / task loop machinery ----------------------------------------

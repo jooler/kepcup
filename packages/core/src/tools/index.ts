@@ -116,7 +116,9 @@ export interface ResponseToolDeps {
   subagent?: SubagentToolFacade | undefined;
   /**
    * MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已按
-   * 「应用 enabled ∩ Bot 选中」构建好的包装工具，直接注册。
+   * 「应用 enabled ∩ Bot 选中」构建好的包装工具，直接注册。W5：任务拿全部已
+   * 启用的工具；对话轮拿的是只读工具面（只读 + 有效审批 auto，≤
+   * TURN_MCP_READ_TOOLS_MAX），由 orchestrator 选好。
    */
   mcp?: McpToolFacade | undefined;
   /**
@@ -198,10 +200,12 @@ function guessMime(fileName: string): string {
  *   (message / attachment / run lookups, read / ls / find / grep), task
  *   management + forward_task_result, async hosted actions (delegate_to_bot,
  *   schedules, wiki ingest, memory candidates, skill authoring, butler
- *   proposals) and web_search / web_fetch. No writes, commands, browser,
- *   media generation, MCP, skill / environment installs, access requests or
- *   delegate_task — those are a task's work. (The gateway refuses writes of a
- *   turn at execution time as well; this list only keeps useless tools away.)
+ *   proposals), web_search / web_fetch and read-only MCP tools (W5: risk
+ *   `read` with effective approval `auto`, capped). No writes, commands,
+ *   browser, media generation, other MCP tools, skill / environment installs,
+ *   access requests or delegate_task — those are a task's work. (The gateway
+ *   refuses writes of a turn at execution time as well — MCP calls are
+ *   re-checked there too; this list only keeps useless tools away.)
  * - otherwise (a task): the full working toolset, minus what belongs to the
  *   turn (task management, cross-bot delegation, butler proposals).
  */
@@ -896,7 +900,8 @@ export function buildResponseTools(input: {
   const delegateTools =
     deps.subagent !== undefined ? buildDelegateTools({ identity, subagent: deps.subagent }) : [];
 
-  // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析。
+  // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析
+  // 并按工具面选好（W5：对话轮只有只读 + 免审批的那部分）。
   const mcpTools = deps.mcp?.tools ?? [];
 
   // 跨 Bot 委派（D71）：异步转交给另一个联系人 Bot。
@@ -934,6 +939,8 @@ export function buildResponseTools(input: {
       ...webTools,
       ...delegationTools,
       ...butlerTools,
+      // W5: read-only MCP tools (call-time re-check in the gateway).
+      ...mcpTools,
       ...setupTools,
     ];
   }
@@ -980,15 +987,17 @@ export function emptyToolResult(): ToolResult {
 }
 
 /**
- * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索。
- * 无 write / edit（避免与主 run 的 project 写租约竞争）、无 send_message /
- * delegate_task（禁止再委派）、无 memory / schedule / browser / skills 工具。
+ * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索 +
+ * 只读 MCP 工具（W5：只读 + 有效审批 auto，≤ TURN_MCP_READ_TOOLS_MAX，按子
+ * run 身份包装好的 `mcp`）。无 write / edit（避免与主 run 的 project 写租约竞
+ * 争）、无 send_message / delegate_task（禁止再委派）、无 memory / schedule /
+ * browser / skills 工具。
  */
 export function buildSubagentResearchTools(input: {
   identity: RunIdentity;
   deps: Pick<
     ResponseToolDeps,
-    'gateway' | 'workspacePath' | 'projectPath' | 'network' | 'secrets' | 'fsState' | 'search'
+    'gateway' | 'workspacePath' | 'projectPath' | 'network' | 'secrets' | 'fsState' | 'search' | 'mcp'
   >;
 }): ToolDefinition[] {
   const coding = buildCodingTools(
@@ -1004,5 +1013,5 @@ export function buildSubagentResearchTools(input: {
     { excludeWriteTools: true },
   );
   const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
-  return [...coding, ...web];
+  return [...coding, ...web, ...(input.deps.mcp?.tools ?? [])];
 }

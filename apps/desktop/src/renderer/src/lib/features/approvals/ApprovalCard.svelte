@@ -28,6 +28,7 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import McpRiskBadge from './McpRiskBadge.svelte';
 
   let {
     approval,
@@ -263,6 +264,9 @@
       >
       <code class="min-w-0 flex-1 truncate">{path}</code>
     {:else}
+      {#if mcpTool?.risk !== undefined}
+        <McpRiskBadge risk={mcpTool.risk} />
+      {/if}
       <code class="min-w-0 flex-1 truncate">
         {approval.kind === 'git_remote'
           ? `git ${gitRemoteOp} ${gitRemoteArgs}`.trim()
@@ -324,6 +328,9 @@
         <TerminalSquare class="size-4 text-amber-600" aria-hidden="true" />
       {/if}
       <span>{title}</span>
+      {#if mcpTool?.risk !== undefined}
+        <McpRiskBadge risk={mcpTool.risk} testid="approval-mcp-risk" />
+      {/if}
       <span class="ml-auto text-[11px] font-normal text-muted-foreground"
         >{t('approvals.focusHint')}</span
       >
@@ -713,6 +720,28 @@
           </button>
           <span class="text-muted-foreground">{t('approvals.durationHint')}</span>
         </div>
+      {/if}
+    {:else if approval.kind === 'mcp_tool' && mcpTool !== null}
+      <!-- W5：MCP 工具卡——服务器 / 工具 / 参数摘要 + 风险档（破坏性用警示色）。 -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <span class="text-muted-foreground">{t('approvals.mcpTool')}</span>
+        <span class="break-all" data-testid="approval-mcp-tool"
+          >{mcpTool.serverName} · <code>{mcpTool.toolName}</code></span
+        >
+        {#if mcpTool.argsSummary.length > 0}
+          <span class="text-muted-foreground">{t('approvals.mcpArgs')}</span>
+          <code class="break-all whitespace-pre-wrap" data-testid="approval-mcp-args"
+            >{mcpTool.argsSummary}</code
+          >
+        {/if}
+      </div>
+      {#if mcpTool.risk === 'destructive'}
+        <p
+          class="mt-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
+          data-testid="approval-risk-note"
+        >
+          {t('approvals.mcpDestructiveRisk')}
+        </p>
       {/if}
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">

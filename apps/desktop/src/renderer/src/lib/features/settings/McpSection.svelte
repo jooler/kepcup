@@ -8,11 +8,13 @@
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import McpToolPolicies from './McpToolPolicies.svelte';
 
   /**
    * 「MCP 服务器」section（docs/design/23-mcp-and-subagent.md，D65）：server
    * 增删改、启用开关、免审批开关（带风险提示）、连接测试（列出工具名；列表
-   * 里测已保存配置，表单里保存前测草稿、新填密钥仅随本次测试生效）。
+   * 里测已保存配置，表单里保存前测草稿、新填密钥仅随本次测试生效）、逐工具
+   * 风险档与策略（W5，McpToolPolicies）。
    * 密钥只写不读：env / headers 的值输入后即落 secrets 表，settings 只存
    * `secret:env:<name>` / `secret:header:<name>` 占位符。
    */
@@ -30,6 +32,8 @@
   let draftTestTools = $state<string[] | null>(null);
   let draftTestError = $state<string | null>(null);
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
+  /** W5：展开了逐工具策略的 server。 */
+  let toolsOpen = $state<Record<string, boolean>>({});
 
   function emptyDraft(kind: 'stdio' | 'http' | 'sse'): Draft {
     const id = `mcp_${Date.now().toString(36)}`;
@@ -174,10 +178,16 @@
       void _ignored;
       const existing = settingsStore.settings?.mcpServers ?? [];
       const index = existing.findIndex((entry) => entry.id === serverId);
+      // W5: the form does not edit per-tool policies — keep the live ones
+      // (changed in the tool list while the form was open), not the snapshot.
+      const merged = (
+        index >= 0 ? { ...server, toolPolicies: existing[index]!.toolPolicies } : server
+      ) as McpServer;
+      if (merged.toolPolicies === undefined) delete merged.toolPolicies;
       const next =
         index >= 0
-          ? existing.map((entry, i) => (i === index ? (server as McpServer) : entry))
-          : [...existing, server as McpServer];
+          ? existing.map((entry, i) => (i === index ? merged : entry))
+          : [...existing, merged];
       await settingsStore.update({ mcpServers: next });
       toast.success(t('settings.saved'));
       draft = null;
@@ -351,6 +361,14 @@
           >
             {testing ? t('settings.testing') : t('settings.test')}
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onclick={() => (toolsOpen = { ...toolsOpen, [server.id]: !toolsOpen[server.id] })}
+            data-testid={`mcp-tools-toggle-${server.id}`}
+          >
+            {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
+          </Button>
           <Button size="sm" variant="ghost" onclick={() => editServer(server)}>
             {t('settings.mcpEdit')}
           </Button>
@@ -374,6 +392,9 @@
         </p>
       {:else if testError !== null}
         <p class="text-xs text-destructive">{testError}</p>
+      {/if}
+      {#if toolsOpen[server.id]}
+        <McpToolPolicies {server} />
       {/if}
     </div>
   {/each}
