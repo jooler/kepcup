@@ -3,6 +3,7 @@
   import {
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
+    describeScheduleWhen,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
@@ -101,10 +102,58 @@
   // W4：决定绑定到卡片渲染时的内容（payloadHash；不符 → APPROVAL_STALE）。
   const boundHash = $derived(decisionBinding(approval).payloadHash);
 
+  /** D80: routines the user unchecked, as "{botIndex}:{routineIndex}". */
+  let routinesDropped = $state<string[]>([]);
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  function toggleRoutine(key: string): void {
+    routinesDropped = routinesDropped.includes(key)
+      ? routinesDropped.filter((k) => k !== key)
+      : [...routinesDropped, key];
+  }
+
+  function routineWhen(routine: { when: string; timezone: string | null }): string {
+    const iso = /^\d{4}-\d{2}-\d{2}/.test(routine.when) ? Date.parse(routine.when) : NaN;
+    return Number.isNaN(iso)
+      ? describeScheduleWhen(
+          { kind: 'cron', cron: routine.when, runAt: null, timezone: routine.timezone ?? localTimeZone },
+          { localTimeZone },
+        )
+      : describeScheduleWhen({ kind: 'once', runAt: iso, cron: null, timezone: localTimeZone }, { now: Date.now() });
+  }
+
+  /** Pending: the local choice; decided: what the decision kept. */
+  function routineChecked(botIndex: number, key: string): boolean {
+    if (pending) return !routinesDropped.includes(key) && !butlerDropped.includes(botIndex);
+    const decision = approval.decision;
+    if (approval.status !== 'approved' || decision === null) return false;
+    if (decision.selection !== undefined && !decision.selection.includes(botIndex)) return false;
+    return decision.routineSelection === undefined || decision.routineSelection.includes(key);
+  }
+
+  /** Kept routine keys of the kept bots; undefined when the proposal has none. */
+  const routinesKept = $derived.by(() => {
+    if (butlerProposal === null || butlerProposal.proposalType === 'group') return undefined;
+    const keys = butlerProposal.bots.flatMap((bot, botIndex) =>
+      bot.routines.map((_, routineIndex) => `${botIndex}:${routineIndex}`),
+    );
+    if (keys.length === 0) return undefined;
+    return keys.filter(
+      (key) => !routinesDropped.includes(key) && butlerKept.includes(Number(key.split(':')[0])),
+    );
+  });
+
   function approve(): void {
     if (butlerProposal !== null && butlerProposal.proposalType !== 'group') {
       // 一项都不留 = 拒绝（core 同样按拒绝处理）。
-      void permissions.decide(approval.id, butlerKept.length > 0, undefined, butlerKept, boundHash);
+      void permissions.decide(
+        approval.id,
+        butlerKept.length > 0,
+        undefined,
+        butlerKept,
+        boundHash,
+        routinesKept,
+      );
       return;
     }
     void permissions.decide(
@@ -680,6 +729,35 @@
                   {/if}
                 </span>
               </label>
+              {#if bot.routines.length > 0}
+                <!-- D80 例行事项：确认后建到这个 Bot 的私聊里，可单独勾掉 -->
+                <ul class="mt-1 ml-6 grid gap-1" data-testid={`approval-butler-routines-${index}`}>
+                  {#each bot.routines as routine, routineIndex (routineIndex)}
+                    {@const key = `${index}:${routineIndex}`}
+                    <li>
+                      <label
+                        class="flex cursor-pointer items-center gap-2 text-xs {butlerDropped.includes(index)
+                          ? 'opacity-50'
+                          : ''}"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={routineChecked(index, key)}
+                          disabled={!pending || butlerDropped.includes(index)}
+                          onchange={() => toggleRoutine(key)}
+                          data-testid={`approval-butler-routine-check-${key}`}
+                        />
+                        <span
+                          >{t('approvals.butlerRoutine', {
+                            when: routineWhen(routine),
+                            title: routine.title,
+                          })}</span
+                        >
+                      </label>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </li>
           {/each}
         </ul>

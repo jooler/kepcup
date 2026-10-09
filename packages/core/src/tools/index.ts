@@ -17,7 +17,11 @@ import { buildCodingTools } from './coding-tools.js';
 import { buildMemoryTools, type MemoryToolFacade } from './memory-tools.js';
 import { buildSetupTools, type SetupToolFacade } from './setup-tools.js';
 import { buildWikiTools, type WikiToolFacade } from './wiki-tools.js';
-import { buildScheduleTools, type ScheduleToolFacade } from './schedule-tools.js';
+import {
+  buildOfferScheduleTool,
+  buildScheduleTools,
+  type ScheduleToolFacade,
+} from './schedule-tools.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
@@ -51,6 +55,11 @@ export interface ResponseToolDeps {
   fsState: FileReadState;
   /** Called for every message the bot sends (output_message_ids + events). */
   onBotMessage: (message: Message) => void;
+  /**
+   * D80: the schedule a scheduled turn runs for — its send_message messages
+   * carry the 「⏰ 标题」 tag like the final reply. Absent otherwise.
+   */
+  scheduleSource?: { scheduleId: string; scheduleTitle: string } | undefined;
   /**
    * P05 group chains: validate mention_bot_ids, extend/create the chain and
    * deliver to the targets. Returns a suffix note for the tool result.
@@ -306,6 +315,9 @@ export function buildResponseTools(input: {
         runId: identity.runId,
         // D75 §6.1: a task's messages are progress, attributed to the task.
         ...(isTask ? { taskOrigin: { taskId: identity.runId } } : {}),
+        ...(!isTask && deps.scheduleSource !== undefined
+          ? { scheduleSource: deps.scheduleSource }
+          : {}),
       });
       if (uploaded.length > 0)
         deps.attachments.attachToMessage(
@@ -939,6 +951,10 @@ export function buildResponseTools(input: {
       ...(deps.skills !== undefined ? [createSkill] : []),
       ...wikiTools,
       ...scheduleTools,
+      // D80: the offer card is the turn's (cards facing the user, D75).
+      ...(deps.schedule !== undefined
+        ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
+        : []),
       ...webTools,
       ...delegationTools,
       ...butlerTools,

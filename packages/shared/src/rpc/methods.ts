@@ -46,6 +46,7 @@ import {
   runSchema,
   runStepSchema,
   scheduleEntrySchema,
+  scheduleSchema,
   settingsSchema,
   browserProfileSchema,
   skillCandidateSchema,
@@ -784,6 +785,8 @@ export const approvalsDecideInputSchema = z.object({
    * 与服务端不符 → APPROVAL_STALE（可选：旧调用方不传）。
    */
   payloadHash: z.string().min(1).optional(),
+  /** `butler_proposal` only (D80): kept routines as `"{botIndex}:{routineIndex}"`. */
+  routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -1066,6 +1069,10 @@ export const schedulesListInputSchema = z.object({
 export const schedulesListOutputSchema = z.object({ schedules: z.array(scheduleEntrySchema) });
 export const schedulesCancelInputSchema = z.object({ id: z.string().min(1) });
 export const schedulesCancelOutputSchema = z.object({ ok: z.literal(true) });
+/** Offer-card actions (D80): the card message id. */
+export const schedulesOfferInputSchema = z.object({ messageId: z.string().min(1) });
+export const schedulesAcceptOfferOutputSchema = z.object({ schedule: scheduleSchema });
+export const schedulesDeclineOfferOutputSchema = z.object({ ok: z.literal(true) });
 
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
@@ -1511,6 +1518,14 @@ export const rpcMethodSchemas = {
 
   'schedules.list': { input: schedulesListInputSchema, output: schedulesListOutputSchema },
   'schedules.cancel': { input: schedulesCancelInputSchema, output: schedulesCancelOutputSchema },
+  'schedules.acceptOffer': {
+    input: schedulesOfferInputSchema,
+    output: schedulesAcceptOfferOutputSchema,
+  },
+  'schedules.declineOffer': {
+    input: schedulesOfferInputSchema,
+    output: schedulesDeclineOfferOutputSchema,
+  },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -1749,6 +1764,8 @@ const APP_METHODS = [
   'browserProfiles.rename',
   'browserProfiles.delete',
   'browserProfiles.clear',
+  'schedules.acceptOffer',
+  'schedules.declineOffer',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;

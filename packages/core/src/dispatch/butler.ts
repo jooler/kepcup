@@ -15,6 +15,7 @@ import type { GroupsService } from '../domain/groups.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { ApprovalOutcome, ApprovalsService } from '../permissions/approvals.js';
 import type { BotCardLine, ButlerToolFacade, RouteSuggestion } from '../tools/butler-tools.js';
+import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 
 /**
  * 管家提议的宿主侧（D70，docs/design/27-butler-and-delegation.md §2.2）：
@@ -30,6 +31,8 @@ export interface ButlerHostDeps {
   approvals: ApprovalsService;
   messages: MessagesService;
   logger: CoreLogger;
+  /** D80: routines of proposed bots (optional in stripped setups: routines are dropped). */
+  schedule?: Pick<ScheduleToolFacade, 'createFromWhen' | 'validateWhen' | 'describeWhen'> | undefined;
   /** Direct-chat delivery through the setup gate (a user message in the butler's chat). */
   deliverDirect(conversationId: string, botId: string, message: Message): void;
   publish: (event: string, payload: unknown) => void;
@@ -52,6 +55,17 @@ export class ButlerHost implements ButlerToolFacade {
 
   constructor(deps: ButlerHostDeps) {
     this.#deps = deps;
+  }
+
+  validateRoutineWhen(when: string, timezone: string | null): string | null {
+    const schedule = this.#deps.schedule;
+    if (schedule === undefined) return '当前环境不支持定时任务';
+    try {
+      schedule.validateWhen(when, timezone);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   }
 
   listBots(selfBotId: string): BotCardLine[] {
@@ -233,7 +247,12 @@ export class ButlerHost implements ButlerToolFacade {
       const lines =
         proposal.proposalType === 'group'
           ? this.#createGroup(proposal)
-          : this.#createBots(approval.id, proposal, approval.decision?.selection);
+          : this.#createBots(
+              approval.id,
+              proposal,
+              approval.decision?.selection,
+              approval.decision?.routineSelection,
+            );
       this.#notify(butlerId, conversationId, lines.join('\n'));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -251,11 +270,15 @@ export class ButlerHost implements ButlerToolFacade {
     approvalId: string,
     proposal: Extract<ButlerProposalPayload, { proposalType: 'team' | 'bot' }>,
     selection: number[] | undefined,
+    routineSelection: string[] | undefined,
   ): string[] {
     const indexes = selection ?? proposal.bots.map((_, index) => index);
+    const keptRoutines = routineSelection !== undefined ? new Set(routineSelection) : null;
     const offset = this.#deps.bots.listActive().length;
     const created: Bot[] = [];
     const failed: string[] = [];
+    const routineLines: string[] = [];
+    const routineFailures: string[] = [];
     for (const [order, index] of indexes.entries()) {
       const item = proposal.bots[index];
       if (item === undefined) continue;
@@ -277,6 +300,35 @@ export class ButlerHost implements ButlerToolFacade {
           this.#deps.publish('conversation.updated', { conversation: { ...conversation, bot } });
         }
         created.push(bot);
+        // D80: the kept routines go into the new bot's direct chat (their
+        // receipt cards are the first thing the user sees there).
+        const schedule = this.#deps.schedule;
+        for (const [routineIndex, routine] of (item.routines ?? []).entries()) {
+          if (keptRoutines !== null && !keptRoutines.has(`${index}:${routineIndex}`)) continue;
+          if (schedule === undefined) {
+            routineFailures.push(`${item.name}「${routine.title}」（当前环境不支持定时任务）`);
+            continue;
+          }
+          try {
+            const row = schedule.createFromWhen({
+              botId: bot.id,
+              conversationId: conversation.id,
+              when: routine.when,
+              timezone: routine.timezone,
+              title: routine.title,
+              note: routine.note,
+              origin: 'proposal',
+            });
+            routineLines.push(`${item.name}「${routine.title}」${schedule.describeWhen(row)}`);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            this.#deps.logger.warn(
+              { approvalId, botId: bot.id, title: routine.title, error: reason },
+              'butler proposal routine creation failed',
+            );
+            routineFailures.push(`${item.name}「${routine.title}」（${reason}）`);
+          }
+        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         this.#deps.logger.warn(
@@ -302,7 +354,11 @@ export class ButlerHost implements ButlerToolFacade {
         ? `已创建：${created.map((bot) => `${bot.name}（${bot.id}）`).join('、')}。`
         : '没有创建任何 Bot。',
       ...(failed.length > 0 ? [`创建失败：${failed.join('、')}。`] : []),
-      '请用一两句话告诉用户结果和接下来怎么用（例如直接去找对应的 Bot 聊，需要多角色协作时可以建群）；不要再把完整清单复述一遍。',
+      ...(routineLines.length > 0 ? [`已设置例行事项：${routineLines.join('；')}。`] : []),
+      ...(routineFailures.length > 0
+        ? [`例行事项设置失败：${routineFailures.join('、')}（Bot 已建好，用户可以之后再让它设）。`]
+        : []),
+      '请用一两句话告诉用户结果和接下来怎么用（例如直接去找对应的 Bot 聊，需要多角色协作时可以建群；设了例行事项的顺带说一句它会到点主动找用户）；不要再把完整清单复述一遍。',
     ];
   }
 

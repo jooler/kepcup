@@ -8,6 +8,8 @@ import {
   type MessageKind,
   type MessageStatus,
   type RunStatus,
+  type ScheduleOfferContent,
+  type ScheduleReceiptSnapshot,
   type TaskEventContent,
   type TaskEventPhase,
 } from '@kepcup/shared';
@@ -89,6 +91,15 @@ export interface AppendMessageInput {
         task?: string | undefined;
       }
     | undefined;
+  /** system_event extras: schedule receipt snapshot (schedule_created, D80). */
+  schedule?: ScheduleReceiptSnapshot | undefined;
+  /** system_event extras: schedule offer card (schedule_offer, D80). */
+  offer?: ScheduleOfferContent | undefined;
+  /**
+   * text messages only (D80): sent by a scheduled turn — the schedule and its
+   * title snapshot (「⏰ 标题」 tag under the bubble).
+   */
+  scheduleSource?: { scheduleId: string; scheduleTitle: string } | undefined;
   /** Card messages only: the approval the card belongs to. */
   cardType?: string | undefined;
   approvalId?: string | undefined;
@@ -228,6 +239,12 @@ export class MessagesService {
               ...(input.taskOrigin !== undefined
                 ? { origin: 'task', taskId: input.taskOrigin.taskId }
                 : {}),
+              ...(input.scheduleSource !== undefined
+                ? {
+                    scheduleId: input.scheduleSource.scheduleId,
+                    scheduleTitle: input.scheduleSource.scheduleTitle,
+                  }
+                : {}),
             })
           : input.kind === 'card'
             ? JSON.stringify({
@@ -248,6 +265,8 @@ export class MessagesService {
                 ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
                 ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),
+                ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
+                ...(input.offer !== undefined ? { offer: input.offer } : {}),
               });
     const mentions = input.mentions ?? [];
     let message: Message;

@@ -119,6 +119,8 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   schedule: 'local',
   list_schedules: 'none',
   cancel_schedule: 'local',
+  /** D80: posts a visible card (in-app, like a message); the click creates the schedule. */
+  offer_schedule: 'local',
 
   // --- 联网读取与媒体（调用云端服务，但不改外部状态；重做只多花费用）---
   web_search: 'none',

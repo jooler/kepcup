@@ -699,6 +699,8 @@ export class Orchestrator {
       approvals: deps.approvals,
       messages: deps.messages,
       logger: deps.logger,
+      // D80: proposal routines are created through the schedule domain.
+      ...(deps.schedule !== undefined ? { schedule: deps.schedule } : {}),
       publish: (event, payload) => deps.publish(event as never, payload as never),
       deliverDirect: (conversationId, botId, message) => {
         const conversation = deps.conversations.getOrThrow(conversationId);
@@ -1587,6 +1589,48 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * The schedule a turn's reply comes from (D80 「⏰ 标题」 tag): a scheduled
+   * part of the batch, or the result of a task launched by a scheduled turn
+   * (scheduled turns usually hand the work to a task and relay its result in
+   * a later `task` turn). Null for everything else.
+   */
+  #scheduleSourceOf(batch: TriggerBatch): { scheduleId: string; scheduleTitle: string } | null {
+    const facade = this.#deps.schedule;
+    if (facade === undefined) return null;
+    // A user's message merged into the batch makes the reply theirs, not the schedule's.
+    if (triggerParts(batch).some((part) => isUserFacingReason(part.reason))) return null;
+    const resolve = (id: unknown) => {
+      if (typeof id !== 'string' || id.length === 0) return null;
+      const title = facade.displayTitle(id);
+      return title === null ? null : { scheduleId: id, scheduleTitle: title };
+    };
+    try {
+      for (const part of triggerParts(batch)) {
+        if (part.reason === 'scheduled') {
+          const found = resolve(part.extraAttributes?.['schedule_id']);
+          if (found !== null) return found;
+        }
+      }
+      for (const entry of batch.messages) {
+        if (entry.kind !== 'task_event' || entry.taskId === null) continue;
+        const originRunId = this.#deps.runs.get(entry.taskId)?.originRunId ?? null;
+        if (originRunId === null) continue;
+        for (const part of this.#deps.runs.triggerPartsOf(originRunId) ?? []) {
+          if (part.reason !== 'scheduled') continue;
+          const found = resolve(part.extraAttributes?.['schedule_id']);
+          if (found !== null) return found;
+        }
+      }
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'schedule source lookup failed',
+      );
+    }
+    return null;
+  }
+
   // --- startup recovery ------------------------------------------------------
 
   /**
@@ -2123,7 +2167,12 @@ export class Orchestrator {
     responseTools: ToolDefinition[];
     workspacePath: string;
     hasProject: boolean;
-    memorySections: { userProfile?: string; myState?: string; relevantMemories?: string };
+    memorySections: {
+      userProfile?: string;
+      myState?: string;
+      schedules?: string;
+      relevantMemories?: string;
+    };
     wikiTopics: string;
     skills: string;
     recommendedSkills: string;
@@ -2971,7 +3020,10 @@ export class Orchestrator {
             triggerMessages: () => batch.messages,
           }
         : undefined;
+      // D80: a scheduled turn's messages carry the 「⏰ 标题」 tag.
+      const scheduleSource = isTask ? null : this.#scheduleSourceOf(batch);
       const toolDeps: ResponseToolDeps = {
+        ...(scheduleSource !== null ? { scheduleSource } : {}),
         messages,
         attachments: this.#deps.attachments,
         runs,
@@ -3079,10 +3131,14 @@ export class Orchestrator {
 
       // P07 injection: relevant memories come from the trigger text plus the
       // last two context messages (docs/dev/phases/P07-memory.md 任务 3).
+      // D80 <schedules>: this bot's active schedules here + declined offers.
+      const schedulesSection =
+        this.#deps.schedule?.contextSection(batch.botId, batch.conversationId) ?? '';
       const memorySections = memoryFacade
         ? {
             userProfile: memoryFacade.profileCardSection(),
             myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
+            ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
             relevantMemories: await memoryFacade.relevantMemoriesSection({
               botId: batch.botId,
               conversationId: batch.conversationId,
@@ -3094,7 +3150,9 @@ export class Orchestrator {
                 .join('\n'),
             }),
           }
-        : {};
+        : schedulesSection.length > 0
+          ? { schedules: schedulesSection }
+          : {};
       // P08: <skills> lists names + descriptions only (design 05 加载方式);
       // the model reads the full SKILL.md via the read tool when needed.
       const skillsSection = this.#deps.skills?.promptSection(batch.botId) ?? '';
@@ -3515,6 +3573,7 @@ export class Orchestrator {
           kind: 'text',
           text: outcome.finalText,
           runId,
+          ...(scheduleSource !== null ? { scheduleSource } : {}),
         });
         this.#recordBotMessage(runId, message);
       }

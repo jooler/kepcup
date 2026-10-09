@@ -177,6 +177,9 @@ import {
   schedulesListInputSchema,
   schedulesListOutputSchema,
   schedulesCancelInputSchema,
+  schedulesOfferInputSchema,
+  schedulesAcceptOfferOutputSchema,
+  schedulesDeclineOfferOutputSchema,
   schedulesCancelOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
@@ -932,6 +935,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.duration,
           input.selection,
           input.payloadHash,
+          input.routineSelection,
         ),
       }),
     ),
@@ -1331,6 +1335,24 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => {
         await domain.browserProfiles.clear(input.id);
         return { profiles: domain.browserProfiles.list() };
+      },
+    ),
+    // D80 offer cards: deterministic creation / decline, no bot wake-up.
+    'schedules.acceptOffer': method(
+      schedulesOfferInputSchema,
+      schedulesAcceptOfferOutputSchema,
+      async (input) => {
+        if (!services.schedules) throw new AppError('NOT_IMPLEMENTED', '定时服务未就绪');
+        return { schedule: services.schedules.acceptOffer(input.messageId) };
+      },
+    ),
+    'schedules.declineOffer': method(
+      schedulesOfferInputSchema,
+      schedulesDeclineOfferOutputSchema,
+      async (input) => {
+        if (!services.schedules) throw new AppError('NOT_IMPLEMENTED', '定时服务未就绪');
+        services.schedules.declineOffer(input.messageId);
+        return { ok: true as const };
       },
     ),
   };

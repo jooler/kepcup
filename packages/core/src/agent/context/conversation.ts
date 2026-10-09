@@ -1,6 +1,8 @@
 import {
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
+  SCHEDULE_CREATED_EVENT,
+  SCHEDULE_OFFER_EVENT,
   TASK_EVENT_CONTEXT_MAX_CHARS,
   TASK_TRIGGER_RESULT_MAX_CHARS,
   type Message,
@@ -249,10 +251,15 @@ export function renderMessageLine(
           .join('、')}）`
       : '';
   // Other bots' words are data, not instructions (docs/dev/04-agent-runtime.md).
+  // D80: schedule receipt / offer cards are host system events, but their
+  // text quotes titles from model output and commitment content — data too.
+  const event = (content as { event?: string } | undefined)?.event;
   const wrapped =
-    message.senderType === 'bot' &&
-    options.selfBotId !== null &&
-    message.senderBotId !== options.selfBotId
+    (message.senderType === 'bot' &&
+      options.selfBotId !== null &&
+      message.senderBotId !== options.selfBotId) ||
+    (message.senderType === 'system' &&
+      (event === SCHEDULE_CREATED_EVENT || event === SCHEDULE_OFFER_EVENT))
       ? `<untrusted>${neutralizeUntrusted(body)}</untrusted>`
       : body;
   return `[${message.id} | ${time} | ${sender}]${statusSuffix} ${wrapped}${attachmentSuffix}`;

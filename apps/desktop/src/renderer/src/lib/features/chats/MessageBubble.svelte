@@ -7,6 +7,7 @@
   import RunChangesCard from '$lib/features/projects/RunChangesCard.svelte';
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
+  import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
@@ -114,6 +115,14 @@
       message.content.event === 'route_suggestion',
   );
 
+  // D80 定时任务卡：回执卡（schedule_created）与提议卡（schedule_offer）。
+  const isScheduleCard = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      (message.content.event === 'schedule_created' || message.content.event === 'schedule_offer'),
+  );
+
   function assign(botId: string): void {
     if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
   }
@@ -169,6 +178,10 @@
 {:else if isRouteCard}
   <div class="flex w-full justify-center py-1">
     <RouteCard {message} />
+  </div>
+{:else if isScheduleCard}
+  <div class="flex w-full justify-center py-1">
+    <ScheduleCard {message} />
   </div>
 {:else if isSystem}
   <div class="flex flex-col items-center gap-1 py-1" data-testid="system-message">

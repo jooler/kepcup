@@ -254,6 +254,21 @@ export const MAX_PROACTIVE_PER_DAY = 5;
 export const SCHEDULE_GUARD_RETRY_MS = 15 * 60 * 1000;
 /** late_by is only reported to the bot above this threshold (P10 任务 4). */
 export const SCHEDULE_LATE_BY_MIN_MS = 60_000;
+/** system_event name of the visible schedule receipt card (D80). */
+export const SCHEDULE_CREATED_EVENT = 'schedule_created';
+/** system_event name of the schedule offer card (D80 offer_schedule). */
+export const SCHEDULE_OFFER_EVENT = 'schedule_offer';
+/**
+ * Offer back-off (D80): once the user declined this many offers of one bot in
+ * one conversation within the window, offer_schedule refuses until the user
+ * asks for a schedule themselves.
+ */
+export const SCHEDULE_OFFER_DECLINE_MAX = 2;
+export const SCHEDULE_OFFER_DECLINE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Active schedules listed in the <schedules> context section (D80). */
+export const SCHEDULE_CONTEXT_MAX = 8;
+/** Routines per proposed bot (D80, butler proposals). */
+export const BUTLER_ROUTINES_PER_BOT_MAX = 3;
 /**
  * Terminal jobs (done / failed / cancelled) are purged after this long
  * (BR-P10-008): every scheduled fire and every 15-minute guard retry leaves a

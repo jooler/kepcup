@@ -136,6 +136,8 @@ class PermissionsState {
      * decision (APPROVAL_STALE) when the approval no longer matches it.
      */
     payloadHash?: string,
+    /** butler_proposal only (D80): kept routines as "{botIndex}:{routineIndex}". */
+    routineSelection?: string[],
   ): Promise<void> {
     try {
       const result = (await core.call('approvals.decide', {
@@ -144,6 +146,7 @@ class PermissionsState {
         ...(duration !== undefined ? { duration } : {}),
         ...(selection !== undefined ? { selection } : {}),
         ...(payloadHash !== undefined ? { payloadHash } : {}),
+        ...(routineSelection !== undefined ? { routineSelection } : {}),
       })) as { approval: Approval };
       this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);
