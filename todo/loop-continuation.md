@@ -59,7 +59,7 @@
 4. 上一个 run 为 `cancelled` 时不走 L1；仲裁可以选择它。
 5. 回放超预算 → 从最早处截断并注明。
 6. 反思 job payload 携带 `continuedFromRunIds`。
-7. 既有测试全绿。
+7. 既有测试全绿（迭代中跑相关测试文件，交付前全量 `pnpm test` 一次，见 [docs/dev/05-testing.md](../docs/dev/05-testing.md#开发中如何跑测试)）。
 
 ## 7. 风险
 

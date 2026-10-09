@@ -10,7 +10,31 @@
 | 端到端测试 | 启动打包前的 Electron 应用，模拟用户操作界面 | Playwright（`_electron`） | `apps/desktop/test/e2e/` |
 | 手工冒烟 | 使用真实模型厂商 | 检查清单（下文） | — |
 
-每个阶段的“测试要求”说明该阶段必须新增哪些测试；阶段结束时全部测试必须通过。
+每个阶段的“测试要求”说明该阶段必须新增哪些测试；阶段收口时全部测试必须通过（全量跑一次即可）。开发与修复迭代中先跑定向测试，见下文[开发中如何跑测试](#开发中如何跑测试)。
+
+## 开发中如何跑测试
+
+**先定向、后全量**。开发与修复迭代中只跑与改动相关的测试；全量只在收口时跑一次。
+
+定向命令（根目录执行；容器里同样只用 `node scripts/run-tests.mjs run …`，见下文[本机容器运行](#本机容器运行linux-开发机)）：
+
+| 范围 | 命令 |
+|---|---|
+| 单个文件或目录 | `node scripts/run-tests.mjs run packages/core/test/unit/xxx.test.ts` |
+| 文件内按用例名 | `node scripts/run-tests.mjs run <测试文件> -t "用例名片段"` |
+| 单个包 | `pnpm --filter @kepcup/core test`（`shared` / `testkit` 同理）；desktop 单测用 `node scripts/run-tests.mjs run --project desktop` |
+| 单个 e2e spec | `pnpm build` 后 `pnpm --filter @kepcup/desktop test:e2e test/e2e/xxx.spec.ts` |
+| 单包类型检查 | `pnpm --filter @kepcup/core typecheck`（`shared` / `desktop` 同理） |
+
+- 顺序：先跑改动文件对应的测试与新增测试 → 需要时再跑改动所在包 → 收口时全量。
+- **全量 `pnpm test` 只在以下情况跑**：
+  1. 阶段收口或最终交付前，跑**一次**；
+  2. 改了跨包公共部分（`packages/shared` 契约、`packages/testkit`、数据库迁移、`vitest.config.ts` / `scripts/run-tests.mjs`）；
+  3. 用户或调度会话明确要求。
+- 不做「连续多轮全量」。全量里出现偶发失败时，只单跑失败的那个文件复核。
+- 改动前不重跑全量建基线：直接引用下文已记录的基线（及 PROGRESS.md / todo 中最近一次全量结果）。
+- 不推荐 `vitest related` / `--changed`：各包测试经 `@kepcup/shared`、`@kepcup/core` 的入口别名导入，依赖图几乎覆盖全部测试文件。实测 `node scripts/run-tests.mjs related --run packages/shared/src/browser/net-rules.ts` 选中了 148/148 个文件，等同全量。
+- `pnpm typecheck` / `pnpm lint` 较快，可在交付前整体跑；迭代中可用单包 typecheck。
 
 ## 模拟模型服务（packages/testkit）
 

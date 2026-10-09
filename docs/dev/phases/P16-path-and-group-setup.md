@@ -64,4 +64,4 @@
 2. 目录卡未答期间从输入框发送的消息不触发 run；作答后该消息与首答一起被 Bot 处理。
 3. 新建群全程无任何模型调用（mock LLM 无脚本访问记录），完成后群名、事务描述、成员、目录与设计一致；`<conversation_info>` 含「本群主要处理：…」。
 4. 创建中刷新 / 重启后问答可继续；「取消创建」后对话从列表消失且 messages 表无残留行。
-5. 旧弹框入口不再出现；`pnpm test` 全绿；desktop build + svelte-check 与基线一致。
+5. 旧弹框入口不再出现；`pnpm test` 全绿（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）；desktop build + svelte-check 与基线一致。

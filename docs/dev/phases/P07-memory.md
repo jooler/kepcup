@@ -140,7 +140,7 @@ P05、P06。
 - [x] 用户可以在界面中查看、编辑、删除所有记忆与画像条目。— 证据：e2e `apps/desktop/test/e2e/memory.spec.ts`（右栏查看/搜索/编辑/只属于该 Bot/证据跳转/删除、来源对话已删除、画像页编辑与删除）。
 - [x] 用量与预算页面可用，预算生效。— 证据：e2e `memory.spec.ts` 用量页用例（按 Bot/loop/天分组、预算设置持久化、超出当日提示）。
 - [x] 删除与撤回的记忆处理符合 03-data-model.md。
-- [x] 本阶段测试全部通过。— 证据：`pnpm test` 315 个全绿（P07 新增 62）；`pnpm build && pnpm test:e2e` 21 个全绿（既有 17 + memory.spec 4）。
+- [x] 本阶段测试全部通过（迭代中跑定向测试，收口跑一次全量，见 [05-testing.md](../05-testing.md#开发中如何跑测试)）。— 证据：`pnpm test` 315 个全绿（P07 新增 62）；`pnpm build && pnpm test:e2e` 21 个全绿（既有 17 + memory.spec 4）。
 
 ## 注意事项
 
