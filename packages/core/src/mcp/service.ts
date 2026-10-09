@@ -234,6 +234,15 @@ export class McpService {
   }
 
   /**
+   * W3：最近一次工具列表里的工具名（同步，不连接）；从未列出过 → null（调用方
+   * 按「未知」取严）。
+   */
+  knownToolNames(serverId: string): string[] | null {
+    const known = this.#annotations.get(serverId);
+    return known !== undefined ? [...known.keys()] : null;
+  }
+
+  /**
    * W5：按最近一次工具列表的注解 + 工具名判定风险（同步，不连接）。未见过的
    * 工具（列表里没有 / 从未列出）按缺省取严：destructive。
    */

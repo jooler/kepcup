@@ -60,6 +60,8 @@ interface StepRow {
 interface RunErrorJson {
   message?: string;
   setup?: SetupRequirement;
+  /** 机器可读原因（W3：`permission_revoked`）。 */
+  reason?: string;
 }
 
 /**
@@ -67,12 +69,16 @@ interface RunErrorJson {
  * 一侧沿用已存值）；两者都未触及且本无错误时保持 null（不无中生有）。
  */
 function nextErrorJson(
-  patch: { error?: string | null; setup?: SetupRequirement },
+  patch: { error?: string | null; setup?: SetupRequirement; errorReason?: string | null },
   existing: Run,
 ): string | null {
+  const reason =
+    (patch.errorReason !== undefined ? patch.errorReason : existing.errorReason) ?? null;
+  const withReason = (json: RunErrorJson): string =>
+    JSON.stringify(reason !== null ? { ...json, reason } : json);
   if (patch.error === undefined && patch.setup === undefined) {
     return existing.error !== null
-      ? JSON.stringify(
+      ? withReason(
           existing.setup !== null
             ? { message: existing.error, setup: existing.setup }
             : { message: existing.error },
@@ -81,7 +87,7 @@ function nextErrorJson(
   }
   const message = (patch.error !== undefined ? patch.error : existing.error) ?? '';
   const setup = patch.setup ?? existing.setup ?? null;
-  return JSON.stringify(setup !== null ? { message, setup } : { message });
+  return withReason(setup !== null ? { message, setup } : { message });
 }
 
 function rowToRun(row: RunRow): Run {
@@ -109,6 +115,7 @@ function rowToRun(row: RunRow): Run {
         : [],
     error: error?.message ?? null,
     setup: error?.setup ?? null,
+    errorReason: error?.reason ?? null,
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskWorkdir: row.task_workdir,
@@ -301,6 +308,8 @@ export class RunsService {
     > & {
       /** Structured setup requirement stored inside error_json (inline setup). */
       setup?: SetupRequirement;
+      /** Machine-readable reason stored inside error_json (W3 `permission_revoked`). */
+      errorReason?: string | null;
     },
   ): Run {
     const existing = this.getOrThrow(id);

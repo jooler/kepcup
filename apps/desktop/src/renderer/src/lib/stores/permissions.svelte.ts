@@ -65,6 +65,12 @@ class PermissionsState {
       const data = payload as { state: UnattendedState };
       this.unattended = data.state;
     });
+    // W3（D78）: a revocation (grants list, MCP settings, a bot's MCP selection)
+    // interrupted running tasks — said right where the user just revoked.
+    core.onEvent('tasks.interrupted', (payload) => {
+      const data = payload as { count: number };
+      if (data.count > 0) toast.warning(t('task.interruptedByRevoke', { count: data.count }));
+    });
   }
 
   /** Loads pending approvals + grants + sandbox state for a conversation. */

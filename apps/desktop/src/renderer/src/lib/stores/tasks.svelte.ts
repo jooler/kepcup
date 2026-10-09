@@ -124,9 +124,16 @@ class TasksState {
     await core.call('runs.cancel', { runId: taskId });
   }
 
-  /** Retries a failed task: a new task continuing it (§7.5); returns the new task's id. */
-  async retry(taskId: string): Promise<string | null> {
-    const result = (await core.call('runs.retry', { runId: taskId })) as { run: Run | null };
+  /**
+   * Retries a failed / interrupted task: a new task continuing it (§7.5);
+   * returns the new task's id. `reviewed` (W3): the user ticked 我已核实 on the
+   * review panel of an interrupted task with external effects.
+   */
+  async retry(taskId: string, reviewed = false): Promise<string | null> {
+    const result = (await core.call('runs.retry', {
+      runId: taskId,
+      ...(reviewed ? { reviewed: true } : {}),
+    })) as { run: Run | null };
     return result.run?.id ?? null;
   }
 

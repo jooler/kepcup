@@ -90,6 +90,7 @@ import {
   webSearchRemoveKeyInputSchema,
   runIdInputSchema,
   runsCancelOutputSchema,
+  runsRetryInputSchema,
   runsRetryOutputSchema,
   runsStepsOutputSchema,
   runsListInputSchema,
@@ -193,6 +194,11 @@ import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
 import { bindAgentMethods } from './agents-bindings.js';
+import {
+  botsUsingServer,
+  mcpRevocationsBetween,
+  serversRemovedFromBot,
+} from '../permissions/revocations.js';
 import type { LoopType } from '@kepcup/shared';
 
 const voidInput = z.void();
@@ -244,6 +250,23 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const domain = services.domain!;
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
+  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」. */
+  const publishInterrupted = (count: number, scope: 'path' | 'mcp'): void => {
+    if (count > 0) publish('tasks.interrupted', { count, reason: 'permission_revoked', scope });
+  };
+  /** W3: MCP permissions the user took back → interrupt the affected tasks. */
+  const revokeMcp = (revoked: Array<{ serverId: string; toolName?: string; botIds: string[] }>) => {
+    let count = 0;
+    for (const entry of revoked) {
+      count += domain.revocations.emit({
+        scope: 'mcp',
+        botIds: entry.botIds,
+        serverId: entry.serverId,
+        ...(entry.toolName !== undefined ? { toolName: entry.toolName } : {}),
+      });
+    }
+    publishInterrupted(count, 'mcp');
+  };
   // P12-B: one in-flight preparation at a time (per services instance) — the
   // wizard reopening mid-import shares the running state-machine pass.
   let wslPrepareInflight: Promise<WslStatusReport> | null = null;
@@ -320,6 +343,19 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           : {}),
       });
       services.scheduler?.setConcurrency(next.providerConcurrency);
+      if (input.mcpServers !== undefined) {
+        // W3（D78）: server switched off / removed, autoApprove on → off, a tool
+        // policy auto → ask or disabled — the bots using it lose their running tasks.
+        const allBots = domain.bots.listActive();
+        revokeMcp(
+          mcpRevocationsBetween(
+            previous.mcpServers,
+            next.mcpServers,
+            (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
+            (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
+          ).map((entry) => ({ ...entry, botIds: botsUsingServer(allBots, entry.serverId) })),
+        );
+      }
       if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
         // P13 任务 3: the main process applies the OS login item on this event
         // (platform port B → setLoginItemSettings / XDG autostart).
@@ -503,8 +539,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (nextAgentId !== domain.bots.getOrThrow(input.id).profile.runtime.agent.id) {
         assertAgentSelectable(domain.settings.get(), services.agents?.catalog() ?? [], nextAgentId);
       }
+      const previousServerIds = domain.bots.getOrThrow(input.id).profile.runtime.mcp_server_ids;
       const bot = domain.bots.update(input.id, input.profile);
       publish('bot.updated', { bot });
+      // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
+      revokeMcp(
+        serversRemovedFromBot(
+          previousServerIds,
+          bot.profile.runtime.mcp_server_ids,
+          domain.settings.get().mcpServers,
+        ).map((serverId) => ({ serverId, botIds: [bot.id] })),
+      );
       return { bot };
     }),
     'bots.avatar.upload': method(
@@ -750,8 +795,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'runs.cancel': method(runIdInputSchema, runsCancelOutputSchema, async (input) => ({
       run: orchestrator.cancelRun(input.runId),
     })),
-    'runs.retry': method(runIdInputSchema, runsRetryOutputSchema, async (input) => ({
-      run: orchestrator.retryRun(input.runId),
+    // W3（D78）: `reviewed` comes only from the task card's review panel (the
+    // user ticked 我已核实); no model tool reaches retryRun.
+    'runs.retry': method(runsRetryInputSchema, runsRetryOutputSchema, async (input) => ({
+      run: orchestrator.retryRun(
+        input.runId,
+        input.reviewed !== undefined ? { reviewed: input.reviewed } : {},
+      ),
     })),
     'runs.steps': method(runIdInputSchema, runsStepsOutputSchema, async (input) => ({
       steps: orchestrator.stepsFor(input.runId),
@@ -885,13 +935,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       grants: domain.grants.listActive(input.conversationId),
     })),
     'grants.revoke': method(grantIdInputSchema, okOutputSchema, async (input) => {
-      const grant = domain.grants.revoke(input.id);
+      // W3（D78）: the user's revocation interrupts the grant's bot's running
+      // tasks in that conversation (permission.revoked → TaskHost).
+      const { grant, interruptedTasks } = domain.grants.revokeByUser(input.id);
       if (grant) {
         publish('grant.changed', {
           conversationId: grant.conversationId,
           grants: domain.grants.listActive(grant.conversationId),
         });
       }
+      publishInterrupted(interruptedTasks, 'path');
       return { ok: true as const };
     }),
 

@@ -470,7 +470,8 @@ export class ApprovalsService {
    * the request must survive the run (conversation/bot cancellation still
    * applies).
    */
-  cancelPendingForRun(runId: string): void {
+  /** Returns the ids of the approvals it cancelled (W3: their calls never ran). */
+  cancelPendingForRun(runId: string): string[] {
     // Non-blocking submissions (`submitNonBlocking`, e.g. a supervisor turn's
     // propose_profile_change, D75 审查 M4) never hold the run: the tool
     // returned at once, so the card outlives the run whatever its kind.
@@ -482,6 +483,7 @@ export class ApprovalsService {
         approval: this.#markCancelled(row.id),
         decision: 'cancelled',
       });
+    return rows.map((row) => row.id);
   }
 
   cancelPendingForConversation(conversationId: string): void {

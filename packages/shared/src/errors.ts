@@ -28,6 +28,11 @@ export const ERROR_CODES = [
   // runs
   'RUN_NOT_FOUND',
   'RUN_ALREADY_FINISHED',
+  /**
+   * W3（D78）：中断的任务有外部副作用台账行（已完成 / 结果未知），重试前须由
+   * 用户在「检查后重试」面板核实（runs.retry 带 reviewed:true）。
+   */
+  'REVIEW_REQUIRED',
   // conversations / messages
   'CONVERSATION_READ_ONLY',
   'MESSAGE_NOT_RECALLABLE',

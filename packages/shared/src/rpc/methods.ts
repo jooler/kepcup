@@ -676,6 +676,11 @@ export const webSearchRemoveKeyInputSchema = z.object({ provider: webSearchProvi
 export const runIdInputSchema = z.object({ runId: z.string().min(1) });
 export const runsCancelOutputSchema = z.object({ run: runSchema.nullable() });
 export const runsRetryOutputSchema = z.object({ run: runSchema.nullable() });
+/**
+ * W3（D78）：`reviewed` = 用户已在「检查后重试」面板核实中断前的外部操作。
+ * 中断任务有外部副作用台账行时不带它会得到 REVIEW_REQUIRED；其他调用方不传。
+ */
+export const runsRetryInputSchema = runIdInputSchema.extend({ reviewed: z.boolean().optional() });
 export const runsStepsOutputSchema = z.object({ steps: z.array(runStepSchema) });
 export const runsListInputSchema = z.object({
   conversationId: z.string().min(1),
@@ -1314,7 +1319,7 @@ export const rpcMethodSchemas = {
   },
 
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
-  'runs.retry': { input: runIdInputSchema, output: runsRetryOutputSchema },
+  'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
   'runs.steps': { input: runIdInputSchema, output: runsStepsOutputSchema },
   'runs.list': { input: runsListInputSchema, output: runsListOutputSchema },
 

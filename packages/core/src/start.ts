@@ -66,6 +66,7 @@ import { DelegationsService } from './domain/delegations.js';
 import { ProvidersService } from './domain/providers.js';
 import { AuditService } from './domain/audit.js';
 import { GrantsService } from './permissions/grants.js';
+import { PermissionRevocations } from './permissions/revocations.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
@@ -321,6 +322,8 @@ export interface CoreServicesOptions {
 export interface CoreDomainServices {
   /** W2 外部副作用台账（runs.db tool_effects）。 */
   effects: ToolEffectsStore;
+  /** W3 用户撤销授权的内部事件（permission.revoked）：TaskHost 据此中断进行中的任务。 */
+  revocations: PermissionRevocations;
   settings: SettingsService;
   secrets: SecretsService;
   bots: BotsService;
@@ -875,7 +878,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     const providers = new ProvidersService({ settings, secrets, logger, media });
     const audit = new AuditService({ db: mainDb, clock });
-    const grants = new GrantsService({ db: mainDb, clock });
+    // W3（D78）: user revocations (grants.revoke, MCP settings / bot selection)
+    // interrupt the affected running tasks — TaskHost subscribes below.
+    const revocations = new PermissionRevocations();
+    const grants = new GrantsService({ db: mainDb, clock, revocations });
     const allowlist = new AllowlistService({ db: mainDb, clock, osPlatform: process.platform });
     const projectsService = new ProjectsService({ db: mainDb, clock });
 
@@ -1409,6 +1415,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         },
       },
     });
+    // W3（D78）: a user revocation interrupts the affected running tasks (turns are not).
+    revocations.on((event) => orchestrator.tasks.interruptForRevocation(event));
     // P10 schedule domain: timer + guardrails + catch-up; deliveries go via
     // the orchestrator mailboxes and commitment lookups via the memory service.
     const schedules = new ScheduleService({
@@ -1699,6 +1707,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       unattended,
       projects: projectsService,
       effects,
+      revocations,
     };
     services.orchestrator = orchestrator;
     services.projectRuntime = projectRuntime;

@@ -137,6 +137,8 @@ export interface AppendTaskEventInput {
   sourceMessageIds?: string[] | undefined;
   status?: RunStatus | undefined;
   error?: string | undefined;
+  /** W3: machine-readable failure reason (e.g. `permission_revoked`). */
+  errorReason?: string | undefined;
   delivery?: 'delivered' | 'queued' | undefined;
   questionMessageId?: string | undefined;
   title?: string | undefined;
@@ -346,6 +348,7 @@ export class MessagesService {
       ...(input.sourceMessageIds !== undefined ? { sourceMessageIds: input.sourceMessageIds } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.error !== undefined ? { error: input.error } : {}),
+      ...(input.errorReason !== undefined ? { errorReason: input.errorReason } : {}),
       ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
       ...(input.questionMessageId !== undefined
         ? { questionMessageId: input.questionMessageId }
