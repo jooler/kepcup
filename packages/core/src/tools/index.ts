@@ -22,6 +22,7 @@ import {
   buildScheduleTools,
   type ScheduleToolFacade,
 } from './schedule-tools.js';
+import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
@@ -92,6 +93,11 @@ export interface ResponseToolDeps {
    * list_schedules / cancel_schedule tools.
    */
   schedule?: ScheduleToolFacade | undefined;
+  /**
+   * W7 确定性监看（optional in stripped unit setups）：watch_create /
+   * watch_list / watch_stop——异步托管动作，对话轮与任务都有。
+   */
+  watch?: WatchToolFacade | undefined;
   /**
    * P11 browser capability hosted by the main process (port B). Present in
    * the real core; tests may omit it (no browser_* tools are registered).
@@ -210,7 +216,7 @@ function guessMime(fileName: string): string {
  * - `turn` (supervisor turn, read-only): conversation core, read-only queries
  *   (message / attachment / run lookups, read / ls / find / grep), task
  *   management + forward_task_result, async hosted actions (delegate_to_bot,
- *   schedules, wiki ingest, memory candidates, skill authoring, butler
+ *   schedules, watches (W7), wiki ingest, memory candidates, skill authoring, butler
  *   proposals), web_search / web_fetch and read-only MCP tools (W5: risk
  *   `read` with effective approval `auto`, capped). No writes, commands,
  *   browser, media generation, other MCP tools, skill / environment installs,
@@ -850,6 +856,10 @@ export function buildResponseTools(input: {
   const scheduleTools =
     deps.schedule !== undefined ? buildScheduleTools({ identity, schedule: deps.schedule }) : [];
 
+  // W7 watch tools: an async hosted action like schedules (turn + task).
+  const watchTools =
+    deps.watch !== undefined ? buildWatchTools({ identity, watch: deps.watch }) : [];
+
   // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
   // — 公网默认可访问，网络规则在主进程的页面网络上下文中强制).
   const browserTools =
@@ -951,6 +961,7 @@ export function buildResponseTools(input: {
       ...(deps.skills !== undefined ? [createSkill] : []),
       ...wikiTools,
       ...scheduleTools,
+      ...watchTools,
       // D80: the offer card is the turn's (cards facing the user, D75).
       ...(deps.schedule !== undefined
         ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
@@ -982,6 +993,7 @@ export function buildResponseTools(input: {
     ...(deps.skills !== undefined ? [createSkill] : []),
     ...wikiTools,
     ...scheduleTools,
+    ...watchTools,
     ...browserTools,
     ...imageTools,
     ...speechTools,

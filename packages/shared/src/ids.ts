@@ -32,6 +32,8 @@ export const ID_PREFIXES = {
   eff: 'eff_',
   /** 共享浏览器资料（W8，settings.browserProfiles）。 */
   bpf: 'bpf_',
+  /** 确定性监看（W7，main.db watches）。 */
+  wat: 'wat_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

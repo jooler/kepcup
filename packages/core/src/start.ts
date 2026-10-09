@@ -122,6 +122,8 @@ import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
+import { WatchService } from './watch/service.js';
+import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
 import type { ScheduleToolFacade } from './tools/schedule-tools.js';
 import {
   createBrowserHostRpc,
@@ -418,6 +420,8 @@ export interface CoreServices {
   wiki: WikiService | null;
   /** P10 proactive-messaging domain (null while locked / errored). */
   schedules: ScheduleService | null;
+  /** W7 确定性监看 (null while locked / errored). */
+  watches: WatchService | null;
   scheduler: Scheduler | null;
   jobsRunner: JobsRunner | null;
   /**
@@ -639,6 +643,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     skillPresets: null,
     wiki: null,
     schedules: null,
+    watches: null,
     scheduler: null,
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
@@ -664,6 +669,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       services.jobsRunner?.stop();
       try {
         services.schedules?.stop();
+      } catch {
+        // Timer already gone.
+      }
+      try {
+        services.watches?.stop();
       } catch {
         // Timer already gone.
       }
@@ -1339,6 +1349,20 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         scheduleService?.contextSection(botId, conversationId) ?? '',
       displayTitle: (scheduleId) => scheduleService?.displayTitle(scheduleId) ?? null,
     };
+    // W7: the watch service is constructed after the orchestrator (alerts
+    // wake turns through its mailboxes); the tool facade delegates lazily.
+    let watchService: WatchService | null = null;
+    const watchFacade: OrchestratorWatchFacade = {
+      create: (input) => watchService!.create(input),
+      listForBotInConversation: (botId, conversationId) =>
+        watchService!.listForBotInConversation(botId, conversationId),
+      stopOwn: (botId, conversationId, watchId) =>
+        watchService!.stopOwn(botId, conversationId, watchId),
+      contextSection: (botId, conversationId) =>
+        watchService?.contextSection(botId, conversationId) ?? '',
+      renderContextLine: (message) =>
+        watchService?.renderContextLine(message) ?? '（监看记录已清理）',
+    };
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -1401,6 +1425,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         enqueueIngest: (input) => wiki.enqueueIngest(input),
       },
       schedule: scheduleFacade,
+      watch: watchFacade,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
       // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。
@@ -1460,6 +1485,28 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
     scheduleService = schedules;
+    // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
+    // （browser.fetchText），用 Bot 的生效浏览器资料（W8）；本机地址只在对话
+    // 绑定了 project 时可访问（与浏览器工具同一规则）。
+    const watches = new WatchService({
+      db: mainDb,
+      clock,
+      ...(options.timers !== undefined ? { timers: options.timers } : {}),
+      logger,
+      bots,
+      conversations,
+      messages,
+      jobs,
+      fetcher: services.browserRpc,
+      profileKeyFor: (botId) => browserProfiles.profileKeyFor(botId),
+      allowLoopback: (conversationId) => {
+        const project = projectRuntime.boundProject(conversationId);
+        return project !== null && project.status === 'available';
+      },
+      deliverAlert: (input) => orchestrator.deliverWatchAlertToBot(input),
+      publish: (event, payload) => events.emit(event as never, payload as never),
+    });
+    watchService = watches;
     // Commitment linkage (docs/design/04-memory.md): a due-dated commitment
     // creates a one-shot task; void / retracted cancels it. Internal events.
     events.on('memory.commitment_created', (payload) => {
@@ -1521,6 +1568,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         cancelForBotInConversation: (botId, conversationId) =>
           schedules.cancelForBotInConversation(botId, conversationId),
       },
+      // W7: watches of a deleted conversation / bot (or a bot removed from the group) are removed.
+      watches: {
+        deleteForConversation: (conversationId) => watches.deleteForConversation(conversationId),
+        prepareBotDeletion: (botId) => watches.prepareBotDeletion(botId),
+        removeForBotInConversation: (botId, conversationId) =>
+          watches.removeForBotInConversation(botId, conversationId),
+      },
       // P11: pages die with their conversation / bot; clearBotData also wipes
       // the partition and tombstones the bot against late ensurePage calls.
       browser: {
@@ -1561,6 +1615,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
       wiki,
       schedules,
+      watches,
       gateway,
       attachments,
     });
@@ -1702,6 +1757,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       );
     }
     schedules.start();
+    // W7: overdue watches check right away, then the worker follows next_check_at.
+    // In the app port B is bound after this (process-entry): checks that found
+    // no browser host are deferred without counting a failure, and binding
+    // the host wakes the worker.
+    watches.start();
+    services.browserRpc.onBound(() => watches.wake());
     // Checkpoint retention sweep (docs/dev/phases/P04-project.md): background,
     // best-effort — a swept repo only makes old reverts report unavailable.
     void projectRuntime
@@ -1756,6 +1817,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.skillPresets = skillPresets;
     services.wiki = wiki;
     services.schedules = schedules;
+    services.watches = watches;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
     services.mcp = mcp;
@@ -2084,6 +2146,9 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
       handle: async () => {
         const missed = services.schedules?.catchUpMissed() ?? 0;
         services.logger.info({ missed }, 'power resume: schedule catch-up done');
+        // W7: watch timers stalled with the OS too — check what is due now
+        // (non-blocking: the pass runs in the background).
+        services.watches?.wake();
         return { ok: true as const };
       },
     },

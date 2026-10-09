@@ -90,6 +90,8 @@ export const ERROR_CODES = [
   'BROWSER_NO_PROGRESS',
   // W8 自动接管：用户在查看窗口里点击 / 键入后该页面归用户操作（派发前拒绝）。
   'BROWSER_USER_CONTROL',
+  // W7 确定性监看：后台页上找不到监看的元素（选择器未匹配）。
+  'BROWSER_SELECTOR_NOT_FOUND',
   // MCP (D65)
   'MCP_CONNECT_FAILED',
   'MCP_TOOL_NOT_FOUND',

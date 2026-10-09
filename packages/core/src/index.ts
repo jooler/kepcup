@@ -13,6 +13,7 @@ export * from './start.js';
 export type { SkillsService } from './skills/registry.js';
 export { sanitizeSkillName } from './skills/parse.js';
 export type { ScheduleService } from './schedule/service.js';
+export type { WatchService, WatchFetcher } from './watch/service.js';
 export { SchedulesStore } from './schedule/store.js';
 export type { BrowserHostRpc, BrowserRpcClient } from './browser/facade.js';
 export { createBrowserHostRpc } from './browser/facade.js';

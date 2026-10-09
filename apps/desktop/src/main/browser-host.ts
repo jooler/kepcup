@@ -8,11 +8,16 @@ import {
   BROWSER_SNAPSHOT_MAX_TEXT_CHARS,
   BROWSER_VIEWPORT_HEIGHT,
   BROWSER_VIEWPORT_WIDTH,
+  WATCH_FETCH_DEADLINE_MS,
+  WATCH_FETCH_TEXT_MAX_CHARS,
   AppError,
   buildSnapshotSummary,
   decideBrowserRequest,
+  watchRedirectAllowed,
+  watchRedirectTarget,
   type AxtreeNode,
   type BrowserActionOutput,
+  type BrowserFetchTextOutput,
   type BrowserNetworkContext,
   type BrowserSnapshotOutput,
   type RefFingerprint,
@@ -90,6 +95,11 @@ interface PageEntry {
   /** DOM agent re-initialized for the current document. */
   domReady: boolean;
   closed: boolean;
+  /**
+   * W7: a watch's background page (`botId|watch:{id}`): never shown, no
+   * downloads, closed right after its text was read.
+   */
+  background: boolean;
 }
 
 export function sessionDataRoot(env: NodeJS.ProcessEnv): string {
@@ -248,6 +258,7 @@ export class BrowserHost {
       navigationSeq: 0,
       domReady: false,
       closed: false,
+      background: false,
     };
     this.#pages.set(key, page);
     this.#pagesByWebContents.set(wc.id, page);
@@ -278,6 +289,8 @@ export class BrowserHost {
     labels?: unknown;
   }): { ok: true } {
     const page = this.#pageOf(input.botId, input.conversationId);
+    // W7: a watch's background page is never shown.
+    if (page.background) throw new AppError('BROWSER_PAGE_CLOSED', '浏览器页面未打开或已关闭');
     const key = pairKey(input.botId, input.conversationId);
     const existing = this.#viewers.get(key);
     if (existing !== undefined && !existing.win.isDestroyed()) {
@@ -549,6 +562,136 @@ export class BrowserHost {
     return { ok: true };
   }
 
+  /**
+   * W7 确定性监看：loads `url` in a hidden background page keyed
+   * `botId|watch:{watchId}` (the bot's effective profile → its login state;
+   * the same network interception as every bot page), returns the body text
+   * — or `selector`'s — plus each `extraSelectors` text (null = no match),
+   * and always closes the page. Never shown, downloads cancelled.
+   *
+   * Not page content (→ BROWSER_NAVIGATION_FAILED, a failed check): a
+   * main-frame HTTP status ≥ 400, and a final URL on another site than the
+   * requested one (`watchRedirectAllowed`: same host modulo `www.`, http →
+   * https allowed — anything else is most likely a login / anti-bot page).
+   * The whole fetch is bounded by WATCH_FETCH_DEADLINE_MS, so the `finally`
+   * always closes the page.
+   */
+  async fetchText(input: {
+    botId: string;
+    watchId: string;
+    profileKey: string;
+    networkContext: BrowserNetworkContext;
+    url: string;
+    selector?: string;
+    extraSelectors?: string[];
+  }): Promise<BrowserFetchTextOutput> {
+    if (!httpHttpsUrl(input.url)) {
+      throw new AppError('INVALID_INPUT', '监看只能打开 http/https 网页');
+    }
+    const conversationId = `watch:${input.watchId}`;
+    this.ensurePage({
+      botId: input.botId,
+      conversationId,
+      profileKey: input.profileKey,
+      networkContext: input.networkContext,
+      downloadsDir: '',
+    });
+    const page = this.#pageOf(input.botId, conversationId);
+    page.background = true;
+    try {
+      return await withTimeout(
+        this.#fetchTextOn(page, input),
+        WATCH_FETCH_DEADLINE_MS,
+        () =>
+          new AppError(
+            'BROWSER_NAVIGATION_FAILED',
+            `读取页面超时（${WATCH_FETCH_DEADLINE_MS / 1000} 秒）`,
+          ),
+      );
+    } finally {
+      // Never kept across checks (also after the deadline: in-flight steps
+      // then fail on the closed page, and nobody awaits them any more).
+      this.#destroyPage(page, { permanent: false });
+    }
+  }
+
+  async #fetchTextOn(
+    page: PageEntry,
+    input: { url: string; selector?: string; extraSelectors?: string[] },
+  ): Promise<BrowserFetchTextOutput> {
+    // The last committed main-frame navigation's HTTP status (after server
+    // redirects: the final response; a later client-side redirect updates it).
+    const nav = { status: 0 };
+    const onNavigate = (_event: unknown, _url: string, httpResponseCode: number): void => {
+      nav.status = httpResponseCode;
+    };
+    page.wc.on('did-navigate', onNavigate);
+    const assertContent = (): void => {
+      if (nav.status >= 400) {
+        throw new AppError('BROWSER_NAVIGATION_FAILED', `页面返回 HTTP ${nav.status}`, {
+          status: nav.status,
+        });
+      }
+      const finalUrl = page.wc.getURL() || input.url;
+      if (!watchRedirectAllowed(input.url, finalUrl)) {
+        throw new AppError(
+          'BROWSER_NAVIGATION_FAILED',
+          `页面被重定向到 ${watchRedirectTarget(finalUrl)}（可能需要登录）`,
+        );
+      }
+    };
+    try {
+      await this.#load(page, input.url);
+      assertContent();
+      // Client-rendered pages fill in after the load event.
+      await delay(WATCH_RENDER_SETTLE_MS);
+      if (page.closed) throw pageClosed();
+      // Isolated world (the page's own scripts cannot tamper with the reader),
+      // no user gesture. The title comes along: no second round trip.
+      const script = `(() => {
+        const pick = (selector) => {
+          try {
+            const el = document.querySelector(selector);
+            return el ? String(el.innerText ?? el.textContent ?? '') : null;
+          } catch { return null; }
+        };
+        const main = ${JSON.stringify(input.selector ?? null)};
+        return {
+          title: String(document.title ?? ''),
+          text: main === null ? String(document.body ? document.body.innerText : '') : pick(main),
+          extra: ${JSON.stringify(input.extraSelectors ?? [])}.map(pick),
+        };
+      })()`;
+      const result = (await withTimeout(
+        page.wc.executeJavaScriptInIsolatedWorld(WATCH_EXTRACT_WORLD_ID, [{ code: script }], false),
+        WATCH_EXTRACT_TIMEOUT_MS,
+        () => new AppError('BROWSER_NAVIGATION_FAILED', '读取页面文本超时'),
+      )) as { title: string; text: string | null; extra: Array<string | null> };
+      // A client-side redirect during the settle counts the same way.
+      assertContent();
+      if (result.text === null) {
+        throw new AppError('BROWSER_SELECTOR_NOT_FOUND', `页面上找不到元素 ${input.selector ?? ''}`);
+      }
+      const truncated = result.text.length > WATCH_FETCH_TEXT_MAX_CHARS;
+      return {
+        ok: true,
+        title: result.title,
+        url: page.wc.getURL() || input.url,
+        text: truncated ? result.text.slice(0, WATCH_FETCH_TEXT_MAX_CHARS) : result.text,
+        ...(truncated ? { truncated: true } : {}),
+        ...(input.extraSelectors !== undefined
+          ? {
+              extraTexts: result.extra.map((text) =>
+                text === null ? null : text.slice(0, WATCH_FETCH_TEXT_MAX_CHARS),
+              ),
+            }
+          : {}),
+      };
+    } finally {
+      if (!page.closed) page.wc.removeListener('did-navigate', onNavigate);
+    }
+  }
+
   // --- internals --------------------------------------------------------------
 
   #pageOf(botId: string, conversationId: string): PageEntry {
@@ -639,7 +782,8 @@ export class BrowserHost {
 
     botSession.on('will-download', (_event, item, contents) => {
       const page = this.#pagesByWebContents.get(contents.id);
-      if (!page) {
+      // W7: a watch's background page never downloads.
+      if (!page || page.background) {
         item.cancel();
         return;
       }
@@ -861,6 +1005,32 @@ export class BrowserHost {
     }
     return this.#hostWindow;
   }
+}
+
+/** W7: extra wait after the load event for client-rendered content. */
+const WATCH_RENDER_SETTLE_MS = 1000;
+/** W7: reading the page text may take at most this long. */
+const WATCH_EXTRACT_TIMEOUT_MS = 10_000;
+/**
+ * W7: the isolated world the text extraction runs in (any id other than 0 =
+ * the page's main world; Electron's preload isolation uses 999).
+ */
+const WATCH_EXTRACT_WORLD_ID = 1007;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(onTimeout()), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function pairKey(botId: string, conversationId: string): string {

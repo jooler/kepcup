@@ -25,6 +25,7 @@ import { runWikiIngestJob } from '../wiki/ingest.js';
 import { runWikiLintJob } from '../wiki/lint.js';
 import type { WikiService } from '../wiki/service.js';
 import type { ScheduleService } from '../schedule/service.js';
+import type { WatchService } from '../watch/service.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { SandboxBackend } from '../sandbox/types.js';
@@ -66,6 +67,8 @@ export interface JobsRunnerDeps {
   wiki?: WikiService | undefined;
   /** P10 schedule domain (schedule_fire consumer). */
   schedules?: ScheduleService | undefined;
+  /** W7 watch domain (watch_alert consumer). */
+  watches?: WatchService | undefined;
   /** Sandbox backend for the skill generation loop (P08). */
   sandbox?: SandboxBackend | undefined;
   paths?: AppPaths | undefined;
@@ -349,6 +352,14 @@ export class JobsRunner {
         }
         await this.#deps.schedules.runFireJob(job);
         return;
+      case 'watch_alert':
+        // W7: the edge was committed with this job (dedupe watch:{id}:{seq}:{hash});
+        // the alert card + the bot's wake are posted here, idempotently.
+        if (this.#deps.watches === undefined) {
+          throw new Error('watch domain not wired; cannot run watch_alert');
+        }
+        this.#deps.watches.runAlertJob(job);
+        return;
       case 'event_delivery':
         // P10 (BR-P10-006): an event response trigger parked for quiet hours —
         // persistent across restarts; re-checks happen in the orchestrator.
@@ -421,6 +432,7 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'schedule_fire',
   'event_delivery',
   'delegation_delivery',
+  'watch_alert',
 ]);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */

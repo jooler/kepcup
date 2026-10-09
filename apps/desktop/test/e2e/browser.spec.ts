@@ -1367,3 +1367,92 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     await closeSession(session);
   }
 });
+
+test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦截记为失败；绑定 project 后本机页可读并提醒', async () => {
+  const testInfo = test.info();
+  test.setTimeout(300_000);
+  const session = await startSession('kepcup-e2e-browser-watch-');
+  const { page, llm, web, app } = session;
+  /** Visible windows (the main window only; a background page never shows). */
+  const visibleWindows = () =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length);
+  /** webContents currently showing the fixture server (a kept background page would). */
+  const fixturePages = (origin: string) =>
+    app.evaluate(
+      ({ webContents }, target) =>
+        webContents.getAllWebContents().filter((wc) => wc.getURL().startsWith(target)).length,
+      origin,
+    );
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '小盯');
+    const windowsBefore = await visibleWindows();
+
+    // 1) 对话轮直接用 watch_create（异步托管动作，不派任务）：内网地址。
+    const before = web.requestsServed();
+    llm.script('mock-main', [
+      step()
+        .expect((req) => req.lastUserText().includes('盯一下路由器'))
+        .replyToolCall('watch_create', {
+          url: 'http://192.168.1.1/',
+          condition: { kind: 'changed' },
+          interval_minutes: 5,
+        }),
+      step().replyText('好的，开始监看路由器页面'),
+    ]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('盯一下路由器页面');
+    await composer.press('ControlOrMeta+Enter');
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '开始监看路由器页面' }),
+    ).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator('[data-testid^="watch-card-created-"]').first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // 右栏「定时任务」标签里的监看列表：第一次检查立即执行，被网络规则拦截 → 失败计数。
+    const tabs = page.locator('[data-testid="right-panel-tabs"]');
+    if (!(await tabs.isVisible())) await page.locator('[data-testid="right-panel-toggle"]').click();
+    await tabs.locator('text=定时任务').click();
+    const list = page.locator('[data-testid="watches-tab-list"]');
+    await expect(list.locator('[data-testid="watch-failing"]')).toContainText('拦截', {
+      timeout: 60_000,
+    });
+    expect(web.requestsServed()).toBe(before);
+    expect(await visibleWindows()).toBe(windowsBefore);
+
+    // 2) 绑定 project 后本机地址放行：contains 条件首检即满足 → 提醒卡 + 唤醒对话轮。
+    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-watch-proj-'));
+    llm.script('mock-main', [
+      step()
+        .expect((req) => req.lastUserText().includes('盯一下本机页面'))
+        .replyToolCall('watch_create', {
+          url: `${web.url}/`,
+          condition: { kind: 'contains', text: 'fixture-home-marker' },
+          interval_minutes: 5,
+        }),
+      step().replyText('好的，开始监看本机页面'),
+      step()
+        .expect((req) => req.lastUserText().includes('<trigger reason="watch"'))
+        .replyText('本机页面出现了标记'),
+    ]);
+    await composer.fill('盯一下本机页面');
+    await composer.press('ControlOrMeta+Enter');
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '本机页面出现了标记' }),
+    ).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator('[data-testid^="watch-card-alert-"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid="watch-card-summary"]').first()).toContainText(
+      'fixture-home-marker',
+    );
+    expect(web.requestsServed()).toBeGreaterThan(before);
+    // Never shown, not kept: no extra visible window, no page left on the fixture.
+    expect(await visibleWindows()).toBe(windowsBefore);
+    await expect.poll(() => fixturePages(web.url), { timeout: 15_000 }).toBe(0);
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});

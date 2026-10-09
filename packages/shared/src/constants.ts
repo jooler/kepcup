@@ -194,6 +194,8 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   'skill_import_failed',
   'credential_warning',
   'schedule_fired',
+  // W7：监看命中唤醒 Bot 的触发消息（用户看到的是监看卡）。
+  'watch_alert',
 ]);
 /** Hard cap of questions one setup interview may ask (soft target: 3~5). */
 export const SETUP_MAX_QUESTIONS = 5;
@@ -352,6 +354,48 @@ export const BROWSER_USER_CONTROL_IDLE_MS = 600_000;
 export const BROWSER_HANDBACK_COALESCE_MS = 30_000;
 /** W8 共享浏览器资料：名称长度上限。 */
 export const BROWSER_PROFILE_NAME_MAX_CHARS = 40;
+
+// --- 确定性监看（W7，D79） ----------------------------------------------------
+
+/** 监看检查间隔下限（秒）：后台抓页可能触发反爬，最短 5 分钟。 */
+export const WATCH_MIN_INTERVAL_SEC = 300;
+/** 监看检查间隔上限（秒）：7 天。 */
+export const WATCH_MAX_INTERVAL_SEC = 7 * 24 * 60 * 60;
+/** 每个 Bot 未停止（active + paused）的监看上限。 */
+export const WATCH_MAX_PER_BOT = 20;
+/** 全局未停止（active + paused）的监看上限。 */
+export const WATCH_MAX_GLOBAL = 100;
+/** 连续失败这么多次后监看自动暂停，并在对话里发一张可「恢复」的卡片。 */
+export const WATCH_PAUSE_AFTER_FAILURES = 5;
+/**
+ * 失败退避上限（分钟）：next_check_at = now + max(间隔下限 5 分钟, min(60, 2^failures) 分钟)，
+ * 即 5 / 5 / 8 / 16 / 32 / 60 分钟（复查后：重试不早于 WATCH_MIN_INTERVAL_SEC）。
+ */
+export const WATCH_BACKOFF_MAX_MINUTES = 60;
+/**
+ * 浏览器宿主未连接（启动时端口 B 尚未绑定、宿主断开）时的重试间隔（毫秒）：不计失败、
+ * 不写 last_error，端口重新绑定后立即重查。
+ */
+export const WATCH_HOST_UNAVAILABLE_RETRY_MS = 60_000;
+/**
+ * 每个监看滚动 24 小时内最多提醒几次；再次触发时不唤醒，改为暂停监看并发卡片
+ * （「提醒过于频繁」，用户放宽条件或延长间隔后恢复）。
+ */
+export const WATCH_MAX_ALERTS_PER_DAY = 24;
+/**
+ * 后台页一次取正文的总时限（毫秒，宿主侧）：导航 30 秒 + 渲染等待 + 读取文本都算在内，
+ * 超时即关页（保证 finally 一定关掉后台页），按失败计。小于端口 B 的 RPC 超时（60 秒）。
+ */
+export const WATCH_FETCH_DEADLINE_MS = 45_000;
+/** 唤醒消息里页面增删改摘要的长度上限（字符）。 */
+export const WATCH_DIFF_SUMMARY_MAX_CHARS = 1500;
+/** 后台页返回的页面文本上限（字符，超出截断）。 */
+export const WATCH_FETCH_TEXT_MAX_CHARS = 200_000;
+/** 为下次做行 diff 而保存的上一版页面文本上限（字符，main.db watches.last_text）。 */
+export const WATCH_STORED_TEXT_MAX_CHARS = 50_000;
+/** contains / not_contains 条件文本与选择器的长度上限。 */
+export const WATCH_CONDITION_TEXT_MAX_CHARS = 200;
+export const WATCH_SELECTOR_MAX_CHARS = 300;
 
 // --- Auto-update gate (P13 任务 2) ----------------------------------------------
 

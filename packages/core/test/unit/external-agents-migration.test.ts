@@ -65,7 +65,7 @@ describe('0017 external_agents 迁移', () => {
     expect(() => insertApproval(db, 'apr_too_early', 'agent_tool')).toThrow(/CHECK/);
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([17, 18, 19, 20, 21, 22]);
+    expect(applied.map((m) => m.version)).toEqual([17, 18, 19, 20, 21, 22, 23]);
 
     const rows = db
       .prepare('select * from approvals order by id')
