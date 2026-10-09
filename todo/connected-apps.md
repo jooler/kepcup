@@ -11,13 +11,14 @@
 >
 > **修订记录**：
 >
-> - v2（本版）：对照代码的审查修订——连接阶段授权错误被 `#ensureConnected` 吞掉并计入停用、DCR 端口须在打开浏览器前预判、交互流程只用 pi-mcp 低层函数、`shell.openExternal` 的 Port B 接线与测试注入点、审批时长独立 schema、自定义连接行不删除、目录连接如何进入 McpService、契约测试命名、显式 `mcp.removeServer`、与设计 29 的出入（已同步修订设计）。
+> - v3（本版，2026-10-09）：迁移不再预留编号（开工时取下一个空号）；与已落地的 borrowings W5（风险分级 / 逐工具策略 / 无人值守全部自动批准——用户决定）与 D75（对话轮 / 任务）对齐：分级器与策略复用 `core/mcp/risk.ts` / `policy.ts`，删去「destructive 无人值守不自动批准」。
+> - v2：对照代码的审查修订——连接阶段授权错误被 `#ensureConnected` 吞掉并计入停用、DCR 端口须在打开浏览器前预判、交互流程只用 pi-mcp 低层函数、`shell.openExternal` 的 Port B 接线与测试注入点、审批时长独立 schema、自定义连接行不删除、目录连接如何进入 McpService、契约测试命名、显式 `mcp.removeServer`、与设计 29 的出入（已同步修订设计）。
 > - v1：首版。
 
 ## 0. 先读什么（按顺序）
 
 1. `docs/design/29-connected-apps.md` — **产品契约**（全文）。重点：§5 授权引擎（§5.6 运行时 / 交互授权分离是本方案最关键的实现约束）、§6 连接、§7 工具暴露、§8 审批与安全、§12 数据模型、§13 分期、§15 Cloudflare 部署。
-2. `docs/design/23-mcp-and-subagent.md`（D65 现状）、`docs/design/18-inline-setup.md`（结构化 setup 失败 → 卡片 → `runs.retry`）、`docs/design/13-permissions.md`（D37 授权时长、D41 无人值守及 D73 例外）、`docs/design/11-storage.md`（D25 加密与 secrets）。
+2. `docs/design/23-mcp-and-subagent.md`（D65 现状）、`docs/design/18-inline-setup.md`（结构化 setup 失败 → 卡片 → `runs.retry`）、`docs/design/13-permissions.md`（D37 授权时长、D41 无人值守）、`docs/design/30-supervisor-and-tasks.md`（D75 对话轮 / 任务）、`todo/borrowings-from-personal-agents.md` W5（MCP 风险分级与逐工具策略，已落地）、`docs/design/11-storage.md`（D25 加密与 secrets）。
 3. `docs/design/28-external-agents-acp.md` §4（能力包、宿主 MCP 桥）与 `todo/acp-external-agents.md`（目录 / 发行门禁 / Provider 契约测试的做法，本方案多处照搬；附录 A.3 是本机测试环境说明）。
 4. `docs/dev/01-conventions.md`、`02-architecture.md`、`03-data-model.md`、`05-testing.md`。
 5. 外部资料（实现时打开；版本为 2026-10-07 调研值）：
@@ -53,7 +54,7 @@
 - **外部智能体**：`packages/core/src/agent/external/capabilities.ts`（`buildExternalAgentTools` :21、`fitToolName` :55、`capabilityOfTool` 归包、`toolAnnotations` :92 / `READ_ONLY_TOOLS`——应用工具的风险须映射成桥上的注解）、`agent/external/mcp-bridge.ts`；提示词注入点 orchestrator `buildSystemPrompt` 闭包（:2305 一带）与 `buildAgentRunContext`（:1711 一带）
 - **目录先例**：`packages/shared/src/domain/agent-catalog.ts`（`filterReleasedAgents` fail-closed）、`apps/desktop/agent-release-gates.json`、`packages/core/src/agent/external/catalog.ts:18-22`（构建期注入）、`scripts/import-acp-registry.mjs`、`packages/core/test/contract/agent-provider.contract.ts`；预置技能 `apps/desktop/resources/preset-skills/catalog.json` + `packages/core/src/skills/presets.ts:31-52`（运行时读资源 JSON 的做法）
 - **渲染端**：`stores/permissions.svelte.ts:99`（审批时长）、`features/settings/SettingsDialog.svelte`（导航 :58、分区渲染 :163）、`features/settings/McpSection.svelte`（`removeServer` :215-228 遗留不清密钥）、`features/bot-panel/BotProfileForm.svelte`（MCP 勾选 :55/:191/:462）、`features/chats/SetupRequiredCard.svelte`（kind 分发 :113）、`features/approvals/ApprovalCard.svelte`（`mcp_tool` :174-216）、`stores/shell.svelte.ts`（分区 id、`openSettings`）、`features/settings/agent-icons.ts`（图标加载先例）、`i18n/locales/zh-CN.ts`
-- **迁移**：main 现有到 `0017_external_agents.sql`（D72，未提交）→ 本方案 `0018_app_connections.sql`（P0）、`0019_app_tools.sql`（P1）、`0020_egress_approval.sql`（P2）；号以目录实况为准，迁移只前进；`approvals` 的 CHECK 约束改动须重建表并带全现有 kind（参照 0015 / 0016 / 0017）
+- **迁移**：本方案三个迁移 `{N}_app_connections.sql`（P0）、`{N+1}_app_tools.sql`（P1）、`{N+2}_egress_approval.sql`（P2）——`N` 为写迁移时 main 的下一个空号（见 §2.1）；号以目录实况为准，迁移只前进；`approvals` 的 CHECK 约束改动须重建表并带全现有 kind（参照 0015 / 0016 / 0017）
 - **测试**：`packages/core/test/unit/mcp-tools.test.ts`、`host-mcp-bridge.test.ts`（现有 MCP 测试样板）；`packages/testkit/src/`（`web-server.ts`、`file-server.ts`、`fake-acp-agent.ts` 是假服务样板）；`pi-mcp/testing` 只导出 `createInMemoryTransportPair`；**vitest 只收** `*.test.ts`（根 `vitest.config.ts:25-27`）——契约文件须由 `.test.ts` 包装（照 `agent-providers.test.ts`）
 
 ## 1. 背景与目标
@@ -76,8 +77,8 @@
 - [ ] 为减少与 D72 P5 第二部分的合并冲突：对 `orchestrator.ts` / `start.ts` / `types.ts` 的改动尽量集中、少动既有代码（新逻辑放新模块，主文件只加接线），并在附录 B 记录改动过的段落。
 - [ ] 开工前 `git status`，并用 `ListAgents` / `SendMessage` 询问是否有其他 kepcup 会话正在执行 `todo/acp-external-agents.md` 或其他计划，确认文件归属。
 - [ ] **不要** `git checkout` / `reset` / 覆盖任何不是你写的改动；与他人改动同文件时只做增量编辑。
-- [ ] **迁移编号顺延（2026-10-08，D75 合入 main）**：D75 已占用 main `0018_task_events` / `0019_agent_sessions_per_task` / `0020_usage_turn_loop_type` 与 runs `0006`–`0008`（迁移必须连续，`infra/migrate.ts` 校验）。D73 改从 **main `0021`** 起（D73 没有 runs 迁移；runs 下一个空号以 `packages/core/migrations/runs/` 为准，`0009` 已被 borrowings W2 的 `0009_tool_effects.sql` 占用）：`0018_app_connections` → `0021`、`0019_app_tools` → `0022`、`0020_egress_approval` → `0023`（本文与设计 29 中的旧编号按此读）。另：D75 的 `0018` 重建了 `messages`（新增 `owner_bot_id` / `task_id`，`kind` 含 `task_event`）与 `attachments`，未动 `approvals`；loop_type `'response'` 已改名 `'turn'`（runs `0007`、main `0020`）。
-- [ ] 迁移编号：D73 占用 main `0018`–`0020`（已告知 kepcup-03）；开工及每次新增迁移前检查 main 与 `t/d72-p5-2` 分支的 `packages/core/migrations/main/`，若 D72 也用了 `0018`+，与 kepcup-03 协调后顺延并同步本文。已约定：D72 的 main 迁移从 `0021` 起；runs 库 `0006` 由 D72 预留——D73 本方案不改 runs 库，若确需改动先告知 kepcup-03。
+- [ ] **迁移编号（2026-10-09 定：不预留）**：多个并行工作（D75、borrowings、D80 等）都在新增 main 迁移，且迁移必须连续（`infra/migrate.ts` 校验），D73 **不预留具体编号**——每次写迁移时 `ls packages/core/migrations/main/` 取当时的下一个空号（本文用 `{N}` / `{N+1}` / `{N+2}` 指代三个 D73 迁移，P0/P1/P2 之间若他人又占了号则继续顺延），写之前用 `ListAgents` 问一下有无会话即将合入新迁移（如 D80 的 worktree `t/schedule-nudges`），合入 main 前再核对一次不冲突。截至 2026-10-09 main 已用到 `0021_delegation_intent`。D73 不改 runs 库（runs `0006`–`0008` 归 D75、`0009_tool_effects` 归 borrowings W2）。另：D75 的 `0018` 重建了 `messages`（新增 `owner_bot_id` / `task_id`，`kind` 含 `task_event`）与 `attachments`，未动 `approvals`；loop_type `'response'` 已改名 `'turn'`（runs `0007`、main `0020`）。
+- [ ] **已落地的相关工作（开工前必读其实现，D73 在其上扩展，不重复实现）**：borrowings W5（提交 `60e57d7`）——`core/mcp/risk.ts`（`classifyRisk` / `classifyRiskDetailed`：注解 + 名字推断，写动词一票否决）、`core/mcp/policy.ts`（逐工具策略：工具策略 > server `autoApprove` > 风险档默认，read→auto、其余→ask）、`mcpServerSchema.toolPolicies`（settings 单行 JSON）、审批 payload 带 `risk`、RPC `mcp.toolRisks`、网关 `mcpToolDecision`（对话轮与只读子代理只能调「只读 + auto」工具）、系统提示 `<mcp_tools>` 段、审批卡 `McpRiskBadge`、设置页 `McpToolPolicies.svelte`；**无人值守下 `mcp_tool` 所有风险档自动批准（用户决定，见 borrowings W5「目标 3」）**。D75（对话轮 / 任务分治，`docs/design/30-supervisor-and-tasks.md`）重构了 orchestrator——§0 第 7 条的行号锚点早于 D75 与 borrowings，**全部按函数名重新定位**。borrowings 的其余工作项由会话 kepcup-81 在主工作树推进，开工前用 `ListAgents` 确认文件归属。
 - [ ] `approvals` CHECK 重建（P2 的 `egress`）须以 `0017_external_agents.sql` 的 CHECK 列表（含 `agent_tool`）为基础，并包含届时全部 kind。
 
 ### 2.2 测试环境
@@ -148,7 +149,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
   - 以上加入 `APP_METHODS` 白名单（`shell.openExternal` 除外，它只由 core 经 Port B 调主进程）
 - [ ] `rpc/events.ts`：`apps.connect_flow`（`{ flowId, phase: 'discovering'|'awaiting_consent'|'awaiting_browser'|'exchanging'|'done'|'failed'|'cancelled', authorizationHost?, authorizationUrl?, connectionId?, error? }`——`authorizationUrl` 仅在 `awaiting_consent` 下发供用户核对，不含任何令牌）、`apps.connection_status`（`{ connectionId, status }`）；`mcp.server_status` 的 status 增 `needs_auth`。
 
-### 4.3 数据：迁移 `0018_app_connections.sql`
+### 4.3 数据：迁移 `{N}_app_connections.sql`
 
 - [ ] 建 `app_connections`（设计 29 §12 字段：`id, connector_id, connector_ver NULL, label, account_sub NULL, server_url NULL, issuer NULL, scopes, token_expires_at NULL, discovery_json NULL, status, created_at, updated_at, last_used_at NULL` + 部分唯一索引 `(connector_id, account_sub) WHERE account_sub IS NOT NULL`）。自定义 server 的连接 `connector_id = 'custom:{serverId}'`、`id` 同为 `custom:{serverId}`（每个自定义 server 唯一一行）；stdio server 的行 `server_url` 为 NULL（P1 工具锁定用）。**自定义行不随断开删除**（改 `not_connected`），只随 `mcp.removeServer` 删除；`apps.connections.list` 默认不返回 `custom:` 行（`includeCustom` 参数）。
 - [ ] 迁移测试（真库，照 `external-agents-migration.test.ts`）。
@@ -259,7 +260,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 - [ ] 脚本 `scripts/import-mcp-registry.mjs`：从 MCP Registry 按 name 导出 `server.json` 骨架，`_meta` 扩展字段留占位人工补。
 - [ ] 契约测试 `packages/core/test/contract/connector-catalog.contract.ts`，由 `packages/core/test/unit/connector-catalog.test.ts` 包装执行（vitest 只收 `*.test.ts`）：每个条目 schema 合法、slug 唯一且符合字符集、图标文件存在、`remotes[0].url` 为 https、`toolPolicy` 中的风险值合法、带 `releaseGate`。
 
-### 5.3 数据：迁移 `0019_app_tools.sql`
+### 5.3 数据：迁移 `{N+1}_app_tools.sql`
 
 - [ ] `app_connection_tools`（设计 29 §12：`connection_id, tool_name, approved_hash NULL, current_hash, risk, user_policy NULL, definition_json`，PK `(connection_id, tool_name)`）。
 - [ ] `app_tool_grants`（`id, bot_id, connection_id, tool_name, conversation_id NULL, approval_id, created_at, revoked_at`；`conversation_id` NULL = 对该 Bot 总是允许；索引 `(bot_id, connection_id, tool_name) WHERE revoked_at IS NULL`）。
@@ -271,27 +272,25 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 - [ ] **进入 McpService**：`McpService` 的服务器来源从「只有 settings」改为 `settings.mcpServers` ∪ 目录连接合成的 `McpServer`（`id = connectionId`、`name = 应用名（账号）`、`transport: 'http'`、`url = server_url`、`auth: 'oauth'`、`enabled: true`）；`listServers` / `#connections` / `closeAll` / `mcp.server_status` 均按此 id；授权提供者统一按「连接 id」从 `ConnectionAuthRegistry` 取（自定义为 `custom:{serverId}`，目录为 `connectionId`）；`mcpAutoApprove` 只对 settings 中的自定义 server 生效。
 - [ ] 账号识别（设计 29 §5.1 第 6 步）：有 `id_token` / userinfo → `account_sub` + 显示名；否则条目 `whoami` 只读工具；否则 `label = "{title} #{n}"`。`account_sub` 冲突（同账号重复连接）→ 复用旧行（更新令牌）而非新建。
 - [ ] **首连工具复核**：交换令牌后进入 `phase: 'reviewing_tools'`（事件带工具清单：名称、标题、描述、计算出的风险）；用户在面板确认 → `apps.connect.confirmTools({ flowId })` → 写 `app_connection_tools` 的 `approved_hash` → `connected`。拒绝 = 取消并吊销。
-- [ ] RPC：`apps.catalog.list`（含每个条目的已连接账号数）、`apps.connections.update`（标签、停用 / 启用）、`apps.connections.setToolPolicy({ connectionId, toolName, policy: 'default'|'ask'|'disabled' })`、`apps.connections.reviewTools({ connectionId, accept: string[] })`、`apps.connections.grants({ connectionId })` / `apps.grants.revoke({ grantId })`；事件 `apps.connection_status` 增 `tools_changed` 详情。
+- [ ] RPC：`apps.catalog.list`（含每个条目的已连接账号数）、`apps.connections.update`（标签、停用 / 启用）、`apps.connections.setToolPolicy({ connectionId, toolName, policy })`（`policy` 与 W5 的 `mcpToolPolicy` 同形：`{ approval?: 'auto'|'ask', enabled?: boolean }`；自定义 server 继续用 W5 的 `settings.mcpServers[].toolPolicies`，目录连接存 `app_connection_tools.user_policy` JSON）、`apps.connections.reviewTools({ connectionId, accept: string[] })`、`apps.connections.grants({ connectionId })` / `apps.grants.revoke({ grantId })`；事件 `apps.connection_status` 增 `tools_changed` 详情。
 
 ### 5.5 策略：风险分级与工具锁定（`packages/core/src/apps/policy.ts`，纯函数为主）
 
-- [ ] `classifyRisk(annotations, catalogPolicy?, tier)`：按设计 29 §8.1——`readOnlyHint === true` → `read`；否则 `destructiveHint === false` → `write`；否则（`true` 或缺失）→ `destructive`。`toolPolicy` 只能调高；`builtin` 条目可为**未声明注解**的工具给出分级（可低于 destructive），不能放宽显式注解。`openWorldHint` 不参与。表驱动单测覆盖全部组合与缺省值。
+- [ ] **分级复用 W5**：直接调用 `core/mcp/risk.ts` 的 `classifyRiskDetailed`（若 D73 需要在 shared / 校验器中复用，再把纯函数移到共享位置并保持 W5 测试全绿）。D73 只在其外层叠加目录 `toolPolicy`：只能调高；`builtin` 条目可为**未声明注解且名字推断不出只读**的工具给出分级，不能放宽 W5 的判定结果。`openWorldHint` 不参与分级（只用于 §6.2 污点）。补表驱动单测覆盖「W5 结果 × 目录覆盖」。
 - [ ] `toolDefinitionHash(tool)`：对 `{ name, title, description, inputSchema, annotations }` 做规范化 JSON（键排序）后 sha256。
 - [ ] 工具刷新（`tools/list_changed` 或缓存过期）时：新增工具 → `approved_hash NULL`；定义变化 → `current_hash ≠ approved_hash`；二者都**不暴露**；连接状态 `tools_changed` 并发事件；删除的工具直接删行。
 - [ ] 锁定对**所有** MCP server 生效：过滤点在 `buildMcpTools`（注入 `toolFilter(serverKey, tools)`），自定义 server（含 stdio、无 OAuth）用 `custom:{serverId}` 行承载工具锁定（`server_url` 可为 NULL）。
-- [ ] **存量基线**：core 启动时若 `settings.apps.toolLockBaselineDone` 不为真，则为当时**已存在**的每个自定义 server 建 `custom:` 行并标记「首次拉取到的工具直接批准」（`app_connections.baseline_pending` 列，0019 以 `ALTER TABLE … ADD COLUMN` 加入），完成后置位标记——只作用一次。之后新加的自定义 server：设置页「测试」成功后展示工具清单，保存即批准；未批准前工具不暴露。
+- [ ] **存量基线**：core 启动时若 `settings.apps.toolLockBaselineDone` 不为真，则为当时**已存在**的每个自定义 server 建 `custom:` 行并标记「首次拉取到的工具直接批准」（`app_connections.baseline_pending` 列，`{N+1}` 以 `ALTER TABLE … ADD COLUMN` 加入），完成后置位标记——只作用一次。之后新加的自定义 server：设置页「测试」成功后展示工具清单，保存即批准；未批准前工具不暴露。
 
 ### 5.6 网关与审批
 
-- [ ] `gateway.mcpToolCall` 扩展为带连接上下文：`{ connection?, accountLabel?, connectorSlug?, risk }`：
-  - `user_policy === 'disabled'` → 拒绝（工具本就不该暴露，防御性检查）。
-  - `read` 且未设 `ask` → 免审批，只审计（**修订 D65**）。
-  - `write`：先查 `app_tool_grants`（本对话 or Bot 级、未撤销）→ 命中免卡；`autoApprove` server → 免卡；否则 `mcp_tool` 审批，`payload.durations = ['once','conversation','bot']`。
-  - `destructive`：始终审批，`durations = ['once']`，卡片标「不可撤销」。
+- [ ] 在 W5 的网关决策（`mcpToolDecision`，工具策略 > server `autoApprove` > 风险档默认）上扩展连接上下文 `{ connection?, accountLabel?, connectorSlug? }`，**不另起一套**：
+  - 策略 `enabled:false` → 拒绝（W5 已有）；对话轮 / 只读子代理只能调「只读 + auto」工具（W5 / D75 已有，应用工具同样适用）。
+  - 决策为 `ask` 时，新增一步：先查 `app_tool_grants`（本对话 or Bot 级、未撤销）→ 命中免卡；否则 `mcp_tool` 审批，`payload.durations`：`write` 为 `['once','conversation','bot']`，`destructive` 为 `['once']`（卡片标「不可撤销」）。
   - 审批通过且时长为 `conversation` / `bot` → 写 `app_tool_grants`。
 - [ ] `mcpToolApprovalPayloadSchema` 增可选 `connectionId`、`connectorSlug`、`accountLabel`、`risk`、`durations`（`approvalDurationSchema` 数组）；`ApprovalDecision.duration` 与 `approvals.decide` / RPC 入参改用 `approvalDurationSchema`；`decide()` 中：`'bot'` 只对 `mcp_tool` 且在 `payload.durations` 内时接受，否则降为 `'once'`；`'conversation'` 对 `mcp_tool` 同样按 `payload.durations` 判定（现只对 `agent_tool` 降级）；`grants` 表与 `agent_tool` 仍只见 `once|conversation`。同步 `ApprovalCard`、`renderContextLine`、`stores/permissions.svelte.ts:99`。
-- [ ] **无人值守**：`NEVER_AUTO_DECIDED` 改为谓词 `neverAutoDecided(kind, payload)` = `kind === 'butler_proposal' || (kind === 'mcp_tool' && payload.risk === 'destructive')`，两处调用点（`approvals.ts:150`、`:207`）同步；单测。无人值守开启确认框文案补此例外。
-- [ ] `ApprovalCard.svelte`：显示「以 {account} 身份在 {app} 执行 {tool}」、风险徽标、时长选项按 `durations` 渲染；`destructive` 显示完整参数（不只摘要）与醒目提示。
+- [ ] **无人值守**：沿用 W5——`mcp_tool` 所有风险档自动批准（用户决定），**不改** `NEVER_AUTO_DECIDED`；应用工具的风险档与账号身份写入审计与上下文行，Bot 详情的 MCP 风险提示覆盖应用工具。
+- [ ] `ApprovalCard.svelte`（W5 已有 `mcp_tool` 专用正文与 `McpRiskBadge`，在其上扩展）：显示「以 {account} 身份在 {app} 执行 {tool}」、时长选项按 `durations` 渲染；`destructive` 显示完整参数（不只摘要）与醒目提示。
 
 ### 5.7 Bot 授权与工具暴露
 
@@ -328,7 +327,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 - 附录 B 的首批应用（spike 通过者）可从目录连接、多账号、Bot 勾选、在对话中完成任务。
 - 端到端（假服务器）：新用户说「把这个 bug 记到 X」→ 连接卡 → 授权 → 工具复核 → `runs.retry` → 写工具审批卡（显示账号）→ 完成。
-- 风险分级：`readOnlyHint:true` 免审；`destructiveHint:false` 写工具弹卡且可选三种时长；缺注解写工具按 destructive 处理且无人值守下挂起。
+- 风险分级（复用 W5）：只读工具免审；`destructiveHint:false` 写工具弹卡且可选三种时长；缺注解且名字推断不出只读的工具按 destructive 弹卡（仅「仅这一次」）；无人值守下全部自动批准，审计记风险档与账号。
 - 工具锁定：假服务器修改某工具描述后，该工具从 Bot 工具集消失，复核后恢复。
 - ACP Bot 勾选 `apps` 包后可调用应用工具，审批一致。
 - 安全测试仍通过；D65 / D72 回归全绿（跑相关测试文件即可，全量留到交付前一次）。
@@ -345,10 +344,10 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 6.2 污点外发控制（设计 29 §8.3）
 
-- [ ] 污点状态表（随 `0020_egress_approval.sql`）：`app_taint(bot_id, conversation_id, first_at, expires_at)`；任意应用工具**成功返回内容**后置位 / 续期 24 小时。按（Bot, 对话）计，`runs.retry` 与续接天然继承。
+- [ ] 污点状态表（随 `{N+2}_egress_approval.sql`）：`app_taint(bot_id, conversation_id, first_at, expires_at)`；任意应用工具**成功返回内容**后置位 / 续期 24 小时。按（Bot, 对话）计，`runs.retry` 与续接天然继承。
 - [ ] 新审批 kind `egress`（设计 29 §8.3 / §12 已同步；同迁移重建 `approvals` CHECK，带全现有 kind；§8.1「不新增审批 kind」只针对应用工具本身的审批）：payload `{ channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool', target, summary }`，时长仅 `once`。
 - [ ] 污点期间拦截点：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 工具（即使有持续授权也要卡）；`web_fetch`（任意 URL）、`web_search`；浏览器导航与表单提交；沙箱 `bash` 在 Bot `network_policy === 'open'` 时强制逐条 `command` 确认；`git_remote` 卡片附加污点提示；ACP 权限桥对网络类请求降为逐次确认。
-- [ ] 无人值守：按 D41 自动批准，但审计 action `egress_tainted` 标记，Bot 详情汇总展示。
+- [ ] 无人值守：按 D41 / W5 自动批准，但审计 action `egress_tainted` 标记，Bot 详情汇总展示。
 - [ ] 开关 `settings.apps.taintGuard`（默认 true，高级）。
 - [ ] 测试：读取应用数据后 web_fetch 弹 `egress` 卡；retry 后仍弹；关闭开关后不弹；24 小时后过期。
 
