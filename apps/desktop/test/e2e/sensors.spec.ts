@@ -28,6 +28,12 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page; home: s
   });
   const page = await app.firstWindow();
   await expect(page.locator('[data-testid="app-shell"]')).toBeVisible({ timeout: 60_000 });
+  // 管家补建后「+」面板可能异步弹出，全屏 backdrop 会挡住设置入口。
+  const startBackdrop = page.locator('[data-testid="start-chat-backdrop"]');
+  if (await startBackdrop.isVisible()) {
+    await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
+  }
+  await expect(startBackdrop).toHaveCount(0);
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
