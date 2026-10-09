@@ -184,6 +184,33 @@ describe('butler interview + team proposal (D70 P2)', () => {
     );
   }, 30_000);
 
+  it('确认后新 Bot 的私聊实时推给左栏：conversation.updated 负载带 bot（不刷新即可见）', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { approval } = await proposeTeam(stack);
+    const pushed: Array<{ id: string; directBotId: string | null; bot: Bot | null | undefined }> = [];
+    const off = core.onEvent('conversation.updated', ({ conversation }) => {
+      pushed.push({
+        id: conversation.id,
+        directBotId: conversation.directBotId,
+        bot: conversation.bot,
+      });
+    });
+
+    llm.script('mock-main', [step().replyText('团队建好了。')]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const created = await waitFor(() => (plainBots(stack).length === 3 ? plainBots(stack) : null));
+    off();
+
+    for (const bot of created) {
+      const [direct] = core.services.domain!.conversations.listDirectByBot(bot.id);
+      const event = pushed.find((p) => p.id === direct!.id);
+      // renderer 把「单聊无 bot」视为已删除而丢弃——负载必须带上新 Bot。
+      expect(event?.directBotId).toBe(bot.id);
+      expect(event?.bot).toMatchObject({ id: bot.id, name: bot.name, status: 'active' });
+    }
+  }, 30_000);
+
   it('拒绝 / 一项不留：零新 Bot；可以再次提议；同一时间只允许一张待确认提议', async () => {
     const stack = await start();
     const { core, llm } = stack;
