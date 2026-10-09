@@ -183,9 +183,11 @@
       <p
         class="mt-1.5 text-xs text-muted-foreground"
         data-testid="task-error"
-        data-reason="permission_revoked"
+        data-reason={model.interruptReason}
       >
-        {t('task.interruptedRevoked')}
+        {model.interruptReason === 'browser_profile_changed'
+          ? t('task.interruptedBrowserProfile')
+          : t('task.interruptedRevoked')}
       </p>
     {:else if model.errorLine !== null}
       <p class="mt-1.5 text-xs text-muted-foreground" data-testid="task-error">{model.errorLine}</p>

@@ -137,6 +137,7 @@ import {
   questionCapReached,
 } from '../tools/setup-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
+import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profiles.js';
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
@@ -2992,7 +2993,20 @@ export class Orchestrator {
             }
           : {}),
         ...(this.#deps.schedule !== undefined ? { schedule: this.#deps.schedule } : {}),
-        ...(this.#deps.browser !== undefined ? { browser: this.#deps.browser } : {}),
+        ...(this.#deps.browser !== undefined
+          ? {
+              browser: this.#deps.browser,
+              // W8: re-read per call — a profile switch applies to the next ensurePage.
+              browserProfileKey: (botId: string) =>
+                browserProfileKey(
+                  botId,
+                  effectiveBrowserProfileId(
+                    this.#deps.bots.get(botId),
+                    this.#deps.settings.get().browserProfiles,
+                  ),
+                ),
+            }
+          : {}),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),

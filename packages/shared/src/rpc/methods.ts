@@ -47,6 +47,7 @@ import {
   runStepSchema,
   scheduleEntrySchema,
   settingsSchema,
+  browserProfileSchema,
   skillCandidateSchema,
   mcpServerSchema,
   mcpToolRiskSchema,
@@ -65,6 +66,7 @@ import {
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
+import { BROWSER_PROFILE_NAME_MAX_CHARS } from '../constants.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -1074,9 +1076,18 @@ export const browserNetworkContextSchema: z.ZodType<BrowserNetworkContext> = z.o
   allowLoopback: z.boolean(),
 });
 
+/**
+ * W8 浏览器资料键：`bot:{botId}`（私有，partition `persist:bot-{botId}`）或
+ * `shared:{profileId}`（共享，`persist:shared-{profileId}`）。core 按 Bot 的生效资料
+ * 算出，宿主据此派生 partition；字符集限制在可直接作目录名的范围。
+ */
+export const browserProfileKeySchema = z.string().regex(/^(bot|shared):[A-Za-z0-9_-]{1,64}$/);
+
 export const browserEnsurePageInputSchema = z.object({
   botId: z.string().min(1),
   conversationId: z.string().min(1),
+  /** W8: which browser profile (partition) the page lives in. */
+  profileKey: browserProfileKeySchema,
   /** Network rules for this page; re-sent on every call (idempotent refresh). */
   networkContext: browserNetworkContextSchema,
   /** Download target (the conversation workspace's downloads/), created lazily. */
@@ -1176,6 +1187,62 @@ export const browserSetNetworkContextInputSchema = browserPairInputSchema.extend
 });
 
 export const browserClearBotDataInputSchema = z.object({ botId: z.string().min(1) });
+
+/** W8: closes every page of a bot (its browser profile changed; not a tombstone). */
+export const browserCloseBotPagesInputSchema = z.object({ botId: z.string().min(1) });
+/**
+ * W8: wipes a shared profile's storage. `remove: true` (the profile is deleted)
+ * also tombstones it and removes `Partitions/shared-{id}`; without it (清除数据)
+ * the entry stays usable and only the stored data is cleared.
+ */
+export const browserClearProfileDataInputSchema = z.object({
+  profileId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  remove: z.boolean().optional(),
+});
+
+/**
+ * W8 自动接管：用户把页面控制权交还给 Bot（工具条按钮 / 关闭查看窗口 / 空闲超时）。
+ * 主进程调 core（端口 B），core 向用过浏览器的进行中任务注入「先 browser_snapshot」。
+ */
+export const browserControlReturnedInputSchema = z.object({
+  botId: z.string().min(1),
+  conversationId: z.string().min(1),
+  reason: z.enum(['button', 'viewer_closed', 'idle']),
+});
+export const browserControlReturnedOutputSchema = z.object({
+  /** Tasks that received the handback notice. */
+  injected: z.number().int().nonnegative(),
+});
+
+// --- browser profiles (W8) ---------------------------------------------------------
+
+/** A shared browser profile with the bots currently using it. */
+export const browserProfileEntrySchema = browserProfileSchema.extend({
+  botIds: z.array(z.string()),
+});
+export type BrowserProfileEntry = z.infer<typeof browserProfileEntrySchema>;
+export const browserProfilesListOutputSchema = z.object({
+  profiles: z.array(browserProfileEntrySchema),
+});
+export const browserProfilesCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(BROWSER_PROFILE_NAME_MAX_CHARS),
+});
+export const browserProfilesCreateOutputSchema = z.object({
+  profile: browserProfileEntrySchema,
+  profiles: z.array(browserProfileEntrySchema),
+});
+export const browserProfilesRenameInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1).max(BROWSER_PROFILE_NAME_MAX_CHARS),
+});
+export const browserProfileIdInputSchema = z.object({ id: z.string().min(1) });
+export const browserProfilesMutateOutputSchema = z.object({
+  profiles: z.array(browserProfileEntrySchema),
+  /** delete only: bots moved back to their private profile. */
+  movedBotIds: z.array(z.string()).optional(),
+  /** Running tasks interrupted by the switch (delete only). */
+  interrupted: z.number().int().nonnegative().optional(),
+});
 
 /**
  * Method registry keyed by wire name. Port A (renderer <-> core) and port B
@@ -1465,6 +1532,32 @@ export const rpcMethodSchemas = {
     output: okOutput,
   },
   'browser.clearBotData': { input: browserClearBotDataInputSchema, output: okOutput },
+  'browser.closeBotPages': { input: browserCloseBotPagesInputSchema, output: okOutput },
+  'browser.clearProfileData': { input: browserClearProfileDataInputSchema, output: okOutput },
+  // W8: served by the core on port B (the main process reports a handback).
+  'browser.controlReturned': {
+    input: browserControlReturnedInputSchema,
+    output: browserControlReturnedOutputSchema,
+  },
+
+  // W8 共享浏览器资料（renderer → core）。
+  'browserProfiles.list': { input: voidInput, output: browserProfilesListOutputSchema },
+  'browserProfiles.create': {
+    input: browserProfilesCreateInputSchema,
+    output: browserProfilesCreateOutputSchema,
+  },
+  'browserProfiles.rename': {
+    input: browserProfilesRenameInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
+  'browserProfiles.delete': {
+    input: browserProfileIdInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
+  'browserProfiles.clear': {
+    input: browserProfileIdInputSchema,
+    output: browserProfilesMutateOutputSchema,
+  },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -1484,9 +1577,15 @@ export type PlatformRpcMethods = {
   'update.activeRuns': () => Promise<UpdateActiveRunsOutput>;
   /** P13 任务 2: user-confirmed interrupt of all active runs before updating. */
   'update.cancelActive': (input: { reason: string }) => Promise<UpdateCancelActiveOutput>;
+  /** W8: the user handed a bot page back (viewer toolbar / close / idle). */
+  'browser.controlReturned': (input: {
+    botId: string;
+    conversationId: string;
+    reason: 'button' | 'viewer_closed' | 'idle';
+  }) => Promise<{ injected: number }>;
 };
 
-/** The 12 browser methods the MAIN process serves on port B (P11). */
+/** The browser methods the MAIN process serves on port B (P11; W8 adds two). */
 export const BROWSER_RPC_METHODS = [
   'browser.ensurePage',
   'browser.navigate',
@@ -1500,6 +1599,8 @@ export const BROWSER_RPC_METHODS = [
   'browser.close',
   'browser.setNetworkContext',
   'browser.clearBotData',
+  'browser.closeBotPages',
+  'browser.clearProfileData',
 ] as const satisfies readonly RpcMethodName[];
 
 const APP_METHODS = [
@@ -1643,6 +1744,11 @@ const APP_METHODS = [
   'wiki.deletePage',
   'schedules.list',
   'schedules.cancel',
+  'browserProfiles.list',
+  'browserProfiles.create',
+  'browserProfiles.rename',
+  'browserProfiles.delete',
+  'browserProfiles.clear',
 ] as const satisfies readonly RpcMethodName[];
 
 export const APP_RPC_METHODS: readonly RpcMethodName[] = APP_METHODS;
@@ -1653,4 +1759,5 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'power.suspend',
   'update.activeRuns',
   'update.cancelActive',
+  'browser.controlReturned',
 ];

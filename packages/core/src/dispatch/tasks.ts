@@ -1,6 +1,7 @@
 import {
   AppError,
   ASK_USER_OPTION_MAX_CHARS,
+  BROWSER_HANDBACK_COALESCE_MS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
   TASK_CONCURRENCY_GLOBAL,
   TASK_CONCURRENCY_PER_CONVERSATION,
@@ -140,8 +141,11 @@ export interface TaskOutcome {
   errorReason?: TaskErrorReason;
 }
 
-/** Why the host interrupts a running task (W3, D78). */
-export type TaskInterruptReason = 'permission_revoked';
+/**
+ * Why the host interrupts a running task (W3, D78; W8 adds the browser
+ * profile switch — the identity the task browsed with changed under it).
+ */
+export type TaskInterruptReason = 'permission_revoked' | 'browser_profile_changed';
 
 /**
  * W4 复查 S4: a task over the wall clock while it waited on a card flagged
@@ -157,7 +161,14 @@ export const TASK_UNCERTAIN_REPEAT_TIMEOUT_MESSAGE =
 /** The interruption's error text (card + failure entry), per reason. */
 export const TASK_INTERRUPT_MESSAGES: Record<TaskInterruptReason, string> = {
   permission_revoked: '授权已被撤销，任务已中断。请检查已完成的操作后再重试',
+  browser_profile_changed: '浏览器资料已切换，任务已中断。请检查已完成的操作后再重试',
 };
+
+/** W8: tool-name prefix of the browser tools ("the task used the browser"). */
+const BROWSER_TOOL_PREFIX = 'browser_';
+
+/** W8: the steer a task gets when the user hands the browser page back. */
+export const BROWSER_HANDBACK_TEXT = '用户已交还浏览器控制，先 browser_snapshot 再继续';
 
 /**
  * Ledger rows that make retrying an interrupted task a reviewed decision (W3):
@@ -543,6 +554,8 @@ export class TaskHost implements TaskToolFacade {
    * Tasks blocked in `ask_user` (§2.4.6): the visible question card and the
    * waiter its answer (a card option, or the turn's inject_task) resolves.
    */
+  /** W8: when each task last got the browser handback notice (coalescing). */
+  readonly #lastHandback = new Map<string, number>();
   readonly #questions = new Map<
     string,
     {
@@ -1624,6 +1637,9 @@ export class TaskHost implements TaskToolFacade {
    */
   interruptForRevocation(event: PermissionRevokedEvent): number {
     const statuses: RunStatus[] = ['running', 'waiting_approval', 'waiting_lease'];
+    // W8: a browser profile switch only concerns the tasks that used the browser.
+    const browserScope = event.scope === 'browser_profile';
+    const reason: TaskInterruptReason = browserScope ? 'browser_profile_changed' : 'permission_revoked';
     let count = 0;
     this.#pumpHeld += 1;
     try {
@@ -1639,8 +1655,9 @@ export class TaskHost implements TaskToolFacade {
         const owner = event.runId !== undefined ? this.#owningTaskId(event.runId) : undefined;
         for (const task of tasks) {
           if (owner !== undefined && task.id !== owner) continue;
+          if (browserScope && !this.usedBrowser(task.id)) continue;
           try {
-            const settled = this.interrupt(task.id, 'permission_revoked');
+            const settled = this.interrupt(task.id, reason);
             if (settled?.status === 'interrupted') count += 1;
           } catch (error) {
             this.#deps.logger.warn(
@@ -1659,6 +1676,61 @@ export class TaskHost implements TaskToolFacade {
         { scope: event.scope, serverId: event.serverId, toolName: event.toolName, count },
         'interrupted running tasks (permission revoked)',
       );
+    }
+    return count;
+  }
+
+  /**
+   * W8: "the task used the browser" = the task or one of its SubAgent sub
+   * runs recorded a `browser_*` tool call (run_steps; written before the tool
+   * runs, so a call in flight counts). Persistent and engine-agnostic — unlike
+   * "has an open page", which is per bot + conversation, not per task.
+   */
+  usedBrowser(taskId: string): boolean {
+    try {
+      return this.#deps.runs.hasToolCallWithPrefix(this.#runIdsOf(taskId), BROWSER_TOOL_PREFIX);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * W8 自动接管 · 交还：the user handed the bot's page in this conversation back
+   * (viewer toolbar / closed the viewer / idle timeout). Every running task of
+   * that bot here that used the browser gets the steer "先 browser_snapshot 再
+   * 继续" through the inject path (an entry on its card + a steer into the
+   * engine run). A task blocked on its question card is skipped: an inject
+   * would answer the question, and the user answers it on the card. A task
+   * notified within BROWSER_HANDBACK_COALESCE_MS is skipped (take over / hand
+   * back repeatedly = one notice). Returns how many tasks were notified.
+   */
+  notifyBrowserHandback(botId: string, conversationId: string): number {
+    const tasks = this.#deps.runs.listTasks({
+      botId,
+      conversationId,
+      statuses: ['running', 'waiting_approval', 'waiting_lease'],
+    });
+    let count = 0;
+    const now = this.#deps.clock.now();
+    for (const [taskId, at] of this.#lastHandback) {
+      if (now - at >= BROWSER_HANDBACK_COALESCE_MS) this.#lastHandback.delete(taskId);
+    }
+    for (const task of tasks) {
+      if (this.#questions.has(task.id) || this.#lastHandback.has(task.id)) continue;
+      if (!this.usedBrowser(task.id)) continue;
+      try {
+        this.inject(
+          { runId: task.id, botId, conversationId, loopType: 'task' },
+          { taskId: task.id, text: BROWSER_HANDBACK_TEXT },
+        );
+        this.#lastHandback.set(task.id, now);
+        count += 1;
+      } catch (error) {
+        this.#deps.logger.warn(
+          { taskId: task.id, error: error instanceof Error ? error.message : String(error) },
+          'browser handback inject failed',
+        );
+      }
     }
     return count;
   }
@@ -2271,7 +2343,9 @@ export class TaskHost implements TaskToolFacade {
     const note =
       reason === 'permission_revoked' && status === 'interrupted'
         ? '用户撤销了这项任务所用的授权：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
-        : '';
+        : reason === 'browser_profile_changed' && status === 'interrupted'
+          ? '用户切换了你的浏览器资料（登录身份可能已不同）：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
+          : '';
     return [`任务${label}${error !== null && error.length > 0 ? `：${error}` : ''}`, note, digest]
       .filter((part) => part.length > 0)
       .join('\n');

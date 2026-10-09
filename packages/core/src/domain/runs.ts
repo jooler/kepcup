@@ -550,6 +550,22 @@ export class RunsService {
       .run(JSON.stringify(payload), stepId);
   }
 
+  /**
+   * W8: whether any of these runs recorded a tool call whose name starts with
+   * `prefix` (e.g. `browser_` — the run used the browser). tool_call steps are
+   * written before the tool executes, so an in-flight call counts.
+   */
+  hasToolCallWithPrefix(runIds: readonly string[], prefix: string): boolean {
+    if (runIds.length === 0) return false;
+    const escaped = prefix.replace(/[\\%_]/g, (char) => `\\${char}`);
+    const row = this.db
+      .prepare(
+        `select 1 from run_steps where run_id in (${runIds.map(() => '?').join(', ')}) and type = 'tool_call' and json_extract(payload_json, '$.toolName') like ? escape '\\' limit 1`,
+      )
+      .get(...runIds, `${escaped}%`);
+    return row !== undefined;
+  }
+
   stepsFor(runId: string): RunStep[] {
     const rows = this.db
       .prepare('select * from run_steps where run_id = ? order by seq')

@@ -727,3 +727,113 @@ describe('W3 review fixes (复查后修正)', () => {
     expect(runs.getOrThrow(queued.id).status).not.toBe('interrupted');
   }, 40_000);
 });
+
+describe('W8 browser profile switch → interrupt (scope browser_profile)', () => {
+  it('revoke: browser_profile — switching the bot’s profile interrupts its browser-using task only; pages closed; idempotent', async () => {
+    const browser = createFakeBrowserHost();
+    browser.setSnapshot({
+      title: '下单页',
+      url: 'https://shop.example/',
+      elements: [{ ref: 'e1', role: 'button', name: '提交订单' }],
+      elementsTruncated: false,
+      text: '下单页正文',
+      textTruncated: false,
+    });
+    browser.hold('browser.click');
+    const { core, llm } = await startStack({ browserRpc: browser });
+    const botA = await makeBot(core, '小资');
+    const botB = await makeBot(core, '小邻');
+    const conv = await openDirect(core, botA.id);
+    const group = await makeGroup(core, '资料群', [botA.id, botB.id]);
+    const interrupted: Array<{ count: number; reason: string; scope: string }> = [];
+    core.onEvent('tasks.interrupted', (payload) => interrupted.push(payload));
+
+    llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().replyToolCall('browser_open', { url: 'https://shop.example/' }),
+          step().replyToolCall('browser_click', { ref: 'e1' }),
+          step().replyText('点完了'),
+        ],
+        relay: '任务被中断了',
+      }),
+    );
+    await sendBatch(core, conv.id, ['去下单']);
+    const { runs, effects } = domain(core);
+    const task = await waitFor(
+      () =>
+        runs
+          .listTasks({ conversationId: conv.id })
+          .find((t) => effects.listForRun(t.id).some((e) => e.status === 'executing')) ?? null,
+      { label: 'task mid-click', timeoutMs: 20_000 },
+    );
+    // The same bot's running task that never browsed, and another bot's task.
+    const noBrowser = seedTask(core, {
+      botId: botA.id,
+      conversationId: group.id,
+      title: 'NO-BROWSER',
+      status: 'running',
+    });
+    const otherBot = seedTask(core, {
+      botId: botB.id,
+      conversationId: group.id,
+      title: 'OTHER-BOT',
+      status: 'running',
+    });
+
+    // An unrelated profile edit (name) is not a switch.
+    const before = domain(core).bots.getOrThrow(botA.id);
+    await core.rpc.call('bots.update', {
+      id: botA.id,
+      profile: { ...before.profile, identity: { ...before.profile.identity, bio: '换个简介' } },
+    });
+    expect(runs.getOrThrow(task.id).status).not.toBe('interrupted');
+    expect(browser.closedBotPages).toEqual([]);
+
+    // Put the bot on a shared profile: identity changed under the task.
+    const { profile } = (await core.rpc.call('browserProfiles.create', { name: '工作账号' })) as {
+      profile: { id: string };
+    };
+    const current = domain(core).bots.getOrThrow(botA.id);
+    await core.rpc.call('bots.update', {
+      id: botA.id,
+      profile: {
+        ...current.profile,
+        runtime: { ...current.profile.runtime, browser_profile: profile.id },
+      },
+    });
+    const after = runs.getOrThrow(task.id);
+    expect(after.status).toBe('interrupted');
+    expect(after.errorReason).toBe('browser_profile_changed');
+    expect(after.error).toBe('浏览器资料已切换，任务已中断。请检查已完成的操作后再重试');
+    expect(effects.listForRun(task.id).map((e) => [e.toolName, e.status])).toEqual([
+      ['browser_click', 'uncertain'],
+    ]);
+    expect(taskView(core, task.id)).toMatchObject({
+      state: 'interrupted',
+      errorReason: 'browser_profile_changed',
+      reviewRequired: true,
+    });
+    const failure = failureEntries(core, task.id);
+    expect(failure).toHaveLength(1);
+    expect(failure[0]!.errorReason).toBe('browser_profile_changed');
+    expect(failure[0]!.text).toContain('浏览器资料');
+    expect(failure[0]!.text).toContain('不要自行重新派出');
+    // Only the browser-using task: the same bot's other task and other bots run on.
+    expect(runs.getOrThrow(noBrowser.id).status).toBe('running');
+    expect(runs.getOrThrow(otherBot.id).status).toBe('running');
+    expect(browser.closedBotPages).toEqual([botA.id]);
+    await waitFor(() => (interrupted.length > 0 ? true : null), { label: 'tasks.interrupted' });
+    expect(interrupted).toEqual([
+      { count: 1, reason: 'browser_profile_changed', scope: 'browser_profile' },
+    ]);
+
+    // A duplicate event: nothing more happens.
+    expect(domain(core).revocations.emit({ scope: 'browser_profile', botIds: [botA.id] })).toBe(0);
+    expect(failureEntries(core, task.id)).toHaveLength(1);
+    browser.release('browser.click');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(runs.getOrThrow(task.id).errorReason).toBe('browser_profile_changed');
+  }, 60_000);
+});

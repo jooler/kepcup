@@ -328,6 +328,15 @@ export type BrowserPressKey = (typeof BROWSER_PRESS_KEYS)[number];
  * 动作直接拒绝（BROWSER_NO_PROGRESS），提示换做法或 ask_user。
  */
 export const BROWSER_NO_PROGRESS_LIMIT = 3;
+/**
+ * W8 自动接管：用户在查看窗口里点击 / 键入后页面归用户操作；用户这么久没有
+ * 任何输入即自动交还给 Bot（与「交还给 Bot」按钮、关闭查看窗口同样通知任务）。
+ */
+export const BROWSER_USER_CONTROL_IDLE_MS = 600_000;
+/** W8: a task gets at most one handback notice per this window (repeated takeovers). */
+export const BROWSER_HANDBACK_COALESCE_MS = 30_000;
+/** W8 共享浏览器资料：名称长度上限。 */
+export const BROWSER_PROFILE_NAME_MAX_CHARS = 40;
 
 // --- Auto-update gate (P13 任务 2) ----------------------------------------------
 

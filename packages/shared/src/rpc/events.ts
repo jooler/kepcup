@@ -187,8 +187,9 @@ export const taskUpdatedPayloadSchema = z.object({ task: taskViewSchema });
  */
 export const tasksInterruptedPayloadSchema = z.object({
   count: z.number().int().positive(),
-  reason: z.literal('permission_revoked'),
-  scope: z.enum(['path', 'mcp']),
+  /** W8: `browser_profile_changed` — a bot's browser profile was switched. */
+  reason: z.enum(['permission_revoked', 'browser_profile_changed']),
+  scope: z.enum(['path', 'mcp', 'browser_profile']),
 });
 
 export const rpcEventSchemas = {

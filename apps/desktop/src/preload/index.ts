@@ -65,8 +65,12 @@ const api = {
     };
   },
   /** P11 查看窗口: shows the bot's browser page for this conversation (任务 5). */
-  showBotBrowser: (botId: string, conversationId: string, title: string): Promise<void> =>
-    ipcRenderer.invoke('browser:show', botId, conversationId, title),
+  showBotBrowser: (
+    botId: string,
+    conversationId: string,
+    title: string,
+    labels?: { agent: string; user: string; handback: string },
+  ): Promise<void> => ipcRenderer.invoke('browser:show', botId, conversationId, title, labels),
   onCoreProcessState: (callback: (state: string) => void): (() => void) => {
     const listener = (_event: unknown, state: string) => callback(state);
     ipcRenderer.on('core-process-state', listener);

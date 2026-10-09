@@ -330,6 +330,18 @@ export const zhCN = {
   'contacts.mcpServersHint':
     '勾选后该 Bot 可使用对应服务器的工具：只读工具默认直接执行（对话中也能直接查询），写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。在 设置 → MCP 服务器 中管理。',
   'contacts.mcpAutoApproveTag': '免审批',
+  // W8 共享浏览器资料
+  'contacts.browserProfile': '浏览器资料',
+  'contacts.browserProfilePrivate': '私有（默认）',
+  'contacts.browserProfileShared': '共享：{name}',
+  'contacts.browserProfileHint':
+    '私有资料只属于这个 Bot；共享资料在 设置 → 浏览器资料 中建立。切换后该 Bot 的浏览器页面会关闭，用过浏览器的进行中任务会被中断。',
+  'contacts.browserProfileSwitchConfirm':
+    '切换后该 Bot 已打开的网页会关闭，正在使用浏览器的任务会被中断；确定切换？',
+  'contacts.browserProfileSwitchYes': '确定切换',
+  'contacts.browserProfileSwitchNo': '取消',
+  'contacts.browserProfileSharedWarning':
+    '同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站',
   // W5：Bot 详情 MCP 区常驻风险提示（§5 护栏 7）
   'contacts.mcpUnattendedNotice':
     '无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作），请注意风险。',
@@ -813,6 +825,8 @@ export const zhCN = {
   // W3（D78）检查后重试 / 撤销授权中断
   'task.reviewRetry': '检查后重试',
   'task.interruptedRevoked': '授权已被撤销，任务已中断。请检查已完成的操作后再重试',
+  // W8：切换浏览器资料 → 用过浏览器的进行中任务被中断
+  'task.interruptedBrowserProfile': '浏览器资料已切换，任务已中断。请检查已完成的操作后再重试',
   'task.review.title': '中断前已经发起的外部操作',
   'task.review.hint':
     '「已完成」的操作重试时不会再做；「结果未知」的可能已经生效，请先到对应页面或系统里核实。',
@@ -964,6 +978,10 @@ export const zhCN = {
     '打开窗口查看该 Bot 在当前对话中的页面，可在其中手动登录；关闭窗口后页面回到后台继续执行。',
   'rightPanel.browserWindowTitle': '{name} 的浏览器',
   'rightPanel.browserShowFailed': '无法打开浏览器窗口（页面未打开或已关闭）',
+  // W8 自动接管：查看窗口工具条
+  'rightPanel.browserToolbarAgent': '{name} 正在使用此页面 · 在页面里点击或键入即可接管',
+  'rightPanel.browserToolbarUser': '你正在操作 · {name} 的浏览器动作已暂停，完成后请交还',
+  'rightPanel.browserToolbarHandback': '交还给 Bot',
 
   // --- P12 Windows 沙箱准备向导与增强沙箱（任务 7） ------------------------------------
   'settings.sandboxBackend': '当前后端：{backend}',
@@ -1137,6 +1155,32 @@ export const zhCN = {
   'settings.navEnvironment': '环境',
   'settings.navUsage': '用量',
   'settings.navDiagnostics': '诊断',
+  // --- W8 共享浏览器资料 ------------------------------------------------------
+  'settings.navBrowserProfiles': '浏览器资料',
+  'settings.browserProfilesTitle': '共享浏览器资料',
+  'settings.browserProfilesHint':
+    '默认每个 Bot 使用私有浏览器资料，登录状态互不相通。共享资料让多个 Bot 共用同一份 cookie 与网站存储：在 Bot 详情里把它们挂到同一份资料，再在任一 Bot 的浏览器窗口里登录即可。网络规则仍按各 Bot 判断。',
+  'settings.browserProfilesWarning':
+    '同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站',
+  'settings.browserProfilesEmpty': '还没有共享浏览器资料。',
+  'settings.browserProfilesNamePlaceholder': '资料名称，如「工作账号」',
+  'settings.browserProfilesCreate': '新建共享资料',
+  'settings.browserProfilesRename': '重命名',
+  'settings.browserProfilesRenameSave': '保存',
+  'settings.browserProfilesRenameCancel': '取消',
+  'settings.browserProfilesBots': '使用它的 Bot：{names}',
+  'settings.browserProfilesNoBots': '还没有 Bot 使用它',
+  'settings.browserProfilesClear': '清除数据',
+  'settings.browserProfilesClearConfirm':
+    '清除「{name}」的全部浏览数据（登录状态、cookie、网站存储）？资料本身保留，挂在上面的 Bot 需要重新登录。',
+  'settings.browserProfilesCleared': '已清除「{name}」的浏览数据',
+  'settings.browserProfilesDelete': '删除',
+  'settings.browserProfilesDeleteConfirm':
+    '删除共享资料「{name}」？使用它的 Bot 会改回私有资料（其浏览器页面关闭、用过浏览器的进行中任务被中断），资料中的登录状态与网站数据一并清除。',
+  'settings.browserProfilesDeleted': '已删除「{name}」',
+  'settings.browserProfilesFailed': '操作失败：{message}',
+  'settings.browserProfilesConfirm': '确认',
+  'settings.browserProfilesCancel': '取消',
   'settings.appearanceSection': '外观',
   'settings.theme': '主题',
   'settings.themeSystem': '跟随系统',

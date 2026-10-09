@@ -36,7 +36,17 @@
     profile = $bindable(),
     /** 名字/简介在右栏头部资料卡已有点按直编，编辑场景传 false 隐藏（新建场景必填，保持显示）。 */
     showIdentity = true,
-  }: { profile: BotProfile; showIdentity?: boolean } = $props();
+    /**
+     * W8：编辑已有 Bot 时，切换浏览器资料要显式确认（关闭它已打开的网页、中断
+     * 用过浏览器的任务）——给了它，下拉只改待确认值，确认后由调用方立即保存；
+     * 不给（新建）则直接绑定。
+     */
+    onBrowserProfileConfirm,
+  }: {
+    profile: BotProfile;
+    showIdentity?: boolean;
+    onBrowserProfileConfirm?: (next: string) => void | Promise<void>;
+  } = $props();
 
   /**
    * Only providers with a stored key offer models here; a stored model ref
@@ -53,6 +63,42 @@
       ...stale.map((ref) => ({ ref, label: t('contacts.modelUnavailable', { ref }) })),
     ];
   });
+  // W8 共享浏览器资料：'' = 私有（默认）。
+  const browserProfiles = $derived(settingsStore.settings?.browserProfiles ?? []);
+  /** W8：下拉里选中但还没确认的资料（null = 没有待确认的切换）。 */
+  let pendingBrowserProfile = $state<string | null>(null);
+  let browserProfileSaving = $state(false);
+  const shownBrowserProfile = $derived(pendingBrowserProfile ?? profile.runtime.browser_profile);
+  const sharedBrowserProfile = $derived(
+    browserProfiles.find((entry) => entry.id === shownBrowserProfile) ?? null,
+  );
+
+  // A re-cloned profile (another bot, or the bot was updated) drops a pending choice.
+  $effect(() => {
+    void profile;
+    pendingBrowserProfile = null;
+  });
+
+  function onBrowserProfileSelect(next: string): void {
+    if (onBrowserProfileConfirm === undefined) {
+      profile.runtime.browser_profile = next;
+      return;
+    }
+    // Arrowing through the options only moves the pending choice; nothing is saved.
+    pendingBrowserProfile = next === profile.runtime.browser_profile ? null : next;
+  }
+
+  async function confirmBrowserProfile(): Promise<void> {
+    const next = pendingBrowserProfile;
+    if (next === null || onBrowserProfileConfirm === undefined) return;
+    browserProfileSaving = true;
+    try {
+      await onBrowserProfileConfirm(next);
+    } finally {
+      browserProfileSaving = false;
+      pendingBrowserProfile = null;
+    }
+  }
   // D65：应用级已启用的 MCP server 才出现在勾选列表里。
   const mcpOptions = $derived(
     (settingsStore.settings?.mcpServers ?? []).filter((server) => server.enabled),
@@ -347,6 +393,58 @@
       />
     </div>
   {/if}
+  <div class="grid gap-1.5">
+    <Label for="bot-browser-profile">{t('contacts.browserProfile')}</Label>
+    <select
+      id="bot-browser-profile"
+      class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+      value={shownBrowserProfile}
+      onchange={(event) => onBrowserProfileSelect(event.currentTarget.value)}
+      disabled={browserProfileSaving}
+      data-testid="bot-browser-profile"
+    >
+      <option value="">{t('contacts.browserProfilePrivate')}</option>
+      {#each browserProfiles as entry (entry.id)}
+        <option value={entry.id}>{t('contacts.browserProfileShared', { name: entry.name })}</option>
+      {/each}
+    </select>
+    <p class="text-xs text-muted-foreground">{t('contacts.browserProfileHint')}</p>
+    {#if pendingBrowserProfile !== null}
+      <div
+        class="space-y-2 rounded bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300"
+        data-testid="bot-browser-profile-confirm"
+      >
+        <p>{t('contacts.browserProfileSwitchConfirm')}</p>
+        <div class="flex gap-2">
+          <Button
+            size="sm"
+            disabled={browserProfileSaving}
+            onclick={() => void confirmBrowserProfile()}
+            data-testid="bot-browser-profile-confirm-yes"
+          >
+            {t('contacts.browserProfileSwitchYes')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={browserProfileSaving}
+            onclick={() => (pendingBrowserProfile = null)}
+            data-testid="bot-browser-profile-confirm-no"
+          >
+            {t('contacts.browserProfileSwitchNo')}
+          </Button>
+        </div>
+      </div>
+    {/if}
+    {#if sharedBrowserProfile !== null}
+      <p
+        class="rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400"
+        data-testid="bot-browser-profile-warning"
+      >
+        {t('contacts.browserProfileSharedWarning')}
+      </p>
+    {/if}
+  </div>
   <div class="grid gap-4 sm:grid-cols-2">
     <div class="grid gap-1.5">
       <Label for="bot-model"
