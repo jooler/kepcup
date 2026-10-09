@@ -1614,9 +1614,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     environment.recoverInterrupted();
     // 安装通报是 Bot 内部事务（事件自带 internal 标记）：照常触发 Bot 续任务，
     // 但不进用户可见对话。
-    environment.setNotifier((botId, conversationId, event, text, opts) =>
-      orchestrator.deliverEventToBot(botId, conversationId, event, text, opts),
-    );
+    environment.setNotifier((botId, conversationId, event, text, opts) => {
+      // System-approval / install callbacks can race stack.cleanup() (CI macOS
+      // saw "database connection is not open" as an unhandled rejection after
+      // every test had already passed). Skip once services are closing.
+      if (servicesClosed.closed) return;
+      try {
+        orchestrator.deliverEventToBot(botId, conversationId, event, text, opts);
+      } catch (error) {
+        warnQuietly('environment notify failed', error);
+      }
+    });
     const dailyDoctorTimer = setInterval(() => {
       if (servicesClosed.closed) return;
       // P12: keep the skills enhanced-verdict cache fresh with the doctor.
