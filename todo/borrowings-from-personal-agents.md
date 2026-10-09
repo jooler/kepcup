@@ -3,10 +3,14 @@
 > 状态：**P0 + P1（W3-P1、W6）已实施并提交，设计文档已回写**（2026-10-09）；W4、W8 暂缓，W7 延期，原 W9 已删除。方案定稿时 Pengfei 已对全部待决问题拍板（见各节「已定」标注），D 编号见 §6。
 > **提交约定**：原硬约束为“只改工作树、不 commit”；2026-10-09 用户授权提交（P0 已分批提交）。仍**不 push、不开 PR**（除非用户另行要求）。每个工作项完成后在本文件对应 `- [ ]` 打勾并写一行完成日期。
 > **范围调整（2026-10-09 用户决定）**：P1 只做 W3-P1 与 W6（W4、W8 暂缓）；W6 委派结果取“各任务结果摘要拼接”；原 W9（记忆导出 / 历史 / 导入）**确定不做，已从本文件删除**；W7 **延期**。
+> **范围再调整（2026-10-09 用户决定）**：继续完成 W4、W7、W8（撤销上一条中 W4 / W8 暂缓、W7 延期的决定）；W9 仍删除。顺序：W4 ∥ W8 → W7（W7 的后台页使用 W8 的生效浏览器资料）。
 > **测试纪律**（AGENTS.md / `docs/dev/05-testing.md`）：开发中**只跑定向测试**（本文件每项都给了命令）；全量 `pnpm test` 只在阶段收尾/交付时跑**一次**，或改了共享契约（`packages/shared` schema）、testkit、迁移、vitest 配置时跑一次。不要反复全量。
 > Mac 上 PATH 里的 node 是 v12，先 `export PATH=$HOME/.nvm/versions/node/v24.13.0/bin:$PATH`；改了 `packages/shared` 后先重建 `packages/shared/dist`。
 
 ---
+
+
+
 ## 0. 先读什么
 
 实施任何一项前，先读：
@@ -18,17 +22,23 @@
 5. `todo/sensors.md`（D76；本轮只维持麦克风能力，W7 不接传感器）。语音 `docs/design/26-voice-input.md`（D69）仅作背景，语音对话模式本轮不立项。
 6. 本文件 §3 的现状地图——每项要改的代码位置都列在那里，**以代码为准**，文档与代码冲突时先核实代码。
 
+
+
 ## 1. 背景与目标
+
+
 
 ### 1.1 来源
 
 公众号「逛逛GitHub」文章《3 个最近爆火的 Personal Agent，在 GitHub 上有开源平替了》介绍了三个项目。我们把源码拉到固定 commit 逐文件读过，本方案引用的上游细节都标了路径：
 
-| 项目 | 仓库 | 读过的 commit | 定位 |
-|---|---|---|---|
-| Rakazo | https://github.com/elie222/rakazo | `8d3fedb63725ac1f896a8009484bf75fcd1ba7ac` | 多 Bot 个人助理（自托管服务 + 容器“电脑”），Bot 间消息、浏览器、审批、记忆 |
-| OpenMuse | https://github.com/CopilotKit/openmuse | `1ac68f3909f2478ab6280883f1ab5ea65eb5719d` | 后台监看 / 任务引擎，确定性页面 diff、动作提案审批 |
-| OpenDots | https://github.com/CopilotKit/OpenDots | `625452e06cde74cb25b0ce319e2c1be0488f5a5f` | 连接应用 + 页面 + 实时语音前端 |
+
+| 项目       | 仓库                                                                               | 读过的 commit                                 | 定位                                           |
+| -------- | -------------------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------- |
+| Rakazo   | [https://github.com/elie222/rakazo](https://github.com/elie222/rakazo)           | `8d3fedb63725ac1f896a8009484bf75fcd1ba7ac` | 多 Bot 个人助理（自托管服务 + 容器“电脑”），Bot 间消息、浏览器、审批、记忆 |
+| OpenMuse | [https://github.com/CopilotKit/openmuse](https://github.com/CopilotKit/openmuse) | `1ac68f3909f2478ab6280883f1ab5ea65eb5719d` | 后台监看 / 任务引擎，确定性页面 diff、动作提案审批                |
+| OpenDots | [https://github.com/CopilotKit/OpenDots](https://github.com/CopilotKit/OpenDots) | `625452e06cde74cb25b0ce319e2c1be0488f5a5f` | 连接应用 + 页面 + 实时语音前端                           |
+
 
 上游关键文件（下文以 `[R]` `[M]` `[D]` 简称项目）：
 
@@ -41,20 +51,26 @@
 - [M] `apps/server/src/actions.ts`（`ActionService.propose`：idempotencyKey→sha256 id、proposal hash 覆盖 input+connection+target、30 分钟过期；`decide(id, hash, decision)` hash 不符 409；结果 `succeeded / failed / outcome_unknown` + 活动回执）
 - [D] `src/server/connections.ts` 约 188 行（`readOnly = annotations.readOnlyHint===true`；`requiresApproval = prior ?? !readOnly`；逐工具覆盖在刷新后保留）、`src/server/connection-tools.ts`（每次调用重新解析工具）、`src/server/pages.ts` `createReviewed`（`page_reviews(threadId, toolCallId)`：同草稿返回已有、不同则 409）、`src/server/store.ts`（租约过期 / 设置变化 → interrupted，“Review completed effects before retrying”）、`src/client/TaskActions.tsx`（Retry after review）、`src/server/voice.ts`（实时语音 + `ask_compute`、每通话 6 次计算上限、turn 去重）
 
+
+
 ### 1.2 目标
 
 把对比结论里的 **9 个借鉴点** 落成可交给编程 Agent 的工作项，同时把 **“不要学”清单** 固化为护栏（§5）。不追求功能对齐上游，只借**确定性、幂等、可审计**的那部分机制。
 
-| # | 借鉴点 | 工作项 | 优先级 |
-|---|---|---|---|
-| 1 | Bot 间消息带 intent | W6（在 `delegate_to_bot` 上加 `intent`，不新增 `message_bot`） | P1 |
-| 2 | 浏览器 `uncertain` 结果、不重放、及配套防护 | W1（+ W2 记账） | **P0** |
-| 3 | MCP / 连接应用审批默认值（只读自动、动词正则） | W5（含只读 MCP 工具进对话轮；无人值守下 MCP 自动批准 + 风险提示） | **P0** |
-| 4 | 草稿/审批幂等 + 精确审批卡 | W4（基于 W2） | P1 |
-| 5 | 中断 → 检查后重试 | W3（基于 W2；含“运行中撤销授权 → 立即中断”） | P0/P1 |
-| 6 | 监看：去重 + 退避 | W7（本轮只做网页来源）——**延期** | P2 |
-| 7 | Team / Private 电脑 → 浏览器资料与接管 | W8（自动接管租约 + 显式共享浏览器资料） | P1 |
-| 9 | 语音前端 + 计算 Agent 配对 | —（**暂不立项**，只在 §4 记下分工原则） | — |
+
+| #   | 借鉴点                          | 工作项                                                   | 优先级    |
+| --- | ---------------------------- | ----------------------------------------------------- | ------ |
+| 1   | Bot 间消息带 intent              | W6（在 `delegate_to_bot` 上加 `intent`，不新增 `message_bot`） | P1     |
+| 2   | 浏览器 `uncertain` 结果、不重放、及配套防护 | W1（+ W2 记账）                                           | **P0** |
+| 3   | MCP / 连接应用审批默认值（只读自动、动词正则）   | W5（含只读 MCP 工具进对话轮；无人值守下 MCP 自动批准 + 风险提示）              | **P0** |
+| 4   | 草稿/审批幂等 + 精确审批卡              | W4（基于 W2）                                               | P1     |
+| 5   | 中断 → 检查后重试                   | W3（基于 W2；含“运行中撤销授权 → 立即中断”）                           | P0/P1  |
+| 6   | 监看：去重 + 退避                   | W7（本轮只做网页来源）                                  | P2     |
+| 7   | Team / Private 电脑 → 浏览器资料与接管 | W8（自动接管租约 + 显式共享浏览器资料）                        | P1     |
+| 9   | 语音前端 + 计算 Agent 配对           | —（**暂不立项**，只在 §4 记下分工原则）                              | —      |
+
+
+
 
 ## 2. 实施顺序
 
@@ -71,19 +87,25 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 粗略工作量（编程 Agent 人日，含定向测试，不含设计文档回写）：
 
-| 工作项 | 量 | 说明 |
-|---|---|---|
-| W1 | 2–3 | 纯 core/desktop，无迁移；元素上限维持 150 |
-| W2 | 2–3 | runs.db 一张新表 + 引擎钩子 |
-| W3 | P0 0.5 / P1 2.5 | 摘要标注 / 重试面板 + `runs.retry` 扩展 + 撤销授权中断（+1） |
-| W4 | 2 | 依赖 W2；无 approvals 表重建 |
-| W5 | 2.5 | 分级器 + 逐工具策略 + 只读 MCP 进对话轮（+0.5）+ Bot 详情 MCP 区风险提示；无人值守不再新增拒绝逻辑 |
-| W6 | 3 | DEV-012 方案二是大头；含 delegations 表重建 |
-| W8 | 3.5 | 接管租约 1.5 + 共享浏览器资料 2 |
-| W7 | 3.5–4 | 新服务 + 新表 + UI；不含传感器来源 |
-| 合计 | 约 21–24（W9 已删除） | P0 ≈ 7.5–9；P1 ≈ 11（本轮只做 W3-P1 + W6 ≈ 5.5）；P2 = W7 ≈ 3.5–4（延期） |
+
+| 工作项 | 量               | 说明                                                             |
+| --- | --------------- | -------------------------------------------------------------- |
+| W1  | 2–3             | 纯 core/desktop，无迁移；元素上限维持 150                                  |
+| W2  | 2–3             | runs.db 一张新表 + 引擎钩子                                            |
+| W3  | P0 0.5 / P1 2.5 | 摘要标注 / 重试面板 + `runs.retry` 扩展 + 撤销授权中断（+1）                     |
+| W4  | 2               | 依赖 W2；无 approvals 表重建                                          |
+| W5  | 2.5             | 分级器 + 逐工具策略 + 只读 MCP 进对话轮（+0.5）+ Bot 详情 MCP 区风险提示；无人值守不再新增拒绝逻辑 |
+| W6  | 3               | DEV-012 方案二是大头；含 delegations 表重建                               |
+| W8  | 3.5             | 接管租约 1.5 + 共享浏览器资料 2                                           |
+| W7  | 3.5–4           | 新服务 + 新表 + UI；不含传感器来源                                          |
+| 合计  | 约 21–24（W9 已删除） | P0 ≈ 7.5–9；P1 ≈ 11（本轮只做 W3-P1 + W6 ≈ 5.5）；P2 = W7 ≈ 3.5–4（延期）  |
+
+
+
 
 ## 3. 现状地图（以代码为准，2026-10-09 读取）
+
+
 
 ### 3.1 浏览器（借鉴点 2、7）
 
@@ -98,6 +120,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - `packages/shared/src/rpc/methods.ts` 约 1066 行 `browserSnapshotOutputSchema` 与各输入 schema；`apps/desktop/src/preload/index.ts:69`、`main/index.ts:249` `browser:show`；渲染端入口 `features/right-panel/show-browser.ts`（RightPanel / GroupInfo 两处按钮）。
 - 测试：`packages/core/test/unit/browser-tools.test.ts`、`packages/core/test/integration/browser.test.ts`、`apps/desktop/test/e2e/browser.spec.ts`（browser-host 无单测）。
 
+
+
 ### 3.2 工具执行与记录（W2 / W3 的钩子）
 
 - `packages/core/src/agent/tool-execution.ts` `executeToolSafely`：`runInToolCall` 作用域里执行，异常转失败结果。两个调用方：`agent/pi-engine.ts:85`（内置引擎）、`agent/external/mcp-bridge.ts:424`（ACP 外部智能体宿主桥）。
@@ -106,36 +130,46 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - `packages/core/src/agent/context/continuation.ts` `buildRunDigest` / `renderStepLines`：**只有 tool_call、没有 tool_result 的步骤渲染成一行普通调用，不标“结果未知”**。
 - runs.db 迁移到 0008；main.db 到 0020；memory 到 0002。**D73 已预定 main 0021 / runs 0009**（`todo/connected-apps.md`）——本方案新迁移取届时的下一个空号，见各项“迁移”。
 
+
+
 ### 3.3 任务与中断（借鉴点 5）
 
-- `packages/core/src/dispatch/tasks.ts`（2020 行）`TaskHost.recover()`：已 started 无终态记录的任务补失败记录、状态 `interrupted`，文案“应用退出，任务中断”。`retry(taskId)` **只接受 `status==='failed'`**：建续接 run（`continuedFromRunIds`）、复用 brief、幂等。
+- `packages/core/src/dispatch/tasks.ts`（2020 行）`TaskHost.recover()`：已 started 无终态记录的任务补失败记录、状态 `interrupted`，文案“应用退出，任务中断”。`retry(taskId)` **只接受** `status==='failed'`：建续接 run（`continuedFromRunIds`）、复用 brief、幂等。
 - `apps/desktop/src/renderer/src/lib/features/tasks/task-view.ts:74`：`canRetry: task.state === 'failed' && task.setup === null && task.continuedByTaskId === null` → **中断任务没有重试按钮**。`TaskCard.svelte`（重试 / 取消 / 撤销）。
 - 测试：`packages/core/test/integration/tasks*.test.ts`、`task-cards.test.ts`、`apps/desktop/src/renderer/src/lib/features/tasks/task-view.test.ts`、`apps/desktop/test/e2e/tasks.spec.ts`、`packages/core/test/unit/continuation.test.ts`。
 
+
+
 ### 3.4 审批（借鉴点 3、4）
 
-- `packages/core/src/permissions/approvals.ts`（1436 行）：`NEVER_AUTO_DECIDED = ['butler_proposal']`；`SURVIVES_RUN = ['environment','butler_proposal']`；`request` / `submitNonBlocking` 查 `unattended.effective()`；`#autoDecideSync` 的数据目录底线只对 `command/unsandboxed/git_remote/agent_tool` 生效——**`mcp_tool` 在无人值守下无条件自动批准**。另有 `decide`、`cancelPendingForRun`、`describe`、`renderContextLine`（约 650 行 mcp_tool 分支）、`summary`。
+- `packages/core/src/permissions/approvals.ts`（1436 行）：`NEVER_AUTO_DECIDED = ['butler_proposal']`；`SURVIVES_RUN = ['environment','butler_proposal']`；`request` / `submitNonBlocking` 查 `unattended.effective()`；`#autoDecideSync` 的数据目录底线只对 `command/unsandboxed/git_remote/agent_tool` 生效——`mcp_tool` **在无人值守下无条件自动批准**。另有 `decide`、`cancelPendingForRun`、`describe`、`renderContextLine`（约 650 行 mcp_tool 分支）、`summary`。
 - approvals 表（main 0016 重建版）：`payload_json` 创建后不变；`status ∈ pending/approved/denied/cancelled/failed`；`decision_json`；`auto_approved`。`kind` 有 CHECK 约束，**加 kind 要重建表**（照 0015/0016 写法、带上全部既有 kind：access, unsandboxed, command, git_remote, environment, skill_import, skill_preset, profile_change, mcp_tool, butler_proposal, agent_tool）。
 - `packages/shared/src/rpc/methods.ts:740` `approvalsDecideInputSchema = { id, approve, duration?, selection? }`。
 - `packages/core/src/permissions/grants.ts`：路径授权 once / conversation，`GRANT_ABSOLUTE_TTL_MS`；`tool-call-scope.ts` `runInToolCall`（AsyncLocalStorage）。
 - 测试：`packages/core/test/integration/approvals.test.ts`、`apps/desktop/test/e2e/approvals.spec.ts`。
 
+
+
 ### 3.5 MCP（借鉴点 3）
 
 - `packages/shared/src/domain/types.ts:272` `mcpServerSchema`：`id, name, transport stdio/http/sse, command/args/env/url/headers, enabled, autoApprove`（**只有 server 级开关**）；Bot 侧 `mcp_server_ids`（:54）；`approvalKindSchema`（:942）；`mcpToolApprovalPayloadSchema`（:1046）。
-- `packages/core/src/mcp/service.ts` `listTools` 返回 pi-mcp `Tool[]`，**带 `annotations`**（pi-mcp 导出 `ToolAnnotations` 类型），目前没人用。
+- `packages/core/src/mcp/service.ts` `listTools` 返回 pi-mcp `Tool[]`，**带** `annotations`（pi-mcp 导出 `ToolAnnotations` 类型），目前没人用。
 - `packages/core/src/mcp/tools.ts` `wrapMcpTool`：`gateway.mcpToolCall`（审批）→ `mcp.callTool` → 结果包 `<untrusted>`。
 - `packages/core/src/gateway/index.ts` 约 787 行 `mcpToolCall`：非 `mcpAutoApprove(serverId)` 则 `approvals.request(identity,'mcp_tool',{serverId,serverName,toolName,argsSummary≤400 脱敏})`，审计 `mcp_tool_call`。
 - `packages/core/src/agent/external/capabilities.ts`：`READ_ONLY_TOOLS` / `DESTRUCTIVE_TOOLS` / `toolAnnotations()`（D72 给外部智能体标注宿主工具，方向相反但词表可复用）。
 - D73（`docs/design/29-*`、`todo/connected-apps.md`）计划的 `classifyRisk`：`readOnlyHint===true` → read；`destructiveHint===false` → write；其余 → destructive；无人值守不自动批准 destructive。**未开工**。
 - 测试：`packages/core/test/unit/mcp-tools.test.ts`、`packages/core/test/integration/mcp.test.ts`、`mcp-loop.test.ts`。
 
+
+
 ### 3.6 Bot 间委派（借鉴点 1）——D70/D71 现状
 
-- **D70/D71 已在代码中实现**（commit `5d22ef8`、`3579fb3`；`todo/butler-and-delegation.md` 状态“P1–P4 已实现（2026-10-06）”）；`docs/design/27-*` 文件头仍写“尚未实现”，**是文档滞后**，留给 Pengfei 回写时修正。
+- **D70/D71 已在代码中实现**（commit `5d22ef8`、`3579fb3`；`todo/butler-and-delegation.md` 状态“P1–P4 已实现（2026-10-06）”）；`docs/design/27-`* 文件头仍写“尚未实现”，**是文档滞后**，留给 Pengfei 回写时修正。
 - 代码：`packages/core/src/tools/delegation-tools.ts`（`delegate_to_bot{bot_id, task}`、`cancel_delegation{delegation_id}`，**无 intent**）、`dispatch/delegation.ts`（586 行 DelegationHost：投递闸门 = B 邮箱空闲且不在免打扰、崩溃一致性、按 run_id 的 settle 钩子、单跳检查、卡片 `delegation_sent` / `delegation_result`）、`dispatch/butler.ts`、`domain/delegations.ts`、`domain/butler.ts`、`tools/butler-tools.ts`、迁移 `0016_butler_and_delegation.sql`。
 - 测试：unit `butler-route` / `butler-team` / `butler` / `delegation`；integration `butler-delegation-migration`、`delegation-host`、`delegation`。
 - **DEV-012**（`docs/dev/DEVIATIONS.md`，2026-10-08 决定）：D71 结果仍取 B 的“单个委派对话轮回复”，D75 后它可能只是“我去做”。推荐方案二（委派跟随 B 在该轮 `start_task` 起的任务，`origin_run_id` 关联），**D75 收尾后单独修订**——即 W6 的主体。
+
+
 
 ### 3.7 监看、记忆、语音（借鉴点 6、8、9）
 
@@ -146,7 +180,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
+
+
 ## W1. 浏览器动作确定性（P0，借鉴点 2）
+
+
 
 ### 目标
 
@@ -161,11 +199,12 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
   - 不做 `act` 批量 1–24 步：批量会让“哪一步不确定”更难表达，且我们的模型每步都拿到快照；保留单步。
   - 元素上限**维持 150**（已定），不跟 Rakazo 降到 80：长列表少滚动更重要；只补截断提示。
 
+
+
 ### 设计
 
 1. **结果形状**（`packages/core/src/tools/browser.ts`，模型看到的文本 + 结构化字段写进 `run_steps` payload）：
-
-   ```ts
+  ```ts
    type BrowserActionOutcome = 'not_started' | 'completed' | 'uncertain';
    interface BrowserActionReport {
      action: 'click' | 'type' | 'press' | 'scroll' | 'back' | 'open';
@@ -175,29 +214,33 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
      /** 页面是否因动作发生了导航 / 文档替换。 */
      navigated?: boolean;
    }
-   ```
-   - `not_started`：参数错、ref 预检失败（`REF_UNKNOWN` / 新增 `REF_STALE`）、`PAGE_CLOSED`、`BROWSER_BLOCKED` 等**派发前**的失败 → `ok:false`，可重试。
-   - `completed`：CDP 调用返回成功。之后取快照失败 → **`ok:true`** + `snapshotError` + 文案“动作已执行，快照失败，请先 browser_snapshot 再继续，不要重复该动作”。（修掉 §3.1 的缺陷。）
-   - `uncertain`：已进入派发（`callFunctionOn` / `Input.insertText` / `Input.dispatchKeyEvent` 已发出）后抛错或超时（含 `#settle` 期间页面崩溃、debugger detach）→ `ok:false, errorCode:'BROWSER_OUTCOME_UNKNOWN'`，文案“动作可能已生效：先 browser_snapshot 核实，确认未生效再重做；涉及提交/付款/发送时用 ask_user 问用户”。
-   - 实现：在 `BrowserHostRpc` 的 `click/type/press/scroll/back` 返回值里带 `dispatched: boolean` 阶段标记——browser-host 在派发前抛的错误打 `phase:'pre'`，派发后抛的打 `phase:'post'`（`AppError.details.phase`），core 按 phase 映射 outcome。
+  ```
+  - `not_started`：参数错、ref 预检失败（`REF_UNKNOWN` / 新增 `REF_STALE`）、`PAGE_CLOSED`、`BROWSER_BLOCKED` 等**派发前**的失败 → `ok:false`，可重试。
+  - `completed`：CDP 调用返回成功。之后取快照失败 → `ok:true` + `snapshotError` + 文案“动作已执行，快照失败，请先 browser_snapshot 再继续，不要重复该动作”。（修掉 §3.1 的缺陷。）
+  - `uncertain`：已进入派发（`callFunctionOn` / `Input.insertText` / `Input.dispatchKeyEvent` 已发出）后抛错或超时（含 `#settle` 期间页面崩溃、debugger detach）→ `ok:false, errorCode:'BROWSER_OUTCOME_UNKNOWN'`，文案“动作可能已生效：先 browser_snapshot 核实，确认未生效再重做；涉及提交/付款/发送时用 ask_user 问用户”。
+  - 实现：在 `BrowserHostRpc` 的 `click/type/press/scroll/back` 返回值里带 `dispatched: boolean` 阶段标记——browser-host 在派发前抛的错误打 `phase:'pre'`，派发后抛的打 `phase:'post'`（`AppError.details.phase`），core 按 phase 映射 outcome。
 2. **ref 指纹预检**（`apps/desktop/src/main/browser-host.ts`）：`PageEntry.refs` 从 `ref → backendNodeId` 扩为 `ref → { backendNodeId, role, name }`；`click/type/press` 前 `DOM.resolveNode` + 一次 `callFunctionOn` 取 `isConnected`、可见（`checkVisibility` 或 rect 非零）、`disabled`/`aria-disabled`、当前 role+可访问名（AX `getPartialAXTree` 取单节点），不符 → `BROWSER_REF_STALE`（`phase:'pre'`），提示“页面已变化，重新 browser_snapshot”。
 3. **重复动作熔断**（core，`tools/browser.ts` 每页一个小状态，按 `botId|conversationId` 存在 BrowserFacade 内存里）：
-   - 每次动作后对快照文本（去掉 ref 编号后）取 sha256；**同一动作签名**（action + ref 指纹 + 参数 hash）连续 3 次且快照 hash 不变 → 第 4 次直接 `ok:false, errorCode:'BROWSER_NO_PROGRESS'`、`not_started`，提示换做法或 ask_user。
-   - `browser_screenshot`：base64 的 sha256 与上一张相同 → 不回图，只回“截图与上一张相同，上一张仍有效”（省 token）。
+  - 每次动作后对快照文本（去掉 ref 编号后）取 sha256；**同一动作签名**（action + ref 指纹 + 参数 hash）连续 3 次且快照 hash 不变 → 第 4 次直接 `ok:false, errorCode:'BROWSER_NO_PROGRESS'`、`not_started`，提示换做法或 ask_user。
+  - `browser_screenshot`：base64 的 sha256 与上一张相同 → 不回图，只回“截图与上一张相同，上一张仍有效”（省 token）。
 4. **敏感输入不落盘**：`browser_type` 增可选参数 `sensitive?: boolean`（工具说明：密码、验证码、卡号必须置 true）；为 true 时 `run_steps` 的 tool_call payload 里 `text` 替换为 `«redacted:N chars»`，结果文本也不回显；另外**无论模型是否标注**，若目标元素 `type=password`（预检时已拿到）则强制按 sensitive 处理。落盘脱敏在 `agent/step-persistence.ts` 加一个按工具名的参数脱敏表（`browser_type.text` when sensitive），**不要**在工具里改 params 对象本身。
-   - 更彻底的 `fill_secret`（凭据不经模型，按 origin 绑定）列为非目标（§4），以后对齐 D52 的凭据审批卡思路单列。
+  - 更彻底的 `fill_secret`（凭据不经模型，按 origin 绑定）列为非目标（§4），以后对齐 D52 的凭据审批卡思路单列。
 5. **元素上限维持 150**（已定）：`BROWSER_SNAPSHOT_MAX_ELEMENTS = 150` 不改；`buildSnapshotSummary` 截断时在快照尾加“还有 N 个元素未列出，可 browser_scroll 或缩小范围”（若已有类似提示则只核对文案）。
 6. 工具说明（`tools/browser.ts` 各 description）补一句通用规则：“结果为已完成或不确定的动作不要重放；不确定先快照核实”。
 
+
+
 ### 改动清单
 
-- [x] `packages/shared/src/rpc/methods.ts`：browser 动作输出 schema 增 `outcome`、`snapshotError?`、`navigated?`；错误码枚举（若有）增 `BROWSER_REF_STALE` / `BROWSER_OUTCOME_UNKNOWN` / `BROWSER_NO_PROGRESS` （2026-10-09 完成）
+- [x] `packages/shared/src/rpc/methods.ts`：browser 动作输出 schema 增 `outcome`、`snapshotError?`、`navigated?`；错误码枚举（若有）增 `BROWSER_REF_STALE` / `BROWSER_OUTCOME_UNKNOWN` / `BROWSER_NO_PROGRESS` （2026-10-09 完成；`snapshotError` 未入 schema、只在结果文本里体现，见下方实施记录）
 - [x] `packages/shared/src/constants.ts`：`BROWSER_NO_PROGRESS_LIMIT = 3` （2026-10-09 完成）
 - [x] `apps/desktop/src/main/browser-host.ts`：refs 指纹、预检、phase 标记、`#settle` 内异常归为 post （2026-10-09 完成）
 - [x] `packages/core/src/browser/facade.ts`：透传 outcome；每页无进展计数器 （2026-10-09 完成）
 - [x] `packages/core/src/tools/browser.ts`：拆开“动作 / 快照”两个 try；outcome 映射；`browserErrorHint` 新码；screenshot 去重；`browser_type.sensitive` （2026-10-09 完成）
 - [x] `packages/core/src/agent/step-persistence.ts`：按工具参数脱敏表 （2026-10-09 完成）
 - [x] `packages/core/src/agent/context/continuation.ts`：渲染 `uncertain` 结果时带“结果未知”标记（与 W3 共用渲染函数） （2026-10-09 完成）
+
+
 
 ### 迁移 / 兼容
 
@@ -212,12 +255,16 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - e2e（改了 browser-host，需真 Electron）：`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/browser.spec.ts`，新增 SPA 重渲染后点旧 ref → REF_STALE
 - `pnpm --filter @kepcup/shared typecheck && pnpm --filter @kepcup/core typecheck && pnpm --filter @kepcup/desktop typecheck`
 
+
+
 ### 验收
 
 - 人为让快照抛错（测试桩），模型拿到 `ok:true` 且文案含“不要重复”。
 - SPA 改写 DOM 后用旧 ref 点击 → `REF_STALE`，无副作用。
 - `browser_type` 在密码框输入后，`run_steps` / 续接摘要 / 执行记录 UI 里都看不到明文。
 - 连续 3 次同一点击且页面不变，第 4 次被拦。
+
+
 
 ### 本项不做
 
@@ -227,6 +274,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 - 指纹校验对“名字随内容变化”的元素（计数徽章、时间）可能误判 stale → 只比 role + 名字前 40 字符，且名字比较前去数字；误判代价只是多一次快照。
 - `phase` 划分不准会把真失败标成 uncertain → 宁可多报 uncertain（安全侧），在测试里覆盖每个 CDP 调用点。
+
+
 
 ### 实施记录（2026-10-09）
 
@@ -238,9 +287,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 敏感输入：`browser_type.sensitive=true` 时 tool_call 步骤里 `text` 写成 `«redacted:N chars»`；值登记为本 run 敏感值，之后落盘的 request / assistant / tool_result / progress / tool_call 步骤里的原文与 JSON 转义形式都替换成 `«redacted»`（长度 < 4 的值只脱敏它自己的参数，不全局替换）。**密码框强制**：tool_call 步骤在执行前已落盘（pi `tool_execution_start`），宿主报 `passwordField` 后工具结果带 `sensitiveParams:['text']`，step-persistence 用新增的 `RunsService.replaceStepPayload` 改写那条 tool_call 步骤。**残留**：执行期间（tool_call 落盘到 tool_result 之间）明文在 runs.db 里短暂存在，此间崩溃则留存；外部智能体（ACP）自身进程/会话里的参数不受控；`wiki/maintenance.ts`、`skills/authoring.ts` 自己的步骤记录不走这张表（它们没有浏览器工具）。结果文本不回显：声明敏感或密码框时，陈述句不含文本，回程快照里出现的该值（≥4 字符）替换为 `«已隐藏»`。
 - e2e：`browser.spec.ts` 新增「SPA 重渲染后点旧 ref → REF_STALE 且无副作用；密码框输入不回显」（testkit `web-server.ts` 新增 `/spa` 夹具），大页面用例补断言「还有 250 个元素未列出」。
 
+
+
 #### 复查后修正（2026-10-09）
 
-- **阻断：字符串 `sensitive` 泄漏**：pi 用 `Value.Convert` 把 `"true"` 强转给工具，但 tool_call 步骤看的是原始参数。现在 `browser_type` 只要声明敏感或命中密码框就**总是**回报 `sensitiveParams:['text']`（含 ensurePage 失败、熔断拦截等早退路径），落盘侧据此改写；脱敏表接受 `true / 1 / "true" / "1" / "yes" / "y" / "on"`。pi 参数校验失败时回显的 `Received arguments: …` 不经工具（pi 直接回错误结果），其中的 `"text": "…"` 在之后的 request 步骤里按下条结构化规则抹掉（前提是值已登记——校验失败且只有密码框能证明敏感时无从得知，记为残留）。
+- **阻断：字符串** `sensitive` **泄漏**：pi 用 `Value.Convert` 把 `"true"` 强转给工具，但 tool_call 步骤看的是原始参数。现在 `browser_type` 只要声明敏感或命中密码框就**总是**回报 `sensitiveParams:['text']`（含 ensurePage 失败、熔断拦截等早退路径），落盘侧据此改写；脱敏表接受 `true / 1 / "true" / "1" / "yes" / "y" / "on"`。pi 参数校验失败时回显的 `Received arguments: …` 不经工具（pi 直接回错误结果），其中的 `"text": "…"` 在之后的 request 步骤里按下条结构化规则抹掉（前提是值已登记——校验失败且只有密码框能证明敏感时无从得知，记为残留）。
 - 宿主桥审计：`agent_bridge_tool_call` 审计行改记 `redactToolArgs(toolName, rawArgs)` 之后的参数（声明敏感的输入不进审计库；只有执行期才发现的密码框在审计行里仍是明文——审计行写在执行前且只追加，记为残留）。
 - 短值（CVV / PIN）：除 ≥4 字符的子串抹除外，新增**结构化**抹除（任意长度）：对象里同名参数字段恰为该值 → `«redacted»`；JSON 文本里的 `"text": "<值>"`（provider 的 `arguments` 字符串、pi 校验回显）及再转义一层的形式。标识字段（`id / call_id / tool_call_id / tool_use_id / toolCallId / toolName`）一律不改写，tool_call 步骤只抹 `args` / `title`。
 - 指纹：只去掉 ≤3 位的数字串（“删除 订单 10023”与“…10024”不再相等）；前缀匹配只在快照名被截断（以“…”结尾）时允许（“Pay”≠“Pay $500 now”）；空名只等于空名；纯短数字名（分页“2”/“3”）按原文比较。
@@ -252,7 +303,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
+
+
 ## W2. 外部副作用台账（P0，借鉴点 2/4/5 的地基；D67 第一步）
+
+
 
 ### 目标
 
@@ -264,23 +319,23 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 借 [M] `actions.ts` 的 `outcome_unknown` 终态与“活动回执”。
 - **不同**：Rakazo 的 effect 只挂在审批上；我们挂在**工具副作用类别**上（有些副作用工具不需要审批，比如已授权路径下的 `browser_click`），审批只是其中一种前置。不引入 Postgres；放在 runs.db（加密 SQLite），随 run 清理策略走。
 
+
+
 ### 设计
 
 1. **副作用分类**（新文件 `packages/core/src/agent/effects/classify.ts`，与 D67 replay 类对齐）：
-
-   ```ts
+  ```ts
    export type EffectClass = 'none' | 'local' | 'external';
    // none: 只读（read/ls/grep/web_search/browser_snapshot/screenshot/memory 查询…）
    // local: 只改本机且可撤销/可重做（write/edit 在项目内——已有 revert；memory 写）
    // external: 离开本机或不可撤销（browser_click/type/press/open 的提交类、mcp 非只读、git_remote、bash 非沙箱、send_message 到外部渠道、delegate_to_bot）
    export function effectClassOf(toolName: string, params: unknown, ctx: { mcpRisk?: ToolRisk }): EffectClass;
-   ```
-   - MCP 工具用 W5 的 `ToolRisk`：`read → none`，`write/destructive → external`。
-   - bash：沙箱内 → `local`；`unsandboxed` 审批通过的 → `external`（保守）。
-   - 词表放一处，`agent/external/capabilities.ts` 的 `READ_ONLY_TOOLS` 改为从这里派生或互相断言一致（测试里断言）。
+  ```
+  - MCP 工具用 W5 的 `ToolRisk`：`read → none`，`write/destructive → external`。
+  - bash：沙箱内 → `local`；`unsandboxed` 审批通过的 → `external`（保守）。
+  - 词表放一处，`agent/external/capabilities.ts` 的 `READ_ONLY_TOOLS` 改为从这里派生或互相断言一致（测试里断言）。
 2. **表**（runs.db 新迁移，编号见“迁移”）：
-
-   ```sql
+  ```sql
    CREATE TABLE tool_effects (
      id            TEXT PRIMARY KEY,          -- eff_…
      run_id        TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -299,15 +354,17 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
    );
    CREATE INDEX tool_effects_by_run ON tool_effects(run_id, created_at);
    CREATE INDEX tool_effects_by_key ON tool_effects(effect_key);
-   ```
+  ```
 3. **钩子**：`executeToolSafely` 增一个可选 `EffectRecorder`（由 pi-engine 与 mcp-bridge 注入），流程：
-   - `effectClassOf` 为 `external` 时：执行前 `insert(status='executing')`（审批在工具内部发生，审批被拒时工具返回 denied 错误码，recorder 结为 `denied`）。
-   - 工具返回 `ok:true` → `completed`；`ok:false` 且 errorCode 为 `BROWSER_OUTCOME_UNKNOWN` 或工具显式 `outcome:'uncertain'` → `uncertain`；其他失败 → `failed`。
-   - 抛异常且异常发生在 `runInToolCall` 内、且无法判断阶段 → `uncertain`（保守）。
-   - `ToolContext` 增 `toolCallId: string`（pi-engine 已有该值；mcp-bridge 用 MCP request id / 生成 id）。
-   - `ToolResult` 增可选 `effect?: { outcome?: 'completed'|'uncertain'; receipt?: {...}; summary?: string }`，工具可主动报告（W1 浏览器、MCP、git_remote 先接）。
+  - `effectClassOf` 为 `external` 时：执行前 `insert(status='executing')`（审批在工具内部发生，审批被拒时工具返回 denied 错误码，recorder 结为 `denied`）。
+  - 工具返回 `ok:true` → `completed`；`ok:false` 且 errorCode 为 `BROWSER_OUTCOME_UNKNOWN` 或工具显式 `outcome:'uncertain'` → `uncertain`；其他失败 → `failed`。
+  - 抛异常且异常发生在 `runInToolCall` 内、且无法判断阶段 → `uncertain`（保守）。
+  - `ToolContext` 增 `toolCallId: string`（pi-engine 已有该值；mcp-bridge 用 MCP request id / 生成 id）。
+  - `ToolResult` 增可选 `effect?: { outcome?: 'completed'|'uncertain'; receipt?: {...}; summary?: string }`，工具可主动报告（W1 浏览器、MCP、git_remote 先接）。
 4. **恢复**：`TaskHost.recover()`（以及对话轮的同类恢复）在标 interrupted 时，把该 run 所有 `executing` 行改为 `uncertain`（一条 UPDATE，幂等）。
 5. **读取接口**（core 内部 + RPC）：`effects.listForRun(runId)`、`effects.listForTask(taskId)`（沿 continuation 链收集）。RPC `effects.list: { input:{ taskId }, output:{ effects: ToolEffect[] } }`（给 W3 面板用）。
+
+
 
 ### 改动清单
 
@@ -319,11 +376,15 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [x] `packages/core/src/dispatch/tasks.ts` `recover()`：executing → uncertain（实际落在 `orchestrator.recoverInterrupted()` 第 0 步，见实施记录） （2026-10-09 完成）
 - [x] `packages/core/src/agent/external/capabilities.ts`：与 classify 词表一致性断言 （2026-10-09 完成）
 
+
+
 ### 迁移 / 兼容
 
 - runs.db 新增一张表，forward-only，无回填（旧 run 无台账 = “未知”，W3 面板对旧任务显示“本任务无副作用记录，请查看执行记录”）。
-- 编号：D73 预定了 runs 0009；谁先落谁先占号，**写迁移时以 `ls packages/core/migrations/runs` 实况取下一个号**，并同步改另一份 todo 里的预定号（那一步由 Pengfei 回写文档时处理，本方案执行时不改别的 todo）。
+- 编号：D73 预定了 runs 0009；谁先落谁先占号，**写迁移时以** `ls packages/core/migrations/runs` **实况取下一个号**，并同步改另一份 todo 里的预定号（那一步由 Pengfei 回写文档时处理，本方案执行时不改别的 todo）。
 - 改迁移属于“必须全量跑一次”的触发条件。
+
+
 
 ### 测试
 
@@ -332,17 +393,21 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 迁移测试：照 `task-events-migration.test.ts` 写 `tool-effects-migration.test.ts`，定向跑。
 - `pnpm --filter @kepcup/core typecheck`；本项收尾（含迁移）跑一次全量 `pnpm test`。
 
+
+
 ### 验收
 
 - 一个任务点了两次外部按钮、调用了一次 MCP 写工具，`effects.list` 返回 3 行且状态正确。
 - 强杀进程重启后，执行中的那行变为 `uncertain`。
 - 只读工具不产生任何行（台账不膨胀）。
 
+
+
 ### 实施记录（2026-10-09）
 
 - **文件**：新 `packages/core/src/agent/effects/{classify,key,store,recorder}.ts`、`packages/core/migrations/runs/0009_tool_effects.sql`（表与索引照设计；FK `runs(id) ON DELETE CASCADE`，runs.db 开着 `foreign_keys`）；shared `domain/types.ts` 增 `effectStatusSchema` / `effectReceiptSchema` / `toolEffectSchema`（类型 `EffectStatus` / `EffectReceipt` / `ToolEffect`），`ids.ts` 增前缀 `eff_`；RPC `effects.list`（输入复用 `taskIdInputSchema`，输出 `effectsListOutputSchema`，已进 `APP_METHODS` 白名单），绑定在 `rpc/bindings.ts`；`CoreDomainServices.effects`（`ToolEffectsStore`）。
 - **钩子**：`executeToolSafely(tool, params, ctx, effects?)`；`PiEngine` 与 `HostMcpBridge` 的 deps 增可选 `effects`（start.ts 用同一个 `createEffectRecorder` 注入）。`ToolContext.toolCallId` 为**可选**（偏差：pi 与桥都会填；做成可选是为了不改几十处直接调 `execute` 的测试）；桥用它自己的 `kc_<uuid>`。`ToolResult.effect?: { outcome?, receipt?, summary? }` 只进台账，本轮**只有 MCP 包装工具**在 `callTool` 抛错时报 `outcome:'uncertain'`（请求可能已到 server）；浏览器沿用 W1 的 `outcome`，git_remote 暂不报回执（留给 W4）。
-- **分类**（`effectClassOf(toolName, params, ctx)`）：全部 69 个内置工具名逐个登记（单测扫描工具源码断言无遗漏、无陈旧项），未登记 → external。偏差 / 细化：`send_message` 平时 local，`mention_bot_ids` 非空（会触发其他 Bot）→ external；`browser_open/scroll/back/close` → none（与 W1 一致：GET 导航可重做）；`generate_*` 媒体 → local（重做只多花费用）；`delegate_task`（只读 SubAgent）→ local，子 run 自己的外部调用按子 run 入账。MCP 工具：`ToolDefinition.mcp = {serverId, toolName, risk}`（mcp/tools.ts 包装时写入，外部智能体改名后仍在），记录器取它与 `McpService.riskOf` 实时值中更严的一档。
+- **分类**（`effectClassOf(toolName, params, ctx)`）：全部 69 个内置工具名逐个登记（单测扫描工具源码断言无遗漏、无陈旧项），未登记 → external。偏差 / 细化：`send_message` 平时 local，`mention_bot_ids` 非空（会触发其他 Bot）→ external；`browser_open/scroll/back/close` → none（与 W1 一致：GET 导航可重做）；`generate_`* 媒体 → local（重做只多花费用）；`delegate_task`（只读 SubAgent）→ local，子 run 自己的外部调用按子 run 入账。MCP 工具：`ToolDefinition.mcp = {serverId, toolName, risk}`（mcp/tools.ts 包装时写入，外部智能体改名后仍在），记录器取它与 `McpService.riskOf` 实时值中更严的一档。
 - **bash**：沙箱内 → local（不记）；沙箱外由网关判定——`ToolCallScope` 增 `effect` 钩子，`gateway #executeUnsandboxedApproved`（确认模式下已批准的命令、`request_unsandboxed`）执行前 `escalate('unsandboxed')`，记录器此时才写 `executing` 行（摘要「bash（沙箱外执行） …」）。确认模式的白名单只读命令不记。审批关联同理：`ApprovalsService #insert` 调 `noteApproval(id)`，行的 `approval_id` = 本次调用最近一次审批。
 - **状态**：执行前 `executing`；ok → completed；`effect.outcome/outcome==='uncertain'` 或 `BROWSER_OUTCOME_UNKNOWN` → uncertain；`APPROVAL_DENIED`（返回或抛出）→ denied；`outcome:'not_started'` → failed；其它失败 → failed，**但 run 已被中止时 → uncertain**（细化）；抛异常 → uncertain。`settle` 只改 executing / uncertain 行（恢复改成 uncertain 后真实结果仍可落定）。记录器任何异常只 `logger.warn`，不影响工具（含 run 不存在时 FK 拒绝）。
 - **脱敏**：摘要与 `args_hash` 的输入 = W1 参数脱敏表（`redactToolArgs`）+ 台账专用表（`browser_type.text` **一律**不入台账——密码框是执行中才知道的，行在执行前已写）+ `secrets.redact`；`args_hash` 是脱敏后 canonical JSON 的完整 sha256，`effect_key` 取前 16 位。摘要 ≤200 字。
@@ -352,7 +417,6 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - **一致性**：`capabilities.ts` 的 `READ_ONLY_TOOLS` 改为导出，单测断言其每一项分类为 none、任何 external 工具都不带只读注解（注解集合本身未改，避免改变外部智能体的审批行为）。
 - **W3-P0 / W1 续接项**：`buildRunDigest` 增可选 `effects`（台账行）；未配对的 tool_call 若有副作用（分类非 none）或台账 uncertain → `[结果未知] 工具(参数) —— 中断时仍在执行、没有返回结果，可能已经生效：先核实页面 / 外部状态，勿直接重做`，只读的未配对调用只标「→（未返回结果）」；结果 `outcome==='uncertain'` / `BROWSER_OUTCOME_UNKNOWN`（旧行无 outcome 也认）/ 台账 uncertain → `[结果未知] 工具(参数) —— 动作可能已经生效（结果不确定）：… → 失败：<untrusted>…</untrusted>`。任务续接回放（orchestrator `#taskContinuation`）与任务失败摘要（`TaskHost #failureText`）传入台账；SubAgent 的摘要不传（只读）。无台账的旧 run 只靠步骤配对。
 - **测试**：`packages/core/test/unit/tool-effects.test.ts`（17）、`packages/core/test/unit/tool-effects-migration.test.ts`、`packages/core/test/integration/tool-effects.test.ts`（真实任务：两次点击 + 输入 + MCP 写工具 → 4 行、只读浏览器 / 只读 MCP 不产生行、审批关联；uncertain 点击 + 拒绝的 MCP；重启恢复 + 失败摘要 + `effects.list` 续接链）、`continuation.test.ts` 增 3 例；`task-events-migration.test.ts` 的 runs 迁移期望改为 `[6, 7, 8, 9]`。改了迁移与 shared 契约，P0 收尾需跑一次全量。
-
 - **复查后修正（2026-10-09）**：
   - **审批串到别的 run**：`Scheduler.submit()` → `#drain()` 在提交方的异步上下文里同步启动 job，委派 / @ 提及 / 任务派出 / 工具里设的定时器启动的另一个 run 会继承该工具调用的 ALS scope（它的 agent_tool 审批会改写委派行的 approval_id；once 授权的归属同理）。根治：`#drain` 用新的 `outsideToolCall()`（`storage.exit`）启动 job——核实过没有合法依赖：once 授权本就按 `grant.runId === identity.runId` 过滤，别的 run 拿不到；子 run 自己的工具调用各自开新 scope。另加两道护栏：钩子改用 `activeEffectHooks()`（scope 已结束则不给），`escalate` / `noteApproval` 带 `identity.runId`，记录器忽略别的 run；`store.noteApproval` 只改 `executing` 行。
   - **结果未知写进步骤**：`executeToolSafely` 在台账结为 uncertain（抛错、MCP 传输失败、中止期间失败）且工具没给 outcome 时，给结果补 `outcome:'uncertain'`；pi-engine 与桥的 tool_result 报 `outcome ?? effect.outcome`。续接摘要因此不依赖台账也能标注；台账兜底按基础 id（去掉 `#n`）匹配，且只作用于失败结果（同 id 的成功调用不被牵连）。`settle` 移出 try，记录器出错不会替换真实结果。
@@ -361,6 +425,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
   - 0009 增 `CREATE INDEX IF NOT EXISTS runs_by_parent ON runs(parent_run_id)`（续接链收集子 run 用）。
   - 测试：tool-effects 单测 +5（跨 run / 已结束 scope 的审批与 escalate 被忽略、调度器 job 不继承 scope、步骤补 outcome、记录器抛错不影响结果、自报摘要擦除），continuation +2（`id#2` 基础 id 匹配、步骤自带 outcome），host-mcp-bridge +1（effect.outcome / 台账 uncertain 进 tool_result 报告），迁移测试断言新索引。
 
+
+
 ### 风险
 
 - 分类表漏掉某个外部工具 → 默认值取**保守**：未登记的工具名按 `external`（只多记一行，不影响行为），测试列出全部内置工具名断言均已登记。
@@ -368,36 +434,46 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
+
+
 ## W3. 中断任务「检查后重试」+ 撤销授权立即中断（P0 摘要标注 + P1 重试面板 / 撤销中断，借鉴点 5）
+
+
 
 ### 目标
 
 1. 应用退出 / 崩溃导致的 `interrupted` 任务**可以重试**，但有外部副作用时**必须先检查**：先让用户看到“可能已经做了什么”，续接的模型也被明确告知“这些结果未知，先核实，勿直接重做”。（已定：开重试按钮；有外部副作用必须检查后才能重试。）
 2. 用户在任务运行中**撤销授权**（路径授权 / MCP 允许）时，受影响的任务**立刻**标为 `interrupted`，走同一条“检查后重试”路径。（已定。）
 
+
+
 ### 借鉴什么 / 刻意不同
 
 - 借 [D] `store.ts`：租约过期 / 设置变化 → interrupted，文案 “Review completed effects before retrying”；`TaskActions.tsx` 的 “Retry after review”。
 - **不同**：不做自动恢复（D49/D67 的 ephemeral 语义不变）；触发中断的“设置变化”只限于**用户主动撤销授权**（下文 §设计 3 列举），不包括无关设置（模型、外观等）。
 
+
+
 ### 设计
 
 1. **P0（无 UI，0.5 天）**：`continuation.ts` `renderStepLines` 对“有 tool_call 无 tool_result”的步骤、以及 `tool_effects.status='uncertain'` 的步骤渲染为：
-   `- [结果未知] browser_click e12 "提交订单" —— 应用中断时正在执行，先核实页面/外部状态，勿直接重做`
+  `- [结果未知] browser_click e12 "提交订单" —— 应用中断时正在执行，先核实页面/外部状态，勿直接重做`
    （无台账时仅依据步骤配对判断，P0 不依赖 W2。）
 2. **P1 重试**：
-   - `TaskHost.retry(taskId, opts?: { reviewed?: boolean })`：允许 `status ∈ {'failed','interrupted'}`；`interrupted` 且该任务链上存在 `external` 台账行（completed/uncertain）时，**要求** `reviewed:true`，否则返回 `REVIEW_REQUIRED`。
-   - 续接 run 的 brief 前置一段 `<effects_before_interrupt>`：列出 completed / uncertain 行（summary + 状态），并写明“completed 的不要重做；uncertain 的先核实”。
-   - RPC：现有重试入口是 `runs.retry`（`methods.ts:1258`，输入 `runIdInputSchema`）。新增 `runsRetryInputSchema = runIdInputSchema.extend({ reviewed: z.boolean().optional() })`，不改其他调用方。
-   - 渲染端：`task-view.ts` `canRetry` 改为 `(state==='failed' || state==='interrupted') && setup===null && continuedByTaskId===null`，并新增 `needsReview`（interrupted 且有 external 行）；`TaskCard.svelte` 中 `needsReview` 时按钮文案“检查后重试”，点开展示 `effects.list` 的清单（状态徽标：已完成 / 结果未知 / 失败），用户勾“我已核实”后才可点“重试”。无 external 行时按钮直接是“重试”。
+  - `TaskHost.retry(taskId, opts?: { reviewed?: boolean })`：允许 `status ∈ {'failed','interrupted'}`；`interrupted` 且该任务链上存在 `external` 台账行（completed/uncertain）时，**要求** `reviewed:true`，否则返回 `REVIEW_REQUIRED`。
+  - 续接 run 的 brief 前置一段 `<effects_before_interrupt>`：列出 completed / uncertain 行（summary + 状态），并写明“completed 的不要重做；uncertain 的先核实”。
+  - RPC：现有重试入口是 `runs.retry`（`methods.ts:1258`，输入 `runIdInputSchema`）。新增 `runsRetryInputSchema = runIdInputSchema.extend({ reviewed: z.boolean().optional() })`，不改其他调用方。
+  - 渲染端：`task-view.ts` `canRetry` 改为 `(state==='failed' || state==='interrupted') && setup===null && continuedByTaskId===null`，并新增 `needsReview`（interrupted 且有 external 行）；`TaskCard.svelte` 中 `needsReview` 时按钮文案“检查后重试”，点开展示 `effects.list` 的清单（状态徽标：已完成 / 结果未知 / 失败），用户勾“我已核实”后才可点“重试”。无 external 行时按钮直接是“重试”。
 3. **P1 撤销授权 → 立即中断**：
-   - **触发源**（用户主动撤销，均为宿主事件，不靠模型）：
-     - `grants.revoke`（路径授权，`methods.ts:1276`）→ 影响该授权所属对话中**正在运行的任务**；
-     - MCP：server 被停用（`enabled:false`）、被移出 Bot 的 `mcp_server_ids`、server `autoApprove` 由开改关、W5 的逐工具策略 `approval` 由 `auto` 改 `ask` 或 `enabled` 改 `false` → 影响**工具面里含该 server 工具**的 Bot 的运行中任务。
-     - **不算撤销**：once 授权在调用结束时的自动失效、`GRANT_ABSOLUTE_TTL_MS` 到期、任务自然结束——这些不触发中断。（解读：Pengfei 的答复针对“用户撤销”，自动过期沿用现状。）
-   - **机制**：GrantsService / MCP 设置写入路径发出 `permission.revoked` 内部事件 `{ scope: 'path'|'mcp', conversationId?, botIds, serverId?, toolName? }`；TaskHost 订阅 → 对受影响任务调用新的 `interrupt(taskId, reason)`：abort run handle → 取消该 run 的待决审批（`cancelPendingForRun`）→ W2 台账中 `executing` 行改 `uncertain` → run 与任务状态写 `interrupted`，`error_json.reason='permission_revoked'`，文案“授权已被撤销，任务已中断。请检查已完成的操作后再重试”。之后就是上面的检查后重试流程。
-   - **对话轮不中断**：对话轮秒级、只读（W5 后可调只读 MCP 工具），撤销后其后续调用自然失败即可。（解读：Pengfei 的问题与答复针对“任务”。）
-   - 幂等：同一任务多次收到事件只中断一次（已终态则忽略）。
+  - **触发源**（用户主动撤销，均为宿主事件，不靠模型）：
+    - `grants.revoke`（路径授权，`methods.ts:1276`）→ 影响该授权所属对话中**正在运行的任务**；
+    - MCP：server 被停用（`enabled:false`）、被移出 Bot 的 `mcp_server_ids`、server `autoApprove` 由开改关、W5 的逐工具策略 `approval` 由 `auto` 改 `ask` 或 `enabled` 改 `false` → 影响**工具面里含该 server 工具**的 Bot 的运行中任务。
+    - **不算撤销**：once 授权在调用结束时的自动失效、`GRANT_ABSOLUTE_TTL_MS` 到期、任务自然结束——这些不触发中断。（解读：Pengfei 的答复针对“用户撤销”，自动过期沿用现状。）
+  - **机制**：GrantsService / MCP 设置写入路径发出 `permission.revoked` 内部事件 `{ scope: 'path'|'mcp', conversationId?, botIds, serverId?, toolName? }`；TaskHost 订阅 → 对受影响任务调用新的 `interrupt(taskId, reason)`：abort run handle → 取消该 run 的待决审批（`cancelPendingForRun`）→ W2 台账中 `executing` 行改 `uncertain` → run 与任务状态写 `interrupted`，`error_json.reason='permission_revoked'`，文案“授权已被撤销，任务已中断。请检查已完成的操作后再重试”。之后就是上面的检查后重试流程。
+  - **对话轮不中断**：对话轮秒级、只读（W5 后可调只读 MCP 工具），撤销后其后续调用自然失败即可。（解读：Pengfei 的问题与答复针对“任务”。）
+  - 幂等：同一任务多次收到事件只中断一次（已终态则忽略）。
+
+
 
 ### 改动清单
 
@@ -407,6 +483,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [x] P1 MCP 设置写入路径（`packages/core/src/mcp/service.ts` 或 settings 写入处）与 `bots.update`（`mcp_server_ids` 变化）：计算差集后发事件 （2026-10-09 完成）
 - [x] P1 `packages/shared/src/rpc/methods.ts`：`runs.retry` 输入 `reviewed?` （2026-10-09 完成）
 - [x] P1 `apps/desktop/src/renderer/src/lib/features/tasks/task-view.ts`、`TaskCard.svelte`、新组件 `TaskEffectsReview.svelte`、i18n `zh-CN.ts` 文案（含“授权已被撤销”中断原因） （2026-10-09 完成）
+
+
 
 ### 迁移 / 兼容
 
@@ -420,27 +498,33 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - `node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/features/tasks/task-view.test.ts`
 - e2e：`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/tasks.spec.ts`（新增中断重试路径，可用测试钩子模拟 recover / 撤销）
 
+
+
 ### 验收
 
 - 任务中断后卡片出现“检查后重试”，清单与执行记录一致；核实前按钮禁用。
 - 续接模型的第一步是核实而不是重做（以 fake model 断言 brief 内容）。
 - 任务运行中在授权列表里撤销一条路径授权，该任务在 1 秒内变为“已中断（授权已被撤销）”。
 
+
+
 ### 风险
 
 - 用户嫌麻烦：没有 external 行时不弹清单，直接可重试。
 - 撤销波及面过大（一个 MCP server 被多个 Bot 用）：只中断**工具面含该 server** 的任务；中断前不弹确认（已定为立即中断），但在撤销操作处的 toast 里写明“已中断 N 个进行中的任务”。
 
+
+
 ### 实施记录（P1，2026-10-09）
 
 - **重试**：`TaskHost.retry(taskId, { reviewed? })` 接受 `failed` / `interrupted`；先查幂等（已有接续任务直接返回，不论 reviewed），再查闸门：`interrupted` 且续接链（`effects.listForTask`，含 SubAgent 子 run）有 `completed` / `uncertain` / `executing`（死进程留下的按未知算）台账行 → 不带 `reviewed:true` 抛 `AppError('REVIEW_REQUIRED')`（shared `ERROR_CODES` 新增）。只有 `failed` / `denied` 行、或没有台账（旧任务）→ 直接重试。`Orchestrator.retryRun(runId, opts)` 对 `failed` / `interrupted` 的任务转交 `TaskHost.retry`（对话轮仍只重试 failed）。同一判定进 `TaskView.reviewRequired?`（core 算，渲染端不再自己查台账），另加 `TaskView.errorReason?`。
-- **谁能传 `reviewed`**：只有 RPC `runs.retry`（`runsRetryInputSchema = runIdInputSchema.extend({ reviewed })`），渲染端只在面板勾「我已核实」后传；设置卡的自动重试（`chat.svelte.ts`）针对 failed，不传。模型侧没有重试工具——D75 的「重新执行」是 `start_task({continues_task_id})`，它不经过这道闸门（偏差 / 解读：不拦模型的接续，因为那是用户在对话里要求的；但接续回放同样带下面的前置段，且撤销授权中断的失败条目告诉 Bot「不要自行重新派出或接续，由用户在任务卡上检查后重试」）。
+- **谁能传** `reviewed`：只有 RPC `runs.retry`（`runsRetryInputSchema = runIdInputSchema.extend({ reviewed })`），渲染端只在面板勾「我已核实」后传；设置卡的自动重试（`chat.svelte.ts`）针对 failed，不传。模型侧没有重试工具——D75 的「重新执行」是 `start_task({continues_task_id})`，它不经过这道闸门（偏差 / 解读：不拦模型的接续，因为那是用户在对话里要求的；但接续回放同样带下面的前置段，且撤销授权中断的失败条目告诉 Bot「不要自行重新派出或接续，由用户在任务卡上检查后重试」）。
 - **前置段**：`buildTaskReplaySegment` 增 `chainEffects`，源任务非 completed 时在 `<continuation>` 前加 `<effects_before_interrupt>`：「completed 的不要重做；uncertain 的先核实…沙箱内执行的命令不在此清单中」，逐行 `- [completed|uncertain] 工具名: <untrusted>摘要</untrusted>`（摘要压成一行、`neutralizeUntrusted`）。偏差：不只用户重试，`continues_task_id` 接续 failed / cancelled / interrupted 源任务都带（同一条回放路径；只多给模型信息）。段落原放在续接回放（上下文段）里——复查后改为放进任务触发段、`<task_brief>` 之前，见下。
 - **撤销 → 中断**：新 `packages/core/src/permissions/revocations.ts`：`PermissionRevocations`（监听器集合，沿用 `onAutoRevoke` 的写法，core 没有事件总线；同步投递、汇总监听器返回的中断数，监听器异常不影响撤销）、纯函数 `mcpRevocationsBetween`（settings 旧→新：server 删除 / `enabled` 开→关 / `autoApprove` 开→关 → 整个 server；逐工具 `enabled`→false、有效审批 auto→ask——含只读工具默认 auto 被改成 ask、删掉 auto 策略回到 ask——按 `effectiveMcpApproval` + `McpService.riskOf` 计算）、`serversRemovedFromBot`（只算应用级启用的 server）、`botsUsingServer`。来源：`GrantsService.revokeByUser(id)`（`grants.revoke` RPC 改调它；自动失效仍走 `revoke` / `#autoRevoke`，不发事件），`settings.update`（带 `mcpServers` 时算差集）、`bots.update`（`mcp_server_ids` 差集）——都在 RPC 绑定里发。`start.ts` 建 `revocations` 注入 GrantsService，并 `revocations.on(e => orchestrator.tasks.interruptForRevocation(e))`；`CoreDomainServices.revocations`。
 - **受影响任务**：路径授权是（Bot, 对话）级的（`listEffective` 按 botId 过滤）→ 只中断**该授权的 Bot** 在该对话里的任务；MCP → 勾选了该 server 的所有 Bot 的任务（逐工具撤销也按 Bot 粒度，不看任务是否真用过该工具）。只中断 `running / waiting_approval / waiting_lease`；还在 submitted（queued）的任务没执行过任何东西，留着按新权限启动。对话轮不中断。
-- **`TaskHost.interrupt(taskId, reason)`**：复用 `#stop`（扩成接受 `interrupted` + `beforeSettle`）：abort 控制器与 run handle → `cancelPendingApprovals(任务 + 子 run)`（新可选 dep，orchestrator 逐个 `approvals.cancelPendingForRun`）→ `effects.markExecutingUncertain(同一组 run)` → `settle(interrupted, error=文案, errorReason)`。终态条目先写（失败摘要因此已把那次点击标「结果未知」），再写 runs；执行体之后的 settle 因终态不可逆而是空操作（测试里放开挂起的点击后状态仍是 interrupted / permission_revoked）。终态任务直接返回（幂等）。`error_json.reason` 落在 runs.ts（`RunErrorJson.reason`，`Run.errorReason?`，`update({errorReason})`）；被唤醒的对话轮照常收到 failure 条目（D75 不变量）。
+- `TaskHost.interrupt(taskId, reason)`：复用 `#stop`（扩成接受 `interrupted` + `beforeSettle`）：abort 控制器与 run handle → `cancelPendingApprovals(任务 + 子 run)`（新可选 dep，orchestrator 逐个 `approvals.cancelPendingForRun`）→ `effects.markExecutingUncertain(同一组 run)` → `settle(interrupted, error=文案, errorReason)`。终态条目先写（失败摘要因此已把那次点击标「结果未知」），再写 runs；执行体之后的 settle 因终态不可逆而是空操作（测试里放开挂起的点击后状态仍是 interrupted / permission_revoked）。终态任务直接返回（幂等）。`error_json.reason` 落在 runs.ts（`RunErrorJson.reason`，`Run.errorReason?`，`update({errorReason})`）；被唤醒的对话轮照常收到 failure 条目（D75 不变量）。
 - **提示**：新事件 `tasks.interrupted { count, reason:'permission_revoked', scope }`（count>0 才推），渲染端 `permissions` store（启动即订阅）弹 `已中断 N 个进行中的任务`——授权列表、MCP 设置（含逐工具策略）、Bot 详情 MCP 勾选三处都由同一事件覆盖（偏差：不是各 RPC 返回值，而是撤销 RPC 同步期间推送的事件）。
-- **渲染端**：`task-view.ts` `canRetry` 放宽到 interrupted、`needsReview`、`revoked`（显示固定文案「授权已被撤销，任务已中断。请检查已完成的操作后再重试」）、`effectBadge`（executing / intended 显示为结果未知）；`TaskCard.svelte` needsReview 时按钮「检查后重试」，展开新组件 `TaskEffectsReview.svelte`（`effects.list` 清单 + 徽标 已完成 / 结果未知 / 失败 / 已拒绝 + 「沙箱内执行的命令不在此清单中，请查看执行记录。」+「我已核实」勾选后才能点「重试」，调 `runs.retry reviewed:true`）；普通重试若被服务端回 `REVIEW_REQUIRED`（视图过期）也改为展开面板。`tasks.retry(taskId, reviewed)`；i18n 新增 `task.reviewRetry` / `task.review.*` / `task.effect.*` / `task.interruptedRevoked` / `task.interruptedByRevoke` / `chats.errorCode.REVIEW_REQUIRED`。
+- **渲染端**：`task-view.ts` `canRetry` 放宽到 interrupted、`needsReview`、`revoked`（显示固定文案「授权已被撤销，任务已中断。请检查已完成的操作后再重试」）、`effectBadge`（executing / intended 显示为结果未知）；`TaskCard.svelte` needsReview 时按钮「检查后重试」，展开新组件 `TaskEffectsReview.svelte`（`effects.list` 清单 + 徽标 已完成 / 结果未知 / 失败 / 已拒绝 + 「沙箱内执行的命令不在此清单中，请查看执行记录。」+「我已核实」勾选后才能点「重试」，调 `runs.retry reviewed:true`）；普通重试若被服务端回 `REVIEW_REQUIRED`（视图过期）也改为展开面板。`tasks.retry(taskId, reviewed)`；i18n 新增 `task.reviewRetry` / `task.review.`* / `task.effect.*` / `task.interruptedRevoked` / `task.interruptedByRevoke` / `chats.errorCode.REVIEW_REQUIRED`。
 - **测试**：新 `packages/core/test/integration/tasks-interrupt.test.ts`（6 例；`-t retry`：无台账直接重试、有 completed/uncertain 行未 reviewed → REVIEW_REQUIRED 且不建任务、reviewed → 成功且 fake model 收到的请求含前置段与 `<untrusted>` 中和、重复点击返回同一任务、只有 denied 行不需检查；`-t revoke`：真实任务卡在挂起的 `browser_click` 时撤销路径授权 → RPC 返回前即 interrupted + errorReason、executing → uncertain、失败条目含提示与「结果未知」、同 Bot 别的对话与别的 Bot 不受影响、once 授权 noteOnceUse / expireForRun 不触发、重复撤销 / 重复事件幂等、`tasks.interrupted` 事件；MCP 写工具等审批时把 server 移出 `mcp_server_ids` → 中断 + 审批 cancelled；settings：无关保存 / 列表不变不触发，逐工具 auto→ask 与停用 server 中断使用它的 Bot 的任务）；新单测 `packages/core/test/unit/permission-revocations.test.ts`（差集真值表、监听器汇总）；`task-view.test.ts` +3。**e2e 未加**（渲染端没有直接调 core 的测试接缝，造 MCP / 浏览器外部副作用要走设置页 UI；且 `apps/desktop/out` 与并行的 W6 会话共用）。改了 shared 契约（Run / TaskView 可选字段、errors、methods、events），按约定收尾需跑一次全量。
 - **复查后修正（2026-10-09）**：
   - **外部智能体复用会话丢前置段**：复用会话时提示只有「对话增量 + 触发段」，上下文段（含续接回放）不发。`<effects_before_interrupt>` 改由 orchestrator `#effectsBeforeInterrupt(brief)` 生成，拼在任务触发段（`<task_brief>` 之前），内置引擎与复用 / 新建的外部会话都能拿到；`buildTaskReplaySegment` 恢复原样（去掉 `chainEffects`）。
@@ -453,13 +537,19 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
-## W4. 审批幂等与回执（P1，借鉴点 4；依赖 W2）
+
+
+## W4. 审批幂等与回执（P1，借鉴点 4；依赖 W2）（2026-10-09 先暂缓，后由用户决定继续实施）
+
+
 
 ### 目标
 
 - 同一 run 里模型对**完全相同的外部动作**再次请求审批时，不再弹第二张卡：已批准且已完成 → 直接返回上次回执；已拒绝 → 直接返回拒绝（附“用户已拒绝过同样的操作”）。参数不同 → 新卡。
 - 审批卡在执行后显示**结果回执**（已完成 / 失败 / 结果未知），用户能看到“批准的那件事最后怎样了”。
 - 决定绑定内容：`approvals.decide` 可带 `payloadHash`，与服务端不符则拒绝。
+
+
 
 ### 借鉴什么 / 刻意不同
 
@@ -469,25 +559,31 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
   - 不做 30 分钟过期：KepCup 审批绑在 run 上，run 结束即 `cancelPendingForRun`，已有生命周期；`SURVIVES_RUN` 的 kind 维持现状。
   - 不加新 approval kind（避免重建 approvals 表），回执放 W2 的 `tool_effects` 行，卡片按 `approval_id` 反查。
 
+
+
 ### 设计
 
 1. `approvals.request` 增可选 `effectKey`（由 recorder 在 external 工具的审批前通过 `tool-call-scope` 的 AsyncLocalStorage 提供，工具代码不需改）。
 2. 去重门：`request` 时若同 `run_id` 链（含 continuation 链）上存在相同 `effect_key` 前缀（不含 occurrence）的行：
-   - `completed` → 不建卡，工具得到 `DUPLICATE_EFFECT`，文案“相同操作已在本任务中完成（回执：…），不要重复执行”；
-   - `denied` → 返回拒绝，文案“用户已拒绝相同操作”；
-   - `uncertain` → **仍建卡**，但卡片顶部标“上次同样的操作结果未知，请先确认是否已生效”；
-   - 模型确实需要重复执行（例如发两条同样的消息）→ 工具参数里本就会有差异；若真完全相同，靠用户在 `uncertain` 卡上决定。对 `completed` 的情形给模型提示“如确需再做一次，用 ask_user 征得用户同意”。
+  - `completed` → 不建卡，工具得到 `DUPLICATE_EFFECT`，文案“相同操作已在本任务中完成（回执：…），不要重复执行”；
+  - `denied` → 返回拒绝，文案“用户已拒绝相同操作”；
+  - `uncertain` → **仍建卡**，但卡片顶部标“上次同样的操作结果未知，请先确认是否已生效”；
+  - 模型确实需要重复执行（例如发两条同样的消息）→ 工具参数里本就会有差异；若真完全相同，靠用户在 `uncertain` 卡上决定。对 `completed` 的情形给模型提示“如确需再做一次，用 ask_user 征得用户同意”。
 3. `approvalsDecideInputSchema` 增 `payloadHash?: string`；`approvalSchema` 输出增 `payloadHash`（`sha256(stableJson(payload))`，计算不落库）；不符 → `APPROVAL_STALE`。
 4. 卡片回执：`approvals.list/describe` 输出增 `effect?: { status, receipt?, settledAt? }`（core 跨库查 `tool_effects where approval_id=?`）；`ApprovalCard.svelte` 底部显示状态行。
 5. 精确卡片：核对 `mcp_tool` 卡展示的 `argsSummary≤400`——对“发送类”工具（名字或 W5 风险为 write/destructive 且参数里有 `to/recipient/channel/email` 等键）把这些键**完整**列在卡片上，不参与截断。
 
+
+
 ### 改动清单
 
-- [ ] `packages/core/src/permissions/approvals.ts`：effectKey 去重门、payloadHash 校验、describe 带 effect
-- [ ] `packages/core/src/agent/effects/recorder.ts`：审批前暴露 effectKey；审批结果回填 approval_id
-- [ ] `packages/core/src/gateway/index.ts` `mcpToolCall`：收件人类字段完整展示
-- [ ] `packages/shared/src/rpc/methods.ts`、`domain/types.ts`：decide `payloadHash?`、approval 输出 `payloadHash`、`effect?`
-- [ ] `apps/desktop/src/renderer/src/lib/features/**/ApprovalCard.svelte`（`rg -l ApprovalCard apps/desktop/src` 定位）：回执行、“上次结果未知”提示、决定时回传 hash
+- [x] `packages/core/src/permissions/approvals.ts`：effectKey 去重门、payloadHash 校验、describe 带 effect （2026-10-09 完成）
+- [x] `packages/core/src/agent/effects/recorder.ts`：审批前暴露 effectKey；审批结果回填 approval_id （2026-10-09 完成）
+- [x] `packages/core/src/gateway/index.ts` `mcpToolCall`：收件人类字段完整展示 （2026-10-09 完成）
+- [x] `packages/shared/src/rpc/methods.ts`、`domain/types.ts`：decide `payloadHash?`、approval 输出 `payloadHash`、`effect?` （2026-10-09 完成）
+- [x] `apps/desktop/src/renderer/src/lib/features/**/ApprovalCard.svelte`（`rg -l ApprovalCard apps/desktop/src` 定位）：回执行、“上次结果未知”提示、决定时回传 hash （2026-10-09 完成）
+
+
 
 ### 迁移 / 兼容
 
@@ -500,18 +596,53 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - e2e：`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/approvals.spec.ts`
 - 改了 shared 契约 → 本项收尾跑一次全量。
 
+
+
 ### 验收
 
 - fake model 连续两次调用同一 MCP 写工具同参数：第一次弹卡并执行，第二次不弹卡、拿到 `DUPLICATE_EFFECT`。
 - 卡片执行后显示“已完成 / 结果未知”。
 
+
+
 ### 风险
 
 - 去重误伤合法重复：只在**同一任务链**内去重；跨任务不去重。
 
+### 实施记录（2026-10-09）
+
+- **去重门放在哪**：`ApprovalsService.request` 建卡前（无人值守分支之前）调 tool-call scope 效果钩子的新方法 `approvalGate(runId)`；判定由记录器做（它有本次调用的台账行、脱敏参数哈希与 store），工具代码不改。门拦下的调用由 `request` 返回无卡片的 `denied` 结局（`ApprovalOutcome.duplicate`，审计 `approval_deduped`），工具照常按拒绝处理、不执行；`executeToolSafely` 结算后用记录器的 `dedupeResult()` 替换工具结果（各工具对 APPROVAL_DENIED 有自己的固定文案，替换保证模型拿到门的文案）。钩子另加 `approvalWaiting` / `approvalGranted`（见 intended）；类型 `EffectApprovalGate` 在 `permissions/tool-call-scope.ts`。
+- **比对范围**：`effect_key` 含 runId，故「去掉 occurrence 的前缀相同」落实为 同一任务链（W2 `chainRunIds`：续接链 + 子 run）里 `tool_name` + `args_hash` 相同的行（`ToolEffectsStore.sameEffectRows`，排除本次调用的行）。只在 `loopType==='task'`、本次调用有台账行（external）时生效；对话轮、子 run、别的任务链一律不去重。
+- **判定**（`recorder.duplicateVerdict`）：链上任一 `completed` 行（不论当时有无审批）→ completed；否则最新的 `denied` / `uncertain` 行决定；`failed`、仍在进行的 `executing` / `intended`（并行调用）不拦。completed → 不建卡，结果 `DUPLICATE_EFFECT`「相同操作已在本任务中完成（回执：<untrusted>…</untrusted> / 无，状态为已完成），不要重复执行；如确需再做一次，用 ask_user 征得用户同意」，**本次调用的台账行删除**（`discard`，偏差：它什么也没做，台账只记可能发生过的事）；denied → 不建卡，结果 `APPROVAL_DENIED`「用户已拒绝相同操作…」，台账行结为 `denied`；uncertain → 照常建卡，payload 加 `priorEffect {status, summary, createdAt}`，卡片顶部提示「上次同样的操作结果未知，请先确认是否已生效」。
+- **补充（偏差）——ask_user 放行**：提示让模型「用 ask_user 征得同意」，若没有放行路径，同意后重试仍会被拦。门把「落定时间早于本链最近一次 ask_user 成功回答（run_steps 的 tool_result）」的行视为已被用户放行（`ToolEffectsStore.lastUserAnswerAt`）；放行后的再一次执行完成后，下一次相同调用又会被拦。
+- **无人值守**：去重门在无人值守分支之前，completed 的重复不会再被自动批准（拿到 DUPLICATE_EFFECT）。**偏差（§5 护栏 7「任何结果未知都不得自动重放」）**：uncertain 的重复在无人值守下**不自动批准**，照常挂卡（带提示）等用户；其余无人值守行为不变。
+- **未覆盖**（审批幂等，不是工具幂等）：不经审批的调用（逐工具策略 auto、server `autoApprove`、W5 只读工具）不去重；确认模式下 bash 的 `command` 审批发生在 `escalate` 写行之前，也不去重；`submitNonBlocking`（环境 / 提议类）不经门。
+- **`intended`（已启用）**：行仍在执行前以 `executing` 写入（审批前后之分只有到 `request` 才知道）；等用户决定时转 `intended`（`ToolEffectsStore.markIntended`），批准后回到 `executing`；无人值守自动批准不经 intended。`settle` / `noteApproval` / `settleUnapproved` 都接受 intended；调用返回时仍是 intended（审批被拒 / 取消，或等待中抛错）→ `denied` / `failed`，**绝不** uncertain；`markExecutingUncertain`（启动恢复第 0 步、W3 中断）把 intended 结为 `denied`（与 `settleUnapproved`「审批被取消 → denied」同一规则；启动时所有待决审批都会被取消），executing 仍改 uncertain。续接摘要：未返回结果、且台账行全为 denied 的调用渲染为「→（等待审批时中断，未执行）」而不是「[结果未知]」。渲染端 `effectBadge('intended')` 改为新徽标「等待审批（未执行）」。W3 记录的残余窗口（行已写、审批还没建时中断 → uncertain）不变。
+- **payloadHash**：`approvalPayloadHash(payload) = sha256Hex(stableJson(payload))`（复用 W2 `agent/effects/key.ts`），`rowToApproval` 每次读取时算、不落库；`approvals.decide` 输入 `payloadHash?`，在「已处理过」检查之后比对，不符 → `AppError('APPROVAL_STALE')`（shared `ERROR_CODES` 新增 `APPROVAL_STALE`、`DUPLICATE_EFFECT`）。渲染端决定时回传卡片渲染的 `approval.payloadHash`（`approval-effect.ts` `decisionBinding`），被拒时 toast 并重新拉取该对话的审批。旧调用方 / 旧审批不传不校验。
+- **回执**：`Approval.effect?: {status, receipt?, settledAt?}`（shared `approvalEffectSchema`），`ToolEffectsStore.forApprovals(ids)` 每 200 个 id 一条查询批量反查（无 N+1）；附在 `approvals.list`、`decide` 返回值、`approval.created` / `approval.resolved` 事件与 `unattended.summary`（条目 `effectStatus?`）上。台账行落定且带 approval_id 时，记录器新 dep `onSettled` → `ApprovalsService.publishEffect` 重新推一次 `approval.resolved`（复用事件，渲染端按 id upsert；不新增事件名）。`describe()` 未加状态（它在建卡时生成通知文案，此时还没有结局）。MCP 包装工具的回执：`mcpReceiptOf` 从 `structuredContent`（或唯一一个 JSON 对象文本块）顶层取 `url / html_url / web_url / permalink / link`（仅 http(s)）与 `id / message_id / number / ts …`，经 `ToolResult.effect.receipt` 走 W2 的擦除 + `secrets.redact` + 截断；取不到时状态本身就是回执。浏览器 / git_remote 仍不报回执。
+- **精确卡片**：新 `packages/core/src/mcp/recipients.ts` `recipientFields(args, redact)`：键名归一化（camelCase → snake）后匹配 to / cc / bcc / recipient(s) / channel(s) / channel_id / email(s) / phone / phone_number / user(s) / user_id / chat_id，嵌套对象最多 3 层（键路径 `message.to`），数组整体列一项；值完整列出（单值上限 10 000 字防异常、最多 20 项），经 `secrets.redact`。`gateway.mcpToolCall` 对风险非 read 的工具写入 `payload.recipients`（shared `mcpToolApprovalPayloadSchema.recipients?`），不参与 `argsSummary` 的 400 字截断；`describe()` 的 mcp_tool 行带「收件方 …」。
+- **渲染端**：新 `features/approvals/approval-effect.ts`（纯函数：`approvalEffectLine`、`effectStatusLine`、`receiptText`、`priorEffectOf`、`decisionBinding`）+ 单测；`ApprovalCard.svelte`：折叠记录（已批准）末尾显示执行结果 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中 与回执文本（纯文本，不做链接），待决卡顶部「上次同样的操作结果未知…」，mcp_tool 卡逐项列出收件方；`UnattendedBanner.svelte` 汇总条目显示「执行结果：…」；`permissions.decide` 增 `payloadHash`；i18n `approvals.effect.*` / `approvals.effectLabel` / `approvals.priorUncertain` / `approvals.mcpRecipient` / `task.effect.pending` / `chats.errorCode.APPROVAL_STALE` / `chats.errorCode.DUPLICATE_EFFECT`。旧审批（无 effect / hash / priorEffect）照旧渲染。
+- **测试**：`approvals.test.ts -t effect` 新增 5 例（completed 去重 + 回执 + 参数不同建新卡 + hash 不符 APPROVAL_STALE + 收件方；denied 去重；uncertain → 带提示的新卡、被拒的第二张卡台账为 denied；另一任务链照常建卡；无人值守：completed 重复 → DUPLICATE_EFFECT、uncertain 重复挂卡等用户、汇总带 effectStatus）；`mcp-loop.test.ts` +1（假模型两次同参数调同一写工具：第一次弹卡执行，第二次无卡 DUPLICATE_EFFECT；收件方完整、argsSummary 截断）；`mcp.test.ts` +1（网关：写工具收件方完整、只读工具无）；`mcp-tools.test.ts` +2（`recipientFields`、`mcpReceiptOf`）；`tool-effects.test.ts`（单测）+7（判定真值表、经 executeToolSafely 的 completed / denied / uncertain 门、ask_user 放行、跨链 / 续接链 / 对话轮、intended 转移与恢复 / 中断、等待中返回不记 uncertain、`forApprovals` + `onSettled`）；`continuation.test.ts` +1；渲染端 `approval-effect.test.ts`（5）、`task-view.test.ts` 徽标改。回归：`tasks-interrupt`、`tool-effects`（单测 / 集成 / 迁移）、`approvals`（全量 17）、`mcp`、`mcp-loop`、`external-agent-tasks`、`permission-bridge`、`host-mcp-bridge`、`environment`、`butler-team`、`external-agent-p3`、`group-chat`、`enhanced-sandbox` 均通过；`skills` 3 条失败为容器基线。e2e `approvals.spec`（`kepcup-test:trixie-xvfb`，`electron-vite build` 后）3/3 通过（未新增 e2e 用例：渲染端没有直接造外部副作用的测试接缝）。改了 shared 契约，按约定收尾需跑一次全量（未跑）。
+- **未做 / 遗留**：~~`tool_effects.approval_id` 没有索引~~（复查后已加，见下）；设计文档 13 未回写（有其他会话的未提交改动）。
+
+#### 复查后修正（2026-10-09）
+
+- **B1 非用户拒绝不算「用户已拒绝」**：`denied` 行只有在其 `approval_id` 指向**用户亲手拒绝**的审批（`approvals.status='denied'`、`auto_approved=0`、已决定；`ApprovalsService.userDeniedIds`，经记录器新 dep `userDeniedApprovals` 跨库批量查）时才走拒绝分支；退出重启（intended → denied）、W3 / W8 中断（`settleUnapproved`）、取消 / 时限中止、无人值守数据目录底线造成的 `denied` 一律不拦（等同 failed）。门自己拒绝的调用结算时带上原审批的 `approval_id`（`store.settle` 的 `approvalId`），之后仍算用户拒绝。
+- **B2 同意的边界**：`ask_user` 超时未答不再是 `ok:true` 的回答——`TaskHost.ask` 在问题过期时（取回调度槽之后）抛 `AppError('ASK_USER_UNANSWERED')`，工具结果 `ok:false`、内容仍是「用户未回答…按你自己的判断继续」，`lastUserAnswerAt` 只认 `ok=1` 的结果，结构上排除。同意只放行在它之前落定的 `completed` 与用户拒绝行，**从不**放行 `uncertain`（总是带提示的卡，无人值守也不自动批准）。
+- **S1**：`completed` 的静默拦截（DUPLICATE_EFFECT）只用于 `mcp_tool`；其他类别（`git_remote`、`unsandboxed` 等依赖状态的操作）得到新判定 `repeat`：照常建卡，`payload.priorEffect {status:'completed', receipt?}`，卡片顶部「本任务中已执行过相同操作（回执：…），请确认是否需要再次执行」；同样不被无人值守自动批准。钩子改为 `approvalGate(runId, kind)`。
+- **S2**：脱敏后的规范参数含 `[REDACTED]` / `«redacted` 时整次跳过去重门（两个不同的密钥脱敏后会一样）。
+- **S3**：回执 id 键去掉 `key` / `uid`；id 只收形似 id 的值（无空白、≤64 字、无常见密钥前缀 sk- / ghp_ / xox… / AKIA…、不是 >32 字的大小写数字混合串）；URL 去掉 query / fragment / userinfo（`receiptIdShaped`、`receiptUrl`）。
+- **S4**：`TaskHostDeps.pendingUncertainRepeat(runIds)`（orchestrator → `ApprovalsService.hasPendingUncertainRepeat`：该任务及子 run 有 `priorEffect.status='uncertain'` 的待决卡）；超过任务时限时若为真，任务以「等待确认「上次结果未知」的重复操作超时…」失败，`errorReason='uncertain_repeat_timeout'`（新 `TaskErrorReason`）。对有人值守同样适用（偏差：只多一句更准确的原因）。
+- **小项**：`approvalWaiting` 在同一调用已有审批被批准后不再把行改回 `intended`（之后抛错照常记 uncertain）；新迁移 `runs/0010_tool_effects_approval_idx.sql`（`tool_effects_by_approval` 部分索引），create-core 期望 runs `user_version` 10、`task-events-migration` / `tool-effects-migration` 的版本列表更新并加 0010 用例（含查询计划用到索引）；渲染端 `mergeApprovalUpdate`：store 的事件与 `decide` 结果都经它合并，晚到的旧副本不会把已落定的回执降级；收件方只取字符串 / 数字及其数组（数字：数字型 chat / user id 常见），对象值不列、继续向里找；`describe()` 里收件方截到 200 字；设计文档 24 §10.2（intended 已用、settle 接受 intended、0010 索引）与新 §10.4（W4 规则含 B1 / B2 / S1 / S2、回执、payloadHash、收件方）、§10.5 未实现。
+- **测试**：`approvals.test.ts -t effect` 共 9 例（+取消后接续再建卡、退出重启后「检查后重试」再建卡、沙箱外命令重复带「已执行过」提示、无人值守下等提示卡超时 → `uncertain_repeat_timeout`；无人值守用例插入一次真实 ask_user 回答后 uncertain 仍挂卡）；`tool-effects.test.ts` 单测 34 例（判定真值表重写：非用户拒绝、同意边界、repeat；B1 / B2 / S1 / S2 / 小项各一例）；`tool-effects-migration` +1；`mcp-tools` +1（S3）并改收件方期望；渲染端 `approval-effect.test.ts` +2。回归：`tasks-review-fixes-e`（问题过期）、`tasks-review-fixes-f`、`task-cards`、`create-core`、`tasks-interrupt`、`tool-effects`、`approvals`、`mcp`、`mcp-loop`、`external-agent-tasks`、`permission-bridge`、`continuation`、`host-mcp-bridge`、迁移测试共 17 个文件 194 例全过。加了 runs 迁移 → 收尾全量需跑一次（未跑）。
+
 ---
 
+
+
 ## W5. MCP 工具风险分级、逐工具策略与只读工具进对话轮（P0，借鉴点 3；提前落地 D73 的分级器）
+
+
 
 ### 目标
 
@@ -522,21 +653,24 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 > 解读（决定原文“自动豁免……提示MCP工具在无人值守时自动批准执行……按最终正确的逻辑处理”）：理解为**所有风险档的 MCP 工具在无人值守下都自动批准**（即保留当前 `#autoDecideSync` 对 `mcp_tool` 的行为并把它定为正式设计），不再设计“无人值守拒绝 / 排队 / 逐工具无人值守白名单”；收紧手段只剩风险提示与审计。D73 文档里“无人值守不自动批准 destructive”的计划与此冲突——连接应用按 D73 定义就是 MCP server，回写 D73 时以本决定为准。
 
+
+
 ### 借鉴什么 / 刻意不同
 
 - 借 [D] `connections.ts`：`readOnlyHint===true` → 只读；`requiresApproval = prior ?? !readOnly`；逐工具覆盖在刷新工具列表后保留。
-- 借 [R] `action-approval.ts`：名字动词正则（READ_ONLY / MUTATING / COMPOUND `_and_` / `_or_` / `_then_`）**只能升级风险，不能降级**（`connectorToolRequiresApproval`：声明只读也不能放过一个名字像写操作的工具）。
+- 借 [R] `action-approval.ts`：名字动词正则（READ_ONLY / MUTATING / COMPOUND `_and`_ / `_or_` / `_then_`）**只能升级风险，不能降级**（`connectorToolRequiresApproval`：声明只读也不能放过一个名字像写操作的工具）。
 - 借 [R]：规则优先级 tool > server > 类别默认。
 - **不同 / 不学**：
-  - **不学 Rakazo 的 `APPROVAL_EXEMPT_TOOLS`（shell / write_file 免审批）**——它的边界是容器，KepCup 跑在用户主机上，沙箱/授权体系不放松（§5 护栏 2）。
+  - **不学 Rakazo 的** `APPROVAL_EXEMPT_TOOLS`**（shell / write_file 免审批）**——它的边界是容器，KepCup 跑在用户主机上，沙箱/授权体系不放松（§5 护栏 2）。
   - 不学 Rakazo 的“无人值守白名单”（`UNATTENDED_SAFE_BUILTIN_TOOLS` 一类）：KepCup 的无人值守是用户开关（D53），开了就表示用户接受自动批准；我们只把风险说清楚（提示 + 审计里标风险档）。
   - annotations 是 server 自报的，不可信 → 只用来**放宽到“只读”**，且受名字正则一票否决；`destructiveHint===false` 只把默认从 destructive 降到 write，不免审批。
+
+
 
 ### 设计
 
 1. **分级器**（新 `packages/core/src/mcp/risk.ts`；D73 落地时移到共享位置或直接复用）：
-
-   ```ts
+  ```ts
    export type ToolRisk = 'read' | 'write' | 'destructive';
    export interface ToolRiskInput { name: string; annotations?: ToolAnnotations; }
    const READ_VERBS = /^(get|list|search|find|read|fetch|query|lookup|describe|view|show|count|check|stat)(_|$)/i;
@@ -550,30 +684,31 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
      if (t.annotations?.destructiveHint === false) return 'write';
      return 'destructive';
    }
-   ```
+  ```
    与 D73 计划规则一致（read / write / destructive 三档），多了“名字一票否决”和“无注解但名字明确只读 → read”。`readOnlyHint === false`（显式声明非只读）永远不走名字放宽。
 2. **配置**（`mcpServerSchema` 扩展，向后兼容）：
-
-   ```ts
+  ```ts
    toolPolicies?: Record<string /*toolName*/, {
      approval?: 'auto' | 'ask';   // 覆盖默认（默认：read→auto，其余→ask）
      enabled?: boolean;           // 默认 true；false 则不暴露给模型
    }>;
-   ```
-   - 旧字段 `autoApprove: true` 语义保持：等价于该 server 所有工具 `approval:'auto'`（逐工具 `ask` 可再收回）。
-   - 覆盖按工具名存，刷新工具列表后仍在（[D] 的做法）；工具消失时保留配置但设置页标灰。
-   - 不设逐工具“无人值守”开关（见上方解读）。
+  ```
+  - 旧字段 `autoApprove: true` 语义保持：等价于该 server 所有工具 `approval:'auto'`（逐工具 `ask` 可再收回）。
+  - 覆盖按工具名存，刷新工具列表后仍在（[D] 的做法）；工具消失时保留配置但设置页标灰。
+  - 不设逐工具“无人值守”开关（见上方解读）。
 3. **审批路径**（`gateway.mcpToolCall`）：
-   - 有人值守时决定顺序：tool policy > server `autoApprove` > 类别默认（read→auto，write/destructive→ask）。
-   - 每次调用都**重新解析**工具风险（[D] `connection-tools.ts` 的做法：工具列表刷新后注解可能变），不只用构建工具面时的快照。
-   - 需审批时 payload 增 `risk: ToolRisk`（`mcpToolApprovalPayloadSchema` 加可选字段，**不加新 kind，不重建表**）；卡片按 risk 显示徽标（只读 / 写入 / 破坏性），破坏性用警示色。
+  - 有人值守时决定顺序：tool policy > server `autoApprove` > 类别默认（read→auto，write/destructive→ask）。
+  - 每次调用都**重新解析**工具风险（[D] `connection-tools.ts` 的做法：工具列表刷新后注解可能变），不只用构建工具面时的快照。
+  - 需审批时 payload 增 `risk: ToolRisk`（`mcpToolApprovalPayloadSchema` 加可选字段，**不加新 kind，不重建表**）；卡片按 risk 显示徽标（只读 / 写入 / 破坏性），破坏性用警示色。
 4. **无人值守**（`approvals.ts` `#autoDecideSync`）：`mcp_tool` **保持自动批准**（所有风险档），行写 `auto_approved=1`，payload 带 `risk`；执行记录与审计 `mcp_tool_call` 写“无人值守自动批准（写入 / 破坏性）”，便于事后追查。代码里把这一分支从“隐式落空”改成显式分支 + 注释引用本决定，并加测试锁定。
 5. **只读 MCP 工具进只读工具面**（已定：允许）：
-   - `packages/core/src/tools/index.ts`：对话轮工具面与只读子代理（`buildSubagentResearchTools` / `task-subagent-read-only` 所用的面）加入该 Bot 可用 MCP 工具中 **`risk==='read'` 且有效审批为 `auto`** 的工具（被用户改成 `ask` 的只读工具不进对话轮——对话轮是秒级的，不在对话轮里等审批）。
-   - 调用时二次校验：若此刻解析出的风险已不是 read，或有效审批变成 ask → 返回 `RUN_READ_ONLY`，提示“该工具需要在任务中执行，请用 start_task”。
-   - 工具说明 token 成本：对话轮每次请求都带这些 schema。若某 Bot 的只读 MCP 工具超过 20 个，只放前 20 个（按 server 顺序）并在系统提示里说明“更多 MCP 工具在任务中可用”。（20 为初值，写成常量 `TURN_MCP_READ_TOOLS_MAX`。）
+  - `packages/core/src/tools/index.ts`：对话轮工具面与只读子代理（`buildSubagentResearchTools` / `task-subagent-read-only` 所用的面）加入该 Bot 可用 MCP 工具中 `risk==='read'` **且有效审批为** `auto` 的工具（被用户改成 `ask` 的只读工具不进对话轮——对话轮是秒级的，不在对话轮里等审批）。
+  - 调用时二次校验：若此刻解析出的风险已不是 read，或有效审批变成 ask → 返回 `RUN_READ_ONLY`，提示“该工具需要在任务中执行，请用 start_task”。
+  - 工具说明 token 成本：对话轮每次请求都带这些 schema。若某 Bot 的只读 MCP 工具超过 20 个，只放前 20 个（按 server 顺序）并在系统提示里说明“更多 MCP 工具在任务中可用”。（20 为初值，写成常量 `TURN_MCP_READ_TOOLS_MAX`。）
 6. **Bot 详情（右栏）MCP 区风险提示**（已定）：`apps/desktop/src/renderer/src/lib/features/bot-panel/BotProfileForm.svelte` 的 MCP server 勾选区，只要该 Bot 选了任一 MCP server，就**常驻**一行提示：“无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作），请注意风险。”；无人值守当前生效且选中 server 中含 write/destructive 工具时，提示升级为警示色并列出数量（“其中 N 个写入 / 破坏性工具”）。
 7. **设置页**：MCP server 详情增“工具”列表（名字、风险徽标、判定来源=注解/名字、审批 auto/ask、启用两个开关）。`rg -l "autoApprove" apps/desktop/src/renderer` 定位现有 MCP 设置组件。
+
+
 
 ### 改动清单
 
@@ -587,10 +722,14 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [x] `packages/core/src/permissions/approvals.ts`：`#autoDecideSync` 显式 mcp_tool 自动批准分支；`renderContextLine` / `describe` 显示风险 （2026-10-09 完成）
 - [x] 渲染端：`BotProfileForm.svelte` 风险提示、MCP 设置组件工具列表、`ApprovalCard.svelte` 风险徽标、`zh-CN.ts` （2026-10-09 完成）
 
+
+
 ### 迁移 / 兼容
 
 - settings 是 JSON（`mcpServerSchema` 存在 settings 里，写之前核实存储位置），新增可选字段，零迁移。
 - 无过渡期逻辑（已定）：升级后所有 server 按新规则——只读工具默认免审批（对老配置是放宽），写工具仍按旧的 `autoApprove` 决定，无人值守行为不变。
+
+
 
 ### 测试
 
@@ -603,12 +742,16 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 渲染端提示：BotProfileForm 若无组件测试，在 e2e `apps/desktop/test/e2e/approvals.spec.ts` 或新 spec 里断言提示文案出现（`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/approvals.spec.ts`）
 - 改了 shared 契约 → 本项收尾跑一次全量。
 
+
+
 ### 验收
 
 - 接入一个带注解的 MCP server：只读工具直接执行、写工具弹卡且卡上有风险徽标。
 - 直聊里问一个只读 MCP 能答的问题，对话轮直接调用，不起任务。
 - 开无人值守：写工具自动执行，执行记录写明“无人值守自动批准（写入）”。
 - Bot 详情 MCP 区可见风险提示；开无人值守时变为警示样式。
+
+
 
 ### 风险
 
@@ -617,6 +760,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 恶意 server 自报 `readOnlyHint` → 名字一票否决只能挡住名字诚实的；结果仍包 `<untrusted>`。
 - 对话轮工具面变大 → 每轮 token 增加，且对话轮可读外部数据（外部内容注入面增大）：结果一律 `<untrusted>`；数量上限 20。
 - 无人值守自动批准写 / 破坏性 MCP 工具是有意保留的风险，靠提示与审计兜底（§5 护栏 7）。
+
+
 
 ### 实施记录（2026-10-09）
 
@@ -639,7 +784,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
+
+
 ## W6. Bot 间消息 intent + 委派跟随任务（P1，借鉴点 1；含 DEV-012 方案二）
+
+
 
 ### 目标
 
@@ -647,40 +796,45 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 2. 委派结果不再是 B 的“我去做”，而是 B 为此起的任务的最终结果（DEV-012 方案二）。
 3. 防止“写在回复里以为发出去了”和投递重放。
 
+
+
 ### 借鉴什么 / 刻意不同
 
 - 借 [R] `message_bot{bot_id, confirm_name, message, intent: request|result|question|status|fyi}`、按 intent 的唤醒提示（result/status 必须转述实质、不许空确认；fyi 允许沉默；request 的终回复自动回传）、`deliveryKey` 防重放、`auto-outcome:{runId}` 自动回传、对端内容视为不可信。
 - **不同**：
   - **不加 6 跳**：保留 D71 的单跳（B 处理委派时不能再委派），多跳编排复杂度和失控面不值得。
-  - **不新增 `message_bot` 工具**（已定）：在 `delegate_to_bot` 上加 `intent`，避免两个相近工具让模型选错；`result`/`status` 两个 intent 在单跳下用不上（结果自动回传），只取 `request | question | fyi`。
+  - **不新增** `message_bot` **工具**（已定）：在 `delegate_to_bot` 上加 `intent`，避免两个相近工具让模型选错；`result`/`status` 两个 intent 在单跳下用不上（结果自动回传），只取 `request | question | fyi`。
   - `confirm_name`（发送前回填对方名字防选错）：KepCup 用 bot_id + 发出卡片已能让用户看到对象，**不加**。
+
+
 
 ### 设计
 
 1. **工具 schema**（`tools/delegation-tools.ts`）：
-
-   ```ts
+  ```ts
    delegate_to_bot {
      bot_id: string;
      task: string;                                   // 仍叫 task，兼容
      intent?: 'request' | 'question' | 'fyi';        // 默认 'request'
    }
-   ```
-   - `fyi`：投递给 B 后**不建结果等待**，`delegations` 行直接 `delivered → settled(no_reply_expected)`；B 的唤醒提示：“这是 A 转告的信息，无需回复；只有需要用户知道时才回复”。B 若回复，正常作为 B 对话里的消息，不回贴 A。
-   - `question`：B 的终回复（对话轮回复，不跟随任务）回贴 A——问题通常对话轮就能答。
-   - `request`：走下面的“跟随任务”。
-   - `delegations` 表增列 `intent`（见改动清单：因 status 要加新值，本就要重建表，intent 一并加入，不加 CHECK）。
+  ```
+  - `fyi`：投递给 B 后**不建结果等待**，`delegations` 行直接 `delivered → settled(no_reply_expected)`；B 的唤醒提示：“这是 A 转告的信息，无需回复；只有需要用户知道时才回复”。B 若回复，正常作为 B 对话里的消息，不回贴 A。
+  - `question`：B 的终回复（对话轮回复，不跟随任务）回贴 A——问题通常对话轮就能答。
+  - `request`：走下面的“跟随任务”。
+  - `delegations` 表增列 `intent`（见改动清单：因 status 要加新值，本就要重建表，intent 一并加入，不加 CHECK）。
 2. **跟随任务（DEV-012 方案二）**（`dispatch/delegation.ts`）：
-   - B 的委派对话轮结束时，查该轮 run 起的任务（runs.db `0006_tasks.sql` 的 `origin_run_id = 委派轮 run_id`）。
-     - 无任务 → 现状：取对话轮回复作为结果。
-     - 有任务 → 委派状态改 `awaiting_tasks`，记下任务 id 列表；对话轮的“我去做”**不**作为结果回贴（但仍在 B 的对话里显示）。
-   - TaskHost 任务终态钩子：属于某委派的任务全部终态后，结果 = 各任务结果摘要拼接（每个截断，总长仍 ≤2000）（**已定** 2026-10-09；注意 DEV-012 方案二原文为“消费任务结果的下一个对话轮的最终回复”，本方案以拼接为准，回写 DEVIATIONS 时同步），失败/取消的任务标注状态；然后走既有的结果卡 + internal follow-up 给 A。
-   - 任务被 `inject_task` 续接 / 重试（W3）产生的新任务：通过 `continuedByTaskId` 链跟随最终那个。
-   - 超时：沿用委派现有超时（若无，按任务 4h 墙钟自然兜底）。
-   - `cancel_delegation`：同时取消关联任务（调用既有 `cancel_task` 路径）。
+  - B 的委派对话轮结束时，查该轮 run 起的任务（runs.db `0006_tasks.sql` 的 `origin_run_id = 委派轮 run_id`）。
+    - 无任务 → 现状：取对话轮回复作为结果。
+    - 有任务 → 委派状态改 `awaiting_tasks`，记下任务 id 列表；对话轮的“我去做”**不**作为结果回贴（但仍在 B 的对话里显示）。
+  - TaskHost 任务终态钩子：属于某委派的任务全部终态后，结果 = 各任务结果摘要拼接（每个截断，总长仍 ≤2000）（**已定** 2026-10-09；注意 DEV-012 方案二原文为“消费任务结果的下一个对话轮的最终回复”，本方案以拼接为准，回写 DEVIATIONS 时同步），失败/取消的任务标注状态；然后走既有的结果卡 + internal follow-up 给 A。
+  - 任务被 `inject_task` 续接 / 重试（W3）产生的新任务：通过 `continuedByTaskId` 链跟随最终那个。
+  - 超时：沿用委派现有超时（若无，按任务 4h 墙钟自然兜底）。
+  - `cancel_delegation`：同时取消关联任务（调用既有 `cancel_task` 路径）。
 3. **防重放**：投递用确定性 `delivery_key = delegationId`（`delegations` 已有 id），投递前查“B 对话里是否已有 `origin=delegation` 且 `delegation_id` 相同的消息”，有则跳过（崩溃重启后的重投防重复）。先核实 `dispatch/delegation.ts` 的崩溃一致性是否已覆盖，若已覆盖则只补测试。
 4. **“写在回复里不算发送”**：A 的 prompt（委派工具说明 + 系统提示里委派段）加一句：“在回复里写‘我已经告诉 B 了’不会发给 B；要发给 B 必须调用 delegate_to_bot”。可选的检测器（回复里 @B 名字但本轮没调用委派工具 → 在执行记录写一条 system 提示）列为 P2，不做。
 5. **B 侧唤醒提示**：按 intent 生成（照 [R] `bot-messages.ts` 的三段文案改写为中文）；A 的 follow-up 提示里对 `request` 结果强调“转述实质结果，不要只说‘B 已完成’”。
+
+
 
 ### 改动清单
 
@@ -692,10 +846,14 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [x] 提示词：委派段（`rg -n "delegate_to_bot" packages/core/src/agent/prompt*` 定位） （2026-10-09 完成）
 - [x] 渲染端 `delegation_sent` / `delegation_result` 卡：显示 intent、等待任务中状态 （2026-10-09 完成）
 
+
+
 ### 迁移 / 兼容
 
 - 旧委派行 `intent='request'`；已在途的旧委派按旧逻辑结束（无 `taskIds` 即走对话轮回复）。
 - 迁移编号取届时下一个空号（D73 预定 main 0021）。
+
+
 
 ### 测试
 
@@ -704,15 +862,21 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - `node scripts/run-tests.mjs run packages/core/test/integration/butler-delegation-migration.test.ts`（迁移）
 - 有迁移 → 本项收尾跑一次全量。
 
+
+
 ### 验收
 
 - 让 A 委派 B “查 X 并整理”，B 回“我去做”并起任务；A 收到的结果卡内容是任务产出，不是“我去做”。
 - `fyi` 委派后 A 不会收到“B 已收到”之类的空回贴。
 
+
+
 ### 风险
 
 - 跟随任务让委派等待时间变长（最长任务 4h）：A 侧卡片显示“B 正在执行任务…”并可取消。
 - 与 D75 收尾时间耦合：DEV-012 写明“D75 收尾后再做”，**开工前确认 D75 已收尾**。
+
+
 
 ### 实施记录（2026-10-09）
 
@@ -735,6 +899,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - **与方案的出入**：① 结果按 2026-10-09 用户决定取各任务结果拼接，而非 DEV-012 方案二原文“消费任务结果的下一个对话轮的最终回复”——`docs/dev/DEVIATIONS.md` DEV-012 与 design/27、design/30 §1.2、design/02「跨 Bot 委派」**尚未回写**，留给 Pengfei 回写时同步。② “失败 / 中断任务等 B 消费后再定局”是本次加的规则（为了能跟上 B 在消费那一轮里的接续 / 重试）；委派结算之后才发生的重试（例如用户之后在任务卡上点重试、设置卡完成后的自动重试）**不再跟随**。③ 终态钩子挂在 orchestrator 的 `onSettled` 回调上而不是改 `tasks.ts`。④ 委派等待没有单独的超时，靠任务 4h 墙钟兜底；B 一直不消费失败结果时靠清扫与重启兜底。
 - **测试**：`unit/delegation-host.test.ts` 新增 14 例（1 个 / 2 个任务、失败标注 + 消费门槛、全失败 / 全取消、续接链跟随、无任务旧行为、question、fyi、取消联动 ×2、重启不重投、中断轮恢复转入等待、确定性投递键、拼接函数）；`integration/delegation.test.ts` 新增 4 例（request 派任务全链路、任务失败、fyi、取消联动）；`unit/butler-delegation-migration.test.ts` 新增 0021 升级用例。定向回归：butler ×3、tasks、tasks-review-fixes-e、create-core、lifecycle-recovery、migration-rollback、diagnostics、migrate 及上述迁移单测均通过。本项有迁移，按约定 P1 收尾时跑一次全量（未在本项内跑）。
 
+
+
 #### 复查后修正（2026-10-09）
 
 - **排队中的 fyi 不再挡请求**：`activeBetween` 加 `intent <> 'fyi'`，B 忙时排队的告知不会让之后的 request / question 报“已有一个转交给 B 的任务还没结束”。
@@ -750,7 +916,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ---
 
-## W7. 确定性监看原语（P2，借鉴点 6；本轮仅网页来源）——延期（2026-10-09 用户决定）
+
+
+## W7. 确定性监看原语（P2，借鉴点 6；本轮仅网页来源）（2026-10-09 先延期，后由用户决定继续实施）
+
+
 
 ### 目标
 
@@ -760,16 +930,19 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 > 解读（决定原文“维持麦克风能力即可，其它后期处理”）：理解为“不新增 Bot 侧传感器能力，现有麦克风能力保持不动”，而不是“本轮要把麦克风接成监看来源”——麦克风作为监看来源需要常驻录音与本地事件检测，体量和隐私面都远超“维持”。
 
+
+
 ### 借鉴什么 / 刻意不同
 
 - 借 [M] `page-diff.ts` + `observe()`：页面按行 diff、去掉相对时间后的“安静 hash”、`contains` / `price` 条件**边沿触发**（上次不满足、这次满足才报）、`alertSequence`、通知键 `monitor:{id}:{seq}:{hash}` 去重、CAS 防并发、失败退避 `min(60, 2^failures)` 分钟、5 次暂停、错误通知键 `watch-error:{task}:{streak}:{paused|retry}`。
 - **不同**：不引入服务端租约（单机单进程，用 SQLite 事务 + 进程内单 worker 即可）；不另起 Postgres。
 
+
+
 ### 设计
 
 1. **数据**（main.db 新表 `watches`）：
-
-   ```sql
+  ```sql
    CREATE TABLE watches (
      id              TEXT PRIMARY KEY,       -- wat_…
      bot_id          TEXT NOT NULL,
@@ -786,12 +959,14 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
      version         INTEGER NOT NULL DEFAULT 0,  -- CAS
      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
    );
-   ```
+  ```
 2. **检查器**：`web_page` 用 BrowserHost 的**独立后台页**（键 `botId|watch:{id}`，使用该 Bot 当前生效的浏览器资料——私有或 W8 的共享资料——复用登录态）取正文文本 → `pageLines` → `withoutRelativeTimes` → hash；条件求值；边沿触发时 `alert_seq++`，以 `watch:{id}:{seq}:{hash}` 为幂等键唤醒一个对话轮（trigger_reason=`watch`），消息里带 `describePageDiff` 的增删改摘要（≤1500 字）。
 3. **失败**：`failures++`，`next_check_at = now + min(60, 2^failures) 分钟`；`failures>=5` → `paused` 并在对话里发一条系统卡片（键 `watch-error:{id}:{streak}:paused`），用户可点“恢复”。
 4. **工具**（任务面与对话轮面都给，因为创建监看是“托管动作”，参照 D75 对 schedule 的处理，核实 schedule 工具在哪个面）：`watch_create{source, condition, interval_minutes}`、`watch_list`、`watch_stop{id}`。创建需要**用户可见卡片**（像 schedule 一样），不需审批（只读访问）。
 5. **传感器来源（后期，不在本轮）**：摄像头等来源以后可做“帧感知 hash 变化 → 才调用多模态理解”，与此原语同构，届时只加 `source.kind='sensor'` 的检查器；本轮 zod schema 只接受 `web_page`。
 6. 中文：不用 FTS / tokenizer，纯行 diff，不受 §5 护栏 5 影响。
+
+
 
 ### 改动清单（概要，开工前细化）
 
@@ -801,6 +976,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - [ ] `apps/desktop/src/main/browser-host.ts`：后台页 `fetchText(url)`（不显示、遵守 `decideBrowserRequest`）
 - [ ] 渲染端：对话内监看卡 + 右侧面板列表
 
+
+
 ### 测试
 
 - 新单测：`node scripts/run-tests.mjs run packages/core/test/unit/watch-page-diff.test.ts`、`node scripts/run-tests.mjs run packages/core/test/unit/watch-conditions.test.ts`（边沿触发、相对时间去噪、退避序列、5 次暂停、非 web_page 来源被 schema 拒绝）
@@ -808,10 +985,14 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - 后台页：`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/browser.spec.ts`（`fetchText` 不显示窗口、受网络策略约束）
 - 有迁移 → 收尾全量一次。
 
+
+
 ### 验收
 
 - 监看一个价格页，价格从 100 跌到 90（条件 `<95`）唤醒一次；保持 90 不再唤醒；回到 100 再跌到 90 再唤醒一次。
 - 页面只有“3 分钟前”变“4 分钟前”时不唤醒。
+
+
 
 ### 风险
 
@@ -820,12 +1001,17 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 ---
 
 
-## W8. 浏览器自动接管 + 共享浏览器资料（P1，借鉴点 7）
+
+## W8. 浏览器自动接管 + 共享浏览器资料（P1，借鉴点 7）（2026-10-09 先暂缓，后由用户决定继续实施）
+
+
 
 ### 目标
 
 1. **自动接管**（已定：用户一操作即接管，不用点按钮）：用户在 Bot 浏览器查看窗口里点击或键入时，该页面控制权立即转给用户，Bot 的浏览器动作暂停，避免双方同时点；用户交还（或关闭窗口）后 Bot 继续。也给“需要用户登录 / 过验证码”提供正式的交接路径。
 2. **共享浏览器资料**（已定：提供共享选项）：默认仍是每个 Bot 私有资料；用户可以显式建立“共享浏览器资料”，把多个 Bot 挂到同一份资料上，共用登录状态（对应上游 Team vs Private 电脑）。
+
+
 
 ### 借鉴什么 / 刻意不同
 
@@ -835,6 +1021,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
   - 共享的单位是“浏览器资料”（Electron partition，含 cookie、localStorage、IndexedDB），不是“按网站同步 cookie”——后者覆盖不了存在 localStorage 里的登录态，且同步时序复杂。
   - 不做团队 / 多用户共享电脑（§5 护栏 6）；共享资料只在本机本用户的 Bot 之间。
   - Bot 的网络策略（`decideBrowserRequest`）、记忆、委派隔离**不随资料共享而共享**，仍按 Bot 判断。
+
+
 
 ### 设计
 
@@ -849,33 +1037,37 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 **B. 共享浏览器资料**
 
 1. 数据（零迁移）：
-   ```ts
+  ```ts
    // settings JSON
    browserProfiles?: Array<{ id: string /* bpf_… */; name: string; createdAt: number }>;
    // botRuntimeSchema（Profile JSON，与 mcp_server_ids 同处，无迁移）
    browser_profile: z.string().default('').catch('');   // '' = 私有（默认）；否则为共享资料 id
-   ```
+  ```
 2. partition：私有 → `persist:bot-{botId}`（不变）；共享 → `persist:shared-{profileId}`。core 在 `ensurePage` / `navigate` 等 RPC 输入里带 `profileKey`（`bot:{botId}` 或 `shared:{profileId}`），browser-host 由它算 partition；`decideBrowserRequest` 仍按 `botId` 判断。
 3. 切换：Bot 的 `browser_profile` 改变时关闭该 Bot 所有页面；若该 Bot 有使用浏览器的运行中任务，按 W3 的 `permission.revoked` 事件（`scope:'browser_profile'`）立即中断——身份在任务脚下变了，与“运行中撤销授权”同理。
 4. 删除：
-   - 删除 Bot：私有资料照旧 `clearBotData`；共享资料不动。
-   - 删除共享资料：使用它的 Bot 先回到私有（同上切换规则），再清 `Partitions/shared-{id}` 目录（照 `clearBotData` 的墓碑写法）。
-   - “清除数据”按钮：清共享资料存储但保留条目。
+  - 删除 Bot：私有资料照旧 `clearBotData`；共享资料不动。
+  - 删除共享资料：使用它的 Bot 先回到私有（同上切换规则），再清 `Partitions/shared-{id}` 目录（照 `clearBotData` 的墓碑写法）。
+  - “清除数据”按钮：清共享资料存储但保留条目。
 5. UI：
-   - 设置 › 浏览器资料：列表（名称、使用它的 Bot、清除数据、删除）、新建、重命名。
-   - Bot 详情（`BotProfileForm.svelte`）：“浏览器资料：私有（默认）/ 共享：xxx”下拉；选共享时显示警示“同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站”。
-   - 新建的共享资料是空的；用户通过任一挂在上面的 Bot 的浏览器查看窗口登录（接管机制 A 正好用上）。不提供“从某 Bot 私有资料复制登录态”（partition 目录在使用中复制不安全）。
+  - 设置 › 浏览器资料：列表（名称、使用它的 Bot、清除数据、删除）、新建、重命名。
+  - Bot 详情（`BotProfileForm.svelte`）：“浏览器资料：私有（默认）/ 共享：xxx”下拉；选共享时显示警示“同一共享资料里的 Bot 共用所有网站的登录状态，其中任一 Bot 都能以你的身份操作这些网站”。
+  - 新建的共享资料是空的；用户通过任一挂在上面的 Bot 的浏览器查看窗口登录（接管机制 A 正好用上）。不提供“从某 Bot 私有资料复制登录态”（partition 目录在使用中复制不安全）。
+
+
 
 ### 改动清单
 
-- [ ] `apps/desktop/src/main/browser-host.ts`：control 状态、输入事件监听、空闲自动交还、工具条 IPC；`profileKey → partition`；共享资料清除
-- [ ] `packages/shared/src/domain/types.ts`：`botRuntimeSchema.browser_profile`、settings `browserProfiles`
-- [ ] `packages/shared/src/rpc/methods.ts`：browser 输入带 `profileKey`；`browserProfiles.list/create/rename/delete/clear`
-- [ ] `packages/shared/src/constants.ts`：`BROWSER_USER_CONTROL_IDLE_MS = 600_000`
-- [ ] `packages/core/src/browser/facade.ts` / port-B：解析 Bot 生效资料；控制权变化事件 → core（用于 inject）
-- [ ] `packages/core/src/tools/browser.ts`：`BROWSER_USER_CONTROL` 提示；`ask_user` 引导文案
-- [ ] `packages/core/src/dispatch/tasks.ts`：`browser_profile` 变化 → `permission.revoked`（复用 W3）
-- [ ] 渲染端：设置页“浏览器资料”区、`BotProfileForm.svelte` 下拉与警示、查看窗口工具条文案（按 i18n 放渲染端再传入，参照 `browser:show` 的 title 传法）、`zh-CN.ts`
+- [x] `apps/desktop/src/main/browser-host.ts`：control 状态、输入事件监听、空闲自动交还、工具条 IPC；`profileKey → partition`；共享资料清除 （2026-10-09 完成；状态机等无 Electron 部分在新文件 `browser-control.ts`，工具条不走 IPC，见实施记录）
+- [x] `packages/shared/src/domain/types.ts`：`botRuntimeSchema.browser_profile`、settings `browserProfiles` （2026-10-09 完成）
+- [x] `packages/shared/src/rpc/methods.ts`：browser 输入带 `profileKey`；`browserProfiles.list/create/rename/delete/clear` （2026-10-09 完成；`profileKey` 只在 `browser.ensurePage` 上，见实施记录）
+- [x] `packages/shared/src/constants.ts`：`BROWSER_USER_CONTROL_IDLE_MS = 600_000` （2026-10-09 完成）
+- [x] `packages/core/src/browser/facade.ts` / port-B：解析 Bot 生效资料；控制权变化事件 → core（用于 inject） （2026-10-09 完成；资料解析在新文件 `browser/profiles.ts`，交还经端口 B 平台方法 `browser.controlReturned`）
+- [x] `packages/core/src/tools/browser.ts`：`BROWSER_USER_CONTROL` 提示；`ask_user` 引导文案 （2026-10-09 完成）
+- [x] `packages/core/src/dispatch/tasks.ts`：`browser_profile` 变化 → `permission.revoked`（复用 W3） （2026-10-09 完成；中断原因新增 `browser_profile_changed`）
+- [x] 渲染端：设置页“浏览器资料”区、`BotProfileForm.svelte` 下拉与警示、查看窗口工具条文案（按 i18n 放渲染端再传入，参照 `browser:show` 的 title 传法）、`zh-CN.ts` （2026-10-09 完成）
+
+
 
 ### 迁移 / 兼容
 
@@ -888,23 +1080,68 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - `node scripts/run-tests.mjs run packages/core/test/integration/tasks.test.ts -t revoke`（`scope:'browser_profile'`）
 - e2e：`pnpm build && pnpm --filter @kepcup/desktop test:e2e test/e2e/browser.spec.ts`（打开查看窗口、模拟点击 → Bot 点击被拒、交还后成功；两个 Bot 挂同一共享资料 → A 页面设置的 cookie B 可见；私有 Bot 不可见；删除共享资料后目录被清）
 
+
+
 ### 验收
 
 - 用户在查看窗口里点一下，Bot 下一次点击得到 `BROWSER_USER_CONTROL`；点“交还”或关窗后 Bot 继续并先快照。
 - 两个 Bot 挂同一共享资料，在其中一个的查看窗口登录某网站后，另一个打开该网站已是登录状态；第三个私有 Bot 不是。
+
+
 
 ### 风险
 
 - 误把“只是看看”当接管：只有点击 / 键盘算接管；空闲 10 分钟自动交还。
 - 共享资料扩大了单个 Bot 被提示注入后的危害面（可借其他 Bot 的登录身份操作）：默认私有、界面警示、网络策略仍按 Bot；与 §5 护栏 6 的表述同步。
 
+
+
+### 实施记录（2026-10-09）
+
+- **接管租约**（`apps/desktop/src/main/browser-control.ts`，无 Electron 依赖、有单测）：`ControlLease` 每页一个（键 `botId|conversationId`，共享资料里别的 Bot 的页面不受影响）。页面 webContents 的 `before-mouse-event` / `before-input-event` 只在**该页查看窗口打开且可见**时计入：按下鼠标（mouseDown / contextMenu）或按下非修饰键 → `user`；移动、滚轮、松开、单按修饰键只算「活动」（延长空闲计时，不接管）。Bot 自己经 CDP 合成的输入（`Input.*`：按键、滚轮、insertText）在途时不归给用户（`withBotInput`）。`control==='user'` 时 click / type / press / scroll / back 在取页面操作时、并在派发前再查一次（`PageOps.assertControl`，关掉 settle 等待期间的 TOCTOU）抛 `BROWSER_USER_CONTROL`（`phase:'pre'`）；`navigate`（browser_open）同样拒绝；snapshot / screenshot 照常。交还三条路：工具条「交还给 Bot」、关闭查看窗口、`BROWSER_USER_CONTROL_IDLE_MS`（10 分钟）无任何输入。
+- **工具条**：查看窗口顶部一条 36px 的 `WebContentsView`，载入 `data:` 页面（CSP `default-src 'none'`、独立内存 partition、sandbox），文案由渲染端 i18n 经 `browser:show` 第 4 个参数传入（与 title 同法，主进程逐字段校验并有缺省）。**偏差**：不走 IPC——按钮把 `document.title` 设成 `kepcup:handback:*`，主进程听 `page-title-updated`；状态切换时整页重载（文案以 JSON 内嵌、`<` 转义、`textContent` 写入）。查看窗口高度加 36px，页面视口仍是 1280×800。
+- **交还 → 注入**：主进程 `onControlReturned` → 端口 B 新平台方法 `browser.controlReturned {botId, conversationId, reason}`（core 提供）→ `TaskHost.notifyBrowserHandback`：该 Bot 在该对话里**用过浏览器**的进行中任务（running / waiting_approval / waiting_lease）经既有 inject 路径收到「用户已交还浏览器控制，先 browser_snapshot 再继续」（任务卡上是一条注入行 + 引擎 steer）。**解读**：正卡在 `ask_user` 问题卡上的任务跳过——inject 会被当成问题的回答，用户在卡片上作答即可。
+- **交接引导**：`ask_user` 的选项只是文字按钮，没有「打开浏览器」动作 → 只做文案：`browser_open` / `browser_type` 说明加「需要登录 / 验证码时，用 ask_user 请用户在浏览器窗口完成（右栏「查看浏览器」…完成后点「交还给 Bot」）」；`browser_click` 说明提到 USER_CONTROL；`BROWSER_USER_CONTROL` 进 `ERROR_CODES` 与工具层派发前码表（未打标签也按 not_started），错误文案「等用户交还（交还后你会收到通知，先 browser_snapshot 再继续），或用 ask_user 询问用户；期间可以 browser_snapshot / browser_screenshot」。
+- **共享资料数据**：settings `browserProfiles: Array<{id:'bpf_…', name, createdAt}>`（`.default([]).catch([])`，不是可选字段；**只经 `browserProfiles.*` 写**，`settings.update` 不接受）；`botRuntimeSchema.browser_profile = z.string().default('').catch('')`；新 ID 前缀 `bpf_`、常量 `BROWSER_PROFILE_NAME_MAX_CHARS = 40`。零迁移。指向不存在资料的 id 按私有处理（`effectiveBrowserProfileId`）；`bots.create` / `bots.update` 只接受已存在的资料（未改动的旧值放行），否则 `NOT_FOUND`。
+- **partition**：core（`packages/core/src/browser/profiles.ts`）按 Bot 的生效资料算 `profileKey`（`bot:{botId}` / `shared:{profileId}`），工具层**每次** ensurePage 现取（切换后下一次调用即生效）；宿主 `parseProfileKey` 校验字符集后派生 `persist:bot-{botId}` / `persist:shared-{profileId}`。**偏差**：`profileKey` 只加在 `browser.ensurePage` 上——partition 只在建页时用到，每个工具调用都先 ensurePage；同一页面键已存在但 profileKey 不同（与切换竞态的调用）→ 宿主先关旧页再按新资料建页，绝不复用旧身份。网络拦截、下载目录仍按页面所属 Bot（`decideBrowserRequest` 用的是该 Bot 页的 networkContext）。
+- **切换**：`bots.update` 前后生效 profileKey 不同 → `BrowserProfilesService.onBotProfileChanged`：先发 W3 撤销事件 `scope:'browser_profile'`（同步中断），再 `browser.closeBotPages`（新端口 B 方法，关该 Bot 全部页面、不 tombstone）。**「用过浏览器」的定义**：任务或其 SubAgent 子 run 的 `run_steps` 里有 `browser_*` 的 tool_call（`RunsService.hasToolCallWithPrefix`；tool_call 在执行前落盘，在途调用也算；持久、与引擎无关，比「有打开的页面」准——页面按 Bot + 对话而非按任务）。中断原因**新增** `browser_profile_changed`（不复用 `permission_revoked`）：卡片文案「浏览器资料已切换，任务已中断。请检查已完成的操作后再重试」，失败条目提示「用户切换了你的浏览器资料（登录身份可能已不同）：不要自行重新派出或接续它…」；`tasks.interrupted` 事件 `reason` / `scope` 扩成 `browser_profile_changed` / `browser_profile`（渲染端仍提示「已中断 N 个进行中的任务」）。其余同 W3（待决审批取消、executing → uncertain、检查后重试、幂等）。
+- **删除 / 清除**：删除共享资料 → 挂在上面的 Bot 逐个改回私有（`bot.updated` + 同一切换规则），再从设置里移除条目，最后 `browser.clearProfileData {remove:true}`：关该资料上的所有页面、tombstone 该资料（迟到的 ensurePage 报 `BROWSER_PAGE_CLOSED`「该共享浏览器资料已删除」）、清存储与缓存、删目录（宿主不可用时只记日志，条目照删）。「清除数据」= `clearProfileData` 不带 remove：关页面、清存储与缓存，条目与 Bot 保留、不删目录。删除 Bot 只清它的私有 partition（`clearBotData` 照旧关掉它的所有页面，含共享资料上的页），共享资料不动。不提供从私有资料复制登录态。
+- **顺带修正（e2e 暴露）**：
+  - Electron 把 partition 目录名**转小写**（`Partitions/bot-bot_01abc…`）。原 `clearBotData` 在大小写敏感的 Linux 上删的是原大小写路径、目录其实没删——这正是 e2e 基线失败「删除 Bot 后其浏览器分区数据不存在」的原因（用例的存在性前置断言也按原大小写找）。现在 `partitionDirs` 同时删小写与原拼写；用例改为大小写不敏感匹配，**该基线失败转为通过**。
+  - 查看窗口开着时退出应用会卡住：窗口在退出过程中关闭，`closed` 回调把页面重新挂到（已销毁后新建的）隐藏宿主窗口，新窗口让应用无法退出。`before-quit` 现在先 `browserHost.closeAll()`（原先只有托盘「退出」走这条）。
+- **UI**：设置新增「浏览器资料」分组（`BrowserProfilesSection.svelte`：新建、重命名、使用它的 Bot、清除数据 / 删除需行内确认，常驻护栏 6 警示）；`BotProfileForm.svelte` 下拉「私有（默认）/ 共享：xxx」，选共享时显示警示「同一共享资料里的 Bot 共用所有网站的登录状态…」（新建与编辑共用该表单）；任务卡按 `errorReason` 显示两种中断文案（`task-view.ts` 增 `interruptReason`）。
+- **测试**：
+  - 新单测 `apps/desktop/src/main/browser-control.test.ts`（15 例：租约状态机、空闲交还与续期、Bot 合成输入不算、dispose、输入分类、profileKey → partition 与非法键、目录名小写、工具条文案校验与转义）；`browser-actions.test.ts` +1（五种动作在 `assertControl` 拒绝时都是 pre、未派发副作用）。
+  - `browser-tools.test.ts` +5（`-t USER_CONTROL`：六种动作 not_started + 提示、未打标签仍 not_started、snapshot / screenshot 可用、说明含 ask_user 引导；profileKey 每次现取、缺省私有）。
+  - `browser.test.ts` +3（profileKey 私有 / 共享、只能选已存在资料；切换关页、清除保留条目、重命名、删 Bot 不动共享资料、删资料改回私有并 remove；交还注入用过浏览器的进行中任务且 steer 进了模型请求）。
+  - `tasks-interrupt.test.ts` +1（**偏差**：计划写的是 `tasks.test.ts -t revoke`，W3 的撤销用例实际在这个文件）：切换资料只中断用过浏览器的任务（同 Bot 未用浏览器的任务、别的 Bot 不受影响）、无关的 Profile 修改不触发、原因 / 卡片 / 失败条目 / 事件、重复事件幂等。
+  - `task-view.test.ts` +1。
+  - e2e `browser.spec.ts` +2：接管（查看窗口里模拟点击 → Bot 点击 `BROWSER_USER_CONTROL`；工具条交还后同一点击成功；滚轮 / 移动不接管、按键接管；关窗即交还）；共享资料（两个 Bot 挂同一共享资料，A 设置的 cookie B 可见，私有 Bot 不可见；删除资料后目录被清、Bot 回到私有）。整份 spec 13/13 通过（含原基线失败）。
+- **残留 / 未做**：交还时正卡在问题卡上的任务不注入（见上）；「清除数据」时正在用该资料的任务下一次调用会重开页面（已登出），不中断；接管只认查看窗口里的输入，隐藏托管的页面无人可点；工具条的「Bot 正在使用」文案在没有任务时也显示（只表示控制权在 Bot）。**按设计保留**：切换资料不中断对话轮（对话轮没有浏览器工具）；「用过浏览器」只看任务自己及其子 run，接续任务（`continues_task_id` / 重试）不继承源任务的用过与否。
+
+
+
+#### 复查后修正（2026-10-09）
+
+- `browser_close` 也受租约约束：用户持有页面时非 permanent 的关闭在宿主抛 `BROWSER_USER_CONTROL`（pre，工具结果 not_started，页面不关）；删除对话 / 移出群 / 删除 Bot / 切换或删除资料等级联（permanent、`closeBotPages`、`clearProfileData`）不受影响。
+- `typeAction` 在 focus / select 之前就复查控制权（空文本也覆盖）；插入文本前仍再查一次。
+- **已定：切换浏览器资料须显式确认，不走自动保存**。`BotProfileForm` 增 `onBrowserProfileConfirm`：给了（右栏编辑）时下拉只改待确认值，出现行内确认「切换后该 Bot 已打开的网页会关闭，正在使用浏览器的任务会被中断；确定切换？」，确认后 `RightPanel` 立即 `bots.update`（draft 同步，自动保存随后判定一致不再存），取消即复原；键盘在下拉里移动选项只改待确认值；换 Bot / Profile 被重克隆时丢弃待确认值。新建对话框不传，仍直接绑定（新 Bot 没有页面）。
+- 宿主拒绝 `bot:X` 而 X ≠ 本页 botId 的 profileKey（`INVALID_INPUT`）。
+- 键盘接管细分：不带修饰键的方向键 / PageUp / PageDown / Home / End 与 Ctrl/Cmd+C 只算活动（延长空闲计时），其余按下仍接管（带 Shift 的方向键算接管）。
+- 交还注入合并：同一任务 `BROWSER_HANDBACK_COALESCE_MS`（30 秒，shared 常量）内只注入一次。
+- testkit 假宿主的 `clearProfileData`（不带 remove）也关闭该资料上的页面，与真宿主一致。
+- core 侧 W1 页面状态（无进展计数、截图去重）在 `clearProfileData` 与「同页 profileKey 变化（宿主重建页面）」时也清掉（facade 记每页最近一次的 profileKey）。
+- 设计文档回写：design/14（隔离：共享资料、切换与删除规则、分区目录小写；可见性：自动接管租约）、README D77 行、design/13「撤销即中断」与 design/30 §7.4 补 `browser_profile_changed` 触发源。
+- 测试：`browser-control.test.ts` 16 例（+键盘细分）；`browser-actions.test.ts` 26 例（+type 在 focus 前拒绝，含空文本）；`browser-tools.test.ts` +2（browser_close USER_CONTROL；资料变化 / clearProfileData 清页面状态）；`browser.test.ts` 交还用例加「立即再次交还 → 0」；e2e：接管用例加 browser_close 被拒、网页自设 `document.title='kepcup:handback:1'` 不会交还、方向键不接管；共享资料用例改为键盘移动选项 → 出确认、超过防抖仍未保存、取消复原，再选择并确认。定向测试与整份 `browser.spec.ts` 通过（见下方汇报）。
+
 ---
+
 
 
 ## 4. 本方案不做（非目标）
 
 - 不实现 D67 的 durable resume（只做 W2 台账；续跑仍是 D67 的事）。
-- 不做多跳 Bot 消息（> 1 跳）、不做 `handoff_to_bot`（会话转移）；**不新增 `message_bot` 工具**（已定：在 `delegate_to_bot` 上加 `intent`）。
+- 不做多跳 Bot 消息（> 1 跳）、不做 `handoff_to_bot`（会话转移）；**不新增** `message_bot` **工具**（已定：在 `delegate_to_bot` 上加 `intent`）。
 - 不做 `act` 批量浏览器动作、不换 isolated-world 引用模型；快照元素上限**维持 150**，不改为 80。
 - 不做 saved-login / `fill_secret`（凭据按 origin 绑定自动填充）——留给 D52 凭据体系后续单列。共享登录走 W8 的“共享浏览器资料”，不走凭据填充。
 - 不做按网站同步 cookie、不做“从 Bot 私有资料复制登录态到共享资料”（W8）。
@@ -915,6 +1152,8 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - **语音对话模式暂不立项**（不写代码、不出设计稿）。仅记下以后立项时的分工原则：实时语音层 = 对话轮（快、只读、可打断），重活 = 任务（`start_task`，完成后 `generate_speech` 播报摘要），不另造 [D] `voice.ts` 的 `ask_compute`；不默认依赖云端实时语音（§5 护栏 1）。
 - 不改 D73 连接应用的 OAuth / 目录部分；W5 只提前落地分级器与 MCP 审批策略。
 
+
+
 ## 5. 护栏（“不要学”清单）
 
 实施任何一项时，以下行为一律不引入；代码评审按此逐条检查：
@@ -923,46 +1162,54 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 2. **不照搬 Rakazo 的 shell / write 免审批**（`APPROVAL_EXEMPT_TOOLS`）。它的边界是一次性容器；KepCup 在主机上跑，srt 沙箱 + 路径授权 + 数据目录底线一个都不放松。W5 的“只读免审批”只适用于 MCP 只读工具；W5 的“无人值守自动批准”只适用于 `mcp_tool`，不外溢到 command / unsandboxed / git_remote / agent_tool 的数据目录底线。
 3. **不把待办队列放在客户端**。follow-up / 委派结果 / 监看唤醒 / 导入预览全部由 core 持有（持久化的进 SQLite），渲染端只展示；渲染进程刷新或崩溃不能丢消息。
 4. **桌面应用不引入 Docker / Postgres 依赖**。新表进既有加密 SQLite（main / runs / memory）；测试可用 Docker 镜像，产品运行时不行。
-5. **中文检索不用 `'simple'` 类分词**。新增的任何全文检索沿用现有 FTS 配置（unicode61 + 现有分词入库）+ 向量检索，或不做 FTS（W7 用行 diff）。
+5. **中文检索不用** `'simple'` **类分词**。新增的任何全文检索沿用现有 FTS 配置（unicode61 + 现有分词入库）+ 向量检索，或不做 FTS（W7 用行 diff）。
 6. **共享不等于安全边界**。不引入“团队工作区”的模型。W8 的共享浏览器资料是**用户显式选择、默认关闭**的例外，只共享浏览器存储；挂在同一资料上的 Bot 之间**不视为隔离**（界面明示）；其他隔离（`private_to_bot`、单跳委派、对端内容 `<untrusted>`、按 Bot 的网络策略）保持为硬边界。
 7. 额外：**server 自报的注解只能放宽到只读、且受名字一票否决**（W5）；**任何“结果未知”都不得自动重放**（W1/W2/W3）；**无人值守自动批准的 MCP 调用必须带风险档进审计**（W5），Bot 详情 MCP 区必须常驻风险提示。
+
+
 
 ## 6. D 编号（已确认）
 
 现行约定：`docs/design/README.md` 决策表按顺序编号，最新为 **D76**（传感器）。本方案的编号已由 Pengfei 确认；回写设计文档时如发现已被其他会话占用，再顺延并同步改本节。
 
-| 编号 | 内容 | 备注 |
-|---|---|---|
-| D77 | 浏览器动作结局三态（not_started / completed / uncertain）、ref 指纹预检、无进展熔断、敏感输入脱敏、元素上限维持 150；自动接管租约与共享浏览器资料（W1 + W8） | 修订 P11 浏览器；本轮只有 W1，W8 暂缓 |
-| D78 | 外部副作用台账 `tool_effects`、中断任务检查后重试、运行中撤销授权立即中断、审批幂等与回执（W2 + W3 + W4） | 标注为 D67 第一步；修订 D49 中断任务的重试规则；本轮 W2 + W3，W4 暂缓 |
-| —（D65 修订） | MCP 工具风险分级、逐工具策略、只读 MCP 工具进对话轮 / 只读子代理、无人值守自动批准 + Bot 详情风险提示（W5） | 不新开号；D73 引用同一分级器，并按本决定修正其无人值守规则 |
-| —（D71 修订） | 委派 intent（request / question / fyi）+ 跟随任务（W6） | 对应 DEV-012 方案二 |
-| —（原拟 D79） | 确定性监看原语，本轮仅网页来源（W7） | W7 延期，**暂不分配编号**；立项时取届时决策表的下一个空号 |
-| — | 语音前端分工 | 暂不立项，无编号（§4） |
+
+| 编号        | 内容                                                                                                      | 备注                                            |
+| --------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| D77       | 浏览器动作结局三态（not_started / completed / uncertain）、ref 指纹预检、无进展熔断、敏感输入脱敏、元素上限维持 150；自动接管租约与共享浏览器资料（W1 + W8） | 修订 P11 浏览器；本轮只有 W1，W8 暂缓                      |
+| D78       | 外部副作用台账 `tool_effects`、中断任务检查后重试、运行中撤销授权立即中断、审批幂等与回执（W2 + W3 + W4）                                      | 标注为 D67 第一步；修订 D49 中断任务的重试规则；本轮 W2 + W3，W4 暂缓 |
+| —（D65 修订） | MCP 工具风险分级、逐工具策略、只读 MCP 工具进对话轮 / 只读子代理、无人值守自动批准 + Bot 详情风险提示（W5）                                        | 不新开号；D73 引用同一分级器，并按本决定修正其无人值守规则               |
+| —（D71 修订） | 委派 intent（request / question / fyi）+ 跟随任务（W6）                                                           | 对应 DEV-012 方案二                                |
+| —（原拟 D79） | 确定性监看原语，本轮仅网页来源（W7）                                                                                     | W7 延期，**暂不分配编号**；立项时取届时决策表的下一个空号              |
+| —         | 语音前端分工                                                                                                  | 暂不立项，无编号（§4）                                  |
+
 
 **设计文档回写（2026-10-09，由回写会话完成）**：D77 / D78 已核实未被占用并写入 `docs/design/README.md` 决策表（另在 D49 / D65 / D67 / D71 行追加修订注）。回写的文档：design/14（D77「动作结局与防护」）、design/23（D65 修订「风险分级与逐工具策略」、SubAgent 工具集）、design/13（撤销即中断、无人值守下 MCP 自动批准）、design/24（D78：新 §10 外部副作用台账）、design/02（恢复第 0 步、中断任务检查后重试、跨 Bot 委派、MCP 工具）、design/30（§1.2、§2.1、§3.1、§6.3、§7.3、§7.4）、design/27（文件头改为已实现、D71 修订新 §3.6）；docs/dev/DEVIATIONS.md DEV-012（已落实）、03-data-model（`tool_effects`、迁移表、`error_json.reason`）、04-agent-runtime（平台规则、`<mcp_tools>`、续接「[结果未知]」、`<effects_before_interrupt>`、工具目录）、01-conventions（常量、`eff_` 前缀）、02-architecture（TaskHost 接口）。W4 / W8 只作为「暂缓」提及，W7 未写入设计文档。
 
 ## 文件路径速查
 
-| 用途 | 路径 |
-|---|---|
-| 浏览器工具 | `packages/core/src/tools/browser.ts` |
-| 浏览器宿主 | `apps/desktop/src/main/browser-host.ts` |
-| 浏览器 facade / RPC | `packages/core/src/browser/facade.ts`、`packages/shared/src/rpc/methods.ts`（约 1066 行） |
-| 快照摘要 | `packages/shared/src/browser/axtree.ts`、`packages/shared/src/constants.ts` |
-| 工具执行 | `packages/core/src/agent/tool-execution.ts`、`pi-engine.ts`、`external/mcp-bridge.ts`、`types.ts` |
-| 步骤落库 / 续接摘要 | `packages/core/src/agent/step-persistence.ts`、`agent/context/continuation.ts` |
-| 任务 | `packages/core/src/dispatch/tasks.ts`、`apps/desktop/src/renderer/src/lib/features/tasks/{task-view.ts,TaskCard.svelte}` |
-| 审批 / 授权 | `packages/core/src/permissions/{approvals,grants,unattended,tool-call-scope}.ts`；RPC `grants.revoke`（methods.ts:1276）、`runs.retry`（:1258） |
-| MCP | `packages/core/src/mcp/{service,tools}.ts`、`packages/core/src/gateway/index.ts`（约 787 行） |
-| 工具面 | `packages/core/src/tools/index.ts` |
-| 工具注解词表 | `packages/core/src/agent/external/capabilities.ts` |
+
+| 用途                  | 路径                                                                                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 浏览器工具               | `packages/core/src/tools/browser.ts`                                                                                                            |
+| 浏览器宿主               | `apps/desktop/src/main/browser-host.ts`                                                                                                         |
+| 浏览器 facade / RPC    | `packages/core/src/browser/facade.ts`、`packages/shared/src/rpc/methods.ts`（约 1066 行）                                                            |
+| 快照摘要                | `packages/shared/src/browser/axtree.ts`、`packages/shared/src/constants.ts`                                                                      |
+| 工具执行                | `packages/core/src/agent/tool-execution.ts`、`pi-engine.ts`、`external/mcp-bridge.ts`、`types.ts`                                                  |
+| 步骤落库 / 续接摘要         | `packages/core/src/agent/step-persistence.ts`、`agent/context/continuation.ts`                                                                   |
+| 任务                  | `packages/core/src/dispatch/tasks.ts`、`apps/desktop/src/renderer/src/lib/features/tasks/{task-view.ts,TaskCard.svelte}`                         |
+| 审批 / 授权             | `packages/core/src/permissions/{approvals,grants,unattended,tool-call-scope}.ts`；RPC `grants.revoke`（methods.ts:1276）、`runs.retry`（:1258）       |
+| MCP                 | `packages/core/src/mcp/{service,tools}.ts`、`packages/core/src/gateway/index.ts`（约 787 行）                                                        |
+| 工具面                 | `packages/core/src/tools/index.ts`                                                                                                              |
+| 工具注解词表              | `packages/core/src/agent/external/capabilities.ts`                                                                                              |
 | Bot 详情（MCP 区、浏览器资料） | `apps/desktop/src/renderer/src/lib/features/bot-panel/BotProfileForm.svelte`；Bot 运行配置 `botRuntimeSchema`（`packages/shared/src/domain/types.ts`） |
-| 无人值守 UI | `apps/desktop/src/renderer/src/lib/features/settings/UnattendedSection.svelte`、`features/approvals/UnattendedBanner.svelte` |
-| 委派 | `packages/core/src/tools/delegation-tools.ts`、`dispatch/delegation.ts`、`domain/delegations.ts`、`migrations/main/0016_butler_and_delegation.sql` |
-| 定时 | `packages/core/src/schedule/service.ts` |
-| 记忆 | `packages/core/migrations/memory/{0001_p07_memory,0002_p09_wiki_fts}.sql`、`packages/core/src/memory/{store,profile-store}.ts` |
-| 迁移目录 | `packages/core/migrations/{main,runs,memory}`（main 0020、runs 0008、memory 0002；D73 预定 main 0021 / runs 0009） |
+| 无人值守 UI             | `apps/desktop/src/renderer/src/lib/features/settings/UnattendedSection.svelte`、`features/approvals/UnattendedBanner.svelte`                     |
+| 委派                  | `packages/core/src/tools/delegation-tools.ts`、`dispatch/delegation.ts`、`domain/delegations.ts`、`migrations/main/0016_butler_and_delegation.sql` |
+| 定时                  | `packages/core/src/schedule/service.ts`                                                                                                         |
+| 记忆                  | `packages/core/migrations/memory/{0001_p07_memory,0002_p09_wiki_fts}.sql`、`packages/core/src/memory/{store,profile-store}.ts`                   |
+| 迁移目录                | `packages/core/migrations/{main,runs,memory}`（main 0020、runs 0008、memory 0002；D73 预定 main 0021 / runs 0009）                                     |
+
+
+
 
 ## 风险与注意
 
@@ -971,14 +1218,17 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 - **approvals 表 CHECK**：本方案刻意不加新 kind；若实施中发现非加不可，照 0015/0016 重建并带上全部 11 个既有 kind。
 - **delegations 表 CHECK**：W6 必须重建（status 加 `awaiting_tasks`），照 0016 写法带全列。
 - **D75 收尾依赖**：W6 的跟随任务依赖 D75 任务模型稳定，开工前确认 `todo/supervisor-and-tasks.md` 状态。
-- **W3 与 W8 共用 `permission.revoked`**：W8 的“切换浏览器资料 → 中断”依赖 W3 P1 的中断机制，W8 排在 W3 P1 之后或同批做。
+- **W3 与 W8 共用** `permission.revoked`：W8 的“切换浏览器资料 → 中断”依赖 W3 P1 的中断机制，W8 排在 W3 P1 之后或同批做。
 - **全量测试次数**：每个阶段（P0 / P1 / P2）收尾**只跑一次**全量，而不是每项一次。
+
+
 
 ## 完成定义
 
 - [x] P0（W1、W2、W5、W3-P0）全部 `- [ ]` 打勾，定向测试通过，P0 收尾跑一次全量 `pnpm test` 通过。（2026-10-09 完成：每项均经独立复查并修正；收尾全量 1986 例 / 28 条失败，失败集合与 D75 后容器基线一致（sandbox-isolation 10、skills-authoring 4、env-distro-toolchain 3、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1）；另 1 条 `create-core`「applies the settings migration」因 runs 版本号写死为 8，已改为 9 并单跑通过。`pnpm typecheck` / `pnpm lint` 通过；W1 e2e `browser.spec` 10/11，失败为基线「删除 Bot 后其浏览器分区数据不存在」。）
 - [x] P1（本轮：W3-P1、W6；W4、W8 暂缓）同上，收尾全量一次。（2026-10-09 完成：两项均经独立复查并修正；收尾全量 2029 例 / 29 条失败，其中 28 条为容器基线（同 P0），1 条 `agents-service`「agent-type login」为已知负载偶发、单跑 4/4 通过。`pnpm typecheck` / `pnpm lint` 通过。e2e 未新增。）
-- [ ] P2（W7）同上，收尾全量一次。——W7 延期；原 W9 已删除（2026-10-09）
-- [ ] 交付说明列出每项新增 / 修改的文件，供 Pengfei 回写设计文档（D 编号见 §6）。
+  - P1 补做（W4、W8，2026-10-09 用户决定继续）：两项均经独立复查并修正（W4 修正 2 个阻断：非用户拒绝不算拒绝、超时未答的 ask_user 不算同意）；新增 runs 迁移 `0010`；收尾全量 2094 例 / 28 条失败，与容器基线一致（原基线 e2e「删除 Bot 后其浏览器分区数据不存在」已由 W8 修复）；`pnpm typecheck` / `pnpm lint` 通过；e2e `browser.spec` 13/13、`approvals.spec` 3/3。
+- [ ] P2（W7）同上，收尾全量一次。——W7 已恢复实施（2026-10-09 用户决定），在独立 worktree `t/borrowings-w7` 进行；原 W9 已删除
+- [x] 交付说明列出每项新增 / 修改的文件，供 Pengfei 回写设计文档（D 编号见 §6）。（2026-10-09 完成：各项文件清单见对应实施记录与提交 60e57d7 / 9e81194 / 68c6522 / a43ffe5 / 8cb925b）
   - 设计 / 开发文档回写已于 2026-10-09 由回写会话完成（清单见 §6 末段），Pengfei 复核即可。
-- [ ] 全程无 push / PR（提交已获用户授权，见文首）。
+- [x] 全程无 push / PR（提交已获用户授权，见文首）。（截至 2026-10-09：本方案提交均在本地 main，未 push、未开 PR）
