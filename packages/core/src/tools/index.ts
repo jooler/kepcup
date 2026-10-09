@@ -30,6 +30,7 @@ import { buildDelegationTools, type DelegationToolFacade } from './delegation-to
 import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
+import { buildAppTools, type AppToolFacade } from './app-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 
@@ -121,6 +122,13 @@ export interface ResponseToolDeps {
    * TURN_MCP_READ_TOOLS_MAX），由 orchestrator 选好。
    */
   mcp?: McpToolFacade | undefined;
+  /**
+   * 连接应用门面（D73）：present 时注册 app_request_connection（orchestrator 只在 Bot
+   * 勾选了 OAuth 自定义应用时提供，其余 Bot 工具集不变）。
+   */
+  apps?: AppToolFacade | undefined;
+  /** Warnings for dropped MCP / app tools whose names collide with built-in ones (D73 §5.7). */
+  logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   /**
    * 管家宿主（D70，docs/design/27-butler-and-delegation.md）：present 时所有
    * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_team /
@@ -903,6 +911,8 @@ export function buildResponseTools(input: {
   // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析
   // 并按工具面选好（W5：对话轮只有只读 + 免审批的那部分）。
   const mcpTools = deps.mcp?.tools ?? [];
+  // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
+  const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
 
   // 跨 Bot 委派（D71）：异步转交给另一个联系人 Bot。
   const delegationTools =
@@ -919,10 +929,16 @@ export function buildResponseTools(input: {
         ]
       : [];
 
+  // D73 §5.7 global dedupe: an MCP / app tool may never shadow a built-in one (a connector
+  // slug `request` + tool `connection` would spell `app_request_connection`).
+  const external = new Set<ToolDefinition>(mcpTools);
+  const finalize = (list: ToolDefinition[]): ToolDefinition[] =>
+    dropBuiltinNameConflicts(list, external, deps.logger);
+
   if (identity.loopType === 'turn') {
     const taskTools =
       deps.tasks !== undefined ? buildTaskTools({ identity, tasks: deps.tasks }) : [];
-    return [
+    return finalize([
       sendMessage,
       skipReply,
       searchMessages,
@@ -941,11 +957,12 @@ export function buildResponseTools(input: {
       ...butlerTools,
       // W5: read-only MCP tools (call-time re-check in the gateway).
       ...mcpTools,
+      ...appTools,
       ...setupTools,
-    ];
+    ]);
   }
 
-  return [
+  return finalize([
     sendMessage,
     skipReply,
     searchMessages,
@@ -977,8 +994,43 @@ export function buildResponseTools(input: {
     // butler's proposals are the turn's (design 30 §1.2).
     ...(deps.butler !== undefined ? [buildListBotsTool({ identity, butler: deps.butler.host })] : []),
     ...mcpTools,
+    ...appTools,
     ...setupTools,
-  ];
+  ]);
+}
+
+/**
+ * Drops every tool of `external` (MCP / app tools) whose name equals a built-in tool's, and
+ * repeated names among `external` themselves (the first one wins) — with a warning each time.
+ * Built-in tools are never touched. Order is preserved.
+ */
+export function dropBuiltinNameConflicts(
+  tools: readonly ToolDefinition[],
+  external: ReadonlySet<ToolDefinition>,
+  logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined,
+): ToolDefinition[] {
+  if (external.size === 0) return [...tools];
+  const builtin = new Set(tools.filter((tool) => !external.has(tool)).map((tool) => tool.name));
+  const taken = new Set<string>();
+  return tools.filter((tool) => {
+    if (!external.has(tool)) return true;
+    if (builtin.has(tool.name)) {
+      logger?.warn(
+        { name: tool.name, serverId: tool.mcp?.serverId },
+        'external tool name collides with a built-in tool; dropping it',
+      );
+      return false;
+    }
+    if (taken.has(tool.name)) {
+      logger?.warn(
+        { name: tool.name, serverId: tool.mcp?.serverId },
+        'duplicate external tool name; dropping it',
+      );
+      return false;
+    }
+    taken.add(tool.name);
+    return true;
+  });
 }
 
 /** Shared no-op result helper for tests. */
@@ -997,7 +1049,15 @@ export function buildSubagentResearchTools(input: {
   identity: RunIdentity;
   deps: Pick<
     ResponseToolDeps,
-    'gateway' | 'workspacePath' | 'projectPath' | 'network' | 'secrets' | 'fsState' | 'search' | 'mcp'
+    | 'gateway'
+    | 'workspacePath'
+    | 'projectPath'
+    | 'network'
+    | 'secrets'
+    | 'fsState'
+    | 'search'
+    | 'mcp'
+    | 'logger'
   >;
 }): ToolDefinition[] {
   const coding = buildCodingTools(
@@ -1013,5 +1073,6 @@ export function buildSubagentResearchTools(input: {
     { excludeWriteTools: true },
   );
   const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
-  return [...coding, ...web, ...(input.deps.mcp?.tools ?? [])];
+  const mcpTools = input.deps.mcp?.tools ?? [];
+  return dropBuiltinNameConflicts([...coding, ...web, ...mcpTools], new Set(mcpTools), input.deps.logger);
 }

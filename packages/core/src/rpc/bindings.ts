@@ -194,6 +194,11 @@ import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
 import { assertAgentSelectable } from '../agent/external/catalog.js';
 import { bindAgentMethods } from './agents-bindings.js';
+import { oauthBindingChanged } from '../apps/disconnect.js';
+import { isCatalogConnectionId } from '../apps/connection-store.js';
+import { bindAppsMethods } from './apps-bindings.js';
+import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
+import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
 import {
   botsUsingServer,
   mcpRevocationsBetween,
@@ -308,6 +313,28 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
         }
       }
+      if (input.mcpServers !== undefined) {
+        // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
+        // connection id as the synthesized server's id), so a custom server may not take it.
+        const reserved = input.mcpServers.find((server) => isCatalogConnectionId(server.id));
+        if (reserved !== undefined) {
+          throw new AppError('INVALID_INPUT', `MCP 服务器 ID 不能以「conn_」开头（保留给连接应用）：${reserved.id}`);
+        }
+        // D73: an OAuth server switched to none/headers, or pointed at another URL, must
+        // lose its connection first (revoke + clear the vault) — the tokens are bound to
+        // the old URL. Done before the replacement so no run can pair old tokens with the
+        // new URL; an in-flight interactive flow for it is cancelled too.
+        for (const server of previous.mcpServers) {
+          const after = input.mcpServers.find((entry) => entry.id === server.id);
+          if (after !== undefined && oauthBindingChanged(server, after)) {
+            services.apps?.flows.cancelForServer(server.id);
+          }
+        }
+        await services.appRuntime?.disconnector.reconcileServers(
+          previous.mcpServers,
+          input.mcpServers,
+        );
+      }
       const next = domain.settings.update({
         ...rest,
         ...(onboardingPatch !== undefined
@@ -343,6 +370,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           : {}),
       });
       services.scheduler?.setConcurrency(next.providerConcurrency);
+      if (input.mcpServers !== undefined) {
+        // D73 P1: a server dropped by this replacement (not via `mcp.removeServer`) takes its
+        // tool-lock rows, connection row and tokens with it — no orphans left behind. Only a
+        // server that is really gone from the saved settings is cleaned.
+        for (const server of previous.mcpServers) {
+          if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
+          await services.appRuntime?.disconnector.removeCustomServer(server.id);
+        }
+      }
       if (input.mcpServers !== undefined) {
         // W3（D78）: server switched off / removed, autoApprove on → off, a tool
         // policy auto → ask or disabled — the bots using it lose their running tasks.
@@ -539,7 +575,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (nextAgentId !== domain.bots.getOrThrow(input.id).profile.runtime.agent.id) {
         assertAgentSelectable(domain.settings.get(), services.agents?.catalog() ?? [], nextAgentId);
       }
-      const previousServerIds = domain.bots.getOrThrow(input.id).profile.runtime.mcp_server_ids;
+      const previousRuntime = domain.bots.getOrThrow(input.id).profile.runtime;
+      const previousServerIds = previousRuntime.mcp_server_ids;
       const bot = domain.bots.update(input.id, input.profile);
       publish('bot.updated', { bot });
       // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
@@ -549,6 +586,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           bot.profile.runtime.mcp_server_ids,
           domain.settings.get().mcpServers,
         ).map((serverId) => ({ serverId, botIds: [bot.id] })),
+      );
+      // D73: connections taken off the bot's authorization (their server id is the
+      // connection id) interrupt its running tasks the same way.
+      revokeMcp(
+        previousRuntime.app_connection_ids
+          .filter((connectionId) => !bot.profile.runtime.app_connection_ids.includes(connectionId))
+          .map((serverId) => ({ serverId, botIds: [bot.id] })),
       );
       return { bot };
     }),
@@ -1062,6 +1106,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
 
     // --- external agents (D72 P4) ---------------------------------------------
     ...bindAgentMethods(services),
+    // D73: interactive OAuth flows (apps.connect*, apps.connections.list).
+    ...bindAppsMethods(services),
+    // D73: apps.disconnect (revocation) and mcp.removeServer (settings + secrets + tokens).
+    ...bindAppsRuntimeMethods(services, { revokeMcp }),
+    // D73 P1: catalog list, connection update / tools / review / policy, grants, approveAfterTest.
+    ...bindAppsConnectionMethods(services, { revokeMcp }),
 
     // --- memory & profile (P07) ------------------------------------------
     'memory.list': method(memoryListInputSchema, memoryListOutputSchema, async (input) => ({

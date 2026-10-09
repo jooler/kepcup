@@ -73,6 +73,9 @@ mac:
     # KEPCUP_PRESET_SKILLS 指向 Resources/preset-skills）。
     - from: resources/preset-skills
       to: preset-skills
+    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
+    - from: resources/connectors
+      to: connectors
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
 win:
@@ -95,6 +98,9 @@ win:
       to: wsl
     - from: resources/preset-skills
       to: preset-skills
+    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
+    - from: resources/connectors
+      to: connectors
 
 # --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
 linux:
@@ -116,6 +122,9 @@ linux:
       to: bin/linux-${arch}
     - from: resources/preset-skills
       to: preset-skills
+    # 连接应用目录（D73；core-host 注入 KEPCUP_CONNECTORS 指向 Resources/connectors）。
+    - from: resources/connectors
+      to: connectors
 
 # 打包前确保按平台条件的 extraResources 源目录存在（缺文件只警告不阻塞）；
 # 打包后校验产物：测试路径标记必须不存在、@kepcup/core|testkit 不得进 asar、

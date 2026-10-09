@@ -362,7 +362,7 @@ export class HostMcpBridge {
         name: tool.name,
         description: tool.description,
         inputSchema: inputSchemaOf(tool.parameters),
-        annotations: toolAnnotations(tool.name),
+        annotations: toolAnnotations(tool.name, tool),
       })),
     }));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {

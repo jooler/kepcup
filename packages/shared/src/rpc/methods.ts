@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  appCatalogEntrySchema,
+  appToolGrantViewSchema,
+  appToolViewSchema,
+  appToolsPendingSchema,
+} from '../domain/app-connections.js';
+import {
   agentIdInputSchema,
   agentOutputSchema,
   agentsAffectingOutputSchema,
@@ -17,6 +23,10 @@ import {
 import {
   agentSettingInputSchema,
   allowlistEntrySchema,
+  appAuthReasonSchema,
+  appConnectionSchema,
+  appConnectTargetSchema,
+  approvalDurationSchema,
   approvalSchema,
   attachmentSchema,
   botProfileSchema,
@@ -48,6 +58,7 @@ import {
   settingsSchema,
   skillCandidateSchema,
   mcpServerSchema,
+  mcpToolPolicySchema,
   mcpToolRiskSchema,
   mcpToolRiskSourceSchema,
   webSearchProviderSchema,
@@ -241,7 +252,113 @@ export const mcpTestOutputSchema = z.object({
   tools: z.array(z.string()),
   /** 未能解析的占位符密钥名（secret:env:x / secret:header:y）。 */
   missingSecrets: z.array(z.string()).default([]),
+  /** D73：OAuth server 未连接 / 授权失效 / 需追加权限时 `tools` 为空，并带原因与可读说明。 */
+  needsAuth: appAuthReasonSchema.optional(),
+  message: z.string().optional(),
+  /**
+   * D73 P1：测试时看到的每个工具的定义哈希（工具名 → sha256）。保存后传给
+   * `apps.tools.approveAfterTest`，只批准「测试时看到的那份定义」（测试与保存之间被改动的
+   * 定义仍然锁定）。
+   */
+  toolHashes: z.record(z.string(), z.string()).optional(),
 });
+
+/** D73：显式删除自定义 server，并清理其 `mcp:{id}:*` 密钥、令牌与连接行。 */
+export const mcpRemoveServerInputSchema = z.object({ serverId: z.string().min(1) });
+
+// --- 连接应用（D73，docs/design/29-connected-apps.md） -----------------------
+
+const appFlowIdInputSchema = z.object({ flowId: z.string().min(1) });
+/** `apps.connect`：P0 只接受 `custom` 目标；同一目标并发调用返回同一 flowId。 */
+export const appsConnectInputSchema = z.object({
+  target: appConnectTargetSchema,
+  /** 追加授权时的完整 scope 集合（旧 ∪ 新）；缺省按服务端 / 目录默认。 */
+  scopes: z.array(z.string()).optional(),
+  /**
+   * 连接完成后由 core 把连接 id 写进该 Bot 的 `app_connection_ids`（P1；不由渲染端改 Profile）。
+   * 仅 `catalog` 目标有意义。
+   */
+  grantBotId: z.string().optional(),
+  /**
+   * 重新授权一个已有的目录连接（过期 / 权限追加）：令牌换到该行上而不是新建账号。仅 `catalog`
+   * 目标；`connectorId` 必须与该连接一致。
+   */
+  connectionId: z.string().min(1).optional(),
+});
+export const appsConnectOutputSchema = z.object({ flowId: z.string() });
+export const appsConnectContinueInputSchema = appFlowIdInputSchema;
+export const appsConnectCancelInputSchema = appFlowIdInputSchema;
+/** 首连工具复核通过（`reviewing_tools` 阶段）：批准全部待复核工具 → connected。拒绝 = `apps.connect.cancel`。 */
+export const appsConnectConfirmToolsInputSchema = appFlowIdInputSchema;
+export const appsConnectionsListInputSchema = z
+  .object({
+    /** 默认不返回 `custom:` 行（自定义 server 的占位连接）。 */
+    includeCustom: z.boolean().optional(),
+  })
+  .default({});
+export const appsConnectionsListOutputSchema = z.object({
+  connections: z.array(appConnectionSchema),
+});
+export const appsDisconnectInputSchema = z.object({ connectionId: z.string().min(1) });
+
+// --- 连接应用 P1：目录 / 连接管理 / 工具复核 / 持续授权 ---------------------
+export const appsCatalogListOutputSchema = z.object({ entries: z.array(appCatalogEntrySchema) });
+export const appsConnectionsUpdateInputSchema = z.object({
+  connectionId: z.string().min(1),
+  /** 账号显示名。 */
+  label: z.string().trim().min(1).max(100).optional(),
+  /** true = 停用（保留授权，不再暴露给 Bot）；false = 启用。 */
+  disabled: z.boolean().optional(),
+});
+export const appsConnectionsUpdateOutputSchema = z.object({ connection: appConnectionSchema });
+export const appsConnectionIdInputSchema = z.object({ connectionId: z.string().min(1) });
+/** 目录连接的逐工具策略（存 `app_connection_tools.user_policy`）；自定义 server 继续用 `settings.mcpServers[].toolPolicies`。 */
+export const appsConnectionsSetToolPolicyInputSchema = z.object({
+  connectionId: z.string().min(1),
+  toolName: z.string().min(1),
+  /** 空对象 = 清除，回到风险档默认。 */
+  policy: mcpToolPolicySchema,
+});
+export const appsConnectionsToolsOutputSchema = z.object({
+  tools: z.array(appToolViewSchema),
+  /** 待复核（新增 / 定义变化）的工具数。 */
+  pending: appToolsPendingSchema,
+});
+export const appsConnectionsReviewToolsInputSchema = z.object({
+  connectionId: z.string().min(1),
+  /** 复核通过的工具名；其余保持锁定。 */
+  accept: z.array(z.string().min(1)).max(500),
+});
+export const appsConnectionsReviewToolsOutputSchema = z.object({
+  approved: z.array(z.string()),
+  tools: z.array(appToolViewSchema),
+  pending: appToolsPendingSchema,
+});
+export const appsConnectionsGrantsOutputSchema = z.object({
+  grants: z.array(appToolGrantViewSchema),
+});
+export const appsGrantsRevokeInputSchema = z.object({ grantId: z.string().min(1) });
+/** 自定义 server「测试 → 保存」：保存后批准测试时看到的工具定义（见 `mcp.test` 的 `toolHashes`）。 */
+export const appsToolsApproveAfterTestInputSchema = z.object({
+  serverId: z.string().min(1),
+  toolHashes: z.record(z.string(), z.string()),
+});
+export const appsToolsApproveAfterTestOutputSchema = z.object({
+  approved: z.array(z.string()),
+  pending: appToolsPendingSchema,
+});
+/** 手填客户端：issuer 只有在失败的流程里才知道，所以以 flowId 定位；只写不读回。 */
+export const appsSetClientCredentialsInputSchema = z.object({
+  flowId: z.string().min(1),
+  clientId: z.string().min(1).max(512),
+  clientSecret: z.string().max(2048).optional(),
+});
+
+/** 主进程服务的外部打开：只允许 https，或主机为回环地址的 http（main 侧再校验）。 */
+export const shellOpenExternalInputSchema = z.object({ url: z.string().min(1).max(8192) });
+export const shellOpenExternalOutputSchema = z.object({ ok: z.boolean() });
+export type ShellOpenExternalInput = z.infer<typeof shellOpenExternalInputSchema>;
+export type ShellOpenExternalOutput = z.infer<typeof shellOpenExternalOutputSchema>;
 
 /**
  * W5：设置页逐工具策略用的工具风险档。core 按已保存的 server 配置连接并列出
@@ -769,8 +886,11 @@ export const approvalsListOutputSchema = z.object({ approvals: z.array(approvalS
 export const approvalsDecideInputSchema = z.object({
   id: z.string().min(1),
   approve: z.boolean(),
-  /** Access approvals only: 仅这一次 / 本对话内一直允许. */
-  duration: z.enum(['once', 'conversation']).optional(),
+  /**
+   * Access approvals: 仅这一次 / 本对话内一直允许；`mcp_tool`（D73）卡片按
+   * `payload.durations` 另可选 `bot`（对该 Bot 总是允许）。core 对不在可选范围内的值降为 `once`。
+   */
+  duration: approvalDurationSchema.optional(),
   /**
    * `butler_proposal` only (D70): indexes into payload.bots the user kept;
    * an empty selection with approve=true counts as a denial.
@@ -1201,6 +1321,48 @@ export const rpcMethodSchemas = {
   'mcp.removeSecret': { input: mcpRemoveSecretInputSchema, output: okOutput },
   /** W5：设置页逐工具策略——列出工具名、风险档与判定来源。 */
   'mcp.toolRisks': { input: mcpToolRisksInputSchema, output: mcpToolRisksOutputSchema },
+  /** D73：显式删除自定义 server 并清理密钥 / 令牌 / 连接行。 */
+  'mcp.removeServer': { input: mcpRemoveServerInputSchema, output: okOutput },
+  /** D73 连接应用：交互授权流程（结果经 apps.connect_flow 事件）。 */
+  'apps.connect': { input: appsConnectInputSchema, output: appsConnectOutputSchema },
+  'apps.connect.continue': { input: appsConnectContinueInputSchema, output: okOutput },
+  'apps.connect.cancel': { input: appsConnectCancelInputSchema, output: okOutput },
+  'apps.connect.confirmTools': { input: appsConnectConfirmToolsInputSchema, output: okOutput },
+  'apps.catalog.list': { input: voidInput, output: appsCatalogListOutputSchema },
+  'apps.connections.update': {
+    input: appsConnectionsUpdateInputSchema,
+    output: appsConnectionsUpdateOutputSchema,
+  },
+  'apps.connections.setToolPolicy': {
+    input: appsConnectionsSetToolPolicyInputSchema,
+    output: okOutput,
+  },
+  'apps.connections.tools': {
+    input: appsConnectionIdInputSchema,
+    output: appsConnectionsToolsOutputSchema,
+  },
+  'apps.connections.reviewTools': {
+    input: appsConnectionsReviewToolsInputSchema,
+    output: appsConnectionsReviewToolsOutputSchema,
+  },
+  'apps.connections.grants': {
+    input: appsConnectionIdInputSchema,
+    output: appsConnectionsGrantsOutputSchema,
+  },
+  'apps.grants.revoke': { input: appsGrantsRevokeInputSchema, output: okOutput },
+  'apps.tools.approveAfterTest': {
+    input: appsToolsApproveAfterTestInputSchema,
+    output: appsToolsApproveAfterTestOutputSchema,
+  },
+  'apps.connections.list': {
+    input: appsConnectionsListInputSchema,
+    output: appsConnectionsListOutputSchema,
+  },
+  'apps.disconnect': { input: appsDisconnectInputSchema, output: okOutput },
+  'apps.setClientCredentials': {
+    input: appsSetClientCredentialsInputSchema,
+    output: okOutput,
+  },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
   'websearch.setKey': { input: webSearchSetKeyInputSchema, output: okOutput },
   'websearch.removeKey': { input: webSearchRemoveKeyInputSchema, output: okOutput },
@@ -1457,6 +1619,12 @@ export const rpcMethodSchemas = {
     output: okOutput,
   },
   'browser.clearBotData': { input: browserClearBotDataInputSchema, output: okOutput },
+  // D73: served by the main process on port B (like browser.*); core calls it to
+  // open the system browser for OAuth consent. Not in APP_METHODS.
+  'shell.openExternal': {
+    input: shellOpenExternalInputSchema,
+    output: shellOpenExternalOutputSchema,
+  },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -1494,6 +1662,9 @@ export const BROWSER_RPC_METHODS = [
   'browser.clearBotData',
 ] as const satisfies readonly RpcMethodName[];
 
+/** Methods the MAIN process serves on port B for core's use (D73): system-shell integration. */
+export const SHELL_RPC_METHODS = ['shell.openExternal'] as const satisfies readonly RpcMethodName[];
+
 const APP_METHODS = [
   'system.ping',
   'system.info',
@@ -1515,6 +1686,22 @@ const APP_METHODS = [
   'mcp.setSecret',
   'mcp.removeSecret',
   'mcp.toolRisks',
+  'mcp.removeServer',
+  'apps.connect',
+  'apps.connect.continue',
+  'apps.connect.cancel',
+  'apps.connect.confirmTools',
+  'apps.catalog.list',
+  'apps.connections.update',
+  'apps.connections.setToolPolicy',
+  'apps.connections.tools',
+  'apps.connections.reviewTools',
+  'apps.connections.grants',
+  'apps.grants.revoke',
+  'apps.tools.approveAfterTest',
+  'apps.connections.list',
+  'apps.disconnect',
+  'apps.setClientCredentials',
   'websearch.test',
   'websearch.setKey',
   'websearch.removeKey',

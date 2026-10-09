@@ -153,6 +153,7 @@ export class CoreHost implements CoreHostEvents {
         KEPCUP_APP_VERSION: this.appVersion,
         ...this.bundledBinEnv(),
         ...this.presetSkillsEnv(),
+        ...this.connectorsEnv(),
       },
     });
     this.proc = proc;
@@ -208,6 +209,12 @@ export class CoreHost implements CoreHostEvents {
   private presetSkillsEnv(): NodeJS.ProcessEnv {
     const dir = join(process.resourcesPath ?? '', 'preset-skills');
     return existsSync(dir) ? { KEPCUP_PRESET_SKILLS: dir } : {};
+  }
+
+  /** Connected-apps catalog (D73), an extraResource too (see core apps/catalog.ts). */
+  private connectorsEnv(): NodeJS.ProcessEnv {
+    const dir = join(process.resourcesPath ?? '', 'connectors');
+    return existsSync(dir) ? { KEPCUP_CONNECTORS: dir } : {};
   }
 
   private handleExit(): void {

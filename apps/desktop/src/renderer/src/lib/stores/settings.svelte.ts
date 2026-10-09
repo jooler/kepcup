@@ -141,6 +141,16 @@ class SettingsState {
   }
 
   /**
+   * D73：显式删除自定义 MCP server——core 一并删除 settings 条目并清理其
+   * `mcp:{id}:*` 密钥、令牌与连接行（不再靠 `settings.update` 的整体差集，陈旧
+   * 快照会误删，也不会泄漏密钥）。完成后刷新本地快照。
+   */
+  async removeMcpServer(serverId: string): Promise<void> {
+    await core.call('mcp.removeServer', { serverId });
+    await this.refresh();
+  }
+
+  /**
    * MCP server 连接测试（设置页「测试连接」）：连接并列出工具名。
    * secretValues 为表单草稿里新输入、尚未落 secrets 表的密钥值（仅本次测试生效）。
    */

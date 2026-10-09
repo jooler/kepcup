@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.7.0",
-    "@kepcup/shared": "workspace:*"
+    "@kepcup/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1"
   },
   "peerDependencies": {
     "@kepcup/core": "workspace:*"

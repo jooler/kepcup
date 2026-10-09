@@ -9,3 +9,8 @@ declare const __KEPCUP_TEST_HOOKS__: boolean | undefined;
  * 其余构建中未定义 → agent/external/catalog.ts 视为不过滤）。
  */
 declare const __KEPCUP_AGENT_RELEASE_GATES__: readonly string[] | undefined;
+/**
+ * D73 连接应用目录发行门禁放行清单（apps/desktop/scripts/dist.mjs 经 esbuild define 注入
+ * connector-release-gates.json；其余构建中未定义 → apps/catalog.ts 视为不过滤）。
+ */
+declare const __KEPCUP_CONNECTOR_RELEASE_GATES__: readonly string[] | undefined;

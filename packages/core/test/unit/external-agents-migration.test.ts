@@ -7,6 +7,7 @@ import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infr
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * 0017_external_agents（D72 P3）：approvals 重建（kind CHECK 增 agent_tool，
@@ -65,7 +66,7 @@ describe('0017 external_agents 迁移', () => {
     expect(() => insertApproval(db, 'apr_too_early', 'agent_tool')).toThrow(/CHECK/);
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([17, 18, 19, 20, 21]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(16));
 
     const rows = db
       .prepare('select * from approvals order by id')

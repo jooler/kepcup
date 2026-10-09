@@ -145,7 +145,7 @@ describe('mcp stdio integration', () => {
       audit: () => {},
       logger,
     };
-    const tools = await buildMcpTools({
+    const { tools } = await buildMcpTools({
       identity,
       servers: [serverOf(scriptPath)],
       mcp: service,
@@ -522,7 +522,7 @@ describe('mcp risk tiers and per-tool policies (W5)', () => {
   it('read tools run without a card; write tools ask with risk in the payload; audit records the risk', async () => {
     const server = await makeAnnotatedServer();
     const h = await makeHarness(server);
-    const tools = await buildMcpTools({
+    const { tools } = await buildMcpTools({
       identity: taskIdentity,
       servers: [server],
       mcp: h.service,
@@ -610,7 +610,7 @@ describe('mcp risk tiers and per-tool policies (W5)', () => {
   it('read-only surface: only read + auto tools; risk re-resolved at call time (RUN_READ_ONLY)', async () => {
     const server = await makeAnnotatedServer();
     const h = await makeHarness(server);
-    const turnTools = await buildMcpTools({
+    const { tools: turnTools } = await buildMcpTools({
       identity: turnIdentity,
       servers: [server],
       mcp: h.service,
@@ -657,7 +657,7 @@ describe('mcp risk tiers and per-tool policies (W5)', () => {
       toolPolicies: { hidden_tool: { enabled: false }, get_status: { approval: 'ask' } },
     };
     h.setServer(asked);
-    const again = await buildMcpTools({
+    const { tools: again } = await buildMcpTools({
       identity: turnIdentity,
       servers: [asked],
       mcp: h.service,

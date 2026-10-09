@@ -1,6 +1,12 @@
 import { Type } from '@earendil-works/pi-ai';
 import { toLlmContent, type Tool as McpTool } from '@earendil-works/pi-mcp';
-import { TOOL_OUTPUT_MAX_CHARS, TURN_MCP_READ_TOOLS_MAX, type McpServer } from '@kepcup/shared';
+import {
+  TOOL_OUTPUT_MAX_CHARS,
+  TURN_MCP_READ_TOOLS_MAX,
+  type AppAuthReason,
+  type McpServer,
+  type SetupRequirement,
+} from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { ToolGateway } from '../gateway/index.js';
@@ -8,6 +14,12 @@ import type { SecretsService } from '../domain/secrets.js';
 import { mcpToolName, type McpService } from './service.js';
 import { classifyRiskDetailed } from './risk.js';
 import { allowedOnReadOnlySurface, decideMcpTool, type McpToolDecision } from './policy.js';
+import { findAppAuthRequiredError } from '../apps/auth/errors.js';
+import { customConnectionId } from '../apps/connection-store.js';
+import { toolLockKey, type LockedToolInfo } from '../apps/tool-lock.js';
+import type { AppServerBinding, AppToolContext } from '../apps/exposure.js';
+import { appToolName } from '../apps/naming.js';
+import { TOOL_SETUP_REQUIRED } from '../tools/image-tools.js';
 
 /**
  * MCP tool → KepCup ToolDefinition 包装（D65）：调用与内置工具同管道——
@@ -19,6 +31,9 @@ import { allowedOnReadOnlySurface, decideMcpTool, type McpToolDecision } from '.
  * 个）。`enabled:false` 的工具两边都不注册。调用时网关重新解析风险与策略。
  */
 
+/** wrapMcpTool 命中授权问题时的回调：orchestrator 写进本 run 的 `setupHit`。 */
+export type McpSetupRequiredHandler = (requirement: SetupRequirement) => void;
+
 export interface McpToolFacade {
   /** Orchestrator 预先解析并构建好的 MCP 包装工具（ready to register）。 */
   readonly tools: ToolDefinition[];
@@ -29,12 +44,55 @@ export interface McpToolFacade {
   readonly omitted?: number;
 }
 
+/**
+ * 因授权问题本次没能列出工具的 server（D73）：run 开头 listTools 遇到
+ * `AppAuthRequiredError` 时收集（不再只记日志）——工具不暴露，但提示词的
+ * `<connected_apps>` 标为「需重新连接」，模型可调用 `app_request_connection`。
+ */
+export interface McpUnavailableServer {
+  serverId: string;
+  serverName: string;
+  connectionId: string;
+  reason: AppAuthReason;
+  scopes?: string[] | undefined;
+}
+
+/**
+ * 工具定义锁定（D73 P1）：某 server 本次因「新增 / 定义变化、尚未复核」而没有暴露的工具。
+ * 提示词 / 界面据此提示「应用有 N 个工具待复核」（本期不改提示词文案）。
+ */
+export interface McpLockedServer {
+  serverId: string;
+  serverName: string;
+  /** 锁定行所属的连接 id（`custom:{serverId}` / `conn_…`）。 */
+  connectionId: string;
+  tools: LockedToolInfo[];
+}
+
+/**
+ * 暴露过滤（D73 P1，`ToolLockService.partition`）：`serverKey` 是锁定行的连接 id；返回
+ * 允许暴露的工具与被锁定的工具。在包装（去重、风险分级）之前应用。
+ */
+export type McpToolFilter = (
+  serverKey: string,
+  tools: McpTool[],
+) => { exposed: McpTool[]; locked: LockedToolInfo[] };
+
+export interface McpToolResolution {
+  entries: McpToolEntry[];
+  unavailable: McpUnavailableServer[];
+  /** 工具锁定拦下的工具（无锁定或全部已批准时为空数组）。 */
+  locked: McpLockedServer[];
+}
+
 /** 一个已解析的 MCP 工具：所属 server、原始定义、模型侧名字与构建时的决定。 */
 export interface McpToolEntry {
   server: McpServer;
   tool: McpTool;
   name: string;
   decision: McpToolDecision;
+  /** D73：目录连接的工具带连接上下文（审批载荷、审计、命名 `app_{slug}_{tool}`）。 */
+  app?: AppToolContext | undefined;
 }
 
 /**
@@ -50,38 +108,101 @@ export async function resolveMcpToolEntries(input: {
    * 都会解析，不能把任务的预算耗光。
    */
   countFailures?: boolean;
-}): Promise<McpToolEntry[]> {
+  /** D73 P1：工具定义锁定过滤（缺省 = 不过滤）。 */
+  toolFilter?: McpToolFilter | undefined;
+  /**
+   * D73 P1 命名 / 决定选项：目录连接合成的 server 返回绑定——工具名用
+   * `appToolName(slug, tool)`（`app_{slug}_{tool}`），风险与审批由绑定给出（W5 分级 + 目录
+   * 叠加 + 用户逐工具策略）。返回 undefined 的 server（自定义 MCP）保持 `mcp_{serverId}_{tool}`
+   * 与 W5 分级，行为不变。
+   */
+  appBindingFor?: ((server: McpServer) => AppServerBinding | undefined) | undefined;
+}): Promise<McpToolResolution> {
   const { servers, mcp, logger } = input;
   const entries: McpToolEntry[] = [];
+  const unavailable: McpUnavailableServer[] = [];
+  const locked: McpLockedServer[] = [];
   const taken = new Set<string>();
   for (const server of servers) {
     let tools;
     try {
       tools = await mcp.listTools(server, { countFailure: input.countFailures ?? true });
     } catch (error) {
+      const authError = findAppAuthRequiredError(error);
+      if (authError !== null) {
+        // 授权问题不是故障：不暴露该 server 的工具，但要让模型知道需要重新连接。
+        unavailable.push({
+          serverId: server.id,
+          serverName: server.name,
+          connectionId: authError.connectionId,
+          reason: authError.reason,
+          ...(authError.scopes !== undefined ? { scopes: authError.scopes } : {}),
+        });
+        continue;
+      }
       logger.warn(
         { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
         'mcp server unavailable; skipping its tools',
       );
       continue;
     }
+    if (input.toolFilter !== undefined) {
+      const key = toolLockKey(server);
+      const filtered = input.toolFilter(key, tools);
+      tools = filtered.exposed;
+      if (filtered.locked.length > 0) {
+        locked.push({
+          serverId: server.id,
+          serverName: server.name,
+          connectionId: key,
+          tools: filtered.locked,
+        });
+      }
+    }
+    const binding = input.appBindingFor?.(server);
     for (const tool of tools) {
-      const decision = decideMcpTool(
-        server,
-        tool.name,
-        classifyRiskDetailed({ name: tool.name, annotations: tool.annotations }),
-      );
+      const decision =
+        binding !== undefined
+          ? binding.decide(tool)
+          : decideMcpTool(
+              server,
+              tool.name,
+              classifyRiskDetailed({ name: tool.name, annotations: tool.annotations }),
+            );
       if (!decision.enabled) continue;
-      const name = mcpToolName(server.id, tool.name);
+      let name =
+        binding !== undefined
+          ? appToolName(binding.connectorSlug, tool.name)
+          : mcpToolName(server.id, tool.name);
+      // sanitize 之后撞名（`a.b` / `a_b`）：应用工具用哈希后缀消歧；自定义 MCP 保持跳过。
+      if (taken.has(name) && binding !== undefined) {
+        name = appToolName(binding.connectorSlug, tool.name, { disambiguate: true });
+      }
       if (taken.has(name)) {
         logger.warn({ name, serverId: server.id }, 'duplicate mcp tool name; skipping');
         continue;
       }
       taken.add(name);
-      entries.push({ server, tool, name, decision });
+      entries.push({
+        server,
+        tool,
+        name,
+        decision,
+        ...(binding !== undefined
+          ? {
+              app: {
+                connectionId: binding.connectionId,
+                connectorId: binding.connectorId,
+                connectorSlug: binding.connectorSlug,
+                accountLabel: binding.accountLabel,
+                appName: binding.appName,
+              },
+            }
+          : {}),
+      });
     }
   }
-  return entries;
+  return { entries, unavailable, locked };
 }
 
 /**
@@ -105,8 +226,9 @@ export function wrapMcpToolEntries(input: {
   mcp: McpService;
   gateway: ToolGateway;
   secrets: SecretsService;
+  onSetupRequired?: McpSetupRequiredHandler | undefined;
 }): ToolDefinition[] {
-  const { identity, entries, mcp, gateway, secrets } = input;
+  const { identity, entries, mcp, gateway, secrets, onSetupRequired } = input;
   return entries.map((entry) =>
     wrapMcpTool({
       identity,
@@ -114,9 +236,11 @@ export function wrapMcpToolEntries(input: {
       tool: entry.tool,
       name: entry.name,
       decision: entry.decision,
+      app: entry.app,
       mcp,
       gateway,
       secrets,
+      onSetupRequired,
     }),
   );
 }
@@ -133,10 +257,19 @@ export async function buildMcpTools(input: {
   secrets: SecretsService;
   logger: { warn(fields: Record<string, unknown>, msg: string): void };
   surface?: 'task' | 'readOnly';
-}): Promise<ToolDefinition[]> {
-  const all = await resolveMcpToolEntries(input);
+  onSetupRequired?: McpSetupRequiredHandler | undefined;
+  /** D73 P1：工具定义锁定过滤，每个 server 的工具在包装前先过它。 */
+  toolFilter?: McpToolFilter | undefined;
+  /** D73 P1：目录连接 server 的命名 / 决定绑定（见 `resolveMcpToolEntries`）。 */
+  appBindingFor?: ((server: McpServer) => AppServerBinding | undefined) | undefined;
+}): Promise<{
+  tools: ToolDefinition[];
+  unavailable: McpUnavailableServer[];
+  locked: McpLockedServer[];
+}> {
+  const { entries: all, unavailable, locked } = await resolveMcpToolEntries(input);
   const entries = input.surface === 'readOnly' ? selectReadOnlyMcpEntries(all).entries : all;
-  return wrapMcpToolEntries({ ...input, entries });
+  return { tools: wrapMcpToolEntries({ ...input, entries }), unavailable, locked };
 }
 
 function wrapMcpTool(input: {
@@ -145,11 +278,14 @@ function wrapMcpTool(input: {
   tool: { name: string; title?: string; description?: string; inputSchema: Record<string, unknown> };
   name: string;
   decision: McpToolDecision;
+  app?: AppToolContext | undefined;
   mcp: McpService;
   gateway: ToolGateway;
   secrets: SecretsService;
+  onSetupRequired?: McpSetupRequiredHandler | undefined;
 }): ToolDefinition {
-  const { identity, server, tool, name, decision, mcp, gateway, secrets } = input;
+  const { identity, server, tool, name, decision, app, mcp, gateway, secrets, onSetupRequired } =
+    input;
   const riskLabel =
     decision.risk === 'read' ? '只读' : decision.risk === 'write' ? '写入' : '可能有破坏性';
   return {
@@ -157,7 +293,10 @@ function wrapMcpTool(input: {
     // W2: the effect ledger classifies by this risk (and the live one).
     mcp: { serverId: server.id, toolName: tool.name, risk: decision.risk },
     description:
-      `MCP 工具（来自服务器「${server.name}」，${riskLabel}）：${tool.description ?? tool.title ?? tool.name}。` +
+      (app !== undefined
+        ? `应用工具（来自「${app.appName}」，账号 ${app.accountLabel}，${riskLabel}）：`
+        : `MCP 工具（来自服务器「${server.name}」，${riskLabel}）：`) +
+      `${tool.description ?? tool.title ?? tool.name}。` +
       (decision.approval === 'auto' ? '调用无需用户批准。' : '调用会请求用户批准。'),
     parameters: Type.Unsafe({
       ...tool.inputSchema,
@@ -167,7 +306,10 @@ function wrapMcpTool(input: {
     execute: async (params, ctx): Promise<ToolResult> => {
       const args = (params ?? {}) as Record<string, unknown>;
       try {
-        await gateway.mcpToolCall(identity, server, tool.name, args, { signal: ctx.signal });
+        await gateway.mcpToolCall(identity, server, tool.name, args, {
+          signal: ctx.signal,
+          ...(app !== undefined ? { connection: app } : {}),
+        });
       } catch (error) {
         return gatewayMcpErrorResult(error);
       }
@@ -175,6 +317,29 @@ function wrapMcpTool(input: {
       try {
         result = await mcp.callTool(server, tool.name, args, { signal: ctx.signal });
       } catch (error) {
+        // D73：授权失效 / 需追加权限 → 记下 connect-app 需求（orchestrator 写入 setupHit，
+        // 既有 abort → failed + run.setup → 卡片 → runs.retry 链路），工具结果 SETUP_REQUIRED。
+        const authError = findAppAuthRequiredError(error);
+        if (authError !== null) {
+          onSetupRequired?.({
+            kind: 'connect-app',
+            target:
+              app !== undefined
+                ? { kind: 'catalog', connectorId: app.connectorId }
+                : { kind: 'custom', serverId: server.id },
+            connectionId:
+              app !== undefined
+                ? app.connectionId
+                : authError.connectionId || customConnectionId(server.id),
+            reason: authError.reason,
+            ...(authError.scopes !== undefined ? { scopes: authError.scopes } : {}),
+          });
+          return {
+            ok: false,
+            content: `需要重新连接「${server.name}」：${authError.reason === 'scope' ? '该应用需要追加权限' : '授权已失效或尚未连接'}。请告知用户在设置中重新连接；连接完成后本次请求会自动继续，不要让用户粘贴令牌。`,
+            errorCode: TOOL_SETUP_REQUIRED,
+          };
+        }
         return {
           ok: false,
           content: `MCP 调用失败：${error instanceof Error ? error.message : String(error)}`,

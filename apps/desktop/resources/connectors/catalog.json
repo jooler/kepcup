@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "connectors": [
+    {
+      "name": "com.notion/mcp",
+      "title": "Notion",
+      "description": "搜索、阅读与编辑 Notion 页面和数据库",
+      "version": "1.0.1",
+      "websiteUrl": "https://www.notion.so",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.notion.com/mcp"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "notion",
+          "icon": "notion.svg",
+          "category": "productivity",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://www.notion.so/privacy",
+          "releaseGate": "notion"
+        }
+      }
+    },
+    {
+      "name": "app.linear/linear",
+      "title": "Linear",
+      "description": "查找、创建与更新 Linear 的 issue、项目与评论",
+      "version": "1.0.1",
+      "websiteUrl": "https://linear.app",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.linear.app/mcp"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "linear",
+          "icon": "linear.svg",
+          "category": "project",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://linear.app/privacy",
+          "releaseGate": "linear"
+        }
+      }
+    },
+    {
+      "name": "com.atlassian/atlassian-mcp-server",
+      "title": "Atlassian",
+      "description": "访问 Jira、Confluence 与 Compass（Rovo MCP）",
+      "version": "1.1.3",
+      "websiteUrl": "https://www.atlassian.com",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.atlassian.com/v1/mcp/authv2"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "atlassian",
+          "icon": "atlassian.svg",
+          "category": "project",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://www.atlassian.com/legal/privacy-policy",
+          "releaseGate": "atlassian"
+        }
+      }
+    },
+    {
+      "name": "io.github.getsentry/sentry-mcp",
+      "title": "Sentry",
+      "description": "查看 Sentry 的问题、错误与 Seer 分析",
+      "version": "0.42.0",
+      "websiteUrl": "https://sentry.io",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.sentry.dev/mcp"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "sentry",
+          "icon": "sentry.svg",
+          "category": "development",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://sentry.io/privacy/",
+          "releaseGate": "sentry"
+        }
+      }
+    },
+    {
+      "name": "com.canva.mcp/mcp",
+      "title": "Canva",
+      "description": "生成、编辑、检索与导出 Canva 设计",
+      "version": "1.0.0",
+      "websiteUrl": "https://www.canva.com",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.canva.com/mcp"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "canva",
+          "icon": "canva.svg",
+          "category": "design",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://www.canva.com/policies/privacy-policy/",
+          "releaseGate": "canva"
+        }
+      }
+    },
+    {
+      "name": "com.stripe/mcp",
+      "title": "Stripe",
+      "description": "查询与管理 Stripe 的客户、商品与支付",
+      "version": "0.2.4",
+      "websiteUrl": "https://stripe.com",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.stripe.com"
+        }
+      ],
+      "_meta": {
+        "app.kepcup/connector": {
+          "slug": "stripe",
+          "icon": "stripe.svg",
+          "category": "payments",
+          "tier": "builtin",
+          "auth": {
+            "kind": "oauth",
+            "registration": "auto",
+            "clientRef": null,
+            "scopes": {
+              "default": [],
+              "write": []
+            }
+          },
+          "toolPolicy": {},
+          "skills": [],
+          "ui": false,
+          "privacyPolicy": "https://stripe.com/privacy",
+          "releaseGate": "stripe"
+        }
+      }
+    }
+  ]
+}

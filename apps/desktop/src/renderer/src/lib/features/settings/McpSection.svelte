@@ -3,11 +3,13 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { appsStore } from '$lib/stores/apps.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import McpToolPolicies from './McpToolPolicies.svelte';
 
   /**
@@ -17,6 +19,9 @@
    * 风险档与策略（W5，McpToolPolicies）。
    * 密钥只写不读：env / headers 的值输入后即落 secrets 表，settings 只存
    * `secret:env:<name>` / `secret:header:<name>` 占位符。
+   * D73：Streamable HTTP server 可选认证方式「无 / Header / OAuth」；OAuth 的
+   * 连接状态与「连接 / 重新连接 / 断开」由 ConnectAppPanel 呈现（与对话内连接卡
+   * 共用）；删除 server 走 `mcp.removeServer`（连同密钥、令牌、连接行一并清理）。
    */
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
@@ -44,8 +49,24 @@
       ...(kind === 'stdio' ? { command: '', args: [] } : { url: '' }),
       enabled: true,
       autoApprove: false,
+      auth: 'none',
       secretDrafts: {},
     };
+  }
+
+  /**
+   * D73：落盘前规整认证方式。http：`oauth` / `none` 不带静态 header（切换认证方式
+   * 后残留的 header 一并丢弃），`headers` 无 header 时退化为 `none`；stdio / sse
+   * 无选择器，随 headers 是否存在而定（与 shared 的缺省推断一致）。
+   */
+  function withAuth(server: McpServer): McpServer {
+    const hasHeaders = Object.keys(server.headers ?? {}).length > 0;
+    if (server.transport === 'http' && (server.auth === 'oauth' || server.auth === 'none')) {
+      const { headers: _dropped, ...rest } = server;
+      void _dropped;
+      return { ...rest, auth: server.auth };
+    }
+    return { ...server, auth: hasHeaders ? 'headers' : 'none' };
   }
 
   function envEntries(server: Draft): Array<{ name: string; value: string }> {
@@ -165,17 +186,23 @@
     busy = true;
     try {
       const serverId = draft.id;
+      const { secretDrafts, ...draftServer } = draft;
+      const server = withAuth(draftServer);
+      // 切到 OAuth / 无认证后被丢弃的 header：其已存密钥一并清掉，不留孤儿。
+      const keptHeaders = new Set(Object.keys(server.headers ?? {}));
+      const droppedHeaders = Object.keys(draftServer.headers ?? {}).filter(
+        (name) => !keptHeaders.has(name),
+      );
       // 新输入的密钥值先落 secrets（env: 直接名；header: h: 前缀区分草稿键）。
-      for (const [name, value] of Object.entries(draft.secretDrafts)) {
+      for (const [name, value] of Object.entries(secretDrafts)) {
         if (value.length === 0) continue;
         if (name.startsWith('h:')) {
+          if (!keptHeaders.has(name.slice(2))) continue;
           await settingsStore.setMcpSecret(serverId, 'header', name.slice(2), value);
         } else {
           await settingsStore.setMcpSecret(serverId, 'env', name, value);
         }
       }
-      const { secretDrafts: _ignored, ...server } = draft;
-      void _ignored;
       const existing = settingsStore.settings?.mcpServers ?? [];
       const index = existing.findIndex((entry) => entry.id === serverId);
       // W5: the form does not edit per-tool policies — keep the live ones
@@ -189,6 +216,9 @@
           ? existing.map((entry, i) => (i === index ? merged : entry))
           : [...existing, merged];
       await settingsStore.update({ mcpServers: next });
+      for (const name of droppedHeaders) {
+        await settingsStore.removeMcpSecret(serverId, 'header', name).catch(() => {});
+      }
       toast.success(t('settings.saved'));
       draft = null;
       editingId = null;
@@ -225,10 +255,10 @@
   async function removeServer(server: McpServer): Promise<void> {
     busy = true;
     try {
-      const existing = settingsStore.settings?.mcpServers ?? [];
-      await settingsStore.update({
-        mcpServers: existing.filter((entry) => entry.id !== server.id),
-      });
+      // D73：core 删除 settings 条目并清理密钥 / 令牌 / 连接行（不再整体覆盖 mcpServers）。
+      await settingsStore.removeMcpServer(server.id);
+      if (editingId === server.id) cancelEdit();
+      void appsStore.refresh().catch(() => undefined);
       toast.success(t('settings.saved'));
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
@@ -293,7 +323,7 @@
       const { secretDrafts: _ignored, ...server } = draft;
       void _ignored;
       const result = await settingsStore.testMcp(
-        server as McpServer,
+        withAuth(server as McpServer),
         draftSecretValues(draft),
       );
       draftTestTools = result.tools;
@@ -393,6 +423,16 @@
       {:else if testError !== null}
         <p class="text-xs text-destructive">{testError}</p>
       {/if}
+      {#if server.auth === 'oauth'}
+        <div class="space-y-1.5 border-t pt-2.5" data-testid={`mcp-oauth-${server.id}`}>
+          <p class="text-xs font-medium">{t('settings.mcpOauthSection')}</p>
+          <ConnectAppPanel
+            target={{ kind: 'custom', serverId: server.id }}
+            name={server.name}
+            testid={`mcp-connect-${server.id}`}
+          />
+        </div>
+      {/if}
       {#if toolsOpen[server.id]}
         <McpToolPolicies {server} />
       {/if}
@@ -456,7 +496,30 @@
         </div>
       {/if}
 
-      <p class="text-xs text-muted-foreground">{t('settings.mcpSecretHint')}</p>
+      {#if draft.transport === 'http'}
+        <div class="grid gap-1.5">
+          <Label for="mcp-auth">{t('settings.mcpAuthLabel')}</Label>
+          <select
+            id="mcp-auth"
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            bind:value={draft.auth}
+            data-testid="mcp-auth"
+          >
+            <option value="none">{t('settings.mcpAuthNone')}</option>
+            <option value="headers">{t('settings.mcpAuthHeaders')}</option>
+            <option value="oauth">{t('settings.mcpAuthOauth')}</option>
+          </select>
+        </div>
+      {/if}
+
+      {#if draft.transport === 'http' && draft.auth === 'oauth'}
+        <p class="text-xs text-muted-foreground" data-testid="mcp-auth-oauth-hint">
+          {t('settings.mcpAuthOauthHint')}
+          {#if editingId === null}{t('settings.mcpAuthOauthSaveFirst')}{/if}
+        </p>
+      {:else if draft.transport !== 'http' || draft.auth === 'headers'}
+        <p class="text-xs text-muted-foreground">{t('settings.mcpSecretHint')}</p>
+      {/if}
 
       {#if draft.transport === 'stdio'}
         <div class="space-y-1.5">
@@ -492,7 +555,7 @@
             />
           </div>
         </div>
-      {:else}
+      {:else if draft.transport !== 'http' || draft.auth === 'headers'}
         <div class="space-y-1.5">
           <Label>{t('settings.mcpHeadersLabel')}</Label>
           {#each Object.keys(draft.headers ?? {}) as name (name)}
@@ -532,15 +595,18 @@
         <Button size="sm" disabled={busy} onclick={() => void save()} data-testid="mcp-save">
           {t('settings.save')}
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={draftTesting}
-          onclick={() => void testDraft()}
-          data-testid="mcp-test-draft"
-        >
-          {draftTesting ? t('settings.testing') : t('settings.test')}
-        </Button>
+        {#if !(draft.transport === 'http' && draft.auth === 'oauth')}
+          <!-- OAuth 的草稿无令牌可测：保存并连接后在列表里测试。 -->
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={draftTesting}
+            onclick={() => void testDraft()}
+            data-testid="mcp-test-draft"
+          >
+            {draftTesting ? t('settings.testing') : t('settings.test')}
+          </Button>
+        {/if}
         <Button size="sm" variant="ghost" onclick={cancelEdit}>{t('settings.mcpCancel')}</Button>
       </div>
 

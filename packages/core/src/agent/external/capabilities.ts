@@ -40,13 +40,17 @@ export function buildExternalAgentTools(input: {
       ...tool,
       name,
       description:
-        capability.category === 'supplement'
+        // 连接应用没有「自带同类能力」可言（宿主是唯一入口），不加原生优先前缀。
+        capability.category === 'supplement' && capability.id !== 'apps'
           ? `${SUPPLEMENT_TOOL_DESCRIPTION_PREFIX}${tool.description}`
           : tool.description,
     });
   }
   return tools;
 }
+
+/** 连接应用工具名前缀（`apps` 能力包按它归包）。 */
+const APP_TOOL_PREFIX = 'app_';
 
 /** Tool name limit of the agents' model APIs (Anthropic / OpenAI: 64). */
 export const MAX_AGENT_TOOL_NAME = 64;
@@ -96,10 +100,22 @@ const DESTRUCTIVE_TOOLS: ReadonlySet<string> = new Set([
   'git_remote',
 ]);
 
-export function toolAnnotations(toolName: string): {
+/**
+ * D73：连接应用的工具（`app_{slug}_{tool}`）的注解来自它们的风险档（W5 分级 + 目录叠加，
+ * 与审批卡 / 网关一致）：`read` → `readOnlyHint:true`；`destructive` → `destructiveHint:true`；
+ * `write` 是非破坏性写入。名字经 `fitToolName` 缩短后前缀 `app_` 不变。
+ */
+export function toolAnnotations(
+  toolName: string,
+  tool?: { mcp?: { risk?: 'read' | 'write' | 'destructive' | undefined } | undefined },
+): {
   readOnlyHint: boolean;
   destructiveHint: boolean;
 } {
+  const appRisk = toolName.startsWith(APP_TOOL_PREFIX) ? tool?.mcp?.risk : undefined;
+  if (appRisk !== undefined) {
+    return { readOnlyHint: appRisk === 'read', destructiveHint: appRisk === 'destructive' };
+  }
   const readOnly = READ_ONLY_TOOLS.has(toolName);
   return { readOnlyHint: readOnly, destructiveHint: !readOnly && DESTRUCTIVE_TOOLS.has(toolName) };
 }

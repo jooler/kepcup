@@ -29,6 +29,8 @@ import type { ProviderRegistry } from '../../src/agent/external/types.js';
 import { genericAcpProvider } from '../../src/agent/external/providers/generic-acp.js';
 import type { EngineEvent, RunSpec } from '../../src/agent/types.js';
 import { mcpToolName } from '../../src/mcp/service.js';
+import { appToolName } from '../../src/apps/naming.js';
+import { APP_REQUEST_CONNECTION_TOOL } from '../../src/tools/app-tools.js';
 
 /**
  * ExternalAgentEngine 单测（D72 P1）：ACP 更新 → 引擎事件的映射（与 PiEngine
@@ -355,8 +357,14 @@ describe('host capability registry vs real tools', () => {
         expect(names, `${capability.id}:${tool}`).toContain(tool);
       }
       for (const prefix of capability.toolPrefixes) {
-        // User MCP tools are named at runtime (mcp/service.ts mcpToolName).
-        const candidates = capability.id === 'mcp' ? [mcpToolName('srv', 'lookup')] : [...names];
+        // User MCP / connected-app tools are named at runtime (mcp/service.ts mcpToolName,
+        // apps/naming.ts appToolName; the host's own `app_request_connection` is an app tool too).
+        const candidates =
+          capability.id === 'mcp'
+            ? [mcpToolName('srv', 'lookup')]
+            : capability.id === 'apps'
+              ? [appToolName('github', 'list_repos'), APP_REQUEST_CONNECTION_TOOL]
+              : [...names];
         expect(candidates.some((name) => name.startsWith(prefix)), prefix).toBe(true);
       }
     }

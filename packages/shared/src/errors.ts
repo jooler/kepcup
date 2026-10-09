@@ -96,6 +96,17 @@ export const ERROR_CODES = [
   'AGENT_CONFIG_UNSAFE',
   'AGENT_PROCESS_EXITED',
   'AGENT_FAILED',
+  // connected apps / MCP OAuth (D73, docs/design/29-connected-apps.md)
+  /** 运行时需要（重新）授权：未连接 / 令牌失效 / 需追加 scope；不计入 MCP 连接失败次数。 */
+  'APP_AUTH_REQUIRED',
+  'OAUTH_FLOW_FAILED',
+  'OAUTH_FLOW_CANCELLED',
+  'OAUTH_FLOW_TIMEOUT',
+  /** 无任何客户端注册途径（无 CIMD / DCR / 预注册），需用户手填 client id。 */
+  'OAUTH_CLIENT_REQUIRED',
+  'OAUTH_ISSUER_MISMATCH',
+  'OAUTH_INSECURE_ENDPOINT',
+  'APP_CONNECTION_NOT_FOUND',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -111,7 +111,7 @@ import { MemoryService } from './memory/service.js';
 import { MediaService } from './media/service.js';
 import { SearchService } from './search/service.js';
 import { McpService } from './mcp/service.js';
-import { decideMcpTool } from './mcp/policy.js';
+import { decideMcpTool, type McpToolDecision } from './mcp/policy.js';
 import type { Embedder } from './memory/embedder.js';
 import { BudgetService } from './usage/budget.js';
 import { SkillImporter } from './skills/library.js';
@@ -124,6 +124,14 @@ import {
   type BrowserHostRpc,
   type DeferredBrowserHostRpc,
 } from './browser/facade.js';
+import { createAppServices, type AppServices } from './apps/index.js';
+import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
+import { AppToolGrants } from './apps/grants.js';
+import { ConnectorCatalog } from './apps/catalog.js';
+import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
+import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
+import { ToolLockService } from './apps/tool-lock.js';
+import { createShellHostRpc, type DeferredShellHostRpc, type ShellHostRpc } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
 import type { CoreEventsMap } from './start-types.js';
 
@@ -294,6 +302,37 @@ export interface CoreServicesOptions {
    */
   browserRpc?: BrowserHostRpc;
   /**
+   * D73 test hook: the system-shell capability hosted by the main process
+   * (`shell.openExternal`). The Electron entry binds the deferred default to
+   * the platform channel; tests inject a fake (typically driving testkit's
+   * `simulateBrowser`) and count the calls.
+   */
+  shellRpc?: ShellHostRpc;
+  /**
+   * D73 test hooks for the OAuth engine (all honoured only when NODE_ENV=test in
+   * a test-hooks build, like KEPCUP_KEYSTORE): extra loopback hosts the SSRF-safe
+   * fetch may reach over plain http (`hostname` or `host:port`, e.g. the fake
+   * OAuth server), the CIMD client_id URL (a testkit file-server document), the
+   * fixed callback port candidates and the flow time limit.
+   */
+  oauthLoopbackAllowlist?: string[];
+  oauthCimdUrl?: string;
+  oauthCallbackPorts?: number[];
+  oauthFlowTimeoutMs?: number;
+  /**
+   * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): tools seen for the
+   * first time are approved straight away, like the stored-server baseline — so
+   * fixtures that add a server through `settings.update` keep working. A tool whose
+   * definition later *changes* is still locked.
+   */
+  toolLockTrustFirstList?: boolean;
+  /**
+   * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): the connector catalog the
+   * Bots' `<available_apps>` / app tools are built from. Test-hook builds default to an
+   * EMPTY catalog (so unrelated suites do not see the shipped entries in their prompts).
+   */
+  connectorCatalog?: ConnectorCatalog;
+  /**
    * P13 修复轮 test hook (BR-P13-007): wraps the pre-migration backup restore
    * so integration tests can inject a restore failure and pin the honest
    * statusReason. The default is the production restoreDatabaseBackup.
@@ -419,6 +458,22 @@ export interface CoreServices {
    * with BROWSER_UNAVAILABLE until the process entry binds the platform port).
    */
   browserRpc: DeferredBrowserHostRpc;
+  /** D73 system shell (open the browser for OAuth consent); same deferred pattern as browserRpc. */
+  shellRpc: DeferredShellHostRpc;
+  /** D73 connected apps: Token Vault, connection rows, interactive auth flows (null while locked / errored). */
+  apps: AppServices | null;
+  /** D73 runtime auth (provider registry, disconnect / removal, audit); null with `apps`. */
+  appRuntime: AppRuntime | null;
+  /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
+  toolLock: ToolLockService | null;
+  /** D73 P1 persistent per-(bot, connection, tool) grants; null with `apps`. */
+  appToolGrants: AppToolGrants | null;
+  /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
+  connectedApps: ConnectedApps | null;
+  /** D73 P1 connector catalog (gate-filtered). */
+  connectorCatalog: ConnectorCatalog | null;
+  /** D73 P1 catalog connection service (connect flow host, tools / policy / grants management). */
+  appConnections: AppConnectionsService | null;
   appMethods: Record<string, RpcMethodSpec>;
   platformMethods: Record<string, RpcMethodSpec>;
   /** Re-announce the current status to a freshly bound RPC client. */
@@ -636,6 +691,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     scheduler: null,
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
+    shellRpc: createShellHostRpc(),
+    apps: null,
+    appRuntime: null,
+    toolLock: null,
+    appToolGrants: null,
+    connectedApps: null,
+    connectorCatalog: null,
+    appConnections: null,
     appMethods: {},
     platformMethods: {},
     pushStatusTo(server) {
@@ -673,6 +736,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         // Connections may already be gone (bot deletion race); nothing to do.
       }
       try {
+        await services.apps?.shutdown();
+      } catch {
+        // Auth flows may already be gone; nothing to do.
+      }
+      try {
         await services.mcp?.closeAll();
       } catch {
         // MCP servers may already be gone; nothing to do.
@@ -692,6 +760,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // P11: a test-injected in-process browser fake takes precedence; the real
   // app binds the platform channel in process-entry (services.browserRpc.bind).
   if (options.browserRpc !== undefined) services.browserRpc.bindFacade(options.browserRpc);
+  if (options.shellRpc !== undefined) services.shellRpc.bindFacade(options.shellRpc);
 
   const systemMethods = createSystemMethods(services, options.appVersion, options.diskUsageBudget);
   const fail = (message: string): CoreServices => {
@@ -876,8 +945,99 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         emit: (payload) => events.emit('mcp.server_status', payload),
       },
     });
+    // D73 连接应用：Token Vault + 连接行 + 交互授权流程（运行时 registry 由 McpService 一侧接入）。
+    const apps = createAppServices({
+      db: mainDb,
+      secrets,
+      settings,
+      clock,
+      logger,
+      events,
+      shell: services.shellRpc,
+      env,
+      testHooks: __KEPCUP_TEST_HOOKS__ === true,
+      test: {
+        cimdUrl: options.oauthCimdUrl,
+        loopbackAllowlist: options.oauthLoopbackAllowlist,
+        callbackPorts: options.oauthCallbackPorts,
+        flowTimeoutMs: options.oauthFlowTimeoutMs,
+      },
+    });
     const providers = new ProvidersService({ settings, secrets, logger, media });
     const audit = new AuditService({ db: mainDb, clock });
+    // D73 runtime auth: McpService ← registry (OAuth server tokens), interactive flows → registry.
+    const appRuntime = createAppRuntime({ apps, mcp, secrets, audit, logger, clock, events });
+    // D73 P1: tool-definition lock for every MCP server + persistent app-tool grants. The lock
+    // registers each fresh tools/list (McpService) and filters what a Bot is offered.
+    // D73 P1: the connector catalog + the exposure facade (catalog connections → synthesized
+    // servers, risk overlay, Bot prompt sections). The tool lock reads catalog `toolPolicy`
+    // through it, so it is declared first and filled right after the lock exists.
+    const connectorCatalog =
+      options.connectorCatalog ??
+      new ConnectorCatalog({
+        env,
+        logger,
+        ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_CONNECTORS
+          ? { source: { entries: [], iconsDir: null } }
+          : {}),
+      });
+    const connectedAppsRef: { current?: ConnectedApps } = {};
+    const toolLock = new ToolLockService({
+      db: mainDb,
+      clock,
+      store: apps.store,
+      logger,
+      settings,
+      catalogPolicyFor: (connectionId) => connectedAppsRef.current?.catalogPolicyFor(connectionId),
+      onStatus: (payload) => events.emit('apps.connection_status', payload),
+      hasTokens: (connectionId) => apps.vault.getTokens(connectionId) !== null,
+      trustFirstList:
+        __KEPCUP_TEST_HOOKS__ === true &&
+        env.NODE_ENV === 'test' &&
+        options.toolLockTrustFirstList === true,
+    });
+    mcp.attachToolLock(toolLock);
+    const connectedApps = new ConnectedApps({
+      store: apps.store,
+      mcp,
+      catalog: connectorCatalog,
+      toolLock,
+    });
+    connectedAppsRef.current = connectedApps;
+    // D73: Bot profiles may only authorize existing catalog connections (one per connector).
+    bots.attachAppConnections(apps.store);
+    try {
+      toolLock.runBaseline();
+    } catch (error) {
+      // Retried on the next start; until then unmarked servers simply stay locked (fail-closed).
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'tool lock baseline failed',
+      );
+    }
+    const appToolGrants = new AppToolGrants({ db: mainDb, clock });
+    // D73 P1 (§5.4): catalog connections — the McpService's second server source, the catalog end of
+    // the interactive flow (account identification, same-account reuse, first-connect tool review)
+    // and connection management. Bot authorization goes through the bots domain layer.
+    const appConnections = new AppConnectionsService({
+      store: apps.store,
+      vault: apps.vault,
+      catalog: connectorCatalog,
+      toolLock,
+      grants: appToolGrants,
+      mcp,
+      registry: appRuntime.registry,
+      disconnector: appRuntime.disconnector,
+      auditor: appRuntime.auditor,
+      botGrants: createBotAppGrantWriter(bots, events),
+      bots,
+      settings,
+      events,
+      logger,
+      clock,
+    });
+    mcp.attachConnections(appConnections.mcpSource());
+    apps.flows.attachCatalogHost(appConnections.flowHost());
     // W3（D78）: user revocations (grants.revoke, MCP settings / bot selection)
     // interrupt the affected running tasks — TaskHost subscribes below.
     const revocations = new PermissionRevocations();
@@ -1136,7 +1296,33 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // annotations; policy / autoApprove re-read from settings. A server the
       // user switched off, or the bot no longer selects, is refused (enabled
       // false) so running tasks stop calling it.
+      appGrants: appToolGrants,
       mcpToolDecision: async ({ botId, serverId, toolName, signal }) => {
+        // D73 P1: a catalog connection's tool (server id = connection id). Same gates as a
+        // custom server — the bot must have the connection selected, the connection must be
+        // in a usable state — plus the tool lock and the catalog risk overlay.
+        const appView = connectedApps.view(serverId);
+        if (appView !== null) {
+          const appServer = mcp.serverFor(serverId) ?? null;
+          const selectedByBot =
+            botId !== null &&
+            (bots.get(botId)?.profile.runtime.app_connection_ids.includes(serverId) ?? false);
+          const denied: McpToolDecision = {
+            risk: 'destructive',
+            riskSource: 'default',
+            approval: 'ask',
+            approvalSource: 'default',
+            enabled: false,
+          };
+          if (appServer === null || !selectedByBot || !isExposableStatus(appView.connection.status)) {
+            return denied;
+          }
+          const base = await mcp.resolveRisk(appServer, toolName, signal !== undefined ? { signal } : {});
+          const appDecision = connectedApps.decisionFor(serverId, toolName, base) ?? denied;
+          return mcp.toolApproved(appServer, toolName)
+            ? appDecision
+            : { ...appDecision, enabled: false };
+        }
         const server = settings.get().mcpServers.find((entry) => entry.id === serverId);
         const selected =
           botId !== null &&
@@ -1150,11 +1336,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             enabled: false,
           };
         }
-        return decideMcpTool(
-          server,
-          toolName,
-          await mcp.resolveRisk(server, toolName, signal !== undefined ? { signal } : {}),
-        );
+        const risk = await mcp.resolveRisk(server, toolName, signal !== undefined ? { signal } : {});
+        const decision = decideMcpTool(server, toolName, risk);
+        // D73 P1: a tool whose definition is unreviewed (new / changed since it was offered, e.g.
+        // mid-run) is not callable — same refusal as a tool the user switched off.
+        return mcp.toolApproved(server, toolName) ? decision : { ...decision, enabled: false };
       },
     });
 
@@ -1163,7 +1349,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: effects,
       redact: (text) => secrets.redact(text),
       logger,
-      mcpRiskOf: (serverId, toolName) => mcp.riskOf(serverId, toolName).risk,
+      mcpRiskOf: (serverId, toolName) =>
+        connectedApps.decisionFor(serverId, toolName, mcp.riskOf(serverId, toolName))?.risk ??
+        mcp.riskOf(serverId, toolName).risk,
     });
     const engine = new PiEngine({
       settings,
@@ -1353,6 +1541,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       media,
       search,
       mcp,
+      connectedApps,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
@@ -1464,6 +1653,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         onConversationDeleted: (conversationId) =>
           orchestrator.delegationsOnConversationDeleted(conversationId),
         prepareBotDeletion: (botId) => orchestrator.delegationsOnBotDeleted(botId),
+      },
+      // D73 P1: the bot's persistent app-tool grants are revoked with the bot / its membership.
+      appGrants: {
+        revokeForBot: (botId) => appToolGrants.revokeForBot(botId),
+        revokeForBotInConversation: (botId, conversationId) =>
+          appToolGrants.revokeForBotInConversation(botId, conversationId),
       },
       // D72 P5: kept agent sessions die with their conversation / bot / membership.
       agentSessions: {
@@ -1724,6 +1919,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
     services.mcp = mcp;
+    services.apps = apps;
+    services.appRuntime = appRuntime;
+    services.toolLock = toolLock;
+    services.appToolGrants = appToolGrants;
+    services.connectedApps = connectedApps;
+    services.connectorCatalog = connectorCatalog;
+    services.appConnections = appConnections;
     services.appMethods = {
       ...systemMethods,
       ...bindAppMethods(services),

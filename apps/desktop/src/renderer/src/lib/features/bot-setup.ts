@@ -19,6 +19,7 @@ export function emptyProfile(): BotProfile {
       network_policy: 'open',
       network_allowlist: [],
       mcp_server_ids: [],
+      app_connection_ids: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     // P10 guardrail defaults — mirrors botBehaviorSchema.prefault({}) (proactive

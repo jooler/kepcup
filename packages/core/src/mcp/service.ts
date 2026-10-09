@@ -1,6 +1,7 @@
 import {
   McpClient,
   McpHttpError,
+  type AuthProvider,
   StdioTransport,
   StreamableHttpTransport,
   McpConnectionClosedError,
@@ -16,7 +17,10 @@ import {
   MCP_RECONNECT_MAX,
   MCP_TOOL_LIST_CACHE_MS,
   MCP_TOOLS_PER_SERVER_MAX,
+  type AppAuthReason,
+  type AppConnection,
   type McpServer,
+  type McpToolPolicy,
   type McpToolRisksOutput,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
@@ -24,6 +28,14 @@ import type { Clock } from '../infra/clock.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { SettingsService } from '../domain/settings.js';
 import { classifyRiskDetailed, type ToolRiskDetail } from './risk.js';
+import { AppAuthRequiredError, findAppAuthRequiredError } from '../apps/auth/errors.js';
+import {
+  customConnectionId,
+  isCatalogConnectionId,
+  sameEndpoint,
+} from '../apps/connection-store.js';
+import { toolDefinitionHash } from '../apps/policy.js';
+import { toolLockKey } from '../apps/tool-lock.js';
 
 /**
  * MCP 接入（D65，docs/design/23-mcp-and-subagent.md）：管理用户配置的 MCP
@@ -35,7 +47,8 @@ import { classifyRiskDetailed, type ToolRiskDetail } from './risk.js';
 /** W5：调用时刷新工具注解的上限（在线连接上的 tools/list；超时用已知注解）。 */
 const MCP_RISK_REFRESH_TIMEOUT_MS = 5_000;
 
-export type McpServerStatus = 'connecting' | 'connected' | 'failed' | 'closed';
+/** `needs_auth`（D73）：OAuth server 未连接 / 令牌失效 / 需追加权限——不是失败，不计入停用。 */
+export type McpServerStatus = 'connecting' | 'connected' | 'failed' | 'closed' | 'needs_auth';
 
 export interface McpServiceEvents {
   'mcp.server_status': {
@@ -70,6 +83,103 @@ export interface McpSecretOverrides {
   header?: Record<string, string> | undefined;
 }
 
+/**
+ * OAuth server 的运行时授权来源（D73；实现见 `apps/auth/registry.ts`）：按连接 id
+ * （自定义 server 为 `custom:{serverId}`）取每个连接唯一的 `AuthProvider`。
+ */
+export interface McpAuthSource {
+  /**
+   * `serverUrl` = 实际要连的 URL：与连接行记录的 URL 不一致（或行不存在）时必须拒绝
+   * （抛 `AppAuthRequiredError` not_connected）——令牌只发给授权时的那个地址。
+   */
+  providerFor(connectionId: string, serverUrl?: string | null): AuthProvider;
+  /** 是否已有令牌（设置页测试在未连接时不发起任何请求）。 */
+  hasTokens(connectionId: string): boolean;
+  /** 服务端在刷新后仍回 401：把连接标记为 expired（持久化 + 广播）。 */
+  markExpired?(connectionId: string): void;
+}
+
+/**
+ * 工具定义锁定的接入点（D73 P1，`apps/tool-lock.ts`）：每次从 server 拉到新的工具列表
+ * （首次、`tools/list_changed` 之后、缓存过期）都同步登记，决定哪些工具被锁定。
+ * 缺省（未接入）= 不锁定（McpService 单测 / 旧调用方）。
+ */
+export interface McpToolLockHook {
+  refresh(
+    connectionId: string,
+    tools: McpTool[],
+    ctx: { server: Pick<McpServer, 'id' | 'name' | 'url' | 'auth'> },
+  ): unknown;
+  /** 暴露过滤：已批准（且未被停用）的工具 vs 待复核而被锁定的工具。 */
+  partition(
+    connectionId: string,
+    tools: McpTool[],
+  ): { exposed: McpTool[]; locked: Array<{ name: string; reason: 'new' | 'changed' }> };
+  /** 调用时再核一次：当前定义是否已批准（run 中途定义变化的工具不再放行）。 */
+  isExposed(connectionId: string, toolName: string): boolean;
+}
+
+/**
+ * 目录连接 → McpService（D73 P1，设计 29 §6 / 执行方案 §5.4）：把 `app_connections` 里的目录
+ * 连接（`conn_…` 行）当作 MCP server 的第二个来源。由 `start.ts` 经 {@link McpService.attachConnections}
+ * 接入；未接入时 McpService 的行为与 P0 完全一致（只有 settings.mcpServers）。
+ */
+export interface McpConnectionSource {
+  /** 全部目录连接（不含 `custom:` 行）。 */
+  list(): AppConnection[];
+  get(connectionId: string): AppConnection | null;
+  /** 连接所属应用的名称（目录条目 title，按 slug 查）；目录里已没有该条目时 undefined。 */
+  appName(connectorId: string): string | undefined;
+  /** 用户对该连接各工具的逐工具策略（`app_connection_tools.user_policy`），无则空。 */
+  toolPolicies(connectionId: string): Record<string, McpToolPolicy>;
+}
+
+/**
+ * 把一个目录连接合成为 `McpServer`（纯函数；McpService 的 server 来源 = `settings.mcpServers` ∪ 这些）。
+ *
+ * **合成契约**（orchestrator / 网关 / 设置页依赖，改动须同步）：
+ * - `id` = 连接 id（`conn_…`），也是 `mcp.server_status` 事件的 `serverId`、`McpService` 内部连接缓存 /
+ *   失败计数 / 注解缓存的键、`ToolLockService` 锁定行的键、`ConnectionAuthRegistry` 授权提供者的键
+ *   （自定义 server 的授权键仍是 `custom:{serverId}`）；
+ * - `name` = `应用名（账号）`，账号标签已含应用名时（`Notion #2`）直接用标签；
+ * - `transport: 'http'`、`url` = 连接行的 `server_url`（`server_url` 为空的行不合成）、`auth: 'oauth'`；
+ * - `enabled` = 连接状态不是 `disabled`（`expired` / `needs_scope` 等仍 enabled：连接时抛授权错误、
+ *   发 `needs_auth`，而不是静默消失）；
+ * - `autoApprove` 恒为 false —— settings 里的 `autoApprove`（“mcpAutoApprove”）只对自定义 server
+ *   生效，应用连接的免审批只能来自逐工具策略；
+ * - `toolPolicies` = 该连接各工具的 `user_policy`，所以对自定义 server 通用的 `decideMcpTool` /
+ *   `mcpToolEnabled` 对合成 server 同样适用（无策略时省略该字段）。
+ */
+export function connectionToMcpServer(
+  connection: AppConnection,
+  options: {
+    appName?: string | undefined;
+    toolPolicies?: Record<string, McpToolPolicy> | undefined;
+  } = {},
+): McpServer | null {
+  if (connection.serverUrl === null) return null;
+  const appName = options.appName ?? connection.connectorId;
+  const name = connection.label.includes(appName)
+    ? connection.label
+    : `${appName}（${connection.label}）`;
+  const policies = options.toolPolicies ?? {};
+  return {
+    id: connection.id,
+    name: name.slice(0, 100),
+    transport: 'http',
+    url: connection.serverUrl,
+    enabled: connection.status !== 'disabled',
+    autoApprove: false,
+    auth: 'oauth',
+    ...(Object.keys(policies).length > 0 ? { toolPolicies: policies } : {}),
+  };
+}
+
+/** 授权连接 id：目录连接 server 的 id 即连接 id，自定义 server 为 `custom:{serverId}`。 */
+export function authConnectionIdOf(server: Pick<McpServer, 'id'>): string {
+  return isCatalogConnectionId(server.id) ? server.id : customConnectionId(server.id);
+}
+
 export interface McpServiceDeps {
   settings: SettingsService;
   secrets: SecretsService;
@@ -77,6 +187,18 @@ export interface McpServiceDeps {
   clock: Clock;
   /** Status fan-out (RPC event bus); kept narrow for testability. */
   statusSink: McpServerStatusSink;
+  /** D73：`auth: 'oauth'` 的 server 的授权来源；缺省时这类 server 视为未连接。 */
+  auth?: McpAuthSource | undefined;
+}
+
+/** 设置页测试结果（`mcp.test`）：OAuth server 未连接 / 失效时 `tools` 为空并带 `needsAuth`。 */
+export interface McpTestResult {
+  tools: string[];
+  missingSecrets: string[];
+  /** 工具名 → 定义哈希（`toolDefinitionHash`），见 `apps.tools.approveAfterTest`。 */
+  toolHashes?: Record<string, string>;
+  needsAuth?: AppAuthReason;
+  message?: string;
 }
 
 /** 应用级 enabled 的 server（Bot 侧再取交集，见 serversForBot）。 */
@@ -117,20 +239,122 @@ export class McpService {
    * resolveRisk 共用同一次连接，不再各起一个进程互相覆盖、留下孤儿 client。
    * `countFailure` 只要有一个等待者要计数（任务 / 工具调用）就计入重连预算。
    */
-  readonly #pending = new Map<string, { promise: Promise<ConnectionState>; countFailure: boolean }>();
+  readonly #pending = new Map<
+    string,
+    { promise: Promise<ConnectionState>; countFailure: boolean }
+  >();
+  /** D73 P1：工具定义锁定（见 {@link McpToolLockHook}）。 */
+  #toolLock: McpToolLockHook | null = null;
+  /** D73 P1：目录连接来源（见 {@link McpConnectionSource}）。 */
+  #connectionSource: McpConnectionSource | null = null;
+  /** 最近见到的 server 名（连接行删除后 `closed` 事件仍能带上名字）。 */
+  readonly #serverNames = new Map<string, string>();
 
   constructor(deps: McpServiceDeps) {
     this.#deps = deps;
   }
 
-  /** settings.mcpServers 的当前配置。 */
-  listServers(): McpServer[] {
+  /** D73：start.ts 在连接应用运行时（registry）构造后接入（McpService 先于它构造）。 */
+  attachAuth(auth: McpAuthSource): void {
+    this.#deps.auth = auth;
+  }
+
+  /** D73 P1：接入工具定义锁定（列表刷新时登记；过滤在 `buildMcpTools` / `resolveMcpToolEntries`）。 */
+  attachToolLock(lock: McpToolLockHook): void {
+    this.#toolLock = lock;
+  }
+
+  /**
+   * D73 P1：`buildMcpTools` / `resolveMcpToolEntries` 的 `toolFilter`；未接入锁定时为
+   * undefined（不过滤）。
+   */
+  get toolFilter():
+    | ((serverKey: string, tools: McpTool[]) => ReturnType<McpToolLockHook['partition']>)
+    | undefined {
+    const lock = this.#toolLock;
+    return lock === null ? undefined : (key, tools) => lock.partition(key, tools);
+  }
+
+  /** D73 P1：工具此刻是否可调用（无锁定 = true）。网关在调用时核对。 */
+  toolApproved(server: Pick<McpServer, 'id'>, toolName: string): boolean {
+    return this.#toolLock === null || this.#toolLock.isExposed(toolLockKey(server), toolName);
+  }
+
+  /** D73 P1：接入目录连接来源（`start.ts`，在连接应用服务构造后）。 */
+  attachConnections(source: McpConnectionSource): void {
+    this.#connectionSource = source;
+  }
+
+  /** `settings.mcpServers`（仅用户配置的自定义 server）。 */
+  listSettingsServers(): McpServer[] {
     return this.#deps.settings.get().mcpServers;
   }
 
-  /** 应用 enabled ∩ Bot 选中（mcp_server_ids）。 */
+  /**
+   * server 全集 = `settings.mcpServers` ∪ 目录连接合成的 server（合成契约见
+   * {@link connectionToMcpServer}）。settings 在前；id 冲突时 settings 的条目优先（目录连接 id 的
+   * `conn_` 前缀为保留，正常不会冲突）。
+   */
+  listServers(): McpServer[] {
+    const settings = this.listSettingsServers();
+    const source = this.#connectionSource;
+    if (source === null) return settings;
+    const taken = new Set(settings.map((server) => server.id));
+    const synthesized: McpServer[] = [];
+    for (const connection of source.list()) {
+      if (taken.has(connection.id)) continue;
+      const server = this.#synthesize(source, connection);
+      if (server !== null) synthesized.push(server);
+    }
+    return synthesized.length === 0 ? settings : [...settings, ...synthesized];
+  }
+
+  /**
+   * 稳定查找：id 对应的 server（settings 自定义 server 或目录连接合成的 server）；不存在 /
+   * 目录连接没有 server_url → undefined。每次调用现读设置与连接行（状态、标签、逐工具策略
+   * 即时生效），不缓存返回对象。
+   */
+  serverFor(id: string): McpServer | undefined {
+    const custom = this.listSettingsServers().find((server) => server.id === id);
+    if (custom !== undefined) return custom;
+    const source = this.#connectionSource;
+    if (source === null || !isCatalogConnectionId(id)) return undefined;
+    const connection = source.get(id);
+    if (connection === null) return undefined;
+    return this.#synthesize(source, connection) ?? undefined;
+  }
+
+  #synthesize(source: McpConnectionSource, connection: AppConnection): McpServer | null {
+    const server = connectionToMcpServer(connection, {
+      appName: source.appName(connection.connectorId),
+      toolPolicies: source.toolPolicies(connection.id),
+    });
+    if (server !== null) this.#serverNames.set(server.id, server.name);
+    return server;
+  }
+
+  #nameOf(serverId: string): string {
+    return this.serverFor(serverId)?.name ?? this.#serverNames.get(serverId) ?? serverId;
+  }
+
+  /**
+   * 应用 enabled ∩ Bot 选中。`selectedIds` 里既可以是自定义 server id（`mcp_server_ids`），也可以是
+   * 目录连接 id（`app_connection_ids`，由 orchestrator 合并后传入）。向后兼容：只含 settings server
+   * id 时结果与旧实现一致（settings 顺序）；目录连接排在后面，按 `selectedIds` 的顺序。
+   */
   serversForBot(selectedIds: string[]): McpServer[] {
-    return serversForBot(this.listServers(), selectedIds);
+    if (selectedIds.length === 0) return [];
+    const custom = serversForBot(this.listSettingsServers(), selectedIds);
+    if (this.#connectionSource === null) return custom;
+    const taken = new Set(custom.map((server) => server.id));
+    const settingsIds = new Set(this.listSettingsServers().map((server) => server.id));
+    const connections: McpServer[] = [];
+    for (const id of new Set(selectedIds)) {
+      if (taken.has(id) || settingsIds.has(id)) continue;
+      const server = this.serverFor(id);
+      if (server !== undefined && server.enabled) connections.push(server);
+    }
+    return connections.length === 0 ? custom : [...custom, ...connections];
   }
 
   /**
@@ -140,16 +364,57 @@ export class McpService {
   async testServer(
     server: McpServer,
     secretValues?: McpSecretOverrides | undefined,
-  ): Promise<{ tools: string[]; missingSecrets: string[] }> {
+  ): Promise<McpTestResult> {
     const missingSecrets = this.missingSecrets(server, secretValues);
+    if (server.auth === 'oauth') {
+      // 已存的令牌只属于已保存的那个 server（按 id）且 URL / 认证方式没变：`mcp.test` 的入参来自
+      // 渲染进程的表单草稿，草稿里的 URL 若与已保存的不同，绝不能带着该 server 的令牌去访问它
+      // （也不能让草稿的 401 把真实连接标成 expired）。草稿态一律按「未连接」处理，不发请求。
+      const saved = this.listSettingsServers().find((entry) => entry.id === server.id);
+      const bound =
+        saved !== undefined &&
+        saved.auth === 'oauth' &&
+        saved.url !== undefined &&
+        sameEndpoint(saved.url, server.url);
+      if (!bound || !this.#deps.auth?.hasTokens(authConnectionIdOf(server))) {
+        // 未连接：不发起任何请求，更不会启动授权（授权只由用户点「连接」触发）。
+        return {
+          tools: [],
+          missingSecrets,
+          needsAuth: 'not_connected',
+          message: bound
+            ? '尚未连接：请先点击「连接」完成授权'
+            : '尚未连接：请先保存配置，再点击「连接」完成授权',
+        };
+      }
+    }
     const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
     try {
       await this.#connectClient(client, server, secretValues);
       const tools = await client.listTools({ timeoutMs: MCP_CONNECT_TIMEOUT_MS });
       // 配置修好后解除 failed 停用：下次 loop 内调用按新配置重新计数。
       this.#failures.delete(server.id);
-      return { tools: tools.map((tool) => tool.name), missingSecrets };
+      return {
+        tools: tools.map((tool) => tool.name),
+        missingSecrets,
+        // D73 P1：测试时看到的定义哈希——保存后 `apps.tools.approveAfterTest` 只批准这一份。
+        toolHashes: Object.fromEntries(tools.map((tool) => [tool.name, toolDefinitionHash(tool)])),
+      };
     } catch (error) {
+      const authError = this.#authFailureOf(server, error);
+      if (authError !== null) {
+        return {
+          tools: [],
+          missingSecrets,
+          needsAuth: authError.reason,
+          message:
+            authError.reason === 'scope'
+              ? '需要追加权限：请重新连接'
+              : authError.reason === 'expired'
+                ? '连接已失效：请重新连接'
+                : '尚未连接：请先点击「连接」完成授权',
+        };
+      }
       const hint = this.#endpointHint(server, error);
       if (hint !== '') {
         const message = error instanceof Error ? error.message : String(error);
@@ -169,6 +434,7 @@ export class McpService {
   #endpointHint(server: McpServer, error: unknown): string {
     if (!(error instanceof McpHttpError)) return '';
     if (error.status === 401) {
+      if (server.auth === 'oauth') return '请在设置中连接该应用';
       return '服务端要求认证：请在「请求头（密钥）」添加名称 Authorization，值为 Bearer <token>（需带 Bearer 前缀）';
     }
     if (error.status !== 404 && error.status !== 405) return '';
@@ -211,19 +477,41 @@ export class McpService {
    */
   async listTools(
     server: McpServer,
-    options: { countFailure?: boolean; signal?: AbortSignal; timeoutMs?: number } = {},
+    options: {
+      countFailure?: boolean;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      /** 跳过缓存，强制向 server 重新拉取（并登记工具锁定）。 */
+      refresh?: boolean;
+    } = {},
   ): Promise<McpTool[]> {
     const state = await this.#ensureConnected(server, options.countFailure ?? true);
-    if (state.tools !== null && this.#deps.clock.now() - state.toolsCachedAt <= MCP_TOOL_LIST_CACHE_MS) {
+    if (
+      options.refresh !== true &&
+      state.tools !== null &&
+      this.#deps.clock.now() - state.toolsCachedAt <= MCP_TOOL_LIST_CACHE_MS
+    ) {
       return state.tools;
     }
-    const tools = await state.client.listTools({
-      timeoutMs: options.timeoutMs ?? MCP_CONNECT_TIMEOUT_MS,
-      ...(options.signal !== undefined ? { signal: options.signal } : {}),
-    });
+    let tools: McpTool[];
+    try {
+      tools = await state.client.listTools({
+        timeoutMs: options.timeoutMs ?? MCP_CONNECT_TIMEOUT_MS,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      });
+    } catch (error) {
+      // 与 callTool 一致：缓存连接上刷新令牌后仍 401（或需追加权限）是授权问题，不是连接故障。
+      const authError = this.#authFailureOf(server, error);
+      if (authError !== null) {
+        this.#emitNeedsAuth(server, authError);
+        throw authError;
+      }
+      throw error;
+    }
     state.tools = tools.slice(0, MCP_TOOLS_PER_SERVER_MAX);
     state.toolsCachedAt = this.#deps.clock.now();
     this.#rememberAnnotations(server.id, state.tools);
+    this.#registerWithToolLock(server, state.tools);
     if (tools.length > MCP_TOOLS_PER_SERVER_MAX) {
       this.#deps.logger.warn(
         { serverId: server.id, total: tools.length, cap: MCP_TOOLS_PER_SERVER_MAX },
@@ -284,9 +572,9 @@ export class McpService {
    * W5 设置页：server 的工具及风险档。应用级启用的 server 走缓存连接；未启用
    * 的用一次性连接（不落连接缓存，只更新注解）。
    */
-  async describeTools(server: McpServer): Promise<
-    Array<{ name: string; description: string } & ToolRiskDetail>
-  > {
+  async describeTools(
+    server: McpServer,
+  ): Promise<Array<{ name: string; description: string } & ToolRiskDetail>> {
     let tools: McpTool[];
     if (server.enabled) {
       // 设置页 / Bot 详情的查询不计入重连预算（只有任务与工具调用计数）。
@@ -336,6 +624,22 @@ export class McpService {
     };
   }
 
+  /**
+   * D73 P1：把刚拉到的工具列表登记到工具锁定（新增 / 定义变化 → 待复核）。登记失败不让
+   * 列表失败——未登记的工具在过滤处按「未批准」处理（fail-closed）。
+   */
+  #registerWithToolLock(server: McpServer, tools: McpTool[]): void {
+    if (this.#toolLock === null) return;
+    try {
+      this.#toolLock.refresh(toolLockKey(server), tools, { server });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
+        'tool lock refresh failed',
+      );
+    }
+  }
+
   #rememberAnnotations(serverId: string, tools: McpTool[]): void {
     this.#annotations.set(serverId, new Map(tools.map((tool) => [tool.name, tool.annotations])));
   }
@@ -354,6 +658,13 @@ export class McpService {
         timeoutMs: MCP_CALL_TIMEOUT_MS,
       });
     } catch (error) {
+      // D73：授权失效 / 需追加权限不是连接故障——不丢连接、不计失败，原样上抛给
+      // mcp/tools.ts 映射成 SETUP_REQUIRED（connect-app）。
+      const authError = this.#authFailureOf(server, error);
+      if (authError !== null) {
+        this.#emitNeedsAuth(server, authError);
+        throw authError;
+      }
       // 连接断开（stdio 崩溃 / HTTP 会话失效）：丢弃连接，下次调用重连。
       if (error instanceof McpConnectionClosedError || this.#isTransportFailure(error)) {
         this.#dropConnection(server, state, error);
@@ -366,20 +677,39 @@ export class McpService {
     }
   }
 
+  /** D73：授权恢复 / 配置修好后清零某 server 的连接失败计数（解除“已停用”）。 */
+  resetFailures(serverId: string): void {
+    this.#failures.delete(serverId);
+  }
+
+  /**
+   * D73：关闭并丢弃某 server 缓存的连接（令牌被替换 / 断开 / server 被删除后，下次调用
+   * 用新凭据重连）。不计入失败次数；进行中的连接先等它收尾。
+   */
+  async closeServer(serverId: string): Promise<void> {
+    const inFlight = this.#pending.get(serverId);
+    if (inFlight !== undefined) await inFlight.promise.catch(() => {});
+    const state = this.#connections.get(serverId);
+    if (state === undefined) return;
+    const serverName = this.#nameOf(serverId);
+    // 先摘掉再关：onClose 回调见到连接已不是当前连接，不会计失败。
+    this.#connections.delete(serverId);
+    state.offNotification?.();
+    state.status = 'closed';
+    await state.client.close().catch(() => {});
+    this.#deps.statusSink.emit({ serverId, serverName, status: 'closed' });
+  }
+
   /** core 关停：统一 close，全部标记 closed。 */
   async closeAll(): Promise<void> {
     // Connects still in flight settle first so none outlives the shutdown.
     await Promise.allSettled([...this.#pending.values()].map((entry) => entry.promise));
     for (const [serverId, state] of [...this.#connections.entries()]) {
-      const server = this.listServers().find((entry) => entry.id === serverId);
+      const serverName = this.#nameOf(serverId);
       await state.client.close().catch(() => {});
       state.offNotification?.();
       this.#connections.delete(serverId);
-      this.#deps.statusSink.emit({
-        serverId,
-        serverName: server?.name ?? serverId,
-        status: 'closed',
-      });
+      this.#deps.statusSink.emit({ serverId, serverName, status: 'closed' });
     }
     this.#failures.clear();
   }
@@ -417,12 +747,23 @@ export class McpService {
       );
     }
 
-    this.#deps.statusSink.emit({ serverId: server.id, serverName: server.name, status: 'connecting' });
+    this.#deps.statusSink.emit({
+      serverId: server.id,
+      serverName: server.name,
+      status: 'connecting',
+    });
     const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
     try {
       await this.#connectClient(client, server);
     } catch (error) {
       await client.close().catch(() => {});
+      // D73：授权错误（含被包装的）不是连接失败——不计数、不发 failed、不停用；
+      // 发 needs_auth 状态并原样重抛，让调用方走“需要重新连接”的路径。
+      const authError = this.#authFailureOf(server, error);
+      if (authError !== null) {
+        this.#emitNeedsAuth(server, authError);
+        throw authError;
+      }
       const counted = countFailure();
       const attempts = counted ? failures + 1 : failures;
       if (counted) this.#failures.set(server.id, attempts);
@@ -449,6 +790,11 @@ export class McpService {
     state.offNotification = client.onNotification('notifications/tools/list_changed', () => {
       state.tools = null;
       this.#deps.logger.info({ serverId: server.id }, 'mcp tool list invalidated');
+      // D73 P1：重拉并登记到工具锁定——定义变化立即让连接进入 tools_changed，而不是等到
+      // 下一次有人解析工具面。无锁定时保持原有惰性行为（只失效缓存）。
+      if (this.#toolLock !== null) {
+        void this.listTools(server, { countFailure: false }).catch(() => {});
+      }
     });
     client.onClose(() => {
       // 服务端主动断开：连接丢弃（failures 计数 +1），由下次调用重连。
@@ -466,7 +812,11 @@ export class McpService {
       });
     });
     this.#connections.set(server.id, state);
-    this.#deps.statusSink.emit({ serverId: server.id, serverName: server.name, status: 'connected' });
+    this.#deps.statusSink.emit({
+      serverId: server.id,
+      serverName: server.name,
+      status: 'connected',
+    });
     return state;
   }
 
@@ -500,6 +850,8 @@ export class McpService {
                 'header',
                 secretValues,
               ),
+              // D73：OAuth 令牌由运行时提供者供给（只读 Vault + 主动刷新；从不自行授权）。
+              ...(server.auth === 'oauth' ? { authProvider: this.#authProviderFor(server) } : {}),
             });
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), MCP_CONNECT_TIMEOUT_MS);
@@ -518,6 +870,39 @@ export class McpService {
     }
   }
 
+  #authProviderFor(server: McpServer): AuthProvider {
+    const connectionId = authConnectionIdOf(server);
+    const provider = this.#deps.auth?.providerFor(connectionId, server.url ?? null);
+    if (provider === undefined)
+      throw new AppAuthRequiredError({ connectionId, reason: 'not_connected' });
+    return provider;
+  }
+
+  /**
+   * 把错误识别为“需要（重新）授权”：运行时提供者抛的 `AppAuthRequiredError`（原样穿出
+   * pi-mcp 传输，见 test/unit/mcp-auth-transport.test.ts；被包装时从 cause 链找出）；或 OAuth
+   * server 在刷新后仍回 401（令牌被服务端拒绝）→ 视为 expired 并标记连接。
+   */
+  #authFailureOf(server: McpServer, error: unknown): AppAuthRequiredError | null {
+    const found = findAppAuthRequiredError(error);
+    if (found !== null) return found;
+    if (server.auth === 'oauth' && error instanceof McpHttpError && error.status === 401) {
+      const connectionId = authConnectionIdOf(server);
+      this.#deps.auth?.markExpired?.(connectionId);
+      return new AppAuthRequiredError({ connectionId, reason: 'expired' });
+    }
+    return null;
+  }
+
+  #emitNeedsAuth(server: McpServer, error: AppAuthRequiredError): void {
+    this.#deps.statusSink.emit({
+      serverId: server.id,
+      serverName: server.name,
+      status: 'needs_auth',
+      detail: error.message,
+    });
+  }
+
   #dropConnection(server: McpServer, state: ConnectionState, error: unknown): void {
     state.offNotification?.();
     this.#connections.delete(server.id);
@@ -534,8 +919,12 @@ export class McpService {
     );
   }
 
+  /** 授权错误（含被包装的）不是传输故障。 */
   #isTransportFailure(error: unknown): boolean {
-    return error instanceof Error && /closed|socket|EPIPE|ECONNRESET|fetch failed/i.test(error.message);
+    if (findAppAuthRequiredError(error) !== null) return false;
+    return (
+      error instanceof Error && /closed|socket|EPIPE|ECONNRESET|fetch failed/i.test(error.message)
+    );
   }
 
   /**

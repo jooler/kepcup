@@ -61,6 +61,8 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   request_access: 'local',
   acquire_project_write: 'local',
   request_environment: 'local',
+  /** 连接应用（D73）：只记下本 run 的 setup 需求（run 中断、对话出连接卡），与 request_* 同类。 */
+  app_request_connection: 'local',
 
   // --- 浏览器（W1）：GET 导航可安全重做（与 W1 一致：browser_open 失败按 not_started）---
   browser_open: 'none',

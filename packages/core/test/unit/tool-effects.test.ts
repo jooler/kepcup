@@ -144,6 +144,7 @@ function scannedBuiltinToolNames(): string[] {
   const root = fileURLToPath(new URL('../../src/', import.meta.url));
   const files = [
     ...[
+      'app-tools.ts',
       'browser.ts',
       'butler-tools.ts',
       'delegate-tools.ts',
@@ -164,7 +165,10 @@ function scannedBuiltinToolNames(): string[] {
   ];
   const names = new Set<string>();
   for (const file of files) {
-    for (const match of readFileSync(file, 'utf8').matchAll(/^\s+name: '([a-z_]+)',$/gm)) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/^\s+name: '([a-z_]+)',$/gm)) names.add(match[1]!);
+    // Tools named through an exported constant (`export const APP_REQUEST_CONNECTION_TOOL = '…'`).
+    for (const match of source.matchAll(/^export const [A-Z_]+_TOOL = '([a-z_]+)';$/gm)) {
       names.add(match[1]!);
     }
   }

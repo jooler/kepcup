@@ -26,7 +26,10 @@ export interface McpToolRiskRow {
 }
 
 /** 写入 / 破坏性且未被停用（仍可能被调用）的工具数。 */
-export function countRiskyTools(server: Pick<McpServer, 'toolPolicies'>, tools: McpToolRiskRow[]): number {
+export function countRiskyTools(
+  server: Pick<McpServer, 'toolPolicies'>,
+  tools: McpToolRiskRow[],
+): number {
   return tools.filter(
     (tool) =>
       tool.missing !== true &&
@@ -108,4 +111,23 @@ export function effectiveApproval(
   if (policy !== undefined) return policy;
   if (server.autoApprove) return 'auto';
   return risk === 'read' ? 'auto' : 'ask';
+}
+
+export interface AppUnattendedNotice {
+  /** 勾选了任一应用连接就常驻显示。 */
+  show: boolean;
+  /** 无人值守生效：第三方账号上的写入 / 不可逆操作会被自动执行（用户在 W5 中的决定，见设计 29 §8.1）。 */
+  warning: boolean;
+}
+
+/**
+ * Bot 详情「应用」区的无人值守提示（D73 P1 §5.6）：与 MCP 区同一套规则，但应用工具的风险档
+ * 不需要逐个查询（写入 / 破坏性工具恒存在），所以只看是否勾选了连接与无人值守是否开启。
+ */
+export function appUnattendedNotice(input: {
+  selectedConnectionCount: number;
+  unattendedEnabled: boolean;
+}): AppUnattendedNotice {
+  const show = input.selectedConnectionCount > 0;
+  return { show, warning: show && input.unattendedEnabled };
 }

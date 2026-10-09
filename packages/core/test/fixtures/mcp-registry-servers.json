@@ -1,0 +1,50 @@
+{
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+        "name": "com.example/mcp",
+        "description": "Example hosted MCP server",
+        "version": "1.0.0",
+        "remotes": [{ "type": "sse", "url": "https://mcp.example.com/sse" }]
+      },
+      "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active", "isLatest": false } }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+        "name": "com.example/mcp",
+        "title": "Example",
+        "description": "Example hosted MCP server",
+        "version": "1.0.1",
+        "websiteUrl": "https://example.com",
+        "remotes": [
+          { "type": "streamable-http", "url": "https://mcp.example.com/mcp" },
+          { "type": "sse", "url": "https://mcp.example.com/sse" }
+        ]
+      },
+      "_meta": { "io.modelcontextprotocol.registry/official": { "status": "active", "isLatest": true } }
+    },
+    {
+      "server": {
+        "name": "io.github.acme/widget-server",
+        "description": "Widgets with a tenant URL and a secret header",
+        "version": "0.3.0",
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://{tenant}.acme.dev/mcp",
+            "variables": { "tenant": { "description": "tenant", "isRequired": true } },
+            "headers": [{ "name": "Authorization", "value": "Bearer {key}", "isSecret": true }]
+          }
+        ],
+        "packages": [
+          { "registryType": "npm", "identifier": "@acme/widget", "version": "0.3.0", "transport": { "type": "stdio" } },
+          { "registryType": "mcpb", "identifier": "https://dl.acme.dev/widget.mcpb", "version": "0.3.0", "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000" }
+        ]
+      },
+      "_meta": {}
+    }
+  ],
+  "metadata": { "count": 3 }
+}

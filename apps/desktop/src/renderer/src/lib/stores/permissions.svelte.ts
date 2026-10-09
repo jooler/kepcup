@@ -1,5 +1,6 @@
 import type {
   Approval,
+  ApprovalDuration,
   Grant,
   Run,
   SandboxStatusOutput,
@@ -102,7 +103,8 @@ class PermissionsState {
   async decide(
     approvalId: string,
     approve: boolean,
-    duration?: 'once' | 'conversation',
+    /** 'bot'（对该 Bot 总是允许）只有 mcp_tool 卡的 payload.durations 提供时才有效（D73）。 */
+    duration?: ApprovalDuration,
     /** butler_proposal only (D70): indexes of the proposed bots the user kept. */
     selection?: number[],
   ): Promise<void> {

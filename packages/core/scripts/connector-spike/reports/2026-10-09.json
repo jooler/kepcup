@@ -1,0 +1,601 @@
+{
+  "generatedAt": "2026-10-09T16:31:32.912Z",
+  "reports": [
+    {
+      "slug": "notion",
+      "url": "https://mcp.notion.com/mcp",
+      "docs": "https://developers.notion.com/docs/mcp",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.notion.com/mcp",
+        "wwwAuthenticate": "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.notion.com/.well-known/oauth-protected-resource/mcp\", scope=\"default\"",
+        "challenge": {
+          "realm": "OAuth",
+          "resource_metadata": "https://mcp.notion.com/.well-known/oauth-protected-resource/mcp",
+          "scope": "default"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.notion.com/.well-known/oauth-protected-resource/mcp",
+        "resource": "https://mcp.notion.com/mcp",
+        "authorization_servers": [
+          "https://mcp.notion.com"
+        ],
+        "scopes_supported": [
+          "default"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ],
+        "resource_name": "Notion MCP (Beta)"
+      },
+      "authorizationServers": [
+        "https://mcp.notion.com"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://mcp.notion.com/.well-known/oauth-authorization-server",
+        "issuer": "https://mcp.notion.com",
+        "authorization_endpoint": "https://mcp.notion.com/authorize",
+        "token_endpoint": "https://mcp.notion.com/token",
+        "registration_endpoint": "https://mcp.notion.com/register",
+        "revocation_endpoint": "https://mcp.notion.com/token",
+        "client_id_metadata_document_supported": true,
+        "scopes_supported": [
+          "default"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": true,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_basic",
+          "client_secret_post",
+          "none"
+        ]
+      },
+      "autoRegistration": "cimd",
+      "pkceS256": true
+    },
+    {
+      "slug": "linear",
+      "url": "https://mcp.linear.app/mcp",
+      "docs": "https://linear.app/docs/mcp",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.linear.app/mcp",
+        "wwwAuthenticate": "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.linear.app/.well-known/oauth-protected-resource/mcp\", scope=\"read write\"",
+        "challenge": {
+          "realm": "OAuth",
+          "resource_metadata": "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp",
+          "scope": "read write"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp",
+        "resource": "https://mcp.linear.app/mcp",
+        "authorization_servers": [
+          "https://mcp.linear.app"
+        ],
+        "scopes_supported": [
+          "read",
+          "write"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ]
+      },
+      "authorizationServers": [
+        "https://mcp.linear.app"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://mcp.linear.app/.well-known/oauth-authorization-server",
+        "issuer": "https://mcp.linear.app",
+        "authorization_endpoint": "https://mcp.linear.app/authorize",
+        "token_endpoint": "https://mcp.linear.app/token",
+        "registration_endpoint": "https://mcp.linear.app/register",
+        "revocation_endpoint": "https://mcp.linear.app/token",
+        "client_id_metadata_document_supported": true,
+        "scopes_supported": [
+          "read",
+          "write",
+          "openid",
+          "email"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": true,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_basic",
+          "client_secret_post",
+          "none"
+        ]
+      },
+      "autoRegistration": "cimd",
+      "pkceS256": true
+    },
+    {
+      "slug": "atlassian",
+      "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+      "docs": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/use-atlassian-rovo-mcp-server/",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.atlassian.com/v1/mcp/authv2",
+        "wwwAuthenticate": "Bearer resource_metadata=\"https://mcp.atlassian.com/.well-known/oauth-protected-resource/v1/mcp/authv2\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"",
+        "challenge": {
+          "resource_metadata": "https://mcp.atlassian.com/.well-known/oauth-protected-resource/v1/mcp/authv2",
+          "error": "invalid_token",
+          "error_description": "Missing or invalid access token"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.atlassian.com/.well-known/oauth-protected-resource/v1/mcp/authv2",
+        "resource": "https://mcp.atlassian.com/v1/mcp/authv2",
+        "authorization_servers": [
+          "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ],
+        "scopes_supported": [
+          "read:me",
+          "read:account",
+          "offline_access",
+          "email",
+          "read:jira-work",
+          "write:jira-work",
+          "search:confluence",
+          "read:confluence-user",
+          "read:page:confluence",
+          "write:page:confluence",
+          "read:comment:confluence",
+          "write:comment:confluence",
+          "read:space:confluence",
+          "read:hierarchical-content:confluence",
+          "write:component:compass",
+          "read:component:compass",
+          "read:scorecard:compass",
+          "write:scorecard:compass",
+          "read:event:compass",
+          "read:metric:compass",
+          "read:all:twg",
+          "write:all:twg"
+        ],
+        "resource_documentation": "https://www.atlassian.com/platform/remote-mcp-server"
+      },
+      "authorizationServers": [
+        "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://auth.atlassian.com/.well-known/oauth-authorization-server/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3",
+        "issuer": "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3",
+        "authorization_endpoint": "https://auth.atlassian.com/authorize",
+        "token_endpoint": "https://auth.atlassian.com/oauth/token",
+        "registration_endpoint": "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/dcr/register",
+        "revocation_endpoint": "https://auth.atlassian.com/oauth/revoke",
+        "client_id_metadata_document_supported": true,
+        "scopes_supported": null,
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": null,
+        "grant_types_supported": [
+          "authorization_code",
+          "client_credentials",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:token-revoke",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          "urn:ietf:params:oauth:grant-type:token-exchange"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "none",
+          "client_secret_post",
+          "client_secret_basic",
+          "private_key_jwt"
+        ]
+      },
+      "autoRegistration": "cimd",
+      "pkceS256": true
+    },
+    {
+      "slug": "sentry",
+      "url": "https://mcp.sentry.dev/mcp",
+      "docs": "https://docs.sentry.io/ai/mcp/",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.sentry.dev/mcp",
+        "wwwAuthenticate": "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.sentry.dev/.well-known/oauth-protected-resource/mcp\"",
+        "challenge": {
+          "realm": "OAuth",
+          "resource_metadata": "https://mcp.sentry.dev/.well-known/oauth-protected-resource/mcp"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.sentry.dev/.well-known/oauth-protected-resource/mcp",
+        "resource": "https://mcp.sentry.dev/mcp",
+        "authorization_servers": [
+          "https://mcp.sentry.dev"
+        ],
+        "scopes_supported": [
+          "org:read",
+          "project:write",
+          "team:write",
+          "event:write",
+          "alerts:write"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ]
+      },
+      "authorizationServers": [
+        "https://mcp.sentry.dev"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://mcp.sentry.dev/.well-known/oauth-authorization-server",
+        "issuer": "https://mcp.sentry.dev",
+        "authorization_endpoint": "https://mcp.sentry.dev/oauth/authorize",
+        "token_endpoint": "https://mcp.sentry.dev/oauth/token",
+        "registration_endpoint": "https://mcp.sentry.dev/oauth/register",
+        "revocation_endpoint": "https://mcp.sentry.dev/oauth/token",
+        "client_id_metadata_document_supported": true,
+        "scopes_supported": [
+          "org:read",
+          "project:write",
+          "team:write",
+          "event:write",
+          "alerts:write"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": true,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_basic",
+          "client_secret_post",
+          "none"
+        ]
+      },
+      "autoRegistration": "cimd",
+      "pkceS256": true
+    },
+    {
+      "slug": "asana",
+      "url": "https://mcp.asana.com/v2/mcp",
+      "docs": "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.asana.com/v2/mcp",
+        "wwwAuthenticate": "Bearer realm=\"Asana MCP\", resource_metadata=\"https://mcp.asana.com/.well-known/oauth-protected-resource/v2\", error=\"invalid_request\", error_description=\"Authorization header is required for MCP V2 access\"",
+        "challenge": {
+          "realm": "Asana MCP",
+          "resource_metadata": "https://mcp.asana.com/.well-known/oauth-protected-resource/v2",
+          "error": "invalid_request",
+          "error_description": "Authorization header is required for MCP V2 access"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.asana.com/.well-known/oauth-protected-resource/v2",
+        "resource": "https://mcp.asana.com/v2/mcp",
+        "authorization_servers": [
+          "https://app.asana.com"
+        ],
+        "scopes_supported": [
+          "default"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ],
+        "resource_documentation": "https://developers.asana.com/docs/using-asanas-mcp-server",
+        "resource_name": "Asana MCP"
+      },
+      "authorizationServers": [
+        "https://app.asana.com"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://app.asana.com/.well-known/oauth-authorization-server",
+        "issuer": "https://app.asana.com",
+        "authorization_endpoint": "https://app.asana.com/-/oauth_authorize",
+        "token_endpoint": "https://app.asana.com/-/oauth_token",
+        "registration_endpoint": null,
+        "revocation_endpoint": "https://app.asana.com/-/oauth_revoke",
+        "client_id_metadata_document_supported": null,
+        "scopes_supported": null,
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": null,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_post",
+          "client_secret_basic"
+        ]
+      },
+      "autoRegistration": "none",
+      "pkceS256": true
+    },
+    {
+      "slug": "hubspot",
+      "url": "https://mcp.hubspot.com",
+      "docs": "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.hubspot.com",
+        "wwwAuthenticate": "Bearer resource_metadata=\"https://mcp.hubspot.com/.well-known/oauth-protected-resource\"",
+        "challenge": {
+          "resource_metadata": "https://mcp.hubspot.com/.well-known/oauth-protected-resource"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.hubspot.com/.well-known/oauth-protected-resource",
+        "resource": "https://mcp.hubspot.com",
+        "authorization_servers": [
+          "https://mcp.hubspot.com"
+        ],
+        "scopes_supported": [],
+        "resource_documentation": "https://developers.hubspot.com/mcp"
+      },
+      "authorizationServers": [
+        "https://mcp.hubspot.com"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://mcp.hubspot.com/.well-known/oauth-authorization-server",
+        "issuer": "https://mcp.hubspot.com",
+        "authorization_endpoint": "https://mcp.hubspot.com/oauth/authorize/user",
+        "token_endpoint": "https://mcp.hubspot.com/oauth/v3/token",
+        "registration_endpoint": null,
+        "revocation_endpoint": null,
+        "client_id_metadata_document_supported": null,
+        "scopes_supported": [],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": null,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "client_credentials"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_post"
+        ]
+      },
+      "autoRegistration": "none",
+      "pkceS256": true
+    },
+    {
+      "slug": "canva",
+      "url": "https://mcp.canva.com/mcp",
+      "docs": "https://www.canva.dev/docs/mcp/",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.canva.com/mcp",
+        "wwwAuthenticate": "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.canva.com/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"",
+        "challenge": {
+          "realm": "OAuth",
+          "resource_metadata": "https://mcp.canva.com/.well-known/oauth-protected-resource/mcp",
+          "error": "invalid_token",
+          "error_description": "Missing or invalid access token"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.canva.com/.well-known/oauth-protected-resource/mcp",
+        "resource": "https://mcp.canva.com/mcp",
+        "authorization_servers": [
+          "https://mcp.canva.com"
+        ],
+        "scopes_supported": [
+          "profile:read",
+          "design:meta:read",
+          "design:content:write",
+          "design:content:read",
+          "folder:read",
+          "folder:write",
+          "brandtemplate:content:read",
+          "brandtemplate:meta:read",
+          "brandtemplate:content:write",
+          "comment:write",
+          "comment:read",
+          "asset:read",
+          "asset:write",
+          "brandkit:read",
+          "help:answers:read",
+          "help:answers:write"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ]
+      },
+      "authorizationServers": [
+        "https://mcp.canva.com"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://mcp.canva.com/.well-known/oauth-authorization-server",
+        "issuer": "https://mcp.canva.com",
+        "authorization_endpoint": "https://mcp.canva.com/authorize",
+        "token_endpoint": "https://mcp.canva.com/token",
+        "registration_endpoint": "https://mcp.canva.com/register",
+        "revocation_endpoint": "https://mcp.canva.com/token",
+        "client_id_metadata_document_supported": true,
+        "scopes_supported": null,
+        "code_challenge_methods_supported": [
+          "plain",
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": null,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_basic",
+          "client_secret_post",
+          "none"
+        ]
+      },
+      "autoRegistration": "cimd",
+      "pkceS256": true
+    },
+    {
+      "slug": "stripe",
+      "url": "https://mcp.stripe.com",
+      "docs": "https://docs.stripe.com/mcp",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://mcp.stripe.com",
+        "wwwAuthenticate": "Bearer resource_metadata=\"https://mcp.stripe.com/.well-known/oauth-protected-resource\"",
+        "challenge": {
+          "resource_metadata": "https://mcp.stripe.com/.well-known/oauth-protected-resource"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://mcp.stripe.com/.well-known/oauth-protected-resource",
+        "resource": "https://mcp.stripe.com",
+        "scopes_supported": [
+          "mcp"
+        ],
+        "authorization_servers": [
+          "https://access.stripe.com/mcp"
+        ]
+      },
+      "authorizationServers": [
+        "https://access.stripe.com/mcp"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://access.stripe.com/.well-known/oauth-authorization-server/mcp",
+        "issuer": "https://access.stripe.com/mcp",
+        "authorization_endpoint": "https://access.stripe.com/mcp/oauth2/authorize",
+        "token_endpoint": "https://access.stripe.com/mcp/oauth2/token",
+        "registration_endpoint": "https://access.stripe.com/mcp/oauth2/register",
+        "revocation_endpoint": "https://access.stripe.com/mcp/oauth2/revoke",
+        "client_id_metadata_document_supported": null,
+        "scopes_supported": [
+          "mcp"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": null,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "none"
+        ]
+      },
+      "autoRegistration": "dcr",
+      "pkceS256": true
+    },
+    {
+      "slug": "github",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "docs": "https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md",
+      "notes": [],
+      "initialize": {
+        "status": 401,
+        "finalUrl": "https://api.githubcopilot.com/mcp/",
+        "wwwAuthenticate": "Bearer error=\"invalid_request\", error_description=\"No access token was provided in this request\", resource_metadata=\"https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/\"",
+        "challenge": {
+          "error": "invalid_request",
+          "error_description": "No access token was provided in this request",
+          "resource_metadata": "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/"
+        }
+      },
+      "prm": {
+        "found": true,
+        "url": "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
+        "resource": "https://api.githubcopilot.com/mcp/",
+        "authorization_servers": [
+          "https://github.com/login/oauth"
+        ],
+        "scopes_supported": [
+          "repo",
+          "read:org",
+          "read:user",
+          "user:email",
+          "read:packages",
+          "write:packages",
+          "read:project",
+          "project",
+          "gist",
+          "notifications"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ],
+        "resource_name": "GitHub MCP Server"
+      },
+      "authorizationServers": [
+        "https://github.com/login/oauth"
+      ],
+      "authorizationServer": {
+        "found": true,
+        "url": "https://github.com/.well-known/oauth-authorization-server/login/oauth",
+        "issuer": "https://github.com/login/oauth",
+        "authorization_endpoint": "https://github.com/login/oauth/authorize",
+        "token_endpoint": "https://github.com/login/oauth/access_token",
+        "registration_endpoint": null,
+        "revocation_endpoint": null,
+        "client_id_metadata_document_supported": null,
+        "scopes_supported": [
+          "offline_access"
+        ],
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "authorization_response_iss_parameter_supported": true,
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:device_code"
+        ],
+        "token_endpoint_auth_methods_supported": null
+      },
+      "autoRegistration": "none",
+      "pkceS256": true
+    }
+  ]
+}

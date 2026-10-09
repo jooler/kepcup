@@ -53,6 +53,12 @@ export const botRuntimeSchema = z.object({
    */
   mcp_server_ids: z.array(z.string()).default([]),
   /**
+   * 该 Bot 授权使用的连接应用（D73，docs/design/29-connected-apps.md §6）：目录连接的
+   * `connectionId` 列表。**同一 Connector 至多一个连接**（工具名不含账号）；默认空 = 不授权
+   * 任何连接。校验在 core 的 bots 领域层（连接存在且属于目录应用），Profile JSON，无迁移。
+   */
+  app_connection_ids: z.array(z.string()).default([]),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -288,7 +294,15 @@ export const mcpToolPolicySchema = z.object({
 });
 export type McpToolPolicy = z.infer<typeof mcpToolPolicySchema>;
 
-export const mcpServerSchema = z.object({
+/**
+ * MCP server 认证方式（D73，design 29 §12）：`none` 无认证；`headers` 静态 header
+ * （含 `secret:header:` 占位）；`oauth` 走 MCP Authorization（仅 `transport:'http'`）。
+ * 缺省值由同级 `headers` 推断，见 `mcpServerSchema` 的对象级 preprocess。
+ */
+export const mcpServerAuthSchema = z.enum(['none', 'headers', 'oauth']);
+export type McpServerAuth = z.infer<typeof mcpServerAuthSchema>;
+
+const mcpServerObjectSchema = z.object({
   id: z.string().min(1).max(64),
   name: z.string().min(1).max(100),
   transport: mcpServerTransportSchema,
@@ -316,8 +330,94 @@ export const mcpServerSchema = z.object({
    * 配置保留（设置页标灰）。
    */
   toolPolicies: z.record(z.string(), mcpToolPolicySchema).optional(),
+  /**
+   * 认证方式（D73）。缺省 / 非法值按同级 `headers` 推断（有 headers → `headers`，
+   * 否则 `none`），所以存量数据无需迁移；`oauth` 仅允许 `transport === 'http'`。
+   */
+  auth: mcpServerAuthSchema,
 });
+
+/**
+ * 字段级 `.catch()` 看不到兄弟字段，所以 `auth` 的缺省推断放在对象级 preprocess：
+ * 输入里没有合法的 `auth` 时，按 `headers` 是否非空推断。
+ */
+export const mcpServerSchema = z
+  .preprocess((raw) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
+    const value = raw as Record<string, unknown>;
+    if (mcpServerAuthSchema.safeParse(value.auth).success) return raw;
+    const headers = value.headers;
+    const hasHeaders =
+      typeof headers === 'object' &&
+      headers !== null &&
+      !Array.isArray(headers) &&
+      Object.keys(headers).length > 0;
+    return { ...value, auth: hasHeaders ? 'headers' : 'none' };
+  }, mcpServerObjectSchema)
+  .superRefine((server, ctx) => {
+    if (server.auth === 'oauth' && server.transport !== 'http') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['auth'],
+        message: 'OAuth is only supported for the http (Streamable HTTP) transport',
+      });
+    }
+  });
 export type McpServer = z.infer<typeof mcpServerSchema>;
+
+// --- 连接应用（D73，docs/design/29-connected-apps.md） -------------------------
+
+/** 连接状态机（design 29 §6）。 */
+export const appConnectionStatusSchema = z.enum([
+  'not_connected',
+  'connecting',
+  'connected',
+  'expired',
+  'needs_scope',
+  'tools_changed',
+  'error',
+  'disabled',
+]);
+export type AppConnectionStatus = z.infer<typeof appConnectionStatusSchema>;
+
+/**
+ * 一个应用连接（`app_connections` 一行的对外视图）。**不含任何令牌字段**：令牌
+ * 只在 Token Vault / secrets 里，永不出现在 RPC 返回中。
+ * 自定义 MCP server 的连接 `id` 与 `connectorId` 同为 `custom:{serverId}`。
+ */
+export const appConnectionSchema = z.object({
+  id: z.string(),
+  connectorId: z.string(),
+  connectorVer: z.string().nullable(),
+  /** 账号显示名（可改）。 */
+  label: z.string(),
+  /** 账号稳定标识（id_token sub 等），用于去重。 */
+  accountSub: z.string().nullable(),
+  /** stdio 自定义 server 为 null。 */
+  serverUrl: z.string().nullable(),
+  /** 授权服务器 issuer。 */
+  issuer: z.string().nullable(),
+  /** 已授予的 scope（库内以空格分隔存储）。 */
+  scopes: z.array(z.string()),
+  /** access token 到期时间（epoch ms；非机密元数据）。 */
+  tokenExpiresAt: z.number().nullable(),
+  status: appConnectionStatusSchema,
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  lastUsedAt: z.number().nullable(),
+});
+export type AppConnection = z.infer<typeof appConnectionSchema>;
+
+/** 连接目标：自定义 MCP server，或目录里的 Connector（P1 起）。 */
+export const appConnectTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('custom'), serverId: z.string().min(1) }),
+  z.object({ kind: z.literal('catalog'), connectorId: z.string().min(1) }),
+]);
+export type AppConnectTarget = z.infer<typeof appConnectTargetSchema>;
+
+/** 需要（重新）连接的原因（`setup` 需求与 `AppAuthRequiredError` 共用）。 */
+export const appAuthReasonSchema = z.enum(['not_connected', 'expired', 'scope']);
+export type AppAuthReason = z.infer<typeof appAuthReasonSchema>;
 
 /** Unattended-mode state (docs/design/13-permissions.md "无人值守模式"). */
 export const unattendedStateSchema = z.object({
@@ -414,6 +514,18 @@ export const backgroundTasksSettingsSchema = z
   .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
+/**
+ * 连接应用（D73）的 core 自有设置（不在 `settings.update` 入参里，渲染端改不了）：
+ * `toolLockBaselineDone` = 存量 MCP server 的工具锁定基线已建立（只作用一次，见
+ * `core/apps/tool-lock.ts`）。读取容错：损坏的值按未完成处理。
+ */
+export const appsSettingsSchema = z
+  .object({
+    toolLockBaselineDone: z.boolean().default(false).catch(false),
+  })
+  .catch({ toolLockBaselineDone: false });
+export type AppsSettings = z.infer<typeof appsSettingsSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -483,6 +595,8 @@ export const settingsSchema = z.object({
    * '' = 不设。
    */
   defaultAgentId: z.string().default('').catch(''),
+  /** 连接应用（D73）的 core 自有状态，如工具锁定基线标记。 */
+  apps: appsSettingsSchema.prefault({}),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -832,6 +946,19 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     /** 原因的具体说明（`config_unsafe`：要改的文件与键）。 */
     detail: z.string().optional(),
   }),
+  /**
+   * 需要（重新）连接某个应用（D73，design 29 §5.6）：MCP 工具调用遇到
+   * `AppAuthRequiredError` / 模型调用 `app_request_connection` 时携带；设置卡引导
+   * 用户走 `apps.connect`，完成后经 `runs.retry` 续跑。P0 只产生 `custom` 目标。
+   */
+  z.object({
+    kind: z.literal('connect-app'),
+    target: appConnectTargetSchema,
+    connectionId: z.string().optional(),
+    /** 需追加的 scope（`reason: 'scope'`）。 */
+    scopes: z.array(z.string()).optional(),
+    reason: appAuthReasonSchema,
+  }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;
 
@@ -1016,6 +1143,15 @@ export const grantDurationSchema = z.enum(['once', 'conversation']);
 export type GrantDuration = z.infer<typeof grantDurationSchema>;
 
 /**
+ * 审批时长（D73 P1，design 29 §8.1）：`bot` = 对该 Bot 总是允许。只用于
+ * `ApprovalDecision.duration` 与 `mcp_tool` 的 `payload.durations`；`grants` 表与
+ * `agent_tool` 仍用 `grantDurationSchema`（不要直接扩展它）。P0 只定义并导出，
+ * 尚未接入审批流程。
+ */
+export const approvalDurationSchema = z.enum(['once', 'conversation', 'bot']);
+export type ApprovalDuration = z.infer<typeof approvalDurationSchema>;
+
+/**
  * Approval kinds. P03 implements `access` / `unsandboxed` / `command`; the
  * later ones arrive with their phases and reuse the same card flow.
  */
@@ -1131,6 +1267,21 @@ export const mcpToolApprovalPayloadSchema = z.object({
   argsSummary: z.string().default(''),
   /** 调用时解析出的风险档（W5；旧行没有）。卡片据此显示徽标。 */
   risk: mcpToolRiskSchema.optional(),
+  /**
+   * 连接应用上下文（D73，design 29 §8.1）：目录连接的工具调用才有。卡片显示
+   * 「以 {accountLabel} 身份在 {serverName} 执行 {toolName}」。
+   */
+  connectionId: z.string().optional(),
+  connectorSlug: z.string().optional(),
+  accountLabel: z.string().optional(),
+  /**
+   * 卡片可选的授权时长（缺省 = 只有「仅这一次」）：写入档 `['once','conversation','bot']`，
+   * 破坏性档 `['once']`。`decide()` 据此限定 `ApprovalDecision.duration`（`bot` 只有这里
+   * 列出才被接受）。
+   */
+  durations: z.array(approvalDurationSchema).optional(),
+  /** 完整参数（脱敏后的 JSON 文本；仅破坏性档的应用工具卡片展示，不截断到摘要长度）。 */
+  argsFull: z.string().optional(),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 
@@ -1222,8 +1373,12 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
 export type ButlerProposalPayload = z.infer<typeof butlerProposalPayloadSchema>;
 
 export const approvalDecisionSchema = z.object({
-  /** Only meaningful for `access` approvals and path-type `agent_tool` ones (D72). */
-  duration: grantDurationSchema.optional(),
+  /**
+   * Only meaningful for `access` approvals, path-type `agent_tool` ones (D72) and
+   * `mcp_tool` ones that offered `payload.durations` (D73；`bot` = 对该 Bot 总是允许，
+   * 仅 `mcp_tool` 可能出现)。
+   */
+  duration: approvalDurationSchema.optional(),
   /**
    * `butler_proposal` only (D70): indexes into payload.bots the user kept
    * (unchecked items are dropped before creation). Absent = all items.

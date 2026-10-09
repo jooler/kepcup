@@ -24,6 +24,7 @@ export const hostCapabilityIdSchema = z.enum([
   'skills',
   'host_ops',
   'mcp',
+  'apps',
 ]);
 export type HostCapabilityId = z.infer<typeof hostCapabilityIdSchema>;
 
@@ -210,6 +211,10 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
   // 工具集合 = 该 Bot 勾选的用户 MCP server（D65 `mcp_server_ids`），动态；
   // 包装后的工具名为 `mcp_{serverId}_{tool}`（core `mcpToolName`）。
   pack({ id: 'mcp', category: 'supplement', default: 'follow_bot', toolPrefixes: ['mcp_'] }),
+  // 连接应用（D73，design 29 §10）：工具集合 = 该 Bot 勾选的目录连接（`app_connection_ids`），
+  // 动态；工具名 `app_{slug}_{tool}`，宿主自有的 `app_request_connection` 同前缀。
+  // 工具在宿主执行（令牌留在宿主、审批 / 风险策略与内置引擎同一网关）。
+  pack({ id: 'apps', category: 'supplement', default: 'follow_bot', toolPrefixes: ['app_'] }),
 ];
 
 /**

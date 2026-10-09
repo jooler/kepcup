@@ -23,6 +23,8 @@ import esbuild from 'esbuild';
  *     `__KEPCUP_AGENT_RELEASE_GATES__`，D72）：`releaseGate` 未放行的目录条目
  *     （Claude Agent 等待定条目、testkit 假 Agent）在发行构建中不收录；开发
  *     构建与测试不注入该常量，全部条目照常可用；
+     连接应用目录同理（connector-release-gates.json →
+     `__KEPCUP_CONNECTOR_RELEASE_GATES__`，D73）：门禁未放行的条目发行构建不收录；
  *  3. 迁移文件拷到 out/migrations（打包后 core 的 import.meta.url 相对解析到那里）；
  *     外部智能体的 stdio ↔ HTTP MCP 代理（stdio-proxy.mjs，D72）拷到 bundle
  *     同目录（asarUnpack 解出，供子进程以 Electron 自带 Node 运行）；
@@ -68,6 +70,17 @@ if (releaseGates.includes('testkit')) {
   throw new Error('[dist] agent-release-gates.json: "testkit" must never be approved');
 }
 console.log(`[dist] agent release gates approved: ${JSON.stringify(releaseGates)}`);
+// Connected-apps catalog gates (D73): same shape, same fail-closed semantics.
+const connectorGates = JSON.parse(
+  readFileSync(path.join(appDir, 'connector-release-gates.json'), 'utf8'),
+).approved;
+if (!Array.isArray(connectorGates) || connectorGates.some((gate) => typeof gate !== 'string')) {
+  throw new Error('[dist] connector-release-gates.json: "approved" must be an array of strings');
+}
+if (connectorGates.includes('testkit')) {
+  throw new Error('[dist] connector-release-gates.json: "testkit" must never be approved');
+}
+console.log(`[dist] connector release gates approved: ${JSON.stringify(connectorGates)}`);
 const coreEntry = path.join(appDir, 'src/core-entry/index.ts');
 const outfile = path.join(appDir, 'out/main/core-entry/index.js');
 console.log('[dist] esbuild bundle core-entry (test paths eliminated)');
@@ -110,6 +123,7 @@ await esbuild.build({
   define: {
     __KEPCUP_TEST_HOOKS__: 'false',
     __KEPCUP_AGENT_RELEASE_GATES__: JSON.stringify(releaseGates),
+    __KEPCUP_CONNECTOR_RELEASE_GATES__: JSON.stringify(connectorGates),
   },
   logLevel: 'info',
 });
@@ -155,6 +169,9 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
   // the catalog unfiltered in the packaged app.
   if (bundled.includes('__KEPCUP_AGENT_RELEASE_GATES__')) {
     throw new Error('[dist] core-entry bundle still references __KEPCUP_AGENT_RELEASE_GATES__');
+  }
+  if (bundled.includes('__KEPCUP_CONNECTOR_RELEASE_GATES__')) {
+    throw new Error('[dist] core-entry bundle still references __KEPCUP_CONNECTOR_RELEASE_GATES__');
   }
   console.log('[dist] core-entry bundle verified: no test-path markers, release gates pinned');
 }

@@ -43,6 +43,17 @@ export interface LifecycleDeps {
         prepareBotDeletion(botId: string): void;
       }
     | undefined;
+  /**
+   * D73 P1 app-tool grants (`app_tool_grants`): a deleted bot loses all of them, a bot
+   * removed from a group loses the ones scoped to that conversation. Conversation
+   * deletion cascades through the foreign key. No-op when absent.
+   */
+  appGrants?:
+    | {
+        revokeForBot(botId: string): number;
+        revokeForBotInConversation(botId: string, conversationId: string): number;
+      }
+    | undefined;
   /** P07 memory cascades (承诺 void / 连接关闭), no-op when memory absent. */
   memory?:
     | {
@@ -251,6 +262,9 @@ export class LifecycleService {
     const groupIds = this.groupConversationIdsOf(botId);
     for (const conversationId of groupIds) this.deps.onGroupMemberRemoved(botId, conversationId);
     this.deps.mainDb.prepare('delete from conversation_members where bot_id = ?').run(botId);
+    this.#cascade('app tool grant bot cascade failed', { botId }, () =>
+      this.deps.appGrants?.revokeForBot(botId),
+    );
 
     for (const conv of this.deps.conversations.listDirectByBot(botId)) {
       this.deps.drafts.removeAll(conv.id);
@@ -383,6 +397,9 @@ export class LifecycleService {
       .prepare('delete from conversation_members where conversation_id = ? and bot_id = ?')
       .run(conversationId, botId);
     this.deps.grants.revokeForBotInConversation(botId, conversationId);
+    this.#cascade('app tool grant group-removal cascade failed', { botId, conversationId }, () =>
+      this.deps.appGrants?.revokeForBotInConversation(botId, conversationId),
+    );
     this.deps.mainDb
       .prepare('update approvals set bot_id = null where bot_id = ? and conversation_id = ?')
       .run(botId, conversationId);

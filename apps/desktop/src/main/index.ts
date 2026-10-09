@@ -19,6 +19,7 @@ import { CORE_SHUTDOWN_TIMEOUT_MS, type UpdateStatusPayload } from '@kepcup/shar
 import { APP_ID, APP_NAME, appIconPath } from './app-brand';
 import { BrowserHost, sessionDataRoot } from './browser-host';
 import { browserMethodSpecs } from './browser-methods';
+import { shellMethodSpecs } from './shell-methods';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
@@ -254,7 +255,11 @@ function bootstrap(): void {
 
   coreHost = new CoreHost(app.getVersion(), {
     // P11: the core's browser tools call the main process over port B.
-    serverMethods: browserMethodSpecs(browserHost),
+    // D73: …and so does OAuth consent (shell.openExternal, URL allow-list in shell-methods).
+    serverMethods: {
+      ...browserMethodSpecs(browserHost),
+      ...shellMethodSpecs((url) => shell.openExternal(url)),
+    },
   });
   coreHost.onState((state: CoreProcessState) => {
     if (state === 'failed') {

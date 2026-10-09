@@ -1,6 +1,7 @@
 import {
   accessApprovalPayloadSchema,
   agentToolApprovalPayloadSchema,
+  approvalDurationSchema,
   butlerProposalPayloadSchema,
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
@@ -11,6 +12,7 @@ import {
   skillPresetApprovalPayloadSchema,
   type Approval,
   type ApprovalDecision,
+  type ApprovalDuration,
   type ApprovalKind,
   type ApprovalStatus,
   type Run,
@@ -330,7 +332,13 @@ export class ApprovalsService {
       kind,
       approved: status === 'approved',
       refused: touches,
-      ...(mcpToolUnattended ? { risk: mcpRiskOf(payload) ?? 'unknown' } : {}),
+      ...(mcpToolUnattended
+        ? {
+            risk: mcpRiskOf(payload) ?? 'unknown',
+            // D73: third-party account identity of an app tool (absent for plain MCP servers).
+            ...mcpConnectionAudit(payload),
+          }
+        : {}),
     });
     this.#deps.logger.info(
       { approvalId: approval.id, kind, approved: status === 'approved' },
@@ -349,7 +357,7 @@ export class ApprovalsService {
   decide(
     id: string,
     approveInput: boolean,
-    duration?: 'once' | 'conversation',
+    duration?: ApprovalDuration,
     selection?: number[],
   ): Approval {
     const approval = this.get(id);
@@ -369,6 +377,20 @@ export class ApprovalsService {
         if (keptSelection.length === 0) approve = false;
       }
     }
+    // D73 duration degradation: a wider choice is honoured only where the card
+    // offered it (`payload.durations`). `bot` ("always for this bot") exists for
+    // `mcp_tool` only; `grants` and `agent_tool` never see anything but
+    // once | conversation. An unavailable choice degrades to「仅这一次」.
+    if (duration === 'bot' || duration === 'conversation') {
+      if (
+        (approval.kind === 'agent_tool' || approval.kind === 'mcp_tool') &&
+        !offeredDurations(approval.payload).includes(duration)
+      ) {
+        duration = 'once';
+      } else if (duration === 'bot' && approval.kind !== 'mcp_tool') {
+        duration = 'once';
+      }
+    }
     if (
       approval.kind === 'access' &&
       approve &&
@@ -376,18 +398,6 @@ export class ApprovalsService {
       duration !== 'conversation'
     ) {
       throw new AppError('INVALID_INPUT', '缺少授权有效期（once / conversation）');
-    }
-    // agent_tool (D72): commands only ever get「仅这一次」; a conversation-wide
-    // decision is honoured only where the card offered it (path requests).
-    if (
-      approval.kind === 'agent_tool' &&
-      duration === 'conversation' &&
-      !(
-        Array.isArray(approval.payload['durations']) &&
-        (approval.payload['durations'] as unknown[]).includes('conversation')
-      )
-    ) {
-      duration = 'once';
     }
     const now = this.#deps.clock.now();
     const decision: ApprovalDecision | null =
@@ -670,6 +680,9 @@ export class ApprovalsService {
         const data = payload.data;
         const args = data.argsSummary.length > 0 ? `，参数 ${data.argsSummary}` : '';
         const risk = data.risk !== undefined ? `，${MCP_RISK_LABELS[data.risk]}` : '';
+        if (data.connectionId !== undefined) {
+          return `${appToolLabel(data)}（${data.risk !== undefined ? MCP_RISK_LABELS[data.risk] : '未分级'}${args}）`;
+        }
         return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${risk}${args}）`;
       }
       case 'agent_tool':
@@ -821,16 +834,26 @@ export class ApprovalsService {
         : String(approval.payload['toolName'] ?? '');
       const serverName = parsed.success ? parsed.data.serverName : '';
       const risk = parsed.success && parsed.data.risk !== undefined ? parsed.data.risk : null;
-      const label = `调用 MCP 工具 ${toolName}${serverName.length > 0 ? `（服务器「${serverName}」）` : ''}`;
+      const label =
+        parsed.success && parsed.data.connectionId !== undefined
+          ? appToolLabel(parsed.data)
+          : `调用 MCP 工具 ${toolName}${serverName.length > 0 ? `（服务器「${serverName}」）` : ''}`;
       const riskNote = risk !== null ? MCP_RISK_LABELS[risk] : null;
       const actor = botName.length > 0 ? `${botName} ` : '';
+      // D73: how long an app-tool approval holds (grant duration of the user's choice).
+      const durationNote =
+        approval.autoApproved !== true && approval.decision?.duration === 'conversation'
+          ? '，本对话内一直允许'
+          : approval.autoApproved !== true && approval.decision?.duration === 'bot'
+            ? '，对该 Bot 总是允许'
+            : '';
       switch (approval.status) {
         case 'pending':
           return `[系统] 等待用户确认：${actor}${label}${riskNote !== null ? `（${riskNote}）` : ''}`;
         case 'approved':
           return approval.autoApproved === true
             ? `[系统] 无人值守自动批准${riskNote !== null ? `（${riskNote}）` : ''}：${actor}${label}`
-            : `[系统] 用户允许${actor}${label}${riskNote !== null ? `（${riskNote}）` : ''}`;
+            : `[系统] 用户允许${actor}${label}${riskNote !== null ? `（${riskNote}${durationNote}）` : durationNote.length > 0 ? `（${durationNote.slice(1)}）` : ''}`;
         case 'denied':
           return `[系统] 用户拒绝${actor}${label}`;
         case 'cancelled':
@@ -1384,6 +1407,39 @@ const MCP_RISK_LABELS: Record<McpToolRisk, string> = {
   write: '写入',
   destructive: '破坏性',
 };
+
+/** 「以 {账号} 身份在 {应用} 执行 {工具}」 — the identity line of an app-tool approval (D73). */
+function appToolLabel(data: {
+  toolName: string;
+  serverName: string;
+  accountLabel?: string | undefined;
+}): string {
+  const account =
+    data.accountLabel !== undefined && data.accountLabel.length > 0
+      ? `以 ${data.accountLabel} 身份`
+      : '';
+  return `${account}在 ${data.serverName} 执行 ${data.toolName}`;
+}
+
+/** Durations a card offered (`payload.durations`); absent = just「仅这一次」. */
+function offeredDurations(payload: Record<string, unknown>): ApprovalDuration[] {
+  const parsed = approvalDurationSchema.array().safeParse(payload['durations']);
+  return parsed.success ? parsed.data : ['once'];
+}
+
+/** App-connection identity of an `mcp_tool` payload, for audit entries (D73). */
+function mcpConnectionAudit(payload: Record<string, unknown>): Record<string, string> {
+  const text = (key: string): string | null =>
+    typeof payload[key] === 'string' && payload[key].length > 0 ? (payload[key] as string) : null;
+  const connectionId = text('connectionId');
+  if (connectionId === null) return {};
+  return {
+    connectionId,
+    ...(text('connectorSlug') !== null ? { connectorSlug: text('connectorSlug')! } : {}),
+    ...(text('accountLabel') !== null ? { accountLabel: text('accountLabel')! } : {}),
+    ...(text('serverName') !== null ? { appName: text('serverName')! } : {}),
+  };
+}
 
 function mcpRiskOf(payload: Record<string, unknown>): McpToolRisk | null {
   const parsed = mcpToolRiskSchema.safeParse(payload['risk']);

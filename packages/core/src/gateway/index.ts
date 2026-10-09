@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, realpathSync, lstatSync, statSync } from 'node:
 import os from 'node:os';
 import path from 'node:path';
 
-import { AppError, BASH_TIMEOUT_DEFAULT_MS } from '@kepcup/shared';
+import { AppError, BASH_TIMEOUT_DEFAULT_MS, type ApprovalDuration } from '@kepcup/shared';
 
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
 import { buildSandboxPolicy } from '../sandbox/policy.js';
@@ -19,6 +19,8 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
+import type { AppToolGrants } from '../apps/grants.js';
+import type { AppToolContext } from '../apps/exposure.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
 
 export interface GatewayDeps {
@@ -79,6 +81,12 @@ export interface GatewayDeps {
         signal?: AbortSignal | undefined;
       }) => Promise<McpToolDecision>)
     | undefined;
+  /**
+   * D73 P1: persistent grants for app tools (write risk — 「本对话内一直允许」/「对该 Bot 总是
+   * 允许」). An `ask` decision first looks here; a hit needs no card. Absent = no grants
+   * (every `ask` shows a card).
+   */
+  appGrants?: Pick<AppToolGrants, 'find' | 'create'> | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -179,6 +187,9 @@ export function resolveStandingPath(target: string): string {
     }
   }
 }
+
+/** 破坏性应用工具审批卡展示的完整参数上限（字符；超出截断）。 */
+const MCP_APPROVAL_ARGS_FULL_MAX = 20_000;
 
 const MCP_RISK_LABELS: Record<McpToolDecision['risk'], string> = {
   read: '只读',
@@ -523,7 +534,9 @@ export class ToolGateway {
     if (outcome.decision !== 'approved') {
       throw new AppError('APPROVAL_DENIED', '用户拒绝或审批已取消，无法访问该路径');
     }
-    const duration = outcome.approval.decision?.duration ?? 'once';
+    // `grants` only ever see once | conversation (decide() confines `bot` to mcp_tool cards).
+    const duration =
+      outcome.approval.decision?.duration === 'conversation' ? 'conversation' : 'once';
     const grant = this.#deps.grants.create({
       botId: identity.botId ?? '',
       conversationId: identity.conversationId ?? '',
@@ -814,8 +827,19 @@ export class ToolGateway {
     server: { id: string; name: string },
     toolName: string,
     args: Record<string, unknown>,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<{ decision: McpToolDecision; approvedBy: 'auto' | 'user' | 'unattended' }> {
+    options: {
+      signal?: AbortSignal;
+      /**
+       * D73: connection context of a catalog app's tool (its identity goes onto the
+       * card and into the audit; absent for plain MCP servers).
+       */
+      connection?: AppToolContext;
+    } = {},
+  ): Promise<{
+    decision: McpToolDecision;
+    approvedBy: 'auto' | 'user' | 'unattended' | 'grant';
+    grantId?: string;
+  }> {
     const decision: McpToolDecision = (await this.#deps.mcpToolDecision?.({
       botId: identity.botId,
       serverId: server.id,
@@ -845,27 +869,106 @@ export class ToolGateway {
           : '该工具需要在任务中执行（子代理只能调用只读且免审批的 MCP 工具），请在结论中说明，由任务本身调用',
       );
     }
-    let approvedBy: 'auto' | 'user' | 'unattended' = 'auto';
+    const connection = options.connection;
+    // D73 identity of the third-party account this call acts as (card, audit).
+    const connectionAudit =
+      connection !== undefined
+        ? {
+            connectionId: connection.connectionId,
+            connectorSlug: connection.connectorSlug,
+            accountLabel: connection.accountLabel,
+            appName: connection.appName,
+          }
+        : {};
+    let approvedBy: 'auto' | 'user' | 'unattended' | 'grant' = 'auto';
+    let grantId: string | undefined;
     if (decision.approval === 'ask') {
-      // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
-      const argsSummary = this.#deps.secrets.redact(JSON.stringify(args));
-      const outcome = await this.#deps.approvals.request(
-        identity,
-        'mcp_tool',
-        {
-          serverId: server.id,
-          serverName: server.name,
-          toolName,
-          argsSummary:
-            argsSummary.length > 400 ? `${argsSummary.slice(0, 400)}…（已截断）` : argsSummary,
-          risk: decision.risk,
-        },
-        options,
-      );
-      if (outcome.decision !== 'approved') {
-        throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该 MCP 工具调用');
+      // D73: a standing grant (this conversation / this bot) for a WRITE app tool
+      // needs no card. Destructive calls always ask (grants are never created for
+      // them, and a tool whose risk was raised since the grant must ask again).
+      // An explicit per-tool「每次确认」policy (approvalSource 'policy') overrides both
+      // standing grants and the longer durations on the card.
+      const grantable =
+        connection !== undefined &&
+        decision.risk === 'write' &&
+        decision.approvalSource !== 'policy' &&
+        identity.botId !== null;
+      const grant =
+        connection !== undefined && grantable && identity.botId !== null
+          ? (this.#deps.appGrants?.find({
+              botId: identity.botId,
+              connectionId: connection.connectionId,
+              toolName,
+              conversationId: identity.conversationId,
+            }) ?? null)
+          : null;
+      if (grant !== null) {
+        approvedBy = 'grant';
+        grantId = grant.id;
+      } else {
+        // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
+        const argsRedacted = this.#deps.secrets.redact(JSON.stringify(args));
+        // 应用工具：写入档可选「本对话内 / 对该 Bot 总是允许」，破坏性档只有「仅这一次」。
+        const durations: ApprovalDuration[] | undefined =
+          connection === undefined
+            ? undefined
+            : grantable
+              ? ['once', 'conversation', 'bot']
+              : ['once'];
+        const outcome = await this.#deps.approvals.request(
+          identity,
+          'mcp_tool',
+          {
+            serverId: server.id,
+            serverName: connection?.appName ?? server.name,
+            toolName,
+            argsSummary:
+              argsRedacted.length > 400 ? `${argsRedacted.slice(0, 400)}…（已截断）` : argsRedacted,
+            risk: decision.risk,
+            ...(connection !== undefined
+              ? {
+                  connectionId: connection.connectionId,
+                  connectorSlug: connection.connectorSlug,
+                  accountLabel: connection.accountLabel,
+                  ...(durations !== undefined ? { durations } : {}),
+                  // 不可撤销的操作：卡片展示完整参数（脱敏、设上限），而不只是摘要。
+                  ...(decision.risk === 'destructive'
+                    ? {
+                        argsFull: this.#deps.secrets
+                          .redact(JSON.stringify(args, null, 2))
+                          .slice(0, MCP_APPROVAL_ARGS_FULL_MAX),
+                      }
+                    : {}),
+                }
+              : {}),
+          },
+          options,
+        );
+        if (outcome.decision !== 'approved') {
+          throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该 MCP 工具调用');
+        }
+        approvedBy = outcome.approval.autoApproved === true ? 'unattended' : 'user';
+        // 审批通过且选了「本对话内 / 对该 Bot 总是允许」→ 写持续授权（decide() 已按卡片
+        // 提供的时长降级，这里再核一次：只有写入档的应用工具、卡片确实提供了该时长才建）。
+        const chosen = outcome.approval.decision?.duration;
+        if (
+          approvedBy === 'user' &&
+          connection !== undefined &&
+          grantable &&
+          identity.botId !== null &&
+          (chosen === 'conversation' || chosen === 'bot') &&
+          durations?.includes(chosen) === true &&
+          (chosen === 'bot' || identity.conversationId !== null)
+        ) {
+          grantId = this.#deps.appGrants?.create({
+            botId: identity.botId,
+            connectionId: connection.connectionId,
+            toolName,
+            conversationId: chosen === 'conversation' ? identity.conversationId : null,
+            approvalId: outcome.approval.id,
+          }).id;
+        }
       }
-      approvedBy = outcome.approval.autoApproved === true ? 'unattended' : 'user';
     }
     this.audit(identity, 'mcp_tool_call', {
       serverId: server.id,
@@ -880,8 +983,10 @@ export class ToolGateway {
       ...(approvedBy === 'unattended'
         ? { note: `无人值守自动批准（${MCP_RISK_LABELS[decision.risk]}）` }
         : {}),
+      ...connectionAudit,
+      ...(grantId !== undefined ? { grantId } : {}),
     });
-    return { decision, approvedBy };
+    return { decision, approvedBy, ...(grantId !== undefined ? { grantId } : {}) };
   }
 
   /** Append-only audit write; details are redacted like any tool payload. */
