@@ -402,11 +402,11 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 ### 改动清单
 
 - [x] P0 `packages/core/src/agent/context/continuation.ts`：未配对 tool_call / uncertain 标注 （2026-10-09 完成）
-- [ ] P1 `packages/core/src/dispatch/tasks.ts`：`retry` 放宽 + `REVIEW_REQUIRED` + brief 前置段；新增 `interrupt(taskId, reason)` 与 `permission.revoked` 订阅
-- [ ] P1 `packages/core/src/permissions/grants.ts`：用户撤销时发事件（区分自动失效）
-- [ ] P1 MCP 设置写入路径（`packages/core/src/mcp/service.ts` 或 settings 写入处）与 `bots.update`（`mcp_server_ids` 变化）：计算差集后发事件
-- [ ] P1 `packages/shared/src/rpc/methods.ts`：`runs.retry` 输入 `reviewed?`
-- [ ] P1 `apps/desktop/src/renderer/src/lib/features/tasks/task-view.ts`、`TaskCard.svelte`、新组件 `TaskEffectsReview.svelte`、i18n `zh-CN.ts` 文案（含“授权已被撤销”中断原因）
+- [x] P1 `packages/core/src/dispatch/tasks.ts`：`retry` 放宽 + `REVIEW_REQUIRED` + brief 前置段；新增 `interrupt(taskId, reason)` 与 `permission.revoked` 订阅 （2026-10-09 完成）
+- [x] P1 `packages/core/src/permissions/grants.ts`：用户撤销时发事件（区分自动失效） （2026-10-09 完成）
+- [x] P1 MCP 设置写入路径（`packages/core/src/mcp/service.ts` 或 settings 写入处）与 `bots.update`（`mcp_server_ids` 变化）：计算差集后发事件 （2026-10-09 完成）
+- [x] P1 `packages/shared/src/rpc/methods.ts`：`runs.retry` 输入 `reviewed?` （2026-10-09 完成）
+- [x] P1 `apps/desktop/src/renderer/src/lib/features/tasks/task-view.ts`、`TaskCard.svelte`、新组件 `TaskEffectsReview.svelte`、i18n `zh-CN.ts` 文案（含“授权已被撤销”中断原因） （2026-10-09 完成）
 
 ### 迁移 / 兼容
 
@@ -430,6 +430,26 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 - 用户嫌麻烦：没有 external 行时不弹清单，直接可重试。
 - 撤销波及面过大（一个 MCP server 被多个 Bot 用）：只中断**工具面含该 server** 的任务；中断前不弹确认（已定为立即中断），但在撤销操作处的 toast 里写明“已中断 N 个进行中的任务”。
+
+### 实施记录（P1，2026-10-09）
+
+- **重试**：`TaskHost.retry(taskId, { reviewed? })` 接受 `failed` / `interrupted`；先查幂等（已有接续任务直接返回，不论 reviewed），再查闸门：`interrupted` 且续接链（`effects.listForTask`，含 SubAgent 子 run）有 `completed` / `uncertain` / `executing`（死进程留下的按未知算）台账行 → 不带 `reviewed:true` 抛 `AppError('REVIEW_REQUIRED')`（shared `ERROR_CODES` 新增）。只有 `failed` / `denied` 行、或没有台账（旧任务）→ 直接重试。`Orchestrator.retryRun(runId, opts)` 对 `failed` / `interrupted` 的任务转交 `TaskHost.retry`（对话轮仍只重试 failed）。同一判定进 `TaskView.reviewRequired?`（core 算，渲染端不再自己查台账），另加 `TaskView.errorReason?`。
+- **谁能传 `reviewed`**：只有 RPC `runs.retry`（`runsRetryInputSchema = runIdInputSchema.extend({ reviewed })`），渲染端只在面板勾「我已核实」后传；设置卡的自动重试（`chat.svelte.ts`）针对 failed，不传。模型侧没有重试工具——D75 的「重新执行」是 `start_task({continues_task_id})`，它不经过这道闸门（偏差 / 解读：不拦模型的接续，因为那是用户在对话里要求的；但接续回放同样带下面的前置段，且撤销授权中断的失败条目告诉 Bot「不要自行重新派出或接续，由用户在任务卡上检查后重试」）。
+- **前置段**：`buildTaskReplaySegment` 增 `chainEffects`，源任务非 completed 时在 `<continuation>` 前加 `<effects_before_interrupt>`：「completed 的不要重做；uncertain 的先核实…沙箱内执行的命令不在此清单中」，逐行 `- [completed|uncertain] 工具名: <untrusted>摘要</untrusted>`（摘要压成一行、`neutralizeUntrusted`）。偏差：不只用户重试，`continues_task_id` 接续 failed / cancelled / interrupted 源任务都带（同一条回放路径；只多给模型信息）。段落原放在续接回放（上下文段）里——复查后改为放进任务触发段、`<task_brief>` 之前，见下。
+- **撤销 → 中断**：新 `packages/core/src/permissions/revocations.ts`：`PermissionRevocations`（监听器集合，沿用 `onAutoRevoke` 的写法，core 没有事件总线；同步投递、汇总监听器返回的中断数，监听器异常不影响撤销）、纯函数 `mcpRevocationsBetween`（settings 旧→新：server 删除 / `enabled` 开→关 / `autoApprove` 开→关 → 整个 server；逐工具 `enabled`→false、有效审批 auto→ask——含只读工具默认 auto 被改成 ask、删掉 auto 策略回到 ask——按 `effectiveMcpApproval` + `McpService.riskOf` 计算）、`serversRemovedFromBot`（只算应用级启用的 server）、`botsUsingServer`。来源：`GrantsService.revokeByUser(id)`（`grants.revoke` RPC 改调它；自动失效仍走 `revoke` / `#autoRevoke`，不发事件），`settings.update`（带 `mcpServers` 时算差集）、`bots.update`（`mcp_server_ids` 差集）——都在 RPC 绑定里发。`start.ts` 建 `revocations` 注入 GrantsService，并 `revocations.on(e => orchestrator.tasks.interruptForRevocation(e))`；`CoreDomainServices.revocations`。
+- **受影响任务**：路径授权是（Bot, 对话）级的（`listEffective` 按 botId 过滤）→ 只中断**该授权的 Bot** 在该对话里的任务；MCP → 勾选了该 server 的所有 Bot 的任务（逐工具撤销也按 Bot 粒度，不看任务是否真用过该工具）。只中断 `running / waiting_approval / waiting_lease`；还在 submitted（queued）的任务没执行过任何东西，留着按新权限启动。对话轮不中断。
+- **`TaskHost.interrupt(taskId, reason)`**：复用 `#stop`（扩成接受 `interrupted` + `beforeSettle`）：abort 控制器与 run handle → `cancelPendingApprovals(任务 + 子 run)`（新可选 dep，orchestrator 逐个 `approvals.cancelPendingForRun`）→ `effects.markExecutingUncertain(同一组 run)` → `settle(interrupted, error=文案, errorReason)`。终态条目先写（失败摘要因此已把那次点击标「结果未知」），再写 runs；执行体之后的 settle 因终态不可逆而是空操作（测试里放开挂起的点击后状态仍是 interrupted / permission_revoked）。终态任务直接返回（幂等）。`error_json.reason` 落在 runs.ts（`RunErrorJson.reason`，`Run.errorReason?`，`update({errorReason})`）；被唤醒的对话轮照常收到 failure 条目（D75 不变量）。
+- **提示**：新事件 `tasks.interrupted { count, reason:'permission_revoked', scope }`（count>0 才推），渲染端 `permissions` store（启动即订阅）弹 `已中断 N 个进行中的任务`——授权列表、MCP 设置（含逐工具策略）、Bot 详情 MCP 勾选三处都由同一事件覆盖（偏差：不是各 RPC 返回值，而是撤销 RPC 同步期间推送的事件）。
+- **渲染端**：`task-view.ts` `canRetry` 放宽到 interrupted、`needsReview`、`revoked`（显示固定文案「授权已被撤销，任务已中断。请检查已完成的操作后再重试」）、`effectBadge`（executing / intended 显示为结果未知）；`TaskCard.svelte` needsReview 时按钮「检查后重试」，展开新组件 `TaskEffectsReview.svelte`（`effects.list` 清单 + 徽标 已完成 / 结果未知 / 失败 / 已拒绝 + 「沙箱内执行的命令不在此清单中，请查看执行记录。」+「我已核实」勾选后才能点「重试」，调 `runs.retry reviewed:true`）；普通重试若被服务端回 `REVIEW_REQUIRED`（视图过期）也改为展开面板。`tasks.retry(taskId, reviewed)`；i18n 新增 `task.reviewRetry` / `task.review.*` / `task.effect.*` / `task.interruptedRevoked` / `task.interruptedByRevoke` / `chats.errorCode.REVIEW_REQUIRED`。
+- **测试**：新 `packages/core/test/integration/tasks-interrupt.test.ts`（6 例；`-t retry`：无台账直接重试、有 completed/uncertain 行未 reviewed → REVIEW_REQUIRED 且不建任务、reviewed → 成功且 fake model 收到的请求含前置段与 `<untrusted>` 中和、重复点击返回同一任务、只有 denied 行不需检查；`-t revoke`：真实任务卡在挂起的 `browser_click` 时撤销路径授权 → RPC 返回前即 interrupted + errorReason、executing → uncertain、失败条目含提示与「结果未知」、同 Bot 别的对话与别的 Bot 不受影响、once 授权 noteOnceUse / expireForRun 不触发、重复撤销 / 重复事件幂等、`tasks.interrupted` 事件；MCP 写工具等审批时把 server 移出 `mcp_server_ids` → 中断 + 审批 cancelled；settings：无关保存 / 列表不变不触发，逐工具 auto→ask 与停用 server 中断使用它的 Bot 的任务）；新单测 `packages/core/test/unit/permission-revocations.test.ts`（差集真值表、监听器汇总）；`task-view.test.ts` +3。**e2e 未加**（渲染端没有直接调 core 的测试接缝，造 MCP / 浏览器外部副作用要走设置页 UI；且 `apps/desktop/out` 与并行的 W6 会话共用）。改了 shared 契约（Run / TaskView 可选字段、errors、methods、events），按约定收尾需跑一次全量。
+- **复查后修正（2026-10-09）**：
+  - **外部智能体复用会话丢前置段**：复用会话时提示只有「对话增量 + 触发段」，上下文段（含续接回放）不发。`<effects_before_interrupt>` 改由 orchestrator `#effectsBeforeInterrupt(brief)` 生成，拼在任务触发段（`<task_brief>` 之前），内置引擎与复用 / 新建的外部会话都能拿到；`buildTaskReplaySegment` 恢复原样（去掉 `chainEffects`）。
+  - **等审批的调用被标 uncertain**：台账在审批前就写 `executing` 行，原 `interrupt` 一律改成 uncertain，界面因此要求检查，等调用随后结为 denied 时卡片又过期。现在 `ApprovalsService.cancelPendingForRun` 返回取消的审批 id，`TaskHost` 的 `cancelPendingApprovals` dep 汇总后先调新的 `ToolEffectsStore.settleUnapproved(runIds, approvalIds)`：`approval_id` 属于被取消审批的 `executing` 行直接结为 `denied`，然后才把其余 executing 行改成 uncertain；`settle` 只改 executing / uncertain 行，调用退栈时的结果不会再改动它们。残余窗口：行已写、审批还没建（如 `mcpToolDecision` 解析风险的那几秒）时中断，这一行仍按 uncertain 处理，偏保守，未细分。台账之后若有变化（uncertain 被真实结果改成 completed / failed），不会重推视图；`reviewRequired` 的误差只会偏向「要检查」，面板每次打开都重新读 `effects.list`，服务端闸门以实时数据为准。
+  - **用户撤销 once 授权中断过多**：`revokeByUser` 对 `duration='once'` 且带 `runId` 的授权在事件里附上 `runId`；`interruptForRevocation` 只中断拥有该 run 的任务（任务本身，或 SubAgent 子 run 向上找到的父任务，`#owningTaskId`），run 是对话轮则不中断任何任务。
+  - **autoApprove 开→关按工具计算**：新增 `McpService.knownToolNames(serverId)`（取最近一次工具列表），`mcpRevocationsBetween` 增可选参数 `knownTools`：工具列表已知时逐个工具比较有效审批，只把真正由 auto 变成 ask 的工具作为撤销（只读工具默认 auto、显式 auto 的不算）；工具列表未知时仍按整个 server 撤销（偏安全）。
+  - **errorReason 写进终态条目**：`taskEventContentSchema.errorReason?`、`AppendTaskEventInput.errorReason`；`settle` 写入 failure 条目，唯一索引被更早的写入者占用时以该条目里的原因为准；`recover()` 按终态条目补回 runs 时一并补回 `errorReason`。
+  - **与 W6 委派的关系（已定行为）**：等待被委派方任务的委派，在 B 消费了任务的 failure 条目（被中断）后即结算；之后用户在卡片上「检查后重试」起的新任务，委派不再跟随。W6 的实施记录写的是同一条。
+  - 测试：`tasks-interrupt.test.ts` 共 9 例。新增 3 例：外部智能体复用会话时，第二次 prompt 含前置段；once 授权的撤销分别作用于对话轮的、任务自己的、子 run 的授权；SubAgent 子 run 中，等审批的行 → denied、执行中的行 → uncertain，`waiting_lease` 任务被中断，submitted 任务不被中断。MCP 移出用例补了台账断言：denied 行带 approval_id、`reviewRequired=false`、调用退栈后仍是 denied。`permission-revocations.test.ts` 共 6 例（加 autoApprove 逐工具判定）。
 
 ---
 
@@ -664,13 +684,13 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 ### 改动清单
 
-- [ ] main.db 迁移：`delegations.status` 在 0016 里**有 CHECK 约束**，加 `awaiting_tasks` 必须重建 delegations 表（照 0016 重建 approvals 的写法：建 `_new` → 全列 INSERT…SELECT → DROP → RENAME → 重建索引），同时加 `intent TEXT NOT NULL DEFAULT 'request'`（不加 CHECK，由 zod 校验）与 `task_ids_json TEXT NOT NULL DEFAULT '[]'`
-- [ ] `packages/shared/src/domain/types.ts`（或 `domain/delegations` 的 schema 所在处）：`intent`、`awaiting_tasks`、`taskIds`
-- [ ] `packages/core/src/tools/delegation-tools.ts`：参数 + 说明
-- [ ] `packages/core/src/dispatch/delegation.ts`：intent 分支、跟随任务、取消联动、防重投
-- [ ] `packages/core/src/dispatch/tasks.ts`：终态钩子通知 DelegationHost
-- [ ] 提示词：委派段（`rg -n "delegate_to_bot" packages/core/src/agent/prompt*` 定位）
-- [ ] 渲染端 `delegation_sent` / `delegation_result` 卡：显示 intent、等待任务中状态
+- [x] main.db 迁移：`delegations.status` 在 0016 里**有 CHECK 约束**，加 `awaiting_tasks` 必须重建 delegations 表（照 0016 重建 approvals 的写法：建 `_new` → 全列 INSERT…SELECT → DROP → RENAME → 重建索引），同时加 `intent TEXT NOT NULL DEFAULT 'request'`（不加 CHECK，由 zod 校验）与 `task_ids_json TEXT NOT NULL DEFAULT '[]'` （2026-10-09 完成）
+- [x] `packages/shared/src/domain/types.ts`（或 `domain/delegations` 的 schema 所在处）：`intent`、`awaiting_tasks`、`taskIds` （2026-10-09 完成）
+- [x] `packages/core/src/tools/delegation-tools.ts`：参数 + 说明 （2026-10-09 完成）
+- [x] `packages/core/src/dispatch/delegation.ts`：intent 分支、跟随任务、取消联动、防重投 （2026-10-09 完成）
+- [x] `packages/core/src/dispatch/tasks.ts`：终态钩子通知 DelegationHost（实际挂在 orchestrator 给 TaskHost 的既有 `onSettled` 回调上，`tasks.ts` 未改，见实施记录） （2026-10-09 完成）
+- [x] 提示词：委派段（`rg -n "delegate_to_bot" packages/core/src/agent/prompt*` 定位） （2026-10-09 完成）
+- [x] 渲染端 `delegation_sent` / `delegation_result` 卡：显示 intent、等待任务中状态 （2026-10-09 完成）
 
 ### 迁移 / 兼容
 
@@ -693,6 +713,40 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 
 - 跟随任务让委派等待时间变长（最长任务 4h）：A 侧卡片显示“B 正在执行任务…”并可取消。
 - 与 D75 收尾时间耦合：DEV-012 写明“D75 收尾后再做”，**开工前确认 D75 已收尾**。
+
+### 实施记录（2026-10-09）
+
+- **迁移**：main **0021** `0021_delegation_intent.sql`（`ls` 核实为下一个空号；D73 已顺延）。照 0016 写法重建 delegations：`_new` → 全列 INSERT…SELECT → DROP → RENAME → 重建三个原索引，另加 `delegations_status`。无外键指向 delegations、迁移器整文件一个事务，无需动 `foreign_keys`。`intent` 默认 `'request'`（无 CHECK），`task_ids_json` 默认 `'[]'`；旧的在途委派没有任务 id，照旧取对话轮回复。写死 main 迁移列表的 5 个单测（butler-delegation / task-events / external-agents / public-skills / agent-sessions-per-task）末尾补了 21。
+- **shared**：`delegationStatusSchema` 加 `awaiting_tasks`；新增 `delegationIntentSchema`；`delegationSchema` 加 `intent`、`taskIds`。
+- **工具**（`tools/delegation-tools.ts`）：`delegate_to_bot` 加可选 `intent: request | question | fyi`（默认 request），说明里加了“在回复里写‘我已经告诉 B 了’不会发给 B；要发给 B 必须调用 delegate_to_bot”；`cancel_delegation` 说明会一并停止任务。
+- **DelegationHost**（`dispatch/delegation.ts`）：
+  - `fyi`：投递成功（拿到 run id）即 `working → completed`，不贴结果卡、不通知 A；B 回复只留在 B 私聊。`fyi` 不参与“重复委派”检查，可以连发。单跳检查改为按 run_id 查**任何状态**的委派（`anyByRun`），fyi 已结算的被委派轮照样不能再委派。
+  - `question`：取 B 对话轮回复，即使该轮派了任务也不跟随。
+  - `request`：B 的委派轮结束（completed / failed / interrupted；cancelled 照旧落 cancelled）时查 `origin_run_id = run_id` 的任务（只取链根：`runs.retry` 保留 origin_run_id，避免重复）；有任务 → `awaiting_tasks` + `taskIds`，该轮“我去做”不作为结果；没有 → 旧行为。
+  - 跟随：每次检查沿 `continuedFromRunIds` 链跟到最新一环（重试、`continues_task_id` 接续），变了就回写 `taskIds` 并推 `delegation.updated`。全部终态才结算；**失败 / 中断的任务要等 B 消费过它的结果**（B 那一轮可能接续或重试；取消的任务不唤醒 B，不等）。
+  - 结果：各任务结果按派出顺序拼接，每个按份额截断，总长 ≤ `DELEGATION_RESULT_MAX_CHARS`；只有一个且完成时就是原文；未完成的标「（失败）/（已取消）/（已中断）」+ 错误。至少一个完成 → `completed`（`resultMessageId` 为空），否则 `failed`（全部取消则 `cancelled`），走既有结果卡 + internal follow-up。A 的 follow-up 改为要求“转述实质结果，不要只说‘B 已完成’，也不要整段复述”（对话轮结果同样改了措辞）。
+  - 结算的“状态迁移 + 结果卡”放进同一个 main.db 事务（`#complete` / `#fail`），状态守卫保证任务钩子、邮箱钩子、清扫、重启几路重复触发只结算一次，竞争失败也不会留下孤儿卡。
+  - 取消：`cancel()` 接受 `awaiting_tasks`；先算关联任务（`taskIds` ∪ 本轮 `origin_run_id` 的任务，沿链取未终态的最新一环），转 `cancelled` 后经新依赖 `cancelTask` → `TaskHost.cancelById`（既有取消路径：cancel 条目 + stop + 结算）；只有 `working` 时才 `cancelRun`。
+  - 防重投：崩溃一致性已由 D71 覆盖（“落代发消息 + 转 working”同一事务；stalled 行复用既有消息），核实后补了测试；另加确定性投递键——投递前按 `origin=delegation` 且 `delegationId` 相同查 B 私聊，已有就复用、不再落第二条。
+  - 恢复：`recover()` 对 `awaiting_tasks` 行重新检查（TaskHost.recover 先跑，已结束的任务已是终态；排队中的任务重启后照常重排）。
+- **任务终态钩子**：没有改 `dispatch/tasks.ts`（避免与 W3-P1 冲突）。TaskHost 每条终态路径（settle、启动修复）都会调既有的 `deps.onSettled`，orchestrator 在这个回调里加了 `delegationHost.onTaskSettled(run)`；另在 B 邮箱释放（`onMailboxIdle`，失败结果被消费之后）与任务清扫 `onSweep`（结果被放弃投递时直接标消费，没有别的钩子）里调 `reevaluateAwaiting`。
+- **提示词**：B 侧在 `<trigger reason="delegation">` 上加 `intent` 属性，并在触发段末尾追加按 intent 的宿主说明（`agent/context/conversation.ts` `delegationWakeHint`：fyi 无需回复、可 skip_reply；question 本轮给完整答复；request 派任务后结果会自动贴回、不要只回“收到”）；对话轮平台规则第 16 / 17 条同步改写（`system-prompt.ts`）。
+- **渲染端**：`DelegationCard.svelte` 发出卡显示 intent 标签（请求 / 提问 / 告知 · 无需回复）与按 intent 的标题；`awaiting_tasks` 显示转圈 +「等待 {name} 的任务…（N 个）」并保留取消按钮；fyi 送达后状态显示「已送达」；结果卡标题区分「的回复 / 的答复 / 的任务结果」。文案在 `zh-CN.ts`。`docs/dev/03-data-model.md` 的 delegations 表已同步。
+- **与方案的出入**：① 结果按 2026-10-09 用户决定取各任务结果拼接，而非 DEV-012 方案二原文“消费任务结果的下一个对话轮的最终回复”——`docs/dev/DEVIATIONS.md` DEV-012 与 design/27、design/30 §1.2、design/02「跨 Bot 委派」**尚未回写**，留给 Pengfei 回写时同步。② “失败 / 中断任务等 B 消费后再定局”是本次加的规则（为了能跟上 B 在消费那一轮里的接续 / 重试）；委派结算之后才发生的重试（例如用户之后在任务卡上点重试、设置卡完成后的自动重试）**不再跟随**。③ 终态钩子挂在 orchestrator 的 `onSettled` 回调上而不是改 `tasks.ts`。④ 委派等待没有单独的超时，靠任务 4h 墙钟兜底；B 一直不消费失败结果时靠清扫与重启兜底。
+- **测试**：`unit/delegation-host.test.ts` 新增 14 例（1 个 / 2 个任务、失败标注 + 消费门槛、全失败 / 全取消、续接链跟随、无任务旧行为、question、fyi、取消联动 ×2、重启不重投、中断轮恢复转入等待、确定性投递键、拼接函数）；`integration/delegation.test.ts` 新增 4 例（request 派任务全链路、任务失败、fyi、取消联动）；`unit/butler-delegation-migration.test.ts` 新增 0021 升级用例。定向回归：butler ×3、tasks、tasks-review-fixes-e、create-core、lifecycle-recovery、migration-rollback、diagnostics、migrate 及上述迁移单测均通过。本项有迁移，按约定 P1 收尾时跑一次全量（未在本项内跑）。
+
+#### 复查后修正（2026-10-09）
+
+- **排队中的 fyi 不再挡请求**：`activeBetween` 加 `intent <> 'fyi'`，B 忙时排队的告知不会让之后的 request / question 报“已有一个转交给 B 的任务还没结束”。
+- **失败路径的数据边界**：全部任务未完成时，host 句子（“B 为此派出的任务都没有完成”）在边界外，B 写的任务标题 / 错误拼接放进 `untrustedBlock`（闭合标签已中和）；结果路径同样改用 `untrustedBlock`。`renderContextLine` 的结果卡 / 失败卡上下文行改为 `preview(…, 300)` + `<untrusted>`（按 conversation.ts 的行内写法），不再把整段 errorText 以 `[系统]` 行塞进 A 的每一轮。去掉了“…没有完成：B 为此派出的任务没有完成：…”的重复。渲染端失败结果卡的说明也加了 `line-clamp-6` + 展开 / 收起。
+- **删除的取消范围（用户决定）**：A 侧删除（A 的对话、A 这个 Bot）只把委派落 `cancelled`（不贴卡、不通知），**不停** B 为此派出的任务；B 侧删除、`cancel_delegation`、卡片取消按钮仍一并停任务。`cancel()` 增加 `{ cancelTasks }` 选项。（B 的委派轮若还在跑，A 侧删除照 D71 原样中止该轮。）
+- **fyi 限流**：同一发起方给同一个 Bot 的、内容相同的告知还在 `submitted` 排队时拒绝；同一轮（A 的 run）给同一个 Bot 最多 3 条告知（`DELEGATION_FYI_MAX_PER_RUN`），都返回模型可读的错误。
+- **消费后立即复查**：`TaskHost` 增加可选依赖 `onConsumed(taskIds)`，`markConsumed` 真正标记后调用；orchestrator 接到 `reevaluateAwaiting()`。失败任务的结果被放弃投递 / 无人可唤醒时也不用等 60 秒清扫。（`tasks.ts` 只动了 deps 接口与 `markConsumed` 两处。）
+- **拼接标题封顶**：标题按任务数封顶（≤40 字、标题总占比 ≤ 一半预算），正文份额随之算出，最终截断不会切进后面的标题与状态标注。
+- **B 侧取消委派轮**：派过任务的委派轮被 B 侧取消（B 的用户在 B 的对话里叫停、更新闸门）时，同样转 `awaiting_tasks` 跟随这些任务（任务已落盘、照常执行；要停得取消任务本身）；没派任务的被取消轮照旧落 `cancelled`。委派自己被取消时行已不是 `working`，不受影响。
+- 文案：`delegation.awaitingTasksHint` 改为“正在等待 {name} 的 {count} 个任务，完成后结果会贴在这里。”
+- **补充说明（出入 ④ 与数据边界）**：等待中的委派没有自己的超时——排队中（submitted）的任务、以及 B 被停用后它的任务都不受 4h 墙钟约束，可能一直等；A（`cancel_delegation`）或用户（卡片取消）随时可以取消。另外，按“任务结果拼接”的决定，B 的任务原始结果**不经 B 再整理就直接到 A**（以 `<untrusted>` 交给 A、结果卡给用户看）；以前 A 拿到的是 B 对话轮的回复，B 有机会先筛一遍——这是用户决定下数据边界上的变化，记录在此，回写 DEV-012 时一并说明。
+- 测试：`unit/delegation-host.test.ts` 再加 6 例（fyi 不挡请求、失败路径 untrusted + 上下文行截断、A / B 侧删除的取消范围、fyi 限流、B 侧取消轮仍跟随、标题封顶），共 30 例通过；回归 delegation（集成 12）、butler ×3、tasks、tasks-review-fixes-e、tasks-interrupt、external-agent-tasks、lifecycle-recovery、butler-delegation-migration 全部通过；core / desktop typecheck、eslint 通过。
 
 ---
 
@@ -921,7 +975,7 @@ P2:  W7 监看原语（仅网页来源；W1 的后台页能力复用）——延
 ## 完成定义
 
 - [x] P0（W1、W2、W5、W3-P0）全部 `- [ ]` 打勾，定向测试通过，P0 收尾跑一次全量 `pnpm test` 通过。（2026-10-09 完成：每项均经独立复查并修正；收尾全量 1986 例 / 28 条失败，失败集合与 D75 后容器基线一致（sandbox-isolation 10、skills-authoring 4、env-distro-toolchain 3、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1）；另 1 条 `create-core`「applies the settings migration」因 runs 版本号写死为 8，已改为 9 并单跑通过。`pnpm typecheck` / `pnpm lint` 通过；W1 e2e `browser.spec` 10/11，失败为基线「删除 Bot 后其浏览器分区数据不存在」。）
-- [ ] P1（本轮：W3-P1、W6；W4、W8 暂缓）同上，收尾全量一次。
+- [x] P1（本轮：W3-P1、W6；W4、W8 暂缓）同上，收尾全量一次。（2026-10-09 完成：两项均经独立复查并修正；收尾全量 2029 例 / 29 条失败，其中 28 条为容器基线（同 P0），1 条 `agents-service`「agent-type login」为已知负载偶发、单跑 4/4 通过。`pnpm typecheck` / `pnpm lint` 通过。e2e 未新增。）
 - [ ] P2（W7）同上，收尾全量一次。——W7 延期；原 W9 已删除（2026-10-09）
 - [ ] 交付说明列出每项新增 / 修改的文件，供 Pengfei 回写设计文档（D 编号见 §6）。
 - [ ] 全程无 push / PR（提交已获用户授权，见文首）。
