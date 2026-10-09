@@ -133,7 +133,7 @@ docker run --rm -v "$WT:$WT" -v "$NODE_DIR:$NODE_DIR:ro" -w "$WT" --user "$(id -
 |---|---|---|---|
 | lint、类型检查、svelte-check | — | ✓ | — |
 | 单元与集成测试 | ✓ | ✓ | ✓ |
-| 沙箱测试 | ✓ | ✓（需先执行 `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`） | P12 起（WSL2 需自建运行器，否则手工验证） |
+| 沙箱测试 | ✓ | ✓（需先 `sysctl …userns=0`，并安装 `bubblewrap` / `socat` / `ripgrep`；应用自带 `resources/bin/linux-*/rg`，srt 初始化须把该路径写入 `ripgrep` 配置） | P12 起（WSL2 需自建运行器，否则手工验证） |
 | 端到端测试 | ✓ | ✓（`xvfb-run`） | ✓ |
 | 打包冒烟 | P13 | P13 | P13 |
 
