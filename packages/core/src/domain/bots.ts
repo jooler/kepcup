@@ -44,6 +44,7 @@ function emptyProfile(): BotProfile {
       network_policy: 'open',
       network_allowlist: [],
       mcp_server_ids: [],
+      app_connection_ids: [],
       agent: { ...BUILTIN_AGENT_RUNTIME },
     },
     behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
@@ -73,19 +74,119 @@ function rowToBot(row: BotRow): Bot {
  */
 export type DefaultAgentResolver = () => { id: string; permission: AgentPermissionTier } | null;
 
+/** `app_connection_ids` 校验所需的连接目录（`AppConnectionStore` 的子集）。 */
+export interface AppConnectionDirectory {
+  get(connectionId: string): { id: string; connectorId: string } | null;
+}
+
 /** Bots CRUD. Deleted bots keep a placeholder row (id never reused). */
 export class BotsService {
+  /** D73：start.ts 在连接服务构造后接入；未接入时 `app_connection_ids` 只能为空。 */
+  #connections: AppConnectionDirectory | null = null;
+
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
     private readonly defaultAgent: DefaultAgentResolver = () => null,
   ) {}
 
+  /** D73：接入连接目录，`create` / `update` / `grantConnection` 据此校验授权。 */
+  attachAppConnections(connections: AppConnectionDirectory): void {
+    this.#connections = connections;
+  }
+
+  /**
+   * Profile 里的 `app_connection_ids` 校验（D73 §5.7）：每个 id 是存在（未删除）的目录连接
+   * （自定义 server 的连接走 `mcp_server_ids`，不在此列），且同一 Connector 至多一个。
+   * 违反 → `INVALID_INPUT`。
+   */
+  #assertAppConnections(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const directory = this.#connections;
+    if (directory === null) {
+      throw new AppError('INVALID_INPUT', '连接应用服务未就绪，不能授权连接');
+    }
+    const byConnector = new Map<string, string>();
+    for (const id of ids) {
+      const connection = id.startsWith('custom:') ? null : directory.get(id);
+      if (connection === null) {
+        throw new AppError('INVALID_INPUT', `连接 ${id} 不存在或已删除`, { connectionId: id });
+      }
+      const other = byConnector.get(connection.connectorId);
+      if (other !== undefined && other !== id) {
+        throw new AppError(
+          'INVALID_INPUT',
+          `同一个应用只能授权一个账号（${other} 与 ${id} 属于同一应用）`,
+          { connectionIds: [other, id] },
+        );
+      }
+      byConnector.set(connection.connectorId, id);
+    }
+  }
+
+  /**
+   * 授权连接给 Bot（连接流程完成后由 core 调用，`apps/connections.ts` 的 `BotAppGrantWriter`；渲染端
+   * 不改 Profile）。幂等；同 Connector 已有另一个连接则替换它（返回被替换的连接 id）。Bot 不存在 /
+   * 已删除、连接不存在 → 抛错。
+   */
+  grantConnection(botId: string, connectionId: string): { replaced: string[] } {
+    const bot = this.getOrThrow(botId);
+    if (bot.status !== 'active') {
+      throw new AppError('CONVERSATION_READ_ONLY', `Bot ${botId} has been deleted`);
+    }
+    const directory = this.#connections;
+    const connection = directory?.get(connectionId) ?? null;
+    if (connection === null || connectionId.startsWith('custom:')) {
+      throw new AppError('INVALID_INPUT', `连接 ${connectionId} 不存在或已删除`, { connectionId });
+    }
+    const current = bot.profile.runtime.app_connection_ids;
+    const replaced = current.filter(
+      (id) => id !== connectionId && directory?.get(id)?.connectorId === connection.connectorId,
+    );
+    if (current.includes(connectionId) && replaced.length === 0) return { replaced: [] };
+    const next = [...current.filter((id) => !replaced.includes(id)), connectionId].filter(
+      (id, index, all) => all.indexOf(id) === index,
+    );
+    this.#writeAppConnectionIds(bot, next);
+    return { replaced };
+  }
+
+  /** 连接被删除：从所有 Bot 的授权里移除它。返回受影响的 Bot id（调用方据此中断其运行中的任务）。 */
+  removeConnectionFromAll(connectionId: string): string[] {
+    const affected: string[] = [];
+    for (const bot of this.listAppConnectionHolders(connectionId)) {
+      this.#writeAppConnectionIds(
+        bot,
+        bot.profile.runtime.app_connection_ids.filter((id) => id !== connectionId),
+      );
+      affected.push(bot.id);
+    }
+    return affected;
+  }
+
+  /** 授权了该连接的活跃 Bot（断开确认框列出受影响的 Bot）。 */
+  listAppConnectionHolders(connectionId: string): Bot[] {
+    return this.listActive().filter((bot) =>
+      bot.profile.runtime.app_connection_ids.includes(connectionId),
+    );
+  }
+
+  #writeAppConnectionIds(bot: Bot, ids: string[]): void {
+    const profile = botProfileSchema.parse({
+      ...bot.profile,
+      runtime: { ...bot.profile.runtime, app_connection_ids: ids },
+    });
+    this.db
+      .prepare('update bots set profile_json = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(profile), this.clock.now(), bot.id);
+  }
+
   create(
     profileInput: Partial<BotProfile> & { identity: { name: string } },
     options: { interview?: boolean; systemRole?: BotSystemRole } = {},
   ): Bot {
     const profile = botProfileSchema.parse(profileInput);
+    this.#assertAppConnections(profile.runtime.app_connection_ids);
     // 未指定模型与 Agent 的新 Bot（对话式访谈除外：访谈只在内置引擎上跑）
     // 默认由 onboarding 选定的外部 Agent 驱动。
     if (
@@ -204,6 +305,7 @@ export class BotsService {
       throw new AppError('CONVERSATION_READ_ONLY', `Bot ${id} has been deleted`);
     }
     const profile = botProfileSchema.parse(profileInput);
+    this.#assertAppConnections(profile.runtime.app_connection_ids);
     this.db
       .prepare(
         'update bots set name = ?, avatar = ?, bio = ?, profile_json = ?, updated_at = ? where id = ?',

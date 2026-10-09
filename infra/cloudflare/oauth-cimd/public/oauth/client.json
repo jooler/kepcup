@@ -1,0 +1,16 @@
+{
+  "client_id": "https://kepcup.com/oauth/client.json",
+  "client_name": "KepCup",
+  "client_uri": "https://kepcup.com",
+  "logo_uri": "https://kepcup.com/oauth/logo.png",
+  "policy_uri": "https://kepcup.com/privacy",
+  "redirect_uris": [
+    "http://127.0.0.1/callback",
+    "http://127.0.0.1:47615/callback",
+    "http://127.0.0.1:47616/callback",
+    "http://127.0.0.1:47617/callback"
+  ],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}

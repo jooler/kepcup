@@ -57,6 +57,25 @@ export interface CreateTestCoreOptions {
     env: Record<string, string>;
   } | null;
   agentSpawn?: unknown;
+  /** D73 test hook: replaces the main process's `shell.openExternal` (drive `simulateBrowser`). */
+  shellRpc?: unknown;
+  /** D73 test hooks for the OAuth engine (see CoreServicesOptions.oauth*). */
+  oauthLoopbackAllowlist?: string[];
+  oauthCimdUrl?: string;
+  oauthCallbackPorts?: number[];
+  oauthFlowTimeoutMs?: number;
+  /**
+   * D73 P1 test hook: tools seen for the first time are approved straight away (default
+   * `true` in the harness, so fixtures that add an MCP server via `settings.update` keep
+   * working); definition *changes* still lock. Pass `false` to exercise the real
+   * "new tools are locked until approved" behaviour.
+   */
+  toolLockTrustFirstList?: boolean;
+  /**
+   * D73 P1 test hook: the connector catalog (a core `ConnectorCatalog` built from fake entries with
+   * `source` / `approvedGates`). Test-hook builds default to an EMPTY catalog.
+   */
+  connectorCatalog?: unknown;
 }
 
 /**
@@ -86,5 +105,20 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog as never } : {}),
     ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
     ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn as never } : {}),
+    ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc as never } : {}),
+    ...(options.oauthLoopbackAllowlist !== undefined
+      ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
+      : {}),
+    ...(options.oauthCimdUrl !== undefined ? { oauthCimdUrl: options.oauthCimdUrl } : {}),
+    ...(options.oauthCallbackPorts !== undefined
+      ? { oauthCallbackPorts: options.oauthCallbackPorts }
+      : {}),
+    ...(options.oauthFlowTimeoutMs !== undefined
+      ? { oauthFlowTimeoutMs: options.oauthFlowTimeoutMs }
+      : {}),
+    ...(options.connectorCatalog !== undefined
+      ? { connectorCatalog: options.connectorCatalog as never }
+      : {}),
+    toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });
 }

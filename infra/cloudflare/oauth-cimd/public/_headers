@@ -1,0 +1,4 @@
+/oauth/*
+  Content-Type: application/json
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *

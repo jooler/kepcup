@@ -30,6 +30,10 @@ export const ID_PREFIXES = {
   ags: 'ags_',
   /** 外部副作用台账（W2，runs.db tool_effects）。 */
   eff: 'eff_',
+  /** 应用连接（D73，main.db app_connections；自定义 server 的连接 id 为 custom:{serverId}）。 */
+  conn: 'conn_',
+  /** 应用工具的持续授权（D73，main.db app_tool_grants）。 */
+  atg: 'atg_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

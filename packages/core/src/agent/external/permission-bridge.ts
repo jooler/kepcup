@@ -823,11 +823,12 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     identity: RunIdentity,
     locations: string[],
     access: 'read' | 'write',
-    approval: { id: string; decision: { duration?: GrantDuration } | null },
+    approval: { id: string; decision: { duration?: GrantDuration | 'bot' } | null },
   ): void {
     if (identity.botId === null || identity.conversationId === null) return;
-    const duration = approval.decision?.duration ?? 'once';
-    if (duration === 'once') return;
+    // `bot` only exists on mcp_tool cards (decide()); a path grant is once | conversation.
+    if (approval.decision?.duration !== 'conversation') return;
+    const duration: GrantDuration = 'conversation';
     for (const location of locations) {
       this.#deps.grants.create({
         botId: identity.botId,

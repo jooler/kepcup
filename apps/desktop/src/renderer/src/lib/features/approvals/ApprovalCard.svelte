@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Approval } from '@kepcup/shared';
+  import type { Approval, ApprovalDuration } from '@kepcup/shared';
   import {
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
@@ -29,6 +29,16 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import McpRiskBadge from './McpRiskBadge.svelte';
+  import {
+    APPROVAL_DURATION_LABEL_KEYS,
+    appToolArgsView,
+    appToolIdentity,
+    clampDuration,
+    durationForKey,
+    foldedApprovedKey,
+    mcpChoosesDuration,
+    mcpDurationOptions,
+  } from './mcp-approval';
 
   let {
     approval,
@@ -48,7 +58,17 @@
   const sensitive = $derived(approval.payload['sensitive'] === true);
 
   let cardEl: HTMLDivElement | undefined = $state();
-  let duration = $state<'once' | 'conversation'>('once');
+  let duration = $state<ApprovalDuration>('once');
+
+  // D65 mcp_tool payload: MCP 工具调用卡（服务器/工具/参数摘要）。
+  const mcpTool = $derived.by(() => {
+    if (approval.kind !== 'mcp_tool') return null;
+    const parsed = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  // D73：连接应用工具的身份行 / 参数视图。
+  const appIdentity = $derived(mcpTool !== null ? appToolIdentity(mcpTool) : null);
+  const appArgs = $derived(mcpTool !== null ? appToolArgsView(mcpTool) : null);
 
   // D72 P3 agent_tool payload：外部智能体的工具权限请求 / 项目内 Agent 配置确认。
   const agentTool = $derived.by(() => {
@@ -62,8 +82,16 @@
       agentTool.kind !== 'config' &&
       agentTool.durations.includes('conversation'),
   );
-  /** 卡片是否显示「仅这一次 / 本对话内」选择。 */
-  const choosesDuration = $derived(access !== null || agentToolDurations);
+  /**
+   * D73：连接应用的 mcp_tool 卡按 `payload.durations` 渲染时长（写入档三档，破坏性档只有
+   * 「仅这一次」）；普通 MCP 工具卡没有时长选择。
+   */
+  const mcpDurations = $derived<ApprovalDuration[]>(
+    mcpTool !== null ? mcpDurationOptions(mcpTool) : ['once'],
+  );
+  const mcpChoosesDur = $derived(mcpTool !== null && mcpChoosesDuration(mcpTool));
+  /** 卡片是否显示时长选择（access：仅这一次 / 本对话内；agent_tool 路径类；应用工具按 durations）。 */
+  const choosesDuration = $derived(access !== null || agentToolDurations || mcpChoosesDur);
 
   $effect(() => {
     if (autofocus && pending && cardEl) cardEl.focus();
@@ -97,7 +125,15 @@
       void permissions.decide(approval.id, butlerKept.length > 0, undefined, butlerKept);
       return;
     }
-    void permissions.decide(approval.id, true, choosesDuration ? duration : undefined);
+    void permissions.decide(
+      approval.id,
+      true,
+      choosesDuration
+        ? mcpChoosesDur
+          ? clampDuration(duration, mcpDurations)
+          : duration
+        : undefined,
+    );
   }
 
   function deny(): void {
@@ -112,6 +148,9 @@
     } else if (event.key === 'Escape') {
       event.preventDefault();
       deny();
+    } else if (mcpChoosesDur) {
+      const picked = durationForKey(mcpDurations, event.key);
+      if (picked !== null) duration = picked;
     } else if (choosesDuration && event.key === '1') {
       duration = 'once';
     } else if (choosesDuration && event.key === '2') {
@@ -172,12 +211,6 @@
     const parsed = skillPresetApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
-  // D65 mcp_tool payload: MCP 工具调用卡（服务器/工具/参数摘要）。
-  const mcpTool = $derived.by(() => {
-    if (approval.kind !== 'mcp_tool') return null;
-    const parsed = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
-    return parsed.success ? parsed.data : null;
-  });
   const skillCompatKeys: Record<SkillImportApprovalPayload['scan']['compatibility'], MessageKey> = {
     compatible: 'skills.compat.compatible',
     partial: 'skills.compat.partial',
@@ -215,7 +248,9 @@
               : approval.kind === 'skill_preset'
                 ? t('approvals.skillPresetTitle')
                 : approval.kind === 'mcp_tool'
-                  ? t('approvals.mcpToolTitle')
+                  ? appIdentity !== null
+                    ? t('approvals.appToolTitle')
+                    : t('approvals.mcpToolTitle')
                   : approval.kind === 'agent_tool'
                     ? agentToolTitle
                     : approval.kind === 'butler_proposal'
@@ -239,6 +274,8 @@
       <ShieldCheck class="size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
       {#if approval.autoApproved}
         <span>{title} · {t('approvals.foldedAutoApproved')}</span>
+      {:else if approval.kind === 'mcp_tool' && approval.decision?.duration !== undefined && approval.decision.duration !== 'once'}
+        <span>{title} · {t(foldedApprovedKey(approval.decision.duration))}</span>
       {:else if choosesDuration && approval.decision?.duration === 'conversation'}
         <span>{title} · {t('approvals.foldedApprovedConversation')}</span>
       {:else}
@@ -277,7 +314,18 @@
               : approval.kind === 'skill_preset'
                 ? (skillPreset?.displayName ?? skillPreset?.name ?? '')
                 : approval.kind === 'mcp_tool'
-                  ? `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
+                  ? appIdentity !== null
+                    ? t(
+                        appIdentity.account !== null
+                          ? 'approvals.appToolOnBehalf'
+                          : 'approvals.appToolOnBehalfNoAccount',
+                        {
+                          account: appIdentity.account ?? '',
+                          app: appIdentity.app,
+                          tool: appIdentity.tool,
+                        },
+                      )
+                    : `${mcpTool?.serverName ?? ''} · ${mcpTool?.toolName ?? ''}`.trim()
                   : approval.kind === 'agent_tool'
                     ? `${agentToolAgentName} · ${agentTool?.command ?? (agentTool?.locations.join('、') || agentTool?.title) ?? ''}`
                     : approval.kind === 'butler_proposal'
@@ -722,26 +770,65 @@
         </div>
       {/if}
     {:else if approval.kind === 'mcp_tool' && mcpTool !== null}
-      <!-- W5：MCP 工具卡——服务器 / 工具 / 参数摘要 + 风险档（破坏性用警示色）。 -->
+      <!-- W5：MCP 工具卡——服务器 / 工具 / 参数摘要 + 风险档（破坏性用警示色）。
+           D73：连接应用的工具卡显示账号身份、按 durations 选时长、破坏性档给完整参数。 -->
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-        <span class="text-muted-foreground">{t('approvals.mcpTool')}</span>
-        <span class="break-all" data-testid="approval-mcp-tool"
-          >{mcpTool.serverName} · <code>{mcpTool.toolName}</code></span
-        >
-        {#if mcpTool.argsSummary.length > 0}
-          <span class="text-muted-foreground">{t('approvals.mcpArgs')}</span>
-          <code class="break-all whitespace-pre-wrap" data-testid="approval-mcp-args"
-            >{mcpTool.argsSummary}</code
+        {#if appIdentity !== null}
+          <span class="text-muted-foreground">{t('approvals.mcpTool')}</span>
+          <span class="break-all" data-testid="approval-mcp-tool">
+            {t(
+              appIdentity.account !== null
+                ? 'approvals.appToolOnBehalf'
+                : 'approvals.appToolOnBehalfNoAccount',
+              { account: appIdentity.account ?? '', app: appIdentity.app, tool: appIdentity.tool },
+            )}
+          </span>
+        {:else}
+          <span class="text-muted-foreground">{t('approvals.mcpTool')}</span>
+          <span class="break-all" data-testid="approval-mcp-tool"
+            >{mcpTool.serverName} · <code>{mcpTool.toolName}</code></span
+          >
+        {/if}
+        {#if appArgs !== null && appArgs.text.length > 0}
+          <span class="text-muted-foreground"
+            >{appArgs.full ? t('approvals.appFullArgs') : t('approvals.mcpArgs')}</span
+          >
+          <code
+            class="break-all whitespace-pre-wrap {appArgs.full ? 'max-h-60 overflow-auto' : ''}"
+            data-testid="approval-mcp-args">{appArgs.text}</code
           >
         {/if}
       </div>
-      {#if mcpTool.risk === 'destructive'}
+      {#if appArgs?.irreversible}
+        <p
+          class="mt-2 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive"
+          data-testid="approval-risk-note"
+        >
+          {t('approvals.appIrreversible')}
+        </p>
+      {:else if mcpTool.risk === 'destructive'}
         <p
           class="mt-2 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
           data-testid="approval-risk-note"
         >
           {t('approvals.mcpDestructiveRisk')}
         </p>
+      {/if}
+      {#if mcpChoosesDur}
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
+          {#each mcpDurations as option, index (option)}
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 {duration === option
+                ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
+                : ''}"
+              onclick={() => (duration = option)}
+              data-testid={`duration-${option}`}
+            >
+              {index + 1} · {t(APPROVAL_DURATION_LABEL_KEYS[option])}
+            </button>
+          {/each}
+        </div>
       {/if}
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">

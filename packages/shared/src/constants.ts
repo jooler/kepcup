@@ -108,6 +108,23 @@ export const BUTLER_PROPOSAL_FOLLOWUP_EVENT = 'butler_proposal_result';
  */
 export const PROFILE_CHANGE_FOLLOWUP_EVENT = 'profile_change_result';
 
+// --- Connected apps / MCP OAuth (D73, docs/design/29-connected-apps.md) ----------
+
+/** KepCup 的 OAuth 客户端身份：CIMD 文档 URL 即 client_id，**永不更改**（设计 29 §5.2）。 */
+export const KEPCUP_OAUTH_CLIENT_ID = 'https://kepcup.com/oauth/client.json';
+/**
+ * 本机 OAuth 回调的 3 个固定候选端口（RFC 8252 回环重定向，按序尝试；全占用再随机）。
+ * 47615–47617 位于 IANA 用户端口段，未被 IANA 分配，也不在常见开发工具的默认端口内。
+ */
+export const OAUTH_CALLBACK_PORTS = [47615, 47616, 47617] as const;
+export const OAUTH_CALLBACK_PATH = '/callback';
+/** 一次交互授权流程的总时限。 */
+export const OAUTH_FLOW_TIMEOUT_MS = 5 * 60_000;
+/** access token 距过期不足该时长时 `token()` 主动刷新。 */
+export const OAUTH_REFRESH_SKEW_MS = 60_000;
+/** 发现 / 令牌端点响应体上限（防超大响应）。 */
+export const OAUTH_METADATA_MAX_BYTES = 64 * 1024;
+
 // --- MCP (D65, docs/design/23-mcp-and-subagent.md) -------------------------------
 
 /** Single MCP tool call timeout (callTool). */
@@ -116,6 +133,13 @@ export const MCP_CALL_TIMEOUT_MS = 60_000;
 export const MCP_CONNECT_TIMEOUT_MS = 15_000;
 /** Per-server tool cap (防失控工具面；与模型侧 64 字符工具名上限对齐的整数). */
 export const MCP_TOOLS_PER_SERVER_MAX = 64;
+/**
+ * 连接应用工具名（`app_{slug}_{tool}`）长度上限（D73，design 29 §7）：外部智能体经宿主桥看到
+ * `mcp__kepcup__{name}`（再留 13 字符），部分厂商工具名上限 64。
+ */
+export const APP_TOOL_NAME_MAX = 50;
+/** 提示词 `<available_apps>` 最多列出的未连接目录应用数。 */
+export const AVAILABLE_APPS_MAX = 30;
 /** stdio server crash retry cap before the server is marked failed. */
 export const MCP_RECONNECT_MAX = 3;
 /** Tools list cache TTL for HTTP servers that announce tool-list-change poorly. */

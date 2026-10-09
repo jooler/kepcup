@@ -46,6 +46,14 @@ export async function createTestStack(
     agentCatalog?: CreateTestCoreOptions['agentCatalog'];
     agentLaunch?: CreateTestCoreOptions['agentLaunch'];
     agentSpawn?: CreateTestCoreOptions['agentSpawn'];
+    /** D73 test hooks (see CreateTestCoreOptions). */
+    shellRpc?: CreateTestCoreOptions['shellRpc'];
+    oauthLoopbackAllowlist?: CreateTestCoreOptions['oauthLoopbackAllowlist'];
+    oauthCimdUrl?: CreateTestCoreOptions['oauthCimdUrl'];
+    oauthCallbackPorts?: CreateTestCoreOptions['oauthCallbackPorts'];
+    oauthFlowTimeoutMs?: CreateTestCoreOptions['oauthFlowTimeoutMs'];
+    toolLockTrustFirstList?: CreateTestCoreOptions['toolLockTrustFirstList'];
+    connectorCatalog?: CreateTestCoreOptions['connectorCatalog'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -66,6 +74,23 @@ export async function createTestStack(
     ...(options.agentCatalog !== undefined ? { agentCatalog: options.agentCatalog } : {}),
     ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
     ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn } : {}),
+    ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc } : {}),
+    ...(options.oauthLoopbackAllowlist !== undefined
+      ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
+      : {}),
+    ...(options.oauthCimdUrl !== undefined ? { oauthCimdUrl: options.oauthCimdUrl } : {}),
+    ...(options.oauthCallbackPorts !== undefined
+      ? { oauthCallbackPorts: options.oauthCallbackPorts }
+      : {}),
+    ...(options.oauthFlowTimeoutMs !== undefined
+      ? { oauthFlowTimeoutMs: options.oauthFlowTimeoutMs }
+      : {}),
+    ...(options.toolLockTrustFirstList !== undefined
+      ? { toolLockTrustFirstList: options.toolLockTrustFirstList }
+      : {}),
+    ...(options.connectorCatalog !== undefined
+      ? { connectorCatalog: options.connectorCatalog }
+      : {}),
   });
   return {
     core,
@@ -105,6 +130,7 @@ export function botProfile(overrides: { name: string } & Partial<Bot['profile']>
       network_policy: overrides.runtime?.network_policy ?? 'open',
       network_allowlist: overrides.runtime?.network_allowlist ?? [],
       mcp_server_ids: overrides.runtime?.mcp_server_ids ?? [],
+      app_connection_ids: overrides.runtime?.app_connection_ids ?? [],
       agent: { ...BUILTIN_AGENT_RUNTIME, ...overrides.runtime?.agent },
     },
     // P10 guardrails: default profile keeps proactive on; tests override.

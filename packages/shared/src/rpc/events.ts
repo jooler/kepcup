@@ -13,8 +13,10 @@ import {
   runSchema,
   taskViewSchema,
   unattendedStateSchema,
+  appConnectionStatusSchema,
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
+import { appConnectReviewToolSchema } from '../domain/app-connections.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -166,10 +168,67 @@ export const wikiChangedPayloadSchema = z.object({ botId: z.string() });
 export const mcpServerStatusPayloadSchema = z.object({
   serverId: z.string(),
   serverName: z.string(),
-  status: z.enum(['connecting', 'connected', 'failed', 'closed']),
+  /** `needs_auth`（D73）：OAuth server 未连接 / 令牌失效 / 需追加权限，不计入失败次数。 */
+  status: z.enum(['connecting', 'connected', 'failed', 'closed', 'needs_auth']),
   /** 失败/关闭的补充说明（如进程退出原因）。 */
   detail: z.string().optional(),
 });
+
+/**
+ * 交互授权流程进度（D73，design 29 §5.6）。`authorizationUrl` 仅在 `awaiting_consent`
+ * 下发供用户核对（不含任何令牌）；`OAUTH_CLIENT_REQUIRED` 失败时带 `issuer` 与需用户在其
+ * 平台登记的 `redirectUris`。
+ */
+export const appConnectFlowPayloadSchema = z.object({
+  flowId: z.string(),
+  phase: z.enum([
+    'discovering',
+    'awaiting_consent',
+    'awaiting_browser',
+    'exchanging',
+    'reviewing_tools',
+    'done',
+    'failed',
+    'cancelled',
+  ]),
+  authorizationHost: z.string().optional(),
+  authorizationUrl: z.string().optional(),
+  /**
+   * 连接 id。目录连接在 `reviewing_tools` 前可能由临时行换成既有行（同一账号重复连接时复用旧行），
+   * 所以 `reviewing_tools` / `done` 里的值才是最终的连接 id。
+   */
+  connectionId: z.string().optional(),
+  /** `reviewing_tools`：识别出的账号显示名（可能为空）。 */
+  accountLabel: z.string().optional(),
+  /** `reviewing_tools`：待用户确认的工具清单（名称、标题、描述、风险档）；确认走 `apps.connect.confirmTools`。 */
+  tools: z.array(appConnectReviewToolSchema).optional(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+      issuer: z.string().optional(),
+      redirectUris: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+export type AppConnectFlowPayload = z.infer<typeof appConnectFlowPayloadSchema>;
+
+export const appConnectionStatusPayloadSchema = z.object({
+  connectionId: z.string(),
+  status: appConnectionStatusSchema,
+  /**
+   * `tools_changed`（design 29 §8.2）的详情：待复核的工具数——新增（`added`）、定义被改
+   * （`changed`）——与本次刷新中下线（被删除）的工具数（`removed`）。
+   */
+  tools: z
+    .object({
+      added: z.number().int().min(0),
+      changed: z.number().int().min(0),
+      removed: z.number().int().min(0),
+    })
+    .optional(),
+});
+export type AppConnectionStatusPayload = z.infer<typeof appConnectionStatusPayloadSchema>;
 
 /** 跨 Bot 委派（D71）状态变化：A 侧发出卡 / 结果卡随之重绘。 */
 export const delegationUpdatedPayloadSchema = z.object({ delegation: delegationSchema });
@@ -216,6 +275,8 @@ export const rpcEventSchemas = {
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,
+  'apps.connect_flow': appConnectFlowPayloadSchema,
+  'apps.connection_status': appConnectionStatusPayloadSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,

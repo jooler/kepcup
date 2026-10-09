@@ -1,0 +1,16 @@
+{
+  // KepCup OAuth CIMD 文档（设计 29 §15.1）：仅静态资源，不带 Worker 脚本。
+  // 路由只接管 kepcup.com/oauth/*，与现有官网并存；URL 一经发布永不更换、不得重定向。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kepcup-oauth-cimd",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    // 不做 .html 规范化 / 尾斜杠重定向，也不做 SPA 回退：/oauth/* 下任何请求都不得被重定向。
+    "html_handling": "none",
+    "not_found_handling": "none",
+  },
+  "routes": [{ "pattern": "kepcup.com/oauth/*", "zone_name": "kepcup.com" }],
+}

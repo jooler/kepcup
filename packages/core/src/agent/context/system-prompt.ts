@@ -12,6 +12,7 @@ import {
   type NativeCapabilityKey,
 } from '@kepcup/shared';
 import { truncateToBudget } from '../tokens.js';
+import { APP_REQUEST_CONNECTION_RULE } from '../../apps/prompt.js';
 
 export interface AccessPromptInfo {
   /** Sandbox verdict for this machine; unavailable means confirm mode. */
@@ -64,6 +65,13 @@ export interface SystemPromptInput {
    * 中可用）。任务不注入。
    */
   mcpTurnNote?: string | undefined;
+  /**
+   * D73：`<connected_apps>` 段正文（需要重新连接的应用 + app_request_connection 规则，
+   * 见 apps/prompt.ts）；空 = 整段省略。
+   */
+  connectedApps?: string | undefined;
+  /** D73 P1：`<available_apps>` 段正文（目录里该 Bot 还没有授权连接的应用）；空 = 整段省略。 */
+  availableApps?: string | undefined;
 }
 
 /**
@@ -335,8 +343,14 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         ].join('\n')
         : '';
 
+  // D73: the app rule only exists when the bot has app sections to act on.
+  const baseRules = isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES;
+  const platformRules =
+    (input.connectedApps ?? '').length > 0 || (input.availableApps ?? '').length > 0
+      ? [...baseRules, `${baseRules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`]
+      : baseRules;
   return [
-    section('platform_rules', (isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES).join('\n')),
+    section('platform_rules', platformRules.join('\n')),
     section('butler_rules', isButler ? BUTLER_RULES : ''),
     section('setup_interview', setupSection),
     section('identity', identityText),
@@ -354,6 +368,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('skills', input.skills ?? ''),
     // The install ladder (install_skill) is a task's; a turn routes the work.
     section('recommended_skills', isTurn ? '' : (input.recommendedSkills ?? '')),
+    section('connected_apps', input.connectedApps ?? ''),
+    section('available_apps', input.availableApps ?? ''),
     section('mcp_tools', isTurn ? (input.mcpTurnNote ?? '') : ''),
     section('file_handling', isTurn ? TURN_FILE_HANDLING_GUIDANCE : FILE_HANDLING_GUIDANCE),
   ]
@@ -404,6 +420,10 @@ export interface AgentRunContextInput {
   wikiTopics?: string | undefined;
   skills?: string | undefined;
   recommendedSkills?: string | undefined;
+  /** D73：`<connected_apps>` 段正文（同 SystemPromptInput.connectedApps）。 */
+  connectedApps?: string | undefined;
+  /** D73 P1：`<available_apps>` 段正文（同 SystemPromptInput.availableApps）。 */
+  availableApps?: string | undefined;
 }
 
 /**
@@ -449,10 +469,13 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{ text: string; tools?: readonly strin
   {
     text: '任务里不能再派任务，也不转交给其他 Bot：需要另一件事或其他 Bot 参与时，在结果里说明，由对话中的你决定。',
   },
+  // D73：应用相关段落（<connected_apps> / <available_apps>）的行动规则；工具未注入则不出现。
+  { text: APP_REQUEST_CONNECTION_RULE, tools: ['app_request_connection'] },
 ];
 
 /** 补位类能力的称呼（`<tool_policy>`）。 */
 const SUPPLEMENT_LABELS: Readonly<Record<string, string>> = {
+  apps: '已连接的第三方应用（GitHub、Notion 等，以用户授权的账号身份操作）',
   browser: '浏览网页（打开、点击、输入、截图）',
   web: '联网搜索与抓取网页',
   image_generation: '生成图片',
@@ -522,6 +545,14 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
     const label = SUPPLEMENT_LABELS[capability.id] ?? capability.id;
     const native =
       capability.overlapsNative !== null ? tools.nativeCapabilities[capability.overlapsNative] : undefined;
+    if (capability.id === 'apps') {
+      // D73: no native counterpart — the host tools are the only way to act on the
+      // user's connected accounts (and they carry the approval / lock policy).
+      supplementLines.push(
+        `- ${label}：只用 ${names(injected)}（在 KepCup 里以用户授权的账号身份执行，写入类操作会请用户批准）。`,
+      );
+      continue;
+    }
     supplementLines.push(
       native !== undefined && native.length > 0
         ? `- ${label}：用你自带的 ${native.join(' / ')}，不要用 ${names(injected)}，除非它们不可用或失败。`
@@ -554,7 +585,7 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
  * (`remember` → `mcp__kepcup__remember`). Whole names only: `schedule`
  * inside `cancel_schedule` stays untouched.
  */
-function mapToolNames(text: string, names: readonly string[], toolName: (tool: string) => string): string {
+export function mapToolNames(text: string, names: readonly string[], toolName: (tool: string) => string): string {
   if (names.length === 0) return text;
   const sorted = [...new Set(names)].sort((a, b) => b.length - a.length);
   const pattern = new RegExp(`(?<![\\w])(${sorted.join('|')})(?![\\w])`, 'g');
@@ -650,6 +681,8 @@ export function buildAgentRunContext(input: AgentRunContextInput): string {
     section('wiki_topics', input.wikiTopics ?? ''),
     section('skills', input.skills ?? ''),
     section('recommended_skills', input.recommendedSkills ?? ''),
+    section('connected_apps', input.connectedApps ?? ''),
+    section('available_apps', input.availableApps ?? ''),
   ]
     .filter(Boolean)
     .join('\n\n');

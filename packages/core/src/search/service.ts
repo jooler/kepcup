@@ -1,10 +1,16 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
-import { Agent, fetch as undiciFetch } from 'undici';
+import { fetch as undiciFetch } from 'undici';
 import { AppError } from '@kepcup/shared';
 import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
+import {
+  assertNoPrivateAddress,
+  connectRejectionText,
+  isPrivateAddress,
+  sharedSafeDispatcher,
+} from '../infra/safe-dispatcher.js';
 import type { WebSearchProviderId } from '@kepcup/shared';
 import { WEB_SEARCH_ADAPTERS, type SearchHit } from './adapters.js';
 
@@ -47,36 +53,9 @@ export class SearchService {
 
   #fetchImpl?: typeof fetch;
 
-  /**
-   * 连接时校验解析地址：fetch 内部对同一 hostname 的（再次）解析也走本
-   * lookup，私网地址在 TCP 连接前即被拒绝。#validateUrl 的先行解析只做
-   * 快速失败，真正的权威检查在这里——否则存在 DNS rebinding 窗口（校验时
-   * 解析公网、连接时切换私网）。
-   */
-  readonly #connectGuard = new Agent({
-    connect: {
-      lookup: (hostname, options, callback) => {
-        dns
-          .lookup(hostname, {
-            all: true,
-            ...(options.family === 4 || options.family === 6 ? { family: options.family } : {}),
-          })
-          .then((addresses) => {
-            try {
-              assertNoPrivateAddress(addresses);
-              callback(null, addresses);
-            } catch (error) {
-              callback(error as Error, []);
-            }
-          })
-          .catch((error: Error) => callback(error, []));
-      },
-    },
-  });
-
   /** 默认通道：undici fetch 挂连接校验 dispatcher（fetchImpl 注入时不走）。 */
   #guardedFetch: FetchPageImpl = (url, init) =>
-    undiciFetch(url, { ...init, dispatcher: this.#connectGuard }) as unknown as Promise<Response>;
+    undiciFetch(url, { ...init, dispatcher: sharedSafeDispatcher() }) as unknown as Promise<Response>;
 
   #provider(): WebSearchProviderId {
     const provider = this.#settings.get().webSearch.provider;
@@ -251,50 +230,8 @@ export class SearchService {
   }
 }
 
-/**
- * undici 会把连接阶段失败（含连接校验的私网拒绝，见 #connectGuard）包成
- * `TypeError: fetch failed`——沿 cause 链找回原文，保证拒绝原因可达用户。
- */
-function connectRejectionText(error: unknown): string | null {
-  let current = error instanceof Error ? error : undefined;
-  while (current !== undefined) {
-    if (current.message.startsWith('拒绝访问内网/保留地址')) return current.message;
-    current = current.cause instanceof Error ? current.cause : undefined;
-  }
-  return null;
-}
-
-/**
- * 解析结果里出现私网/保留地址即抛错（错误信息以「拒绝访问内网/保留地址」
- * 开头——fetchPage 依赖该前缀从 undici 的 cause 链里还原拒绝原因）。先行
- * URL 校验与连接时校验（#connectGuard）共用同一判定。
- */
-export function assertNoPrivateAddress(addresses: Array<{ address: string }>): void {
-  for (const entry of addresses) {
-    if (isPrivateAddress(entry.address)) {
-      throw new Error(`拒绝访问内网/保留地址：${entry.address}`);
-    }
-  }
-}
-
-/** IPv4/IPv6 私网、环回、链路本地、保留段与云元数据地址。 */
-export function isPrivateAddress(address: string): boolean {
-  if (net.isIPv4(address)) {
-    const [a, b] = address.split('.').map(Number) as [number, number, number, number];
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true; // 链路本地 + AWS/GCP 元数据 169.254.169.254
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-    if (a >= 224) return true; // 组播/保留
-    return false;
-  }
-  const lower = address.toLowerCase();
-  if (lower === '::1' || lower === '::' || lower === '::ffff:127.0.0.1') return true;
-  if (lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) return true;
-  if (lower.startsWith('::ffff:')) return isPrivateAddress(lower.slice(7));
-  return false;
-}
+// SSRF 判定已抽到 infra/safe-dispatcher.ts；此处再导出以保持原有导入路径。
+export { assertNoPrivateAddress, isPrivateAddress };
 
 /** HTML → 正文文本：去 script/style、块级标签换行、剥标签、解常见实体。 */
 export function htmlToText(html: string): string {

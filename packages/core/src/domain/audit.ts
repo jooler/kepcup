@@ -65,6 +65,18 @@ export class AuditService {
     };
   }
 
+  /** Audit entry with no run context (user-initiated, e.g. connected-app connect / disconnect). */
+  recordSystem(action: string, detail: Record<string, unknown>): AuditEntry {
+    const id = newId('aud');
+    const now = this.#clock.now();
+    this.#db
+      .prepare(
+        'insert into audit_log (id, run_id, bot_id, conversation_id, action, detail_json, created_at) values (?, null, null, null, ?, ?, ?)',
+      )
+      .run(id, action, JSON.stringify(detail), now);
+    return { id, runId: null, botId: null, conversationId: null, action, detail, createdAt: now };
+  }
+
   listByConversation(conversationId: string, limit = 100): AuditEntry[] {
     const rows = this.#db
       .prepare('select * from audit_log where conversation_id = ? order by created_at desc limit ?')

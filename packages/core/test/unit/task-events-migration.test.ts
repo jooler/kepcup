@@ -7,6 +7,7 @@ import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infr
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * main 0018_task_events / runs 0006_tasks（D75，docs/design/30 §2.4.2 / §3.4）。
@@ -70,7 +71,7 @@ describe('main 0018 task_events 迁移', () => {
     const attachmentsBefore = db.prepare('select * from attachments order by id').all();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([18, 19, 20, 21]);
+    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(17));
 
     // Every old column survives; the new columns are NULL on existing rows.
     const after = db.prepare('select * from messages order by seq').all() as Array<

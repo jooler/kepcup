@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appUnattendedNotice,
   countRiskyTools,
   effectiveApproval,
   mcpUnattendedNotice,
@@ -24,7 +25,8 @@ describe('mcpUnattendedNotice', () => {
       mcpUnattendedNotice({ selectedServerCount: 1, unattendedEnabled: false, riskyCount: null }),
     ).toEqual({ show: true, warning: false, riskyCount: 0, unknown: false });
     expect(
-      mcpUnattendedNotice({ selectedServerCount: 2, unattendedEnabled: false, riskyCount: 4 }).warning,
+      mcpUnattendedNotice({ selectedServerCount: 2, unattendedEnabled: false, riskyCount: 4 })
+        .warning,
     ).toBe(false);
   });
 
@@ -34,7 +36,8 @@ describe('mcpUnattendedNotice', () => {
     ).toEqual({ show: true, warning: true, riskyCount: 2, unknown: false });
     // Only read tools (or risks not loaded yet): the persistent notice stays plain.
     expect(
-      mcpUnattendedNotice({ selectedServerCount: 1, unattendedEnabled: true, riskyCount: 0 }).warning,
+      mcpUnattendedNotice({ selectedServerCount: 1, unattendedEnabled: true, riskyCount: 0 })
+        .warning,
     ).toBe(false);
     expect(
       mcpUnattendedNotice({ selectedServerCount: 1, unattendedEnabled: true, riskyCount: null })
@@ -95,7 +98,28 @@ describe('withToolPolicy / effectiveApproval', () => {
     expect(effectiveApproval({ autoApprove: false }, 'x', 'write')).toBe('ask');
     expect(effectiveApproval({ autoApprove: true }, 'x', 'destructive')).toBe('auto');
     expect(
-      effectiveApproval({ autoApprove: true, toolPolicies: { x: { approval: 'ask' } } }, 'x', 'read'),
+      effectiveApproval(
+        { autoApprove: true, toolPolicies: { x: { approval: 'ask' } } },
+        'x',
+        'read',
+      ),
     ).toBe('ask');
+  });
+});
+
+describe('appUnattendedNotice (D73)', () => {
+  it('is shown once a connection is selected and warns while unattended mode is on', () => {
+    expect(appUnattendedNotice({ selectedConnectionCount: 0, unattendedEnabled: true })).toEqual({
+      show: false,
+      warning: false,
+    });
+    expect(appUnattendedNotice({ selectedConnectionCount: 2, unattendedEnabled: false })).toEqual({
+      show: true,
+      warning: false,
+    });
+    expect(appUnattendedNotice({ selectedConnectionCount: 1, unattendedEnabled: true })).toEqual({
+      show: true,
+      warning: true,
+    });
   });
 });

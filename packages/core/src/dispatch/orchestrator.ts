@@ -38,6 +38,10 @@ import {
   type Message,
   type Run,
   type ToolEffect,
+  connectorMetaOf,
+  type AppAuthReason,
+  type ConnectorCatalogEntry,
+  type McpServer,
   type SetupRequirement,
   type TaskChanges,
   type TaskEventContent,
@@ -69,6 +73,7 @@ import {
 } from '../schedule/guard.js';
 import {
   buildAgentRunContext,
+  mapToolNames,
   buildAgentSessionPrompt,
   buildSystemPrompt,
   turnMcpNote,
@@ -125,6 +130,15 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
+import type { AppToolFacade } from '../tools/app-tools.js';
+import { availableAppsPromptBody, connectedAppsPromptBody } from '../apps/prompt.js';
+import {
+  isExposableStatus,
+  type BotAppsExposure,
+  type ConnectedAppView,
+  type ConnectedApps,
+} from '../apps/exposure.js';
+import { customConnectionId } from '../apps/connection-store.js';
 import type { SearchToolFacade } from '../tools/web-tools.js';
 import type { SkillInstallFacade } from '../tools/skill-tools.js';
 import {
@@ -149,6 +163,8 @@ import {
   resolveMcpToolEntries,
   selectReadOnlyMcpEntries,
   wrapMcpToolEntries,
+  type McpLockedServer,
+  type McpUnavailableServer,
   type McpToolEntry,
   type McpToolFacade,
 } from '../mcp/tools.js';
@@ -323,6 +339,11 @@ export interface OrchestratorDeps {
    * （无 server 工具注册）。
    */
   mcp?: McpService | null;
+  /**
+   * D73 P1 连接应用：Bot 勾选的目录连接 → 合成 server / 工具命名 / 风险决定 / 提示词两段
+   * （`<connected_apps>` / `<available_apps>`）。null / 缺省 = 没有目录连接能力。
+   */
+  connectedApps?: ConnectedApps | null;
 }
 
 /** The slice of the wiki domain the response loop consumes. */
@@ -1861,11 +1882,35 @@ export class Orchestrator {
   async #mcpEntriesFor(
     serverIds: string[],
     isTask: boolean,
-  ): Promise<{ entries: McpToolEntry[]; hasServers: boolean; resolved: boolean }> {
+    appConnectionIds: readonly string[] = [],
+  ): Promise<{
+    entries: McpToolEntry[];
+    /** D73: servers whose tools could not be listed because they need (re)connecting. */
+    unavailable: McpUnavailableServer[];
+    /** D73 P1: tools held back by the tool-definition lock (new / changed, not yet reviewed). */
+    locked: McpLockedServer[];
+    /** D73 P1: the bot's authorized catalog connections (every status, for `<connected_apps>`). */
+    apps: BotAppsExposure;
+    hasServers: boolean;
+    resolved: boolean;
+  }> {
     const mcp = this.#deps.mcp;
-    if (mcp == null || serverIds.length === 0) return { entries: [], hasServers: false, resolved: true };
-    const servers = mcp.serversForBot(serverIds);
-    if (servers.length === 0) return { entries: [], hasServers: false, resolved: true };
+    const noApps: BotAppsExposure = { servers: [], views: [] };
+    // D73 P1: catalog connections the bot has selected. Only usable states contribute
+    // servers (expired / needs_scope / … expose no tools and only show up as status lines);
+    // the synthesized server id IS the connection id (McpService resolves it).
+    const apps =
+      this.#deps.connectedApps != null && appConnectionIds.length > 0
+        ? this.#deps.connectedApps.forBot(appConnectionIds)
+        : noApps;
+    if (mcp == null || (serverIds.length === 0 && apps.servers.length === 0)) {
+      return { entries: [], unavailable: [], locked: [], apps, hasServers: false, resolved: true };
+    }
+    const servers = [...mcp.serversForBot(serverIds), ...apps.servers];
+    if (servers.length === 0) {
+      return { entries: [], unavailable: [], locked: [], apps, hasServers: false, resolved: true };
+    }
+    const connectedApps = this.#deps.connectedApps ?? null;
     // Only a task's connect failures count toward MCP_RECONNECT_MAX: turns
     // resolve on every message and must not drain the budget tasks rely on.
     const resolving = resolveMcpToolEntries({
@@ -1873,24 +1918,28 @@ export class Orchestrator {
       mcp,
       logger: this.#deps.logger,
       countFailures: isTask,
+      toolFilter: mcp.toolFilter,
+      ...(connectedApps !== null
+        ? { appBindingFor: (server: McpServer) => connectedApps.bindingFor(server.id) }
+        : {}),
     });
-    if (isTask) return { entries: await resolving, hasServers: true, resolved: true };
+    if (isTask) return { ...(await resolving), apps, hasServers: true, resolved: true };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), TURN_MCP_RESOLVE_TIMEOUT_MS);
       timer.unref?.();
     });
     try {
-      const entries = await Promise.race([resolving, timeout]);
-      if (entries === null) {
+      const resolution = await Promise.race([resolving, timeout]);
+      if (resolution === null) {
         resolving.catch(() => {});
         this.#deps.logger.warn(
           { serverIds },
           'mcp tool lists not ready within the turn budget; turn runs without MCP tools',
         );
-        return { entries: [], hasServers: true, resolved: false };
+        return { entries: [], unavailable: [], locked: [], apps, hasServers: true, resolved: false };
       }
-      return { entries, hasServers: true, resolved: true };
+      return { ...resolution, apps, hasServers: true, resolved: true };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
@@ -2124,6 +2173,10 @@ export class Orchestrator {
     wikiTopics: string;
     skills: string;
     recommendedSkills: string;
+    /** D73: `<connected_apps>` body (apps needing reconnection); '' = omitted. */
+    connectedApps?: string;
+    /** D73 P1: `<available_apps>` body (catalog apps without an authorized connection); '' = omitted. */
+    availableApps?: string;
     conversationText: string;
     /** P5 会话复用：触发批、触发段（增量对话段用）、工作目录与模型引用（指纹）。 */
     batch: TriggerBatch;
@@ -2261,6 +2314,9 @@ export class Orchestrator {
       if (previous !== null) this.#discardAgentSession(previous, false);
     }
     const tools = session.tools;
+    const hostToolOf = hostToolNamer(provider, session.hostServerName);
+    const mapAppToolNames = (text: string): string =>
+      mapToolNames(text, tools.map((tool) => tool.name), hostToolOf);
     const access = await this.#accessPromptInfo(input.identity);
     const project = input.hasProject
       ? await this.#deps.projects.promptSection(conversation.id, {
@@ -2310,6 +2366,13 @@ export class Orchestrator {
           ...(input.skills.length > 0 ? { skills: input.skills } : {}),
           ...(input.recommendedSkills.length > 0
             ? { recommendedSkills: input.recommendedSkills }
+            : {}),
+          // The sections name `app_request_connection`: spelled the way this agent sees it.
+          ...(input.connectedApps !== undefined && input.connectedApps.length > 0
+            ? { connectedApps: mapAppToolNames(input.connectedApps) }
+            : {}),
+          ...(input.availableApps !== undefined && input.availableApps.length > 0
+            ? { availableApps: mapAppToolNames(input.availableApps) }
             : {}),
         }),
         conversation: input.conversationText,
@@ -2924,7 +2987,11 @@ export class Orchestrator {
       // W5：任务拿全部已启用工具；对话轮与只读子代理只拿只读 + 免审批的前
       // TURN_MCP_READ_TOOLS_MAX 个（调用时网关再校验）。对话轮最多等
       // TURN_MCP_RESOLVE_TIMEOUT_MS：连接慢就本轮不带，下一轮命中缓存。
-      const mcpResolution = await this.#mcpEntriesFor(bot.profile.runtime.mcp_server_ids, isTask);
+      const mcpResolution = await this.#mcpEntriesFor(
+        bot.profile.runtime.mcp_server_ids,
+        isTask,
+        bot.profile.runtime.app_connection_ids,
+      );
       const mcpEntries = mcpResolution.entries;
       const readOnlyMcp = selectReadOnlyMcpEntries(mcpEntries);
       const wrapMcp = (ident: RunIdentity, entries: McpToolEntry[]) =>
@@ -2935,8 +3002,30 @@ export class Orchestrator {
               mcp: this.#deps.mcp,
               gateway: this.#deps.gateway,
               secrets: this.#deps.secrets,
+              // D73: an OAuth app that needs (re)connecting → the same setupHit chain
+              // as media / search (tool result SETUP_REQUIRED → abort → failed + setup).
+              onSetupRequired: (requirement) => {
+                setupHit.requirement = requirement;
+              },
             })
           : [];
+      // D73 §5.6: apps that need reconnecting are named in <connected_apps> (their tools
+      // are not offered); the model can ask the user via app_request_connection.
+      const connectedAppsSection = connectedAppsPromptBody({
+        views: mcpResolution.apps.views,
+        unavailable: mcpResolution.unavailable,
+      });
+      // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
+      const availableEntries =
+        this.#deps.connectedApps?.availableFor(mcpResolution.apps.views) ?? [];
+      const availableAppsSection = availableAppsPromptBody(availableEntries);
+      const appFacade = this.#appToolFacade(
+        setupHit,
+        bot.profile.runtime.mcp_server_ids,
+        mcpResolution.unavailable,
+        mcpResolution.apps,
+        availableEntries,
+      );
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
       const memoryToolFacade: MemoryToolFacade | undefined = memoryFacade
@@ -2993,6 +3082,8 @@ export class Orchestrator {
         ...(this.#deps.browser !== undefined ? { browser: this.#deps.browser } : {}),
         ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
+        ...(appFacade !== undefined ? { apps: appFacade } : {}),
+        logger: this.#deps.logger,
         ...(this.#deps.skillInstall !== undefined ? { skillInstall: this.#deps.skillInstall } : {}),
         batchMessages: batch.messages,
         onBotMessage: (message) => this.#recordBotMessage(runId, message),
@@ -3233,6 +3324,8 @@ export class Orchestrator {
               wikiTopics: wikiTopicsSection,
               skills: skillsSection,
               recommendedSkills: recommendedSkillsSection,
+              connectedApps: connectedAppsSection,
+              availableApps: availableAppsSection,
               conversationText: `${contextAndContinuation}\n\n${triggerContent}`,
               batch,
               renderOptions,
@@ -3366,6 +3459,8 @@ export class Orchestrator {
             ...(recommendedSkillsSection.length > 0
               ? { recommendedSkills: recommendedSkillsSection }
               : {}),
+            ...(connectedAppsSection.length > 0 ? { connectedApps: connectedAppsSection } : {}),
+            ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
             // resolution timed out), so the prompt does not flip between turns.
             ...(!isTask && mcpResolution.hasServers
@@ -4094,6 +4189,121 @@ export class Orchestrator {
   }
 
   /**
+   * D73 `app_request_connection` 的门面（design 29 §7）。目标三种：
+   * - `connector`（目录 slug）：该 Bot 还没有授权连接的目录应用 → `target: catalog`（未连接）；
+   *   已有授权连接但需要重连则按该连接处理；已可用则拒绝（无需再连）；
+   * - `connectionId`：该 Bot 已勾选的目录连接 → `catalog` 目标 + connectionId（过期 / 追加权限）；
+   *   `custom:` 开头 = 该 Bot 已勾选、应用级启用、OAuth 的自定义 server；
+   * - `serverId`：同上（自定义 OAuth server）。
+   * 通过后把 `connect-app` 需求写进本 run 的 `setupHit`（工具随即返回 SETUP_REQUIRED，既有链路中断
+   * run 并出连接卡）。Bot 没有任何可请求的目标时不提供（工具集不变）。
+   */
+  #appToolFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    selectedServerIds: string[],
+    unavailable: McpUnavailableServer[],
+    apps: BotAppsExposure,
+    availableEntries: readonly ConnectorCatalogEntry[],
+  ): AppToolFacade | undefined {
+    const mcp = this.#deps.mcp;
+    const connectedApps = this.#deps.connectedApps ?? null;
+    const candidates =
+      mcp == null ? [] : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
+    if (candidates.length === 0 && apps.views.length === 0 && availableEntries.length === 0) {
+      return undefined;
+    }
+    const reasonOf = (view: ConnectedAppView): AppAuthReason => {
+      const hit = unavailable.find((entry) => entry.connectionId === view.connection.id);
+      if (hit !== undefined) return hit.reason;
+      return view.connection.status === 'needs_scope'
+        ? 'scope'
+        : view.connection.status === 'not_connected'
+          ? 'not_connected'
+          : 'expired';
+    };
+    const requestFor = (view: ConnectedAppView): { ok: boolean; message: string } => {
+      const hit = unavailable.find((entry) => entry.connectionId === view.connection.id);
+      setupHit.requirement = {
+        kind: 'connect-app',
+        target: { kind: 'catalog', connectorId: view.slug },
+        connectionId: view.connection.id,
+        reason: reasonOf(view),
+        ...(hit?.scopes !== undefined ? { scopes: hit.scopes } : {}),
+      };
+      return {
+        ok: true,
+        message: `已请求用户重新连接「${view.appName}」（账号 ${view.accountLabel}）：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
+      };
+    };
+    const needsReconnect = (view: ConnectedAppView): boolean =>
+      !isExposableStatus(view.connection.status) ||
+      unavailable.some((entry) => entry.connectionId === view.connection.id);
+    return {
+      requestConnection: (input) => {
+        // 1) A catalog connector the bot has no (usable) connection for.
+        if (input.connector !== undefined) {
+          const entry = connectedApps?.entryBySlug(input.connector) ?? null;
+          if (entry === null) {
+            return {
+              ok: false,
+              message: `没有应用「${input.connector}」：只能请求连接 <available_apps> 里列出的应用`,
+            };
+          }
+          const existing = apps.views.find((view) => view.slug === connectorMetaOf(entry).slug);
+          if (existing !== undefined) {
+            return needsReconnect(existing)
+              ? requestFor(existing)
+              : {
+                  ok: false,
+                  message: `「${entry.title}」已经连接并授权给你（账号 ${existing.accountLabel}），可以直接使用它的工具。`,
+                };
+          }
+          setupHit.requirement = {
+            kind: 'connect-app',
+            target: { kind: 'catalog', connectorId: connectorMetaOf(entry).slug },
+            reason: 'not_connected',
+          };
+          return {
+            ok: true,
+            message: `已请求用户连接「${entry.title}」：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
+          };
+        }
+        // 2) A catalog connection the bot has selected.
+        const appView =
+          input.connectionId !== undefined
+            ? apps.views.find((view) => view.connection.id === input.connectionId)
+            : undefined;
+        if (appView !== undefined) return requestFor(appView);
+        // 3) A custom OAuth server the bot has selected.
+        const wantedId =
+          input.serverId ??
+          (input.connectionId !== undefined && input.connectionId.startsWith('custom:')
+            ? input.connectionId.slice('custom:'.length)
+            : undefined);
+        const server = candidates.find((entry) => entry.id === wantedId);
+        if (server === undefined) {
+          return {
+            ok: false,
+            message: `没有可连接的应用「${input.connectionId ?? input.serverId ?? ''}」：只能请求连接你已被授权使用的 OAuth 应用（见 <connected_apps>）`,
+          };
+        }
+        const hit = unavailable.find((entry) => entry.serverId === server.id);
+        setupHit.requirement = {
+          kind: 'connect-app',
+          target: { kind: 'custom', serverId: server.id },
+          connectionId: customConnectionId(server.id),
+          reason: hit?.reason ?? 'expired',
+          ...(hit?.scopes !== undefined ? { scopes: hit.scopes } : {}),
+        };
+        return {
+          ok: true,
+          message: `已请求用户连接「${server.name}」：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
+        };
+      },
+    };
+  }
+
+  /**
    * 联网检索工具的 search facade（docs/design/21-web-search.md）：web_search
    * 缺配置/缺 key 时记下结构化 setup 需求（工具返回 SETUP_REQUIRED，run 中断
    * 引导设置后自动续跑）；web_fetch 独立可用，失败照常回到模型。
@@ -4387,6 +4597,12 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
       return '未配置联网检索：请先在设置中选择检索供应商并填写 API key';
     case 'agent':
       return agentSetupMessage(requirement.agentId, requirement.reason);
+    case 'connect-app':
+      return requirement.reason === 'scope'
+        ? '需要追加应用权限：请在设置中重新连接该应用'
+        : requirement.reason === 'expired'
+          ? '应用连接已失效：请在设置中重新连接'
+          : '应用尚未连接：请先在设置中连接该应用';
   }
 }
 

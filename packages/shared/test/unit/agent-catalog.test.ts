@@ -56,6 +56,7 @@ describe('host capability packs', () => {
       'transcription',
       'video',
       'mcp',
+      'apps',
     ]) {
       expect(category[id]).toBe('supplement');
     }
