@@ -439,3 +439,192 @@ describe('cross-bot delegation A→B (D71)', () => {
     expect(cards(aAll, 'delegation_result')).toHaveLength(1);
   }, 40_000);
 });
+
+describe('W6: delegation intent + 跟随任务（DEV-012 方案二）', () => {
+  const isTaskWake = (req: MockChatRequest) => req.lastUserText().includes('<trigger reason="task"');
+
+  it('request：B 的委派轮派任务 → A 的结果卡是任务结果而不是「我去做」，follow-up 要求转述实质', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { b, aConv } = await pair(stack);
+    const taskStep = step().inTask().hold().replyText('TASK-RESULT：X 的三条结论');
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('让小乙查 X'))
+        .replyToolCall('delegate_to_bot', { bot_id: b.id, task: '查 X 并整理' }),
+      step().inTurn().expect(isAfterDelegateCall).replyText('已经转交给小乙。'),
+      step()
+        .inTurn()
+        .expect(isDelegatedTrigger)
+        .replyToolCall('start_task', {
+          title: '查 X',
+          instruction: '查 X 并整理成三条结论',
+          source_message_ids: [],
+          writes: false,
+        }),
+      step().inTurn().expect(isDelegatedTrigger).replyText('好的，我去做'),
+      taskStep,
+      step().inTurn().expect(isTaskWake).replyText('X 查好了。'),
+      step().inTurn().expect(isFollowUp).replyText('小乙查到了 X 的三条结论。'),
+    ]);
+    await sendBatch(core, aConv, ['让小乙查 X']);
+
+    // 委派轮已回「我去做」，任务还在跑：委派等任务，A 侧还没有结果卡。
+    const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
+    expect(awaiting.taskIds).toHaveLength(1);
+    await waitFor(() => (taskStep.consumed ? true : null), { label: 'task running' });
+    expect(cards(await listAllMessages(core, aConv), 'delegation_result')).toHaveLength(0);
+    taskStep.release();
+    const done = await waitDelegation(stack, (d) => d.status === 'completed');
+    expect(done.intent).toBe('request');
+    expect(done.resultExcerpt).toBe('TASK-RESULT：X 的三条结论');
+    expect(done.resultMessageId).toBeNull();
+    const task = core.services.domain!.runs.get(done.taskIds[0]!)!;
+    expect(task).toMatchObject({ loopType: 'task', status: 'completed', originRunId: done.runId });
+
+    const aAll = await listAllMessages(core, aConv);
+    expect(cards(aAll, 'delegation_result')).toHaveLength(1);
+    const followUp = aAll.find(
+      (m) => 'event' in m.content && m.content.event === DELEGATION_FOLLOWUP_EVENT,
+    )!;
+    const followText = (followUp.content as { text: string }).text;
+    expect(followText).toContain('TASK-RESULT');
+    expect(followText).not.toContain('我去做');
+    expect(followText).toContain('不要只说');
+    await waitFor(async () =>
+      (await listMessages(core, aConv)).find(
+        (m) => (m.content as { text?: string }).text === '小乙查到了 X 的三条结论。',
+      ),
+    );
+    // B 的唤醒提示：intent 属性 + 按 intent 的宿主说明；A 的工具说明含「写在回复里不算发送」。
+    const requests = llm.requestsFor('mock-main');
+    const bReq = requests.find(isDelegatedTrigger)!;
+    expect(bReq.lastUserText()).toContain('intent="request"');
+    expect(bReq.lastUserText()).toContain('它们的结果会自动贴回给对方');
+    const aFirst = requests.find((req) => req.lastUserText().includes('让小乙查 X'))!;
+    expect(JSON.stringify(aFirst.body.tools)).toContain('不会发给 B');
+  }, 60_000);
+
+  it('request：B 派出的任务失败 → B 消费失败结果后委派 failed，结果卡标注任务状态', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { b, aConv } = await pair(stack);
+    const wake = step().inTurn().expect(isTaskWake).hold().replyText('任务失败了，我跟用户说一下。');
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('让小乙部署'))
+        .replyToolCall('delegate_to_bot', { bot_id: b.id, task: '部署一下' }),
+      step().inTurn().expect(isAfterDelegateCall).replyText('转交了。'),
+      step()
+        .inTurn()
+        .expect(isDelegatedTrigger)
+        .replyToolCall('start_task', {
+          title: '部署',
+          instruction: '部署',
+          source_message_ids: [],
+          writes: false,
+        }),
+      step().inTurn().expect(isDelegatedTrigger).replyText('我去部署'),
+      step().inTask().failWith(401, 'Incorrect API key provided'),
+      wake,
+      step().inTurn().expect(isFollowUp).replyText('小乙没部署成。'),
+    ]);
+    await sendBatch(core, aConv, ['让小乙部署']);
+    const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
+    // 任务已失败，但 B 还没消费它的失败结果（B 那一轮可能接续）：仍在等。
+    await waitFor(() => (wake.consumed ? true : null), { label: 'B woken by the failure' });
+    const taskId = awaiting.taskIds[0]!;
+    expect(core.services.domain!.runs.get(taskId)!.status).toBe('failed');
+    expect(core.services.domain!.delegations.getOrThrow(awaiting.id).status).toBe('awaiting_tasks');
+    wake.release();
+    const failed = await waitDelegation(stack, (d) => d.status === 'failed');
+    expect(failed.errorText).toContain('【部署】（失败）');
+    expect(failed.resultCardId).not.toBeNull();
+    const followUp = await waitFor(async () =>
+      (await listAllMessages(core, aConv)).find(
+        (m) => 'event' in m.content && m.content.event === DELEGATION_FOLLOWUP_EVENT,
+      ),
+    );
+    expect((followUp.content as { text: string }).text).toContain('没有完成');
+  }, 60_000);
+
+  it('fyi：送达即结算，B 的回复不贴回 A，A 不收结果卡与 follow-up', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { b, aConv } = await pair(stack);
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('告诉小乙'))
+        .replyToolCall('delegate_to_bot', { bot_id: b.id, task: '下周一放假', intent: 'fyi' }),
+      step().inTurn().expect(isAfterDelegateCall).replyText('已经告诉小乙了。'),
+      step().inTurn().expect(isDelegatedTrigger).replyText('FYI-ACK 知道了'),
+    ]);
+    await sendBatch(core, aConv, ['告诉小乙下周一放假']);
+    const done = await waitDelegation(stack, (d) => d.status === 'completed');
+    expect(done).toMatchObject({ intent: 'fyi', resultExcerpt: null, resultCardId: null });
+    const bConv = bConversation(stack, b);
+    await waitFor(async () =>
+      (await listMessages(core, bConv)).find((m) => (m.content as { text?: string }).text === 'FYI-ACK 知道了'),
+    );
+    await waitForRun(core, aConv, 'completed');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const aAll = await listAllMessages(core, aConv);
+    expect(cards(aAll, 'delegation_result')).toHaveLength(0);
+    expect(
+      aAll.some((m) => 'event' in m.content && m.content.event === DELEGATION_FOLLOWUP_EVENT),
+    ).toBe(false);
+    expect(aAll.some((m) => (m.content as { text?: string }).text?.includes('FYI-ACK'))).toBe(false);
+    const bReq = llm.requestsFor('mock-main').find(isDelegatedTrigger)!;
+    expect(bReq.lastUserText()).toContain('intent="fyi"');
+    expect(bReq.lastUserText()).toContain('不需要回复对方');
+  }, 60_000);
+
+  it('取消等待任务中的委派 → 一并取消 B 派出的任务，A 侧不贴结果卡', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { b, aConv } = await pair(stack);
+    const slowTask = step().inTask().hold().replyText('不会到这里');
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .expect((req) => req.lastUserText().includes('交给小乙'))
+        .replyToolCall('delegate_to_bot', { bot_id: b.id, task: '做个长任务' }),
+      step().inTurn().expect(isAfterDelegateCall).replyText('转交了。'),
+      step()
+        .inTurn()
+        .expect(isDelegatedTrigger)
+        .replyToolCall('start_task', {
+          title: '长任务',
+          instruction: '慢慢做',
+          source_message_ids: [],
+          writes: false,
+        }),
+      step().inTurn().expect(isDelegatedTrigger).replyText('我去做'),
+      slowTask,
+    ]);
+    await sendBatch(core, aConv, ['交给小乙']);
+    const awaiting = await waitDelegation(stack, (d) => d.status === 'awaiting_tasks');
+    const taskId = awaiting.taskIds[0]!;
+    await waitFor(() => (slowTask.consumed ? true : null), { label: 'task running' });
+
+    const result = (await core.rpc.call('delegations.cancel', { id: awaiting.id })) as {
+      delegation: Delegation;
+    };
+    expect(result.delegation.status).toBe('cancelled');
+    const task = await waitFor(() => {
+      const run = core.services.domain!.runs.get(taskId);
+      return run !== null && run.status === 'cancelled' ? run : null;
+    });
+    expect(task.error).toContain('用户取消');
+    slowTask.release();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const aAll = await listAllMessages(core, aConv);
+    expect(cards(aAll, 'delegation_result')).toHaveLength(0);
+    expect(
+      aAll.some((m) => 'event' in m.content && m.content.event === DELEGATION_FOLLOWUP_EVENT),
+    ).toBe(false);
+  }, 60_000);
+});

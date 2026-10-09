@@ -1267,11 +1267,25 @@ export type Approval = z.infer<typeof approvalSchema>;
 export const delegationStatusSchema = z.enum([
   'submitted',
   'working',
+  /**
+   * W6 (DEV-012 方案二): B's delegated turn ended having started tasks
+   * (`origin_run_id`); the delegation waits for them (`taskIds`, followed
+   * along their continuation chain) and its result is their results.
+   */
+  'awaiting_tasks',
   'completed',
   'failed',
   'cancelled',
 ]);
 export type DelegationStatus = z.infer<typeof delegationStatusSchema>;
+
+/**
+ * What A expects back (W6): `request` — a result (B's turn reply, or the
+ * results of the tasks that turn started); `question` — B's turn reply;
+ * `fyi` — nothing (settled on delivery, no result card / follow-up).
+ */
+export const delegationIntentSchema = z.enum(['request', 'question', 'fyi']);
+export type DelegationIntent = z.infer<typeof delegationIntentSchema>;
 
 export const delegationSchema = z.object({
   id: z.string(),
@@ -1298,6 +1312,10 @@ export const delegationSchema = z.object({
   /** A-side result card message. */
   resultCardId: z.string().nullable(),
   errorText: z.string().nullable(),
+  /** W6: what A expects back (rows before 0021: 'request'). */
+  intent: delegationIntentSchema,
+  /** W6: the tasks the delegation follows (`awaiting_tasks`; latest link of each chain). */
+  taskIds: z.array(z.string()),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

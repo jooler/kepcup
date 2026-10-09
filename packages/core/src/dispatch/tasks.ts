@@ -289,6 +289,11 @@ export interface TaskHostDeps {
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
   onSweep?: (now: number) => void;
+  /**
+   * W6: tasks whose results were just marked consumed (a delegation waiting
+   * on a failed task settles now instead of on the next sweep).
+   */
+  onConsumed?: (taskIds: string[]) => void;
 }
 
 interface LaunchedTask {
@@ -1195,13 +1200,17 @@ export class TaskHost implements TaskToolFacade {
    */
   markConsumed(taskIds: Iterable<string>): void {
     const now = this.#deps.clock.now();
+    const consumed: string[] = [];
     for (const taskId of new Set(taskIds)) {
       this.#pendingConsumption.delete(taskId);
       const task = this.#deps.runs.get(taskId);
       if (task === null || task.loopType !== 'task') continue;
       if (!isTerminalStatus(task.status) || task.resultConsumedAt !== null) continue;
       this.#deps.runs.update(taskId, { resultConsumedAt: now });
+      consumed.push(taskId);
     }
+    const onConsumed = this.#deps.onConsumed;
+    if (consumed.length > 0 && onConsumed !== undefined) this.#safely(() => onConsumed(consumed));
   }
 
   /**

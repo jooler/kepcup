@@ -1,11 +1,18 @@
-import { AppError, newId, type Delegation, type DelegationStatus } from '@kepcup/shared';
+import {
+  AppError,
+  newId,
+  type Delegation,
+  type DelegationIntent,
+  type DelegationStatus,
+} from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
 /**
  * 跨 Bot 委派行（D71，docs/design/27-butler-and-delegation.md §3）。状态流转
  * 的唯一入口：`submitted`（未投递）→ `working`（代发消息已落 B 私聊、B 的
- * run 已起）→ `completed` | `failed` | `cancelled`。终态不可再改。
+ * run 已起）→ [`awaiting_tasks`（W6：B 的委派轮派了任务，等任务结算）] →
+ * `completed` | `failed` | `cancelled`。终态不可再改。
  */
 
 interface DelegationRow {
@@ -25,8 +32,23 @@ interface DelegationRow {
   result_message_id: string | null;
   result_card_id: string | null;
   error_text: string | null;
+  intent: string;
+  task_ids_json: string;
   created_at: number;
   updated_at: number;
+}
+
+function parseIntent(value: string): DelegationIntent {
+  return value === 'question' || value === 'fyi' ? value : 'request';
+}
+
+function parseTaskIds(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 function rowToDelegation(row: DelegationRow): Delegation {
@@ -47,6 +69,8 @@ function rowToDelegation(row: DelegationRow): Delegation {
     resultMessageId: row.result_message_id,
     resultCardId: row.result_card_id,
     errorText: row.error_text,
+    intent: parseIntent(row.intent),
+    taskIds: parseTaskIds(row.task_ids_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -70,7 +94,13 @@ const PATCH_COLUMNS = {
   errorText: 'error_text',
 } as const;
 
-export type DelegationPatch = Partial<Record<keyof typeof PATCH_COLUMNS, string | null>>;
+export type DelegationPatch = Partial<Record<keyof typeof PATCH_COLUMNS, string | null>> & {
+  /** W6: the followed task ids (stored as JSON). */
+  taskIds?: string[];
+};
+
+/** Non-terminal statuses (lifecycle, duplicate guard, recovery). */
+const ACTIVE_SQL = "('submitted', 'working', 'awaiting_tasks')";
 
 export class DelegationsService {
   constructor(
@@ -85,12 +115,13 @@ export class DelegationsService {
     taskText: string;
     depth: number;
     fromRunId: string | null;
+    intent?: DelegationIntent;
   }): Delegation {
     const id = newId('dlg');
     const now = this.clock.now();
     this.db
       .prepare(
-        "insert into delegations (id, from_bot_id, to_bot_id, from_conversation_id, task_text, status, depth, from_run_id, created_at, updated_at) values (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?)",
+        "insert into delegations (id, from_bot_id, to_bot_id, from_conversation_id, task_text, status, depth, from_run_id, intent, created_at, updated_at) values (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?)",
       )
       .run(
         id,
@@ -100,6 +131,7 @@ export class DelegationsService {
         input.taskText,
         input.depth,
         input.fromRunId,
+        input.intent ?? 'request',
         now,
         now,
       );
@@ -125,6 +157,32 @@ export class DelegationsService {
       .prepare("select * from delegations where run_id = ? and status = 'working'")
       .get(runId) as DelegationRow | undefined;
     return row ? rowToDelegation(row) : null;
+  }
+
+  /**
+   * The delegation whose delegated run `runId` is, in any status (single-hop
+   * guard: a delegated turn stays delegated after an fyi settled on delivery).
+   */
+  anyByRun(runId: string): Delegation | null {
+    const row = this.db
+      .prepare('select * from delegations where run_id = ? order by created_at limit 1')
+      .get(runId) as DelegationRow | undefined;
+    return row ? rowToDelegation(row) : null;
+  }
+
+  /** W6: delegations waiting for B's tasks, optionally only those to one bot. */
+  listAwaitingTasks(toBotId?: string): Delegation[] {
+    const rows =
+      toBotId === undefined
+        ? this.db
+            .prepare("select * from delegations where status = 'awaiting_tasks' order by created_at, id")
+            .all()
+        : this.db
+            .prepare(
+              "select * from delegations where status = 'awaiting_tasks' and to_bot_id = ? order by created_at, id",
+            )
+            .all(toBotId);
+    return (rows as DelegationRow[]).map(rowToDelegation);
   }
 
   /** Undelivered delegations to one bot, oldest first (FIFO delivery). */
@@ -158,7 +216,7 @@ export class DelegationsService {
     return (
       this.db
         .prepare(
-          "select * from delegations where status in ('submitted', 'working') order by created_at, id",
+          `select * from delegations where status in ${ACTIVE_SQL} order by created_at, id`,
         )
         .all() as DelegationRow[]
     ).map(rowToDelegation);
@@ -169,7 +227,7 @@ export class DelegationsService {
     return (
       this.db
         .prepare(
-          "select * from delegations where status in ('submitted', 'working') and (from_conversation_id = ? or to_conversation_id = ?)",
+          `select * from delegations where status in ${ACTIVE_SQL} and (from_conversation_id = ? or to_conversation_id = ?)`,
         )
         .all(conversationId, conversationId) as DelegationRow[]
     ).map(rowToDelegation);
@@ -180,7 +238,7 @@ export class DelegationsService {
     return (
       this.db
         .prepare(
-          "select * from delegations where status in ('submitted', 'working') and (from_bot_id = ? or to_bot_id = ?)",
+          `select * from delegations where status in ${ACTIVE_SQL} and (from_bot_id = ? or to_bot_id = ?)`,
         )
         .all(botId, botId) as DelegationRow[]
     ).map(rowToDelegation);
@@ -188,12 +246,34 @@ export class DelegationsService {
 
   /** Non-terminal delegation from one A conversation to one B (duplicate guard). */
   activeBetween(fromConversationId: string, toBotId: string): Delegation | null {
+    // W6: a queued fyi (still `submitted` while B is busy) waits for no result
+    // and does not block a request / question to the same bot.
     const row = this.db
       .prepare(
-        "select * from delegations where status in ('submitted', 'working') and from_conversation_id = ? and to_bot_id = ? limit 1",
+        `select * from delegations where status in ${ACTIVE_SQL} and intent <> 'fyi' and from_conversation_id = ? and to_bot_id = ? limit 1`,
       )
       .get(fromConversationId, toBotId) as DelegationRow | undefined;
     return row ? rowToDelegation(row) : null;
+  }
+
+  /** W6 fyi throttle: a still-queued fyi from `fromBotId` to `toBotId` with the same text. */
+  queuedFyiWithText(fromBotId: string, toBotId: string, taskText: string): Delegation | null {
+    const row = this.db
+      .prepare(
+        "select * from delegations where status = 'submitted' and intent = 'fyi' and from_bot_id = ? and to_bot_id = ? and task_text = ? limit 1",
+      )
+      .get(fromBotId, toBotId, taskText) as DelegationRow | undefined;
+    return row ? rowToDelegation(row) : null;
+  }
+
+  /** W6 fyi throttle: how many fyi one run of A has sent to `toBotId` (any status). */
+  countFyiFromRun(fromRunId: string, toBotId: string): number {
+    const row = this.db
+      .prepare(
+        "select count(*) as n from delegations where intent = 'fyi' and from_run_id = ? and to_bot_id = ?",
+      )
+      .get(fromRunId, toBotId) as { n: number };
+    return row.n;
   }
 
   /**
@@ -213,11 +293,15 @@ export class DelegationsService {
     const sets = ['status = ?', 'updated_at = ?'];
     const params: unknown[] = [status, this.clock.now()];
     for (const [key, column] of Object.entries(PATCH_COLUMNS)) {
-      const value = patch[key as keyof DelegationPatch];
+      const value = patch[key as keyof typeof PATCH_COLUMNS];
       if (value !== undefined) {
         sets.push(`${column} = ?`);
         params.push(value);
       }
+    }
+    if (patch.taskIds !== undefined) {
+      sets.push('task_ids_json = ?');
+      params.push(JSON.stringify(patch.taskIds));
     }
     const placeholders = from.map(() => '?').join(', ');
     const result = this.db

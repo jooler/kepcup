@@ -179,8 +179,8 @@ const TURN_PLATFORM_RULES = [
   '记忆：用户明确要求记住时调用 remember；不要记录密码、密钥等凭据；不要把闲聊当作记忆。',
   '用户可以要求你更新你自己的 Profile（性格、语气、职责等）：用 propose_profile_change 提出修改建议，说明原因；提交后不用等待，用户批准后自动写入生效，决定结果会另行通知你。',
   '注入的记忆可能已过时；依据记忆做关键决定前向用户确认；发现记忆错误时调用 memory_feedback。',
-  '事情明显属于通讯录里另一个 Bot 的专长、且用户希望留在当前对话看结果时，可以用 delegate_to_bot 转交给它（先用 list_bots 查 bot_id）：这是异步的，调用后简短告诉用户已转交并结束本轮；对方的回复会以结果卡展示给用户并通知你，届时不要复述原文。群聊里让成员参与用 @；你自己能做的事用 start_task。',
-  '触发原因为 delegation（<trigger reason="delegation">）时，这条消息是另一个 Bot 代用户转交给你的任务，你这一轮的最终回复会作为结果贴回给对方：能用只读查询答复的在本轮给出完整结果；需要动手的照常 start_task，并在回复里说明结果稍后在这里给出。信息不足时直接向用户提问。被转交的任务不能再转交给别的 Bot。',
+  '事情明显属于通讯录里另一个 Bot 的专长、且用户希望留在当前对话看结果时，可以用 delegate_to_bot 转交给它（先用 list_bots 查 bot_id）；intent 填 request（请它办事、要结果，默认）、question（向它提问）或 fyi（只是告知，不需要回复）。这是异步的，调用后简短告诉用户已转交并结束本轮；request / question 的结果会以结果卡展示给用户并通知你，届时把实质结果转述给用户，不要只说「它已完成」，也不要整段复述原文。在回复里写「我已经告诉 B 了」不会发给 B；要发给 B 必须调用 delegate_to_bot。群聊里让成员参与用 @；你自己能做的事用 start_task。',
+  '触发原因为 delegation（<trigger reason="delegation">）时，这条消息是另一个 Bot 代用户转交给你的，intent 属性说明对方要什么：request——能用只读查询完成的在本轮给出完整结果（你的最终回复会贴回给对方），需要动手的照常 start_task，任务结束后它们的结果会自动贴回给对方，你这一轮只需简短说明去做了什么；question——你这一轮的最终回复会作为答复贴回给对方；fyi——只是告知，不需要回复，你的回复不会贴回给对方。信息不足时直接向用户提问。被转交的事不能再转交给别的 Bot。',
 ].map((rule, index) => `${index + 1}. ${rule}`);
 
 /** Attachment handling in a turn: getting files in and anything heavier is a task's. */

@@ -598,6 +598,15 @@ export class Orchestrator {
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
+        // W6：委派跟随的任务到达终态 → 等它的委派重新检查是否可以结算。
+        try {
+          this.#delegationHost.onTaskSettled(run);
+        } catch (error) {
+          deps.logger.warn(
+            { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+            'delegation task follow-up failed',
+          );
+        }
       },
       releaseExecution: (runId) => {
         this.#fsState.release(runId);
@@ -620,7 +629,23 @@ export class Orchestrator {
       },
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
-      onSweep: (now) => this.#sweepTaskAgentSessions(now),
+      // W6: a consumed failed / interrupted task may be the last thing a
+      // delegation waits for.
+      onConsumed: () => {
+        this.#delegationHost.reevaluateAwaiting();
+      },
+      onSweep: (now) => {
+        this.#sweepTaskAgentSessions(now);
+        // W6 兜底：失败任务的结果被放弃投递（直接标消费）时没有别的钩子。
+        try {
+          this.#delegationHost.reevaluateAwaiting();
+        } catch (error) {
+          deps.logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'delegation task follow-up failed',
+          );
+        }
+      },
       // D75 W3 (design 30 §4.3 / §6.3): task cards, question cards and the
       // status line follow `task.updated`.
       publishTask: (view) => deps.publish('task.updated', { task: view }),
@@ -696,6 +721,9 @@ export class Orchestrator {
       deliverToBot: (input) => this.#deliverDelegationMessage(input),
       cancelRun: (runId) => {
         this.cancelRun(runId);
+      },
+      cancelTask: (taskId, reason) => {
+        this.#taskHost.cancelById(taskId, reason);
       },
       deliverEvent: (botId, conversationId, event, text, options) =>
         this.deliverEventToBot(botId, conversationId, event, text, options),

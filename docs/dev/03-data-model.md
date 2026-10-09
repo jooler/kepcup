@@ -506,7 +506,7 @@ CREATE TABLE schedules (
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
 
-### delegations（D71）
+### delegations（D71；W6 main 0021 重建）
 
 ```sql
 CREATE TABLE delegations (
@@ -517,7 +517,8 @@ CREATE TABLE delegations (
   to_conversation_id    TEXT,                   -- B 私聊；投递时解析
   task_text             TEXT NOT NULL,
   status                TEXT NOT NULL CHECK (status IN (
-                          'submitted', 'working', 'completed', 'failed', 'cancelled')),
+                          'submitted', 'working', 'awaiting_tasks',
+                          'completed', 'failed', 'cancelled')),
   depth                 INTEGER NOT NULL DEFAULT 1,
   from_run_id           TEXT,                   -- A 发起委派的 run
   sent_message_id       TEXT,                   -- A 侧发出卡
@@ -528,15 +529,19 @@ CREATE TABLE delegations (
   result_card_id        TEXT,                   -- A 侧结果卡
   error_text            TEXT,
   created_at            INTEGER NOT NULL,
-  updated_at            INTEGER NOT NULL
+  updated_at            INTEGER NOT NULL,
+  intent                TEXT NOT NULL DEFAULT 'request',  -- request | question | fyi（zod 校验，无 CHECK）
+  task_ids_json         TEXT NOT NULL DEFAULT '[]'        -- 跟随中的任务 id（续接链最新一环）
 );
 CREATE INDEX delegations_to_bot_status ON delegations(to_bot_id, status);
 CREATE INDEX delegations_run ON delegations(run_id);
 CREATE INDEX delegations_from_conversation ON delegations(from_conversation_id);
+CREATE INDEX delegations_status ON delegations(status);
 ```
 
 - 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
+- W6（0021）：`awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
 
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
