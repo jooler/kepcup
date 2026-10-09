@@ -19,6 +19,7 @@ import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
 import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
+import { recipientFields } from '../mcp/recipients.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
 
 export interface GatewayDeps {
@@ -849,6 +850,12 @@ export class ToolGateway {
     if (decision.approval === 'ask') {
       // 卡片与落库 payload 都经脱敏：参数里可能出现模型误带入的密钥值。
       const argsSummary = this.#deps.secrets.redact(JSON.stringify(args));
+      // W4 精确卡片：发送类（写入 / 破坏性）工具的收件方字段完整列出，不参与
+      // argsSummary 的截断（同样脱敏）。
+      const recipients =
+        decision.risk !== 'read'
+          ? recipientFields(args, (text) => this.#deps.secrets.redact(text))
+          : [];
       const outcome = await this.#deps.approvals.request(
         identity,
         'mcp_tool',
@@ -859,6 +866,7 @@ export class ToolGateway {
           argsSummary:
             argsSummary.length > 400 ? `${argsSummary.slice(0, 400)}…（已截断）` : argsSummary,
           risk: decision.risk,
+          ...(recipients.length > 0 ? { recipients } : {}),
         },
         options,
       );

@@ -60,6 +60,9 @@ export const zhCN = {
   'chats.errorCode.RUN_ALREADY_FINISHED': '这次执行已经结束',
   'chats.errorCode.RUN_NOT_FOUND': '执行记录不存在或已被清理',
   'chats.errorCode.REVIEW_REQUIRED': '请先检查任务中断前已完成的操作，再重试',
+  // W4（D78）：审批幂等与回执
+  'chats.errorCode.APPROVAL_STALE': '审批内容已变化，请重新查看后再决定',
+  'chats.errorCode.DUPLICATE_EFFECT': '相同操作已在本任务中完成，未重复执行',
   'chats.errorCode.NOT_SUPPORTED': '当前不支持这个操作',
   'runStatus.pleaseWait': '请稍等…',
   'runStatus.callingVerb': '正在{verb}…',
@@ -710,6 +713,17 @@ export const zhCN = {
   'approvals.mcpArgs': '参数',
   'approvals.mcpDestructiveRisk':
     '该工具可能有破坏性（服务器未声明它是只读或非破坏性的），批准前请核对参数。',
+  // W4（D78）：收件方完整展示、执行回执、去重提示
+  'approvals.mcpRecipient': '收件方',
+  'approvals.priorUncertain': '上次同样的操作结果未知，请先确认是否已生效',
+  'approvals.priorCompleted': '本任务中已执行过相同操作（回执：{receipt}），请确认是否需要再次执行',
+  'approvals.priorCompletedNoReceipt': '无',
+  'approvals.effectLabel': '执行结果：',
+  'approvals.effect.completed': '已完成',
+  'approvals.effect.failed': '失败',
+  'approvals.effect.uncertain': '结果未知',
+  'approvals.effect.denied': '已拒绝',
+  'approvals.effect.executing': '执行中',
   // D72 P3：外部智能体的工具权限请求（agent_tool）
   'approvals.agentToolTitle': '智能体工具权限请求',
   'approvals.agentToolReadTitle': '智能体申请读取',
@@ -813,6 +827,7 @@ export const zhCN = {
   'task.effect.uncertain': '结果未知',
   'task.effect.failed': '失败',
   'task.effect.denied': '已拒绝',
+  'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
   'task.revertConflicts': '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',

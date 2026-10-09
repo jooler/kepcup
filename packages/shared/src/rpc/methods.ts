@@ -24,6 +24,7 @@ import {
   delegationSchema,
   taskViewSchema,
   toolEffectSchema,
+  effectStatusSchema,
   budgetSchema,
   conversationSchema,
   customProviderSchema,
@@ -776,6 +777,11 @@ export const approvalsDecideInputSchema = z.object({
    * an empty selection with approve=true counts as a denial.
    */
   selection: z.array(z.number().int().nonnegative()).optional(),
+  /**
+   * W4：渲染端显示的审批内容的 `payloadHash`（approval 输出里的同名字段）。
+   * 与服务端不符 → APPROVAL_STALE（可选：旧调用方不传）。
+   */
+  payloadHash: z.string().min(1).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -844,6 +850,8 @@ export const unattendedSummaryItemSchema = z.object({
   /** One-line description of the auto-approved operation. */
   detail: z.string(),
   createdAt: z.number(),
+  /** W4：自动批准的外部调用的台账结局（旧审批 / 非外部调用没有）。 */
+  effectStatus: effectStatusSchema.optional(),
 });
 export const unattendedSummaryOutputSchema = z.object({
   items: z.array(unattendedSummaryItemSchema),

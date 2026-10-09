@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Run, RunStep } from '@kepcup/shared';
 import {
   buildRunDigest,
+  NOT_RUN_CALL_NOTE,
   UNCERTAIN_RESULT_NOTE,
   UNRETURNED_CALL_NOTE,
 } from '../../src/agent/context/continuation.js';
@@ -191,6 +192,22 @@ describe('buildRunDigest「结果未知」标注（W3-P0 / W1）', () => {
       'browser_click({"ref":"e2"}) → 失败：<untrusted>页面已变化</untrusted>',
     );
     expect(digest).not.toContain('[结果未知] browser_click({"ref":"e2"})');
+  });
+
+  it('W4: an unreturned call whose ledger row is denied (stopped at its approval) is not 结果未知', () => {
+    const steps = [
+      makeStep(0, 'tool_call', {
+        toolCallId: 't1',
+        toolName: 'mcp_srv_send',
+        args: { to: 'ann' },
+      }),
+    ];
+    // Without the ledger: an external call that never returned — flagged.
+    expect(digestOf(steps)).toContain('[结果未知] mcp_srv_send');
+    // Interrupted / recovered while waiting on its approval (intended → denied).
+    const digest = digestOf(steps, [{ toolCallId: 't1', status: 'denied' }]);
+    expect(digest).not.toContain('[结果未知]');
+    expect(digest).toContain(`mcp_srv_send({"to":"ann"}) ${NOT_RUN_CALL_NOTE}`);
   });
 
   it('uses the W2 ledger when given: a thrown call recorded uncertain is flagged', () => {

@@ -4,8 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { step, viaTask, type TestStack } from '@kepcup/testkit';
 import {
+  createTestCore,
   createTestStack,
   listMessages,
+  startMockLlm,
   makeBot,
   openDirect,
   sendBatch,
@@ -14,7 +16,7 @@ import {
   waitForRun,
 } from '@kepcup/testkit';
 import { createMemoryKeystore } from '@kepcup/core';
-import type { Approval, Run } from '@kepcup/shared';
+import { TASK_MAX_WALL_MS, type Approval, type Run } from '@kepcup/shared';
 import { resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 
 const stacks: TestStack[] = [];
@@ -693,3 +695,535 @@ async function rmP03(dir: string): Promise<void> {
 
 // Keep unused imports referenced.
 void waitForMessage;
+
+// ---------------------------------------------------------------------------
+// W4 审批幂等与回执（todo/borrowings-from-personal-agents.md W4）：真实任务经
+// PiEngine + 真实 stdio MCP server 调写工具——同一任务链里相同操作的去重门
+// （completed / denied / uncertain）、跨任务链不去重、无人值守、payloadHash、
+// 回执、收件方完整展示。
+
+const W4_SERVER_SCRIPT = `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }
+let n = 0;
+const schema = { type: 'object', properties: { to: { type: 'string' }, text: { type: 'string' } } };
+rl.on('line', (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: {
+      protocolVersion: '2025-06-18', capabilities: { tools: {} },
+      serverInfo: { name: 'chat', version: '1.0.0' } } });
+    return;
+  }
+  if (String(msg.method).startsWith('notifications/')) return;
+  if (msg.method === 'ping') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
+  if (msg.method === 'tools/list') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { tools: [
+      { name: 'send_message', description: '发消息', inputSchema: schema,
+        annotations: { destructiveHint: false } },
+      { name: 'flaky_send', description: '发消息（连接会断）', inputSchema: schema,
+        annotations: { destructiveHint: false } },
+    ] } });
+    return;
+  }
+  if (msg.method === 'tools/call') {
+    if (msg.params?.name === 'flaky_send') process.exit(1);
+    n += 1;
+    send({ jsonrpc: '2.0', id: msg.id, result: {
+      content: [{ type: 'text', text: JSON.stringify({ id: 'm-' + n, url: 'https://chat.example/m/' + n }) }],
+      isError: false } });
+  }
+});
+`;
+
+type W4Approval = Approval & { payloadHash?: string; effect?: { status: string; receipt?: Record<string, string> } };
+
+async function w4Stack() {
+  const stack = await start();
+  const dir = fsMkdtemp();
+  const scriptPath = path.join(dir, 'chat-server.cjs');
+  writeFileSync(scriptPath, W4_SERVER_SCRIPT);
+  await stack.core.rpc.call('settings.update', {
+    mcpServers: [
+      {
+        id: 'chat',
+        name: '聊天服务',
+        transport: 'stdio',
+        command: process.execPath,
+        args: [scriptPath],
+        env: {},
+        enabled: true,
+        autoApprove: false,
+      },
+    ],
+  });
+  const bot = await makeBot(stack.core, '小信');
+  await stack.core.rpc.call('bots.update', {
+    id: bot.id,
+    profile: { ...bot.profile, runtime: { ...bot.profile.runtime, mcp_server_ids: ['chat'] } },
+  });
+  const conv = await openDirect(stack.core, bot.id);
+  return { ...stack, bot, conv };
+}
+
+async function mcpApprovals(core: TestStack['core'], conversationId: string): Promise<W4Approval[]> {
+  const result = (await core.rpc.call('approvals.list', { conversationId })) as {
+    approvals: W4Approval[];
+  };
+  return result.approvals
+    .filter((a) => a.kind === 'mcp_tool')
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+async function pendingMcp(core: TestStack['core'], conversationId: string, skip: string[] = []) {
+  return waitFor(
+    async () =>
+      (await mcpApprovals(core, conversationId)).find(
+        (a) => a.status === 'pending' && !skip.includes(a.id),
+      ) ?? null,
+    { label: 'pending mcp_tool approval', timeoutMs: 30_000 },
+  );
+}
+
+async function toolResults(core: TestStack, runId: string, toolName: string) {
+  return (await stepsOf(core, runId))
+    .filter((s) => s.type === 'tool_result' && s.payload['toolName'] === toolName)
+    .map((s) => s.payload);
+}
+
+describe('approval effect dedupe and receipts (W4)', () => {
+  it('effect: a completed duplicate gets no card (DUPLICATE_EFFECT + receipt); different args ask again; stale hash refused; cards carry receipts and full recipients', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '你好' }),
+          step().replyToolCall('mcp_chat_send_message', { text: '你好', to: 'ann@example.com' }),
+          step().replyToolCall('mcp_chat_send_message', { to: 'bob@example.com', text: '你好' }),
+          step().replyText('都发了'),
+        ],
+        relay: 'W4-RELAY-1',
+      }),
+    );
+    await sendBatch(core, conv.id, ['给 ann 发消息']);
+
+    const first = await pendingMcp(core, conv.id);
+    // Exact card: the recipient is listed in full, outside argsSummary.
+    expect(first.payload['recipients']).toEqual([{ key: 'to', value: 'ann@example.com' }]);
+    expect(first.payloadHash).toMatch(/^[0-9a-f]{64}$/);
+    // A decision bound to another payload is refused; the card stays pending.
+    await expect(
+      core.rpc.call('approvals.decide', { id: first.id, approve: true, payloadHash: 'f'.repeat(64) }),
+    ).rejects.toMatchObject({ code: 'APPROVAL_STALE' });
+    expect((await mcpApprovals(core, conv.id))[0]!.status).toBe('pending');
+    await core.rpc.call('approvals.decide', {
+      id: first.id,
+      approve: true,
+      payloadHash: first.payloadHash,
+    });
+
+    // The identical second call never shows a card: the next one is for bob.
+    const second = await pendingMcp(core, conv.id, [first.id]);
+    expect(second.payload['recipients']).toEqual([{ key: 'to', value: 'bob@example.com' }]);
+    await core.rpc.call('approvals.decide', { id: second.id, approve: true });
+    await waitForRelay(core, conv.id, 'W4-RELAY-1');
+
+    const task = await latestTask(core, conv.id);
+    const results = await toolResults(core, task.id, 'mcp_chat_send_message');
+    expect(results.map((r) => [r['ok'], r['errorCode'] ?? null])).toEqual([
+      [true, null],
+      [false, 'DUPLICATE_EFFECT'],
+      [true, null],
+    ]);
+    expect(String(results[1]!['content'])).toContain('相同操作已在本任务中完成');
+    expect(String(results[1]!['content'])).toContain('https://chat.example/m/1');
+
+    // Two cards, each with its receipt; the ledger has no row for the duplicate.
+    const cards = await waitFor(
+      async () => {
+        const list = await mcpApprovals(core, conv.id);
+        return list.every((a) => a.effect?.status === 'completed') ? list : null;
+      },
+      { label: 'receipts on cards' },
+    );
+    expect(cards).toHaveLength(2);
+    expect(cards[0]!.effect).toMatchObject({
+      status: 'completed',
+      receipt: { url: 'https://chat.example/m/1', externalId: 'm-1' },
+    });
+    const effects = (await core.rpc.call('effects.list', { taskId: task.id })) as {
+      effects: Array<{ status: string; approvalId: string | null }>;
+    };
+    expect(effects.effects.map((e) => e.status)).toEqual(['completed', 'completed']);
+    const audit = core.services.domain!.audit.listByConversation(conv.id, 200);
+    expect(audit.find((a) => a.action === 'approval_deduped')?.detail).toMatchObject({
+      kind: 'mcp_tool',
+      verdict: 'completed',
+    });
+  }, 120_000);
+
+  it('effect: a denied duplicate is refused without a card (用户已拒绝相同操作)', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '在吗' }),
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '在吗' }),
+          step().replyText('用户不让发'),
+        ],
+        relay: 'W4-RELAY-2',
+      }),
+    );
+    await sendBatch(core, conv.id, ['发一条']);
+    const first = await pendingMcp(core, conv.id);
+    await core.rpc.call('approvals.decide', { id: first.id, approve: false });
+    await waitForRelay(core, conv.id, 'W4-RELAY-2');
+    const task = await latestTask(core, conv.id);
+    const results = await toolResults(core, task.id, 'mcp_chat_send_message');
+    expect(results.map((r) => r['errorCode'])).toEqual(['APPROVAL_DENIED', 'APPROVAL_DENIED']);
+    expect(String(results[1]!['content'])).toContain('用户已拒绝相同操作');
+    expect(await mcpApprovals(core, conv.id)).toHaveLength(1);
+    const effects = (await core.rpc.call('effects.list', { taskId: task.id })) as {
+      effects: Array<{ status: string }>;
+    };
+    expect(effects.effects.map((e) => e.status)).toEqual(['denied', 'denied']);
+  }, 120_000);
+
+  it('effect: an uncertain earlier attempt still asks, with the 结果未知 flag on the card', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '1' }),
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '1' }),
+          step().replyText('先不发了'),
+        ],
+        relay: 'W4-RELAY-3',
+      }),
+    );
+    await sendBatch(core, conv.id, ['发']);
+    const first = await pendingMcp(core, conv.id);
+    expect(first.payload['priorEffect']).toBeUndefined();
+    await core.rpc.call('approvals.decide', { id: first.id, approve: true });
+    const second = await pendingMcp(core, conv.id, [first.id]);
+    expect(second.payload['priorEffect']).toMatchObject({ status: 'uncertain' });
+    await core.rpc.call('approvals.decide', { id: second.id, approve: false });
+    await waitForRelay(core, conv.id, 'W4-RELAY-3');
+    const cards = await mcpApprovals(core, conv.id);
+    expect(cards[0]!.effect?.status).toBe('uncertain');
+    // The denied second card's row went intended → denied, never 结果未知.
+    expect(cards[1]!.effect?.status).toBe('denied');
+  }, 120_000);
+
+  it('effect: another task chain asks again for the same operation', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script('mock-main', [
+      ...viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '早' }),
+          step().replyText('发了'),
+        ],
+        relay: 'W4-RELAY-4A',
+      }),
+      ...viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '早' }),
+          step().replyText('又发了'),
+        ],
+        relay: 'W4-RELAY-4B',
+      }),
+    ]);
+    await sendBatch(core, conv.id, ['发一条']);
+    const first = await pendingMcp(core, conv.id);
+    await core.rpc.call('approvals.decide', { id: first.id, approve: true });
+    await waitForRelay(core, conv.id, 'W4-RELAY-4A');
+    await sendBatch(core, conv.id, ['再发一条一样的']);
+    const second = await pendingMcp(core, conv.id, [first.id]);
+    expect(second.payload['priorEffect']).toBeUndefined();
+    await core.rpc.call('approvals.decide', { id: second.id, approve: true });
+    await waitForRelay(core, conv.id, 'W4-RELAY-4B');
+    const task = await latestTask(core, conv.id);
+    expect((await toolResults(core, task.id, 'mcp_chat_send_message'))[0]!['ok']).toBe(true);
+  }, 120_000);
+
+  it('effect: unattended mode never auto-approves a completed duplicate, and waits for the user on an uncertain one', async () => {
+    const { core, llm, conv } = await w4Stack();
+    await core.rpc.call('unattended.enable', { hours: null, acknowledgeRisk: true });
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '夜' }),
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '夜' }),
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '夜' }),
+          step().replyToolCall('ask_user', { question: '再试一次？', options: ['再试'] }),
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '夜' }),
+          step().replyText('完成'),
+        ],
+        relay: 'W4-RELAY-5',
+      }),
+    );
+    await sendBatch(core, conv.id, ['夜里发']);
+    // 复查 B2: the user answers the question — that never clears an uncertain attempt.
+    const question = await waitForMessage(
+      core,
+      conv.id,
+      (m) =>
+        m.kind === 'system_event' &&
+        (m.content as { event?: string; answer?: unknown }).event !== undefined &&
+        Array.isArray((m.content as { options?: unknown }).options) &&
+        (m.content as { answer?: unknown }).answer === undefined,
+      { timeoutMs: 30_000 },
+    );
+    await core.rpc.call('tasks.answer', { messageId: question.id, answer: '再试' });
+    // The uncertain repeat is not auto-approved: a pending card with the flag.
+    const pending = await pendingMcp(core, conv.id);
+    expect(pending.payload['toolName']).toBe('flaky_send');
+    expect(pending.payload['priorEffect']).toMatchObject({ status: 'uncertain' });
+    await core.rpc.call('approvals.decide', { id: pending.id, approve: false });
+    await waitForRelay(core, conv.id, 'W4-RELAY-5');
+
+    const task = await latestTask(core, conv.id);
+    const sends = await toolResults(core, task.id, 'mcp_chat_send_message');
+    expect(sends.map((r) => r['errorCode'] ?? null)).toEqual([null, 'DUPLICATE_EFFECT']);
+    const cards = await mcpApprovals(core, conv.id);
+    // send_message auto-approved once; flaky_send auto-approved once + the pending one.
+    expect(cards.map((a) => [a.payload['toolName'], a.status, a.autoApproved])).toEqual([
+      ['send_message', 'approved', true],
+      ['flaky_send', 'approved', true],
+      ['flaky_send', 'denied', false],
+    ]);
+    // The unattended summary carries the auto-approved calls' outcomes.
+    const summary = (await core.rpc.call('unattended.summary', {})) as {
+      items: Array<{ approvalId: string; effectStatus?: string }>;
+    };
+    expect(summary.items.find((i) => i.approvalId === cards[0]!.id)?.effectStatus).toBe('completed');
+    expect(summary.items.find((i) => i.approvalId === cards[1]!.id)?.effectStatus).toBe('uncertain');
+  }, 120_000);
+  it('effect (复查 B1): cancelling a task while its card waits, then continuing it, asks again', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '取消' }),
+          step().replyText('没发成'),
+        ],
+      }),
+    );
+    await sendBatch(core, conv.id, ['发一条']);
+    const first = await pendingMcp(core, conv.id);
+    const task = await latestTask(core, conv.id);
+    await core.rpc.call('runs.cancel', { runId: task.id });
+    await waitFor(
+      async () => ((await mcpApprovals(core, conv.id))[0]?.status === 'cancelled' ? true : null),
+      { label: 'card cancelled' },
+    );
+    await waitFor(
+      async () => {
+        const effects = (await core.rpc.call('effects.list', { taskId: task.id })) as {
+          effects: Array<{ status: string }>;
+        };
+        return effects.effects[0]?.status === 'denied' ? true : null;
+      },
+      { label: 'ledger row denied' },
+    );
+
+    // The bot continues the cancelled task: the same call shows a card again.
+    llm.script('mock-main', [
+      step().inTurn().replyToolCall('start_task', {
+        title: '重发',
+        instruction: '接着发',
+        source_message_ids: [],
+        writes: false,
+        continues_task_id: task.id,
+      }),
+      step().inTurn().replyText('好的'),
+      step().inTask().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '取消' }),
+      step().inTask().replyText('发了'),
+      step().inTurn().replyText('W4-RELAY-B1'),
+    ]);
+    await sendBatch(core, conv.id, ['还是发吧']);
+    const again = await pendingMcp(core, conv.id, [first.id]);
+    expect(again.payload['priorEffect']).toBeUndefined();
+    await core.rpc.call('approvals.decide', { id: again.id, approve: true });
+    await waitForRelay(core, conv.id, 'W4-RELAY-B1');
+    const retried = await latestTask(core, conv.id);
+    expect(retried.continuedFromRunIds).toContain(task.id);
+    expect((await toolResults(core, retried.id, 'mcp_chat_send_message'))[0]!['ok']).toBe(true);
+  }, 120_000);
+
+  it('effect (复查 B1): quitting while a card waits, then 检查后重试, asks again', async () => {
+    const home = fsMkdtemp();
+    const keystore = createMemoryKeystore();
+    const dir = fsMkdtemp();
+    const scriptPath = path.join(dir, 'chat-server.cjs');
+    writeFileSync(scriptPath, W4_SERVER_SCRIPT);
+    const boot = async () => {
+      const llm = await startMockLlm();
+      const core = await createTestCore({ home, keystore, env: { KEPCUP_MOCK_LLM_URL: llm.url } });
+      return {
+        core,
+        llm,
+        async close() {
+          llm.releaseAll();
+          await core.close();
+          await llm.stop();
+        },
+      };
+    };
+    const first = await boot();
+    let taskId = '';
+    let convId = '';
+    try {
+      await first.core.rpc.call('settings.update', {
+        mcpServers: [
+          {
+            id: 'chat',
+            name: '聊天服务',
+            transport: 'stdio',
+            command: process.execPath,
+            args: [scriptPath],
+            env: {},
+            enabled: true,
+            autoApprove: false,
+          },
+        ],
+      });
+      const bot = await makeBot(first.core, '小退');
+      await first.core.rpc.call('bots.update', {
+        id: bot.id,
+        profile: { ...bot.profile, runtime: { ...bot.profile.runtime, mcp_server_ids: ['chat'] } },
+      });
+      const conv = await openDirect(first.core, bot.id);
+      convId = conv.id;
+      first.llm.script(
+        'mock-main',
+        viaTask({
+          writes: false,
+          taskSteps: [
+            step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '退出' }),
+            step().replyText('发了'),
+          ],
+        }),
+      );
+      await sendBatch(first.core, conv.id, ['发一条']);
+      await pendingMcp(first.core, conv.id);
+      taskId = (await latestTask(first.core, conv.id)).id;
+      const effects = first.core.services.domain!.effects.listForRun(taskId);
+      expect(effects.map((e) => e.status)).toEqual(['intended']);
+    } finally {
+      await first.close(); // quit while the card waits
+    }
+
+    const second = await boot();
+    try {
+      const { core, llm } = second;
+      const effects = (await core.rpc.call('effects.list', { taskId })) as {
+        effects: Array<{ status: string }>;
+      };
+      // Never ran: denied by recovery (not 结果未知) — and no review needed.
+      expect(effects.effects.map((e) => e.status)).toEqual(['denied']);
+      llm.script('mock-main', [
+        step().inTask().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '退出' }),
+        step().inTask().replyText('这次发了'),
+        step().inTurn().replyText('W4-RELAY-RESTART'),
+        step().inTurn().replyText('W4-RELAY-RESTART'),
+      ]);
+      await core.rpc.call('runs.retry', { runId: taskId });
+      const card = await waitFor(
+        async () =>
+          (await mcpApprovals(core, convId)).find((a) => a.status === 'pending') ?? null,
+        { label: 'card after retry', timeoutMs: 30_000 },
+      );
+      expect(card.payload['priorEffect']).toBeUndefined();
+      await core.rpc.call('approvals.decide', { id: card.id, approve: true });
+      await waitFor(
+        async () => {
+          const latest = await latestTask(core, convId);
+          return latest.id !== taskId && latest.status === 'completed' ? latest : null;
+        },
+        { label: 'retried task completed', timeoutMs: 30_000 },
+      );
+    } finally {
+      await second.close();
+    }
+  }, 120_000);
+
+  it('effect (复查 S1): a completed request_unsandboxed repeat shows a flagged card instead of being blocked', async () => {
+    const { core, llm, conv } = await w4Stack();
+    llm.script(
+      'mock-main',
+      viaTask({
+        taskSteps: [
+          step().replyToolCall('request_unsandboxed', { command: 'echo w4-repeat', reason: '同步' }),
+          step().replyToolCall('request_unsandboxed', { command: 'echo w4-repeat', reason: '同步' }),
+          step().replyText('跑了两次'),
+        ],
+        relay: 'W4-RELAY-S1',
+      }),
+    );
+    await sendBatch(core, conv.id, ['跑两次']);
+    const first = await pendingApproval(core, conv.id);
+    expect(first.payload['priorEffect']).toBeUndefined();
+    await core.rpc.call('approvals.decide', { id: first.id, approve: true });
+    const second = await waitFor(
+      async () => {
+        const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+          approvals: Approval[];
+        };
+        return list.approvals.find((a) => a.status === 'pending' && a.id !== first.id) ?? null;
+      },
+      { label: 'second unsandboxed card' },
+    );
+    expect(second.kind).toBe('unsandboxed');
+    expect(second.payload['priorEffect']).toMatchObject({ status: 'completed' });
+    await core.rpc.call('approvals.decide', { id: second.id, approve: true });
+    await waitForRelay(core, conv.id, 'W4-RELAY-S1');
+    const task = await latestTask(core, conv.id);
+    const results = await toolResults(core, task.id, 'request_unsandboxed');
+    expect(results.map((r) => r['ok'])).toEqual([true, true]);
+  }, 120_000);
+  it('effect (复查 S4): an unattended task over the wall clock on a「上次结果未知」card fails with its own reason', async () => {
+    const { core, llm, conv } = await w4Stack();
+    await core.rpc.call('unattended.enable', { hours: null, acknowledgeRisk: true });
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '超时' }),
+          step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '超时' }),
+          step().replyText('不该到这里'),
+        ],
+      }),
+    );
+    await sendBatch(core, conv.id, ['夜里发']);
+    const flagged = await pendingMcp(core, conv.id);
+    expect(flagged.payload['priorEffect']).toMatchObject({ status: 'uncertain' });
+    const task = await latestTask(core, conv.id);
+    core.services.orchestrator!.tasks.sweep(Date.now() + TASK_MAX_WALL_MS + 60_000);
+    const failed = await waitFor(
+      () => {
+        const run = core.services.domain!.runs.get(task.id);
+        return run?.status === 'failed' ? run : null;
+      },
+      { label: 'task failed' },
+    );
+    expect(failed.errorReason).toBe('uncertain_repeat_timeout');
+    expect(failed.error).toContain('等待确认「上次结果未知」的重复操作超时');
+    expect((await mcpApprovals(core, conv.id)).at(-1)!.status).toBe('cancelled');
+  }, 120_000);
+});

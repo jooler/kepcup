@@ -13,7 +13,10 @@ import {
   type ApprovalDecision,
   type ApprovalKind,
   type ApprovalStatus,
+  type ApprovalEffect,
+  type ApprovalPriorEffect,
   type Run,
+  type ToolEffect,
 } from '@kepcup/shared';
 import path from 'node:path';
 import { AppError, newId } from '@kepcup/shared';
@@ -31,7 +34,8 @@ import type { RunsService } from '../domain/runs.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { UnattendedService } from './unattended.js';
-import { activeEffectHooks } from './tool-call-scope.js';
+import { activeEffectHooks, type EffectApprovalGate } from './tool-call-scope.js';
+import { sha256Hex, stableJson } from '../agent/effects/key.js';
 
 interface ApprovalRow {
   id: string;
@@ -48,14 +52,24 @@ interface ApprovalRow {
   decided_at: number | null;
 }
 
+/**
+ * W4: the hash a decision is bound to — sha256 of the canonical payload JSON
+ * (key order never matters). Computed on read, never stored.
+ */
+export function approvalPayloadHash(payload: Record<string, unknown>): string {
+  return sha256Hex(stableJson(payload));
+}
+
 function rowToApproval(row: ApprovalRow): Approval {
+  const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
   return {
     id: row.id,
     kind: row.kind,
     botId: row.bot_id,
     conversationId: row.conversation_id,
     runId: row.run_id,
-    payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+    payload,
+    payloadHash: approvalPayloadHash(payload),
     status: row.status,
     decision: row.decision_json ? (JSON.parse(row.decision_json) as ApprovalDecision) : null,
     autoApproved: row.auto_approved === 1,
@@ -68,6 +82,12 @@ function rowToApproval(row: ApprovalRow): Approval {
 export interface ApprovalOutcome {
   approval: Approval;
   decision: 'approved' | 'denied' | 'cancelled';
+  /**
+   * W4: the dedupe gate answered without a card (decision 'denied'): the same
+   * effect already completed / was denied in the task chain. The tool result
+   * is replaced by the gate's (executeToolSafely).
+   */
+  duplicate?: 'completed' | 'denied';
 }
 
 export interface ApprovalsDeps {
@@ -89,6 +109,12 @@ export interface ApprovalsDeps {
   notify: (approval: Approval, description: string) => void;
   /** Audit sink (writes approval_auto / approval_refused entries). */
   audit: (identity: RunIdentity, action: string, detail: Record<string, unknown>) => void;
+  /**
+   * W4 receipts: the effect-ledger rows (runs.db tool_effects) linked to
+   * approvals, batched (ToolEffectsStore.forApprovals). Optional: without it
+   * approvals carry no `effect`.
+   */
+  effects?: { forApprovals(approvalIds: readonly string[]): Map<string, ToolEffect> };
 }
 
 type Resolver = (outcome: ApprovalOutcome) => void;
@@ -149,11 +175,55 @@ export class ApprovalsService {
     if (options.signal?.aborted) {
       return this.#cancelledOutcome(identity, kind, payload, 'run already aborted');
     }
+    // W4 dedupe gate（todo/borrowings-from-personal-agents.md W4 设计 2）：the
+    // calling tool call's effect hooks (tool-call scope, filled by the effect
+    // recorder) compare this external call with the earlier rows of the same
+    // effect in the task chain — before any card, unattended or not.
+    const gate = activeEffectHooks()?.approvalGate?.(identity.runId, kind) ?? null;
+    if (gate !== null && (gate.verdict === 'completed' || gate.verdict === 'denied')) {
+      return this.#dedupedOutcome(identity, kind, payload, gate);
+    }
+    const flagged = gate !== null ? { ...payload, priorEffect: priorEffectOf(gate) } : payload;
     const unattended = this.#deps.unattended.effective();
-    if (unattended.enabled && !NEVER_AUTO_DECIDED.has(kind)) {
+    // A flagged repeat (uncertain earlier attempt, or a non-MCP operation
+    // that already completed) is never decided automatically (§5 护栏 7
+    // 「任何结果未知都不得自动重放」; a completed duplicate is never auto-approved
+    // again): unattended mode waits for the user too.
+    if (unattended.enabled && !NEVER_AUTO_DECIDED.has(kind) && gate === null) {
       return this.#autoDecide(identity, kind, payload);
     }
-    return this.#requestAndWait(identity, kind, payload, options);
+    // W4 `intended`: the ledger row waits on the user (nothing ran yet) and
+    // goes back to `executing` once approved.
+    activeEffectHooks()?.approvalWaiting?.(identity.runId);
+    const outcome = await this.#requestAndWait(identity, kind, flagged, options);
+    if (outcome.decision === 'approved') activeEffectHooks()?.approvalGranted?.(identity.runId);
+    return outcome;
+  }
+
+  /**
+   * W4: the dedupe gate answers without a card — a denial the tool handles
+   * like any other (nothing runs); executeToolSafely then gives the model the
+   * gate's text (DUPLICATE_EFFECT / 用户已拒绝相同操作). Audited.
+   */
+  #dedupedOutcome(
+    identity: RunIdentity,
+    kind: ApprovalKind,
+    payload: Record<string, unknown>,
+    gate: EffectApprovalGate,
+  ): ApprovalOutcome {
+    const duplicate = gate.verdict === 'completed' ? 'completed' : 'denied';
+    this.#deps.audit(identity, 'approval_deduped', {
+      kind,
+      verdict: duplicate,
+      priorEffectId: gate.prior.id,
+      ...(kind === 'mcp_tool' ? { toolName: String(payload['toolName'] ?? '') } : {}),
+    });
+    this.#deps.logger.info(
+      { kind, verdict: duplicate, priorEffectId: gate.prior.id },
+      'approval deduplicated by the effect ledger',
+    );
+    const stub = this.#cancelledOutcome(identity, kind, payload, 'duplicate').approval;
+    return { approval: { ...stub, status: 'denied' }, decision: 'denied', duplicate };
   }
 
   #requestAndWait(
@@ -165,10 +235,7 @@ export class ApprovalsService {
     const approval = this.#insert(identity, kind, payload, { status: 'pending' });
     const card = this.#insertCard(approval);
     const withCard = this.#updateRow(approval.id, { messageId: card.id });
-    this.#deps.publish('approval.created', {
-      conversationId: approval.conversationId,
-      approval: withCard,
-    });
+    this.#publishApproval('approval.created', withCard);
     this.#publishConversation(approval.conversationId);
     this.#deps.notify(withCard, this.describe(withCard));
 
@@ -215,10 +282,7 @@ export class ApprovalsService {
     const approval = this.#insert(identity, kind, payload, { status: 'pending' });
     const card = this.#insertCard(approval);
     const withCard = this.#updateRow(approval.id, { messageId: card.id });
-    this.#deps.publish('approval.created', {
-      conversationId: approval.conversationId,
-      approval: withCard,
-    });
+    this.#publishApproval('approval.created', withCard);
     this.#publishConversation(approval.conversationId);
     this.#deps.notify(withCard, this.describe(withCard));
     this.#decisionCallbacks.set(approval.id, (outcome) => {
@@ -317,14 +381,8 @@ export class ApprovalsService {
     });
     const card = this.#insertCard(approval);
     const withCard = this.#updateRow(approval.id, { messageId: card.id });
-    this.#deps.publish('approval.created', {
-      conversationId: approval.conversationId,
-      approval: withCard,
-    });
-    this.#deps.publish('approval.resolved', {
-      conversationId: approval.conversationId,
-      approval: withCard,
-    });
+    this.#publishApproval('approval.created', withCard);
+    this.#publishApproval('approval.resolved', withCard);
     this.#deps.audit(identity, 'approval_auto', {
       approvalId: approval.id,
       kind,
@@ -351,11 +409,16 @@ export class ApprovalsService {
     approveInput: boolean,
     duration?: 'once' | 'conversation',
     selection?: number[],
+    /** W4: the hash of the payload the renderer showed; a mismatch → APPROVAL_STALE. */
+    payloadHash?: string,
   ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
     if (approval.status !== 'pending') {
       throw new AppError('INVALID_INPUT', '该审批已经处理过了');
+    }
+    if (payloadHash !== undefined && payloadHash !== approval.payloadHash) {
+      throw new AppError('APPROVAL_STALE', '审批内容与界面显示的不一致，请重新查看后再决定');
     }
     let approve = approveInput;
     let keptSelection: number[] | undefined;
@@ -415,7 +478,18 @@ export class ApprovalsService {
         this.#afterResolution({ approval: updated, decision: approve ? 'approved' : 'denied' });
       }
     }
-    return this.getOrThrow(id);
+    return this.#withEffect(this.getOrThrow(id));
+  }
+
+  /**
+   * W4: the ledger row linked to the approval settled (the effect recorder's
+   * `onSettled`): the card's receipt line changed — the approval goes out
+   * again on `approval.resolved` (the renderer upserts by id).
+   */
+  publishEffect(approvalId: string): void {
+    const approval = this.get(approvalId);
+    if (approval === null || approval.status === 'pending') return;
+    this.#publishApproval('approval.resolved', approval);
   }
 
   /**
@@ -437,20 +511,14 @@ export class ApprovalsService {
       )
       .run(JSON.stringify({ error: reason.slice(0, 500) }), this.#deps.clock.now(), id);
     const updated = this.getOrThrow(id);
-    this.#deps.publish('approval.resolved', {
-      conversationId: updated.conversationId,
-      approval: updated,
-    });
+    this.#publishApproval('approval.resolved', updated);
     this.#publishConversation(updated.conversationId);
     return updated;
   }
 
   /** Runs after the promise resolves (or inline when no one is waiting). */
   #afterResolution(outcome: ApprovalOutcome): void {
-    this.#deps.publish('approval.resolved', {
-      conversationId: outcome.approval.conversationId,
-      approval: outcome.approval,
-    });
+    this.#publishApproval('approval.resolved', outcome.approval);
     this.#publishConversation(outcome.approval.conversationId);
     if (
       outcome.approval.runId !== null &&
@@ -548,7 +616,83 @@ export class ApprovalsService {
             .all(conversationId)
         : this.#db.prepare('select * from approvals order by created_at desc limit 200').all()
     ) as ApprovalRow[];
-    return rows.map(rowToApproval);
+    return this.#withEffects(rows.map(rowToApproval));
+  }
+
+  /**
+   * W4 receipts: approvals with the effect-ledger outcome of their tool call
+   * (`effect`), one batched cross-database lookup for the whole list. Old
+   * approvals / non-external calls have no row and stay as they are.
+   */
+  #withEffects(approvals: Approval[]): Approval[] {
+    const lookup = this.#deps.effects;
+    if (lookup === undefined || approvals.length === 0) return approvals;
+    let effects: Map<string, ToolEffect>;
+    try {
+      effects = lookup.forApprovals(approvals.map((approval) => approval.id));
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'approval receipts lookup failed',
+      );
+      return approvals;
+    }
+    return approvals.map((approval) => {
+      const effect = effects.get(approval.id);
+      return effect !== undefined ? { ...approval, effect: approvalEffectOf(effect) } : approval;
+    });
+  }
+
+  #withEffect(approval: Approval): Approval {
+    return this.#withEffects([approval])[0] ?? approval;
+  }
+
+  /** approval.created / approval.resolved with the receipt attached (W4). */
+  #publishApproval(event: 'approval.created' | 'approval.resolved', approval: Approval): void {
+    this.#deps.publish(event, {
+      conversationId: approval.conversationId,
+      approval: this.#withEffect(approval),
+    });
+  }
+
+  /**
+   * W4 复查 S4: a pending card of these runs flagged「上次同样的操作结果未知」
+   * (payload.priorEffect.status = 'uncertain').
+   */
+  hasPendingUncertainRepeat(runIds: readonly string[]): boolean {
+    if (runIds.length === 0) return false;
+    const row = this.#db
+      .prepare(
+        `select 1 from approvals
+          where status = 'pending'
+            and json_extract(payload_json, '$.priorEffect.status') = 'uncertain'
+            and run_id in (${runIds.map(() => '?').join(', ')})
+          limit 1`,
+      )
+      .get(...runIds);
+    return row !== undefined;
+  }
+
+  /**
+   * W4 复查 B1: the approvals among `ids` the **user** refused — status
+   * 'denied', decided by hand (not unattended's floor, not cancelled). Only
+   * such rows make the dedupe gate answer「用户已拒绝相同操作」.
+   */
+  userDeniedIds(ids: readonly string[]): Set<string> {
+    const out = new Set<string>();
+    const unique = [...new Set(ids.filter((id) => id.length > 0))];
+    for (let start = 0; start < unique.length; start += 200) {
+      const chunk = unique.slice(start, start + 200);
+      const rows = this.#db
+        .prepare(
+          `select id from approvals
+            where status = 'denied' and auto_approved = 0 and decided_at is not null
+              and id in (${chunk.map(() => '?').join(', ')})`,
+        )
+        .all(...chunk) as Array<{ id: string }>;
+      for (const row of rows) out.add(row.id);
+    }
+    return out;
   }
 
   pendingCount(conversationId: string): number {
@@ -670,7 +814,17 @@ export class ApprovalsService {
         const data = payload.data;
         const args = data.argsSummary.length > 0 ? `，参数 ${data.argsSummary}` : '';
         const risk = data.risk !== undefined ? `，${MCP_RISK_LABELS[data.risk]}` : '';
-        return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${risk}${args}）`;
+        // Notifications / the unattended summary: recipients capped (the
+        // card itself lists them in full).
+        const recipientText =
+          data.recipients !== undefined && data.recipients.length > 0
+            ? data.recipients.map((r) => `${r.key}=${r.value}`).join('；')
+            : '';
+        const recipients =
+          recipientText.length > 0
+            ? `，收件方 ${recipientText.length > DESCRIBE_RECIPIENTS_MAX_CHARS ? `${recipientText.slice(0, DESCRIBE_RECIPIENTS_MAX_CHARS)}…` : recipientText}`
+            : '';
+        return `调用 MCP 工具 ${data.toolName}（服务器「${data.serverName}」${risk}${recipients}${args}）`;
       }
       case 'agent_tool':
         return `${botName} ${describeAgentTool(approval.payload)}`;
@@ -892,6 +1046,7 @@ export class ApprovalsService {
     botId: string | null;
     detail: string;
     createdAt: number;
+    effectStatus?: ToolEffect['status'];
   }> {
     const rows = (
       since !== undefined
@@ -906,17 +1061,15 @@ export class ApprovalsService {
             )
             .all()
     ) as ApprovalRow[];
-    return rows.map((row) => {
-      const approval = rowToApproval(row);
-      return {
-        approvalId: approval.id,
-        kind: approval.kind,
-        conversationId: approval.conversationId,
-        botId: approval.botId,
-        detail: this.describe(approval),
-        createdAt: approval.createdAt,
-      };
-    });
+    return this.#withEffects(rows.map(rowToApproval)).map((approval) => ({
+      approvalId: approval.id,
+      kind: approval.kind,
+      conversationId: approval.conversationId,
+      botId: approval.botId,
+      detail: this.describe(approval),
+      createdAt: approval.createdAt,
+      ...(approval.effect !== undefined ? { effectStatus: approval.effect.status } : {}),
+    }));
   }
 
   /** Called by the gateway when a file access was satisfied by a grant. */
@@ -955,10 +1108,7 @@ export class ApprovalsService {
       .prepare("update approvals set status = 'cancelled', decided_at = ? where id = ?")
       .run(this.#deps.clock.now(), id);
     const updated = this.getOrThrow(id);
-    this.#deps.publish('approval.resolved', {
-      conversationId: updated.conversationId,
-      approval: updated,
-    });
+    this.#publishApproval('approval.resolved', updated);
     return updated;
   }
 
@@ -1384,6 +1534,29 @@ const MCP_RISK_LABELS: Record<McpToolRisk, string> = {
   write: '写入',
   destructive: '破坏性',
 };
+
+/** W4 复查: recipients in describe() (notifications, unattended summary) are capped. */
+const DESCRIBE_RECIPIENTS_MAX_CHARS = 200;
+
+/** W4: the receipt an approval carries (from its ledger row). */
+function approvalEffectOf(effect: ToolEffect): ApprovalEffect {
+  return {
+    status: effect.status,
+    ...(effect.receipt !== null ? { receipt: effect.receipt } : {}),
+    ...(effect.settledAt !== null ? { settledAt: effect.settledAt } : {}),
+  };
+}
+
+/** W4: the `priorEffect` flag of a card whose earlier same attempt is uncertain. */
+function priorEffectOf(gate: EffectApprovalGate): ApprovalPriorEffect {
+  const receipt = gate.prior.receipt;
+  return {
+    status: gate.prior.status as ApprovalPriorEffect['status'],
+    summary: gate.prior.summary,
+    createdAt: gate.prior.createdAt,
+    ...(receipt !== null && Object.keys(receipt).length > 0 ? { receipt } : {}),
+  };
+}
 
 function mcpRiskOf(payload: Record<string, unknown>): McpToolRisk | null {
   const parsed = mcpToolRiskSchema.safeParse(payload['risk']);

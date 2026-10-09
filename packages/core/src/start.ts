@@ -923,6 +923,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           JSON.parse(secrets.redact(JSON.stringify(detail))) as Record<string, unknown>,
         );
       },
+      // W4: approval cards carry their tool call's ledger outcome (receipt).
+      effects,
     });
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
     const leases = new SlotYieldingLeaseService();
@@ -1164,6 +1166,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       redact: (text) => secrets.redact(text),
       logger,
       mcpRiskOf: (serverId, toolName) => mcp.riskOf(serverId, toolName).risk,
+      // W4: a settled row linked to an approval refreshes that card's receipt.
+      onSettled: (effect) => {
+        if (effect.approvalId !== null) approvals.publishEffect(effect.approvalId);
+      },
+      // W4 复查 B1: only a hand-made refusal makes a denied row a duplicate.
+      userDeniedApprovals: (ids) => approvals.userDeniedIds(ids),
     });
     const engine = new PiEngine({
       settings,

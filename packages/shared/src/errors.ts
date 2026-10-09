@@ -39,6 +39,16 @@ export const ERROR_CODES = [
   // gateway / permissions
   'APPROVAL_DENIED',
   'APPROVAL_NOT_FOUND',
+  /**
+   * W4（D78）：`approvals.decide` 带的 payloadHash 与服务端审批内容不符（界面
+   * 显示的是过期的卡片），决定不生效。
+   */
+  'APPROVAL_STALE',
+  /**
+   * W4（D78）：同一任务链里完全相同的外部操作已经完成，审批去重门不再建卡、
+   * 不再执行（工具结果的错误码）。
+   */
+  'DUPLICATE_EFFECT',
   'PATH_OUT_OF_SCOPE',
   'STALE_FILE',
   'LEASE_TIMEOUT',

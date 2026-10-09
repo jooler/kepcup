@@ -182,11 +182,12 @@ describe('taskCardModel', () => {
     expect(model.canRetry).toBe(true);
   });
 
-  it('W3: ledger statuses map to the four review badges', () => {
+  it('W3 / W4: ledger statuses map to the review badges', () => {
     expect(effectBadge('completed')).toBe('completed');
     expect(effectBadge('uncertain')).toBe('uncertain');
     expect(effectBadge('executing')).toBe('uncertain');
-    expect(effectBadge('intended')).toBe('uncertain');
+    // W4: intended = waiting on its approval, never ran — not 结果未知.
+    expect(effectBadge('intended')).toBe('pending');
     expect(effectBadge('failed')).toBe('failed');
     expect(effectBadge('denied')).toBe('denied');
   });
