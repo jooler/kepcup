@@ -20,6 +20,7 @@ import { permissions } from '$lib/stores/permissions.svelte';
 import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
 import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
+import { resolveConversationBot } from '../features/chats/conversation-bot';
 import { mergeUnreadCount } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
@@ -130,7 +131,7 @@ class ChatState {
     });
     core.onEvent('conversation.updated', (payload) => {
       const data = payload as { conversation: Conversation };
-      this.#upsertConversation(data.conversation);
+      this.#upsertConversation(this.#withDirectBot(data.conversation));
       // Membership may have changed; member cards drive the @ popup and the
       // group info panel, so refresh them for the open group.
       if (data.conversation.type === 'group' && data.conversation.id === this.currentId) {
@@ -778,6 +779,32 @@ class ChatState {
         ...merged,
         bot: conversation.bot ?? this.#chat.conversation.bot,
       };
+    }
+  }
+
+  /**
+   * 事件负载缺 `bot`（未经视图化的推送）时先查通讯录补齐；通讯录也没有就回源
+   * conversations.get——否则活跃 Bot 的新单聊会被当作已删除而不进左栏
+   * （D70 管家建团队后左栏只剩管家，刷新才出现）。显式 null 原样交给
+   * #upsertConversation 按已删除处理，不回源，避免循环。
+   */
+  #withDirectBot(conversation: Conversation): Conversation {
+    if (conversation.bot !== undefined) return conversation;
+    const resolved = resolveConversationBot(conversation, contacts.bots);
+    if (resolved.refetch) void this.#refetchConversation(conversation.id);
+    return resolved.conversation;
+  }
+
+  async #refetchConversation(conversationId: string): Promise<void> {
+    try {
+      const result = (await core.call('conversations.get', { id: conversationId })) as {
+        conversation: ConversationView | null;
+      };
+      if (result.conversation && result.conversation.bot !== undefined) {
+        this.#upsertConversation(result.conversation);
+      }
+    } catch (error) {
+      console.warn('[kepcup] conversation refetch failed', { conversationId, error });
     }
   }
 

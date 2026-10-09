@@ -272,12 +272,29 @@ export class ButlerHost implements ButlerToolFacade {
         this.#deps.publish('bot.updated', { bot });
         // 新联系人直接出现在左栏（空私聊），用户点开即可开聊。
         const { conversation, created: opened } = this.#deps.conversations.openDirect(bot.id);
-        if (opened) this.#deps.publish('conversation.updated', { conversation });
+        // 带上 bot：renderer 把「单聊无 bot」当作已删除，不会加入侧栏。
+        if (opened) {
+          this.#deps.publish('conversation.updated', { conversation: { ...conversation, bot } });
+        }
         created.push(bot);
       } catch (error) {
-        failed.push(`${item.name}（${error instanceof Error ? error.message : String(error)}）`);
+        const reason = error instanceof Error ? error.message : String(error);
+        this.#deps.logger.warn(
+          { approvalId, name: item.name, error: reason },
+          'butler proposal bot creation failed',
+        );
+        failed.push(`${item.name}（${reason}）`);
       }
     }
+    this.#deps.logger.info(
+      {
+        approvalId,
+        proposalType: proposal.proposalType,
+        created: created.map((bot) => ({ id: bot.id, name: bot.name })),
+        failedCount: failed.length,
+      },
+      'butler proposal applied',
+    );
     if (failed.length > 0) this.#failApproval(approvalId, `部分创建失败：${failed.join('、')}`);
     return [
       '提议处理结果（宿主系统注入，不是用户消息）：用户确认了提议。',
@@ -295,6 +312,10 @@ export class ButlerHost implements ButlerToolFacade {
       memberBotIds: proposal.memberBotIds,
       description: proposal.description,
     });
+    this.#deps.logger.info(
+      { proposalType: 'group', conversationId: group.id, memberCount: proposal.memberBotIds.length },
+      'butler proposal applied',
+    );
     return [
       '提议处理结果（宿主系统注入，不是用户消息）：用户确认了建群提议。',
       `已创建群「${group.title ?? proposal.title}」（${group.id}），成员 ${proposal.memberBotIds.length} 位。`,

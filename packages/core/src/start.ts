@@ -18,6 +18,7 @@ import {
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
   type AgentCatalogEntry,
+  type Bot,
   type CoreStatus,
   type CustomModel,
 } from '@kepcup/shared';
@@ -46,6 +47,7 @@ import {
 import './infra/test-hooks.js';
 import { systemClock, type Clock, type TimerScheduler } from './infra/clock.js';
 import { createEventBus, type EventBus } from './infra/events.js';
+import { withDirectConversationBots } from './infra/conversation-events.js';
 import type { RpcMethodSpec, RpcServerHandle } from './rpc/server.js';
 import { SettingsService } from './domain/settings.js';
 import { SecretsService } from './domain/secrets.js';
@@ -477,7 +479,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   mkdirSync(paths.toolchainsDir, { recursive: true });
 
   const logger = await createLogger({ logsDir: paths.logsDir, dev: options.dev === true });
-  const events = createEventBus<CoreEventsMap>();
+  // 单聊 conversation.updated 出核前补 bot（见 conversation-events.ts）；
+  // 查询函数在域服务建好后赋值，锁定/未解锁期间原样放行。
+  let lookupDirectBot: ((botId: string) => Bot | null) | null = null;
+  const events = withDirectConversationBots(
+    createEventBus<CoreEventsMap>(),
+    () => lookupDirectBot,
+  );
   // BR-P13-007 test seam: production restore by default; tests inject a
   // failing wrapper to pin the honest migration-failure statusReason.
   const restoreBackup = options.restoreBackup ?? restoreDatabaseBackup;
@@ -816,6 +824,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       if (entry === null) return null;
       return { id: agentId, permission: entry.tier === 'preview' ? 'ask' : 'workspace' };
     });
+    lookupDirectBot = (botId) => bots.get(botId);
     const avatars = new BotAvatarService({ paths, clock, bots });
     const conversations = new ConversationsService(mainDb, clock);
     const messages = new MessagesService(mainDb, clock);
