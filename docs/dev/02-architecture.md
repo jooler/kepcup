@@ -6,7 +6,7 @@
 
 | 进程 | 创建方式 | 职责 |
 |---|---|---|
-| 主进程 | Electron 启动 | 托盘、窗口、看护核心服务、系统对话框（选择目录）、系统通知、电源事件、浏览器页面托管 |
+| 主进程 | Electron 启动 | 托盘、窗口、看护核心服务、系统对话框（选择目录）、系统通知、电源事件、浏览器页面托管、用系统浏览器打开授权页（`shell.openExternal`，D73） |
 | 界面进程 | 主进程创建的 `BrowserWindow` | Svelte 界面 |
 | 核心服务 | 主进程通过 `utilityProcess.fork()` 启动（使用 Electron 内置的 Node） | 全部业务逻辑与数据 |
 | 沙箱子进程 | 核心服务按命令启动 | 执行 Bot 的命令 |
@@ -25,7 +25,7 @@ flowchart LR
 ```
 
 - **端口 A（界面 ↔ 核心服务）**：主进程创建 `MessageChannelMain`，一端交给核心服务，另一端经 preload 交给界面。所有业务调用走这里。
-- **端口 B（主进程 ↔ 核心服务）**：核心服务请求平台能力（发送系统通知、控制 Bot 浏览器、更新托盘状态），主进程转发平台事件（电源恢复、窗口焦点变化）。
+- **端口 B（主进程 ↔ 核心服务）**：核心服务请求平台能力（发送系统通知、控制 Bot 浏览器、更新托盘状态、用系统浏览器打开授权页 `shell.openExternal`），主进程转发平台事件（电源恢复、窗口焦点变化）。
 - **ipcRenderer（界面 ↔ 主进程）**：只用于必须由主进程完成的界面动作：打开系统目录选择框、打开 Bot 浏览器窗口、窗口控制。选择目录的结果（路径）由界面再通过端口 A 交给核心服务。
 - preload 使用 `contextBridge` 只暴露：获取端口 A、上述少量 ipc 方法。界面进程开启 `contextIsolation`、`sandbox`，关闭 `nodeIntegration`。
 
@@ -37,7 +37,7 @@ flowchart LR
   - `events.ts`：核心服务推送给界面的事件及其载荷 schema。
 - 方法命名 `领域.动作`，例如 `conversations.list`、`drafts.add`、`drafts.flush`、`messages.recall`、`runs.cancel`、`approvals.decide`。
 - 核心服务在 RPC 层用 zod 校验所有输入；校验失败返回 `INVALID_INPUT`。
-- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）。
+- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）；连接应用（D73 P0）的 `apps.connect` / `apps.connect.continue` / `apps.connect.cancel` / `apps.setClientCredentials` / `apps.connections.list` / `apps.disconnect` / `mcp.removeServer` 与事件 `apps.connect_flow`、`apps.connection_status`（见下文「连接应用」）。
 - 界面只通过事件更新状态，不轮询。
 
 ## 核心服务模块
@@ -165,6 +165,30 @@ D75 补充：
 - **只读 run 硬拒写**：`writeDenial(identity)` 非空（对话轮、只读任务及其子代理）时，文件写返回 `forbidden` + `readOnlyRun`（工具错误码 `RUN_READ_ONLY`），命令以只读挂载的策略执行，沙箱外执行 / git 远程 / 租约申请一律拒绝；媒体生成、浏览器下载、技能安装、环境申请经 `tools/read-only.ts` `readOnlyRefusal` 同样拒绝（只读 run 的浏览器下载改落应用缓存 `readOnlyDownloadsDir`）。`checkHostCopyPath(identity, path, hostDir)` 让只读 run 的宿主代复制（`get_attachment`）限定在 workspace 的该子目录。
 - **「仅这一次」= 单次工具调用**（DEV-009）：每次工具调用在 `permissions/tool-call-scope.ts` 的 `AsyncLocalStorage` 作用域里执行；once 授权归属于使用它的调用（`GrantsService.noteOnceUse`），调用结束即撤销；`request_access` 走 `ensurePathAccess(…, { preauthorize: true })`，预授权由第一次用到它的调用认领；另有 `GRANT_ABSOLUTE_TTL_MS` 与 run 结束兜底，自动撤销经 `GrantsService.onAutoRevoke` 发布 `grant.changed`。
 - **对话轮不等用户**（DEV-014）：对话轮的越界读取不发起审批，当场返回 `PATH_OUT_OF_SCOPE`。
+
+### 连接应用（D73 P0，`core/src/apps/`）
+
+自定义 Streamable HTTP MCP server 的 OAuth 授权地基（设计 [29](../design/29-connected-apps.md) §5 / §6，执行方案 `todo/connected-apps.md` §4）。核心约束是**运行时与交互授权分离**（§5.6）：运行中的 run 只读取令牌、主动刷新，永远不打开浏览器；打开浏览器的只有用户点「连接」触发的交互流程。
+
+| 文件 | 职责 |
+|---|---|
+| `apps/index.ts` | `AppServices` 服务束（`start.ts` 域服务阶段构造一次，`CoreServices.apps`）：`store` / `vault` / `flows`，以及测试注入点生效值（`cimdClientId`、`loopbackAllowlist`；仅 `NODE_ENV=test` 且含 `__KEPCUP_TEST_HOOKS__` 才可覆盖，生产恒为常量 / 空） |
+| `apps/connection-store.ts` | `app_connections` / `oauth_clients` 行级存取（只有非机密元数据）；自定义 server 的连接 id = `custom:{serverId}`，断开不删行 |
+| `apps/token-vault.ts` | Token Vault：access / refresh token 与 OAuth 客户端 id / secret **逐值**存 `secrets` 表（`conn:{id}:access`、`conn:{id}:refresh`、`oauth:client:{issuerHash}:id|secret`）；`saveTokens` 要求连接行已存在；令牌明文只在此处与发 HTTP 请求的那一刻出现 |
+| `apps/auth/flow.ts` | `ConnectFlowManager` 交互流程：发现 → 选客户端（已存 > CIMD > DCR > 手填 `OAUTH_CLIENT_REQUIRED`）→ 起回调服务 + DCR 端口预判 → `awaiting_consent`（带授权主机，等 `apps.connect.continue`）→ `shell.openExternal` → 回调（校验 `state` / `iss`）→ 换令牌 → 入 Vault。只用 pi-mcp 的低层函数（不用 `McpOAuthProvider` / `authorizeMcp`）；同一目标至多一个流程（重复 `apps.connect` 返回同一 `flowId`）；`setClientCredentials` 在**同一流程**上续跑 |
+| `apps/auth/callback-server.ts` | 自建本机回调服务：只监听 `127.0.0.1`、固定候选端口（`OAUTH_CALLBACK_PORTS`，全占用回落随机）、校验 `Host`、按 `state` 匹配、一次性；无脚本结果页，**浏览器请求保持到换令牌结束**才显示成功 / 失败（见 DEV-019） |
+| `apps/auth/safe-fetch.ts` | 注入 pi-mcp 的 `McpFetch`：仅 `https:`；连接时逐跳校验地址（`infra/safe-dispatcher.ts`）；回环例外只给自定义 server 自身的回环主机与测试白名单；响应体上限 `OAUTH_METADATA_MAX_BYTES`；只跟随同源重定向（至多 3 跳），跨源重定向拒绝 |
+| `apps/auth/runtime-provider.ts` / `registry.ts` | 运行时：每个连接进程内唯一的 `ConnectionAuthProvider`（`token()` 临近过期 single-flight 主动刷新；`onUnauthorized` 401 刷新一次、`insufficient_scope` → `needs_scope`），失败抛 `AppAuthRequiredError`（`not_connected` / `expired` / `scope`），**绝不**发起授权。`ConnectionAuthRegistry` 持有提供者并在授权完成 / 断开后 `invalidate`（清失败计数、丢缓存 client） |
+| `apps/disconnect.ts` | `AppDisconnector`：`apps.disconnect` = 先吊销（RFC 7009，refresh 再 access，失败只记日志）→ 清 Vault → 关缓存连接 → 状态事件 → 审计；`mcp.removeServer` 的清理；`reconcileServers`（`settings.update` 里 OAuth server 改成非 OAuth 或 URL 变了时先断开旧连接，令牌受众绑定 URL） |
+| `apps/audit.ts` / `apps/prompt.ts` / `apps/shell-facade.ts` | `app_connect` / `app_disconnect` 审计（明细只含 connectionId / connector / issuer / scopes，经 `redact`）；`<connected_apps>` 段正文；core 侧 `shell.openExternal` 门面 |
+| `rpc/apps-bindings.ts` / `apps-runtime-bindings.ts` | `apps.connect*`、`apps.connections.list`、`apps.setClientCredentials`；`apps.disconnect`、`mcp.removeServer` |
+| `tools/app-tools.ts` | `app_request_connection`（见 04-agent-runtime） |
+
+接线（`start.ts`）：`createAppServices`（Vault / store / flows）→ `McpService` 与 `AuditService` 构造后 `createAppRuntime`（`mcp.attachAuth(registry)`、`registry.bindMcp(mcp)`、`apps.attachRegistry(flowInvalidator)`）→ `services.appRuntime`。`McpService` 对 `auth:'oauth'` 的 HTTP server 给 `StreamableHttpTransport` 传 `authProvider`；`AppAuthRequiredError`（含 `cause` 链）在 `#ensureConnected` 的 catch 里原样重抛，**不计入失败次数**、发 `mcp.server_status: needs_auth`；`buildMcpTools` 把授权失败的 server 收进 `unavailable`（不中断 run），`wrapMcpTool` 把运行中的授权错误变成 `SETUP_REQUIRED`（记 `connect-app` 需求）。
+
+**主进程方法 `shell.openExternal`（端口 B）**：shared `rpc/methods.ts` 定义方法并列入 `SHELL_RPC_METHODS`（只由 core 经端口 B 调主进程，不在 `APP_METHODS`）；主进程 `apps/desktop/src/main/shell-methods.ts`（`shellMethodSpecs`，在 `index.ts` 与 `browserMethodSpecs` 合并进 `serverMethods`）是最后一道防线：`new URL()` 解析，只放行不带凭据的 `https:` 与主机为 `127.0.0.1` / `[::1]` 的 `http:`，经 Electron `shell.openExternal` 打开，不拼命令行。core 侧 `apps/shell-facade.ts`（`createShellHostRpc`）未绑定时报「未连接」，`process-entry.ts` 里 `services.shellRpc.bind(platformServer)`，解绑时在途调用被拒；测试用 `CoreServicesOptions.shellRpc` 注入门面（优先于端口 B 客户端）。
+
+**SSRF 防线 `infra/safe-dispatcher.ts`**：从 `search/service.ts` 的私有 `#connectGuard` 抽出，`web_fetch` 与 OAuth 的发现 / 令牌 / 吊销请求共用。undici `Agent` 的 `connect.lookup` 在 TCP 连接前校验每次解析的结果（私网 / 回环 / 链路本地 / 保留段 / 云元数据地址拒绝），校验与连接用同一次解析，无 DNS rebinding 窗口；IP 字面量不经 `lookup`，调用方先用 `assertNoPrivateAddress` 校验。拒绝信息带固定前缀 `PRIVATE_ADDRESS_REJECTION_PREFIX`（undici 把连接失败包成 `fetch failed`，靠它从 cause 链还原原因）。
 
 ### 沙箱
 

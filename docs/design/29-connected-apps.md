@@ -424,6 +424,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
     risk            TEXT NOT NULL,             -- 由注解 + 清单计算的默认分级（§8.1）
     user_policy     TEXT,                      -- 逐工具策略 JSON，与 W5 `mcpToolPolicy` 同形 {approval?: auto|ask, enabled?}；NULL = 按风险档默认
     definition_json TEXT NOT NULL,
+    approved_definition_json TEXT,             -- 批准时的定义快照（复核 diff 的“旧”）
     PRIMARY KEY (connection_id, tool_name)
   );
   CREATE TABLE app_tool_grants (                -- 写工具的持续授权（§8.1）

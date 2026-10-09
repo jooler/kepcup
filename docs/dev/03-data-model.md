@@ -30,6 +30,8 @@
 | runs | `0008_turn_trigger.sql` | `runs` 增 `trigger_parts_json`、`retry_of_run_id` |
 | runs | `0009_tool_effects.sql` | D78（borrowings W2）：新表 `tool_effects`；`runs` 增索引 `runs_by_parent` |
 | main | `0021_delegation_intent.sql` | D71 修订（borrowings W6）：`delegations` 重建（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`，增索引 `delegations_status`） |
+| main | `0022_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients`；D73 后续迁移（P2 起）顺延取号 |
+| main | `0023_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（合并时与 main 的号冲突则整体顺延，测试用 `mainVersionsAfter()`） |
 
   D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，D73 从 main `0022` 起编号（不改 runs 库，以目录实况为准）。
 
@@ -54,6 +56,8 @@ CREATE TABLE settings (
 ```
 
 已知键：`providers`（厂商与自定义接口配置，不含 key）、`models.default_main`、`models.default_light`、`provider_concurrency`、`unattended`（无人值守模式状态）、`notifications`、`embedding`、`webSearch`（联网检索供应商，P18：`{provider: 'tavily'|'brave'|'bocha'|null}`；key 不在此处，存 secrets）。
+
+连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有，不在 `settings.update` 入参里）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。
 
 外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 群聊摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, groupMentionOnly=true（经 Agent 的群聊判断需用户关掉此项）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
@@ -545,6 +549,89 @@ CREATE INDEX delegations_status ON delegations(status);
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
 - W6（0021）：`awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
 
+### app_connections（D73 P0，迁移 0022）
+
+连接应用（[design/29](../design/29-connected-apps.md) §12）：一行 = 一个账号对一个 Connector（目录应用或自定义 MCP server）的授权。
+
+```sql
+CREATE TABLE app_connections (
+  id               TEXT PRIMARY KEY,         -- conn_...；自定义 server 为 custom:{serverId}
+  connector_id     TEXT NOT NULL,            -- 目录清单 name；自定义为 custom:{serverId}
+  connector_ver    TEXT,                     -- 自定义应用为 NULL
+  label            TEXT NOT NULL,            -- 账号显示名（可改）
+  account_sub      TEXT,                     -- 账号稳定标识（id_token sub 等），用于去重
+  server_url       TEXT,                     -- stdio 自定义 server 为 NULL
+  issuer           TEXT,                     -- 授权服务器 issuer
+  scopes           TEXT NOT NULL DEFAULT '', -- 已授予 scope，空格分隔
+  token_expires_at INTEGER,                  -- access token 到期（epoch ms，非机密）
+  discovery_json   TEXT,                     -- OAuthServerInfo 缓存
+  status           TEXT NOT NULL,            -- appConnectionStatusSchema，由 zod 校验，无 CHECK
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  last_used_at     INTEGER
+);
+CREATE UNIQUE INDEX app_connections_account
+  ON app_connections(connector_id, account_sub) WHERE account_sub IS NOT NULL;
+CREATE INDEX app_connections_connector ON app_connections(connector_id);
+```
+
+- **令牌不在此表**：access / refresh token 与 OAuth 客户端 id / secret **逐值**存 `secrets` 表（每个机密一个名称，`redact()` 按整值匹配，JSON 打包会让令牌逃过脱敏）：`conn:{connectionId}:access`、`conn:{connectionId}:refresh`、`oauth:client:{issuerHash}:id` / `:secret`（`issuerHash` = sha256(issuer) hex 前 24 位；同 issuer 的连接共享客户端）。读写经 `core/apps/token-vault.ts`，行的 CRUD 经 `core/apps/connection-store.ts`。
+- 非机密元数据（`token_expires_at`、`scopes`、`issuer`、`discovery_json`）在行内。
+- 同一迁移还建 `oauth_clients`（按 issuer 一行，跨连接共享，设计 29 §12 未列、P0 实现需要）：
+
+```sql
+CREATE TABLE oauth_clients (
+  issuer_hash   TEXT PRIMARY KEY,            -- sha256(issuer) hex 前 24 位
+  issuer        TEXT NOT NULL,
+  source        TEXT NOT NULL,               -- 'dcr' | 'manual' | 'preregistered'
+  redirect_uris TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：已登记的回调地址（DCR 端口预判用）
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+```
+
+  client id / secret 仍逐值存 secrets；该表只记来源与已登记 `redirect_uris`，使「客户端是否来自 DCR（最后一个引用方断开后清除）」与打开浏览器前的回调端口预判不必读机密。CIMD 客户端的 `client_id` 是常量，不落表。
+- 自定义 MCP server 的连接 `id = connector_id = custom:{serverId}`，每个 server 至多一行；断开**不删行**（`status = 'not_connected'`，清令牌），只随 `mcp.removeServer` 删除。`apps.connections.list` 默认不返回 `custom:` 行。
+- P1（迁移 0023）追加列 `baseline_pending INTEGER NOT NULL DEFAULT 0`（见下节）。非 OAuth 的自定义 server 也建 `custom:{serverId}` 行承载工具锁定：`server_url` 可为 NULL（stdio），`status = 'connected'`（无需授权；`apps.connections.list` 默认不返回 `custom:` 行）。
+
+### app_connection_tools / app_tool_grants（D73 P1，迁移 0023）
+
+**工具定义锁定**（[design/29](../design/29-connected-apps.md) §8.2；`core/apps/tool-lock.ts`、纯函数在 `core/apps/policy.ts`）：对**所有** MCP server 生效。承载行是 `app_connections`（目录连接 `conn_…`；自定义 server `custom:{serverId}`）。
+
+```sql
+CREATE TABLE app_connection_tools (
+  connection_id   TEXT NOT NULL REFERENCES app_connections(id) ON DELETE CASCADE,
+  tool_name       TEXT NOT NULL,
+  approved_hash   TEXT,                      -- NULL = 待复核（新工具）
+  current_hash    TEXT NOT NULL,             -- 最近一次 tools/list 的定义哈希
+  risk            TEXT NOT NULL,             -- W5 分级器 + 目录 toolPolicy 叠加（只能调高）
+  user_policy     TEXT,                      -- 逐工具策略 JSON，与 W5 mcpToolPolicy 同形 {approval?, enabled?}；NULL = 按风险档默认
+  definition_json TEXT NOT NULL,             -- 最近一次的完整定义（复核 diff 的“新”）
+  approved_definition_json TEXT,             -- 批准当时的定义快照（复核 diff 的“旧”）；从未批准 = NULL
+  PRIMARY KEY (connection_id, tool_name)
+);
+CREATE TABLE app_tool_grants (
+  id              TEXT PRIMARY KEY,          -- atg_...
+  bot_id          TEXT NOT NULL,             -- 无外键：删除 Bot 保留占位行，由 core 撤销
+  connection_id   TEXT NOT NULL REFERENCES app_connections(id) ON DELETE CASCADE,
+  tool_name       TEXT NOT NULL,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE, -- NULL = 对该 Bot 总是允许
+  approval_id     TEXT,
+  created_at      INTEGER NOT NULL,
+  revoked_at      INTEGER                    -- 撤销 = 写时间戳，行保留作审计
+);
+CREATE INDEX app_tool_grants_live
+  ON app_tool_grants(bot_id, connection_id, tool_name) WHERE revoked_at IS NULL;
+CREATE INDEX app_tool_grants_conversation
+  ON app_tool_grants(conversation_id) WHERE conversation_id IS NOT NULL;
+ALTER TABLE app_connections ADD COLUMN baseline_pending INTEGER NOT NULL DEFAULT 0;
+```
+
+- **哈希**：`{name, title, description, inputSchema, annotations}` 键排序的规范化 JSON → sha256 hex（`toolDefinitionHash`）。
+- **状态机**：刷新（`tools/list`、`list_changed` 之后的重拉）时，新工具 `approved_hash = NULL`、定义变化 `current_hash ≠ approved_hash`——二者**不暴露**给模型（`buildMcpTools` / `resolveMcpToolEntries` 的 `toolFilter`，调用时网关再核一次），连接 `connected → tools_changed` 并发 `apps.connection_status`（带待复核计数 `tools`）；消失的工具直接删行；复核批准 = `approved_hash := current_hash`，无待复核后 `tools_changed → connected`（`expired` / `needs_scope` 等更紧迫的状态不被覆盖）。
+- **存量基线**（只作用一次）：core 启动时 `settings.apps.toolLockBaselineDone` 不为真 → 为当时已存在的每个自定义 server 建 `custom:` 行并置 `baseline_pending = 1`，其首次拉取到的工具直接批准（之后清零），随后置位该标记。之后新加的 server：设置页「测试」成功后 `approveAfterTest`，保存即批准；未批准前工具不暴露。`settings.apps` 是 core 自有键（不在 `settings.update` 入参里，`{...current, ...patch}` 的浅合并保证它不被渲染端的 patch 抹掉）。
+- **授权**：`app_tool_grants` 以 (Bot, 连接, 工具) 为键；`conversation_id` 为空 = 对该 Bot 总是允许，非空 = 仅在该对话内。现有 `grants` 表按路径设计，不复用。清理见下方删除级联表。
+
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
 ```sql
@@ -731,6 +818,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该对话的 jobs | 取消 | P01 |
 | 所有 Bot 在该对话的 workspace 目录 | 删除 | P02 |
 | 该对话的 approvals（待确认的先取消）、grants | 删除 | P03 |
+| app_tool_grants 中该对话的行 | 随外键 `ON DELETE CASCADE` 删除 | D73 P1 |
 | agent_sessions（外部智能体会话行；尽力 `session/delete`，Agent 自己目录里的 transcript 不清理） | 删除 | D72 P5（`Orchestrator.agentSessionsOnConversationDeleted`） |
 | run_changes | 删除（project 文件与影子仓库不动） | P04 |
 | chains | 删除 | P05 |
@@ -757,6 +845,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
+| 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |
 | usage_ledger | **保留**（用量统计） | — |
 
@@ -780,6 +869,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 成员行 | 删除 | P05 |
 | 该 Bot 在此群的 workspace | 删除 | P05 |
 | 该 Bot 在此群的 grants、待确认 approvals | 撤销 / 取消 | P05 |
+| 该 Bot 在此群的 app_tool_grants（Bot 级授权不受影响） | 撤销（`AppToolGrants.revokeForBotInConversation`） | D73 P1 |
 | 该 Bot 在此群做出的承诺 | 置为 `void` | P07 |
 | 该 Bot 在此群的 schedules | 取消 | P10 |
 

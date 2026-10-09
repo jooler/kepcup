@@ -309,3 +309,26 @@
   5. **强制收回 = 持有方写任务失去写权限**（design 30 §5.1）：此前收回只关掉持有方的租约窗口，持有方任务下一次写入会悄悄以新窗口重新取得租约（不再钉住），而 `run_changes` 按 `run_id` 覆盖写入，第一个窗口的改动记录丢失、整次回退撤不掉它。现在被收回的钉住 run 记为「租约已被收回」，`writeDenial` 以「写入租约已被用户收回」拒绝它（及其子代理）的一切写入；`run_changes` 跨窗口累积（每个文件记首个窗口前 / 末个窗口后的快照，别人夹在两个窗口之间改过的文件回退时按冲突处理），只对不钉住的执行（宿主伪身份等）仍会出现多窗口。
 - 已更新的文档（审查批 E，原标「待确认」，用户确认后已去掉）：design/30 §2.2（上限行）、§2.4.6、§3.2（不变量、投、对账、故障表）、§4.3（任务卡渲染）、§5.1（强制收回）；design/02（时限、提问、吸收、对账、强制收回、任务卡渲染）；design/08「并发：写入租约」D75 修订注（钉住租约与 `acquire_project_write` / `PATH_OUT_OF_SCOPE`、强制收回）；docs/dev/02-architecture（Mailbox、TaskHost）、03-data-model（任务问题卡、结果放弃提示、`deliveries`、`setTrigger` 的连锁绑定、run_changes 多窗口）、04-agent-runtime（上下文渲染、工具目录、常量表、已删除的续接仲裁 / 中途注入代码）。
 - 最终审查（`t/d75-fixf`）对上面 1–3 的细化：M-1（等待中被取消不拿回名额、墙钟到拿回名额才恢复）、L-3（排队中 / 缓冲中的结果算持有，抛错的投递不计数）、L-5（用户消息不与连锁批同轮）；已同步 design/30 §2.4.6 / §3.2、design/02、docs/dev/02 / 04 / 05。
+
+### DEV-019 连接应用 P0 实现对设计 29 / 执行方案的偏差与补充（D73）
+
+- 状态：待决定（实现者按下列推荐落地；用户确认后改「已决定」）
+- 阶段：D73 P0（`todo/connected-apps.md` §4）
+- 是否阻塞：否
+- 问题：实现 P0 时，设计 29 §5 / §12 与 todo §4 有若干没写到或与实现细节冲突之处：
+  1. **多一张 `oauth_clients` 表**（设计 29 §12 未列）：按 issuer 一行，记客户端来源（`dcr` / `manual` / `preregistered`）与已登记的 `redirect_uris`。没有它就无法判断「客户端是否来自 DCR（最后一个引用方断开后才清除）」，也无法在打开浏览器前做 DCR 端口预判。客户端 id / secret 仍逐值存 secrets。同在迁移 `0022_app_connections.sql`。
+  2. **`TokenVault.saveTokens` 要求连接行已存在**（否则抛 `APP_CONNECTION_NOT_FOUND`）：交互流程先建行（状态 `connecting`）再换令牌，令牌写入与 `token_expires_at` / `scopes` 更新在同一处完成，避免有令牌而无行的孤儿状态。测试里直接种子令牌须先 `ensureCustom`。
+  3. **回调服务把浏览器请求保持到换令牌结束**（todo §4.6 只写「回给浏览器一个结果页」）：为让「已连接，可回到 KepCup」只在真正连上之后显示，回调请求挂起，由流程在换令牌后 `respond({ok})` 决定成功页或失败页；未响应 30 秒自动中性收尾，`close()` 立即销毁连接。代价：浏览器标签页在换令牌期间转圈，通常不到一秒。
+  4. **`listTools` 的 GET 事件流收到 401**（todo §4.7 的待验证问题）：用 pi-mcp 真实传输层验证（`mcp-auth-transport.test.ts` 锁定）——GET 流的 401 只走 `client.onError`，不触发 `onClose`、不使连接失败，POST 照常；所以**不**对 OAuth 连接关闭 GET 流。`onUnauthorized` / `token()` 抛出的 `AppAuthRequiredError` 原样穿出传输层（`McpService` 仍保留对 `cause` 链的防御）。
+  5. **账号标识未做**：todo 的 `account_sub`（`id_token` sub 等）与 `id_token` 解析 P0 不做——连接行的 `account_sub` 恒为 NULL，`label` 取 server 名；`id_token` 不保存。多账号（同一 Connector 多行）随 P1 目录一起做。
+  6. **`grantBotId` 仅接受、P0 不用**：`apps.connect` 接受 `grantBotId` 并传入流程，P0 不使用它（不据此给 Bot 授权）（Bot 授权是 P1 §5.7）；P0 的 Bot 仍经 `mcp_server_ids` 勾选使用自定义应用。
+  7. **`settings.update` 改认证方式 / URL 时断开旧连接**（todo 未写）：令牌的受众绑定 server URL（RFC 8707），所以原为 OAuth 的 server 被改成 `none` / `headers`、或 URL 变了，在替换 `mcpServers` **之前**吊销并清除旧连接（`AppDisconnector.reconcileServers`），并取消该 server 进行中的授权流程。纯改名、改 `autoApprove`、URL 规范化后相同则保持连接。被 `settings.update` 差集删掉的 server 不在此处理（走显式 `mcp.removeServer`，幂等）。
+  8. **`apps.setClientCredentials` 在同一流程上续跑**：保存凭据后流程自行发出 `discovering` 并继续（同一 `flowId`），渲染端不再重复 `apps.connect`（早先版本的 store 会重发一次，无害但多余，已去掉）。
+  9. **`app_request_connection` 的注册条件**：Bot 勾选了应用级启用的 OAuth 自定义 server 即注册（不要求此刻有需要重连的应用），因为 run 中途授权失效时模型也需要它；工具名 `app_` 前缀留给 P1 的 `apps` 能力包，P0 的 ACP 外部智能体 Bot 拿不到。
+  10. **迁移号冲突待处理**：本分支取 main `0022`，`t/schedule-nudges`（D80）的 `0022_schedule_title_origin.sql` 同号；后合入的一方顺延。
+  11. **复查后的补强（2026-10-09，不改设计语义）**：① SSRF 判定 `isPrivateAddress` 改为按 16 字节解析 IPv6（IPv4 映射 / NAT64 / 6to4 内嵌 IPv4 复判，Teredo、IPv4 兼容、站点本地、完整 `fe80::/10`、组播、文档段一律拒绝），IPv4 补 192.0.0.0/24、192.0.2.0/24、198.18.0.0/15、198.51.100.0/24、203.0.113.0/24；② `mcp.test` 的 OAuth server 只有「已保存且 URL / 认证方式一致」才会带已存令牌发请求，草稿一律「未连接」；`ConnectionAuthRegistry.providerFor(connectionId, serverUrl)` 再核对连接行记录的 URL；③ 每个连接记录授权时所用的客户端（secrets `conn:{id}:client_id|client_secret`，无迁移），刷新 / 吊销优先用它，其次 issuer 客户端，最后 CIMD——同一 issuer 上别的连接重新注册不再让既有连接失效；④ `apps.disconnect` 先取消并等待该连接进行中的交互流程（状态落 `not_connected`），registry 的世代号保证在途刷新在断开 / 重新授权后丢弃结果、不写回令牌；⑤ 流程总时限在每次尝试（含 `invalid_client` 重试、停放在 `OAUTH_CLIENT_REQUIRED`）开始时重新计时；`invalid_client` 重试后授权主机变了会重新进入 `awaiting_consent`；⑥ 启动时把上次未正常退出遗留的 `connecting` 行修正（有令牌 → `connected` / `expired`，否则 `not_connected`）；⑦ `McpService.listTools` 缓存连接上刷新后仍 401 同样产生 `AppAuthRequiredError` + `needs_auth`；⑧ `app_request_connection` 登记为 `local` 副作用类别。
+- 影响范围：`apps/*`、`migrations/main/0022`、`rpc/bindings.ts`（`settings.update`）、渲染端 `stores/apps.svelte.ts`；设计 29 §12 补 `oauth_clients`。
+- 可选方案：按上述实现保留（推荐）；或逐项回到设计原文（1、2、3 会损失可观察行为，不推荐）。
+- 推荐：均保留；设计 29 在用户确认后补 `oauth_clients`、「改认证方式 / URL 断开」两处。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/dev/02-architecture.md`（连接应用）、`03-data-model.md`、`04-agent-runtime.md`、`05-testing.md`、`docs/design/23-mcp-and-subagent.md`（认证方式）、`docs/dev/PROGRESS.md`
