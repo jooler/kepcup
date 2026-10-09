@@ -87,6 +87,14 @@ export interface LifecycleDeps {
         cancelForBotInConversation(botId: string, conversationId: string): number;
       }
     | undefined;
+  /** W7 watch cascades (删除监看), no-op when absent. */
+  watches?:
+    | {
+        deleteForConversation(conversationId: string): number;
+        prepareBotDeletion(botId: string): number;
+        removeForBotInConversation(botId: string, conversationId: string): number;
+      }
+    | undefined;
   /**
    * D72 P5 external-agent sessions (agent_sessions rows + best-effort
    * `session/delete` on the agent side). The agents' own on-disk history is
@@ -185,6 +193,16 @@ export class LifecycleService {
       this.deps.logger.warn(
         { conversationId, error: error instanceof Error ? error.message : String(error) },
         'schedule conversation cascade failed',
+      );
+    }
+    // W7: the conversation's watches are deleted (FK cascades too; this also
+    // tells the interface and re-arms the worker).
+    try {
+      this.deps.watches?.deleteForConversation(conversationId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { conversationId, error: error instanceof Error ? error.message : String(error) },
+        'watch conversation cascade failed',
       );
     }
 
@@ -304,6 +322,15 @@ export class LifecycleService {
         'schedule bot cleanup failed',
       );
     }
+    // W7: the bot's watches are deleted (its watch_alert jobs were cancelled above).
+    try {
+      this.deps.watches?.prepareBotDeletion(botId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { botId, error: error instanceof Error ? error.message : String(error) },
+        'watch bot cleanup failed',
+      );
+    }
     // P11: every page of the bot closes, the session partition storage and
     // its directory on disk are removed, and the bot is tombstoned so an
     // aborted run's late ensurePage fails instead of resurrecting the session.
@@ -379,6 +406,15 @@ export class LifecycleService {
       this.deps.logger.warn(
         { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
         'schedule group-removal cascade failed',
+      );
+    }
+    // W7: the bot's watches in this group are deleted.
+    try {
+      this.deps.watches?.removeForBotInConversation(botId, conversationId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
+        'watch group-removal cascade failed',
       );
     }
 

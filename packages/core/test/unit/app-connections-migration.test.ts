@@ -9,8 +9,8 @@ import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 
 /**
- * 0022_app_connections（D73 P0）：app_connections 表 + 部分唯一索引。升级路径
- * 用「真实迁移目录截到 0021」建旧库再跑全量迁移（真库，不用 stub）。
+ * 0024_app_connections（D73 P0）：app_connections 表 + 部分唯一索引。升级路径
+ * 用「真实迁移目录截到 0023」建旧库再跑全量迁移（真库，不用 stub）。
  */
 
 const dir = mkdtempSync(path.join(tmpdir(), 'app-connections-migration-'));
@@ -48,17 +48,17 @@ function insertConnection(
   ).run(id, connectorId, accountSub);
 }
 
-describe('0022 app_connections 迁移', () => {
-  it('旧库（0021）升级后出现 app_connections，列与默认值符合设计 29 §12', () => {
+describe('0024 app_connections 迁移', () => {
+  it('旧库（0023）升级后出现 app_connections，列与默认值符合设计 29 §12', () => {
     const db = openMainDb();
-    runMigrations(db, migrationsUpTo(21));
+    runMigrations(db, migrationsUpTo(23));
     expect(
       db.prepare("select 1 from sqlite_master where name = 'app_connections'").get(),
     ).toBeUndefined();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied[0]?.version).toBe(22);
-    expect(applied[0]?.file).toBe('0022_app_connections.sql');
+    expect(applied[0]?.version).toBe(24);
+    expect(applied[0]?.file).toBe('0024_app_connections.sql');
 
     const columns = (
       db.prepare('pragma table_info(app_connections)').all() as Array<{
@@ -81,7 +81,7 @@ describe('0022 app_connections 迁移', () => {
       'created_at',
       'updated_at',
       'last_used_at',
-      // 0023_app_tools 追加（ALTER TABLE ADD COLUMN）：存量基线标记。
+      // 0025_app_tools 追加（ALTER TABLE ADD COLUMN）：存量基线标记。
       'baseline_pending',
     ]);
     // 没有任何令牌 / 密钥列（令牌只在 secrets 表）。

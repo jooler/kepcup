@@ -4,6 +4,12 @@ import {
   AppError,
   agentSettingSchema,
   settingsGetOutputSchema,
+  browserProfilesListOutputSchema,
+  browserProfilesCreateInputSchema,
+  browserProfilesCreateOutputSchema,
+  browserProfilesRenameInputSchema,
+  browserProfileIdInputSchema,
+  browserProfilesMutateOutputSchema,
   settingsUpdateInputSchema,
   providersSetKeyInputSchema,
   providerNameInputSchema,
@@ -171,7 +177,15 @@ import {
   schedulesListInputSchema,
   schedulesListOutputSchema,
   schedulesCancelInputSchema,
+  schedulesOfferInputSchema,
+  schedulesAcceptOfferOutputSchema,
+  schedulesDeclineOfferOutputSchema,
   schedulesCancelOutputSchema,
+  watchesListInputSchema,
+  watchesListOutputSchema,
+  watchIdInputSchema,
+  watchGetOutputSchema,
+  watchMutateOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
@@ -189,6 +203,7 @@ import {
   type Conversation,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
+import type { WatchService } from '../watch/service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
@@ -255,9 +270,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const domain = services.domain!;
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
-  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」. */
-  const publishInterrupted = (count: number, scope: 'path' | 'mcp'): void => {
-    if (count > 0) publish('tasks.interrupted', { count, reason: 'permission_revoked', scope });
+  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」 (W8: also a profile switch). */
+  const publishInterrupted = (count: number, scope: 'path' | 'mcp' | 'browser_profile'): void => {
+    if (count > 0) {
+      publish('tasks.interrupted', {
+        count,
+        reason: scope === 'browser_profile' ? 'browser_profile_changed' : 'permission_revoked',
+        scope,
+      });
+    }
   };
   /** W3: MCP permissions the user took back → interrupt the affected tasks. */
   const revokeMcp = (revoked: Array<{ serverId: string; toolName?: string; botIds: string[] }>) => {
@@ -511,6 +532,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           '对话式新建暂不支持外部智能体：请先用内置模型创建，再切换',
         );
       }
+      // W8: only an existing shared browser profile ('' = private).
+      domain.browserProfiles.assertSelectable(input.profile.runtime.browser_profile);
       const bot = domain.bots.create(input.profile, { interview: input.interview });
       publish('bot.updated', { bot });
       return { bot };
@@ -577,8 +600,22 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }
       const previousRuntime = domain.bots.getOrThrow(input.id).profile.runtime;
       const previousServerIds = previousRuntime.mcp_server_ids;
+      // W8: the browser profile may only point at an existing shared profile.
+      domain.browserProfiles.assertSelectable(
+        input.profile.runtime.browser_profile,
+        previousRuntime.browser_profile,
+      );
+      const previousProfileKey = domain.browserProfiles.profileKeyFor(input.id);
       const bot = domain.bots.update(input.id, input.profile);
       publish('bot.updated', { bot });
+      // W8: a different effective browser profile = the identity changed under
+      // the bot's browser-using tasks → interrupted; its pages are closed.
+      if (domain.browserProfiles.profileKeyFor(bot.id) !== previousProfileKey) {
+        publishInterrupted(
+          await domain.browserProfiles.onBotProfileChanged(bot.id),
+          'browser_profile',
+        );
+      }
       // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
       revokeMcp(
         serversRemovedFromBot(
@@ -942,7 +979,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       approvalsDecideInputSchema,
       approvalsDecideOutputSchema,
       async (input) => ({
-        approval: domain.approvals.decide(input.id, input.approve, input.duration, input.selection),
+        approval: domain.approvals.decide(
+          input.id,
+          input.approve,
+          input.duration,
+          input.selection,
+          input.payloadHash,
+          input.routineSelection,
+        ),
       }),
     ),
 
@@ -1311,5 +1355,89 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { ok: true as const };
       },
     ),
+
+    // --- watches (W7) ---------------------------------------------------------
+    'watches.list': method(watchesListInputSchema, watchesListOutputSchema, async (input) => ({
+      watches: services.watches?.listEntries(input.conversationId) ?? [],
+    })),
+    'watches.get': method(watchIdInputSchema, watchGetOutputSchema, async (input) => ({
+      watch: services.watches?.get(input.id) ?? null,
+    })),
+    'watches.pause': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.pauseWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+    'watches.resume': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.resumeWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+    'watches.stop': method(watchIdInputSchema, watchMutateOutputSchema, async (input) => {
+      const watches = requireWatches(services);
+      watches.stopWatch(input.id);
+      return { watch: watches.get(input.id)! };
+    }),
+
+    // --- W8 共享浏览器资料 ---------------------------------------------------
+    'browserProfiles.list': method(voidInput, browserProfilesListOutputSchema, async () => ({
+      profiles: domain.browserProfiles.list(),
+    })),
+    'browserProfiles.create': method(
+      browserProfilesCreateInputSchema,
+      browserProfilesCreateOutputSchema,
+      async (input) => {
+        const profile = domain.browserProfiles.create(input.name);
+        return { profile, profiles: domain.browserProfiles.list() };
+      },
+    ),
+    'browserProfiles.rename': method(
+      browserProfilesRenameInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        const profiles = domain.browserProfiles.rename(input.id, input.name);
+        return { profiles };
+      },
+    ),
+    'browserProfiles.delete': method(
+      browserProfileIdInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        const { movedBotIds, interrupted } = await domain.browserProfiles.delete(input.id);
+        publishInterrupted(interrupted, 'browser_profile');
+        return { profiles: domain.browserProfiles.list(), movedBotIds, interrupted };
+      },
+    ),
+    'browserProfiles.clear': method(
+      browserProfileIdInputSchema,
+      browserProfilesMutateOutputSchema,
+      async (input) => {
+        await domain.browserProfiles.clear(input.id);
+        return { profiles: domain.browserProfiles.list() };
+      },
+    ),
+    // D80 offer cards: deterministic creation / decline, no bot wake-up.
+    'schedules.acceptOffer': method(
+      schedulesOfferInputSchema,
+      schedulesAcceptOfferOutputSchema,
+      async (input) => {
+        if (!services.schedules) throw new AppError('NOT_IMPLEMENTED', '定时服务未就绪');
+        return { schedule: services.schedules.acceptOffer(input.messageId) };
+      },
+    ),
+    'schedules.declineOffer': method(
+      schedulesOfferInputSchema,
+      schedulesDeclineOfferOutputSchema,
+      async (input) => {
+        if (!services.schedules) throw new AppError('NOT_IMPLEMENTED', '定时服务未就绪');
+        services.schedules.declineOffer(input.messageId);
+        return { ok: true as const };
+      },
+    ),
   };
+}
+
+function requireWatches(services: CoreServices): WatchService {
+  if (!services.watches) throw new AppError('NOT_IMPLEMENTED', '监看服务未就绪');
+  return services.watches;
 }

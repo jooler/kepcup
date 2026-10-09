@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   BUTLER_PROPOSAL_FOLLOWUP_EVENT,
+  SCHEDULE_CREATED_EVENT,
   type Approval,
   type Bot,
   type Message,
@@ -316,5 +317,70 @@ describe('butler interview + team proposal (D70 P2)', () => {
     expect(core.services.domain!.conversations.memberBotIds(group.id).sort()).toEqual(
       [a.id, b.id].sort(),
     );
+  }, 30_000);
+
+  it('D80 例行事项：确认后建到新 Bot 私聊（origin=proposal，回执卡在新 Bot 私聊里），可单独勾掉；非法 when 提交时即退回', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = await startButlerInterview(stack);
+    const team = [
+      {
+        ...TEAM[0]!,
+        routines: [
+          { title: '周报提醒', when: '0 17 * * 5', note: '提醒用户写周报，问要不要帮忙起草' },
+          { title: '月报提醒', when: '0 9 1 * *', note: '提醒用户写月报' },
+        ],
+      },
+      TEAM[1]!,
+      { ...TEAM[2]!, routines: [{ title: '技术周刊', when: '0 9 * * 1', note: '整理本周技术动态' }] },
+    ];
+    // 先提交一个 when 非法的：工具直接退回，不出卡；再提交合法的。
+    llm.script('mock-main', [
+      step().replyToolCall('propose_team', {
+        bots: [{ ...TEAM[0]!, routines: [{ title: 'x', when: 'banana', note: 'y' }] }, TEAM[1]!, TEAM[2]!],
+      }),
+      step().replyToolCall('propose_team', { bots: team }),
+    ]);
+    await core.rpc.call('bots.interview.answer', { conversationId, text: '工作：编程与技术' });
+    const approval = await waitFor(
+      () => butlerApprovals(stack, conversationId).find((a) => a.status === 'pending') ?? null,
+      { label: 'pending butler proposal' },
+    );
+    await waitForRun(core, conversationId, 'completed');
+    expect(butlerApprovals(stack, conversationId)).toHaveLength(1);
+
+    llm.script('mock-main', [step().replyText('建好了。')]);
+    // 留下文书与研究员；文书只留周报提醒（0:0），研究员的技术周刊（2:0）保留。
+    const decided = (await core.rpc.call('approvals.decide', {
+      id: approval.id,
+      approve: true,
+      selection: [0, 2],
+      // Non-canonical keys are normalised ("02:0" → "2:0", review #5).
+      routineSelection: ['0:0', '02:0'],
+    })) as { approval: Approval };
+    expect(decided.approval.decision).toMatchObject({ selection: [0, 2], routineSelection: ['0:0', '2:0'] });
+
+    const created = await waitFor(() => (plainBots(stack).length === 2 ? plainBots(stack) : null));
+    const writer = created.find((b) => b.name === '文书')!;
+    const researcher = created.find((b) => b.name === '研究员')!;
+    const writerChat = core.services.domain!.conversations.listDirectByBot(writer.id)[0]!;
+    const schedules = core.services.schedules!;
+    const writerRows = schedules.listForBotInConversation(writer.id, writerChat.id);
+    expect(writerRows.map((r) => [r.title, r.origin, r.cron])).toEqual([['周报提醒', 'proposal', '0 17 * * 5']]);
+    const researcherChat = core.services.domain!.conversations.listDirectByBot(researcher.id)[0]!;
+    expect(schedules.listForBotInConversation(researcher.id, researcherChat.id)).toHaveLength(1);
+
+    const receipts = (await listAllMessages(core, writerChat.id)).filter(
+      (m) => 'event' in m.content && m.content.event === SCHEDULE_CREATED_EVENT,
+    );
+    expect(receipts).toHaveLength(1);
+    expect((receipts[0]!.content as { text: string }).text).toBe('已设置定时任务「周报提醒」：每周五 17:00');
+
+    const followUp = await waitFor(async () =>
+      (await listAllMessages(core, conversationId)).find(
+        (m) => 'event' in m.content && m.content.event === BUTLER_PROPOSAL_FOLLOWUP_EVENT,
+      ),
+    );
+    expect((followUp.content as { text: string }).text).toContain('已设置例行事项：文书「周报提醒」每周五 17:00');
   }, 30_000);
 });

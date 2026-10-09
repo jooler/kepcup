@@ -1,9 +1,11 @@
 import { Type } from '@earendil-works/pi-ai';
 import {
+  BUTLER_ROUTINES_PER_BOT_MAX,
   BUTLER_TEAM_SIZE_MAX,
   BUTLER_TEAM_SIZE_MIN,
   type ButlerProposalPayload,
   type ButlerProposedBot,
+  type ButlerProposedRoutine,
 } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 
@@ -34,6 +36,11 @@ export interface ButlerToolFacade {
   propose(identity: RunIdentity, payload: ButlerProposalPayload): { ok: boolean; message: string };
   /** Posts a route card (D70 §2.4); acting on it is the user's click. */
   suggestRoute(identity: RunIdentity, route: RouteSuggestion): { ok: boolean; message: string };
+  /**
+   * D80: checks a routine's `when` up front (ISO 8601 / cron, future, known
+   * zone); null = valid, otherwise why not. Created only on confirmation.
+   */
+  validateRoutineWhen(when: string, timezone: string | null): string | null;
 }
 
 /** Where the butler suggests the user's request should go (D70 §2.4). */
@@ -48,6 +55,20 @@ export interface RouteSuggestion {
 const NAME_MAX_CHARS = 40;
 const FIELD_MAX_CHARS = 500;
 
+const TITLE_MAX_CHARS = 40;
+
+const proposedRoutineSchema = Type.Object(
+  {
+    title: Type.String({ description: '给用户看的短名（如「工作日早报」）' }),
+    when: Type.String({
+      description: 'cron 表达式（周期，如 "0 9 * * 1-5"）或 ISO 8601 时间（一次性）',
+    }),
+    timezone: Type.Optional(Type.String({ description: 'IANA 时区；默认用户本地时区' })),
+    note: Type.String({ description: '到点时这个 Bot 要做什么（它到时会看到这段话）' }),
+  },
+  { additionalProperties: false },
+);
+
 const proposedBotSchema = Type.Object(
   {
     name: Type.String({ description: 'Bot 的名字（简短，2~8 个字为宜）' }),
@@ -55,9 +76,21 @@ const proposedBotSchema = Type.Object(
     expertise: Type.String({ description: '擅长的领域' }),
     responsibilities: Type.String({ description: '具体负责哪些事（群聊里据此判断「归不归我」）' }),
     reason: Type.String({ description: '为什么用户需要它（基于用户说过的情况，展示在提议卡上）' }),
+    routines: Type.Optional(
+      Type.Array(proposedRoutineSchema, {
+        description: `例行事项（≤ ${BUTLER_ROUTINES_PER_BOT_MAX} 条）：用户说过的、有固定周期或时间点的事，确认后建到该 Bot 的私聊里由它到点去做；没有就不填`,
+      }),
+    ),
   },
   { additionalProperties: false },
 );
+
+interface ProposedRoutineParams {
+  title: string;
+  when: string;
+  timezone?: string;
+  note: string;
+}
 
 interface ProposedBotParams {
   name: string;
@@ -65,14 +98,43 @@ interface ProposedBotParams {
   expertise: string;
   responsibilities: string;
   reason: string;
+  routines?: ProposedRoutineParams[];
 }
 
 function invalid(content: string): ToolResult {
   return { ok: false, content, errorCode: 'INVALID_INPUT' };
 }
 
+/** Normalizes + validates one bot's routines (D80); an error text or the clean list. */
+function cleanRoutines(
+  botName: string,
+  raw: ProposedRoutineParams[] | undefined,
+  validateWhen: ButlerToolFacade['validateRoutineWhen'],
+): string | ButlerProposedRoutine[] {
+  const items = raw ?? [];
+  if (items.length > BUTLER_ROUTINES_PER_BOT_MAX) {
+    return `「${botName}」的例行事项太多（≤ ${BUTLER_ROUTINES_PER_BOT_MAX} 条）`;
+  }
+  const routines: ButlerProposedRoutine[] = [];
+  for (const [index, item] of items.entries()) {
+    const title = item.title.trim().slice(0, TITLE_MAX_CHARS);
+    const note = item.note.trim().slice(0, FIELD_MAX_CHARS);
+    if (title.length === 0 || note.length === 0) {
+      return `「${botName}」的第 ${index + 1} 条例行事项缺少 title 或 note`;
+    }
+    const timezone = item.timezone?.trim() || null;
+    const error = validateWhen(item.when, timezone);
+    if (error !== null) return `「${botName}」的例行事项「${title}」时间不对：${error}`;
+    routines.push({ title, when: item.when.trim(), timezone, note });
+  }
+  return routines;
+}
+
 /** Normalizes + validates proposed bots; returns an error text or the clean list. */
-function cleanProposedBots(raw: ProposedBotParams[]): string | ButlerProposedBot[] {
+function cleanProposedBots(
+  raw: ProposedBotParams[],
+  validateWhen: ButlerToolFacade['validateRoutineWhen'],
+): string | ButlerProposedBot[] {
   const bots: ButlerProposedBot[] = [];
   const seen = new Set<string>();
   for (const [index, item] of raw.entries()) {
@@ -83,12 +145,15 @@ function cleanProposedBots(raw: ProposedBotParams[]): string | ButlerProposedBot
     seen.add(name);
     const responsibilities = item.responsibilities.trim();
     if (responsibilities.length === 0) return `「${name}」缺少职责说明`;
+    const routines = cleanRoutines(name, item.routines, validateWhen);
+    if (typeof routines === 'string') return routines;
     bots.push({
       name,
       bio: item.bio.trim().slice(0, FIELD_MAX_CHARS),
       expertise: item.expertise.trim().slice(0, FIELD_MAX_CHARS),
       responsibilities: responsibilities.slice(0, FIELD_MAX_CHARS),
       reason: item.reason.trim().slice(0, FIELD_MAX_CHARS),
+      routines,
     });
   }
   return bots;
@@ -194,7 +259,7 @@ export function buildButlerTools(input: {
     name: 'propose_team',
     description:
       `向用户提议一组（${BUTLER_TEAM_SIZE_MIN}~${BUTLER_TEAM_SIZE_MAX} 个）领域 Bot，以审批卡展示（名字、职责、理由），用户可勾掉不要的再确认；确认后系统自动创建，你会收到结果通知。` +
-      '你不能直接创建 Bot，只能提议。每个 Bot 职责要分得清、不重叠，理由要基于用户说过的情况。调用后本轮立即结束，所以它必须是本轮最后一个动作。',
+      '你不能直接创建 Bot，只能提议。每个 Bot 职责要分得清、不重叠，理由要基于用户说过的情况；用户说过的周期事项放进对应 Bot 的 routines。调用后本轮立即结束，所以它必须是本轮最后一个动作。',
     parameters: Type.Object(
       {
         bots: Type.Array(proposedBotSchema, {
@@ -213,7 +278,7 @@ export function buildButlerTools(input: {
           `组队提议需要 ${BUTLER_TEAM_SIZE_MIN}~${BUTLER_TEAM_SIZE_MAX} 个 Bot；只需要一个时用 propose_bot。`,
         );
       }
-      const bots = cleanProposedBots(params.bots);
+      const bots = cleanProposedBots(params.bots, (when, tz) => butler.validateRoutineWhen(when, tz));
       if (typeof bots === 'string') return invalid(bots);
       return submitted(
         butler.propose(identity, {
@@ -237,7 +302,7 @@ export function buildButlerTools(input: {
       { additionalProperties: false },
     ),
     execute: async (params) => {
-      const bots = cleanProposedBots([params.bot]);
+      const bots = cleanProposedBots([params.bot], (when, tz) => butler.validateRoutineWhen(when, tz));
       if (typeof bots === 'string') return invalid(bots);
       return submitted(
         butler.propose(identity, {

@@ -43,12 +43,17 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table bots drop column system_role;');
     // 0017（外部智能体）的新表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table agent_sessions;');
-    // 0022（连接应用）的新表同样摘除（纯新增，回放时重建）。
-    // 0023（应用工具）的新表先摘除（外键指向 app_connections）。
+    // 0024（连接应用）的新表同样摘除（纯新增，回放时重建）。
+    // 0025（应用工具）的新表先摘除（外键指向 app_connections）。
     db.exec('drop table app_tool_grants;');
     db.exec('drop table app_connection_tools;');
     db.exec('drop table app_connections;');
     db.exec('drop table oauth_clients;');
+    // 0022（D80）的 schedules 新列同样摘除。
+    db.exec('alter table schedules drop column title;');
+    db.exec('alter table schedules drop column origin;');
+    // main 0023（W7）的 watches 表同样摘除。
+    db.exec('drop table watches;');
     db.exec(
       `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
        values ('skl_preset', 'docx', 'preset://docx', '1.0.0', 'hashpreset', 'skills-library/docx@hashpreset', '{}', 1),

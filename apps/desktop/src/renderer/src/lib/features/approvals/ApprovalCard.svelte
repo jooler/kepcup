@@ -3,6 +3,7 @@
   import {
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
+    describeScheduleWhen,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
@@ -39,6 +40,13 @@
     mcpChoosesDuration,
     mcpDurationOptions,
   } from './mcp-approval';
+  import {
+    approvalEffectLine,
+    decisionBinding,
+    priorEffectFlag,
+    priorEffectOf,
+    receiptText,
+  } from './approval-effect';
 
   let {
     approval,
@@ -119,10 +127,61 @@
       : [...butlerDropped, index];
   }
 
+  // W4：决定绑定到卡片渲染时的内容（payloadHash；不符 → APPROVAL_STALE）。
+  const boundHash = $derived(decisionBinding(approval).payloadHash);
+
+  /** D80: routines the user unchecked, as "{botIndex}:{routineIndex}". */
+  let routinesDropped = $state<string[]>([]);
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  function toggleRoutine(key: string): void {
+    routinesDropped = routinesDropped.includes(key)
+      ? routinesDropped.filter((k) => k !== key)
+      : [...routinesDropped, key];
+  }
+
+  function routineWhen(routine: { when: string; timezone: string | null }): string {
+    const iso = /^\d{4}-\d{2}-\d{2}/.test(routine.when) ? Date.parse(routine.when) : NaN;
+    return Number.isNaN(iso)
+      ? describeScheduleWhen(
+          { kind: 'cron', cron: routine.when, runAt: null, timezone: routine.timezone ?? localTimeZone },
+          { localTimeZone },
+        )
+      : describeScheduleWhen({ kind: 'once', runAt: iso, cron: null, timezone: localTimeZone }, { now: Date.now() });
+  }
+
+  /** Pending: the local choice; decided: what the decision kept. */
+  function routineChecked(botIndex: number, key: string): boolean {
+    if (pending) return !routinesDropped.includes(key) && !butlerDropped.includes(botIndex);
+    const decision = approval.decision;
+    if (approval.status !== 'approved' || decision === null) return false;
+    if (decision.selection !== undefined && !decision.selection.includes(botIndex)) return false;
+    return decision.routineSelection === undefined || decision.routineSelection.includes(key);
+  }
+
+  /** Kept routine keys of the kept bots; undefined when the proposal has none. */
+  const routinesKept = $derived.by(() => {
+    if (butlerProposal === null || butlerProposal.proposalType === 'group') return undefined;
+    const keys = butlerProposal.bots.flatMap((bot, botIndex) =>
+      bot.routines.map((_, routineIndex) => `${botIndex}:${routineIndex}`),
+    );
+    if (keys.length === 0) return undefined;
+    return keys.filter(
+      (key) => !routinesDropped.includes(key) && butlerKept.includes(Number(key.split(':')[0])),
+    );
+  });
+
   function approve(): void {
     if (butlerProposal !== null && butlerProposal.proposalType !== 'group') {
       // 一项都不留 = 拒绝（core 同样按拒绝处理）。
-      void permissions.decide(approval.id, butlerKept.length > 0, undefined, butlerKept);
+      void permissions.decide(
+        approval.id,
+        butlerKept.length > 0,
+        undefined,
+        butlerKept,
+        boundHash,
+        routinesKept,
+      );
       return;
     }
     void permissions.decide(
@@ -133,12 +192,22 @@
           ? clampDuration(duration, mcpDurations)
           : duration
         : undefined,
+      undefined,
+      boundHash,
     );
   }
 
   function deny(): void {
-    void permissions.decide(approval.id, false);
+    void permissions.decide(approval.id, false, undefined, undefined, boundHash);
   }
+
+  // W4 回执：已批准的卡片底部显示执行结果（已完成 / 失败 / 结果未知 / 已拒绝 /
+  // 执行中）；去重门的「上次同样的操作结果未知」提示在待决卡片顶部。
+  const effectLine = $derived(approvalEffectLine(approval));
+  const effectReceipt = $derived(receiptText(approval.effect?.receipt));
+  const priorEffect = $derived(priorEffectOf(approval));
+  const priorFlag = $derived(priorEffectFlag(approval));
+  const priorReceipt = $derived(receiptText(priorEffect?.receipt));
 
   function onKeydown(event: KeyboardEvent): void {
     if (!pending) return;
@@ -342,6 +411,26 @@
                       : command}
       </code>
     {/if}
+    {#if effectLine !== null}
+      <span
+        class={`shrink-0 ${
+          effectLine === 'completed'
+            ? 'text-emerald-700 dark:text-emerald-400'
+            : effectLine === 'uncertain'
+              ? 'text-amber-700 dark:text-amber-400'
+              : effectLine === 'failed'
+                ? 'text-destructive'
+                : ''
+        }`}
+        data-testid="approval-effect-status"
+        data-effect-status={effectLine}
+        title={effectReceipt ?? undefined}
+        >{t(`approvals.effect.${effectLine}`)}{#if effectReceipt !== null}<span
+            class="ml-1 text-muted-foreground"
+            data-testid="approval-effect-receipt">{effectReceipt}</span
+          >{/if}</span
+      >
+    {/if}
   </div>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -383,6 +472,22 @@
         >{t('approvals.focusHint')}</span
       >
     </div>
+
+    {#if priorFlag !== null}
+      <p
+        class="mb-2 flex items-start gap-1.5 rounded bg-amber-500/15 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+        data-testid={priorFlag === 'uncertain' ? 'approval-prior-uncertain' : 'approval-prior-completed'}
+      >
+        <AlertTriangle class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span
+          >{priorFlag === 'uncertain'
+            ? t('approvals.priorUncertain')
+            : t('approvals.priorCompleted', {
+                receipt: priorReceipt ?? t('approvals.priorCompletedNoReceipt'),
+              })}</span
+        >
+      </p>
+    {/if}
 
     {#if access !== null}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -668,6 +773,35 @@
                   {/if}
                 </span>
               </label>
+              {#if bot.routines.length > 0}
+                <!-- D80 例行事项：确认后建到这个 Bot 的私聊里，可单独勾掉 -->
+                <ul class="mt-1 ml-6 grid gap-1" data-testid={`approval-butler-routines-${index}`}>
+                  {#each bot.routines as routine, routineIndex (routineIndex)}
+                    {@const key = `${index}:${routineIndex}`}
+                    <li>
+                      <label
+                        class="flex cursor-pointer items-center gap-2 text-xs {butlerDropped.includes(index)
+                          ? 'opacity-50'
+                          : ''}"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={routineChecked(index, key)}
+                          disabled={!pending || butlerDropped.includes(index)}
+                          onchange={() => toggleRoutine(key)}
+                          data-testid={`approval-butler-routine-check-${key}`}
+                        />
+                        <span
+                          >{t('approvals.butlerRoutine', {
+                            when: routineWhen(routine),
+                            title: routine.title,
+                          })}</span
+                        >
+                      </label>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -789,6 +923,16 @@
             >{mcpTool.serverName} · <code>{mcpTool.toolName}</code></span
           >
         {/if}
+        {#each mcpTool.recipients ?? [] as recipient, index (index)}
+          <!-- W4 精确卡片：收件方完整列出，不随参数摘要截断。 -->
+          <span class="text-muted-foreground"
+            >{t('approvals.mcpRecipient')} <code class="text-[11px]">{recipient.key}</code></span
+          >
+          <code
+            class="font-semibold break-all whitespace-pre-wrap"
+            data-testid="approval-mcp-recipient">{recipient.value}</code
+          >
+        {/each}
         {#if appArgs !== null && appArgs.text.length > 0}
           <span class="text-muted-foreground"
             >{appArgs.full ? t('approvals.appFullArgs') : t('approvals.mcpArgs')}</span

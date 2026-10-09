@@ -726,23 +726,27 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     const card = page.locator('li[data-testid^="bot-card-"]', { hasText: '阿删' });
     const botId = await card.getAttribute('data-testid').then((v) => v?.replace('bot-card-', ''));
     expect(botId).toBeTruthy();
-    const partition = path.join(home, 'browser', 'Partitions', `bot-${botId}`);
+    // Electron lower-cases the partition directory name (Linux is case-sensitive,
+    // macOS is not): match it case-insensitively (partitionEntries, W8).
+    const partition = `bot-${botId}`;
     // Force pending storage writes so the directory is observably present.
     await app.evaluate(async ({ session }, id) => {
       const botSession = session.fromPartition(`persist:bot-${id as string}`);
       await botSession.cookies.flushStore();
       await botSession.flushStorageData();
     }, botId);
-    await expect.poll(() => existsSync(partition), { timeout: 15_000 }).toBe(true);
+    await expect
+      .poll(() => partitionEntries(home, partition).length, { timeout: 15_000 })
+      .toBeGreaterThan(0);
 
     // 删除 Bot（两步确认）→ 分区目录被清理。
     await card.locator('[data-testid^="bot-delete-"]').click();
     await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeVisible();
     await page.locator('[data-testid="bot-delete-confirm"]').click();
     await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeHidden({ timeout: 15_000 });
-    await expect.poll(() => existsSync(partition), { timeout: 30_000 }).toBe(false);
+    await expect.poll(() => partitionEntries(home, partition).length, { timeout: 30_000 }).toBe(0);
     // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
-    await expect.poll(() => existsSync(partition), { timeout: 5_000 }).toBe(false);
+    await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
   } catch (error) {
     dumpRequests(llm, testInfo);
     throw error;
@@ -1011,6 +1015,440 @@ test('W1：SPA 重渲染后点旧 ref → REF_STALE 且无副作用；密码框�
       '密码填好了',
     );
     expect(lastToolContent(llm)).not.toContain('pw-e2e-secret');
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});
+
+// --- W8 自动接管 + 共享浏览器资料 ------------------------------------------------
+
+/** Opens the bot's viewer window from the right panel and waits until it shows the page. */
+async function openViewer(
+  app: ElectronApplication,
+  page: Page,
+  title: string,
+  urlPrefix: string,
+): Promise<void> {
+  if (!(await page.locator('[data-testid="browser-show"]').isVisible())) {
+    await page.locator('[data-testid="right-panel-toggle"]').click();
+  }
+  await page.locator('[data-testid="browser-show"]').click();
+  await expect
+    .poll(
+      () =>
+        app.evaluate(
+          ({ BrowserWindow }, args) => {
+            const win = BrowserWindow.getAllWindows().find(
+              (w) => !w.isDestroyed() && w.getTitle() === args.title,
+            );
+            return (
+              win !== undefined &&
+              win.isVisible() &&
+              win.contentView.children.some((c) =>
+                ((c as Partial<WebContentsView>).webContents?.getURL() ?? '').startsWith(
+                  args.urlPrefix,
+                ),
+              )
+            );
+          },
+          { title, urlPrefix },
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+}
+
+/**
+ * Viewer toolbar state ('agent' / 'user'), read from the toolbar page's data:
+ * URL (the state is part of the page it was loaded with) — no script execution.
+ */
+async function toolbarControl(app: ElectronApplication, title: string): Promise<string | null> {
+  const url = await app.evaluate(({ BrowserWindow }, viewerTitle) => {
+    const win = BrowserWindow.getAllWindows().find(
+      (w) => !w.isDestroyed() && w.getTitle() === viewerTitle,
+    );
+    return (
+      win?.contentView.children
+        .map((c) => (c as Partial<WebContentsView>).webContents?.getURL() ?? '')
+        .find((u) => u.startsWith('data:text/html')) ?? null
+    );
+  }, title);
+  if (url === null) return null;
+  const match = /"control":"(agent|user)"/.exec(decodeURIComponent(url));
+  return match?.[1] ?? null;
+}
+
+test('W8 自动接管：查看窗口里点击 → Bot 点击被拒（BROWSER_USER_CONTROL）；交还给 Bot 后成功；滚轮不算接管、键盘算；关窗即交还', async () => {
+  const testInfo = test.info();
+  test.setTimeout(300_000);
+  const session = await startSession('kepcup-e2e-browser-takeover-');
+  const { page, llm, web, app } = session;
+  const viewerTitle = '阿接 的浏览器';
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '阿接');
+    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-takeover-proj-'));
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/` }, 'fixture-home-marker', '首页打开了'),
+      '首页打开了',
+    );
+    await openViewer(app, page, viewerTitle, `${web.url}/`);
+    await expect.poll(() => toolbarControl(app, viewerTitle), { timeout: 15_000 }).toBe('agent');
+
+    // 用户在查看窗口的页面里点一下（空白处，不触发页面导航）→ 页面归用户。
+    await app.evaluate(
+      ({ BrowserWindow }, args) => {
+        const win = BrowserWindow.getAllWindows().find(
+          (w) => !w.isDestroyed() && w.getTitle() === args.title,
+        );
+        const wc = win?.contentView.children
+          .map((c) => (c as Partial<WebContentsView>).webContents)
+          .find((w) => (w?.getURL() ?? '').startsWith(args.urlPrefix));
+        if (wc === undefined) throw new Error('viewer page not found');
+        wc.sendInputEvent({ type: 'mouseDown', x: 640, y: 600, button: 'left', clickCount: 1 });
+        wc.sendInputEvent({ type: 'mouseUp', x: 640, y: 600, button: 'left', clickCount: 1 });
+      },
+      { title: viewerTitle, urlPrefix: `${web.url}/` },
+    );
+    await expect.poll(() => toolbarControl(app, viewerTitle), { timeout: 15_000 }).toBe('user');
+
+    // Bot 的点击被拒：未派发（not_started），提示等用户交还 / ask_user。
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_click', { ref: 'e1' }, '用户正在浏览器窗口里操作', '被用户接管了'),
+      '被用户接管了',
+    );
+    expect(lastToolContent(llm)).toContain('ask_user');
+
+    // browser_close 也要等用户交还（不关页面）。
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_close', {}, '用户正在浏览器窗口里操作', '关闭也被拒了'),
+      '关闭也被拒了',
+    );
+    // 网页自己改 document.title 成工具条的交还信号：无效（只认工具条页面）。
+    await app.evaluate(
+      async ({ BrowserWindow }, args) => {
+        const win = BrowserWindow.getAllWindows().find(
+          (w) => !w.isDestroyed() && w.getTitle() === args.title,
+        );
+        const wc = win?.contentView.children
+          .map((c) => (c as Partial<WebContentsView>).webContents)
+          .find((w) => (w?.getURL() ?? '').startsWith(args.urlPrefix));
+        if (wc === undefined) throw new Error('viewer page not found');
+        await wc.executeJavaScript("document.title = 'kepcup:handback:1'", true);
+      },
+      { title: viewerTitle, urlPrefix: `${web.url}/` },
+    );
+    await page.waitForTimeout(1_000);
+    expect(await toolbarControl(app, viewerTitle)).toBe('user');
+
+    // 工具条「交还给 Bot」→ 回到 Bot；同一个点击这次生效（进入表单页）。
+    await app.evaluate(async ({ BrowserWindow }, title) => {
+      const win = BrowserWindow.getAllWindows().find(
+        (w) => !w.isDestroyed() && w.getTitle() === title,
+      );
+      const toolbar = win?.contentView.children
+        .map((c) => (c as Partial<WebContentsView>).webContents)
+        .find((wc) => (wc?.getURL() ?? '').startsWith('data:text/html'));
+      if (toolbar === undefined) throw new Error('toolbar not found');
+      await Promise.race([
+        toolbar.executeJavaScript("document.getElementById('handback').click()", true),
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new Error('toolbar script timed out')), 10_000),
+        ),
+      ]);
+    }, viewerTitle);
+    await expect.poll(() => toolbarControl(app, viewerTitle), { timeout: 15_000 }).toBe('agent');
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_click', { ref: 'e1' }, 'fixture-form-marker', '交还后点上了'),
+      '交还后点上了',
+    );
+
+    // 滚轮 / 移动鼠标不算接管；键盘输入算。
+    const sendToViewerPage = (events: Array<Record<string, unknown>>) =>
+      app.evaluate(
+        ({ BrowserWindow }, args) => {
+          const win = BrowserWindow.getAllWindows().find(
+            (w) => !w.isDestroyed() && w.getTitle() === args.title,
+          );
+          const wc = win?.contentView.children
+            .map((c) => (c as Partial<WebContentsView>).webContents)
+            .find((w) => (w?.getURL() ?? '').startsWith(args.urlPrefix));
+          if (wc === undefined) throw new Error('viewer page not found');
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const event of args.events) wc.sendInputEvent(event as any);
+        },
+        { title: viewerTitle, urlPrefix: `${web.url}/`, events },
+      );
+    await sendToViewerPage([
+      { type: 'mouseMove', x: 300, y: 300 },
+      { type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: -120 },
+      { type: 'keyDown', keyCode: 'Down' },
+      { type: 'keyUp', keyCode: 'Down' },
+    ]);
+    await page.waitForTimeout(1_000);
+    expect(await toolbarControl(app, viewerTitle)).toBe('agent');
+    await sendToViewerPage([
+      { type: 'keyDown', keyCode: 'Escape' },
+      { type: 'keyUp', keyCode: 'Escape' },
+    ]);
+    await expect.poll(() => toolbarControl(app, viewerTitle), { timeout: 15_000 }).toBe('user');
+
+    // 关闭查看窗口 = 交还：Bot 的动作重新可用。
+    await app.evaluate(({ BrowserWindow }, title) => {
+      BrowserWindow.getAllWindows()
+        .find((w) => !w.isDestroyed() && w.getTitle() === title)
+        ?.close();
+    }, viewerTitle);
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_back', {}, 'fixture-home-marker', '关窗后回到首页'),
+      '关窗后回到首页',
+    );
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});
+
+async function openProfileTab(page: Page): Promise<void> {
+  if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
+    await page.locator('[data-testid="right-panel-toggle"]').click();
+  }
+  await page.locator('[data-testid="right-panel-tabs"]').locator('text=配置').click();
+  await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
+}
+
+async function openBrowserProfilesSettings(page: Page): Promise<void> {
+  await page.locator('[data-testid="user-menu-trigger"]').click();
+  await page.locator('[data-testid="menu-settings"]').click();
+  await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+  await page.locator('[data-testid="settings-nav-browser"]').click();
+  await expect(page.locator('[data-testid="settings-browser-profiles"]')).toBeVisible();
+}
+
+async function closeSettings(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+}
+
+/** Partition directories of a profile (Electron's on-disk spelling may be lower-cased). */
+function partitionEntries(home: string, name: string): string[] {
+  const root = path.join(home, 'browser', 'Partitions');
+  if (!existsSync(root)) return [];
+  return readdirSync(root).filter((entry) => entry.toLowerCase() === name.toLowerCase());
+}
+
+test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie，私有 Bot 看不到；删除资料后目录被清', async () => {
+  const testInfo = test.info();
+  test.setTimeout(420_000);
+  const session = await startSession('kepcup-e2e-browser-shared-');
+  const { page, llm, web, home, app } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '共甲');
+    await createBotAndOpenChat(page, '共乙');
+    await createBotAndOpenChat(page, '私丙');
+    const project = makeProjectDir('kepcup-e2e-browser-shared-proj-');
+    await bindProject(app, page, project); // 当前对话 = 私丙
+
+    // 设置 › 浏览器资料：新建共享资料。
+    await openBrowserProfilesSettings(page);
+    await page.locator('[data-testid="browser-profile-new-name"]').fill('工作账号');
+    await page.locator('[data-testid="browser-profile-create"]').click();
+    const item = page.locator('li[data-testid^="browser-profile-bpf_"]');
+    await expect(item).toHaveCount(1, { timeout: 15_000 });
+    const profileId = (await item.getAttribute('data-testid'))!.replace('browser-profile-', '');
+    await closeSettings(page);
+
+    // Bot 详情：共甲、共乙挂到共享资料（选中即出现警示），自动保存。
+    // 切换要显式确认（不走自动保存）：先取消一次，值复原、没有保存。
+    const profileSelect = page.locator(
+      '[data-testid="profile-tab"] [data-testid="bot-browser-profile"]',
+    );
+    const switchConfirm = page.locator('[data-testid="bot-browser-profile-confirm"]');
+    for (const name of ['共甲', '共乙']) {
+      await openConversation(page, name);
+      await bindProject(app, page, project);
+      await openProfileTab(page);
+      if (name === '共甲') {
+        // 键盘在下拉里移动选项：只出确认，不保存。
+        await profileSelect.focus();
+        await page.keyboard.press('ArrowDown');
+        await expect(switchConfirm).toBeVisible();
+        await page.waitForTimeout(1_000); // 超过自动保存的防抖：未确认不保存
+        await page.locator('[data-testid="bot-browser-profile-confirm-no"]').click();
+        await expect(switchConfirm).toBeHidden();
+        await expect(profileSelect).toHaveValue('');
+        await openBrowserProfilesSettings(page);
+        await expect(item.locator('[data-testid="browser-profile-bots"]')).toHaveText(
+          '还没有 Bot 使用它',
+        );
+        await closeSettings(page);
+        await openProfileTab(page);
+      }
+      await profileSelect.selectOption(profileId);
+      await expect(page.locator('[data-testid="bot-browser-profile-warning"]')).toBeVisible();
+      await page.locator('[data-testid="bot-browser-profile-confirm-yes"]').click();
+      await expect(switchConfirm).toBeHidden({ timeout: 15_000 });
+      await expect(profileSelect).toHaveValue(profileId);
+    }
+    await openBrowserProfilesSettings(page);
+    await expect(item.locator('[data-testid="browser-profile-bots"]')).toContainText('共甲');
+    await expect(item.locator('[data-testid="browser-profile-bots"]')).toContainText('共乙');
+    await closeSettings(page);
+
+    // 共甲设置 cookie → 共乙（同一共享资料）看得到；私丙（私有）看不到。
+    await openConversation(page, '共甲');
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/cookie-set` }, 'cookie-set-page', '甲设好了'),
+      '甲设好了',
+    );
+    await openConversation(page, '共乙');
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/cookie-read` }, 'fixture_sid=SID1234', '乙看到了'),
+      '乙看到了',
+    );
+    await openConversation(page, '私丙');
+    await runOnce(
+      page,
+      llm,
+      toolRun('browser_open', { url: `${web.url}/cookie-read` }, 'COOKIE_JAR=[]', '丙看不到'),
+      '丙看不到',
+    );
+
+    // 共享资料的分区目录存在（强制落盘）。
+    await app.evaluate(async ({ session: electronSession }, id) => {
+      const shared = electronSession.fromPartition(`persist:shared-${id as string}`);
+      await shared.cookies.flushStore();
+      await shared.flushStorageData();
+    }, profileId);
+    await expect
+      .poll(() => partitionEntries(home, `shared-${profileId}`).length, { timeout: 15_000 })
+      .toBeGreaterThan(0);
+
+    // 删除共享资料（行内确认）→ 目录被清；两个 Bot 回到私有。
+    await openBrowserProfilesSettings(page);
+    await item.locator('[data-testid="browser-profile-delete"]').click();
+    await item.locator('[data-testid="browser-profile-confirm-yes"]').click();
+    await expect(page.locator('[data-testid="browser-profiles-empty"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await closeSettings(page);
+    await expect
+      .poll(() => partitionEntries(home, `shared-${profileId}`).length, { timeout: 30_000 })
+      .toBe(0);
+    await openConversation(page, '共甲');
+    await openProfileTab(page);
+    await expect(
+      page.locator('[data-testid="profile-tab"] [data-testid="bot-browser-profile"]'),
+    ).toHaveValue('');
+  } catch (error) {
+    dumpRequests(llm, testInfo);
+    throw error;
+  } finally {
+    await closeSession(session);
+  }
+});
+
+test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦截记为失败；绑定 project 后本机页可读并提醒', async () => {
+  const testInfo = test.info();
+  test.setTimeout(300_000);
+  const session = await startSession('kepcup-e2e-browser-watch-');
+  const { page, llm, web, app } = session;
+  /** Visible windows (the main window only; a background page never shows). */
+  const visibleWindows = () =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length);
+  /** webContents currently showing the fixture server (a kept background page would). */
+  const fixturePages = (origin: string) =>
+    app.evaluate(
+      ({ webContents }, target) =>
+        webContents.getAllWebContents().filter((wc) => wc.getURL().startsWith(target)).length,
+      origin,
+    );
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '小盯');
+    const windowsBefore = await visibleWindows();
+
+    // 1) 对话轮直接用 watch_create（异步托管动作，不派任务）：内网地址。
+    const before = web.requestsServed();
+    llm.script('mock-main', [
+      step()
+        .expect((req) => req.lastUserText().includes('盯一下路由器'))
+        .replyToolCall('watch_create', {
+          url: 'http://192.168.1.1/',
+          condition: { kind: 'changed' },
+          interval_minutes: 5,
+        }),
+      step().replyText('好的，开始监看路由器页面'),
+    ]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('盯一下路由器页面');
+    await composer.press('ControlOrMeta+Enter');
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '开始监看路由器页面' }),
+    ).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator('[data-testid^="watch-card-created-"]').first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // 右栏「定时任务」标签里的监看列表：第一次检查立即执行，被网络规则拦截 → 失败计数。
+    const tabs = page.locator('[data-testid="right-panel-tabs"]');
+    if (!(await tabs.isVisible())) await page.locator('[data-testid="right-panel-toggle"]').click();
+    await tabs.locator('text=定时任务').click();
+    const list = page.locator('[data-testid="watches-tab-list"]');
+    await expect(list.locator('[data-testid="watch-failing"]')).toContainText('拦截', {
+      timeout: 60_000,
+    });
+    expect(web.requestsServed()).toBe(before);
+    expect(await visibleWindows()).toBe(windowsBefore);
+
+    // 2) 绑定 project 后本机地址放行：contains 条件首检即满足 → 提醒卡 + 唤醒对话轮。
+    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-watch-proj-'));
+    llm.script('mock-main', [
+      step()
+        .expect((req) => req.lastUserText().includes('盯一下本机页面'))
+        .replyToolCall('watch_create', {
+          url: `${web.url}/`,
+          condition: { kind: 'contains', text: 'fixture-home-marker' },
+          interval_minutes: 5,
+        }),
+      step().replyText('好的，开始监看本机页面'),
+      step()
+        .expect((req) => req.lastUserText().includes('<trigger reason="watch"'))
+        .replyText('本机页面出现了标记'),
+    ]);
+    await composer.fill('盯一下本机页面');
+    await composer.press('ControlOrMeta+Enter');
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '本机页面出现了标记' }),
+    ).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator('[data-testid^="watch-card-alert-"]').first()).toBeVisible();
+    await expect(page.locator('[data-testid="watch-card-summary"]').first()).toContainText(
+      'fixture-home-marker',
+    );
+    expect(web.requestsServed()).toBeGreaterThan(before);
+    // Never shown, not kept: no extra visible window, no page left on the fixture.
+    expect(await visibleWindows()).toBe(windowsBefore);
+    await expect.poll(() => fixturePages(web.url), { timeout: 15_000 }).toBe(0);
   } catch (error) {
     dumpRequests(llm, testInfo);
     throw error;

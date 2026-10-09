@@ -59,6 +59,12 @@ export const botRuntimeSchema = z.object({
    */
   app_connection_ids: z.array(z.string()).default([]),
   /**
+   * 浏览器资料（W8，docs/design/14-models-and-browser.md）：'' = 私有（默认，
+   * partition `persist:bot-{botId}`）；否则为共享资料 id（settings.browserProfiles，
+   * partition `persist:shared-{id}`）。Profile JSON，无迁移；指向已删除资料时按私有处理。
+   */
+  browser_profile: z.string().default('').catch(''),
+  /**
    * 外部智能体引擎（D72，docs/design/28-external-agents-acp.md §3）：`id` 为
    * 空 = 内置 pi 引擎（其余字段忽略）；非空 = 由目录中该 Agent 驱动。D75
    * （docs/design/30-supervisor-and-tasks.md §8.1）起语义为「Bot 的**任务**
@@ -526,6 +532,17 @@ export const appsSettingsSchema = z
   .catch({ toolLockBaselineDone: false });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;
 
+/**
+ * 共享浏览器资料（W8）：用户显式建立、多个 Bot 挂同一份 Electron partition
+ * （cookie / localStorage / IndexedDB），共用登录状态。只经 `browserProfiles.*` 写入。
+ */
+export const browserProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.number(),
+});
+export type BrowserProfile = z.infer<typeof browserProfileSchema>;
+
 export const settingsSchema = z.object({
   customProviders: z.array(customProviderSchema).default([]),
   /** 国内厂商配置（百炼 / 火山方舟），每家至多一条；只登记对话模型。 */
@@ -557,6 +574,8 @@ export const settingsSchema = z.object({
    * 密钥在 secrets 表，设置 UI 写占位符。默认空 = 未配置任何 server。
    */
   mcpServers: z.array(mcpServerSchema).default([]),
+  /** 共享浏览器资料（W8）：只经 `browserProfiles.*` 写入，settings.update 不接受。 */
+  browserProfiles: z.array(browserProfileSchema).default([]).catch([]),
   /**
    * Launch at login (P13 任务 3): default ON per docs/dev/phases/P13-release.md.
    * The value lives in core's settings row; the main process applies it to the
@@ -685,6 +704,12 @@ export const textContentSchema = z.object({
   delegatedBy: z.string().optional(),
   /** origin = 'task' 时发出该消息的任务（run id）。 */
   taskId: z.string().optional(),
+  /**
+   * 定时触发的对话轮发出的消息（D80）：来源定时任务与其标题快照，气泡下方
+   * 显示「⏰ 标题」，点开定时任务列表。
+   */
+  scheduleId: z.string().optional(),
+  scheduleTitle: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
@@ -735,7 +760,46 @@ export const systemEventContentSchema = z.object({
       task: z.string().optional(),
     })
     .optional(),
+  /**
+   * 定时任务回执卡（D80，event = schedule_created）：创建时的快照；`status`
+   * 随取消 / 完成回写。
+   */
+  schedule: z
+    .object({
+      id: z.string(),
+      botId: z.string(),
+      title: z.string(),
+      note: z.string(),
+      kind: z.enum(['once', 'cron']),
+      runAt: z.number().nullable(),
+      cron: z.string().nullable(),
+      timezone: z.string(),
+      origin: z.enum(['tool', 'offer', 'proposal', 'commitment']),
+      status: z.enum(['active', 'done', 'cancelled']),
+    })
+    .optional(),
+  /**
+   * 定时提议卡（D80，event = schedule_offer）：Bot 用 offer_schedule 提出的
+   * 具体时间；用户点「设置」后宿主确定性创建（scheduleId），点「不用了」记为
+   * declined；同一 Bot 的新提议把旧的待定提议标为 superseded。
+   */
+  offer: z
+    .object({
+      botId: z.string(),
+      title: z.string(),
+      note: z.string(),
+      when: z.string(),
+      timezone: z.string().nullable(),
+      question: z.string(),
+      status: z.enum(['pending', 'accepted', 'declined', 'superseded', 'expired']),
+      scheduleId: z.string().optional(),
+      decidedAt: z.number().optional(),
+    })
+    .optional(),
 });
+export type SystemEventContent = z.infer<typeof systemEventContentSchema>;
+export type ScheduleReceiptSnapshot = NonNullable<SystemEventContent['schedule']>;
+export type ScheduleOfferContent = NonNullable<SystemEventContent['offer']>;
 /**
  * Card message (P03): the payload itself lives in the approvals table; the
  * message row only links to it so collapsed/updated rendering follows the
@@ -748,6 +812,24 @@ export const cardContentSchema = z.object({
   runId: z.string().optional(),
   /** Delegation cards only (D71, cardType delegation_sent / delegation_result). */
   delegationId: z.string().optional(),
+  /**
+   * Watch cards only (W7, cardType `watch`): the watch, which moment the card
+   * marks (created / alert / paused), the alert sequence, the idempotency key
+   * (`watch:{id}:{seq}:{hash}` / `watch-error:{id}:{streak}:paused`) and the
+   * alert's page-diff summary (web content: untrusted when shown to a bot).
+   */
+  watchId: z.string().optional(),
+  watchEvent: z.enum(['created', 'alert', 'paused']).optional(),
+  watchSeq: z.number().int().optional(),
+  watchKey: z.string().optional(),
+  watchSummary: z.string().optional(),
+  /**
+   * Paused cards only: why (`failures` / `too_frequent`) and, for failures,
+   * the streak length at the time — the card keeps reading right after a
+   * resume reset the live counter.
+   */
+  watchPauseReason: z.enum(['failures', 'too_frequent']).optional(),
+  watchFailures: z.number().int().optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 
@@ -885,6 +967,8 @@ export const triggerReasonSchema = z.enum([
   'delegation',
   /** 任务结算唤醒对话轮（D75 §3.2）：触发批是任务的终态条目。 */
   'task',
+  /** 确定性监看（W7，D79）：监看条件边沿触发，触发批是内部事件 watch_alert。 */
+  'watch',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -984,8 +1068,9 @@ export const runSchema = z.object({
    */
   setup: setupRequirementSchema.nullable().default(null),
   /**
-   * 机器可读的失败 / 中断原因（error_json.reason）：目前只有 W3 的
-   * `permission_revoked`（用户撤销授权 → 运行中的任务被中断）；其余为 null / 缺省。
+   * 机器可读的失败 / 中断原因（error_json.reason）：W3 的 `permission_revoked`
+   * （用户撤销授权 → 运行中的任务被中断）、W8 的 `browser_profile_changed`（Bot
+   * 的浏览器资料被切换 → 用过浏览器的运行中任务被中断）；其余为 null / 缺省。
    */
   errorReason: z.string().nullable().optional(),
   /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
@@ -1096,6 +1181,10 @@ export const jobTypeSchema = z.enum([
   'memory_vec_rebuild',
   // D71: a cross-bot delegation parked until the target bot's quiet hours end.
   'delegation_delivery',
+  // W7 (D79): a watch alert (dedupe key watch:{id}:{seq}:{hash}) — the card +
+  // the bot's wake are posted by the job, so a crash after the edge was
+  // committed never loses the alert.
+  'watch_alert',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
@@ -1282,6 +1371,12 @@ export const mcpToolApprovalPayloadSchema = z.object({
   durations: z.array(approvalDurationSchema).optional(),
   /** 完整参数（脱敏后的 JSON 文本；仅破坏性档的应用工具卡片展示，不截断到摘要长度）。 */
   argsFull: z.string().optional(),
+  /**
+   * W4 精确卡片：写入 / 破坏性工具参数里的收件人类字段（to / cc / bcc /
+   * recipient(s) / channel / email / phone / user / chat_id …，可在嵌套对象里），
+   * 值**完整**列出、不参与 argsSummary 的 400 字截断（已脱敏）。`key` 是参数路径。
+   */
+  recipients: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
 
@@ -1335,6 +1430,15 @@ export const agentToolApprovalPayloadSchema = z.object({
 });
 export type AgentToolApprovalPayload = z.infer<typeof agentToolApprovalPayloadSchema>;
 
+/** One routine of a proposed bot (D80, todo/schedule-nudges.md §3.7). */
+export const butlerProposedRoutineSchema = z.object({
+  title: z.string(),
+  when: z.string(),
+  timezone: z.string().nullable().default(null),
+  note: z.string(),
+});
+export type ButlerProposedRoutine = z.infer<typeof butlerProposedRoutineSchema>;
+
 /** One bot a butler proposal suggests (D70); maps onto Profile fields on creation. */
 export const butlerProposedBotSchema = z.object({
   name: z.string(),
@@ -1343,6 +1447,11 @@ export const butlerProposedBotSchema = z.object({
   responsibilities: z.string().default(''),
   /** Why the user needs it (shown on the card). */
   reason: z.string().default(''),
+  /**
+   * 例行事项（D80）：确认后建到新 Bot 私聊里的定时任务。`when` 同 schedule
+   * 工具（ISO 8601 一次性 / cron 周期）。
+   */
+  routines: z.array(butlerProposedRoutineSchema).default([]),
 });
 export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
 
@@ -1372,6 +1481,31 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
 ]);
 export type ButlerProposalPayload = z.infer<typeof butlerProposalPayloadSchema>;
 
+/**
+ * W4（D78）审批回执：审批所属外部调用的台账行（runs.db `tool_effects`，按
+ * approval_id 跨库查）的状态 / 回执 / 落定时间。
+ */
+export const approvalEffectSchema = z.object({
+  status: effectStatusSchema,
+  receipt: effectReceiptSchema.optional(),
+  settledAt: z.number().optional(),
+});
+export type ApprovalEffect = z.infer<typeof approvalEffectSchema>;
+
+/**
+ * W4 去重门：同一任务链里同样的操作上次结果未知（`uncertain`），或非 MCP 的
+ * 操作（git_remote、沙箱外命令…）已经执行过（`completed`）时，新卡的 payload
+ * 带 `priorEffect`；渲染端在卡片顶部提示「上次同样的操作结果未知，请先确认是否
+ * 已生效」/「本任务中已执行过相同操作（回执…），请确认是否需要再次执行」。
+ */
+export const approvalPriorEffectSchema = z.object({
+  status: effectStatusSchema,
+  summary: z.string(),
+  createdAt: z.number(),
+  receipt: effectReceiptSchema.optional(),
+});
+export type ApprovalPriorEffect = z.infer<typeof approvalPriorEffectSchema>;
+
 export const approvalDecisionSchema = z.object({
   /**
    * Only meaningful for `access` approvals, path-type `agent_tool` ones (D72) and
@@ -1384,6 +1518,11 @@ export const approvalDecisionSchema = z.object({
    * (unchecked items are dropped before creation). Absent = all items.
    */
   selection: z.array(z.number().int().nonnegative()).optional(),
+  /**
+   * `butler_proposal` only (D80): routines the user kept, as
+   * `"{botIndex}:{routineIndex}"`. Absent = every routine of the kept bots.
+   */
+  routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });
@@ -1404,6 +1543,13 @@ export const approvalSchema = z.object({
   messageId: z.string().nullable(),
   createdAt: z.number(),
   decidedAt: z.number().nullable(),
+  /**
+   * W4：sha256(stableJson(payload))，读取时计算、不落库。渲染端决定时回传它
+   * 渲染的值（`approvals.decide.payloadHash`），不符 → APPROVAL_STALE。
+   */
+  payloadHash: z.string().optional(),
+  /** W4：本审批所属工具调用的台账结局（回执）；旧审批 / 非外部调用没有。 */
+  effect: approvalEffectSchema.optional(),
 });
 export type Approval = z.infer<typeof approvalSchema>;
 
@@ -1941,6 +2087,15 @@ export type ScheduleKind = z.infer<typeof scheduleKindSchema>;
 export const scheduleStatusSchema = z.enum(['active', 'done', 'cancelled']);
 export type ScheduleStatus = z.infer<typeof scheduleStatusSchema>;
 
+/**
+ * Where a schedule came from (D80, todo/schedule-nudges.md §3.1): `tool` = the
+ * bot called `schedule`; `offer` = the user clicked 设置 on an offer card;
+ * `proposal` = a routine of a butler team / bot proposal; `commitment` = the
+ * commitment linkage (P10 任务 6).
+ */
+export const scheduleOriginSchema = z.enum(['tool', 'offer', 'proposal', 'commitment']);
+export type ScheduleOrigin = z.infer<typeof scheduleOriginSchema>;
+
 /** One row of the schedules table (docs/dev/03-data-model.md "schedules"). */
 export const scheduleSchema = z.object({
   id: z.string(),
@@ -1954,6 +2109,9 @@ export const scheduleSchema = z.object({
   /** IANA time zone the cron expression (and quiet hours) evaluate in. */
   timezone: z.string(),
   note: z.string(),
+  /** User-facing short name (D80); '' on pre-D80 rows (display falls back to the note). */
+  title: z.string(),
+  origin: scheduleOriginSchema,
   /** Commitment (memory.db) this task was created for, if any. */
   commitmentId: z.string().nullable(),
   status: scheduleStatusSchema,

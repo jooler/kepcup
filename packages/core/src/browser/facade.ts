@@ -3,11 +3,13 @@ import {
   AppError,
   browserActionOutputSchema,
   browserEnsurePageOutputSchema,
+  browserFetchTextOutputSchema,
   browserNavigateOutputSchema,
   browserScreenshotOutputSchema,
   browserSnapshotOutputSchema,
   okOutputSchema,
   type BrowserActionOutput,
+  type BrowserFetchTextOutput,
   type BrowserNetworkContext,
   type BrowserScreenshotOutput,
   type BrowserSnapshotOutput,
@@ -35,6 +37,8 @@ export interface BrowserRpcClient {
 
 export interface BrowserHostRpc {
   ensurePage(input: BrowserPageKey & {
+    /** W8: `bot:{botId}` / `shared:{profileId}` — the host derives the partition. */
+    profileKey: string;
     networkContext: BrowserNetworkContext;
     downloadsDir: string;
   }): Promise<{ ok: true }>;
@@ -54,10 +58,42 @@ export interface BrowserHostRpc {
   close(input: BrowserPageKey & { permanent?: boolean }): Promise<{ ok: true }>;
   setNetworkContext(input: BrowserPageKey & { networkContext: BrowserNetworkContext }): Promise<{ ok: true }>;
   clearBotData(input: { botId: string }): Promise<{ ok: true }>;
+  /** W8: closes every page of the bot (its browser profile was switched). */
+  closeBotPages(input: { botId: string }): Promise<{ ok: true }>;
+  /** W8: wipes a shared profile's storage (`remove` = deleted: tombstone + directory). */
+  clearProfileData(input: { profileId: string; remove?: boolean }): Promise<{ ok: true }>;
+  /**
+   * W7 确定性监看：a hidden background page keyed `botId|watch:{watchId}` in
+   * the bot's effective profile loads `url` under the network rules, returns
+   * the body text (or `selector`'s) and closes. Never shown, never kept.
+   */
+  fetchText(input: {
+    botId: string;
+    watchId: string;
+    profileKey: string;
+    networkContext: BrowserNetworkContext;
+    url: string;
+    selector?: string;
+    extraSelectors?: string[];
+  }): Promise<BrowserFetchTextOutput>;
 }
 
 function unavailable(): AppError {
   return new AppError('BROWSER_UNAVAILABLE', '浏览器宿主未连接');
+}
+
+/** Reason in-flight calls are rejected with when the port B binding is replaced. */
+const HOST_DISCONNECTED = 'browser host disconnected';
+
+/**
+ * W7: the call failed because no browser host is connected — not bound yet
+ * (startup), or the binding went away while it ran (the pending call then
+ * surfaces as INTERNAL "browser host disconnected"). Not the page's fault.
+ */
+export function isBrowserHostUnavailable(error: unknown): boolean {
+  if (!(error instanceof AppError)) return false;
+  if (error.code === 'BROWSER_UNAVAILABLE') return true;
+  return error.code === 'INTERNAL' && error.message === HOST_DISCONNECTED;
 }
 
 /** One facade dispatch per method (used when a test fake is bound). */
@@ -74,6 +110,9 @@ const FACADE_METHODS: Record<string, (facade: BrowserHostRpc, input: unknown) =>
   'browser.close': (f, i) => f.close(i as never),
   'browser.setNetworkContext': (f, i) => f.setNetworkContext(i as never),
   'browser.clearBotData': (f, i) => f.clearBotData(i as never),
+  'browser.closeBotPages': (f, i) => f.closeBotPages(i as never),
+  'browser.clearProfileData': (f, i) => f.clearProfileData(i as never),
+  'browser.fetchText': (f, i) => f.fetchText(i as never),
 };
 
 class DeferredRpc implements BrowserHostRpc {
@@ -81,15 +120,36 @@ class DeferredRpc implements BrowserHostRpc {
   /** In-process target (test fake); takes precedence over the port B client. */
   #facade: BrowserHostRpc | null = null;
 
+  readonly #boundListeners = new Set<() => void>();
+
   bind(client: BrowserRpcClient | null): void {
     // Fail everything still in flight: pages die with the transport.
-    this.#client?.rejectPending('browser host disconnected');
+    this.#client?.rejectPending(HOST_DISCONNECTED);
     this.#client = client;
+    if (client !== null) this.#notifyBound();
   }
 
   /** Binds an in-process implementation (integration tests). */
   bindFacade(facade: BrowserHostRpc | null): void {
     this.#facade = facade;
+    if (facade !== null) this.#notifyBound();
+  }
+
+  onBound(listener: () => void): () => void {
+    this.#boundListeners.add(listener);
+    return () => {
+      this.#boundListeners.delete(listener);
+    };
+  }
+
+  #notifyBound(): void {
+    for (const listener of [...this.#boundListeners]) {
+      try {
+        listener();
+      } catch {
+        // A listener's failure never breaks the binding.
+      }
+    }
   }
 
   async #call<T>(method: string, input: unknown, output: ZodType<T>): Promise<T> {
@@ -105,6 +165,9 @@ class DeferredRpc implements BrowserHostRpc {
   }
 
   ensurePage(input: Parameters<BrowserHostRpc['ensurePage']>[0]) {
+    // W8: another profile for this page = the host recreates it — the W1
+    // state (no-progress streak, screenshot dedupe) belongs to the old page.
+    if (notePageProfile(this, input, input.profileKey)) dropBrowserPageState(this, input);
     return this.#call('browser.ensurePage', input, browserEnsurePageOutputSchema);
   }
 
@@ -154,12 +217,33 @@ class DeferredRpc implements BrowserHostRpc {
     dropBotBrowserPageStates(this, input.botId);
     return this.#call('browser.clearBotData', input, okOutputSchema);
   }
+
+  closeBotPages(input: Parameters<BrowserHostRpc['closeBotPages']>[0]) {
+    // The pages are gone: a reopened page (new profile) starts clean.
+    dropBotBrowserPageStates(this, input.botId);
+    return this.#call('browser.closeBotPages', input, okOutputSchema);
+  }
+
+  fetchText(input: Parameters<BrowserHostRpc['fetchText']>[0]) {
+    return this.#call('browser.fetchText', input, browserFetchTextOutputSchema);
+  }
+
+  clearProfileData(input: Parameters<BrowserHostRpc['clearProfileData']>[0]) {
+    // The host closes every page on the profile (clear and delete alike).
+    dropProfileBrowserPageStates(this, `shared:${input.profileId}`);
+    return this.#call('browser.clearProfileData', input, okOutputSchema);
+  }
 }
 
 export type DeferredBrowserHostRpc = BrowserHostRpc & {
   bind(client: BrowserRpcClient | null): void;
   /** Binds an in-process implementation (integration test fakes). */
   bindFacade(facade: BrowserHostRpc | null): void;
+  /**
+   * W7: called whenever a host gets bound (port B arrived / re-bound, or a
+   * test fake) — work deferred while the host was unavailable resumes.
+   */
+  onBound(listener: () => void): () => void;
 };
 
 /** The unbound-by-default facade used when no client was injected yet. */
@@ -192,6 +276,37 @@ export interface BrowserPageState {
 /** Pages remembered per host handle (oldest dropped first). */
 const PAGE_STATE_MAX = 256;
 const pageStates = new WeakMap<object, Map<string, BrowserPageState>>();
+/** W8: the profile key each page was last ensured with (per host handle). */
+const pageProfiles = new WeakMap<object, Map<string, string>>();
+
+/** Records the page's profile key; true when it differs from the last one seen. */
+function notePageProfile(host: BrowserHostRpc, key: BrowserPageKey, profileKey: string): boolean {
+  let profiles = pageProfiles.get(host);
+  if (profiles === undefined) {
+    profiles = new Map();
+    pageProfiles.set(host, profiles);
+  }
+  const mapKey = `${key.botId}|${key.conversationId}`;
+  const previous = profiles.get(mapKey);
+  profiles.delete(mapKey);
+  profiles.set(mapKey, profileKey);
+  if (profiles.size > PAGE_STATE_MAX) {
+    const oldest = profiles.keys().next().value;
+    if (oldest !== undefined) profiles.delete(oldest);
+  }
+  return previous !== undefined && previous !== profileKey;
+}
+
+/** W8: forgets every page on a profile (clearProfileData closes them). */
+export function dropProfileBrowserPageStates(host: BrowserHostRpc, profileKey: string): void {
+  const profiles = pageProfiles.get(host);
+  if (profiles === undefined) return;
+  for (const [key, value] of [...profiles.entries()]) {
+    if (value !== profileKey) continue;
+    profiles.delete(key);
+    pageStates.get(host)?.delete(key);
+  }
+}
 
 export function browserPageState(
   host: BrowserHostRpc,

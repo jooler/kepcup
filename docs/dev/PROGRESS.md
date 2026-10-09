@@ -979,7 +979,7 @@
 - **交付**：
   - testkit 假授权 + MCP 服务器 `fake-oauth-mcp-server.ts`（发现 / CIMD / DCR / 预注册 / PKCE / 吊销，行为开关与记录齐全）与 `simulateBrowser`、`publishCimdDocument`。
   - shared：`mcpServer.auth`（`none | headers | oauth`，缺省按 `headers` 推断）、`appConnection*` 类型、`approvalDurationSchema`、`connect-app` setup 需求、`apps.*` / `mcp.removeServer` / 主进程 `shell.openExternal` RPC、`apps.connect_flow` / `apps.connection_status` 事件、`needs_auth` 状态、OAuth 常量与错误码。
-  - main `0022_app_connections.sql`（`app_connections`、`oauth_clients`）。
+  - main `0024_app_connections.sql`（`app_connections`、`oauth_clients`；起初为 0022，合入 main 时顺延）。
   - core `apps/`：Token Vault（令牌逐值存 secrets）、连接行存取、交互流程 `ConnectFlowManager`（自建回调服务、SSRF 防护的 fetch，`infra/safe-dispatcher.ts` 从 `search/service.ts` 抽出）、运行时 `ConnectionAuthProvider` / `ConnectionAuthRegistry`（只刷新、不授权）、`AppDisconnector`（吊销 + 清理 + 改认证方式 / URL 时断开旧连接）、审计。
   - `McpService` / `buildMcpTools` / orchestrator 接线：授权错误不计失败、`needs_auth`、`SETUP_REQUIRED` → `connect-app` 卡 → `runs.retry`；`<connected_apps>` 段与 `app_request_connection` 工具；`SecretsService` 轮换 / 删除后旧值仍参与 `redact`、`removeByPrefix`。
   - 渲染端：`ConnectAppPanel`（设置页与对话卡共用）、`stores/apps.svelte.ts`、`McpSection` 认证方式与连接 / 断开、`SetupRequiredCard` 的 `connect-app` 分支、`mcp.removeServer`；主进程 `shell-methods.ts`。
@@ -989,5 +989,5 @@
 - **偏差**：DEV-019（见 DEVIATIONS）。
 - **未做 / 待办**：
   - **门禁里需要用户的部分（用户待办 U1）**：部署 `infra/cloudflare/oauth-cimd` 到 `kepcup.com/oauth/*` 并运行 `verify.mjs`；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（连接 → 调用 → 过期重连 → 断开），结果补记在此。
-  - **迁移号**：本分支取 main `0022`，`t/schedule-nudges`（D80）的 `0022_schedule_title_origin.sql` 同号——后合入的一方须顺延重编号（D73 改 `0023`；`app-connections-migration.test.ts` 等按版本号断言的测试同步改，既有迁移测试已用 `test/support/migration-versions.ts` 的 `mainVersionsAfter` 不受影响）。
+  - **迁移号**：已处理——合入 main 时撞上 D80 的 `0022_schedule_title_origin.sql` 与 W7 的 `0023_watches.sql`，D73 顺延为 `0024_app_connections.sql` / `0025_app_tools.sql`；`app-connections-migration.test.ts` / `app-tools-migration.test.ts` 同步改版本号，既有迁移测试用 `test/support/migration-versions.ts` 的 `mainVersionsAfter`，不受影响。
   - P1（目录、Bot 授权、风险分级审批与工具锁定、设置「应用」分区、ACP `apps` 能力包）、P2 起不在本期。

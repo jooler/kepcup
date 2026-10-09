@@ -61,7 +61,7 @@ describe('runs 0009 tool_effects 迁移', () => {
     const stepsBefore = db.prepare('select * from run_steps').all();
 
     const applied = runMigrations(db, migrationsUrl('runs'));
-    expect(applied.map((m) => m.version)).toEqual([9]);
+    expect(applied.map((m) => m.version)).toEqual([9, 10]);
     expect(db.prepare('select * from runs').all()).toEqual(runsBefore);
     expect(db.prepare('select * from run_steps').all()).toEqual(stepsBefore);
     // Forward-only, no backfill: old runs have no ledger rows.
@@ -89,6 +89,32 @@ describe('runs 0009 tool_effects 迁移', () => {
 
     db.prepare("delete from runs where id = 'run_old'").run();
     expect(db.prepare('select count(*) as n from tool_effects').get()).toEqual({ n: 0 });
+    closeDatabase(db);
+  });
+});
+
+describe('runs 0010 tool_effects approval index', () => {
+  it('0009 库升级：既有台账行保留，approval_id 部分索引就位并被反查使用', () => {
+    const db = openDb();
+    runMigrations(db, migrationsUpTo(9));
+    db.exec(`
+      insert into runs (id, bot_id, conversation_id, loop_type, status, created_at)
+        values ('run_old', 'bot_x', 'conv_a', 'task', 'completed', 1);
+      insert into tool_effects (id, run_id, tool_call_id, tool_name, effect_key, args_hash, summary, approval_id, status, created_at)
+        values ('eff_a', 'run_old', 't1', 'mcp_s_send', 'k', 'h', 's', 'apr_1', 'completed', 2),
+               ('eff_b', 'run_old', 't2', 'browser_click', 'k2', 'h2', 's', null, 'completed', 3);
+    `);
+    const before = db.prepare('select * from tool_effects order by id').all();
+    const applied = runMigrations(db, migrationsUrl('runs'));
+    expect(applied.map((m) => m.version)).toEqual([10]);
+    expect(db.prepare('select * from tool_effects order by id').all()).toEqual(before);
+    expect(indexNames(db, 'tool_effects')).toContain('tool_effects_by_approval');
+    const plan = db
+      .prepare("explain query plan select * from tool_effects where approval_id in ('apr_1')")
+      .all() as Array<{ detail: string }>;
+    expect(plan.map((p) => p.detail).join(' ')).toContain('tool_effects_by_approval');
+    // Idempotent re-run: nothing left to apply.
+    expect(runMigrations(db, migrationsUrl('runs'))).toEqual([]);
     closeDatabase(db);
   });
 });

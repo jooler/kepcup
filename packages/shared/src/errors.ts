@@ -39,6 +39,16 @@ export const ERROR_CODES = [
   // gateway / permissions
   'APPROVAL_DENIED',
   'APPROVAL_NOT_FOUND',
+  /**
+   * W4（D78）：`approvals.decide` 带的 payloadHash 与服务端审批内容不符（界面
+   * 显示的是过期的卡片），决定不生效。
+   */
+  'APPROVAL_STALE',
+  /**
+   * W4（D78）：同一任务链里完全相同的外部操作已经完成，审批去重门不再建卡、
+   * 不再执行（工具结果的错误码）。
+   */
+  'DUPLICATE_EFFECT',
   'PATH_OUT_OF_SCOPE',
   'STALE_FILE',
   'LEASE_TIMEOUT',
@@ -78,6 +88,10 @@ export const ERROR_CODES = [
   'BROWSER_REF_STALE',
   'BROWSER_OUTCOME_UNKNOWN',
   'BROWSER_NO_PROGRESS',
+  // W8 自动接管：用户在查看窗口里点击 / 键入后该页面归用户操作（派发前拒绝）。
+  'BROWSER_USER_CONTROL',
+  // W7 确定性监看：后台页上找不到监看的元素（选择器未匹配）。
+  'BROWSER_SELECTOR_NOT_FOUND',
   // MCP (D65)
   'MCP_CONNECT_FAILED',
   'MCP_TOOL_NOT_FOUND',

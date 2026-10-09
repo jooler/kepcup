@@ -3,6 +3,7 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { effectStatusLine } from './approval-effect';
   import {
     Dialog,
     DialogContent,
@@ -64,8 +65,19 @@
     {:else}
       <ul class="max-h-80 space-y-2 overflow-y-auto text-sm" data-testid="unattended-summary-list">
         {#each permissions.summaryItems as item (item.approvalId)}
+          {@const effectLine = effectStatusLine(item.effectStatus)}
           <li class="rounded-md border p-2">
             <p class="break-all">{item.detail}</p>
+            {#if effectLine !== null}
+              <!-- W4：自动批准的外部操作最后怎样了（旧记录没有）。 -->
+              <p
+                class="text-xs text-muted-foreground"
+                data-testid="unattended-summary-effect"
+                data-effect-status={effectLine}
+              >
+                {t('approvals.effectLabel')}{t(`approvals.effect.${effectLine}`)}
+              </p>
+            {/if}
             {#if item.conversationId !== null}
               <Button
                 variant="link"

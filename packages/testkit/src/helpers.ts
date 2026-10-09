@@ -131,6 +131,7 @@ export function botProfile(overrides: { name: string } & Partial<Bot['profile']>
       network_allowlist: overrides.runtime?.network_allowlist ?? [],
       mcp_server_ids: overrides.runtime?.mcp_server_ids ?? [],
       app_connection_ids: overrides.runtime?.app_connection_ids ?? [],
+      browser_profile: overrides.runtime?.browser_profile ?? '',
       agent: { ...BUILTIN_AGENT_RUNTIME, ...overrides.runtime?.agent },
     },
     // P10 guardrails: default profile keeps proactive on; tests override.

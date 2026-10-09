@@ -3,9 +3,13 @@ import {
   browserActionOutputSchema,
   browserClickInputSchema,
   browserClearBotDataInputSchema,
+  browserClearProfileDataInputSchema,
+  browserCloseBotPagesInputSchema,
   browserCloseInputSchema,
   browserEnsurePageInputSchema,
   browserEnsurePageOutputSchema,
+  browserFetchTextInputSchema,
+  browserFetchTextOutputSchema,
   browserNavigateInputSchema,
   browserNavigateOutputSchema,
   browserPairInputSchema,
@@ -91,6 +95,23 @@ export function browserMethodSpecs(
       input: browserClearBotDataInputSchema,
       output: okOutputSchema,
       handle: (input) => host.clearBotData(input as never),
+    },
+    // W8 共享浏览器资料：profile switch / clear / delete.
+    'browser.closeBotPages': {
+      input: browserCloseBotPagesInputSchema,
+      output: okOutputSchema,
+      handle: (input) => Promise.resolve(host.closeBotPages(input as never)),
+    },
+    'browser.clearProfileData': {
+      input: browserClearProfileDataInputSchema,
+      output: okOutputSchema,
+      handle: (input) => host.clearProfileData(input as never),
+    },
+    // W7 确定性监看：后台页取正文（不显示、取完即关）。
+    'browser.fetchText': {
+      input: browserFetchTextInputSchema,
+      output: browserFetchTextOutputSchema,
+      handle: (input) => host.fetchText(input as never),
     },
   };
 }

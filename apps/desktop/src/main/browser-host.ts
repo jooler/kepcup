@@ -8,11 +8,16 @@ import {
   BROWSER_SNAPSHOT_MAX_TEXT_CHARS,
   BROWSER_VIEWPORT_HEIGHT,
   BROWSER_VIEWPORT_WIDTH,
+  WATCH_FETCH_DEADLINE_MS,
+  WATCH_FETCH_TEXT_MAX_CHARS,
   AppError,
   buildSnapshotSummary,
   decideBrowserRequest,
+  watchRedirectAllowed,
+  watchRedirectTarget,
   type AxtreeNode,
   type BrowserActionOutput,
+  type BrowserFetchTextOutput,
   type BrowserNetworkContext,
   type BrowserSnapshotOutput,
   type RefFingerprint,
@@ -25,6 +30,20 @@ import {
   type WebContents,
 } from 'electron';
 import { pageClosed, toPageError } from './browser-action-phase.js';
+import {
+  ControlLease,
+  HANDBACK_TITLE_PREFIX,
+  VIEWER_TOOLBAR_HEIGHT,
+  classifyKeyInput,
+  classifyMouseInput,
+  parseProfileKey,
+  parseViewerLabels,
+  partitionDirName,
+  viewerToolbarUrl,
+  type HandbackReason,
+  type PageControl,
+  type ViewerLabels,
+} from './browser-control.js';
 import {
   axStateDigest,
   backAction,
@@ -40,7 +59,8 @@ import { uniqueDownloadPath } from './download-name.js';
 /**
  * Hosts one bot browser page per "bot + conversation" (docs/dev/phases/
  * P11-browser.md 任务 1): each bot gets the isolated `persist:bot-{botId}`
- * partition, pages are WebContentsViews in one hidden (offscreen but painting)
+ * partition by default — or, W8, a user-made shared profile
+ * `persist:shared-{profileId}` (the core sends the page's profileKey) — pages are WebContentsViews in one hidden (offscreen but painting)
  * window, driven over `webContents.debugger` (CDP) — no remote debugging port.
  *
  * CDP protocol constraints baked in below (re-verified in the P11-B e2e):
@@ -54,6 +74,12 @@ import { uniqueDownloadPath } from './download-name.js';
 interface PageEntry {
   botId: string;
   conversationId: string;
+  /** W8: `bot:{botId}` / `shared:{profileId}` the page was created for. */
+  profileKey: string;
+  /** Electron partition derived from profileKey. */
+  partition: string;
+  /** W8 自动接管: who may act on the page (user after a click / key in the viewer). */
+  lease: ControlLease;
   view: WebContentsView;
   wc: WebContents;
   context: BrowserNetworkContext;
@@ -69,6 +95,11 @@ interface PageEntry {
   /** DOM agent re-initialized for the current document. */
   domReady: boolean;
   closed: boolean;
+  /**
+   * W7: a watch's background page (`botId|watch:{id}`): never shown, no
+   * downloads, closed right after its text was read.
+   */
+  background: boolean;
 }
 
 export function sessionDataRoot(env: NodeJS.ProcessEnv): string {
@@ -76,9 +107,36 @@ export function sessionDataRoot(env: NodeJS.ProcessEnv): string {
   return path.join(home, 'browser');
 }
 
-/** Electron keeps one partition's disk state under `Partitions/{name}`. */
-export function partitionDir(root: string, botId: string): string {
-  return path.join(root, 'Partitions', `bot-${botId}`);
+/**
+ * Electron keeps one partition's disk state under `Partitions/{name}`, the
+ * name lower-cased (browser-control.ts partitionDirName). The as-written
+ * spelling is included too (removal is `force`, so a missing one is a no-op):
+ * deletion must not depend on that naming detail.
+ */
+export function partitionDirs(root: string, partition: string): string[] {
+  const raw = path.join(root, 'Partitions', partition.replace(/^persist:/, ''));
+  const lower = path.join(root, 'Partitions', partitionDirName(partition));
+  return raw === lower ? [lower] : [lower, raw];
+}
+
+/** A visible viewer window: the page view below a toolbar view (W8). */
+interface Viewer {
+  win: BrowserWindow;
+  toolbar: WebContentsView;
+  labels: ViewerLabels;
+}
+
+export interface BrowserHostOptions {
+  /**
+   * W8: the user handed a page back (toolbar / closed viewer / idle). The
+   * main process forwards it to the core (`browser.controlReturned`), which
+   * tells the page's running tasks to snapshot before going on.
+   */
+  onControlReturned?: (input: {
+    botId: string;
+    conversationId: string;
+    reason: HandbackReason;
+  }) => void;
 }
 
 export class BrowserHost {
@@ -90,11 +148,15 @@ export class BrowserHost {
   readonly #dns = new HostDnsResolver();
   readonly #tombstonedBots = new Set<string>();
   readonly #tombstonedPairs = new Set<string>();
+  /** W8: deleted shared profiles (a late ensurePage must not recreate them). */
+  readonly #tombstonedProfiles = new Set<string>();
   /** Per-page visible viewer windows (ipc browser.show, docs 任务 5). */
-  readonly #viewers = new Map<string, BrowserWindow>();
+  readonly #viewers = new Map<string, Viewer>();
+  readonly #options: BrowserHostOptions;
 
-  constructor(env: NodeJS.ProcessEnv) {
+  constructor(env: NodeJS.ProcessEnv, options: BrowserHostOptions = {}) {
     this.#sessionRoot = sessionDataRoot(env);
+    this.#options = options;
   }
 
   // --- lifecycle ------------------------------------------------------------
@@ -111,6 +173,7 @@ export class BrowserHost {
   ensurePage(input: {
     botId: string;
     conversationId: string;
+    profileKey: string;
     networkContext: BrowserNetworkContext;
     downloadsDir: string;
   }): { ok: true } {
@@ -121,16 +184,27 @@ export class BrowserHost {
     if (this.#tombstonedPairs.has(key)) {
       throw new AppError('BROWSER_CONVERSATION_DELETED', '该对话已删除，浏览器页面不可用');
     }
+    const profile = parseProfileKey(input.profileKey);
+    // A private profile belongs to its own bot only.
+    if (profile.kind === 'bot' && profile.id !== input.botId) {
+      throw new AppError('INVALID_INPUT', '私有浏览器资料只属于它自己的 Bot');
+    }
+    if (profile.kind === 'shared' && this.#tombstonedProfiles.has(profile.id)) {
+      throw new AppError('BROWSER_PAGE_CLOSED', '该共享浏览器资料已删除');
+    }
     const existing = this.#pages.get(key);
-    if (existing) {
+    if (existing && existing.profileKey === input.profileKey) {
       existing.context = input.networkContext;
       existing.downloadsDir = input.downloadsDir;
       return { ok: true };
     }
-    this.#sessionFor(input.botId);
+    // W8: the bot's profile changed under an open page (core closes pages on
+    // a switch; this covers a call racing it) — never reuse the old identity.
+    if (existing) this.#destroyPage(existing, { permanent: false });
+    this.#sessionFor(profile.partition);
     const view = new WebContentsView({
       webPreferences: {
-        partition: `persist:bot-${input.botId}`,
+        partition: profile.partition,
         backgroundThrottling: false,
       },
     });
@@ -151,6 +225,14 @@ export class BrowserHost {
     });
     wc.on('did-navigate', () => this.#invalidateDocumentState(wc));
     wc.on('did-navigate-in-page', () => this.#invalidateDocumentState(wc));
+    // W8 自动接管: only input inside the visible viewer counts — a click or a
+    // key press takes the page over; moves / wheel only keep the lease alive.
+    wc.on('before-input-event', (_event, keyInput) => {
+      this.#userInput(wc, classifyKeyInput(keyInput));
+    });
+    wc.on('before-mouse-event', (_event, mouse) => {
+      this.#userInput(wc, classifyMouseInput(mouse));
+    });
     try {
       wc.debugger.attach('1.3');
     } catch {
@@ -158,9 +240,15 @@ export class BrowserHost {
     }
     this.#hostWindowLazy().contentView.addChildView(view);
 
+    const lease = new ControlLease({
+      onChange: (control, reason) => this.#controlChanged(key, control, reason),
+    });
     const page: PageEntry = {
       botId: input.botId,
       conversationId: input.conversationId,
+      profileKey: input.profileKey,
+      partition: profile.partition,
+      lease,
       view,
       wc,
       context: input.networkContext,
@@ -170,6 +258,7 @@ export class BrowserHost {
       navigationSeq: 0,
       domReady: false,
       closed: false,
+      background: false,
     };
     this.#pages.set(key, page);
     this.#pagesByWebContents.set(wc.id, page);
@@ -193,28 +282,55 @@ export class BrowserHost {
    * window; the webContents object is never touched, so an in-flight run
    * keeps operating the page uninterrupted.
    */
-  show(input: { botId: string; conversationId: string; title?: string }): { ok: true } {
+  show(input: {
+    botId: string;
+    conversationId: string;
+    title?: string;
+    labels?: unknown;
+  }): { ok: true } {
     const page = this.#pageOf(input.botId, input.conversationId);
+    // W7: a watch's background page is never shown.
+    if (page.background) throw new AppError('BROWSER_PAGE_CLOSED', '浏览器页面未打开或已关闭');
     const key = pairKey(input.botId, input.conversationId);
     const existing = this.#viewers.get(key);
-    if (existing !== undefined && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore();
-      existing.focus();
+    if (existing !== undefined && !existing.win.isDestroyed()) {
+      if (existing.win.isMinimized()) existing.win.restore();
+      existing.win.focus();
       return { ok: true };
     }
     const win = new BrowserWindow({
       width: BROWSER_VIEWPORT_WIDTH,
-      height: BROWSER_VIEWPORT_HEIGHT,
+      height: BROWSER_VIEWPORT_HEIGHT + VIEWER_TOOLBAR_HEIGHT,
       title: input.title && input.title.length > 0 ? input.title : 'Bot 浏览器',
       autoHideMenuBar: true,
     });
+    // W8 工具条: a tiny data: page above the bot's page (state + 交还给 Bot).
+    // Its own in-memory session; no node, sandboxed; the button speaks through
+    // document.title (page-title-updated) — no IPC surface.
+    const toolbar = new WebContentsView({
+      webPreferences: { partition: 'kepcup-viewer-toolbar', sandbox: true, javascript: true },
+    });
+    const viewer: Viewer = { win, toolbar, labels: parseViewerLabels(input.labels) };
+    toolbar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    toolbar.webContents.on('will-navigate', (event) => event.preventDefault());
+    toolbar.webContents.on('page-title-updated', (_event, title) => {
+      if (title.startsWith(HANDBACK_TITLE_PREFIX)) page.lease.handBack('button');
+    });
+    win.contentView.addChildView(toolbar);
     win.contentView.addChildView(page.view);
+    this.#renderToolbar(viewer, page.lease.control);
     const fit = (): void => {
       if (page.closed) return;
       // contentView.bounds is undefined before first layout — the window API
       // always answers (fit() runs synchronously inside show()).
       const { width, height } = win.getContentBounds();
-      page.view.setBounds({ x: 0, y: 0, width, height });
+      toolbar.setBounds({ x: 0, y: 0, width, height: VIEWER_TOOLBAR_HEIGHT });
+      page.view.setBounds({
+        x: 0,
+        y: VIEWER_TOOLBAR_HEIGHT,
+        width,
+        height: Math.max(0, height - VIEWER_TOOLBAR_HEIGHT),
+      });
     };
     fit();
     win.on('resize', fit);
@@ -232,7 +348,12 @@ export class BrowserHost {
       }
     });
     win.on('closed', () => {
-      this.#viewers.delete(key);
+      if (this.#viewers.get(key) === viewer) this.#viewers.delete(key);
+      try {
+        toolbar.webContents.close();
+      } catch {
+        // Already destroyed with the window.
+      }
       if (page.closed) return;
       this.#hostWindowLazy().contentView.addChildView(page.view);
       page.view.setBounds({
@@ -241,11 +362,23 @@ export class BrowserHost {
         width: BROWSER_VIEWPORT_WIDTH,
         height: BROWSER_VIEWPORT_HEIGHT,
       });
+      // W8: closing the viewer hands the page back to the bot.
+      page.lease.handBack('viewer_closed');
     });
-    this.#viewers.set(key, win);
+    this.#viewers.set(key, viewer);
     return { ok: true };
   }
 
+  /** W8: the toolbar's 交还给 Bot (also reachable without the toolbar, e.g. tests). */
+  handBack(input: { botId: string; conversationId: string }): { ok: true } {
+    this.#pageOf(input.botId, input.conversationId).lease.handBack('button');
+    return { ok: true };
+  }
+
+  /** W8: current control of a page (null = no such page). */
+  controlOf(input: { botId: string; conversationId: string }): PageControl | null {
+    return this.#pages.get(pairKey(input.botId, input.conversationId))?.lease.control ?? null;
+  }
 
   async navigate(input: { botId: string; conversationId: string; url: string }): Promise<{
     ok: true;
@@ -253,6 +386,8 @@ export class BrowserHost {
     url: string;
   }> {
     const page = this.#pageOf(input.botId, input.conversationId);
+    // W8: the user has the page — nothing is loaded (not_started).
+    page.lease.assertAgent();
     if (!httpHttpsUrl(input.url)) {
       if (!isValidUrl(input.url)) {
         throw new AppError('INVALID_INPUT', `无效的 URL：${input.url}`);
@@ -377,6 +512,9 @@ export class BrowserHost {
   }): Promise<{ ok: true }> {
     const key = pairKey(input.botId, input.conversationId);
     const page = this.#pages.get(key);
+    // W8: the bot's own browser_close waits for the user's handback like any
+    // action; deletion cascades (permanent) always go through.
+    if (page && input.permanent !== true) page.lease.assertAgent();
     if (page) this.#destroyPage(page, { permanent: input.permanent === true });
     if (input.permanent === true) this.#tombstonedPairs.add(key);
     return { ok: true };
@@ -389,20 +527,169 @@ export class BrowserHost {
    * run can never resurrect the session.
    */
   async clearBotData(input: { botId: string }): Promise<{ ok: true }> {
+    // Every page of the bot (its shared-profile pages too) closes; only the
+    // bot's private partition is wiped — a shared profile outlives the bot (W8).
     for (const page of [...this.#pages.values()]) {
       if (page.botId === input.botId) this.#destroyPage(page, { permanent: false });
     }
     this.#tombstonedBots.add(input.botId);
-    const dir = partitionDir(this.#sessionRoot, input.botId);
-    const botSession = session.fromPartition(`persist:bot-${input.botId}`);
-    try {
-      await botSession.clearStorageData();
-      await botSession.clearCache();
-    } catch {
-      // Session may already be gone; the directory removal below still runs.
-    }
-    rmSync(dir, { recursive: true, force: true });
+    await this.#wipePartition(parseProfileKey(`bot:${input.botId}`).partition, { removeDir: true });
     return { ok: true };
+  }
+
+  /** W8: the bot's browser profile changed — close all its pages (no tombstone). */
+  closeBotPages(input: { botId: string }): { ok: true } {
+    for (const page of [...this.#pages.values()]) {
+      if (page.botId === input.botId) this.#destroyPage(page, { permanent: false });
+    }
+    return { ok: true };
+  }
+
+  /**
+   * W8: wipes a shared profile. `remove` (the profile is deleted): pages on
+   * it close, the profile is tombstoned and its directory removed, like
+   * clearBotData. Without it (清除数据) the pages close and the stored data is
+   * cleared; the profile stays usable.
+   */
+  async clearProfileData(input: { profileId: string; remove?: boolean }): Promise<{ ok: true }> {
+    const profile = parseProfileKey(`shared:${input.profileId}`);
+    const profileKey = `shared:${input.profileId}`;
+    for (const page of [...this.#pages.values()]) {
+      if (page.profileKey === profileKey) this.#destroyPage(page, { permanent: false });
+    }
+    if (input.remove === true) this.#tombstonedProfiles.add(input.profileId);
+    await this.#wipePartition(profile.partition, { removeDir: input.remove === true });
+    return { ok: true };
+  }
+
+  /**
+   * W7 确定性监看：loads `url` in a hidden background page keyed
+   * `botId|watch:{watchId}` (the bot's effective profile → its login state;
+   * the same network interception as every bot page), returns the body text
+   * — or `selector`'s — plus each `extraSelectors` text (null = no match),
+   * and always closes the page. Never shown, downloads cancelled.
+   *
+   * Not page content (→ BROWSER_NAVIGATION_FAILED, a failed check): a
+   * main-frame HTTP status ≥ 400, and a final URL on another site than the
+   * requested one (`watchRedirectAllowed`: same host modulo `www.`, http →
+   * https allowed — anything else is most likely a login / anti-bot page).
+   * The whole fetch is bounded by WATCH_FETCH_DEADLINE_MS, so the `finally`
+   * always closes the page.
+   */
+  async fetchText(input: {
+    botId: string;
+    watchId: string;
+    profileKey: string;
+    networkContext: BrowserNetworkContext;
+    url: string;
+    selector?: string;
+    extraSelectors?: string[];
+  }): Promise<BrowserFetchTextOutput> {
+    if (!httpHttpsUrl(input.url)) {
+      throw new AppError('INVALID_INPUT', '监看只能打开 http/https 网页');
+    }
+    const conversationId = `watch:${input.watchId}`;
+    this.ensurePage({
+      botId: input.botId,
+      conversationId,
+      profileKey: input.profileKey,
+      networkContext: input.networkContext,
+      downloadsDir: '',
+    });
+    const page = this.#pageOf(input.botId, conversationId);
+    page.background = true;
+    try {
+      return await withTimeout(
+        this.#fetchTextOn(page, input),
+        WATCH_FETCH_DEADLINE_MS,
+        () =>
+          new AppError(
+            'BROWSER_NAVIGATION_FAILED',
+            `读取页面超时（${WATCH_FETCH_DEADLINE_MS / 1000} 秒）`,
+          ),
+      );
+    } finally {
+      // Never kept across checks (also after the deadline: in-flight steps
+      // then fail on the closed page, and nobody awaits them any more).
+      this.#destroyPage(page, { permanent: false });
+    }
+  }
+
+  async #fetchTextOn(
+    page: PageEntry,
+    input: { url: string; selector?: string; extraSelectors?: string[] },
+  ): Promise<BrowserFetchTextOutput> {
+    // The last committed main-frame navigation's HTTP status (after server
+    // redirects: the final response; a later client-side redirect updates it).
+    const nav = { status: 0 };
+    const onNavigate = (_event: unknown, _url: string, httpResponseCode: number): void => {
+      nav.status = httpResponseCode;
+    };
+    page.wc.on('did-navigate', onNavigate);
+    const assertContent = (): void => {
+      if (nav.status >= 400) {
+        throw new AppError('BROWSER_NAVIGATION_FAILED', `页面返回 HTTP ${nav.status}`, {
+          status: nav.status,
+        });
+      }
+      const finalUrl = page.wc.getURL() || input.url;
+      if (!watchRedirectAllowed(input.url, finalUrl)) {
+        throw new AppError(
+          'BROWSER_NAVIGATION_FAILED',
+          `页面被重定向到 ${watchRedirectTarget(finalUrl)}（可能需要登录）`,
+        );
+      }
+    };
+    try {
+      await this.#load(page, input.url);
+      assertContent();
+      // Client-rendered pages fill in after the load event.
+      await delay(WATCH_RENDER_SETTLE_MS);
+      if (page.closed) throw pageClosed();
+      // Isolated world (the page's own scripts cannot tamper with the reader),
+      // no user gesture. The title comes along: no second round trip.
+      const script = `(() => {
+        const pick = (selector) => {
+          try {
+            const el = document.querySelector(selector);
+            return el ? String(el.innerText ?? el.textContent ?? '') : null;
+          } catch { return null; }
+        };
+        const main = ${JSON.stringify(input.selector ?? null)};
+        return {
+          title: String(document.title ?? ''),
+          text: main === null ? String(document.body ? document.body.innerText : '') : pick(main),
+          extra: ${JSON.stringify(input.extraSelectors ?? [])}.map(pick),
+        };
+      })()`;
+      const result = (await withTimeout(
+        page.wc.executeJavaScriptInIsolatedWorld(WATCH_EXTRACT_WORLD_ID, [{ code: script }], false),
+        WATCH_EXTRACT_TIMEOUT_MS,
+        () => new AppError('BROWSER_NAVIGATION_FAILED', '读取页面文本超时'),
+      )) as { title: string; text: string | null; extra: Array<string | null> };
+      // A client-side redirect during the settle counts the same way.
+      assertContent();
+      if (result.text === null) {
+        throw new AppError('BROWSER_SELECTOR_NOT_FOUND', `页面上找不到元素 ${input.selector ?? ''}`);
+      }
+      const truncated = result.text.length > WATCH_FETCH_TEXT_MAX_CHARS;
+      return {
+        ok: true,
+        title: result.title,
+        url: page.wc.getURL() || input.url,
+        text: truncated ? result.text.slice(0, WATCH_FETCH_TEXT_MAX_CHARS) : result.text,
+        ...(truncated ? { truncated: true } : {}),
+        ...(input.extraSelectors !== undefined
+          ? {
+              extraTexts: result.extra.map((text) =>
+                text === null ? null : text.slice(0, WATCH_FETCH_TEXT_MAX_CHARS),
+              ),
+            }
+          : {}),
+      };
+    } finally {
+      if (!page.closed) page.wc.removeListener('did-navigate', onNavigate);
+    }
   }
 
   // --- internals --------------------------------------------------------------
@@ -424,8 +711,56 @@ export class BrowserHost {
     page.domReady = false;
   }
 
-  #sessionFor(botId: string): Session {
-    const botSession = session.fromPartition(`persist:bot-${botId}`);
+  /** Clears a partition's storage + cache; `removeDir` also deletes it on disk. */
+  async #wipePartition(partition: string, options: { removeDir: boolean }): Promise<void> {
+    const target = session.fromPartition(partition);
+    try {
+      await target.clearStorageData();
+      await target.clearCache();
+    } catch {
+      // Session may already be gone; the directory removal below still runs.
+    }
+    if (options.removeDir) {
+      for (const dir of partitionDirs(this.#sessionRoot, partition)) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  /** W8: a page input event → the lease (only while the viewer is open). */
+  #userInput(wc: WebContents, kind: 'takeover' | 'activity' | null): void {
+    if (kind === null) return;
+    const page = this.#pagesByWebContents.get(wc.id);
+    if (!page || page.closed) return;
+    const viewer = this.#viewers.get(pairKey(page.botId, page.conversationId));
+    if (viewer === undefined || viewer.win.isDestroyed() || !viewer.win.isVisible()) return;
+    page.lease.userInput(kind);
+  }
+
+  /** W8: lease transition → toolbar redraw; a handback is reported to the core. */
+  #controlChanged(key: string, control: PageControl, reason: HandbackReason | null): void {
+    const viewer = this.#viewers.get(key);
+    if (viewer !== undefined && !viewer.win.isDestroyed()) this.#renderToolbar(viewer, control);
+    const page = this.#pages.get(key);
+    if (control === 'agent' && reason !== null && page !== undefined && !page.closed) {
+      this.#options.onControlReturned?.({
+        botId: page.botId,
+        conversationId: page.conversationId,
+        reason,
+      });
+    }
+  }
+
+  #renderToolbar(viewer: Viewer, control: PageControl): void {
+    try {
+      void viewer.toolbar.webContents.loadURL(viewerToolbarUrl(viewer.labels, control)).catch(() => {});
+    } catch {
+      // Toolbar already destroyed.
+    }
+  }
+
+  #sessionFor(partition: string): Session {
+    const botSession = session.fromPartition(partition);
     if (!this.#configuredSessions.has(botSession)) {
       this.#configureSession(botSession);
       this.#configuredSessions.add(botSession);
@@ -447,7 +782,8 @@ export class BrowserHost {
 
     botSession.on('will-download', (_event, item, contents) => {
       const page = this.#pagesByWebContents.get(contents.id);
-      if (!page) {
+      // W7: a watch's background page never downloads.
+      if (!page || page.background) {
         item.cancel();
         return;
       }
@@ -591,10 +927,17 @@ export class BrowserHost {
   /** The page operations the action flows (browser-actions.ts) drive. */
   #ops(botId: string, conversationId: string): PageOps {
     const page = this.#pageOf(botId, conversationId);
+    // W8: refused before anything runs while the user has the page.
+    page.lease.assertAgent();
     return {
       settle: (timeoutMs) => this.#settle(page, timeoutMs),
       initDom: () => this.#initDomAgent(page),
-      send: (method, params) => this.#send(page, method, params),
+      // Key / wheel / text input the bot synthesizes is not the user's input.
+      send: (method, params) =>
+        method.startsWith('Input.')
+          ? page.lease.withBotInput(() => this.#send(page, method, params))
+          : this.#send(page, method, params),
+      assertControl: () => page.lease.assertAgent(),
       refFingerprint: (ref) => this.#refNode(page, ref),
       navigationSeq: () => page.navigationSeq,
       canGoBack: () => page.wc.navigationHistory.canGoBack(),
@@ -627,10 +970,12 @@ export class BrowserHost {
     this.#pages.delete(key);
     this.#pagesByWebContents.delete(page.wc.id);
     if (options.permanent) this.#tombstonedPairs.add(key);
+    // The lease dies with the page: no idle timer, no handback report.
+    page.lease.dispose();
     // A visible viewer must not outlive its page: close it first (its
     // 'closed' handler sees page.closed and skips re-adopting the view).
     const viewer = this.#viewers.get(key);
-    if (viewer !== undefined && !viewer.isDestroyed()) viewer.close();
+    if (viewer !== undefined && !viewer.win.isDestroyed()) viewer.win.close();
     this.#viewers.delete(key);
     try {
       page.wc.debugger.detach();
@@ -660,6 +1005,32 @@ export class BrowserHost {
     }
     return this.#hostWindow;
   }
+}
+
+/** W7: extra wait after the load event for client-rendered content. */
+const WATCH_RENDER_SETTLE_MS = 1000;
+/** W7: reading the page text may take at most this long. */
+const WATCH_EXTRACT_TIMEOUT_MS = 10_000;
+/**
+ * W7: the isolated world the text extraction runs in (any id other than 0 =
+ * the page's main world; Electron's preload isolation uses 999).
+ */
+const WATCH_EXTRACT_WORLD_ID = 1007;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(onTimeout()), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function pairKey(botId: string, conversationId: string): string {

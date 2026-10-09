@@ -13,7 +13,12 @@ import type { ToolRisk } from '../mcp/risk.js';
  * 任务数，`emit` 汇总给调用方（RPC 据此推 `tasks.interrupted` 提示）。
  */
 export interface PermissionRevokedEvent {
-  scope: 'path' | 'mcp';
+  /**
+   * W8: `browser_profile` — the bot's browser profile was switched (bots.update
+   * or its shared profile deleted); only its running tasks that used the
+   * browser are interrupted (reason `browser_profile_changed`).
+   */
+  scope: 'path' | 'mcp' | 'browser_profile';
   /** path：授权所属对话；mcp：缺省（跨对话）。 */
   conversationId?: string;
   /** 受影响的 Bot（路径授权按 Bot + 对话；MCP 为工具面含该 server 的 Bot）。 */

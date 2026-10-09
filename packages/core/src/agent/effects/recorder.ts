@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { AppError } from '@kepcup/shared';
+import { AppError, type EffectReceipt, type ToolEffect } from '@kepcup/shared';
 import type { ToolRisk } from '../../mcp/risk.js';
-import type { ToolCallEffectHooks } from '../../permissions/tool-call-scope.js';
+import { neutralizeUntrusted } from '../../infra/data-boundary.js';
+import type { EffectApprovalGate, ToolCallEffectHooks } from '../../permissions/tool-call-scope.js';
 import { redactToolArgs, scrubSensitiveValues } from '../step-persistence.js';
 import type { ToolContext, ToolDefinition, ToolResult } from '../types.js';
 import { effectClassOf } from './classify.js';
@@ -44,7 +45,25 @@ export interface EffectRecorderDeps {
    * destructive). The more severe of this and the build-time risk counts.
    */
   mcpRiskOf?(serverId: string, toolName: string): ToolRisk;
+  /**
+   * W4: a row linked to an approval settled — the approval card's receipt
+   * line changed (start.ts re-publishes the approval). Errors are swallowed.
+   */
+  onSettled?(effect: ToolEffect): void;
+  /**
+   * W4 复查 B1: which of these approval ids the **user** refused (status
+   * denied, not auto-decided, not cancelled — ApprovalsService.userDeniedIds).
+   * Absent = none: a denied row then never dedupes.
+   */
+  userDeniedApprovals?(approvalIds: readonly string[]): ReadonlySet<string>;
 }
+
+/**
+ * Redaction placeholders (stored secrets → `[REDACTED]`, W1 / ledger params
+ * → `«redacted…»`). Args containing one are never compared (W4 复查 S2): two
+ * different secrets would look identical.
+ */
+const REDACTION_MARKERS = ['[REDACTED]', '«redacted'];
 
 /** One recorded call (null from `begin` = nothing to record). */
 export interface EffectCall extends ToolCallEffectHooks {
@@ -55,6 +74,12 @@ export interface EffectCall extends ToolCallEffectHooks {
   settle(result: ToolResult): SettledEffectStatus | null;
   /** The tool threw (executeToolSafely turns it into a failure result). */
   settleThrown(error: unknown): SettledEffectStatus | null;
+  /**
+   * W4: the result the model gets instead of the tool's own when the approval
+   * dedupe gate stopped the call (the same effect already completed / was
+   * denied in the task chain); null otherwise. Read after settling.
+   */
+  dedupeResult(): ToolResult | null;
 }
 
 export interface EffectRecorder {
@@ -90,6 +115,93 @@ export function effectStatusOf(result: ToolResult, aborted = false): SettledEffe
   if (result.outcome === 'not_started') return 'failed';
   return aborted ? 'uncertain' : 'failed';
 }
+
+/**
+ * W4 approval dedupe gate: what the earlier rows of the same effect (same
+ * tool, same redacted args; task chain, oldest first) mean for a new approval
+ * request of `kind`.
+ * - Any `completed` row (with or without an approval) → `completed` for
+ *   `mcp_tool` (no card, DUPLICATE_EFFECT), `repeat` for every other kind (a
+ *   flagged card: git_remote / unsandboxed are state-dependent).
+ * - Else the newest `uncertain` or **user-denied** row decides. A denied row
+ *   counts only when its approval is in `userDenied` (refused by hand — not
+ *   a cancellation, an interruption / restart while waiting, a wall-clock
+ *   abort or unattended's floor; 复查 B1).
+ * - The user's latest real `ask_user` answer (`consentAt`) clears completed
+ *   and user-denied rows that settled before it; it never clears uncertain
+ *   ones (复查 B2) — those always get the flagged card.
+ * - Failed rows never block (nothing happened), nor do live ones (a parallel
+ *   call).
+ */
+export function duplicateVerdict(
+  rows: readonly ToolEffect[],
+  input: {
+    consentAt: number | null;
+    userDenied: ReadonlySet<string>;
+    /** The approval kind asked for (default: blocking like `mcp_tool`). */
+    kind?: string;
+  },
+): EffectApprovalGate | null {
+  const consented = (row: ToolEffect) =>
+    input.consentAt !== null && (row.settledAt ?? row.createdAt) <= input.consentAt;
+  const newest = (accept: (row: ToolEffect) => boolean) =>
+    rows
+      .filter(accept)
+      .reduce<ToolEffect | null>(
+        (best, row) => (best === null || row.createdAt >= best.createdAt ? row : best),
+        null,
+      );
+  const completed = newest((row) => row.status === 'completed' && !consented(row));
+  const decisive =
+    completed ??
+    newest(
+      (row) =>
+        row.status === 'uncertain' ||
+        (row.status === 'denied' &&
+          row.approvalId !== null &&
+          input.userDenied.has(row.approvalId) &&
+          !consented(row)),
+    );
+  if (decisive === null) return null;
+  const verdict: EffectApprovalGate['verdict'] =
+    decisive.status === 'completed'
+      ? (input.kind ?? 'mcp_tool') === 'mcp_tool'
+        ? 'completed'
+        : 'repeat'
+      : (decisive.status as 'denied' | 'uncertain');
+  return {
+    verdict,
+    prior: {
+      id: decisive.id,
+      status: decisive.status,
+      approvalId: decisive.approvalId,
+      summary: decisive.summary,
+      receipt: decisive.receipt,
+      createdAt: decisive.createdAt,
+      settledAt: decisive.settledAt,
+    },
+  };
+}
+
+/** One line of a receipt for the model (`<untrusted>`: tool / server text). */
+export function receiptText(receipt: EffectReceipt | null): string | null {
+  if (receipt === null) return null;
+  const parts = [receipt.url, receipt.externalId, receipt.note].filter(
+    (part): part is string => typeof part === 'string' && part.length > 0,
+  );
+  return parts.length > 0
+    ? `<untrusted>${neutralizeUntrusted(parts.join('，'))}</untrusted>`
+    : null;
+}
+
+/** W4: the tool result of a call stopped because the same effect already completed. */
+export function duplicateEffectMessage(receipt: EffectReceipt | null): string {
+  return `相同操作已在本任务中完成（回执：${receiptText(receipt) ?? '无，状态为已完成'}），不要重复执行；如确需再做一次，用 ask_user 征得用户同意`;
+}
+
+/** W4: the tool result of a call stopped because the user denied the same effect. */
+export const DUPLICATE_DENIED_MESSAGE =
+  '用户已拒绝相同操作，不要重复请求；调整做法，或用 ask_user 询问用户';
 
 /** A thrown call: denied when the approval was refused, else uncertain (phase unknown). */
 export function thrownEffectStatus(error: unknown): SettledEffectStatus {
@@ -164,6 +276,12 @@ export function createEffectRecorder(deps: EffectRecorderDeps): EffectRecorder {
         let rowId: string | null = null;
         let approvalId: string | null = null;
         let failed = false;
+        /** W4: the row is `intended` (waiting on the user's decision). */
+        let intended = false;
+        /** W4: an approval of this call was granted — it may already be running. */
+        let granted = false;
+        /** W4: the dedupe gate's verdict (undefined = not asked yet). */
+        let gate: EffectApprovalGate | null | undefined;
         let canonical: string | null = null;
         const canonicalArgs = (): string => {
           canonical ??= ledgerArgsText(tool.name, params, deps.redact);
@@ -208,18 +326,42 @@ export function createEffectRecorder(deps: EffectRecorderDeps): EffectRecorder {
           return (text: string) => deps.redact(scrubSensitiveValues(text, set) as string);
         };
         const settleAs = (
-          status: SettledEffectStatus,
+          settledStatus: SettledEffectStatus,
           result?: ToolResult,
         ): SettledEffectStatus | null => {
+          let status = settledStatus;
+          // W4: the dedupe gate stopped the call. A completed duplicate never
+          // ran — its row goes (the ledger lists what may have happened); a
+          // denied duplicate is a denial whatever the tool made of it.
+          if (gate?.verdict === 'completed') {
+            if (rowId !== null) {
+              try {
+                deps.store.discard(rowId);
+              } catch (error) {
+                warn(error, 'tool effect ledger: discard failed', { toolName: tool.name });
+              }
+            }
+            return null;
+          }
+          const deniedBy = gate?.verdict === 'denied' ? gate.prior.approvalId : null;
+          if (gate?.verdict === 'denied') status = 'denied';
+          // Still waiting on its approval when it returned: it never ran —
+          // denied (the approval was refused / cancelled) or failed, never
+          // uncertain.
+          else if (intended) status = status === 'denied' ? 'denied' : 'failed';
           // No row: a local call (nothing to report), or the ledger write
           // failed — the status is still a fact about this external call.
           if (rowId === null) return failed ? status : null;
+          let settled: ToolEffect | null = null;
           try {
             const reported = result?.effect;
             const scrub = scrubber(result);
             const receipt = redactReceipt(reported?.receipt, scrub);
-            deps.store.settle(rowId, {
+            settled = deps.store.settle(rowId, {
               status,
+              // A denial the gate repeated carries the user's original
+              // approval (it stays a user denial for later calls, 复查 B1).
+              ...(deniedBy !== null ? { approvalId: deniedBy } : {}),
               ...(receipt !== undefined ? { receipt } : {}),
               ...(reported?.summary !== undefined && reported.summary.length > 0
                 ? { summary: truncate(scrub(reported.summary), EFFECT_SUMMARY_MAX_CHARS) }
@@ -230,6 +372,13 @@ export function createEffectRecorder(deps: EffectRecorderDeps): EffectRecorder {
               runId: identity.runId,
               toolName: tool.name,
             });
+          }
+          if (settled !== null && settled.approvalId !== null) {
+            try {
+              deps.onSettled?.(settled);
+            } catch (error) {
+              warn(error, 'tool effect ledger: settle listener failed', { toolName: tool.name });
+            }
           }
           return status;
         };
@@ -253,11 +402,93 @@ export function createEffectRecorder(deps: EffectRecorderDeps): EffectRecorder {
               warn(error, 'tool effect ledger: approval link failed', { toolName: tool.name });
             }
           },
+          approvalGate(runId, kind) {
+            // Never across task chains, never in turns / sub runs, only for a
+            // call that has a ledger row (an external call).
+            if (!ownRun(runId) || identity.loopType !== 'task' || rowId === null) return null;
+            if (gate !== undefined) return gate;
+            try {
+              const args = canonicalArgs();
+              // 复查 S2: redacted args are never compared (two different
+              // secrets would look the same).
+              if (REDACTION_MARKERS.some((marker) => args.includes(marker))) {
+                gate = null;
+                return gate;
+              }
+              const runIds = deps.store.chainRunIds(identity.runId);
+              const rows = deps.store.sameEffectRows({
+                runIds,
+                toolName: tool.name,
+                argsHash: sha256Hex(args),
+                excludeId: rowId,
+              });
+              if (rows.length === 0) {
+                gate = null;
+              } else {
+                const deniedApprovals = rows
+                  .filter((row) => row.status === 'denied' && row.approvalId !== null)
+                  .map((row) => row.approvalId!);
+                gate = duplicateVerdict(rows, {
+                  consentAt: deps.store.lastUserAnswerAt(runIds),
+                  userDenied:
+                    deniedApprovals.length > 0
+                      ? (deps.userDeniedApprovals?.(deniedApprovals) ?? new Set<string>())
+                      : new Set<string>(),
+                  ...(kind !== undefined ? { kind } : {}),
+                });
+              }
+            } catch (error) {
+              warn(error, 'tool effect ledger: dedupe gate failed', { toolName: tool.name });
+              gate = null;
+            }
+            return gate;
+          },
+          approvalWaiting(runId) {
+            // Once an approval of this call was granted the call may already
+            // be acting — it never goes back to「nothing ran」.
+            if (!ownRun(runId) || rowId === null || granted) return;
+            try {
+              deps.store.markIntended(rowId, true);
+              intended = true;
+            } catch (error) {
+              warn(error, 'tool effect ledger: intended failed', { toolName: tool.name });
+            }
+          },
+          approvalGranted(runId) {
+            if (!ownRun(runId) || rowId === null) return;
+            granted = true;
+            if (!intended) return;
+            intended = false;
+            try {
+              deps.store.markIntended(rowId, false);
+            } catch (error) {
+              warn(error, 'tool effect ledger: executing failed', { toolName: tool.name });
+            }
+          },
           settle(result) {
             return settleAs(effectStatusOf(result, ctx.signal.aborted), result);
           },
           settleThrown(error) {
             return settleAs(thrownEffectStatus(error));
+          },
+          dedupeResult() {
+            if (gate?.verdict === 'completed') {
+              return {
+                ok: false,
+                content: duplicateEffectMessage(gate.prior.receipt),
+                errorCode: 'DUPLICATE_EFFECT',
+                outcome: 'not_started',
+              };
+            }
+            if (gate?.verdict === 'denied') {
+              return {
+                ok: false,
+                content: DUPLICATE_DENIED_MESSAGE,
+                errorCode: 'APPROVAL_DENIED',
+                outcome: 'not_started',
+              };
+            }
+            return null;
           },
         };
       } catch (error) {

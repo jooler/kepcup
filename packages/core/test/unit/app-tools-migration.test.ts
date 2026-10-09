@@ -10,8 +10,8 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
- * 0023_app_tools（D73 P1）：app_connection_tools / app_tool_grants 与
- * app_connections.baseline_pending。升级路径用「真实迁移目录截到 0022」建旧库再跑全量
+ * 0025_app_tools（D73 P1）：app_connection_tools / app_tool_grants 与
+ * app_connections.baseline_pending。升级路径用「真实迁移目录截到 0024」建旧库再跑全量
  * 迁移（真库，不用 stub）。
  */
 
@@ -60,18 +60,18 @@ function insertConversation(db: SqliteDatabase, id: string): void {
   db.prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)").run(id);
 }
 
-describe('0023 app_tools 迁移', () => {
-  it('旧库（0022，含已有连接行）升级：新表与列出现，老行 baseline_pending 默认 0', () => {
+describe('0025 app_tools 迁移', () => {
+  it('旧库（0024，含已有连接行）升级：新表与列出现，老行 baseline_pending 默认 0', () => {
     const db = openMainDb();
-    runMigrations(db, migrationsUpTo(22));
+    runMigrations(db, migrationsUpTo(24));
     insertConnection(db, 'custom:old');
     expect(
       db.prepare("select 1 from sqlite_master where name = 'app_connection_tools'").get(),
     ).toBeUndefined();
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((entry) => entry.version)).toEqual(mainVersionsAfter(22));
-    expect(applied[0]?.file).toBe('0023_app_tools.sql');
+    expect(applied.map((entry) => entry.version)).toEqual(mainVersionsAfter(24));
+    expect(applied[0]?.file).toBe('0025_app_tools.sql');
 
     expect(columnsOf(db, 'app_connection_tools').map((c) => c.name)).toEqual([
       'connection_id',

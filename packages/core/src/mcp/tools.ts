@@ -367,13 +367,107 @@ function wrapMcpTool(input: {
       const redacted = secrets.redact(textParts.join('\n'));
       const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
       const suffix = truncated.truncated ? '\n[输出已截断]' : '';
+      // W4 回执：结构化结果（或纯 JSON 文本）里现成的链接 / id，只进台账
+      // （记录器再做敏感值擦除与 secrets 脱敏），审批卡据此显示「已完成」的回执。
+      const receipt = result.isError === true ? null : mcpReceiptOf(result, textParts);
       return {
         ok: result.isError !== true,
         content: `<untrusted>\n${truncated.text || '（无输出）'}${suffix}\n</untrusted>`,
         ...(images.length > 0 ? { images } : {}),
         ...(result.isError === true ? { errorCode: 'MCP_CALL_FAILED' } : {}),
+        ...(receipt !== null ? { effect: { receipt } } : {}),
       };
     },
+  };
+}
+
+/** Receipt keys looked up at the top level of the result object (W4). */
+const RECEIPT_URL_KEYS = ['url', 'html_url', 'web_url', 'permalink', 'link', 'htmlUrl', 'webUrl'];
+const RECEIPT_ID_KEYS = ['id', 'message_id', 'messageId', 'issue_id', 'number', 'ts', 'uuid'];
+/** Id-shaped: no whitespace, ≤ 64 chars (W4 复查 S3). */
+const RECEIPT_ID_MAX_CHARS = 64;
+/** Typical secret / token prefixes — never shown as a receipt. */
+const SECRET_PREFIX = /^(sk-|sk_|pk_|rk_|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xox[abposr]-?|AKIA|ASIA|AIza|ya29\.|eyJ)/i;
+
+/**
+ * Whether a receipt id looks like an id and not like a credential: no
+ * whitespace, ≤ 64 chars, no well-known secret prefix, and not a long
+ * high-entropy string (> 32 chars mixing upper, lower and digits).
+ */
+export function receiptIdShaped(value: string): boolean {
+  if (value.length === 0 || value.length > RECEIPT_ID_MAX_CHARS || /\s/.test(value)) return false;
+  if (SECRET_PREFIX.test(value)) return false;
+  if (value.length > 32 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /\d/.test(value)) {
+    return false;
+  }
+  return true;
+}
+
+/** A receipt URL without its query string / fragment (tokens often live there). */
+function receiptUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    url.search = '';
+    url.hash = '';
+    url.username = '';
+    url.password = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+/** A text result larger than this is not parsed for a receipt. */
+const RECEIPT_TEXT_PARSE_MAX_CHARS = 64 * 1024;
+
+/**
+ * W4: a cheap receipt from an MCP tool result — the URL / id the server
+ * already returns at the top level of `structuredContent`, or of the only
+ * text block when it is a JSON object. Nothing found → null (the status alone
+ * is the receipt). Server-supplied: the recorder scrubs and bounds it, the
+ * card shows it as text, the model only sees it inside `<untrusted>`.
+ */
+export function mcpReceiptOf(
+  result: { structuredContent?: Record<string, unknown> },
+  textParts: readonly string[],
+): { url?: string; externalId?: string } | null {
+  let source: Record<string, unknown> | null =
+    result.structuredContent !== undefined && result.structuredContent !== null
+      ? result.structuredContent
+      : null;
+  if (source === null && textParts.length === 1) {
+    const text = textParts[0]!.trim();
+    if (text.startsWith('{') && text.length <= RECEIPT_TEXT_PARSE_MAX_CHARS) {
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          source = parsed as Record<string, unknown>;
+        }
+      } catch {
+        source = null;
+      }
+    }
+  }
+  if (source === null) return null;
+  const pick = (
+    keys: readonly string[],
+    accept: (value: string) => string | null,
+  ): string | null => {
+    for (const key of keys) {
+      const value = source![key];
+      const text =
+        typeof value === 'string' ? value : typeof value === 'number' ? String(value) : null;
+      const accepted = text !== null && text.length > 0 ? accept(text) : null;
+      if (accepted !== null) return accepted;
+    }
+    return null;
+  };
+  const url = pick(RECEIPT_URL_KEYS, receiptUrl);
+  const externalId = pick(RECEIPT_ID_KEYS, (value) => (receiptIdShaped(value) ? value : null));
+  if (url === null && externalId === null) return null;
+  return {
+    ...(url !== null ? { url } : {}),
+    ...(externalId !== null ? { externalId } : {}),
   };
 }
 

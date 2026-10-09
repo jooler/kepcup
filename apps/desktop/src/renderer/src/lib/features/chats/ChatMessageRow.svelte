@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import type { Message } from '@kepcup/shared';
-  import { Pencil, Reply, type LucideIcon } from '@lucide/svelte';
+  import { AlarmClock, Pencil, Reply, type LucideIcon } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
@@ -50,6 +51,12 @@
   });
   const taskTitle = $derived(
     taskOrigin !== null ? (tasks.byId[taskOrigin.taskId]?.title ?? '') : '',
+  );
+  /** D80：定时触发的对话轮发出的回复——气泡下方「⏰ 标题」，点开定时任务列表。 */
+  const scheduleTitle = $derived(
+    !isUser && 'scheduleId' in message.content && message.content.scheduleId
+      ? (message.content.scheduleTitle ?? '')
+      : null,
   );
   // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
   // （不再渲染名字/时间行）。
@@ -191,6 +198,18 @@
 
     {#if message.attachments.length > 0}
       <MessageAttachments attachments={message.attachments} />
+    {/if}
+
+    {#if scheduleTitle !== null}
+      <button
+        type="button"
+        class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+        title={t('schedules.sourceHint')}
+        onclick={() => shell.openSchedules()}
+        data-testid="schedule-source"
+      >
+        <AlarmClock class="size-3" aria-hidden="true" />{scheduleTitle}
+      </button>
     {/if}
   </div>
 

@@ -17,7 +17,12 @@ import { buildCodingTools } from './coding-tools.js';
 import { buildMemoryTools, type MemoryToolFacade } from './memory-tools.js';
 import { buildSetupTools, type SetupToolFacade } from './setup-tools.js';
 import { buildWikiTools, type WikiToolFacade } from './wiki-tools.js';
-import { buildScheduleTools, type ScheduleToolFacade } from './schedule-tools.js';
+import {
+  buildOfferScheduleTool,
+  buildScheduleTools,
+  type ScheduleToolFacade,
+} from './schedule-tools.js';
+import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
@@ -53,6 +58,11 @@ export interface ResponseToolDeps {
   /** Called for every message the bot sends (output_message_ids + events). */
   onBotMessage: (message: Message) => void;
   /**
+   * D80: the schedule a scheduled turn runs for — its send_message messages
+   * carry the 「⏰ 标题」 tag like the final reply. Absent otherwise.
+   */
+  scheduleSource?: { scheduleId: string; scheduleTitle: string } | undefined;
+  /**
    * P05 group chains: validate mention_bot_ids, extend/create the chain and
    * deliver to the targets. Returns a suffix note for the tool result.
    */
@@ -85,10 +95,17 @@ export interface ResponseToolDeps {
    */
   schedule?: ScheduleToolFacade | undefined;
   /**
+   * W7 确定性监看（optional in stripped unit setups）：watch_create /
+   * watch_list / watch_stop——异步托管动作，对话轮与任务都有。
+   */
+  watch?: WatchToolFacade | undefined;
+  /**
    * P11 browser capability hosted by the main process (port B). Present in
    * the real core; tests may omit it (no browser_* tools are registered).
    */
   browser?: BrowserHostRpc | undefined;
+  /** W8: the bot's current browser profile key (`bot:{id}` / `shared:{id}`). */
+  browserProfileKey?: ((botId: string) => string) | undefined;
   /**
    * 对话式新建（setup interview，UI 改版）：仅在 bots.setup_state =
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
@@ -207,7 +224,7 @@ function guessMime(fileName: string): string {
  * - `turn` (supervisor turn, read-only): conversation core, read-only queries
  *   (message / attachment / run lookups, read / ls / find / grep), task
  *   management + forward_task_result, async hosted actions (delegate_to_bot,
- *   schedules, wiki ingest, memory candidates, skill authoring, butler
+ *   schedules, watches (W7), wiki ingest, memory candidates, skill authoring, butler
  *   proposals), web_search / web_fetch and read-only MCP tools (W5: risk
  *   `read` with effective approval `auto`, capped). No writes, commands,
  *   browser, media generation, other MCP tools, skill / environment installs,
@@ -312,6 +329,9 @@ export function buildResponseTools(input: {
         runId: identity.runId,
         // D75 §6.1: a task's messages are progress, attributed to the task.
         ...(isTask ? { taskOrigin: { taskId: identity.runId } } : {}),
+        ...(!isTask && deps.scheduleSource !== undefined
+          ? { scheduleSource: deps.scheduleSource }
+          : {}),
       });
       if (uploaded.length > 0)
         deps.attachments.attachToMessage(
@@ -844,6 +864,10 @@ export function buildResponseTools(input: {
   const scheduleTools =
     deps.schedule !== undefined ? buildScheduleTools({ identity, schedule: deps.schedule }) : [];
 
+  // W7 watch tools: an async hosted action like schedules (turn + task).
+  const watchTools =
+    deps.watch !== undefined ? buildWatchTools({ identity, watch: deps.watch }) : [];
+
   // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
   // — 公网默认可访问，网络规则在主进程的页面网络上下文中强制).
   const browserTools =
@@ -853,6 +877,7 @@ export function buildResponseTools(input: {
           browser: deps.browser,
           workspacePath: deps.workspacePath,
           projectPath: deps.projectPath,
+          ...browserProfileKeyOption(deps.browserProfileKey, identity.botId),
           // D75: a page click can start a download; a read-only run's
           // downloads never land in the workspace.
           ...(gateway.writeDenial(identity) !== null
@@ -952,6 +977,11 @@ export function buildResponseTools(input: {
       ...(deps.skills !== undefined ? [createSkill] : []),
       ...wikiTools,
       ...scheduleTools,
+      ...watchTools,
+      // D80: the offer card is the turn's (cards facing the user, D75).
+      ...(deps.schedule !== undefined
+        ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
+        : []),
       ...webTools,
       ...delegationTools,
       ...butlerTools,
@@ -980,6 +1010,7 @@ export function buildResponseTools(input: {
     ...(deps.skills !== undefined ? [createSkill] : []),
     ...wikiTools,
     ...scheduleTools,
+    ...watchTools,
     ...browserTools,
     ...imageTools,
     ...speechTools,
@@ -1075,4 +1106,12 @@ export function buildSubagentResearchTools(input: {
   const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
   const mcpTools = input.deps.mcp?.tools ?? [];
   return dropBuiltinNameConflicts([...coding, ...web, ...mcpTools], new Set(mcpTools), input.deps.logger);
+}
+
+/** W8: the browser tools' profile-key resolver bound to the run's bot. */
+function browserProfileKeyOption(
+  resolve: ((botId: string) => string) | undefined,
+  botId: string | null,
+): { profileKey?: () => string } {
+  return resolve !== undefined && botId !== null ? { profileKey: () => resolve(botId) } : {};
 }

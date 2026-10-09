@@ -1,4 +1,4 @@
-import type { Schedule } from '@kepcup/shared';
+import type { Schedule, ScheduleOrigin } from '@kepcup/shared';
 import { newId } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
@@ -12,6 +12,8 @@ interface ScheduleRow {
   cron: string | null;
   timezone: string;
   note: string;
+  title: string;
+  origin: ScheduleOrigin;
   commitment_id: string | null;
   status: 'active' | 'done' | 'cancelled';
   next_fire_at: number | null;
@@ -29,6 +31,8 @@ function rowToSchedule(row: ScheduleRow): Schedule {
     cron: row.cron,
     timezone: row.timezone,
     note: row.note,
+    title: row.title,
+    origin: row.origin,
     commitmentId: row.commitment_id,
     status: row.status,
     nextFireAt: row.next_fire_at,
@@ -45,6 +49,8 @@ export interface InsertScheduleInput {
   cron?: string | null;
   timezone: string;
   note: string;
+  title?: string | undefined;
+  origin?: ScheduleOrigin | undefined;
   commitmentId?: string | null;
   nextFireAt: number | null;
 }
@@ -72,8 +78,8 @@ export class SchedulesStore {
       .prepare(
         `insert into schedules
            (id, bot_id, conversation_id, kind, run_at, cron, timezone, note,
-            commitment_id, status, next_fire_at, last_fired_at, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?)`,
+            title, origin, commitment_id, status, next_fire_at, last_fired_at, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?)`,
       )
       .run(
         id,
@@ -84,6 +90,8 @@ export class SchedulesStore {
         input.cron ?? null,
         input.timezone,
         input.note,
+        input.title ?? '',
+        input.origin ?? (input.commitmentId ? 'commitment' : 'tool'),
         input.commitmentId ?? null,
         input.nextFireAt,
         this.clock.now(),
@@ -171,22 +179,26 @@ export class SchedulesStore {
     ).map(rowToSchedule);
   }
 
-  /** 承诺作废 → 对应任务取消（P10 任务 6）。 */
-  cancelByCommitment(botId: string, commitmentId: string): number {
-    return this.db
-      .prepare(
-        "update schedules set status = 'cancelled' where bot_id = ? and commitment_id = ? and status = 'active'",
-      )
-      .run(botId, commitmentId).changes;
+  /** 承诺作废 → 对应任务取消（P10 任务 6）；返回被取消的行（D80 回写回执卡）。 */
+  cancelByCommitment(botId: string, commitmentId: string): Schedule[] {
+    return (
+      this.db
+        .prepare(
+          "update schedules set status = 'cancelled' where bot_id = ? and commitment_id = ? and status = 'active' returning *",
+        )
+        .all(botId, commitmentId) as ScheduleRow[]
+    ).map(rowToSchedule);
   }
 
-  /** 移出群：该 Bot 在此群的任务取消（03-data-model 删除级联）。 */
-  cancelForBotInConversation(botId: string, conversationId: string): number {
-    return this.db
-      .prepare(
-        "update schedules set status = 'cancelled' where bot_id = ? and conversation_id = ? and status = 'active'",
-      )
-      .run(botId, conversationId).changes;
+  /** 移出群：该 Bot 在此群的任务取消（03-data-model 删除级联）；返回被取消的行。 */
+  cancelForBotInConversation(botId: string, conversationId: string): Schedule[] {
+    return (
+      this.db
+        .prepare(
+          "update schedules set status = 'cancelled' where bot_id = ? and conversation_id = ? and status = 'active' returning *",
+        )
+        .all(botId, conversationId) as ScheduleRow[]
+    ).map(rowToSchedule);
   }
 
   /** 删除对话：该对话的任务删除（03-data-model 删除级联；FK 亦级联，双保险）。 */

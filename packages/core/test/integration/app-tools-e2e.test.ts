@@ -224,7 +224,9 @@ describe('exposure and approvals', () => {
     llm.script('mock-main', [
       ...taskOf(env, [
         step().replyToolCall('app_notes_delete_all', { confirm: true, note: longNote }),
-        step().replyToolCall('app_notes_delete_all', { confirm: true, note: longNote }),
+        // W4: an identical repeat of a completed operation is deduplicated (no new card), so
+        // the second call differs in its arguments to exercise "still asks".
+        step().replyToolCall('app_notes_delete_all', { confirm: true, note: 'second' }),
         step().replyText('完成'),
       ]),
     ]);

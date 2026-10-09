@@ -196,6 +196,68 @@ describe('mcp response loop', () => {
     expect(String(toolResult!.payload['errorCode'])).toBe('APPROVAL_DENIED');
   }, 60_000);
 
+  it('W4: the same MCP write call twice — the first shows a card and runs, the second gets DUPLICATE_EFFECT without a card; recipients are on the card in full', async () => {
+    const server = await makeServerConfig();
+    const { core, llm, cleanup } = await createTestStack();
+    stacks.push({ cleanup });
+    await core.rpc.call('settings.update', { mcpServers: [server] });
+    const bot = await makeBot(core, '小重');
+    await core.rpc.call('bots.update', {
+      id: bot.id,
+      profile: {
+        ...bot.profile,
+        runtime: { ...bot.profile.runtime, mcp_server_ids: ['srv1'] },
+      },
+    });
+    const conv = await openDirect(core, bot.id);
+    const to = Array.from({ length: 30 }, (_, i) => `team${i}@example.com`).join(';');
+    const args = { text: '周报已发', to };
+    llm.script(
+      'mock-main',
+      viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('mcp_srv1_echo', args),
+          step().replyToolCall('mcp_srv1_echo', args),
+          step().replyText('发完了'),
+        ],
+        relay: '好了',
+      }),
+    );
+    await sendBatch(core, conv.id, ['发周报']);
+    const approval = await waitFor(
+      async () => {
+        const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+          approvals: Array<{ id: string; kind: string; status: string; payload: Record<string, unknown> }>;
+        };
+        return list.approvals.find((a) => a.kind === 'mcp_tool' && a.status === 'pending') ?? null;
+      },
+      { label: 'mcp_tool approval', timeoutMs: 20_000 },
+    );
+    expect(String(approval.payload['argsSummary'])).toContain('（已截断）');
+    expect(approval.payload['recipients']).toEqual([{ key: 'to', value: to }]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const results = steps.steps.filter(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_echo',
+    );
+    expect(results.map((s) => [s.payload['ok'], s.payload['errorCode'] ?? null])).toEqual([
+      [true, null],
+      [false, 'DUPLICATE_EFFECT'],
+    ]);
+    expect(String(results[1]!.payload['content'])).toContain('不要重复执行');
+    const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
+      approvals: Array<{ kind: string; effect?: { status: string } }>;
+    };
+    const cards = list.approvals.filter((a) => a.kind === 'mcp_tool');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.effect?.status).toBe('completed');
+  }, 60_000);
+
   it('does not register the tool when the bot does not select the server', async () => {
     const server = await makeServerConfig();
     const { core, llm, cleanup } = await createTestStack();

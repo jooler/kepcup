@@ -148,7 +148,7 @@ D67 的 tool 生命周期 `opened → running → settled` 先落一个最小子
 
 ### 10.2 表与状态
 
-runs.db `0009_tool_effects.sql`（字段见 [dev/03-data-model.md](../dev/03-data-model.md#tool_effectsd78runs-0009)）：一次调用一行，`run_id` 外键随 run 清理；`summary` 是脱敏后（参数脱敏表 + `secrets.redact`，`browser_type.text` 一律不入）≤200 字的「做了什么」；`effect_key = runId:tool:sha256(规范化脱敏参数)[:16]:occurrence`；`approval_id` 关联本次调用最近一次审批（跨库，无外键）。
+runs.db `0009_tool_effects.sql`（`approval_id` 部分索引在 `0010`；字段见 [dev/03-data-model.md](../dev/03-data-model.md#tool_effectsd78runs-0009)）：一次调用一行，`run_id` 外键随 run 清理；`summary` 是脱敏后（参数脱敏表 + `secrets.redact`，`browser_type.text` 一律不入）≤200 字的「做了什么」；`effect_key = runId:tool:sha256(规范化脱敏参数)[:16]:occurrence`；`approval_id` 关联本次调用最近一次审批（跨库，无外键）。
 
 | 状态 | 何时 |
 |---|---|
@@ -156,10 +156,10 @@ runs.db `0009_tool_effects.sql`（字段见 [dev/03-data-model.md](../dev/03-dat
 | `completed` | 工具返回 `ok:true` |
 | `failed` | 其它失败，含 `not_started`；但 run 已被中止时的失败记 `uncertain` |
 | `uncertain` | 工具报告结果不确定（浏览器 `BROWSER_OUTCOME_UNKNOWN`、MCP 调用传输失败）、工具抛异常、中断时仍在执行 |
-| `denied` | 审批被拒，或中断时其审批被取消 |
-| `intended` | 预留（D78 未使用） |
+| `denied` | 审批被拒，或中断 / 恢复时其审批被取消（等审批的 `intended` 行一律结为 `denied`，从不记为结果未知） |
+| `intended` | 调用在等用户对其审批做决定（W4）：`executing` → `intended`，批准后回到 `executing`；无人值守自动批准不经过它。同一调用已有一次审批被批准后不再回到 `intended` |
 
-- `settle` 只改 `executing` / `uncertain` 行：恢复改成 `uncertain` 之后真实结果仍可落定。记录器出错只记日志，不影响工具结果。
+- `settle` 只改 `executing` / `intended` / `uncertain` 行：恢复改成 `uncertain` 之后真实结果仍可落定。记录器出错只记日志，不影响工具结果。
 - 台账结为 `uncertain` 而工具没给出结局时，宿主给工具结果补 `outcome:'uncertain'` 写入执行记录，续接摘要不依赖台账也能标注。
 
 ### 10.3 恢复、读取与使用
@@ -168,7 +168,17 @@ runs.db `0009_tool_effects.sql`（字段见 [dev/03-data-model.md](../dev/03-dat
 - **读取**：`effects.list({ taskId })` 沿 `continued_from_run_ids` 向前收集整条重试 / 接续链及各 run 的子代理子 run，按时间排序（给任务卡的检查面板用）。
 - **使用**：续接摘要与任务失败摘要把未返回结果或结果不确定的外部调用标「[结果未知]」；`interrupted` 任务的重试闸门与接续任务的 `<effects_before_interrupt>` 段见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
-### 10.4 未实现
+### 10.4 审批幂等与回执（W4，已实现）
 
-- 审批幂等（同一外部动作已完成 / 已拒绝时不再弹卡）与审批卡上的执行回执——原计划同属 D78，暂缓；`ToolResult.effect.receipt` 已留口，但目前没有工具填写，`receipt_json` 恒为空。
-- 本节之外的 D67 全部内容：journal、工具 `replay` 声明、durable 分级与 resume。
+- **去重门**：`ApprovalsService.request` 建卡前（无人值守分支之前）经 tool-call scope 钩子问记录器：同一任务链（`chainRunIds`）里同工具、同脱敏参数哈希的更早台账行。只对任务里有台账行的调用生效；对话轮、子 run、别的任务链、不经审批的调用（auto 策略 / `autoApprove`）不去重；参数含脱敏占位（`[REDACTED]` / `«redacted…»`）时整次不比对。
+  - 链上有 `completed` 行：`mcp_tool` 不建卡，工具得到 `DUPLICATE_EFFECT`（带回执，提示「如确需再做一次，用 ask_user 征得用户同意」），该次调用的台账行删除；其他类别（`git_remote`、沙箱外命令等依赖状态的操作）照常建卡，顶部提示「本任务中已执行过相同操作（回执…），请确认是否需要再次执行」。
+  - 否则最新的 `uncertain` 行 → 照常建卡并提示「上次同样的操作结果未知，请先确认是否已生效」；最新的**用户亲手拒绝**的 `denied` 行（审批 status=denied、非无人值守自动、非取消）→ 不建卡，返回「用户已拒绝相同操作」。取消、中断、退出重启、超时、无人值守底线造成的 `denied` 不算拒绝。
+  - 用户在 `ask_user` 上的真实回答（超时未答的问题是 `ASK_USER_UNANSWERED` 失败，不算）放行在它之前落定的 `completed` / 用户拒绝行；**从不**放行 `uncertain`。
+  - 带提示的卡在无人值守下也不自动批准（§5 护栏「结果未知不得自动重放」）；等这张卡超过任务时限 → 任务失败，`errorReason='uncertain_repeat_timeout'`。
+- **payloadHash**：审批输出带 `payloadHash = sha256(stableJson(payload))`（读取时算、不落库）；`approvals.decide` 可回传它，不符 → `APPROVAL_STALE`。
+- **回执**：审批输出带 `effect {status, receipt?, settledAt?}`，按 `approval_id` 批量反查台账（runs 0010 部分索引）；行落定时重推 `approval.resolved`。MCP 写工具从结构化结果取 http(s) 链接（去掉 query / fragment）与形似 id 的值作回执，经同一脱敏路径；取不到时状态即回执。卡片折叠记录显示 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中，无人值守汇总带结局。
+- **精确卡片**：写入 / 破坏性 MCP 工具参数里的收件方类字段（to / cc / bcc / recipient(s) / channel / email / phone / user / chat_id …，字符串 / 数字及其数组）完整列在卡片上，不参与 400 字参数摘要截断（脱敏）；通知与汇总里截到约 200 字。
+
+### 10.5 未实现
+
+- 本节之外的 D67 全部内容：journal、工具 `replay` 声明、durable 分级与 resume。浏览器 / git_remote 尚不报回执。

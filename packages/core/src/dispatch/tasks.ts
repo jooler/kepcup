@@ -1,6 +1,7 @@
 import {
   AppError,
   ASK_USER_OPTION_MAX_CHARS,
+  BROWSER_HANDBACK_COALESCE_MS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
   TASK_CONCURRENCY_GLOBAL,
   TASK_CONCURRENCY_PER_CONVERSATION,
@@ -137,16 +138,37 @@ export interface TaskOutcome {
   error?: string | null;
   setup?: SetupRequirement;
   /** Machine-readable reason (error_json.reason), e.g. W3 `permission_revoked`. */
-  errorReason?: TaskInterruptReason;
+  errorReason?: TaskErrorReason;
 }
 
-/** Why the host interrupts a running task (W3, D78). */
-export type TaskInterruptReason = 'permission_revoked';
+/**
+ * Why the host interrupts a running task (W3, D78; W8 adds the browser
+ * profile switch — the identity the task browsed with changed under it).
+ */
+export type TaskInterruptReason = 'permission_revoked' | 'browser_profile_changed';
+
+/**
+ * W4 复查 S4: a task over the wall clock while it waited on a card flagged
+ * 「上次同样的操作结果未知」(never auto-approved, not even unattended) —
+ * `errorReason: 'uncertain_repeat_timeout'`.
+ */
+/** Machine-readable task error reasons (`Run.errorReason`). */
+export type TaskErrorReason = TaskInterruptReason | 'uncertain_repeat_timeout';
+
+export const TASK_UNCERTAIN_REPEAT_TIMEOUT_MESSAGE =
+  '等待确认「上次结果未知」的重复操作超时，任务已结束。请检查该操作是否已生效后再决定是否重试';
 
 /** The interruption's error text (card + failure entry), per reason. */
 export const TASK_INTERRUPT_MESSAGES: Record<TaskInterruptReason, string> = {
   permission_revoked: '授权已被撤销，任务已中断。请检查已完成的操作后再重试',
+  browser_profile_changed: '浏览器资料已切换，任务已中断。请检查已完成的操作后再重试',
 };
+
+/** W8: tool-name prefix of the browser tools ("the task used the browser"). */
+const BROWSER_TOOL_PREFIX = 'browser_';
+
+/** W8: the steer a task gets when the user hands the browser page back. */
+export const BROWSER_HANDBACK_TEXT = '用户已交还浏览器控制，先 browser_snapshot 再继续';
 
 /**
  * Ledger rows that make retrying an interrupted task a reviewed decision (W3):
@@ -285,6 +307,13 @@ export interface TaskHostDeps {
    * (onSettled). Returns the ids of the approvals it cancelled.
    */
   cancelPendingApprovals?(runIds: readonly string[]): string[];
+  /**
+   * W4 复查 S4: whether these runs (the task and its sub runs) wait on a
+   * pending approval card flagged「上次同样的操作结果未知」— such a card is
+   * never auto-approved (§5 护栏 7), so a task over the wall clock fails with
+   * a specific reason instead of the generic timeout. Absent = never.
+   */
+  pendingUncertainRepeat?(runIds: readonly string[]): boolean;
   /** Test overrides of the D75 constants. */
   limits?: Partial<TaskHostLimits>;
   /** Runs at the end of every reaper pass (`sweep`, same `now`): the orchestrator's cleanup. */
@@ -525,9 +554,21 @@ export class TaskHost implements TaskToolFacade {
    * Tasks blocked in `ask_user` (§2.4.6): the visible question card and the
    * waiter its answer (a card option, or the turn's inject_task) resolves.
    */
+  /** W8: when each task last got the browser handback notice (coalescing). */
+  readonly #lastHandback = new Map<string, number>();
   readonly #questions = new Map<
     string,
-    { messageId: string; askedAt: number; resolve: (answer: string) => void }
+    {
+      messageId: string;
+      askedAt: number;
+      resolve: (answer: string) => void;
+      /**
+       * W4 复查 B2: the question expired unanswered — ask_user fails with
+       * ASK_USER_UNANSWERED (a tool_result with ok:false), so an expired
+       * question can never count as the user's consent.
+       */
+      expire?: (text: string) => void;
+    }
   >();
   /** Last published queue reason per submitted task (republished only when it changes). */
   readonly #publishedReasons = new Map<string, string | null>();
@@ -891,7 +932,7 @@ export class TaskHost implements TaskToolFacade {
     const askedAt = this.#deps.clock.now();
     const launched = this.#launched.get(task.id);
     if (launched !== undefined) launched.questionSince = askedAt;
-    const answered = new Promise<string>((resolve, reject) => {
+    const answered = new Promise<{ text: string; expired: boolean }>((resolve, reject) => {
       const onAbort = (): void => {
         if (this.#questions.get(task.id)?.messageId === card.id) this.#questions.delete(task.id);
         reject(new AppError('RUN_ALREADY_FINISHED', '任务已停止，问题作废'));
@@ -902,7 +943,12 @@ export class TaskHost implements TaskToolFacade {
         askedAt,
         resolve: (answer) => {
           signal.removeEventListener('abort', onAbort);
-          resolve(answer);
+          resolve({ text: answer, expired: false });
+        },
+        // Resolved (not rejected) so the task takes its slot back and goes on.
+        expire: (text) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve({ text, expired: true });
         },
       });
     });
@@ -913,14 +959,21 @@ export class TaskHost implements TaskToolFacade {
     // on a half-done tree), and the user can cancel the task on its card —
     // a cancelled task unwinds without waiting for a slot (审查 M-1).
     const waited = this.#deps.yieldSlotWhile?.(task.id, answered, signal) ?? answered;
-    return waited.finally(() => {
-      // Waiting on the user is not running time (审查 M3): the wall clock
-      // pauses for it — and for taking the slot back after the answer.
-      if (launched !== undefined && launched.questionSince !== null) {
-        launched.questionWaitMs += Math.max(0, this.#deps.clock.now() - launched.questionSince);
-        launched.questionSince = null;
-      }
-    });
+    return waited
+      .finally(() => {
+        // Waiting on the user is not running time (审查 M3): the wall clock
+        // pauses for it — and for taking the slot back after the answer.
+        if (launched !== undefined && launched.questionSince !== null) {
+          launched.questionWaitMs += Math.max(0, this.#deps.clock.now() - launched.questionSince);
+          launched.questionSince = null;
+        }
+      })
+      .then(({ text, expired }) => {
+        // W4 复查 B2: an expired question is not an answer — ask_user fails
+        // (ok:false, ASK_USER_UNANSWERED) with the go-on instruction as text.
+        if (expired) throw new AppError('ASK_USER_UNANSWERED', text);
+        return text;
+      });
   }
 
   /** Marks a question card answered with `text` (void / expired) so it is no longer clickable. */
@@ -978,9 +1031,14 @@ export class TaskHost implements TaskToolFacade {
    */
   #resolveQuestion(
     taskId: string,
-    question: { messageId: string; resolve: (answer: string) => void },
+    question: {
+      messageId: string;
+      resolve: (answer: string) => void;
+      expire?: (text: string) => void;
+    },
     answer: string,
     forTask: string = answer,
+    expired = false,
   ): void {
     this.#questions.delete(taskId);
     this.#voidQuestionCard(question.messageId, answer, true);
@@ -990,7 +1048,8 @@ export class TaskHost implements TaskToolFacade {
         this.#deps.publishRunStatus(this.#deps.runs.update(taskId, { awaitingInput: false })),
       );
     }
-    question.resolve(forTask);
+    if (expired && question.expire !== undefined) question.expire(forTask);
+    else question.resolve(forTask);
     this.publishUpdate(taskId);
   }
 
@@ -1438,6 +1497,16 @@ export class TaskHost implements TaskToolFacade {
         launched.questionWaitMs +
         (launched.questionSince !== null ? Math.max(0, now - launched.questionSince) : 0);
       if (since !== null && now - since - waited > this.#limits.maxWallMs) {
+        let flagged = false;
+        this.#safely(() => {
+          flagged = this.#deps.pendingUncertainRepeat?.(this.#runIdsOf(launched.taskId)) === true;
+        });
+        if (flagged) {
+          this.#stop(launched.taskId, 'failed', TASK_UNCERTAIN_REPEAT_TIMEOUT_MESSAGE, {
+            errorReason: 'uncertain_repeat_timeout',
+          });
+          continue;
+        }
         this.#stop(
           launched.taskId,
           'failed',
@@ -1483,6 +1552,7 @@ export class TaskHost implements TaskToolFacade {
         question,
         '（超时未回答）',
         `用户未回答（等了 ${hours} 小时）。按你自己的判断继续：选最稳妥、可撤销的做法，并在结果里说明哪些事需要用户确认。`,
+        true,
       );
     }
   }
@@ -1567,6 +1637,9 @@ export class TaskHost implements TaskToolFacade {
    */
   interruptForRevocation(event: PermissionRevokedEvent): number {
     const statuses: RunStatus[] = ['running', 'waiting_approval', 'waiting_lease'];
+    // W8: a browser profile switch only concerns the tasks that used the browser.
+    const browserScope = event.scope === 'browser_profile';
+    const reason: TaskInterruptReason = browserScope ? 'browser_profile_changed' : 'permission_revoked';
     let count = 0;
     this.#pumpHeld += 1;
     try {
@@ -1582,8 +1655,9 @@ export class TaskHost implements TaskToolFacade {
         const owner = event.runId !== undefined ? this.#owningTaskId(event.runId) : undefined;
         for (const task of tasks) {
           if (owner !== undefined && task.id !== owner) continue;
+          if (browserScope && !this.usedBrowser(task.id)) continue;
           try {
-            const settled = this.interrupt(task.id, 'permission_revoked');
+            const settled = this.interrupt(task.id, reason);
             if (settled?.status === 'interrupted') count += 1;
           } catch (error) {
             this.#deps.logger.warn(
@@ -1602,6 +1676,61 @@ export class TaskHost implements TaskToolFacade {
         { scope: event.scope, serverId: event.serverId, toolName: event.toolName, count },
         'interrupted running tasks (permission revoked)',
       );
+    }
+    return count;
+  }
+
+  /**
+   * W8: "the task used the browser" = the task or one of its SubAgent sub
+   * runs recorded a `browser_*` tool call (run_steps; written before the tool
+   * runs, so a call in flight counts). Persistent and engine-agnostic — unlike
+   * "has an open page", which is per bot + conversation, not per task.
+   */
+  usedBrowser(taskId: string): boolean {
+    try {
+      return this.#deps.runs.hasToolCallWithPrefix(this.#runIdsOf(taskId), BROWSER_TOOL_PREFIX);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * W8 自动接管 · 交还：the user handed the bot's page in this conversation back
+   * (viewer toolbar / closed the viewer / idle timeout). Every running task of
+   * that bot here that used the browser gets the steer "先 browser_snapshot 再
+   * 继续" through the inject path (an entry on its card + a steer into the
+   * engine run). A task blocked on its question card is skipped: an inject
+   * would answer the question, and the user answers it on the card. A task
+   * notified within BROWSER_HANDBACK_COALESCE_MS is skipped (take over / hand
+   * back repeatedly = one notice). Returns how many tasks were notified.
+   */
+  notifyBrowserHandback(botId: string, conversationId: string): number {
+    const tasks = this.#deps.runs.listTasks({
+      botId,
+      conversationId,
+      statuses: ['running', 'waiting_approval', 'waiting_lease'],
+    });
+    let count = 0;
+    const now = this.#deps.clock.now();
+    for (const [taskId, at] of this.#lastHandback) {
+      if (now - at >= BROWSER_HANDBACK_COALESCE_MS) this.#lastHandback.delete(taskId);
+    }
+    for (const task of tasks) {
+      if (this.#questions.has(task.id) || this.#lastHandback.has(task.id)) continue;
+      if (!this.usedBrowser(task.id)) continue;
+      try {
+        this.inject(
+          { runId: task.id, botId, conversationId, loopType: 'task' },
+          { taskId: task.id, text: BROWSER_HANDBACK_TEXT },
+        );
+        this.#lastHandback.set(task.id, now);
+        count += 1;
+      } catch (error) {
+        this.#deps.logger.warn(
+          { taskId: task.id, error: error instanceof Error ? error.message : String(error) },
+          'browser handback inject failed',
+        );
+      }
     }
     return count;
   }
@@ -1975,7 +2104,7 @@ export class TaskHost implements TaskToolFacade {
     taskId: string,
     status: 'cancelled' | 'failed' | 'interrupted',
     reason: string,
-    options: { errorReason?: TaskInterruptReason; beforeSettle?: () => void } = {},
+    options: { errorReason?: TaskErrorReason; beforeSettle?: () => void } = {},
   ): Run | null {
     const launched = this.#launched.get(taskId);
     if (launched !== undefined) {
@@ -2192,7 +2321,7 @@ export class TaskHost implements TaskToolFacade {
     task: Run,
     status: RunStatus,
     error: string | null,
-    reason?: TaskInterruptReason,
+    reason?: TaskErrorReason,
   ): string {
     const label = status === 'cancelled' ? '已取消' : status === 'interrupted' ? '已中断' : '失败';
     let digest = '';
@@ -2214,7 +2343,9 @@ export class TaskHost implements TaskToolFacade {
     const note =
       reason === 'permission_revoked' && status === 'interrupted'
         ? '用户撤销了这项任务所用的授权：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
-        : '';
+        : reason === 'browser_profile_changed' && status === 'interrupted'
+          ? '用户切换了你的浏览器资料（登录身份可能已不同）：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
+          : '';
     return [`任务${label}${error !== null && error.length > 0 ? `：${error}` : ''}`, note, digest]
       .filter((part) => part.length > 0)
       .join('\n');

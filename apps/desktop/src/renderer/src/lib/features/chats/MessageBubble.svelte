@@ -7,7 +7,9 @@
   import RunChangesCard from '$lib/features/projects/RunChangesCard.svelte';
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
+  import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
+  import WatchCard from '$lib/features/watches/WatchCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
@@ -51,6 +53,19 @@
       ? String(('runId' in message.content ? message.content.runId : null) ?? message.taskId ?? '')
       : null,
   );
+  // W7 监看卡（created / alert / paused），按监看行实时重绘。
+  const watchCard = $derived(
+    isCard && 'cardType' in message.content && message.content.cardType === 'watch'
+      ? {
+          watchId: String(message.content.watchId ?? ''),
+          watchEvent: String(message.content.watchEvent ?? 'created'),
+          watchSeq: message.content.watchSeq,
+          watchSummary: message.content.watchSummary,
+          watchPauseReason: message.content.watchPauseReason,
+          watchFailures: message.content.watchFailures,
+        }
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
@@ -59,6 +74,7 @@
       !isChangesCard &&
       delegationCard === null &&
       taskCardId === null &&
+      watchCard === null &&
       'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
@@ -114,6 +130,14 @@
       message.content.event === 'route_suggestion',
   );
 
+  // D80 定时任务卡：回执卡（schedule_created）与提议卡（schedule_offer）。
+  const isScheduleCard = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      (message.content.event === 'schedule_created' || message.content.event === 'schedule_offer'),
+  );
+
   function assign(botId: string): void {
     if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
   }
@@ -128,6 +152,18 @@
   <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
+  </div>
+{:else if watchCard !== null}
+  <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要，暂停卡可恢复 -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <WatchCard
+      watchId={watchCard.watchId}
+      watchEvent={watchCard.watchEvent}
+      watchSeq={watchCard.watchSeq}
+      watchSummary={watchCard.watchSummary}
+      watchPauseReason={watchCard.watchPauseReason}
+      watchFailures={watchCard.watchFailures}
+    />
   </div>
 {:else if taskCardId !== null}
   <!-- D75 任务卡：信息卡，居中；进行中可取消，失败可重试，取消后附改动摘要 -->
@@ -169,6 +205,10 @@
 {:else if isRouteCard}
   <div class="flex w-full justify-center py-1">
     <RouteCard {message} />
+  </div>
+{:else if isScheduleCard}
+  <div class="flex w-full justify-center py-1">
+    <ScheduleCard {message} />
   </div>
 {:else if isSystem}
   <div class="flex flex-col items-center gap-1 py-1" data-testid="system-message">

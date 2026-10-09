@@ -316,7 +316,7 @@
 - 阶段：D73 P0（`todo/connected-apps.md` §4）
 - 是否阻塞：否
 - 问题：实现 P0 时，设计 29 §5 / §12 与 todo §4 有若干没写到或与实现细节冲突之处：
-  1. **多一张 `oauth_clients` 表**（设计 29 §12 未列）：按 issuer 一行，记客户端来源（`dcr` / `manual` / `preregistered`）与已登记的 `redirect_uris`。没有它就无法判断「客户端是否来自 DCR（最后一个引用方断开后才清除）」，也无法在打开浏览器前做 DCR 端口预判。客户端 id / secret 仍逐值存 secrets。同在迁移 `0022_app_connections.sql`。
+  1. **多一张 `oauth_clients` 表**（设计 29 §12 未列）：按 issuer 一行，记客户端来源（`dcr` / `manual` / `preregistered`）与已登记的 `redirect_uris`。没有它就无法判断「客户端是否来自 DCR（最后一个引用方断开后才清除）」，也无法在打开浏览器前做 DCR 端口预判。客户端 id / secret 仍逐值存 secrets。同在迁移 `0024_app_connections.sql`。
   2. **`TokenVault.saveTokens` 要求连接行已存在**（否则抛 `APP_CONNECTION_NOT_FOUND`）：交互流程先建行（状态 `connecting`）再换令牌，令牌写入与 `token_expires_at` / `scopes` 更新在同一处完成，避免有令牌而无行的孤儿状态。测试里直接种子令牌须先 `ensureCustom`。
   3. **回调服务把浏览器请求保持到换令牌结束**（todo §4.6 只写「回给浏览器一个结果页」）：为让「已连接，可回到 KepCup」只在真正连上之后显示，回调请求挂起，由流程在换令牌后 `respond({ok})` 决定成功页或失败页；未响应 30 秒自动中性收尾，`close()` 立即销毁连接。代价：浏览器标签页在换令牌期间转圈，通常不到一秒。
   4. **`listTools` 的 GET 事件流收到 401**（todo §4.7 的待验证问题）：用 pi-mcp 真实传输层验证（`mcp-auth-transport.test.ts` 锁定）——GET 流的 401 只走 `client.onError`，不触发 `onClose`、不使连接失败，POST 照常；所以**不**对 OAuth 连接关闭 GET 流。`onUnauthorized` / `token()` 抛出的 `AppAuthRequiredError` 原样穿出传输层（`McpService` 仍保留对 `cause` 链的防御）。
@@ -325,9 +325,9 @@
   7. **`settings.update` 改认证方式 / URL 时断开旧连接**（todo 未写）：令牌的受众绑定 server URL（RFC 8707），所以原为 OAuth 的 server 被改成 `none` / `headers`、或 URL 变了，在替换 `mcpServers` **之前**吊销并清除旧连接（`AppDisconnector.reconcileServers`），并取消该 server 进行中的授权流程。纯改名、改 `autoApprove`、URL 规范化后相同则保持连接。被 `settings.update` 差集删掉的 server 不在此处理（走显式 `mcp.removeServer`，幂等）。
   8. **`apps.setClientCredentials` 在同一流程上续跑**：保存凭据后流程自行发出 `discovering` 并继续（同一 `flowId`），渲染端不再重复 `apps.connect`（早先版本的 store 会重发一次，无害但多余，已去掉）。
   9. **`app_request_connection` 的注册条件**：Bot 勾选了应用级启用的 OAuth 自定义 server 即注册（不要求此刻有需要重连的应用），因为 run 中途授权失效时模型也需要它；工具名 `app_` 前缀留给 P1 的 `apps` 能力包，P0 的 ACP 外部智能体 Bot 拿不到。
-  10. **迁移号冲突待处理**：本分支取 main `0022`，`t/schedule-nudges`（D80）的 `0022_schedule_title_origin.sql` 同号；后合入的一方顺延。
+  10. **迁移号已顺延**：本分支起初取 main `0022` / `0023`，与 D80 的 `0022_schedule_title_origin.sql`、W7 的 `0023_watches.sql` 撞号；合入 main 时 D73 顺延为 `0024_app_connections.sql` / `0025_app_tools.sql`。
   11. **复查后的补强（2026-10-09，不改设计语义）**：① SSRF 判定 `isPrivateAddress` 改为按 16 字节解析 IPv6（IPv4 映射 / NAT64 / 6to4 内嵌 IPv4 复判，Teredo、IPv4 兼容、站点本地、完整 `fe80::/10`、组播、文档段一律拒绝），IPv4 补 192.0.0.0/24、192.0.2.0/24、198.18.0.0/15、198.51.100.0/24、203.0.113.0/24；② `mcp.test` 的 OAuth server 只有「已保存且 URL / 认证方式一致」才会带已存令牌发请求，草稿一律「未连接」；`ConnectionAuthRegistry.providerFor(connectionId, serverUrl)` 再核对连接行记录的 URL；③ 每个连接记录授权时所用的客户端（secrets `conn:{id}:client_id|client_secret`，无迁移），刷新 / 吊销优先用它，其次 issuer 客户端，最后 CIMD——同一 issuer 上别的连接重新注册不再让既有连接失效；④ `apps.disconnect` 先取消并等待该连接进行中的交互流程（状态落 `not_connected`），registry 的世代号保证在途刷新在断开 / 重新授权后丢弃结果、不写回令牌；⑤ 流程总时限在每次尝试（含 `invalid_client` 重试、停放在 `OAUTH_CLIENT_REQUIRED`）开始时重新计时；`invalid_client` 重试后授权主机变了会重新进入 `awaiting_consent`；⑥ 启动时把上次未正常退出遗留的 `connecting` 行修正（有令牌 → `connected` / `expired`，否则 `not_connected`）；⑦ `McpService.listTools` 缓存连接上刷新后仍 401 同样产生 `AppAuthRequiredError` + `needs_auth`；⑧ `app_request_connection` 登记为 `local` 副作用类别。
-- 影响范围：`apps/*`、`migrations/main/0022`、`rpc/bindings.ts`（`settings.update`）、渲染端 `stores/apps.svelte.ts`；设计 29 §12 补 `oauth_clients`。
+- 影响范围：`apps/*`、`migrations/main/0024`、`0025`、`rpc/bindings.ts`（`settings.update`）、渲染端 `stores/apps.svelte.ts`；设计 29 §12 补 `oauth_clients`。
 - 可选方案：按上述实现保留（推荐）；或逐项回到设计原文（1、2、3 会损失可观察行为，不推荐）。
 - 推荐：均保留；设计 29 在用户确认后补 `oauth_clients`、「改认证方式 / URL 断开」两处。
 - 决定：（由人工填写）

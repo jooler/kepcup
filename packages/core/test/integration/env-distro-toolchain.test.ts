@@ -89,9 +89,14 @@ function distroCatalog(archiveUrl: string, sha256: string, sizeBytes: number): C
       install: { via: 'archive' },
       wslDistro: true,
       platforms: {
-        // 主机条目（审批卡片的平台键）；发行版安装走 linux-arm64 产物。
+        // 主机条目（审批卡片的平台键）：CI 会在 darwin/linux/win32 × arch 上跑，
+        // request() 按 process.platform-arch 查键；发行版安装再按 process.arch 取 linux-* 产物。
         'darwin-arm64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
+        'darwin-x64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
         'linux-arm64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
+        'linux-x64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
+        'win32-arm64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
+        'win32-x64': { url: archiveUrl, sha256, sizeBytes, kind: 'archive' },
       },
       verify: { command: '"{bin}" --version', expect: 'node 1.0.0' },
     },
