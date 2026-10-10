@@ -1,8 +1,10 @@
 import type {
+  AppCatalogEntry,
   AppConnectFlowPayload,
   AppConnectionStatusPayload,
   AppConnection,
   AppConnectTarget,
+  AppToolView,
 } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import {
@@ -26,11 +28,20 @@ import {
  */
 class AppsState {
   connections = $state<AppConnection[]>([]);
+  /** 目录（`apps.catalog.list`，仅发行门禁放行的条目；含每条的已连接账号数）。 */
+  catalog = $state<AppCatalogEntry[]>([]);
+  catalogLoaded = $state(false);
   /** flowId → 流程视图（终态保留，直到同目标发起新流程或显式清除）。 */
   flows = $state<Record<string, FlowView>>({});
   /** 目标键 → 当前流程 id。 */
   flowIdByTarget = $state<Record<string, string>>({});
   loaded = $state(false);
+  /**
+   * 连接 id → 工具清单（`apps.connections.tools`，Bot 表单的工具数估计 / 风险提示用）。
+   * 查询会连到服务端，所以只按需拉、按连接缓存；该连接状态变化（含 `tools_changed`）时失效。
+   */
+  toolsByConnection = $state<Record<string, AppToolView[]>>({});
+  readonly #toolsInflight = new Map<string, Promise<AppToolView[]>>();
   #started = false;
   #sawReady = false;
   /** flowId → 发起它的目标（`clearFlow` 据此清理）。 */
@@ -45,6 +56,7 @@ class AppsState {
     });
     core.onEvent('apps.connection_status', (payload) => {
       const { connectionId, status } = payload as AppConnectionStatusPayload;
+      this.invalidateTools(connectionId);
       const next = applyConnectionStatus(this.connections, connectionId, status);
       if (next === null) void this.refresh().catch(() => undefined);
       else this.connections = next;
@@ -61,16 +73,69 @@ class AppsState {
   #onFlowEvent(payload: AppConnectFlowPayload): void {
     this.flows = applyFlowEvent(this.flows, payload);
     // 完成：拉最新连接列表（账号标签 / scope / 状态）。失败 / 取消：连接状态不变。
-    if (payload.phase === 'done') void this.refresh().catch(() => undefined);
+    if (payload.phase === 'done') {
+      if (payload.connectionId !== undefined) this.invalidateTools(payload.connectionId);
+      void this.refresh().catch(() => undefined);
+    }
   }
 
-  /** 拉取连接列表（含自定义 server 的占位连接 `custom:{serverId}`）。 */
+  /** 丢弃某连接缓存的工具清单（下次 `connectionTools` 重拉）。 */
+  invalidateTools(connectionId: string): void {
+    this.#toolsInflight.delete(connectionId);
+    if (!(connectionId in this.toolsByConnection)) return;
+    const { [connectionId]: _dropped, ...rest } = this.toolsByConnection;
+    void _dropped;
+    this.toolsByConnection = rest;
+  }
+
+  /**
+   * 某连接的工具清单（含锁定状态 / 策略 / 是否暴露），按连接缓存、并发去重。
+   * 查询失败抛错（调用方按「未知」处理，不要当成 0 个工具）。
+   */
+  async connectionTools(connectionId: string): Promise<AppToolView[]> {
+    const cached = this.toolsByConnection[connectionId];
+    if (cached !== undefined) return cached;
+    const inflight = this.#toolsInflight.get(connectionId);
+    if (inflight !== undefined) return inflight;
+    const request = (async () => {
+      try {
+        const { tools } = (await core.call('apps.connections.tools', { connectionId })) as {
+          tools: AppToolView[];
+        };
+        this.toolsByConnection = { ...this.toolsByConnection, [connectionId]: tools };
+        return tools;
+      } finally {
+        this.#toolsInflight.delete(connectionId);
+      }
+    })();
+    this.#toolsInflight.set(connectionId, request);
+    return request;
+  }
+
+  /**
+   * 拉取连接列表（含自定义 server 的占位连接 `custom:{serverId}`）与目录（条目带已连接
+   * 账号数，随连接变化一起刷新）。
+   */
   async refresh(): Promise<void> {
     const { connections } = (await core.call('apps.connections.list', {
       includeCustom: true,
     })) as { connections: AppConnection[] };
     this.connections = connections;
     this.loaded = true;
+    await this.refreshCatalog().catch(() => undefined);
+  }
+
+  async refreshCatalog(): Promise<void> {
+    const { entries } = (await core.call('apps.catalog.list')) as {
+      entries: AppCatalogEntry[];
+    };
+    this.catalog = entries;
+    this.catalogLoaded = true;
+  }
+
+  /** 目录条目（断开后残留的连接可能查不到 → null）。 */
+  entryFor(connectorId: string): AppCatalogEntry | null {
+    return this.catalog.find((entry) => entry.connectorId === connectorId) ?? null;
   }
 
   connectionFor(target: AppConnectTarget): AppConnection | null {
@@ -90,17 +155,20 @@ class AppsState {
   }
 
   /**
-   * 发起连接（`apps.connect`）。同一目标并发调用 core 会返回同一 flowId；这里把
-   * 该 flowId 挂到目标上。返回 flowId，供面板追踪。
+   * 发起连接（`apps.connect`）。同一目标并发调用 core 会返回同一 flowId（后到的
+   * `grantBotId` 不生效——群聊里第二张卡片完成后自行补写 Profile，见
+   * ConnectAppSetupBody）；这里把该 flowId 挂到目标上。`connectionId` = 重新授权
+   * 既有的目录连接（过期 / 追加权限）而不是新建账号。返回 flowId，供面板追踪。
    */
   async connect(
     target: AppConnectTarget,
-    options: { scopes?: string[]; grantBotId?: string } = {},
+    options: { scopes?: string[]; grantBotId?: string; connectionId?: string } = {},
   ): Promise<string> {
     const { flowId } = (await core.call('apps.connect', {
       target,
       ...(options.scopes !== undefined ? { scopes: options.scopes } : {}),
       ...(options.grantBotId !== undefined ? { grantBotId: options.grantBotId } : {}),
+      ...(options.connectionId !== undefined ? { connectionId: options.connectionId } : {}),
     })) as { flowId: string };
     this.#targetByFlow.set(flowId, target);
     this.flowIdByTarget = { ...this.flowIdByTarget, [targetKey(target)]: flowId };
@@ -114,6 +182,11 @@ class AppsState {
 
   async cancel(flowId: string): Promise<void> {
     await core.call('apps.connect.cancel', { flowId });
+  }
+
+  /** `reviewing_tools` 下用户确认工具清单：core 批准全部待复核工具 → `connected` → `done`。 */
+  async confirmTools(flowId: string): Promise<void> {
+    await core.call('apps.connect.confirmTools', { flowId });
   }
 
   /** 收起目标的流程提示（终态的失败 / 取消卡片）。 */

@@ -1,15 +1,19 @@
 <script lang="ts">
-  import type { McpServer } from '@kepcup/shared';
+  import type { McpServer, McpToolRisk } from '@kepcup/shared';
+  import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
+  import { appDetailStore } from '$lib/stores/app-detail.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
+  import { customConnectionId } from '$lib/features/apps/connect-flow';
+  import McpRiskBadge from '../approvals/McpRiskBadge.svelte';
   import McpToolPolicies from './McpToolPolicies.svelte';
 
   /**
@@ -22,6 +26,9 @@
    * D73：Streamable HTTP server 可选认证方式「无 / Header / OAuth」；OAuth 的
    * 连接状态与「连接 / 重新连接 / 断开」由 ConnectAppPanel 呈现（与对话内连接卡
    * 共用）；删除 server 走 `mcp.removeServer`（连同密钥、令牌、连接行一并清理）。
+   * D73 P1（§5.5 工具锁定）：「测试」成功后列出工具（带风险档），「批准」/「保存并批准」
+   * 把测试时看到的定义哈希交给 `apps.tools.approveAfterTest`；批准前工具不暴露给
+   * Bot，行上显示待批准数（`apps.connections.tools`，连接 id `custom:{serverId}`）。
    */
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
@@ -31,14 +38,69 @@
   let draft = $state<Draft | null>(null);
   let busy = $state(false);
   let testing = $state(false);
+  /** 列表里最近一次「测试」属于哪个 server（结果只显示在它的行上）。 */
+  let testServerId = $state<string | null>(null);
   let testTools = $state<string[] | null>(null);
   let testError = $state<string | null>(null);
+  /** 测试时看到的工具定义哈希（`mcp.test` 的 `toolHashes`），供「批准」提交。 */
+  let testHashes = $state<Record<string, string> | null>(null);
   let draftTesting = $state(false);
   let draftTestTools = $state<string[] | null>(null);
   let draftTestError = $state<string | null>(null);
+  let draftTestHashes = $state<Record<string, string> | null>(null);
+  let approving = $state(false);
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
   /** W5：展开了逐工具策略的 server。 */
   let toolsOpen = $state<Record<string, boolean>>({});
+
+  $effect(() => {
+    appsStore.start();
+    appDetailStore.start();
+  });
+
+  // 待批准数：只对 core 已登记连接行的 server 读清单（没有行 = 从未列过工具，读清单会
+  // 触发一次连接，留到用户点「测试」时再做）。正在拉的跳过，免得连接列表刷新时并发重复
+  // 请求；loadingTools 不追踪——否则失败（缓存仍空）→ 清 loading → 重跑 → 再拉，会循环。
+  $effect(() => {
+    const known = new Set(appsStore.connections.map((connection) => connection.id));
+    for (const server of servers) {
+      const id = customConnectionId(server.id);
+      if (
+        !known.has(id) ||
+        appDetailStore.toolsFor(id) !== null ||
+        untrack(() => appDetailStore.loadingTools[id] === true)
+      ) {
+        continue;
+      }
+      void appDetailStore.loadTools(id).catch(() => undefined);
+    }
+  });
+
+  function riskOf(serverId: string, toolName: string): McpToolRisk | null {
+    const view = appDetailStore.toolsFor(customConnectionId(serverId));
+    return view?.tools.find((tool) => tool.toolName === toolName)?.risk ?? null;
+  }
+
+  /** 把测试时看到的工具定义交给 core 批准（§5.5）；返回是否有工具被批准。 */
+  async function approveTested(serverId: string, hashes: Record<string, string>): Promise<boolean> {
+    approving = true;
+    try {
+      const { approved } = await appDetailStore.approveAfterTest(serverId, hashes);
+      if (approved.length > 0) {
+        toast.success(t('settings.mcpToolsApproved', { count: approved.length }));
+      } else {
+        toast.error(t('settings.mcpToolsApproveNone'));
+      }
+      return approved.length > 0;
+    } catch (error) {
+      toast.error(
+        t('settings.mcpToolsApproveFailed', { reason: String((error as Error).message ?? error) }),
+      );
+      return false;
+    } finally {
+      approving = false;
+    }
+  }
 
   function emptyDraft(kind: 'stdio' | 'http' | 'sse'): Draft {
     const id = `mcp_${Date.now().toString(36)}`;
@@ -144,22 +206,26 @@
     void settingsStore.removeMcpSecret(draft.id, 'header', name).catch(() => {});
   }
 
+  function resetTestResults(): void {
+    testServerId = null;
+    testTools = null;
+    testError = null;
+    testHashes = null;
+    draftTestTools = null;
+    draftTestError = null;
+    draftTestHashes = null;
+  }
+
   function addServer(): void {
     draft = emptyDraft(newKind);
     editingId = null;
-    testTools = null;
-    testError = null;
-    draftTestTools = null;
-    draftTestError = null;
+    resetTestResults();
   }
 
   function editServer(server: McpServer): void {
     draft = { ...server, secretDrafts: {} };
     editingId = server.id;
-    testTools = null;
-    testError = null;
-    draftTestTools = null;
-    draftTestError = null;
+    resetTestResults();
   }
 
   function cancelEdit(): void {
@@ -167,9 +233,13 @@
     editingId = null;
   }
 
-  /** 落盘：先写新输入的密钥，再整体覆盖 mcpServers。 */
-  async function save(): Promise<void> {
+  /**
+   * 落盘：先写新输入的密钥，再整体覆盖 mcpServers。`approveTools` = 「保存并批准工具」：
+   * 保存成功后把草稿测试时看到的工具定义交给 core 批准。
+   */
+  async function save(approveTools = false): Promise<void> {
     if (draft === null) return;
+    const hashesToApprove = approveTools ? draftTestHashes : null;
     flushPendingEntries();
     if (draft.name.trim().length === 0) {
       toast.error(t('settings.mcpNameRequired'));
@@ -222,6 +292,10 @@
       toast.success(t('settings.saved'));
       draft = null;
       editingId = null;
+      draftTestTools = null;
+      draftTestHashes = null;
+      if (hashesToApprove !== null) await approveTested(serverId, hashesToApprove);
+      else void appsStore.refresh().catch(() => undefined);
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
     } finally {
@@ -269,13 +343,22 @@
 
   async function test(server: McpServer): Promise<void> {
     testing = true;
+    testServerId = server.id;
     testTools = null;
     testError = null;
+    testHashes = null;
     try {
       const result = await settingsStore.testMcp(server);
       testTools = result.tools;
+      testHashes = result.toolHashes ?? null;
       if (result.missingSecrets.length > 0) {
         testError = t('settings.mcpMissingSecrets', { names: result.missingSecrets.join(', ') });
+      } else if (result.needsAuth !== undefined && result.message !== undefined) {
+        testError = result.message;
+      }
+      // 风险档 / 待批准状态来自锁定清单（测试本身不登记）；测试成功后拉一次。
+      if (result.tools.length > 0) {
+        void appDetailStore.loadTools(customConnectionId(server.id)).catch(() => undefined);
       }
     } catch (error) {
       testError = String((error as Error).message ?? error);
@@ -319,6 +402,7 @@
     draftTesting = true;
     draftTestTools = null;
     draftTestError = null;
+    draftTestHashes = null;
     try {
       const { secretDrafts: _ignored, ...server } = draft;
       void _ignored;
@@ -327,6 +411,7 @@
         draftSecretValues(draft),
       );
       draftTestTools = result.tools;
+      draftTestHashes = result.toolHashes ?? null;
       if (result.missingSecrets.length > 0) {
         draftTestError = t('settings.mcpMissingSecrets', {
           names: result.missingSecrets.join(', '),
@@ -358,6 +443,17 @@
         >
         {#if !server.enabled}
           <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
+        {/if}
+        {#if appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
+          <Badge
+            variant="outline"
+            class="border-amber-500/60 text-amber-700 dark:text-amber-400"
+            data-testid={`mcp-pending-${server.id}`}
+          >
+            {t('settings.mcpToolsPending', {
+              count: appDetailStore.pendingFor(customConnectionId(server.id)),
+            })}
+          </Badge>
         {/if}
         <div class="ml-auto flex items-center gap-3">
           <label class="flex items-center gap-1.5 text-xs">
@@ -413,15 +509,46 @@
           </Button>
         </div>
       </div>
-      {#if testTools !== null && testError === null}
-        <p
-          class="text-xs text-emerald-600 dark:text-emerald-400"
-          data-testid={`mcp-tools-${server.id}`}
-        >
-          {t('settings.mcpToolsFound', { count: testTools.length })}: {testTools.join('、')}
-        </p>
-      {:else if testError !== null}
-        <p class="text-xs text-destructive">{testError}</p>
+      {#if testServerId === server.id}
+        {#if testTools !== null && testError === null}
+          <div class="space-y-1.5" data-testid={`mcp-tools-${server.id}`}>
+            <p class="text-xs text-emerald-600 dark:text-emerald-400">
+              {t('settings.mcpToolsFound', { count: testTools.length })}
+            </p>
+            {#if testTools.length > 0}
+              <div class="flex flex-wrap gap-1.5" data-testid={`mcp-tested-${server.id}`}>
+                <!-- 按位置键：server 返回的工具名可能重复，重名会让按名键的 each 崩掉 -->
+                {#each testTools as name, index (index)}
+                  {@const risk = riskOf(server.id, name)}
+                  <span class="flex items-center gap-1 text-xs">
+                    <code class="rounded bg-muted px-1.5 py-0.5">{name}</code>
+                    {#if risk !== null}
+                      <McpRiskBadge {risk} testid={`mcp-tested-risk-${server.id}-${name}`} />
+                    {/if}
+                  </span>
+                {/each}
+              </div>
+              {#if testHashes !== null && appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
+                {@const hashes = testHashes}
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={approving}
+                    onclick={() => void approveTested(server.id, hashes)}
+                    data-testid={`mcp-approve-${server.id}`}
+                  >
+                    {t('settings.mcpToolsApprove')}
+                  </Button>
+                  <span class="text-xs text-muted-foreground">
+                    {t('settings.mcpToolsApproveHint')}
+                  </span>
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {:else if testError !== null}
+          <p class="text-xs text-destructive">{testError}</p>
+        {/if}
       {/if}
       {#if server.auth === 'oauth'}
         <div class="space-y-1.5 border-t pt-2.5" data-testid={`mcp-oauth-${server.id}`}>
@@ -487,11 +614,9 @@
             id="mcp-url"
             class="h-9"
             bind:value={draft.url}
-            placeholder={
-              draft.transport === 'sse'
-                ? 'https://mcp.example.com/sse'
-                : 'https://mcp.example.com/mcp'
-            }
+            placeholder={draft.transport === 'sse'
+              ? 'https://mcp.example.com/sse'
+              : 'https://mcp.example.com/mcp'}
           />
         </div>
       {/if}
@@ -591,8 +716,25 @@
         </div>
       {/if}
 
-      <div class="flex items-center gap-2">
-        <Button size="sm" disabled={busy} onclick={() => void save()} data-testid="mcp-save">
+      <div class="flex flex-wrap items-center gap-2">
+        {#if draftTestHashes !== null && Object.keys(draftTestHashes).length > 0 && draftTestError === null}
+          <!-- §5.5：测试到的工具批准前不暴露给 Bot；保存即批准测试时看到的定义。 -->
+          <Button
+            size="sm"
+            disabled={busy || approving}
+            onclick={() => void save(true)}
+            data-testid="mcp-save-approve"
+          >
+            {t('settings.mcpToolsSaveApprove')}
+          </Button>
+        {/if}
+        <Button
+          size="sm"
+          variant={draftTestHashes !== null && draftTestError === null ? 'secondary' : 'default'}
+          disabled={busy}
+          onclick={() => void save()}
+          data-testid="mcp-save"
+        >
           {t('settings.save')}
         </Button>
         {#if !(draft.transport === 'http' && draft.auth === 'oauth')}
@@ -611,11 +753,19 @@
       </div>
 
       {#if draftTestTools !== null && draftTestError === null}
-        <p class="text-xs text-emerald-600 dark:text-emerald-400" data-testid="mcp-draft-test-ok">
-          {t('settings.mcpToolsFound', { count: draftTestTools.length })}: {draftTestTools.join(
-            '、',
-          )}
-        </p>
+        <div class="space-y-1.5" data-testid="mcp-draft-test-ok">
+          <p class="text-xs text-emerald-600 dark:text-emerald-400">
+            {t('settings.mcpToolsFound', { count: draftTestTools.length })}
+          </p>
+          {#if draftTestTools.length > 0}
+            <div class="flex flex-wrap gap-1.5" data-testid="mcp-draft-tested">
+              {#each draftTestTools as name, index (index)}
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{name}</code>
+              {/each}
+            </div>
+            <p class="text-xs text-muted-foreground">{t('settings.mcpToolsApproveHint')}</p>
+          {/if}
+        </div>
       {:else if draftTestError !== null}
         <p class="text-xs text-destructive" data-testid="mcp-draft-test-error">
           {draftTestError}

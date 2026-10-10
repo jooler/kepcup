@@ -77,6 +77,8 @@ export interface CatalogFlowBegin {
   connectionId: string;
   /** 重新授权某个已有连接时的目标（令牌通过账号核对后换到该行）。 */
   reconnectTo: string | null;
+  /** 重连目标行当前已授予的 scope（首连为空）：重新授权时并入请求，不丢已有 / 追加授权过的 scope。 */
+  existingScopes: string[];
 }
 
 export interface CatalogSettleResult {
@@ -109,8 +111,11 @@ export interface CatalogFlowHost {
     /** 流程被取消 / 超时：宿主应尽快结束（不要再改连接行）。 */
     signal: AbortSignal;
   }): Promise<CatalogSettleResult>;
-  /** 用户确认（或无需复核）：批准全部待复核工具、置 connected、授权 Bot。 */
-  confirm(input: { connectionId: string; grantBotId?: string | undefined }): Promise<void>;
+  /**
+   * 用户确认（或无需复核）：批准全部待复核工具、置 connected、授权 Bot。`grantBotIds` 是本流程
+   * 收集到的全部 Bot（发起者 + 并发去重接入的后到者；群聊里两个 Bot 的连接卡片走同一流程）。
+   */
+  confirm(input: { connectionId: string; grantBotIds: readonly string[] }): Promise<void>;
   /** 令牌已发出但复核被拒绝 / 超时 / 取消 / 出错：新建的连接吊销并清除。 */
   reject(input: { connectionId: string }): Promise<void>;
 }
@@ -141,7 +146,10 @@ export interface StartFlowInput {
   target: AppConnectTarget;
   /** 完整 scope 集合（追加授权时为旧 ∪ 新）；缺省按服务端提示。 */
   scopes?: string[] | undefined;
-  /** 连接完成后由 core 授权给该 Bot（目录连接；经 `BotAppGrantWriter`）。 */
+  /**
+   * 连接完成后由 core 授权给该 Bot（目录连接；经 `BotAppGrantWriter`）。与进行中的同目标流程
+   * 去重时并入该流程的 Bot 集合：完成时每个 Bot 都被授权。
+   */
   grantBotId?: string | undefined;
   /** 重新授权已有的目录连接。 */
   connectionId?: string | undefined;
@@ -188,10 +196,16 @@ interface Flow {
   abort: Deferred<void>;
   timer: NodeJS.Timeout | null;
   done: Promise<void>;
+  /**
+   * 流程已进入收尾（授权 Bot 开始 / 失败 / 取消 / 超时）：之后带 `grantBotId` 的同目标 `apps.connect`
+   * 不再并入本流程（授权不会追溯），而是开始新流程。
+   */
+  ending: boolean;
   /** 目录连接（P1）的状态；自定义 server 为 undefined。 */
   catalog?: {
     begin: CatalogFlowBegin;
-    grantBotId: string | undefined;
+    /** 完成时要授权的 Bot（发起者 + 并发去重接入者）；去重只在 `ending` 之前并入。 */
+    grantBotIds: Set<string>;
     /** pre = 令牌未落盘；tokens = 令牌在临时行、尚未结算；settled = 已确定最终行。 */
     stage: 'pre' | 'tokens' | 'settled';
     /** 最终行是否本次新建。 */
@@ -302,6 +316,7 @@ export class ConnectFlowManager {
       abort,
       timer: null,
       done: Promise.resolve(),
+      ending: false,
     };
     flow.lastPayload = { flowId: flow.id, phase: 'discovering', connectionId: flow.connectionId };
     this.#flows.set(flow.id, flow);
@@ -314,7 +329,11 @@ export class ConnectFlowManager {
     return { flowId: flow.id };
   }
 
-  /** 目录连接：同一 Connector（或同一重连目标）同时至多一个流程。 */
+  /**
+   * 目录连接：同一 Connector（或同一重连目标）同时至多一个流程。后到者带 `grantBotId` 时并入进行中
+   * 流程的 Bot 集合（完成时一起授权）；流程已在收尾（授权已开始 / 已终止、尚未清理）则不追溯，
+   * 为后到者开始新流程。
+   */
   #startCatalog(input: StartFlowInput, connectorId: string): { flowId: string } {
     const host = this.#catalogHost;
     if (host === undefined) throw new AppError('NOT_IMPLEMENTED', '应用目录模块未就绪');
@@ -322,12 +341,18 @@ export class ConnectFlowManager {
       input.connectionId !== undefined ? `conn:${input.connectionId}` : `catalog:${connectorId}`;
     const existingId = this.#byTarget.get(targetKey);
     const existing = existingId !== undefined ? this.#flows.get(existingId) : undefined;
-    if (existing !== undefined) {
+    if (existing?.catalog !== undefined && (input.grantBotId === undefined || !existing.ending)) {
+      if (input.grantBotId !== undefined) existing.catalog.grantBotIds.add(input.grantBotId);
       this.#deps.events.emit('apps.connect_flow', existing.lastPayload);
       return { flowId: existing.id };
     }
     // 先校验并建临时行：目录里没有 / 门禁未放行 / 需要预注册客户端都在这里同步报错。
     const begin = host.begin({ connectorId, reconnectTo: input.connectionId });
+    // 请求的 scope：显式给出的（追加授权）或目录默认，重连时再并上目标行已授予的——从设置里重新
+    // 授权绝不能丢掉以前授予 / 追加过的 scope。全空则按服务端提示。
+    const scopes = [
+      ...new Set([...begin.existingScopes, ...(input.scopes ?? begin.defaultScopes)]),
+    ];
     const abort = deferred<void>();
     const flow: Flow = {
       id: `flow_${randomUUID()}`,
@@ -336,7 +361,7 @@ export class ConnectFlowManager {
       serverName: begin.title,
       serverUrl: begin.serverUrl,
       connectionId: begin.connectionId,
-      scopes: input.scopes ?? (begin.defaultScopes.length > 0 ? begin.defaultScopes : undefined),
+      scopes: scopes.length > 0 ? scopes : undefined,
       previousStatus: 'not_connected',
       phase: 'discovering',
       lastPayload: { flowId: '', phase: 'discovering' },
@@ -351,9 +376,10 @@ export class ConnectFlowManager {
       abort,
       timer: null,
       done: Promise.resolve(),
+      ending: false,
       catalog: {
         begin,
-        grantBotId: input.grantBotId,
+        grantBotIds: new Set(input.grantBotId !== undefined ? [input.grantBotId] : []),
         stage: 'pre',
         rowIsNew: true,
         review: null,
@@ -512,10 +538,12 @@ export class ConnectFlowManager {
         }
       }
     } catch (error) {
+      flow.ending = true;
       const failure = flow.abortError ?? error;
       await this.#catalogCleanup(flow, failure);
       this.#finishFailed(flow, failure);
     } finally {
+      flow.ending = true;
       if (flow.timer !== null) clearTimeout(flow.timer);
       flow.timer = null;
       await flow.callback?.close().catch(() => undefined);
@@ -815,10 +843,9 @@ export class ConnectFlowManager {
       catalog.review = null;
     }
     this.#throwIfAborted(flow);
-    await host.confirm({
-      connectionId: flow.connectionId,
-      ...(catalog.grantBotId !== undefined ? { grantBotId: catalog.grantBotId } : {}),
-    });
+    // 从这里起 Bot 集合定稿：再来的 grantBotId 走新流程（见 #startCatalog），不会被漏掉也不追溯。
+    flow.ending = true;
+    await host.confirm({ connectionId: flow.connectionId, grantBotIds: [...catalog.grantBotIds] });
     const row = this.#deps.store.get(flow.connectionId);
     this.#deps.events.emit('apps.connection_status', {
       connectionId: flow.connectionId,
@@ -1158,6 +1185,7 @@ export class ConnectFlowManager {
   #abortFlow(flow: Flow, error: AppError): void {
     if (flow.abortError !== null) return;
     flow.abortError = error;
+    flow.ending = true;
     flow.controller.abort(error);
     flow.abort.resolve();
     // 关回调服务（等待者以 CANCELLED 失败）；verifier 随 #attempt 栈帧丢弃。

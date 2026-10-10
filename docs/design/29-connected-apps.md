@@ -2,7 +2,12 @@
 
 用户把自己的 Google、GitHub、Notion、Figma、Slack、Linear 等第三方账号**授权**给 KepCup，Bot 即可代用户读取与操作这些账号中的数据（查邮件、建 issue、改文档、发消息……），体验对标 Grok「Connect apps / Connectors」。本文同时规定一个**开放平台基座**：连接应用的描述格式、授权方式、目录分发、审批与界面渲染全部采用业界开放标准，使「第三方开发者自由开发并入驻」成为后续增量，而不是推倒重来。
 
-决策：D73（连接应用）、D74（开放平台基座）。执行方案见 [todo/connected-apps.md](../../todo/connected-apps.md)。**尚未实现**。
+决策：D73（连接应用）、D74（开放平台基座）。执行方案见 [todo/connected-apps.md](../../todo/connected-apps.md)。
+
+修订记录：
+
+- 2026-10-09 P0 实施修订：见 `docs/dev/DEVIATIONS.md` DEV-019（`oauth_clients` 表、回调页等待换令牌、改认证方式 / URL 时断开等）。
+- 2026-10-10 P1 实施修订：见 DEV-020（群聊并发连接的 Bot 授权由 core 合并、重新授权 scopes 取并集、目录面板新建 / 重连语义、隐私政策纯文本、目录条目门禁关闭发布等）。正文未改写，相关处以「P1 实施注」标出。
 
 相关：D25（加密与敏感数据）、D37（授权方式，本文扩展）、D41/D42（无人值守）、D44（浏览器工具）、D58（对话内设置引导）、D62（检索供应商密钥命名）、D63（技能安装）、D65（MCP，本文补齐其「OAuth 后续单排」）、D72（外部智能体与能力包、宿主 MCP 桥、目录模式）。
 
@@ -216,6 +221,7 @@ CIMD 的 loopback redirect 存在「本机其他进程冒用」风险（规范�
 ### 5.4 权限追加（step-up）
 
 - 服务端返回 `403 insufficient_scope`：工具结果为结构化 `SETUP_REQUIRED`（`{kind:'connect-app', connectionId, scopes:[新增], reason}`），对话内卡片说明「需要追加 xx 权限」；用户确认后以**旧 ∪ 新**范围重新授权（`skipRefresh`），完成后经 `runs.retry` 续跑。step-up 计数以（对话, 连接）为键、30 分钟窗口内至多 1 次——重试产生新 run，按 run 计数会被绕过。
+  - P1 实施注（DEV-020 第 2 项）：任何带 `connectionId` 的重新授权（含设置页「重新连接」）都取现有 scopes ∪ 请求 scopes，不只限于对话卡的 step-up。
 - 默认只申请最小范围（只读优先，如 Google 用 `drive.file` 而非 `drive`），写权限在首次需要时追加。
 
 ### 5.6 运行时与交互授权分离
@@ -232,11 +238,13 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 - run 开头 `listTools` 因授权失败时（现行为是静默跳过该 server）：该连接的工具不暴露，但 `<connected_apps>` 中标为「需重新连接」，模型可调用 `app_request_connection({ connection_id })` 置起卡片；设置页同步显示状态。不在 run 开头直接失败——用户的请求可能根本不需要该应用。
 - **重试语义**：续跑是新 run（D58），通过 `continued_from_run_ids` 与 D56 回放拿到上一 run 的过程记录，因此模型知道 abort 前哪些写操作已经执行；宿主不自动重放任何应用写操作。§8.3 的污点状态同样随续接链传递。
 - **并发去重**：同一 Connector（重连时为同一 Connection）进程内同时至多一个交互授权流程；群聊中多个 Bot 同时请求时，后到的卡片显示「正在连接…」并订阅同一流程结果。
+  - P1 实施注（DEV-020 第 1 项）：后到者的 `grantBotId` 并入同一流程，由 core 在确认时一并授权；授权已开始或流程已终止后再来的 `grantBotId` 起新流程、不追溯。
 
 ## 6 连接（Connection）
 
 - 状态机：`not_connected`（仅自定义 server 行：断开后保留行与工具锁定）→ `connecting` → `connected`；`expired`（刷新失败 / 被吊销）、`needs_scope`（step-up 待确认）、`tools_changed`（§8.2 待复核）、`error`（服务端不可达，保留授权）、`disabled`（用户停用，保留授权）。状态经 `apps.connection_status` 事件推送界面。
 - **多账号**：同一 Connector 可有多个 Connection（工作 / 个人 GitHub）；每个 Connection 有用户可改的标签。
+  - P1 实施注（DEV-020 第 7 项）：目录卡的「连接 / 再连一个账号」一律新建 Connection；只有详情页「重新连接」与对话卡的过期 / step-up 带 `connectionId` 落到既有行；同一账号（`account_sub` 相同）重复授权由 core 复用旧行。
 - **Bot 授权（Grant）**：Bot 运行配置新增 `runtime.app_connection_ids`（Profile JSON，无迁移，语义同 `mcp_server_ids`：默认空、显式勾选）；**同一 Bot 对同一 Connector 至多勾选一个 Connection**，因此工具名不含账号，模型看到的是稳定的 `app_github_*`。
 - **自定义应用**：授权仍经 `runtime.mcp_server_ids`；一个自定义 server 配置 = 一个账号（多账号即添加两条 server 配置），工具名保持 `mcp_{serverId}_*`，不冲突。启用 OAuth 时另建一行 `app_connections`（`connector_id = custom:{serverId}`）只承载令牌与状态。风险分级与工具锁定对**所有** MCP server 生效（含无 OAuth 的自定义 server）。
 - 删除 Connection：从所有 Bot 的勾选中移除、吊销与清除令牌、保留审计记录；删除 Bot 不影响 Connection。

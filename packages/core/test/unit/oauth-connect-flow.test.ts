@@ -673,6 +673,82 @@ describe('超时 / 取消 / 去重', () => {
     await until(() => ctx.flows.activeFlowIds().length === 0);
   });
 
+  it('目录去重并入 grantBotId：后到者的 Bot 一起授权；授权已开始 / 流程已终止后再来的 grantBotId 走新流程，不追溯', async () => {
+    const ctx = await setup({ fake: { dcrEnabled: true }, browser: 'manual' });
+    // 桩目录端：begin 建临时行，settle 直接定稿（无需复核），confirm 记录 Bot 集合并卡在闸门上。
+    const confirmed: string[][] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    ctx.flows.attachCatalogHost({
+      begin: ({ connectorId }) => {
+        const row = ctx.store.create({
+          connectorId,
+          connectorVer: '1.0.0',
+          label: 'Stub',
+          serverUrl: ctx.fake.mcpUrl,
+          status: 'connecting',
+        });
+        return {
+          connectorId,
+          title: 'Stub',
+          serverUrl: ctx.fake.mcpUrl,
+          defaultScopes: [],
+          connectionId: row.id,
+          reconnectTo: null,
+          existingScopes: [],
+        };
+      },
+      abandon: (connectionId) => {
+        if (ctx.store.get(connectionId) !== null) {
+          ctx.vault.clearConnection(connectionId, { deleteRow: true });
+        }
+      },
+      settle: async ({ connectionId }) => ({
+        connectionId,
+        isNew: true,
+        accountLabel: null,
+        review: [],
+      }),
+      confirm: async ({ grantBotIds }) => {
+        confirmed.push([...grantBotIds]);
+        await gate;
+      },
+      reject: async ({ connectionId }) => {
+        if (ctx.store.get(connectionId) !== null) {
+          ctx.vault.clearConnection(connectionId, { deleteRow: true });
+        }
+      },
+    });
+    const target = { kind: 'catalog', connectorId: 'stub' } as const;
+
+    const first = ctx.flows.start({ target, grantBotId: 'bot_a' });
+    // 并发接入：同一 flowId；带 grantBotId 的并入集合，不带的只是订阅；重复的 Bot 不重复。
+    expect(ctx.flows.start({ target, grantBotId: 'bot_b' }).flowId).toBe(first.flowId);
+    expect(ctx.flows.start({ target }).flowId).toBe(first.flowId);
+    expect(ctx.flows.start({ target, grantBotId: 'bot_a' }).flowId).toBe(first.flowId);
+    await until(() => ctx.shellCalls.length === 1);
+    await simulateBrowser(ctx.shellCalls[0] as string);
+    await until(() => confirmed.length === 1);
+    expect([...(confirmed[0] as string[])].sort()).toEqual(['bot_a', 'bot_b']);
+
+    // 授权已开始（confirm 进行中，流程尚未清理）：再带 grantBotId 来不并入——开始新流程；
+    // 不带 grantBotId 的仍订阅原流程。
+    expect(ctx.flows.activeFlowIds()).toContain(first.flowId);
+    expect(ctx.flows.start({ target }).flowId).toBe(first.flowId);
+    const second = ctx.flows.start({ target, grantBotId: 'bot_c' });
+    expect(second.flowId).not.toBe(first.flowId);
+    release();
+    await until(() => !ctx.flows.activeFlowIds().includes(first.flowId));
+    expect(ctx.flowEvents.filter((e) => e.flowId === first.flowId).at(-1)?.phase).toBe('done');
+    // 第一个流程只授权了它收集到的两个 Bot；bot_c 不被追溯。
+    expect(confirmed).toHaveLength(1);
+    ctx.flows.cancel(second.flowId);
+    await until(() => ctx.flows.activeFlowIds().length === 0);
+    expect(confirmed).toHaveLength(1);
+  });
+
   it('应用退出（shutdown）取消所有进行中的流程并关闭回调服务', async () => {
     const ctx = await setup({ fake: { dcrEnabled: true }, browser: 'manual' });
     ctx.flows.start({ target: { kind: 'custom', serverId: SERVER_ID } });

@@ -1,8 +1,11 @@
 import type {
+  AppCatalogEntry,
   AppConnectFlowPayload,
+  AppConnectReviewTool,
   AppConnection,
   AppConnectionStatus,
   AppConnectTarget,
+  McpToolRisk,
 } from '@kepcup/shared';
 import type { MessageKey } from '$lib/i18n';
 
@@ -22,6 +25,10 @@ export interface FlowView {
   authorizationHost?: string | undefined;
   authorizationUrl?: string | undefined;
   connectionId?: string | undefined;
+  /** `reviewing_tools` 起：识别出的账号显示名。 */
+  accountLabel?: string | undefined;
+  /** `reviewing_tools`：待用户确认的工具清单（其他阶段不带）。 */
+  tools?: AppConnectReviewTool[] | undefined;
   error?: AppConnectFlowPayload['error'] | undefined;
 }
 
@@ -51,6 +58,57 @@ export function connectionForTarget(
   return connections.find((connection) => connection.connectorId === target.connectorId) ?? null;
 }
 
+/**
+ * 连接面板呈现（并据此显示状态 / 「重新连接」/ 「断开」）的连接行：自定义 server 取其唯一行
+ * （`custom:{serverId}`）；目录目标只认显式指定的重连行（`reconnectConnectionId`）——没指定
+ * 就是「再连一个账号」，不能拿该应用的第一个账号充数（否则面板显示的是别的账号的状态，
+ * 按钮写着「重新连接」却会新建账号）。
+ */
+export function panelConnection(
+  connections: readonly AppConnection[],
+  target: AppConnectTarget,
+  reconnectConnectionId?: string | undefined,
+): AppConnection | null {
+  if (target.kind === 'custom') return connectionForTarget(connections, target);
+  if (reconnectConnectionId === undefined) return null;
+  return connections.find((connection) => connection.id === reconnectConnectionId) ?? null;
+}
+
+export interface ContinueCandidate {
+  connection: AppConnection;
+  /** 目录连接尚未授权给当前 Bot：继续前要先写进 Profile，否则续跑还会再出一张卡。 */
+  needsGrant: boolean;
+}
+
+/**
+ * 对话卡「已连接，继续对话」能直接用的连接：requirement 指明了连接（重连 / 追加权限 /
+ * 断开后的旧行）就只看它；目录目标没指明（未连接）时取该应用已有的账号——优先 Bot 已持有
+ * 的，其次第一个已连接的（继续前要授权给 Bot）。只有状态 `connected` 的才算；无则 null。
+ */
+export function continueCandidate(
+  connections: readonly AppConnection[],
+  target: AppConnectTarget,
+  connectionId: string | undefined,
+  botAppConnectionIds: readonly string[],
+): ContinueCandidate | null {
+  const explicit = panelConnection(connections, target, connectionId);
+  if (target.kind === 'custom') {
+    return explicit !== null && explicit.status === 'connected'
+      ? { connection: explicit, needsGrant: false }
+      : null;
+  }
+  let chosen: AppConnection | null = explicit;
+  if (connectionId === undefined) {
+    const held = botConnectionForConnector(botAppConnectionIds, connections, target.connectorId);
+    chosen =
+      [held, ...connections.filter((item) => item.connectorId === target.connectorId)].find(
+        (item): item is AppConnection => item !== null && item.status === 'connected',
+      ) ?? null;
+  }
+  if (chosen === null || chosen.status !== 'connected') return null;
+  return { connection: chosen, needsGrant: !botAppConnectionIds.includes(chosen.id) };
+}
+
 // --- 流程阶段 ------------------------------------------------------------------
 
 export function isTerminalPhase(phase: FlowPhase): boolean {
@@ -73,7 +131,7 @@ export const FLOW_PHASE_LABEL_KEYS: Record<FlowPhase, MessageKey> = {
   cancelled: 'apps.phase.cancelled',
 };
 
-/** 阶段进度（1..4，用于步骤指示）；终态不参与。 */
+/** 阶段进度（1..5，用于步骤指示）；终态不参与。 */
 export function phaseStep(phase: FlowPhase): number {
   switch (phase) {
     case 'discovering':
@@ -84,11 +142,72 @@ export function phaseStep(phase: FlowPhase): number {
       return 3;
     case 'exchanging':
       return 4;
+    case 'reviewing_tools':
+      return 5;
     default:
       return 0;
   }
 }
-export const FLOW_STEP_COUNT = 4;
+export const FLOW_STEP_COUNT = 5;
+
+/** 首连工具复核阶段（§5.4）：等用户「确认并完成连接」或取消。 */
+export function isReviewingPhase(phase: FlowPhase): boolean {
+  return phase === 'reviewing_tools';
+}
+
+/** 复核清单按风险档计数（写入 / 破坏性的数量决定提示强度）。 */
+export function summarizeReviewTools(
+  tools: readonly Pick<AppConnectReviewTool, 'risk'>[],
+): Record<McpToolRisk, number> & { total: number } {
+  const summary = { read: 0, write: 0, destructive: 0, total: tools.length };
+  for (const tool of tools) summary[tool.risk]++;
+  return summary;
+}
+
+/** 复核清单的展示顺序：破坏性 → 写入 → 只读，同档按名字。不修改入参。 */
+export function sortReviewTools(tools: readonly AppConnectReviewTool[]): AppConnectReviewTool[] {
+  const rank: Record<McpToolRisk, number> = { destructive: 0, write: 1, read: 2 };
+  return [...tools].sort(
+    (a, b) => rank[a.risk] - rank[b.risk] || a.name.localeCompare(b.name, 'en'),
+  );
+}
+
+// --- 目录形态 ------------------------------------------------------------------
+
+export interface RequestedScope {
+  scope: string;
+  /** 属于条目的写入权限集合（追加授权时才会出现）。 */
+  write: boolean;
+}
+
+/**
+ * 面板上展示「将申请的权限」：显式给了 scope 集合（追加授权 = 已授予 ∪ 需追加）就按它；
+ * 否则为条目默认权限。写入权限只在显式集合里出现时展示，并打上标记。
+ */
+export function requestedScopes(
+  entry: Pick<AppCatalogEntry, 'scopes'>,
+  explicit?: readonly string[] | undefined,
+): RequestedScope[] {
+  const write = new Set(entry.scopes.write);
+  const list = explicit !== undefined ? explicit : entry.scopes.default;
+  return [...new Set(list)].map((scope) => ({ scope, write: write.has(scope) }));
+}
+
+/**
+ * Bot 已授权的、同一应用的连接（设计 29 §6：同一 Connector 至多一个）；连接后授权给
+ * 该 Bot 时它会被替换。目录里查不到的连接 id（已删除）忽略。
+ */
+export function botConnectionForConnector(
+  appConnectionIds: readonly string[],
+  connections: readonly AppConnection[],
+  connectorId: string,
+): AppConnection | null {
+  for (const id of appConnectionIds) {
+    const connection = connections.find((item) => item.id === id);
+    if (connection !== undefined && connection.connectorId === connectorId) return connection;
+  }
+  return null;
+}
 
 export const CONNECTION_STATUS_LABEL_KEYS: Record<AppConnectionStatus, MessageKey> = {
   not_connected: 'apps.status.not_connected',
@@ -182,6 +301,9 @@ export function applyFlowEvent(
     authorizationHost: payload.authorizationHost ?? previous?.authorizationHost,
     authorizationUrl: payload.authorizationUrl ?? previous?.authorizationUrl,
     connectionId: payload.connectionId ?? previous?.connectionId,
+    accountLabel: payload.accountLabel ?? previous?.accountLabel,
+    // 工具清单只属于复核阶段：复核事件缺省时沿用旧值，其他阶段不带。
+    tools: payload.tools ?? (payload.phase === 'reviewing_tools' ? previous?.tools : undefined),
     // error 只属于失败流程：失败事件缺省时沿用旧值，其他阶段不带。
     error: payload.error ?? (payload.phase === 'failed' ? previous?.error : undefined),
   };

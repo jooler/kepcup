@@ -37,7 +37,7 @@ flowchart LR
   - `events.ts`：核心服务推送给界面的事件及其载荷 schema。
 - 方法命名 `领域.动作`，例如 `conversations.list`、`drafts.add`、`drafts.flush`、`messages.recall`、`runs.cancel`、`approvals.decide`。
 - 核心服务在 RPC 层用 zod 校验所有输入；校验失败返回 `INVALID_INPUT`。
-- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）；连接应用（D73 P0）的 `apps.connect` / `apps.connect.continue` / `apps.connect.cancel` / `apps.setClientCredentials` / `apps.connections.list` / `apps.disconnect` / `mcp.removeServer` 与事件 `apps.connect_flow`、`apps.connection_status`（见下文「连接应用」）。
+- 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）；连接应用（D73 P0）的 `apps.connect` / `apps.connect.continue` / `apps.connect.cancel` / `apps.setClientCredentials` / `apps.connections.list` / `apps.disconnect` / `mcp.removeServer` 与事件 `apps.connect_flow`、`apps.connection_status`；P1 再加 `apps.catalog.list`、`apps.connect.confirmTools`（首连工具复核）、`apps.connections.update` / `tools` / `setToolPolicy` / `reviewTools` / `grants`、`apps.grants.revoke`、`apps.tools.approveAfterTest`（`mcp.test` 返回 `toolHashes` / `needsAuth`），`apps.connection_status` 增 `tools_changed` 详情（见下文「连接应用」）。
 - 界面只通过事件更新状态，不轮询。
 
 ## 核心服务模块
@@ -166,9 +166,9 @@ D75 补充：
 - **「仅这一次」= 单次工具调用**（DEV-009）：每次工具调用在 `permissions/tool-call-scope.ts` 的 `AsyncLocalStorage` 作用域里执行；once 授权归属于使用它的调用（`GrantsService.noteOnceUse`），调用结束即撤销；`request_access` 走 `ensurePathAccess(…, { preauthorize: true })`，预授权由第一次用到它的调用认领；另有 `GRANT_ABSOLUTE_TTL_MS` 与 run 结束兜底，自动撤销经 `GrantsService.onAutoRevoke` 发布 `grant.changed`。
 - **对话轮不等用户**（DEV-014）：对话轮的越界读取不发起审批，当场返回 `PATH_OUT_OF_SCOPE`。
 
-### 连接应用（D73 P0，`core/src/apps/`）
+### 连接应用（D73 P0 / P1，`core/src/apps/`）
 
-自定义 Streamable HTTP MCP server 的 OAuth 授权地基（设计 [29](../design/29-connected-apps.md) §5 / §6，执行方案 `todo/connected-apps.md` §4）。核心约束是**运行时与交互授权分离**（§5.6）：运行中的 run 只读取令牌、主动刷新，永远不打开浏览器；打开浏览器的只有用户点「连接」触发的交互流程。
+P0 是自定义 Streamable HTTP MCP server 的 OAuth 授权地基（设计 [29](../design/29-connected-apps.md) §5 / §6，执行方案 `todo/connected-apps.md` §4）；P1 在其上加目录、多账号连接、工具风险 / 锁定 / 持续授权与 Bot 勾选（todo §5）。核心约束是**运行时与交互授权分离**（§5.6）：运行中的 run 只读取令牌、主动刷新，永远不打开浏览器；打开浏览器的只有用户点「连接」触发的交互流程。
 
 | 文件 | 职责 |
 |---|---|
@@ -183,6 +183,17 @@ D75 补充：
 | `apps/audit.ts` / `apps/prompt.ts` / `apps/shell-facade.ts` | `app_connect` / `app_disconnect` 审计（明细只含 connectionId / connector / issuer / scopes，经 `redact`）；`<connected_apps>` 段正文；core 侧 `shell.openExternal` 门面 |
 | `rpc/apps-bindings.ts` / `apps-runtime-bindings.ts` | `apps.connect*`、`apps.connections.list`、`apps.setClientCredentials`；`apps.disconnect`、`mcp.removeServer` |
 | `tools/app-tools.ts` | `app_request_connection`（见 04-agent-runtime） |
+| **P1** `apps/catalog.ts` | 目录运行时加载：随应用打包的 `apps/desktop/resources/connectors/catalog.json` + `icons/`（shared `domain/connector-catalog.ts` 的 `server.json` 子集 + `_meta["app.kepcup/connector"]` schema 校验，坏条目只告警跳过，slug 重复取先者）；发行门禁照 D72：打包时注入 `__KEPCUP_CONNECTOR_RELEASE_GATES__`（`apps/desktop/connector-release-gates.json`），`filterReleasedConnectors` fail-closed；开发构建 / 测试里常量不存在 → 不过滤 |
+| `apps/connections.ts` | `AppConnectionsService`：目录连接（`apps.connect({target:{kind:'catalog', connectorId}, grantBotId?, connectionId?})`，多账号 = 同一 connector 多行，`conn_` 前缀 id 保留给目录连接）；账号识别 `id_token` / userinfo → 条目 `whoami` 只读工具 → `"{title} #{n}"`，同 `account_sub` 已有连接则复用旧行（临时行令牌搬过去后删除），`connectionId` 重新授权要求账号一致、scopes 取现有 ∪ 请求；首连 `reviewing_tools` → `apps.connect.confirmTools` 后批准工具、置 `connected`、经 `BotsService.grantConnection` 授权流程收集的全部 Bot（并发去重并入的 `grantBotId`，`Flow.ending` 后不追溯，见 DEV-020）；连接管理 RPC 的实现 |
+| `apps/policy.ts` | 纯函数：`classifyAppToolRisk` = W5 `mcp/risk.ts classifyRiskDetailed` + 目录 `toolPolicy` 叠加（只能调高）；`toolDefinitionHash`（`{name,title,description,inputSchema,annotations}` 规范化 JSON 的 sha256） |
+| `apps/tool-lock.ts` | `ToolLockService`（`app_connection_tools`）：对**所有** MCP server 生效（自定义 server 用 `custom:{serverId}` 行，stdio 的 `server_url` 为 NULL），经 `mcp.toolFilter` 在列工具时过滤——新增（`approved_hash NULL`）/ 定义变化（`current_hash ≠ approved_hash`）的工具不暴露，删除的删行；有待复核项时 `connected → tools_changed`，全部复核完回 `connected`；存量基线（`baseline_pending`，一次性）与测试注入 `toolLockTrustFirstList`；`reviewTools` / `approveAfterTest` 写批准 |
+| `apps/grants.ts` | `AppToolGrants`（`app_tool_grants`）：写工具的「本对话内」（带 `conversation_id`）/「对该 Bot 总是允许」（NULL）授权；`gateway` 的 `mcpToolDecision` 为 `ask` 时先查这里，命中免卡，批准时长为 `conversation` / `bot` 时写入；撤销经 `apps.grants.revoke`、`domain/lifecycle.ts`（删 Bot / 移出群）、断开连接 |
+| `apps/exposure.ts` | `ConnectedApps`：只读解析 Bot 勾选的目录连接（`runtime.app_connection_ids`）→ 合成 server（`id = connectionId`）、每连接绑定（slug / 账号 / 风险决定）与提示词数据；只有 `connected` / `tools_changed` / `error` 参与列工具，`expired` / `needs_scope` / `disabled` 不暴露任何工具、只进 `<connected_apps>` 状态行 |
+| `apps/naming.ts` | `appToolName(slug, tool)`：`app_{slug}_{tool}`，sanitize `[A-Za-z0-9_-]`，≤ `APP_TOOL_NAME_MAX`（50）；超长截断 + `_` + 8 位哈希（取自原始名） |
+| `apps/prompt.ts` | `<connected_apps>`（P1：每个已授权连接一行 + 不可信数据规则 + 需重连规则；只有需重连的自定义应用时输出与 P0 相同）、`<available_apps>`、`APP_REQUEST_CONNECTION_RULE` |
+| `rpc/apps-connections-bindings.ts` | `apps.catalog.list`、`apps.connect.confirmTools`、`apps.connections.update` / `tools` / `setToolPolicy` / `reviewTools` / `grants`、`apps.grants.revoke`、`apps.tools.approveAfterTest` |
+
+P1 在 core 其他位置的接线：`mcp/service.ts` 服务器来源 = `settings.mcpServers` ∪ 目录连接合成的 server（`connectionToMcpServer` / `serverFor`，`mcpAutoApprove` 只对 settings 里的自定义 server 生效）；`gateway/index.ts mcpToolDecision` 带连接上下文（`connectionId` / `connectorSlug` / `accountLabel` / `risk`）与 `durations`（写 = `once|conversation|bot`，破坏性 = `once`），`permissions/approvals.ts decide()` 把卡片未提供的时长降为 `once`；`tools/index.ts dropBuiltinNameConflicts` 把与内置工具同名的 MCP / 应用工具丢弃并告警；`domain/bots.ts` 校验 `app_connection_ids`（每 connector 至多一个连接、连接存在），`grantConnection` 替换同 connector 的旧勾选；shared `HOST_CAPABILITIES` 的 `apps` 能力包（`toolPrefixes: ['app_']`）与 `agent/external/capabilities.ts toolAnnotations` 按风险出注解。渲染端对应设置页「应用」分区（`features/settings/AppsSection.svelte`：目录 / 已连接 / 自定义三页签，`features/apps/*`；分区 id `apps`，旧 `mcp` 为别名 → 自定义页）、Bot 面板「应用」区（`features/bot-panel/bot-apps.ts`）与对话卡 `ConnectAppSetupBody`。
 
 接线（`start.ts`）：`createAppServices`（Vault / store / flows）→ `McpService` 与 `AuditService` 构造后 `createAppRuntime`（`mcp.attachAuth(registry)`、`registry.bindMcp(mcp)`、`apps.attachRegistry(flowInvalidator)`）→ `services.appRuntime`。`McpService` 对 `auth:'oauth'` 的 HTTP server 给 `StreamableHttpTransport` 传 `authProvider`；`AppAuthRequiredError`（含 `cause` 链）在 `#ensureConnected` 的 catch 里原样重抛，**不计入失败次数**、发 `mcp.server_status: needs_auth`；`buildMcpTools` 把授权失败的 server 收进 `unavailable`（不中断 run），`wrapMcpTool` 把运行中的授权错误变成 `SETUP_REQUIRED`（记 `connect-app` 需求）。
 

@@ -1,6 +1,6 @@
 # 连接应用（Connected Apps）与开放平台基座 — 执行方案（D73 / D74）
 
-> 状态：**P0 实现完成待门禁（用户待办 U1）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09 在 `t/d73-connected-apps` 实现，P1 起未开始）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P0、P1 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10 在 `t/d73-connected-apps` 实现，P2 起未开始）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
 > **硬约束**：
 >
@@ -251,16 +251,16 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 5.1 首批应用实测（spike，先于目录定稿）
 
-- [ ] `packages/core/scripts/connector-spike/`（不进产品代码）：对候选 URL（Notion `https://mcp.notion.com/mcp`、Linear `https://mcp.linear.app/mcp`、Atlassian `https://mcp.atlassian.com/v1/mcp/authv2`、Sentry `https://mcp.sentry.dev/mcp`、Asana `https://mcp.asana.com/…`、HubSpot、Canva `https://mcp.canva.com/mcp`、Stripe `https://mcp.stripe.com`、GitHub `https://api.githubcopilot.com/mcp/`；以各家文档为准）输出 JSON 报告：401 challenge、PRM、AS 元数据、**是否支持 CIMD / DCR**、`scopes_supported`、`code_challenge_methods_supported`、`authorization_response_iss_parameter_supported`、`revocation_endpoint`。
+- [x] `packages/core/scripts/connector-spike/`（不进产品代码）：对候选 URL（Notion `https://mcp.notion.com/mcp`、Linear `https://mcp.linear.app/mcp`、Atlassian `https://mcp.atlassian.com/v1/mcp/authv2`、Sentry `https://mcp.sentry.dev/mcp`、Asana `https://mcp.asana.com/…`、HubSpot、Canva `https://mcp.canva.com/mcp`、Stripe `https://mcp.stripe.com`、GitHub `https://api.githubcopilot.com/mcp/`；以各家文档为准）输出 JSON 报告：401 challenge、PRM、AS 元数据、**是否支持 CIMD / DCR**、`scopes_supported`、`code_challenge_methods_supported`、`authorization_response_iss_parameter_supported`、`revocation_endpoint`。
 - [ ] 带登录模式（需**用户待办 U2** 的账号，用户在浏览器里登录）：用 P0 引擎完整连接，导出工具清单、注解覆盖率（多少工具缺 `readOnlyHint` / `destructiveHint`）、账号识别可行性。
-- [ ] 结论入本文附录 B：每家「可上目录 / 需预注册 / 暂不支持」。只有能自动注册（CIMD 或 DCR）的进 P1 目录；GitHub 不支持 CIMD 时需用户注册 GitHub App（U3）并走 P2 的预注册客户端机制——**不要**为赶 P1 提前做半套。
+- [x] 结论入本文附录 B：每家「可上目录 / 需预注册 / 暂不支持」。只有能自动注册（CIMD 或 DCR）的进 P1 目录；GitHub 不支持 CIMD 时需用户注册 GitHub App（U3）并走 P2 的预注册客户端机制——**不要**为赶 P1 提前做半套。
 
 ### 5.2 目录（catalog）
 
-- [ ] shared `domain/connector-catalog.ts`：zod schema = `server.json` 子集（`name`、`title`、`description`、`version`、`remotes[]`（P1 只认 `streamable-http`）、`packages[]`（P2 MCPB）、`_meta`）+ `_meta["app.kepcup/connector"]`（设计 29 §4：`slug` `[a-z0-9]{2,16}`、`icon`、`category`、`tier`、`auth{kind, registration, clientRef, scopes{default, write}}`、`toolPolicy`、`skills`、`ui`、`privacyPolicy`、`whoami?`（账号识别用只读工具名 + 结果字段路径）、`releaseGate`）。导出 `filterReleasedConnectors`（fail-closed，照 `filterReleasedAgents`）。
-- [ ] 资源 `apps/desktop/resources/connectors/catalog.json` + `icons/*.svg`；core 运行时读取（照 `skills/presets.ts` 读资源 JSON）；发行门禁清单 `apps/desktop/connector-release-gates.json`，构建期注入（照 `agent/external/catalog.ts:18-22` 与 `scripts/dist.mjs`；新常量在 `packages/core/src/build-constants.d.ts` 声明）。
-- [ ] 脚本 `scripts/import-mcp-registry.mjs`：从 MCP Registry 按 name 导出 `server.json` 骨架，`_meta` 扩展字段留占位人工补。
-- [ ] 契约测试 `packages/core/test/contract/connector-catalog.contract.ts`，由 `packages/core/test/unit/connector-catalog.test.ts` 包装执行（vitest 只收 `*.test.ts`）：每个条目 schema 合法、slug 唯一且符合字符集、图标文件存在、`remotes[0].url` 为 https、`toolPolicy` 中的风险值合法、带 `releaseGate`。
+- [x] shared `domain/connector-catalog.ts`：zod schema = `server.json` 子集（`name`、`title`、`description`、`version`、`remotes[]`（P1 只认 `streamable-http`）、`packages[]`（P2 MCPB）、`_meta`）+ `_meta["app.kepcup/connector"]`（设计 29 §4：`slug` `[a-z0-9]{2,16}`、`icon`、`category`、`tier`、`auth{kind, registration, clientRef, scopes{default, write}}`、`toolPolicy`、`skills`、`ui`、`privacyPolicy`、`whoami?`（账号识别用只读工具名 + 结果字段路径）、`releaseGate`）。导出 `filterReleasedConnectors`（fail-closed，照 `filterReleasedAgents`）。
+- [x] 资源 `apps/desktop/resources/connectors/catalog.json` + `icons/*.svg`；core 运行时读取（照 `skills/presets.ts` 读资源 JSON）；发行门禁清单 `apps/desktop/connector-release-gates.json`，构建期注入（照 `agent/external/catalog.ts:18-22` 与 `scripts/dist.mjs`；新常量在 `packages/core/src/build-constants.d.ts` 声明）。
+- [x] 脚本 `scripts/import-mcp-registry.mjs`：从 MCP Registry 按 name 导出 `server.json` 骨架，`_meta` 扩展字段留占位人工补。
+- [x] 契约测试 `packages/core/test/contract/connector-catalog.contract.ts`，由 `packages/core/test/unit/connector-catalog.test.ts` 包装执行（vitest 只收 `*.test.ts`）：每个条目 schema 合法、slug 唯一且符合字符集、图标文件存在、`remotes[0].url` 为 https、`toolPolicy` 中的风险值合法、带 `releaseGate`。
 
 ### 5.3 数据：迁移 `{N+1}_app_tools.sql`
 
@@ -288,44 +288,50 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 5.6 网关与审批
 
-- [ ] 在 W5 的网关决策（`mcpToolDecision`，工具策略 > server `autoApprove` > 风险档默认）上扩展连接上下文 `{ connection?, accountLabel?, connectorSlug? }`，**不另起一套**：
+- [x] 在 W5 的网关决策（`mcpToolDecision`，工具策略 > server `autoApprove` > 风险档默认）上扩展连接上下文 `{ connection?, accountLabel?, connectorSlug? }`，**不另起一套**：
   - 策略 `enabled:false` → 拒绝（W5 已有）；对话轮 / 只读子代理只能调「只读 + auto」工具（W5 / D75 已有，应用工具同样适用）。
   - 决策为 `ask` 时，新增一步：先查 `app_tool_grants`（本对话 or Bot 级、未撤销）→ 命中免卡；否则 `mcp_tool` 审批，`payload.durations`：`write` 为 `['once','conversation','bot']`，`destructive` 为 `['once']`（卡片标「不可撤销」）。
   - 审批通过且时长为 `conversation` / `bot` → 写 `app_tool_grants`。
-- [ ] `mcpToolApprovalPayloadSchema` 增可选 `connectionId`、`connectorSlug`、`accountLabel`、`risk`、`durations`（`approvalDurationSchema` 数组）；`ApprovalDecision.duration` 与 `approvals.decide` / RPC 入参改用 `approvalDurationSchema`；`decide()` 中：`'bot'` 只对 `mcp_tool` 且在 `payload.durations` 内时接受，否则降为 `'once'`；`'conversation'` 对 `mcp_tool` 同样按 `payload.durations` 判定（现只对 `agent_tool` 降级）；`grants` 表与 `agent_tool` 仍只见 `once|conversation`。同步 `ApprovalCard`、`renderContextLine`、`stores/permissions.svelte.ts:99`。
-- [ ] **无人值守**：沿用 W5——`mcp_tool` 所有风险档自动批准（用户决定），**不改** `NEVER_AUTO_DECIDED`；应用工具的风险档与账号身份写入审计与上下文行，Bot 详情的 MCP 风险提示覆盖应用工具。
-- [ ] `ApprovalCard.svelte`（W5 已有 `mcp_tool` 专用正文与 `McpRiskBadge`，在其上扩展）：显示「以 {account} 身份在 {app} 执行 {tool}」、时长选项按 `durations` 渲染；`destructive` 显示完整参数（不只摘要）与醒目提示。
+- [x] `mcpToolApprovalPayloadSchema` 增可选 `connectionId`、`connectorSlug`、`accountLabel`、`risk`、`durations`（`approvalDurationSchema` 数组）；`ApprovalDecision.duration` 与 `approvals.decide` / RPC 入参改用 `approvalDurationSchema`；`decide()` 中：`'bot'` 只对 `mcp_tool` 且在 `payload.durations` 内时接受，否则降为 `'once'`；`'conversation'` 对 `mcp_tool` 同样按 `payload.durations` 判定（现只对 `agent_tool` 降级）；`grants` 表与 `agent_tool` 仍只见 `once|conversation`。同步 `ApprovalCard`、`renderContextLine`、`stores/permissions.svelte.ts:99`。
+- [x] **无人值守**：沿用 W5——`mcp_tool` 所有风险档自动批准（用户决定），**不改** `NEVER_AUTO_DECIDED`；应用工具的风险档与账号身份写入审计与上下文行，Bot 详情的 MCP 风险提示覆盖应用工具。
+- [x] `ApprovalCard.svelte`（W5 已有 `mcp_tool` 专用正文与 `McpRiskBadge`，在其上扩展）：显示「以 {account} 身份在 {app} 执行 {tool}」、时长选项按 `durations` 渲染；`destructive` 显示完整参数（不只摘要）与醒目提示。
 
 ### 5.7 Bot 授权与工具暴露
 
-- [ ] `botRuntimeSchema` 增 `app_connection_ids: z.array(z.string()).default([])`（Profile JSON，无迁移）；校验放在 bots 领域层（`bots.create` 与 `bots.update` 都会带 Profile）：每个 connector 至多一个连接、连接存在且未删除，否则 `INVALID_INPUT`。删除连接时从所有 Bot 移除。
-- [ ] 工具命名 `appToolName(slug, toolName)`：`app_{slug}_{tool}` sanitize `[A-Za-z0-9_-]`、≤50 字符（截断冲突时加短哈希后缀）。
-- [ ] orchestrator：在 MCP 接线旁新增连接应用接线（Bot 勾选的、`connected` 的连接 → 只暴露 `approved_hash === current_hash` 且未 `disabled` 的工具）；`expired` / `needs_scope` 的连接不暴露工具，进入 `<connected_apps>` 状态行。
-- [ ] `tools/index.ts` 汇总处加**全局去重**：任何 MCP / 应用工具与内置工具同名 → 丢弃并告警（现只在 MCP 之间去重）。
-- [ ] `<connected_apps>` 段：每个已授权连接一行（应用名、账号标签、状态、条目一句话说明）；`<available_apps>` 段：目录中未连接的已发行条目（名称 + 一句话，≤30 条）；平台规则补一句「需要未连接或需重连的应用时调用 `app_request_connection`」。
-- [ ] `app_request_connection` 完整版：`{ connector?: slug, connection_id?, reason }`；未连接 → `target: catalog`；已勾选但过期 → `connectionId`。
+- [x] `botRuntimeSchema` 增 `app_connection_ids: z.array(z.string()).default([])`（Profile JSON，无迁移）；校验放在 bots 领域层（`bots.create` 与 `bots.update` 都会带 Profile）：每个 connector 至多一个连接、连接存在且未删除，否则 `INVALID_INPUT`。删除连接时从所有 Bot 移除。
+- [x] 工具命名 `appToolName(slug, toolName)`：`app_{slug}_{tool}` sanitize `[A-Za-z0-9_-]`、≤50 字符（截断冲突时加短哈希后缀）。
+- [x] orchestrator：在 MCP 接线旁新增连接应用接线（Bot 勾选的、`connected` 的连接 → 只暴露 `approved_hash === current_hash` 且未 `disabled` 的工具）；`expired` / `needs_scope` 的连接不暴露工具，进入 `<connected_apps>` 状态行。
+- [x] `tools/index.ts` 汇总处加**全局去重**：任何 MCP / 应用工具与内置工具同名 → 丢弃并告警（现只在 MCP 之间去重）。
+- [x] `<connected_apps>` 段：每个已授权连接一行（应用名、账号标签、状态、条目一句话说明）；`<available_apps>` 段：目录中未连接的已发行条目（名称 + 一句话，≤30 条）；平台规则补一句「需要未连接或需重连的应用时调用 `app_request_connection`」。
+- [x] `app_request_connection` 完整版：`{ connector?: slug, connection_id?, reason }`；未连接 → `target: catalog`；已勾选但过期 → `connectionId`。
 
 ### 5.8 对话内连接（完整）
 
-- [ ] `ConnectAppPanel` 支持目录形态：图标、名称、将申请的权限、「连接后授权给当前 Bot」（默认勾选；该 Bot 已有同应用的另一账号时提示将替换）、工具复核步骤。
-- [ ] 卡片完成连接 → 按勾选写入 Bot 的 `app_connection_ids` → `runs.retry`。
-- [ ] 群聊多个 Bot 同时请求同一应用：后到的卡片加入同一流程（§4.6 去重），完成后各自按自身勾选授权。
+- [x] `ConnectAppPanel` 支持目录形态：图标、名称、将申请的权限、「连接后授权给当前 Bot」（默认勾选；该 Bot 已有同应用的另一账号时提示将替换）、工具复核步骤。
+- [x] 卡片完成连接 → 按勾选写入 Bot 的 `app_connection_ids` → `runs.retry`。
+- [x] 群聊多个 Bot 同时请求同一应用：后到的卡片加入同一流程（§4.6 去重），完成后各自按自身勾选授权。
+
+**实施记录（2026-10-10，§5.8）**：`features/chats/ConnectAppSetupBody.svelte` 处理 `target.kind === 'catalog'`——`grantBot` = 失败 run 的 Bot（卡片「连接后授权给当前 Bot」默认勾选，该 Bot 已有同应用另一账号时提示替换），scopes = 连接行现有 ∪ 需求 `scopes`；用户已有可用连接但没勾给该 Bot 时给 `continueCandidate`（先 `contacts.update` 授权再 `runs.retry`）。「各自按自身勾选授权」落在 core：`apps/auth/flow.ts` 同目标去重时把后到者的 `grantBotId` 并入 `Flow.catalog.grantBotIds`，`confirmTools` 后 `CatalogFlowHost.confirm` 逐个 `BotsService.grantConnection`（每 Bot 单独 try / catch）；`Flow.ending` 守卫：授权开始 / 终止后再来的 `grantBotId` 起新流程、不追溯；渲染端保留幂等兜底（`done` 后本卡的 Bot 仍未持有则自行补写 Profile）。`ConnectAppPanel` 目录形态：图标 / 首字母、tier、scopes、隐私政策纯文本（渲染端无打开任意 URL 的通道）、`unavailableReason`、`reviewing_tools` 步骤（按破坏性 → 写 → 只读排序，「确认并完成连接」/「取消」）、`reconnectConnectionId`（只有它才落到既有连接）。偏差见 DEV-020 第 1 / 2 / 4 / 7 项。测试：`unit/oauth-connect-flow.test.ts`（去重并入、`ending`、scopes 旧 ∪ 新）、`integration/catalog-connect.test.ts`（重连 scope 并集、两 Bot 共享流程）、渲染端 `features/apps/connect-flow.test.ts`。
 
 ### 5.9 设置「应用」分区
 
-- [ ] `stores/shell.svelte.ts` 分区 id 新增 `apps`，`mcp` 作为别名映射到 `apps` 的「自定义」页；`SettingsDialog` 导航用 `Plug` 图标替换原 MCP 项。
-- [ ] `features/settings/AppsSection.svelte`：三个页签——**目录**（卡片网格、搜索、分类、tier 标签、连接按钮）、**已连接**（按应用分组的连接列表：账号、状态、已授权 Bot、最近使用）、**自定义**（嵌入现 `McpSection`）。
-- [ ] 连接详情页：权限范围、逐工具列表（风险徽标 + 策略下拉）、待复核工具 diff（旧 / 新定义对比）、Bot 级持续授权列表（可撤销）、重新连接、断开（确认框列出受影响 Bot）。
-- [ ] `BotProfileForm.svelte`：「应用」区按应用分组，单选账号；未连接的应用显示「去连接」（`shell.openSettings('apps')`）；工具数估计纳入应用工具。
-- [ ] 图标加载照 `agent-icons.ts`；i18n。
+- [x] `stores/shell.svelte.ts` 分区 id 新增 `apps`，`mcp` 作为别名映射到 `apps` 的「自定义」页；`SettingsDialog` 导航用 `Plug` 图标替换原 MCP 项。
+- [x] `features/settings/AppsSection.svelte`：三个页签——**目录**（卡片网格、搜索、分类、tier 标签、连接按钮）、**已连接**（按应用分组的连接列表：账号、状态、已授权 Bot、最近使用）、**自定义**（嵌入现 `McpSection`）。
+- [x] 连接详情页：权限范围、逐工具列表（风险徽标 + 策略下拉）、待复核工具 diff（旧 / 新定义对比）、Bot 级持续授权列表（可撤销）、重新连接、断开（确认框列出受影响 Bot）。
+- [x] `BotProfileForm.svelte`：「应用」区按应用分组，单选账号；未连接的应用显示「去连接」（`shell.openSettings('apps')`）；工具数估计纳入应用工具。
+- [x] 图标加载照 `agent-icons.ts`；i18n。
+
+**实施记录（2026-10-10，§5.9）**：`features/settings/sections.ts`（`SettingsSectionId` 增 `apps`，`mcp` 别名 → `apps` 自定义页，`resolveSettingsSection` / `appsTabForKey`）、`stores/shell.svelte.ts`（`settingsAppsTab`，`openSettings(section, anchor?, appsTab?)`）、`SettingsDialog` 导航 `apps`（`Plug`）取代 MCP 项（`settings.navMcp` 删除）；`AppsSection.svelte` 三页签（a11y `role=tablist` + 方向键）；`features/apps/AppCatalogGrid.svelte`（搜索、分类芯片、tier 徽标、连接 / 再连一个账号 → 内嵌 `ConnectAppPanel`）、`AppConnectionsList.svelte`（按应用分组、状态徽标、已授权 Bot 数、最近使用）、`AppConnectionDetail.svelte`（标签编辑、停用开关、权限范围、待复核 diff〔`app-tools.ts` 行级 LCS `diffLines`，超大 schema 退化为整块删 / 增〕、接受所选 / 全部 → `apps.connections.reviewTools`、工具表 `McpRiskBadge` + 策略下拉 → `setToolPolicy`、授权列表 + 撤销、重新连接〔`reconnectConnectionId` + scopes〕、断开确认列出受影响 Bot）；`stores/app-detail.svelte.ts`（工具 / 授权缓存与动作）、`stores/apps.svelte.ts`（目录、`connect(connectionId)`、`confirmTools`、`toolsByConnection` 缓存与失效）。`features/bot-panel/bot-apps.ts` + `BotProfileForm`「应用」区：每应用单选 不使用 / 账号，「去连接」→ `openSettings('apps', undefined, 'catalog')`，工具数估计从已暴露的应用工具算，无人值守提示。`McpSection.svelte`：测试结果只归属被测 server，工具芯片带风险，「批准这些工具」/「保存并批准工具」→ `apps.tools.approveAfterTest`（`mcp.test` 不登记锁定行，见 DEV-020 第 3 项），待复核徽标；`settings.svelte.ts testMcp` 返回 `McpTestResult`。i18n `apps.*` / `settings.navApps` / `settings.mcpTools*` / `contacts.apps*`。独立评审 9 项已修（重连 scopes、目录连接解析、标签草稿重置、工具估计重取、重复加载、testid、页签 a11y、each key、navMcp 残留）。测试：`features/apps/app-catalog.test.ts`、`app-tools.test.ts`、`bot-panel/bot-apps.test.ts`、`settings/sections.test.ts`；渲染端合计 13 文件 111 例，typecheck 0 错误。
 
 ### 5.10 外部智能体（ACP）
 
-- [ ] `HOST_CAPABILITIES` 增 `apps` 能力包（`category: 'supplement'`、`default: 'follow_bot'`、`toolPrefixes: ['app_']`、无 `overlapsNative`）；`app_request_connection` 归入该包（前缀即可命中 `capabilityOfTool`）。
-- [ ] 宿主桥的工具名经 `fitToolName` 后 `mcp__kepcup__{name}` 总长 ≤64 的测试。
-- [ ] 桥的 `tools/list` 为应用工具输出与风险一致的注解（扩展 `toolAnnotations` / `READ_ONLY_TOOLS` 的判定：`read` → `readOnlyHint:true`；`destructive` → `destructiveHint:true`），让外部 Agent 侧的权限提示与宿主一致。
-- [ ] ACP 提示词（`buildAgentRunContext`）同样注入 `<connected_apps>` / `<available_apps>`。
-- [ ] 外部智能体自身 shell / fetch 不受网关管控的残余风险：Bot 切到外部智能体且勾选 `apps` 包时，首次弹框说明（文案键）。
+- [x] `HOST_CAPABILITIES` 增 `apps` 能力包（`category: 'supplement'`、`default: 'follow_bot'`、`toolPrefixes: ['app_']`、无 `overlapsNative`）；`app_request_connection` 归入该包（前缀即可命中 `capabilityOfTool`）。
+- [x] 宿主桥的工具名经 `fitToolName` 后 `mcp__kepcup__{name}` 总长 ≤64 的测试。
+- [x] 桥的 `tools/list` 为应用工具输出与风险一致的注解（扩展 `toolAnnotations` / `READ_ONLY_TOOLS` 的判定：`read` → `readOnlyHint:true`；`destructive` → `destructiveHint:true`），让外部 Agent 侧的权限提示与宿主一致。
+- [x] ACP 提示词（`buildAgentRunContext`）同样注入 `<connected_apps>` / `<available_apps>`。
+- [x] 外部智能体自身 shell / fetch 不受网关管控的残余风险：Bot 切到外部智能体且勾选 `apps` 包时，首次弹框说明（文案键）。
+
+**实施记录（2026-10-10，§5.10）**：shared `domain/host-capabilities.ts` `apps` 包（`supplement` / `follow_bot` / `toolPrefixes: ['app_']`）；`agent/external/capabilities.ts toolAnnotations` 对应用工具按风险出 `readOnlyHint` / `destructiveHint`；orchestrator 的 ACP run 上下文带 `connectedApps` / `availableApps` 两段（`mapAppToolNames` 把正文里的 `app_request_connection` 映射为桥所见名）。一次性提示：`bot-apps.ts shouldShowAcpAppsNotice`，在 `BotProfileForm` 切到外部智能体 / 勾上 `apps` 包 / 在智能体下选中应用账号时各检查一次，确认存 `localStorage` `kepcup.apps.acpNoticeAck`（按本机，DEV-020 第 6 项）；文案键 `apps.acpNotice.*`。测试：`integration/connected-apps-p1-gate-acp.test.ts`（桥 `tools/list` 注解、名字 ≤64、提示词两段、经桥审批一致）、`unit/app-prompt-capabilities.test.ts`、渲染端 `bot-apps.test.ts`。
 
 ### 5.11 P1 验收（门禁）
 
@@ -335,6 +341,8 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 - 工具锁定：假服务器修改某工具描述后，该工具从 Bot 工具集消失，复核后恢复。
 - ACP Bot 勾选 `apps` 包后可调用应用工具，审批一致。
 - 安全测试仍通过；D65 / D72 回归全绿（跑相关测试文件即可，全量留到交付前一次）。
+
+**门禁结果（2026-10-10）**：自动化部分全绿——第 2 条（端到端）、第 3 条（风险分级）、第 4 条（工具锁定）由 `packages/core/test/integration/connected-apps-p1-gate.test.ts`（4 例）覆盖，第 5 条（ACP）与 Bot 校验 / 全局去重由 `connected-apps-p1-gate-acp.test.ts`（3 例）覆盖，第 6 条：`security/catalog-connect-tokens.test.ts` + `connected-apps-tokens.test.ts` 通过，D73 相关回归 45 文件 517 例 0 失败（Docker `kepcup-test:trixie`）。**待用户的部分**：第 1 条（附录 B 的首批应用真实连接、多账号、Bot 勾选、对话中完成任务）需 **U2**——提供测试账号 → 带登录的 spike（§5.1 第 2 项）→ 补 `catalog.json` 的 `toolPolicy` / `whoami` / `scopes` → 把通过者加入 `connector-release-gates.json`（当前 `approved: []`，6 条全部门禁关闭）；U1（CIMD 部署、`verify.mjs`、Notion / Linear 手工走通）沿 P0 未动。偏差汇总见 `docs/dev/DEVIATIONS.md` DEV-020；进度见 `docs/dev/PROGRESS.md`「连接应用 P1」。
 
 ---
 

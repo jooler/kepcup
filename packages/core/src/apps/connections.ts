@@ -237,6 +237,7 @@ export class AppConnectionsService {
         { connectorId: meta.slug, clientRef: meta.auth.clientRef },
       );
     }
+    let existingScopes: string[] = [];
     if (input.reconnectTo !== undefined) {
       const target = store.getRequired(input.reconnectTo);
       if (target.connectorId !== meta.slug) {
@@ -245,6 +246,7 @@ export class AppConnectionsService {
           connectorId: meta.slug,
         });
       }
+      existingScopes = target.scopes;
     }
     const scratch = store.create({
       connectorId: meta.slug,
@@ -260,6 +262,7 @@ export class AppConnectionsService {
       defaultScopes: meta.auth.scopes.default,
       connectionId: scratch.id,
       reconnectTo: input.reconnectTo ?? null,
+      existingScopes,
     };
   }
 
@@ -445,7 +448,7 @@ export class AppConnectionsService {
     }
   }
 
-  async #confirm(input: { connectionId: string; grantBotId?: string | undefined }): Promise<void> {
+  async #confirm(input: { connectionId: string; grantBotIds: readonly string[] }): Promise<void> {
     const { store, toolLock, auditor, botGrants, logger } = this.#deps;
     const row = store.getRequired(input.connectionId);
     const approved = toolLock.approve(row.id, 'all');
@@ -453,13 +456,14 @@ export class AppConnectionsService {
       auditor.auditAppToolsReview({ connectionId: row.id, connectorId: row.connectorId, approved });
     }
     if (store.getRequired(row.id).status !== 'disabled') store.setStatus(row.id, 'connected');
-    if (input.grantBotId !== undefined) {
+    // 流程收集到的每个 Bot（发起者 + 并发去重接入者）各自授权；一个失败不影响其余。
+    for (const botId of input.grantBotIds) {
       try {
-        await botGrants.grant(input.grantBotId, row.id);
+        await botGrants.grant(botId, row.id);
       } catch (error) {
         // 连接本身已成功：授权 Bot 失败只告警，用户可在 Bot 设置里手动勾选。
         logger.warn(
-          { connectionId: row.id, botId: input.grantBotId, err: String(error) },
+          { connectionId: row.id, botId, err: String(error) },
           'granting the connection to the bot failed',
         );
       }

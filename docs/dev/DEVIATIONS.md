@@ -332,3 +332,22 @@
 - 推荐：均保留；设计 29 在用户确认后补 `oauth_clients`、「改认证方式 / URL 断开」两处。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/dev/02-architecture.md`（连接应用）、`03-data-model.md`、`04-agent-runtime.md`、`05-testing.md`、`docs/design/23-mcp-and-subagent.md`（认证方式）、`docs/dev/PROGRESS.md`
+
+### DEV-020 连接应用 P1 实现对设计 29 / 执行方案的偏差与补充（D73）
+
+- 状态：待决定（实现者按下列推荐落地；用户确认后改「已决定」）
+- 阶段：D73 P1（`todo/connected-apps.md` §5）；P0 的项见 DEV-019
+- 是否阻塞：否
+- 问题：实现 P1 时，设计 29 §4 / §6 / §7 / §9 与 todo §5 有若干没写到或与实现细节冲突之处：
+  1. **群聊并发连接的 Bot 授权由 core 合并**（todo §5.8 只写「后到的卡片加入同一流程，完成后各自按自身勾选授权」，没说由谁授权）：同一目录目标在途时，后到的 `apps.connect` 把自己的 `grantBotId` 并入该流程的 Bot 集合（`Flow.catalog.grantBotIds`），流程确认时 `CatalogFlowHost.confirm({connectionId, grantBotIds})` 逐个 `BotsService.grantConnection`（每个 Bot 单独 try / catch，一个失败不影响其余）。`Flow.ending` 守卫：授权已开始（`confirmTools` 之后）或流程已终止后再带 `grantBotId` 来的调用**不并入、不追溯**，而是起新流程。渲染端 `ConnectAppSetupBody` 仍保留幂等兜底：`done` 后若本卡的 Bot 仍未持有该连接，经 `contacts.update` 自行补写 Profile。
+  2. **重新授权的 scopes 取并集**（设计 29 §5.4 只对对话卡的 step-up 写了「旧 ∪ 新」）：`apps.connect` 带 `connectionId` 时请求的 scopes = 连接行现有 scopes ∪（入参 `scopes` ?? 目录默认），设置页「重新连接」与对话卡一致，不会把先前追加过的权限收窄。
+  3. **`mcp.test` 不登记工具锁定行**（todo §5.5「测试成功后展示工具清单，保存即批准」）：测试只返回 `toolHashes`（+ `needsAuth`），锁定行在保存 / 「批准这些工具」经 `apps.tools.approveAfterTest` 时才写；因此测试之后的风险徽标来自随后的 `apps.connections.tools` 查询，而不是测试结果本身。
+  4. **隐私政策链接以纯文本呈现**（设计 29 §4 / §9 隐含可点击）：渲染端没有打开任意外部 URL 的通道（`shell.openExternal` 只由 core 的授权流程经端口 B 调用，不向渲染端开放），`ConnectAppPanel` 把 `privacyPolicy` 显示为文字；要点击需另开白名单通道，留待后续。
+  5. **目录条目全部门禁关闭发布**：`catalog.json` 的 6 条（notion / linear / atlassian / sentry / canva / stripe）`toolPolicy` / `whoami` / `scopes` 为空，`connector-release-gates.json` 为 `approved: []`——真实账号登录实测（用户待办 U2）前不放行任何条目；发布构建里目录为空，开发构建 / 测试不过滤。
+  6. **ACP 一次性提示的触发与存储**（todo §5.10「Bot 切到外部智能体且勾选 `apps` 包时首次弹框」）：在 Bot 表单里由用户动作触发（选中外部智能体 / 勾选 `apps` 包的那一刻，`shouldShowAcpAppsNotice`），确认状态存 `localStorage` 键 `kepcup.apps.acpNoticeAck`（按本机，不进 settings、不随数据目录迁移）。
+  7. **目录面板只经显式 `reconnectConnectionId` 解析到已有连接**（设计 29 §6 的多账号没有规定面板语义）：目录卡的「连接」/「再连一个账号」一律新建连接（新账号），只有详情页「重新连接」与对话卡的过期 / step-up 才带 `reconnectConnectionId` 落到既有行；同账号重复授权由 core 按 `account_sub` 复用旧行。
+- 影响范围：`apps/auth/flow.ts`、`apps/connections.ts`、`mcp/service.ts`（`mcp.test`）、渲染端 `features/apps/*`、`features/chats/ConnectAppSetupBody.svelte`、`features/bot-panel/BotProfileForm.svelte`、`apps/desktop/resources/connectors/`、`connector-release-gates.json`。
+- 可选方案：按上述实现保留（推荐）；或 1 改为只认首个 `grantBotId`（群聊里其余 Bot 全靠渲染端兜底，不推荐）、4 另开渲染端外链白名单通道（P2 起可做）、6 改存 settings（需 RPC，收益小）。
+- 推荐：均保留；设计 29 在用户确认后补 §5.4「重新授权亦取并集」、§6「目录面板新建 / 重连语义」两处；U2 完成后再逐条打开门禁。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/dev/02-architecture.md`（连接应用 P1 模块与 RPC）、`04-agent-runtime.md`（两段提示词、`app_request_connection`、应用工具暴露与时长）、`05-testing.md`（P1 用例分布）、`docs/design/29-connected-apps.md`（修订记录与三处旁注）、`docs/dev/PROGRESS.md`、`todo/connected-apps.md`（§5.8–5.11 实施记录）

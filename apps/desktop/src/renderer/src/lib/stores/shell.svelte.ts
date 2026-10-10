@@ -2,20 +2,9 @@
  * 全局外壳状态。主界面只有对话一个视图；设置与通讯录都以弹框呈现
  * （通讯录是设置弹框中的一个分组），不再整页替换主区域。
  */
-export type SettingsSectionId =
-  | 'general'
-  | 'hardware'
-  | 'models'
-  | 'search'
-  | 'mcp'
-  | 'browser'
-  | 'agents'
-  | 'profile'
-  | 'contacts'
-  | 'unattended'
-  | 'environment'
-  | 'usage'
-  | 'diagnostics';
+import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
+
+export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 
 class ShellState {
   /** 设置弹框是否打开。 */
@@ -27,6 +16,11 @@ class ShellState {
    * SettingsDialog 渲染完目标分区后消费并复位。
    */
   settingsAnchor = $state<string | null>(null);
+  /**
+   * 「应用」分区要落在的页签（D73 §5.9：目录 / 已连接 / 自定义）；`mcp` 别名固定落
+   * 「自定义」。SettingsDialog 经 resolveSettingsSection 消费。
+   */
+  settingsAppsTab = $state<AppsTab | null>(null);
   /** 右栏（Bot 详情）默认收起，保持界面简单；只在用户点击顶部药丸时展开。 */
   rightPanelCollapsed = $state(true);
   /**
@@ -41,10 +35,14 @@ class ShellState {
     this.skillMarketOpen = true;
   }
 
-  /** 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）。 */
-  openSettings(section: SettingsSectionId = 'general', anchor?: string): void {
+  /**
+   * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）；`apps` 分组可
+   * 再指定页签（缺省「目录」）。
+   */
+  openSettings(section: SettingsSectionId = 'general', anchor?: string, appsTab?: AppsTab): void {
     this.settingsSection = section;
     this.settingsAnchor = anchor ?? null;
+    this.settingsAppsTab = appsTab ?? null;
     this.settingsOpen = true;
   }
 

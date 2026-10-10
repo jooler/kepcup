@@ -293,6 +293,56 @@ describe('catalog connect: accounts', () => {
     expect(env.fake.revokeRequests.length).toBeGreaterThan(0);
     expect(rows(env)[0]).toMatchObject({ id, status: 'connected', accountSub: 'acct-1' });
   });
+
+  it('reconnecting requests the union of the row scopes and the requested / default scopes', async () => {
+    const env = await start({
+      fake: { tools: [ECHO] },
+      entry: { scopes: { default: ['read'], write: ['write'] } },
+    });
+    env.fake.configure({ idTokenClaims: { sub: 'acct-1', email: 'one@example.com' } });
+    const scopeOfLastAuthorize = (): string[] =>
+      (env.fake.authorizeRequests.at(-1)!.params['scope'] ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .sort();
+    const connectWith = async (input: Record<string, unknown>): Promise<string> => {
+      const { flowId } = (await env.core.rpc.call('apps.connect', {
+        target: { kind: 'catalog', connectorId: 'fake' },
+        ...input,
+      })) as { flowId: string };
+      const review = await until(() =>
+        env.flowEvents.find((e) => e.flowId === flowId && e.phase === 'reviewing_tools'),
+      );
+      await env.core.rpc.call('apps.connect.confirmTools', { flowId });
+      const done = await until(() =>
+        env.flowEvents.find((e) => e.flowId === flowId && e.phase === 'done'),
+      );
+      expect(review.connectionId).toBeDefined();
+      return done.connectionId!;
+    };
+
+    // First connect with a step-up scope set: the row records what the server granted.
+    const id = await connectWith({ scopes: ['a', 'b'] });
+    expect(scopeOfLastAuthorize()).toEqual(['a', 'b']);
+    expect(rows(env)[0]).toMatchObject({ id, scopes: ['a', 'b'] });
+
+    // Reconnect from Settings (no scopes): defaults ∪ existing — nothing previously granted is dropped.
+    const again = await env.connect({ connectionId: id });
+    expect(again.last).toMatchObject({ phase: 'done', connectionId: id });
+    expect(scopeOfLastAuthorize()).toEqual(['a', 'b', 'read']);
+    expect(rows(env)[0]!.scopes.sort()).toEqual(['a', 'b', 'read']);
+
+    // Reconnect with an explicit step-up: requested ∪ existing.
+    const { flowId } = (await env.core.rpc.call('apps.connect', {
+      target: { kind: 'catalog', connectorId: 'fake' },
+      connectionId: id,
+      scopes: ['c'],
+    })) as { flowId: string };
+    await until(() => env.flowEvents.find((e) => e.flowId === flowId && e.phase === 'done'));
+    expect(scopeOfLastAuthorize()).toEqual(expect.arrayContaining(['a', 'b', 'c']));
+    expect(rows(env)).toHaveLength(1);
+    expect(rows(env)[0]!.scopes).toEqual(expect.arrayContaining(['a', 'b', 'c']));
+  });
 });
 
 describe('catalog connect: first-connect tool review', () => {
@@ -396,6 +446,51 @@ describe('catalog connect: granting a Bot and disconnecting', () => {
       bot: { profile: { runtime: { app_connection_ids: string[] } } };
     };
     expect(got.bot.profile.runtime.app_connection_ids).toEqual([outcome.last.connectionId]);
+  });
+
+  it('two Bots connecting the same app share one flow and both get the connection; a grantBotId after the flow ended starts a new flow', async () => {
+    const env = await start({ fake: { tools: [ECHO] } });
+    // A stable account: the late flow below must merge into the same connection row.
+    env.fake.configure({ idTokenClaims: { sub: 'acct-1', email: 'one@example.com' } });
+    const a = await env.makeBot('甲');
+    const b = await env.makeBot('乙');
+    const c = await env.makeBot('丙');
+    const idsOf = async (botId: string): Promise<string[]> =>
+      (
+        (await env.core.rpc.call('bots.get', { id: botId })) as {
+          bot: { profile: { runtime: { app_connection_ids: string[] } } };
+        }
+      ).bot.profile.runtime.app_connection_ids;
+
+    // Group chat: Bot 甲's card starts the flow; Bot 乙's card joins it (same target → same flowId).
+    const parked = await env.connect({ grantBotId: a.id, review: 'park' });
+    const joined = (await env.core.rpc.call('apps.connect', {
+      target: { kind: 'catalog', connectorId: 'fake' },
+      grantBotId: b.id,
+    })) as { flowId: string };
+    expect(joined.flowId).toBe(parked.flowId);
+    expect(env.fake.authorizeRequests).toHaveLength(1);
+    await env.core.rpc.call('apps.connect.confirmTools', { flowId: parked.flowId });
+    const done = await until(() =>
+      env.flowEvents.find((e) => e.flowId === parked.flowId && e.phase === 'done'),
+    );
+    const connectionId = done.connectionId!;
+    expect(rows(env)).toHaveLength(1);
+    // Core granted the connection to both Bots (nobody wrote the Profile from outside).
+    expect(await idsOf(a.id)).toEqual([connectionId]);
+    expect(await idsOf(b.id)).toEqual([connectionId]);
+    expect(await idsOf(c.id)).toEqual([]);
+
+    // After the flow ended, a third Bot's grantBotId is not applied retroactively: a new flow runs
+    // (same account → merged into the same row), and only then is 丙 granted.
+    const late = await env.connect({ grantBotId: c.id });
+    expect(late.flowId).not.toBe(parked.flowId);
+    expect(late.last.phase).toBe('done');
+    expect(late.last.connectionId).toBe(connectionId);
+    expect(env.fake.authorizeRequests).toHaveLength(2);
+    expect(rows(env)).toHaveLength(1);
+    expect(await idsOf(c.id)).toEqual([connectionId]);
+    expect(await idsOf(a.id)).toEqual([connectionId]);
   });
 
   it('a failed grant (unknown Bot) does not fail the connection', async () => {

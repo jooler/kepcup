@@ -281,7 +281,7 @@ export const appsConnectInputSchema = z.object({
   scopes: z.array(z.string()).optional(),
   /**
    * 连接完成后由 core 把连接 id 写进该 Bot 的 `app_connection_ids`（P1；不由渲染端改 Profile）。
-   * 仅 `catalog` 目标有意义。
+   * 仅 `catalog` 目标有意义。与进行中的同目标流程去重时并入其 Bot 集合（完成时每个 Bot 都授权）。
    */
   grantBotId: z.string().optional(),
   /**
