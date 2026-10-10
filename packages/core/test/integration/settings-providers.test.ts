@@ -171,6 +171,38 @@ describe('settings and provider key persistence', () => {
     expect(settings.vendorProviders[0]!.models).toEqual([]);
   });
 
+  it('联网检索：provider 经 settings.update 持久化，key 经 websearch.setKey 落 secrets 不回流；清除置 null', async () => {
+    const stack = await createTestStack();
+    stacks.push(stack);
+    const { core } = stack;
+
+    // 回归：settingsUpdateInputSchema 曾漏声明 webSearch，zod 静默剥键——
+    // 保存「成功」但重新读取仍为未配置。
+    const updated = (await core.rpc.call('settings.update', {
+      webSearch: { provider: 'tavily' },
+    })) as { webSearch: { provider: string | null }; launchAtLogin: boolean };
+    expect(updated.webSearch.provider).toBe('tavily');
+    // 整覆盖 patch 只换 webSearch 对象，其余字段原样保留。
+    expect(updated.launchAtLogin).toBe(true);
+
+    const reread = (await core.rpc.call('settings.get')) as {
+      webSearch: { provider: string | null };
+    };
+    expect(reread.webSearch.provider).toBe('tavily');
+
+    // key 落 secrets（websearch:{provider}），任何 settings 读取都不含明文。
+    await core.rpc.call('websearch.setKey', { provider: 'tavily', key: 'tvly-secret-1' });
+    const afterKey = (await core.rpc.call('settings.get')) as { webSearch: unknown };
+    expect(JSON.stringify(afterKey).includes('tvly-secret-1')).toBe(false);
+
+    // 清除（设置页「清除」按钮）：provider 置 null，未配置徽章恢复。
+    await core.rpc.call('settings.update', { webSearch: { provider: null } });
+    const cleared = (await core.rpc.call('settings.get')) as {
+      webSearch: { provider: string | null };
+    };
+    expect(cleared.webSearch.provider).toBeNull();
+  });
+
   it('opening the direct chat twice returns the same conversation', async () => {
     const stack = await createTestStack();
     stacks.push(stack);
