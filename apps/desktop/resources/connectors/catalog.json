@@ -5,7 +5,7 @@
       "name": "com.notion/mcp",
       "title": "Notion",
       "description": "搜索、阅读与编辑 Notion 页面和数据库",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "websiteUrl": "https://www.notion.so",
       "remotes": [
         {
@@ -28,7 +28,7 @@
               "write": []
             }
           },
-          "toolPolicy": {},
+          "toolPolicy": { "notion-create-comment": { "risk": "destructive" } },
           "skills": [],
           "ui": false,
           "privacyPolicy": "https://www.notion.so/privacy",

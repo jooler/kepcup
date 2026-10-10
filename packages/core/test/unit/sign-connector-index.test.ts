@@ -123,12 +123,14 @@ describe('sign -> verify roundtrip', () => {
     expect(tampered.stderr).toContain('signature does not match');
   });
 
-  it('an empty production key list refuses to verify without --keys', async () => {
+  it('an empty key list refuses to verify', async () => {
     const out = path.join(tmp(), 'out');
     mkdirSync(out);
     writeFileSync(path.join(out, 'index.json'), '{}');
     writeFileSync(path.join(out, 'index.json.sig'), '');
-    const result = await script(['--verify', out]);
+    const empty = path.join(tmp(), 'empty.json');
+    writeFileSync(empty, '[]');
+    const result = await script(['--verify', out, '--keys', empty]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('public key list is empty');
   });
