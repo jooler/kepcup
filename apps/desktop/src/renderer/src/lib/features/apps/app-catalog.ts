@@ -101,6 +101,20 @@ export function isVerifiedTier(tier: ConnectorTier): boolean {
   return tier === 'verified';
 }
 
+/**
+ * 这个状态下详情页能向 server 拉工具清单（`apps.connections.tools` 会连到服务端）：授权没了 /
+ * 过期 / 缺权限 / 还在连接中的连接去拉只会失败，详情页改显示状态与「重新连接」。授权记录
+ * （`apps.connections.grants`）只读本地库，任何状态都能拉。
+ */
+export function toolsLoadableStatus(status: AppConnectionStatus): boolean {
+  return status === 'connected' || status === 'tools_changed' || status === 'disabled';
+}
+
+/** 错误是「连接行不存在」（已被删除）：不重试、不弹 toast，详情页回退。 */
+export function isConnectionGone(error: unknown): boolean {
+  return (error as { code?: string } | undefined)?.code === 'APP_CONNECTION_NOT_FOUND';
+}
+
 export type CatalogLoadState = 'loading' | 'error' | 'ready';
 
 /**

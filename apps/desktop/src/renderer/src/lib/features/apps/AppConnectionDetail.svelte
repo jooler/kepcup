@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AppToolView } from '@kepcup/shared';
   import { ArrowLeft, Eye, EyeOff } from '@lucide/svelte';
+  import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { errorText, t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
@@ -27,7 +28,9 @@
     appIconSrc,
     appInitial,
     disconnectImpact,
+    isConnectionGone,
     statusBadge,
+    toolsLoadableStatus,
   } from './app-catalog';
   import {
     TOOL_POLICY_CHOICES,
@@ -71,9 +74,24 @@
     appDetailStore.start();
   });
 
+  // 连接行存在才去拉（行已被删——比如首次连接取消后残留的旧引用——拉了只会 NOT_FOUND）；
+  // 授权没了 / 过期 / 缺权限的连接不去连 server 取工具清单，只拉本地的授权记录，界面改显示
+  // 状态与「重新连接」。派生值相等时不会重跑 effect（connected ⇄ tools_changed 不重拉）。
+  const exists = $derived(connection !== null);
+  const toolsLoadable = $derived(connection !== null && toolsLoadableStatus(connection.status));
+
   $effect(() => {
     const id = connectionId;
-    void appDetailStore.load(id).catch((error: unknown) => toast.error(rpcError(error)));
+    if (!exists) return;
+    const withTools = toolsLoadable;
+    // load 只能被 connectionId / 可拉取性驱动：store 的簿记状态不能成为这个 effect 的依赖。
+    untrack(() => {
+      void appDetailStore.load(id, { withTools }).catch((error: unknown) => {
+        // 连接已不存在：静默（视图会显示「不存在」），绝不重试；其它失败同一连接只留一条 toast。
+        if (isConnectionGone(error)) return;
+        toast.error(rpcError(error), { id: `app-detail-load-${id}` });
+      });
+    });
   });
 
   function rpcError(error: unknown): string {
