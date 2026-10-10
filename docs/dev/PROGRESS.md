@@ -22,7 +22,7 @@
 | P12 Windows WSL2 与增强沙箱 | 已验收 | 2026-10-01 | 2026-10-01 | 经自动审查流程验收（见审查修复记录 BR-P12-001～009 已全部修复）；WSL 真机全套等 13 项列跨系统清单 |
 | P13 打包发布与首次启动          | 已验收 | 2026-10-01 | 2026-10-02 | 经自动审查流程验收（见审查修复记录 BR-P13-001～008 已全部修复，最终代码 dist 真实构建 + afterPack/asar 双架构校验通过）；签名/公证、三平台安装、自动更新端到端等 10 项列跨系统清单 |
 | P14 命令行交互执行          | 未开始 | —          | —          | 任务书已就绪（2026-10-03），设计见 design/15-interactive-execution.md |
-| 连接应用 P0（D73） | 待验收 | 2026-10-09 | — | 自定义 HTTP MCP server 的 OAuth 地基：CIMD / DCR / 手填三条注册路径的真实交互流程、运行时令牌刷新、断开吊销、对话内重连卡；自动化门禁已通过（228 例），待用户待办 U1（部署 CIMD 并跑 `verify.mjs`、Notion / Linear 手工走通一次）。详见文末「连接应用 P0」 |
+| 连接应用 P0（D73） | 已验收 | 2026-10-09 | — | 自定义 HTTP MCP server 的 OAuth 地基：CIMD / DCR / 手填三条注册路径的真实交互流程、运行时令牌刷新、断开吊销、对话内重连卡；自动化门禁已通过（228 例）；U1 已于 2026-10-10 完成（CIMD 已部署且 `verify.mjs` 通过，用户用 Notion、Linear 官方 MCP 实测连接成功）。详见文末「连接应用 P0」 |
 | 连接应用 P1（D73） | 待验收 | 2026-10-10 | — | 连接应用 MVP：内置目录（6 条，发行门禁全关）、目录连接与多账号、首连工具复核、风险分级审批（写工具三种时长、Bot 级持续授权）、工具定义锁定、Bot 勾选与 `app_*` 工具暴露、`<connected_apps>` / `<available_apps>`、对话内连接卡完整版、设置「应用」分区、ACP `apps` 能力包；门禁自动化部分已通过（P1 回归 45 文件 517 例 + 渲染端 13 文件 111 例），待用户待办 U2（真实账号登录实测后开门禁）。详见文末「连接应用 P1」 |
 | 连接应用 P2（D73） | 待验收 | 2026-10-10 | — | 规模化与大平台：权限追加（step-up）限流与待追加 scopes、污点外发控制（`egress` 审批、`app_taint`、无人值守审计汇总）、按需工具发现（`app_search_tools` / `app_call_tool`）、预注册 / 自带 OAuth 客户端、开发者模式（原始工具定义 / 授权事件日志 / 手动刷新 / 开发者档）、MCPB 本地包安装、协议版本 spike（结论：保持 pi-mcp）；已实现并经两组独立评审修复，定向测试在 Docker 全绿，全量回归由收口时补；真实平台条目（Google / Microsoft / Slack / GitHub）待用户待办 U3 / U4，「+」菜单临时开关（§6.8）未做。详见文末「连接应用 P2」 |
 | 连接应用 P3（D73） | 待验收 | 2026-10-10 | — | 开放平台基座：签名目录索引（Ed25519 验签 + 防回滚 + 与快照合并，生产公钥未生成前自动停用）、分级信任（社区应用首连确认、写工具无 Bot 级授权、目录分组与认证徽标）、子注册表 Worker（`infra/cloudflare/registry/`，官方 OpenAPI v0.1 只读子集 + 144 例契约 / 单元测试）、校验器 CLI `kepcup-app validate`（新包 `packages/app-validator`）、MCP Apps 渲染（`kepcup-app` 特权协议沙箱 iframe + ext-apps AppBridge，界面发起的写入必须人点）、随附 Skills 提示安装；开发者门户只出任务书；已实现并经三组独立评审修复（含沙箱 iframe 劫持 core 端口的严重问题），定向测试在 Docker 全绿，全量回归由收口时补；线上部分（签名密钥、`dl.` / `registry.` 子域、D1）待用户待办 U5。详见文末「连接应用 P3」 |
@@ -993,6 +993,7 @@
 - **偏差**：DEV-019（见 DEVIATIONS）。
 - **未做 / 待办**：
   - **门禁里需要用户的部分（用户待办 U1）**：部署 `infra/cloudflare/oauth-cimd` 到 `kepcup.com/oauth/*` 并运行 `verify.mjs`；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（连接 → 调用 → 过期重连 → 断开），结果补记在此。
+  - **U1 已完成（2026-10-10）**：Agent 用 `.env` 令牌部署 `kepcup-oauth-cimd`（路由 `kepcup.com/oauth/*`，同时补上 `kepcup.com` 顶级域 `AAAA 100::` 代理记录）并跑通 `verify.mjs`；Bot Fight Mode 本来就关闭、先用免费版（决定记在 `todo/connected-apps-user-actions.md` U1）；用户在桌面端以「自定义」方式连接 **Notion 与 Linear 官方 MCP，均连接成功**。用户只回报了「连接成功」，调用 / 令牌过期重连 / 断开这几步没有逐项回报，如有异常另记。线上变更见 `infra/cloudflare/README.md` §7。
   - **迁移号**：已处理——合入 main 时撞上 D80 的 `0022_schedule_title_origin.sql` 与 W7 的 `0023_watches.sql`，D73 顺延为 `0025_app_connections.sql` / `0026_app_tools.sql`；`app-connections-migration.test.ts` / `app-tools-migration.test.ts` 同步改版本号，既有迁移测试用 `test/support/migration-versions.ts` 的 `mainVersionsAfter`，不受影响。
   - P1 已于 2026-10-10 完成（见下节「连接应用 P1」），P2 同日完成（见「连接应用 P2」）。
 

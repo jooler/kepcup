@@ -51,7 +51,7 @@
 - [x] （已由 Agent 完成）`wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
 - [x] （已由 Agent 完成，通过）运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
 - [x] **外部可用性监控（2026-10-10 决定用 GitHub Actions）**：`.github/workflows/uptime.yml` 每 20 分钟跑 `oauth-cimd/verify.mjs`、`directory/verify.mjs`（验签）和注册表冒烟（200、结构、非空、POST 405），失败由 GitHub 发邮件。仓库是公开的，标准 runner 免费不限分钟。**定时触发只在默认分支生效，所以要等 M1 合并到 main 后才开始跑**；合并后可在 Actions 页手动触发一次确认。注册表在 17:17 UTC 首次同步前为空，工作流会判失败（预期）。需要状态页或更密频率时再加 UptimeRobot 免费版。
-- [ ] 用 **Notion 或 Linear 官方 MCP** 以「自定义」方式手工走通一次：连接 → 调用 → 令牌过期后重连 → 断开；结果记入 `docs/dev/PROGRESS.md`「连接应用 P0」。
+- [x] **已完成（2026-10-10，用户实测）**：Notion 与 Linear 官方 MCP 以「自定义」方式连接均成功；结果已记入 `docs/dev/PROGRESS.md`「连接应用 P0」。（调用 / 过期重连 / 断开未逐项回报。）
 
 
 
