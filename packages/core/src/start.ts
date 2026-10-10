@@ -146,6 +146,7 @@ import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
+import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
 import { DirectorySync } from './apps/directory-sync.js';
 import { createSafeFetch } from './apps/auth/safe-fetch.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
@@ -531,6 +532,8 @@ export interface CoreServices {
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
   connectorCatalog: ConnectorCatalog | null;
+  /** 本机连接（Bot 读文档生成、只存本机的目录条目）：提案 / 确认 / 删除；null with `apps`. */
+  localConnectors: LocalConnectors | null;
   /** D73 P3 signed directory sync (daily pull of the signed index; null before ready). */
   directorySync: DirectorySync | null;
   /** D73 P1 catalog connection service (connect flow host, tools / policy / grants management). */
@@ -765,6 +768,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appUi: null,
     connectedApps: null,
     connectorCatalog: null,
+    localConnectors: null,
     directorySync: null,
     appConnections: null,
     appSkills: null,
@@ -1083,6 +1087,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           ? { source: { entries: [], iconsDir: null } }
           : {}),
       });
+    // 本机连接（todo/local-connector-authoring.md）：目录的第三个来源。无论目录是内部构造还是
+    // 测试注入的，都在这里接上；冲突检查需要目录，所以事后互相接入。
+    const localConnectors = new LocalConnectors({
+      settings,
+      clock,
+      logger,
+      events,
+      auditor: appRuntime.auditor,
+      store: apps.store,
+      disconnector: appRuntime.disconnector,
+      loopbackAllowlist: apps.loopbackAllowlist,
+    });
+    connectorCatalog.attachLocal(localConnectors);
+    localConnectors.attachCatalog(connectorCatalog);
+    // 本机条目的地址由 Bot 提供：其 MCP 流量同样走 SSRF 守卫（连接时校验解析地址、同源重定向）。
+    const guardedMcpFetch = createGuardedMcpFetch(apps.loopbackAllowlist);
+    mcp.attachHttpFetch((server) => {
+      const row = apps.store.get(server.id);
+      return row !== null && connectorCatalog.isLocal(row.connectorId) ? guardedMcpFetch : undefined;
+    });
     const connectedAppsRef: { current?: ConnectedApps } = {};
     const toolLock = new ToolLockService({
       db: mainDb,
@@ -1746,6 +1770,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       search,
       mcp,
       connectedApps,
+      localConnectors,
       appUi,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
@@ -2189,6 +2214,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.appUi = appUi;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
+    services.localConnectors = localConnectors;
     services.directorySync = directorySync;
     directorySync.start();
     services.appConnections = appConnections;

@@ -27,7 +27,11 @@ import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
-import { appToolDurations, tierAllowsBotLevelGrant } from '../apps/tier.js';
+import {
+  appToolDurations,
+  tierAllowsBotLevelGrant,
+  tierAllowsStandingGrants,
+} from '../apps/tier.js';
 import type { TaintService, TaintState } from '../apps/taint.js';
 import { recipientFields } from '../mcp/recipients.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
@@ -1005,9 +1009,11 @@ export class ToolGateway {
     // them, and a tool whose risk was raised since the grant must ask again).
     // An explicit per-tool「每次确认」policy (approvalSource 'policy') overrides both
     // standing grants and the longer durations on the card.
+    // `developer` 分级（本机连接）没有持续授权：每次调用都确认（apps/tier.ts）。
     const grantable =
       !appUi &&
       connection !== undefined &&
+      tierAllowsStandingGrants(connection.tier) &&
       decision.risk === 'write' &&
       decision.approvalSource !== 'policy' &&
       identity.botId !== null;

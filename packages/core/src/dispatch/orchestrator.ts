@@ -134,9 +134,15 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import { buildAppDiscoveryTools, type AppToolFacade } from '../tools/app-tools.js';
+import {
+  buildAppDiscoveryTools,
+  type AppToolFacade,
+  type LocalConnectorToolFacade,
+} from '../tools/app-tools.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody, connectedAppsPromptBody } from '../apps/prompt.js';
+import { LOCAL_CONNECTOR_GUIDE } from '../apps/local-connector-guide.js';
+import type { LocalConnectors } from '../apps/local-connectors.js';
 import { buildAppToolDiscovery, type AppToolDiscovery } from '../apps/discovery.js';
 import { AppStepUpLimiter, stepUpConnectionOf } from '../apps/step-up.js';
 import {
@@ -366,6 +372,11 @@ export interface OrchestratorDeps {
    * （`<connected_apps>` / `<available_apps>`）。null / 缺省 = 没有目录连接能力。
    */
   connectedApps?: ConnectedApps | null;
+  /**
+   * 本机连接（todo/local-connector-authoring.md）：开发者模式开启时给 Bot 提供手册 / 提案工具。
+   * null / 缺省 = 没有该能力。
+   */
+  localConnectors?: LocalConnectors | null;
   /** D73 P3 §7.5: tool results with `_meta.ui.resourceUri` become MCP App cards. */
   appUi?: McpToolUiSink | null;
 }
@@ -4404,7 +4415,13 @@ export class Orchestrator {
     const connectedApps = this.#deps.connectedApps ?? null;
     const candidates =
       mcp == null ? [] : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
-    if (candidates.length === 0 && apps.views.length === 0 && availableEntries.length === 0) {
+    const localConnectors = this.#localConnectorFacade(setupHit, identity);
+    if (
+      candidates.length === 0 &&
+      apps.views.length === 0 &&
+      availableEntries.length === 0 &&
+      localConnectors === undefined
+    ) {
       return undefined;
     }
     const reasonOf = (view: ConnectedAppView): AppAuthReason => {
@@ -4442,6 +4459,7 @@ export class Orchestrator {
       unavailable.some((entry) => entry.connectionId === view.connection.id);
     return {
       ...(discovery !== undefined ? { discovery } : {}),
+      ...(localConnectors !== undefined ? { localConnectors } : {}),
       requestConnection: (input) => {
         // 1) A catalog connector the bot has no (usable) connection for.
         if (input.connector !== undefined) {
@@ -4502,6 +4520,56 @@ export class Orchestrator {
           ok: true,
           message: `已请求用户连接「${server.name}」：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
         };
+      },
+    };
+  }
+
+  /**
+   * 本机连接的工具门面（仅开发者模式开启时存在）。`propose` 经 core 探测；通过后把
+   * `confirm-local-connector` 需求写进本 run 的 `setupHit`（工具随即返回 SETUP_REQUIRED，run 中断、
+   * 对话里出确认卡）。拒绝原因（`LOCAL_CONNECTOR_REJECTED`）原样回给模型；其余错误上抛。
+   */
+  #localConnectorFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    identity: RunIdentity,
+  ): LocalConnectorToolFacade | undefined {
+    const local = this.#deps.localConnectors ?? null;
+    if (local === null || !this.#deps.settings.get().apps.developerMode) return undefined;
+    return {
+      guide: () => LOCAL_CONNECTOR_GUIDE,
+      propose: async (input, ctx) => {
+        try {
+          const result = await local.propose(input, {
+            botId: identity.botId,
+            conversationId: identity.conversationId,
+            signal: ctx.signal,
+          });
+          if (result.kind === 'existing') {
+            return {
+              ok: true,
+              message: `「${result.title}」已经添加为本机连接（slug ${result.connectorId}），无需再次确认。用 app_request_connection({ connector: "${result.connectorId}", reason }) 请用户连接它。`,
+            };
+          }
+          setupHit.requirement = {
+            kind: 'confirm-local-connector',
+            proposalId: result.proposalId,
+            card: result.card,
+          };
+          return {
+            ok: true,
+            setup: true,
+            message:
+              '已发起确认，等待用户：对话里出现了确认卡，用户核对域名后选择添加或取消，本次执行暂停。不要重复提交，也不要让用户把令牌或密码贴给你。',
+          };
+        } catch (error) {
+          if (
+            error instanceof AppError &&
+            (error.code === 'LOCAL_CONNECTOR_REJECTED' || error.code === 'DEVELOPER_MODE_REQUIRED')
+          ) {
+            return { ok: false, message: error.message };
+          }
+          throw error;
+        }
       },
     };
   }
@@ -4800,6 +4868,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
       return '未配置联网检索：请先在设置中选择检索供应商并填写 API key';
     case 'agent':
       return agentSetupMessage(requirement.agentId, requirement.reason);
+    case 'confirm-local-connector':
+      return '等待你确认添加本机连接：请在对话里的确认卡上核对域名后选择「添加」或「取消」';
     case 'connect-app':
       return requirement.reason === 'scope'
         ? '需要追加应用权限：请在设置中重新连接该应用'

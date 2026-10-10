@@ -7,6 +7,7 @@ import {
   McpConnectionClosedError,
   type CallToolResult,
   type ClientCapabilities,
+  type McpFetch,
   type ReadResourceResult,
   type Tool as McpTool,
   type ToolAnnotations,
@@ -258,6 +259,8 @@ export class McpService {
   #toolLock: McpToolLockHook | null = null;
   /** D73 P1：目录连接来源（见 {@link McpConnectionSource}）。 */
   #connectionSource: McpConnectionSource | null = null;
+  /** 本机连接：给这类 server 的 HTTP 传输换上带 SSRF 守卫的 fetch（见 {@link attachHttpFetch}）。 */
+  #httpFetchFor: ((server: McpServer) => McpFetch | undefined) | null = null;
   /** 最近见到的 server 名（连接行删除后 `closed` 事件仍能带上名字）。 */
   readonly #serverNames = new Map<string, string>();
 
@@ -289,6 +292,15 @@ export class McpService {
   /** D73 P1：工具此刻是否可调用（无锁定 = true）。网关在调用时核对。 */
   toolApproved(server: Pick<McpServer, 'id'>, toolName: string): boolean {
     return this.#toolLock === null || this.#toolLock.isExposed(toolLockKey(server), toolName);
+  }
+
+  /**
+   * 本机连接（todo/local-connector-authoring.md）：对返回 fetch 的 server，Streamable HTTP 传输用它
+   * 发请求（连接时校验解析地址、拒绝私网 / 保留地址，跨源重定向拒绝）。本机条目的地址由 Bot 提供，
+   * 探测时通过不等于之后不会被 DNS 重绑定到内网，所以工具调用流量同样要守卫。
+   */
+  attachHttpFetch(resolver: (server: McpServer) => McpFetch | undefined): void {
+    this.#httpFetchFor = resolver;
   }
 
   /** D73 P1：接入目录连接来源（`start.ts`，在连接应用服务构造后）。 */
@@ -928,6 +940,7 @@ export class McpService {
     server: McpServer,
     secretValues?: McpSecretOverrides | undefined,
   ): Promise<void> {
+    const guardedFetch = server.transport === 'http' ? this.#httpFetchFor?.(server) : undefined;
     const transport =
       server.transport === 'stdio'
         ? new StdioTransport({
@@ -955,6 +968,7 @@ export class McpService {
               ),
               // D73：OAuth 令牌由运行时提供者供给（只读 Vault + 主动刷新；从不自行授权）。
               ...(server.auth === 'oauth' ? { authProvider: this.#authProviderFor(server) } : {}),
+              ...(guardedFetch !== undefined ? { fetch: guardedFetch } : {}),
             });
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), MCP_CONNECT_TIMEOUT_MS);
