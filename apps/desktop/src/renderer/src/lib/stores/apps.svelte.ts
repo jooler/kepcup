@@ -57,11 +57,13 @@ class AppsState {
       this.#onFlowEvent(payload as AppConnectFlowPayload);
     });
     core.onEvent('apps.connection_status', (payload) => {
-      const { connectionId, status } = payload as AppConnectionStatusPayload;
+      const { connectionId, status, removed } = payload as AppConnectionStatusPayload;
       this.invalidateTools(connectionId);
-      const next = applyConnectionStatus(this.connections, connectionId, status);
+      const next = applyConnectionStatus(this.connections, connectionId, status, removed === true);
       if (next === null) void this.refresh().catch(() => undefined);
       else this.connections = next;
+      // 行被删了：目录卡片上的账号数也要跟着变（不等下一次手动刷新）。
+      if (removed === true) void this.refreshCatalog().catch(() => undefined);
     });
     // core 重启 / 端口重绑：断连期间的推送已丢失，重拉连接列表。
     core.onEvent('core.status', (payload) => {
@@ -74,8 +76,9 @@ class AppsState {
 
   #onFlowEvent(payload: AppConnectFlowPayload): void {
     this.flows = applyFlowEvent(this.flows, payload);
-    // 完成：拉最新连接列表（账号标签 / scope / 状态）。失败 / 取消：连接状态不变。
-    if (payload.phase === 'done') {
+    // 终态一律拉最新连接列表与目录：完成 → 新账号 / 标签 / 状态；取消 / 失败 → 首次连接的临时行
+    // 已被 core 删掉（`removed` 事件通常先到，这里兜底对齐，不让界面停在旧数据上）。
+    if (isTerminalPhase(payload.phase)) {
       if (payload.connectionId !== undefined) this.invalidateTools(payload.connectionId);
       void this.refresh().catch(() => undefined);
     }

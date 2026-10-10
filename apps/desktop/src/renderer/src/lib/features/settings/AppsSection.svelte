@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Blocks } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
@@ -21,6 +22,18 @@
   $effect(() => {
     appsStore.start();
     contacts.start();
+  });
+
+  // 连接行被删了：回到列表，不停在不存在的详情上。
+  $effect(() => {
+    if (!appsStore.loaded) return;
+    const current = untrack(() => detailConnectionId);
+    if (
+      current !== null &&
+      !appsStore.connections.some((connection) => connection.id === current)
+    ) {
+      detailConnectionId = null;
+    }
   });
 
   /** 去扩展中心「连接」分组添加应用：先收起设置弹框（两个弹框不叠放）。 */
