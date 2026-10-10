@@ -1,23 +1,21 @@
 <script lang="ts">
+  import { Blocks } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import AppCatalogGrid from '$lib/features/apps/AppCatalogGrid.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { Button } from '$lib/components/ui/button';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
-  import McpSection from './McpSection.svelte';
-  import { APPS_TABS, appsTabForKey, type AppsTab } from './sections';
 
   /**
-   * 设置「应用」分区（D73 §5.9）：三个页签——目录（连接新应用）、已连接（按应用分组
-   * 的账号列表 → 详情）、自定义（原「MCP 服务器」section 原样并入）。初始页签由
-   * shell（`openSettings('apps', …, tab)` / 别名 `mcp` → 自定义）决定。
+   * 设置「应用」分区（D73 §5.9；扩展中心 X3 调整，决定 B）：只做**已连接账号的管理**——
+   * 按应用分组的账号列表 → 详情（权限、逐工具策略、待复核 diff、重新授权、断开）。
+   * 「发现与添加」统一到扩展中心的「连接」分组（顶部横条跳转，原「目录」页签已移除）；
+   * 自定义 MCP 服务器 / 填 URL / BYO 客户端在「设置 → 开发者模式」分区。
    */
-  let { initialTab = 'catalog' }: { initialTab?: AppsTab } = $props();
 
-  /** 当前页签：随 shell 指定的初始页签复位，之后由用户点击切换。 */
-  let tab = $derived<AppsTab>(initialTab);
-  /** 「已连接」页签里打开的连接详情。 */
+  /** 当前打开的连接详情。 */
   let detailConnectionId = $state<string | null>(null);
 
   $effect(() => {
@@ -25,87 +23,42 @@
     contacts.start();
   });
 
-  const TAB_LABEL_KEYS = {
-    catalog: 'apps.tabs.catalog',
-    connected: 'apps.tabs.connected',
-    custom: 'apps.tabs.custom',
-  } as const;
-
-  function select(next: AppsTab): void {
-    tab = next;
-    detailConnectionId = null;
-  }
-
-  let tablist = $state<HTMLDivElement | null>(null);
-
-  /** WAI-ARIA tabs：左右方向键 / Home / End 切换页签并把焦点移到新页签上。 */
-  function onTablistKeydown(event: KeyboardEvent): void {
-    const next = appsTabForKey(tab, event.key);
-    if (next === null) return;
-    event.preventDefault();
-    select(next);
-    tablist?.querySelector<HTMLElement>(`#${tabId(next)}`)?.focus();
-  }
-
-  function tabId(item: AppsTab): string {
-    return `apps-tab-${item}`;
-  }
-
-  function panelId(item: AppsTab): string {
-    return `apps-tabpanel-${item}`;
+  /** 去扩展中心「连接」分组添加应用：先收起设置弹框（两个弹框不叠放）。 */
+  function openExtensionCenter(): void {
+    shell.closeSettings();
+    shell.openExtensionCenter('connections');
   }
 </script>
 
 <section class="space-y-4" data-testid="apps-section">
   <div
-    class="flex items-center gap-1 border-b"
-    role="tablist"
-    bind:this={tablist}
-    data-testid="apps-tabs"
+    class="flex items-center gap-3 rounded-xl border px-4 py-3"
+    data-testid="apps-extension-center-pointer"
   >
-    {#each APPS_TABS as item (item)}
-      <button
-        type="button"
-        role="tab"
-        id={tabId(item)}
-        aria-selected={tab === item}
-        aria-controls={panelId(item)}
-        tabindex={tab === item ? 0 : -1}
-        class="-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors {tab === item
-          ? 'border-foreground font-medium text-foreground'
-          : 'border-transparent text-muted-foreground hover:text-foreground'}"
-        onclick={() => select(item)}
-        onkeydown={onTablistKeydown}
-        data-testid={`apps-tab-${item}`}
-      >
-        {t(TAB_LABEL_KEYS[item])}
-      </button>
-    {/each}
+    <Blocks class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+    <p class="min-w-0 flex-1 text-xs text-muted-foreground">{t('apps.pointer.text')}</p>
+    <Button
+      size="sm"
+      variant="secondary"
+      class="shrink-0"
+      onclick={openExtensionCenter}
+      data-testid="apps-open-extension-center"
+    >
+      {t('apps.pointer.open')}
+    </Button>
   </div>
 
-  <div role="tabpanel" id={panelId(tab)} aria-labelledby={tabId(tab)}>
-    {#if tab === 'catalog'}
-      <div data-settings-anchor="apps-catalog">
-        <AppCatalogGrid />
-      </div>
-    {:else if tab === 'connected'}
-      <div data-settings-anchor="apps-connected">
-        {#if detailConnectionId !== null}
-          <AppConnectionDetail
-            connectionId={detailConnectionId}
-            onBack={() => (detailConnectionId = null)}
-          />
-        {:else}
-          <AppConnectionsList
-            onOpen={(id) => (detailConnectionId = id)}
-            onGoCatalog={() => select('catalog')}
-          />
-        {/if}
-      </div>
+  <div data-settings-anchor="apps-connected">
+    {#if detailConnectionId !== null}
+      <AppConnectionDetail
+        connectionId={detailConnectionId}
+        onBack={() => (detailConnectionId = null)}
+      />
     {:else}
-      <div data-settings-anchor="mcp">
-        <McpSection />
-      </div>
+      <AppConnectionsList
+        onOpen={(id) => (detailConnectionId = id)}
+        onGoCatalog={openExtensionCenter}
+      />
     {/if}
   </div>
 </section>

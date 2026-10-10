@@ -1,6 +1,6 @@
 # 扩展中心：把「技能市场」升级为 Skills / 连接 / MCP 三组，并逐家预置连接应用
 
-> 状态：**任务书（未开工）**，2026-10-10 由用户决定后写成。编号待分配（接 D73 / D74 之后）。上游：[connected-apps.md](connected-apps.md)（连接应用 P0–P3 已实现）、[connected-apps-status.md](connected-apps-status.md)。
+> 状态：**X0–X4、X6 已在 `t/extension-center` 分支实现（2026-10-10，待评审合并）**；X5 逐家适配未开始。偏差见 DEV-023。2026-10-10 由用户决定后写成，编号待分配（接 D73 / D74 之后）。上游：[connected-apps.md](connected-apps.md)（连接应用 P0–P3 已实现）、[connected-apps-status.md](connected-apps-status.md)。
 >
 > **本文取代原 U2**：原「U2 测试账号 → 登录实测 → 放行发行门禁」不再是用户待办，而是本文 §4 的**持续适配工作**（Agent 做，账号持有人只负责浏览器里的那一次登录）。
 
@@ -86,13 +86,15 @@
 
 每个任务都带测试；E2E 用现有 Electron e2e 方式；全量按 [AGENTS.md](../AGENTS.md) 在 Docker 里先定向后全量。
 
-- [ ] **X0 设计定稿**：在 `docs/design/` 新增（或扩展 29）一节「扩展中心」：信息架构、三组职责、决定 A / B / C 的结论、与设置「应用」分区的分工、对已有 `mcpServers` 的兼容策略。**先确认 ⚠ 三点再动代码**。
-- [ ] **X1 外壳**：`SkillMarketDialog` → `ExtensionCenterDialog`（目录名、`shell.skillMarketOpen` → `extensionCenterOpen`、`sidebar.skillMarket` → `sidebar.extensionCenter`、`data-testid` 随之更名），三个页签；Skills 页签 = 现有内容原样迁入，行为与测试不变。更新 `skill-market.spec.ts` / `sidebar-resize.spec.ts`。
-- [ ] **X2 连接页签**：复用 `apps.catalog.list` 与 `ConnectAppPanel` 的目录卡；只列放行条目（开发构建照旧全部可见，便于适配）；已连接状态、账号数、跳详情；空态文案（「暂无已适配的应用」）。
-- [ ] **X3 自定义入口收口**（决定 A）：「自定义」页签 / 填 URL 入口移入开发者模式；设置「应用」分区只留已连接管理（决定 B）；保留深链 `openSettings('apps', …)` 与别名 `mcp` 的兼容；e2e 与 `sections.test.ts` 更新。
-- [ ] **X4 MCP 页签**：已安装 MCP 的启停 / 状态 / 工具策略入口 + MCPB 安装（`McpbInstall`）；精选清单数据结构（对齐 `catalog.json` 风格）先建空壳。
+- [x] **X0 设计定稿**：在 `docs/design/` 新增（或扩展 29）一节「扩展中心」：信息架构、三组职责、决定 A / B / C 的结论、与设置「应用」分区的分工、对已有 `mcpServers` 的兼容策略。**先确认 ⚠ 三点再动代码**。
+- [x] **X1 外壳**：`SkillMarketDialog` → `ExtensionCenterDialog`（目录名、`shell.skillMarketOpen` → `extensionCenterOpen`、`sidebar.skillMarket` → `sidebar.extensionCenter`、`data-testid` 随之更名），三个页签；Skills 页签 = 现有内容原样迁入，行为与测试不变。更新 `skill-market.spec.ts` / `sidebar-resize.spec.ts`。
+- [x] **X2 连接页签**：复用 `apps.catalog.list` 与 `ConnectAppPanel` 的目录卡；只列放行条目（开发构建照旧全部可见，便于适配）；已连接状态、账号数、跳详情；空态文案（「暂无已适配的应用」）。
+- [x] **X3 自定义入口收口**（决定 A）：「自定义」页签 / 填 URL 入口移入开发者模式；设置「应用」分区只留已连接管理（决定 B）；保留深链 `openSettings('apps', …)` 与别名 `mcp` 的兼容；e2e 与 `sections.test.ts` 更新。
+- [x] **X4 MCP 页签**：已安装 MCP 的启停 / 状态 / 工具策略入口 + MCPB 安装（`McpbInstall`）；精选清单数据结构（对齐 `catalog.json` 风格）先建空壳。
 - [ ] **X5 逐家适配**（持续任务，§4 流程）：先 Notion、Linear（账号已就绪，可立即开始），其余随账号到位逐个推进。每家一个提交，含目录数据、测试、放行与附录 B 结论。
-- [ ] **X6 文案与文档收尾**：zh-CN 文案、`docs/dev/PROGRESS.md`、`todo/connected-apps*.md` 的引用、`connectors/README.md` 的放行说明。
+- [x] **X6 文案与文档收尾**：zh-CN 文案、`docs/dev/PROGRESS.md`、`todo/connected-apps*.md` 的引用、`connectors/README.md` 的放行说明。
+
+**实施记录（2026-10-10，X0–X4 / X6）**：三项 ⚠ 决定均取推荐方案（A / B / C）。设计定稿在 [设计 29 §16](../docs/design/29-connected-apps.md)；代码在 `features/extension-center/`（`ExtensionCenterDialog` + `ExtensionSkills` / `ExtensionConnections` / `ExtensionMcp`）；自定义 MCP 与开发者模式开关在设置新分区「开发者模式」（`DeveloperSection`），设置「应用」只管已连接账号；精选 MCP 清单空壳在 `resources/mcp-presets/` + core `mcp/presets.ts`。实现取舍见 DEV-023，验证结果见 `docs/dev/PROGRESS.md`「扩展中心」。
 
 依赖：X0 → X1 → (X2、X3、X4 并行，注意都动 `settings` / `shell` 文件，按文件归属拆分) → X6；X5 与 X1–X4 并行（只动 `connectors/` 数据与测试）。
 

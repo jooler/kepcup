@@ -3,7 +3,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { core } from '$lib/rpc/client.svelte';
 
 /**
- * 技能市场状态：随应用分发的预置目录 + 全局安装态。目录与安装都是公共作用
+ * 扩展中心 Skills 分组（原技能市场）状态：随应用分发的预置目录 + 全局安装态。目录与安装都是公共作用
  * 域（public_skills，所有 Bot 可用），因此没有目标 Bot 概念；弹框打开时加载
  * 一次，`skills.changed`（botId 为空串 = 公共技能变更）驱动刷新，让市场按钮
  * 与各 Bot 的技能面板保持一致。
@@ -39,7 +39,7 @@ class SkillMarketState {
 			this.#loaded = true;
 		} catch (error) {
 			// 调用方多是 `void load()`：不吞成未处理的 rejection，记录并透出。
-			console.error('[skill-market] load failed', error);
+			console.error('[extension-center/skills] load failed', error);
 			this.loadError =
 				error instanceof Error && error.message.length > 0 ? error.message : String(error);
 		} finally {
