@@ -42,7 +42,7 @@ class ShellState {
 
   /**
    * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）；`apps` 分组可
-   * 再指定页签（缺省「目录」）。
+   * 再带一个旧页签参数：`custom` 落「开发者模式」分区，其余忽略（「应用」= 已连接账号管理）。
    */
   openSettings(section: SettingsSectionId = 'general', anchor?: string, appsTab?: AppsTab): void {
     this.settingsSection = section;

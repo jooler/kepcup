@@ -321,7 +321,8 @@ export const zhCN = {
   'settings.devMode': '开发者模式',
   'settings.navDeveloper': '开发者模式',
   'settings.devModeOffHint':
-    '开启后可自行添加 MCP 服务器（命令或网址）、配置手填 OAuth 客户端，并查看原始工具定义与授权日志。普通使用不需要开启；常用应用请到「扩展中心 → 连接」添加。',
+    '开启后可自行添加 MCP 服务器（命令或网址）、配置手填 OAuth 客户端，并查看原始工具定义与授权日志。普通使用不需要开启；常用应用请到「扩展中心 → 连接」添加，已安装的 MCP 服务器在「扩展中心 → MCP」管理。',
+  'settings.devModeOpenMcp': '打开 扩展中心 → MCP',
   'settings.devModeHint':
     '开启后，每个自定义服务器会显示原始工具定义（含注解）、授权流程事件日志，并可手动刷新工具。日志不含令牌。',
   'settings.devModeToolsTitle': '原始工具定义',
@@ -403,7 +404,7 @@ export const zhCN = {
   'contacts.lightModel': '轻量模型（留空用默认）',
   'contacts.mcpServers': 'MCP 工具服务器',
   'contacts.mcpServersHint':
-    '勾选后该 Bot 可使用对应服务器的工具：只读工具默认直接执行（对话中也能直接查询），写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。在 设置 → MCP 服务器 中管理。',
+    '勾选后该 Bot 可使用对应服务器的工具：只读工具默认直接执行（对话中也能直接查询），写入 / 破坏性工具每次调用需批准（除非开启了免审批或逐工具设置）。在 扩展中心 → MCP 中管理。',
   'contacts.mcpAutoApproveTag': '免审批',
   // W8 共享浏览器资料
   'contacts.browserProfile': '浏览器资料',
@@ -429,7 +430,7 @@ export const zhCN = {
   // D73 §5.7 / §5.9：Bot 详情「应用」区（按应用分组、单选账号）
   'contacts.apps': '应用',
   'contacts.appsHint':
-    '每个应用最多选一个账号：该 Bot 会以这个账号调用应用工具（只读工具直接执行，写入 / 不可逆操作需批准）。在 设置 → 应用 中连接账号。',
+    '每个应用最多选一个账号：该 Bot 会以这个账号调用应用工具（只读工具直接执行，写入 / 不可逆操作需批准）。要连接新的应用，请到 扩展中心 → 连接；已连接的账号在 设置 → 应用 中管理。',
   'contacts.appsNone': '不使用',
   'contacts.appsConnect': '去连接',
   'contacts.appsNotConnected': '尚未连接账号',
@@ -1073,6 +1074,8 @@ export const zhCN = {
   'extensionCenter.connections.back': '返回应用列表',
   'extensionCenter.mcp.hint':
     '管理已安装的 MCP 工具服务器：启用 / 停用、逐工具风险与策略，也可安装 .mcpb 本地包。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
+  'extensionCenter.mcp.targetLocked':
+    '命令、参数与地址在这里只读；需要修改请先在「设置 → 开发者模式」中开启开发者模式。名称、启用状态与密钥值仍可修改。',
   'extensionCenter.mcp.empty': '还没有安装 MCP 服务器。可以安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
     '为所有 Bot 添加开箱即用的办公技能：安装一次，每个 Bot 都能发现并调用。装完可在技能面板管理。',
@@ -1465,6 +1468,7 @@ export const zhCN = {
   'apps.doneHint': '已连接 {name}。',
   'apps.cancelledHint': '已取消连接。',
   'apps.clientRequiredTitle': '需要你提供 OAuth 客户端',
+  'apps.clientUnavailable': '该应用需要预注册客户端，暂不可用。',
   'apps.clientRequiredHint':
     '这个服务既不支持客户端元数据文档，也不支持动态注册。请在该服务的开发者后台创建 OAuth 应用（类型选桌面 / 原生应用），把下方所有回调地址登记为 Redirect URI，再把得到的 client id（如有 client secret 一并）填在这里。',
   'apps.issuer': '授权服务器（issuer）',
@@ -1566,6 +1570,8 @@ export const zhCN = {
   'apps.catalog.loading': '正在读取目录…',
   'apps.catalog.empty': '没有匹配的应用',
   'apps.catalog.none': '暂无已适配的应用',
+  'apps.catalog.loadFailed': '读取应用目录失败',
+  'apps.catalog.retry': '重试',
   'apps.catalog.manage': '管理',
   'apps.catalog.connect': '连接',
   'apps.catalog.connectAnother': '再连一个账号',

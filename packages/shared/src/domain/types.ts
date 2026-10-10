@@ -550,7 +550,7 @@ export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSche
 export const appsSettingsSchema = z
   .object({
     toolLockBaselineDone: z.boolean().default(false).catch(false),
-    /** 开发者模式（P2 §6.6）：「自定义」页显示原始工具定义 / 授权事件日志 / 手动刷新工具。只经 `settings.update` 的 `apps.developerMode` 写。 */
+    /** 开发者模式（P2 §6.6）：设置 → 开发者模式分区显示原始工具定义 / 授权事件日志 / 手动刷新工具。只经 `settings.update` 的 `apps.developerMode` 写。 */
     developerMode: z.boolean().default(false).catch(false),
     /**
      * 污点外发控制（D73 P2，design 29 §8.3）：Bot 读取过连接应用数据后，24 小时内所有外发
