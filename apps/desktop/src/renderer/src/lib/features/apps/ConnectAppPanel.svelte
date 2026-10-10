@@ -321,6 +321,16 @@
           <Badge variant="outline" class="text-[10px]" data-testid={`${testid}-tier`}>
             {t(TIER_LABEL_KEYS[entry.tier])}
           </Badge>
+          {#if entry.origin === 'local'}
+            <Badge
+              variant="outline"
+              class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+              title={t('apps.local.badgeHint')}
+              data-testid={`${testid}-local-badge`}
+            >
+              {t('apps.local.badge')}
+            </Badge>
+          {/if}
         </p>
         {#if entry.description.length > 0}
           <p class="text-xs text-muted-foreground">{entry.description}</p>
@@ -347,7 +357,7 @@
             </span>
           {/if}
         </div>
-        {#if entry.privacyPolicy.length > 0}
+        {#if entry.privacyPolicy.length > 0 && entry.origin !== 'local'}
           <p class="text-xs break-all text-muted-foreground" data-testid={`${testid}-privacy`}>
             {t('apps.panel.privacyPolicy')}
             <span class="font-mono select-all">{entry.privacyPolicy}</span>

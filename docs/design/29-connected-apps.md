@@ -607,6 +607,17 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 `confirm-local-connector` 设置需求携带 `{proposalId, card}`，`card` 全部由 core 生成：展示名、描述、分类、**MCP 域名（含端口，卡上大字）**与完整地址、认证方式（oauth）与注册方式（cimd / dcr）、授权服务器域名、将请求的范围、文档链接（仅展示）、风险说明、过期时间。用户点「添加」→ `apps.localConnectors.confirm({ proposalId })`（落库、广播 `apps.catalog_changed`、审计）；点「取消」→ `…reject`。随后用 `runs.retry` 续跑，Bot 在 `<available_apps>` 里看到新条目，经 `app_request_connection` 引导用户连接。
 
+### 17.3a 安全评审后的加固（A1–A7，DEV-024 修订）
+
+- **跨站授权服务器**：提案记录授权服务器是否与 MCP 服务同站点（`sameSite`）。不同站点 → 卡片 `issuerCrossSite: true` + core 生成的强警告，`apps.localConnectors.confirm` 必须带 `acknowledgeCrossSiteIssuer: true`（否则 `LOCAL_CONNECTOR_ACK_REQUIRED`，且不消耗提案）；渲染端用红色框点名两个域名并要求勾选。`developer` 分级的连接**只用 CIMD / DCR**，不用 KepCup 预注册表（按 issuer 兜底查表）也不用用户为该 issuer 手填的 BYO 客户端。
+- **issuer 钉死**：探测到的授权服务器 issuer 写进条目（`_meta.expectedIssuer`）；连接时重新发现到不同的 issuer → `OAUTH_ISSUER_MISMATCH` 中止，要求删除后重新添加，不静默跟随被换掉的授权服务器。探测不到范围时卡片写「由服务端决定」，授权前的完整授权地址（含 `scope` 参数）仍要用户核对。
+- **文本清洗**：shared 的 `sanitizeDisplayText` 是唯一实现（`\p{Cf}` / `\p{Cc}`、Unicode 标签字符、U+061C / 3164 / 115F / 1160 / 180E / 00AD / 034F、变体选择符、零宽与双向控制全部去掉，空白折叠）；用于卡片展示文本、`<available_apps>` 的 `oneLine`、授权服务器给的账号名、本机连接内联工具的说明；范围名只留 RFC 6749 scope-token（长度 / 个数有上限）。本机连接**忽略**授权服务器给的 `name` / `email` / `sub`，账号一律自动编号，也不把令牌发去 userinfo。
+- **`ui: false` 落地**：本机 / `developer` 条目的工具即使声明 `_meta.ui` 也不出界面卡、不取资源、不服务页面（`McpAppUiService.uiAllowed`）。预置条目的 `ui` 字段仍只是声明（MCP Apps 由工具元数据驱动，现有预置应用的 `ui: false` 不是开关）。`toolDefinitionHash` 不含 `_meta`，所以 `_meta` 的改动不会触发工具复核。
+- **主机名规范化**：小写并去掉末尾的点（`example.com.` ≡ `example.com`），用于 URL / origin / slug 与「目录里已有 / 已存在」检查；同域另一条路径返回已存地址，明确告知提交的地址未被使用。
+- **提案卫生**：错误原因用固定文案，不回显解析到的内网 IP 或库的原始报错（原始细节只进日志）；每个 run 至多 5 次、每个对话每小时至多 20 次（Clock 计时）。
+- **`<available_apps>`**：本机条目优先占位（至多 10 个），再由预置 / 目录条目补满 30 条。
+- **`settings.update`** 的 `apps` 合并对**最新**设置做，避免 await 期间丢失 / 复活本机条目。
+
 ### 17.4 删除、审计与观测
 
 - `apps.localConnectors.remove`：先经 `AppDisconnector` 断开该条目的**全部**连接（吊销、清令牌、清 DCR 客户端、从 Bot 勾选中移除、取消进行中的流程），再删条目；任何时候可用。

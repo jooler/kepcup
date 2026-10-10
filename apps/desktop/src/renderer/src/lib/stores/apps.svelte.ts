@@ -4,7 +4,9 @@ import type {
   AppConnectionStatusPayload,
   AppConnection,
   AppConnectTarget,
+  AppCatalogChangedPayload,
   AppToolView,
+  LocalConnectorView,
 } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import {
@@ -44,6 +46,11 @@ class AppsState {
    */
   toolsByConnection = $state<Record<string, AppToolView[]>>({});
   readonly #toolsInflight = new Map<string, Promise<AppToolView[]>>();
+  /** 本机连接（`apps.localConnectors.list`，设计 29 §17）：扩展中心「本机自建」区的数据。 */
+  localConnectors = $state<LocalConnectorView[]>([]);
+  localLoaded = $state(false);
+  /** 正在删除的本机条目（防重复点击）。 */
+  removingLocal = $state<Record<string, boolean>>({});
   #started = false;
   #sawReady = false;
   /** flowId → 发起它的目标（`clearFlow` 据此清理）。 */
@@ -65,13 +72,25 @@ class AppsState {
       // 行被删了：目录卡片上的账号数也要跟着变（不等下一次手动刷新）。
       if (removed === true) void this.refreshCatalog().catch(() => undefined);
     });
+    // 本机条目被添加 / 删除：重拉目录与本机列表；删除时立刻丢掉对它的引用（流程提示、本机列表行）。
+    core.onEvent('apps.catalog_changed', (payload) => {
+      const { connectorId, change } = payload as AppCatalogChangedPayload;
+      if (change === 'removed') this.#dropLocal(connectorId);
+      void this.refreshLocal().catch(() => undefined);
+      void this.refreshCatalog().catch(() => undefined);
+      if (change === 'removed') void this.refresh().catch(() => undefined);
+    });
     // core 重启 / 端口重绑：断连期间的推送已丢失，重拉连接列表。
     core.onEvent('core.status', (payload) => {
       if ((payload as { status?: string }).status !== 'ready') return;
-      if (this.#sawReady) void this.refresh().catch(() => undefined);
+      if (this.#sawReady) {
+        void this.refresh().catch(() => undefined);
+        void this.refreshLocal().catch(() => undefined);
+      }
       this.#sawReady = true;
     });
     void this.refresh().catch(() => undefined);
+    void this.refreshLocal().catch(() => undefined);
   }
 
   #onFlowEvent(payload: AppConnectFlowPayload): void {
@@ -147,6 +166,68 @@ class AppsState {
       this.catalogError =
         error instanceof Error && error.message.length > 0 ? error.message : String(error);
       throw error;
+    }
+  }
+
+  async refreshLocal(): Promise<void> {
+    const { connectors } = (await core.call('apps.localConnectors.list')) as {
+      connectors: LocalConnectorView[];
+    };
+    this.localConnectors = connectors;
+    this.localLoaded = true;
+  }
+
+  /** 本机条目没了：删本机列表行并收起它的流程提示（不再引用不存在的条目）。 */
+  #dropLocal(connectorId: string): void {
+    this.localConnectors = this.localConnectors.filter((item) => item.connectorId !== connectorId);
+    this.clearFlow({ kind: 'catalog', connectorId });
+    this.catalog = this.catalog.filter((entry) => entry.connectorId !== connectorId);
+  }
+
+  /**
+   * 用户在确认卡上点「添加」：core 落库并广播 `apps.catalog_changed`；这里等目录与本机列表
+   * 都刷新后再返回，调用方紧接着渲染连接面板时条目已在目录里（面板按条目取标题 / 权限）。
+   */
+  async confirmLocal(
+    proposalId: string,
+    options: { acknowledgeCrossSiteIssuer?: boolean } = {},
+  ): Promise<{ connectorId: string; title: string }> {
+    const result = (await core.call('apps.localConnectors.confirm', {
+      proposalId,
+      ...(options.acknowledgeCrossSiteIssuer === true ? { acknowledgeCrossSiteIssuer: true } : {}),
+    })) as {
+      connectorId: string;
+      title: string;
+    };
+    await Promise.all([this.refreshCatalog(), this.refreshLocal()]).catch(() => undefined);
+    return result;
+  }
+
+  /** 确认卡上点「取消」：丢弃提案（幂等）。 */
+  async rejectLocal(proposalId: string): Promise<void> {
+    await core.call('apps.localConnectors.reject', { proposalId });
+  }
+
+  /**
+   * 删除本机条目（core 先断开它的全部账号：吊销、清令牌 / DCR 客户端、移出 Bot 授权，再删条目）。
+   * 条目已不存在（NOT_FOUND）按成功处理；同一条目并发点击只发一次。
+   */
+  async removeLocal(connectorId: string): Promise<void> {
+    if (this.removingLocal[connectorId] === true) return;
+    this.removingLocal = { ...this.removingLocal, [connectorId]: true };
+    try {
+      try {
+        await core.call('apps.localConnectors.remove', { connectorId });
+      } catch (error) {
+        if ((error as { code?: string } | undefined)?.code !== 'NOT_FOUND') throw error;
+      }
+      this.#dropLocal(connectorId);
+      await this.refresh().catch(() => undefined);
+      await this.refreshLocal().catch(() => undefined);
+    } finally {
+      const { [connectorId]: _done, ...rest } = this.removingLocal;
+      void _done;
+      this.removingLocal = rest;
     }
   }
 

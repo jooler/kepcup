@@ -9,6 +9,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import ConnectAppPanel from './ConnectAppPanel.svelte';
+  import { withoutLocalEntries } from './local-connectors';
   import {
     CATEGORY_LABEL_KEYS,
     TIER_LABEL_KEYS,
@@ -44,8 +45,10 @@
   const loadState = $derived(
     catalogLoadState({ loaded: appsStore.catalogLoaded, error: appsStore.catalogError }),
   );
-  const categories = $derived(catalogCategories(appsStore.catalog));
-  const entries = $derived(catalogView(appsStore.catalog, { query, category }));
+  // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
+  const catalog = $derived(withoutLocalEntries(appsStore.catalog));
+  const categories = $derived(catalogCategories(catalog));
+  const entries = $derived(catalogView(catalog, { query, category }));
   // 分级分组（D73 P3 §7.2）：内置在前、已认证带徽标；社区应用单独成组，默认折叠。
   const sections = $derived(catalogSections(entries));
   let communityOpen = $state(false);
@@ -82,7 +85,7 @@
     </p>
   {/if}
 
-  {#if loadState !== 'ready' || appsStore.catalog.length > 0}
+  {#if loadState !== 'ready' || catalog.length > 0}
     <div class="flex flex-wrap items-center gap-2">
       <div class="relative min-w-48 flex-1">
         <Search
@@ -150,7 +153,7 @@
         {t('apps.catalog.retry')}
       </Button>
     </div>
-  {:else if appsStore.catalog.length === 0}
+  {:else if catalog.length === 0}
     <!-- 目录本身为空（发行构建里还没有任何放行的应用）：与「搜索无结果」区分 -->
     <p class="text-xs text-muted-foreground" data-testid="apps-catalog-none">
       {t('apps.catalog.none')}
