@@ -128,7 +128,7 @@ test('draft queue full flow: add, edit, reorder, remove, Enter flush, Cmd+Enter,
     await composer.fill('第一条消息');
     await composer.press('Enter');
     await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(composer).toHaveValue('');
+    await expect(composer).toHaveText('');
     await composer.fill('第二条消息');
     await composer.press('Enter');
     await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(2);

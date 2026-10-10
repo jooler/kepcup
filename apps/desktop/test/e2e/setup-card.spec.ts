@@ -200,7 +200,7 @@ test('send gate holds drafts: no failed run, card completes setup, drafts flush 
     await composer.press('Enter');
     // 入队生效（对空输入框的下一次 Enter 才是 flush，见 direct-chat 范式）。
     await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(composer).toHaveValue('');
+    await expect(composer).toHaveText('');
     await composer.press('Enter');
     const setupCard = page.locator('[data-testid="setup-card"]');
     await expect(setupCard).toBeVisible({ timeout: 15_000 });

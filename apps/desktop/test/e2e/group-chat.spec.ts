@@ -116,7 +116,7 @@ async function createGroupViaUi(page: Page, title: string, memberNames: string[]
   });
 }
 
-/** Types text with an @ mention picked from the popup. */
+/** Types text with an @ mention picked from the popup (keyboard Enter). */
 async function mentionAndType(page: Page, botName: string, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
   await composer.click();
@@ -126,7 +126,8 @@ async function mentionAndType(page: Page, botName: string, text: string): Promis
     .filter({ hasText: botName })
     .first();
   await expect(candidate).toBeVisible({ timeout: 5_000 });
-  await candidate.click();
+  // 弹层打开时回车是「确认提及目标」，不得把消息推入待发送队列。
+  await composer.press('Enter');
   await composer.pressSequentially(text);
 }
 
@@ -150,14 +151,31 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
 
     const composer = page.locator('[data-testid="composer-input"]');
 
-    // --- @ mention: popup, tag chip, only the mentioned bot answers ---------
+    // --- @ mention: popup, input highlight, only the mentioned bot answers ---
     llm.script('mock-main', [
       step()
         .expect((r) => JSON.stringify(r.body.messages).includes('名字：阿甲'))
         .replyText('阿甲收到'),
     ]);
+    // 输入框内提及交互：高亮着色 + Backspace 一次删掉整个 @XXX（先吃分隔
+    // 空格，再删节点），触发符 @ 保留且弹层立刻重开，可继续选目标。
+    await composer.click();
+    await composer.pressSequentially('@阿甲');
+    await page
+      .locator('[data-testid="mention-popup"] button')
+      .filter({ hasText: '阿甲' })
+      .first()
+      .click();
+    await expect(page.locator('[data-testid="composer-mention"]')).toHaveText('@阿甲');
+    await composer.press('Backspace');
+    await composer.press('Backspace');
+    await expect(composer).toHaveText('@');
+    await expect(page.locator('[data-testid="mention-popup"]').first()).toBeVisible();
+    // 再退格删掉触发符，回到空输入后重新提及发送。
+    await composer.press('Backspace');
+    await expect(composer).toHaveText('');
     await mentionAndType(page, '阿甲', ' 帮我看个问题');
-    await expect(page.locator('[data-testid="mention-tags"]')).toContainText('@阿甲');
+    await expect(page.locator('[data-testid="composer-mention"]')).toHaveText('@阿甲');
     await composer.press('Meta+Enter');
     await expect(page.locator('[data-testid="user-bubble"]').first()).toContainText(
       '帮我看个问题',
@@ -165,6 +183,10 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
         timeout: 15_000,
       },
     );
+    // 发送后的用户气泡里 @ 部分有独立样式（mention pill span）。
+    await expect(
+      page.locator('[data-testid="user-bubble"]').first().locator('[data-testid="user-mention"]'),
+    ).toHaveText('@阿甲');
     await expect(page.locator('[data-testid="bot-bubble"]').first()).toContainText('阿甲收到', {
       timeout: 30_000,
     });

@@ -25,6 +25,7 @@ import {
   agentSetupReasonOf,
   agentToolApprovalPayloadSchema,
   findAgentEntry,
+  groupMentionToken,
   newId,
   resolveCapabilities,
   type AgentCatalogEntry,
@@ -689,8 +690,9 @@ export class Orchestrator {
         return (
           this.#mailboxes
             .get(task.botId, task.conversationId)
-            ?.hasBuffered((message) => message.kind === 'task_event' && message.taskId === taskId) ??
-          false
+            ?.hasBuffered(
+              (message) => message.kind === 'task_event' && message.taskId === taskId,
+            ) ?? false
         );
       },
       // D75 §8.5 并发 (审查 M3): an external-agent task launches (lease,
@@ -1941,7 +1943,8 @@ export class Orchestrator {
     isTask: boolean,
   ): Promise<{ entries: McpToolEntry[]; hasServers: boolean; resolved: boolean }> {
     const mcp = this.#deps.mcp;
-    if (mcp == null || serverIds.length === 0) return { entries: [], hasServers: false, resolved: true };
+    if (mcp == null || serverIds.length === 0)
+      return { entries: [], hasServers: false, resolved: true };
     const servers = mcp.serversForBot(serverIds);
     if (servers.length === 0) return { entries: [], hasServers: false, resolved: true };
     // Only a task's connect failures count toward MCP_RECONNECT_MAX: turns
@@ -2017,10 +2020,19 @@ export class Orchestrator {
   #renderOptions(): RenderMessageOptions {
     const names = new Map<string, string>();
     for (const bot of this.#deps.bots.listActive()) names.set(bot.id, bot.name);
+    // 群提及图例（`group:<id>` → 群标题）：用户消息正文里的 `@群名` 靠它
+    // 被模型理解为群聊引用（conversation.ts mentionTokenLabel）。
+    const mentionLabels = new Map<string, string>();
+    for (const conversation of this.#deps.conversations.list()) {
+      if (conversation.type === 'group' && conversation.title !== null) {
+        mentionLabels.set(groupMentionToken(conversation.id), conversation.title);
+      }
+    }
     return {
       selfBotId: null,
       timeZone: this.#deps.timeZone,
       botNames: names,
+      mentionLabels,
       renderCard: (message) => {
         if (message.senderType !== 'system' || message.kind !== 'card') return null;
         const content = message.content;
@@ -3115,54 +3127,57 @@ export class Orchestrator {
           : {}),
         // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts），
         // 子 run 挂在本 run 上，本 run 结束时 #closeSubagents。
-        subagent: this.#registerSubagents(runId, createSubagentFacade(
-          {
-            engine: this.#deps.engine,
-            runs,
-            usage: this.#deps.usage,
-            secrets: this.#deps.secrets,
-            logger: this.#deps.logger,
-            clock: this.#deps.clock,
-            timeZone: this.#deps.timeZone,
-            providerForRef: (ref) => this.#providerForRef(ref),
-            publishRunStatus: (run) => this.#deps.publish('run.status', { run }),
-          },
-          {
-            parent: identity,
-            modelRef,
-            ...this.#compactionRoute(batch.botId),
-            buildTools: (subIdentity) =>
-              buildSubagentResearchTools({
-                identity: subIdentity,
-                deps: {
-                  gateway: this.#deps.gateway,
-                  workspacePath,
-                  projectPath:
-                    project !== null && project.status === 'available' ? project.path : null,
-                  network,
-                  secrets: this.#deps.secrets,
-                  fsState: this.#fsState,
-                  ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
-                  // W5: read-only MCP tools, wrapped with the sub run's identity.
-                  ...(readOnlyMcp.entries.length > 0
-                    ? { mcp: { tools: wrapMcp(subIdentity, readOnlyMcp.entries) } }
-                    : {}),
-                },
-              }),
-            buildSystemPrompt: () =>
-              Promise.resolve(
-                buildSubagentSystemPrompt({
-                  botName: bot.profile.identity.name || bot.name,
-                  workspacePath,
-                  projectPath:
-                    project !== null && project.status === 'available' ? project.path : null,
-                  timeZone: this.#deps.timeZone,
-                  now: new Date(this.#deps.clock.now()),
+        subagent: this.#registerSubagents(
+          runId,
+          createSubagentFacade(
+            {
+              engine: this.#deps.engine,
+              runs,
+              usage: this.#deps.usage,
+              secrets: this.#deps.secrets,
+              logger: this.#deps.logger,
+              clock: this.#deps.clock,
+              timeZone: this.#deps.timeZone,
+              providerForRef: (ref) => this.#providerForRef(ref),
+              publishRunStatus: (run) => this.#deps.publish('run.status', { run }),
+            },
+            {
+              parent: identity,
+              modelRef,
+              ...this.#compactionRoute(batch.botId),
+              buildTools: (subIdentity) =>
+                buildSubagentResearchTools({
+                  identity: subIdentity,
+                  deps: {
+                    gateway: this.#deps.gateway,
+                    workspacePath,
+                    projectPath:
+                      project !== null && project.status === 'available' ? project.path : null,
+                    network,
+                    secrets: this.#deps.secrets,
+                    fsState: this.#fsState,
+                    ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
+                    // W5: read-only MCP tools, wrapped with the sub run's identity.
+                    ...(readOnlyMcp.entries.length > 0
+                      ? { mcp: { tools: wrapMcp(subIdentity, readOnlyMcp.entries) } }
+                      : {}),
+                  },
                 }),
-              ),
-            onSubRunSettled: (subRunId) => this.#fsState.release(subRunId),
-          },
-        )),
+              buildSystemPrompt: () =>
+                Promise.resolve(
+                  buildSubagentSystemPrompt({
+                    botName: bot.profile.identity.name || bot.name,
+                    workspacePath,
+                    projectPath:
+                      project !== null && project.status === 'available' ? project.path : null,
+                    timeZone: this.#deps.timeZone,
+                    now: new Date(this.#deps.clock.now()),
+                  }),
+                ),
+              onSubRunSettled: (subRunId) => this.#fsState.release(subRunId),
+            },
+          ),
+        ),
       };
 
       // P07 injection: relevant memories come from the trigger text plus the
@@ -3537,11 +3552,7 @@ export class Orchestrator {
           handle,
           conversationId: batch.conversationId,
           botId: batch.botId,
-          cutoffSeq: Math.max(
-            -1,
-            ...recent.map((m) => m.seq),
-            ...batch.messages.map((m) => m.seq),
-          ),
+          cutoffSeq: Math.max(-1, ...recent.map((m) => m.seq), ...batch.messages.map((m) => m.seq)),
         });
       }
 
@@ -3827,7 +3838,9 @@ export class Orchestrator {
     if (incoming.length === 0) return;
     const text = sections.join('\n\n');
     const injectText =
-      visibleSections.length > 0 ? visibleSections.join('\n\n') : '（Bot 内部事务的通知，见原消息）';
+      visibleSections.length > 0
+        ? visibleSections.join('\n\n')
+        : '（Bot 内部事务的通知，见原消息）';
     const sourceMessageIds = incoming.map((message) => message.id);
     const startTask = (): void => {
       const first = incoming
@@ -3869,9 +3882,7 @@ export class Orchestrator {
       }
       startTask();
     } catch (error) {
-      notice(
-        `没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`,
-      );
+      notice(`没能把这条消息交给任务：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -3908,8 +3919,7 @@ export class Orchestrator {
     const stored = this.#deps.runs.get(runId);
     const chainChanged =
       refreshed.chain !== undefined &&
-      (stored?.chainId !== refreshed.chain.id ||
-        (stored.chainDepth ?? 0) < refreshed.chain.depth);
+      (stored?.chainId !== refreshed.chain.id || (stored.chainDepth ?? 0) < refreshed.chain.depth);
     if (buffered.length > 0 || before !== after || chainChanged) {
       const run = this.#deps.runs.setTrigger(runId, {
         reason: refreshed.reason,
@@ -4369,8 +4379,7 @@ export class Orchestrator {
   #renderTaskCard(taskId: string): string {
     const task = this.#deps.runs.get(taskId);
     if (task === null || task.loopType !== 'task') return '（任务记录已清理）';
-    const owner =
-      task.botId !== null ? (this.#deps.bots.get(task.botId)?.name ?? task.botId) : '';
+    const owner = task.botId !== null ? (this.#deps.bots.get(task.botId)?.name ?? task.botId) : '';
     const state = TASK_CARD_STATE_TEXT[taskState(task.status)];
     const extra =
       task.status === 'queued'
@@ -4395,7 +4404,8 @@ export class Orchestrator {
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
-    const kind = task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
+    const kind =
+      task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
     if (!withChanges) return { kind, changes: null };
     if (kind === 'project') {
       // A checkpoint lookup by run id (the revert state can still change).

@@ -836,6 +836,24 @@ export const draftSchema = z.object({
 });
 export type Draft = z.infer<typeof draftSchema>;
 
+/**
+ * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id（dispatcher 据此
+ * 路由），群聊提及带前缀（群不是响应者，只作引用展示——`members.has` 查不到
+ * 该 token，调度层天然忽略；AI 文本渲染时经它补「（群聊）」图例）。
+ */
+export const GROUP_MENTION_PREFIX = 'group:';
+
+export function groupMentionToken(conversationId: string): string {
+  return `${GROUP_MENTION_PREFIX}${conversationId}`;
+}
+
+export function parseMentionToken(token: string): { kind: 'bot' | 'group'; id: string } {
+  if (token.startsWith(GROUP_MENTION_PREFIX)) {
+    return { kind: 'group', id: token.slice(GROUP_MENTION_PREFIX.length) };
+  }
+  return { kind: 'bot', id: token };
+}
+
 // ---------------------------------------------------------------------------
 // Runs
 // ---------------------------------------------------------------------------
