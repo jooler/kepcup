@@ -31,7 +31,8 @@ describe('oneLine', () => {
       expect(invisible, `U+${code.toString(16)}`).toBe(false);
     }
     expect(cleaned).not.toMatch(/\s{2,}/);
-    expect(cleaned.startsWith('a b')).toBe(true);
+    // 不可见 / 格式字符直接删除（共用的展示文本清洗），空白类控制字符折叠为空格。
+    expect(cleaned.startsWith('abbb')).toBe(true);
   });
 
   it('still caps the length', () => {

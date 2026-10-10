@@ -370,6 +370,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.mcpServers,
         );
       }
+      // `apps` 一律对**最新**设置合并（上面有 await：期间 core 自有字段，如 `localConnectors`，
+      // 可能被 `apps.localConnectors.*` 改过，拿读取时的快照回写会丢掉 / 复活条目）。
+      const latestApps = domain.settings.get().apps;
       const next = domain.settings.update({
         ...rest,
         ...(onboardingPatch !== undefined
@@ -403,10 +406,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(appsPatch !== undefined
           ? {
               apps: {
-                ...previous.apps,
-                developerMode: appsPatch.developerMode ?? previous.apps.developerMode,
-                taintGuard: appsPatch.taintGuard ?? previous.apps.taintGuard,
-                directorySync: appsPatch.directorySync ?? previous.apps.directorySync,
+                ...latestApps,
+                developerMode: appsPatch.developerMode ?? latestApps.developerMode,
+                taintGuard: appsPatch.taintGuard ?? latestApps.taintGuard,
+                directorySync: appsPatch.directorySync ?? latestApps.directorySync,
               },
             }
           : {}),

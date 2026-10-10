@@ -82,7 +82,10 @@ export function bindAppsConnectionMethods(
     'apps.localConnectors.confirm': method(
       appsLocalConnectorsConfirmInputSchema,
       appsLocalConnectorsConfirmOutputSchema,
-      async (input) => local().confirm(input.proposalId),
+      async (input) =>
+        local().confirm(input.proposalId, {
+          acknowledgeCrossSiteIssuer: input.acknowledgeCrossSiteIssuer,
+        }),
     ),
     'apps.localConnectors.reject': method(
       appsLocalConnectorsRejectInputSchema,

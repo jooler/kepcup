@@ -16,6 +16,8 @@ import {
   createLocalConnectorRecordSchema,
   isSafeDocUrl,
   isSafeLocalConnectorUrl,
+  containsUnsafeText,
+  normalizeLocalConnectorUrl,
   localConnectorName,
   localConnectorOrigin,
   localConnectorSlug,
@@ -54,6 +56,10 @@ import { probeLocalConnector, type LocalProbeResult } from './local-connector-pr
 
 /** 内存中同时保留的待确认提案上限（Bot 反复提案不能无限占内存）。 */
 const PROPOSALS_MAX = 10;
+/** 提案频率限制（评审 A6）：每个 run 至多 5 次，每个对话每小时至多 20 次（Clock 计时）。 */
+export const PROPOSALS_PER_RUN_MAX = 5;
+export const PROPOSALS_PER_CONVERSATION_HOURLY_MAX = 20;
+const HOUR_MS = 3_600_000;
 
 export interface LocalConnectorsDeps {
   settings: Pick<SettingsService, 'get' | 'update'>;
@@ -89,13 +95,22 @@ export interface ProposeInput {
 export interface ProposeContext {
   botId: string | null;
   conversationId: string | null;
+  /** 触发提案的 run（每个 run 至多 {@link PROPOSALS_PER_RUN_MAX} 次）。 */
+  runId?: string | null | undefined;
   signal?: AbortSignal | undefined;
 }
 
 export type ProposeResult =
   | { kind: 'proposed'; proposalId: string; card: LocalConnectorCard }
   /** 同一 origin 已经添加过：返回已有条目，不再发确认卡。 */
-  | { kind: 'existing'; connectorId: string; title: string };
+  | {
+      kind: 'existing';
+      connectorId: string;
+      title: string;
+      /** 已存的 MCP 地址；与本次提交的地址不同时（同一域名的另一条路径）Bot 要被明确告知。 */
+      mcpUrl: string;
+      sameUrl: boolean;
+    };
 
 /** 冲突检查需要的目录视图（`ConnectorCatalog` 满足）。 */
 export interface LocalConnectorsCatalog {
@@ -107,6 +122,8 @@ export class LocalConnectors implements LocalConnectorSource {
   readonly #deps: LocalConnectorsDeps;
   readonly #schema: ReturnType<typeof createLocalConnectorRecordSchema>;
   readonly #proposals = new Map<string, Proposal>();
+  readonly #runCounts = new Map<string, number>();
+  readonly #conversationHits = new Map<string, number[]>();
   #revision = 0;
   /** 已告警过的坏条目 slug（每次装载都告警会刷屏）。 */
   readonly #warned = new Set<string>();
@@ -204,25 +221,34 @@ export class LocalConnectors implements LocalConnectorSource {
   async propose(input: ProposeInput, context: ProposeContext): Promise<ProposeResult> {
     this.#requireDeveloperMode();
     const reject = (message: string): AppError => new AppError('LOCAL_CONNECTOR_REJECTED', message);
+    this.#rateLimit(context, reject);
 
     const title = sanitizeLocalConnectorText(input.title, LOCAL_CONNECTOR_TITLE_MAX);
     if (title.length === 0) throw reject('需要提供 title（展示名）');
-    const rawUrl = input.mcpUrl.trim();
-    const allowlisted = this.#allowlisted(rawUrl);
-    if (!allowlisted && !isSafeLocalConnectorUrl(rawUrl)) {
+    // 规范化：小写主机、去掉主机名末尾的点——`example.com.` 与 `example.com` 是同一个服务（评审 A5）。
+    const normalized = normalizeLocalConnectorUrl(input.mcpUrl.trim());
+    if (normalized === null) throw reject('mcpUrl 不是合法的地址');
+    if (!this.#allowlisted(normalized) && !isSafeLocalConnectorUrl(normalized)) {
       throw reject(
         'mcpUrl 必须是 https 域名地址：不能是 http、IP 地址、localhost 或内网域名，也不能带用户名密码、? 查询串或 # 片段',
       );
     }
-    const url = new URL(rawUrl);
-    const origin = localConnectorOrigin(url.href);
+    const url = new URL(normalized);
+    const origin = localConnectorOrigin(normalized);
     if (origin === null) throw reject('mcpUrl 不是合法的地址');
     const slug = localConnectorSlug(origin);
 
-    // 同一 origin 已添加：返回已有条目（不再发确认卡）。
+    // 同一 origin 已添加：返回已有条目（不再发确认卡），并带上已存地址（路径可能不同）。
     const existing = this.#records().find((record) => connectorMetaOf(record.entry).slug === slug);
     if (existing !== undefined) {
-      return { kind: 'existing', connectorId: slug, title: existing.entry.title };
+      const storedUrl = connectorRemoteOf(existing.entry)!.url;
+      return {
+        kind: 'existing',
+        connectorId: slug,
+        title: existing.entry.title,
+        mcpUrl: storedUrl,
+        sameUrl: storedUrl === url.href,
+      };
     }
     this.#sweepExpired();
     if (this.#records().length >= LOCAL_CONNECTORS_MAX) {
@@ -243,6 +269,7 @@ export class LocalConnectors implements LocalConnectorSource {
       fetch: createSafeFetch({ loopbackHosts: this.#deps.loopbackAllowlist }),
       loopbackAllowlist: this.#deps.loopbackAllowlist,
       signal: context.signal,
+      logger: this.#deps.logger,
     });
 
     const description =
@@ -252,7 +279,9 @@ export class LocalConnectors implements LocalConnectorSource {
       sanitizeLocalConnectorText(input.category ?? '', 20).toLowerCase(),
     );
     const docUrl =
-      input.docUrl !== undefined && isSafeDocUrl(input.docUrl.trim())
+      input.docUrl !== undefined &&
+      isSafeDocUrl(input.docUrl.trim()) &&
+      !containsUnsafeText(input.docUrl.trim())
         ? input.docUrl.trim()
         : undefined;
 
@@ -281,6 +310,8 @@ export class LocalConnectors implements LocalConnectorSource {
           // 本机条目没有隐私政策：占位为服务自己的站点（界面不应把它当成「已审核的隐私政策」展示）。
           privacyPolicy: `${origin}/`,
           releaseGate: LOCAL_CONNECTOR_GATE,
+          // 探测到的授权服务器 issuer 钉在条目里：连接时重新发现到不同的 issuer 就中止（评审 A2）。
+          expectedIssuer: probe.issuer,
         },
       },
     };
@@ -350,17 +381,28 @@ export class LocalConnectors implements LocalConnectorSource {
    * 用户在确认卡上点「添加」：一次性消费提案并落库。开发者模式关闭 → `DEVELOPER_MODE_REQUIRED`；
    * 提案不存在 / 已用过 / 过期 → `LOCAL_CONNECTOR_EXPIRED`。
    */
-  confirm(proposalId: string): { connectorId: string; title: string } {
+  confirm(
+    proposalId: string,
+    options: { acknowledgeCrossSiteIssuer?: boolean | undefined } = {},
+  ): { connectorId: string; title: string } {
     this.#requireDeveloperMode();
     const proposal = this.#proposals.get(proposalId);
-    // 一次性：无论成败都不能再用同一个 id。
-    this.#proposals.delete(proposalId);
     if (proposal === undefined || proposal.expiresAt <= this.#deps.clock.now()) {
+      this.#proposals.delete(proposalId);
       throw new AppError(
         'LOCAL_CONNECTOR_EXPIRED',
         '这个添加请求已过期或已处理，请让 Bot 重新发起',
       );
     }
+    // 授权服务器属于另一个站点：必须带显式确认（评审 A1）。缺确认不消耗提案，用户可勾选后重试。
+    if (proposal.card.issuerCrossSite && options.acknowledgeCrossSiteIssuer !== true) {
+      throw new AppError(
+        'LOCAL_CONNECTOR_ACK_REQUIRED',
+        `这个服务的授权服务器（${proposal.card.issuerHost}）与它自己的域名（${proposal.card.mcpHost}）不属于同一个站点：请核对后勾选「我了解」再添加`,
+      );
+    }
+    // 一次性：此后无论成败都不能再用同一个 id。
+    this.#proposals.delete(proposalId);
     const meta = connectorMetaOf(proposal.record.entry);
     const current = this.#deps.settings.get().apps;
     const already = this.#records().find((item) => connectorMetaOf(item.entry).slug === meta.slug);
@@ -466,6 +508,36 @@ export class LocalConnectors implements LocalConnectorSource {
     }
   }
 
+  /** 提案频率限制：超限直接拒绝（不探测、不联网）。 */
+  #rateLimit(context: ProposeContext, reject: (message: string) => AppError): void {
+    const now = this.#deps.clock.now();
+    if (context.runId !== undefined && context.runId !== null) {
+      const used = this.#runCounts.get(context.runId) ?? 0;
+      if (used >= PROPOSALS_PER_RUN_MAX) {
+        throw reject(
+          `本次执行已经提交过 ${PROPOSALS_PER_RUN_MAX} 次本机连接提案，请先和用户确认再继续`,
+        );
+      }
+      this.#runCounts.set(context.runId, used + 1);
+      // 只保留最近的若干 run 的计数。
+      while (this.#runCounts.size > 200) {
+        const oldest = this.#runCounts.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        this.#runCounts.delete(oldest);
+      }
+    }
+    if (context.conversationId !== null) {
+      const hits = (this.#conversationHits.get(context.conversationId) ?? []).filter(
+        (at) => now - at < HOUR_MS,
+      );
+      if (hits.length >= PROPOSALS_PER_CONVERSATION_HOURLY_MAX) {
+        throw reject('这个对话里本机连接提案太频繁了（每小时有上限），请稍后再试');
+      }
+      hits.push(now);
+      this.#conversationHits.set(context.conversationId, hits);
+    }
+  }
+
   #sweepExpired(): void {
     const now = this.#deps.clock.now();
     for (const [key, proposal] of this.#proposals) {
@@ -492,7 +564,7 @@ function buildCard(input: {
     input.probe.scopes.length > 0
       ? `将请求的授权范围：${input.probe.scopes.join('、')}`
       : '授权范围由服务端在授权时决定（未声明具体范围）';
-  const warnings = [
+  const warnings: string[] = [
     '这是未经 KepCup 审核的服务：它的工具定义和返回内容都不可信，请只添加你信任的服务。',
     '该连接的每一次工具调用都需要你确认（不可逆操作恒需确认），不能设为「对该 Bot 总是允许」。',
     '读取过它的数据后，Bot 在一段时间内向外发送内容也会逐次确认。',
@@ -502,6 +574,11 @@ function buildCard(input: {
       ? '连接时会先显示完整的授权地址，请核对域名后再继续。'
       : `授权页面在另一个域名（${input.probe.issuerHost}）：连接时会先显示完整的授权地址，请核对后再继续。`,
   ];
+  if (input.probe.issuerCrossSite) {
+    warnings.unshift(
+      `警告：这个服务（${input.host}）使用的登录授权服务器属于另一个站点（${input.probe.issuerHost}）。如果你并不知道它们有关联，这可能是借用别家的登录来骗取授权——请只在确认两者确实是同一服务时才添加。`,
+    );
+  }
   return {
     proposalId: input.proposalId,
     title: input.entry.title,
@@ -513,6 +590,7 @@ function buildCard(input: {
     authKind: 'oauth',
     registration: input.probe.registration,
     issuerHost: input.probe.issuerHost,
+    issuerCrossSite: input.probe.issuerCrossSite,
     scopes: input.probe.scopes,
     tier: 'developer',
     warnings,
@@ -525,7 +603,11 @@ function buildCard(input: {
  * 保留地址，防 DNS 重绑定），重定向只跟同源（≤3 跳）——Location 指向 IP 字面量 / 别的主机一律拒绝；
  * 不缓冲响应体（SSE 流式）。回环白名单里的主机（仅测试）用无守卫的 Agent。
  */
-export function createGuardedMcpFetch(loopbackAllowlist: readonly string[]): McpFetch {
+export function createGuardedMcpFetch(
+  loopbackAllowlist: readonly string[],
+  /** 非回环主机用的守卫 Agent（缺省共享的；测试注入可控解析器）。 */
+  options: { dispatcher?: Agent } = {},
+): McpFetch {
   let loopbackAgent: Agent | undefined;
   return async (input, init) => {
     let url = new URL(typeof input === 'string' ? input : input.href);
@@ -535,7 +617,7 @@ export function createGuardedMcpFetch(loopbackAllowlist: readonly string[]): Mcp
     for (let hop = 0; hop <= 3; hop += 1) {
       const dispatcher = isLoopbackAllowed(url, loopbackAllowlist)
         ? (loopbackAgent ??= new Agent())
-        : sharedSafeDispatcher();
+        : (options.dispatcher ?? sharedSafeDispatcher());
       if (url.protocol !== 'https:' && !isLoopbackAllowed(url, loopbackAllowlist)) {
         throw new AppError('OAUTH_INSECURE_ENDPOINT', '本机连接的 MCP 请求必须使用 https');
       }

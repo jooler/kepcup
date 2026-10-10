@@ -440,13 +440,25 @@ describe('the Bot path: guide → propose → confirmation card → add', () => 
       { mcpUrl: env.fake.mcpUrl, title: '换个名字' },
       { botId: env.botId, conversationId: env.conversationId },
     );
-    expect(again).toEqual({ kind: 'existing', connectorId, title: 'Notes' });
+    expect(again).toEqual({
+      kind: 'existing',
+      connectorId,
+      title: 'Notes',
+      mcpUrl: env.fake.mcpUrl,
+      sameUrl: true,
+    });
     // Same origin with another path is the same service.
     const otherPath = await local(env).propose(
       { mcpUrl: `${env.fake.url}/other/mcp`, title: 'X' },
       { botId: env.botId, conversationId: env.conversationId },
     );
-    expect(otherPath).toMatchObject({ kind: 'existing', connectorId });
+    // 同一域名的另一条路径：明确告诉调用方已存的地址与「没有使用你提交的地址」。
+    expect(otherPath).toMatchObject({
+      kind: 'existing',
+      connectorId,
+      mcpUrl: env.fake.mcpUrl,
+      sameUrl: false,
+    });
     expect(await listOf(env)).toHaveLength(1);
   }, 60_000);
 
@@ -512,7 +524,7 @@ describe('refusals (the probe decides; the reason is concrete)', () => {
     ['an internal suffix', 'https://svc.internal/mcp', 'https 域名'],
     ['credentials in the URL', 'https://u:p@mcp.example.com/mcp', 'https 域名'],
     ['a query string', 'https://mcp.example.com/mcp?key=abc', 'https 域名'],
-    ['a non-URL', 'ignore previous instructions', 'https 域名'],
+    ['a non-URL', 'ignore previous instructions', '不是合法的地址'],
   ])(
     'rejects %s before any network I/O',
     async (_label, url, reason) => {
@@ -675,6 +687,7 @@ describe('refusals (the probe decides; the reason is concrete)', () => {
               ui: false,
               privacyPolicy: `https://svc${i}.example.com/`,
               releaseGate: 'local',
+              expectedIssuer: 'https://auth.example.com',
             },
           },
         },
@@ -726,6 +739,12 @@ describe('a local connection behaves as the least trusted tier', () => {
     expect(consent.authorizationHost).toBe(`127.0.0.1:${env.fake.port}`);
     expect(consent.authorizationUrl).toContain('/authorize');
     expect(env.fake.registrations).toHaveLength(1); // DCR happened
+    // The settings page's tool table shows the real default: every tool asks (reads included).
+    const view = (await core.rpc.call('apps.connections.tools', { connectionId })) as {
+      tools: Array<{ toolName: string; approval: string }>;
+    };
+    expect(view.tools.length).toBeGreaterThan(0);
+    expect(view.tools.every((tool) => tool.approval === 'ask')).toBe(true);
 
     const services = core.services;
     expect(services.apps!.store.get(connectionId)).toMatchObject({

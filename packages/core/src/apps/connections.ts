@@ -3,6 +3,7 @@ import {
   connectorMetaOf,
   connectorRemoteOf,
   mcpToolPolicySchema,
+  sanitizeDisplayText,
   type AppCatalogEntry,
   type AppConnectReviewTool,
   type AppConnection,
@@ -291,6 +292,7 @@ export class AppConnectionsService {
       connectorId: meta.slug,
       title: entry.title,
       tier: meta.tier,
+      ...(meta.expectedIssuer !== undefined ? { expectedIssuer: meta.expectedIssuer } : {}),
       serverUrl: remote.url,
       defaultScopes: meta.auth.scopes.default,
       clientRef: meta.auth.registration === 'preregistered' ? meta.auth.clientRef : null,
@@ -467,7 +469,7 @@ export class AppConnectionsService {
     const label = extractPath(json, whoami.labelPath);
     return {
       ...(sub !== undefined ? { sub: sub.slice(0, 200) } : {}),
-      ...(label !== undefined ? { label: label.slice(0, 100) } : {}),
+      ...(label !== undefined ? { label: sanitizeDisplayText(label, 100) } : {}),
     };
   }
 
@@ -579,18 +581,35 @@ export class AppConnectionsService {
           .get()
           .mcpServers.find((entry) => entry.id === connectionId.slice('custom:'.length))
       : undefined;
-    const tools = toolLock.list(connectionId).map((row) => this.#viewOf(row, server));
+    const tier = this.#tierOf(connectionId);
+    const tools = toolLock.list(connectionId).map((row) => this.#viewOf(row, server, tier));
     return { tools, pending: toolLock.pendingSummary(connectionId) };
   }
 
-  #viewOf(row: AppToolRow, server: McpServer | undefined): AppToolView {
+  /** 目录连接的条目分级（连接行的条目已不在目录里 / 自定义 server = undefined）。 */
+  #tierOf(connectionId: string): string | undefined {
+    if (isCustomConnectionId(connectionId)) return undefined;
+    const row = this.#deps.store.get(connectionId);
+    const entry = row === null ? null : this.#deps.catalog.get(row.connectorId);
+    return entry === null ? undefined : connectorMetaOf(entry).tier;
+  }
+
+  #viewOf(row: AppToolRow, server: McpServer | undefined, tier?: string): AppToolView {
     // 目录连接的策略存在行里；自定义 server 的策略在 settings（W5），行里恒为 null。
     const policy: McpToolPolicy | null =
       server !== undefined ? (server.toolPolicies?.[row.toolName] ?? null) : row.userPolicy;
     const enabled = policy?.enabled !== false;
+    // `developer` 分级（本机连接）：默认全部每次确认，破坏性恒每次确认（与 `mcp/policy.ts` 一致）。
+    const developer = tier === 'developer';
     const approval =
-      policy?.approval ??
-      (server?.autoApprove === true ? 'auto' : row.risk === 'read' ? 'auto' : 'ask');
+      developer && row.risk === 'destructive'
+        ? 'ask'
+        : (policy?.approval ??
+          (server?.autoApprove === true
+            ? 'auto'
+            : row.risk === 'read' && !developer
+              ? 'auto'
+              : 'ask'));
     const title = titleOf(row);
     return {
       toolName: row.toolName,
@@ -645,11 +664,15 @@ export class AppConnectionsService {
         toolName: input.toolName,
       });
     }
+    const developer = this.#tierOf(row.id) === 'developer';
     const effective = (
       value: McpToolPolicy | null,
     ): { enabled: boolean; approval: 'auto' | 'ask' } => ({
       enabled: value?.enabled !== false,
-      approval: value?.approval ?? (before.risk === 'read' ? 'auto' : 'ask'),
+      approval:
+        developer && before.risk === 'destructive'
+          ? 'ask'
+          : (value?.approval ?? (before.risk === 'read' && !developer ? 'auto' : 'ask')),
     });
     const previous = effective(before.userPolicy);
     toolLock.setUserPolicy(row.id, input.toolName, policy);

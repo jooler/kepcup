@@ -4,6 +4,7 @@ import {
   KEPCUP_OAUTH_CLIENT_ID,
   OAUTH_CALLBACK_PATH,
   OAUTH_CALLBACK_PORTS,
+  sanitizeDisplayText,
   OAUTH_FLOW_TIMEOUT_MS,
   type AppConnectFlowPayload,
   type AppConnectReviewTool,
@@ -82,6 +83,8 @@ export interface CatalogFlowBegin {
   clientRef: string | null;
   /** 目录条目的信任分级（D73 P3 §7.2）：随 `reviewing_tools` 事件下发，界面据此要求社区应用确认。 */
   tier?: ConnectorTier;
+  /** 条目钉死的授权服务器 issuer（本机连接，评审 A2）：重新发现到的 issuer 不同 → 中止。 */
+  expectedIssuer?: string;
   /** 流程期间承载令牌的临时连接行（`conn_…`，status `connecting`）。 */
   connectionId: string;
   /** 重新授权某个已有连接时的目标（令牌通过账号核对后换到该行）。 */
@@ -618,6 +621,15 @@ export class ConnectFlowManager {
     const asUrl = info.authorizationServerUrl;
     const issuer = metadata?.issuer ?? asUrl;
     flow.issuer = issuer;
+    // 本机连接：授权服务器被换掉（DNS / 目标服务改了元数据）→ 不静默跟随，要求重新添加（评审 A2）。
+    const expectedIssuer = flow.catalog?.begin.expectedIssuer;
+    if (expectedIssuer !== undefined && !sameIssuerUrl(expectedIssuer, issuer)) {
+      throw new AppError(
+        'OAUTH_ISSUER_MISMATCH',
+        '该服务的授权服务器与添加这个本机连接时核对过的不一致，为安全起见已中止。请删除这个本机连接后重新添加',
+        { expected: expectedIssuer, actual: issuer },
+      );
+    }
     for (const endpoint of [
       metadata?.authorization_endpoint,
       metadata?.token_endpoint,
@@ -646,8 +658,16 @@ export class ConnectFlowManager {
       | { kind: 'cimd'; info: OAuthClientInformation }
       | { kind: 'dcr' };
     const clientRef = flow.catalog?.begin.clientRef ?? null;
+    // `developer` 分级（本机连接 / 未审核来源，评审 A1）：只用 CIMD / DCR——不用 KepCup 预注册客户端
+    // （按 issuer 兜底查表会把它发给任意声称该 issuer 的服务），也不用用户为该 issuer 手填的 BYO 客户端。
+    const autoOnly = flow.catalog?.begin.tier === 'developer';
     const resolveIdentity = (): Identity | null => {
-      const stored = this.#deps.vault.getClient(issuer);
+      const stored = autoOnly
+        ? (() => {
+            const found = this.#deps.vault.getClient(issuer);
+            return found !== null && found.source === 'dcr' ? found : null;
+          })()
+        : this.#deps.vault.getClient(issuer);
       const fromStored = (entry: NonNullable<typeof stored>): Identity => ({
         kind: 'stored',
         info: entry.info,
@@ -659,7 +679,7 @@ export class ConnectFlowManager {
       // 2. 目录 `clientRef` → 预注册表；自定义 server 按 issuer 在表里找。表项的 issuer 与
       //    发现到的不符则不用（不把 KepCup 的客户端发给别的授权服务器）。预注册条目（有
       //    `clientRef`）绝不退回 DCR / CIMD：那会拿 KepCup 的名义去别的授权服务器注册。
-      const pre = this.#preregistered.lookup(issuer, clientRef);
+      const pre = autoOnly ? { kind: 'missing' as const } : this.#preregistered.lookup(issuer, clientRef);
       if (pre.kind === 'ok') {
         return { kind: 'stored', info: pre.info, source: 'preregistered', redirectUris: [] };
       }
@@ -975,6 +995,9 @@ export class ConnectFlowManager {
       fetch: McpFetch;
     },
   ): Promise<AccountHint | null> {
+    // 本机连接：授权服务器说的 name / email / sub 不可信（评审 A3）——不拿来当账号名或去重键，
+    // 一律自动编号；也不把访问令牌发去 userinfo。
+    if (flow.catalog?.begin.tier === 'developer') return null;
     let hint: AccountHint | null = null;
     if (ctx.tokens.id_token !== undefined) {
       const claims = decodeIdTokenClaims(ctx.tokens.id_token);
@@ -1330,6 +1353,12 @@ export function sameSite(a: string, b: string): boolean {
   return l !== null && l === lastTwo(right);
 }
 
+/** 两个 issuer URL 是否相同（忽略末尾斜杠）。 */
+export function sameIssuerUrl(a: string, b: string): boolean {
+  const trim = (value: string): string => value.replace(/\/+$/, '');
+  return trim(a) === trim(b);
+}
+
 /** JWT 载荷（不验签：id_token 直接取自令牌端点）；格式不对返回 null。 */
 export function decodeIdTokenClaims(idToken: string): Record<string, unknown> | null {
   const parts = idToken.split('.');
@@ -1346,8 +1375,10 @@ export function decodeIdTokenClaims(idToken: string): Record<string, unknown> | 
 
 /** OIDC 标准声明 → 账号标识：`sub`；显示名取 email / preferred_username / name。 */
 export function hintFromClaims(claims: Record<string, unknown>): AccountHint {
-  const text = (value: unknown): string | undefined =>
-    typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, 100) : undefined;
+  const text = (value: unknown): string | undefined => {
+    const cleaned = typeof value === 'string' ? sanitizeDisplayText(value, 100) : '';
+    return cleaned.length > 0 ? cleaned : undefined;
+  };
   const sub = text(claims['sub']);
   const label = text(claims['email']) ?? text(claims['preferred_username']) ?? text(claims['name']);
   return { ...(sub !== undefined ? { sub } : {}), ...(label !== undefined ? { label } : {}) };

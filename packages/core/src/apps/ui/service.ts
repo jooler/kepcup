@@ -75,6 +75,11 @@ export interface McpAppUiDeps {
   publishMessage(message: Message): void;
   /** 目录连接的工具上下文（审批卡的账号 / 应用名）；自定义 server 为 undefined。 */
   appContextFor?: ((serverId: string) => AppToolContext | undefined) | undefined;
+  /**
+   * 该 server 是否允许显示 MCP Apps 界面（缺省 = 允许）。本机连接 / `developer` 分级的条目声明
+   * `ui: false`：它们返回的 HTML 不可信，core 不发卡、不取资源、不服务页面（评审 A4）。
+   */
+  uiAllowed?: ((serverId: string) => boolean) | undefined;
   secrets: { redact(text: string): string };
   shell: { openExternal(input: { url: string }): Promise<{ ok: boolean }> };
   clock: Clock;
@@ -203,6 +208,7 @@ export class McpAppUiService {
     if (result.isError === true) return null;
     const resourceUri = mcpAppResourceUriOf(tool._meta) ?? mcpAppResourceUriOf(result._meta);
     if (resourceUri === null) return null;
+    if (this.#deps.uiAllowed?.(server.id) === false) return null;
     if (identity.conversationId === null) return null;
     const emitted = this.#cardsByRun.get(identity.runId) ?? 0;
     if (identity.runId !== '' && emitted >= CARDS_PER_RUN_MAX) return null;
@@ -270,6 +276,9 @@ export class McpAppUiService {
     const server = this.#deps.mcp.serverFor(serverId);
     if (server === undefined || !server.enabled) {
       throw new AppError('APP_UI_EXPIRED', '这个应用已断开或被停用，请重新连接后再试');
+    }
+    if (this.#deps.uiAllowed?.(serverId) === false) {
+      throw new AppError('APP_UI_INVALID', '这个应用（未审核的本机连接）不允许显示界面');
     }
     return server;
   }

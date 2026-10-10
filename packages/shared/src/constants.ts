@@ -147,6 +147,8 @@ export const APP_TAINT_TTL_MS = 24 * 60 * 60_000;
 export const EGRESS_TARGET_MAX_CHARS = 20_000;
 /** 提示词 `<available_apps>` 最多列出的未连接目录应用数。 */
 export const AVAILABLE_APPS_MAX = 30;
+/** `<available_apps>` 里为本机连接保留的位置（其余由预置 / 目录条目补满 {@link AVAILABLE_APPS_MAX}）。 */
+export const AVAILABLE_LOCAL_MAX = 10;
 /**
  * 应用工具「按需发现」阈值（D73 P2 §6.3，design 29 §7）：Bot 全部目录连接可暴露的应用工具
  * 总数超过它时，不再把这些工具逐个放进工具列表，只注入 `<connected_apps>` 摘要 + 两个稳定

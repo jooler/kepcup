@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sha256Hex } from '../policy/sha256.js';
 import { connectorCatalogEntrySchema, connectorMetaOf } from './connector-catalog.js';
+import { containsUnsafeText, sanitizeDisplayText } from './text-sanitize.js';
 
 /**
  * 本机连接（docs/design/29-connected-apps.md §17，todo/local-connector-authoring.md）：Bot 读
@@ -33,9 +34,22 @@ export const LOCAL_CONNECTOR_SLUG_PATTERN = /^l[0-9a-f]{12}$/;
 
 /** MCP 地址的 origin（小写主机，默认端口省略）；非法地址返回 null。 */
 export function localConnectorOrigin(mcpUrl: string): string | null {
+  const normalized = normalizeLocalConnectorUrl(mcpUrl);
+  if (normalized === null) return null;
+  const origin = new URL(normalized).origin;
+  return origin === 'null' ? null : origin;
+}
+
+/**
+ * 规范化 MCP 地址：`URL` 解析（小写主机、默认端口省略）并去掉主机名末尾的点——
+ * `https://example.com./mcp` 与 `https://example.com/mcp` 是同一个服务（同一 slug、同一 origin）。
+ * 非法地址返回 null。
+ */
+export function normalizeLocalConnectorUrl(raw: string): string | null {
   try {
-    const url = new URL(mcpUrl);
-    return url.origin === 'null' ? null : url.origin;
+    const url = new URL(raw);
+    if (url.hostname.endsWith('.')) url.hostname = url.hostname.replace(/\.+$/, '');
+    return url.href;
   } catch {
     return null;
   }
@@ -88,39 +102,15 @@ export function isSafeDocUrl(raw: string): boolean {
   }
 }
 
-// 控制字符、双向覆盖 / 隔离、零宽字符：展示文本里一律剔除（防界面欺骗与提示词夹带）。
-const UNSAFE_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x00, 0x1f], // C0 控制字符
-  [0x7f, 0x9f], // DEL + C1 控制字符
-  [0x200b, 0x200f], // 零宽 / 方向标记
-  [0x2028, 0x2029], // 行 / 段分隔符
-  [0x202a, 0x202e], // 双向嵌入 / 覆盖
-  [0x2060, 0x2064], // 词连接符等不可见字符
-  [0x2066, 0x2069], // 双向隔离
-  [0xfeff, 0xfeff], // BOM / 零宽不换行空格
-];
-
-function isUnsafeCodePoint(code: number): boolean {
-  return UNSAFE_RANGES.some(([from, to]) => code >= from && code <= to);
-}
-
 /**
- * 清洗 Bot 提供的展示文本：剔除控制 / 双向 / 零宽字符，空白折叠为单个空格，去首尾空白，
- * 按码点截断到 `max`。结果可能为空串。
+ * 清洗 Bot 提供的展示文本——与全仓共用的 {@link sanitizeDisplayText}（控制 / 格式 / 不可见字符、
+ * Unicode 标签字符、填充字符、变体选择符一律去掉，空白折叠，按码点截断）。结果可能为空串。
  */
 export function sanitizeLocalConnectorText(text: string, max: number): string {
-  const cleaned = Array.from(text, (ch) => (isUnsafeCodePoint(ch.codePointAt(0) ?? 0) ? ' ' : ch))
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const points = Array.from(cleaned);
-  return points.length <= max ? cleaned : points.slice(0, max).join('').trimEnd();
+  return sanitizeDisplayText(text, max);
 }
 
-function hasUnsafeText(text: string): boolean {
-  for (const ch of text) if (isUnsafeCodePoint(ch.codePointAt(0) ?? 0)) return true;
-  return false;
-}
+const hasUnsafeText = containsUnsafeText;
 
 export interface LocalConnectorSchemaOptions {
   /**
@@ -166,6 +156,8 @@ export function createLocalConnectorRecordSchema(options: LocalConnectorSchemaOp
         fail('auth.registration must be "auto" without a clientRef');
       }
       if (meta.releaseGate !== LOCAL_CONNECTOR_GATE) fail('releaseGate must be "local"');
+      // 探测到的授权服务器 issuer 钉在条目里：连接时重新发现的 issuer 必须与之相同（评审 A2）。
+      if (meta.expectedIssuer === undefined) fail('expectedIssuer is required');
       if (Object.keys(meta.toolPolicy).length > 0) fail('toolPolicy must be empty');
       if (meta.whoami !== undefined) fail('whoami must not be set');
       if (meta.skills.length > 0) fail('skills must be empty');
@@ -216,12 +208,14 @@ export const appsLocalConnectorsListOutputSchema = z.object({
 });
 export const appsLocalConnectorsConfirmInputSchema = z.object({
   proposalId: z.string().min(1),
+  /** 卡片标注 `issuerCrossSite` 时用户已勾选「我了解授权服务器属于另一个站点」；缺它 core 拒绝。 */
+  acknowledgeCrossSiteIssuer: z.boolean().optional(),
 });
 export const appsLocalConnectorsConfirmOutputSchema = z.object({
   connectorId: z.string(),
   title: z.string(),
 });
-export const appsLocalConnectorsRejectInputSchema = appsLocalConnectorsConfirmInputSchema;
+export const appsLocalConnectorsRejectInputSchema = z.object({ proposalId: z.string().min(1) });
 export const appsLocalConnectorsRemoveInputSchema = z.object({
   connectorId: z.string().min(1),
 });

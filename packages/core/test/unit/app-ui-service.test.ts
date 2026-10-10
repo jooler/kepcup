@@ -319,6 +319,36 @@ describe('McpAppUiService.onToolResult', () => {
     });
   });
 
+  it('uiAllowed=false (local connector / developer tier, ui:false): no card is emitted and a stale card cannot be opened', async () => {
+    const allowed = make();
+    allowed.service.onToolResult({ identity, server, tool: tool as never, args: {}, result });
+    const card = allowed.appended[0]!['cardAppUi'];
+    const blocked = make({
+      uiAllowed: () => false,
+      mcp: { serverFor: () => server } as never,
+      messages: {
+        append: () => {
+          throw new Error('must not append');
+        },
+        getById: () =>
+          ({
+            id: 'msg_1',
+            kind: 'card',
+            conversationId: 'conv_1',
+            content: { cardType: 'mcp_app', appUi: card },
+          }) as never,
+      },
+    });
+    expect(
+      blocked.service.onToolResult({ identity, server, tool: tool as never, args: {}, result }),
+    ).toBeNull();
+    expect(blocked.published).toHaveLength(0);
+    // A card that already exists (e.g. from before the entry was classified) still cannot load HTML.
+    await expect(blocked.service.open({ messageId: 'msg_1' })).rejects.toMatchObject({
+      code: 'APP_UI_INVALID',
+    });
+  });
+
   it('uses the result _meta as a fallback, and skips errors, non-ui:// uris and runs without a conversation', () => {
     const { service, appended } = make();
     const plain = { name: 't', inputSchema: {} };
