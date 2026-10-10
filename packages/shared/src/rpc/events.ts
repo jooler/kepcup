@@ -246,6 +246,12 @@ export const appConnectionStatusPayloadSchema = z.object({
   connectionId: z.string(),
   status: appConnectionStatusSchema,
   /**
+   * 连接行被**删除**了（目录连接断开、首次连接取消 / 失败后清掉的临时行、重复账号并入旧行、
+   * 删除自定义 server）：渲染端据此把行从列表里移除，而不是当成「状态变成 not_connected」留一个
+   * 幽灵账号。缺省 = 行仍在（向后兼容）。
+   */
+  removed: z.boolean().optional(),
+  /**
    * `tools_changed`（design 29 §8.2）的详情：待复核的工具数——新增（`added`）、定义被改
    * （`changed`）——与本次刷新中下线（被删除）的工具数（`removed`）。
    */
