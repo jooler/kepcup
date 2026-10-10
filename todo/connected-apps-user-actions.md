@@ -11,6 +11,7 @@
 | --- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --- |
 | U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次                                                                                               | P0 门禁（真实环境部分）                     | [ ] |
 | U2  | ~~首批应用测试账号 → 登录实测 → 放行~~ **已移出用户待办（2026-10-10）**：这是逐家适配，转为开发任务，见 [extension-center.md](extension-center.md) §4 / X5 | — | —   |
+| U6  | Notion / Linear 放行后的真实验收（whoami 样本、多账号、审批卡、重连）                                                    | 发行前确认                           | [ ] |
 | U3  | ~~GitHub App 注册~~ **已决定推迟（2026-10-10）**：GitHub 要 client secret，与「不分发 secret」冲突，等 P4 托管网关；P2 的预注册验收改用 Google（U4） | — | —   |
 | U4  | Google / Microsoft / Slack / Figma 的平台注册与审核                                                                                        | P2 §6.4 对应条目                      | [ ] |
 | U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖）         | [ ] |
@@ -60,6 +61,18 @@
 用户决定：测试各家、补目录数据、放行本质是**逐家适配**，属于后续开发；产品形态也改为把「技能市场」升级为「扩展中心」（Skills / 连接 / MCP 三组），连接组按「测试好一家上一家」预置，不再让用户自建 MCP 连接。完整任务书：[extension-center.md](extension-center.md)（§4 是单家适配流程，X5 是逐家适配的持续任务）。
 
 对你仍有影响的只有一点：适配每一家时，**账号持有人要在浏览器里登录授权一次**，并自备测试账号 / 站点（密码和令牌不给 Agent、不贴进聊天）。Notion、Linear 账号已就绪，排在最前。
+
+## U6 — Notion / Linear 放行后的真实验收（由 extension-center.md §4 步骤 6 引出）
+
+两家已适配并在 `connector-release-gates.json` 放行（2026-10-10，细节见 todo/connected-apps.md B.8）。发行构建会收录它们之前，请在开发版里走一遍并告诉我结果：
+
+- [ ] **whoami 样本**：让一个已授权 Notion 的 Bot 调用 `notion-get-self`，另一个（或同一个）已授权 Linear 的 Bot 调用 `get_user`（参数 `{"query":"me"}`），把**原始返回的结构**贴给我（邮箱、名字可以打码，我要的是字段名和嵌套层级）。我据此补 `whoami` 的 `labelPath` / `subjectPath`，让账号标签显示成邮箱而不是「Notion #1」。
+- [ ] **目录连接**：设置 → 应用 → 目录里能看到并连接 Notion、Linear（开发构建本来就显示；要看发行行为需 `pnpm dist`）。
+- [ ] **多账号**：每家再连一个账号（可用第二个工作区 / 第二个邮箱），确认标签区分、Bot 同一应用只能勾选一个连接。
+- [ ] **Bot 勾选 + 对话里完成一件事**：例如让 Bot 搜索 Notion 页面、列出 Linear 的 issue。
+- [ ] **写工具审批卡显示账号**：让 Bot 创建一条 Notion 评论（应为破坏性档）和一个 Linear issue（服务端标破坏性），确认审批卡显示「以哪个账号」+ 参数摘要，且没有「总是允许」。
+- [ ] **令牌过期重连、断开吊销**：沿用 U1 的四步。
+- [ ] **Linear 的 scopes 实测（可选）**：在授权页看 Linear 请求了哪些范围；若想改成「默认只读 + 写工具 step-up」，先验证只读令牌调写工具时服务端回 `403 insufficient_scope`，再告诉我，我把 `auth.scopes` 改成 `default: ["read"]`、`write: ["write"]`。
 
 ## U3 — GitHub App 注册：**已决定推迟（2026-10-10）**
 

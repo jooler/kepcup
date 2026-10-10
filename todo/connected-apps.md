@@ -701,3 +701,18 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 3. **HTML 通道**：HTML 由 core 经 `resources/read` 取得并存在内存里；主进程协议处理器通过平台 RPC 向 core 取（只服务渲染端经主进程 IPC 登记过的 `(connectionId, resourceId)`，核对发送方 webContents）；HTML 与令牌都不进模型上下文。
 4. `ext-apps` **2.x 待 SDK 2.x**：升级条件见 B.6 的 SDK 路径；到时只换 `AppBridgeHost` 的 import。
 
+### B.8 Notion / Linear 适配结论（2026-10-10，逐家适配 · [extension-center.md](extension-center.md) §4）
+
+数据来源：用户在桌面端开发者模式导出的真实 `tools/list`，存为 `packages/core/test/fixtures/connectors/{notion,linear}.tools.json`（汇总命令 `node packages/core/scripts/connector-spike/summarize-tools.mjs`，风险分档用产品里的 `classifyRiskDetailed`）。
+
+| 项 | Notion | Linear |
+| -- | ------ | ------ |
+| 工具数 / 注解覆盖 | 50 / 50（全部带 `readOnlyHint` + `destructiveHint`） | 64 / 64 |
+| 分级（只读 / 写 / 破坏性） | 30 / 12 / 8 | 37 / 5 / 22 |
+| 判定来源 | 全部来自服务端注解，无按名字推断 | 同左 |
+| `toolPolicy` | `notion-create-comment` 调到 `destructive`（服务端标「写」，但评论会通知他人、不可无痕撤回，与 Linear 的 `save_comment` 同档） | `{}`：**服务端标的破坏性一律照单全收**（含 `save_issue` / `save_comment` 等「创建或更新」类，每次都需确认、不可「总是允许」；用一段时间后再决定是否放宽） |
+| `auth.scopes` | `default: []`：PRM / AS 只声明 `default`，没有可细分的范围 | `default: []`：PRM 列 `read` / `write`；**先不拆 step-up**（未经真实验证，写工具在只读令牌下是否回 `403 insufficient_scope` 不确定），保持由服务端决定 |
+| `whoami` | **暂不设**：`notion-get-self` 是只读、返回工作区 + 用户，但快照没有 `outputSchema`，字段路径不能猜 | **暂不设**：候选 `get_user {"query":"me"}`，同样缺输出结构 |
+| 放行 | `connector-release-gates.json` 已加入 `notion` | 已加入 `linear` |
+
+`whoami` 缺省时的行为：账号用自动编号（「Notion #1」），同一账号重新连接走 `connectionId` 复用，不影响功能；补上需要一份真实输出（见 user-actions 的 U6）。守门测试：`unit/connector-tool-snapshots.test.ts`（放行的条目必须有快照且注解齐全、`toolPolicy` / `whoami` 只引用真实工具、分级分布钉死，快照重新导出后变化会逼人重新审）。

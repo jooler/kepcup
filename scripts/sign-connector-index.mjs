@@ -21,7 +21,7 @@
 // The private key comes ONLY from the env var KEPCUP_CONNECTOR_SIGNING_KEY (PKCS8 PEM, or the
 // base64 of the 32-byte raw seed). It is never read from a file in the repository and never
 // printed. The production public key list is compiled into @kepcup/shared
-// (CONNECTOR_INDEX_PUBLIC_KEYS) and is EMPTY until the real key exists (user action U5).
+// (CONNECTOR_INDEX_PUBLIC_KEYS) (the production key kepcup-2026-1 was registered 2026-10-10).
 import {
   createHash,
   createPrivateKey,
@@ -350,7 +350,7 @@ export async function verifyDirectory(dir, keysFile) {
   const keys = keysFile ? readJson(keysFile) : await defaultKeys();
   if (!Array.isArray(keys) || keys.length === 0) {
     throw new SignError(
-      'the public key list is empty (the production list stays empty until the real key exists, U5); pass --keys <file> to verify against a specific key',
+      'the public key list is empty; register the public key in CONNECTOR_INDEX_PUBLIC_KEYS or pass --keys <file> to verify against a specific key',
     );
   }
   const indexBytes = readFileSync(path.join(dir, 'index.json'));
