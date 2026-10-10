@@ -61,10 +61,17 @@ export const connectorIndexPublicKeySchema = z.object({
 export type ConnectorIndexPublicKey = z.input<typeof connectorIndexPublicKeySchema>;
 
 /**
- * 生产公钥列表。**目前为空**：真正的签名密钥由用户生成（执行方案 U5，私钥只放 CI 机密、
- * 绝不进仓库），生成后把公钥登记在这里并发版。列表为空 = 目录同步关闭，只用随应用打包的快照。
+ * 生产公钥列表。私钥（Ed25519 种子）只在发布者的 `.env` / CI 机密里，绝不进仓库；这里只登记公钥。
+ * 列表为空 = 目录同步关闭，只用随应用打包的快照。轮换流程见 infra/cloudflare/directory/README.md。
  */
-export const CONNECTOR_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [];
+export const CONNECTOR_INDEX_PUBLIC_KEYS: readonly ConnectorIndexPublicKey[] = [
+  {
+    keyId: 'kepcup-2026-1',
+    publicKey: 'HDRtk+J5tKkOWJUshMzP9Bc1SbRtSMFBxK830FmDAW4=',
+    validFrom: Date.UTC(2026, 9, 10),
+    revoked: false,
+  },
+];
 
 export type IndexKeySelection =
   | { ok: true; key: ConnectorIndexPublicKey }

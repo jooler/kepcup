@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONNECTOR_INDEX_PUBLIC_KEYS,
+  connectorIndexPublicKeySchema,
   applyDirectoryDelta,
   canonicalEntriesJson,
   connectorDeltaFileSchema,
@@ -135,7 +136,12 @@ describe('canonical serialization and deltas', () => {
 });
 
 describe('production key list', () => {
-  it('is empty until the real signing key exists (U5): directory sync stays disabled', () => {
-    expect(CONNECTOR_INDEX_PUBLIC_KEYS).toEqual([]);
+  it('registers only well-formed, non-revoked public keys (private key never in the repo)', () => {
+    expect(CONNECTOR_INDEX_PUBLIC_KEYS.map((key) => key.keyId)).toEqual(['kepcup-2026-1']);
+    for (const key of CONNECTOR_INDEX_PUBLIC_KEYS) {
+      expect(connectorIndexPublicKeySchema.safeParse(key).success).toBe(true);
+      expect(Buffer.from(key.publicKey, 'base64')).toHaveLength(32);
+      expect(key.revoked).toBe(false);
+    }
   });
 });
