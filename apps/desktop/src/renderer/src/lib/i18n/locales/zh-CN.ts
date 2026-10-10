@@ -229,7 +229,7 @@ export const zhCN = {
   'settings.save': '保存',
   'settings.remove': '移除',
   // --- MCP（docs/design/23-mcp-and-subagent.md D65）-------------------------
-  // D73 §5.9：「MCP 服务器」并入「应用」分区的「自定义」页签（导航项只剩「应用」）。
+  // D73 §5.9 / 扩展中心：自定义 MCP 服务器在「设置 → 开发者模式」，已安装 server 的管理在「扩展中心 → MCP」。
   'settings.navApps': '应用',
   'settings.mcpTitle': 'MCP 服务器',
   'settings.mcpHint':
@@ -319,6 +319,9 @@ export const zhCN = {
   'settings.mcpbCancel': '取消',
   // D73 P2 §6.6 开发者模式
   'settings.devMode': '开发者模式',
+  'settings.navDeveloper': '开发者模式',
+  'settings.devModeOffHint':
+    '开启后可自行添加 MCP 服务器（命令或网址）、配置手填 OAuth 客户端，并查看原始工具定义与授权日志。普通使用不需要开启；常用应用请到「扩展中心 → 连接」添加。',
   'settings.devModeHint':
     '开启后，每个自定义服务器会显示原始工具定义（含注解）、授权流程事件日志，并可手动刷新工具。日志不含令牌。',
   'settings.devModeToolsTitle': '原始工具定义',
@@ -1056,13 +1059,21 @@ export const zhCN = {
   'skills.missingAck': '知道了',
   'skills.missingPurged': '已清理技能「{name}」的安装记录',
   'skills.actionFailed': '操作失败',
-  'skills.openMarket': '浏览技能市场',
+  'skills.openMarket': '浏览扩展中心',
   'chats.errorCode.SKILL_IMPORT_FAILED': '技能导入失败',
   'chats.errorCode.ALREADY_EXISTS': '对象已存在',
   'chats.errorCode.BOT_UNDELETABLE': '管家不能删除',
 
-  'sidebar.skillMarket': '技能市场',
-  'skillMarket.title': '技能市场',
+  'sidebar.extensionCenter': '扩展中心',
+  'extensionCenter.title': '扩展中心',
+  'extensionCenter.description': '为 Bot 添加技能、连接常用应用、管理已安装的 MCP 工具服务器。',
+  'extensionCenter.tabs.skills': 'Skills',
+  'extensionCenter.tabs.connections': '连接',
+  'extensionCenter.tabs.mcp': 'MCP',
+  'extensionCenter.connections.back': '返回应用列表',
+  'extensionCenter.mcp.hint':
+    '管理已安装的 MCP 工具服务器：启用 / 停用、逐工具风险与策略，也可安装 .mcpb 本地包。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
+  'extensionCenter.mcp.empty': '还没有安装 MCP 服务器。可以安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
     '为所有 Bot 添加开箱即用的办公技能：安装一次，每个 Bot 都能发现并调用。装完可在技能面板管理。',
   'skillMarket.searchPlaceholder': '搜索技能',
@@ -1544,16 +1555,18 @@ export const zhCN = {
   'settings.mcpAuthOauthSaveFirst': '请先保存服务器，保存后即可在这里连接。',
   'settings.mcpAuthOauthHttpOnly': 'OAuth 仅支持 Streamable HTTP 类型。',
   'settings.mcpOauthSection': 'OAuth 连接',
-  // --- 设置「应用」分区（D73 §5.9：目录 / 已连接 / 自定义） ------------------------
-  'apps.tabs.catalog': '目录',
-  'apps.tabs.connected': '已连接',
-  'apps.tabs.custom': '自定义',
+  // --- 设置「应用」分区（已连接账号管理）与扩展中心「连接」分组共用 ------------------
+  'apps.pointer.text':
+    '这里只管理已连接的账号。要连接新的应用，请到「扩展中心 → 连接」。',
+  'apps.pointer.open': '打开扩展中心',
   'apps.catalog.hint':
     '连接常用应用后，Bot 就能使用它们的工具。每个应用可连接多个账号；在 Bot 配置里授权给对应的 Bot。',
   'apps.catalog.search': '搜索应用…',
   'apps.catalog.all': '全部',
   'apps.catalog.loading': '正在读取目录…',
   'apps.catalog.empty': '没有匹配的应用',
+  'apps.catalog.none': '暂无已适配的应用',
+  'apps.catalog.manage': '管理',
   'apps.catalog.connect': '连接',
   'apps.catalog.connectAnother': '再连一个账号',
   'apps.catalog.connecting': '连接中…',
@@ -1587,7 +1600,7 @@ export const zhCN = {
   'apps.directory.degraded': '目录同步失败，当前使用内置或上次校验通过的目录。',
   'apps.connected.hint': '点击一个账号查看工具、审批策略与已授权的 Bot。',
   'apps.connected.empty': '还没有连接任何应用。',
-  'apps.connected.goCatalog': '去目录连接',
+  'apps.connected.goCatalog': '去扩展中心添加',
   'apps.connected.defaultLabel': '默认账号',
   'apps.connected.bots': '{count} 个 Bot 已授权',
   'apps.connected.noBots': '尚无 Bot 授权',

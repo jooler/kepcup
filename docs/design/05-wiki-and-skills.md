@@ -52,7 +52,7 @@ wiki/                  -- git 管理（内嵌 git 库），每次维护提交一
 
 ### 来源与作用域
 
-- **公共**：技能市场（随应用分发的预置目录）安装，落入 `public_skills`——**一次安装，所有 Bot 都能发现并调用**；启停与卸载是全局的，从任意 Bot 的技能面板操作。预置目录内允许出现 **vendored 条目**（逐字引入的上游官方技能，如 MinerU，见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）：不改写、用同步脚本跟随上游，NOTICE.md 记录来源与许可。未安装的预置技能对模型可见（`<recommended_skills>` 段），模型可经 `install_skill` 请求用户授权安装——文件识别技能路由见 [22-file-skill-routing.md](22-file-skill-routing.md)。
+- **公共**：扩展中心的 Skills 分组（原「技能市场」，随应用分发的预置目录）安装，落入 `public_skills`——**一次安装，所有 Bot 都能发现并调用**；启停与卸载是全局的，从任意 Bot 的技能面板操作。预置目录内允许出现 **vendored 条目**（逐字引入的上游官方技能，如 MinerU，见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）：不改写、用同步脚本跟随上游，NOTICE.md 记录来源与许可。未安装的预置技能对模型可见（`<recommended_skills>` 段），模型可经 `install_skill` 请求用户授权安装——文件识别技能路由见 [22-file-skill-routing.md](22-file-skill-routing.md)。
 - **私有**：从 git 仓库导入，锁定到具体 commit 或内容哈希，按 Bot 独立安装（需审批确认）；统一存放在用户级只读技能库中，Bot 的 `bot_skills` 行只记录引用和版本。
 - **自建**：由 Bot 的技能生成 loop 产出，属于该 Bot。
 

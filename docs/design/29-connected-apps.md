@@ -10,6 +10,7 @@
 - 2026-10-10 P1 实施修订：见 DEV-020（群聊并发连接的 Bot 授权由 core 合并、重新授权 scopes 取并集、目录面板新建 / 重连语义、隐私政策纯文本、目录条目门禁关闭发布等）。正文未改写，相关处以「P1 实施注」标出。
 - 2026-10-10 P2 实施修订：见 DEV-021（开发者档只对 `tier: developer` 的 server 生效、客户端选择顺序与预注册不回退、污点期间写工具的 `mcp_tool` / `egress` 混合规则、污点随委派 / 群聊传递且来源仅目录应用工具、MCPB 设置页安装的同意方式、待追加 scopes 进程内保存、对话轮 / 子代理遇外发确认不等待、只读子代理的发现工具子集等）。正文未改写，相关处以「P2 实施注」标出。
 - 2026-10-10 P3 实施修订：见 DEV-022（发行门禁对快照条目留在客户端、对远端独有条目以验签为准；社区首连确认由 core 强制；目录增量文件客户端暂不消费；随附技能克隆先于审批；MCP Apps 无独立 partition、`visibility` 默认拒绝、界面发起的写入一律要人点、CSP 响应头加 `sandbox` / `frame-ancestors`、ext-apps 钉 1.7.5、`core-port` 握手加 nonce；远端目录字符串进提示词前清洗）。§11.6 的正文已按 spike 结论改写（独立 partition 不可行），其余正文未改写，相关处以「P3 实施注」标出。
+- 2026-10-10 扩展中心修订：见 §16（技能市场升级为「扩展中心」：Skills / 连接 / MCP 三组；自定义入口收进「设置 → 开发者模式」；设置「应用」只管已连接账号）。§9 的界面描述按 §16 改写，D73 第 7 条的「目录 / 已连接 / 自定义」页签随之调整。
 
 相关：D25（加密与敏感数据）、D37（授权方式，本文扩展）、D41/D42（无人值守）、D44（浏览器工具）、D58（对话内设置引导）、D62（检索供应商密钥命名）、D63（技能安装）、D65（MCP，本文补齐其「OAuth 后续单排」）、D72（外部智能体与能力包、宿主 MCP 桥、目录模式）。
 
@@ -22,7 +23,7 @@
   4. **三层模型**：Connector（目录里的应用定义）→ Connection（用户的一个已授权账号）→ Grant（哪些 Bot 可用该账号）。同一 Bot 对同一 Connector 至多绑定一个 Connection。
   5. **审批按工具风险分级**：分级器与逐工具策略复用已落地的 MCP 实现（`core/mcp/risk.ts` / `policy.ts`，borrowings W5）——注解 + 名字推断（写动词一票否决），其余按规范缺省值取严为破坏性；默认只读免审、写入与破坏性逐次确认；注解是不可信提示，只决定默认值，用户可逐工具覆盖（应用另有「对该 Bot 总是允许」，以 Bot × Connection × 工具为键）。工具定义**按哈希锁定**，首次连接即展示、服务端变更后新/改工具停用待复核（防 rug pull）。
   6. **对话内连接**：Bot 需要某应用而用户尚未连接（或连接过期、需追加权限）时，走 D58 对话内设置卡（`{kind:'connect-app'}`），连接完成后经 `runs.retry` 续跑，体验对标 Grok。**运行时永不自行发起交互授权**，交互授权只由用户在设置页或卡片上触发（§5.6）。
-  7. **与现有 MCP 合流**：设置页「MCP」分区并入新的「应用」分区（目录 / 已连接 / 自定义）；用户自填 MCP server 即「自定义应用」，同样可走 OAuth（仅 Streamable HTTP）。
+  7. **与现有 MCP 合流**：设置页「MCP」分区并入新的「应用」分区；用户自填 MCP server 即「自定义应用」，同样可走 OAuth（仅 Streamable HTTP）。（扩展中心修订，§16：「应用」分区只管已连接账号，发现与添加在扩展中心「连接」；自定义 MCP 在「设置 → 开发者模式」。）
   8. **对既有决策的修订**（显式列出）：D65「每次调用需用户批准」→ 只读工具默认免审（已由 borrowings W5 落地）；D37「仅这一次 / 本对话内」→ 应用工具新增「对该 Bot 总是允许」（§8.1）。无人值守**不修订** D41：按用户在 W5 中的决定，所有风险档的 MCP / 应用工具在无人值守下自动批准，只以风险提示与审计收紧。
 - **D74 开放平台基座**：
   1. **不发明协议**：工具 = MCP；界面 = MCP Apps（`ui://` 资源，沙箱 iframe）；使用说明 = Agent Skills（`SKILL.md`）；分发元数据 = MCP Registry `server.json`；本地包 = MCPB。KepCup 只在 `_meta` 命名空间 `app.kepcup/*` 下加扩展字段。由此为 ChatGPT / Claude 开发的应用可近乎零改动入驻 KepCup，反之亦然。
@@ -318,10 +319,9 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ## 9 界面
 
-- **设置 ·「应用」分区**（取代并吸收现「MCP」分区，图标沿用 `Plug`）：
-  - **目录**：卡片网格（图标、名称、简介、分级标签、授权方式），搜索与分类；「连接」按钮直接起授权流程。
-  - **已连接**：按应用分组列出 Connection（账号标签、状态、已授权 Bot、最近使用时间）；详情页：权限范围、逐工具策略、工具变更复核、重新授权、断开。
-  - **自定义**：原 MCP 配置界面（stdio / HTTP），HTTP 新增认证方式「无 / Header / OAuth」；开发者模式入口（安装本地 `.mcpb`、填写自建 server URL），条目标注 `developer`。
+- **扩展中心**（原「技能市场」，侧栏左下角入口，§16）：Skills / 连接 / MCP 三组；「连接」组是已适配应用的发现与添加（卡片网格：图标、名称、简介、分级标签；搜索与分类；「连接」按钮直接起授权流程；已连接的显示状态与账号数，「管理」进账号详情）。
+- **设置 ·「应用」分区**（取代并吸收现「MCP」分区，图标沿用 `Plug`）：**只管已连接账号**——按应用分组列出 Connection（账号标签、状态、已授权 Bot、最近使用时间）；详情页：权限范围、逐工具策略、工具变更复核、重新授权、断开。顶部横条跳转扩展中心「连接」。
+- **设置 ·「开发者模式」分区**（§16）：`settings.apps.developerMode` 开关；开启后才出现原「自定义」能力——MCP 配置界面（stdio / HTTP / SSE，HTTP 认证方式「无 / Header / OAuth」）、填写自建 server URL、BYO 客户端面板、原始工具定义与授权日志；条目标注 `developer`。（`.mcpb` 本地包安装不在此：在扩展中心「MCP」。）
 - **Bot 面板**：「应用」勾选列表（按 Connector 分组，可选账号），未连接的应用显示「去连接」。
 - **对话内连接卡**：同一组件复用于首次连接、过期重连、step-up；连接成功后卡片收起为一行「已连接 Notion（jyy）」并经 `runs.retry` 续跑。
 - **输入框「+」菜单**（P2）：本对话临时开关某个已授权应用，对标 Grok 的 Connectors 入口。
@@ -531,6 +531,43 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 - P0：Free 即可（仅静态资源）。前置动作只有 Bot Fight Mode 决策。
 - P3：Workers Paid（$5/月起）覆盖 D1、Workflows、Sandbox；Analytics Engine 与 R2 在免费额度内起步。
 - P3+ 网关：Workers Paid；按用量计费，与连接数、调用量线性相关，上线前单独测算。
+
+## 16 扩展中心（Extension Center，2026-10-10）
+
+> 任务书与进度：[todo/extension-center.md](../../todo/extension-center.md)。本节记录信息架构与三项产品决定（A / B / C，均取推荐方案）；不改 §5–§8 的授权、令牌、风险分级、工具锁定与污点语义。
+
+**动机**：逐家适配（测一家、放行一家）取代了「用户自己填 MCP 地址去连」；普通用户不应看到钓鱼面更大的自建入口。侧栏左下角的「技能市场」因此升级为统一的「扩展中心」，把三类可添加的东西放在一个入口里。
+
+### 16.1 信息架构
+
+入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。三组（页签，WAI-ARIA tabs）：
+
+| 分组 | 内容 | 数据来源 |
+| ---- | ---- | ---- |
+| **Skills** | 原技能市场内容原样迁入，行为不变 | `preset-skills/catalog.json`，RPC `skills.presets.*` |
+| **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（`connectors/catalog.json` + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
+| **MCP** | 已安装 MCP 的管理（启停 / 状态 / 逐工具策略 / 编辑 / 删除）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
+
+组件复用：「连接」组 = 设置「应用」原「目录」网格（`AppCatalogGrid`）+ `AppConnectionsList` / `AppConnectionDetail`（多账号时先列账号，单账号直接进详情）；「MCP」组 = `McpSection` 的 `manage` 形态 + `McpbInstall`。代码在 `renderer/.../features/extension-center/`。
+
+### 16.2 决定 A：自定义入口收进「设置 → 开发者模式」
+
+自建 / 填 URL / 手填客户端 / 原始工具定义等「自定义」能力从普通界面撤出，新增设置分区 **开发者模式**（`SettingsSectionId = 'developer'`，导航项始终可见，因为开关在里面）。分区内容：`settings.apps.developerMode` 开关（P2 §6.6 既有字段，默认关）；**开启后**才渲染 `McpSection` 的 `full` 形态（「新建 server」stdio / HTTP / SSE、BYO 客户端面板 `OAuthClientsPanel`、`McpDevTools`）；关闭时只显示说明。落点选择的理由：开发者能力需要一个**始终可达的开关**，而扩展中心「MCP」组面向普通用户，不应出现开关或自定义入口；设置里本来就是「高级项」的位置。
+
+兼容：代码、RPC、测试保留；已存在的 `settings.mcpServers` 与已建立的连接**不迁移、不删除**，仍可在扩展中心「MCP」组启停 / 编辑 / 删除 / 管理工具策略（OAuth 类自定义 server 的重新连接也在其行内）；`.mcpb` 安装属于「安装本地包」，留在「MCP」组。别名 `openSettings('mcp')` 与旧深链 `openSettings('apps', anchor, 'custom')` 落到「开发者模式」分区（`data-settings-anchor="mcp"` 锚点沿用）。
+
+### 16.3 决定 B：设置「应用」只管已连接账号
+
+设置「应用」分区去掉页签，只剩已连接账号管理（列表 / 详情 / 重新授权 / 断开 / 逐工具策略等）；「发现与添加」统一在扩展中心「连接」。原「目录」页签**移除**而非保留跳转页（保留一个只含跳转按钮的页签是多余的一层），改为分区顶部的一条横条 +「去扩展中心添加」按钮；空态按钮同样跳扩展中心（先收起设置弹框，两个弹框不叠放）。深链 `openSettings('apps', …)` 继续有效（落在已连接列表），旧的 `catalog` / `connected` 页签参数被忽略；Bot 面板的「去连接」直接打开扩展中心「连接」组。
+
+### 16.4 决定 C：「MCP」组首期范围
+
+首期 = 已安装 MCP 管理 + MCPB 本地包安装（复用 `McpbInstall` 与 `McpSection`）。精选清单先建**空壳**：`apps/desktop/resources/mcp-presets/catalog.json`（`{version:1, presets:[]}`）、zod schema 与加载器（`packages/core/src/mcp/presets.ts`）、单测；条目字段 `id/section/displayName/summary/icon/version/tryIt` + `install`（`mcpb` 包相对路径 + sha256 / `stdio` 命令 / `http` https 端点）。**不接 RPC、不进安装包**——第一个值得预置的无 OAuth MCP 出现时，再补 RPC、`extraResources`、core-host 环境变量与卡片渲染（见该目录 README）。需要 OAuth 的第三方应用一律走「连接」组，不进这份清单。
+
+### 16.5 不变量
+
+- 发行门禁、签名目录、工具锁定、风险分级、污点外发等安全语义不变；「连接」组只是同一份 `apps.catalog.list` 的另一个壳，不放宽过滤。
+- 收紧的是入口可见性，不是能力：开发者模式开启后与此前的「自定义」页签等价。
 
 ## 非目标（本期）
 

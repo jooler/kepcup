@@ -3,6 +3,8 @@
 > 更新：2026-10-10（P3 提交 `d4bed6b` 之后，已把 main 合入分支）。本文只做**汇总与导航**，细节以链接的文档为准；执行方案是 [connected-apps.md](connected-apps.md)，产品契约是 [design/29](../docs/design/29-connected-apps.md)。
 >
 > 分支：`t/d73-connected-apps`（独立长期分支，**未合入 main**，合入需你明确同意）。迁移：main `0025_app_connections`、`0026_app_tools`、`0027_egress_approval`（P3 没有新增迁移）。
+>
+> 扩展中心（[extension-center.md](extension-center.md) X0–X4 / X6：技能市场 → Skills / 连接 / MCP 三组，自定义入口收进开发者模式）已在 `t/extension-center` 分支实现，待评审合并；X5 逐家适配另行推进。
 
 ## 1. 一眼看懂
 
@@ -29,7 +31,7 @@
 
 - 内置目录 6 家（Notion、Linear、Atlassian、Sentry、Canva、Stripe），**当前发行门禁全部关闭**（逐家适配见 [extension-center.md](extension-center.md)）。
 - 多账号、账号识别（id_token / userinfo / `whoami`）、首次连接工具复核、Bot 勾选、对话内「请求连接」卡、群聊多个 Bot 并发请求合并到同一流程。
-- 设置「应用」分区：目录 / 已连接 / 自定义三页；连接详情页（权限、逐工具风险与策略、待复核 diff、持续授权撤销、重新连接、断开影响提示）。
+- 设置「应用」分区（扩展中心之后只管已连接账号；发现与添加在扩展中心「连接」组，自定义 MCP 在「设置 → 开发者模式」，见设计 29 §16）；连接详情页（权限、逐工具风险与策略、待复核 diff、持续授权撤销、重新连接、断开影响提示）。
 
 **安全策略**
 

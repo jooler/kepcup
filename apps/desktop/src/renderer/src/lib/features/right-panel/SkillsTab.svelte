@@ -142,7 +142,7 @@
       size="sm"
       variant="ghost"
       class="text-xs text-muted-foreground"
-      onclick={() => shell.openSkillMarket()}
+      onclick={() => shell.openExtensionCenter('skills')}
       data-testid="skills-open-market"
     >
       {t('skills.openMarket')}

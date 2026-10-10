@@ -3,8 +3,10 @@
  * （通讯录是设置弹框中的一个分组），不再整页替换主区域。
  */
 import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
+import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 
 export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
+export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 
 class ShellState {
   /** 设置弹框是否打开。 */
@@ -28,11 +30,14 @@ class ShellState {
    * AppSidebar 消费后即复位。
    */
   autoOpenStartPanel = $state(false);
-  /** 技能市场弹框（左栏底部入口 / 右栏技能面板入口共用）。 */
-  skillMarketOpen = $state(false);
+  /** 扩展中心弹框（原技能市场；左栏底部入口 / 右栏技能面板入口 / 设置里的「去添加」共用）。 */
+  extensionCenterOpen = $state(false);
+  /** 扩展中心当前分组（Skills / 连接 / MCP）；`openExtensionCenter(tab)` 指定，用户可在弹框内切换。 */
+  extensionCenterTab = $state<ExtensionCenterTab>('skills');
 
-  openSkillMarket(): void {
-    this.skillMarketOpen = true;
+  openExtensionCenter(tab: ExtensionCenterTab = 'skills'): void {
+    this.extensionCenterTab = tab;
+    this.extensionCenterOpen = true;
   }
 
   /**
