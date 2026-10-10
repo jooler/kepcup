@@ -234,6 +234,93 @@ describe('apps.* RPC（交互授权）', () => {
   });
 });
 
+describe('自定义 OAuth server 的 URL 换源（令牌受众）', () => {
+  async function connectedStack(): Promise<Stack> {
+    const stack = await startStack();
+    const { flowId } = (await stack.core.rpc.call('apps.connect', {
+      target: { kind: 'custom', serverId: 'notes' },
+    })) as { flowId: string };
+    await until(() => stack.flowEvents.find((e) => e.flowId === flowId && e.phase === 'done'));
+    expect(stack.core.services.apps!.vault.getTokens('custom:notes')).not.toBeNull();
+    return stack;
+  }
+
+  it('兜底：绕过 settings.update 把 URL 改到另一个 origin → 令牌被清、连接 not_connected、发状态事件', async () => {
+    const stack = await connectedStack();
+    const apps = stack.core.services.apps!;
+    const other = await startFakeOAuthMcpServer({ dcrEnabled: true });
+    cleanups.push(() => other.stop());
+    stack.statusEvents.length = 0;
+
+    apps.store.ensureCustom('notes', { label: 'Fake Notes', serverUrl: other.mcpUrl });
+
+    expect(apps.vault.getTokens('custom:notes')).toBeNull();
+    expect(apps.store.get('custom:notes')).toMatchObject({
+      status: 'not_connected',
+      issuer: null,
+      accountSub: null,
+      serverUrl: other.mcpUrl,
+    });
+    expect(stack.statusEvents).toContainEqual({
+      connectionId: 'custom:notes',
+      status: 'not_connected',
+    });
+  });
+
+  it('同源只改路径：令牌与连接保持', async () => {
+    const stack = await connectedStack();
+    const apps = stack.core.services.apps!;
+    const samePlace = new URL('/other-path', stack.fake.mcpUrl).href;
+
+    apps.store.ensureCustom('notes', { label: 'Fake Notes', serverUrl: samePlace });
+
+    expect(apps.vault.getTokens('custom:notes')).not.toBeNull();
+    expect(apps.store.get('custom:notes')).toMatchObject({
+      status: 'connected',
+      serverUrl: samePlace,
+    });
+  });
+
+  it('非 OAuth server 换源：不受影响（无令牌、状态不动）', async () => {
+    const stack = await connectedStack();
+    const apps = stack.core.services.apps!;
+    const other = await startFakeOAuthMcpServer({ dcrEnabled: true });
+    cleanups.push(() => other.stop());
+    apps.store.ensureCustom('plain', {
+      label: 'Plain',
+      serverUrl: stack.fake.mcpUrl,
+      status: 'connected',
+    });
+    stack.statusEvents.length = 0;
+
+    apps.store.ensureCustom('plain', { label: 'Plain', serverUrl: other.mcpUrl });
+
+    expect(apps.store.get('custom:plain')).toMatchObject({
+      status: 'connected',
+      serverUrl: other.mcpUrl,
+    });
+    expect(stack.statusEvents).toEqual([]);
+    // 另一个（OAuth）server 的令牌不受牵连。
+    expect(apps.vault.getTokens('custom:notes')).not.toBeNull();
+  });
+
+  it('settings.update 改 URL（既有路径）：先断开，令牌同样被清', async () => {
+    const stack = await connectedStack();
+    const other = await startFakeOAuthMcpServer({ dcrEnabled: true });
+    cleanups.push(() => other.stop());
+    const settings = (await stack.core.rpc.call('settings.get')) as {
+      mcpServers: Array<Record<string, unknown>>;
+    };
+    await stack.core.rpc.call('settings.update', {
+      mcpServers: settings.mcpServers.map((server) =>
+        server['id'] === 'notes' ? { ...server, url: other.mcpUrl } : server,
+      ),
+    });
+    expect(stack.core.services.apps!.vault.getTokens('custom:notes')).toBeNull();
+    expect(stack.core.services.apps!.store.get('custom:notes')?.status).toBe('not_connected');
+  });
+});
+
 describe('createAppServices 的测试注入点', () => {
   function build(env: NodeJS.ProcessEnv, testHooks: boolean) {
     const real = openRealMainDb();

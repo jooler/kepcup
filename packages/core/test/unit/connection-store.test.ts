@@ -105,4 +105,65 @@ describe('AppConnectionStore', () => {
     expect(store.get('conn_1')).toBeNull();
     expect(store.disconnect('conn_1')).toBe('missing');
   });
+
+  describe('ensureCustom：URL 换源', () => {
+    function connected(store: AppConnectionStore, url: string): void {
+      store.ensureCustom('srv', { label: 'S', serverUrl: url });
+      store.update('custom:srv', {
+        status: 'connected',
+        issuer: 'https://auth.x.test',
+        accountSub: 'acct',
+        scopes: ['read'],
+        tokenExpiresAt: 9_999,
+      });
+    }
+
+    it('换 origin：连接行重置为 not_connected（issuer / 账号 / scope 清空），并通知清理（带换源前的行）', () => {
+      const { store } = setup();
+      const seen: Array<{ id: string; issuer: string | null; url: string | null }> = [];
+      store.onCustomOriginChanged(({ connectionId, before }) =>
+        seen.push({ id: connectionId, issuer: before.issuer, url: before.serverUrl }),
+      );
+      connected(store, 'https://old.example/mcp');
+      const row = store.ensureCustom('srv', { label: 'S', serverUrl: 'https://new.example/mcp' });
+      expect(row).toMatchObject({
+        status: 'not_connected',
+        issuer: null,
+        accountSub: null,
+        scopes: [],
+        tokenExpiresAt: null,
+        serverUrl: 'https://new.example/mcp',
+      });
+      expect(seen).toEqual([
+        { id: 'custom:srv', issuer: 'https://auth.x.test', url: 'https://old.example/mcp' },
+      ]);
+      // 端口 / 协议不同也算换源
+      connected(store, 'https://new.example/mcp');
+      store.ensureCustom('srv', { label: 'S', serverUrl: 'https://new.example:8443/mcp' });
+      expect(store.get('custom:srv')?.status).toBe('not_connected');
+    });
+
+    it('同源只改路径 / 查询：连接保持，不触发清理', () => {
+      const { store } = setup();
+      let calls = 0;
+      store.onCustomOriginChanged(() => (calls += 1));
+      connected(store, 'https://old.example/mcp');
+      const row = store.ensureCustom('srv', { label: 'S', serverUrl: 'https://old.example/v2/mcp?x=1' });
+      expect(row).toMatchObject({
+        status: 'connected',
+        issuer: 'https://auth.x.test',
+        accountSub: 'acct',
+        serverUrl: 'https://old.example/v2/mcp?x=1',
+      });
+      expect(calls).toBe(0);
+    });
+
+    it('没有授权痕迹的行（非 OAuth server）换源：状态不动', () => {
+      const { store } = setup();
+      store.ensureCustom('plain', { label: 'P', serverUrl: 'https://a.example/mcp', status: 'connected' });
+      const row = store.ensureCustom('plain', { label: 'P', serverUrl: 'https://b.example/mcp' });
+      expect(row.status).toBe('connected');
+      expect(row.serverUrl).toBe('https://b.example/mcp');
+    });
+  });
 });

@@ -29,6 +29,16 @@ export function sameEndpoint(a: string | null | undefined, b: string | null | un
   }
 }
 
+/** 端点 URL 的 origin（scheme+host+port）；缺失 / 无法解析 → null（与任何值都视为不同源，除非两者都是 null）。 */
+function originOf(url: string | null | undefined): string | null {
+  if (url === undefined || url === null) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function isCustomConnectionId(connectionId: string): boolean {
   return connectionId.startsWith(CUSTOM_PREFIX);
 }
@@ -150,10 +160,17 @@ export class AppConnectionStore {
    * 本期冻结；连接回到 `connected`（授权完成）/ 断开 / 删除时清除。
    */
   readonly #pendingScopes = new Map<string, string[]>();
+  /** 自定义 server 的 URL 换了源（origin）之后的清理接入点（令牌、客户端、审计在运行时一侧）。 */
+  #originChanged: ((info: { connectionId: string; before: AppConnection }) => void) | undefined;
 
   constructor(deps: { db: SqliteDatabase; clock: Clock }) {
     this.#db = deps.db;
     this.#clock = deps.clock;
+  }
+
+  /** 接入「自定义 server 换源」的清理（`createAppRuntime`）：清 Token Vault 里该连接的令牌等。 */
+  onCustomOriginChanged(handler: (info: { connectionId: string; before: AppConnection }) => void): void {
+    this.#originChanged = handler;
   }
 
   create(input: NewAppConnection): AppConnection {
@@ -185,7 +202,7 @@ export class AppConnectionStore {
 
   /**
    * 自定义 server 的唯一连接行：不存在则以 `init.status`（缺省 `not_connected`）创建，存在则只同步
-   * `serverUrl`（server 的 URL 被编辑后保持一致）与可选的标签，其余不动。
+   * `serverUrl`（server 的 URL 被编辑后保持一致）与可选的标签，其余不动——**换源**例外：见下。
    */
   ensureCustom(
     serverId: string,
@@ -203,6 +220,15 @@ export class AppConnectionStore {
       });
     }
     if (existing.serverUrl !== init.serverUrl) {
+      // 令牌的受众是旧 server 的源（RFC 8707 / 设计 §5.6）：URL 换了 origin，旧令牌绝不能再随
+      // 请求发给新主机。`settings.update` 路径已在替换前断开（`reconcileServers`，含吊销）；这里是
+      // 兜底——任何绕过它改 URL 的路径都会在这里把连接重置为 `not_connected`，并通知运行时清掉
+      // Vault 里的令牌（不向旧授权服务器发吊销：那会带着新 URL 的上下文）。同源（仅路径 / 查询
+      // 变化）保持原样。
+      if (originOf(existing.serverUrl) !== originOf(init.serverUrl)) {
+        if (existing.issuer !== null || existing.accountSub !== null) this.disconnect(id);
+        this.#originChanged?.({ connectionId: id, before: existing });
+      }
       return this.update(id, { serverUrl: init.serverUrl });
     }
     return existing;
