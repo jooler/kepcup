@@ -5,7 +5,7 @@ import { expect, test, type ElectronApplication, type Page, _electron } from '@p
 import { startMockLlm } from '@kepcup/testkit';
 
 /**
- * 技能市场 e2e：左栏底部「技能市场」入口 → marketplace 弹框 → 点「添加」
+ * 扩展中心 Skills 分组（原技能市场）e2e：左栏底部「扩展中心」入口 → 弹框（默认落在 Skills）→ 点「添加」
  * 安装为公共技能（public_skills：一次安装所有 Bot 可用，无审批卡片）→ 按钮
  * 翻转为「已添加」→ 右栏技能面板出现且 active、带「公共」徽标。预置目录用
  * 夹具（与 skills.spec 的本地 git 夹具同理，绝不触网、无模型调用）。
@@ -68,7 +68,7 @@ async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
   await expect(backdrop).toHaveCount(0);
 }
 
-test('skill market: sidebar entry → dialog → add installs a PUBLIC skill → Skills tab shows it active with the public badge', async () => {
+test('extension center / skills: sidebar entry → dialog → add installs a PUBLIC skill → Skills tab shows it active with the public badge', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-market-'));
@@ -93,9 +93,16 @@ test('skill market: sidebar entry → dialog → add installs a PUBLIC skill →
     await createBotAndOpenChat(page, '阿市');
 
     // 左栏底部入口 → 弹框（公共作用域：没有目标 Bot 选择器）。
-    await page.locator('[data-testid="skill-market-button"]').click();
-    const dialog = page.locator('[data-testid="skill-market-dialog"]');
+    await page.locator('[data-testid="extension-center-button"]').click();
+    const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await expect(dialog).toBeVisible();
+    // 默认落在 Skills 分组，三个分组都在。
+    await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(dialog.locator('[data-testid="extension-center-tab-connections"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="extension-center-tab-mcp"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="skill-market-bot-select"]')).toHaveCount(0);
 
     // 办公起步包分区 + 条目渲染（图标位 / 一句话 / 本地即可标签）。
@@ -123,7 +130,7 @@ test('skill market: sidebar entry → dialog → add installs a PUBLIC skill →
     // 关闭重开：全局安装态持久（从 core 重新加载）。
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
-    await page.locator('[data-testid="skill-market-button"]').click();
+    await page.locator('[data-testid="extension-center-button"]').click();
     await expect(item).toBeVisible({ timeout: 30_000 });
     await expect(item.locator('[data-testid="skill-market-added-market-demo"]')).toBeVisible();
     await page.keyboard.press('Escape');

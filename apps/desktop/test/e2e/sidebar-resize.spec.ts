@@ -114,8 +114,8 @@ test('sidebar drag-resize: icon mode at min width, double-click reset, persisten
     const tooltip = page.locator('[data-slot="tooltip-content"]');
     await expect(tooltip).toContainText('小宽');
 
-    // 底部技能市场收成图标（无文字）。
-    await expect(page.locator('[data-testid="skill-market-button"]')).toHaveText('');
+    // 底部扩展中心收成图标（无文字）。
+    await expect(page.locator('[data-testid="extension-center-button"]')).toHaveText('');
 
     // 图标模式下「+」面板贴着窄栏右侧展开。
     await newButton.click();
