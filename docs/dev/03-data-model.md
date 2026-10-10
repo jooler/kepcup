@@ -557,6 +557,29 @@ CREATE INDEX watches_bot ON watches(bot_id, status);
 - 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
 - `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
 
+### stickies（辅助阅读便签，main 0024）
+
+渲染层在消息里选中文本钉出的可拖拽便签（类 mac stickies，浮在对话容器上层）：`conversation` 作用域只在来源对话显示，`global` 作用域在所有对话显示且共享位置与层号。
+
+```sql
+CREATE TABLE stickies (
+  id              TEXT PRIMARY KEY,       -- stc_...
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  scope           TEXT NOT NULL CHECK (scope IN ('conversation', 'global')),
+  text            TEXT NOT NULL,          -- 钉住的选中文本（≤ STICKIE_TEXT_MAX_CHARS）
+  pos_x           INTEGER,                -- 对话容器内的左上角（px）
+  pos_y           INTEGER,                -- NULL = 尚未放置（渲染层取默认落点后回写）
+  z               INTEGER NOT NULL,       -- 点击置顶的单调层号，值大者在上
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX stickies_conversation ON stickies(conversation_id);
+```
+
+- 渲染层乐观更新即时上屏，经 `stickies.create / update / delete` 异步落库；拖拽中的高频位置更新只在本地，拖拽结束才落库。
+- `z` 由渲染层发牌（单调递增），启动水合时接到库中最大层号之后。
+- 删除对话时随 `conversations` 行 FK 级联删除（含 `global`：来源对话是所有者）。
+
 ### delegations（D71，main 0016；0021 重建）
 
 ```sql
@@ -787,6 +810,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
 | watches | 删除 | D79 |
+| stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
 

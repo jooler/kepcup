@@ -70,6 +70,12 @@ import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import { BROWSER_PROFILE_NAME_MAX_CHARS, WATCH_SELECTOR_MAX_CHARS } from '../constants.js';
 import { watchEntrySchema } from '../domain/watches.js';
+import {
+  STICKIE_TEXT_MAX_CHARS,
+  stickiePositionSchema,
+  stickieScopeSchema,
+  stickieSchema,
+} from '../domain/stickies.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -1093,6 +1099,29 @@ export const watchIdInputSchema = z.object({ id: z.string().min(1) });
 export const watchGetOutputSchema = z.object({ watch: watchEntrySchema.nullable() });
 export const watchMutateOutputSchema = z.object({ watch: watchEntrySchema });
 
+// --- stickies（辅助阅读便签，main.db stickies） ------------------------------
+export const stickiesListInputSchema = z.object({});
+export const stickiesListOutputSchema = z.object({ stickies: z.array(stickieSchema) });
+export const stickiesCreateInputSchema = z.object({
+  /** 渲染层乐观上屏时已生成的 id（stc_）；缺省时由 core 生成。 */
+  id: z.string().min(1).optional(),
+  conversationId: z.string().min(1),
+  text: z.string().trim().min(1).max(STICKIE_TEXT_MAX_CHARS),
+  scope: stickieScopeSchema,
+  position: stickiePositionSchema.nullable(),
+  z: z.number().int(),
+});
+export const stickiesCreateOutputSchema = z.object({ stickie: stickieSchema });
+export const stickiesUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  position: stickiePositionSchema.nullable().optional(),
+  scope: stickieScopeSchema.optional(),
+  z: z.number().int().optional(),
+});
+export const stickiesUpdateOutputSchema = z.object({ stickie: stickieSchema });
+export const stickiesDeleteInputSchema = z.object({ id: z.string().min(1) });
+export const stickiesDeleteOutputSchema = okOutputSchema;
+
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
 // client (docs/dev/02-architecture.md 端口 B: 核心服务请求平台能力).
@@ -1584,6 +1613,10 @@ export const rpcMethodSchemas = {
   'watches.pause': { input: watchIdInputSchema, output: watchMutateOutputSchema },
   'watches.resume': { input: watchIdInputSchema, output: watchMutateOutputSchema },
   'watches.stop': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'stickies.list': { input: stickiesListInputSchema, output: stickiesListOutputSchema },
+  'stickies.create': { input: stickiesCreateInputSchema, output: stickiesCreateOutputSchema },
+  'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
+  'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -1826,6 +1859,10 @@ const APP_METHODS = [
   'watches.pause',
   'watches.resume',
   'watches.stop',
+  'stickies.list',
+  'stickies.create',
+  'stickies.update',
+  'stickies.delete',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

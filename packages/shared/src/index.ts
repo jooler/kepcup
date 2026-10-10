@@ -7,6 +7,7 @@ export * from './domain/agent-catalog.js';
 export * from './domain/host-capabilities.js';
 export * from './domain/sensors.js';
 export * from './domain/watches.js';
+export * from './domain/stickies.js';
 export * from './domain/agent-status.js';
 export * from './rpc/index.js';
 export * from './browser/net-rules.js';
