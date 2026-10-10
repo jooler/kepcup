@@ -78,7 +78,7 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 
 ## M1 — 合入 main 前的最终确认（Agent 不会自行合入）
 
-- [ ] 你明确同意后再合入 main；合入前 Agent 会：把 main 合进分支、迁移重新编号（当前分支用 `0024_app_connections`、`0025_app_tools`、`0026_egress_approval`，若 main 又新增迁移则顺延；`app-connections-migration.test.ts` 等有编号断言的测试同步改）、跑全量测试一次。
+- [ ] 你明确同意后再合入 main；合入前 Agent 会：把 main 合进分支、迁移重新编号（当前分支用 `0025_app_connections`、`0026_app_tools`、`0027_egress_approval`，若 main 又新增迁移则顺延；`app-connections-migration.test.ts` 等有编号断言的测试同步改）、跑全量测试一次。
 - [ ] 与主工作树里他人尚未提交的改动（共享的 `types.ts` / `constants.ts` / `methods.ts` / `events.ts` / `bindings.ts` / `zh-CN.ts`）会有文本冲突，由 Agent 在分支侧解决。
 - [ ] 合入后删除分支 `t/d73-connected-apps`（本地 worktree `/home/jyy/wt/kepcup-d73` 与远端分支）。
 - [ ] 推送方式：HTTPS 凭据缓存会过期，分支一律用 SSH 推（`git push git@github.com:jooler/kepcup.git t/d73-connected-apps:t/d73-connected-apps`）。

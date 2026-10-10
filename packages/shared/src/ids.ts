@@ -38,6 +38,8 @@ export const ID_PREFIXES = {
   bpf: 'bpf_',
   /** 确定性监看（W7，main.db watches）。 */
   wat: 'wat_',
+  /** 辅助阅读便签（main.db stickies）。 */
+  stc: 'stc_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

@@ -1,4 +1,6 @@
+import type { JSONContent } from '@tiptap/core';
 import type { Attachment } from '@kepcup/shared';
+import { EMPTY_COMPOSER_DOC } from './composer-draft-persist';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { toast } from 'svelte-sonner';
@@ -13,7 +15,8 @@ import {
 } from './composer-draft-persist';
 
 /**
- * 输入框草稿的按会话缓存（store）：文本 / @ 提及 / 引用回复 / 待发送附件。
+ * 输入框草稿的按会话缓存（store）：编辑器文档（原生 JSON）/ @ 提及 / 引用
+ * 回复 / 待发送附件。
  * Composer 是唯一的读写方——进入会话时把缓存水合进组件状态，内容变化即写回，
  * 这里负责防抖落盘（localStorage）；因此切换会话、关闭应用后回到原会话都能
  * 正确重载。附件字节本体在 core（上传即落盘，docs/design/20-conversation-media.md），
@@ -36,7 +39,8 @@ export interface PendingUpload {
 }
 
 interface ComposerRuntimeDraft {
-  text: string;
+  /** TipTap 编辑器文档（原生 JSON）：中间过程保持原始数据，发送时才转 markdown。 */
+  doc: JSONContent;
   mentions: string[];
   reply: ComposerReplyRef | null;
   uploads: PendingUpload[];
@@ -121,15 +125,15 @@ class ComposerDraftsState {
     return this.#runtime[conversationId]?.uploads ?? [];
   }
 
-  /** 组件水合用：当前草稿的文本/提及/引用（非响应式读取，进会话取一次）。 */
+  /** 组件水合用：当前草稿的文档/提及/引用（非响应式读取，进会话取一次）。 */
   loadDraft(conversationId: string): {
-    text: string;
+    doc: JSONContent;
     mentions: string[];
     reply: ComposerReplyRef | null;
   } {
     const entry = this.#runtime[conversationId];
     return {
-      text: entry?.text ?? '',
+      doc: entry?.doc ?? EMPTY_COMPOSER_DOC,
       mentions: entry ? [...entry.mentions] : [],
       reply: entry?.reply ?? null,
     };
@@ -150,7 +154,7 @@ class ComposerDraftsState {
       ownsPreviewUrl: false,
     }));
     this.#runtime[conversationId] = {
-      text: saved?.text ?? '',
+      doc: saved?.doc ?? EMPTY_COMPOSER_DOC,
       mentions: [...(saved?.mentions ?? [])],
       reply: saved?.reply ?? null,
       uploads,
@@ -165,15 +169,15 @@ class ComposerDraftsState {
     }
   }
 
-  /** 文本/提及/引用变化写回缓存（保存分支每个键程都会进来；落盘是防抖的）。 */
-  saveComposerText(
+  /** 文档/提及/引用变化写回缓存（保存分支每个键程都会进来；落盘是防抖的）。 */
+  saveComposerDoc(
     conversationId: string,
-    text: string,
+    doc: JSONContent,
     mentions: string[],
     reply: ComposerReplyRef | null,
   ): void {
     const entry = this.#ensureEntry(conversationId);
-    entry.text = text;
+    entry.doc = doc;
     entry.mentions = [...mentions];
     entry.reply = reply;
     this.#schedulePersist();
@@ -311,7 +315,12 @@ class ComposerDraftsState {
   #ensureEntry(conversationId: string): ComposerRuntimeDraft {
     const existing = this.#runtime[conversationId];
     if (existing !== undefined) return existing;
-    const created: ComposerRuntimeDraft = { text: '', mentions: [], reply: null, uploads: [] };
+    const created: ComposerRuntimeDraft = {
+      doc: EMPTY_COMPOSER_DOC,
+      mentions: [],
+      reply: null,
+      uploads: [],
+    };
     this.#runtime[conversationId] = created;
     return created;
   }

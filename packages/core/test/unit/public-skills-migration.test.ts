@@ -54,6 +54,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table schedules drop column origin;');
     // main 0023（W7）的 watches 表同样摘除。
     db.exec('drop table watches;');
+    // main 0024（辅助阅读便签）的 stickies 表同样摘除。
+    db.exec('drop table stickies;');
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
     db.exec(

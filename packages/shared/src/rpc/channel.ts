@@ -1,6 +1,7 @@
 import type { ZodError, ZodType } from 'zod';
 import { createBirpc, type BirpcReturn } from 'birpc';
 import { AppError } from '../errors.js';
+import { RPC_CALL_TIMEOUT_MS } from '../constants.js';
 import type { RpcTransport } from './transport.js';
 
 /**
@@ -128,7 +129,7 @@ export function createRpcChannel(options: CreateRpcChannelOptions): RpcChannel {
       on: (fn) => {
         options.transport.onData(fn as (data: unknown) => void);
       },
-      ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+      timeout: options.timeoutMs ?? RPC_CALL_TIMEOUT_MS,
     });
 
   return {

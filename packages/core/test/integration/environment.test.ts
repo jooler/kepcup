@@ -104,6 +104,78 @@ async function envList(core: TestStack['core']): Promise<EnvInstall[]> {
   return result.installs;
 }
 
+/** Builds a tar.gz from a relPath → content map (its root becomes targetDir). */
+function fakeArchive(
+  dir: string,
+  item: string,
+  version: string,
+  files: Record<string, string>,
+): { buffer: Buffer; sha256: string } {
+  const root = path.join(dir, `${item}-${version}-pkg`);
+  mkdirSync(root, { recursive: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const target = path.join(root, rel);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, content);
+  }
+  const archive = path.join(dir, `${item}.tar.gz`);
+  execFileSync('tar', ['-czf', archive, '-C', dir, `${item}-${version}-pkg`]);
+  const buffer = execFileSync('cat', [archive]);
+  return { buffer, sha256: createHash('sha256').update(buffer).digest('hex') };
+}
+
+/**
+ * embedding.download（设置页手动下载）的假目录：fake onnxruntime + fake
+ * embedding-model。布局按 resolveBinDir / verify 的条目要求构造（真实条目
+ * 经 files 安装，但链式前置逻辑只看条目名，archive 假条目即可驱动同一条
+ * 代码路径），文件存在也让 LocalEmbedder.ready() 成立。
+ */
+async function startFakeEmbeddingEnv(): Promise<{ catalog: Catalog }> {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'kepcup-env-fixture-'));
+  const served: Record<string, Buffer> = {};
+  const catalog: Catalog = [
+    {
+      item: 'onnxruntime',
+      version: '1.0.0',
+      displayName: 'ONNX Runtime',
+      source: 'http://127.0.0.1/fake-release',
+      install: { via: 'archive' },
+      platforms: {},
+      verify: { files: ['dist/index.js'] },
+    },
+    {
+      item: 'embedding-model',
+      version: '2.0.0',
+      displayName: '本地向量模型',
+      source: 'http://127.0.0.1/fake-release',
+      install: { via: 'archive' },
+      platforms: {},
+      verify: { files: ['model.onnx', 'vocab.json', 'merges.txt', 'config.json'] },
+    },
+  ];
+  for (const entry of catalog) {
+    const payload =
+      entry.item === 'onnxruntime'
+        ? { 'dist/index.js': 'module.exports = {};\n' }
+        : { 'model.onnx': 'fake', 'vocab.json': '{}', 'merges.txt': '', 'config.json': '{}' };
+    const { buffer, sha256 } = fakeArchive(dir, entry.item, entry.version, payload);
+    served[`${entry.item}-${entry.version}-${platformKey()}.tar.gz`] = buffer;
+    entry.platforms[platformKey()] = {
+      kind: 'archive',
+      sha256,
+      sizeBytes: buffer.byteLength,
+      url: `${entry.item}.placeholder`,
+    };
+  }
+  const server = await startFileServer(served);
+  fileServers.push(server);
+  for (const entry of catalog) {
+    entry.platforms[platformKey()]!.url =
+      `${server.url}/${entry.item}-${entry.version}-${platformKey()}.tar.gz`;
+  }
+  return { catalog };
+}
+
 async function installOf(core: TestStack['core'], item: string): Promise<EnvInstall> {
   return waitFor(
     async () => {
@@ -143,15 +215,12 @@ function envTask(marker: string, taskSteps: MockLlmStep[]): MockLlmStep[] {
   const isMarkerTurn = (req: MockChatRequest) =>
     req.lastUserText().includes(marker) && !req.lastUserText().includes('<trigger reason="task"');
   return [
-    step()
-      .inTurn()
-      .expect(isMarkerTurn)
-      .replyToolCall('start_task', {
-        title: '装环境',
-        instruction: marker,
-        source_message_ids: [],
-        writes: true,
-      }),
+    step().inTurn().expect(isMarkerTurn).replyToolCall('start_task', {
+      title: '装环境',
+      instruction: marker,
+      source_message_ids: [],
+      writes: true,
+    }),
     step().inTurn().expect(isMarkerTurn).replyText('好的，我去申请'),
     ...taskSteps.map((taskStep) => taskStep.inTask()),
     step()
@@ -819,5 +888,46 @@ describe('environment manager (P06)', () => {
       { label: 'doctor marks broken install failed' },
     );
     expect(unhealthy.status).toBe('failed');
+  }, 120_000);
+
+  it('embedding.download（设置页手动下载）：无审批卡直装、已装幂等、待决定卡代批准', async () => {
+    const { catalog } = await startFakeEmbeddingEnv();
+    const stack = await createTestStack({ envCatalog: catalog });
+    stacks.push(stack);
+    const { core } = stack;
+
+    // 用户点击即同意：不产生审批卡，直接建行安装（embedding-model 链式带
+    // onnxruntime），RPC 同步返回 installing 行。
+    const first = (await core.rpc.call('embedding.download')) as { install: EnvInstall | null };
+    expect(first.install?.item).toBe('embedding-model');
+    expect(first.install?.status).toBe('installing');
+    const installed = await installOf(core, 'embedding-model');
+    expect(installed.status).toBe('installed');
+    expect(installed.approvalId).toBeNull();
+    expect((await envList(core)).find((i) => i.item === 'onnxruntime')?.status).toBe('installed');
+
+    // 幂等：已装时返回现状，不新建行、不重装。
+    const again = (await core.rpc.call('embedding.download')) as { install: EnvInstall | null };
+    expect(again.install?.id).toBe(installed.id);
+    expect(again.install?.status).toBe('installed');
+    expect((await envList(core)).filter((i) => i.item === 'embedding-model')).toHaveLength(1);
+
+    // 对话里的系统环境申请卡还在待决定时，设置页点击代为批准：
+    // 沿原回调链路安装，卡片落为 approved（不留悬挂、不二次下载）。
+    const stack2 = await createTestStack({ envCatalog: catalog });
+    stacks.push(stack2);
+    const bot = await makeBot(stack2.core, '小下');
+    const conv = await openDirect(stack2.core, bot.id);
+    stack2.core.services.memory!.ensureEmbeddingConfigured(conv.id);
+    await pendingEnvironmentApproval(stack2.core, conv.id);
+    const result = (await stack2.core.rpc.call('embedding.download')) as {
+      install: EnvInstall | null;
+    };
+    expect(result.install?.item).toBe('embedding-model');
+    expect((await installOf(stack2.core, 'embedding-model')).status).toBe('installed');
+    const approvals = (await stack2.core.rpc.call('approvals.list', {
+      conversationId: conv.id,
+    })) as { approvals: Array<{ kind: string; status: string }> };
+    expect(approvals.approvals.find((a) => a.kind === 'environment')?.status).toBe('approved');
   }, 120_000);
 });

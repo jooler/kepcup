@@ -34,6 +34,14 @@ export const zhCN = {
   'chats.setupCustomPlaceholder': '或输入你的回答…',
   'chats.setupCustomSubmit': '提交回答',
   'chats.setupAnswerFailed': '回答提交失败，请重试',
+  // 选中文本钉便签（辅助阅读）
+  'chats.pinToConversation': '固定到当前对话',
+  'chats.pinToAllConversations': '固定到所有对话',
+  'chats.stickieHandle': '拖动移动便签',
+  'chats.stickieCard': '便签',
+  'chats.stickieScopeLocal': '仅当前对话可见',
+  'chats.stickieScopeGlobal': '所有对话可见',
+  'chats.stickieFrom': '来自 {name}',
   // 访谈工作目录卡（docs/design/19 D59）
   'chats.setupPathPick': '选择目录…',
   'chats.setupPathSkip': '暂不设置',
@@ -634,6 +642,7 @@ export const zhCN = {
   'composer.replying': '引用 {name}：{text}',
   'composer.replyCancel': '取消引用',
   'composer.mentionPlaceholder': '输入 @ 选择成员',
+  'composer.mentionGroup': '群聊',
   'messages.quote': '引用',
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',
@@ -804,7 +813,7 @@ export const zhCN = {
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
-    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（jina-embeddings-v2-base-zh，768 维，中英双语）与 ONNX 运行库（合计约 276MB）经环境申请安装到应用私有目录，所有 Bot 共享；GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
+    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（jina-embeddings-v2-base-zh，768 维，中英双语）与 ONNX 运行库（合计约 276MB）安装到应用私有目录，所有 Bot 共享；模型未就绪时可在下方手动下载，或经环境申请自动安装。GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
   'settings.embeddingSourceNone': '未配置',
   'settings.embeddingSourceLocal': '本地模型',
   'settings.embeddingSourceProvider': '厂商接口（使用上方「向量模型」配置）',
@@ -814,6 +823,8 @@ export const zhCN = {
   'settings.embeddingNoVendorConfig':
     '尚未在「向量模型」中配置厂商与模型，请先配置或改用本地模型。',
   'settings.embeddingSaved': '已保存，正在后台重建向量索引',
+  'settings.embeddingDownload': '下载本地模型（含 ONNX 运行库，约 276MB）',
+  'settings.embeddingDownloadStarted': '已开始下载，完成后自动就绪',
 
   // --- P08 Skills ------------------------------------------------------------------
   'approvals.skillImportTitle': '技能导入请求',
@@ -1039,6 +1050,11 @@ export const zhCN = {
   'skills.uninstallBody':
     '将移除该 Bot 对此技能的引用；没有其他 Bot 使用同一版本时，技能库中的版本会一并删除。此操作不可恢复。',
   'skills.uninstalled': '已卸载',
+  'skills.missingTitle': '技能文件已被删除',
+  'skills.missingBody':
+    '技能「{name}」的文件目录已不存在（可能在应用外被手动删除），该技能无法再使用。点击「知道了」将清理它的安装记录；需要时可重新添加或导入。',
+  'skills.missingAck': '知道了',
+  'skills.missingPurged': '已清理技能「{name}」的安装记录',
   'skills.actionFailed': '操作失败',
   'skills.openMarket': '浏览技能市场',
   'chats.errorCode.SKILL_IMPORT_FAILED': '技能导入失败',

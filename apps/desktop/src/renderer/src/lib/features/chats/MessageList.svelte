@@ -6,6 +6,7 @@
   import GroupTurnStatusLine from './GroupTurnStatusLine.svelte';
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
+  import SelectionPinToolbar from './SelectionPinToolbar.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
   let { bottomInset = 0 }: { bottomInset?: number } = $props();
@@ -191,4 +192,7 @@
       <ChevronDown class="size-4" />
     </button>
   {/if}
+
+  <!-- 选中文本的浮动工具栏（浮层自身 portal 到 body）：container 限定只在消息列表内触发 -->
+  <SelectionPinToolbar container={scrollContainer ?? null} />
 </div>

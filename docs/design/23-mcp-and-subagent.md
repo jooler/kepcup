@@ -10,13 +10,13 @@ Bot 执行 loop 的两项能力扩展：接入用户配置的 MCP 工具服务�
 
 - 用户在设置页配置 MCP server（stdio 命令或 streamable HTTP 端点），其工具按「应用启用 ∩ Bot 勾选」暴露给响应 loop。
 - MCP 是工具来源的扩展，不是独立执行通道：工具调用与内置工具同管道（审批、审计、截断、`<untrusted>`）。
-- 默认不启用任何 server；`autoApprove` 默认关闭，每次调用需用户批准。（修订：按工具风险分级，只读工具默认免审、可逐工具设置策略，已由 borrowings W5 落地；连接应用复用，见 [29-connected-apps.md](29-connected-apps.md) §8.1。）
+- 默认不启用任何 server；`autoApprove` 默认关闭。是否每次调用需用户批准按工具风险档与逐工具策略决定（只读工具默认免审），见下文「风险分级与逐工具策略」；连接应用复用同一分级器与策略，见 [29-connected-apps.md](29-connected-apps.md) §8.1。
 
 ### 配置与存储
 
 | 层 | 位置 | 内容 |
 |---|---|---|
-| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http=Streamable / sse=旧版 HTTP+SSE）、command/args 或 url、`enabled`、`autoApprove`、`toolPolicies?`（逐工具策略，W5）、`auth`（认证方式，D73，见下） |
+| 应用级 | `settings.mcpServers`（单行 JSON，无需迁移） | server 列表：id、名称、transport（stdio / http=Streamable / sse=旧版 HTTP+SSE）、command/args 或 url、`enabled`、`autoApprove`、`toolPolicies?`（逐工具策略）、`auth`（认证方式，见下） |
 | Bot 级 | `botRuntimeSchema.mcp_server_ids` | 该 Bot 启用的 server 子集，默认空 |
 | 密钥 | `secrets` 表 | stdio env / http headers 中的敏感值，键 `mcp:{serverId}:env|header:{name}`，字段级加密（D25），LLM 与日志不可见 |
 
@@ -51,7 +51,7 @@ HTTP / SSE server 的 `auth` 字段（缺省按同级 `headers` 推断：有 `he
 - 每次调用写审计。MCP 不用于绕过沙箱；登录态社交操作仍优先浏览器 CDP（D44）。
 - 连接生命周期：首次使用懒连接（对话轮解析工具面也会触发）；同一 server 的并发连接请求共用一次连接，不起第二个进程；stdio 进程崩溃后下次调用自动重连，失败计入 `MCP_RECONNECT_MAX`，超限标记 failed 并发 `mcp.server_status` 事件，之后任何路径都不再连它。只有任务与工具调用消耗这份重连预算——对话轮解析工具面与设置页 / Bot 详情查询工具风险不计数；core 关停时先等进行中的连接落定再统一关闭。
 
-### 风险分级与逐工具策略（D65 修订，borrowings W5）
+### 风险分级与逐工具策略
 
 - **分级**（`core/mcp/risk.ts` `classifyRisk`，D73 连接应用复用）：`read` / `write` / `destructive` 三档。server 自报的注解不可信，只能把工具**放宽到只读**，且受名字一票否决：
   - `readOnlyHint:true` 且名字不像写操作 → `read`（来源：注解）；
@@ -61,9 +61,9 @@ HTTP / SSE server 的 `auth` 字段（缺省按同级 `headers` 推断：有 `he
   - 「像写操作」= 名字（先把 camelCase / kebab-case / 点号归一为下划线小写）任意位置含写动词（create / update / delete / send / post / write / pay / exec / run / invoke / edit / clear / revoke …）或复合动作（`_and_` / `_or_` / `_then_`）；也常作名词的 commit / push / deploy / install / sync / start / stop / order / book 等只在名字开头才算（`get_order` 仍是读）。正则误判只会把工具判得更严。
 - **策略**（`settings.mcpServers[].toolPolicies[toolName] = { approval?: 'auto' | 'ask', enabled?: boolean }`，按工具名存，工具列表刷新后保留，已消失的工具在设置页标灰）。有人值守时的决定顺序：逐工具 `approval` > server `autoApprove`（等价于该 server 全部工具 `auto`，可被逐工具 `ask` 收回）> 风险档默认（`read` → 免审，`write` / `destructive` → 每次确认）。`enabled:false` 的工具不注册，调用时也拒绝（`MCP_TOOL_NOT_FOUND`）。
 - **调用时重新解析**：网关每次调用都重读设置并重新判定风险（连接在线时先刷新注解，最多等 5 秒；离线时用已知注解，没见过的工具按 `destructive`，不为判定风险去连接）；server 已在应用级停用、或 Bot 已不再勾选它，进行中的任务也不能再调。
-- **无人值守**：`mcp_tool` 审批在无人值守下**所有风险档**都自动批准（D41 / D53：开关是用户的选择；不拒绝、不排队、不设逐工具无人值守白名单；数据目录底线只作用于命令 / 路径类审批，不涉及 MCP）。审批行 `auto_approved=1`、payload 带 `risk`；审计 `mcp_tool_call` 记 `risk` / `riskSource` / 批准方式（auto / user / unattended）及来源，无人值守时另记「无人值守自动批准（写入 / 破坏性）」。Bot 详情的 MCP 区只要勾选了 server 就常驻提示「无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作）」；无人值守生效且勾选的 server 含写入 / 破坏性工具（或风险查询失败）时提示改为警示样式并给出数量。
+- **无人值守**：`mcp_tool` 审批在无人值守下**所有风险档**都自动批准（D41 / D53：开关是用户的选择；不拒绝、不排队、不设逐工具无人值守白名单；数据目录底线只作用于命令 / 路径类审批，不涉及 MCP）；例外是任务里的重复调用：去重门先于自动批准，已完成或被用户拒绝过的相同调用不建卡、直接返回，带「上次结果未知」提示的卡不自动批准、等用户（[13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)）。自动批准的审批行 `auto_approved=1`、payload 带 `risk`；审计 `mcp_tool_call` 记 `risk` / `riskSource` / 批准方式（auto / user / unattended）及来源，无人值守时另记「无人值守自动批准（写入 / 破坏性）」。Bot 详情的 MCP 区只要勾选了 server 就常驻提示「无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作）」；无人值守生效且勾选的 server 含写入 / 破坏性工具（或风险查询失败）时提示改为警示样式并给出数量。
 - **只读 MCP 工具进对话轮与只读子代理**：风险为 `read` 且有效审批为免审的工具也进对话轮（D75）与只读子代理（D66）的工具面，至多 `TURN_MCP_READ_TOOLS_MAX`（20）个（按 server 顺序）；对话轮解析工具面最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS`（3 秒），超时本轮不带 MCP 工具、连接在后台继续。调用时网关再校验一次：此刻已不是「只读 + 免审」→ `RUN_READ_ONLY`（对话轮提示改用 `start_task`）。对话轮系统提示的 `<mcp_tools>` 段（Bot 有既在应用级启用、又被 Bot 勾选的 MCP server——「应用启用 ∩ Bot 勾选」非空——就有）说明本轮可直接调用的个数，以及写入 / 需确认的工具只在任务中可用。只读**任务**（`writes:false`）的工具面不变，仍拿到全部 MCP 工具（写工具照常弹卡）。
-- **界面**：设置页每个 server 有「工具与审批」展开（风险徽标、判定来源、审批 默认 / 免审批 / 每次确认、启用开关，`mcp.toolRisks`）；`mcp_tool` 审批卡显示服务器 · 工具、参数与风险徽标，破坏性加警示条。
+- **界面**：设置页每个 server 有「工具与审批」展开（风险徽标、判定来源、审批 默认 / 免审批 / 每次确认、启用开关，已消失的工具标灰；`mcp.toolRisks`）；`mcp_tool` 审批卡显示服务器 · 工具、参数与风险徽标，破坏性加警示条，写入 / 破坏性工具的收件方字段逐项完整列出，已批准的卡显示执行结果与回执（见 [13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)）。
 - 运行中把授权收紧（停用 server、移出 Bot、关闭 `autoApprove`、逐工具停用或由免审改为确认）会立即中断受影响的进行中任务，见 [13-permissions.md](13-permissions.md) 与 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
 ### 非目标（首期）
@@ -72,7 +72,7 @@ OAuth（首期不做；已单排为 D73，P0 已实现自定义 HTTP server 的 
 
 ## SubAgent（D66）
 
-> **D75 修订**：`delegate_task` 降级为「**任务内部**的嵌套子代理」。三种模式（前台 / 后台 / fan-out）在任务内照旧可用，但「后台委派 + 对话级锚点 + follow-up 结算」这一组职责**移交 D75 的任务层**（否则有两套对话级并发计数与两套结算路径）：`SubagentHost`（对话级锚点、`runningCount`、`abortFor*`）、`SubagentFollowUp`、orchestrator 的 follow-up 注入与 `SUBAGENT_FOLLOWUP_EVENT` **已删除**，对话级的注册、并发与结算由 `dispatch/tasks.ts` `TaskHost` 承担；后台模式退回「父任务内的并行分支」。对话轮派活用 `start_task`，不用 `delegate_task`（对话轮的工具面里没有它，执行期也拒绝）。MCP 工具同样只在**任务**的工具面（对话轮不提供）——borrowings W5 修订：风险为只读且免审批的 MCP 工具也进对话轮与只读子代理，见上文「风险分级与逐工具策略」。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
+> **D75 修订**：`delegate_task` 降级为「**任务内部**的嵌套子代理」。三种模式（前台 / 后台 / fan-out）在任务内照旧可用，但「后台委派 + 对话级锚点 + follow-up 结算」这一组职责**移交 D75 的任务层**（否则有两套对话级并发计数与两套结算路径）：`SubagentHost`（对话级锚点、`runningCount`、`abortFor*`）、`SubagentFollowUp`、orchestrator 的 follow-up 注入与 `SUBAGENT_FOLLOWUP_EVENT` **已删除**，对话级的注册、并发与结算由 `dispatch/tasks.ts` `TaskHost` 承担；后台模式退回「父任务内的并行分支」。对话轮派活用 `start_task`，不用 `delegate_task`（对话轮的工具面里没有它，执行期也拒绝）。MCP 工具同样只在**任务**的工具面，例外是风险为只读且免审批的 MCP 工具也进对话轮与只读子代理，见上文「风险分级与逐工具策略」。见 [30 §1.2](30-supervisor-and-tasks.md#12-与-d66--d71-的定位关系)。
 >
 > **后台分支的实现（D75 W2）**：`mode:"background"` 立即返回 `child_run_id`，分支在父 run（任务）内并行推进；父 loop 需要结论时调用 `collect_delegate_results({ child_run_ids? })`——等待所列分支（缺省为全部未取回的）结束，按委派顺序返回各分支的压缩结论或失败原因，每条只交付一次（两次并发的 collect 不会拿到同一条：调用先认领分支再等待，被取消的 collect 释放认领）。结论**只回到父 run**：不写对话消息、不投递 mailbox、不唤醒新一轮（下文 B / C 节的「follow-up 注入」「对话级锚点」「对话级并发封顶」均已废止）。生命周期全部挂父 run：父 run abort（含任务取消、对话删除、删 Bot）级联中止分支；父 run 结束时宿主中止仍在跑的分支并等它们 settle（最长 `SUBAGENT_CLOSE_GRACE_MS`，10 秒；先于释放写租约与任务结算，超时后父 run 照常结算，迟到分支的写入已被拒），未取回的结论作废——结论没有别的去处，等下去只会白占父任务的名额与租约。单条子 run 仍可经 `runs.cancel` 中止（`collect` 中该槽位报取消）。并发封顶 `SUBAGENT_BACKGROUND_CONCURRENCY` 改为按父 run 计。对话轮（`loop_type='turn'`）与子代理调用 `delegate_task` 在执行期被拒（`NOT_SUPPORTED`）。
 
@@ -89,7 +89,7 @@ OAuth（首期不做；已单排为 D73，P0 已实现自定义 HTTP server 的 
 | 触发 | 主 loop 调用 `delegate_task`；参数见下节模式 |
 | 子 run | `PiEngine.startRun` 嵌套启动，`loopType='subagent'`，落 `runs` 行（可审计、用量独立），**不**产生面向用户的对话消息 |
 | 归属 | 同 Bot、同对话：workspace / project / 网关授权边界原样继承，不扩大沙箱 |
-| 工具集 | 只读研究集：`read` / `grep` / `find` / `ls` / `bash`（沙箱）/ `web_search` / `web_fetch`，以及只读且免审批的 MCP 工具（W5）；无 `write` / `edit`、无 `send_message` / `skip_reply`、无再委派、无 memory / schedule / browser |
+| 工具集 | 只读研究集：`read` / `grep` / `find` / `ls` / `bash`（沙箱）/ `web_search` / `web_fetch`，以及只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个）；无 `write` / `edit`、无 `send_message` / `skip_reply`、无再委派、无 memory / schedule / browser |
 | 结果压缩 | 轻量模型把子 run 过程摘要压缩为 ≤ 4000 字符的结论；子 transcript 全文只落 `run_steps` |
 | 预算 | 每个子 run 独立封顶：轮数、超时、token；超限中止并把已有内容压缩返回 |
 | 可见性 | 对话流不出现子 transcript；`get_run` / run 详情与其他执行记录同级可查 |

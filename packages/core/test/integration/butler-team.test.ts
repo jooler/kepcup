@@ -8,11 +8,13 @@ import {
 } from '@kepcup/shared';
 import {
   createTestStack,
+  isTaskRequest,
   listAllMessages,
   makeBot,
   openDirect,
   sendBatch,
   step,
+  viaTask,
   waitFor,
   waitForRun,
   type TestStack,
@@ -287,6 +289,61 @@ describe('butler interview + team proposal (D70 P2)', () => {
     expect(toolResult).toContain('（管家）');
     expect(toolResult).not.toContain(`${bot.id} |`);
   }, 30_000);
+
+  it('普通对话要求建 Bot（D75 分工回归）：任务里没有 propose 工具、提示词是任务版；结果回轮后由对话轮提交提议卡', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = (await core.rpc.call('butler.ensure', {})) as {
+      conversationId: string;
+    };
+
+    // 「帮我新建一个 Bot」被管家派成任务（回归场景：任务循环里没有 propose_*，
+    // 此前提示词仍按对话轮版指挥调用 propose_bot——模型只能编造「已创建」）。
+    llm.script('mock-main', [
+      ...viaTask({
+        title: '规划写作 Bot',
+        instruction: '根据用户的需求给出一个写作 Bot 的建议（名字、职责、理由）',
+        taskSteps: [
+          step().replyText('建议建一个「文书」Bot：负责周报与文档的起草润色（提议卡需由对话轮提交）。'),
+        ],
+        ack: '我去安排了。',
+      }),
+      // 任务结果唤醒对话轮：由对话轮提交提议卡（创建的唯一入口）。
+      step().inTurn().replyToolCall('propose_bot', { bot: TEAM[0], note: '按任务结论提议' }),
+    ]);
+    await sendBatch(core, conversationId, ['帮我新建一个写作 Bot']);
+
+    // 结果回轮 → 对话轮提交提议卡；确认后真正创建（数据层闭合）。
+    const approval = await waitFor(
+      () => butlerApprovals(stack, conversationId).find((a) => a.status === 'pending') ?? null,
+      { label: 'pending butler proposal from task result' },
+    );
+    expect(approval.payload).toMatchObject({ proposalType: 'bot' });
+
+    // 任务请求：工具面只有 list_bots，没有 propose_* / suggest_route；
+    // 提示词是任务版管家规则，不再指挥调用对话轮才有的工具。
+    const taskRequests = llm.requestsFor('mock-main').filter((req) => isTaskRequest(req));
+    expect(taskRequests.length).toBeGreaterThan(0);
+    const taskTools = (taskRequests[0]!.body.tools as Array<{ function: { name: string } }>).map(
+      (tool) => tool.function.name,
+    );
+    expect(taskTools).toContain('list_bots');
+    expect(taskTools).not.toContain('propose_bot');
+    expect(taskTools).not.toContain('propose_team');
+    expect(taskTools).not.toContain('propose_group');
+    expect(taskTools).not.toContain('suggest_route');
+    const taskPrompt = JSON.stringify(taskRequests[0]!.body.messages);
+    expect(taskPrompt).toContain('<butler_rules>');
+    expect(taskPrompt).toContain('都在对话轮工具面');
+    expect(taskPrompt).not.toContain('用 suggest_route 出一张路由卡');
+    // 对话轮请求：带「建 Bot 直接提议、不派任务」的指引。
+    const turnRequest = llm.requestsFor('mock-main').find((req) => !isTaskRequest(req));
+    expect(JSON.stringify(turnRequest!.body.messages)).toContain('不要为此用 start_task 派任务');
+
+    llm.script('mock-main', [step().replyText('写作 Bot 已经提上日程。')]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    await waitFor(() => (plainBots(stack).length === 1 ? plainBots(stack) : null));
+  }, 40_000);
 
   it('propose_group：确认后建群（含定位描述与成员）', async () => {
     const stack = await start();

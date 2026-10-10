@@ -90,7 +90,7 @@ queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额�
       → completed    结果已写入私有时间线（skip_reply 时结果为空）
       → failed       执行失败（含结构化 setup 失败、超时 / 超预算被强制结束）
       → cancelled    cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot / 移出群 / 更新闸门
-      → interrupted  进程退出或崩溃；运行中用户撤销授权（D78）
+      → interrupted  进程退出或崩溃；运行中用户收紧授权或切换浏览器资料（D78，见 30 §7.4）
 ```
 
 ### 「必有结算」
@@ -117,7 +117,7 @@ Run
   conversation_id
   loop_type             -- turn | task | subagent | triage | reflection | ...
   trigger_message_ids[]
-  trigger_reason        -- direct | mention | broadcast | reply | chain | scheduled | event | delegation | task
+  trigger_reason        -- direct | mention | broadcast | reply | chain | scheduled | event | delegation | task | watch
   trigger_parts         -- 对话轮合并批的各来源段（重试按段重建）
   retry_of_run_id       -- 重试出来的对话轮指向被重试的那一轮
   status
@@ -136,15 +136,15 @@ Run
 
 对话轮与任务一律 ephemeral（D49）：不自动续跑。启动恢复次序：
 
-0. **外部副作用台账**（D78）：`tool_effects` 中所有 `executing` 行改为 `uncertain`（启动时没有活着的 run，这些调用的结果未知；先于任务修复，失败摘要据此标注「[结果未知]」）。
+0. **外部副作用台账**（D78）：`tool_effects` 中所有 `executing` 行改为 `uncertain`、等审批的 `intended` 行结为 `denied`（启动时没有活着的 run；先于任务修复，失败摘要据此标注「[结果未知]」）。
 1. **修复任务**（先于整批中断）：非终态任务已有终态条目的，按条目补成对应终态；已有 `cancel` 条目的补成 `cancelled`；已启动、无条目的先写 `failure` 条目再标 `interrupted`；submitted 的保留待重排。
 2. 其余非终态 run（对话轮等）标 `interrupted` 并在对话中提示一次；待确认审批取消；写租约与会话 token 本在内存中，随进程消失。
 3. D71 委派恢复。
 4. 重排 submitted 任务，再对账补投未消费的结果 / 失败条目——被中断的任务因此唤醒一个对话轮，由它告诉用户。
 
-D67（durable journal 与工具 replay，[24-durable-execution.md](24-durable-execution.md)）的适用对象改为**任务**；目前任务一律 ephemeral，只实现了第一步外部副作用台账（D78，[24 §10](24-durable-execution.md#10-第一步外部副作用台账d78已实现)）。
+D67（durable journal 与工具 replay，[24-durable-execution.md](24-durable-execution.md)）的适用对象改为**任务**；journal 与 replay 未实现，任务一律 ephemeral，已实现的是外部副作用台账（D78，[24 §10](24-durable-execution.md#10-外部副作用台账d78)）。
 
-**中断任务检查后重试**（D78，修订 D49）：被中断的任务（进程退出、运行中撤销授权）不自动续跑，但用户可以在任务卡上重试。该任务的续接链（含子代理）里有 `completed` / `uncertain`（或仍是 `executing`）的台账行时，任务卡的按钮变为「检查后重试」：展开已完成 / 结果未知 / 失败 / 已拒绝的外部操作清单，用户勾「我已核实」后才能重试（`runs.retry {reviewed:true}`，否则 `REVIEW_REQUIRED`）；只有失败 / 已拒绝的行或没有台账（旧任务）时直接重试。接续任务的触发段在任务简报前加 `<effects_before_interrupt>`：completed 的不要重做、uncertain 的先核实。对话轮的 `start_task({continues_task_id})` 不经这道闸门，但同样拿到该段。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
+**中断任务检查后重试**（D78）：被中断的任务（进程退出、运行中收紧授权或切换浏览器资料）不自动续跑，由用户在任务卡上重试；续接链里有已完成 / 结果未知的外部操作时须先在任务卡上核实（「检查后重试」，否则 `REVIEW_REQUIRED`），接续任务的触发段前置 `<effects_before_interrupt>`。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
 ## Loop 续接
 
@@ -253,11 +253,11 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 ## 跨 Bot 委派（A→B，D71）
 
-`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。委派带 `intent`（D71 修订，borrowings W6）：`request`（默认）——B 那一轮没派任务时取该轮最终回复；派了任务时委派转 `awaiting_tasks`、跟随这些任务（沿续接链跟到最新一环），全部结算后把各任务结果拼接（截断到 `DELEGATION_RESULT_MAX_CHARS`，未完成的标注状态）贴回 A 为结果卡，B 那一轮的「我去做」不作为结果（DEV-012 方案二，按用户决定修订）；`question`——取 B 那一轮的最终回复，不跟随任务；`fyi`——投递即完成，不贴结果卡、不通知 A。同群且 A/B 均在场时降级为 D4 `@`。细节见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务d71-修订borrowings-w6)。
+`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。委派带 `intent`：`request`（默认）在 B 那一轮派出任务时跟随这些任务、贴回各任务结果的拼接，否则贴回该轮最终回复；`question` 取 B 那一轮的最终回复；`fyi` 投递即完成、不回贴。同群且 A/B 均在场时降级为 D4 `@`。细节见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务)。
 
 ## MCP 工具
 
-用户配置的 MCP server 按「应用启用 ∩ Bot 勾选」把工具并入**任务**的工具面；其中风险为只读且免审批的工具（至多 20 个）也进对话轮与只读子代理（D65 修订，borrowings W5），调用时若已不再是「只读 + 免审」则被拒（`RUN_READ_ONLY`），需要派任务。调用统一走网关审批（按风险档与逐工具策略）与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。
+用户配置的 MCP server 按「应用启用 ∩ Bot 勾选」把工具并入**任务**的工具面；其中风险为只读且免审批的工具（至多 20 个）也进对话轮与只读子代理（D65），调用时若已不再是「只读 + 免审」则被拒（`RUN_READ_ONLY`），需要派任务。调用统一走网关审批（按风险档与逐工具策略）与审计，结果按 `<untrusted>` + 截断处理，密钥字段级加密。见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)。
 
 ## 主动消息
 
@@ -273,17 +273,19 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 ### 网页监看（D79）
 
-「盯着某个网页，变了才叫我」：定时任务每次到点都要花一轮模型调用，监看则把检查做成确定性的，只有条件**边沿触发**才唤醒 Bot。
+「盯着某个网页，变了才叫我」：宿主按间隔确定性地检查网页（不调模型），只有条件**边沿触发**才唤醒 Bot 一个对话轮。
 
-- **创建**：Bot 用 `watch_create{url, selector?, condition, interval_minutes}`（对话轮与任务都有，见 [30](30-supervisor-and-tasks.md)）；不需审批（只读访问用户给的网址），对话里随即出现**监看卡**（`cardType: 'watch'`，`watchEvent: 'created'`），首次检查立即执行。条件：`changed`（页面有实质变化）/ `contains` / `not_contains`（某段文字出现 / 消失）/ `number_below` / `number_above`（价格等数值，可指定元素）。间隔下限 5 分钟；每个 Bot 至多 `WATCH_MAX_PER_BOT`（20）个、全局 `WATCH_MAX_GLOBAL`（100）个未停止的监看。
+- **工具**（对话轮与任务都有，不需审批；对话轮为何能直接创建见 [30 §2.1](30-supervisor-and-tasks.md#21-对话轮supervisor-turn)）：`watch_create{url, selector?, condition{kind, text?, value?, selector?}, interval_minutes}`；`watch_list`（本 Bot 在本对话进行中与已暂停的监看，输出包 `<untrusted>`）；`watch_stop{id}`（只能停本 Bot 在本对话创建的）。内置引擎的对话轮与任务靠 `watch_create` 的工具描述（适合「降价了 / 有货了 / 页面更新了告诉我」，宿主后台检查、不花模型调用）引导；外部智能体的 `<tool_policy>` 另写明盯网页用 `watch_*`，不要用定时任务反复打开网页、也不要自写轮询脚本（[28 §4.2](28-external-agents-acp.md#42-原生优先与宿主优先工具选择策略)）。
+- **创建**：只接受 http(s) 网址（来源只有网页，`source.kind='web_page'`），`selector` 限定只看某个元素的文本；对话里随即出现**监看卡**（`cardType: 'watch'`，`watchEvent: 'created'`），首次检查立即执行。条件：`changed`（页面有实质变化）/ `contains` / `not_contains`（某段文字出现 / 消失，忽略大小写与空白差异）/ `number_below` / `number_above`（价格等数值，可再指定元素；取第一个带货币符号的数，没有则第一个数）。间隔 5 分钟–7 天（`WATCH_MIN_INTERVAL_SEC` / `WATCH_MAX_INTERVAL_SEC`）；每个 Bot 至多 `WATCH_MAX_PER_BOT`（20）个、全局 `WATCH_MAX_GLOBAL`（100）个未停止（进行中 + 已暂停）的监看。
 - **检查**：core 进程内一个 worker 按 `next_check_at` 逐个检查（不另起服务、不引入租约），经主进程的隐藏后台页取正文（[14 §监看后台页](14-models-and-browser.md#监看后台页d79)）→ 规整成行 → 去掉相对时间（「3 分钟前」「刚刚」「5 minutes ago」）后算「安静 hash」→ 求值条件。检查本身不调模型。
 - **边沿触发**：`changed` 在安静 hash 与上次不同才算（首次检查只记基线）；其余条件在「上次不满足、这次满足」时才算（首次检查即满足也提醒一次）；保持满足不再提醒，回到不满足再满足会再提醒。只有相对时间在走的页面不算变化。
 - **提醒**：边沿在同一个 main.db 事务里 CAS 写监看行（`alert_seq + 1`、新 hash、`version + 1`）并登记持久作业 `watch_alert`（去重键 `watch:{id}:{seq}:{hash}`）；作业在对话里贴出用户可见的**提醒卡**（`watchEvent: 'alert'`，带增删改摘要），再以内部事件 `watch_alert` 唤醒 Bot 一个对话轮（`trigger_reason=watch`，消息带网址、条件与 ≤1500 字的变化摘要，摘要是网页内容，放在 `<untrusted>` 里）。行先推进、提醒在持久队列里：重启后同一变化不会再提醒，崩溃也不会丢提醒；作业重跑时分别查同键提醒卡与已记录的唤醒（内部 `watch_alert` 消息），只补缺的那一步（贴卡后、唤醒前崩溃也不会丢唤醒）。唤醒与事件一样不计入每日主动消息上限，但遇免打扰时段停放到时段结束（`event_delivery`）。
 - **提醒上限**：每个监看滚动 24 小时内最多提醒 `WATCH_MAX_ALERTS_PER_DAY`（24）次（行上记最近的提醒时间）。超出的那次边沿**不唤醒**，同一事务里把监看改为暂停并贴暂停卡「提醒过于频繁（24 小时内超过 24 次），已暂停；可放宽条件或延长间隔后恢复」（键 `watch-error:{id}:{streak}:too_frequent`）；这次观察照常记下，恢复后不会补发；恢复时 24 小时窗口清零。
 - **失败**：取页失败（被拦截、超时、HTTP ≥ 400、被重定向到别的站点（多半是登录页）、选择器无匹配、页面无文本、数值条件找不到数字）计一次失败，`failures + 1`、`next_check_at = now + max(5, min(60, 2^failures))` 分钟（5 / 5 / 8 / 16 / 32 / 60——重试不早于间隔下限）；连续 `WATCH_PAUSE_AFTER_FAILURES`（5）次后监看**暂停**，对话里出一张暂停卡（`watchEvent: 'paused'`，键 `watch-error:{id}:{streak}:paused`，卡上记下当时的失败次数），用户点「恢复」后清零并立即检查。成功检查清零失败计数。**浏览器宿主未连接不算失败**（启动时端口尚未接上、宿主断开）：不计数、不写错误，`WATCH_HOST_UNAVAILABLE_RETRY_MS`（1 分钟）后重试，宿主一接上立即检查；电脑从休眠唤醒后也立即检查到期的监看。
 - **并发**：用户的暂停 / 恢复 / 停止与检查都按 `version` 做 CAS；检查进行中用户动了监看，检查结果作废、用户的操作生效。同一批到期的监看逐个检查前重读该行，已不是进行中、尚未到期或版本变了的跳过。
-- **可见与管理**：右栏「定时任务」标签与群信息里，定时任务列表下面是该对话的**网页监看**列表（条件、间隔、上次检查、提醒次数、最近失败原因；暂停 / 恢复 / 停止）。对话轮上下文有 `<watches>` 段（本 Bot 在本对话的监看）。
-- **生命周期**：删除对话、删除 Bot、把 Bot 移出群时其监看一并删除；检查时发现 Bot / 对话已不在也删除。本轮只有网页来源；传感器（摄像头等）以后作为 `source.kind` 的另一种接入同一原语。
+- **可见与管理**：右栏「定时任务」标签与群信息里，定时任务列表下面是该对话的**网页监看**列表（条件、间隔、上次检查、提醒次数、最近失败原因；暂停 / 恢复 / 停止）；监看卡按监看行实时重绘，可「全部监看」与两步「停止监看」，暂停卡带最近错误与「恢复」。RPC `watches.list{conversationId?}` / `get` / `pause` / `resume` / `stop`，事件 `watch.updated{watch, removed?}`（检查、提醒、用户操作、删除都推）。对话轮与任务的上下文有 `<watches>` 段（本 Bot 在本对话未停止的监看，`<untrusted>`）。
+- **生命周期**：删除对话、删除 Bot、把 Bot 移出群时其监看一并删除；检查时发现 Bot / 对话 / 成员关系已不在也删除。已停止的监看行保留、不再显示。存储见 [dev/03 §watches](../dev/03-data-model.md#watchesd79main-0023)。
+- **已知限制**：正文按 `innerText` 取，纯 canvas、需滚动才加载的内容取不到；客户端渲染的页面只多等 1 秒；HTTP 状态只看主框架，不看页面内部接口的错误；数字不识别欧式写法（1.299,00）、汉字数字、万 / 亿 / k 与科学计数；没有「立即检查」按钮（恢复即立即检查）；唤醒消息已落库、但投递进信箱前进程崩溃时，这一轮是否补跑取决于对话轮的通用恢复。安全边界（以 Bot 的浏览器登录身份做无人值守 GET、DNS 重绑定）见 [14 §监看后台页](14-models-and-browser.md#监看后台页d79)。
 
 ## 撤回与编辑
 

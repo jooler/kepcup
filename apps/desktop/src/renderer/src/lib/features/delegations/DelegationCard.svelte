@@ -5,12 +5,14 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { delegations } from '$lib/stores/delegations.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { lazyMarkdown } from '../chats/markdown-lazy.svelte';
+  import Markdown from '../chats/Markdown.svelte';
 
   /**
    * 跨 Bot 委派卡（D71，docs/design/27 §3.2）：A 的对话里的两种卡——
    * 发出卡（delegation_sent：交给了谁、任务摘要、实时状态、可取消）与结果卡
-   * （delegation_result：B 的回复截断 + 「查看原文」跳到 B 的对话，或失败 /
-   * 取消原因）。用户留在 A 的对话，**不**自动切换到 B。
+   * （delegation_result：B 的回复截断（markdown 渲染，与 Bot 气泡同管线）+
+   * 「查看原文」跳到 B 的对话，或失败 / 取消原因）。用户留在 A 的对话，**不**自动切换到 B。
    * W6：发出卡显示 intent（请求 / 提问 / 告知）；B 派了后台任务时显示
    * 「等待 B 的任务…」并可取消（一并停止那些任务）；告知送达即结束、没有结果卡。
    */
@@ -18,6 +20,11 @@
 
   $effect(() => {
     void delegations.ensure(delegationId);
+  });
+  // 结果卡的正文是 B 的回复原文（markdown 源文本），与 Bot 气泡共用同一条
+  // streamdown 懒加载管线；结果卡可能先于任何 Bot 气泡出现，这里自己触发加载。
+  $effect(() => {
+    lazyMarkdown.start();
   });
 
   const delegation = $derived(delegations.byId[delegationId] ?? null);
@@ -148,12 +155,17 @@
       {/if}
     </div>
     {#if delegation.status === 'completed'}
-      <p
-        class="mt-1.5 text-sm whitespace-pre-wrap {expanded ? '' : 'line-clamp-6'}"
+      <!-- 折叠态不能用 line-clamp：它要求内容参与 -webkit-box 的行布局，而
+           streamdown-wrap 是 display:grid（独立格式化上下文），行数截断不生效，
+           折叠/展开看起来毫无变化；改用高度裁剪，对任意 markdown 块都可靠 -->
+      <div
+        class="mt-1.5 text-sm {expanded ? '' : 'max-h-32 overflow-hidden'}"
         data-testid="delegation-result-text"
       >
-        {delegation.resultExcerpt}
-      </p>
+        <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">
+          <Markdown content={delegation.resultExcerpt ?? ''} />
+        </div>
+      </div>
     {:else}
       <p
         class="mt-1.5 text-xs whitespace-pre-wrap text-muted-foreground {expanded

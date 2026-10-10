@@ -6,8 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
-import { migrationTargetVersion, runMigrations } from '../../src/infra/migrate.js';
-import { mainVersionsAfter } from '../support/migration-versions.js';
+import { runMigrations } from '../../src/infra/migrate.js';
 
 /**
  * main watches 迁移（W7，D79）：新表 watches（status / interval_sec CHECK、
@@ -70,13 +69,9 @@ describe('watches 迁移（W7）', () => {
     db.prepare(
       "insert into conversations (id, type, title, created_at) values ('conv_a', 'group', 'x', 1)",
     ).run();
-    const applied = runMigrations(db, migrationsUrl('main'));
-    // Later migrations (D73's 0024 / 0025 …) may follow; this one is the first applied.
-    expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(version - 1));
-    expect(applied[0]?.file).toMatch(/_watches\.sql$/);
-    expect(db.pragma('user_version', { simple: true })).toBe(
-      migrationTargetVersion(migrationsUrl('main')),
-    );
+    const applied = runMigrations(db, migrationsUpTo(version));
+    expect(applied.map((m) => m.version)).toEqual([version]);
+    expect(db.pragma('user_version', { simple: true })).toBe(version);
 
     insertWatch(db, 'wat_a');
     const row = db.prepare('select * from watches where id = ?').get('wat_a') as Record<

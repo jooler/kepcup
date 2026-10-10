@@ -1,4 +1,5 @@
 import {
+  GROUP_MENTION_PREFIX,
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
   SCHEDULE_CREATED_EVENT,
@@ -40,6 +41,12 @@ export interface RenderMessageOptions {
   timeZone: string;
   /** Bot names by id; deleted/unknown bots render as their id. */
   botNames: Map<string, string>;
+  /**
+   * Group-mention tokens (`group:<conversationId>`) → group titles, for the
+   * mention legend appended to user lines (the raw text only carries
+   * `@名字`; the legend tells the model what each mention refers to).
+   */
+  mentionLabels?: Map<string, string>;
   /**
    * Card messages (P03): renders the folded one-line record from the
    * approval state. Return null to fall back to a placeholder.
@@ -169,6 +176,19 @@ function renderTaskQuestionLine(
   return `[${message.id} | ${time} | ${asker}（任务 ${taskId}）向用户提问] <untrusted>${neutralizeUntrusted(body)}</untrusted>`;
 }
 
+/**
+ * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），群出
+ * 「标题（群聊）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
+ * 不在本群的 Bot 或其他群聊的场合。
+ */
+function mentionTokenLabel(token: string, options: RenderMessageOptions): string {
+  if (token.startsWith(GROUP_MENTION_PREFIX)) {
+    const title = options.mentionLabels?.get(token);
+    return title !== undefined ? `${title}（群聊）` : '某群聊';
+  }
+  return options.botNames.get(token) ?? token;
+}
+
 /** Renders one message line: [msg_... | time | sender] body. */
 export function renderMessageLine(
   message: Message,
@@ -250,6 +270,14 @@ export function renderMessageLine(
           )
           .join('、')}）`
       : '';
+  // 提及图例：结构化 mentions（Bot id / group:<会话 id>）补成显式说明，
+  // 模型不用猜 `@名字` 各指什么（composer 侧约定见 shared GROUP_MENTION_PREFIX）。
+  const mentionSuffix =
+    message.senderType === 'user' && message.mentions.length > 0
+      ? `（提及：${message.mentions
+          .map((token) => `@${mentionTokenLabel(token, options)}`)
+          .join('、')}）`
+      : '';
   // Other bots' words are data, not instructions (docs/dev/04-agent-runtime.md).
   // D80: schedule receipt / offer cards are host system events, but their
   // text quotes titles from model output and commitment content — data too.
@@ -262,7 +290,7 @@ export function renderMessageLine(
       (event === SCHEDULE_CREATED_EVENT || event === SCHEDULE_OFFER_EVENT))
       ? `<untrusted>${neutralizeUntrusted(body)}</untrusted>`
       : body;
-  return `[${message.id} | ${time} | ${sender}]${statusSuffix} ${wrapped}${attachmentSuffix}`;
+  return `[${message.id} | ${time} | ${sender}]${statusSuffix} ${wrapped}${mentionSuffix}${attachmentSuffix}`;
 }
 
 /**

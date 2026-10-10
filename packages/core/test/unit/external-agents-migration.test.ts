@@ -68,9 +68,9 @@ describe('0017 external_agents 迁移', () => {
     const applied = runMigrations(db, migrationsUrl('main'));
     expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(16));
 
-    const rows = db
-      .prepare('select * from approvals order by id')
-      .all() as Array<Record<string, unknown>>;
+    const rows = db.prepare('select * from approvals order by id').all() as Array<
+      Record<string, unknown>
+    >;
     expect(rows.map((row) => row['kind']).sort()).toEqual([...OLD_KINDS].sort());
     // Every column survives the rebuild.
     expect(rows[0]).toMatchObject({

@@ -137,24 +137,24 @@ test.describe('输入框草稿按会话缓存', () => {
 
       // 切到第二个 Bot 的会话：输入框为空，输入另一份草稿。
       await createBotAndOpenChat(page, '记录乙');
-      await expect(composer).toHaveValue('');
+      await expect(composer).toHaveText('');
       await composer.fill('乙会话的草稿');
       await expect(page.locator('[data-testid="composer-pending-attachments"]')).toHaveCount(0);
 
       // 回到甲的会话：文本与附件 chip 都要回来（图片预览字节重建后渲染 <img>）。
       await openConversation(page, '画图甲');
-      await expect(composer).toHaveValue('甲会话的草稿');
+      await expect(composer).toHaveText('甲会话的草稿');
       await expect(page.locator('[data-testid="pending-attachment-ready"]')).toBeVisible();
       await expect(page.locator('[data-testid="pending-attachment-image"] img')).toBeVisible();
 
       // 乙的会话仍然只有自己的文本、没有甲的附件。
       await openConversation(page, '记录乙');
-      await expect(composer).toHaveValue('乙会话的草稿');
+      await expect(composer).toHaveText('乙会话的草稿');
       await expect(page.locator('[data-testid="composer-pending-attachments"]')).toHaveCount(0);
 
       // 回甲发送：附件随草稿发出（Meta+Enter = 入队并立即发送）。
       await openConversation(page, '画图甲');
-      await expect(composer).toHaveValue('甲会话的草稿');
+      await expect(composer).toHaveText('甲会话的草稿');
       await composer.press('Meta+Enter');
       await expect(page.locator('[data-testid="attachment-image"]').first()).toBeVisible({
         timeout: 30_000,
@@ -193,7 +193,7 @@ test.describe('输入框草稿按会话缓存', () => {
         try {
           await waitReady(relaunched.page);
           const recomposer = relaunched.page.locator('[data-testid="composer-input"]');
-          await expect(recomposer).toHaveValue('重启后应该还在的草稿', { timeout: 15_000 });
+          await expect(recomposer).toHaveText('重启后应该还在的草稿', { timeout: 15_000 });
           // 附件 chip 重载；预览字节经 attachments.get 重建后渲染缩略图。
           await expect(
             relaunched.page.locator('[data-testid="pending-attachment-ready"]'),
@@ -218,6 +218,80 @@ test.describe('输入框草稿按会话缓存', () => {
       }
     } finally {
       await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test('@ 提及：切换会话回来仍是提及节点（原生 JSON 草稿缓存）', async () => {
+    test.setTimeout(120_000);
+    const session = await startSession('kepcup-composer-mention-');
+    const { page, llm } = session;
+    try {
+      await waitReady(page);
+      await createBotAndOpenChat(page, '提及甲');
+      await createBotAndOpenChat(page, '提及乙');
+
+      const composer = page.locator('[data-testid="composer-input"]');
+      await composer.click();
+      await composer.pressSequentially('@提及甲');
+      await expect(page.locator('[data-testid="mention-popup"] button').first()).toBeVisible();
+      await composer.press('Enter');
+      await expect(page.locator('[data-testid="composer-mention"]')).toHaveText('@提及甲');
+      await composer.pressSequentially(' 记得这件事');
+
+      // 切到甲的会话再切回：@ 提及仍是 mention 节点（高亮显示、退格整段
+      // 删除），不退化为普通文本——草稿缓存走编辑器原生 JSON。
+      await openConversation(page, '提及甲');
+      await expect(composer).toHaveText('');
+      await openConversation(page, '提及乙');
+      await expect(page.locator('[data-testid="composer-mention"]')).toHaveText('@提及甲');
+      await expect(composer).toContainText('记得这件事');
+
+      // 发送后消息条目里 @XXX 正确显示（气泡内提及高亮 + markdown 原文给 AI）。
+      llm.script('mock-main', [step().replyText('记住了')]);
+      await composer.press('Meta+Enter');
+      await expect(
+        page.locator('[data-testid="user-bubble"]').first().locator('[data-testid="user-mention"]'),
+      ).toHaveText('@提及甲', { timeout: 15_000 });
+    } finally {
+      await closeSession(session);
+    }
+  });
+
+  test('markdown 列表：`1.`/`-` 加空格自动转列表，回车续行，空项回车退出', async () => {
+    test.setTimeout(120_000);
+    const session = await startSession('kepcup-composer-list-');
+    const { page } = session;
+    try {
+      await waitReady(page);
+      await createBotAndOpenChat(page, '列表甲');
+
+      const composer = page.locator('[data-testid="composer-input"]');
+      await composer.click();
+      // 输入 `1. ` 触发输入规则：整行转为有序列表（不发送）。
+      await composer.pressSequentially('1. 第一步');
+      await expect(composer.locator('ol > li')).toHaveCount(1);
+      // 列表项内回车：续行出新列表项（不发送）。
+      await composer.press('Enter');
+      await expect(composer.locator('ol > li')).toHaveCount(2);
+      await expect(page.locator('[data-testid="draft-drawer"]')).toHaveCount(0);
+      // 空项回车：退出列表（回到普通段落），同样不发送。
+      await composer.press('Enter');
+      await expect(composer.locator('ol > li')).toHaveCount(1);
+      await expect(page.locator('[data-testid="draft-drawer"]')).toHaveCount(0);
+      // 无序列表：`- ` + 空格同样自动转换、回车续行。
+      await composer.pressSequentially('- 待办甲');
+      await expect(composer.locator('ul > li')).toHaveCount(1);
+      await composer.press('Enter');
+      await expect(composer.locator('ul > li')).toHaveCount(2);
+      await composer.press('Enter');
+      await expect(composer.locator('ul > li')).toHaveCount(1);
+      // 发送后用户气泡收到 markdown 原文（列表即标准 markdown，AI 可理解）。
+      await composer.press('Meta+Enter');
+      const bubble = page.locator('[data-testid="user-bubble"]').first();
+      await expect(bubble).toContainText('第一步', { timeout: 15_000 });
+      await expect(bubble).toContainText('待办甲');
+    } finally {
+      await closeSession(session);
     }
   });
 });

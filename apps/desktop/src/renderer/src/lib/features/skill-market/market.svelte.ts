@@ -11,6 +11,8 @@ import { core } from '$lib/rpc/client.svelte';
 class SkillMarketState {
 	presets = $state<SkillPresetInfo[]>([]);
 	loading = $state(false);
+	/** 最近一次目录加载失败的错误文本（null = 正常）；弹框据此区分「空目录」与「加载失败」。 */
+	loadError = $state<string | null>(null);
 	/** 正在安装的 presetId 集合（按钮 spinner）。 */
 	installing = new SvelteSet<string>();
 	#loaded = false;
@@ -33,7 +35,13 @@ class SkillMarketState {
 				presets: SkillPresetInfo[];
 			};
 			this.presets = result.presets;
+			this.loadError = null;
 			this.#loaded = true;
+		} catch (error) {
+			// 调用方多是 `void load()`：不吞成未处理的 rejection，记录并透出。
+			console.error('[skill-market] load failed', error);
+			this.loadError =
+				error instanceof Error && error.message.length > 0 ? error.message : String(error);
 		} finally {
 			this.loading = false;
 		}
@@ -42,8 +50,15 @@ class SkillMarketState {
 	async install(presetId: string): Promise<void> {
 		this.installing.add(presetId);
 		try {
-			// skills.changed（botId=''）会触发刷新；这里只等安装落定。
 			await core.call('skills.presets.install', { presetId });
+			// 成功：先刷新（load 自吞错误不抛出）再在 finally 摘除 installing——
+			// 按钮从「添加中…」直接切「✓ 已添加」，不经停「添加」态。
+			await this.load(true);
+		} catch (error) {
+			// 安装失败：也刷新对齐真实安装态再上抛（如「替换过期预置」在卸载
+			// 旧行后才失败，不刷新会残留「可更新」的假状态）。
+			await this.load(true);
+			throw error;
 		} finally {
 			this.installing.delete(presetId);
 		}
@@ -52,6 +67,7 @@ class SkillMarketState {
 	/** 弹框关闭后复位加载标记，避免下次打开闪现陈旧目录。 */
 	reset(): void {
 		this.presets = [];
+		this.loadError = null;
 		this.#loaded = false;
 	}
 }
