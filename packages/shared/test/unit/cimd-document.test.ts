@@ -59,7 +59,10 @@ describe('CIMD document (infra/cloudflare/oauth-cimd)', () => {
       new URL('../../../../infra/cloudflare/oauth-cimd/public/_headers', import.meta.url),
       'utf8',
     );
-    expect(headers).toContain('/oauth/*');
+    expect(headers).toContain('/oauth/client.json');
+    // logo 不能被强制成 application/json：Content-Type 只能出现在 client.json 的规则里。
+    expect(headers.match(/Content-Type/g)).toHaveLength(1);
+    expect(headers.indexOf('/oauth/logo.png')).toBeGreaterThan(headers.indexOf('Content-Type'));
     expect(headers).toContain('Content-Type: application/json');
     expect(headers).toContain('Cache-Control: public, max-age=86400');
     expect(headers).toContain('Access-Control-Allow-Origin: *');

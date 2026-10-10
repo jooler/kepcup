@@ -20,12 +20,23 @@
 
 已装好新的 Cloudflare CLI `cf`（beta）与 `wrangler`；详细方法见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)。
 
-- [ ] 确认 **`kepcup.com` 在哪个 Cloudflare 账号下**。当前会话环境里已有的令牌只看得到 `omnecells.com`，**看不到 `kepcup.com`**，所以没有用它。
-- [ ] 在该账号建**令牌 A「kepcup-deploy」**（Workers Scripts / D1 / Account Settings 读 + kepcup.com 的 Zone 读、DNS、Workers Routes、Cache Purge），按 README §4.1。
-- [ ] `cp .env.example .env && chmod 600 .env`，填 `CLOUDFLARE_ACCOUNT_ID` 与令牌（**不要贴进聊天**）。
-- [ ] 运行 `infra/cloudflare/with-env.sh check`，看到目标 zone 可见后告诉 Agent。
+- [x] 确认 **`kepcup.com` 在哪个 Cloudflare 账号下**（账号 id `37918f50…`；会话环境里原有的令牌属于别的账号 / 项目，没有使用）。
+- [x] 在该账号建**令牌 A「kepcup-deploy」**（Workers Scripts / D1 / Account Settings 读 + kepcup.com 的 Zone 读、DNS、Workers Routes、Cache Purge），按 README §4.1。
+- [x] `cp .env.example .env && chmod 600 .env`，填 `CLOUDFLARE_ACCOUNT_ID` 与令牌（**不要贴进聊天**）。
+- [x] 运行 `infra/cloudflare/with-env.sh check`，目标 zone 可见（2026-10-10 通过）。
 - [ ] （仅在需要时）令牌 B「kepcup-zone-admin」用于 WAF / Bot Fight Mode；免费套餐的 Bot Fight Mode 可能只能在控制台手动关。
 - [ ] 升级 Workers Paid 仍然只能你在控制台做。
+
+## C1 — 等你放行的 DNS / 域名变更（Agent 已尝试一次被安全分类器拦下，没有绕过）
+
+kepcup.com 目前**没有任何 DNS 记录**。以下四件事是线上继续推进的唯一阻塞（详情见 [infra/cloudflare/README.md](../infra/cloudflare/README.md) §7）：
+
+- [ ] 创建顶级域已代理记录 `AAAA kepcup.com 100::`（无源站 Worker 的标准做法；有真实网站后替换）。
+- [ ] 部署 `oauth-cimd`（路由 `kepcup.com/oauth/*`），然后 `node infra/cloudflare/oauth-cimd/verify.mjs`。
+- [ ] `registry.kepcup.com` 绑定为 Worker custom domain 后重新部署；随后冒烟与 WAF 速率限制规则。
+- [ ] `dl.kepcup.com` custom domain（先要有 U5 的签名密钥）。
+
+放行方法二选一：给 Claude Code 加允许这类 Bash 命令的权限规则；或你自己执行这几条命令后告诉我。已经由 Agent 完成的线上变更（D1、建表、registry Worker + Cron）记录在 README §7。
 
 ## U1 — CIMD 文档部署与验证（P0 门禁）
 
