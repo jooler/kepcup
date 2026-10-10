@@ -335,7 +335,7 @@
 
 ### DEV-020 连接应用 P1 实现对设计 29 / 执行方案的偏差与补充（D73）
 
-- 状态：待决定（实现者按下列推荐落地；用户确认后改「已决定」）
+- 状态：已决定（2026-10-10 用户确认：全部保留）
 - 阶段：D73 P1（`todo/connected-apps.md` §5）；P0 的项见 DEV-019
 - 是否阻塞：否
 - 问题：实现 P1 时，设计 29 §4 / §6 / §7 / §9 与 todo §5 有若干没写到或与实现细节冲突之处：
@@ -349,5 +349,5 @@
 - 影响范围：`apps/auth/flow.ts`、`apps/connections.ts`、`mcp/service.ts`（`mcp.test`）、渲染端 `features/apps/*`、`features/chats/ConnectAppSetupBody.svelte`、`features/bot-panel/BotProfileForm.svelte`、`apps/desktop/resources/connectors/`、`connector-release-gates.json`。
 - 可选方案：按上述实现保留（推荐）；或 1 改为只认首个 `grantBotId`（群聊里其余 Bot 全靠渲染端兜底，不推荐）、4 另开渲染端外链白名单通道（P2 起可做）、6 改存 settings（需 RPC，收益小）。
 - 推荐：均保留；设计 29 在用户确认后补 §5.4「重新授权亦取并集」、§6「目录面板新建 / 重连语义」两处；U2 完成后再逐条打开门禁。
-- 决定：（由人工填写）
+- 决定：全部保留（用户，2026-10-10）
 - 已更新的文档：`docs/dev/02-architecture.md`（连接应用 P1 模块与 RPC）、`04-agent-runtime.md`（两段提示词、`app_request_connection`、应用工具暴露与时长）、`05-testing.md`（P1 用例分布）、`docs/design/29-connected-apps.md`（修订记录与三处旁注）、`docs/dev/PROGRESS.md`、`todo/connected-apps.md`（§5.8–5.11 实施记录）
