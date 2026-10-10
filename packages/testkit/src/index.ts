@@ -9,4 +9,5 @@ export * from './clock.js';
 export * from './fake-acp-agent.js';
 export * from './fake-acp-launch.js';
 export * from './fake-oauth-mcp-server.js';
+export * from './fake-mcp-app-server.js';
 export * from './mcpb-fixture.js';

@@ -48,6 +48,7 @@ const CONNECTION: AppToolContext = {
   connectorSlug: 'github',
   accountLabel: 'jyy@example.com',
   appName: 'GitHub',
+  tier: 'verified',
 };
 const SERVER = { id: 'conn_gh', name: 'GitHub（jyy@example.com）' };
 

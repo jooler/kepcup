@@ -6,6 +6,8 @@ import {
   StreamableHttpTransport,
   McpConnectionClosedError,
   type CallToolResult,
+  type ClientCapabilities,
+  type ReadResourceResult,
   type Tool as McpTool,
   type ToolAnnotations,
 } from '@earendil-works/pi-mcp';
@@ -46,6 +48,15 @@ import { toolLockKey } from '../apps/tool-lock.js';
 
 /** W5：调用时刷新工具注解的上限（在线连接上的 tools/list；超时用已知注解）。 */
 const MCP_RISK_REFRESH_TIMEOUT_MS = 5_000;
+
+/**
+ * MCP Apps（D73 P3 §7.5）：客户端在 `initialize` 里声明支持 `text/html;profile=mcp-app` 的 UI 资源，
+ * 服务端据此才会给工具带上 `_meta.ui.resourceUri`。pi-mcp 的 `ClientCapabilities` 类型还没有
+ * `extensions` 字段，但会原样发送。
+ */
+const MCP_APPS_CLIENT_CAPABILITIES = {
+  extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } },
+} as unknown as ClientCapabilities;
 
 /** `needs_auth`（D73）：OAuth server 未连接 / 令牌失效 / 需追加权限——不是失败，不计入停用。 */
 export type McpServerStatus = 'connecting' | 'connected' | 'failed' | 'closed' | 'needs_auth';
@@ -677,6 +688,38 @@ export class McpService {
     }
   }
 
+  /**
+   * 读取 MCP 资源（`resources/read`，D73 P3 MCP Apps 的 `ui://` 资源）。错误映射与 `callTool` 一致：
+   * 授权问题原样上抛（`AppAuthRequiredError`），传输故障丢弃连接，其余统一为 `MCP_CALL_FAILED`。
+   */
+  async readResource(
+    server: McpServer,
+    uri: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ReadResourceResult> {
+    const state = await this.#ensureConnected(server);
+    try {
+      return await state.client.readResource(uri, {
+        signal: options.signal,
+        timeoutMs: MCP_CALL_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const authError = this.#authFailureOf(server, error);
+      if (authError !== null) {
+        this.#emitNeedsAuth(server, authError);
+        throw authError;
+      }
+      if (error instanceof McpConnectionClosedError || this.#isTransportFailure(error)) {
+        this.#dropConnection(server, state, error);
+      }
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        'MCP_CALL_FAILED',
+        `MCP 资源读取失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   /** D73：授权恢复 / 配置修好后清零某 server 的连接失败计数（解除“已停用”）。 */
   resetFailures(serverId: string): void {
     this.#failures.delete(serverId);
@@ -728,7 +771,21 @@ export class McpService {
    * D73：关闭并丢弃某 server 缓存的连接（令牌被替换 / 断开 / server 被删除后，下次调用
    * 用新凭据重连）。不计入失败次数；进行中的连接先等它收尾。
    */
+  /** D73 P3: told when a server is closed / dropped by disconnect, removal or credential change. */
+  onServerClosed(listener: (serverId: string) => void): void {
+    this.#closeListeners.add(listener);
+  }
+
+  readonly #closeListeners = new Set<(serverId: string) => void>();
+
   async closeServer(serverId: string): Promise<void> {
+    for (const listener of this.#closeListeners) {
+      try {
+        listener(serverId);
+      } catch {
+        // A listener must never break closing.
+      }
+    }
     const inFlight = this.#pending.get(serverId);
     if (inFlight !== undefined) await inFlight.promise.catch(() => {});
     const state = this.#connections.get(serverId);
@@ -794,7 +851,11 @@ export class McpService {
       serverName: server.name,
       status: 'connecting',
     });
-    const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
+    const client = new McpClient({
+      name: 'kepcup',
+      version: '0.0.0',
+      capabilities: MCP_APPS_CLIENT_CAPABILITIES,
+    });
     try {
       await this.#connectClient(client, server);
     } catch (error) {

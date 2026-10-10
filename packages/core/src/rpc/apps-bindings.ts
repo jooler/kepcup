@@ -62,7 +62,9 @@ export function bindAppsMethods(services: CoreServices): Record<string, RpcMetho
       appsConnectConfirmToolsInputSchema,
       okOutputSchema,
       async (input) => {
-        apps().flows.confirmTools(input.flowId);
+        apps().flows.confirmTools(input.flowId, {
+          acknowledgeCommunity: input.acknowledgeCommunity === true,
+        });
         return { ok: true as const };
       },
     ),

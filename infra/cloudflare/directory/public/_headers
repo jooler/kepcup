@@ -1,0 +1,17 @@
+# Cloudflare Static Assets 只认资源根目录下的 _headers（不是 connectors/v1/ 里的）。
+# 索引入口与签名：短缓存，客户端每日带 ETag 条件请求。
+/connectors/v1/index.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=300
+  X-Content-Type-Options: nosniff
+
+/connectors/v1/index.json.sig
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=300
+  X-Content-Type-Options: nosniff
+
+# 增量按内容寻址（文件名 = 两份条目集的 sha256），永不变化。
+/connectors/v1/deltas/*
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

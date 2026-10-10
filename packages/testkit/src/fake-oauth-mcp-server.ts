@@ -11,7 +11,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   isInitializeRequest,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   type CallToolResult,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -124,12 +126,25 @@ export interface FakeMcpTool {
   inputSchema?: Tool['inputSchema'];
   /** Any MCP tool annotations (readOnlyHint, destructiveHint, …). */
   annotations?: Tool['annotations'];
+  /** Tool `_meta` (e.g. `{ ui: { resourceUri } }` for MCP Apps). */
+  _meta?: Record<string, unknown>;
   /** tools/call answers 403 insufficient_scope unless the token has all of these. */
   requiredScopes?: string[];
   handler?: (
     args: Record<string, unknown>,
     ctx: { token: string | null; scopes: string[] },
   ) => CallToolResult | string | Promise<CallToolResult | string>;
+}
+
+/** MCP resource served by the fake (`resources/list` + `resources/read`); e.g. MCP Apps `ui://` pages. */
+export interface FakeMcpResource {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  /** Text body returned by resources/read. */
+  text: string;
+  /** `_meta` of the resource contents (MCP Apps: `{ ui: { csp: { … } } }`). */
+  contentMeta?: Record<string, unknown>;
 }
 
 export interface FakePreregisteredClient {
@@ -143,6 +158,8 @@ export interface FakePreregisteredClient {
 export interface FakeOAuthMcpOptions extends Partial<FakeOAuthMcpConfig> {
   /** Initial tools; default is one read-only `echo` tool. */
   tools?: FakeMcpTool[];
+  /** Initial resources; when set the server advertises the `resources` capability. */
+  resources?: FakeMcpResource[];
   preregisteredClients?: FakePreregisteredClient[];
 }
 
@@ -272,6 +289,8 @@ export interface FakeOAuthMcpServer {
   // Tools (runtime mutable; each mutation emits notifications/tools/list_changed).
   readonly tools: readonly FakeMcpTool[];
   setTools(tools: FakeMcpTool[]): Promise<void>;
+  /** Replace the served resources (advertised only if the server was started with `resources`). */
+  setResources(resources: FakeMcpResource[]): void;
   addTool(tool: FakeMcpTool): Promise<void>;
   removeTool(name: string): Promise<void>;
   /** Number of list_changed notifications sent (to any session). */
@@ -550,9 +569,16 @@ export async function simulateBrowser(url: string | URL): Promise<SimulatedBrows
 export function startFakeOAuthMcpServer(
   options: FakeOAuthMcpOptions = {},
 ): Promise<FakeOAuthMcpServer> {
-  const { tools: initialTools, preregisteredClients, ...configOptions } = options;
+  const {
+    tools: initialTools,
+    resources: initialResources,
+    preregisteredClients,
+    ...configOptions
+  } = options;
   const config: FakeOAuthMcpConfig = { ...DEFAULT_CONFIG, now: Date.now, ...configOptions };
   let tools: FakeMcpTool[] = [...(initialTools ?? DEFAULT_TOOLS)];
+  let resources: FakeMcpResource[] = [...(initialResources ?? [])];
+  const advertiseResources = initialResources !== undefined;
 
   const preregistered = new Map<string, ClientRecord>();
   const dynamicClients = new Map<string, ClientRecord>();
@@ -689,8 +715,36 @@ export function startFakeOAuthMcpServer(
   function createSession(): Session {
     const server = new McpServer(
       { name: 'fake-oauth-mcp', version: '0.0.0' },
-      { capabilities: { tools: { listChanged: true } } },
+      {
+        capabilities: {
+          tools: { listChanged: true },
+          ...(advertiseResources ? { resources: {} } : {}),
+        },
+      },
     );
+    if (advertiseResources) {
+      server.setRequestHandler(ListResourcesRequestSchema, () => ({
+        resources: resources.map((resource) => ({
+          uri: resource.uri,
+          name: resource.name ?? resource.uri,
+          ...(resource.mimeType !== undefined ? { mimeType: resource.mimeType } : {}),
+        })),
+      }));
+      server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+        const resource = resources.find((candidate) => candidate.uri === request.params.uri);
+        if (resource === undefined) throw new Error(`unknown resource ${request.params.uri}`);
+        return {
+          contents: [
+            {
+              uri: resource.uri,
+              ...(resource.mimeType !== undefined ? { mimeType: resource.mimeType } : {}),
+              text: resource.text,
+              ...(resource.contentMeta !== undefined ? { _meta: resource.contentMeta } : {}),
+            },
+          ],
+        };
+      });
+    }
     server.setRequestHandler(ListToolsRequestSchema, () => ({
       tools: tools.map((tool) => ({
         name: tool.name,
@@ -698,6 +752,7 @@ export function startFakeOAuthMcpServer(
         description: tool.description ?? `Fake tool ${tool.name}`,
         inputSchema: tool.inputSchema ?? { type: 'object' as const, properties: {} },
         ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+        ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
       })),
     }));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
@@ -1336,6 +1391,9 @@ export function startFakeOAuthMcpServer(
         setTools: async (next) => {
           tools = [...next];
           await notifyToolsChanged();
+        },
+        setResources: (next) => {
+          resources = [...next];
         },
         addTool: async (tool) => {
           tools = [...tools.filter((existing) => existing.name !== tool.name), tool];

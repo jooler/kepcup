@@ -1,0 +1,978 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Official MCP Registry (hand-maintained subset for the KepCup sub-registry)",
+    "version": "1.0.0"
+  },
+  "x-source": "https://registry.modelcontextprotocol.io/openapi.json (fetched 2026-10-10; info.version 1.0.0)",
+  "x-note": "HAND-MAINTAINED SUBSET of the live OpenAPI: only the read-only /v0.1 operations a sub-registry serves, plus the schemas they reference. Re-fetch and diff when the upstream changes (see README \"verify against live OpenAPI\").",
+  "x-kepcup-modifications": [
+    "components.schemas.ResponseMeta: added optional properties \"app.kepcup/connector\" and \"app.kepcup/review\" (KepCup extension keys; upstream has additionalProperties:false with only the official key).",
+    "components.schemas.ServerMeta: added optional property \"app.kepcup/connector\" (server.json _meta per design 29 section 4).",
+    "components.schemas.KepcupConnectorMeta / KepcupReviewMeta: new, KepCup-only.",
+    "Query parameters / error semantics copied verbatim; the live service answers parameter violations with HTTP 422 (huma), which this sub-registry mirrors."
+  ],
+  "paths": {
+    "/v0.1/servers": {
+      "get": {
+        "operationId": "list-servers-v0.1",
+        "parameters": [
+          {
+            "description": "Pagination cursor",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Pagination cursor",
+              "examples": ["server-cursor-123"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Number of items per page",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 30,
+              "description": "Number of items per page",
+              "examples": [50],
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter servers updated since timestamp (RFC3339 datetime)",
+            "explode": false,
+            "in": "query",
+            "name": "updated_since",
+            "schema": {
+              "description": "Filter servers updated since timestamp (RFC3339 datetime)",
+              "examples": ["2025-08-07T13:15:04.280Z"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Search servers by name (substring match)",
+            "explode": false,
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "description": "Search servers by name (substring match)",
+              "examples": ["filesystem"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by version ('latest' for latest version, or an exact version like '1.2.3')",
+            "explode": false,
+            "in": "query",
+            "name": "version",
+            "schema": {
+              "description": "Filter by version ('latest' for latest version, or an exact version like '1.2.3')",
+              "examples": ["latest"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include deleted servers in results (default: false, but always true when updated_since is provided)",
+            "explode": false,
+            "in": "query",
+            "name": "include_deleted",
+            "schema": {
+              "description": "Include deleted servers in results (default: false, but always true when updated_since is provided)",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/v0.1/servers/{serverName}/versions": {
+      "get": {
+        "operationId": "get-server-versions-v0.1",
+        "parameters": [
+          {
+            "description": "URL-encoded server name",
+            "in": "path",
+            "name": "serverName",
+            "required": true,
+            "schema": {
+              "description": "URL-encoded server name",
+              "examples": ["com.example%2Fmy-server"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include deleted servers in results (default: false)",
+            "explode": false,
+            "in": "query",
+            "name": "include_deleted",
+            "schema": {
+              "default": false,
+              "description": "Include deleted servers in results (default: false)",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/v0.1/servers/{serverName}/versions/{version}": {
+      "get": {
+        "operationId": "get-server-version-v0.1",
+        "parameters": [
+          {
+            "description": "URL-encoded server name",
+            "in": "path",
+            "name": "serverName",
+            "required": true,
+            "schema": {
+              "description": "URL-encoded server name",
+              "examples": ["com.example%2Fmy-server"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "URL-encoded server version",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "URL-encoded server version",
+              "examples": ["1.0.0"],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include deleted servers in results (default: false)",
+            "explode": false,
+            "in": "query",
+            "name": "include_deleted",
+            "schema": {
+              "default": false,
+              "description": "Include deleted servers in results (default: false)",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/v0.1/health": {
+      "get": {
+        "operationId": "get-health-v0.1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/v0.1/ping": {
+      "get": {
+        "operationId": "ping-v0.1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PingBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    },
+    "/v0.1/version": {
+      "get": {
+        "operationId": "get-version-v0.1",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ServerListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata",
+            "description": "Pagination metadata"
+          },
+          "servers": {
+            "description": "List of server entries",
+            "items": {
+              "$ref": "#/components/schemas/ServerResponse"
+            },
+            "type": ["array", "null"]
+          }
+        },
+        "required": ["servers", "metadata"],
+        "type": "object"
+      },
+      "Metadata": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Number of items in current page",
+            "format": "int64",
+            "type": "integer"
+          },
+          "nextCursor": {
+            "description": "Pagination cursor for retrieving the next page of results. Use this exact value in the cursor query parameter of your next request.",
+            "type": "string"
+          }
+        },
+        "required": ["count"],
+        "type": "object"
+      },
+      "ServerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "_meta": {
+            "$ref": "#/components/schemas/ResponseMeta",
+            "description": "Registry-managed metadata"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerJSON",
+            "description": "Server configuration and metadata"
+          }
+        },
+        "required": ["server", "_meta"],
+        "type": "object"
+      },
+      "ResponseMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "io.modelcontextprotocol.registry/official": {
+            "$ref": "#/components/schemas/RegistryExtensions",
+            "description": "Official MCP registry metadata"
+          },
+          "app.kepcup/connector": {
+            "$ref": "#/components/schemas/KepcupConnectorMeta"
+          },
+          "app.kepcup/review": {
+            "$ref": "#/components/schemas/KepcupReviewMeta"
+          }
+        },
+        "type": "object"
+      },
+      "RegistryExtensions": {
+        "additionalProperties": false,
+        "properties": {
+          "isLatest": {
+            "description": "Whether this is the latest version of the server",
+            "type": "boolean"
+          },
+          "publishedAt": {
+            "description": "Timestamp when the server was first published to the registry",
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "description": "Server lifecycle status",
+            "enum": ["active", "deprecated", "deleted"],
+            "type": "string"
+          },
+          "statusChangedAt": {
+            "description": "Timestamp when the server status was last changed",
+            "format": "date-time",
+            "type": "string"
+          },
+          "statusMessage": {
+            "description": "Optional message explaining status change (e.g., deprecation reason, migration guidance)",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Timestamp when the server entry was last updated",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": ["status", "statusChangedAt", "publishedAt", "isLatest"],
+        "type": "object"
+      },
+      "ServerJSON": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "JSON Schema URI for this server.json format",
+            "examples": [
+              "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+            ],
+            "format": "uri",
+            "minLength": 1,
+            "type": "string"
+          },
+          "_meta": {
+            "$ref": "#/components/schemas/ServerMeta",
+            "description": "Extension metadata using reverse DNS namespacing for vendor-specific data"
+          },
+          "description": {
+            "description": "Clear human-readable explanation of server functionality.",
+            "examples": ["MCP server providing weather data and forecasts via OpenWeatherMap API"],
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "icons": {
+            "description": "Optional set of sized icons that the client can display in a user interface.",
+            "items": {
+              "$ref": "#/components/schemas/Icon"
+            },
+            "type": ["array", "null"]
+          },
+          "name": {
+            "description": "Server name in reverse-DNS format. Must contain exactly one forward slash separating namespace from server name.",
+            "examples": ["io.github.user/weather"],
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$",
+            "type": "string"
+          },
+          "packages": {
+            "description": "Array of package configurations",
+            "items": {
+              "$ref": "#/components/schemas/Package"
+            },
+            "type": ["array", "null"]
+          },
+          "remotes": {
+            "description": "Array of remote configurations",
+            "items": {
+              "$ref": "#/components/schemas/Transport"
+            },
+            "type": ["array", "null"]
+          },
+          "repository": {
+            "$ref": "#/components/schemas/Repository",
+            "description": "Optional repository metadata for the MCP server source code."
+          },
+          "title": {
+            "description": "Optional human-readable title or display name for the MCP server.",
+            "examples": ["Weather API"],
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "description": "Version string for this server. SHOULD follow semantic versioning.",
+            "examples": ["1.0.2"],
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "websiteUrl": {
+            "description": "Optional URL to the server's homepage, documentation, or project website.",
+            "examples": ["https://modelcontextprotocol.io/examples"],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": ["$schema", "name", "description", "version"],
+        "type": "object"
+      },
+      "ServerMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "additionalProperties": {},
+            "description": "Publisher-provided metadata for downstream registries",
+            "type": "object"
+          },
+          "app.kepcup/connector": {
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "Icon": {
+        "additionalProperties": false,
+        "properties": {
+          "mimeType": {
+            "description": "Optional MIME type override if the source MIME type is missing or generic. Must be one of: image/png, image/jpeg, image/jpg, image/svg+xml, image/webp.",
+            "enum": ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"],
+            "examples": ["image/png"],
+            "type": "string"
+          },
+          "sizes": {
+            "description": "Optional array of strings that specify sizes at which the icon can be used. Each string should be in WxH format (e.g., '48x48', '96x96') or 'any' for scalable formats like SVG. If not provided, the client should assume that the icon can be used at any size.",
+            "items": {
+              "type": "string"
+            },
+            "type": ["array", "null"]
+          },
+          "src": {
+            "description": "A standard URI pointing to an icon resource. Must be an HTTPS URL. Consumers SHOULD take steps to ensure URLs serving icons are from the same domain as the server or a trusted domain. Consumers SHOULD take appropriate precautions when consuming SVGs as they can contain executable JavaScript.",
+            "examples": ["https://example.com/icon.png"],
+            "format": "uri",
+            "maxLength": 255,
+            "type": "string"
+          },
+          "theme": {
+            "description": "Optional specifier for the theme this icon is designed for. 'light' indicates the icon is designed to be used with a light background, and 'dark' indicates the icon is designed to be used with a dark background. If not provided, the client should assume the icon can be used with any theme.",
+            "enum": ["light", "dark"],
+            "type": "string"
+          }
+        },
+        "required": ["src"],
+        "type": "object"
+      },
+      "Package": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentVariables": {
+            "description": "A mapping of environment variables to be set when running the package.",
+            "items": {
+              "$ref": "#/components/schemas/KeyValueInput"
+            },
+            "type": ["array", "null"]
+          },
+          "fileSha256": {
+            "description": "SHA-256 hash of the package file for integrity verification. Required for MCPB packages and optional for other package types. Authors are responsible for generating correct SHA-256 hashes when creating server.json. If present, MCP clients must validate the downloaded file matches the hash before running packages to ensure file integrity.",
+            "examples": ["fe333e598595000ae021bd27117db32ec69af6987f507ba7a63c90638ff633ce"],
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "identifier": {
+            "description": "Package identifier - either a package name (for registries) or URL (for direct downloads)",
+            "examples": ["@modelcontextprotocol/server-brave-search"],
+            "minLength": 1,
+            "type": "string"
+          },
+          "packageArguments": {
+            "description": "A list of arguments to be passed to the package's binary.",
+            "items": {
+              "$ref": "#/components/schemas/Argument"
+            },
+            "type": ["array", "null"]
+          },
+          "registryBaseUrl": {
+            "description": "Base URL of the package registry",
+            "examples": ["https://registry.npmjs.org"],
+            "format": "uri",
+            "type": "string"
+          },
+          "registryType": {
+            "description": "Registry type indicating how to download packages (e.g., 'npm', 'pypi', 'cargo', 'oci', 'nuget', 'mcpb')",
+            "examples": ["npm"],
+            "minLength": 1,
+            "type": "string"
+          },
+          "runtimeArguments": {
+            "description": "A list of arguments to be passed to the package's runtime command (such as docker or npx). The runtimeHint field should be provided when runtimeArguments are present.",
+            "items": {
+              "$ref": "#/components/schemas/Argument"
+            },
+            "type": ["array", "null"]
+          },
+          "runtimeHint": {
+            "description": "A hint to help clients determine the appropriate runtime for the package. This field should be provided when runtimeArguments are present.",
+            "examples": ["npx"],
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport",
+            "description": "Transport protocol configuration for the package"
+          },
+          "version": {
+            "description": "Package version. Must be a specific version. Version ranges are rejected (e.g., '^1.2.3', '~1.2.3', '>=1.2.3', '1.x', '1.*').",
+            "examples": ["1.0.2"],
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": ["registryType", "identifier", "transport"],
+        "type": "object"
+      },
+      "KeyValueInput": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "description": "A list of possible values for the input. If provided, the user must select one of these values.",
+            "items": {
+              "type": "string"
+            },
+            "type": ["array", "null"]
+          },
+          "default": {
+            "description": "The default value for the input. This should be a valid value for the input. If you want to provide input examples or guidance, use the placeholder field instead.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A description of the input, which clients can use to provide context to the user.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Specifies the input format. Supported values include filepath, which should be interpreted as a file on the user's filesystem.",
+            "enum": ["string", "number", "boolean", "filepath"],
+            "type": "string"
+          },
+          "isRequired": {
+            "description": "Whether the input is required",
+            "type": "boolean"
+          },
+          "isSecret": {
+            "description": "Indicates whether the input is a secret value (e.g., password, token). If true, clients should handle the value securely.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Name of the header or environment variable.",
+            "examples": ["SOME_VARIABLE"],
+            "type": "string"
+          },
+          "placeholder": {
+            "description": "A placeholder for the input to be displaying during configuration. This is used to provide examples or guidance about the expected form or content of the input.",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value for the input. If this is not set, the user may be prompted to provide a value. Identifiers wrapped in {curly_braces} will be replaced with the corresponding properties from the input variables map.",
+            "type": "string"
+          },
+          "variables": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Input"
+            },
+            "description": "A map of variable names to their values. Keys in the input value that are wrapped in {curly_braces} will be replaced with the corresponding variable values.",
+            "type": "object"
+          }
+        },
+        "required": ["name"],
+        "type": "object"
+      },
+      "Input": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "description": "A list of possible values for the input. If provided, the user must select one of these values.",
+            "items": {
+              "type": "string"
+            },
+            "type": ["array", "null"]
+          },
+          "default": {
+            "description": "The default value for the input. This should be a valid value for the input. If you want to provide input examples or guidance, use the placeholder field instead.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A description of the input, which clients can use to provide context to the user.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Specifies the input format. Supported values include filepath, which should be interpreted as a file on the user's filesystem.",
+            "enum": ["string", "number", "boolean", "filepath"],
+            "type": "string"
+          },
+          "isRequired": {
+            "description": "Whether the input is required",
+            "type": "boolean"
+          },
+          "isSecret": {
+            "description": "Indicates whether the input is a secret value (e.g., password, token). If true, clients should handle the value securely.",
+            "type": "boolean"
+          },
+          "placeholder": {
+            "description": "A placeholder for the input to be displaying during configuration. This is used to provide examples or guidance about the expected form or content of the input.",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value for the input. If this is not set, the user may be prompted to provide a value. Identifiers wrapped in {curly_braces} will be replaced with the corresponding properties from the input variables map.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Argument": {
+        "additionalProperties": false,
+        "properties": {
+          "choices": {
+            "description": "A list of possible values for the input. If provided, the user must select one of these values.",
+            "items": {
+              "type": "string"
+            },
+            "type": ["array", "null"]
+          },
+          "default": {
+            "description": "The default value for the input. This should be a valid value for the input. If you want to provide input examples or guidance, use the placeholder field instead.",
+            "type": "string"
+          },
+          "description": {
+            "description": "A description of the input, which clients can use to provide context to the user.",
+            "type": "string"
+          },
+          "format": {
+            "description": "Specifies the input format. Supported values include filepath, which should be interpreted as a file on the user's filesystem.",
+            "enum": ["string", "number", "boolean", "filepath"],
+            "type": "string"
+          },
+          "isRepeated": {
+            "description": "Whether the argument can be repeated multiple times.",
+            "type": "boolean"
+          },
+          "isRequired": {
+            "description": "Whether the input is required",
+            "type": "boolean"
+          },
+          "isSecret": {
+            "description": "Indicates whether the input is a secret value (e.g., password, token). If true, clients should handle the value securely.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The flag name (for named arguments), including any leading dashes. Empty for positional arguments.",
+            "examples": ["--port"],
+            "type": "string"
+          },
+          "placeholder": {
+            "description": "A placeholder for the input to be displaying during configuration. This is used to provide examples or guidance about the expected form or content of the input.",
+            "type": "string"
+          },
+          "type": {
+            "description": "Argument type: 'positional' or 'named'",
+            "examples": ["positional"],
+            "type": "string"
+          },
+          "value": {
+            "description": "The value for the input. If this is not set, the user may be prompted to provide a value. Identifiers wrapped in {curly_braces} will be replaced with the corresponding properties from the input variables map.",
+            "type": "string"
+          },
+          "valueHint": {
+            "description": "An identifier for positional arguments. Used in transport URL variable substitution.",
+            "examples": ["file_path"],
+            "type": "string"
+          },
+          "variables": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Input"
+            },
+            "description": "A map of variable names to their values. Keys in the input value that are wrapped in {curly_braces} will be replaced with the corresponding variable values.",
+            "type": "object"
+          }
+        },
+        "required": ["type"],
+        "type": "object"
+      },
+      "Transport": {
+        "additionalProperties": false,
+        "properties": {
+          "headers": {
+            "description": "HTTP headers for streamable-http or sse transports",
+            "items": {
+              "$ref": "#/components/schemas/KeyValueInput"
+            },
+            "type": ["array", "null"]
+          },
+          "type": {
+            "description": "Transport type (stdio, streamable-http, or sse)",
+            "examples": ["stdio"],
+            "type": "string"
+          },
+          "url": {
+            "description": "URL for streamable-http or sse transports",
+            "examples": ["https://api.example.com/mcp"],
+            "type": "string"
+          },
+          "variables": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Input"
+            },
+            "description": "Variables for URL templating in remote transports",
+            "type": "object"
+          }
+        },
+        "required": ["type"],
+        "type": "object"
+      },
+      "Repository": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Repository identifier from the hosting service (e.g., GitHub repo ID). Owned and determined by the source forge. Should remain stable across repository renames and may be used to detect repository resurrection attacks - if a repository is deleted and recreated, the ID should change. For GitHub, use: gh api repos/<owner>/<repo> --jq '.id'",
+            "examples": ["b94b5f7e-c7c6-d760-2c78-a5e9b8a5b8c9"],
+            "type": "string"
+          },
+          "source": {
+            "description": "Repository hosting service identifier. Used by registries to determine validation and API access methods.",
+            "examples": ["github"],
+            "type": "string"
+          },
+          "subfolder": {
+            "description": "Optional relative path from repository root to the server location within a monorepo or nested package structure. Must be a clean relative path.",
+            "examples": ["src/everything"],
+            "type": "string"
+          },
+          "url": {
+            "description": "Repository URL for browsing source code. Should support both web browsing and git clone operations.",
+            "examples": ["https://github.com/modelcontextprotocol/servers"],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorModel": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "description": "A human-readable explanation specific to this occurrence of the problem.",
+            "examples": ["Property foo is required but is missing."],
+            "type": "string"
+          },
+          "errors": {
+            "description": "Optional list of individual error details",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "type": ["array", "null"]
+          },
+          "instance": {
+            "description": "A URI reference that identifies the specific occurrence of the problem.",
+            "examples": ["https://example.com/error-log/abc123"],
+            "format": "uri",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP status code",
+            "examples": [400],
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "A short, human-readable summary of the problem type. This value should not change between occurrences of the error.",
+            "examples": ["Bad Request"],
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "A URI reference to human-readable documentation for the error.",
+            "examples": ["https://example.com/errors/example"],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
+            "type": "string"
+          },
+          "message": {
+            "description": "Error message text",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value at the given location"
+          }
+        },
+        "type": "object"
+      },
+      "HealthBody": {
+        "additionalProperties": false,
+        "properties": {
+          "github_client_id": {
+            "description": "GitHub OAuth App Client ID",
+            "type": "string"
+          },
+          "status": {
+            "description": "Health status",
+            "examples": ["ok"],
+            "type": "string"
+          }
+        },
+        "required": ["status"],
+        "type": "object"
+      },
+      "PingBody": {
+        "additionalProperties": false,
+        "properties": {
+          "pong": {
+            "description": "Ping response",
+            "examples": [true],
+            "type": "boolean"
+          }
+        },
+        "required": ["pong"],
+        "type": "object"
+      },
+      "VersionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "build_time": {
+            "description": "Build timestamp",
+            "examples": ["2025-10-14T12:00:00Z"],
+            "type": "string"
+          },
+          "git_commit": {
+            "description": "Git commit SHA",
+            "examples": ["abc123d"],
+            "type": "string"
+          },
+          "version": {
+            "description": "Application version",
+            "examples": ["v1.0.0"],
+            "type": "string"
+          }
+        },
+        "required": ["version", "git_commit", "build_time"],
+        "type": "object"
+      },
+      "KepcupConnectorMeta": {
+        "description": "KepCup extension (not in the official OpenAPI). Present only for approved reviews.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tier"],
+        "properties": {
+          "tier": {
+            "type": "string",
+            "enum": ["verified", "community"]
+          }
+        }
+      },
+      "KepcupReviewMeta": {
+        "description": "KepCup extension (not in the official OpenAPI). Present only for approved reviews.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tier", "status", "reviewedAt", "toolContractHash"],
+        "properties": {
+          "tier": {
+            "type": "string",
+            "enum": ["verified", "community"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["approved"]
+          },
+          "reviewedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "toolContractHash": {
+            "type": ["string", "null"]
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

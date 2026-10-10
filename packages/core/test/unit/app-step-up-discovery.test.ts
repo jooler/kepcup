@@ -169,6 +169,7 @@ describe('appToolsDeferred / prompt', () => {
     connection: { id: 'conn_1', status: 'connected', label: 'a@b.c' },
     slug: 'notes',
     appName: 'Notes',
+    tier: 'verified',
     accountLabel: 'a@b.c',
     description: '笔记',
   } as never;

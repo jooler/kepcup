@@ -1,5 +1,6 @@
 import type {
   AppCatalogEntry,
+  AppsDirectoryStatus,
   AppConnection,
   AppConnectionStatus,
   Bot,
@@ -50,6 +51,61 @@ export const TIER_LABEL_KEYS: Record<ConnectorTier, MessageKey> = {
 
 export type CategoryFilter = ConnectorCategory | 'all';
 
+// --- 分级分组（D73 P3 §7.2）-------------------------------------------------------
+
+const TIER_RANK: Record<ConnectorTier, number> = {
+  builtin: 0,
+  verified: 1,
+  developer: 2,
+  community: 3,
+};
+
+export interface CatalogSections {
+  /** 内置 / 已认证（及其他非社区）条目：内置在前，同级保持入参顺序。 */
+  main: AppCatalogEntry[];
+  /** 社区条目：在目录里单独成组，默认折叠。 */
+  community: AppCatalogEntry[];
+}
+
+/**
+ * 目录分组（设计 29 §11.3）：`community` 单独成「社区」组（界面默认折叠，显示数量），其余按
+ * 分级排序（`builtin` 在前、`verified` 次之）；每组内保持入参顺序（稳定排序）。不修改入参。
+ */
+export function catalogSections(entries: readonly AppCatalogEntry[]): CatalogSections {
+  const community: AppCatalogEntry[] = [];
+  const rest: AppCatalogEntry[] = [];
+  for (const entry of entries) (entry.tier === 'community' ? community : rest).push(entry);
+  const main = rest
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => TIER_RANK[a.entry.tier] - TIER_RANK[b.entry.tier] || a.index - b.index)
+    .map((item) => item.entry);
+  return { main, community };
+}
+
+/**
+ * 社区组是否展开：用户手动展开，或正在搜索（搜索时不该把命中的社区应用藏起来），或社区组是
+ * 唯一有结果的组。没有社区条目 = 不展开（也不显示该组）。
+ */
+export function communityExpanded(input: {
+  open: boolean;
+  query: string;
+  mainCount: number;
+  communityCount: number;
+}): boolean {
+  if (input.communityCount === 0) return false;
+  return input.open || input.query.trim().length > 0 || input.mainCount === 0;
+}
+
+/** 认证（`verified`）条目带「认证」徽标。 */
+export function isVerifiedTier(tier: ConnectorTier): boolean {
+  return tier === 'verified';
+}
+
+/** 目录同步降级时的提示（`ok` / `stale` / `disabled` 不打扰用户）。 */
+export function directoryNoticeKey(state: AppsDirectoryStatus['state']): MessageKey | null {
+  return state === 'degraded' ? 'apps.directory.degraded' : null;
+}
+
 /** 目录里实际出现的分类，按 {@link CATEGORY_ORDER} 排序。 */
 export function catalogCategories(entries: readonly AppCatalogEntry[]): ConnectorCategory[] {
   const present = new Set(entries.map((entry) => entry.category));
@@ -72,7 +128,8 @@ export function filterCatalog(
   const category = filter.category ?? 'all';
   return entries.filter(
     (entry) =>
-      (category === 'all' || entry.category === category) && matchesQuery(entry, filter.query ?? ''),
+      (category === 'all' || entry.category === category) &&
+      matchesQuery(entry, filter.query ?? ''),
   );
 }
 
@@ -214,7 +271,9 @@ export const BADGE_TONE_CLASSES: Record<BadgeTone, string> = {
 
 /** 授权了该连接的 Bot（`runtime.app_connection_ids` 含连接 id）。 */
 export function botsForConnection(bots: readonly Bot[], connectionId: string): Bot[] {
-  return bots.filter((bot) => (bot.profile.runtime.app_connection_ids ?? []).includes(connectionId));
+  return bots.filter((bot) =>
+    (bot.profile.runtime.app_connection_ids ?? []).includes(connectionId),
+  );
 }
 
 /** 各连接已授权的 Bot 数（一次遍历，供列表行用）。 */

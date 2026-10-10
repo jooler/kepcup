@@ -29,8 +29,22 @@ const STATUS_TEXT: Record<AppConnectionStatus, { text: string; reconnect: boolea
   disabled: { text: '已被用户停用', reconnect: false },
 };
 
-function oneLine(text: string, max = 80): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, max);
+/** 控制字符与不可见的方向 / 零宽标记（U+200B-200F、U+202A-202E、U+2060-2064、U+2066-2069、U+FEFF）。 */
+const INVISIBLE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+/**
+ * 进提示词的一行文本。标题 / 描述可能来自远端目录（不可信）：折叠空白、去掉 `<` `>`（不能借
+ * `</available_apps>` 之类的标签逃出本段）、控制字符与方向 / 零宽标记，再截断。
+ */
+export function oneLine(text: string, max = 80): string {
+  return text
+    .replace(INVISIBLE, ' ')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 }
 
 const RECONNECT_RULE =

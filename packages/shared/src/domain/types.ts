@@ -3,6 +3,7 @@ import { BACKGROUND_DAILY_BUDGET_DEFAULT } from '../constants.js';
 import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.js';
 import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
 import { agentSetupReasonSchema } from './agent-status.js';
+import { appUiCardSchema } from './apps-ui.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -557,8 +558,18 @@ export const appsSettingsSchema = z
      * `apps.taintGuard` 写。
      */
     taintGuard: z.boolean().default(true).catch(true),
+    /**
+     * 目录同步（D73 P3 §7.1）：每日拉取签名目录索引并与打包快照合并。默认开；关闭 = 只用
+     * 打包快照。只经 `settings.update` 的 `apps.directorySync` 写。
+     */
+    directorySync: z.boolean().default(true).catch(true),
   })
-  .catch({ toolLockBaselineDone: false, developerMode: false, taintGuard: true });
+  .catch({
+    toolLockBaselineDone: false,
+    developerMode: false,
+    taintGuard: true,
+    directorySync: true,
+  });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;
 
 /**
@@ -859,6 +870,8 @@ export const cardContentSchema = z.object({
    */
   watchPauseReason: z.enum(['failures', 'too_frequent']).optional(),
   watchFailures: z.number().int().optional(),
+  /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
+  appUi: appUiCardSchema.optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 

@@ -354,7 +354,7 @@
 
 ### DEV-021 连接应用 P2 实现对设计 29 / 执行方案的偏差与补充（D73）
 
-- 状态：待决定
+- 状态：已决定（2026-10-10 用户确认：按推荐，全部保留）
 - 阶段：D73 P2（`todo/connected-apps.md` §6）；P0 / P1 的项见 DEV-019 / DEV-020
 - 是否阻塞：否
 - 问题：实现 P2 时，设计 29 §5 / §7 / §8.3 / §11.3 与 todo §6 有若干没写到或与既有实现冲突之处：
@@ -370,5 +370,30 @@
 - 影响范围：`apps/{step-up,taint,discovery,oauth-clients}.ts`、`apps/auth/{flow,flow-log}.ts`、`apps/mcpb/*`、`apps/connections.ts`、`apps/exposure.ts`、`mcp/policy.ts`、`mcp/tools.ts`、`tools/{app-tools,browser,watch-tools}.ts`、`gateway/index.ts`（`egressCheck`）、`permissions/approvals.ts`、`agent/external/permission-bridge.ts`、`dispatch/orchestrator.ts`、`domain/{lifecycle,delegations,audit}.ts`、`rpc/{apps-bindings,apps-runtime-bindings,apps-connections-bindings,mcpb-bindings}.ts`、`migrations/main/0026`、shared `domain/{mcpb,oauth-clients}.ts` 与 `mcpServerSchema.source` / `tier`、渲染端 `features/settings/{OAuthClientsPanel,McpDevTools,McpbInstall,UnattendedSection}.svelte`、`features/bot-panel/EgressSummary.svelte`、`features/chats/ConnectAppSetupBody.svelte`。
 - 可选方案：按上述实现保留（推荐）；或 1 改为所有自定义 server 在开发者模式下全部确认（推翻 W5，不推荐）、3 改为一律 `egress` 卡（同一调用两张卡，不推荐）、4 改回只按（Bot, 对话）计（群聊可洗白污点，不推荐）、5 改为设置页安装也出审批卡（需先有承载卡片的对话，收益小）、6 把待追加 scopes 落库（需新迁移，等下一次合并窗口）。
 - 推荐：均保留；用户确认后设计 29 §5 客户端顺序、§8.3 外发规则、§11.3 开发者档的旁注并入正文。
-- 决定：（由人工填写）
+- 决定：全部保留（用户，2026-10-10）
 - 已更新的文档：`docs/dev/02-architecture.md`（连接应用 P2 模块与 RPC）、`03-data-model.md`（`app_taint`、`egress`、`apps.developerMode` / `taintGuard`、MCP server `source` / `tier`）、`04-agent-runtime.md`（按需发现、step-up、外发确认、开发者档）、`05-testing.md`（P2 用例分布）、`docs/design/29-connected-apps.md`（修订记录与五处旁注）、`docs/dev/PROGRESS.md`、`todo/connected-apps.md`（§6 实施记录）
+
+### DEV-022 连接应用 P3 实现对设计 29 / 执行方案的偏差与补充（D73）
+
+- 状态：待决定
+- 阶段：D73 P3（`todo/connected-apps.md` §7）；P0–P2 的项见 DEV-019 / DEV-020 / DEV-021
+- 是否阻塞：否
+- 问题：实现 P3 时，设计 29 §8.2 / §11.3 / §11.4 / §11.6 与 todo §7 有若干没写到或与既有实现冲突之处：
+  1. **发行门禁的权威来源按条目来源区分**（todo §7.1「与打包快照合并（同名取较新且通过验签者）」）：随应用打包的 `builtin` 条目，`releaseGate` 恒取快照值，合并之后快照来源的条目仍整体过 `filterReleasedConnectors`（厂商门禁留在客户端，U2 放行才可见）；**远端独有条目**以验签为授权——它们声明的 `releaseGate` 一律忽略并改写为 `'directory'`，不受厂商门禁约束（否则社区目录在发行构建里永远是空的），但必须通过严格的端点校验（`isSafeDirectoryRemoteUrl`：https、无用户信息、带点的非 IP 域名、非 `localhost`；`ConnectorCatalog.isDirectorySourced`，`apps/connections.ts` 再断言一次，目录来源条目永远拿不到注册表里的回环例外）。分级也被钳制：远端自称 `builtin` 按 `verified`，`developer` 丢弃。
+  2. **社区应用首连确认由 core 强制，且无工具可复核的条目没有确认步骤**（todo §7.2 只写「首连额外提示」）：渲染端勾选框之外，`apps.connect.confirmTools({acknowledgeCommunity})` 在 `tier === 'community'` 时缺确认返回 `INVALID_INPUT`（`apps/auth/flow.ts`）；确认挂在工具复核步骤（`reviewing_tools`，事件新带 `tier`）上，没有任何待复核工具的社区条目没有这一步，也就没有确认（此时没有可被授权的工具）。`community` 的写工具时长只有 `once` / `conversation`；**任何创建路径**都不能产生 Bot 级授权（`AppToolGrants.create({connectionTier})` 兜底拒绝，`find({excludeBotLevel})` 令已存在的 Bot 级行对该档不命中）；分级未知 / 缺失一律 fail-closed 按 `community`。
+  3. **目录增量文件客户端暂不消费**（todo §7.1「增量 `deltas/{from}-{to}.json` 按内容寻址」）：签名脚本会生成增量并随索引发布（`index.json` 的 `deltas` 引用、`applyDirectoryDelta` 已有纯函数与测试），但 `directory-sync.ts` 每次拉完整索引（≤ 4 MiB / 5000 条）；消费增量留待目录变大后。
+  4. **技能克隆发生在审批之前，且无体积 / 时间上限**（todo §7.6「走既有 `skill_import` 审批」）：`SkillImporter.import` 先用 libgit2 把目录声明的 https 来源克隆到暂存区、扫描，再提交 `skill_import` 审批卡（来源、commit、扫描结果在卡上）；克隆本身没有大小 / 时间上限——这是 D63 既有行为，未改，列为 D63 的后续项。目录声明的技能名必须等于 SKILL.md 里的名字（`expectedName`，不符 → `status: 'mismatch'`，不提交审批，本进程内不再提示 / 不再克隆）；`isSafeSkillSourceUrl`（https、无用户信息 / 端口 / 查询、带点域名、非 IP / localhost / `.local`、≤ 500 字符）在目录 schema 与安装时各校验一次。
+  5. **MCP Apps 的 iframe 没有独立 partition**（设计 29 §11.6 原文「独立 partition、独立 origin `kepcup-app://{connectionId}/`」）：spike（todo 附录 B.7）证实 `<iframe>` 无法有自己的 partition，特权协议 `kepcup-app` 只能挂在宿主窗口所在的默认 session。隔离改由 opaque origin（`sandbox="allow-scripts"` 且无 `allow-same-origin`）+ 逐应用响应头 CSP + `frame-src kepcup-app:` + 子框架 `will-frame-navigate` 拦截（判定失败即关闭）+ 默认 session 权限白名单（`kepcup-app:` 来源一律拒绝）+ `allow=""` + 无 preload 共同保证；URL 形态为 `kepcup-app://{host}/{resourceId}`（host 由 server id 派生，resourceId 是 128 位随机数）。
+  6. **界面发起的工具调用 `visibility` 默认拒绝**（MCP Apps 规范缺省 `["model","app"]`）：`tools/call` 只允许同一 server 的、`_meta.ui.visibility` **显式**含 `app` 的工具，未声明 / 仅模型可见 / 未知工具一律 `APP_UI_TOOL_NOT_ALLOWED`，不出卡不调用。
+  7. **界面发起的写入一律要人点**（设计 29 §8.1 的无人值守 / 持续授权规则不适用）：`origin: 'app_ui'` 的调用走 `requireHuman`——无人值守、`auto` 策略、server `autoApprove`、持续授权都不能代替，卡片时长只有 `once`（应用不能给自己铸授权），载荷与审计带 `origin:'app_ui'` 与应用名，卡片标「来自应用界面的操作」；同一张卡对被拒绝的工具 30 秒内静默，每个对话至多 3 个待处理的界面调用；卡片关闭 / 过期 / 应用断开 / server 移除会取消待处理审批，之后批准也不执行。ACP 桥（外部智能体）调用应用工具时不出 `mcp_app` 卡。
+  8. **MCP Apps 页面的 CSP 响应头带 `sandbox allow-scripts` 与 `frame-ancestors file: http://localhost:*`**（todo spike 原写 `default-src 'none'` 系列、未提 `frame-ancestors`）：CSP 来源清洗后只接受 https / wss 的精确域名，**拒绝一切通配**，回环只认所属本机 server 的完全相同 `host:port`；`frame-ancestors` 不设 `'none'`，因为宿主页是 `file://`（打包）或 `http://localhost`（开发）。
+  9. **`@modelcontextprotocol/ext-apps` 钉在 1.7.5**：2.x 的 peer 依赖是 SDK 2，仓库锁在 SDK 1.32.1；升级只换 `app-bridge-host.ts` 的 import。
+  10. **`core-port` 握手加秘密 nonce**（评审发现的严重问题，设计未涉及）：渲染端原先接受任何 `message` 事件的 `core-port`，沙箱 iframe 可 `parent.postMessage('core-port', …)` 劫持界面的 core RPC 端口。现 preload 发 `{type:'core-port', nonce}`（nonce 每次加载随机），渲染端只在 `event.source === window` 且 nonce 匹配时接管端口（`rpc/port.ts`）；e2e 探针在旧实现上被证实会失败。测试用页面钩子 `window.__kepcupRpc` 也列入 `pack-hooks` 的 `FORBIDDEN_MARKERS`（产物里不得出现）。
+  11. **社区目录条目在发行构建里无需应用发行门禁即可见，但只经已验签的索引**：生产公钥列表 `CONNECTOR_INDEX_PUBLIC_KEYS` 在用户完成 U5 之前为空——此时目录同步 `disabled`（`disabledReason: 'no_keys'`），不联网，只用打包快照；因此在 U5 之前不存在这条旁路。
+  12. **远端索引不能降低 `builtin` 应用的工具风险**（todo §7.1 只写「同名取较新」）：同名 `builtin` 条目的 `remotes` / `packages` / `auth` / `whoami` / `icon` / `slug` / `skills` 钉死为快照值，`toolPolicy` 只升不降（快照里没有的工具名只接受 `destructive`），远端能更新的只有标题 / 描述 / 版本 / 隐私政策 / 类别 / `ui`；换端点必须发新版应用。
+  13. **远端字符串进系统提示词前先清洗**（设计 29 §8.3 只要求应用输出包 `<untrusted>`）：`<available_apps>` / `<connected_apps>` 里的标题 / 说明经 `apps/prompt.ts oneLine`，去掉 `<` `>`、控制字符、双向控制符与零宽字符并截断，目录条目（含签名过的）不能借提示词注入。
+- 影响范围：`apps/{directory-sync,directory-merge,tier,skills-offer,catalog,connections,grants,prompt}.ts`、`apps/auth/flow.ts`、`apps/ui/*`、`mcp/{risk,service,tools}.ts`、`gateway/index.ts`、`permissions/approvals.ts`、`skills/library.ts`、`dispatch/orchestrator.ts`、`domain/messages.ts`、`rpc/{apps-bindings,apps-connections-bindings,apps-skills-bindings,apps-ui-bindings,bindings}.ts`、`start.ts`、shared `domain/{directory-index,apps-ui,app-skills,connector-catalog}.ts` 与 `policy/*`（从 core 抽出的纯函数）、`scripts/sign-connector-index.mjs`、`infra/cloudflare/{directory,registry}/`、`packages/app-validator/`、主进程 `main/{apps-ui,apps-ui-policy,index}.ts` 与 `apps/desktop/scripts/pack-hooks.cjs`、渲染端 `features/apps-ui/*`、`features/apps/{AppCatalogGrid,ConnectAppPanel,ConnectedSkillsPrompt}.svelte`、`rpc/port.ts`；无新迁移。
+- 可选方案：按上述实现保留（推荐）；或 1 让远端独有条目也受厂商门禁约束（社区目录在发行构建里恒为空，不推荐）、2 去掉 core 侧强制只靠界面勾选（绕过界面即可跳过确认，不推荐）、3 现在就实现增量消费（收益小，等目录变大）、4 在 D63 的导入器里加克隆体积 / 时间上限并改成「先审批后克隆」（需要把来源与 commit 提到审批卡前，工作量较大，留作 D63 后续）、5 给 MCP Apps 另开 `BrowserWindow` / `webview` 以换独立 partition（隔离更强但卡片内嵌体验与消息流集成要重做，不推荐）、6 / 7 放宽为规范缺省或允许持续授权（应用可借此自授权写入，不推荐）。
+- 推荐：均保留；用户确认后设计 29 §8.2 / §11.3 / §11.4 / §11.6 的旁注并入正文，U5 完成时再核对第 11 项的前提（生产公钥已填入）。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/dev/02-architecture.md`（连接应用 P3 模块与 RPC）、`04-agent-runtime.md`（分级规则、界面发起的审批、随附技能提示、MCP Apps 卡）、`05-testing.md`（P3 用例分布与注入点）、`docs/design/29-connected-apps.md`（修订记录与三处旁注）、`docs/dev/PROGRESS.md`、`todo/connected-apps.md`（§7 实施记录）、`todo/connected-apps-user-actions.md`

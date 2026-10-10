@@ -1,0 +1,33 @@
+{
+  // KepCup MCP 子注册表（设计 29 §11.4 / §15.2）：官方 Registry OpenAPI v0.1 的只读实现，
+  // Workers + D1 + Cache API；Cron 从官方注册表增量同步。
+  // 部署前必须由用户完成 README「用户待办」：创建 D1、替换下面的 database_id、DNS、迁移 schema。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kepcup-registry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kepcup-registry",
+      // 占位：`npx wrangler d1 create kepcup-registry` 后把输出的 UUID 填到这里（用户待办）。
+      "database_id": "00000000-0000-0000-0000-000000000000",
+    },
+  ],
+  "triggers": {
+    // 每小时 17 分同步一次上游（避开整点拥塞）。
+    "crons": ["17 * * * *"],
+  },
+  // 路由要求 registry.kepcup.com 在 Cloudflare 上有一条已代理的 DNS 记录（如 AAAA 100::，用户待办）；
+  // 也可改用 {"pattern":"registry.kepcup.com","custom_domain":true} 让 wrangler 自动建记录。
+  "routes": [{ "pattern": "registry.kepcup.com/*", "zone_name": "kepcup.com" }],
+  "vars": {
+    // Workers Free: 8 pages fit the 50-subrequest limit; raise on Workers Paid (see README).
+    "SYNC_MAX_PAGES": "8",
+    "UPSTREAM_REGISTRY_URL": "https://registry.modelcontextprotocol.io",
+    "BUILD_VERSION": "0.1.0",
+  },
+}

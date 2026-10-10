@@ -9,6 +9,7 @@
 - 2026-10-09 P0 实施修订：见 `docs/dev/DEVIATIONS.md` DEV-019（`oauth_clients` 表、回调页等待换令牌、改认证方式 / URL 时断开等）。
 - 2026-10-10 P1 实施修订：见 DEV-020（群聊并发连接的 Bot 授权由 core 合并、重新授权 scopes 取并集、目录面板新建 / 重连语义、隐私政策纯文本、目录条目门禁关闭发布等）。正文未改写，相关处以「P1 实施注」标出。
 - 2026-10-10 P2 实施修订：见 DEV-021（开发者档只对 `tier: developer` 的 server 生效、客户端选择顺序与预注册不回退、污点期间写工具的 `mcp_tool` / `egress` 混合规则、污点随委派 / 群聊传递且来源仅目录应用工具、MCPB 设置页安装的同意方式、待追加 scopes 进程内保存、对话轮 / 子代理遇外发确认不等待、只读子代理的发现工具子集等）。正文未改写，相关处以「P2 实施注」标出。
+- 2026-10-10 P3 实施修订：见 DEV-022（发行门禁对快照条目留在客户端、对远端独有条目以验签为准；社区首连确认由 core 强制；目录增量文件客户端暂不消费；随附技能克隆先于审批；MCP Apps 无独立 partition、`visibility` 默认拒绝、界面发起的写入一律要人点、CSP 响应头加 `sandbox` / `frame-ancestors`、ext-apps 钉 1.7.5、`core-port` 握手加 nonce；远端目录字符串进提示词前清洗）。§11.6 的正文已按 spike 结论改写（独立 partition 不可行），其余正文未改写，相关处以「P3 实施注」标出。
 
 相关：D25（加密与敏感数据）、D37（授权方式，本文扩展）、D41/D42（无人值守）、D44（浏览器工具）、D58（对话内设置引导）、D62（检索供应商密钥命名）、D63（技能安装）、D65（MCP，本文补齐其「OAuth 后续单排」）、D72（外部智能体与能力包、宿主 MCP 桥、目录模式）。
 
@@ -373,12 +374,15 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | `developer` | 本机手动添加 | 无 | 全部工具每次确认（可逐工具放宽） | 仅「自定义」 |
 
 - P2 实施注（DEV-021 第 1 项）：`developer` 档只对 `McpServer.tier === 'developer'` 的 server（MCPB 包安装生成）生效；普通自定义 server 保持 W5 默认（只读自动、写 / 破坏性确认）。`destructive` 恒每次确认。
+- P3 实施注（DEV-022 第 2 项）：`community` 的「不可总是允许写入类」在任何创建路径都成立（含核心兜底与既有 Bot 级授权不命中）；首连额外确认由 core 强制（`apps.connect.confirmTools({acknowledgeCommunity})`），无待复核工具的社区条目没有该步；分级未知按 `community` 处理。
 
 ### 11.4 目录服务
 
 - KepCup 目录是 **MCP Registry 子注册表**：实现同一 OpenAPI（v0.1），数据 = 从官方注册表同步的 `server.json` + KepCup 审核结果与 `_meta` 扩展。
 - 客户端不直连目录 API 做实时查询，而是定期拉取**签名索引**（Ed25519，**在 CI 中离线签名**，私钥不上云；公钥编译进应用，支持密钥轮换列表）+ 增量；校验失败则回落到随应用打包的快照。目录只含元数据，不含任何用户数据，与本地优先不冲突。
 - 版本锁定：每个上架版本记录工具契约哈希；服务端工具变化但未提交新版本 → 客户端走 §8.2 复核，同时上报（可选、匿名）给目录方以触发复审。
+
+- P3 实施注（DEV-022 第 1 / 3 / 12 项）：签名索引客户端为 `apps/directory-sync.ts`、合并规则为 `apps/directory-merge.ts`——快照 `builtin` 条目的端点 / 认证 / 技能来源钉死、`toolPolicy` 只升不降，发行门禁对快照条目仍在客户端，远端独有条目以验签为授权并过严格端点校验；增量文件由 `scripts/sign-connector-index.mjs` 生成但客户端暂不消费；生产公钥列表在用户生成密钥（U5）前为空，此时同步自动停用、只用快照。
 
 ### 11.5 开发者流程（P3）
 
@@ -390,9 +394,10 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 11.6 MCP Apps 渲染（P3）
 
-- 工具结果带 `_meta.ui.resourceUri` 时，在消息流中渲染为卡片：Electron 中以**独立 partition、独立 origin（自定义协议 `kepcup-app://{connectionId}/`）、`sandbox` iframe、无 preload/Node**承载；CSP 严格按 `_meta.ui.csp` 白名单生成，默认禁止外连。
-- 宿主侧用 `@modelcontextprotocol/ext-apps` AppBridge：界面发起的 `tools/call` 一律回到 ToolGateway 走同一套审批与风险策略；界面不能读取令牌、对话内容或其他应用数据，除非经宿主显式授予。
-- 界面请求打开外链 → `shell.openExternal` 并先征得用户确认。
+- 工具定义（或结果）带 `_meta.ui.resourceUri` 时，在对话里发一张 `mcp_app` 卡片消息（内容只是描述符：服务器 id、`ui://` URI、工具名、脱敏截断后的入参 / 结果；**不含 HTML、令牌**，模型上下文里只有一行固定文案）。卡片挂载时 core 经所属 MCP 连接 `resources/read` 取 HTML（`text/html;profile=mcp-app`，≤ 2 MB），登记成内存里的一次性资源，渲染端把 `sandbox="allow-scripts"` 的 iframe 指向自定义特权协议 `kepcup-app://{host}/{resourceId}`（host 由 server id 派生）。**spike 结论（todo 附录 B.7）：`<iframe>` 没有独立 partition**——协议处理器必须挂在宿主窗口所在的 session，iframe 的网络栈跟随宿主 webContents；隔离改由 opaque origin（无 `allow-same-origin`：无 cookie / localStorage / IndexedDB，读不到 `window.kepcup` 与父页面，且在独立渲染进程）、逐应用响应头 CSP、渲染端 `frame-src kepcup-app:`、子框架 `will-frame-navigate` 拦截、默认 session 权限白名单（`kepcup-app:` 一律拒绝）、`allow=""` 与无 preload 共同保证。CSP 严格按资源 `_meta.ui.csp` 清洗后生成（只接受 https / wss 的精确域名来源，拒绝一切通配 / IP / 路径；`localhost` 与回环 IP 只接受与所属本机开发 server 完全相同的 `host:port`；嵌套 iframe 与 base URI 声明一律不生效；响应头另带 `sandbox allow-scripts` 与 `frame-ancestors`），默认禁止外连。
+- 宿主侧用 `@modelcontextprotocol/ext-apps` 1.7.5 的 `AppBridge`（渲染端按需加载，外加方法白名单与体积上限）：界面发起的 `tools/call` 回到 core 的 ToolGateway，走同一套审批 / 授权 / 风险 / 污点外发策略，但只允许同一 server 的、`_meta.ui.visibility` **显式**含 `app` 的工具（比规范缺省 `["model","app"]` 更严）；身份为 `loopType: 'host'`（用户发起的动作，不受对话轮只读限制），审批卡出现在输入区上方的 dock、带「来自应用界面的操作」标记。**界面发起的写入 / 破坏性调用一律要人点**：无人值守模式、`auto` 策略、持续授权都不能代替，卡片只提供「仅这一次」（应用不能给自己铸授权）；被拒绝的工具在同一张卡上 30 秒内不再询问，每个对话最多 3 个待处理的界面调用；卡片关闭 / 过期 / 应用断开会取消待处理的审批，之后批准也不执行。`ui/message` 与 `ui/update-model-context` 本期不支持；界面不能读取令牌、对话内容或其他应用数据，只拿到卡片创建时的工具入参 / 结果。
+- 界面请求打开外链 → 卡片内确认条（显示完整地址）→ core 再校验 https 且无凭据 → 主进程 `shell.openExternal`（白名单再核一次）。
+- P3 实施注（DEV-022 第 5–10 项）：iframe 无独立 partition（协议处理器在默认 session，隔离靠 opaque origin + 逐应用 CSP + 导航拦截）；界面工具 `visibility` 默认拒绝；界面发起的写入一律要人点、持续授权无效；CSP 响应头另带 `sandbox allow-scripts` 与 `frame-ancestors file: http://localhost:*`；ext-apps 钉 1.7.5；渲染端 `core-port` 握手需 preload 的秘密 nonce（否则沙箱 iframe 可劫持 core RPC 端口）。
 
 ### 11.7 托管授权网关（按需，P3+）
 

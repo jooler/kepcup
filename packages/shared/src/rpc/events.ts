@@ -17,6 +17,8 @@ import {
 } from '../domain/types.js';
 import { agentStatusPayloadSchema } from '../domain/agent-status.js';
 import { appConnectReviewToolSchema } from '../domain/app-connections.js';
+import { appSkillsOfferEventSchema } from '../domain/app-skills.js';
+import { connectorTierSchema } from '../domain/connector-catalog.js';
 import { watchEntrySchema } from '../domain/watches.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
@@ -210,6 +212,8 @@ export const appConnectFlowPayloadSchema = z.object({
   connectionId: z.string().optional(),
   /** `reviewing_tools`：识别出的账号显示名（可能为空）。 */
   accountLabel: z.string().optional(),
+  /** `reviewing_tools`：目录条目的信任分级（D73 P3 §7.2；`community` 时界面要求勾选确认）。 */
+  tier: connectorTierSchema.optional(),
   /** `reviewing_tools`：待用户确认的工具清单（名称、标题、描述、风险档）；确认走 `apps.connect.confirmTools`。 */
   tools: z.array(appConnectReviewToolSchema).optional(),
   error: z
@@ -296,6 +300,8 @@ export const rpcEventSchemas = {
   'mcp.server_status': mcpServerStatusPayloadSchema,
   'apps.connect_flow': appConnectFlowPayloadSchema,
   'apps.connection_status': appConnectionStatusPayloadSchema,
+  /** D73 P3 §7.6 随附技能提示：连接完成后有被授权的 Bot 缺目录声明的技能。 */
+  'apps.skills_offer': appSkillsOfferEventSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,

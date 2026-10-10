@@ -86,6 +86,10 @@
     const parsed = egressApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
+  /** D73 P3：由 MCP 应用界面（而非模型）发起的操作，卡片上明示来源。 */
+  const fromAppUi = $derived(
+    approval.kind === 'mcp_tool' && approval.payload['origin'] === 'app_ui',
+  );
   /** command / git_remote / mcp_tool 卡在污点期间带 `tainted` 标记，附加提示。 */
   const taintedHint = $derived(
     (approval.kind === 'command' ||
@@ -978,6 +982,14 @@
           data-testid="approval-risk-note"
         >
           {t('approvals.mcpDestructiveRisk')}
+        </p>
+      {/if}
+      {#if fromAppUi}
+        <p
+          class="mt-2 rounded bg-sky-500/10 px-2 py-1 text-xs text-sky-800 dark:text-sky-300"
+          data-testid="approval-app-ui-note"
+        >
+          {t('approvals.fromAppUi')}
         </p>
       {/if}
       {#if taintedHint}

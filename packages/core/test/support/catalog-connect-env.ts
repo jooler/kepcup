@@ -44,6 +44,8 @@ export interface FakeEntryInput {
     arguments?: Record<string, unknown>;
   };
   scopes?: { default: string[]; write: string[] };
+  /** Bundled skills (`_meta.skills`, D73 P3 §7.6). */
+  skills?: unknown[];
 }
 
 /** A raw catalog entry (validated by `ConnectorCatalog`). */
@@ -68,7 +70,7 @@ export function fakeCatalogEntry(input: FakeEntryInput): Record<string, unknown>
           scopes: input.scopes ?? { default: [], write: [] },
         },
         toolPolicy: input.toolPolicy ?? {},
-        skills: [],
+        skills: input.skills ?? [],
         ui: false,
         privacyPolicy: 'https://example.com/privacy',
         ...(input.whoami !== undefined ? { whoami: input.whoami } : {}),
@@ -120,6 +122,8 @@ export interface CatalogEnvOptions {
   preregisteredClients?: (fake: FakeOAuthMcpServer) => PreregisteredClientTable;
   /** Extra `toolLockTrustFirstList` override (default false: new tools are locked until reviewed). */
   trustFirstList?: boolean;
+  /** D73 P3 §7.6: maps a declared https skill source to a local fixture repository. */
+  appSkillSourceOverride?: (source: string) => string;
 }
 
 export interface ConnectOutcome {
@@ -190,6 +194,9 @@ export async function startCatalogEnv(options: CatalogEnvOptions = {}): Promise<
     oauthFlowTimeoutMs: options.flowTimeoutMs ?? 20_000,
     ...(options.cimdUrl !== undefined ? { oauthCimdUrl: options.cimdUrl } : {}),
     toolLockTrustFirstList: options.trustFirstList ?? false,
+    ...(options.appSkillSourceOverride !== undefined
+      ? { appSkillSourceOverride: options.appSkillSourceOverride }
+      : {}),
     connectorCatalog: catalog,
     ...(options.preregisteredClients !== undefined
       ? { oauthPreregisteredClients: options.preregisteredClients(fake) }

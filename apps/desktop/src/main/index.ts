@@ -20,6 +20,7 @@ import { APP_ID, APP_NAME, appIconPath } from './app-brand';
 import { BrowserHost, sessionDataRoot } from './browser-host';
 import { browserMethodSpecs } from './browser-methods';
 import { shellMethodSpecs } from './shell-methods';
+import { guardAllAppFrames, installAppsUiProtocol, registerAppsUiScheme } from './apps-ui';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
 import { createTray } from './tray';
@@ -278,6 +279,19 @@ function bootstrap(): void {
     },
   );
 
+  // D73 P3 §7.5 MCP Apps: `kepcup-app://` pages are served from core-registered resources only
+  // (the scheme itself is registered before ready, below); the handler lives on the window's session.
+  installAppsUiProtocol(session.defaultSession, {
+    fetchResource: async (input) => {
+      if (coreHost === null) throw new Error('core not running');
+      return coreHost.callPlatform('apps.ui.resource', input);
+    },
+    log: (message, error) => {
+      const detail = error instanceof Error ? ` — ${error.message}` : '';
+      console.warn(`[apps-ui] ${message}${detail}`);
+    },
+  });
+
   coreHost = new CoreHost(app.getVersion(), {
     // P11: the core's browser tools call the main process over port B.
     // D73: …and so does OAuth consent (shell.openExternal, URL allow-list in shell-methods).
@@ -433,6 +447,11 @@ app.setAppUserModelId(APP_ID);
 if (process.env.KEPCUP_HOME) {
   app.setPath('userData', join(process.env.KEPCUP_HOME, 'userData'));
 }
+
+// D73 P3 §7.5: the privileged `kepcup-app` scheme must be registered before `app.ready`; the
+// navigation guard is installed for every webContents created from now on.
+registerAppsUiScheme();
+guardAllAppFrames();
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {

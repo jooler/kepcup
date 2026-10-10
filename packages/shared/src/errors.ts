@@ -125,6 +125,11 @@ export const ERROR_CODES = [
   'MCPB_INVALID',
   'MCPB_INCOMPATIBLE',
   'MCPB_RUNTIME_MISSING',
+  /** MCP Apps 渲染（D73 P3 §7.5）：资源已过期 / 无效（MIME、体积）/ 界面调用了未声明给 app 的工具 / 限流。 */
+  'APP_UI_EXPIRED',
+  'APP_UI_INVALID',
+  'APP_UI_TOOL_NOT_ALLOWED',
+  'APP_UI_RATE_LIMITED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

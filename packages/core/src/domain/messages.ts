@@ -4,6 +4,7 @@ import {
   TERMINAL_TASK_EVENT_PHASES,
   newId,
   taskEventContentSchema,
+  type AppUiCard,
   type Message,
   type MessageKind,
   type MessageStatus,
@@ -107,6 +108,8 @@ export interface AppendMessageInput {
   cardRunId?: string | undefined;
   /** Delegation cards only (D71): the delegation the card renders. */
   cardDelegationId?: string | undefined;
+  /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor (no HTML, no tokens). */
+  cardAppUi?: AppUiCard | undefined;
   /** Watch cards only (W7, cardType `watch`). */
   cardWatch?:
     | {
@@ -266,6 +269,7 @@ export class MessagesService {
                 ...(input.cardDelegationId !== undefined
                   ? { delegationId: input.cardDelegationId }
                   : {}),
+                ...(input.cardAppUi !== undefined ? { appUi: input.cardAppUi } : {}),
                 ...(input.cardWatch !== undefined
                   ? {
                       watchId: input.cardWatch.watchId,

@@ -10,6 +10,7 @@ import {
   type ConnectorCatalogEntry,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
+import { mergeDirectoryEntries } from './directory-merge.js';
 
 /**
  * 连接应用目录（D73 P1 §5.2，设计 29 §4）的运行时加载。
@@ -68,6 +69,17 @@ export interface ConnectorCatalogOptions {
   approvedGates?: readonly string[] | null | undefined;
   /** 追加的已校验条目（测试 / 开发者模式）；同样受门禁约束。 */
   extra?: readonly ConnectorCatalogEntry[] | undefined;
+  /**
+   * 已验签的远端目录条目（D73 P3 §7.1，`DirectorySync`）：未校验的原始条目，按
+   * `directory-merge.ts` 的规则并入打包快照，之后仍整体过发行门禁。
+   */
+  remote?: readonly unknown[] | undefined;
+}
+
+/** 远端目录的来源：`revision()` 变化 = 条目变了，目录需要重新合并。 */
+export interface RemoteDirectorySource {
+  revision(): number;
+  entries(): readonly unknown[];
 }
 
 /** 读取资源目录里的 catalog.json；缺失 / 损坏 → 空来源并告警。 */
@@ -121,12 +133,30 @@ export function parseConnectorEntries(
   return out;
 }
 
-/** 生效的目录：校验 → 合并追加条目 → 发行门禁过滤。 */
+/** 生效的目录：校验 → 并入远端条目 → 合并追加条目 → 发行门禁过滤。 */
 export function effectiveConnectorCatalog(
   options: ConnectorCatalogOptions,
 ): ConnectorCatalogEntry[] {
+  return buildConnectorCatalog(options).entries;
+}
+
+/** {@link effectiveConnectorCatalog} 加上远端独有条目的 slug（这些条目没有打包图标）。 */
+export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
+  entries: ConnectorCatalogEntry[];
+  remoteOnlySlugs: ReadonlySet<string>;
+} {
   const source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
-  const entries = parseConnectorEntries(source.entries, options.logger);
+  let entries = parseConnectorEntries(source.entries, options.logger);
+  let remoteOnlySlugs: ReadonlySet<string> = new Set();
+  if (options.remote !== undefined && options.remote.length > 0) {
+    const merged = mergeDirectoryEntries(
+      entries,
+      parseConnectorEntries(options.remote, options.logger),
+      options.logger,
+    );
+    entries = merged.entries;
+    remoteOnlySlugs = merged.remoteOnlySlugs;
+  }
   const taken = new Set(entries.map((entry) => connectorMetaOf(entry).slug));
   for (const extra of options.extra ?? []) {
     const slug = connectorMetaOf(extra).slug;
@@ -136,7 +166,20 @@ export function effectiveConnectorCatalog(
   }
   const gates =
     options.approvedGates === undefined ? connectorReleaseGates() : options.approvedGates;
-  return filterReleasedConnectors(entries, gates);
+  // 发行门禁只约束快照 / 追加来源的条目；远端独有条目（已验签、端点已校验）不受厂商门禁约束，
+  // 见 directory-merge.ts 第 4 条。
+  const isRemoteOnly = (entry: ConnectorCatalogEntry): boolean =>
+    remoteOnlySlugs.has(connectorMetaOf(entry).slug);
+  const released = new Set(
+    filterReleasedConnectors(
+      entries.filter((entry) => !isRemoteOnly(entry)),
+      gates,
+    ),
+  );
+  return {
+    entries: entries.filter((entry) => isRemoteOnly(entry) || released.has(entry)),
+    remoteOnlySlugs,
+  };
 }
 
 /**
@@ -144,22 +187,57 @@ export function effectiveConnectorCatalog(
  * `apps.catalog.list` RPC、连接服务与 `app_request_connection` 都经它查条目。
  */
 export class ConnectorCatalog {
-  readonly #entries: readonly ConnectorCatalogEntry[];
+  readonly #options: ConnectorCatalogOptions;
+  readonly #directory: RemoteDirectorySource | undefined;
   readonly #iconsDir: string | null;
+  readonly #source: ConnectorCatalogSource;
+  #entries: readonly ConnectorCatalogEntry[] = [];
+  #remoteOnlySlugs: ReadonlySet<string> = new Set();
+  #revision = Number.NaN;
 
-  constructor(options: ConnectorCatalogOptions) {
-    const source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
-    this.#iconsDir = source.iconsDir;
-    this.#entries = effectiveConnectorCatalog({ ...options, source });
+  /**
+   * `directory`（D73 P3 §7.1）：已验签的远端目录来源。远端条目变化时（`revision()` 变了）
+   * 目录在下一次读取时重新合并；缺省 = 只有打包快照（目录随应用版本不变）。
+   */
+  constructor(options: ConnectorCatalogOptions & { directory?: RemoteDirectorySource }) {
+    this.#source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
+    this.#iconsDir = this.#source.iconsDir;
+    this.#options = options;
+    this.#directory = options.directory;
+    this.#refresh();
+  }
+
+  #refresh(): void {
+    const revision = this.#directory?.revision() ?? 0;
+    if (revision === this.#revision) return;
+    this.#revision = revision;
+    const built = buildConnectorCatalog({
+      ...this.#options,
+      source: this.#source,
+      ...(this.#directory !== undefined ? { remote: this.#directory.entries() } : {}),
+    });
+    this.#entries = built.entries;
+    this.#remoteOnlySlugs = built.remoteOnlySlugs;
   }
 
   /** 门禁放行后的全部条目（目录顺序）。 */
   list(): readonly ConnectorCatalogEntry[] {
+    this.#refresh();
     return this.#entries;
+  }
+
+  /**
+   * 该条目是否来自已验签的远端目录（不在打包快照里）。这类条目永远拿不到回环例外：连接前
+   * 端点要重新校验为公网 https（`isSafeDirectoryRemoteUrl`）。
+   */
+  isDirectorySourced(slug: string): boolean {
+    this.#refresh();
+    return this.#remoteOnlySlugs.has(slug);
   }
 
   /** 按 slug 查（过滤后）；不在目录 = null。 */
   get(slug: string): ConnectorCatalogEntry | null {
+    this.#refresh();
     return findConnectorBySlug(this.#entries, slug);
   }
 
@@ -167,6 +245,8 @@ export class ConnectorCatalog {
   iconSvg(slug: string): string | null {
     const entry = this.get(slug);
     if (entry === null || this.#iconsDir === null) return null;
+    // 远端独有的条目没有打包图标：不能按它声明的文件名去读（会冒用快照条目的图标）。
+    if (this.#remoteOnlySlugs.has(slug)) return null;
     const icon = connectorMetaOf(entry).icon;
     if (!icon.endsWith('.svg')) return null;
     // `icon` is a bare filename (connectorIconSchema forbids separators), so it cannot escape.

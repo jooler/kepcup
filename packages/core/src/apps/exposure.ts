@@ -74,6 +74,8 @@ export interface AppToolContext {
   accountLabel: string;
   /** 应用名（卡片里的「在 {app} 执行」）。 */
   appName: string;
+  /** 目录条目的信任分级（D73 P3 §7.2：`community` 的写工具不提供「总是允许」）；未知分级按最严处理。 */
+  tier: string;
 }
 
 /** `resolveMcpToolEntries` 为目录连接 server 使用的绑定。 */
@@ -187,6 +189,7 @@ export class ConnectedApps {
       connectorSlug: view.slug,
       accountLabel: view.accountLabel,
       appName: view.appName,
+      tier: view.tier,
     };
   }
 

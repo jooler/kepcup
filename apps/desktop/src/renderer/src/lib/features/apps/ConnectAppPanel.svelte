@@ -12,14 +12,17 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import McpRiskBadge from '$lib/features/approvals/McpRiskBadge.svelte';
+  import ConnectedSkillsPrompt from './ConnectedSkillsPrompt.svelte';
   import { TIER_LABEL_KEYS, appIconSrc, appInitial } from './app-catalog';
   import {
     CONNECTION_STATUS_LABEL_KEYS,
     FLOW_PHASE_LABEL_KEYS,
     FLOW_STEP_COUNT,
+    confirmToolsDisabled,
     flowErrorKey,
     isTerminalPhase,
     needsClientCredentials,
+    needsCommunityAck,
     panelConnection,
     phaseStep,
     requestedScopes,
@@ -192,7 +195,7 @@
     if (flow === null || busy) return;
     busy = true;
     try {
-      await appsStore.confirmTools(flow.flowId);
+      await appsStore.confirmTools(flow.flowId, communityAcked);
     } catch (error) {
       toast.error(rpcError(error));
     } finally {
@@ -276,6 +279,12 @@
   const hasGrant = $derived(statusHasGrant(status));
   const reviewTools = $derived(sortReviewTools(flow?.tools ?? []));
   const reviewSummary = $derived(summarizeReviewTools(reviewTools));
+
+  // 社区应用（D73 P3 §7.2）：未经 KepCup 人工审核，首次连接的工具复核要额外勾选确认；
+  // 勾选只对当前流程有效（换流程重置）。分级以事件为准，缺省退回目录条目。
+  const reviewTier = $derived(flow?.tier ?? entry?.tier);
+  let communityAckFlowId = $state<string | null>(null);
+  const communityAcked = $derived(flow !== null && communityAckFlowId === flow.flowId);
 </script>
 
 <div
@@ -499,6 +508,31 @@
             </p>
           {/if}
           <p class="text-xs text-muted-foreground">{t('apps.review.hint')}</p>
+          {#if needsCommunityAck(reviewTier)}
+            <!-- 社区应用：仅经自动校验、未经人工审核；确认后才能完成连接 -->
+            <div
+              class="space-y-1.5 rounded-md border border-amber-500/50 bg-amber-500/5 px-2.5 py-2"
+              data-testid={`${testid}-community-warning`}
+            >
+              <p
+                class="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400"
+              >
+                <ShieldAlert class="size-3.5" aria-hidden="true" />
+                {t('apps.tier.communityWarning')}
+              </p>
+              <p class="text-xs text-muted-foreground">{t('apps.tier.communityWarningHint')}</p>
+              <label class="flex items-center gap-2 text-xs">
+                <Checkbox
+                  checked={communityAcked}
+                  disabled={busy}
+                  onCheckedChange={(checked) =>
+                    (communityAckFlowId = checked === true && flow !== null ? flow.flowId : null)}
+                  data-testid={`${testid}-community-ack`}
+                />
+                {t('apps.tier.communityAck')}
+              </label>
+            </div>
+          {/if}
           {#if reviewTools.length === 0}
             <p class="text-xs text-muted-foreground">{t('apps.review.empty')}</p>
           {:else}
@@ -530,7 +564,11 @@
           <div class="flex items-center gap-2">
             <Button
               size="sm"
-              disabled={busy}
+              disabled={confirmToolsDisabled({
+                busy,
+                tier: reviewTier,
+                acknowledged: communityAcked,
+              })}
               onclick={() => void confirmTools()}
               data-testid={`${testid}-confirm`}
             >
@@ -570,6 +608,9 @@
           ? t('apps.panel.doneWithAccount', { name: displayName, label: flow.accountLabel ?? '' })
           : t('apps.doneHint', { name: displayName })}
       </p>
+      {#if flow.connectionId !== undefined}
+        <ConnectedSkillsPrompt connectionId={flow.connectionId} testid={`${testid}-skills`} />
+      {/if}
     {:else if flow.phase === 'cancelled'}
       <div class="flex items-center gap-2 text-xs text-muted-foreground">
         <span data-testid={`${testid}-cancelled`}>{t('apps.cancelledHint')}</span>

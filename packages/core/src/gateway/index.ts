@@ -27,6 +27,7 @@ import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
+import { appToolDurations, tierAllowsBotLevelGrant } from '../apps/tier.js';
 import type { TaintService, TaintState } from '../apps/taint.js';
 import { recipientFields } from '../mcp/recipients.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
@@ -939,13 +940,21 @@ export class ToolGateway {
        * world). With a non-read-only tool this decides whether it is an egress channel.
        */
       openWorldHint?: boolean | undefined;
+      /**
+       * D73 P3: the call was initiated by an MCP App's UI, not by the model. Write / destructive
+       * tools then ALWAYS raise a card that only a human can decide (never auto-decided by
+       * unattended mode or by `auto` policies), standing grants are ignored and only「仅这一次」is
+       * offered — an app can neither act unattended nor mint grants the model later inherits.
+       */
+      origin?: 'app_ui';
     } = {},
   ): Promise<{
     decision: McpToolDecision;
     approvedBy: 'auto' | 'user' | 'unattended' | 'grant';
     grantId?: string;
   }> {
-    const decision: McpToolDecision = (await this.#deps.mcpToolDecision?.({
+    const appUi = options.origin === 'app_ui';
+    let decision: McpToolDecision = (await this.#deps.mcpToolDecision?.({
       botId: identity.botId,
       serverId: server.id,
       toolName,
@@ -974,6 +983,10 @@ export class ToolGateway {
           : '该工具需要在任务中执行（子代理只能调用只读且免审批的 MCP 工具），请在结论中说明，由任务本身调用',
       );
     }
+    // D73 P3: a UI-initiated non-read call always asks, whatever the policy says.
+    if (appUi && decision.risk !== 'read' && decision.approval !== 'ask') {
+      decision = { ...decision, approval: 'ask' };
+    }
     const connection = options.connection;
     // D73 identity of the third-party account this call acts as (card, audit).
     const connectionAudit =
@@ -993,11 +1006,13 @@ export class ToolGateway {
     // An explicit per-tool「每次确认」policy (approvalSource 'policy') overrides both
     // standing grants and the longer durations on the card.
     const grantable =
+      !appUi &&
       connection !== undefined &&
       decision.risk === 'write' &&
       decision.approvalSource !== 'policy' &&
       identity.botId !== null;
     const grant =
+      !appUi &&
       decision.approval === 'ask' &&
       connection !== undefined &&
       grantable &&
@@ -1007,6 +1022,8 @@ export class ToolGateway {
             connectionId: connection.connectionId,
             toolName,
             conversationId: identity.conversationId,
+            // 目录降级后（verified → community）此前留下的 Bot 级授权不再生效。
+            excludeBotLevel: !tierAllowsBotLevelGrant(connection.tier),
           }) ?? null)
         : null;
     // D73 P2 (design 29 §8.3): while tainted, a non-read-only tool that may reach the open
@@ -1054,19 +1071,20 @@ export class ToolGateway {
           decision.risk !== 'read'
             ? recipientFields(args, (text) => this.#deps.secrets.redact(text))
             : [];
-        // 应用工具：写入档可选「本对话内 / 对该 Bot 总是允许」，破坏性档只有「仅这一次」。
-        const durations: ApprovalDuration[] | undefined =
-          connection === undefined
+        // 应用工具：写入档可选「本对话内 / 对该 Bot 总是允许」，破坏性档只有「仅这一次」；
+        // 社区分级的写入档没有「总是允许」（apps/tier.ts，D73 P3 §7.2）。
+        const durations: ApprovalDuration[] | undefined = appUi
+          ? ['once']
+          : connection === undefined
             ? undefined
-            : grantable
-              ? ['once', 'conversation', 'bot']
-              : ['once'];
+            : appToolDurations({ tier: connection.tier, risk: decision.risk, grantable });
         const outcome = await this.#deps.approvals.request(
           identity,
           'mcp_tool',
           {
             serverId: server.id,
             serverName: connection?.appName ?? server.name,
+            ...(appUi ? { origin: 'app_ui' as const, appName: connection?.appName ?? server.name } : {}),
             toolName,
             argsSummary:
               argsRedacted.length > 400 ? `${argsRedacted.slice(0, 400)}…（已截断）` : argsRedacted,
@@ -1080,7 +1098,9 @@ export class ToolGateway {
                   accountLabel: connection.accountLabel,
                   ...(durations !== undefined ? { durations } : {}),
                 }
-              : {}),
+              : appUi
+                ? { durations: ['once'] }
+                : {}),
             // 不可撤销的应用操作（以及污点期间的外发）：卡片展示完整参数（脱敏、设上限），
             // 而不只是摘要。
             ...((connection !== undefined && decision.risk === 'destructive') || taint !== null
@@ -1091,7 +1111,7 @@ export class ToolGateway {
                 }
               : {}),
           },
-          options,
+          appUi ? { ...options, requireHuman: true } : options,
         );
         if (outcome.decision !== 'approved') {
           throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该 MCP 工具调用');
@@ -1115,6 +1135,7 @@ export class ToolGateway {
             toolName,
             conversationId: chosen === 'conversation' ? identity.conversationId : null,
             approvalId: outcome.approval.id,
+            connectionTier: connection.tier,
           }).id;
         }
       }
@@ -1133,6 +1154,7 @@ export class ToolGateway {
         ? { note: `无人值守自动批准（${MCP_RISK_LABELS[decision.risk]}）` }
         : {}),
       ...connectionAudit,
+      ...(appUi ? { origin: 'app_ui', appName: connection?.appName ?? server.name } : {}),
       ...(grantId !== undefined ? { grantId } : {}),
       ...(egressHandled ? { egress: true } : {}),
     });

@@ -9,6 +9,7 @@ import {
   INTERIM_TEXT_MAX_CHARS,
   INTERIM_TEXT_MAX_PER_RUN,
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
+  MCP_APP_CARD_TYPE,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   RUN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
@@ -175,6 +176,7 @@ import {
   type McpUnavailableServer,
   type McpToolEntry,
   type McpToolFacade,
+  type McpToolUiSink,
 } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
 import { FileReadState } from '../tools/fs-state.js';
@@ -363,6 +365,8 @@ export interface OrchestratorDeps {
    * （`<connected_apps>` / `<available_apps>`）。null / 缺省 = 没有目录连接能力。
    */
   connectedApps?: ConnectedApps | null;
+  /** D73 P3 §7.5: tool results with `_meta.ui.resourceUri` become MCP App cards. */
+  appUi?: McpToolUiSink | null;
 }
 
 /** The slice of the wiki domain the response loop consumes. */
@@ -2089,6 +2093,10 @@ export class Orchestrator {
             String(content.delegationId ?? ''),
           );
         }
+        if ('cardType' in content && content.cardType === MCP_APP_CARD_TYPE) {
+          // D73 P3: the card shows the user an app's UI; nothing of it (HTML, results) is context.
+          return '[系统] 已向用户显示一张应用界面卡片';
+        }
         if ('cardType' in content && content.cardType === WATCH_CARD_TYPE) {
           return this.#deps.watch?.renderContextLine(message) ?? '（监看记录已清理）';
         }
@@ -3106,6 +3114,7 @@ export class Orchestrator {
               mcp: this.#deps.mcp,
               gateway: this.#deps.gateway,
               secrets: this.#deps.secrets,
+              ui: this.#deps.appUi ?? undefined,
               // D73: an OAuth app that needs (re)connecting → the same setupHit chain
               // as media / search (tool result SETUP_REQUIRED → abort → failed + setup).
               onSetupRequired: (requirement) => {

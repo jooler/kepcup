@@ -7,6 +7,8 @@ import { z } from 'zod';
 import {
   AGENT_CATALOG,
   AppError,
+  CONNECTOR_INDEX_MAX_BYTES,
+  CONNECTOR_INDEX_PUBLIC_KEYS,
   TASK_SETTLE_SWEEP_MS,
   findAgentEntry,
   systemInfoOutputSchema,
@@ -25,6 +27,7 @@ import {
   type CustomModel,
 } from '@kepcup/shared';
 import type {
+  ConnectorIndexPublicKey,
   DiagnosticsDatabaseRow,
   DiagnosticsToolRow,
   PreregisteredClientTable,
@@ -139,9 +142,14 @@ import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
 import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { AppToolGrants } from './apps/grants.js';
 import { TaintService } from './apps/taint.js';
+import { McpAppUiService } from './apps/ui/service.js';
+import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
+import { DirectorySync } from './apps/directory-sync.js';
+import { createSafeFetch } from './apps/auth/safe-fetch.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
+import { AppSkillsOffers } from './apps/skills-offer.js';
 import { ToolLockService } from './apps/tool-lock.js';
 import { createShellHostRpc, type DeferredShellHostRpc, type ShellHostRpc } from './apps/shell-facade.js';
 import { bindAppMethods } from './rpc/bindings.js';
@@ -334,6 +342,25 @@ export interface CoreServicesOptions {
   /** D73 P2 test hook: pre-registered OAuth client table (replaces oauth-clients.json). */
   oauthPreregisteredClients?: PreregisteredClientTable;
   /**
+   * D73 P3 §7.6 test hook (NODE_ENV=test in a test-hooks build only): maps a catalog entry's
+   * declared https skill source to a local fixture repository (the catalog schema rejects local
+   * paths, so tests can only get one in through here).
+   */
+  appSkillSourceOverride?: (source: string) => string;
+  /**
+   * D73 P3 §7.1 test hook (NODE_ENV=test in a test-hooks build only): the signed-directory
+   * public key list (production list lives in shared `CONNECTOR_INDEX_PUBLIC_KEYS`, empty
+   * until the real key exists), the directory base URL (a loopback fake; its host is added
+   * to the SSRF-safe fetch allowlist) and the timer cadence. Without `keys` here the
+   * production list applies.
+   */
+  directorySync?: {
+    keys?: ConnectorIndexPublicKey[];
+    baseUrl?: string;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  };
+  /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): tools seen for the
    * first time are approved straight away, like the stored-server baseline — so
    * fixtures that add a server through `settings.update` keep working. A tool whose
@@ -495,12 +522,18 @@ export interface CoreServices {
   appToolGrants: AppToolGrants | null;
   /** D73 P2 taint state ((bot, conversation) read connected-app data → egress approvals). */
   taint: TaintService | null;
+  /** D73 P3 §7.5 MCP Apps rendering (UI resources, UI-initiated tool calls, links); null with `apps`. */
+  appUi: McpAppUiService | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
   connectorCatalog: ConnectorCatalog | null;
+  /** D73 P3 signed directory sync (daily pull of the signed index; null before ready). */
+  directorySync: DirectorySync | null;
   /** D73 P1 catalog connection service (connect flow host, tools / policy / grants management). */
   appConnections: AppConnectionsService | null;
+  /** D73 P3 §7.6 bundled-skills offers after a catalog connection (installs go through skill_import). */
+  appSkills: AppSkillsOffers | null;
   appMethods: Record<string, RpcMethodSpec>;
   platformMethods: Record<string, RpcMethodSpec>;
   /** Re-announce the current status to a freshly bound RPC client. */
@@ -726,9 +759,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     toolLock: null,
     appToolGrants: null,
     taint: null,
+    appUi: null,
     connectedApps: null,
     connectorCatalog: null,
+    directorySync: null,
     appConnections: null,
+    appSkills: null,
     appMethods: {},
     platformMethods: {},
     pushStatusTo(server) {
@@ -749,6 +785,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     async close() {
       servicesClosed.closed = true;
       services.jobsRunner?.stop();
+      services.directorySync?.stop();
+      services.appSkills?.stop();
       try {
         services.schedules?.stop();
       } catch {
@@ -1008,11 +1046,35 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D73 P1: the connector catalog + the exposure facade (catalog connections → synthesized
     // servers, risk overlay, Bot prompt sections). The tool lock reads catalog `toolPolicy`
     // through it, so it is declared first and filled right after the lock exists.
+    // D73 P3 §7.1: signed directory index (daily pull → verify → merge with the bundled
+    // snapshot). An empty production key list = disabled, snapshot only.
+    const directoryTest = __KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test';
+    const directoryBase = directoryTest ? options.directorySync?.baseUrl : undefined;
+    const directorySync = new DirectorySync({
+      dir: path.join(paths.cacheDir, 'directory'),
+      keys:
+        (directoryTest ? options.directorySync?.keys : undefined) ?? CONNECTOR_INDEX_PUBLIC_KEYS,
+      fetch: createSafeFetch({
+        maxBytes: CONNECTOR_INDEX_MAX_BYTES,
+        ...(directoryBase !== undefined ? { loopbackHosts: [new URL(directoryBase).host] } : {}),
+      }),
+      clock,
+      logger,
+      enabled: () => settings.get().apps.directorySync,
+      ...(directoryBase !== undefined ? { baseUrl: directoryBase } : {}),
+      ...(directoryTest && options.directorySync?.intervalMs !== undefined
+        ? { intervalMs: options.directorySync.intervalMs }
+        : {}),
+      ...(directoryTest && options.directorySync?.initialDelayMs !== undefined
+        ? { initialDelayMs: options.directorySync.initialDelayMs }
+        : {}),
+    });
     const connectorCatalog =
       options.connectorCatalog ??
       new ConnectorCatalog({
         env,
         logger,
+        directory: directorySync,
         ...(__KEPCUP_TEST_HOOKS__ === true && env.NODE_ENV === 'test' && !env.KEPCUP_CONNECTORS
           ? { source: { entries: [], iconsDir: null } }
           : {}),
@@ -1623,6 +1685,25 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       renderContextLine: (message) =>
         watchService?.renderContextLine(message) ?? '（监看记录已清理）',
     };
+    // D73 P3 §7.5: MCP Apps cards (tool results with `_meta.ui.resourceUri`) + UI-initiated calls.
+    const appUi = new McpAppUiService({
+      mcp,
+      gateway,
+      messages,
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+      appContextFor: (serverId) => {
+        const view = connectedApps.view(serverId);
+        return view === null ? undefined : connectedApps.contextOf(view);
+      },
+      secrets,
+      shell: services.shellRpc,
+      clock,
+      logger,
+    });
+    // D73 P3: a closed / removed / disconnected app's UI resources die with it (pending approvals cancelled).
+    mcp.onServerClosed((serverId) => appUi.store.invalidateServer(serverId));
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -1661,6 +1742,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       search,
       mcp,
       connectedApps,
+      appUi,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
@@ -2099,9 +2181,33 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.toolLock = toolLock;
     services.appToolGrants = appToolGrants;
     services.taint = taint;
+    services.appUi = appUi;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
+    services.directorySync = directorySync;
+    directorySync.start();
     services.appConnections = appConnections;
+    // D73 P3 §7.6: bundled skills of a catalog entry are offered after the connection completes;
+    // installing goes through the existing skill_import approval (never automatic).
+    const appSkills = new AppSkillsOffers({
+      catalog: connectorCatalog,
+      store: apps.store,
+      skills,
+      importer: skillImporter,
+      approvals,
+      bots,
+      conversations,
+      events,
+      logger,
+      clock,
+      ...(__KEPCUP_TEST_HOOKS__ === true &&
+      env.NODE_ENV === 'test' &&
+      options.appSkillSourceOverride !== undefined
+        ? { resolveSource: options.appSkillSourceOverride }
+        : {}),
+    });
+    appSkills.start();
+    services.appSkills = appSkills;
     services.appMethods = {
       ...systemMethods,
       ...bindAppMethods(services),
@@ -2483,6 +2589,8 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         return { injected };
       },
     },
+    // D73 P3 §7.5: the protocol handler fetches a registered MCP App page.
+    ...bindAppsUiMethods(services).platform,
     'update.cancelActive': {
       input: updateCancelActiveInputSchema,
       output: updateCancelActiveOutputSchema,

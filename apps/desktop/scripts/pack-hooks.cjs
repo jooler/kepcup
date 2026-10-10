@@ -37,7 +37,14 @@ const FORBIDDEN_MARKERS = [
   'KEPCUP_FAKE_ACP_AGENT_BIN',
   'KEPCUP_FAKE_ACP_AGENT_SCRIPT',
   'KEPCUP_FAKE_ACP_AGENT_RECORD',
+  // D73 P3 MCP Apps e2e seam：渲染端 main.ts 的 window.__kepcupRpc（页面可直接调用 core RPC）
+  '__kepcupRpc',
 ];
+
+/** 文本里出现的第一个禁止标记；干净 = null（导出供单测）。 */
+function findForbiddenMarker(text) {
+  return FORBIDDEN_MARKERS.find((marker) => text.includes(marker)) ?? null;
+}
 
 function platformName(context) {
   // context.packager.platform is a Platform instance ({name: 'mac'|'linux'|'win'}).
@@ -91,10 +98,9 @@ function afterPack(context) {
   if (existsSync(asarPath)) {
     const asar = readFileSync(asarPath);
     const asarText = asar.toString('latin1');
-    for (const marker of FORBIDDEN_MARKERS) {
-      if (asarText.includes(marker)) {
-        throw new Error(`[pack] 打包产物包含测试路径标记 "${marker}"（P13 产物剔除校验失败）`);
-      }
+    const marker = findForbiddenMarker(asarText);
+    if (marker !== null) {
+      throw new Error(`[pack] 打包产物包含测试路径标记 "${marker}"（P13 产物剔除校验失败）`);
     }
     for (const pkg of ['node_modules/@kepcup/core', 'node_modules/@kepcup/testkit']) {
       if (asarText.includes(pkg)) {
@@ -133,4 +139,4 @@ function afterPack(context) {
   );
 }
 
-module.exports = { beforePack, afterPack };
+module.exports = { beforePack, afterPack, FORBIDDEN_MARKERS, findForbiddenMarker };
