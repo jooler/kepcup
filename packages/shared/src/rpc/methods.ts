@@ -54,6 +54,7 @@ import {
   mcpToolRiskSchema,
   mcpToolRiskSourceSchema,
   webSearchProviderSchema,
+  webSearchConfigSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
   skillPresetInfoSchema,
@@ -209,6 +210,8 @@ export const settingsUpdateInputSchema = z.object({
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
   mcpServers: z.array(mcpServerSchema).optional(),
+  /** 联网检索供应商（docs/design/21-web-search.md）：整体覆盖 patch；key 走 websearch.setKey。 */
+  webSearch: webSearchConfigSchema.optional(),
   /** 外部智能体启用状态（D72）：整体覆盖 patch。 */
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
