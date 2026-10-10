@@ -7,7 +7,7 @@
   import AppCatalogGrid from '$lib/features/apps/AppCatalogGrid.svelte';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
-  import { isCustomConnection } from '$lib/features/apps/app-catalog';
+  import { manageTarget } from '$lib/features/apps/app-catalog';
 
   /**
    * 扩展中心 →「连接」分组（X2，设计 29 §16）：已适配（发行构建里=已放行）的预置连接应用
@@ -31,13 +31,11 @@
 
   /** 点「管理」：只有一个账号直接进详情，多个账号先列出来。 */
   function manage(connectorId: string): void {
-    const accounts = appsStore.connections.filter(
-      (connection) => connection.connectorId === connectorId && !isCustomConnection(connection),
-    );
-    if (accounts.length === 1) {
+    const target = manageTarget(appsStore.connections, connectorId);
+    if (target.kind === 'detail') {
       managingConnectorId = null;
-      detailConnectionId = accounts[0]!.id;
-    } else {
+      detailConnectionId = target.connectionId;
+    } else if (target.kind === 'list') {
       managingConnectorId = connectorId;
       detailConnectionId = null;
     }

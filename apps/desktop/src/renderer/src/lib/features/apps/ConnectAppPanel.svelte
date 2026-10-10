@@ -21,6 +21,7 @@
     confirmToolsDisabled,
     flowErrorKey,
     isTerminalPhase,
+    clientFormMode,
     needsClientCredentials,
     needsCommunityAck,
     panelConnection,
@@ -235,6 +236,15 @@
   }
 
   // --- 手填客户端（OAUTH_CLIENT_REQUIRED） ---------------------------------------
+  const clientMode = $derived(
+    clientFormMode({
+      target,
+      developerMode: settingsStore.developerMode,
+      customServerExists:
+        target.kind === 'custom' &&
+        (settingsStore.settings?.mcpServers.some((s) => s.id === target.serverId) ?? false),
+    }),
+  );
   let clientId = $state('');
   let clientSecret = $state('');
   let savingClient = $state(false);
@@ -614,6 +624,14 @@
     {:else if flow.phase === 'cancelled'}
       <div class="flex items-center gap-2 text-xs text-muted-foreground">
         <span data-testid={`${testid}-cancelled`}>{t('apps.cancelledHint')}</span>
+        <Button size="sm" variant="ghost" class="ml-auto" onclick={dismissFlow}>
+          {t('apps.dismiss')}
+        </Button>
+      </div>
+    {:else if needsClientCredentials(flow) && clientMode === 'unavailable'}
+      <!-- 目录应用需要预注册客户端，而开发者模式关着：不引导普通用户手填客户端 -->
+      <div class="flex items-start gap-2" data-testid={`${testid}-client-unavailable`}>
+        <p class="text-xs text-muted-foreground">{t('apps.clientUnavailable')}</p>
         <Button size="sm" variant="ghost" class="ml-auto" onclick={dismissFlow}>
           {t('apps.dismiss')}
         </Button>

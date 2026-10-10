@@ -556,6 +556,8 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 兼容：代码、RPC、测试保留；已存在的 `settings.mcpServers` 与已建立的连接**不迁移、不删除**，仍可在扩展中心「MCP」组启停 / 编辑 / 删除 / 管理工具策略（OAuth 类自定义 server 的重新连接也在其行内）；`.mcpb` 安装属于「安装本地包」，留在「MCP」组。别名 `openSettings('mcp')` 与旧深链 `openSettings('apps', anchor, 'custom')` 落到「开发者模式」分区（`data-settings-anchor="mcp"` 锚点沿用）。
 
+开发者模式**关闭**时的收紧（评审后补）：扩展中心「MCP」组里编辑已有 server，命令 / 参数 / URL 只读（名称、启停、密钥值仍可改）；目录应用在 `OAUTH_CLIENT_REQUIRED` 时不给手填客户端表单，只提示「该应用需要预注册客户端，暂不可用」——表单仅在开发者模式开启，或目标是已存在的自定义 server 时出现。另：自定义 OAuth server 的 URL 换 origin 时，旧令牌随连接重置一并清除（`AppConnectionStore.ensureCustom` 兜底；`settings.update` 路径本来就先断开）。
+
 ### 16.3 决定 B：设置「应用」只管已连接账号
 
 设置「应用」分区去掉页签，只剩已连接账号管理（列表 / 详情 / 重新授权 / 断开 / 逐工具策略等）；「发现与添加」统一在扩展中心「连接」。原「目录」页签**移除**而非保留跳转页（保留一个只含跳转按钮的页签是多余的一层），改为分区顶部的一条横条 +「去扩展中心添加」按钮；空态按钮同样跳扩展中心（先收起设置弹框，两个弹框不叠放）。深链 `openSettings('apps', …)` 继续有效（落在已连接列表），旧的 `catalog` / `connected` 页签参数被忽略；Bot 面板的「去连接」直接打开扩展中心「连接」组。

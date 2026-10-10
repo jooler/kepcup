@@ -8,6 +8,7 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
+  import { skillMarket } from './market.svelte';
   import ExtensionSkills from './ExtensionSkills.svelte';
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
@@ -32,6 +33,11 @@
   } as const;
 
   const tab = $derived(shell.extensionCenterTab);
+
+  // Skills 分组的目录 / 搜索词只在弹框关闭时复位（切分组不清），避免下次打开闪现陈旧内容。
+  $effect(() => {
+    if (!open) skillMarket.reset();
+  });
 
   let tablist = $state<HTMLDivElement | null>(null);
 

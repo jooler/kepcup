@@ -1101,9 +1101,19 @@
   - **X6**：zh-CN 文案；设计 03 / 05 / 22 与 `preset-skills` / `connectors` / `mcp-presets` README、`todo/connected-apps*.md`、`todo/extension-center.md`（X0–X4、X6 已勾，X5 未做）同步改名与结构；历史 PROGRESS 条目保持原样。
 - **验证**（Docker `kepcup-test:trixie`，2026-10-10）：
   - 定向：`mcp-presets-catalog.test.ts` 7 例、`settings/sections.test.ts` 4 例、`extension-center/tabs.test.ts` 3 例、`features/apps/*` 既有 6 个文件全部通过（共 9 文件 94 例）。
-  - e2e（`kepcup-test:trixie-xvfb`，`electron-vite build` 后 `xvfb-run playwright`）：新增 `extension-center.spec.ts`（三页签 + 方向键；连接组在带发行门禁的构建里显示「暂无已适配的应用」且无卡片；MCP 组无新建入口；设置 → 开发者模式关时入口隐藏、开启后出现；设置「应用」横条跳转扩展中心「连接」）、改动后的 `skill-market.spec.ts`、`sidebar-resize.spec.ts`，3 例全部通过。
+  - e2e（`kepcup-test:trixie-xvfb`，`electron-vite build` 后 `xvfb-run playwright`）：新增 `extension-center.spec.ts`（三页签 + 方向键；连接组在测试构建的默认空目录下显示「暂无已适配的应用」（注意：这**不**证明发行门禁——测试里 core 强制空目录，门禁 define 只在 `dist.mjs` 打包时注入；门禁语义由 core `connector-catalog.test.ts` 覆盖）；MCP 组无新建入口；设置 → 开发者模式关时入口隐藏、开启后出现；设置「应用」横条跳转扩展中心「连接」）、改动后的 `skill-market.spec.ts`、`sidebar-resize.spec.ts`，3 例全部通过。
   - `pnpm typecheck` 通过（svelte-check 0 错误，1 条 `ProviderSetupForm` 既有警告）；`pnpm lint` 只剩既有的 `debug-dev-pin.spec.ts` 6 条错误（来自 main）。
   - 全量一次：3526 例中 29 失败（3495 通过、2 跳过）——26 例是沙箱 / es-git / wiki 容器基线文件（`sandbox-isolation` 10、`workspace-tools` 3、`skills-authoring` 4、`skills` 3、`wiki-url` 2、`toolchain-sandbox` 2、`environment` 1、`projects` 1），1 例 `composer-text`「同名先到先得」（main 带入），另有 2 例与本任务无关、在 `t/d73-connected-apps` 基线（3d4ca11 的干净导出）上同样失败：`connected-apps-runtime`「listing failure at run start」与 `sign-connector-index`「empty production key list」（脚本先校验 `index.json` 形状、后判公钥列表为空，与测试写入的 `{}` 顺序冲突）。本任务新增 / 改动的测试无失败。
 - **偏差**：DEV-023（待决定，推荐全部保留）：常驻的「开发者模式」设置分区、`mcp` 别名落点、「目录」页签直接移除、MCP 组保留已有 server 的编辑 / 删除、精选清单不接 RPC 与打包、弹框固定高度、空目录隐藏搜索。
 - **未做 / 待办**：X5 逐家适配（Notion、Linear 起）；「连接」组「管理 → 账号详情」路径只有类型检查覆盖（需要真实连接，没有 e2e）；精选 MCP 清单的 RPC / 打包 / 卡片在第一个条目落地时再做。
 - 影响范围：渲染端 `features/{extension-center,settings,apps,sidebar,right-panel,bot-panel}`、`stores/shell.svelte.ts`、`i18n/locales/zh-CN.ts`；core `mcp/presets.ts`；资源 `resources/mcp-presets/`；e2e；文档（设计 29 / 03 / 05 / 22、todo、README）。
+
+### 扩展中心 评审修复（2026-10-10，编排会话转交的评审意见）
+
+- **e2e 如实化**：`extension-center.spec.ts` 去掉「空态证明发行门禁」的说法；新增第二个用例，把 `KEPCUP_CONNECTORS` 指向临时目录（一条取自随包目录的 Notion 条目），验证非空目录下卡片 / 连接按钮 / 展开面板渲染，未连接时没有「管理」与账号数；并验证开发者模式关闭时已有 server 的地址只读、开启后可编辑。**已连接状态 / 账号数 / 「管理」去向**无法在 e2e 里造出真实连接（OAuth 需要真实浏览器），改由纯函数单测覆盖（`extension-center/connections-group.test.ts`：`catalogAction` / `showManageButton` / `manageTarget` 单账号 vs 多账号）。
+- **过期指引**：`contacts.mcpServersHint` / `contacts.appsHint`、core `apps/connections.ts` 与 `mcp/service.ts` 的报错、`settings.devModeOffHint`（并加「打开 扩展中心 → MCP」按钮）、`shell.openSettings` 注释均改指扩展中心。
+- **自由入口收紧**：`McpSection` `manage` 形态下，开发者模式关闭时已有 server 的命令 / 参数 / URL 只读（`settings/mcp-edit.ts`）；`ConnectAppPanel` 在 `OAUTH_CLIENT_REQUIRED` 时，目录应用 + 开发者模式关闭只提示「该应用需要预注册客户端，暂不可用」，仅开发者模式开启或目标是已存在的自定义 server 才显示手填客户端表单（`connect-flow.ts clientFormMode`）。
+- **Skills 回归**：目录与搜索词移入 `skillMarket` 单例，只在弹框关闭时复位，切分组不丢（e2e 覆盖 Skills → 连接 → Skills 与关闭重开）。
+- **目录读取失败**：`appsStore.catalogError` + 连接列表读失败时仍读目录；「连接」组显示错误与「重试」，不再一直「正在读取目录…」（`catalogLoadState` 单测）。
+- **core 改动（唯一一处）**：`AppConnectionStore.ensureCustom` 在自定义 server 的 URL **换 origin** 时，把连接行重置为 `not_connected`（issuer / 账号 / scope / 发现缓存清空），并由 `createAppRuntime` 注册的处理器清掉 Token Vault 里该连接的令牌（`conn:{id}:*`）、孤立的 DCR 客户端、缓存的提供者，发 `apps.connection_status` 与脱敏的 `app_disconnect` 审计（不向旧授权服务器发吊销）。同源（只改路径 / 查询）保持不变；非 OAuth server 不受影响。说明：经 `settings.update` 改 URL 的主路径本来就由 `AppDisconnector.reconcileServers` 先断开（含吊销），这里是绕过它时的兜底；新增单测 3 例与集成 4 例（含 `settings.update` 路径的回归）。
+- **未做（按转交意见跳过）**：切换开发者模式时表单草稿丢失；`mcp/presets.ts` 的防护（接线前的 TODO 清单写在 `resources/mcp-presets/README.md`）。

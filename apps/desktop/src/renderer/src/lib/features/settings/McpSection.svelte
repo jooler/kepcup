@@ -17,6 +17,7 @@
   import McpToolPolicies from './McpToolPolicies.svelte';
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
+  import { mcpTargetLocked } from './mcp-edit';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
   /**
@@ -59,6 +60,10 @@
   let toolsOpen = $state<Record<string, boolean>>({});
   /** D73 P2 §6.6：开发者模式（原始工具定义 / 授权事件日志 / 手动刷新工具）；开关在 DeveloperSection。 */
   const developerMode = $derived(settingsStore.developerMode);
+  /** 扩展中心里编辑已有 server、且未开启开发者模式：连接目标（命令 / 参数 / URL）只读。 */
+  const targetLocked = $derived(
+    mcpTargetLocked({ variant, developerMode, editing: editingId !== null }),
+  );
 
   $effect(() => {
     appsStore.start();
@@ -510,7 +515,12 @@
           >
             {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
           </Button>
-          <Button size="sm" variant="ghost" onclick={() => editServer(server)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onclick={() => editServer(server)}
+            data-testid={`mcp-edit-${server.id}`}
+          >
             {t('settings.mcpEdit')}
           </Button>
           <Button
@@ -607,10 +617,22 @@
         {/if}
       </div>
 
+      {#if targetLocked}
+        <p class="text-xs text-muted-foreground" data-testid="mcp-target-locked">
+          {t('extensionCenter.mcp.targetLocked')}
+        </p>
+      {/if}
+
       {#if draft.transport === 'stdio'}
         <div class="grid gap-1.5">
           <Label for="mcp-command">{t('settings.mcpCommandLabel')}</Label>
-          <Input id="mcp-command" class="h-9" bind:value={draft.command} placeholder="npx" />
+          <Input
+            id="mcp-command"
+            class="h-9"
+            bind:value={draft.command}
+            placeholder="npx"
+            readonly={targetLocked}
+          />
         </div>
         <div class="grid gap-1.5">
           <Label for="mcp-args">{t('settings.mcpArgsLabel')}</Label>
@@ -618,6 +640,7 @@
             id="mcp-args"
             class="h-9"
             value={(draft.args ?? []).join(' ')}
+            readonly={targetLocked}
             oninput={(event) => {
               const text = event.currentTarget.value;
               draft!.args = text.length === 0 ? [] : text.split(' ');
@@ -632,6 +655,7 @@
             id="mcp-url"
             class="h-9"
             bind:value={draft.url}
+            readonly={targetLocked}
             placeholder={draft.transport === 'sse'
               ? 'https://mcp.example.com/sse'
               : 'https://mcp.example.com/mcp'}

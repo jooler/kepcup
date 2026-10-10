@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -8,11 +8,15 @@ import { startMockLlm } from '@kepcup/testkit';
  * 扩展中心分组 e2e（X1–X4，设计 29 §16）：
  * - 三个分组：Skills / 连接 / MCP；
  * - 「连接」只有目录卡片，没有「填 URL」入口；
- * - 「MCP」是已安装 MCP 的管理视图，没有「新建 server」入口；
+ * - 「MCP」是已安装 MCP 的管理视图，没有「新建 server」入口，已有 server 的地址 / 命令在
+ *   开发者模式关闭时只读；
  * - 自定义入口只在「设置 → 开发者模式」打开后出现；设置「应用」只管已连接账号，
  *   并能跳到扩展中心「连接」。
- * e2e 跑的是 electron-vite 构建产物，带发行门禁（`connector-release-gates.json` 当前为空）：
- * 「连接」组应显示空态、一张卡片都不出现；开发构建不过滤（core 单测覆盖门禁语义）。
+ *
+ * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
+ * `KEPCUP_CONNECTORS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
+ * 所以这里的空态**不**证明发行门禁；门禁语义由 core `connector-catalog.test.ts` 覆盖。
+ * 第二个用例把 `KEPCUP_CONNECTORS` 指向临时目录（含一条取自随包目录的条目）来验证非空目录的渲染。
  */
 
 async function waitReady(page: Page): Promise<void> {
@@ -68,8 +72,7 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
       'true',
     );
 
-    // 连接：打包后的构建带发行门禁（放行清单为空）→ 目录里一条都不可见，显示空态；
-    // 没有填 URL 的入口。
+    // 连接：测试构建默认空目录 → 空态；没有填 URL 的入口。
     await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
     await expect(dialog.locator('[data-testid="apps-catalog-none"]')).toHaveText(
       '暂无已适配的应用',
@@ -125,6 +128,110 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
     await expect(
       dialog.locator('[data-testid="extension-center-tab-connections"]'),
     ).toHaveAttribute('aria-selected', 'true');
+  } finally {
+    await app?.close();
+    await llm.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('extension center: non-empty catalog renders cards in 连接; existing MCP server target is read-only without developer mode', async () => {
+  test.setTimeout(240_000);
+  const llm = await startMockLlm();
+  const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-extcenter2-'));
+  // 临时目录：一条取自随包目录的 Notion 条目（核心按 KEPCUP_CONNECTORS 读取；测试构建不过滤门禁）。
+  const shipped = path.resolve('resources/connectors');
+  const connectorsDir = path.join(home, 'connectors');
+  await mkdir(connectorsDir, { recursive: true });
+  await cp(path.join(shipped, 'icons'), path.join(connectorsDir, 'icons'), { recursive: true });
+  const full = JSON.parse(await readFile(path.join(shipped, 'catalog.json'), 'utf8')) as {
+    version: number;
+    connectors: Array<{ title: string }>;
+  };
+  const notion = full.connectors.find((entry) => entry.title === 'Notion');
+  expect(notion).toBeDefined();
+  await writeFile(
+    path.join(connectorsDir, 'catalog.json'),
+    JSON.stringify({ version: full.version, connectors: [notion] }),
+  );
+  let app: ElectronApplication | null = null;
+  try {
+    app = await _electron.launch({
+      args: ['.'],
+      env: {
+        ...process.env,
+        KEPCUP_HOME: home,
+        NODE_ENV: 'test',
+        KEPCUP_KEYSTORE: 'file',
+        KEPCUP_ONBOARDING: 'off',
+        KEPCUP_FILE_KEYSTORE_PATH: path.join(home, '.test-master-key'),
+        KEPCUP_MOCK_LLM_URL: llm.url,
+        KEPCUP_CONNECTORS: connectorsDir,
+      },
+    });
+    const page = await app.firstWindow();
+    await waitReady(page);
+    const dialog = page.locator('[data-testid="extension-center-dialog"]');
+    await page.locator('[data-testid="extension-center-button"]').click();
+
+    // 连接：非空目录 → 卡片、连接按钮；未连接 → 没有「管理」、没有账号数；没有填 URL 的入口。
+    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    const card = dialog.locator('[data-testid="apps-catalog-card-notion"]');
+    await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(card).toContainText('Notion');
+    await expect(dialog.locator('[data-testid="apps-catalog-none"]')).toHaveCount(0);
+    await expect(card.locator('[data-testid="apps-catalog-accounts"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="apps-catalog-manage-notion"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
+    // 点「连接」在卡片内展开连接面板（授权本身要真实浏览器，这里不发起）。
+    await dialog.locator('[data-testid="apps-catalog-connect-notion"]').click();
+    await expect(dialog.locator('[data-testid="apps-catalog-panel-notion"]')).toBeVisible();
+
+    // 一个已有的 HTTP MCP server（直接经 core RPC 写入；渲染端设置快照不监听该变更，重载页面后可见）：
+    // 开发者模式关闭时，编辑表单里地址只读。
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+    await page.evaluate(() =>
+      window.__kepcupRpc('settings.update', {
+        mcpServers: [
+          {
+            id: 'ro',
+            name: 'RO Server',
+            transport: 'http',
+            url: 'https://mcp.example.test/mcp',
+            auth: 'none',
+            enabled: true,
+            autoApprove: false,
+          },
+        ],
+      }),
+    );
+    await page.reload();
+    await waitReady(page);
+    const openMcpEdit = async (): Promise<void> => {
+      await page.locator('[data-testid="extension-center-button"]').click();
+      await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
+      await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible({
+        timeout: 30_000,
+      });
+      await dialog.locator('[data-testid="mcp-edit-ro"]').click();
+    };
+    await openMcpEdit();
+    await expect(dialog.locator('[data-testid="mcp-target-locked"]')).toBeVisible();
+    await expect(dialog.locator('#mcp-url')).toHaveAttribute('readonly', '');
+    await expect(dialog.locator('#mcp-name')).not.toHaveAttribute('readonly', '');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
+
+    // 在「设置 → 开发者模式」开启后，同一个表单可编辑。
+    await openSettings(page, 'developer');
+    await page.locator('[data-testid="mcp-dev-mode"]').click();
+    await expect(page.locator('[data-testid="mcp-add"]')).toBeVisible({ timeout: 15_000 });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
+    await openMcpEdit();
+    await expect(dialog.locator('[data-testid="mcp-target-locked"]')).toHaveCount(0);
+    await expect(dialog.locator('#mcp-url')).not.toHaveAttribute('readonly', '');
   } finally {
     await app?.close();
     await llm.stop();

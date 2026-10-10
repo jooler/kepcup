@@ -416,3 +416,8 @@
 - 推荐：均保留。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/design/29-connected-apps.md`（§16、§9、D73 第 7 条、修订记录）、`docs/design/{03-bot,05-wiki-and-skills,22-file-skill-routing}.md`（技能市场 → 扩展中心 Skills 分组）、`todo/connected-apps*.md`、`apps/desktop/resources/{connectors,preset-skills,mcp-presets}/README.md`、`docs/dev/PROGRESS.md`。
+
+- **DEV-023 修订（评审后，2026-10-10）**：
+  8. **core 改动 `ensureCustom` 换源兜底**（超出「无 core 改动」的原表述）：自定义 server 的 URL origin 变化时重置连接行并清令牌（见 PROGRESS「扩展中心 评审修复」）；`settings.update` 主路径的行为（`reconcileServers` 对任何 URL 变化先吊销并断开）不变，比 origin 判定更严。
+  9. **开发者模式关闭时收紧**：「MCP」组里已有 server 的命令 / 参数 / URL 只读；目录应用的 `OAUTH_CLIENT_REQUIRED` 不再给手填表单（已存在的自定义 server 除外）。
+  10. **指引文案**：「设置 → MCP 服务器」「设置 → 应用 中连接账号」「设置的『自定义』页」「设置页检查配置」等改指扩展中心。
