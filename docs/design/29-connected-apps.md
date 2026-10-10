@@ -374,6 +374,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | `developer` | 本机手动添加 | 无 | 全部工具每次确认（可逐工具放宽） | 仅「自定义」 |
 
 - P2 实施注（DEV-021 第 1 项）：`developer` 档只对 `McpServer.tier === 'developer'` 的 server（MCPB 包安装生成）生效；普通自定义 server 保持 W5 默认（只读自动、写 / 破坏性确认）。`destructive` 恒每次确认。
+- 本机连接实施注（DEV-024 第 1 项，§17）：目录连接的 `tier: developer` 现在同样生效——所有工具默认每次确认、没有任何持续授权、授权前必核对完整授权地址（此前目录里没有 `developer` 条目，远端目录也会丢弃它）。
 - P3 实施注（DEV-022 第 2 项）：`community` 的「不可总是允许写入类」在任何创建路径都成立（含核心兜底与既有 Bot 级授权不命中）；首连额外确认由 core 强制（`apps.connect.confirmTools({acknowledgeCommunity})`），无待复核工具的社区条目没有该步；分级未知按 `community` 处理。
 
 ### 11.4 目录服务
@@ -570,6 +571,51 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 - 发行门禁、签名目录、工具锁定、风险分级、污点外发等安全语义不变；「连接」组只是同一份 `apps.catalog.list` 的另一个壳，不放宽过滤。
 - 收紧的是入口可见性，不是能力：开发者模式开启后与此前的「自定义」页签等价。
+
+## 17 本机连接（Local Connectors，2026-10-10）
+
+> 任务书与进度：[todo/local-connector-authoring.md](../../todo/local-connector-authoring.md)。不改 §5–§8 的授权、令牌、风险分级、工具锁定与污点语义，只新增一个**条目来源**和一条受控的添加路径。
+
+**动机**：厂商长尾太长，逐家预置（§16）覆盖不过来；而「连接」在 KepCup 里本质是数据（MCP 地址 + 认证方式 + 工具策略 + 账号识别 + 范围），工具清单、风险分级、定义锁定、污点外发与审批都不依赖条目是谁写的。所以让 Bot 读厂商文档、生成一条**只存在于本机**的条目，用户确认后即可像预置连接一样连接。它同时取代第三方开放平台门户（`todo/developer-portal.md`）作为长尾的第一落点——门户降级为「需要共享 / 审核 / 签名分发 / 已验证等级」时再做，本机条目将来可导出成 `server.json` 作为提交入口。
+
+### 17.1 硬边界
+
+1. **只支持 MCP 远端服务**（`streamable-http`，https 域名）；只有 REST、没有 MCP 的不走本流程（那是技能创作，沙箱里跑）。
+2. **文档是不可信输入**：条目内容以 **core 的探测结果为准**，不以 Bot 的转述为准——Bot 只能提供展示名 / 描述 / 分类 / 文档链接，且经长度限制和控制 / 双向 / 零宽字符清洗；URL、认证方式、范围、域名从不取自 Bot 文本。保存必须经**用户确认卡**，Bot 自己不能保存。
+3. **最低信任等级**：`tier: developer`（§11.3）——全部工具每次确认（只读也是）、用户可逐工具放宽、破坏性恒确认、**没有任何持续授权**（既无 Bot 级也无对话级）；读过其数据即污点（§8.3）。界面标注「本机自建 · 未审核」。
+4. **认证只支持能自动注册的 OAuth**（授权服务器支持 CIMD 或 DCR，且声明 PKCE S256）。需要预注册密钥、API Key 的不支持；**无需认证的 MCP 服务也不支持**（目录连接底座目前只实现 OAuth，匿名服务走「设置 → 开发者模式」手动添加）。
+5. **只存本机**：不进打包目录、不进签名目录、不上传、不同步；**绕过不了发行门禁**——它走独立来源，不是门禁的放行对象（`releaseGate: "local"` 不在任何放行清单里，远端目录也不得使用该门禁值 / 命名空间）。
+6. **仅在开发者模式（§16.2）打开时可新增**：关闭时 Bot 看不到这两个工具、`apps.localConnectors.confirm` 被拒；已建的条目保留，`remove` 任何时候可用。
+7. **Bot 不碰账号识别与策略放宽**：不设 `whoami`（账号用自动编号）、`toolPolicy` 为空（只能由用户在连接详情里逐工具调整）。
+
+### 17.2 数据与接入
+
+- 条目存 `settings.apps.localConnectors`（slug → `LocalConnectorRecord`，设置 JSON，无迁移；`settings.update` 不接受该字段）。记录 = 完整目录条目（§4）+ `addedAt` + `sourceDocUrl?`，读取时逐条经 `localConnectorRecordSchema` 校验，坏条目只丢弃它自己。强制：`tier: developer`、`auth.kind: oauth` + `registration: auto`、唯一一个 https 域名的 `streamable-http` 远端（无用户信息 / 查询 / 片段，非 IP / localhost / 内网后缀）、`releaseGate: local`、`toolPolicy: {}`、无 `whoami`、`skills: []`、`ui: false`、占位图标、固定版本。
+- **slug** = `l` + 对 MCP 地址 origin 取的 sha256 前 12 位（`[a-z0-9]{13}`，十六进制里没有 `o`，撞不上 `app_local_*` 工具前缀）；name = `local.kepcup/{slug}`。同一 origin 再次提案返回已有条目；与打包 / 远端条目的 slug、name 或同一服务地址冲突即拒绝（目录里已有就用目录里的）。
+- **目录**：`ConnectorCatalog` 的第三个来源 `local()`，在快照与远端目录合并**之后**追加，**不经 `filterReleasedConnectors`**；冲突时本机条目让位。`apps.catalog.list` 条目带 `origin`（`bundled | directory | local`）。连接、多账号、Bot 授权、工具锁定、风险分级、污点全部复用现有路径。
+- **MCP 流量**也走 SSRF 守卫：本机条目的地址由 Bot 提供，探测通过不等于之后不会被 DNS 重绑定到内网，所以其 Streamable HTTP 传输换用 `createGuardedMcpFetch`（连接时校验解析地址、仅跟随同源重定向、https）。
+- **授权**：`developer` 分级即使授权服务器与 MCP 同站点也**先显示完整授权地址让用户核对**（`awaiting_consent`），再打开浏览器。
+
+### 17.3 Bot 工具与确认卡
+
+仅 `settings.apps.developerMode` 为真时暴露：
+
+| 工具 | 作用 |
+|---|---|
+| `app_local_connector_guide` | 返回内置手册（随 core 打包的 zh-CN Markdown 常量 `apps/local-connector-guide.ts`：何时适用、如何读文档、边界与禁止事项、字段说明、失败解释） |
+| `app_propose_local_connector` | 入参 `mcpUrl`、`title`、`description?`、`category?`、`docUrl?`。core 做 SSRF 安全探测（复用 `createSafeFetch` + `discoverOAuthServerInfo`：`initialize` → 401 + `WWW-Authenticate` → 受保护资源元数据 → 授权服务器元数据 → CIMD / DCR、S256、`scopes_supported`；跨主机重定向、私网、非 https、无自动注册、非 MCP、匿名服务一律带具体原因拒绝）。通过后创建**提案**（内存，30 分钟 TTL，用 Clock，一次性 id；同一服务新提案顶掉旧的，待确认上限 10 个）并发起 `confirm-local-connector` 设置需求；工具结果只返回「已发起确认，等待用户」，不含任何探测细节 |
+
+`confirm-local-connector` 设置需求携带 `{proposalId, card}`，`card` 全部由 core 生成：展示名、描述、分类、**MCP 域名（含端口，卡上大字）**与完整地址、认证方式（oauth）与注册方式（cimd / dcr）、授权服务器域名、将请求的范围、文档链接（仅展示）、风险说明、过期时间。用户点「添加」→ `apps.localConnectors.confirm({ proposalId })`（落库、广播 `apps.catalog_changed`、审计）；点「取消」→ `…reject`。随后用 `runs.retry` 续跑，Bot 在 `<available_apps>` 里看到新条目，经 `app_request_connection` 引导用户连接。
+
+### 17.4 删除、审计与观测
+
+- `apps.localConnectors.remove`：先经 `AppDisconnector` 断开该条目的**全部**连接（吊销、清令牌、清 DCR 客户端、从 Bot 勾选中移除、取消进行中的流程），再删条目；任何时候可用。
+- 审计 `local_connector_add` / `local_connector_remove`（slug、域名、触发的 Bot / 会话；经 `redact`，不含令牌）；探测失败原因与提案创建写结构化日志。
+
+### 17.5 与既有设计的衔接
+
+- §11.3 的 `developer` 分级此前只对 `McpServer.tier === 'developer'`（MCPB 安装生成）生效；本节上线时补齐**目录连接**：`ConnectedApps` 的审批决定把条目分级传入 `decideMcpTool`，网关对该分级不提供持续授权。
+- 非目标：API Key / 预注册密钥认证、REST 适配、`whoami` 与 `toolPolicy` 自动生成、云同步 / 分享、`server.json` 导出提交（预留给后续门户）。
 
 ## 非目标（本期）
 
