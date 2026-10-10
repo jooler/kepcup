@@ -4,7 +4,13 @@ import {
   selectResource,
 } from '@earendil-works/pi-mcp/oauth';
 import type { McpFetch } from '@earendil-works/pi-mcp';
-import { AppError } from '@kepcup/shared';
+import { AppError, sanitizeScopes } from '@kepcup/shared';
+import {
+  PRIVATE_ADDRESS_REJECTION_PREFIX,
+  connectRejectionText,
+} from '../infra/safe-dispatcher.js';
+import type { CoreLogger } from '../infra/logger.js';
+import { sameSite } from './auth/flow.js';
 import { isLoopbackAllowed } from './auth/safe-fetch.js';
 import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
 
@@ -27,6 +33,8 @@ export interface LocalProbeResult {
   issuer: string;
   /** 授权服务器主机（含端口），卡片上展示。 */
   issuerHost: string;
+  /** 授权服务器与 MCP 服务不同站点（评审 A1）：别家的授权服务器可能被借来给这个地址签发令牌。 */
+  issuerCrossSite: boolean;
   /** 将请求的范围：401 挑战的 scope，否则资源元数据的 `scopes_supported`；可空。 */
   scopes: string[];
 }
@@ -36,6 +44,8 @@ export interface LocalProbeDeps {
   /** 允许明文 / 回环端点的主机（生产恒为空）。 */
   loopbackAllowlist: readonly string[];
   signal?: AbortSignal | undefined;
+  /** 探测失败的原始细节只写日志（给 Bot / 用户的原因是固定文案，不回显库的原始报错 / 解析到的 IP）。 */
+  logger?: Pick<CoreLogger, 'info'> | undefined;
 }
 
 function reject(message: string): AppError {
@@ -52,12 +62,9 @@ function endpointAllowed(raw: string, loopbackAllowlist: readonly string[]): boo
   return isSafeDirectoryRemoteUrl(raw);
 }
 
+/** 范围名：按 RFC 6749 scope-token 过滤（非法字符 / 超长 / 重复 / 超个数的丢弃，评审 A3）。 */
 function splitScopes(scope: string | undefined): string[] {
-  return (scope ?? '')
-    .split(/\s+/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0 && item.length <= 200)
-    .slice(0, 50);
+  return sanitizeScopes((scope ?? '').split(/\s+/));
 }
 
 /** `initialize` 的 200 响应是不是 MCP（JSON-RPC result 带 protocolVersion / serverInfo）。 */
@@ -122,7 +129,7 @@ export async function probeLocalConnector(
       }),
     });
   } catch (error) {
-    throw describeNetworkFailure(error);
+    throw describeNetworkFailure(error, '无法连接到该地址', deps.logger);
   }
 
   if (response.status === 200) {
@@ -156,7 +163,7 @@ export async function probeLocalConnector(
       fetch,
     });
   } catch (error) {
-    throw describeNetworkFailure(error, '读取授权服务器元数据失败');
+    throw describeNetworkFailure(error, '读取授权服务器元数据失败', deps.logger);
   }
   try {
     selectResource(mcpUrl, info.resourceMetadata);
@@ -191,18 +198,32 @@ export async function probeLocalConnector(
     registration: cimd ? 'cimd' : 'dcr',
     issuer: metadata.issuer,
     issuerHost: new URL(metadata.issuer).host,
+    issuerCrossSite: !sameSite(new URL(mcpUrl).hostname, new URL(metadata.issuer).hostname),
     scopes,
   };
 }
 
-/** 网络 / 发现阶段失败 → 给人看的原因（跨主机重定向、私网地址等 SSRF 拒绝原样说明）。 */
-function describeNetworkFailure(error: unknown, prefix = '无法连接到该地址'): AppError {
-  if (error instanceof AppError && error.code === 'OAUTH_INSECURE_ENDPOINT') {
-    return reject(`${prefix}：${error.message}`);
-  }
+/**
+ * 网络 / 发现阶段失败 → 给人看的**固定**原因（评审 A6）：不回显库的原始报错，更不回显解析到的
+ * 内网 IP（那会让 Bot 把域名当成探测内网的工具）；原始细节只写日志。
+ */
+function describeNetworkFailure(
+  error: unknown,
+  prefix: string,
+  logger: LocalProbeDeps['logger'],
+): AppError {
   if (error instanceof AppError && error.code === 'LOCAL_CONNECTOR_REJECTED') return error;
+  const raw = error instanceof Error ? error.message : String(error);
+  logger?.info({ detail: raw.slice(0, 300) }, 'local connector probe failed');
   const name = error instanceof Error ? error.name : '';
   if (name === 'TimeoutError' || name === 'AbortError') return reject(`${prefix}：请求超时`);
-  const message = error instanceof Error ? error.message : String(error);
-  return reject(`${prefix}：${message.slice(0, 200)}`);
+  if (raw.includes(PRIVATE_ADDRESS_REJECTION_PREFIX) || connectRejectionText(error) !== null) {
+    return reject(`${prefix}：该域名解析到内网或保留地址，已拒绝`);
+  }
+  if (raw.includes('跨源重定向'))
+    return reject(`${prefix}：对方把请求重定向到了另一个站点，已拒绝（跨源重定向）`);
+  if (error instanceof AppError && error.code === 'OAUTH_INSECURE_ENDPOINT') {
+    return reject(`${prefix}：连接被安全策略拒绝（必须是公网 https 地址）`);
+  }
+  return reject(`${prefix}：连接失败或对方没有按预期响应`);
 }

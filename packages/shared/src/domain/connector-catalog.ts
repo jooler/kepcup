@@ -167,6 +167,11 @@ export const connectorMetaSchema = z.object({
   privacyPolicy: z.string().url(),
   whoami: connectorWhoamiSchema.optional(),
   /**
+   * 钉死的授权服务器 issuer（本机连接用，设计 29 §17）：连接时重新发现到的 issuer 与之不符 →
+   * 中止，不静默跟随被换掉的授权服务器。预置 / 目录条目不设（授权服务器由厂商门禁与审核保证）。
+   */
+  expectedIssuer: z.string().url().optional(),
+  /**
    * 发行门禁：发行构建只收录门禁已放行的条目；必填，缺省的条目无法被放行
    * （fail-closed，见 {@link filterReleasedConnectors}）。开发构建与测试不受影响。
    */

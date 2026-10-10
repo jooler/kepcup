@@ -1,6 +1,7 @@
 import {
   APP_TOOLS_INLINE_MAX,
   AVAILABLE_APPS_MAX,
+  AVAILABLE_LOCAL_MAX,
   connectorMetaOf,
   type AppConnection,
   type AppConnectionStatus,
@@ -98,7 +99,7 @@ export interface ConnectedAppsDeps {
    * `mcp/service.ts` 的 `connectionToMcpServer`）：id = 连接 id，`name` = 应用名（账号）。
    */
   mcp: Pick<McpService, 'serverFor'>;
-  catalog: Pick<ConnectorCatalog, 'list' | 'get'>;
+  catalog: Pick<ConnectorCatalog, 'list' | 'get'> & Partial<Pick<ConnectorCatalog, 'isLocal'>>;
   toolLock: Pick<ToolLockService, 'getUserPolicy'>;
 }
 
@@ -253,9 +254,15 @@ export class ConnectedApps {
    */
   availableFor(authorized: readonly ConnectedAppView[]): ConnectorCatalogEntry[] {
     const taken = new Set(authorized.map((view) => view.slug));
-    return this.#deps.catalog
+    const open = this.#deps.catalog
       .list()
-      .filter((entry) => !taken.has(connectorMetaOf(entry).slug))
-      .slice(0, AVAILABLE_APPS_MAX);
+      .filter((entry) => !taken.has(connectorMetaOf(entry).slug));
+    // 本机连接（用户刚添加、Bot 要帮着连的）永远占位：先放至多 {@link AVAILABLE_LOCAL_MAX} 个，再用
+    // 预置 / 目录条目补满上限——预置条目再多也不会把它们挤出提示词。
+    const isLocal = (entry: ConnectorCatalogEntry): boolean =>
+      this.#deps.catalog.isLocal?.(connectorMetaOf(entry).slug) === true;
+    const local = open.filter(isLocal).slice(0, AVAILABLE_LOCAL_MAX);
+    const rest = open.filter((entry) => !isLocal(entry)).slice(0, AVAILABLE_APPS_MAX - local.length);
+    return [...local, ...rest];
   }
 }

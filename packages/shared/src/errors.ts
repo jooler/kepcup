@@ -136,6 +136,8 @@ export const ERROR_CODES = [
   'LOCAL_CONNECTOR_EXPIRED',
   /** 本机连接的新增需要先在设置里打开开发者模式。 */
   'DEVELOPER_MODE_REQUIRED',
+  /** 授权服务器与 MCP 服务不同站点的提案，`confirm` 缺少 `acknowledgeCrossSiteIssuer`。 */
+  'LOCAL_CONNECTOR_ACK_REQUIRED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

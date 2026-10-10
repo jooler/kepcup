@@ -1089,6 +1089,11 @@ export const localConnectorCardSchema = z.object({
   registration: z.enum(['cimd', 'dcr']),
   /** 授权服务器域名（含端口）：与 MCP 域名不同站时授权前还会再核对一次完整 URL。 */
   issuerHost: z.string(),
+  /**
+   * 授权服务器与 MCP 服务**不同站点**（评审 A1）：可能是别家真实的授权服务器被借来给这个地址签发令牌。
+   * 界面必须醒目警告并要求勾选确认；`apps.localConnectors.confirm` 须带 `acknowledgeCrossSiteIssuer: true`。
+   */
+  issuerCrossSite: z.boolean().default(false),
   /** 探测到的将请求的范围（空 = 按服务端提示）。 */
   scopes: z.array(z.string()),
   tier: z.literal('developer'),

@@ -4542,12 +4542,17 @@ export class Orchestrator {
           const result = await local.propose(input, {
             botId: identity.botId,
             conversationId: identity.conversationId,
+            runId: identity.runId,
             signal: ctx.signal,
           });
           if (result.kind === 'existing') {
+            // 本机连接按域名只保留一条：地址路径不同时要明确告诉 Bot，而不是悄悄忽略它提交的地址。
+            const differs = result.sameUrl
+              ? ''
+              : `注意：你提交的地址与已保存的不同，已保存的是 ${result.mcpUrl}；本机连接按域名只保留一条，你提交的地址没有被使用。如确实需要换地址，请告诉用户先在扩展中心删除这个本机连接再重新添加。`;
             return {
               ok: true,
-              message: `「${result.title}」已经添加为本机连接（slug ${result.connectorId}），无需再次确认。用 app_request_connection({ connector: "${result.connectorId}", reason }) 请用户连接它。`,
+              message: `「${result.title}」已经添加为本机连接（slug ${result.connectorId}），无需再次确认。${differs}用 app_request_connection({ connector: "${result.connectorId}", reason }) 请用户连接它。`,
             };
           }
           setupHit.requirement = {

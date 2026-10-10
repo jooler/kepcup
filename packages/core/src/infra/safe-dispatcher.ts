@@ -134,15 +134,18 @@ export function connectRejectionText(error: unknown): string | null {
  * 连接时校验解析地址的 undici Agent：fetch 内部对同一 hostname 的（再次）解析也走本
  * lookup，私网地址在 TCP 连接前即被拒绝。
  */
-export function createSafeDispatcher(): Agent {
+export function createSafeDispatcher(
+  /** 解析器（测试可注入，模拟 DNS 重绑定：探测时返回公网地址、连接时返回内网地址）。 */
+  resolve: (
+    hostname: string,
+    family: 4 | 6 | undefined,
+  ) => Promise<Array<{ address: string; family: number }>> = (hostname, family) =>
+    dns.lookup(hostname, { all: true, ...(family !== undefined ? { family } : {}) }),
+): Agent {
   return new Agent({
     connect: {
       lookup: (hostname, options, callback) => {
-        dns
-          .lookup(hostname, {
-            all: true,
-            ...(options.family === 4 || options.family === 6 ? { family: options.family } : {}),
-          })
+        resolve(hostname, options.family === 4 || options.family === 6 ? options.family : undefined)
           .then((addresses) => {
             try {
               assertNoPrivateAddress(addresses);

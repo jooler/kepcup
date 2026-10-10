@@ -1039,7 +1039,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       testHooks: __KEPCUP_TEST_HOOKS__ === true,
       test: {
         cimdUrl: options.oauthCimdUrl,
-        loopbackAllowlist: options.oauthLoopbackAllowlist,
+        // e2e（真实 Electron，没有 createCore 选项可传）：KEPCUP_TEST_OAUTH_LOOPBACK=host[,host…]；
+        // 同样只在测试钩子构建里存在，`createAppServices` 另要求 NODE_ENV=test。
+        loopbackAllowlist:
+          options.oauthLoopbackAllowlist ??
+          (__KEPCUP_TEST_HOOKS__ === true
+            ? env.KEPCUP_TEST_OAUTH_LOOPBACK?.split(',')
+                .map((host) => host.trim())
+                .filter((host) => host.length > 0)
+            : undefined),
         callbackPorts: options.oauthCallbackPorts,
         flowTimeoutMs: options.oauthFlowTimeoutMs,
         preregisteredClients: options.oauthPreregisteredClients,
@@ -1723,6 +1731,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       appContextFor: (serverId) => {
         const view = connectedApps.view(serverId);
         return view === null ? undefined : connectedApps.contextOf(view);
+      },
+      // 本机连接 / developer 分级的条目声明 `ui: false`：不渲染它们返回的界面（评审 A4）。
+      uiAllowed: (serverId) => {
+        const view = connectedApps.view(serverId);
+        return view === null || (view.tier !== 'developer' && !connectorCatalog.isLocal(view.slug));
       },
       secrets,
       shell: services.shellRpc,
