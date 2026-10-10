@@ -69,7 +69,7 @@ describe('watches 迁移（W7）', () => {
     db.prepare(
       "insert into conversations (id, type, title, created_at) values ('conv_a', 'group', 'x', 1)",
     ).run();
-    const applied = runMigrations(db, migrationsUrl('main'));
+    const applied = runMigrations(db, migrationsUpTo(version));
     expect(applied.map((m) => m.version)).toEqual([version]);
     expect(db.pragma('user_version', { simple: true })).toBe(version);
 

@@ -11,6 +11,7 @@
   import Composer from './Composer.svelte';
   import SetupRequiredCard from './SetupRequiredCard.svelte';
   import MediaLightbox from './MediaLightbox.svelte';
+  import StickiesLayer from './StickiesLayer.svelte';
   import ApprovalDock from '$lib/features/approvals/ApprovalDock.svelte';
 
   /**
@@ -235,6 +236,11 @@
         centered={!hasMessages}
       />
     </div>
+    <!--
+      便签层（辅助阅读）：浮在消息列表上层、顶部药丸与输入坞之下；放在
+      header 之后保证卡片的 no-drag 矩形按 DOM 顺序覆盖顶部拖拽区（app.css）。
+    -->
+    <StickiesLayer conversationId={current.conversation.id} />
     <!-- 媒体灯箱（docs/design/20-conversation-media.md）：消息附件图片/音视频的放大预览。
          组件内部 portal 到 body 末尾 + no-drag，否则顶部 drag 区矩形会盖住顶栏按钮 -->
     <MediaLightbox />

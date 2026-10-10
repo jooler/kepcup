@@ -34,6 +34,14 @@ export const zhCN = {
   'chats.setupCustomPlaceholder': '或输入你的回答…',
   'chats.setupCustomSubmit': '提交回答',
   'chats.setupAnswerFailed': '回答提交失败，请重试',
+  // 选中文本钉便签（辅助阅读）
+  'chats.pinToConversation': '固定到当前对话',
+  'chats.pinToAllConversations': '固定到所有对话',
+  'chats.stickieHandle': '拖动移动便签',
+  'chats.stickieCard': '便签',
+  'chats.stickieScopeLocal': '仅当前对话可见',
+  'chats.stickieScopeGlobal': '所有对话可见',
+  'chats.stickieFrom': '来自 {name}',
   // 访谈工作目录卡（docs/design/19 D59）
   'chats.setupPathPick': '选择目录…',
   'chats.setupPathSkip': '暂不设置',

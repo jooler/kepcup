@@ -19,6 +19,7 @@
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
+  import { stickies } from '$lib/features/chats/stickies.svelte';
   import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
   import PlaceholderPage from '$lib/features/shell/PlaceholderPage.svelte';
   import CoreStatusBar from '$lib/features/shell/CoreStatusBar.svelte';
@@ -59,6 +60,8 @@
     chat.start();
     // 输入框草稿缓存的事件接线（conversation.deleted → 丢弃该会话的缓存条目）。
     composerDrafts.start();
+    // 便签：事件接线（conversation.deleted → 修剪本地缓存）+ 恢复已钉便签。
+    stickies.start();
     contacts.start();
     settingsStore.start();
     permissions.start();
@@ -68,9 +71,11 @@
   });
 
   /**
-   * 初始加载 + 启动恢复：直接激活上一次对话的 Bot（从没聊过则打开第一个
-   * Bot，初始化向导创建的即第一个）；一个 Bot 都没有（跳过了向导）时停在
-   * 空态、右栏默认收起、左栏「+」面板自动下拉展开引导新建。
+   * 初始加载 + 启动恢复：优先回到上次查看的会话（私聊或群聊，localStorage
+   * 记忆，见 last-conversation-persist）；没有记忆/记忆失效则按最近消息挑
+   * （从没聊过则打开第一个 Bot，初始化向导创建的即第一个）；一个 Bot 都
+   * 没有（跳过了向导）时停在空态、右栏默认收起、左栏「+」面板自动下拉
+   * 展开引导新建。
    */
   async function bootstrap(): Promise<void> {
     await Promise.all([
@@ -80,6 +85,7 @@
       permissions.refreshUnattended(),
       permissions.refreshSandbox(),
       projects.refresh(),
+      stickies.load(),
     ]);
     const restored = await chat.restoreLast();
     if (restored === 'empty' && !onboarding.open) {

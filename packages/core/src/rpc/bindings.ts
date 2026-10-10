@@ -188,6 +188,14 @@ import {
   watchIdInputSchema,
   watchGetOutputSchema,
   watchMutateOutputSchema,
+  stickiesListInputSchema,
+  stickiesListOutputSchema,
+  stickiesCreateInputSchema,
+  stickiesCreateOutputSchema,
+  stickiesUpdateInputSchema,
+  stickiesUpdateOutputSchema,
+  stickiesDeleteInputSchema,
+  stickiesDeleteOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
@@ -1313,6 +1321,35 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       schedulesCancelOutputSchema,
       async (input) => {
         services.schedules?.cancel(input.id);
+        return { ok: true as const };
+      },
+    ),
+
+    // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---
+    'stickies.list': method(stickiesListInputSchema, stickiesListOutputSchema, async () => ({
+      stickies: domain.stickies.list(),
+    })),
+    'stickies.create': method(
+      stickiesCreateInputSchema,
+      stickiesCreateOutputSchema,
+      async (input) => {
+        domain.conversations.getOrThrow(input.conversationId);
+        return { stickie: domain.stickies.create(input) };
+      },
+    ),
+    'stickies.update': method(
+      stickiesUpdateInputSchema,
+      stickiesUpdateOutputSchema,
+      async (input) => {
+        const { id, ...patch } = input;
+        return { stickie: domain.stickies.update(id, patch) };
+      },
+    ),
+    'stickies.delete': method(
+      stickiesDeleteInputSchema,
+      stickiesDeleteOutputSchema,
+      async (input) => {
+        domain.stickies.remove(input.id);
         return { ok: true as const };
       },
     ),
