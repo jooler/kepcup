@@ -1133,3 +1133,24 @@
   - 渲染端：`applyConnectionStatus(…, removed)` 移除行；终态（done / failed / cancelled）一律 `refresh()`；`removed` 时同时刷新目录并让 `appDetailStore.forget`；`appDetailStore` 的加载器簿记读写全部 `untrack`，任何调用方的 effect 都安全；详情页的 effect 只依赖 `connectionId` 与「能否拉工具」，行不存在时不请求、`APP_CONNECTION_NOT_FOUND` 不 toast 不重试、其它失败同一连接只留一条 toast（`id: app-detail-load-{id}`）；授权没了 / 过期 / 缺权限 / 连接中的连接不去 server 取工具，只读本地授权记录；`ExtensionConnections` / `AppsSection` 在所开详情的连接消失时回到列表。
 - **测试**：core 集成 `catalog-connect-abort.test.ts` 5 例（授权页开着时取消 / 超时 / `access_denied` / 复核阶段取消 / 成功后断开：行与密钥不留、`connectedAccounts` 与列表、`removed` 事件）；desktop 纯函数（`applyConnectionStatus` 移除、`toolsLoadableStatus`、`isConnectionGone`）；Svelte 运行时 `app-detail.svelte.test.ts`（含状态事件：`removed` 丢缓存且不再请求、非可拉取状态不重拉）。测试基建：根 `vitest.config.ts` 新增 `desktop-svelte` 项目（vite-plugin-svelte + 无 DOM 的「客户端」环境 `apps/desktop/test/svelte-client-env.ts`，只跑 `*.svelte.test.ts`；`desktop` 项目排除它们）。
 - **审计其它 effect / 重试路径**：`McpSection` 的自定义 server 工具预取 effect 同样受此根因影响（随加载器修复一并解决）；`BotProfileForm` 的 `connectionTools` 预取 effect 对失败的连接会在缓存的每次变化时重试（有界，非无限，未改）；`ConnectedSkillsPrompt` / `EgressSummary` / `ConnectAppSetupBody` 的 effect 无此模式；`ConnectAppSetupBody.proceed` 有 `continued` 保护、只在 `done` 触发，`runs.retry` 无循环；core 的 `flow.ts` 失败路径都经 `#catalogCleanup` 收尾且 `#flows` 在 `finally` 里清掉，不留可再触发的东西。**未改的可疑点**：`McpService` 对界面发起的连接（`countFailure:false`）没有节流，所以渲染端循环时 core 每次都真的去连 server——core 侧限流可作纵深防御。
+
+
+## 本机连接 — Bot 读厂商文档生成只在本机运行的连接（2026-10-10，todo/local-connector-authoring.md L0–L3、L5，D73）
+
+设计 `docs/design/29-connected-apps.md` §17，任务书 `todo/local-connector-authoring.md`。分支 `t/local-connectors`（基于 `t/d73-connected-apps`），**未推送、未合入**；**L4 渲染端未做**（避开另一路对 `stores/apps*`、`features/apps/*`、`features/extension-center/*`、`ConnectAppSetupBody` / `SetupRequiredCard` 的修复）。无迁移。
+
+- **交付**：
+  - **L0** 设计 29 新增 §17（边界、数据与接入、Bot 工具与确认卡、删除 / 审计、与 §11.3 的衔接）；`todo/developer-portal.md`、`todo/extension-center.md` 加优先级说明（门户降级、本机条目是它的入口）。
+  - **L1 shared**：`domain/local-connectors.ts`（`localConnectorRecordSchema` / `createLocalConnectorRecordSchema`：tier developer、oauth + auto、唯一 https 域名 streamable-http 远端、`releaseGate: local`、`toolPolicy` 空、无 `whoami`、`skills` 空、`ui` false、slug = `l` + sha256(origin) 前 12 位、name 在 `local.kepcup/` 下；URL / 文档链接判定；展示文本清洗；RPC / 事件 schema）；`settings.apps.localConnectors`；setup 需求 `confirm-local-connector`（`{proposalId, card}`）；`apps.localConnectors.list|confirm|reject|remove`；`apps.catalog.list` 条目增可选 `origin`；事件 `apps.catalog_changed`；错误码 `LOCAL_CONNECTOR_REJECTED|LOCAL_CONNECTOR_EXPIRED|DEVELOPER_MODE_REQUIRED`。
+  - **L2 core**：`apps/local-connectors.ts`（`LocalConnectors`：提案存储〔内存、30 分钟 TTL、Clock、一次性 id、同服务新提案顶旧的、上限 10〕、落库、`remove` 经 `AppDisconnector` 断开全部连接再删、审计 `local_connector_add/remove`、`createGuardedMcpFetch`）、`apps/local-connector-probe.ts`（`createSafeFetch` + `discoverOAuthServerInfo` 的 SSRF 安全探测）、`apps/local-connector-guide.ts`（手册常量）；`ConnectorCatalog.attachLocal` 的第三来源与 `origin`（不经发行门禁、冲突让位）；工具 `app_local_connector_guide` / `app_propose_local_connector`（仅开发者模式，orchestrator `#localConnectorFacade`）；`McpService.attachHttpFetch` 守卫本机连接的 MCP 流量；远端目录合并保留本机命名空间、签名脚本拒收本机条目。
+  - **安全补齐（偏差 DEV-024 第 1 项）**：目录连接的 `tier: developer` 此前不生效（只对 MCPB server），现在所有工具默认每次确认、无持续授权（`tierAllowsStandingGrants`）、授权前恒核对完整授权地址。
+  - **L5**：`docs/guides/add-connected-app.md`「本机生成」；DEV-024；`docs/dev/{02-architecture,05-testing}.md`；`todo/connected-apps-status.md` 导航。
+- **验证**（Docker `kepcup-test:trixie`，2026-10-10）：
+  - 新增：shared `local-connectors` 27 例；core `unit/local-connector-isolation` 8、`unit/local-connector-tier` 8、`integration/local-connectors` 25（开发者模式闸门、Bot 提案路径、拒绝表、注入文本、一次性 / TTL、`developer` 分级的卡片与授权时长、`remove` 无残留）；共 68 例通过。
+  - 相关既有文件回归（`connector-catalog`、`app-exposure`、`connected-apps-p3-tier-directory`、`catalog-connect`、`directory-merge`、`sign-connector-index` 等）通过。
+  - 全量一次：333 文件 / 3624 例，3595 通过、27 失败、2 跳过——27 例全是已知基线（`sandbox-isolation` 10、`workspace-tools` 3、`skills-authoring` 4、`skills` 3、`wiki-url` 2、`toolchain-sandbox` 2、`environment` 1、`projects` 1，以及 `composer-text`「同名先到先得」1），无新增失败。
+  - `pnpm typecheck` 通过；`pnpm lint` 只剩既有的 `debug-dev-pin.spec.ts` 6 条错误。
+- **偏差**：DEV-024（待决定，推荐全部保留）：developer 分级补齐到目录连接、不支持匿名 MCP、追加 `reject` / 事件 / 错误码、本机 MCP 流量 SSRF 守卫、手册为 TS 常量、scopes 冻结进条目、占位 privacyPolicy / icon、隔离纵深防御、本机工具默认只在任务里可用、数量与 TTL 上限。
+- **未做 / 待办**：**L4 渲染端**（确认卡、「本机自建」区、徽标与删除、zh-CN 文案、e2e；见任务书与本次交接清单）；真实环境走通一次（真实厂商文档 → Bot 提案 → 确认 → OAuth → 调用）；`<available_apps>` 最多 30 条，本机条目排在最后，目录条目很多时可能被截掉（`app_request_connection` 按 slug 仍可用）。
+- 影响范围：shared `domain/{local-connectors,connector-catalog,app-connections,types}.ts`、`rpc/{methods,events}.ts`、`errors.ts`；core `apps/*`（新增 3 文件，改 `catalog / exposure / tier / audit / directory-merge / connections`、`auth/flow`）、`mcp/service.ts`、`gateway/index.ts`、`tools/app-tools.ts`、`agent/effects/classify.ts`、`dispatch/orchestrator.ts`、`rpc/apps-connections-bindings.ts`、`start.ts`；`scripts/sign-connector-index.mjs`；文档与测试。
+

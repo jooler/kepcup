@@ -4,6 +4,8 @@
 >
 > 分支：`t/d73-connected-apps`（独立长期分支，**未合入 main**，合入需你明确同意）。迁移：main `0025_app_connections`、`0026_app_tools`、`0027_egress_approval`（P3 没有新增迁移）。
 >
+> 本机连接（[local-connector-authoring.md](local-connector-authoring.md)，设计 29 §17：Bot 读厂商文档生成只在本机运行的连接）L0–L3、L5 已在 `t/local-connectors` 分支实现（未推送、未合入），L4 渲染端待做；第三方开发者门户（[developer-portal.md](developer-portal.md)）因此降级为后续。
+>
 > 扩展中心（[extension-center.md](extension-center.md) X0–X4 / X6：技能市场 → Skills / 连接 / MCP 三组，自定义入口收进开发者模式）已在 `t/extension-center` 分支实现，待评审合并；X5 逐家适配另行推进。
 
 ## 1. 一眼看懂

@@ -5,6 +5,7 @@ export * from './domain/types.js';
 export * from './domain/vendors.js';
 export * from './domain/agent-catalog.js';
 export * from './domain/connector-catalog.js';
+export * from './domain/local-connectors.js';
 export * from './domain/directory-index.js';
 export * from './domain/app-connections.js';
 export * from './domain/app-skills.js';

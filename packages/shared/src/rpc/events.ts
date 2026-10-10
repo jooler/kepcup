@@ -19,6 +19,7 @@ import { agentStatusPayloadSchema } from '../domain/agent-status.js';
 import { appConnectReviewToolSchema } from '../domain/app-connections.js';
 import { appSkillsOfferEventSchema } from '../domain/app-skills.js';
 import { connectorTierSchema } from '../domain/connector-catalog.js';
+import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
@@ -324,6 +325,8 @@ export const rpcEventSchemas = {
   'apps.connection_status': appConnectionStatusPayloadSchema,
   /** D73 P3 §7.6 随附技能提示：连接完成后有被授权的 Bot 缺目录声明的技能。 */
   'apps.skills_offer': appSkillsOfferEventSchema,
+  /** 本机连接（todo/local-connector-authoring.md）：本机条目被添加 / 删除，界面重拉目录。 */
+  'apps.catalog_changed': appCatalogChangedPayloadSchema,
   'delegation.updated': delegationUpdatedPayloadSchema,
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,

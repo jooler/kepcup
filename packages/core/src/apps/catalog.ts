@@ -8,6 +8,7 @@ import {
   filterReleasedConnectors,
   findConnectorBySlug,
   type ConnectorCatalogEntry,
+  type ConnectorOrigin,
 } from '@kepcup/shared';
 import type { CoreLogger } from '../infra/logger.js';
 import { mergeDirectoryEntries } from './directory-merge.js';
@@ -23,6 +24,10 @@ import { mergeDirectoryEntries } from './directory-merge.js';
  * 发行门禁（照 D72 `agent/external/catalog.ts`）：打包脚本以 esbuild define 注入
  * `__KEPCUP_CONNECTOR_RELEASE_GATES__`（放行清单）；开发构建、tsc 产物与测试里
  * 该常量不存在 → 不过滤。目录对外只暴露过滤后的条目。
+ *
+ * 本机连接（`local()` 来源，todo/local-connector-authoring.md）：在打包快照与远端目录合并**之后**
+ * 追加，**不经发行门禁**——它们不是发行产物（`releaseGate: 'local'` 不在任何放行清单里），而是
+ * 独立来源；与已有条目的 slug / name 冲突时本机条目被丢弃（打包 / 远端条目永远优先）。
  */
 
 /** 资源目录：env 覆盖 → 向上查找 `apps/desktop/resources/connectors` → null（目录为空）。 */
@@ -74,6 +79,14 @@ export interface ConnectorCatalogOptions {
    * `directory-merge.ts` 的规则并入打包快照，之后仍整体过发行门禁。
    */
   remote?: readonly unknown[] | undefined;
+  /** 本机连接条目（已校验）：合并之后追加，不经发行门禁。 */
+  local?: readonly ConnectorCatalogEntry[] | undefined;
+}
+
+/** 本机连接的来源：`revision()` 变化 = 条目变了，目录需要重新合并。 */
+export interface LocalConnectorSource {
+  revision(): number;
+  entries(): readonly ConnectorCatalogEntry[];
 }
 
 /** 远端目录的来源：`revision()` 变化 = 条目变了，目录需要重新合并。 */
@@ -144,6 +157,8 @@ export function effectiveConnectorCatalog(
 export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
   entries: ConnectorCatalogEntry[];
   remoteOnlySlugs: ReadonlySet<string>;
+  /** 本机连接条目的 slug（已并入 `entries`）。 */
+  localSlugs: ReadonlySet<string>;
 } {
   const source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
   let entries = parseConnectorEntries(source.entries, options.logger);
@@ -176,10 +191,23 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
       gates,
     ),
   );
-  return {
-    entries: entries.filter((entry) => isRemoteOnly(entry) || released.has(entry)),
-    remoteOnlySlugs,
-  };
+  const result = entries.filter((entry) => isRemoteOnly(entry) || released.has(entry));
+  // 本机连接：独立来源，追加在门禁之后。与任何已有条目（含被门禁挡掉的）的 slug / name 冲突即丢弃。
+  const localSlugs = new Set<string>();
+  const takenSlugs = new Set(entries.map((entry) => connectorMetaOf(entry).slug));
+  const takenNames = new Set(entries.map((entry) => entry.name));
+  for (const local of options.local ?? []) {
+    const slug = connectorMetaOf(local).slug;
+    if (takenSlugs.has(slug) || takenNames.has(local.name)) {
+      options.logger?.warn({ slug }, 'local connector skipped: slug or name already taken');
+      continue;
+    }
+    takenSlugs.add(slug);
+    takenNames.add(local.name);
+    localSlugs.add(slug);
+    result.push(local);
+  }
+  return { entries: result, remoteOnlySlugs, localSlugs };
 }
 
 /**
@@ -189,35 +217,52 @@ export function buildConnectorCatalog(options: ConnectorCatalogOptions): {
 export class ConnectorCatalog {
   readonly #options: ConnectorCatalogOptions;
   readonly #directory: RemoteDirectorySource | undefined;
+  #local: LocalConnectorSource | undefined;
   readonly #iconsDir: string | null;
   readonly #source: ConnectorCatalogSource;
   #entries: readonly ConnectorCatalogEntry[] = [];
   #remoteOnlySlugs: ReadonlySet<string> = new Set();
-  #revision = Number.NaN;
+  #localSlugs: ReadonlySet<string> = new Set();
+  #revision = '';
 
   /**
    * `directory`（D73 P3 §7.1）：已验签的远端目录来源。远端条目变化时（`revision()` 变了）
    * 目录在下一次读取时重新合并；缺省 = 只有打包快照（目录随应用版本不变）。
    */
-  constructor(options: ConnectorCatalogOptions & { directory?: RemoteDirectorySource }) {
+  constructor(
+    options: ConnectorCatalogOptions & {
+      directory?: RemoteDirectorySource;
+      /** 本机连接来源（`LocalConnectors`）：条目变化时目录在下一次读取时重新合并。 */
+      local?: LocalConnectorSource;
+    },
+  ) {
     this.#source = options.source ?? readConnectorCatalogSource(options.env, options.logger);
     this.#iconsDir = this.#source.iconsDir;
     this.#options = options;
     this.#directory = options.directory;
+    this.#local = options.local;
     this.#refresh();
   }
 
+  /** 接入本机连接来源（`start.ts`；注入的测试目录同样适用）。条目变化在下一次读取时合并。 */
+  attachLocal(local: LocalConnectorSource): void {
+    this.#local = local;
+    this.#revision = '';
+  }
+
   #refresh(): void {
-    const revision = this.#directory?.revision() ?? 0;
+    const revision = `${this.#directory?.revision() ?? 0}:${this.#local?.revision() ?? 0}`;
     if (revision === this.#revision) return;
     this.#revision = revision;
     const built = buildConnectorCatalog({
       ...this.#options,
       source: this.#source,
       ...(this.#directory !== undefined ? { remote: this.#directory.entries() } : {}),
+      ...(this.#local !== undefined ? { local: this.#local.entries() } : {}),
     });
     this.#entries = built.entries;
     this.#remoteOnlySlugs = built.remoteOnlySlugs;
+    this.#localSlugs = built.localSlugs;
   }
 
   /** 门禁放行后的全部条目（目录顺序）。 */
@@ -235,6 +280,22 @@ export class ConnectorCatalog {
     return this.#remoteOnlySlugs.has(slug);
   }
 
+  /** 该条目是否是本机连接（Bot 读文档生成、只在本机；不经发行门禁、永不外传）。 */
+  isLocal(slug: string): boolean {
+    this.#refresh();
+    return this.#localSlugs.has(slug);
+  }
+
+  /** 条目来源：`apps.catalog.list` 的 `origin`。 */
+  originOf(slug: string): ConnectorOrigin {
+    this.#refresh();
+    return this.#localSlugs.has(slug)
+      ? 'local'
+      : this.#remoteOnlySlugs.has(slug)
+        ? 'directory'
+        : 'bundled';
+  }
+
   /** 按 slug 查（过滤后）；不在目录 = null。 */
   get(slug: string): ConnectorCatalogEntry | null {
     this.#refresh();
@@ -247,6 +308,8 @@ export class ConnectorCatalog {
     if (entry === null || this.#iconsDir === null) return null;
     // 远端独有的条目没有打包图标：不能按它声明的文件名去读（会冒用快照条目的图标）。
     if (this.#remoteOnlySlugs.has(slug)) return null;
+    // 本机条目同理：图标文件名是占位，不去读。
+    if (this.#localSlugs.has(slug)) return null;
     const icon = connectorMetaOf(entry).icon;
     if (!icon.endsWith('.svg')) return null;
     // `icon` is a bare filename (connectorIconSchema forbids separators), so it cannot escape.

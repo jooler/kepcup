@@ -167,6 +167,14 @@ export function collectEntries({ catalog = DEFAULT_CATALOG, extraDir } = {}) {
   for (const entry of entries) {
     const name = nameOf(entry);
     if (name === '') throw new SignError('an entry has no "name"');
+    // Local connectors (todo/local-connector-authoring.md) live in a user's settings and never
+    // ship: refuse them even if one is pasted into --extra-dir by mistake.
+    if (
+      name.startsWith('local.kepcup/') ||
+      entry?._meta?.['app.kepcup/connector']?.releaseGate === 'local'
+    ) {
+      throw new SignError(`entry ${name} is a local connector and must never be published`);
+    }
     if (seen.has(name)) throw new SignError(`duplicate entry name: ${name}`);
     seen.add(name);
   }

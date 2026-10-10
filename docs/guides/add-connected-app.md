@@ -175,6 +175,16 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
 
 条目随应用发布（`catalog.json` 与门禁文件都会被打进发行构建）。想在两次应用发版之间更新目录，可走签名目录通道（`dl.kepcup.com`）：`infra/cloudflare/sign-directory.sh` 签名、`with-env.sh wrangler deploy` 部署，细节与限制见 [infra/cloudflare/directory/README.md](../../infra/cloudflare/directory/README.md) 与 DEV-022（目录合并与发行门禁的权威来源）。**放行类变更仍以随应用打包的门禁为准**，不要指望只靠目录远程放行。
 
+## 本机生成（不进目录，只在这台电脑上用）
+
+长尾厂商不值得走 S0–S11（预置 + 放行）时，可以让 Bot 读厂商文档，**在本机生成一条连接**——方案与边界见 [todo/local-connector-authoring.md](../../todo/local-connector-authoring.md) 与[设计 29 §17](../design/29-connected-apps.md)。和本指南的预置流程的关系：
+
+- 做的事是 S0–S3 的一个子集（找 MCP 地址、判断授权方式、探测），但**由 core 的探测结果决定条目内容**，Bot 只提供展示名 / 描述 / 分类 / 文档链接；没有 S4–S9（无 `toolPolicy`、无 `whoami`、无快照、无放行门禁）。
+- 条目是 `tier: developer`（未审核）：每次工具调用都要用户确认、没有持续授权；只存在 `settings.apps.localConnectors`，**永不进 `catalog.json`、签名索引或发行构建**。
+- 前提：设置 → 开发者模式已打开；服务是 https 域名的 Streamable HTTP MCP，授权是支持 CIMD 或 DCR（+ PKCE S256）的 OAuth。需要 API Key / 预注册密钥、匿名服务、只有 REST 的，都不走这条路。
+- 使用：对 Bot 说「帮我接入 XXX，文档在 …」，Bot 会调 `app_local_connector_guide` → `app_propose_local_connector`，对话里出确认卡（核对 MCP 域名），点「添加」后在扩展中心「连接」组（「本机自建」区）连接；删除会同时断开账号、吊销并清令牌。
+- 想把一个本机条目转成**预置**连接：按 S0–S11 走一遍（本机条目验证过地址与授权方式，S0 可直接跳过探测）。
+
 ## 常见陷阱
 
 - **在宿主机上跑测试**：glibc 加载不了 es-git，会得到一堆与改动无关的失败，且可能把真回归当成环境问题放过（这个坑踩过）。一律 Docker。

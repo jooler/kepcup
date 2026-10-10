@@ -8,6 +8,9 @@ export const APP_AUDIT_ACTIONS = {
   connect: 'app_connect',
   disconnect: 'app_disconnect',
   toolsReview: 'app_tools_review',
+  /** 本机连接（todo/local-connector-authoring.md §2.5）：用户确认添加 / 删除一个本机条目。 */
+  localConnectorAdd: 'local_connector_add',
+  localConnectorRemove: 'local_connector_remove',
 } as const;
 
 /** `audit_log` 写入口（无 run 身份：连接 / 断开由用户在界面发起）。 */
@@ -35,6 +38,16 @@ export interface AppToolsReviewAuditInput {
   connectorId: string;
   /** 本次批准的工具名。 */
   approved: string[];
+}
+
+export interface LocalConnectorAuditInput {
+  /** 本机条目的 slug（`l…`）。 */
+  connectorId: string;
+  /** MCP 域名（含端口）。 */
+  host: string;
+  /** 触发提案的 Bot / 会话（删除时为 null：用户在界面操作）。 */
+  botId: string | null;
+  conversationId: string | null;
 }
 
 export class AppAuditor {
@@ -74,6 +87,14 @@ export class AppAuditor {
       connector: input.connectorId,
       approved: input.approved,
     });
+  }
+
+  auditLocalConnectorAdd(input: LocalConnectorAuditInput): void {
+    this.#write(APP_AUDIT_ACTIONS.localConnectorAdd, { ...input });
+  }
+
+  auditLocalConnectorRemove(input: LocalConnectorAuditInput): void {
+    this.#write(APP_AUDIT_ACTIONS.localConnectorRemove, { ...input });
   }
 
   #write(action: string, detail: Record<string, unknown>): void {
