@@ -2,9 +2,11 @@
   import type { Message } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { avatarColorForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
+  import { buildMentionTargets, segmentComposerText } from './composer-text';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
 
@@ -50,6 +52,23 @@
   const userBubbleColor = $derived(
     parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
   );
+  /**
+   * 用户气泡的 @ 提及分词：注册表（全部活跃 Bot + 群聊）与输入框共用同一
+   * 套规则，手动输入的全名同样命中着色。
+   */
+  const mentionTargets = $derived.by(() =>
+    buildMentionTargets({
+      memberBots: [],
+      allBots: contacts.bots,
+      groups: chat.conversations
+        .filter((c) => c.type === 'group')
+        .map((c) => ({ id: c.id, title: c.title })),
+    }),
+  );
+  const userText = $derived('text' in message.content ? message.content.text : '');
+  const userSegments = $derived(
+    message.senderType === 'user' ? segmentComposerText(userText, mentionTargets) : [],
+  );
 </script>
 
 {#if message.status === 'recalled'}
@@ -79,7 +98,16 @@
       style:color={userBubbleColor ? avatarColorForeground(userBubbleColor) : undefined}
       data-testid="user-bubble"
     >
-      {'text' in message.content ? message.content.text : ''}
+      {#each userSegments as segment, index (index)}
+        {#if segment.kind === 'mention'}
+          <!-- 中性半透明底：在默认主色底与任意预置头像色底上都可读 -->
+          <span class="rounded-xs bg-black/10 px-0.5 dark:bg-white/20" data-testid="user-mention">
+            {segment.text}
+          </span>
+        {:else}
+          {segment.text}
+        {/if}
+      {/each}
     </div>
   {/if}
 {:else}

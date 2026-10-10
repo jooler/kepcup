@@ -112,11 +112,13 @@ export const zhCN = {
   'settings.navHardware': '硬件',
   'settings.hardwareSection': '硬件',
   'sensors.microphone.name': '麦克风',
-  'sensors.microphone.description': '语音输入使用这里选定的设备；「系统默认」跟随系统当前输入设备。',
+  'sensors.microphone.description':
+    '语音输入使用这里选定的设备；「系统默认」跟随系统当前输入设备。',
   'sensors.microphone.empty': '未检测到输入设备，请确认麦克风已连接',
   'sensors.microphone.test': '测试麦克风',
   'sensors.camera.name': '摄像头',
-  'sensors.camera.description': '目前仅用于在这里预览画面，确认摄像头可用；后续将支持让 Bot 协助监看。',
+  'sensors.camera.description':
+    '目前仅用于在这里预览画面，确认摄像头可用；后续将支持让 Bot 协助监看。',
   'sensors.camera.empty': '未检测到摄像头，请确认设备已连接',
   'sensors.camera.preview': '预览',
   'sensors.camera.stopPreview': '关闭预览',
@@ -345,7 +347,8 @@ export const zhCN = {
   // W5：Bot 详情 MCP 区常驻风险提示（§5 护栏 7）
   'contacts.mcpUnattendedNotice':
     '无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作），请注意风险。',
-  'contacts.mcpUnattendedActive': '无人值守模式已开启：其中 {count} 个写入 / 破坏性工具会被自动执行。',
+  'contacts.mcpUnattendedActive':
+    '无人值守模式已开启：其中 {count} 个写入 / 破坏性工具会被自动执行。',
   'contacts.mcpUnattendedUnknown':
     '无人值守模式已开启：无法确认工具风险（服务器暂时连不上），请按可能含写入 / 删除类工具对待。',
 
@@ -538,6 +541,7 @@ export const zhCN = {
   'composer.replying': '引用 {name}：{text}',
   'composer.replyCancel': '取消引用',
   'composer.mentionPlaceholder': '输入 @ 选择成员',
+  'composer.mentionGroup': '群聊',
   'messages.quote': '引用',
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',
@@ -690,7 +694,7 @@ export const zhCN = {
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':
-    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（jina-embeddings-v2-base-zh，768 维，中英双语）与 ONNX 运行库（合计约 276MB）经环境申请安装到应用私有目录，所有 Bot 共享；GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
+    '记忆检索的向量化方式；未就绪时自动退化为全文检索。「本地模型」（jina-embeddings-v2-base-zh，768 维，中英双语）与 ONNX 运行库（合计约 276MB）安装到应用私有目录，所有 Bot 共享；模型未就绪时可在下方手动下载，或经环境申请自动安装。GPU 加速按平台自动选择（macOS CoreML / Windows DirectML，不可用回退 CPU）。「厂商接口」使用上方「向量模型」section 的配置，更换来源后会重建所有 Bot 的向量索引。',
   'settings.embeddingSourceNone': '未配置',
   'settings.embeddingSourceLocal': '本地模型',
   'settings.embeddingSourceProvider': '厂商接口（使用上方「向量模型」配置）',
@@ -700,6 +704,8 @@ export const zhCN = {
   'settings.embeddingNoVendorConfig':
     '尚未在「向量模型」中配置厂商与模型，请先配置或改用本地模型。',
   'settings.embeddingSaved': '已保存，正在后台重建向量索引',
+  'settings.embeddingDownload': '下载本地模型（含 ONNX 运行库，约 276MB）',
+  'settings.embeddingDownloadStarted': '已开始下载，完成后自动就绪',
 
   // --- P08 Skills ------------------------------------------------------------------
   'approvals.skillImportTitle': '技能导入请求',
@@ -814,9 +820,11 @@ export const zhCN = {
   'task.injectNotDelivered': '（未送达：任务已在收尾，需要时可让 Bot 接着重做）',
   'task.cancelledBecause': '已取消：{reason}',
   'task.cancelledPlain': '已取消',
-  'task.changesProject': '它已产生的改动：新增 {added}、修改 {modified}、删除 {deleted}。可以整次回退。',
+  'task.changesProject':
+    '它已产生的改动：新增 {added}、修改 {modified}、删除 {deleted}。可以整次回退。',
   'task.changesReverted': '它产生的改动已整次回退。',
-  'task.changesWorkspace': '它在 Bot 工作区里做的改动不会自动撤销；工作区没有检查点，无法整次回退。',
+  'task.changesWorkspace':
+    '它在 Bot 工作区里做的改动不会自动撤销；工作区没有检查点，无法整次回退。',
   'task.changesWorkspaceFiles': '它用文件工具写过的文件（命令造成的改动不在此列）：',
   'task.changesMore': '另有 {count} 个文件',
   'task.changesNone': '没有产生文件改动。',
@@ -845,7 +853,8 @@ export const zhCN = {
   'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
-  'task.revertConflicts': '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',
+  'task.revertConflicts':
+    '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',
   'task.questionFrom': '任务「{title}」需要你决定',
   'task.questionFromBot': '{name} 的任务需要你决定',
   'task.questionExpired': '任务已结束，这个问题不再需要回答。',
@@ -1026,7 +1035,8 @@ export const zhCN = {
   'watches.card.pausedTooFrequent': '监看已暂停：提醒过于频繁',
   'watches.card.pausedTooFrequentHint':
     '24 小时内提醒超过 24 次，为免打扰已暂停。可放宽条件或延长检查间隔后点「恢复」。',
-  'watches.card.pausedHint': '网页可能打不开、需要在 Bot 的浏览器里重新登录，或被网络规则拦截。处理后点「恢复」。',
+  'watches.card.pausedHint':
+    '网页可能打不开、需要在 Bot 的浏览器里重新登录，或被网络规则拦截。处理后点「恢复」。',
   'watches.card.removed': '该监看已删除',
   'watches.card.loading': '正在加载监看…',
 
@@ -1488,7 +1498,8 @@ export const zhCN = {
     '文件与命令由智能体自带的工具完成，在它自己的沙箱中运行；KepCup 的沙箱、项目保护规则与网络策略对它们不生效。',
   'contacts.agentSwitchPrompt':
     '任务的系统提示词每个任务只刷新一次；订阅制没有单价，只记录 token 与轮数。',
-  'contacts.agentSwitchFeatures': '任务不支持断点续跑；部分智能体不支持向进行中的任务追加指令（追加会在任务结束后才生效）。',
+  'contacts.agentSwitchFeatures':
+    '任务不支持断点续跑；部分智能体不支持向进行中的任务追加指令（追加会在任务结束后才生效）。',
   'contacts.agentSwitchHistory': '智能体会在它自己的目录保存会话历史，删除对话不会清除这部分。',
   'contacts.agentSwitchReads':
     '读取不受 KepCup 限制：智能体自带的联网读取（网页抓取、搜索）不逐次确认；部分智能体（如 Codex）的沙箱可以不经请求读取整台电脑上的文件，包括 KepCup 的应用数据目录（其他 Bot 的工作区、技能与日志）。',

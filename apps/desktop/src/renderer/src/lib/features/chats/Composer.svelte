@@ -1,17 +1,30 @@
 <script lang="ts">
   import { ArrowUp, AudioLines, Loader2, Paperclip, Plus, Reply, X } from '@lucide/svelte';
-  import type { Bot } from '@kepcup/shared';
+  import { Editor } from '@tiptap/core';
+  import type { JSONContent } from '@tiptap/core';
+  import { Markdown } from '@tiptap/markdown';
+  import { Placeholder } from '@tiptap/extensions';
+  import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion';
   import { untrack } from 'svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
-  import { Textarea } from '$lib/components/ui/textarea';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { resolveComposerAction } from './key-handling';
+  import { buildMentionTargets, type MentionTarget } from './composer-text';
+  import {
+    collectMentionTokens,
+    composerMention,
+    composerNodes,
+    mergeMentionTokens,
+  } from './composer-editor';
+  import { parsePresetAvatar } from '$lib/avatars/presets';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
+  import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
   import DraftQueue from './DraftQueue.svelte';
   import {
     MAX_RECORDING_MS,
@@ -31,20 +44,27 @@
     readOnlyHint,
   }: { readOnly?: boolean; centered?: boolean; readOnlyHint?: string } = $props();
 
-  let text = $state('');
-  let isComposing = $state(false);
   /**
-   * 药丸两态（参考 Grok Bot）：单行时附件键在最左、发送键在最右、输入居中
-   * 占余宽；内容换行或有待发送附件时输入占满整行、附件键/发送键沉底两角。
+   * 输入区是 TipTap 编辑器（contenteditable）：列表（`- `/`1. ` 输入规则自动
+   * 转换、回车续行、空项回车退出）与 @ 提及（mention 节点 + suggestion 弹层）
+   * 都是 ProseMirror 原生节点行为。中间过程保持编辑器原生 JSON（草稿缓存、
+   * 提及收集都以它为准）；markdown 只在发送入队时 getMarkdown() 转换一次。
+   * 编辑器内容只在草稿水合时反向写入（setContent）。
    */
+  let docJson = $state<JSONContent>(EMPTY_COMPOSER_DOC);
+  /** 当前内容的结构化提及 token（文档 mention 节点；发送时再并入手打名称）。 */
+  let mentionTokens: string[] = $state([]);
+  let editorHostEl: HTMLDivElement | null = $state(null);
+  let editor = $state<Editor | null>(null);
+  /** 药丸两态（参考 Grok Bot）：内容换行或有待发送附件时输入占满整行。 */
   let multiline = $state(false);
-  /** Structured mentions accumulated via the @ popup (P05). */
-  let mentions: string[] = $state([]);
-  /** @ popup state: open + the query text typed after the '@'. */
-  let mentionOpen = $state(false);
-  let mentionQuery = $state('');
-  let mentionIndex = $state(0);
-  let textareaEl: HTMLTextAreaElement | null = $state(null);
+  /** IME 组合中（handleKeyDown 的 Enter 拦截要避开候选确认）。 */
+  let composing = false;
+  /**
+   * suggestion 弹层存活状态（非响应式，给 handleKeyDown 判断用）：打开且
+   * 有候选时 Enter 是「确认提及目标」，不得截走为入队。
+   */
+  const suggestionState = { active: false, count: 0 };
   let fileInputEl: HTMLInputElement | null = $state(null);
   let dragOver = $state(false);
 
@@ -88,7 +108,8 @@
    */
   const pendingUploads = $derived(composerDrafts.uploadsOf(chat.current?.conversation.id ?? ''));
 
-  const hasContent = $derived(text.trim().length > 0 || pendingUploads.length > 0);
+  const composerEmpty = $derived(isComposerDocEmpty(docJson));
+  const hasContent = $derived(!composerEmpty || pendingUploads.length > 0);
 
   /**
    * 沉底两态的开关：内容换行（multiline）或有待发送图片/文件时，输入占满
@@ -105,166 +126,337 @@
   );
 
   /**
-   * 会话草稿的按会话缓存：进入会话先把缓存水合进本地状态（文本/提及/引用），
-   * 之后内容变化即写回（composerDrafts 负责防抖落盘，附件走它自己的管道）。
-   * 单个 effect 承担水合/保存两个分支：切换会话时水合分支先执行，避免旧
-   * 会话的文本被写进新会话的缓存。
+   * @ 提及注册表（suggestion 弹层候选与发送解析共用）：当前群成员优先，
+   * 其余活跃 Bot 次之，其他群聊最后；当前会话自己不作候选。单聊同样可用
+   * ——提及非成员 Bot / 群是「引用」，不参与群聊路由。
    */
+  const mentionTargets = $derived.by(() =>
+    buildMentionTargets({
+      memberBots: (chat.current?.members ?? []).map((m) => m.bot),
+      allBots: contacts.bots,
+      groups: chat.conversations
+        .filter((c) => c.type === 'group')
+        .map((c) => ({ id: c.id, title: c.title })),
+      currentConversationId: chat.current?.conversation.id ?? null,
+    }),
+  );
+
+  /**
+   * @ 文字色：当前会话 Bot 的预置头像色（单聊取 direct Bot；群聊无单一
+   * Bot，回退主色）。与用户气泡取色同源（MessageBody）。经 CSS 变量下发，
+   * mention 节点的渲染无需感知会话切换。
+   */
+  const mentionColor = $derived(
+    parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
+  );
+
+  // --- TipTap 编辑器 -----------------------------------------------------------
+
+  /** 编辑器原生 JSON → docJson/mentionTokens 单向同步 + 多行形态测量。 */
+  function syncFromEditor(ed: Editor): void {
+    docJson = ed.getJSON();
+    mentionTokens = collectMentionTokens(docJson);
+    queueMicrotask(() => {
+      multiline = (editorHostEl?.scrollHeight ?? 0) > 48;
+    });
+  }
+
+  /** suggestion 弹层：纯 DOM 渲染（插件负责定位/外点关闭），键盘导航在此。 */
+  function suggestionRender(): {
+    onStart: (props: SuggestionProps) => void;
+    onUpdate: (props: SuggestionProps) => void;
+    onKeyDown: (props: SuggestionKeyDownProps) => boolean;
+    onExit: () => void;
+  } {
+    let popup: HTMLUListElement | null = null;
+    let unmountPopup: (() => void) | null = null;
+    let items: MentionTarget[] = [];
+    let selectedIndex = 0;
+    let currentCommand: ((target: MentionTarget) => void) | null = null;
+
+    const renderList = (): void => {
+      if (popup === null) return;
+      popup.textContent = '';
+      if (items.length === 0) {
+        popup.style.display = 'none';
+        return;
+      }
+      popup.style.display = '';
+      items.forEach((target, index) => {
+        const li = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'flex w-full items-center gap-1 px-3 py-1.5 text-left text-sm hover:bg-accent' +
+          (index === selectedIndex ? ' bg-accent' : '');
+        button.dataset.testid = `mention-candidate-${target.token}`;
+        button.onclick = () => currentCommand?.(target);
+        const name = document.createElement('span');
+        name.className = 'truncate';
+        name.textContent = `@${target.name}`;
+        button.append(name);
+        const hint = document.createElement('span');
+        hint.className = 'ml-auto truncate text-xs text-muted-foreground';
+        hint.textContent =
+          target.kind === 'group' ? t('composer.mentionGroup') : (target.bio ?? '');
+        button.append(hint);
+        li.append(button);
+        popup?.append(li);
+      });
+    };
+
+    return {
+      onStart: (props) => {
+        popup = document.createElement('ul');
+        popup.className =
+          'absolute z-50 max-h-48 w-64 overflow-y-auto rounded-md border bg-background shadow-md';
+        popup.style.zIndex = '50';
+        popup.dataset.testid = 'mention-popup';
+        items = props.items as MentionTarget[];
+        selectedIndex = 0;
+        currentCommand = props.command as (target: MentionTarget) => void;
+        suggestionState.active = true;
+        suggestionState.count = items.length;
+        renderList();
+        unmountPopup = props.mount(popup);
+      },
+      onUpdate: (props) => {
+        items = props.items as MentionTarget[];
+        selectedIndex = 0;
+        currentCommand = props.command as (target: MentionTarget) => void;
+        suggestionState.count = items.length;
+        renderList();
+      },
+      onKeyDown: (props) => {
+        if (popup === null || items.length === 0) return false;
+        // IME 组合中的按键（含候选确认的 Enter）不参与提及选择。
+        if (props.event.isComposing || props.event.keyCode === 229) return false;
+        if (props.event.key === 'ArrowDown') {
+          selectedIndex = (selectedIndex + 1) % items.length;
+          renderList();
+          return true;
+        }
+        if (props.event.key === 'ArrowUp') {
+          selectedIndex = (selectedIndex - 1 + items.length) % items.length;
+          renderList();
+          return true;
+        }
+        if (props.event.key === 'Enter' || props.event.key === 'Tab') {
+          const target = items[selectedIndex];
+          if (target) currentCommand?.(target);
+          return true;
+        }
+        if (props.event.key === 'Escape') {
+          // Esc 关闭弹层并交还 Enter 语义（此后 Enter 恢复入队/发送）。
+          suggestionState.active = false;
+          suggestionState.count = 0;
+          popup.style.display = 'none';
+          return true;
+        }
+        return false;
+      },
+      onExit: () => {
+        suggestionState.active = false;
+        suggestionState.count = 0;
+        unmountPopup?.();
+        unmountPopup = null;
+        popup?.remove();
+        popup = null;
+      },
+    };
+  }
+
+  /** 创建守卫用普通变量（非响应式）：effect 里读写响应式 editor 会自触发。 */
+  let editorInstance: Editor | null = null;
+  $effect(() => {
+    const host = editorHostEl;
+    if (host === null || editorInstance !== null) return;
+    // 构造期间 Placeholder 等扩展的闭包会同步读取组件状态（placeholder /
+    // mentionTargets），必须 untrack——否则 effect 隐式依赖草稿队列，草稿一变
+    // 就销毁重建编辑器（in-flight 的 clearContent 直接踩空）。
+    const ed = untrack(
+      () =>
+        new Editor({
+          element: host,
+          extensions: [
+            Markdown.configure({ markedOptions: { breaks: true, gfm: true } }),
+            Placeholder.configure({ placeholder: () => placeholder }),
+            composerMention.configure({
+              // 退格删除提及节点时保留触发符 @（扩展内建行为）：删除后的
+              // insertText('@') 事务会让 suggestion 插件立刻重开弹层（空查询
+              // = 全部候选），可直接继续选目标。一次 Backspace 仍删掉整个
+              // mention 节点，不会逐字删除。
+              deleteTriggerWithBackspace: false,
+              renderText: ({ node }) => `@${node.attrs.label ?? node.attrs.id}`,
+              renderHTML: ({ node, options }) => [
+                'span',
+                {
+                  ...options.HTMLAttributes,
+                  'data-type': 'mention',
+                  class: 'composer-mention',
+                  'data-testid': 'composer-mention',
+                },
+                `@${node.attrs.label ?? node.attrs.id}`,
+              ],
+              suggestion: {
+                char: '@',
+                placement: 'top-start',
+                items: ({ query }) => {
+                  const q = query.trim().toLowerCase();
+                  return mentionTargets.filter(
+                    (target) =>
+                      q.length === 0 ||
+                      target.name.toLowerCase().includes(q) ||
+                      target.token.toLowerCase().includes(q),
+                  );
+                },
+                render: suggestionRender,
+                command: ({ editor: targetEditor, range, props }) => {
+                  // suggestion 的选中项泛型默认是节点 attrs；我们的选中项是
+                  // MentionTarget（token + name），在边界收窄一次。
+                  const target = props as unknown as MentionTarget;
+                  targetEditor
+                    .chain()
+                    .focus()
+                    .insertContentAt(range, [
+                      { type: 'mention', attrs: { id: target.token, label: target.name } },
+                      { type: 'text', text: ' ' },
+                    ])
+                    .run();
+                },
+              },
+            }),
+            ...composerNodes,
+          ],
+          editorProps: {
+            attributes: {
+              class:
+                'composer-editor max-h-40 min-h-10 w-full overflow-y-auto px-2 py-2.5 text-sm outline-none [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_li]:my-0',
+              'data-testid': 'composer-input',
+              role: 'textbox',
+              'aria-multiline': 'true',
+            },
+            handleDOMEvents: {
+              compositionstart: () => {
+                composing = true;
+                return false;
+              },
+              compositionend: () => {
+                composing = false;
+                return false;
+              },
+            },
+            handleKeyDown: (view, event) => {
+              if (composing || event.isComposing || event.keyCode === 229) return false;
+              if (event.key !== 'Enter') return false;
+              // @ 弹层打开且有候选：Enter 是确认提及目标，放行给 suggestion
+              // 插件。directProps 的按键处理先于插件，不在这里让路会被入队
+              // 截走（弹层选不上、消息直接进了待发送队列）。
+              if (
+                !event.shiftKey &&
+                !(event.metaKey || event.ctrlKey) &&
+                suggestionState.active &&
+                suggestionState.count > 0
+              ) {
+                return false;
+              }
+              // 列表项内回车交给 ProseMirror：续行（有序自动 +1）/ 空项退出列表。
+              if (
+                !event.shiftKey &&
+                !(event.metaKey || event.ctrlKey) &&
+                editor !== null &&
+                editor.isActive('listItem')
+              ) {
+                return false;
+              }
+              const action = resolveComposerAction({
+                key: event.key,
+                meta: event.metaKey || event.ctrlKey,
+                shift: event.shiftKey,
+                isComposing: false,
+                hasText: !composerEmpty,
+                hasAttachments: pendingUploads.length > 0,
+                queueLength: drafts.length,
+              });
+              if (action === 'none' || action === 'newline') return false;
+              if (action === 'add-draft') void queueCurrent();
+              else if (action === 'flush') void chat.flush();
+              else if (action === 'add-and-flush') void queueAndFlush();
+              return true;
+            },
+          },
+          // content 先留空：会话草稿由水合 effect 写入。
+          content: '',
+        }),
+    );
+    ed.on('update', () => syncFromEditor(ed));
+    editorInstance = ed;
+    editor = ed;
+    return () => {
+      ed.destroy();
+      editorInstance = null;
+      editor = null;
+    };
+  });
+
+  /** 会话草稿的按会话缓存：水合（JSON → 编辑器）与保存（编辑器 → JSON）。 */
   let activeConversationId: string | null = null;
   $effect(() => {
     const conversationId = chat.current?.conversation.id ?? null;
-    // 依赖在每次运行都要读取（含水合分支）：Svelte 按次运行追踪，若只在保存
-    // 分支读取，首跑走水合分支后键入将不触发本 effect，草稿永远不落盘。
-    const currentText = text;
-    const currentMentions = mentions;
+    const ed = editor;
+    const currentDoc = docJson;
+    const currentMentionTokens = mentionTokens;
     const currentReply = chat.replyTo;
     if (conversationId !== activeConversationId) {
       activeConversationId = conversationId;
-      if (conversationId === null) return;
+      if (conversationId === null || ed === null) return;
       untrack(() => {
         composerDrafts.hydrate(conversationId);
         const saved = composerDrafts.loadDraft(conversationId);
-        text = saved.text;
-        mentions = [...saved.mentions];
+        // 草稿缓存是编辑器原生 JSON：mention/列表节点原样回位，无需任何转换。
+        ed.commands.setContent(saved.doc);
+        syncFromEditor(ed);
         chat.replyTo = saved.reply;
       });
       return;
     }
-    if (conversationId === null) return;
-    composerDrafts.saveComposerText(conversationId, currentText, currentMentions, currentReply);
+    if (conversationId === null || ed === null) return;
+    composerDrafts.saveComposerDoc(conversationId, currentDoc, currentMentionTokens, currentReply);
   });
 
-  // 内容变化后测量实际行高：field-sizing 让 textarea 随内容增高，
-  // scrollHeight 超过单行（约 40px + 容差）即进入多行形态。
-  $effect(() => {
-    void text;
-    queueMicrotask(() => {
-      const el = textareaEl;
-      if (!el) return;
-      multiline = el.scrollHeight > 48;
-    });
-  });
-
-  /** Members matching the query typed after '@'; already-mentioned ones hidden. */
-  const candidates = $derived.by(() => {
-    if (!mentionOpen) return [] as Bot[];
-    const memberBots = (chat.current?.members ?? []).map((m) => m.bot);
-    const query = mentionQuery.trim().toLowerCase();
-    return memberBots.filter(
-      (bot) =>
-        !mentions.includes(bot.id) &&
-        (query.length === 0 ||
-          bot.name.toLowerCase().includes(query) ||
-          bot.id.toLowerCase().includes(query)),
-    );
-  });
-
-  function onInput(): void {
-    if (!isGroup) return;
-    // Open the popup when the caret is right after an '@' (possibly with a
-    // query); close when the '@' is gone.
-    const match = /@([^@]*)$/.exec(text);
-    if (match) {
-      mentionOpen = true;
-      mentionQuery = match[1] ?? '';
-      mentionIndex = 0;
-    } else {
-      mentionOpen = false;
-    }
-  }
-
-  function pick(bot: Bot): void {
-    mentions = [...mentions, bot.id];
-    text = text.replace(/@([^@]*)$/, `@${bot.name} `);
-    mentionOpen = false;
-    mentionQuery = '';
-    textareaEl?.focus();
-  }
-
-  function removeMention(botId: string): void {
-    const bot = (chat.current?.members ?? []).find((m) => m.bot.id === botId)?.bot;
-    mentions = mentions.filter((id) => id !== botId);
-    if (bot) {
-      const token = `@${bot.name} `;
-      const index = text.lastIndexOf(token);
-      if (index >= 0) text = text.slice(0, index) + text.slice(index + token.length);
-    }
-  }
-
-  function onMentionKeydown(event: KeyboardEvent): boolean {
-    if (!mentionOpen || candidates.length === 0) return false;
-    if (event.key === 'ArrowDown') {
-      mentionIndex = (mentionIndex + 1) % candidates.length;
-      return true;
-    }
-    if (event.key === 'ArrowUp') {
-      mentionIndex = (mentionIndex - 1 + candidates.length) % candidates.length;
-      return true;
-    }
-    if (event.key === 'Enter' || event.key === 'Tab') {
-      const bot = candidates[mentionIndex];
-      if (bot) pick(bot);
-      return true;
-    }
-    if (event.key === 'Escape') {
-      mentionOpen = false;
-      return true;
-    }
-    return false;
-  }
-
-  async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    if (readOnly) return;
-    if (onMentionKeydown(event)) {
-      event.preventDefault();
-      return;
-    }
-    const action = resolveComposerAction({
-      key: event.key,
-      meta: event.metaKey || event.ctrlKey,
-      shift: event.shiftKey,
-      isComposing: isComposing || event.isComposing || event.keyCode === 229,
-      hasText: text.trim().length > 0,
-      hasAttachments: pendingUploads.length > 0,
-      queueLength: drafts.length,
-    });
-    if (action === 'none' || action === 'newline') return;
-    event.preventDefault();
-    if (action === 'add-draft') {
-      const current = text;
-      text = '';
-      await addCurrent(current);
-    } else if (action === 'flush') {
-      await chat.flush();
-    } else if (action === 'add-and-flush') {
-      const current = text;
-      text = '';
-      if (current.trim().length > 0 || pendingUploads.length > 0) await addCurrent(current);
-      await chat.flush();
-    }
-  }
-
-  /** Adds a draft carrying the structured mentions + reply reference + attachments. */
-  async function addCurrent(current: string): Promise<void> {
+  /**
+   * 把当前内容入队为草稿。markdown/提及/引用在进 await 前捕获，编辑器
+   * 同步清空——对齐原 textarea 的键入语义：连续 Enter / 自动化脚本不会
+   * 踩到尚未清空的旧内容（清空放在异步入队之后会把它抹掉）。
+   */
+  async function queueCurrent(): Promise<void> {
+    const ed = editor;
     const conversationId = chat.current?.conversation.id;
-    if (!conversationId) return;
+    if (ed === null || !conversationId) return;
+    const markdown = ed.getMarkdown();
+    const trimmed = markdown.trim();
+    if (trimmed.length === 0 && pendingUploads.length === 0) return;
+    const tokens = mergeMentionTokens(ed.getJSON(), markdown, mentionTargets);
+    const replyToId = replyTo?.id ?? null;
+    ed.commands.clearContent();
     const attachmentIds = await composerDrafts.settle(conversationId);
-    const trimmed = current.trim();
-    if (trimmed.length === 0 && attachmentIds.length === 0) return;
     await chat.addDraft(trimmed, {
-      ...(mentions.length > 0 ? { mentions: [...mentions] } : {}),
-      ...(replyTo !== null ? { replyTo: replyTo.id } : {}),
+      ...(tokens.length > 0 ? { mentions: tokens } : {}),
+      ...(replyToId !== null ? { replyTo: replyToId } : {}),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     });
-    mentions = [];
+  }
+
+  /** Cmd/Ctrl+Enter：入队当前内容并冲出队列。 */
+  async function queueAndFlush(): Promise<void> {
+    if (!composerEmpty || pendingUploads.length > 0) await queueCurrent();
+    await chat.flush();
   }
 
   async function onSendClick(): Promise<void> {
     if (readOnly) return;
     if (hasContent) {
-      const current = text;
-      text = '';
-      await addCurrent(current);
+      await queueCurrent();
     } else if (drafts.length > 0) {
       await chat.flush();
     }
@@ -437,8 +629,11 @@
         toast.error(t('composer.voiceNoSpeech'));
         return;
       }
-      text = text.trim().length > 0 ? `${text.trimEnd()} ${transcript}` : transcript;
-      textareaEl?.focus();
+      const ed = editor;
+      if (ed !== null) {
+        ed.commands.insertContent(!composerEmpty ? ` ${transcript}` : transcript);
+        ed.commands.focus('end');
+      }
     } catch (error) {
       if (isCapabilityError(error)) {
         chat.requestCapabilitySetup('asr');
@@ -531,29 +726,6 @@
   {:else}
     <div class="mx-auto w-full max-w-3xl">
       <div class="relative flex flex-col">
-        {#if mentionOpen && candidates.length > 0}
-          <ul
-            class="absolute bottom-full left-0 z-10 mb-1 max-h-48 w-64 overflow-y-auto rounded-md border bg-background shadow-md"
-            data-testid="mention-popup"
-          >
-            {#each candidates as bot, index (bot.id)}
-              <li>
-                <button
-                  type="button"
-                  class="w-full px-3 py-1.5 text-left text-sm hover:bg-accent {index ===
-                  mentionIndex
-                    ? 'bg-accent'
-                    : ''}"
-                  onclick={() => pick(bot)}
-                  data-testid={`mention-candidate-${bot.id}`}
-                >
-                  @{bot.name}
-                  <span class="ml-1 text-xs text-muted-foreground">{bot.bio}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
         <!-- 待发送抽屉：待发送行不内嵌进输入坞，而是从输入坞背后向上伸出——
              底边下移一个圆角半径（-mb-6）塞进输入坞背后被压住，左上/右上圆角
              与输入坞一致、底部直角（藏在输入坞后），底部一个圆角半径的内边距
@@ -566,7 +738,7 @@
             <DraftQueue {drafts} />
           </div>
         {/if}
-        <!-- 输入坞（参考 Grok）：引用条 / @ 提及 / 待发送附件内嵌在圆角容器里，
+        <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里，
              待发送抽屉从容器背后向上伸出；输入区垫底；单行＝输入与按钮同行，
              多行＝输入占满整宽、按钮沉底。背景用 surface-raised（比背景亮一级），
              relative 保证压在抽屉上层；粘贴/拖拽文件即上传附件 -->
@@ -689,26 +861,6 @@
               </button>
             </div>
           {/if}
-          {#if mentions.length > 0}
-            <div class="flex flex-wrap gap-1 px-1" data-testid="mention-tags">
-              {#each mentions as botId (botId)}
-                <span
-                  class="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary"
-                >
-                  @{chat.botName(botId)}
-                  <button
-                    type="button"
-                    class="rounded-full p-0.5 hover:bg-primary/20"
-                    onclick={() => removeMention(botId)}
-                    data-testid={`mention-tag-remove-${botId}`}
-                    aria-label={t('composer.replyCancel')}
-                  >
-                    <X class="size-3" />
-                  </button>
-                </span>
-              {/each}
-            </div>
-          {/if}
           {#snippet attachButton()}
             <Button
               variant="ghost"
@@ -735,24 +887,18 @@
             </Button>
           {/snippet}
           <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
-               占满整行，附件键/发送键落到底部两角 -->
+               占满整行，附件键/发送键落到底部两角。@ 提及文字色取当前 Bot
+               头像色，经 --mention-color 下发给 .composer-mention -->
           <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
             {#if !stacked}
               {@render attachButton()}
             {/if}
-            <Textarea
-              bind:value={text}
-              bind:ref={textareaEl}
-              {placeholder}
-              rows={1}
-              class="max-h-40 min-h-10 resize-none border-none bg-transparent px-2 py-2.5 text-sm shadow-none focus-visible:ring-0 md:text-sm dark:bg-transparent
-                {stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}"
-              onkeydown={handleKeydown}
-              oninput={onInput}
-              oncompositionstart={() => (isComposing = true)}
-              oncompositionend={() => (isComposing = false)}
-              data-testid="composer-input"
-            />
+            <div
+              class={stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}
+              style:--mention-color={mentionColor?.hex ?? ''}
+            >
+              <div bind:this={editorHostEl}></div>
+            </div>
             <div
               class="flex items-center {stacked ? 'w-full justify-between pt-0.5 pb-1' : 'pr-0.5'}"
             >

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Bot, Conversation, Message } from '@kepcup/shared';
-import { botProfileSchema } from '@kepcup/shared';
+import { botProfileSchema, groupMentionToken } from '@kepcup/shared';
 import { buildSystemPrompt } from '../../src/agent/context/system-prompt.js';
 import {
   buildConversationContext,
   buildTriggerSegment,
+  renderMessageLine,
   type RenderMessageOptions,
 } from '../../src/agent/context/conversation.js';
 
@@ -75,6 +76,43 @@ function makeConversation(): Conversation {
 }
 
 describe('system prompt assembly', () => {
+  it('butler rules follow the loop tool surface: tasks never reference turn-only proposal tools (D75/dev 30 §1.2)', () => {
+    const butler = makeBot('bot_butler', '管家');
+    butler.systemRole = 'butler';
+    const base = {
+      bot: butler,
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+    };
+
+    // 对话轮：完整规则 + 「建 Bot 直接提议、不派任务」。
+    const turn = buildSystemPrompt({ ...base, loop: 'turn' });
+    expect(turn).toContain('<butler_rules>');
+    expect(turn).toContain('这一轮直接用 propose_* 提交提议卡');
+    expect(turn).toContain('不要为此用 start_task 派任务');
+    expect(turn).toContain('用 suggest_route 出一张路由卡');
+
+    // 任务（缺省 loop）：propose_* / suggest_route / delegate_to_bot 是对话轮
+    // 工具面——任务里注入对话轮版会指挥模型调用不存在的工具（只能编造「已创建」）。
+    const task = buildSystemPrompt(base);
+    expect(task).toContain('<butler_rules>');
+    expect(task).toContain('都在对话轮工具面');
+    expect(task).toContain('不要声称已经创建了任何 Bot 或群');
+    expect(task).not.toContain('这一轮直接用 propose_* 提交提议卡');
+    expect(task).not.toContain('用 suggest_route 出一张路由卡');
+  });
+
+  it('non-butler bots get no butler rules section', () => {
+    const prompt = buildSystemPrompt({
+      bot: makeBot('bot_self', '小艾'),
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+    });
+    expect(prompt).not.toContain('<butler_rules>');
+  });
+
   it('assembles sections in the documented order with tags', () => {
     const prompt = buildSystemPrompt({
       bot: makeBot('bot_self', '小艾'),
@@ -277,5 +315,49 @@ describe('trigger segment', () => {
     expect(segment).toContain('<trigger reason="direct">');
     expect(segment).toContain('msg_5');
     expect(segment).toContain('触发');
+  });
+});
+
+describe('user message mention legend', () => {
+  const optionsWithGroups: RenderMessageOptions = {
+    ...renderOptions,
+    mentionLabels: new Map([[groupMentionToken('conv_g1'), '项目讨论组']]),
+  };
+
+  it('appends the mention legend: bots by name, groups labeled as group chats', () => {
+    const line = renderMessageLine(
+      makeMessage({
+        id: 'msg_9',
+        seq: 9,
+        content: { text: '@别人 @项目讨论组 看看这个' },
+        mentions: ['bot_other', groupMentionToken('conv_g1'), 'bot_gone'],
+      }),
+      optionsWithGroups,
+    );
+    expect(line).toContain('（提及：@别人、@项目讨论组（群聊）、@bot_gone）');
+    expect(line).toContain('@别人 @项目讨论组 看看这个');
+    // 图例跟在正文后、是宿主生成的元数据（顺序：正文 → 图例）。
+    expect(line.indexOf('看看这个')).toBeLessThan(line.indexOf('（提及：'));
+  });
+
+  it('group tokens without a label still render legibly', () => {
+    const line = renderMessageLine(
+      makeMessage({
+        id: 'msg_10',
+        seq: 10,
+        content: { text: 'x' },
+        mentions: [groupMentionToken('conv_missing')],
+      }),
+      renderOptions,
+    );
+    expect(line).toContain('（提及：@某群聊）');
+  });
+
+  it('bot/system messages without mentions stay unchanged', () => {
+    const line = renderMessageLine(
+      makeMessage({ id: 'msg_11', seq: 11, content: { text: '普通' } }),
+      optionsWithGroups,
+    );
+    expect(line).not.toContain('（提及：');
   });
 });
