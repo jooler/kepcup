@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { ArrowLeft } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { appsStore } from '$lib/stores/apps.svelte';
@@ -27,6 +28,25 @@
   $effect(() => {
     appsStore.start();
     contacts.start();
+  });
+
+  // 连接行被删了（取消 / 失败的首次连接、断开）：别停在一个不存在的详情 / 空账号列表上。
+  $effect(() => {
+    if (!appsStore.loaded) return;
+    const ids = new Set(appsStore.connections.map((connection) => connection.id));
+    if (
+      untrack(() => detailConnectionId) !== null &&
+      !ids.has(untrack(() => detailConnectionId)!)
+    ) {
+      detailConnectionId = null;
+    }
+    const connectorId = untrack(() => managingConnectorId);
+    if (
+      connectorId !== null &&
+      !appsStore.connections.some((connection) => connection.connectorId === connectorId)
+    ) {
+      managingConnectorId = null;
+    }
   });
 
   /** 点「管理」：只有一个账号直接进详情，多个账号先列出来。 */

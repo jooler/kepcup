@@ -409,3 +409,37 @@ describe('connection updates', () => {
     expect(applyConnectionStatus(rows, 'zzz', 'expired')).toBeNull();
   });
 });
+
+describe('applyConnectionStatus: removed', () => {
+  const row = (id: string): AppConnection => ({
+    id,
+    connectorId: 'linear',
+    connectorVer: null,
+    label: '',
+    accountSub: null,
+    serverUrl: null,
+    issuer: null,
+    scopes: [],
+    tokenExpiresAt: null,
+    status: 'connecting',
+    createdAt: 1,
+    updatedAt: 1,
+    lastUsedAt: null,
+  });
+
+  it('drops a deleted row instead of keeping a ghost with a new status', () => {
+    const rows = [row('a'), row('b')];
+    expect(applyConnectionStatus(rows, 'a', 'not_connected', true)?.map((r) => r.id)).toEqual([
+      'b',
+    ]);
+    // 不修改入参
+    expect(rows.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('removing a row the list never had is a no-op, not a refetch', () => {
+    const rows = [row('a')];
+    expect(applyConnectionStatus(rows, 'zzz', 'not_connected', true)?.map((r) => r.id)).toEqual([
+      'a',
+    ]);
+  });
+});

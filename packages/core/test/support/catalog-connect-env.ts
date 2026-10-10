@@ -116,6 +116,8 @@ export interface CatalogEnvOptions {
   /** Release gates: `null` = open (default). */
   approvedGates?: readonly string[] | null;
   flowTimeoutMs?: number;
+  /** `none` = the system browser never completes (the user walks away from the authorization page). */
+  browser?: 'auto' | 'none';
   cimdUrl?: string;
   loopbackAllowlist?: string[];
   /** Pre-registered OAuth client table (replaces oauth-clients.json). */
@@ -185,7 +187,7 @@ export async function startCatalogEnv(options: CatalogEnvOptions = {}): Promise<
     shellRpc: {
       async openExternal({ url }) {
         shellCalls.push(url);
-        void simulateBrowser(url).catch(() => undefined);
+        if (options.browser !== 'none') void simulateBrowser(url).catch(() => undefined);
         return { ok: true };
       },
     },

@@ -36,6 +36,8 @@
 - 不推荐 `vitest related` / `--changed`：各包测试经 `@kepcup/shared`、`@kepcup/core` 的入口别名导入，依赖图几乎覆盖全部测试文件。实测 `node scripts/run-tests.mjs related --run packages/shared/src/browser/net-rules.ts` 选中了 148/148 个文件，等同全量。
 - `pnpm typecheck` / `pnpm lint` 较快，可在交付前整体跑；迭代中可用单包 typecheck。
 
+- **渲染端 Svelte 响应式测试**（`desktop-svelte` 项目）：`apps/desktop/src/renderer/src/**/*.svelte.test.ts` 用 vite-plugin-svelte + 无 DOM 的「客户端」环境（`apps/desktop/test/svelte-client-env.ts`）真的跑 `$effect.root` / `$state`，用来复现 effect 读写同一状态的循环（如 `stores/app-detail.svelte.test.ts`）。没有 DOM，不能挂组件；组件级行为靠 e2e。`desktop` 项目排除这类文件。
+
 ## 模拟模型服务（packages/testkit）
 
 测试中不调用真实模型。`testkit` 提供一个本地 HTTP 服务，实现 **OpenAI 兼容的 Chat Completions 接口**（流式 SSE，支持 tool calls），通过 pi 的自定义 `baseUrl` 接入。
