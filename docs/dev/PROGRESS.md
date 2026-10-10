@@ -26,6 +26,7 @@
 | 连接应用 P1（D73） | 待验收 | 2026-10-10 | — | 连接应用 MVP：内置目录（6 条，发行门禁全关）、目录连接与多账号、首连工具复核、风险分级审批（写工具三种时长、Bot 级持续授权）、工具定义锁定、Bot 勾选与 `app_*` 工具暴露、`<connected_apps>` / `<available_apps>`、对话内连接卡完整版、设置「应用」分区、ACP `apps` 能力包；门禁自动化部分已通过（P1 回归 45 文件 517 例 + 渲染端 13 文件 111 例），待用户待办 U2（真实账号登录实测后开门禁）。详见文末「连接应用 P1」 |
 | 连接应用 P2（D73） | 待验收 | 2026-10-10 | — | 规模化与大平台：权限追加（step-up）限流与待追加 scopes、污点外发控制（`egress` 审批、`app_taint`、无人值守审计汇总）、按需工具发现（`app_search_tools` / `app_call_tool`）、预注册 / 自带 OAuth 客户端、开发者模式（原始工具定义 / 授权事件日志 / 手动刷新 / 开发者档）、MCPB 本地包安装、协议版本 spike（结论：保持 pi-mcp）；已实现并经两组独立评审修复，定向测试在 Docker 全绿，全量回归由收口时补；真实平台条目（Google / Microsoft / Slack / GitHub）待用户待办 U3 / U4，「+」菜单临时开关（§6.8）未做。详见文末「连接应用 P2」 |
 | 连接应用 P3（D73） | 待验收 | 2026-10-10 | — | 开放平台基座：签名目录索引（Ed25519 验签 + 防回滚 + 与快照合并，生产公钥未生成前自动停用）、分级信任（社区应用首连确认、写工具无 Bot 级授权、目录分组与认证徽标）、子注册表 Worker（`infra/cloudflare/registry/`，官方 OpenAPI v0.1 只读子集 + 144 例契约 / 单元测试）、校验器 CLI `kepcup-app validate`（新包 `packages/app-validator`）、MCP Apps 渲染（`kepcup-app` 特权协议沙箱 iframe + ext-apps AppBridge，界面发起的写入必须人点）、随附 Skills 提示安装；开发者门户只出任务书；已实现并经三组独立评审修复（含沙箱 iframe 劫持 core 端口的严重问题），定向测试在 Docker 全绿，全量回归由收口时补；线上部分（签名密钥、`dl.` / `registry.` 子域、D1）待用户待办 U5。详见文末「连接应用 P3」 |
+| 连接应用 P4（D73） | 仅任务书 | 2026-10-10 | — | 托管授权网关（`todo/hosted-auth-gateway.md`，默认不建，G0 为决策与合规关口）与企业托管授权 EMA（`todo/enterprise-ema.md`，ID-JAG / Okta XAA 客户端支持）两份自包含任务书；本期不实现。总览见 `todo/connected-apps-status.md` |
 
 
 ## 验收记录
@@ -1072,6 +1073,6 @@
   - **§6.8「+」菜单临时开关**（P2 可选项）：仍未做。
   - 目录增量文件的客户端消费；技能克隆的体积 / 时间上限（D63 后续，见 DEV-022 第 4 项）；子注册表在真实 Cloudflare 上的冒烟与对照官方实现核对的假设项。
   - MCP Apps 后续：ACP 桥调用不出卡、`ui/message` / `ui/update-model-context` / `ui/download-file` / 显示模式请求、主题切换不推给已打开的界面、卡片重新挂载会重新 `resources/read`、ext-apps 2.x 待 SDK 2。
-  - **P4 任务书**（todo §8）：`todo/hosted-auth-gateway.md` 与 `todo/enterprise-ema.md` **仍未写**。
+  - **P4 任务书**（todo §8）：`todo/hosted-auth-gateway.md`（G0–G6）与 `todo/enterprise-ema.md`（E0–E6）已写（2026-10-10，**仅任务书，未实现**）；进度总览见 `todo/connected-apps-status.md`。
   - 迁移号沿用 `0024`–`0026`，最终合并时若 main 又前进则再顺延。
 - 影响范围：`apps/*`（含新增 `directory-sync` / `directory-merge` / `tier` / `skills-offer` / `ui/`）、`mcp/{risk,service,tools}.ts`、`gateway/index.ts`、`permissions/approvals.ts`、`skills/library.ts`、`dispatch/orchestrator.ts`、`domain/messages.ts`、`rpc/*`、`start.ts`、shared 契约（`domain/{directory-index,apps-ui,app-skills,connector-catalog}.ts`、`policy/*`、RPC / 事件）、主进程 `main/{apps-ui,apps-ui-policy,index}.ts`、`apps/desktop/scripts/pack-hooks.cjs`、渲染端 `features/apps-ui/*` / `features/apps/*` / `rpc/port.ts`、`scripts/sign-connector-index.mjs`、`infra/cloudflare/{directory,registry}/`、`packages/app-validator/`、`vitest.config.ts`。

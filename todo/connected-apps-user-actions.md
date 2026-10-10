@@ -1,6 +1,6 @@
 # 连接应用（D73）需要用户手动处理的事项
 
-> 状态：2026-10-10 汇总（P0–P3 已实现；P4 只出任务书，尚未写）。这些事项 Agent **不能也不应代做**（要登录账号、注册平台应用、持有私钥、改 Cloudflare 账户设置）。Agent 已把准备材料与验证脚本做好，每项下面写明「材料在哪、你要做什么、做完怎么验证、卡住哪个阶段的验收」。
+> 状态：2026-10-10 汇总（P0–P3 已实现；P4 的两份任务书已写，未实现）。这些事项 Agent **不能也不应代做**（要登录账号、注册平台应用、持有私钥、改 Cloudflare 账户设置）。Agent 已把准备材料与验证脚本做好，每项下面写明「材料在哪、你要做什么、做完怎么验证、卡住哪个阶段的验收」。
 >
 > 编号沿用 `todo/connected-apps.md` §2.3（U1–U5）；新增的 M 系列是合入与账号类杂项。完成一项就在这里打勾，并在 `docs/dev/PROGRESS.md` 对应阶段补一行验收记录。
 
@@ -63,6 +63,18 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] 部署后分别运行各目录下的 `verify.mjs`；`registry.kepcup.com` 另按 `infra/cloudflare/registry/README.md`「部署」第 6–7 步回填并 `curl` 冒烟，并逐条核对该 README「响应形状：已对照与仍需核对」里的推断项（严格 `ResponseMeta`、422、游标、`updated_since` 边界、`/v0` 别名、D1 行为）——本期离线，未在真实 Cloudflare 运行时验证。
 - [ ] 目录签名 CI 步骤：把 `scripts/sign-connector-index.mjs` 接入 CI（每次目录变更签名并发布到 `dl.kepcup.com`；用法与增量生成见 `infra/cloudflare/directory/README.md`）。填入公钥并发布应用新版本之后，旧版本客户端没有公钥，目录同步对它们仍是停用的——这是预期行为。
 - [ ] **真机验收（todo §7.8 的用户部分）**：自动化只验了自写的 Linear 形态 `server.json` 夹具 + 假服务器。请取一个已上架 Claude / ChatGPT 目录的真实应用（如 Linear 官方 MCP）的 `server.json`，补上 `_meta["app.kepcup/connector"]` 后运行 `node packages/app-validator/dist/cli.js validate <server.json> --auth`（先 `pnpm --filter @kepcup/app-validator build`；`--auth` 要在浏览器里登录），把结果记入 `docs/dev/PROGRESS.md`「连接应用 P3」。
+
+## P4 启动前的用户决定（两份任务书均**未开工**，默认不启动）
+
+任务书：[hosted-auth-gateway.md](hosted-auth-gateway.md)（托管授权网关）、[enterprise-ema.md](enterprise-ema.md)（企业托管授权）。下面是 Agent 动手前需要你拍板的事；没有你的明确批准，两者都保持任务书状态。
+
+- [ ] **托管网关：是否启动？** 默认不建。只有某个你确实需要的平台无法用本地客户端身份接入（任务书 §1 的决策清单，G0）才启动；目前没有已确认需要的平台（Google / Microsoft 走桌面公共客户端；Slack / Figma 的瓶颈是平台审核，网关绕不过）。同意启动即同意「令牌离开本机」的产品代价。
+- [ ] 网关身份方案（任务书 §5 Q1）：推荐「上游账号即身份」，不做 KepCup 账号体系；如不接受请在 G0 前说明。
+- [ ] 网关法务与数据地域：隐私政策「托管网关」章节、Cloudflare DPA、子处理者清单、数据删除说明页；欧盟存储与大陆用户出境的法务意见（任务书 §9）。
+- [ ] 网关前置资源（G6 才需要）：Workers Paid、`auth.kepcup.com` / `mcp.kepcup.com`、`eu` 管辖区资源、保险库主密钥（离线备份）、平台应用注册（保密客户端）。
+- [ ] **企业 EMA：是否做企业版？** 目标 IdP（Okta / Entra / Google / 其他）、是否接受仅 OIDC（不含 SAML-only）、许可与定价（任务书 Q3 / Q5）。
+- [ ] 企业测试环境（E0 / E6 才需要）：Okta 开发者租户（或其他支持 ID-JAG 签发的 IdP）、Linear / Atlassian / Canva 等支持 EMA 的服务器的测试租户。
+- [ ] 托管配置的发行渠道与路径（任务书 §5.1 的提案：各平台系统级只读 `managed-settings.json`）、`client.json` 增加 `grant_types` / `authorization_grant_profiles_supported` 的评审与部署（任务书 §7，属 M2 的「发布即评审」范围）。
 
 ## M1 — 合入 main 前的最终确认（Agent 不会自行合入）
 
