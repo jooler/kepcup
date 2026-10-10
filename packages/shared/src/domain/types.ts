@@ -563,12 +563,19 @@ export const appsSettingsSchema = z
      * 打包快照。只经 `settings.update` 的 `apps.directorySync` 写。
      */
     directorySync: z.boolean().default(true).catch(true),
+    /**
+     * 本机连接（todo/local-connector-authoring.md）：slug → `LocalConnectorRecord`（core 自有，
+     * 只经 `apps.localConnectors.*` 写；`settings.update` 不接受）。值读取时由 core 逐条校验
+     * （`domain/local-connectors.ts`），所以这里不收紧类型：一条坏记录只丢弃它自己。
+     */
+    localConnectors: z.record(z.string(), z.unknown()).default({}).catch({}),
   })
   .catch({
     toolLockBaselineDone: false,
     developerMode: false,
     taintGuard: true,
     directorySync: true,
+    localConnectors: {},
   });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;
 
@@ -1063,6 +1070,36 @@ export const runStepTypeSchema = z.enum([
 export type RunStepType = z.infer<typeof runStepTypeSchema>;
 
 /**
+ * 本机连接确认卡（`confirm-local-connector` 设置需求的载荷）：全部字段由 core 的探测结果生成，
+ * 展示名 / 描述 / 分类 / 文档链接是 Bot 提供但经清洗的文本。`mcpHost` 是卡片上要醒目显示的域名。
+ */
+export const localConnectorCardSchema = z.object({
+  proposalId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  category: z.string(),
+  /** 完整 MCP 地址（探测的就是这个地址）。 */
+  mcpUrl: z.string(),
+  /** MCP 域名（含端口）：卡片上大字显示。 */
+  mcpHost: z.string(),
+  /** 文档链接：仅展示，从不自动打开 / 抓取。 */
+  docUrl: z.string().optional(),
+  authKind: z.literal('oauth'),
+  /** 客户端注册方式：`cimd`（KepCup 的 CIMD 文档）或 `dcr`（动态注册）。 */
+  registration: z.enum(['cimd', 'dcr']),
+  /** 授权服务器域名（含端口）：与 MCP 域名不同站时授权前还会再核对一次完整 URL。 */
+  issuerHost: z.string(),
+  /** 探测到的将请求的范围（空 = 按服务端提示）。 */
+  scopes: z.array(z.string()),
+  tier: z.literal('developer'),
+  /** core 生成的风险说明（未审核、每次确认、数据只在本机……）。 */
+  warnings: z.array(z.string()),
+  /** 提案过期时间（毫秒时间戳）；过期后 `confirm` 被拒。 */
+  expiresAt: z.number(),
+});
+export type LocalConnectorCard = z.infer<typeof localConnectorCardSchema>;
+
+/**
  * 一个 run（或即将发生的调用）所缺失的用户配置（docs/design/18-inline-setup.md）。
  * `main-model`：Bot 未指定模型且全局没有默认主模型；`capability-model`：
  * settings.capabilityModels 中对应能力的配置缺失（或厂商缺 Key）。
@@ -1102,6 +1139,16 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     /** 需追加的 scope（`reason: 'scope'`）。 */
     scopes: z.array(z.string()).optional(),
     reason: appAuthReasonSchema,
+  }),
+  /**
+   * Bot 提议添加一个本机连接（todo/local-connector-authoring.md）：`app_propose_local_connector`
+   * 经 core 探测通过后携带。`card` 的全部字段由 core 的探测结果生成（不是 Bot 原文）；用户在
+   * 卡片上点「添加」→ `apps.localConnectors.confirm({ proposalId })`，「取消」→ `…reject`。
+   */
+  z.object({
+    kind: z.literal('confirm-local-connector'),
+    proposalId: z.string(),
+    card: localConnectorCardSchema,
   }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;

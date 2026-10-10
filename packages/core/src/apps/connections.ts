@@ -159,6 +159,7 @@ export class AppConnectionsService {
         privacyPolicy: meta.privacyPolicy,
         category: meta.category,
         tier: meta.tier,
+        origin: catalog.originOf(meta.slug),
         authKind: meta.auth.kind,
         registration: meta.auth.registration,
         connectable: unavailable === null,

@@ -23,6 +23,14 @@ export function tierAllowsBotLevelGrant(tier: string | undefined): boolean {
 }
 
 /**
+ * 该分级的写入类工具能否带持续授权（本对话内 / 对该 Bot 总是允许）。`developer`（本机连接等未审核
+ * 来源）**每次调用都要确认**——既不能 Bot 级也不能对话级，用户只能逐工具把审批改成「自动」。
+ */
+export function tierAllowsStandingGrants(tier: string | undefined): boolean {
+  return tier !== 'developer';
+}
+
+/**
  * 首次连接时是否需要额外的社区风险提示与确认（界面勾选；core 在 `apps.connect.confirmTools`
  * 里强制：需要 `acknowledgeCommunity: true`）。确认挂在工具复核步骤上——社区应用没有任何待复核
  * 工具时没有这一步，也就不需要确认（此时没有可被授权的工具）。
@@ -55,6 +63,12 @@ export function assertGrantAllowedForTier(input: {
   tier: string | undefined;
   conversationId: string | null | undefined;
 }): void {
+  if (!tierAllowsStandingGrants(input.tier)) {
+    throw new AppError(
+      'APPROVAL_DENIED',
+      '未审核来源（本机连接）的工具每次调用都需要确认，不能设为持续授权',
+    );
+  }
   if ((input.conversationId ?? null) === null && !tierAllowsBotLevelGrant(input.tier)) {
     throw new AppError(
       'APPROVAL_DENIED',
