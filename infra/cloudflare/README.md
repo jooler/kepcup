@@ -99,8 +99,8 @@ infra/cloudflare/with-env.sh check
 | 2026-10-10 | 注册表改用 custom domain `registry.kepcup.com` 并重新部署 | 已上线，版本 `a6b99ada…`；冒烟：GET 200、ETag 条件请求 304、POST 405；表仍为空，等 :17 UTC 的首次同步 |
 | 2026-10-10 | 本机生成 Ed25519 签名密钥（keyId `kepcup-2026-1`）：私钥种子只写进 `.env` 的 `KEPCUP_CONNECTOR_SIGNING_KEY`，公钥登记进 `CONNECTOR_INDEX_PUBLIC_KEYS` | 私钥不入库、不上传 Cloudflare；**请自行备份 `.env` 里这一行**，丢失只能走轮换 |
 | 2026-10-10 | 用 `infra/cloudflare/sign-directory.sh` 签名（6 条目）并部署 `kepcup-directory`，custom domain `dl.kepcup.com` | 已上线，版本 `ea6b872f…`；`directory/verify.mjs` 通过 |
-| 2026-10-10 | 校验（`--validate-only`）`http_ratelimit` 规则：`registry.kepcup.com` 每 IP 每 10 秒 60 次，超出封 10 秒 | 校验通过；**正式写入被分类器拦下（Modify Shared Resources），未写入**；见下 |
+| 2026-10-10 | 写入 `http_ratelimit` 规则：`registry.kepcup.com` 每 IP（按 colo）每 10 秒 60 次，超出封 10 秒 | 已生效，ruleset `75902de5…`、rule `9a0b198f…`（免费套餐仅允许 1 条限速规则，已占用）；改动前被分类器拦下，用户追加更窄的 Bash 规则后成功 |
 
 ### 等你放行的
 
-1. **`registry.kepcup.com` 的限速规则**（zone 级 WAF 变更，免费套餐只允许 1 条限速规则）：`cf rulesets entrypoint update http_ratelimit --zone <zone id> --name "kepcup rate limits" --rules @rl.json`，规则内容为表达式 `http.host eq "registry.kepcup.com"`、动作 `block`、特征 `["cf.colo.id","ip.src"]`（免费套餐要求带 `cf.colo.id`）、60 次 / 10 秒、封禁 10 秒。已用 `--validate-only` 验证。
+暂无。线上待办只剩首次注册表同步（:17 UTC）的确认。

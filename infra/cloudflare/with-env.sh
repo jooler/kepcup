@@ -92,4 +92,10 @@ print("目标 zone", want, "可见" if found else "不可见：令牌未包含�
   exit 0
 fi
 
+# cf / wrangler 通常装在 nvm 的 node 下；非交互 shell 的 PATH 里可能没有，找不到时补上。
+if ! command -v "$1" >/dev/null 2>&1; then
+  for d in "$HOME"/.nvm/versions/node/*/bin; do
+    [[ -x "$d/$1" ]] && PATH="$d:$PATH" && break
+  done
+fi
 exec "$@"
