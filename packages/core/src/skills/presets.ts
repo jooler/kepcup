@@ -126,7 +126,16 @@ export class SkillPresetsService {
     }
     const row = this.#deps.skills.publicSkillRow(preset.name);
     const state = this.#installState(row, preset);
+    const log = {
+      preset: presetId,
+      skill: preset.name,
+      version: preset.entry.version,
+      hash: preset.contentHash,
+      dir: preset.dir,
+      ...state,
+    };
     if (state.foreign) {
+      this.#deps.logger.warn(log, 'preset install refused: same-name public skill from another source');
       throw new AppError(
         'ALREADY_EXISTS',
         `已存在同名公共技能「${preset.name}」（非预置来源），请先卸载后再添加`,
@@ -135,16 +144,29 @@ export class SkillPresetsService {
     if (state.installed && !state.upToDate && row !== null) {
       // Outdated preset install: drop the old public row first (GC collects
       // the library version when nothing references it), then reinstall.
+      this.#deps.logger.info({ ...log, oldLibraryId: row.library_id }, 'preset install: replacing outdated public entry');
       this.#deps.skills.uninstallPublic(preset.name);
     }
-    this.#deps.skills.installPublic({
-      name: preset.name,
-      scan: preset.scan,
-      sourceUrl: `${PRESET_SOURCE_PREFIX}${preset.entry.id}`,
-      commitOid: preset.entry.version,
-      contentHash: preset.contentHash,
-      stagingDir: preset.dir,
-    });
+    try {
+      this.#deps.skills.installPublic({
+        name: preset.name,
+        scan: preset.scan,
+        sourceUrl: `${PRESET_SOURCE_PREFIX}${preset.entry.id}`,
+        commitOid: preset.entry.version,
+        contentHash: preset.contentHash,
+        stagingDir: preset.dir,
+      });
+    } catch (error) {
+      this.#deps.logger.error(
+        { ...log, error: error instanceof Error ? error.message : String(error) },
+        'preset install failed',
+      );
+      throw error;
+    }
+    this.#deps.logger.info(
+      { ...log, compatibility: preset.scan.compatibility, runtimeDeps: preset.scan.runtimeDeps },
+      'preset skill installed (public)',
+    );
     return this.list();
   }
 
@@ -157,6 +179,19 @@ export class SkillPresetsService {
     const library = this.#deps.skills.libraryGet(row.library_id);
     if (library === null) {
       // Dangling reference: reinstallable.
+      return { installed: true, upToDate: false, foreign: false };
+    }
+    const dir = this.#deps.skills.libraryDirOf(library);
+    if (!existsSync(dir)) {
+      // 目录在应用外被删除：告知用户（弹框 → 知道了 → purge），市场上按
+      // 「可更新」显示而不是「✓ 已添加」——点更新即卸载旧行并重装，也能恢复。
+      this.#deps.skills.reportMissing({
+        name: preset.name,
+        scope: 'public',
+        botId: null,
+        libraryId: library.id,
+        dirPath: dir,
+      });
       return { installed: true, upToDate: false, foreign: false };
     }
     if (library.content_hash === preset.contentHash) {

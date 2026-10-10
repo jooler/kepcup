@@ -39,6 +39,7 @@
   } from '$lib/components/ui/dialog';
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import SkillMarketDialog from '$lib/features/skill-market/SkillMarketDialog.svelte';
+  import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
   import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import { sidebarLayout } from './sidebar-layout.svelte';
@@ -774,6 +775,7 @@
 <GroupSettingsDialog conversationId={groupSettingsId ?? ''} bind:open={groupSettingsOpen} />
 <GlobalSearchDialog bind:open={searchOpen} />
 <SkillMarketDialog bind:open={shell.skillMarketOpen} />
+<MissingSkillDialog />
 
 <Dialog
   open={deleteTargetId !== null}

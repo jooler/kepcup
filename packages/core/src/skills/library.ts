@@ -150,6 +150,16 @@ export class SkillImporter {
         this.discard(prepared);
       },
     );
+    this.#deps.logger.info(
+      {
+        skill: payload.name,
+        botId: request.botId,
+        conversationId: request.conversationId,
+        approvalId: approval.id,
+        status: approval.status,
+      },
+      'skill import approval submitted',
+    );
     return { status: 'submitted', approvalId: approval.id };
   }
 
@@ -173,9 +183,21 @@ export class SkillImporter {
       `imp_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`,
     );
     mkdirSync(stagingDir, { recursive: true });
+    const log = {
+      sourceUrl: request.sourceUrl,
+      ref: request.ref ?? null,
+      subdirectory: request.subdirectory ?? null,
+      botId: request.botId,
+      stagingDir,
+    };
     try {
+      this.#deps.logger.info(log, 'skill import: cloning');
       const commitOid = await this.#clone(url, request.ref, stagingDir);
       const located = locateSkillDirs(stagingDir, request.subdirectory);
+      this.#deps.logger.info(
+        { ...log, commitOid, located: located.map((dir) => path.relative(stagingDir, dir) || '.') },
+        'skill import: clone done, skill directories located',
+      );
       if (located.length === 0) {
         throw new AppError(
           'SKILL_IMPORT_FAILED',
@@ -223,6 +245,21 @@ export class SkillImporter {
         scan,
         missingDeps,
       });
+      this.#deps.logger.info(
+        {
+          ...log,
+          skill: scan.name,
+          commitOid,
+          hash: contentHash,
+          reuseExisting: existing !== null,
+          compatibility: scan.compatibility,
+          compatibilityReasons: scan.compatibilityReasons,
+          runtimeDeps: scan.runtimeDeps,
+          missingDeps,
+          files: scan.files.length,
+        },
+        'skill import: prepared (scan done, awaiting approval)',
+      );
       return {
         status: 'ready',
         stagingDir,
@@ -238,6 +275,15 @@ export class SkillImporter {
       };
     } catch (error) {
       rmSync(stagingDir, { recursive: true, force: true });
+      this.#deps.logger.warn(
+        {
+          ...log,
+          code: error instanceof AppError ? error.code : 'SKILL_IMPORT_FAILED',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+        'skill import: prepare failed',
+      );
       if (error instanceof AppError) throw error;
       throw new AppError(
         'SKILL_IMPORT_FAILED',

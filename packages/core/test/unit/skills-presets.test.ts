@@ -33,7 +33,7 @@ interface Rig {
   paths: ReturnType<typeof resolvePaths>;
 }
 
-function makeRig(): Rig {
+function makeRig(publish: (event: string, payload: unknown) => void = () => {}): Rig {
   const home = path.join(root, `home-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(home, { recursive: true });
   const paths = resolvePaths(home);
@@ -52,7 +52,7 @@ function makeRig(): Rig {
     bots: {
       get: (id) => (id === 'bot_a' || id === 'bot_b' ? { id, name: id, status: 'active' } : null),
     },
-    publish: () => {},
+    publish,
   });
   return { skills, db, paths };
 }
@@ -332,6 +332,62 @@ describe('SkillPresetsService（公共作用域）', () => {
     rig.skills.uninstall('bot_a', 'alpha');
     expect(rig.skills.libraryGet(libraryId)).not.toBeNull();
     expect(rig.skills.listForBot('bot_a')[0]).toEqual(expect.objectContaining({ scope: 'public' }));
+  });
+
+  it('库目录在应用外被删除：列表/读取/市场各发现一次 skills.missing（去重）；purgeMissing 清掉 DB 行后可重装', () => {
+    const events: Array<{ event: string; payload: unknown }> = [];
+    const rig = makeRig((event, payload) => events.push({ event, payload }));
+    const presetDir = makePresetDir([{ dir: 'gone', name: 'gone-skill', description: '会被删掉' }]);
+    const service = makeService(rig, presetDir);
+    service.install('gone-skill');
+    const row = rig.skills.publicSkillRow('gone-skill')!;
+    const library = rig.skills.libraryGet(row.library_id)!;
+    const dir = rig.skills.libraryDirOf(library);
+    rmSync(dir, { recursive: true, force: true });
+    events.length = 0;
+
+    rig.skills.listForBot('bot_a');
+    rig.skills.listForBot('bot_b');
+    expect(rig.skills.activeSkills('bot_a')).toHaveLength(0);
+    expect(() => rig.skills.readSkill('bot_a', 'gone-skill')).toThrow(/技能目录不存在/);
+    // 市场：按「可更新」显示而非「✓ 已添加」。
+    expect(service.list().find((preset) => preset.id === 'gone-skill')).toMatchObject({
+      installed: true,
+      upToDate: false,
+      foreign: false,
+    });
+    const missing = events.filter((entry) => entry.event === 'skills.missing');
+    expect(missing).toHaveLength(1);
+    expect(missing[0]!.payload).toEqual({
+      name: 'gone-skill',
+      scope: 'public',
+      botId: null,
+      libraryId: library.id,
+      dirPath: dir,
+    });
+
+    // 「知道了」→ 清理：public_skills + skill_library 行都没了，广播全局变更。
+    events.length = 0;
+    expect(rig.skills.purgeMissing('gone-skill')).toBe(1);
+    expect(rig.skills.publicSkillRow('gone-skill')).toBeNull();
+    expect(rig.skills.libraryGet(library.id)).toBeNull();
+    expect(events.some((entry) => entry.event === 'skills.changed')).toBe(true);
+    expect(rig.skills.purgeMissing('gone-skill')).toBe(0);
+    expect(service.list().find((preset) => preset.id === 'gone-skill')).toMatchObject({
+      installed: false,
+    });
+
+    // 清理后重新添加：目录重建，再次缺失会再报一次（去重记录已清）。
+    service.install('gone-skill');
+    expect(rig.skills.publicSkillRow('gone-skill')).not.toBeNull();
+    expect(rig.skills.readSkill('bot_a', 'gone-skill').content).toContain('gone-skill');
+    rmSync(rig.skills.libraryDirOf(rig.skills.libraryGet(rig.skills.publicSkillRow('gone-skill')!.library_id)!), {
+      recursive: true,
+      force: true,
+    });
+    events.length = 0;
+    rig.skills.listForBot('bot_a');
+    expect(events.filter((entry) => entry.event === 'skills.missing')).toHaveLength(1);
   });
 
   it('closeDatabase 释放夹具库', () => {

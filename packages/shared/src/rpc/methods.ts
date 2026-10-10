@@ -1021,6 +1021,12 @@ export const skillsPresetsInstallInputSchema = z.object({
 export const skillsPresetsInstallOutputSchema = z.object({
   presets: z.array(skillPresetInfoSchema),
 });
+/** 用户确认「技能目录已被删除」后清理其 DB 记录（见 skills.missing 事件）。 */
+export const skillsPurgeMissingInputSchema = z.object({ name: z.string().min(1) });
+export const skillsPurgeMissingOutputSchema = z.object({
+  /** 清掉的库版本数（0 = 目录其实还在，什么都没删）。 */
+  purged: z.number().int().nonnegative(),
+});
 
 // --- wiki (P09) ---------------------------------------------------------------
 
@@ -1543,6 +1549,10 @@ export const rpcMethodSchemas = {
   'skills.presets.install': {
     input: skillsPresetsInstallInputSchema,
     output: skillsPresetsInstallOutputSchema,
+  },
+  'skills.purgeMissing': {
+    input: skillsPurgeMissingInputSchema,
+    output: skillsPurgeMissingOutputSchema,
   },
 
   'wiki.tree': { input: wikiBotIdInputSchema, output: wikiTreeOutputSchema },

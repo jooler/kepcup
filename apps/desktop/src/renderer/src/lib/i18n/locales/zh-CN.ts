@@ -912,6 +912,11 @@ export const zhCN = {
   'skills.uninstallBody':
     '将移除该 Bot 对此技能的引用；没有其他 Bot 使用同一版本时，技能库中的版本会一并删除。此操作不可恢复。',
   'skills.uninstalled': '已卸载',
+  'skills.missingTitle': '技能文件已被删除',
+  'skills.missingBody':
+    '技能「{name}」的文件目录已不存在（可能在应用外被手动删除），该技能无法再使用。点击「知道了」将清理它的安装记录；需要时可重新添加或导入。',
+  'skills.missingAck': '知道了',
+  'skills.missingPurged': '已清理技能「{name}」的安装记录',
   'skills.actionFailed': '操作失败',
   'skills.openMarket': '浏览技能市场',
   'chats.errorCode.SKILL_IMPORT_FAILED': '技能导入失败',

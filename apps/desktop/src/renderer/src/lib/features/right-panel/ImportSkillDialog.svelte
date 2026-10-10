@@ -56,14 +56,19 @@
       toast.success(t('skills.importSubmitted'));
       open = false;
     } catch (error) {
-      toast.error(
-        errorText(
-          (error as { code?: string } | undefined)?.code,
-          error instanceof Error && error.message.length > 0
-            ? error.message
-            : t('skills.importFailed'),
-        ),
-      );
+      // core 的 SKILL_IMPORT_FAILED 消息带具体原因（克隆失败 / 找不到分支 /
+      // 无 SKILL.md…），优先原样展示；完整错误（code / details）进控制台。
+      const code = (error as { code?: string } | undefined)?.code;
+      const message = error instanceof Error && error.message.length > 0 ? error.message : null;
+      console.error('[skills] import failed', {
+        botId,
+        sourceUrl: url.trim(),
+        ref: ref.trim(),
+        subdirectory: subdirectory.trim(),
+        code,
+        error,
+      });
+      toast.error(message ?? errorText(code, t('skills.importFailed')));
     } finally {
       submitting = false;
     }
