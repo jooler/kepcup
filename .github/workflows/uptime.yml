@@ -1,0 +1,51 @@
+name: Uptime (kepcup.com)
+
+# 线上可用性监控（D73 U1）：每 20 分钟检查 CIMD 文档、签名目录索引、子注册表。
+# 失败时 GitHub 会给最后修改本定时任务的人发邮件。定时任务只在默认分支上触发；
+# 仓库 60 天无活动时 GitHub 会自动暂停它（push 一次或手动触发即可恢复）。
+on:
+  schedule:
+    - cron: '7,27,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: CIMD / directory / registry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # 目录验签需要 @kepcup/shared 里编进应用的公钥列表；只装并构建它，不装整个仓库。
+      - run: pnpm install --frozen-lockfile --filter @kepcup/shared...
+      - run: pnpm --filter @kepcup/shared build
+
+      - name: CIMD 文档（200 / application/json / 无重定向 / ≤5 KB / client_id 一致 / 与仓库一致）
+        run: node infra/cloudflare/oauth-cimd/verify.mjs
+
+      - name: 签名目录索引（可达 / 验签 / 密钥有效）
+        run: node infra/cloudflare/directory/verify.mjs
+
+      - name: 子注册表（GET 200、JSON 结构正确、已同步到数据）
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 20 'https://registry.kepcup.com/v0.1/servers?limit=1')"
+          echo "$body" | head -c 300; echo
+          echo "$body" | node -e '
+            const d = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            if (!Array.isArray(d.servers)) { console.error("FAIL  响应缺少 servers 数组"); process.exit(1); }
+            if (d.servers.length === 0) { console.error("FAIL  注册表为空（上游同步可能已停止）"); process.exit(1); }
+          '
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST https://registry.kepcup.com/v0.1/servers)"
+          [ "$code" = 405 ] || { echo "FAIL  POST 应返回 405，实际 $code"; exit 1; }

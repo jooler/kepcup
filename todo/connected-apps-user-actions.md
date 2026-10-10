@@ -50,7 +50,7 @@
 - [x] **已决定（2026-10-10）：先用免费版**。kepcup.com 的 Bot Fight Mode 本来就是关的（`fight_mode:false`，Agent 只读核对过），CIMD 现在可被授权服务器正常抓取（`verify.mjs` 通过）。**约束**：免费版下保持 Bot Fight Mode 关闭；若以后要开，必须先升级 Pro 并用 WAF 自定义规则 Skip `/oauth/*` 与 `/.well-known/*`（免费版只能整站开关，开了会拦掉授权服务器对 CIMD 的抓取，表现为 `invalid_client`）。同时不要启用「Block AI bots」覆盖 `/oauth/*`（设计 29 §15.1）。
 - [x] （已由 Agent 完成）`wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
 - [x] （已由 Agent 完成，通过）运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
-- [ ] 接入外部可用性监控（CIMD 宕机只影响**新**授权，不影响已有令牌）。
+- [x] **外部可用性监控（2026-10-10 决定用 GitHub Actions）**：`.github/workflows/uptime.yml` 每 20 分钟跑 `oauth-cimd/verify.mjs`、`directory/verify.mjs`（验签）和注册表冒烟（200、结构、非空、POST 405），失败由 GitHub 发邮件。仓库是公开的，标准 runner 免费不限分钟。**定时触发只在默认分支生效，所以要等 M1 合并到 main 后才开始跑**；合并后可在 Actions 页手动触发一次确认。注册表在 17:17 UTC 首次同步前为空，工作流会判失败（预期）。需要状态页或更密频率时再加 UptimeRobot 免费版。
 - [ ] 用 **Notion 或 Linear 官方 MCP** 以「自定义」方式手工走通一次：连接 → 调用 → 令牌过期后重连 → 断开；结果记入 `docs/dev/PROGRESS.md`「连接应用 P0」。
 
 
