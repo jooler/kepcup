@@ -842,7 +842,7 @@ export class McpService {
     if (failures >= MCP_RECONNECT_MAX) {
       throw new AppError(
         'MCP_SERVER_FAILED',
-        `MCP 服务器 ${server.name} 连接多次失败，已停用（请在设置页检查配置后重试）`,
+        `MCP 服务器 ${server.name} 连接多次失败，已停用（请在扩展中心「MCP」检查配置后重试）`,
       );
     }
 

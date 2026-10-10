@@ -505,7 +505,7 @@ export class AppConnectionsService {
   /** 目录连接才可经这些方法管理；自定义 server 走 settings。 */
   #catalogRow(connectionId: string): AppConnection {
     if (isCustomConnectionId(connectionId)) {
-      throw new AppError('INVALID_INPUT', '自定义 MCP server 请在设置的「自定义」页管理', {
+      throw new AppError('INVALID_INPUT', '自定义 MCP server 请在扩展中心「MCP」管理（高级配置在「设置 → 开发者模式」）', {
         connectionId,
       });
     }

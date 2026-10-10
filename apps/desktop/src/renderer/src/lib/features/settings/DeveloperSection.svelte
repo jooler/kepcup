@@ -2,6 +2,8 @@
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import McpSection from './McpSection.svelte';
 
@@ -16,6 +18,12 @@
 
   const developerMode = $derived(settingsStore.developerMode);
   let busy = $state(false);
+
+  /** 已安装的 MCP 在扩展中心「MCP」管理（先收起设置弹框，两个弹框不叠放）。 */
+  function openMcpManagement(): void {
+    shell.closeSettings();
+    shell.openExtensionCenter('mcp');
+  }
 
   async function toggle(on: boolean): Promise<void> {
     busy = true;
@@ -51,5 +59,13 @@
     <p class="text-xs text-muted-foreground" data-testid="developer-off-hint">
       {t('settings.devModeOffHint')}
     </p>
+    <Button
+      size="sm"
+      variant="secondary"
+      onclick={openMcpManagement}
+      data-testid="developer-open-mcp"
+    >
+      {t('settings.devModeOpenMcp')}
+    </Button>
   {/if}
 </section>

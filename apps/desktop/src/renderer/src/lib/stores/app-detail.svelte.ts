@@ -18,7 +18,7 @@ export interface ConnectionToolsView {
  * 设置「应用」分区（D73 §5.9）里按连接查看 / 管理的状态：工具清单（锁定状态、策略、
  * 新旧定义）与持续授权，按 connectionId 缓存；连接状态推送（`apps.connection_status`，
  * 含 `tools_changed`）到达时重拉已缓存的清单。连接列表 / 目录本身在 appsStore。
- * 自定义 server 的连接 id 为 `custom:{serverId}`，设置页「自定义」页签用同一份缓存读
+ * 自定义 server 的连接 id 为 `custom:{serverId}`，扩展中心「MCP」/ 开发者模式的 MCP 管理用同一份缓存读
  * 待批准数。
  */
 class AppDetailState {
