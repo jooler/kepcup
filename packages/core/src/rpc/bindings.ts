@@ -163,6 +163,8 @@ import {
   skillsPresetsListOutputSchema,
   skillsPresetsInstallInputSchema,
   skillsPresetsInstallOutputSchema,
+  skillsPurgeMissingInputSchema,
+  skillsPurgeMissingOutputSchema,
   wikiBotIdInputSchema,
   wikiTreeOutputSchema,
   wikiPageInputSchema,
@@ -1260,6 +1262,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       skillsPresetsInstallInputSchema,
       skillsPresetsInstallOutputSchema,
       async (input) => ({ presets: services.skillPresets!.install(input.presetId) }),
+    ),
+    // 技能目录在应用外被删除：用户在弹框点「知道了」后清理 DB 记录。
+    'skills.purgeMissing': method(
+      skillsPurgeMissingInputSchema,
+      skillsPurgeMissingOutputSchema,
+      async (input) => ({ purged: services.skills!.purgeMissing(input.name) }),
     ),
 
     // --- wiki (P09) --------------------------------------------------------

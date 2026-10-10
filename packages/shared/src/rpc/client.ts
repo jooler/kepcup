@@ -1,5 +1,6 @@
 import { createBirpc, type BirpcReturn } from 'birpc';
 import { AppError } from '../errors.js';
+import { RPC_CALL_TIMEOUT_MS } from '../constants.js';
 import type { RpcTransport } from './transport.js';
 
 type RemoteFunctions = Record<string, (...args: unknown[]) => unknown>;
@@ -28,7 +29,7 @@ export function createRpcClient(options: CreateRpcClientOptions): RpcClient {
     on: (fn) => {
       options.transport.onData(fn as (data: unknown) => void);
     },
-    ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+    timeout: options.timeoutMs ?? RPC_CALL_TIMEOUT_MS,
   });
 
   return {

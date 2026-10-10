@@ -81,12 +81,13 @@
       await skillMarket.install(preset.id);
       toast.success(t('skillMarket.installedToast', { name: preset.displayName }));
     } catch (error) {
-      toast.error(
-        errorText(
-          (error as { code?: string } | undefined)?.code,
-          error instanceof Error && error.message.length > 0 ? error.message : t('skillMarket.installFailed'),
-        ),
-      );
+      // core 侧的 AppError 消息（如「已存在同名公共技能…」「技能库条目写入失败…」）
+      // 比按错误码映射的通用文案更具体：有消息就原样展示，并把完整错误打到
+      // 控制台（code / details 一起），便于排查。
+      const code = (error as { code?: string } | undefined)?.code;
+      const message = error instanceof Error && error.message.length > 0 ? error.message : null;
+      console.error('[skill-market] install failed', { presetId: preset.id, code, error });
+      toast.error(message ?? errorText(code, t('skillMarket.installFailed')));
     }
   }
 </script>
@@ -116,6 +117,10 @@
     <div class="min-h-0 flex-1 overflow-y-auto pr-0.5" data-testid="skill-market-list">
       {#if skillMarket.loading && skillMarket.presets.length === 0}
         <p class="py-6 text-center text-sm text-muted-foreground">…</p>
+      {:else if skillMarket.loadError !== null && skillMarket.presets.length === 0}
+        <p class="py-6 text-center text-sm text-destructive" data-testid="skill-market-error">
+          {skillMarket.loadError}
+        </p>
       {:else if sections.length === 0}
         <p class="py-6 text-center text-sm text-muted-foreground" data-testid="skill-market-empty">
           {t('skillMarket.empty')}

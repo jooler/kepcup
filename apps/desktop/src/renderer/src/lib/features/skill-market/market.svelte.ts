@@ -11,6 +11,8 @@ import { core } from '$lib/rpc/client.svelte';
 class SkillMarketState {
 	presets = $state<SkillPresetInfo[]>([]);
 	loading = $state(false);
+	/** 最近一次目录加载失败的错误文本（null = 正常）；弹框据此区分「空目录」与「加载失败」。 */
+	loadError = $state<string | null>(null);
 	/** 正在安装的 presetId 集合（按钮 spinner）。 */
 	installing = new SvelteSet<string>();
 	#loaded = false;
@@ -33,7 +35,13 @@ class SkillMarketState {
 				presets: SkillPresetInfo[];
 			};
 			this.presets = result.presets;
+			this.loadError = null;
 			this.#loaded = true;
+		} catch (error) {
+			// 调用方多是 `void load()`：不吞成未处理的 rejection，记录并透出。
+			console.error('[skill-market] load failed', error);
+			this.loadError =
+				error instanceof Error && error.message.length > 0 ? error.message : String(error);
 		} finally {
 			this.loading = false;
 		}
@@ -52,6 +60,7 @@ class SkillMarketState {
 	/** 弹框关闭后复位加载标记，避免下次打开闪现陈旧目录。 */
 	reset(): void {
 		this.presets = [];
+		this.loadError = null;
 		this.#loaded = false;
 	}
 }
