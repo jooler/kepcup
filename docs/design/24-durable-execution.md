@@ -10,7 +10,7 @@ Journal 与 resume 落在 KepCup 自有 `runs` / `run_steps` 与工具网关之�
 
 > **D75 修订**：durable / ephemeral 的分级对象由「响应 run」改为「**任务**」——对话轮一律 ephemeral（秒级，崩溃即中断、不恢复），需要 journal 与工具 replay 的本来就是长任务。D67 尚未实现：目前任务也一律 ephemeral，崩溃后按 D75 的启动修复补成 `interrupted` 并写失败条目，唤醒对话轮告诉用户（[02 崩溃与恢复](02-execution.md#崩溃与恢复)）。下文「续跑中的新消息仍走 D2 soft steer（`<new_messages>`）」随 D2 修订而变：新消息进入下一个对话轮，由 Bot 用 `inject_task` 转给任务（注入格式为 `<task_inject>`）。见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 >
-> **D78（D67 第一步，已实现）**：外部副作用台账 `tool_effects`——只记账、不续跑，回答「中断时哪些外部动作可能已经发生」，并支撑中断任务的「检查后重试」。见 §10。journal、工具 `replay` 声明与 durable resume 仍未实现。
+> **实现状态**：本文的 durable / ephemeral 分级、journal（§4）、工具 `replay` 声明（§5）与 durable resume 均未实现，任务一律 ephemeral。已实现的只有外部副作用台账 `tool_effects`（D78，§10）：只记账、不续跑，回答「中断时哪些外部动作可能已经发生」，支撑中断任务的「检查后重试」与审批去重。
 
 - **D67 长任务崩溃恢复**：Host Durable Journal。run 分两级——**ephemeral**（默认；崩溃仍走 `orchestrator.recoverInterrupted`，标 `interrupted`、对话提示、取消未决审批，**不**自动继续，即 D49，适用范围收窄到这一级）与 **durable**（长任务；启动扫描后按 journal + 工具 `replay` 策略 resume）。不把 `@earendil-works/pi-durable` 定为全体 Bot Runtime。续跑中的新消息仍走 D2 soft steer（`<new_messages>`）。群聊不因崩溃重跑整轮 triage，只恢复已升为 durable 的成员 run。
 
@@ -123,24 +123,24 @@ Project 写入继续配合 D30 影子 git。tool settle 记录 before/after oid�
 
 ## 9 实现分期（文档级）
 
-1. 常量与 schema：`durable` 标记、`effects` 表、工具 `replay` 元数据。（`effects` 表的一部分已由 §10 的 `tool_effects` 台账（D78）落地：只记外部副作用、不支撑续跑。）
+1. 常量与 schema：`durable` 标记、`effects` 表、工具 `replay` 元数据。（其中外部副作用部分即 §10 的 `tool_effects` 台账（D78），只记账、不支撑续跑。）
 2. 拆分启动恢复：`finalizeEphemeral`（今日 `orchestrator.recoverInterrupted` 的 ephemeral 路径）与 `resumeDurable`。
 3. 网关三类 replay，以及 `send_message` 的 idempotent。
 4. 杀进程集成测试，再接 SubAgent 级联（含后台与 fan-out）。
 5. Pi Durable 单车道对比 spike：**不做**（与 D67「不定为 Runtime」一致；需要时另开评估，不写入本分期）。
 
-## 10 第一步：外部副作用台账（D78，已实现）
+## 10 外部副作用台账（D78）
 
-D67 的 tool 生命周期 `opened → running → settled` 先落一个最小子集：只给**有外部副作用**的工具调用记「执行前写、结束后结」的一行，不续跑。D67 落地时并入 journal / receipt。
+有外部副作用的工具调用「执行前写一行、结束后结」，不续跑。它对应 §4 tool 生命周期 `opened → running → settled` 中外部调用的那部分，类别与 §5 的 replay 类对齐。
 
 ### 10.1 副作用类别
 
-`agent/effects/classify.ts` `effectClassOf`，与 §5 的 replay 类对齐：
+`agent/effects/classify.ts` `effectClassOf`：
 
 | 类别 | 含义 | 例 | 台账 |
 |---|---|---|---|
-| `none` | 只读、重做安全（≈ `safe`） | read / grep、`web_*`、`browser_snapshot` / `screenshot` / `open` / `scroll` / `back`、只读 MCP | 不记 |
-| `local` | 只改本机或应用内状态，可撤销 / 可重做 | write / edit、记忆、定时、普通 `send_message`、任务管理、**沙箱内的 `bash`**、媒体生成、`delegate_task` | 不记 |
+| `none` | 只读、重做安全（≈ `safe`） | read / grep、`web_*`、`browser_snapshot` / `screenshot` / `open` / `scroll` / `back` / `close`、只读 MCP、`watch_list` | 不记 |
+| `local` | 只改本机或应用内状态，可撤销 / 可重做 | write / edit、记忆、定时、监看（`watch_create` / `watch_stop`）、普通 `send_message`、任务管理、**沙箱内的 `bash`**、媒体生成、`delegate_task` | 不记 |
 | `external` | 离开本机或不可撤销（≈ `unsafe`） | `browser_click` / `type` / `press`、写入 / 破坏性 MCP（按调用时风险档，取更严一档）、`git_remote`、`request_unsandboxed` 与确认模式下批准后在沙箱外执行的命令、`delegate_to_bot`、带 `mention_bot_ids` 的 `send_message` | 记 |
 
 - 全部内置工具名逐个登记（单测扫描工具源码断言无遗漏），**未登记的工具名一律按 `external`**（只多记一行）。外部智能体宿主桥上的工具同样经此记录。
@@ -157,28 +157,20 @@ runs.db `0009_tool_effects.sql`（`approval_id` 部分索引在 `0010`；字段�
 | `failed` | 其它失败，含 `not_started`；但 run 已被中止时的失败记 `uncertain` |
 | `uncertain` | 工具报告结果不确定（浏览器 `BROWSER_OUTCOME_UNKNOWN`、MCP 调用传输失败）、工具抛异常、中断时仍在执行 |
 | `denied` | 审批被拒，或中断 / 恢复时其审批被取消（等审批的 `intended` 行一律结为 `denied`，从不记为结果未知） |
-| `intended` | 调用在等用户对其审批做决定（W4）：`executing` → `intended`，批准后回到 `executing`；无人值守自动批准不经过它。同一调用已有一次审批被批准后不再回到 `intended` |
+| `intended` | 调用在等用户对其审批做决定：`executing` → `intended`，批准后回到 `executing`；无人值守自动批准不经过它。同一调用已有一次审批被批准后不再回到 `intended` |
 
 - `settle` 只改 `executing` / `intended` / `uncertain` 行：恢复改成 `uncertain` 之后真实结果仍可落定。记录器出错只记日志，不影响工具结果。
 - 台账结为 `uncertain` 而工具没给出结局时，宿主给工具结果补 `outcome:'uncertain'` 写入执行记录，续接摘要不依赖台账也能标注。
 
 ### 10.3 恢复、读取与使用
 
-- **启动恢复第 0 步**：`orchestrator.recoverInterrupted` 在修复任务之前执行一条 `UPDATE … SET status='uncertain' WHERE status='executing'`（幂等）——启动时没有活着的 run，同时覆盖任务、对话轮、子代理与外部智能体的 run，且先于任务失败摘要的生成。撤销授权中断任务时对该任务及其子 run 做同样的事（先把被取消审批的行结为 `denied`）。
+- **启动恢复第 0 步**：`orchestrator.recoverInterrupted` 在修复任务之前把全表的 `executing` 行改为 `uncertain`、`intended` 行结为 `denied`（`ToolEffectsStore.markExecutingUncertain`，幂等）——启动时没有活着的 run，同时覆盖任务、对话轮、子代理与外部智能体的 run，且先于任务失败摘要的生成。任务被中断（撤销授权、切换浏览器资料）时对该任务及其子 run 做同样的事，此前先把被取消审批的行结为 `denied`（`settleUnapproved`）。
 - **读取**：`effects.list({ taskId })` 沿 `continued_from_run_ids` 向前收集整条重试 / 接续链及各 run 的子代理子 run，按时间排序（给任务卡的检查面板用）。
 - **使用**：续接摘要与任务失败摘要把未返回结果或结果不确定的外部调用标「[结果未知]」；`interrupted` 任务的重试闸门与接续任务的 `<effects_before_interrupt>` 段见 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
-### 10.4 审批幂等与回执（W4，已实现）
+### 10.4 审批关联与回执
 
-- **去重门**：`ApprovalsService.request` 建卡前（无人值守分支之前）经 tool-call scope 钩子问记录器：同一任务链（`chainRunIds`）里同工具、同脱敏参数哈希的更早台账行。只对任务里有台账行的调用生效；对话轮、子 run、别的任务链、不经审批的调用（auto 策略 / `autoApprove`）不去重；参数含脱敏占位（`[REDACTED]` / `«redacted…»`）时整次不比对。
-  - 链上有 `completed` 行：`mcp_tool` 不建卡，工具得到 `DUPLICATE_EFFECT`（带回执，提示「如确需再做一次，用 ask_user 征得用户同意」），该次调用的台账行删除；其他类别（`git_remote`、沙箱外命令等依赖状态的操作）照常建卡，顶部提示「本任务中已执行过相同操作（回执…），请确认是否需要再次执行」。
-  - 否则最新的 `uncertain` 行 → 照常建卡并提示「上次同样的操作结果未知，请先确认是否已生效」；最新的**用户亲手拒绝**的 `denied` 行（审批 status=denied、非无人值守自动、非取消）→ 不建卡，返回「用户已拒绝相同操作」。取消、中断、退出重启、超时、无人值守底线造成的 `denied` 不算拒绝。
-  - 用户在 `ask_user` 上的真实回答（超时未答的问题是 `ASK_USER_UNANSWERED` 失败，不算）放行在它之前落定的 `completed` / 用户拒绝行；**从不**放行 `uncertain`。
-  - 带提示的卡在无人值守下也不自动批准（§5 护栏「结果未知不得自动重放」）；等这张卡超过任务时限 → 任务失败，`errorReason='uncertain_repeat_timeout'`。
-- **payloadHash**：审批输出带 `payloadHash = sha256(stableJson(payload))`（读取时算、不落库）；`approvals.decide` 可回传它，不符 → `APPROVAL_STALE`。
-- **回执**：审批输出带 `effect {status, receipt?, settledAt?}`，按 `approval_id` 批量反查台账（runs 0010 部分索引）；行落定时重推 `approval.resolved`。MCP 写工具从结构化结果取 http(s) 链接（去掉 query / fragment）与形似 id 的值作回执，经同一脱敏路径；取不到时状态即回执。卡片折叠记录显示 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中，无人值守汇总带结局。
-- **精确卡片**：写入 / 破坏性 MCP 工具参数里的收件方类字段（to / cc / bcc / recipient(s) / channel / email / phone / user / chat_id …，字符串 / 数字及其数组）完整列在卡片上，不参与 400 字参数摘要截断（脱敏）；通知与汇总里截到约 200 字。
+- 审批输出按 `approval_id` 批量反查台账（部分索引 `tool_effects_by_approval`）得到 `effect {status, receipt?, settledAt?}`；它出现在哪些输出与事件里、落定时的重推与界面显示见 [13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)。
+- `receipt_json` 是工具自报的回执：MCP 工具从结构化结果（或唯一一个 JSON 文本块）顶层取 http(s) 链接（去掉 query / fragment / userinfo）与形似 id 的值（无空白、≤64 字、不像密钥），经与摘要相同的脱敏路径；取不到时状态本身即回执。浏览器与 `git_remote` 不报回执。
+- 审批去重门按同一任务链的台账行判定，规则见 [13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)。
 
-### 10.5 未实现
-
-- 本节之外的 D67 全部内容：journal、工具 `replay` 声明、durable 分级与 resume。浏览器 / git_remote 尚不报回执。
