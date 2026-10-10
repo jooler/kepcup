@@ -32,3 +32,4 @@ apps/desktop/release/
 .zcodeignore
 
 .apiresearch
+.claude/worktrees/
