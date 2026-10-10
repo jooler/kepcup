@@ -63,7 +63,7 @@
 
 1. **无登录探测**：`node packages/core/scripts/connector-spike/probe.mjs --only <slug>`，确认 401 + 发现元数据 + CIMD 或 DCR + PKCE S256（只做探测，不登录）。
 2. **账号准备**：测试账号 / 测试站点 / 测试数据由账号持有人准备并保管（不把密码、令牌给 Agent，也不贴进聊天）。各家特例：Atlassian 需有管理员权限的测试站点（验证「已批准客户端 / 域名」是否拦 CIMD 客户端；可用 Microsoft 账号登录）；Canva 先确认私有访问 / 等候名单；Stripe 只用测试模式 + 受限权限。
-3. **带登录实测**（账号持有人在浏览器登录一次）：用桌面端开发者模式（P2 §6.6）连接，导出原始工具定义（不含令牌）；也可补写 `connector-spike/login-probe.mjs`（用 P0 引擎连接并输出工具清单、注解覆盖率、`whoami` 可行性，令牌只在内存）。
+3. **带登录实测**（账号持有人在浏览器登录一次；**工具快照一家一个文件**存 `packages/core/test/fixtures/connectors/<slug>.tools.json`，导出方法与汇总命令见该目录 README；`node packages/core/scripts/connector-spike/summarize-tools.mjs <slug>` 给出工具数、注解覆盖率和风险分布）：用桌面端开发者模式（P2 §6.6）连接，导出原始工具定义（不含令牌）；也可补写 `connector-spike/login-probe.mjs`（用 P0 引擎连接并输出工具清单、注解覆盖率、`whoami` 可行性，令牌只在内存）。
 4. **补目录数据**：`catalog.json` 的 `toolPolicy`（逐工具风险：只读 / 写 / 破坏性；缺注解的工具按保守档）、`whoami`（账号识别方式）、`auth.scopes`；Stripe 之类涉钱的逐工具取严。
 5. **自动化测试**：以假服务器复现该家的特殊点（发现路径、scope、账号识别）；工具清单快照进测试，防止上游悄悄改动而不被发现（配合工具定义锁定）。
 6. **真实走一遍**：目录连接 → 多账号（需第二个账号时由持有人再备一个）→ Bot 勾选 → 对话里完成一件事 → 写工具审批卡显示账号 → 令牌过期重连 → 断开吊销。
@@ -73,8 +73,8 @@
 
 | 顺序 | 应用 | 现状 | 备注 |
 | ---- | ---- | ---- | ---- |
-| 1 | Notion | 用户已在桌面端连接成功（2026-10-10） | 缺 `toolPolicy` / `whoami` 数据与放行；账号已就绪 |
-| 2 | Linear | 同上 | 同上 |
+| 1 | Notion | 用户已连接成功，工具快照已入库（50 个工具，注解 50/50；只读 30 / 写 13 / 破坏性 7） | 缺 `toolPolicy` / `whoami` 数据与放行 |
+| 2 | Linear | 同上（64 个工具，注解 64/64；只读 37 / 写 5 / 破坏性 22） | 同上 |
 | 3 | Sentry | 待账号 | 免费版 + 测试项目 + 测试事件 |
 | 4 | Atlassian | 待账号 | 管理员限制验证；Microsoft 登录；端点 `authv2` / `v2` 一并确认 |
 | 5 | Stripe | 待账号 | 仅测试模式；逐工具取严 |
