@@ -364,6 +364,67 @@ export class EnvManager {
   }
 
   /**
+   * User-initiated install from the settings page (「向量来源」的手动下载等):
+   * the click IS the consent — the same authorization level as `reinstall`,
+   * so no approval card is raised. A pending system-request card for the same
+   * item is approved instead (走原回调链路安装，卡片不留悬挂、不二次下载);
+   * installed/installing rows return as-is; a failed row is reused so the
+   * settings list keeps one entry per item; otherwise a fresh row installs in
+   * place, embedding-model chaining onnxruntime exactly like the approval flow.
+   */
+  async requestAsUser(item: string): Promise<EnvInstall | null> {
+    const entry = this.catalogEntry(item);
+    const key = platformKey(process.platform, process.arch);
+    if (key === null || entry.platforms[key] === undefined) {
+      throw new AppError(
+        'ENV_ITEM_UNSUPPORTED_PLATFORM',
+        `当前平台（${process.platform}-${process.arch}）暂不提供 ${item} 的自动安装`,
+      );
+    }
+    // kind='system' has no in-app installer — the settings-page guidance is
+    // the only path (docs 任务 1).
+    if (entry.platforms[key]!.kind === 'system') {
+      throw new AppError(
+        'ENV_ITEM_UNSUPPORTED_PLATFORM',
+        `${entry.displayName} 为系统级条目，请按设置页「环境」的指引安装`,
+      );
+    }
+    const active = this.activeRowFor(item);
+    if (active !== null) return this.getInstall(active.id);
+    const pending = this.#deps.approvals.pendingEnvironmentFor(item);
+    if (pending !== null) {
+      try {
+        this.#deps.approvals.decide(pending.id, true);
+      } catch (error) {
+        this.#deps.logger.warn(
+          { item, error: error instanceof Error ? error.message : String(error) },
+          'settings-page approval of the pending environment card failed',
+        );
+      }
+      // decide() runs the approval callback synchronously up to its first
+      // await — the install row exists by now unless the decide raced.
+      const settled = this.activeRowFor(item);
+      if (settled !== null) return this.getInstall(settled.id);
+    }
+    const identity: RunIdentity = {
+      runId: '',
+      botId: null,
+      conversationId: null,
+      loopType: 'host',
+    };
+    const failed = this.#db
+      .prepare(
+        "select * from env_installs where item = ? and status = 'failed' order by rowid desc limit 1",
+      )
+      .get(item) as InstallRow | undefined;
+    const rowId = failed?.id ?? this.#createRow(entry, identity, null);
+    this.#updateRow(rowId, { status: 'installing' });
+    this.#publishChanged();
+    void this.#installAfterApproval(identity, entry, { existingRowId: rowId });
+    return this.getInstall(rowId);
+  }
+
+  /**
    * kind='system' approval (macOS/Linux git): nothing is downloaded and no
    * install row is created. macOS opens the OS installer (xcode-select — the
    * system owns the authorization, docs 任务 1); Linux only ever had the card

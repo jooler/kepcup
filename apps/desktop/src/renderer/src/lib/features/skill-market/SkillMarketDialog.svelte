@@ -22,6 +22,9 @@
    * 在这里点「添加」决定；安装落入公共作用域（public_skills）：一次安装，
    * 所有 Bot 都能发现并调用。Bot 的私有技能（git 导入 / 自建）不受影响，
    * 同名时该 Bot 的私有版本遮蔽公共版本。
+   *
+   * 面板是明确打开的管理界面：点遮罩/弹框外部不关闭（易误触），只留右上角
+   * ✕ 与 Esc；安装进行中关闭弹框不中断安装（installing 在模块级单例里）。
    */
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
@@ -81,12 +84,13 @@
       await skillMarket.install(preset.id);
       toast.success(t('skillMarket.installedToast', { name: preset.displayName }));
     } catch (error) {
-      toast.error(
-        errorText(
-          (error as { code?: string } | undefined)?.code,
-          error instanceof Error && error.message.length > 0 ? error.message : t('skillMarket.installFailed'),
-        ),
-      );
+      // core 侧的 AppError 消息（如「已存在同名公共技能…」「技能库条目写入失败…」）
+      // 比按错误码映射的通用文案更具体：有消息就原样展示，并把完整错误打到
+      // 控制台（code / details 一起），便于排查。
+      const code = (error as { code?: string } | undefined)?.code;
+      const message = error instanceof Error && error.message.length > 0 ? error.message : null;
+      console.error('[skill-market] install failed', { presetId: preset.id, code, error });
+      toast.error(message ?? errorText(code, t('skillMarket.installFailed')));
     }
   }
 </script>
@@ -95,6 +99,7 @@
   <DialogContent
     class="flex max-h-[85vh] max-w-xl sm:max-w-[50rem] flex-col overflow-hidden"
     data-testid="skill-market-dialog"
+    onInteractOutside={(event) => event.preventDefault()}
   >
     <DialogHeader class="shrink-0">
       <DialogTitle>{t('skillMarket.title')}</DialogTitle>
@@ -116,6 +121,10 @@
     <div class="min-h-0 flex-1 overflow-y-auto pr-0.5" data-testid="skill-market-list">
       {#if skillMarket.loading && skillMarket.presets.length === 0}
         <p class="py-6 text-center text-sm text-muted-foreground">…</p>
+      {:else if skillMarket.loadError !== null && skillMarket.presets.length === 0}
+        <p class="py-6 text-center text-sm text-destructive" data-testid="skill-market-error">
+          {skillMarket.loadError}
+        </p>
       {:else if sections.length === 0}
         <p class="py-6 text-center text-sm text-muted-foreground" data-testid="skill-market-empty">
           {t('skillMarket.empty')}

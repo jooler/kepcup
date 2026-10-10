@@ -157,12 +157,12 @@
 
 {#if isChangesCard}
   <!-- 改动摘要卡片（docs/design/12-ui-layout.md 卡片表）：信息展示，不进 dock -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <RunChangesCard runId={cardRunId} />
   </div>
 {:else if delegationCard !== null}
   <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
   </div>
 {:else if appUiCard !== null}
@@ -172,7 +172,7 @@
   </div>
 {:else if watchCard !== null}
   <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要，暂停卡可恢复 -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <WatchCard
       watchId={watchCard.watchId}
       watchEvent={watchCard.watchEvent}
@@ -184,12 +184,12 @@
   </div>
 {:else if taskCardId !== null}
   <!-- D75 任务卡：信息卡，居中；进行中可取消，失败可重试，取消后附改动摘要 -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <TaskCard taskId={taskCardId} />
   </div>
 {:else if isCard}
   <!-- 审批卡片：消息流里显示折叠记录，交互卡片在输入区上方的 dock 中 -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     {#if cardApproval}
       <div class="w-full max-w-[85%]">
         <ApprovalCard approval={cardApproval} variant="folded" />
@@ -211,20 +211,20 @@
     <SetupPathCard {message} />
   </div>
 {:else if isGroupSetup}
-  <!-- 对话内群创建问题卡（19/D60）：居中卡片形态（群无 bot 左缘） -->
-  <div class="flex w-full justify-center py-1">
+  <!-- 对话内群创建问题卡（19/D60）（群无 bot 左缘） -->
+  <div class="flex w-full py-1">
     <GroupSetupCard {message} />
   </div>
 {:else if isTaskQuestion}
-  <div class="flex w-full justify-center py-1">
+  <div class="flex w-full py-1">
     <TaskQuestionCard {message} />
   </div>
 {:else if isRouteCard}
-  <div class="flex w-full justify-center py-1">
+  <div class="flex w-full py-1">
     <RouteCard {message} />
   </div>
 {:else if isScheduleCard}
-  <div class="flex w-full justify-center py-1">
+  <div class="flex w-full py-1">
     <ScheduleCard {message} />
   </div>
 {:else if isSystem}
@@ -233,7 +233,7 @@
       {'text' in message.content ? message.content.text : ''}
     </span>
     {#if noClaimBotIds.length > 0 && noClaimBatchId !== null}
-      <div class="flex max-w-[85%] flex-wrap justify-center gap-1" data-testid="no-claim-bots">
+      <div class="flex max-w-[85%] flex-wrap gap-1" data-testid="no-claim-bots">
         {#each noClaimBotIds as botId (botId)}
           <button
             type="button"

@@ -145,6 +145,21 @@ export const environmentChangedPayloadSchema = z.object({
 export const skillsChangedPayloadSchema = z.object({ botId: z.string() });
 
 /**
+ * 已安装技能的目录在应用外被删除（DB 行仍在）：core 在列表 / 加载 / 读取时
+ * 发现即发一次（按 scope+bot+name 去重），UI 弹框告知，用户点「知道了」后
+ * 调 `skills.purgeMissing` 清理记录。
+ */
+export const skillsMissingPayloadSchema = z.object({
+  name: z.string(),
+  scope: z.enum(['public', 'private']),
+  /** 私有技能所属 Bot；公共技能为 null。 */
+  botId: z.string().nullable(),
+  libraryId: z.string(),
+  dirPath: z.string(),
+});
+export type SkillsMissingPayload = z.infer<typeof skillsMissingPayloadSchema>;
+
+/**
  * A schedule of the conversation was created / cancelled / finished (D80):
  * the schedule lists refetch (there was no live refresh before).
  */
@@ -294,6 +309,7 @@ export const rpcEventSchemas = {
   'environment.progress': environmentProgressPayload,
   'environment.changed': environmentChangedPayloadSchema,
   'skills.changed': skillsChangedPayloadSchema,
+  'skills.missing': skillsMissingPayloadSchema,
   'schedules.changed': schedulesChangedPayloadSchema,
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,

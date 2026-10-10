@@ -241,6 +241,83 @@ export class SkillsService {
     this.#deps.publish('skills.changed', { botId: '' });
   }
 
+  // --- 目录在应用外被删除（DB 行仍在）------------------------------------------
+
+  /** 已经发过 `skills.missing` 的 `scope|botId|name`，purge 后清掉对应项。 */
+  readonly #missingReported = new Set<string>();
+
+  /**
+   * 库目录不存在而 DB 行还在：发一次 `skills.missing`（UI 弹框告知，用户点
+   * 「知道了」后调 purgeMissing），同一 scope+bot+name 只发一次。列表、加载
+   * 提示词、读取、市场安装态检查时都会经过这里。
+   */
+  reportMissing(input: {
+    name: string;
+    scope: 'public' | 'private';
+    botId: string | null;
+    libraryId: string;
+    dirPath: string;
+  }): void {
+    const key = `${input.scope}|${input.botId ?? ''}|${input.name}`;
+    if (this.#missingReported.has(key)) return;
+    this.#missingReported.add(key);
+    this.#deps.logger.warn(input, 'skill directory missing (deleted outside the app?)');
+    this.#deps.publish('skills.missing', input);
+  }
+
+  #reportMissingPrivate(botId: string, row: BotSkillRow): void {
+    if (row.kind !== 'imported' || row.library_id === null) return;
+    const library = this.libraryGet(row.library_id);
+    if (library === null) return;
+    this.reportMissing({
+      name: row.name,
+      scope: 'private',
+      botId,
+      libraryId: library.id,
+      dirPath: this.libraryDirOf(library),
+    });
+  }
+
+  #reportMissingPublic(row: PublicSkillRow): void {
+    const library = this.libraryGet(row.library_id);
+    if (library === null) return;
+    this.reportMissing({
+      name: row.name,
+      scope: 'public',
+      botId: null,
+      libraryId: library.id,
+      dirPath: this.libraryDirOf(library),
+    });
+  }
+
+  /**
+   * 用户确认后清理：删掉所有「目录确实不存在」的同名库版本及引用它们的
+   * bot_skills / public_skills 行。目录还在的版本不动。返回清掉的版本数。
+   */
+  purgeMissing(name: string): number {
+    const libraries = this.#db
+      .prepare('select * from skill_library where name = ?')
+      .all(name) as LibraryRow[];
+    let purged = 0;
+    for (const library of libraries) {
+      const dir = this.libraryDirOf(library);
+      if (existsSync(dir)) continue;
+      this.#db.prepare('delete from bot_skills where library_id = ?').run(library.id);
+      this.#db.prepare('delete from public_skills where library_id = ?').run(library.id);
+      this.#db.prepare('delete from skill_library where id = ?').run(library.id);
+      purged += 1;
+      this.#deps.logger.warn(
+        { skill: name, libraryId: library.id, dir },
+        'missing skill directory: records purged',
+      );
+    }
+    for (const key of [...this.#missingReported]) {
+      if (key.endsWith(`|${name}`)) this.#missingReported.delete(key);
+    }
+    if (purged > 0) this.publishChangedAll();
+    return purged;
+  }
+
   // --- library ------------------------------------------------------------
 
   libraryByNameAndHash(name: string, contentHash: string): LibraryRow | null {
@@ -369,6 +446,10 @@ export class SkillsService {
            status = excluded.status, status_reason = excluded.status_reason, updated_at = excluded.updated_at`,
       )
       .run(input.name, library.id, status, statusReason, now, now);
+    this.#deps.logger.info(
+      { skill: input.name, libraryId: library.id, hash: input.contentHash, status, statusReason, sourceUrl: input.sourceUrl },
+      'public skill installed',
+    );
     this.publishChangedAll();
   }
 
@@ -627,6 +708,7 @@ export class SkillsService {
   #privateEntry(botId: string, row: BotSkillRow): SkillEntry {
     const library = row.library_id !== null ? this.libraryGet(row.library_id) : null;
     const dir = this.dirOf(row);
+    if (dir === null && library !== null) this.#reportMissingPrivate(botId, row);
     const parsed = dir !== null ? parseSkillDir(dir) : null;
     const scan = library !== null ? safeParseScan(library.scan_json) : null;
     const effective = resolveEffectiveCompatibility(scan, this.#enhancedAvailable());
@@ -655,6 +737,7 @@ export class SkillsService {
   #publicEntry(botId: string, row: PublicSkillRow): SkillEntry | null {
     const library = this.libraryGet(row.library_id);
     const dir = this.#publicDirOf(row);
+    if (dir === null && library !== null) this.#reportMissingPublic(row);
     const parsed = dir !== null ? parseSkillDir(dir) : null;
     const scan = library !== null ? safeParseScan(library.scan_json) : null;
     const effective = resolveEffectiveCompatibility(scan, this.#enhancedAvailable());
@@ -713,7 +796,10 @@ export class SkillsService {
       if (row.status !== 'active') continue;
       if (this.#effectiveIncompatible(row)) continue;
       const dir = this.dirOf(row);
-      if (dir === null) continue;
+      if (dir === null) {
+        this.#reportMissingPrivate(botId, row);
+        continue;
+      }
       const loaded = loadSkillsFromDir({ dir, source: row.kind });
       skills.push(...loaded.skills);
     }
@@ -722,7 +808,10 @@ export class SkillsService {
       if (pub.status !== 'active') continue;
       if (this.#effectiveIncompatibleLibrary(pub.library_id)) continue;
       const dir = this.#publicDirOf(pub);
-      if (dir === null) continue;
+      if (dir === null) {
+        this.#reportMissingPublic(pub);
+        continue;
+      }
       const loaded = loadSkillsFromDir({ dir, source: 'imported' });
       skills.push(...loaded.skills);
     }
@@ -1001,7 +1090,8 @@ export class SkillsService {
     if (row !== null) {
       const dir = this.dirOf(row);
       if (dir === null) {
-        throw new AppError('SKILL_IMPORT_FAILED', '技能目录不存在（可能已被回收）');
+        this.#reportMissingPrivate(botId, row);
+        throw new AppError('SKILL_IMPORT_FAILED', '技能目录不存在（可能已被删除或回收）');
       }
       return { name, content: readSkillMarkdown(dir), dirPath: dir };
     }
@@ -1009,7 +1099,8 @@ export class SkillsService {
     const pub = this.#requirePublicRow(name);
     const dir = this.#publicDirOf(pub);
     if (dir === null) {
-      throw new AppError('SKILL_IMPORT_FAILED', '技能目录不存在（可能已被回收）');
+      this.#reportMissingPublic(pub);
+      throw new AppError('SKILL_IMPORT_FAILED', '技能目录不存在（可能已被删除或回收）');
     }
     return { name, content: readSkillMarkdown(dir), dirPath: dir };
   }

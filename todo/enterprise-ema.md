@@ -27,7 +27,7 @@
    - `apps/auth/flow.ts`：`resolveIdentity`（BYO → 预注册 → 已存 DCR → CIMD → DCR）、`startCallbackServer`（`auth/callback-server.ts`，回环、校验 `Host`、一次性）、`OAUTH_CALLBACK_PORTS`（`packages/shared/src/constants.ts`，`[47615, 47616, 47617]`）；`exchangeAuthorizationCode` / `startAuthorization` 的用法。
    - `apps/auth/runtime-provider.ts`：`#doRefresh`（`refreshAuthorization`、single-flight、世代号 `epoch` 防断开后写回、`PERMANENT_GRANT_ERRORS`）——EMA 的"静默续期"要插入到这里（§6.2）。
    - `apps/auth/registry.ts`：`providerFor` / `invalidate` / `clientFor`；`apps/token-vault.ts`：命名规则 `conn:{id}:access|refresh`，机密逐值存放（`redact()` 按整值匹配）。
-   - `apps/connection-store.ts` / `0024_app_connections.sql`：`app_connections` 列、`(connector_id, account_sub)` 唯一索引、`oauth_clients` 表。
+   - `apps/connection-store.ts` / `0025_app_connections.sql`：`app_connections` 列、`(connector_id, account_sub)` 唯一索引、`oauth_clients` 表。
    - `apps/tier.ts`（`tierAllowsBotLevelGrant`、`appToolDurations`）、`apps/taint.ts`、`domain/types.ts` 的 `appsSettingsSchema`（`developerMode` / `taintGuard` / `directorySync`）。
 4. 外部资料（本文 §16 列出；2026-10-10 联网读到）：MCP 扩展页与稳定规范 `enterprise-managed-authorization`、IETF 草案 `draft-ietf-oauth-identity-assertion-authz-grant`、RFC 8693、RFC 7523、MCP 博客「Enterprise-Managed Authorization」。
 5. `todo/developer-portal.md` / `todo/hosted-auth-gateway.md`：同系列任务书的写法；`hosted-auth-gateway.md` §6 讨论的"客户端不变、服务端托管"与本任务书互不依赖。

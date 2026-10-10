@@ -354,3 +354,21 @@ html.platform-mac main {
     opacity: 0.6;
   }
 }
+
+/* 输入框（TipTap 编辑器）里的 @ 提及节点：文字色取当前会话 Bot 的预置
+   头像色，Composer 经 --mention-color 下发，缺省回退主题主色。 */
+.composer-mention {
+  color: var(--mention-color, var(--color-primary));
+  background: color-mix(in oklab, var(--mention-color, var(--color-primary)) 12%, transparent);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+/* 编辑器空态占位符（@tiptap/extensions Placeholder）。 */
+.composer-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--color-muted-foreground);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

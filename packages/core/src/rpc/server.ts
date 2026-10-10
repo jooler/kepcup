@@ -28,6 +28,12 @@ export interface CreateRpcServerOptions {
   methods: Record<string, RpcMethodSpec>;
   /** Locally-handled event names for the remote side; unused on the server. */
   timeoutMs?: number;
+  /**
+   * Called for every failed method call (after the error is normalized into
+   * an envelope, before it crosses the wire). The envelope is all the client
+   * ever sees, so this is the only place the core can log what failed.
+   */
+  onError?: (method: string, error: RpcErrorEnvelope) => void;
 }
 
 /**
@@ -50,9 +56,9 @@ export function createRpcServer(options: CreateRpcServerOptions): RpcServerHandl
         }
         return outCheck.data;
       } catch (error) {
-        if (error instanceof AppError) throw toErrorEnvelope(error);
-        if (isEnvelope(error)) throw error;
-        throw toErrorEnvelope(error);
+        const envelope = isEnvelope(error) ? error : toErrorEnvelope(error);
+        options.onError?.(name, envelope);
+        throw envelope;
       }
     };
   }

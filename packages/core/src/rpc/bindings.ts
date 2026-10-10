@@ -163,6 +163,8 @@ import {
   skillsPresetsListOutputSchema,
   skillsPresetsInstallInputSchema,
   skillsPresetsInstallOutputSchema,
+  skillsPurgeMissingInputSchema,
+  skillsPurgeMissingOutputSchema,
   wikiBotIdInputSchema,
   wikiTreeOutputSchema,
   wikiPageInputSchema,
@@ -186,6 +188,14 @@ import {
   watchIdInputSchema,
   watchGetOutputSchema,
   watchMutateOutputSchema,
+  stickiesListInputSchema,
+  stickiesListOutputSchema,
+  stickiesCreateInputSchema,
+  stickiesCreateOutputSchema,
+  stickiesUpdateInputSchema,
+  stickiesUpdateOutputSchema,
+  stickiesDeleteInputSchema,
+  stickiesDeleteOutputSchema,
   mediaGenerateImageInputSchema,
   mediaGenerateImageOutputSchema,
   mediaSynthesizeSpeechInputSchema,
@@ -1275,6 +1285,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       embeddingStatusOutputSchema,
       async (input) => services.memory!.configureEmbedding(input),
     ),
+    'embedding.download': method(voidInput, environmentReinstallOutputSchema, async () => ({
+      install: await services.memory!.downloadEmbeddingModel(),
+    })),
 
     // --- skills (P08) ------------------------------------------------------
     'skills.list': method(skillsListInputSchema, skillsListOutputSchema, async (input) => ({
@@ -1332,6 +1345,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       skillsPresetsInstallOutputSchema,
       async (input) => ({ presets: services.skillPresets!.install(input.presetId) }),
     ),
+    // 技能目录在应用外被删除：用户在弹框点「知道了」后清理 DB 记录。
+    'skills.purgeMissing': method(
+      skillsPurgeMissingInputSchema,
+      skillsPurgeMissingOutputSchema,
+      async (input) => ({ purged: services.skills!.purgeMissing(input.name) }),
+    ),
 
     // --- wiki (P09) --------------------------------------------------------
     'wiki.tree': method(wikiBotIdInputSchema, wikiTreeOutputSchema, async (input) => ({
@@ -1373,6 +1392,35 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       schedulesCancelOutputSchema,
       async (input) => {
         services.schedules?.cancel(input.id);
+        return { ok: true as const };
+      },
+    ),
+
+    // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---
+    'stickies.list': method(stickiesListInputSchema, stickiesListOutputSchema, async () => ({
+      stickies: domain.stickies.list(),
+    })),
+    'stickies.create': method(
+      stickiesCreateInputSchema,
+      stickiesCreateOutputSchema,
+      async (input) => {
+        domain.conversations.getOrThrow(input.conversationId);
+        return { stickie: domain.stickies.create(input) };
+      },
+    ),
+    'stickies.update': method(
+      stickiesUpdateInputSchema,
+      stickiesUpdateOutputSchema,
+      async (input) => {
+        const { id, ...patch } = input;
+        return { stickie: domain.stickies.update(id, patch) };
+      },
+    ),
+    'stickies.delete': method(
+      stickiesDeleteInputSchema,
+      stickiesDeleteOutputSchema,
+      async (input) => {
+        domain.stickies.remove(input.id);
         return { ok: true as const };
       },
     ),

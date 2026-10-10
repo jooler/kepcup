@@ -2,7 +2,7 @@
 
 > 更新：2026-10-10（P3 提交 `d4bed6b` 之后，已把 main 合入分支）。本文只做**汇总与导航**，细节以链接的文档为准；执行方案是 [connected-apps.md](connected-apps.md)，产品契约是 [design/29](../docs/design/29-connected-apps.md)。
 >
-> 分支：`t/d73-connected-apps`（独立长期分支，**未合入 main**，合入需你明确同意）。迁移：main `0024_app_connections`、`0025_app_tools`、`0026_egress_approval`（P3 没有新增迁移）。
+> 分支：`t/d73-connected-apps`（独立长期分支，**未合入 main**，合入需你明确同意）。迁移：main `0025_app_connections`、`0026_app_tools`、`0027_egress_approval`（P3 没有新增迁移）。
 
 ## 1. 一眼看懂
 

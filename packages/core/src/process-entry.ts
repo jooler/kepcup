@@ -95,7 +95,18 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
       wireEventBridge(services);
       if (type === 'app-port') {
         appServer?.close();
-        appServer = createRpcServer({ transport, methods: services.appMethods });
+        appServer = createRpcServer({
+          transport,
+          methods: services.appMethods,
+          // The renderer only sees the envelope (and often maps the code to a
+          // generic i18n string): log every failed call here so the full
+          // message / details land in logs/kepcup.log.
+          onError: (method, error) => {
+            const record = { method, code: error.code, error: error.message, details: error.details };
+            if (error.code === 'INTERNAL') services.logger.error(record, 'rpc method failed');
+            else services.logger.warn(record, 'rpc method rejected');
+          },
+        });
         services.pushStatusTo(appServer);
         services.logger.info('app port bound');
       } else if (type === 'platform-port') {

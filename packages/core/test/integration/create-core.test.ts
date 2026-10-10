@@ -88,12 +88,14 @@ describe('createCore (integration)', () => {
       'usage_ledger',
       // W7 确定性监看（main 0023）。
       'watches',
+      // 辅助阅读便签（main 0024）。
+      'stickies',
     ]) {
       expect(tables.map((t) => t.name)).toContain(table);
     }
-    // main 0023 = watches（W7；0022 = D80 schedules title / origin）；0024 / 0025 / 0026 = D73
+    // main 0024 = stickies（辅助阅读便签；0023 = W7 watches）；0025 / 0026 / 0027 = D73
     // app_connections / app_tools / egress_approval。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(26);
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(27);
     // 0001 init + 0002 runs + 0003 run continuation (D56) + 0004 subagent parent (D66/D67)
     // + 0005 run engine (D72) + 0006 tasks (D75) + 0007 'response' → 'turn' (D75 W2)
     // + 0008 turn trigger parts / retry origin (D75 审查 L3 / L6)

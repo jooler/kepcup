@@ -5,6 +5,7 @@ import {
   PROFILE_CURATION_DELAY_MS,
   type Conversation,
   type EmbeddingStatus,
+  type EnvInstall,
   type MemoryEvidence,
   type MemoryItem,
   type MemoryKind,
@@ -282,7 +283,7 @@ export class MemoryService {
       dim: embedder.dim,
       reason:
         config.source === 'local'
-          ? '本地向量模型或 ONNX 运行库未安装：批准环境安装（含运行库，约 276MB）后自动就绪，未安装时使用全文检索'
+          ? '本地向量模型或 ONNX 运行库未安装：点击「下载本地模型」或批准对话内的环境申请（含运行库，约 276MB）后自动就绪，未安装时使用全文检索'
           : '该厂商缺少 API key，无法调用向量接口',
     };
   }
@@ -340,6 +341,17 @@ export class MemoryService {
       this.ensureEmbeddingConfigured(null);
     }
     return this.embeddingStatus();
+  }
+
+  /**
+   * embedding.download RPC: 设置页「向量来源」的手动下载。用户点击即同意，
+   * 直接走 requestAsUser（不再发审批卡；同条目待决定的环境卡会被代为批准，
+   * 沿原回调链路安装）。环境管理器未接线（精简单测环境）时返回 null。
+   */
+  async downloadEmbeddingModel(): Promise<EnvInstall | null> {
+    const environment = this.#deps.environment;
+    if (environment === undefined) return null;
+    return environment.requestAsUser('embedding-model');
   }
 
   /**

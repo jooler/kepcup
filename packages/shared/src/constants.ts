@@ -340,6 +340,12 @@ export const BACKGROUND_LOOP_CONCURRENCY = 2;
 
 /** Grace period for the core service to shut down before being killed. */
 export const CORE_SHUTDOWN_TIMEOUT_MS = 5_000;
+/**
+ * RPC 单次调用的默认超时（渲染进程 ↔ core 的端口 A、主进程 ↔ core 的端口 B
+ * 都用它）。技能导入要 clone 外部仓库、环境安装要下载，birpc 自带的 60 秒
+ * 不够；真正的进度/失败由各自的事件与日志透出，这里只兜底防止悬挂。
+ */
+export const RPC_CALL_TIMEOUT_MS = 30 * 60_000;
 /** Backoff schedule for restarting the core service after a crash. */
 export const CORE_RESTART_BACKOFF_MS = [1_000, 2_000, 5_000] as const;
 /** Restart failures within this window count towards giving up. */
@@ -428,7 +434,7 @@ export const WATCH_HOST_UNAVAILABLE_RETRY_MS = 60_000;
 export const WATCH_MAX_ALERTS_PER_DAY = 24;
 /**
  * 后台页一次取正文的总时限（毫秒，宿主侧）：导航 30 秒 + 渲染等待 + 读取文本都算在内，
- * 超时即关页（保证 finally 一定关掉后台页），按失败计。小于端口 B 的 RPC 超时（60 秒）。
+ * 超时即关页（保证 finally 一定关掉后台页），按失败计。远小于端口 B 的 RPC 超时（RPC_CALL_TIMEOUT_MS）。
  */
 export const WATCH_FETCH_DEADLINE_MS = 45_000;
 /** 唤醒消息里页面增删改摘要的长度上限（字符）。 */

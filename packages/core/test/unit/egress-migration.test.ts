@@ -10,7 +10,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { mainVersionsAfter } from '../support/migration-versions.js';
 
 /**
- * 0026_egress_approval（D73 P2）：approvals.kind 增 'egress'（重建表，带全现有 kind，旧行与
+ * 0027_egress_approval（D73 P2）：approvals.kind 增 'egress'（重建表，带全现有 kind，旧行与
  * 索引保留）+ 新表 app_taint。升级路径用「真实迁移目录截到 0025」建旧库再跑全量迁移。
  */
 
@@ -59,17 +59,17 @@ function insertApproval(db: SqliteDatabase, id: string, kind: string, status = '
   ).run(id, kind, status);
 }
 
-describe('0026 egress_approval 迁移', () => {
-  it('旧库（0025，含已有审批行）升级：旧行保留，egress 可写，app_taint 出现', () => {
+describe('0027 egress_approval 迁移', () => {
+  it('旧库（0026，含已有审批行）升级：旧行保留，egress 可写，app_taint 出现', () => {
     const db = openMainDb();
-    runMigrations(db, migrationsUpTo(25));
+    runMigrations(db, migrationsUpTo(26));
     insertApproval(db, 'apr_old1', 'mcp_tool', 'approved');
     insertApproval(db, 'apr_old2', 'agent_tool');
     expect(() => insertApproval(db, 'apr_x', 'egress')).toThrow(/CHECK/);
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((entry) => entry.version)).toEqual(mainVersionsAfter(25));
-    expect(applied[0]?.file).toBe('0026_egress_approval.sql');
+    expect(applied.map((entry) => entry.version)).toEqual(mainVersionsAfter(26));
+    expect(applied[0]?.file).toBe('0027_egress_approval.sql');
 
     expect(db.prepare('select id, kind, status from approvals order by id').all()).toEqual([
       { id: 'apr_old1', kind: 'mcp_tool', status: 'approved' },

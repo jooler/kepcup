@@ -94,6 +94,7 @@ import {
   mcpToolRiskSchema,
   mcpToolRiskSourceSchema,
   webSearchProviderSchema,
+  webSearchConfigSchema,
   skillEntrySchema,
   skillHistoryEntrySchema,
   skillPresetInfoSchema,
@@ -109,6 +110,12 @@ import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import { BROWSER_PROFILE_NAME_MAX_CHARS, WATCH_SELECTOR_MAX_CHARS } from '../constants.js';
 import { watchEntrySchema } from '../domain/watches.js';
+import {
+  STICKIE_TEXT_MAX_CHARS,
+  stickiePositionSchema,
+  stickieScopeSchema,
+  stickieSchema,
+} from '../domain/stickies.js';
 
 /** Every RPC method: `domain.action`. Wire name is the dotted key. */
 export const systemPingOutputSchema = z.object({
@@ -249,6 +256,8 @@ export const settingsUpdateInputSchema = z.object({
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */
   mcpServers: z.array(mcpServerSchema).optional(),
+  /** 联网检索供应商（docs/design/21-web-search.md）：整体覆盖 patch；key 走 websearch.setKey。 */
+  webSearch: webSearchConfigSchema.optional(),
   /** 外部智能体启用状态（D72）：整体覆盖 patch。 */
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
@@ -1237,6 +1246,12 @@ export const skillsPresetsInstallInputSchema = z.object({
 export const skillsPresetsInstallOutputSchema = z.object({
   presets: z.array(skillPresetInfoSchema),
 });
+/** 用户确认「技能目录已被删除」后清理其 DB 记录（见 skills.missing 事件）。 */
+export const skillsPurgeMissingInputSchema = z.object({ name: z.string().min(1) });
+export const skillsPurgeMissingOutputSchema = z.object({
+  /** 清掉的库版本数（0 = 目录其实还在，什么都没删）。 */
+  purged: z.number().int().nonnegative(),
+});
 
 // --- wiki (P09) ---------------------------------------------------------------
 
@@ -1299,6 +1314,29 @@ export const watchesListOutputSchema = z.object({ watches: z.array(watchEntrySch
 export const watchIdInputSchema = z.object({ id: z.string().min(1) });
 export const watchGetOutputSchema = z.object({ watch: watchEntrySchema.nullable() });
 export const watchMutateOutputSchema = z.object({ watch: watchEntrySchema });
+
+// --- stickies（辅助阅读便签，main.db stickies） ------------------------------
+export const stickiesListInputSchema = z.object({});
+export const stickiesListOutputSchema = z.object({ stickies: z.array(stickieSchema) });
+export const stickiesCreateInputSchema = z.object({
+  /** 渲染层乐观上屏时已生成的 id（stc_）；缺省时由 core 生成。 */
+  id: z.string().min(1).optional(),
+  conversationId: z.string().min(1),
+  text: z.string().trim().min(1).max(STICKIE_TEXT_MAX_CHARS),
+  scope: stickieScopeSchema,
+  position: stickiePositionSchema.nullable(),
+  z: z.number().int(),
+});
+export const stickiesCreateOutputSchema = z.object({ stickie: stickieSchema });
+export const stickiesUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  position: stickiePositionSchema.nullable().optional(),
+  scope: stickieScopeSchema.optional(),
+  z: z.number().int().optional(),
+});
+export const stickiesUpdateOutputSchema = z.object({ stickie: stickieSchema });
+export const stickiesDeleteInputSchema = z.object({ id: z.string().min(1) });
+export const stickiesDeleteOutputSchema = okOutputSchema;
 
 // --- browser (P11) ----------------------------------------------------------------
 // Served by the MAIN process on port B; the core's browser tools are the
@@ -1819,6 +1857,8 @@ export const rpcMethodSchemas = {
     input: embeddingConfigureInputSchema,
     output: embeddingStatusOutputSchema,
   },
+  /** 设置页「向量来源」的手动下载（用户点击即同意，出参同 reinstall）。 */
+  'embedding.download': { input: voidInput, output: environmentReinstallOutputSchema },
 
   'skills.list': { input: skillsListInputSchema, output: skillsListOutputSchema },
   'skills.import': { input: skillsImportInputSchema, output: skillsImportOutputSchema },
@@ -1835,6 +1875,10 @@ export const rpcMethodSchemas = {
   'skills.presets.install': {
     input: skillsPresetsInstallInputSchema,
     output: skillsPresetsInstallOutputSchema,
+  },
+  'skills.purgeMissing': {
+    input: skillsPurgeMissingInputSchema,
+    output: skillsPurgeMissingOutputSchema,
   },
 
   'wiki.tree': { input: wikiBotIdInputSchema, output: wikiTreeOutputSchema },
@@ -1861,6 +1905,10 @@ export const rpcMethodSchemas = {
   'watches.pause': { input: watchIdInputSchema, output: watchMutateOutputSchema },
   'watches.resume': { input: watchIdInputSchema, output: watchMutateOutputSchema },
   'watches.stop': { input: watchIdInputSchema, output: watchMutateOutputSchema },
+  'stickies.list': { input: stickiesListInputSchema, output: stickiesListOutputSchema },
+  'stickies.create': { input: stickiesCreateInputSchema, output: stickiesCreateOutputSchema },
+  'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
+  'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
 
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
@@ -2126,6 +2174,7 @@ const APP_METHODS = [
   'budget.update',
   'embedding.status',
   'embedding.configure',
+  'embedding.download',
   'skills.list',
   'skills.import',
   'skills.enable',
@@ -2149,6 +2198,10 @@ const APP_METHODS = [
   'watches.pause',
   'watches.resume',
   'watches.stop',
+  'stickies.list',
+  'stickies.create',
+  'stickies.update',
+  'stickies.delete',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

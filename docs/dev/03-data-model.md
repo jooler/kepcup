@@ -28,15 +28,17 @@
 | runs | `0006_tasks.sql` | `runs` 增任务列与 `(conversation_id, loop_type, status)` 索引 |
 | runs | `0007_turn_loop_type.sql` | `runs.loop_type` 的 `'response'` → `'turn'` |
 | runs | `0008_turn_trigger.sql` | `runs` 增 `trigger_parts_json`、`retry_of_run_id` |
-| runs | `0009_tool_effects.sql` | D78（borrowings W2）：新表 `tool_effects`；`runs` 增索引 `runs_by_parent` |
-| main | `0021_delegation_intent.sql` | D71 修订（borrowings W6）：`delegations` 重建（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`，增索引 `delegations_status`） |
+| runs | `0009_tool_effects.sql` | D78：新表 `tool_effects`；`runs` 增索引 `runs_by_parent` |
+| runs | `0010_tool_effects_approval_idx.sql` | D78：`tool_effects` 增部分索引 `tool_effects_by_approval`（`approval_id IS NOT NULL`） |
+| main | `0021_delegation_intent.sql` | D71：`delegations` 重建（status 增 `awaiting_tasks`，增 `intent`、`task_ids_json`，增索引 `delegations_status`） |
 | main | `0022_schedule_title_origin.sql` | D80：`schedules` 增 `title`、`origin` |
-| main | `0023_watches.sql` | D79（borrowings W7）：新表 `watches` |
-| main | `0024_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients`；D73 后续迁移（P2 起）顺延取号 |
-| main | `0025_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
-| main | `0026_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
+| main | `0023_watches.sql` | D79：新表 `watches` |
+| main | `0024_stickies.sql` | 辅助阅读便签：新表 `stickies` |
+| main | `0025_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients` |
+| main | `0026_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
+| main | `0027_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
 
-  D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，main `0022` / `0023` 又被 D80 / W7 占用，D73 从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
+  D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
 ### 全文检索与中文
 
@@ -63,6 +65,8 @@ CREATE TABLE settings (
 连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。P3 再加 `apps.directorySync`（签名目录索引同步开关，默认 `true`；同一入口写；关闭 → 远端目录条目立即清空，只用打包快照）。签名目录索引的本地缓存不在数据库里，而在数据目录 `cache/directory/`（`index.json`、`index.json.sig`、`state.json`；`state.json` 记最后接受的索引的 `generatedAt`、字节 sha256、`keyId`、ETag 与最近成功时间，是防回滚棘轮，缓存被清也不会放过更旧的索引；缓存启动时重新验签）。
 
 外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 群聊摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, groupMentionOnly=true（经 Agent 的群聊判断需用户关掉此项）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
+
+MCP 与浏览器资料同在设置 JSON：`mcpServers`（D65，server 列表，每项可带逐工具策略 `toolPolicies?: Record<toolName, {approval?: 'auto'|'ask', enabled?}>`）、`browserProfiles`（D77，共享浏览器资料 `[{id: 'bpf_…', name, createdAt}]`，缺省 `[]`；只经 `browserProfiles.*` RPC 写，`settings.update` 不接受）。Bot 运行配置 `browser_profile`（`''` = 私有；指向不存在的资料按私有处理）。均无迁移。
 
 ### secrets（P01）
 
@@ -281,7 +285,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0026 增 egress）
+### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0027 增 egress）
 
 ```sql
 CREATE TABLE approvals (
@@ -311,7 +315,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, projectPath?, configHash?}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：project 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、project 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
-`egress`（D73 P2，迁移 `0026_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
+`egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -524,7 +528,7 @@ CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 
 D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。
 
-### watches（D79，borrowings W7，main 0023）
+### watches（D79，main 0023）
 
 确定性监看：宿主按 `next_check_at` 用 Bot 的后台页检查网页，条件边沿触发才唤醒 Bot（[design/02 §网页监看](../design/02-execution.md#网页监看d79)）。
 
@@ -533,7 +537,7 @@ CREATE TABLE watches (
   id              TEXT PRIMARY KEY,       -- wat_...
   bot_id          TEXT NOT NULL,
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  source_json     TEXT NOT NULL,          -- 本轮仅 {kind:'web_page', url, selector?}（zod 只接受 web_page）
+  source_json     TEXT NOT NULL,          -- {kind:'web_page', url, selector?}（zod 只接受 web_page）
   condition_json  TEXT NOT NULL,          -- {kind:'changed'} | {kind:'contains'|'not_contains', text}
                                           -- | {kind:'number_below'|'number_above', selector?, value}
   interval_sec    INTEGER NOT NULL CHECK (interval_sec >= 300),
@@ -557,12 +561,35 @@ CREATE INDEX watches_conversation ON watches(conversation_id);
 CREATE INDEX watches_bot ON watches(bot_id, status);
 ```
 
-- 计划稿的列之外增加了 `last_text`（没有上一版文本就做不出增删改摘要）、`last_error` / `last_checked_at`（列表与暂停卡展示）、`alert_times_json`（`WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡）。
+- `alert_times_json` 支撑 `WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡。
 - 读行时 `source_json` / `condition_json` 用 zod `safeParse`：解析不了的行在列表 / 上下文里跳过并记日志；到期查询遇到它时直接改 `paused`（`last_error` 说明记录损坏），避免永远到期、空转 worker；删除级联按 SQL 一并删除。
 - 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
 - `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
 
-### delegations（D71；W6 main 0021 重建）
+### stickies（辅助阅读便签，main 0024）
+
+渲染层在消息里选中文本钉出的可拖拽便签（类 mac stickies，浮在对话容器上层）：`conversation` 作用域只在来源对话显示，`global` 作用域在所有对话显示且共享位置与层号。
+
+```sql
+CREATE TABLE stickies (
+  id              TEXT PRIMARY KEY,       -- stc_...
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  scope           TEXT NOT NULL CHECK (scope IN ('conversation', 'global')),
+  text            TEXT NOT NULL,          -- 钉住的选中文本（≤ STICKIE_TEXT_MAX_CHARS）
+  pos_x           INTEGER,                -- 对话容器内的左上角（px）
+  pos_y           INTEGER,                -- NULL = 尚未放置（渲染层取默认落点后回写）
+  z               INTEGER NOT NULL,       -- 点击置顶的单调层号，值大者在上
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX stickies_conversation ON stickies(conversation_id);
+```
+
+- 渲染层乐观更新即时上屏，经 `stickies.create / update / delete` 异步落库；拖拽中的高频位置更新只在本地，拖拽结束才落库。
+- `z` 由渲染层发牌（单调递增），启动水合时接到库中最大层号之后。
+- 删除对话时随 `conversations` 行 FK 级联删除（含 `global`：来源对话是所有者）。
+
+### delegations（D71，main 0016；0021 重建）
 
 ```sql
 CREATE TABLE delegations (
@@ -597,9 +624,9 @@ CREATE INDEX delegations_status ON delegations(status);
 
 - 对话 / 消息 / run 只存 id，不加外键：对话删除时委派行保留，由 `lifecycle` 终态化（见删除级联表）。
 - `submitted` = 行已写、尚未向 B 投递（等 B 邮箱空闲 / 免打扰结束）；`working` = 代发消息已落 B 私聊、`run_id` 已回填。
-- W6（0021）：`awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
+- `awaiting_tasks` = `request` 的委派轮结束时派出了任务（runs.db `origin_run_id` = `run_id`），等这些任务（`task_ids_json`，顺着续接链更新）结算，结果取各任务结果摘要拼接；`fyi` 投递即 `completed`（`result_excerpt` / `result_card_id` 为空）。
 
-### app_connections（D73 P0，迁移 0024）
+### app_connections（D73 P0，迁移 0025）
 
 连接应用（[design/29](../design/29-connected-apps.md) §12）：一行 = 一个账号对一个 Connector（目录应用或自定义 MCP server）的授权。
 
@@ -642,9 +669,9 @@ CREATE TABLE oauth_clients (
 
   client id / secret 仍逐值存 secrets；该表只记来源与已登记 `redirect_uris`，使「客户端是否来自 DCR（最后一个引用方断开后清除）」与打开浏览器前的回调端口预判不必读机密。CIMD 客户端的 `client_id` 是常量，不落表。
 - 自定义 MCP server 的连接 `id = connector_id = custom:{serverId}`，每个 server 至多一行；断开**不删行**（`status = 'not_connected'`，清令牌），只随 `mcp.removeServer` 删除。`apps.connections.list` 默认不返回 `custom:` 行。
-- P1（迁移 0025）追加列 `baseline_pending INTEGER NOT NULL DEFAULT 0`（见下节）。非 OAuth 的自定义 server 也建 `custom:{serverId}` 行承载工具锁定：`server_url` 可为 NULL（stdio），`status = 'connected'`（无需授权；`apps.connections.list` 默认不返回 `custom:` 行）。
+- P1（迁移 0026）追加列 `baseline_pending INTEGER NOT NULL DEFAULT 0`（见下节）。非 OAuth 的自定义 server 也建 `custom:{serverId}` 行承载工具锁定：`server_url` 可为 NULL（stdio），`status = 'connected'`（无需授权；`apps.connections.list` 默认不返回 `custom:` 行）。
 
-### app_connection_tools / app_tool_grants（D73 P1，迁移 0025）
+### app_connection_tools / app_tool_grants（D73 P1，迁移 0026）
 
 **工具定义锁定**（[design/29](../design/29-connected-apps.md) §8.2；`core/apps/tool-lock.ts`、纯函数在 `core/apps/policy.ts`）：对**所有** MCP server 生效。承载行是 `app_connections`（目录连接 `conn_…`；自定义 server `custom:{serverId}`）。
 
@@ -682,7 +709,7 @@ ALTER TABLE app_connections ADD COLUMN baseline_pending INTEGER NOT NULL DEFAULT
 - **存量基线**（只作用一次）：core 启动时 `settings.apps.toolLockBaselineDone` 不为真 → 为当时已存在的每个自定义 server 建 `custom:` 行并置 `baseline_pending = 1`，其首次拉取到的工具直接批准（之后清零），随后置位该标记。之后新加的 server：设置页「测试」成功后 `approveAfterTest`，保存即批准；未批准前工具不暴露。`settings.apps` 是 core 自有键（不在 `settings.update` 入参里，`{...current, ...patch}` 的浅合并保证它不被渲染端的 patch 抹掉）。
 - **授权**：`app_tool_grants` 以 (Bot, 连接, 工具) 为键；`conversation_id` 为空 = 对该 Bot 总是允许，非空 = 仅在该对话内。现有 `grants` 表按路径设计，不复用。清理见下方删除级联表。
 
-### app_taint（D73 P2，迁移 0026）
+### app_taint（D73 P2，迁移 0027）
 
 污点状态（[design/29](../design/29-connected-apps.md) §8.3 / §12；`core/apps/taint.ts` 的 `TaintService`）：某 Bot 在某对话里**成功读取过目录应用（`conn_…`）的工具结果**后置位，之后 24 小时（`APP_TAINT_TTL_MS`）内该 (Bot, 对话) 的外发通道降级为逐次确认（`egress` 审批）。每次成功读取续期（`first_at` 在未过期时保持，过期后重新开始）；按 (Bot, 对话) 计而不按 run 计，`runs.retry`、后续对话轮与任务共用同一行。自定义 MCP 工具**不是来源**（只是通道）。`settings.apps.taintGuard`（默认 true，设置「无人值守 / 高级」）关闭时仍置位、只是不再拦截。
 
@@ -737,7 +764,7 @@ CREATE TABLE runs (
   status               TEXT NOT NULL CHECK (status IN (
                          'queued', 'running', 'waiting_approval', 'waiting_lease',
                          'completed', 'failed', 'cancelled', 'interrupted')),
-  trigger_reason       TEXT,              -- direct | mention | broadcast | reply | chain | scheduled | event | background | delegation | task（D75：任务结算唤醒对话轮）
+  trigger_reason       TEXT,              -- direct | mention | broadcast | reply | chain | scheduled | event | background | delegation | task（D75：任务结算唤醒对话轮）| watch（D79：监看条件边沿触发）
   trigger_message_ids_json TEXT NOT NULL DEFAULT '[]',
   chain_id             TEXT,
   chain_depth          INTEGER,
@@ -746,7 +773,7 @@ CREATE TABLE runs (
   output_message_ids_json TEXT NOT NULL DEFAULT '[]',
   summary              TEXT,
   continued_from_run_ids_json TEXT,    -- 续接来源 run id 列表（Loop 续接，design/02）；null＝无续接
-  error_json           TEXT,           -- {message, setup?, reason?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（D78：`permission_revoked`，`Run.errorReason`）
+  error_json           TEXT,           -- {message, setup?, reason?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（`Run.errorReason`：`permission_revoked`、`browser_profile_changed`、`uncertain_repeat_timeout`）
   parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
   engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null
@@ -789,11 +816,11 @@ CREATE TABLE run_steps (
 
 `request` 类型记录每次发给模型的完整上下文（“模型看到的一切都在日志里”），便于排查；写入前脱敏。
 
-- 浏览器敏感输入（D77）：`browser_type` 声明 `sensitive` 或命中密码框时，tool_call 步骤的 `text` 写成 `«redacted:N chars»`（执行中才发现的密码框经 `RunsService.replaceStepPayload` 改写已落盘的那条 tool_call），该值登记为本 run 的敏感值，之后落盘的各类步骤里出现的原文替换为 `«redacted»`（`agent/step-persistence.ts` 的按工具参数脱敏表）。浏览器动作的 tool_result payload 带 `outcome`（`not_started` / `completed` / `uncertain`，旧行没有）；台账结为 uncertain 而工具未给出结局的调用，宿主补 `outcome:'uncertain'`。
+- 浏览器敏感输入（D77）：`browser_type` 声明 `sensitive` 或命中密码框时，tool_call 步骤的 `text` 写成 `«redacted:N chars»`（执行中才发现的密码框经 `RunsService.replaceStepPayload` 改写已落盘的那条 tool_call），该值登记为本 run 的敏感值，之后落盘的各类步骤里出现的原文替换为 `«redacted»`（`agent/step-persistence.ts` 的按工具参数脱敏表）。浏览器动作的 tool_result payload 带 `outcome`（`not_started` / `completed` / `uncertain`）；台账结为 uncertain 而工具未给出结局的调用，宿主补 `outcome:'uncertain'`。
 
 ### tool_effects（D78，runs 0009）
 
-外部副作用台账（[design/24 §10](../design/24-durable-execution.md#10-第一步外部副作用台账d78已实现)）：有外部副作用（`external`）的工具调用执行前写一行、结束后结。只读与本地可撤销的调用不记，沙箱内命令不记。
+外部副作用台账（[design/24 §10](../design/24-durable-execution.md#10-外部副作用台账d78)）：有外部副作用（`external`）的工具调用执行前写一行、结束后结。只读与本地可撤销的调用不记，沙箱内命令不记。
 
 ```sql
 CREATE TABLE tool_effects (
@@ -807,19 +834,20 @@ CREATE TABLE tool_effects (
   approval_id   TEXT,                            -- main.approvals.id（跨库，无外键）
   status        TEXT NOT NULL CHECK (status IN (
                   'intended', 'executing', 'completed', 'failed', 'uncertain', 'denied')),
-  receipt_json  TEXT,                            -- 工具自报回执 {url?, externalId?, note?}（目前无工具填写）
+  receipt_json  TEXT,                            -- 工具自报回执 {url?, externalId?, note?}（目前只有 MCP 工具填写）
   created_at    INTEGER NOT NULL,
   settled_at    INTEGER,
   UNIQUE (run_id, tool_call_id)
 );
 CREATE INDEX tool_effects_by_run ON tool_effects(run_id, created_at);
 CREATE INDEX tool_effects_by_key ON tool_effects(effect_key);
+CREATE INDEX tool_effects_by_approval ON tool_effects(approval_id) WHERE approval_id IS NOT NULL;  -- 0010
 ```
 
-- 写入：`agent/effects/recorder.ts`（`executeToolSafely` 的可选记录器，内置引擎与外部智能体宿主桥共用）；确认模式下批准的 `bash` 命令只在网关决定沙箱外执行时经 tool-call scope 的 `escalate` 才写行；`request_unsandboxed` 在 `agent/effects/classify.ts` 归 `external`，审批前就写行，被拒结为 `denied`。审批经 `noteApproval` 回填 `approval_id`（只认同一 run、仍在 `executing` 的行）。记录器出错只记日志。
-- `occurrence` 在写入事务里按（run、工具、`args_hash`）计数。`settle` 只改 `executing` / `uncertain` 行；`intended` 预留未用。
-- 恢复：`ToolEffectsStore.markExecutingUncertain()`（启动恢复第 0 步，全表；撤销授权中断时按 run 列表）；`settleUnapproved(runIds, approvalIds)` 把审批被取消的 `executing` 行结为 `denied`。
-- 读取：`listForRun`、`listForRuns`、`chainRunIds(taskId)` / `listForTask(taskId)`（沿 `continued_from_run_ids_json` 向前追溯，并带上各 run 的 `parent_run_id` 子 run）；RPC `effects.list({ taskId })`。
+- 写入：`agent/effects/recorder.ts`（`executeToolSafely` 的可选记录器，内置引擎与外部智能体宿主桥共用）；确认模式下批准的 `bash` 命令只在网关决定沙箱外执行时经 tool-call scope 的 `escalate` 才写行；`request_unsandboxed` 在 `agent/effects/classify.ts` 归 `external`，审批前就写行，被拒结为 `denied`。审批经 `noteApproval` 回填 `approval_id`（只认同一 run、仍在 `executing` / `intended` 的行）。记录器出错只记日志。
+- `occurrence` 在写入事务里按（run、工具、`args_hash`）计数。等审批时 `markIntended` 把行在 `executing` ⇄ `intended` 间切换（同一调用已有审批被批准后不再回到 `intended`）。`settle` 只改 `executing` / `intended` / `uncertain` 行。审批去重门拦下的调用（同一任务链已完成）删除其行（`discard`）。
+- 恢复：`ToolEffectsStore.markExecutingUncertain()`（启动恢复第 0 步，全表；任务被中断时按 run 列表）：`executing` → `uncertain`，`intended` → `denied`；`settleUnapproved(runIds, approvalIds)` 把审批被取消的 `executing` / `intended` 行结为 `denied`。
+- 读取：`listForRun`、`listForRuns`、`chainRunIds(taskId)` / `listForTask(taskId)`（沿 `continued_from_run_ids_json` 向前追溯，并带上各 run 的 `parent_run_id` 子 run）；RPC `effects.list({ taskId })`。审批去重：`sameEffectRows`（同一任务链、同工具同 `args_hash`）、`lastUserAnswerAt`（最近一次成功的 `ask_user` 回答）；审批回执：`forApprovals(ids)`（按 `approval_id` 批量反查）。
 
 ## memory.db（每个 Bot 一个，P07 起）
 
@@ -894,6 +922,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
 | watches | 删除 | D79 |
+| stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
 

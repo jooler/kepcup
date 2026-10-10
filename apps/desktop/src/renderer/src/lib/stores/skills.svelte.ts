@@ -2,7 +2,8 @@ import type {
 	SkillCandidate,
 	SkillEntry,
 	SkillHistoryEntry,
-	SkillsImportOutput
+	SkillsImportOutput,
+	SkillsMissingPayload
 } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 
@@ -15,12 +16,24 @@ class SkillsState {
 	botId = $state<string | null>(null);
 	skills = $state<SkillEntry[]>([]);
 	loading = $state(false);
+	/**
+	 * 目录在应用外被删除的技能（core 的 skills.missing 事件），按名字去重的待
+	 * 确认队列；MissingSkillDialog 逐个弹出，「知道了」→ purge → 出队。
+	 */
+	missing = $state<SkillsMissingPayload[]>([]);
 	#loadedFor: string | null = null;
 	#started = false;
 
 	start(): void {
 		if (this.#started) return;
 		this.#started = true;
+		core.onEvent('skills.missing', (payload) => {
+			const data = payload as SkillsMissingPayload;
+			console.warn('[skills] skill directory missing', data);
+			if (!this.missing.some((item) => item.name === data.name)) {
+				this.missing = [...this.missing, data];
+			}
+		});
 		core.onEvent('skills.changed', (payload) => {
 			const data = payload as { botId: string };
 			// botId 为空串 = 公共技能变更（市场安装/全局启停）：所有已加载面板刷新；
@@ -41,6 +54,10 @@ class SkillsState {
 			this.skills = result.skills;
 			this.botId = botId;
 			this.#loadedFor = botId;
+		} catch (error) {
+			// 调用方都是 `void load()`（$effect / skills.changed 事件）：记录到控制台，
+			// 不变成未处理的 rejection。
+			console.error('[skills] list failed', { botId, error });
 		} finally {
 			this.loading = false;
 		}
@@ -102,6 +119,13 @@ class SkillsState {
 			content: string;
 			dirPath: string;
 		};
+	}
+
+	/** 「知道了」：清理该技能的 DB 记录并出队（失败则留在队列里可重试）。 */
+	async acknowledgeMissing(name: string): Promise<number> {
+		const result = (await core.call('skills.purgeMissing', { name })) as { purged: number };
+		this.missing = this.missing.filter((item) => item.name !== name);
+		return result.purged;
 	}
 
 	/** Re-sent import against a multi-skill repository (candidate pick). */
