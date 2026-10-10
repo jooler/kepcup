@@ -8,6 +8,7 @@
   import AppCatalogGrid from '$lib/features/apps/AppCatalogGrid.svelte';
   import AppConnectionsList from '$lib/features/apps/AppConnectionsList.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
+  import LocalConnectorsSection from './LocalConnectorsSection.svelte';
   import { manageTarget } from '$lib/features/apps/app-catalog';
 
   /**
@@ -88,5 +89,7 @@
     </div>
   {:else}
     <AppCatalogGrid onManage={manage} />
+    <!-- 本机自建（设计 29 §17）：开发者模式开启或已有条目时显示；本机条目只在这里出现，不进上面的网格 -->
+    <LocalConnectorsSection onManage={manage} />
   {/if}
 </div>

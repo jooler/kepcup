@@ -138,9 +138,13 @@
   // --- 工具策略 ----------------------------------------------------------------
   let savingPolicy = $state<string | null>(null);
 
+  /**
+   * 「默认」档的有效审批：未设逐工具策略时 `tool.approval` 就是 core 按风险档与应用分级算出的
+   * 默认（本机连接 / `developer` 分级全部「每次确认」，破坏性恒每次确认），不在这里重算。
+   */
   function defaultPolicyLabel(tool: AppToolView): string {
     return t('apps.detail.policy.default', {
-      mode: tool.risk === 'read' ? t('apps.detail.policy.auto') : t('apps.detail.policy.ask'),
+      mode: tool.approval === 'auto' ? t('apps.detail.policy.auto') : t('apps.detail.policy.ask'),
     });
   }
 
@@ -270,6 +274,17 @@
           >
             {t(badge.labelKey)}
           </Badge>
+          {#if entry?.origin === 'local'}
+            <!-- 本机自建（设计 29 §17）：未审核，所有工具默认每次确认 -->
+            <Badge
+              variant="outline"
+              class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+              title={t('apps.local.badgeHint')}
+              data-testid="apps-detail-local-badge"
+            >
+              {t('apps.local.badge')}
+            </Badge>
+          {/if}
         </div>
         <div class="grid gap-1.5">
           <Label for="apps-detail-label" class="text-xs">{t('apps.detail.label')}</Label>

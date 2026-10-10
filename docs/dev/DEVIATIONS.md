@@ -444,4 +444,12 @@
 - 可选方案：按上述实现保留（推荐）；或 2 为匿名 MCP 补一条 `auth: none` 的目录连接路径（需要改 `connectionToMcpServer`、连接流程、`connectable` 与工具复核，工作量不小，且匿名服务没有「账号」概念）、4 对所有目录条目都加 MCP 流量守卫（行为变更面更大，需要单独评审）。
 - 推荐：均保留。
 - 决定：（由人工填写）
-- 已更新的文档：`docs/design/29-connected-apps.md`（新增 §17、§11.3 旁注）、`docs/guides/add-connected-app.md`（「本机生成」）、`todo/{local-connector-authoring,developer-portal,extension-center,connected-apps-status}.md`、`docs/dev/PROGRESS.md`。
+- **DEV-024 修订（独立安全评审后，2026-10-10）**：
+  11. **A1 跨站授权服务器**：卡片 `issuerCrossSite` + 强警告，`confirm` 要 `acknowledgeCrossSiteIssuer`（新错误码 `LOCAL_CONNECTOR_ACK_REQUIRED`，缺确认不消耗提案）；`developer` 分级只用 CIMD / DCR（不用预注册表兜底、不用 BYO）。
+  12. **A2 issuer 钉死**：目录条目 schema 新增可选 `_meta.expectedIssuer`（本机条目必填）；连接时 issuer 漂移 → `OAUTH_ISSUER_MISMATCH`。
+  13. **A3**：shared `sanitizeDisplayText` / `sanitizeScopes` 为唯一清洗实现，`oneLine`、账号标签、内联工具说明同用；本机连接忽略授权服务器给的 name / email / sub（自动编号），并且不再把令牌发去 userinfo。此项改变了 `oneLine` 的行为：不可见 / 格式字符现在是**删除**而非替换成空格（`app-prompt-sanitize` 用例相应更新）。
+  14. **A4**：`McpAppUiService.uiAllowed`——**只**对本机 / `developer` 条目生效，没有按「预置条目的 `ui: false`」一概禁用（那会让现有的 MCP Apps 渲染测试与预置应用失效：预置条目的 `ui` 目前只是声明、MCP Apps 由工具元数据驱动）。记录：`toolDefinitionHash` 不含 `_meta`。
+  15. **A5–A7、B**：主机名规范化与同域不同路径的明确提示；提案限流（每 run 5、每对话每小时 20）；错误文案固定；`<available_apps>` 本机优先（≤10）；`settings.update` 的 `apps` 对最新设置合并；`developer` 分级的内联工具说明加「第三方数据」前缀并清洗（没有套 `<untrusted>`：内联工具说明属于工具定义，走工具锁定复核）。
+  16. **L4 引入的两处小 core 改动**：`apps.connections.tools` 的有效审批与 `setToolPolicy` 的「变严」判断按条目分级计算（此前本机连接的只读工具在详情页误显示「自动」）；e2e 测试钩子 `KEPCUP_TEST_OAUTH_LOOPBACK`（仅测试钩子构建 + `NODE_ENV=test`，真实 Electron 里没有 createCore 选项可传回环白名单）。
+  17. **未做**：真实 Electron 里 DNS 重绑定的端到端（只有可注入解析器的 `createGuardedMcpFetch` 单测）；匿名 MCP 仍不支持（见第 2 项）。
+- 已更新的文档：`docs/design/29-connected-apps.md`（新增 §17、§17.3a、§11.3 旁注）、`docs/guides/add-connected-app.md`（「本机生成」）、`todo/{local-connector-authoring,developer-portal,extension-center,connected-apps-status}.md`、`docs/dev/PROGRESS.md`。

@@ -1,6 +1,6 @@
 # 本机连接：Bot 读文档，自己写好连接（只在当前设备运行）
 
-> 状态：**L0–L3、L5 已实现（分支 `t/local-connectors`，2026-10-10，未推送、未合入）；L4 渲染端待做**。用户确认方案后直接实施，不另写任务书；本文既是方案也是任务清单。偏差见 DEV-024；实现记录见 `docs/dev/PROGRESS.md`「本机连接」。上游：[connected-apps.md](connected-apps.md)（底座）、[extension-center.md](extension-center.md)（入口与信任等级）、[设计 29](../docs/design/29-connected-apps.md)。
+> 状态：**L0–L5 已实现（分支 `t/local-connectors`，2026-10-10，未推送、未合入）；L4 渲染端已做，独立安全评审 A1–A7 / B 已修**。用户确认方案后直接实施，不另写任务书；本文既是方案也是任务清单。偏差见 DEV-024；实现记录见 `docs/dev/PROGRESS.md`「本机连接」。上游：[connected-apps.md](connected-apps.md)（底座）、[extension-center.md](extension-center.md)（入口与信任等级）、[设计 29](../docs/design/29-connected-apps.md)。
 >
 > **对 P3 开发者门户的影响**：第三方「提交新连接」的开放平台（[developer-portal.md](developer-portal.md)）**降级为后续**——长尾需求先靠本机生成覆盖；门户只在需要「共享 / 审核 / 签名分发 / 已验证等级」时再做。本机条目可导出成 `server.json`，将来就是提交入口。
 
@@ -58,7 +58,7 @@
 - [x] **L1 shared**：`localConnectorRecordSchema` / 校验函数（强制字段、slug 规则）、`settings.apps.localConnectors`、`confirm-local-connector` setup requirement、RPC 契约（`apps.localConnectors.*`）、目录条目 `origin` 字段、审计事件名。
 - [x] **L2 core**：`apps/local-connectors.ts`（提案存储 + TTL、探测〔复用发现逻辑，SSRF 安全〕、校验、落库、删除）；`ConnectorCatalog` 的 `local()` 来源与 `origin`；`app_local_connector_guide` / `app_propose_local_connector` 工具（仅开发者模式暴露，exposure 里按设置裁剪）；RPC 绑定；审计；手册文本资源。
 - [x] **L3 测试（core）**：用 testkit 假授权 / MCP 服务器覆盖——合规提案 → 确认 → 目录出现 → 连接 → 工具每次确认；拒绝路径（http、内网 / IP、无自动注册、非 MCP、与内置冲突、重复添加）；提案不能被 Bot 绕过确认保存；开发者模式关闭时工具不暴露且 `confirm` 被拒；`remove` 吊销并清令牌；本机条目不出现在发行门禁过滤 / 签名脚本输入里；注入文档不能改变探测结果（条目内容只来自探测）。
-- [ ] **L4 渲染端**（在「连接详情 / 目录」的缺陷修复合入之后做，避免与 `stores/apps.svelte.ts`、`AppConnectionDetail.svelte`、`ExtensionConnections.svelte` 冲突）：确认卡、「本机自建」区、徽标与删除、zh-CN 文案；e2e 覆盖「开发者模式关闭时不可见 → 开启后出现 → 确认卡 → 添加 → 删除」。
+- [x] **L4 渲染端**（在「连接详情 / 目录」的缺陷修复合入之后做，避免与 `stores/apps.svelte.ts`、`AppConnectionDetail.svelte`、`ExtensionConnections.svelte` 冲突）：确认卡、「本机自建」区、徽标与删除、zh-CN 文案；e2e 覆盖「开发者模式关闭时不可见 → 开启后出现 → 确认卡 → 添加 → 删除」。
 - [x] **L5 文档收尾**：[docs/guides/add-connected-app.md](../docs/guides/add-connected-app.md) 加一节「本机生成」指向本文；`docs/dev/PROGRESS.md`、DEVIATIONS；`connected-apps-status.md` 导航。
 
 ## 4. 验收
