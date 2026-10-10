@@ -18,8 +18,9 @@
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
-  import { shell, type SettingsSectionId } from '$lib/stores/shell.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
+  import { resolveSettingsSection, type AppsTab, type ResolvedSection } from './sections';
   import AppearanceSection from './AppearanceSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
   import HardwareSection from './HardwareSection.svelte';
@@ -33,7 +34,7 @@
   import UsageSection from './UsageSection.svelte';
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
-  import McpSection from './McpSection.svelte';
+  import AppsSection from './AppsSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
@@ -46,10 +47,13 @@
    * 分组（条件渲染，非滚动定位），滚动条归当前分组内容自己；打开时按
    * shell.settingsSection 直接落在目标分组，带 anchor 时再滚到分组内的
    * [data-settings-anchor]（如「模型 → 默认模型」）。沙箱与访问白名单并入
-   * 「环境」，定时任务并入「无人值守」。
+   * 「环境」，定时任务并入「无人值守」；MCP 服务器并入「应用 → 自定义」（D73 §5.9，
+   * `mcp` 仍作为分区别名经 resolveSettingsSection 落到该页签）。
    */
+  type SectionId = ResolvedSection['section'];
+
   interface SectionDef {
-    id: SettingsSectionId;
+    id: SectionId;
     label: string;
     icon: LucideIcon;
   }
@@ -59,7 +63,7 @@
     { id: 'hardware', label: t('settings.navHardware'), icon: Mic },
     { id: 'models', label: t('settings.navModels'), icon: Cpu },
     { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
-    { id: 'mcp', label: t('settings.navMcp'), icon: Plug },
+    { id: 'apps', label: t('settings.navApps'), icon: Plug },
     { id: 'browser', label: t('settings.navBrowserProfiles'), icon: Compass },
     { id: 'agents', label: t('settings.navAgents'), icon: Bot },
     { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
@@ -70,18 +74,26 @@
     { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },
   ];
 
-  let activeSection = $state<SettingsSectionId>('general');
+  let activeSection = $state<SectionId>('general');
+  /** 「应用」分区落在的页签（别名 `mcp` → 自定义）。 */
+  let appsTab = $state<AppsTab>('catalog');
   let contentEl: HTMLElement | undefined = $state();
 
   const activeLabel = $derived(
     sections.find((section) => section.id === activeSection)?.label ?? t('settings.title'),
   );
 
-  // 每次打开：落在指定分组（无左栏条目的 id 兜底回 usage）。
+  // 每次打开：展开别名后落在指定分组（无左栏条目的 id 兜底回 usage）。
   $effect(() => {
     if (!shell.settingsOpen) return;
-    const target = shell.settingsSection;
-    activeSection = sections.some((section) => section.id === target) ? target : 'usage';
+    const resolved = resolveSettingsSection(
+      shell.settingsSection,
+      shell.settingsAppsTab ?? undefined,
+    );
+    activeSection = sections.some((section) => section.id === resolved.section)
+      ? resolved.section
+      : 'usage';
+    appsTab = resolved.appsTab ?? 'catalog';
   });
 
   // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位。
@@ -165,11 +177,10 @@
               <WebSearchSection testid="settings-web-search" />
             </div>
           </div>
-        {:else if activeSection === 'mcp'}
-          <div data-settings-section="mcp" class="space-y-6">
-            <div data-settings-anchor="mcp">
-              <McpSection />
-            </div>
+        {:else if activeSection === 'apps'}
+          <!-- 「自定义」页签容器带 data-settings-anchor="mcp"（AppsSection 内），旧锚点继续可用。 -->
+          <div data-settings-section="apps" class="space-y-6">
+            <AppsSection initialTab={appsTab} />
           </div>
         {:else if activeSection === 'browser'}
           <div data-settings-section="browser" class="space-y-6">

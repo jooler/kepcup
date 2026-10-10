@@ -20,8 +20,12 @@
   import type { MessageKey } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
+  import { appsStore } from '$lib/stores/apps.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
-  import { countRiskyTools, mcpUnattendedNotice } from '../approvals/mcp-risk';
+  import { shell } from '$lib/stores/shell.svelte';
+  import { appIconSrc, appInitial } from '$lib/features/apps/app-catalog';
+  import { CONNECTION_STATUS_LABEL_KEYS } from '$lib/features/apps/connect-flow';
+  import { appUnattendedNotice, countRiskyTools, mcpUnattendedNotice } from '../approvals/mcp-risk';
   import {
     capabilityRows,
     engineValue,
@@ -31,6 +35,13 @@
     toggleCapability,
     AGENT_OPTION_PREFIX,
   } from './agent-capabilities';
+  import {
+    accountHintKey,
+    appChoiceGroups,
+    appToolEstimate,
+    selectAppConnection,
+    shouldShowAcpAppsNotice,
+  } from './bot-apps';
 
   let {
     profile = $bindable(),
@@ -152,6 +163,98 @@
     }),
   );
 
+  // --- 连接应用（D73 §5.7 / §5.9）：按应用分组、单选账号 ------------------------
+  $effect(() => {
+    appsStore.start();
+  });
+  const appGroups = $derived(
+    appChoiceGroups(appsStore.catalog, appsStore.connections, profile.runtime.app_connection_ids),
+  );
+  const selectedAppConnections = $derived(
+    appsStore.connections.filter((connection) =>
+      profile.runtime.app_connection_ids.includes(connection.id),
+    ),
+  );
+  /**
+   * 拉所选连接的工具清单——查询会连到服务端，所以只在选中集合（id）变化、或缓存被清
+   * （`invalidateTools`：状态推送 / 连接完成）时重拉。缓存本身要被追踪，否则失效后估计
+   * 一直停在「未知」；`!== undefined` 守卫保证已缓存的不会重复拉、失败的（缓存仍空、无
+   * 状态变化）不会循环。
+   */
+  const selectedAppKey = $derived(selectedAppConnections.map((c) => c.id).join(','));
+  $effect(() => {
+    const key = selectedAppKey;
+    if (key.length === 0) return;
+    const cache = appsStore.toolsByConnection;
+    const ids = untrack(() => selectedAppConnections.map((c) => c.id));
+    for (const id of ids) {
+      if (cache[id] !== undefined) continue;
+      // A failed query leaves the cache empty: the estimate reports it as unknown, never as 0.
+      void appsStore.connectionTools(id).catch(() => undefined);
+    }
+  });
+  const appTools = $derived(appToolEstimate(selectedAppConnections, appsStore.toolsByConnection));
+  const appNotice = $derived(
+    appUnattendedNotice({
+      selectedConnectionCount: selectedAppConnections.length,
+      unattendedEnabled: permissions.unattended.enabled,
+    }),
+  );
+
+  function selectApp(connectorId: string, connectionId: string | null): void {
+    profile.runtime.app_connection_ids = selectAppConnection(
+      profile.runtime.app_connection_ids,
+      appsStore.connections,
+      connectorId,
+      connectionId,
+    );
+    if (connectionId !== null) maybeShowAcpAppsNotice();
+  }
+
+  function openCatalog(): void {
+    shell.openSettings('apps', undefined, 'catalog');
+  }
+
+  // --- §5.10：外部智能体 + `apps` 能力包的一次性残余风险说明 -------------------------
+  const ACP_APPS_ACK_KEY = 'kepcup.apps.acpNoticeAck';
+  let acpNoticeOpen = $state(false);
+
+  function acpNoticeAcknowledged(): boolean {
+    try {
+      return localStorage.getItem(ACP_APPS_ACK_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  /** 切到外部智能体、勾上 `apps` 包、或在智能体下选中应用账号时各检查一次。 */
+  function maybeShowAcpAppsNotice(): void {
+    if (
+      shouldShowAcpAppsNotice({
+        agentSelected: profile.runtime.agent.id.length > 0,
+        appsCapabilityChecked: capabilityList.some((row) => row.id === 'apps' && row.checked),
+        acknowledged: acpNoticeAcknowledged(),
+      })
+    ) {
+      acpNoticeOpen = true;
+    }
+  }
+
+  function confirmAcpNotice(): void {
+    try {
+      localStorage.setItem(ACP_APPS_ACK_KEY, '1');
+    } catch {
+      // Not persisted: the notice shows again next time.
+    }
+    acpNoticeOpen = false;
+  }
+
+  /** 「不注入应用」：取消 `apps` 包（不记已确认，下次勾选再提示）。 */
+  function declineAcpNotice(): void {
+    acpNoticeOpen = false;
+    toggleAgentCapability('apps', false);
+  }
+
   // --- 外部智能体（D72 §3）：主模型选择器扩展为「模型 / 智能体」 -----------------
   /** 首次把 Bot 切到外部智能体时弹框说明让渡项（每台设备一次）。 */
   const SWITCH_ACK_KEY = 'kepcup.agentSwitchAcknowledged';
@@ -212,6 +315,7 @@
         ? {}
         : { permission: agent?.tier === 'preview' ? ('ask' as const) : ('workspace' as const) }),
     };
+    maybeShowAcpAppsNotice();
   }
 
   function onEngineChange(value: string): void {
@@ -282,6 +386,7 @@
       capabilityContext,
     );
     profile.runtime.agent.capabilities = normalizeCapabilities(next, capabilityContext);
+    if (id === 'apps' && checked) maybeShowAcpAppsNotice();
   }
 
   function toggleMcpServer(id: string, checked: boolean): void {
@@ -617,6 +722,13 @@
           {toolEstimate.mcp && profile.runtime.mcp_server_ids.length > 0
             ? t('contacts.agentToolCountMcp', { count: toolEstimate.count })
             : t('contacts.agentToolCount', { count: toolEstimate.count })}
+          {#if capabilityList.some((row) => row.id === 'apps' && row.checked) && selectedAppConnections.length > 0}
+            <span data-testid="bot-apps-agent-tool-count" data-count={appTools.count}>
+              {appTools.unknown
+                ? t('contacts.appsAgentToolCountUnknown', { count: appTools.count })
+                : t('contacts.appsAgentToolCount', { count: appTools.count })}
+            </span>
+          {/if}
         </p>
         <p class="text-xs text-muted-foreground">{t('contacts.agentCapabilitiesHint')}</p>
       </div>
@@ -659,7 +771,150 @@
       {/if}
     </div>
   {/if}
+  {#if appsStore.catalogLoaded && appGroups.length > 0}
+    <!-- D73 §5.7 / §5.9：连接应用按应用分组，单选账号；未连接的应用「去连接」 -->
+    <div class="grid gap-1.5">
+      <Label>{t('contacts.apps')}</Label>
+      <div class="space-y-2" data-testid="bot-apps">
+        {#each appGroups as group (group.connectorId)}
+          {@const icon = appIconSrc(group.iconDataUri)}
+          <div
+            class="space-y-1 rounded-lg border px-2.5 py-2"
+            data-testid={`bot-apps-${group.connectorId}`}
+            data-selected={group.selectedConnectionId ?? ''}
+          >
+            <div class="flex items-center gap-2 text-sm">
+              {#if icon !== null}
+                <img src={icon} alt="" class="size-5 shrink-0 rounded" aria-hidden="true" />
+              {:else}
+                <span
+                  class="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground"
+                  aria-hidden="true">{appInitial(group.title)}</span
+                >
+              {/if}
+              <span class="min-w-0 flex-1 truncate font-medium">{group.title}</span>
+              {#if group.accounts.length === 0}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  class="h-7 px-2 text-xs"
+                  disabled={!group.connectable}
+                  onclick={openCatalog}
+                  data-testid={`bot-apps-${group.connectorId}-connect`}
+                >
+                  {t('contacts.appsConnect')}
+                </Button>
+              {/if}
+            </div>
+            {#if group.accounts.length === 0}
+              <p class="text-xs text-muted-foreground">
+                {group.connectable ? t('contacts.appsNotConnected') : t('contacts.appsUnavailable')}
+              </p>
+            {:else}
+              <div class="space-y-1" role="radiogroup" aria-label={group.title}>
+                <label class="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name={`bot-apps-${group.connectorId}`}
+                    class="accent-primary"
+                    checked={group.selectedConnectionId === null}
+                    onchange={() => selectApp(group.connectorId, null)}
+                    data-testid={`bot-apps-${group.connectorId}-none`}
+                  />
+                  <span class="text-muted-foreground">{t('contacts.appsNone')}</span>
+                </label>
+                {#each group.accounts as account (account.connection.id)}
+                  {@const hintKey = accountHintKey(account.connection.status)}
+                  <label class="flex flex-wrap items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name={`bot-apps-${group.connectorId}`}
+                      class="accent-primary"
+                      checked={account.selected}
+                      onchange={() => selectApp(group.connectorId, account.connection.id)}
+                      data-testid={`bot-apps-${group.connectorId}-${account.connection.id}`}
+                    />
+                    <span class="truncate">{account.label}</span>
+                    {#if account.connection.status !== 'connected'}
+                      <span
+                        class={account.needsReconnect || account.connection.status === 'error'
+                          ? 'rounded border border-amber-500/60 px-1 text-[10px] text-amber-700 dark:text-amber-400'
+                          : 'rounded border px-1 text-[10px] text-muted-foreground'}
+                        data-status={account.connection.status}
+                        >{t(CONNECTION_STATUS_LABEL_KEYS[account.connection.status])}</span
+                      >
+                    {/if}
+                    {#if hintKey !== null && account.selected}
+                      <span
+                        class="basis-full pl-6 text-xs text-amber-700 dark:text-amber-400"
+                        data-testid={`bot-apps-${group.connectorId}-hint`}>{t(hintKey)}</span
+                      >
+                    {/if}
+                  </label>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+      <p class="text-xs text-muted-foreground">{t('contacts.appsHint')}</p>
+      {#if selectedAppConnections.length > 0}
+        <p
+          class="text-xs text-muted-foreground"
+          data-testid="bot-apps-tool-count"
+          data-count={appTools.count}
+          data-unknown={appTools.unknown}
+        >
+          {appTools.unknown
+            ? t('contacts.appsToolCountUnknown', { count: appTools.count })
+            : t('contacts.appsToolCount', { count: appTools.count })}
+        </p>
+      {/if}
+      {#if appNotice.show}
+        <p
+          class={appNotice.warning
+            ? 'rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'
+            : 'text-xs text-amber-700 dark:text-amber-400'}
+          data-testid="bot-apps-unattended-notice"
+          data-warning={appNotice.warning}
+        >
+          {t('contacts.appsUnattendedNotice')}
+          {#if appNotice.warning}
+            {t('contacts.appsUnattendedActive')}
+            {#if appTools.unknown}
+              {t('contacts.appsUnattendedUnknown')}
+            {:else if appTools.risky > 0}
+              {t('contacts.appsUnattendedRisky', { count: appTools.risky })}
+            {/if}
+          {/if}
+        </p>
+      {/if}
+    </div>
+  {/if}
 </div>
+
+<!-- §5.10：外部智能体自带的 shell / fetch 不经 KepCup 网关——首次（每台设备一次）说明 -->
+<Dialog bind:open={acpNoticeOpen}>
+  <DialogContent data-testid="apps-acp-notice">
+    <DialogHeader>
+      <DialogTitle>{t('apps.acpNotice.title')}</DialogTitle>
+      <DialogDescription>{t('apps.acpNotice.intro')}</DialogDescription>
+    </DialogHeader>
+    <ul class="list-disc space-y-1 pl-5 text-sm">
+      <li>{t('apps.acpNotice.gateway')}</li>
+      <li>{t('apps.acpNotice.bypass')}</li>
+      <li>{t('apps.acpNotice.mitigation')}</li>
+    </ul>
+    <DialogFooter>
+      <Button variant="outline" onclick={declineAcpNotice} data-testid="apps-acp-notice-decline"
+        >{t('apps.acpNotice.decline')}</Button
+      >
+      <Button onclick={confirmAcpNotice} data-testid="apps-acp-notice-confirm"
+        >{t('apps.acpNotice.confirm')}</Button
+      >
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
 
 <Dialog bind:open={switchDialogOpen}>
   <DialogContent data-testid="bot-agent-switch-dialog">

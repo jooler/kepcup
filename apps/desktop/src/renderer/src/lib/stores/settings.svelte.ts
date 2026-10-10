@@ -1,4 +1,5 @@
 import type {
+  AppAuthReason,
   McpToolRisksOutput,
   ModelCapability,
   OnboardingStatePatch,
@@ -11,6 +12,17 @@ import { core } from '$lib/rpc/client.svelte';
 export interface ModelOption {
   ref: string;
   label: string;
+}
+
+/** `mcp.test` 的结果（shared `mcpTestOutputSchema`）。 */
+export interface McpTestResult {
+  tools: string[];
+  missingSecrets: string[];
+  /** D73：OAuth server 未连接 / 授权失效时 tools 为空并带原因。 */
+  needsAuth?: AppAuthReason;
+  message?: string;
+  /** D73 P1：测试时看到的工具定义哈希，保存后交给 `apps.tools.approveAfterTest`。 */
+  toolHashes?: Record<string, string>;
 }
 
 class SettingsState {
@@ -168,14 +180,11 @@ class SettingsState {
       autoApprove: boolean;
     },
     secretValues?: { env?: Record<string, string>; header?: Record<string, string> },
-  ): Promise<{ tools: string[]; missingSecrets: string[] }> {
+  ): Promise<McpTestResult> {
     return core.call('mcp.test', {
       server,
       ...(secretValues !== undefined ? { secretValues } : {}),
-    }) as Promise<{
-      tools: string[];
-      missingSecrets: string[];
-    }>;
+    }) as Promise<McpTestResult>;
   }
 
   /**
