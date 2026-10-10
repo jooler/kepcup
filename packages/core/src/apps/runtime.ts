@@ -68,6 +68,25 @@ export function createAppRuntime(deps: {
     cancelFlows: (connectionId) => apps.flows.cancelForConnection(connectionId),
     onServerRemoved: (serverId) => apps.flows.clearFlowLog(serverId),
   });
+  // 兜底（见 AppConnectionStore.ensureCustom）：自定义 server 的 URL 换了源 → 连接行已重置，
+  // 这里清令牌 / 密钥 / 缓存的提供者并审计；不吊销（旧授权服务器与新 URL 无关）。
+  apps.store.onCustomOriginChanged(({ connectionId, before }) => {
+    const hadTokens = apps.vault.getTokens(connectionId) !== null;
+    if (!hadTokens && before.issuer === null) return;
+    deps.secrets.removeByPrefix(`conn:${connectionId}:`);
+    if (before.issuer !== null) apps.vault.clearIssuerClientIfUnused(before.issuer);
+    registry.discardInflight(connectionId);
+    void registry.invalidate(connectionId);
+    onStatus({ connectionId, status: 'not_connected' });
+    auditor.auditAppDisconnect({
+      connectionId,
+      connectorId: before.connectorId,
+      issuer: before.issuer,
+      scopes: before.scopes,
+      revoked: { refresh: false, access: false },
+      removed: false,
+    });
+  });
   mcp.attachAuth(registry);
   registry.bindMcp(mcp);
   const flowInvalidator = {
