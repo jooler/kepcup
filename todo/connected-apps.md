@@ -636,7 +636,7 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 | Stripe    | **可上目录**（待登录实测） | 是（`stripe`）    | 仅 DCR（无 CIMD 声明）；令牌端点认证 `none`（公共客户端）。涉及资金，**风险分级务必取严**：登录实测后逐工具补 `toolPolicy`，并确认测试模式 / 受限权限                                                                     |
 | Asana     | **需预注册**        | 否              | 文档明确 V2 不支持 DCR；元数据无 `registration_endpoint`。且令牌端点**只支持带 secret 的认证**（`client_secret_post/basic`）——桌面应用无法安全持有 secret，预注册能否以公共客户端 + PKCE 使用须先问 Asana。入 P2 §6.4 评估  |
 | HubSpot   | **需预注册**        | 否              | 无 DCR / CIMD；须在 HubSpot 账号内建「MCP Connector」（client id + secret）；令牌端点仅 `client_secret_post`；**无吊销端点**。与 Asana 同样有 secret 难题，且需 HubSpot 侧批准分发——P2 评估，无进展前视为**暂不支持** |
-| GitHub    | **需预注册**（U3）    | 否              | AS 元数据未声明 CIMD / DCR，且无吊销端点；`iss` 与 S256 具备。需用户注册 KepCup 的 GitHub App（U3）+ P2 预注册客户端机制。若 GitHub 后续在元数据里声明 `client_id_metadata_document_supported`，重跑探测即可改判        |
+| GitHub    | **需预注册**（U3，已推迟到 P4 托管网关）    | 否              | AS 元数据未声明 CIMD / DCR，且无吊销端点；`iss` 与 S256 具备。需用户注册 KepCup 的 GitHub App（U3）+ P2 预注册客户端机制。若 GitHub 后续在元数据里声明 `client_id_metadata_document_supported`，重跑探测即可改判        |
 
 
 **P1 目录（6 家）**：`notion`、`linear`、`atlassian`、`sentry`、`canva`、`stripe`——对应 `apps/desktop/resources/connectors/catalog.json`；图标为中性占位（圆角方块 + 首字母），不含厂商商标图形。`toolPolicy` 与 `whoami` 暂空，待登录实测后补；`auth.scopes` 暂空（按服务端 `WWW-Authenticate` / PRM 取）。**当前没有「暂不支持」的厂商**（HubSpot 视 P2 进展）。
