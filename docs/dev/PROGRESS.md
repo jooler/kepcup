@@ -1117,3 +1117,19 @@
 - **目录读取失败**：`appsStore.catalogError` + 连接列表读失败时仍读目录；「连接」组显示错误与「重试」，不再一直「正在读取目录…」（`catalogLoadState` 单测）。
 - **core 改动（唯一一处）**：`AppConnectionStore.ensureCustom` 在自定义 server 的 URL **换 origin** 时，把连接行重置为 `not_connected`（issuer / 账号 / scope / 发现缓存清空），并由 `createAppRuntime` 注册的处理器清掉 Token Vault 里该连接的令牌（`conn:{id}:*`）、孤立的 DCR 客户端、缓存的提供者，发 `apps.connection_status` 与脱敏的 `app_disconnect` 审计（不向旧授权服务器发吊销）。同源（只改路径 / 查询）保持不变；非 OAuth server 不受影响。说明：经 `settings.update` 改 URL 的主路径本来就由 `AppDisconnector.reconcileServers` 先断开（含吊销），这里是绕过它时的兜底；新增单测 3 例与集成 4 例（含 `settings.update` 路径的回归）。
 - **未做（按转交意见跳过）**：切换开发者模式时表单草稿丢失；`mcp/presets.ts` 的防护（接线前的 TODO 清单写在 `resources/mcp-presets/README.md`）。
+
+### 扩展中心 缺陷修复：首次连接取消后的幽灵账号与无限 toast（2026-10-10，用户实测）
+
+- **现象**：目录应用（Linear）点「连接」→ 授权页开着、没授权 → 回到应用点「取消」→ 卡片仍写「已连接 1 个账号」→ 点「管理」→ 一直弹「找不到这个连接」，界面卡死。
+- **根因（两个缺陷 + 一个放大器）**：
+  1. **core 把授权进行中的临时行当成账号**：目录连接一开始就建一行 `connecting` 的临时行（无令牌、无账号标识），`apps.catalog.list` 的 `connectedAccounts` 与 `apps.connections.list` 都把它算进去；取消 / 失败时 core 删行并发 `apps.connection_status{not_connected}`，但渲染端把它当成「已知行的状态变化」，留下一个幽灵账号，而且只在 `done` 才刷新（取消 / 失败不刷新，注释「连接状态不变」对首次连接不成立）。
+  2. **详情页对一个已不存在的连接发请求**：`ExtensionConnections` 的「管理」打开了幽灵账号的详情，`apps.connections.tools` / `grants` 返回 `APP_CONNECTION_NOT_FOUND`。
+  3. **放大器（无限循环）**：`AppConnectionDetail` 的 `$effect` 直接调 `appDetailStore.load`，而 `loadTools` / `loadGrants` 在同步段读了自己的 `loadingTools` / `loadingGrants` 簿记状态（并在 `finally` 里写回），effect 因此追踪了它们 → 每次完成都重跑 → 再拉 → 失败再 toast。健康的连接上则是静默地一直重复 `tools/list`。`McpSection` 里为避开这个坑写了 `untrack` 的 effect 其实也中招（它调用的 `loadTools` 自己追踪）。
+- **证据**：
+  - Svelte 运行时测试（新增 `desktop-svelte` vitest 项目）用与组件相同的 effect 写法驱动 `appDetailStore`：修复前 3 例全部失败，Svelte 抛 `effect_update_depth_exceeded`（effect 读写同一状态的无限循环）；修复后 4 例通过（拉取次数 ≤ 1 次 tools / 1 次 grants，换连接 id 才重拉）。
+  - e2e 按用户步骤复现（`connect-abort.spec.ts` 的探针版，在修复前的导出上跑）：取消后卡片文本为「已连接 1 个账号 | 管理」；点「管理」后渲染进程卡死（后续 `page.evaluate` / toast 计数全部超时，用例跑满 4 分钟）。修复后同一用例通过：取消后卡片没有账号数与「管理」，3.5 s 内 0 条 toast，渲染端对该连接发出 0 次 `apps.connections.tools` / `grants`。
+- **修复**：
+  - core：`isUnsettledScratch`（`connecting` 且无令牌的目录行）不进 `apps.connections.list`、不计入 `connectedAccounts` / `connectionIds`；行被**删除**时 `apps.connection_status` 带 `removed: true`（`abandon` / 并入旧行 / `AppDisconnector` 删行；shared 事件 schema 新增可选字段，向后兼容）。
+  - 渲染端：`applyConnectionStatus(…, removed)` 移除行；终态（done / failed / cancelled）一律 `refresh()`；`removed` 时同时刷新目录并让 `appDetailStore.forget`；`appDetailStore` 的加载器簿记读写全部 `untrack`，任何调用方的 effect 都安全；详情页的 effect 只依赖 `connectionId` 与「能否拉工具」，行不存在时不请求、`APP_CONNECTION_NOT_FOUND` 不 toast 不重试、其它失败同一连接只留一条 toast（`id: app-detail-load-{id}`）；授权没了 / 过期 / 缺权限 / 连接中的连接不去 server 取工具，只读本地授权记录；`ExtensionConnections` / `AppsSection` 在所开详情的连接消失时回到列表。
+- **测试**：core 集成 `catalog-connect-abort.test.ts` 5 例（授权页开着时取消 / 超时 / `access_denied` / 复核阶段取消 / 成功后断开：行与密钥不留、`connectedAccounts` 与列表、`removed` 事件）；desktop 纯函数（`applyConnectionStatus` 移除、`toolsLoadableStatus`、`isConnectionGone`）；Svelte 运行时 `app-detail.svelte.test.ts`（含状态事件：`removed` 丢缓存且不再请求、非可拉取状态不重拉）。测试基建：根 `vitest.config.ts` 新增 `desktop-svelte` 项目（vite-plugin-svelte + 无 DOM 的「客户端」环境 `apps/desktop/test/svelte-client-env.ts`，只跑 `*.svelte.test.ts`；`desktop` 项目排除它们）。
+- **审计其它 effect / 重试路径**：`McpSection` 的自定义 server 工具预取 effect 同样受此根因影响（随加载器修复一并解决）；`BotProfileForm` 的 `connectionTools` 预取 effect 对失败的连接会在缓存的每次变化时重试（有界，非无限，未改）；`ConnectedSkillsPrompt` / `EgressSummary` / `ConnectAppSetupBody` 的 effect 无此模式；`ConnectAppSetupBody.proceed` 有 `continued` 保护、只在 `done` 触发，`runs.retry` 无循环；core 的 `flow.ts` 失败路径都经 `#catalogCleanup` 收尾且 `#flows` 在 `finally` 里清掉，不留可再触发的东西。**未改的可疑点**：`McpService` 对界面发起的连接（`countFailure:false`）没有节流，所以渲染端循环时 core 每次都真的去连 server——core 侧限流可作纵深防御。
