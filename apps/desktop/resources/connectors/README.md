@@ -8,5 +8,5 @@
 - `icons/*.svg`：**中性占位图标**（圆角方块 + 首字母），不含任何厂商商标图形；上线前由用户确认
   各家品牌素材许可后再替换。
 - 发行门禁：`apps/desktop/connector-release-gates.json`（`approved: []`）。条目 `releaseGate`
-  未被放行时，发行构建不收录；开发构建与测试不过滤。**全部条目在用户完成带登录实测（U2）前保持关闭。**
+  未被放行时，发行构建不收录；开发构建与测试不过滤。**全部条目在完成带登录实测与适配（流程见 todo/extension-center.md §4）前保持关闭，测好一家放行一家。**
 - 骨架导入：`node scripts/import-mcp-registry.mjs <registry-name>`，`_meta` 扩展字段为占位，人工补。

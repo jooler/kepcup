@@ -9,7 +9,7 @@
 | 阶段 | 内容                                                                 | 代码 / 自动化测试 | 真实环境验收                               |
 | ---- | -------------------------------------------------------------------- | ----------------- | ------------------------------------------ |
 | P0   | MCP OAuth 地基（自定义 HTTP server 走 OAuth、令牌库、运行时刷新）    | **完成**          | 待 U1（部署 CIMD、Notion / Linear 手工走通） |
-| P1   | 连接应用 MVP（目录、多账号、Bot 授权、风险分级审批、工具锁定、设置「应用」、ACP 能力包） | **完成**          | 待 U2（测试账号 → 登录实测 → 放行发行门禁） |
+| P1   | 连接应用 MVP（目录、多账号、Bot 授权、风险分级审批、工具锁定、设置「应用」、ACP 能力包） | **完成**          | 待逐家适配（[extension-center.md](extension-center.md) X5） |
 | P2   | 规模化（step-up、污点外发、按需发现、预注册 / BYO 客户端、MCPB、开发者模式、协议版本调研） | **完成**（§6.8 可选项未做） | 待 U3 / U4（真实预注册客户端走通一次）     |
 | P3   | 开放平台基座（签名目录索引、分级信任、子注册表 Worker、校验器 CLI、MCP Apps 渲染、随附技能、开发者门户任务书） | **完成**          | 待 U5（签名密钥、子域与 Worker 部署）      |
 | P4   | 企业与托管网关                                                       | **只出任务书**（见 §4） | 不适用（本期不实现）                       |
@@ -27,7 +27,7 @@
 
 **连接与目录**
 
-- 内置目录 6 家（Notion、Linear、Atlassian、Sentry、Canva、Stripe），**当前发行门禁全部关闭**（见 §3 的 U2）。
+- 内置目录 6 家（Notion、Linear、Atlassian、Sentry、Canva、Stripe），**当前发行门禁全部关闭**（逐家适配见 [extension-center.md](extension-center.md)）。
 - 多账号、账号识别（id_token / userinfo / `whoami`）、首次连接工具复核、Bot 勾选、对话内「请求连接」卡、群聊多个 Bot 并发请求合并到同一流程。
 - 设置「应用」分区：目录 / 已连接 / 自定义三页；连接详情页（权限、逐工具风险与策略、待复核 diff、持续授权撤销、重新连接、断开影响提示）。
 
@@ -57,7 +57,7 @@
 | -- | ------------------------------------------------ | ---------------------------------------------- |
 | C0 | Cloudflare 凭证（`.env` 里的令牌 + 账号 ID；`cf` 已装好，见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)） | **所有 Agent 直接操作 Cloudflare 的前提**（U1 / U5 的部署与 DNS / WAF 操作） |
 | U1 | 部署 CIMD 文档、跑 `verify.mjs`、Notion / Linear 手工走通 | P0 真实验收                                    |
-| U2 | 测试账号 → 登录实测 → 补 `catalog.json` → 放行发行门禁 | P1 真实验收；在此之前目录 6 家在发行版里**不可见** |
+| ~~U2~~ | **已移出用户待办（2026-10-10）**：逐家适配转为开发任务，随「扩展中心」推进，见 [extension-center.md](extension-center.md) | 在此之前目录 6 家在发行版里**不可见** |
 | U3 | GitHub App 注册                                  | GitHub 条目、P2 的真实预注册验收               |
 | U4 | Google / Microsoft / Slack / Figma 的注册与审核  | 对应目录条目                                   |
 | U5 | 签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth | P3 线上部分                                    |
@@ -101,4 +101,5 @@
 | 逐项勾选与实施记录                 | [connected-apps.md](connected-apps.md)                                                   |
 | 平台探测结论、协议版本、MCP Apps spike | connected-apps.md 附录 B（B.1–B.7）                                                      |
 | 你要手动做的事                     | [connected-apps-user-actions.md](connected-apps-user-actions.md)                         |
+| 「扩展中心」与逐家适配（取代原 U2）  | [extension-center.md](extension-center.md)                                               |
 | 部署材料                           | `infra/cloudflare/{oauth-cimd,directory,registry}/`（各有 README 和 `verify.mjs`）       |
