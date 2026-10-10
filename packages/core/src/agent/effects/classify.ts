@@ -70,6 +70,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
    * 真实工具返回的回执 / 不确定结果照常进台账。
    */
   app_call_tool: 'external',
+  /** 本机连接（仅开发者模式）：手册只读；提案只记下确认卡需求，落库须用户确认，Bot 侧无外部副作用。 */
+  app_local_connector_guide: 'none',
+  app_propose_local_connector: 'local',
 
   // --- 浏览器（W1）：GET 导航可安全重做（与 W1 一致：browser_open 失败按 not_started）---
   browser_open: 'none',

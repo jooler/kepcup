@@ -754,8 +754,10 @@ export class ConnectFlowManager {
     // issuer 直接打开）。重试（invalid_client 重新注册）时用户已确认过，不再询问。
     // 目录应用（builtin，经 KepCup 审核的远程端点）：授权服务器与 MCP 端点同一站点（如
     // mcp.stripe.com → access.stripe.com）时直接打开；授权服务器指向别的站点则仍须用户先核对。
+    // `developer` 分级（本机连接 / 未审核来源）：即便同站点也先让用户核对完整授权地址。
     const autoOpen =
       flow.catalog !== undefined &&
+      flow.catalog.begin.tier !== 'developer' &&
       sameSite(new URL(flow.serverUrl).hostname, authorizationUrl.hostname);
     if (!autoOpen && flow.consentedHost !== authorizationUrl.host) {
       flow.consent = deferred<void>();

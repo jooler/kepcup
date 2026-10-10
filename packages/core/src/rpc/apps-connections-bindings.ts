@@ -14,12 +14,18 @@ import {
   appsEgressSummaryInputSchema,
   appsEgressSummaryOutputSchema,
   appsGrantsRevokeInputSchema,
+  appsLocalConnectorsConfirmInputSchema,
+  appsLocalConnectorsConfirmOutputSchema,
+  appsLocalConnectorsListOutputSchema,
+  appsLocalConnectorsRejectInputSchema,
+  appsLocalConnectorsRemoveInputSchema,
   appsToolsApproveAfterTestInputSchema,
   appsToolsApproveAfterTestOutputSchema,
   okOutputSchema,
 } from '@kepcup/shared';
 import type { AppConnectionsService } from '../apps/connections.js';
 import type { DirectorySync } from '../apps/directory-sync.js';
+import type { LocalConnectors } from '../apps/local-connectors.js';
 import type { CoreServices } from '../start.js';
 import type { RpcMethodSpec } from './server.js';
 
@@ -54,10 +60,42 @@ export function bindAppsConnectionMethods(
     }
     return services.directorySync;
   };
+  const local = (): LocalConnectors => {
+    if (services.localConnectors === null) {
+      throw new AppError('NOT_IMPLEMENTED', '本机连接模块未就绪');
+    }
+    return services.localConnectors;
+  };
   return {
     'apps.catalog.list': method(z.void(), appsCatalogListOutputSchema, async () => ({
       entries: connections().catalogEntries(),
     })),
+    // 本机连接（todo/local-connector-authoring.md §2.4）：confirm 在开发者模式关闭时被拒；
+    // remove 任何时候可用（断开全部连接 → 删条目）；reject = 确认卡上点「取消」。
+    'apps.localConnectors.list': method(z.void(), appsLocalConnectorsListOutputSchema, async () => ({
+      connectors: local().list(),
+    })),
+    'apps.localConnectors.confirm': method(
+      appsLocalConnectorsConfirmInputSchema,
+      appsLocalConnectorsConfirmOutputSchema,
+      async (input) => local().confirm(input.proposalId),
+    ),
+    'apps.localConnectors.reject': method(
+      appsLocalConnectorsRejectInputSchema,
+      okOutputSchema,
+      async (input) => {
+        local().reject(input.proposalId);
+        return { ok: true as const };
+      },
+    ),
+    'apps.localConnectors.remove': method(
+      appsLocalConnectorsRemoveInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await local().remove(input.connectorId);
+        return { ok: true as const };
+      },
+    ),
     // D73 P3 §7.1: signed directory sync status / manual sync (off = no network, status only).
     'apps.directory.status': method(z.void(), appsDirectoryStatusOutputSchema, async () =>
       directory().status(),

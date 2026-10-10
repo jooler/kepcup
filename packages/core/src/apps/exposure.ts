@@ -201,7 +201,7 @@ export class ConnectedApps {
     return {
       ...this.contextOf(view),
       decide: (tool) =>
-        this.#decide(view.connection.id, tool.name, classifyAppToolRisk(tool, policy)),
+        this.#decide(view.connection.id, tool.name, classifyAppToolRisk(tool, policy), view.tier),
     };
   }
 
@@ -220,13 +220,28 @@ export class ConnectedApps {
       connectionId,
       toolName,
       applyCatalogOverlay(base, toolName, catalogPolicyOf(view.entry)),
+      view.tier,
     );
   }
 
-  #decide(connectionId: string, toolName: string, detail: ToolRiskDetail): McpToolDecision {
+  /**
+   * 有效审批 = 用户逐工具策略 > 风险档默认。`developer` 分级（本机连接 / 未审核来源）按
+   * `mcp/policy.ts` 的 `isDeveloperTier` 走：所有工具默认每次确认（只读也是），用户可逐工具放宽，
+   * 破坏性恒每次确认（设计 29 §11.3；P2 起此前只对 MCPB server 生效，目录连接在本机连接上线时补齐）。
+   */
+  #decide(
+    connectionId: string,
+    toolName: string,
+    detail: ToolRiskDetail,
+    tier: string,
+  ): McpToolDecision {
     const policy = this.#deps.toolLock.getUserPolicy(connectionId, toolName);
     return decideMcpTool(
-      { autoApprove: false, ...(policy !== null ? { toolPolicies: { [toolName]: policy } } : {}) },
+      {
+        autoApprove: false,
+        ...(tier === 'developer' ? { tier: 'developer' as const } : {}),
+        ...(policy !== null ? { toolPolicies: { [toolName]: policy } } : {}),
+      },
       toolName,
       { risk: detail.risk, source: detail.source },
     );
