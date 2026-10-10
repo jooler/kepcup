@@ -138,6 +138,12 @@
         .filter((c) => c.type === 'group')
         .map((c) => ({ id: c.id, title: c.title })),
       currentConversationId: chat.current?.conversation.id ?? null,
+      // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；群聊的成员是
+      // 主力候选，不排除。
+      excludeBotIds:
+        isGroup || chat.current?.conversation.directBotId == null
+          ? []
+          : [chat.current.conversation.directBotId],
     }),
   );
 
@@ -172,6 +178,8 @@
     let unmountPopup: (() => void) | null = null;
     let items: MentionTarget[] = [];
     let selectedIndex = 0;
+    /** 方向键导航后才显示选中背景：首项不默认加背景（Enter 仍以其为目标）。 */
+    let navigated = false;
     let currentCommand: ((target: MentionTarget) => void) | null = null;
 
     const renderList = (): void => {
@@ -187,21 +195,30 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.className =
-          'flex w-full items-center gap-1 px-3 py-1.5 text-left text-sm hover:bg-accent' +
-          (index === selectedIndex ? ' bg-accent' : '');
+          'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent' +
+          (navigated && index === selectedIndex ? ' bg-accent' : '');
         button.dataset.testid = `mention-candidate-${target.token}`;
         button.onclick = () => currentCommand?.(target);
         const name = document.createElement('span');
-        name.className = 'truncate';
+        name.className = 'min-w-0 flex-1 truncate';
         name.textContent = `@${target.name}`;
         button.append(name);
-        const hint = document.createElement('span');
-        hint.className = 'ml-auto truncate text-xs text-muted-foreground';
-        hint.textContent =
-          target.kind === 'group' ? t('composer.mentionGroup') : (target.bio ?? '');
-        button.append(hint);
+        // 群聊候选带角标区分；Bot 简介不再展示（弹层保持紧凑固定宽度）。
+        if (target.kind === 'group') {
+          const badge = document.createElement('span');
+          badge.className = 'shrink-0 text-xs text-muted-foreground';
+          badge.textContent = t('composer.mentionGroup');
+          button.append(badge);
+        }
         li.append(button);
         popup?.append(li);
+        // 管家是特殊成员：行下加分隔线与普通候选分区（列表末尾不加）。
+        if (target.butler === true && index < items.length - 1) {
+          const divider = document.createElement('li');
+          divider.setAttribute('aria-hidden', 'true');
+          divider.className = 'mx-2 border-t border-border';
+          popup?.append(divider);
+        }
       });
     };
 
@@ -209,20 +226,25 @@
       onStart: (props) => {
         popup = document.createElement('ul');
         popup.className =
-          'absolute z-50 max-h-48 w-64 overflow-y-auto rounded-md border bg-background shadow-md';
+          'absolute z-50 max-h-48 overflow-x-hidden overflow-y-auto rounded-md border bg-background p-1 shadow-md';
         popup.style.zIndex = '50';
+        // 浮层定位脚本会把宽度撑成 max-content（长简介把弹层拉满屏），固定
+        // 宽度 + 文本截断（inline style 压过定位脚本写入的样式）。
+        popup.style.width = '18rem';
         popup.dataset.testid = 'mention-popup';
         items = props.items as MentionTarget[];
         selectedIndex = 0;
         currentCommand = props.command as (target: MentionTarget) => void;
         suggestionState.active = true;
         suggestionState.count = items.length;
+        navigated = false;
         renderList();
         unmountPopup = props.mount(popup);
       },
       onUpdate: (props) => {
         items = props.items as MentionTarget[];
         selectedIndex = 0;
+        navigated = false;
         currentCommand = props.command as (target: MentionTarget) => void;
         suggestionState.count = items.length;
         renderList();
@@ -232,11 +254,13 @@
         // IME 组合中的按键（含候选确认的 Enter）不参与提及选择。
         if (props.event.isComposing || props.event.keyCode === 229) return false;
         if (props.event.key === 'ArrowDown') {
+          navigated = true;
           selectedIndex = (selectedIndex + 1) % items.length;
           renderList();
           return true;
         }
         if (props.event.key === 'ArrowUp') {
+          navigated = true;
           selectedIndex = (selectedIndex - 1 + items.length) % items.length;
           renderList();
           return true;

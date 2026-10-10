@@ -20,6 +20,8 @@ export interface MentionTarget {
   kind: MentionKind;
   /** Bot 简介（弹层副标题）。 */
   bio?: string;
+  /** 管家（特殊成员：弹层里行下加分隔线分区）。 */
+  butler?: boolean;
 }
 
 /**
@@ -31,24 +33,36 @@ export function buildMentionTargets(input: {
   allBots: Bot[];
   groups: { id: string; title: string | null }[];
   currentConversationId?: string | null;
+  /** 不作候选的 Bot（如单聊里当前对话的 Bot 自己——@ 自己没有意义）。 */
+  excludeBotIds?: string[];
 }): MentionTarget[] {
   const targets: MentionTarget[] = [];
   const seenNames = new Set<string>();
   const seenTokens = new Set<string>();
+  const excluded = new Set(input.excludeBotIds ?? []);
   const push = (
     token: string,
     rawName: string | null | undefined,
     kind: MentionKind,
     bio?: string,
+    butler = false,
   ): void => {
     const trimmed = (rawName ?? '').trim();
     if (trimmed.length === 0 || seenNames.has(trimmed) || seenTokens.has(token)) return;
     seenNames.add(trimmed);
     seenTokens.add(token);
-    targets.push({ token, name: trimmed, kind, bio });
+    targets.push({ token, name: trimmed, kind, bio, butler });
   };
-  for (const bot of input.memberBots) push(bot.id, bot.name, 'bot', bot.bio);
-  for (const bot of input.allBots) push(bot.id, bot.name, 'bot', bot.bio);
+  for (const bot of input.memberBots) {
+    if (!excluded.has(bot.id)) {
+      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler');
+    }
+  }
+  for (const bot of input.allBots) {
+    if (!excluded.has(bot.id)) {
+      push(bot.id, bot.name, 'bot', bot.bio, bot.systemRole === 'butler');
+    }
+  }
   for (const group of input.groups) {
     if (group.id === input.currentConversationId) continue;
     push(groupMentionToken(group.id), group.title, 'group');

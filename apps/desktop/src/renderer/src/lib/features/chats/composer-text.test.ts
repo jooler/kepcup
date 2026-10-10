@@ -3,7 +3,7 @@ import type { Bot } from '@kepcup/shared';
 import { groupMentionToken } from '@kepcup/shared';
 import { buildMentionTargets, resolveMentionTokens, segmentComposerText } from './composer-text';
 
-function bot(id: string, name: string): Bot {
+function bot(id: string, name: string, systemRole: Bot['systemRole'] = null): Bot {
   return {
     id,
     name,
@@ -11,6 +11,7 @@ function bot(id: string, name: string): Bot {
     bio: `${name}的简介`,
     profile: {} as Bot['profile'],
     status: 'active',
+    systemRole,
     createdAt: 0,
     updatedAt: 0,
   } as Bot;
@@ -44,6 +45,25 @@ describe('buildMentionTargets', () => {
       groups: [{ id: 'g1', title: '同名' }],
     });
     expect(merged).toEqual([{ token: 'm1', name: '同名', kind: 'bot', bio: '同名的简介' }]);
+  });
+
+  it('butler Bot 带 butler 标记（弹层加分区线用）', () => {
+    const withButler = buildMentionTargets({
+      memberBots: [bot('bot_butler', '管家', 'butler'), bot('bot_jia', '阿甲')],
+      allBots: [],
+      groups: [],
+    });
+    expect(withButler.map((t) => t.butler)).toEqual([true, false]);
+  });
+
+  it('excludeBotIds 排除指定 Bot（单聊里排除当前对话的 Bot 自己）', () => {
+    const filtered = buildMentionTargets({
+      memberBots: [],
+      allBots: [bot('bot_self', '管家'), bot('bot_other', '阿丙')],
+      groups: [],
+      excludeBotIds: ['bot_self'],
+    });
+    expect(filtered.map((t) => t.token)).toEqual(['bot_other']);
   });
 });
 

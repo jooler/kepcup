@@ -100,8 +100,9 @@
     >
       {#each userSegments as segment, index (index)}
         {#if segment.kind === 'mention'}
-          <!-- 中性半透明底：在默认主色底与任意预置头像色底上都可读 -->
-          <span class="rounded-xs bg-black/10 px-0.5 dark:bg-white/20" data-testid="user-mention">
+          <!-- 边框取 currentColor（= 气泡文字色，跟随任意预置头像色/主色），
+               不再用背景色 -->
+          <span class="mx-1 rounded-sm border border-current/30 px-1" data-testid="user-mention">
             {segment.text}
           </span>
         {:else}
