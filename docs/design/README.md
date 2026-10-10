@@ -38,7 +38,7 @@
 | [26-voice-input.md](26-voice-input.md) | 输入坞语音化：按录转文字键与语音对话模式（音频附件 + 转写文本），16kHz PCM→WAV 录音管道，缺配置走对话内设置引导 |
 | [27-butler-and-delegation.md](27-butler-and-delegation.md) | 管家 Bot（唯一/置顶/不可删）与跨 Bot 委派 A→B：组队审批卡、路由、delegations、结果回贴（非 SubAgent）；委派 intent 与跟随任务结果 |
 | [28-external-agents-acp.md](28-external-agents-acp.md) | 外部智能体引擎（ACP）：设置页智能体目录（兼容 ACP Registry 条目）、Bot 在模型 / 智能体间选择、宿主能力按能力包可选注入、Provider 架构；本期 Claude Agent / Codex / OpenCode / DeepSeek Harness / Cursor / Google Antigravity（仅 key / Vertex 登录）；ZCode 已放弃（DEV-008：订阅鉴权须由宿主读取 / 中转凭据）；补位能力原生优先；隔离让渡与条款边界（未实现） |
-| [29-connected-apps.md](29-connected-apps.md) | 连接应用（Connect apps）：第三方账号经远程 MCP + OAuth（MCP Authorization 规范、CIMD/DCR/预注册、系统浏览器 + loopback）授权给 Bot；Connector→Connection→Grant 模型、令牌本地加密、按工具风险分级审批与定义锁定、对话内连接卡；开放平台基座（MCP / MCP Apps / Agent Skills / Registry 子注册表、分级信任、开发者流程）（未实现） |
+| [29-connected-apps.md](29-connected-apps.md) | 连接应用（Connect apps）：第三方账号经远程 MCP + OAuth（MCP Authorization 规范、CIMD/DCR/预注册、系统浏览器 + loopback）授权给 Bot；Connector→Connection→Grant 模型、令牌本地加密、按工具风险分级审批与定义锁定、对话内连接卡；开放平台基座（MCP / MCP Apps / Agent Skills / Registry 子注册表、分级信任、开发者流程）；§16 扩展中心（技能市场升级为 Skills / 连接 / MCP 三组，自定义入口收进开发者模式）（未实现） |
 | [30-supervisor-and-tasks.md](30-supervisor-and-tasks.md) | 对话轮与任务分治：对话轮（只读、串行、负责沟通与调度）与任务（完整工具面、可并行、负责执行）两层 loop；任务状态机与「必有结算」不变量、枚举化路由工具、1 写 N 读租约、消息所有权与任务卡；归并 D66/D71 并化简 D72；worktree 隔离明确不做（已实现，2026-10-08；实现期细化 DEV-009–DEV-015 待用户确认；进行中任务数与执行记录分列未做） |
 | [31-sensors.md](31-sensors.md) | 传感器统一管理：麦克风 / 摄像头 / 将来的温湿压风等统一为 `sensor`（kind × transport × dataShape 三维描述表）、统一权限与授权、设备选择与启停、设置页「硬件」数据驱动；本期麦克风做实、摄像头只走通硬件（Bot 监看待需求确认）；default session 权限收紧（代码已实现，待实机验收） |
 
