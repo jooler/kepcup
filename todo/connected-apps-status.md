@@ -58,7 +58,7 @@
 | C0 | Cloudflare 凭证（`.env` 里的令牌 + 账号 ID；`cf` 已装好，见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)） | **所有 Agent 直接操作 Cloudflare 的前提**（U1 / U5 的部署与 DNS / WAF 操作） |
 | U1 | 部署 CIMD 文档、跑 `verify.mjs`、Notion / Linear 手工走通 | P0 真实验收                                    |
 | ~~U2~~ | **已移出用户待办（2026-10-10）**：逐家适配转为开发任务，随「扩展中心」推进，见 [extension-center.md](extension-center.md) | 在此之前目录 6 家在发行版里**不可见** |
-| U3 | GitHub App 注册                                  | GitHub 条目、P2 的真实预注册验收               |
+| ~~U3~~ | **已决定推迟（2026-10-10）**：GitHub 需要 client secret，等 P4 托管网关；P2 的真实预注册验收改用 Google（U4） | GitHub 条目（推迟）                            |
 | U4 | Google / Microsoft / Slack / Figma 的注册与审核  | 对应目录条目                                   |
 | U5 | 签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth | P3 线上部分                                    |
 | M1 | 合入 main 的最终确认                             | 合入                                           |
@@ -73,7 +73,7 @@
 | 事项                                              | 说明                                                                 |
 | ------------------------------------------------- | -------------------------------------------------------------------- |
 | §6.8「+」菜单临时开关                             | 计划里的可选项，未做                                                 |
-| §6.4 的 Google / Microsoft / Slack / GitHub / Figma 目录条目 | **机制已做**（预注册表、BYO），条目本身要等 U3 / U4                   |
+| §6.4 的 Google / Microsoft / Slack / GitHub / Figma 目录条目 | **机制已做**（预注册表、BYO），条目本身要等 U4（GitHub 已推迟到 P4 托管网关）                   |
 | 目录增量文件                                      | 签名脚本会产出，客户端暂不消费（总是拉全量）                         |
 | MCPB：URL 下载、目录卡片「安装本地包」按钮        | 目前只能选本地文件安装；后端 `fromCatalog` 已就绪                    |
 | 随附技能的克隆上限                                | 克隆发生在审批之前、没有大小与时间上限——技能导入（D63）的后续项      |

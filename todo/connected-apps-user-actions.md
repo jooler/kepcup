@@ -11,7 +11,7 @@
 | --- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --- |
 | U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次                                                                                               | P0 门禁（真实环境部分）                     | [ ] |
 | U2  | ~~首批应用测试账号 → 登录实测 → 放行~~ **已移出用户待办（2026-10-10）**：这是逐家适配，转为开发任务，见 [extension-center.md](extension-center.md) §4 / X5 | — | —   |
-| U3  | GitHub App 注册（预注册客户端）                                                                                                              | P2 §6.4 的 GitHub 条目、P2 门禁的真实预注册走通 | [ ] |
+| U3  | ~~GitHub App 注册~~ **已决定推迟（2026-10-10）**：GitHub 要 client secret，与「不分发 secret」冲突，等 P4 托管网关；P2 的预注册验收改用 Google（U4） | — | —   |
 | U4  | Google / Microsoft / Slack / Figma 的平台注册与审核                                                                                        | P2 §6.4 对应条目                      | [ ] |
 | U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖）         | [ ] |
 | M1  | 合入 main 前的最终确认与迁移重编号                                                                                                               | 合入 main                           | [ ] |
@@ -61,7 +61,9 @@
 
 对你仍有影响的只有一点：适配每一家时，**账号持有人要在浏览器里登录授权一次**，并自备测试账号 / 站点（密码和令牌不给 Agent、不贴进聊天）。Notion、Linear 账号已就绪，排在最前。
 
-## U3 — GitHub App 注册（2026-10-10 核对官方文档：与「不分发 secret」原则冲突，先别做）
+## U3 — GitHub App 注册：**已决定推迟（2026-10-10）**
+
+**用户决定：GitHub 推迟**，等 P4 托管网关（[hosted-auth-gateway.md](hosted-auth-gateway.md)）再做；P2 门禁要求的「至少一个预注册条目真实走通」改用 **Google**（U4，桌面应用客户端的 secret 按 Google 规定不算保密，支持 PKCE 与回环回调）。GitHub 目录条目暂不进 `catalog.json`。下面是决定依据与备选做法，留作将来参考。
 
 GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端点，所以需要预注册客户端。核对 `github/github-mcp-server` 的 `docs/host-integration.md`（2026-10-10 读取）得到：
 
