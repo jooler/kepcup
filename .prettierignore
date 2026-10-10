@@ -6,3 +6,4 @@ package-lock.json
 docs
 resources
 *.md
+packages/core/test/fixtures/connectors
