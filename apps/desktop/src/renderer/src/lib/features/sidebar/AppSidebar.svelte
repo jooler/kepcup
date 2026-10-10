@@ -47,10 +47,11 @@
 
   /**
    * 左栏（参考 Grok Bot）：顶部只有搜索与新增，对话直接平铺列出；条目是
-   * 头像 + 名称 + 最后一条消息的单行预览，管理操作（重命名/复制会话 id/
-   * 群设置/删除会话）收进右键上下文菜单，不再有常驻「…」按钮。新建只保留
-   * 「+」一个入口（对话式新建 + 高级新建）。搜索按钮打开全局搜索弹框
-   * （Bot/会话/设置条目，Cmd+K 同效）。设置与通讯录打开全局设置弹框。
+   * 头像 + 名称 + 最后一条消息的单行预览（无消息且无未读/执行中/待确认
+   * 信号时预览行整行不渲染，只剩名称与头像垂直居中），管理操作（重命名/
+   * 复制会话 id/群设置/删除会话）收进右键上下文菜单，不再有常驻「…」按钮。
+   * 新建只保留「+」一个入口（对话式新建 + 高级新建）。搜索按钮打开全局
+   * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效）。设置与通讯录打开全局设置弹框。
    *
    * 宽度可拖拽调节（右缘手柄，sidebar-layout）：收窄到 macOS 红绿灯占位宽
    * 即图标模式——顶部搜索隐藏、「+」移到底部（与参考一致），对话只剩头像、
@@ -442,6 +443,14 @@
         {:else}
           <Sidebar.Menu>
             {#each orderedConversations as conversation (conversation.id)}
+              <!-- 预览行只在有内容（预览文本或未读/执行中/待确认信号）时渲染：
+                   什么都没有的条目只剩名称一行，与头像垂直居中。 -->
+              {@const preview = previewOf(conversation)}
+              {@const showMetaRow =
+                preview.length > 0 ||
+                ((conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id) ||
+                (conversation.runningBotIds?.length ?? 0) > 0 ||
+                (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
               <Sidebar.MenuItem>
                 <div
                   class="group/conversation flex w-full items-center"
@@ -469,38 +478,42 @@
                           {nameOf(conversation)}
                         </span>
                       </span>
-                      <!-- min-h-4：没有消息时也占住一行的视觉高度，保证条目高度统一。 -->
-                      <span
-                        class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground"
-                      >
-                        {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
-                          <span
-                            class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
-                            data-testid="unread-badge"
-                          >
-                            {conversation.unreadCount}
-                          </span>
-                        {/if}
-                        {#if (conversation.runningBotIds?.length ?? 0) > 0}
-                          <span
-                            class="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
-                            title={t('sidebar.runningSuffix')}
-                            data-testid="running-dot"
-                          ></span>
-                        {/if}
-                        {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-                          <span
-                            class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
-                            title={t('sidebar.pendingSuffix')}
-                            data-testid="pending-badge"
-                          >
-                            {permissions.pendingByConversation[conversation.id]}
-                          </span>
-                        {/if}
-                        <span class="truncate" data-testid="conversation-preview">
-                          {previewOf(conversation)}
+                      <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
+                      {#if showMetaRow}
+                        <span
+                          class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground"
+                        >
+                          {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
+                            <span
+                              class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                              data-testid="unread-badge"
+                            >
+                              {conversation.unreadCount}
+                            </span>
+                          {/if}
+                          {#if (conversation.runningBotIds?.length ?? 0) > 0}
+                            <span
+                              class="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+                              title={t('sidebar.runningSuffix')}
+                              data-testid="running-dot"
+                            ></span>
+                          {/if}
+                          {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+                            <span
+                              class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
+                              title={t('sidebar.pendingSuffix')}
+                              data-testid="pending-badge"
+                            >
+                              {permissions.pendingByConversation[conversation.id]}
+                            </span>
+                          {/if}
+                          {#if preview.length > 0}
+                            <span class="truncate" data-testid="conversation-preview">
+                              {preview}
+                            </span>
+                          {/if}
                         </span>
-                      </span>
+                      {/if}
                     </span>
                   </Sidebar.MenuButton>
                 </div>
