@@ -16,6 +16,17 @@
 | M1  | 合入 main 前的最终确认与迁移重编号                    | 合入 main                                          | [ ]  |
 | M2  | 隐私政策页面与 CIMD 里的 `logo_uri` / `policy_uri`    | U1 之前                                            | [ ]  |
 
+## C0 — Cloudflare 凭证（让 Agent 能直接操作 Cloudflare；U1 / U5 的前置）
+
+已装好新的 Cloudflare CLI `cf`（beta）与 `wrangler`；详细方法见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)。
+
+- [ ] 确认 **`kepcup.com` 在哪个 Cloudflare 账号下**。当前会话环境里已有的令牌只看得到 `omnecells.com`，**看不到 `kepcup.com`**，所以没有用它。
+- [ ] 在该账号建**令牌 A「kepcup-deploy」**（Workers Scripts / D1 / Account Settings 读 + kepcup.com 的 Zone 读、DNS、Workers Routes、Cache Purge），按 README §4.1。
+- [ ] `cp .env.example .env && chmod 600 .env`，填 `CLOUDFLARE_ACCOUNT_ID` 与令牌（**不要贴进聊天**）。
+- [ ] 运行 `infra/cloudflare/with-env.sh check`，看到目标 zone 可见后告诉 Agent。
+- [ ] （仅在需要时）令牌 B「kepcup-zone-admin」用于 WAF / Bot Fight Mode；免费套餐的 Bot Fight Mode 可能只能在控制台手动关。
+- [ ] 升级 Workers Paid 仍然只能你在控制台做。
+
 ## U1 — CIMD 文档部署与验证（P0 门禁）
 
 材料：`infra/cloudflare/oauth-cimd/`（`wrangler.jsonc`、`public/oauth/client.json`、`public/_headers`、`README.md`、`verify.mjs`）。
