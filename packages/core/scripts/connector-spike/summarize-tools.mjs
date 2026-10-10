@@ -31,6 +31,8 @@ export function summarize(tools, classifyRiskDetailed) {
   return { total: tools.length, withHints, buckets, notFromAnnotation };
 }
 
+const out = (line) => process.stdout.write(`${line}\n`);
+
 async function main() {
   const shared = await import(pathToFileURL(sharedDist).href).catch(() => null);
   if (!shared) {
@@ -49,15 +51,15 @@ async function main() {
       tools,
       shared.classifyRiskDetailed,
     );
-    console.log(
+    out(
       `${slug}: ${total} 个工具；带风险注解 ${withHints}/${total}；只读 ${buckets.read.length}、写 ${buckets.write.length}、破坏性 ${buckets.destructive.length}`,
     );
     if (notFromAnnotation.length > 0) {
-      console.log(`  判定不来自注解（需人工看）: ${notFromAnnotation.join(', ')}`);
+      out(`  判定不来自注解（需人工看）: ${notFromAnnotation.join(', ')}`);
     }
     if (list) {
       for (const key of ['destructive', 'write', 'read']) {
-        console.log(`  ${key}: ${buckets[key].join(', ')}`);
+        out(`  ${key}: ${buckets[key].join(', ')}`);
       }
     }
   }
