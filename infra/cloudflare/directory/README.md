@@ -59,8 +59,8 @@ node verify.mjs                                 # 部署后验线上
 ## 公钥列表与轮换
 
 公钥编进应用：`packages/shared/src/domain/directory-index.ts` 的 `CONNECTOR_INDEX_PUBLIC_KEYS`
-（`{ keyId, publicKey(原始 32 字节的 base64), validFrom, validUntil?, revoked }`）。**生产列表目前为空**
-= 目录同步关闭、只用打包快照（`apps.directory.status` 显示 `disabled / no_keys`）。
+（`{ keyId, publicKey(原始 32 字节的 base64), validFrom, validUntil?, revoked }`）。生产列表目前只有 `kepcup-2026-1`（2026-10-10 起）；
+列表为空 = 目录同步关闭、只用打包快照（`apps.directory.status` 显示 `disabled / no_keys`）。本机发布用 `infra/cloudflare/sign-directory.sh`（从 `.env` 读私钥）。
 
 轮换（旧密钥 A → 新密钥 B）：
 

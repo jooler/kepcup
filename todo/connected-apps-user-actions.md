@@ -32,7 +32,7 @@
 已完成并验证：`AAAA kepcup.com 100::`、`oauth-cimd` 部署（`verify.mjs` 通过）、`registry.kepcup.com` custom domain（冒烟通过）。详情见 [infra/cloudflare/README.md](../infra/cloudflare/README.md) §7。仍待办：
 
 - [ ] `registry.kepcup.com` 的 WAF 限速规则：正式写入被分类器拦下（zone 级共享资源变更）；规则已 `--validate-only` 通过，命令与内容见 README §7「等你放行的」。放行后 Agent 一条命令即可，或你在控制台 Security → WAF → Rate limiting rules 手建。
-- [ ] `dl.kepcup.com` custom domain（先要有 U5 的签名密钥）。
+- [x] （已由 Agent 完成）`dl.kepcup.com` 已上线并验签通过；签名私钥在 `.env`（**请自行备份**），公钥已登记进 `CONNECTOR_INDEX_PUBLIC_KEYS`（`kepcup-2026-1`）。之后更新目录：`infra/cloudflare/sign-directory.sh --out infra/cloudflare/directory/public/connectors/v1 --key-id kepcup-2026-1`，再 `with-env.sh wrangler deploy --config infra/cloudflare/directory/wrangler.jsonc`。
 - [ ] 首次定时同步（:17 UTC）后确认 `sync_state` 有数据、`/v0.1/servers` 非空。
 
 ## U1 — CIMD 文档部署与验证（P0 门禁）
