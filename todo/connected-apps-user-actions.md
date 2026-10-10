@@ -6,26 +6,32 @@
 
 ## 总览
 
-| #   | 事项                                                  | 卡住什么                                           | 状态 |
-| --- | ----------------------------------------------------- | -------------------------------------------------- | ---- |
-| U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次    | P0 门禁（真实环境部分）                            | [ ]  |
-| U2  | 首批应用测试账号 → 登录实测 → 放行发行门禁            | P1 门禁第 1 条；目录里 6 家目前全部「门禁关闭」    | [ ]  |
-| U3  | GitHub App 注册（预注册客户端）                       | P2 §6.4 的 GitHub 条目、P2 门禁的真实预注册走通    | [ ]  |
-| U4  | Google / Microsoft / Slack / Figma 的平台注册与审核   | P2 §6.4 对应条目                                   | [ ]  |
-| U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖） | [ ]  |
-| M1  | 合入 main 前的最终确认与迁移重编号                    | 合入 main                                          | [ ]  |
-| M2  | 隐私政策页面与 CIMD 里的 `logo_uri` / `policy_uri`    | U1 之前                                            | [ ]  |
+
+| #   | 事项                                                                                                                                 | 卡住什么                              | 状态  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --- |
+| U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次                                                                                               | P0 门禁（真实环境部分）                     | [ ] |
+| U2  | 首批应用测试账号 → 登录实测 → 放行发行门禁                                                                                                           | P1 门禁第 1 条；目录里 6 家目前全部「门禁关闭」      | [ ] |
+| U3  | GitHub App 注册（预注册客户端）                                                                                                              | P2 §6.4 的 GitHub 条目、P2 门禁的真实预注册走通 | [ ] |
+| U4  | Google / Microsoft / Slack / Figma 的平台注册与审核                                                                                        | P2 §6.4 对应条目                      | [ ] |
+| U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖）         | [ ] |
+| M1  | 合入 main 前的最终确认与迁移重编号                                                                                                               | 合入 main                           | [ ] |
+| M2  | 隐私政策页面与 CIMD 里的 `logo_uri` / `policy_uri`                                                                                          | U1 之前                             | [ ] |
+
+
+
 
 ## C0 — Cloudflare 凭证（让 Agent 能直接操作 Cloudflare；U1 / U5 的前置）
 
 已装好新的 Cloudflare CLI `cf`（beta）与 `wrangler`；详细方法见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)。
 
-- [x] 确认 **`kepcup.com` 在哪个 Cloudflare 账号下**（账号 id `37918f50…`；会话环境里原有的令牌属于别的账号 / 项目，没有使用）。
+- [x] 确认 `kepcup.com` **在哪个 Cloudflare 账号下**（账号 id `37918f50…`；会话环境里原有的令牌属于别的账号 / 项目，没有使用）。
 - [x] 在该账号建**令牌 A「kepcup-deploy」**（Workers Scripts / D1 / Account Settings 读 + kepcup.com 的 Zone 读、DNS、Workers Routes、Cache Purge），按 README §4.1。
 - [x] `cp .env.example .env && chmod 600 .env`，填 `CLOUDFLARE_ACCOUNT_ID` 与令牌（**不要贴进聊天**）。
 - [x] 运行 `infra/cloudflare/with-env.sh check`，目标 zone 可见（2026-10-10 通过）。
 - [ ] （仅在需要时）令牌 B「kepcup-zone-admin」用于 WAF / Bot Fight Mode；免费套餐的 Bot Fight Mode 可能只能在控制台手动关。
 - [ ] 升级 Workers Paid 仍然只能你在控制台做。
+
+
 
 ## C1 — 剩余的 Cloudflare 变更（顶级域记录、CIMD、registry 域名、dl 域名、限速规则均已由 Agent 完成）
 
@@ -35,15 +41,19 @@
 - [x] （已由 Agent 完成）`dl.kepcup.com` 已上线并验签通过；签名私钥在 `.env`（**请自行备份**），公钥已登记进 `CONNECTOR_INDEX_PUBLIC_KEYS`（`kepcup-2026-1`）。之后更新目录：`infra/cloudflare/sign-directory.sh --out infra/cloudflare/directory/public/connectors/v1 --key-id kepcup-2026-1`，再 `with-env.sh wrangler deploy --config infra/cloudflare/directory/wrangler.jsonc`。
 - [ ] 首次定时同步（:17 UTC）后确认 `sync_state` 有数据、`/v0.1/servers` 非空。
 
+
+
 ## U1 — CIMD 文档部署与验证（P0 门禁）
 
 材料：`infra/cloudflare/oauth-cimd/`（`wrangler.jsonc`、`public/oauth/client.json`、`public/_headers`、`README.md`、`verify.mjs`）。
 
-- [ ] 决定 Cloudflare 的 **Bot Fight Mode** 处理方式：免费版只能整站关闭；Pro 起用 Super Bot Fight Mode 并用 WAF 自定义规则 Skip `/oauth/*` 与 `/.well-known/*`。同时确认「Block AI bots」等规则不覆盖 `/oauth/*`（设计 29 §15.1）。授权服务器是服务端到服务端抓取，被 JS 挑战拦下就表现为 `invalid_client`。
+- [x] **已决定（2026-10-10）：先用免费版**。kepcup.com 的 Bot Fight Mode 本来就是关的（`fight_mode:false`，Agent 只读核对过），CIMD 现在可被授权服务器正常抓取（`verify.mjs` 通过）。**约束**：免费版下保持 Bot Fight Mode 关闭；若以后要开，必须先升级 Pro 并用 WAF 自定义规则 Skip `/oauth/*` 与 `/.well-known/*`（免费版只能整站开关，开了会拦掉授权服务器对 CIMD 的抓取，表现为 `invalid_client`）。同时不要启用「Block AI bots」覆盖 `/oauth/*`（设计 29 §15.1）。
 - [x] （已由 Agent 完成）`wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
 - [x] （已由 Agent 完成，通过）运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
 - [ ] 接入外部可用性监控（CIMD 宕机只影响**新**授权，不影响已有令牌）。
 - [ ] 用 **Notion 或 Linear 官方 MCP** 以「自定义」方式手工走通一次：连接 → 调用 → 令牌过期后重连 → 断开；结果记入 `docs/dev/PROGRESS.md`「连接应用 P0」。
+
+
 
 ## U2 — 首批应用测试账号与登录实测（P1 门禁第 1 条）
 
@@ -55,6 +65,8 @@
 - [ ] 把通过的条目加入 `connector-release-gates.json`（即「放行」）；结论写入 `todo/connected-apps.md` 附录 B。
 - [ ] 用放行的应用在真实环境走一遍：目录连接 → 多账号 → Bot 勾选 → 对话里完成一件事 → 写工具审批卡显示账号。
 
+
+
 ## U3 — GitHub App 注册
 
 GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端点，所以需要预注册客户端。
@@ -63,6 +75,8 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] 把**平台定义为非保密**的客户端信息填入 `apps/desktop/oauth-clients.json`（`{ [clientRef]: { issuer, clientId, clientSecret? } }`，现为 `{}`；不要放保密的 secret），并在目录条目里写对应 `auth.clientRef` 与 `registration: "preregistered"`。
 - [ ] 真实走通一次预注册客户端授权（P2 门禁要求「至少一个预注册条目真实走通」，Google 或 GitHub 任一即可）。
 
+
+
 ## U4 — 大平台注册与审核
 
 - [ ] **Google**：Cloud 项目、OAuth 同意屏幕、「桌面应用」类型客户端、应用验证；首批只用非受限范围（`drive.file`、日历、`gmail.send` 等）。受限范围需要 CASA 安全评估——是否做由你决定。
@@ -70,6 +84,8 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] **Slack**：只能用已发布 / 内部应用——需要创建并上架（或内部分发）Slack 应用。
 - [ ] **Figma**：需向 Figma 申请合作 / 白名单；未获批准前不进目录。
 - [ ] 每一项完成后：填 `oauth-clients.json` + 目录条目，跑一次真实授权。
+
+
 
 ## U5 — P3 的线上部分（目录签名与服务端）
 
@@ -83,6 +99,8 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] 目录签名 CI 步骤：把 `scripts/sign-connector-index.mjs` 接入 CI（每次目录变更签名并发布到 `dl.kepcup.com`；用法与增量生成见 `infra/cloudflare/directory/README.md`）。填入公钥并发布应用新版本之后，旧版本客户端没有公钥，目录同步对它们仍是停用的——这是预期行为。
 - [ ] **真机验收（todo §7.8 的用户部分）**：自动化只验了自写的 Linear 形态 `server.json` 夹具 + 假服务器。请取一个已上架 Claude / ChatGPT 目录的真实应用（如 Linear 官方 MCP）的 `server.json`，补上 `_meta["app.kepcup/connector"]` 后运行 `node packages/app-validator/dist/cli.js validate <server.json> --auth`（先 `pnpm --filter @kepcup/app-validator build`；`--auth` 要在浏览器里登录），把结果记入 `docs/dev/PROGRESS.md`「连接应用 P3」。
 
+
+
 ## P4 启动前的用户决定（两份任务书均**未开工**，默认不启动）
 
 任务书：[hosted-auth-gateway.md](hosted-auth-gateway.md)（托管授权网关）、[enterprise-ema.md](enterprise-ema.md)（企业托管授权）。下面是 Agent 动手前需要你拍板的事；没有你的明确批准，两者都保持任务书状态。
@@ -95,6 +113,8 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] 企业测试环境（E0 / E6 才需要）：Okta 开发者租户（或其他支持 ID-JAG 签发的 IdP）、Linear / Atlassian / Canva 等支持 EMA 的服务器的测试租户。
 - [ ] 托管配置的发行渠道与路径（任务书 §5.1 的提案：各平台系统级只读 `managed-settings.json`）、`client.json` 增加 `grant_types` / `authorization_grant_profiles_supported` 的评审与部署（任务书 §7，属 M2 的「发布即评审」范围）。
 
+
+
 ## M1 — 合入 main 前的最终确认（Agent 不会自行合入）
 
 - [ ] 你明确同意后再合入 main；合入前 Agent 会：把 main 合进分支、迁移重新编号（当前分支用 `0025_app_connections`、`0026_app_tools`、`0027_egress_approval`，若 main 又新增迁移则顺延；`app-connections-migration.test.ts` 等有编号断言的测试同步改）、跑全量测试一次。
@@ -102,11 +122,15 @@ GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端�
 - [ ] 合入后删除分支 `t/d73-connected-apps`（本地 worktree `/home/jyy/wt/kepcup-d73` 与远端分支）。
 - [ ] 推送方式：HTTPS 凭据缓存会过期，分支一律用 SSH 推（`git push git@github.com:jooler/kepcup.git t/d73-connected-apps:t/d73-connected-apps`）。
 
+
+
 ## M2 — 隐私政策与 CIMD 元数据
 
 - [ ] 在 `https://kepcup.com/privacy` 放上隐私政策页面（`client.json` 的 `policy_uri` 与目录条目都会引用；Agent 写的是占位地址，**请确认 URL 与内容**）。
 - [ ] 提供 `https://kepcup.com/oauth/logo.png`（`client.json` 的 `logo_uri` 目前是占位，文件不存在）。
 - [ ] `client.json` 一旦发布，`redirect_uris` / `client_name` 等字段改动视同发布，走评审；**URL 永不更换**。
+
+
 
 ## 其他待你决定的开放项（不阻塞）
 
