@@ -397,3 +397,22 @@
 - 推荐：均保留；用户确认后设计 29 §8.2 / §11.3 / §11.4 / §11.6 的旁注并入正文，U5 完成时再核对第 11 项的前提（生产公钥已填入）。
 - 决定：（由人工填写）
 - 已更新的文档：`docs/dev/02-architecture.md`（连接应用 P3 模块与 RPC）、`04-agent-runtime.md`（分级规则、界面发起的审批、随附技能提示、MCP Apps 卡）、`05-testing.md`（P3 用例分布与注入点）、`docs/design/29-connected-apps.md`（修订记录与三处旁注）、`docs/dev/PROGRESS.md`、`todo/connected-apps.md`（§7 实施记录）、`todo/connected-apps-user-actions.md`
+
+### DEV-023 扩展中心（X0–X4 / X6）实现对任务书 / 设计 29 的细化与取舍（D73）
+
+- 状态：待决定
+- 阶段：扩展中心（`todo/extension-center.md` X0–X4、X6；设计 29 §16）；分支 `t/extension-center`
+- 是否阻塞：否
+- 问题：任务书把几处落点留给实现者选择，实现时的取舍如下（均已写入设计 29 §16）：
+  1. **「开发者模式」是一个常驻的设置分区**（决定 A 的落点）：`SettingsSectionId` 增 `developer`，导航项始终可见（开关就在分区里，隐藏则无法开启）；开关关闭时只显示一句说明，**自定义入口**（新建 server：stdio / HTTP / SSE，BYO 客户端面板，原始工具定义 / 授权日志）全部不渲染。扩展中心「MCP」组里**不放**开关或自定义入口。
+  2. **`mcp` 别名与 `openSettings('apps', anchor, 'custom')` 落「开发者模式」分区**（原落「应用 → 自定义」页）。开发者模式关闭时用户看到的是开关而不是 server 列表——已有 server 的管理改在扩展中心「MCP」组（启停 / 编辑 / 删除 / 逐工具策略 / OAuth 连接仍在行内），`settings.mcpServers` 与既有连接不迁移、不删除。
+  3. **设置「应用」的「目录」页签直接移除**（任务书允许「移除或改成跳转」）：整个分区去掉页签（只剩已连接管理），顶部加跳转扩展中心的横条；`APPS_TABS` / `appsTabForKey` 删除，`AppsTab` 类型保留 `'catalog' | 'connected' | 'custom'` 仅为旧深链参数可编译（`catalog` / `connected` 被忽略，`custom` → 开发者模式）。Bot 面板的「去连接」改为直接打开扩展中心「连接」组。
+  4. **「MCP」组复用 `McpSection` 的 `manage` 形态**：保留已有 server 的编辑 / 删除（只隐藏「新建 server」与 BYO 客户端面板），`.mcpb` 安装留在这里。
+  5. **精选 MCP 清单只建空壳，不接 RPC、不进安装包**：`resources/mcp-presets/catalog.json`（空）+ core `mcp/presets.ts` 的 schema / 加载器 + 单测；`extraResources`、core-host 环境变量、RPC 与卡片渲染等第一个条目落地时再补（见该目录 README）。
+  6. **扩展中心弹框改为固定高度（`h-[85vh]`）**：原技能市场是 `max-h-[85vh]` 随内容伸缩；三个分组共用一个框，固定高度避免切页签时抖动。Skills 分组内容与行为不变（`skill-market-*` testid 原样保留，仅弹框与入口按钮改名）。
+  7. **「连接」组的目录为空时隐藏搜索 / 分类筛选**，只显示「暂无已适配的应用」（新增 `AppCatalogGrid` 的 `onManage` 属性与目录空态；设置里不再使用该网格）。
+- 影响范围：渲染端 `features/extension-center/*`、`features/settings/{sections,SettingsDialog,AppsSection,DeveloperSection,McpSection}`、`features/apps/{AppCatalogGrid,AppConnectionsList}`、`stores/shell.svelte.ts`、`i18n/locales/zh-CN.ts`；core `mcp/presets.ts`；e2e `skill-market` / `sidebar-resize` / 新增 `extension-center`。无 RPC / 迁移 / 共享契约改动。
+- 可选方案：按上述实现保留（推荐）；或 1 把「开发者模式」开关放进「通用」分区、仅开启后才出现分区导航（多一处开关入口，不推荐）、5 现在就接 RPC 与打包（清单为空时是死代码，不推荐）。
+- 推荐：均保留。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/design/29-connected-apps.md`（§16、§9、D73 第 7 条、修订记录）、`docs/design/{03-bot,05-wiki-and-skills,22-file-skill-routing}.md`（技能市场 → 扩展中心 Skills 分组）、`todo/connected-apps*.md`、`apps/desktop/resources/{connectors,preset-skills,mcp-presets}/README.md`、`docs/dev/PROGRESS.md`。
