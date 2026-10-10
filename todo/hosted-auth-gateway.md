@@ -44,7 +44,7 @@
 | 用户自带客户端（BYO，`apps.setClientCredentials`）              | 开发者、企业自建                   |
 | `api-key` 类连接（`auth.kind: 'api-key'`）                       | 只提供 API key / PAT 的服务        |
 | 厂商官方远程 MCP（令牌留在本机）                                 | 绝大多数                           |
-| 等厂商支持 CIMD / 公共客户端，或向厂商申请合作                   | Figma（白名单）、GitHub（CIMD 待核） |
+| 等厂商支持 CIMD / 公共客户端，或向厂商申请合作                   | Figma（白名单）、GitHub（CIMD 待核；2026-10-10 用户决定 GitHub **推迟到本网关**——GitHub App / OAuth App 都要求 client secret，是首批候选之一） |
 
 > 网关**解决不了**"平台不让 KepCup 接入"的问题（如 Figma 的客户端白名单）：网关在平台眼里仍是 KepCup 的一个应用，同样要过平台审核。它只解决"客户端形态不被接受"。
 
