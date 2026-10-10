@@ -22,6 +22,9 @@
    * 在这里点「添加」决定；安装落入公共作用域（public_skills）：一次安装，
    * 所有 Bot 都能发现并调用。Bot 的私有技能（git 导入 / 自建）不受影响，
    * 同名时该 Bot 的私有版本遮蔽公共版本。
+   *
+   * 面板是明确打开的管理界面：点遮罩/弹框外部不关闭（易误触），只留右上角
+   * ✕ 与 Esc；安装进行中关闭弹框不中断安装（installing 在模块级单例里）。
    */
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
@@ -96,6 +99,7 @@
   <DialogContent
     class="flex max-h-[85vh] max-w-xl sm:max-w-[50rem] flex-col overflow-hidden"
     data-testid="skill-market-dialog"
+    onInteractOutside={(event) => event.preventDefault()}
   >
     <DialogHeader class="shrink-0">
       <DialogTitle>{t('skillMarket.title')}</DialogTitle>
