@@ -1536,6 +1536,8 @@ export const rpcMethodSchemas = {
     input: embeddingConfigureInputSchema,
     output: embeddingStatusOutputSchema,
   },
+  /** 设置页「向量来源」的手动下载（用户点击即同意，出参同 reinstall）。 */
+  'embedding.download': { input: voidInput, output: environmentReinstallOutputSchema },
 
   'skills.list': { input: skillsListInputSchema, output: skillsListOutputSchema },
   'skills.import': { input: skillsImportInputSchema, output: skillsImportOutputSchema },
@@ -1800,6 +1802,7 @@ const APP_METHODS = [
   'budget.update',
   'embedding.status',
   'embedding.configure',
+  'embedding.download',
   'skills.list',
   'skills.import',
   'skills.enable',

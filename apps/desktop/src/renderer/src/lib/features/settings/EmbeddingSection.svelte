@@ -4,6 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
+  import { environmentStore } from '$lib/stores/environment.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
 
@@ -14,9 +15,33 @@
   let status = $state<EmbeddingStatus | null>(null);
   let source = $state<'local' | 'provider'>('local');
   let saving = $state(false);
+  let downloading = $state(false);
 
   $effect(() => {
+    environmentStore.start();
+    void environmentStore.refresh();
     void refresh();
+  });
+
+  /** 本地向量模型的安装行（environment.changed / progress 事件实时更新）。 */
+  const modelInstall = $derived(
+    environmentStore.installs.find((install) => install.item === 'embedding-model') ?? null,
+  );
+  const modelReady = $derived(modelInstall?.status === 'installed');
+  const downloadProgress = $derived(
+    modelInstall?.status === 'installing'
+      ? (environmentStore.progress[modelInstall.id] ?? null)
+      : null,
+  );
+  const downloadPercent = $derived.by(() => {
+    const event = downloadProgress;
+    if (event === null || event.totalBytes === undefined || event.totalBytes <= 0) return null;
+    return Math.min(100, Math.round(((event.receivedBytes ?? 0) / event.totalBytes) * 100));
+  });
+
+  // 安装落位（environment.changed 翻转行状态）后重取状态，徽章翻为「已就绪」。
+  $effect(() => {
+    if (modelReady) void refresh();
   });
 
   /** 「向量模型」section 的配置是否齐备（厂商 + 模型 + key）。 */
@@ -44,6 +69,19 @@
       toast.error(t('common.actionFailed'));
     } finally {
       saving = false;
+    }
+  }
+
+  /** 手动下载本地模型：用户点击即同意，core 侧直接安装（不再发审批卡）。 */
+  async function downloadModel(): Promise<void> {
+    downloading = true;
+    try {
+      await core.call('embedding.download');
+      toast.success(t('settings.embeddingDownloadStarted'));
+    } catch {
+      toast.error(t('common.actionFailed'));
+    } finally {
+      downloading = false;
     }
   }
 </script>
@@ -104,8 +142,45 @@
       </label>
     </div>
 
+    {#if source === 'local' && !modelReady}
+      {#if modelInstall?.status === 'installing'}
+        <div class="space-y-1" data-testid="embedding-download-progress">
+          <div class="flex items-center justify-between text-xs text-muted-foreground">
+            <span
+              >{downloadProgress === null
+                ? t('approvals.environmentPreparing')
+                : t(`approvals.envStage.${downloadProgress.stage}`)}</span
+            >
+            {#if downloadPercent !== null}<span>{downloadPercent}%</span>{/if}
+          </div>
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              class="h-full rounded-full bg-amber-500 transition-all"
+              style="width: {downloadPercent ?? 8}%"
+              data-testid="embedding-download-progress-bar"
+            ></div>
+          </div>
+        </div>
+      {:else}
+        <div>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={downloading}
+            onclick={() => void downloadModel()}
+            data-testid="embedding-download"
+          >
+            {t('settings.embeddingDownload')}
+          </Button>
+        </div>
+      {/if}
+    {/if}
+
     {#if source === 'provider' && (embeddingConfigured === null || !embeddingVendorHasKey)}
-      <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="embedding-no-vendor-config">
+      <p
+        class="text-xs text-amber-700 dark:text-amber-400"
+        data-testid="embedding-no-vendor-config"
+      >
         {t('settings.embeddingNoVendorConfig')}
       </p>
     {/if}

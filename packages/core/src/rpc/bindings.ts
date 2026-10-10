@@ -1206,6 +1206,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       embeddingStatusOutputSchema,
       async (input) => services.memory!.configureEmbedding(input),
     ),
+    'embedding.download': method(voidInput, environmentReinstallOutputSchema, async () => ({
+      install: await services.memory!.downloadEmbeddingModel(),
+    })),
 
     // --- skills (P08) ------------------------------------------------------
     'skills.list': method(skillsListInputSchema, skillsListOutputSchema, async (input) => ({
