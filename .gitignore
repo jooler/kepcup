@@ -22,6 +22,7 @@ playwright-report/
 # environment
 .env
 .env.*
+!.env.example
 
 # packaging artifacts (P13)
 apps/desktop/release/

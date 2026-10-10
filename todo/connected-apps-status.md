@@ -55,6 +55,7 @@
 
 | #  | 事项                                             | 阻塞                                           |
 | -- | ------------------------------------------------ | ---------------------------------------------- |
+| C0 | Cloudflare 凭证（`.env` 里的令牌 + 账号 ID；`cf` 已装好，见 [infra/cloudflare/README.md](../infra/cloudflare/README.md)） | **所有 Agent 直接操作 Cloudflare 的前提**（U1 / U5 的部署与 DNS / WAF 操作） |
 | U1 | 部署 CIMD 文档、跑 `verify.mjs`、Notion / Linear 手工走通 | P0 真实验收                                    |
 | U2 | 测试账号 → 登录实测 → 补 `catalog.json` → 放行发行门禁 | P1 真实验收；在此之前目录 6 家在发行版里**不可见** |
 | U3 | GitHub App 注册                                  | GitHub 条目、P2 的真实预注册验收               |
