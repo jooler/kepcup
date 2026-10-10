@@ -54,6 +54,17 @@ export interface LifecycleDeps {
         revokeForBotInConversation(botId: string, conversationId: string): number;
       }
     | undefined;
+  /**
+   * D73 P2 taint rows (`app_taint`, no foreign keys): a deleted conversation loses all of its
+   * rows, a deleted bot the rows of its own direct conversations (its group rows keep the
+   * group's taint until they expire). No-op when absent.
+   */
+  taint?:
+    | {
+        deleteForConversation(conversationId: string): number;
+        deleteForBotInConversations(botId: string, conversationIds: readonly string[]): number;
+      }
+    | undefined;
   /** P07 memory cascades (承诺 void / 连接关闭), no-op when memory absent. */
   memory?:
     | {
@@ -160,6 +171,9 @@ export class LifecycleService {
     await this.deps.abortRunsForConversation(conversationId);
     this.#cascade('agent session conversation cascade failed', { conversationId }, () =>
       this.deps.agentSessions?.onConversationDeleted(conversationId),
+    );
+    this.#cascade('taint conversation cascade failed', { conversationId }, () =>
+      this.deps.taint?.deleteForConversation(conversationId),
     );
 
     // P07: commitments made in this conversation are void for every member
@@ -282,6 +296,12 @@ export class LifecycleService {
     this.deps.mainDb.prepare('delete from conversation_members where bot_id = ?').run(botId);
     this.#cascade('app tool grant bot cascade failed', { botId }, () =>
       this.deps.appGrants?.revokeForBot(botId),
+    );
+    this.#cascade('taint bot cascade failed', { botId }, () =>
+      this.deps.taint?.deleteForBotInConversations(
+        botId,
+        this.deps.conversations.listDirectByBot(botId).map((conv) => conv.id),
+      ),
     );
 
     for (const conv of this.deps.conversations.listDirectByBot(botId)) {

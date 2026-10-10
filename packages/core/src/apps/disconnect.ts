@@ -33,6 +33,8 @@ export interface AppDisconnectDeps {
    * 外键 `ON DELETE CASCADE` 一并消失。
    */
   onRowDeleted?: (info: { connectionId: string; connectorId: string }) => void | Promise<void>;
+  /** 自定义 server 被删除之后（`removeCustomServer`）：丢弃内存里属于它的东西（开发者模式的授权事件日志）。 */
+  onServerRemoved?: (serverId: string) => void;
 }
 
 /** 原为 OAuth 的 server 被改成非 OAuth，或 URL 变了（令牌受众不再成立）。 */
@@ -151,6 +153,7 @@ export class AppDisconnector {
       // 名称不合法的 serverId 不可能存过密钥（secrets 名称有同一套校验）。
       if (!(error instanceof AppError && error.code === 'INVALID_INPUT')) throw error;
     }
+    this.#deps.onServerRemoved?.(serverId);
   }
 
   async #revoke(connectionId: string): Promise<{ refresh: boolean; access: boolean }> {

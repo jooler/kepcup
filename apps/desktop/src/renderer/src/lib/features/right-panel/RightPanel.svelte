@@ -27,6 +27,7 @@
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
+  import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
   import { showBrowser } from './show-browser';
 
   const conversation = $derived(chat.current?.conversation ?? null);
@@ -397,6 +398,9 @@
             showIdentity={false}
             onBrowserProfileConfirm={confirmBrowserProfile}
           />
+          {#if bot}
+            <EgressSummary botId={bot.id} />
+          {/if}
         </div>
       </div>
       <div

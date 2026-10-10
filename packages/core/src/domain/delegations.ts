@@ -103,6 +103,14 @@ export type DelegationPatch = Partial<Record<keyof typeof PATCH_COLUMNS, string 
 const ACTIVE_SQL = "('submitted', 'working', 'awaiting_tasks')";
 
 export class DelegationsService {
+  /** Observer of every successful transition / patch (D73 P2: taint travels with a handoff). */
+  #onMoved: ((delegation: Delegation) => void) | null = null;
+
+  /** Registers the (single) transition observer; its errors never fail a transition. */
+  onMoved(listener: (delegation: Delegation) => void): void {
+    this.#onMoved = listener;
+  }
+
   constructor(
     private readonly db: SqliteDatabase,
     private readonly clock: Clock,
@@ -309,7 +317,14 @@ export class DelegationsService {
         `update delegations set ${sets.join(', ')} where id = ? and status in (${placeholders})`,
       )
       .run(...params, id, ...from);
-    return result.changes > 0 ? this.getOrThrow(id) : null;
+    if (result.changes === 0) return null;
+    const updated = this.getOrThrow(id);
+    try {
+      this.#onMoved?.(updated);
+    } catch {
+      // an observer must never break the transition
+    }
+    return updated;
   }
 
   /** Patches bookkeeping columns without a status change (e.g. the sent card id). */

@@ -1,5 +1,7 @@
 import type {
   AppAuthReason,
+  AppFlowLogEntry,
+  OAuthClientView,
   McpToolRisksOutput,
   ModelCapability,
   OnboardingStatePatch,
@@ -193,6 +195,56 @@ class SettingsState {
    */
   async mcpToolRisks(serverId: string): Promise<McpToolRisksOutput> {
     return (await core.call('mcp.toolRisks', { serverId })) as McpToolRisksOutput;
+  }
+
+  // --- 连接应用 P2：开发者模式 / BYO OAuth 客户端（D73 §6.4 / §6.6）---------------
+
+  get developerMode(): boolean {
+    return this.settings?.apps.developerMode === true;
+  }
+
+  async setDeveloperMode(on: boolean): Promise<void> {
+    await this.update({ apps: { developerMode: on } } as Partial<Settings>);
+  }
+
+  /** 原始工具定义（含 annotations / inputSchema）。 */
+  async rawMcpTools(serverId: string): Promise<Array<Record<string, unknown>>> {
+    const out = (await core.call('mcp.rawTools', { serverId })) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    return out.tools;
+  }
+
+  /** 手动刷新工具：丢弃缓存并重新列出（工具锁定照常生效，新增 / 变化的工具待复核）。 */
+  async refreshMcpTools(serverId: string): Promise<Array<Record<string, unknown>>> {
+    const out = (await core.call('mcp.refreshTools', { serverId })) as {
+      tools: Array<Record<string, unknown>>;
+    };
+    return out.tools;
+  }
+
+  /** 授权流程事件日志（脱敏，进程内）。 */
+  async flowLog(serverId: string): Promise<AppFlowLogEntry[]> {
+    const out = (await core.call('apps.flowLog', { serverId })) as { entries: AppFlowLogEntry[] };
+    return out.entries;
+  }
+
+  async listOauthClients(): Promise<OAuthClientView[]> {
+    const out = (await core.call('apps.oauthClients.list')) as { clients: OAuthClientView[] };
+    return out.clients;
+  }
+
+  /** secret 只写不读；调用后调用方应立刻清空输入。 */
+  async setOauthClient(input: {
+    issuer: string;
+    clientId: string;
+    clientSecret?: string;
+  }): Promise<void> {
+    await core.call('apps.oauthClients.set', input);
+  }
+
+  async removeOauthClient(issuer: string): Promise<void> {
+    await core.call('apps.oauthClients.remove', { issuer });
   }
 
   /** 检索供应商连通性测试：入参 key 优先（未保存前先测），失败返回错误说明。 */

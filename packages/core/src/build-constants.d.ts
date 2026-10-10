@@ -14,3 +14,10 @@ declare const __KEPCUP_AGENT_RELEASE_GATES__: readonly string[] | undefined;
  * connector-release-gates.json；其余构建中未定义 → apps/catalog.ts 视为不过滤）。
  */
 declare const __KEPCUP_CONNECTOR_RELEASE_GATES__: readonly string[] | undefined;
+/**
+ * D73 P2 预注册 OAuth 客户端表（apps/desktop/scripts/dist.mjs 经 esbuild define 注入
+ * oauth-clients.json；其余构建中未定义 → apps/oauth-clients.ts 退回读文件 / 空表）。
+ */
+declare const __KEPCUP_OAUTH_CLIENTS__:
+  | Readonly<Record<string, { issuer: string; clientId: string; clientSecret?: string }>>
+  | undefined;

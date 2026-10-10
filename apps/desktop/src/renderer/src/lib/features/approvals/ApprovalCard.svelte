@@ -4,6 +4,7 @@
     agentToolApprovalPayloadSchema,
     butlerProposalPayloadSchema,
     describeScheduleWhen,
+    egressApprovalPayloadSchema,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
@@ -22,6 +23,7 @@
     AlertTriangle,
     Users,
     Bot,
+    Globe,
   } from '@lucide/svelte';
   import { t, type MessageKey } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -77,6 +79,20 @@
   // D73：连接应用工具的身份行 / 参数视图。
   const appIdentity = $derived(mcpTool !== null ? appToolIdentity(mcpTool) : null);
   const appArgs = $derived(mcpTool !== null ? appToolArgsView(mcpTool) : null);
+
+  // D73 P2 egress payload：污点期间的外发确认（通道、外发内容全文）。
+  const egress = $derived.by(() => {
+    if (approval.kind !== 'egress') return null;
+    const parsed = egressApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  /** command / git_remote / mcp_tool 卡在污点期间带 `tainted` 标记，附加提示。 */
+  const taintedHint = $derived(
+    (approval.kind === 'command' ||
+      approval.kind === 'git_remote' ||
+      approval.kind === 'mcp_tool') &&
+      approval.payload['tainted'] === true,
+  );
 
   // D72 P3 agent_tool payload：外部智能体的工具权限请求 / 项目内 Agent 配置确认。
   const agentTool = $derived.by(() => {
@@ -304,7 +320,9 @@
   );
 
   const title = $derived(
-    approval.kind === 'access'
+    approval.kind === 'egress'
+      ? t('approvals.egress.title')
+      : approval.kind === 'access'
       ? t('approvals.accessTitle')
       : approval.kind === 'unsandboxed'
         ? t('approvals.unsandboxedTitle')
@@ -374,7 +392,9 @@
         <McpRiskBadge risk={mcpTool.risk} />
       {/if}
       <code class="min-w-0 flex-1 truncate">
-        {approval.kind === 'git_remote'
+        {approval.kind === 'egress'
+          ? `${egress !== null ? t(`approvals.egress.channel.${egress.channel}` as MessageKey) : ''} · ${egress?.target ?? ''}`
+          : approval.kind === 'git_remote'
           ? `git ${gitRemoteOp} ${gitRemoteArgs}`.trim()
           : approval.kind === 'environment'
             ? `${envDisplayName} ${envVersion}`.trim()
@@ -454,6 +474,8 @@
         <Package class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'skill_import' || approval.kind === 'skill_preset'}
         <Puzzle class="size-4 text-amber-600" aria-hidden="true" />
+      {:else if approval.kind === 'egress'}
+        <Globe class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'mcp_tool'}
         <Plug class="size-4 text-amber-600" aria-hidden="true" />
       {:else if approval.kind === 'butler_proposal'}
@@ -958,6 +980,14 @@
           {t('approvals.mcpDestructiveRisk')}
         </p>
       {/if}
+      {#if taintedHint}
+        <p
+          class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+          data-testid="approval-tainted-hint"
+        >
+          {t('approvals.egress.taintedHint')}
+        </p>
+      {/if}
       {#if mcpChoosesDur}
         <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="approval-duration">
           {#each mcpDurations as option, index (option)}
@@ -974,6 +1004,35 @@
           {/each}
         </div>
       {/if}
+    {:else if approval.kind === 'egress' && egress !== null}
+      <!-- D73 P2 污点外发确认（design 29 §8.3）：通道 + 外发内容全文（不摘要），只有「允许一次 / 拒绝」 -->
+      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-egress">
+        <span class="text-muted-foreground">{t('approvals.egress.channel')}</span>
+        <span data-testid="approval-egress-channel"
+          >{t(`approvals.egress.channel.${egress.channel}` as MessageKey)}</span
+        >
+        {#if egress.summary.length > 0}
+          <span class="text-muted-foreground">{t('approvals.reason')}</span>
+          <span class="break-all">{egress.summary}</span>
+        {/if}
+        <span class="text-muted-foreground">{t('approvals.egress.target')}</span>
+        <code
+          class="max-h-60 overflow-auto break-all whitespace-pre-wrap"
+          data-testid="approval-egress-target">{egress.target}</code
+        >
+        {#if egress.taintedSince !== undefined}
+          <span class="text-muted-foreground">{t('approvals.egress.since')}</span>
+          <span data-testid="approval-egress-since"
+            >{new Date(egress.taintedSince).toLocaleString()}</span
+          >
+        {/if}
+      </div>
+      <p
+        class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+        data-testid="approval-egress-note"
+      >
+        {t('approvals.egress.explain')}
+      </p>
     {:else if approval.kind === 'git_remote'}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.gitRemoteOperation')}</span>
@@ -997,6 +1056,14 @@
       >
         {t('approvals.gitRemoteRisk')}
       </p>
+      {#if taintedHint}
+        <p
+          class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+          data-testid="approval-tainted-hint"
+        >
+          {t('approvals.egress.taintedHint')}
+        </p>
+      {/if}
     {:else}
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
         <span class="text-muted-foreground">{t('approvals.command')}</span>
@@ -1018,6 +1085,14 @@
           {t('approvals.unsandboxedRisk')}
         </p>
       {/if}
+      {#if taintedHint}
+        <p
+          class="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300"
+          data-testid="approval-tainted-hint"
+        >
+          {t('approvals.egress.taintedHint')}
+        </p>
+      {/if}
     {/if}
 
     <div class="mt-3 flex items-center gap-2">
@@ -1031,7 +1106,9 @@
         data-testid="approval-approve"
         >{approval.kind === 'butler_proposal'
           ? t('approvals.butlerConfirm')
-          : t('approvals.approve')}</Button
+          : approval.kind === 'egress'
+            ? t('approvals.egress.allowOnce')
+            : t('approvals.approve')}</Button
       >
       <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
         >{t('approvals.deny')}</Button

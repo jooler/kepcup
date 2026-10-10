@@ -34,6 +34,7 @@
 | main | `0023_watches.sql` | D79（borrowings W7）：新表 `watches` |
 | main | `0024_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients`；D73 后续迁移（P2 起）顺延取号 |
 | main | `0025_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
+| main | `0026_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
 
   D73（连接应用）原预留的 main `0018`–`0020` 因此顺延；main `0021`、runs `0009` 又被 borrowings W6 / W2 占用，main `0022` / `0023` 又被 D80 / W7 占用，D73 从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -59,7 +60,7 @@ CREATE TABLE settings (
 
 已知键：`providers`（厂商与自定义接口配置，不含 key）、`models.default_main`、`models.default_light`、`provider_concurrency`、`unattended`（无人值守模式状态）、`notifications`、`embedding`、`webSearch`（联网检索供应商，P18：`{provider: 'tavily'|'brave'|'bocha'|null}`；key 不在此处，存 secrets）。
 
-连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有，不在 `settings.update` 入参里）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。
+连接应用（D73）在同一设置 JSON 中增加 `apps`（core 自有；`settings.update` 入参只开放 P2 的 `developerMode` / `taintGuard` 两个字段的部分 patch，其余字段 core 独占）：`apps.toolLockBaselineDone`（存量 MCP server 的工具锁定基线已建立，默认 `false`，只作用一次；读取容错）。P2 再加 `apps.developerMode`（开发者模式，默认 `false`；经 `settings.update` 的 `apps` 部分 patch 写）与 `apps.taintGuard`（污点外发控制总开关，默认 `true`；同一入口写，设置「无人值守」分区的开关）。MCP server 条目（`settings.mcpServers[]`）P2 增可选 `source`（`{kind:'mcpb', name, version, sha256}`，MCPB 包安装生成；`name` / `version` 受正则约束，不含路径分隔符）与 `tier`（`'developer'`，MCPB 非目录安装；见 `mcp/policy.ts isDeveloperTier`），MCPB 的 `sensitive` `user_config` 存 `secrets` 表 `mcp:{serverId}:env:{KEY}`，设置里的 env 值只留占位符 `secret:env:KEY`。
 
 外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 群聊摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, groupMentionOnly=true（经 Agent 的群聊判断需用户关掉此项）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
@@ -279,7 +280,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool）
+### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0026 增 egress）
 
 ```sql
 CREATE TABLE approvals (
@@ -288,7 +289,7 @@ CREATE TABLE approvals (
                     'access', 'unsandboxed', 'command', 'git_remote',
                     'environment', 'skill_import', 'skill_preset',
                     'profile_change', 'mcp_tool', 'butler_proposal',
-                    'agent_tool')),
+                    'agent_tool', 'egress')),
   bot_id          TEXT,
   conversation_id TEXT,
   run_id          TEXT,
@@ -308,6 +309,8 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 `butler_proposal`（D70，迁移 0016 重建表加入 CHECK）：payload 以 `proposalType: 'team' | 'bot' | 'group'` 区分（见 `butlerProposalPayloadSchema`）；非阻塞提交、管家 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `selection`（用户保留的条目下标）。
 
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, projectPath?, configHash?}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：project 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、project 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
+
+`egress`（D73 P2，迁移 `0026_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -677,6 +680,25 @@ ALTER TABLE app_connections ADD COLUMN baseline_pending INTEGER NOT NULL DEFAULT
 - **状态机**：刷新（`tools/list`、`list_changed` 之后的重拉）时，新工具 `approved_hash = NULL`、定义变化 `current_hash ≠ approved_hash`——二者**不暴露**给模型（`buildMcpTools` / `resolveMcpToolEntries` 的 `toolFilter`，调用时网关再核一次），连接 `connected → tools_changed` 并发 `apps.connection_status`（带待复核计数 `tools`）；消失的工具直接删行；复核批准 = `approved_hash := current_hash`，无待复核后 `tools_changed → connected`（`expired` / `needs_scope` 等更紧迫的状态不被覆盖）。
 - **存量基线**（只作用一次）：core 启动时 `settings.apps.toolLockBaselineDone` 不为真 → 为当时已存在的每个自定义 server 建 `custom:` 行并置 `baseline_pending = 1`，其首次拉取到的工具直接批准（之后清零），随后置位该标记。之后新加的 server：设置页「测试」成功后 `approveAfterTest`，保存即批准；未批准前工具不暴露。`settings.apps` 是 core 自有键（不在 `settings.update` 入参里，`{...current, ...patch}` 的浅合并保证它不被渲染端的 patch 抹掉）。
 - **授权**：`app_tool_grants` 以 (Bot, 连接, 工具) 为键；`conversation_id` 为空 = 对该 Bot 总是允许，非空 = 仅在该对话内。现有 `grants` 表按路径设计，不复用。清理见下方删除级联表。
+
+### app_taint（D73 P2，迁移 0026）
+
+污点状态（[design/29](../design/29-connected-apps.md) §8.3 / §12；`core/apps/taint.ts` 的 `TaintService`）：某 Bot 在某对话里**成功读取过目录应用（`conn_…`）的工具结果**后置位，之后 24 小时（`APP_TAINT_TTL_MS`）内该 (Bot, 对话) 的外发通道降级为逐次确认（`egress` 审批）。每次成功读取续期（`first_at` 在未过期时保持，过期后重新开始）；按 (Bot, 对话) 计而不按 run 计，`runs.retry`、后续对话轮与任务共用同一行。自定义 MCP 工具**不是来源**（只是通道）。`settings.apps.taintGuard`（默认 true，设置「无人值守 / 高级」）关闭时仍置位、只是不再拦截。
+
+```sql
+CREATE TABLE app_taint (
+  bot_id          TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  first_at        INTEGER NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  PRIMARY KEY (bot_id, conversation_id)
+);
+CREATE INDEX app_taint_expires ON app_taint(expires_at);
+```
+
+不设外键 / CASCADE：对话删除时 `domain/lifecycle.ts` 删掉该对话的全部行，Bot 删除时只删它自己私聊里的行（群聊里的行保留到过期——群里其他成员读到过它的输出）；其余遗留行由 `sweepExpired()`（启动时与每次置位时）清理。
+
+**判定粒度与跨 Bot 传递**：外发拦截按**对话**判定（`TaintService.guard` = 该对话里任一 Bot 的行未过期）——群聊里 Bot B 读到 Bot A 的输出时不能把污点「洗掉」；私聊只有一个 Bot，与按 (Bot, 对话) 等价。跨对话的交接由 `TaintService.inherit` 传递：委派投递（`delegations` 转 `working`）把 A 对话的污点带到 B 的私聊，B 的结果贴回（转 `completed`，非 `fyi`）再把 B 私聊的污点带回 A 的对话；继承保留来源的 `first_at`，`expires_at` 取较晚者（不因传递而延长）。接线在 `DelegationsService.onMoved`（`start.ts`）。
 
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 

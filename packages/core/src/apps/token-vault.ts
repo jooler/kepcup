@@ -27,6 +27,15 @@ export function issuerHash(issuer: string): string {
   return createHash('sha256').update(issuer).digest('hex').slice(0, 24);
 }
 
+/**
+ * 客户端表的 issuer 键：去掉首尾空白与末尾斜杠（`https://a.com` 与 `https://a.com/` 是同一个
+ * 授权服务器；预注册表的 `sameIssuer` 同样忽略末尾斜杠）。只作用于客户端的存取
+ * （`getClient` / `saveClient` / `clearIssuerClient*`）；`issuerHash` 本身仍按原样哈希。
+ */
+export function normalizeIssuer(issuer: string): string {
+  return issuer.trim().replace(/\/+$/, '');
+}
+
 export function accessTokenSecretName(connectionId: string): string {
   return `conn:${connectionId}:access`;
 }
@@ -74,6 +83,23 @@ export class TokenVault {
     this.#secrets = deps.secrets;
     this.#store = deps.store;
     this.#clock = deps.clock;
+  }
+
+  // --- 待追加的 scope（step-up）-------------------------------------------------
+
+  /**
+   * 运行时遇到 `403 insufficient_scope` 时记下服务端要求的 scope：连接此后进入 `needs_scope`、
+   * 工具不再暴露，这些 scope 只存在于抛出的错误里——卡片被忽略 / 被限流抑制后，设置页「重新连接」
+   * 与 `apps.connect` 用它把缺的 scope 并进授权请求（见 `AppConnectionsService`）。
+   * 进程内记录（不进 secrets 表：secrets 的值会进入脱敏词表，scope 这类短词会误伤正文）；
+   * 重启后丢失无碍——重连后工具重新暴露，下一次 403 会再次记下。
+   */
+  setPendingScopes(connectionId: string, scopes: readonly string[]): void {
+    this.#store.setPendingScopes(connectionId, scopes);
+  }
+
+  getPendingScopes(connectionId: string): string[] {
+    return this.#store.getPendingScopes(connectionId);
   }
 
   // --- 令牌 ------------------------------------------------------------------
@@ -135,7 +161,8 @@ export class TokenVault {
 
   // --- OAuth 客户端（按 issuer，跨连接共享） --------------------------------------------
 
-  getClient(issuer: string): StoredOAuthClient | null {
+  getClient(rawIssuer: string): StoredOAuthClient | null {
+    const issuer = normalizeIssuer(rawIssuer);
     const clientId = this.#secrets.getValue(clientIdSecretName(issuer));
     const meta = this.#store.getClientMeta(issuerHash(issuer));
     if (clientId === null || meta === null) return null;
@@ -156,10 +183,11 @@ export class TokenVault {
    * 以传入为准：没有 secret 则删除已存的 secret。
    */
   saveClient(
-    issuer: string,
+    rawIssuer: string,
     info: OAuthClientInformation | OAuthClientInformationFull,
     options: { source: OAuthClientSource; redirectUris?: string[] },
   ): void {
+    const issuer = normalizeIssuer(rawIssuer);
     if (info.client_id.length === 0) {
       throw new AppError('INVALID_INPUT', 'client_id must not be empty');
     }
@@ -243,7 +271,8 @@ export class TokenVault {
   }
 
   /** 强制清除某 issuer 的客户端（令牌端点返回 `invalid_client` 后重新注册前）。 */
-  clearIssuerClient(issuer: string): void {
+  clearIssuerClient(rawIssuer: string): void {
+    const issuer = normalizeIssuer(rawIssuer);
     this.#secrets.removeByPrefix(`oauth:client:${issuerHash(issuer)}:`);
     this.#store.deleteClientMeta(issuerHash(issuer));
   }
@@ -252,7 +281,8 @@ export class TokenVault {
    * 无其他连接引用该 issuer 且客户端来自 DCR 时清除；手填 / 预注册的客户端是用户或
    * 发行方的配置，不随连接清除。返回是否清除了。
    */
-  clearIssuerClientIfUnused(issuer: string): boolean {
+  clearIssuerClientIfUnused(rawIssuer: string): boolean {
+    const issuer = normalizeIssuer(rawIssuer);
     const meta = this.#store.getClientMeta(issuerHash(issuer));
     if (meta === null || meta.source !== 'dcr') return false;
     if (this.#store.countByIssuer(issuer) > 0) return false;

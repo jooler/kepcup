@@ -24,6 +24,7 @@
 | P14 命令行交互执行          | 未开始 | —          | —          | 任务书已就绪（2026-10-03），设计见 design/15-interactive-execution.md |
 | 连接应用 P0（D73） | 待验收 | 2026-10-09 | — | 自定义 HTTP MCP server 的 OAuth 地基：CIMD / DCR / 手填三条注册路径的真实交互流程、运行时令牌刷新、断开吊销、对话内重连卡；自动化门禁已通过（228 例），待用户待办 U1（部署 CIMD 并跑 `verify.mjs`、Notion / Linear 手工走通一次）。详见文末「连接应用 P0」 |
 | 连接应用 P1（D73） | 待验收 | 2026-10-10 | — | 连接应用 MVP：内置目录（6 条，发行门禁全关）、目录连接与多账号、首连工具复核、风险分级审批（写工具三种时长、Bot 级持续授权）、工具定义锁定、Bot 勾选与 `app_*` 工具暴露、`<connected_apps>` / `<available_apps>`、对话内连接卡完整版、设置「应用」分区、ACP `apps` 能力包；门禁自动化部分已通过（P1 回归 45 文件 517 例 + 渲染端 13 文件 111 例），待用户待办 U2（真实账号登录实测后开门禁）。详见文末「连接应用 P1」 |
+| 连接应用 P2（D73） | 待验收 | 2026-10-10 | — | 规模化与大平台：权限追加（step-up）限流与待追加 scopes、污点外发控制（`egress` 审批、`app_taint`、无人值守审计汇总）、按需工具发现（`app_search_tools` / `app_call_tool`）、预注册 / 自带 OAuth 客户端、开发者模式（原始工具定义 / 授权事件日志 / 手动刷新 / 开发者档）、MCPB 本地包安装、协议版本 spike（结论：保持 pi-mcp）；已实现并经两组独立评审修复，定向测试在 Docker 全绿，全量回归由收口时补；真实平台条目（Google / Microsoft / Slack / GitHub）待用户待办 U3 / U4，「+」菜单临时开关（§6.8）未做。详见文末「连接应用 P2」 |
 
 
 ## 验收记录
@@ -991,7 +992,7 @@
 - **未做 / 待办**：
   - **门禁里需要用户的部分（用户待办 U1）**：部署 `infra/cloudflare/oauth-cimd` 到 `kepcup.com/oauth/*` 并运行 `verify.mjs`；用 Notion 或 Linear 官方 MCP 以「自定义」方式手工走通一次（连接 → 调用 → 过期重连 → 断开），结果补记在此。
   - **迁移号**：已处理——合入 main 时撞上 D80 的 `0022_schedule_title_origin.sql` 与 W7 的 `0023_watches.sql`，D73 顺延为 `0024_app_connections.sql` / `0025_app_tools.sql`；`app-connections-migration.test.ts` / `app-tools-migration.test.ts` 同步改版本号，既有迁移测试用 `test/support/migration-versions.ts` 的 `mainVersionsAfter`，不受影响。
-  - P1 已于 2026-10-10 完成（见下节「连接应用 P1」）；P2 起不在本期。
+  - P1 已于 2026-10-10 完成（见下节「连接应用 P1」），P2 同日完成（见「连接应用 P2」）。
 
 
 ## 连接应用 P1 — 连接应用 MVP（2026-10-10，todo/connected-apps.md §5，D73）
@@ -1010,5 +1011,33 @@
 - **偏差**：DEV-020（见 DEVIATIONS；P0 项仍在 DEV-019）。
 - **未做 / 待办**：
   - **门禁里需要用户的部分**：U1（部署 CIMD、`verify.mjs`、Notion / Linear 手工走通，沿 P0）；**U2**：提供测试账号 → 带登录的 spike（导出工具清单、注解覆盖率、账号识别可行性）→ 据此补 `catalog.json` 的 `toolPolicy` / `whoami` / `scopes` → 把通过者加入 `connector-release-gates.json`。门禁打开前目录在发布构建里为空（开发构建 / 测试不过滤）。
-  - U3（GitHub App 预注册）、U4 / U5 随 P2 起的阶段；P2（step-up、污点外发控制、按需发现、预注册客户端、MCPB、开发者模式）不在本期。
+  - U3（GitHub App 预注册）、U4 / U5 随 P2 起的阶段；P2（step-up、污点外发控制、按需发现、预注册客户端、MCPB、开发者模式）已于 2026-10-10 实现，见「连接应用 P2」。
   - 迁移号 `0024` / `0025` 以当前 main 为准；最终合并时若 main 又前进则再顺延。
+
+
+## 连接应用 P2 — 规模化与大平台（2026-10-10，todo/connected-apps.md §6，D73）
+
+设计 `docs/design/29-connected-apps.md`，执行方案 `todo/connected-apps.md` §6。分支 `t/d73-connected-apps`，工作树未提交（P0 / P1 已提交为 `553fd03` / `8eb876e` 等）、未合入 `main`（需用户确认）。
+
+- **交付**：
+  - **§6.1 权限追加（step-up）**：`apps/step-up.ts` `AppStepUpLimiter`（进程内，(对话, 连接) 为键，`APP_STEP_UP_WINDOW_MS`=30 分钟，`isAvailable()` 只检查不占名额；名额由 orchestrator `#commitStepUp` 在胜出的 setup 需求让 run 以 `failed` 收尾时才占）；被抑制时工具结果为普通失败 `APP_SCOPE_INSUFFICIENT`（引导用户去设置重新授权）。挑战要求的 scopes 存 `AppConnectionStore` 进程内映射（`setPendingScopes` / `getPendingScopes`，经 TokenVault，`runtime-provider.onUnauthorized` 写），`AppConnectionsService #begin` 并入重新授权，故设置页「重新连接」/ `apps.connect({connectionId})` 在卡片被忽略后仍能补上缺的权限；重启丢失，下次 403 重新得到。渲染端 `ConnectAppSetupBody` 显示「需要追加的权限」（`apps.setupScopesAdded`）。目录连接首次只申请 `auth.scopes.default`。
+  - **§6.2 污点外发控制**：迁移 `0026_egress_approval.sql`（`approvals` 重建加 `egress`；`app_taint(bot_id, conversation_id, first_at, expires_at)`）；`apps/taint.ts` `TaintService`（目录应用工具成功返回后 `mark` / 续期 `APP_TAINT_TTL_MS`=24h，`guard` 开关感知、按对话判定，委派经 `DelegationsService.onMoved` `inherit`，群聊任一成员的行未过期则全体受影响；对话删除删行、Bot 删除删其私聊的行）。来源只有目录应用工具；通道：应用 / 自定义 MCP 工具（写或 `openWorldHint:true`，含显式 `openWorldHint:true` 的自定义读工具）、`web_fetch` / `web_search`、浏览器导航 / 点击（角色白名单外一律算，默认拒绝）/ Enter、沙箱 `bash`（网络 `open` 且非只读白名单命令）、`watch_create`、`git_remote` 与确认模式 `command` 卡（加 `tainted` 标记）、ACP 权限桥 fetch 类与自动放行命令。`egress` 审批 payload `{channel(web_fetch|web_search|browser|app_tool|mcp_tool|bash|git_remote|watch), target, summary, taintedSince?}`，时长只有 `once`（`decide()` 降级）；W4 重复效果门对外发通道不启用（`app_tool` / `mcp_tool` 例外）。混合规则：会弹 `mcp_tool` 卡的写工具只出一张带污点标记与完整参数的卡，本来免卡的（grant / `auto` / `autoApprove`）弹 `egress` 卡。对话轮 / 子代理不等待（`RUN_READ_ONLY` → `start_task`）；无人值守 D41 自动批准，审计 `egress_tainted`（`channel` / `target`）+ RPC `apps.egressSummary` + Bot 详情 `EgressSummary`。开关 `settings.apps.taintGuard`（默认 true，「无人值守」分区）。
+  - **§6.3 按需工具发现**：`APP_TOOLS_INLINE_MAX`=40、`APP_SEARCH_RESULTS_MAX`=20；`apps/discovery.ts`、`tools/app-tools.ts` `buildAppDiscoveryTools`（`app_search_tools` / `app_call_tool`）、`exposure.ts appToolsDeferred`；`app_call_tool` 经同一个 `wrapMcpTool` → `gateway.mcpToolCall` 恰好一次（真实工具卡 / grant / 锁定 / 策略），入参先 `validateToolArguments`；效果类别经新增的 `ToolDefinition.mcpOf?(params)` 钩子（`agent/types.ts`、`effects/recorder.ts`）；只读子代理拿同样两个工具，范围限于只读 + 免审；ACP 桥与提示词随同一决定；`<untrusted>` 统一由 `untrustedBlock()` 构造（`mcp/tools.ts` 的普通结果也一并修正）。
+  - **§6.4 预注册 / 自带客户端**：`apps/oauth-clients.ts`、`apps/desktop/oauth-clients.json`（当前 `{}`，真实条目待 U3 / U4）经 `scripts/dist.mjs` 注入 `__KEPCUP_OAUTH_CLIENTS__`；选择顺序：自带 / 已存非 DCR → 目录 `clientRef`（按 issuer 校验）→ 已存 DCR → CIMD → DCR；`registration:'preregistered'` 条目不回退（issuer 不符 → `OAUTH_ISSUER_MISMATCH`，缺项 → 不可连接 / 停放 `OAUTH_CLIENT_REQUIRED`）；issuer 规范化（trim + 去尾斜杠）；DCR 保存不再覆盖中途出现的 BYO 客户端。RPC `apps.oauthClients.list/set/remove`（不返回 secret，`clearSecret`，仍有连接引用该 issuer 时拒删）；渲染端 `OAuthClientsPanel`（「自定义」页）。
+  - **§6.5 MCPB 本地包**：`apps/mcpb/{manifest,install,zip,index}.ts`、`rpc/mcpb-bindings.ts`、shared `domain/mcpb.ts`（`mcpb.inspect` / `mcpb.install({path, sha256, userConfig, conversationId?, fromCatalog?})`）、`mcpServerSchema.source{kind:'mcpb',name,version,sha256}` + `tier`；错误码 `MCPB_INVALID` / `MCPB_INCOMPATIBLE` / `MCPB_RUNTIME_MISSING`；私有快照拷贝（防 TOCTOU）→ 检视 → 解到 `{toolchains}/mcpb/{name@version 小写}/`（暂存 + 标记〔sha256 + 目录树哈希〕，复用前校验）；zip 加固（zip-slip、符号链接、绝对路径、盘符、Windows 设备名、冒号、尾随点 / 空格、重名与大小写冲突、条目数 / 体积上限、中央目录大小自洽）；`sensitive` `user_config` → secrets `mcp:{serverId}:env:{KEY}`，设置里只留 `secret:env:KEY` 且必须是整个参数 / 环境变量值；运行时经环境管理器（`envManagerRuntimeResolver`，`CoreServicesOptions.mcpbRuntimes` 测试钩子），缺运行时给可读错误、不下载；同意：设置页以对话框内确认面板为同意，带 `conversationId` 才出 `environment` 类审批卡（完整命令、遮蔽密钥、sha256、体积、来源）；审计 `mcpb_install` / `mcpb_uninstall`；`mcp.removeServer` 与 `settings.update` 移除 server 都调 `afterServerRemoved`；渲染端 `McpbInstall.svelte`（`mcpb-install.ts`）+ 主进程 `dialog:selectFile`。
+  - **§6.6 开发者模式**：`settings.apps.developerMode`；`McpService.rawTools` / `refreshTools`（RPC `mcp.rawTools` / `mcp.refreshTools`）、`apps/auth/flow-log.ts` `FlowEventLog`（RPC `apps.flowLog`，每 server 环形 100 条、至多 50 个 server〔LRU〕、脱敏覆盖 JSON / 冒号形态 / Bearer / JWT / 长不透明串并叠加 `SecretsService.redact`，server 移除时清除）；渲染端 `McpDevTools.svelte`；`mcp/policy.ts` `isDeveloperTier`：`McpServer.tier === 'developer'`（MCPB 非目录安装）的 server 全部风险档默认每次确认、`destructive` 恒确认、可逐工具 / server 级放宽；普通自定义 server 保持 W5 默认（偏离 todo 原文，见 DEV-021 第 1 项）。
+  - **§6.7 协议版本**：todo 附录 B.6——`pi-mcp@1.0.2` 与 `@modelcontextprotocol/sdk@1.32.1` 均只到 `2025-11-25`，无 2026-07-28 特性（`server/discover`、无状态、MRTR），锁文件与 pnpm 存储里没有更新版本；**结论：本期不动、保持 pi-mcp**，出现只支持 2026-07-28 的厂商或官方 SDK 先发客户端时再启动「HTTP 传输换官方 SDK」；假服务器将来需无状态模式。
+  - testkit：`mcpb-fixture.ts`（`buildZip` / `buildMcpbFixture` / `defaultMcpbManifest`）、假服务器 `registerGate`、`CreateTestCoreOptions` / `createTestStack` 增 `oauthPreregisteredClients`、`mcpbRuntimes`。
+  - 渲染端其余：`ApprovalCard` 的 `egress` 卡与 `mcp_tool` 卡污点标记、`UnattendedSection` 的 `taintGuard` 开关、`RightPanel` 的 `EgressSummary`、zh-CN 文案。
+- **验证**：Docker `kepcup-test:trixie`，定向跑 P2 新增 / 改动测试全绿。单测（core）：`app-step-up-discovery`、`egress-migration`、`taint-egress`、`browser-tools-taint`、`permission-bridge-taint`、`mcpb`、`oauth-clients`、`mcp-policy`；集成：`connected-apps-p2-stepup-discovery`、`connected-apps-p2-discovery-acp`、`connected-apps-p2-egress`、`mcpb`、`oauth-clients`、`developer-mode`；渲染端 `settings/mcpb-install.test.ts`；testkit 夹具 `mcpb-fixture.ts`。各文件用例分布见 `05-testing.md`「用例分布（D73 P2）」。门禁自动化部分：step-up、污点（含 retry 继承、关开关、委派传递、无人值守审计）、按需发现（含 ACP）三组集成全绿，MCPB 示例包安装并被 Bot 调用，协议版本结论明确。**全量回归：2912 通过 / 28 失败（Docker kepcup-test:trixie）——其中 26 例为沙箱 / es-git / wiki 环境基线（sandbox-isolation、toolchain-sandbox、environment、projects、skills、skills-authoring、wiki-url、workspace-tools），另 agents-service、memory 各 1 例为负载下的偶发失败，单跑均通过；pnpm typecheck、pnpm lint 通过**
+- **复查修复（2026-10-10）**：两组独立评审的发现均已修复并各带回归测试。
+  - MCPB / OAuth 客户端 / 开发者模式：zip 炸弹（伪造 `compressedSize` 曾使进程中止）、`source` 路径穿越 → 递归删除、`settings.update` 移除 server 遗留解包目录、快照 TOCTOU、复用已解包目录前未校验、DCR 保存覆盖 BYO 客户端、预注册条目回退到 DCR / CIMD、日志脱敏缺口、issuer 规范化、secret 残留。
+  - 污点 / step-up / 按需发现：`watch_create` 未受控、污点在 Bot 间被洗白（群聊 / 委派）、`mcp_tool` 的无人值守审计标签错误、重复效果门对外发通道的干扰、自定义读工具的 `openWorldHint:true`、浏览器角色放行（改为 deny-by-default 白名单）、step-up 名额被落选需求烧掉 / 连接卡死、`app_call_tool` 入参未校验、`<untrusted>` 注入。
+  - 接受不改：对话轮 / 子代理遇外发确认直接 `RUN_READ_ONLY`（D75 / 规格如此）；`browser_type` 向已打开且已批准的页面输入不拦（设计取舍）；被污点数据经 `remember` / wiki 写入后会出现在之后无污点的对话里（规格范围内）。
+- **偏差**：DEV-021（待决定，推荐全部保留；P0 / P1 的项在 DEV-019 / DEV-020）。
+- **未做 / 待办**：
+  - **用户待办**：U1（CIMD 部署，沿 P0）、U2（真实账号 spike，沿 P1）仍未动；**U3**（GitHub App 预注册，仅当 spike 证实 GitHub 不支持 CIMD）与 **U4**（Google Cloud 项目 / OAuth 同意屏幕 / Desktop 客户端 / 应用验证；Microsoft Entra 应用；Slack 应用；Figma 合作申请）未做——因此 `oauth-clients.json` 为空，Google Workspace / Microsoft 365 / Slack / GitHub 目录条目未加，§6.9 门禁里「至少一个预注册条目真实走通」待用户；Figma 未获白名单前不进目录。**U5**（目录签名密钥、`dl.` / `registry.` 子域、Workers Paid）属 P3。
+  - **§6.8「+」菜单临时开关**（可选）：未做。
+  - MCPB 延后项：URL 下载安装、目录卡片的「安装本地包」按钮（后端 `fromCatalog` 已支持按 `fileSha256` 校验）、python / uv 的端到端测试、启动前自动复验。
+  - 迁移号 `0026` 以当前 main 为准；最终合并时若 main 又前进则再顺延。
+- 影响范围：`apps/*`（含 `mcpb/`）、`mcp/{policy,service,tools}.ts`、`tools/{app-tools,browser,web-tools,watch-tools}.ts`、`gateway/index.ts`、`permissions/approvals.ts`、`agent/external/permission-bridge.ts`、`dispatch/orchestrator.ts`、`domain/{lifecycle,delegations,audit}.ts`、`rpc/*`、迁移 `0026`、shared 契约、渲染端设置 / 审批 / 对话卡 / Bot 面板、`apps/desktop/scripts/dist.mjs`。

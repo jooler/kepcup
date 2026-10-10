@@ -2,7 +2,13 @@ import { mkdirSync, readdirSync, realpathSync, lstatSync, statSync } from 'node:
 import os from 'node:os';
 import path from 'node:path';
 
-import { AppError, BASH_TIMEOUT_DEFAULT_MS, type ApprovalDuration } from '@kepcup/shared';
+import {
+  AppError,
+  BASH_TIMEOUT_DEFAULT_MS,
+  EGRESS_TARGET_MAX_CHARS,
+  type ApprovalDuration,
+  type EgressChannel,
+} from '@kepcup/shared';
 
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
 import { buildSandboxPolicy } from '../sandbox/policy.js';
@@ -21,6 +27,7 @@ import type { ProjectRuntime } from '../project/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
+import type { TaintService, TaintState } from '../apps/taint.js';
 import { recipientFields } from '../mcp/recipients.js';
 import { activeEffectHooks } from '../permissions/tool-call-scope.js';
 
@@ -88,6 +95,11 @@ export interface GatewayDeps {
    * (every `ask` shows a card).
    */
   appGrants?: Pick<AppToolGrants, 'find' | 'create'> | undefined;
+  /**
+   * D73 P2 污点外发控制（design 29 §8.3）：应用数据读取后置位；外发通道（web_fetch / web_search /
+   * 浏览器 / 非只读 MCP 工具 / 沙箱 bash / git_remote）据此降级为逐次确认。缺省 = 不做污点控制。
+   */
+  taint?: Pick<TaintService, 'mark' | 'guard'> | undefined;
   platform?: string;
   homeDir?: string;
   /** DI overrides for tests / future policy evolution. */
@@ -561,6 +573,63 @@ export class ToolGateway {
   }
 
   /**
+   * D73 P2：目录应用工具成功返回内容 → 置位 / 续期该 (Bot, 对话) 的污点。自定义 MCP 工具不是
+   * 来源（见 `apps/taint.ts`）。
+   */
+  markAppTaint(identity: RunIdentity): void {
+    if (identity.botId === null || identity.conversationId === null) return;
+    this.#deps.taint?.mark(identity.botId, identity.conversationId);
+  }
+
+  /** 此刻生效的污点状态（开关关闭 / 未污点 / 未接入 = null）。 */
+  taintOf(identity: RunIdentity): TaintState | null {
+    return this.#deps.taint?.guard(identity.botId, identity.conversationId) ?? null;
+  }
+
+  /**
+   * D73 P2 外发闸门：污点期间，外发通道（`web_fetch` / `web_search` / 浏览器 / 沙箱 bash /
+   * 非只读工具……）在执行前调用它。没有污点（或开关关闭）→ 返回 null，调用方照原规则继续；
+   * 有污点 → 弹 `egress` 卡（外发内容全文，只有「允许一次 / 拒绝」；无人值守按 D41 自动批准，
+   * 审计 `egress_tainted`），拒绝抛 `APPROVAL_DENIED`。对话轮 / 子代理不等审批（D75：不占住
+   * mailbox）：非无人值守时直接失败并引导用 `start_task` 在任务里做。
+   */
+  async egressCheck(
+    identity: RunIdentity,
+    input: { channel: EgressChannel; target: string; summary: string },
+    options: { signal?: AbortSignal | undefined } = {},
+  ): Promise<{ approvedBy: 'user' | 'unattended' } | null> {
+    const taint = this.taintOf(identity);
+    if (taint === null) return null;
+    const unattendedOn = this.#deps.unattended.effective?.().enabled === true;
+    if ((identity.loopType === 'turn' || identity.loopType === 'subagent') && !unattendedOn) {
+      throw new AppError(
+        'RUN_READ_ONLY',
+        '本对话读取过连接应用的数据，外发通道（联网、浏览器、写入类工具等）需要用户逐次确认；对话轮不等待确认，这次调用在对话轮里不会成功，不要重试——请用 start_task 派一个任务，在任务里执行（届时会逐次向用户确认）',
+      );
+    }
+    const redacted = this.#deps.secrets.redact(input.target);
+    const target =
+      redacted.length > EGRESS_TARGET_MAX_CHARS
+        ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
+        : redacted;
+    const outcome = await this.#deps.approvals.request(
+      identity,
+      'egress',
+      {
+        channel: input.channel,
+        target,
+        summary: input.summary,
+        taintedSince: taint.firstAt,
+      },
+      { ...(options.signal !== undefined ? { signal: options.signal } : {}) },
+    );
+    if (outcome.decision !== 'approved') {
+      throw new AppError('APPROVAL_DENIED', '用户拒绝或取消了该外发操作');
+    }
+    return { approvedBy: outcome.approval.autoApproved === true ? 'unattended' : 'user' };
+  }
+
+  /**
    * Runs a command. Sandbox available: per-command policy (with the effective
    * grants) and sandboxed execution. Sandbox unavailable: confirm mode —
    * allowlisted read-only commands run directly, everything else needs a
@@ -598,6 +667,24 @@ export class ToolGateway {
       this.#deps.environment?.noteToolchainUse();
     }
     if (availability.available) {
+      // D73 P2 (design 29 §8.3): while tainted, a sandboxed command with the network
+      // open is a per-command confirmation (`egress`, channel bash) — `allowlist` / `none`
+      // policies keep the original rules (the sandbox itself bounds egress there).
+      // Commands the read-only allowlist vouches for (ls / cat / grep …: no network) are not a
+      // channel and stay unconfirmed.
+      if (
+        req.network.mode === 'open' &&
+        this.taintOf(identity) !== null &&
+        !this.#deps.allowlist.match(req.command, {
+          isPathAllowed: (p) => this.checkPath(identity, p, 'read').kind === 'allowed',
+        }).exempt
+      ) {
+        await this.egressCheck(
+          identity,
+          { channel: 'bash', target: req.command, summary: '沙箱命令（Bot 网络策略为开放）' },
+          { signal: req.signal },
+        );
+      }
       // Effective = conversation grants + once grants this tool call owns or
       // may claim (unclaimed request_access pre-authorizations); once grants
       // owned by a parallel call of the same run are not visible here (D75).
@@ -693,6 +780,8 @@ export class ToolGateway {
         cwd,
         reason: '',
         confirmModeReason: availability.reason ?? '',
+        // D73 P2: confirm mode already asks per command — the card just carries the taint hint.
+        ...this.#taintedFlag(identity),
       },
       { signal: req.signal },
     );
@@ -727,7 +816,7 @@ export class ToolGateway {
     const outcome = await this.#deps.approvals.request(
       identity,
       'unsandboxed',
-      { command, cwd: workspace, reason, confirmModeReason: '' },
+      { command, cwd: workspace, reason, confirmModeReason: '', ...this.#taintedFlag(identity) },
       options,
     );
     if (outcome.decision !== 'approved') {
@@ -772,12 +861,22 @@ export class ToolGateway {
     return this.#deps.projects.gitRemote(identity, input, {
       signal: options.signal,
       requestApproval: async (payload) => {
-        const outcome = await this.#deps.approvals.request(identity, 'git_remote', payload, {
-          signal: options.signal,
-        });
+        // D73 P2: git_remote already asks every time — while tainted the card says so.
+        const taint = this.taintOf(identity);
+        const outcome = await this.#deps.approvals.request(
+          identity,
+          'git_remote',
+          taint !== null ? { ...payload, tainted: true, taintedSince: taint.firstAt } : payload,
+          { signal: options.signal },
+        );
         return outcome.decision;
       },
     });
+  }
+
+  /** `{ tainted: true }` for approval payloads raised while the identity is tainted. */
+  #taintedFlag(identity: RunIdentity): { tainted?: true } {
+    return this.taintOf(identity) !== null ? { tainted: true } : {};
   }
 
   async #executeUnsandboxedApproved(
@@ -835,6 +934,11 @@ export class ToolGateway {
        * card and into the audit; absent for plain MCP servers).
        */
       connection?: AppToolContext;
+      /**
+       * D73 P2: the tool's `openWorldHint` annotation (absent = unknown, treated as open
+       * world). With a non-read-only tool this decides whether it is an egress channel.
+       */
+      openWorldHint?: boolean | undefined;
     } = {},
   ): Promise<{
     decision: McpToolDecision;
@@ -883,26 +987,61 @@ export class ToolGateway {
         : {};
     let approvedBy: 'auto' | 'user' | 'unattended' | 'grant' = 'auto';
     let grantId: string | undefined;
-    if (decision.approval === 'ask') {
-      // D73: a standing grant (this conversation / this bot) for a WRITE app tool
-      // needs no card. Destructive calls always ask (grants are never created for
-      // them, and a tool whose risk was raised since the grant must ask again).
-      // An explicit per-tool「每次确认」policy (approvalSource 'policy') overrides both
-      // standing grants and the longer durations on the card.
-      const grantable =
-        connection !== undefined &&
-        decision.risk === 'write' &&
-        decision.approvalSource !== 'policy' &&
-        identity.botId !== null;
-      const grant =
-        connection !== undefined && grantable && identity.botId !== null
-          ? (this.#deps.appGrants?.find({
-              botId: identity.botId,
-              connectionId: connection.connectionId,
-              toolName,
-              conversationId: identity.conversationId,
-            }) ?? null)
-          : null;
+    // D73: a standing grant (this conversation / this bot) for a WRITE app tool
+    // needs no card. Destructive calls always ask (grants are never created for
+    // them, and a tool whose risk was raised since the grant must ask again).
+    // An explicit per-tool「每次确认」policy (approvalSource 'policy') overrides both
+    // standing grants and the longer durations on the card.
+    const grantable =
+      connection !== undefined &&
+      decision.risk === 'write' &&
+      decision.approvalSource !== 'policy' &&
+      identity.botId !== null;
+    const grant =
+      decision.approval === 'ask' &&
+      connection !== undefined &&
+      grantable &&
+      identity.botId !== null
+        ? (this.#deps.appGrants?.find({
+            botId: identity.botId,
+            connectionId: connection.connectionId,
+            toolName,
+            conversationId: identity.conversationId,
+          }) ?? null)
+        : null;
+    // D73 P2 (design 29 §8.3): while tainted, a non-read-only tool that may reach the open
+    // world (`openWorldHint !== false`) is an egress channel and is confirmed on every call.
+    // Where the call would run without a card (a standing grant, an `auto` policy / server
+    // autoApprove) an `egress` card is raised instead; where it asks anyway (no grant) the
+    // ordinary `mcp_tool` card is that per-call confirmation — flagged `tainted`, with the
+    // full (redacted) arguments — so the user never gets two cards for one call.
+    // A custom MCP tool classified read but explicitly `openWorldHint: true` (fetch / search
+    // servers) is the same channel as web_fetch / web_search; the catalog apps' own read
+    // tools are the taint SOURCE and stay out of it.
+    const isEgressChannel =
+      (decision.risk !== 'read' && options.openWorldHint !== false) ||
+      (decision.risk === 'read' && connection === undefined && options.openWorldHint === true);
+    const taint = isEgressChannel ? this.taintOf(identity) : null;
+    let egressHandled = false;
+    if (taint !== null && (decision.approval !== 'ask' || grant !== null)) {
+      const egress = await this.egressCheck(
+        identity,
+        {
+          channel: connection !== undefined ? 'app_tool' : 'mcp_tool',
+          target: JSON.stringify({ tool: toolName, arguments: args }, null, 2),
+          summary:
+            connection !== undefined
+              ? `以 ${connection.accountLabel} 身份在「${connection.appName}」执行 ${toolName}（${MCP_RISK_LABELS[decision.risk]}）`
+              : `调用 MCP 工具 ${toolName}（服务器「${server.name}」，${MCP_RISK_LABELS[decision.risk]}）`,
+        },
+        { signal: options.signal },
+      );
+      if (egress !== null) {
+        egressHandled = true;
+        approvedBy = egress.approvedBy;
+      }
+    }
+    if (!egressHandled && decision.approval === 'ask') {
       if (grant !== null) {
         approvedBy = 'grant';
         grantId = grant.id;
@@ -932,6 +1071,7 @@ export class ToolGateway {
             argsSummary:
               argsRedacted.length > 400 ? `${argsRedacted.slice(0, 400)}…（已截断）` : argsRedacted,
             risk: decision.risk,
+            ...(taint !== null ? { tainted: true, taintedSince: taint.firstAt } : {}),
             ...(recipients.length > 0 ? { recipients } : {}),
             ...(connection !== undefined
               ? {
@@ -939,14 +1079,15 @@ export class ToolGateway {
                   connectorSlug: connection.connectorSlug,
                   accountLabel: connection.accountLabel,
                   ...(durations !== undefined ? { durations } : {}),
-                  // 不可撤销的操作：卡片展示完整参数（脱敏、设上限），而不只是摘要。
-                  ...(decision.risk === 'destructive'
-                    ? {
-                        argsFull: this.#deps.secrets
-                          .redact(JSON.stringify(args, null, 2))
-                          .slice(0, MCP_APPROVAL_ARGS_FULL_MAX),
-                      }
-                    : {}),
+                }
+              : {}),
+            // 不可撤销的应用操作（以及污点期间的外发）：卡片展示完整参数（脱敏、设上限），
+            // 而不只是摘要。
+            ...((connection !== undefined && decision.risk === 'destructive') || taint !== null
+              ? {
+                  argsFull: this.#deps.secrets
+                    .redact(JSON.stringify(args, null, 2))
+                    .slice(0, MCP_APPROVAL_ARGS_FULL_MAX),
                 }
               : {}),
           },
@@ -993,6 +1134,7 @@ export class ToolGateway {
         : {}),
       ...connectionAudit,
       ...(grantId !== undefined ? { grantId } : {}),
+      ...(egressHandled ? { egress: true } : {}),
     });
     return { decision, approvedBy, ...(grantId !== undefined ? { grantId } : {}) };
   }

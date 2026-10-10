@@ -145,6 +145,11 @@ function parseRedirectUris(value: string): string[] {
 export class AppConnectionStore {
   readonly #db: SqliteDatabase;
   readonly #clock: Clock;
+  /**
+   * 运行时 step-up 挑战要求、尚未授予的 scope（D73 P2 §6.1）。进程内：没有合适的列，且迁移
+   * 本期冻结；连接回到 `connected`（授权完成）/ 断开 / 删除时清除。
+   */
+  readonly #pendingScopes = new Map<string, string[]>();
 
   constructor(deps: { db: SqliteDatabase; clock: Clock }) {
     this.#db = deps.db;
@@ -257,8 +262,19 @@ export class AppConnectionStore {
     return rows.map(toConnection);
   }
 
+  setPendingScopes(id: string, scopes: readonly string[]): void {
+    const unique = [...new Set(scopes.filter((scope) => scope.length > 0))];
+    if (unique.length === 0) this.#pendingScopes.delete(id);
+    else this.#pendingScopes.set(id, unique);
+  }
+
+  getPendingScopes(id: string): string[] {
+    return [...(this.#pendingScopes.get(id) ?? [])];
+  }
+
   update(id: string, patch: AppConnectionPatch): AppConnection {
     this.getRequired(id);
+    if (patch.status === 'connected') this.#pendingScopes.delete(id);
     const sets: string[] = [];
     const values: Array<string | number | null> = [];
     const set = (column: string, value: string | number | null): void => {
@@ -309,6 +325,7 @@ export class AppConnectionStore {
 
   /** 删除一行（`mcp.removeServer` 用于 `custom:` 行；目录连接的最终删除）。 */
   delete(id: string): boolean {
+    this.#pendingScopes.delete(id);
     return this.#db.prepare('delete from app_connections where id = ?').run(id).changes > 0;
   }
 
@@ -319,6 +336,7 @@ export class AppConnectionStore {
    */
   disconnect(id: string): 'reset' | 'deleted' | 'missing' {
     if (this.get(id) === null) return 'missing';
+    this.#pendingScopes.delete(id);
     if (!isCustomConnectionId(id)) {
       this.delete(id);
       return 'deleted';
@@ -336,9 +354,11 @@ export class AppConnectionStore {
 
   /** 引用某 issuer 的连接数（`clearIssuerClientIfUnused` 判定用）。 */
   countByIssuer(issuer: string): number {
+    // 末尾斜杠不同的写法是同一个 issuer（与客户端表的键一致）。
+    const base = issuer.trim().replace(/\/+$/, '');
     const row = this.#db
-      .prepare('select count(*) as n from app_connections where issuer = ?')
-      .get(issuer) as { n: number };
+      .prepare('select count(*) as n from app_connections where issuer = ? or issuer = ?')
+      .get(base, `${base}/`) as { n: number };
     return row.n;
   }
 
@@ -380,6 +400,21 @@ export class AppConnectionStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  /** 全部已存客户端的元数据（BYO 客户端列表）。 */
+  listClientMetas(): OAuthClientMeta[] {
+    const rows = this.#db
+      .prepare('select * from oauth_clients order by created_at, issuer_hash')
+      .all() as ClientRow[];
+    return rows.map((row) => ({
+      issuerHash: row.issuer_hash,
+      issuer: row.issuer,
+      source: row.source as OAuthClientSource,
+      redirectUris: parseRedirectUris(row.redirect_uris),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   putClientMeta(meta: {

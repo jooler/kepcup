@@ -37,6 +37,7 @@ import {
 } from './connection-store.js';
 import type { AppDisconnector } from './disconnect.js';
 import type { AppToolGrants } from './grants.js';
+import type { PreregisteredClients } from './oauth-clients.js';
 import { classifyAppToolRisk } from './policy.js';
 import type { AppToolRow, ToolLockService } from './tool-lock.js';
 import type { TokenVault } from './token-vault.js';
@@ -73,6 +74,8 @@ export interface AppConnectionsDeps {
   store: AppConnectionStore;
   vault: TokenVault;
   catalog: ConnectorCatalog;
+  /** KepCup 预注册客户端表（P2 §6.4）：`registration: 'preregistered'` 条目仅在 clientRef 可解析时可连接。 */
+  preregistered: PreregisteredClients;
   toolLock: ToolLockService;
   grants: AppToolGrants;
   mcp: Pick<McpService, 'serverFor' | 'listTools' | 'callTool' | 'closeServer'>;
@@ -171,8 +174,11 @@ export class AppConnectionsService {
     const meta = connectorMetaOf(entry);
     if (connectorRemoteOf(entry) === null) return '该应用没有可用的远程端点';
     if (meta.auth.kind !== 'oauth') return `暂不支持 ${meta.auth.kind} 认证方式`;
-    if (meta.auth.registration === 'preregistered') {
-      return '该应用需要 KepCup 预注册的客户端，暂未开放（P2）';
+    if (
+      meta.auth.registration === 'preregistered' &&
+      !this.#deps.preregistered.has(meta.auth.clientRef)
+    ) {
+      return `该应用需要 KepCup 预注册的客户端（${meta.auth.clientRef ?? '—'}），当前版本未包含`;
     }
     return null;
   }
@@ -229,11 +235,14 @@ export class AppConnectionsService {
         },
       );
     }
-    if (meta.auth.registration === 'preregistered') {
-      // P2：KepCup 预注册客户端（clientRef）。P1 不做半套——明确失败。
+    if (
+      meta.auth.registration === 'preregistered' &&
+      !this.#deps.preregistered.has(meta.auth.clientRef)
+    ) {
+      // 客户端表（oauth-clients.json）里没有该 clientRef：明确失败，不退回自动注册。
       throw new AppError(
         'NOT_IMPLEMENTED',
-        `应用「${entry.title}」需要 KepCup 预注册的客户端（${meta.auth.clientRef ?? '—'}），当前版本暂未支持`,
+        `应用「${entry.title}」需要 KepCup 预注册的客户端（${meta.auth.clientRef ?? '—'}），当前版本未包含`,
         { connectorId: meta.slug, clientRef: meta.auth.clientRef },
       );
     }
@@ -246,7 +255,10 @@ export class AppConnectionsService {
           connectorId: meta.slug,
         });
       }
-      existingScopes = target.scopes;
+      // 已授予 ∪ 运行时 step-up 挑战要求过的（卡片被忽略后，设置页「重新连接」同样补上）。
+      existingScopes = [
+        ...new Set([...target.scopes, ...this.#deps.vault.getPendingScopes(target.id)]),
+      ];
     }
     const scratch = store.create({
       connectorId: meta.slug,
@@ -260,6 +272,7 @@ export class AppConnectionsService {
       title: entry.title,
       serverUrl: remote.url,
       defaultScopes: meta.auth.scopes.default,
+      clientRef: meta.auth.registration === 'preregistered' ? meta.auth.clientRef : null,
       connectionId: scratch.id,
       reconnectTo: input.reconnectTo ?? null,
       existingScopes,

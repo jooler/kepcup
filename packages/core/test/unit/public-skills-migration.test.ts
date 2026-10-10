@@ -54,6 +54,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('alter table schedules drop column origin;');
     // main 0023（W7）的 watches 表同样摘除。
     db.exec('drop table watches;');
+    // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
+    db.exec('drop table app_taint;');
     db.exec(
       `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
        values ('skl_preset', 'docx', 'preset://docx', '1.0.0', 'hashpreset', 'skills-library/docx@hashpreset', '{}', 1),

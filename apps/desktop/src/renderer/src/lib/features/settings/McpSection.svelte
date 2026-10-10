@@ -15,6 +15,9 @@
   import { customConnectionId } from '$lib/features/apps/connect-flow';
   import McpRiskBadge from '../approvals/McpRiskBadge.svelte';
   import McpToolPolicies from './McpToolPolicies.svelte';
+  import McpbInstall from './McpbInstall.svelte';
+  import McpDevTools from './McpDevTools.svelte';
+  import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
   /**
    * 「MCP 服务器」section（docs/design/23-mcp-and-subagent.md，D65）：server
@@ -52,6 +55,20 @@
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
   /** W5：展开了逐工具策略的 server。 */
   let toolsOpen = $state<Record<string, boolean>>({});
+  /** D73 P2 §6.6：开发者模式（原始工具定义 / 授权事件日志 / 手动刷新工具）。 */
+  const developerMode = $derived(settingsStore.developerMode);
+  let devModeBusy = $state(false);
+
+  async function toggleDeveloperMode(on: boolean): Promise<void> {
+    devModeBusy = true;
+    try {
+      await settingsStore.setDeveloperMode(on);
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    } finally {
+      devModeBusy = false;
+    }
+  }
 
   $effect(() => {
     appsStore.start();
@@ -429,6 +446,17 @@
 <section class="space-y-3" data-testid="mcp-section">
   <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
   <p class="text-xs text-muted-foreground">{t('settings.mcpHint')}</p>
+  <label class="flex items-start gap-2 text-xs" data-testid="mcp-dev-mode">
+    <Checkbox
+      checked={developerMode}
+      disabled={devModeBusy}
+      onCheckedChange={(checked) => void toggleDeveloperMode(checked === true)}
+    />
+    <span>
+      <span class="block font-medium">{t('settings.devMode')}</span>
+      <span class="block text-muted-foreground">{t('settings.devModeHint')}</span>
+    </span>
+  </label>
 
   {#each servers as server (server.id)}
     <div class="space-y-2 rounded-xl border px-4 py-3.5" data-testid={`mcp-server-${server.id}`}>
@@ -562,6 +590,9 @@
       {/if}
       {#if toolsOpen[server.id]}
         <McpToolPolicies {server} />
+      {/if}
+      {#if developerMode}
+        <McpDevTools {server} />
       {/if}
     </div>
   {/each}
@@ -784,6 +815,9 @@
         <option value="sse">SSE（旧版）</option>
       </select>
       <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
+      <McpbInstall />
     </div>
   {/if}
+
+  <OAuthClientsPanel />
 </section>

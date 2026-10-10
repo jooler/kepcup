@@ -59,6 +59,7 @@ export function bindAppsRuntimeMethods(
         );
       }
       await runtime().disconnector.removeCustomServer(input.serverId);
+      await services.mcpb?.afterServerRemoved(previous.mcpServers, input.serverId);
       return { ok: true as const };
     }),
   };

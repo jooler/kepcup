@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { t } from '$lib/i18n';
+  import { errorText, t } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
+  import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -17,6 +19,29 @@
   let acknowledged = $state(false);
   let hours = $state<null | number>(null);
   let enabled = $derived(permissions.unattended.enabled);
+  // D73 P2（design 29 §8.3）：污点外发保护开关，默认开。
+  let taintGuard = $state(true);
+  $effect(() => {
+    const settings = settingsStore.settings;
+    if (settings) taintGuard = settings.apps.taintGuard;
+  });
+
+  async function toggleTaintGuard(checked: boolean): Promise<void> {
+    const current = settingsStore.settings;
+    if (!current) return;
+    try {
+      await settingsStore.update({ apps: { ...current.apps, taintGuard: checked } });
+    } catch (error) {
+      // 保存失败：开关回到已存的值，并提示原因。
+      taintGuard = current.apps.taintGuard;
+      toast.error(
+        errorText(
+          (error as { code?: string } | null)?.code,
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+  }
 
   function openDialog(): void {
     acknowledged = false;
@@ -61,6 +86,17 @@
       </Button>
     {/if}
   </div>
+  <label class="flex items-start gap-3" data-testid="settings-taint-guard-row">
+    <Checkbox
+      bind:checked={taintGuard}
+      onCheckedChange={(checked) => void toggleTaintGuard(checked === true)}
+      data-testid="settings-taint-guard"
+    />
+    <span class="grid gap-0.5">
+      <span class="text-sm font-medium">{t('settings.taintGuard')}</span>
+      <span class="text-xs text-muted-foreground">{t('settings.taintGuardHint')}</span>
+    </span>
+  </label>
 </section>
 
 <Dialog bind:open={dialogOpen}>

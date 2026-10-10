@@ -132,9 +132,13 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import type { AppToolFacade } from '../tools/app-tools.js';
+import { buildAppDiscoveryTools, type AppToolFacade } from '../tools/app-tools.js';
+import { allowedOnReadOnlySurface } from '../mcp/policy.js';
 import { availableAppsPromptBody, connectedAppsPromptBody } from '../apps/prompt.js';
+import { buildAppToolDiscovery, type AppToolDiscovery } from '../apps/discovery.js';
+import { AppStepUpLimiter, stepUpConnectionOf } from '../apps/step-up.js';
 import {
+  appToolsDeferred,
   isExposableStatus,
   type BotAppsExposure,
   type ConnectedAppView,
@@ -543,6 +547,8 @@ export class Orchestrator {
   readonly #cancelledBeforeStart = new Set<string>();
   /** Per-run file-read hashes (staleness detection, P04). */
   readonly #fsState = new FileReadState();
+  /** D73 P2 §6.1: at most one step-up card per (conversation, connection) per 30 minutes. */
+  readonly #appStepUp: AppStepUpLimiter;
   /** Bot-to-bot @ chains (P05); owns chain rows, depth and budget checks. */
   readonly #chains: ChainsService;
   /** Group turns (P05): triage, ordered responses, re-dispatch bookkeeping. */
@@ -571,6 +577,7 @@ export class Orchestrator {
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
+    this.#appStepUp = new AppStepUpLimiter(deps.clock);
     this.#agentSessions = new AgentSessionsStore(deps.db);
     // Sessions the engine gave up (poisoned, closed before use, changed mode
     // outside a run) are neither reused nor resumed (P5 审查 #1).
@@ -3079,8 +3086,18 @@ export class Orchestrator {
         isTask,
         bot.profile.runtime.app_connection_ids,
       );
-      const mcpEntries = mcpResolution.entries;
+      // D73 P2 §6.3: over APP_TOOLS_INLINE_MAX catalog-app tools in total → they are not inlined;
+      // the model gets the <connected_apps> summary + app_search_tools / app_call_tool instead
+      // (decided once per run, so the tool list is fixed within it). Custom MCP tools stay inline.
+      const allAppEntries = mcpResolution.entries.filter((entry) => entry.app !== undefined);
+      const appsDeferred = appToolsDeferred(allAppEntries.length);
+      const mcpEntries = appsDeferred
+        ? mcpResolution.entries.filter((entry) => entry.app === undefined)
+        : mcpResolution.entries;
       const readOnlyMcp = selectReadOnlyMcpEntries(mcpEntries);
+      const subAppEntries = appsDeferred
+        ? allAppEntries.filter((entry) => allowedOnReadOnlySurface(entry.decision))
+        : [];
       const wrapMcp = (ident: RunIdentity, entries: McpToolEntry[]) =>
         this.#deps.mcp != null
           ? wrapMcpToolEntries({
@@ -3092,6 +3109,9 @@ export class Orchestrator {
               // D73: an OAuth app that needs (re)connecting → the same setupHit chain
               // as media / search (tool result SETUP_REQUIRED → abort → failed + setup).
               onSetupRequired: (requirement) => {
+                // D73 P2 §6.1: a step-up card is rationed per (conversation, connection) — over
+                // the limit the tool result is a plain failure and no card appears.
+                if (!this.#stepUpAllowed(ident, requirement)) return false;
                 setupHit.requirement = requirement;
               },
             })
@@ -3101,6 +3121,7 @@ export class Orchestrator {
       const connectedAppsSection = connectedAppsPromptBody({
         views: mcpResolution.apps.views,
         unavailable: mcpResolution.unavailable,
+        discovery: appsDeferred,
       });
       // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
       const availableEntries =
@@ -3112,6 +3133,13 @@ export class Orchestrator {
         mcpResolution.unavailable,
         mcpResolution.apps,
         availableEntries,
+        identity,
+        appsDeferred
+          ? buildAppToolDiscovery({
+              entries: allAppEntries,
+              tools: wrapMcp(identity, allAppEntries),
+            })
+          : undefined,
       );
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
@@ -3235,9 +3263,23 @@ export class Orchestrator {
                   fsState: this.#fsState,
                   ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
                   // W5: read-only MCP tools, wrapped with the sub run's identity.
-                  ...(readOnlyMcp.entries.length > 0
-                    ? { mcp: { tools: wrapMcp(subIdentity, readOnlyMcp.entries) } }
-                    : {}),
+                  // D73 P2 §6.3: with the app tools deferred, the sub run gets the same two
+                  // discovery tools over the read-only + auto subset only (the gateway also
+                  // refuses anything else on a sub run).
+                  ...(() => {
+                    const subTools = [
+                      ...wrapMcp(subIdentity, readOnlyMcp.entries),
+                      ...(subAppEntries.length > 0
+                        ? buildAppDiscoveryTools(
+                            buildAppToolDiscovery({
+                              entries: subAppEntries,
+                              tools: wrapMcp(subIdentity, subAppEntries),
+                            }),
+                          )
+                        : []),
+                    ];
+                    return subTools.length > 0 ? { mcp: { tools: subTools } } : {};
+                  })(),
                 },
               }),
             buildSystemPrompt: () =>
@@ -3745,6 +3787,7 @@ export class Orchestrator {
       // 缺设置中断（setupHit 非空且 run 非正常完成）：统一改判 failed 并携带
       // 结构化 setup，界面上是可引导的设置卡片而非普通失败。
       if (setupHit.requirement !== null && outcome.status !== 'completed') {
+        this.#commitStepUp(batch.conversationId, setupHit.requirement);
         settle('failed', setupRequirementErrorText(setupHit.requirement), setupHit.requirement);
         this.#maybeEnqueueSummary(batch.conversationId);
         return;
@@ -4305,6 +4348,22 @@ export class Orchestrator {
   }
 
   /**
+   * D73 P2 §6.1 step-up 限流：只限 `reason: 'scope'` 且有连接 id 的 `connect-app` 需求；
+   * 其余（未连接 / 过期）一律放行。返回 false = 本对话在窗口内已出过一张该连接的追加权限卡。
+   * 这里只检查、不占名额——名额在卡片随 run 发出时才占（{@link #commitStepUp}）。
+   */
+  #stepUpAllowed(identity: RunIdentity, requirement: SetupRequirement): boolean {
+    const connectionId = stepUpConnectionOf(requirement);
+    return connectionId === null || this.#appStepUp.isAvailable(identity.conversationId, connectionId);
+  }
+
+  /** 卡片真正发出（run 带着胜出的 setup 需求收尾）时才占用 step-up 名额。 */
+  #commitStepUp(conversationId: string | null, requirement: SetupRequirement): void {
+    const connectionId = stepUpConnectionOf(requirement);
+    if (connectionId !== null) this.#appStepUp.tryAcquire(conversationId, connectionId);
+  }
+
+  /**
    * D73 `app_request_connection` 的门面（design 29 §7）。目标三种：
    * - `connector`（目录 slug）：该 Bot 还没有授权连接的目录应用 → `target: catalog`（未连接）；
    *   已有授权连接但需要重连则按该连接处理；已可用则拒绝（无需再连）；
@@ -4320,6 +4379,8 @@ export class Orchestrator {
     unavailable: McpUnavailableServer[],
     apps: BotAppsExposure,
     availableEntries: readonly ConnectorCatalogEntry[],
+    identity: RunIdentity,
+    discovery?: AppToolDiscovery,
   ): AppToolFacade | undefined {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
@@ -4339,13 +4400,20 @@ export class Orchestrator {
     };
     const requestFor = (view: ConnectedAppView): { ok: boolean; message: string } => {
       const hit = unavailable.find((entry) => entry.connectionId === view.connection.id);
-      setupHit.requirement = {
+      const requirement: SetupRequirement = {
         kind: 'connect-app',
         target: { kind: 'catalog', connectorId: view.slug },
         connectionId: view.connection.id,
         reason: reasonOf(view),
         ...(hit?.scopes !== undefined ? { scopes: hit.scopes } : {}),
       };
+      if (!this.#stepUpAllowed(identity, requirement)) {
+        return {
+          ok: false,
+          message: `「${view.appName}」需要追加权限，但本对话刚刚已经请求过一次。请告知用户到「设置 → 应用」为该应用重新授权所需权限，不要再次请求。`,
+        };
+      }
+      setupHit.requirement = requirement;
       return {
         ok: true,
         message: `已请求用户重新连接「${view.appName}」（账号 ${view.accountLabel}）：本次执行暂停，用户在对话里完成连接后会自动继续。不要让用户粘贴令牌。`,
@@ -4355,6 +4423,7 @@ export class Orchestrator {
       !isExposableStatus(view.connection.status) ||
       unavailable.some((entry) => entry.connectionId === view.connection.id);
     return {
+      ...(discovery !== undefined ? { discovery } : {}),
       requestConnection: (input) => {
         // 1) A catalog connector the bot has no (usable) connection for.
         if (input.connector !== undefined) {

@@ -138,8 +138,28 @@ export const MCP_TOOLS_PER_SERVER_MAX = 64;
  * `mcp__kepcup__{name}`（再留 13 字符），部分厂商工具名上限 64。
  */
 export const APP_TOOL_NAME_MAX = 50;
+/**
+ * 污点外发控制（D73 P2，design 29 §8.3）：(Bot, 对话) 读取过连接应用数据后的污点时长；
+ * 每次成功读取续期。
+ */
+export const APP_TAINT_TTL_MS = 24 * 60 * 60_000;
+/** 污点外发卡片的外发内容全文上限（字符；超出截断并注明）。 */
+export const EGRESS_TARGET_MAX_CHARS = 20_000;
 /** 提示词 `<available_apps>` 最多列出的未连接目录应用数。 */
 export const AVAILABLE_APPS_MAX = 30;
+/**
+ * 应用工具「按需发现」阈值（D73 P2 §6.3，design 29 §7）：Bot 全部目录连接可暴露的应用工具
+ * 总数超过它时，不再把这些工具逐个放进工具列表，只注入 `<connected_apps>` 摘要 + 两个稳定
+ * 工具 `app_search_tools` / `app_call_tool`（run 内工具列表不变）。
+ */
+export const APP_TOOLS_INLINE_MAX = 40;
+/** `app_search_tools` 一次最多返回的工具数。 */
+export const APP_SEARCH_RESULTS_MAX = 20;
+/**
+ * 权限追加（step-up）计数窗口（D73 P2 §6.1，design 29 §5.4）：（对话, 连接）在该窗口内至多
+ * 出一张 step-up 卡，超出时工具结果为普通失败文本。
+ */
+export const APP_STEP_UP_WINDOW_MS = 30 * 60_000;
 /** stdio server crash retry cap before the server is marked failed. */
 export const MCP_RECONNECT_MAX = 3;
 /** Tools list cache TTL for HTTP servers that announce tool-list-change poorly. */

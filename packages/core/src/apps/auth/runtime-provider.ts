@@ -116,6 +116,10 @@ export class ConnectionAuthProvider implements AuthProvider {
       const granted = stored?.scopes.join(' ');
       const wanted = stepUpScope(granted, challenge.scope);
       const scopes = wanted?.split(/\s+/).filter((entry) => entry.length > 0);
+      // 记下要求的 scope（step-up 卡被忽略 / 被限流抑制后，设置页重新连接仍能补上）。
+      if (scopes !== undefined && scopes.length > 0) {
+        this.#deps.vault.setPendingScopes(connectionId, scopes);
+      }
       this.#deps.setStatus(connectionId, 'needs_scope');
       throw this.#required('scope', scopes !== undefined && scopes.length > 0 ? scopes : undefined);
     }

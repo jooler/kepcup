@@ -64,6 +64,11 @@ export interface CreateTestCoreOptions {
   oauthCimdUrl?: string;
   oauthCallbackPorts?: number[];
   oauthFlowTimeoutMs?: number;
+  /** D73 P2 test hook: pre-registered OAuth client table (replaces oauth-clients.json). */
+  oauthPreregisteredClients?: Record<
+    string,
+    { issuer: string; clientId: string; clientSecret?: string }
+  >;
   /**
    * D73 P1 test hook: tools seen for the first time are approved straight away (default
    * `true` in the harness, so fixtures that add an MCP server via `settings.update` keep
@@ -76,6 +81,8 @@ export interface CreateTestCoreOptions {
    * `source` / `approvedGates`). Test-hook builds default to an EMPTY catalog.
    */
   connectorCatalog?: unknown;
+  /** D73 P2 test hook: managed runtimes for MCPB bundles (e.g. `{ node: { command: process.execPath } }`). */
+  mcpbRuntimes?: Partial<Record<'node' | 'python' | 'uv', { command: string; version?: string }>>;
 }
 
 /**
@@ -116,9 +123,13 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.oauthFlowTimeoutMs !== undefined
       ? { oauthFlowTimeoutMs: options.oauthFlowTimeoutMs }
       : {}),
+    ...(options.oauthPreregisteredClients !== undefined
+      ? { oauthPreregisteredClients: options.oauthPreregisteredClients }
+      : {}),
     ...(options.connectorCatalog !== undefined
       ? { connectorCatalog: options.connectorCatalog as never }
       : {}),
+    ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });
 }

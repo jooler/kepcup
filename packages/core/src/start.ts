@@ -24,7 +24,11 @@ import {
   type CoreStatus,
   type CustomModel,
 } from '@kepcup/shared';
-import type { DiagnosticsDatabaseRow, DiagnosticsToolRow } from '@kepcup/shared';
+import type {
+  DiagnosticsDatabaseRow,
+  DiagnosticsToolRow,
+  PreregisteredClientTable,
+} from '@kepcup/shared';
 import { readdirSync } from 'node:fs';
 import { directoryUsage, fileSizeOrNull } from './infra/disk-usage.js';
 import {
@@ -132,7 +136,9 @@ import {
 } from './browser/facade.js';
 import { createAppServices, type AppServices } from './apps/index.js';
 import { createAppRuntime, type AppRuntime } from './apps/runtime.js';
+import { McpbInstaller, envManagerRuntimeResolver } from './apps/mcpb/index.js';
 import { AppToolGrants } from './apps/grants.js';
+import { TaintService } from './apps/taint.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { ConnectedApps, isExposableStatus } from './apps/exposure.js';
 import { AppConnectionsService, createBotAppGrantWriter } from './apps/connections.js';
@@ -325,6 +331,8 @@ export interface CoreServicesOptions {
   oauthCimdUrl?: string;
   oauthCallbackPorts?: number[];
   oauthFlowTimeoutMs?: number;
+  /** D73 P2 test hook: pre-registered OAuth client table (replaces oauth-clients.json). */
+  oauthPreregisteredClients?: PreregisteredClientTable;
   /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): tools seen for the
    * first time are approved straight away, like the stored-server baseline — so
@@ -332,6 +340,11 @@ export interface CoreServicesOptions {
    * definition later *changes* is still locked.
    */
   toolLockTrustFirstList?: boolean;
+  /**
+   * D73 P2 test hook (test-hooks builds only): managed runtimes the MCPB installer resolves
+   * without the environment manager (e.g. `{ node: { command: process.execPath } }`).
+   */
+  mcpbRuntimes?: Partial<Record<'node' | 'python' | 'uv', { command: string; version?: string }>>;
   /**
    * D73 P1 test hook (NODE_ENV=test in a test-hooks build only): the connector catalog the
    * Bots' `<available_apps>` / app tools are built from. Test-hook builds default to an
@@ -474,10 +487,14 @@ export interface CoreServices {
   apps: AppServices | null;
   /** D73 runtime auth (provider registry, disconnect / removal, audit); null with `apps`. */
   appRuntime: AppRuntime | null;
+  /** D73 P2 §6.5 MCPB local bundle installer; null with `apps`. */
+  mcpb: McpbInstaller | null;
   /** D73 P1 tool-definition lock (all MCP servers); null with `apps`. */
   toolLock: ToolLockService | null;
   /** D73 P1 persistent per-(bot, connection, tool) grants; null with `apps`. */
   appToolGrants: AppToolGrants | null;
+  /** D73 P2 taint state ((bot, conversation) read connected-app data → egress approvals). */
+  taint: TaintService | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -705,8 +722,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     shellRpc: createShellHostRpc(),
     apps: null,
     appRuntime: null,
+    mcpb: null,
     toolLock: null,
     appToolGrants: null,
+    taint: null,
     connectedApps: null,
     connectorCatalog: null,
     appConnections: null,
@@ -977,6 +996,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         loopbackAllowlist: options.oauthLoopbackAllowlist,
         callbackPorts: options.oauthCallbackPorts,
         flowTimeoutMs: options.oauthFlowTimeoutMs,
+        preregisteredClients: options.oauthPreregisteredClients,
       },
     });
     const providers = new ProvidersService({ settings, secrets, logger, media });
@@ -1032,6 +1052,21 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       );
     }
     const appToolGrants = new AppToolGrants({ db: mainDb, clock });
+    // D73 P2 (design 29 §8.3): taint state for egress control; expired rows swept at start.
+    const taint = new TaintService({ db: mainDb, clock, settings });
+    taint.sweepExpired();
+    // Taint travels with a cross-bot handoff (design 29 §8.3, 不可被「转交」洗掉): A's task text
+    // reaching B's DM taints (B, that DM); B's result card landing in A's conversation taints
+    // (A, that conversation). Group chats are covered by the conversation-level check.
+    delegations.onMoved((delegation) => {
+      if (delegation.toConversationId === null) return;
+      const fromA = { botId: delegation.fromBotId, conversationId: delegation.fromConversationId };
+      const toB = { botId: delegation.toBotId, conversationId: delegation.toConversationId };
+      if (delegation.status === 'working') taint.inherit(fromA, toB);
+      else if (delegation.status === 'completed' && delegation.intent !== 'fyi') {
+        taint.inherit(toB, fromA);
+      }
+    });
     // D73 P1 (§5.4): catalog connections — the McpService's second server source, the catalog end of
     // the interactive flow (account identification, same-account reuse, first-connect tool review)
     // and connection management. Bot authorization goes through the bots domain layer.
@@ -1039,6 +1074,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       store: apps.store,
       vault: apps.vault,
       catalog: connectorCatalog,
+      preregistered: apps.preregistered,
       toolLock,
       grants: appToolGrants,
       mcp,
@@ -1179,6 +1215,40 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // P12: in-distro toolchains join the WSL backend's policy PATH.
     distroToolchainPrefix = () => environment.distroToolchainPathPrefix();
+    // D73 P2 §6.5 MCPB bundles: runtimes come from the environment manager; installs started
+    // from a conversation go through an `environment`-kind approval card (D41 rules).
+    const envRuntimeResolver = envManagerRuntimeResolver(environment, options.platform);
+    const mcpb = new McpbInstaller({
+      paths,
+      settings,
+      secrets,
+      logger,
+      homeDir: os.homedir(),
+      audit,
+      ...(options.platform !== undefined ? { platform: options.platform } : {}),
+      resolveRuntime: (kind) => {
+        const forced = __KEPCUP_TEST_HOOKS__ === true ? options.mcpbRuntimes?.[kind] : undefined;
+        return forced !== undefined
+          ? { command: forced.command, version: forced.version ?? null }
+          : envRuntimeResolver(kind);
+      },
+      requestApproval: (context, payload) =>
+        new Promise<boolean>((resolve) => {
+          approvals.submitNonBlocking(
+            {
+              runId: '',
+              botId: context.botId ?? null,
+              conversationId: context.conversationId,
+              loopType: 'host',
+            },
+            'environment',
+            payload,
+            (outcome) => resolve(outcome.decision === 'approved'),
+          );
+        }),
+      closeServer: (serverId) => mcp.closeServer(serverId),
+      catalogEntry: (slug) => connectorCatalog.get(slug),
+    });
     // P12 红线：register the mountable directories once the domain services
     // exist (data home + bound projects + active grants).
     const mountRegistration: MountRegistration = {
@@ -1326,6 +1396,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       // user switched off, or the bot no longer selects, is refused (enabled
       // false) so running tasks stop calling it.
       appGrants: appToolGrants,
+      taint,
       mcpToolDecision: async ({ botId, serverId, toolName, signal }) => {
         // D73 P1: a catalog connection's tool (server id = connection id). Same gates as a
         // custom server — the bot must have the connection selected, the connection must be
@@ -1448,6 +1519,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D72 P3 权限桥：外部 Agent 的 request_permission 分级 + agent_tool 审批卡。
     const agentPermissions = new AgentPermissionBridge({
       paths,
+      taint,
       gateway,
       approvals,
       grants,
@@ -1726,6 +1798,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         onConversationDeleted: (conversationId) =>
           orchestrator.delegationsOnConversationDeleted(conversationId),
         prepareBotDeletion: (botId) => orchestrator.delegationsOnBotDeleted(botId),
+      },
+      // D73 P2: taint rows follow their conversation / the bot's own direct chats.
+      taint: {
+        deleteForConversation: (conversationId) => taint.deleteForConversation(conversationId),
+        deleteForBotInConversations: (botId, ids) => taint.deleteForBotInConversations(botId, ids),
       },
       // D73 P1: the bot's persistent app-tool grants are revoked with the bot / its membership.
       appGrants: {
@@ -2018,8 +2095,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.mcp = mcp;
     services.apps = apps;
     services.appRuntime = appRuntime;
+    services.mcpb = mcpb;
     services.toolLock = toolLock;
     services.appToolGrants = appToolGrants;
+    services.taint = taint;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.appConnections = appConnections;

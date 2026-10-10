@@ -8,6 +8,7 @@
 
 - 2026-10-09 P0 实施修订：见 `docs/dev/DEVIATIONS.md` DEV-019（`oauth_clients` 表、回调页等待换令牌、改认证方式 / URL 时断开等）。
 - 2026-10-10 P1 实施修订：见 DEV-020（群聊并发连接的 Bot 授权由 core 合并、重新授权 scopes 取并集、目录面板新建 / 重连语义、隐私政策纯文本、目录条目门禁关闭发布等）。正文未改写，相关处以「P1 实施注」标出。
+- 2026-10-10 P2 实施修订：见 DEV-021（开发者档只对 `tier: developer` 的 server 生效、客户端选择顺序与预注册不回退、污点期间写工具的 `mcp_tool` / `egress` 混合规则、污点随委派 / 群聊传递且来源仅目录应用工具、MCPB 设置页安装的同意方式、待追加 scopes 进程内保存、对话轮 / 子代理遇外发确认不等待、只读子代理的发现工具子集等）。正文未改写，相关处以「P2 实施注」标出。
 
 相关：D25（加密与敏感数据）、D37（授权方式，本文扩展）、D41/D42（无人值守）、D44（浏览器工具）、D58（对话内设置引导）、D62（检索供应商密钥命名）、D63（技能安装）、D65（MCP，本文补齐其「OAuth 后续单排」）、D72（外部智能体与能力包、宿主 MCP 桥、目录模式）。
 
@@ -222,6 +223,7 @@ CIMD 的 loopback redirect 存在「本机其他进程冒用」风险（规范�
 
 - 服务端返回 `403 insufficient_scope`：工具结果为结构化 `SETUP_REQUIRED`（`{kind:'connect-app', connectionId, scopes:[新增], reason}`），对话内卡片说明「需要追加 xx 权限」；用户确认后以**旧 ∪ 新**范围重新授权（`skipRefresh`），完成后经 `runs.retry` 续跑。step-up 计数以（对话, 连接）为键、30 分钟窗口内至多 1 次——重试产生新 run，按 run 计数会被绕过。
   - P1 实施注（DEV-020 第 2 项）：任何带 `connectionId` 的重新授权（含设置页「重新连接」）都取现有 scopes ∪ 请求 scopes，不只限于对话卡的 step-up。
+  - P2 实施注（DEV-021 第 6 项）：限流名额在卡片真正随 run 发出时才占用，被限流抑制时工具结果为普通失败文本（`APP_SCOPE_INSUFFICIENT`）；挑战要求的 scopes 存进程内映射（重启丢失，下次 403 再得），设置页「重新连接」与 `apps.connect({connectionId})` 把它并入请求。
 - 默认只申请最小范围（只读优先，如 Google 用 `drive.file` 而非 `drive`），写权限在首次需要时追加。
 
 ### 5.6 运行时与交互授权分离
@@ -257,6 +259,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 - **系统提示词**：新增 `<connected_apps>` 段，列出该 Bot 已授权的应用名称、账号标签与一句用途；新增 `<available_apps>` 段，列出目录中**尚未连接**的应用（名称 + 一句话，≤30 条，不含工具清单）。
 - **请求连接工具** `app_request_connection({ connector?, connection_id?, reason })`：Bot 判断需要某个未连接应用、或已授权连接需重新连接时调用；返回 `SETUP_REQUIRED` `{kind:'connect-app', connectorId, connectionId?, reason}` → 对话内连接卡（含应用图标、将申请的权限、「连接后授权给当前 Bot」默认勾选）→ 完成后 `runs.retry` 续跑（D58 既有链路，§5.6）。Bot 不得以文字引导用户去别处填令牌。
 - **工具面控制**：沿用每服务器工具数上限（`MCP_TOOLS_PER_SERVER_MAX`）；连接多了之后工具清单会膨胀，P2 引入「按需发现」。因 PiEngine 在 run 开始时固定工具列表、宿主桥亦按会话下发，不做 run 中途挂载，而是：工具总数超过阈值的连接只注入 `<connected_apps>` 摘要 + 两个稳定工具 `app_search_tools(query)`（返回匹配工具的名称、说明与参数 schema）与 `app_call_tool(name, args)`（分发器，按被调工具自身的风险走审批与锁定）——工具列表在 run 内保持不变。
+  - P2 实施注（DEV-021 第 8 项）：阈值 `APP_TOOLS_INLINE_MAX`=40（按全部目录应用工具总数，run 开头决定一次），`app_call_tool` 转给与直接暴露时同一个包装工具，只读子代理拿的发现工具限于只读 + 免审子集。
 
 ## 8 审批、策略与安全
 
@@ -302,6 +305,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
   | 自定义 MCP 工具（非只读） | 每次确认 |
 
   可在设置中关闭污点规则（高级，默认开）。污点状态存 `app_taint` 表（§12），按（Bot, 对话）计、24 小时过期；`web_fetch` / `web_search` / 浏览器原本无审批，污点期间的确认使用新审批 kind `egress`（§8.1「不新增 kind」只针对应用工具审批本身）。
+  - P2 实施注（DEV-021 第 3 / 4 / 7 项）：污点来源仅限目录应用工具，按对话判定并随委派 / 群聊传递；会弹 `mcp_tool` 卡的写工具不叠第二张 `egress` 卡（该卡带污点标记与完整参数），其余通道（含 `watch_create`）弹 `egress` 卡；对话轮 / 子代理不等待确认（`RUN_READ_ONLY`，引导 `start_task`）。
 - 审批卡对外发内容（邮件正文、消息文本）显示全文而非摘要。
 - 不自动渲染工具输出中的远程图片（§7）。
 
@@ -367,6 +371,8 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | `verified` | 第三方提交 | 自动校验 + 人工审核 + 命名空间验证 | §8.1 默认 | 目录，带认证标 |
 | `community` | 第三方提交 | 仅自动校验 | 写入类首次连接时额外提示；不可「总是允许」`write` | 目录「社区」分组，默认折叠 |
 | `developer` | 本机手动添加 | 无 | 全部工具每次确认（可逐工具放宽） | 仅「自定义」 |
+
+- P2 实施注（DEV-021 第 1 项）：`developer` 档只对 `McpServer.tier === 'developer'` 的 server（MCPB 包安装生成）生效；普通自定义 server 保持 W5 默认（只读自动、写 / 破坏性确认）。`destructive` 恒每次确认。
 
 ### 11.4 目录服务
 

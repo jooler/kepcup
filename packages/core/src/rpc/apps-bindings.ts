@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 import {
   AppError,
   appsConnectCancelInputSchema,
@@ -8,12 +8,23 @@ import {
   appsConnectOutputSchema,
   appsConnectionsListInputSchema,
   appsConnectionsListOutputSchema,
+  appsFlowLogInputSchema,
+  appsFlowLogOutputSchema,
+  appsOauthClientsListOutputSchema,
+  appsOauthClientsRemoveInputSchema,
+  appsOauthClientsSetInputSchema,
   appsSetClientCredentialsInputSchema,
+  mcpRawToolsInputSchema,
+  mcpRawToolsOutputSchema,
+  mcpRefreshToolsInputSchema,
+  mcpRefreshToolsOutputSchema,
   okOutputSchema,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { AppServices } from '../apps/index.js';
 import type { RpcMethodSpec } from './server.js';
+
+const voidInput = z.void();
 
 function method<I extends z.ZodType, O extends z.ZodType>(
   input: I,
@@ -32,6 +43,10 @@ export function bindAppsMethods(services: CoreServices): Record<string, RpcMetho
   const apps = (): AppServices => {
     if (services.apps === null) throw new AppError('NOT_IMPLEMENTED', '应用连接模块未就绪');
     return services.apps;
+  };
+  const mcp = (): NonNullable<CoreServices['mcp']> => {
+    if (!services.mcp) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+    return services.mcp;
   };
   return {
     'apps.connect': method(appsConnectInputSchema, appsConnectOutputSchema, async (input) =>
@@ -70,6 +85,38 @@ export function bindAppsMethods(services: CoreServices): Record<string, RpcMetho
         apps().flows.setClientCredentials(input.flowId, input.clientId, input.clientSecret);
         return { ok: true as const };
       },
+    ),
+    // D73 P2 §6.4：BYO 客户端（按 issuer）。secret 只写不读；仍有连接使用该 issuer 时拒绝删除。
+    'apps.oauthClients.list': method(voidInput, appsOauthClientsListOutputSchema, async () => ({
+      clients: apps().oauthClients.list(),
+    })),
+    'apps.oauthClients.set': method(
+      appsOauthClientsSetInputSchema,
+      okOutputSchema,
+      async (input) => {
+        apps().oauthClients.set(input);
+        return { ok: true as const };
+      },
+    ),
+    'apps.oauthClients.remove': method(
+      appsOauthClientsRemoveInputSchema,
+      okOutputSchema,
+      async (input) => {
+        apps().oauthClients.remove(input.issuer);
+        return { ok: true as const };
+      },
+    ),
+    // D73 P2 §6.6 开发者模式：授权事件日志（脱敏）/ 原始工具定义 / 手动刷新工具。
+    'apps.flowLog': method(appsFlowLogInputSchema, appsFlowLogOutputSchema, async (input) => ({
+      entries: apps().flows.flowLog(input.serverId),
+    })),
+    'mcp.rawTools': method(mcpRawToolsInputSchema, mcpRawToolsOutputSchema, async (input) => ({
+      tools: await mcp().rawTools(input.serverId),
+    })),
+    'mcp.refreshTools': method(
+      mcpRefreshToolsInputSchema,
+      mcpRefreshToolsOutputSchema,
+      async (input) => ({ tools: await mcp().refreshTools(input.serverId) }),
     ),
     'apps.connections.list': method(
       appsConnectionsListInputSchema,

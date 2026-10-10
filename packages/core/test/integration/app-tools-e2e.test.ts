@@ -118,6 +118,10 @@ async function start(): Promise<Env> {
     'done',
   );
   expect(done.phase).toBe('done');
+  // These tests are about naming, risk tiers and standing grants. Reading app data taints the
+  // (bot, conversation) and a taint turns a grant-covered write into an `egress` card (D73 P2 §6.2,
+  // covered by connected-apps-p2-egress.test.ts), so the harness switches the guard off.
+  await core.rpc.call('settings.update', { apps: { taintGuard: false } });
   const conv = await openDirect(core, bot.id);
   return { stack, fake, botId: bot.id, conversationId: conv.id, connectionId: done.connectionId! };
 }

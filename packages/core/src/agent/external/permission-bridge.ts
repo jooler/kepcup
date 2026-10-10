@@ -16,6 +16,9 @@ import type { ToolGateway } from '../../gateway/index.js';
 import type { ApprovalsService } from '../../permissions/approvals.js';
 import type { GrantsService } from '../../permissions/grants.js';
 import type { AllowlistService } from '../../permissions/allowlist.js';
+import type { EgressChannel } from '@kepcup/shared';
+import { EGRESS_TARGET_MAX_CHARS } from '@kepcup/shared';
+import type { TaintService } from '../../apps/taint.js';
 import { unattendedCommandVerdict } from '../../permissions/approvals.js';
 import type { RunIdentity } from '../types.js';
 import {
@@ -322,6 +325,11 @@ export interface AgentPermissionBridgeDeps {
    * 一律拒绝（不弹卡），否则 project 会在没有租约与检查点的情况下被改写。
    */
   unleasedProject?(identity: RunIdentity): string | null;
+  /**
+   * D73 P2 污点外发控制（design 29 §8.3）：(Bot, 对话) 读取过连接应用数据后，网络类请求
+   * （fetch 类工具、agent 沙箱内自动放行的命令）降为逐次确认（`egress` 卡）。缺省 = 不降级。
+   */
+  taint?: Pick<TaintService, 'guard'> | undefined;
   /** 用户主目录（`~` 展开；缺省 os.homedir()）。 */
   homeDir?: string;
   logger: CoreLogger;
@@ -456,6 +464,27 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     }
 
     const roots = this.#roots(ctx.identity, ctx.workdir);
+    // D73 P2: network reads while tainted are a per-request confirmation, whatever the tier.
+    if (classified.category === 'fetch') {
+      const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
+      if (tainted !== null && tainted !== undefined) {
+        return this.#askEgress(
+          ctx,
+          {
+            channel: 'web_fetch',
+            target: this.#redactCapped(
+              toolCall.rawInput !== undefined
+                ? JSON.stringify(toolCall.rawInput)
+                : (toolCall.title ?? toolCall.name ?? ''),
+            ),
+            summary: `智能体网络请求：${toolCall.title ?? toolCall.name ?? ''}`,
+            since: tainted.firstAt,
+          },
+          allow,
+          reject,
+        );
+      }
+    }
     switch (classified.category) {
       case 'think':
         return allow('auto', 'no side effects');
@@ -663,6 +692,22 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     }
     if (ctx.tier === 'read_only') return reject('auto', '只读档：不允许执行命令', { command });
     if (sandboxed && ctx.tier === 'workspace') {
+      // D73 P2: the agent sandbox does not bound the network — while tainted an
+      // allowlisted read-only command (above) is the only command left unconfirmed.
+      const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
+      if (tainted !== null && tainted !== undefined) {
+        return this.#askEgress(
+          ctx,
+          {
+            channel: 'bash',
+            target: this.#redactCapped(command),
+            summary: '智能体沙箱内命令（沙箱不限制网络）',
+            since: tainted.firstAt,
+          },
+          allow,
+          reject,
+        );
+      }
       return allow('auto', 'runs inside the agent sandbox', { command });
     }
     // Past here the command runs outside any sandbox once approved. Without
@@ -719,6 +764,42 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         ? base
         : `${base}；⚠ 可能触及应用数据目录 / 无法静态分析（${analysis.reason ?? ''}）`,
     });
+  }
+
+  /** Redacted + capped outbound text for an egress card. */
+  #redactCapped(text: string): string {
+    const redacted = this.#deps.redact?.(text) ?? text;
+    return redacted.length > EGRESS_TARGET_MAX_CHARS
+      ? `${redacted.slice(0, EGRESS_TARGET_MAX_CHARS)}…（已截断）`
+      : redacted;
+  }
+
+  /** D73 P2: raises an `egress` card for a network-class request; approval → allow_once. */
+  async #askEgress(
+    ctx: PermissionRequestContext,
+    card: { channel: EgressChannel; target: string; summary: string; since: number },
+    allow: (via: string, reason: string, extra?: object) => PermissionVerdict,
+    reject: (via: string, reason: string, extra?: object) => PermissionVerdict,
+  ): Promise<PermissionVerdict> {
+    const outcome = await this.#deps.approvals.request(
+      ctx.identity,
+      'egress',
+      {
+        channel: card.channel,
+        target: card.target,
+        summary: card.summary,
+        taintedSince: card.since,
+      },
+      { signal: ctx.signal },
+    );
+    if (outcome.decision === 'cancelled') {
+      return { response: { outcome: { outcome: 'cancelled' } }, decision: 'cancelled' };
+    }
+    const via = outcome.approval.autoApproved ? 'unattended' : 'approval';
+    const extra = { approvalId: outcome.approval.id, egress: card.channel };
+    return outcome.decision === 'approved'
+      ? allow(via, '污点期间的网络类请求已确认', extra)
+      : reject(via, '污点期间的网络类请求被拒绝', extra);
   }
 
   /** The unleased bound project (see deps); 'unknown' = the lookup failed (fail closed). */

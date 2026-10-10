@@ -87,6 +87,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'list_schedules',
   'watch_list',
   'list_bots',
+  'app_search_tools',
   'web_search',
   'web_fetch',
   'browser_snapshot',
