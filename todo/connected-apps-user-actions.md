@@ -39,7 +39,7 @@
 
 - [x] （已由 Agent 完成）`registry.kepcup.com` 的 WAF 限速规则已写入（每 IP 每 10 秒 60 次，免费套餐唯一的一条限速规则）。
 - [x] （已由 Agent 完成）`dl.kepcup.com` 已上线并验签通过；签名私钥在 `.env`（**请自行备份**），公钥已登记进 `CONNECTOR_INDEX_PUBLIC_KEYS`（`kepcup-2026-1`）。之后更新目录：`infra/cloudflare/sign-directory.sh --out infra/cloudflare/directory/public/connectors/v1 --key-id kepcup-2026-1`，再 `with-env.sh wrangler deploy --config infra/cloudflare/directory/wrangler.jsonc`。
-- [ ] 首次定时同步（:17 UTC）后确认 `sync_state` 有数据、`/v0.1/servers` 非空。
+- [x] （已由 Agent 确认）首次定时同步 17:17 UTC 成功，800 条，`/v0.1/servers` 非空。
 
 
 

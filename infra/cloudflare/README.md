@@ -100,6 +100,7 @@ infra/cloudflare/with-env.sh check
 | 2026-10-10 | 本机生成 Ed25519 签名密钥（keyId `kepcup-2026-1`）：私钥种子只写进 `.env` 的 `KEPCUP_CONNECTOR_SIGNING_KEY`，公钥登记进 `CONNECTOR_INDEX_PUBLIC_KEYS` | 私钥不入库、不上传 Cloudflare；**请自行备份 `.env` 里这一行**，丢失只能走轮换 |
 | 2026-10-10 | 用 `infra/cloudflare/sign-directory.sh` 签名（6 条目）并部署 `kepcup-directory`，custom domain `dl.kepcup.com` | 已上线，版本 `ea6b872f…`；`directory/verify.mjs` 通过 |
 | 2026-10-10 | 写入 `http_ratelimit` 规则：`registry.kepcup.com` 每 IP（按 colo）每 10 秒 60 次，超出封 10 秒 | 已生效，ruleset `75902de5…`、rule `9a0b198f…`（免费套餐仅允许 1 条限速规则，已占用）；改动前被分类器拦下，用户追加更窄的 Bash 规则后成功 |
+| 2026-10-10 | 确认注册表首次定时同步 | 17:17 UTC 同步成功，`servers` 表 800 条（8 页 × 100，`SYNC_MAX_PAGES=8`），游标已保存，之后每小时接着同步；`/v0.1/servers` 返回真实数据 |
 
 ### 等你放行的
 
