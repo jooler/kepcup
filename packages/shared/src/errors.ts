@@ -130,6 +130,12 @@ export const ERROR_CODES = [
   'APP_UI_INVALID',
   'APP_UI_TOOL_NOT_ALLOWED',
   'APP_UI_RATE_LIMITED',
+  /** 本机连接（todo/local-connector-authoring.md）：探测 / 校验不通过（原因在 message）。 */
+  'LOCAL_CONNECTOR_REJECTED',
+  /** 提案不存在、已被使用或已过期，需要让 Bot 重新发起。 */
+  'LOCAL_CONNECTOR_EXPIRED',
+  /** 本机连接的新增需要先在设置里打开开发者模式。 */
+  'DEVELOPER_MODE_REQUIRED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

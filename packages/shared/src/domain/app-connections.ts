@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { connectorCategorySchema, connectorTierSchema } from './connector-catalog.js';
+import {
+  connectorCategorySchema,
+  connectorOriginSchema,
+  connectorTierSchema,
+} from './connector-catalog.js';
 import { mcpToolApprovalModeSchema, mcpToolPolicySchema, mcpToolRiskSchema } from './types.js';
 
 /**
@@ -29,6 +33,8 @@ export const appCatalogEntrySchema = z.object({
   privacyPolicy: z.string(),
   category: connectorCategorySchema,
   tier: connectorTierSchema,
+  /** 来源（本机连接 = `local`）；缺省按 `bundled` 处理。 */
+  origin: connectorOriginSchema.optional(),
   authKind: z.enum(['oauth', 'api-key', 'none']),
   registration: z.enum(['auto', 'preregistered']),
   /** false = 当前版本不能连接（预注册客户端 / 非 OAuth，P2）；界面置灰并显示 `unavailableReason`。 */
