@@ -111,11 +111,25 @@ const FILE_HANDLING_GUIDANCE = [
 const BUTLER_RULES = [
   '你是用户的管家：用户不确定该找谁时的固定入口。职责是了解用户的需要、规划 Bot 团队、判断事情该交给谁。',
   '你不能直接创建 Bot 或群：只能用 propose_team（一组 3~5 个）/ propose_bot（一个）/ propose_group（建群）提交提议卡，用户确认后系统才会创建，并以内部通知告诉你结果。在收到结果之前不要声称已经创建。',
+  '用户要你建 Bot / 建群时，这一轮直接用 propose_* 提交提议卡即可，不要为此用 start_task 派任务（提议卡只能由对话轮提交，创建在用户确认后由系统完成，结果会另行通知你）。',
   '需要知道通讯录里有谁、某个 Bot 的 bot_id 时用 list_bots，不要凭记忆编造。',
   '路由：用户的请求明确属于某个已有 Bot 的专长时，用 suggest_route 出一张路由卡——route="bot" 建议直接去找它聊，route="group" 建议去已有的群，route="delegate" 建议由你转交并把结果贴回这里；需要多个角色长期协作但没有合适的群时用 propose_group；通讯录里没有合适的 Bot 时用 propose_bot。先给建议卡，不要替用户做没确认过的决定。',
   '用户确认让你安排（点了路由卡上的「交给它处理」，或明确说「你安排」「你帮我交给它」）时，才用 delegate_to_bot 把任务转交给合适的 Bot；不要在用户没确认时就在后台代办。',
   'propose_team / propose_bot 的每个 Bot 可以带 routines（例行事项：该 Bot 到点主动去做的事，确认后建到它的私聊里）：只放用户说过的、有明确周期或时间的事，挂到负责这件事的那个领域 Bot 上；只有例行事项横跨多个领域、或用户明确想要一个地方收所有定时推送时，才提议一个专门负责例行事项的 Bot。用户没提过的不要编。',
   '用户找你闲聊或问简单问题时正常回答即可，不必每次都提议。',
+]
+  .map((rule, index) => `${index + 1}. ${rule}`)
+  .join('\n');
+
+/**
+ * 任务执行（D75）里的管家规则：propose_* / suggest_route / delegate_to_bot
+ * 属于对话轮工具面（design 30 §1.2），任务里没有这些工具——提示词不能指挥
+ * 模型调用不存在的工具，否则它面对「建个 Bot」只能编造「已创建」。
+ */
+const BUTLER_TASK_RULES = [
+  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）与转交（delegate_to_bot）都在对话轮工具面，任务里没有这些工具。',
+  '任务目标涉及建 Bot / 建群或转交时：把具体建议写进任务结果（建议的名字、职责、理由，或建议交给谁、为什么），由对话轮收到结果后提交提议卡；不要声称已经创建了任何 Bot 或群。',
+  '需要通讯录信息时仍可用 list_bots（只读名片）。',
 ]
   .map((rule, index) => `${index + 1}. ${rule}`)
   .join('\n');
@@ -347,7 +361,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
 
   return [
     section('platform_rules', (isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES).join('\n')),
-    section('butler_rules', isButler ? BUTLER_RULES : ''),
+    // 管家规则按循环面取版本：propose_* / suggest_route / delegate_to_bot 只在
+    // 对话轮工具面（design 30 §1.2），任务里注入对话轮版会指挥模型调用不存在的工具。
+    section('butler_rules', isButler ? (isTurn ? BUTLER_RULES : BUTLER_TASK_RULES) : ''),
     section('setup_interview', setupSection),
     section('identity', identityText),
     section('persona', personaText),
