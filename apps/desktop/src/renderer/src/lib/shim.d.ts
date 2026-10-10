@@ -23,6 +23,8 @@ declare global {
         info(): Promise<PlatformInfo>;
         /** System directory picker (project selector, P04); null when cancelled. */
         selectDirectory(): Promise<string | null>;
+        /** System file picker (D73 P2 MCPB install); null when cancelled. */
+        selectFile(extensions: string[]): Promise<string | null>;
       };
       /** Syncs nativeTheme.themeSource (macOS vibrancy material follows the app theme). */
       setNativeThemeSource(mode: 'light' | 'dark' | 'system'): Promise<void>;

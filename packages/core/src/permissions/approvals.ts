@@ -3,6 +3,7 @@ import {
   agentToolApprovalPayloadSchema,
   approvalDurationSchema,
   butlerProposalPayloadSchema,
+  egressApprovalPayloadSchema,
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
   skillImportApprovalPayloadSchema,
@@ -181,7 +182,21 @@ export class ApprovalsService {
     // calling tool call's effect hooks (tool-call scope, filled by the effect
     // recorder) compare this external call with the earlier rows of the same
     // effect in the task chain — before any card, unattended or not.
-    const gate = activeEffectHooks()?.approvalGate?.(identity.runId, kind) ?? null;
+    // D73 P2: an `egress` card is a per-call confirmation of an outbound action, never a
+    // repeat of an earlier effect — browser clicks / Enter are ledger-recorded calls whose
+    // identical args ({ref:'e5'} / {key:'Enter'}) recur across snapshots, and a spurious
+    // "prior effect" flag would also stop unattended mode from auto-approving. Only the
+    // MCP-tool channels keep the gate (duplicate-effect protection, judged as `mcp_tool`).
+    const gateKind: ApprovalKind | null =
+      kind !== 'egress'
+        ? kind
+        : payload['channel'] === 'app_tool' || payload['channel'] === 'mcp_tool'
+          ? 'mcp_tool'
+          : null;
+    const gate =
+      gateKind === null
+        ? null
+        : (activeEffectHooks()?.approvalGate?.(identity.runId, gateKind) ?? null);
     if (gate !== null && (gate.verdict === 'completed' || gate.verdict === 'denied')) {
       return this.#dedupedOutcome(identity, kind, payload, gate);
     }
@@ -398,6 +413,19 @@ export class ApprovalsService {
           }
         : {}),
     });
+    // D73 P2 (design 29 §8.3): an unattended approval of an egress raised while the
+    // (bot, conversation) is tainted by connected-app data — approved per D41, but marked
+    // so the Bot detail can summarise it. `command` / `git_remote` carry the flag too.
+    if (kind === 'egress' || payload['tainted'] === true) {
+      this.#deps.audit(identity, 'egress_tainted', {
+        approvalId: approval.id,
+        kind,
+        channel: egressChannelOf(kind, payload),
+        target: egressTargetOf(kind, payload).slice(0, EGRESS_AUDIT_TARGET_MAX_CHARS),
+        approved: status === 'approved',
+        via: 'unattended',
+      });
+    }
     this.#deps.logger.info(
       { approvalId: approval.id, kind, approved: status === 'approved' },
       'unattended auto decision',
@@ -459,7 +487,10 @@ export class ApprovalsService {
     // once | conversation. An unavailable choice degrades to「仅这一次」.
     if (duration === 'bot' || duration === 'conversation') {
       if (
-        (approval.kind === 'agent_tool' || approval.kind === 'mcp_tool') &&
+        (approval.kind === 'agent_tool' ||
+          approval.kind === 'mcp_tool' ||
+          // D73 P2: egress cards offer「允许一次 / 拒绝」only.
+          approval.kind === 'egress') &&
         !offeredDurations(approval.payload).includes(duration)
       ) {
         duration = 'once';
@@ -857,6 +888,8 @@ export class ApprovalsService {
       }
       case 'agent_tool':
         return `${botName} ${describeAgentTool(approval.payload)}`;
+      case 'egress':
+        return `${botName} ${describeEgress(approval.payload)}`;
       default:
         return `${botName} 请求确认（${approval.kind}）`;
     }
@@ -970,6 +1003,24 @@ export class ApprovalsService {
           return `[系统] 已取消：${botName} ${label}`;
         case 'failed':
           return `[系统] 处理失败：${label}${failureSuffix(approval)}`;
+      }
+    }
+    if (approval.kind === 'egress') {
+      const label = describeEgress(approval.payload, true);
+      const actor = botName.length > 0 ? `${botName} ` : '';
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${actor}${label}`;
+        case 'approved':
+          return approval.autoApproved === true
+            ? `[系统] 无人值守自动批准：${actor}${label}`
+            : `[系统] 用户允许${actor}${label}（仅这一次）`;
+        case 'denied':
+          return `[系统] 用户拒绝${actor}${label}`;
+        case 'cancelled':
+          return `[系统] 已取消：${actor}${label}`;
+        case 'failed':
+          return `[系统] 处理失败：${actor}${label}${failureSuffix(approval)}`;
       }
     }
     if (approval.kind === 'agent_tool') {
@@ -1273,6 +1324,66 @@ export class ApprovalsService {
       .prepare(`select * from approvals where ${clauses.join(' and ')}`)
       .all(...params) as ApprovalRow[];
   }
+}
+
+/** Audit cap for the outbound content of an `egress_tainted` entry (the card keeps it in full). */
+const EGRESS_AUDIT_TARGET_MAX_CHARS = 1_000;
+/** The conversation-context / notification line caps the outbound content. */
+const EGRESS_DESCRIBE_TARGET_MAX_CHARS = 200;
+
+const EGRESS_CHANNEL_LABELS: Record<string, string> = {
+  web_fetch: '抓取网页',
+  web_search: '联网搜索',
+  browser: '浏览器操作',
+  app_tool: '应用工具',
+  mcp_tool: 'MCP 工具',
+  bash: '执行命令',
+  git_remote: 'git 远程操作',
+  watch: '网页监看',
+};
+
+/** Channel of a tainted approval for the audit: egress cards carry it, `command` / `git_remote` are fixed. */
+function egressChannelOf(kind: ApprovalKind, payload: Record<string, unknown>): string {
+  if (kind === 'egress') return String(payload['channel'] ?? '');
+  if (kind === 'mcp_tool') {
+    return typeof payload['connectionId'] === 'string' && payload['connectionId'].length > 0
+      ? 'app_tool'
+      : 'mcp_tool';
+  }
+  return kind === 'git_remote' ? 'git_remote' : 'bash';
+}
+
+function egressTargetOf(kind: ApprovalKind, payload: Record<string, unknown>): string {
+  if (kind === 'egress') return String(payload['target'] ?? '');
+  if (kind === 'mcp_tool') {
+    // Tainted mcp_tool cards carry the full (already redacted) arguments.
+    const full = payload['argsFull'];
+    const tool = String(payload['toolName'] ?? '');
+    return typeof full === 'string' && full.length > 0
+      ? `${tool} ${full}`
+      : `${tool} ${String(payload['argsSummary'] ?? '')}`.trim();
+  }
+  if (kind === 'git_remote') {
+    const args = Array.isArray(payload['args']) ? (payload['args'] as string[]).join(' ') : '';
+    return `git ${String(payload['operation'] ?? '')} ${args}`.trim();
+  }
+  return String(payload['command'] ?? '');
+}
+
+/**
+ * One-line summary of an egress payload (D73 P2): the channel + what goes out. With `untrusted`
+ * (conversation context) the model-chosen target is wrapped in `<untrusted>` like other cards.
+ */
+function describeEgress(payload: Record<string, unknown>, untrusted = false): string {
+  const parsed = egressApprovalPayloadSchema.safeParse(payload);
+  if (!parsed.success) return '外发操作确认（读取过应用数据）';
+  const data = parsed.data;
+  const target =
+    data.target.length > EGRESS_DESCRIBE_TARGET_MAX_CHARS
+      ? `${data.target.slice(0, EGRESS_DESCRIBE_TARGET_MAX_CHARS)}…`
+      : data.target;
+  const shown = untrusted ? `<untrusted>${neutralizeUntrusted(target)}</untrusted>` : target;
+  return `外发确认（已读取应用数据）· ${EGRESS_CHANNEL_LABELS[data.channel] ?? data.channel}：${shown}`;
 }
 
 /** One-line summary of a butler proposal payload (D70). */

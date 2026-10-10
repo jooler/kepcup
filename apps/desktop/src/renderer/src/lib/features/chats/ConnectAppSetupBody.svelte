@@ -108,6 +108,13 @@
     return [...new Set([...(connection?.scopes ?? []), ...extra])];
   });
 
+  // step-up：卡片说明本次要新增哪些权限（requirement.scopes 是「已授予 ∪ 需追加」，减去已有的）。
+  const addedScopes = $derived.by(() => {
+    if (requirement.reason !== 'scope') return [];
+    const granted = new Set(connection?.scopes ?? []);
+    return (requirement.scopes ?? []).filter((scope) => !granted.has(scope));
+  });
+
   /**
    * 不走授权流程就能继续的连接：requirement 指明的行已在别处重连好；或未连接的目录应用在
    * 设置页已有连接好的账号（优先 Bot 已持有的）。后者尚未授权给 Bot 时「继续」要先写
@@ -195,6 +202,14 @@
     {t('apps.setupTitle', { name })}
   </p>
   <p class="text-xs text-muted-foreground">{t(REASON_KEYS[requirement.reason])}</p>
+  {#if addedScopes.length > 0}
+    <p class="text-xs" data-testid="setup-card-added-scopes">
+      <span class="text-muted-foreground">{t('apps.setupScopesAdded')}</span>
+      {#each addedScopes as scope (scope)}
+        <code class="mx-0.5 rounded bg-muted px-1 py-0.5 text-[11px]">{scope}</code>
+      {/each}
+    </p>
+  {/if}
 </div>
 <ConnectAppPanel
   target={requirement.target}

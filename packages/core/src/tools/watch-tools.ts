@@ -4,6 +4,7 @@ import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import { describeWatchLine } from '../watch/service.js';
 import { describeCondition } from '../watch/conditions.js';
+import { egressFailureResult, type EgressCheck } from '../apps/taint.js';
 
 /**
  * 确定性监看工具（W7，D79）：`watch_create` / `watch_list` / `watch_stop`。
@@ -54,8 +55,13 @@ function conditionFromParams(params: ConditionParams): Record<string, unknown> {
 export function buildWatchTools(input: {
   identity: RunIdentity;
   watch: WatchToolFacade;
+  /**
+   * D73 P2（design 29 §8.3）：监看会立即、并在每个间隔用 Bot 的浏览器资料访问 URL，是一条
+   * 外发通道——污点期间创建前要用户确认（目标 = 完整 URL）；缺省 = 不做污点控制。
+   */
+  egress?: EgressCheck | undefined;
 }): ToolDefinition[] {
-  const { identity, watch } = input;
+  const { identity, watch, egress } = input;
   const requireContext = (): { botId: string; conversationId: string } | null => {
     if (identity.conversationId === null || identity.botId === null) return null;
     return { botId: identity.botId, conversationId: identity.conversationId };
@@ -111,9 +117,21 @@ export function buildWatchTools(input: {
         description: `检查间隔（分钟），不小于 ${WATCH_MIN_INTERVAL_SEC / 60}`,
       }),
     }),
-    execute: async (params) => {
+    execute: async (params, toolCtx) => {
       const ctx = requireContext();
       if (ctx === null) return noContext();
+      try {
+        await egress?.(
+          {
+            channel: 'watch',
+            target: params.url,
+            summary: '创建网页监看（该网址会立即并按间隔反复被访问）',
+          },
+          { signal: toolCtx.signal },
+        );
+      } catch (error) {
+        return egressFailureResult(error);
+      }
       try {
         const created = watch.create({
           botId: ctx.botId,

@@ -249,6 +249,24 @@ function bootstrap(): void {
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });
 
+  // D73 P2 (MCPB): system file picker restricted to the given extensions; path only, the core
+  // reads and verifies the file itself (inspect → sha256 → confirm → install).
+  ipcMain.handle('dialog:selectFile', async (_event, extensions: unknown) => {
+    if (window === null) return null;
+    const allowed = Array.isArray(extensions)
+      ? extensions.filter(
+          (ext): ext is string => typeof ext === 'string' && /^[a-z0-9]+$/i.test(ext),
+        )
+      : [];
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile'],
+      ...(allowed.length > 0
+        ? { filters: [{ name: allowed.join(', '), extensions: allowed }] }
+        : {}),
+    });
+    return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
+  });
+
   // P11 任务 5 (查看窗口): moves the bot's page for this conversation into a
   // visible window. Capability only — whether showing is appropriate is the
   // renderer's / core's decision, not the main process's.

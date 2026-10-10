@@ -66,6 +66,7 @@ export function createAppRuntime(deps: {
     auditor,
     onStatus,
     cancelFlows: (connectionId) => apps.flows.cancelForConnection(connectionId),
+    onServerRemoved: (serverId) => apps.flows.clearFlowLog(serverId),
   });
   mcp.attachAuth(registry);
   registry.bindMcp(mcp);

@@ -404,7 +404,8 @@ describe('ToolLockService: stored-server baseline (once only)', () => {
     lock.runBaseline();
     settings.update({ mcpServers: [serverOf('s')] });
     settings.update({ launchAtLogin: false });
-    expect(settings.get().apps).toEqual({ toolLockBaselineDone: true });
+    // Only the baseline flag changed; the other `apps` settings keep their defaults.
+    expect(settings.get().apps).toMatchObject({ toolLockBaselineDone: true, taintGuard: true });
   });
 
   it('a corrupt stored apps value reads as "baseline not done" instead of breaking settings', () => {

@@ -6,6 +6,8 @@ export * from './domain/vendors.js';
 export * from './domain/agent-catalog.js';
 export * from './domain/connector-catalog.js';
 export * from './domain/app-connections.js';
+export * from './domain/mcpb.js';
+export * from './domain/oauth-clients.js';
 export * from './domain/host-capabilities.js';
 export * from './domain/sensors.js';
 export * from './domain/watches.js';

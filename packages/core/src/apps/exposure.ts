@@ -1,4 +1,5 @@
 import {
+  APP_TOOLS_INLINE_MAX,
   AVAILABLE_APPS_MAX,
   connectorMetaOf,
   type AppConnection,
@@ -38,6 +39,15 @@ const EXPOSABLE_STATUSES: ReadonlySet<AppConnectionStatus> = new Set([
 
 export function isExposableStatus(status: AppConnectionStatus): boolean {
   return EXPOSABLE_STATUSES.has(status);
+}
+
+/**
+ * 按需发现（D73 P2 §6.3，design 29 §7）：Bot 全部目录连接可暴露的应用工具总数 `count`（锁定 /
+ * 停用过滤之后）超过 {@link APP_TOOLS_INLINE_MAX} 时，应用工具不再逐个进工具列表，只注入
+ * `<connected_apps>` 摘要 + `app_search_tools` / `app_call_tool`。run 开头决定一次，run 内不变。
+ */
+export function appToolsDeferred(count: number): boolean {
+  return count > APP_TOOLS_INLINE_MAX;
 }
 
 /** 一个已授权连接的解析视图（连接行 + 目录条目）。 */

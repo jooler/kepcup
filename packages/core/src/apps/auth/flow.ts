@@ -9,6 +9,7 @@ import {
   type AppConnectReviewTool,
   type AppConnectTarget,
   type AppConnectionStatus,
+  type AppFlowLogEntry,
   type McpServer,
 } from '@kepcup/shared';
 import {
@@ -36,9 +37,11 @@ import type { EventBus } from '../../infra/events.js';
 import type { CoreLogger } from '../../infra/logger.js';
 import type { CoreEventsMap } from '../../start-types.js';
 import type { AppConnectionStore } from '../connection-store.js';
+import { PreregisteredClients } from '../oauth-clients.js';
 import type { ShellHostRpc } from '../shell-facade.js';
 import type { TokenVault } from '../token-vault.js';
 import { startCallbackServer, type CallbackServer } from './callback-server.js';
+import { FlowEventLog, redactFlowPayload } from './flow-log.js';
 import { createSafeFetch, isLoopbackAllowed, loopbackHostOf } from './safe-fetch.js';
 
 /**
@@ -73,6 +76,8 @@ export interface CatalogFlowBegin {
   serverUrl: string;
   /** 目录条目声明的默认 scope（空 = 按服务端提示）。 */
   defaultScopes: string[];
+  /** 目录条目的预注册客户端引用（`auth.clientRef`，P2 §6.4）；自动注册的条目为 null。 */
+  clientRef: string | null;
   /** 流程期间承载令牌的临时连接行（`conn_…`，status `connecting`）。 */
   connectionId: string;
   /** 重新授权某个已有连接时的目标（令牌通过账号核对后换到该行）。 */
@@ -140,6 +145,12 @@ export interface ConnectFlowDeps {
   flowTimeoutMs?: number;
   /** 运行时缓存失效；也可稍后经 {@link ConnectFlowManager.attachInvalidator} 接入。 */
   invalidator?: ConnectionInvalidator;
+  /** KepCup 预注册客户端表（P2 §6.4）；缺省为空表。 */
+  preregistered?: PreregisteredClients;
+  /** 开发者模式的授权事件日志（自定义 server；缺省自建）。 */
+  flowLog?: FlowEventLog;
+  /** 已存机密的精确脱敏（`SecretsService.redact`），日志文案再过一遍；缺省不做。 */
+  redact?: (text: string) => string;
 }
 
 export interface StartFlowInput {
@@ -236,6 +247,8 @@ export class ConnectFlowManager {
   readonly #ports: readonly number[];
   readonly #timeoutMs: number;
   readonly #flows = new Map<string, Flow>();
+  readonly #preregistered: PreregisteredClients;
+  readonly #log: FlowEventLog;
   /** 目标 → 进行中的 flowId（并发去重）。 */
   readonly #byTarget = new Map<string, string>();
   #invalidator: ConnectionInvalidator | undefined;
@@ -251,6 +264,18 @@ export class ConnectFlowManager {
     this.#ports = deps.callbackPorts ?? OAUTH_CALLBACK_PORTS;
     this.#timeoutMs = deps.flowTimeoutMs ?? OAUTH_FLOW_TIMEOUT_MS;
     this.#invalidator = deps.invalidator;
+    this.#preregistered = deps.preregistered ?? new PreregisteredClients();
+    this.#log = deps.flowLog ?? new FlowEventLog();
+  }
+
+  /** 开发者模式：某自定义 server 最近的授权流程事件（脱敏，进程内）。 */
+  flowLog(serverId: string): AppFlowLogEntry[] {
+    return this.#log.entries(serverId);
+  }
+
+  /** server 被删除后丢弃它的授权事件日志。 */
+  clearFlowLog(serverId: string): void {
+    this.#log.clear(serverId);
   }
 
   /** 接入运行时缓存失效器（`ConnectionAuthRegistry`）。 */
@@ -608,16 +633,41 @@ export class ConnectFlowManager {
         }
       | { kind: 'cimd'; info: OAuthClientInformation }
       | { kind: 'dcr' };
+    const clientRef = flow.catalog?.begin.clientRef ?? null;
     const resolveIdentity = (): Identity | null => {
       const stored = this.#deps.vault.getClient(issuer);
-      if (stored !== null) {
-        return {
-          kind: 'stored',
-          info: stored.info,
-          source: stored.source,
-          redirectUris: stored.redirectUris,
-        };
+      const fromStored = (entry: NonNullable<typeof stored>): Identity => ({
+        kind: 'stored',
+        info: entry.info,
+        source: entry.source,
+        redirectUris: entry.redirectUris,
+      });
+      // 1. 用户自带（BYO，source manual）永远最先：覆盖预注册表 / CIMD / DCR。
+      if (stored !== null && stored.source !== 'dcr') return fromStored(stored);
+      // 2. 目录 `clientRef` → 预注册表；自定义 server 按 issuer 在表里找。表项的 issuer 与
+      //    发现到的不符则不用（不把 KepCup 的客户端发给别的授权服务器）。预注册条目（有
+      //    `clientRef`）绝不退回 DCR / CIMD：那会拿 KepCup 的名义去别的授权服务器注册。
+      const pre = this.#preregistered.lookup(issuer, clientRef);
+      if (pre.kind === 'ok') {
+        return { kind: 'stored', info: pre.info, source: 'preregistered', redirectUris: [] };
       }
+      if (clientRef !== null) {
+        this.#deps.logger.warn(
+          { flowId: flow.id, clientRef, reason: pre.kind },
+          'preregistered client unavailable for issuer',
+        );
+        if (pre.kind === 'issuer_mismatch') {
+          throw new AppError(
+            'OAUTH_ISSUER_MISMATCH',
+            '授权服务器的 issuer 与 KepCup 预注册客户端登记的不一致，已中止',
+            { clientRef, issuer },
+          );
+        }
+        // 表里没有该 clientRef：停放等用户自带客户端（BYO，下一轮解析时最先命中）。
+        return null;
+      }
+      // 3. 此前 DCR 得到的客户端 → CIMD → DCR。
+      if (stored !== null) return fromStored(stored);
       if (metadata?.client_id_metadata_document_supported === true) {
         return { kind: 'cimd', info: { client_id: this.#cimdUrl } };
       }
@@ -673,6 +723,8 @@ export class ConnectFlowManager {
       source = 'dcr';
       client = await this.#register(flow, { asUrl, metadata, issuer, callback, scope, fetch });
     }
+
+    this.#logEvent(flow, { phase: 'client_selected', clientSource: source });
 
     // 4. PKCE + state + 授权 URL ---------------------------------------------
     const { authorizationUrl, codeVerifier } = await startAuthorization(asUrl, {
@@ -1030,10 +1082,15 @@ export class ConnectFlowManager {
         fetch: ctx.fetch,
       }),
     );
-    this.#deps.vault.saveClient(ctx.issuer, registered, {
-      source: 'dcr',
-      redirectUris: registered.redirect_uris.length > 0 ? registered.redirect_uris : redirectUris,
-    });
+    // DCR 往返期间用户可能经 `apps.oauthClients.set` 登记了自带客户端：不能被覆盖。
+    // 本次流程仍用刚注册的客户端（对授权服务器有效），只是不写入 issuer 级存储。
+    const current = this.#deps.vault.getClient(ctx.issuer);
+    if (current === null || current.source === 'dcr') {
+      this.#deps.vault.saveClient(ctx.issuer, registered, {
+        source: 'dcr',
+        redirectUris: registered.redirect_uris.length > 0 ? registered.redirect_uris : redirectUris,
+      });
+    }
     return registered;
   }
 
@@ -1147,7 +1204,18 @@ export class ConnectFlowManager {
       ...patch,
     };
     flow.lastPayload = payload;
+    if (flow.catalog === undefined)
+      this.#log.record(
+        flow.serverId,
+        redactFlowPayload(payload, this.#deps.clock.now(), this.#deps.redact),
+      );
     this.#deps.events.emit('apps.connect_flow', payload);
+  }
+
+  /** 日志专用条目（不对外发事件）；只记自定义 server 的流程。 */
+  #logEvent(flow: Flow, entry: Omit<AppFlowLogEntry, 'at' | 'flowId'>): void {
+    if (flow.catalog !== undefined) return;
+    this.#log.record(flow.serverId, { at: this.#deps.clock.now(), flowId: flow.id, ...entry });
   }
 
   #setStatus(connectionId: string, status: AppConnectionStatus): void {

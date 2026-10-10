@@ -20,6 +20,7 @@ import { toolLockKey, type LockedToolInfo } from '../apps/tool-lock.js';
 import type { AppServerBinding, AppToolContext } from '../apps/exposure.js';
 import { appToolName } from '../apps/naming.js';
 import { TOOL_SETUP_REQUIRED } from '../tools/image-tools.js';
+import { untrustedBlock } from '../infra/data-boundary.js';
 
 /**
  * MCP tool → KepCup ToolDefinition 包装（D65）：调用与内置工具同管道——
@@ -31,8 +32,11 @@ import { TOOL_SETUP_REQUIRED } from '../tools/image-tools.js';
  * 个）。`enabled:false` 的工具两边都不注册。调用时网关重新解析风险与策略。
  */
 
-/** wrapMcpTool 命中授权问题时的回调：orchestrator 写进本 run 的 `setupHit`。 */
-export type McpSetupRequiredHandler = (requirement: SetupRequirement) => void;
+/**
+ * wrapMcpTool 命中授权问题时的回调：orchestrator 写进本 run 的 `setupHit`。返回 `false` =
+ * 不接受这张卡（D73 P2 §6.1 step-up 限流）：工具结果改成普通失败文本，不出 SETUP_REQUIRED。
+ */
+export type McpSetupRequiredHandler = (requirement: SetupRequirement) => boolean | void;
 
 export interface McpToolFacade {
   /** Orchestrator 预先解析并构建好的 MCP 包装工具（ready to register）。 */
@@ -275,7 +279,13 @@ export async function buildMcpTools(input: {
 function wrapMcpTool(input: {
   identity: RunIdentity;
   server: McpServer;
-  tool: { name: string; title?: string; description?: string; inputSchema: Record<string, unknown> };
+  tool: {
+    name: string;
+    title?: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+    annotations?: { openWorldHint?: boolean | undefined } | undefined;
+  };
   name: string;
   decision: McpToolDecision;
   app?: AppToolContext | undefined;
@@ -309,6 +319,8 @@ function wrapMcpTool(input: {
         await gateway.mcpToolCall(identity, server, tool.name, args, {
           signal: ctx.signal,
           ...(app !== undefined ? { connection: app } : {}),
+          // D73 P2: only non-read-only tools that may reach the open world are egress channels.
+          openWorldHint: tool.annotations?.openWorldHint,
         });
       } catch (error) {
         return gatewayMcpErrorResult(error);
@@ -321,7 +333,7 @@ function wrapMcpTool(input: {
         // 既有 abort → failed + run.setup → 卡片 → runs.retry 链路），工具结果 SETUP_REQUIRED。
         const authError = findAppAuthRequiredError(error);
         if (authError !== null) {
-          onSetupRequired?.({
+          const accepted = onSetupRequired?.({
             kind: 'connect-app',
             target:
               app !== undefined
@@ -334,6 +346,14 @@ function wrapMcpTool(input: {
             reason: authError.reason,
             ...(authError.scopes !== undefined ? { scopes: authError.scopes } : {}),
           });
+          if (accepted === false) {
+            // step-up 限流（同一对话 + 连接 30 分钟内已请求过一次追加权限）：普通失败，不出卡。
+            return {
+              ok: false,
+              content: `「${server.name}」拒绝了这次调用：当前授权的权限不足${authError.scopes !== undefined && authError.scopes.length > 0 ? `（需要 ${authError.scopes.join(' ')}）` : ''}，而本对话刚刚已经请求过一次追加权限。不要再次重试这个调用；请告知用户到「设置 → 应用」为该应用重新授权所需权限，之后再继续。`,
+              errorCode: 'APP_SCOPE_INSUFFICIENT',
+            };
+          }
           return {
             ok: false,
             content: `需要重新连接「${server.name}」：${authError.reason === 'scope' ? '该应用需要追加权限' : '授权已失效或尚未连接'}。请告知用户在设置中重新连接；连接完成后本次请求会自动继续，不要让用户粘贴令牌。`,
@@ -364,6 +384,10 @@ function wrapMcpTool(input: {
           textParts.push(`（${block.type} 内容已省略）`);
         }
       }
+      // D73 P2 (design 29 §8.3): a catalog app tool that returned content taints the
+      // (bot, conversation) — external egress channels need per-call confirmation for 24 h.
+      // Custom MCP tools are channels, not sources.
+      if (app !== undefined && result.isError !== true) gateway.markAppTaint(identity);
       const redacted = secrets.redact(textParts.join('\n'));
       const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
       const suffix = truncated.truncated ? '\n[输出已截断]' : '';
@@ -372,7 +396,7 @@ function wrapMcpTool(input: {
       const receipt = result.isError === true ? null : mcpReceiptOf(result, textParts);
       return {
         ok: result.isError !== true,
-        content: `<untrusted>\n${truncated.text || '（无输出）'}${suffix}\n</untrusted>`,
+        content: untrustedBlock(`${truncated.text || '（无输出）'}${suffix}`),
         ...(images.length > 0 ? { images } : {}),
         ...(result.isError === true ? { errorCode: 'MCP_CALL_FAILED' } : {}),
         ...(receipt !== null ? { effect: { receipt } } : {}),

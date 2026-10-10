@@ -308,6 +308,16 @@ export type McpToolPolicy = z.infer<typeof mcpToolPolicySchema>;
 export const mcpServerAuthSchema = z.enum(['none', 'headers', 'oauth']);
 export type McpServerAuth = z.infer<typeof mcpServerAuthSchema>;
 
+export const mcpServerSourceSchema = z.object({
+  kind: z.literal('mcpb'),
+  // Same patterns as the MCPB manifest: these become a directory name under toolchains/mcpb
+  // (and get `rm -r`-ed on uninstall), so no separators / dot-dot can ever get in.
+  name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/),
+  version: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
+
 const mcpServerObjectSchema = z.object({
   id: z.string().min(1).max(64),
   name: z.string().min(1).max(100),
@@ -341,6 +351,17 @@ const mcpServerObjectSchema = z.object({
    * 否则 `none`），所以存量数据无需迁移；`oauth` 仅允许 `transport === 'http'`。
    */
   auth: mcpServerAuthSchema,
+  /**
+   * 信任分级（设计 29 §11.3）：`developer` = 本机手动添加的未审核来源（如 MCPB 包安装），
+   * 所有工具默认每次确认（`destructive` 之外可逐工具放宽）。缺省 = 沿用 W5 默认。
+   */
+  tier: z.literal('developer').optional(),
+  /**
+   * 来源（D73 P2 §6.5）：由 MCPB 本地包安装生成的 stdio server 记录包名 / 版本 / 包文件 sha256，
+   * 供设置页标注、卸载（清理 `toolchains/mcpb/{name}@{version}/`）与完整性复核使用。
+   */
+  // A malformed (hand-edited) source is dropped rather than failing the whole settings parse.
+  source: mcpServerSourceSchema.optional().catch(undefined),
 });
 
 /**
@@ -528,8 +549,16 @@ export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSche
 export const appsSettingsSchema = z
   .object({
     toolLockBaselineDone: z.boolean().default(false).catch(false),
+    /** 开发者模式（P2 §6.6）：「自定义」页显示原始工具定义 / 授权事件日志 / 手动刷新工具。只经 `settings.update` 的 `apps.developerMode` 写。 */
+    developerMode: z.boolean().default(false).catch(false),
+    /**
+     * 污点外发控制（D73 P2，design 29 §8.3）：Bot 读取过连接应用数据后，24 小时内所有外发
+     * 通道降级为逐次确认（`egress`）。默认开；设置「高级」里可关。只经 `settings.update` 的
+     * `apps.taintGuard` 写。
+     */
+    taintGuard: z.boolean().default(true).catch(true),
   })
-  .catch({ toolLockBaselineDone: false });
+  .catch({ toolLockBaselineDone: false, developerMode: false, taintGuard: true });
 export type AppsSettings = z.infer<typeof appsSettingsSchema>;
 
 /**
@@ -1263,6 +1292,12 @@ export const approvalKindSchema = z.enum([
    * `config` 是 project 内 Agent 侧配置文件的首次运行确认。
    */
   'agent_tool',
+  /**
+   * 污点期间的外发确认（D73 P2，design 29 §8.3）：Bot 读取过连接应用数据后，web_fetch /
+   * web_search / 浏览器 / 应用与自定义 MCP 写工具 / 沙箱 bash / git 远程 / ACP 网络请求
+   * 的逐次确认。时长只有 `once`。
+   */
+  'egress',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -1293,6 +1328,8 @@ export const commandApprovalPayloadSchema = z.object({
   reason: z.string().default(''),
   /** Confirm-mode reason (kind = command only). */
   confirmModeReason: z.string().default(''),
+  /** D73 P2: raised while the (bot, conversation) is tainted by connected-app data (design 29 §8.3). */
+  tainted: z.boolean().optional(),
 });
 export type CommandApprovalPayload = z.infer<typeof commandApprovalPayloadSchema>;
 
@@ -1304,6 +1341,9 @@ export const gitRemoteApprovalPayloadSchema = z.object({
   /** Working directory for the command (the project path). */
   cwd: z.string().default(''),
   reason: z.string().default(''),
+  /** D73 P2: raised while the (bot, conversation) is tainted by connected-app data (design 29 §8.3). */
+  tainted: z.boolean().optional(),
+  taintedSince: z.number().optional(),
 });
 export type GitRemoteApprovalPayload = z.infer<typeof gitRemoteApprovalPayloadSchema>;
 
@@ -1369,8 +1409,11 @@ export const mcpToolApprovalPayloadSchema = z.object({
    * 列出才被接受）。
    */
   durations: z.array(approvalDurationSchema).optional(),
-  /** 完整参数（脱敏后的 JSON 文本；仅破坏性档的应用工具卡片展示，不截断到摘要长度）。 */
+  /** 完整参数（脱敏后的 JSON 文本；破坏性档的应用工具与污点期间的外发卡片展示，不截断到摘要长度）。 */
   argsFull: z.string().optional(),
+  /** D73 P2：污点期间（读取过应用数据）的外发调用——卡片附加提示、展示完整参数。 */
+  tainted: z.boolean().optional(),
+  taintedSince: z.number().optional(),
   /**
    * W4 精确卡片：写入 / 破坏性工具参数里的收件人类字段（to / cc / bcc /
    * recipient(s) / channel / email / phone / user / chat_id …，可在嵌套对象里），
@@ -1379,6 +1422,33 @@ export const mcpToolApprovalPayloadSchema = z.object({
   recipients: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
 });
 export type McpToolApprovalPayload = z.infer<typeof mcpToolApprovalPayloadSchema>;
+
+/**
+ * Payload of an `egress` approval（D73 P2，design 29 §8.3）：污点期间的外发通道确认。
+ * `target` 是外发内容全文（URL / 查询词 / 命令 / 工具参数），卡片完整展示，不做摘要截断
+ * （只在 `EGRESS_TARGET_MAX_CHARS` 的硬上限处截断）。`summary` 是一行说明（通道 + 工具名等）。
+ */
+export const egressChannelSchema = z.enum([
+  'web_fetch',
+  'web_search',
+  'browser',
+  'app_tool',
+  'mcp_tool',
+  'bash',
+  'git_remote',
+  /** 网页监看（`watch_create`）：创建时立即、之后每个间隔都用 Bot 的浏览器资料访问该 URL。 */
+  'watch',
+]);
+export type EgressChannel = z.infer<typeof egressChannelSchema>;
+
+export const egressApprovalPayloadSchema = z.object({
+  channel: egressChannelSchema,
+  target: z.string(),
+  summary: z.string(),
+  /** 污点开始时间（毫秒时间戳；卡片显示「自 … 起」）。 */
+  taintedSince: z.number().optional(),
+});
+export type EgressApprovalPayload = z.infer<typeof egressApprovalPayloadSchema>;
 
 /**
  * Payload of an `agent_tool` approval（D72，design 28 §6）：外部智能体原生工具

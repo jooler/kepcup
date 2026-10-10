@@ -253,14 +253,15 @@ export function createEffectRecorder(deps: EffectRecorderDeps): EffectRecorder {
         const identity = ctx.identity;
         if (identity.loopType === 'host') return null; // never a runs row
         let mcpRisk: ToolRisk | undefined;
-        if (tool.mcp !== undefined) {
+        const mcpOrigin = tool.mcp ?? tool.mcpOf?.(params);
+        if (mcpOrigin !== undefined) {
           let live: ToolRisk | undefined;
           try {
-            live = deps.mcpRiskOf?.(tool.mcp.serverId, tool.mcp.toolName);
+            live = deps.mcpRiskOf?.(mcpOrigin.serverId, mcpOrigin.toolName);
           } catch {
             live = undefined;
           }
-          mcpRisk = severer(tool.mcp.risk, live);
+          mcpRisk = severer(mcpOrigin.risk, live);
         }
         const effectClass = effectClassOf(
           tool.name,

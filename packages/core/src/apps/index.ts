@@ -1,4 +1,4 @@
-import { KEPCUP_OAUTH_CLIENT_ID } from '@kepcup/shared';
+import { KEPCUP_OAUTH_CLIENT_ID, type PreregisteredClientTable } from '@kepcup/shared';
 import type { SecretsService } from '../domain/secrets.js';
 import type { SettingsService } from '../domain/settings.js';
 import type { Clock } from '../infra/clock.js';
@@ -8,6 +8,11 @@ import type { CoreLogger } from '../infra/logger.js';
 import type { CoreEventsMap } from '../start-types.js';
 import { ConnectFlowManager, type ConnectionInvalidator } from './auth/flow.js';
 import { AppConnectionStore, isCustomConnectionId } from './connection-store.js';
+import {
+  loadPreregisteredClients,
+  OAuthClientManager,
+  PreregisteredClients,
+} from './oauth-clients.js';
 import type { ShellHostRpc } from './shell-facade.js';
 import { TokenVault } from './token-vault.js';
 
@@ -27,6 +32,10 @@ export interface AppServices {
   store: AppConnectionStore;
   vault: TokenVault;
   flows: ConnectFlowManager;
+  /** KepCup 预注册客户端表（P2 §6.4，只读）。 */
+  preregistered: PreregisteredClients;
+  /** BYO 客户端的增删查（`apps.oauthClients.*`）。 */
+  oauthClients: OAuthClientManager;
   /** 生效的 CIMD `client_id`：生产恒为 `KEPCUP_OAUTH_CLIENT_ID`，仅 NODE_ENV=test 可覆盖。 */
   cimdClientId: string;
   /** 额外允许明文 / 私网访问的回环主机；生产恒为空，仅 NODE_ENV=test 可注入。 */
@@ -47,6 +56,8 @@ export interface AppServicesTestOptions {
   callbackPorts?: readonly number[] | undefined;
   /** 流程总时限。 */
   flowTimeoutMs?: number | undefined;
+  /** 预注册客户端表（替换 `oauth-clients.json`）。 */
+  preregisteredClients?: PreregisteredClientTable | undefined;
 }
 
 export interface CreateAppServicesDeps {
@@ -106,6 +117,10 @@ export function createAppServices(deps: CreateAppServicesDeps): AppServices {
 
   const store = new AppConnectionStore({ db: deps.db, clock: deps.clock });
   const vault = new TokenVault({ secrets: deps.secrets, store, clock: deps.clock });
+  const preregistered = new PreregisteredClients(
+    loadPreregisteredClients(deps.logger, test.preregisteredClients),
+  );
+  const oauthClients = new OAuthClientManager({ vault, store });
   recoverInterruptedConnections({ store, vault, clock: deps.clock, logger: deps.logger });
   const flows = new ConnectFlowManager({
     store,
@@ -119,6 +134,8 @@ export function createAppServices(deps: CreateAppServicesDeps): AppServices {
     // 生产路径断言 CIMD URL 为 https（构造时抛错）；只有测试覆盖才允许 http。
     allowInsecureCimdUrl: test.cimdUrl !== undefined,
     loopbackAllowlist,
+    preregistered,
+    redact: (text) => deps.secrets.redact(text),
     ...(test.callbackPorts !== undefined ? { callbackPorts: test.callbackPorts } : {}),
     ...(test.flowTimeoutMs !== undefined ? { flowTimeoutMs: test.flowTimeoutMs } : {}),
   });
@@ -126,6 +143,8 @@ export function createAppServices(deps: CreateAppServicesDeps): AppServices {
     store,
     vault,
     flows,
+    preregistered,
+    oauthClients,
     cimdClientId,
     loopbackAllowlist,
     attachRegistry: (registry) => flows.attachInvalidator(registry),

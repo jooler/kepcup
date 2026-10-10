@@ -683,6 +683,48 @@ export class McpService {
   }
 
   /**
+   * 开发者模式（D73 P2 §6.6）：server 的原始工具定义（含 annotations / inputSchema，JSON 化）。
+   * `refresh` = 丢弃工具缓存并向 server 重新拉取；重新拉取与其它刷新一样登记到工具锁定
+   * （新增 / 定义变化的工具照常被锁定待复核），所以手动刷新绕不过锁定。未启用的 server 用一次性连接
+   * （不落缓存、不登记锁定）。
+   */
+  async rawTools(
+    serverId: string,
+    options: { refresh?: boolean } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const server = this.serverFor(serverId);
+    if (server === undefined) throw new AppError('NOT_FOUND', `MCP 服务器 ${serverId} 不存在`);
+    let tools: McpTool[];
+    if (server.enabled) {
+      if (options.refresh === true) {
+        const state = this.#connections.get(server.id);
+        if (state !== undefined) state.tools = null;
+      }
+      tools = await this.listTools(server, {
+        countFailure: false,
+        ...(options.refresh === true ? { refresh: true } : {}),
+      });
+    } else {
+      const client = new McpClient({ name: 'kepcup', version: '0.0.0' });
+      try {
+        await this.#connectClient(client, server);
+        tools = (await client.listTools({ timeoutMs: MCP_CONNECT_TIMEOUT_MS })).slice(
+          0,
+          MCP_TOOLS_PER_SERVER_MAX,
+        );
+      } finally {
+        await client.close().catch(() => {});
+      }
+    }
+    return tools.map((tool) => JSON.parse(JSON.stringify(tool)) as Record<string, unknown>);
+  }
+
+  /** 开发者模式「手动刷新工具」：丢弃工具缓存并重新列出（工具锁定照常生效）。 */
+  refreshTools(serverId: string): Promise<Array<Record<string, unknown>>> {
+    return this.rawTools(serverId, { refresh: true });
+  }
+
+  /**
    * D73：关闭并丢弃某 server 缓存的连接（令牌被替换 / 断开 / server 被删除后，下次调用
    * 用新凭据重连）。不计入失败次数；进行中的连接先等它收尾。
    */

@@ -97,6 +97,11 @@ export interface FakeOAuthMcpConfig {
    */
   authorizationEndpoint: (() => string) | undefined;
   /**
+   * /register waits for this promise after recording the registration and before answering
+   * (a test can act while the client's DCR round trip is in flight).
+   */
+  registerGate: (() => Promise<void>) | undefined;
+  /**
    * OIDC: when set, the authorization_code response carries an (unsigned, JWT-shaped) `id_token` whose
    * claims are these merged over `{ iss, aud: <client id>, iat, exp }`. Mutable at runtime, so a test
    * can connect two different accounts through the same server.
@@ -380,6 +385,7 @@ const DEFAULT_CONFIG: Omit<FakeOAuthMcpConfig, 'now'> = {
   grantScope: undefined,
   revokeStatus: 200,
   authorizationEndpoint: undefined,
+  registerGate: undefined,
   idTokenClaims: undefined,
   userinfoClaims: undefined,
 };
@@ -1220,6 +1226,7 @@ export function startFakeOAuthMcpServer(
         typeof body.application_type === 'string' ? body.application_type : undefined,
       redirectUris: redirectUris as string[],
     });
+    await config.registerGate?.();
     sendJson(res, 201, {
       ...body,
       client_id: clientId,

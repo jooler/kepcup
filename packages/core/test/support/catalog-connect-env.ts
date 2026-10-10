@@ -3,7 +3,12 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AppConnectFlowPayload, AppConnectionStatusPayload, McpServer } from '@kepcup/shared';
+import type {
+  AppConnectFlowPayload,
+  AppConnectionStatusPayload,
+  McpServer,
+  PreregisteredClientTable,
+} from '@kepcup/shared';
 import {
   createTestHome,
   makeBot,
@@ -29,6 +34,7 @@ export interface FakeEntryInput {
   version?: string;
   tier?: 'builtin' | 'verified' | 'community' | 'developer';
   registration?: 'auto' | 'preregistered';
+  clientRef?: string;
   releaseGate?: string;
   toolPolicy?: Record<string, { risk: 'read' | 'write' | 'destructive' }>;
   whoami?: {
@@ -58,7 +64,7 @@ export function fakeCatalogEntry(input: FakeEntryInput): Record<string, unknown>
         auth: {
           kind: 'oauth',
           registration,
-          clientRef: registration === 'preregistered' ? 'fake-ref' : null,
+          clientRef: registration === 'preregistered' ? (input.clientRef ?? 'fake-ref') : null,
           scopes: input.scopes ?? { default: [], write: [] },
         },
         toolPolicy: input.toolPolicy ?? {},
@@ -110,6 +116,8 @@ export interface CatalogEnvOptions {
   flowTimeoutMs?: number;
   cimdUrl?: string;
   loopbackAllowlist?: string[];
+  /** Pre-registered OAuth client table (replaces oauth-clients.json). */
+  preregisteredClients?: (fake: FakeOAuthMcpServer) => PreregisteredClientTable;
   /** Extra `toolLockTrustFirstList` override (default false: new tools are locked until reviewed). */
   trustFirstList?: boolean;
 }
@@ -183,6 +191,9 @@ export async function startCatalogEnv(options: CatalogEnvOptions = {}): Promise<
     ...(options.cimdUrl !== undefined ? { oauthCimdUrl: options.cimdUrl } : {}),
     toolLockTrustFirstList: options.trustFirstList ?? false,
     connectorCatalog: catalog,
+    ...(options.preregisteredClients !== undefined
+      ? { oauthPreregisteredClients: options.preregisteredClients(fake) }
+      : {}),
   });
   cleanups.push(() => core.close());
 

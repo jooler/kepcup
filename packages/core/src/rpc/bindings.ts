@@ -213,6 +213,7 @@ import { oauthBindingChanged } from '../apps/disconnect.js';
 import { isCatalogConnectionId } from '../apps/connection-store.js';
 import { bindAppsMethods } from './apps-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
+import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
 import {
   botsUsingServer,
@@ -321,6 +322,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       const {
         onboarding: onboardingPatch,
         experimental: experimentalPatch,
+        apps: appsPatch,
         agents: agentsPatch,
         backgroundTasks: backgroundTasksPatch,
         ...rest
@@ -385,6 +387,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
               },
             }
           : {}),
+        // D73 P2: only `developerMode` is renderer-writable; the other apps fields are core-owned.
+        ...(appsPatch !== undefined
+          ? {
+              apps: {
+                ...previous.apps,
+                developerMode: appsPatch.developerMode ?? previous.apps.developerMode,
+                taintGuard: appsPatch.taintGuard ?? previous.apps.taintGuard,
+              },
+            }
+          : {}),
         // P6 后台任务：部分 patch，与已存值合并。
         ...(backgroundTasksPatch !== undefined
           ? { backgroundTasks: { ...previous.backgroundTasks, ...backgroundTasksPatch } }
@@ -398,6 +410,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         for (const server of previous.mcpServers) {
           if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
           await services.appRuntime?.disconnector.removeCustomServer(server.id);
+          await services.mcpb?.afterServerRemoved(previous.mcpServers, server.id);
         }
       }
       if (input.mcpServers !== undefined) {
@@ -1154,6 +1167,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsMethods(services),
     // D73: apps.disconnect (revocation) and mcp.removeServer (settings + secrets + tokens).
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
+    // D73 P2 §6.5: mcpb.inspect / mcpb.install.
+    ...bindMcpbMethods(services),
     // D73 P1: catalog list, connection update / tools / review / policy, grants, approveAfterTest.
     ...bindAppsConnectionMethods(services, { revokeMcp }),
 

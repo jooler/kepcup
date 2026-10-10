@@ -25,6 +25,8 @@ import esbuild from 'esbuild';
  *     构建与测试不注入该常量，全部条目照常可用；
      连接应用目录同理（connector-release-gates.json →
      `__KEPCUP_CONNECTOR_RELEASE_GATES__`，D73）：门禁未放行的条目发行构建不收录；
+     预注册 OAuth 客户端表同样注入（oauth-clients.json → `__KEPCUP_OAUTH_CLIENTS__`，
+     D73 P2 §6.4）：只放平台定义为非保密的桌面客户端凭据；
  *  3. 迁移文件拷到 out/migrations（打包后 core 的 import.meta.url 相对解析到那里）；
  *     外部智能体的 stdio ↔ HTTP MCP 代理（stdio-proxy.mjs，D72）拷到 bundle
  *     同目录（asarUnpack 解出，供子进程以 Electron 自带 Node 运行）；
@@ -81,6 +83,25 @@ if (connectorGates.includes('testkit')) {
   throw new Error('[dist] connector-release-gates.json: "testkit" must never be approved');
 }
 console.log(`[dist] connector release gates approved: ${JSON.stringify(connectorGates)}`);
+// Pre-registered OAuth clients (D73 P2 §6.4): { [clientRef]: { issuer, clientId, clientSecret? } }.
+// Only credentials the platform defines as NON-confidential for desktop apps may live here.
+const oauthClients = JSON.parse(readFileSync(path.join(appDir, 'oauth-clients.json'), 'utf8'));
+if (typeof oauthClients !== 'object' || oauthClients === null || Array.isArray(oauthClients)) {
+  throw new Error('[dist] oauth-clients.json must be an object');
+}
+for (const [ref, client] of Object.entries(oauthClients)) {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    typeof client.issuer !== 'string' ||
+    typeof client.clientId !== 'string' ||
+    client.clientId.length === 0 ||
+    (client.clientSecret !== undefined && typeof client.clientSecret !== 'string')
+  ) {
+    throw new Error(`[dist] oauth-clients.json: invalid entry "${ref}"`);
+  }
+}
+console.log(`[dist] pre-registered oauth clients: ${JSON.stringify(Object.keys(oauthClients))}`);
 const coreEntry = path.join(appDir, 'src/core-entry/index.ts');
 const outfile = path.join(appDir, 'out/main/core-entry/index.js');
 console.log('[dist] esbuild bundle core-entry (test paths eliminated)');
@@ -124,6 +145,7 @@ await esbuild.build({
     __KEPCUP_TEST_HOOKS__: 'false',
     __KEPCUP_AGENT_RELEASE_GATES__: JSON.stringify(releaseGates),
     __KEPCUP_CONNECTOR_RELEASE_GATES__: JSON.stringify(connectorGates),
+    __KEPCUP_OAUTH_CLIENTS__: JSON.stringify(oauthClients),
   },
   logLevel: 'info',
 });
@@ -172,6 +194,9 @@ console.log('[dist] stdio-proxy.mjs copied next to the core-entry bundle');
   }
   if (bundled.includes('__KEPCUP_CONNECTOR_RELEASE_GATES__')) {
     throw new Error('[dist] core-entry bundle still references __KEPCUP_CONNECTOR_RELEASE_GATES__');
+  }
+  if (bundled.includes('__KEPCUP_OAUTH_CLIENTS__')) {
+    throw new Error('[dist] core-entry bundle still references __KEPCUP_OAUTH_CLIENTS__');
   }
   console.log('[dist] core-entry bundle verified: no test-path markers, release gates pinned');
 }

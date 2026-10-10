@@ -121,6 +121,10 @@ export const ERROR_CODES = [
   'OAUTH_ISSUER_MISMATCH',
   'OAUTH_INSECURE_ENDPOINT',
   'APP_CONNECTION_NOT_FOUND',
+  /** MCPB 本地包（D73 P2 §6.5）：包损坏 / 清单非法 / 路径越界 / sha256 不符 / 运行时缺失。 */
+  'MCPB_INVALID',
+  'MCPB_INCOMPATIBLE',
+  'MCPB_RUNTIME_MISSING',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

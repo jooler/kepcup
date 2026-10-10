@@ -51,9 +51,11 @@ export async function createTestStack(
     oauthLoopbackAllowlist?: CreateTestCoreOptions['oauthLoopbackAllowlist'];
     oauthCimdUrl?: CreateTestCoreOptions['oauthCimdUrl'];
     oauthCallbackPorts?: CreateTestCoreOptions['oauthCallbackPorts'];
+    oauthPreregisteredClients?: CreateTestCoreOptions['oauthPreregisteredClients'];
     oauthFlowTimeoutMs?: CreateTestCoreOptions['oauthFlowTimeoutMs'];
     toolLockTrustFirstList?: CreateTestCoreOptions['toolLockTrustFirstList'];
     connectorCatalog?: CreateTestCoreOptions['connectorCatalog'];
+    mcpbRuntimes?: CreateTestCoreOptions['mcpbRuntimes'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -79,6 +81,9 @@ export async function createTestStack(
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
       : {}),
     ...(options.oauthCimdUrl !== undefined ? { oauthCimdUrl: options.oauthCimdUrl } : {}),
+    ...(options.oauthPreregisteredClients !== undefined
+      ? { oauthPreregisteredClients: options.oauthPreregisteredClients }
+      : {}),
     ...(options.oauthCallbackPorts !== undefined
       ? { oauthCallbackPorts: options.oauthCallbackPorts }
       : {}),
@@ -91,6 +96,7 @@ export async function createTestStack(
     ...(options.connectorCatalog !== undefined
       ? { connectorCatalog: options.connectorCatalog }
       : {}),
+    ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
   });
   return {
     core,

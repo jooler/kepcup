@@ -20,6 +20,7 @@ import {
   type BrowserHostRpc,
   type BrowserPageState,
 } from '../browser/facade.js';
+import { egressFailureResult, type EgressCheck } from '../apps/taint.js';
 
 /** A screenshot returned as an image block (pi ImageContent shape). */
 export interface ToolImage {
@@ -46,6 +47,11 @@ export interface BrowserToolDeps {
    * Absent (stripped setups) = the bot's private profile.
    */
   profileKey?: (() => string) | undefined;
+  /**
+   * D73 P2（design 29 §8.3）：污点期间，导航（browser_open）与可能提交表单 / 跳转的动作
+   * （点击按钮 / 链接、按 Enter）每次都要用户确认；缺省 = 不做污点控制。
+   */
+  egress?: EgressCheck | undefined;
 }
 
 const MAX_URL_CHARS = 2000;
@@ -104,6 +110,25 @@ const HANDOFF_RULE =
   '需要登录 / 验证码时，用 ask_user 请用户在浏览器窗口完成（右栏「查看浏览器」打开该窗口；用户在窗口里点击或键入即接管页面，完成后点「交还给 Bot」）。';
 
 const SENSITIVE_MASK = '«已隐藏»';
+
+/**
+ * D73 P2: roles whose click never navigates or submits (text entry, sliders, purely
+ * presentational nodes). Every other role is an egress candidate while the bot is tainted.
+ */
+const NON_NAVIGATING_ROLES: ReadonlySet<string> = new Set([
+  'textbox',
+  'searchbox',
+  'slider',
+  'spinbutton',
+  'heading',
+  'paragraph',
+  'text',
+  'statictext',
+  'image',
+  'img',
+  'separator',
+  'generic',
+]);
 
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -278,6 +303,40 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
     return browserPageState(browser, pair, identity.runId);
   }
 
+  /**
+   * D73 P2: what the model typed into the page since the last submit-like action (keyed by
+   * ref + role + name — refs are renumbered on every snapshot, so the key also pins the
+   * element it named; a renumbered duplicate over-reports, which is the safe side →
+   * "name: text"); sensitive values are masked. A submit card lists it so the user sees
+   * what would go out with the form.
+   *
+   * By design `browser_type` itself is not gated: typing into an already-open page sends
+   * nothing; the page was approved at `browser_open`, and anything that submits it (click,
+   * Enter) is gated and shows this text.
+   */
+  const typedSinceSubmit = new Map<string, string>();
+
+  /** The egress gate for an outbound browser action; a failure result when it must not run. */
+  async function egressGate(
+    target: string,
+    summary: string,
+    ctx: { signal: AbortSignal },
+  ): Promise<ToolResult | null> {
+    if (deps.egress === undefined) return null;
+    try {
+      await deps.egress({ channel: 'browser', target, summary }, { signal: ctx.signal });
+      return null;
+    } catch (error) {
+      return egressFailureResult(error);
+    }
+  }
+
+  /** Card text for a click / Enter that may submit a form or navigate. */
+  function submitTarget(action: string): string {
+    const typed = [...typedSinceSubmit.values()];
+    return typed.length > 0 ? `${action}\n已在页面输入的内容：\n${typed.map((t) => `- ${t}`).join('\n')}` : action;
+  }
+
   /** ensurePage re-sent before every action: idempotent, refreshes context. */
   async function ensure(): Promise<void> {
     await browser.ensurePage({
@@ -416,6 +475,8 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
           outcome: 'not_started',
         };
       }
+      const blocked = await egressGate(url, '打开网页（完整 URL 会发给目标站点）', ctx);
+      if (blocked !== null) return blocked;
       ctx.progress(`正在打开 ${hostOf(url)}`);
       // BR-P11-001: the final URL is page-controlled (301/302/JS/meta can
       // redirect anywhere), so it never enters the statement prefix — the
@@ -463,6 +524,21 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
       ref: Type.String({ description: '元素引用，例如 e12' }),
     }),
     execute: async (params, ctx) => {
+      // D73 P2: nearly any clickable role can submit a form or navigate (button, link, tab,
+      // option, menuitem*, checkbox / radio / switch with handlers, combobox, listbox …), so
+      // every role is gated except a small allowlist of inert ones; unknown refs fail closed.
+      const element = pageState().elements.get(params.ref);
+      const role = element?.split('|')[0] ?? '';
+      if (element === undefined || !NON_NAVIGATING_ROLES.has(role)) {
+        const name = element?.slice(role.length + 1) ?? '';
+        const blocked = await egressGate(
+          submitTarget(element === undefined ? `点击元素 ${params.ref}` : `点击${role}「${name}」（${params.ref}）`),
+          '浏览器点击（可能提交表单或跳转）',
+          ctx,
+        );
+        if (blocked !== null) return blocked;
+        typedSinceSubmit.clear();
+      }
       ctx.progress(`正在点击 ${params.ref}`);
       return runAction(ctx, {
         action: 'click',
@@ -493,10 +569,18 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
         action: 'type',
         signature: `type|${refKey(params.ref)}|${sha256(params.text)}`,
         dispatch: () => browser.type({ ...pair, ref: params.ref, text: params.text }),
-        statement: (out) =>
-          declared || out.passwordField === true
+        statement: (out) => {
+          // D73 P2: remember what was typed (masked when sensitive) for a later submit card.
+          const label =
+            pageState().elements.get(params.ref)?.split('|').slice(1).join('|') || params.ref;
+          typedSinceSubmit.set(
+            refKey(params.ref),
+            `${label}: ${declared || out.passwordField === true ? SENSITIVE_MASK : params.text}`,
+          );
+          return declared || out.passwordField === true
             ? `已在 ${params.ref} 输入敏感内容（${params.text.length} 字符，不回显）`
-            : `已在 ${params.ref} 输入文本（${params.text.length} 字符）`,
+            : `已在 ${params.ref} 输入文本（${params.text.length} 字符）`;
+        },
         // Always reported when sensitive — declared (pi may have coerced a
         // string "true" the persistence table did not recognize) or a password
         // field: step persistence rewrites the already-written tool_call args.
@@ -524,6 +608,15 @@ export function buildBrowserTools(deps: BrowserToolDeps): ToolDefinition[] {
           errorCode: 'INVALID_INPUT',
           outcome: 'not_started',
         };
+      }
+      if (params.key === 'Enter') {
+        const blocked = await egressGate(
+          submitTarget('按下 Enter（可能提交表单）'),
+          '浏览器按键（可能提交表单）',
+          ctx,
+        );
+        if (blocked !== null) return blocked;
+        typedSinceSubmit.clear();
       }
       return runAction(ctx, {
         action: 'press',

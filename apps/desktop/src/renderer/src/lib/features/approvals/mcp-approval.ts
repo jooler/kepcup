@@ -72,7 +72,12 @@ export function appToolArgsView(payload: McpToolApprovalPayload): {
   irreversible: boolean;
 } {
   const irreversible = payload.connectionId !== undefined && payload.risk === 'destructive';
-  if (irreversible && payload.argsFull !== undefined && payload.argsFull.length > 0) {
+  // D73 P2：污点期间的外发调用同样展示完整参数（不只是摘要）。
+  if (
+    (irreversible || payload.tainted === true) &&
+    payload.argsFull !== undefined &&
+    payload.argsFull.length > 0
+  ) {
     return { text: payload.argsFull, full: true, irreversible };
   }
   return { text: payload.argsSummary, full: false, irreversible };

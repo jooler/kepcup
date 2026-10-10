@@ -44,7 +44,15 @@ export interface ConnectedAppsPromptInput {
   views?: readonly ConnectedAppView[] | undefined;
   /** run 开头列工具时发现需要（重新）连接的 server（自定义 OAuth 应用与目录连接）。 */
   unavailable?: readonly McpUnavailableServer[] | undefined;
+  /**
+   * 按需发现（D73 P2 §6.3）：应用工具总数超阈值，工具没有逐个列出——摘要行改为「工具按需发现」
+   * 并补一条用法规则（`app_search_tools` → `app_call_tool`）。
+   */
+  discovery?: boolean | undefined;
 }
+
+const DISCOVERY_RULE =
+  '这些应用的工具较多，没有逐个列在工具列表里：先用 app_search_tools({ query, connector? }) 按关键词查找工具（返回名称、说明和参数 schema），再用 app_call_tool({ name, arguments }) 调用——name 必须是搜索结果里的完整名称，参数按返回的 schema 填写。调用的审批、权限和账号与直接调用工具完全一致。';
 
 /**
  * `<connected_apps>` 段正文。没有目录连接、也没有需要重连的自定义应用时返回空串。
@@ -66,7 +74,9 @@ export function connectedAppsPromptBody(input: ConnectedAppsPromptInput): string
     lines.push(
       `- ${oneLine(view.appName)}（账号 ${oneLine(view.accountLabel)}，connection_id: ${view.connection.id}）：${statusText}` +
         (hit === undefined && status?.reconnect !== true && view.connection.status === 'connected'
-          ? `；工具名以 app_${view.slug}_ 开头`
+          ? input.discovery === true
+            ? '；工具按需发现（app_search_tools）'
+            : `；工具名以 app_${view.slug}_ 开头`
           : '') +
         ` —— ${oneLine(view.description)}`,
     );
@@ -83,6 +93,7 @@ export function connectedAppsPromptBody(input: ConnectedAppsPromptInput): string
       ? '以下是已授权给你的应用（每个应用你只有一个账号，调用时自动以该账号的身份执行）：'
       : '以下已授权给你的应用需要（重新）连接，当前没有可用工具：',
     ...lines,
+    ...(views.length > 0 && input.discovery === true ? [DISCOVERY_RULE] : []),
     ...(views.length > 0 ? [UNTRUSTED_RULE] : []),
     ...(needsReconnect ? [RECONNECT_RULE] : []),
   ].join('\n');

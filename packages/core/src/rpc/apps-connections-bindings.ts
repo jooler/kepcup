@@ -10,6 +10,8 @@ import {
   appsConnectionsToolsOutputSchema,
   appsConnectionsUpdateInputSchema,
   appsConnectionsUpdateOutputSchema,
+  appsEgressSummaryInputSchema,
+  appsEgressSummaryOutputSchema,
   appsGrantsRevokeInputSchema,
   appsToolsApproveAfterTestInputSchema,
   appsToolsApproveAfterTestOutputSchema,
@@ -90,6 +92,26 @@ export function bindAppsConnectionMethods(
       connections().revokeGrant(input.grantId);
       return { ok: true as const };
     }),
+    'apps.egressSummary': method(
+      appsEgressSummaryInputSchema,
+      appsEgressSummaryOutputSchema,
+      async (input) => {
+        const audit = services.domain?.audit;
+        if (audit === undefined) throw new AppError('NOT_IMPLEMENTED', '审计模块未就绪');
+        const { total, refused, recent } = audit.egressTainted(input.botId);
+        return {
+          total,
+          refused,
+          recent: recent.map((entry) => ({
+            at: entry.createdAt,
+            conversationId: entry.conversationId,
+            channel: String(entry.detail['channel'] ?? ''),
+            target: String(entry.detail['target'] ?? ''),
+            approved: entry.detail['approved'] !== false,
+          })),
+        };
+      },
+    ),
     'apps.tools.approveAfterTest': method(
       appsToolsApproveAfterTestInputSchema,
       appsToolsApproveAfterTestOutputSchema,

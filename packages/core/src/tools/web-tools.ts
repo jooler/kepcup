@@ -4,6 +4,7 @@ import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED } from './image-tools.js';
 import type { ToolDefinition } from '../agent/types.js';
+import { egressFailureResult, type EgressCheck } from '../apps/taint.js';
 
 /**
  * 联网检索工具（docs/design/21-web-search.md，D62）：web_search 走用户配置
@@ -22,8 +23,15 @@ export interface SearchToolFacade {
   fetchPage(url: string, signal?: AbortSignal): Promise<string>;
 }
 
-export function buildWebTools(input: { search: SearchToolFacade }): ToolDefinition[] {
-  const { search } = input;
+export function buildWebTools(input: {
+  search: SearchToolFacade;
+  /**
+   * D73 P2（design 29 §8.3）：污点期间 web_search（查询词即外发）与 web_fetch（任意 URL，数据可
+   * 藏在路径里）每次都要用户确认；缺省 = 不做污点控制。
+   */
+  egress?: EgressCheck | undefined;
+}): ToolDefinition[] {
+  const { search, egress } = input;
 
   const webSearch: ToolDefinition<{ query: string; max_results?: number }> = {
     name: 'web_search',
@@ -34,6 +42,18 @@ export function buildWebTools(input: { search: SearchToolFacade }): ToolDefiniti
       max_results: Type.Optional(Type.Number({ description: '结果条数上限，默认 6，最多 8' })),
     }),
     execute: async (params, ctx) => {
+      try {
+        await egress?.(
+          {
+            channel: 'web_search',
+            target: params.query,
+            summary: '联网搜索（查询词会发给检索供应商）',
+          },
+          { signal: ctx.signal },
+        );
+      } catch (error) {
+        return egressFailureResult(error);
+      }
       let hits;
       try {
         hits = await search.search(params.query, params.max_results, ctx.signal);
@@ -75,6 +95,18 @@ export function buildWebTools(input: { search: SearchToolFacade }): ToolDefiniti
       url: Type.String({ description: '要抓取的 http/https 地址' }),
     }),
     execute: async (params, ctx) => {
+      try {
+        await egress?.(
+          {
+            channel: 'web_fetch',
+            target: params.url,
+            summary: '抓取网页（完整 URL 会发给目标站点）',
+          },
+          { signal: ctx.signal },
+        );
+      } catch (error) {
+        return egressFailureResult(error);
+      }
       try {
         const text = await search.fetchPage(params.url, ctx.signal);
         const truncated = truncateToBudget(text, TOOL_OUTPUT_MAX_CHARS);

@@ -19,7 +19,17 @@ export interface McpToolDecision {
   enabled: boolean;
 }
 
-type PolicyServer = Pick<McpServer, 'autoApprove' | 'toolPolicies'>;
+type PolicyServer = Pick<McpServer, 'autoApprove' | 'toolPolicies'> &
+  Partial<Pick<McpServer, 'tier'>>;
+
+/**
+ * 信任分级 `developer`（设计 29 §11.3；MCPB 包安装等本机手动添加的未审核来源）：
+ * 所有工具默认每次确认——只读也不再自动放行；用户可逐工具（或 server 级免审批）放宽，
+ * `destructive` 例外，恒为每次确认。
+ */
+export function isDeveloperTier(server: Partial<Pick<McpServer, 'tier'>>): boolean {
+  return server.tier === 'developer';
+}
 
 /** 工具是否暴露给模型（toolPolicies[name].enabled 默认 true）。 */
 export function mcpToolEnabled(server: PolicyServer, toolName: string): boolean {
@@ -32,6 +42,15 @@ export function effectiveMcpApproval(
   risk: ToolRisk,
 ): { approval: McpToolApprovalMode; source: McpApprovalSource } {
   const policy = server.toolPolicies?.[toolName]?.approval;
+  if (isDeveloperTier(server)) {
+    // Relaxing is allowed per tool / per server, except for destructive tools.
+    if (risk === 'destructive') {
+      return { approval: 'ask', source: policy === 'ask' ? 'policy' : 'default' };
+    }
+    if (policy !== undefined) return { approval: policy, source: 'policy' };
+    if (server.autoApprove) return { approval: 'auto', source: 'server' };
+    return { approval: 'ask', source: 'default' };
+  }
   if (policy !== undefined) return { approval: policy, source: 'policy' };
   if (server.autoApprove) return { approval: 'auto', source: 'server' };
   return { approval: risk === 'read' ? 'auto' : 'ask', source: 'default' };
@@ -53,6 +72,8 @@ export function decideMcpTool(
 }
 
 /** 只读工具面（对话轮 / 只读子代理）的准入：只读且有效审批为 auto。 */
-export function allowedOnReadOnlySurface(decision: Pick<McpToolDecision, 'risk' | 'approval' | 'enabled'>): boolean {
+export function allowedOnReadOnlySurface(
+  decision: Pick<McpToolDecision, 'risk' | 'approval' | 'enabled'>,
+): boolean {
   return decision.enabled && decision.risk === 'read' && decision.approval === 'auto';
 }

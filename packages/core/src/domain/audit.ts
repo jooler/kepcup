@@ -77,6 +77,32 @@ export class AuditService {
     return { id, runId: null, botId: null, conversationId: null, action, detail, createdAt: now };
   }
 
+  /**
+   * D73 P2: the `egress_tainted` audits of one Bot (unattended auto-approvals of outbound actions
+   * while tainted by connected-app data) — total count and the most recent entries.
+   */
+  egressTainted(
+    botId: string,
+    limit = 10,
+  ): { total: number; refused: number; recent: AuditEntry[] } {
+    // `total` counts what was let through; `refused` the unattended floor's refusals
+    // (`approved: false`, e.g. a tainted command that touches the data directory).
+    const counts = this.#db
+      .prepare(
+        `select
+           coalesce(sum(case when json_extract(detail_json, '$.approved') = 0 then 0 else 1 end), 0) as total,
+           coalesce(sum(case when json_extract(detail_json, '$.approved') = 0 then 1 else 0 end), 0) as refused
+         from audit_log where bot_id = ? and action = 'egress_tainted'`,
+      )
+      .get(botId) as { total: number; refused: number };
+    const rows = this.#db
+      .prepare(
+        "select * from audit_log where bot_id = ? and action = 'egress_tainted' order by created_at desc limit ?",
+      )
+      .all(botId, limit) as AuditRow[];
+    return { total: counts.total, refused: counts.refused, recent: rows.map(rowToEntry) };
+  }
+
   listByConversation(conversationId: string, limit = 100): AuditEntry[] {
     const rows = this.#db
       .prepare('select * from audit_log where conversation_id = ? order by created_at desc limit ?')

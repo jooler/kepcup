@@ -866,7 +866,14 @@ export function buildResponseTools(input: {
 
   // W7 watch tools: an async hosted action like schedules (turn + task).
   const watchTools =
-    deps.watch !== undefined ? buildWatchTools({ identity, watch: deps.watch }) : [];
+    deps.watch !== undefined
+      ? buildWatchTools({
+          identity,
+          watch: deps.watch,
+          // D73 P2: a watch fetches its URL right away and on every interval — an egress channel.
+          egress: (input, options) => gateway.egressCheck(identity, input, options),
+        })
+      : [];
 
   // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
   // — 公网默认可访问，网络规则在主进程的页面网络上下文中强制).
@@ -878,6 +885,8 @@ export function buildResponseTools(input: {
           workspacePath: deps.workspacePath,
           projectPath: deps.projectPath,
           ...browserProfileKeyOption(deps.browserProfileKey, identity.botId),
+          // D73 P2: tainted bots confirm every navigation / submit-like action (design 29 §8.3).
+          egress: (input, options) => gateway.egressCheck(identity, input, options),
           // D75: a page click can start a download; a read-only run's
           // downloads never land in the workspace.
           ...(gateway.writeDenial(identity) !== null
@@ -921,7 +930,14 @@ export function buildResponseTools(input: {
       : [];
 
   // 联网检索（docs/design/21-web-search.md）：网关就绪才注册。
-  const webTools = deps.search !== undefined ? buildWebTools({ search: deps.search }) : [];
+  const webTools =
+    deps.search !== undefined
+      ? buildWebTools({
+          search: deps.search,
+          // D73 P2: web_fetch / web_search are egress channels while the bot is tainted.
+          egress: (input, options) => gateway.egressCheck(identity, input, options),
+        })
+      : [];
 
   // 技能安装（docs/design/22-file-skill-routing.md）：门面就绪才注册。
   const skillTools =
@@ -1103,7 +1119,14 @@ export function buildSubagentResearchTools(input: {
     },
     { excludeWriteTools: true },
   );
-  const web = input.deps.search !== undefined ? buildWebTools({ search: input.deps.search }) : [];
+  const web =
+    input.deps.search !== undefined
+      ? buildWebTools({
+          search: input.deps.search,
+          egress: (egressInput, options) =>
+            input.deps.gateway.egressCheck(input.identity, egressInput, options),
+        })
+      : [];
   const mcpTools = input.deps.mcp?.tools ?? [];
   return dropBuiltinNameConflicts([...coding, ...web, ...mcpTools], new Set(mcpTools), input.deps.logger);
 }

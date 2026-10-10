@@ -1,6 +1,17 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  mcpbInspectInputSchema,
+  mcpbInspectOutputSchema,
+  mcpbInstallInputSchema,
+  mcpbInstallOutputSchema,
+} from '../domain/mcpb.js';
+import {
+  oauthClientsListOutputSchema,
+  oauthClientsRemoveInputSchema,
+  oauthClientsSetInputSchema,
+} from '../domain/oauth-clients.js';
+import {
   appCatalogEntrySchema,
   appToolGrantViewSchema,
   appToolViewSchema,
@@ -224,6 +235,10 @@ export const settingsUpdateInputSchema = z.object({
   agents: z.record(agentIdSchema, agentSettingInputSchema).optional(),
   /** 实验开关（D72）：部分 patch，与已存值合并。 */
   experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
+  /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
+  apps: z
+    .object({ developerMode: z.boolean().optional(), taintGuard: z.boolean().optional() })
+    .optional(),
   /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
   backgroundAgentId: z.string().optional(),
   /** 后台任务开关（P6）：部分 patch，与已存值合并。 */
@@ -306,6 +321,40 @@ export const appsConnectionsListOutputSchema = z.object({
 });
 export const appsDisconnectInputSchema = z.object({ connectionId: z.string().min(1) });
 
+// --- 连接应用 P2：BYO / 预注册 OAuth 客户端、开发者模式（§6.4 / §6.6） -------
+export const appsOauthClientsListOutputSchema = oauthClientsListOutputSchema;
+export const appsOauthClientsSetInputSchema = oauthClientsSetInputSchema;
+export const appsOauthClientsRemoveInputSchema = oauthClientsRemoveInputSchema;
+
+/**
+ * 开发者模式的「授权流程事件日志」一行：来自 `apps.connect_flow` 的脱敏副本，永不含令牌 /
+ * code / state；授权地址只保留 host + path。
+ */
+export const appFlowLogEntrySchema = z.object({
+  at: z.number(),
+  flowId: z.string(),
+  phase: z.string(),
+  authorizationHost: z.string().optional(),
+  /** 仅 `scheme://host/path`，不含 query / fragment。 */
+  authorizationUrl: z.string().optional(),
+  /** 本次所用客户端的来源（`client_selected` 条目）。 */
+  clientSource: z.enum(['preregistered', 'manual', 'cimd', 'dcr']).optional(),
+  errorCode: z.string().optional(),
+  errorMessage: z.string().optional(),
+  issuer: z.string().optional(),
+});
+export type AppFlowLogEntry = z.infer<typeof appFlowLogEntrySchema>;
+export const appsFlowLogInputSchema = z.object({ serverId: z.string().min(1) });
+export const appsFlowLogOutputSchema = z.object({ entries: z.array(appFlowLogEntrySchema) });
+
+/** 原始工具定义（含 annotations / inputSchema，原样 JSON）。 */
+export const mcpRawToolsInputSchema = z.object({ serverId: z.string().min(1) });
+export const mcpRawToolsOutputSchema = z.object({
+  tools: z.array(z.record(z.string(), z.unknown())),
+});
+export const mcpRefreshToolsInputSchema = mcpRawToolsInputSchema;
+export const mcpRefreshToolsOutputSchema = mcpRawToolsOutputSchema;
+
 // --- 连接应用 P1：目录 / 连接管理 / 工具复核 / 持续授权 ---------------------
 export const appsCatalogListOutputSchema = z.object({ entries: z.array(appCatalogEntrySchema) });
 export const appsConnectionsUpdateInputSchema = z.object({
@@ -343,6 +392,23 @@ export const appsConnectionsGrantsOutputSchema = z.object({
   grants: z.array(appToolGrantViewSchema),
 });
 export const appsGrantsRevokeInputSchema = z.object({ grantId: z.string().min(1) });
+/** D73 P2：Bot 详情的污点外发汇总——无人值守下自动批准的外发（审计 `egress_tainted`）。 */
+export const appsEgressSummaryInputSchema = z.object({ botId: z.string().min(1) });
+export const appsEgressSummaryOutputSchema = z.object({
+  /** 放行的次数（审计 `approved !== false`）。 */
+  total: z.number().int().min(0),
+  /** 被无人值守底线拒绝的次数（`approved: false`）。 */
+  refused: z.number().int().min(0),
+  recent: z.array(
+    z.object({
+      at: z.number(),
+      conversationId: z.string().nullable(),
+      channel: z.string(),
+      target: z.string(),
+      approved: z.boolean(),
+    }),
+  ),
+});
 /** 自定义 server「测试 → 保存」：保存后批准测试时看到的工具定义（见 `mcp.test` 的 `toolHashes`）。 */
 export const appsToolsApproveAfterTestInputSchema = z.object({
   serverId: z.string().min(1),
@@ -1441,6 +1507,9 @@ export const rpcMethodSchemas = {
   'mcp.toolRisks': { input: mcpToolRisksInputSchema, output: mcpToolRisksOutputSchema },
   /** D73：显式删除自定义 server 并清理密钥 / 令牌 / 连接行。 */
   'mcp.removeServer': { input: mcpRemoveServerInputSchema, output: okOutput },
+  /** D73 P2 §6.5 MCPB 本地包：读取包摘要 / 启动命令预览；确认后安装并建 stdio server。 */
+  'mcpb.inspect': { input: mcpbInspectInputSchema, output: mcpbInspectOutputSchema },
+  'mcpb.install': { input: mcpbInstallInputSchema, output: mcpbInstallOutputSchema },
   /** D73 连接应用：交互授权流程（结果经 apps.connect_flow 事件）。 */
   'apps.connect': { input: appsConnectInputSchema, output: appsConnectOutputSchema },
   'apps.connect.continue': { input: appsConnectContinueInputSchema, output: okOutput },
@@ -1468,6 +1537,10 @@ export const rpcMethodSchemas = {
     output: appsConnectionsGrantsOutputSchema,
   },
   'apps.grants.revoke': { input: appsGrantsRevokeInputSchema, output: okOutput },
+  'apps.egressSummary': {
+    input: appsEgressSummaryInputSchema,
+    output: appsEgressSummaryOutputSchema,
+  },
   'apps.tools.approveAfterTest': {
     input: appsToolsApproveAfterTestInputSchema,
     output: appsToolsApproveAfterTestOutputSchema,
@@ -1481,6 +1554,14 @@ export const rpcMethodSchemas = {
     input: appsSetClientCredentialsInputSchema,
     output: okOutput,
   },
+  /** D73 P2：BYO 客户端（按 issuer；secret 只写不读）。 */
+  'apps.oauthClients.list': { input: voidInput, output: appsOauthClientsListOutputSchema },
+  'apps.oauthClients.set': { input: appsOauthClientsSetInputSchema, output: okOutput },
+  'apps.oauthClients.remove': { input: appsOauthClientsRemoveInputSchema, output: okOutput },
+  /** D73 P2 开发者模式：授权事件日志 / 原始工具定义 / 手动刷新工具。 */
+  'apps.flowLog': { input: appsFlowLogInputSchema, output: appsFlowLogOutputSchema },
+  'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
+  'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
   'websearch.setKey': { input: webSearchSetKeyInputSchema, output: okOutput },
   'websearch.removeKey': { input: webSearchRemoveKeyInputSchema, output: okOutput },
@@ -1857,6 +1938,8 @@ const APP_METHODS = [
   'mcp.removeSecret',
   'mcp.toolRisks',
   'mcp.removeServer',
+  'mcpb.inspect',
+  'mcpb.install',
   'apps.connect',
   'apps.connect.continue',
   'apps.connect.cancel',
@@ -1868,10 +1951,17 @@ const APP_METHODS = [
   'apps.connections.reviewTools',
   'apps.connections.grants',
   'apps.grants.revoke',
+  'apps.egressSummary',
   'apps.tools.approveAfterTest',
   'apps.connections.list',
   'apps.disconnect',
   'apps.setClientCredentials',
+  'apps.oauthClients.list',
+  'apps.oauthClients.set',
+  'apps.oauthClients.remove',
+  'apps.flowLog',
+  'mcp.rawTools',
+  'mcp.refreshTools',
   'websearch.test',
   'websearch.setKey',
   'websearch.removeKey',
