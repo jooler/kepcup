@@ -50,8 +50,15 @@ class SkillMarketState {
 	async install(presetId: string): Promise<void> {
 		this.installing.add(presetId);
 		try {
-			// skills.changed（botId=''）会触发刷新；这里只等安装落定。
 			await core.call('skills.presets.install', { presetId });
+			// 成功：先刷新（load 自吞错误不抛出）再在 finally 摘除 installing——
+			// 按钮从「添加中…」直接切「✓ 已添加」，不经停「添加」态。
+			await this.load(true);
+		} catch (error) {
+			// 安装失败：也刷新对齐真实安装态再上抛（如「替换过期预置」在卸载
+			// 旧行后才失败，不刷新会残留「可更新」的假状态）。
+			await this.load(true);
+			throw error;
 		} finally {
 			this.installing.delete(presetId);
 		}

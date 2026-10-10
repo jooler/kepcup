@@ -110,6 +110,10 @@ test('skill market: sidebar entry → dialog → add installs a PUBLIC skill →
     await expect(dialog.locator('[data-testid="skill-market-empty"]')).toBeVisible();
     await dialog.locator('[data-testid="skill-market-search"]').fill('市场演示');
 
+    // 点弹框外部（遮罩）不关闭：管理面板只留 ✕ 与 Esc（onInteractOutside preventDefault）。
+    await page.mouse.click(20, 300);
+    await expect(dialog).toBeVisible();
+
     // 添加 → 安装为公共技能（无审批卡片），按钮翻转为已添加。
     await item.locator('[data-testid="skill-market-add-market-demo"]').click();
     await expect(item.locator('[data-testid="skill-market-added-market-demo"]')).toBeVisible({
