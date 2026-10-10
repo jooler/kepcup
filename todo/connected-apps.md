@@ -108,7 +108,7 @@
 | --- | ------------------------------------------------------------------------------------------- | ------------ |
 | U1  | Cloudflare：决定 Bot Fight Mode 处理方式（关闭或 Pro + Skip 规则）；部署 CIMD 文档                             | P0 验收        |
 | U2  | ~~首批应用的测试账号供 spike~~ **已移出（2026-10-10）**：逐家适配转入 [extension-center.md](extension-center.md)（§4 / X5）                                                | —            |
-| U3  | GitHub App 注册（仅当 spike 证实 GitHub 不支持 CIMD）                                                  | P1 GitHub 条目 |
+| U3  | ~~GitHub App 注册~~ **已推迟（2026-10-10）**：GitHub 要 client secret，与不分发 secret 冲突，等 P4 托管网关；P2 预注册验收改用 Google | —            |
 | U4  | Google Cloud 项目 / OAuth 同意屏幕 / Desktop 客户端 / 应用验证；Microsoft Entra 应用；Slack 应用与上架；Figma 合作申请 | P2 对应条目      |
 | U5  | Ed25519 目录签名密钥与 CI 密钥；`dl.` / `registry.` 子域；Workers Paid                                   | P3           |
 
@@ -442,7 +442,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
   - 实施记录（2026-10-10）：客户端选择顺序 = 用户自带 / 已存的非 DCR 客户端（`apps.oauthClients.*`，`source: manual`）→ 目录 `clientRef`（无 `clientRef` 的自定义 server 按 issuer 在表里找；表项 issuer 与发现到的不符则不用）→ 此前 DCR 得到的客户端 → CIMD → DCR → `OAUTH_CLIENT_REQUIRED`。`registration: 'preregistered'` 条目仅当 `clientRef` 在表里有项时 `connectable`，否则 `unavailableReason`。表项不复制进 Token Vault（连接各自记授权时所用客户端供刷新 / 吊销）。Google / Microsoft / Slack / GitHub 条目待 U3 / U4，表现为空。
 - [ ] Google Workspace（需 **U4**）：Workspace MCP 端点（预览，以届时文档为准）+ Google「桌面应用」客户端；首批只用非受限范围（`drive.file`、日历、`gmail.send` 等），受限范围等用户决定 CASA；`tier: builtin` + `releaseGate`。
 - [ ] Microsoft 365、Slack（需 **U4**）：同上模式；Slack 只能用已发布 / 内部应用。
-- [ ] GitHub（若 P1 spike 证实不支持 CIMD，需 **U3**）。
+- [ ] GitHub：**推迟到 P4 托管网关**（2026-10-10 用户决定；原因：GitHub 的 App 与 OAuth App 都要求客户端带 client secret，见 user-actions U3）。P2 门禁的「至少一个预注册条目真实走通」改用 Google。
 - [ ] Figma：未获白名单前不进目录。
 
 **状态（2026-10-10，§6.4）**：上面四条**保持未勾**——机制（预注册表、`clientRef` 解析、`registration:'preregistered'` 条目的 `connectable` 判定、BYO 覆盖）已在第一条实现并测试，但真实平台条目需要用户在各平台注册客户端（**U3**：GitHub App；**U4**：Google Cloud 桌面客户端 / 同意屏幕 / 应用验证、Microsoft Entra 应用、Slack 应用、Figma 合作申请）后才能放进 `oauth-clients.json` 与 `catalog.json`，当前表为 `{}`、目录里没有这几家。填表步骤见 `apps/desktop/oauth-clients.README.md`。复查修复与偏差：客户端选择顺序与「预注册不回退」见 DEV-021 第 2 项；issuer 规范化（trim + 去尾斜杠）、DCR 保存不覆盖中途出现的 BYO 客户端、`apps.oauthClients.set` 不带 secret 时保留原 secret（`clearSecret` 清除、换 client id 丢弃）；渲染端 `OAuthClientsPanel`（「自定义」页，按 issuer 管理）。测试：`unit/oauth-clients`、`integration/oauth-clients`（预注册公开 PKCE 客户端端到端、issuer 不符不回退、BYO 压过预注册、并发 DCR 与 BYO）。

@@ -79,7 +79,8 @@
 | 4 | Atlassian | 待账号 | 管理员限制验证；Microsoft 登录；端点 `authv2` / `v2` 一并确认 |
 | 5 | Stripe | 待账号 | 仅测试模式；逐工具取严 |
 | 6 | Canva | 待确认可用性 | 可能仍是等候名单；不可用则暂缓 |
-| 后续 | GitHub、Google、Microsoft、Slack、Asana、HubSpot | 需预注册客户端（原 U3 / U4） | 走 P2 的预注册客户端机制；先有客户端再进队列 |
+| 后续 | Google、Microsoft、Slack、Asana、HubSpot | 需预注册客户端（U4） | 走 P2 的预注册客户端机制；先有客户端再进队列；**Google 优先**（它同时是 P2 预注册验收的那一条） |
+| 推迟 | GitHub | 要 client secret（2026-10-10 用户决定推迟） | 等 P4 托管网关（[hosted-auth-gateway.md](hosted-auth-gateway.md)），不进本期队列 |
 
 ## 5. 任务拆分
 
