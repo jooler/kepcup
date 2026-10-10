@@ -77,52 +77,54 @@
     </p>
   {/if}
 
-  <div class="flex flex-wrap items-center gap-2">
-    <div class="relative min-w-48 flex-1">
-      <Search
-        class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-        aria-hidden="true"
-      />
-      <Input
-        class="h-8 pl-8"
-        placeholder={t('apps.catalog.search')}
-        bind:value={query}
-        data-testid="apps-catalog-search"
-      />
-    </div>
-    {#if categories.length > 1}
-      <div
-        class="flex flex-wrap items-center gap-1"
-        role="group"
-        data-testid="apps-catalog-filters"
-      >
-        <button
-          type="button"
-          aria-pressed={category === 'all'}
-          class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {category === 'all'
-            ? 'border-foreground/60 bg-accent text-accent-foreground'
-            : 'text-muted-foreground hover:bg-accent/50'}"
-          onclick={() => (category = 'all')}
-          data-testid="apps-catalog-filter-all"
+  {#if !appsStore.catalogLoaded || appsStore.catalog.length > 0}
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="relative min-w-48 flex-1">
+        <Search
+          class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <Input
+          class="h-8 pl-8"
+          placeholder={t('apps.catalog.search')}
+          bind:value={query}
+          data-testid="apps-catalog-search"
+        />
+      </div>
+      {#if categories.length > 1}
+        <div
+          class="flex flex-wrap items-center gap-1"
+          role="group"
+          data-testid="apps-catalog-filters"
         >
-          {t('apps.catalog.all')}
-        </button>
-        {#each categories as item (item)}
           <button
             type="button"
-            aria-pressed={category === item}
-            class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {category === item
+            aria-pressed={category === 'all'}
+            class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {category === 'all'
               ? 'border-foreground/60 bg-accent text-accent-foreground'
               : 'text-muted-foreground hover:bg-accent/50'}"
-            onclick={() => (category = item)}
-            data-testid={`apps-catalog-filter-${item}`}
+            onclick={() => (category = 'all')}
+            data-testid="apps-catalog-filter-all"
           >
-            {t(CATEGORY_LABEL_KEYS[item])}
+            {t('apps.catalog.all')}
           </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
+          {#each categories as item (item)}
+            <button
+              type="button"
+              aria-pressed={category === item}
+              class="rounded-full border px-2.5 py-0.5 text-xs transition-colors {category === item
+                ? 'border-foreground/60 bg-accent text-accent-foreground'
+                : 'text-muted-foreground hover:bg-accent/50'}"
+              onclick={() => (category = item)}
+              data-testid={`apps-catalog-filter-${item}`}
+            >
+              {t(CATEGORY_LABEL_KEYS[item])}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if !appsStore.catalogLoaded}
     <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>

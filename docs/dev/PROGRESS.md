@@ -27,6 +27,7 @@
 | 连接应用 P2（D73） | 待验收 | 2026-10-10 | — | 规模化与大平台：权限追加（step-up）限流与待追加 scopes、污点外发控制（`egress` 审批、`app_taint`、无人值守审计汇总）、按需工具发现（`app_search_tools` / `app_call_tool`）、预注册 / 自带 OAuth 客户端、开发者模式（原始工具定义 / 授权事件日志 / 手动刷新 / 开发者档）、MCPB 本地包安装、协议版本 spike（结论：保持 pi-mcp）；已实现并经两组独立评审修复，定向测试在 Docker 全绿，全量回归由收口时补；真实平台条目（Google / Microsoft / Slack / GitHub）待用户待办 U3 / U4，「+」菜单临时开关（§6.8）未做。详见文末「连接应用 P2」 |
 | 连接应用 P3（D73） | 待验收 | 2026-10-10 | — | 开放平台基座：签名目录索引（Ed25519 验签 + 防回滚 + 与快照合并，生产公钥未生成前自动停用）、分级信任（社区应用首连确认、写工具无 Bot 级授权、目录分组与认证徽标）、子注册表 Worker（`infra/cloudflare/registry/`，官方 OpenAPI v0.1 只读子集 + 144 例契约 / 单元测试）、校验器 CLI `kepcup-app validate`（新包 `packages/app-validator`）、MCP Apps 渲染（`kepcup-app` 特权协议沙箱 iframe + ext-apps AppBridge，界面发起的写入必须人点）、随附 Skills 提示安装；开发者门户只出任务书；已实现并经三组独立评审修复（含沙箱 iframe 劫持 core 端口的严重问题），定向测试在 Docker 全绿，全量回归由收口时补；线上部分（签名密钥、`dl.` / `registry.` 子域、D1）待用户待办 U5。详见文末「连接应用 P3」 |
 | 连接应用 P4（D73） | 仅任务书 | 2026-10-10 | — | 托管授权网关（`todo/hosted-auth-gateway.md`，默认不建，G0 为决策与合规关口）与企业托管授权 EMA（`todo/enterprise-ema.md`，ID-JAG / Okta XAA 客户端支持）两份自包含任务书；本期不实现。总览见 `todo/connected-apps-status.md` |
+| 扩展中心（D73） | 待验收 | 2026-10-10 | — | 技能市场升级为「扩展中心」（Skills / 连接 / MCP 三组）：连接组复用目录网格与账号详情，只列放行条目；自定义 MCP / 填 URL / BYO 客户端收进「设置 → 开发者模式」，设置「应用」只管已连接账号；MCP 组 = 已安装 MCP 管理 + MCPB 安装，精选清单空壳；分支 `t/extension-center`（未合入）；X5 逐家适配未开始。详见文末「扩展中心」 |
 
 
 ## 验收记录
@@ -1077,3 +1078,23 @@
   - **P4 任务书**（todo §8）：`todo/hosted-auth-gateway.md`（G0–G6）与 `todo/enterprise-ema.md`（E0–E6）已写（2026-10-10，**仅任务书，未实现**）；进度总览见 `todo/connected-apps-status.md`。
   - 迁移号沿用 `0024`–`0026`，最终合并时若 main 又前进则再顺延。
 - 影响范围：`apps/*`（含新增 `directory-sync` / `directory-merge` / `tier` / `skills-offer` / `ui/`）、`mcp/{risk,service,tools}.ts`、`gateway/index.ts`、`permissions/approvals.ts`、`skills/library.ts`、`dispatch/orchestrator.ts`、`domain/messages.ts`、`rpc/*`、`start.ts`、shared 契约（`domain/{directory-index,apps-ui,app-skills,connector-catalog}.ts`、`policy/*`、RPC / 事件）、主进程 `main/{apps-ui,apps-ui-policy,index}.ts`、`apps/desktop/scripts/pack-hooks.cjs`、渲染端 `features/apps-ui/*` / `features/apps/*` / `rpc/port.ts`、`scripts/sign-connector-index.mjs`、`infra/cloudflare/{directory,registry}/`、`packages/app-validator/`、`vitest.config.ts`。
+
+## 扩展中心 — 技能市场升级为 Skills / 连接 / MCP 三组（2026-10-10，todo/extension-center.md X0–X4、X6，D73）
+
+设计 `docs/design/29-connected-apps.md` §16，任务书 `todo/extension-center.md`。分支 `t/extension-center`（基于 `t/d73-connected-apps`），**未推送、未合入**。无 RPC / 迁移 / 共享契约改动。三项 ⚠ 产品决定均取推荐方案（A 自定义入口收进开发者模式；B 设置「应用」只管已连接账号；C 「MCP」组首期 = 管理 + MCPB 安装、精选清单空壳）。
+
+- **交付**：
+  - **X0** 设计 29 新增 §16（信息架构、三组职责、决定 A / B / C、与设置「应用」的分工、对已有 `mcpServers` 的兼容），并同步 §9 / D73 第 7 条 / 修订记录。
+  - **X1 外壳**：`features/skill-market/` 改名为 `features/extension-center/`，`SkillMarketDialog` → `ExtensionCenterDialog`（三页签，WAI-ARIA tabs + 方向键）；Skills 页签 = `ExtensionSkills`（原市场内容，行为与 `skill-market-*` testid 不变，卸载时复位加载标记）；`shell.skillMarketOpen/openSkillMarket` → `extensionCenterOpen/extensionCenterTab/openExtensionCenter(tab)`；`sidebar.skillMarket` → `sidebar.extensionCenter`（「扩展中心」），`skill-market-button` → `extension-center-button`；右栏「浏览技能市场」→「浏览扩展中心」。弹框仍是明确打开的管理界面（点遮罩不关，✕ / Esc 关）。
+  - **X2 连接页签**：`ExtensionConnections` = `AppCatalogGrid`（新增 `onManage`；目录为空显示「暂无已适配的应用」并隐藏搜索）+ `AppConnectionsList`（新增 `connectorId` 过滤、`onGoCatalog` 可省）+ `AppConnectionDetail`；已连接卡片显示账号数并有「管理」（单账号直进详情，多账号先列账号）。数据仍来自 `apps.catalog.list`，发行门禁不变；没有「填 URL」入口。Bot 面板「去连接」改开扩展中心「连接」组。
+  - **X3 收口**：设置新增分区「开发者模式」（`DeveloperSection`，`settings.apps.developerMode` 开关；开启后才渲染 `McpSection` 的 `full` 形态：新建 server / BYO 客户端 / 原始工具定义与日志）；设置「应用」去掉页签，只留已连接账号管理 + 跳扩展中心的横条；`mcp` 别名与 `apps` + `custom` 旧参数落「开发者模式」，`apps` 深链继续有效；`APPS_TABS` / `appsTabForKey` 删除。`settings.mcpServers` 与既有连接不迁移、不删除。
+  - **X4 MCP 页签**：`ExtensionMcp` = `McpSection` 的 `manage` 形态（启停 / 状态 / 逐工具策略 / 编辑 / 删除，无「新建」）+ `McpbInstall`；精选清单空壳 `apps/desktop/resources/mcp-presets/{catalog.json,README.md}` + core `mcp/presets.ts`（zod schema、`resolveMcpPresetsDir`、`loadMcpPresetCatalog`，坏条目 / 重复 id 告警跳过）+ 单测；首期为空，不接 RPC、不进安装包。
+  - **X6**：zh-CN 文案；设计 03 / 05 / 22 与 `preset-skills` / `connectors` / `mcp-presets` README、`todo/connected-apps*.md`、`todo/extension-center.md`（X0–X4、X6 已勾，X5 未做）同步改名与结构；历史 PROGRESS 条目保持原样。
+- **验证**（Docker `kepcup-test:trixie`，2026-10-10）：
+  - 定向：`mcp-presets-catalog.test.ts` 7 例、`settings/sections.test.ts` 4 例、`extension-center/tabs.test.ts` 3 例、`features/apps/*` 既有 6 个文件全部通过（共 9 文件 94 例）。
+  - e2e（`kepcup-test:trixie-xvfb`，`electron-vite build` 后 `xvfb-run playwright`）：新增 `extension-center.spec.ts`（三页签 + 方向键；连接组在带发行门禁的构建里显示「暂无已适配的应用」且无卡片；MCP 组无新建入口；设置 → 开发者模式关时入口隐藏、开启后出现；设置「应用」横条跳转扩展中心「连接」）、改动后的 `skill-market.spec.ts`、`sidebar-resize.spec.ts`，3 例全部通过。
+  - `pnpm typecheck` 通过（svelte-check 0 错误，1 条 `ProviderSetupForm` 既有警告）；`pnpm lint` 只剩既有的 `debug-dev-pin.spec.ts` 6 条错误（来自 main）。
+  - 全量一次：3526 例中 29 失败（3495 通过、2 跳过）——26 例是沙箱 / es-git / wiki 容器基线文件（`sandbox-isolation` 10、`workspace-tools` 3、`skills-authoring` 4、`skills` 3、`wiki-url` 2、`toolchain-sandbox` 2、`environment` 1、`projects` 1），1 例 `composer-text`「同名先到先得」（main 带入），另有 2 例与本任务无关、在 `t/d73-connected-apps` 基线（3d4ca11 的干净导出）上同样失败：`connected-apps-runtime`「listing failure at run start」与 `sign-connector-index`「empty production key list」（脚本先校验 `index.json` 形状、后判公钥列表为空，与测试写入的 `{}` 顺序冲突）。本任务新增 / 改动的测试无失败。
+- **偏差**：DEV-023（待决定，推荐全部保留）：常驻的「开发者模式」设置分区、`mcp` 别名落点、「目录」页签直接移除、MCP 组保留已有 server 的编辑 / 删除、精选清单不接 RPC 与打包、弹框固定高度、空目录隐藏搜索。
+- **未做 / 待办**：X5 逐家适配（Notion、Linear 起）；「连接」组「管理 → 账号详情」路径只有类型检查覆盖（需要真实连接，没有 e2e）；精选 MCP 清单的 RPC / 打包 / 卡片在第一个条目落地时再做。
+- 影响范围：渲染端 `features/{extension-center,settings,apps,sidebar,right-panel,bot-panel}`、`stores/shell.svelte.ts`、`i18n/locales/zh-CN.ts`；core `mcp/presets.ts`；资源 `resources/mcp-presets/`；e2e；文档（设计 29 / 03 / 05 / 22、todo、README）。
