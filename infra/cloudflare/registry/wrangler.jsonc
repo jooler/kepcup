@@ -13,8 +13,8 @@
     {
       "binding": "DB",
       "database_name": "kepcup-registry",
-      // 占位：`npx wrangler d1 create kepcup-registry` 后把输出的 UUID 填到这里（用户待办）。
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // 2026-10-10 由 `cf d1 create --name kepcup-registry` 创建（WEUR）；这是资源标识，不是机密。
+      "database_id": "efc7712f-a979-414e-b315-3640cd00a600",
     },
   ],
   "triggers": {

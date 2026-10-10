@@ -82,3 +82,24 @@ infra/cloudflare/with-env.sh check
 - 怀疑泄露：控制台 → Account API Tokens → 对应令牌 → **Roll**（换新值）或 **Delete**。
 - 重建后只需改 `.env`，无需改任何代码。
 - 换机器：重新 `cp .env.example .env` 填写即可；`cf auth login` 的设备登录是另一条路径，不用于本仓库的自动化。
+
+## 7. 线上变更记录（Agent 做过的事，最新在前）
+
+账号 id `37918f50…`；kepcup.com zone `91ba5016c1b4df6855cf21439cbd20c9`（Free）。该账号还有 `botrunning.com`、`fincop.cc`、`inkcop.cc` 三个 zone 和 Worker `inkcop-web`、`oss-cache`，属于其他项目，**不碰**。
+
+| 日期 | 动作 | 结果 |
+| ---- | ---- | ---- |
+| 2026-10-10 | 只读盘点：DNS、Worker、D1、Bot Management | kepcup.com **没有任何 DNS 记录**；Bot Fight Mode 本来就是关的（`fight_mode:false`）；账号里没有 D1 |
+| 2026-10-10 | `cf d1 create --name kepcup-registry` | 已建，id `efc7712f-a979-414e-b315-3640cd00a600`（WEUR，无管辖区限制；公开元数据，无用户数据） |
+| 2026-10-10 | `wrangler d1 execute kepcup-registry --remote --file=schema.sql` | 已建表（`servers` / `reviews` / `sync_state`） |
+| 2026-10-10 | 部署 Worker `kepcup-registry`（D1 绑定 + Cron `17 * * * *`，**暂不带域名路由**） | 已部署，版本 `4e1a846e…`；首次同步在下一个整点后的 :17（UTC） |
+| 2026-10-10 | 尝试创建 kepcup.com 顶级域的 `AAAA 100::`（已代理）记录 | **被自动模式的安全分类器拦下（DNS / 域名 / 证书变更），未创建**；见下 |
+
+### 等你放行的（DNS / 域名类，分类器要求你明确允许）
+
+1. **kepcup.com 顶级域的已代理记录**（`AAAA kepcup.com 100::`，Cloudflare 官方的"无源站 Worker"做法）。没有它，`https://kepcup.com/oauth/client.json` 根本解析不到，CIMD 无法上线（P0 验收前置）。以后有真实网站时直接替换这条记录。
+2. **`kepcup.com/oauth/*` 的 Worker 路由**（部署 `oauth-cimd`）。
+3. **`registry.kepcup.com`**：custom domain（自动建 DNS 记录和证书），把 `infra/cloudflare/registry/wrangler.jsonc` 的 `routes` 改成 `{"pattern":"registry.kepcup.com","custom_domain":true}` 后部署。
+4. **`dl.kepcup.com`**：custom domain（`infra/cloudflare/directory/`）。另外它需要先有签名密钥（U5），否则托管的是空目录。
+
+放行方式：在你的 Claude Code 设置里为这类命令加 Bash 权限规则（例如允许 `infra/cloudflare/with-env.sh cf dns records create` 与 `infra/cloudflare/with-env.sh wrangler deploy`），或者你自己在控制台 / 终端执行上面几步，然后告诉我，我继续做验证（`verify.mjs`、冒烟、WAF 速率限制）。

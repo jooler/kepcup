@@ -93,7 +93,13 @@ npx wrangler d1 execute kepcup-registry --remote --file=./schema.sql
 6. `/v0` 别名假定与 `/v0.1` 同形状（官方当前 schema 同名）。
 7. **未在真实 Cloudflare 运行时验证**（本期离线、未引入 wrangler / miniflare）：D1 对 `json_extract`、标量 `max(a,b)`、`instr` / `lower`、编号参数 `?NNN`、`ON CONFLICT … DO UPDATE … WHERE`、`batch()` 原子性的支持（均为 SQLite 标准功能，测试用 `node:sqlite` 跑通，并模拟了 D1 的 50 字节 LIKE 限制）；`caches.default` 的实际行为；Workers Free 的子请求上限（以 Cloudflare 当时文档为准）。部署后用下面的 `curl` 冒烟。
 
-## 部署（用户待办）
+## 部署状态（2026-10-10）
+
+已由 Agent 用 `.env` 里的令牌完成：创建 D1（`kepcup-registry`，id 已写入 `wrangler.jsonc`）、建表、部署 Worker 与 Cron（**暂未绑定域名**，所以现在还没有公网入口，但定时同步已在跑）。尚未做：`registry.kepcup.com` 的域名 / 路由（DNS 类变更需用户放行，见 `../README.md` §7）、冒烟、WAF 速率限制。线上变更记录见 `../README.md` §7。
+
+下面的清单保留为"从零部署"的参考；第 2、3、5 步（不含路由）已完成。
+
+## 部署（从零参考）
 
 > 以下由用户在自己的 Cloudflare 账号完成；Agent 只准备材料，不代为登录 / 创建资源 / 部署。**不要把 API token 写进仓库。**
 > 对应执行方案 U5（`dl.` / `registry.` 子域；Workers Paid）。

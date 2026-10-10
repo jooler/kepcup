@@ -1,4 +1,9 @@
-/oauth/*
+# 只有 CIMD 文档强制 application/json；logo 等其他文件按扩展名返回正确类型。
+/oauth/client.json
   Content-Type: application/json
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *
+
+/oauth/logo.png
   Cache-Control: public, max-age=86400
   Access-Control-Allow-Origin: *
