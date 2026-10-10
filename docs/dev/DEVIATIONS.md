@@ -421,3 +421,25 @@
   8. **core 改动 `ensureCustom` 换源兜底**（超出「无 core 改动」的原表述）：自定义 server 的 URL origin 变化时重置连接行并清令牌（见 PROGRESS「扩展中心 评审修复」）；`settings.update` 主路径的行为（`reconcileServers` 对任何 URL 变化先吊销并断开）不变，比 origin 判定更严。
   9. **开发者模式关闭时收紧**：「MCP」组里已有 server 的命令 / 参数 / URL 只读；目录应用的 `OAUTH_CLIENT_REQUIRED` 不再给手填表单（已存在的自定义 server 除外）。
   10. **指引文案**：「设置 → MCP 服务器」「设置 → 应用 中连接账号」「设置的『自定义』页」「设置页检查配置」等改指扩展中心。
+
+### DEV-024 本机连接（L0–L3、L5）实现对任务书 / 设计 29 的细化与取舍（D73）
+
+- 状态：待决定
+- 阶段：本机连接（`todo/local-connector-authoring.md` L0–L3、L5；设计 29 §17）；分支 `t/local-connectors`（基于 `t/d73-connected-apps`）；L4 渲染端未做
+- 是否阻塞：否
+- 问题：任务书把几处落点留给实现者选择，或与现状不符，取舍如下（均已写入设计 29 §17）：
+  1. **目录连接的 `developer` 分级此前并未生效**（安全要求，已补齐）：设计 29 §11.3 / DEV-021 第 1 项只对 `McpServer.tier === 'developer'`（MCPB）实现；目录连接的审批决定 `ConnectedApps.#decide` 没有传分级，所以 `tier: developer` 的目录条目只读工具仍自动放行。现在把分级传入 `decideMcpTool`（全部默认每次确认、用户可逐工具放宽、破坏性恒确认），并新增 `tierAllowsStandingGrants`：`developer` 在网关里 `grantable=false`（既无 Bot 级也无对话级持续授权，`assertGrantAllowedForTier` 兜底），授权前 `awaiting_consent` 恒触发（同站点也不自动打开浏览器）。此前目录里没有 `developer` 条目（远端目录丢弃它），所以对既有连接无影响。
+  2. **不支持「完全无认证」的 MCP 服务**（任务书 §1.4 写了「OAuth 或完全无认证」）：目录连接底座只实现 OAuth（`connectionToMcpServer` 恒 `auth: 'oauth'`，`apps.catalog.list` 对非 oauth 条目 `connectable=false`）。匿名服务在探测时带原因拒绝，并指向「设置 → 开发者模式」手动添加。本机条目的记录 schema 因此只接受 `oauth` + `auto`。
+  3. **新增 `apps.localConnectors.reject`**（任务书只列 list / confirm / remove）：确认卡的「取消」要显式丢弃提案，而不是等 TTL；另新增事件 `apps.catalog_changed`（`{connectorId, change}`）与三个错误码 `LOCAL_CONNECTOR_REJECTED` / `LOCAL_CONNECTOR_EXPIRED` / `DEVELOPER_MODE_REQUIRED`。均为追加，不改既有契约。
+  4. **本机条目的 MCP 工具调用流量也走 SSRF 守卫**（任务书只写了探测阶段）：`McpService.attachHttpFetch` 给本机连接的 Streamable HTTP 传输换用 `createGuardedMcpFetch`（连接时校验解析地址、仅同源重定向、不缓冲 SSE）。理由：地址由 Bot 提供，探测通过不等于之后不会被 DNS 重绑定到内网。打包目录 / 远端目录条目沿用原行为（未改）。
+  5. **手册是 TS 常量而不是 Markdown 资源**（`apps/local-connector-guide.ts`）：core 被 esbuild 并成单个入口，没有运行时资源目录；常量随 core 打包，打包流程无需改动。
+  6. **探测到的 scopes 冻结进条目** `auth.scopes.default`：确认卡展示的就是将请求的范围；服务端之后改范围时需删除重加。无范围则保持 `[]`（按服务端提示）。
+  7. **本机条目的 `privacyPolicy` 是占位**（服务自己的 origin，schema 要求必填 URL）、`icon` 是占位文件名（`iconSvg` 对本机条目恒返回 null）；L4 不应把它们当作「已审核的隐私政策 / 图标」展示。
+  8. **隔离的纵深防御**：远端目录合并丢弃使用 `local.kepcup/` 命名空间或 `releaseGate: local` 的条目；`scripts/sign-connector-index.mjs` 拒收这类条目（防误把本机记录丢进 `--extra-dir`）。
+  9. **可用面**：`developer` 条目的只读工具有效审批是 `ask`，所以不在对话轮的只读工具面（`allowedOnReadOnlySurface` 要求 `auto`）里——本机连接的工具默认只在任务里可用，用户把某个只读工具逐个放宽为「自动」后才进对话轮。符合「每次确认」，不是缺陷。
+  10. **数量与时间**：本机条目上限 20、待确认提案上限 10（同一服务的新提案顶掉旧的）、提案 TTL 30 分钟；`settings.apps.localConnectors` 的值读取时才逐条校验（类型是 `Record<string, unknown>`），一条损坏的记录只丢它自己，且仍可被 `remove` 删掉。
+- 影响范围：shared `domain/{local-connectors,connector-catalog,app-connections,types}.ts`、`rpc/{methods,events}.ts`、`errors.ts`；core `apps/{local-connectors,local-connector-probe,local-connector-guide,catalog,exposure,tier,audit,directory-merge,connections}.ts`、`apps/auth/flow.ts`、`mcp/service.ts`、`gateway/index.ts`、`tools/app-tools.ts`、`agent/effects/classify.ts`、`dispatch/orchestrator.ts`、`rpc/apps-connections-bindings.ts`、`start.ts`；`scripts/sign-connector-index.mjs`。无迁移；无渲染端改动（`SetupRequiredCard` 遇到 `confirm-local-connector` 会落到最后的分支，L4 前开发者模式默认关闭，不会触发）。
+- 可选方案：按上述实现保留（推荐）；或 2 为匿名 MCP 补一条 `auth: none` 的目录连接路径（需要改 `connectionToMcpServer`、连接流程、`connectable` 与工具复核，工作量不小，且匿名服务没有「账号」概念）、4 对所有目录条目都加 MCP 流量守卫（行为变更面更大，需要单独评审）。
+- 推荐：均保留。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/design/29-connected-apps.md`（新增 §17、§11.3 旁注）、`docs/guides/add-connected-app.md`（「本机生成」）、`todo/{local-connector-authoring,developer-portal,extension-center,connected-apps-status}.md`、`docs/dev/PROGRESS.md`。

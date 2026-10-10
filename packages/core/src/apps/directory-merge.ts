@@ -1,5 +1,7 @@
 import {
   CONNECTOR_META_KEY,
+  LOCAL_CONNECTOR_GATE,
+  LOCAL_CONNECTOR_NAME_PREFIX,
   connectorCatalogEntrySchema,
   connectorMetaOf,
   type ConnectorCatalogEntry,
@@ -195,6 +197,11 @@ export function mergeDirectoryEntries(
     seenRemote.add(entry.name);
     if (meta.tier === 'developer') {
       drop(entry.name, 'developer_tier_not_allowed');
+      continue;
+    }
+    // 本机连接的命名空间 / 门禁值是本机条目专用（只存在于用户设置里，永不外发也永不由目录下发）。
+    if (entry.name.startsWith(LOCAL_CONNECTOR_NAME_PREFIX) || meta.releaseGate === LOCAL_CONNECTOR_GATE) {
+      drop(entry.name, 'reserved_for_local_connectors');
       continue;
     }
     if (!entry.remotes.every((remote) => isSafeDirectoryRemoteUrl(remote.url))) {

@@ -108,7 +108,6 @@ export class LocalConnectors implements LocalConnectorSource {
   readonly #schema: ReturnType<typeof createLocalConnectorRecordSchema>;
   readonly #proposals = new Map<string, Proposal>();
   #revision = 0;
-  #cache: { revision: number; records: LocalConnectorRecord[] } | null = null;
   /** 已告警过的坏条目 slug（每次装载都告警会刷屏）。 */
   readonly #warned = new Set<string>();
   /** 目录（装载后接入）：冲突检查需要看打包 / 远端条目。 */
@@ -138,8 +137,8 @@ export class LocalConnectors implements LocalConnectorSource {
     return this.#records().map((record) => record.entry);
   }
 
+  /** 读设置并逐条校验（至多 {@link LOCAL_CONNECTORS_MAX} 条，量很小；不缓存，设置是唯一事实来源）。 */
   #records(): LocalConnectorRecord[] {
-    if (this.#cache !== null && this.#cache.revision === this.#revision) return this.#cache.records;
     const stored = this.#deps.settings.get().apps.localConnectors;
     const records: LocalConnectorRecord[] = [];
     for (const [slug, raw] of Object.entries(stored)) {
@@ -162,7 +161,6 @@ export class LocalConnectors implements LocalConnectorSource {
       records.push(parsed.data);
     }
     records.sort((a, b) => a.addedAt - b.addedAt || a.entry.name.localeCompare(b.entry.name));
-    this.#cache = { revision: this.#revision, records };
     return records;
   }
 
@@ -460,7 +458,6 @@ export class LocalConnectors implements LocalConnectorSource {
 
   #bump(): void {
     this.#revision += 1;
-    this.#cache = null;
   }
 }
 
