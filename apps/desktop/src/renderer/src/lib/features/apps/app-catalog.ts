@@ -101,6 +101,41 @@ export function isVerifiedTier(tier: ConnectorTier): boolean {
   return tier === 'verified';
 }
 
+export type CatalogLoadState = 'loading' | 'error' | 'ready';
+
+/**
+ * 目录的加载态：加载成功过 = `ready`（之后刷新失败仍显示旧目录）；从未成功且有错误 = `error`
+ * （显示重试）；否则 `loading`。
+ */
+export function catalogLoadState(input: {
+  loaded: boolean;
+  error: string | null;
+}): CatalogLoadState {
+  if (input.loaded) return 'ready';
+  return input.error !== null ? 'error' : 'loading';
+}
+
+/** 扩展中心「连接」组点「管理」后去哪：单个账号直进详情，多个账号先列出来，没有账号回目录。 */
+export function manageTarget(
+  connections: readonly Pick<AppConnection, 'id' | 'connectorId'>[],
+  connectorId: string,
+): { kind: 'detail'; connectionId: string } | { kind: 'list' } | { kind: 'none' } {
+  const accounts = connections.filter(
+    (connection) => connection.connectorId === connectorId && !isCustomConnection(connection),
+  );
+  if (accounts.length === 0) return { kind: 'none' };
+  if (accounts.length === 1) return { kind: 'detail', connectionId: accounts[0]!.id };
+  return { kind: 'list' };
+}
+
+/** 目录卡片是否显示「管理」按钮：宿主提供了管理入口，且该应用已有账号。 */
+export function showManageButton(
+  entry: Pick<AppCatalogEntry, 'connectedAccounts'>,
+  hasManageHandler: boolean,
+): boolean {
+  return hasManageHandler && entry.connectedAccounts > 0;
+}
+
 /** 目录同步降级时的提示（`ok` / `stale` / `disabled` 不打扰用户）。 */
 export function directoryNoticeKey(state: AppsDirectoryStatus['state']): MessageKey | null {
   return state === 'degraded' ? 'apps.directory.degraded' : null;
@@ -188,7 +223,7 @@ export function appInitial(title: string): string {
 
 // --- 已连接 --------------------------------------------------------------------
 
-/** 自定义 server 的占位连接（`custom:{serverId}`）：归「自定义」页，不进已连接列表。 */
+/** 自定义 server 的占位连接（`custom:{serverId}`）：归扩展中心「MCP」/ 开发者模式的自定义 MCP 管理，不进已连接列表。 */
 export function isCustomConnection(connection: Pick<AppConnection, 'id' | 'connectorId'>): boolean {
   return connection.id.startsWith('custom:') || connection.connectorId.startsWith('custom:');
 }

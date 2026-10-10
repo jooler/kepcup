@@ -117,6 +117,13 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await expect(dialog.locator('[data-testid="skill-market-empty"]')).toBeVisible();
     await dialog.locator('[data-testid="skill-market-search"]').fill('市场演示');
 
+    // 切到「连接」再切回 Skills：搜索词与已加载的列表保留（只在弹框关闭时才复位）。
+    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
+    await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveCount(0);
+    await dialog.locator('[data-testid="extension-center-tab-skills"]').click();
+    await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveValue('市场演示');
+    await expect(item).toBeVisible();
+
     // 点弹框外部（遮罩）不关闭：管理面板只留 ✕ 与 Esc（onInteractOutside preventDefault）。
     await page.mouse.click(20, 300);
     await expect(dialog).toBeVisible();
@@ -132,6 +139,8 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await expect(dialog).toBeHidden({ timeout: 15_000 });
     await page.locator('[data-testid="extension-center-button"]').click();
     await expect(item).toBeVisible({ timeout: 30_000 });
+    // 关闭过弹框：搜索词已复位。
+    await expect(dialog.locator('[data-testid="skill-market-search"]')).toHaveValue('');
     await expect(item.locator('[data-testid="skill-market-added-market-demo"]')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });

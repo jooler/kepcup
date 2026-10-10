@@ -17,20 +17,17 @@
    * 同名时该 Bot 的私有版本遮蔽公共版本。
    *
    * 安装进行中关闭弹框 / 切换分组不中断安装（installing 在模块级单例里）。
-   * 本组件随分组挂载 / 卸载：挂载时加载目录，卸载（切走分组或关闭弹框）时复位
-   * 加载标记，避免下次打开闪现陈旧目录。
+   * 本组件随分组挂载 / 卸载：每次挂载都重新拉一次目录，但目录与搜索词在切到别的分组再切回时
+   * 保留（状态在 `skillMarket` 单例里）；只有弹框关闭时才复位（`ExtensionCenterDialog`）。
    */
-
-  let query = $state('');
 
   $effect(() => {
     skillMarket.start();
     void skillMarket.load(true);
-    return () => skillMarket.reset();
   });
 
   const filtered = $derived.by(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = skillMarket.query.trim().toLowerCase();
     if (needle.length === 0) return skillMarket.presets;
     return skillMarket.presets.filter(
       (preset) =>
@@ -91,7 +88,7 @@
       class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
     />
     <Input
-      bind:value={query}
+      bind:value={skillMarket.query}
       placeholder={t('skillMarket.searchPlaceholder')}
       class="h-9 pl-8"
       data-testid="skill-market-search"

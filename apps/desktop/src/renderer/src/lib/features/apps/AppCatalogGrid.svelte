@@ -17,10 +17,12 @@
     catalogAction,
     catalogCategories,
     catalogSections,
+    catalogLoadState,
     catalogView,
     communityExpanded,
     directoryNoticeKey,
     isVerifiedTier,
+    showManageButton,
     type CategoryFilter,
   } from './app-catalog';
 
@@ -39,6 +41,9 @@
   /** 当前展开了连接面板的目录条目。 */
   let openConnectorId = $state<string | null>(null);
 
+  const loadState = $derived(
+    catalogLoadState({ loaded: appsStore.catalogLoaded, error: appsStore.catalogError }),
+  );
   const categories = $derived(catalogCategories(appsStore.catalog));
   const entries = $derived(catalogView(appsStore.catalog, { query, category }));
   // 分级分组（D73 P3 §7.2）：内置在前、已认证带徽标；社区应用单独成组，默认折叠。
@@ -77,7 +82,7 @@
     </p>
   {/if}
 
-  {#if !appsStore.catalogLoaded || appsStore.catalog.length > 0}
+  {#if loadState !== 'ready' || appsStore.catalog.length > 0}
     <div class="flex flex-wrap items-center gap-2">
       <div class="relative min-w-48 flex-1">
         <Search
@@ -126,8 +131,25 @@
     </div>
   {/if}
 
-  {#if !appsStore.catalogLoaded}
+  {#if loadState === 'loading'}
     <p class="text-xs text-muted-foreground">{t('apps.catalog.loading')}</p>
+  {:else if loadState === 'error'}
+    <!-- 目录从未读成功（core 报错 / 重启中）：给出原因与重试，而不是一直「正在读取」 -->
+    <div class="space-y-2" data-testid="apps-catalog-error">
+      <p class="text-xs text-destructive">
+        {t('apps.catalog.loadFailed')}{appsStore.catalogError !== null
+          ? `：${appsStore.catalogError}`
+          : ''}
+      </p>
+      <Button
+        size="sm"
+        variant="secondary"
+        onclick={() => void appsStore.refresh().catch(() => undefined)}
+        data-testid="apps-catalog-retry"
+      >
+        {t('apps.catalog.retry')}
+      </Button>
+    </div>
   {:else if appsStore.catalog.length === 0}
     <!-- 目录本身为空（发行构建里还没有任何放行的应用）：与「搜索无结果」区分 -->
     <p class="text-xs text-muted-foreground" data-testid="apps-catalog-none">
@@ -240,7 +262,7 @@
           <p class="text-[11px] text-amber-700 dark:text-amber-400">{action.reason}</p>
         {/if}
       </div>
-      {#if onManage !== undefined && entry.connectedAccounts > 0}
+      {#if onManage !== undefined && showManageButton(entry, true)}
         <Button
           size="sm"
           variant="outline"

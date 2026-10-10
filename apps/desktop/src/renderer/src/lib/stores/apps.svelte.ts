@@ -31,6 +31,8 @@ class AppsState {
   /** 目录（`apps.catalog.list`，仅发行门禁放行的条目；含每条的已连接账号数）。 */
   catalog = $state<AppCatalogEntry[]>([]);
   catalogLoaded = $state(false);
+  /** 最近一次目录读取失败的错误文本（null = 无）；目录从未加载成功时界面据此显示重试，而不是一直「正在读取」。 */
+  catalogError = $state<string | null>(null);
   /** flowId → 流程视图（终态保留，直到同目标发起新流程或显式清除）。 */
   flows = $state<Record<string, FlowView>>({});
   /** 目标键 → 当前流程 id。 */
@@ -117,20 +119,32 @@ class AppsState {
    * 账号数，随连接变化一起刷新）。
    */
   async refresh(): Promise<void> {
-    const { connections } = (await core.call('apps.connections.list', {
-      includeCustom: true,
-    })) as { connections: AppConnection[] };
-    this.connections = connections;
-    this.loaded = true;
-    await this.refreshCatalog().catch(() => undefined);
+    try {
+      const { connections } = (await core.call('apps.connections.list', {
+        includeCustom: true,
+      })) as { connections: AppConnection[] };
+      this.connections = connections;
+      this.loaded = true;
+    } finally {
+      // 连接列表读失败也要读目录：目录与连接列表互不依赖，别让前者拖住后者的加载态。
+      await this.refreshCatalog().catch(() => undefined);
+    }
   }
 
   async refreshCatalog(): Promise<void> {
-    const { entries } = (await core.call('apps.catalog.list')) as {
-      entries: AppCatalogEntry[];
-    };
-    this.catalog = entries;
-    this.catalogLoaded = true;
+    if (!this.catalogLoaded) this.catalogError = null;
+    try {
+      const { entries } = (await core.call('apps.catalog.list')) as {
+        entries: AppCatalogEntry[];
+      };
+      this.catalog = entries;
+      this.catalogLoaded = true;
+      this.catalogError = null;
+    } catch (error) {
+      this.catalogError =
+        error instanceof Error && error.message.length > 0 ? error.message : String(error);
+      throw error;
+    }
   }
 
   /** 目录条目（断开后残留的连接可能查不到 → null）。 */
