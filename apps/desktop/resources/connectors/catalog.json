@@ -5,7 +5,7 @@
       "name": "com.notion/mcp",
       "title": "Notion",
       "description": "搜索、阅读与编辑 Notion 页面和数据库",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "websiteUrl": "https://www.notion.so",
       "remotes": [
         {
@@ -29,6 +29,11 @@
             }
           },
           "toolPolicy": { "notion-create-comment": { "risk": "destructive" } },
+          "whoami": {
+            "tool": "notion-get-self",
+            "labelPath": "workspace.name",
+            "subjectPath": "workspace.id"
+          },
           "skills": [],
           "ui": false,
           "privacyPolicy": "https://www.notion.so/privacy",
@@ -40,7 +45,7 @@
       "name": "app.linear/linear",
       "title": "Linear",
       "description": "查找、创建与更新 Linear 的 issue、项目与评论",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "websiteUrl": "https://linear.app",
       "remotes": [
         {
@@ -64,6 +69,12 @@
             }
           },
           "toolPolicy": {},
+          "whoami": {
+            "tool": "get_user",
+            "arguments": { "query": "me" },
+            "labelPath": "email",
+            "subjectPath": "id"
+          },
           "skills": [],
           "ui": false,
           "privacyPolicy": "https://linear.app/privacy",

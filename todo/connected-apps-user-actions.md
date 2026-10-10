@@ -66,7 +66,7 @@
 
 两家已适配并在 `connector-release-gates.json` 放行（2026-10-10，细节见 todo/connected-apps.md B.8）。发行构建会收录它们之前，请在开发版里走一遍并告诉我结果：
 
-- [ ] **whoami 样本**：让一个已授权 Notion 的 Bot 调用 `notion-get-self`，另一个（或同一个）已授权 Linear 的 Bot 调用 `get_user`（参数 `{"query":"me"}`），把**原始返回的结构**贴给我（邮箱、名字可以打码，我要的是字段名和嵌套层级）。我据此补 `whoami` 的 `labelPath` / `subjectPath`，让账号标签显示成邮箱而不是「Notion #1」。
+- [x] （已完成 2026-10-10，Agent 已补 `whoami`）**whoami 样本**：让一个已授权 Notion 的 Bot 调用 `notion-get-self`，另一个（或同一个）已授权 Linear 的 Bot 调用 `get_user`（参数 `{"query":"me"}`），把**原始返回的结构**贴给我（邮箱、名字可以打码，我要的是字段名和嵌套层级）。我据此补 `whoami` 的 `labelPath` / `subjectPath`，让账号标签显示成邮箱而不是「Notion #1」。
 - [ ] **目录连接**：设置 → 应用 → 目录里能看到并连接 Notion、Linear（开发构建本来就显示；要看发行行为需 `pnpm dist`）。
 - [ ] **多账号**：每家再连一个账号（可用第二个工作区 / 第二个邮箱），确认标签区分、Bot 同一应用只能勾选一个连接。
 - [ ] **Bot 勾选 + 对话里完成一件事**：例如让 Bot 搜索 Notion 页面、列出 Linear 的 issue。

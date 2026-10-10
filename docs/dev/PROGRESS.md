@@ -1082,10 +1082,10 @@
 
 ## 连接应用 · Notion / Linear 适配与放行（2026-10-10，todo/extension-center.md §4 / X5）
 
-- **交付**：用户导出的真实工具定义存为 `packages/core/test/fixtures/connectors/{notion,linear}.tools.json`（README 写明导出方法）；`summarize-tools.mjs` 汇总（用产品里的 `classifyRiskDetailed`）。结论：Notion 50 个工具、Linear 64 个，注解均 100%，分级 30/12/8 与 37/5/22。`catalog.json`：Notion `toolPolicy` 把 `notion-create-comment` 调到 `destructive`（版本 1.0.2）；Linear 的服务端破坏性标注照单全收；两家 `auth.scopes` 保持 `[]`；`whoami` 暂不设（缺输出样本）。`connector-release-gates.json` 放行 `notion`、`linear`。
+- **交付**：用户导出的真实工具定义存为 `packages/core/test/fixtures/connectors/{notion,linear}.tools.json`（README 写明导出方法）；`summarize-tools.mjs` 汇总（用产品里的 `classifyRiskDetailed`）。结论：Notion 50 个工具、Linear 64 个，注解均 100%，分级 30/12/8 与 37/5/22。`catalog.json`：Notion `toolPolicy` 把 `notion-create-comment` 调到 `destructive`（版本 1.0.2）；Linear 的服务端破坏性标注照单全收；两家 `auth.scopes` 保持 `[]`；`whoami`：Notion `notion-get-self`（`workspace.id` / `workspace.name`，按工作区认账号）、Linear `get_user {"query":"me"}`（`id` / `email`），路径由用户在真实账号上的返回结构确认，`unit/connector-whoami.test.ts` 用虚构值钉住（Notion 1.0.3、Linear 1.0.2）。`connector-release-gates.json` 放行 `notion`、`linear`。
 - **守门**：`unit/connector-tool-snapshots.test.ts`（放行的条目必须有快照且注解齐全；`toolPolicy` / `whoami` 只引用真实工具；分级分布钉死）。
 - **验证**：Docker `kepcup-test:trixie`，定向 12 文件 173 例（含 `connector-catalog`、`catalog-connect*`、`directory-*`、`connected-apps-p1-gate` / `p3-tier-directory` / `e2e`、`sign-connector-index`）通过，期间修了一处自己引入的回归：登记生产公钥后 `sign-connector-index.test.ts`「空生产公钥列表」用例失效，改为用空的 `--keys` 文件断言。**更正**：此前一次测试是在宿主机上误跑（宿主机 glibc 加载不了 es-git），已重新在 Docker 里跑。
-- **未做 / 待办**：`whoami`（需真实输出，见 user-actions U6）、Linear 的 scopes step-up 拆分（需真实验证）、真实验收（U6）。
+- **未做 / 待办**：Linear 的 scopes step-up 拆分（需真实验证）、真实验收（U6）。
 
 
 ## 扩展中心 — 技能市场升级为 Skills / 连接 / MCP 三组（2026-10-10，todo/extension-center.md X0–X4、X6，D73）

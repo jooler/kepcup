@@ -714,7 +714,7 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 | 判定来源 | 全部来自服务端注解，无按名字推断 | 同左 |
 | `toolPolicy` | `notion-create-comment` 调到 `destructive`（服务端标「写」，但评论会通知他人、不可无痕撤回，与 Linear 的 `save_comment` 同档） | `{}`：**服务端标的破坏性一律照单全收**（含 `save_issue` / `save_comment` 等「创建或更新」类，每次都需确认、不可「总是允许」；用一段时间后再决定是否放宽） |
 | `auth.scopes` | `default: []`：PRM / AS 只声明 `default`，没有可细分的范围 | `default: []`：PRM 列 `read` / `write`；**先不拆 step-up**（未经真实验证，写工具在只读令牌下是否回 `403 insufficient_scope` 不确定），保持由服务端决定 |
-| `whoami` | **暂不设**：`notion-get-self` 是只读、返回工作区 + 用户，但快照没有 `outputSchema`，字段路径不能猜 | **暂不设**：候选 `get_user {"query":"me"}`，同样缺输出结构 |
+| `whoami` | `notion-get-self`；`subjectPath: workspace.id`、`labelPath: workspace.name`（真实返回含 `workspace{id,name}` 与 `user{type,id,name,email}`；令牌绑定的是**工作区**，所以按工作区认账号：同一工作区重新授权复用旧行、换了工作区重新授权会被拒；代价：同一工作区里两个不同用户会被并成一行，个人桌面使用极少见） | `get_user {"query":"me"}`；`subjectPath: id`、`labelPath: email`（真实返回含 `id` / `name` / `email` / `displayName` / `teams[]`，没有工作区信息，所以按用户认账号） |
 | 放行 | `connector-release-gates.json` 已加入 `notion` | 已加入 `linear` |
 
-`whoami` 缺省时的行为：账号用自动编号（「Notion #1」），同一账号重新连接走 `connectionId` 复用，不影响功能；补上需要一份真实输出（见 user-actions 的 U6）。守门测试：`unit/connector-tool-snapshots.test.ts`（放行的条目必须有快照且注解齐全、`toolPolicy` / `whoami` 只引用真实工具、分级分布钉死，快照重新导出后变化会逼人重新审）。
+`whoami` 路径由用户在真实账号上调用得到的返回结构确认（2026-10-10），字段路径用**结构相同、值虚构**的样本钉进 `unit/connector-whoami.test.ts`。守门测试：`unit/connector-tool-snapshots.test.ts`（放行的条目必须有快照且注解齐全、`toolPolicy` / `whoami` 只引用真实工具、分级分布钉死，快照重新导出后变化会逼人重新审）。
