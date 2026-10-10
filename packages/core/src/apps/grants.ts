@@ -1,6 +1,7 @@
 import { newId } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { SqliteDatabase } from '../infra/db.js';
+import { assertGrantAllowedForTier } from './tier.js';
 
 /**
  * 应用工具的持续授权（D73 P1，design 29 §8.1 / 执行方案 §5.3、§5.6）：写工具的「本对话内
@@ -36,6 +37,8 @@ export interface NewAppToolGrant extends AppToolGrantKey {
   /** 缺省 / null = 对该 Bot 总是允许。 */
   conversationId?: string | null;
   approvalId?: string | null;
+  /** 连接的信任分级（D73 P3 §7.2）：受限分级（`community`）拒绝创建 Bot 级授权。缺省 = 不核对。 */
+  connectionTier?: string | undefined;
 }
 
 interface GrantRow {
@@ -74,6 +77,10 @@ export class AppToolGrants {
   /** 创建授权；同一 (Bot, 连接, 工具, 范围) 已有未撤销的授权则直接返回它（幂等）。 */
   create(input: NewAppToolGrant): AppToolGrant {
     const conversationId = input.conversationId ?? null;
+    // 网关总会带分级；直接调用（测试 / 管理路径）不带 = 不核对。
+    if (input.connectionTier !== undefined) {
+      assertGrantAllowedForTier({ tier: input.connectionTier, conversationId });
+    }
     const existing = this.#db
       .prepare(
         `select * from app_tool_grants
@@ -118,17 +125,28 @@ export class AppToolGrants {
    * 级）且未撤销的授权；两种都有时返回 Bot 级。`conversationId` 为 null（没有对话上下文）只
    * 匹配 Bot 级。
    */
-  find(input: AppToolGrantKey & { conversationId: string | null }): AppToolGrant | null {
+  find(
+    input: AppToolGrantKey & {
+      conversationId: string | null;
+      /** 忽略 Bot 级授权（受限分级的连接：此前留下的 Bot 级授权不再生效，D73 P3 §7.2）。 */
+      excludeBotLevel?: boolean | undefined;
+    },
+  ): AppToolGrant | null {
     const row = this.#db
       .prepare(
         `select * from app_tool_grants
           where bot_id = ? and connection_id = ? and tool_name = ? and revoked_at is null
-            and (conversation_id is null or conversation_id = ?)
+            and ((conversation_id is null and ? = 0) or conversation_id = ?)
           order by conversation_id is null desc, created_at, id
           limit 1`,
       )
-      .get(input.botId, input.connectionId, input.toolName, input.conversationId) as
-      GrantRow | undefined;
+      .get(
+        input.botId,
+        input.connectionId,
+        input.toolName,
+        input.excludeBotLevel === true ? 1 : 0,
+        input.conversationId,
+      ) as GrantRow | undefined;
     return row ? toGrant(row) : null;
   }
 

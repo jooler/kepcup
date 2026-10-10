@@ -1,0 +1,19 @@
+{
+  // KepCup 签名目录索引（设计 29 §11.4 / §15.2，执行方案 §7.1）：仅静态资源，不带 Worker 脚本。
+  // Ed25519 签名在 CI 里离线完成，Cloudflare 只托管签名后的文件——私钥不进 Workers Secrets。
+  // 部署前由 CI 把 scripts/sign-connector-index.mjs 的输出放进 public/connectors/v1/（见 README）。
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kepcup-directory",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    // 不做 .html 规范化 / 尾斜杠重定向，也不做 SPA 回退：缺文件就是干净的 404。
+    "html_handling": "none",
+    "not_found_handling": "none",
+  },
+  // dl.kepcup.com 整个子域由本 Worker 的静态资源服务（需要 kepcup.com 在同一 Cloudflare 账号；
+  // 子域的 DNS 记录由 custom_domain 路由自动创建——用户待办 U5，见 README）。
+  "routes": [{ "pattern": "dl.kepcup.com", "custom_domain": true }],
+}

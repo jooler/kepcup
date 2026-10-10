@@ -5,11 +5,19 @@ import type { SensorKind } from '@kepcup/shared';
 // itself is forwarded via window.postMessage because contextBridge cannot
 // transfer MessagePort objects directly. The target is this very window, so
 // its own origin is the exact (and only) targetOrigin that must match.
+//
+// Security (D73 P3 review): the message carries a per-load secret nonce that only this
+// preload and the page's own main world (`window.kepcup.portNonce`) know. A sandboxed MCP App
+// iframe can post to its parent too, but cannot read the nonce — without it the renderer
+// ignores the message, so a page can never swap the core RPC port.
+const portNonce = crypto.randomUUID();
 ipcRenderer.on('core-port', (event) => {
-  window.postMessage('core-port', window.location.origin, event.ports);
+  window.postMessage({ type: 'core-port', nonce: portNonce }, window.location.origin, event.ports);
 });
 
 const api = {
+  /** Secret accompanying the core port message (see above); never sent anywhere else. */
+  portNonce,
   platform: {
     info: (): Promise<{
       version: string;

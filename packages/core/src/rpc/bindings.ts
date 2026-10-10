@@ -214,7 +214,9 @@ import { isCatalogConnectionId } from '../apps/connection-store.js';
 import { bindAppsMethods } from './apps-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
+import { bindAppsUiMethods } from './apps-ui-bindings.js';
 import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
+import { bindAppsSkillsMethods } from './apps-skills-bindings.js';
 import {
   botsUsingServer,
   mcpRevocationsBetween,
@@ -394,6 +396,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
                 ...previous.apps,
                 developerMode: appsPatch.developerMode ?? previous.apps.developerMode,
                 taintGuard: appsPatch.taintGuard ?? previous.apps.taintGuard,
+                directorySync: appsPatch.directorySync ?? previous.apps.directorySync,
               },
             }
           : {}),
@@ -1169,8 +1172,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.
     ...bindMcpbMethods(services),
+    // D73 P3 §7.5: apps.ui.open / close / callTool / openLink (MCP Apps rendering).
+    ...bindAppsUiMethods(services).app,
     // D73 P1: catalog list, connection update / tools / review / policy, grants, approveAfterTest.
     ...bindAppsConnectionMethods(services, { revokeMcp }),
+    ...bindAppsSkillsMethods(services),
 
     // --- memory & profile (P07) ------------------------------------------
     'memory.list': method(memoryListInputSchema, memoryListOutputSchema, async (input) => ({

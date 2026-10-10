@@ -33,6 +33,11 @@ export interface ImportRequest {
   sourceUrl: string;
   ref?: string | undefined;
   subdirectory?: string | undefined;
+  /**
+   * The skill name the caller expects (a catalog entry's declared skill, D73 §7.6). When the scanned
+   * SKILL.md names something else, nothing is submitted: staging is discarded and the import fails.
+   */
+  expectedName?: string | undefined;
   botId: string;
   conversationId: string;
 }
@@ -103,6 +108,14 @@ export class SkillImporter {
   async import(request: ImportRequest): Promise<ImportOutcome> {
     const prepared = await this.prepare(request);
     if (prepared.status === 'candidates') return prepared;
+    if (request.expectedName !== undefined && prepared.scan.name !== request.expectedName) {
+      this.discard(prepared);
+      throw new AppError(
+        'SKILL_IMPORT_FAILED',
+        `来源里的技能叫 ${prepared.scan.name}，与目录声明的 ${request.expectedName} 不一致，已放弃导入`,
+        { nameMismatch: true, expected: request.expectedName, actual: prepared.scan.name },
+      );
+    }
     const payload = prepared.payload;
     const identity: RunIdentity = {
       runId: '',

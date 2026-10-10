@@ -1,0 +1,87 @@
+# 连接应用（D73）需要用户手动处理的事项
+
+> 状态：2026-10-10 汇总（P0–P3 已实现；P4 只出任务书，尚未写）。这些事项 Agent **不能也不应代做**（要登录账号、注册平台应用、持有私钥、改 Cloudflare 账户设置）。Agent 已把准备材料与验证脚本做好，每项下面写明「材料在哪、你要做什么、做完怎么验证、卡住哪个阶段的验收」。
+>
+> 编号沿用 `todo/connected-apps.md` §2.3（U1–U5）；新增的 M 系列是合入与账号类杂项。完成一项就在这里打勾，并在 `docs/dev/PROGRESS.md` 对应阶段补一行验收记录。
+
+## 总览
+
+| #   | 事项                                                  | 卡住什么                                           | 状态 |
+| --- | ----------------------------------------------------- | -------------------------------------------------- | ---- |
+| U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次    | P0 门禁（真实环境部分）                            | [ ]  |
+| U2  | 首批应用测试账号 → 登录实测 → 放行发行门禁            | P1 门禁第 1 条；目录里 6 家目前全部「门禁关闭」    | [ ]  |
+| U3  | GitHub App 注册（预注册客户端）                       | P2 §6.4 的 GitHub 条目、P2 门禁的真实预注册走通    | [ ]  |
+| U4  | Google / Microsoft / Slack / Figma 的平台注册与审核   | P2 §6.4 对应条目                                   | [ ]  |
+| U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖） | [ ]  |
+| M1  | 合入 main 前的最终确认与迁移重编号                    | 合入 main                                          | [ ]  |
+| M2  | 隐私政策页面与 CIMD 里的 `logo_uri` / `policy_uri`    | U1 之前                                            | [ ]  |
+
+## U1 — CIMD 文档部署与验证（P0 门禁）
+
+材料：`infra/cloudflare/oauth-cimd/`（`wrangler.jsonc`、`public/oauth/client.json`、`public/_headers`、`README.md`、`verify.mjs`）。
+
+- [ ] 决定 Cloudflare 的 **Bot Fight Mode** 处理方式：免费版只能整站关闭；Pro 起用 Super Bot Fight Mode 并用 WAF 自定义规则 Skip `/oauth/*` 与 `/.well-known/*`。同时确认「Block AI bots」等规则不覆盖 `/oauth/*`（设计 29 §15.1）。授权服务器是服务端到服务端抓取，被 JS 挑战拦下就表现为 `invalid_client`。
+- [ ] `wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
+- [ ] 运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
+- [ ] 接入外部可用性监控（CIMD 宕机只影响**新**授权，不影响已有令牌）。
+- [ ] 用 **Notion 或 Linear 官方 MCP** 以「自定义」方式手工走通一次：连接 → 调用 → 令牌过期后重连 → 断开；结果记入 `docs/dev/PROGRESS.md`「连接应用 P0」。
+
+## U2 — 首批应用测试账号与登录实测（P1 门禁第 1 条）
+
+目录当前 6 家（`notion`、`linear`、`atlassian`、`sentry`、`canva`、`stripe`）在 `apps/desktop/connector-release-gates.json` 里 `approved: []`，界面能看到但连不上真实平台。
+
+- [ ] 提供各家测试账号（Atlassian 需有管理员权限的测试站点——要验证管理员「已批准客户端 / 域名」限制是否拦住 KepCup 的 CIMD 客户端；Canva 需确认私有访问等候名单；Stripe **只用测试模式 / 受限权限**）。
+- [ ] 运行带登录的 spike（`packages/core/scripts/connector-spike/`，登录在浏览器里由你完成）：导出工具清单、注解覆盖率、账号识别（`whoami`）可行性。
+- [ ] 按结果补 `apps/desktop/resources/connectors/catalog.json` 的 `toolPolicy` / `whoami` / `auth.scopes`；Stripe 逐工具取严。
+- [ ] 把通过的条目加入 `connector-release-gates.json`（即「放行」）；结论写入 `todo/connected-apps.md` 附录 B。
+- [ ] 用放行的应用在真实环境走一遍：目录连接 → 多账号 → Bot 勾选 → 对话里完成一件事 → 写工具审批卡显示账号。
+
+## U3 — GitHub App 注册
+
+GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端点，所以需要预注册客户端。
+
+- [ ] 注册 KepCup 的 GitHub App（设备 / 回环回调以 GitHub 当时文档为准，最小权限）。
+- [ ] 把**平台定义为非保密**的客户端信息填入 `apps/desktop/oauth-clients.json`（`{ [clientRef]: { issuer, clientId, clientSecret? } }`，现为 `{}`；不要放保密的 secret），并在目录条目里写对应 `auth.clientRef` 与 `registration: "preregistered"`。
+- [ ] 真实走通一次预注册客户端授权（P2 门禁要求「至少一个预注册条目真实走通」，Google 或 GitHub 任一即可）。
+
+## U4 — 大平台注册与审核
+
+- [ ] **Google**：Cloud 项目、OAuth 同意屏幕、「桌面应用」类型客户端、应用验证；首批只用非受限范围（`drive.file`、日历、`gmail.send` 等）。受限范围需要 CASA 安全评估——是否做由你决定。
+- [ ] **Microsoft 365**：Entra 应用注册（公共客户端 + 回环回调）。
+- [ ] **Slack**：只能用已发布 / 内部应用——需要创建并上架（或内部分发）Slack 应用。
+- [ ] **Figma**：需向 Figma 申请合作 / 白名单；未获批准前不进目录。
+- [ ] 每一项完成后：填 `oauth-clients.json` + 目录条目，跑一次真实授权。
+
+## U5 — P3 的线上部分（目录签名与服务端）
+
+本地实现与测试不依赖这些（用一次性测试密钥和本地假服务），但上线需要。生产公钥列表在你生成密钥前是**空的**——此时目录同步自动停用，只用随应用打包的快照。
+
+- [ ] 生成 **Ed25519 目录签名密钥对**：私钥只放 CI 的加密环境变量（`KEPCUP_CONNECTOR_SIGNING_KEY`），**不进仓库、不进 Workers Secrets**；公钥（含 `keyId`）填入 shared 常量 `CONNECTOR_INDEX_PUBLIC_KEYS` 并随应用发布。密钥轮换流程见 `infra/cloudflare/directory/README.md`。
+- [ ] 创建子域并部署：`dl.kepcup.com`（签名索引与增量，`infra/cloudflare/directory/`）、`registry.kepcup.com`（子注册表 Worker，`infra/cloudflare/registry/`：先创建 D1 数据库并把 `database_id` 填进 `wrangler.jsonc`，初始化 `schema.sql`，配置 Cron）。
+- [ ] 升级 **Workers Paid**（约 $5/月起；D1 容量、Workflows、Sandbox 需要）。
+- [ ] 开发者门户（`todo/developer-portal.md`，本期只出任务书）将来需要：`developers.kepcup.com`、GitHub OAuth 应用、Turnstile 站点密钥、R2 / D1。
+- [ ] 部署后分别运行各目录下的 `verify.mjs`；`registry.kepcup.com` 另按 `infra/cloudflare/registry/README.md`「部署」第 6–7 步回填并 `curl` 冒烟，并逐条核对该 README「响应形状：已对照与仍需核对」里的推断项（严格 `ResponseMeta`、422、游标、`updated_since` 边界、`/v0` 别名、D1 行为）——本期离线，未在真实 Cloudflare 运行时验证。
+- [ ] 目录签名 CI 步骤：把 `scripts/sign-connector-index.mjs` 接入 CI（每次目录变更签名并发布到 `dl.kepcup.com`；用法与增量生成见 `infra/cloudflare/directory/README.md`）。填入公钥并发布应用新版本之后，旧版本客户端没有公钥，目录同步对它们仍是停用的——这是预期行为。
+- [ ] **真机验收（todo §7.8 的用户部分）**：自动化只验了自写的 Linear 形态 `server.json` 夹具 + 假服务器。请取一个已上架 Claude / ChatGPT 目录的真实应用（如 Linear 官方 MCP）的 `server.json`，补上 `_meta["app.kepcup/connector"]` 后运行 `node packages/app-validator/dist/cli.js validate <server.json> --auth`（先 `pnpm --filter @kepcup/app-validator build`；`--auth` 要在浏览器里登录），把结果记入 `docs/dev/PROGRESS.md`「连接应用 P3」。
+
+## M1 — 合入 main 前的最终确认（Agent 不会自行合入）
+
+- [ ] 你明确同意后再合入 main；合入前 Agent 会：把 main 合进分支、迁移重新编号（当前分支用 `0024_app_connections`、`0025_app_tools`、`0026_egress_approval`，若 main 又新增迁移则顺延；`app-connections-migration.test.ts` 等有编号断言的测试同步改）、跑全量测试一次。
+- [ ] 与主工作树里他人尚未提交的改动（共享的 `types.ts` / `constants.ts` / `methods.ts` / `events.ts` / `bindings.ts` / `zh-CN.ts`）会有文本冲突，由 Agent 在分支侧解决。
+- [ ] 合入后删除分支 `t/d73-connected-apps`（本地 worktree `/home/jyy/wt/kepcup-d73` 与远端分支）。
+- [ ] 推送方式：HTTPS 凭据缓存会过期，分支一律用 SSH 推（`git push git@github.com:jooler/kepcup.git t/d73-connected-apps:t/d73-connected-apps`）。
+
+## M2 — 隐私政策与 CIMD 元数据
+
+- [ ] 在 `https://kepcup.com/privacy` 放上隐私政策页面（`client.json` 的 `policy_uri` 与目录条目都会引用；Agent 写的是占位地址，**请确认 URL 与内容**）。
+- [ ] 提供 `https://kepcup.com/oauth/logo.png`（`client.json` 的 `logo_uri` 目前是占位，文件不存在）。
+- [ ] `client.json` 一旦发布，`redirect_uris` / `client_name` 等字段改动视同发布，走评审；**URL 永不更换**。
+
+## 其他待你决定的开放项（不阻塞）
+
+- [ ] **DEV-022**（`docs/dev/DEVIATIONS.md`，P3 的 13 项偏差，推荐全部保留）——请确认；其中第 11 项的前提是 U5 之前生产公钥列表为空。
+- [ ] 目录增量文件的客户端消费（脚本已生成，客户端每次拉完整索引；目录变大后再做）。
+- [ ] 技能克隆的体积 / 时间上限（D63 既有行为，克隆发生在审批之前；DEV-022 第 4 项）。
+- [ ] §6.8「+」菜单临时开关（P2 可选项，当前未做）。
+- [ ] MCPB 的 URL 下载与目录卡片「安装本地包」按钮（P2 已做本地文件安装，URL 下载未做）。
+- [ ] 若将来增加由 Agent 发起的 MCPB 安装入口，必须先给安装审批卡加「永不自动批准」标记（DEV-021 第 5 项）。

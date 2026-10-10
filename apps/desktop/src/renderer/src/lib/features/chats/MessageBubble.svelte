@@ -10,6 +10,7 @@
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
+  import McpAppCard from '$lib/features/apps-ui/McpAppCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
@@ -66,6 +67,16 @@
         }
       : null,
   );
+  // D73 P3 MCP Apps 界面卡片（cardType `mcp_app`）：iframe 沙箱渲染，见 features/apps-ui。
+  const appUiCard = $derived(
+    isCard &&
+      'cardType' in message.content &&
+      message.content.cardType === 'mcp_app' &&
+      'appUi' in message.content &&
+      message.content.appUi !== undefined
+      ? { messageId: message.id, card: message.content.appUi }
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
@@ -75,6 +86,7 @@
       delegationCard === null &&
       taskCardId === null &&
       watchCard === null &&
+      appUiCard === null &&
       'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
@@ -152,6 +164,11 @@
   <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <DelegationCard cardType={delegationCard.cardType} delegationId={delegationCard.delegationId} />
+  </div>
+{:else if appUiCard !== null}
+  <!-- D73 P3 MCP Apps 界面卡片：居中信息卡，内含沙箱 iframe -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <McpAppCard messageId={appUiCard.messageId} card={appUiCard.card} />
   </div>
 {:else if watchCard !== null}
   <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要，暂停卡可恢复 -->

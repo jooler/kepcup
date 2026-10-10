@@ -83,6 +83,22 @@ export interface CreateTestCoreOptions {
   connectorCatalog?: unknown;
   /** D73 P2 test hook: managed runtimes for MCPB bundles (e.g. `{ node: { command: process.execPath } }`). */
   mcpbRuntimes?: Partial<Record<'node' | 'python' | 'uv', { command: string; version?: string }>>;
+  /**
+   * D73 P3 §7.1 test hook (see CoreServicesOptions.directorySync): signed-directory public keys,
+   * the loopback base URL of a fake directory, and the timer cadence.
+   */
+  directorySync?: {
+    keys?: Array<{
+      keyId: string;
+      publicKey: string;
+      validFrom: number;
+      validUntil?: number;
+      revoked?: boolean;
+    }>;
+    baseUrl?: string;
+    intervalMs?: number;
+    initialDelayMs?: number;
+  };
 }
 
 /**
@@ -130,6 +146,7 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
       ? { connectorCatalog: options.connectorCatalog as never }
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
+    ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
     toolLockTrustFirstList: options.toolLockTrustFirstList ?? true,
   });
 }

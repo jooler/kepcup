@@ -194,6 +194,7 @@ describe('resolveMcpToolEntries with app bindings', () => {
       connectorSlug: 'github',
       accountLabel: 'work',
       appName: 'GitHub',
+      tier: 'builtin',
     });
     expect(locked).toEqual([]);
   });

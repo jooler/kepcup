@@ -173,7 +173,14 @@ export class ApprovalsService {
     identity: RunIdentity,
     kind: ApprovalKind,
     payload: Record<string, unknown>,
-    options: { signal?: AbortSignal } = {},
+    options: {
+      signal?: AbortSignal;
+      /**
+       * A human must click: unattended mode does not auto-decide this request (D73 P3: write
+       * actions initiated from an MCP App's UI). Other kinds' `NEVER_AUTO_DECIDED` is unchanged.
+       */
+      requireHuman?: boolean;
+    } = {},
   ): Promise<ApprovalOutcome> {
     if (options.signal?.aborted) {
       return this.#cancelledOutcome(identity, kind, payload, 'run already aborted');
@@ -206,7 +213,12 @@ export class ApprovalsService {
     // that already completed) is never decided automatically (§5 护栏 7
     // 「任何结果未知都不得自动重放」; a completed duplicate is never auto-approved
     // again): unattended mode waits for the user too.
-    if (unattended.enabled && !NEVER_AUTO_DECIDED.has(kind) && gate === null) {
+    if (
+      unattended.enabled &&
+      !NEVER_AUTO_DECIDED.has(kind) &&
+      gate === null &&
+      options.requireHuman !== true
+    ) {
       return this.#autoDecide(identity, kind, payload);
     }
     // W4 `intended`: the ledger row waits on the user (nothing ran yet) and

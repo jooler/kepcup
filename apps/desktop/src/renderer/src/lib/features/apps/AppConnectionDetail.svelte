@@ -21,6 +21,7 @@
   } from '$lib/components/ui/dialog';
   import McpRiskBadge from '$lib/features/approvals/McpRiskBadge.svelte';
   import ConnectAppPanel from './ConnectAppPanel.svelte';
+  import ConnectedSkillsPrompt from './ConnectedSkillsPrompt.svelte';
   import {
     BADGE_TONE_CLASSES,
     appIconSrc,
@@ -292,6 +293,8 @@
         </label>
       </div>
     </div>
+
+    <ConnectedSkillsPrompt {connectionId} testid="apps-detail-skills" />
 
     <!-- 权限 -->
     <section class="space-y-1.5" data-testid="apps-detail-scopes">

@@ -6,7 +6,7 @@ import {
   type SystemInfoOutput,
 } from '@kepcup/shared';
 import type { PlatformInfo } from '$lib/shim';
-import { domPortToTransport } from './port';
+import { domPortToTransport, isCorePortMessage } from './port';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
@@ -103,7 +103,7 @@ class CoreConnection {
   }
 
   readonly #onWindowMessage = (event: MessageEvent) => {
-    if (event.data === 'core-port' && event.ports.length > 0) {
+    if (isCorePortMessage(event, window, window.kepcup.portNonce)) {
       this.#bind(event.ports[0]!);
     }
   };

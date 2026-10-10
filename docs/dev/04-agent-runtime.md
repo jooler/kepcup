@@ -193,6 +193,12 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 **开发者档与 MCPB（P2，§6.5 / §6.6）**：`McpServer.tier === 'developer'`（MCPB 包安装生成，非目录来源）的 server 经 `isDeveloperTier` 走另一套默认：全部风险档默认每次确认（只读也不自动放行），`destructive` 恒每次确认，逐工具策略 / server `autoApprove` 可放宽其余；普通自定义 server 仍是 W5 默认（DEV-021 第 1 项）。MCPB 装出的 server 是普通 stdio server，工具走同一套 `mcp_{serverId}_{tool}` 命名、工具锁定与审批。
 
+**分级信任（P3，§7.2，design 29 §11.3，`apps/tier.ts`）**：目录连接的 `tier` 随 `AppToolContext` 进网关 `mcpToolDecision`。`builtin` / `verified` 用 §8.1 默认（写工具时长 `once|conversation|bot`）；`community` 的写工具卡片时长只有 `once|conversation`，没有「对该 Bot 总是允许」——创建路径（`AppToolGrants.create({connectionTier})`）也拒绝 Bot 级授权，`find({excludeBotLevel})` 令已存在的 Bot 级行对该档不命中；破坏性工具对所有分级仍只有 `once`；分级未知 / 缺失按 `community` 处理（fail-closed）。社区应用首次连接的工具复核步骤（`reviewing_tools` 事件带 `tier`）需要用户勾选风险确认，`apps.connect.confirmTools({acknowledgeCommunity: true})` 缺确认时 core 返回 `INVALID_INPUT`；没有任何待复核工具的社区条目没有这一步。`developer` 档沿用 P2 的 `isDeveloperTier`。远端目录给的标题 / 说明进 `<available_apps>` / `<connected_apps>` 前经 `oneLine` 清洗（去 `<` `>`、控制字符、双向控制符与零宽字符），不能借提示词注入（DEV-022 第 13 项）。
+
+**界面发起的审批（P3，§7.5，design 29 §11.6）**：MCP Apps 卡片里的页面经 `apps.ui.callTool` 发起 `tools/call`，走与模型调用同一个网关 `mcpToolCall`，但 `loopType:'host'`（用户发起的动作，不受对话轮只读限制）且 `origin:'app_ui'`：只允许同一 server 的、`_meta.ui.visibility` 显式含 `app` 的工具（`APP_UI_TOOL_NOT_ALLOWED`），入参先按 `inputSchema` 校验；非只读工具**一律**出 `mcp_tool` 审批卡并带 `requireHuman`——无人值守、`auto` 策略、server `autoApprove`、持续授权都不能代替，卡片时长只有 `once`，载荷与审计带 `origin:'app_ui'` 与 `appName`（卡片标「来自应用界面的操作」）；用户拒绝后同一张卡对该工具 30 秒静默（`MCP_APP_DENY_LOCK_MS`），每个对话最多 3 个待处理的界面调用（`MCP_APP_CONVERSATION_PENDING_MAX`），卡片关闭 / 资源过期 / 应用断开 / server 移除会取消待处理审批且之后批准不执行；污点期间照常过 `egressCheck`。工具结果带 `_meta.ui.resourceUri` 时 `onToolResult` 往对话里追加一张 `mcp_app` 卡片消息（描述符含 server id、`ui://` URI、工具名、脱敏截断后的入参 / 结果；**不含 HTML、令牌**）；**模型上下文里只有一行固定文案**，页面内容不回灌模型。外部智能体（ACP 桥）调用应用工具时不出 `mcp_app` 卡。
+
+**随附技能提示（P3，§7.6）**：连接完成（`apps.connect_flow` `done`）后，若目录条目的 `_meta.skills` 声明了带来源的技能、有 Bot 持有该连接且该 Bot 还没有同名技能，core 发 `apps.skills_offer`（渲染端 `ConnectedSkillsPrompt` 展示）。安装只能由用户点：`apps.skills.install` → `SkillImporter.import({expectedName})`（来源取自目录，SKILL.md 名与声明不符 → `mismatch`，不提交审批）→ 提交常规 `skill_import` 审批卡，批准后落位到被授权的 Bot；无人值守沿用该审批类型既有规则（D41），没有「自动安装」开关。克隆发生在审批之前、没有体积 / 时间上限（D63 既有行为，DEV-022 第 4 项）。
+
 **对话轮版 `<platform_rules>`**（`system-prompt.ts` `TURN_PLATFORM_RULES`，措辞可调整、含义不变）：
 
 1. 联系人身份、像真人交流、回复语言跟随用户；最终回复自动作为聊天消息发出，保持聊天风格。

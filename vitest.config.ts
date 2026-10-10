@@ -27,6 +27,16 @@ export default defineConfig({
       { test: { name: 'testkit', include: ['packages/testkit/test/**/*.test.ts'] } },
       {
         test: {
+          name: 'app-validator',
+          include: ['packages/app-validator/test/**/*.test.ts'],
+        },
+      },
+      // D73 P3: sub-registry Worker (infra/cloudflare/registry), tested against in-memory SQLite.
+      {
+        test: { name: 'infra-registry', include: ['infra/cloudflare/registry/test/**/*.test.ts'] },
+      },
+      {
+        test: {
           name: 'desktop',
           include: [
             'apps/desktop/src/renderer/src/**/*.test.ts',

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "app.linear/linear",
+  "title": "Linear",
+  "description": "Find, create and update Linear issues, projects and comments",
+  "version": "1.0.1",
+  "websiteUrl": "https://linear.app",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.linear.app/mcp"
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "listedIn": ["claude-connectors-directory", "chatgpt-apps-directory"]
+    },
+    "app.kepcup/connector": {
+      "slug": "linear",
+      "icon": "linear.svg",
+      "category": "project",
+      "tier": "community",
+      "auth": {
+        "kind": "oauth",
+        "registration": "auto",
+        "clientRef": null,
+        "scopes": { "default": [], "write": [] }
+      },
+      "toolPolicy": {},
+      "skills": [],
+      "ui": false,
+      "privacyPolicy": "https://linear.app/privacy"
+    }
+  }
+}

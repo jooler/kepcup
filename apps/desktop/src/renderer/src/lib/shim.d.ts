@@ -19,6 +19,8 @@ export interface AutostartResult {
 declare global {
   interface Window {
     kepcup: {
+      /** Secret nonce of the core-port window message (preload ↔ this page only). */
+      portNonce: string;
       platform: {
         info(): Promise<PlatformInfo>;
         /** System directory picker (project selector, P04); null when cancelled. */

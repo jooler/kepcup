@@ -3,6 +3,7 @@ import {
   AppError,
   appsCatalogListOutputSchema,
   appsConnectionIdInputSchema,
+  appsDirectoryStatusOutputSchema,
   appsConnectionsGrantsOutputSchema,
   appsConnectionsReviewToolsInputSchema,
   appsConnectionsReviewToolsOutputSchema,
@@ -18,6 +19,7 @@ import {
   okOutputSchema,
 } from '@kepcup/shared';
 import type { AppConnectionsService } from '../apps/connections.js';
+import type { DirectorySync } from '../apps/directory-sync.js';
 import type { CoreServices } from '../start.js';
 import type { RpcMethodSpec } from './server.js';
 
@@ -46,10 +48,23 @@ export function bindAppsConnectionMethods(
     }
     return services.appConnections;
   };
+  const directory = (): DirectorySync => {
+    if (services.directorySync === null) {
+      throw new AppError('NOT_IMPLEMENTED', '目录同步模块未就绪');
+    }
+    return services.directorySync;
+  };
   return {
     'apps.catalog.list': method(z.void(), appsCatalogListOutputSchema, async () => ({
       entries: connections().catalogEntries(),
     })),
+    // D73 P3 §7.1: signed directory sync status / manual sync (off = no network, status only).
+    'apps.directory.status': method(z.void(), appsDirectoryStatusOutputSchema, async () =>
+      directory().status(),
+    ),
+    'apps.directory.sync': method(z.void(), appsDirectoryStatusOutputSchema, async () =>
+      directory().sync(),
+    ),
     'apps.connections.update': method(
       appsConnectionsUpdateInputSchema,
       appsConnectionsUpdateOutputSchema,

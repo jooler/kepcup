@@ -1,5 +1,5 @@
 import { Type } from '@earendil-works/pi-ai';
-import { toLlmContent, type Tool as McpTool } from '@earendil-works/pi-mcp';
+import { toLlmContent, type CallToolResult, type Tool as McpTool } from '@earendil-works/pi-mcp';
 import {
   TOOL_OUTPUT_MAX_CHARS,
   TURN_MCP_READ_TOOLS_MAX,
@@ -37,6 +37,21 @@ import { untrustedBlock } from '../infra/data-boundary.js';
  * 不接受这张卡（D73 P2 §6.1 step-up 限流）：工具结果改成普通失败文本，不出 SETUP_REQUIRED。
  */
 export type McpSetupRequiredHandler = (requirement: SetupRequirement) => boolean | void;
+
+/**
+ * MCP Apps（D73 P3 §7.5）：工具成功返回后，若工具定义 / 结果带 `_meta.ui.resourceUri`，交给它在对话里
+ * 发一张界面卡片。实现（`apps/ui/service.ts`）绝不抛错、不改变工具结果；模型看不到任何东西。
+ */
+export interface McpToolUiSink {
+  onToolResult(input: {
+    identity: RunIdentity;
+    server: McpServer;
+    app?: AppToolContext | undefined;
+    tool: McpTool;
+    args: Record<string, unknown>;
+    result: CallToolResult;
+  }): unknown;
+}
 
 export interface McpToolFacade {
   /** Orchestrator 预先解析并构建好的 MCP 包装工具（ready to register）。 */
@@ -200,6 +215,7 @@ export async function resolveMcpToolEntries(input: {
                 connectorSlug: binding.connectorSlug,
                 accountLabel: binding.accountLabel,
                 appName: binding.appName,
+                tier: binding.tier,
               },
             }
           : {}),
@@ -231,8 +247,10 @@ export function wrapMcpToolEntries(input: {
   gateway: ToolGateway;
   secrets: SecretsService;
   onSetupRequired?: McpSetupRequiredHandler | undefined;
+  /** D73 P3：MCP Apps 卡片出口（缺省 = 不出卡）。 */
+  ui?: McpToolUiSink | undefined;
 }): ToolDefinition[] {
-  const { identity, entries, mcp, gateway, secrets, onSetupRequired } = input;
+  const { identity, entries, mcp, gateway, secrets, onSetupRequired, ui } = input;
   return entries.map((entry) =>
     wrapMcpTool({
       identity,
@@ -245,6 +263,7 @@ export function wrapMcpToolEntries(input: {
       gateway,
       secrets,
       onSetupRequired,
+      ui,
     }),
   );
 }
@@ -279,13 +298,7 @@ export async function buildMcpTools(input: {
 function wrapMcpTool(input: {
   identity: RunIdentity;
   server: McpServer;
-  tool: {
-    name: string;
-    title?: string;
-    description?: string;
-    inputSchema: Record<string, unknown>;
-    annotations?: { openWorldHint?: boolean | undefined } | undefined;
-  };
+  tool: McpTool;
   name: string;
   decision: McpToolDecision;
   app?: AppToolContext | undefined;
@@ -293,8 +306,9 @@ function wrapMcpTool(input: {
   gateway: ToolGateway;
   secrets: SecretsService;
   onSetupRequired?: McpSetupRequiredHandler | undefined;
+  ui?: McpToolUiSink | undefined;
 }): ToolDefinition {
-  const { identity, server, tool, name, decision, app, mcp, gateway, secrets, onSetupRequired } =
+  const { identity, server, tool, name, decision, app, mcp, gateway, secrets, onSetupRequired, ui } =
     input;
   const riskLabel =
     decision.risk === 'read' ? '只读' : decision.risk === 'write' ? '写入' : '可能有破坏性';
@@ -388,6 +402,8 @@ function wrapMcpTool(input: {
       // (bot, conversation) — external egress channels need per-call confirmation for 24 h.
       // Custom MCP tools are channels, not sources.
       if (app !== undefined && result.isError !== true) gateway.markAppTaint(identity);
+      // D73 P3 §7.5: an MCP App card (never touches what the model sees below).
+      ui?.onToolResult({ identity, server, app, tool, args, result });
       const redacted = secrets.redact(textParts.join('\n'));
       const truncated = truncateToBudget(redacted, TOOL_OUTPUT_MAX_CHARS);
       const suffix = truncated.truncated ? '\n[输出已截断]' : '';

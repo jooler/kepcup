@@ -1490,6 +1490,15 @@ export const zhCN = {
   'apps.panel.grantReplaceHint':
     '{name} 已授权这个应用的另一个账号（{label}），完成后会替换为本次连接的账号。',
   'apps.panel.doneWithAccount': '已连接 {name}（{label}）。',
+  'apps.skills.prompt': '{app} 附带 {count} 个技能，安装到 {bot}？',
+  'apps.skills.source': '来源 {source}',
+  'apps.skills.hint':
+    '点「安装」后，{bot} 的对话里会出现一张导入确认卡（显示来源和扫描结果），你批准后才会安装。',
+  'apps.skills.install': '安装到 {bot}',
+  'apps.skills.later': '稍后',
+  'apps.skills.submitted': '已发出确认卡，请到 {bot} 的对话里批准。',
+  'apps.skills.pending': '{bot} 的对话里已有等待确认的导入卡，请在那里处理。',
+  'apps.skills.failed': '无法发起安装：{error}',
   'apps.review.title': '请复核 {name} 提供的工具',
   'apps.review.hint':
     '这是该应用首次提供的工具清单，确认后才会提供给 Bot；之后工具定义一旦变化会再次要求复核。取消 = 拒绝并撤销本次授权。',
@@ -1549,6 +1558,17 @@ export const zhCN = {
   'apps.catalog.tier.verified': '已审核',
   'apps.catalog.tier.community': '社区',
   'apps.catalog.tier.developer': '开发者',
+  // --- 分级信任与签名目录（D73 P3 §7.1 / §7.2） ---------------------------------
+  'apps.tier.verifiedBadge': '认证',
+  'apps.tier.verifiedHint': '已通过 KepCup 的自动校验、人工审核与命名空间验证',
+  'apps.tier.communityGroup': '社区应用（{count}）',
+  'apps.tier.communityHint':
+    '社区应用仅经自动校验，未经 KepCup 人工审核；它们的写入类工具不能设为「对该 Bot 总是允许」。',
+  'apps.tier.communityWarning': '社区应用未经 KepCup 人工审核',
+  'apps.tier.communityWarningHint':
+    '它的工具由第三方提供，仅通过了自动校验。写入类工具每次都要你确认（至多可在本对话内允许），不能设为「对该 Bot 总是允许」。',
+  'apps.tier.communityAck': '我了解风险，仍要连接',
+  'apps.directory.degraded': '目录同步失败，当前使用内置或上次校验通过的目录。',
   'apps.connected.hint': '点击一个账号查看工具、审批策略与已授权的 Bot。',
   'apps.connected.empty': '还没有连接任何应用。',
   'apps.connected.goCatalog': '去目录连接',
@@ -1839,6 +1859,25 @@ export const zhCN = {
   'contacts.agentBadge': '任务由 {name} 执行',
   'contacts.agentBadgeOpen': '在设置中查看这个智能体',
   'contacts.agentSwitchCancel': '取消',
+  // MCP Apps 界面卡片（D73 P3 §7.5）
+  'approvals.fromAppUi': '来自应用界面的操作：由应用页面发起，不是模型。',
+  'appsUi.fromApp': '来自 {app}',
+  'appsUi.loading': '正在加载应用界面…',
+  'appsUi.reload': '重新加载应用界面',
+  'appsUi.loadFailed': '无法加载这个应用界面',
+  'appsUi.callFailed': '应用界面发起的调用失败',
+  'appsUi.networkNone': '此界面不能访问网络',
+  'appsUi.network': '此界面可连接：{domains}',
+  'appsUi.permissionsDenied': '未授予权限：{items}',
+  'appsUi.ignored': '已忽略 {count} 项声明',
+  'appsUi.openLinkTitle': '这个应用想在浏览器中打开链接',
+  'appsUi.openLinkHost': '将打开站点：',
+  'appsUi.openLinkConfirm': '在浏览器中打开',
+  'appsUi.openLinkCancel': '取消',
+  'chats.errorCode.APP_UI_EXPIRED': '应用界面已过期，或应用已断开；可点重新加载',
+  'chats.errorCode.APP_UI_INVALID': '应用提供的界面资源不受支持',
+  'chats.errorCode.APP_UI_TOOL_NOT_ALLOWED': '这个应用的界面不能调用该工具',
+  'chats.errorCode.APP_UI_RATE_LIMITED': '应用界面调用过于频繁，请稍后再试',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

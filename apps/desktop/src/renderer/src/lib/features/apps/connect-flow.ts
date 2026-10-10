@@ -29,6 +29,8 @@ export interface FlowView {
   accountLabel?: string | undefined;
   /** `reviewing_tools`：待用户确认的工具清单（其他阶段不带）。 */
   tools?: AppConnectReviewTool[] | undefined;
+  /** `reviewing_tools`：目录条目的信任分级（D73 P3 §7.2）。 */
+  tier?: AppConnectFlowPayload['tier'] | undefined;
   error?: AppConnectFlowPayload['error'] | undefined;
 }
 
@@ -302,6 +304,7 @@ export function applyFlowEvent(
     authorizationUrl: payload.authorizationUrl ?? previous?.authorizationUrl,
     connectionId: payload.connectionId ?? previous?.connectionId,
     accountLabel: payload.accountLabel ?? previous?.accountLabel,
+    tier: payload.tier ?? previous?.tier,
     // 工具清单只属于复核阶段：复核事件缺省时沿用旧值，其他阶段不带。
     tools: payload.tools ?? (payload.phase === 'reviewing_tools' ? previous?.tools : undefined),
     // error 只属于失败流程：失败事件缺省时沿用旧值，其他阶段不带。
@@ -328,4 +331,20 @@ export function applyConnectionStatus(
 ): AppConnection[] | null {
   if (!connections.some((item) => item.id === connectionId)) return null;
   return connections.map((item) => (item.id === connectionId ? { ...item, status } : item));
+}
+
+// --- 社区应用首连确认（D73 P3 §7.2）----------------------------------------------
+
+/** 社区分级的应用未经 KepCup 人工审核：首次连接的工具复核要额外勾选确认。 */
+export function needsCommunityAck(tier: AppConnectFlowPayload['tier'] | undefined): boolean {
+  return tier === 'community';
+}
+
+/** 「确认并完成连接」是否置灰：忙碌，或社区应用尚未勾选确认。 */
+export function confirmToolsDisabled(input: {
+  busy: boolean;
+  tier: AppConnectFlowPayload['tier'] | undefined;
+  acknowledged: boolean;
+}): boolean {
+  return input.busy || (needsCommunityAck(input.tier) && !input.acknowledged);
 }

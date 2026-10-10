@@ -1,10 +1,12 @@
 # 连接应用（Connected Apps）与开放平台基座 — 执行方案（D73 / D74）
 
-> 状态：**P0、P1、P2 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测；U3 / U4 真实平台预注册客户端条目）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P3 起未开始；P2 的 §6.8「+」菜单临时开关为可选项，未做）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P0、P1、P2、P3 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测；U3 / U4 真实平台预注册客户端条目；U5 目录签名密钥与 `dl.` / `registry.` 线上部署）；P4 只出任务书，两份（`hosted-auth-gateway.md`、`enterprise-ema.md`）尚未写**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 与 P3 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P2 的 §6.8「+」菜单临时开关为可选项，未做；P3 全量回归由收口时补）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+>
+> **需要你手动处理的事项**（部署、账号、密钥、合入确认）已汇总在 [connected-apps-user-actions.md](connected-apps-user-actions.md)。
 >
 > **硬约束**：
 >
-> - 只改本地工作树；**不要** `git commit` / `push` / 开 PR（除非用户另行明确要求）。
+> - 分支 `t/d73-connected-apps` 的提交与推送已获批准（用户决定，2026-10-09）：每次提交都推到 origin（走 SSH：`git push git@github.com:jooler/kepcup.git t/d73-connected-apps:t/d73-connected-apps`）；**合入 main、推送 main、开 PR 仍须用户明确批准**。
 > - 现有 MCP（D65）、外部智能体（D72）与内置 pi 引擎的行为与测试**零回归**。
 > - 令牌明文**只**允许出现在 core 发起 HTTP 请求的那一刻（以及 Token Vault 内部）：不进 RPC 返回、界面、日志、`runs.db`、审计明细、LLM 上下文、外部智能体进程。每个阶段的安全测试都要覆盖这一条。
 > - 标注「**用户待办**」的事项（Cloudflare 部署、平台应用注册、真实账号）由用户完成，Agent 只做准备与验证脚本，不要尝试代为登录或注册。
@@ -426,41 +428,57 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ### 7.1 签名目录索引
 
-- [ ] 索引格式 `connectors/v1/index.json`：`{ version, generatedAt, keyId, entries: server.json[] }` + 分离签名 `index.json.sig`（Ed25519，base64）；增量 `deltas/{from}-{to}.json` 按内容寻址。
-- [ ] CI 签名脚本 `scripts/sign-connector-index.mjs`（私钥只从 CI 环境变量读取，**用户待办 U5**）；公钥列表（含 keyId，支持轮换）编译进 shared 常量。
-- [ ] 客户端 `apps/directory-sync.ts`：每日拉取 `https://dl.kepcup.com/connectors/v1/index.json`（ETag）→ Node `crypto` 验签 → 防回滚（`generatedAt` 单调、记录最后版本）→ 与打包快照合并（同名取较新且通过验签者）→ 缓存 `~/.kepcup/cache/directory/`；验签失败回落快照并告警。
-- [ ] `infra/cloudflare/directory/`：Static Assets 或 R2 自定义域部署材料（设计 29 §15.2）。
+- [x] 索引格式 `connectors/v1/index.json`：`{ version, generatedAt, keyId, entries: server.json[] }` + 分离签名 `index.json.sig`（Ed25519，base64）；增量 `deltas/{from}-{to}.json` 按内容寻址。
+- [x] CI 签名脚本 `scripts/sign-connector-index.mjs`（私钥只从 CI 环境变量读取，**用户待办 U5**）；公钥列表（含 keyId，支持轮换）编译进 shared 常量。
+- [x] 客户端 `apps/directory-sync.ts`：每日拉取 `https://dl.kepcup.com/connectors/v1/index.json`（ETag）→ Node `crypto` 验签 → 防回滚（`generatedAt` 单调、记录最后版本）→ 与打包快照合并（同名取较新且通过验签者）→ 缓存 `~/.kepcup/cache/directory/`；验签失败回落快照并告警。
+- [x] `infra/cloudflare/directory/`：Static Assets 或 R2 自定义域部署材料（设计 29 §15.2）。
+
+**实施记录（2026-10-10，§7.1）**：shared `domain/directory-index.ts`（索引信封、增量文件 schema 与内容寻址路径、`CONNECTOR_INDEX_PUBLIC_KEYS`〔**生产列表为空，等 U5**〕、`selectIndexKey`、`stableStringify` / `canonicalEntriesJson` / `applyDirectoryDelta`、状态 `disabled|ok|degraded|stale`、各常量）；`scripts/sign-connector-index.mjs`（`--out/--key-id/--previous/--generated-at` 签名；`--verify`；`--generate-dev-key`〔测试用，拒绝写进仓库树〕；私钥只读环境变量 `KEPCUP_CONNECTOR_SIGNING_KEY`；条目校验失败即中止除非 `--skip-validation`；超前一天以上的 `--generated-at` 拒绝；自检按密钥有效期）；core `apps/directory-sync.ts`（每日拉取 ±10% 抖动、失败约 1 小时后重试、ETag、对原始字节验 Ed25519、4 MiB / 5000 条上限、`generatedAt` 严格单调的棘轮〔`~/.kepcup/cache/directory/state.json`；相等仅限同一份字节；超前一天以上拒绝；缓存加载时重新验签〕、原子写缓存、RPC `apps.directory.status` / `apps.directory.sync`、`settings.apps.directorySync` 默认 `true`〔关闭 → 远端条目清空并 bump 修订号〕）；`apps/directory-merge.ts`（合并规则见 DEV-022 第 1 / 12 项）与 `apps/catalog.ts` 合并视图；`infra/cloudflare/directory/`（`wrangler.jsonc`、资源根的 `public/_headers`、README 含密钥轮换、`verify.mjs`）。**增量文件由脚本生成，客户端暂不消费**（DEV-022 第 3 项）。生产公钥为空时同步 `disabled`（不联网）。测试：shared `directory-index`；core `directory-sync`（28）、`directory-merge`（16）、`sign-connector-index`（12）、集成 `connected-apps-p3-tier-directory`。偏差见 DEV-022 第 1 / 3 / 11 / 12 项。
 
 ### 7.2 分级信任落地
 
-- [ ] `tier` 影响默认值：`community` 写工具不可「对该 Bot 总是允许」、首连额外提示；`developer` 全部每次确认。目录 UI 社区分组默认折叠、`verified` 标识。
+- [x] `tier` 影响默认值：`community` 写工具不可「对该 Bot 总是允许」、首连额外提示；`developer` 全部每次确认。目录 UI 社区分组默认折叠、`verified` 标识。
+
+**实施记录（2026-10-10，§7.2）**：core `apps/tier.ts`（`community` 写工具时长只有 `once` / `conversation`，任何创建路径都不能产生 Bot 级授权——`AppToolGrants.create({connectionTier})` 兜底拒绝、`find({excludeBotLevel})` 令既有 Bot 级行对该档不命中；分级未知 / 缺失 fail-closed；`developer` 沿用 P2 的 `isDeveloperTier`）；首连确认：渲染端勾选框 + core 强制（`apps.connect.confirmTools({acknowledgeCommunity})`，缺确认 → `INVALID_INPUT`），无工具可复核的社区条目没有该步；`reviewing_tools` 事件带 `tier`；`AppCatalogGrid.svelte`：内置在前、社区组默认折叠（搜索时 / 只有它有命中时自动展开）、`verified` 带「认证」徽标、目录同步降级时一行提示；`apps/prompt.ts oneLine` 清洗远端标题 / 说明（去 `<>`、控制 / 双向 / 零宽字符）再进 `<available_apps>` / `<connected_apps>`。偏差见 DEV-022 第 2 / 13 项。测试：core `app-tier`（11）、`app-prompt-sanitize`（4）、集成 `connected-apps-p3-tier-directory`；渲染端 `tier-grouping.test`（13）。
 
 ### 7.3 子注册表 Worker
 
-- [ ] `infra/cloudflare/registry/`：Workers + D1 实现官方 Registry OpenAPI v0.1 的只读接口（`GET /v0.1/servers`、`/v0.1/servers/{name}/versions` 等，以官方 OpenAPI 为准）；Cron 触发从官方注册表同步；审核状态表；`createMcpHandler` 不需要。部署为 `registry.kepcup.com`（U5）。
-- [ ] 用官方 Registry 的 OpenAPI 做契约测试。
+- [x] `infra/cloudflare/registry/`：Workers + D1 实现官方 Registry OpenAPI v0.1 的只读接口（`GET /v0.1/servers`、`/v0.1/servers/{name}/versions` 等，以官方 OpenAPI 为准）；Cron 触发从官方注册表同步；审核状态表；`createMcpHandler` 不需要。部署为 `registry.kepcup.com`（U5）。
+- [x] 用官方 Registry 的 OpenAPI 做契约测试。
+
+**实施记录（2026-10-10，§7.3）**：`infra/cloudflare/registry/` 已实现——`src/worker.ts`（`GET /v0.1/servers`、`…/{name}/versions`、`…/versions/{version|latest}`、`health|ping|version`，`/v0` 别名；非 GET 一律 405；`(name, version)` keyset 游标、`limit` 默认 30 / 最大 100、`updated_since`、`search`、ETag / 304、Cache API 读穿透）、`src/sync.ts`（Cron 增量同步，有界可续，幂等 upsert，`is_latest` 唯一，网络失败不抛、不碰 `reviews`）、`schema.sql`（D1 三表）、`wrangler.jsonc`（`database_id` 为占位）。审核合并：仅 `approved` 的审核对外带 `_meta["app.kepcup/connector"].tier` 与 `app.kepcup/review`，发布者自标的 tier 被剔除。**契约测试**用 2026-10-10 联网抓取的官方 `openapi.json` 的手工维护子集（`test/openapi-v0.1.subset.json`）校验每种响应；Docker 内 `node scripts/run-tests.mjs run infra/cloudflare/registry` 144 例全绿（评审修复后；`node:sqlite` 内存库实现 `D1Like`，无 wrangler / miniflare）；`npx tsc -p infra/cloudflare/registry --noEmit`、eslint、prettier 通过。有意偏离 / 需对照官方核对的点（`_meta` 扩展键、参数违规用 422、游标格式、`updated_since` 边界等）与线上部署用户待办（建 D1、DNS、Cron、U5）见 `infra/cloudflare/registry/README.md`；真实 Cloudflare 运行时未验证（离线，未引入 wrangler）。
 
 ### 7.4 校验器 CLI
 
-- [ ] 新包 `packages/app-validator`（bin `kepcup-app`）：`kepcup-app validate <server.json | url>`——可达性、PRM / AS 发现、CIMD 或 DCR 可用、每个工具有 `title` 与风险注解、读写拆分启发式检查、名称 ≤64、`_meta["app.kepcup/connector"]` 合法、MCP Apps 的 CSP 声明、隐私政策链接；`--auth` 交互模式用 KepCup CIMD 身份走一次真实授权。复用 core 的 policy / catalog schema（抽到 shared 或独立包，避免依赖 Electron）。
+- [x] 新包 `packages/app-validator`（bin `kepcup-app`）：`kepcup-app validate <server.json | url>`——可达性、PRM / AS 发现、CIMD 或 DCR 可用、每个工具有 `title` 与风险注解、读写拆分启发式检查、名称 ≤64、`_meta["app.kepcup/connector"]` 合法、MCP Apps 的 CSP 声明、隐私政策链接；`--auth` 交互模式用 KepCup CIMD 身份走一次真实授权。复用 core 的 policy / catalog schema（抽到 shared 或独立包，避免依赖 Electron）。
+
+**实施记录（2026-10-10，§7.4）**：新包 `packages/app-validator`（`@kepcup/app-validator`，bin `kepcup-app`，ESM，`tsc` → `dist`，根 vitest 项目 `app-validator`）。`kepcup-app validate <server.json 路径 | https URL> [--auth] [--json] [--timeout ms] [--no-browser]`；检查项分组（id 与说明见包 `README.md`，`readme-anchors.test` 保证 README 与实现一致）：`manifest.*`（schema、`_meta` 扩展、slug / icon / category / tier / auth / toolPolicy / skills / ui / whoami、远端、隐私政策）、`remote.*`（可达、TLS、401 挑战、PRM、AS 元数据、端点 https、PKCE、`iss`、CIMD / DCR、公共客户端、refresh、吊销）、`auth.*`（`--auth`：CIMD 文档、客户端身份、回调 `iss`、流程、令牌、refresh、吊销）、`tools.*` / `tool.*`（标题、描述、schema、名称 ≤ 64、风险注解、读写拆分、注入扫描）、`ui.*`（`_meta.ui` 与 CSP 条目）；退出码 0（无 error）/ 1（有 error）/ 2（用法错误或工具自身失败）；`--json` 为 `schemaVersion: 1`，URL 只保留 origin + path。`--auth` 用 KepCup 的 CIMD 身份经 pi-mcp 低层 OAuth 函数 + 自带回环回调服务（校验 `Host`、一次性）走一次真实授权；授权 / 令牌 / 注册端点必须 https（仅当 MCP server 本身是回环时允许回环 http）且先于打开浏览器校验；受保护 fetch 拒绝公网 → 回环 / 私网的重定向；描述注入扫描在 NFKC 规范化后的文本上做并列出隐藏字符。**复用方式**：core 的纯策略函数抽到 `packages/shared/src/policy/{sha256,risk,tool-policy,naming}.ts`（shared 会被打进渲染端，所以用纯 JS SHA-256），core `mcp/risk.ts` / `apps/policy.ts` / `apps/naming.ts` 只保留再导出，既有 import 与测试不变；校验器只依赖 shared 与 pi-mcp，不依赖 Electron / core。测试：12 文件 145 例，含 §7.8 验收 `acceptance-listed-app`（Linear 形态 `server.json` 夹具 + 假服务器通过 `validate --auth`）。
 
 ### 7.5 MCP Apps 渲染（先 spike）
 
-- [ ] Spike：Electron 中以自定义特权协议 `kepcup-app://{connectionId}/`（standard + secure）在**独立 partition** 内承载 `ui://` 资源 HTML，iframe `sandbox="allow-scripts"`（无 same-origin）、无 preload / Node；CSP 由 `_meta.ui.csp` 生成；验证 `@modelcontextprotocol/ext-apps` AppBridge 在 Svelte 渲染端可用。结论记附录 B，不可行则调整方案后再实现。
-- [ ] 实现：工具结果带 `_meta.ui.resourceUri` → core `resources/read` 取 HTML → 消息流内卡片渲染；界面发起的 `tools/call` 经 RPC `apps.ui.callTool` 回到网关（同一审批与风险策略）；外链经 `shell.openExternal` 且先确认。
-- [ ] 安全测试：iframe 无法访问 `window.kepcup`、其他应用数据、令牌；CSP 外的请求被拦。
+- [x] Spike（2026-10-10，附录 B.7）：真实 Electron 44 里验证——特权方案 `kepcup-app`（standard + secure）+ 响应头 CSP、`sandbox="allow-scripts"` iframe 的 opaque origin、CSP 外的网络被拦且 `connect-src` 白名单生效、postMessage JSON-RPC 与 `event.source` 校验、权限 / 导航 / 弹窗被拒、`@modelcontextprotocol/ext-apps@1.7.5`（SDK 1.x 兼容；2.x 需 SDK 2.x）的 `AppBridge` 可用。**结论：可行；唯一偏差是 iframe 没有独立 partition**（协议处理器必须挂在宿主窗口的 session）。
+- [x] 实现：core `apps/ui/{store,resource,service}.ts`（工具结果 / 定义带 `_meta.ui.resourceUri` → `mcp_app` 卡片消息；`apps.ui.open` 经 `resources/read` 取 HTML、校验 MIME / ≤ 2 MB、清洗 CSP、登记内存资源；平台方法 `apps.ui.resource` 供主进程协议处理器取页面；`apps.ui.callTool` 走网关同一审批路径、`loopType:'host'`、`visibility` 默认拒绝、限流每秒 5 次 / 在途 3 个；`apps.ui.openLink` 仅 https）；`McpService.readResource` 与 `io.modelcontextprotocol/ui` 客户端能力；主进程 `main/apps-ui.ts`（方案注册、处理器、子框架导航拦截）；渲染端 `features/apps-ui/{McpAppCard.svelte,app-bridge-host.ts,bridge-guard.ts}`（消息流卡片、官方 `AppBridge` + 方法白名单 / 体积上限、高度 100–800、外链确认条）。`ui/message`、`ui/update-model-context` 本期不支持（`-32601`）。
+- [x] 安全测试：e2e `apps/desktop/test/e2e/mcp-apps.spec.ts`（真实 Electron：iframe 读不到 `window.kepcup` / 父页面 / cookie / 存储，CSP 外请求与回环请求被拦且服务端命中 0，白名单内可达，弹窗 / 导航被拦，写工具出审批卡、未声明 / 仅模型可见的工具被拒，外链确认后才 `openExternal`）；core `integration/mcp-apps-ui`、`security/mcp-apps-ui-tokens`（OAuth 连接：卡片 / open / 页面 / 调用结果 / 事件无令牌）、`unit/app-ui-service`；shared `apps-ui`；主进程 `apps-ui-policy.test`；渲染端 `bridge-guard.test`。
+- 安全评审修复（2026-10-10）：**严重**——渲染端 `core-port` 窗口消息无来源校验，沙箱 iframe 可劫持 core RPC 端口（已修：preload 带每次加载的秘密 nonce + `event.source === window`）；界面发起的写入不再被无人值守 / auto 策略 / 持续授权绕过（`origin:'app_ui'`、仅一次、必须人点）；拒绝后 30 秒静默、每对话 3 个待处理上限；关闭 / 过期 / 断开取消待处理审批且之后不执行；CSP 拒绝一切通配、回环只认所属 server 的精确 host:port，响应头加 `sandbox allow-scripts` 与 `frame-ancestors`（e2e 验证 iframe 照常工作）；`__kepcupRpc` 入产物剔除清单；子框架导航判定失败即关闭；外链取消冷却 5 秒、确认条突出主机名；`tools/call` 入参按 inputSchema 校验；`size-changed` 节流 100 ms。`resources/read` 的 2 MB 上限只能在 pi-mcp 返回完整响应之后检查（客户端库先缓冲整个响应，无法更早截断）。
+- 未做 / 后续：外部智能体（ACP 桥）调用应用工具时不出卡；`ui/message` / `ui/update-model-context` / `ui/download-file` / `request-display-mode`；`permissions`（camera 等）一律不授予；主题切换不推给已打开的界面；ext-apps 2.x 待 SDK 2.x（只换 `app-bridge-host.ts` 的 import）；卡片重新挂载（虚拟列表滚出再滚入）会重新 `resources/read`。
 
 ### 7.6 随附 Skills
 
-- [ ] 目录条目 `_meta.skills` → 连接成功后提示安装（走既有 `skill_import` 审批，D63），安装到被授权的 Bot。
+- [x] 目录条目 `_meta.skills` → 连接成功后提示安装（走既有 `skill_import` 审批，D63），安装到被授权的 Bot。
+
+**实施记录（2026-10-10，§7.6）**：`_meta.skills` 条目为 `{name, source〔https git URL〕, description?, ref?, subdirectory?}`（旧的纯字符串形态能解析但永远不会被提示）；`isSafeSkillSourceUrl`（https、无用户信息 / 端口 / 查询、带点域名、非 IP / localhost / `.local`、≤ 500 字符）在目录 schema 与安装时各校验一次；core `apps/skills-offer.ts`：连接完成后条目声明了技能 + 有 Bot 持有该连接 + 该 Bot 未装同名技能 → 发 `apps.skills_offer`；RPC `apps.skills.offers` / `apps.skills.install`（`rpc/apps-skills-bindings.ts`）→ 既有 `SkillImporter.import` → 常规 `skill_import` 审批（从不自动安装，无人值守沿用该审批既有规则）；声明名必须等于 SKILL.md 名（`expectedName`，不符 → `status: 'mismatch'`，不提交审批，本进程内不再提示 / 克隆）；**git 克隆发生在审批之前，libgit2 无体积 / 时间上限**（D63 既有行为，列为后续，DEV-022 第 4 项）；渲染端 `ConnectedSkillsPrompt.svelte`（稍后 / 失败项 / 已提交状态）；测试钩子 `CoreServicesOptions.appSkillSourceOverride`（仅测试钩子构建）。测试：shared `connector-skill-source`（30）；core `apps-skills-offer`（26）、集成 `connected-apps-skills-offer`（7）；渲染端 `connected-skills.test`（3）。
 
 ### 7.7 开发者门户与审核流水线
 
-- [ ] 本阶段只出任务书 `todo/developer-portal.md`（Cloudflare：GitHub OAuth + DoH TXT 命名空间验证 + Turnstile + D1/R2 + Workflows + Sandbox SDK 扫描，设计 29 §11.5、§15），不实现。
+- [x] 本阶段只出任务书 `todo/developer-portal.md`（Cloudflare：GitHub OAuth + DoH TXT 命名空间验证 + Turnstile + D1/R2 + Workflows + Sandbox SDK 扫描，设计 29 §11.5、§15），不实现。
+
+**实施记录（2026-10-10，§7.7）**：任务书 `todo/developer-portal.md` 已写（未实现）：目标 / 硬约束、Cloudflare 架构（Worker + D1 + R2 + Workflows + Containers / Browser Run）、数据模型、审核状态机（`community` 自动 → `verified` 人工）、GitHub / DoH 命名空间证明、提交流水线（`kepcup-app validate --json` → 远程探测 → MCP Apps 渲染检查）、`tool_contract_hash` 复审触发、SSRF 与滥用防护、与 registry `reviews` 的写入方案、API 清单、匿名遥测（Analytics Engine）、分阶段任务（D0–D6，含验收）与用户待办（Workers Paid、Turnstile、GitHub OAuth 应用、子域等）。
 
 ### 7.8 P3 验收
 
 - 签名索引端到端（篡改 / 回滚被拒、离线回落）；子注册表通过 OpenAPI 契约测试；`kepcup-app validate` 对一个已上架 Claude / ChatGPT 目录的第三方应用的 `server.json`（补 `_meta` 后）通过；MCP Apps 示例渲染并通过安全测试。
+
+**门禁结果（2026-10-10）**：自动化部分全绿——签名索引端到端由 core `directory-sync`（篡改字节 / 签名、他钥、未知 / 吊销 / 窗口外钥、防回滚、离线回落并保留最后验签缓存、空密钥与设置开关停用）+ 集成 `connected-apps-p3-tier-directory`（真实 core + 假 `dl.kepcup.com`）覆盖；子注册表 OpenAPI 契约由 `infra/cloudflare/registry/test/contract.test.ts`（官方 `openapi.json` 手工子集）+ worker / sync / reviews 共 144 例覆盖；`kepcup-app validate` 的验收由 `packages/app-validator/test/acceptance-listed-app.test.ts` 覆盖（Linear 形态 `server.json` 夹具补 `_meta` 后，对替身远端 `validate --auth` 端到端通过——**夹具是自写的，不是对线上真实 Linear 的实测**）；MCP Apps 示例渲染与安全测试由 e2e `mcp-apps.spec.ts`（3 例，真实 Electron）+ core `mcp-apps-ui*` / 安全测试覆盖（§7.5 记录）。定向测试例数与分布见 `docs/dev/05-testing.md`「用例分布（D73 P3）」。全量回归：3375 通过 / 26 失败（均为环境基线文件，无新增失败）；pnpm typecheck、pnpm lint 通过。**待用户的部分**：对真实已上架应用（如 Linear 官方 MCP）的 `server.json` 跑 `kepcup-app validate --auth`（要真实账号登录）；U5（目录签名密钥、`dl.` / `registry.` 子域、D1、Workers Paid）及各目录的线上 `verify.mjs` / `curl` 冒烟；子注册表在真实 Cloudflare 运行时与官方实现上的核对（见 `infra/cloudflare/registry/README.md`）。偏差汇总见 `docs/dev/DEVIATIONS.md` DEV-022（待决定）；进度见 `docs/dev/PROGRESS.md`「连接应用 P3」。
 
 ---
 
@@ -565,3 +583,25 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 2. 触发条件（任一）才启动「HTTP 传输换官方 SDK」：(a) 目录里有厂商**只**支持 2026-07-28（探测脚本 `connector-spike/probe.mjs` 可加一次 `server/discover` 探测；连接失败文案里已会带出 `unsupported protocol version`）；(b) 官方 SDK 发布 2026-07-28 版客户端而 pi-mcp 数周内无跟进。届时的做法：`McpService` 的 HTTP 连接抽成窄接口（`connect` / `listTools` / `callTool` / `onNotification` / `close`，现有 `McpClient` 即其形状），为 Streamable HTTP 增加官方 SDK 适配实现，OAuth 仍用 `apps/auth` 的 `AuthProvider`（SDK 的 `authProvider` 接口需薄适配），stdio 与 SSE 继续用 pi-mcp；先用假服务器无状态模式跑通再切流量。当前锁定的 1.32.1 是 v1 线，升级需评估对宿主 MCP 桥（`mcp-bridge.ts` 服务端）和 testkit 假服务器的影响。
 3. **假服务器需要的改动**（不在本期实现）：`startFakeOAuthMcpServer` 增 `statelessMode`——每个 POST 用独立的 `StreamableHTTPServerTransport({ sessionIdGenerator: undefined })`、不下发 `Mcp-Session-Id`、`GET` 回 405（因此 `setTools` 等不再能推 `list_changed`，测试改用手动刷新）；2026-07-28 本身另需：`server/discover`（不经 `initialize` 返回能力 / 版本）、每个请求自带协议版本头、MRTR（工具调用中途要求补充输入时返回「需要输入」结果而不是服务端发起的 elicitation 请求）。后三项等 SDK 或 pi-mcp 有对应客户端实现后再做，否则无法被任何客户端驱动。
 4. 风险登记：MRTR 若成为主流，当前 pi-mcp 的 `elicitation` 能力（`capabilities.elicitation`）不会被触发，工具调用会在需要用户输入处失败而不是挂起——目前 KepCup 不声明 `elicitation` 能力，所以服务端本就不应发起；无需处理。
+
+### B.7 MCP Apps 渲染 spike（P3，2026-10-10）
+
+> §7.5 spike。在 `kepcup-test:trixie-xvfb` 容器内用**真实 Electron 44.4.5**（xvfb，`--no-sandbox` 同 Playwright）跑一次性探针：主窗口带 preload（`window.kepcup = { secret }`）、`file://` 宿主页（CSP 与真实渲染端同款，另加 `frame-src kepcup-app:`）、特权方案 `kepcup-app`（`standard` + `secure`，`supportFetchAPI:false`、`corsEnabled:false`）经 `protocol.handle` 服务一份 `text/html` + 响应头 CSP 的页面；iframe `sandbox="allow-scripts" allow="" referrerpolicy="no-referrer"`；iframe 内用**真实的** `@modelcontextprotocol/ext-apps` `App`，宿主用**真实的** `AppBridge` + `PostMessageTransport`（esbuild 打包）。两个 127.0.0.1 HTTP 服务端（一个在 CSP 白名单、一个不在）统计命中数。探针不入库（一次性）；结论如下，实现与安全测试见 `apps/desktop/test/e2e/mcp-apps.spec.ts`。
+
+**结论：可行，但有一处与设计 29 §11.6 的措辞不同——iframe 没有「独立 partition」。**
+
+| 问 | 结论 | 证据 |
+| --- | --- | --- |
+| (a) 特权方案 + 响应头 CSP | 可行 | iframe 加载 `kepcup-app://conn1/res`，响应头 `content-security-policy: default-src 'none'; script-src 'unsafe-inline'; … connect-src http://127.0.0.1:<白名单端口>; frame-src 'none'; base-uri 'none'; form-action 'none'` 生效（违规以 `securitypolicyviolation` 事件上报）。**`protocol.handle` 必须注册在宿主窗口所在的 session（默认 session）上**：只在 `session.fromPartition('kepcup-apps-ui')` 上注册时，宿主窗口里的 iframe 不走它（`handled=[]`，iframe 静默停在 about:blank，无 `did-fail-load`）。iframe 是页面的子框架，网络栈跟随**宿主 webContents 的 session**，`<iframe>` 没有 per-frame partition。要真独立 partition 只有 `<webview partition>`（需开 `webviewTag`，放大主窗口攻击面且 Electron 不推荐）或覆盖在窗口上的 `WebContentsView`（无法嵌入可滚动消息流）——**都不采用**。替代：不依赖 partition 的隔离见下（opaque origin + 逐应用 CSP + 导航拦截），iframe 因 opaque origin 本就没有 cookie / localStorage / IndexedDB 可共享。 |
+| (b) 独立 origin / 无法碰宿主 | 可行 | `window.origin === "null"`（`location.origin` 是 `kepcup-app://conn1`，仅用于 CSP `'self'`）；`typeof window.kepcup === "undefined"`（宿主里是 `HOST-SECRET-TOKEN`）；`typeof window.require / process` 为 `undefined`；`parent.document`、`parent.kepcup`、`top.location.href`（读写）均抛 `SecurityError`；`document.cookie`、`localStorage` 抛 `SecurityError`（"The document is sandboxed"）；`indexedDB.open` 被拒；`window.open(...)` 返回 `null`。iframe 与宿主在**不同渲染进程**（`frame.processId` 5 对 4，OOPIF）。preload 只进主框架，不进子框架。 |
+| (c) CSP 外的网络请求被拦；`connect-src` 白名单生效 | 可行 | `fetch("https://example.com/")`、`fetch("http://127.0.0.1:<非白名单>")`、`fetch("kepcup-app://conn2/res")`（别的应用）、`fetch("file:///etc/hostname")`、`new Image().src`、`new WebSocket("ws://127.0.0.1:…")`、`navigator.sendBeacon(...)`、`<form action=…>.submit()` 全部被 CSP 拦下（`securitypolicyviolation`：`connect-src` / `img-src`），**非白名单服务端命中数 0**；`connect-src http://127.0.0.1:<白名单>` 的 `fetch` 返回 200（服务端命中 1，需服务端自带 CORS，请求来源是 `null`）。`script-src` 之外的 `eval` 也被拦（zod / SDK 的 `new Function` 探测，库会回退）。 |
+| (d) postMessage JSON-RPC | 可行 | 真实 `App.connect()` ↔ 宿主 `AppBridge.connect(new PostMessageTransport(win, win))`：`ui/initialize` 往返（宿主能力与 `hostContext` 到达应用）、`ui/notifications/initialized`、`tool-input` / `tool-result` 通知、`tools/call`（`App.callServerTool`）→ 宿主 `oncalltool`、`ui/open-link` → 宿主 `onopenlink`、`ui/notifications/size-changed`（宿主收到 `{width,height}`，autoResize 随 body 高度变化 81 → 351）。`ui/message`、`ui/update-model-context` 在宿主未设处理器时返回 `-32601 Method not found`（正是 P3 要的「不支持」）。**来源校验**：`PostMessageTransport` 只接受 `event.source === eventSource` 的消息；同窗口里另一个 `kepcup-app://conn1/rogue` 兄弟 iframe 发来的 `tools/call` / `ui/initialize` 不触发宿主 `oncalltool`（宿主自己的监听器把它们记为 foreign-message，`origin` 均为 `"null"`——不能靠 origin 区分，只能靠 `event.source`）。 |
+| (e) 权限 / 导航 / 弹窗 | 可行 | iframe 的 `allow=""`（Permissions-Policy）使 camera / microphone / geolocation 等在到达 `setPermissionRequestHandler` 之前就被拒（`geolocation` 回调 `code 1`；权限日志里只有 `notifications` 请求与 `background-sync` 检查，均被处理器拒绝）。`will-frame-navigate` 在子框架导航到**另一个 `kepcup-app://` 应用**时触发（`e.frame.url` 已是 `kepcup-app://…`），`preventDefault()` 后别的应用的 HTML **没有**被服务（`handled` 里只有自己）；导航到 `https://example.com/` 先被宿主页 CSP `frame-src kepcup-app:` 拦（`did-fail-load -30 ERR_BLOCKED_BY_CSP`，先于 `will-frame-navigate`，框架落在错误页——卡片自己坏掉，不影响宿主）。`window.open` 被 `sandbox`（无 `allow-popups`）直接返回 `null`；`top.location=…` 无 `allow-top-navigation` 抛 `SecurityError`。因此渲染端 `index.html` 的 CSP 必须加 `frame-src kepcup-app:`（二道防线），主进程对子框架导航加 `will-frame-navigate` 拦截。 |
+| (f) `@modelcontextprotocol/ext-apps` | 可用 | npm `2.0.3`（最新）的 peer 是 `@modelcontextprotocol/{client,core}@^2`（仓库是 SDK 1.x，**不兼容**）；`1.7.5` 的 peer 是 `@modelcontextprotocol/sdk@^1.29`、`zod@^3.25 \|\| ^4`（仓库锁 sdk 1.32.1 / zod 4.6.5，**兼容**）→ 采用 **1.7.5**。`AppBridge` 可 `new AppBridge(null, hostInfo, capabilities, { hostContext })`（无需 MCP `Client`），用 `oncalltool` / `onopenlink` / `onmessage` / `onupdatemodelcontext` / `onsizechange` / `oninitialized` 挂宿主处理；`sendToolInput` / `sendToolResult` / `setHostContext` / `teardownResource`；`PostMessageTransport(eventTarget, eventSource)`；`getToolUiResourceUri(tool)`（同时识别 `_meta.ui.resourceUri` 与旧的 `_meta["ui/resourceUri"]`）、`buildAllowAttribute(permissions)`、`RESOURCE_MIME_TYPE = "text/html;profile=mcp-app"`。esbuild 压缩后宿主侧约 520 KB（含 zod 4 与 SDK 协议层），渲染端按需 `import()`。`csp` / `permissions` 在 **`resources/read` 内容项的 `_meta.ui`** 上，不在工具上；工具 `_meta.ui.visibility` 默认 `["model","app"]`（KepCup 更严，见下）。 |
+
+**偏差与决定**
+
+1. **没有独立 partition**（见 (a)）：靠 opaque origin（无 cookie / 存储）+ 逐应用响应头 CSP + `frame-src kepcup-app:` + `will-frame-navigate` 拦截 + 默认 session 的权限处理器（含 `kepcup-app:` 一律拒绝）+ 子框架无 preload。设计 29 §11.6 的「独立 partition」措辞随实现改为「独立 origin 的特权方案 + opaque origin」。
+2. **`visibility` 默认拒绝**：规范默认 `["model","app"]`，KepCup 要求工具**显式**含 `"app"` 才允许界面调用（比规范严；审批与风险策略照常）。
+3. **HTML 通道**：HTML 由 core 经 `resources/read` 取得并存在内存里；主进程协议处理器通过平台 RPC 向 core 取（只服务渲染端经主进程 IPC 登记过的 `(connectionId, resourceId)`，核对发送方 webContents）；HTML 与令牌都不进模型上下文。
+4. **`ext-apps` 2.x 待 SDK 2.x**：升级条件见 B.6 的 SDK 路径；到时只换 `AppBridgeHost` 的 import。

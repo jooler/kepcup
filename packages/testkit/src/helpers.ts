@@ -56,6 +56,7 @@ export async function createTestStack(
     toolLockTrustFirstList?: CreateTestCoreOptions['toolLockTrustFirstList'];
     connectorCatalog?: CreateTestCoreOptions['connectorCatalog'];
     mcpbRuntimes?: CreateTestCoreOptions['mcpbRuntimes'];
+    directorySync?: CreateTestCoreOptions['directorySync'];
   } = {},
 ): Promise<TestStack> {
   const llm = await startMockLlm();
@@ -97,6 +98,7 @@ export async function createTestStack(
       ? { connectorCatalog: options.connectorCatalog }
       : {}),
     ...(options.mcpbRuntimes !== undefined ? { mcpbRuntimes: options.mcpbRuntimes } : {}),
+    ...(options.directorySync !== undefined ? { directorySync: options.directorySync } : {}),
   });
   return {
     core,

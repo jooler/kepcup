@@ -1,0 +1,17 @@
+{
+  // Standalone: this directory is not a pnpm workspace package, so the repo-level
+  // `pnpm typecheck` does not pick it up. Run: npx tsc -p infra/cloudflare/registry --noEmit
+  // `dom` supplies Request/Response/Cache/crypto.subtle (the Workers runtime shapes);
+  // @types/node is only for the vitest tests (node:sqlite) and never for src/.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2023", "dom"],
+    "types": ["node"],
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "include": ["src", "test"]
+}

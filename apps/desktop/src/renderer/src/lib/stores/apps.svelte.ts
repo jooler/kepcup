@@ -185,8 +185,11 @@ class AppsState {
   }
 
   /** `reviewing_tools` 下用户确认工具清单：core 批准全部待复核工具 → `connected` → `done`。 */
-  async confirmTools(flowId: string): Promise<void> {
-    await core.call('apps.connect.confirmTools', { flowId });
+  async confirmTools(flowId: string, acknowledgeCommunity = false): Promise<void> {
+    await core.call('apps.connect.confirmTools', {
+      flowId,
+      ...(acknowledgeCommunity ? { acknowledgeCommunity: true } : {}),
+    });
   }
 
   /** 收起目标的流程提示（终态的失败 / 取消卡片）。 */

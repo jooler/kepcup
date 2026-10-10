@@ -10,6 +10,7 @@ import {
   type AppConnectTarget,
   type AppConnectionStatus,
   type AppFlowLogEntry,
+  type ConnectorTier,
   type McpServer,
 } from '@kepcup/shared';
 import {
@@ -42,6 +43,7 @@ import type { ShellHostRpc } from '../shell-facade.js';
 import type { TokenVault } from '../token-vault.js';
 import { startCallbackServer, type CallbackServer } from './callback-server.js';
 import { FlowEventLog, redactFlowPayload } from './flow-log.js';
+import { tierRequiresConnectAck } from '../tier.js';
 import { createSafeFetch, isLoopbackAllowed, loopbackHostOf } from './safe-fetch.js';
 
 /**
@@ -78,6 +80,8 @@ export interface CatalogFlowBegin {
   defaultScopes: string[];
   /** 目录条目的预注册客户端引用（`auth.clientRef`，P2 §6.4）；自动注册的条目为 null。 */
   clientRef: string | null;
+  /** 目录条目的信任分级（D73 P3 §7.2）：随 `reviewing_tools` 事件下发，界面据此要求社区应用确认。 */
+  tier?: ConnectorTier;
   /** 流程期间承载令牌的临时连接行（`conn_…`，status `connecting`）。 */
   connectionId: string;
   /** 重新授权某个已有连接时的目标（令牌通过账号核对后换到该行）。 */
@@ -422,13 +426,21 @@ export class ConnectFlowManager {
   }
 
   /** 首连工具复核通过（`reviewing_tools` 阶段）：批准全部待复核工具。拒绝 = {@link cancel}。 */
-  confirmTools(flowId: string): void {
+  confirmTools(flowId: string, options: { acknowledgeCommunity?: boolean } = {}): void {
     const flow = this.#flows.get(flowId);
     if (flow === undefined) {
       throw new AppError('INVALID_INPUT', '授权流程不存在或已结束');
     }
     if (flow.catalog?.review == null) {
       throw new AppError('INVALID_INPUT', '该流程当前不在工具复核阶段');
+    }
+    // 社区应用（D73 P3 §7.2）：core 自己强制确认，不只靠界面的勾选框。没有待复核工具的
+    // 流程不会走到这里（不出 `reviewing_tools`），所以也不需要确认。
+    if (tierRequiresConnectAck(flow.catalog.begin.tier) && options.acknowledgeCommunity !== true) {
+      throw new AppError(
+        'INVALID_INPUT',
+        '这是未经 KepCup 人工审核的社区应用：请先确认已了解风险（acknowledgeCommunity）',
+      );
     }
     flow.catalog.review.resolve();
   }
@@ -889,6 +901,7 @@ export class ConnectFlowManager {
       this.#emitFlow(flow, {
         phase: 'reviewing_tools',
         tools: settled.review,
+        ...(catalog.begin.tier !== undefined ? { tier: catalog.begin.tier } : {}),
         ...(settled.accountLabel !== null ? { accountLabel: settled.accountLabel } : {}),
       });
       await this.#race(flow, catalog.review.promise);

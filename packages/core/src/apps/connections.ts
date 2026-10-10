@@ -30,6 +30,7 @@ import type {
 } from './auth/flow.js';
 import type { ConnectionAuthRegistry } from './auth/registry.js';
 import type { ConnectorCatalog } from './catalog.js';
+import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
 import {
   customConnectionId,
   isCustomConnectionId,
@@ -221,6 +222,21 @@ export class AppConnectionsService {
     }
     const meta = connectorMetaOf(entry);
     const remote = connectorRemoteOf(entry);
+    // 目录来源的条目（D73 P3 §7.1）：连接前再核一次端点是公网 https。registry 的回环例外按
+    // 连接的 serverUrl 判断，这里保证目录来源的条目绝不会带着回环 / IP 字面量地址走到那一步。
+    if (
+      remote !== null &&
+      catalog.isDirectorySourced(meta.slug) &&
+      !isSafeDirectoryRemoteUrl(remote.url)
+    ) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `应用「${entry.title}」的端点不是可接受的公网 https 地址`,
+        {
+          connectorId: meta.slug,
+        },
+      );
+    }
     if (remote === null) {
       throw new AppError('NOT_IMPLEMENTED', `应用「${entry.title}」没有可用的远程端点`, {
         connectorId: meta.slug,
@@ -270,6 +286,7 @@ export class AppConnectionsService {
     return {
       connectorId: meta.slug,
       title: entry.title,
+      tier: meta.tier,
       serverUrl: remote.url,
       defaultScopes: meta.auth.scopes.default,
       clientRef: meta.auth.registration === 'preregistered' ? meta.auth.clientRef : null,

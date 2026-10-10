@@ -80,6 +80,61 @@ export const connectorWhoamiSchema = z.object({
 });
 export type ConnectorWhoami = z.infer<typeof connectorWhoamiSchema>;
 
+/**
+ * 随附技能（D73 P3 §7.6）。`source` 是 `skills.import` 认的那种 HTTPS git 仓库地址（目录条目
+ * 不得指向本机路径）；`ref` / `subdirectory` 同 `skills.import`（一个仓库含多个技能时必须给
+ * `subdirectory`）。`name` 必须等于该目录下 SKILL.md 的 `name`——界面据此判断「已安装」。
+ */
+export const CONNECTOR_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** 随附技能来源地址的最大长度。 */
+export const CONNECTOR_SKILL_SOURCE_MAX = 500;
+
+/**
+ * 目录声明的技能来源必须是「公网 https git 主机」：只认 `https:`，不带用户信息 / 端口 /
+ * 查询 / 片段 / 空白，主机名是带点的域名（不是 IP 字面量，不是 `localhost`、`*.local`、
+ * `*.internal`、`*.localhost`），长度有上限。克隆发生在用户批准**之前**（`SkillImporter.prepare`，
+ * libgit2，不经 SafeDispatcher），所以这里把能挡的都挡在 schema 与安装时（core 同样调用本函数）。
+ */
+export function isSafeSkillSourceUrl(value: string): boolean {
+  if (value.length === 0 || value.length > CONNECTOR_SKILL_SOURCE_MAX) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  if (url.username !== '' || url.password !== '') return false;
+  if (url.port !== '' || url.search !== '' || url.hash !== '') return false;
+  if (!/^https:\/\/[^/@]+\//.test(value)) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (host.startsWith('[') || host.includes(':')) return false; // IPv6 literal
+  if (/^[0-9.]+$/.test(host)) return false; // IPv4 literal (the URL parser normalizes odd forms)
+  if (host === 'localhost' || !host.includes('.')) return false;
+  if (/\.(?:localhost|local|internal|lan|home|corp|intranet)$/.test(host)) return false;
+  return true;
+}
+
+export const connectorSkillSchema = z.object({
+  name: z.string().min(1).max(64).regex(CONNECTOR_SKILL_NAME_PATTERN),
+  source: z.string().max(CONNECTOR_SKILL_SOURCE_MAX).refine(isSafeSkillSourceUrl, {
+    message: 'skill source must be a public https git repository URL (no credentials, IP, port)',
+  }),
+  ref: z.string().min(1).max(200).optional(),
+  subdirectory: z
+    .string()
+    .min(1)
+    .max(500)
+    .refine((value) => !value.startsWith('/') && !value.split(/[\\/]/).includes('..'), {
+      message: 'subdirectory must be a relative path inside the repository',
+    })
+    .optional(),
+  description: z.string().max(300).default(''),
+});
+export type ConnectorSkill = z.infer<typeof connectorSkillSchema>;
+
 /** `toolPolicy` 只能把风险调高（设计 29 §4）：落地由 core 的 apps/policy.ts 保证。 */
 export const connectorToolPolicySchema = z.record(
   z.string().min(1),
@@ -94,8 +149,12 @@ export const connectorMetaSchema = z.object({
   tier: connectorTierSchema,
   auth: connectorAuthSchema,
   toolPolicy: connectorToolPolicySchema.default({}),
-  /** [P3] 随附 Agent Skills（技能库引用）。 */
-  skills: z.array(z.string().min(1)).default([]),
+  /**
+   * [P3 §7.6] 随附 Agent Skills：连接成功后提示安装到被授权的 Bot（走既有 `skill_import` 审批）。
+   * 条目为 {@link connectorSkillSchema}；旧形态的字符串（技能库引用）仍被接受但没有来源，
+   * 不会被提示安装（见 {@link connectorInstallableSkills}）。
+   */
+  skills: z.array(z.union([connectorSkillSchema, z.string().min(1)])).default([]),
   /** [P3] 是否提供 MCP Apps 界面。 */
   ui: z.boolean().default(false),
   privacyPolicy: z.string().url(),
@@ -155,6 +214,11 @@ export const connectorCatalogFileSchema = z.object({
   connectors: z.array(z.unknown()),
 });
 export type ConnectorCatalogFile = z.infer<typeof connectorCatalogFileSchema>;
+
+/** 条目里可以提示安装的随附技能（有 `source` 的对象形态；旧字符串形态没有来源，忽略）。 */
+export function connectorInstallableSkills(meta: Pick<ConnectorMeta, 'skills'>): ConnectorSkill[] {
+  return meta.skills.filter((skill): skill is ConnectorSkill => typeof skill !== 'string');
+}
 
 /** 取条目的 KepCup 扩展（schema 已保证存在）。 */
 export function connectorMetaOf(entry: ConnectorCatalogEntry): ConnectorMeta {

@@ -1,6 +1,24 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  appsSkillsInstallInputSchema,
+  appsSkillsInstallOutputSchema,
+  appsSkillsOffersInputSchema,
+  appsSkillsOffersOutputSchema,
+} from '../domain/app-skills.js';
+import { appsDirectoryStatusSchema } from '../domain/directory-index.js';
+import {
+  appsUiCallToolInputSchema,
+  appsUiCallToolOutputSchema,
+  appsUiCloseInputSchema,
+  appsUiOpenInputSchema,
+  appsUiOpenLinkInputSchema,
+  appsUiOpenLinkOutputSchema,
+  appsUiOpenOutputSchema,
+  appsUiResourceInputSchema,
+  appsUiResourceOutputSchema,
+} from '../domain/apps-ui.js';
+import {
   mcpbInspectInputSchema,
   mcpbInspectOutputSchema,
   mcpbInstallInputSchema,
@@ -237,7 +255,11 @@ export const settingsUpdateInputSchema = z.object({
   experimental: z.object({ externalAgents: z.boolean().optional() }).optional(),
   /** 连接应用设置（D73 P2）：部分 patch；只开放 `developerMode`（其余字段 core 自有）。 */
   apps: z
-    .object({ developerMode: z.boolean().optional(), taintGuard: z.boolean().optional() })
+    .object({
+      developerMode: z.boolean().optional(),
+      taintGuard: z.boolean().optional(),
+      directorySync: z.boolean().optional(),
+    })
     .optional(),
   /** 后台 loop 选用的 Agent（P6）；'' = 自动。 */
   backgroundAgentId: z.string().optional(),
@@ -309,7 +331,13 @@ export const appsConnectOutputSchema = z.object({ flowId: z.string() });
 export const appsConnectContinueInputSchema = appFlowIdInputSchema;
 export const appsConnectCancelInputSchema = appFlowIdInputSchema;
 /** 首连工具复核通过（`reviewing_tools` 阶段）：批准全部待复核工具 → connected。拒绝 = `apps.connect.cancel`。 */
-export const appsConnectConfirmToolsInputSchema = appFlowIdInputSchema;
+export const appsConnectConfirmToolsInputSchema = appFlowIdInputSchema.extend({
+  /**
+   * 社区应用（D73 P3 §7.2）：用户已勾选「我了解风险」。目录条目分级为 `community` 的流程
+   * 缺它（或为 false）时 core 拒绝确认；其他分级忽略。
+   */
+  acknowledgeCommunity: z.boolean().optional(),
+});
 export const appsConnectionsListInputSchema = z
   .object({
     /** 默认不返回 `custom:` 行（自定义 server 的占位连接）。 */
@@ -357,6 +385,8 @@ export const mcpRefreshToolsOutputSchema = mcpRawToolsOutputSchema;
 
 // --- 连接应用 P1：目录 / 连接管理 / 工具复核 / 持续授权 ---------------------
 export const appsCatalogListOutputSchema = z.object({ entries: z.array(appCatalogEntrySchema) });
+/** 目录同步状态（D73 P3 §7.1）：`apps.directory.status` / 手动同步 `apps.directory.sync` 共用。 */
+export const appsDirectoryStatusOutputSchema = appsDirectoryStatusSchema;
 export const appsConnectionsUpdateInputSchema = z.object({
   connectionId: z.string().min(1),
   /** 账号显示名。 */
@@ -1516,6 +1546,18 @@ export const rpcMethodSchemas = {
   'apps.connect.cancel': { input: appsConnectCancelInputSchema, output: okOutput },
   'apps.connect.confirmTools': { input: appsConnectConfirmToolsInputSchema, output: okOutput },
   'apps.catalog.list': { input: voidInput, output: appsCatalogListOutputSchema },
+  /** D73 P3 §7.6 随附技能：某连接下各被授权 Bot 还缺的技能 / 发起安装（走 skill_import 审批）。 */
+  'apps.skills.offers': {
+    input: appsSkillsOffersInputSchema,
+    output: appsSkillsOffersOutputSchema,
+  },
+  'apps.skills.install': {
+    input: appsSkillsInstallInputSchema,
+    output: appsSkillsInstallOutputSchema,
+  },
+  /** D73 P3 §7.1 签名目录索引：同步状态 / 手动立即同步（关闭时不联网，直接返回状态）。 */
+  'apps.directory.status': { input: voidInput, output: appsDirectoryStatusOutputSchema },
+  'apps.directory.sync': { input: voidInput, output: appsDirectoryStatusOutputSchema },
   'apps.connections.update': {
     input: appsConnectionsUpdateInputSchema,
     output: appsConnectionsUpdateOutputSchema,
@@ -1560,6 +1602,13 @@ export const rpcMethodSchemas = {
   'apps.oauthClients.remove': { input: appsOauthClientsRemoveInputSchema, output: okOutput },
   /** D73 P2 开发者模式：授权事件日志 / 原始工具定义 / 手动刷新工具。 */
   'apps.flowLog': { input: appsFlowLogInputSchema, output: appsFlowLogOutputSchema },
+  // D73 P3 §7.5 MCP Apps rendering: register a card's UI resource, UI-initiated tool calls,
+  // external links. `apps.ui.resource` is served on port B (the main process' protocol handler).
+  'apps.ui.open': { input: appsUiOpenInputSchema, output: appsUiOpenOutputSchema },
+  'apps.ui.close': { input: appsUiCloseInputSchema, output: okOutput },
+  'apps.ui.callTool': { input: appsUiCallToolInputSchema, output: appsUiCallToolOutputSchema },
+  'apps.ui.openLink': { input: appsUiOpenLinkInputSchema, output: appsUiOpenLinkOutputSchema },
+  'apps.ui.resource': { input: appsUiResourceInputSchema, output: appsUiResourceOutputSchema },
   'mcp.rawTools': { input: mcpRawToolsInputSchema, output: mcpRawToolsOutputSchema },
   'mcp.refreshTools': { input: mcpRefreshToolsInputSchema, output: mcpRefreshToolsOutputSchema },
   'websearch.test': { input: webSearchTestInputSchema, output: webSearchTestOutputSchema },
@@ -1892,6 +1941,11 @@ export type PlatformRpcMethods = {
     conversationId: string;
     reason: 'button' | 'viewer_closed' | 'idle';
   }) => Promise<{ injected: number }>;
+  /** D73 P3 §7.5: the protocol handler fetches a registered MCP App page (HTML + CSP header). */
+  'apps.ui.resource': (input: { resourceId: string; host: string }) => Promise<{
+    html: string;
+    csp: string;
+  }>;
 };
 
 /** The browser methods the MAIN process serves on port B (P11; W8 adds two). */
@@ -1945,6 +1999,10 @@ const APP_METHODS = [
   'apps.connect.cancel',
   'apps.connect.confirmTools',
   'apps.catalog.list',
+  'apps.skills.offers',
+  'apps.skills.install',
+  'apps.directory.status',
+  'apps.directory.sync',
   'apps.connections.update',
   'apps.connections.setToolPolicy',
   'apps.connections.tools',
@@ -1960,6 +2018,10 @@ const APP_METHODS = [
   'apps.oauthClients.set',
   'apps.oauthClients.remove',
   'apps.flowLog',
+  'apps.ui.open',
+  'apps.ui.close',
+  'apps.ui.callTool',
+  'apps.ui.openLink',
   'mcp.rawTools',
   'mcp.refreshTools',
   'websearch.test',
@@ -2105,4 +2167,5 @@ export const PLATFORM_RPC_METHODS: readonly RpcMethodName[] = [
   'update.activeRuns',
   'update.cancelActive',
   'browser.controlReturned',
+  'apps.ui.resource',
 ];
