@@ -61,15 +61,23 @@
 
 对你仍有影响的只有一点：适配每一家时，**账号持有人要在浏览器里登录授权一次**，并自备测试账号 / 站点（密码和令牌不给 Agent、不贴进聊天）。Notion、Linear 账号已就绪，排在最前。
 
-## U3 — GitHub App 注册
+## U3 — GitHub App 注册（2026-10-10 核对官方文档：与「不分发 secret」原则冲突，先别做）
 
-GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端点，所以需要预注册客户端。
+GitHub 的授权服务器元数据没有声明 CIMD / DCR，也没有吊销端点，所以需要预注册客户端。核对 `github/github-mcp-server` 的 `docs/host-integration.md`（2026-10-10 读取）得到：
 
-- [ ] 注册 KepCup 的 GitHub App（设备 / 回环回调以 GitHub 当时文档为准，最小权限）。
-- [ ] 把**平台定义为非保密**的客户端信息填入 `apps/desktop/oauth-clients.json`（`{ [clientRef]: { issuer, clientId, clientSecret? } }`，现为 `{}`；不要放保密的 secret），并在目录条目里写对应 `auth.clientRef` 与 `registration: "preregistered"`。
-- [ ] 真实走通一次预注册客户端授权（P2 门禁要求「至少一个预注册条目真实走通」，Google 或 GitHub 任一即可）。
+- 远程 GitHub MCP **不支持 DCR**；GitHub App 与 OAuth App **两种都要求客户端在授权流程里带 client secret**；文档自己警告「运行在不受控环境（用户硬件）的客户端，终端用户能发现这个 secret」，建议为此客户端**专门注册一个独立的 App**。PKCE 文档里只是「强烈建议」（并写「为即将到来的 PKCE 支持做准备」）。
+- 本项目的原则（设计 29 §、`oauth-clients.json` 说明、P4 任务书 [hosted-auth-gateway.md](hosted-auth-gateway.md)）是**保密 secret 不随桌面应用分发**；平台只发保密客户端的，走 P4 托管网关。所以 GitHub 按原计划（把 client id / secret 填进 `oauth-clients.json`）**做不到而不违背原则**。
 
+选项（需要你决定，见对话；默认建议是先不做 GitHub）：
 
+1. **推迟 GitHub**，等 P4 托管网关；P2 门禁要求的「至少一个预注册条目真实走通」改用 **Google**（桌面应用客户端的 secret 按 Google 规定本来就不算保密，支持 PKCE 与回环回调，见 U4）。
+2. **接受 GitHub 官方的折中**：注册一个**专用**、权限最小的 GitHub App，secret 构建时由 `.env` 注入打包产物（**不入库**），明知它可被用户从应用里提取；最坏影响是别人能冒用「KepCup」这个 App 名发起授权页。需要你明确同意这个取舍，并先让 Agent 把「构建时从环境变量注入 secret」做出来。
+
+若选 2，你要做的（Agent 不能代做）：
+
+- [ ] 在 GitHub → Settings → Developer settings → GitHub Apps → New GitHub App：名称 KepCup；Homepage `https://kepcup.com`；Callback URL 逐条添加 `http://127.0.0.1/callback`、`http://127.0.0.1:47615/callback`、`:47616`、`:47617`（与 CIMD 里的一致）；Webhook 取消勾选；开启「Expire user authorization tokens」；权限从最小开始（Metadata 只读，其余按需，如 Contents / Issues / Pull requests 只读起步）；可安装范围先「Only on this account」。
+- [ ] 生成 client secret，**只写进本机 `.env`**（建议键名 `GITHUB_APP_CLIENT_SECRET`），不要贴进聊天；client id 不是机密，可以直接告诉 Agent。
+- [ ] Agent 把 client id 填进 `apps/desktop/oauth-clients.json`，目录条目写 `auth.clientRef` 与 `registration: "preregistered"`，再由你真实走通一次授权。
 
 ## U4 — 大平台注册与审核
 
