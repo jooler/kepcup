@@ -6,6 +6,7 @@
     BarChart3,
     BookUser,
     Bot,
+    Code,
     Compass,
     Globe,
     Mic,
@@ -20,7 +21,7 @@
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
-  import { resolveSettingsSection, type AppsTab, type ResolvedSection } from './sections';
+  import { resolveSettingsSection, type ResolvedSection } from './sections';
   import AppearanceSection from './AppearanceSection.svelte';
   import GeneralSection from './GeneralSection.svelte';
   import HardwareSection from './HardwareSection.svelte';
@@ -35,6 +36,7 @@
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import AppsSection from './AppsSection.svelte';
+  import DeveloperSection from './DeveloperSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
@@ -47,8 +49,8 @@
    * 分组（条件渲染，非滚动定位），滚动条归当前分组内容自己；打开时按
    * shell.settingsSection 直接落在目标分组，带 anchor 时再滚到分组内的
    * [data-settings-anchor]（如「模型 → 默认模型」）。沙箱与访问白名单并入
-   * 「环境」，定时任务并入「无人值守」；MCP 服务器并入「应用 → 自定义」（D73 §5.9，
-   * `mcp` 仍作为分区别名经 resolveSettingsSection 落到该页签）。
+   * 「环境」，定时任务并入「无人值守」；「应用」只管已连接账号（发现与添加在扩展中心）；
+   * 自定义 MCP 服务器在「开发者模式」分区（`mcp` 仍作为分区别名经 resolveSettingsSection 落到那里）。
    */
   type SectionId = ResolvedSection['section'];
 
@@ -72,11 +74,10 @@
     { id: 'environment', label: t('settings.navEnvironment'), icon: Monitor },
     { id: 'usage', label: t('settings.navUsage'), icon: BarChart3 },
     { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },
+    { id: 'developer', label: t('settings.navDeveloper'), icon: Code },
   ];
 
   let activeSection = $state<SectionId>('general');
-  /** 「应用」分区落在的页签（别名 `mcp` → 自定义）。 */
-  let appsTab = $state<AppsTab>('catalog');
   let contentEl: HTMLElement | undefined = $state();
 
   const activeLabel = $derived(
@@ -93,7 +94,6 @@
     activeSection = sections.some((section) => section.id === resolved.section)
       ? resolved.section
       : 'usage';
-    appsTab = resolved.appsTab ?? 'catalog';
   });
 
   // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位。
@@ -178,9 +178,8 @@
             </div>
           </div>
         {:else if activeSection === 'apps'}
-          <!-- 「自定义」页签容器带 data-settings-anchor="mcp"（AppsSection 内），旧锚点继续可用。 -->
           <div data-settings-section="apps" class="space-y-6">
-            <AppsSection initialTab={appsTab} />
+            <AppsSection />
           </div>
         {:else if activeSection === 'browser'}
           <div data-settings-section="browser" class="space-y-6">
@@ -236,6 +235,10 @@
         {:else if activeSection === 'diagnostics'}
           <div data-settings-section="diagnostics">
             <DiagnosticsSection />
+          </div>
+        {:else if activeSection === 'developer'}
+          <div data-settings-section="developer">
+            <DeveloperSection />
           </div>
         {/if}
       </div>

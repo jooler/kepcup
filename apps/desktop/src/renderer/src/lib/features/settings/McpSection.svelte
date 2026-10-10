@@ -34,6 +34,8 @@
    * Bot，行上显示待批准数（`apps.connections.tools`，连接 id `custom:{serverId}`）。
    */
 
+  let { variant = 'full' }: { variant?: 'manage' | 'full' } = $props();
+
   type Draft = McpServer & { secretDrafts: Record<string, string> };
 
   const servers = $derived(settingsStore.settings?.mcpServers ?? []);
@@ -55,20 +57,8 @@
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
   /** W5：展开了逐工具策略的 server。 */
   let toolsOpen = $state<Record<string, boolean>>({});
-  /** D73 P2 §6.6：开发者模式（原始工具定义 / 授权事件日志 / 手动刷新工具）。 */
+  /** D73 P2 §6.6：开发者模式（原始工具定义 / 授权事件日志 / 手动刷新工具）；开关在 DeveloperSection。 */
   const developerMode = $derived(settingsStore.developerMode);
-  let devModeBusy = $state(false);
-
-  async function toggleDeveloperMode(on: boolean): Promise<void> {
-    devModeBusy = true;
-    try {
-      await settingsStore.setDeveloperMode(on);
-    } catch (error) {
-      toast.error(String((error as Error).message ?? error));
-    } finally {
-      devModeBusy = false;
-    }
-  }
 
   $effect(() => {
     appsStore.start();
@@ -445,18 +435,15 @@
 
 <section class="space-y-3" data-testid="mcp-section">
   <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
-  <p class="text-xs text-muted-foreground">{t('settings.mcpHint')}</p>
-  <label class="flex items-start gap-2 text-xs" data-testid="mcp-dev-mode">
-    <Checkbox
-      checked={developerMode}
-      disabled={devModeBusy}
-      onCheckedChange={(checked) => void toggleDeveloperMode(checked === true)}
-    />
-    <span>
-      <span class="block font-medium">{t('settings.devMode')}</span>
-      <span class="block text-muted-foreground">{t('settings.devModeHint')}</span>
-    </span>
-  </label>
+  <p class="text-xs text-muted-foreground">
+    {variant === 'manage' ? t('extensionCenter.mcp.hint') : t('settings.mcpHint')}
+  </p>
+
+  {#if variant === 'manage' && servers.length === 0 && draft === null}
+    <p class="text-xs text-muted-foreground" data-testid="mcp-empty">
+      {t('extensionCenter.mcp.empty')}
+    </p>
+  {/if}
 
   {#each servers as server (server.id)}
     <div class="space-y-2 rounded-xl border px-4 py-3.5" data-testid={`mcp-server-${server.id}`}>
@@ -591,7 +578,7 @@
       {#if toolsOpen[server.id]}
         <McpToolPolicies {server} />
       {/if}
-      {#if developerMode}
+      {#if variant === 'full' && developerMode}
         <McpDevTools {server} />
       {/if}
     </div>
@@ -805,19 +792,23 @@
     </div>
   {:else}
     <div class="flex items-center gap-2">
-      <select
-        class="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-        bind:value={newKind}
-        data-testid="mcp-new-kind"
-      >
-        <option value="stdio">stdio</option>
-        <option value="http">Streamable HTTP</option>
-        <option value="sse">SSE（旧版）</option>
-      </select>
-      <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
+      {#if variant === 'full'}
+        <select
+          class="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+          bind:value={newKind}
+          data-testid="mcp-new-kind"
+        >
+          <option value="stdio">stdio</option>
+          <option value="http">Streamable HTTP</option>
+          <option value="sse">SSE（旧版）</option>
+        </select>
+        <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
+      {/if}
       <McpbInstall />
     </div>
   {/if}
 
-  <OAuthClientsPanel />
+  {#if variant === 'full'}
+    <OAuthClientsPanel />
+  {/if}
 </section>

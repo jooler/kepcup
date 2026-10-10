@@ -212,7 +212,7 @@
   }
 
   function openCatalog(): void {
-    shell.openSettings('apps', undefined, 'catalog');
+    shell.openExtensionCenter('connections');
   }
 
   // --- §5.10：外部智能体 + `apps` 能力包的一次性残余风险说明 -------------------------

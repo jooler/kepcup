@@ -19,17 +19,25 @@
   /**
    * 「应用 → 已连接」（D73 §5.9）：目录连接按应用分组，每行一个账号：账号名、状态
    * 徽标、已授权 Bot 数、最近使用；点击进入详情（AppConnectionDetail）。自定义
-   * server 的占位连接不在此列（归「自定义」页签）。
+   * server 的占位连接不在此列（归开发者模式下的自定义 MCP 管理）。
+   * `connectorId` 只列该应用（扩展中心「连接」分组的「管理」）。
    */
   let {
     onOpen,
     onGoCatalog,
+    connectorId,
   }: {
     onOpen: (connectionId: string) => void;
-    onGoCatalog: () => void;
+    /** 空态里「去添加」的跳转；不传则不显示按钮。 */
+    onGoCatalog?: (() => void) | undefined;
+    connectorId?: string | undefined;
   } = $props();
 
-  const groups = $derived(groupConnectionsByApp(appsStore.connections, appsStore.catalog));
+  const groups = $derived(
+    groupConnectionsByApp(appsStore.connections, appsStore.catalog).filter(
+      (group) => connectorId === undefined || group.connectorId === connectorId,
+    ),
+  );
   const botCounts = $derived(authorizedBotCounts(contacts.bots));
 
   // 「最近使用」的相对时间每分钟刷新一次。
@@ -62,14 +70,16 @@
       data-testid="apps-connected-empty"
     >
       <p class="text-sm text-muted-foreground">{t('apps.connected.empty')}</p>
-      <Button
-        size="sm"
-        variant="secondary"
-        onclick={onGoCatalog}
-        data-testid="apps-connected-go-catalog"
-      >
-        {t('apps.connected.goCatalog')}
-      </Button>
+      {#if onGoCatalog !== undefined}
+        <Button
+          size="sm"
+          variant="secondary"
+          onclick={onGoCatalog}
+          data-testid="apps-connected-go-catalog"
+        >
+          {t('apps.connected.goCatalog')}
+        </Button>
+      {/if}
     </div>
   {:else}
     <p class="text-xs text-muted-foreground">{t('apps.connected.hint')}</p>

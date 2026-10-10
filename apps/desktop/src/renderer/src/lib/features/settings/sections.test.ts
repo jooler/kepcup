@@ -1,46 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { APPS_TABS, appsTabForKey, resolveSettingsSection } from './sections';
+import { resolveSettingsSection } from './sections';
 
 describe('resolveSettingsSection', () => {
-  it('maps the legacy mcp id onto the apps custom tab', () => {
-    expect(resolveSettingsSection('mcp')).toEqual({ section: 'apps', appsTab: 'custom' });
+  it('maps the legacy mcp id onto the developer-mode section', () => {
+    expect(resolveSettingsSection('mcp')).toEqual({ section: 'developer' });
     // 别名不受传入页签影响
-    expect(resolveSettingsSection('mcp', 'catalog')).toEqual({
-      section: 'apps',
-      appsTab: 'custom',
-    });
+    expect(resolveSettingsSection('mcp', 'catalog')).toEqual({ section: 'developer' });
   });
 
-  it('opens apps on the catalog tab by default, or the requested one', () => {
-    expect(resolveSettingsSection('apps')).toEqual({ section: 'apps', appsTab: 'catalog' });
-    expect(resolveSettingsSection('apps', 'connected')).toEqual({
-      section: 'apps',
-      appsTab: 'connected',
-    });
+  it('keeps apps deep links on the apps section (connected-account management)', () => {
+    expect(resolveSettingsSection('apps')).toEqual({ section: 'apps' });
+    expect(resolveSettingsSection('apps', 'connected')).toEqual({ section: 'apps' });
+    // 旧的「目录」页签已并入扩展中心：深链仍落在「应用」（那里有去扩展中心的入口）
+    expect(resolveSettingsSection('apps', 'catalog')).toEqual({ section: 'apps' });
   });
 
-  it('passes other sections through without a tab', () => {
+  it('sends the legacy apps custom tab to the developer-mode section', () => {
+    expect(resolveSettingsSection('apps', 'custom')).toEqual({ section: 'developer' });
+  });
+
+  it('passes other sections through', () => {
     expect(resolveSettingsSection('models')).toEqual({ section: 'models' });
+    expect(resolveSettingsSection('developer')).toEqual({ section: 'developer' });
     expect(resolveSettingsSection('general', 'custom')).toEqual({ section: 'general' });
-  });
-
-  it('exposes the three tabs in display order', () => {
-    expect(APPS_TABS).toEqual(['catalog', 'connected', 'custom']);
-  });
-});
-
-describe('appsTabForKey', () => {
-  it('cycles with the arrow keys and jumps with Home / End', () => {
-    expect(appsTabForKey('catalog', 'ArrowRight')).toBe('connected');
-    expect(appsTabForKey('custom', 'ArrowRight')).toBe('catalog');
-    expect(appsTabForKey('catalog', 'ArrowLeft')).toBe('custom');
-    expect(appsTabForKey('connected', 'ArrowLeft')).toBe('catalog');
-    expect(appsTabForKey('connected', 'Home')).toBe('catalog');
-    expect(appsTabForKey('connected', 'End')).toBe('custom');
-  });
-
-  it('ignores other keys', () => {
-    expect(appsTabForKey('catalog', 'Enter')).toBeNull();
-    expect(appsTabForKey('catalog', 'ArrowDown')).toBeNull();
   });
 });

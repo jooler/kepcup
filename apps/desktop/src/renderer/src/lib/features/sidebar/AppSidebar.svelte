@@ -38,7 +38,7 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
-  import SkillMarketDialog from '$lib/features/skill-market/SkillMarketDialog.svelte';
+  import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
   import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
   import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
@@ -544,10 +544,10 @@
           type="button"
           class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
             rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          onclick={() => shell.openSkillMarket()}
-          aria-label={t('sidebar.skillMarket')}
-          title={t('sidebar.skillMarket')}
-          data-testid="skill-market-button"
+          onclick={() => shell.openExtensionCenter()}
+          aria-label={t('sidebar.extensionCenter')}
+          title={t('sidebar.extensionCenter')}
+          data-testid="extension-center-button"
         >
           <Blocks class="size-5" aria-hidden="true" />
         </button>
@@ -623,13 +623,13 @@
           class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
             rounded-full border border-border bg-background px-3 text-sm
             text-muted-foreground shadow-none transition-colors hover:text-foreground"
-          onclick={() => shell.openSkillMarket()}
-          aria-label={t('sidebar.skillMarket')}
-          title={t('sidebar.skillMarket')}
-          data-testid="skill-market-button"
+          onclick={() => shell.openExtensionCenter()}
+          aria-label={t('sidebar.extensionCenter')}
+          title={t('sidebar.extensionCenter')}
+          data-testid="extension-center-button"
         >
           <Blocks class="size-4 shrink-0" aria-hidden="true" />
-          <span class="truncate">{t('sidebar.skillMarket')}</span>
+          <span class="truncate">{t('sidebar.extensionCenter')}</span>
         </button>
       </div>
     {/if}
@@ -787,7 +787,7 @@
 
 <GroupSettingsDialog conversationId={groupSettingsId ?? ''} bind:open={groupSettingsOpen} />
 <GlobalSearchDialog bind:open={searchOpen} />
-<SkillMarketDialog bind:open={shell.skillMarketOpen} />
+<ExtensionCenterDialog bind:open={shell.extensionCenterOpen} />
 <MissingSkillDialog />
 
 <Dialog
