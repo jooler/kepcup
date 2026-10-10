@@ -27,24 +27,21 @@
 - [ ] （仅在需要时）令牌 B「kepcup-zone-admin」用于 WAF / Bot Fight Mode；免费套餐的 Bot Fight Mode 可能只能在控制台手动关。
 - [ ] 升级 Workers Paid 仍然只能你在控制台做。
 
-## C1 — 等你放行的 DNS / 域名变更（Agent 已尝试一次被安全分类器拦下，没有绕过）
+## C1 — 剩余的 Cloudflare 变更（顶级域记录、CIMD、registry 域名已由 Agent 完成）
 
-kepcup.com 目前**没有任何 DNS 记录**。以下四件事是线上继续推进的唯一阻塞（详情见 [infra/cloudflare/README.md](../infra/cloudflare/README.md) §7）：
+已完成并验证：`AAAA kepcup.com 100::`、`oauth-cimd` 部署（`verify.mjs` 通过）、`registry.kepcup.com` custom domain（冒烟通过）。详情见 [infra/cloudflare/README.md](../infra/cloudflare/README.md) §7。仍待办：
 
-- [ ] 创建顶级域已代理记录 `AAAA kepcup.com 100::`（无源站 Worker 的标准做法；有真实网站后替换）。
-- [ ] 部署 `oauth-cimd`（路由 `kepcup.com/oauth/*`），然后 `node infra/cloudflare/oauth-cimd/verify.mjs`。
-- [ ] `registry.kepcup.com` 绑定为 Worker custom domain 后重新部署；随后冒烟与 WAF 速率限制规则。
+- [ ] `registry.kepcup.com` 的 WAF 限速规则：正式写入被分类器拦下（zone 级共享资源变更）；规则已 `--validate-only` 通过，命令与内容见 README §7「等你放行的」。放行后 Agent 一条命令即可，或你在控制台 Security → WAF → Rate limiting rules 手建。
 - [ ] `dl.kepcup.com` custom domain（先要有 U5 的签名密钥）。
-
-放行方法二选一：给 Claude Code 加允许这类 Bash 命令的权限规则；或你自己执行这几条命令后告诉我。已经由 Agent 完成的线上变更（D1、建表、registry Worker + Cron）记录在 README §7。
+- [ ] 首次定时同步（:17 UTC）后确认 `sync_state` 有数据、`/v0.1/servers` 非空。
 
 ## U1 — CIMD 文档部署与验证（P0 门禁）
 
 材料：`infra/cloudflare/oauth-cimd/`（`wrangler.jsonc`、`public/oauth/client.json`、`public/_headers`、`README.md`、`verify.mjs`）。
 
 - [ ] 决定 Cloudflare 的 **Bot Fight Mode** 处理方式：免费版只能整站关闭；Pro 起用 Super Bot Fight Mode 并用 WAF 自定义规则 Skip `/oauth/*` 与 `/.well-known/*`。同时确认「Block AI bots」等规则不覆盖 `/oauth/*`（设计 29 §15.1）。授权服务器是服务端到服务端抓取，被 JS 挑战拦下就表现为 `invalid_client`。
-- [ ] `wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
-- [ ] 运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
+- [x] （已由 Agent 完成）`wrangler deploy`（路由 `kepcup.com/oauth/*`，只接管该路径，与现有官网并存）。`www` 跳转、尾斜杠规范化等规则不能作用于 `/oauth/*`（不得重定向）。
+- [x] （已由 Agent 完成，通过）运行 `node infra/cloudflare/oauth-cimd/verify.mjs`：应当检查 200、`application/json`、无重定向、≤5 KB、`client_id` 与 URL 逐字相等、内容与仓库文件一致。
 - [ ] 接入外部可用性监控（CIMD 宕机只影响**新**授权，不影响已有令牌）。
 - [ ] 用 **Notion 或 Linear 官方 MCP** 以「自定义」方式手工走通一次：连接 → 调用 → 令牌过期后重连 → 断开；结果记入 `docs/dev/PROGRESS.md`「连接应用 P0」。
 
