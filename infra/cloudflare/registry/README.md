@@ -95,7 +95,7 @@ npx wrangler d1 execute kepcup-registry --remote --file=./schema.sql
 
 ## 部署状态（2026-10-10）
 
-已由 Agent 用 `.env` 里的令牌完成：创建 D1（`kepcup-registry`，id 已写入 `wrangler.jsonc`）、建表、部署 Worker 与 Cron（**暂未绑定域名**，所以现在还没有公网入口，但定时同步已在跑）。尚未做：`registry.kepcup.com` 的域名 / 路由（DNS 类变更需用户放行，见 `../README.md` §7）、冒烟、WAF 速率限制。线上变更记录见 `../README.md` §7。
+已由 Agent 用 `.env` 里的令牌完成：创建 D1（`kepcup-registry`，id 已写入 `wrangler.jsonc`）、建表、部署 Worker 与 Cron，并绑定 custom domain `registry.kepcup.com`（冒烟：GET 200、ETag 条件请求 304、POST 405）。表在首次定时同步（每小时 :17 UTC）前为空。尚未做：WAF 速率限制（zone 级变更被分类器拦下，等你放行，见 `../README.md` §7）。线上变更记录见 `../README.md` §7。
 
 下面的清单保留为"从零部署"的参考；第 2、3、5 步（不含路由）已完成。
 

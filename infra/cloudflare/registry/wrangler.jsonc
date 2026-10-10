@@ -21,9 +21,8 @@
     // 每小时 17 分同步一次上游（避开整点拥塞）。
     "crons": ["17 * * * *"],
   },
-  // 路由要求 registry.kepcup.com 在 Cloudflare 上有一条已代理的 DNS 记录（如 AAAA 100::，用户待办）；
-  // 也可改用 {"pattern":"registry.kepcup.com","custom_domain":true} 让 wrangler 自动建记录。
-  "routes": [{ "pattern": "registry.kepcup.com/*", "zone_name": "kepcup.com" }],
+  // custom domain：部署时 Cloudflare 自动创建 registry.kepcup.com 的 DNS 记录与证书。
+  "routes": [{ "pattern": "registry.kepcup.com", "custom_domain": true }],
   "vars": {
     // Workers Free: 8 pages fit the 50-subrequest limit; raise on Workers Paid (see README).
     "SYNC_MAX_PAGES": "8",

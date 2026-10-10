@@ -93,13 +93,13 @@ infra/cloudflare/with-env.sh check
 | 2026-10-10 | `cf d1 create --name kepcup-registry` | 已建，id `efc7712f-a979-414e-b315-3640cd00a600`（WEUR，无管辖区限制；公开元数据，无用户数据） |
 | 2026-10-10 | `wrangler d1 execute kepcup-registry --remote --file=schema.sql` | 已建表（`servers` / `reviews` / `sync_state`） |
 | 2026-10-10 | 部署 Worker `kepcup-registry`（D1 绑定 + Cron `17 * * * *`，**暂不带域名路由**） | 已部署，版本 `4e1a846e…`；首次同步在下一个整点后的 :17（UTC） |
-| 2026-10-10 | 尝试创建 kepcup.com 顶级域的 `AAAA 100::`（已代理）记录 | **被自动模式的安全分类器拦下（DNS / 域名 / 证书变更），未创建**；见下 |
+| 2026-10-10 | 尝试创建 kepcup.com 顶级域的 `AAAA 100::`（已代理）记录 | 当时被自动模式的安全分类器拦下，未创建；用户加了 Bash 权限规则后重试成功 |
+| 2026-10-10 | `cf dns records create`：`AAAA kepcup.com 100::`（已代理） | 已建，记录 id `7443880c…` |
+| 2026-10-10 | 部署 `kepcup-oauth-cimd`（路由 `kepcup.com/oauth/*`） | 已上线，版本 `7b446bf9…`；`verify.mjs` 通过；`/oauth/logo.png` 为 `image/png` |
+| 2026-10-10 | 注册表改用 custom domain `registry.kepcup.com` 并重新部署 | 已上线，版本 `a6b99ada…`；冒烟：GET 200、ETag 条件请求 304、POST 405；表仍为空，等 :17 UTC 的首次同步 |
+| 2026-10-10 | 校验（`--validate-only`）`http_ratelimit` 规则：`registry.kepcup.com` 每 IP 每 10 秒 60 次，超出封 10 秒 | 校验通过；**正式写入被分类器拦下（Modify Shared Resources），未写入**；见下 |
 
-### 等你放行的（DNS / 域名类，分类器要求你明确允许）
+### 等你放行的
 
-1. **kepcup.com 顶级域的已代理记录**（`AAAA kepcup.com 100::`，Cloudflare 官方的"无源站 Worker"做法）。没有它，`https://kepcup.com/oauth/client.json` 根本解析不到，CIMD 无法上线（P0 验收前置）。以后有真实网站时直接替换这条记录。
-2. **`kepcup.com/oauth/*` 的 Worker 路由**（部署 `oauth-cimd`）。
-3. **`registry.kepcup.com`**：custom domain（自动建 DNS 记录和证书），把 `infra/cloudflare/registry/wrangler.jsonc` 的 `routes` 改成 `{"pattern":"registry.kepcup.com","custom_domain":true}` 后部署。
-4. **`dl.kepcup.com`**：custom domain（`infra/cloudflare/directory/`）。另外它需要先有签名密钥（U5），否则托管的是空目录。
-
-放行方式：在你的 Claude Code 设置里为这类命令加 Bash 权限规则（例如允许 `infra/cloudflare/with-env.sh cf dns records create` 与 `infra/cloudflare/with-env.sh wrangler deploy`），或者你自己在控制台 / 终端执行上面几步，然后告诉我，我继续做验证（`verify.mjs`、冒烟、WAF 速率限制）。
+1. **`registry.kepcup.com` 的限速规则**（zone 级 WAF 变更，免费套餐只允许 1 条限速规则）：`cf rulesets entrypoint update http_ratelimit --zone <zone id> --name "kepcup rate limits" --rules @rl.json`，规则内容为表达式 `http.host eq "registry.kepcup.com"`、动作 `block`、特征 `["cf.colo.id","ip.src"]`（免费套餐要求带 `cf.colo.id`）、60 次 / 10 秒、封禁 10 秒。已用 `--validate-only` 验证。
+2. **`dl.kepcup.com`**：custom domain（`infra/cloudflare/directory/`），需要先有签名密钥（U5），否则托管的是空目录。
