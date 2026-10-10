@@ -5,8 +5,10 @@ import type {
   AppToolView,
   McpToolPolicy,
 } from '@kepcup/shared';
+import { untrack } from 'svelte';
 import { core } from '$lib/rpc/client.svelte';
 import { appsStore } from '$lib/stores/apps.svelte';
+import { toolsLoadableStatus } from '$lib/features/apps/app-catalog';
 
 /** `apps.connections.tools` 的一份结果（按连接缓存）。 */
 export interface ConnectionToolsView {
@@ -33,8 +35,14 @@ class AppDetailState {
     if (this.#started) return;
     this.#started = true;
     core.onEvent('apps.connection_status', (payload) => {
-      const { connectionId } = payload as AppConnectionStatusPayload;
-      if (this.tools[connectionId] !== undefined) {
+      const { connectionId, status, removed } = payload as AppConnectionStatusPayload;
+      if (removed === true) {
+        // 行没了（首次连接取消 / 失败、断开）：丢掉缓存，别再对它发任何请求。
+        this.forget(connectionId);
+        return;
+      }
+      // 只在能向 server 拉清单的状态下重拉（授权没了 / 过期的拉了只会失败）。
+      if (this.tools[connectionId] !== undefined && toolsLoadableStatus(status)) {
         void this.loadTools(connectionId).catch(() => undefined);
       }
     });
@@ -61,7 +69,11 @@ class AppDetailState {
   }
 
   async loadTools(connectionId: string): Promise<ConnectionToolsView> {
-    this.loadingTools = { ...this.loadingTools, [connectionId]: true };
+    // 簿记状态的读写不能被调用方的 `$effect` 追踪：否则 finally 里写回 `loadingTools` 会让
+    // effect 重跑 → 再拉一次 → 失败再 toast → 再写……（授权失败后无限弹 toast 的根因）。
+    untrack(() => {
+      this.loadingTools = { ...this.loadingTools, [connectionId]: true };
+    });
     try {
       const view = (await core.call('apps.connections.tools', {
         connectionId,
@@ -69,14 +81,18 @@ class AppDetailState {
       this.tools = { ...this.tools, [connectionId]: view };
       return view;
     } finally {
-      const { [connectionId]: _done, ...rest } = this.loadingTools;
-      void _done;
-      this.loadingTools = rest;
+      untrack(() => {
+        const { [connectionId]: _done, ...rest } = this.loadingTools;
+        void _done;
+        this.loadingTools = rest;
+      });
     }
   }
 
   async loadGrants(connectionId: string): Promise<AppToolGrantView[]> {
-    this.loadingGrants = { ...this.loadingGrants, [connectionId]: true };
+    untrack(() => {
+      this.loadingGrants = { ...this.loadingGrants, [connectionId]: true };
+    });
     try {
       const { grants } = (await core.call('apps.connections.grants', { connectionId })) as {
         grants: AppToolGrantView[];
@@ -84,15 +100,23 @@ class AppDetailState {
       this.grants = { ...this.grants, [connectionId]: grants };
       return grants;
     } finally {
-      const { [connectionId]: _done, ...rest } = this.loadingGrants;
-      void _done;
-      this.loadingGrants = rest;
+      untrack(() => {
+        const { [connectionId]: _done, ...rest } = this.loadingGrants;
+        void _done;
+        this.loadingGrants = rest;
+      });
     }
   }
 
-  /** 打开详情时一次拉齐工具与授权。 */
-  async load(connectionId: string): Promise<void> {
-    await Promise.all([this.loadTools(connectionId), this.loadGrants(connectionId)]);
+  /**
+   * 打开详情时拉工具与授权。`withTools: false`（连接当前不可用：授权没了 / 过期 / 缺权限）只拉
+   * 本地的授权记录，不去连 server 取工具清单。
+   */
+  async load(connectionId: string, options: { withTools?: boolean } = {}): Promise<void> {
+    await Promise.all([
+      options.withTools === false ? Promise.resolve() : this.loadTools(connectionId),
+      this.loadGrants(connectionId),
+    ]);
   }
 
   /** 断开 / 删除后丢弃缓存。 */

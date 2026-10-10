@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { AppCatalogEntry, AppConnection } from '@kepcup/shared';
 import {
   catalogAction,
+  isConnectionGone,
+  toolsLoadableStatus,
   catalogLoadState,
   catalogView,
   manageTarget,
@@ -120,5 +122,29 @@ describe('clientFormMode（OAUTH_CLIENT_REQUIRED 时的手填客户端表单）'
     expect(
       clientFormMode({ target: customTarget, developerMode: false, customServerExists: false }),
     ).toBe('unavailable');
+  });
+});
+
+describe('详情页的加载守卫', () => {
+  it('只有能向 server 拉清单的状态才去拉工具；授权没了 / 过期 / 缺权限 / 连接中只读本地授权记录', () => {
+    for (const status of ['connected', 'tools_changed', 'disabled'] as const) {
+      expect(toolsLoadableStatus(status), status).toBe(true);
+    }
+    for (const status of [
+      'not_connected',
+      'connecting',
+      'expired',
+      'needs_scope',
+      'error',
+    ] as const) {
+      expect(toolsLoadableStatus(status), status).toBe(false);
+    }
+  });
+
+  it('「连接不存在」是终局：不重试、不弹 toast', () => {
+    expect(isConnectionGone({ code: 'APP_CONNECTION_NOT_FOUND' })).toBe(true);
+    expect(isConnectionGone({ code: 'INTERNAL' })).toBe(false);
+    expect(isConnectionGone(new Error('x'))).toBe(false);
+    expect(isConnectionGone(undefined)).toBe(false);
   });
 });

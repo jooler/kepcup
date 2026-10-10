@@ -338,12 +338,18 @@ export function upsertConnection(
   return connections.map((item, i) => (i === index ? connection : item));
 }
 
-/** 应用 `apps.connection_status`：已知连接就地改状态；未知返回 null（调用方重拉列表）。 */
+/**
+ * 应用 `apps.connection_status`：已知连接就地改状态；未知返回 null（调用方重拉列表）。
+ * `removed`（core 删了这一行：首次连接取消 / 失败后的临时行、断开、并入旧行）→ 把行移除，
+ * 不留「状态变成 not_connected」的幽灵账号；移除一个本来就不在列表里的行不需要重拉。
+ */
 export function applyConnectionStatus(
   connections: readonly AppConnection[],
   connectionId: string,
   status: AppConnectionStatus,
+  removed = false,
 ): AppConnection[] | null {
+  if (removed) return connections.filter((item) => item.id !== connectionId);
   if (!connections.some((item) => item.id === connectionId)) return null;
   return connections.map((item) => (item.id === connectionId ? { ...item, status } : item));
 }
