@@ -21,6 +21,11 @@ import { agentsStore } from '$lib/stores/agents.svelte';
 import { sendGateRequirement } from '../features/chats/send-gate';
 import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
+import {
+  clearLastConversationId,
+  loadLastConversationId,
+  saveLastConversationId,
+} from '../features/chats/last-conversation-persist';
 import { mergeUnreadCount } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
@@ -245,11 +250,18 @@ class ChatState {
   }
 
   /**
-   * 启动恢复：直接激活上一次对话的会话（最近 lastMessageAt），从没聊过则
-   * 打开第一个 Bot 的直聊；一个 Bot 都没有（跳过了初始化向导）时不打开
-   * 任何会话，交由调用方进入「选择 Bot」的引导态。
+   * 启动恢复：优先精确恢复上次查看的会话（私聊或群聊，localStorage 记忆，
+   * last-conversation-persist）；id 已失效（会话被删/Bot 被删转只读）或从未
+   * 打开过则退回「最近 lastMessageAt」启发式；从没聊过则打开第一个 Bot 的
+   * 直聊；一个 Bot 都没有（跳过了初始化向导）时不打开任何会话，交由调用方
+   * 进入「选择 Bot」的引导态。
    */
   async restoreLast(): Promise<'conversation' | 'bot' | 'empty'> {
+    const lastViewed = loadLastConversationId(globalThis.localStorage ?? null);
+    if (lastViewed !== null && this.conversations.some((c) => c.id === lastViewed)) {
+      await this.select(lastViewed);
+      return 'conversation';
+    }
     if (this.conversations.length > 0) {
       const latest = [...this.conversations].sort(
         (a, b) => (b.lastMessageAt ?? b.createdAt ?? 0) - (a.lastMessageAt ?? a.createdAt ?? 0),
@@ -302,6 +314,9 @@ class ChatState {
     };
     this.currentId = conversationId;
     this.replyTo = null;
+    // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
+    // 或群聊），而不是按最近消息时间挑一个。
+    saveLastConversationId(globalThis.localStorage ?? null, conversationId);
     // 切换会话撤销门禁缺设置卡（与 close 同理；失败 run 的 setup 卡随
     // failedRun 天然按会话生效，无需处理）。
     this.#pendingSetup = null;
@@ -436,6 +451,9 @@ class ChatState {
     this.currentId = null;
     this.replyTo = null;
     this.highlightMessageId = null;
+    // 会话消失（删除会话/删除 Bot/放弃建群）才走到这里：记忆一并清除，
+    // 下次启动按启发式恢复，而不是指着一个不存在的 id。
+    clearLastConversationId(globalThis.localStorage ?? null);
     // 门禁置起的缺设置卡是「本次发送动作」的即时引导：离开会话即撤销
     //（草稿仍在原会话队列，再发送会重新拦下）。
     this.#pendingSetup = null;

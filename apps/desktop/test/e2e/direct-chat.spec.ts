@@ -357,6 +357,41 @@ test('queued drafts survive an app restart', async () => {
   }
 });
 
+test('restart reopens the conversation last viewed (not the most recently messaged)', async () => {
+  test.setTimeout(180_000);
+  const session = await startSession('kepcup-e2e-restore-');
+  const { page, home, llm } = session;
+  try {
+    await waitReady(page);
+    // 先建「小安」再建「小北」：建完各自自动打开。两条会话都没有消息，
+    // 旧启发式（最近消息时间）重启后总会选中较新的「小北」。
+    await createBotAndOpenChat(page, '小安');
+    await createBotAndOpenChat(page, '小北');
+    await expect(page.locator('[data-testid="right-panel-toggle"]')).toContainText('小北');
+
+    // 回到「小安」的对话——这是关闭前最后查看的会话。
+    await page.locator('[data-testid^="conversation-item-"]').filter({ hasText: '小安' }).click();
+    await expect(page.locator('[data-testid="right-panel-toggle"]')).toContainText('小安');
+
+    await session.app.close();
+
+    const relaunched = await launchApp({ home, llmUrl: llm.url, keystore: 'file' });
+    try {
+      await waitReady(relaunched.page);
+      // 恢复的正是上次查看的「小安」，而不是启发式挑出的「小北」。
+      await expect(relaunched.page.locator('[data-testid="right-panel-toggle"]')).toContainText(
+        '小安',
+        { timeout: 15_000 },
+      );
+    } finally {
+      await relaunched.app.close();
+    }
+  } finally {
+    await llm.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('deleting the conversation removes it; deleting the bot removes its entry and closes its chat', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-delete-');
