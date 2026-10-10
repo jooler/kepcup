@@ -1,8 +1,8 @@
 # 连接应用（Connected Apps）与开放平台基座 — 执行方案（D73 / D74）
 
-> 状态：**P0、P1、P2、P3 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测；U3 / U4 真实平台预注册客户端条目；U5 目录签名密钥与 `dl.` / `registry.` 线上部署）；P4 只出任务书，两份（`hosted-auth-gateway.md`、`enterprise-ema.md`）尚未写**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 与 P3 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P2 的 §6.8「+」菜单临时开关为可选项，未做；P3 全量回归由收口时补）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P0、P1、P2、P3 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测；U3 / U4 真实平台预注册客户端条目；U5 目录签名密钥与 `dl.` / `registry.` 线上部署）；P4 只出任务书，两份（`hosted-auth-gateway.md`、`enterprise-ema.md`）已写（2026-10-10，未实现）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 与 P3 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P2 的 §6.8「+」菜单临时开关为可选项，未做；P3 全量回归由收口时补）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
-> **需要你手动处理的事项**（部署、账号、密钥、合入确认）已汇总在 [connected-apps-user-actions.md](connected-apps-user-actions.md)。
+> **需要你手动处理的事项**（部署、账号、密钥、合入确认）已汇总在 [connected-apps-user-actions.md](connected-apps-user-actions.md)；**已完成 / 未完成的总览**见 [connected-apps-status.md](connected-apps-status.md)。
 >
 > **硬约束**：
 >
@@ -81,7 +81,7 @@
 - [x] **不要** `git checkout` / `reset` / 覆盖任何不是你写的改动；与他人改动同文件时只做增量编辑。
 - [ ] **迁移编号（2026-10-09 定：不预留）**：多个并行工作（D75、borrowings、D80 等）都在新增 main 迁移，且迁移必须连续（`infra/migrate.ts` 校验），D73 **不预留具体编号**——每次写迁移时 `ls packages/core/migrations/main/` 取当时的下一个空号（本文用 `{N}` / `{N+1}` / `{N+2}` 指代三个 D73 迁移，P0/P1/P2 之间若他人又占了号则继续顺延），写之前用 `ListAgents` 问一下有无会话即将合入新迁移（如 D80 的 worktree `t/schedule-nudges`），合入 main 前再核对一次不冲突。截至 2026-10-09 main 已用到 `0021_delegation_intent`。D73 不改 runs 库（runs `0006`–`0008` 归 D75、`0009_tool_effects` 归 borrowings W2）。另：D75 的 `0018` 重建了 `messages`（新增 `owner_bot_id` / `task_id`，`kind` 含 `task_event`）与 `attachments`，未动 `approvals`；loop_type `'response'` 已改名 `'turn'`（runs `0007`、main `0020`）。
 - [x] **已落地的相关工作（开工前必读其实现，D73 在其上扩展，不重复实现）**：borrowings W5（提交 `60e57d7`）——`core/mcp/risk.ts`（`classifyRisk` / `classifyRiskDetailed`：注解 + 名字推断，写动词一票否决）、`core/mcp/policy.ts`（逐工具策略：工具策略 > server `autoApprove` > 风险档默认，read→auto、其余→ask）、`mcpServerSchema.toolPolicies`（settings 单行 JSON）、审批 payload 带 `risk`、RPC `mcp.toolRisks`、网关 `mcpToolDecision`（对话轮与只读子代理只能调「只读 + auto」工具）、系统提示 `<mcp_tools>` 段、审批卡 `McpRiskBadge`、设置页 `McpToolPolicies.svelte`；**无人值守下 `mcp_tool` 所有风险档自动批准（用户决定，见 borrowings W5「目标 3」）**。D75（对话轮 / 任务分治，`docs/design/30-supervisor-and-tasks.md`）重构了 orchestrator——§0 第 7 条的行号锚点早于 D75 与 borrowings，**全部按函数名重新定位**。borrowings 的其余工作项由会话 kepcup-81 在主工作树推进，开工前用 `ListAgents` 确认文件归属。
-- [ ] `approvals` CHECK 重建（P2 的 `egress`）须以 `0017_external_agents.sql` 的 CHECK 列表（含 `agent_tool`）为基础，并包含届时全部 kind。
+- [x] `approvals` CHECK 重建（P2 的 `egress`，`0026_egress_approval.sql` 带全部 12 个 kind）须以 `0017_external_agents.sql` 的 CHECK 列表（含 `agent_tool`）为基础，并包含届时全部 kind。
 
 ### 2.2 测试环境
 
@@ -484,8 +484,10 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 ## 8. P4 — 企业与托管网关（只出任务书）
 
-- [ ] `todo/hosted-auth-gateway.md`：Cloudflare `workers-oauth-provider`（CIMD + `global_fetch_strictly_public`）+ Agents SDK `createMcpHandler` + D1 / Durable Objects 令牌库（应用层加密、`eu` 管辖区）+ URL 模式 elicitation 账号关联页（`__Host-` Cookie、一次性 state、同一用户校验）；只在某平台无法本地直连时启动（设计 29 §11.7、§15.3）。
-- [ ] `todo/enterprise-ema.md`：MCP Enterprise-Managed Authorization（ID-JAG / Okta XAA）客户端支持。
+- [x] `todo/hosted-auth-gateway.md`：Cloudflare `workers-oauth-provider`（CIMD + `global_fetch_strictly_public`）+ Agents SDK `createMcpHandler` + D1 / Durable Objects 令牌库（应用层加密、`eu` 管辖区）+ URL 模式 elicitation 账号关联页（`__Host-` Cookie、一次性 state、同一用户校验）；只在某平台无法本地直连时启动（设计 29 §11.7、§15.3）。
+  - 任务书已写（2026-10-10，未实现，默认不建）：[hosted-auth-gateway.md](hosted-auth-gateway.md)，阶段 G0–G6。
+- [x] `todo/enterprise-ema.md`：MCP Enterprise-Managed Authorization（ID-JAG / Okta XAA）客户端支持。
+  - 任务书已写（2026-10-10，未实现）：[enterprise-ema.md](enterprise-ema.md)，阶段 E0–E6。
 
 ---
 
