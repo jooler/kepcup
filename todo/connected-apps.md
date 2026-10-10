@@ -1,6 +1,6 @@
 # 连接应用（Connected Apps）与开放平台基座 — 执行方案（D73 / D74）
 
-> 状态：**P0、P1、P2、P3 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 真实账号登录实测；U3 / U4 真实平台预注册客户端条目；U5 目录签名密钥与** `dl.` **/** `registry.` **线上部署）；P4 只出任务书，两份（**`hosted-auth-gateway.md`**、**`enterprise-ema.md`**）已写（2026-10-10，未实现）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 与 P3 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P2 的 §6.8「+」菜单临时开关为可选项，未做；P3 全量回归由收口时补）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
+> 状态：**P0、P1、P2、P3 实现完成，待门禁中需用户的部分（U1 部署 CIMD；U2 已移出用户待办、转为 extension-center.md 的逐家适配；U3 / U4 真实平台预注册客户端条目；U5 目录签名密钥与** `dl.` **/** `registry.` **线上部署）；P4 只出任务书，两份（**`hosted-auth-gateway.md`**、**`enterprise-ema.md`**）已写（2026-10-10，未实现）**（2026-10-07 设计完成，设计见 `docs/design/29-connected-apps.md`；P0 于 2026-10-09、P1 于 2026-10-09～10、P2 与 P3 于 2026-10-10 在 `t/d73-connected-apps` 实现并经独立评审修复；P2 的 §6.8「+」菜单临时开关为可选项，未做；P3 全量回归由收口时补）。分 P0→P4 五个阶段，每阶段有**门禁**（不通过不进入下一阶段）。本文是给编码 Agent 的**自包含交接**：不依赖本 chat 历史即可开工。
 >
 > **需要你手动处理的事项**（部署、账号、密钥、合入确认）已汇总在 [connected-apps-user-actions.md](connected-apps-user-actions.md)；**已完成 / 未完成的总览**见 [connected-apps-status.md](connected-apps-status.md)。
 >
@@ -107,7 +107,7 @@
 | #   | 事项                                                                                          | 阻塞           |
 | --- | ------------------------------------------------------------------------------------------- | ------------ |
 | U1  | Cloudflare：决定 Bot Fight Mode 处理方式（关闭或 Pro + Skip 规则）；部署 CIMD 文档                             | P0 验收        |
-| U2  | 首批应用的测试账号（Notion、Linear、Atlassian、Sentry、Asana、HubSpot、Canva、Stripe、GitHub）供 spike          | P1 目录定稿      |
+| U2  | ~~首批应用的测试账号供 spike~~ **已移出（2026-10-10）**：逐家适配转入 [extension-center.md](extension-center.md)（§4 / X5）                                                | —            |
 | U3  | GitHub App 注册（仅当 spike 证实 GitHub 不支持 CIMD）                                                  | P1 GitHub 条目 |
 | U4  | Google Cloud 项目 / OAuth 同意屏幕 / Desktop 客户端 / 应用验证；Microsoft Entra 应用；Slack 应用与上架；Figma 合作申请 | P2 对应条目      |
 | U5  | Ed25519 目录签名密钥与 CI 密钥；`dl.` / `registry.` 子域；Workers Paid                                   | P3           |
@@ -296,7 +296,7 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 ### 5.1 首批应用实测（spike，先于目录定稿）
 
 - [x] `packages/core/scripts/connector-spike/`（不进产品代码）：对候选 URL（Notion `https://mcp.notion.com/mcp`、Linear `https://mcp.linear.app/mcp`、Atlassian `https://mcp.atlassian.com/v1/mcp/authv2`、Sentry `https://mcp.sentry.dev/mcp`、Asana `https://mcp.asana.com/…`、HubSpot、Canva `https://mcp.canva.com/mcp`、Stripe `https://mcp.stripe.com`、GitHub `https://api.githubcopilot.com/mcp/`；以各家文档为准）输出 JSON 报告：401 challenge、PRM、AS 元数据、**是否支持 CIMD / DCR**、`scopes_supported`、`code_challenge_methods_supported`、`authorization_response_iss_parameter_supported`、`revocation_endpoint`。
-- [ ] 带登录模式（需**用户待办 U2** 的账号，用户在浏览器里登录）：用 P0 引擎完整连接，导出工具清单、注解覆盖率（多少工具缺 `readOnlyHint` / `destructiveHint`）、账号识别可行性。
+- [ ] 带登录模式（已转入 [extension-center.md](extension-center.md) §4 / X5 逐家适配；原需 U2 的账号，用户在浏览器里登录）：用 P0 引擎完整连接，导出工具清单、注解覆盖率（多少工具缺 `readOnlyHint` / `destructiveHint`）、账号识别可行性。
 - [x] 结论入本文附录 B：每家「可上目录 / 需预注册 / 暂不支持」。只有能自动注册（CIMD 或 DCR）的进 P1 目录；GitHub 不支持 CIMD 时需用户注册 GitHub App（U3）并走 P2 的预注册客户端机制——**不要**为赶 P1 提前做半套。
 
 
@@ -623,7 +623,7 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 
 ### B.4 每家结论
 
-图例：**可上目录** = 无登录探测满足「CIMD 或 DCR + PKCE S256」，P1 目录收录；但**一律仍待登录实测**（U2）后才放行。**需预注册** = 无自动注册，按计划走 P2 预注册客户端（§6.4），**不进 P1 目录**、不做半套。**暂不支持** = 当前无可行路径。
+图例：**可上目录** = 无登录探测满足「CIMD 或 DCR + PKCE S256」，P1 目录收录；但**一律仍待登录实测**（extension-center.md §4）后才放行。**需预注册** = 无自动注册，按计划走 P2 预注册客户端（§6.4），**不进 P1 目录**、不做半套。**暂不支持** = 当前无可行路径。
 
 
 | 应用        | 结论              | 进 P1 目录        | 依据与待办                                                                                                                                                             |
@@ -643,7 +643,7 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 
 ### B.5 门禁与后续
 
-- 放行流程：用户完成 U1（CIMD 文档部署）与 U2（各家测试账号）后，对每家用 P0 引擎连接并导出工具清单 → 补 `toolPolicy` / `whoami` / 修正 URL → 在 `connector-release-gates.json` 的 `approved` 里加入该条目的 `releaseGate` 值（= slug）。**在此之前不要放行任何一家。**
+- 放行流程：U1（CIMD 文档部署）已完成；各家按 [extension-center.md](extension-center.md) §4 逐家适配（账号持有人在浏览器登录一次）后，对每家用 P0 引擎连接并导出工具清单 → 补 `toolPolicy` / `whoami` / 修正 URL → 在 `connector-release-gates.json` 的 `approved` 里加入该条目的 `releaseGate` 值（= slug）。**在此之前不要放行任何一家。**
 - 探测的局限：无登录探测不能证明 (a) KepCup 的 CIMD URL 会被各家接受（vendors 可有客户端白名单 / 域名限制，且 U1 尚未部署）、(b) 工具注解质量、(c) 账号识别可行性——这些都是「待登录实测」的内容。
 - 工具与脚本：`scripts/import-mcp-registry.mjs <registry-name>` 可导出新应用的 `server.json` 骨架（`privacyPolicy: "TODO"` 故意让契约测试失败，须人工补全）；契约测试 `packages/core/test/contract/connector-catalog.contract.ts`（入口 `test/unit/connector-catalog.test.ts`）覆盖目录所有条目。
 - 打包：`apps/desktop/electron-builder.yml` 三平台 `extraResources` 增加 `resources/connectors → connectors`，`core-host.ts` 注入 `KEPCUP_CONNECTORS`；`dist.mjs` 注入 `__KEPCUP_CONNECTOR_RELEASE_GATES__`（与 D72 同款，`testkit` 门禁禁止放行）。

@@ -10,7 +10,7 @@
 | #   | 事项                                                                                                                                 | 卡住什么                              | 状态  |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | --- |
 | U1  | 部署 CIMD 文档并验证；Notion / Linear 手工走通一次                                                                                               | P0 门禁（真实环境部分）                     | [ ] |
-| U2  | 首批应用测试账号 → 登录实测 → 放行发行门禁                                                                                                           | P1 门禁第 1 条；目录里 6 家目前全部「门禁关闭」      | [ ] |
+| U2  | ~~首批应用测试账号 → 登录实测 → 放行~~ **已移出用户待办（2026-10-10）**：这是逐家适配，转为开发任务，见 [extension-center.md](extension-center.md) §4 / X5 | — | —   |
 | U3  | GitHub App 注册（预注册客户端）                                                                                                              | P2 §6.4 的 GitHub 条目、P2 门禁的真实预注册走通 | [ ] |
 | U4  | Google / Microsoft / Slack / Figma 的平台注册与审核                                                                                        | P2 §6.4 对应条目                      | [ ] |
 | U5  | 目录签名密钥、`dl.` / `registry.` / `developers.` 子域、Workers Paid、D1 / Turnstile / GitHub OAuth 应用；`kepcup-app validate --auth` 对真实上架应用实测 | P3 的线上部分与真机验收（本地实现与测试不依赖）         | [ ] |
@@ -55,17 +55,11 @@
 
 
 
-## U2 — 首批应用测试账号与登录实测（P1 门禁第 1 条）
+## U2 — 已移出用户待办（2026-10-10）
 
-目录当前 6 家（`notion`、`linear`、`atlassian`、`sentry`、`canva`、`stripe`）在 `apps/desktop/connector-release-gates.json` 里 `approved: []`，界面能看到但连不上真实平台。
+用户决定：测试各家、补目录数据、放行本质是**逐家适配**，属于后续开发；产品形态也改为把「技能市场」升级为「扩展中心」（Skills / 连接 / MCP 三组），连接组按「测试好一家上一家」预置，不再让用户自建 MCP 连接。完整任务书：[extension-center.md](extension-center.md)（§4 是单家适配流程，X5 是逐家适配的持续任务）。
 
-- [ ] 提供各家测试账号（Atlassian 需有管理员权限的测试站点——要验证管理员「已批准客户端 / 域名」限制是否拦住 KepCup 的 CIMD 客户端；Canva 需确认私有访问等候名单；Stripe **只用测试模式 / 受限权限**）。
-- [ ] 运行带登录的 spike（`packages/core/scripts/connector-spike/`，登录在浏览器里由你完成）：导出工具清单、注解覆盖率、账号识别（`whoami`）可行性。
-- [ ] 按结果补 `apps/desktop/resources/connectors/catalog.json` 的 `toolPolicy` / `whoami` / `auth.scopes`；Stripe 逐工具取严。
-- [ ] 把通过的条目加入 `connector-release-gates.json`（即「放行」）；结论写入 `todo/connected-apps.md` 附录 B。
-- [ ] 用放行的应用在真实环境走一遍：目录连接 → 多账号 → Bot 勾选 → 对话里完成一件事 → 写工具审批卡显示账号。
-
-
+对你仍有影响的只有一点：适配每一家时，**账号持有人要在浏览器里登录授权一次**，并自备测试账号 / 站点（密码和令牌不给 Agent、不贴进聊天）。Notion、Linear 账号已就绪，排在最前。
 
 ## U3 — GitHub App 注册
 

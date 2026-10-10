@@ -1013,7 +1013,7 @@
 - **复查修复（2026-10-10）**：渲染端 diff 独立评审 9 项已全部修复：重连 scopes 取并集、目录连接只经 `reconnectConnectionId` 解析（「再连一个账号」不再误落到已有连接）、标签草稿切换连接时重置、工具数估计在授权变化后重取、重复的工具列表加载合并、`data-testid` 前缀统一、页签 a11y（`role=tablist` / 方向键）、`{#each}` 补 key、`settings.navMcp` 残留清理。安全 / i18n 检查无发现。
 - **偏差**：DEV-020（见 DEVIATIONS；P0 项仍在 DEV-019）。
 - **未做 / 待办**：
-  - **门禁里需要用户的部分**：U1（部署 CIMD、`verify.mjs`、Notion / Linear 手工走通，沿 P0）；**U2**：提供测试账号 → 带登录的 spike（导出工具清单、注解覆盖率、账号识别可行性）→ 据此补 `catalog.json` 的 `toolPolicy` / `whoami` / `scopes` → 把通过者加入 `connector-release-gates.json`。门禁打开前目录在发布构建里为空（开发构建 / 测试不过滤）。
+  - **门禁里需要用户的部分**：U1（部署 CIMD、`verify.mjs`、Notion / Linear 手工走通，沿 P0）；**U2（2026-10-10 已移出用户待办，转入 todo/extension-center.md）**：提供测试账号 → 带登录的 spike（导出工具清单、注解覆盖率、账号识别可行性）→ 据此补 `catalog.json` 的 `toolPolicy` / `whoami` / `scopes` → 把通过者加入 `connector-release-gates.json`。门禁打开前目录在发布构建里为空（开发构建 / 测试不过滤）。
   - U3（GitHub App 预注册）、U4 / U5 随 P2 起的阶段；P2（step-up、污点外发控制、按需发现、预注册客户端、MCPB、开发者模式）已于 2026-10-10 实现，见「连接应用 P2」。
   - 迁移号 `0024` / `0025` 以当前 main 为准；最终合并时若 main 又前进则再顺延。
 
