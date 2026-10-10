@@ -34,6 +34,7 @@ import { isSafeDirectoryRemoteUrl } from './directory-merge.js';
 import {
   customConnectionId,
   isCustomConnectionId,
+  isUnsettledScratch,
   type AppConnectionStore,
 } from './connection-store.js';
 import type { AppDisconnector } from './disconnect.js';
@@ -143,7 +144,9 @@ export class AppConnectionsService {
     const { catalog, store } = this.#deps;
     return catalog.list().map((entry) => {
       const meta = connectorMetaOf(entry);
-      const connections = store.listByConnector(meta.slug);
+      const connections = store
+        .listByConnector(meta.slug)
+        .filter((row) => !isUnsettledScratch(row, this.#deps.vault.getTokens(row.id) !== null));
       const unavailable = this.#unavailableReason(entry);
       const svg = catalog.iconSvg(meta.slug);
       return {
@@ -301,7 +304,11 @@ export class AppConnectionsService {
     const { store, vault } = this.#deps;
     if (store.get(connectionId) === null) return;
     vault.clearConnection(connectionId, { deleteRow: true });
-    this.#deps.events.emit('apps.connection_status', { connectionId, status: 'not_connected' });
+    this.#deps.events.emit('apps.connection_status', {
+      connectionId,
+      status: 'not_connected',
+      removed: true,
+    });
   }
 
   async #reject(connectionId: string): Promise<void> {
@@ -378,6 +385,7 @@ export class AppConnectionsService {
       this.#deps.events.emit('apps.connection_status', {
         connectionId: scratch.id,
         status: 'not_connected',
+        removed: true,
       });
     } else {
       store.update(scratch.id, {

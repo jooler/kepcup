@@ -39,6 +39,19 @@ function originOf(url: string | null | undefined): string | null {
   }
 }
 
+/**
+ * 「还没成为账号」的临时行：目录连接在授权开始时就建了一行（`connecting`，没有令牌、没有账号标识），
+ * 流程成功才会成为账号，取消 / 失败则被删除。这种行不算已连接账号——既不进 `apps.connections.list`，
+ * 也不计入目录卡片的 `connectedAccounts`（否则取消授权后卡片仍显示「已连接 1 个账号」）。
+ * 自定义 server 的行（`custom:`）不在此列。令牌已落盘（结算阶段）的行算账号。
+ */
+export function isUnsettledScratch(
+  row: Pick<AppConnection, 'id' | 'status'>,
+  hasTokens: boolean,
+): boolean {
+  return row.status === 'connecting' && !hasTokens && !isCustomConnectionId(row.id);
+}
+
 export function isCustomConnectionId(connectionId: string): boolean {
   return connectionId.startsWith(CUSTOM_PREFIX);
 }

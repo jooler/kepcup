@@ -98,7 +98,11 @@ export class AppDisconnector {
         );
       }
     }
-    this.#deps.onStatus({ connectionId, status: 'not_connected' });
+    this.#deps.onStatus({
+      connectionId,
+      status: 'not_connected',
+      ...(rowDeleted ? { removed: true } : {}),
+    });
     auditor.auditAppDisconnect({
       connectionId,
       connectorId: row.connectorId,
