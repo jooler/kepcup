@@ -71,7 +71,8 @@ function looksLikeMcpInitialize(text: string): boolean {
   for (const candidate of candidates) {
     try {
       const message = JSON.parse(candidate) as { jsonrpc?: unknown; result?: unknown };
-      const result = message.result as { protocolVersion?: unknown; serverInfo?: unknown } | undefined;
+      const result = message.result as
+        { protocolVersion?: unknown; serverInfo?: unknown } | undefined;
       if (
         message.jsonrpc === '2.0' &&
         typeof result === 'object' &&
@@ -140,7 +141,9 @@ export async function probeLocalConnector(
   }
   const header = response.headers.get('www-authenticate');
   if (header === null || !/^\s*(?:bearer|dpop)\b/i.test(header)) {
-    throw reject('该地址返回 401 但没有 Bearer 授权挑战（WWW-Authenticate），不是标准的 OAuth 保护的 MCP 端点');
+    throw reject(
+      '该地址返回 401 但没有 Bearer 授权挑战（WWW-Authenticate），不是标准的 OAuth 保护的 MCP 端点',
+    );
   }
   const challenge = parseWwwAuthenticate(header);
 
@@ -183,9 +186,7 @@ export async function probeLocalConnector(
       '授权服务器既不支持客户端元数据文档（CIMD）也没有动态注册端点（DCR）：需要预先登记密钥的服务暂不支持本机连接',
     );
   }
-  const scopes = splitScopes(
-    challenge.scope ?? info.resourceMetadata?.scopes_supported?.join(' '),
-  );
+  const scopes = splitScopes(challenge.scope ?? info.resourceMetadata?.scopes_supported?.join(' '));
   return {
     registration: cimd ? 'cimd' : 'dcr',
     issuer: metadata.issuer,

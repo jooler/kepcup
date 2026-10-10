@@ -27,7 +27,9 @@ import {
 
 const URL_OK = 'https://mcp.example.com/mcp';
 
-function record(overrides: { meta?: Record<string, unknown>; entry?: Record<string, unknown> } = {}) {
+function record(
+  overrides: { meta?: Record<string, unknown>; entry?: Record<string, unknown> } = {},
+) {
   const slug = localConnectorSlug(localConnectorOrigin(URL_OK)!);
   return {
     entry: {
@@ -170,7 +172,10 @@ describe('localConnectorRecordSchema', () => {
       },
     ],
     ['旧版 sse 远端', { entry: { remotes: [{ type: 'sse', url: URL_OK }] } }],
-    ['http 远端', { entry: { remotes: [{ type: 'streamable-http', url: 'http://mcp.example.com/mcp' }] } }],
+    [
+      'http 远端',
+      { entry: { remotes: [{ type: 'streamable-http', url: 'http://mcp.example.com/mcp' }] } },
+    ],
     ['标题含控制字符', { entry: { title: 'bad\ntitle' } }],
   ])('拒绝：%s', (_label, overrides) => {
     expect(localConnectorRecordSchema.safeParse(record(overrides)).success).toBe(false);
@@ -182,8 +187,10 @@ describe('localConnectorRecordSchema', () => {
         .success,
     ).toBe(false);
     expect(
-      localConnectorRecordSchema.safeParse({ ...record(), sourceDocUrl: 'https://docs.example.com' })
-        .success,
+      localConnectorRecordSchema.safeParse({
+        ...record(),
+        sourceDocUrl: 'https://docs.example.com',
+      }).success,
     ).toBe(true);
   });
 
@@ -203,7 +210,8 @@ describe('localConnectorRecordSchema', () => {
         .success,
     ).toBe(true);
     expect(
-      createLocalConnectorRecordSchema({ allowInsecureHosts: ['127.0.0.2'] }).safeParse(raw).success,
+      createLocalConnectorRecordSchema({ allowInsecureHosts: ['127.0.0.2'] }).safeParse(raw)
+        .success,
     ).toBe(false);
   });
 });
@@ -240,9 +248,9 @@ describe('接入点', () => {
 
   it('settings.apps.localConnectors 缺省为空，坏值回退为空而不让整个设置解析失败', () => {
     expect(settingsSchema.parse({}).apps.localConnectors).toEqual({});
-    expect(settingsSchema.parse({ apps: { localConnectors: 'oops' } }).apps.localConnectors).toEqual(
-      {},
-    );
+    expect(
+      settingsSchema.parse({ apps: { localConnectors: 'oops' } }).apps.localConnectors,
+    ).toEqual({});
     expect(
       settingsSchema.parse({ apps: { localConnectors: { l1: { anything: true } } } }).apps
         .localConnectors,

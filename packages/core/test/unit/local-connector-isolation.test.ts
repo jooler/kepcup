@@ -32,7 +32,10 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function localEntry(url = 'https://mcp.local-example.com/mcp', title = 'Local'): ConnectorCatalogEntry {
+function localEntry(
+  url = 'https://mcp.local-example.com/mcp',
+  title = 'Local',
+): ConnectorCatalogEntry {
   const slug = localConnectorSlug(localConnectorOrigin(url)!);
   return connectorCatalogEntrySchema.parse({
     name: localConnectorName(slug),
@@ -103,7 +106,11 @@ describe('ConnectorCatalog local() source', () => {
   it('picks up changes by revision (add / remove) without rebuilding the catalog', () => {
     let revision = 0;
     let entries: ConnectorCatalogEntry[] = [];
-    const catalog = new ConnectorCatalog({ env: {}, source: { entries: [], iconsDir: null }, approvedGates: null });
+    const catalog = new ConnectorCatalog({
+      env: {},
+      source: { entries: [], iconsDir: null },
+      approvedGates: null,
+    });
     catalog.attachLocal({ revision: () => revision, entries: () => entries });
     expect(catalog.list()).toEqual([]);
     entries = [localEntry()];
@@ -123,7 +130,10 @@ describe('ConnectorCatalog local() source', () => {
     // A bundled entry that took the local slug.
     const sameSlug = fakeCatalogEntry({ slug: meta.slug, url: 'https://mcp.other.test/mcp' });
     // A remote-only entry that took the local name.
-    const sameName = { ...fakeCatalogEntry({ slug: 'zeta', url: 'https://mcp.zeta.test/mcp' }), name: local.name };
+    const sameName = {
+      ...fakeCatalogEntry({ slug: 'zeta', url: 'https://mcp.zeta.test/mcp' }),
+      name: local.name,
+    };
     for (const taken of [sameSlug, sameName]) {
       const result = buildConnectorCatalog({
         env: {},
@@ -151,9 +161,16 @@ describe('ConnectorCatalog local() source', () => {
   it('has no bundled icon: iconSvg is null even when a file with the placeholder name exists', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'lc-icons-'));
     dirs.push(dir);
-    writeFileSync(path.join(dir, LOCAL_CONNECTOR_ICON), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    writeFileSync(
+      path.join(dir, LOCAL_CONNECTOR_ICON),
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    );
     const local = localEntry();
-    const catalog = new ConnectorCatalog({ env: {}, source: { entries: [], iconsDir: dir }, approvedGates: null });
+    const catalog = new ConnectorCatalog({
+      env: {},
+      source: { entries: [], iconsDir: dir },
+      approvedGates: null,
+    });
     catalog.attachLocal({ revision: () => 1, entries: () => [local] });
     expect(catalog.iconSvg(connectorMetaOf(local).slug)).toBeNull();
   });
@@ -177,7 +194,9 @@ describe('the signed directory path never carries a local connector', () => {
     squatNameVerified['name'] = local.name;
     const merged = mergeDirectoryEntries(
       [connectorCatalogEntrySchema.parse(bundled('alpha'))],
-      [squatGate, squatNameVerified, squatName].map((entry) => connectorCatalogEntrySchema.parse(entry)),
+      [squatGate, squatNameVerified, squatName].map((entry) =>
+        connectorCatalogEntrySchema.parse(entry),
+      ),
       undefined,
     );
     expect(merged.dropped.map((item) => item.reason)).toEqual([
@@ -222,7 +241,9 @@ describe('the signed directory path never carries a local connector', () => {
       'packages/core/src/apps/directory-sync.ts',
       'packages/core/src/apps/directory-merge.ts',
     ]) {
-      expect(readFileSync(path.join(repoRoot, file), 'utf8'), file).not.toContain('localConnectors');
+      expect(readFileSync(path.join(repoRoot, file), 'utf8'), file).not.toContain(
+        'localConnectors',
+      );
     }
   });
 });

@@ -42,7 +42,9 @@ const tool = (name: string, extra: Partial<McpTool> = {}): McpTool =>
   }) as McpTool;
 const READ = tool('list_notes', { annotations: { readOnlyHint: true } });
 const WRITE = tool('create_note', { annotations: { readOnlyHint: false, destructiveHint: false } });
-const DESTRUCTIVE = tool('delete_all', { annotations: { readOnlyHint: false, destructiveHint: true } });
+const DESTRUCTIVE = tool('delete_all', {
+  annotations: { readOnlyHint: false, destructiveHint: true },
+});
 
 function setup(tier: 'builtin' | 'developer') {
   env = openRealMainDb();
@@ -89,7 +91,9 @@ describe('tier=developer on a catalog connection', () => {
     expect(binding.decide(WRITE)).toMatchObject({ risk: 'write', approval: 'ask' });
     expect(binding.decide(DESTRUCTIVE)).toMatchObject({ risk: 'destructive', approval: 'ask' });
     // The gateway's call-time path agrees.
-    expect(apps.decisionFor('conn_n', 'list_notes', { risk: 'read', source: 'annotation' })).toMatchObject({
+    expect(
+      apps.decisionFor('conn_n', 'list_notes', { risk: 'read', source: 'annotation' }),
+    ).toMatchObject({
       approval: 'ask',
     });
   });
@@ -120,14 +124,18 @@ describe('no standing grants for developer tier', () => {
   });
 
   it('the approval card only offers "once", even for a grantable write', () => {
-    expect(appToolDurations({ tier: 'developer', risk: 'write', grantable: false })).toEqual(['once']);
+    expect(appToolDurations({ tier: 'developer', risk: 'write', grantable: false })).toEqual([
+      'once',
+    ]);
     // (the gateway passes grantable=false for developer tier; a defective caller still cannot widen it
     // beyond community's set because assertGrantAllowedForTier refuses the grant itself)
-    expect(() => assertGrantAllowedForTier({ tier: 'developer', conversationId: 'conv_1' })).toThrow(
-      /每次调用都需要确认/,
-    );
+    expect(() =>
+      assertGrantAllowedForTier({ tier: 'developer', conversationId: 'conv_1' }),
+    ).toThrow(/每次调用都需要确认/);
     expect(() => assertGrantAllowedForTier({ tier: 'developer', conversationId: null })).toThrow();
-    expect(() => assertGrantAllowedForTier({ tier: 'builtin', conversationId: null })).not.toThrow();
+    expect(() =>
+      assertGrantAllowedForTier({ tier: 'builtin', conversationId: null }),
+    ).not.toThrow();
   });
 });
 
@@ -192,6 +200,8 @@ describe('createGuardedMcpFetch (MCP traffic of a local connection)', () => {
     const ok = await guarded(`${base}/a`, { method: 'POST', body: '{}' });
     expect(await ok.text()).toBe('landed');
     await expect(guarded(`${base}/out`)).rejects.toMatchObject({ code: 'OAUTH_INSECURE_ENDPOINT' });
-    await expect(guarded(`${base}/meta`)).rejects.toMatchObject({ code: 'OAUTH_INSECURE_ENDPOINT' });
+    await expect(guarded(`${base}/meta`)).rejects.toMatchObject({
+      code: 'OAUTH_INSECURE_ENDPOINT',
+    });
   });
 });

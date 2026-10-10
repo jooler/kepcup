@@ -64,7 +64,10 @@ export function assertGrantAllowedForTier(input: {
   conversationId: string | null | undefined;
 }): void {
   if (!tierAllowsStandingGrants(input.tier)) {
-    throw new AppError('APPROVAL_DENIED', '未审核来源（本机连接）的工具每次调用都需要确认，不能设为持续授权');
+    throw new AppError(
+      'APPROVAL_DENIED',
+      '未审核来源（本机连接）的工具每次调用都需要确认，不能设为持续授权',
+    );
   }
   if ((input.conversationId ?? null) === null && !tierAllowsBotLevelGrant(input.tier)) {
     throw new AppError(
