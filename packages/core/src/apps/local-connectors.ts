@@ -133,6 +133,11 @@ export class LocalConnectors implements LocalConnectorSource {
     return this.#revision;
   }
 
+  /** 设置在本服务之外被改过（导入 / 恢复 / 测试）：让目录在下一次读取时重新合并。 */
+  reload(): void {
+    this.#bump();
+  }
+
   entries(): readonly ConnectorCatalogEntry[] {
     return this.#records().map((record) => record.entry);
   }
@@ -228,7 +233,9 @@ export class LocalConnectors implements LocalConnectorSource {
       if (this.catalog.isLocal(connectorMetaOf(entry).slug)) continue;
       const remote = connectorRemoteOf(entry);
       if (remote !== null && localConnectorOrigin(remote.url) === origin) {
-        throw reject(`该服务已经在应用目录里（「${entry.title}」），请直接请求连接它，不需要本机连接`);
+        throw reject(
+          `该服务已经在应用目录里（「${entry.title}」），请直接请求连接它，不需要本机连接`,
+        );
       }
     }
 
@@ -349,14 +356,20 @@ export class LocalConnectors implements LocalConnectorSource {
     // 一次性：无论成败都不能再用同一个 id。
     this.#proposals.delete(proposalId);
     if (proposal === undefined || proposal.expiresAt <= this.#deps.clock.now()) {
-      throw new AppError('LOCAL_CONNECTOR_EXPIRED', '这个添加请求已过期或已处理，请让 Bot 重新发起');
+      throw new AppError(
+        'LOCAL_CONNECTOR_EXPIRED',
+        '这个添加请求已过期或已处理，请让 Bot 重新发起',
+      );
     }
     const meta = connectorMetaOf(proposal.record.entry);
     const current = this.#deps.settings.get().apps;
     const already = this.#records().find((item) => connectorMetaOf(item.entry).slug === meta.slug);
     if (already !== undefined) return { connectorId: meta.slug, title: already.entry.title };
     if (this.#records().length >= LOCAL_CONNECTORS_MAX) {
-      throw new AppError('LOCAL_CONNECTOR_REJECTED', `本机连接已达上限（${LOCAL_CONNECTORS_MAX} 个）`);
+      throw new AppError(
+        'LOCAL_CONNECTOR_REJECTED',
+        `本机连接已达上限（${LOCAL_CONNECTORS_MAX} 个）`,
+      );
     }
     // 提案之后目录可能新增了同服务的条目（远端同步）：落库前再核一次。
     for (const entry of this.catalog.list()) {
@@ -368,7 +381,10 @@ export class LocalConnectors implements LocalConnectorSource {
         entry.name === proposal.record.entry.name ||
         (remote !== null && localConnectorOrigin(remote.url) === origin)
       ) {
-        throw new AppError('LOCAL_CONNECTOR_REJECTED', `该服务已经在应用目录里（「${entry.title}」）`);
+        throw new AppError(
+          'LOCAL_CONNECTOR_REJECTED',
+          `该服务已经在应用目录里（「${entry.title}」）`,
+        );
       }
     }
     this.#deps.settings.update({
@@ -385,7 +401,10 @@ export class LocalConnectors implements LocalConnectorSource {
       botId: proposal.botId,
       conversationId: proposal.conversationId,
     });
-    this.#deps.logger.info({ slug: meta.slug, host: proposal.card.mcpHost }, 'local connector added');
+    this.#deps.logger.info(
+      { slug: meta.slug, host: proposal.card.mcpHost },
+      'local connector added',
+    );
     return { connectorId: meta.slug, title: proposal.record.entry.title };
   }
 
@@ -399,9 +418,7 @@ export class LocalConnectors implements LocalConnectorSource {
     if (current.localConnectors[connectorId] === undefined) {
       throw new AppError('NOT_FOUND', `没有本机连接「${connectorId}」`);
     }
-    const record = this.#records().find(
-      (item) => connectorMetaOf(item.entry).slug === connectorId,
-    );
+    const record = this.#records().find((item) => connectorMetaOf(item.entry).slug === connectorId);
     const host =
       record !== undefined ? new URL(connectorRemoteOf(record.entry)!.url).host : '(invalid)';
     const sweep = async (): Promise<void> => {
@@ -535,7 +552,10 @@ export function createGuardedMcpFetch(loopbackAllowlist: readonly string[]): Mcp
         if (next.origin !== origin) {
           throw new AppError('OAUTH_INSECURE_ENDPOINT', '本机连接的 MCP 请求不允许跨源重定向');
         }
-        if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
+        if (
+          response.status === 303 ||
+          ((response.status === 301 || response.status === 302) && method === 'POST')
+        ) {
           method = 'GET';
           body = undefined;
         }

@@ -72,9 +72,13 @@ export function bindAppsConnectionMethods(
     })),
     // 本机连接（todo/local-connector-authoring.md §2.4）：confirm 在开发者模式关闭时被拒；
     // remove 任何时候可用（断开全部连接 → 删条目）；reject = 确认卡上点「取消」。
-    'apps.localConnectors.list': method(z.void(), appsLocalConnectorsListOutputSchema, async () => ({
-      connectors: local().list(),
-    })),
+    'apps.localConnectors.list': method(
+      z.void(),
+      appsLocalConnectorsListOutputSchema,
+      async () => ({
+        connectors: local().list(),
+      }),
+    ),
     'apps.localConnectors.confirm': method(
       appsLocalConnectorsConfirmInputSchema,
       appsLocalConnectorsConfirmOutputSchema,
