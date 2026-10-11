@@ -29,7 +29,11 @@
   import SandboxWizard from '$lib/features/settings/SandboxWizard.svelte';
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
   import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
+  import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
   import * as Sidebar from '$lib/components/ui/sidebar';
+
+  // 全局弹层拖拽带：任何全屏浮层打开时窗口仍可从顶部拖动（模块头注释）。
+  $effect(() => mountWindowDragBand());
 
   let started = false;
   $effect(() => {

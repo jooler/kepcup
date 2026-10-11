@@ -118,12 +118,22 @@ test.describe('对话附件与媒体', () => {
       const thumbnail = page.locator('[data-testid="attachment-image"] img');
       await expect(thumbnail).toBeVisible({ timeout: 30_000 });
 
-      // 灯箱：点击缩略图打开，Esc 关闭。
+      // 灯箱：点击缩略图打开，Esc 关闭。开着时全局拖拽带应激活（窗口仍可拖），
+      // 且带是 body 最后一个子节点——app-region 矩形按 DOM 顺序后者胜出，
+      // 排不到最后就压不过浮层的 no-drag（window-drag-band.ts）。
       await page.locator('[data-testid="attachment-image"]').click();
       await expect(page.locator('[data-testid="lightbox"]')).toBeVisible();
       await expect(page.locator('[data-testid="lightbox-image"]')).toBeVisible();
+      const dragBand = page.locator('[data-testid="window-drag-band"]');
+      await expect(dragBand).toHaveAttribute('data-active', 'true');
+      await expect
+        .poll(() =>
+          page.evaluate(() => document.body.lastElementChild?.getAttribute('data-testid')),
+        )
+        .toBe('window-drag-band');
       await page.locator('[data-testid="lightbox-close"]').click();
       await expect(page.locator('[data-testid="lightbox"]')).toBeHidden();
+      await expect(dragBand).toHaveAttribute('data-active', 'false');
 
       // Bot 回复照常到达（附件发送不影响响应链路）。
       await expect(

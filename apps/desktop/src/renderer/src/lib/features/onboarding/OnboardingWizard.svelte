@@ -351,9 +351,12 @@
   }
 </script>
 
+<!-- data-window-overlay:接入全局弹层拖拽带(window-drag-band.ts),向导开着时窗口仍可拖;
+     卡片垂直居中,不会伸进顶部 40px 拖拽带。 -->
 <div
   class="app-no-drag fixed inset-0 z-50 flex items-center justify-center bg-background/95"
   data-testid="onboarding"
+  data-window-overlay
   data-step={step}
 >
   <div class="w-full max-w-xl rounded-lg border bg-background p-6 shadow-sm">
