@@ -5,7 +5,7 @@ import { BOT_WIDGET_HEIGHT_MAX, BOT_WIDGET_HEIGHT_MIN } from '@kepcup/shared';
  * opaque origin iframe 里——没有 localStorage / fetch / window.kepcup，与宿主的唯一
  * 通道是 postMessage。core 在 `widgets.ui.open` 登记 HTML 时把这段内联 `<script>`
  * 前置进去（响应头 CSP 的 `script-src 'unsafe-inline'` 允许内联），组件即可用
- * `window.kepcup.*`（storage / openLink / theme / setHeight，全部 promise 化）。
+ * `window.kepcup.*`（storage / query / openLink / theme / setHeight，全部 promise 化）。
  *
  * 垫片是静态文本：关联凭据（resourceId）由渲染端宿主桥附加，不进这里——因此
  * 不存在把不可信内容拼进脚本的注入面。插入点必须是 `<!DOCTYPE html>` **之后**
@@ -13,6 +13,9 @@ import { BOT_WIDGET_HEIGHT_MAX, BOT_WIDGET_HEIGHT_MIN } from '@kepcup/shared';
  * `<head>` 开标签之后，找不到再退到 doctype 的 `>` 之后，两者都没有（本就不规范
  * 的 HTML）才前置到文档最开头。已知失效模式（垫片被注释 / 属性值吞掉，`window.kepcup`
  * 不存在）：Bot 把 `<head>` 字样写进注释或属性——自伤且无副作用，不做廉价探测。
+ *
+ * 暴露的 API（P1 storage/openLink/theme/setHeight，P2 query）：全部 promise 化
+ * （setHeight 是通知）；被拒时 reject 的 Error 带 `code`（机器可读错误码）。
  */
 
 /** 垫片的唯一指纹：幂等判定与「确认注入成功」都认它，不用协议里组件也会写的字段值。 */
@@ -76,6 +79,12 @@ export const WIDGET_SDK_SHIM = `<script>/* ${WIDGET_SDK_MARKER} */
       set: function (key, value) { return send('storage.set', { key: requireKey(key), value: value }); },
       delete: function (key) { return send('storage.delete', { key: requireKey(key) }); },
       list: function () { return send('storage.list', {}); }
+    },
+    query: function (name, params) {
+      if (typeof name !== 'string' || name.length === 0) {
+        return Promise.reject(new Error('kepcup.query 需要一个非空字符串查询名'));
+      }
+      return send('query', { name: name, params: params === undefined ? {} : params });
     },
     openLink: function (url) {
       if (typeof url !== 'string' || url.length === 0) {

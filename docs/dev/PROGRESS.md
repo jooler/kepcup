@@ -1297,3 +1297,32 @@ P0 骨架（卡片 + 审查态 + 协议分流）之上补齐能力桥：Bot 写�
 - **垫片安全网（审查 P1）**：高度常量从 shared 插值（消灭双份）；幂等指纹改唯一标记 `kepcup-widget-sdk-v1`（原标记是协议字段值，Bot 照抄文档即可误触「已注入」静默跳过）；新增 `sdk-injection.test.ts`（10 例）在 node 里**真实执行**垫片（promise 配对 / code 透传 / 来源校验 / requireKey / setHeight 夹取含数字字符串宽松接取 / 幂等早退）；guard 白名单测试改为遍历 `WIDGET_BRIDGE_METHODS` 本体——协议方法清单的四处手工同步从此有两处由测试自动跟随。
 - **其余**：`setHeight` 补 100ms 节流（复用 `createThrottle`，rAF 连发不再逐帧重排版）；KV 写入改「存在性单查 + count/sum 聚合」并抽 `#storageSet`（修掉 `JSON.stringify ?? ''` 语义错误）；`resource()` 补 host 派生二次校验；外链确认条抽 `LinkConfirmBar.svelte`（安全 UI 单一实现，McpAppCard / BotWidgetCard 共用）；`WidgetBridgeHost` 监听目标可注入 → 协议级测试无需 DOM；reload 复位卡片高度；测试时钟魔数收敛为 `advance(RATE_TICK_MS)`；inflight 上限如实标注「P2 预留」（当前全同步不生效）；dev/03 `widget_docs` 补 P1 写入方与配额。
 - **验证**：定向 97 例全绿（widgets-service 21、sdk-injection 10、bridge-guard 6、bridge-host 9、widget-tools 7、supervisor-turn 21、context-assembly 14、apps-ui bridge-guard 9）；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。**收口全量**（3745 例）：`environment.test` checksum 为已记录本机 flake；另甄别 `connected-apps-p2-egress` 委托污点用例——整文件跑超时、`-t` 单跑 2.7s 恒过、HEAD（不含本轮修复）同败、同代码当日早些两度全文件通过：定性为本机时序敏感的文件级用例间交互 flake（与 `environment.test` 同族），非本功能引入，留观察。
+
+
+## Bot Widgets P2——命名只读查询与 `scope='bot'` 资产管理（2026-10-11，design/32 §6/§9，D81 续）
+
+P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
+
+- **命名只读查询模板**（查询免审的唯一理由是 SQL 在交付时被人工预审）：迁移 `0029`（`widget_queries` 表 + `widget_versions.queries_sha256` 列）；`widget_create`/`widget_update` 收 `queries`（每版本全量快照，≤20 条，名字 `[A-Za-z0-9_-]{1,64}`，SQL ≤64KB）；交付时 `prepare` + 只读门槛（`stmt.readonly` 且首关键词必须 SELECT/WITH——`sqlite3_stmt_readonly` 对 `pragma foreign_keys=off` / `attach` 也返回 true，连接级副作用必须挡在门外；prepare 编译顺带在交付时暴露语法错与表不存在）。运行时 `widgets.ui.query` 按**卡片钉住的版本**取模板（旧卡永远用旧模板）、对库行再跑同一门槛，参数只收 JSON 标量（boolean 归一 1/0），行数上限 200 截断并标 `truncated`，行值 JSON 安全（BLOB → base64）。超时无法真中断（better-sqlite3 同步执行、core 单线程）：扫描耗时以人工预审为主要边界，design 32 §6 与 service 注释写明。新错误码 `WIDGET_QUERY_UNKNOWN` / `WIDGET_QUERY_FAILED`（登记三件套：errors.ts + zh-CN + 工具指南）。
+- **确认指纹覆盖查询**：卡片描述符加 `queriesSha256`/`queriesCount`（default 兼容旧卡），open/source 完整性校验扩到摘要；渲染端确认记忆键改 `sha256|queriesSha256`——HTML 不变、仅查询变化的新版本同样要求重新确认。审查态「查看源码」展示模板 SQL 全文，声明了查询的版本有醒目提示行；footer 能力文案补「查库仅限已审查的只读模板」。
+- **管理入口**（形态经用户确认：Bot 详情右栏新「组件」Tab）：RPC `widgets.list` / `widgets.delete`（botId 校验、清四表、摘除在途内存资源——已挂 iframe 下一次桥调用即 `WIDGET_RESOURCE_EXPIRED`，历史卡片优雅报错）/ `widgets.publish`。`WidgetsTab.svelte`：跨对话资产在上（带「发到当前对话」）、会话级分组在下、两步删除确认（SchedulesPanel 先例）。
+- **跨对话引用**：`widget_update` 解禁 Bot 级组件（可在任意对话更新，新卡发当前对话；会话级仍固定归属对话）；新工具 `widget_publish{widget_id}` 把 Bot 级组件最新版发卡到当前对话（不落新版本，受每 run 8 张上限约束）。工具指南 / system prompt / dev 04 工具目录同步。
+- **inflight 措辞按实际修正**：query 落地后能力桥调用（storage/query）依然全同步（acquire→release 无 await、单线程不可重叠），`BOT_WIDGET_CALLS_INFLIGHT_MAX` 定性为纵深防线（未触达），不再写「为 P2 预留」。
+- **测试**：`widgets-service.test.ts` 21→33 例（登记与摘要 / 只读门槛全矩阵含 PRAGMA、ATTACH、WITH-INSERT、多语句 / 版本钉住换模板 / 参数归一与缺参 / 行数截断 / 限速、过期 / 摘要不一致 `WIDGET_INVALID` / list/delete/publish）；`sdk-injection.test.ts` 10→12 例（query 形状与 params 缺省 / code 透传 / 前置校验）；`widget-bridge-host.test.ts` 9→12 例（query dispatch / 前置拒 / 错误码透传）；`widget-tools.test.ts` 7→9 例；`create-core`（user_version=29 + `widget_queries`）与 `public-skills-migration`（回拨摘除新表）复绿；`supervisor-turn` / `context-assembly` / `app-prompt-capabilities`（提示词波及面）回归绿。shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。
+- 影响范围：shared `domain/widgets-ui.ts`（query + 管理面 schema、卡片新字段、查询常量）、`errors.ts`（2 码）；core `migrations/main/0029_widget_queries.sql`、`widgets/{service,resource-store,sdk-injection}.ts`、`rpc/widgets-ui-bindings.ts`、`tools/widget-tools.ts`、`agent/context/system-prompt.ts`；desktop renderer `features/widgets/{BotWidgetCard.svelte,widget-bridge-guard.ts,widget-bridge-host.ts}`、`features/right-panel/{WidgetsTab.svelte,RightPanel.svelte}`、`i18n/locales/zh-CN.ts`。**生效需 `shared`/`core` dist 重建（已执行）并完全重启应用**（迁移 0029 首次启动落库）。
+
+
+## Bot Widgets P2 独立审查修复轮——回执字节上限、在途资源摘除与负结果信号（2026-10-11，D81 续）
+
+两个独立审查（安全与正确性 50+ 真实探针 / 工程质量）对 P2 的结论：**无 P0；只读门槛与信任模型零绕过**（注释变体、12 种 PRAGMA、ATTACH/DETACH、VACUUM INTO、WITH…INSERT、load_extension、触发器路径全部被拦或不可达）。按长期收益最大化修复全部 P1/P2 与可低成本落地的 P3：
+
+- **回执字节上限（审查 P2）**：行数上限约束不了行宽（探针：200 行 × 100KB 列 = 20MB 回执）。query 逐行累计回执 JSON 字节，超过 `BOT_WIDGET_QUERY_RESULT_MAX_BYTES`（1MB，与桥入站上限对齐）即截断标 `truncated`，溢出行不返回；指南写明「回执总量约 1MB」。
+- **deleteForBot 摘除在途资源（审查 P2）**：lifecycle 删 Bot 原本只清库行，存活 iframe 在 TTL 内会打到已消失的库行——KV 写收到裸 `FOREIGN KEY constraint failed` 英文错误。现在先查 widgetId 再删行、逐个 `removeForWidget`，与管理入口 delete() 的失败模式（`WIDGET_RESOURCE_EXPIRED`）一致。
+- **大整数精度（审查 P2）**：better-sqlite3 非 safeIntegers 把 bigint 按 double 绑——参数超出 ±2^53 现在响亮拒绝（`INVALID_INPUT`）而不是静默查错行；指南注明结果侧超大整数列会失去精度。
+- **`__proto__` 命名参数（审查 P2）**：对象键赋值是原型操作，`:__proto__` 永远绑不上但人审会放行——交付时正则即拒（大小写不敏感），报「请换一个名字」。
+- **模板内容偷换防线（审查 P3 建议）**：`#pinnedVersion` 现在对 `widget_queries` 现行内容复算摘要、与版本行记录互核——只改模板内容、不动版本行摘要的「审查对象偷换」在 open/source 即拒（`WIDGET_INVALID`）。
+- **负结果信号（两审查各报一半）**：`widget_publish` 发卡失败分支的占位文案错乱（「组件「已存在」」）修正——`WidgetWriteResult` ok 分支补 `title`，文案带组件名与 widgetId；`widgets.publish` RPC 的 UI 路径不再假报成功：删除检查 `{ok:false}`，发布区分「已发卡 / 已引用但发卡失败（toast.warning）」；审查态提示按「是否声明查询」分支，消除「读不到你的其他数据」与查询提示的自相矛盾。
+- **口径与复用（审查 P3）**：`listForBot` 的 sizeBytes 从 `length(v.html)`（字符数，CJK 偏小）改 `length(cast(v.html as blob))`（字节，与卡片描述符同口径）；WidgetsTab 复用 `formatBytes` 不再自带一份。
+- **审查裁决不加的**：`widgets.changed` 事件（Tab 激活刷新 + 手动刷新足够，主场景是盯对话不是盯右栏）；publish RPC 的发卡配额（用户手点属自主行为）；`#gateReadonlyQuery` 与 query() 双查不收敛（错误语义不同：INVALID_INPUT vs WIDGET_QUERY_FAILED）。
+- **验证**：`widgets-service.test.ts` 33→37 例（字节上限 / bigint 拒绝 / `__proto__` 拒绝 / 摘要复算 / deleteForBot 摘资源）、`widget-tools.test.ts` 扩 publish 失败文案断言；`supervisor-turn` 等提示词波及面回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。收口全量一次的甄别结论见下。
+- 工作区提示：本轮树上有并行会话的 `docs/design/34-supplier.md`（D83）与 design README 的 D83/34 行，与本功能无关，提交时需拆分。

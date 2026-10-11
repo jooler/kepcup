@@ -1,4 +1,11 @@
-import { BOT_WIDGET_STORAGE_KEY_MAX_CHARS, type WidgetsUiStorageCall, type WidgetsUiStorageOutput } from '@kepcup/shared';
+import {
+  BOT_WIDGET_QUERY_NAME_MAX_CHARS,
+  BOT_WIDGET_STORAGE_KEY_MAX_CHARS,
+  type WidgetsUiQueryCall,
+  type WidgetsUiQueryOutput,
+  type WidgetsUiStorageCall,
+  type WidgetsUiStorageOutput,
+} from '@kepcup/shared';
 import { createThrottle, normalizeAppLink } from '../apps-ui/bridge-guard';
 import {
   clampWidgetHeight,
@@ -20,6 +27,7 @@ export interface WidgetBridgeListenerTarget {
  * 在 opaque origin 里，postMessage 只能 `targetOrigin '*'`），过白名单后分派：
  *
  * - `storage.*` → core RPC `widgets.ui.storage`（resourceId 在这里附加，core 反查命名空间）；
+ * - `query` → core RPC `widgets.ui.query`（P2：按名字执行随版本预审的只读查询模板）；
  * - `openLink` → 先 renderer 侧 https 规范化，再交给卡片出确认条（用户同意后走
  *   `widgets.ui.openLink`）；一次只挂一条，卡片拒绝后有冷却；
  * - `theme.get` → 建桥时的宿主主题（一次性，不推送变更）；
@@ -38,6 +46,8 @@ export interface WidgetBridgeHostOptions {
   theme: 'light' | 'dark';
   /** 转发 `widgets.ui.storage`（卡片负责 schema.parse + 错误透传）。 */
   storage(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput>;
+  /** 转发 `widgets.ui.query`（P2：按名字执行随版本预审的只读查询模板）。 */
+  query(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput>;
   /** 外链确认（卡片出确认条；resolve = 用户同意且打开成功）。 */
   openLink(url: string): Promise<boolean>;
   onHeight(height: number): void;
@@ -122,6 +132,29 @@ export class WidgetBridgeHost {
       case 'storage.list': {
         const out = await this.#options.storage({ op: 'list' });
         return { value: out.op === 'list' ? out.keys : [] };
+      }
+      case 'query': {
+        const name = payload['name'];
+        if (typeof name !== 'string' || name.length === 0) {
+          return { error: 'kepcup.query 需要一个非空字符串查询名', code: 'INVALID_INPUT' };
+        }
+        if (name.length > BOT_WIDGET_QUERY_NAME_MAX_CHARS) {
+          // 与 core 的 schema 同上限；在这里前置拒绝，组件拿到可行动的中文说明。
+          return {
+            error: `查询名过长（最多 ${BOT_WIDGET_QUERY_NAME_MAX_CHARS} 字）`,
+            code: 'INVALID_INPUT',
+          };
+        }
+        const rawParams = payload['params'] ?? {};
+        if (rawParams === null || typeof rawParams !== 'object' || Array.isArray(rawParams)) {
+          return { error: 'query 的 params 必须是一个对象', code: 'INVALID_INPUT' };
+        }
+        return {
+          value: await this.#options.query({
+            name,
+            params: rawParams as Record<string, unknown>,
+          }),
+        };
       }
       case 'openLink': {
         // Renderer-side https gate next to core's; a malformed URL never reaches the confirm bar.

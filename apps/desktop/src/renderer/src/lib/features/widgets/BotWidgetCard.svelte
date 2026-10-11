@@ -10,10 +10,14 @@
     MCP_APP_LINK_COOLDOWN_MS,
     widgetsUiOpenLinkOutputSchema,
     widgetsUiOpenOutputSchema,
+    widgetsUiQueryOutputSchema,
     widgetsUiSourceOutputSchema,
     widgetsUiStorageOutputSchema,
     type WidgetCard,
+    type WidgetQueryDef,
     type WidgetsUiOpenOutput,
+    type WidgetsUiQueryCall,
+    type WidgetsUiQueryOutput,
     type WidgetsUiStorageCall,
     type WidgetsUiStorageOutput,
   } from '@kepcup/shared';
@@ -27,15 +31,17 @@
    * 对话里的 Bot 自制交互组件卡片（D81，docs/design/32-bot-widgets.md）。
    *
    * 审查态先行：Bot 生成的 HTML 是最低信任内容——初始不挂 iframe，展示版本与能力
-   * （禁网 / 本机 KV 存储），用户「查看源码」或「加载运行」。按 sha256 记忆确认（同版本
-   * 只确认一次，localStorage），新版本视为新代码。加载后 `widgets.ui.open` 登记
+   * （禁网 / 本机 KV 存储 / 预审查询模板），用户「查看源码」（含查询模板 SQL 全文）
+   * 或「加载运行」。按「HTML sha256 + 查询摘要」记忆确认（同版本只确认一次，
+   * localStorage），新版本或仅查询变化都视为新代码。加载后 `widgets.ui.open` 登记
    * 内存资源（core 在 HTML 前置 SDK 垫片），iframe `sandbox="allow-scripts"`
    * （opaque origin，无 preload）指向 `kepcup-app://widget-{hash}/{id}`。
    *
-   * 能力桥（P1）：`WidgetBridgeHost` 在挂 iframe 前监听，只信
+   * 能力桥（P1 / P2）：`WidgetBridgeHost` 在挂 iframe 前监听，只信
    * `event.source === frameWindow` 的消息——`storage.*` 转发为 `widgets.ui.storage`，
-   * `openLink` 先出卡内确认条（拒绝后冷却，同 McpAppCard），`setHeight` 夹取后调高度，
-   * `theme` 回建桥时的明暗主题。
+   * `query` 转发为 `widgets.ui.query`（随版本预审的只读模板），`openLink` 先出卡内
+   * 确认条（拒绝后冷却，同 McpAppCard），`setHeight` 夹取后调高度，`theme` 回建桥时
+   * 的明暗主题。
    */
   let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
 
@@ -46,6 +52,7 @@
   let frame = $state<HTMLIFrameElement | undefined>(undefined);
   let sourceOpen = $state(false);
   let sourceHtml = $state<string | null>(null);
+  let sourceQueries = $state<WidgetQueryDef[]>([]);
   let sourceError = $state(false);
   let sourceLoading = $state(false);
   /** 未上报前的缺省高度；组件可用 `kepcup.setHeight` 自适应（夹到 [100, 800]）。 */
@@ -71,7 +78,7 @@
         return;
       }
       // 确认在资源登记成功后记忆：open 失败不留下次自动重试失败请求的确认。
-      rememberConsent(card.sha256);
+      rememberConsent(consentKey(card));
       activeResource = out.resourceId;
       opened = out;
       await tick();
@@ -83,6 +90,7 @@
         resourceId: out.resourceId,
         theme: mode.current === 'dark' ? 'dark' : 'light',
         storage: (input) => callStorage(input),
+        query: (input) => callQuery(input),
         openLink: (url) =>
           new Promise<boolean>((resolve) => {
             // One confirmation at a time; a second request while one is open is refused.
@@ -118,6 +126,14 @@
     );
   }
 
+  /** `widgets.ui.query` 的渲染端出站（P2）：同上，错误（code/message）由桥透传给组件。 */
+  async function callQuery(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput> {
+    if (activeResource === null) throw new Error('组件界面已关闭');
+    return widgetsUiQueryOutputSchema.parse(
+      await core.call('widgets.ui.query', { ...input, resourceId: activeResource }),
+    );
+  }
+
   async function stop(): Promise<void> {
     generation += 1;
     pendingLink?.resolve(false);
@@ -148,6 +164,7 @@
           await core.call('widgets.ui.source', { messageId }),
         );
         sourceHtml = out.html;
+        sourceQueries = out.queries;
       } catch {
         // 失败不缓存错误文案：收起再展开即重试。
         sourceError = true;
@@ -180,11 +197,20 @@
 
   onMount(() => {
     // 卡片内容随消息固定（widget/version/sha 不变）：按版本记忆的确认直接自动加载。
-    if (consented(card.sha256)) void start();
+    if (consented(consentKey(card))) void start();
     return () => {
       void stop();
     };
   });
+
+  /**
+   * 确认记忆的指纹 = HTML sha256 + 查询模板摘要（P2）：HTML 不变、仅查询变化的
+   * 新版本同样视为新代码要求重新确认。旧确认（P1 时代只按 sha256 记）会失配、
+   * 多确认一次——安全方向的代价。
+   */
+  function consentKey(c: WidgetCard): string {
+    return `${c.sha256}|${c.queriesSha256}`;
+  }
 
   function consents(): Record<string, boolean> {
     try {
@@ -251,8 +277,14 @@
     <div class="border-t px-3 py-2" data-testid="bot-widget-review">
       <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <ShieldCheck class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        {t('botWidget.reviewNote')}
+        <!-- 声明了查询的版本换专门文案：笼统的「读不到你的其他数据」会与下方查询提示自相矛盾。 -->
+        {t(card.queriesCount > 0 ? 'botWidget.reviewNoteQueries' : 'botWidget.reviewNote')}
       </p>
+      {#if card.queriesCount > 0}
+        <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="bot-widget-queries-note">
+          {t('botWidget.queriesNote', { n: card.queriesCount })}
+        </p>
+      {/if}
       <div class="mt-2 flex gap-1">
         <Button
           size="sm"
@@ -274,6 +306,19 @@
         </Button>
       </div>
       {#if sourceOpen}
+        {#if sourceQueries.length > 0}
+          <div class="mt-2 rounded bg-muted p-2 text-[11px]" data-testid="bot-widget-queries">
+            <p class="mb-1 font-medium">{t('botWidget.queriesTitle')}</p>
+            {#each sourceQueries as query (query.name)}
+              <div class="mt-1">
+                <p class="text-muted-foreground">
+                  kepcup.query('{query.name}') →
+                </p>
+                <pre class="overflow-auto whitespace-pre-wrap leading-relaxed">{query.sql}</pre>
+              </div>
+            {/each}
+          </div>
+        {/if}
         <pre
           class="mt-2 max-h-64 overflow-auto rounded bg-muted p-2 text-[11px] leading-relaxed"
           data-testid="bot-widget-source"

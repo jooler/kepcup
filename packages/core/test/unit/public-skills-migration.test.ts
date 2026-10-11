@@ -58,7 +58,8 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table stickies;');
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
-    // main 0028（D81 bot widgets）的三表同样摘除（先子后父）。
+    // main 0028（D81 bot widgets）的三表与 0029（P2 查询模板）同样摘除（先子后父）。
+    db.exec('drop table widget_queries;');
     db.exec('drop table widget_docs;');
     db.exec('drop table widget_versions;');
     db.exec('drop table widgets;');

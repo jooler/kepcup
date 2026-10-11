@@ -38,6 +38,7 @@
 | main | `0026_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
 | main | `0027_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
 | main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
+| main | `0029_widget_queries.sql` | D81 P2：新表 `widget_queries`（命名只读查询模板）+ `widget_versions.queries_sha256` 列 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -614,9 +615,19 @@ CREATE TABLE widget_versions (
   version        INTEGER NOT NULL,
   html           TEXT NOT NULL,           -- ≤ BOT_WIDGET_HTML_MAX_BYTES（2MB）
   sha256         TEXT NOT NULL,           -- 渲染端按它记忆用户确认（同版本只确认一次）
+  queries_sha256 TEXT NOT NULL DEFAULT '', -- 0029：该版本查询模板摘要（确认指纹含它）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (widget_id, version)
+);
+
+-- 0029（P2）：命名只读查询模板，随版本登记（版本 = HTML + 查询的完整快照）。
+CREATE TABLE widget_queries (
+  widget_id  TEXT NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
+  version    INTEGER NOT NULL,
+  name       TEXT NOT NULL,               -- 组件内 kepcup.query(name, params) 的名字
+  sql        TEXT NOT NULL,               -- 单条只读 SELECT（交付时 prepare + 只读门槛预审）
+  PRIMARY KEY (widget_id, version, name)
 );
 
 CREATE TABLE widget_docs (
@@ -628,9 +639,10 @@ CREATE TABLE widget_docs (
 );
 ```
 
-- `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 三表（见删除级联表）。
+- `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 四表（见删除级联表）；管理界面删除走 `widgets.delete` → `WidgetService.delete`（级联相同，另摘除在途内存资源）。
 - `widget_docs` 是能力桥的每组件命名空间 KV（P1 起由 `widgets.ui.storage` 写入：值存 JSON 文本，配额单值 256KB / 总量 1MB / 1000 键，见设计 32 §6）；组件删除时随 widgets 行级联清除。
-- 服务层在 `core/src/widgets/service.ts`；HTML 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
+- `widget_queries`（P2）是能力桥查询的模板表：由 `widget_create` / `widget_update` 的 `queries` 参数写入（每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
+- 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
 
 ### delegations（D71，main 0016；0021 重建）
 
@@ -988,7 +1000,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
-| 该 Bot 的 widgets / widget_versions / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
+| 该 Bot 的 widgets / widget_versions / widget_queries / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |

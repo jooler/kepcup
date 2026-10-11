@@ -23,6 +23,7 @@ export const WIDGET_BRIDGE_METHODS: ReadonlySet<string> = new Set([
   'storage.set',
   'storage.delete',
   'storage.list',
+  'query',
   'openLink',
   'theme.get',
   'setHeight',

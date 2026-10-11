@@ -33,7 +33,7 @@ KepCup 现有三类第三方/生成内容，信任级从高到低：
 - core 进程内以 `node:vm` / isolated-vm 执行 Bot 写的 JS：`node:vm` 不是安全边界；core 只跑可信代码是不变量。
 - 运行时透传 raw SQL 到 better-sqlite3：注入面不可控；结构化查询改为「创建时人工预审的命名只读查询模板」（§6）。
 
-## 3. 数据模型（main.db `0028_widgets.sql`）
+## 3. 数据模型（main.db `0028_widgets.sql` + `0029_widget_queries.sql`）
 
 ```sql
 -- widgets：组件本体（元数据 + 最新版本号）
@@ -49,15 +49,26 @@ CREATE TABLE widgets (
   updated_at       INTEGER NOT NULL
 );
 
--- widget_versions：每个版本一份完整 HTML，只增不改（旧消息卡片钉住旧版本）
+-- widget_versions：每个版本一份完整 HTML，只增不改（旧消息卡片钉住旧版本）；
+-- queries_sha256（0029）是该版本查询模板的摘要（无模板为空串），审查指纹的一部分。
 CREATE TABLE widget_versions (
   widget_id    TEXT NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
   version      INTEGER NOT NULL,
   html         TEXT NOT NULL,
   sha256       TEXT NOT NULL,
+  queries_sha256 TEXT NOT NULL DEFAULT '',   -- 0029：查询模板摘要（按名字序 JSON 的 sha256）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   PRIMARY KEY (widget_id, version)
+);
+
+-- widget_queries（0029）：命名只读查询模板，随版本登记（版本 = HTML + 查询的完整快照）
+CREATE TABLE widget_queries (
+  widget_id  TEXT NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
+  version    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  sql        TEXT NOT NULL,
+  PRIMARY KEY (widget_id, version, name)
 );
 
 -- widget_docs：每个组件命名空间的 KV 文档存储（能力桥 P1 落地，表先行）
@@ -71,14 +82,15 @@ CREATE TABLE widget_docs (
 ```
 
 - 卡片消息**只存描述符**（widgetId、version、title 等），不存 HTML——与 `appUi` 卡「不含 HTML、不含令牌」同约定；旧卡永远指向其产出时的版本。
-- 删除级联：**会话删除** → `scope='conversation'` 的组件随 `conversations` 行 FK 级联清除；**Bot 删除** → bots 行改占位、FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 全部三表（登记 `docs/dev/03-data-model.md` 级联表）。`scope='bot'` 的组件跨对话存活，直到 Bot 删除或用户在管理界面删除（P2）。
+- 删除级联：**会话删除** → `scope='conversation'` 的组件随 `conversations` 行 FK 级联清除；**Bot 删除** → bots 行改占位、FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 全部四表（登记 `docs/dev/03-data-model.md` 级联表）。`scope='bot'` 的组件跨对话存活，直到 Bot 删除或用户在管理界面删除（P2）。
 
 ## 4. Bot 侧工具（task 面）
 
 | 工具 | 参数 | 行为 |
 |---|---|---|
-| `widget_create` | `title`(1–120)、`description`(给用户的一句话)、`html`(单文件 HTML，≤2MB)、`scope`?(`'conversation'`缺省/`'bot'`) | 建组件 + v1，落库，发卡片消息；返回 widgetId/version 与提示（不要再用文字复述代码） |
-| `widget_update` | `widgetId`、`html`、`changeNote` | 追加新版本并发**新卡**（版本只增不改，旧卡仍开旧版）；每 run 发卡上限同 MCP Apps（8 张） |
+| `widget_create` | `title`(1–120)、`description`(给用户的一句话)、`html`(单文件 HTML，≤2MB)、`queries`?(P2：命名只读查询模板清单，随版本全量快照)、`scope`?(`'conversation'`缺省/`'bot'`) | 建组件 + v1，落库，发卡片消息；返回 widgetId/version 与提示（不要再用文字复述代码） |
+| `widget_update` | `widgetId`、`html`、`queries`?(同 create 全量快照)、`changeNote` | 追加新版本并发**新卡**（版本只增不改，旧卡仍开旧版）；每 run 发卡上限同 MCP Apps（8 张）。P2 起 Bot 级组件可在**任何对话**更新，新卡发给当前对话 |
+| `widget_publish`（P2） | `widgetId` | 把 Bot 级组件（`scope='bot'`）的**最新版本**发卡到当前对话（跨对话引用）；不落新版本，走既有审查态流程，受每 run 卡数上限约束。会话级组件不外发 |
 
 - 两个工具都是**任务面**工具（对话轮只读纪律不动）；副作用记 `local`（不写 tool_effects 台账）。
 - HTML 校验：UTF-8 体积 ≤ `BOT_WIDGET_HTML_MAX_BYTES`（2MB，同 `MCP_APP_HTML_MAX_BYTES`）；标题/描述脱敏沿用 `secrets.redact`。
@@ -99,18 +111,18 @@ iframe(sandbox="allow-scripts") ──► 主进程协议处理器（既有） �
 - **协议与 URL 解析零改动**：widget 的 host 形如 `widget-{sha256(widgetId).slice(0,24)}`，通过既有 `parseAppUiUrl` 的 host 校验；renderer CSP `frame-src kepcup-app:` 已覆盖，**渲染端与主进程的 CSP/导航拦截/权限拒绝全部原样生效**。
 - 主进程唯一改动：`main/index.ts` 的 `fetchResource` 按 `host.startsWith('widget-')` 分流到平台方法 `widgets.ui.resource`。
 - widget 响应头 CSP：`buildAppCspHeader` 空域输出 = `default-src 'none'; sandbox allow-scripts; script/style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame/object/base/form 全禁`——比 MCP 应用更严（不可声明任何网络域）。
-- **审查态**（renderer）：卡片初始不挂 iframe，显示标题、版本、能力声明（"本组件禁网"、"不保存任何数据"，P1 起按能力桥实际开放更新）与「查看源码」「加载运行」；按版本 HTML 的 sha256（内容寻址）首次确认后记入 localStorage，之后自动加载；`widget_update` 产生的新版本视为新代码重新确认。open 失败不记忆确认（避免下次自动重试失败请求）。
+- **审查态**（renderer）：卡片初始不挂 iframe，显示标题、版本、能力声明（"本组件禁网"、"不保存任何数据"，P1 起按能力桥实际开放更新）与「查看源码」「加载运行」；按「版本 HTML 的 sha256 + 查询模板摘要」（P2 起，内容寻址）首次确认后记入 localStorage，之后自动加载——HTML 不变、仅查询变化的新版本同样视为新代码重新确认；`widget_update` 产生的新版本视为新代码重新确认。open 失败不记忆确认（避免下次自动重试失败请求）。审查态「查看源码」展示 HTML 原文**与查询模板 SQL 全文**（人工预审的落点），声明了查询的版本在审查态有一行醒目提示。
 - 组件关闭 / 过期沿用 `UiResourceStore` 的 TTL（30 分钟滑动）+ 上限（64）模型，重新打开即重新登记（HTML 在库里，不丢失）。
 - widget 内没有 preload：core 在 `widgets.ui.open` 登记资源时把 **SDK 垫片**（内联 `<script>`）前置进 HTML（仅内存资源；`widget_versions` 里的原文不动，审查态「查看源码」看到的仍是 Bot 写的原文），能力桥由卡片组件内的 postMessage 宿主桥提供（`WidgetBridgeHost`，只信 `event.source === iframe.contentWindow`，带关联 id，见 §6）。
 
-## 6. 能力桥（P1，已落地）
+## 6. 能力桥（P1 落地，P2 补查询）
 
 widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widgets.ui.*` RPC，core 执行）：
 
 | API | 行为 | 审批 |
 |---|---|---|
-| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键（单值 256KB）；限速每资源每秒 5 次（在途上限 3 为 P2 异步能力预留，当前调用全同步不生效）（`BOT_WIDGET_CALLS_*`，同 MCP Apps 语义的独立常量） | 免审（作用域天然隔离） |
-| `kepcup.query(name, params)`（P2） | 只能调用 `widget_create`/`widget_update` 时随版本登记的**命名只读查询模板**（`:param` 占位）；core `prepare()` 后校验 `stmt.readonly`，带行数/超时上限 | SQL 随版本被人审查，运行时免审 |
+| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键（单值 256KB）；限速每资源每秒 5 次（在途上限 3 是纵深防线：storage / query 都在 core 单线程同步执行，调用间不可能重叠，真正异步化的能力出现之前它不会触达）（`BOT_WIDGET_CALLS_*`，同 MCP Apps 语义的独立常量） | 免审（作用域天然隔离） |
+| `kepcup.query(name, params)`（P2，已落地） | 只能调用 `widget_create`/`widget_update` 时随**卡片钉住版本**登记的命名只读查询模板（`:param` 占位）；core `prepare()` 后校验 `stmt.readonly` **且首关键词必须 SELECT/WITH**（sqlite3_stmt_readonly 对 PRAGMA / ATTACH 也返回 true，`pragma foreign_keys=off` 这类改连接状态的语句必须挡在门外；交付与运行时同门槛双查，open 时还对模板内容复算摘要防「审查对象被偷换」），带行数上限（200 行）与**回执字节上限**（1MB，行数约束不了行宽；超出任一上限截断并标记 `truncated`）。**超时语义**：better-sqlite3 同步执行、core 单线程，事件循环内无法真中断一条正在跑的 SQL——扫描耗时无法限时，人工预审是耗时边界的主要防线，行数/字节上限只约束输出体积。参数只允许 JSON 标量（boolean 归一 1/0；超出 ±2^53 的 bigint 拒绝——绑定按 double 会静默失真；结果侧超大整数列同样降精度），行是「列名→值」对象（BLOB → base64 字符串） | SQL 随版本被人审查，运行时免审 |
 | `kepcup.openLink(url)` | 与 `apps.ui.openLink` 同路径（https-only + 主进程白名单 + 卡内确认条 + 冷却） | 卡内确认 |
 | `kepcup.theme()` / `setHeight(px)` | 主题（建桥时一次性读取，不推送变更）与高度协商（夹取 `BOT_WIDGET_HEIGHT_MIN/MAX`，未上报时缺省 380px） | 免审 |
 
@@ -126,9 +138,9 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 
 ## 7. RPC 面
 
-- renderer → core：`widgets.ui.open {messageId}`（登记内存资源并返回 iframe 地址；同时做卡片 sha256 与版本行的一致性校验，不一致 → `WIDGET_INVALID`）、`widgets.ui.source {messageId}`（审查态取 HTML 原文，不登记资源）、`widgets.ui.close {resourceId}`；P1 已增 `widgets.ui.storage`（op: get/set/delete/list 判别 union）、`widgets.ui.openLink`。
+- renderer → core：`widgets.ui.open {messageId}`（登记内存资源并返回 iframe 地址；同时做卡片 sha256 与版本行的一致性校验，不一致 → `WIDGET_INVALID`）、`widgets.ui.source {messageId}`（审查态取 HTML 原文与查询模板全文，不登记资源）、`widgets.ui.close {resourceId}`；P1 已增 `widgets.ui.storage`（op: get/set/delete/list 判别 union）、`widgets.ui.openLink`；P2 已增 `widgets.ui.query`（能力桥查询）与管理入口 `widgets.list`（Bot 全部组件）/ `widgets.delete`（清四表 + 摘在途资源）/ `widgets.publish`（Bot 级组件发卡到指定对话）。
 - 平台（主进程 → core）：`widgets.ui.resource {resourceId, host}` → `{html, csp}`（html 为垫片版）。
-- 契约集中在 `packages/shared/src/domain/widgets-ui.ts`（写法同 `apps-ui.ts`）：`BOT_WIDGET_CARD_TYPE = 'bot_widget'`、`widgetCardSchema`、各 RPC in/out schema、体积/数量/配额/限速常量。卡片字段挂 `cardContentSchema.cardWidget`（同 `appUi` 的挂法）。
+- 契约集中在 `packages/shared/src/domain/widgets-ui.ts`（写法同 `apps-ui.ts`）：`BOT_WIDGET_CARD_TYPE = 'bot_widget'`、`widgetCardSchema`、各 RPC in/out schema、体积/数量/配额/限速/查询常量。卡片字段挂 `cardContentSchema.cardWidget`（同 `appUi` 的挂法）。
 
 ## 8. 安全清单
 
@@ -142,9 +154,9 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 
 ## 9. 分期
 
-- **P0（骨架）**：工具 + 迁移 + 卡片 + 审查态渲染 + 协议分流。验收：Bot 在对话里写出可交互组件，用户加载即用；重启后旧卡可重开且仍为原版本。
-- **P1（能力桥）**：postMessage 桥 + `storage` KV + `openLink` + 主题/高度。
-- **P2（结构化数据与资产）**：命名只读查询模板 + `query()`；`scope='bot'` 组件的管理入口（列表/删除/跨对话引用）。
+- **P0（骨架，已落地）**：工具 + 迁移 + 卡片 + 审查态渲染 + 协议分流。验收：Bot 在对话里写出可交互组件，用户加载即用；重启后旧卡可重开且仍为原版本。
+- **P1（能力桥，已落地）**：postMessage 桥 + `storage` KV + `openLink` + 主题/高度。
+- **P2（结构化数据与资产，已落地）**：命名只读查询模板 + `query()`；`scope='bot'` 组件的管理入口（Bot 详情「组件」Tab：列表/删除）+ 跨对话引用（`widget_publish` 工具 + `widget_update` 解禁到任意对话 + Tab 内「发到当前对话」）。
 
 ## 10. 本期不做
 

@@ -3,7 +3,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { BOT_WIDGET_CARD_TYPE, type Message, type WidgetCard } from '@kepcup/shared';
+import {
+  BOT_WIDGET_CARD_TYPE,
+  BOT_WIDGET_QUERY_RESULT_MAX_BYTES,
+  BOT_WIDGET_QUERY_ROWS_MAX,
+  type Message,
+  type WidgetCard,
+  type WidgetScope,
+} from '@kepcup/shared';
 import { openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
@@ -685,5 +692,482 @@ describe('WidgetService SDK 垫片注入（P1）', () => {
     expect(injectWidgetSdk(afterDoctype)).toBe(afterDoctype);
     // 垫片自身不含 </script> 以外的意外标签闭合。
     expect(WIDGET_SDK_SHIM.endsWith('</script>')).toBe(true);
+  });
+});
+
+
+describe('WidgetService 查询模板登记（P2）', () => {
+  const QUERIES = [
+    { name: 'by_month', sql: 'select month, sum(n) as total from qd where month = :month group by month' },
+    { name: 'all', sql: 'select n from qd order by n' },
+  ];
+
+  function seedQueryTable(db: Harness['db']): void {
+    db.exec('create table qd (month text, n integer, flag integer)');
+    db.prepare("insert into qd values ('2026-01', 1, 0), ('2026-02', 2, 1), ('2026-02', 3, 1)").run();
+  }
+
+  function createWith(
+    queries: Array<{ name: string; sql: string }>,
+    html: string = HTML,
+  ): { widgetId: string; messageId: string } {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '报表',
+      description: '',
+      html,
+      queries,
+      scope: 'conversation',
+      runId: 'r',
+    });
+    if (!created.ok) throw new Error('create failed');
+    return { widgetId: created.widgetId, messageId: h.cards[h.cards.length - 1]!.id };
+  }
+
+  it('create 带 queries：模板落库、版本行记摘要、卡片带 queriesSha256/queriesCount、source 返回按名字序全文', () => {
+    seedQueryTable(h.db);
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: '报表',
+      description: '',
+      html: HTML,
+      queries: [QUERIES[1], QUERIES[0]], // 乱序交付
+      scope: 'conversation',
+      runId: 'r',
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const rows = h.db
+      .prepare('select name, sql from widget_queries where widget_id = ? and version = 1 order by name')
+      .all(created.widgetId) as Array<{ name: string; sql: string }>;
+    expect(rows.map((r) => r.name)).toEqual(['all', 'by_month']);
+    const versionRow = h.db
+      .prepare('select queries_sha256 from widget_versions where widget_id = ? and version = 1')
+      .get(created.widgetId) as { queries_sha256: string };
+    expect(versionRow.queries_sha256).not.toBe('');
+    expect(cardOfLast(h.cards)).toMatchObject({
+      widgetId: created.widgetId,
+      queriesCount: 2,
+      queriesSha256: versionRow.queries_sha256,
+    });
+    const source = h.service.source(h.cards[h.cards.length - 1]!.id);
+    expect(source.queries.map((q) => q.name)).toEqual(['all', 'by_month']);
+    expect(source.queries[1]!.sql).toContain(':month');
+  });
+
+  it('登记校验：非只读 / PRAGMA / ATTACH / 多语句 / 坏名字 / 重名 / 超量 / 编译失败全部拒绝且不发卡', () => {
+    seedQueryTable(h.db);
+    const base = { botId: 'bot_a', conversationId: 'conv_1', scope: 'conversation' as const, runId: 'r' };
+    const q = (sql: string) => [{ name: 'q', sql }];
+    const cases: Array<{ label: string; sql: string }> = [
+      { label: 'insert', sql: 'insert into qd values (1)' },
+      { label: 'pragma', sql: 'pragma foreign_keys = off' },
+      { label: 'attach', sql: "attach database ':memory:' as x" },
+      { label: 'multi', sql: 'select 1; select 2' },
+      { label: 'with-insert', sql: 'with c as (select 1 as n) insert into qd select n from c' },
+    ];
+    for (const c of cases) {
+      expect(h.service.create({ ...base, title: 't', html: HTML, queries: q(c.sql) }).ok, c.label).toBe(false);
+    }
+    expect(
+      h.service.create({ ...base, title: 't', html: HTML, queries: [{ name: 'bad name!', sql: 'select 1' }] }).ok,
+    ).toBe(false);
+    expect(
+      h.service
+        .create({ ...base, title: 't', html: HTML, queries: [{ name: 'a', sql: 'select 1' }, { name: 'a', sql: 'select 2' }] })
+        .ok,
+    ).toBe(false);
+    expect(
+      h.service.create({
+        ...base,
+        title: 't',
+        html: HTML,
+        queries: Array.from({ length: 21 }, (_, i) => ({ name: `q${i}`, sql: 'select 1' })),
+      }).ok,
+    ).toBe(false);
+    // 引用不存在表的模板在交付时即被拒（prepare 编译校验）。
+    expect(
+      h.service.create({ ...base, title: 't', html: HTML, queries: [{ name: 'q', sql: 'select * from nope' }] }).ok,
+    ).toBe(false);
+    expect(h.cards).toHaveLength(0);
+  });
+
+  it('update 换模板：新版本用新模板，旧卡（钉 v1）只能调 v1 的模板；不传 queries = 新版本没有查询', () => {
+    seedQueryTable(h.db);
+    const created = createWith([QUERIES[0]]);
+    const v1MessageId = created.messageId;
+    const updated = h.service.update({
+      botId: 'bot_a',
+      widgetId: created.widgetId,
+      html: HTML, // HTML 相同、仅模板变化：摘要必须不同（确认指纹覆盖查询）
+      queries: [{ name: 'v2_only', sql: 'select n * 2 as doubled from qd' }],
+      changeNote: '换查询',
+      runId: 'r2',
+    });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    const v2Card = cardOfLast(h.cards);
+    expect(v2Card.queriesCount).toBe(1);
+    expect(v2Card.queriesSha256).not.toBe('');
+    const openedV1 = h.service.open({ messageId: v1MessageId });
+    advance(RATE_TICK_MS);
+    // 旧卡只能用 v1 的模板。
+    expect(
+      h.service.query({ resourceId: openedV1.resourceId, name: 'by_month', params: { month: '2026-02' } }),
+    ).toEqual({ rows: [{ month: '2026-02', total: 5 }], truncated: false });
+    advance(RATE_TICK_MS);
+    expect(() => h.service.query({ resourceId: openedV1.resourceId, name: 'v2_only', params: {} })).toThrow(
+      /WIDGET_QUERY_UNKNOWN|没有在这个组件版本里登记/,
+    );
+    // 新卡（v2）只能用 v2 的模板；v2 没登记 by_month。
+    const openedV2 = h.service.open({ messageId: h.cards[h.cards.length - 1]!.id });
+    advance(RATE_TICK_MS);
+    expect(h.service.query({ resourceId: openedV2.resourceId, name: 'v2_only', params: {} })).toEqual({
+      rows: [
+        { doubled: 2 },
+        { doubled: 4 },
+        { doubled: 6 },
+      ],
+      truncated: false,
+    });
+    advance(RATE_TICK_MS);
+    expect(() =>
+      h.service.query({ resourceId: openedV2.resourceId, name: 'by_month', params: { month: 'x' } }),
+    ).toThrow(/WIDGET_QUERY_UNKNOWN|没有在这个组件版本里登记/);
+    // update 不带 queries：v3 是「没有查询」的完整快照。
+    const v3 = h.service.update({
+      botId: 'bot_a',
+      widgetId: created.widgetId,
+      html: HTML.replace('>1<', '>3<'),
+      changeNote: '',
+      runId: 'r3',
+    });
+    expect(v3.ok).toBe(true);
+    expect(
+      h.db.prepare('select count(*) as n from widget_queries where widget_id = ? and version = 3').get(created.widgetId),
+    ).toEqual({ n: 0 });
+    const v3Row = h.db
+      .prepare('select queries_sha256 from widget_versions where widget_id = ? and version = 3')
+      .get(created.widgetId) as { queries_sha256: string };
+    expect(v3Row.queries_sha256).toBe('');
+    expect(cardOfLast(h.cards).queriesSha256).toBe('');
+  });
+
+  it('query：参数绑定（boolean 归一 1/0）、缺参数与坏参数类型报人话 + 机器码、行数上限截断', () => {
+    seedQueryTable(h.db);
+    h.db.exec('create table wide (n integer)');
+    const insert = h.db.prepare('insert into wide values (?)');
+    h.db.transaction(() => {
+      for (let i = 0; i < BOT_WIDGET_QUERY_ROWS_MAX + 20; i += 1) insert.run(i);
+    })();
+    const { messageId } = createWith([
+      { name: 'by_flag', sql: 'select n from qd where month = :month and flag = :flag' },
+      { name: 'page', sql: 'select n from wide order by n' },
+    ]);
+    const { resourceId } = h.service.open({ messageId });
+
+    advance(RATE_TICK_MS);
+    // flag: true → 1，命中两行。
+    expect(h.service.query({ resourceId, name: 'by_flag', params: { month: '2026-02', flag: true } })).toEqual({
+      rows: [{ n: 2 }, { n: 3 }],
+      truncated: false,
+    });
+    advance(RATE_TICK_MS);
+    // flag: false → 0，命中 flag=0 的行。
+    expect(h.service.query({ resourceId, name: 'by_flag', params: { month: '2026-01', flag: false } })).toEqual({
+      rows: [{ n: 1 }],
+      truncated: false,
+    });
+
+    advance(RATE_TICK_MS);
+    expect(() => h.service.query({ resourceId, name: 'by_flag', params: { flag: 1 } })).toThrow(
+      /WIDGET_QUERY_FAILED|缺少参数/,
+    ); // 缺 :month
+
+    advance(RATE_TICK_MS);
+    expect(() =>
+      h.service.query({ resourceId, name: 'by_flag', params: { month: { x: 1 }, flag: 1 } }),
+    ).toThrow(/INVALID_INPUT|只支持/); // 对象参数
+
+    advance(RATE_TICK_MS);
+    const paged = h.service.query({ resourceId, name: 'page', params: {} });
+    expect(paged.truncated).toBe(true);
+    expect(paged.rows).toHaveLength(BOT_WIDGET_QUERY_ROWS_MAX);
+    expect(paged.rows[0]).toEqual({ n: 0 });
+  });
+
+  it('query：未知模板；库行被外力改成写语句时运行时门槛再拦', () => {
+    seedQueryTable(h.db);
+    const { messageId } = createWith([{ name: 'all', sql: 'select n from qd' }]);
+    const { resourceId } = h.service.open({ messageId });
+    advance(RATE_TICK_MS);
+    expect(() => h.service.query({ resourceId, name: 'nope', params: {} })).toThrow(
+      /WIDGET_QUERY_UNKNOWN|没有在这个组件版本里登记/,
+    );
+
+    h.db.prepare("update widget_queries set sql = 'delete from qd' where name = 'all'").run();
+    advance(RATE_TICK_MS);
+    expect(() => h.service.query({ resourceId, name: 'all', params: {} })).toThrow(
+      /WIDGET_QUERY_FAILED|不是只读语句/,
+    );
+  });
+
+  it('query：与 storage 共用每资源每秒 5 次限速；过期 resourceId → WIDGET_RESOURCE_EXPIRED', () => {
+    seedQueryTable(h.db);
+    const { messageId } = createWith([{ name: 'all', sql: 'select n from qd' }]);
+    const opened = h.service.open({ messageId });
+    for (let i = 0; i < 5; i += 1) {
+      expect(h.service.query({ resourceId: opened.resourceId, name: 'all', params: {} }).truncated).toBe(false);
+    }
+    expect(() => h.service.query({ resourceId: opened.resourceId, name: 'all', params: {} })).toThrow(
+      /WIDGET_RATE_LIMITED|频繁/,
+    );
+
+    const h3 = makeHarness(50);
+    seed(h3.db);
+    seedQueryTable(h3.db);
+    const c3 = h3.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: 't',
+      description: '',
+      html: HTML,
+      queries: [{ name: 'all', sql: 'select n from qd' }],
+      scope: 'conversation',
+      runId: 'r',
+    });
+    if (!c3.ok) throw new Error('create failed');
+    const opened3 = h3.service.open({ messageId: h3.cards[h3.cards.length - 1]!.id });
+    advance(100);
+    expect(() => h3.service.query({ resourceId: opened3.resourceId, name: 'all', params: {} })).toThrow(
+      /WIDGET_RESOURCE_EXPIRED|过期/,
+    );
+  });
+
+  it('完整性：版本行的 queries_sha256 与卡片不一致 → WIDGET_INVALID（open 与 source 一致）', () => {
+    seedQueryTable(h.db);
+    const { widgetId, messageId } = createWith([{ name: 'all', sql: 'select 1' }]);
+    h.db
+      .prepare('update widget_versions set queries_sha256 = ? where widget_id = ?')
+      .run('deadbeef', widgetId);
+    expect(() => h.service.open({ messageId })).toThrow(/WIDGET_INVALID|不一致/);
+    expect(() => h.service.source(messageId)).toThrow(/WIDGET_INVALID|不一致/);
+  });
+
+  it('deleteForBot 连查询模板一起清（级联），并摘除在途资源', () => {
+    seedQueryTable(h.db);
+    const { messageId } = createWith([{ name: 'all', sql: 'select 1' }]);
+    const opened = h.service.open({ messageId });
+    expect(h.service.deleteForBot('bot_a')).toBe(1);
+    expect(h.db.prepare('select count(*) as n from widget_queries').get()).toEqual({ n: 0 });
+    // 在途资源被摘除：桥调用得 WIDGET_RESOURCE_EXPIRED，而不是打到已消失的库行收裸 SQLite 错误。
+    expect(() =>
+      h.service.storage({ op: 'set', resourceId: opened.resourceId, key: 'k', value: 1 }),
+    ).toThrow(/WIDGET_RESOURCE_EXPIRED|过期/);
+  });
+});
+
+describe('WidgetService P2 独立审查修复轮', () => {
+  function createSingle(sql: string): { messageId: string } {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId: 'conv_1',
+      title: 't',
+      description: '',
+      html: HTML,
+      queries: [{ name: 'q', sql }],
+      scope: 'conversation',
+      runId: 'r',
+    });
+    if (!created.ok) throw new Error('create failed');
+    return { messageId: h.cards[h.cards.length - 1]!.id };
+  }
+
+  it('回执字节上限：宽行在 200 行之前触顶，截断且不返回溢出行', () => {
+    h.db.exec('create table wide (payload text)');
+    const insert = h.db.prepare('insert into wide values (?)');
+    h.db.transaction(() => {
+      for (let i = 0; i < 200; i += 1) insert.run('x'.repeat(16 * 1024));
+    })();
+    const { messageId } = createSingle('select payload from wide order by rowid');
+    const { resourceId } = h.service.open({ messageId });
+    advance(RATE_TICK_MS);
+    const out = h.service.query({ resourceId, name: 'q', params: {} });
+    expect(out.truncated).toBe(true);
+    expect(out.rows.length).toBeLessThan(200);
+    // 溢出的那一行不返回：累计字节在上限之内。
+    const total = out.rows.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row)), 0);
+    expect(total).toBeLessThanOrEqual(BOT_WIDGET_QUERY_RESULT_MAX_BYTES);
+    expect(total + 16 * 1024 + 16).toBeGreaterThan(BOT_WIDGET_QUERY_RESULT_MAX_BYTES);
+  });
+
+  it('bigint 参数超出 ±2^53 拒绝（better-sqlite3 按 double 绑会静默失真）', () => {
+    const { messageId } = createSingle('select :id as id');
+    const { resourceId } = h.service.open({ messageId });
+    advance(RATE_TICK_MS);
+    expect(
+      h.service.query({ resourceId, name: 'q', params: { id: 42n } }).rows,
+    ).toEqual([{ id: 42 }]);
+    advance(RATE_TICK_MS);
+    expect(() =>
+      h.service.query({ resourceId, name: 'q', params: { id: 2n ** 60n } }),
+    ).toThrow(/INVALID_INPUT|安全整数/);
+  });
+
+  it('__proto__ 命名参数的模板在交付时即拒（运行时永远绑不上）', () => {
+    const base = { botId: 'bot_a', conversationId: 'conv_1', scope: 'conversation' as const, runId: 'r' };
+    expect(
+      h.service.create({ ...base, title: 't', html: HTML, queries: [{ name: 'q', sql: 'select :__proto__ as p' }] }).ok,
+    ).toBe(false);
+    expect(
+      h.service.create({ ...base, title: 't', html: HTML, queries: [{ name: 'q', sql: 'select :__PROTO__ as p' }] }).ok,
+    ).toBe(false);
+    // 普通名字不受影响。
+    expect(
+      h.service.create({ ...base, title: 't', html: HTML, queries: [{ name: 'q', sql: 'select :proto_value as p' }] }).ok,
+    ).toBe(true);
+    expect(h.cards).toHaveLength(1);
+  });
+
+  it('模板内容被外力替换（版本行摘要未变）时 open 拒绝：摘要对现行内容复算', () => {
+    const { messageId } = createSingle('select 1 as one');
+    // 只改模板内容、版本行 queries_sha256 不动：卡片与版本行的摘要比对发现不了，
+    // 靠 open 时对现行内容复算摘要拦截（审查对象不能被偷换）。
+    h.db.prepare("update widget_queries set sql = 'select 2 as two' where name = 'q'").run();
+    expect(() => h.service.open({ messageId })).toThrow(/WIDGET_INVALID|不一致/);
+    expect(() => h.service.source(messageId)).toThrow(/WIDGET_INVALID|不一致/);
+  });
+});
+
+describe('WidgetService 管理入口（P2）：列表 / 删除 / 跨对话引用', () => {
+  function createScoped(
+    scope: WidgetScope,
+    title: string,
+    conversationId = 'conv_1',
+  ): { widgetId: string } {
+    const created = h.service.create({
+      botId: 'bot_a',
+      conversationId,
+      title,
+      description: `${title} 说明`,
+      html: HTML,
+      scope,
+      runId: 'r',
+    });
+    if (!created.ok) throw new Error('create failed');
+    return { widgetId: created.widgetId };
+  }
+
+  it('listForBot：全部组件（含会话级）按更新时间倒序，带最新版本信息', () => {
+    const a = createScoped('bot', '资产 A');
+    advance(10); // updated_at 倒序需要可比较的时间戳
+    const conv = createScoped('conversation', '会话 B');
+    const list = h.service.listForBot('bot_a');
+    expect(list.map((w) => [w.widgetId, w.scope, w.version, w.queriesCount])).toEqual([
+      [conv.widgetId, 'conversation', 1, 0],
+      [a.widgetId, 'bot', 1, 0],
+    ]);
+    expect(list[0]).toMatchObject({
+      title: '会话 B',
+      conversationId: 'conv_1',
+      versionCount: 1,
+      sizeBytes: Buffer.byteLength(HTML),
+      sha256: expect.any(String),
+    });
+    expect(list[1]!.conversationId).toBeNull();
+    // 别的 Bot 的组件不出现。
+    expect(h.service.listForBot('bot_b')).toEqual([]);
+  });
+
+  it('publish：Bot 级组件发卡到指定对话（钉最新版、带查询摘要）；会话级 / 别人的 / 不存在的拒绝', () => {
+    const { widgetId } = createScoped('bot', '资产 A');
+    const published = h.service.publish({
+      botId: 'bot_a',
+      widgetId,
+      conversationId: 'conv_2',
+      runId: 'run_p',
+    });
+    expect(published).toMatchObject({ ok: true, version: 1 });
+    if (!published.ok) return;
+    expect(h.cards).toHaveLength(2);
+    const card = cardOfLast(h.cards);
+    expect(card).toMatchObject({
+      widgetId,
+      version: 1,
+      scope: 'bot',
+      queriesSha256: '',
+      queriesCount: 0,
+    });
+    // 卡片发进了目标对话。
+    expect(h.cards[h.cards.length - 1]!.conversationId).toBe('conv_2');
+    // publish 不落新版本。
+    expect(
+      (h.db.prepare('select count(*) as n from widget_versions where widget_id = ?').get(widgetId) as { n: number }).n,
+    ).toBe(1);
+    // 每 run 卡数上限同样约束 publish（run_p 之前没有发过卡）。
+    for (let i = 0; i < 7; i += 1) {
+      expect(
+        h.service.publish({ botId: 'bot_a', widgetId, conversationId: 'conv_2', runId: 'run_p' }).ok,
+      ).toBe(true);
+    }
+    expect(h.service.publish({ botId: 'bot_a', widgetId, conversationId: 'conv_2', runId: 'run_p' }).ok).toBe(false);
+
+    const convScoped = createScoped('conversation', '会话 C');
+    expect(
+      h.service.publish({ botId: 'bot_a', widgetId: convScoped.widgetId, conversationId: 'conv_2', runId: 'r2' }),
+    ).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(
+      h.service.publish({ botId: 'bot_b', widgetId, conversationId: 'conv_2', runId: 'r3' }),
+    ).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(
+      h.service.publish({ botId: 'bot_a', widgetId: 'wgt_missing', conversationId: 'conv_2', runId: 'r4' }),
+    ).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+  });
+
+  it('publish 后 widget_update 出新版本：旧 publish 卡钉旧版，新 publish 发新版（含查询摘要）', () => {
+    const { widgetId } = createScoped('bot', '资产 A');
+    const updated = h.service.update({
+      botId: 'bot_a',
+      widgetId,
+      html: HTML.replace('>1<', '>2<'),
+      queries: [{ name: 'all', sql: 'select 1' }],
+      changeNote: '',
+      conversationId: 'conv_2',
+      runId: 'r2',
+    });
+    expect(updated.ok).toBe(true);
+    if (!updated.ok) return;
+    // Bot 级组件在另一对话更新：新卡发到 conv_2（跨对话引用）。
+    expect(h.cards[h.cards.length - 1]!.conversationId).toBe('conv_2');
+    expect(cardOfLast(h.cards)).toMatchObject({ version: 2, queriesCount: 1 });
+
+    const published = h.service.publish({
+      botId: 'bot_a',
+      widgetId,
+      conversationId: 'conv_2',
+      runId: 'r3',
+    });
+    expect(published).toMatchObject({ ok: true, version: 2 });
+    expect(cardOfLast(h.cards)).toMatchObject({ version: 2, queriesCount: 1 });
+    expect(cardOfLast(h.cards).queriesSha256).not.toBe('');
+  });
+
+  it('delete：清三表 + 摘除在途资源；别人的组件拒绝；旧卡 open 优雅报错', () => {
+    const { widgetId } = createScoped('bot', '资产 A');
+    const messageId = h.cards[h.cards.length - 1]!.id;
+    const opened = h.service.open({ messageId });
+    expect(h.service.delete('bot_b', widgetId)).toBe(false);
+    expect(h.service.delete('bot_a', widgetId)).toBe(true);
+    expect(h.db.prepare('select count(*) as n from widget_versions').get()).toEqual({ n: 0 });
+    expect(h.db.prepare('select count(*) as n from widget_docs').get()).toEqual({ n: 0 });
+    expect(h.db.prepare('select count(*) as n from widget_queries').get()).toEqual({ n: 0 });
+    // 在途资源被摘除：桥调用得 WIDGET_RESOURCE_EXPIRED（人话「过期」）。
+    expect(() =>
+      h.service.storage({ op: 'set', resourceId: opened.resourceId, key: 'k', value: 1 }),
+    ).toThrow(/WIDGET_RESOURCE_EXPIRED|过期/);
+    // 不存在的组件删除返回 false（幂等）。
+    expect(h.service.delete('bot_a', widgetId)).toBe(false);
   });
 });
