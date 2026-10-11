@@ -24,6 +24,11 @@ afterAll(() => {
 
 let now = 1_000;
 const clock = { now: () => now };
+/** storage 的每个 op 都计入限速（1 秒滚动窗口、每资源 5 次）：无关用例在调用间推进一个窗口避开它。 */
+const RATE_TICK_MS = 1100;
+const advance = (ms: number): void => {
+  now += ms;
+};
 
 function openDb(): SqliteDatabase {
   const db = openDatabase({
@@ -337,7 +342,7 @@ describe('WidgetService 审查与资源', () => {
     expect(page.html).toContain("source: 'kepcup-widget'");
     expect(page.html).toContain('<button id="b">1</button>');
     expect(page.csp).toEqual(expect.any(String));
-    now += 100;
+    advance(100);
     expect(() => h2.service.resource({ resourceId: opened.resourceId, host })).toThrow();
   });
 
@@ -462,51 +467,47 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
     const a = createAndOpen(h.service, h.cards);
     const b = createAndOpen(h.service, h.cards);
     // 限速按资源滚动窗口计（每秒 5 次）：用例内多次调用之间推进时钟避开。
-    const tick = (): void => {
-      now += 1100;
-    };
-
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'count' })).toEqual({
       op: 'get',
       found: false,
     });
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'count', value: { n: 42 } })).toEqual({ op: 'set' });
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'count' })).toEqual({
       op: 'get',
       found: true,
       value: { n: 42 },
     });
     // 命名空间隔离：B 读不到 A 的键。
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'get', resourceId: b.resourceId, key: 'count' })).toEqual({
       op: 'get',
       found: false,
     });
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'list', resourceId: b.resourceId })).toEqual({
       op: 'list',
       keys: [],
     });
 
-    tick();
+    advance(RATE_TICK_MS);
     h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'note', value: '第二' });
-    tick();
+    advance(RATE_TICK_MS);
     h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'alpha', value: 1 });
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'list', resourceId: a.resourceId })).toEqual({
       op: 'list',
       keys: ['alpha', 'count', 'note'],
     });
 
-    tick();
+    advance(RATE_TICK_MS);
     h.service.storage({ op: 'delete', resourceId: a.resourceId, key: 'note' });
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'note' }).found).toBe(false);
     // 删除不存在的键是幂等的。
-    tick();
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'delete', resourceId: a.resourceId, key: 'nope' }).op).toBe('delete');
 
     // 资源过期重开（新 resourceId）后数据仍在——数据在 widget_docs，不在内存资源里。
@@ -521,24 +522,45 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
 
   it('set 拒绝 undefined 与不可序列化值（INVALID_INPUT）', () => {
     const { resourceId } = createAndOpen(h.service, h.cards);
-    now += 1100;
+    advance(RATE_TICK_MS);
     expect(() => h.service.storage({ op: 'set', resourceId, key: 'k', value: undefined })).toThrow(
       /INVALID_INPUT|undefined/,
     );
-    now += 1100;
+    advance(RATE_TICK_MS);
     const cyclic: Record<string, unknown> = {};
     cyclic['self'] = cyclic;
     expect(() => h.service.storage({ op: 'set', resourceId, key: 'k', value: cyclic })).toThrow(
       /INVALID_INPUT|JSON/,
     );
     // null / 0 / 空串等 falsy 值是合法 JSON，可以存。
-    now += 1100;
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'set', resourceId, key: 'zero', value: 0 }).op).toBe('set');
-    now += 1100;
+    advance(RATE_TICK_MS);
     expect(h.service.storage({ op: 'get', resourceId, key: 'zero' })).toEqual({
       op: 'get',
       found: true,
       value: 0,
+    });
+  });
+
+  it('库行 value_json 损坏（外力改动）时 get 按不存在返回，不抛裸异常', () => {
+    const { resourceId } = createAndOpen(h.service, h.cards);
+    advance(RATE_TICK_MS);
+    expect(h.service.storage({ op: 'set', resourceId, key: 'k', value: { a: 1 } }).op).toBe('set');
+    h.db.prepare("update widget_docs set value_json = 'not-json{' where key = 'k'").run();
+    advance(RATE_TICK_MS);
+    expect(h.service.storage({ op: 'get', resourceId, key: 'k' })).toEqual({
+      op: 'get',
+      found: false,
+    });
+    // 坏值可被覆盖修复。
+    advance(RATE_TICK_MS);
+    expect(h.service.storage({ op: 'set', resourceId, key: 'k', value: 2 }).op).toBe('set');
+    advance(RATE_TICK_MS);
+    expect(h.service.storage({ op: 'get', resourceId, key: 'k' })).toEqual({
+      op: 'get',
+      found: true,
+      value: 2,
     });
   });
 
@@ -547,16 +569,13 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
     seed(h2.db);
     const { resourceId } = createAndOpen(h2.service, h2.cards);
     // 每次调用前推进时钟，让限速窗口永不命中（本用例只测配额）。
-    const tick = (): void => {
-      now += 1100;
-    };
     const set = (key: string, value: unknown): { op: string } => {
-      tick();
+      advance(RATE_TICK_MS);
       return h2.service.storage({ op: 'set', resourceId, key, value });
     };
 
     // 单值上限（256KB 序列化字节，引号也算）。
-    tick();
+    advance(RATE_TICK_MS);
     expect(() =>
       h2.service.storage({ op: 'set', resourceId, key: 'big', value: 'x'.repeat(256 * 1024) }),
     ).toThrow(/过大/);
@@ -564,7 +583,7 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
     // 总配额：4 × 220KB 可写，第 5 块触顶。
     const chunk = 'y'.repeat(220_000);
     for (let i = 0; i < 4; i += 1) expect(set(`k${i}`, chunk).op).toBe('set');
-    tick();
+    advance(RATE_TICK_MS);
     expect(() => h2.service.storage({ op: 'set', resourceId, key: 'k4', value: chunk })).toThrow(
       /存储空间已用完/,
     );
@@ -573,7 +592,7 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
 
     // 键数上限：清掉大键后恰好补到 1000 键，新键被拒。
     for (const key of ['k1', 'k2', 'k3']) {
-      tick();
+      advance(RATE_TICK_MS);
       h2.service.storage({ op: 'delete', resourceId, key });
     }
     for (let i = 1; i < 1000; i += 1) expect(set(`key-${i}`, 1).op).toBe('set');
@@ -594,7 +613,7 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
     const other = createAndOpen(h.service, h.cards);
     expect(h.service.storage({ op: 'set', resourceId: other.resourceId, key: 'k', value: 1 }).op).toBe('set');
     // 窗口滑过：恢复可用。
-    now += 1001;
+    advance(1001);
     expect(h.service.storage({ op: 'set', resourceId, key: 'k5', value: 5 }).op).toBe('set');
   });
 
@@ -602,7 +621,7 @@ describe('WidgetService 能力桥：storage KV（P1）', () => {
     const h2 = makeHarness(50);
     seed(h2.db);
     const { resourceId } = createAndOpen(h2.service, h2.cards);
-    now += 100;
+    advance(100);
     expect(() => h2.service.storage({ op: 'set', resourceId, key: 'k', value: 1 })).toThrow(
       /WIDGET_RESOURCE_EXPIRED|过期/,
     );

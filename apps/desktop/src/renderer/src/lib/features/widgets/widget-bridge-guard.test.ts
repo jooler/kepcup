@@ -1,22 +1,17 @@
 import { describe, expect, test } from 'vitest';
 import {
   WIDGET_BRIDGE_MESSAGE_MAX_CHARS,
+  WIDGET_BRIDGE_METHODS,
   clampWidgetHeight,
   parseWidgetBridgeMessage,
+  widgetBridgeMessageId,
   widgetBridgeReply,
 } from './widget-bridge-guard';
 
 describe('parseWidgetBridgeMessage', () => {
-  test('lets the supported widget methods through with id and payload', () => {
-    for (const method of [
-      'storage.get',
-      'storage.set',
-      'storage.delete',
-      'storage.list',
-      'openLink',
-      'theme.get',
-      'setHeight',
-    ]) {
+  test('lets every whitelisted widget method through with id and payload', () => {
+    // 遍历导出的白名单本体：垫片 / dispatch / schema 增删方法时这里自动跟随。
+    for (const method of WIDGET_BRIDGE_METHODS) {
       expect(
         parseWidgetBridgeMessage({ source: 'kepcup-widget', id: 1, type: method, payload: {} }),
         method,
@@ -70,7 +65,7 @@ describe('parseWidgetBridgeMessage', () => {
     ).toMatchObject({ ok: false });
   });
 
-  test('oversized messages are refused', () => {
+  test('oversized and unserializable messages are refused', () => {
     const big = 'x'.repeat(WIDGET_BRIDGE_MESSAGE_MAX_CHARS);
     expect(
       parseWidgetBridgeMessage({
@@ -80,11 +75,32 @@ describe('parseWidgetBridgeMessage', () => {
         payload: { key: 'k', value: big },
       }),
     ).toMatchObject({ ok: false });
+    // BigInt 值能过 structured clone 但 JSON.stringify 抛错：拒收（宿主按 id 回错误回执）。
+    expect(
+      parseWidgetBridgeMessage({
+        source: 'kepcup-widget',
+        id: 1,
+        type: 'storage.set',
+        payload: { key: 'k', value: 10n },
+      }),
+    ).toMatchObject({ ok: false });
+  });
+});
+
+describe('widgetBridgeMessageId', () => {
+  test('extracts a correlatable id from otherwise-rejected messages, or null', () => {
+    expect(widgetBridgeMessageId({ source: 'wrong', id: 3, type: 'nope' })).toBe(3);
+    expect(widgetBridgeMessageId({ id: 0 })).toBe(0);
+    expect(widgetBridgeMessageId({ id: -1 })).toBeNull();
+    expect(widgetBridgeMessageId({ id: 1.5 })).toBeNull();
+    expect(widgetBridgeMessageId({ id: '1' })).toBeNull();
+    expect(widgetBridgeMessageId('x')).toBeNull();
+    expect(widgetBridgeMessageId(null)).toBeNull();
   });
 });
 
 describe('widgetBridgeReply', () => {
-  test('success carries the value; failures carry the error text', () => {
+  test('success carries the value; failures carry the error text and machine-readable code', () => {
     expect(widgetBridgeReply(3, {})).toEqual({ source: 'kepcup-host', id: 3, ok: true });
     expect(widgetBridgeReply(3, { value: { a: 1 } })).toEqual({
       source: 'kepcup-host',
@@ -92,11 +108,18 @@ describe('widgetBridgeReply', () => {
       ok: true,
       value: { a: 1 },
     });
-    expect(widgetBridgeReply(4, { error: '组件界面已过期' })).toEqual({
+    expect(widgetBridgeReply(4, { error: '组件界面已过期', code: 'WIDGET_RESOURCE_EXPIRED' })).toEqual({
       source: 'kepcup-host',
       id: 4,
       ok: false,
       error: '组件界面已过期',
+      code: 'WIDGET_RESOURCE_EXPIRED',
+    });
+    expect(widgetBridgeReply(5, { error: 'x' })).toEqual({
+      source: 'kepcup-host',
+      id: 5,
+      ok: false,
+      error: 'x',
     });
   });
 });

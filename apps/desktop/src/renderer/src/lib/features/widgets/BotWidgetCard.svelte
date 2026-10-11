@@ -14,12 +14,13 @@
     widgetsUiStorageOutputSchema,
     type WidgetCard,
     type WidgetsUiOpenOutput,
+    type WidgetsUiStorageCall,
     type WidgetsUiStorageOutput,
   } from '@kepcup/shared';
   import { Button } from '$lib/components/ui/button';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
-  import { describeAppLink } from '$lib/features/apps-ui/bridge-guard';
+  import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
 
   /**
@@ -59,8 +60,6 @@
   let generation = 0;
   let activeResource: string | null = null;
 
-  const linkInfo = $derived(pendingLink === null ? null : describeAppLink(pendingLink.url));
-
   async function start(): Promise<void> {
     const gen = ++generation;
     cardState = 'loading';
@@ -83,7 +82,7 @@
         frameWindow,
         resourceId: out.resourceId,
         theme: mode.current === 'dark' ? 'dark' : 'light',
-        storage: (input) => callStorage(out.resourceId, input),
+        storage: (input) => callStorage(input),
         openLink: (url) =>
           new Promise<boolean>((resolve) => {
             // One confirmation at a time; a second request while one is open is refused.
@@ -112,12 +111,10 @@
   }
 
   /** `widgets.ui.storage` 的渲染端出站：schema.parse 后原样回给桥（契约纪律同其他 RPC）。 */
-  async function callStorage(
-    resourceId: string,
-    input: { op: 'get' | 'set' | 'delete' | 'list'; key?: string; value?: unknown },
-  ): Promise<WidgetsUiStorageOutput> {
+  async function callStorage(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput> {
+    if (activeResource === null) throw new Error('组件界面已关闭');
     return widgetsUiStorageOutputSchema.parse(
-      await core.call('widgets.ui.storage', { resourceId, ...input }),
+      await core.call('widgets.ui.storage', { ...input, resourceId: activeResource }),
     );
   }
 
@@ -131,6 +128,7 @@
     const resource = activeResource;
     activeResource = null;
     opened = null;
+    height = 380;
     if (resource !== null) {
       await core.call('widgets.ui.close', { resourceId: resource }).catch(() => undefined);
     }
@@ -328,37 +326,17 @@
     ></iframe>
   {/if}
 
-  {#if pendingLink !== null && linkInfo !== null}
-    <div
-      class="border-t bg-amber-500/5 px-3 py-2 text-xs"
-      data-testid="bot-widget-link-confirm"
-      role="alertdialog"
-      aria-label={t('botWidget.openLinkTitle')}
-    >
-      <p class="font-medium">{t('botWidget.openLinkTitle')}</p>
-      <p class="mt-1" data-testid="bot-widget-link-host">
-        <span class="text-muted-foreground">{t('botWidget.openLinkHost')}</span>
-        <strong class="text-sm">{linkInfo.host}</strong>
-      </p>
-      <p class="mt-1 break-all text-muted-foreground" data-testid="bot-widget-link-url">
-        {linkInfo.display}
-      </p>
-      <div class="mt-2 flex justify-end gap-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          class="h-6 px-2 text-xs"
-          onclick={cancelLink}
-          data-testid="bot-widget-link-cancel">{t('botWidget.openLinkCancel')}</Button
-        >
-        <Button
-          size="sm"
-          class="h-6 px-2 text-xs"
-          onclick={() => void confirmLink()}
-          data-testid="bot-widget-link-open">{t('botWidget.openLinkConfirm')}</Button
-        >
-      </div>
-    </div>
+  {#if pendingLink !== null}
+    <LinkConfirmBar
+      url={pendingLink.url}
+      title={t('botWidget.openLinkTitle')}
+      hostLabel={t('botWidget.openLinkHost')}
+      confirmLabel={t('botWidget.openLinkConfirm')}
+      cancelLabel={t('botWidget.openLinkCancel')}
+      testidPrefix="bot-widget"
+      onconfirm={() => void confirmLink()}
+      oncancel={cancelLink}
+    />
   {/if}
 
   {#if cardState === 'ready'}

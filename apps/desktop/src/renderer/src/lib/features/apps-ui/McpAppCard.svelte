@@ -13,7 +13,8 @@
   import { errorText, i18n, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { AppBridgeHost } from './app-bridge-host';
-  import { clampAppHeight, describeAppLink } from './bridge-guard';
+  import { clampAppHeight } from './bridge-guard';
+  import LinkConfirmBar from './LinkConfirmBar.svelte';
   import { MCP_APP_LINK_COOLDOWN_MS } from '@kepcup/shared';
 
   /**
@@ -43,7 +44,6 @@
   let generation = 0;
   let activeResource: string | null = null;
 
-  const linkInfo = $derived(pendingLink === null ? null : describeAppLink(pendingLink.url));
   const bordered = $derived(opened?.prefersBorder !== false);
 
   async function start(): Promise<void> {
@@ -221,37 +221,17 @@
     ></iframe>
   {/if}
 
-  {#if pendingLink !== null && linkInfo !== null}
-    <div
-      class="border-t bg-amber-500/5 px-3 py-2 text-xs"
-      data-testid="mcp-app-link-confirm"
-      role="alertdialog"
-      aria-label={t('appsUi.openLinkTitle')}
-    >
-      <p class="font-medium">{t('appsUi.openLinkTitle')}</p>
-      <p class="mt-1" data-testid="mcp-app-link-host">
-        <span class="text-muted-foreground">{t('appsUi.openLinkHost')}</span>
-        <strong class="text-sm">{linkInfo.host}</strong>
-      </p>
-      <p class="mt-1 break-all text-muted-foreground" data-testid="mcp-app-link-url">
-        {linkInfo.display}
-      </p>
-      <div class="mt-2 flex justify-end gap-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          class="h-6 px-2 text-xs"
-          onclick={cancelLink}
-          data-testid="mcp-app-link-cancel">{t('appsUi.openLinkCancel')}</Button
-        >
-        <Button
-          size="sm"
-          class="h-6 px-2 text-xs"
-          onclick={() => void confirmLink()}
-          data-testid="mcp-app-link-open">{t('appsUi.openLinkConfirm')}</Button
-        >
-      </div>
-    </div>
+  {#if pendingLink !== null}
+    <LinkConfirmBar
+      url={pendingLink.url}
+      title={t('appsUi.openLinkTitle')}
+      hostLabel={t('appsUi.openLinkHost')}
+      confirmLabel={t('appsUi.openLinkConfirm')}
+      cancelLabel={t('appsUi.openLinkCancel')}
+      testidPrefix="mcp-app"
+      onconfirm={() => void confirmLink()}
+      oncancel={cancelLink}
+    />
   {/if}
 
   {#if opened !== null}

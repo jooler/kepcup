@@ -1,3 +1,5 @@
+import { BOT_WIDGET_HEIGHT_MAX, BOT_WIDGET_HEIGHT_MIN } from '@kepcup/shared';
+
 /**
  * widget 侧 SDK 垫片（D81 P1，设计 32 §6）：组件跑在 `sandbox="allow-scripts"` 的
  * opaque origin iframe 里——没有 localStorage / fetch / window.kepcup，与宿主的唯一
@@ -9,23 +11,30 @@
  * 不存在把不可信内容拼进脚本的注入面。插入点必须是 `<!DOCTYPE html>` **之后**
  * （doctype 前出现任何节点会触发 quirks mode，改变盒模型与 CSS 语义）：优先
  * `<head>` 开标签之后，找不到再退到 doctype 的 `>` 之后，两者都没有（本就不规范
- * 的 HTML）才前置到文档最开头。
+ * 的 HTML）才前置到文档最开头。已知失效模式（垫片被注释 / 属性值吞掉，`window.kepcup`
+ * 不存在）：Bot 把 `<head>` 字样写进注释或属性——自伤且无副作用，不做廉价探测。
  */
+
+/** 垫片的唯一指纹：幂等判定与「确认注入成功」都认它，不用协议里组件也会写的字段值。 */
+export const WIDGET_SDK_MARKER = 'kepcup-widget-sdk-v1';
 
 /**
  * 垫片脚本本体（IIFE，不污染全局 except `window.kepcup`）。协议：
  * - widget → 宿主：`{ source: 'kepcup-widget', id, type, payload }`（opaque origin
  *   下 `postMessage` 只能 `targetOrigin '*'`，宿主侧必须以 `event.source` 校验来源）；
- * - 宿主 → widget：`{ source: 'kepcup-host', id, ok, value? , error? }`。
+ * - 宿主 → widget：`{ source: 'kepcup-host', id, ok, value?/code?, error? }`——拒绝时
+ *   `error` 是人话、`code` 是机器可读错误码（widget 据此区分限速 / 配额 / 过期等）。
+ * 不设超时：宿主对每个带 id 的请求保证恰好一条回执（含格式拒收），iframe 销毁时
+ * 挂起的 promise 随上下文消亡。
  */
-export const WIDGET_SDK_SHIM = `<script>
+export const WIDGET_SDK_SHIM = `<script>/* ${WIDGET_SDK_MARKER} */
 (function () {
   'use strict';
   if (window.kepcup) return;
   var seq = 0;
   var pending = new Map();
-  var HEIGHT_MIN = 100;
-  var HEIGHT_MAX = 800;
+  var HEIGHT_MIN = ${BOT_WIDGET_HEIGHT_MIN};
+  var HEIGHT_MAX = ${BOT_WIDGET_HEIGHT_MAX};
   function send(type, payload) {
     return new Promise(function (resolve, reject) {
       var id = ++seq;
@@ -45,8 +54,10 @@ export const WIDGET_SDK_SHIM = `<script>
     var call = pending.get(data.id);
     if (call === undefined) return;
     pending.delete(data.id);
-    if (data.ok) call.resolve(data.value);
-    else call.reject(new Error(typeof data.error === 'string' ? data.error : '宿主调用失败'));
+    if (data.ok) { call.resolve(data.value); return; }
+    var error = new Error(typeof data.error === 'string' ? data.error : '宿主调用失败');
+    if (typeof data.code === 'string') error.code = data.code;
+    call.reject(error);
   });
   function clampHeight(value) {
     var height = Math.ceil(Number(value));
@@ -86,10 +97,10 @@ export const WIDGET_SDK_SHIM = `<script>
 
 /**
  * 把垫片插进 HTML（quirks-mode 安全，见模块注释）。返回新 HTML；已含垫片标记
- * `kepcup-widget` 的输入原样返回（幂等，防重复注入）。
+ * {@link WIDGET_SDK_MARKER} 的输入原样返回（幂等，防重复注入）。
  */
 export function injectWidgetSdk(html: string): string {
-  if (html.includes("source: 'kepcup-widget'")) return html;
+  if (html.includes(WIDGET_SDK_MARKER)) return html;
   const head = /<head\b[^>]*>/i.exec(html);
   if (head !== null) {
     const at = head.index + head[0].length;

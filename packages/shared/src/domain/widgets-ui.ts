@@ -138,6 +138,10 @@ export const widgetsUiStorageOutputSchema = z.discriminatedUnion('op', [
 ]);
 export type WidgetsUiStorageOutput = z.infer<typeof widgetsUiStorageOutputSchema>;
 
+type WithoutResourceId<T> = T extends unknown ? Omit<T, 'resourceId'> : never;
+/** 渲染端桥转发一次 KV 调用的形状（`WidgetsUiStorageInput` 去掉宿主附加的 resourceId）。 */
+export type WidgetsUiStorageCall = WithoutResourceId<WidgetsUiStorageInput>;
+
 /**
  * `widgets.ui.openLink`（能力桥外链，P1）：渲染端已出卡内确认条征得用户同意，core 再核一次
  * https-only 与无凭据（写法同 `apps.ui.openLink`），经主进程 `shell.openExternal` 打开。

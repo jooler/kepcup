@@ -23,7 +23,7 @@ import {
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { SqliteDatabase } from '../infra/db.js';
-import { WidgetResourceStore } from './resource-store.js';
+import { WidgetResourceStore, widgetUiHostFor } from './resource-store.js';
 import { injectWidgetSdk } from './sdk-injection.js';
 
 /**
@@ -335,11 +335,16 @@ export class WidgetService {
   }
 
   /**
-   * 平台方法 `widgets.ui.resource`：id 存在、未过期、host 与登记一致。
+   * 平台方法 `widgets.ui.resource`：id 存在、未过期、host 与登记一致（并复核 host
+   * 确由 widgetId 派生——同 apps.ui.resource 的纵深校验）。
    */
   resource(input: { resourceId: string; host: string }): { html: string; csp: string } {
     const entry = this.store.get(input.resourceId);
-    if (entry === undefined || entry.host !== input.host) {
+    if (
+      entry === undefined ||
+      entry.host !== input.host ||
+      entry.host !== widgetUiHostFor(entry.widgetId)
+    ) {
       throw new AppError('NOT_FOUND', '组件界面资源不存在或已过期');
     }
     return { html: entry.html, csp: entry.csp };
@@ -375,47 +380,8 @@ export class WidgetService {
             return { op: 'get', found: false };
           }
         }
-        case 'set': {
-          if (input.value === undefined) {
-            throw new AppError('INVALID_INPUT', 'storage.set 需要一个 JSON 值（不支持 undefined）');
-          }
-          let valueJson: string;
-          try {
-            valueJson = JSON.stringify(input.value) ?? '';
-          } catch {
-            throw new AppError('INVALID_INPUT', 'storage.set 的值必须是可 JSON 序列化的');
-          }
-          if (Buffer.byteLength(valueJson) > BOT_WIDGET_STORAGE_VALUE_MAX_BYTES) {
-            throw new AppError(
-              'WIDGET_STORAGE_QUOTA',
-              `单个值过大（上限 ${BOT_WIDGET_STORAGE_VALUE_MAX_BYTES} 字节）`,
-            );
-          }
-          const usage = this.#docsUsage(widgetId);
-          const exists = usage.keys.has(input.key);
-          const valueBytes = Buffer.byteLength(valueJson);
-          const nextBytes =
-            usage.bytes - (exists ? (usage.sizes.get(input.key) ?? 0) : 0) + valueBytes;
-          if (nextBytes > BOT_WIDGET_STORAGE_QUOTA_BYTES) {
-            throw new AppError(
-              'WIDGET_STORAGE_QUOTA',
-              `这个组件的存储空间已用完（上限 ${BOT_WIDGET_STORAGE_QUOTA_BYTES} 字节），先删除一些键再试`,
-            );
-          }
-          if (!exists && usage.keys.size >= BOT_WIDGET_STORAGE_KEYS_MAX) {
-            throw new AppError(
-              'WIDGET_STORAGE_QUOTA',
-              `这个组件的键数量已达上限（${BOT_WIDGET_STORAGE_KEYS_MAX} 个），先删除一些键再试`,
-            );
-          }
-          this.#deps.db
-            .prepare(
-              'insert into widget_docs (widget_id, key, value_json, updated_at) values (?, ?, ?, ?) ' +
-                'on conflict(widget_id, key) do update set value_json = excluded.value_json, updated_at = excluded.updated_at',
-            )
-            .run(widgetId, input.key, valueJson, this.#deps.clock.now());
-          return { op: 'set' };
-        }
+        case 'set':
+          return this.#storageSet(widgetId, input.key, input.value);
         case 'delete': {
           this.#deps.db
             .prepare('delete from widget_docs where widget_id = ? and key = ?')
@@ -459,21 +425,61 @@ export class WidgetService {
 
   // --- 内部 ----------------------------------------------------------------------
 
-  /** 该组件 KV 的当前占用：键集合、总字节、每键字节（≤1000 键，全量读入即可）。 */
-  #docsUsage(widgetId: string): { keys: Set<string>; bytes: number; sizes: Map<string, number> } {
-    const rows = this.#deps.db
-      .prepare('select key, value_json from widget_docs where widget_id = ?')
-      .all(widgetId) as Array<{ key: string; value_json: string }>;
-    const keys = new Set<string>();
-    const sizes = new Map<string, number>();
-    let bytes = 0;
-    for (const row of rows) {
-      const size = Buffer.byteLength(row.value_json);
-      keys.add(row.key);
-      sizes.set(row.key, size);
-      bytes += size;
+  /**
+   * KV 写入：单值体积 → 总配额（覆盖旧键释放旧值体积）→ 键数上限（覆盖不计新键），
+   * 全部通过后才落库。同步 better-sqlite3 + core 单进程持库，检查与写入之间无并发。
+   */
+  #storageSet(widgetId: string, key: string, value: unknown): WidgetsUiStorageOutput {
+    if (value === undefined) {
+      throw new AppError('INVALID_INPUT', 'storage.set 需要一个 JSON 值（不支持 undefined）');
     }
-    return { keys, bytes, sizes };
+    let valueJson: string | undefined;
+    try {
+      valueJson = JSON.stringify(value);
+    } catch {
+      // 循环引用 / BigInt 等：structured clone 能过桥，序列化必败。
+      throw new AppError('INVALID_INPUT', 'storage.set 的值必须是可 JSON 序列化的');
+    }
+    if (valueJson === undefined) {
+      throw new AppError('INVALID_INPUT', 'storage.set 的值必须是可 JSON 序列化的');
+    }
+    const valueBytes = Buffer.byteLength(valueJson);
+    if (valueBytes > BOT_WIDGET_STORAGE_VALUE_MAX_BYTES) {
+      throw new AppError(
+        'WIDGET_STORAGE_QUOTA',
+        `单个值过大（上限 ${BOT_WIDGET_STORAGE_VALUE_MAX_BYTES} 字节）`,
+      );
+    }
+    const existing = this.#deps.db
+      .prepare('select value_json from widget_docs where widget_id = ? and key = ?')
+      .get(widgetId, key) as { value_json: string } | undefined;
+    const usage = this.#deps.db
+      .prepare(
+        'select count(*) as n, coalesce(sum(length(cast(value_json as blob))), 0) as bytes from widget_docs where widget_id = ?',
+      )
+      .get(widgetId) as { n: number | bigint; bytes: number | bigint };
+    const nextBytes =
+      Number(usage.bytes) - (existing !== undefined ? Buffer.byteLength(existing.value_json) : 0) +
+      valueBytes;
+    if (nextBytes > BOT_WIDGET_STORAGE_QUOTA_BYTES) {
+      throw new AppError(
+        'WIDGET_STORAGE_QUOTA',
+        `这个组件的存储空间已用完（上限 ${BOT_WIDGET_STORAGE_QUOTA_BYTES} 字节），先删除一些键再试`,
+      );
+    }
+    if (existing === undefined && Number(usage.n) >= BOT_WIDGET_STORAGE_KEYS_MAX) {
+      throw new AppError(
+        'WIDGET_STORAGE_QUOTA',
+        `这个组件的键数量已达上限（${BOT_WIDGET_STORAGE_KEYS_MAX} 个），先删除一些键再试`,
+      );
+    }
+    this.#deps.db
+      .prepare(
+        'insert into widget_docs (widget_id, key, value_json, updated_at) values (?, ?, ?, ?) ' +
+          'on conflict(widget_id, key) do update set value_json = excluded.value_json, updated_at = excluded.updated_at',
+      )
+      .run(widgetId, key, valueJson, this.#deps.clock.now());
+    return { op: 'set' };
   }
 
   #insertVersion(
