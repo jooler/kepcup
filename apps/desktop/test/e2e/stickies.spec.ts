@@ -231,3 +231,35 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     await closeSession(session);
   }
 });
+
+test('pin a whole message from the hover button and the context menu', async () => {
+  test.setTimeout(120_000);
+  const session = await startSession('kepcup-e2e-stickies-msg-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '小艾');
+    const reply = '这是整条消息固定出来的便签内容，应当完整进入便签';
+    llm.script('mock-main', [step().replyText(reply)]);
+    const composer = page.locator('[data-testid="composer-input"]');
+    await composer.fill('来一条长回复');
+    await composer.press('Meta+Enter');
+    const bubble = page.locator('[data-testid="bot-bubble"]').first();
+    await expect(bubble).toContainText('整条消息固定出来的便签内容', { timeout: 30_000 });
+
+    // hover 操作：消息行悬停出现 pin 按钮，点击后整条消息文本成为便签。
+    await bubble.hover();
+    await page.locator('[data-testid="message-pin"]').last().click();
+    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 5_000 });
+    await expect(page.locator('[data-testid="stickie-card"]')).toContainText(reply);
+
+    // 右键菜单：同一组操作里的「固定整条消息」条目。
+    await bubble.click({ button: 'right' });
+    const menu = page.locator('[data-testid="message-context-menu"]');
+    await expect(menu).toBeVisible();
+    await menu.locator('[data-testid="context-message-pin"]').click();
+    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(2, { timeout: 5_000 });
+  } finally {
+    await closeSession(session);
+  }
+});
