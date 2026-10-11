@@ -86,8 +86,8 @@
   {/if}
 
   {#if loadState !== 'ready' || catalog.length > 0}
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="relative min-w-48 flex-1">
+    <div class="flex flex-wrap items-center gap-2 px-1">
+      <div class="relative min-w-48 max-w-sm flex-1">
         <Search
           class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden="true"
@@ -101,7 +101,7 @@
       </div>
       {#if categories.length > 1}
         <div
-          class="flex flex-wrap items-center gap-1"
+          class="ml-auto flex flex-wrap items-center gap-1"
           role="group"
           data-testid="apps-catalog-filters"
         >
@@ -164,7 +164,10 @@
     </p>
   {:else}
     {#if sections.main.length > 0}
-      <div class="grid gap-3 sm:grid-cols-2" data-testid="apps-catalog-main">
+      <div
+        class="grid grid-cols-2 gap-3 @3xl:grid-cols-3 @5xl:grid-cols-4 px-1"
+        data-testid="apps-catalog-main"
+      >
         {#each sections.main as entry (entry.connectorId)}
           {@render card(entry)}
         {/each}
@@ -192,7 +195,10 @@
             <p class="text-[11px] text-muted-foreground" data-testid="apps-catalog-community-hint">
               {t('apps.tier.communityHint')}
             </p>
-            <div class="grid gap-3 sm:grid-cols-2" data-testid="apps-catalog-community-list">
+            <div
+              class="grid grid-cols-2 gap-3 @3xl:grid-cols-3 @5xl:grid-cols-4"
+              data-testid="apps-catalog-community-list"
+            >
               {#each sections.community as entry (entry.connectorId)}
                 {@render card(entry)}
               {/each}
@@ -211,7 +217,7 @@
   {@const icon = appIconSrc(entry.iconDataUri)}
   <div
     class="flex flex-col gap-2.5 rounded-xl border px-4 py-3.5 {open
-      ? 'sm:col-span-2'
+      ? 'col-span-full'
       : ''} {entry.connectable ? '' : 'opacity-60'}"
     data-testid={`apps-catalog-card-${entry.connectorId}`}
     data-connectable={entry.connectable}
@@ -265,6 +271,9 @@
           <p class="text-[11px] text-amber-700 dark:text-amber-400">{action.reason}</p>
         {/if}
       </div>
+    </div>
+    <!-- 操作独立成行：4 列时首行放不下「管理 + 再连一个账号」两个按钮，会把标题挤成竖排 -->
+    <div class="flex flex-wrap items-center justify-end gap-2">
       {#if onManage !== undefined && showManageButton(entry, true)}
         <Button
           size="sm"

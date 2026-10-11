@@ -44,7 +44,9 @@ describe('buildMentionTargets', () => {
       allBots: [bot('a1', '同名')],
       groups: [{ id: 'g1', title: '同名' }],
     });
-    expect(merged).toEqual([{ token: 'm1', name: '同名', kind: 'bot', bio: '同名的简介' }]);
+    expect(merged).toEqual([
+      { token: 'm1', name: '同名', kind: 'bot', bio: '同名的简介', butler: false },
+    ]);
   });
 
   it('butler Bot 带 butler 标记（弹层加分区线用）', () => {

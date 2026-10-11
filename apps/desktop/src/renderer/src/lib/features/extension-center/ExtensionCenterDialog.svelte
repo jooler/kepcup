@@ -65,7 +65,7 @@
 
 <Dialog bind:open>
   <DialogContent
-    class="flex h-[85vh] max-w-xl flex-col overflow-hidden sm:max-w-[50rem]"
+    class="flex h-[70vh] max-w-xl flex-col overflow-hidden sm:max-w-6xl"
     data-testid="extension-center-dialog"
     onInteractOutside={(event) => event.preventDefault()}
   >
@@ -104,7 +104,7 @@
       role="tabpanel"
       id={panelId(tab)}
       aria-labelledby={tabId(tab)}
-      class="flex min-h-0 flex-1 flex-col"
+      class="@container flex min-h-0 flex-1 flex-col"
     >
       {#if tab === 'skills'}
         <ExtensionSkills />
