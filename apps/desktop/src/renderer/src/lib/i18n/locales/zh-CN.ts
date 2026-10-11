@@ -1972,6 +1972,22 @@ export const zhCN = {
   'chats.errorCode.APP_UI_INVALID': '应用提供的界面资源不受支持',
   'chats.errorCode.APP_UI_TOOL_NOT_ALLOWED': '这个应用的界面不能调用该工具',
   'chats.errorCode.APP_UI_RATE_LIMITED': '应用界面调用过于频繁，请稍后再试',
+  // Bot 自制交互组件卡片（D81）
+  'botWidget.byBot': 'Bot 制作',
+  'botWidget.reviewNote':
+    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网、读不到你的其他数据；建议先查看源码再加载。',
+  'botWidget.load': '加载运行',
+  'botWidget.sourceShow': '查看源码',
+  'botWidget.sourceHide': '收起源码',
+  'botWidget.sourceLoading': '正在读取源码…',
+  'botWidget.sourceUnavailable': '源码已不可用（组件可能已被删除）',
+  'botWidget.loading': '正在加载组件…',
+  'botWidget.loadFailed': '无法加载这个组件',
+  'botWidget.retry': '重试',
+  'botWidget.reload': '重新加载组件',
+  'botWidget.sourceTruncated': '源码过长，仅显示前 2 万字符；完整内容以运行组件为准',
+  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 不保存任何数据',
+  'chats.errorCode.WIDGET_INVALID': '组件卡片与其版本记录不一致或已损坏，无法加载',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

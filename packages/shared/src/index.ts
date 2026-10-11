@@ -11,6 +11,7 @@ export * from './domain/directory-index.js';
 export * from './domain/app-connections.js';
 export * from './domain/app-skills.js';
 export * from './domain/apps-ui.js';
+export * from './domain/widgets-ui.js';
 export * from './domain/mcpb.js';
 export * from './domain/oauth-clients.js';
 export * from './domain/host-capabilities.js';

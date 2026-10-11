@@ -4,6 +4,7 @@ import { vendorIdSchema, vendorProviderSchema, type VendorId } from './vendors.j
 import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.js';
 import { agentSetupReasonSchema } from './agent-status.js';
 import { appUiCardSchema } from './apps-ui.js';
+import { widgetCardSchema } from './widgets-ui.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -879,6 +880,8 @@ export const cardContentSchema = z.object({
   watchFailures: z.number().int().optional(),
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
   appUi: appUiCardSchema.optional(),
+  /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */
+  widget: widgetCardSchema.optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 

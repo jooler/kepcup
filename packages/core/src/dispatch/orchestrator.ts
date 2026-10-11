@@ -10,6 +10,7 @@ import {
   INTERIM_TEXT_MAX_PER_RUN,
   INTERIM_TEXT_MAX_PER_RUN_GROUP,
   MCP_APP_CARD_TYPE,
+  BOT_WIDGET_CARD_TYPE,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   RUN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
@@ -186,6 +187,7 @@ import {
   type McpToolUiSink,
 } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
+import type { WidgetToolFacade } from '../tools/widget-tools.js';
 import { FileReadState } from '../tools/fs-state.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AppPaths } from '../infra/paths.js';
@@ -385,6 +387,11 @@ export interface OrchestratorDeps {
   localConnectors?: LocalConnectors | null;
   /** D73 P3 §7.5: tool results with `_meta.ui.resourceUri` become MCP App cards. */
   appUi?: McpToolUiSink | null;
+  /**
+   * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：widget_create /
+   * widget_update 的落库与发卡。null / 缺省 = 没有该能力（不注册工具）。
+   */
+  widgets?: WidgetToolFacade | null;
 }
 
 /** The slice of the wiki domain the response loop consumes. */
@@ -2152,6 +2159,10 @@ export class Orchestrator {
           // D73 P3: the card shows the user an app's UI; nothing of it (HTML, results) is context.
           return '[系统] 已向用户显示一张应用界面卡片';
         }
+        if ('cardType' in content && content.cardType === BOT_WIDGET_CARD_TYPE) {
+          // D81: the card shows the user a bot-authored widget; the HTML is never context.
+          return '[系统] 已向用户显示一张交互组件卡片，等用户确认加载（HTML 不在上下文里）';
+        }
         if ('cardType' in content && content.cardType === WATCH_CARD_TYPE) {
           return this.#deps.watch?.renderContextLine(message) ?? '（监看记录已清理）';
         }
@@ -3262,6 +3273,8 @@ export class Orchestrator {
           : {}),
         ...(this.#deps.schedule !== undefined ? { schedule: this.#deps.schedule } : {}),
         ...(this.#deps.watch !== undefined ? { watch: this.#deps.watch } : {}),
+        // D81：组件工具只在任务分支注册（tools/index.ts），门面这里无条件给。
+        ...(this.#deps.widgets != null ? { widgets: this.#deps.widgets } : {}),
         ...(this.#deps.browser !== undefined
           ? {
               browser: this.#deps.browser,

@@ -58,6 +58,10 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table stickies;');
     // main 0026（D73 P2 污点外发）的 app_taint 表同样摘除（approvals 重建可原样重放）。
     db.exec('drop table app_taint;');
+    // main 0028（D81 bot widgets）的三表同样摘除（先子后父）。
+    db.exec('drop table widget_docs;');
+    db.exec('drop table widget_versions;');
+    db.exec('drop table widgets;');
     db.exec(
       `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
        values ('skl_preset', 'docx', 'preset://docx', '1.0.0', 'hashpreset', 'skills-library/docx@hashpreset', '{}', 1),

@@ -36,6 +36,7 @@ import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-to
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
+import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 
@@ -163,6 +164,11 @@ export interface ResponseToolDeps {
    * list_tasks / forward_task_result（任务内不注册：深度 1）。
    */
   tasks?: TaskToolFacade | undefined;
+  /**
+   * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：present 时任务注册
+   * widget_create / widget_update（对话轮不注册：组件交付是任务的写行为）。
+   */
+  widgets?: WidgetToolFacade | undefined;
 }
 
 /**
@@ -1016,6 +1022,10 @@ export function buildResponseTools(input: {
       ? buildDelegationTools({ identity, delegation: deps.delegation })
       : [];
 
+  // Bot 自制交互组件（D81）：任务面专属（对话轮只读）。
+  const widgetTools =
+    deps.widgets !== undefined ? buildWidgetTools({ identity, widgets: deps.widgets }) : [];
+
   // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家。
   const butlerTools =
     deps.butler !== undefined
@@ -1088,6 +1098,7 @@ export function buildResponseTools(input: {
     ...webTools,
     ...skillTools,
     ...delegateTools,
+    ...widgetTools,
     // §2.4.6: a task asks the user on a question card bound to it.
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
       ? [buildAskUserTool({ identity, ask: deps.tasks.ask.bind(deps.tasks) })]

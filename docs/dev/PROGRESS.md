@@ -1222,6 +1222,20 @@
 - **待办**：待 widgets 会话把代码补齐可编译后（或由用户协调该会话收尾），执行 `pnpm --filter @kepcup/shared build && pnpm --filter @kepcup/core build` 并**重启应用**（core 进程在启动时 fork），投递修复即生效。
 
 
+### Bot 自制交互组件（Bot Widgets）P0 骨架（2026-10-11）
+
+用户需求：Bot 自己写一段代码，在对话框中直接加载供用户操作（可借 Electron Node 环境与 better-sqlite3 做持久化）。调研（Claude Artifacts / ChatGPT Apps SDK / MCP Apps / LobeChat）结论：生成代码一律跑 `sandbox="allow-scripts"` 不透明 origin iframe + 窄能力桥由宿主代执行，没有产品把宿主运行时交给生成代码。落法（D81，[design/32](../design/32-bot-widgets.md)、[todo/bot-widgets.md](../../todo/bot-widgets.md)）：复用 D73 P3 MCP Apps 的 `kepcup-app://` 管线 + 低信任层。
+
+- **Bot 侧**：任务面新工具 `widget_create` / `widget_update`（`tools/widget-tools.ts`）——单文件 HTML（≤2MB）落 `main.db` 新表 `widgets` / `widget_versions` / `widget_docs`（main 0028，版本只增不改），每次落版本发一张 `cardType:'bot_widget'` 卡片（描述符不含 HTML；每 run ≤8 张；`renderCard` 对模型只回一行固定文案，HTML 永不进上下文）；任务平台规则加一条（何时做组件、禁网写法、改组件用 widget_update）。
+- **渲染**：`features/widgets/BotWidgetCard.svelte`——审查态先行（版本 / 能力声明 / 「查看源码」（`widgets.ui.source`）/ 「加载运行」），按 sha256 记忆确认（localStorage，同版本只确认一次，新版本视为新代码）；加载后 `widgets.ui.open` 登记内存资源（新 `WidgetResourceStore`，TTL 30min / 64 个），iframe `sandbox="allow-scripts"` 指向 `kepcup-app://widget-{hash24}/{id}`，P0 固定高 380px、无能力桥（组件内无 `window.kepcup`）。`MessageBubble` 调度层加分支；i18n zh-CN。
+- **协议分流零改动兑现**：widget host = `widget-{sha256(widgetId).slice(0,24)}` 直接通过既有 `parseAppUiUrl` 校验；主进程 `fetchResource` 仅按 host 前缀分流到新平台方法 `widgets.ui.resource`（与 `apps.ui.resource` 同形）；响应头 CSP 取 `buildAppCspHeader` 空域输出 = `connect-src 'none'`（比 MCP Apps 更严：不可声明任何网络域）。core 新服务 `widgets/service.ts`（create/update/source/open/close/resource/deleteForBot）+ `rpc/widgets-ui-bindings.ts`（app：`widgets.ui.open/close/source`；platform：`widgets.ui.resource`）。
+- **删除级联**：会话删除 → `scope='conversation'` 组件随 conversations 行 FK 级联；**Bot 删除不走 FK**（bots 行改占位）→ lifecycle 新增 `widgets.prepareBotDeletion` → `WidgetService.deleteForBot` 显式清三表（design 32 §3 与 dev/03 级联表两行同步）。
+- **测试**：core 单元 `widgets-service.test.ts`（8：落库发卡 / 作用域、校验、版本只增与归属、每 run 卡数、source/open/resource 的 host 校验与禁网 CSP、TTL、删除级联）+ `widget-tools.test.ts`（3）；`create-core.test.ts` 迁移断言升 0028 + 三表；`supervisor-turn` / `context-assembly` / `app-prompt-capabilities` / `memory-retrieval` / `schedule`（删除级联抽查）回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 通过；改动文件 eslint 干净。**收口全量一次**（3697 例，5 失败逐一甄别，详见 [todo/bot-widgets.md](../../todo/bot-widgets.md) §7）：`public-skills-migration`（回拨重放测试需摘除新表，已补）与 `sign-connector-index`（macOS 符号链接下脚本入口守卫失效，顺手 3 行 realpath 修复）修复后复绿；`tasks-review-fixes-f` 是并行新增对话轮规则文本含「任务卡」抢了测试 find 命中，最小修复谓词后复绿；`external-agent-p3` 随并行会话提交完成自行复绿；`environment.test` checksum 在 HEAD 干净基线上同样失败（本机既有 flake，用例时序敏感），未修留观察。
+- **文档**：design/32（新建）、design README（索引 32 + D81）、dev/03（0028 行 + widgets 三表节 + 级联表两行）、dev/04 工具目录（`widget_create` / `widget_update` 行）、todo/bot-widgets.md（P0 清单全勾 + 实施记录）。
+- 影响范围：shared `domain/{types,widgets-ui}.ts`、`ids.ts`、`index.ts`；core `widgets/`（新）、`tools/{index,widget-tools}.ts`（新）、`rpc/{bindings,widgets-ui-bindings}.ts`（新）、`domain/{messages,lifecycle}.ts`、`dispatch/orchestrator.ts`、`agent/context/system-prompt.ts`、`start.ts`、`migrations/main/0028_widgets.sql`（新）；desktop `main/index.ts`、renderer `features/widgets/`（新）、`features/chats/MessageBubble.svelte`、`i18n/locales/zh-CN.ts`。P1 能力桥（KV 存储 / openLink）、P2 命名只读查询与组件管理入口未做（见 todo §4）。
+- **协同备注**：本功能与上一条「投递修复」同树并行，其待办已由本会话执行（`pnpm --filter @kepcup/shared build && pnpm --filter @kepcup/core build` 双双通过，dist 含两批改动），**重启应用**后投递修复与本功能同时生效。
+
+
 ### 实时通道附件丢失——「空气泡」根因与修复（2026-10-11）
 
 用户重启后复测：图片仍未显示，但对话里出现了一个**空气泡**（有「任务进度」标签、无内容）——这正是投递消息已创建、附件却在实时通道里丢了的直接证据。根因：`messages.append` 返回的消息 `attachments` 恒为空数组（附件在 `appendToMessage` 之后才挂上，且无重发事件），orchestrator `#recordBotMessage` 把这个未挂附件的对象直接 publish 成 `message.created`，渲染端实时收到的是空附件消息；重开对话走 `messages.list`（`#listWhere` 会 `attachmentsFor` 回填）才能看到图。此 bug 影响**所有** bot 附件消息的实时渲染（`send_message` 带附件同病），不只媒体投递。
