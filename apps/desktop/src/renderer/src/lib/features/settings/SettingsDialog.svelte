@@ -1,90 +1,41 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { Component } from 'svelte';
-  import {
-    Activity,
-    BarChart3,
-    BookUser,
-    Bot,
-    Code,
-    Compass,
-    Globe,
-    Mic,
-    Plug,
-    Monitor,
-    MoonStar,
-    UserRound,
-    Settings2,
-    Cpu,
-    type LucideIcon,
-  } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import { resolveSettingsSection, type ResolvedSection } from './sections';
-  import AppearanceSection from './AppearanceSection.svelte';
-  import GeneralSection from './GeneralSection.svelte';
-  import HardwareSection from './HardwareSection.svelte';
-  import ModelsSection from './ModelsSection.svelte';
-  import ContactsSection from '$lib/features/contacts/ContactsSection.svelte';
-  import SandboxSection from './SandboxSection.svelte';
-  import UnattendedSection from './UnattendedSection.svelte';
-  import AllowlistSection from './AllowlistSection.svelte';
-  import EnvironmentSection from './EnvironmentSection.svelte';
-  import ProfileSection from './ProfileSection.svelte';
-  import UsageSection from './UsageSection.svelte';
-  import EmbeddingSection from './EmbeddingSection.svelte';
-  import WebSearchSection from './WebSearchSection.svelte';
-  import AppsSection from './AppsSection.svelte';
-  import DeveloperSection from './DeveloperSection.svelte';
-  import BrowserProfilesSection from './BrowserProfilesSection.svelte';
-  import AgentsSection from './AgentsSection.svelte';
-  import BackgroundTasksSection from './BackgroundTasksSection.svelte';
-  import { agentsStore } from '$lib/stores/agents.svelte';
-  import SchedulesSection from './SchedulesSection.svelte';
-  import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import {
+    asIconComponent,
+    settingsSectionLabel,
+    visibleSettingsSections,
+  } from './settings-sections-list';
+  import SettingsSectionView from './SettingsSectionView.svelte';
 
   /**
    * 全局设置弹框：左栏分组条目 + 右侧分组内容。点击左栏条目只渲染对应
    * 分组（条件渲染，非滚动定位），滚动条归当前分组内容自己；打开时按
    * shell.settingsSection 直接落在目标分组，带 anchor 时再滚到分组内的
    * [data-settings-anchor]（如「模型 → 默认模型」）。沙箱与访问白名单并入
-   * 「环境」，定时任务并入「无人值守」；「应用」只管已连接账号（发现与添加在扩展中心）；
+   *「环境」，定时任务并入「无人值守」；「应用」只管已连接账号（发现与添加在扩展中心）；
    * 自定义 MCP 服务器在「开发者模式」分区（`mcp` 仍作为分区别名经 resolveSettingsSection 落到那里）。
+   *
+   * 分区清单 / 内容视图与窄屏设置页（NarrowSettings）共用（settings-sections-list /
+   * SettingsSectionView）；窄屏不再打开本弹框（shell.openSettings 重路由到
+   * NarrowSettings 全屏页或对应 tab），窗口被拉窄时宽度上限贴视口。
    */
   type SectionId = ResolvedSection['section'];
 
-  interface SectionDef {
-    id: SectionId;
-    label: string;
-    icon: LucideIcon;
-  }
-
-  const sections: SectionDef[] = [
-    { id: 'general', label: t('settings.navGeneral'), icon: Settings2 },
-    { id: 'hardware', label: t('settings.navHardware'), icon: Mic },
-    { id: 'models', label: t('settings.navModels'), icon: Cpu },
-    { id: 'search', label: t('settings.navWebSearch'), icon: Globe },
-    { id: 'apps', label: t('settings.navApps'), icon: Plug },
-    { id: 'browser', label: t('settings.navBrowserProfiles'), icon: Compass },
-    { id: 'agents', label: t('settings.navAgents'), icon: Bot },
-    { id: 'profile', label: t('settings.navProfile'), icon: UserRound },
-    { id: 'contacts', label: t('settings.navContacts'), icon: BookUser },
-    { id: 'unattended', label: t('settings.navUnattended'), icon: MoonStar },
-    { id: 'environment', label: t('settings.navEnvironment'), icon: Monitor },
-    { id: 'usage', label: t('settings.navUsage'), icon: BarChart3 },
-    { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },
-    { id: 'developer', label: t('settings.navDeveloper'), icon: Code },
-  ];
+  const narrow = $derived(narrowLayout.narrow);
+  const sections = $derived(visibleSettingsSections(narrow));
 
   let activeSection = $state<SectionId>('general');
   let contentEl: HTMLElement | undefined = $state();
 
-  const activeLabel = $derived(
-    sections.find((section) => section.id === activeSection)?.label ?? t('settings.title'),
-  );
+  const activeLabel = $derived(settingsSectionLabel(activeSection));
 
-  // 每次打开：展开别名后落在指定分组（无左栏条目的 id 兜底回 usage）。
+  // 每次打开：展开别名后落在指定分组（无条目的 id 兜底回 general——窄屏下
+  // 通讯录 / 用户画像深链即落这里，入口本身已在底部 tab）。
   $effect(() => {
     if (!shell.settingsOpen) return;
     const resolved = resolveSettingsSection(
@@ -93,7 +44,7 @@
     );
     activeSection = sections.some((section) => section.id === resolved.section)
       ? resolved.section
-      : 'usage';
+      : 'general';
   });
 
   // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位。
@@ -115,17 +66,21 @@
 
 <Dialog.Root bind:open={shell.settingsOpen}>
   <Dialog.Content
-    class="grid h-[80vh] max-w-[calc(100%_-_2rem)] grid-cols-[13rem_1fr] gap-0 overflow-hidden p-0 sm:max-w-4xl"
+    class="grid h-[80vh] max-w-[calc(100%_-_1rem)] grid-cols-1 grid-rows-[auto_1fr] gap-0 overflow-hidden p-0
+      sm:max-w-4xl sm:grid-cols-[13rem_1fr] sm:grid-rows-[auto_auto]"
     onInteractOutside={(event) => event.preventDefault()}
     data-testid="settings-dialog"
   >
     <Dialog.Title class="sr-only">{t('settings.title')}</Dialog.Title>
-    <nav class="flex min-h-0 flex-col gap-0.5 overflow-y-auto border-r bg-muted/30 p-3">
+    <nav
+      class="flex min-h-0 shrink-0 flex-row items-center gap-1 overflow-x-auto border-b bg-muted/30 p-2 pr-12
+        sm:flex-col sm:items-stretch sm:gap-0.5 sm:overflow-y-auto sm:border-r sm:border-b-0 sm:p-3"
+    >
       {#each sections as section (section.id)}
-        {@const Icon = section.icon as unknown as Component<{ class?: string }>}
+        {@const Icon = asIconComponent(section.icon)}
         <button
           type="button"
-          class="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors
+          class="flex shrink-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors
             {activeSection === section.id
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
@@ -139,108 +94,15 @@
     </nav>
 
     <div class="flex min-h-0 flex-col">
-      <header class="flex h-12 shrink-0 items-center border-b px-5">
+      <header class="flex h-12 shrink-0 items-center border-b px-4 sm:px-5">
         <h2 class="text-sm font-medium">{activeLabel}</h2>
       </header>
       <div
-        class="min-h-0 flex-1 overflow-y-auto p-6"
+        class="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"
         data-testid="settings-page-content"
         bind:this={contentEl}
       >
-        {#if activeSection === 'general'}
-          <div data-settings-section="general" class="space-y-6">
-            <div data-settings-anchor="appearance">
-              <AppearanceSection />
-            </div>
-            <div data-settings-anchor="general">
-              <GeneralSection />
-            </div>
-          </div>
-        {:else if activeSection === 'hardware'}
-          <div data-settings-section="hardware" class="space-y-6">
-            <div data-settings-anchor="hardware">
-              <HardwareSection />
-            </div>
-          </div>
-        {:else if activeSection === 'models'}
-          <div data-settings-section="models" class="space-y-6">
-            <div data-settings-anchor="default-models">
-              <ModelsSection />
-            </div>
-            <div data-settings-anchor="embedding">
-              <EmbeddingSection />
-            </div>
-          </div>
-        {:else if activeSection === 'search'}
-          <div data-settings-section="search" class="space-y-6">
-            <div data-settings-anchor="web-search">
-              <WebSearchSection testid="settings-web-search" />
-            </div>
-          </div>
-        {:else if activeSection === 'apps'}
-          <div data-settings-section="apps" class="space-y-6">
-            <AppsSection />
-          </div>
-        {:else if activeSection === 'browser'}
-          <div data-settings-section="browser" class="space-y-6">
-            <div data-settings-anchor="browser-profiles">
-              <BrowserProfilesSection />
-            </div>
-          </div>
-        {:else if activeSection === 'agents'}
-          <div data-settings-section="agents" class="space-y-6">
-            <div data-settings-anchor="agents">
-              <AgentsSection />
-            </div>
-            {#if agentsStore.experimental}
-              <div data-settings-anchor="background-tasks">
-                <BackgroundTasksSection />
-              </div>
-            {/if}
-          </div>
-        {:else if activeSection === 'contacts'}
-          <div data-settings-section="contacts">
-            <ContactsSection />
-          </div>
-        {:else if activeSection === 'unattended'}
-          <div data-settings-section="unattended" class="space-y-6">
-            <UnattendedSection />
-            <div data-settings-anchor="schedules">
-              <SchedulesSection />
-            </div>
-          </div>
-        {:else if activeSection === 'profile'}
-          <div data-settings-section="profile">
-            <ProfileSection />
-          </div>
-        {:else if activeSection === 'environment'}
-          <div data-settings-section="environment" class="space-y-6">
-            <div data-settings-anchor="environment">
-              <EnvironmentSection />
-            </div>
-            <div data-settings-anchor="sandbox" class="space-y-3">
-              <SandboxSection />
-              <p class="text-xs text-muted-foreground" data-testid="sandbox-confirm-note">
-                {t('settings.sandboxNoteP03')}
-              </p>
-            </div>
-            <div data-settings-anchor="allowlist">
-              <AllowlistSection />
-            </div>
-          </div>
-        {:else if activeSection === 'usage'}
-          <div data-settings-section="usage">
-            <UsageSection />
-          </div>
-        {:else if activeSection === 'diagnostics'}
-          <div data-settings-section="diagnostics">
-            <DiagnosticsSection />
-          </div>
-        {:else if activeSection === 'developer'}
-          <div data-settings-section="developer">
-            <DeveloperSection />
-          </div>
-        {/if}
+        <SettingsSectionView section={activeSection} />
       </div>
     </div>
   </Dialog.Content>

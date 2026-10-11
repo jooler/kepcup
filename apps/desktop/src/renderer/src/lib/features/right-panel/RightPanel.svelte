@@ -5,6 +5,7 @@
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { shell } from '$lib/stores/shell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -35,6 +36,10 @@
   const bot = $derived(chat.current?.conversation.bot ?? null);
   const grants = $derived(permissions.grants);
   const confirmMode = $derived(permissions.sandbox !== null && !permissions.sandbox.available);
+  // 窄屏（33-narrow-layout）：本组件渲染为全屏 Bot 详情覆盖层（NarrowShell），
+  // 无左边框、✕ 关闭的是覆盖层，头部让出 macOS 红绿灯占位。
+  const narrow = $derived(narrowLayout.narrow);
+  const isMac = /Mac/i.test(navigator.platform);
 
   let draft = $state<BotProfile | null>(null);
   let activeTab = $state('profile');
@@ -231,8 +236,15 @@
   }
 </script>
 
-<aside class="flex h-full min-h-0 flex-col border-l bg-background" data-testid="right-panel">
-  <header class="app-drag flex h-12 shrink-0 items-center justify-end px-4">
+<aside
+  class="flex h-full min-h-0 flex-col bg-background {narrow ? '' : 'border-l'}"
+  data-testid="right-panel"
+>
+  <header
+    class="app-drag flex h-12 shrink-0 items-center justify-end {narrow && isMac
+      ? 'pr-2 pl-20'
+      : 'px-4'}"
+  >
     <div class="app-no-drag flex items-center gap-1">
       <!-- P11 任务 5: 查看该 Bot 在当前对话中的浏览器页面（直聊才有单一 Bot）。 -->
       {#if !isGroup && bot?.status === 'active' && conversation}
@@ -248,15 +260,16 @@
           {t('rightPanel.browserShow')}
         </Button>
       {/if}
+      <!-- 关闭按钮与对话列表页的搜索 / 新增同款（圆形带边框，33-narrow-layout）。 -->
       <Button
         variant="ghost"
         size="icon"
-        class="size-7"
-        onclick={() => shell.toggleRightPanel()}
+        class="size-9 rounded-full border border-border bg-background text-muted-foreground shadow-none hover:text-foreground"
+        onclick={() => (narrow ? narrowLayout.closeBotDetail() : shell.toggleRightPanel())}
         data-testid="right-panel-hide"
         aria-label={t('shell.rightPanelHide')}
       >
-        <X class="size-4" aria-hidden="true" />
+        <X class="size-5" aria-hidden="true" />
       </Button>
     </div>
   </header>

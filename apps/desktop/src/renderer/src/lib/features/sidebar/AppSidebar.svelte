@@ -11,6 +11,7 @@
     Pencil,
     Copy,
     Trash2,
+    ChevronLeft,
     type LucideIcon,
   } from '@lucide/svelte';
   import type { Bot, BotProfile } from '@kepcup/shared';
@@ -43,6 +44,7 @@
   import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
   import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import { sidebarLayout } from './sidebar-layout.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
 
   /**
@@ -56,11 +58,16 @@
    * 宽度可拖拽调节（右缘手柄，sidebar-layout）：收窄到 macOS 红绿灯占位宽
    * 即图标模式——顶部搜索隐藏、「+」移到底部（与参考一致），对话只剩头像、
    * 名称/预览走 hover 提示，底部技能市场收成图标。
+   *
+   * 窄屏模式（33-narrow-layout）本组件复用为「对话」tab 的列表页：--sidebar-width
+   * 由 NarrowShell 覆盖为全宽，图标模式不适用（强制展开）、底部 footer 与调宽
+   * 手柄隐藏（扩展中心 / 我移到底部 tab），「+」面板定位改贴窗口左缘。
    */
   const isMac = /Mac/i.test(navigator.platform);
 
   /** 图标模式（拖到最小宽 = 红绿灯占位）：顶部搜索隐藏、「+」落底部、对话只显示头像。 */
-  const collapsed = $derived(sidebarLayout.collapsed);
+  const narrow = $derived(narrowLayout.narrow);
+  const collapsed = $derived(narrow ? false : sidebarLayout.collapsed);
 
   /**
    * Electron 按 DOM 顺序合并 app-region，后出现的矩形胜出。开始对话面板和
@@ -525,131 +532,243 @@
     </Sidebar.Group>
   </Sidebar.Content>
 
-  <Sidebar.Footer>
-    {#if collapsed}
-      <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。 -->
-      <div class="flex flex-col items-center gap-1 p-1">
-        <button
-          type="button"
-          class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-            rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          onclick={() => (plusOpen = true)}
-          aria-label={t('sidebar.startChatTitle')}
-          title={t('sidebar.startChatTitle')}
-          data-testid="new-chat-button"
-        >
-          <Plus class="size-5" />
-        </button>
-        <button
-          type="button"
-          class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
-            rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          onclick={() => shell.openExtensionCenter()}
-          aria-label={t('sidebar.extensionCenter')}
-          title={t('sidebar.extensionCenter')}
-          data-testid="extension-center-button"
-        >
-          <Blocks class="size-5" aria-hidden="true" />
-        </button>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            <button
-              type="button"
-              class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
-              aria-label={t('menu.settings')}
-              title={t('sidebar.userName')}
-              data-testid="user-menu-trigger"
-            >
-              <Avatar.Root class="size-10">
-                <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
-              </Avatar.Root>
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content side="top" align="center" class="min-w-40">
-            <DropdownMenu.Item
-              onclick={() => shell.openSettings('general')}
-              data-testid="menu-settings"
-            >
-              <Settings2 aria-hidden="true" />
-              {t('menu.settings')}
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onclick={() => shell.openSettings('contacts')}
-              data-testid="menu-contacts"
-            >
-              <BookUser aria-hidden="true" />
-              {t('menu.contacts')}
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-      </div>
-    {:else}
-      <div class="flex items-center gap-2 p-1">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            <!-- 参考 Grok Bot：底部只有一枚圆形头像，不带文字与底色。 -->
-            <button
-              type="button"
-              class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
-              aria-label={t('menu.settings')}
-              title={t('sidebar.userName')}
-              data-testid="user-menu-trigger"
-            >
-              <Avatar.Root class="size-10">
-                <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
-              </Avatar.Root>
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content side="top" align="start" class="min-w-40">
-            <DropdownMenu.Item
-              onclick={() => shell.openSettings('general')}
-              data-testid="menu-settings"
-            >
-              <Settings2 aria-hidden="true" />
-              {t('menu.settings')}
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onclick={() => shell.openSettings('contacts')}
-              data-testid="menu-contacts"
-            >
-              <BookUser aria-hidden="true" />
-              {t('menu.contacts')}
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-        <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加 -->
-        <button
-          type="button"
-          class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
-            rounded-full border border-border bg-background px-3 text-sm
-            text-muted-foreground shadow-none transition-colors hover:text-foreground"
-          onclick={() => shell.openExtensionCenter()}
-          aria-label={t('sidebar.extensionCenter')}
-          title={t('sidebar.extensionCenter')}
-          data-testid="extension-center-button"
-        >
-          <Blocks class="size-4 shrink-0" aria-hidden="true" />
-          <span class="truncate">{t('sidebar.extensionCenter')}</span>
-        </button>
-      </div>
-    {/if}
-  </Sidebar.Footer>
+  <!-- 底部 footer 窄屏隐藏：扩展中心（底部 tab「扩展」）与用户菜单（「我」页）
+       移到了全局 tab 栏。 -->
+  {#if !narrow}
+    <Sidebar.Footer>
+      {#if collapsed}
+        <!-- 图标模式（参考图）：「+」从顶部移到底部，与技能市场、头像竖排。 -->
+        <div class="flex flex-col items-center gap-1 p-1">
+          <button
+            type="button"
+            class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
+              rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            onclick={() => (plusOpen = true)}
+            aria-label={t('sidebar.startChatTitle')}
+            title={t('sidebar.startChatTitle')}
+            data-testid="new-chat-button"
+          >
+            <Plus class="size-5" />
+          </button>
+          <button
+            type="button"
+            class="app-no-drag z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center
+              rounded-full text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            onclick={() => shell.openExtensionCenter()}
+            aria-label={t('sidebar.extensionCenter')}
+            title={t('sidebar.extensionCenter')}
+            data-testid="extension-center-button"
+          >
+            <Blocks class="size-5" aria-hidden="true" />
+          </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger>
+              <button
+                type="button"
+                class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
+                aria-label={t('menu.settings')}
+                title={t('sidebar.userName')}
+                data-testid="user-menu-trigger"
+              >
+                <Avatar.Root class="size-10">
+                  <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
+                </Avatar.Root>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content side="top" align="center" class="min-w-40">
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('general')}
+                data-testid="menu-settings"
+              >
+                <Settings2 aria-hidden="true" />
+                {t('menu.settings')}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('contacts')}
+                data-testid="menu-contacts"
+              >
+                <BookUser aria-hidden="true" />
+                {t('menu.contacts')}
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+        </div>
+      {:else}
+        <div class="flex items-center gap-2 p-1">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger>
+              <!-- 参考 Grok Bot：底部只有一枚圆形头像，不带文字与底色。 -->
+              <button
+                type="button"
+                class="z-10 flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent/50"
+                aria-label={t('menu.settings')}
+                title={t('sidebar.userName')}
+                data-testid="user-menu-trigger"
+              >
+                <Avatar.Root class="size-10">
+                  <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
+                </Avatar.Root>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content side="top" align="start" class="min-w-40">
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('general')}
+                data-testid="menu-settings"
+              >
+                <Settings2 aria-hidden="true" />
+                {t('menu.settings')}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onclick={() => shell.openSettings('contacts')}
+                data-testid="menu-contacts"
+              >
+                <BookUser aria-hidden="true" />
+                {t('menu.contacts')}
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+          <!-- 技能市场入口（参考 Connect apps 的胶囊形态）：预置技能的浏览/添加 -->
+          <button
+            type="button"
+            class="app-no-drag z-10 flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-2
+              rounded-full border border-border bg-background px-3 text-sm
+              text-muted-foreground shadow-none transition-colors hover:text-foreground"
+            onclick={() => shell.openExtensionCenter()}
+            aria-label={t('sidebar.extensionCenter')}
+            title={t('sidebar.extensionCenter')}
+            data-testid="extension-center-button"
+          >
+            <Blocks class="size-4 shrink-0" aria-hidden="true" />
+            <span class="truncate">{t('sidebar.extensionCenter')}</span>
+          </button>
+        </div>
+      {/if}
+    </Sidebar.Footer>
+  {/if}
 
   <!-- 右缘调宽手柄：整条侧栏高度可抓；DOM 上位于头部（app-drag）之后，
-       重叠处 no-drag 胜出，红绿灯旁也能拖。只承担交互，不加视觉反馈。 -->
-  <div
-    class="app-no-drag absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
-    role="separator"
-    aria-orientation="vertical"
-    aria-label={t('sidebar.resizeHandle')}
-    title={t('sidebar.resizeHandle')}
-    onpointerdown={(event) => sidebarLayout.startResize(event)}
-    ondblclick={() => sidebarLayout.resetWidth()}
-    data-testid="sidebar-resize-handle"
-  ></div>
+       重叠处 no-drag 胜出，红绿灯旁也能拖。只承担交互，不加视觉反馈。
+       窄屏下列表全宽（宽度跟窗口），无手柄。 -->
+  {#if !narrow}
+    <div
+      class="app-no-drag absolute inset-y-0 right-0 z-50 w-1.5 cursor-col-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t('sidebar.resizeHandle')}
+      title={t('sidebar.resizeHandle')}
+      onpointerdown={(event) => sidebarLayout.startResize(event)}
+      ondblclick={() => sidebarLayout.resetWidth()}
+      data-testid="sidebar-resize-handle"
+    ></div>
+  {/if}
 </Sidebar.Root>
 
-{#if plusOpen}
+<!-- 「新增」面板内容（宽窄两形态共用）：搜索过滤 + 三个新建入口 + Bot 名单。 -->
+{#snippet plusPanelBody()}
+  <Input
+    bind:value={plusQuery}
+    placeholder={t('sidebar.startChatPlaceholder')}
+    class="h-9 rounded-full bg-muted/50 text-sm"
+    data-testid="start-chat-search"
+  />
+  <div class="mt-2 space-y-0.5">
+    <button
+      type="button"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+      onclick={() => void startConversationalCreate()}
+      data-testid="start-chat-create-bot"
+    >
+      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+        <Plus class="size-4" />
+      </span>
+      {t('sidebar.createBot')}
+    </button>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+      onclick={openFormCreate}
+      data-testid="bot-create-form"
+    >
+      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+        <Pencil class="size-4" />
+      </span>
+      {t('contacts.advancedCreate')}
+    </button>
+    <button
+      type="button"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      onclick={openCreateGroup}
+      disabled={contacts.bots.length === 0}
+      title={contacts.bots.length === 0 ? t('sidebar.botsEmpty') : undefined}
+      data-testid="start-chat-create-group"
+    >
+      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
+        <Users class="size-4" />
+      </span>
+      {t('sidebar.createGroup')}
+    </button>
+  </div>
+  {#if plusBots.length > 0}
+    <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground">{t('contacts.title')}</p>
+    <div class="space-y-0.5 pb-1 {narrow ? '' : 'max-h-[300px] overflow-y-auto'}">
+      {#each plusBots as bot (bot.id)}
+        <button
+          type="button"
+          class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+          onclick={() => void openBotChat(bot.id)}
+          data-testid={`start-chat-bot-${bot.id}`}
+        >
+          <BotAvatar
+            botId={bot.id}
+            name={bot.name}
+            avatar={bot.avatar}
+            class="size-7"
+            fallbackClass="text-xs"
+          />
+          <span class="min-w-0 flex-1">
+            <span class="block truncate">{bot.name}</span>
+            {#if bot.bio.length > 0}
+              <span class="block truncate text-xs text-muted-foreground">{bot.bio}</span>
+            {/if}
+          </span>
+          <MessagesSquare class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </button>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
+{#if plusOpen && narrow}
+  <!-- 窄屏（33-narrow-layout）：全屏浮层带背景色盖住底层（像打开新页面），
+       顶部拖拽带让出红绿灯，返回按钮关闭；页面级滚动（不再限 300px）。 -->
+  <div
+    class="app-no-drag fixed inset-0 z-50 flex flex-col bg-background"
+    use:mountAboveDragRegion
+    data-testid="start-chat-layer"
+  >
+    <div
+      class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
+        ? 'pr-3 pl-20'
+        : 'px-3'}"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        class="app-no-drag size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+        onclick={() => (plusOpen = false)}
+        aria-label={t('narrow.back')}
+        title={t('narrow.back')}
+        data-testid="start-chat-layer-back"
+      >
+        <ChevronLeft class="size-5" aria-hidden="true" />
+      </Button>
+      <span class="text-base font-semibold">{t('sidebar.startChatTitle')}</span>
+    </div>
+    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      {@render plusPanelBody()}
+    </div>
+  </div>
+{:else if plusOpen}
   <!-- 「新增」面板（参考 Grok Bot 的开始对话面板）：新建只有一个入口 -->
   <button
     type="button"
@@ -665,77 +784,7 @@
     use:mountAboveDragRegion
     data-testid="start-chat-panel"
   >
-    <Input
-      bind:value={plusQuery}
-      placeholder={t('sidebar.startChatPlaceholder')}
-      class="h-9 rounded-full bg-muted/50 text-sm"
-      data-testid="start-chat-search"
-    />
-    <div class="mt-2 space-y-0.5">
-      <button
-        type="button"
-        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-        onclick={() => void startConversationalCreate()}
-        data-testid="start-chat-create-bot"
-      >
-        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-          <Plus class="size-4" />
-        </span>
-        {t('sidebar.createBot')}
-      </button>
-      <button
-        type="button"
-        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-        onclick={openFormCreate}
-        data-testid="bot-create-form"
-      >
-        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-          <Pencil class="size-4" />
-        </span>
-        {t('contacts.advancedCreate')}
-      </button>
-      <button
-        type="button"
-        class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-        onclick={openCreateGroup}
-        disabled={contacts.bots.length === 0}
-        title={contacts.bots.length === 0 ? t('sidebar.botsEmpty') : undefined}
-        data-testid="start-chat-create-group"
-      >
-        <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-          <Users class="size-4" />
-        </span>
-        {t('sidebar.createGroup')}
-      </button>
-    </div>
-    {#if plusBots.length > 0}
-      <p class="px-2 pt-2 pb-1 text-[11px] text-muted-foreground">{t('contacts.title')}</p>
-      <div class="max-h-[300px] space-y-0.5 overflow-y-auto pb-1">
-        {#each plusBots as bot (bot.id)}
-          <button
-            type="button"
-            class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-            onclick={() => void openBotChat(bot.id)}
-            data-testid={`start-chat-bot-${bot.id}`}
-          >
-            <BotAvatar
-              botId={bot.id}
-              name={bot.name}
-              avatar={bot.avatar}
-              class="size-7"
-              fallbackClass="text-xs"
-            />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate">{bot.name}</span>
-              {#if bot.bio.length > 0}
-                <span class="block truncate text-xs text-muted-foreground">{bot.bio}</span>
-              {/if}
-            </span>
-            <MessagesSquare class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </button>
-        {/each}
-      </div>
-    {/if}
+    {@render plusPanelBody()}
   </div>
 {/if}
 

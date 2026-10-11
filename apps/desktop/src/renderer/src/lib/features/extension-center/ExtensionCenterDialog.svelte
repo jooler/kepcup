@@ -1,6 +1,5 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { shell } from '$lib/stores/shell.svelte';
   import {
     Dialog,
     DialogContent,
@@ -8,64 +7,24 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import { skillMarket } from './market.svelte';
-  import ExtensionSkills from './ExtensionSkills.svelte';
-  import ExtensionConnections from './ExtensionConnections.svelte';
-  import ExtensionMcp from './ExtensionMcp.svelte';
-  import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
+  import ExtensionCenterBody from './ExtensionCenterBody.svelte';
 
   /**
-   * 扩展中心（原技能市场，docs/design/29-connected-apps.md §16）：三个分组——
-   * Skills（预置技能，原技能市场内容原样迁入）、连接（已适配的预置连接应用：发现 / 连接 /
-   * 管理）、MCP（已安装 MCP 的管理 + MCPB 本地包安装）。当前分组存在 shell store 里，
-   * 各入口经 `shell.openExtensionCenter(tab)` 直达某一组。
+   * 扩展中心弹框（docs/design/29-connected-apps.md §16）：三个分组的主体在
+   * ExtensionCenterBody（与窄屏「扩展」tab 页共用）。
    *
    * 面板是明确打开的管理界面：点遮罩/弹框外部不关闭（易误触），只留右上角
    * ✕ 与 Esc；技能安装进行中关闭弹框不中断安装（installing 在模块级单例里）。
+   * 窄屏模式下扩展入口走底部 tab 页，不再打开这个弹框（NarrowShell 会把
+   * openExtensionCenter 深链重路由到 tab）；窗口被拉窄时宽度上限贴视口。
    */
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
-
-  const TAB_LABEL_KEYS = {
-    skills: 'extensionCenter.tabs.skills',
-    connections: 'extensionCenter.tabs.connections',
-    mcp: 'extensionCenter.tabs.mcp',
-  } as const;
-
-  const tab = $derived(shell.extensionCenterTab);
-
-  // Skills 分组的目录 / 搜索词只在弹框关闭时复位（切分组不清），避免下次打开闪现陈旧内容。
-  $effect(() => {
-    if (!open) skillMarket.reset();
-  });
-
-  let tablist = $state<HTMLDivElement | null>(null);
-
-  function select(next: ExtensionCenterTab): void {
-    shell.extensionCenterTab = next;
-  }
-
-  function tabId(item: ExtensionCenterTab): string {
-    return `extension-center-tab-${item}`;
-  }
-
-  function panelId(item: ExtensionCenterTab): string {
-    return `extension-center-tabpanel-${item}`;
-  }
-
-  /** WAI-ARIA tabs：左右方向键 / Home / End 切换分组并把焦点移到新页签上。 */
-  function onTablistKeydown(event: KeyboardEvent): void {
-    const next = extensionTabForKey(tab, event.key);
-    if (next === null) return;
-    event.preventDefault();
-    select(next);
-    tablist?.querySelector<HTMLElement>(`#${tabId(next)}`)?.focus();
-  }
 </script>
 
 <Dialog bind:open>
   <DialogContent
-    class="flex h-[70vh] max-w-xl flex-col overflow-hidden sm:max-w-6xl"
+    class="flex h-[70vh] max-w-[calc(100%_-_1rem)] flex-col overflow-hidden sm:max-w-6xl"
     data-testid="extension-center-dialog"
     onInteractOutside={(event) => event.preventDefault()}
   >
@@ -74,45 +33,6 @@
       <DialogDescription>{t('extensionCenter.description')}</DialogDescription>
     </DialogHeader>
 
-    <div
-      class="flex shrink-0 items-center gap-1 border-b"
-      role="tablist"
-      bind:this={tablist}
-      data-testid="extension-center-tabs"
-    >
-      {#each EXTENSION_CENTER_TABS as item (item)}
-        <button
-          type="button"
-          role="tab"
-          id={tabId(item)}
-          aria-selected={tab === item}
-          aria-controls={panelId(item)}
-          tabindex={tab === item ? 0 : -1}
-          class="-mb-px border-b-2 px-3 py-1.5 text-sm transition-colors {tab === item
-            ? 'border-foreground font-medium text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'}"
-          onclick={() => select(item)}
-          onkeydown={onTablistKeydown}
-          data-testid={`extension-center-tab-${item}`}
-        >
-          {t(TAB_LABEL_KEYS[item])}
-        </button>
-      {/each}
-    </div>
-
-    <div
-      role="tabpanel"
-      id={panelId(tab)}
-      aria-labelledby={tabId(tab)}
-      class="@container flex min-h-0 flex-1 flex-col"
-    >
-      {#if tab === 'skills'}
-        <ExtensionSkills />
-      {:else if tab === 'connections'}
-        <ExtensionConnections />
-      {:else}
-        <ExtensionMcp />
-      {/if}
-    </div>
+    <ExtensionCenterBody />
   </DialogContent>
 </Dialog>

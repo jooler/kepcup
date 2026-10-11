@@ -87,7 +87,7 @@
 
   {#if loadState !== 'ready' || catalog.length > 0}
     <div class="flex flex-wrap items-center gap-2 px-1">
-      <div class="relative min-w-48 max-w-sm flex-1">
+      <div class="relative max-w-sm min-w-48 flex-1">
         <Search
           class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden="true"
@@ -165,7 +165,7 @@
   {:else}
     {#if sections.main.length > 0}
       <div
-        class="grid grid-cols-2 gap-3 @3xl:grid-cols-3 @5xl:grid-cols-4 px-1"
+        class="grid grid-cols-1 gap-3 px-1 @xl:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4"
         data-testid="apps-catalog-main"
       >
         {#each sections.main as entry (entry.connectorId)}
@@ -196,7 +196,7 @@
               {t('apps.tier.communityHint')}
             </p>
             <div
-              class="grid grid-cols-2 gap-3 @3xl:grid-cols-3 @5xl:grid-cols-4"
+              class="grid grid-cols-1 gap-3 @xl:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4"
               data-testid="apps-catalog-community-list"
             >
               {#each sections.community as entry (entry.connectorId)}

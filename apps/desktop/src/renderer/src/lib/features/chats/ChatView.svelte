@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { ChevronRight, MessageSquare, Users, X } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, MessageSquare, Users, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
@@ -63,6 +64,11 @@
           t('rightPanel.title'),
   );
   const panelCollapsed = $derived(shell.rightPanelCollapsed);
+  // 窄屏（33-narrow-layout）：无右栏分栏，药丸点击开 Bot 详情覆盖层；顶部
+  // 左上角是「返回列表」按钮（macOS 让出红绿灯占位）。本组件只在已选中会话
+  // 时被 NarrowShell 渲染，空态分支窄屏不可达。
+  const narrow = $derived(narrowLayout.narrow);
+  const isMac = /Mac/i.test(navigator.platform);
 
   let composerDockHeight = $state(0);
 </script>
@@ -81,15 +87,35 @@
     data-testid="chat-view"
     data-readonly={current.conversation.readOnly}
   >
-    <!-- 顶部 Bot 药丸：点击切换右栏；收起时右侧「>」提示可展开 -->
+    <!-- 顶部 Bot 药丸：点击切换右栏；收起时右侧「>」提示可展开。
+         窄屏：左上角返回列表（chat.leaveCurrent），药丸跟在返回之后、可截断，
+         点击打开 Bot 详情覆盖层（NarrowShell）。 -->
     <header
-      class="app-drag absolute inset-x-0 top-0 z-30 flex h-16 items-center justify-center bg-gradient-to-b from-background to-background/0"
+      class="app-drag absolute inset-x-0 top-0 z-30 flex h-16 items-center gap-2 bg-gradient-to-b from-background to-background/0
+        {narrow ? 'justify-start ' + (isMac ? 'pr-3 pl-20' : 'px-3') : 'justify-center'}"
     >
+      {#if narrow}
+        <Button
+          variant="ghost"
+          size="icon"
+          class="app-no-drag size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+          onclick={() => chat.leaveCurrent()}
+          aria-label={t('narrow.back')}
+          title={t('narrow.back')}
+          data-testid="narrow-back-button"
+        >
+          <ChevronLeft class="size-5" aria-hidden="true" />
+        </Button>
+      {/if}
       <Button
         variant="outline"
-        class="app-no-drag h-10 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
-        onclick={() => shell.toggleRightPanel()}
-        title={panelCollapsed ? t('chatHeader.expandPanel') : t('chatHeader.collapsePanel')}
+        class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
+        onclick={narrow ? () => narrowLayout.openBotDetail() : () => shell.toggleRightPanel()}
+        title={narrow
+          ? t('rightPanel.title')
+          : panelCollapsed
+            ? t('chatHeader.expandPanel')
+            : t('chatHeader.collapsePanel')}
         data-testid="right-panel-toggle"
       >
         {#if isGroup}
@@ -108,7 +134,7 @@
           />
         {/if}
         <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
-        {#if panelCollapsed}
+        {#if panelCollapsed && !narrow}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
                外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
                gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->
