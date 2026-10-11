@@ -150,6 +150,55 @@ describe('generate_speech', () => {
   });
 });
 
+describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
+  it('generate_image：落盘后 delivery.send 收到保存路径，文案改为「已作为消息附件」', async () => {
+    const workspace = path.join(root, 'ws-delivery-img');
+    const sent: Array<{ files: string[]; caption: string }> = [];
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({
+          images: [{ b64: Buffer.from('png-bytes').toString('base64') }],
+        }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      delivery: { send: (files, caption) => sent.push({ files, caption }) },
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    const result = await image.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
+    expect(result.ok).toBe(true);
+    expect(sent).toEqual([{ files: [path.join(workspace, '.generated', 'cat.png')], caption: '' }]);
+    expect(result.content).toContain('已作为消息附件显示在用户的对话界面中');
+    expect(result.content).not.toContain('请用 send_message');
+    // 不把绝对路径回给模型——它只会把路径复述给用户（噪声）。
+    expect(result.content).not.toContain(workspace);
+    expect(readFileSync(path.join(workspace, '.generated', 'cat.png')).toString()).toBe('png-bytes');
+  });
+
+  it('generate_speech：同样自动投递', async () => {
+    const workspace = path.join(root, 'ws-delivery-speech');
+    const sent: Array<{ files: string[]; caption: string }> = [];
+    const tools = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      delivery: { send: (files, caption) => sent.push({ files, caption }) },
+    });
+    const speech = tools.find((tool) => tool.name === 'generate_speech')!;
+    const result = await speech.execute({ text: '你好', file_name: 'greeting' }, ctx());
+    expect(result.ok).toBe(true);
+    expect(sent).toEqual([
+      { files: [path.join(workspace, '.generated', 'greeting.mp3')], caption: '' },
+    ]);
+    expect(result.content).toContain('已作为消息附件显示在用户的对话界面中');
+    expect(result.content).not.toContain(workspace);
+  });
+});
+
 describe('generate_video', () => {
   it('提交 → 轮询到成功 → 下载字节落盘', async () => {
     const workspace = path.join(root, 'ws4');

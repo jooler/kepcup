@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createTestStack,
+  listAllMessages,
   listMessages,
   listRuns,
   makeBot,
@@ -17,7 +18,6 @@ import {
   waitForRun,
   type TestStack,
 } from '@kepcup/testkit';
-
 const stacks: TestStack[] = [];
 
 afterEach(async () => {
@@ -238,6 +238,14 @@ describe('response loop', () => {
     const failed = await waitForRun(core, conv.id, 'failed', { loopType: 'task' });
     expect(failed.setup).toEqual({ kind: 'capability-model', capability: 'image' });
 
+    // 失败条目带确定性指引：Bot 等卡片、勿代产（配置完成后任务自动继续）。
+    // task_event 条目是内部行（用户可见列表只渲染任务卡），走 domain 级列表。
+    const entries = await listAllMessages(core, conv.id);
+    const failureEntry = entries.find(
+      (m) => m.kind === 'task_event' && (m.content as { phase?: string }).phase === 'failure',
+    );
+    expect((failureEntry?.content as { text?: string }).text ?? '').toContain('自动继续');
+
     // 设置卡片完成图像模型配置后重试：工具不再报 SETUP_REQUIRED，对话继续。
     const settings = (await core.rpc.call('settings.get')) as {
       capabilityModels: Record<string, unknown>;
@@ -260,6 +268,102 @@ describe('response loop', () => {
     const tasks = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'task');
     expect(tasks.filter((r) => r.setup !== null)).toHaveLength(1);
     expect(tasks.find((r) => r.id === retried.run!.id)?.continuedFromRunIds).toEqual([failed.id]);
+  }, 30_000);
+
+  // 用户关闭「缺设置」卡片（放弃配置，runs.setupDismissed）：Bot 收到一次性
+  // 通知（internal event 唤醒对话轮）并给新的反馈；同一 run 只通知一次。
+  it('closing the setup card without configuring wakes the bot into a new reply', async () => {
+    const { core, llm } = await start();
+    llm.script('mock-main', [
+      ...viaTask({
+        taskSteps: [step().replyToolCall('generate_image', { prompt: '一只猫' })],
+        relay: '需要先完成图像生成设置，完成后任务会自动继续',
+      }),
+      step().inTurn().replyText('设置卡片已关闭，任务停在这里；需要我给替代方案吗？'),
+    ]);
+    const bot = await makeBot(core, '画师');
+    const conv = await openDirect(core, bot.id);
+
+    await sendBatch(core, conv.id, ['帮我画张图']);
+    const failed = await waitForRun(core, conv.id, 'failed', { loopType: 'task' });
+    expect(failed.setup).toEqual({ kind: 'capability-model', capability: 'image' });
+    // 失败条目先唤醒一轮转述（等设置卡）。
+    await waitForMessage(core, conv.id, (m) => m.senderBotId === bot.id);
+
+    const first = (await core.rpc.call('runs.setupDismissed', { runId: failed.id })) as {
+      notified: boolean;
+    };
+    expect(first.notified).toBe(true);
+    await waitForMessage(
+      core,
+      conv.id,
+      (m) =>
+        m.senderBotId === bot.id &&
+        ((m.content as { text?: string }).text?.includes('替代方案') ?? false),
+    );
+    // 幂等：同一 run 只通知一次。
+    const second = (await core.rpc.call('runs.setupDismissed', { runId: failed.id })) as {
+      notified: boolean;
+    };
+    expect(second.notified).toBe(false);
+  }, 30_000);
+
+  // 生成产物的确定性投递：generate_image 落盘后由工具本身把图片作为消息
+  // 附件发出（任务内 = 进度消息），不再依赖模型记得调 send_message——漏发
+  // 会让「已生成」的报告无图可看。
+  it('generate_image delivers the image as a message attachment without send_message', async () => {
+    const { core, llm } = await start();
+    // 能力配置 + 厂商 key（#resolveVendor 读密钥表，缺 key 会在厂商请求前失败）。
+    await core.rpc.call('settings.update', {
+      capabilityModels: {
+        image: { vendor: 'volcengine', model: 'doubao-seedream-4-0-250828' },
+      },
+    });
+    await core.rpc.call('providers.setKey', { provider: 'volcengine', key: 'sk-test' });
+    // 1x1 PNG：厂商端点返回 b64，其余请求（mock LLM 等）透传真实 fetch。
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('/images/generations')) {
+        return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }));
+      }
+      return realFetch(url, init);
+    });
+    try {
+      // 实时通道断言：message.created 载荷必须已带附件（append 返回值本身
+      // attachments 为空，发布前须重读——否则界面实时渲染成空气泡）。
+      const createdPromise = waitForEvent<{ message: { id: string; attachments: unknown[] } }>(
+        core,
+        'message.created',
+        (payload) => payload.message.attachments.length > 0,
+      );
+      llm.script('mock-main', [
+        ...viaTask({
+          taskSteps: [
+            step().replyToolCall('generate_image', { prompt: '一只猫' }),
+            step().replyText('图片已经生成好了'),
+          ],
+          relay: '画好了，图片已经发给你了',
+        }),
+      ]);
+      const bot = await makeBot(core, '画师');
+      const conv = await openDirect(core, bot.id);
+
+      await sendBatch(core, conv.id, ['帮我画一张图']);
+      const created = await createdPromise;
+      expect(created.message.attachments).toHaveLength(1);
+      await waitForRun(core, conv.id, 'completed', { loopType: 'task' });
+      const withImage = await waitFor(async () => {
+        const all = await listAllMessages(core, conv.id);
+        return all.find((m) => m.senderBotId === bot.id && m.attachments.length > 0) ?? null;
+      }, { label: 'bot message with image attachment' });
+      expect(withImage?.attachments[0]?.mime).toBe('image/png');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   }, 30_000);
 
   it('deleting one conversation leaves a running loop in another conversation alone', async () => {

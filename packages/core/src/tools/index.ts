@@ -182,6 +182,16 @@ export interface SkillsToolFacade {
   }): { ok: boolean; message: string };
 }
 
+/**
+ * 生成类媒体工具（generate_image / generate_speech / generate_video）的**确定性
+ * 投递**：产物落盘后由工具本身把文件作为 Bot 消息附件发进对话（任务内即进度
+ * 消息，归属当前任务），不再依赖模型记得调 send_message 的 attachment_paths
+ * ——漏发会让「已生成」的报告没有图可看。caption 为空串时只发附件。
+ */
+export interface GeneratedMediaDelivery {
+  send(files: string[], caption: string): void;
+}
+
 /** The slice of EnvManager the request_environment tool needs. */
 export interface EnvironmentToolFacade {
   request(
@@ -905,6 +915,49 @@ export function buildResponseTools(input: {
         })
       : [];
 
+  // 生成类媒体产物的确定性投递（GeneratedMediaDelivery）：与 send_message 同一
+  // 组上传/落库/发布原语——刚写进 workspace 的文件必过 checkPath，逐文件容错。
+  const generatedMediaDelivery: GeneratedMediaDelivery = {
+    send: (files, caption) => {
+      if (identity.conversationId === null || identity.botId === null) return;
+      const uploaded = [];
+      for (const filePath of files) {
+        const decision = gateway.checkPath(identity, filePath, 'read');
+        if (decision.kind !== 'allowed') continue;
+        try {
+          uploaded.push(
+            deps.attachments.upload({
+              conversationId: identity.conversationId,
+              fileName: path.basename(filePath),
+              mime: guessMime(filePath),
+              bytes: readFileSync(decision.resolvedPath),
+            }),
+          );
+        } catch {
+          // 单个文件读不了就跳过：工具结果仍带回路径，模型可用 send_message 重试。
+        }
+      }
+      if (uploaded.length === 0) return;
+      const message = deps.messages.append({
+        conversationId: identity.conversationId,
+        senderType: 'bot',
+        senderBotId: identity.botId,
+        kind: 'text',
+        text: caption,
+        replyTo: null,
+        mentions: [],
+        runId: identity.runId,
+        // D75 §6.1: a task's messages are progress, attributed to the task.
+        ...(identity.loopType !== 'turn' ? { taskOrigin: { taskId: identity.runId } } : {}),
+      });
+      deps.attachments.attachToMessage(
+        uploaded.map((a) => a.id),
+        message.id,
+      );
+      deps.onBotMessage(message);
+    },
+  };
+
   // 图像/语音/视频生成与理解（docs/design/18-inline-setup.md、
   // 20-conversation-media.md、25-capability-tools.md）：媒体网关就绪才注册；
   // 未配置能力时工具返回 SETUP_REQUIRED，由 orchestrator 中断 run 并引导设置。
@@ -916,6 +969,7 @@ export function buildResponseTools(input: {
           workspacePath: deps.workspacePath,
           attachments: deps.attachments,
           gateway,
+          delivery: generatedMediaDelivery,
         })
       : [];
   const speechTools =
@@ -926,6 +980,7 @@ export function buildResponseTools(input: {
           workspacePath: deps.workspacePath,
           attachments: deps.attachments,
           gateway,
+          delivery: generatedMediaDelivery,
         })
       : [];
 

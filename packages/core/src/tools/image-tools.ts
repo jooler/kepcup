@@ -8,14 +8,15 @@ import type { ImageGenerationResult } from '../media/types.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
+import type { GeneratedMediaDelivery } from './index.js';
 import { resolveMediaSource } from './media-source.js';
 import { readOnlyRefusal } from './read-only.js';
 
 /**
  * 图像生成的 Bot 工具（docs/design/18-inline-setup.md）：图像能力在
  * settings.capabilityModels.image 按厂商配置（MediaService 解析适配器）。
- * 生成的图片落盘到 workspace 的 .generated/ 下，由 Bot 用 send_message
- * 的 attachment_paths 随消息发出。
+ * 生成的图片落盘到 workspace 的 .generated/ 后由 delivery **立即作为消息
+ * 附件发进对话**（确定性投递，不再依赖模型记得调 send_message）。
  *
  * 未配置（能力缺失或厂商缺 Key）时返回 SETUP_REQUIRED 错误码——它对模型
  * 只是普通的失败结果，但 orchestrator 监听该错误码中断 run 并以结构化
@@ -70,6 +71,8 @@ export function buildImageTools(input: {
   /** 素材来源解析（understand_image）：附件字节与路径权限检查。 */
   attachments: AttachmentsService;
   gateway: ToolGateway;
+  /** 产物落盘后的确定性投递（测试装配可缺省：走「请模型 send_message」旧路径）。 */
+  delivery?: GeneratedMediaDelivery | undefined;
 }): ToolDefinition[] {
   const { identity, media, workspacePath } = input;
 
@@ -80,7 +83,7 @@ export function buildImageTools(input: {
   }> = {
     name: 'generate_image',
     description:
-      '生成图片（文生图）。图片保存到 workspace 后返回文件路径，需用 send_message 的 attachment_paths 把文件发给用户。应用未配置图像生成模型时本工具不可用。',
+      '生成图片（文生图）。用户要图片、图标、插画、海报等真实图片文件时必须调用本工具产出，不要用文字描述或字符画代替；图片保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置图像生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续，不要因此改用文字方案或推荐外部工具。',
     parameters: Type.Object({
       prompt: Type.String({ description: '图片描述（提示词），尽量具体：主体、风格、构图' }),
       file_name: Type.Optional(
@@ -149,10 +152,20 @@ export function buildImageTools(input: {
       if (saved.length === 0) {
         return { ok: false, content: '图片生成失败：未能保存任何图片文件', errorCode: 'INTERNAL' };
       }
-      const truncated = truncateToBudget(saved.join('\n'), TOOL_OUTPUT_MAX_CHARS).text;
+      const paths = truncateToBudget(saved.join('\n'), TOOL_OUTPUT_MAX_CHARS).text;
+      if (input.delivery !== undefined) {
+        // 确定性投递：图片立即作为消息附件发进对话（任务内为进度消息），
+        // 不依赖模型再调 send_message——漏发会让「已生成」的报告无图可看。
+        // 不把文件路径回给模型：它只会把绝对路径复述给用户（噪声）。
+        input.delivery.send(saved, '');
+        return {
+          ok: true,
+          content: `已生成 ${saved.length} 张图片，并已作为消息附件显示在用户的对话界面中。无需再调 send_message，也不要向用户复述文件路径；只需用一句话向用户确认生成结果。`,
+        };
+      }
       return {
         ok: true,
-        content: `已生成 ${saved.length} 张图片并保存到 workspace：\n${truncated}\n请用 send_message 的 attachment_paths 把这些文件发给用户。`,
+        content: `已生成 ${saved.length} 张图片并保存到 workspace：\n${paths}\n请用 send_message 的 attachment_paths 把这些文件发给用户。`,
       };
     },
   };
@@ -247,8 +260,9 @@ export function buildImageTools(input: {
 
 function setupRequiredResult(reason: string): ToolResult {
   return {
+    // understand_image 也走这里（图片理解 ≠ 图像生成），措辞不能写死能力名。
     ok: false,
-    content: `${reason}：请告知用户需要先在应用中完成图像生成模型设置；设置完成后本次请求会自动继续。`,
+    content: `${reason}：请告知用户需要先在应用中完成对应能力模型设置；设置完成后本次请求会自动继续。`,
     errorCode: TOOL_SETUP_REQUIRED,
   };
 }

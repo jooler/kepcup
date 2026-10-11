@@ -1203,7 +1203,13 @@ export class TaskHost implements TaskToolFacade {
               ownerBotId: task.botId,
               taskId,
               phase: 'failure',
-              text: this.#failureText(task, outcome.status, error, outcome.errorReason),
+              text: this.#failureText(
+                task,
+                outcome.status,
+                error,
+                outcome.errorReason,
+                outcome.setup,
+              ),
               status: outcome.status,
               ...(error !== null ? { error } : {}),
               ...(outcome.errorReason !== undefined ? { errorReason: outcome.errorReason } : {}),
@@ -2322,6 +2328,7 @@ export class TaskHost implements TaskToolFacade {
     status: RunStatus,
     error: string | null,
     reason?: TaskErrorReason,
+    setup?: SetupRequirement,
   ): string {
     const label = status === 'cancelled' ? '已取消' : status === 'interrupted' ? '已中断' : '失败';
     let digest = '';
@@ -2346,7 +2353,23 @@ export class TaskHost implements TaskToolFacade {
         : reason === 'browser_profile_changed' && status === 'interrupted'
           ? '用户切换了你的浏览器资料（登录身份可能已不同）：不要自行重新派出或接续它；告诉用户任务已中断，需要时由用户在任务卡上检查已完成的操作后重试。'
           : '';
-    return [`任务${label}${error !== null && error.length > 0 ? `：${error}` : ''}`, note, digest]
+    // 缺设置的失败（docs/design/18-inline-setup.md）：设置卡片已弹出，任务
+    // 会在配置完成后自动续跑——明确告诉 Bot「等待」与「勿代产」的纪律，否则
+    // 它会按普通失败自行给出替代产出（如文字设计方案）甚至推荐外部工具。
+    const setupNote =
+      setup !== undefined && status === 'failed'
+        ? [
+            '这是一个缺设置的失败：对话里已出现对应的设置卡片，用户完成配置后这个任务会自动原样继续，不需要你重派。',
+            '你现在只需用一两句话告诉用户「需要先完成设置，完成后任务会自动继续」；不要改用文字方案等方式代替任务产出，不要建议外部工具，也不要重新派出任务。',
+            '用户若关闭设置卡片放弃配置，你会另行收到通知，届时再按用户意愿给新的反馈（那时才可给替代做法）。',
+          ].join('\n')
+        : '';
+    return [
+      `任务${label}${error !== null && error.length > 0 ? `：${error}` : ''}`,
+      note,
+      setupNote,
+      digest,
+    ]
       .filter((part) => part.length > 0)
       .join('\n');
   }

@@ -160,7 +160,7 @@ core 侧 `media/` 每家厂商一个适配器，实现厂商无关的 `VendorAda
 
 预置：百炼 `qwen-image / qwen-image-plus / qwen-image-edit / qwen-image-edit-plus`；方舟 `doubao-seedream-4-0-250828 / doubao-seedream-4-5-251128`。
 
-Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生图，产物落 workspace `.generated/`，Bot 经 `send_message` 的 `attachment_paths` 发给用户。能力未配置 / 厂商缺 Key 时网关抛 `CAPABILITY_NOT_CONFIGURED` / `PROVIDER_AUTH_FAILED`，工具转 `SETUP_REQUIRED`，orchestrator 中断执行并以结构化 setup 失败 settle，对话内呈现图像模型设置卡片（[18-inline-setup.md](18-inline-setup.md)）。
+Bot 侧消费入口：响应 loop 工具 `generate_image`（P15）——文生图，产物落 workspace `.generated/` 后由工具**立即作为消息附件发进对话**（确定性投递，不依赖模型再调 `send_message`；漏发会让「已生成」的报告无图可看）。能力未配置 / 厂商缺 Key 时网关抛 `CAPABILITY_NOT_CONFIGURED` / `PROVIDER_AUTH_FAILED`，工具转 `SETUP_REQUIRED`，orchestrator 中断执行并以结构化 setup 失败 settle，对话内呈现图像模型设置卡片（[18-inline-setup.md](18-inline-setup.md)）。
 
 ### 视频生成（video，异步任务）
 

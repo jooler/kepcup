@@ -36,7 +36,7 @@ export function buildWebTools(input: {
   const webSearch: ToolDefinition<{ query: string; max_results?: number }> = {
     name: 'web_search',
     description:
-      '联网搜索：按关键词检索公网资料，返回标题、链接与摘要列表。回答时效性问题、查证事实或寻找资料来源时使用；需要页面全文时对结果里的链接调用 web_fetch。应用未配置检索供应商时本工具不可用。',
+      '联网搜索：按关键词检索公网资料，返回标题、链接与摘要列表。回答时效性问题、查证事实或寻找资料来源时调用，不要凭记忆编造；需要页面全文时对结果里的链接调用 web_fetch。未配置检索供应商时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
     parameters: Type.Object({
       query: Type.String({ description: '搜索关键词（可用空格组合多个词）' }),
       max_results: Type.Optional(Type.Number({ description: '结果条数上限，默认 6，最多 8' })),

@@ -98,6 +98,7 @@ import {
   runsCancelOutputSchema,
   runsRetryInputSchema,
   runsRetryOutputSchema,
+  runsSetupDismissedOutputSchema,
   runsStepsOutputSchema,
   runsListInputSchema,
   runsListOutputSchema,
@@ -462,7 +463,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       return { ok: true as const };
     }),
     'providers.test': method(providersTestInputSchema, okOutputSchema, async (input) => {
-      await domain.providers.test(input.provider, input.model, input.capability);
+      await domain.providers.test(input.provider, input.model, input.capability, input.keyOverride);
       return { ok: true as const };
     }),
 
@@ -912,6 +913,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         input.runId,
         input.reviewed !== undefined ? { reviewed: input.reviewed } : {},
       ),
+    })),
+    // 缺设置卡片被用户关闭（未完成配置）：一次性通知 Bot 现状，由它给新的
+    // 反馈（internal event → 对话轮）；无可通知时 notified=false。
+    'runs.setupDismissed': method(runIdInputSchema, runsSetupDismissedOutputSchema, async (input) => ({
+      notified: orchestrator.notifySetupDismissed(input.runId),
     })),
     'runs.steps': method(runIdInputSchema, runsStepsOutputSchema, async (input) => ({
       steps: orchestrator.stepsFor(input.runId),

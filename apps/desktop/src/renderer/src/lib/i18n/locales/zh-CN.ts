@@ -193,7 +193,9 @@ export const zhCN = {
   'settings.capabilityModelLabel': '模型 id',
   'settings.capabilityNotConfigured': '未配置',
   'settings.capabilityClear': '清除配置',
-  'settings.capabilityTestNote': '先保存再测试；测试会发一次最小真实请求。',
+  'settings.capabilityTestNote':
+    '测试直接使用当前填写的厂商 / 模型 / API Key（不保存；Key 留空则用已保存的），会发一次最小真实请求；落库请点「保存」。',
+  'settings.saveAndClose': '保存并关闭',
   'settings.capabilityMissingFields': '请选择厂商并填写模型 id',
   'settings.capabilityTitle.embedding': '向量模型',
   'settings.capabilityTitle.rerank': '重排模型',
