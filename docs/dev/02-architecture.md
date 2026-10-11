@@ -35,7 +35,7 @@ flowchart LR
 - 契约定义在 `packages/shared/src/rpc/`：
   - `methods.ts`：每个方法一个 zod 输入 schema 与输出 schema。
   - `events.ts`：核心服务推送给界面的事件及其载荷 schema。
-- 方法命名 `领域.动作`，例如 `conversations.list`、`drafts.add`、`drafts.flush`、`messages.recall`、`runs.cancel`、`approvals.decide`。
+- 方法命名 `领域.动作`，例如 `conversations.list`、`messages.send`、`messages.recall`、`runs.cancel`、`approvals.decide`。
 - 核心服务在 RPC 层用 zod 校验所有输入；校验失败返回 `INVALID_INPUT`。
 - 事件命名 `领域.事件`，例如 `message.created`、`run.status`、`run.progress`、`approval.created`、`approval.resolved`、`lease.waiting`、`grant.changed`、`task.updated`（D75：任务卡 / 状态行的 `TaskView`）、`draft.changed`、`conversation.updated`、`bot.updated`、`unattended.changed`、`core.status`。D75 的任务 RPC：`tasks.get`、`tasks.active`（对话中未结束任务的视图）、`tasks.answer`（问题卡点选）；取消 / 重试任务沿用 `runs.cancel` / `runs.retry`；`runs.list` 加 `active: true` 只列未结束的执行（状态行初始化用）。其他功能的 RPC 举例：`delegation.updated`（D71 委派卡重绘）；`tasks.interrupted`（D78：撤销授权中断了进行中的任务，渲染端提示条数）与 `effects.list`（任务续接链的外部副作用台账，「检查后重试」用）；`mcp.toolRisks`（D65 修订：设置页逐工具风险与审批策略）；连接应用（D73 P0）的 `apps.connect` / `apps.connect.continue` / `apps.connect.cancel` / `apps.setClientCredentials` / `apps.connections.list` / `apps.disconnect` / `mcp.removeServer` 与事件 `apps.connect_flow`、`apps.connection_status`；P1 再加 `apps.catalog.list`、`apps.connect.confirmTools`（首连工具复核）、`apps.connections.update` / `tools` / `setToolPolicy` / `reviewTools` / `grants`、`apps.grants.revoke`、`apps.tools.approveAfterTest`（`mcp.test` 返回 `toolHashes` / `needsAuth`），`apps.connection_status` 增 `tools_changed` 详情（见下文「连接应用」）。P2 再加 `apps.oauthClients.list` / `set` / `remove`（自带 OAuth 客户端，不返回 secret）、`apps.flowLog`（开发者模式的授权事件日志）、`apps.egressSummary`（Bot 详情的污点外发汇总）、`mcp.rawTools` / `mcp.refreshTools`（开发者模式：原始工具定义与手动刷新）、`mcpb.inspect` / `mcpb.install`（本地包安装）；`settings.update` 的 `apps` 入参开放 `developerMode` / `taintGuard`；主进程 IPC `dialog:selectFile`（选择 `.mcpb`）。
 - 界面只通过事件更新状态，不轮询。
@@ -356,9 +356,9 @@ sequenceDiagram
   participant S as 调度器
   participant E as AgentEngine
   participant T as TaskHost
-  U->>C: drafts.flush(conversationId)
-  C->>C: 草稿转为消息（一批），写入 main.db
-  C-->>U: message.created（每条）
+  U->>C: messages.send(conversationId, ...)
+  C->>C: 消息写入 main.db（附件同事务转正）
+  C-->>U: message.created
   C->>MB: deliver(批次)
   alt 没有正在执行的对话轮
     MB->>S: submit(对话轮, 优先级 0, 内置厂商)

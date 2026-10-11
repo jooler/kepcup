@@ -224,9 +224,9 @@ describe('P11 浏览器：响应 loop 工具与删除级联', () => {
         runs: Run[];
       };
       expect(runs.runs.filter((r) => r.loopType === 'turn' || r.loopType === 'task')).toHaveLength(0);
-      // 单聊已只读，drafts.flush 被拒
+      // 单聊已只读，messages.send 被拒
       await expect(
-        stack.core.rpc.call('drafts.flush', { conversationId: conv.id }),
+        stack.core.rpc.call('messages.send', { conversationId: conv.id, text: 'x' }),
       ).rejects.toMatchObject({ code: 'CONVERSATION_READ_ONLY' });
     } finally {
       await stack.cleanup();

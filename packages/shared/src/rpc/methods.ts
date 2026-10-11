@@ -75,7 +75,6 @@ import {
   conversationSchema,
   customProviderSchema,
   capabilityModelsSchema,
-  draftSchema,
   embeddingStatusSchema,
   envInstallSchema,
   envSystemStatusSchema,
@@ -835,39 +834,21 @@ export const messagesEditInputSchema = z.object({
   text: z.string().min(1).max(100_000),
 });
 
-// --- drafts ---------------------------------------------------------------
-
-export const draftsListInputSchema = z.object({ conversationId: z.string().min(1) });
-export const draftsListOutputSchema = z.object({ drafts: z.array(draftSchema) });
-// Patch-shaped input: plain optionals (no defaults) so a partial update never
-// erases stored values (see settingsUpdateInputSchema note above).
-export const draftsAddInputSchema = z.object({
+/**
+ * 发送一条用户消息（直发，无待发送队列）：单次发送 = 一条消息 = 一个批次
+ * （batchId core 侧生成）。空文本 + 纯附件允许（docs/design/20-conversation-media.md）；
+ * 渲染层保证非空组合。
+ */
+export const messagesSendInputSchema = z.object({
   conversationId: z.string().min(1),
-  /** 空文本 + 纯附件允许（docs/design/20-conversation-media.md）；渲染层保证非空组合。 */
   text: z.string().max(100_000),
   mentions: z.array(z.string().min(1)).optional(),
   replyTo: z.string().min(1).nullable().optional(),
-  /**
-   * 随草稿发送的附件（attachments.upload 先行上传）：core 校验归属后把
-   * draft_id 预挂到本草稿，flush 时随消息转正。
-   */
+  /** 随消息发送的附件（attachments.upload 先行上传）：core 校验归属后挂到本消息。 */
   attachmentIds: z.array(z.string().min(1)).optional(),
 });
-export const draftsUpdateInputSchema = z.object({
-  id: z.string().min(1),
-  text: z.string().min(1).max(100_000),
-});
-export const draftsReorderInputSchema = z.object({
-  conversationId: z.string().min(1),
-  /** Draft ids in their new order. */
-  ids: z.array(z.string()).min(1),
-});
-export const draftsRemoveInputSchema = z.object({ id: z.string().min(1) });
-export const draftsFlushInputSchema = z.object({ conversationId: z.string().min(1) });
-/** 立即发送队列中的单条草稿（UI 逐条「立即」按钮）。 */
-export const draftsFlushOneInputSchema = z.object({ id: z.string().min(1) });
-export const draftsFlushOutputSchema = z.object({
-  messages: z.array(messageSchema),
+export const messagesSendOutputSchema = z.object({
+  message: messageSchema,
   runId: z.string().nullable(),
 });
 
@@ -878,7 +859,6 @@ export const attachmentsUploadInputSchema = z.object({
   fileName: z.string().min(1).max(255),
   mime: z.string().min(1).max(255),
   bytesBase64: z.string().min(1).max(40_000_000),
-  draftId: z.string().min(1).optional(),
 });
 export const attachmentsUploadOutputSchema = z.object({ attachment: attachmentSchema });
 export const attachmentsGetInputSchema = z.object({ id: z.string().min(1) });
@@ -886,7 +866,7 @@ export const attachmentsGetOutputSchema = z.object({
   attachment: attachmentSchema,
   dataBase64: z.string(),
 });
-/** 移除草稿阶段的附件（已随消息发出的附件不可移除）。 */
+/** 移除未发送的附件（输入框里已上传、尚未随消息发出的 chip）。 */
 export const attachmentsDetachInputSchema = z.object({ id: z.string().min(1) });
 export const attachmentsDetachOutputSchema = z.object({ ok: z.literal(true) });
 
@@ -1777,13 +1757,7 @@ export const rpcMethodSchemas = {
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },
 
-  'drafts.list': { input: draftsListInputSchema, output: draftsListOutputSchema },
-  'drafts.add': { input: draftsAddInputSchema, output: draftsListOutputSchema },
-  'drafts.update': { input: draftsUpdateInputSchema, output: draftsListOutputSchema },
-  'drafts.reorder': { input: draftsReorderInputSchema, output: draftsListOutputSchema },
-  'drafts.remove': { input: draftsRemoveInputSchema, output: draftsListOutputSchema },
-  'drafts.flush': { input: draftsFlushInputSchema, output: draftsFlushOutputSchema },
-  'drafts.flushOne': { input: draftsFlushOneInputSchema, output: draftsFlushOutputSchema },
+  'messages.send': { input: messagesSendInputSchema, output: messagesSendOutputSchema },
 
   'attachments.upload': {
     input: attachmentsUploadInputSchema,
@@ -2138,12 +2112,7 @@ const APP_METHODS = [
   'groups.redistribute',
   'messages.list',
   'messages.edit',
-  'drafts.list',
-  'drafts.add',
-  'drafts.update',
-  'drafts.reorder',
-  'drafts.remove',
-  'drafts.flush',
+  'messages.send',
   'attachments.upload',
   'attachments.get',
   'attachments.detach',

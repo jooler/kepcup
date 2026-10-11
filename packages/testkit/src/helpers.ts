@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Draft, type Message, type Run } from '@kepcup/shared';
+import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Message, type Run } from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 import { startMockLlm, step, type MockLlmServer, type MockLlmStep } from './mock-llm.js';
 import { createTestCore, createTestHome, type CreateTestCoreOptions } from './fixtures.js';
@@ -186,24 +186,27 @@ export interface GroupDraft {
   replyTo?: string | null;
 }
 
-/** Queues drafts (with optional structured mentions / replyTo) and flushes. */
+/**
+ * Sends user messages (with optional structured mentions / replyTo) via
+ * `messages.send`. 每条消息独立发送（直发，无待发送队列）——一个数组不再
+ * 构成单一批次。
+ */
 export async function sendDrafts(
   core: CoreHarness,
   conversationId: string,
   drafts: GroupDraft[],
 ): Promise<Message[]> {
+  const sent: Message[] = [];
   for (const draft of drafts) {
-    await core.rpc.call('drafts.add', {
+    const result = (await core.rpc.call('messages.send', {
       conversationId,
       text: draft.text,
       ...(draft.mentions !== undefined ? { mentions: draft.mentions } : {}),
       ...(draft.replyTo !== undefined ? { replyTo: draft.replyTo } : {}),
-    });
+    })) as { message: Message };
+    sent.push(result.message);
   }
-  const result = (await core.rpc.call('drafts.flush', { conversationId })) as {
-    messages: Message[];
-  };
-  return result.messages;
+  return sent;
 }
 
 export async function listMembers(core: CoreHarness, conversationId: string) {
@@ -213,24 +216,21 @@ export async function listMembers(core: CoreHarness, conversationId: string) {
   return result.members;
 }
 
-/** Queues a batch of drafts and flushes them as a single batch. */
+/** Sends each text as its own user message (直发；遗留批量形参逐条转发). */
 export async function sendBatch(
   core: CoreHarness,
   conversationId: string,
   texts: string[],
 ): Promise<Message[]> {
+  const sent: Message[] = [];
   for (const text of texts) {
-    await core.rpc.call('drafts.add', { conversationId, text });
+    const result = (await core.rpc.call('messages.send', {
+      conversationId,
+      text,
+    })) as { message: Message };
+    sent.push(result.message);
   }
-  const result = (await core.rpc.call('drafts.flush', { conversationId })) as {
-    messages: Message[];
-  };
-  return result.messages;
-}
-
-export async function listDrafts(core: CoreHarness, conversationId: string): Promise<Draft[]> {
-  const result = (await core.rpc.call('drafts.list', { conversationId })) as { drafts: Draft[] };
-  return result.drafts;
+  return sent;
 }
 
 export async function listMessages(core: CoreHarness, conversationId: string): Promise<Message[]> {

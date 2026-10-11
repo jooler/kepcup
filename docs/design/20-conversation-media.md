@@ -19,13 +19,12 @@
 ```
 Composer（按钮/粘贴/拖拽）
   → attachments.upload（字节即传，渲染层预检 30MB；失败 chip 标错可重试）
-  → drafts.add({ text, attachmentIds })   ← core 校验归属后绑定 draftId
-  → 草稿队列 chip 展示（可 detach 移除）
-  → flush（既有链路：attachmentsForDraft → attachToMessage → message.attachments）
+  → 输入框下方 chip 展示（可 detach 移除）
+  → messages.send({ text, attachmentIds })  ← core 校验归属后同事务挂到消息
 ```
 
-- **空文本 + 附件**允许发送：`drafts.add` 的 `text` 放宽为可空字符串（渲染层保证「有文本或有附件」才入队）；消息气泡对空文本只渲染附件。
-- **移除**：`attachments.detach {id}` 仅当附件仍在草稿阶段（`message_id IS NULL`）可用，删除行与文件；`drafts.remove / removeAll` 级联清理草稿阶段附件（不留孤儿行/文件）。
+- **空文本 + 附件**允许发送：`messages.send` 的 `text` 可为空字符串（渲染层保证「有文本或有附件」才发送）；消息气泡对空文本只渲染附件。
+- **移除**：`attachments.detach {id}` 仅当附件尚未随消息发出（`message_id IS NULL`）可用，删除行与文件。
 - 粘贴（`clipboardData.files`）与拖拽（`drop` 的 `DataTransfer.files`）复用同一条上传函数；大小超限/类型拒绝即时 toast（i18n）。
 
 ## 3 媒体内联与灯箱

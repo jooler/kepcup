@@ -273,11 +273,11 @@ test.describe('输入框草稿按会话缓存', () => {
       // 列表项内回车：续行出新列表项（不发送）。
       await composer.press('Enter');
       await expect(composer.locator('ol > li')).toHaveCount(2);
-      await expect(page.locator('[data-testid="draft-drawer"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(0);
       // 空项回车：退出列表（回到普通段落），同样不发送。
       await composer.press('Enter');
       await expect(composer.locator('ol > li')).toHaveCount(1);
-      await expect(page.locator('[data-testid="draft-drawer"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(0);
       // 无序列表：`- ` + 空格同样自动转换、回车续行。
       await composer.pressSequentially('- 待办甲');
       await expect(composer.locator('ul > li')).toHaveCount(1);

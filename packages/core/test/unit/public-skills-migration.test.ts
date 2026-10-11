@@ -63,6 +63,20 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table widget_docs;');
     db.exec('drop table widget_versions;');
     db.exec('drop table widgets;');
+    // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，
+    // 而 0018 的 attachments 重建按列名引用 draft_id——按 0002 的原始形态补回，
+    // 才能原样重放 0013 之后的迁移。
+    db.exec(`create table drafts (
+      id               TEXT PRIMARY KEY,
+      conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      position         INTEGER NOT NULL,
+      text             TEXT NOT NULL,
+      mentions_json    TEXT NOT NULL DEFAULT '[]',
+      reply_to         TEXT,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );`);
+    db.exec('alter table attachments add column draft_id TEXT;');
     db.exec(
       `insert into skill_library (id, name, source_url, commit_oid, content_hash, rel_path, scan_json, imported_at)
        values ('skl_preset', 'docx', 'preset://docx', '1.0.0', 'hashpreset', 'skills-library/docx@hashpreset', '{}', 1),

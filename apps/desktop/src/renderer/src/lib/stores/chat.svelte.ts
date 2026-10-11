@@ -1,4 +1,4 @@
-import type { Bot, Conversation, Draft, Message, Run, SetupRequirement } from '@kepcup/shared';
+import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
 export interface GroupMemberView {
@@ -57,7 +57,6 @@ export interface ActiveRunView {
 interface CurrentChat {
   conversation: ConversationView;
   messages: Message[];
-  drafts: Draft[];
   /** Active runs with their latest progress text (status line). */
   activeRuns: ActiveRunView[];
   /** The latest failed (retryable) run of this conversation. */
@@ -103,9 +102,9 @@ class ChatState {
   #continuedSetupRunIds = new Set<string>();
   /**
    * 发送门禁置起的「缺设置」（inline setup，docs/design/18-inline-setup.md）：
-   * 单聊 Bot 无可用模型时消息不发（草稿留在队列），先在消息列表里完成设置。
-   * fromVoice 标记置起来源：语音入口（26 号设计）与草稿队列互不相干，完成
-   * 设置后不得触发 flush。
+   * 单聊 Bot 无可用模型时消息不发（内容留在输入框），先在消息列表里完成设置。
+   * fromVoice 标记置起来源：语音入口（26 号设计）的转写能力缺失与发送门禁
+   * 共用卡片层，语义上只用于标记入口。
    */
   #pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
   #started = false;
@@ -147,12 +146,6 @@ class ChatState {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
       if (this.currentId === data.id) this.close();
-    });
-    core.onEvent('draft.changed', (payload) => {
-      const data = payload as { conversationId: string; drafts: Draft[] };
-      if (this.currentId === data.conversationId && this.#chat) {
-        this.#chat.drafts = data.drafts;
-      }
     });
     core.onEvent('run.status', (payload) => {
       const data = payload as { run: Run };
@@ -283,7 +276,6 @@ class ChatState {
     if (!result.conversation) return;
     this.#upsertConversation(result.conversation);
     const messages = await this.#loadLatest(conversationId);
-    const drafts = (await core.call('drafts.list', { conversationId })) as { drafts: Draft[] };
     // D75: several tasks may be in flight next to the turns — look further back.
     const runs = (await core.call('runs.list', { conversationId, limit: 30 })) as { runs: Run[] };
     // Every in-flight run, however old (审查 L3: a long task may be older
@@ -299,7 +291,6 @@ class ChatState {
     this.#chat = {
       conversation: result.conversation,
       messages,
-      drafts: drafts.drafts,
       activeRuns: active.map((run) => ({
         run,
         progress: '',
@@ -455,7 +446,7 @@ class ChatState {
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
     // 门禁置起的缺设置卡是「本次发送动作」的即时引导：离开会话即撤销
-    //（草稿仍在原会话队列，再发送会重新拦下）。
+    //（消息内容仍在输入框，再发送会重新拦下）。
     this.#pendingSetup = null;
   }
 
@@ -518,67 +509,30 @@ class ChatState {
     }
   }
 
-  // --- drafts ----------------------------------------------------------------
+  // --- send（直发，无待发送队列）---------------------------------------------
 
-  async addDraft(
+  /**
+   * 发送一条用户消息（messages.send）：core 侧落库 + 投递一步完成。
+   * 空文本 + 无附件由组件层拦截，不发出请求。
+   */
+  async send(
     text: string,
     options: { mentions?: string[]; replyTo?: string | null; attachmentIds?: string[] } = {},
   ): Promise<void> {
     const chat = this.#chat;
     if (!chat) return;
-    await core.call('drafts.add', {
-      conversationId: chat.conversation.id,
-      text,
-      ...(options.mentions !== undefined && options.mentions.length > 0
-        ? { mentions: options.mentions }
-        : {}),
-      ...(options.replyTo != null ? { replyTo: options.replyTo } : {}),
-      ...(options.attachmentIds !== undefined && options.attachmentIds.length > 0
-        ? { attachmentIds: options.attachmentIds }
-        : {}),
-    });
-  }
-
-  /** 移除草稿阶段的附件（docs/design/20-conversation-media.md）；draft.changed 自动刷新。 */
-  async detachAttachment(id: string): Promise<void> {
     try {
-      await core.call('attachments.detach', { id });
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-    }
-  }
-
-  async updateDraft(id: string, text: string): Promise<void> {
-    await core.call('drafts.update', { id, text });
-  }
-
-  async removeDraft(id: string): Promise<void> {
-    await core.call('drafts.remove', { id });
-  }
-
-  async reorderDrafts(ids: string[]): Promise<void> {
-    const chat = this.#chat;
-    if (!chat) return;
-    await core.call('drafts.reorder', { conversationId: chat.conversation.id, ids });
-  }
-
-  async flush(): Promise<void> {
-    const chat = this.#chat;
-    if (!chat) return;
-    if (this.#gateForMissingModel()) return;
-    try {
-      await core.call('drafts.flush', { conversationId: chat.conversation.id });
-      this.replyTo = null;
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-    }
-  }
-
-  /** 逐条「立即」：只把这一条草稿发出，其余留在队列里。 */
-  async flushOne(id: string): Promise<void> {
-    if (this.#gateForMissingModel()) return;
-    try {
-      await core.call('drafts.flushOne', { id });
+      await core.call('messages.send', {
+        conversationId: chat.conversation.id,
+        text,
+        ...(options.mentions !== undefined && options.mentions.length > 0
+          ? { mentions: options.mentions }
+          : {}),
+        ...(options.replyTo != null ? { replyTo: options.replyTo } : {}),
+        ...(options.attachmentIds !== undefined && options.attachmentIds.length > 0
+          ? { attachmentIds: options.attachmentIds }
+          : {}),
+      });
       this.replyTo = null;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
@@ -590,11 +544,11 @@ class ChatState {
   /**
    * 发送门禁（send-gate.ts）：单聊 Bot 跑不起来时不发送——内置 Bot 无可用
    * 模型 → main-model 卡；外部 Agent Bot 未开实验 / 未启用 / 未安装 / 未登录
-   * → Agent 设置卡（D72 P4）。置起 pendingSetup，草稿原地保留；设置完成后
-   * continueAfterSetup 自动冲掉草稿。快照未加载时放行，由 core 的结构化
-   * 失败（run.setup）兜底出卡片。
+   * → Agent 设置卡（D72 P4）。置起 pendingSetup；消息内容留在输入框，设置
+   * 完成后用户再按一次发送。快照未加载时放行，由 core 的结构化失败
+   *（run.setup）兜底出卡片。Composer 发送前调用（true = 已拦截，不要清空）。
    */
-  #gateForMissingModel(): boolean {
+  gateForSend(): boolean {
     const chat = this.#chat;
     if (!chat) return false;
     const bot = chat.conversation.bot;
@@ -614,10 +568,10 @@ class ChatState {
   }
 
   /**
-   * 用户关闭设置卡片：门禁撤销、失败横幅一并收起（草稿保留，可再试）。
-   * 失败 run 带结构化 setup 时顺带通知 core（一次性 internal event 唤醒
-   * 对话轮）：Bot 得知用户放弃了配置，给出新的反馈；main-model 缺失时
-   * core 侧自行跳过（对话轮本就跑不起来）。
+   * 用户关闭设置卡片：门禁撤销、失败横幅一并收起。失败 run 带结构化 setup
+   * 时顺带通知 core（一次性 internal event 唤醒对话轮）：Bot 得知用户放弃了
+   * 配置，给出新的反馈；main-model 缺失时 core 侧自行跳过（对话轮本就跑
+   * 不起来）。
    */
   dismissSetupCard(): void {
     this.#pendingSetup = null;
@@ -632,8 +586,7 @@ class ChatState {
 
   /**
    * 输入组件的语音功能（docs/design/26-voice-input.md）在缺设置时置起能力
-   * 设置卡：与发送门禁同一层——卡片出现、完成设置后 continueAfterSetup 收卡。
-   * 不阻断任何已排队草稿（语音与草稿队列互不相干）。
+   * 设置卡：与发送门禁同一层——卡片出现，完成设置后收卡。
    */
   requestCapabilitySetup(
     capability: Extract<SetupRequirement, { kind: 'capability-model' }>['capability'],
@@ -644,12 +597,10 @@ class ChatState {
 
   /**
    * 卡片内完成设置后的继续：core 失败路径（failedRun.setup）→ 收起横幅并
-   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 群聊 / 图像工具）；
-   * 发送门禁路径 → 自动冲掉保留的草稿队列。语音置起的卡片不冲队列——它
-   * 不是发送门禁，完成设置后用户自己决定何时发送（26 号设计：互不相干）。
+   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 群聊 / 图像工具）。
+   * 发送门禁路径无事可做——消息内容一直留在输入框，用户再按一次发送。
    */
   async continueAfterSetup(): Promise<void> {
-    const fromVoice = this.#pendingSetup?.fromVoice === true;
     this.#pendingSetup = null;
     const failed = this.#chat?.failedRun;
     if (failed?.setup) {
@@ -661,8 +612,6 @@ class ChatState {
         await this.retryRun(failed.id);
       }
     }
-    // 发送门禁扣下的草稿在设置完成后照常发出（D58），失败重试之后也一样。
-    if (!fromVoice && (this.#chat?.drafts.length ?? 0) > 0) await this.flush();
   }
 
   // --- messages ---------------------------------------------------------------

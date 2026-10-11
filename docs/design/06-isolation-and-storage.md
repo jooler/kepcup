@@ -77,7 +77,7 @@
 ```mermaid
 flowchart LR
   subgraph UIP[界面进程]
-    UI[对话界面 / 待发送队列 / project 选择器]
+    UI[对话界面 / project 选择器]
   end
   subgraph CORE[核心服务：常驻后台]
     MSG[消息服务]

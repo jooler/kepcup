@@ -69,15 +69,8 @@ import {
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
-  draftsListInputSchema,
-  draftsListOutputSchema,
-  draftsAddInputSchema,
-  draftsUpdateInputSchema,
-  draftsReorderInputSchema,
-  draftsRemoveInputSchema,
-  draftsFlushInputSchema,
-  draftsFlushOneInputSchema,
-  draftsFlushOutputSchema,
+  messagesSendInputSchema,
+  messagesSendOutputSchema,
   attachmentsUploadInputSchema,
   attachmentsUploadOutputSchema,
   attachmentsGetInputSchema,
@@ -823,46 +816,14 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       messages: [orchestrator.editMessage(input.id, input.text)],
     })),
 
-    'drafts.list': method(draftsListInputSchema, draftsListOutputSchema, async (input) => ({
-      drafts: domain.drafts.list(input.conversationId),
-    })),
-    'drafts.add': method(draftsAddInputSchema, draftsListOutputSchema, async (input) => {
-      domain.drafts.add(input.conversationId, input.text, {
+    'messages.send': method(messagesSendInputSchema, messagesSendOutputSchema, async (input) =>
+      orchestrator.sendMessage(input.conversationId, {
+        text: input.text,
         ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
         ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
         ...(input.attachmentIds !== undefined ? { attachmentIds: input.attachmentIds } : {}),
-      });
-      const drafts = domain.drafts.list(input.conversationId);
-      publish('draft.changed', { conversationId: input.conversationId, drafts });
-      return { drafts };
-    }),
-    'drafts.update': method(draftsUpdateInputSchema, draftsListOutputSchema, async (input) => {
-      const draft = domain.drafts.update(input.id, input.text);
-      const drafts = domain.drafts.list(draft.conversationId);
-      publish('draft.changed', { conversationId: draft.conversationId, drafts });
-      return { drafts };
-    }),
-    'drafts.reorder': method(draftsReorderInputSchema, draftsListOutputSchema, async (input) => {
-      const drafts = domain.drafts.reorder(input.conversationId, input.ids);
-      publish('draft.changed', { conversationId: input.conversationId, drafts });
-      return { drafts };
-    }),
-    'drafts.remove': method(draftsRemoveInputSchema, draftsListOutputSchema, async (input) => {
-      const draft = domain.drafts.getOrThrow(input.id);
-      domain.drafts.remove(input.id);
-      // 草稿删除级联清掉仍挂在草稿上的附件（行与文件，docs/design/20）。
-      domain.attachments.deleteDraftFiles(input.id);
-      const drafts = domain.drafts.list(draft.conversationId);
-      publish('draft.changed', { conversationId: draft.conversationId, drafts });
-      return { drafts };
-    }),
-    'drafts.flush': method(draftsFlushInputSchema, draftsFlushOutputSchema, async (input) =>
-      orchestrator.flushDrafts(input.conversationId),
+      }),
     ),
-    'drafts.flushOne': method(draftsFlushOneInputSchema, draftsFlushOutputSchema, async (input) => {
-      const draft = domain.drafts.getOrThrow(input.id);
-      return orchestrator.flushDrafts(draft.conversationId, input.id);
-    }),
 
     'attachments.upload': method(
       attachmentsUploadInputSchema,
@@ -874,7 +835,6 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           fileName: input.fileName,
           mime: input.mime,
           bytes,
-          draftId: input.draftId ?? null,
         });
         return { attachment };
       },
@@ -894,12 +854,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       attachmentsDetachInputSchema,
       attachmentsDetachOutputSchema,
       async (input) => {
-        const attachment = domain.attachments.getOrThrow(input.id);
         domain.attachments.detach(input.id);
-        if (attachment.draftId !== null) {
-          const drafts = domain.drafts.list(attachment.conversationId);
-          publish('draft.changed', { conversationId: attachment.conversationId, drafts });
-        }
         return { ok: true } as const;
       },
     ),

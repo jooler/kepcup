@@ -44,7 +44,7 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 
 卡片（`SetupRequiredCard`）出现在**输入坞上方**（审批卡 dock 同层）——这是对话的注意力位置；无消息（发送门禁）与有消息（失败改判）两种场景都可见。数据源（chat store 的 `setupRequirement`）按优先级合并：
 
-1. **发送门禁**：单聊 Bot 无可用模型时，`flush/flushOne` 不发送——草稿原地留在待发送队列、不产生失败 run，置起 `pendingSetup` 显示卡片。settings 快照未加载时放行，由 core 的结构化失败兜底（卡片仍会出现）。
+1. **发送门禁**：单聊 Bot 无可用模型时，发送不执行——消息内容留在输入框（输入框草稿缓存照常按会话保留）、不产生失败 run，置起 `pendingSetup` 显示卡片。settings 快照未加载时放行，由 core 的结构化失败兜底（卡片仍会出现）。
 2. **结构化失败**：最近失败 run 携带 `setup` 时，卡片替代失败横幅（横幅对 setup 失败不渲染）；完成后 `dismiss + runs.retry` 自动续跑——这一条覆盖访谈回答、群聊、图像工具等所有 core 侧路径，无需逐场景处理。
 
 卡片内容按 requirement 分发：
@@ -54,7 +54,7 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 | `main-model` | 两段式：尚无已配置厂商时内嵌**供应商表单**（`ProviderSetupForm`）；之后选默认主模型 + 可选「这个 Bot 的模型」（`bots.update`），确认后继续。**切段只由「保存」进入**：「测试连接」为完成探测会先落盘 key（`providers.test` 只读已存 key），`availableModelOptions` 随之翻转，不能用它派生切段——测试无论成败都不自动跳段；引导卡场景下任一测试失败后「保存」禁用（`blockSaveAfterFailedTest`），直到某次测试通过（切换厂商重置表单即重置），设置页用法不设此限 |
 | `capability-model` | 内嵌对应能力的**能力模型配置**（`CapabilityModelSection embedded`），保存即继续。卡片内「测试」**未保存先测**（与 websearch.test 同一取向）：直接用表单里的厂商 / 模型 / Key 发一次最小真实请求（`providers.test` 带 `keyOverride`，不落库；Key 留空用已存 key），不再「先保存再测试」；测试通过后「保存」换为「**保存并关闭**」（同一保存路径，保存即继续、卡片收起）——用户不必对着禁用的保存按钮猜配置是否已落库。表单任一字段一变，「测试通过」即失效、按钮还原 |
 
-确认 / 保存后 `continueAfterSetup()`：失败路径收起横幅并自动 `runs.retry`（原触发消息照常续跑）；门禁路径自动冲掉保留的草稿队列。卡片右上角可「暂不设置」——门禁撤销、失败横幅收起，草稿保留，下次发送会再次拦下。
+确认 / 保存后 `continueAfterSetup()`：失败路径收起横幅并自动 `runs.retry`（原触发消息照常续跑）；门禁路径无事可做——内容一直留在输入框，用户再按一次发送即可。卡片右上角可「暂不设置」——门禁撤销、失败横幅收起，下次发送会再次拦下。
 
 **放弃分支（失败路径）**：任务类 setup 失败（`main-model` 除外——对话轮本就跑不起来，通知只会原样失败再弹同一张卡）时，关闭卡片会调用 `runs.setupDismissed`：core 校验 run 仍带 setup 且为 failed 后，以一次性 internal event（`task_setup_dismissed`，`reason='event'`）唤醒 Bot 的对话轮——Bot 得知「用户放弃了配置，任务不会自动继续」，按用户意愿给新的反馈（此时用户已放弃应用内配置，可以给替代做法或外部工具建议）。同一 run 只通知一次；任务仍在任务卡上可手动重试。
 

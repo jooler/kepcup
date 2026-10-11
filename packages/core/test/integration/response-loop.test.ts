@@ -31,26 +31,27 @@ async function start(options: Parameters<typeof createTestStack>[0] = {}): Promi
 }
 
 describe('response loop', () => {
-  it('one flushed batch becomes multiple messages and a single run', async () => {
+  it('a direct send creates one message, one batch and a single run', async () => {
     const { core, llm } = await start();
-    llm.script('mock-main', [step().replyText('收到，三条都看到了')]);
+    llm.script('mock-main', [step().replyText('收到')]);
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
 
-    const messages = await sendBatch(core, conv.id, ['第一条', '第二条', '第三条']);
-    expect(messages).toHaveLength(3);
-    expect(new Set(messages.map((m) => m.batchId)).size).toBe(1);
+    const sent = (await core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '第一条',
+    })) as { message: { id: string; batchId: string } };
 
     const run = await waitForRun(core, conv.id, 'completed');
-    expect(run.triggerMessageIds).toEqual(messages.map((m) => m.id));
+    expect(run.triggerMessageIds).toEqual([sent.message.id]);
     // P07：响应之后还有后台反思 run——响应 run 本身仍只有一个。
     const runs = (await listRuns(core, conv.id)).filter((r) => r.loopType === 'turn');
     expect(runs).toHaveLength(1);
 
     const all = await listMessages(core, conv.id);
-    expect(all.filter((m) => m.senderType === 'user')).toHaveLength(3);
+    expect(all.filter((m) => m.senderType === 'user')).toHaveLength(1);
     const botMessage = all.find((m) => m.senderBotId === bot.id);
-    expect(botMessage?.content).toMatchObject({ text: '收到，三条都看到了' });
+    expect(botMessage?.content).toMatchObject({ text: '收到' });
   });
 
   // D75 W2: turns are never steered (was: injected as <new_messages> into the

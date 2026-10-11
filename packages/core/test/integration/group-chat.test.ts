@@ -131,7 +131,7 @@ describe('group conversations', () => {
     expect(llm.requestsFor('mock-light').filter((req) => req.lastUserText().includes('<triage_batch>'))).toHaveLength(0);
   });
 
-  it('a batch @-ing A and B executes them in order; B sees A\'s reply and the sequence hint', async () => {
+  it('one message @-ing A and B executes them in order; B sees A\'s reply and the sequence hint', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
     void conv;
@@ -141,8 +141,7 @@ describe('group conversations', () => {
     ]);
 
     await sendDrafts(core, conv.id, [
-      { text: '第一个问题', mentions: [a.id] },
-      { text: '第二个问题', mentions: [b.id] },
+      { text: '两个问题一起', mentions: [a.id, b.id] },
     ]);
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await waitForBotRun(core, conv.id, b.id, 'completed');

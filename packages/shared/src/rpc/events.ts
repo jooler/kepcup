@@ -4,7 +4,6 @@ import {
   botSchema,
   conversationSchema,
   delegationSchema,
-  draftSchema,
   envInstallSchema,
   environmentProgressPayloadSchema,
   grantSchema,
@@ -44,11 +43,6 @@ export const conversationUpdatedPayloadSchema = z.object({
   conversation: conversationSchema,
 });
 export const conversationDeletedPayloadSchema = z.object({ id: z.string() });
-
-export const draftChangedPayloadSchema = z.object({
-  conversationId: z.string(),
-  drafts: z.array(draftSchema),
-});
 
 export const runStatusPayloadSchema = z.object({ run: runSchema });
 
@@ -300,7 +294,6 @@ export const rpcEventSchemas = {
   'message.updated': messageUpdatedPayloadSchema,
   'conversation.updated': conversationUpdatedPayloadSchema,
   'conversation.deleted': conversationDeletedPayloadSchema,
-  'draft.changed': draftChangedPayloadSchema,
   'run.status': runStatusPayloadSchema,
   'run.progress': runProgressPayloadSchema,
   'bot.updated': botUpdatedPayloadSchema,

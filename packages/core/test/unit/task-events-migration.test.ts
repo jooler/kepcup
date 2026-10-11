@@ -68,7 +68,9 @@ describe('main 0018 task_events 迁移', () => {
     runMigrations(db, migrationsUpTo('main', 17));
     seedOldMainDb(db);
     const before = db.prepare('select * from messages order by seq').all();
-    const attachmentsBefore = db.prepare('select * from attachments order by id').all();
+    const attachmentsBefore = db
+      .prepare('select * from attachments order by id')
+      .all() as Array<Record<string, unknown>>;
 
     const applied = runMigrations(db, migrationsUrl('main'));
     expect(applied.map((m) => m.version)).toEqual(mainVersionsAfter(17));
@@ -84,7 +86,10 @@ describe('main 0018 task_events 迁移', () => {
         task_id: null,
       })),
     );
-    expect(db.prepare('select * from attachments order by id').all()).toEqual(attachmentsBefore);
+    // 0030 直发改造删除了草稿阶段的 draft_id 列；其余列与行原样保留。
+    expect(db.prepare('select * from attachments order by id').all()).toEqual(
+      attachmentsBefore.map(({ draft_id: _draftId, ...rest }) => rest),
+    );
     expect(
       db.prepare("select message_id from messages_fts where messages_fts match '世界'").all(),
     ).toEqual([{ message_id: 'msg_1' }]);

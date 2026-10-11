@@ -90,20 +90,19 @@ describe('startup recovery', () => {
 });
 
 describe('delete conversation cascade', () => {
-  it('removes messages, attachments files, runs and drafts; the next open gets a new id', async () => {
+  it('removes messages, attachments files and runs; the next open gets a new id', async () => {
     const { core, llm } = await start();
     llm.script('mock-main', [step().replyText('完成')]);
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
 
-    // Draft + attachment still queued, plus a completed run with messages.
+    // An unclaimed upload plus a completed run with messages.
     await core.rpc.call('attachments.upload', {
       conversationId: conv.id,
       fileName: 'notes.txt',
       mime: 'text/plain',
       bytesBase64: Buffer.from('附件内容').toString('base64'),
     });
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '待发送草稿' });
     await sendBatch(core, conv.id, ['历史消息']);
     await waitForRun(core, conv.id, 'completed');
 
@@ -114,7 +113,6 @@ describe('delete conversation cascade', () => {
 
     // Everything scoped to the conversation is gone.
     expect(core.services.mainDb!.prepare('select count(*) as n from messages where conversation_id = ?').get(conv.id)).toEqual({ n: 0 });
-    expect(core.services.mainDb!.prepare('select count(*) as n from drafts where conversation_id = ?').get(conv.id)).toEqual({ n: 0 });
     expect(core.services.mainDb!.prepare('select count(*) as n from attachments where conversation_id = ?').get(conv.id)).toEqual({ n: 0 });
     expect(core.services.mainDb!.prepare('select count(*) as n from conversations where id = ?').get(conv.id)).toEqual({ n: 0 });
     expect(core.services.runsDb!.prepare('select count(*) as n from runs where conversation_id = ?').get(conv.id)).toEqual({ n: 0 });
@@ -152,7 +150,6 @@ describe('delete bot cascade', () => {
     const conv = await openDirect(core, bot.id);
     await sendBatch(core, conv.id, ['你好']);
     await waitForRun(core, conv.id, 'completed');
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '未发出的草稿' });
 
     // Simulate bot data on disk (workspace etc. arrives in later phases).
     const botDir = path.join(core.services.paths.home, 'bots', bot.id);
@@ -181,21 +178,16 @@ describe('delete bot cascade', () => {
     expect(row.name).toBe('');
     expect(row.profile_json).toBe('{}');
 
-    // The direct conversation is read-only with a cleared queue.
+    // The direct conversation is read-only.
     const conversation = (await core.rpc.call('conversations.get', { id: conv.id })) as {
       conversation: { readOnly: boolean } | null;
     };
     expect(conversation.conversation?.readOnly).toBe(true);
-    const drafts = (await core.rpc.call('drafts.list', { conversationId: conv.id })) as {
-      drafts: unknown[];
-    };
-    expect(drafts.drafts).toHaveLength(0);
 
-    // Flushing into a read-only conversation is rejected.
-    await expect(core.rpc.call('drafts.add', { conversationId: conv.id, text: 'x' })).resolves.toBeTruthy();
-    await expect(core.rpc.call('drafts.flush', { conversationId: conv.id })).rejects.toMatchObject({
-      code: 'CONVERSATION_READ_ONLY',
-    });
+    // Sending into a read-only conversation is rejected.
+    await expect(
+      core.rpc.call('messages.send', { conversationId: conv.id, text: 'x' }),
+    ).rejects.toMatchObject({ code: 'CONVERSATION_READ_ONLY' });
 
     // Runs of the bot are gone; messages stay; directory removed.
     expect(core.services.runsDb!.prepare('select count(*) as n from runs where bot_id = ?').get(bot.id)).toEqual({ n: 0 });

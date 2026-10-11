@@ -282,8 +282,7 @@ describe('workspace and coding tools', () => {
       step().replyToolCall('get_attachment', { attachment_id: uploaded.attachment.id }),
       step().replyText('图片已拿到'),
     ]);
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '给我那张图' });
-    const flushed = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as { runId: string | null };
+    const flushed = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '给我那张图' })) as { message: Message; runId: string | null };
     await waitFor(
       async () => {
         const run = ((await core.rpc.call('runs.list', { conversationId: conv.id, limit: 10 })) as { runs: Run[] }).runs.find((r) => r.id === flushed.runId);

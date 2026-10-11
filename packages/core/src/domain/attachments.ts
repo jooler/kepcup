@@ -12,7 +12,6 @@ interface AttachmentRow {
   id: string;
   conversation_id: string;
   message_id: string | null;
-  draft_id: string | null;
   file_name: string;
   mime: string;
   size: number;
@@ -26,7 +25,6 @@ function rowToAttachment(row: AttachmentRow): Attachment {
     id: row.id,
     conversationId: row.conversation_id,
     messageId: row.message_id,
-    draftId: row.draft_id,
     fileName: row.file_name,
     mime: row.mime,
     size: row.size,
@@ -70,7 +68,6 @@ export class AttachmentsService {
     fileName: string;
     mime: string;
     bytes: Buffer;
-    draftId?: string | null;
   }): Attachment {
     if (input.bytes.length === 0) {
       throw new AppError('INVALID_INPUT', 'Attachment is empty');
@@ -88,12 +85,11 @@ export class AttachmentsService {
 
     this.#db
       .prepare(
-        'insert into attachments (id, conversation_id, message_id, draft_id, file_name, mime, size, sha256, rel_path, created_at) values (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into attachments (id, conversation_id, message_id, file_name, mime, size, sha256, rel_path, created_at) values (?, ?, NULL, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
         input.conversationId,
-        input.draftId ?? null,
         safeName,
         input.mime,
         input.bytes.length,
@@ -120,27 +116,37 @@ export class AttachmentsService {
     return readFileSync(this.absolutePath(attachment));
   }
 
-  /** Re-links queued attachments to the message they are sent with. */
+  /** Re-links bot-generated attachments to the message they belong to. */
   attachToMessage(attachmentIds: string[], messageId: string): void {
     const run = this.#db.transaction(() => {
       for (const id of attachmentIds) {
-        this.#db
-          .prepare('update attachments set message_id = ?, draft_id = NULL where id = ?')
-          .run(messageId, id);
+        this.#db.prepare('update attachments set message_id = ? where id = ?').run(messageId, id);
       }
     });
     run.immediate();
   }
 
-  attachmentsForDraft(draftId: string): Attachment[] {
-    const rows = this.#db
-      .prepare('select * from attachments where draft_id = ?')
-      .all(draftId) as AttachmentRow[];
-    return rows.map(rowToAttachment);
+  /**
+   * 校验附件归属并把无主的上传挂到随发消息上（messages.send 直发，
+   * docs/design/20-conversation-media.md）：必须属于本对话且尚未挂消息。
+   * 在调用方的事务内执行（与消息落库同事务）。
+   */
+  claimForMessage(attachmentIds: string[], conversationId: string, messageId: string): void {
+    for (const id of attachmentIds) {
+      const row = this.#db.prepare('select * from attachments where id = ?').get(id) as
+        AttachmentRow | undefined;
+      if (!row || row.conversation_id !== conversationId) {
+        throw new AppError('INVALID_INPUT', `附件 ${id} 不存在或不属于当前对话`);
+      }
+      if (row.message_id !== null) {
+        throw new AppError('INVALID_INPUT', `附件 ${id} 已被占用`);
+      }
+      this.#db.prepare('update attachments set message_id = ? where id = ?').run(messageId, id);
+    }
   }
 
   /**
-   * 移除草稿阶段的附件（docs/design/20-conversation-media.md）：行与文件一起删。
+   * 移除未发送的附件（上传后尚未随消息发出的 chip）：行与文件一起删。
    * 已随消息发出的附件（message_id 非空）不可移除——消息内容属对话历史。
    */
   detach(id: string): void {
@@ -153,19 +159,6 @@ export class AttachmentsService {
     });
     run.immediate();
     this.#deleteFile(attachment);
-  }
-
-  /** 删除一条草稿的全部附件（drafts.remove 级联，避免孤儿行/文件）。 */
-  deleteDraftFiles(draftId: string): void {
-    const rows = this.attachmentsForDraft(draftId);
-    if (rows.length === 0) return;
-    const run = this.#db.transaction(() => {
-      for (const row of rows) {
-        this.#db.prepare('delete from attachments where id = ?').run(row.id);
-      }
-    });
-    run.immediate();
-    for (const row of rows) this.#deleteFile(row);
   }
 
   #deleteFile(attachment: Attachment): void {

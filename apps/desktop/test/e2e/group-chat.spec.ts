@@ -126,7 +126,7 @@ async function mentionAndType(page: Page, botName: string, text: string): Promis
     .filter({ hasText: botName })
     .first();
   await expect(candidate).toBeVisible({ timeout: 5_000 });
-  // 弹层打开时回车是「确认提及目标」，不得把消息推入待发送队列。
+  // 弹层打开时回车是「确认提及目标」，不得把消息直接发送出去。
   await composer.press('Enter');
   await composer.pressSequentially(text);
 }
@@ -230,15 +230,14 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
     ]);
     await mentionAndType(page, '阿甲', ' 第一个问题');
     await composer.press('Enter');
+    // 第二条 @ 在阿甲的轮次进行中到达：作为待处理批次排队，轮次结束后接续。
     await mentionAndType(page, '阿乙', ' 第二个问题');
     await composer.press('Enter');
-    await composer.press('Meta+Enter');
 
     const status = page.locator('[data-testid="group-turn-status"]');
     await expect(status).toBeVisible({ timeout: 15_000 });
     await expect(status).toHaveAttribute('data-phase', 'running');
     await expect(status).toContainText('阿甲');
-    await expect(status).toContainText('阿乙');
 
     llm.releaseAll();
     await expect(page.locator('[data-testid="bot-bubble"]').nth(2)).toContainText('甲先答', {

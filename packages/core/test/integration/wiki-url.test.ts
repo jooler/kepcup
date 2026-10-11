@@ -90,11 +90,7 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
       step().replyText('整理完成'),
       // 入库成功静默（消息原则）：没有事件触发 run。
     ]);
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: `学一下这个网页 ${url}`,
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: `学一下这个网页 ${url}`, });
 
     // 维护 loop 的任务消息里内联的是转换后的 markdown（HTML 已消失）。
     await waitFor(
@@ -167,11 +163,7 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
       profile: current.bot.profile as never,
     });
 
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: '学一下被拒绝的网页',
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '学一下被拒绝的网页', });
     // 入库任务以失败终态（网络策略拒绝），没有任何抓取发生。
     await waitFor(
       () => {
@@ -226,11 +218,7 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
         .expect((req) => String(req.lastUserText()).includes('入库失败'))
         .replyText('这份是二进制内容，无法入库，我知道了'),
     ]);
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: '学一下二进制页面',
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '学一下二进制页面', });
     await waitFor(
       () => {
         const rows = stack.core.services.mainDb!

@@ -138,9 +138,19 @@ describe('conversation summary', () => {
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
 
-    // SUMMARY_TRIGGER_UNSUMMARIZED is 50: flush 51 messages in one batch.
-    const texts = Array.from({ length: 51 }, (_, i) => `消息 ${i + 1}`);
-    await sendBatch(core, conv.id, texts);
+    // SUMMARY_TRIGGER_UNSUMMARIZED is 50: seed 50 rows via the domain service
+    // (no dispatch), then one direct send crosses the threshold.
+    const domain = core.services.domain;
+    if (domain === null) throw new Error('core domain services unavailable');
+    for (let i = 0; i < 50; i += 1) {
+      domain.messages.append({
+        conversationId: conv.id,
+        senderType: 'user',
+        kind: 'text',
+        text: `消息 ${i + 1}`,
+      });
+    }
+    await sendBatch(core, conv.id, ['第 51 条']);
     await waitForRun(core, conv.id, 'completed');
 
     // The job runner claims the summary and the light model produces it.

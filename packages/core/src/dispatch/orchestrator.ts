@@ -116,7 +116,6 @@ import type { ConversationsService } from '../domain/conversations.js';
 import type { GroupsService } from '../domain/groups.js';
 import type { DelegationsService } from '../domain/delegations.js';
 import { isVisibleToUser, type MessagesService } from '../domain/messages.js';
-import type { DraftsService } from '../domain/drafts.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { JobsService, JobRow } from '../domain/jobs.js';
 import type { RunsService } from '../domain/runs.js';
@@ -304,7 +303,6 @@ export interface OrchestratorDeps {
   /** 跨 Bot 委派行（D71，docs/design/27）。 */
   delegations: DelegationsService;
   messages: MessagesService;
-  drafts: DraftsService;
   attachments: AttachmentsService;
   jobs: JobsService;
   runs: RunsService;
@@ -556,7 +554,7 @@ type RunExecution =
     };
 
 /**
- * Drives conversations end to end: draft flush -> message rows -> mailbox ->
+ * Drives conversations end to end: sent messages -> message rows -> mailbox ->
  * supervisor turn (scheduler -> engine -> persisted steps, bot messages, usage
  * entries and events; docs/dev/02-architecture.md "一条消息的完整链路") and
  * the D75 tasks the turns start (TaskHost).
@@ -861,68 +859,65 @@ export class Orchestrator {
     });
   }
 
-  // --- draft flush ---------------------------------------------------------
+  // --- direct send ----------------------------------------------------------
 
   /**
-   * Converts drafts into messages (one shared batch id, attachments
-   * re-linked) in a single transaction, then hands the batch to the mailbox.
-   * Delivery happens after the transaction commits: a failed delivery never
-   * rolls the messages back (docs/dev/phases/P01-direct-chat.md 注意事项).
-   * draftId 缺省时冲掉整条队列；给定时只发那一条（UI 逐条「立即」），其余
-   * 草稿原地保留。
+   * 发送一条用户消息（直发，无待发送队列）：消息落库（独立 batch id，附件
+   * 同事务转正）后立即投递。投递发生在事务提交之后：投递失败从不回滚消息
+   * （docs/dev/phases/P01-direct-chat.md 注意事项）。
    */
-  flushDrafts(
+  sendMessage(
     conversationId: string,
-    draftId?: string,
-  ): { messages: Message[]; runId: string | null } {
-    const { drafts, messages, attachments } = this.#deps;
+    input: {
+      text: string;
+      mentions?: string[];
+      replyTo?: string | null;
+      attachmentIds?: string[];
+    },
+  ): { message: Message; runId: string | null } {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
     }
-    const queue = drafts.list(conversationId);
-    const selected = draftId === undefined ? queue : queue.filter((d) => d.id === draftId);
-    if (selected.length === 0) return { messages: [], runId: null };
-
+    if (input.text.trim().length === 0 && (input.attachmentIds?.length ?? 0) === 0) {
+      throw new AppError('INVALID_INPUT', '消息内容与附件不能同时为空');
+    }
     const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const created: Message[] = [];
+    let message: Message;
     const tx = this.#deps.db.transaction(() => {
-      for (const draft of selected) {
-        const attachmentIds = attachments.attachmentsForDraft(draft.id).map((a) => a.id);
-        const message = messages.append({
-          conversationId,
-          senderType: 'user',
-          kind: 'text',
-          text: draft.text,
-          mentions: draft.mentions,
-          replyTo: draft.replyTo,
-          batchId,
-        });
-        attachments.attachToMessage(attachmentIds, message.id);
-        created.push({ ...message, attachments: messages.attachmentsFor(message.id) });
+      message = this.#deps.messages.append({
+        conversationId,
+        senderType: 'user',
+        kind: 'text',
+        text: input.text,
+        mentions: input.mentions ?? [],
+        replyTo: input.replyTo ?? null,
+        batchId,
+      });
+      if ((input.attachmentIds?.length ?? 0) > 0) {
+        this.#deps.attachments.claimForMessage(input.attachmentIds!, conversationId, message.id);
       }
-      if (draftId === undefined) drafts.removeAll(conversationId);
-      else drafts.remove(draftId);
     });
     tx.immediate();
+    const full: Message = {
+      ...message!,
+      attachments: this.#deps.messages.attachmentsFor(message!.id),
+    };
 
-    for (const message of created) {
-      this.#deps.publish('message.created', { conversationId, message });
-    }
-    this.#publishDrafts(conversationId);
+    this.#deps.publish('message.created', { conversationId, message: full });
     this.#publishConversation(conversationId);
 
     if (conv.type === 'group') {
       // Group dispatch (P05): explicit targets, triage, ordered turns. The
       // runs (if any) are chosen asynchronously; no single run id to report.
-      this.#groupTurns.onUserBatch(conversationId, batchId, created);
-      return { messages: created, runId: null };
+      this.#groupTurns.onUserBatch(conversationId, batchId, [full]);
+      return { message: full, runId: null };
     }
     if (conv.directBotId !== null) {
       // 目录闸门（19/D59）：访谈中的自由输入同样只落库，等目录卡作答。
-      this.#deliverDirectThroughGate(conv, conv.directBotId, created, 'direct');
+      this.#deliverDirectThroughGate(conv, conv.directBotId, [full], 'direct');
     }
-    return { messages: created, runId: this.#latestRunId(conversationId, conv.directBotId) };
+    return { message: full, runId: this.#latestRunId(conversationId, conv.directBotId) };
   }
 
   /**
@@ -969,7 +964,7 @@ export class Orchestrator {
   /**
    * 直聊投递的唯一闸口：Bot 在初始化访谈中且首问卡已发出时，工作目录卡
    * （确定性、无候选）未作答前扣下一切投递——首问作答、输入框自由输入
-   * （flushDrafts）、编辑重触发（editMessage）共用；作答即放行。返回是否
+   * （sendMessage）、编辑重触发（editMessage）共用；作答即放行。返回是否
    * 被扣下（true = 未投递）。
    */
   #deliverDirectThroughGate(
@@ -4889,13 +4884,6 @@ export class Orchestrator {
     if (conversation) {
       this.#deps.publish('conversation.updated', { conversation });
     }
-  }
-
-  #publishDrafts(conversationId: string): void {
-    this.#deps.publish('draft.changed', {
-      conversationId,
-      drafts: this.#deps.drafts.list(conversationId),
-    });
   }
 }
 
