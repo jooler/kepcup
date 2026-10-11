@@ -10,6 +10,7 @@
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
+  import MailCard from '$lib/features/mail/MailCard.svelte';
   import McpAppCard from '$lib/features/apps-ui/McpAppCard.svelte';
   import BotWidgetCard from '$lib/features/widgets/BotWidgetCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
@@ -65,6 +66,17 @@
           watchSummary: message.content.watchSummary,
           watchPauseReason: message.content.watchPauseReason,
           watchFailures: message.content.watchFailures,
+        }
+      : null,
+  );
+  const mailCard = $derived(
+    isCard && 'cardType' in message.content && message.content.cardType === 'mail'
+      ? {
+          accountId: String(message.content.mailAccountId ?? ''),
+          mailEvent: String(message.content.mailEvent ?? 'arrived'),
+          summary: message.content.mailSummary,
+          from: message.content.mailFrom,
+          subject: message.content.mailSubject,
         }
       : null,
   );
@@ -197,6 +209,16 @@
       watchSummary={watchCard.watchSummary}
       watchPauseReason={watchCard.watchPauseReason}
       watchFailures={watchCard.watchFailures}
+    />
+  </div>
+{:else if mailCard !== null}
+  <div class="flex py-1" data-testid="card-message">
+    <MailCard
+      accountId={mailCard.accountId}
+      mailEvent={mailCard.mailEvent}
+      summary={mailCard.summary}
+      from={mailCard.from}
+      subject={mailCard.subject}
     />
   </div>
 {:else if taskCardId !== null}

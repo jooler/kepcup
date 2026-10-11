@@ -537,17 +537,18 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 > 任务书与进度：[todo/extension-center.md](../../todo/extension-center.md)。本节记录信息架构与三项产品决定（A / B / C，均取推荐方案）；不改 §5–§8 的授权、令牌、风险分级、工具锁定与污点语义。
 
-**动机**：逐家适配（测一家、放行一家）取代了「用户自己填 MCP 地址去连」；普通用户不应看到钓鱼面更大的自建入口。侧栏左下角的「技能市场」因此升级为统一的「扩展中心」，把三类可添加的东西放在一个入口里。
+**动机**：逐家适配（测一家、放行一家）取代了「用户自己填 MCP 地址去连」；普通用户不应看到钓鱼面更大的自建入口。侧栏左下角的「技能市场」因此升级为统一的「扩展中心」，把可添加的扩展放在一个入口里（技能、连接、MCP；邮件通道见 D84）。
 
 ### 16.1 信息架构
 
-入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。三组（页签，WAI-ARIA tabs）：
+入口：侧栏左下角「扩展中心」（`shell.extensionCenterOpen` / `openExtensionCenter(tab)`，`data-testid="extension-center-button"`），明确打开的管理界面——点遮罩不关闭，仅 ✕ 与 Esc。页签（WAI-ARIA tabs；D84 起四组）：
 
 | 分组 | 内容 | 数据来源 |
 | ---- | ---- | ---- |
 | **Skills** | 原技能市场内容原样迁入，行为不变 | `preset-skills/catalog.json`，RPC `skills.presets.*` |
 | **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（`connectors/catalog.json` + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
 | **MCP** | 已安装 MCP 的管理（启停 / 状态 / 逐工具策略 / 编辑 / 删除）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
+| **邮件** | IMAP/SMTP 本机邮件通道（非 MCP）：添加账号、绑定 Bot、IDLE/轮询状态（见 [35-mail-channel.md](35-mail-channel.md)，D84） | `mail.*` RPC / `mail_accounts` |
 
 组件复用：「连接」组 = 设置「应用」原「目录」网格（`AppCatalogGrid`）+ `AppConnectionsList` / `AppConnectionDetail`（多账号时先列账号，单账号直接进详情）；「MCP」组 = `McpSection` 的 `manage` 形态 + `McpbInstall`。代码在 `renderer/.../features/extension-center/`。
 

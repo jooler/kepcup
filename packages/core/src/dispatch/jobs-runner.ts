@@ -26,6 +26,7 @@ import { runWikiLintJob } from '../wiki/lint.js';
 import type { WikiService } from '../wiki/service.js';
 import type { ScheduleService } from '../schedule/service.js';
 import type { WatchService } from '../watch/service.js';
+import type { MailService } from '../mail/service.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { SandboxBackend } from '../sandbox/types.js';
@@ -69,6 +70,8 @@ export interface JobsRunnerDeps {
   schedules?: ScheduleService | undefined;
   /** W7 watch domain (watch_alert consumer). */
   watches?: WatchService | undefined;
+  /** D84 mail domain (mail_alert consumer). */
+  mail?: MailService | undefined;
   /** Sandbox backend for the skill generation loop (P08). */
   sandbox?: SandboxBackend | undefined;
   paths?: AppPaths | undefined;
@@ -360,6 +363,12 @@ export class JobsRunner {
         }
         this.#deps.watches.runAlertJob(job);
         return;
+      case 'mail_alert':
+        if (this.#deps.mail === undefined) {
+          throw new Error('mail domain not wired; cannot run mail_alert');
+        }
+        this.#deps.mail.runAlertJob(job);
+        return;
       case 'event_delivery':
         // P10 (BR-P10-006): an event response trigger parked for quiet hours —
         // persistent across restarts; re-checks happen in the orchestrator.
@@ -433,6 +442,7 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'event_delivery',
   'delegation_delivery',
   'watch_alert',
+  'mail_alert',
 ]);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */

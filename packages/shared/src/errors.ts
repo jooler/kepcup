@@ -153,6 +153,11 @@ export const ERROR_CODES = [
   'WIDGET_QUERY_UNKNOWN',
   /** Bot 组件能力桥查询（D81 P2）：参数不符 / SQL 无法编译 / 执行出错。 */
   'WIDGET_QUERY_FAILED',
+  /** 邮件通道（D84）：账号没交给当前 Bot / 登录失败 / 连不上 / 厂商预设还不能用。 */
+  'MAIL_NOT_BOUND',
+  'MAIL_AUTH_FAILED',
+  'MAIL_CONNECT_FAILED',
+  'MAIL_PROVIDER_UNAVAILABLE',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

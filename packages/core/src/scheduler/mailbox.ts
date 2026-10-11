@@ -13,7 +13,9 @@ export type TriggerReason =
   /** D75 §3.2：任务结算条目（result / failure）唤醒 Bot。 */
   | 'task'
   /** W7：网页监看条件边沿触发（内部事件 watch_alert）。 */
-  | 'watch';
+  | 'watch'
+  /** D84：新邮件唤醒（内部事件 mail_alert）。 */
+  | 'mail';
 
 /** One source batch of a merged trigger (its own `<trigger>` segment). */
 export interface TriggerPart {

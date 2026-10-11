@@ -878,6 +878,20 @@ export const cardContentSchema = z.object({
    */
   watchPauseReason: z.enum(['failures', 'too_frequent']).optional(),
   watchFailures: z.number().int().optional(),
+  /**
+   * Mail cards only (D84, cardType `mail`): which account, which moment
+   * (arrived / paused / error), the IMAP UID and a short summary. The body
+   * stays out of the card; the bot reads it with mail_read.
+   */
+  mailAccountId: z.string().optional(),
+  mailEvent: z.enum(['arrived', 'paused', 'error']).optional(),
+  mailUid: z.number().int().optional(),
+  mailKey: z.string().optional(),
+  mailFrom: z.string().optional(),
+  mailSubject: z.string().optional(),
+  mailDate: z.string().optional(),
+  mailSummary: z.string().optional(),
+  mailPauseReason: z.enum(['too_frequent']).optional(),
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
   appUi: appUiCardSchema.optional(),
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */
@@ -1021,6 +1035,8 @@ export const triggerReasonSchema = z.enum([
   'task',
   /** 确定性监看（W7，D79）：监看条件边沿触发，触发批是内部事件 watch_alert。 */
   'watch',
+  /** 邮件通道（D84）：新信唤醒，触发批是内部事件 mail_alert。 */
+  'mail',
 ]);
 export type TriggerReason = z.infer<typeof triggerReasonSchema>;
 
@@ -1282,6 +1298,8 @@ export const jobTypeSchema = z.enum([
   // the bot's wake are posted by the job, so a crash after the edge was
   // committed never loses the alert.
   'watch_alert',
+  // D84：新信唤醒（去重键 mail:{accountId}:{uid}:{botId}）。卡片和对话轮由作业投递。
+  'mail_alert',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
@@ -1366,6 +1384,8 @@ export const approvalKindSchema = z.enum([
    * 的逐次确认。时长只有 `once`。
    */
   'egress',
+  /** 邮件发送（D84）：完整收件人与正文，用户确认后才 SMTP 发出。 */
+  'mail_send',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 

@@ -1,6 +1,18 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  mailAccountCreateInputSchema,
+  mailAccountGetOutputSchema,
+  mailAccountIdInputSchema,
+  mailAccountSetBotsInputSchema,
+  mailAccountTestInputSchema,
+  mailAccountTestOutputSchema,
+  mailAccountUpdateInputSchema,
+  mailAccountsListOutputSchema,
+  mailBindingResumeInputSchema,
+  mailBotSetAccountsInputSchema,
+} from '../domain/mail.js';
+import {
   appsSkillsInstallInputSchema,
   appsSkillsInstallOutputSchema,
   appsSkillsOffersInputSchema,
@@ -1914,6 +1926,30 @@ export const rpcMethodSchemas = {
   'stickies.update': { input: stickiesUpdateInputSchema, output: stickiesUpdateOutputSchema },
   'stickies.delete': { input: stickiesDeleteInputSchema, output: stickiesDeleteOutputSchema },
 
+  'mail.accounts.list': { input: voidInput, output: mailAccountsListOutputSchema },
+  'mail.accounts.get': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
+  'mail.accounts.test': { input: mailAccountTestInputSchema, output: mailAccountTestOutputSchema },
+  'mail.accounts.create': {
+    input: mailAccountCreateInputSchema,
+    output: mailAccountGetOutputSchema,
+  },
+  'mail.accounts.update': {
+    input: mailAccountUpdateInputSchema,
+    output: mailAccountGetOutputSchema,
+  },
+  'mail.accounts.delete': { input: mailAccountIdInputSchema, output: okOutput },
+  'mail.accounts.setBots': {
+    input: mailAccountSetBotsInputSchema,
+    output: mailAccountGetOutputSchema,
+  },
+  'mail.bots.setAccounts': { input: mailBotSetAccountsInputSchema, output: okOutput },
+  'mail.accounts.pause': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
+  'mail.accounts.resume': { input: mailAccountIdInputSchema, output: mailAccountGetOutputSchema },
+  'mail.bindings.resume': {
+    input: mailBindingResumeInputSchema,
+    output: mailAccountGetOutputSchema,
+  },
+
   // P11: served by the main process (browser-host) on port B — see the
   // PlatformRpcMethods / BrowserRpcMethods types below.
   'browser.ensurePage': {
@@ -2206,6 +2242,17 @@ const APP_METHODS = [
   'stickies.create',
   'stickies.update',
   'stickies.delete',
+  'mail.accounts.list',
+  'mail.accounts.get',
+  'mail.accounts.test',
+  'mail.accounts.create',
+  'mail.accounts.update',
+  'mail.accounts.delete',
+  'mail.accounts.setBots',
+  'mail.bots.setAccounts',
+  'mail.accounts.pause',
+  'mail.accounts.resume',
+  'mail.bindings.resume',
   'browserProfiles.list',
   'browserProfiles.create',
   'browserProfiles.rename',

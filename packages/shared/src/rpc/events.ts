@@ -20,6 +20,7 @@ import { appSkillsOfferEventSchema } from '../domain/app-skills.js';
 import { connectorTierSchema } from '../domain/connector-catalog.js';
 import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
+import { mailAccountSchema } from '../domain/mail.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -288,6 +289,12 @@ export const watchUpdatedPayloadSchema = z.object({
   removed: z.boolean().optional(),
 });
 
+export const mailAccountUpdatedPayloadSchema = z.object({
+  accountId: z.string(),
+  /** null when the account was deleted. */
+  account: mailAccountSchema.nullable(),
+});
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -324,6 +331,7 @@ export const rpcEventSchemas = {
   'task.updated': taskUpdatedPayloadSchema,
   'tasks.interrupted': tasksInterruptedPayloadSchema,
   'watch.updated': watchUpdatedPayloadSchema,
+  'mail.account_updated': mailAccountUpdatedPayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;

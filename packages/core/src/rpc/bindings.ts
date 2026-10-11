@@ -216,6 +216,7 @@ import { bindAgentMethods } from './agents-bindings.js';
 import { oauthBindingChanged } from '../apps/disconnect.js';
 import { isCatalogConnectionId } from '../apps/connection-store.js';
 import { bindAppsMethods } from './apps-bindings.js';
+import { bindMailMethods } from './mail-bindings.js';
 import { bindAppsRuntimeMethods } from './apps-runtime-bindings.js';
 import { bindMcpbMethods } from './mcpb-bindings.js';
 import { bindAppsUiMethods } from './apps-ui-bindings.js';
@@ -1143,6 +1144,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ...bindAgentMethods(services),
     // D73: interactive OAuth flows (apps.connect*, apps.connections.list).
     ...bindAppsMethods(services),
+    ...bindMailMethods(services),
     // D73: apps.disconnect (revocation) and mcp.removeServer (settings + secrets + tokens).
     ...bindAppsRuntimeMethods(services, { revokeMcp }),
     // D73 P2 §6.5: mcpb.inspect / mcpb.install.

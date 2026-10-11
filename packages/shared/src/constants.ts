@@ -242,6 +242,8 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   'schedule_fired',
   // W7：监看命中唤醒 Bot 的触发消息（用户看到的是监看卡）。
   'watch_alert',
+  // D84：新邮件唤醒 Bot 的触发消息（用户看到的是邮件卡）。
+  'mail_alert',
 ]);
 /** Hard cap of questions one setup interview may ask (soft target: 3~5). */
 export const SETUP_MAX_QUESTIONS = 5;

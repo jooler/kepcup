@@ -60,6 +60,24 @@
       {t('apps.pointer.open')}
     </Button>
   </div>
+  <div
+    class="flex items-center gap-3 rounded-xl border px-4 py-3"
+    data-testid="mail-extension-center-pointer"
+  >
+    <p class="min-w-0 flex-1 text-xs text-muted-foreground">{t('mail.pointer.text')}</p>
+    <Button
+      size="sm"
+      variant="secondary"
+      class="shrink-0"
+      onclick={() => {
+        shell.closeSettings();
+        shell.openExtensionCenter('mail');
+      }}
+      data-testid="mail-open-extension-center"
+    >
+      {t('mail.pointer.open')}
+    </Button>
+  </div>
 
   <div data-settings-anchor="apps-connected">
     {#if detailConnectionId !== null}
