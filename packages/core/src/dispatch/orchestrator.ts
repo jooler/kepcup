@@ -250,6 +250,12 @@ export interface OrchestratorWatchFacade extends WatchToolFacade {
   renderContextLine(message: Message): string;
 }
 
+/**
+ * 「缺设置」卡片被用户关闭（未完成配置）时发给 Bot 的内部事件（inline setup
+ * 的放弃分支）：Bot 据此得知用户放弃了配置，给出新的反馈。
+ */
+export const SETUP_DISMISSED_EVENT = 'task_setup_dismissed';
+
 export interface OrchestratorDeps {
   engine: AgentEngine;
   /**
@@ -687,8 +693,7 @@ export class Orchestrator {
           this.#recordBotMessage(runId, message);
           return;
         }
-        deps.publish('message.created', { conversationId: message.conversationId, message });
-        this.#publishConversation(message.conversationId);
+        this.#publishMessageCreated(message);
       },
       // D75 §8.5: kept sessions of settled tasks outlive them only for the
       // continuation window.
@@ -1628,6 +1633,34 @@ export class Orchestrator {
     this.deliverEventToBot(input.botId, input.conversationId, WATCH_ALERT_EVENT, input.text, {
       internal: true,
     });
+  }
+
+  #setupDismissNotified = new Set<string>();
+
+  /**
+   * 用户关闭了「缺设置」卡片、未完成配置（inline setup 的放弃分支）：一次性
+   * 通知 Bot 现状，由它给新的反馈。main-model 缺失除外——对话轮本就跑不起
+   * 来，通知只会原样失败并再弹同一张卡。返回是否真的发出了通知。
+   */
+  notifySetupDismissed(runId: string): boolean {
+    const run = this.#deps.runs.get(runId);
+    if (run === null) return false;
+    if (run.setup === null || run.setup.kind === 'main-model') return false;
+    if (run.status !== 'failed' || run.botId === null || run.conversationId === null) return false;
+    if (this.#setupDismissNotified.has(runId)) return false;
+    this.#setupDismissNotified.add(runId);
+    const title = run.taskTitle ?? '';
+    this.deliverEventToBot(
+      run.botId,
+      run.conversationId,
+      SETUP_DISMISSED_EVENT,
+      [
+        `任务「${title}」的设置卡片已被用户关闭，配置未完成：该任务不会自动继续。`,
+        '用户暂时放弃了在应用内完成这项配置。告诉用户现状与影响，并按其意愿给新的反馈——用户已放弃应用内配置，此时可以给替代做法（包括建议外部工具）或询问下一步；不要自行重新派出这个任务。用户之后仍可在任务卡上手动重试，或先在设置页完成配置再重试。',
+      ].join('\n'),
+      { internal: true },
+    );
+    return true;
   }
 
   /**
@@ -4610,11 +4643,21 @@ export class Orchestrator {
     this.#deps.runs.update(runId, {
       outputMessageIds: [...(current?.outputMessageIds ?? []), message.id],
     });
+    this.#publishMessageCreated(message);
+  }
+
+  /**
+   * `message.created` 的统一发布口：append 返回的消息 attachments 恒为空
+   * （附件在其后 attach，无重发事件）——直接发布会让实时通道的附件消息
+   * 渲染成空气泡，重开对话才可见。发布前按 id 重读带附件的完整消息。
+   */
+  #publishMessageCreated(message: Message): void {
+    const full = this.#deps.messages.getById(message.id) ?? message;
     this.#deps.publish('message.created', {
-      conversationId: message.conversationId,
-      message,
+      conversationId: full.conversationId,
+      message: full,
     });
-    this.#publishConversation(message.conversationId);
+    this.#publishConversation(full.conversationId);
   }
 
   /**

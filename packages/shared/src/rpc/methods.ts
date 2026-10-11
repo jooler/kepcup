@@ -530,6 +530,11 @@ export const providersTestInputSchema = providerNameInputSchema.extend({
    * 提交任务后立即取消，向量为一次单词 embed）。
    */
   capability: modelCapabilitySchema.optional(),
+  /**
+   * 未保存先测（与 websearch.test 同一取向）：填写了 Key 就用入参直接探测、
+   * 不落库；缺省用已存 key。只对能力探测生效（对话探测仍用已存配置）。
+   */
+  keyOverride: z.string().min(1).max(4096).optional(),
 });
 
 // --- media（统一媒体调用：按厂商自动路由） ------------------------------------
@@ -910,6 +915,12 @@ export const webSearchRemoveKeyInputSchema = z.object({ provider: webSearchProvi
 export const runIdInputSchema = z.object({ runId: z.string().min(1) });
 export const runsCancelOutputSchema = z.object({ run: runSchema.nullable() });
 export const runsRetryOutputSchema = z.object({ run: runSchema.nullable() });
+/**
+ * 「缺设置」卡片被用户关闭（未完成配置）：一次性通知 run 所属的 Bot（internal
+ * event，触发对话轮给新的反馈）。notified=false = 无可通知（run 不存在、无
+ * setup、main-model 缺失、非失败状态或已通知过）。
+ */
+export const runsSetupDismissedOutputSchema = z.object({ notified: z.boolean() });
 /**
  * W3（D78）：`reviewed` = 用户已在「检查后重试」面板核实中断前的外部操作。
  * 中断任务有外部副作用台账行时不带它会得到 REVIEW_REQUIRED；其他调用方不传。
@@ -1786,6 +1797,7 @@ export const rpcMethodSchemas = {
 
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
   'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
+  'runs.setupDismissed': { input: runIdInputSchema, output: runsSetupDismissedOutputSchema },
   'runs.steps': { input: runIdInputSchema, output: runsStepsOutputSchema },
   'runs.list': { input: runsListInputSchema, output: runsListOutputSchema },
 
@@ -2137,6 +2149,7 @@ const APP_METHODS = [
   'attachments.detach',
   'runs.cancel',
   'runs.retry',
+  'runs.setupDismissed',
   'runs.steps',
   'runs.list',
   'sandbox.status',

@@ -600,11 +600,21 @@ class ChatState {
     return true;
   }
 
-  /** 用户关闭设置卡片：门禁撤销、失败横幅一并收起（草稿保留，可再试）。 */
+  /**
+   * 用户关闭设置卡片：门禁撤销、失败横幅一并收起（草稿保留，可再试）。
+   * 失败 run 带结构化 setup 时顺带通知 core（一次性 internal event 唤醒
+   * 对话轮）：Bot 得知用户放弃了配置，给出新的反馈；main-model 缺失时
+   * core 侧自行跳过（对话轮本就跑不起来）。
+   */
   dismissSetupCard(): void {
     this.#pendingSetup = null;
     const failed = this.#chat?.failedRun;
-    if (failed?.setup) this.dismissFailedRun(failed.id);
+    if (failed?.setup) {
+      this.dismissFailedRun(failed.id);
+      core.call('runs.setupDismissed', { runId: failed.id }).catch(() => {
+        // 通知失败不影响收卡（任务仍可在任务卡上手动重试）。
+      });
+    }
   }
 
   /**

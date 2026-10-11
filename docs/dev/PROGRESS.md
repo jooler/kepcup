@@ -1163,7 +1163,75 @@
 - **未做**：真实 OAuth 授权页（会打开系统浏览器，e2e 只到连接步骤）；真实 Electron 里的 DNS 重绑定端到端。
 
 
+
+## 能力触发优先、提示词兜底——修「图像请求被模型口头代劳、推荐第三方」（2026-10-11）
+
+用户场景：未配置图像生成模型时让 Bot 画 icon，Bot 把任务做成纯文字设计方案（全程未调 `generate_image`），最后推荐 Midjourney / DALL·E。而设计 16 §163 / 18 §2 / 25 D68 的本意是：能力调用是确定性的——工具被调用、未配置则以 `SETUP_REQUIRED` 中断并弹能力设置卡、配置后自动续跑；推荐第三方只应发生在确认应用提供不了该能力之后。链路本身早已实现并有集成测试（`response-loop.test.ts`「generate_image … capability-model setup failure」），断点在模型根本没发起调用：对话轮工具面没有图像工具（D75 有意设计，媒体生成必须经任务），提示词与工具描述都没有告诉模型「宿主具备这些能力、必须经工具产出真实文件」，模型的参数化先验（「我不会画图」）于是接管。
+
+- **修复（分层）**：
+  - 调用层的接口文案（`tools/image-tools.ts`、`speech-tools.ts`、`web-tools.ts`）：`generate_image` / `generate_speech` / `generate_video` / `web_search` 描述删掉「应用未配置…时本工具不可用」（这句话在劝退调用），改为「必须调用本工具产出真实文件，不要用文字方案代替；未配置时返回『需要设置』，由系统引导配置并自动继续」。`image-tools` 的 `setupRequiredResult` 文案从写死「图像生成模型设置」改为「对应能力模型设置」（`understand_image` 也走它，此前图文不符）。
+  - 提示词兜底：`TURN_PLATFORM_RULES` 新增媒体生成路由规则——真实媒体文件照常 `start_task`、instruction 写明用 `generate_image` / `generate_speech` / `generate_video`，不以「我不能生成图片」拒绝、不推荐外部第三方工具，只有任务结果表明应用提供不了才给替代做法；`start_task` 描述的「都在任务里做」枚举补上「生成图片 / 语音 / 视频」。
+  - 未改：`SETUP_REQUIRED` → 设置卡 → `runs.retry` 自动续跑的既有链路、`setupRequirementErrorText` 的确定性失败文案、D75 工具面切分（图像工具不进对话轮）。
+- **其余能力同款排查（第二轮）**：逐条核对全部确定性 setup 路径——六个 `SetupRequirement` kind（main-model / capability-model〔image/tts/video/multimodal/asr〕/ web-search / connect-app / confirm-local-connector / agent）都有「工具返回 `SETUP_REQUIRED` → orchestrator facade 记需求 → run 改判 failed+setup → 卡片 → `runs.retry`」链路，`SetupRequiredCard` 对全部 kind 有 UI 分支；`web_fetch` 不依赖检索供应商（`fetchPage` 独立可用，无缺口）；memory 的 embedding 未配置降级全文检索、rerank 未配置返回 null 不阻断（内部能力优雅降级，无第三方话术问题）；外部智能体的补位能力「原生优先」是设计 28 §4.2 的既定策略，且宿主桥保留 `SETUP_REQUIRED` 中断（`mcp-bridge.ts`），卡片照常触发。发现并补齐两处理解类缺口（multimodal / asr 的对话轮路由）：`pi-engine.buildUserMessageContent` 的「图片未注入」就地提示补「本执行没有该工具时（对话轮）用 start_task 派任务调用」；`TURN_PLATFORM_RULES` 再加一条——看不了图派任务用 `understand_image`、听不了音频派任务用 `transcribe_audio`，不要只回复「看不了 / 听不了」，缺配置同样引导设置。
+- **测试**：`supervisor-turn.test.ts` 新增 1 例锁定对话轮路由规则；定向跑 `media-tools` / `supervisor-turn` / `context-assembly` / `web-tools` / `gateway-read-only` / `response-loop`（setup 集成例）/ `runs-tasks` / `messages-task-events` 全绿；core typecheck 通过（此前 `mcp/tools.ts`、`rpc/apps-connections-bindings.ts` 两条报错是 shared 旧 dist 所致，`pnpm --filter @kepcup/shared build` 后消失，与本改动无关）。
+- 影响范围：core `tools/{image-tools,speech-tools,web-tools,task-tools}.ts`、`agent/context/system-prompt.ts`、`agent/pi-engine.ts`、`test/unit/supervisor-turn.test.ts`；文档 `docs/dev/04-agent-runtime.md`（对话轮规则列表插入第 5、6 条、后续重编号）。无迁移、无渲染端改动（`SetupRequiredCard` 的 `capability-model` 卡已支持 image/tts/video/multimodal/asr）。
+
+
 ### 整条消息钉便签：消息行 pin 按钮 + 右键条目（2026-10-11）
 
 选中文本钉便签（`SelectionPinToolbar`）之外，普通消息行（`ChatMessageRow`）新增两条整条 pin 入口：hover 操作区在复制旁加 `Pin` 按钮（`message-pin`），右键菜单加同文案条目（`context-message-pin`），都走 `stickies.pin(messageText, conversationId, 'conversation')`——与选中文本同一入口，作用域仍在便签卡片上切换；门槛与复制一致（有正文、未撤回、非编辑中）。`stickies.pin` 入口截断到 `STICKIE_TEXT_MAX_CHARS`（2 万）：消息正文上限 10 万，整条钉长消息此前会过不了 `stickies.create` 校验，乐观行落不了库、重启即消失。i18n `messages.pinMessage`（「固定整条消息」）。
 - **测试**：新增 `stickies.svelte.test.ts`（desktop-svelte：全文乐观行与 create 载荷一致、超限截断、空白不钉）；e2e `stickies.spec.ts` 新增「hover 按钮 + 右键条目各钉一条」（本地 Electron 实跑，同文件既有选中 pin 用例回归通过）；chats 目录 13 文件 75 例全绿；svelte-check 0 错误；eslint 干净。
+
+
+### 设置卡测试/收尾交互 + Bot 感知配置状态（2026-10-11）
+
+用户反馈三点：①能力模型配置卡「先保存再测试」不合理，应直接用用户参数测；②测试成功后保存按钮禁用、卡片还开着，用户担心没保存成功——应有「保存并关闭」；③配置卡片开着时 Bot 没有等待，返回了文字设计方案——Bot 应感知配置操作状态：卡片开着→等待并只做简短转述（配置后任务自动续跑），用户关闭卡片放弃配置→通知 Bot 给新的反馈（此时才可给替代做法/外部工具）。逻辑适配全部 setup 场景，不限图像生成。
+
+- **①未保存先测**：`providers.test` 入参加 `keyOverride`（只对能力探测生效；对话探测仍用已存配置），穿透 `domain/providers.test` → `media.testCapability` → `#resolveVendor`（入参 key 不读密钥表、不落库）。渲染端 `CapabilityModelSection.test()` 去掉先 `persist()`，Key 留空测已存 key——对齐 `WebSearchSection` 的既定取向（`websearch.test` 本就是未保存先测）。设置页同步生效：测试不再顺带落库，落库只经「保存」。`ProviderSetupForm`（main-model 卡第一段的「测试连接」）**不改**——两段式切段依赖它先落盘 key（design 18 §卡片内容表的既定设计）。
+- **②保存并关闭**：`CapabilityModelSection` 增 `testOk` 状态（表单任一字段一变即失效），embedded 下测试通过后「保存」换为「保存并关闭」（同一保存路径 → `onSaved` → `continueAfterSetup` 收卡续跑）；i18n `settings.saveAndClose`、`capabilityTestNote` 文案改为「测试直接使用当前填写的参数（不保存…）」。
+- **③Bot 感知配置状态**（三层，全部 kind 通用）：
+  - 失败条目指引：任务以 setup 失败时，`task_event` failure 条目附确定性指引（`tasks.ts #failureText` 增 setupNote）——卡片已出现、配置后自动原样继续、只需简短告知用户、勿以文字方案代产、勿建议外部工具、关卡片会另行通知。这修正了「Bot 没等配置、自己给了设计方案」：此前条目只有「任务失败：未配置图像生成模型…」，对话轮按普通失败自行给了「下一步建议」。
+  - 放弃通知：新增 RPC `runs.setupDismissed {runId} → {notified}`（orchestrator `notifySetupDismissed`）：run 仍带 setup、status=failed、bot/对话齐备、且 kind ≠ main-model（对话轮本就跑不起来，通知只会再弹同一张卡）时，以一次性 internal event `task_setup_dismissed`（`deliverEventToBot`，reason='event'）唤醒对话轮；同 run 幂等（内存 Set）。渲染端 `chat.dismissSetupCard()` 在 failedRun.setup 时调用（main-model 由 core 跳过）；通知失败静默（不影响收卡）。
+  - 对话轮规则：`TURN_PLATFORM_RULES` 增 `task_setup_dismissed` 触发指引——告知现状、此时可给替代做法（含外部工具建议）或询问下一步、勿自行重派（任务卡可手动重试）。
+  - 自动续跑（成功路径）沿用既有 `continueAfterSetup` → `runs.retry` → `TaskHost.retry`（continues_task_id 续派），未改。
+- **测试**：core 单元 `media-service` 增 keyOverride 用例（入参 key 直接探测、无入参且无存 key → PROVIDER_AUTH_FAILED）；集成 `response-loop`——既有 setup 用例补「失败条目带『自动继续』指引」断言（task_event 是内部行，走 `listAllMessages`），新增「关闭卡片 → notified=true → Bot 新反馈 → 重复调用 notified=false」；渲染端新增 `settings.svelte.test.ts`（desktop-svelte，锁 `providers.test` 的 keyOverride 线上格式 + 不落库）。`supervisor-turn` / `context-assembly` / `gateway-read-only` 回归绿；core / shared / desktop（svelte-check 0 错误）typecheck 通过。
+- **文档**：design 18（失败条目指引、放弃分支、卡片内测试交互、测试锚点）、dev/04（对话轮规则第 14 条）。
+- 影响范围：shared `rpc/methods.ts`；core `rpc/bindings.ts`、`domain/providers.ts`、`media/service.ts`、`dispatch/{orchestrator,tasks}.ts`、`agent/context/system-prompt.ts`；desktop `stores/{settings,chat}.svelte.ts`、`features/settings/CapabilityModelSection.svelte`、`i18n/locales/zh-CN.ts`；测试 3 个文件（新增 1）。无迁移。
+- **已知边界**：`#setupDismissNotified` 是内存态（重启后卡片若重现、再关会再通知一次，与卡片本地的 in-memory dismiss 语义一致）；渲染端通知为尽力而为（fire-and-forget）；组件级按钮切换逻辑无 DOM 测试环境覆盖，由 svelte-check + store 级 wire-format 测试 + 后续 e2e 兜底。
+
+
+### 生成产物确定性投递——修「报告已生成、对话里没有图」（2026-10-11）
+
+用户实测（真实图像模型已配置）：任务报告「图标已保存为 icon_pi_community.png」，但对话里没有任何图片。排查：渲染端正常（`MessageAttachments` 对 `message.attachments` 无条件内联渲染，空文本+附件也渲染）；断点在 core 侧的**投递依赖模型自觉**——`generate_image` 只把文件落盘 `.generated/` 并在工具结果里「请用 send_message 的 attachment_paths 发给用户」，模型拿到路径后只在进度/结果里复述了文件名，从未调 `send_message`，图片于是永远留在 workspace 里。这正是「能力调用要确定性、不靠 AI 自觉」原则在投递环节的同一个缺口。
+
+- **修复（`GeneratedMediaDelivery`）**：`buildResponseTools` 组装一个投递门面（与 `send_message` 同一组原语：`gateway.checkPath` → `attachments.upload` → `messages.append`（任务内带 `taskOrigin`，渲染为归属任务的进度消息）→ `attachToMessage` → `onBotMessage`），传给 `buildImageTools` / `buildSpeechTools`。`generate_image` / `generate_speech` / `generate_video` 落盘后**由工具本身立即把产物作为消息附件发进对话**（caption 空串=只发附件；逐文件容错，单文件失败不影响其余，工具结果仍带回路径供 `send_message` 重试）；结果文案改为「已作为消息附件发给了用户，无需再调 send_message」。工具描述同步（「保存后自动作为消息附件发给用户」）。测试装配缺省不传 delivery → 保留旧路径文案（既有用例不动）。
+- **测试**：单元 `media-tools` 增 2 例（image/speech 的 delivery fake：send 收到落盘路径、文案切换、文件确实落盘）；集成 `response-loop` 新增端到端——真实 MediaService + `settings.update`(capabilityModels.image) + `providers.setKey` + stub 全局 fetch（volcengine `/images/generations` 返回 b64 PNG，其余透传），任务只调 `generate_image` 不调 `send_message`，断言对话出现 `image/png` 附件的 Bot 消息。此前集成覆盖只到「未配置 → SETUP_REQUIRED」，成功链路（适配器→落盘→投递→附件渲染数据）首次有测试。
+- **调试备注**：集成用例两次踩坑——`settings.update` 只配 capabilityModels 不配厂商 key 时，`#resolveVendor` 在厂商请求之前就抛 `PROVIDER_AUTH_FAILED`（转 SETUP_REQUIRED），stub 永远不会命中，须先 `providers.setKey`；`messages.list` 不返回 `task_event` 内部行，断言失败条目要走 `listAllMessages`。
+- **文档**：design 16 §163、design 20（D61 摘要/通道说明/工具表后注）、dev/04 工具目录（`generate_image` / `generate_speech` / `generate_video` 行）——「由模型 send_message 发出」全部改为「工具落盘后立即作为消息附件发出（`GeneratedMediaDelivery`）」；`send_message.attachment_paths` 保留为模型主动发任意 workspace 文件的通道。
+- 影响范围：core `tools/{index,image-tools,speech-tools}.ts`、`test/{unit/media-tools,integration/response-loop}.test.ts`；文档 3 处。无迁移、无渲染端改动。
+- **遗留观察**：截图里同一进度文案重复出现 3 次（「我已成功生成…设计特点…」整段×3）——可能是模型逐工具调用重复叙述（LLM 行为），也可能涉及进度投递去重，本次未改；若复现可单开排查。
+
+
+### 投递修复的「生效」跟进：dist 未重建 + 结果文案不再回传路径（2026-10-11）
+
+用户复测仍失败：图片依旧未显示、模型用自然语言复述了保存的**绝对路径**。排查结论分两层：
+
+- **为什么复测没生效**：桌面 app 经 `@kepcup/core` 的 `exports → dist/index.js` 加载 core（electron-vite 把 `@kepcup/core` 外置，bundle 运行时读 dist），而 `dist` 停在当日 13:27 的构建——两轮修复（投递门面、setup 通知）都不在运行中的 app 里，复测跑的是旧逻辑。集成测试（真实 MediaService + stub 厂商端点）已证明新链路本身是通的。
+- **结果文案精修（对应用户「告知 LLM 已显示、简单反馈即可」）**：`generate_image` / `generate_speech` / `generate_video` 投递成功后的工具结果**不再携带文件绝对路径**（旧文案带路径，模型原样复述给用户=噪声），改为「已生成 N 张图片，并已作为消息附件显示在用户的对话界面中。无需再调 send_message，也不要向用户复述文件路径；只需用一句话向用户确认生成结果。」单测断言同步锁定「内容不含 workspace 路径」。
+- **重建被并发工作阻塞**：`pnpm --filter @kepcup/core build` 当前编译失败——另一条会话正在写「bot widgets」功能（`packages/core/widgets/`、`tools/widget-tools.ts`、`rpc/widgets-ui-bindings.ts`、`migrations/0028_widgets.sql`、design 32 / todo，17:08–17:09 落盘），尚余 5 个类型错误。`noEmitOnError: true` 保证失败的构建不污染 dist（仍是 13:27 旧产物，app 可正常启动、只是没有新修复）。未触碰对方文件。
+- **待办**：待 widgets 会话把代码补齐可编译后（或由用户协调该会话收尾），执行 `pnpm --filter @kepcup/shared build && pnpm --filter @kepcup/core build` 并**重启应用**（core 进程在启动时 fork），投递修复即生效。
+
+
+### 实时通道附件丢失——「空气泡」根因与修复（2026-10-11）
+
+用户重启后复测：图片仍未显示，但对话里出现了一个**空气泡**（有「任务进度」标签、无内容）——这正是投递消息已创建、附件却在实时通道里丢了的直接证据。根因：`messages.append` 返回的消息 `attachments` 恒为空数组（附件在 `appendToMessage` 之后才挂上，且无重发事件），orchestrator `#recordBotMessage` 把这个未挂附件的对象直接 publish 成 `message.created`，渲染端实时收到的是空附件消息；重开对话走 `messages.list`（`#listWhere` 会 `attachmentsFor` 回填）才能看到图。此 bug 影响**所有** bot 附件消息的实时渲染（`send_message` 带附件同病），不只媒体投递。
+
+- **修复**：orchestrator 抽 `#publishMessageCreated`——发布前按 id `getById` 重读带附件的完整消息；`#recordBotMessage` 与 `recordVisibleMessage`（forward_task_result 的非 run 分支）统一走它。其余直发点（run_interrupted / 内部事件等系统消息）不携带附件，保持原状。
+- **测试**：集成用例增实时断言——`waitForEvent('message.created')` 载荷必须带 1 个附件（修复前该载荷 attachments 为空）；落库断言（`listAllMessages` 命中 `image/png`）保持。35 例全绿。
+- **构建**：并发「bot widgets」会话已于 17:17 修齐其代码，`pnpm --filter @kepcup/shared build && pnpm --filter @kepcup/core build` 通过，dist 已含全部修复（投递、实时附件、无路径结果文案、setup 通知、卡片测试交互）。**用户需完全重启应用**（core 进程启动时 fork）。
+- 附注：此前那次「空气泡」运行里附件行其实已落库（有气泡即有上传），重启后历史里那条消息也会带出图片。
+
+
+### 纯附件消息不再渲染空气泡（2026-10-11）
+
+投递修复生效后用户反馈：图片显示了，但原空气泡的容器壳还留在图片上方。`MessageBody` 的用户分支本就有「纯附件消息没有文本气泡」的处理（design 20），bot 分支却无条件渲染气泡容器（空文本 = 空壳）。对齐：bot 正文 `trim` 后为空时跳过气泡容器（`hasBotText` derived），附件行即消息体（任务进度标签仍保留）。编辑态与已撤回分支在其之前，不受影响。chats/stores 16 文件 86 例全绿，svelte-check 0 错误；desktop electron-vite 产物已重建。

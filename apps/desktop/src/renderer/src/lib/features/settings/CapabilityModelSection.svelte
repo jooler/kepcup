@@ -12,9 +12,11 @@ import { Badge } from '$lib/components/ui/badge';
   /**
    * 「能力模型」section（docs/design/16-capability-models.md）：一种模型
    * 能力一条配置——厂商（仅已适配该能力的国内厂商）+ 模型 id + API Key
-   * （按厂商共享）。保存 / 测试会先落盘（providers.test 只读已存 key）。
-   * embedded=true 时隐藏标题与说明（对话内设置卡片自带），保存成功后回调
-   * onSaved（inline setup 的继续对话钩子）。
+   * （按厂商共享）。测试「未保存先测」（与 websearch.test 同一取向）：
+   * 直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，不落库；落库只经
+   * 「保存」。embedded=true 时隐藏标题与说明（对话内设置卡片自带），测试
+   * 成功后把「保存」换成「保存并关闭」，保存成功后回调 onSaved（inline
+   * setup 的继续对话钩子，卡片随之关闭）。
    */
   let {
     capability,
@@ -35,6 +37,8 @@ import { Badge } from '$lib/components/ui/badge';
   let key = $state('');
   let busy = $state(false);
   let testing = $state(false);
+  /** 测试已用当前参数通过：embedded 下把「保存」换成「保存并关闭」。 */
+  let testOk = $state(false);
 
   const vendors = $derived(vendorsForCapability(capability));
   const stored = $derived(settingsStore.settings?.capabilityModels[capability] ?? null);
@@ -48,6 +52,14 @@ import { Badge } from '$lib/components/ui/badge';
     vendor !== '' &&
       (stored === null || stored.vendor !== vendor || stored.model !== model.trim() || key.length > 0),
   );
+
+  // 表单任何字段一变，「测试通过」即失效（测的是改之前的参数）。
+  $effect(() => {
+    void vendor;
+    void model;
+    void key;
+    testOk = false;
+  });
 
   // 同步已存配置到表单；用户编辑中（dirty）不覆盖，避免外部刷新清掉输入。
   $effect(() => {
@@ -92,12 +104,15 @@ import { Badge } from '$lib/components/ui/badge';
     }
   }
 
-  /** 先落盘再按能力探测（providers.test 只读已存 key）。 */
+  /**
+   * 未保存先测：直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，
+   * 不落库（key 留空 = 测已存 key）；落库只经「保存」。
+   */
   async function test(): Promise<void> {
     testing = true;
     try {
-      await persist();
-      await settingsStore.test(vendor, model.trim(), capability);
+      await settingsStore.test(vendor, model.trim(), capability, key.length > 0 ? key : undefined);
+      testOk = true;
       toast.success(t('settings.testOk'));
     } catch (error) {
       const code = error instanceof AppError ? error.code : 'PROVIDER_UNAVAILABLE';
@@ -208,14 +223,26 @@ import { Badge } from '$lib/components/ui/badge';
     {/if}
 
     <div class="flex flex-wrap items-center gap-2">
-      <Button
-        size="sm"
-        disabled={busy || !dirty}
-        onclick={() => void save()}
-        data-testid={`${testid}-save`}
-      >
-        {t('settings.save')}
-      </Button>
+      {#if embedded && testOk}
+        <!-- 测试已用当前参数通过：一个明确的「保存并关闭」，保存后卡片自动收起。 -->
+        <Button
+          size="sm"
+          disabled={busy || testing}
+          onclick={() => void save()}
+          data-testid={`${testid}-save-close`}
+        >
+          {t('settings.saveAndClose')}
+        </Button>
+      {:else}
+        <Button
+          size="sm"
+          disabled={busy || testing || !dirty}
+          onclick={() => void save()}
+          data-testid={`${testid}-save`}
+        >
+          {t('settings.save')}
+        </Button>
+      {/if}
       <Button
         size="sm"
         variant="secondary"

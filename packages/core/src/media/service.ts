@@ -219,6 +219,7 @@ export class MediaService {
   async testCapability(
     capability: Exclude<ModelCapability, 'chat'>,
     target: { vendor: string; model: string },
+    options: { keyOverride?: string } = {},
   ): Promise<void> {
     if (!isVendorId(target.vendor)) {
       throw new AppError(
@@ -230,7 +231,7 @@ export class MediaService {
     if (!VENDOR_DESCRIPTORS[vendor].capabilities.includes(capability)) {
       throw this.#unsupported(vendor, capability);
     }
-    const resolved = this.#resolveVendor(vendor);
+    const resolved = this.#resolveVendor(vendor, options.keyOverride);
     resolved.modelId = target.model;
     const ctx = resolved.context;
     switch (capability) {
@@ -336,15 +337,16 @@ export class MediaService {
     return resolved;
   }
 
-  /** 厂商 id → key/baseUrl 解析与适配器。不校验能力方法（调用方负责）。 */
-  #resolveVendor(provider: string): ResolvedVendor {
+  /** 厂商 id → key/baseUrl 解析与适配器。不校验能力方法（调用方负责）。
+   *  keyOverride：未保存先测（providers.test）用入参 key，不读密钥表。 */
+  #resolveVendor(provider: string, keyOverride?: string): ResolvedVendor {
     if (!isVendorId(provider)) {
       throw new AppError(
         'NOT_IMPLEMENTED',
         `媒体能力仅支持内置国内厂商（百炼/火山方舟），不支持 ${provider}`,
       );
     }
-    const apiKey = this.#secrets.getValue(providerSecretName(provider));
+    const apiKey = keyOverride ?? this.#secrets.getValue(providerSecretName(provider));
     if (apiKey === null) {
       throw new AppError(
         'PROVIDER_AUTH_FAILED',

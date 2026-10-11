@@ -119,12 +119,19 @@ class SettingsState {
    * Resolves through AppError.code on failure (PROVIDER_AUTH_FAILED etc.).
    * capability 缺省 = 对话探测；传入后路由到该能力的接口探测
    * （图片/语音一次最小生成，视频提交即取消，向量一次 embed）。
+   * key 非空时未保存先测（服务端只用入参探测、不落库）；缺省用已存 key。
    */
-  async test(provider: string, model?: string, capability?: ModelCapability): Promise<void> {
+  async test(
+    provider: string,
+    model?: string,
+    capability?: ModelCapability,
+    key?: string,
+  ): Promise<void> {
     await core.call('providers.test', {
       provider,
       ...(model !== undefined ? { model } : {}),
       ...(capability !== undefined ? { capability } : {}),
+      ...(key !== undefined && key.length > 0 ? { keyOverride: key } : {}),
     });
   }
 

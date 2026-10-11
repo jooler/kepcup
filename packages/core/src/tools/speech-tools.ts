@@ -5,6 +5,7 @@ import { Type } from '@earendil-works/pi-ai';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from './image-tools.js';
+import type { GeneratedMediaDelivery } from './index.js';
 import { resolveMediaSource } from './media-source.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -37,6 +38,8 @@ export function buildSpeechTools(input: {
   /** 素材来源解析（transcribe_audio）：附件字节与路径权限检查。 */
   attachments: AttachmentsService;
   gateway: ToolGateway;
+  /** 产物落盘后的确定性投递（测试装配可缺省：走「请模型 send_message」旧路径）。 */
+  delivery?: GeneratedMediaDelivery | undefined;
   /** 轮询间隔（测试注入缩短）；默认 5s。 */
   videoPollIntervalMs?: number;
 }): ToolDefinition[] {
@@ -52,7 +55,7 @@ export function buildSpeechTools(input: {
   }> = {
     name: 'generate_speech',
     description:
-      '把文本合成为语音（TTS）。音频保存到 workspace 后返回文件路径，需用 send_message 的 attachment_paths 把文件发给用户。应用未配置语音合成模型时本工具不可用。',
+      '把文本合成为语音（TTS）。用户要配音、朗读、语音消息等真实音频文件时必须调用本工具产出，不要只给文字稿；音频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置语音合成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
     parameters: Type.Object({
       text: Type.String({ description: '要合成的文本（限一次可读的段落，过长请分段生成）' }),
       file_name: Type.Optional(
@@ -114,6 +117,16 @@ export function buildSpeechTools(input: {
       if (saved === null) {
         return { ok: false, content: '语音保存失败：内容为空', errorCode: 'PROVIDER_UNAVAILABLE' };
       }
+      if (input.delivery !== undefined) {
+        // 确定性投递：音频立即作为消息附件发进对话（任务内为进度消息）。
+        // 不把文件路径回给模型，避免它向用户复述绝对路径。
+        input.delivery.send([saved], '');
+        return {
+          ok: true,
+          content:
+            '已生成语音，并已作为消息附件显示在用户的对话界面中。无需再调 send_message，也不要向用户复述文件路径；只需用一句话向用户确认即可。',
+        };
+      }
       return {
         ok: true,
         content: `已生成语音并保存到 workspace：\n${saved}\n请用 send_message 的 attachment_paths 把这个文件发给用户。`,
@@ -127,7 +140,7 @@ export function buildSpeechTools(input: {
   }> = {
     name: 'generate_video',
     description:
-      '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。视频保存到 workspace 后返回文件路径，需用 send_message 的 attachment_paths 把文件发给用户。应用未配置视频生成模型时本工具不可用。',
+      '根据文字描述生成一段短视频（文生视频，异步任务，通常需要几十秒到几分钟）。用户要真实视频文件时必须调用本工具产出，不要只给分镜脚本；视频保存到 workspace 后会自动作为消息附件发给用户，无需再调 send_message。未配置视频生成模型时本工具会返回「需要设置」，由系统引导用户完成配置并自动继续。',
     parameters: Type.Object({
       prompt: Type.String({ description: '视频内容描述（主体、动作、镜头、风格）' }),
       file_name: Type.Optional(
@@ -243,6 +256,16 @@ export function buildSpeechTools(input: {
           const saved = saveGenerated(workspacePath, params.file_name ?? null, 'mp4', bytes);
           if (saved === null) {
             return { ok: false, content: '视频保存失败：内容为空', errorCode: 'INTERNAL' };
+          }
+          if (input.delivery !== undefined) {
+            // 确定性投递：视频立即作为消息附件发进对话（任务内为进度消息）。
+            // 不把文件路径回给模型，避免它向用户复述绝对路径。
+            input.delivery.send([saved], '');
+            return {
+              ok: true,
+              content:
+                '已生成视频，并已作为消息附件显示在用户的对话界面中。无需再调 send_message，也不要向用户复述文件路径；只需用一句话向用户确认即可。',
+            };
           }
           return {
             ok: true,

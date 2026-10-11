@@ -66,7 +66,12 @@ export class ProvidersService {
    * 但能力配置（capabilityModels）引用了它 → 按该能力探测（校验 key）。
    * 这样「更换 Key」弹框的不带 capability 测试不会误报 Unknown provider。
    */
-  async test(provider: string, modelId?: string, capability?: ModelCapability): Promise<void> {
+  async test(
+    provider: string,
+    modelId?: string,
+    capability?: ModelCapability,
+    keyOverride?: string,
+  ): Promise<void> {
     if (capability === undefined && isVendorId(provider)) {
       const settings = this.#settings.get();
       const entry = settings.vendorProviders.find((v) => v.id === provider);
@@ -106,7 +111,7 @@ export class ProvidersService {
       if (model === null) {
         throw new AppError('NOT_FOUND', `未指定模型，且未配置「${capability}」能力模型`);
       }
-      await this.#media.testCapability(capability, { vendor: provider, model });
+      await this.#media.testCapability(capability, { vendor: provider, model }, { keyOverride });
       return;
     }
     const models = buildModelRegistry({

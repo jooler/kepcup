@@ -331,6 +331,29 @@ describe('按能力连通性测试（testCapability）', () => {
     expect(seen).toEqual(['https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal']);
   });
 
+  it('keyOverride：未保存先测——入参 key 直接探测，不读密钥表', async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(String(new Headers(init?.headers).get('Authorization')));
+      return new Response(JSON.stringify({ data: { embedding: [0.1, 0.2] } }));
+    }) as unknown as typeof fetch;
+    const service = mediaService(makeSettings({}), {}, fetchImpl);
+    // 密钥表为空也能测：入参 key 生效（providers.test 的未保存先测）。
+    await service.testCapability(
+      'embedding',
+      { vendor: 'volcengine', model: 'doubao-embedding-vision-251215' },
+      { keyOverride: 'probe-key' },
+    );
+    expect(seen[0]).toContain('probe-key');
+    // 无入参且密钥表为空：照旧 PROVIDER_AUTH_FAILED。
+    await expect(
+      service.testCapability('embedding', {
+        vendor: 'volcengine',
+        model: 'doubao-embedding-vision-251215',
+      }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH_FAILED' });
+  });
+
   it('rerank：query + 2 条短文档的最小探测', async () => {
     const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { input: { documents: string[] } };

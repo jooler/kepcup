@@ -408,6 +408,15 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).not.toContain('acquire_project_write');
   });
 
+  it('turn: 媒体生成路由——真实媒体文件派任务经工具产出，不推第三方工具', () => {
+    const turn = buildSystemPrompt({ ...base, loop: 'turn' });
+    expect(turn).toContain('generate_image / generate_speech / generate_video');
+    expect(turn).toContain('不要推荐 Midjourney、DALL·E 等外部第三方工具');
+    expect(turn).toContain('缺模型配置时系统会引导用户完成设置并自动续跑');
+    expect(turn).toContain('understand_image');
+    expect(turn).toContain('transcribe_audio');
+  });
+
   it('D80: the turn nudges schedules via offer_schedule; <schedules> is injected; the task only reports', () => {
     const turn = buildSystemPrompt({
       ...base,

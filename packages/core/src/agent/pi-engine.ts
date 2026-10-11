@@ -457,7 +457,7 @@ export function buildUserMessageContent(
       : [
           {
             type: 'text' as const,
-            text: '（用户消息中的图片未注入：当前模型不支持图像输入。可用 understand_image 工具识别图片内容，或建议用户配置支持视觉的模型。）',
+            text: '（用户消息中的图片未注入：当前模型不支持图像输入。可用 understand_image 工具识别图片内容——本执行的工具面里没有它时（对话轮），用 start_task 派任务调用；或建议用户配置支持视觉的模型。）',
           },
         ]),
   ];

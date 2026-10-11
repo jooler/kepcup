@@ -38,6 +38,7 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 - 媒体网关的「能力未配置」错误从 `INVALID_INPUT` 改为专用码 **`CAPABILITY_NOT_CONFIGURED`**——调用方据此区分「缺用户配置」（可引导）与「参数/网络问题」（普通失败）。
 - `SETUP_REQUIRED` 对模型只是普通的工具失败文本；中断由 orchestrator 监听 `tool_result` 事件完成（工具执行中不中断引擎的 await 链，abort 延后一拍）。改判为 `failed` 而非保留 `cancelled`，是因为重试入口 `runs.retry` 只接受 failed。
 - 改判只发生在 run 非正常完成时：若模型在缺设置的工具结果后自行完成了别的回答（completed），不强行改判——已经发生的沟通不回滚。
+- 任务失败条目（`task_event` failure）在 setup 失败时附**确定性指引**：设置卡片已出现、用户完成配置后任务自动原样继续、不要以文字方案代替任务产出、不要建议外部工具、用户关闭卡片会另行通知——对话轮收到条目时据此「等待」并只做简短转述，而不是按普通失败自行给替代产出。
 
 ## 界面：消息列表内的设置卡片
 
@@ -51,9 +52,11 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 | requirement | 卡片内容 |
 |---|---|
 | `main-model` | 两段式：尚无已配置厂商时内嵌**供应商表单**（`ProviderSetupForm`）；之后选默认主模型 + 可选「这个 Bot 的模型」（`bots.update`），确认后继续。**切段只由「保存」进入**：「测试连接」为完成探测会先落盘 key（`providers.test` 只读已存 key），`availableModelOptions` 随之翻转，不能用它派生切段——测试无论成败都不自动跳段；引导卡场景下任一测试失败后「保存」禁用（`blockSaveAfterFailedTest`），直到某次测试通过（切换厂商重置表单即重置），设置页用法不设此限 |
-| `capability-model` | 内嵌对应能力的**能力模型配置**（`CapabilityModelSection embedded`），保存即继续 |
+| `capability-model` | 内嵌对应能力的**能力模型配置**（`CapabilityModelSection embedded`），保存即继续。卡片内「测试」**未保存先测**（与 websearch.test 同一取向）：直接用表单里的厂商 / 模型 / Key 发一次最小真实请求（`providers.test` 带 `keyOverride`，不落库；Key 留空用已存 key），不再「先保存再测试」；测试通过后「保存」换为「**保存并关闭**」（同一保存路径，保存即继续、卡片收起）——用户不必对着禁用的保存按钮猜配置是否已落库。表单任一字段一变，「测试通过」即失效、按钮还原 |
 
 确认 / 保存后 `continueAfterSetup()`：失败路径收起横幅并自动 `runs.retry`（原触发消息照常续跑）；门禁路径自动冲掉保留的草稿队列。卡片右上角可「暂不设置」——门禁撤销、失败横幅收起，草稿保留，下次发送会再次拦下。
+
+**放弃分支（失败路径）**：任务类 setup 失败（`main-model` 除外——对话轮本就跑不起来，通知只会原样失败再弹同一张卡）时，关闭卡片会调用 `runs.setupDismissed`：core 校验 run 仍带 setup 且为 failed 后，以一次性 internal event（`task_setup_dismissed`，`reason='event'`）唤醒 Bot 的对话轮——Bot 得知「用户放弃了配置，任务不会自动继续」，按用户意愿给新的反馈（此时用户已放弃应用内配置，可以给替代做法或外部工具建议）。同一 run 只通知一次；任务仍在任务卡上可手动重试。
 
 ## 设置组件拆分（复用，不改行为）
 
@@ -67,7 +70,8 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 
 ## 测试锚点
 
-- 集成（response-loop）：无模型失败带 `setup={kind:'main-model'}` 且配置后 `runs.retry` 续跑成功；`generate_image` 未配置能力 → failed + `capability-model`，配置后重试不再命中。
+- 集成（response-loop）：无模型失败带 `setup={kind:'main-model'}` 且配置后 `runs.retry` 续跑成功；`generate_image` 未配置能力 → failed + `capability-model`（失败条目带「自动继续」指引），配置后重试不再命中；关闭卡片 → `runs.setupDismissed` 返回 `notified=true` 并唤醒对话轮给新反馈，重复调用 `notified=false`。
+- 单元（media-service）：`testCapability` 的 `keyOverride` 用入参 key 直接探测、不读密钥表。
 - e2e（setup-card.spec，环境不带 `KEPCUP_MOCK_LLM_URL` 模拟全新环境）：访谈回答 → 卡片（无失败横幅）→ 卡片内加厂商 → 确认 → 访谈继续；高级新建 Bot 的消息 → 门禁拦截（草稿保留、无失败 run）→ 卡片完成设置 → 草稿自动发出并得到回复；「测试连接」指向死端口 → 卡片停在第一段且保存禁用 → 修正重测通过 → 保存解锁（成功也不自动跳段）→ 保存进第二段 → 确认续跑。
 
 ## 非目标与后续

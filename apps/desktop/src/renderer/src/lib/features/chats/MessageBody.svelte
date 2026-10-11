@@ -69,6 +69,10 @@
   const userSegments = $derived(
     message.senderType === 'user' ? segmentComposerText(userText, mentionTargets) : [],
   );
+  // Bot 气泡的正文；空（含纯空白）时不渲染气泡容器——纯附件消息（如媒体
+  // 生成的确定性投递）只有附件行，空气泡会在 UI 里留下空元素。
+  const botText = $derived('text' in message.content ? message.content.text : '');
+  const hasBotText = $derived(botText.trim().length > 0);
 </script>
 
 {#if message.status === 'recalled'}
@@ -111,14 +115,14 @@
       {/each}
     </div>
   {/if}
-{:else}
+{:else if hasBotText}
   <div
     class="max-w-full min-w-0 rounded-[22px] bg-muted px-4 py-3 text-sm
       {merge.above ? 'rounded-tl-[7px]' : ''} {merge.below ? 'rounded-bl-[7px]' : ''}"
     data-testid="bot-bubble"
   >
     <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">
-      <Markdown content={'text' in message.content ? message.content.text : ''} />
+      <Markdown content={botText} />
     </div>
   </div>
 {/if}
