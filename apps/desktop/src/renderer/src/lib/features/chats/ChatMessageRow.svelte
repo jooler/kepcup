@@ -181,7 +181,7 @@
        一个头像的宽度， hover 操作钮落在让出的留白里，不再挤压气泡。 -->
   <div
     class="flex min-w-0 flex-col {narrowLayout.narrow
-      ? 'max-w-[calc(100%-64px)]'
+      ? 'max-w-[calc(100%-32px)]'
       : 'max-w-[78%]'} {isUser ? 'items-end' : 'items-start'}"
   >
     {#if delegatedBy !== null}
