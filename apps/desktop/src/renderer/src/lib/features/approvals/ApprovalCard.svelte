@@ -5,6 +5,7 @@
     butlerProposalPayloadSchema,
     describeScheduleWhen,
     egressApprovalPayloadSchema,
+    mailSendApprovalPayloadSchema,
     skillImportApprovalPayloadSchema,
     skillPresetApprovalPayloadSchema,
     mcpToolApprovalPayloadSchema,
@@ -84,6 +85,11 @@
   const egress = $derived.by(() => {
     if (approval.kind !== 'egress') return null;
     const parsed = egressApprovalPayloadSchema.safeParse(approval.payload);
+    return parsed.success ? parsed.data : null;
+  });
+  const mailSend = $derived.by(() => {
+    if (approval.kind !== 'mail_send') return null;
+    const parsed = mailSendApprovalPayloadSchema.safeParse(approval.payload);
     return parsed.success ? parsed.data : null;
   });
   /** D73 P3：由 MCP 应用界面（而非模型）发起的操作，卡片上明示来源。 */
@@ -324,7 +330,9 @@
   );
 
   const title = $derived(
-    approval.kind === 'egress'
+    approval.kind === 'mail_send'
+      ? t('approvals.mailSendTitle')
+      : approval.kind === 'egress'
       ? t('approvals.egress.title')
       : approval.kind === 'access'
       ? t('approvals.accessTitle')
@@ -1105,6 +1113,24 @@
           {t('approvals.egress.taintedHint')}
         </p>
       {/if}
+    {/if}
+
+    {#if mailSend !== null}
+      <div class="mt-2 space-y-1 text-sm" data-testid="approval-mail-send">
+        <p><span class="text-muted-foreground">From</span> {mailSend.from}</p>
+        <p data-testid="approval-mail-to"><span class="text-muted-foreground">To</span> {mailSend.to.join(', ')}</p>
+        {#if mailSend.cc.length > 0}
+          <p data-testid="approval-mail-cc"><span class="text-muted-foreground">Cc</span> {mailSend.cc.join(', ')}</p>
+        {/if}
+        {#if mailSend.bcc.length > 0}
+          <p data-testid="approval-mail-bcc"><span class="text-muted-foreground">Bcc</span> {mailSend.bcc.join(', ')}</p>
+        {/if}
+        <p data-testid="approval-mail-subject">{mailSend.subject}</p>
+        <pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs" data-testid="approval-mail-body">{mailSend.text}</pre>
+        {#if mailSend.tainted}
+          <p class="text-xs text-amber-700 dark:text-amber-400">{t('approvals.egress.taintedHint')}</p>
+        {/if}
+      </div>
     {/if}
 
     <div class="mt-3 flex items-center gap-2">

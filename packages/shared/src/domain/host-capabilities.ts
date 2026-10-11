@@ -25,6 +25,7 @@ export const hostCapabilityIdSchema = z.enum([
   'host_ops',
   'mcp',
   'apps',
+  'mail',
 ]);
 export type HostCapabilityId = z.infer<typeof hostCapabilityIdSchema>;
 
@@ -215,6 +216,13 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
   // 动态；工具名 `app_{slug}_{tool}`，宿主自有的 `app_request_connection` 同前缀。
   // 工具在宿主执行（令牌留在宿主、审批 / 风险策略与内置引擎同一网关）。
   pack({ id: 'apps', category: 'supplement', default: 'follow_bot', toolPrefixes: ['app_'] }),
+  // 邮件通道（D84）：IMAP/SMTP，不是 MCP。工具只作用于该 Bot 已绑定的邮箱。
+  pack({
+    id: 'mail',
+    category: 'host',
+    default: 'inject',
+    tools: ['mail_list', 'mail_read', 'mail_search', 'mail_send', 'mail_accounts'],
+  }),
 ];
 
 /**

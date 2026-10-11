@@ -23,6 +23,8 @@ import {
   type ScheduleToolFacade,
 } from './schedule-tools.js';
 import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
+import { buildMailTools } from './mail-tools.js';
+import type { MailService } from '../mail/service.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
 import { buildSpeechTools } from './speech-tools.js';
@@ -100,6 +102,8 @@ export interface ResponseToolDeps {
    * watch_list / watch_stop——异步托管动作，对话轮与任务都有。
    */
   watch?: WatchToolFacade | undefined;
+  /** D84 邮件通道。读工具随时可用；发信在对话轮被 readOnlyRefusal 拒绝。 */
+  mail?: MailService | undefined;
   /**
    * P11 browser capability hosted by the main process (port B). Present in
    * the real core; tests may omit it (no browser_* tools are registered).
@@ -891,6 +895,11 @@ export function buildResponseTools(input: {
         })
       : [];
 
+  const mailTools =
+    deps.mail !== undefined
+      ? buildMailTools({ identity, mail: deps.mail, gateway })
+      : [];
+
   // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
   // — 公网默认可访问，网络规则在主进程的页面网络上下文中强制).
   const browserTools =
@@ -1059,6 +1068,7 @@ export function buildResponseTools(input: {
       ...wikiTools,
       ...scheduleTools,
       ...watchTools,
+      ...mailTools,
       // D80: the offer card is the turn's (cards facing the user, D75).
       ...(deps.schedule !== undefined
         ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
@@ -1092,6 +1102,7 @@ export function buildResponseTools(input: {
     ...wikiTools,
     ...scheduleTools,
     ...watchTools,
+    ...mailTools,
     ...browserTools,
     ...imageTools,
     ...speechTools,

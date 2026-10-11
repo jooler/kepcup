@@ -63,6 +63,9 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table widget_docs;');
     db.exec('drop table widget_versions;');
     db.exec('drop table widgets;');
+    // main 0031（D84 邮件）的新表同样摘除，回放时才能重建。
+    db.exec('drop table mail_account_bots;');
+    db.exec('drop table mail_accounts;');
     // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，
     // 而 0018 的 attachments 重建按列名引用 draft_id——按 0002 的原始形态补回，
     // 才能原样重放 0013 之后的迁移。

@@ -984,6 +984,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
+| mail_account_bots 中该 Bot 的绑定（`mail_accounts` 保留；`mail_alert` 作业随 jobs 取消） | 删除 | D84 |
 | 该 Bot 的 widgets / widget_versions / widget_queries / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |

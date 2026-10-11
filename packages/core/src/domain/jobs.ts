@@ -166,6 +166,16 @@ export class JobsService {
       .run(this.clock.now(), botId).changes;
   }
 
+  /** 取消去重键以此前缀开头的未完成作业（删除邮箱时清掉它的 mail_alert）。 */
+  cancelByDedupePrefix(prefix: string): number {
+    return this.db
+      .prepare(
+        `update jobs set status = 'cancelled', updated_at = ?
+         where status in ('pending', 'running') and dedupe_key like ?`,
+      )
+      .run(this.clock.now(), `${prefix}%`).changes;
+  }
+
   deleteByBot(botId: string): void {
     this.db.prepare('delete from jobs where bot_id = ?').run(botId);
   }

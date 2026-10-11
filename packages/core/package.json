@@ -28,7 +28,10 @@
     "birpc": "4.2.0",
     "cron-parser": "5.4.0",
     "es-git": "0.7.0",
+    "imapflow": "2.4.0",
     "js-yaml": "4.3.2",
+    "mailparser": "3.9.38",
+    "nodemailer": "10.1.0",
     "pino": "10.3.1",
     "pino-roll": "4.0.0",
     "undici": "^8.11.2",
@@ -36,6 +39,7 @@
   },
   "devDependencies": {
     "@kepcup/testkit": "workspace:*",
+    "@types/mailparser": "3.9.0",
     "sqlite-vec": "0.1.9"
   }
 }

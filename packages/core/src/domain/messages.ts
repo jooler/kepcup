@@ -125,6 +125,20 @@ export interface AppendMessageInput {
         watchFailures?: number | undefined;
       }
     | undefined;
+  /** Mail cards only (D84, cardType `mail`). */
+  cardMail?:
+    | {
+        mailEvent: 'arrived' | 'paused' | 'error';
+        mailAccountId: string;
+        mailKey: string;
+        mailUid?: number | undefined;
+        mailFrom?: string | undefined;
+        mailSubject?: string | undefined;
+        mailDate?: string | undefined;
+        mailSummary?: string | undefined;
+        mailPauseReason?: 'too_frequent' | undefined;
+      }
+    | undefined;
   replyTo?: string | null;
   mentions?: string[];
   batchId?: string | null;
@@ -288,6 +302,25 @@ export class MessagesService {
                         : {}),
                       ...(input.cardWatch.watchFailures !== undefined
                         ? { watchFailures: input.cardWatch.watchFailures }
+                        : {}),
+                    }
+                  : {}),
+                ...(input.cardMail !== undefined
+                  ? {
+                      mailAccountId: input.cardMail.mailAccountId,
+                      mailEvent: input.cardMail.mailEvent,
+                      mailKey: input.cardMail.mailKey,
+                      ...(input.cardMail.mailUid !== undefined ? { mailUid: input.cardMail.mailUid } : {}),
+                      ...(input.cardMail.mailFrom !== undefined ? { mailFrom: input.cardMail.mailFrom } : {}),
+                      ...(input.cardMail.mailSubject !== undefined
+                        ? { mailSubject: input.cardMail.mailSubject }
+                        : {}),
+                      ...(input.cardMail.mailDate !== undefined ? { mailDate: input.cardMail.mailDate } : {}),
+                      ...(input.cardMail.mailSummary !== undefined
+                        ? { mailSummary: input.cardMail.mailSummary }
+                        : {}),
+                      ...(input.cardMail.mailPauseReason !== undefined
+                        ? { mailPauseReason: input.cardMail.mailPauseReason }
                         : {}),
                     }
                   : {}),

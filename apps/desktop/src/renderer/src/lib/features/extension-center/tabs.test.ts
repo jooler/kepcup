@@ -3,16 +3,17 @@ import { EXTENSION_CENTER_TABS, extensionTabForKey } from './tabs';
 
 describe('extensionTabForKey', () => {
   it('lists the three groups in display order', () => {
-    expect(EXTENSION_CENTER_TABS).toEqual(['skills', 'connections', 'mcp']);
+    expect(EXTENSION_CENTER_TABS).toEqual(['skills', 'connections', 'mcp', 'mail']);
   });
 
   it('cycles with the arrow keys and jumps with Home / End', () => {
     expect(extensionTabForKey('skills', 'ArrowRight')).toBe('connections');
-    expect(extensionTabForKey('mcp', 'ArrowRight')).toBe('skills');
-    expect(extensionTabForKey('skills', 'ArrowLeft')).toBe('mcp');
+    expect(extensionTabForKey('mcp', 'ArrowRight')).toBe('mail');
+    expect(extensionTabForKey('mail', 'ArrowRight')).toBe('skills');
+    expect(extensionTabForKey('skills', 'ArrowLeft')).toBe('mail');
     expect(extensionTabForKey('connections', 'ArrowLeft')).toBe('skills');
     expect(extensionTabForKey('connections', 'Home')).toBe('skills');
-    expect(extensionTabForKey('connections', 'End')).toBe('mcp');
+    expect(extensionTabForKey('connections', 'End')).toBe('mail');
   });
 
   it('ignores other keys', () => {

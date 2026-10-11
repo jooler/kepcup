@@ -53,6 +53,8 @@ export interface SystemPromptInput {
   schedules?: string | undefined;
   /** This bot's live web-page watches here for <watches> (W7). */
   watches?: string | undefined;
+  /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
+  mailAccounts?: string | undefined;
   /** Top-k relevant memories (with ids) for <relevant_memories> (P07). */
   relevantMemories?: string | undefined;
   /** Wiki topic index (index.md titles) for <wiki_topics> (P09). */
@@ -389,6 +391,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
     section('watches', input.watches ?? ''),
+    section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
     section('conversation_info', conversationInfo),
     section('project', projectSection),
@@ -451,6 +454,8 @@ export interface AgentRunContextInput {
   schedules?: string | undefined;
   /** This bot's live web-page watches here for <watches> (W7). */
   watches?: string | undefined;
+  /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
+  mailAccounts?: string | undefined;
   relevantMemories?: string | undefined;
   wikiTopics?: string | undefined;
   skills?: string | undefined;
@@ -719,6 +724,7 @@ export function buildAgentRunContext(input: AgentRunContextInput): string {
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
     section('watches', input.watches ?? ''),
+    section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
     section('project', input.project ?? ''),
     section('workspace', workspaceSection),

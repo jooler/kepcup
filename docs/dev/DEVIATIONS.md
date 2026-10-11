@@ -453,3 +453,17 @@
   16. **L4 引入的两处小 core 改动**：`apps.connections.tools` 的有效审批与 `setToolPolicy` 的「变严」判断按条目分级计算（此前本机连接的只读工具在详情页误显示「自动」）；e2e 测试钩子 `KEPCUP_TEST_OAUTH_LOOPBACK`（仅测试钩子构建 + `NODE_ENV=test`，真实 Electron 里没有 createCore 选项可传回环白名单）。
   17. **未做**：真实 Electron 里 DNS 重绑定的端到端（只有可注入解析器的 `createGuardedMcpFetch` 单测）；匿名 MCP 仍不支持（见第 2 项）。
 - 已更新的文档：`docs/design/29-connected-apps.md`（新增 §17、§17.3a、§11.3 旁注）、`docs/guides/add-connected-app.md`（「本机生成」）、`todo/{local-connector-authoring,developer-portal,extension-center,connected-apps-status}.md`、`docs/dev/PROGRESS.md`。
+
+### DEV-025 邮件通道的 IMAP/SMTP 库（设计 35 §11 授权实施期选型）
+
+- 状态：已落实
+- 阶段：D84 邮件通道 P0
+- 是否阻塞：否
+- 问题：设计 35 §11 写明 IMAP/SMTP 客户端库在实施期选定，要求维护活跃、支持 IDLE 与自定义 ID。01-conventions 对未列入阶段文档的大型依赖要求先记录。这里的库是协议客户端，不是框架、运行时或原生模块。
+- 影响范围：`packages/core` 依赖 `imapflow@2.4.0`、`nodemailer@10.1.0`、`mailparser@3.9.38`。
+- 可选方案：
+  1. 使用上述三个库 — IDLE、ID、MIME 解析都有现成实现；许可证 MIT。
+  2. 自写 IMAP/SMTP — 不增加依赖，但 IDLE 与 MIME 容易错。
+- 推荐：方案 1。设计已把选型交给实施。163 不在 CAPABILITY 里广告 ID 时，连接后仍强制发 `ID name=KepCup`（库默认只在广告了 ID 时才发）。
+- 决定：采用方案 1。
+- 已更新的文档：`docs/dev/03-data-model.md` 删除 Bot 级联增加邮箱绑定。

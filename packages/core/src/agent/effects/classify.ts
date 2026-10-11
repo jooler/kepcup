@@ -137,6 +137,13 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   watch_create: 'local',
   watch_list: 'none',
   watch_stop: 'local',
+  /** D84：读邮箱不改外部状态。 */
+  mail_list: 'none',
+  mail_read: 'none',
+  mail_search: 'none',
+  mail_accounts: 'none',
+  /** 发出去的信收不回来。 */
+  mail_send: 'external',
 
   // --- 联网读取与媒体（调用云端服务，但不改外部状态；重做只多花费用）---
   web_search: 'none',

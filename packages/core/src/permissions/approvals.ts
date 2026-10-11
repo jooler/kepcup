@@ -123,10 +123,12 @@ export interface ApprovalsDeps {
 type Resolver = (outcome: ApprovalOutcome) => void;
 
 /**
- * Kinds unattended mode never decides on its own (D70): a butler proposal
- * creates contacts / groups — it always waits for the user, unattended or not.
+ * Kinds unattended mode never decides on its own:
+ * - butler_proposal (D70): creates contacts / groups — always waits for the user.
+ * - mail_send (D84): outbound email to arbitrary recipients — always a human click,
+ *   even when unattended is on (defence in depth with requireHuman on the request).
  */
-const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set(['butler_proposal']);
+const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set(['butler_proposal', 'mail_send']);
 
 /**
  * Non-blocking kinds whose card must outlive the requesting run: the tool
@@ -902,6 +904,13 @@ export class ApprovalsService {
         return `${botName} ${describeAgentTool(approval.payload)}`;
       case 'egress':
         return `${botName} ${describeEgress(approval.payload)}`;
+      case 'mail_send': {
+        const to = Array.isArray(approval.payload['to'])
+          ? (approval.payload['to'] as string[]).join(', ')
+          : '';
+        const subject = String(approval.payload['subject'] ?? '');
+        return `${botName} 申请发送邮件${to.length > 0 ? `给 ${to}` : ''}${subject.length > 0 ? `：${subject}` : ''}`;
+      }
       default:
         return `${botName} 请求确认（${approval.kind}）`;
     }

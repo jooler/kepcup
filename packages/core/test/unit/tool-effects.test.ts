@@ -156,6 +156,7 @@ function scannedBuiltinToolNames(): string[] {
       'delegation-tools.ts',
       'image-tools.ts',
       'index.ts',
+      'mail-tools.ts',
       'memory-tools.ts',
       'schedule-tools.ts',
       'setup-tools.ts',

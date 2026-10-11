@@ -423,6 +423,7 @@
           <BotProfileForm
             bind:profile={draft}
             showIdentity={false}
+            botId={bot?.id}
             onBrowserProfileConfirm={confirmBrowserProfile}
           />
           {#if bot}

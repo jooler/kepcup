@@ -6,6 +6,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Textarea } from '$lib/components/ui/textarea';
+  import BotMailBindings from '$lib/features/mail/BotMailBindings.svelte';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import {
@@ -53,10 +54,13 @@
      * 不给（新建）则直接绑定。
      */
     onBrowserProfileConfirm,
+    botId,
   }: {
     profile: BotProfile;
     showIdentity?: boolean;
     onBrowserProfileConfirm?: (next: string) => void | Promise<void>;
+    /** 已有 Bot 时才能勾选邮箱绑定。新建对话框还没有 id。 */
+    botId?: string;
   } = $props();
 
   /**
@@ -891,6 +895,7 @@
       {/if}
     </div>
   {/if}
+  <BotMailBindings {botId} />
 </div>
 
 <!-- §5.10：外部智能体自带的 shell / fetch 不经 KepCup 网关——首次（每台设备一次）说明 -->

@@ -130,6 +130,7 @@ import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
 import { WatchService } from './watch/service.js';
+import { MailService } from './mail/service.js';
 import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
 import type { ScheduleToolFacade } from './tools/schedule-tools.js';
 import {
@@ -505,6 +506,8 @@ export interface CoreServices {
   schedules: ScheduleService | null;
   /** W7 确定性监看 (null while locked / errored). */
   watches: WatchService | null;
+  /** D84 邮件通道 (null while locked / errored). */
+  mail: MailService | null;
   scheduler: Scheduler | null;
   jobsRunner: JobsRunner | null;
   /**
@@ -757,6 +760,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     wiki: null,
     schedules: null,
     watches: null,
+    mail: null,
     scheduler: null,
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
@@ -806,6 +810,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.watches?.stop();
       } catch {
         // Timer already gone.
+      }
+      try {
+        services.mail?.stop();
+      } catch {
+        // Session already gone.
       }
       envDoctorTimerRef.timer?.unref?.();
       if (envDoctorTimerRef.timer) clearInterval(envDoctorTimerRef.timer);
@@ -1712,6 +1721,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // W7: the watch service is constructed after the orchestrator (alerts
     // wake turns through its mailboxes); the tool facade delegates lazily.
     let watchService: WatchService | null = null;
+    let mailService: MailService | null = null;
     const watchFacade: OrchestratorWatchFacade = {
       create: (input) => watchService!.create(input),
       listForBotInConversation: (botId, conversationId) =>
@@ -1825,6 +1835,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       schedule: scheduleFacade,
       watch: watchFacade,
+      get mail() {
+        return mailService ?? undefined;
+      },
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
       // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。
@@ -1906,6 +1919,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
     watchService = watches;
+    const mail = new MailService({
+      db: mainDb,
+      clock,
+      logger,
+      secrets,
+      bots,
+      conversations,
+      messages,
+      jobs,
+      taint,
+      requestApproval: (identity, kind, payload, options) =>
+        approvals.request(identity, kind, payload, options),
+      deliverAlert: (input) => orchestrator.deliverMailAlertToBot(input),
+      publishAccount: (account, accountId) =>
+        events.emit('mail.account_updated', { accountId, account }),
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+    });
+    mail.start();
+    mailService = mail;
     // Commitment linkage (docs/design/04-memory.md): a due-dated commitment
     // creates a one-shot task; void / retracted cancels it. Internal events.
     events.on('memory.commitment_created', (payload) => {
@@ -1984,6 +2017,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         removeForBotInConversation: (botId, conversationId) =>
           watches.removeForBotInConversation(botId, conversationId),
       },
+      mail: {
+        prepareBotDeletion: (botId) => mail.prepareBotDeletion(botId),
+      },
       // D81: a deleted bot's widgets (conversation deletion cascades through the FK).
       widgets: {
         prepareBotDeletion: (botId) => widgetService.deleteForBot(botId),
@@ -2029,6 +2065,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       wiki,
       schedules,
       watches,
+      mail,
       gateway,
       attachments,
     });
@@ -2231,6 +2268,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.wiki = wiki;
     services.schedules = schedules;
     services.watches = watches;
+    services.mail = mail;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
     services.mcp = mcp;
@@ -2597,6 +2635,7 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
         // W7: watch timers stalled with the OS too — check what is due now
         // (non-blocking: the pass runs in the background).
         services.watches?.wake();
+        services.mail?.wake();
         return { ok: true as const };
       },
     },

@@ -5,6 +5,7 @@
   import ExtensionSkills from './ExtensionSkills.svelte';
   import ExtensionConnections from './ExtensionConnections.svelte';
   import ExtensionMcp from './ExtensionMcp.svelte';
+  import ExtensionMail from './ExtensionMail.svelte';
   import { EXTENSION_CENTER_TABS, extensionTabForKey, type ExtensionCenterTab } from './tabs';
 
   /**
@@ -18,6 +19,7 @@
     skills: 'extensionCenter.tabs.skills',
     connections: 'extensionCenter.tabs.connections',
     mcp: 'extensionCenter.tabs.mcp',
+    mail: 'extensionCenter.tabs.mail',
   } as const;
 
   const tab = $derived(shell.extensionCenterTab);
@@ -87,7 +89,9 @@
     <ExtensionSkills />
   {:else if tab === 'connections'}
     <ExtensionConnections />
-  {:else}
+  {:else if tab === 'mcp'}
     <ExtensionMcp />
+  {:else}
+    <ExtensionMail />
   {/if}
 </div>

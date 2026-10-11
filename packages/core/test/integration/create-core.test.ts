@@ -94,13 +94,17 @@ describe('createCore (integration)', () => {
       'widget_versions',
       'widget_docs',
       'widget_queries',
+      // 邮件通道（main 0031，D84）。
+      'mail_accounts',
+      'mail_account_bots',
     ]) {
       expect(tables.map((t) => t.name)).toContain(table);
     }
     // main 0024 = stickies（辅助阅读便签；0023 = W7 watches）；0025 / 0026 / 0027 = D73
     // app_connections / app_tools / egress_approval；0028 = D81 bot widgets；
-    // 0029 = D81 P2 widget_queries；0030 = 直发改造（drop drafts / draft_id）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(30);
+    // 0029 = D81 P2 widget_queries；0030 = 直发改造（drop drafts / draft_id）；
+    // 0031 = D84 邮件通道（mail_accounts，approvals.kind 增加 mail_send）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(31);
     // 0001 init + 0002 runs + 0003 run continuation (D56) + 0004 subagent parent (D66/D67)
     // + 0005 run engine (D72) + 0006 tasks (D75) + 0007 'response' → 'turn' (D75 W2)
     // + 0008 turn trigger parts / retry origin (D75 审查 L3 / L6)
