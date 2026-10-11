@@ -166,12 +166,10 @@ async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await page.waitForTimeout(1_500);
 }
 
-/** Enter on text queues a draft; Enter on the empty input sends the queue. */
+/** Enter sends the composer content directly (直发，无待发送队列). */
 async function send(page: Page, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
   await composer.fill(text);
-  await composer.press('Enter');
-  await expect(page.locator('[data-testid="draft-text"]').filter({ hasText: text })).toHaveCount(1);
   await composer.press('Enter');
 }
 
@@ -252,7 +250,7 @@ test('agent_tool approval card: an out-of-workspace write asks the user; approva
   }
 });
 
-test('in-chat agent setup card: a disabled agent holds the draft; enabling in the card sends it', async () => {
+test('in-chat agent setup card: a disabled agent holds the message; enabling in the card lets the resend through', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-agent-setup-', {
     turns: [agentTurn().text('设置好了，我来了。')],
@@ -274,18 +272,21 @@ test('in-chat agent setup card: a disabled agent holds the draft; enabling in th
     });
     await closeSettings(page);
 
-    // 发送门禁：草稿保留、出现 Agent 设置卡（原因：未启用）。
+    // 发送门禁：内容留在输入框、出现 Agent 设置卡（原因：未启用）。
     await send(page, '在吗');
     const setup = page.locator('[data-testid="setup-card"]');
     await expect(setup).toBeVisible({ timeout: 30_000 });
     await expect(setup.locator('[data-testid="setup-card-agent-reason"]')).toBeVisible();
     await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
 
-    // 卡片内启用 → 就绪 → 自动续跑（草稿发出、Bot 回复）。
+    // 卡片内启用 → 就绪 → 卡片收起 → 再按一次发送（Bot 回复）。
     await setup.locator('[data-testid="agent-enable-fake"]').click();
     await page.locator('[data-testid="agent-install-confirm"]').click();
+    await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 30_000 });
+    const composer = page.locator('[data-testid="composer-input"]');
+    await expect(composer).toHaveText('在吗');
+    await composer.press('Enter');
     await expect(botBubble(page, '设置好了，我来了。')).toBeVisible({ timeout: 60_000 });
-    await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0);
   } finally {
     await session.close();
   }

@@ -25,7 +25,6 @@
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
-  import DraftQueue from './DraftQueue.svelte';
   import {
     MAX_RECORDING_MS,
     MIN_RECORDING_MS,
@@ -84,7 +83,6 @@
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const drafts = $derived(chat.current?.drafts ?? []);
   const isGroup = $derived(chat.current?.conversation.type === 'group');
   const replyTo = $derived(chat.replyTo);
   const replyToName = $derived(
@@ -118,11 +116,7 @@
   const stacked = $derived(multiline || pendingUploads.length > 0);
 
   const placeholder = $derived(
-    drafts.length > 0
-      ? t('composer.queuePlaceholder')
-      : isGroup
-        ? t('composer.mentionPlaceholder')
-        : t('composer.placeholder'),
+    isGroup ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
   );
 
   /**
@@ -296,8 +290,8 @@
     const host = editorHostEl;
     if (host === null || editorInstance !== null) return;
     // 构造期间 Placeholder 等扩展的闭包会同步读取组件状态（placeholder /
-    // mentionTargets），必须 untrack——否则 effect 隐式依赖草稿队列，草稿一变
-    // 就销毁重建编辑器（in-flight 的 clearContent 直接踩空）。
+    // mentionTargets），必须 untrack——否则 effect 隐式依赖这些响应式值，
+    // 它们一变就销毁重建编辑器（in-flight 的 clearContent 直接踩空）。
     const ed = untrack(
       () =>
         new Editor({
@@ -374,8 +368,8 @@
               if (composing || event.isComposing || event.keyCode === 229) return false;
               if (event.key !== 'Enter') return false;
               // @ 弹层打开且有候选：Enter 是确认提及目标，放行给 suggestion
-              // 插件。directProps 的按键处理先于插件，不在这里让路会被入队
-              // 截走（弹层选不上、消息直接进了待发送队列）。
+              // 插件。directProps 的按键处理先于插件，不在这里让路会被发送
+              // 截走（弹层选不上、消息直接发了出去）。
               if (
                 !event.shiftKey &&
                 !(event.metaKey || event.ctrlKey) &&
@@ -400,12 +394,9 @@
                 isComposing: false,
                 hasText: !composerEmpty,
                 hasAttachments: pendingUploads.length > 0,
-                queueLength: drafts.length,
               });
               if (action === 'none' || action === 'newline') return false;
-              if (action === 'add-draft') void queueCurrent();
-              else if (action === 'flush') void chat.flush();
-              else if (action === 'add-and-flush') void queueAndFlush();
+              if (action === 'send') void sendCurrent();
               return true;
             },
           },
@@ -449,41 +440,34 @@
   });
 
   /**
-   * 把当前内容入队为草稿。markdown/提及/引用在进 await 前捕获，编辑器
-   * 同步清空——对齐原 textarea 的键入语义：连续 Enter / 自动化脚本不会
-   * 踩到尚未清空的旧内容（清空放在异步入队之后会把它抹掉）。
+   * 直发当前内容（docs/design/01-conversation.md 输入与发送）。markdown/提及/
+   * 引用在进 await 前捕获，编辑器同步清空——对齐原 textarea 的键入语义：
+   * 连续 Enter / 自动化脚本不会踩到尚未清空的旧内容（清空放在异步发送之后
+   * 会把它抹掉）。缺设置门禁拦下时不清空、不上传：内容原样留在输入框，
+   * 设置完成后用户再按一次发送。
    */
-  async function queueCurrent(): Promise<void> {
+  async function sendCurrent(): Promise<void> {
     const ed = editor;
     const conversationId = chat.current?.conversation.id;
     if (ed === null || !conversationId) return;
     const markdown = ed.getMarkdown();
     const trimmed = markdown.trim();
     if (trimmed.length === 0 && pendingUploads.length === 0) return;
+    if (chat.gateForSend()) return;
     const tokens = mergeMentionTokens(ed.getJSON(), markdown, mentionTargets);
     const replyToId = replyTo?.id ?? null;
     ed.commands.clearContent();
     const attachmentIds = await composerDrafts.settle(conversationId);
-    await chat.addDraft(trimmed, {
+    await chat.send(trimmed, {
       ...(tokens.length > 0 ? { mentions: tokens } : {}),
       ...(replyToId !== null ? { replyTo: replyToId } : {}),
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     });
   }
 
-  /** Cmd/Ctrl+Enter：入队当前内容并冲出队列。 */
-  async function queueAndFlush(): Promise<void> {
-    if (!composerEmpty || pendingUploads.length > 0) await queueCurrent();
-    await chat.flush();
-  }
-
   async function onSendClick(): Promise<void> {
     if (readOnly) return;
-    if (hasContent) {
-      await queueCurrent();
-    } else if (drafts.length > 0) {
-      await chat.flush();
-    }
+    await sendCurrent();
   }
 
   // --- 语音输入（docs/design/26-voice-input.md）-------------------------------
@@ -750,22 +734,9 @@
   {:else}
     <div class="mx-auto w-full max-w-3xl">
       <div class="relative flex flex-col">
-        <!-- 待发送抽屉：待发送行不内嵌进输入坞，而是从输入坞背后向上伸出——
-             底边下移一个圆角半径（-mb-6）塞进输入坞背后被压住，左上/右上圆角
-             与输入坞一致、底部直角（藏在输入坞后），底部一个圆角半径的内边距
-             让草稿文字停在输入坞上边缘之上、不被盖住；仅在有待发送内容时出现 -->
-        {#if drafts.length > 0}
-          <div
-            class="-mb-6 rounded-t-3xl border bg-background px-1 pt-1 pb-7 shadow-sm"
-            data-testid="draft-drawer"
-          >
-            <DraftQueue {drafts} />
-          </div>
-        {/if}
-        <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里，
-             待发送抽屉从容器背后向上伸出；输入区垫底；单行＝输入与按钮同行，
-             多行＝输入占满整宽、按钮沉底。背景用 surface-raised（比背景亮一级），
-             relative 保证压在抽屉上层；粘贴/拖拽文件即上传附件 -->
+        <!-- 输入坞（参考 Grok）：引用条 / 待发送附件内嵌在圆角容器里；
+             输入区垫底；单行＝输入与按钮同行，多行＝输入占满整宽、按钮沉底。
+             背景用 surface-raised（比背景亮一级）；粘贴/拖拽文件即上传附件 -->
         <div
           class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5 transition-colors focus-within:border-ring/40 {dragOver
             ? 'border-ring/60'
@@ -960,8 +931,8 @@
                       {/each}
                     </span>
                   </button>
-                {:else if !hasContent && drafts.length === 0}
-                  <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容/有队列时
+                {:else if !hasContent}
+                  <!-- 语音键：点击开始录音（录音中原位变胶囊）；有内容时
                        此位让给发送键。语音对话模式暂缓，入口隐藏。 -->
                   <button
                     type="button"
@@ -974,7 +945,7 @@
                     <AudioLines class="size-4" />
                   </button>
                 {/if}
-                {#if hasContent || drafts.length > 0}
+                {#if hasContent}
                   {@render sendButton()}
                 {/if}
               </div>

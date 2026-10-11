@@ -7,28 +7,24 @@ const base = {
   shift: false,
   isComposing: false,
   hasText: false,
-  queueLength: 0,
 };
 
-describe('composer key handling (待发送队列按键逻辑)', () => {
-  it('Enter with input text queues a draft', () => {
-    expect(resolveComposerAction({ ...base, hasText: true })).toBe('add-draft');
+describe('composer key handling (直发按键逻辑)', () => {
+  it('Enter with input text sends directly', () => {
+    expect(resolveComposerAction({ ...base, hasText: true })).toBe('send');
   });
 
-  it('Enter with an empty input flushes a non-empty queue', () => {
-    expect(resolveComposerAction({ ...base, queueLength: 2 })).toBe('flush');
+  it('pure attachments send too', () => {
+    expect(resolveComposerAction({ ...base, hasAttachments: true })).toBe('send');
   });
 
-  it('Enter with an empty input and empty queue does nothing', () => {
+  it('Enter with an empty input does nothing', () => {
     expect(resolveComposerAction(base)).toBe('none');
   });
 
-  it('Cmd/Ctrl+Enter appends the draft and flushes immediately', () => {
-    expect(resolveComposerAction({ ...base, meta: true, hasText: true })).toBe('add-and-flush');
-    // Empty input: just flush the queue.
-    expect(resolveComposerAction({ ...base, meta: true, queueLength: 3 })).toBe('flush');
-    // Nothing anywhere: no-op.
-    expect(resolveComposerAction({ ...base, meta: true })).toBe('flush');
+  it('Cmd/Ctrl+Enter is an alias for send', () => {
+    expect(resolveComposerAction({ ...base, meta: true, hasText: true })).toBe('send');
+    expect(resolveComposerAction({ ...base, meta: true })).toBe('none');
   });
 
   it('Shift+Enter inserts a newline', () => {
@@ -37,10 +33,9 @@ describe('composer key handling (待发送队列按键逻辑)', () => {
 
   it('never fires while the IME is composing', () => {
     expect(resolveComposerAction({ ...base, isComposing: true, hasText: true })).toBe('none');
-    expect(resolveComposerAction({ ...base, isComposing: true, queueLength: 1 })).toBe('none');
-    expect(
-      resolveComposerAction({ ...base, isComposing: true, meta: true, hasText: true }),
-    ).toBe('none');
+    expect(resolveComposerAction({ ...base, isComposing: true, hasAttachments: true })).toBe(
+      'none',
+    );
   });
 
   it('ignores other keys', () => {

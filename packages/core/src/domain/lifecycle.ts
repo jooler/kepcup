@@ -6,7 +6,6 @@ import { workspacePathFor } from '../infra/paths.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { ConversationsService } from './conversations.js';
 import type { MessagesService } from './messages.js';
-import type { DraftsService } from './drafts.js';
 import type { AttachmentsService } from './attachments.js';
 import type { JobsService } from './jobs.js';
 import type { BotsService } from './bots.js';
@@ -21,7 +20,6 @@ export interface LifecycleDeps {
   bots: BotsService;
   conversations: ConversationsService;
   messages: MessagesService;
-  drafts: DraftsService;
   attachments: AttachmentsService;
   jobs: JobsService;
   grants: GrantsService;
@@ -315,7 +313,6 @@ export class LifecycleService {
     );
 
     for (const conv of this.deps.conversations.listDirectByBot(botId)) {
-      this.deps.drafts.removeAll(conv.id);
       this.deps.conversations.setReadOnly(conv.id, true);
     }
 

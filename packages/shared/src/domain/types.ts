@@ -668,7 +668,7 @@ export const settingsSchema = z.object({
 export type Settings = z.infer<typeof settingsSchema>;
 
 // ---------------------------------------------------------------------------
-// Conversation / message / draft / attachment
+// Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
 export const conversationTypeSchema = z.enum(['direct', 'group']);
@@ -949,7 +949,6 @@ export const attachmentSchema = z.object({
   id: z.string(),
   conversationId: z.string(),
   messageId: z.string().nullable(),
-  draftId: z.string().nullable(),
   fileName: z.string(),
   mime: z.string(),
   size: z.number(),
@@ -984,23 +983,6 @@ export const messageSchema = z.object({
   taskId: z.string().nullable().default(null),
 });
 export type Message = z.infer<typeof messageSchema>;
-
-export const draftSchema = z.object({
-  id: z.string(),
-  conversationId: z.string(),
-  position: z.number(),
-  text: z.string(),
-  mentions: z.array(z.string()).default([]),
-  replyTo: z.string().nullable(),
-  /**
-   * 草稿阶段附件（draft_id 预挂，docs/design/20-conversation-media.md）：
-   * flush 时随消息转正；UI 在待发送抽屉里展示并允许移除。
-   */
-  attachments: z.array(attachmentSchema).default([]),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-});
-export type Draft = z.infer<typeof draftSchema>;
 
 /**
  * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id（dispatcher 据此

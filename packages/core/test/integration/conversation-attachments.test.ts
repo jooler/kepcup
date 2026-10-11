@@ -1,16 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createTestStack,
-  listDrafts,
   listMessages,
   makeBot,
   openDirect,
 } from '@kepcup/testkit';
 
 /**
- * 对话附件链路（docs/design/20-conversation-media.md，D61）：上传预挂 →
- * drafts.add 绑定（归属校验）→ 草稿展示（draft.attachments）→ detach 移除 →
- * flush 转正（message.attachments）→ 草稿删除级联清理。
+ * 对话附件链路（docs/design/20-conversation-media.md，D61）：上传（无主）→
+ * messages.send 携 attachmentIds 转正（归属校验）→ message.attachments；
+ * detach 只能移除未随消息发出的上传。
  */
 
 let stack: Awaited<ReturnType<typeof createTestStack>>;
@@ -40,34 +39,32 @@ afterAll(async () => {
   await stack.cleanup();
 });
 
-describe('drafts.add 绑定附件', () => {
-  it('attachmentIds 预挂 → draft.attachments 可见 → flush 转正到 message.attachments', async () => {
+describe('messages.send 携附件', () => {
+  it('attachmentIds 转正到 message.attachments；空文本 + 纯附件允许', async () => {
     const att = await upload('photo.png');
-    await stack.core.rpc.call('drafts.add', {
+    const sent = (await stack.core.rpc.call('messages.send', {
       conversationId: conv.id,
       text: '',
       attachmentIds: [att.id],
-    });
-    const drafts = await listDrafts(stack.core, conv.id);
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0]!.attachments.map((a) => a.id)).toEqual([att.id]);
-
-    const flushed = (await stack.core.rpc.call('drafts.flush', {
-      conversationId: conv.id,
     })) as {
-      messages: Array<{
+      message: {
         id: string;
         attachments: Array<{ id: string }>;
         content: { text?: string };
-      }>;
+      };
     };
-    expect(flushed.messages).toHaveLength(1);
-    expect(flushed.messages[0]!.attachments.map((a) => a.id)).toEqual([att.id]);
-    expect(flushed.messages[0]!.content.text ?? '').toBe('');
+    expect(sent.message.attachments.map((a) => a.id)).toEqual([att.id]);
+    expect(sent.message.content.text ?? '').toBe('');
 
     const messages = await listMessages(stack.core, conv.id);
     const withAttachment = messages.find((m) => m.attachments.length > 0);
     expect(withAttachment).toBeDefined();
+  });
+
+  it('空文本 + 无附件 → INVALID_INPUT', async () => {
+    await expect(
+      stack.core.rpc.call('messages.send', { conversationId: conv.id, text: '' }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
   it('附件归属校验：他人对话的附件 / 已占用附件 → INVALID_INPUT', async () => {
@@ -81,7 +78,7 @@ describe('drafts.add 绑定附件', () => {
     })) as { attachment: { id: string } };
 
     await expect(
-      stack.core.rpc.call('drafts.add', {
+      stack.core.rpc.call('messages.send', {
         conversationId: conv.id,
         text: '拿别人的附件',
         attachmentIds: [foreign.attachment.id],
@@ -89,13 +86,13 @@ describe('drafts.add 绑定附件', () => {
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
 
     const mine = await upload('mine.png');
-    await stack.core.rpc.call('drafts.add', {
+    await stack.core.rpc.call('messages.send', {
       conversationId: conv.id,
       text: '先占用',
       attachmentIds: [mine.id],
     });
     await expect(
-      stack.core.rpc.call('drafts.add', {
+      stack.core.rpc.call('messages.send', {
         conversationId: conv.id,
         text: '再次占用同一附件',
         attachmentIds: [mine.id],
@@ -104,18 +101,10 @@ describe('drafts.add 绑定附件', () => {
   });
 });
 
-describe('attachments.detach 与草稿删除级联', () => {
-  it('detach：草稿阶段可移除（draft.changed 后附件消失）；重复移除 NOT_FOUND', async () => {
+describe('attachments.detach（仅未发送的上传可移除）', () => {
+  it('detach：上传后未发送可移除；重复移除 NOT_FOUND', async () => {
     const att = await upload('temp.txt', 'text/plain');
-    await stack.core.rpc.call('drafts.add', {
-      conversationId: conv.id,
-      text: '带附件草稿',
-      attachmentIds: [att.id],
-    });
     await stack.core.rpc.call('attachments.detach', { id: att.id });
-    const drafts = await listDrafts(stack.core, conv.id);
-    const draft = drafts.find((d) => d.text === '带附件草稿');
-    expect(draft!.attachments).toHaveLength(0);
     await expect(stack.core.rpc.call('attachments.get', { id: att.id })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
@@ -123,29 +112,13 @@ describe('attachments.detach 与草稿删除级联', () => {
 
   it('已随消息发出的附件不可 detach', async () => {
     const att = await upload('sent.png');
-    await stack.core.rpc.call('drafts.add', {
+    await stack.core.rpc.call('messages.send', {
       conversationId: conv.id,
       text: '已发送附件',
       attachmentIds: [att.id],
     });
-    await stack.core.rpc.call('drafts.flush', { conversationId: conv.id });
     await expect(stack.core.rpc.call('attachments.detach', { id: att.id })).rejects.toMatchObject({
       code: 'INVALID_INPUT',
-    });
-  });
-
-  it('drafts.remove 级联清理草稿附件（行删除）', async () => {
-    const att = await upload('doomed.png');
-    await stack.core.rpc.call('drafts.add', {
-      conversationId: conv.id,
-      text: '要删的草稿',
-      attachmentIds: [att.id],
-    });
-    const drafts = await listDrafts(stack.core, conv.id);
-    const draft = drafts.find((d) => d.text === '要删的草稿')!;
-    await stack.core.rpc.call('drafts.remove', { id: draft.id });
-    await expect(stack.core.rpc.call('attachments.get', { id: att.id })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
     });
   });
 });

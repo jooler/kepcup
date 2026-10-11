@@ -33,24 +33,25 @@ function logWith(line: string): string {
 }
 
 /** 附件挂在草稿上（不 flush）：登记 mock 脚本需要先拿到 attachment id。 */
-async function stageDraftWithAttachment(
+/** 上传附件并随一条用户消息直发（docs/design/20-conversation-media.md）。 */
+async function sendWithAttachment(
   core: CoreHarness,
   conversationId: string,
   text: string,
   fileName: string,
   attachmentText: string,
 ): Promise<{ attachmentId: string }> {
-  await core.rpc.call('drafts.add', { conversationId, text });
-  const drafts = (await core.rpc.call('drafts.list', { conversationId })) as {
-    drafts: Array<{ id: string }>;
-  };
   const upload = (await core.rpc.call('attachments.upload', {
     conversationId,
     fileName,
     mime: 'text/markdown',
     bytesBase64: Buffer.from(attachmentText, 'utf8').toString('base64'),
-    draftId: drafts.drafts[0]!.id,
   })) as { attachment: { id: string } };
+  await core.rpc.call('messages.send', {
+    conversationId,
+    text,
+    attachmentIds: [upload.attachment.id],
+  });
   return { attachmentId: upload.attachment.id };
 }
 
@@ -83,19 +84,6 @@ async function latestRunId(core: CoreHarness, conversationId: string): Promise<s
     runs: Run[];
   };
   return result.runs[0]?.id ?? null;
-}
-
-/** flush 后返回该批次的用户消息 id（附件已随消息落库）。 */
-async function flushAndGetUserMessageId(
-  core: CoreHarness,
-  conversationId: string,
-): Promise<string> {
-  const result = (await core.rpc.call('drafts.flush', { conversationId })) as {
-    messages: Array<{ id: string; senderType: string }>;
-  };
-  const userMessage = result.messages.find((m) => m.senderType === 'user');
-  if (!userMessage) throw new Error('flush did not create the user message');
-  return userMessage.id;
 }
 
 function wikiRoot(core: CoreHarness, botId: string): string {
@@ -151,7 +139,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
   });
 
   it('用户说“学一下这份文档”：登记 → 后台整理 → 完成消息 → wiki_search 可查', async () => {
-    const { attachmentId: attId } = await stageDraftWithAttachment(
+    const { attachmentId: attId } = await sendWithAttachment(
       stack.core,
       conversationId,
       '学一下这份文档',
@@ -198,7 +186,6 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
       // 入库完成不再有事件触发 run：知识库整理是 Bot 自己的事务（消息原则），
       // 对话保持安静，后续用例断言"没有入库通报"。
     ]);
-    await flushAndGetUserMessageId(stack.core, conversationId);
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 1);
 
@@ -278,11 +265,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
       step().replyText('部署流程：构建、推送、发布（来自我的知识库）'),
     ]);
     const baseline = await latestRunId(stack.core, conversationId);
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: '部署流程是什么？查一下你的知识库',
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '部署流程是什么？查一下你的知识库', });
     const run = await waitForNewRun(stack.core, conversationId, baseline);
     const steps = (await stack.core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -319,11 +302,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
       }),
     );
     const baseline = await latestRunId(stack.core, conversationId);
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: `把这句话写进 ${target}`,
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: `把这句话写进 ${target}`, });
     const run = await waitForNewRun(stack.core, conversationId, baseline, 'completed', 'task');
     await waitFor(
       async () =>
@@ -378,11 +357,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
         }),
       step().replyText('好的，再看一遍'),
     ]);
-    await stack.core.rpc.call('drafts.add', {
-      conversationId,
-      text: '再学一遍这份文档',
-    });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '再学一遍这份文档', });
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 2);
     const event = await skippedEvent;
@@ -493,12 +468,10 @@ describe('P09 Wiki：同一 Bot 两个入库任务串行', () => {
     ]);
 
     const baselineOne = await latestRunId(stack.core, conversationId);
-    await stack.core.rpc.call('drafts.add', { conversationId, text: '入库第一份：one.md' });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '入库第一份：one.md' });
     await waitForNewRun(stack.core, conversationId, baselineOne);
     const baselineTwo = await latestRunId(stack.core, conversationId);
-    await stack.core.rpc.call('drafts.add', { conversationId, text: '入库第二份：two.md' });
-    await stack.core.rpc.call('drafts.flush', { conversationId });
+    await stack.core.rpc.call('messages.send', { conversationId, text: '入库第二份：two.md' });
     await waitForNewRun(stack.core, conversationId, baselineTwo);
 
     // 两个任务都被认领（running），第一个挂在 mock 上：第二个 loop 未开始。
@@ -544,7 +517,7 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
   });
 
   it('入库附件：raw 落盘、页面提交完成、UI 刷新事件（BR-P09-012）', async () => {
-    const { attachmentId } = await stageDraftWithAttachment(
+    const { attachmentId } = await sendWithAttachment(
       stack.core,
       conversationId,
       '学一下这份文档',
@@ -594,7 +567,6 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
       }),
       step().replyText('整理完成'),
     ]);
-    await flushAndGetUserMessageId(stack.core, conversationId);
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 1);
     expect(rawFiles(stack.core, botId)).toHaveLength(1);
@@ -697,8 +669,7 @@ describe('P09 Wiki：每周体检调度（BR-P09-003：入库不重置体检时�
         }),
         step().replyText('整理完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId: conv, text: '学一下周检资料' });
-      await flushAndGetUserMessageId(stack.core, conv);
+      await stack.core.rpc.call('messages.send', { conversationId: conv, text: '学一下周检资料' });
       await waitForRun(stack.core, conv, 'completed', { timeoutMs: 30_000 });
       await waitJobDone(stack.core, 'wiki_ingest', 1);
 
@@ -809,8 +780,7 @@ describe('P09 Wiki：维护 loop 步骤脱敏与 <untrusted> 边界（BR-P09-001
         }),
         step().replyText('整理完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下机密文档' });
-      await stack.core.rpc.call('drafts.flush', { conversationId });
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下机密文档' });
       await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
       await waitJobDone(stack.core, 'wiki_ingest', 1);
 
@@ -881,11 +851,9 @@ describe('P09 Wiki：来源消息为遗留已撤回状态时的入库任务防�
       // 把附件挂上一条真实用户消息后，直接把该消息置为遗留已撤回状态
       // （撤回入口已移除，该状态只能来自历史数据），走 resolveSource 的
       // 「message.status === recalled」重查分支。
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '挂附件的消息' });
-      const flush = (await stack.core.rpc.call('drafts.flush', { conversationId })) as {
-        messages: Array<{ id: string; senderType: string }>;
-      };
-      const userMessage = flush.messages.find((m) => m.senderType === 'user')!;
+      const flush = (await stack.core.rpc.call('messages.send', { conversationId, text: '挂附件的消息' })) as { message: Message; runId: string | null };
+      const userMessage = flush.message.senderType === 'user' ? flush.message : null;
+      if (userMessage === null) throw new Error('send did not create the user message');
       stack.core.services
         .mainDb!.prepare('update attachments set message_id = ? where id = ?')
         .run(userMessage.id, upload.attachment.id);
@@ -962,8 +930,7 @@ describe('P09 Wiki：wiki_read 路径限定反例（BR-P09-007）', () => {
         }),
         step().replyText('整理完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下路径资料' });
-      await stack.core.rpc.call('drafts.flush', { conversationId });
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下路径资料' });
       await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
       await waitJobDone(stack.core, 'wiki_ingest', 1);
 
@@ -1037,8 +1004,7 @@ describe('P09 Wiki：log.md 只追加的强制（BR-P09-008）', () => {
         step().replyToolCall('write', { path: 'log.md', content: rewrittenLog }),
         step().replyText('整理完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下改写资料' });
-      await stack.core.rpc.call('drafts.flush', { conversationId });
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下改写资料' });
       await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
       await waitJobDone(stack.core, 'wiki_ingest', 1);
 
@@ -1094,8 +1060,7 @@ describe('P09 Wiki：回滚与在途维护的互斥（BR-P09-010）', () => {
           .expect((req) => JSON.stringify(req.body).includes('pages/lock.md'))
           .replyText('维护完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下锁资料' });
-      await stack.core.rpc.call('drafts.flush', { conversationId });
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下锁资料' });
       await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
 
       // 维护 loop 已在 mock 上挂起（持锁），init 提交已存在。
@@ -1169,8 +1134,7 @@ describe('P09 Wiki：回滚与在途维护的互斥（BR-P09-010）', () => {
         heldMaintenance,
         step().replyText('维护完成'),
       ]);
-      await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下删除竞态资料' });
-      await stack.core.rpc.call('drafts.flush', { conversationId });
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下删除竞态资料' });
       await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
       await waitFor(
         () =>
@@ -1238,8 +1202,7 @@ describe('P09 Wiki：启动 FTS 对账（BR-P09-009）', () => {
         }),
         step().replyText('整理完成'),
       ]);
-      await first.core.rpc.call('drafts.add', { conversationId, text: '学一下对账资料' });
-      await first.core.rpc.call('drafts.flush', { conversationId });
+      await first.core.rpc.call('messages.send', { conversationId, text: '学一下对账资料' });
       await waitForRun(first.core, conversationId, 'completed', { timeoutMs: 30_000 });
       await waitJobDone(first.core, 'wiki_ingest', 1);
       return { botId: bot.id, conversationId };
@@ -1330,8 +1293,7 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
       }),
       step().replyText('整理完成'),
     ]);
-    await stack.core.rpc.call('drafts.add', { conversationId, text: '学一下待删资料' });
-    await flushAndGetUserMessageId(stack.core, conversationId);
+    await stack.core.rpc.call('messages.send', { conversationId, text: '学一下待删资料' });
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 1);
     const history = (await stack.core.rpc.call('wiki.history', { botId })) as {

@@ -247,10 +247,7 @@ describe('access approvals for file tools (P03)', () => {
       step().replyToolCall('read', { path: `${dir}/note.txt` }),
       step().replyText('读到了'),
     ]);
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '再读一次' });
-    const second = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
-      runId: string | null;
-    };
+    const second = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '再读一次' })) as { message: Message; runId: string | null };
     const covered = await waitFor(
       async () => {
         const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 5 })) as {
@@ -531,10 +528,10 @@ describe('access approvals for file tools (P03)', () => {
       ),
     );
     const first = await (async () => {
-      await core.rpc.call('drafts.add', { conversationId: conv.id, text: '申请写权限' });
-      return (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
-        runId: string | null;
-      };
+      return (await core.rpc.call('messages.send', {
+        conversationId: conv.id,
+        text: '申请写权限',
+      })) as { message: Message; runId: string | null };
     })();
     const approval = await pendingApproval(core, conv.id);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true, duration: 'once' });
@@ -553,10 +550,7 @@ describe('access approvals for file tools (P03)', () => {
 
     // The folded line appears in the next run's request context.
     llm.script('mock-main', [step().replyText('看到卡片记录了')]);
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '继续' });
-    const second = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
-      runId: string | null;
-    };
+    const second = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '继续' })) as { message: Message; runId: string | null };
     expect(second.runId).not.toBeNull();
     await waitFor(
       async () => {

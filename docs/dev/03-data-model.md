@@ -198,7 +198,6 @@ CREATE TABLE attachments (
   id               TEXT PRIMARY KEY,      -- att_...
   conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   message_id       TEXT REFERENCES messages(id) ON DELETE CASCADE,
-  draft_id         TEXT,                  -- 仍在待发送队列时
   file_name        TEXT NOT NULL,
   mime             TEXT NOT NULL,
   size             INTEGER NOT NULL,
@@ -208,22 +207,7 @@ CREATE TABLE attachments (
 );
 ```
 
-P17（D61）语义增补：`draft_id` 预挂经 `drafts.add` 的 `attachmentIds` 绑定（校验归属对话且无主）；`attachments.detach` 仅允许移除草稿阶段附件（行与文件一起删）；`drafts.remove` 级联清理仍挂在草稿上的附件；flush 时 `attachToMessage` 转正不变。
-
-### drafts（P01）
-
-```sql
-CREATE TABLE drafts (
-  id               TEXT PRIMARY KEY,      -- drf_...
-  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  position         INTEGER NOT NULL,
-  text             TEXT NOT NULL,
-  mentions_json    TEXT NOT NULL DEFAULT '[]',
-  reply_to         TEXT,
-  created_at       INTEGER NOT NULL,
-  updated_at       INTEGER NOT NULL
-);
-```
+D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下线）；附件以 `messages.send` 的 `attachmentIds` 同事务转正（校验归属对话且无主）；`attachments.detach` 仅允许移除未随消息发出的上传（行与文件一起删）。
 
 ### jobs（P01）
 
@@ -962,7 +946,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 | 数据 | 处理 | 阶段 |
 |---|---|---|
-| messages、messages_fts、attachments（含文件）、drafts | 删除 | P01 |
+| messages、messages_fts、attachments（含文件） | 删除 | P01 |
 | conversation_members、conversations 行 | 删除 | P01 |
 | 该对话的执行（runs、run_steps） | 删除；正在执行的先取消 | P01 |
 | 该对话的任务（D75） | 未结束的经 `TaskHost.abortForConversation` 结算为 `cancelled`（不唤醒），随后按上行删除；私有任务条目随 messages 删除 | D75 |
@@ -990,7 +974,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 |---|---|---|
 | 该 Bot 所有正在执行、排队的执行 | 取消（任务经 `TaskHost.abortForBot` 结算为 `cancelled`，不唤醒） | P01 / D75 |
 | bots 行 | 改为占位（见 bots 表说明） | P01 |
-| 单聊对话 | `read_only = 1`，清空其待发送队列 | P01 |
+| 单聊对话 | `read_only = 1` | P01 |
 | 群成员关系 | 删除成员行（历史消息保留，发送者显示为 id） | P05 |
 | 该 Bot 的执行记录 | 删除 | P01 |
 | `bots/{id}/` 整个目录（workspace、maintenance、memory.db、wiki、skills） | 删除 | P01 起，随各阶段补充 |

@@ -274,8 +274,7 @@ describe('conversational bot setup (interview)', () => {
 
     // 访谈结束后的新 run 不再注入 <setup_interview>，也不再提供 setup 工具。
     llm.script('mock-main', [step().replyText('好的，随时吩咐。')]);
-    await core.rpc.call('drafts.add', { conversationId, text: '在吗' });
-    await core.rpc.call('drafts.flush', { conversationId });
+    await core.rpc.call('messages.send', { conversationId, text: '在吗' });
     await waitForMessage(
       core,
       conversationId,

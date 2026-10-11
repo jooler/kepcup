@@ -578,15 +578,9 @@ describe('M5: a relayed answer carries the user originals', () => {
       mime: 'text/plain',
       bytesBase64: Buffer.from('规格内容').toString('base64'),
     })) as { attachment: { id: string } };
-    await core.rpc.call('drafts.add', {
-      conversationId: conv.id,
-      text: '看附件',
-      attachmentIds: [upload.attachment.id],
-    });
-    const flushed = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as {
-      messages: Message[];
-    };
-    answerId = flushed.messages[0]!.id;
+    const flushed = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '看附件',
+      attachmentIds: [upload.attachment.id], })) as { message: Message; runId: string | null };
+    answerId = flushed.message.id;
     await waitRun(stack, taskId, ['completed'], 'task completed');
     expect(final.consumed).toBe(true);
     // The card shows the relayed text only.

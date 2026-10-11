@@ -180,7 +180,7 @@ test('setup card: failed test connection neither advances the card nor lets save
   }
 });
 
-test('send gate holds drafts: no failed run, card completes setup, drafts flush automatically', async () => {
+test('send gate holds the message: no failed run, card completes setup, resend sends it', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-setup-gate-');
   const { page, llm } = session;
@@ -193,26 +193,26 @@ test('send gate holds drafts: no failed run, card completes setup, drafts flush 
     await page.locator('[data-testid="bot-create-save"]').click();
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
 
-    // 发送被门禁拦截：草稿保留、无用户气泡、无失败 run、卡片出现。
+    // 发送被门禁拦截：内容留在输入框、无用户气泡、无失败 run、卡片出现。
     llm.script('mock-main', [step().replyText('模型已配置，我们继续。')]);
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('帮我看看今天的安排');
     await composer.press('Enter');
-    // 入队生效（对空输入框的下一次 Enter 才是 flush，见 direct-chat 范式）。
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(composer).toHaveText('');
-    await composer.press('Enter');
     const setupCard = page.locator('[data-testid="setup-card"]');
     await expect(setupCard).toBeVisible({ timeout: 15_000 });
+    await expect(composer).toHaveText('帮我看看今天的安排');
     await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
 
-    // 卡片内完成设置 → 草稿自动发出 → Bot 回复 → 卡片消失。
+    // 卡片内完成设置 → 再按一次发送 → Bot 回复 → 卡片消失。
     await addMockProviderViaCard(page, llm);
     await expect(page.locator('[data-testid="setup-card-default-model"]')).toBeVisible({
       timeout: 15_000,
     });
     await page.locator('[data-testid="setup-card-confirm"]').click();
+    // 等卡片收起（设置写入 + 门禁撤销完成后）再手动重发。
+    await expect(page.locator('[data-testid="setup-card"]')).toHaveCount(0, { timeout: 15_000 });
+    await composer.press('Enter');
     await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(1, { timeout: 30_000 });
     await expect(
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '模型已配置' }).first(),

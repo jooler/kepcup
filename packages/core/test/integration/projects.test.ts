@@ -516,8 +516,7 @@ describe('projects (P04)', () => {
       step().replyToolCall('read', { path: '.env' }),
       step().replyText('读到了'),
     ]);
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '再读一次' });
-    const flushed = (await core.rpc.call('drafts.flush', { conversationId: conv.id })) as { runId: string | null };
+    const flushed = (await core.rpc.call('messages.send', { conversationId: conv.id, text: '再读一次' })) as { message: Message; runId: string | null };
     await waitFor(
       async () => {
         const run = (await listRuns(core, conv.id)).find((r) => r.id === flushed.runId);
@@ -749,8 +748,7 @@ describe('projects (P04)', () => {
       ),
     );
     const firstTaskIds = new Set((await listRuns(core, conv.id)).filter((r) => r.loopType === 'task').map((r) => r.id));
-    await core.rpc.call('drafts.add', { conversationId: conv.id, text: '推一下' });
-    await core.rpc.call('drafts.flush', { conversationId: conv.id });
+    await core.rpc.call('messages.send', { conversationId: conv.id, text: '推一下' });
     const pushApproval = await waitFor(
       async () => {
         const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {

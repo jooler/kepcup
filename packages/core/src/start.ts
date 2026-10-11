@@ -64,7 +64,6 @@ import { BotsService } from './domain/bots.js';
 import { BotAvatarService } from './domain/avatars.js';
 import { ConversationsService } from './domain/conversations.js';
 import { MessagesService } from './domain/messages.js';
-import { DraftsService } from './domain/drafts.js';
 import { StickiesService } from './domain/stickies.js';
 import { AttachmentsService } from './domain/attachments.js';
 import { JobsService } from './domain/jobs.js';
@@ -422,7 +421,6 @@ export interface CoreDomainServices {
   audit: AuditService;
   conversations: ConversationsService;
   messages: MessagesService;
-  drafts: DraftsService;
   /** 辅助阅读便签（main.db stickies）。 */
   stickies: StickiesService;
   attachments: AttachmentsService;
@@ -1005,7 +1003,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         if (conversation) events.emit('conversation.updated', { conversation });
       },
     });
-    const drafts = new DraftsService(mainDb, clock);
     const stickies = new StickiesService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
@@ -1778,7 +1775,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       groups,
       delegations,
       messages,
-      drafts,
       attachments,
       jobs,
       runs,
@@ -1926,7 +1922,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       bots,
       conversations,
       messages,
-      drafts,
       attachments,
       jobs,
       grants,
@@ -2204,7 +2199,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       avatars,
       conversations,
       messages,
-      drafts,
       stickies,
       attachments,
       jobs,

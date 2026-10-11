@@ -142,8 +142,7 @@ describe('setup path gate (D59)', () => {
 
     llm.script('mock-main', [step().replyText('两条都看到了。')]);
     await answerInterview(core, conversationId, '做我的写作助手');
-    await core.rpc.call('drafts.add', { conversationId, text: '顺便每天九点提醒我' });
-    await core.rpc.call('drafts.flush', { conversationId });
+    await core.rpc.call('messages.send', { conversationId, text: '顺便每天九点提醒我' });
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(await listRuns(core, conversationId)).toHaveLength(0);
 
@@ -307,8 +306,7 @@ describe('conversational group creation (D60)', () => {
       step().replyJson({ decision: 'no_action', confidence: 0.2, reason: '无需回应' }),
     ]);
     llm.script('mock-main', [step().replyText('收到。')]);
-    await core.rpc.call('drafts.add', { conversationId, text: '有条售后问题' });
-    await core.rpc.call('drafts.flush', { conversationId });
+    await core.rpc.call('messages.send', { conversationId, text: '有条售后问题' });
     await waitForRun(core, conversationId, 'completed');
     const body = JSON.stringify(llm.requestsFor('mock-main')[0]!.body.messages);
     expect(body).toContain('本群主要处理：处理用户售后咨询');

@@ -107,7 +107,7 @@ async function ensureStartPanelClosed(page: Page): Promise<void> {
   await expect(backdrop).toHaveCount(0);
 }
 
-test('draft queue full flow: add, edit, reorder, remove, Enter flush, Cmd+Enter, reply', async () => {
+test('direct send: Enter sends immediately, Cmd+Enter too, reply works', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-draft-');
   const { page, llm } = session;
@@ -117,66 +117,29 @@ test('draft queue full flow: add, edit, reorder, remove, Enter flush, Cmd+Enter,
 
     const composer = page.locator('[data-testid="composer-input"]');
 
-    // No messages yet: the queue + composer float centered; the dock moves to
-    // the bottom once the first message exists.
+    // No messages yet: the composer floats centered; the dock moves to the
+    // bottom once the first message exists.
     await expect(page.locator('[data-testid="composer-dock"]')).toHaveAttribute(
       'data-centered',
       'true',
     );
 
-    // Two drafts join the queue; the input clears each time.
-    await composer.fill('第一条消息');
-    await composer.press('Enter');
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(composer).toHaveText('');
-    await composer.fill('第二条消息');
-    await composer.press('Enter');
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(2);
-
-    // Reorder: drag the first draft onto the second -> [第二条消息, 第一条消息].
-    await page
-      .locator('[data-testid^="draft-item-"]')
-      .first()
-      .dragTo(page.locator('[data-testid^="draft-item-"]').last());
-    await expect(page.locator('[data-testid="draft-text"]').first()).toHaveText('第二条消息');
-
-    // Edit the first draft inline.
-    await page.locator('[data-testid="draft-text"]').first().click();
-    const editInput = page.locator('[data-testid="draft-edit-input"]');
-    await expect(editInput).toBeVisible();
-    await editInput.fill('第二条消息（已修改）');
-    await editInput.press('Enter');
-    await expect(page.locator('[data-testid="draft-text"]').first()).toHaveText(
-      '第二条消息（已修改）',
-    );
-
-    // Remove the remaining draft ("第一条消息").
-    await page.locator('[data-testid^="draft-item-"]').last().hover();
-    await page.locator('[data-testid="draft-remove"]').last().click();
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="draft-text"]').first()).toHaveText(
-      '第二条消息（已修改）',
-    );
-
-    // Flush with Enter on the empty input; the mock answers.
     llm.script('mock-main', [step().replyText('收到，看到了')]);
-    await composer.click();
+    await composer.fill('第一条消息');
     await composer.press('Enter');
 
     await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(1, { timeout: 15_000 });
-    await expect(page.locator('[data-testid="user-bubble"]').first()).toContainText(
-      '第二条消息（已修改）',
-    );
+    await expect(page.locator('[data-testid="user-bubble"]').first()).toContainText('第一条消息');
+    await expect(composer).toHaveText('');
     await expect(page.locator('[data-testid="composer-dock"]')).toHaveAttribute(
       'data-centered',
       'false',
     );
-    await expect(page.locator('[data-testid="draft-queue"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="bot-bubble"]').first()).toContainText('收到，看到了', {
       timeout: 30_000,
     });
 
-    // Cmd/Ctrl+Enter sends the current input immediately.
+    // Cmd/Ctrl+Enter sends the current input immediately as well.
     llm.script('mock-main', [step().replyText('好的，第二条也收到')]);
     await composer.fill('再来一条');
     await composer.press('Meta+Enter');
@@ -187,30 +150,12 @@ test('draft queue full flow: add, edit, reorder, remove, Enter flush, Cmd+Enter,
         timeout: 30_000,
       },
     );
-
-    // 「立即」sends only the targeted draft; the rest of the queue stays put.
-    llm.script('mock-main', [step().replyText('立即的一条收到')]);
-    await composer.fill('先排队一条');
-    await composer.press('Enter');
-    await composer.fill('再排队一条');
-    await composer.press('Enter');
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(2);
-    await page.locator('[data-testid="draft-send-now"]').first().click();
-    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(3, { timeout: 15_000 });
-    await expect(page.locator('[data-testid="user-bubble"]').last()).toContainText('先排队一条');
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="draft-text"]').first()).toHaveText('再排队一条');
-
-    // Clean up the leftover draft so the session ends tidy.
-    await page.locator('[data-testid^="draft-item-"]').hover();
-    await page.locator('[data-testid="draft-remove"]').click();
-    await expect(page.locator('[data-testid="draft-queue"]')).toHaveCount(0);
   } finally {
     await closeSession(session);
   }
 });
 
-test('a batch of drafts becomes multiple bubbles and one run; the run status shows without cancel', async () => {
+test('a send shows the run status without cancel until the reply lands', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-status-');
   const { page, llm } = session;
@@ -227,12 +172,8 @@ test('a batch of drafts becomes multiple bubbles and one run; the run status sho
 
     await composer.fill('先做一件事');
     await composer.press('Enter');
-    await composer.fill('再做另一件事');
-    await composer.press('Enter');
-    await composer.click();
-    await composer.press('Enter');
 
-    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(2, { timeout: 15_000 });
+    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(1, { timeout: 15_000 });
     await expect(page.locator('[data-testid="run-status"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="run-status-text"]')).toBeVisible();
 
@@ -251,14 +192,14 @@ test('a batch of drafts becomes multiple bubbles and one run; the run status sho
       },
     );
     await expect(page.locator('[data-testid="run-status"]')).toBeHidden({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(2);
 
     // A follow-up message starts a new run that completes normally.
     await composer.fill('继续吧');
     await composer.press('Meta+Enter');
-    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(3, { timeout: 15_000 });
-    await expect(page.locator('[data-testid="bot-bubble"]')).toHaveCount(2, { timeout: 30_000 });
-    await expect(page.locator('[data-testid="bot-bubble"]').last()).toContainText('第二条回复');
+    await expect(page.locator('[data-testid="user-bubble"]')).toHaveCount(2, { timeout: 15_000 });
+    await expect(page.locator('[data-testid="bot-bubble"]').nth(1)).toContainText('第二条回复', {
+      timeout: 30_000,
+    });
   } finally {
     await closeSession(session);
   }
@@ -309,51 +250,6 @@ test('a failed run shows a closable banner: dismiss hides it across switches and
     await expect(page.locator('[data-testid="run-failed-banner"]')).toHaveCount(0);
   } finally {
     await closeSession(session);
-  }
-});
-
-test('queued drafts survive an app restart', async () => {
-  test.setTimeout(180_000);
-  const session = await startSession('kepcup-e2e-restart-');
-  const { page, home, llm } = session;
-  try {
-    await waitReady(page);
-    await createBotAndOpenChat(page, '小艾');
-    const composer = page.locator('[data-testid="composer-input"]');
-    await composer.fill('重启前写入队列的消息');
-    await composer.press('Enter');
-    await expect(page.locator('[data-testid="draft-text"]')).toHaveText('重启前写入队列的消息');
-
-    await session.app.close();
-    await llm.stop();
-
-    const llm2 = await startMockLlm();
-    try {
-      llm2.script('mock-main', [step().replyText('重启后收到')]);
-      const relaunched = await launchApp({ home, llmUrl: llm2.url, keystore: 'file' });
-      try {
-        await waitReady(relaunched.page);
-        // Open the conversation again from the sidebar.
-        await relaunched.page.locator('[data-testid^="conversation-item-"]').first().click();
-        await expect(relaunched.page.locator('[data-testid="draft-text"]')).toHaveText(
-          '重启前写入队列的消息',
-          { timeout: 15_000 },
-        );
-
-        await relaunched.page.locator('[data-testid="composer-input"]').click();
-        await relaunched.page.locator('[data-testid="composer-input"]').press('Enter');
-        await expect(relaunched.page.locator('[data-testid="bot-bubble"]').first()).toContainText(
-          '重启后收到',
-          { timeout: 30_000 },
-        );
-      } finally {
-        await relaunched.app.close();
-      }
-    } finally {
-      await llm2.stop();
-    }
-  } finally {
-    await rm(home, { recursive: true, force: true });
   }
 });
 

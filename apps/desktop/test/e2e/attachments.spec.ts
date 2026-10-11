@@ -107,14 +107,9 @@ test.describe('对话附件与媒体', () => {
       await expect(page.locator('[data-testid="composer-pending-attachments"]')).toBeVisible();
       await expect(page.locator('[data-testid="pending-attachment-ready"]')).toBeVisible();
 
-      // 入草稿：抽屉里出现附件 chip（可移除），文本为空 → 占位文案。
+      // 直发：消息行出现图片缩略图（字节加载完成渲染 <img>）。
       await page.locator('[data-testid="composer-input"]').pressSequentially('看这张图');
       await page.locator('[data-testid="composer-input"]').press('Enter');
-      await expect(page.locator('[data-testid="draft-drawer"]')).toBeVisible();
-      await expect(page.locator('[data-testid="draft-attachments"]')).toBeVisible();
-
-      // 发送：消息行出现图片缩略图（字节加载完成渲染 <img>）。
-      await page.locator('[data-testid="composer-send"]').click();
       const thumbnail = page.locator('[data-testid="attachment-image"] img');
       await expect(thumbnail).toBeVisible({ timeout: 30_000 });
 
