@@ -174,6 +174,8 @@ html.platform-mac main {
  * -webkit-app-region 按元素边框矩形、沿 DOM 顺序收集：后出现的矩形覆盖
  * 先出现的，z-index 不参与。浮层要能点击，必须自身 no-drag，并且在 DOM 里
  * 排在 drag 区域之后（bits-ui 的弹层会 portal 到 body 末尾，满足后者）。
+ * 代价是全屏浮层会把内容 drag 区全压平、窗口拖不动——由下面的
+ * window-drag-band 统一兜底（见 lib/features/shell/window-drag-band.ts）。
  */
 .app-drag {
   -webkit-app-region: drag;
@@ -189,6 +191,25 @@ html.platform-mac main {
 [data-slot='tooltip-content'],
 [data-sonner-toaster] {
   -webkit-app-region: no-drag;
+}
+
+/*
+ * 全局弹层拖拽带：body 末尾常驻的隐藏元素（window-drag-band.ts 负责沉底与
+ * 激活）。任一全屏浮层（[data-window-overlay]）打开时变成满窗宽的顶部
+ * drag 矩形——它在 DOM 里最后，矩形压过浮层的 no-drag，浮层开着窗口也能
+ * 从标题区拖动；平时 display:none 不产生矩形。z 要高于浮层（z-50），顶部
+ * 40px 才不会漏点击/滚轮给弹框内容；浮层自身交互须避开这一条。
+ */
+.window-drag-band {
+  display: none;
+}
+.window-drag-band-active {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 40px;
+  z-index: 60;
+  -webkit-app-region: drag;
 }
 
 /*

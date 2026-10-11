@@ -17,7 +17,12 @@
    * 顺序收集、z-index 不参与（见 app.css），原地挂在 ChatView 里会被顶部
    * h-16 drag 条（ChatView 头部）与右栏 h-12 drag 头部（DOM 还在其后）的
    * 矩形压住，顶栏按钮的真实鼠标点击被吞成窗口拖拽。
+   *
+   * data-window-overlay：接入全局弹层拖拽带（window-drag-band.ts），灯箱开着
+   * 时窗口仍可从顶部拖。顶栏因此整体下移到带（40px）之下，mac 再让出红绿灯。
    */
+
+  const isMac = /Mac/i.test(navigator.platform);
 
   // 图片缩放/平移；scale=1 即适配窗口。{#key current?.id} 在切换附件时复位。
   let scale = $state(1);
@@ -119,18 +124,23 @@
 
 {#if mediaViewer.open && current}
   <!-- 背板：点击空白处关闭；媒体区阻止冒泡。Portal 到 body 末尾 + no-drag，
-       避免 drag 区矩形（DOM 顺序优先于 z-index）盖住顶栏按钮。 -->
+       避免 drag 区矩形（DOM 顺序优先于 z-index）盖住顶栏按钮；data-window-overlay
+       让全局拖拽带兜底「灯箱开着时拖窗口」。 -->
   <Portal>
     <div
       class="app-no-drag fixed inset-0 z-50 flex flex-col bg-black/85"
       data-testid="lightbox"
+      data-window-overlay
       onclick={() => mediaViewer.close()}
       onwheel={onWheel}
       role="presentation"
     >
-      <!-- 顶栏 -->
+      <!-- 顶栏：压在全局拖拽带（顶部 40px，见 window-drag-band.ts）之下，
+           mac 侧再让出红绿灯；带内是纯拖拽区，顶栏按钮不能伸进去。 -->
       <div
-        class="flex items-center justify-between px-4 py-3 text-white"
+        class="flex items-center justify-between py-3 pr-4 text-white {isMac
+          ? 'pt-11 pl-20'
+          : 'pt-11 pl-4'}"
         onclick={(event) => event.stopPropagation()}
         role="presentation"
       >

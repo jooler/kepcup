@@ -11,9 +11,11 @@
 
 <!-- 遮罩不用 backdrop-filter:mac 窗口衬了原生 vibrancy,侧栏透明区与 DOM
 	背景模糊合成时会把未模糊的原始内容叠在模糊层上(Chromium 缺陷),只能压暗。 -->
+<!-- data-window-overlay:接入全局弹层拖拽带(window-drag-band.ts),浮层开着时窗口仍可拖。 -->
 <SheetPrimitive.Overlay
   bind:ref
   data-slot="sheet-overlay"
+  data-window-overlay
   class={cn(
     'fixed inset-0 z-50 bg-black/60 duration-100 data-closed:animate-out data-closed:fade-out-0 data-open:animate-in data-open:fade-in-0',
     className,

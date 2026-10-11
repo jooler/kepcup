@@ -67,6 +67,15 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
     await page.locator('[data-testid="extension-center-button"]').click();
     await expect(dialog).toBeVisible();
+
+    // 全局弹层拖拽带（window-drag-band.ts）：弹框开着时激活，且必须是 body
+    // 最后一个子节点（app-region 矩形按 DOM 顺序后者胜出，沉不了底就压不过
+    // 浮层的 no-drag，窗口拖不动的问题会复发）。
+    const dragBand = page.locator('[data-testid="window-drag-band"]');
+    await expect(dragBand).toHaveAttribute('data-active', 'true');
+    await expect
+      .poll(() => page.evaluate(() => document.body.lastElementChild?.getAttribute('data-testid')))
+      .toBe('window-drag-band');
     await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
       'aria-selected',
       'true',
@@ -100,6 +109,7 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
     );
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
+    await expect(dragBand).toHaveAttribute('data-active', 'false');
 
     // 设置 → 应用：只管已连接账号，带去扩展中心的入口。
     await openSettings(page, 'apps');
