@@ -1993,8 +1993,15 @@ export const zhCN = {
   'botWidget.retry': '重试',
   'botWidget.reload': '重新加载组件',
   'botWidget.sourceTruncated': '源码过长，仅显示前 2 万字符；完整内容以运行组件为准',
-  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 不保存任何数据',
+  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）',
+  'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',
+  'botWidget.openLinkHost': '将打开站点：',
+  'botWidget.openLinkConfirm': '在浏览器中打开',
+  'botWidget.openLinkCancel': '取消',
   'chats.errorCode.WIDGET_INVALID': '组件卡片与其版本记录不一致或已损坏，无法加载',
+  'chats.errorCode.WIDGET_RESOURCE_EXPIRED': '组件界面已过期，请重新加载这张卡片',
+  'chats.errorCode.WIDGET_RATE_LIMITED': '组件调用宿主能力过于频繁，请稍后再试',
+  'chats.errorCode.WIDGET_STORAGE_QUOTA': '这个组件的存储空间已用完',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

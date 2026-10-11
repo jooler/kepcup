@@ -36,6 +36,19 @@ export const BOT_WIDGET_HEIGHT_MAX = 800;
 export const BOT_WIDGET_CONSENT_STORAGE_KEY = 'kepcup.botWidget.consents.v1';
 export const BOT_WIDGET_CONSENTS_MAX = 200;
 
+// --- 能力桥（P1，设计 32 §6）---------------------------------------------------
+
+/** KV 单键的键长上限（字符）。 */
+export const BOT_WIDGET_STORAGE_KEY_MAX_CHARS = 200;
+/** KV 单值 JSON 序列化后的体积上限（字节）。 */
+export const BOT_WIDGET_STORAGE_VALUE_MAX_BYTES = 256 * 1024;
+/** 每个组件 KV 的总配额（字节）与键数上限（`widget_docs`，命名空间 = widgetId）。 */
+export const BOT_WIDGET_STORAGE_QUOTA_BYTES = 1024 * 1024;
+export const BOT_WIDGET_STORAGE_KEYS_MAX = 1000;
+/** 每张卡每秒最多发起的能力桥调用，与同时在途的上限（同 MCP Apps 语义，独立常量避免语义漂移）。 */
+export const BOT_WIDGET_CALLS_PER_SECOND = 5;
+export const BOT_WIDGET_CALLS_INFLIGHT_MAX = 3;
+
 // --- 卡片描述符（落库在对话消息里，不含 HTML） --------------------------------
 
 export const widgetScopeSchema = z.enum(['conversation', 'bot']);
@@ -96,3 +109,41 @@ export const widgetsUiCloseInputSchema = z.object({ resourceId: z.string().min(1
  */
 export const widgetsUiResourceInputSchema = appsUiResourceInputSchema;
 export const widgetsUiResourceOutputSchema = appsUiResourceOutputSchema;
+
+/**
+ * `widgets.ui.storage`（能力桥 KV，P1）：命名空间 = widgetId 的 `widget_docs` 键值存储。
+ * 渲染端桥收到 widget 的调用后带上 `resourceId`（一次性凭据）转发到这里；core 用它反查
+ * 登记资源拿 widgetId——resourceId 过期 / 不存在 = `WIDGET_RESOURCE_EXPIRED`。
+ */
+const widgetStorageKeySchema = z.string().min(1).max(BOT_WIDGET_STORAGE_KEY_MAX_CHARS);
+export const widgetsUiStorageInputSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('get'), resourceId: z.string().min(1), key: widgetStorageKeySchema }),
+  z.object({
+    op: z.literal('set'),
+    resourceId: z.string().min(1),
+    key: widgetStorageKeySchema,
+    /** 任意 JSON 值（undefined 拒绝）；序列化后受单值体积与总配额限制。 */
+    value: z.unknown(),
+  }),
+  z.object({ op: z.literal('delete'), resourceId: z.string().min(1), key: widgetStorageKeySchema }),
+  z.object({ op: z.literal('list'), resourceId: z.string().min(1) }),
+]);
+export type WidgetsUiStorageInput = z.infer<typeof widgetsUiStorageInputSchema>;
+
+export const widgetsUiStorageOutputSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('get'), found: z.boolean(), value: z.unknown().optional() }),
+  z.object({ op: z.literal('set') }),
+  z.object({ op: z.literal('delete') }),
+  z.object({ op: z.literal('list'), keys: z.array(z.string()) }),
+]);
+export type WidgetsUiStorageOutput = z.infer<typeof widgetsUiStorageOutputSchema>;
+
+/**
+ * `widgets.ui.openLink`（能力桥外链，P1）：渲染端已出卡内确认条征得用户同意，core 再核一次
+ * https-only 与无凭据（写法同 `apps.ui.openLink`），经主进程 `shell.openExternal` 打开。
+ */
+export const widgetsUiOpenLinkInputSchema = z.object({
+  resourceId: z.string().min(1),
+  url: z.string().min(1).max(2048),
+});
+export const widgetsUiOpenLinkOutputSchema = z.object({ ok: z.boolean() });

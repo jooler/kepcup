@@ -44,9 +44,10 @@
 - [x] 文档回写：`docs/design/32`（已建）、`docs/design/README.md`（索引 + D81）、`docs/dev/03-data-model.md`（三表 + 级联表两行）、`docs/dev/04-agent-runtime.md`（工具目录）、`docs/dev/PROGRESS.md`（验收证据）
 
 ### P1 能力桥
-- [ ] `BotWidgetCard` 内 postMessage 宿主桥（关联 id、只信 `event.source`）
-- [ ] `widgets.ui.storage`（KV get/set/delete/list，配额 1MB / 1000 键，限速）+ widget 侧注入 `window.kepcup` 垫片（core 服务 HTML 时前置 `<script>`）
-- [ ] `widgets.ui.openLink`（复用 McpAppCard 确认条模式）
+- [x] `BotWidgetCard` 内 postMessage 宿主桥（关联 id、只信 `event.source`）
+- [x] `widgets.ui.storage`（KV get/set/delete/list，配额 1MB / 1000 键，限速）+ widget 侧注入 `window.kepcup` 垫片（core 服务 HTML 时前置 `<script>`）
+- [x] `widgets.ui.openLink`（复用 McpAppCard 确认条模式）
+- [x] `kepcup.theme()` / `setHeight(px)`（设计 32 §6 表内免审项；高度夹取 [100, 800]，未上报缺省 380px）
 
 ### P2 结构化数据与资产
 - [ ] 命名只读查询模板：工具参数 `queries`、版本内登记、`widgets.ui.query`（`prepare` + `stmt.readonly` 校验 + 行数上限）
@@ -83,3 +84,14 @@
   - `external-agent-p3` lease（1）：与并行会话当时提交到一半的工作区状态相关，其提交完成后复绿（13/13）。**与本功能无关**。
   - `environment.test` checksum（1）：HEAD 基线（干净 worktree）同样失败、`-t` 单测过滤下通过（用例间时序敏感），**本机既有 flake**，不属本功能，未修（留观察）。
 - 分支树上并行会话的媒体路由修复已由其自行提交（4469019 等）；`shared` / `core` 的 dist 重建已执行（含两批改动），**重启应用**后同时生效。
+
+### 2026-10-11（同日，P1 能力桥）
+
+- P1 全量实现（设计 32 §6 落地细节已回写，要点）：
+  - **桥协议**：widget → 宿主 `{source:'kepcup-widget', id, type, payload}`（方法白名单 `storage.get/set/delete/list`、`openLink`、`theme.get`、`setHeight`；setHeight 是通知无回执），宿主 → widget `{source:'kepcup-host', id, ok, value?/error?}`。renderer 侧纯校验在 `widget-bridge-guard.ts`（来源标记 / 白名单 / 关联 id / 1MB 体积上限 / 高度夹取），`WidgetBridgeHost` 持唯一来源防线 `event.source === frameWindow`（opaque origin 下 `event.origin` 恒 "null" 不能当凭据），每个请求恰好回执一次。
+  - **KV**：`widgets.ui.storage` 是 op 判别 union（get 带 `found`/`value`，set/delete 幂等，list 按键序）；service 以 resourceId 反查资源定 widgetId 命名空间，值存 `widget_docs.value_json`（JSON 文本）；限速加在 `WidgetResourceStore.tryAcquireCall`（复刻 `UiResourceStore` 的 1s 滚动窗口 + 在途上限，所有 op 都计）。数据在库里、资源在内存：资源过期重开卡片（新 resourceId）数据仍在，重启应用亦然。
+  - **垫片**：静态 `<script>`（`sdk-injection.ts` 的 `WIDGET_SDK_SHIM`），promise 化 + 关联 id + 15s 内不设超时（宿主对每个请求必回执，iframe 销毁时挂起的 promise 随上下文消亡）；插入点 head 优先 → doctype 后 → 文档开头（quirks-mode 防线，见 design 32 §6）；`open()` 登记垫片版 HTML，`source()` 仍回原文，注入幂等（含 `source: 'kepcup-widget'` 标记即跳过）。
+  - **外链**：renderer `normalizeAppLink`（复用 apps-ui 的 bridge-guard 纯函数）→ 卡内确认条（`pendingLink` 单例 + 5s 冷却，testid `bot-widget-link-*`）→ `widgets.ui.openLink` → core 再核 https/无凭据 → 主进程 `shell.openExternal`（`WidgetServiceDeps` 新增 `shell`）。
+  - **theme / 高度**：theme 建桥时一次性读取（mode-watcher），不推送变更（组件需要可自行轮询）；`setHeight` 夹取 [100, 800]（`BOT_WIDGET_HEIGHT_MIN/MAX`），未上报缺省 380px（P0 行为兜底）。
+  - **错误码**：新增 `WIDGET_RESOURCE_EXPIRED` / `WIDGET_RATE_LIMITED` / `WIDGET_STORAGE_QUOTA`（errors.ts + zh-CN `chats.errorCode.*`）；footer 能力文案从「不保存任何数据」改为「数据仅保存在本机（每组件独立）」；`widget_create`/`widget_update` 的 HTML 指南与任务平台规则同步写明 `window.kepcup` 能力与配额。
+- 验证：`widgets-service.test.ts` 扩到 20 例（KV 往返 / 命名空间隔离 / 重开数据仍在 / 单值与总配额与键数上限 / 限速窗口 / resourceId 过期 / openLink https-only / 垫片注入点与幂等 / doctype 不被顶走）；desktop `widget-bridge-guard.test.ts`（5 例：白名单 / 形状 / 体积 / 回执形状 / 高度夹取）全绿；`widget-tools` / `supervisor-turn` / `context-assembly` / `app-prompt-capabilities`（提示词文案变更波及面）回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。收口全量一次的甄别结论见 PROGRESS。

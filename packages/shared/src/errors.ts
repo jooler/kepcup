@@ -140,6 +140,12 @@ export const ERROR_CODES = [
   'LOCAL_CONNECTOR_ACK_REQUIRED',
   /** Bot 自制交互组件（D81）：卡片内容损坏 / 版本缺失 / 卡片与版本 sha256 不一致。 */
   'WIDGET_INVALID',
+  /** Bot 组件能力桥（D81 P1）：一次性资源凭据已过期或不存在，需重新打开卡片。 */
+  'WIDGET_RESOURCE_EXPIRED',
+  /** Bot 组件能力桥（D81 P1）：能力桥调用超过每秒 / 在途上限。 */
+  'WIDGET_RATE_LIMITED',
+  /** Bot 组件能力桥（D81 P1）：KV 超出每组件配额（总字节 / 键数）。 */
+  'WIDGET_STORAGE_QUOTA',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
