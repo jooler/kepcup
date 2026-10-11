@@ -26,6 +26,7 @@
   import SkillsTab from './SkillsTab.svelte';
   import WikiTab from './WikiTab.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
+  import WidgetsTab from './WidgetsTab.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
@@ -61,6 +62,7 @@
     { value: 'access', labelKey: 'rightPanel.tabAccess' },
     { value: 'memory', labelKey: 'rightPanel.tabMemory' },
     { value: 'skills', labelKey: 'rightPanel.tabSkills' },
+    { value: 'widgets', labelKey: 'rightPanel.tabWidgets' },
     { value: 'wiki', labelKey: 'rightPanel.tabWiki' },
     { value: 'schedules', labelKey: 'rightPanel.tabSchedules' },
     { value: 'other', labelKey: 'rightPanel.otherSection' },
@@ -503,6 +505,17 @@
       >
         {#if bot}
           <SkillsTab botId={bot.id} active={activeTab === 'skills'} />
+        {/if}
+      </div>
+      <div
+        id="tab-panel-widgets"
+        role="tabpanel"
+        aria-labelledby="tab-widgets"
+        class="min-h-0 flex-1 overflow-y-auto p-4"
+        hidden={activeTab !== 'widgets'}
+      >
+        {#if bot}
+          <WidgetsTab botId={bot.id} conversationId={conversation?.id} active={activeTab === 'widgets'} />
         {/if}
       </div>
       <div

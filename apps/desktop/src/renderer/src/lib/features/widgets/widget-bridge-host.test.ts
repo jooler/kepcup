@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import type { WidgetsUiStorageCall, WidgetsUiStorageOutput } from '@kepcup/shared';
+import type {
+  WidgetsUiQueryCall,
+  WidgetsUiQueryOutput,
+  WidgetsUiStorageCall,
+  WidgetsUiStorageOutput,
+} from '@kepcup/shared';
 import { WidgetBridgeHost, type WidgetBridgeListenerTarget } from './widget-bridge-host';
 
 /**
@@ -18,7 +23,10 @@ interface Reply {
   error?: string;
 }
 
-function harness(options?: { storage?(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput> }) {
+function harness(options?: {
+  storage?(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput>;
+  query?(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput>;
+}) {
   const replies: Reply[] = [];
   const frameWindow = {
     postMessage: (msg: Reply) => {
@@ -37,6 +45,7 @@ function harness(options?: { storage?(input: WidgetsUiStorageCall): Promise<Widg
   };
   const heights: number[] = [];
   const storageCalls: WidgetsUiStorageCall[] = [];
+  const queryCalls: WidgetsUiQueryCall[] = [];
   const openLinkCalls: string[] = [];
   const host = WidgetBridgeHost.connect({
     frameWindow,
@@ -52,6 +61,12 @@ function harness(options?: { storage?(input: WidgetsUiStorageCall): Promise<Widg
       if (input.op === 'list') return { op: 'list', keys: ['a', 'b'] };
       return { op: input.op };
     }),
+    query:
+      options?.query ??
+      (async (input: WidgetsUiQueryCall) => {
+        queryCalls.push(input);
+        return { rows: [{ total: input.params['month'] === '2026-02' ? 5 : 0 }], truncated: false };
+      }),
     openLink: async (url) => {
       openLinkCalls.push(url);
       return url === 'https://good.example/';
@@ -67,7 +82,7 @@ function harness(options?: { storage?(input: WidgetsUiStorageCall): Promise<Widg
   const settled = async (): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
-  return { host, replies, heights, storageCalls, openLinkCalls, emit, settled };
+  return { host, replies, heights, storageCalls, queryCalls, openLinkCalls, emit, settled };
 }
 
 const widgetMessage = (overrides: Record<string, unknown>): Record<string, unknown> => ({
@@ -172,6 +187,62 @@ describe('WidgetBridgeHost', () => {
     h.emit(widgetMessage({ id: 7, type: 'theme.get', payload: {} }));
     await h.settled();
     expect(h.replies).toEqual([{ source: 'kepcup-host', id: 7, ok: true, value: 'dark' }]);
+    h.host.destroy();
+  });
+
+  test('query: name+params reach core; params defaults to {}; result value is replied', async () => {
+    const h = harness();
+    h.emit(widgetMessage({ id: 1, type: 'query', payload: { name: 'by_month', params: { month: '2026-02' } } }));
+    h.emit(widgetMessage({ id: 2, type: 'query', payload: { name: 'all' } }));
+    await h.settled();
+    expect(h.queryCalls).toEqual([
+      { name: 'by_month', params: { month: '2026-02' } },
+      { name: 'all', params: {} },
+    ]);
+    expect(h.replies.map((r) => [r.id, r.ok, r.value])).toEqual([
+      [1, true, { rows: [{ total: 5 }], truncated: false }],
+      [2, true, { rows: [{ total: 0 }], truncated: false }],
+    ]);
+    h.host.destroy();
+  });
+
+  test('query: malformed name / params are refused before reaching core', async () => {
+    const h = harness();
+    h.emit(widgetMessage({ id: 1, type: 'query', payload: { name: '', params: {} } }));
+    h.emit(widgetMessage({ id: 2, type: 'query', payload: { params: {} } }));
+    h.emit(widgetMessage({ id: 3, type: 'query', payload: { name: 'q'.repeat(65), params: {} } }));
+    h.emit(widgetMessage({ id: 4, type: 'query', payload: { name: 'q', params: [1, 2] } }));
+    await h.settled();
+    expect(h.queryCalls).toHaveLength(0);
+    expect(h.replies.map((r) => [r.id, r.ok, r.code])).toEqual([
+      [1, false, 'INVALID_INPUT'],
+      [2, false, 'INVALID_INPUT'],
+      [3, false, 'INVALID_INPUT'],
+      [4, false, 'INVALID_INPUT'],
+    ]);
+    expect(String(h.replies[2]?.error)).toContain('查询名过长');
+    h.host.destroy();
+  });
+
+  test('query: core errors carry the human message and the machine-readable code', async () => {
+    const h = harness({
+      query: async () => {
+        throw Object.assign(new Error('查询「all」没有在这个组件版本里登记'), {
+          code: 'WIDGET_QUERY_UNKNOWN',
+        });
+      },
+    });
+    h.emit(widgetMessage({ id: 1, type: 'query', payload: { name: 'all', params: {} } }));
+    await h.settled();
+    expect(h.replies).toEqual([
+      {
+        source: 'kepcup-host',
+        id: 1,
+        ok: false,
+        error: '查询「all」没有在这个组件版本里登记',
+        code: 'WIDGET_QUERY_UNKNOWN',
+      },
+    ]);
     h.host.destroy();
   });
 

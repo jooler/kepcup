@@ -28,6 +28,7 @@ interface KepcupApi {
     delete(key: string): Promise<unknown>;
     list(): Promise<unknown>;
   };
+  query(name: unknown, params: unknown): Promise<unknown>;
   openLink(url: unknown): Promise<unknown>;
   theme(): Promise<unknown>;
   setHeight(height: unknown): void;
@@ -163,6 +164,41 @@ describe('WIDGET_SDK_SHIM 执行路径', () => {
     expect(h.sent[1]).toMatchObject({ type: 'openLink', payload: { url: 'https://example.com' } });
     h.reply({ source: 'kepcup-host', id: 2, ok: true, value: true });
     await expect(opened).resolves.toBe(true);
+  });
+
+  it('query：请求形状 { name, params }；params 缺省为 {}；按关联 id 配对回执并透传错误码', async () => {
+    const h = installShim();
+    const pending = h.kepcup.query('by_month', { month: '2026-02' });
+    expect(h.sent[0]).toEqual({
+      source: 'kepcup-widget',
+      id: 1,
+      type: 'query',
+      payload: { name: 'by_month', params: { month: '2026-02' } },
+    });
+    h.reply({ source: 'kepcup-host', id: 1, ok: true, value: { rows: [{ total: 5 }], truncated: false } });
+    await expect(pending).resolves.toEqual({ rows: [{ total: 5 }], truncated: false });
+
+    // params 缺省为 {}（宿主 schema 的 default 语义在垫片侧就兑现）。
+    const noParams = h.kepcup.query('all', undefined);
+    expect(h.sent[1]).toMatchObject({ type: 'query', payload: { name: 'all', params: {} } });
+    h.reply({
+      source: 'kepcup-host',
+      id: 2,
+      ok: false,
+      error: '查询「all」没有在这个组件版本里登记',
+      code: 'WIDGET_QUERY_UNKNOWN',
+    });
+    await expect(noParams).rejects.toMatchObject({
+      message: '查询「all」没有在这个组件版本里登记',
+      code: 'WIDGET_QUERY_UNKNOWN',
+    });
+  });
+
+  it('query：非空字符串校验在发消息前同步失败，不发消息', async () => {
+    const h = installShim();
+    await expect(h.kepcup.query('', {})).rejects.toThrow(/非空字符串/);
+    await expect(h.kepcup.query(42, {})).rejects.toThrow(/非空字符串/);
+    expect(h.sent).toHaveLength(0);
   });
 
   it('二次执行同一 window 时垫片早退（不重装、不发消息）', () => {

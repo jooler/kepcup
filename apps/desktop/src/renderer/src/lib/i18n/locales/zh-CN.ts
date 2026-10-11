@@ -475,6 +475,7 @@ export const zhCN = {
   'rightPanel.tabProfile': '配置',
   'rightPanel.tabMemory': '记忆',
   'rightPanel.tabSkills': 'Skills',
+  'rightPanel.tabWidgets': '组件',
   'rightPanel.tabWiki': 'Wiki',
   'rightPanel.deletedBot': '该 Bot 已被删除',
   'rightPanel.clickToEdit': '点击编辑',
@@ -1983,6 +1984,10 @@ export const zhCN = {
   'botWidget.byBot': 'Bot 制作',
   'botWidget.reviewNote':
     '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网、读不到你的其他数据；建议先查看源码再加载。',
+  'botWidget.reviewNoteQueries':
+    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网；数据库查询仅限下方列出的只读模板；建议先查看源码再加载。',
+  'botWidget.queriesNote':
+    '本版本声明了 {n} 个数据库查询（只读模板），SQL 全文在「查看源码」里，请一并审查',
   'botWidget.load': '加载运行',
   'botWidget.sourceShow': '查看源码',
   'botWidget.sourceHide': '收起源码',
@@ -1993,15 +1998,33 @@ export const zhCN = {
   'botWidget.retry': '重试',
   'botWidget.reload': '重新加载组件',
   'botWidget.sourceTruncated': '源码过长，仅显示前 2 万字符；完整内容以运行组件为准',
-  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）',
+  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
   'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',
   'botWidget.openLinkHost': '将打开站点：',
   'botWidget.openLinkConfirm': '在浏览器中打开',
   'botWidget.openLinkCancel': '取消',
+  'botWidget.queriesTitle': '数据库查询模板（随版本由你审查）',
+  // Bot 详情「组件」Tab（D81 P2 管理入口）
+  'widgetsTab.hint': '这个 Bot 制作的交互组件。跨对话资产不随对话删除，可发到任意对话；删除会清除全部版本与数据，历史卡片将无法打开。',
+  'widgetsTab.empty': '还没有组件。在任务里让 Bot 用 widget_create 制作交互组件。',
+  'widgetsTab.assetBadge': '跨对话资产',
+  'widgetsTab.conversationScopedBadge': '仅本对话',
+  'widgetsTab.conversationSection': '会话级组件（随所属对话删除）',
+  'widgetsTab.versionCount': '{n} 个版本',
+  'widgetsTab.queriesCount': '{n} 个查询模板',
+  'widgetsTab.publish': '发到当前对话',
+  'widgetsTab.published': '已发卡到当前对话，等用户确认加载',
+  'widgetsTab.publishCardFailed': '组件已引用，但卡片发送失败，对话里没有出现新卡片；请稍后重试',
+  'widgetsTab.delete': '删除',
+  'widgetsTab.deleteConfirm': '确认删除',
+  'widgetsTab.deleted': '组件已删除',
+  'widgetsTab.actionFailed': '组件操作失败',
   'chats.errorCode.WIDGET_INVALID': '组件卡片与其版本记录不一致或已损坏，无法加载',
   'chats.errorCode.WIDGET_RESOURCE_EXPIRED': '组件界面已过期，请重新加载这张卡片',
   'chats.errorCode.WIDGET_RATE_LIMITED': '组件调用宿主能力过于频繁，请稍后再试',
   'chats.errorCode.WIDGET_STORAGE_QUOTA': '这个组件的存储空间已用完',
+  'chats.errorCode.WIDGET_QUERY_UNKNOWN': '组件调用了未登记的查询模板（需要 Bot 发新版本）',
+  'chats.errorCode.WIDGET_QUERY_FAILED': '组件查询执行失败（参数不符或模板已损坏）',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

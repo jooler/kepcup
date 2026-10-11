@@ -146,6 +146,13 @@ export const ERROR_CODES = [
   'WIDGET_RATE_LIMITED',
   /** Bot 组件能力桥（D81 P1）：KV 超出每组件配额（总字节 / 键数）。 */
   'WIDGET_STORAGE_QUOTA',
+  /**
+   * Bot 组件能力桥查询（D81 P2）：调用了本组件当前版本未登记的查询模板名
+   * （模板随版本声明，更新模板需 widget_update 发新版本）。
+   */
+  'WIDGET_QUERY_UNKNOWN',
+  /** Bot 组件能力桥查询（D81 P2）：参数不符 / SQL 无法编译 / 执行出错。 */
+  'WIDGET_QUERY_FAILED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

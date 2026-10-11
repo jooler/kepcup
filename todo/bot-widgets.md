@@ -50,8 +50,8 @@
 - [x] `kepcup.theme()` / `setHeight(px)`（设计 32 §6 表内免审项；高度夹取 [100, 800]，未上报缺省 380px）
 
 ### P2 结构化数据与资产
-- [ ] 命名只读查询模板：工具参数 `queries`、版本内登记、`widgets.ui.query`（`prepare` + `stmt.readonly` 校验 + 行数上限）
-- [ ] `scope='bot'` 组件管理入口（列表 / 删除 / 跨对话引用）
+- [x] 命名只读查询模板：工具参数 `queries`、版本内登记（0029：`widget_queries` 表 + `widget_versions.queries_sha256`）、`widgets.ui.query`（`prepare` + `stmt.readonly` + 首关键词 SELECT/WITH 双门槛 + 行数上限 200 截断）
+- [x] `scope='bot'` 组件管理入口（Bot 详情「组件」Tab：列表 / 删除 / 发到当前对话；跨对话引用 = `widget_publish` 工具 + `widget_update` 解禁到任意对话——形态经用户确认）
 
 ## 5. 测试
 
@@ -109,3 +109,27 @@
   - **UI 去重**：外链确认条抽 `LinkConfirmBar.svelte`（安全 UI 单一实现，McpAppCard / BotWidgetCard 共用，文案经 props 传各自 i18n）。
   - **测试基建**：`WidgetBridgeHost` 监听目标可注入，新增协议级测试（来源防线 / 回执契约 / code 透传 / 节流 / destroy），无需 DOM。
   - **文档**：inflight 上限如实标注「预留」（当前全同步不生效）；todo「15s 超时」草稿措辞纠正；dev/03 `widget_docs` 补 P1 写入方与配额。
+
+### 2026-10-11（同日，P2 结构化数据与资产）
+
+- P2 全量实现（设计 32 §3/§4/§6/§7 已回写，要点）：
+  - **查询模板**：迁移 `0029_widget_queries.sql`（`widget_queries` 表，主键 (widget_id, version, name)）+ `widget_versions.queries_sha256` 列（该版本模板清单按名字序 JSON 的 sha256，无模板空串）。工具参数 `queries`（create/update 都收，每版本**全量快照**：不传 = 该版本没有查询），交付侧校验：形状 / 名字唯一（`[A-Za-z0-9_-]{1,64}`）/ ≤20 条 / SQL ≤64KB / **prepare + 只读门槛**——`stmt.readonly` 且首关键词必须 SELECT/WITH（`sqlite3_stmt_readonly` 对 `pragma foreign_keys=off`、`attach` 等也返回 true，连接级副作用必须挡在门外；prepare 编译顺带暴露语法错与表不存在，Bot 交付时即得可行动报错）。
+  - **运行时 `widgets.ui.query`**：resourceId 反查资源拿 widgetId + **卡片钉住的 version**（旧卡永远用旧模板），取该版本模板执行；运行时对库行再跑同一只读门槛（防外力改动）。参数只允许 JSON 标量（boolean 归一 1/0，对象/数组/undefined 拒绝），better-sqlite3 缺名参数报错人话化（`缺少参数「x」`）。行数上限 200（`BOT_WIDGET_QUERY_ROWS_MAX`）迭代即断并标 `truncated`；**超时无法真中断**（better-sqlite3 同步执行、core 单线程），扫描耗时以人工预审为主要边界——design 32 §6 与 service 注释均已写明。行值归一 JSON 安全（BLOB → base64 字符串）。错误码登记三件套：`WIDGET_QUERY_UNKNOWN`（该版本没登记此名）/ `WIDGET_QUERY_FAILED`（参数不符 / 编译失败 / 执行出错）。
+  - **确认指纹覆盖查询**：卡片描述符新增 `queriesSha256` / `queriesCount`（zod default 兼容旧卡），open/source 的完整性校验扩到 `queries_sha256`；渲染端确认记忆键改为 `sha256|queriesSha256`——HTML 不变、仅查询变化的新版本同样要求重新确认（P1 时代的旧确认失配、多确认一次，安全方向）。
+  - **管理入口**（形态经用户确认：Bot 详情右栏新「组件」Tab + `widget_publish` 工具）：RPC `widgets.list`（该 Bot 全部组件 + 最新版本信息，按更新时间倒序）/ `widgets.delete`（botId 校验后清四表 + `store.removeForWidget` 摘除在途资源，已挂 iframe 下一次桥调用即 `WIDGET_RESOURCE_EXPIRED`，历史卡片按版本已不存在优雅报错）/ `widgets.publish`（Bot 级组件最新版发卡到指定对话）。`RightPanel` 新 Tab 渲染 `WidgetsTab.svelte`（跨对话资产在上带「发到当前对话」，会话级分组在下，删除两步确认同 SchedulesPanel 先例）。
+  - **跨对话引用**：`widget_update` 解禁——Bot 级组件（conversation_id 为 NULL）可在任意对话更新，新卡发到当前对话（`WidgetUpdateInput.conversationId`）；会话级组件仍固定发回归属对话。新工具 `widget_publish{widget_id}`：只认 `scope='bot'` 且属于本 Bot，不落新版本、钉最新版发卡，受每 run 8 张上限约束。`WIDGET_HTML_GUIDE` / system prompt 规则 / dev 04 工具目录同步更新。
+  - **inflight 措辞按实际修正**：query 落地后所有能力桥调用（storage / query）依然在 core 单线程同步执行（acquire→release 无 await），`BOT_WIDGET_CALLS_INFLIGHT_MAX` 是纵深防线、未触达——resource-store 注释与 design 32 §6 不再说「为 P2 预留」。
+- 验证：`widgets-service.test.ts` 扩到 33 例（模板登记与摘要 / 交付只读门槛全矩阵含 PRAGMA/ATTACH/WITH-INSERT/多语句 / 版本钉住换模板 / 参数归一与缺参 / 行数截断 / 限速与过期 / 摘要不一致 WIDGET_INVALID / list/delete/publish）；`sdk-injection.test.ts` 12 例（query 请求形状与 params 缺省 / code 透传 / 前置校验不发消息）；desktop `widget-bridge-host.test.ts` 12 例（query dispatch / 名字与 params 前置拒 / 错误码透传）；`widget-tools.test.ts` 9 例（queries 透传与归一 / publish 工具）；`create-core.test.ts`（user_version=29 + `widget_queries`）与 `public-skills-migration`（回拨摘除 `widget_queries`）复绿；`supervisor-turn` / `context-assembly` / `app-prompt-capabilities`（提示词波及面）回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。收口全量一次的甄别结论见 PROGRESS。
+
+### 2026-10-11（同日，P2 独立审查修复轮）
+
+- 双审查（安全与正确性 50+ 真实探针 / 工程质量）结论：无 P0，只读门槛与信任模型零绕过。修复清单（证据与探针见 PROGRESS 同名段）：
+  - query 回执补**字节上限**（`BOT_WIDGET_QUERY_RESULT_MAX_BYTES` = 1MB，对齐桥入站上限；行数约束不了行宽，溢出行不返回）；
+  - `deleteForBot` 补摘在途资源（否则存活 iframe 30 分钟内打到已消失的库行、KV 写收裸 SQLite 英文错误）；
+  - bigint 参数超 ±2^53 拒绝（better-sqlite3 按 double 绑定会静默失真），指南注明结果侧大整数列降精度；
+  - `:__proto__` 命名参数交付时即拒（对象键赋值是原型操作，运行时必败但人审会放行）；
+  - `#pinnedVersion` 对 `widget_queries` 现行内容**复算摘要**（堵「只改模板内容、版本行摘要不动」的审查对象偷换）；
+  - `WidgetWriteResult` 补 `title`，修 publish 发卡失败分支的占位文案错乱；`widgets.publish`/`widgets.delete` 的 UI 路径不再假报成功（检查 ok 与 cardMessageId，发卡失败 toast.warning）；审查态提示按是否声明查询分支（消除安全文案自相矛盾）；
+  - `listForBot` sizeBytes 改字节口径（`length(cast(v.html as blob))`）；WidgetsTab 复用 `formatBytes`。
+  - 裁决不加：`widgets.changed` 事件、publish RPC 配额、`#gateReadonlyQuery`/query() 双查收敛（错误语义不同）。工作区另有并行会话的 34-supplier.md（D83），提交时拆分。
+- 验证：`widgets-service.test.ts` 37 例、`widget-tools.test.ts` 9 例全绿；三包 typecheck 干净（svelte-check 仅既有 warning）；改动文件 eslint 干净；收口全量一次（甄别见 PROGRESS）。
