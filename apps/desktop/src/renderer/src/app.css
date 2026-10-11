@@ -286,6 +286,23 @@ html.platform-mac main {
 }
 
 /*
+ * streamdown 行内 code（codespan）：长路径等无断行机会的 token 按 min-content
+ * 溢出所在段落，会戳破气泡（p 自身宽度正常，溢出的是 code 里的长 token）。
+ * 把 codespan 收成 inline-block 并限宽到所在块（max-width:100%），放不下时在
+ * code 内部出横向滚动条，而不是让滚动条/溢出落在 p 上；overscroll-behavior
+ * 截住触控板滚动链，滚到 code 末尾不再带动整页横移。含空格的短 codespan 仍
+ * 按普通文本换行。注意 overflow 非 visible 会把 inline-block 的基线变成盒底
+ * 边缘，这里显式用 middle 对齐，避免 code 相邻文字上下错位。
+ */
+[data-streamdown-codespan] {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  vertical-align: middle;
+}
+
+/*
  * 预置 Bot 头像动效（参考 Grok Bot）：眼睛四处看 + 眨眼 + 整体轻缓摇摆。
  * 动画类挂在 SVG 内部 group 上，但 {@html} 注入的形状节点拿不到 Svelte
  * scoped class，因此这里的规则必须是全局的；prefers-reduced-motion 时全关。
