@@ -18,7 +18,8 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
-    minWidth: 960,
+    // 允许窄到手机宽度（375）：扩展中心等弹框在小窗口仍可用，不再按桌面布局设下限
+    minWidth: 375,
     minHeight: 600,
     show: false,
     title: APP_NAME,

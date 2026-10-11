@@ -1068,7 +1068,7 @@ export const zhCN = {
   'sidebar.extensionCenter': '扩展中心',
   'extensionCenter.title': '扩展中心',
   'extensionCenter.description': '为 Bot 添加技能、连接常用应用、管理已安装的 MCP 工具服务器。',
-  'extensionCenter.tabs.skills': 'Skills',
+  'extensionCenter.tabs.skills': '技能',
   'extensionCenter.tabs.connections': '连接',
   'extensionCenter.tabs.mcp': 'MCP',
   'extensionCenter.connections.back': '返回应用列表',

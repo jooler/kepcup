@@ -409,7 +409,7 @@
   3. **设置「应用」的「目录」页签直接移除**（任务书允许「移除或改成跳转」）：整个分区去掉页签（只剩已连接管理），顶部加跳转扩展中心的横条；`APPS_TABS` / `appsTabForKey` 删除，`AppsTab` 类型保留 `'catalog' | 'connected' | 'custom'` 仅为旧深链参数可编译（`catalog` / `connected` 被忽略，`custom` → 开发者模式）。Bot 面板的「去连接」改为直接打开扩展中心「连接」组。
   4. **「MCP」组复用 `McpSection` 的 `manage` 形态**：保留已有 server 的编辑 / 删除（只隐藏「新建 server」与 BYO 客户端面板），`.mcpb` 安装留在这里。
   5. **精选 MCP 清单只建空壳，不接 RPC、不进安装包**：`resources/mcp-presets/catalog.json`（空）+ core `mcp/presets.ts` 的 schema / 加载器 + 单测；`extraResources`、core-host 环境变量、RPC 与卡片渲染等第一个条目落地时再补（见该目录 README）。
-  6. **扩展中心弹框改为固定高度（`h-[85vh]`）**：原技能市场是 `max-h-[85vh]` 随内容伸缩；三个分组共用一个框，固定高度避免切页签时抖动。Skills 分组内容与行为不变（`skill-market-*` testid 原样保留，仅弹框与入口按钮改名）。
+  6. **扩展中心弹框改为固定高度（`h-[70vh]`）**：原技能市场是 `max-h-[85vh]` 随内容伸缩；三个分组共用一个框，固定高度避免切页签时抖动。Skills 分组内容与行为不变（`skill-market-*` testid 原样保留，仅弹框与入口按钮改名）。
   7. **「连接」组的目录为空时隐藏搜索 / 分类筛选**，只显示「暂无已适配的应用」（新增 `AppCatalogGrid` 的 `onManage` 属性与目录空态；设置里不再使用该网格）。
 - 影响范围：渲染端 `features/extension-center/*`、`features/settings/{sections,SettingsDialog,AppsSection,DeveloperSection,McpSection}`、`features/apps/{AppCatalogGrid,AppConnectionsList}`、`stores/shell.svelte.ts`、`i18n/locales/zh-CN.ts`；core `mcp/presets.ts`；e2e `skill-market` / `sidebar-resize` / 新增 `extension-center`。无 RPC / 迁移 / 共享契约改动。
 - 可选方案：按上述实现保留（推荐）；或 1 把「开发者模式」开关放进「通用」分区、仅开启后才出现分区导航（多一处开关入口，不推荐）、5 现在就接 RPC 与打包（清单为空时是死代码，不推荐）。
