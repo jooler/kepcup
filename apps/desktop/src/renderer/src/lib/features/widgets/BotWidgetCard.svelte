@@ -1,29 +1,40 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { Blocks, Code2, RefreshCw, ShieldCheck } from '@lucide/svelte';
+  import { mode } from 'mode-watcher';
   import {
     BOT_WIDGET_CONSENT_STORAGE_KEY,
     BOT_WIDGET_CONSENTS_MAX,
     BOT_WIDGET_HEIGHT_MAX,
     BOT_WIDGET_HEIGHT_MIN,
+    MCP_APP_LINK_COOLDOWN_MS,
+    widgetsUiOpenLinkOutputSchema,
     widgetsUiOpenOutputSchema,
     widgetsUiSourceOutputSchema,
+    widgetsUiStorageOutputSchema,
     type WidgetCard,
     type WidgetsUiOpenOutput,
+    type WidgetsUiStorageOutput,
   } from '@kepcup/shared';
   import { Button } from '$lib/components/ui/button';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { describeAppLink } from '$lib/features/apps-ui/bridge-guard';
+  import { WidgetBridgeHost } from './widget-bridge-host';
 
   /**
    * 对话里的 Bot 自制交互组件卡片（D81，docs/design/32-bot-widgets.md）。
    *
    * 审查态先行：Bot 生成的 HTML 是最低信任内容——初始不挂 iframe，展示版本与能力
-   * （禁网 / 本机存储），用户「查看源码」或「加载运行」。按 sha256 记忆确认（同版本
+   * （禁网 / 本机 KV 存储），用户「查看源码」或「加载运行」。按 sha256 记忆确认（同版本
    * 只确认一次，localStorage），新版本视为新代码。加载后 `widgets.ui.open` 登记
-   * 内存资源，iframe `sandbox="allow-scripts"`（opaque origin，无 preload）指向
-   * `kepcup-app://widget-{hash}/{id}`；能力桥（P1 起）由后续版本的卡片内 postMessage
-   * 宿主提供，本组件不含任何对 iframe 的 DOM 访问。
+   * 内存资源（core 在 HTML 前置 SDK 垫片），iframe `sandbox="allow-scripts"`
+   * （opaque origin，无 preload）指向 `kepcup-app://widget-{hash}/{id}`。
+   *
+   * 能力桥（P1）：`WidgetBridgeHost` 在挂 iframe 前监听，只信
+   * `event.source === frameWindow` 的消息——`storage.*` 转发为 `widgets.ui.storage`，
+   * `openLink` 先出卡内确认条（拒绝后冷却，同 McpAppCard），`setHeight` 夹取后调高度，
+   * `theme` 回建桥时的明暗主题。
    */
   let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
 
@@ -36,13 +47,19 @@
   let sourceHtml = $state<string | null>(null);
   let sourceError = $state(false);
   let sourceLoading = $state(false);
-  /** P0 无能力桥：固定高度，组件内部滚动。 */
+  /** 未上报前的缺省高度；组件可用 `kepcup.setHeight` 自适应（夹到 [100, 800]）。 */
   let height = $state(380);
   /** 查看源码的展示上限：本地库损坏时 html 可能远超 2MB 上限，整段渲染会卡死界面。 */
   const SOURCE_DISPLAY_MAX_CHARS = 20_000;
+  let pendingLink = $state<{ url: string; resolve: (ok: boolean) => void } | null>(null);
+  /** 一条外链被取消后的冷却（防反复弹确认条），与 McpAppCard 同值。 */
+  let linkBlockedUntil = 0;
 
+  let bridge: WidgetBridgeHost | null = null;
   let generation = 0;
   let activeResource: string | null = null;
+
+  const linkInfo = $derived(pendingLink === null ? null : describeAppLink(pendingLink.url));
 
   async function start(): Promise<void> {
     const gen = ++generation;
@@ -59,7 +76,32 @@
       activeResource = out.resourceId;
       opened = out;
       await tick();
-      if (frame === undefined || !frame.contentWindow) throw new Error('frame unavailable');
+      const frameWindow = frame?.contentWindow;
+      if (frame === undefined || !frameWindow) throw new Error('frame unavailable');
+      // Listen first, then load: the shim's first calls must find the bridge ready.
+      bridge = WidgetBridgeHost.connect({
+        frameWindow,
+        resourceId: out.resourceId,
+        theme: mode.current === 'dark' ? 'dark' : 'light',
+        storage: (input) => callStorage(out.resourceId, input),
+        openLink: (url) =>
+          new Promise<boolean>((resolve) => {
+            // One confirmation at a time; a second request while one is open is refused.
+            if (pendingLink !== null || Date.now() < linkBlockedUntil) {
+              resolve(false);
+              return;
+            }
+            pendingLink = { url, resolve };
+          }),
+        onHeight: (value) => {
+          height = value;
+        },
+      });
+      if (gen !== generation) {
+        bridge.destroy();
+        bridge = null;
+        return;
+      }
       frame.src = out.url;
       cardState = 'ready';
     } catch (error) {
@@ -69,8 +111,23 @@
     }
   }
 
+  /** `widgets.ui.storage` 的渲染端出站：schema.parse 后原样回给桥（契约纪律同其他 RPC）。 */
+  async function callStorage(
+    resourceId: string,
+    input: { op: 'get' | 'set' | 'delete' | 'list'; key?: string; value?: unknown },
+  ): Promise<WidgetsUiStorageOutput> {
+    return widgetsUiStorageOutputSchema.parse(
+      await core.call('widgets.ui.storage', { resourceId, ...input }),
+    );
+  }
+
   async function stop(): Promise<void> {
     generation += 1;
+    pendingLink?.resolve(false);
+    pendingLink = null;
+    const connected = bridge;
+    bridge = null;
+    connected?.destroy();
     const resource = activeResource;
     activeResource = null;
     opened = null;
@@ -100,6 +157,27 @@
         sourceLoading = false;
       }
     }
+  }
+
+  async function confirmLink(): Promise<void> {
+    const link = pendingLink;
+    const resource = activeResource;
+    if (link === null || resource === null) return;
+    pendingLink = null;
+    try {
+      const result = widgetsUiOpenLinkOutputSchema.parse(
+        await core.call('widgets.ui.openLink', { resourceId: resource, url: link.url }),
+      );
+      link.resolve(result.ok);
+    } catch {
+      link.resolve(false);
+    }
+  }
+
+  function cancelLink(): void {
+    pendingLink?.resolve(false);
+    pendingLink = null;
+    linkBlockedUntil = Date.now() + MCP_APP_LINK_COOLDOWN_MS;
   }
 
   onMount(() => {
@@ -236,6 +314,7 @@
     <!--
       sandbox: scripts only — no allow-same-origin (opaque origin), no popups,
       no top-navigation, no forms. allow="": no camera / microphone / etc.
+      Capabilities reach the widget only through the WidgetBridgeHost listener.
     -->
     <iframe
       bind:this={frame}
@@ -247,6 +326,39 @@
       style="height: {Math.min(Math.max(height, BOT_WIDGET_HEIGHT_MIN), BOT_WIDGET_HEIGHT_MAX)}px; color-scheme: normal;"
       data-testid="bot-widget-frame"
     ></iframe>
+  {/if}
+
+  {#if pendingLink !== null && linkInfo !== null}
+    <div
+      class="border-t bg-amber-500/5 px-3 py-2 text-xs"
+      data-testid="bot-widget-link-confirm"
+      role="alertdialog"
+      aria-label={t('botWidget.openLinkTitle')}
+    >
+      <p class="font-medium">{t('botWidget.openLinkTitle')}</p>
+      <p class="mt-1" data-testid="bot-widget-link-host">
+        <span class="text-muted-foreground">{t('botWidget.openLinkHost')}</span>
+        <strong class="text-sm">{linkInfo.host}</strong>
+      </p>
+      <p class="mt-1 break-all text-muted-foreground" data-testid="bot-widget-link-url">
+        {linkInfo.display}
+      </p>
+      <div class="mt-2 flex justify-end gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          class="h-6 px-2 text-xs"
+          onclick={cancelLink}
+          data-testid="bot-widget-link-cancel">{t('botWidget.openLinkCancel')}</Button
+        >
+        <Button
+          size="sm"
+          class="h-6 px-2 text-xs"
+          onclick={() => void confirmLink()}
+          data-testid="bot-widget-link-open">{t('botWidget.openLinkConfirm')}</Button
+        >
+      </div>
+    </div>
   {/if}
 
   {#if cardState === 'ready'}

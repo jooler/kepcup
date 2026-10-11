@@ -10,6 +10,7 @@ import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { WidgetService } from '../../src/widgets/service.js';
 import { WidgetResourceStore, widgetUiHostFor } from '../../src/widgets/resource-store.js';
+import { WIDGET_SDK_SHIM, injectWidgetSdk } from '../../src/widgets/sdk-injection.js';
 
 /**
  * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：落库发卡、版本只增、
@@ -38,12 +39,15 @@ interface Harness {
   service: WidgetService;
   cards: Message[];
   getById(messageId: string): Message | null;
+  /** shell.openExternal 收到的外链（openLink 用例断言用）。 */
+  links: string[];
 }
 
 function makeHarness(ttlMs?: number, options?: { appendThrows?: boolean }): Harness {
   const db = openDb();
   const cards: Message[] = [];
   const byId = new Map<string, Message>();
+  const links: string[] = [];
   const service = new WidgetService(
     {
       db,
@@ -81,12 +85,18 @@ function makeHarness(ttlMs?: number, options?: { appendThrows?: boolean }): Harn
       },
       publishMessage: () => undefined,
       secrets: { redact: (text) => text },
+      shell: {
+        openExternal: async (input: { url: string }) => {
+          links.push(input.url);
+          return { ok: true };
+        },
+      },
       clock,
       logger: { warn: () => undefined },
     },
     new WidgetResourceStore({ clock, ttlMs }),
   );
-  return { db, service, cards, getById: (id) => byId.get(id) ?? null };
+  return { db, service, cards, getById: (id) => byId.get(id) ?? null, links };
 }
 
 function seed(db: SqliteDatabase): { botId: string; conversationId: string } {
@@ -107,6 +117,27 @@ function cardOfLast(cards: Message[]): WidgetCard {
   const content = cards[cards.length - 1]!.content as { cardType: string; widget: WidgetCard };
   expect(content.cardType).toBe(BOT_WIDGET_CARD_TYPE);
   return content.widget;
+}
+
+/** 建一个组件并 open 出 resourceId（storage / openLink 用例的公共前置）。 */
+function createAndOpen(
+  service: WidgetService,
+  cards: Message[],
+  html: string = HTML,
+): { widgetId: string; resourceId: string } {
+  const created = service.create({
+    botId: 'bot_a',
+    conversationId: 'conv_1',
+    title: 't',
+    description: '',
+    html,
+    scope: 'conversation',
+    runId: 'r',
+  });
+  if (!created.ok) throw new Error('create failed');
+  const messageId = cards[cards.length - 1]!.id;
+  const opened = service.open({ messageId });
+  return { widgetId: created.widgetId, resourceId: opened.resourceId };
 }
 
 let h: Harness;
@@ -250,7 +281,10 @@ describe('WidgetService 审查与资源', () => {
     expect(opened.url).toBe(`kepcup-app://${widgetUiHostFor(card.widgetId)}/${opened.resourceId}`);
 
     const page = h.service.resource({ resourceId: opened.resourceId, host: widgetUiHostFor(card.widgetId) });
-    expect(page.html).toBe(HTML);
+    // P1：登记的是「原文 + 前置 SDK 垫片」的版本；原文本体仍在（doctype 不被顶走）。
+    expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(page.html).toContain('<button id="b">1</button>');
+    expect(page.html).toContain("source: 'kepcup-widget'");
     expect(page.csp).toContain("connect-src 'none'");
     expect(page.csp).toContain('sandbox allow-scripts');
 
@@ -297,10 +331,12 @@ describe('WidgetService 审查与资源', () => {
     const messageId = h2.cards[0]!.id;
     const opened = h2.service.open({ messageId });
     const host = widgetUiHostFor(created.widgetId);
-    expect(h2.service.resource({ resourceId: opened.resourceId, host })).toEqual({
-      html: HTML,
-      csp: expect.any(String),
-    });
+    const page = h2.service.resource({ resourceId: opened.resourceId, host });
+    // P1：登记的是垫片版 HTML（P0 时为原文）；审查态 source 看到的仍是原文。
+    expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(page.html).toContain("source: 'kepcup-widget'");
+    expect(page.html).toContain('<button id="b">1</button>');
+    expect(page.csp).toEqual(expect.any(String));
     now += 100;
     expect(() => h2.service.resource({ resourceId: opened.resourceId, host })).toThrow();
   });
@@ -418,5 +454,217 @@ describe('WidgetService 删除级联', () => {
     expect(h.db.prepare('select count(*) as n from widget_docs').get() as { n: number }).toEqual({
       n: 0,
     });
+  });
+});
+
+describe('WidgetService 能力桥：storage KV（P1）', () => {
+  it('set/get/list/delete 往返；两个组件命名空间互不可见；重开后数据仍在', () => {
+    const a = createAndOpen(h.service, h.cards);
+    const b = createAndOpen(h.service, h.cards);
+    // 限速按资源滚动窗口计（每秒 5 次）：用例内多次调用之间推进时钟避开。
+    const tick = (): void => {
+      now += 1100;
+    };
+
+    tick();
+    expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'count' })).toEqual({
+      op: 'get',
+      found: false,
+    });
+    tick();
+    expect(h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'count', value: { n: 42 } })).toEqual({ op: 'set' });
+    tick();
+    expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'count' })).toEqual({
+      op: 'get',
+      found: true,
+      value: { n: 42 },
+    });
+    // 命名空间隔离：B 读不到 A 的键。
+    tick();
+    expect(h.service.storage({ op: 'get', resourceId: b.resourceId, key: 'count' })).toEqual({
+      op: 'get',
+      found: false,
+    });
+    tick();
+    expect(h.service.storage({ op: 'list', resourceId: b.resourceId })).toEqual({
+      op: 'list',
+      keys: [],
+    });
+
+    tick();
+    h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'note', value: '第二' });
+    tick();
+    h.service.storage({ op: 'set', resourceId: a.resourceId, key: 'alpha', value: 1 });
+    tick();
+    expect(h.service.storage({ op: 'list', resourceId: a.resourceId })).toEqual({
+      op: 'list',
+      keys: ['alpha', 'count', 'note'],
+    });
+
+    tick();
+    h.service.storage({ op: 'delete', resourceId: a.resourceId, key: 'note' });
+    tick();
+    expect(h.service.storage({ op: 'get', resourceId: a.resourceId, key: 'note' }).found).toBe(false);
+    // 删除不存在的键是幂等的。
+    tick();
+    expect(h.service.storage({ op: 'delete', resourceId: a.resourceId, key: 'nope' }).op).toBe('delete');
+
+    // 资源过期重开（新 resourceId）后数据仍在——数据在 widget_docs，不在内存资源里。
+    h.service.close(a.resourceId);
+    const reopened = h.service.open({ messageId: h.cards[h.cards.length - 2]!.id });
+    expect(h.service.storage({ op: 'get', resourceId: reopened.resourceId, key: 'count' })).toEqual({
+      op: 'get',
+      found: true,
+      value: { n: 42 },
+    });
+  });
+
+  it('set 拒绝 undefined 与不可序列化值（INVALID_INPUT）', () => {
+    const { resourceId } = createAndOpen(h.service, h.cards);
+    now += 1100;
+    expect(() => h.service.storage({ op: 'set', resourceId, key: 'k', value: undefined })).toThrow(
+      /INVALID_INPUT|undefined/,
+    );
+    now += 1100;
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    expect(() => h.service.storage({ op: 'set', resourceId, key: 'k', value: cyclic })).toThrow(
+      /INVALID_INPUT|JSON/,
+    );
+    // null / 0 / 空串等 falsy 值是合法 JSON，可以存。
+    now += 1100;
+    expect(h.service.storage({ op: 'set', resourceId, key: 'zero', value: 0 }).op).toBe('set');
+    now += 1100;
+    expect(h.service.storage({ op: 'get', resourceId, key: 'zero' })).toEqual({
+      op: 'get',
+      found: true,
+      value: 0,
+    });
+  });
+
+  it('配额：单值 / 总字节 / 键数超限 → WIDGET_STORAGE_QUOTA；覆盖旧键不受键数限制', () => {
+    const h2 = makeHarness();
+    seed(h2.db);
+    const { resourceId } = createAndOpen(h2.service, h2.cards);
+    // 每次调用前推进时钟，让限速窗口永不命中（本用例只测配额）。
+    const tick = (): void => {
+      now += 1100;
+    };
+    const set = (key: string, value: unknown): { op: string } => {
+      tick();
+      return h2.service.storage({ op: 'set', resourceId, key, value });
+    };
+
+    // 单值上限（256KB 序列化字节，引号也算）。
+    tick();
+    expect(() =>
+      h2.service.storage({ op: 'set', resourceId, key: 'big', value: 'x'.repeat(256 * 1024) }),
+    ).toThrow(/过大/);
+
+    // 总配额：4 × 220KB 可写，第 5 块触顶。
+    const chunk = 'y'.repeat(220_000);
+    for (let i = 0; i < 4; i += 1) expect(set(`k${i}`, chunk).op).toBe('set');
+    tick();
+    expect(() => h2.service.storage({ op: 'set', resourceId, key: 'k4', value: chunk })).toThrow(
+      /存储空间已用完/,
+    );
+    // 覆盖已有键：释放旧值体积后可以继续写。
+    expect(set('k0', 'small').op).toBe('set');
+
+    // 键数上限：清掉大键后恰好补到 1000 键，新键被拒。
+    for (const key of ['k1', 'k2', 'k3']) {
+      tick();
+      h2.service.storage({ op: 'delete', resourceId, key });
+    }
+    for (let i = 1; i < 1000; i += 1) expect(set(`key-${i}`, 1).op).toBe('set');
+    expect(() => set('one-too-many', 1)).toThrow(/键数量/);
+    // 满键数时覆盖旧键仍允许。
+    expect(set('key-5', 2).op).toBe('set');
+  });
+
+  it('限速：每资源每秒 5 次（滚动窗口），超限 WIDGET_RATE_LIMITED；窗口滑过后恢复', () => {
+    const { resourceId } = createAndOpen(h.service, h.cards);
+    for (let i = 0; i < 5; i += 1) {
+      expect(h.service.storage({ op: 'set', resourceId, key: `k${i}`, value: i }).op).toBe('set');
+    }
+    expect(() => h.service.storage({ op: 'set', resourceId, key: 'k5', value: 5 })).toThrow(
+      /WIDGET_RATE_LIMITED|频繁/,
+    );
+    // 另一个资源不受影响（限速按资源计）。
+    const other = createAndOpen(h.service, h.cards);
+    expect(h.service.storage({ op: 'set', resourceId: other.resourceId, key: 'k', value: 1 }).op).toBe('set');
+    // 窗口滑过：恢复可用。
+    now += 1001;
+    expect(h.service.storage({ op: 'set', resourceId, key: 'k5', value: 5 }).op).toBe('set');
+  });
+
+  it('resourceId 过期 / 未知 → WIDGET_RESOURCE_EXPIRED（storage 与 openLink 一致）', async () => {
+    const h2 = makeHarness(50);
+    seed(h2.db);
+    const { resourceId } = createAndOpen(h2.service, h2.cards);
+    now += 100;
+    expect(() => h2.service.storage({ op: 'set', resourceId, key: 'k', value: 1 })).toThrow(
+      /WIDGET_RESOURCE_EXPIRED|过期/,
+    );
+    expect(() => h2.service.storage({ op: 'get', resourceId: 'nope', key: 'k' })).toThrow(
+      /WIDGET_RESOURCE_EXPIRED|过期/,
+    );
+    await expect(h2.service.openLink({ resourceId, url: 'https://a.example/x' })).rejects.toThrow(
+      /WIDGET_RESOURCE_EXPIRED|过期/,
+    );
+  });
+});
+
+describe('WidgetService 能力桥：openLink（P1）', () => {
+  it('仅 https 无凭据经 shell 打开；http / 非法 URL / 带凭据 → ok:false 且不打扰 shell', async () => {
+    const { resourceId } = createAndOpen(h.service, h.cards);
+    await expect(
+      h.service.openLink({ resourceId, url: 'https://example.com/a?b=1' }),
+    ).resolves.toEqual({ ok: true });
+    expect(h.links).toEqual(['https://example.com/a?b=1']);
+
+    await expect(h.service.openLink({ resourceId, url: 'http://example.com/' })).resolves.toEqual({
+      ok: false,
+    });
+    await expect(
+      h.service.openLink({ resourceId, url: 'https://user:pass@example.com/' }),
+    ).resolves.toEqual({ ok: false });
+    await expect(h.service.openLink({ resourceId, url: 'javascript:alert(1)' })).resolves.toEqual({
+      ok: false,
+    });
+    await expect(h.service.openLink({ resourceId, url: 'not a url' })).resolves.toEqual({ ok: false });
+    expect(h.links).toHaveLength(1);
+  });
+});
+
+describe('WidgetService SDK 垫片注入（P1）', () => {
+  it('open 登记的是垫片版 HTML（doctype 不被顶到垫片后面）；source 仍是原文', () => {
+    const { widgetId, resourceId } = createAndOpen(
+      h.service,
+      h.cards,
+      '<!DOCTYPE html><html><head><title>t</title></head><body><p>x</p></body></html>',
+    );
+    const host = widgetUiHostFor(widgetId);
+    const page = h.service.resource({ resourceId, host });
+    // doctype 仍是文档第一个非空内容（quirks-mode 防线），垫片插在 <head> 之后。
+    expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(page.html).toContain('<head><script>');
+    expect(page.html).toContain("source: 'kepcup-widget'");
+    expect(page.html).toContain('</script><title>t</title>');
+    expect(page.html).toContain('<body><p>x</p></body>');
+    // 审查态看到的是 Bot 写的原文，不含垫片。
+    const source = h.service.source(h.cards[h.cards.length - 1]!.id);
+    expect(source.html).toBe('<!DOCTYPE html><html><head><title>t</title></head><body><p>x</p></body></html>');
+  });
+
+  it('injectWidgetSdk：无 head 时退到 doctype 之后；两者都无时前置；幂等', () => {
+    const afterDoctype = injectWidgetSdk('<!doctype html><html><body></body></html>');
+    expect(afterDoctype.startsWith('<!doctype html><script>')).toBe(true);
+    const prepended = injectWidgetSdk('<html><body></body></html>');
+    expect(prepended.startsWith('<script>')).toBe(true);
+    // 已含垫片（例如重复调用）原样返回。
+    expect(injectWidgetSdk(afterDoctype)).toBe(afterDoctype);
+    // 垫片自身不含 </script> 以外的意外标签闭合。
+    expect(WIDGET_SDK_SHIM.endsWith('</script>')).toBe(true);
   });
 });

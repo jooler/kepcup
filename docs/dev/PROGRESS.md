@@ -1274,3 +1274,15 @@
 - **tab 页标题移除**：NarrowPage 顶部只剩红绿灯高度的空白拖拽带（高度保留，防下方元素被红绿灯盖住）。
 
 **验证**：单测 10 例（断点 / tab 显隐 / 隐藏分区）全绿；e2e 重写（全屏浮层、设置页、Tooltip 回归、通讯录卡片视口内断言、无 pageerror）通过；回归 `sidebar-resize` / `extension-center` / `diagnostics` e2e 全绿；svelte-check 0 错误；8 张截图像素级复核全 PASS（通讯录卡片右缘精确 16 逻辑 px、扩展顶部零文字、设置页全屏列表形态确认）。
+
+
+## Bot Widgets P1 能力桥——沙箱组件的本机 KV / 外链 / 高度协商（2026-10-11，design/32 §6，D81 续）
+
+P0 骨架（卡片 + 审查态 + 协议分流）之上补齐能力桥：Bot 写的组件现在可以通过 `window.kepcup.*` 使用宿主代执行的受控能力，生成代码仍然拿不到 Node / 文件系统 / 网络。
+
+- **桥**：renderer `features/widgets/widget-bridge-guard.ts`（纯校验：来源标记 / 方法白名单 / 关联 id / 1MB 体积 / 高度夹取，5 例单测）+ `widget-bridge-host.ts`（唯一来源防线 `event.source === iframe.contentWindow`；每请求恰好回执一次）；`BotWidgetCard` 在挂 iframe 前建桥。垫片由 core `widgets/sdk-injection.ts` 在 `open()` 登记时前置（head 优先 → doctype 后 → 文档开头，quirks-mode 防线；仅内存资源，`widget_versions` 原文与审查态 source 不变）。
+- **KV**：`widgets.ui.storage`（op 判别 union，get/set/delete/list）——命名空间 = resourceId 反查出的 widgetId（组件互不可见），落 0028 的 `widget_docs`；配额单值 256KB / 总量 1MB / 1000 键，限速每资源每秒 5 次（`WidgetResourceStore.tryAcquireCall`，所有 op 计入）；resourceId 过期 → 新错误码 `WIDGET_RESOURCE_EXPIRED`，超配额 → `WIDGET_STORAGE_QUOTA`，超限速 → `WIDGET_RATE_LIMITED`。免审批（作用域天然隔离）。资源重开（新 resourceId）后数据仍在——数据在库里、资源在内存。
+- **外链**：`widgets.ui.openLink`——renderer `normalizeAppLink` → 卡内确认条（`pendingLink` 单例 + 5s 冷却，抄 McpAppCard）→ core 再核 https/无凭据 → 主进程 `shell.openExternal`（WidgetService 新增 shell 依赖）。**theme/高度**：`kepcup.theme()` 建桥时一次性读取；`setHeight` 夹取 [100,800]，未上报缺省 380px。
+- **Bot 侧认知同步**：`widget_create`/`widget_update` 的 HTML 指南与任务平台规则写明 `window.kepcup.storage/openLink/setHeight` 的能力与配额（P0 的「宿主桥暂未开放」文案移除）；卡片 footer 能力声明改为「数据仅保存在本机（每组件独立）」。
+- **测试**：`widgets-service.test.ts` 8→20 例（往返 / 隔离 / 重开数据仍在 / 三类配额 / 限速窗口与按资源隔离 / resourceId 过期 / openLink https-only 与凭据拒绝 / 垫片注入点与幂等）；`widget-bridge-guard.test.ts` 5 例；`widget-tools` / `supervisor-turn` / `context-assembly` / `app-prompt-capabilities`（提示词波及面）回归绿。shared / core / desktop typecheck 干净，改动文件 eslint 干净。**收口全量一次**（3724 例）：唯一失败 `environment.test` checksum 为已知本机 flake（P0 已记录，HEAD 干净基线同败；`-t` 单测过滤下通过，用例间时序敏感），甄别后无本功能引入的失败。
+- 影响范围：shared `domain/widgets-ui.ts`（storage/openLink schema + 配额限速常量）、`errors.ts`（3 码）；core `widgets/{service,resource-store,sdk-injection}.ts`、`rpc/widgets-ui-bindings.ts`、`start.ts`、`tools/widget-tools.ts`、`agent/context/system-prompt.ts`；desktop renderer `features/widgets/{BotWidgetCard.svelte,widget-bridge-guard.ts,widget-bridge-host.ts}`、`i18n/locales/zh-CN.ts`。P2（命名只读查询、组件管理入口）未动。

@@ -5,6 +5,9 @@ import {
   BOT_WIDGET_CARD_TYPE,
   BOT_WIDGET_DESCRIPTION_MAX_CHARS,
   BOT_WIDGET_HTML_MAX_BYTES,
+  BOT_WIDGET_STORAGE_KEYS_MAX,
+  BOT_WIDGET_STORAGE_QUOTA_BYTES,
+  BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
   BOT_WIDGET_TITLE_MAX_CHARS,
   MCP_APP_SCHEME,
   buildAppCspHeader,
@@ -15,10 +18,13 @@ import {
   type WidgetScope,
   type WidgetsUiOpenOutput,
   type WidgetsUiSourceOutput,
+  type WidgetsUiStorageInput,
+  type WidgetsUiStorageOutput,
 } from '@kepcup/shared';
 import type { Clock } from '../infra/clock.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import { WidgetResourceStore } from './resource-store.js';
+import { injectWidgetSdk } from './sdk-injection.js';
 
 /**
  * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）。
@@ -28,9 +34,14 @@ import { WidgetResourceStore } from './resource-store.js';
  *   对话里发一张 `bot_widget` 卡片（描述符，不含 HTML；每 run 有上限防刷屏）。
  * - {@link WidgetService.source}：审查态「查看源码」（不登记资源、不挂 iframe）。
  * - {@link WidgetService.open} / {@link WidgetService.close}：卡片挂载 / 卸载，
- *   把该卡版本的 HTML 登记成内存资源，返回 `kepcup-app://widget-{hash}/{id}`。
+ *   把该卡版本的 HTML 登记成内存资源（前置 SDK 垫片，见 sdk-injection.ts），返回
+ *   `kepcup-app://widget-{hash}/{id}`。
  * - {@link WidgetService.resource}：平台方法 `widgets.ui.resource` 的实现——主进程
  *   协议处理器按 host 前缀 `widget-` 分流到这里取 HTML 与响应头 CSP（固定禁网）。
+ * - {@link WidgetService.storage} / {@link WidgetService.openLink}：能力桥（P1，
+ *   设计 32 §6）——渲染端桥把 widget 的调用转发为 `widgets.ui.storage` /
+ *   `widgets.ui.openLink`，这里以 resourceId 反查登记资源定命名空间，KV 落
+ *   `widget_docs`（命名空间 = widgetId），外链 https-only 经主进程打开。
  *
  * HTML 永不进模型上下文（卡片在 `renderCard` 里只渲染一行固定文案，见
  * orchestrator），也永不发给除 `kepcup-app://` 协议处理器与「查看源码」以外的消费者。
@@ -75,6 +86,8 @@ export interface WidgetServiceDeps {
   };
   publishMessage(message: Message): void;
   secrets: { redact(text: string): string };
+  /** 能力桥外链（P1）：主进程 `shell.openExternal`（白名单再核一次）。 */
+  shell: { openExternal(input: { url: string }): Promise<{ ok: boolean }> };
   clock: Clock;
   logger: { warn(fields: Record<string, unknown>, msg: string): void };
 }
@@ -289,7 +302,9 @@ export class WidgetService {
       messageId: message.id,
       conversationId: message.conversationId,
       botId: card.botId,
-      html: version.html,
+      // 登记的是「垫片版」HTML（仅内存资源；widget_versions 里的原文不动，
+      // 审查态 source 看到的仍是 Bot 写的原文）。
+      html: injectWidgetSdk(version.html),
       csp: WIDGET_CSP,
     });
     return {
@@ -319,7 +334,9 @@ export class WidgetService {
     return Number(row.changes);
   }
 
-  /** 平台方法 `widgets.ui.resource`：id 存在、未过期、host 与登记一致。 */
+  /**
+   * 平台方法 `widgets.ui.resource`：id 存在、未过期、host 与登记一致。
+   */
   resource(input: { resourceId: string; host: string }): { html: string; csp: string } {
     const entry = this.store.get(input.resourceId);
     if (entry === undefined || entry.host !== input.host) {
@@ -328,7 +345,136 @@ export class WidgetService {
     return { html: entry.html, csp: entry.csp };
   }
 
+  // --- 能力桥（P1，设计 32 §6）---------------------------------------------------
+
+  /**
+   * 能力桥 KV：命名空间 = resourceId 反查出的 widgetId（组件之间互不可见）。
+   * 免审批（作用域天然隔离），但按资源限速；resourceId 过期 / 不存在即拒绝。
+   */
+  storage(input: WidgetsUiStorageInput): WidgetsUiStorageOutput {
+    const entry = this.store.get(input.resourceId);
+    if (entry === undefined) {
+      throw new AppError('WIDGET_RESOURCE_EXPIRED', '组件界面已过期，请重新打开这张卡片');
+    }
+    const release = this.store.tryAcquireCall(entry.id);
+    if (release === null) {
+      throw new AppError('WIDGET_RATE_LIMITED', '组件调用宿主能力过于频繁，请稍后再试');
+    }
+    try {
+      const widgetId = entry.widgetId;
+      switch (input.op) {
+        case 'get': {
+          const row = this.#deps.db
+            .prepare('select value_json from widget_docs where widget_id = ? and key = ?')
+            .get(widgetId, input.key) as { value_json: string } | undefined;
+          if (row === undefined) return { op: 'get', found: false };
+          try {
+            return { op: 'get', found: true, value: JSON.parse(row.value_json) as unknown };
+          } catch {
+            // 库行被外力损坏：宁缺勿错，按不存在返回（写入会覆盖坏值）。
+            return { op: 'get', found: false };
+          }
+        }
+        case 'set': {
+          if (input.value === undefined) {
+            throw new AppError('INVALID_INPUT', 'storage.set 需要一个 JSON 值（不支持 undefined）');
+          }
+          let valueJson: string;
+          try {
+            valueJson = JSON.stringify(input.value) ?? '';
+          } catch {
+            throw new AppError('INVALID_INPUT', 'storage.set 的值必须是可 JSON 序列化的');
+          }
+          if (Buffer.byteLength(valueJson) > BOT_WIDGET_STORAGE_VALUE_MAX_BYTES) {
+            throw new AppError(
+              'WIDGET_STORAGE_QUOTA',
+              `单个值过大（上限 ${BOT_WIDGET_STORAGE_VALUE_MAX_BYTES} 字节）`,
+            );
+          }
+          const usage = this.#docsUsage(widgetId);
+          const exists = usage.keys.has(input.key);
+          const valueBytes = Buffer.byteLength(valueJson);
+          const nextBytes =
+            usage.bytes - (exists ? (usage.sizes.get(input.key) ?? 0) : 0) + valueBytes;
+          if (nextBytes > BOT_WIDGET_STORAGE_QUOTA_BYTES) {
+            throw new AppError(
+              'WIDGET_STORAGE_QUOTA',
+              `这个组件的存储空间已用完（上限 ${BOT_WIDGET_STORAGE_QUOTA_BYTES} 字节），先删除一些键再试`,
+            );
+          }
+          if (!exists && usage.keys.size >= BOT_WIDGET_STORAGE_KEYS_MAX) {
+            throw new AppError(
+              'WIDGET_STORAGE_QUOTA',
+              `这个组件的键数量已达上限（${BOT_WIDGET_STORAGE_KEYS_MAX} 个），先删除一些键再试`,
+            );
+          }
+          this.#deps.db
+            .prepare(
+              'insert into widget_docs (widget_id, key, value_json, updated_at) values (?, ?, ?, ?) ' +
+                'on conflict(widget_id, key) do update set value_json = excluded.value_json, updated_at = excluded.updated_at',
+            )
+            .run(widgetId, input.key, valueJson, this.#deps.clock.now());
+          return { op: 'set' };
+        }
+        case 'delete': {
+          this.#deps.db
+            .prepare('delete from widget_docs where widget_id = ? and key = ?')
+            .run(widgetId, input.key);
+          return { op: 'delete' };
+        }
+        case 'list': {
+          const rows = this.#deps.db
+            .prepare('select key from widget_docs where widget_id = ? order by key')
+            .all(widgetId) as Array<{ key: string }>;
+          return { op: 'list', keys: rows.map((row) => row.key) };
+        }
+      }
+    } finally {
+      release();
+    }
+  }
+
+  /** 能力桥外链：渲染端已出确认条征得同意，这里再核 https-only / 无凭据后经主进程打开。 */
+  async openLink(input: { resourceId: string; url: string }): Promise<{ ok: boolean }> {
+    if (this.store.get(input.resourceId) === undefined) {
+      throw new AppError('WIDGET_RESOURCE_EXPIRED', '组件界面已过期，请重新打开这张卡片');
+    }
+    let url: URL;
+    try {
+      url = new URL(input.url);
+    } catch {
+      return { ok: false };
+    }
+    // 只放行 https；不带凭据（同 apps.ui.openLink）。
+    if (
+      url.protocol !== 'https:' ||
+      url.hostname === '' ||
+      url.username !== '' ||
+      url.password !== ''
+    ) {
+      return { ok: false };
+    }
+    return this.#deps.shell.openExternal({ url: url.toString() });
+  }
+
   // --- 内部 ----------------------------------------------------------------------
+
+  /** 该组件 KV 的当前占用：键集合、总字节、每键字节（≤1000 键，全量读入即可）。 */
+  #docsUsage(widgetId: string): { keys: Set<string>; bytes: number; sizes: Map<string, number> } {
+    const rows = this.#deps.db
+      .prepare('select key, value_json from widget_docs where widget_id = ?')
+      .all(widgetId) as Array<{ key: string; value_json: string }>;
+    const keys = new Set<string>();
+    const sizes = new Map<string, number>();
+    let bytes = 0;
+    for (const row of rows) {
+      const size = Buffer.byteLength(row.value_json);
+      keys.add(row.key);
+      sizes.set(row.key, size);
+      bytes += size;
+    }
+    return { keys, bytes, sizes };
+  }
 
   #insertVersion(
     widgetId: string,

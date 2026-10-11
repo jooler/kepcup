@@ -101,26 +101,34 @@ iframe(sandbox="allow-scripts") ──► 主进程协议处理器（既有） �
 - widget 响应头 CSP：`buildAppCspHeader` 空域输出 = `default-src 'none'; sandbox allow-scripts; script/style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame/object/base/form 全禁`——比 MCP 应用更严（不可声明任何网络域）。
 - **审查态**（renderer）：卡片初始不挂 iframe，显示标题、版本、能力声明（"本组件禁网"、"不保存任何数据"，P1 起按能力桥实际开放更新）与「查看源码」「加载运行」；按版本 HTML 的 sha256（内容寻址）首次确认后记入 localStorage，之后自动加载；`widget_update` 产生的新版本视为新代码重新确认。open 失败不记忆确认（避免下次自动重试失败请求）。
 - 组件关闭 / 过期沿用 `UiResourceStore` 的 TTL（30 分钟滑动）+ 上限（64）模型，重新打开即重新登记（HTML 在库里，不丢失）。
-- widget 内没有 preload、没有 `window.kepcup`：P0 是纯静态组件；能力桥（P1）由卡片组件内的 postMessage 宿主桥提供（只信 `event.source === iframe.contentWindow`，带关联 id）。
+- widget 内没有 preload：core 在 `widgets.ui.open` 登记资源时把 **SDK 垫片**（内联 `<script>`）前置进 HTML（仅内存资源；`widget_versions` 里的原文不动，审查态「查看源码」看到的仍是 Bot 写的原文），能力桥由卡片组件内的 postMessage 宿主桥提供（`WidgetBridgeHost`，只信 `event.source === iframe.contentWindow`，带关联 id，见 §6）。
 
-## 6. 能力桥（P1 起逐步提供）
+## 6. 能力桥（P1，已落地）
 
-widget 可用的宿主 API（由渲染端桥转发为 `widgets.ui.*` RPC，core 执行）：
+widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widgets.ui.*` RPC，core 执行）：
 
 | API | 行为 | 审批 |
 |---|---|---|
-| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键；限速同 `MCP_APP_CALLS_PER_SECOND` | 免审（作用域天然隔离） |
+| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键（单值 256KB）；限速每资源每秒 5 次 / 在途 3（`BOT_WIDGET_CALLS_*`，同 MCP Apps 语义的独立常量） | 免审（作用域天然隔离） |
 | `kepcup.query(name, params)`（P2） | 只能调用 `widget_create`/`widget_update` 时随版本登记的**命名只读查询模板**（`:param` 占位）；core `prepare()` 后校验 `stmt.readonly`，带行数/超时上限 | SQL 随版本被人审查，运行时免审 |
 | `kepcup.openLink(url)` | 与 `apps.ui.openLink` 同路径（https-only + 主进程白名单 + 卡内确认条 + 冷却） | 卡内确认 |
-| `kepcup.theme` / `setHeight` | 主题与高度协商 | 免审 |
+| `kepcup.theme()` / `setHeight(px)` | 主题（建桥时一次性读取，不推送变更）与高度协商（夹取 `BOT_WIDGET_HEIGHT_MIN/MAX`，未上报时缺省 380px） | 免审 |
 
 结构化查库采用**预审模板**而非运行时 SQL：运行时的输入永远只是参数，没有注入面；这是「Bot 需要数据库」与「core 只跑可信代码」的交汇点——better-sqlite3 全程在 core，widget 只见命名查询。
 
+实施要点（P1 实现期确定）：
+
+- **数据流**：widget（垫片）`parent.postMessage` → `BotWidgetCard` 的 `WidgetBridgeHost`（renderer，只收 `event.source === iframe.contentWindow` 的消息）→ `core.call('widgets.ui.storage' | 'widgets.ui.openLink', { resourceId, … })` → core 以 `resourceId` 反查内存资源拿 widgetId（凭据即命名空间，resourceId 过期 → `WIDGET_RESOURCE_EXPIRED`）。widget 侧 opaque origin，postMessage 只能 `targetOrigin '*'`，`event.source` 校验是唯一来源防线；消息带自增关联 id 配对请求 / 回执。
+- **垫片注入**：`core/widgets/sdk-injection.ts`——`open()` 登记时前置静态 `<script>`（resourceId 不进脚本，没有拼注入面；CSP `script-src 'unsafe-inline'` 允许内联）。插入点必须在 `<!DOCTYPE html>` **之后**（doctype 前出现任何节点触发 quirks mode，改变盒模型与 CSS 语义）：优先 `<head>` 开标签之后 → 退到 doctype `>` 之后 → 都没有才前置文档开头。
+- **KV**：落 `widget_docs`（0028 已建表），值存 JSON 文本；超单值 / 总配额 / 键数上限 → `WIDGET_STORAGE_QUOTA`，值不可序列化 → `INVALID_INPUT`；覆盖旧键释放旧体积、不增键数。**免审批**的理由：命名空间即 widgetId，组件天然读不到别人的数据，审批没有额外信息量。
+- **外链**：renderer 先 `normalizeAppLink`（https、无凭据、有主机名）再出卡内确认条（`pendingLink` 单例 + 拒绝后 `MCP_APP_LINK_COOLDOWN_MS` 5s 冷却，同 McpAppCard）；core `openLink` 再核一次同样规则，经主进程 `shell.openExternal`。
+- **错误码**：`WIDGET_RESOURCE_EXPIRED`（重开卡片即恢复）、`WIDGET_RATE_LIMITED`、`WIDGET_STORAGE_QUOTA`（登记 shared `errors.ts`，zh-CN 文案在 `chats.errorCode.*`）。
+
 ## 7. RPC 面
 
-- renderer → core：`widgets.ui.open {messageId}`（登记内存资源并返回 iframe 地址；同时做卡片 sha256 与版本行的一致性校验，不一致 → `WIDGET_INVALID`）、`widgets.ui.source {messageId}`（审查态取 HTML 原文，不登记资源）、`widgets.ui.close {resourceId}`；P1 增 `widgets.ui.storage`、`widgets.ui.openLink`。
-- 平台（主进程 → core）：`widgets.ui.resource {resourceId, host}` → `{html, csp}`。
-- 契约集中在 `packages/shared/src/domain/widgets-ui.ts`（写法同 `apps-ui.ts`）：`BOT_WIDGET_CARD_TYPE = 'bot_widget'`、`widgetCardSchema`、各 RPC in/out schema、体积/数量常量。卡片字段挂 `cardContentSchema.cardWidget`（同 `appUi` 的挂法）。
+- renderer → core：`widgets.ui.open {messageId}`（登记内存资源并返回 iframe 地址；同时做卡片 sha256 与版本行的一致性校验，不一致 → `WIDGET_INVALID`）、`widgets.ui.source {messageId}`（审查态取 HTML 原文，不登记资源）、`widgets.ui.close {resourceId}`；P1 已增 `widgets.ui.storage`（op: get/set/delete/list 判别 union）、`widgets.ui.openLink`。
+- 平台（主进程 → core）：`widgets.ui.resource {resourceId, host}` → `{html, csp}`（html 为垫片版）。
+- 契约集中在 `packages/shared/src/domain/widgets-ui.ts`（写法同 `apps-ui.ts`）：`BOT_WIDGET_CARD_TYPE = 'bot_widget'`、`widgetCardSchema`、各 RPC in/out schema、体积/数量/配额/限速常量。卡片字段挂 `cardContentSchema.cardWidget`（同 `appUi` 的挂法）。
 
 ## 8. 安全清单
 

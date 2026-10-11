@@ -1757,6 +1757,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),
       secrets,
+      shell: services.shellRpc,
       clock,
       logger,
     });
