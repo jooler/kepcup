@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import type { Message } from '@kepcup/shared';
-  import { AlarmClock, Pencil, Reply, type LucideIcon } from '@lucide/svelte';
+  import { AlarmClock, Copy, Pencil, Pin, Reply, type LucideIcon } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+  import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -11,11 +12,12 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
+  import { stickies } from './stickies.svelte';
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
-   * 排列、群聊头像列、引用行、已编辑标记、hover 操作（引用/编辑）与右键
-   * 菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
+   * 排列、群聊头像列、引用行、已编辑标记、hover 操作（引用/复制/固定/编辑）与
+   * 右键菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
    * MessageAttachments：后续多模态支持（图片、音频、视频等）只扩展那两
    * 层，本行的布局与操作保持稳定。merge 为连排信息，透传给 MessageBody
    * 决定对齐侧圆角。
@@ -94,6 +96,12 @@
 
   // hover / 右键共用的操作集合：引用对所有消息可用。
   const canAct = $derived(message.status !== 'recalled' && !isEditing);
+  /** 可复制的纯文本：仅文本消息（卡片、任务事件等结构化内容不提供复制）。 */
+  const messageText = $derived('text' in message.content ? message.content.text : '');
+  const hasText = $derived(messageText.length > 0);
+  const canCopy = $derived(canAct && hasText);
+  /** 整条钉为便签：便签是纯文本，只对有正文的消息提供（与复制同一门槛）。 */
+  const canPin = $derived(canAct && hasText);
 
   function startEdit(): void {
     editText = 'text' in message.content ? message.content.text : '';
@@ -108,6 +116,18 @@
 
   function quote(): void {
     chat.startReply(message);
+  }
+
+  async function copyText(): Promise<void> {
+    await navigator.clipboard.writeText(messageText);
+    toast.success(t('messages.copied'));
+  }
+
+  /** 整条消息钉成便签（与选中文本钉便签同一入口，作用域在便签卡片上切换）。 */
+  function pinMessage(): void {
+    const conversationId = chat.current?.conversation.id;
+    if (conversationId === undefined) return;
+    stickies.pin(messageText, conversationId, 'conversation');
   }
 
   function openMenu(event: MouseEvent): void {
@@ -235,6 +255,32 @@
         </Tooltip.Trigger>
         <Tooltip.Content>{t('messages.quote')}</Tooltip.Content>
       </Tooltip.Root>
+      {#if canCopy}
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={() => void copyText()}
+            aria-label={t('messages.copy')}
+            data-testid="message-copy"
+          >
+            <Copy class="size-3.5" aria-hidden="true" />
+          </Tooltip.Trigger>
+          <Tooltip.Content>{t('messages.copy')}</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
+      {#if canPin}
+        <Tooltip.Root>
+          <Tooltip.Trigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={pinMessage}
+            aria-label={t('messages.pinMessage')}
+            data-testid="message-pin"
+          >
+            <Pin class="size-3.5" aria-hidden="true" />
+          </Tooltip.Trigger>
+          <Tooltip.Content>{t('messages.pinMessage')}</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
       {#if isUser && editing && delegatedBy === null}
         <Tooltip.Root>
           <Tooltip.Trigger
@@ -253,7 +299,7 @@
 </div>
 
 {#if menuPos}
-  <!-- 消息条目右键菜单：引用 -->
+  <!-- 消息条目右键菜单：引用 / 复制 / 固定整条 -->
   <button
     type="button"
     class="fixed inset-0 z-40 cursor-default"
@@ -278,5 +324,27 @@
       },
       'context-message-quote',
     )}
+    {#if canCopy}
+      {@render menuRow(
+        Copy,
+        t('messages.copy'),
+        () => {
+          menuPos = null;
+          void copyText();
+        },
+        'context-message-copy',
+      )}
+    {/if}
+    {#if canPin}
+      {@render menuRow(
+        Pin,
+        t('messages.pinMessage'),
+        () => {
+          menuPos = null;
+          pinMessage();
+        },
+        'context-message-pin',
+      )}
+    {/if}
   </div>
 {/if}

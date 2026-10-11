@@ -1,4 +1,10 @@
-import { newId, type Stickie, type StickiePosition, type StickieScope } from '@kepcup/shared';
+import {
+  newId,
+  STICKIE_TEXT_MAX_CHARS,
+  type Stickie,
+  type StickiePosition,
+  type StickieScope,
+} from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { isStickieVisible } from './stickies';
 
@@ -37,7 +43,9 @@ class StickiesState {
   }
 
   pin(text: string, conversationId: string, scope: StickieScope): void {
-    const trimmed = text.trim();
+    // 整条消息钉出时可能远超便签上限（消息 10 万 / 便签 2 万）：先截断，
+    // 否则 create 校验失败、乐观行落不了库，重启即消失。
+    const trimmed = text.trim().slice(0, STICKIE_TEXT_MAX_CHARS);
     if (trimmed.length === 0) return;
     // 时间戳仅本地展示用，落库值以 create 返回行为准。
     const now = Date.now();

@@ -1162,3 +1162,8 @@
 - **验证**（Docker）：新增 core `integration/local-connectors-review` 16 例、`unit/app-ui-service` +1、shared `local-connectors` 32 例（含清洗 / 规范化）；渲染端 `features/apps/local-connectors.test` 11 例、`stores/apps.svelte.test`（`desktop-svelte`）5 例；e2e（`kepcup-test:trixie-xvfb`）`local-connectors.spec` 2 例 + 相邻 `extension-center` / `connect-abort` / `setup-card` 共 8 例全部通过。全量一次：338 文件 / 3675 例，3646 通过、27 失败、2 跳过——27 例全是已知基线（`sandbox-isolation` 10、`skills-authoring` 4、`skills` 3、`workspace-tools` 3、`wiki-url` 2、`toolchain-sandbox` 2、`environment` 1、`projects` 1、`composer-text` 1）。`pnpm typecheck` 通过（svelte-check 0 错误）；`pnpm lint` 只剩 `debug-dev-pin.spec.ts` 基线 6 条。
 - **未做**：真实 OAuth 授权页（会打开系统浏览器，e2e 只到连接步骤）；真实 Electron 里的 DNS 重绑定端到端。
 
+
+### 整条消息钉便签：消息行 pin 按钮 + 右键条目（2026-10-11）
+
+选中文本钉便签（`SelectionPinToolbar`）之外，普通消息行（`ChatMessageRow`）新增两条整条 pin 入口：hover 操作区在复制旁加 `Pin` 按钮（`message-pin`），右键菜单加同文案条目（`context-message-pin`），都走 `stickies.pin(messageText, conversationId, 'conversation')`——与选中文本同一入口，作用域仍在便签卡片上切换；门槛与复制一致（有正文、未撤回、非编辑中）。`stickies.pin` 入口截断到 `STICKIE_TEXT_MAX_CHARS`（2 万）：消息正文上限 10 万，整条钉长消息此前会过不了 `stickies.create` 校验，乐观行落不了库、重启即消失。i18n `messages.pinMessage`（「固定整条消息」）。
+- **测试**：新增 `stickies.svelte.test.ts`（desktop-svelte：全文乐观行与 create 载荷一致、超限截断、空白不钉）；e2e `stickies.spec.ts` 新增「hover 按钮 + 右键条目各钉一条」（本地 Electron 实跑，同文件既有选中 pin 用例回归通过）；chats 目录 13 文件 75 例全绿；svelte-check 0 错误；eslint 干净。

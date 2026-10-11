@@ -648,6 +648,9 @@ export const zhCN = {
   'composer.mentionPlaceholder': '输入 @ 选择成员',
   'composer.mentionGroup': '群聊',
   'messages.quote': '引用',
+  'messages.copy': '复制',
+  'messages.copied': '已复制',
+  'messages.pinMessage': '固定整条消息',
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',
   'approvals.gitRemoteTitle': 'git 远程操作请求',
@@ -1076,7 +1079,8 @@ export const zhCN = {
     '管理已安装的 MCP 工具服务器：启用 / 停用、逐工具风险与策略，也可安装 .mcpb 本地包。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
   'extensionCenter.mcp.targetLocked':
     '命令、参数与地址在这里只读；需要修改请先在「设置 → 开发者模式」中开启开发者模式。名称、启用状态与密钥值仍可修改。',
-  'extensionCenter.mcp.empty': '还没有安装 MCP 服务器。可以安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
+  'extensionCenter.mcp.empty':
+    '还没有安装 MCP 服务器。可以安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
     '为所有 Bot 添加开箱即用的办公技能：安装一次，每个 Bot 都能发现并调用。装完可在技能面板管理。',
   'skillMarket.searchPlaceholder': '搜索技能',
@@ -1560,8 +1564,7 @@ export const zhCN = {
   'settings.mcpAuthOauthHttpOnly': 'OAuth 仅支持 Streamable HTTP 类型。',
   'settings.mcpOauthSection': 'OAuth 连接',
   // --- 设置「应用」分区（已连接账号管理）与扩展中心「连接」分组共用 ------------------
-  'apps.pointer.text':
-    '这里只管理已连接的账号。要连接新的应用，请到「扩展中心 → 连接」。',
+  'apps.pointer.text': '这里只管理已连接的账号。要连接新的应用，请到「扩展中心 → 连接」。',
   'apps.pointer.open': '打开扩展中心',
   'apps.catalog.hint':
     '连接常用应用后，Bot 就能使用它们的工具。每个应用可连接多个账号；在 Bot 配置里授权给对应的 Bot。',
