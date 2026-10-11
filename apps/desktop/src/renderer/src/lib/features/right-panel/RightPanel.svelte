@@ -177,6 +177,11 @@
   let editingBio = $state(false);
   let bioDraft = $state('');
 
+  /** 编辑态输入框挂载即聚焦，点按后光标立即可见。 */
+  function focusOnMount(node: HTMLInputElement): void {
+    node.focus();
+  }
+
   function startNameEdit(): void {
     if (!bot) return;
     nameDraft = bot.profile.identity.name;
@@ -295,10 +300,13 @@
             </span>
           </button>
           {#if editingName}
+            <!-- 编辑态与展示态盒子对齐（同高 h-8、同水平内边距 px-2）：不加边框，
+                 以 bg-accent 标识编辑中；field-sizing:content 让宽度贴文本，切换不跳动。 -->
             <input
-              class="w-full rounded-md border border-input bg-background px-2 py-1 text-center text-xl font-semibold outline-none focus:ring-1 focus:ring-ring"
+              class="field-sizing-content h-8 max-w-full min-w-12 rounded-md bg-accent px-2 text-center text-xl font-semibold outline-none"
               bind:value={nameDraft}
               maxlength={50}
+              use:focusOnMount
               onkeydown={(e) => {
                 if (e.key === 'Enter') void commitName();
                 if (e.key === 'Escape') editingName = false;
@@ -309,7 +317,7 @@
           {:else}
             <button
               type="button"
-              class="max-w-full truncate rounded-md px-2 py-0.5 text-xl font-semibold transition-colors hover:bg-accent"
+              class="h-8 max-w-full truncate rounded-md px-2 py-0.5 text-xl font-semibold transition-colors hover:bg-accent"
               onclick={startNameEdit}
               title={t('rightPanel.clickToEdit')}
               data-testid="bot-name-edit"
@@ -318,10 +326,14 @@
             </button>
           {/if}
           {#if editingBio}
+            <!-- 空简介时宽度由 placeholder 撑起（field-sizing:content 对空值取
+                 placeholder 尺寸），与展示态的占位文案宽度衔接。 -->
             <input
-              class="w-full rounded-md border border-input bg-background px-2 py-1 text-center text-sm outline-none focus:ring-1 focus:ring-ring"
+              class="field-sizing-content h-6 max-w-full min-w-12 rounded-md bg-accent px-2 text-center text-sm outline-none placeholder:text-muted-foreground"
               bind:value={bioDraft}
               maxlength={500}
+              placeholder={t('rightPanel.bioPlaceholder')}
+              use:focusOnMount
               onkeydown={(e) => {
                 if (e.key === 'Enter') void commitBio();
                 if (e.key === 'Escape') editingBio = false;
@@ -332,7 +344,7 @@
           {:else}
             <button
               type="button"
-              class="max-w-full truncate rounded-md px-2 py-0.5 text-sm text-muted-foreground transition-colors hover:bg-accent {bot.bio
+              class="h-6 max-w-full truncate rounded-md px-2 py-0.5 text-sm text-muted-foreground transition-colors hover:bg-accent {bot.bio
                 ? ''
                 : 'italic'}"
               onclick={startBioEdit}
