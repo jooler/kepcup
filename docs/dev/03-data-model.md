@@ -629,7 +629,7 @@ CREATE TABLE widget_docs (
 ```
 
 - `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 三表（见删除级联表）。
-- `widget_docs` 是能力桥（P1）的每组件命名空间 KV，随 0028 先建表（P0 无写入方）。
+- `widget_docs` 是能力桥的每组件命名空间 KV（P1 起由 `widgets.ui.storage` 写入：值存 JSON 文本，配额单值 256KB / 总量 1MB / 1000 键，见设计 32 §6）；组件删除时随 widgets 行级联清除。
 - 服务层在 `core/src/widgets/service.ts`；HTML 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
 
 ### delegations（D71，main 0016；0021 重建）

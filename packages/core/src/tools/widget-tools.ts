@@ -24,7 +24,10 @@ const WIDGET_HTML_GUIDE =
   '需要持久化用宿主桥 window.kepcup.storage.get/set/delete/list(key,value)（每组件独立命名空间的 JSON KV，' +
   '数据只存本机、重启仍在；单值 ≤256KB、总量 ≤1MB/1000 键，不要存敏感信息）；需要打开网页用 ' +
   'window.kepcup.openLink(url)（仅 https，会先请用户确认）；window.kepcup.theme() 可取当前明暗主题，' +
-  'window.kepcup.setHeight(像素) 让卡片高度自适应内容。这些 API 都是异步的（返回 Promise）。组件初始高约 380px，宽度自适应。';
+  'window.kepcup.setHeight(像素) 让卡片高度自适应内容。这些 API 都是异步的（返回 Promise）；被拒绝时 ' +
+  'Promise reject，error.code 可程序化区分（WIDGET_RATE_LIMITED=调用太频繁、WIDGET_STORAGE_QUOTA=存储满了、' +
+  'WIDGET_RESOURCE_EXPIRED=请用户重新打开卡片、INVALID_INPUT=参数不对），error.message 是可直接展示的中文。' +
+  '组件初始高约 380px，宽度自适应。';
 
 export function buildWidgetTools(input: {
   identity: RunIdentity;

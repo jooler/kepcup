@@ -104,6 +104,8 @@ export class WidgetResourceStore {
   /**
    * 能力桥限流（P1）：每个资源每秒至多 {@link BOT_WIDGET_CALLS_PER_SECOND} 次、同时在途至多
    * {@link BOT_WIDGET_CALLS_INFLIGHT_MAX} 个。通过则登记一次占用并返回释放函数；超限返回 null。
+   * 在途上限是为 P2 的异步能力（query）预留的：当前 storage 调用全同步、释放前不会有并发，
+   * inflight 实际恒为 0，生效的只有每秒次数。
    */
   tryAcquireCall(id: string): (() => void) | null {
     const now = this.#clock.now();

@@ -109,7 +109,7 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 
 | API | 行为 | 审批 |
 |---|---|---|
-| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键（单值 256KB）；限速每资源每秒 5 次 / 在途 3（`BOT_WIDGET_CALLS_*`，同 MCP Apps 语义的独立常量） | 免审（作用域天然隔离） |
+| `kepcup.storage.get/set/delete/list` | 命名空间 = widgetId 的 KV（`widget_docs`）；配额每组件 1MB / 1000 键（单值 256KB）；限速每资源每秒 5 次（在途上限 3 为 P2 异步能力预留，当前调用全同步不生效）（`BOT_WIDGET_CALLS_*`，同 MCP Apps 语义的独立常量） | 免审（作用域天然隔离） |
 | `kepcup.query(name, params)`（P2） | 只能调用 `widget_create`/`widget_update` 时随版本登记的**命名只读查询模板**（`:param` 占位）；core `prepare()` 后校验 `stmt.readonly`，带行数/超时上限 | SQL 随版本被人审查，运行时免审 |
 | `kepcup.openLink(url)` | 与 `apps.ui.openLink` 同路径（https-only + 主进程白名单 + 卡内确认条 + 冷却） | 卡内确认 |
 | `kepcup.theme()` / `setHeight(px)` | 主题（建桥时一次性读取，不推送变更）与高度协商（夹取 `BOT_WIDGET_HEIGHT_MIN/MAX`，未上报时缺省 380px） | 免审 |
@@ -122,7 +122,7 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 - **垫片注入**：`core/widgets/sdk-injection.ts`——`open()` 登记时前置静态 `<script>`（resourceId 不进脚本，没有拼注入面；CSP `script-src 'unsafe-inline'` 允许内联）。插入点必须在 `<!DOCTYPE html>` **之后**（doctype 前出现任何节点触发 quirks mode，改变盒模型与 CSS 语义）：优先 `<head>` 开标签之后 → 退到 doctype `>` 之后 → 都没有才前置文档开头。
 - **KV**：落 `widget_docs`（0028 已建表），值存 JSON 文本；超单值 / 总配额 / 键数上限 → `WIDGET_STORAGE_QUOTA`，值不可序列化 → `INVALID_INPUT`；覆盖旧键释放旧体积、不增键数。**免审批**的理由：命名空间即 widgetId，组件天然读不到别人的数据，审批没有额外信息量。
 - **外链**：renderer 先 `normalizeAppLink`（https、无凭据、有主机名）再出卡内确认条（`pendingLink` 单例 + 拒绝后 `MCP_APP_LINK_COOLDOWN_MS` 5s 冷却，同 McpAppCard）；core `openLink` 再核一次同样规则，经主进程 `shell.openExternal`。
-- **错误码**：`WIDGET_RESOURCE_EXPIRED`（重开卡片即恢复）、`WIDGET_RATE_LIMITED`、`WIDGET_STORAGE_QUOTA`（登记 shared `errors.ts`，zh-CN 文案在 `chats.errorCode.*`）。
+- **错误码**：`WIDGET_RESOURCE_EXPIRED`（重开卡片即恢复）、`WIDGET_RATE_LIMITED`、`WIDGET_STORAGE_QUOTA`（登记 shared `errors.ts`，zh-CN 文案在 `chats.errorCode.*`）。桥回执的拒绝形状是 `{ok:false, error, code?}`——`error` 是可直接展示的中文，`code` 是机器可读错误码（Bot 写的组件据它程序化区分限速 / 配额 / 过期）；宿主对每个带可解析 id 的请求保证恰好一条回执（含格式拒收），组件侧 promise 不会挂起。
 
 ## 7. RPC 面
 

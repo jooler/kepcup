@@ -90,8 +90,22 @@
 - P1 全量实现（设计 32 §6 落地细节已回写，要点）：
   - **桥协议**：widget → 宿主 `{source:'kepcup-widget', id, type, payload}`（方法白名单 `storage.get/set/delete/list`、`openLink`、`theme.get`、`setHeight`；setHeight 是通知无回执），宿主 → widget `{source:'kepcup-host', id, ok, value?/error?}`。renderer 侧纯校验在 `widget-bridge-guard.ts`（来源标记 / 白名单 / 关联 id / 1MB 体积上限 / 高度夹取），`WidgetBridgeHost` 持唯一来源防线 `event.source === frameWindow`（opaque origin 下 `event.origin` 恒 "null" 不能当凭据），每个请求恰好回执一次。
   - **KV**：`widgets.ui.storage` 是 op 判别 union（get 带 `found`/`value`，set/delete 幂等，list 按键序）；service 以 resourceId 反查资源定 widgetId 命名空间，值存 `widget_docs.value_json`（JSON 文本）；限速加在 `WidgetResourceStore.tryAcquireCall`（复刻 `UiResourceStore` 的 1s 滚动窗口 + 在途上限，所有 op 都计）。数据在库里、资源在内存：资源过期重开卡片（新 resourceId）数据仍在，重启应用亦然。
-  - **垫片**：静态 `<script>`（`sdk-injection.ts` 的 `WIDGET_SDK_SHIM`），promise 化 + 关联 id + 15s 内不设超时（宿主对每个请求必回执，iframe 销毁时挂起的 promise 随上下文消亡）；插入点 head 优先 → doctype 后 → 文档开头（quirks-mode 防线，见 design 32 §6）；`open()` 登记垫片版 HTML，`source()` 仍回原文，注入幂等（含 `source: 'kepcup-widget'` 标记即跳过）。
+  - **垫片**：静态 `<script>`（`sdk-injection.ts` 的 `WIDGET_SDK_SHIM`），promise 化 + 关联 id，不设超时（宿主对每个带 id 的请求保证恰好一条回执，iframe 销毁时挂起的 promise 随上下文消亡）；插入点 head 优先 → doctype 后 → 文档开头（quirks-mode 防线，见 design 32 §6）；`open()` 登记垫片版 HTML，`source()` 仍回原文，注入幂等（唯一指纹 `kepcup-widget-sdk-v1`）。
   - **外链**：renderer `normalizeAppLink`（复用 apps-ui 的 bridge-guard 纯函数）→ 卡内确认条（`pendingLink` 单例 + 5s 冷却，testid `bot-widget-link-*`）→ `widgets.ui.openLink` → core 再核 https/无凭据 → 主进程 `shell.openExternal`（`WidgetServiceDeps` 新增 `shell`）。
   - **theme / 高度**：theme 建桥时一次性读取（mode-watcher），不推送变更（组件需要可自行轮询）；`setHeight` 夹取 [100, 800]（`BOT_WIDGET_HEIGHT_MIN/MAX`），未上报缺省 380px（P0 行为兜底）。
   - **错误码**：新增 `WIDGET_RESOURCE_EXPIRED` / `WIDGET_RATE_LIMITED` / `WIDGET_STORAGE_QUOTA`（errors.ts + zh-CN `chats.errorCode.*`）；footer 能力文案从「不保存任何数据」改为「数据仅保存在本机（每组件独立）」；`widget_create`/`widget_update` 的 HTML 指南与任务平台规则同步写明 `window.kepcup` 能力与配额。
 - 验证：`widgets-service.test.ts` 扩到 20 例（KV 往返 / 命名空间隔离 / 重开数据仍在 / 单值与总配额与键数上限 / 限速窗口 / resourceId 过期 / openLink https-only / 垫片注入点与幂等 / doctype 不被顶走）；desktop `widget-bridge-guard.test.ts`（5 例：白名单 / 形状 / 体积 / 回执形状 / 高度夹取）全绿；`widget-tools` / `supervisor-turn` / `context-assembly` / `app-prompt-capabilities`（提示词文案变更波及面）回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。收口全量一次的甄别结论见 PROGRESS。
+
+### 2026-10-11（同日，P1 独立审查修复轮）
+
+- 两个独立审查（安全与正确性 / 工程质量）结论：无 P0；安全边界（`event.source` 唯一防线、免审批理由、垫片无拼注入面、原型链键无汇聚点、openLink 三道闸）逐项确认成立。按「长期收益最大化」修复全部 P1/P2 与可低风险落地的 P3：
+  - **挂起缝隙**（P1）：桥拒收但 id 可解析的消息此前静默丢弃，垫片 promise 永久挂起（BigInt 值、>1MB 消息可达）——宿主现在回 `{ok:false, error:'不支持的消息格式', code:'INVALID_INPUT'}`，「每请求恰好一回执」成为可测试的完整契约（`widget-bridge-host.test.ts`）。
+  - **错误回执带机器可读 code**：`WidgetBridgeReply` 增 `code?`（透传 AppError.code），垫片 reject 的 Error 带同名属性；key 超长在宿主前置拒（可行动中文，不再漏 zod 泛化英文）；`widget_create`/`widget_update` 指南写明四个 code 的语义。
+  - **垫片可演进性**（P1）：高度常量从 shared 插值（不再双份）；幂等指纹改唯一标记 `kepcup-widget-sdk-v1`（原标记是协议字段值，Bot 照抄文档即可误触跳过注入）；新增 `sdk-injection.test.ts`（10 例）在 node 里真实执行垫片——promise 配对、code 透传、来源校验、requireKey、setHeight 夹取（含数字字符串宽松接取的行为钉子）、幂等早退。guard 白名单测试改为遍历 `WIDGET_BRIDGE_METHODS` 本体（协议单一事实源）。
+  - **setHeight 节流**（P2）：复用 apps-ui 的 `createThrottle(100ms)`，rAF 连发不再逐帧重排版（假时钟测试覆盖折叠行为）。
+  - **注入点已知失效模式钉住**：`<head>` 在注释/属性里时垫片被吞（自伤、无副作用）——行为用例钉住防意外变化，模块注释明示不做廉价探测。
+  - **KV 写入重写**：`#docsUsage` 全量载入改为「存在性单查 + count/sum 聚合」两条 SQL；set 分支抽 `#storageSet`；`JSON.stringify ?? ''` 的语义错误改显式 INVALID_INPUT；新增库行 value_json 损坏 → get 按不存在且可覆盖修复的用例。
+  - **纵深与健壮性**：`resource()` 补 host 派生二次校验（同 apps.ui.resource）；reload/stop 复位卡片高度；测试魔数 `now += 1100` 收敛为 `advance(RATE_TICK_MS)`。
+  - **UI 去重**：外链确认条抽 `LinkConfirmBar.svelte`（安全 UI 单一实现，McpAppCard / BotWidgetCard 共用，文案经 props 传各自 i18n）。
+  - **测试基建**：`WidgetBridgeHost` 监听目标可注入，新增协议级测试（来源防线 / 回执契约 / code 透传 / 节流 / destroy），无需 DOM。
+  - **文档**：inflight 上限如实标注「预留」（当前全同步不生效）；todo「15s 超时」草稿措辞纠正；dev/03 `widget_docs` 补 P1 写入方与配额。
