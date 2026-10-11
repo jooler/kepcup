@@ -145,6 +145,8 @@ import { AppToolGrants } from './apps/grants.js';
 import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
+import { WidgetService } from './widgets/service.js';
+import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
 import { DirectorySync } from './apps/directory-sync.js';
@@ -528,6 +530,8 @@ export interface CoreServices {
   taint: TaintService | null;
   /** D73 P3 §7.5 MCP Apps rendering (UI resources, UI-initiated tool calls, links); null with `apps`. */
   appUi: McpAppUiService | null;
+  /** D81 Bot 自制交互组件（widget_create / widget_update 落库发卡 + 沙箱资源登记）；null with `apps`. */
+  widgets: WidgetService | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -766,6 +770,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     appToolGrants: null,
     taint: null,
     appUi: null,
+    widgets: null,
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
@@ -1745,6 +1750,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // D73 P3: a closed / removed / disconnected app's UI resources die with it (pending approvals cancelled).
     mcp.onServerClosed((serverId) => appUi.store.invalidateServer(serverId));
 
+    // D81 Bot 自制交互组件：任务工具落库发卡 + 沙箱资源登记（复用 kepcup-app:// 管线）。
+    const widgetService = new WidgetService({
+      db: mainDb,
+      messages,
+      publishMessage: (message) =>
+        events.emit('message.created', { conversationId: message.conversationId, message }),
+      secrets,
+      clock,
+      logger,
+    });
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -1785,6 +1801,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       connectedApps,
       localConnectors,
       appUi,
+      widgets: widgetService,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),
@@ -1970,6 +1987,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         prepareBotDeletion: (botId) => watches.prepareBotDeletion(botId),
         removeForBotInConversation: (botId, conversationId) =>
           watches.removeForBotInConversation(botId, conversationId),
+      },
+      // D81: a deleted bot's widgets (conversation deletion cascades through the FK).
+      widgets: {
+        prepareBotDeletion: (botId) => widgetService.deleteForBot(botId),
       },
       // P11: pages die with their conversation / bot; clearBotData also wipes
       // the partition and tombstones the bot against late ensurePage calls.
@@ -2225,6 +2246,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.appToolGrants = appToolGrants;
     services.taint = taint;
     services.appUi = appUi;
+    services.widgets = widgetService;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;
@@ -2635,6 +2657,8 @@ function createPlatformMethods(services: CoreServices): Record<string, RpcMethod
     },
     // D73 P3 §7.5: the protocol handler fetches a registered MCP App page.
     ...bindAppsUiMethods(services).platform,
+    // D81: the same protocol handler fetches a registered bot-widget page (host prefix `widget-`).
+    ...bindWidgetsUiMethods(services).platform,
     'update.cancelActive': {
       input: updateCancelActiveInputSchema,
       output: updateCancelActiveOutputSchema,

@@ -11,6 +11,7 @@
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
   import McpAppCard from '$lib/features/apps-ui/McpAppCard.svelte';
+  import BotWidgetCard from '$lib/features/widgets/BotWidgetCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
@@ -77,6 +78,16 @@
       ? { messageId: message.id, card: message.content.appUi }
       : null,
   );
+  // D81 Bot 自制交互组件卡（cardType `bot_widget`）：审查态 + iframe 沙箱渲染。
+  const widgetCard = $derived(
+    isCard &&
+      'cardType' in message.content &&
+      message.content.cardType === 'bot_widget' &&
+      'widget' in message.content &&
+      message.content.widget !== undefined
+      ? { messageId: message.id, card: message.content.widget }
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
@@ -87,6 +98,7 @@
       taskCardId === null &&
       watchCard === null &&
       appUiCard === null &&
+      widgetCard === null &&
       'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
@@ -169,6 +181,11 @@
   <!-- D73 P3 MCP Apps 界面卡片：居中信息卡，内含沙箱 iframe -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <McpAppCard messageId={appUiCard.messageId} card={appUiCard.card} />
+  </div>
+{:else if widgetCard !== null}
+  <!-- D81 Bot 自制交互组件卡：居中信息卡，审查态 + 沙箱 iframe -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <BotWidgetCard messageId={widgetCard.messageId} card={widgetCard.card} />
   </div>
 {:else if watchCard !== null}
   <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要，暂停卡可恢复 -->

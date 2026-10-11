@@ -107,6 +107,16 @@ export interface LifecycleDeps {
       }
     | undefined;
   /**
+   * D81 bot-widget cascades: conversation deletion cascades through the foreign
+   * key (`widgets.conversation_id`); a deleted bot's rows go here — the bots
+   * row becomes a tombstone, so `bot_id`'s FK never fires. No-op when absent.
+   */
+  widgets?:
+    | {
+        prepareBotDeletion(botId: string): number;
+      }
+    | undefined;
+  /**
    * D72 P5 external-agent sessions (agent_sessions rows + best-effort
    * `session/delete` on the agent side). The agents' own on-disk history is
    * not KepCup's to manage. No-op when absent.
@@ -349,6 +359,16 @@ export class LifecycleService {
       this.deps.logger.warn(
         { botId, error: error instanceof Error ? error.message : String(error) },
         'watch bot cleanup failed',
+      );
+    }
+    // D81: the bot's widgets (versions / docs cascade with the widgets rows;
+    // the bots row turns into a tombstone below, so the FK alone never fires).
+    try {
+      this.deps.widgets?.prepareBotDeletion(botId);
+    } catch (error) {
+      this.deps.logger.warn(
+        { botId, error: error instanceof Error ? error.message : String(error) },
+        'widget bot cleanup failed',
       );
     }
     // P11: every page of the bot closes, the session partition storage and

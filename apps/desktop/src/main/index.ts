@@ -281,9 +281,13 @@ function bootstrap(): void {
 
   // D73 P3 §7.5 MCP Apps: `kepcup-app://` pages are served from core-registered resources only
   // (the scheme itself is registered before ready, below); the handler lives on the window's session.
+  // D81 Bot Widgets ride the same scheme: hosts prefixed `widget-` are bot-authored pages.
   installAppsUiProtocol(session.defaultSession, {
     fetchResource: async (input) => {
       if (coreHost === null) throw new Error('core not running');
+      if (input.host.startsWith('widget-')) {
+        return coreHost.callPlatform('widgets.ui.resource', input);
+      }
       return coreHost.callPlatform('apps.ui.resource', input);
     },
     log: (message, error) => {

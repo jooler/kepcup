@@ -527,4 +527,14 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
+// argv[1] 与 import.meta.url 都按 realpath 比较：macOS 的临时目录在符号链接下
+// （/var → /private/var），直接比较会让脚本被复制到 tmpdir 后静默不执行。
+if (process.argv[1]) {
+  let invoked = pathToFileURL(process.argv[1]).href;
+  try {
+    invoked = pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    // argv[1] 不存在等：保持原路径比较。
+  }
+  if (import.meta.url === invoked) await main();
+}

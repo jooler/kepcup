@@ -13,6 +13,7 @@ import {
   type ScheduleReceiptSnapshot,
   type TaskEventContent,
   type TaskEventPhase,
+  type WidgetCard,
 } from '@kepcup/shared';
 import { buildFtsQuery, segmentForFts } from '../infra/text-segment.js';
 import type { SqliteDatabase } from '../infra/db.js';
@@ -110,6 +111,8 @@ export interface AppendMessageInput {
   cardDelegationId?: string | undefined;
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor (no HTML, no tokens). */
   cardAppUi?: AppUiCard | undefined;
+  /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符（不含 HTML）。 */
+  cardWidget?: WidgetCard | undefined;
   /** Watch cards only (W7, cardType `watch`). */
   cardWatch?:
     | {
@@ -270,6 +273,7 @@ export class MessagesService {
                   ? { delegationId: input.cardDelegationId }
                   : {}),
                 ...(input.cardAppUi !== undefined ? { appUi: input.cardAppUi } : {}),
+                ...(input.cardWidget !== undefined ? { widget: input.cardWidget } : {}),
                 ...(input.cardWatch !== undefined
                   ? {
                       watchId: input.cardWatch.watchId,

@@ -40,6 +40,8 @@ export const ID_PREFIXES = {
   wat: 'wat_',
   /** 辅助阅读便签（main.db stickies）。 */
   stc: 'stc_',
+  /** Bot 自制交互组件（D81，main.db widgets）。 */
+  wgt: 'wgt_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

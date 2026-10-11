@@ -37,6 +37,7 @@
 | main | `0025_app_connections.sql` | D73 P0：新表 `app_connections`（含部分唯一索引）、`oauth_clients` |
 | main | `0026_app_tools.sql` | D73 P1：新表 `app_connection_tools`（工具定义锁定）、`app_tool_grants`（写工具持续授权）；`app_connections` 增 `baseline_pending`（测试用 `mainVersionsAfter()` 取「某版本之后的全部 main 迁移」，新增迁移不必改老测试） |
 | main | `0027_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
+| main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -589,6 +590,48 @@ CREATE INDEX stickies_conversation ON stickies(conversation_id);
 - `z` 由渲染层发牌（单调递增），启动水合时接到库中最大层号之后。
 - 删除对话时随 `conversations` 行 FK 级联删除（含 `global`：来源对话是所有者）。
 
+### widgets（Bot 自制交互组件，D81，main 0028）
+
+Bot 在任务里用 `widget_create` / `widget_update` 交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
+
+```sql
+CREATE TABLE widgets (
+  id              TEXT PRIMARY KEY,       -- wgt_...
+  bot_id          TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  scope           TEXT NOT NULL DEFAULT 'conversation' CHECK (scope IN ('conversation', 'bot')),
+  title           TEXT NOT NULL,
+  description     TEXT NOT NULL DEFAULT '',
+  latest_version  INTEGER NOT NULL DEFAULT 1,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX widgets_bot ON widgets(bot_id);
+CREATE INDEX widgets_conversation ON widgets(conversation_id);
+
+CREATE TABLE widget_versions (
+  widget_id      TEXT NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
+  version        INTEGER NOT NULL,
+  html           TEXT NOT NULL,           -- ≤ BOT_WIDGET_HTML_MAX_BYTES（2MB）
+  sha256         TEXT NOT NULL,           -- 渲染端按它记忆用户确认（同版本只确认一次）
+  created_by_run TEXT NOT NULL DEFAULT '',
+  created_at     INTEGER NOT NULL,
+  PRIMARY KEY (widget_id, version)
+);
+
+CREATE TABLE widget_docs (
+  widget_id  TEXT NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (widget_id, key)
+);
+```
+
+- `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 三表（见删除级联表）。
+- `widget_docs` 是能力桥（P1）的每组件命名空间 KV，随 0028 先建表（P0 无写入方）。
+- 服务层在 `core/src/widgets/service.ts`；HTML 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
+
 ### delegations（D71，main 0016；0021 重建）
 
 ```sql
@@ -923,6 +966,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | schedules | 删除 | P10 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
+| 该对话的 Bot 自制组件（D81 `widgets`，scope='conversation'） | 删除（conversations FK 级联；scope='bot' 的行跨对话存活） | D81 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
 
@@ -944,6 +988,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
 | watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
+| 该 Bot 的 widgets / widget_versions / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
 | 该 Bot 贡献的 profile_items | **保留** | — |

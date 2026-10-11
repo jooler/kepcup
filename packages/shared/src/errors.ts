@@ -138,6 +138,8 @@ export const ERROR_CODES = [
   'DEVELOPER_MODE_REQUIRED',
   /** 授权服务器与 MCP 服务不同站点的提案，`confirm` 缺少 `acknowledgeCrossSiteIssuer`。 */
   'LOCAL_CONNECTOR_ACK_REQUIRED',
+  /** Bot 自制交互组件（D81）：卡片内容损坏 / 版本缺失 / 卡片与版本 sha256 不一致。 */
+  'WIDGET_INVALID',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

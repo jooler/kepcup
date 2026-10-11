@@ -90,12 +90,16 @@ describe('createCore (integration)', () => {
       'watches',
       // 辅助阅读便签（main 0024）。
       'stickies',
+      // Bot 自制交互组件（main 0028，D81）。
+      'widgets',
+      'widget_versions',
+      'widget_docs',
     ]) {
       expect(tables.map((t) => t.name)).toContain(table);
     }
     // main 0024 = stickies（辅助阅读便签；0023 = W7 watches）；0025 / 0026 / 0027 = D73
-    // app_connections / app_tools / egress_approval。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(27);
+    // app_connections / app_tools / egress_approval；0028 = D81 bot widgets。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(28);
     // 0001 init + 0002 runs + 0003 run continuation (D56) + 0004 subagent parent (D66/D67)
     // + 0005 run engine (D72) + 0006 tasks (D75) + 0007 'response' → 'turn' (D75 W2)
     // + 0008 turn trigger parts / retry origin (D75 审查 L3 / L6)
