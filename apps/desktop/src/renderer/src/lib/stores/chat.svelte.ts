@@ -460,6 +460,19 @@ class ChatState {
   }
 
   /**
+   * 窄屏「返回列表」（33-narrow-layout）：只退出当前会话视图回到列表层；会话
+   * 本身还在，与 close()（会话消失时的清理，一并放弃启动恢复记忆）不同，
+   * 这里保留记忆——下次启动 / 拉回宽屏仍回到该会话。
+   */
+  leaveCurrent(): void {
+    this.#chat = null;
+    this.currentId = null;
+    this.replyTo = null;
+    this.highlightMessageId = null;
+    this.#pendingSetup = null;
+  }
+
+  /**
    * Memory evidence jump (任务书任务 13): opens the evidence conversation and
    * highlights the message. Returns false when the conversation is deleted —
    * the caller then shows 「来源对话已删除」.

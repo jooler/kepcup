@@ -56,7 +56,10 @@
       {t('contacts.empty')}
     </div>
   {:else}
-    <ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <!-- 显式 grid-cols-1（minmax(0,1fr)，轨道可收缩）：裸 grid 的 auto 轨道按
+         内容 min-content 取宽，简介 truncate 的不换行文本会把轨道撑到超出
+         窄屏视口、出现横向滚动条（33-narrow-layout）。 -->
+    <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {#each contacts.bots as bot (bot.id)}
         <li
           class="flex flex-col gap-3 rounded-xl border p-4 transition-colors hover:bg-accent/40"

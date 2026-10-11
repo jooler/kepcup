@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import type { Component } from 'svelte';
+  import { ChevronLeft, Search } from '@lucide/svelte';
   import type { Bot } from '@kepcup/shared';
   import {
     Activity,
@@ -14,7 +15,6 @@
     Moon,
     MoonStar,
     Palette,
-    Search,
     Settings2,
     ShieldCheck,
     Sun,
@@ -29,6 +29,8 @@
   import { shell, type SettingsSectionId } from '$lib/stores/shell.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+  import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -38,6 +40,9 @@
    * 空查询时展示快捷入口——Bots 列表与高频设置；有查询时按
    * Bot → 对话 → 设置排序平铺（同参考截图），前 9 条带 ⌘N 直达。
    * 外观三条（自动风格/亮色/暗色）不跳设置，选中即生效。
+   *
+   * 窄屏（33-narrow-layout）不用弹框：全屏浮层带背景色把底层盖住（像打开
+   * 新页面），顶部给 macOS 红绿灯留位；返回按钮关闭。结果行两种形态共用。
    */
 
   let {
@@ -47,6 +52,7 @@
   } = $props();
 
   const isMac = /Mac/i.test(navigator.platform);
+  const narrow = $derived(narrowLayout.narrow);
 
   let query = $state('');
   let activeIndex = $state(0);
@@ -283,7 +289,11 @@
   );
 
   const quickSettingRows = $derived(
-    quickSettings.map((target): Row => ({ kind: 'settings', key: `settings-${target.id}`, target })),
+    quickSettings.map((target): Row => ({
+      kind: 'settings',
+      key: `settings-${target.id}`,
+      target,
+    })),
   );
 
   /** 有查询：Bot → 对话（与已匹配 Bot 的直聊去重）→ 设置，平铺。 */
@@ -316,14 +326,16 @@
 
     return [
       ...bots.map((bot): Row => ({ kind: 'bot', key: `bot-${bot.id}`, bot })),
-      ...conversations.map(
-        (conversation): Row => ({
-          kind: 'conversation',
-          key: `conversation-${conversation.id}`,
-          conversation,
-        }),
-      ),
-      ...settings.map((target): Row => ({ kind: 'settings', key: `settings-${target.id}`, target })),
+      ...conversations.map((conversation): Row => ({
+        kind: 'conversation',
+        key: `conversation-${conversation.id}`,
+        conversation,
+      })),
+      ...settings.map((target): Row => ({
+        kind: 'settings',
+        key: `settings-${target.id}`,
+        target,
+      })),
     ];
   });
 
@@ -404,123 +416,166 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<Dialog.Root bind:open>
-  <Dialog.Content
-    class="w-[min(36rem,calc(100%_-_2rem))] max-w-none sm:max-w-none gap-0 overflow-hidden rounded-2xl p-0"
-    showCloseButton={false}
-    data-testid="global-search-dialog"
-  >
-    <Dialog.Title class="sr-only">{t('search.open')}</Dialog.Title>
-    <div class="flex items-center gap-2.5 border-b px-4">
+<!-- 结果区（宽窄两形态共用）：空态 / 搜索平铺 / 快捷入口两组。 -->
+{#snippet rowsList()}
+  {#snippet rowButton(row: Row, index: number)}
+    <button
+      type="button"
+      class="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors
+        {activeIndex === index ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'}"
+      data-active={activeIndex === index}
+      onclick={() => activate(row)}
+      onmousemove={() => (activeIndex = index)}
+      data-testid={`global-search-item-${row.key}`}
+    >
+      {#if row.kind === 'bot'}
+        <BotAvatar
+          botId={row.bot.id}
+          name={row.bot.name}
+          avatar={row.bot.avatar}
+          class="size-10"
+          fallbackClass="text-base"
+        />
+        <span class="grid min-w-0 flex-1 gap-0.5">
+          <span class="truncate text-sm font-medium">{row.bot.name}</span>
+          {#if row.bot.bio.length > 0}
+            <span class="truncate text-xs text-muted-foreground">{row.bot.bio}</span>
+          {/if}
+        </span>
+      {:else if row.kind === 'conversation'}
+        {#if row.conversation.type === 'group'}
+          <Avatar.Root class="size-10">
+            <Avatar.Fallback class="bg-emerald-600 text-primary-foreground">
+              <Users class="size-5" aria-hidden="true" />
+            </Avatar.Fallback>
+          </Avatar.Root>
+        {:else}
+          <BotAvatar
+            botId={row.conversation.directBotId ?? row.conversation.id}
+            name={row.conversation.bot?.name ?? row.conversation.directBotId ?? '?'}
+            avatar={row.conversation.bot?.avatar ?? null}
+            class="size-10"
+            fallbackClass="text-base"
+          />
+        {/if}
+        <span class="grid min-w-0 flex-1 gap-0.5">
+          <span class="truncate text-sm font-medium">{conversationTitle(row.conversation)}</span>
+          {#if conversationPreview(row.conversation).length > 0}
+            <span class="truncate text-xs text-muted-foreground">
+              {conversationPreview(row.conversation)}
+            </span>
+          {/if}
+        </span>
+      {:else}
+        {@const Icon = row.target.icon as unknown as Component<{ class?: string }>}
+        <span
+          class="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-foreground/80"
+        >
+          <Icon class="size-4.5" />
+        </span>
+        <span class="grid min-w-0 flex-1 gap-0.5">
+          <span class="truncate text-sm font-medium">{row.target.label}</span>
+          <span class="truncate text-xs text-muted-foreground">{row.target.subtitle}</span>
+        </span>
+      {/if}
+      {#if index < 9}
+        <kbd
+          class="shrink-0 rounded-md border bg-muted/50 px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
+        >
+          {shortcutHint(index)}
+        </kbd>
+      {/if}
+    </button>
+  {/snippet}
+
+  {#if rows.length === 0}
+    <p class="p-6 text-center text-sm text-muted-foreground" data-testid="global-search-empty">
+      {t('search.noResults')}
+    </p>
+  {:else if isSearching}
+    {#each searchRows as row, index (row.key)}
+      {@render rowButton(row, index)}
+    {/each}
+  {:else}
+    {#if quickBotRows.length > 0}
+      <p class="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
+        {t('search.groupBots')}
+      </p>
+      {#each quickBotRows as row, index (row.key)}
+        {@render rowButton(row, index)}
+      {/each}
+    {/if}
+    <p class="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
+      {t('search.quickSettings')}
+    </p>
+    {#each quickSettingRows as row, index (row.key)}
+      {@render rowButton(row, quickBotRows.length + index)}
+    {/each}
+  {/if}
+{/snippet}
+
+{#if narrow && open}
+  <!-- 窄屏全屏浮层：盖住整个应用（像打开新页面），顶部拖拽带让出红绿灯。 -->
+  <div class="fixed inset-0 z-50 flex flex-col bg-background" data-testid="global-search-layer">
+    <div
+      class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
+        ? 'pr-3 pl-20'
+        : 'px-3'}"
+    >
+      <Button
+        variant="ghost"
+        size="icon"
+        class="app-no-drag size-9 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+        onclick={() => (open = false)}
+        aria-label={t('narrow.back')}
+        title={t('narrow.back')}
+        data-testid="global-search-back"
+      >
+        <ChevronLeft class="size-5" aria-hidden="true" />
+      </Button>
       <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <input
         bind:this={inputEl}
         bind:value={query}
         placeholder={t('search.placeholder')}
-        class="h-14 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        class="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         data-testid="global-search-input"
       />
     </div>
-
     <div
-      class="max-h-[min(26rem,55vh)] overflow-y-auto p-2"
+      class="min-h-0 flex-1 overflow-y-auto p-2"
       bind:this={listEl}
       data-testid="global-search-list"
     >
-      {#snippet rowButton(row: Row, index: number)}
-        <button
-          type="button"
-          class="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors
-            {activeIndex === index ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'}"
-          data-active={activeIndex === index}
-          onclick={() => activate(row)}
-          onmousemove={() => (activeIndex = index)}
-          data-testid={`global-search-item-${row.key}`}
-        >
-          {#if row.kind === 'bot'}
-            <BotAvatar
-              botId={row.bot.id}
-              name={row.bot.name}
-              avatar={row.bot.avatar}
-              class="size-10"
-              fallbackClass="text-base"
-            />
-            <span class="grid min-w-0 flex-1 gap-0.5">
-              <span class="truncate text-sm font-medium">{row.bot.name}</span>
-              {#if row.bot.bio.length > 0}
-                <span class="truncate text-xs text-muted-foreground">{row.bot.bio}</span>
-              {/if}
-            </span>
-          {:else if row.kind === 'conversation'}
-            {#if row.conversation.type === 'group'}
-              <Avatar.Root class="size-10">
-                <Avatar.Fallback class="bg-emerald-600 text-primary-foreground">
-                  <Users class="size-5" aria-hidden="true" />
-                </Avatar.Fallback>
-              </Avatar.Root>
-            {:else}
-              <BotAvatar
-                botId={row.conversation.directBotId ?? row.conversation.id}
-                name={row.conversation.bot?.name ?? row.conversation.directBotId ?? '?'}
-                avatar={row.conversation.bot?.avatar ?? null}
-                class="size-10"
-                fallbackClass="text-base"
-              />
-            {/if}
-            <span class="grid min-w-0 flex-1 gap-0.5">
-              <span class="truncate text-sm font-medium">{conversationTitle(row.conversation)}</span>
-              {#if conversationPreview(row.conversation).length > 0}
-                <span class="truncate text-xs text-muted-foreground">
-                  {conversationPreview(row.conversation)}
-                </span>
-              {/if}
-            </span>
-          {:else}
-            {@const Icon = row.target.icon as unknown as Component<{ class?: string }>}
-            <span
-              class="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-foreground/80"
-            >
-              <Icon class="size-4.5" />
-            </span>
-            <span class="grid min-w-0 flex-1 gap-0.5">
-              <span class="truncate text-sm font-medium">{row.target.label}</span>
-              <span class="truncate text-xs text-muted-foreground">{row.target.subtitle}</span>
-            </span>
-          {/if}
-          {#if index < 9}
-            <kbd
-              class="shrink-0 rounded-md border bg-muted/50 px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground"
-            >
-              {shortcutHint(index)}
-            </kbd>
-          {/if}
-        </button>
-      {/snippet}
-
-      {#if rows.length === 0}
-        <p class="p-6 text-center text-sm text-muted-foreground" data-testid="global-search-empty">
-          {t('search.noResults')}
-        </p>
-      {:else if isSearching}
-        {#each searchRows as row, index (row.key)}
-          {@render rowButton(row, index)}
-        {/each}
-      {:else}
-        {#if quickBotRows.length > 0}
-          <p class="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
-            {t('search.groupBots')}
-          </p>
-          {#each quickBotRows as row, index (row.key)}
-            {@render rowButton(row, index)}
-          {/each}
-        {/if}
-        <p class="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
-          {t('search.quickSettings')}
-        </p>
-        {#each quickSettingRows as row, index (row.key)}
-          {@render rowButton(row, quickBotRows.length + index)}
-        {/each}
-      {/if}
+      {@render rowsList()}
     </div>
-  </Dialog.Content>
-</Dialog.Root>
+  </div>
+{:else}
+  <Dialog.Root bind:open>
+    <Dialog.Content
+      class="w-[min(36rem,calc(100%_-_2rem))] max-w-none gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-none"
+      showCloseButton={false}
+      data-testid="global-search-dialog"
+    >
+      <Dialog.Title class="sr-only">{t('search.open')}</Dialog.Title>
+      <div class="flex items-center gap-2.5 border-b px-4">
+        <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <input
+          bind:this={inputEl}
+          bind:value={query}
+          placeholder={t('search.placeholder')}
+          class="h-14 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          data-testid="global-search-input"
+        />
+      </div>
+
+      <div
+        class="max-h-[min(26rem,55vh)] overflow-y-auto p-2"
+        bind:this={listEl}
+        data-testid="global-search-list"
+      >
+        {@render rowsList()}
+      </div>
+    </Dialog.Content>
+  </Dialog.Root>
+{/if}

@@ -9,6 +9,7 @@
   import { contacts } from '$lib/stores/contacts.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
@@ -176,7 +177,13 @@
       testId="bot-avatar"
     />
   {/if}
-  <div class="flex max-w-[78%] min-w-0 flex-col {isUser ? 'items-end' : 'items-start'}">
+  <!-- 气泡列宽：宽屏 78%；窄屏（33-narrow-layout）改 100% - 64px——左右各让约
+       一个头像的宽度， hover 操作钮落在让出的留白里，不再挤压气泡。 -->
+  <div
+    class="flex min-w-0 flex-col {narrowLayout.narrow
+      ? 'max-w-[calc(100%-64px)]'
+      : 'max-w-[78%]'} {isUser ? 'items-end' : 'items-start'}"
+  >
     {#if delegatedBy !== null}
       <span class="mb-0.5 text-[11px] text-muted-foreground" data-testid="delegation-origin">
         {t('delegation.proxiedBy', { name: delegatedBy ? chat.botName(delegatedBy) : '' })}
@@ -233,11 +240,12 @@
     {/if}
   </div>
 
-  {#if canAct}
+  {#if canAct && !narrowLayout.narrow}
     <!-- hover 操作：放在消息旁的留白区（参考 Grok），悬停展示 tooltip，右键菜单为同一组操作。
          常驻占位（invisible↔visible）而非 hidden↔flex：出现/消失会挤压气泡横移，
          鼠标停在窄元素（如小图缩略图）上时形成「悬停→位移→移出→收起」的布局
-         死循环，渲染层被 relayout 打满（P17 观察到的冻结）。 -->
+         死循环，渲染层被 relayout 打满（P17 观察到的冻结）。
+         窄屏（33-narrow-layout）整组不渲染——按钮组占掉大量宽度，操作只留右键菜单。 -->
     <div
       class="invisible flex shrink-0 items-center gap-0.5 self-center {isUser
         ? 'mr-1'

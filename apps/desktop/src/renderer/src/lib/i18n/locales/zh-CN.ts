@@ -17,6 +17,13 @@ export const zhCN = {
   'sidebar.userEmail': '本地账户',
   'menu.settings': '设置',
   'menu.contacts': '通讯录',
+  // 窄屏单栏布局（docs/design/33-narrow-layout.md）：底部全局 tab 与详情页返回
+  'narrow.tabBarLabel': '全局导航',
+  'narrow.tabChats': '对话',
+  'narrow.tabContacts': '通讯录',
+  'narrow.tabExtensions': '扩展',
+  'narrow.tabMe': '我',
+  'narrow.back': '返回',
   'chats.empty': '选择或开始一个对话',
   'chats.loadEarlier': '加载更早消息',
   'chats.recalled': '消息已撤回',

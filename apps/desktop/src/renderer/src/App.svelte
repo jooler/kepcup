@@ -17,6 +17,8 @@
   import ReconnectBanner from '$lib/features/shell/ReconnectBanner.svelte';
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
+  import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
@@ -45,6 +47,13 @@
     window.kepcup.onNavigateConversation((conversationId) => {
       void chat.select(conversationId);
     });
+  });
+
+  // 窄屏宽度监听：svelte:window bind:innerWidth 随窗口拉伸即时回填（拖拽中
+  // 逐帧触发），narrow 派生抽值切换宽/窄布局形态（narrow-layout.svelte.ts）。
+  // 拉回宽屏时 Bot 详情覆盖层复位——宽屏没有这一层（右栏开合归 rightPanelCollapsed）。
+  $effect(() => {
+    if (!narrowLayout.narrow && narrowLayout.botDetailOpen) narrowLayout.closeBotDetail();
   });
 
   const coreReady = $derived(core.coreStatus?.status === 'ready');
@@ -132,6 +141,7 @@
 </script>
 
 <ModeWatcher />
+<svelte:window bind:innerWidth={narrowLayout.windowWidth} />
 <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
   {#if core.connection === 'reconnecting'}
     <ReconnectBanner />
@@ -142,6 +152,18 @@
   <div class="flex min-h-0 flex-1">
     {#if core.connection === 'failed'}
       <CoreErrorPage />
+    {:else if narrowLayout.narrow}
+      <!-- 窄屏（33-narrow-layout）：手机式单栏 + 底部全局 tab；核心状态页全屏
+           呈现（包 main 以铺不透明背景，macOS 毛玻璃下同宽屏）。 -->
+      <main class="flex min-h-0 min-w-0 flex-1 flex-col">
+        {#if core.coreStatus?.status === 'locked'}
+          <LockedPage reason={core.coreStatus.reason} />
+        {:else if !coreReady}
+          <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
+        {:else}
+          <NarrowShell />
+        {/if}
+      </main>
     {:else}
       <!-- 左栏宽度可拖拽调节：动态 --sidebar-width 经 style 覆盖套件默认值
            （provider 的 style 拼在默认声明之后，后写胜出）。 -->
@@ -182,5 +204,7 @@
     <OnboardingWizard />
   {/if}
 
-  <Toaster position="bottom-right" />
+  <!-- 窄屏 toast 改顶部居中（33-narrow-layout）：sonner 单条 toast 默认 356px 宽，
+       bottom-right 在手机宽度窗口里会横贯整个底部 tab 栏。 -->
+  <Toaster position={narrowLayout.narrow ? 'top-center' : 'bottom-right'} />
 </div>

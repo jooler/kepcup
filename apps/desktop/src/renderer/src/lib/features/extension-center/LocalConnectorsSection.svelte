@@ -111,7 +111,7 @@
             {t('apps.local.section.empty')}
           </p>
         {:else}
-          <div class="grid gap-3 sm:grid-cols-2" data-testid="local-connectors-list">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="local-connectors-list">
             {#each views as view (view.connectorId)}
               {@const open = openConnectorId === view.connectorId}
               {@const accounts = accountsOf(view.connectorId)}

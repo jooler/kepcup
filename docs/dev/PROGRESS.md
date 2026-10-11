@@ -1249,3 +1249,28 @@
 ### 纯附件消息不再渲染空气泡（2026-10-11）
 
 投递修复生效后用户反馈：图片显示了，但原空气泡的容器壳还留在图片上方。`MessageBody` 的用户分支本就有「纯附件消息没有文本气泡」的处理（design 20），bot 分支却无条件渲染气泡容器（空文本 = 空壳）。对齐：bot 正文 `trim` 后为空时跳过气泡容器（`hasBotText` derived），附件行即消息体（任务进度标签仍保留）。编辑态与已撤回分支在其之前，不受影响。chats/stores 16 文件 86 例全绿，svelte-check 0 错误；desktop electron-vite 产物已重建。
+
+
+## 窄屏单栏布局——手机式辅助 Panel（2026-10-11，design/33，D82）
+
+窗口此前已允许拉到 375px 宽但界面仍是桌面三栏。本次补齐窄屏形态：内容宽 **<640px**（`max-width: 639.98px` 开区间，与 Tailwind `sm:` 恰互补、边界不重叠）整体切换为手机式单栏，随拉伸即时切换、不持久化。
+
+- **导航模型**：底部全局 tab（对话 / 通讯录 / 扩展 / 我）为第一层；会话详情与 Bot 详情覆盖层为详情层——进入后 tab 栏隐藏、左上角返回（`chat.leaveCurrent()`：只退视图，保留启动恢复记忆，区别于会话消失时的 `chat.close()`）。任何 tab 下打开会话（通讯录「打开对话」、通知点击、记忆证据跳转）由 NarrowShell 的 effect 统一切回对话 tab。
+- **页面全部复用而非复制**：列表 = AppSidebar（`--sidebar-width: 100%`，footer / 调宽手柄隐藏、「+」面板贴左缘）；详情 = ChatsArea（窄屏不渲染 Resizable 分栏）；Bot 详情覆盖层 = RightPanel（无左边框、✕ 关覆盖层、macOS 让出红绿灯）；通讯录 / 我 = 设置弹框对应分区（窄屏弹框隐藏这两项并单栏化，深链兜底回「通用」）；扩展 tab 整页化（抽 `ExtensionCenterBody` 与弹框共用，`openExtensionCenter` 深链统一重路由到 tab）。
+- **窄屏细节**：toast 改顶部居中（sonner 单条默认 356px 宽，bottom-right 在手机宽度窗口里会横贯整个 tab 栏）；tab 当前项深色加粗 + 顶部短指示条（仅文字色差在 11px 字号下不够醒目）；macOS 毛玻璃只保留在列表页。
+- **测试**：新增 `narrow-layout.test.ts`（7 例：断点开区间 / tab 栏显隐推导 / 设置分区隐藏集）与 e2e `narrow-layout.spec.ts`（宽窄切换全流程：tab 栏、返回、覆盖层开合、通讯录跳转、扩展页、我页 + 设置弹框隐藏分区与 ✕、拉回宽屏恢复双栏）。回归 `sidebar-resize` / `extension-center` e2e 全绿；定向单测 4 文件 23 例全绿；svelte-check 0 错误。e2e 输出的 8 张关键状态截图经像素级视觉复核（两轮，修复 toast 遮挡 / 扩展页左缘裁切 / tab 指示强化后全部通过）。
+
+
+## 窄屏布局修复轮——实时切换 / Tooltip 崩溃 / 溢出 / 全屏化（2026-10-11，design/33 反馈）
+
+首版窄屏实机反馈六项，全部修复：
+
+- **实时切换失效**：matchMedia 的 `change` 监听在实机拖拽窗口时不触发（e2e 的 `setSize` 路径却能触发，掩盖了问题），切换滞后到刷新。改为 `svelte:window bind:innerWidth` 回填 `narrowLayout.windowWidth`，`narrow` 变纯派生（`isNarrowWidth`），resize 逐帧响应、无事件订阅。
+- **带消息的会话打开崩溃**（`Context "Tooltip.Provider" not found`）：Provider 在宽屏由 `Sidebar.Provider` 隐式提供，窄屏不渲染它，消息行 `Tooltip.Root` 取上下文直接抛错（空会话无消息行，e2e 首版没踩到）。NarrowShell 外层补 `Tooltip.Provider`；e2e 增加「发消息等回复 → 返回 → 重进」回归并断言全程无 `pageerror`。
+- **通讯录横向滚动**：裸 `grid`（无显式列模板）的 auto 轨道按内容 min-content 取宽，简介 `truncate` 的不换行文本把轨道撑到 ~575px 超出视口（宽屏弹框够宽没暴露）。通讯录 / 本机连接网格补显式 `grid-cols-1`（`minmax(0,1fr)` 可收缩），NarrowPage 内容区加 `overflow-x-hidden`。
+- **扩展卡片窄屏单列**：技能（ExtensionSkills）与连接目录（AppCatalogGrid）网格基准改 `grid-cols-1`、容器查询 `@xl` 起升列（宽屏弹框 2–4 列观感不变）。
+- **搜索 / 「+」全屏化**：窄屏不再用弹框 / 浮板——`fixed inset-0` 全屏浮层带背景色盖住底层，顶部拖拽带让出红绿灯、返回按钮关闭；结果行 / 面板内容经 snippet 与宽屏形态共用（GlobalSearchDialog、AppSidebar）。
+- **设置全屏页**：新增 `NarrowSettings`（分组列表 ↔ 详情页，左上角返回、Esc 逐层退、锚点滚动）；分区清单与内容视图抽成 `settings-sections-list.ts` / `SettingsSectionView.svelte` 与宽屏弹框共用。`shell.openSettings` 窄屏重路由：不带分区落列表页、带分区（别名展开后）直达详情、通讯录 / 用户画像直接切 tab。
+- **tab 页标题移除**：NarrowPage 顶部只剩红绿灯高度的空白拖拽带（高度保留，防下方元素被红绿灯盖住）。
+
+**验证**：单测 10 例（断点 / tab 显隐 / 隐藏分区）全绿；e2e 重写（全屏浮层、设置页、Tooltip 回归、通讯录卡片视口内断言、无 pageerror）通过；回归 `sidebar-resize` / `extension-center` / `diagnostics` e2e 全绿；svelte-check 0 错误；8 张截图像素级复核全 PASS（通讯录卡片右缘精确 16 逻辑 px、扩展顶部零文字、设置页全屏列表形态确认）。

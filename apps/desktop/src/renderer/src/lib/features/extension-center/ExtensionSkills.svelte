@@ -81,7 +81,7 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col gap-4" data-testid="skill-market-panel">
-  <p class="shrink-0 text-xs text-muted-foreground pt-3">{t('skillMarket.description')}</p>
+  <p class="shrink-0 pt-3 text-xs text-muted-foreground">{t('skillMarket.description')}</p>
 
   <div class="relative shrink-0">
     <Search
@@ -109,8 +109,9 @@
     {:else}
       {#each sections as section (section.id)}
         <p class="pt-3 pb-1.5 text-sm font-medium">{sectionTitle(section.id)}</p>
-        <!-- 技能卡片随面板宽度自适应 2–4 列（容器查询：视口断点跟弹框宽度对不上） -->
-        <ul class="grid grid-cols-2 gap-1.5 @3xl:grid-cols-3 @5xl:grid-cols-4">
+        <!-- 技能卡片随面板宽度自适应 1–4 列（容器查询：视口断点跟弹框宽度对不上）；
+             基准单列——窄屏页（33-narrow-layout）里两列会把卡片挤到不可读 -->
+        <ul class="grid grid-cols-1 gap-1.5 @xl:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4">
           {#each section.presets as preset (preset.id)}
             {@const Icon = presetIcon(preset.icon)}
             <li
