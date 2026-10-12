@@ -105,7 +105,7 @@ core：制作 loop（`widgets/craft/`）：
 - [x] `service.ts`（`WidgetCraftService`）：状态机、阶段 run 的创建（`runs.create({loopType:'widget_authoring', parentRunId})` + `routeFor(…,'widget_authoring')` + `persistEngineSteps` + `publishRunStatus`，照抄 subagent）、整体时限与 token 轮询封顶、父 signal 级联、评分 / 最佳快照 / 回滚 / 问题签名去重与收缩模式、回执关卡、交付判定、调 `WidgetService.create/update` 交付、回执文本。P3a 的 GATE = S0 + S1；没有 REVIEW（直接按 GATE 结果交付）。
 - [x] `llm-router.ts`：`LlmPurpose` 加 `'widget_authoring'`（P3c 再加 `'widget_review'`）；路由规则与 `skill_authoring` 同。
 - [x] `WidgetService.create/update` 增入参 `check?: {status, summary}`，落 `widget_versions.check_status` / `check_summary_json` 并带进卡片描述符；`listForBot` 输出带上 `checkStatus`。
-- [x] 迁移 `migrations/main/0035_widget_check.sql`（合并时重编号）：两列，默认 `'legacy'` / `''`。
+- [x] 迁移 `migrations/main/0035_widget_check.sql`（合入时 main 下一个空闲号正是 0035，未改号）：两列，默认 `'legacy'` / `''`。
 
 core：工具面切换：
 - [x] `tools/widget-tools.ts`：新增 `widget_craft`（参数与回执见设计 32 §11.4 / §11.6），保留 `widget_publish`；`widget_create` / `widget_update` 不再注册（删掉工具定义，`WidgetToolFacade` 改为 `{craft, publish}`）；工具描述瘦身。
@@ -329,3 +329,5 @@ renderer：
 | desktop | `widget-bridge-host`（reply 与无手势）、`present-geometry`（含极值刻度）；真机 harness 26 例（reply 无手势得 false） |
 
 **全量一次**（评审修复后）：4280 例，4231 通过 / 27 失败。其中 26 例是环境基线（sandbox / skills / workspace-tools / wiki-url / projects / environment），另 1 例 `integration/widget-craft` 是本次引入的：`widget_read_state` 的工具说明提到了 `kepcup.storage`，撞上「任务上下文不含组件代码」的断言。已改说明，单跑通过。core / desktop typecheck（svelte-check 0 错误）与改动文件的 eslint 均通过。
+
+**合入**：2026-10-12 P3-0 至 P4 一并合入 main（未推送）。main 的下一个空闲迁移号正是 0035，`0035_widget_check.sql` 未改号。D88（`t/handover`）也占了 0035，它合入时要改成 0036，并同步 `create-core.test.ts` 的 user_version 与 `public-skills-migration` 的回拨重放。效果基准（§5.4）仍待跑。
