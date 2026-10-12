@@ -30,6 +30,7 @@
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { Button } from '$lib/components/ui/button';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import * as Avatar from '$lib/components/ui/avatar';
@@ -42,7 +43,12 @@
    * 外观三条（自动风格/亮色/暗色）不跳设置，选中即生效。
    *
    * 窄屏（33-narrow-layout）不用弹框：全屏浮层带背景色把底层盖住（像打开
-   * 新页面），顶部给 macOS 红绿灯留位；返回按钮关闭。结果行两种形态共用。
+   * 新页面），顶部给 macOS 红绿灯留位；返回按钮 / Esc 关闭。结果行两种形态共用。
+   *
+   * 本组件挂在 App 根（不在 AppSidebar 里）：Cmd/Ctrl+K 与窄屏的任意 tab / 详情层都要
+   * 能用，宽窄切换（整树重挂载）也不丢打开状态。窄屏的全屏层是自绘 fixed 层，没有 bits-ui
+   * 的 Esc 与焦点约束，所以：Esc 经 escape-layers 仲裁；App 把底层容器置 inert（Tab 不会跑到
+   * 被盖住的侧栏按钮）；关闭时焦点还给打开前的元素。
    */
 
   let {
@@ -355,7 +361,26 @@
     if (!open) return;
     query = '';
     activeIndex = 0;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     void tick().then(() => inputEl?.focus());
+    return () => {
+      // 窄屏全屏层没有 bits-ui 的焦点归还：关闭时把焦点还给打开前的元素。
+      if (!narrow) return;
+      void tick().then(() => {
+        if (opener?.isConnected) opener.focus();
+      });
+    };
+  });
+
+  // 窄屏全屏层的 Esc（宽屏弹框由 bits-ui 处理）。输入框自带焦点，Esc 直接关层。
+  $effect(() => {
+    if (!open || !narrow) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.page,
+      onEscape: () => {
+        open = false;
+      },
+    });
   });
 
   function activate(row: Row): void {
@@ -515,8 +540,14 @@
 {/snippet}
 
 {#if narrow && open}
-  <!-- 窄屏全屏浮层：盖住整个应用（像打开新页面），顶部拖拽带让出红绿灯。 -->
-  <div class="fixed inset-0 z-50 flex flex-col bg-background" data-testid="global-search-layer">
+  <!-- 窄屏全屏浮层：盖住整个应用（像打开新页面），顶部拖拽带让出红绿灯。
+       根节点 app-no-drag 盖掉下层延伸上来的 drag 矩形；顶栏是 app-drag，但输入框与按钮必须
+       自带 app-no-drag——Electron 把 drag 区内的输入框也当窗口拖拽区，真实鼠标点击 / 框选
+       会被吞（Playwright 的 CDP 点击测不出，由 e2e 的结构性断言守护）。 -->
+  <div
+    class="app-no-drag fixed inset-0 z-50 flex flex-col bg-background"
+    data-testid="global-search-layer"
+  >
     <div
       class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
         ? 'pr-3 pl-20'
@@ -538,7 +569,7 @@
         bind:this={inputEl}
         bind:value={query}
         placeholder={t('search.placeholder')}
-        class="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        class="app-no-drag h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         data-testid="global-search-input"
       />
     </div>

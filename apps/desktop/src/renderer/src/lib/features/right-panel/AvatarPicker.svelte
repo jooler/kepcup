@@ -19,6 +19,7 @@
   } from '$lib/avatars/presets';
   import { fileToScaledPngBase64 } from '$lib/avatars/upload-image';
   import BotPresetAvatar from '$lib/avatars/BotPresetAvatar.svelte';
+  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
   let { bot, open = $bindable() }: { bot: Bot; open?: boolean } = $props();
 
@@ -36,6 +37,17 @@
   );
   // 预置网格里实时反显的颜色：上传态等没有预置颜色时用默认色。
   const activeColor = $derived(selected.color);
+
+  // Esc 经层级仲裁：头像选择器开着时，一次 Esc 只收起它，不连带关外层的 Bot 详情覆盖层。
+  $effect(() => {
+    if (!open) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.popover,
+      onEscape: () => {
+        open = false;
+      },
+    });
+  });
 
   function closeOnPointerdown(event: PointerEvent): void {
     if (open && node && !node.contains(event.target as globalThis.Node)) open = false;
@@ -83,12 +95,7 @@
   }
 </script>
 
-<svelte:window
-  onpointerdown={closeOnPointerdown}
-  onkeydown={(e) => {
-    if (e.key === 'Escape') open = false;
-  }}
-/>
+<svelte:window onpointerdown={closeOnPointerdown} />
 
 {#if open}
   <div

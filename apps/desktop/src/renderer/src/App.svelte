@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Toaster } from 'svelte-sonner';
   import { ModeWatcher, userPrefersMode } from 'mode-watcher';
   import { core } from '$lib/rpc/client.svelte';
@@ -18,6 +19,12 @@
   import LockedPage from '$lib/features/shell/LockedPage.svelte';
   import CoreErrorPage from '$lib/features/shell/CoreErrorPage.svelte';
   import NarrowShell from '$lib/features/shell/NarrowShell.svelte';
+  import BotDetailOverlay from '$lib/features/shell/BotDetailOverlay.svelte';
+  import NarrowSettings from '$lib/features/settings/NarrowSettings.svelte';
+  import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
+  import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
+  import SidebarDialogs from '$lib/features/sidebar/SidebarDialogs.svelte';
+  import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
@@ -32,6 +39,11 @@
   import OnboardingWizard from '$lib/features/onboarding/OnboardingWizard.svelte';
   import NoModelBanner from '$lib/features/onboarding/NoModelBanner.svelte';
   import { mountWindowDragBand } from '$lib/features/shell/window-drag-band';
+  import {
+    hasOpenModal,
+    isSearchShortcut,
+    resolveSearchShortcut,
+  } from '$lib/features/shell/global-shortcuts';
   import * as Sidebar from '$lib/components/ui/sidebar';
 
   // 全局弹层拖拽带：任何全屏浮层打开时窗口仍可从顶部拖动（模块头注释）。
@@ -50,13 +62,54 @@
   });
 
   // 窄屏宽度监听：svelte:window bind:innerWidth 随窗口拉伸即时回填（拖拽中
-  // 逐帧触发），narrow 派生抽值切换宽/窄布局形态（narrow-layout.svelte.ts）。
-  // 拉回宽屏时 Bot 详情覆盖层复位——宽屏没有这一层（右栏开合归 rightPanelCollapsed）。
+  // 逐帧触发），narrow 抽值带滞回（640 进入 / 680 退出，narrow-layout.ts）切换
+  // 宽/窄布局形态（narrow-layout.svelte.ts）。
+  //
+  // 宽 / 窄切换时：设置类浮层状态统一复位（宽屏 SettingsDialog 与窄屏 NarrowSettings 是两套
+  // 互不相通的状态，shell.resetForLayoutChange）；窄屏拉回宽屏时，窄屏「返回列表」
+  // （chat.leaveCurrent）留下的空选中恢复到上次查看的会话（宽屏没有「列表层」，右侧聊天区
+  // 不该是空的）。Bot 详情覆盖层由 BotDetailOverlay 按「是否仍需要覆盖层」自行收放。
+  // 首次运行只记录形态，不当作切换（启动恢复归 bootstrap）。
+  let previousNarrow: boolean | null = null;
   $effect(() => {
-    if (!narrowLayout.narrow && narrowLayout.botDetailOpen) narrowLayout.closeBotDetail();
+    const narrow = narrowLayout.narrow;
+    const previous = previousNarrow;
+    previousNarrow = narrow;
+    if (previous === null || previous === narrow) return;
+    untrack(() => {
+      shell.resetForLayoutChange();
+      if (previous && !narrow && coreReady && chat.currentId === null) void chat.restoreLast();
+    });
   });
 
   const coreReady = $derived(core.coreStatus?.status === 'ready');
+
+  // 窄屏全屏层（Bot 详情覆盖层 / 设置页 / 搜索层）开着时，其下的主布局不可聚焦（inert）：
+  // 这些自绘 fixed 层没有 bits-ui 弹框的焦点约束，Tab 会跑到被盖住的按钮上。层本身挂在
+  // 主布局容器之外（下面的兄弟节点），不受 inert 影响。宽屏的搜索弹框是 bits-ui 模态，自带约束。
+  const layerCoversMain = $derived(
+    narrowLayout.botDetailOpen ||
+      shell.narrowSettingsOpen ||
+      (narrowLayout.narrow && shell.searchOpen),
+  );
+
+  // Cmd/Ctrl+K 打开全局搜索：挂在这里而不是 AppSidebar——窄屏的会话详情 / 其它 tab 里
+  // AppSidebar 并未挂载。先判定能不能开（global-shortcuts.ts：核心未就绪、设置页 /
+  // 向导 / 已有任何模态时不叠层），能开才 preventDefault；否则不吞事件。
+  function onGlobalKeydown(event: KeyboardEvent): void {
+    if (!isSearchShortcut(event)) return;
+    const action = resolveSearchShortcut({
+      coreReady,
+      searchOpen: shell.searchOpen,
+      onboardingOpen: onboarding.open,
+      settingsOpen: shell.settingsOpen,
+      narrowSettingsOpen: shell.narrowSettingsOpen,
+      modalOpen: hasOpenModal(document),
+    });
+    if (action !== 'open') return;
+    event.preventDefault();
+    shell.openSearch();
+  }
 
   // macOS 毛玻璃材质跟随应用主题（preload setNativeThemeSource → 主进程
   // nativeTheme.themeSource）：应用内选了亮/暗时侧栏的原生模糊同步换挡，
@@ -141,7 +194,7 @@
 </script>
 
 <ModeWatcher />
-<svelte:window bind:innerWidth={narrowLayout.windowWidth} />
+<svelte:window bind:innerWidth={narrowLayout.windowWidth} onkeydown={onGlobalKeydown} />
 <div class="flex h-screen min-h-0 flex-col" data-testid="app-shell">
   {#if core.connection === 'reconnecting'}
     <ReconnectBanner />
@@ -149,7 +202,7 @@
   <UnattendedBanner />
   <UpdateBanner />
 
-  <div class="flex min-h-0 flex-1">
+  <div class="flex min-h-0 flex-1" inert={layerCoversMain}>
     {#if core.connection === 'failed'}
       <CoreErrorPage />
     {:else if narrowLayout.narrow}
@@ -191,6 +244,21 @@
   <!-- 设置弹框（含通讯录分组），不再整页替换主区域 -->
   {#if coreReady}
     <SettingsDialog />
+  {/if}
+
+  <!-- 全屏层与全局弹框挂在 App 根（不依赖侧栏 / 外壳是否挂载，宽窄切换也不丢状态）：
+       Bot 详情覆盖层（z-40）→ 窄屏设置页（z-50）→ 全局搜索（z-50）；侧栏触发的模态对话框；
+       技能目录缺失提示（原挂在 AppSidebar，窄屏会话详情里侧栏不在，订阅与弹框都不存在）。 -->
+  {#if coreReady}
+    <BotDetailOverlay />
+    {#if narrowLayout.narrow}
+      <Tooltip.Provider delayDuration={0}>
+        <NarrowSettings />
+      </Tooltip.Provider>
+    {/if}
+    <GlobalSearchDialog bind:open={shell.searchOpen} />
+    <SidebarDialogs />
+    <MissingSkillDialog />
   {/if}
 
   <!-- P12-B：沙箱准备向导（设置页/首启提示共用）与首次启动入口 -->

@@ -40,6 +40,21 @@ class ShellState {
   /** 扩展中心当前分组（Skills / 连接 / MCP）；`openExtensionCenter(tab)` 指定，用户可在弹框内切换。 */
   extensionCenterTab = $state<ExtensionCenterTab>('skills');
 
+  /**
+   * 全局搜索层是否打开（侧栏搜索按钮 / Cmd+K 共用）。状态放 shell 而不是 AppSidebar：
+   * 窄屏下侧栏只在「对话」列表层挂载，Cmd+K 与搜索层都要在任意 tab / 详情层可用；
+   * 宽窄切换（整树重挂载）也不丢。
+   */
+  searchOpen = $state(false);
+
+  openSearch(): void {
+    this.searchOpen = true;
+  }
+
+  closeSearch(): void {
+    this.searchOpen = false;
+  }
+
   openExtensionCenter(tab: ExtensionCenterTab = 'skills'): void {
     this.extensionCenterTab = tab;
     this.extensionCenterOpen = true;
@@ -58,6 +73,7 @@ class ShellState {
       if (section === undefined) {
         this.narrowSettingsSection = null;
         this.narrowSettingsAnchor = null;
+        this.narrowSettingsFromLink = false;
         this.narrowSettingsOpen = true;
         return;
       }
@@ -68,6 +84,8 @@ class ShellState {
       }
       this.narrowSettingsSection = resolved.section;
       this.narrowSettingsAnchor = anchor ?? null;
+      // 深链直达详情页：返回一次回到来源页（聊天里的「去配置模型」等），不是分组列表。
+      this.narrowSettingsFromLink = true;
       this.narrowSettingsOpen = true;
       return;
     }
@@ -77,8 +95,13 @@ class ShellState {
     this.settingsOpen = true;
   }
 
+  /**
+   * 收起设置：宽屏弹框与窄屏全屏页统一关闭——调用方（设置里「去扩展中心」、新建 Bot
+   * 后进会话等）不用区分当前是哪种形态，否则窄屏的 z-50 设置页会盖在已切走的 tab 之上。
+   */
   closeSettings(): void {
     this.settingsOpen = false;
+    this.closeNarrowSettings();
   }
 
   /**
@@ -90,10 +113,45 @@ class ShellState {
   /** 打开详情页时要滚动到的分区内锚点；NarrowSettings 渲染完消费并复位。 */
   narrowSettingsAnchor = $state<string | null>(null);
 
+  /** 详情页是否由深链直达（返回一次回到来源页，而不是先回分组列表）。 */
+  narrowSettingsFromLink = $state(false);
+
   closeNarrowSettings(): void {
     this.narrowSettingsOpen = false;
     this.narrowSettingsSection = null;
     this.narrowSettingsAnchor = null;
+    this.narrowSettingsFromLink = false;
+  }
+
+  /** 列表页点进某个分组详情。 */
+  selectNarrowSettingsSection(section: SettingsSectionId): void {
+    this.narrowSettingsSection = section;
+    this.narrowSettingsFromLink = false;
+  }
+
+  /**
+   * 窄屏设置页的「返回」：列表点进的详情回列表；深链直达的详情与列表页本身都直接
+   * 关闭页面（回到来源页）。Esc 同路径。
+   */
+  backNarrowSettings(): void {
+    if (this.narrowSettingsSection !== null && !this.narrowSettingsFromLink) {
+      this.narrowSettingsSection = null;
+      this.narrowSettingsAnchor = null;
+      return;
+    }
+    this.closeNarrowSettings();
+  }
+
+  /**
+   * 宽 / 窄形态切换时统一复位设置类浮层状态：宽屏的 SettingsDialog 与窄屏的
+   * NarrowSettings 是两套互不相通的状态，不复位会出现「窄屏设置页开着→拉宽→再拉窄，
+   * 设置页自己弹出」或「宽屏弹框开着拉窄，弹框还留在窄屏里」。底部 tab 回到「对话」，
+   * 往返后落点可预期。Bot 详情覆盖层由 BotDetailOverlay 按「是否仍需覆盖层」自行收放。
+   */
+  resetForLayoutChange(): void {
+    this.settingsOpen = false;
+    this.closeNarrowSettings();
+    narrowLayout.tab = 'chats';
   }
 
   /**

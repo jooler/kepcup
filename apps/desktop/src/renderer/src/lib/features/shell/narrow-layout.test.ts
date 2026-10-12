@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   isNarrowWidth,
+  NARROW_LAYOUT_EXIT_WIDTH,
+  nextNarrow,
   NARROW_HIDDEN_SETTINGS_SECTIONS,
   NARROW_LAYOUT_MAX_WIDTH,
   NARROW_TABS,
@@ -18,6 +20,38 @@ describe('isNarrowWidth', () => {
   test('非法宽度不进窄屏', () => {
     expect(isNarrowWidth(Number.NaN)).toBe(false);
     expect(isNarrowWidth(Number.POSITIVE_INFINITY)).toBe(false);
+  });
+});
+
+describe('nextNarrow（滞回：640 进入、680 退出）', () => {
+  test('宽屏下：小于 640 才进入窄屏，640~679 仍是宽屏', () => {
+    expect(nextNarrow(false, 639)).toBe(true);
+    expect(nextNarrow(false, NARROW_LAYOUT_MAX_WIDTH)).toBe(false);
+    expect(nextNarrow(false, 679)).toBe(false);
+  });
+
+  test('窄屏下：小于 680 保持窄屏，≥ 680 才退出', () => {
+    expect(nextNarrow(true, 639)).toBe(true);
+    expect(nextNarrow(true, 640)).toBe(true);
+    expect(nextNarrow(true, NARROW_LAYOUT_EXIT_WIDTH - 1)).toBe(true);
+    expect(nextNarrow(true, NARROW_LAYOUT_EXIT_WIDTH)).toBe(false);
+  });
+
+  test('在断点附近来回抖动不翻转（逐帧序列只翻转一次）', () => {
+    let narrow = false;
+    const flips: number[] = [];
+    for (const width of [700, 650, 641, 639, 641, 645, 639, 660, 670, 679, 680, 650]) {
+      const next = nextNarrow(narrow, width);
+      if (next !== narrow) flips.push(width);
+      narrow = next;
+    }
+    // 639 进入窄屏；一路到 680 才退出；650 不再进入（需 <640）。
+    expect(flips).toEqual([639, 680]);
+  });
+
+  test('非法宽度视为宽屏', () => {
+    expect(nextNarrow(true, Number.NaN)).toBe(false);
+    expect(nextNarrow(false, Number.POSITIVE_INFINITY)).toBe(false);
   });
 });
 
