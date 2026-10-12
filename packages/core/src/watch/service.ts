@@ -14,6 +14,7 @@ import {
   watchSourceSchema,
   type BrowserFetchTextOutput,
   type BrowserNetworkContext,
+  type AppNoticePayload,
   type Message,
   type Watch,
   type WatchCondition,
@@ -71,6 +72,8 @@ export interface WatchServiceDeps {
   /** Wakes one turn of the bot (internal `watch_alert` event, reason `watch`). */
   deliverAlert: (input: { botId: string; conversationId: string; text: string }) => void;
   publish: (event: string, payload: unknown) => void;
+  /** 应用状态提示（监看被系统暂停）：弹一条轻量提示，不落库、不进对话。 */
+  notice: (notice: AppNoticePayload) => void;
 }
 
 export interface CreateWatchInput {
@@ -93,22 +96,21 @@ export function watchAlertKey(watchId: string, seq: number, quietHashHex: string
   return `watch:${watchId}:${seq}:${quietHashHex.slice(0, 16)}`;
 }
 
-/**
- * Pause-card idempotency key: `watch-error:{id}:{streak}:paused` (consecutive
- * failures) / `watch-error:{id}:{streak}:too_frequent` (alert cap), streak =
- * the how-many-th pause of this watch.
- */
-export function watchPausedKey(
-  watchId: string,
-  streak: number,
-  reason: WatchPauseReason = 'failures',
-): string {
-  return `watch-error:${watchId}:${streak}:${reason === 'failures' ? 'paused' : reason}`;
+function watchPausedNoticeKey(watchId: string): string {
+  return `watch-paused:${watchId}`;
+}
+
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.slice(0, 60);
+  }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** last_error / card text of a watch paused by the alert cap. */
+/** last_error / notice text of a watch paused by the alert cap. */
 export const WATCH_TOO_FREQUENT_TEXT = `提醒过于频繁（24 小时内超过 ${WATCH_MAX_ALERTS_PER_DAY} 次），已暂停；可放宽条件或延长间隔后恢复`;
 
 /** How one worker pass ended (what the timer arms next). */
@@ -353,11 +355,12 @@ export class WatchService {
     return this.#userWrite(row, { status: 'paused' });
   }
 
-  /** Resume (also the paused card's 恢复): failures reset, checks right away. */
+  /** Resume: failures reset, checks right away. */
   resumeWatch(id: string): Watch {
     const row = this.#getOrThrow(id);
     if (row.status !== 'paused') throw new AppError('INVALID_INPUT', '只有已暂停的监看可以恢复');
     this.#assertTarget(row.botId, row.conversationId);
+    this.#dismissPausedNotice(row.id);
     const updated = this.#userWrite(row, {
       status: 'active',
       failures: 0,
@@ -373,6 +376,7 @@ export class WatchService {
   stopWatch(id: string): Watch {
     const row = this.#getOrThrow(id);
     if (row.status === 'stopped') return publicWatch(row);
+    this.#dismissPausedNotice(row.id);
     return this.#userWrite(row, { status: 'stopped' });
   }
 
@@ -551,14 +555,9 @@ export class WatchService {
       patch.lastError = WATCH_TOO_FREQUENT_TEXT;
     }
     let updated: StoredWatch | null = null;
-    let card: Message | null = null;
     this.#deps.db.transaction(() => {
       updated = this.store.cas(row.id, row.version, patch);
-      if (updated === null || !edge) return;
-      if (capped) {
-        card = this.#appendPausedCard(row, 'too_frequent');
-        return;
-      }
+      if (updated === null || !edge || capped) return;
       const key = watchAlertKey(row.id, seq, quiet);
       const payload: AlertJobPayload = {
         watchId: row.id,
@@ -582,12 +581,12 @@ export class WatchService {
       this.#deps.logger.info({ watchId: row.id }, 'watch check result dropped (version changed)');
       return;
     }
-    if (card !== null) this.#publishCard(card);
     if (capped) {
       this.#deps.logger.info(
         { watchId: row.id, alerts: recentAlerts.length },
         'watch paused: too many alerts in 24 hours',
       );
+      this.#noticePaused(row, 'too_frequent');
     }
     this.#publishWatch(updated);
   }
@@ -596,24 +595,18 @@ export class WatchService {
     const now = this.#deps.clock.now();
     const failures = row.failures + 1;
     const pause = shouldPause(failures);
-    let updated: StoredWatch | null = null;
-    let card: Message | null = null;
-    this.#deps.db.transaction(() => {
-      updated = this.store.cas(row.id, row.version, {
-        failures,
-        lastError: error.slice(0, 500),
-        lastCheckedAt: now,
-        nextCheckAt: now + failureBackoffMs(failures),
-        ...(pause ? { status: 'paused' as const } : {}),
-      });
-      if (updated === null || !pause) return;
-      card = this.#appendPausedCard(row, 'failures', failures);
-    })();
+    const updated = this.store.cas(row.id, row.version, {
+      failures,
+      lastError: error.slice(0, 500),
+      lastCheckedAt: now,
+      nextCheckAt: now + failureBackoffMs(failures),
+      ...(pause ? { status: 'paused' as const } : {}),
+    });
     if (updated === null) {
       this.#deps.logger.info({ watchId: row.id }, 'watch failure dropped (version changed)');
       return;
     }
-    if (card !== null) this.#publishCard(card);
+    if (pause) this.#noticePaused(row, 'failures', failures);
     this.#publishWatch(updated);
     this.#deps.logger.info(
       { watchId: row.id, failures, paused: pause, error },
@@ -621,36 +614,25 @@ export class WatchService {
     );
   }
 
-  /** The paused card (inside the caller's transaction); null when already posted. */
-  #appendPausedCard(row: StoredWatch, reason: WatchPauseReason, failures?: number): Message | null {
-    const streak = this.#pausedCardCount(row) + 1;
-    const key = watchPausedKey(row.id, streak, reason);
-    if (this.#cardExists(row.conversationId, key)) return null;
-    return this.#deps.messages.append({
-      conversationId: row.conversationId,
-      senderType: 'system',
-      kind: 'card',
-      cardType: WATCH_CARD_TYPE,
-      cardWatch: {
-        watchId: row.id,
-        watchEvent: 'paused',
-        watchKey: key,
-        watchPauseReason: reason,
-        ...(failures !== undefined ? { watchFailures: failures } : {}),
-      },
-    });
+  /**
+   * 系统暂停监看（连续失败 / 提醒过于频繁）只是应用状态：弹一条轻量提示，不落库、
+   * 不进对话上下文。右栏「定时与监看」里的监看行（watch.updated）随时可见并可恢复。
+   */
+  #dismissPausedNotice(watchId: string): void {
+    this.#deps.notice({ key: watchPausedNoticeKey(watchId), level: 'info', text: '', dismiss: true });
   }
 
-  #pausedCardCount(row: StoredWatch): number {
-    const result = this.#deps.db
-      .prepare(
-        `select count(*) as n from messages
-         where conversation_id = ? and kind = 'card'
-           and json_extract(content_json, '$.watchId') = ?
-           and json_extract(content_json, '$.watchEvent') = 'paused'`,
-      )
-      .get(row.conversationId, row.id) as { n: number };
-    return result.n;
+  #noticePaused(row: StoredWatch, reason: WatchPauseReason, failures?: number): void {
+    const what =
+      reason === 'too_frequent'
+        ? WATCH_TOO_FREQUENT_TEXT
+        : `连续 ${failures ?? '多'} 次检查失败，已暂停。网页可能打不开、需要在 Bot 的浏览器里重新登录，或被网络规则拦截；处理后可在右栏恢复`;
+    this.#deps.notice({
+      key: watchPausedNoticeKey(row.id),
+      level: 'warning',
+      text: `监看「${hostLabel(row.source.url)}」${what}`,
+      action: 'open_schedules',
+    });
   }
 
   #cardExists(conversationId: string, key: string): boolean {
@@ -741,7 +723,6 @@ export class WatchService {
       watchId?: string;
       watchEvent?: string;
       watchSeq?: number;
-      watchPauseReason?: string;
     };
     const row = this.store.get(String(content.watchId ?? ''));
     if (row === null) return '（监看记录已清理）';
@@ -749,10 +730,6 @@ export class WatchService {
     switch (content.watchEvent) {
       case 'alert':
         return `[系统] 监看 ${row.id} 第 ${content.watchSeq ?? '?'} 次提醒（卡片，用户可见）：${target}`;
-      case 'paused':
-        return content.watchPauseReason === 'too_frequent'
-          ? `[系统] 监看 ${row.id} ${WATCH_TOO_FREQUENT_TEXT}（用户可点「恢复」）：${target}`
-          : `[系统] 监看 ${row.id} 连续检查失败已暂停（用户可点「恢复」）：${target}`;
       default:
         return `[系统] 已创建网页监看 ${row.id}（当前${STATUS_TEXT[row.status]}）：${target}`;
     }
@@ -783,6 +760,7 @@ export class WatchService {
 
   #remove(row: StoredWatch): void {
     if (!this.store.delete(row.id)) return;
+    this.#dismissPausedNotice(row.id);
     this.#deps.publish('watch.updated', { watch: this.#entry(row), removed: true });
     this.#reload();
   }

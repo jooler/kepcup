@@ -18,7 +18,7 @@ import {
   type FakeBrowserHost,
   type TestStack,
 } from '@kepcup/testkit';
-import { AppError, type Message, type WatchEntry } from '@kepcup/shared';
+import { AppError, type AppNoticePayload, type Message, type WatchEntry } from '@kepcup/shared';
 import { createMemoryKeystore, type WatchService } from '@kepcup/core';
 import type { JobRow } from '../../src/domain/jobs.js';
 
@@ -39,6 +39,13 @@ function watchesOf(stack: TestStack): WatchService {
   const service = stack.core.services.watches;
   if (service === null) throw new Error('watch service not wired');
   return service;
+}
+
+/** Collects every `app.notice` the core publishes (status notices are never messages). */
+function collectNotices(stack: TestStack): AppNoticePayload[] {
+  const notices: AppNoticePayload[] = [];
+  stack.core.onEvent('app.notice', (payload) => notices.push(payload as AppNoticePayload));
+  return notices;
 }
 
 function scriptWakes(stack: TestStack, count = 6): void {
@@ -334,8 +341,9 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
     }
   });
 
-  it('连续 5 次失败：退避 5/5/8/16 分钟（不早于间隔下限）后暂停并发卡片；恢复后立即检查', async () => {
+  it('连续 5 次失败：退避 5/5/8/16 分钟（不早于间隔下限）后暂停并弹提示（不发卡片）；恢复后立即检查', async () => {
     const { clock, browser, stack, bot, conv, watches } = await setup();
+    const notices = collectNotices(stack);
     try {
       browser.pageTexts.set(URL_A, new AppError('BROWSER_BLOCKED', '该地址被网络规则拦截'));
       const watch = watches.create({
@@ -360,27 +368,26 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
       let row = watches.get(watch.id)!;
       expect(row.failures).toBe(5);
       expect(row.status).toBe('paused');
-      const paused = watchCards(await listMessages(stack.core, conv.id), watch.id, 'paused');
-      expect(paused).toHaveLength(1);
-      expect(paused[0]!.content).toMatchObject({
-        watchKey: `watch-error:${watch.id}:1:paused`,
-        watchPauseReason: 'failures',
-        // The card keeps the streak: the live counter resets on resume.
-        watchFailures: 5,
-      });
+      // 被系统暂停只是应用状态：一条提示，对话里没有卡片。
+      const shown = notices.filter((n) => n.key === `watch-paused:${watch.id}` && n.dismiss !== true);
+      expect(shown).toHaveLength(1);
+      expect(shown[0]).toMatchObject({ level: 'warning', action: 'open_schedules' });
+      expect(shown[0]!.text).toContain('连续 5 次检查失败');
+      expect(watchCards(await listMessages(stack.core, conv.id), watch.id)).toHaveLength(1); // 仅创建卡
       // Paused: the clock moving on checks nothing.
       const fetches = browser.fetchCount();
       clock.advance(120 * MINUTE);
       await watches.whenIdle();
       expect(browser.fetchCount()).toBe(fetches);
 
-      // 恢复 (the paused card's action = watches.resume): failures reset, checks now.
+      // 恢复 (watches.resume): failures reset, checks now; the notice is dismissed.
       browser.pageTexts.set(URL_A, '库存：缺货');
       const resumed = (await stack.core.rpc.call('watches.resume', { id: watch.id })) as {
         watch: WatchEntry;
       };
       expect(resumed.watch.status).toBe('active');
       expect(resumed.watch.failures).toBe(0);
+      expect(notices.at(-1)).toMatchObject({ key: `watch-paused:${watch.id}`, dismiss: true });
       await watches.whenIdle();
       row = watches.get(watch.id)!;
       expect(browser.fetchCount()).toBe(fetches + 1);
@@ -575,8 +582,9 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
     }
   });
 
-  it('24 小时内提醒超过上限：不唤醒，改为暂停并发「提醒过于频繁」卡；恢复后窗口清零', async () => {
+  it('24 小时内提醒超过上限：不唤醒，改为暂停并弹「提醒过于频繁」提示（不发卡）；恢复后窗口清零', async () => {
     const { clock, browser, stack, bot, conv, watches } = await setup();
+    const notices = collectNotices(stack);
     try {
       scriptWakes(stack, 2);
       browser.pageTexts.set(URL_A, '版本 0');
@@ -607,7 +615,7 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
       expect(watches.get(watch.id)!.alertSeq).toBe(1);
       await expectAlerts(stack, conv.id, watch.id, 1);
 
-      // The 25th: no wake — paused with a card instead.
+      // The 25th: no wake — paused (with a notice) instead.
       browser.pageTexts.set(URL_A, '版本 2');
       clock.advance(5 * MINUTE);
       await watches.whenIdle();
@@ -616,12 +624,10 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
       expect(row.alertSeq).toBe(1);
       expect(row.failures).toBe(0);
       expect(row.lastError).toContain('提醒过于频繁（24 小时内超过 24 次）');
-      const paused = watchCards(await listMessages(stack.core, conv.id), watch.id, 'paused');
-      expect(paused).toHaveLength(1);
-      expect(paused[0]!.content).toMatchObject({
-        watchKey: `watch-error:${watch.id}:1:too_frequent`,
-        watchPauseReason: 'too_frequent',
-      });
+      const shown = notices.filter((n) => n.key === `watch-paused:${watch.id}` && n.dismiss !== true);
+      expect(shown).toHaveLength(1);
+      expect(shown[0]!.text).toContain('提醒过于频繁');
+      expect(watchCards(await listMessages(stack.core, conv.id), watch.id, 'paused')).toHaveLength(0);
       expect(db.prepare("select count(*) as n from jobs where type = 'watch_alert'").get()).toEqual(
         { n: 1 },
       );

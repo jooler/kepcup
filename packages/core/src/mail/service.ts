@@ -7,6 +7,7 @@ import {
   isMailAddress,
   mailAlertDedupeKey,
   newId,
+  type AppNoticePayload,
   type MailAccount,
   type MailAccountCreateInput,
   type MailAccountTestInput,
@@ -56,8 +57,19 @@ import {
 const LIST_DEFAULT = 20;
 const LIST_MAX = 50;
 const READ_TEXT_MAX = 20_000;
-/** 同一账号的「连接失败」卡片最短间隔：抖动的连接不能一直往对话里刷卡。 */
-const ERROR_CARD_COOLDOWN_MS = 10 * 60 * 1000;
+/**
+ * 连续失败多少次才提示「连接中断」。休眠唤醒、切网络这类瞬时断线 1 秒内就能
+ * 自动重连成功，不值得打扰用户；认证被拒（fatal）不等，立即提示。
+ */
+const CONNECTION_NOTICE_STREAK = 3;
+
+function connectionNoticeKey(accountId: string): string {
+  return `mail-conn:${accountId}`;
+}
+
+function pausedNoticeKey(accountId: string, botId: string): string {
+  return `mail-paused:${accountId}:${botId}`;
+}
 
 export function mailPasswordName(accountId: string): string {
   return `mail:${accountId}:password`;
@@ -82,6 +94,8 @@ export interface MailServiceDeps {
   deliverAlert: (input: { botId: string; conversationId: string; text: string }) => void;
   publishAccount: (account: MailAccount | null, accountId: string) => void;
   publishMessage: (message: Message) => void;
+  /** 应用状态提示（连接中断、提醒暂停）：弹一条轻量提示，不落库、不进对话。 */
+  notice: (notice: AppNoticePayload) => void;
   openImap?: MailImapOpener;
   /** 测试注入：缩短会话重连退避。 */
   sessionBackoffMs?: (streak: number) => number;
@@ -106,10 +120,8 @@ export class MailService {
   readonly store: MailStore;
   readonly #deps: MailServiceDeps;
   readonly #hub: MailSessionHub;
-  /** 卡片键用的序号：同一毫秒内多张卡也不会撞键。 */
-  #eventSeq = 0;
-  /** 每个账号上次发连接失败卡的时间（内存即可：重启后最多多一张）。 */
-  readonly #errorCardAt = new Map<string, number>();
+  /** 已经提示过「连接中断」、还没恢复的账号：恢复时撤掉那条提示。 */
+  readonly #noticedOutage = new Set<string>();
 
   constructor(deps: MailServiceDeps) {
     this.#deps = deps;
@@ -302,6 +314,7 @@ export class MailService {
     this.store.deleteBindings(id);
     const now = this.#deps.clock.now();
     this.store.patch(id, { deletedAt: now, updatedAt: now, status: 'paused', listen: null });
+    this.#dismissOutage(id);
     this.#deps.publishAccount(null, id);
     return toPublicAccount({ ...current, deletedAt: now, status: 'paused' }, []);
   }
@@ -328,6 +341,7 @@ export class MailService {
   pause(id: string): MailAccount {
     const current = this.#require(id);
     this.#hub.stop(id);
+    this.#dismissOutage(id);
     this.store.patch(id, {
       status: 'paused',
       listen: null,
@@ -357,6 +371,7 @@ export class MailService {
     const binding = this.store.bindings(accountId).find((item) => item.botId === botId);
     if (binding === undefined) throw new AppError('MAIL_NOT_BOUND', '这个 Bot 没有接管该邮箱');
     this.store.setAlertState(accountId, botId, false, []);
+    this.#deps.notice({ key: pausedNoticeKey(accountId, botId), level: 'info', text: '', dismiss: true });
     const account = this.get(accountId);
     this.#deps.publishAccount(account, accountId);
     return account;
@@ -399,8 +414,6 @@ export class MailService {
   renderContextLine(message: Message): string {
     if (message.kind !== 'card' || !('mailEvent' in message.content)) return '（邮件记录）';
     const content = message.content;
-    if (content.mailEvent === 'paused') return '[系统] 邮箱新信提醒已暂停（过于频繁）';
-    if (content.mailEvent === 'error') return '[系统] 邮箱连接失败';
     // 发件人和主题是外部人写的，不能出现在带 [系统] 前缀的平台行里：平台行只说事实，
     // 邮件字段放进 <untrusted> 数据边界，并去换行、限长。
     const subject = oneLineMailField(content.mailSubject || '（无主题）', MAIL_SUBJECT_MAX_CHARS);
@@ -423,7 +436,7 @@ export class MailService {
         if (bot === null || bot.status !== 'active') return [];
         return [{ binding, conversationId: this.#deps.conversations.openDirect(binding.botId).conversation.id }];
       });
-      const cards: Message[] = [];
+      const notices: AppNoticePayload[] = [];
       this.#deps.db.transaction(() => {
         const latest = this.store.get(accountId);
         if (latest === null || (latest.lastUid !== null && message.uid <= latest.lastUid)) return;
@@ -435,14 +448,13 @@ export class MailService {
           const recent = recentMailAlerts(fresh.alertTimes, now);
           if (mailAlertsExceeded(recent.length)) {
             this.store.setAlertState(accountId, fresh.botId, true, recent);
-            const card = this.#appendCard(target.conversationId, {
-              mailEvent: 'paused',
-              mailAccountId: accountId,
-              mailKey: `mail-paused:${accountId}:${fresh.botId}:${now}:${this.#eventSeq++}`,
-              mailPauseReason: 'too_frequent',
-              mailSummary: `${account.label} 一小时内的新信超过 ${recent.length} 封，已暂停提醒这个 Bot。之后的新信仍会计入，恢复后不会重放。`,
+            const botName = this.#deps.bots.get(fresh.botId)?.name ?? 'Bot';
+            notices.push({
+              key: pausedNoticeKey(accountId, fresh.botId),
+              level: 'warning',
+              text: `${account.label} 一小时内的新信超过 ${recent.length} 封，已暂停提醒「${botName}」。之后的新信仍会计入，恢复后不会重放。`,
+              action: 'open_mail_settings',
             });
-            if (card !== null) cards.push(card);
             continue;
           }
           this.store.setAlertState(accountId, fresh.botId, false, [...recent, now]);
@@ -466,7 +478,7 @@ export class MailService {
           });
         }
       })();
-      for (const card of cards) this.#deps.publishMessage(card);
+      for (const notice of notices) this.#deps.notice(notice);
     }
   }
 
@@ -772,6 +784,7 @@ export class MailService {
       );
     }
     this.#emit(accountId);
+    this.#dismissOutage(accountId);
   }
 
   #markFailure(accountId: string, error: string, streak: number, fatal: boolean): void {
@@ -787,63 +800,32 @@ export class MailService {
       failureStreak: streak,
       updatedAt: now,
     });
-    if (fatal) {
-      // 会话循环已停止：每次都明确告诉用户，等 TA 更新授权码（update 会重启会话）。
-      this.#postErrorCards(
-        accountId,
-        `${row.label} 登录被服务器拒绝，已停止自动重试（连续登录失败会被邮箱服务商限流甚至锁定）。请在扩展中心更新授权码，保存后会自动重新连接。详情：${redacted}`,
-      );
-    } else if (streak === 1) {
-      // 一次中断只发一张；抖动的连接有冷却，不会反复刷卡。
-      const last = this.#errorCardAt.get(accountId);
-      if (last === undefined || now - last >= ERROR_CARD_COOLDOWN_MS) {
-        this.#postErrorCards(accountId, `${row.label} 连接失败：${redacted}`);
-      }
-    }
     this.#emit(accountId);
-  }
-
-  #postErrorCards(accountId: string, summary: string): void {
-    const account = this.store.get(accountId);
-    if (account === null) return;
-    this.#errorCardAt.set(accountId, this.#deps.clock.now());
-    for (const binding of this.store.bindings(accountId)) {
-      const bot = this.#deps.bots.get(binding.botId);
-      if (bot === null || bot.status !== 'active') continue;
-      const conversationId = this.#deps.conversations.openDirect(binding.botId).conversation.id;
-      // 每次事件一个新键：旧键按 (账号, streak) 去重会让「恢复后再次失败」的卡被吞掉。
-      const card = this.#appendCard(conversationId, {
-        mailEvent: 'error',
-        mailAccountId: accountId,
-        mailKey: `mail-error:${accountId}:${this.#deps.clock.now()}:${this.#eventSeq++}`,
-        mailSummary: summary,
+    // 连接状态只是「现在的应用状态」，不是对话内容：弹一条轻量提示，不落库。
+    // 瞬时断线会自己重连，连续失败到阈值才提示；认证被拒不会再重试，立即提示。
+    if (fatal) {
+      this.#noticedOutage.add(accountId);
+      this.#deps.notice({
+        key: connectionNoticeKey(accountId),
+        level: 'error',
+        text: `${row.label} 登录被服务器拒绝，已停止自动重试（连续登录失败会被邮箱服务商限流甚至锁定）。请在扩展中心更新授权码。详情：${redacted}`,
+        action: 'open_mail_settings',
       });
-      if (card !== null) this.#deps.publishMessage(card);
+    } else if (streak === CONNECTION_NOTICE_STREAK) {
+      this.#noticedOutage.add(accountId);
+      this.#deps.notice({
+        key: connectionNoticeKey(accountId),
+        level: 'warning',
+        text: `${row.label} 连接中断，正在自动重试：${redacted}`,
+        action: 'open_mail_settings',
+      });
     }
   }
 
-  #appendCard(
-    conversationId: string,
-    card: {
-      mailEvent: 'arrived' | 'paused' | 'error';
-      mailAccountId: string;
-      mailKey: string;
-      mailUid?: number;
-      mailFrom?: string;
-      mailSubject?: string;
-      mailDate?: string;
-      mailSummary?: string;
-      mailPauseReason?: 'too_frequent';
-    },
-  ): Message | null {
-    if (this.#cardExists(conversationId, card.mailKey)) return null;
-    return this.#deps.messages.append({
-      conversationId,
-      senderType: 'system',
-      kind: 'card',
-      cardType: MAIL_CARD_TYPE,
-      cardMail: card,
-    });
+  /** 连接恢复 / 暂停 / 删除：撤掉之前的「连接中断」提示。 */
+  #dismissOutage(accountId: string): void {
+    if (!this.#noticedOutage.delete(accountId)) return;
+    this.#deps.notice({ key: connectionNoticeKey(accountId), level: 'info', text: '', dismiss: true });
   }
 
   #cardExists(conversationId: string, key: string): boolean {

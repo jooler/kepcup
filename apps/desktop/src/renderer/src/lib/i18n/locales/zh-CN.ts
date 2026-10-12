@@ -1189,13 +1189,6 @@ export const zhCN = {
   'watches.collapse': '收起',
   'watches.card.created': '已开始监看网页',
   'watches.card.alert': '监看提醒 · 第 {seq} 次',
-  'watches.card.paused': '监看已暂停：连续 {count} 次检查失败',
-  'watches.card.pausedFailures': '监看已暂停：连续多次检查失败',
-  'watches.card.pausedTooFrequent': '监看已暂停：提醒过于频繁',
-  'watches.card.pausedTooFrequentHint':
-    '24 小时内提醒超过 24 次，为免打扰已暂停。可放宽条件或延长检查间隔后点「恢复」。',
-  'watches.card.pausedHint':
-    '网页可能打不开、需要在 Bot 的浏览器里重新登录，或被网络规则拦截。处理后点「恢复」。',
   'watches.card.removed': '该监看已删除',
   'watches.card.loading': '正在加载监看…',
 
@@ -2080,12 +2073,12 @@ export const zhCN = {
   'mail.resume': '恢复收信',
   'mail.delete': '删除邮箱',
   'mail.resumeAlerts': '恢复提醒',
+  'notice.action.open_mail_settings': '去处理',
+  'notice.action.open_schedules': '查看监看',
   'mail.updatePassword': '更新授权码',
   'mail.updatePasswordSave': '测试并更新',
   'mail.passwordUpdated': '授权码已更新，正在重新连接',
   'mail.card.arrived': '新邮件',
-  'mail.card.paused': '新邮件提醒已暂停',
-  'mail.card.error': '邮箱连接失败',
   'mail.card.expand': '查看摘要',
   'mail.card.collapse': '收起',
   'mail.card.unknownFrom': '未知发件人',

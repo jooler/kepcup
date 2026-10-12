@@ -64,8 +64,6 @@
           watchEvent: String(message.content.watchEvent ?? 'created'),
           watchSeq: message.content.watchSeq,
           watchSummary: message.content.watchSummary,
-          watchPauseReason: message.content.watchPauseReason,
-          watchFailures: message.content.watchFailures,
         }
       : null,
   );
@@ -73,7 +71,6 @@
     isCard && 'cardType' in message.content && message.content.cardType === 'mail'
       ? {
           accountId: String(message.content.mailAccountId ?? ''),
-          mailEvent: String(message.content.mailEvent ?? 'arrived'),
           summary: message.content.mailSummary,
           from: message.content.mailFrom,
           subject: message.content.mailSubject,
@@ -200,22 +197,19 @@
     <BotWidgetCard messageId={widgetCard.messageId} card={widgetCard.card} />
   </div>
 {:else if watchCard !== null}
-  <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要，暂停卡可恢复 -->
+  <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要 -->
   <div class="flex py-1" data-testid="card-message">
     <WatchCard
       watchId={watchCard.watchId}
       watchEvent={watchCard.watchEvent}
       watchSeq={watchCard.watchSeq}
       watchSummary={watchCard.watchSummary}
-      watchPauseReason={watchCard.watchPauseReason}
-      watchFailures={watchCard.watchFailures}
     />
   </div>
 {:else if mailCard !== null}
   <div class="flex py-1" data-testid="card-message">
     <MailCard
       accountId={mailCard.accountId}
-      mailEvent={mailCard.mailEvent}
       summary={mailCard.summary}
       from={mailCard.from}
       subject={mailCard.subject}

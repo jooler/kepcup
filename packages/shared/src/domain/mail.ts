@@ -64,7 +64,7 @@ export type MailStatus = z.infer<typeof mailStatusSchema>;
 export const mailListenSchema = z.enum(['idle', 'poll']);
 export type MailListen = z.infer<typeof mailListenSchema>;
 
-export const mailEventSchema = z.enum(['arrived', 'paused', 'error']);
+export const mailEventSchema = z.enum(['arrived']);
 export type MailEvent = z.infer<typeof mailEventSchema>;
 
 export interface MailServerEndpoint {
