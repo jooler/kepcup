@@ -13,7 +13,7 @@ wiki/                  -- git 管理（内嵌 git 库），每次维护提交一
   pages/               -- LLM 维护的知识页面（实体、概念、主题……）
 ```
 
-`raw/` 的来源：用户给的文档、抓取的网页、有价值的执行产出。复杂文档（PDF、扫描件、Office 等）经预置的 MinerU 文档解析技能导出为 Markdown 后入库，原始文件与转换产物并存（见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）。
+`raw/` 的来源：用户给的文档、抓取的网页、有价值的执行产出。复杂文档与媒体经**宿主派生管线**入库：原件进 `raw/`，可读文本进 `raw/_derived/`（PDF/Office→MinerU Markdown，图片→多模态描述，音视频→转写[+关键帧]），清单互链后再由维护 loop 写 `pages/`（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)，D85）。对话中分页读 PDF 仍可用预置 MinerU 技能（见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）。
 
 ### 读写规则
 
