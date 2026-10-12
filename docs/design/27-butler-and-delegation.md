@@ -78,11 +78,13 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | 工具 | 作用 |
 |---|---|
 | `list_bots` | 列出用户 Bot 名片（id / name / bio / 职责摘要），只读；与 `delegate_to_bot` 同注册范围（所有 Bot） |
-| `propose_bot` | 提议新建一个领域 Bot → 审批卡 |
-| `propose_team` | 提议一组（3–5 个）领域 Bot → 批量审批卡 |
+| `propose_bot` | 提议新建一个领域 Bot → 审批卡（D88 起每个 Bot 可带可选 `model`：可用模型列表里的 ref，不填 = 跟随设置默认） |
+| `propose_team` | 提议一组（3–5 个）领域 Bot → 批量审批卡（同上可带 `model`） |
 | `propose_group` | 提议建群（名、事务、成员）→ 审批卡（可对齐 D60 字段） |
 | `suggest_route` | 对用户当前意图给出路由建议（管家 / 直聊某 Bot / 群 / 委派）→ 路由卡 |
-| `delegate_to_bot` | 同 D71；管家与普通 Bot 均可具备，管家提示词更强调路由 |
+| `delegate_to_bot` | 同 D71；管家与普通 Bot 均可具备，管家提示词更强调路由。委派不改变谁负责什么 |
+| `inspect_bot_assets` | D88：只读盘点某个 Bot 名下的资产（模型 / 连接应用 / MCP / 邮箱 / 定时任务）与可用模型列表，见 [37 §4.1](37-bot-asset-handover.md#41-inspect_bot_assets只读) |
+| `propose_handover` | D88：把 A 的资产与职责长期交给已有或新建的 B → 移交卡（`bot_handover`），用户逐项勾选确认后宿主确定性执行，见 [37 §4.2](37-bot-asset-handover.md#42-propose_handover)。P0 仅管家注册 |
 
 普通领域 Bot **默认不**暴露 `propose_*` / `suggest_route`（避免人人建队）；`delegate_to_bot` 首期：**管家与普通 Bot 默认都开，且都是单跳**。委派目标从哪来：非群对话的提示词里目前没有任何其他 Bot 的名单（`members` 只在群聊注入），普通 Bot 不知道 B 的 `bot_id`——所以**只读的 `list_bots` 与 `delegate_to_bot` 一起注册**给所有 Bot（返回名片：id / name / bio / 职责摘要，不含 Profile 其它内容），不往每个 Bot 的系统提示里塞通讯录。
 

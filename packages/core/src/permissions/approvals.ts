@@ -1061,7 +1061,7 @@ export class ApprovalsService {
         case 'pending':
           return `[系统] 等待用户确认：${botName} ${label}`;
         case 'approved':
-          return `[系统] 用户确认了${label}${keptNote}，宿主正在执行，结果会另行通知`;
+          return `[系统] 用户确认了${label}${keptNote}（由宿主按清单执行，结果以移交结果通知为准）`;
         case 'denied':
           return `[系统] 用户拒绝了${label}`;
         case 'cancelled':

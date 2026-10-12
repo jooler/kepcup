@@ -23,6 +23,17 @@ export interface ModelAdapterDeps {
   modelOptions(): ChatModelOption[];
 }
 
+/**
+ * 「与 A 相同」：A 当下的模型配置值（主模型、轻量模型与外部智能体设置）。这里只复制
+ * Profile 的配置值，不做选取（选取仍走 llm-router）。
+ */
+export function inheritedModelRuntime(
+  bot: Bot,
+): Pick<Bot['profile']['runtime'], 'model' | 'light_model' | 'agent'> {
+  const runtime = bot.profile.runtime;
+  return { model: runtime.model, light_model: runtime.light_model, agent: { ...runtime.agent } };
+}
+
 /** 一个 Bot 当下模型的显示名。 */
 export function botModelLabel(bot: Bot, options: readonly ChatModelOption[]): string {
   const runtime = bot.profile.runtime;
@@ -104,13 +115,10 @@ export class ModelAdapter implements HandoverAdapter {
     key: string,
   ): Promise<{ result: Record<string, unknown> }> {
     const value = keyId(key, 'model') ?? '';
-    const from = ctx.fromBot.profile.runtime;
     const updated = this.#deps.bots.updateProfile(ctx.toBot.id, (profile) => {
       const runtime = { ...profile.runtime };
       if (value === MODEL_INHERIT) {
-        runtime.model = from.model;
-        runtime.light_model = from.light_model;
-        runtime.agent = { ...from.agent };
+        Object.assign(runtime, inheritedModelRuntime(ctx.fromBot));
       } else if (value === MODEL_DEFAULT) {
         runtime.model = '';
         runtime.light_model = '';

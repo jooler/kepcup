@@ -31,7 +31,7 @@ import type {
 import type { HandoverRegistry } from '../handover/registry.js';
 import type { HandoverStore, HandoverItemRecord, HandoverRecord } from '../handover/store.js';
 import type { HandoverAdapter, HandoverContext } from '../handover/types.js';
-import { MODEL_INHERIT } from '../handover/adapters/model.js';
+import { MODEL_INHERIT, botModelLabel, inheritedModelRuntime } from '../handover/adapters/model.js';
 import {
   announceCreatedBot,
   createProposedBotRecord,
@@ -352,16 +352,7 @@ export class HandoverHost implements HandoverToolFacade {
 
   #newBotModelLabel(model: string, from: Bot): string {
     const options = this.modelOptions();
-    if (model === MODEL_INHERIT) {
-      const ref = from.profile.runtime.model;
-      const label =
-        ref.length > 0
-          ? (options.find((option) => option.ref === ref)?.label ?? ref)
-          : from.profile.runtime.agent.id.length > 0
-            ? `外部智能体 ${from.profile.runtime.agent.id}`
-            : '跟随设置默认';
-      return `与 ${from.name} 相同（${label}）`;
-    }
+    if (model === MODEL_INHERIT) return `与 ${from.name} 相同（${botModelLabel(from, options)}）`;
     if (model.length === 0) return '跟随设置默认';
     return options.find((option) => option.ref === model)?.label ?? model;
   }
@@ -646,11 +637,7 @@ export class HandoverHost implements HandoverToolFacade {
     const notes: string[] = [];
     let runtime: Partial<Pick<BotProfile['runtime'], 'model' | 'light_model' | 'agent'>>;
     if (item.model === MODEL_INHERIT) {
-      runtime = {
-        model: from.profile.runtime.model,
-        light_model: from.profile.runtime.light_model,
-        agent: { ...from.profile.runtime.agent },
-      };
+      runtime = inheritedModelRuntime(from);
     } else if (
       item.model.length > 0 &&
       !this.modelOptions().some((option) => option.ref === item.model)

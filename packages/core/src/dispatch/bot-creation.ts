@@ -46,19 +46,12 @@ export function createProposedBotRecord(
   slot: number,
   runtime?: Partial<Pick<BotProfile['runtime'], 'model' | 'light_model' | 'agent'>>,
 ): CreatedBotRecord {
-  const model = runtime?.model ?? item.model;
+  // 只写 Profile 的配置值（'' = 跟随设置默认）；选取仍由 llm-router 负责。
+  const overrides = runtime ?? (item.model.length > 0 ? { model: item.model } : undefined);
   const bot = deps.bots.create({
     identity: { name: item.name, bio: item.bio, avatar: proposedBotAvatar(slot) },
     role: { expertise: item.expertise, responsibilities: item.responsibilities },
-    ...(model.length > 0 || runtime !== undefined
-      ? {
-          runtime: {
-            model,
-            ...(runtime?.light_model !== undefined ? { light_model: runtime.light_model } : {}),
-            ...(runtime?.agent !== undefined ? { agent: runtime.agent } : {}),
-          } as BotProfile['runtime'],
-        }
-      : {}),
+    ...(overrides !== undefined ? { runtime: { ...overrides } as BotProfile['runtime'] } : {}),
   });
   const { conversation, created } = deps.conversations.openDirect(bot.id);
   return { bot, conversation, opened: created };

@@ -134,6 +134,7 @@ kepcup/
 | 应用连接（D73） | `conn_` | 自定义 MCP server 的连接 id 固定为 `custom:{serverId}` |
 | 共享浏览器资料（D77） | `bpf_` | |
 | 网页监看（D79） | `wat_` | |
+| Bot 资产移交（D88） | `hnd_` | |
 
 ## 可调参数
 

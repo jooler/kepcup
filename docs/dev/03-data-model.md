@@ -39,6 +39,7 @@
 | main | `0027_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
 | main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
 | main | `0029_widget_queries.sql` | D81 P2：新表 `widget_queries`（命名只读查询模板）+ `widget_versions.queries_sha256` 列 |
+| main | `0035_bot_handover.sql`（暂定号） | D88 P0：新表 `bot_handovers` / `bot_handover_items`；`approvals` 重建（kind 增 `bot_handover`，带全现有 kind）。D87 在另一分支同占 0035，后合入的一方按 main 实况重排 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -273,7 +274,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0027 增 egress）
+### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0027 增 egress；D84 迁移 0031 增 mail_send；D88 迁移 0035 增 bot_handover）
 
 ```sql
 CREATE TABLE approvals (
@@ -282,7 +283,7 @@ CREATE TABLE approvals (
                     'access', 'unsandboxed', 'command', 'git_remote',
                     'environment', 'skill_import', 'skill_preset',
                     'profile_change', 'mcp_tool', 'butler_proposal',
-                    'agent_tool', 'egress')),
+                    'agent_tool', 'egress', 'mail_send', 'bot_handover')),
   bot_id          TEXT,
   conversation_id TEXT,
   run_id          TEXT,
@@ -304,6 +305,8 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 `agent_tool`（D72 P3，迁移 `0017_external_agents.sql` 重建表加入 CHECK）：外部智能体原生工具的权限请求（ACP `session/request_permission` 经权限桥分级后需要用户确认的部分）。payload 见 `agentToolApprovalPayloadSchema`：`{agentId, agentName, title, kind: 'read'|'write'|'execute'|'other'|'config', toolKind, access?, locations[]（已解析绝对路径）, command?, cwd, options[]（Agent 提供的选项，仅展示 / 审计）, durations, reason, sensitive, exemptDirs, projectPath?, configHash?}`。路径类（read / write）`durations` 含 `conversation`，批准后按 `decision_json.duration` 记 grants（与 access 同语义）；命令 / 其他只有「仅这一次」（`approvals.decide` 把越权的 conversation 降为 once）。子类型 `kind: 'config'`：project 内 Agent 侧配置文件（Provider 的 `agentSideConfigFiles`）首次运行前的确认，批准后按（对话、Bot、Agent、project 路径、配置内容哈希 `configHash`）记住，无人值守的自动批准不算（`approvedAgentConfigs` 以 `json_extract(payload_json,'$.kind')='config'` 定向查询）。无人值守：自动批准并审计，但并入数据目录底线——`command` 文本或 `locations` 触及数据目录（`exemptDirs`＝本 run 的 workspace 与技能目录除外）则自动拒绝（`agentToolTouchesDataDir`：相对 token 按 `cwd` 解析，cwd 本身也检查）；`kind:'other'` 与无 locations 的 write 一律自动拒绝（`agentToolUnattendedRefusal`）。
 
 `egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
+
+`bot_handover`（D88，迁移 `0035_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -514,7 +517,7 @@ CREATE TABLE schedules (
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
 
-D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。
+D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。D88 移交定时任务时（`ScheduleService.transferTo`，一个事务）：在 B 的对话里按原字段重建一行并出新回执卡，原行 `cancelled`，原回执卡快照写入 `schedule.handedOverTo = {botId, name}`、文案改为「已移交给 {B}」。交接记录也是 system_event：`bot_handover`（B 私聊）/ `bot_handed_over`（A 私聊），内容带 `handover: {handoverId, fromBotId, fromBotName, toBotId, toBotName, items[], note}`。
 
 ### watches（D79，main 0023）
 
@@ -769,6 +772,44 @@ CREATE INDEX app_taint_expires ON app_taint(expires_at);
 
 **判定粒度与跨 Bot 传递**：外发拦截按**对话**判定（`TaintService.guard` = 该对话里任一 Bot 的行未过期）——群聊里 Bot B 读到 Bot A 的输出时不能把污点「洗掉」；私聊只有一个 Bot，与按 (Bot, 对话) 等价。跨对话的交接由 `TaintService.inherit` 传递：委派投递（`delegations` 转 `working`）把 A 对话的污点带到 B 的私聊，B 的结果贴回（转 `completed`，非 `fyi`）再把 B 私聊的污点带回 A 的对话；继承保留来源的 `first_at`，`expires_at` 取较晚者（不因传递而延长）。接线在 `DelegationsService.onMoved`（`start.ts`）。
 
+### bot_handovers / bot_handover_items（D88，迁移 0035 暂定）
+
+```sql
+CREATE TABLE bot_handovers (
+  id               TEXT PRIMARY KEY,           -- hnd_...
+  approval_id      TEXT,                       -- 移交卡（approvals.kind = 'bot_handover'）
+  proposer_bot_id  TEXT NOT NULL,              -- 发起方（P0 恒为管家）
+  conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  from_bot_id      TEXT NOT NULL,
+  to_bot_id        TEXT,                       -- 新建目标建好后回填（与建 Bot 同一事务）
+  new_bot_json     TEXT,                       -- 新建目标的字段（同 propose_bot + model）
+  status           TEXT NOT NULL CHECK (status IN (
+                     'proposed', 'applying', 'completed', 'partial', 'failed', 'denied', 'cancelled')),
+  plan_json        TEXT NOT NULL,              -- 提交时的移交卡 payload 快照
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+CREATE INDEX bot_handovers_approval ON bot_handovers(approval_id);
+CREATE INDEX bot_handovers_status ON bot_handovers(status);
+
+CREATE TABLE bot_handover_items (
+  handover_id  TEXT NOT NULL REFERENCES bot_handovers(id) ON DELETE CASCADE,
+  key          TEXT NOT NULL,      -- 资产 key（mail:… / app:… / mcp:… / model:… / schedule:…）或宿主条目
+  asset_type   TEXT NOT NULL,      -- 无 CHECK：后续期的适配器与宿主条目共用
+  action       TEXT NOT NULL,      -- move / share / copy；宿主条目为 create / rewrite / write
+  status       TEXT NOT NULL CHECK (status IN ('pending', 'done', 'skipped', 'failed')),
+  error        TEXT,               -- skipped / failed 的原因
+  result_json  TEXT,               -- 如重建后的定时任务 id、改投的提醒数
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (handover_id, key)
+);
+```
+
+- 批准时在一个事务里写入被勾选的条目（`pending`）并把移交置为 `applying`；宿主条目：`bot:new`（新建目标）、`resp:to` / `resp:from`（职责改写）、`note:handover`（两侧交接说明）。
+- `(handover_id, key)` 是幂等键：执行前查状态，`done` 跳过；启动时 `applying` 的移交继续剩余 `pending` 项，`proposed` 而卡片已被启动恢复取消的落 `cancelled`。
+- 结算：全部 done → `completed`；一项都没做成 → `failed`；其余 → `partial`（跳过与失败都算未完成）。
+- 删除级联：对话物理删除时随 FK 删除；Bot 删除不删（Bot 行是占位行、id 不复用，记录留作历史；对应的待确认卡由「删除 Bot 取消其 approvals」处理，执行中的条目重新校验时因 Bot 已删除而跳过）。
+
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
 ```sql
@@ -964,6 +1005,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | schedules | 删除 | P10 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
+| 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
 | 该对话的 Bot 自制组件（D81 `widgets`，scope='conversation'） | 删除（conversations FK 级联；scope='bot' 的行跨对话存活） | D81 |
 | 以该对话为 A 侧或 B 侧的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | Wiki 中从该对话入库的资料 | **保留** | — |
@@ -987,6 +1029,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 | schedules、jobs | 删除 / 取消 | P10 |
 | watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
 | mail_account_bots 中该 Bot 的绑定（`mail_accounts` 保留；`mail_alert` 作业随 jobs 取消） | 删除 | D84 |
+| 涉及该 Bot 的 bot_handovers（来源 / 目标） | **保留**作历史；未执行的条目执行时因 Bot 已删除而跳过 | D88 |
 | 该 Bot 的 widgets / widget_versions / widget_queries / widget_docs（D81） | 删除（`WidgetService.deleteForBot`；bots 行改占位，FK 不触发） | D81 |
 | 以该 Bot 为 A 或 B 的活动委派（`submitted` / `working`） | 落 `cancelled`（B 有活动 run 的先中止）；行保留 | D71 |
 | 该 Bot 的 app_tool_grants（对话级与 Bot 级） | 撤销（写 `revoked_at`，行保留作审计；`AppToolGrants.revokeForBot`） | D73 P1 |
