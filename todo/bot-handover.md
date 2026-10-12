@@ -1,6 +1,6 @@
 # Bot 资产移交：实施方案
 
-> 状态：**已定稿，待实施**（2026-10-12；用户拍板：①记忆、Wiki 一律复制；②普通 Bot 交出自己资产按开发节奏排期，但属本功能必做范围，P0–P2 全部要落地）。
+> 状态：**已定稿，待实施**（2026-10-12；用户拍板：①记忆、Wiki 一律复制；②普通 Bot 交出自己资产按开发节奏排期，但属本功能必做范围，P0–P2 全部要落地；③DEV-001～011 按建议确认、P0 合入 main；④承诺例外（承诺随定时任务迁移、A 的承诺置 void）确认，P1 实施）。
 > 设计：[docs/design/37-bot-asset-handover.md](../docs/design/37-bot-asset-handover.md)，决策 **D88**。
 > 分支 / worktree：`t/handover` @ `/home/jyy/wt/kepcup-handover`（从 main 拉）。主工作树由多个会话共用，**不在主树里改代码**；D87 在 `/home/jyy/wt/kepcup-widget-craft` 并行进行，不碰它。
 > 迁移号：写迁移时取 main 的下一个空号。当前 main 最大为 0034，D87 暂记 0035（未合入）——本方案先记 **0036（暂定）**，合入时以 main 实况重排，并同步 `create-core.test.ts` 的 `user_version` 与 public-skills-migration 测试里的版本号。
