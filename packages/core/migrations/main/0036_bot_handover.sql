@@ -1,5 +1,4 @@
 -- Bot 资产移交（D88，docs/design/37-bot-asset-handover.md §5.1）。
--- 迁移号暂定：D87 在另一分支也占 0035，合入第二个的一方按 main 实况重排。
 --
 -- bot_handovers：一次移交提议及其执行状态。新建目标在建好后回填 to_bot_id
 -- （new_bot_json 是提议里的新 Bot 字段）。plan_json 是提交时的移交卡 payload 快照。

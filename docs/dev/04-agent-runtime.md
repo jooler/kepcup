@@ -41,6 +41,8 @@
 | 摘要 / 反思 / 记忆整理 | `summary` / `reflection` / `consolidation`（全局轻量 → 全局主） | `routeFor` |
 | 画像整理 | `profile_curation`（全局主） | `routeFor` |
 | Wiki 维护 / 技能生成 | `wiki_maintenance` / `skill_authoring`（Bot 主 → 全局主） | `routeFor` |
+| 组件审查（REVIEW 阶段 run，P3c） | `widget_review`（设置 `widgetReviewModel` → Bot 主 → 全局主；解析不到退回制作的路由） | `routeFor`（`widgets/craft/service.ts`） |
+| 组件制作（SPEC / BUILD / FIX 阶段 run） | `widget_authoring`（Bot 主 → 全局主；无内置模型时按「后台任务」设置走外部 Agent，都没有 → `widget_craft` 以 `WIDGET_CRAFT_UNAVAILABLE` 失败） | `routeFor`（`widgets/craft/service.ts`） |
 
 **设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（对话轮、任务、Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录实际使用的模型）。
 
@@ -391,7 +393,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 
 ## 工具目录
 
-`access` 取值含义见 [02-architecture.md](02-architecture.md#工具)。“loop”列：T = 对话轮，K = 任务，W = Wiki 维护，S = 技能生成；其他后台 loop 不使用工具（单次结构化调用）。D75 前的「R = 响应」拆为 T / K：对话轮只有对话核心、只读查询（含 read / ls / find / grep，无 bash）、任务管理与异步托管动作；任务是完整工具面，去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议（`buildResponseTools` 按 `identity.loopType` 组装）。注册期摘除只是优化，写入在执行期由网关按 `writeDenial` 硬拒。
+`access` 取值含义见 [02-architecture.md](02-architecture.md#工具)。“loop”列：T = 对话轮，K = 任务，W = Wiki 维护，S = 技能生成，C = 组件制作（D87，工具见下文「组件制作 loop」）；其他后台 loop 不使用工具（单次结构化调用）。D75 前的「R = 响应」拆为 T / K：对话轮只有对话核心、只读查询（含 read / ls / find / grep，无 bash）、任务管理与异步托管动作；任务是完整工具面，去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议（`buildResponseTools` 按 `identity.loopType` 组装）。注册期摘除只是优化，写入在执行期由网关按 `writeDenial` 硬拒。
 
 | 工具 | access | loop | 阶段 | 说明 |
 |---|---|---|---|---|
@@ -432,9 +434,10 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | `cancel_task` | conversation | T | D75 | 取消 submitted / running 的任务：写 `cancel` 条目、结算 `cancelled`、不唤醒；写任务的改动不自动撤销 |
 | `list_tasks` | conversation | T | D75 | 进行中 + `TASK_LIST_SETTLED_WINDOW_MS` 内已结算的任务（id、标题、状态、读写、排队原因、等待输入、最近进度、可否注入） |
 | `forward_task_result` | conversation | T | D75 | 把已完成任务的结果条目全文作为 Bot 消息发出（`origin:'task'`），每个任务一次 |
-| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016） |
+| `ask_user` | conversation | K | D75 | 任务向用户提问：`question`、`options`（1～`ASK_USER_OPTIONS_MAX`=6 个，每个 ≤ `ASK_USER_OPTION_MAX_CHARS`）；私有 `question` 条目 + 问题卡 + `awaiting_input`，阻塞到用户点选（`tasks.answer`）或对话轮 `inject_task` 转交（带原消息）；等待期间让出调度名额、到拿回名额为止不计入 `TASK_MAX_WALL_MS`（等待中被取消则不拿回名额直接收尾），`TASK_QUESTION_TTL_MS` 后按「用户未回答」返回；外部智能体任务没有（DEV-016）。D87 P4：`mode`（`single` 缺省 / `multi` / `form`）+ `fields`（表单字段 ≤8，text / number / date / select）；多选 / 表单的回答经 shared `checkAskUserAnswer` 校验后以 `<untrusted>` 包裹的 JSON 交回任务 |
+| `present` | conversation | T、K | D87 P4 | 声明式展示卡（[design/32 §12.1](../design/32-bot-widgets.md)）：`present{kind, title?, data}`，`kind ∈ table / bar / line / pie / kpi / steps / timeline / compare`，每种一个最小 zod schema（shared `present.ts`），`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）；校验失败回「哪一字段、期望什么」且不发卡；成功发一条系统卡片消息（`cardType: 'present'`，记发卡的 Bot），每 run ≤`PRESENT_CARDS_PER_RUN_MAX`（8）张；上下文回放紧凑文字（≤`PRESENT_CONTEXT_MAX_CHARS`，标明发卡的 Bot、包 `<untrusted>`）。副作用 `local`。系统提示：展示类结果优先 `present`，要交互才 `widget_craft` |
 | `delegate_task` / `collect_delegate_results` | host | K | D66 / D75 | 任务内的嵌套子代理（[design/23](../design/23-mcp-and-subagent.md)）：前台 / 后台分支 / fan-out；后台分支的结论用 `collect_delegate_results` 取回（等待、按委派顺序、每条一次）；对话轮与子代理调用一律 `NOT_SUPPORTED` |
-| `widget_create` / `widget_update` / `widget_publish` | conversation | K | D81 | Bot 自制交互组件（[design/32](../design/32-bot-widgets.md)）：`widget_create{title, description, html, queries?, scope?}` 落一个单文件 HTML 组件（≤2MB，版本只增不改）并发 `bot_widget` 卡片（每 run ≤8 张），用户按「HTML sha256 + 查询摘要」确认后在沙箱 iframe 里操作；`queries`（P2）随版本登记命名只读查询模板（单条 SELECT/WITH + `:param` 占位，交付时 prepare + 只读门槛预审，审查态可见全文，运行时组件经 `kepcup.query` 免审调用）；`widget_update{widget_id, html, queries?, change_note?}` 发新版本新卡（旧卡仍开旧版），P2 起 Bot 级组件可在任意对话更新（新卡发当前对话）；`widget_publish{widget_id}`（P2）把 Bot 级组件最新版发卡到当前对话（跨对话引用，不落新版本）。仅任务面注册（对话轮只读）；副作用记 `local`；HTML/SQL 不进模型上下文；conversation 作用域组件随会话删除、Bot 删除走 `lifecycle` 显式清理 |
+| `widget_craft` / `widget_publish` / `widget_read_state` | conversation | K | D81 / D87 | Bot 自制交互组件（[design/32](../design/32-bot-widgets.md)）。`widget_craft{brief, title?, widget_id?, scope?, acceptance?, resume_craft_id?}`（D87）是新建与修改的唯一入口：前台阻塞，编码在独立制作 loop 里完成（见下文「组件制作 loop」），任务只拿到 ≤`WIDGET_CRAFT_RESULT_MAX_CHARS`（1500）字的回执（widgetId、版本、自检状态、已知问题；或未交付原因 + craftId），HTML / diff / 检查报告不进任务上下文；每 run ≤`WIDGET_CRAFTS_PER_RUN_MAX`（3）次，交付占用每 run ≤8 张的发卡名额。`widget_publish{widget_id}`（P2）把 Bot 级组件最新版发卡到当前对话（沿用该版本的自检状态）。`widget_create` / `widget_update` 不再是 Bot 的工具（保留为 `WidgetService.create` / `update`，只由制作 loop 凭检查回执调用）。`widget_read_state{widget_id, keys?}`（D87 P4）只读本 Bot 组件的 KV（≤`WIDGET_READ_STATE_MAX_BYTES` 64KB，按转义后字节计；放不下的值跳过并报告键名、大小与开头片段，`<untrusted source="widget-state">` 包裹，副作用 `none`）。仅任务面注册（对话轮只读）；craft / publish 副作用记 `local`；HTML/SQL 不进模型上下文；conversation 作用域组件随会话删除、Bot 删除走 `lifecycle` 显式清理 |
 | `app_request_connection` | none | T、K | D73 P0 / P1 | 请用户（重新）连接一个应用，三选一：`connector`（目录 slug，`<available_apps>` 里的未连接应用 → `target:{kind:'catalog'}`；该 Bot 已有授权连接但需重连则按该连接处理，已可用则拒绝）、`connection_id`（该 Bot 已勾选的目录连接 → `catalog` 目标 + `connectionId`；`custom:{serverId}` = 已勾选、应用级启用的 OAuth 自定义 server）或 `server_id`（自定义 OAuth server），`reason?`。目标不合法 → `INVALID_INPUT` 且不出卡；有效则宿主记下 `connect-app` setup 需求并返回 `SETUP_REQUIRED`（链路见下）。orchestrator `#appToolFacade`：Bot 有 OAuth 自定义 server、目录连接或可连接的目录条目之一才注册（其余 Bot 工具集不变）。属于 ACP `apps` 能力包（前缀 `app_`），勾选该包的外部智能体 Bot 经桥可用 |
 | `app_search_tools` / `app_call_tool` | 随连接 | T（仅子代理的只读 + 免审子集；对话轮同应用工具）、K | D73 P2 | 应用工具超过 `APP_TOOLS_INLINE_MAX`（40）时取代逐个暴露的应用工具；`app_call_tool` 转给真实应用工具（同一网关路径），见上文「按需工具发现」。`app_` 前缀，归 ACP `apps` 能力包 |
 | 应用工具 `app_{slug}_{toolName}` | 随连接 | T（仅只读 + 免审）、K | D73 P1 | Bot 勾选的目录连接（`runtime.app_connection_ids`）的工具，暴露规则见上文「应用工具暴露」。审批沿用 `mcp_tool` 卡：`read` 免审记审计；`write` 弹卡，`durations = ['once','conversation','bot']`，`conversation` / `bot` 批准写 `app_tool_grants`，下次 `ask` 决策先查 grant 命中免卡；`destructive`（含缺注解且名字推断不出只读、目录 `toolPolicy` 调高者）只给 `once`，卡片显示完整参数与「不可撤销」；`decide()` 对卡片未提供的时长降为 `once`。载荷带 `connectionId` / `connectorSlug` / `accountLabel` / `risk`（「以 {账号} 身份在 {应用} 执行 {工具}」）；无人值守按 W5 全部自动批准，审计与上下文行记风险档与账号 |
@@ -469,6 +472,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | 画像整理 | 默认主模型 | 单次结构化调用 | — | 2 | P07 |
 | Wiki 维护 | 主模型 | 完整 loop | 文件工具，限定在该 Bot 的 wiki 目录（读写）与 `raw/`（只读）；`delete` 工具限删 `pages/` 下的页面 | 2 | P09 |
 | 技能生成 | 主模型 | 完整 loop | 文件工具与 bash，限定在技能草稿目录 | 2 | P08 |
+| 组件制作 | Bot 主模型（`widget_authoring`）；审查用 `widget_review`（设置「组件审查模型」，缺省跟随 Bot 主模型） | 宿主状态机：每阶段一个完整 loop（SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 轮） | read / ls / write / edit / `widget_check` / `widget_template` / `stage_done`（REVIEW 只有 read / ls / `submit_review`），限定在本次制作的草稿目录 | 嵌套在发起的任务 run 下（不经调度器） | D87 |
 
 模型解析顺序：Bot Profile 中的设置 → 设置页默认值。轻量模型未配置时使用主模型。没有内置主模型、只配了外部智能体的 Bot，对话轮按设计 30 §8.4 第 2 级降级：不调模型、宿主确定性路由（`#routeWithoutModel`，DEV-011）。
 
@@ -495,6 +499,17 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | `GRANT_ABSOLUTE_TTL_MS` | 10 min | 「仅这一次」授权的绝对时限（DEV-009） |
 | `SUBAGENT_BACKGROUND_CONCURRENCY` / `SUBAGENT_CLOSE_GRACE_MS` | 4 / 10 s | 每个父 run 的后台分支封顶 / 父 run 结束时等分支 settle 的上限 |
 
+
+### 组件制作 loop（D87）
+
+`widget_craft` 的执行体是 `core/widgets/craft/service.ts` 的 `WidgetCraftService`（start.ts 装配，[design/32 §11](../design/32-bot-widgets.md)）：宿主状态机 SPEC → BUILD → GATE ⇄ FIX → DELIVER（P3c 在 GATE 合格后插入 REVIEW）。
+
+- **阶段 run**：每个阶段一个 pi run，`loop_type='widget_authoring'`、`parent_run_id` = 发起的任务 run，步骤落 run_steps、用量按 `widget_authoring` 入账，不产生对话消息（同 subagent）；`runs.cancel` 落到阶段 run = 中止整次制作（orchestrator `cancelRun` 经 `widgetCraft.cancelStageRun`），父任务取消同样级联。阶段输入由宿主从草稿文件重建（`craft/prompts.ts`：平台事实 + 由检查规则注册表生成的沙箱雷区清单 + 文件约定 + 阶段要求），不累积上下文。
+- **草稿目录** `bots/{botId}/widget-drafts/{craftId}/`（`craft/draft.ts`）：`manifest.json`（宿主独占，原子写）、`spec.md`、`acceptance.json`、`index.html`、`queries.json`、`fixtures.json`、`reports/check-{n}.json`、`snapshots/round-{n}/`。交付即删；未交付保留 `WIDGET_CRAFT_DRAFT_TTL_DAYS`（7）天供 `resume_craft_id`，core 启动时与新建制作时清理过期草稿。
+- **阶段工具**（`craft/tools.ts`）：read / ls 全阶段；write 按阶段白名单（SPEC 只写 spec.md / acceptance.json；BUILD / FIX 只写 index.html / queries.json / fixtures.json），FIX 的 write 拒绝覆盖已存在的文件（逼出 edit 补丁）；manifest 恒只读；`widget_check` 自查（同一检查器，不留回执）；`widget_template`（BUILD，P3a 只有 `blank`）；`stage_done` 终止本阶段。没有 bash、网络与任何宿主副作用工具。
+- **GATE** 由宿主执行 `runWidgetCheck`（`widgets/check/`：S0 静态 + S1 JS + S2 预览——`widgets/preview.ts` 按视口〔360 亮 / 720 暗〕注入垫片与探针〔`preview-probe.ts`，单行，行号与原文一致〕，经端口 B 调主进程 `widgetPreview.run`〔`apps/desktop/src/main/widget-preview.ts`：隐藏窗口 + 内存分区 `widget-preview` + `file://` 外壳页 + 与正式卡片相同的沙箱 iframe 与 CSP，模拟能力桥以 `fixtures.json` 为数据〕；未绑定时 skipped）：先快照再检查，报告与回执 `{round, htmlSha256, queriesSha256, verdict, score, previewed}` 记入 manifest。有错误（含必需验收点失败）→ FIX（只给 error 清单）；只剩警告最多修一轮。分数比最佳快照差 → 回滚到最佳快照并在 FIX 输入写明新增问题；同一组错误签名连续两轮 → 收缩模式。修复轮数 `WIDGET_CRAFT_FIX_ROUNDS_MAX`（4）、时限 `WIDGET_CRAFT_TIMEOUT_MS`（15 分钟）、token 预算 `WIDGET_CRAFT_TOKEN_BUDGET`（40 万，轮询 `tokensSoFar()`）任一用尽即按最佳快照判定。
+- **REVIEW**（P3c）：GATE 合格后的独立审查 run（`craft/prompts.ts` 的 `reviewSystemPrompt`，工具只有 read / ls / `submit_review`，路由 `widget_review` = 设置「组件审查模型」或 Bot 主模型）；同一份文件只审一次，至多 `WIDGET_CRAFT_REVIEW_ROUNDS_MAX`（2）轮，P0 / P1 进 FIX，P2 只记 `reports/review-{n}.json`；用尽仍有 P0 / P1 → 交付为 `issues` 并列入已知问题；没交结论 → skipped。
+- **DELIVER**：可交付回执里分数最低的一条（都阻断 → 不交付，回执给原因 ≤5 条 + craftId，草稿保留）；复算当前文件摘要，必须与一条非阻断回执一致才调 `WidgetService.create` / `update`（带 `check{status, summary}`），状态 = 未运行 S2 → `unverified`，否则 `passed` / `issues`。
 
 ## 结构化输出
 

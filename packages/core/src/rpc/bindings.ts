@@ -1023,7 +1023,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       tasks: orchestrator.tasks.activeViews(input.conversationId),
     })),
     'tasks.answer': method(tasksAnswerInputSchema, okOutputSchema, async (input) => {
-      orchestrator.tasks.answerQuestion(input.messageId, input.answer);
+      orchestrator.tasks.answerQuestion(input.messageId, input.answer, input.values);
       return { ok: true as const };
     }),
     // W2 外部副作用台账（W3 检查后重试面板）：任务沿续接链的 tool_effects 行。

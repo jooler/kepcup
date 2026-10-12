@@ -1,6 +1,10 @@
 import {
   AppError,
   ASK_USER_OPTION_MAX_CHARS,
+  checkAskUserAnswer,
+  type AskUserField,
+  type AskUserMode,
+  type AskUserValues,
   BROWSER_HANDBACK_COALESCE_MS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
   TASK_CONCURRENCY_GLOBAL,
@@ -907,7 +911,13 @@ export class TaskHost implements TaskToolFacade {
    */
   ask(
     identity: RunIdentity,
-    input: { question: string; options: string[] },
+    input: {
+      question: string;
+      options: string[];
+      /** D87 P4 L2：多选 / 表单（缺省单选）。 */
+      mode?: AskUserMode;
+      fields?: AskUserField[];
+    },
     signal: AbortSignal,
   ): Promise<string> {
     if (identity.loopType !== 'task') {
@@ -934,6 +944,8 @@ export class TaskHost implements TaskToolFacade {
       event: TASK_QUESTION_EVENT,
       text: question,
       options,
+      ...(input.mode !== undefined && input.mode !== 'single' ? { questionMode: input.mode } : {}),
+      ...(input.mode === 'form' && input.fields !== undefined ? { questionFields: input.fields } : {}),
       taskId: task.id,
       ...(task.botId !== null ? { taskBotId: task.botId } : {}),
       runId: task.id,
@@ -1013,9 +1025,17 @@ export class TaskHost implements TaskToolFacade {
    * The user picked an option on a task question card (§2.4.6): the answer is
    * injected straight into the task (no turn), recorded as an inject entry.
    */
-  answerQuestion(messageId: string, answer: string): void {
+  answerQuestion(messageId: string, answer: string, values?: AskUserValues): void {
     const card = this.#deps.messages.getById(messageId);
-    const content = card?.content as { event?: unknown; answer?: unknown } | undefined;
+    const content = card?.content as
+      | {
+          event?: unknown;
+          answer?: unknown;
+          options?: string[];
+          questionMode?: AskUserMode;
+          questionFields?: AskUserField[];
+        }
+      | undefined;
     if (card === null || card.kind !== 'system_event' || content?.event !== TASK_QUESTION_EVENT) {
       throw new AppError('NOT_FOUND', '问题卡不存在');
     }
@@ -1028,7 +1048,22 @@ export class TaskHost implements TaskToolFacade {
     if (question === undefined || question.messageId !== messageId || task === null) {
       throw new AppError('RUN_ALREADY_FINISHED', '任务已不再等待这个问题的回答');
     }
-    const text = answer.trim();
+    // D87 P4 L2：多选 / 表单按卡上登记的候选与字段校验；卡片显示可读的一行，任务拿结构化 JSON
+    // （用户填的内容是不可信数据，<untrusted> 包裹）。
+    const mode = content?.questionMode ?? 'single';
+    let text = answer.trim();
+    let forTask: string | undefined;
+    if (mode !== 'single') {
+      const checked = checkAskUserAnswer(
+        { mode, options: content?.options ?? [], fields: content?.questionFields ?? [] },
+        values,
+      );
+      if (!checked.ok) throw new AppError('INVALID_INPUT', checked.message);
+      text = checked.display;
+      // `<` 转义：用户填的文字不能提前闭合 <untrusted>。
+      const json = JSON.stringify(checked.structured).replace(/</g, '\\u003c');
+      forTask = `用户在问题卡上的回答（${mode === 'multi' ? '多选' : '表单'}，JSON）：<untrusted>${json}</untrusted>`;
+    }
     if (text.length === 0) throw new AppError('INVALID_INPUT', '回答不能为空');
     if (task.botId !== null && task.conversationId !== null) {
       this.#deps.messages.appendTaskEvent({
@@ -1040,7 +1075,7 @@ export class TaskHost implements TaskToolFacade {
         delivery: 'delivered',
       });
     }
-    this.#resolveQuestion(taskId, question, text);
+    this.#resolveQuestion(taskId, question, text, forTask ?? text);
   }
 
   /**

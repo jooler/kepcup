@@ -8,7 +8,7 @@ import {
 import type { Clock } from '../infra/clock.js';
 import type { SqliteDatabase } from '../infra/db.js';
 
-/** `bot_handovers` / `bot_handover_items` 的读写（D88，main 0035 暂定）。 */
+/** `bot_handovers` / `bot_handover_items` 的读写（D88，main 0036）。 */
 
 interface HandoverRow {
   id: string;

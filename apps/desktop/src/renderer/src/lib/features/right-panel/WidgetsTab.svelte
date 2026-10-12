@@ -6,6 +6,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import { Button } from '$lib/components/ui/button';
   import { formatBytes } from '$lib/features/settings/mcpb-install';
+  import { checkBadge } from '$lib/features/widgets/check-status';
 
   /**
    * Bot 详情「组件」Tab（D81 P2，design 32 §3）：该 Bot 全部自制交互组件的列表 /
@@ -143,7 +144,10 @@
           <p class="mt-0.5 text-xs text-muted-foreground">
             v{entry.version} · {t('widgetsTab.versionCount', { n: entry.versionCount })} ·
             {formatBytes(entry.sizeBytes)} · {whenText(entry)}{#if entry.queriesCount > 0}
-              · {t('widgetsTab.queriesCount', { n: entry.queriesCount })}{/if}
+              · {t('widgetsTab.queriesCount', { n: entry.queriesCount })}{/if}{#if checkBadge(entry.checkStatus) !== null}
+              · <span data-testid={`widget-check-${entry.widgetId}`}
+                >{t(checkBadge(entry.checkStatus)!.label)}</span
+              >{/if}
           </p>
           <div class="mt-1 flex justify-end gap-1">
             {#if deleteTarget === entry.widgetId}

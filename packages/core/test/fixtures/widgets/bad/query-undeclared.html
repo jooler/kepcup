@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+  <p>本月消息数：<span id="n">…</span></p>
+  <script>
+    (async () => {
+      const rows = await kepcup.query('monthly_count', { month: '2026-10' });
+      document.getElementById('n').textContent = rows[0]?.n ?? 0;
+    })();
+  </script>
+</body>
+</html>

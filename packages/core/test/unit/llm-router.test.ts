@@ -459,14 +459,39 @@ describe('builtinModelRef / routeStillCurrent: the single model-selection entry'
   const settingsOf = (patch: Partial<Settings>) => settingsSchema.parse(patch);
 
   it('conversation = bot main → default main, whatever the light settings are', () => {
-    const s = settingsOf({ defaultMainModel: 'custom:m/main', defaultLightModel: 'custom:m/light' });
+    const s = settingsOf({
+      defaultMainModel: 'custom:m/main',
+      defaultLightModel: 'custom:m/light',
+    });
     expect(builtinModelRef('conversation', s, null)).toBe('custom:m/main');
-    expect(builtinModelRef('conversation', s, bot({ model: 'custom:b/main' }))).toBe('custom:b/main');
+    expect(builtinModelRef('conversation', s, bot({ model: 'custom:b/main' }))).toBe(
+      'custom:b/main',
+    );
     expect(builtinModelRef('conversation', settingsOf({}), bot())).toBe('');
   });
 
+  it('widget_review (D87 P3c): the review model setting, else the bot main; a bot-pinned model wins', () => {
+    const plain = settingsOf({ defaultMainModel: 'custom:m/main' });
+    expect(builtinModelRef('widget_review', plain, bot())).toBe('custom:m/main');
+    const withReview = settingsOf({
+      defaultMainModel: 'custom:m/main',
+      widgetReviewModel: 'custom:r/review',
+    });
+    expect(builtinModelRef('widget_review', withReview, bot())).toBe('custom:r/review');
+    expect(builtinModelRef('widget_review', withReview, null)).toBe('custom:r/review');
+    // 固定了自己主模型的 Bot（数据去向）：审查也用它，不把源码发给另一家。
+    expect(builtinModelRef('widget_review', withReview, bot({ model: 'custom:b/local' }))).toBe(
+      'custom:b/local',
+    );
+    // 只影响审查，不影响制作。
+    expect(builtinModelRef('widget_authoring', withReview, bot())).toBe('custom:m/main');
+  });
+
   it('reads settings on every call, so a default change applies to the next call', () => {
-    let current = settingsOf({ defaultMainModel: 'custom:old/main', defaultLightModel: 'custom:old/light' });
+    let current = settingsOf({
+      defaultMainModel: 'custom:old/main',
+      defaultLightModel: 'custom:old/light',
+    });
     const deps = {
       engine: builtin,
       settings: { get: () => current },
@@ -474,7 +499,10 @@ describe('builtinModelRef / routeStillCurrent: the single model-selection entry'
     };
     expect(routeFor(deps, 'summary', null)?.modelRef).toBe('custom:old/light');
     expect(routeStillCurrent(deps, 'summary', null, 'custom:old/light')).toBe(true);
-    current = settingsOf({ defaultMainModel: 'custom:new/main', defaultLightModel: 'custom:new/light' });
+    current = settingsOf({
+      defaultMainModel: 'custom:new/main',
+      defaultLightModel: 'custom:new/light',
+    });
     expect(routeFor(deps, 'summary', null)?.modelRef).toBe('custom:new/light');
     expect(routeStillCurrent(deps, 'summary', null, 'custom:old/light')).toBe(false);
   });

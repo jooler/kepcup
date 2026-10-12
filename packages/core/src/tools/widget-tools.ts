@@ -1,79 +1,47 @@
 import { Type } from '@earendil-works/pi-ai';
-import {
-  BOT_WIDGET_CALLS_BURST,
-  BOT_WIDGET_CALLS_INFLIGHT_MAX,
-  BOT_WIDGET_CALLS_PER_SECOND,
-  BOT_WIDGET_PER_BOT_MAX,
-  BOT_WIDGET_QUERY_TIMEOUT_MS,
-  BOT_WIDGET_VERSIONS_KEPT,
-  type WidgetScope,
-} from '@kepcup/shared';
-import type { RunIdentity, ToolDefinition } from '../agent/types.js';
-import type {
-  WidgetCreateInput,
-  WidgetUpdateInput,
-  WidgetWriteResult,
-} from '../widgets/service.js';
-import { WIDGET_QUERY_SCOPE_GUIDE } from '../widgets/query-gate.js';
+import { WIDGET_CRAFT_ACCEPTANCE_HINTS_MAX, WIDGET_CRAFT_BRIEF_MAX_CHARS } from '@kepcup/shared';
+import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
+import type { WidgetCraftParams } from '../widgets/craft/service.js';
+import type { WidgetWriteResult } from '../widgets/service.js';
 
 /**
- * Bot 自制交互组件工具（D81，docs/design/32-bot-widgets.md）：`widget_create` /
- * `widget_update` / `widget_publish`——任务把单文件 HTML 组件落库（版本只增不改）
- * 并以 `bot_widget` 卡片发进对话，用户按版本确认后在沙箱 iframe 里操作。仅任务面
- * 注册（对话轮只读纪律）；副作用是本机库写入，记 `local`（不进外部副作用台账）。
+ * Bot 自制交互组件工具（D81 / D87，docs/design/32-bot-widgets.md）：任务面只有
+ * `widget_craft`（新建与修改的唯一入口——编码在独立制作 loop 里完成，任务只拿到 ≤1500 字的
+ * 回执，HTML / diff / 检查报告都不进任务上下文，§11）与 `widget_publish`（把 Bot 级组件的
+ * 最新版发卡到当前对话）。`widget_create` / `widget_update` 不再是 Bot 的工具：它们保留为
+ * `WidgetService.create` / `update`，只由制作 loop 凭检查回执调用——给模型留一条「直接塞
+ * HTML」的捷径，非一线模型就会绕过流程。仅任务面注册（对话轮只读纪律）；副作用是本机库
+ * 写入，记 `local`。
  */
 
-export const WIDGET_CREATE_TOOL = 'widget_create';
-export const WIDGET_UPDATE_TOOL = 'widget_update';
+export const WIDGET_CRAFT_TOOL = 'widget_craft';
 export const WIDGET_PUBLISH_TOOL = 'widget_publish';
+export const WIDGET_READ_STATE_TOOL = 'widget_read_state';
 
-/** The slice of WidgetService the tools need. */
+/** The slice of the widget services the tools need. */
 export interface WidgetToolFacade {
-  create(input: WidgetCreateInput): WidgetWriteResult;
-  update(input: WidgetUpdateInput): WidgetWriteResult;
+  craft(input: {
+    identity: RunIdentity;
+    params: WidgetCraftParams;
+    signal: AbortSignal;
+    progress: (text: string) => void;
+  }): Promise<ToolResult>;
   publish(input: {
     botId: string;
     widgetId: string;
     conversationId: string;
     runId: string | null;
   }): WidgetWriteResult;
-}
-
-const WIDGET_HTML_GUIDE =
-  '单文件 HTML（含内联 CSS/JS），不用外链资源、不发网络请求、不用 localStorage/fetch（沙箱里不可用）。' +
-  '需要持久化用宿主桥 window.kepcup.storage.get/set/delete/list(key,value)（每组件独立命名空间的 JSON KV，' +
-  '数据只存本机、重启仍在；单值 ≤256KB、总量 ≤1MB/1000 键，不要存敏感信息）；需要对数据做统计汇总' +
-  '就在 queries 参数里随版本声明命名只读查询模板（单条 SELECT 或 WITH…SELECT，:name 占位参数），组件里用 ' +
-  'window.kepcup.query(name, params) 调用。' +
-  WIDGET_QUERY_SCOPE_GUIDE +
-  '返回 { rows, truncated }（rows 是「列名→值」对象数组，最多 200 行、' +
-  '回执总量约 1MB，超出任一上限时 truncated=true；BLOB 列以 base64 字符串返回，超过 ±2^53 的整数会失去精度，' +
-  `超大数值请以文本列处理；单次执行超过 ${BOT_WIDGET_QUERY_TIMEOUT_MS / 1000} 秒会被中止）。SQL 全文会展示给用户审查，` +
-  '用户展开审查后才能加载（运行时免审批）；模板随版本生效，每次交付都要给完整 queries 清单（不传 = 该版本没有任何查询）。' +
-  '需要打开网页用 window.kepcup.openLink(url)（仅 https，会先请用户确认）；window.kepcup.theme() 可取当前明暗主题，' +
-  'window.kepcup.setHeight(像素) 让卡片高度自适应内容。这些 API 都是异步的（返回 Promise）；' +
-  `storage 与 query 合计按卡片限流：允许瞬时突发 ${BOT_WIDGET_CALLS_BURST} 次、持续每秒 ${BOT_WIDGET_CALLS_PER_SECOND} 次、` +
-  `同时在途至多 ${BOT_WIDGET_CALLS_INFLIGHT_MAX} 个（看板一次性并发拉取全部查询没问题，不要写高频轮询）。被拒绝时 ` +
-  'Promise reject，error.code 可程序化区分（WIDGET_RATE_LIMITED=调用太频繁，稍后重试、WIDGET_STORAGE_QUOTA=存储满了、' +
-  'WIDGET_RESOURCE_EXPIRED=请用户重新打开卡片、WIDGET_QUERY_UNKNOWN=查询模板名在这个版本没登记、' +
-  'WIDGET_QUERY_FAILED=参数不对或执行出错、WIDGET_QUERY_TIMEOUT=查询太慢或太耗内存被中止、INVALID_INPUT=参数不对），' +
-  'error.message 是可直接展示的中文。' +
-  '组件初始高约 380px，宽度自适应。scope="bot" 的组件是你的跨对话资产（不随对话删除）：' +
-  '可在任何对话里用 widget_update 更新（新卡发给当前对话），或用 widget_publish 把最新版发卡到当前对话。' +
-  `每个 Bot 最多 ${BOT_WIDGET_PER_BOT_MAX} 个组件，每个组件只保留最近 ${BOT_WIDGET_VERSIONS_KEPT} 个版本；` +
-  '改已有组件用 widget_update，不要反复新建。';
-
-const QUERIES_PARAM_DESCRIPTION =
-  '随版本登记的命名只读查询模板（每次交付都给完整清单，不传 = 该版本没有查询）。' +
-  '单条 SELECT/WITH…SELECT，用 :参数名 占位；只能读 widget_kv 与 conversation_messages 两张视图；' +
-  'SQL 会展示给用户审查，组件内用 window.kepcup.query(name, params) 调用';
-
-/** 模型给的 queries 条目归一为 {name, sql} 字符串（残缺条目交服务层拒绝并给出人话）。 */
-function normalizeQueries(raw: Array<{ name?: string; sql?: string }> | undefined):
-  | Array<{ name: string; sql: string }>
-  | undefined {
-  if (raw === undefined) return undefined;
-  return raw.map((def) => ({ name: String(def?.name ?? ''), sql: String(def?.sql ?? '') }));
+  /** D87 P4 L3：读本 Bot 组件的 KV（只读；不是代码，是用户在组件里填的数据）。 */
+  readState(input: { botId: string; widgetId: string; keys?: string[] }):
+    | {
+        ok: true;
+        json: string;
+        truncated: boolean;
+        count: number;
+        skipped: Array<{ key: string; bytes: number; preview: string }>;
+      }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' };
 }
 
 export function buildWidgetTools(input: {
@@ -82,148 +50,63 @@ export function buildWidgetTools(input: {
 }): ToolDefinition[] {
   const { identity, widgets } = input;
 
-  const create: ToolDefinition<{
-    title?: string;
-    description?: string;
-    html?: string;
-    queries?: Array<{ name?: string; sql?: string }>;
-    scope?: WidgetScope;
-  }> = {
-    name: WIDGET_CREATE_TOOL,
+  const craft: ToolDefinition<WidgetCraftParams> = {
+    name: WIDGET_CRAFT_TOOL,
     description:
-      '给用户做一个可直接操作的交互组件（计算器、追踪表、小工具、可视化等）：写一个完整的单文件 HTML，用户在对话里点「加载」即可使用。用户明确想要「能点的」「做个小工具」「帮我做个页面」时用它；纯文字能说清的不要做组件。' +
-      WIDGET_HTML_GUIDE,
+      '给用户做（或修改）一个可直接操作的交互组件：计算器、追踪表、小工具、小游戏、数据小看板等。用户明确想要「能点的」「做个小工具」「帮我做个页面」时用它；纯文字或一张表能说清的不要做组件。' +
+      '组件由独立的制作流程编写、检查并在真实浏览器里试运行，你只需写清 brief，**不要自己写 HTML**。调用会阻塞到制作结束（通常几分钟），返回交付结果：成功时组件已作为卡片发进对话；返回「未交付」时如实告诉用户原因，不要假装成功。' +
+      '修改已有组件传 widget_id（以它的最新版为起点）；继续一次未交付的制作传 resume_craft_id（可在 brief 里补充说明）。',
     parameters: Type.Object({
-      title: Type.String({ description: '组件名，简短（≤120 字），如「费用分摊计算器」' }),
-      description: Type.String({ description: '一句话说明它能做什么（给用户看）' }),
-      html: Type.String({ description: '完整的单文件 HTML 源码（<!DOCTYPE html> 开头）' }),
-      queries: Type.Optional(
-        Type.Array(
-          Type.Object({
-            name: Type.String({ description: '查询名（字母/数字/-/_，≤64 字符），如 by_month' }),
-            sql: Type.String({
-              description: '单条只读 SELECT（或 WITH…SELECT），只能读 widget_kv / conversation_messages，用 :参数名 占位',
-            }),
-          }),
-          { description: QUERIES_PARAM_DESCRIPTION },
-        ),
+      brief: Type.String({
+        description: `组件需求（≤${WIDGET_CRAFT_BRIEF_MAX_CHARS} 字）：目标、主要界面与交互、数据从哪来以及要不要保存（保存在本机）、风格偏好；尽量引用用户原话。修改时写清要改什么`,
+      }),
+      title: Type.Optional(
+        Type.String({
+          description: '新建时的组件名，简短（≤120 字），如「费用分摊计算器」；修改时不用给',
+        }),
+      ),
+      widget_id: Type.Optional(
+        Type.String({ description: '要修改的已有组件 ID（之前交付回执里的 widgetId）' }),
       ),
       scope: Type.Optional(
         Type.Union([Type.Literal('conversation'), Type.Literal('bot')], {
-          description: '作用域：仅本对话（默认）或保存为你的跨对话资产',
+          description: '新建时的作用域：仅本对话（默认）或保存为你的跨对话资产',
         }),
       ),
-    }),
-    execute: async (params) => {
-      const botId = identity.botId;
-      const conversationId = identity.conversationId;
-      if (botId === null || conversationId === null) {
-        return { ok: false, content: '组件必须发给一个对话（当前没有对话上下文）', errorCode: 'INVALID_INPUT' };
-      }
-      const title = params.title?.trim() ?? '';
-      const html = params.html ?? '';
-      if (title === '' || html.trim() === '') {
-        return { ok: false, content: '需要提供 title 和 html', errorCode: 'INVALID_INPUT' };
-      }
-      const result = widgets.create({
-        botId,
-        conversationId,
-        title,
-        description: params.description?.trim() ?? '',
-        html,
-        ...(params.queries !== undefined ? { queries: normalizeQueries(params.queries) } : {}),
-        scope: params.scope ?? 'conversation',
-        runId: identity.runId,
-      });
-      if (!result.ok) {
-        return { ok: false, content: result.message, errorCode: result.code ?? 'INVALID_INPUT' };
-      }
-      // 落库成功但发卡失败（cardMessageId 缺省）：组件此刻在界面上不可见，不能让
-      // 模型引导用户去找一张不存在的卡。
-      if (result.cardMessageId === null) {
-        return {
-          ok: true,
-          content: `组件「${title}」已保存，但卡片消息发送失败，用户暂时看不到它；请如实告知用户组件未能送达，之后用 widget_update 重新发布（会发新卡）。（widgetId: ${result.widgetId}）`,
-        };
-      }
-      return { ok: true, content: `${result.message}（widgetId: ${result.widgetId}）` };
-    },
-  };
-
-  const update: ToolDefinition<{
-    widget_id?: string;
-    html?: string;
-    queries?: Array<{ name?: string; sql?: string }>;
-    change_note?: string;
-  }> = {
-    name: WIDGET_UPDATE_TOOL,
-    description:
-      '更新你之前创建的交互组件：整体给出修改后的完整 HTML，生成新版本卡片（旧卡仍是旧版本，用户加载新卡看到新版）。用户对组件提出修改意见时用它。' +
-      WIDGET_HTML_GUIDE,
-    parameters: Type.Object({
-      widget_id: Type.String({ description: 'widget_create 返回的组件 ID' }),
-      html: Type.String({ description: '修改后的完整单文件 HTML（不是差异）' }),
-      queries: Type.Optional(
-        Type.Array(
-          Type.Object({
-            name: Type.String({ description: '查询名（字母/数字/-/_，≤64 字符），如 by_month' }),
-            sql: Type.String({
-              description: '单条只读 SELECT（或 WITH…SELECT），只能读 widget_kv / conversation_messages，用 :参数名 占位',
-            }),
-          }),
-          { description: QUERIES_PARAM_DESCRIPTION },
-        ),
+      acceptance: Type.Optional(
+        Type.Array(Type.String(), {
+          description: `用户明确提出的验收要求（自然语言，≤${WIDGET_CRAFT_ACCEPTANCE_HINTS_MAX} 条），如「删除前要确认」「刷新后数据还在」`,
+        }),
       ),
-      change_note: Type.Optional(
-        Type.String({ description: '一句话改动说明，显示在卡片上（给用户看）' }),
+      resume_craft_id: Type.Optional(
+        Type.String({ description: '继续一次未交付的制作（之前回执里的 craftId）' }),
       ),
     }),
-    execute: async (params) => {
-      const botId = identity.botId;
-      if (botId === null) {
-        return { ok: false, content: '没有执行身份，无法更新组件', errorCode: 'INVALID_INPUT' };
-      }
-      // Bot 级组件（跨对话资产）的新卡发到当前对话；会话级组件不受它影响。
-      const conversationId = identity.conversationId;
-      const widgetId = params.widget_id?.trim() ?? '';
-      const html = params.html ?? '';
-      if (widgetId === '' || html.trim() === '') {
-        return { ok: false, content: '需要提供 widget_id 和 html', errorCode: 'INVALID_INPUT' };
-      }
-      const result: WidgetWriteResult = widgets.update({
-        botId,
-        widgetId,
-        html,
-        ...(params.queries !== undefined ? { queries: normalizeQueries(params.queries) } : {}),
-        conversationId,
-        changeNote: params.change_note?.trim() ?? '',
-        runId: identity.runId,
-      });
-      if (!result.ok) {
-        return { ok: false, content: result.message, errorCode: result.code ?? 'INVALID_INPUT' };
-      }
-      if (result.cardMessageId === null) {
-        return {
-          ok: true,
-          content: `组件已更新到 v${result.version}，但卡片消息发送失败，用户暂时看不到新版本；请如实告知用户，之后用 widget_update 重新发布（会发新卡）。（widgetId: ${result.widgetId}）`,
-        };
-      }
-      return { ok: true, content: `${result.message}（widgetId: ${result.widgetId}）` };
-    },
+    execute: (params, ctx) =>
+      widgets.craft({
+        identity,
+        params,
+        signal: ctx.signal,
+        progress: (text) => ctx.progress(text),
+      }),
   };
 
   const publish: ToolDefinition<{ widget_id?: string }> = {
     name: WIDGET_PUBLISH_TOOL,
     description:
-      '把你创建的 Bot 级组件（跨对话资产，widget_create 时 scope="bot"）的最新版本发卡到当前对话，让本对话的用户加载使用；不产生新版本。组件已在本对话或有会话级组件时不需要用它。',
+      '把你创建的 Bot 级组件（跨对话资产，widget_craft 时 scope="bot"）的最新版本发卡到当前对话，让本对话的用户加载使用；不产生新版本。组件已在本对话或有会话级组件时不需要用它。',
     parameters: Type.Object({
-      widget_id: Type.String({ description: 'widget_create 返回的组件 ID' }),
+      widget_id: Type.String({ description: '组件 ID（交付回执里的 widgetId）' }),
     }),
     execute: async (params) => {
       const botId = identity.botId;
       const conversationId = identity.conversationId;
       if (botId === null || conversationId === null) {
-        return { ok: false, content: '组件必须发给一个对话（当前没有对话上下文）', errorCode: 'INVALID_INPUT' };
+        return {
+          ok: false,
+          content: '组件必须发给一个对话（当前没有对话上下文）',
+          errorCode: 'INVALID_INPUT',
+        };
       }
       const widgetId = params.widget_id?.trim() ?? '';
       if (widgetId === '') {
@@ -243,5 +126,63 @@ export function buildWidgetTools(input: {
     },
   };
 
-  return [create, update, publish] as ToolDefinition[];
+  // D87 P4 L3（设计 32 §12.3）：组件里存的数据是用户填的（不可信）——包进 <untrusted> 再交给模型。
+  const readState: ToolDefinition<{ widget_id?: string; keys?: string[] }> = {
+    name: WIDGET_READ_STATE_TOOL,
+    description:
+      '读取你创建的某个组件在本机保存的键值数据，用于汇总、分析或接着处理用户在组件里填的内容。只读，不改数据；只能读你自己的组件。',
+    parameters: Type.Object({
+      widget_id: Type.String({ description: '组件 ID（交付回执里的 widgetId）' }),
+      keys: Type.Optional(
+        Type.Array(Type.String({ maxLength: 200 }), {
+          maxItems: 50,
+          description: '只读这些键；不给则读全部（总量有上限，超出会截断）',
+        }),
+      ),
+    }),
+    execute: (params) => {
+      const botId = identity.botId;
+      if (botId === null) {
+        return Promise.resolve({
+          ok: false,
+          content: '当前没有 Bot 身份，不能读组件数据',
+          errorCode: 'INVALID_INPUT',
+        });
+      }
+      const widgetId = params.widget_id?.trim() ?? '';
+      if (widgetId === '') {
+        return Promise.resolve({
+          ok: false,
+          content: '需要提供 widget_id',
+          errorCode: 'INVALID_INPUT',
+        });
+      }
+      const result = widgets.readState({
+        botId,
+        widgetId,
+        ...(params.keys !== undefined ? { keys: params.keys } : {}),
+      });
+      if (!result.ok) {
+        return Promise.resolve({ ok: false, content: result.message, errorCode: result.code });
+      }
+      // json / preview 里的 `<` 已由服务转成 \u003c，数据闭合不了边界。
+      const note = result.truncated ? '（数据较多，已截断；可用 keys 只读需要的键）' : '';
+      const skipped =
+        result.skipped.length === 0
+          ? ''
+          : `\n以下键的值太大，没有整体放进来（${result.skipped
+              .map((s) => `${s.key}：${s.bytes} 字节`)
+              .join('；')}）；开头片段（同样是数据）：\n<untrusted source="widget-state">${JSON.stringify(
+              Object.fromEntries(
+                result.skipped.filter((s) => s.preview !== '').map((s) => [s.key, s.preview]),
+              ),
+            ).replace(/</g, '\\u003c')}</untrusted>`;
+      return Promise.resolve({
+        ok: true,
+        content: `组件 ${widgetId} 的数据（${result.count} 个键）${note}：\n<untrusted source="widget-state">${result.json}</untrusted>${skipped}`,
+      });
+    },
+  };
+
+  return [craft, publish, readState] as ToolDefinition[];
 }

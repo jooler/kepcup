@@ -20,6 +20,8 @@ import { APP_ID, APP_NAME, appIconPath } from './app-brand';
 import { BrowserHost, sessionDataRoot } from './browser-host';
 import { browserMethodSpecs } from './browser-methods';
 import { shellMethodSpecs } from './shell-methods';
+import { WidgetPreviewHost } from './widget-preview';
+import { widgetPreviewMethodSpecs } from './widget-preview-methods';
 import { guardAllAppFrames, installAppsUiProtocol, registerAppsUiScheme } from './apps-ui';
 import { CoreHost, type CoreProcessState } from './core-host';
 import { createMainWindow } from './window';
@@ -38,6 +40,8 @@ let window: BrowserWindow | null = null;
 let quitting = false;
 let coreHost: CoreHost | null = null;
 let browserHost: BrowserHost | null = null;
+/** D87 P3b: hidden S2 preview window for widget drafts (never the app's main window). */
+let widgetPreviewHost: WidgetPreviewHost | null = null;
 let tray: ReturnType<typeof createTray> | null = null;
 /** Tracked to honour "no notifications while the window is in the foreground". */
 let windowFocused = true;
@@ -296,12 +300,15 @@ function bootstrap(): void {
     },
   });
 
+  widgetPreviewHost = new WidgetPreviewHost();
   coreHost = new CoreHost(app.getVersion(), {
     // P11: the core's browser tools call the main process over port B.
     // D73: …and so does OAuth consent (shell.openExternal, URL allow-list in shell-methods).
     serverMethods: {
       ...browserMethodSpecs(browserHost),
       ...shellMethodSpecs((url) => shell.openExternal(url)),
+      // D87 P3b: S2 widget preview (hidden window, created lazily on the first run).
+      ...widgetPreviewMethodSpecs(widgetPreviewHost),
     },
   });
   coreHost.onState((state: CoreProcessState) => {
@@ -473,6 +480,7 @@ if (!gotLock) {
     // the tray's: a viewer closing mid-quit must not re-adopt its page into a
     // freshly created hidden host window (that window would keep the app alive).
     browserHost?.closeAll();
+    widgetPreviewHost?.dispose();
   });
   void app.whenReady().then(bootstrap);
 }
