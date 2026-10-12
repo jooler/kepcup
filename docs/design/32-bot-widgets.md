@@ -2,7 +2,9 @@
 
 Bot 在任务里自己写一个**单文件 HTML 交互组件**（下称 widget），作为卡片消息落在对话里，用户点「加载」即可在气泡内操作（计算器、追踪器、小仪表盘、小游戏……）。组件的持久化不靠生成代码自己拿运行时，而是由宿主提供的能力桥完成——能力最终落在 core 进程的 better-sqlite3 上。生成代码**永远拿不到** Node、文件系统、网络与宿主页面。
 
-决策编号 **D81**。执行文档见 [todo/bot-widgets.md](../../todo/bot-widgets.md)。
+决策编号 **D81**（P0–P2：组件本体、沙箱与能力桥）、**D87**（P3：组件制作流程——独立制作 loop + 确定性检查 + 独立审查，§11；P4：交付形态分层，§12）。执行文档见 [todo/bot-widgets.md](../../todo/bot-widgets.md)（P0–P2，已完成）、[todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md)（P3–P4）。
+
+> 阅读提示：§1–§10 描述的是「组件怎样安全地跑」；§11 描述「组件怎样被写对」。P3 落地后 Bot 不再直接持有 `widget_create` / `widget_update`（§4、§11.2），这两个名字保留为服务层的交付入口。
 
 ## 1. 调研事实（同类产品的共识做法，2026-10-11）
 
@@ -95,6 +97,8 @@ CREATE TABLE widget_docs (
 | `widget_update` | `widgetId`、`html`、`queries`?(同 create 全量快照)、`changeNote` | 追加新版本并发**新卡**（版本只增不改，旧卡仍开旧版）；每 run 发卡上限同 MCP Apps（8 张）。P2 起 Bot 级组件可在**任何对话**更新，新卡发给当前对话 |
 | `widget_publish`（P2） | `widgetId` | 把 Bot 级组件（`scope='bot'`）的**最新版本**发卡到当前对话（跨对话引用）；不落新版本，走既有审查态流程，受每 run 卡数上限约束。会话级组件不外发 |
 
+> **P3（D87）起的工具面**：任务面改为 `widget_craft`（新建与修改的唯一入口，编码在独立制作 loop 里完成，§11）+ `widget_publish`（不变）。`widget_create` / `widget_update` 从 Bot 工具面移除，其行为保留为 `WidgetService.create` / `update`，只由制作 loop 的交付步骤调用——给模型留一条「直接塞 HTML」的捷径，非一线模型就会绕过流程。下表是 P0–P2 的工具契约，参数与校验在交付步骤里原样生效。
+
 - 两个工具都是**任务面**工具（对话轮只读纪律不动）；副作用记 `local`（不写 tool_effects 台账）。
 - HTML 校验：UTF-8 体积 ≤ `BOT_WIDGET_HTML_MAX_BYTES`（2MB，同 `MCP_APP_HTML_MAX_BYTES`）；标题/描述脱敏沿用 `secrets.redact`。
 - system prompt 任务平台规则新增一条：什么时候适合给用户做交互组件（用户要「能点的」「做个小工具」）、单文件自包含、不写网络请求与本地存储 API（用宿主桥）、改组件用 `widget_update`。
@@ -172,12 +176,16 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 5b. 每 Bot 组件数 / 版本总字节上限与版本修剪（§3）；桥入口先核对版本行存活（§5）。
 6. 每工具面：仅任务可创建/更新；每 run 发卡 ≤8。
 7. 删除级联全覆盖（Bot / 会话）。
+8. （P3）制作 loop 的预览检查是**质量闸，不是安全闸**：预览在与正式卡片同一套沙箱 / CSP / 禁网条件下运行，探针脚本只注入预览资源；「已通过自检」不豁免按版本人工确认，卡片文案不得暗示安全（§11.12）。
+9. （P3）草稿目录归应用所有（`bots/{botId}/widget-drafts/`），制作 loop 的文件工具只能访问本次制作的草稿目录，没有 bash、没有网络；组件 HTML 不进发起任务的上下文（§11.1）。
 
 ## 9. 分期
 
 - **P0（骨架，已落地）**：工具 + 迁移 + 卡片 + 审查态渲染 + 协议分流。验收：Bot 在对话里写出可交互组件，用户加载即用；重启后旧卡可重开且仍为原版本。
 - **P1（能力桥，已落地）**：postMessage 桥 + `storage` KV + `openLink` + 主题/高度。
 - **P2（结构化数据与资产，已落地）**：命名只读查询模板 + `query()`；`scope='bot'` 组件的管理入口（Bot 详情「组件」Tab：列表/删除）+ 跨对话引用（`widget_publish` 工具 + `widget_update` 解禁到任意对话 + Tab 内「发到当前对话」）。
+- **P3（组件制作流程，D87，待实施）**：§11。P3a 制作 loop 骨架 + 静态检查（S0/S1）+ 回执关卡 + 工具面切换；P3b 预览宿主（S2 运行冒烟与验收步骤）+ 主题变量与模板；P3c 独立审查 + 自检状态上卡 + 基准评测。
+- **P4（交付形态分层，D87，待实施）**：§12。声明式展示卡 `present`、`ask_user` 表单化、组件回传通道 `kepcup.reply` 与 `widget_read_state`。
 
 ## 10. 本期不做
 
@@ -186,3 +194,280 @@ widget 可用的宿主 API（`window.kepcup.*`，由渲染端桥转发为 `widge
 - 运行时 raw SQL 透传。
 - 组件市场 / 分享 / 多 Bot 共用组件模板（未设计）。
 - 组件的无人值守自动加载（确认默认不可跳过）。
+
+## 11. 组件制作流程（D87，P3）
+
+### 11.1 问题与目标
+
+P0–P2 只保证「组件安全地跑」，不保证「组件写对」：`widget_create` 落库前只检查非空与体积，工具回执是「已发卡」，Bot 从不知道组件能不能运行；用户是唯一的测试员，每修一次就多一个版本、一张新卡、一次重新确认。三个结构性原因：
+
+1. **没有外部反馈信号**。模型看不到运行时错误；对一线以下的模型，只靠「写完再自己读一遍」几乎不提升正确率。
+2. **沙箱把 LLM 的惯用写法静默变成坏掉**：外链 CDN 脚本 / 字体（CSP `default-src 'none'`）、`localStorage`（不透明 origin 直接抛错）、`alert` / `confirm` / `prompt`（无 `allow-modals`：`if (confirm(…))` 的删除按钮永远不执行）、`<form>` 提交（无 `allow-forms`）、`target=_blank` / `window.open`（无 popups）。
+3. **交付介质对弱模型不友好**：整份 HTML 作为工具参数 JSON 字符串传入——转义出错、输出被 max tokens 截断（截断的 HTML 照样过体积校验）、修改要整份重写（回归）。
+
+目标：**Bot 交出的组件，在交到用户手上之前已经被真实运行过、被独立审查过；做不到时如实说明**。约束（用户决策）：编码在**自己的 loop** 里跑完，发起它的任务只拿到最终产品（卡片 + 一段简短回执），**不污染任务上下文**。
+
+### 11.2 业界依据
+
+| 做法 | 来源（代表） | 在本设计里的落点 |
+|---|---|---|
+| 批评必须锚定外部信号（执行、lint、测试）；无外部信号的自我修正收益很小 | Huang 等「LLMs cannot self-correct reasoning yet」、CRITIC | 先过确定性检查（S0–S2），LLM 审查排在最后且只在检查全绿后进行 |
+| 在编辑 / 交付处设硬关卡，拒收语法错误的产物 | SWE-agent 的 ACI（编辑即 lint） | 交付凭「检查回执」：文件摘要必须对应一次合格的检查，否则宿主拒绝交付 |
+| 修改走补丁而不是整份重写；自动 lint / test 回灌 | Aider（edit formats、auto-lint / auto-test） | 草稿是文件，修复阶段用 pi 的 `edit` 工具；检查报告自动作为修复阶段的输入 |
+| 运行时报错回灌给模型自动修复 | Bolt / Lovable、v0 AutoFix | S2 预览收集未捕获异常 / console.error / CSP 违规，并做「乱点」交互冒烟 |
+| 固定流水线比自由 agent 循环对弱模型更稳 | Agentless（固定的定位 → 修复 → 验证阶段） | 阶段由宿主状态机驱动，每阶段一个 pi run、上下文从文件重建 |
+| 生成者 / 评估者分离 | Anthropic「evaluator-optimizer」工作流 | 审查者是全新上下文的只读 run，可配置不同模型 |
+| 先写可验证的验收点，跑通 e2e 才标记完成 | Anthropic 长任务 harness 实践 | SPEC 阶段产出 `acceptance.json`，S2 逐条执行 |
+
+### 11.3 总体结构
+
+```
+任务 run ──widget_craft{brief, widget_id?}──►  WidgetCraftService（宿主状态机，core）
+   ▲                                              │  草稿目录 bots/{botId}/widget-drafts/{craftId}/
+   │                                              ├─ SPEC    pi run（loopType widget_authoring）→ spec.md + acceptance.json
+   │                                              ├─ BUILD   pi run → index.html (+ queries.json, fixtures.json)
+   │                                              ├─ GATE    确定性检查 S0 静态 / S1 JS / S2 预览（宿主代码，非模型）
+   │                                              │    └─ 不合格 → FIX pi run（只看报告 + 文件，用 edit）→ GATE …
+   │                                              ├─ REVIEW  审查 pi run（全新上下文、只读、结构化结论）
+   │                                              │    └─ 有 P0/P1 → FIX → GATE（全量回归）→ REVIEW …
+   │                                              └─ DELIVER 宿主凭回执调 WidgetService.create/update → 发卡
+   └──── 工具回执（≤1500 字：widgetId、版本、自检状态、已知问题；无 HTML）
+```
+
+- **上下文隔离**：任务 run 只看到工具回执。HTML、检查报告、审查意见、制作过程全部只存在于草稿目录与制作 loop 的 `run_steps` 里。
+- **阶段之间以文件为记忆**：每个阶段是一个新的 pi run，宿主用「spec + 当前文件 + 最新报告」重建它的输入。这样弱模型不用在 60 轮的长上下文里自己记住进度，每一轮的上下文都短且聚焦。
+- **流程由宿主保证**：阶段顺序、轮数、回滚、交付门槛都写在宿主代码里，不靠模型遵守提示词。模型在每个阶段只做一件事。
+- **前台阻塞**：`widget_craft` 是前台工具，经 `ctx.progress` 报阶段进度（「规格已定 / 第 2 轮检查：3 个错误 / 审查：1 个 P1 / 已交付 v3」），任务卡上可见。父 run 取消时级联中止当前阶段 run，草稿保留。
+
+### 11.4 工具面
+
+**任务面（发起者）**：
+
+| 工具 | 参数 | 行为 |
+|---|---|---|
+| `widget_craft` | `brief`（必填：目标、主要交互、数据来源与是否保存、风格；尽量引用用户原话）、`widget_id`?（修改已有组件，以其最新版 HTML 与查询为起点）、`title`?（新建时）、`scope`?（同 §4）、`acceptance`?（用户明确提出的验收点，自然语言数组）、`resume_craft_id`?（继续一次未交付的制作） | 跑完 §11.6 的状态机，交付或如实失败；回执见 §11.6 末 |
+| `widget_publish` | 同 §4 | 不变 |
+
+- 每 run 至多 `WIDGET_CRAFTS_PER_RUN_MAX`（3）次制作；交付占用既有的每 run 8 张发卡名额。
+- 任务平台规则改为：用户要能操作的界面时调 `widget_craft` 并给完整 brief；**不要自己写 HTML**；回执是「未交付」时如实告诉用户原因，不要假装成功。
+- 外部 Agent 引擎（ACP）照常经宿主 MCP 桥看到 `widget_craft`；制作 loop 本身按 §11.11 的模型路由运行，与发起任务用哪个引擎无关。
+
+**制作 loop 内（只在各阶段 run 里注册，全部限定在本次制作的草稿目录）**：
+
+| 工具 | 阶段 | 说明 |
+|---|---|---|
+| `read` / `ls` | 全部 | pi 工具工厂 + 草稿目录守卫（同 `skills/authoring-tools.ts` 的写法） |
+| `write` | SPEC、BUILD、FIX | 写文件。FIX 阶段的 `write` 只能新建文件，守卫拒绝整份覆盖已存在的 `index.html`——逼出补丁式修复，防回归 |
+| `edit` | BUILD、FIX | 补丁式修改 |
+| `widget_template` | BUILD | 列出 / 把骨架模板（§11.13）写入 `index.html` |
+| `widget_check` | BUILD、FIX | 模型可在阶段内**自查**（同一检查器、同一报告格式）；宿主的 GATE 无论如何都会再跑一次，模型自查不算数 |
+| `stage_done` | 全部 | 终止型工具：模型声明本阶段完成，附一句说明。不调用而自然结束也视为完成 |
+| `submit_review` | REVIEW | 终止型，参数即审查结论 schema（§11.10） |
+
+没有 bash、没有网络、没有任何宿主副作用工具。
+
+### 11.5 草稿目录
+
+`bots/{botId}/widget-drafts/{craftId}/`（`craftId` = `wcf_` 前缀 id），应用自有目录：
+
+```
+manifest.json      craftId / botId / conversationId / parentRunId / widgetId? / baseVersion? / title / scope /
+                   brief / acceptanceHints / phase / rounds{fix,review} / best{round,score} / receipts[] / status / 时间戳
+spec.md            SPEC 产出：目标、界面元素、交互、数据（storage 键 / 查询）、边界情况
+acceptance.json    验收点（§11.8.4 schema；每条带 must）
+index.html         组件源码（单文件）
+queries.json       查询模板清单 [{name, sql}]（可缺省 = 无查询）
+fixtures.json      预览用的模拟数据：{storage: {键: 值}, queries: {名: rows[]}}（可缺省）
+reports/           check-{n}.json、review-{n}.json
+snapshots/round-{n}/   每次 GATE 时的 index.html + queries.json 快照（回滚用）
+```
+
+- 修改已有组件（`widget_id`）时，宿主把该组件最新版的 HTML 与查询模板写入 `index.html` / `queries.json` 作起点；SPEC 阶段以「改动要求」为主，保留原有验收点。
+- 生命周期：交付成功即删除草稿（之后再改走 `widget_id`，源码在库里）；未交付的草稿保留 `WIDGET_CRAFT_DRAFT_TTL_DAYS`（7 天）供 `resume_craft_id` 续做；过期草稿在 core 启动时与每次新建制作时顺带清理。Bot 删除时随 `bots/{id}` 目录一并删除。
+- `manifest.json` 由宿主独占写；模型的文件工具对它只读（守卫拒写）。
+
+### 11.6 状态机、预算与交付判定
+
+```
+SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────────► REVIEW ─┬─ 无 P0/P1 ─► DELIVER(passed)
+                       │                                └─ 有 P0/P1 ─► FIX ─► GATE（全量）…
+                       └─ 不合格 ─► FIX ─► GATE …
+任一时刻：修复轮数 / 审查轮数 / 时限 / token 预算用尽 ─► 按「最佳快照」判定 DELIVER(issues) 或 FAILED
+```
+
+| 参数 | 值（shared 常量） | 说明 |
+|---|---|---|
+| `WIDGET_CRAFT_FIX_ROUNDS_MAX` | 4 | GATE 与 REVIEW 触发的 FIX 合计轮数 |
+| `WIDGET_CRAFT_REVIEW_ROUNDS_MAX` | 2 | 第二轮审查只核对上一轮 P0/P1 是否修好，再看有无新 P0 |
+| `WIDGET_CRAFT_TIMEOUT_MS` | 900 000（15 分钟） | 整次制作 |
+| `WIDGET_CRAFT_TOKEN_BUDGET` | 400 000 | 全部阶段 run 合计（input+output），宿主轮询各 handle 的 `tokensSoFar()` 封顶，同 subagent |
+| 各阶段 `maxTurns` | SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 | 单阶段兜底 |
+
+- **评分与最佳快照**：每次 GATE 计分（阻断项 ×100 + 错误 ×10 + 警告 ×1 + 未通过的 must 验收点 ×50）。分数比最佳快照更差，就在下一轮 FIX 之前**回滚到最佳快照**，并在 FIX 的输入里写明「上一次修改引入了回归（列出新增问题），已回滚，请换一种改法」。
+- **防震荡**：同一组问题签名（规则 id + 位置）连续两次 GATE 都出现时，下一轮 FIX 进入「收缩」模式：输入要求按 spec 删减到只保留 must 验收点覆盖的功能，或回到骨架模板重写出错的模块。
+- **阻断项**（任何一项存在都不可交付）：S0 / S1 的 error；S2 的未捕获异常、页面空白、预览超时（死循环）；must 验收点失败；查询模板未通过交付侧校验。
+- **交付判定**（按最佳快照）：
+  - 无任何问题，且最后一轮审查没有 P0/P1 → `passed`。
+  - 无阻断项，但仍有警告、非 must 验收点失败或未修完的审查 P1 → `issues`：照常交付，卡片列出「已知问题」（≤5 条，面向用户的中文）。
+  - S2 不可用（预览宿主未绑定，如无界面的测试装配）且 S0 / S1 无 error → `unverified`：交付，卡片标「未经运行验证」。
+  - 有阻断项 → **不交付**：回执给出失败原因（≤5 条）、`craftId` 与建议（可 `resume_craft_id` 续做，或缩小需求），由任务如实告诉用户。
+- **回执关卡**：每次 GATE 产出回执 `{htmlSha256, queriesSha256, verdict, round}` 记入 manifest。DELIVER 读取当前文件、复算摘要，必须与一条回执一致才调 `WidgetService.create/update`，状态取该回执的判定。模型无法绕过 GATE 直接交付。
+- **工具回执**（返回给任务）：成功时形如「组件「费用分摊」v2 已交付（自检通过：检查 3 轮、审查 1 轮）。widgetId: … 已知问题：…」；失败时形如「组件未交付：① … ② …。草稿保留 7 天（craftId: …），可续做或缩小需求。」不含任何源码。
+
+### 11.7 各阶段的输入与提示
+
+各阶段的系统提示集中在 `core/widgets/craft-prompts.ts`，共用三段：平台事实（沙箱规则、`window.kepcup` API 全文、限额）、**沙箱雷区清单**（由检查规则注册表生成，§11.8.1；规则与提示同源，改一处两处同步）、文件约定。三段只出现在制作 loop 里，任务面的工具描述因此可以瘦身到一句话。
+
+| 阶段 | 用户消息（宿主拼装） | 要求 |
+|---|---|---|
+| SPEC | brief、acceptance 提示、（修改时）原组件的 spec 摘要与文件结构概要 | 写 `spec.md`（≤60 行）与 `acceptance.json`（3–8 条，至少 2 条 must，按 §11.8.4 的选择器与断言写）。不写代码 |
+| BUILD | spec.md 全文、acceptance.json、模板目录 | 先选模板再填充；写 `index.html`（必要时 `queries.json` / `fixtures.json`）；鼓励写完调一次 `widget_check` 自查 |
+| FIX | spec.md、**本轮要修的问题清单**（来自 GATE 报告或审查的 P0/P1，按严重度排序、每条带行号与修改建议）、回滚 / 收缩说明（如有） | 只改清单里的问题，用 `edit`；不顺手重构；改完可 `widget_check` 自查 |
+| REVIEW | spec.md、acceptance.json、最新 GATE 报告摘要（告诉审查者这些已经机器验证过，不要重复） | 读 `index.html`，按清单审查，调 `submit_review` |
+
+### 11.8 检查器（GATE / `widget_check`）
+
+实现集中在 `core/widgets/check/`：规则注册表 + 三级检查 + 报告。报告是 JSON（落 `reports/`），交给模型时转成按严重度排序的文本（≤3000 字）：每条 `[规则id] 第 L 行:C 列 — 问题 — 怎么改`。
+
+#### 11.8.1 S0 静态（parse5，带源码位置）
+
+| 规则 | 级别 | 说明 |
+|---|---|---|
+| `html.truncated` | error | 缺 `</html>` / `</body>`、`<script>` 或 `<style>` 未闭合（截断输出的典型症状；parse5 自身会容错补全，所以对原文单独计数） |
+| `html.size` | error | 超 `BOT_WIDGET_HTML_MAX_BYTES` |
+| `html.doctype` | warning | 缺 `<!DOCTYPE html>`（quirks mode） |
+| `sandbox.external-resource` | error | `script[src]` / `link[href]` / `img[src]` / CSS `@import` 与 `url()` 指向 http(s) 或 `//`——CSP 静默拦截 |
+| `sandbox.storage` | error | `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie`——不透明 origin 下抛 SecurityError；改用 `kepcup.storage` |
+| `sandbox.network` | error | `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` / `sendBeacon` |
+| `sandbox.modals` | error | `alert` / `confirm` / `prompt`——无 `allow-modals`，不弹窗，`confirm` 恒为 false；改用页内确认 UI |
+| `sandbox.form-submit` | error | `<form>` 的 submit 事件或 `onsubmit`、`type=submit`——无 `allow-forms`，提交被拦，submit 处理函数不执行；改用 `type="button"` + click |
+| `sandbox.popup` | error | `target="_blank"`、`window.open`——改用 `kepcup.openLink` |
+| `sandbox.top-nav` | error | 改写 `location` / `top.location` |
+| `sandbox.download` / `sandbox.clipboard` | warning | `a[download]`、`navigator.clipboard`——在沙箱里不可用 |
+| `theme.media-query` | warning | 用 `prefers-color-scheme` 跟随系统而不是应用主题；改用 `[data-theme]` 与宿主变量（§11.13） |
+| `query.invalid` | error | `queries.json` 未通过交付侧校验（复用 `WidgetService` 的 `#cleanQueries` 与名字闸，报错原样转出） |
+| `query.unknown-name` | error | 代码里 `kepcup.query('x', …)` 的字面量名字不在 `queries.json` 里 |
+
+沙箱行为（尤其 form 提交与 modals）以 Electron 当前版本的实测为准（执行文档的 spike 任务），实测与表不符时调整级别。
+
+#### 11.8.2 S1 JavaScript（acorn + 轻量作用域分析）
+
+| 规则 | 级别 | 说明 |
+|---|---|---|
+| `js.syntax` | error | 每个内联 `<script>` 用 acorn 解析（`type=module` 按 module），错误位置映射回文件行列 |
+| `js.handler-syntax` | error | `on*` 属性体按函数体解析 |
+| `js.handler-undefined` | error | `onclick="fn()"` 的 `fn` 不是全局函数——典型成因：函数写在 `DOMContentLoaded` 回调或 `type=module` 里，内联处理器看不到 |
+| `js.undefined-name` | error（被调用）/ warning | 使用了未声明、也不在浏览器全局表（`globals` 包的 browser 集合）与 `kepcup` 里的标识符 |
+| `js.redeclare` | error | 多个经典 `<script>` 之间 `let` / `const` / `class` 同名——共享全局词法作用域，运行时抛 SyntaxError |
+| `dom.id-missing` | error | `getElementById('x')` / `querySelector('#x')` 的字面量 id 在 HTML 里不存在，且源码别处也没出现 `x`（排除动态生成的误报） |
+| `dom.duplicate-id` | warning | 重复 id |
+| `kepcup.not-awaited` | warning | `kepcup.storage.*` / `kepcup.query` 的返回值未经 `await` / `.then` / `return` / `Promise.all` 就被使用 |
+
+自己实现规则而不引 ESLint：规则少而准、无配置面、可在 core 进程内同步跑完（毫秒级）。
+
+#### 11.8.3 S2 预览（真实 Chromium 运行，§11.9）
+
+在两种视口各跑一次（360px 亮色、720px 暗色，覆盖窄屏与暗色主题），每次：
+
+1. **加载**：等 `load` 后 DOM 静默 300ms（上限 3s）。收集 `runtime.error`（未捕获异常，含后续脚本的解析错误）、`runtime.rejection`、`console.error`（error）/ `console.warn`（warning）、`csp.violation`（error）。
+2. **渲染体检**：`render.blank`（body 无可见文本，且没有尺寸非零的 canvas / svg / img → error）、`render.overflow-x`（360px 下横向溢出 → warning）、`render.bad-text`（可见文本含 `NaN` / `undefined` / `[object Object]` / 孤立的 `null` → warning）。
+3. **乱点冒烟**：收集可操作元素（button、`[onclick]`、input、select、textarea、`[role=button]`、`a[href^="#"]`，至多 30 个），按类型给输入框填样例值（数字 12、文本「测试」、日期今天、勾选、选第二项），再按 DOM 顺序点击（文字含「删除 / 清空 / 重置」的排在最后）。每步之后收集新增错误与坏文本，报告里指明触发它的元素（选择器 + 文字）。
+4. **验收步骤**：逐条执行 `acceptance.json`，得出每条的通过 / 失败与失败时的实际值。
+5. **大纲**：输出一份 DOM 文本大纲（标签 / 角色 / 标签名 / 文字，≤2000 字），让不看图的模型也「看见」页面；制作模型支持图片输入时，另附两张截图（`ToolResult.images`，不落库）。
+
+预览里的能力桥是模拟的：storage 为内存 KV（以 `fixtures.storage` 为初值、每个视口重置），`query` 按名字返回 `fixtures.queries[名]`（缺省空数组），`openLink` / `setHeight` 只记录，`theme` 按视口。预览从不读真实库。
+
+#### 11.8.4 验收点 schema
+
+```jsonc
+[
+  {
+    "id": "add-expense",
+    "desc": "添加一笔费用后合计更新",
+    "must": true,
+    "steps": [
+      { "fill": "#amount", "value": "12" },
+      { "click": "#add" }
+    ],
+    "expect": [
+      { "selector": "#total", "textContains": "12" },
+      { "selector": ".row", "count": 1 },
+      { "noBadText": true }
+    ]
+  }
+]
+```
+
+动作：`click` / `fill` / `select` / `check` / `press`（键名）/ `wait`（毫秒，≤1000）。断言：`exists` / `textContains` / `textEquals` / `valueEquals` / `count` / `noBadText` / `noErrors`。宿主校验 schema（zod），不合格时 SPEC 阶段收到报错重写一次，仍不合格就只跑乱点冒烟，并在报告里记一条 warning。
+
+### 11.9 预览宿主（桌面主进程）
+
+- **通道**：core → 主进程的平台方法 `widgetPreview.run`，走与 `browser.*` 相同的端口 B 延迟绑定（`DeferredHostRpc` 模式）。未绑定（测试装配、无界面）时 S2 记为 skipped，判定按 §11.6 的 `unverified`。
+- **输入**：预览版 HTML（core 注入 SDK 垫片 + **预览探针**）、视口列表、验收点、fixtures、时限。**输出**：§11.8.3 的结构化结果 + 可选截图。
+- **运行环境**：一个复用的隐藏窗口（`show:false`，离屏仍绘制，同 `browser-host.ts` 先例），独立的内存分区 `widget-preview`（不落盘）。窗口加载宿主自己的**预览外壳页**（带 preload，只暴露「上报结果」一个通道），外壳页里用与正式卡片**完全相同**的 `<iframe sandbox="allow-scripts">` 加载组件；组件资源由该分区上的协议处理器返回，响应头 CSP 同 §5（`buildAppCspHeader` 空域）。导航拦截、新窗口拒绝、权限一律拒绝，与正式环境同口径。
+- **探针**：core 在垫片之后、组件脚本之前注入的预览专用脚本（`sdk-injection.ts` 的 `injectPreviewProbe`）。它挂 `error` / `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`，执行外壳页下发的乱点与验收步骤，经 `parent.postMessage`（来源标记 `kepcup-probe`）回报。外壳页同时扮演模拟的能力桥宿主。探针与组件代码在同一个 realm 里，组件理论上能干扰它——这可以接受：预览是质量闸，不是安全闸（§8 第 8 条）。
+- **超时与死循环**：主进程对每个视口设硬时限；时限内收不到外壳页的完成消息（组件死循环会冻住渲染进程）就 `forcefullyCrashRenderer` 并重建窗口，报 `preview.timeout`（阻断项）。
+- **并发**：串行队列，一次一个预览；单次检查总时限 `WIDGET_CHECK_TIMEOUT_MS`（20s）。
+- **备选**：若 spike 发现探针方案漏报（例如跨进程 iframe 的某类错误），改用 `webContents.debugger`（CDP 的 `Runtime.exceptionThrown` / `Log.entryAdded`，`Target.setAutoAttach` flatten 覆盖子框架）——`browser-host.ts` 已有 CDP 先例。
+
+### 11.10 独立审查（REVIEW）
+
+- 全新上下文的 pi run，只有 `read` / `ls` / `submit_review`；输入见 §11.7。审查者不改文件。
+- **清单**：需求覆盖（逐条对照 spec 与 acceptance）；边界（空状态、非法输入、除零、超长文本、大量数据）；数据持久化正确（键名一致、写后读、并发写覆盖）；`kepcup` API 用法（await、错误码处理、限流下的重试）；窄屏与暗色；可访问性（按钮有文字、输入有 label）；沙箱雷区里机器没覆盖到的变体。明确要求**不重复** GATE 报告里已有的条目，不提纯风格建议。
+- **结论 schema**（`submit_review` 参数）：`{ verdict: 'pass' | 'fix', findings: [{ severity: 'P0' | 'P1' | 'P2', line?: number, problem, scenario, fixHint }] }`。P0 = 主要功能不可用或数据会丢失 / 写错；P1 = 一条明确的使用路径出错；P2 = 体验问题。每条必须给出具体失败场景（输入 / 操作 → 错误结果），没有场景的条目宿主丢弃。
+- 只有 P0/P1 进入 FIX；P2 记入报告，不修。审查 run 没有调用 `submit_review` 就结束（或超出 `maxTurns`）时，这一轮记为 skipped，不阻断交付，回执里如实注明「审查未完成」。
+- 只在 GATE 合格后才审查，不把审查花在跑不起来的代码上。
+
+### 11.11 模型路由
+
+- `LlmPurpose` 增 `widget_authoring`（SPEC / BUILD / FIX）与 `widget_review`（REVIEW），经 `llm-router` 的 `routeFor` 取路由。缺省都解析为该 Bot 的主模型（与任务一致）；无内置模型时按「后台任务」设置决定是否改走外部 Agent，两者都没有就让 `widget_craft` 直接失败并说明原因（同 `skill_authoring` 的处理）。
+- P3c 增设置项「组件审查模型」（缺省 = 跟随 Bot 主模型）：允许给审查单独指定一个更强或不同厂商的模型——评估者与生成者用不同模型，能减少同源盲区。
+- 每个阶段 run 落一行 `runs`（`loop_type='widget_authoring'`，`parent_run_id` = 发起的任务 run），步骤照常落 `run_steps`，用量照常记入 `usage_ledger`，不产生任何对话消息（同 subagent 的落库方式）。`loopTypeSchema` 加值即可：runs.db 的 `loop_type` 列没有 CHECK 约束。
+
+### 11.12 交付与卡片上的自检状态
+
+- 迁移（main 下一个空闲编号，当前为 `0035_widget_check.sql`）：`widget_versions` 增 `check_status TEXT NOT NULL DEFAULT 'legacy'`（`legacy` / `passed` / `issues` / `unverified`）与 `check_summary_json TEXT NOT NULL DEFAULT ''`（检查轮数、审查轮数、已知问题 ≤5 条、craftId）。存量版本为 `legacy`。
+- 卡片描述符增 `checkStatus` / `knownIssues`（zod default，兼容旧卡）。审查态显示徽标：「已通过自检」「有已知问题（展开）」「未经运行验证」；`legacy` 不显示。徽标下有一行固定说明：**「自检只说明它能运行，不代表安全；加载前仍需你确认」**——自检不改变 §5 的按版本人工确认。
+- `widget_publish` 发出的卡沿用该版本的自检状态。
+
+### 11.13 面向非一线模型的减负
+
+- **骨架模板**（`core/widgets/templates/`，TS 字符串模块，经 `widget_template` 取用）：`blank`、`form-calculator`、`list-tracker`（storage 增删改）、`dashboard`（查询 + 图表）。模板本身就满足全部 S0 / S1 规则，带好主题变量、窄屏布局、`kepcup` 调用的错误处理范式，把模型的工作从「从零写页面」降到「往骨架里填业务」。
+- **主题变量（宿主注入）**：`widgets.ui.open` 增可选参数 `theme`；垫片在组件脚本之前设置 `<html data-theme>` 与 `color-scheme`，并注入一组 CSS 变量（`--kc-bg` / `--kc-fg` / `--kc-muted` / `--kc-border` / `--kc-accent` / `--kc-danger` / `--kc-radius` / `--kc-font`）。宿主在应用切换主题时推送 `{source:'kepcup-host', event:'theme'}`，垫片更新属性并派发 `kepcup:theme` 事件。变量总是注入（对存量组件无副作用）。
+- **基础样式与小工具（按需）**：组件带 `<meta name="kepcup-kit" content="1">` 时，垫片额外注入基础样式（`:where()` 零优先级的 body / button / input / table 样式）与 `kepcup.ui` 小工具（纯 SVG 的柱状 / 折线 / 饼图与数字格式化）。沙箱禁网、用不了 CDN 图表库，让弱模型徒手画 canvas 是 bug 的主要来源之一；模板默认带这个 meta。存量组件不带它，外观不变。
+- **任务面工具描述瘦身**：`WIDGET_HTML_GUIDE` 移入制作 loop 的系统提示（§11.7），`widget_craft` 的描述只讲何时用、brief 写什么。
+
+### 11.14 不做
+
+- 制作 loop 里的 bash / 网络 / 依赖安装（组件是单文件、离线；检查器是宿主代码）。
+- 把检查结果当安全结论（§8 第 8 条）。
+- 跨制作复用审查结论，或「检查通过就自动加载」。
+- 在任务上下文里回显 HTML 或 diff（与 §11.1 的上下文隔离目标冲突）。
+
+## 12. 交付形态分层（D87，P4）
+
+不是所有「非文字结果」都值得让 Bot 写代码。按「谁写代码」分三层，提示词按层引导：
+
+| 层 | 形态 | 谁写代码 | 适用 | 状态 |
+|---|---|---|---|---|
+| L1 声明式展示卡 | Bot 只给数据（JSON），宿主用自己的 Svelte 组件渲染 | 宿主 | 表格、柱 / 折 / 饼图、指标卡、步骤 / 时间线、方案对比——展示类结果的大多数。弱模型基本零 bug，也不需要代码确认 | 新增 `present` |
+| L2 交互式提问卡 | 单选 / 多选 / 简单表单，用户提交后回到发起者 | 宿主 | Bot 需要用户决策或补充信息 | `ask_user` 已有单选（任务面），扩展多选与表单字段 |
+| L3 组件 | 单文件 HTML | Bot（经 §11 制作流程） | 计算器、追踪器、小游戏、定制工具 | 已有；P4 补回传通道 |
+
+### 12.1 L1：`present`
+
+- 工具 `present{kind, title?, data}`，对话轮与任务都注册（只发一条卡片消息，没有其他副作用）。`kind ∈ table | bar | line | pie | kpi | steps | timeline | compare`，每种一个 zod schema（**自定的最小 schema，不用 Vega-Lite**：可选项越少，弱模型越不出错，渲染端也越小）；`data` ≤ `PRESENT_DATA_MAX_BYTES`（64KB）。
+- 卡片类型 `present`，`content.present = {kind, title, data}`。渲染端每种 kind 一个组件，图表库在实施时选型（约束：离线打包、gzip 后 ≤150KB、跟随主题变量、可访问性；候选 layerchart / uPlot）。
+- 上下文回放：与 widget 不同，展示数据就是模型自己给的内容，按 kind 渲染成紧凑文本行回放（截断到 `PRESENT_CONTEXT_MAX_CHARS`），Bot 记得自己展示过什么。
+- 校验失败时返回可行动的报错（哪一字段、期望什么），模型重试即可，没有代码执行面。
+
+### 12.2 L2：`ask_user` 表单化
+
+- `ask_user` 增 `mode: 'single' | 'multi' | 'form'`（缺省 `single`，与现状一致）。`form` 的字段：`{name, label, type: text | number | date | select, options?, required?}`，≤8 个。回答以结构化 JSON 回到任务（`<untrusted>` 包裹）。
+- 对话轮仍「在回复里问」，不加这个工具（D75 对话轮纪律不变）。
+
+### 12.3 L3 回传：组件 → 对话
+
+- 垫片增 `kepcup.reply(text)`：只在用户手势（click / keydown 处理函数内）调用时有效；宿主在卡内出确认条「组件要以你的名义发送：……」，用户确认后作为**用户消息**发出，带来源标记 `origin: {kind:'widget', widgetId, version}`，正常触发 Bot。限制：≤2000 字、每卡冷却 5s、确认条单例（同 openLink）。上下文里渲染为 `<untrusted source="widget">`。
+- 任务面工具 `widget_read_state{widget_id, keys?}`：Bot 读取自己组件的 KV（≤64KB，`<untrusted>` 包裹），用于「用户在组件里填完了，帮我分析」这类场景。只能读本 Bot 的组件。
+- 安全：回传是提示词注入面（组件代码由 Bot 写，内容由用户输入）。所以必须用户确认、标注来源、按不可信数据处理，且不能静默发送。

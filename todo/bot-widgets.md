@@ -1,8 +1,8 @@
 # Bot 自制交互组件（Bot Widgets）：实施方案
 
-> 状态：**已定稿，实施中**（2026-10-11；用户拍板：Bot 写的单文件 HTML 组件直接在对话里加载供用户操作，持久化借 core 的 better-sqlite3 由宿主能力桥提供；复用 D73 P3 MCP Apps 管线 + 低信任层，不把 Node 交给生成代码）。
+> 状态：**P0–P2 已完成**（2026-10-11）；后续 P3（组件制作流程）/ P4（交付形态分层）见 [todo/bot-widgets-authoring.md](bot-widgets-authoring.md)（D87，2026-10-12 定稿）。原始拍板（2026-10-11；用户拍板：Bot 写的单文件 HTML 组件直接在对话里加载供用户操作，持久化借 core 的 better-sqlite3 由宿主能力桥提供；复用 D73 P3 MCP Apps 管线 + 低信任层，不把 Node 交给生成代码）。
 > 决策编号 **D81**；设计事实见 [docs/design/32-bot-widgets.md](../docs/design/32-bot-widgets.md)。
-> 分支：`t/d73-connected-apps`（树上另有未提交的媒体路由修复，属其他任务，不碰）。
+> 分支：`t/d73-connected-apps`（已合入 main；树上当时另有未提交的媒体路由修复，属其他任务）。
 > **测试纪律**：开发中只跑定向测试（`node scripts/run-tests.mjs run <文件>`）；本方案改 `packages/shared` 契约与 main 迁移，收口全量跑一次。
 
 ## 1. 目标
