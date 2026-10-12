@@ -5,15 +5,18 @@
 每个 Bot 挂载一个自己维护的 LLM Wiki，采用 Karpathy 提出的 LLM Wiki 模式。
 
 ```text
-wiki/                  -- git 管理（内嵌 git 库），每次维护提交一次，可回滚
+wiki/                  -- git 管理（内嵌 git 库，只存文本），每次维护提交一次，可回滚
   SCHEMA.md            -- 维护规范：页面类型、命名、链接、引用格式
   index.md             -- 目录，每页一行摘要
   log.md               -- 只追加的变更日志
-  raw/                 -- 原始资料，只增不改
+  raw/                 -- 原始资料：文本类原件，只增不改（仅「删除资料」可移除）
+    _assets/           -- 资产清单（每份资料一条，含 sha256 与来源，指向原件）
+    _derived/          -- 派生文本（全文 / 描述 / 转写），对维护 loop 只读
   pages/               -- LLM 维护的知识页面（实体、概念、主题……）
+wiki-store/            -- 仓外内容存储（不进 git）：二进制原件、关键帧、派生实时状态
 ```
 
-`raw/` 的来源：用户给的文档、抓取的网页、有价值的执行产出。复杂文档与媒体经**宿主派生管线**入库：原件进 `raw/`，可读文本进 `raw/_derived/`（PDF/Office→MinerU Markdown，图片→多模态描述，音视频→转写[+关键帧]），清单互链后再由维护 loop 写 `pages/`（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)，D85）。对话中分页读 PDF 仍可用预置 MinerU 技能（见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）。
+`raw/` 的来源：用户给的文档、抓取的网页、有价值的执行产出。复杂文档与媒体经**宿主派生管线**入库：文本类原件进 `raw/`，二进制原件与关键帧存仓外 `wiki-store/`（git 只留 `raw/_assets/` 清单），可读文本进 `raw/_derived/`（PDF/Office→MinerU Markdown，图片→多模态描述，音视频→分段转写+关键帧描述），派生在独立 `wiki_derive` 通道完成后再由维护 loop 写 `pages/`（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)，D85）。对话中分页读 PDF 仍可用预置 MinerU 技能（见 [17-mineru-document-parsing.md](17-mineru-document-parsing.md)）。
 
 ### 读写规则
 
@@ -25,7 +28,8 @@ wiki/                  -- git 管理（内嵌 git 库），每次维护提交一
 
 - **入库（ingest）**：读取一份原始资料，更新或新建多个页面，同时更新 `index.md` 和 `log.md`。
 - **体检（lint）**：定期检查矛盾、过时内容、孤立页面、缺失的引用、个人信息。
-- **删除**：整页不再需要时，维护 loop 用 `delete` 工具删除页面（限 `pages/` 下的文件）并同步更新 `index.md`；用户也可以在界面上删除页面。所有删除都是追加式的 git 新提交，历史不改写，随时可回滚恢复。
+- **删除**：整页不再需要时，维护 loop 用 `delete` 工具删除页面（限 `pages/` 下的文件）并同步更新 `index.md`；用户也可以在界面上删除页面。页面删除都是追加式的 git 新提交，历史不改写，随时可回滚恢复。
+- **删除资料**（用户操作，`wiki.deleteAsset`，D85）：移除一份原始资料及其派生文本与清单，并登记体检清理悬空引用。**例外**：仓外的二进制原件与关键帧被物理删除，回滚无法恢复——这正是「删除即真删除」的目的；派生文本与页面一样仍留在 git 历史中（见 36 §6）。
 
 ### 触发来源
 
@@ -34,7 +38,7 @@ wiki/                  -- git 管理（内嵌 git 库），每次维护提交一
 - 反思 loop 提出建议
 - 定时体检
 
-入库、体检、整理都是 Bot 自己的知识库事务（见 [01-conversation.md](01-conversation.md) 消息原则）：完成与进展不进入对话，不向用户播报（“你给的文档我读完了”这类汇报已废弃）；入库成功后 Bot 直接通过检索引用新内容。终态失败（重试耗尽）以内部事件触发 Bot，由 Bot 用自己的话向用户交代一句。
+入库、体检、整理都是 Bot 自己的知识库事务（见 [01-conversation.md](01-conversation.md) 消息原则）：完成与进展不进入对话，不向用户播报（“你给的文档我读完了”这类汇报已废弃）；入库成功后 Bot 直接通过检索引用新内容。终态失败（重试耗尽）以内部事件触发 Bot，由 Bot 用自己的话向用户交代一句。唯一的另一例外是**派生阻塞**（缺 ffmpeg / MinerU 或未配置所需能力模型，D85）：同一份资料同一原因只触发一次内部事件，由 Bot 在对话里发起安装卡或设置卡；条件满足后自动续跑，不再播报。
 
 ## Skills：Bot 的工具
 

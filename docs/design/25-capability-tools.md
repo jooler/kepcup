@@ -37,7 +37,7 @@
 | `language` | `string?` | 语言提示（BCP-47，如 `zh`），透传 `TranscriptionParams.language` |
 
 - 字节解析同上；转 `audioBase64 + audioMime` 传 `media.transcribeSpeech`。
-- 大小上限沿用附件通道的 30MB（core 侧校验已有）；长音频分片不做（非目标），超限如实报 `INVALID_INPUT`。
+- 大小上限 **20MB**（`TRANSCRIBE_MAX_BYTES`，低于附件通道的 30MB：同步 ASR 接口整段上传，更大的音频多半超出厂商单次时长限制）；工具内不做分片（非目标），超限如实报 `INVALID_INPUT`。长录音需要沉淀时走 Wiki 入库，由宿主派生分段转写（36）。
 - 结果：转写文本包 `<untrusted>`。
 - 典型场景：用户发语音/录音附件 → 附件行入上下文 → 模型调本工具拿文本再答复。
 
@@ -57,6 +57,6 @@
 ## 非目标
 
 - 语音输入（用户侧按录转文字 / 语音消息）已另行落地，见 [26](26-voice-input.md)；本篇只覆盖模型侧的 `transcribe_audio` 工具。
-- 长音频分片转写与说话人分离；视频转码与抽帧理解。
+- **在对话工具中**做长音频分片转写、说话人分离、视频转码与抽帧理解。宿主 Wiki 派生管线（36，D85）已具备分段 ASR 与关键帧抽取；将来若工具需要，复用该管线的派生器，不另写一套。
 - 对话内的 `understand_image` / `transcribe_audio` 仍是即时补位工具；Wiki 批量离线派生由宿主 ingest 管线调用同一 MediaService API（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)，D85），不在响应 loop 里让模型逐张「自觉」描述。
 - embedding / rerank 不工具化：它们是记忆检索的内部环节，模型无需感知（16 号定位）。
