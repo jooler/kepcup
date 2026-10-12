@@ -78,10 +78,10 @@ export type WidgetCheckStatus = 'legacy' | 'passed' | 'issues' | 'unverified';
 
 ### P3-0 Spike（先做，结论记 §8，必要时修订设计 32 §11.8.1 的规则级别）
 
-- [ ] 在当前 Electron 版本、`sandbox="allow-scripts"` + 组件 CSP 下实测：`confirm()` 返回值与是否弹窗；`<form>` 的 submit 事件是否触发；`localStorage` 是否抛错；`target=_blank` / `window.open`；`a[download]`；`navigator.clipboard`。写成一个最小 HTML + 主进程脚本，结论按行记录。
-- [ ] 隐藏窗口（`show:false`）里的 iframe：`window.onerror` 是否能捕获后续 `<script>` 的解析错误；`securitypolicyviolation` 是否触发；`capturePage()` 在三平台是否出图（Linux 先测，macOS / Windows 记为手工验收项）。
-- [ ] 死循环组件：主进程能否在时限后 `forcefullyCrashRenderer` 并重建窗口，外壳页是否一起被冻住。
-- [ ] 结论决定 §11.9 用「探针」还是「CDP」作主方案（默认探针）。
+- [x] 在当前 Electron 版本、`sandbox="allow-scripts"` + 组件 CSP 下实测：`confirm()` 返回值与是否弹窗；`<form>` 的 submit 事件是否触发；`localStorage` 是否抛错；`target=_blank` / `window.open`；`a[download]`；`navigator.clipboard`。写成一个最小 HTML + 主进程脚本，结论按行记录。
+- [x] 隐藏窗口（`show:false`）里的 iframe：`window.onerror` 是否能捕获后续 `<script>` 的解析错误；`securitypolicyviolation` 是否触发；`capturePage()` 在三平台是否出图（Linux 先测，macOS / Windows 记为手工验收项）。
+- [x] 死循环组件：主进程能否在时限后 `forcefullyCrashRenderer` 并重建窗口，外壳页是否一起被冻住。
+- [x] 结论决定 §11.9 用「探针」还是「CDP」作主方案（默认探针）。→ 探针 + 主进程 `console-message` 兜底，不用 CDP（§8.1）。
 
 ### P3a 制作 loop 骨架 + 静态检查 + 工具面切换
 
@@ -192,3 +192,53 @@ renderer：
 ## 8. 实施记录
 
 （实施会话在此追加：spike 结论、规则级别调整、参数调整、基准结果、全量测试甄别。）
+
+### 8.1 P3-0 沙箱行为实测（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**环境**：Electron 44.4.5（Chromium 152.0.7977.130），Linux / Xvfb（`kepcup-test:trixie-xvfb`）。脚本 `apps/desktop/scripts/spikes/widget-sandbox/`（`main.cjs` + `preload.cjs` + `shell.html`），可在三平台复跑：`xvfb-run -a node_modules/electron/dist/electron apps/desktop/scripts/spikes/widget-sandbox/main.cjs`（每条结论一行 JSON，截图写 `$SPIKE_OUT`）。条件与正式卡片一致：特权协议 `kepcup-app`（standard + secure）注册在窗口自己的 session 上、响应头 = `buildAppCspHeader` 空域 + `appUiResponseHeaders`、`<iframe sandbox="allow-scripts" allow="" referrerpolicy="no-referrer">`、外壳页是 `file://`（CSP `frame-ancestors file: http://localhost:*` 要求）。容器里没有配置好的 SUID 沙箱助手，所以带 `--no-sandbox` 跑——这只关掉 OS 级进程沙箱，不影响 iframe sandbox 标志、CSP 与进程模型；打包产物（带 OS 沙箱）上的复核记为手工验收项。动作分别以「有用户手势」（`WebFrameMain.executeJavaScript(code, true)`）与「无手势」各跑一遍，**除 `execCommand('copy')` 外两组结果完全一致**——预览探针用合成事件做乱点冒烟有代表性。
+
+**沙箱行为（逐条）**：
+
+| 行为 | 实测 | 规则级别 |
+|---|---|---|
+| `confirm()` | 不弹窗，0ms 返回 `false`——`if (confirm(…))` 的分支永远不执行 | `sandbox.modals` error（不变） |
+| `prompt()` | 不弹窗，0ms 返回 `null` | 同上 |
+| `alert()` | 不弹窗，0ms 返回，控制流照常继续（只丢了提示） | **拆出 `sandbox.alert`，降为 warning** |
+| `<button type=submit>` 点击 / `requestSubmit()` / 文本框里按 Enter（隐式提交，经真实输入事件） | **submit 事件不触发**（`onsubmit` 属性与 `addEventListener('submit')` 都是 0 次），也没有导航 | `sandbox.form-submit` error：有 submit 处理函数（`onsubmit` 属性 / `addEventListener('submit')` / `.onsubmit =`）或调用 `requestSubmit()` / `.submit()` |
+| submit 按钮自身的 `onclick`、表单里不写 type 的 `<button>` 的 `onclick` | **照常执行**（1 次），只是默认的提交动作被拦 | **拆出 `sandbox.submit-button`，warning**：只有 `type=submit` / 表单内无 type 按钮、没有 submit 处理函数时不阻断 |
+| `form.submit()` | 无事件、无导航（静默无效） | 计入 `sandbox.form-submit` |
+| `localStorage` / `sessionStorage` | 连读属性（`typeof localStorage`）都抛 `SecurityError` | `sandbox.storage` error（不变） |
+| `indexedDB.open` / `document.cookie =` | 抛 `SecurityError` | 同上 |
+| `window.open(…)` | 返回 `null`（`w.document` 随即 TypeError），主进程 `setWindowOpenHandler` 收不到任何请求 | `sandbox.popup` error（不变） |
+| `<a target=_blank>` 点击 | 静默无效：无新窗口、无导航、主进程无事件 | 同上 |
+| `top.location.href =` | 抛 `SecurityError`（无权导航目标框架） | `sandbox.top-nav` error（不变） |
+| `<a href="#x">` 页内锚点 | 正常 | — |
+| `a[download]` 点击 | 静默无效：session 的 `will-download` 不触发 | `sandbox.download` warning（不变） |
+| `navigator.clipboard.writeText/readText` | reject `NotAllowedError`（且响应头 Permissions-Policy 本就禁用剪贴板） | `sandbox.clipboard` warning（不变） |
+| `document.execCommand('copy')` | 有手势时返回 `true`、无手势 `false`；系统剪贴板是否真的收到在 Xvfb 下无法确认 | 不设规则（记为已知差异） |
+| `fetch(…)` | reject `TypeError: Failed to fetch`，同时触发 `securitypolicyviolation`（`connect-src`） | `sandbox.network` error（不变） |
+| 外链 `<script src>` / `<link rel=stylesheet>` / `<img>` / `@import` | 被 CSP 拦，**既**触发 `securitypolicyviolation`（`script-src-elem` / `style-src-elem` / `img-src`）**又**在元素上触发 `error` 事件 | `sandbox.external-resource` error（不变） |
+| `<style>` 里 `background:url(https://…)` | **没有任何事件**（CSP 事件与 console 都没有）——只有 S0 静态规则能发现 | 同上（S0 必须覆盖 CSS `url()`） |
+| 权限 | 加载期间只出现一次 `background-sync` 权限查询（被拒） | — |
+
+**S2 可观测性**：
+- 探针（第一个 `<script>`，挂 `error`〔捕获阶段，可拿到资源加载失败〕/ `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`）收到全部错误类型：外链资源失败、**后续 `<script>` 的 SyntaxError**（带行列）、ReferenceError、经典脚本之间 `let` 重复声明（`Identifier 'dup' has already been declared`）、异步 TypeError、promise 拒绝、console 输出、CSP 违规（指令 + 被拦 URI + 行号）。
+- **主进程 `webContents` 的 `console-message` 事件同样收到 iframe 里的所有未捕获异常、promise 拒绝（`Uncaught (in promise) …`）、CSP 违规与 console 输出**，并带 `frame`（可按 URL 过滤）。这一路组件代码碰不到，可作探针的防篡改对照通道。
+- **结论：主方案用探针（结构化、能执行乱点与验收步骤），主进程 `console-message` 作并行的错误兜底通道；不需要 CDP**（设计 32 §11.9 的备选不启用）。
+- 行号：探针报的是**预览资源**里的行号。预览注入（垫片 + 探针）必须写成**不含换行的一行**、插在原有 `<head>` 之后，行号才与草稿 `index.html` 一致（只有注入所在那一行的列号偏移）；S2 报告据此直接引用行号。
+
+**进程模型与死循环**（关键差异，修订设计 32 §11.9）：
+- Chromium 152 把 opaque-origin 的 sandbox iframe 放进**独立的渲染进程**（`frame.osProcessId` ≠ 外壳页），即使外壳与组件都在 `widget-preview` 分区里。
+- 组件死循环（加载期间的同步 `for(;;)`，或加载后 `setTimeout` 里的循环）只冻住组件进程：外壳页的 100ms 心跳在 1.5s 内照常 15–25 次，主进程对组件框架的 `executeJavaScript` 得不到回应；加载期间就死循环时 iframe 的 `load` 事件不触发。
+- 恢复手段实测：
+  - **外壳页移除 iframe**：组件进程 3s 内被 Chromium 回收；下一个组件（新 host）分到新进程、正常运行。→ **主方案**。
+  - 主进程 `process.kill(frame.osProcessId)`：外壳不受影响，下一个组件正常。→ 移除 iframe 后 3s 仍存活时的补刀。
+  - 销毁窗口并重建：2.6s 内恢复，残留进程被回收。→ 外壳页本身无响应时的兜底。
+  - `webContents.forcefullyCrashRenderer()`：只会杀掉**外壳页**（它并没有卡住），之后在同一个 webContents 上 `loadFile` 外壳得 `ERR_FAILED`。→ **不采用**（设计原文的做法作废）。
+- 每次预览给组件一个新的 host（`widget-preview-{随机}`），避免下一个组件被分进还没回收的进程。
+
+**截图**：隐藏窗口（`show:false`）的 `capturePage()` 在 Linux / Xvfb 下能出图，**包含跨进程 iframe 的内容**，单次 30–50ms。但 `load` 之后的第一张往往还是空白（iframe 进程还没合成首帧）：137–185ms 后的第二次截图才有内容。→ 截图放在探针报告「DOM 静默」之后，若整幅与底色一致就每 50ms 重试，最多 1s；截取 iframe 的矩形而不是整个窗口。macOS / Windows 上能否出图记为手工验收项（用同一脚本复跑）。
+
+**分区**：`session.fromPartition('widget-preview')`（无 `persist:`）`isPersistent()` 为 false、`storagePath` 为 null——预览不落盘。
+
+**对设计 32 的修订**（已回写 §11.8.1、§11.8.3、§11.9）：`alert` 降为 warning（`sandbox.alert`）；`sandbox.form-submit` 收窄到 submit 处理函数与 `requestSubmit()` / `.submit()`，`type=submit` 本身拆为 warning（`sandbox.submit-button`）；CSS `url()` 只有静态规则能发现；死循环处理改为「外壳移除 iframe → 杀组件进程 → 重建窗口」，不用 `forcefullyCrashRenderer`；错误收集 = 探针 + 主进程 `console-message`，不用 CDP；预览注入保持单行以保留行号；截图要等首帧。
