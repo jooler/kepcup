@@ -107,12 +107,14 @@ export const BOT_HANDOVER_EVENT = 'bot_handover';
 export const BOT_HANDED_OVER_EVENT = 'bot_handed_over';
 /** D88：移交卡决定 / 执行完毕后注入发起方对话的 internal follow-up。 */
 export const BOT_HANDOVER_FOLLOWUP_EVENT = 'bot_handover_result';
-/** D88：一张移交卡最多的资产条目数。 */
+/** D88：一张移交卡最多的资产条目数（记忆条目另计，见 HANDOVER_MEMORY_MAX_ITEMS）。 */
 export const HANDOVER_ITEMS_MAX = 100;
 /** D88：交接要点（写进 B 的私聊）的字数上限。 */
 export const HANDOVER_NOTE_MAX_CHARS = 2000;
 /** D88 P1：一次移交最多复制的记忆条目数。 */
 export const HANDOVER_MEMORY_MAX_ITEMS = 200;
+/** D88 P1：`inspect_bot_assets` 的 memory_query 一次最多列出的候选记忆条数。 */
+export const HANDOVER_MEMORY_QUERY_LIMIT = 50;
 /**
  * system_event name of the follow-up injected into a bot after the user
  * decided on the propose_profile_change card a supervisor turn submitted

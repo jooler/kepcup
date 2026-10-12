@@ -25,6 +25,21 @@ export class HandoverRegistry {
     return this.#adapters.flatMap((adapter) => adapter.inventory(botId, query));
   }
 
+  /** Per-type summary lines of the inventory (e.g. memory counts), in stage order. */
+  summaries(botId: string): Array<{ type: string; text: string }> {
+    const out: Array<{ type: string; text: string }> = [];
+    for (const adapter of this.#adapters) {
+      const text = adapter.summary?.(botId) ?? null;
+      if (text !== null && text.length > 0) out.push({ type: adapter.type, text });
+    }
+    return out;
+  }
+
+  /** Why an existing `key` can never be handed over (null = not such a key). */
+  refusal(botId: string, key: string): string | null {
+    return this.forKey(key)?.refusal?.(botId, key) ?? null;
+  }
+
   /**
    * The entry behind `key` as of now: the adapter's inventory first, then its `resolve`
    * (keys valid outside the inventory, e.g. `model:<ref>`). null = no such asset.

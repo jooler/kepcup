@@ -2050,11 +2050,19 @@ export type MemorySource = z.infer<typeof memorySourceSchema>;
 export type MemorySensitivity = z.infer<typeof memorySensitivitySchema>;
 export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
 
-/** Evidence link: the message(s) / run a memory came from (traceable, retractable). */
+/**
+ * Evidence link: the message(s) / run a memory came from (traceable, retractable).
+ * D88 P1 provenance shape: an entry copied from another bot by a handover carries
+ * `{handoverId, fromBotId, fromItemId}` (message / conversation / run null) — it is a copy,
+ * not something the user said to this bot.
+ */
 export const memoryEvidenceSchema = z.object({
   messageId: z.string().nullable(),
   conversationId: z.string().nullable(),
   runId: z.string().nullable(),
+  handoverId: z.string().optional(),
+  fromBotId: z.string().optional(),
+  fromItemId: z.string().optional(),
 });
 export type MemoryEvidence = z.infer<typeof memoryEvidenceSchema>;
 
