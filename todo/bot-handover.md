@@ -133,7 +133,8 @@
 - 改动的既有测试：`create-core`（版本 35 + 两表）、`public-skills-migration`（回放摘表）、`tool-effects`（扫描文件表加 `handover-tools.ts`）、`model-selection-single-source`（允许名单加 `handover/adapters/model.ts`，见 DEV-008）。
 - 定向回归（Docker `kepcup-test:trixie`）：上述新增 + butler-team / butler / butler-route / context-assembly / external-agent-p2 / external-agent-engine / tool-effects / create-core / mail / mail-service-fixes / schedule / approvals / app-approvals / turn-tools-review-fixes / shared agent-catalog / connected-apps / message-content / ids，全绿。
 - 全量（Docker，2026-10-12）：4062 例，首轮 28 失败，其中 2 条是本分支引入（`public-skills-migration` 回放未摘新表、`model-selection-single-source` 新调用点）——已修复并单跑通过；其余 26 条全部在基线文件内（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1；`environment`「checksum mismatch」在 main@064cbdd 的临时 worktree 上同样失败，已核实）。
-- e2e：见下方「e2e 全量」。
+- 全量复跑（修复后，提交 `5a71588`，容器 `kh-full2`）：4062 例，**26 失败，全部为上述基线文件**，无新增失败。
+- e2e 全量（`kepcup-test:trixie-xvfb`，92 例）：首轮 7 失败；复跑（`kh-e2e-full2`）**86 通过 / 6 失败**，`handover.spec` 通过。失败：`wiki.spec`「wiki tab: browse …」（已知基线）、`debug-dev-pin.spec`、`external-agents.spec` 三条（settings catalog / agent_tool approval card / in-chat agent setup card）、`local-connectors.spec`——后五条不在文档记录的 3 条基线里，已在 main@064cbdd 的临时 worktree 上单跑这三个 spec，**同样 5 条失败**（环境原因：dev-mode pin 的 app-shell 不出现、对话框遮罩挡点击等），与本分支无关，建议更新 e2e 基线记录。首轮另有 `sandbox.spec`「run status line …」失败（已知基线，复跑通过）。
 
 **偏差（需用户确认）**：
 
