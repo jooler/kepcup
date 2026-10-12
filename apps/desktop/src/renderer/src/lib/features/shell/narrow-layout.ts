@@ -15,6 +15,13 @@
  */
 export const NARROW_LAYOUT_MAX_WIDTH = 640;
 
+/**
+ * 退出窄屏的宽度（px，含）：滞回区间 [640, 680)——进入窄屏要小于 640，回到宽屏
+ * 要至少 680。宽 / 窄是两棵不同的组件树（切换即整树重挂载），断点附近来回抖动
+ * 一个像素就重挂载一次会丢滚动位置与局部状态，滞回把「抖动」吸收在 40px 缓冲里。
+ */
+export const NARROW_LAYOUT_EXIT_WIDTH = 680;
+
 /** 底部全局 tab（顺序即展示顺序）。 */
 export const NARROW_TABS = ['chats', 'contacts', 'extensions', 'me'] as const;
 export type NarrowTab = (typeof NARROW_TABS)[number];
@@ -28,9 +35,18 @@ export const NARROW_HIDDEN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
   'profile',
 ]);
 
-/** 窗口内容宽是否处于窄屏模式（开区间，640px 整属宽屏，与 sm: 一致）。 */
+/** 窗口内容宽是否处于窄屏模式（无历史时的判定：开区间，640px 整属宽屏，与 sm: 一致）。 */
 export function isNarrowWidth(width: number): boolean {
   return Number.isFinite(width) && width < NARROW_LAYOUT_MAX_WIDTH;
+}
+
+/**
+ * 带滞回的窄屏判定：已在窄屏则宽度 < 680 才保持窄屏（≥ 680 才退出），未在窄屏则
+ * < 640 才进入。非法宽度一律视为宽屏（与 isNarrowWidth 一致）。
+ */
+export function nextNarrow(previouslyNarrow: boolean, width: number): boolean {
+  if (!Number.isFinite(width)) return false;
+  return width < (previouslyNarrow ? NARROW_LAYOUT_EXIT_WIDTH : NARROW_LAYOUT_MAX_WIDTH);
 }
 
 /**

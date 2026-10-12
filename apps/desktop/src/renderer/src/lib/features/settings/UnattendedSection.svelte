@@ -2,6 +2,7 @@
   import { errorText, t } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
@@ -55,8 +56,9 @@
   }
 
   async function disable(): Promise<void> {
-    // 关闭确认汇总要让位于设置弹框之上展示：先收起设置弹框再停用。
-    shell.closeSettings();
+    // 关闭确认汇总要让位于设置弹框之上展示：先收起设置弹框再停用。窄屏的设置是全屏页、
+    // 不是模态弹框（确认汇总作为弹层天然压在它之上），不必把用户踢出设置页。
+    if (!narrowLayout.narrow) shell.closeSettings();
     await permissions.disableUnattended();
   }</script>
 

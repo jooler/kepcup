@@ -1,0 +1,88 @@
+import { describe, expect, test } from 'vitest';
+import {
+  ANCHOR_SCROLL_MARGIN,
+  revealSettingsAnchor,
+  scrollToSettingsAnchor,
+  type AnchorScrollContainer,
+} from './anchor-scroll';
+
+function container(
+  options: { containerTop?: number; targetTop?: number | null; scrollTop?: number } = {},
+) {
+  const scrolls: number[] = [];
+  const queries: string[] = [];
+  const el: AnchorScrollContainer & { scrolls: number[]; queries: string[] } = {
+    scrollTop: options.scrollTop ?? 0,
+    scrolls,
+    queries,
+    querySelector(selector) {
+      queries.push(selector);
+      const top = options.targetTop === undefined ? 300 : options.targetTop;
+      return top === null ? null : { getBoundingClientRect: () => ({ top }) };
+    },
+    getBoundingClientRect: () => ({ top: options.containerTop ?? 100 }),
+    scrollTo({ top }) {
+      scrolls.push(top);
+    },
+  };
+  return el;
+}
+
+describe('scrollToSettingsAnchor', () => {
+  test('按目标相对容器的偏移 + 当前 scrollTop 减留白算滚动位置', () => {
+    const el = container({ containerTop: 100, targetTop: 300, scrollTop: 50 });
+    expect(scrollToSettingsAnchor(el, 'models-default')).toBe(true);
+    expect(el.queries).toEqual(['[data-settings-anchor="models-default"]']);
+    expect(el.scrolls).toEqual([50 + 200 - ANCHOR_SCROLL_MARGIN]);
+  });
+
+  test('目标在容器顶部之上时不滚成负值', () => {
+    const el = container({ containerTop: 100, targetTop: 100, scrollTop: 0 });
+    scrollToSettingsAnchor(el, 'x');
+    expect(el.scrolls).toEqual([0]);
+  });
+
+  test('找不到目标返回 false 且不滚动', () => {
+    const el = container({ targetTop: null });
+    expect(scrollToSettingsAnchor(el, 'missing')).toBe(false);
+    expect(el.scrolls).toEqual([]);
+  });
+});
+
+describe('revealSettingsAnchor', () => {
+  test('等渲染 tick 之后才滚动，并在滚动后清除锚点', async () => {
+    const order: string[] = [];
+    const el = container();
+    const originalScrollTo = el.scrollTo.bind(el);
+    el.scrollTo = (o) => {
+      order.push('scroll');
+      originalScrollTo(o);
+    };
+    await revealSettingsAnchor({
+      anchor: 'a',
+      container: () => el,
+      flush: async () => {
+        order.push('flush');
+      },
+      clear: () => order.push('clear'),
+    });
+    expect(order).toEqual(['flush', 'scroll', 'clear']);
+  });
+
+  test('容器已卸载 / 目标不存在也要清锚点', async () => {
+    let cleared = 0;
+    await revealSettingsAnchor({
+      anchor: 'a',
+      container: () => null,
+      flush: async () => {},
+      clear: () => void (cleared += 1),
+    });
+    await revealSettingsAnchor({
+      anchor: 'a',
+      container: () => container({ targetTop: null }),
+      flush: async () => {},
+      clear: () => void (cleared += 1),
+    });
+    expect(cleared).toBe(2);
+  });
+});

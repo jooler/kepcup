@@ -6,6 +6,7 @@
   import { toast } from 'svelte-sonner';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+  import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -37,9 +38,9 @@
   const bot = $derived(chat.current?.conversation.bot ?? null);
   const grants = $derived(permissions.grants);
   const confirmMode = $derived(permissions.sandbox !== null && !permissions.sandbox.available);
-  // 窄屏（33-narrow-layout）：本组件渲染为全屏 Bot 详情覆盖层（NarrowShell），
-  // 无左边框、✕ 关闭的是覆盖层，头部让出 macOS 红绿灯占位。
-  const narrow = $derived(narrowLayout.narrow);
+  // 窄屏（33-narrow-layout），或宽屏但放不下并排右栏：本组件渲染为全屏 Bot 详情覆盖层
+  // （BotDetailOverlay），无左边框、✕ 关闭的是覆盖层，头部让出 macOS 红绿灯占位。
+  const narrow = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
 
   let draft = $state<BotProfile | null>(null);
@@ -324,7 +325,11 @@
               use:focusOnMount
               onkeydown={(e) => {
                 if (e.key === 'Enter') void commitName();
-                if (e.key === 'Escape') editingName = false;
+                if (e.key === 'Escape') {
+                  // 取消编辑并消费 Esc：外层（Bot 详情覆盖层等）看到 defaultPrevented 就不再关自己。
+                  e.preventDefault();
+                  editingName = false;
+                }
               }}
               onblur={() => void commitName()}
               data-testid="bot-name-inline-input"
@@ -351,7 +356,10 @@
               use:focusOnMount
               onkeydown={(e) => {
                 if (e.key === 'Enter') void commitBio();
-                if (e.key === 'Escape') editingBio = false;
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  editingBio = false;
+                }
               }}
               onblur={() => void commitBio()}
               data-testid="bot-bio-inline-input"

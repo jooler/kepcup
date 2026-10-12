@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -11,6 +11,7 @@
     visibleSettingsSections,
   } from './settings-sections-list';
   import SettingsSectionView from './SettingsSectionView.svelte';
+  import { revealSettingsAnchor } from './anchor-scroll';
 
   /**
    * 全局设置弹框：左栏分组条目 + 右侧分组内容。点击左栏条目只渲染对应
@@ -36,30 +37,29 @@
 
   // 每次打开：展开别名后落在指定分组（无条目的 id 兜底回 general——窄屏下
   // 通讯录 / 用户画像深链即落这里，入口本身已在底部 tab）。
+  // 只依赖「打开 / 请求的分组」：sections 随宽窄形态变化，若被追踪，宽屏弹框开着时
+  // 拉窄会让本 effect 重跑、把用户当前所在分区重置回 general。
   $effect(() => {
     if (!shell.settingsOpen) return;
     const resolved = resolveSettingsSection(
       shell.settingsSection,
       shell.settingsAppsTab ?? undefined,
     );
-    activeSection = sections.some((section) => section.id === resolved.section)
+    activeSection = untrack(() => sections).some((section) => section.id === resolved.section)
       ? resolved.section
       : 'general';
   });
 
-  // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位。
-  // 手动算 scrollTop（scrollIntoView 会让整个弹框内容跟着抢滚动）。
+  // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位（anchor-scroll.ts，
+  // 与窄屏设置页共用）。
   $effect(() => {
     const anchor = shell.settingsAnchor;
     if (!shell.settingsOpen || anchor === null) return;
-    void tick().then(() => {
-      const container = contentEl;
-      const target = container?.querySelector(`[data-settings-anchor="${anchor}"]`);
-      if (container && target) {
-        const offset = target.getBoundingClientRect().top - container.getBoundingClientRect().top;
-        container.scrollTo({ top: Math.max(0, container.scrollTop + offset - 8) });
-      }
-      shell.settingsAnchor = null;
+    void revealSettingsAnchor({
+      anchor,
+      container: () => contentEl,
+      flush: tick,
+      clear: () => (shell.settingsAnchor = null),
     });
   });
 </script>

@@ -12,6 +12,14 @@ export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_DEFAULT_WIDTH = 280;
 /** 释放时低于该值吸附为最小宽（图标模式），避免停在挤塞的中间宽度。 */
 export const SIDEBAR_ICON_SNAP_WIDTH = 160;
+/**
+ * 宽屏布局的聊天区最小可用宽度（px）：窗口最小宽已放宽到手机宽度（main/window.ts
+ * 375），窄屏断点（640 进入 / 680 退出）与旧的 960 下限之间多出一段「宽屏三栏」可达
+ * 区间——侧栏按窗口宽度夹取、右栏放不下时让位，都以这条为底线。
+ */
+export const WIDE_CHAT_MIN_WIDTH = 360;
+/** 宽屏右栏（Bot 详情）的最小可用宽度（px）。 */
+export const WIDE_RIGHT_PANEL_MIN_WIDTH = 300;
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'kepcup.sidebar.width';
 
 /** localStorage 的最小结构面（node 单测用替身注入）。 */
@@ -21,6 +29,34 @@ export type WidthStorage = Pick<Storage, 'getItem' | 'setItem'>;
 export function clampSidebarWidth(width: number): number {
   if (!Number.isFinite(width)) return SIDEBAR_DEFAULT_WIDTH;
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+/**
+ * 该窗口宽度下侧栏的宽度上限：给聊天区留出 WIDE_CHAT_MIN_WIDTH，且不超过全局上限、
+ * 不低于最小宽。非法窗口宽度不夹取（回退全局上限）。
+ */
+export function maxSidebarWidthFor(windowWidth: number): number {
+  if (!Number.isFinite(windowWidth)) return SIDEBAR_MAX_WIDTH;
+  return Math.min(
+    SIDEBAR_MAX_WIDTH,
+    Math.max(SIDEBAR_MIN_WIDTH, Math.floor(windowWidth - WIDE_CHAT_MIN_WIDTH)),
+  );
+}
+
+/**
+ * 实际渲染宽度：持久化的偏好宽度再按窗口夹取（偏好本身不改写，窗口拉回去就恢复）。
+ */
+export function effectiveSidebarWidth(storedWidth: number, windowWidth: number): number {
+  return Math.min(clampSidebarWidth(storedWidth), maxSidebarWidthFor(windowWidth));
+}
+
+/**
+ * 常驻右栏是否放得下：聊天区 ≥ WIDE_CHAT_MIN_WIDTH 且右栏 ≥ WIDE_RIGHT_PANEL_MIN_WIDTH。
+ * 放不下时宽屏不并排渲染右栏，Bot 药丸改开全屏 Bot 详情覆盖层（同窄屏）。
+ */
+export function rightPanelFits(windowWidth: number, sidebarWidth: number): boolean {
+  if (!Number.isFinite(windowWidth)) return true;
+  return windowWidth - sidebarWidth >= WIDE_CHAT_MIN_WIDTH + WIDE_RIGHT_PANEL_MIN_WIDTH;
 }
 
 /** 拖拽释放时的落点：低于吸附阈值收成图标模式（最小宽），其余原样夹取。 */

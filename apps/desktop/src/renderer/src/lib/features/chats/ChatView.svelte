@@ -5,6 +5,7 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+  import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
@@ -68,6 +69,8 @@
   // 左上角是「返回列表」按钮（macOS 让出红绿灯占位）。本组件只在已选中会话
   // 时被 NarrowShell 渲染，空态分支窄屏不可达。
   const narrow = $derived(narrowLayout.narrow);
+  // Bot 详情走全屏覆盖层：窄屏，或宽屏但窗口放不下并排右栏（sidebar-layout.ts）。
+  const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
 
   let composerDockHeight = $state(0);
@@ -110,8 +113,8 @@
       <Button
         variant="outline"
         class="app-no-drag h-10 min-w-0 cursor-pointer gap-1.5 rounded-full border-border/25 bg-background py-0 pr-2.5 pl-1.5 text-sm font-medium shadow-xl backdrop-blur dark:border-input/25 dark:bg-background"
-        onclick={narrow ? () => narrowLayout.openBotDetail() : () => shell.toggleRightPanel()}
-        title={narrow
+        onclick={panelOverlay ? () => narrowLayout.openBotDetail() : () => shell.toggleRightPanel()}
+        title={panelOverlay
           ? t('rightPanel.title')
           : panelCollapsed
             ? t('chatHeader.expandPanel')
@@ -134,7 +137,7 @@
           />
         {/if}
         <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
-        {#if panelCollapsed && !narrow}
+        {#if panelCollapsed && !panelOverlay}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
                外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的
                gap-1.5，未 hover 时按钮宽度与没有提示时完全一致 -->

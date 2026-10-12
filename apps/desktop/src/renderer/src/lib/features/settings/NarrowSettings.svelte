@@ -11,6 +11,12 @@
     type SettingsViewSection,
   } from './settings-sections-list';
   import SettingsSectionView from './SettingsSectionView.svelte';
+  import { revealSettingsAnchor } from './anchor-scroll';
+  import {
+    blurEditableTarget,
+    ESCAPE_PRIORITY,
+    registerEscapeLayer,
+  } from '$lib/features/shell/escape-layers';
 
   /**
    * 窄屏设置全屏页（33-narrow-layout，修复 7）：设置不再是弹框——分组列表占
@@ -18,8 +24,8 @@
    * 不带分区落列表页，带分区直达详情页；「通讯录」「用户画像」在窄屏是底部
    * tab，深链由 shell store 切 tab、不进本页。
    *
-   * 顶部拖拽带让出 macOS 红绿灯；Esc 在详情页回列表、列表页关页面（嵌套弹框
-   * 开着时先归弹框）。
+   * 顶部拖拽带让出 macOS 红绿灯；Esc 在列表点进的详情页回列表、其余关页面
+   * （嵌套弹层先归弹层，统一经 escape-layers 仲裁）。
    */
   const isMac = /Mac/i.test(navigator.platform);
 
@@ -30,44 +36,43 @@
 
   let contentEl: HTMLElement | null = $state(null);
 
-  // 锚点滚动：详情页渲染完后滚到 [data-settings-anchor]（与宽屏弹框同款）。
+  // 锚点滚动：详情页渲染完后滚到 [data-settings-anchor]（anchor-scroll.ts，与宽屏弹框共用）。
   $effect(() => {
     const anchor = shell.narrowSettingsAnchor;
     if (!open || section === null || anchor === null) return;
-    void tick().then(() => {
-      const container = contentEl;
-      const target = container?.querySelector(`[data-settings-anchor="${anchor}"]`);
-      if (container && target) {
-        const offset = target.getBoundingClientRect().top - container.getBoundingClientRect().top;
-        container.scrollTo({ top: Math.max(0, container.scrollTop + offset - 8) });
-      }
-      shell.narrowSettingsAnchor = null;
+    void revealSettingsAnchor({
+      anchor,
+      container: () => contentEl,
+      flush: tick,
+      clear: () => (shell.narrowSettingsAnchor = null),
     });
   });
 
-  /** 返回：详情页回列表页，列表页关页面。 */
-  function back(): void {
-    if (section !== null) {
-      shell.narrowSettingsSection = null;
-      shell.narrowSettingsAnchor = null;
-    } else {
-      shell.closeNarrowSettings();
-    }
-  }
+  /** 返回：列表点进的详情回列表；深链直达的详情 / 列表页关页面（shell.backNarrowSettings）。 */
+  const back = (): void => shell.backNarrowSettings();
 
-  function onKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || !open) return;
-    // 嵌套弹框（移除 Bot 确认等）开着时先归弹框。
-    if (document.querySelector('[data-slot="dialog-overlay"]') !== null) return;
-    event.stopPropagation();
-    back();
-  }
+  // Esc 经层级仲裁（escape-layers.ts）：页面打开期间登记为最顶的全屏页；嵌套的
+  // bits-ui 弹层（Select / Popover / 弹框）已 preventDefault 的 Esc 仲裁器不会再派发，
+  // 输入框里的 Esc 先失焦；设置页开在 Bot 覆盖层之上时一次 Esc 只关设置页。
+  $effect(() => {
+    if (!open) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.page,
+      onEscape: (event) => {
+        if (blurEditableTarget(event)) return;
+        back();
+      },
+    });
+  });
 </script>
 
-<svelte:window onkeydown={onKeydown} />
-
 {#if open}
-  <div class="fixed inset-0 z-50 flex flex-col bg-background" data-testid="narrow-settings-page">
+  <!-- app-no-drag：整页声明 no-drag，盖掉下层会话头部 / 其他页面延伸上来的 drag 矩形
+       （app-region 按 DOM 顺序后者胜出）；顶栏自己再声明 drag。 -->
+  <div
+    class="app-no-drag fixed inset-0 z-50 flex flex-col bg-background"
+    data-testid="narrow-settings-page"
+  >
     <div
       class="app-drag flex h-14 shrink-0 items-center gap-1 border-b {isMac
         ? 'pr-3 pl-20'
@@ -98,7 +103,7 @@
             type="button"
             class="flex w-full cursor-pointer items-center gap-3 rounded-xl p-3 text-left
               text-sm transition-colors hover:bg-accent/40"
-            onclick={() => (shell.narrowSettingsSection = item.id)}
+            onclick={() => shell.selectNarrowSettingsSection(item.id)}
             data-testid={`narrow-settings-item-${item.id}`}
           >
             <span

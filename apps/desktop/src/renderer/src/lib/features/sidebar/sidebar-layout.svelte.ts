@@ -1,5 +1,9 @@
+import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import {
   clampSidebarWidth,
+  effectiveSidebarWidth,
+  maxSidebarWidthFor,
+  rightPanelFits,
   isSidebarCollapsed,
   loadSidebarWidth,
   saveSidebarWidth,
@@ -17,11 +21,23 @@ class SidebarLayoutState {
   /** 拖拽进行中：宽度不加过渡动画（逐帧跟手）。 */
   dragging = $state(false);
 
+  /** 按窗口宽度夹取后的实际宽度（偏好宽度 width 不被改写，窗口拉回去就恢复）。 */
+  effectiveWidth = $derived(effectiveSidebarWidth(this.width, narrowLayout.windowWidth));
+
+  /** 宽屏下常驻右栏是否放得下（聊天区 / 右栏各有最小宽度）。 */
+  panelFits = $derived(rightPanelFits(narrowLayout.windowWidth, this.effectiveWidth));
+
+  /**
+   * Bot 详情是否走全屏覆盖层：窄屏，或宽屏但窗口太窄放不下并排右栏
+   *（此时 Bot 药丸开覆盖层而不是展开右栏）。
+   */
+  panelAsOverlay = $derived(narrowLayout.narrow || !this.panelFits);
+
   /** 最小宽即图标模式。 */
   collapsed = $derived(isSidebarCollapsed(this.width));
 
   /** 注入 Sidebar.Provider 的 wrapper 变量（覆盖套件默认值，全树继承）。 */
-  widthStyle = $derived(`--sidebar-width: ${this.width}px;`);
+  widthStyle = $derived(`--sidebar-width: ${this.effectiveWidth}px;`);
 
   /** 拖拽中不加过渡（跟手）；松手吸附与双击复位才有平滑动画。 */
   transitionClass = $derived(this.dragging ? '' : 'transition-[width] duration-200 ease-linear');
@@ -57,7 +73,10 @@ class SidebarLayoutState {
       document.querySelector('[data-slot="sidebar-wrapper"]')?.getBoundingClientRect().left ?? 0;
 
     const onMove = (move: PointerEvent): void => {
-      this.width = clampSidebarWidth(move.clientX - originLeft);
+      this.width = Math.min(
+        clampSidebarWidth(move.clientX - originLeft),
+        maxSidebarWidthFor(narrowLayout.windowWidth),
+      );
     };
     const onUp = (): void => {
       handle.removeEventListener('pointermove', onMove);

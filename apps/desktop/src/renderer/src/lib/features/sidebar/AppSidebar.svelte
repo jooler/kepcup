@@ -14,35 +14,25 @@
     ChevronLeft,
     type LucideIcon,
   } from '@lucide/svelte';
-  import type { Bot, BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { stripMarkdown } from '$lib/strip-markdown';
   import { shell } from '$lib/stores/shell.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import { core } from '$lib/rpc/client.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
-  import { createBotConversational, emptyProfile } from '$lib/features/bot-setup';
+  import { createBotConversational } from '$lib/features/bot-setup';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import {
-    Dialog,
-    DialogContent,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-  } from '$lib/components/ui/dialog';
-  import GlobalSearchDialog from '$lib/features/search/GlobalSearchDialog.svelte';
   import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
-  import MissingSkillDialog from '$lib/features/right-panel/MissingSkillDialog.svelte';
-  import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
-  import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
+  import { isButlerConversation } from './butler';
+  import { sidebarDialogs } from './sidebar-dialogs.svelte';
+  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -53,7 +43,7 @@
    * 信号时预览行整行不渲染，只剩名称与头像垂直居中），管理操作（重命名/
    * 复制会话 id/群设置/删除会话）收进右键上下文菜单，不再有常驻「…」按钮。
    * 新建只保留「+」一个入口（对话式新建 + 高级新建）。搜索按钮打开全局
-   * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效）。设置与通讯录打开全局设置弹框。
+   * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
    * 宽度可拖拽调节（右缘手柄，sidebar-layout）：收窄到 macOS 红绿灯占位宽
    * 即图标模式——顶部搜索隐藏、「+」移到底部（与参考一致），对话只剩头像、
@@ -80,11 +70,8 @@
     target.appendChild(node);
   }
 
-  let searchOpen = $state(false);
   let plusOpen = $state(false);
   let plusQuery = $state('');
-  let groupSettingsOpen = $state(false);
-  let groupSettingsId = $state<string | null>(null);
 
   /** 右键上下文菜单（视口坐标 + 目标会话）。 */
   let contextMenu = $state<{ x: number; y: number; conversationId: string } | null>(null);
@@ -93,28 +80,6 @@
       ? null
       : (chat.conversations.find((c) => c.id === contextMenu?.conversationId) ?? null),
   );
-
-  let renameOpen = $state(false);
-  let renameBot = $state<Bot | null>(null);
-  let renameName = $state('');
-
-  let formCreateOpen = $state(false);
-  let draftProfile = $state<BotProfile>(emptyProfile());
-
-  let deleteTargetId = $state<string | null>(null);
-  let deleteTargetName = $derived.by(() => {
-    const conversation = chat.conversations.find((c) => c.id === deleteTargetId);
-    if (conversation === undefined) return deleteTargetId ?? '';
-    return conversation.type === 'group'
-      ? (conversation.title ?? deleteTargetId ?? '')
-      : (conversation.bot?.name ?? conversation.directBotId ?? '');
-  });
-
-  // D72 P5: the bot runs an external agent whose own history KepCup does not manage.
-  const deleteTargetUsesAgent = $derived.by(() => {
-    const conversation = chat.conversations.find((c) => c.id === deleteTargetId);
-    return (conversation?.bot?.profile.runtime.agent.id ?? '').length > 0;
-  });
 
   const plusBots = $derived.by(() => {
     const query = plusQuery.trim().toLowerCase();
@@ -144,8 +109,34 @@
   /** 打开全局搜索弹框（「+」面板开着时先收起，避免两层浮层叠加）。 */
   function openGlobalSearch(): void {
     plusOpen = false;
-    searchOpen = true;
+    shell.openSearch();
   }
+
+  // 搜索层可从 Cmd/Ctrl+K 等任意入口打开（状态在 shell，层本身挂在 App 根）：
+  // 无论从哪打开，「+」面板都要收起，避免两层浮层叠加。
+  $effect(() => {
+    if (shell.searchOpen) plusOpen = false;
+  });
+
+  // 右键菜单 / 「+」面板的 Esc：窄屏的「开始对话」是 z-50 全屏页，宽屏的面板是局部弹出层。
+  $effect(() => {
+    if (contextMenu === null) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.popover,
+      onEscape: () => {
+        contextMenu = null;
+      },
+    });
+  });
+  $effect(() => {
+    if (!plusOpen) return;
+    return registerEscapeLayer({
+      priority: narrow ? ESCAPE_PRIORITY.page : ESCAPE_PRIORITY.popover,
+      onEscape: () => {
+        plusOpen = false;
+      },
+    });
+  });
 
   /** 条目第二行的单行预览：本会话积累的最后一条消息，启动时回退会话摘要；
    *  消息是 markdown 渲染的，这里剥掉语法标记只留可读文本。 */
@@ -181,37 +172,13 @@
 
   function openFormCreate(): void {
     plusOpen = false;
-    draftProfile = emptyProfile();
-    formCreateOpen = true;
-  }
-
-  async function createWithForm(): Promise<void> {
-    if (draftProfile.identity.name.trim().length === 0) return;
-    const bot = await contacts.create($state.snapshot(draftProfile) as BotProfile);
-    formCreateOpen = false;
-    toast.success(t('settings.saved'));
-    await chat.openDirect(bot.id);
+    sidebarDialogs.openFormCreate();
   }
 
   async function openCreateGroup(): Promise<void> {
     plusOpen = false;
     // 对话内群创建（19/D60）：直接创建「创建中」的群并进入，四问以卡片收集。
     await chat.createGroupViaSetup();
-  }
-
-  async function confirmDelete(): Promise<void> {
-    const id = deleteTargetId;
-    deleteTargetId = null;
-    if (!id) return;
-    const wasButlerChat = isButlerConversation(chat.conversations.find((c) => c.id === id));
-    await chat.deleteConversation(id);
-    // 管家（D70）置顶入口不能消失：删的只是聊天记录，随即重开一个空私聊。
-    if (wasButlerChat) await core.call('butler.ensure', {});
-  }
-
-  /** 管家（D70）的私聊：侧栏固定置顶。 */
-  function isButlerConversation(conversation: ConversationView | undefined): boolean {
-    return conversation?.type === 'direct' && conversation.bot?.systemRole === 'butler';
   }
 
   /** 侧栏顺序：管家私聊置顶，其余保持 store 的时间顺序。 */
@@ -236,8 +203,7 @@
 
   function openGroupSettings(): void {
     if (!contextMenu) return;
-    groupSettingsId = contextMenu.conversationId;
-    groupSettingsOpen = true;
+    sidebarDialogs.openGroupSettings(contextMenu.conversationId);
     closeContextMenu();
   }
 
@@ -248,21 +214,8 @@
       closeContextMenu();
       return;
     }
-    renameBot = bot;
-    renameName = bot.name;
     closeContextMenu();
-    renameOpen = true;
-  }
-
-  async function saveRename(): Promise<void> {
-    const bot = renameBot;
-    const name = renameName.trim();
-    if (!bot || name.length === 0) return;
-    const profile = structuredClone($state.snapshot(bot.profile)) as BotProfile;
-    profile.identity = { ...profile.identity, name };
-    await contacts.update(bot.id, profile);
-    renameOpen = false;
-    toast.success(t('settings.saved'));
+    sidebarDialogs.openRename(bot);
   }
 
   async function copyConversationId(): Promise<void> {
@@ -274,28 +227,14 @@
 
   function deleteFromContext(): void {
     if (!contextMenu) return;
-    deleteTargetId = contextMenu.conversationId;
+    sidebarDialogs.askDelete(contextMenu.conversationId);
     closeContextMenu();
   }
 </script>
 
-<!-- 快捷键：Cmd/Ctrl+K 打开全局搜索（设置弹框/向导开着时不叠层）；
-     Escape 关闭「+」面板与右键菜单（面板开着时 Esc 优先归零，再冒泡给弹框）。 -->
-<svelte:window
-  onkeydown={(event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      if (!searchOpen && !shell.settingsOpen && !onboarding.open) openGlobalSearch();
-      return;
-    }
-    if (event.key !== 'Escape') return;
-    if (contextMenu !== null) {
-      contextMenu = null;
-      return;
-    }
-    if (plusOpen) plusOpen = false;
-  }}
-/>
+<!-- 快捷键：Cmd/Ctrl+K 打开全局搜索在 App 根（全局，不依赖本组件挂载）。
+     Esc 经层级仲裁（escape-layers）：右键菜单优先、其次「+」面板；有 bits-ui 弹框 /
+     行内控件已处理的 Esc 不会再关它们。 -->
 
 <!-- 右键菜单里的一行（同文件私有 snippet）。 -->
 {#snippet contextItem(
@@ -834,103 +773,4 @@
   </div>
 {/if}
 
-<GroupSettingsDialog conversationId={groupSettingsId ?? ''} bind:open={groupSettingsOpen} />
-<GlobalSearchDialog bind:open={searchOpen} />
 <ExtensionCenterDialog bind:open={shell.extensionCenterOpen} />
-<MissingSkillDialog />
-
-<Dialog
-  open={deleteTargetId !== null}
-  onOpenChange={(open) => (deleteTargetId = open ? deleteTargetId : null)}
->
-  <DialogContent class="max-w-sm" data-testid="conversation-delete-dialog">
-    <DialogHeader>
-      <DialogTitle>{t('chats.deleteConversationTitle', { name: deleteTargetName })}</DialogTitle>
-    </DialogHeader>
-    <p class="text-sm text-muted-foreground">{t('chats.deleteConversationBody')}</p>
-    {#if deleteTargetUsesAgent}
-      <p class="text-xs text-muted-foreground" data-testid="conversation-delete-agent-note">
-        {t('contacts.deleteAgentNote')}
-      </p>
-    {/if}
-    <DialogFooter>
-      <Button
-        variant="outline"
-        onclick={() => (deleteTargetId = null)}
-        data-testid="conversation-delete-cancel"
-      >
-        {t('contacts.cancel')}
-      </Button>
-      <Button
-        variant="destructive"
-        onclick={confirmDelete}
-        data-testid="conversation-delete-confirm"
-      >
-        {t('chats.deleteConversation')}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-
-<Dialog bind:open={renameOpen}>
-  <DialogContent class="max-w-sm" data-testid="bot-rename-dialog">
-    <DialogHeader>
-      <DialogTitle>{t('sidebar.renameBot')}</DialogTitle>
-    </DialogHeader>
-    <div class="grid gap-1.5">
-      <label class="text-sm" for="bot-rename-input">{t('contacts.name')}</label>
-      <Input
-        id="bot-rename-input"
-        bind:value={renameName}
-        placeholder={t('contacts.namePlaceholder')}
-        data-testid="bot-rename-input"
-      />
-    </div>
-    <DialogFooter>
-      <Button
-        variant="outline"
-        onclick={() => (renameOpen = false)}
-        data-testid="bot-rename-cancel"
-      >
-        {t('contacts.cancel')}
-      </Button>
-      <Button
-        onclick={() => void saveRename()}
-        disabled={renameName.trim().length === 0}
-        data-testid="bot-rename-save"
-      >
-        {t('settings.save')}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-
-<Dialog bind:open={formCreateOpen}>
-  <DialogContent
-    class="flex max-h-[85vh] max-w-xl flex-col overflow-hidden"
-    data-testid="bot-create-dialog"
-  >
-    <DialogHeader class="shrink-0">
-      <DialogTitle>{t('contacts.advancedCreate')}</DialogTitle>
-    </DialogHeader>
-    <div class="min-h-0 flex-1 overflow-y-auto pr-0.5">
-      <BotProfileForm bind:profile={draftProfile} />
-    </div>
-    <DialogFooter class="shrink-0 pt-2">
-      <Button
-        variant="outline"
-        onclick={() => (formCreateOpen = false)}
-        data-testid="bot-create-cancel"
-      >
-        {t('contacts.cancel')}
-      </Button>
-      <Button
-        onclick={createWithForm}
-        disabled={draftProfile.identity.name.trim().length === 0}
-        data-testid="bot-create-save"
-      >
-        {t('contacts.create')}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>

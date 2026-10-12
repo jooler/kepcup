@@ -18,7 +18,10 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
-    // 允许窄到手机宽度（375）：扩展中心等弹框在小窗口仍可用，不再按桌面布局设下限
+    // 允许窄到手机宽度（375）：扩展中心等弹框在小窗口仍可用，不再按桌面布局设下限。
+    // 窄屏形态在 <640 进入（≥680 退出，滞回）；680~959 的宽屏三栏区间不再有 960 的下限兜底，
+    // 由渲染端保证聊天区可用宽度：侧栏宽度按窗口夹取、放不下并排右栏时 Bot 详情改走全屏覆盖层
+    //（renderer sidebar-layout.ts 的 WIDE_CHAT_MIN_WIDTH / rightPanelFits）。
     minWidth: 375,
     minHeight: 600,
     show: false,
