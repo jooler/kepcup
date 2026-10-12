@@ -25,6 +25,8 @@ Composer（按钮/粘贴/拖拽）
 
 - **空文本 + 附件**允许发送：`messages.send` 的 `text` 可为空字符串（渲染层保证「有文本或有附件」才发送）；消息气泡对空文本只渲染附件。
 - **移除**：`attachments.detach {id}` 仅当附件尚未随消息发出（`message_id IS NULL`）可用，删除行与文件。
+- **草稿 chip 的存在性校验**：未绑定附件 7 天后被 core 回收（`sweepOrphans`），而草稿快照里的 chip 会跨重启保留。`attachments.status {conversationId, ids}` 批量返回 `pending / sent / missing`（一次往返，不读字节）：进入会话水合草稿时对**所有**附件（含 pdf/docx）校验，`missing` 的摘掉并提示、`sent`（已被某条消息占用）的静默摘掉；发送被 `INVALID_INPUT` 拒绝且带附件时同样用它判因——`missing` 提示“附件已过期/不存在”，`sent` 提示“很可能上一次发送已受理、只是响应丢了，请先看会话”，两者都摘 chip 并回填文本，避免 chip 卡死、每次发送都报莫名错误。
+- **发送按会话隔离**：`chat.send(conversationId, …)` 只发往发起发送时的会话（等待上传最长 60 秒，期间可切会话）；防重入闸按会话分闸，A 会话等上传时 B 会话可正常发送。
 - 粘贴（`clipboardData.files`）与拖拽（`drop` 的 `DataTransfer.files`）复用同一条上传函数；大小超限/类型拒绝即时 toast（i18n）。
 
 ## 3 媒体内联与灯箱

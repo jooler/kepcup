@@ -514,16 +514,23 @@ class ChatState {
   /**
    * 发送一条用户消息（messages.send）：core 侧落库 + 投递一步完成。
    * 空文本 + 无附件由组件层拦截，不发出请求。
+   *
+   * `conversationId` 由调用方显式给出并**只发往它**——发送是异步的（要等上传落定，
+   * 最长 60 秒），期间用户可能已切到别的会话；若按「调用时的当前会话」发，文本会误投
+   * 进新会话。因此这里不依赖 `#chat`。
+   *
+   * 返回 `{ ok: true }` = core 已受理；失败返回错误码，**不在这里 toast**——调用方
+   * （composer-send）要先按错误码/附件状态判因再决定提示（附件失效 vs 通用错误），
+   * 并据此回填输入内容（不能把用户的内容吞掉）。
    */
   async send(
+    conversationId: string,
     text: string,
     options: { mentions?: string[]; replyTo?: string | null; attachmentIds?: string[] } = {},
-  ): Promise<void> {
-    const chat = this.#chat;
-    if (!chat) return;
+  ): Promise<{ ok: true } | { ok: false; code: string | undefined }> {
     try {
       await core.call('messages.send', {
-        conversationId: chat.conversation.id,
+        conversationId,
         text,
         ...(options.mentions !== undefined && options.mentions.length > 0
           ? { mentions: options.mentions }
@@ -533,10 +540,17 @@ class ChatState {
           ? { attachmentIds: options.attachmentIds }
           : {}),
       });
-      this.replyTo = null;
+      // 引用回复是当前会话的瞬态；发的是别的会话（用户已切走）时不能清掉眼前会话的引用。
+      if (this.#chat?.conversation.id === conversationId) this.replyTo = null;
+      return { ok: true };
     } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return { ok: false, code: errorCode(error) };
     }
+  }
+
+  /** 发送失败的通用提示（附件失效等可归因的情形由调用方另行提示）。 */
+  reportSendFailure(code: string | undefined): void {
+    toast.error(errorText(code, t('chats.errorCode.INTERNAL')));
   }
 
   // --- inline setup（对话内设置引导，docs/design/18-inline-setup.md）-----------

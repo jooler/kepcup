@@ -122,3 +122,31 @@ describe('attachments.detach（仅未发送的上传可移除）', () => {
     });
   });
 });
+
+describe('attachments.status（草稿 chip 存在性批量查询）', () => {
+  it('一次往返区分 pending / sent / missing；换个对话查同一 id 算 missing', async () => {
+    const pending = await upload('p.pdf', 'application/pdf');
+    const sentAtt = await upload('s.png');
+    await stack.core.rpc.call('messages.send', {
+      conversationId: conv.id,
+      text: '发出去',
+      attachmentIds: [sentAtt.id],
+    });
+    const result = (await stack.core.rpc.call('attachments.status', {
+      conversationId: conv.id,
+      ids: [pending.id, sentAtt.id, 'att_does_not_exist'],
+    })) as { statuses: Array<{ id: string; state: string }> };
+    expect(result.statuses).toEqual([
+      { id: pending.id, state: 'pending' },
+      { id: sentAtt.id, state: 'sent' },
+      { id: 'att_does_not_exist', state: 'missing' },
+    ]);
+
+    const other = await openDirect(stack.core, (await makeBot(stack.core, '附件乙')).id);
+    const foreign = (await stack.core.rpc.call('attachments.status', {
+      conversationId: other.id,
+      ids: [pending.id],
+    })) as { statuses: Array<{ id: string; state: string }> };
+    expect(foreign.statuses).toEqual([{ id: pending.id, state: 'missing' }]);
+  });
+});

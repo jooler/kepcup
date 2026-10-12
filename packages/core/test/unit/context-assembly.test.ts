@@ -246,7 +246,6 @@ describe('conversation context', () => {
               id: 'att_1',
               conversationId: 'conv_1',
               messageId: 'msg_9',
-              draftId: null,
               fileName: 'error.log',
               mime: 'text/plain',
               size: 12_288,

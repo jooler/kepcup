@@ -15,6 +15,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { resolveComposerAction } from './key-handling';
   import { buildMentionTargets, type MentionTarget } from './composer-text';
+  import { createSendGuard, performComposerSend } from './composer-send';
   import {
     collectMentionTokens,
     composerMention,
@@ -36,6 +37,7 @@
   import { sensors } from '$lib/sensors/sensors.svelte';
   import { SensorDisabledError } from '$lib/sensors/types';
   import { shell } from '$lib/stores/shell.svelte';
+  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
   let {
     readOnly = false,
@@ -440,29 +442,96 @@
   });
 
   /**
+   * 防重入（按会话分闸）：同一会话上传未完成时连按两次 Enter / 点发送，第二次直接
+   * 忽略；会话 A 还在等上传时切到 B，B 的发送不受 A 影响。
+   */
+  const sendGuard = createSendGuard();
+
+  /**
    * 直发当前内容（docs/design/01-conversation.md 输入与发送）。markdown/提及/
    * 引用在进 await 前捕获，编辑器同步清空——对齐原 textarea 的键入语义：
-   * 连续 Enter / 自动化脚本不会踩到尚未清空的旧内容（清空放在异步发送之后
-   * 会把它抹掉）。缺设置门禁拦下时不清空、不上传：内容原样留在输入框，
-   * 设置完成后用户再按一次发送。
+   * 清空放在异步发送之后会把用户接着键入的新内容抹掉。缺设置门禁拦下时不清空、
+   * 不上传：内容原样留在输入框，设置完成后用户再按一次发送。
+   *
+   * 编排见 composer-send.ts：等上传落定后重新判空；附件 chip 发送成功才摘，
+   * 失败则回填文本（chip 本就没动）；整个过程由 sendGuard 防重入。
    */
   async function sendCurrent(): Promise<void> {
     const ed = editor;
     const conversationId = chat.current?.conversation.id;
     if (ed === null || !conversationId) return;
+    if (sendGuard.isBusy(conversationId)) return;
     const markdown = ed.getMarkdown();
     const trimmed = markdown.trim();
     if (trimmed.length === 0 && pendingUploads.length === 0) return;
     if (chat.gateForSend()) return;
     const tokens = mergeMentionTokens(ed.getJSON(), markdown, mentionTargets);
     const replyToId = replyTo?.id ?? null;
-    ed.commands.clearContent();
-    const attachmentIds = await composerDrafts.settle(conversationId);
-    await chat.send(trimmed, {
-      ...(tokens.length > 0 ? { mentions: tokens } : {}),
-      ...(replyToId !== null ? { replyTo: replyToId } : {}),
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+    const docSnapshot = ed.getJSON();
+    await sendGuard.run(conversationId, async () => {
+      ed.commands.clearContent();
+      await performComposerSend(trimmed, {
+        settle: () => composerDrafts.settle(conversationId),
+        // 显式只发往发起发送时的会话：等上传期间用户可能已切走。
+        send: (text, attachmentIds) =>
+          chat.send(conversationId, text, {
+            ...(tokens.length > 0 ? { mentions: tokens } : {}),
+            ...(replyToId !== null ? { replyTo: replyToId } : {}),
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          }),
+        commit: (attachmentIds) => {
+          composerDrafts.commitSent(conversationId, attachmentIds);
+          if (replyToId !== null) composerDrafts.clearReply(conversationId);
+        },
+        restore: () => restoreComposerContent(ed, docSnapshot, conversationId),
+        inspectAttachments: (attachmentIds) =>
+          composerDrafts.inspectAttachments(conversationId, attachmentIds),
+        onAttachmentIssue: (issue) => {
+          const nameOf = (id: string): string =>
+            composerDrafts
+              .uploadsOf(conversationId)
+              .find((upload) => upload.attachmentId === id)?.fileName ?? id;
+          composerDrafts.discardAttachments(conversationId, issue);
+          if (issue.sent.length > 0) {
+            toast.error(
+              t('composer.attachmentIssueSent', { names: issue.sent.map(nameOf).join('、') }),
+            );
+          }
+          if (issue.missing.length > 0) {
+            toast.error(
+              t('composer.attachmentIssueMissing', { names: issue.missing.map(nameOf).join('、') }),
+            );
+          }
+        },
+        reportFailure: (code) => chat.reportSendFailure(code),
+      });
     });
+  }
+
+  /**
+   * 发送失败：把发送前清掉的内容放回编辑器。用户在等待期间已键入新内容时，
+   * 旧内容插到最前面而不是覆盖它；用户已切到别的会话时，改写回原会话的草稿缓存
+   *（那边仍为空才写，不覆盖），回到该会话即可见——内容不会因发送失败而丢。
+   */
+  function restoreComposerContent(ed: Editor, doc: JSONContent, conversationId: string): void {
+    if (editor !== ed || ed.isDestroyed || chat.current?.conversation.id !== conversationId) {
+      const cached = composerDrafts.loadDraft(conversationId);
+      if (isComposerDocEmpty(cached.doc)) {
+        composerDrafts.saveComposerDoc(
+          conversationId,
+          doc,
+          collectMentionTokens(doc),
+          cached.reply,
+        );
+      }
+      return;
+    }
+    if (ed.isEmpty) {
+      ed.commands.setContent(doc);
+    } else if (doc.content !== undefined && doc.content.length > 0) {
+      ed.commands.insertContentAt(0, doc.content);
+    }
+    syncFromEditor(ed);
   }
 
   async function onSendClick(): Promise<void> {
@@ -481,14 +550,14 @@
     return () => clearInterval(timer);
   });
 
-  // 录音中 Esc 取消；组件卸载（切会话/关窗）丢弃录音并释放麦克风。
+  // 录音中 Esc 取消（走仲裁器，优先级在所有覆盖层之下：有层开着时 Esc 先关那一层，
+  // 不会一次 Esc 既取消录音又关掉层）；组件卸载（切会话/关窗）丢弃录音并释放麦克风。
   $effect(() => {
     if (recording === null) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') void finishRecording(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.inline,
+      onEscape: () => void finishRecording(false),
+    });
   });
   $effect(() => () => {
     recordingSession += 1;

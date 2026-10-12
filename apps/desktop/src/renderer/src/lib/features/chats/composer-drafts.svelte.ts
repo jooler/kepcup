@@ -6,6 +6,12 @@ import { core } from '$lib/rpc/client.svelte';
 import { toast } from 'svelte-sonner';
 import { attachmentUrl } from './attachments.svelte';
 import {
+  classifyAttachmentStatuses,
+  readyAttachmentIds,
+  type AttachmentIssue,
+  type AttachmentStatusLike,
+} from './composer-send';
+import {
   buildPersistedSnapshot,
   loadPersistedDrafts,
   writePersistedDrafts,
@@ -139,7 +145,12 @@ class ComposerDraftsState {
     };
   }
 
-  /** 进入会话：把快照晋升为 runtime（幂等）；图片附件的预览经 attachments.get 重建。 */
+  /**
+   * 进入会话：把快照晋升为 runtime（幂等）。恢复出来的附件 chip 不能直接信：core 会在
+   * 7 天后回收未绑定附件（AttachmentsService.sweepOrphans），也可能已被先前一次受理了的
+   * 发送占用——所以对**所有**附件（不只图片）经 attachments.status 一次往返校验，
+   * 失效的摘掉；图片再经 attachments.get 重建预览。
+   */
   hydrate(conversationId: string): void {
     if (this.#runtime[conversationId] !== undefined) return;
     const saved = this.#snapshot[conversationId];
@@ -159,14 +170,78 @@ class ComposerDraftsState {
       reply: saved?.reply ?? null,
       uploads,
     };
-    for (const upload of uploads) {
+    if (uploads.length > 0) void this.#verifyRestored(conversationId, uploads);
+  }
+
+  async #verifyRestored(conversationId: string, restored: PendingUpload[]): Promise<void> {
+    let found: AttachmentIssue | null = null;
+    try {
+      found = await this.inspectAttachments(
+        conversationId,
+        restored.map((upload) => upload.attachmentId as string),
+      );
+    } catch {
+      // 查不出（core 暂不可用等）：不据此丢 chip——发送时若真失效会按错误码再判因。
+    }
+    if (found !== null) {
+      const issue = found;
+      const gone = this.discardAttachments(conversationId, issue);
+      if (issue.missing.length > 0) {
+        const names = restored
+          .filter((upload) => issue.missing.includes(upload.attachmentId as string))
+          .map((upload) => upload.fileName);
+        toast.info(t('composer.attachmentExpired', { names: names.join('、') }));
+      }
+      if (gone !== null) restored = restored.filter((upload) => !gone.has(upload.key));
+    }
+    // 预览：仅图片；已被丢弃的 chip 不再请求。
+    for (const upload of restored) {
       if (!upload.mime.startsWith('image/') || upload.attachmentId === null) continue;
+      if (this.#runtime[conversationId]?.uploads.every((u) => u.key !== upload.key)) continue;
       const key = upload.key;
-      const attachmentId: string = upload.attachmentId;
-      void attachmentUrl({ id: attachmentId, mime: upload.mime } as Attachment)
+      void attachmentUrl({ id: upload.attachmentId, mime: upload.mime } as Attachment)
         .then((url) => this.patchUpload(conversationId, key, { previewUrl: url }))
         .catch(() => this.#dropUpload(conversationId, key));
     }
+  }
+
+  /** 批量查附件状态（core 一次往返，不读字节），归类为失效附件。 */
+  async inspectAttachments(
+    conversationId: string,
+    attachmentIds: readonly string[],
+  ): Promise<AttachmentIssue> {
+    if (attachmentIds.length === 0) return { missing: [], sent: [] };
+    const result = (await core.call('attachments.status', {
+      conversationId,
+      ids: [...attachmentIds],
+    })) as { statuses: AttachmentStatusLike[] };
+    return classifyAttachmentStatuses(result.statuses);
+  }
+
+  /**
+   * 摘掉失效附件对应的 chip（不 detach：missing 已不存在，sent 已属于某条消息）。
+   * 返回被摘掉的 chip key 集合（无则 null）。
+   */
+  discardAttachments(conversationId: string, issue: AttachmentIssue): Set<string> | null {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined) return null;
+    const dead = new Set([...issue.missing, ...issue.sent]);
+    const gone = entry.uploads.filter(
+      (upload) => upload.attachmentId !== null && dead.has(upload.attachmentId),
+    );
+    if (gone.length === 0) return null;
+    for (const upload of gone) this.#revokePreview(upload);
+    entry.uploads = entry.uploads.filter((upload) => !gone.includes(upload));
+    this.#schedulePersist();
+    return new Set(gone.map((upload) => upload.key));
+  }
+
+  /** 消息已发出后清掉该会话缓存里的引用回复（用户已切走时，回来不应还挂着旧引用）。 */
+  clearReply(conversationId: string): void {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined || entry.reply === null) return;
+    entry.reply = null;
+    this.#schedulePersist();
   }
 
   /** 文档/提及/引用变化写回缓存（保存分支每个键程都会进来；落盘是防抖的）。 */
@@ -234,9 +309,10 @@ class ComposerDraftsState {
   }
 
   /**
-   * 等待在途上传完成，返回可发送的附件 id。已就绪/失败的条目从 chip 区移除
-   * （预览随之释放）；超时仍未完成的保留在原地（随下一条草稿发出或手动
-   * 移除），不再静默丢弃。
+   * 等待在途上传完成，返回可发送的附件 id。**不移除任何 chip**：就绪的 chip
+   * 要等发送成功后由 commitSent 摘掉（发送失败时它们原样留在输入框，可直接
+   * 重试，不会变成孤儿）；上传失败的 chip 留着显示错误，由用户手动移除；
+   * 超时仍未完成的同样保留，不静默丢弃。
    */
   async settle(conversationId: string): Promise<string[]> {
     for (let guard = 0; guard < 600; guard += 1) {
@@ -247,16 +323,24 @@ class ComposerDraftsState {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     const entry = this.#runtime[conversationId];
-    if (entry === undefined) return [];
-    const ids = entry.uploads
-      .filter((upload) => upload.state === 'ready' && upload.attachmentId !== null)
-      .map((upload) => upload.attachmentId as string);
-    for (const upload of entry.uploads) {
-      if (upload.state !== 'uploading') this.#revokePreview(upload);
-    }
-    entry.uploads = entry.uploads.filter((upload) => upload.state === 'uploading');
+    return entry === undefined ? [] : readyAttachmentIds(entry.uploads);
+  }
+
+  /**
+   * 消息已发出：摘掉随它发出的附件 chip（释放预览，不 detach——附件已转正属于
+   * 该消息）。其余 chip（上传失败 / 仍在上传）原样保留。
+   */
+  commitSent(conversationId: string, attachmentIds: readonly string[]): void {
+    const entry = this.#runtime[conversationId];
+    if (entry === undefined || attachmentIds.length === 0) return;
+    const sent = new Set(attachmentIds);
+    const gone = entry.uploads.filter(
+      (upload) => upload.attachmentId !== null && sent.has(upload.attachmentId),
+    );
+    if (gone.length === 0) return;
+    for (const upload of gone) this.#revokePreview(upload);
+    entry.uploads = entry.uploads.filter((upload) => !gone.includes(upload));
     this.#schedulePersist();
-    return ids;
   }
 
   /** 移除 chip：等在途上传落定后把 core 侧附件行与文件一并清掉（不留孤儿）。 */

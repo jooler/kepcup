@@ -8,7 +8,7 @@ import type { ImageGenerationResult } from '../media/types.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { ToolGateway } from '../gateway/index.js';
-import type { GeneratedMediaDelivery } from './index.js';
+import { mediaDeliveryResult, type GeneratedMediaDelivery } from './media-delivery.js';
 import { resolveMediaSource } from './media-source.js';
 import { readOnlyRefusal } from './read-only.js';
 
@@ -155,13 +155,15 @@ export function buildImageTools(input: {
       const paths = truncateToBudget(saved.join('\n'), TOOL_OUTPUT_MAX_CHARS).text;
       if (input.delivery !== undefined) {
         // 确定性投递：图片立即作为消息附件发进对话（任务内为进度消息），
-        // 不依赖模型再调 send_message——漏发会让「已生成」的报告无图可看。
-        // 不把文件路径回给模型：它只会把绝对路径复述给用户（噪声）。
-        input.delivery.send(saved, '');
-        return {
-          ok: true,
-          content: `已生成 ${saved.length} 张图片，并已作为消息附件显示在用户的对话界面中。无需再调 send_message，也不要向用户复述文件路径；只需用一句话向用户确认生成结果。`,
-        };
+        // 不依赖模型再调 send_message。全部送达才不回路径（模型只会向用户复述
+        // 绝对路径）；有失败则把未送达的路径与原因交还模型补救。
+        const outcome = input.delivery.send(saved, '');
+        return mediaDeliveryResult({
+          generated: `${saved.length} 张图片`,
+          saved,
+          outcome,
+          successHint: '只需用一句话向用户确认生成结果。',
+        });
       }
       return {
         ok: true,

@@ -86,9 +86,12 @@ describe('main 0018 task_events 迁移', () => {
         task_id: null,
       })),
     );
-    // 0030 直发改造删除了草稿阶段的 draft_id 列；其余列与行原样保留。
+    // 0030 直发改造删除了草稿阶段的 draft_id 列；0033 回收遗弃很久的未绑定附件行
+    // （att_2：message_id 为空且创建于 1970 年）；已绑定消息的附件行与其余列原样保留。
     expect(db.prepare('select * from attachments order by id').all()).toEqual(
-      attachmentsBefore.map(({ draft_id: _draftId, ...rest }) => rest),
+      attachmentsBefore
+        .filter((row) => row['message_id'] !== null)
+        .map(({ draft_id: _draftId, ...rest }) => rest),
     );
     expect(
       db.prepare("select message_id from messages_fts where messages_fts match '世界'").all(),
@@ -111,8 +114,13 @@ describe('main 0018 task_events 迁移', () => {
         }
       ).sql,
     ).not.toContain('messages_new');
+    // 迁移后新上传、尚未绑定消息的附件（0033 只回收遗弃很久的行）：级联只带走 msg_1 的附件。
+    db.prepare(
+      `insert into attachments (id, conversation_id, message_id, file_name, mime, size, sha256, rel_path, created_at)
+       values ('att_3', 'conv_a', null, 'c.txt', 'text/plain', 1, 'h3', 'c.txt', ?)`,
+    ).run(Date.now());
     db.prepare("delete from messages where id = 'msg_1'").run();
-    expect(db.prepare('select id from attachments order by id').all()).toEqual([{ id: 'att_2' }]);
+    expect(db.prepare('select id from attachments order by id').all()).toEqual([{ id: 'att_3' }]);
     // Conversation cascade still reaches messages.
     db.prepare("delete from conversations where id = 'conv_a'").run();
     expect(db.prepare('select count(*) as n from messages').get()).toEqual({ n: 0 });

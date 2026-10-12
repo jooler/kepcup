@@ -878,6 +878,19 @@ export const attachmentsGetOutputSchema = z.object({
   attachment: attachmentSchema,
   dataBase64: z.string(),
 });
+/**
+ * 批量查附件状态（输入框草稿水合 / 发送失败判因；不读字节）：pending = 仍可发送，
+ * sent = 已随消息发出，missing = 不存在 / 不属于该对话 / 文件已被回收。
+ */
+export const attachmentsStatusInputSchema = z.object({
+  conversationId: z.string().min(1),
+  ids: z.array(z.string().min(1)).min(1).max(100),
+});
+export const attachmentsStatusOutputSchema = z.object({
+  statuses: z.array(
+    z.object({ id: z.string(), state: z.enum(['pending', 'sent', 'missing']) }),
+  ),
+});
 /** 移除未发送的附件（输入框里已上传、尚未随消息发出的 chip）。 */
 export const attachmentsDetachInputSchema = z.object({ id: z.string().min(1) });
 export const attachmentsDetachOutputSchema = z.object({ ok: z.literal(true) });
@@ -1776,6 +1789,10 @@ export const rpcMethodSchemas = {
     output: attachmentsUploadOutputSchema,
   },
   'attachments.get': { input: attachmentsGetInputSchema, output: attachmentsGetOutputSchema },
+  'attachments.status': {
+    input: attachmentsStatusInputSchema,
+    output: attachmentsStatusOutputSchema,
+  },
   'attachments.detach': {
     input: attachmentsDetachInputSchema,
     output: attachmentsDetachOutputSchema,
@@ -2151,6 +2168,7 @@ const APP_METHODS = [
   'messages.send',
   'attachments.upload',
   'attachments.get',
+  'attachments.status',
   'attachments.detach',
   'runs.cancel',
   'runs.retry',

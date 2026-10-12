@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import { mediaViewer, isLocalMedia } from './media-viewer.svelte';
   import { attachmentUrl, downloadAttachment } from './attachments.svelte';
+  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
 
   /**
    * 媒体灯箱（docs/design/20-conversation-media.md）：全屏遮罩 + 缩放平移
@@ -99,10 +100,19 @@
 
   function onKeydown(event: KeyboardEvent): void {
     if (!mediaViewer.open) return;
-    if (event.key === 'Escape') mediaViewer.close();
     if (event.key === 'ArrowRight') mediaViewer.step(1);
     if (event.key === 'ArrowLeft') mediaViewer.step(-1);
   }
+
+  // Esc 走仲裁器（shell/escape-layers.ts）：灯箱压在 Bot 覆盖层 / 设置页之上，一次 Esc
+  // 只关灯箱，不连带关掉其下的层（过去各挂一个 window keydown，互相拦不住）。
+  $effect(() => {
+    if (!mediaViewer.open) return;
+    return registerEscapeLayer({
+      priority: ESCAPE_PRIORITY.lightbox,
+      onEscape: () => mediaViewer.close(),
+    });
+  });
 
   async function download(): Promise<void> {
     if (current === null) return;
