@@ -32,7 +32,7 @@
 - [x] 事件 `handover.updated`（卡片进度）；系统事件常量 `BOT_HANDOVER_EVENT`（B 侧交接说明）/ `BOT_HANDED_OVER_EVENT`（A 侧已移交）及其 content 形态（参照 `ROUTE_SUGGESTION_EVENT`）。
 - [x] 常量：`HANDOVER_ITEMS_MAX`（100）、`HANDOVER_NOTE_MAX_CHARS`（2000）、`HANDOVER_MEMORY_MAX_ITEMS`（200，P1 用）。
 
-### 3.2 迁移（main 0036 暂定）
+### 3.2 迁移（main 0036）
 
 - [x] `bot_handovers`、`bot_handover_items`（字段见设计 §5.1）。
 - [x] 重建 `approvals`，CHECK 增 `bot_handover`（照 0031 的写法）。
@@ -152,7 +152,7 @@
 
 **评审时请重点看**：`dispatch/handover.ts` 的执行 / 恢复 / 结算顺序与幂等（`isApplied` → `validate` → `apply`，move 的 `release` 在阶段 5）；`MailService.retargetPendingAlerts`（只动 pending、按新去重键入队再取消旧作业）；`ScheduleService.transferTo` 事务与 `transferredTo` 的字段比对兜底；`approvals.decide` 的 `handoverSelection` 校验；`propose` 的 key 校验与置灰；渲染端 `HandoverCard` 的勾选 / 进度状态推导。已知未覆盖：移交时 A 正在运行的、用到该邮箱的任务不会被中断（与在设置页解绑一致，§7 风险已接受）；已在跑（claimed）的 `mail_alert` 作业不改投。
 
-**迁移号**：0035（暂定，见 DEV-001）。
+**迁移号**：开发期 0035（见 DEV-001）；合入 main 时 D87 已占 0035，改为 **0036**（`0036_bot_handover.sql`，`user_version` = 36）。
 
 ### P0 审查修复（2026-10-12，独立 opus 审查 064cbdd..312cc85，无 critical）
 
@@ -179,7 +179,7 @@
 - 全量（容器 `kh-full3`）：4070 例，4041 通过 / 27 失败。26 条为既有基线文件（同前）；另 1 条 `connected-apps-runtime`「listing failure at run start」是负载偶发，单跑 13/13 通过，修复前的全量里也是通过的。无新增失败。
 - e2e（容器 `kh-e2e-full3`，92 例）：85 通过 / 6 失败 / 1 flaky，`handover.spec` 通过。失败与上一轮完全相同：`wiki.spec`（已知基线）与 `debug-dev-pin`、`external-agents` ×3、`local-connectors`（在 main@064cbdd 上同样失败，已核实）；`sandbox.spec`「run status line」重试后通过（已知基线 flaky）。
 - 另一轮全量复跑（`kh-full3`，协调会话）偶发项换成 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」5 秒超时，单跑 12/12 通过；其余同上，无新增失败。
-- **迁移号**：D87 已先合入 main（4184d87）并占用 0035；本分支合入时改为 **0036**（同步 `create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表）。
+- **迁移号**：D87 已先合入 main（4184d87）并占用 0035；合入时已改为 **0036**（`create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表已同步）。
 
 ## 7. 风险
 

@@ -52,6 +52,7 @@ flowchart LR
 type LoopType =
   | 'turn' | 'task'                       // D75：对话轮（只读）/ 任务（task_writes=false 时只读）
   | 'subagent'                            // D66：任务内 delegate_task 的嵌套子 run
+  | 'widget_authoring'                    // D87：任务内 widget_craft 的制作阶段 run（嵌套，不产生对话消息）
   | 'triage' | 'reflection' | 'memory_consolidation'
   | 'profile_curation' | 'wiki_maintenance' | 'skill_authoring' | 'conversation_summary'
   | 'host';                               // 仅 core：宿主伪身份（回退、系统安装、技能导入审批），不落 runs 行，可写

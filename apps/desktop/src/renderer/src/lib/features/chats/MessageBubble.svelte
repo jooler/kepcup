@@ -14,6 +14,7 @@
   import MailCard from '$lib/features/mail/MailCard.svelte';
   import McpAppCard from '$lib/features/apps-ui/McpAppCard.svelte';
   import BotWidgetCard from '$lib/features/widgets/BotWidgetCard.svelte';
+  import PresentCard from '$lib/features/present/PresentCard.svelte';
   import TaskQuestionCard from '$lib/features/tasks/TaskQuestionCard.svelte';
   import SetupQuestionCard from './SetupQuestionCard.svelte';
   import SetupPathCard from './SetupPathCard.svelte';
@@ -98,6 +99,16 @@
       ? { messageId: message.id, card: message.content.widget }
       : null,
   );
+  // D87 P4 L1 声明式展示卡：数据就在卡片里，宿主组件渲染（无代码、无需确认）。
+  const presentCard = $derived(
+    isCard &&
+      'cardType' in message.content &&
+      message.content.cardType === 'present' &&
+      'present' in message.content &&
+      message.content.present !== undefined
+      ? message.content.present
+      : null,
+  );
   const cardRunId = $derived(
     isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
   );
@@ -109,6 +120,7 @@
       watchCard === null &&
       appUiCard === null &&
       widgetCard === null &&
+      presentCard === null &&
       'approvalId' in message.content
       ? (permissions.approvals[message.content.approvalId] ?? null)
       : null,
@@ -204,6 +216,11 @@
   <!-- D81 Bot 自制交互组件卡：居中信息卡，审查态 + 沙箱 iframe -->
   <div class="flex justify-center py-1" data-testid="card-message">
     <BotWidgetCard messageId={widgetCard.messageId} card={widgetCard.card} />
+  </div>
+{:else if presentCard !== null}
+  <!-- D87 P4 L1 声明式展示卡：表格 / 图表 / 指标 / 步骤 / 时间线 / 对比 -->
+  <div class="flex justify-center py-1" data-testid="card-message">
+    <PresentCard card={presentCard} />
   </div>
 {:else if watchCard !== null}
   <!-- W7 监看卡：信息卡，居中；提醒卡带变化摘要 -->

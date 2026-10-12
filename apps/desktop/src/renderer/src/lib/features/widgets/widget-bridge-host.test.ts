@@ -26,6 +26,7 @@ interface Reply {
 function harness(options?: {
   storage?(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput>;
   query?(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput>;
+  userActivation?: () => boolean;
 }) {
   const replies: Reply[] = [];
   const frameWindow = {
@@ -47,6 +48,7 @@ function harness(options?: {
   const storageCalls: WidgetsUiStorageCall[] = [];
   const queryCalls: WidgetsUiQueryCall[] = [];
   const openLinkCalls: string[] = [];
+  const replyCalls: string[] = [];
   const host = WidgetBridgeHost.connect({
     frameWindow,
     resourceId: 'res_1',
@@ -71,6 +73,11 @@ function harness(options?: {
       openLinkCalls.push(url);
       return url === 'https://good.example/';
     },
+    reply: async (text) => {
+      replyCalls.push(text);
+      return true;
+    },
+    userActivation: options?.userActivation ?? (() => true),
     onHeight: (value) => {
       heights.push(value);
     },
@@ -82,7 +89,7 @@ function harness(options?: {
   const settled = async (): Promise<void> => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
-  return { host, replies, heights, storageCalls, queryCalls, openLinkCalls, emit, settled };
+  return { host, replies, heights, storageCalls, queryCalls, openLinkCalls, replyCalls, emit, settled };
 }
 
 const widgetMessage = (overrides: Record<string, unknown>): Record<string, unknown> => ({
@@ -169,6 +176,31 @@ describe('WidgetBridgeHost', () => {
       [1, false, undefined, 'INVALID_INPUT'],
       [2, true, true, undefined],
     ]);
+    h.host.destroy();
+  });
+
+  test('reply: trimmed non-empty text within the cap reaches the confirm callback', async () => {
+    const h = harness();
+    h.emit(widgetMessage({ id: 1, type: 'reply', payload: { text: '   ' } }));
+    h.emit(widgetMessage({ id: 2, type: 'reply', payload: { text: 'x'.repeat(2001) } }));
+    h.emit(widgetMessage({ id: 3, type: 'reply', payload: { text: ' 清单：牛奶、鸡蛋 ' } }));
+    await h.settled();
+    expect(h.replyCalls).toEqual(['清单：牛奶、鸡蛋']);
+    expect(h.replies.map((r) => [r.id, r.ok, r.value, r.code])).toEqual([
+      [1, false, undefined, 'INVALID_INPUT'],
+      [2, false, undefined, 'INVALID_INPUT'],
+      [3, true, true, undefined],
+    ]);
+    h.host.destroy();
+  });
+
+  test('reply without a user gesture resolves false and never reaches the confirm bar', async () => {
+    // 组件可以绕过垫片直接发桥消息：宿主自己再核一次手势。
+    const h = harness({ userActivation: () => false });
+    h.emit(widgetMessage({ id: 1, type: 'reply', payload: { text: '清单' } }));
+    await h.settled();
+    expect(h.replyCalls).toEqual([]);
+    expect(h.replies.map((r) => [r.id, r.ok, r.value])).toEqual([[1, true, false]]);
     h.host.destroy();
   });
 
@@ -290,4 +322,22 @@ describe('WidgetBridgeHost', () => {
     expect(h.replies).toHaveLength(0);
     expect(h.storageCalls).toHaveLength(0);
   });
+
+  test('setTheme：推送主题事件（同值不推），之后 theme.get 回新主题；destroy 后不再推（D87 P3b）', async () => {
+    const h = harness();
+    h.host.setTheme('dark');
+    expect(h.replies).toHaveLength(0);
+    h.host.setTheme('light');
+    expect(h.replies).toEqual([{ source: 'kepcup-host', event: 'theme', theme: 'light' }]);
+    h.emit({ source: 'kepcup-widget', id: 9, type: 'theme.get', payload: {} });
+    await h.settled();
+    expect(h.replies.at(-1)).toMatchObject({ id: 9, ok: true, value: 'light' });
+    // iframe 加载完成时强制重推（文档就绪前的推送会丢）。
+    h.host.setTheme('light', { force: true });
+    expect(h.replies.at(-1)).toEqual({ source: 'kepcup-host', event: 'theme', theme: 'light' });
+    h.host.destroy();
+    h.host.setTheme('dark', { force: true });
+    expect(h.replies).toHaveLength(3);
+  });
 });
+

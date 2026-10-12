@@ -159,6 +159,10 @@ export const ERROR_CODES = [
   'WIDGET_REVIEW_REQUIRED',
   /** Bot 组件（D81 审查修复）：每 Bot 组件数 / 版本总字节配额已满。 */
   'WIDGET_LIMIT',
+  /** Bot 组件制作（D87）：制作 loop 没能交付（有阻断项 / 时限 / 预算 / 被取消），回执里有原因与 craftId。 */
+  'WIDGET_CRAFT_FAILED',
+  /** Bot 组件制作（D87）：没有可用于制作的模型（无内置模型、也没有可用的后台 Agent）。 */
+  'WIDGET_CRAFT_UNAVAILABLE',
   /** 邮件通道（D84）：账号没交给当前 Bot / 登录失败 / 连不上 / 厂商预设还不能用。 */
   'MAIL_NOT_BOUND',
   'MAIL_AUTH_FAILED',

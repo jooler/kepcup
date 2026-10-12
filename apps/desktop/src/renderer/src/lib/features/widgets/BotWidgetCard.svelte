@@ -2,12 +2,15 @@
   import { onMount, tick } from 'svelte';
   import { Blocks, Code2, RefreshCw, ShieldCheck } from '@lucide/svelte';
   import { mode } from 'mode-watcher';
+  import { toast } from 'svelte-sonner';
   import {
     BOT_WIDGET_CONSENT_STORAGE_KEY,
     BOT_WIDGET_CONSENTS_MAX,
     BOT_WIDGET_HEIGHT_MAX,
     BOT_WIDGET_HEIGHT_MIN,
     MCP_APP_LINK_COOLDOWN_MS,
+    WIDGET_REPLY_COOLDOWN_MS,
+    widgetsUiReplyOutputSchema,
     widgetsUiOpenLinkOutputSchema,
     widgetsUiOpenOutputSchema,
     widgetsUiQueryOutputSchema,
@@ -27,6 +30,7 @@
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
+  import { checkBadge } from './check-status';
 
   /**
    * 对话里的 Bot 自制交互组件卡片（D81，docs/design/32-bot-widgets.md）。
@@ -64,11 +68,21 @@
   let sourceLoading = $state(false);
   /** 未上报前的缺省高度；组件可用 `kepcup.setHeight` 自适应（夹到 [100, 800]）。 */
   let height = $state(380);
+  /** 自检徽标（`legacy` 为 null）与「已知问题」展开态。 */
+  const badge = $derived(checkBadge(card.checkStatus));
+  let issuesOpen = $state(false);
   /** 查看源码的展示上限：本地库损坏时 html 可能远超 2MB 上限，整段渲染会卡死界面。 */
   const SOURCE_DISPLAY_MAX_CHARS = 20_000;
   let pendingLink = $state<{ url: string; resolve: (ok: boolean) => void } | null>(null);
   /** 一条外链被取消后的冷却（防反复弹确认条），与 McpAppCard 同值。 */
   let linkBlockedUntil = 0;
+  /**
+   * D87 P4 L3 回传确认（设计 32 §12.3）：组件请求把一段文字作为用户消息发回对话。确认条与外链
+   * 共用单例（同一时刻只挂一条），每次（发出或取消）后冷却 WIDGET_REPLY_COOLDOWN_MS——不能静默
+   * 发送，也不能连发刷屏。
+   */
+  let pendingReply = $state<{ text: string; resolve: (ok: boolean) => void } | null>(null);
+  let replyBlockedUntil = 0;
 
   let bridge: WidgetBridgeHost | null = null;
   let generation = 0;
@@ -77,12 +91,26 @@
   /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「加载」。 */
   const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
 
+  function currentTheme(): 'light' | 'dark' {
+    return mode.current === 'dark' ? 'dark' : 'light';
+  }
+
+  // D87 P3b：应用切换明暗时推给已挂载的组件（垫片更新 data-theme 并派发 kepcup:theme）。
+  $effect(() => {
+    const theme = currentTheme();
+    bridge?.setTheme(theme);
+  });
+
   async function start(): Promise<void> {
     const gen = ++generation;
     cardState = 'loading';
     errorCode = undefined;
     try {
-      const out = widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId }));
+      // 垫片按 open 时的主题烘焙进 HTML：桥从同一个主题起步（期间切换会在 load 时重推）。
+      const openedTheme = currentTheme();
+      const out = widgetsUiOpenOutputSchema.parse(
+        await core.call('widgets.ui.open', { messageId, theme: openedTheme }),
+      );
       if (gen !== generation) {
         void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
         return;
@@ -92,7 +120,7 @@
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
         reopen: async () =>
-          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId })).resourceId,
+          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId, theme: currentTheme() })).resourceId,
         discard: (resourceId) => {
           void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
         },
@@ -111,17 +139,25 @@
       bridge = WidgetBridgeHost.connect({
         frameWindow,
         resourceId: out.resourceId,
-        theme: mode.current === 'dark' ? 'dark' : 'light',
+        theme: openedTheme,
         storage: (input) => callStorage(input),
         query: (input) => callQuery(input),
         openLink: (url) =>
           new Promise<boolean>((resolve) => {
             // One confirmation at a time; a second request while one is open is refused.
-            if (pendingLink !== null || Date.now() < linkBlockedUntil) {
+            if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
               resolve(false);
               return;
             }
             pendingLink = { url, resolve };
+          }),
+        reply: (text) =>
+          new Promise<boolean>((resolve) => {
+            if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+              resolve(false);
+              return;
+            }
+            pendingReply = { text, resolve };
           }),
         onHeight: (value) => {
           height = value;
@@ -132,6 +168,14 @@
         bridge = null;
         return;
       }
+      const connected = bridge;
+      frame.addEventListener(
+        'load',
+        () => {
+          connected.setTheme(currentTheme(), { force: true });
+        },
+        { once: true },
+      );
       frame.src = out.url;
       cardState = 'ready';
     } catch (error) {
@@ -177,6 +221,8 @@
     generation += 1;
     pendingLink?.resolve(false);
     pendingLink = null;
+    pendingReply?.resolve(false);
+    pendingReply = null;
     const connected = bridge;
     bridge = null;
     connected?.destroy();
@@ -233,6 +279,30 @@
     pendingLink?.resolve(false);
     pendingLink = null;
     linkBlockedUntil = Date.now() + MCP_APP_LINK_COOLDOWN_MS;
+  }
+
+  async function confirmReply(): Promise<void> {
+    const reply = pendingReply;
+    if (reply === null || lease === null) return;
+    pendingReply = null;
+    replyBlockedUntil = Date.now() + WIDGET_REPLY_COOLDOWN_MS;
+    try {
+      const result = await withResource(async (resourceId) =>
+        widgetsUiReplyOutputSchema.parse(
+          await core.call('widgets.ui.reply', { resourceId, text: reply.text }),
+        ),
+      );
+      reply.resolve(result.ok);
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('botWidget.replyFailed')));
+      reply.resolve(false);
+    }
+  }
+
+  function cancelReply(): void {
+    pendingReply?.resolve(false);
+    pendingReply = null;
+    replyBlockedUntil = Date.now() + WIDGET_REPLY_COOLDOWN_MS;
   }
 
   onMount(() => {
@@ -315,6 +385,44 @@
 
   {#if cardState === 'review'}
     <div class="border-t px-3 py-2" data-testid="bot-widget-review">
+      {#if badge !== null}
+        <!-- D87 P3c 自检徽标：只说明它能运行、不代表安全；按版本确认照旧（设计 32 §11.12）。 -->
+        <div class="mb-1.5" data-testid="bot-widget-check">
+          <span
+            class="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium {badge.tone}"
+            data-testid="bot-widget-check-badge"
+            data-status={card.checkStatus}>{t(badge.label)}</span
+          >
+          {#if card.knownIssues.length > 0}
+            <button
+              type="button"
+              class="ml-1 text-[11px] text-muted-foreground underline underline-offset-2"
+              aria-expanded={issuesOpen}
+              aria-controls={`known-issues-${messageId}`}
+              onclick={() => (issuesOpen = !issuesOpen)}
+              data-testid="bot-widget-known-issues-toggle"
+            >
+              {t(issuesOpen ? 'botWidget.check.hideIssues' : 'botWidget.check.showIssues', {
+                n: card.knownIssues.length,
+              })}
+            </button>
+            {#if issuesOpen}
+              <ul
+                id={`known-issues-${messageId}`}
+                class="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground"
+                data-testid="bot-widget-known-issues"
+              >
+                {#each card.knownIssues as issue, index (index)}
+                  <li>{issue}</li>
+                {/each}
+              </ul>
+            {/if}
+          {/if}
+          <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-check-note">
+            {t('botWidget.check.note')}
+          </p>
+        </div>
+      {/if}
       <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <ShieldCheck class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <!-- 声明了查询的版本换专门文案：笼统的「读不到你的其他数据」会与下方查询提示自相矛盾。 -->
@@ -428,6 +536,38 @@
       onconfirm={() => void confirmLink()}
       oncancel={cancelLink}
     />
+  {/if}
+
+  {#if pendingReply !== null}
+    <div
+      class="border-t bg-sky-500/5 px-3 py-2 text-xs"
+      data-testid="bot-widget-reply-confirm"
+      role="alertdialog"
+      aria-label={t('botWidget.replyTitle')}
+    >
+      <p class="font-medium">{t('botWidget.replyTitle')}</p>
+      <p
+        class="mt-1 max-h-32 overflow-y-auto rounded border bg-background px-2 py-1 whitespace-pre-wrap break-words"
+        data-testid="bot-widget-reply-text"
+      >
+        {pendingReply.text}
+      </p>
+      <div class="mt-2 flex justify-end gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          class="h-6 px-2 text-xs"
+          onclick={cancelReply}
+          data-testid="bot-widget-reply-cancel">{t('botWidget.replyCancel')}</Button
+        >
+        <Button
+          size="sm"
+          class="h-6 px-2 text-xs"
+          onclick={() => void confirmReply()}
+          data-testid="bot-widget-reply-send">{t('botWidget.replyConfirm')}</Button
+        >
+      </div>
+    </div>
   {/if}
 
   {#if cardState === 'ready'}

@@ -1,10 +1,14 @@
 import { Type } from '@earendil-works/pi-ai';
 import {
   AppError,
+  ASK_USER_FIELDS_MAX,
   ASK_USER_OPTION_MAX_CHARS,
+  askUserFieldsSchema,
   TASK_INSTRUCTION_MAX_CHARS,
   TASK_SOURCE_MESSAGES_MAX,
   TASK_TITLE_MAX_CHARS,
+  type AskUserField,
+  type AskUserMode,
   type RunStatus,
 } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
@@ -109,7 +113,7 @@ export interface TaskToolFacade {
    */
   ask?(
     identity: RunIdentity,
-    input: { question: string; options: string[] },
+    input: { question: string; options: string[]; mode?: AskUserMode; fields?: AskUserField[] },
     signal: AbortSignal,
   ): Promise<string>;
 }
@@ -127,17 +131,45 @@ export function buildAskUserTool(input: {
   ask: NonNullable<TaskToolFacade['ask']>;
 }): ToolDefinition {
   const { identity, ask } = input;
-  const tool: ToolDefinition<{ question: string; options: string[] }> = {
+  const tool: ToolDefinition<{
+    question: string;
+    options?: string[];
+    mode?: AskUserMode;
+    fields?: unknown;
+  }> = {
     name: 'ask_user',
     description:
       '任务无法继续、必须由用户做决定时向用户提问：问题与候选答案以卡片形式出现在对话里，本次调用会一直等到用户回答（用户点选的选项，或在对话里自由回答后由对话中的你转交），返回用户的回答。' +
-      '只问真正需要用户拍板的事，一次一个问题；能自己判断的不要问。',
+      '只问真正需要用户拍板的事，一次一个问题；能自己判断的不要问。' +
+      `mode：single（缺省，单选）/ multi（多选，回答是选中项的 JSON 列表）/ form（简单表单，fields 至多 ${ASK_USER_FIELDS_MAX} 个字段，回答是「字段名 → 值」的 JSON）。只需补充几项信息时用 form，别连续问多次。`,
     parameters: Type.Object(
       {
         question: Type.String({ description: '要问用户的问题（说明背景与影响）' }),
-        options: Type.Array(Type.String(), {
-          description: `候选答案，1~${ASK_USER_OPTIONS_MAX} 个、每个不超过 ${ASK_USER_OPTION_MAX_CHARS} 字；用户也可以在对话里另行回答`,
-        }),
+        options: Type.Optional(
+          Type.Array(Type.String(), {
+            description: `single / multi 的候选答案，1~${ASK_USER_OPTIONS_MAX} 个（多选至少 2 个）、每个不超过 ${ASK_USER_OPTION_MAX_CHARS} 字；用户也可以在对话里另行回答`,
+          }),
+        ),
+        mode: Type.Optional(
+          Type.Union([Type.Literal('single'), Type.Literal('multi'), Type.Literal('form')], {
+            description: '提问方式，缺省 single',
+          }),
+        ),
+        fields: Type.Optional(
+          Type.Array(
+            Type.Object({
+              name: Type.String({ description: '字段键（字母 / 数字 / 下划线），回答 JSON 里用它' }),
+              label: Type.String({ description: '给用户看的字段名' }),
+              type: Type.Union(
+                [Type.Literal('text'), Type.Literal('number'), Type.Literal('date'), Type.Literal('select')],
+                { description: 'date 为 YYYY-MM-DD；select 需要 options' },
+              ),
+              options: Type.Optional(Type.Array(Type.String(), { description: 'select 的选项（2~12 个）' })),
+              required: Type.Optional(Type.Boolean()),
+            }),
+            { description: `form 的字段（1~${ASK_USER_FIELDS_MAX} 个）` },
+          ),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -150,6 +182,22 @@ export function buildAskUserTool(input: {
         question = nonEmpty(params.question, 'question', TASK_INSTRUCTION_MAX_CHARS);
       } catch (error) {
         return fail('INVALID_INPUT', error instanceof Error ? error.message : String(error));
+      }
+      const mode: AskUserMode = params.mode ?? 'single';
+      if (mode === 'form') {
+        const fields = askUserFieldsSchema.safeParse(params.fields);
+        if (!fields.success) {
+          const issue = fields.error.issues[0];
+          const where = issue !== undefined && issue.path.length > 0 ? `fields.${issue.path.join('.')}：` : '';
+          return fail('INVALID_INPUT', `表单字段不对（${where}${issue?.message ?? '格式错误'}）`);
+        }
+        try {
+          const answer = await ask(identity, { question, options: [], mode, fields: fields.data }, ctx.signal);
+          return { ok: true, content: answer.startsWith('用户在问题卡上的回答') ? answer : `用户的回答：${answer}` };
+        } catch (error) {
+          if (error instanceof AppError) return fail(String(error.code), error.message);
+          return fail('INTERNAL', error instanceof Error ? error.message : String(error));
+        }
       }
       const options = Array.isArray(params.options)
         ? [
@@ -164,6 +212,9 @@ export function buildAskUserTool(input: {
       if (options.length < 1 || options.length > ASK_USER_OPTIONS_MAX) {
         return fail('INVALID_INPUT', `options 需要 1~${ASK_USER_OPTIONS_MAX} 个非空候选答案`);
       }
+      if (mode === 'multi' && options.length < 2) {
+        return fail('INVALID_INPUT', '多选至少要 2 个候选答案');
+      }
       // Each option is a button on the card and a line in every bot's context
       // (D75 审查 H1): short answers only — the background goes in the question.
       if (options.some((option) => option.length > ASK_USER_OPTION_MAX_CHARS)) {
@@ -173,8 +224,11 @@ export function buildAskUserTool(input: {
         );
       }
       try {
-        const answer = await ask(identity, { question, options }, ctx.signal);
-        return { ok: true, content: `用户的回答：${answer}` };
+        const answer = await ask(identity, { question, options, mode }, ctx.signal);
+        return {
+          ok: true,
+          content: answer.startsWith('用户在问题卡上的回答') ? answer : `用户的回答：${answer}`,
+        };
       } catch (error) {
         if (error instanceof AppError) return fail(String(error.code), error.message);
         return fail('INTERNAL', error instanceof Error ? error.message : String(error));

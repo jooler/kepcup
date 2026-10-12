@@ -66,7 +66,7 @@ describe('0013 public_skills 迁移', () => {
     // main 0031（D84 邮件）的新表同样摘除，回放时才能重建。
     db.exec('drop table mail_account_bots;');
     db.exec('drop table mail_accounts;');
-    // main 0035（D88 资产移交，暂定号）的两张表同样摘除（先子后父）。
+    // main 0036（D88 资产移交）的两张表同样摘除（先子后父）。
     db.exec('drop table bot_handover_items;');
     db.exec('drop table bot_handovers;');
     // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，

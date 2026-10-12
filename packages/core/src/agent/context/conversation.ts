@@ -205,6 +205,8 @@ function renderTaskQuestionLine(
     options?: unknown;
     answer?: unknown;
     taskBotId?: unknown;
+    questionMode?: unknown;
+    questionFields?: unknown;
   };
   const taskId = message.taskId ?? message.runId ?? '';
   const botId = typeof content.taskBotId === 'string' ? content.taskBotId : '';
@@ -218,7 +220,20 @@ function renderTaskQuestionLine(
     ? content.options.filter((option): option is string => typeof option === 'string')
     : [];
   const parts = [typeof content.text === 'string' ? content.text : ''];
-  if (choices.length > 0) parts.push(`选项：${choices.join(' / ')}`);
+  // D87 P4 L2：多选 / 表单卡标明方式与字段（对话轮转交自由回答时知道该怎么填）。
+  if (choices.length > 0) {
+    parts.push(`${content.questionMode === 'multi' ? '选项（可多选）' : '选项'}：${choices.join(' / ')}`);
+  }
+  if (content.questionMode === 'form' && Array.isArray(content.questionFields)) {
+    const fields = content.questionFields
+      .map((field) =>
+        field !== null && typeof field === 'object' && typeof (field as { label?: unknown }).label === 'string'
+          ? (field as { label: string }).label
+          : '',
+      )
+      .filter((label) => label !== '');
+    if (fields.length > 0) parts.push(`表单字段：${fields.join(' / ')}`);
+  }
   if (typeof content.answer === 'string') parts.push(`回答：${content.answer}`);
   const body = clipTaskBody(parts.join('\n'), message, taskLines, null);
   return `[${message.id} | ${time} | ${asker}（任务 ${taskId}）向用户提问] <untrusted>${neutralizeUntrusted(body)}</untrusted>`;
@@ -280,10 +295,13 @@ export function renderMessageLine(
   switch (message.senderType) {
     case 'user': {
       // D71：委派代发消息——另一个 Bot 代用户转交的任务。
-      const content = message.content as { origin?: string; delegatedBy?: string };
+      const content = message.content as { origin?: string; delegatedBy?: string; widgetId?: string };
       if (content.origin === 'delegation') {
         const by = content.delegatedBy ?? '';
         sender = `用户（由 ${options.botNames.get(by) ?? (by || '其他 Bot')} 代为转交）`;
+      } else if (content.origin === 'widget') {
+        // D87 P4 L3：用户在组件卡上确认后经组件发出——文字由组件代码拼成，按不可信数据处理。
+        sender = `用户（经组件 ${content.widgetId ?? ''} 发出）`;
       } else {
         sender = '用户';
       }
@@ -334,8 +352,11 @@ export function renderMessageLine(
   // D80: schedule receipt / offer cards are host system events, but their
   // text quotes titles from model output and commitment content — data too.
   const event = (content as { event?: string } | undefined)?.event;
-  const wrapped =
-    (message.senderType === 'bot' &&
+  const fromWidget =
+    message.senderType === 'user' && (content as { origin?: string } | undefined)?.origin === 'widget';
+  const wrapped = fromWidget
+    ? `<untrusted source="widget">${neutralizeUntrusted(body)}</untrusted>`
+    : (message.senderType === 'bot' &&
       options.selfBotId !== null &&
       message.senderBotId !== options.selfBotId) ||
     (message.senderType === 'system' &&

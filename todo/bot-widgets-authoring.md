@@ -78,74 +78,74 @@ export type WidgetCheckStatus = 'legacy' | 'passed' | 'issues' | 'unverified';
 
 ### P3-0 Spike（先做，结论记 §8，必要时修订设计 32 §11.8.1 的规则级别）
 
-- [ ] 在当前 Electron 版本、`sandbox="allow-scripts"` + 组件 CSP 下实测：`confirm()` 返回值与是否弹窗；`<form>` 的 submit 事件是否触发；`localStorage` 是否抛错；`target=_blank` / `window.open`；`a[download]`；`navigator.clipboard`。写成一个最小 HTML + 主进程脚本，结论按行记录。
-- [ ] 隐藏窗口（`show:false`）里的 iframe：`window.onerror` 是否能捕获后续 `<script>` 的解析错误；`securitypolicyviolation` 是否触发；`capturePage()` 在三平台是否出图（Linux 先测，macOS / Windows 记为手工验收项）。
-- [ ] 死循环组件：主进程能否在时限后 `forcefullyCrashRenderer` 并重建窗口，外壳页是否一起被冻住。
-- [ ] 结论决定 §11.9 用「探针」还是「CDP」作主方案（默认探针）。
+- [x] 在当前 Electron 版本、`sandbox="allow-scripts"` + 组件 CSP 下实测：`confirm()` 返回值与是否弹窗；`<form>` 的 submit 事件是否触发；`localStorage` 是否抛错；`target=_blank` / `window.open`；`a[download]`；`navigator.clipboard`。写成一个最小 HTML + 主进程脚本，结论按行记录。
+- [x] 隐藏窗口（`show:false`）里的 iframe：`window.onerror` 是否能捕获后续 `<script>` 的解析错误；`securitypolicyviolation` 是否触发；`capturePage()` 在三平台是否出图（Linux 先测，macOS / Windows 记为手工验收项）。
+- [x] 死循环组件：主进程能否在时限后 `forcefullyCrashRenderer` 并重建窗口，外壳页是否一起被冻住。
+- [x] 结论决定 §11.9 用「探针」还是「CDP」作主方案（默认探针）。→ 探针 + 主进程 `console-message` 兜底，不用 CDP（§8.1）。
 
 ### P3a 制作 loop 骨架 + 静态检查 + 工具面切换
 
 shared：
-- [ ] `domain/widget-craft.ts`：常量、`WidgetCheckStatus`、`checkReportSchema`、`acceptanceSchema`（§11.8.4）、`reviewResultSchema`（§11.10）、`craftManifestSchema`；包入口导出。
-- [ ] `loopTypeSchema` 加 `'widget_authoring'`；错误码登记 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`（errors.ts + zh-CN `chats.errorCode.*`）。
-- [ ] `widgetCardSchema` 加 `checkStatus`（default `'legacy'`）与 `knownIssues`（default `[]`）。
+- [x] `domain/widget-craft.ts`：常量、`WidgetCheckStatus`、`checkReportSchema`、`acceptanceSchema`（§11.8.4）、`reviewResultSchema`（§11.10）、`craftManifestSchema`；包入口导出。
+- [x] `loopTypeSchema` 加 `'widget_authoring'`；错误码登记 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`（errors.ts + zh-CN `chats.errorCode.*`）。
+- [x] `widgetCardSchema` 加 `checkStatus`（default `'legacy'`）与 `knownIssues`（default `[]`）。
 
 core：检查器（`widgets/check/`）：
-- [ ] `rules.ts`：规则注册表（`{id, level:'error'|'warning', stage:'S0'|'S1'|'S2', title, hint}`）+ `sandboxPitfallsPrompt()`（从注册表生成提示词段落）。
-- [ ] `static-check.ts`（S0）：parse5 带位置解析；设计 32 §11.8.1 全部规则；`query.invalid` 复用 `WidgetService` 的查询校验（把 `#cleanQueries` 的纯校验部分抽成可导出的函数，`service.ts` 与检查器共用，行为不变）。
-- [ ] `js-check.ts`（S1）：acorn 解析内联脚本与 `on*` 属性；位置映射回文件；全局作用域收集（经典脚本共享、module 隔离）；`globals` 的 browser 集合 + `kepcup`；设计 32 §11.8.2 全部规则。
-- [ ] `report.ts`：合并 S0/S1/S2 结果 → JSON 报告 + 给模型的文本（按级别排序、截断到 `WIDGET_CHECK_REPORT_MAX_CHARS`）+ 评分（设计 32 §11.6）+ 阻断项判定。
-- [ ] `run-check.ts`：`runWidgetCheck({draftDir, preview?})` → 报告；`preview` 缺省时 S2 记 skipped。
+- [x] `rules.ts`：规则注册表（`{id, level:'error'|'warning', stage:'S0'|'S1'|'S2', title, hint}`）+ `sandboxPitfallsPrompt()`（从注册表生成提示词段落）。
+- [x] `static-check.ts`（S0）：parse5 带位置解析；设计 32 §11.8.1 全部规则；`query.invalid` 复用 `WidgetService` 的查询校验（把 `#cleanQueries` 的纯校验部分抽成可导出的函数，`service.ts` 与检查器共用，行为不变）。
+- [x] `js-check.ts`（S1）：acorn 解析内联脚本与 `on*` 属性；位置映射回文件；全局作用域收集（经典脚本共享、module 隔离）；`globals` 的 browser 集合 + `kepcup`；设计 32 §11.8.2 全部规则。
+- [x] `report.ts`：合并 S0/S1/S2 结果 → JSON 报告 + 给模型的文本（按级别排序、截断到 `WIDGET_CHECK_REPORT_MAX_CHARS`）+ 评分（设计 32 §11.6）+ 阻断项判定。
+- [x] `run-check.ts`：`runWidgetCheck({draftDir, preview?})` → 报告；`preview` 缺省时 S2 记 skipped。
 
 core：制作 loop（`widgets/craft/`）：
-- [ ] `infra/paths.ts`：`botWidgetDraftsDir` / `botWidgetDraftDir`。
-- [ ] `draft.ts`：草稿目录的创建 / 读写 manifest（宿主独占）/ 快照 / 回滚 / 过期清理（启动时 + 新建制作时）；修改模式下用组件最新版初始化 `index.html` 与 `queries.json`。
-- [ ] `tools.ts`：阶段工具集——基于 `skills/authoring-tools.ts` 的守卫写法实现 read / ls / write / edit（pi 的 `createEditToolDefinition` 等），守卫：只能访问本草稿目录、拒写 `manifest.json`、FIX 阶段拒绝覆盖已存在的 `index.html`；`widget_check`（自查，调 `runWidgetCheck`）、`widget_template`（P3a 先只有 `blank`）、`stage_done`（终止型）。
-- [ ] `prompts.ts`（设计 32 §11.7）：平台事实（`WIDGET_HTML_GUIDE` 原文迁来，扩写成 API 参考）+ `sandboxPitfallsPrompt()` + 文件约定 + 各阶段的输入拼装函数。
-- [ ] `service.ts`（`WidgetCraftService`）：状态机、阶段 run 的创建（`runs.create({loopType:'widget_authoring', parentRunId})` + `routeFor(…,'widget_authoring')` + `persistEngineSteps` + `publishRunStatus`，照抄 subagent）、整体时限与 token 轮询封顶、父 signal 级联、评分 / 最佳快照 / 回滚 / 问题签名去重与收缩模式、回执关卡、交付判定、调 `WidgetService.create/update` 交付、回执文本。P3a 的 GATE = S0 + S1；没有 REVIEW（直接按 GATE 结果交付）。
-- [ ] `llm-router.ts`：`LlmPurpose` 加 `'widget_authoring'`（P3c 再加 `'widget_review'`）；路由规则与 `skill_authoring` 同。
-- [ ] `WidgetService.create/update` 增入参 `check?: {status, summary}`，落 `widget_versions.check_status` / `check_summary_json` 并带进卡片描述符；`listForBot` 输出带上 `checkStatus`。
-- [ ] 迁移 `migrations/main/0035_widget_check.sql`（合并时重编号）：两列，默认 `'legacy'` / `''`。
+- [x] `infra/paths.ts`：`botWidgetDraftsDir` / `botWidgetDraftDir`。
+- [x] `draft.ts`：草稿目录的创建 / 读写 manifest（宿主独占）/ 快照 / 回滚 / 过期清理（启动时 + 新建制作时）；修改模式下用组件最新版初始化 `index.html` 与 `queries.json`。
+- [x] `tools.ts`：阶段工具集——基于 `skills/authoring-tools.ts` 的守卫写法实现 read / ls / write / edit（pi 的 `createEditToolDefinition` 等），守卫：只能访问本草稿目录、拒写 `manifest.json`、FIX 阶段拒绝覆盖已存在的 `index.html`；`widget_check`（自查，调 `runWidgetCheck`）、`widget_template`（P3a 先只有 `blank`）、`stage_done`（终止型）。
+- [x] `prompts.ts`（设计 32 §11.7）：平台事实（`WIDGET_HTML_GUIDE` 原文迁来，扩写成 API 参考）+ `sandboxPitfallsPrompt()` + 文件约定 + 各阶段的输入拼装函数。
+- [x] `service.ts`（`WidgetCraftService`）：状态机、阶段 run 的创建（`runs.create({loopType:'widget_authoring', parentRunId})` + `routeFor(…,'widget_authoring')` + `persistEngineSteps` + `publishRunStatus`，照抄 subagent）、整体时限与 token 轮询封顶、父 signal 级联、评分 / 最佳快照 / 回滚 / 问题签名去重与收缩模式、回执关卡、交付判定、调 `WidgetService.create/update` 交付、回执文本。P3a 的 GATE = S0 + S1；没有 REVIEW（直接按 GATE 结果交付）。
+- [x] `llm-router.ts`：`LlmPurpose` 加 `'widget_authoring'`（P3c 再加 `'widget_review'`）；路由规则与 `skill_authoring` 同。
+- [x] `WidgetService.create/update` 增入参 `check?: {status, summary}`，落 `widget_versions.check_status` / `check_summary_json` 并带进卡片描述符；`listForBot` 输出带上 `checkStatus`。
+- [x] 迁移 `migrations/main/0035_widget_check.sql`（合入时 main 下一个空闲号正是 0035，未改号）：两列，默认 `'legacy'` / `''`。
 
 core：工具面切换：
-- [ ] `tools/widget-tools.ts`：新增 `widget_craft`（参数与回执见设计 32 §11.4 / §11.6），保留 `widget_publish`；`widget_create` / `widget_update` 不再注册（删掉工具定义，`WidgetToolFacade` 改为 `{craft, publish}`）；工具描述瘦身。
-- [ ] orchestrator / `start.ts` 装配 `WidgetCraftService`（依赖：engine、router、runs、usage、secrets、widgets、paths、logger、clock、预览宿主 facade〔P3b 前为未绑定〕）。
-- [ ] `system-prompt.ts:187` 规则改写：何时用 `widget_craft`、brief 要包含什么、不要自己写 HTML、未交付时如实告知。
-- [ ] 文档回写：dev `04-agent-runtime.md`（工具目录与 loop 表）、`03-data-model.md`（两列）、`02-architecture.md`（若列有 loop 类型）。
+- [x] `tools/widget-tools.ts`：新增 `widget_craft`（参数与回执见设计 32 §11.4 / §11.6），保留 `widget_publish`；`widget_create` / `widget_update` 不再注册（删掉工具定义，`WidgetToolFacade` 改为 `{craft, publish}`）；工具描述瘦身。
+- [x] orchestrator / `start.ts` 装配 `WidgetCraftService`（依赖：engine、router、runs、usage、secrets、widgets、paths、logger、clock、预览宿主 facade〔P3b 前为未绑定〕）。
+- [x] `system-prompt.ts:187` 规则改写：何时用 `widget_craft`、brief 要包含什么、不要自己写 HTML、未交付时如实告知。
+- [x] 文档回写：dev `04-agent-runtime.md`（工具目录与 loop 表）、`03-data-model.md`（两列）、`02-architecture.md`（若列有 loop 类型）。
 
 P3a 测试：见 §5.1–§5.2。
 
 ### P3b 预览宿主（S2）+ 主题变量 + 模板
 
 core：
-- [ ] `sdk-injection.ts`：`injectPreviewProbe(html)`（垫片之后、组件脚本之前；只用于预览资源）；探针脚本：错误 / 拒绝 / CSP 违规 / console 收集、DOM 静默等待、渲染体检、乱点冒烟、验收步骤执行、大纲生成，经 `parent.postMessage({source:'kepcup-probe', …})` 回报。
-- [ ] `widgets/preview-facade.ts`：`DeferredWidgetPreviewRpc`（照抄 `apps/shell-facade.ts` 的 `createShellHostRpc` / `DeferredShellHostRpc`），`process-entry.ts` 在 platform-port 绑定时 `bind`。
-- [ ] `run-check.ts` 接入 S2：两视口；结果并入报告；截图在制作模型支持图片时作为 `ToolResult.images` 交给 BUILD / FIX 阶段的 `widget_check`（GATE 报告本身只存文本）。
-- [ ] 主题：`widgets.ui.open` 增可选 `theme`；垫片注入 `data-theme` / `color-scheme` / `--kc-*` 变量；监听 `{source:'kepcup-host', event:'theme'}` 并派发 `kepcup:theme`。
-- [ ] `kepcup-kit`：带 `<meta name="kepcup-kit" content="1">` 时注入基础样式（`:where()`）与 `kepcup.ui`（SVG 柱 / 折 / 饼 + 数字格式化）；更新 `WIDGET_SDK_SHIM` 指纹版本（`-v2`）并保持注入幂等。
-- [ ] 模板：`widgets/templates/` 下 `blank`、`form-calculator`、`list-tracker`、`dashboard`，每个模板都必须过 S0/S1/S2 全绿（单测锁住）。
+- [x] `sdk-injection.ts`：`injectPreviewProbe(html)`（垫片之后、组件脚本之前；只用于预览资源）；探针脚本：错误 / 拒绝 / CSP 违规 / console 收集、DOM 静默等待、渲染体检、乱点冒烟、验收步骤执行、大纲生成，经 `parent.postMessage({source:'kepcup-probe', …})` 回报。
+- [x] `widgets/preview-facade.ts`：`DeferredWidgetPreviewRpc`（照抄 `apps/shell-facade.ts` 的 `createShellHostRpc` / `DeferredShellHostRpc`），`process-entry.ts` 在 platform-port 绑定时 `bind`。
+- [x] `run-check.ts` 接入 S2：两视口；结果并入报告；截图在制作模型支持图片时作为 `ToolResult.images` 交给 BUILD / FIX 阶段的 `widget_check`（GATE 报告本身只存文本）。
+- [x] 主题：`widgets.ui.open` 增可选 `theme`；垫片注入 `data-theme` 与 `--kc-*` 变量（`color-scheme` 只在 kit 里设，见 §8.3）；监听 `{source:'kepcup-host', event:'theme'}` 并派发 `kepcup:theme`。
+- [x] `kepcup-kit`：带 `<meta name="kepcup-kit" content="1">` 时注入基础样式（`:where()`）与 `kepcup.ui`（SVG 柱 / 折 / 饼 + 数字格式化）；更新 `WIDGET_SDK_SHIM` 指纹版本（`-v2`）并保持注入幂等。
+- [x] 模板：`widgets/templates/` 下 `blank`、`form-calculator`、`list-tracker`、`dashboard`，每个模板都必须过 S0/S1/S2 全绿（S0/S1 由单测锁住，S2 由真机 harness 锁住）。
 
 desktop main：
-- [ ] `widget-preview.ts`：隐藏窗口（`show:false`）+ `session.fromPartition('widget-preview')`（不带 `persist:`）+ 外壳页（preload 只暴露上报通道）+ 该分区上的协议处理器（只服务内存里的预览资源，CSP 同 `buildAppCspHeader` 空域）+ 导航 / 新窗口 / 权限全部拒绝 + 串行队列 + 视口时限与 `forcefullyCrashRenderer` 重建 + `capturePage`。
-- [ ] 外壳页里的模拟能力桥：按现有桥协议（`widget-bridge-guard.ts` 的方法白名单与回执形状）回执 storage（内存 KV、fixtures 初值）/ query（fixtures）/ openLink 与 setHeight（记录）/ theme（视口）。协议常量从 shared 取，不另写一份。
-- [ ] `widget-preview-methods.ts`（`widgetPreviewMethodSpecs`）注册到 `index.ts` 的平台方法表。
+- [x] `widget-preview.ts`：隐藏窗口（`show:false`）+ `session.fromPartition('widget-preview')`（不带 `persist:`）+ 外壳页（`file://`，无 preload，主进程 `executeJavaScript` 驱动）+ 该分区上的协议处理器（只服务内存里的预览资源，CSP 同 `buildAppCspHeader` 空域）+ 导航 / 新窗口 / 权限全部拒绝 + 串行队列 + 视口时限与「移除 iframe → 杀组件进程 → 重建窗口」回收 + `capturePage`（spike 结论，不用 `forcefullyCrashRenderer`）。
+- [x] 外壳页里的模拟能力桥：按现有桥协议（`widget-bridge-guard.ts` 的方法白名单与回执形状）回执 storage（内存 KV、fixtures 初值）/ query（fixtures）/ openLink 与 setHeight（记录）/ theme（视口）。协议常量从 shared 取，不另写一份。
+- [x] `widget-preview-methods.ts`（`widgetPreviewMethodSpecs`）注册到 `index.ts` 的平台方法表。
 
 renderer：
-- [ ] `BotWidgetCard.svelte`：open 时传 `theme`；`mode` 变化时向 iframe 推送 theme 事件。
+- [x] `BotWidgetCard.svelte`：open 时传 `theme`；`mode` 变化时向 iframe 推送 theme 事件。
 
 ### P3c 独立审查 + 自检状态上卡 + 基准
 
-- [ ] `craft/review.ts`：REVIEW 阶段 run（read / ls / `submit_review`），结论 zod 校验，无场景的条目丢弃，未提交记 skipped；接入状态机（GATE 合格才审查、只修 P0/P1、第二轮审查的输入带上一轮结论）。
-- [ ] `LlmPurpose` 加 `'widget_review'`；设置项「组件审查模型」（`settings` schema 加可空字段，缺省跟随 Bot 主模型；设置页「后台任务」分组加一个选择器）。
-- [ ] renderer：`BotWidgetCard` 审查态徽标（已通过自检 / 有已知问题〔可展开〕/ 未经运行验证；`legacy` 不显示）+ 固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」+ i18n；`WidgetsTab` 列表显示状态。
-- [ ] 基准（§5.4）：跑一次，结果写进 §8 与 `docs/dev/PROGRESS.md`。
-- [ ] 文档：设计 32 §11 按实施结果修订（规则级别、参数值）；dev 文档同步。
+- [x] `craft/review.ts`（实现在 `craft/service.ts` 的 `#review` + `prompts.ts` / `tools.ts`，没有单独成文件）：REVIEW 阶段 run（read / ls / `submit_review`），结论 zod 校验，无场景的条目丢弃，未提交记 skipped；接入状态机（GATE 合格才审查、只修 P0/P1、第二轮审查的输入带上一轮结论）。
+- [x] `LlmPurpose` 加 `'widget_review'`；设置项「组件审查模型」（`settings` schema 加可空字段，缺省跟随 Bot 主模型；选择器放在设置页「模型」，见 §8.4）。
+- [x] renderer：`BotWidgetCard` 审查态徽标（已通过自检 / 有已知问题〔可展开〕/ 未经运行验证；`legacy` 不显示）+ 固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」+ i18n；`WidgetsTab` 列表显示状态。
+- [ ] 基准（§5.4）：跑一次，结果写进 §8 与 `docs/dev/PROGRESS.md`。——**脚本已就绪，用户决定暂不跑**（2026-10-12：本机无模型 Key），见 §8.4。
+- [x] 文档：设计 32 §11 按实施结果修订（规则级别、参数值）；dev 文档同步。
 
 ### P4 交付形态分层（设计 32 §12；P3c 后开始，可拆给另一个会话）
 
-- [ ] L1 `present`：shared 每种 kind 的 zod schema 与 `PRESENT_DATA_MAX_BYTES` / `PRESENT_CONTEXT_MAX_CHARS`；core 工具（对话轮 + 任务）与卡片消息 `content.present`、上下文紧凑回放；renderer 每种 kind 一个组件（图表库选型记 §8，约束见设计 32 §12.1）；系统提示加「展示类结果优先 `present`，要交互才 `widget_craft`」。
-- [ ] L2 `ask_user` 加 `mode: single | multi | form`（缺省 single，现有行为不变）；问题卡渲染多选与表单；回答以结构化 JSON（`<untrusted>`）回到任务。
-- [ ] L3 回传：垫片 `kepcup.reply(text)`（仅用户手势内有效）→ 卡内确认条（单例 + 冷却，复用 `LinkConfirmBar` 模式）→ 作为用户消息发出、带 `origin:{kind:'widget', widgetId, version}`，上下文渲染 `<untrusted source="widget">`；任务面 `widget_read_state{widget_id, keys?}`（只读本 Bot 组件、≤64KB、`<untrusted>`）。桥白名单、垫片、错误码、i18n 同步。
+- [x] L1 `present`：shared 每种 kind 的 zod schema 与 `PRESENT_DATA_MAX_BYTES` / `PRESENT_CONTEXT_MAX_CHARS`；core 工具（对话轮 + 任务）与卡片消息 `content.present`、上下文紧凑回放；renderer 每种 kind 一个组件（图表库选型记 §8，约束见设计 32 §12.1）；系统提示加「展示类结果优先 `present`，要交互才 `widget_craft`」。
+- [x] L2 `ask_user` 加 `mode: single | multi | form`（缺省 single，现有行为不变）；问题卡渲染多选与表单；回答以结构化 JSON（`<untrusted>`）回到任务。
+- [x] L3 回传：垫片 `kepcup.reply(text)`（仅用户手势内有效）→ 卡内确认条（单例 + 冷却，复用 `LinkConfirmBar` 模式）→ 作为用户消息发出、带 `origin:{kind:'widget', widgetId, version}`，上下文渲染 `<untrusted source="widget">`；任务面 `widget_read_state{widget_id, keys?}`（只读本 Bot 组件、≤64KB、`<untrusted>`）。桥白名单、垫片、错误码、i18n 同步。
 
 ## 5. 测试
 
@@ -155,7 +155,7 @@ renderer：
 - **已知坏组件语料**：收集 10–20 份典型的 LLM 坏组件（用 CDN、localStorage、confirm、form submit、onclick 指向闭包内函数、截断、NaN 显示……），断言每份都被至少一条 error 拦下——这是检查器召回率的回归锁。
 
 ### 5.2 制作 loop（P3a 起，mock-llm 脚本化）
-- 状态机：一次写对 → 直接交付 `passed`（P3a 无审查时）；GATE 失败 → FIX → 通过；FIX 引入回归 → 回滚到最佳快照且下一轮输入带回归说明；同一问题签名连续两次 → 收缩模式输入；修复轮数用尽：无阻断项 → `issues` 交付并列已知问题，有阻断项 → 不交付、回执带原因与 craftId、草稿保留；时限与 token 预算中止；父 signal 中止 → 阶段 run `cancelled`、草稿保留。
+- 状态机：一次写对 → 直接交付（P3a 没有 S2 → `unverified`；P3b 接上预览后为 `passed`）；GATE 失败 → FIX → 通过；FIX 引入回归 → 回滚到最佳快照且下一轮输入带回归说明；同一问题签名连续两次 → 收缩模式输入；修复轮数用尽：无阻断项 → `issues` 交付并列已知问题，有阻断项 → 不交付、回执带原因与 craftId、草稿保留；时限与 token 预算中止；父 signal 中止 → 阶段 run `cancelled`、草稿保留。
 - 回执关卡：GATE 之后改动文件（模拟）→ DELIVER 拒绝；`resume_craft_id` 续做。
 - 上下文隔离：任务 run 的 `run_steps` 里只有工具参数与回执（断言回执不含 `<html`、`<script`、报告片段，长度 ≤ 上限）。
 - 守卫：越界路径、写 manifest、FIX 阶段覆盖 index.html 都被拒。
@@ -192,3 +192,142 @@ renderer：
 ## 8. 实施记录
 
 （实施会话在此追加：spike 结论、规则级别调整、参数调整、基准结果、全量测试甄别。）
+
+### 8.1 P3-0 沙箱行为实测（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**环境**：Electron 44.4.5（Chromium 152.0.7977.130），Linux / Xvfb（`kepcup-test:trixie-xvfb`）。脚本 `apps/desktop/scripts/spikes/widget-sandbox/`（`main.cjs` + `preload.cjs` + `shell.html`），可在三平台复跑：`xvfb-run -a node_modules/electron/dist/electron apps/desktop/scripts/spikes/widget-sandbox/main.cjs`（每条结论一行 JSON，截图写 `$SPIKE_OUT`）。条件与正式卡片一致：特权协议 `kepcup-app`（standard + secure）注册在窗口自己的 session 上、响应头 = `buildAppCspHeader` 空域 + `appUiResponseHeaders`、`<iframe sandbox="allow-scripts" allow="" referrerpolicy="no-referrer">`、外壳页是 `file://`（CSP `frame-ancestors file: http://localhost:*` 要求）。容器里没有配置好的 SUID 沙箱助手，所以带 `--no-sandbox` 跑——这只关掉 OS 级进程沙箱，不影响 iframe sandbox 标志、CSP 与进程模型；打包产物（带 OS 沙箱）上的复核记为手工验收项。动作分别以「有用户手势」（`WebFrameMain.executeJavaScript(code, true)`）与「无手势」各跑一遍，**除 `execCommand('copy')` 外两组结果完全一致**——预览探针用合成事件做乱点冒烟有代表性。
+
+**沙箱行为（逐条）**：
+
+| 行为 | 实测 | 规则级别 |
+|---|---|---|
+| `confirm()` | 不弹窗，0ms 返回 `false`——`if (confirm(…))` 的分支永远不执行 | `sandbox.modals` error（不变） |
+| `prompt()` | 不弹窗，0ms 返回 `null` | 同上 |
+| `alert()` | 不弹窗，0ms 返回，控制流照常继续（只丢了提示） | **拆出 `sandbox.alert`，降为 warning** |
+| `<button type=submit>` 点击 / `requestSubmit()` / 文本框里按 Enter（隐式提交，经真实输入事件） | **submit 事件不触发**（`onsubmit` 属性与 `addEventListener('submit')` 都是 0 次），也没有导航 | `sandbox.form-submit` error：有 submit 处理函数（`onsubmit` 属性 / `addEventListener('submit')` / `.onsubmit =`）或调用 `requestSubmit()` / `.submit()` |
+| submit 按钮自身的 `onclick`、表单里不写 type 的 `<button>` 的 `onclick` | **照常执行**（1 次），只是默认的提交动作被拦 | **拆出 `sandbox.submit-button`，warning**：只有 `type=submit` / 表单内无 type 按钮、没有 submit 处理函数时不阻断 |
+| `form.submit()` | 无事件、无导航（静默无效） | 计入 `sandbox.form-submit` |
+| `localStorage` / `sessionStorage` | 连读属性（`typeof localStorage`）都抛 `SecurityError` | `sandbox.storage` error（不变） |
+| `indexedDB.open` / `document.cookie =` | 抛 `SecurityError` | 同上 |
+| `window.open(…)` | 返回 `null`（`w.document` 随即 TypeError），主进程 `setWindowOpenHandler` 收不到任何请求 | `sandbox.popup` error（不变） |
+| `<a target=_blank>` 点击 | 静默无效：无新窗口、无导航、主进程无事件 | 同上 |
+| `top.location.href =` | 抛 `SecurityError`（无权导航目标框架） | `sandbox.top-nav` error（不变） |
+| `<a href="#x">` 页内锚点 | 正常 | — |
+| `a[download]` 点击 | 静默无效：session 的 `will-download` 不触发 | `sandbox.download` warning（不变） |
+| `navigator.clipboard.writeText/readText` | reject `NotAllowedError`（且响应头 Permissions-Policy 本就禁用剪贴板） | `sandbox.clipboard` warning（不变） |
+| `document.execCommand('copy')` | 有手势时返回 `true`、无手势 `false`；系统剪贴板是否真的收到在 Xvfb 下无法确认 | 不设规则（记为已知差异） |
+| `fetch(…)` | reject `TypeError: Failed to fetch`，同时触发 `securitypolicyviolation`（`connect-src`） | `sandbox.network` error（不变） |
+| 外链 `<script src>` / `<link rel=stylesheet>` / `<img>` / `@import` | 被 CSP 拦，**既**触发 `securitypolicyviolation`（`script-src-elem` / `style-src-elem` / `img-src`）**又**在元素上触发 `error` 事件 | `sandbox.external-resource` error（不变） |
+| `<style>` 里 `background:url(https://…)` | **没有任何事件**（CSP 事件与 console 都没有）——只有 S0 静态规则能发现 | 同上（S0 必须覆盖 CSS `url()`） |
+| 权限 | 加载期间只出现一次 `background-sync` 权限查询（被拒） | — |
+
+**S2 可观测性**：
+- 探针（第一个 `<script>`，挂 `error`〔捕获阶段，可拿到资源加载失败〕/ `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`）收到全部错误类型：外链资源失败、**后续 `<script>` 的 SyntaxError**（带行列）、ReferenceError、经典脚本之间 `let` 重复声明（`Identifier 'dup' has already been declared`）、异步 TypeError、promise 拒绝、console 输出、CSP 违规（指令 + 被拦 URI + 行号）。
+- **主进程 `webContents` 的 `console-message` 事件同样收到 iframe 里的所有未捕获异常、promise 拒绝（`Uncaught (in promise) …`）、CSP 违规与 console 输出**，并带 `frame`（可按 URL 过滤）。这一路组件代码碰不到，可作探针的防篡改对照通道。
+- **结论：主方案用探针（结构化、能执行乱点与验收步骤），主进程 `console-message` 作并行的错误兜底通道；不需要 CDP**（设计 32 §11.9 的备选不启用）。
+- 行号：探针报的是**预览资源**里的行号。预览注入（垫片 + 探针）必须写成**不含换行的一行**、插在原有 `<head>` 之后，行号才与草稿 `index.html` 一致（只有注入所在那一行的列号偏移）；S2 报告据此直接引用行号。
+
+**进程模型与死循环**（关键差异，修订设计 32 §11.9）：
+- Chromium 152 把 opaque-origin 的 sandbox iframe 放进**独立的渲染进程**（`frame.osProcessId` ≠ 外壳页），即使外壳与组件都在 `widget-preview` 分区里。
+- 组件死循环（加载期间的同步 `for(;;)`，或加载后 `setTimeout` 里的循环）只冻住组件进程：外壳页的 100ms 心跳在 1.5s 内照常 15–25 次，主进程对组件框架的 `executeJavaScript` 得不到回应；加载期间就死循环时 iframe 的 `load` 事件不触发。
+- 恢复手段实测：
+  - **外壳页移除 iframe**：组件进程 3s 内被 Chromium 回收；下一个组件（新 host）分到新进程、正常运行。→ **主方案**。
+  - 主进程 `process.kill(frame.osProcessId)`：外壳不受影响，下一个组件正常。→ 移除 iframe 后 3s 仍存活时的补刀。
+  - 销毁窗口并重建：2.6s 内恢复，残留进程被回收。→ 外壳页本身无响应时的兜底。
+  - `webContents.forcefullyCrashRenderer()`：只会杀掉**外壳页**（它并没有卡住），之后在同一个 webContents 上 `loadFile` 外壳得 `ERR_FAILED`。→ **不采用**（设计原文的做法作废）。
+- 每次预览给组件一个新的 host（`widget-preview-{随机}`），避免下一个组件被分进还没回收的进程。
+
+**截图**：隐藏窗口（`show:false`）的 `capturePage()` 在 Linux / Xvfb 下能出图，**包含跨进程 iframe 的内容**，单次 30–50ms。但 `load` 之后的第一张往往还是空白（iframe 进程还没合成首帧）：137–185ms 后的第二次截图才有内容。→ 截图放在探针报告「DOM 静默」之后，若整幅与底色一致就每 50ms 重试，最多 1s；截取 iframe 的矩形而不是整个窗口。macOS / Windows 上能否出图记为手工验收项（用同一脚本复跑）。
+
+**分区**：`session.fromPartition('widget-preview')`（无 `persist:`）`isPersistent()` 为 false、`storagePath` 为 null——预览不落盘。
+
+**对设计 32 的修订**（已回写 §11.8.1、§11.8.3、§11.9）：`alert` 降为 warning（`sandbox.alert`）；`sandbox.form-submit` 收窄到 submit 处理函数与 `requestSubmit()` / `.submit()`，`type=submit` 本身拆为 warning（`sandbox.submit-button`）；CSS `url()` 只有静态规则能发现；死循环处理改为「外壳移除 iframe → 杀组件进程 → 重建窗口」，不用 `forcefullyCrashRenderer`；错误收集 = 探针 + 主进程 `console-message`，不用 CDP；预览注入保持单行以保留行号；截图要等首帧。
+
+### 8.2 P3a 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**（与 §4 清单一一对应，清单已勾）：shared `domain/widget-craft.ts`（常量、检查报告 / 验收点 / 审查结论 / 制作清单 / fixtures schema）、`loopTypeSchema` + core `LoopType` 加 `widget_authoring`、错误码 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`、id 前缀 `wcf`、卡片 `checkStatus` / `knownIssues` 与列表 `checkStatus`；迁移 `0035_widget_check.sql`（**合并时按 main 下一个空闲编号重命名**，同步 `create-core.test.ts` 的 user_version；`public-skills-migration` 按 `mainVersionsAfter` 动态取，无需改）；检查器 `widgets/check/`（规则注册表 41 条 + S0 / S1 + 报告 + `runWidgetCheck`，S0 / S1 共用 `source.ts` 的 parse5 + acorn 模型）；查询校验抽成 `widgets/query-validate.ts`（交付与检查器同一份代码）；制作 loop `widgets/craft/`（`draft.ts` / `tools.ts` / `prompts.ts` / `service.ts`）+ `widgets/templates/`（P3a 只有 `blank`）；任务面切换为 `widget_craft` + `widget_publish`；`system-prompt.ts` 规则改写；effects 分类表登记 widget 工具（`widget-tools.ts` 原先不在覆盖扫描里，一并补上）；orchestrator `cancelRun` 的 `widget_authoring` 分支；start.ts 装配 + 启动清理过期草稿；dev 文档 02 / 03 / 04 同步。
+
+**实施中的新决定**（已回写设计 32 §11）：
+- 写入按阶段白名单：SPEC 只写 spec.md / acceptance.json，BUILD / FIX 只写交付文件；规格与验收点在 SPEC 之后只读（编码阶段不能靠删验收点「通过」）。新建组件 `title` 必填。
+- 合格 = 没有错误（含必需验收点失败）；只剩警告最多修一轮，那一轮反而修出错误就停、交付只剩警告的版本。
+- GATE 先快照再检查；GATE 有制作的 signal 与 `WIDGET_CHECK_TIMEOUT_MS` 时限，预览被取消 / 超时退回只跑 S0 / S1（超时另记 `preview.timeout` 阻断项）。
+- 最佳版本与交付同口径：可交付的回执优先、分数最低、同分取新；回滚也按这个口径（不会从可交付版本退回阻断版本）。
+- 交付只读一次文件、按读到的字节复算摘要，取同一摘要的**最后一次**回执及其报告；修改模式下制作期间组件已有新版本（基于的 `baseVersion` 过时）→ 不覆盖、如实失败。
+- 检查器自身异常（S0 / S1 skipped 且原因带 `检查器内部错误：` 前缀）合成阻断项 `checker.failed`，不当作合格；`缺少 index.html` 走 `html.missing` 的正常 FIX。没有源码的草稿续做回到 BUILD。
+- 卡片说明 / 改动说明取 spec.md 第一条 `>` 引用行（SPEC 按约定写）。修改已有组件时 BUILD 不提供 `widget_template`。
+- 草稿写入不重建草稿目录本身（Bot 删除后进行中的制作不会把 `bots/{id}` 写回来）。
+- 规则补充：`html.missing`、`sandbox.link-navigation`（warning）、`acceptance.invalid` / `fixtures.invalid`（warning）；`js.undefined-name` 只读取时降为不阻断的 warning；`location.href = '#x'` 视为同文档跳转不报。
+
+**评审**：独立评审一轮（只读），无 P0；P1 一条（缺 index.html 被当作检查器故障、续做死循环）与 P2 十一条全部修复并补回归测试（见上「新决定」与 `widget-craft-loop.test.ts` 的 review fixes、`widget-check-js/static.test.ts`）。
+
+**测试**：定向——检查器 6 文件（规则正反例与行列、注释 / 字符串不误报、20 份坏组件语料每份至少一条阻断项、3 份好组件零错误、报告排序截断评分、提示与注册表同源）、`widget-craft-loop.test.ts`（假引擎驱动状态机：一次写对、GATE → FIX、回归回滚、收缩模式、轮数用尽不交付 + 续做、只剩警告、修改模式、父取消 / cancelStageRun、时限、预算、回执关卡拒绝、交付失败、验收点重写、入参与每 run 上限 / 无模型、守卫，及评审修复 6 例）、`integration/widget-craft.test.ts`（真实 core + 脚本化模型：阶段 run 挂在任务下、**任务 run_steps 里没有 HTML**、卡片与版本行的自检状态、任务 / 对话轮 / 阶段 run 的工具面）、`widget-tools` / `widgets-service` / `tool-effects` / `create-core` / `subagent`，Docker 全绿。**全量一次**（评审修复前，Docker `kepcup-test:trixie`）：4168 例，4140 通过 / 26 失败，26 例全部在环境基线文件内（`sandbox-isolation` 10、`skills-authoring` 4、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2、`projects` OS 沙箱 1、`environment` checksum 1），与 D73 记录的 26 例基线集合一致，无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**留给后续**：P3a 没有 S2，交付状态是 `unverified`（卡片徽标与说明在 P3c）；`blank` 之外的模板与主题变量在 P3b。
+
+### 8.3 P3b 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**（§4 P3b 清单已勾）：shared 预览协议（`widgetPreview.run` 的入参 / 出参 schema、`budgetMs`、协议来源常量、`WIDGET_PREVIEW_*` 常量、`widgets.ui.open` 的 `theme`）；core——垫片 v2（单行注入、`--kc-*` 主题变量总注入、`data-theme` 与主题推送事件、`kepcup.theme()` 本地返回）、`kepcup-kit`（`:where()` 基础样式 + `kepcup.ui` 柱 / 折 / 饼 / format，按 meta 静态判定）、预览探针 `preview-probe.ts`（单行，错误 / 拒绝 / CSP / console 收集、DOM 静默、渲染体检、验收、乱点、大纲）、`preview.ts`（延迟绑定的 `widgetPreview.run` 句柄 + 检查器的 S2 适配，进程入口在端口 B 就绪时 `bind`，测试可 `widgetPreviewRpc` 注入）、制作 loop 的 GATE / 自查接入 S2（自查带截图给支持图片的模型）、四个模板（全部带 kit，`dashboard` 附查询示例）、提示词补主题与 kit 的 API；desktop main——`widget-preview.ts`（隐藏窗口 + 内存分区 + `file://` 外壳页 + 与正式卡片相同的 iframe / CSP，串行队列、视口时限、回收、崩溃识别、console-message 兜底、截图）、`widget-preview-shell.ts`（外壳页与模拟能力桥）、`widget-preview-policy.ts`（纯函数）、`widget-preview-methods.ts`，`index.ts` 注册与退出时 dispose；renderer——`BotWidgetCard` 按当前主题 open、主题变化推送、iframe load 时强制重推，`WidgetBridgeHost.setTheme`。
+
+**实施中的新决定**（已回写设计 32 §11.8.3 / §11.9 / §11.13）：`color-scheme` 只在 kit 里设（存量组件写死白底时不能跟着暗色改默认文字色）；注入全部单行、垫片指纹升 v2；外壳页无 preload、主进程 `executeJavaScript` 驱动；隐藏窗口里组件框架常停在 0×0——预览进行时每 100ms 截 4×4 逼帧、探针等视口非零才报 ready；一个视口超时不再跑其余视口；验收先于乱点、截图与大纲取自加载完成的页面；评审修复的口径见设计 32 §11.9「审查修复后的口径」。
+
+**评审**：独立评审一轮（只读）：无 P0；P1 五条（排队时间被算进 core 时限导致冤枉组件、探针沉默被当成宿主故障放行、截图时机、外壳在两次预览之间崩溃被记到组件头上、预览分区的 WebRTC 出网）与 P2 十二条全部修复。宿主侧的修复原派给实现它的 agent，该 agent 因用量上限中途停止，余下由本会话完成；回归用例补进 harness（7 例）与单测。
+
+**测试**：定向——core `sdk-injection`（单行、折行后 acorn 可解析、主题、kit 开关、v1 兼容）、`widget-templates`（四模板 S0 / S1 零问题、查询示例过交付校验）、`widget-preview-runner`（未绑定 skipped、按视口注入、映射级别 / 阻断 / 视口 / 触发、崩溃、宿主失败带阻断问题照算、只带警告的半截预览 skipped、取消）、`widget-preview-probe`、`widget-craft-loop`（S2 两例：宿主不回应 → skipped / unverified；跑通 → passed + 自查截图）、`integration/widget-craft`（绑定预览宿主后交付 `passed`）；desktop `widget-preview-policy`（含模拟桥的配额与限流）、`shell-methods`、renderer widgets（`setTheme`），Docker 全绿。**真机 harness**（`kepcup-test:trixie-xvfb`，Electron 44.4.5）25 / 25，连续两轮。**全量一次**（评审修复前）：4218 例，4189 通过 / 27 失败——26 例为既有环境基线，另 1 例 `web-tools` 是已知的负载超时，单跑通过；无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**手工验收项**（真机）：macOS / Windows 上复跑 harness（截图与隐藏窗口逼帧是平台相关的）；打包产物（带 OS 沙箱）里让 Bot 做一个组件，确认任务卡看到「第 N 轮检查」、卡片说明与主题切换正常。
+
+### 8.4 P3c 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**：REVIEW 阶段（`craft/service.ts` `#review`、`prompts.ts` `reviewSystemPrompt` / `reviewStageInput`、`tools.ts` 的 review 工具集与 `submit_review`）接入状态机；`LlmPurpose` `widget_review` + 设置 `widgetReviewModel`（设置页「模型」里的下拉）；交付状态 / 已知问题 / 回执纳入审查结论；renderer 自检徽标（`features/widgets/check-status.ts` + `BotWidgetCard` 审查态徽标、已知问题展开、固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」）与管理列表的状态；`services.widgetCraft` 暴露给基准；基准测试 `test/benchmark/widget-craft.benchmark.test.ts` + 10 条需求 `test/fixtures/widget-briefs/briefs.json` + 真实 Electron 预览服务 `apps/desktop/scripts/widget-preview-server.mjs`（S2 走真实预览宿主）。
+
+**实施中的新决定**（已回写设计 32 §11.10 / §11.11）：同一份文件只审一次；审查用尽仍有 P0 / P1 → 交付为 `issues` 并列入已知问题（P0 不算阻断项——机器检查与必需验收点都已通过，审查可能误判，但必须如实告诉用户）；审查失败 / 没交结论记 skipped，不停制作；`passed` 要求交付的文件审查过且无剩余 P0 / P1，没审过 → `issues` +「未完成独立审查」；审查意见计入最佳版本的分数（P0 ×50、P1 ×10）；审查者的 `problem` 是给用户看的一句话，上卡加「审查：」前缀；Bot 固定了主模型时审查也用它；审查模型不可用时退回制作的模型；设置项不放在实验开关后面。
+
+**评审**：独立评审一轮（只读）：无 P0；P1 四条（没审过的版本被标「已通过自检」、最佳版本与回滚忽略审查结论导致修好的版本被丢掉、设置项藏在实验开关后面、审查模型失效时每次审查都静默跳过）与 P2 全部修复（审查者提示按 S2 是否运行如实描述、`unverified` 也展示已知问题、审查文本面向用户、固定模型的 Bot 不改用审查模型、`submit_review` 的参数限制与 zod 一致、审查意见的修复指令、设置失败回滚、展开按钮的 aria、预览服务的启动失败 / 关闭超时 / 临时目录、基准的阻断项统计）。
+
+**测试**：`widget-craft-loop.test.ts` 31 例（审查 8 例：通过 → passed、P1 → FIX → 第二轮核对 → passed、两轮仍有 P1 → issues + 已知问题、没交结论 → issues +「未完成独立审查」、格式不对重交 / 无场景丢弃、审查模型路由、修好 P1 但多警告不回滚、审查模型不可用退回）、`llm-router`（`widget_review` 覆盖 / 固定模型 / 不影响制作）、`integration/widget-craft`（两例都走 REVIEW）、renderer `check-status`，Docker 全绿；基准文件在全量里整组跳过。**全量一次**（评审修复前）：4250 例，4201 通过 / 27 失败——26 例环境基线，另 1 例 `connected-apps-runtime` 单跑通过（负载偶发）；无新增失败。core / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**效果基准（§5.4）——待跑**：用户决定暂不跑（本机没有模型 Key）。命令与环境变量见 `docs/dev/05-testing.md`「组件制作效果基准」；建议在 `kepcup-test:trixie-xvfb` 里带 `KEPCUP_BENCH_PREVIEW=1` 跑，结果 JSON 的 `baseline.delivered` / `full.delivered`（无阻断项交付数，目标完整流程 ≥ 8/10 且明显高于基线）、`passed`、轮数、token、耗时写回本节与 PROGRESS。
+
+
+### 8.5 P4 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**：
+- L1 `present`：shared `present.ts`（8 种 kind 的最小 zod schema、`validatePresent`、`presentContextText`）；core `tools/present-tools.ts`（对话轮 + 任务都注册，副作用 `local`），orchestrator 发系统卡片消息（`cardType: 'present'`）并在上下文回放；renderer `features/present/`（`PresentCard.svelte` + `present-geometry.ts`）。
+- L2 `ask_user` 的 `mode` / `fields`：shared `ask-user.ts`（`checkAskUserAnswer` 由 core 与问题卡共用）；问题卡记 `questionMode` / `questionFields`；`tasks.answer` 带 `values`，回答以 `<untrusted>` JSON 交回任务；`TaskQuestionCard` 渲染多选与表单。
+- L3 回传：垫片 `kepcup.reply`、桥白名单与 `WidgetBridgeHost` 的 `reply`、`BotWidgetCard` 确认条、`widgets.ui.reply`（`WidgetService.prepareReply` → `orchestrator.sendMessage`，消息带 `origin: 'widget'`），上下文渲染「用户（经组件 … 发出）」+ `<untrusted source="widget">`；任务工具 `widget_read_state`（副作用 `none`）；S2 预览的模拟桥认 `reply`；制作提示的 API 清单补 `kepcup.reply`。
+
+**实施中的新决定**（已回写设计 32 §12）：
+- 图表不引第三方库，自绘 SVG：零依赖、主题变量、`role="img"` + 数据 `aria-label`，刻度取 1 / 2 / 5 × 10ⁿ。
+- 展示卡是系统卡片消息，回放时标明发卡的 Bot、数据包 `<untrusted>`；每 run ≤8 张。
+- 来源标记沿用 content 上的扁平 `origin` 字段（`origin: 'widget'` + `widgetId` + `widgetVersion`）。
+- 没有手势时 `kepcup.reply` 得 `false`、不抛错（S2 合成点击）；宿主桥再核一次手势。
+- 回传确认条与外链确认条共用单例；core 侧也有每卡冷却（按卡片消息 id）。
+- `widget_read_state` 按键名排序、按转义后字节计，放不下的值跳过并报告。
+- 问题卡上的可读一行截到 500 字，完整内容只走结构化 JSON。
+- 组件发出的消息在记忆 / 反思里按「非用户本人的话」处理。
+
+**评审**：独立评审一轮（只读），无 P0。P1 ×2 与 P2 ×7 全部修复：
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| P1 | 展示卡回放以 `[系统]` 身份带出 Bot 给的数据 | 回放标明发卡的 Bot，数据包 `<untrusted>` |
+| P1 | `widget_read_state` 遇到 >64KB 的单值就停，用 `keys` 也读不到 | 跳过大值并报告键名、大小与开头片段；按转义后字节计 |
+| P2 | 长表单回答超出 `tasks.answer` 的 4000 字上限 | 卡上的可读一行截到 500 字 |
+| P2 | 回传冷却按资源计，重开即重置 | 改按卡片消息 id；超量时只清已过冷却的项 |
+| P2 | 手势检查只在组件里的垫片 | 宿主桥再核一次 |
+| P2 | 组件消息被当作用户本人的话进入记忆 / 反思 | 与委派代发同等处理 |
+| P2 | 对话轮提示没讲组件消息 | 对话轮规则补一句 |
+| P2 | 展示卡没有每 run 上限 | 每 run ≤8 张 |
+| P2 | 极小量级的刻度重复 | 刻度按有效数字取整；Svelte 用下标作 key |
+
+**测试**：新增 / 扩展：
+
+| 范围 | 文件与用例 |
+|---|---|
+| shared | `present` / `ask-user`（含截断） |
+| core | `present-tools`（每 run 上限）、`widget-tools`（读状态的包裹与转义、keys、大值跳过、跨 Bot、回传冷却按卡）、`sdk-injection`（reply）、`context-assembly`（组件消息）、`memory-reflection-input`（组件消息包裹）、`integration/present`、`integration/widget-reply`、`integration/task-cards`（表单） |
+| desktop | `widget-bridge-host`（reply 与无手势）、`present-geometry`（含极值刻度）；真机 harness 26 例（reply 无手势得 false） |
+
+**全量一次**（评审修复后）：4280 例，4231 通过 / 27 失败。其中 26 例是环境基线（sandbox / skills / workspace-tools / wiki-url / projects / environment），另 1 例 `integration/widget-craft` 是本次引入的：`widget_read_state` 的工具说明提到了 `kepcup.storage`，撞上「任务上下文不含组件代码」的断言。已改说明，单跑通过。core / desktop typecheck（svelte-check 0 错误）与改动文件的 eslint 均通过。
+
+**合入**：2026-10-12 P3-0 至 P4 一并合入 main（未推送）。main 的下一个空闲迁移号正是 0035，`0035_widget_check.sql` 未改号。D88（`t/handover`）也占了 0035，它合入时要改成 0036，并同步 `create-core.test.ts` 的 user_version 与 `public-skills-migration` 的回拨重放。效果基准（§5.4）仍待跑。

@@ -9,22 +9,26 @@ import {
   BOT_WIDGET_PER_BOT_MAX,
   BOT_WIDGET_QUERY_RESULT_MAX_BYTES,
   BOT_WIDGET_QUERY_ROWS_MAX,
-  BOT_WIDGET_QUERY_SQL_MAX_BYTES,
-  BOT_WIDGET_QUERIES_MAX,
   BOT_WIDGET_STORAGE_KEYS_MAX,
   BOT_WIDGET_STORAGE_QUOTA_BYTES,
   BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
   BOT_WIDGET_TITLE_MAX_CHARS,
   BOT_WIDGET_VERSIONS_KEPT,
+  WIDGET_READ_STATE_MAX_BYTES,
+  WIDGET_REPLY_COOLDOWN_MS,
+  WIDGET_REPLY_MAX_CHARS,
   MCP_APP_SCHEME,
   buildAppCspHeader,
   newId,
   widgetCardSchema,
-  widgetQueryDefSchema,
+  widgetCheckSummarySchema,
   type Message,
   type WidgetCard,
+  type WidgetCheckStatus,
+  type WidgetCheckSummary,
   type WidgetQueryDef,
   type WidgetScope,
+  type WidgetTheme,
   type WidgetsUiOpenOutput,
   type WidgetsUiQueryInput,
   type WidgetsUiQueryOutput,
@@ -43,6 +47,7 @@ import {
 } from './query-gate.js';
 import type { WidgetQueryExecutor } from './query-runner.js';
 import { WidgetResourceStore, widgetUiHostFor, type WidgetResource } from './resource-store.js';
+import { cleanWidgetQueries } from './query-validate.js';
 import { injectWidgetSdk } from './sdk-injection.js';
 
 /**
@@ -97,6 +102,9 @@ interface WidgetVersionRow {
   size_bytes: number;
   /** 含模板的版本被用户展开审查 SQL 的时间（0032；未审查 / 无模板为 null）。 */
   queries_reviewed_at: number | null;
+  /** D87 自检状态（0035；存量为 legacy）与检查摘要 JSON（存量为空串）。 */
+  check_status: WidgetCheckStatus;
+  check_summary_json: string;
   created_by_run: string;
   created_at: number;
 }
@@ -130,6 +138,15 @@ export interface WidgetServiceDeps {
   logger: { warn(fields: Record<string, unknown>, msg: string): void };
 }
 
+/**
+ * D87 交付时的自检结论（制作 loop 凭检查回执给出，设计 32 §11.12）：落版本行并带进卡片。
+ * 缺省 = `legacy`（服务层直接调用，如测试装配）。
+ */
+export interface WidgetDeliveryCheck {
+  status: Exclude<WidgetCheckStatus, 'legacy'>;
+  summary: WidgetCheckSummary;
+}
+
 export interface WidgetCreateInput {
   botId: string;
   conversationId: string;
@@ -140,6 +157,7 @@ export interface WidgetCreateInput {
   queries?: WidgetQueryDef[];
   scope: WidgetScope;
   runId: string;
+  check?: WidgetDeliveryCheck;
 }
 
 export interface WidgetUpdateInput {
@@ -155,6 +173,7 @@ export interface WidgetUpdateInput {
   conversationId?: string | null;
   changeNote: string;
   runId: string;
+  check?: WidgetDeliveryCheck;
 }
 
 export type WidgetWriteResult =
@@ -173,10 +192,15 @@ export type WidgetWriteResult =
     }
   | { ok: false; message: string; code?: 'NOT_FOUND' | 'FORBIDDEN' | 'INVALID_INPUT' | 'WIDGET_LIMIT' };
 
+/** widget_read_state 里放不下的大值给出的开头片段长度（字符）。 */
+const READ_STATE_PREVIEW_CHARS = 1_000;
+
 export class WidgetService {
   readonly store: WidgetResourceStore;
   readonly #deps: WidgetServiceDeps;
   readonly #cardsByRun = new Map<string, number>();
+  /** 回传冷却：卡片消息 id → 上次回传时间（按卡，不按资源：重开 / 重载 / 重新挂载换资源 id）。 */
+  readonly #lastReplyAt = new Map<string, number>();
   readonly #gate = new WidgetQueryGate();
 
   constructor(deps: WidgetServiceDeps, store?: WidgetResourceStore) {
@@ -213,7 +237,7 @@ export class WidgetService {
         return {
           ok: false,
           code: 'WIDGET_LIMIT',
-          message: `你已有 ${owned} 个组件（上限 ${BOT_WIDGET_PER_BOT_MAX}）：改已有组件请用 widget_update；如需新组件，请用户在 Bot 详情「组件」里删除不再使用的组件后再试`,
+          message: `你已有 ${owned} 个组件（上限 ${BOT_WIDGET_PER_BOT_MAX}）：改已有组件请用 widget_craft 并传 widget_id；如需新组件，请用户在 Bot 详情「组件」里删除不再使用的组件后再试`,
         };
       }
       const overQuota = this.#bytesQuotaError(input.botId, sizeBytes, 0);
@@ -237,10 +261,11 @@ export class WidgetService {
             now,
             now,
           );
-        this.#insertVersion(widgetId, 1, html, sha256, queries, input.runId, now);
+        this.#insertVersion(widgetId, 1, html, sha256, queries, input.runId, now, input.check);
       });
       tx();
       const card = this.#emitCard({
+        ...cardCheckFields(input.check),
         widgetId,
         version: 1,
         title,
@@ -260,7 +285,7 @@ export class WidgetService {
         widgetId,
         title,
         version: 1,
-        message: `组件「${title}」（v1）已作为卡片发进对话，等用户确认加载。不要用文字复述代码；之后要改动用它的新版本时调 widget_update（返回里带 widgetId）。`,
+        message: `组件「${title}」（v1）已作为卡片发进对话，等用户确认加载。不要用文字复述代码；之后要修改时用 widget_craft 并传 widget_id。`,
         cardMessageId: card?.id ?? null,
       };
     } catch (error) {
@@ -272,7 +297,7 @@ export class WidgetService {
     try {
       const widgetId = input.widgetId.trim();
       if (widgetId === '') {
-        return { ok: false, message: '需要提供 widgetId（widget_create 返回的）' };
+        return { ok: false, message: '需要提供 widgetId' };
       }
       const widget = this.#widgetOf(widgetId);
       if (widget === null) {
@@ -322,7 +347,7 @@ export class WidgetService {
       const run = this.#acquireRunSlot(input.runId);
       if (!run.ok) return run;
       const tx = this.#deps.db.transaction(() => {
-        this.#insertVersion(widgetId, version, html, sha256, queries, input.runId, now);
+        this.#insertVersion(widgetId, version, html, sha256, queries, input.runId, now, input.check);
         this.#deps.db
           .prepare('update widgets set latest_version = ?, updated_at = ? where id = ?')
           .run(version, now, widgetId);
@@ -341,6 +366,7 @@ export class WidgetService {
       // 重开时得「这个版本的组件已不存在」）。
       if (pruneThrough >= 1) this.store.removeForWidget(widgetId, pruneThrough);
       const card = this.#emitCard({
+        ...cardCheckFields(input.check),
         widgetId,
         version,
         title: widget.title,
@@ -367,6 +393,46 @@ export class WidgetService {
     } catch (error) {
       return { ok: false, message: `组件未能更新：${errorMessage(error)}` };
     }
+  }
+
+  /**
+   * 制作 loop 修改已有组件的起点（D87，设计 32 §11.5）：本 Bot 名下组件最新版的 HTML 与查询
+   * 模板（草稿的 index.html / queries.json 由它初始化）。只给制作 loop 用，内容不进任务上下文。
+   */
+  craftSource(
+    botId: string,
+    widgetId: string,
+  ):
+    | {
+        ok: true;
+        title: string;
+        description: string;
+        scope: WidgetScope;
+        version: number;
+        html: string;
+        queries: WidgetQueryDef[];
+      }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' } {
+    const widget = this.#widgetOf(widgetId.trim());
+    if (widget === null) {
+      return { ok: false, message: '找不到这个组件（widget_id 不存在）', code: 'NOT_FOUND' };
+    }
+    if (widget.bot_id !== botId) {
+      return { ok: false, message: '这个组件不是你创建的，不能修改', code: 'FORBIDDEN' };
+    }
+    const version = this.#versionOf(widget.id, widget.latest_version);
+    if (version === null) {
+      return { ok: false, message: '组件的最新版本已不存在', code: 'NOT_FOUND' };
+    }
+    return {
+      ok: true,
+      title: widget.title,
+      description: widget.description,
+      scope: widget.scope,
+      version: version.version,
+      html: version.html,
+      queries: this.#queriesOf(widget.id, version.version),
+    };
   }
 
   // --- 卡片与审查 ----------------------------------------------------------------
@@ -436,7 +502,7 @@ export class WidgetService {
   // --- 挂载与协议服务 ------------------------------------------------------------
 
   /** 卡片挂载：登记内存资源，返回渲染端挂 iframe 所需的信息。 */
-  open(input: { messageId: string }): WidgetsUiOpenOutput {
+  open(input: { messageId: string; theme?: WidgetTheme | undefined }): WidgetsUiOpenOutput {
     const { message, card } = this.cardOf(input.messageId);
     // 卡片「钉住」某个版本的完整性校验（含查询模板摘要）。
     const version = this.#pinnedVersion(card);
@@ -456,7 +522,8 @@ export class WidgetService {
       botId: card.botId,
       // 登记的是「垫片版」HTML（仅内存资源；widget_versions 里的原文不动，
       // 审查态 source 看到的仍是 Bot 写的原文）。
-      html: injectWidgetSdk(version.html),
+      // 主题按卡片打开时的明暗设好（D87 P3b）；之后的切换由卡片推送主题事件。
+      html: injectWidgetSdk(version.html, input.theme !== undefined ? { theme: input.theme } : {}),
       csp: WIDGET_CSP,
     });
     return {
@@ -501,7 +568,7 @@ export class WidgetService {
       .prepare(
         `select w.id as widget_id, w.title, w.description, w.scope, w.conversation_id,
                 w.latest_version, w.updated_at,
-                v.sha256, v.size_bytes,
+                v.sha256, v.size_bytes, v.check_status,
                 (select count(*) from widget_versions vv where vv.widget_id = w.id) as version_count,
                 (select count(*) from widget_queries q where q.widget_id = w.id and q.version = w.latest_version) as queries_count
          from widgets w
@@ -519,6 +586,7 @@ export class WidgetService {
       updated_at: number;
       sha256: string;
       size_bytes: number | bigint;
+      check_status: WidgetCheckStatus;
       version_count: number | bigint;
       queries_count: number | bigint;
     }>;
@@ -534,6 +602,7 @@ export class WidgetService {
       sizeBytes: Number(row.size_bytes),
       queriesCount: Number(row.queries_count),
       updatedAt: row.updated_at,
+      checkStatus: row.check_status,
     }));
   }
 
@@ -578,11 +647,17 @@ export class WidgetService {
     // 只取描述符要的列：发卡用不着把最多 2MB 的 html 读出来。
     const version = (this.#deps.db
       .prepare(
-        'select version, sha256, queries_sha256, size_bytes, created_at from widget_versions where widget_id = ? and version = ?',
+        'select version, sha256, queries_sha256, size_bytes, created_at, check_status, check_summary_json from widget_versions where widget_id = ? and version = ?',
       )
       .get(widget.id, widget.latest_version) ?? null) as Pick<
       WidgetVersionRow,
-      'version' | 'sha256' | 'queries_sha256' | 'size_bytes' | 'created_at'
+      | 'version'
+      | 'sha256'
+      | 'queries_sha256'
+      | 'size_bytes'
+      | 'created_at'
+      | 'check_status'
+      | 'check_summary_json'
     > | null;
     if (version === null) {
       return { ok: false, message: '组件的最新版本已不存在', code: 'NOT_FOUND' };
@@ -594,7 +669,10 @@ export class WidgetService {
     ).n;
     const run = this.#acquireRunSlot(input.runId ?? '');
     if (!run.ok) return run;
+    // widget_publish 发出的卡沿用该版本的自检状态（设计 32 §11.12）。
     const card = this.#emitCard({
+      checkStatus: version.check_status,
+      knownIssues: knownIssuesOf(version.check_summary_json),
       widgetId: widget.id,
       version: version.version,
       title: widget.title,
@@ -683,6 +761,96 @@ export class WidgetService {
     }
   }
 
+  /**
+   * 回传（D87 P4 L3，设计 32 §12.3）：用户在卡内确认条上同意后，取组件文字要发往的对话与来源。
+   * 资源必须存活；每张卡（按卡片消息，资源重开不重置）至少间隔 WIDGET_REPLY_COOLDOWN_MS（渲染端
+   * 也有冷却，这里是不依赖 UI 的那一侧）。真正发消息由绑定层调 orchestrator.sendMessage（带 `origin: 'widget'`）。
+   */
+  prepareReply(input: { resourceId: string; text: string }): {
+    conversationId: string;
+    widgetId: string;
+    version: number;
+    text: string;
+  } {
+    const entry = this.#requireLiveEntry(input.resourceId);
+    const text = input.text.trim();
+    if (text === '') throw new AppError('INVALID_INPUT', '回传的内容不能为空');
+    if (text.length > WIDGET_REPLY_MAX_CHARS) {
+      throw new AppError('INVALID_INPUT', `回传的内容过长（最多 ${WIDGET_REPLY_MAX_CHARS} 字）`);
+    }
+    const now = this.#deps.clock.now();
+    const last = this.#lastReplyAt.get(entry.messageId);
+    if (last !== undefined && now - last < WIDGET_REPLY_COOLDOWN_MS) {
+      throw new AppError('WIDGET_RATE_LIMITED', '组件回传太频繁，请稍后再试');
+    }
+    if (this.#lastReplyAt.size > 1000) {
+      // 只清已过冷却的项（全清会让正在冷却的卡也解禁）。
+      for (const [key, at] of this.#lastReplyAt) {
+        if (now - at >= WIDGET_REPLY_COOLDOWN_MS) this.#lastReplyAt.delete(key);
+      }
+    }
+    this.#lastReplyAt.set(entry.messageId, now);
+    return { conversationId: entry.conversationId, widgetId: entry.widgetId, version: entry.version, text };
+  }
+
+  /**
+   * `widget_read_state`（D87 P4 L3）：Bot 读自己组件的 KV（全部或指定键），回执上限
+   * WIDGET_READ_STATE_MAX_BYTES；只能读本 Bot 的组件。返回的 JSON 已把 `<` 转成 `\u003c`（仍是合法
+   * JSON，字节数按转义后计），由工具层包 <untrusted>。单个值放不下时**跳过并报告**（键、字节数、
+   * 开头片段），不中断——单值上限 256KB 大于回执上限，否则一个大键会让整份数据都读不到。
+   */
+  readState(input: { botId: string; widgetId: string; keys?: string[] }):
+    | {
+        ok: true;
+        json: string;
+        truncated: boolean;
+        count: number;
+        skipped: Array<{ key: string; bytes: number; preview: string }>;
+      }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' } {
+    const widget = this.#widgetOf(input.widgetId.trim());
+    if (widget === null) return { ok: false, message: '找不到这个组件（widget_id 不存在）', code: 'NOT_FOUND' };
+    if (widget.bot_id !== input.botId) {
+      return { ok: false, message: '这个组件不是你创建的，不能读取它的数据', code: 'FORBIDDEN' };
+    }
+    const rows = this.#deps.db
+      .prepare('select key, value_json from widget_docs where widget_id = ? order by key')
+      .all(widget.id) as Array<{ key: string; value_json: string }>;
+    const wanted = input.keys !== undefined && input.keys.length > 0 ? new Set(input.keys) : null;
+    const escape = (text: string): string => text.replace(/</g, '\\u003c');
+    const pieces: string[] = [];
+    const skipped: Array<{ key: string; bytes: number; preview: string }> = [];
+    let bytes = 2;
+    let truncated = false;
+    for (const row of rows) {
+      if (wanted !== null && !wanted.has(row.key)) continue;
+      let value: string;
+      try {
+        value = escape(JSON.stringify(JSON.parse(row.value_json) as unknown));
+      } catch {
+        continue;
+      }
+      const piece = `${escape(JSON.stringify(row.key))}:${value}`;
+      const size = Buffer.byteLength(piece) + 1;
+      if (bytes + size > WIDGET_READ_STATE_MAX_BYTES) {
+        truncated = true;
+        // 片段也占预算；预算不够时只报键名与大小。
+        const preview = value.slice(0, READ_STATE_PREVIEW_CHARS);
+        const previewSize = Buffer.byteLength(preview) + row.key.length + 32;
+        if (bytes + previewSize <= WIDGET_READ_STATE_MAX_BYTES) {
+          bytes += previewSize;
+          skipped.push({ key: row.key, bytes: Buffer.byteLength(row.value_json), preview });
+        } else {
+          skipped.push({ key: row.key, bytes: Buffer.byteLength(row.value_json), preview: '' });
+        }
+        continue;
+      }
+      bytes += size;
+      pieces.push(piece);
+    }
+    return { ok: true, json: `{${pieces.join(',')}}`, truncated, count: pieces.length, skipped };
+  }
+
   /** 能力桥外链：渲染端已出确认条征得同意，这里再核 https-only / 无凭据后经主进程打开。 */
   async openLink(input: { resourceId: string; url: string }): Promise<{ ok: boolean }> {
     this.#requireLiveEntry(input.resourceId);
@@ -731,7 +899,7 @@ export class WidgetService {
       if (row === undefined) {
         throw new AppError(
           'WIDGET_QUERY_UNKNOWN',
-          `查询「${input.name}」没有在这个组件版本里登记（查询模板随版本声明；要新增或修改模板需用 widget_update 发新版本并请用户重新确认）`,
+          `查询「${input.name}」没有在这个组件版本里登记（查询模板随版本声明；要新增或修改模板需让 Bot 发新版本并请用户重新确认）`,
         );
       }
       // 运行时复核（防库行被外力改动 / schema 变化）：与交付时同一道名字闸。
@@ -881,12 +1049,24 @@ export class WidgetService {
     queries: WidgetQueryDef[],
     runId: string,
     now: number,
+    check: WidgetDeliveryCheck | undefined,
   ): void {
     this.#deps.db
       .prepare(
-        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into widget_versions (widget_id, version, html, sha256, queries_sha256, size_bytes, created_by_run, created_at, check_status, check_summary_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(widgetId, version, html, sha256, queriesSha256Of(queries), Buffer.byteLength(html), runId, now);
+      .run(
+        widgetId,
+        version,
+        html,
+        sha256,
+        queriesSha256Of(queries),
+        Buffer.byteLength(html),
+        runId,
+        now,
+        check?.status ?? 'legacy',
+        check !== undefined ? JSON.stringify(check.summary) : '',
+      );
     const insert = this.#deps.db.prepare(
       'insert into widget_queries (widget_id, version, name, sql) values (?, ?, ?, ?)',
     );
@@ -908,51 +1088,22 @@ export class WidgetService {
     return rows;
   }
 
-  /**
-   * 交付侧的查询模板校验（widget_create / widget_update）：形状 / 数量 / 名字唯一 /
-   * 体积，再逐条过名字闸（query-gate.ts：只读 + 只能引用作用域视图）——语法错误、
-   * 越界的表、写语句在交付时即被拒绝（Bot 拿到可行动的错误，用户也不会看到注定
-   * 跑不通的模板）。
-   */
+  /** 交付侧的查询模板校验（与制作 loop 检查器的 `query.invalid` 同一份代码，query-validate.ts）。 */
   #cleanQueries(raw: WidgetQueryDef[] | undefined): WidgetQueryDef[] {
-    if (raw === undefined) return [];
-    if (!Array.isArray(raw)) {
-      throw new AppError('INVALID_INPUT', 'queries 必须是模板数组');
+    return cleanWidgetQueries(raw, this.#gate);
+  }
+
+  /**
+   * 制作 loop 检查器用的查询校验（设计 32 §11.8.1 `query.invalid`）：与交付侧同一道校验，
+   * 通过返回 null，否则返回原样的人话报错。
+   */
+  validateQueries(raw: WidgetQueryDef[]): string | null {
+    try {
+      cleanWidgetQueries(raw, this.#gate);
+      return null;
+    } catch (error) {
+      return errorMessage(error);
     }
-    if (raw.length > BOT_WIDGET_QUERIES_MAX) {
-      throw new AppError('INVALID_INPUT', `查询模板最多 ${BOT_WIDGET_QUERIES_MAX} 条`);
-    }
-    const seen = new Set<string>();
-    const defs = raw.map((def) => {
-      const parsed = widgetQueryDefSchema.safeParse(def);
-      if (!parsed.success) {
-        throw new AppError(
-          'INVALID_INPUT',
-          '查询模板不合法：name 需为 1–64 个字母/数字/-/_，sql 不能为空且 ≤64KB',
-        );
-      }
-      const { name, sql } = parsed.data;
-      if (seen.has(name)) throw new AppError('INVALID_INPUT', `查询模板名重复：${name}`);
-      seen.add(name);
-      if (Buffer.byteLength(sql) > BOT_WIDGET_QUERY_SQL_MAX_BYTES) {
-        throw new AppError(
-          'INVALID_INPUT',
-          `查询「${name}」的 SQL 过大（上限 ${BOT_WIDGET_QUERY_SQL_MAX_BYTES} 字节）`,
-        );
-      }
-      // __proto__ 作为命名参数永远绑不上（对象键赋值是原型操作不是 own key），人审
-      // 会放行一个运行时必败的模板——交付时即拒，让 Bot 改名。
-      if (/[:@?$]__proto__\b/i.test(sql)) {
-        throw new AppError(
-          'INVALID_INPUT',
-          `查询「${name}」的参数名不能是 __proto__（保留字，参数绑定会静默失败），请换一个名字`,
-        );
-      }
-      const denied = this.#gate.check(sql);
-      if (denied !== null) throw new AppError('INVALID_INPUT', `查询「${name}」${denied}`);
-      return parsed.data;
-    });
-    return defs;
   }
 
   #versionOf(widgetId: string, version: number): WidgetVersionRow | null {
@@ -1024,6 +1175,27 @@ export class WidgetService {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 卡片描述符里的自检字段（缺省 = 存量语义 legacy，不显示徽标）。 */
+function cardCheckFields(
+  check: WidgetDeliveryCheck | undefined,
+): Pick<WidgetCard, 'checkStatus' | 'knownIssues'> {
+  if (check === undefined) return { checkStatus: 'legacy', knownIssues: [] };
+  return { checkStatus: check.status, knownIssues: check.summary.knownIssues };
+}
+
+/** 版本行的检查摘要里的已知问题（存量空串 / 损坏 → 空）。 */
+function knownIssuesOf(summaryJson: string): string[] {
+  if (summaryJson === '') return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(summaryJson) as unknown;
+  } catch {
+    return [];
+  }
+  const parsed = widgetCheckSummarySchema.safeParse(raw);
+  return parsed.success ? parsed.data.knownIssues : [];
 }
 
 /** 查询模板清单的规范摘要：按名字排序后 JSON 序列化取 sha256；空清单 = 空串。 */

@@ -39,7 +39,7 @@
 | main | `0027_egress_approval.sql` | D73 P2：`approvals` 重建（kind 增 `egress`，带全现有 kind）、新表 `app_taint`（污点状态） |
 | main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
 | main | `0029_widget_queries.sql` | D81 P2：新表 `widget_queries`（命名只读查询模板）+ `widget_versions.queries_sha256` 列 |
-| main | `0035_bot_handover.sql`（暂定号） | D88 P0：新表 `bot_handovers` / `bot_handover_items`；`approvals` 重建（kind 增 `bot_handover`，带全现有 kind）。D87 在另一分支同占 0035，后合入的一方按 main 实况重排 |
+| main | `0036_bot_handover.sql` | D88 P0：新表 `bot_handovers` / `bot_handover_items`；`approvals` 重建（kind 增 `bot_handover`，带全现有 kind）。D87 在另一分支同占 0035，后合入的一方按 main 实况重排 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -185,9 +185,12 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - 编辑：更新正文与 `edited_at`，`status = 'edited'`，同步更新 `messages_fts`。
 - 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, deliveries? }`（`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
 - 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
+- 组件回传（D87 P4 L3）：用户在组件卡上确认后经 `widgets.ui.reply` 发出的用户消息，`text` 消息的 `content_json` 带 `origin: 'widget'` + `widgetId` + `widgetVersion`（同样免加列）；上下文发送者渲染为「用户（经组件 … 发出）」，正文包 `<untrusted source="widget">`；记忆与反思把它当「非用户本人的话」（同委派代发）。
 - 任务卡（D75 W3）：共享的 `card` 行，`content_json = { cardType: 'task', runId: <任务 id> }`，`task_id` = 任务；`start_task` 与失败任务的重试各写一张。上下文中渲染为一行状态（[design/30](../design/30-supervisor-and-tasks.md) §4.3）。
 - MCP Apps 卡（D73 P3，`cardType: 'mcp_app'`）：共享的 `card` 行，`content_json = { cardType: 'mcp_app', appUi: {…} }`，`appUi` 是描述符（server id、`ui://` URI、工具名、脱敏并截断后的入参 / 结果，入参 ≤ 16 KiB、结果 ≤ 64 KiB 字符，超出丢弃并标记 truncated），**不含 HTML 与令牌**；页面 HTML 只在 core 内存里的一次性资源（128 位随机 id，≤ 64 条、30 分钟滑动 TTL），不落库。上下文中渲染为一行固定文案。
+- 展示卡（D87 P4 L1，`cardType: 'present'`）：`sender_type = 'system'` 的 `card` 行（`run_id` = 发出它的对话轮或任务），`content_json = { cardType: 'present', present: { kind, title, data, botId? } }`，`data` 是 Bot 给的 JSON（按 kind 的 schema 校验，≤64KB），`botId` 是发卡的 Bot；上下文按 kind 回放成紧凑文字（≤1200 字），标明发卡的 Bot、数据包 `<untrusted>`。
 - 任务问题卡（`ask_user`）：共享的 `system_event` 行，`event = 'task_question'`，`content_json` 带 `text`（问题）、`options`、`taskBotId`（提问任务所属的 Bot；上下文渲染为「Bot（任务 t）向用户提问」并包 `<untrusted>`），回答后写入 `answer`（超时为「（超时未回答）」，提问失败作废为「（提问没有成功，问题作废）」）；`task_id` 与 `run_id` = 任务。
+- 问题卡的多选 / 表单（D87 P4 L2）：同一行的 `content_json` 另带 `questionMode`（`single` / `multi` / `form`，缺省视为 `single`，存量卡不变）与 `questionFields`（表单字段 `{name, label, type, options?, required}`，≤8 个）；回答后 `answer` 是卡上显示的可读一行（≤500 字），交给任务的结构化 JSON 只进任务的私有条目。
 - 结果放弃提示：共享的 `system_event` 行，`event = 'task_result_undelivered'`，`task_id` / `run_id` = 任务；用户可见，Bot 上下文渲染为固定文案（不含任务标题）。
 - `MessagesService` 的读法（D75 W1-B）：`listForBot(conversationId, botId)`（共享行 + 该 Bot 的私有行，Bot 上下文）、`listShared`（只共享行：任务的对话层、摘要）、`search(…, viewerBotId)`（FTS join `messages` 按 owner 过滤）、`around`（前后各 N 条可见行）、`unsummarized`（只摘共享行）、`countVisibleAfter`（未读只数用户可见行）；`terminalTaskEvent(taskId)` / `taskEvents(taskId)` 只查 `kind = 'task_event'`。私有行推进对话的 `last_seq`，不推进 `last_message_at`。
 - 0018 重建方式：`messages` 被 `attachments.message_id`（`ON DELETE CASCADE`）引用，迁移又在 `foreign_keys=ON` 的事务内执行，直接 `DROP TABLE messages` 会级联删光附件；因此 `attachments` 一并重建（先建两张新表并复制，先删旧 `attachments` 再删旧 `messages`，再改名——外键开启时改名会同步改写引用）。表结构与本节 / 下节一致。
@@ -274,7 +277,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0027 增 egress；D84 迁移 0031 增 mail_send；D88 迁移 0035 增 bot_handover）
+### approvals（P03；P08 审查修复 BR-P08-004 增补终态 failed；D72 迁移 0017 增 agent_tool；D73 迁移 0027 增 egress；D84 迁移 0031 增 mail_send；D88 迁移 0036 增 bot_handover）
 
 ```sql
 CREATE TABLE approvals (
@@ -306,7 +309,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
 
-`bot_handover`（D88，迁移 `0035_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
+`bot_handover`（D88，迁移 `0036_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -582,7 +585,7 @@ CREATE INDEX stickies_conversation ON stickies(conversation_id);
 
 ### widgets（Bot 自制交互组件，D81，main 0028）
 
-Bot 在任务里用 `widget_create` / `widget_update` 交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
+Bot 在任务里用 `widget_craft`（D87 制作 loop，凭检查回执经 `WidgetService.create` / `update` 落库）交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
 
 ```sql
 CREATE TABLE widgets (
@@ -605,6 +608,10 @@ CREATE TABLE widget_versions (
   html           TEXT NOT NULL,           -- ≤ BOT_WIDGET_HTML_MAX_BYTES（2MB）
   sha256         TEXT NOT NULL,           -- 渲染端按它记忆用户确认（同版本只确认一次）
   queries_sha256 TEXT NOT NULL DEFAULT '', -- 0029：该版本查询模板摘要（确认指纹含它）
+  size_bytes     INTEGER NOT NULL DEFAULT 0, -- 0032：HTML 的 UTF-8 字节数（列表与配额只读它）
+  queries_reviewed_at INTEGER,             -- 0032：含模板的版本被展开审查 SQL 的时间（open 强制预审）
+  check_status   TEXT NOT NULL DEFAULT 'legacy', -- 0035（D87）：legacy / passed / issues / unverified
+  check_summary_json TEXT NOT NULL DEFAULT '',   -- 0035：检查摘要（轮数、已知问题 ≤5、craftId；不含源码）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (widget_id, version)
@@ -630,8 +637,9 @@ CREATE TABLE widget_docs (
 
 - `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 四表（见删除级联表）；管理界面删除走 `widgets.delete` → `WidgetService.delete`（级联相同，另摘除在途内存资源）。
 - `widget_docs` 是能力桥的每组件命名空间 KV（P1 起由 `widgets.ui.storage` 写入：值存 JSON 文本，配额单值 256KB / 总量 1MB / 1000 键，见设计 32 §6）；组件删除时随 widgets 行级联清除。
-- `widget_queries`（P2）是能力桥查询的模板表：由 `widget_create` / `widget_update` 的 `queries` 参数写入（每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
+- `widget_queries`（P2）是能力桥查询的模板表：由交付时的 `queries` 清单写入（D87 起来自制作草稿的 `queries.json`；每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
 - 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
+- `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
 
 ### delegations（D71，main 0016；0021 重建）
 
@@ -772,7 +780,7 @@ CREATE INDEX app_taint_expires ON app_taint(expires_at);
 
 **判定粒度与跨 Bot 传递**：外发拦截按**对话**判定（`TaintService.guard` = 该对话里任一 Bot 的行未过期）——群聊里 Bot B 读到 Bot A 的输出时不能把污点「洗掉」；私聊只有一个 Bot，与按 (Bot, 对话) 等价。跨对话的交接由 `TaintService.inherit` 传递：委派投递（`delegations` 转 `working`）把 A 对话的污点带到 B 的私聊，B 的结果贴回（转 `completed`，非 `fyi`）再把 B 私聊的污点带回 A 的对话；继承保留来源的 `first_at`，`expires_at` 取较晚者（不因传递而延长）。接线在 `DelegationsService.onMoved`（`start.ts`）。
 
-### bot_handovers / bot_handover_items（D88，迁移 0035 暂定）
+### bot_handovers / bot_handover_items（D88，迁移 0036）
 
 ```sql
 CREATE TABLE bot_handovers (

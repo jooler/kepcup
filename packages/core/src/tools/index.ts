@@ -41,6 +41,7 @@ import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
 import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
+import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 
@@ -177,9 +178,14 @@ export interface ResponseToolDeps {
   tasks?: TaskToolFacade | undefined;
   /**
    * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：present 时任务注册
-   * widget_create / widget_update（对话轮不注册：组件交付是任务的写行为）。
+   * widget_craft / widget_publish（D87；对话轮不注册：组件交付是任务的写行为）。
    */
   widgets?: WidgetToolFacade | undefined;
+  /**
+   * 声明式展示卡（D87 P4 L1，设计 32 §12.1）：present 时对话轮与任务都注册 `present`（只发一条
+   * 卡片消息，没有其他副作用，不破坏对话轮的只读纪律）。
+   */
+  present?: PresentToolFacade | undefined;
 }
 
 /**
@@ -1005,6 +1011,10 @@ export function buildResponseTools(input: {
   const widgetTools =
     deps.widgets !== undefined ? buildWidgetTools({ identity, widgets: deps.widgets }) : [];
 
+  // 声明式展示卡（D87 P4 L1）：对话轮与任务都有。
+  const presentTools =
+    deps.present !== undefined ? buildPresentTools({ identity, present: deps.present }) : [];
+
   // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家；D88 移交工具 P0 同样仅管家。
   const butlerTools =
     deps.butler !== undefined
@@ -1042,6 +1052,7 @@ export function buildResponseTools(input: {
       ...scheduleTools,
       ...watchTools,
       ...mailTools,
+      ...presentTools,
       // D80: the offer card is the turn's (cards facing the user, D75).
       ...(deps.schedule !== undefined
         ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
@@ -1082,6 +1093,7 @@ export function buildResponseTools(input: {
     ...webTools,
     ...skillTools,
     ...delegateTools,
+    ...presentTools,
     ...widgetTools,
     // §2.4.6: a task asks the user on a question card bound to it.
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
