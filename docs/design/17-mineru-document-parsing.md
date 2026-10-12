@@ -2,6 +2,9 @@
 
 Bot 需要读到 PDF（及扫描件、Office 文档、EPUB、网页存档等）的**原文**——包括 OCR、表格、公式的保真还原——并把它整合进自己的 Wiki。这一能力通过**预置公共技能接入官方 MinerU Agent Skill** 实现：MinerU 是 OpenDataLab 开源的一站式文档解析工具（AGPL-3.0），其仓库内自带官方 Agent Skill（`skills/mineru/SKILL.md`），随 MinerU 本体一起演进。
 
+
+> **与 D85 的关系**：Wiki 批量入库的 PDF/Office 派生改由宿主 ingest 管线调用 MinerU（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)）。本文的预置技能路径仍用于对话中分页读原文；二者共享同一 MinerU 安装，不互相替代。
+
 ## 方案选择
 
 2026-10 调研对比了官方 Skill 与若干第三方封装（打包虚拟环境的 Converter Skill、双通道路由的 mineru-local、其他宿主的脚本封装、MCP Server 形态），结论是只有官方方案同时满足三个条件：
