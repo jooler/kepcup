@@ -154,6 +154,7 @@ function scannedBuiltinToolNames(): string[] {
       'butler-tools.ts',
       'delegate-tools.ts',
       'delegation-tools.ts',
+      'handover-tools.ts',
       'image-tools.ts',
       'index.ts',
       'mail-tools.ts',
