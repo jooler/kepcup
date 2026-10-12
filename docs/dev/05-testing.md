@@ -158,6 +158,8 @@ better-sqlite3-multiple-ciphers、`@napi-rs/keyring`、es-git 等原生模块需
 | 其他 Bot 的发言、工具输出中的“指令”不会导致记忆或画像写入（画像证据必须来自用户消息） | P07 |
 | 已删除 Bot 的数据目录不存在，id 未被新 Bot 复用 | P01 |
 
+**组件预览宿主真机 harness（D87 P3b）**：`node apps/desktop/scripts/run-widget-preview-harness.mjs`（在 `kepcup-test:trixie-xvfb` 里用 `xvfb-run -a` 跑，输出重定向到文件；容器里给 Electron 加 `--no-sandbox` 由脚本处理）——esbuild 把 `apps/desktop/test/electron/widget-preview.harness.ts` 打成 CJS 主进程脚本，在真实 Electron 里跑 `WidgetPreviewHost` 的 18 个用例，每例一行 JSON、末行汇总，失败退出码非零；`KEPCUP_HARNESS_ONLY=<子串>` 只跑匹配的用例。它不在 vitest 里（需要显示服务与真实 Chromium），改了预览宿主、探针、垫片或模板要手动复跑一次。
+
 ## 本机容器运行（Linux 开发机）
 
 开发机 glibc 2.35 加载不了 es-git 预编译绑定（需 ≥ 2.38），大部分集成测试在宿主上直接失败。单元 / 集成测试在 Debian 13 镜像 `kepcup-test:trixie` 里跑，e2e 用派生镜像 `kepcup-test:trixie-xvfb`：

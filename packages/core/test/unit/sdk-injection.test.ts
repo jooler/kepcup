@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import { parse } from 'acorn';
 import {
+  WIDGET_KIT_SCRIPT,
+  WIDGET_KIT_STYLE,
   WIDGET_SDK_MARKER,
   WIDGET_SDK_SHIM,
   injectWidgetSdk,
+  wantsKepcupKit,
+  widgetSdkShim,
 } from '../../src/widgets/sdk-injection.js';
 
 /**
@@ -152,17 +157,21 @@ describe('WIDGET_SDK_SHIM 执行路径', () => {
     }
   });
 
-  it('theme / openLink 的请求与回执', async () => {
+  it('theme：直接返回注入时的主题；宿主推送主题事件后更新（D87 P3b）；openLink 请求与回执', async () => {
     const h = installShim();
-    const theme = h.kepcup.theme();
-    expect(h.sent[0]).toMatchObject({ type: 'theme.get', payload: {} });
-    h.reply({ source: 'kepcup-host', id: 1, ok: true, value: 'dark' });
-    await expect(theme).resolves.toBe('dark');
+    await expect(h.kepcup.theme()).resolves.toBe('light');
+    expect(h.sent).toHaveLength(0);
+    h.reply({ source: 'kepcup-host', event: 'theme', theme: 'dark' });
+    await expect(h.kepcup.theme()).resolves.toBe('dark');
+    // 非法主题值、非宿主窗口的主题事件都被忽略。
+    h.reply({ source: 'kepcup-host', event: 'theme', theme: 'purple' });
+    h.replyFromOtherWindow({ source: 'kepcup-host', event: 'theme', theme: 'light' });
+    await expect(h.kepcup.theme()).resolves.toBe('dark');
 
     await expect(h.kepcup.openLink('')).rejects.toThrow(/https/);
     const opened = h.kepcup.openLink('https://example.com');
-    expect(h.sent[1]).toMatchObject({ type: 'openLink', payload: { url: 'https://example.com' } });
-    h.reply({ source: 'kepcup-host', id: 2, ok: true, value: true });
+    expect(h.sent[0]).toMatchObject({ type: 'openLink', payload: { url: 'https://example.com' } });
+    h.reply({ source: 'kepcup-host', id: 1, ok: true, value: true });
     await expect(opened).resolves.toBe(true);
   });
 
@@ -221,7 +230,7 @@ describe('injectWidgetSdk 插入点边界', () => {
     // head 正则不做注释解析（廉价探测不值得）：垫片插进注释 → window.kepcup 不存在，
     // 无副作用（见 sdk-injection.ts 模块注释「已知失效模式」）；Bot 重发修正的 HTML 即恢复。
     expect(out.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(out).toContain('<!-- <head><script>');
+    expect(out).toContain('<!-- <head><style data-kepcup="theme">');
     expect(out).toContain(WIDGET_SDK_MARKER);
   });
 
@@ -234,3 +243,51 @@ describe('injectWidgetSdk 插入点边界', () => {
     expect(injectWidgetSdk(out)).toBe(out);
   });
 });
+
+describe('垫片 v2：单行注入、主题与 kit（D87 P3b）', () => {
+  const body = (script: string): string => script.slice(script.indexOf('>') + 1, -'</script>'.length);
+
+  it('注入内容不含换行：原文每一行的行号不变', () => {
+    const html = '<!DOCTYPE html>\n<html>\n<head>\n<title>t</title>\n</head>\n<body><script>boom()</script></body>\n</html>';
+    const out = injectWidgetSdk(html, { theme: 'dark' });
+    expect(out.split('\n')).toHaveLength(html.split('\n').length);
+    expect(out.split('\n')[5]).toBe('<body><script>boom()</script></body>');
+    expect(WIDGET_SDK_SHIM).not.toContain('\n');
+  });
+
+  it('垫片与 kit 脚本折行后仍是合法 JS（不依赖换行的语句分隔）', () => {
+    for (const script of [widgetSdkShim('light'), widgetSdkShim('dark'), WIDGET_KIT_SCRIPT]) {
+      expect(() => parse(body(script), { ecmaVersion: 2022, sourceType: 'script' })).not.toThrow();
+    }
+  });
+
+  it('主题按 open 的参数写进垫片（缺省 light），主题变量总是注入', () => {
+    expect(injectWidgetSdk('<html><head></head></html>')).toContain("currentTheme = 'light'");
+    const dark = injectWidgetSdk('<html><head></head></html>', { theme: 'dark' });
+    expect(dark).toContain("currentTheme = 'dark'");
+    expect(dark).toContain('--kc-accent');
+    expect(dark).toContain(':root[data-theme=dark]');
+    // 不带 kit 的存量组件不受 color-scheme 影响。
+    expect(dark).not.toContain('color-scheme');
+  });
+
+  it('kit 只在 <meta name="kepcup-kit" content="1"> 时注入', () => {
+    const plain = '<html><head></head><body></body></html>';
+    const kit = '<html><head><meta name="kepcup-kit" content="1"></head><body></body></html>';
+    expect(wantsKepcupKit(plain)).toBe(false);
+    expect(wantsKepcupKit(kit)).toBe(true);
+    expect(wantsKepcupKit('<meta content="1" name="kepcup-kit">')).toBe(true);
+    expect(injectWidgetSdk(plain)).not.toContain('kepcup-kit');
+    const out = injectWidgetSdk(kit);
+    expect(out).toContain(WIDGET_KIT_STYLE);
+    expect(out).toContain(WIDGET_KIT_SCRIPT);
+    expect(WIDGET_KIT_STYLE).toContain(':where(');
+  });
+
+  it('旧版（v1）垫片标记同样视为已注入', () => {
+    const legacy = '<html><head><script>/* kepcup-widget-sdk-v1 */</script></head></html>';
+    expect(injectWidgetSdk(legacy)).toBe(legacy);
+    expect(WIDGET_SDK_MARKER).toBe('kepcup-widget-sdk-v2');
+  });
+});
+

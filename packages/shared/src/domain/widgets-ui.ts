@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MCP_APP_SCHEME, appsUiResourceInputSchema, appsUiResourceOutputSchema } from './apps-ui.js';
-import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema } from './widget-craft.js';
+import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema, widgetThemeSchema } from './widget-craft.js';
 
 /**
  * Bot 自制交互组件（Bot Widgets，D81，设计 32）：Bot 在任务里用 `widget_create` /
@@ -166,7 +166,14 @@ export const widgetsUiSourceOutputSchema = z.object({
 export type WidgetsUiSourceOutput = z.infer<typeof widgetsUiSourceOutputSchema>;
 
 /** `widgets.ui.open`：卡片挂载，登记内存资源并返回 iframe 地址。 */
-export const widgetsUiOpenInputSchema = z.object({ messageId: z.string().min(1) });
+export const widgetsUiOpenInputSchema = z.object({
+  messageId: z.string().min(1),
+  /**
+   * D87 P3b：卡片当前的明暗主题——垫片在组件脚本之前设好 `<html data-theme>` 与 `--kc-*` 变量
+   * （缺省 light）；之后的切换由卡片推送 `{source:'kepcup-host', event:'theme'}`。
+   */
+  theme: widgetThemeSchema.optional(),
+});
 export const widgetsUiOpenOutputSchema = z.object({
   /** 一次性不透明资源 id（iframe 路径与后续调用的凭据）。 */
   resourceId: z.string(),

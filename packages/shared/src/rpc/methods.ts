@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import {
+  widgetPreviewRunInputSchema,
+  widgetPreviewRunOutputSchema,
+} from '../domain/widget-craft.js';
+import {
   mailAccountCreateInputSchema,
   mailAccountGetOutputSchema,
   mailAccountIdInputSchema,
@@ -2021,6 +2025,12 @@ export const rpcMethodSchemas = {
     input: shellOpenExternalInputSchema,
     output: shellOpenExternalOutputSchema,
   },
+  // D87 P3b: served by the main process on port B; core's widget authoring loop runs a
+  // widget in the hidden preview window (S2). Not in APP_METHODS.
+  'widgetPreview.run': {
+    input: widgetPreviewRunInputSchema,
+    output: widgetPreviewRunOutputSchema,
+  },
 } as const;
 
 export type RpcMethodName = keyof typeof rpcMethodSchemas;
@@ -2074,6 +2084,11 @@ export const BROWSER_RPC_METHODS = [
 
 /** Methods the MAIN process serves on port B for core's use (D73): system-shell integration. */
 export const SHELL_RPC_METHODS = ['shell.openExternal'] as const satisfies readonly RpcMethodName[];
+
+/** Methods the MAIN process serves on port B for core's use (D87): widget preview (S2). */
+export const WIDGET_PREVIEW_RPC_METHODS = [
+  'widgetPreview.run',
+] as const satisfies readonly RpcMethodName[];
 
 const APP_METHODS = [
   'system.ping',

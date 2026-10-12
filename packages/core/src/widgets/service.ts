@@ -25,6 +25,7 @@ import {
   type WidgetCheckSummary,
   type WidgetQueryDef,
   type WidgetScope,
+  type WidgetTheme,
   type WidgetsUiOpenOutput,
   type WidgetsUiQueryInput,
   type WidgetsUiQueryOutput,
@@ -493,7 +494,7 @@ export class WidgetService {
   // --- 挂载与协议服务 ------------------------------------------------------------
 
   /** 卡片挂载：登记内存资源，返回渲染端挂 iframe 所需的信息。 */
-  open(input: { messageId: string }): WidgetsUiOpenOutput {
+  open(input: { messageId: string; theme?: WidgetTheme | undefined }): WidgetsUiOpenOutput {
     const { message, card } = this.cardOf(input.messageId);
     // 卡片「钉住」某个版本的完整性校验（含查询模板摘要）。
     const version = this.#pinnedVersion(card);
@@ -513,7 +514,8 @@ export class WidgetService {
       botId: card.botId,
       // 登记的是「垫片版」HTML（仅内存资源；widget_versions 里的原文不动，
       // 审查态 source 看到的仍是 Bot 写的原文）。
-      html: injectWidgetSdk(version.html),
+      // 主题按卡片打开时的明暗设好（D87 P3b）；之后的切换由卡片推送主题事件。
+      html: injectWidgetSdk(version.html, input.theme !== undefined ? { theme: input.theme } : {}),
       csp: WIDGET_CSP,
     });
     return {

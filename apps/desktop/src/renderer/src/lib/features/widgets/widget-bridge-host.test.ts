@@ -290,4 +290,22 @@ describe('WidgetBridgeHost', () => {
     expect(h.replies).toHaveLength(0);
     expect(h.storageCalls).toHaveLength(0);
   });
+
+  test('setTheme：推送主题事件（同值不推），之后 theme.get 回新主题；destroy 后不再推（D87 P3b）', async () => {
+    const h = harness();
+    h.host.setTheme('dark');
+    expect(h.replies).toHaveLength(0);
+    h.host.setTheme('light');
+    expect(h.replies).toEqual([{ source: 'kepcup-host', event: 'theme', theme: 'light' }]);
+    h.emit({ source: 'kepcup-widget', id: 9, type: 'theme.get', payload: {} });
+    await h.settled();
+    expect(h.replies.at(-1)).toMatchObject({ id: 9, ok: true, value: 'light' });
+    // iframe 加载完成时强制重推（文档就绪前的推送会丢）。
+    h.host.setTheme('light', { force: true });
+    expect(h.replies.at(-1)).toEqual({ source: 'kepcup-host', event: 'theme', theme: 'light' });
+    h.host.destroy();
+    h.host.setTheme('dark', { force: true });
+    expect(h.replies).toHaveLength(3);
+  });
 });
+

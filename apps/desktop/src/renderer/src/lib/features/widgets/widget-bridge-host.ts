@@ -1,5 +1,7 @@
 import {
   BOT_WIDGET_QUERY_NAME_MAX_CHARS,
+  WIDGET_BRIDGE_HOST_SOURCE,
+  WIDGET_HOST_THEME_EVENT,
   BOT_WIDGET_STORAGE_KEY_MAX_CHARS,
   type WidgetsUiQueryCall,
   type WidgetsUiQueryOutput,
@@ -61,10 +63,12 @@ export class WidgetBridgeHost {
   readonly #target: WidgetBridgeListenerTarget;
   readonly #listener: (event: MessageEvent) => void;
   #destroyed = false;
+  #theme: 'light' | 'dark';
 
   private constructor(options: WidgetBridgeHostOptions) {
     this.#frameWindow = options.frameWindow;
     this.#options = options;
+    this.#theme = options.theme;
     this.#target = options.listenerTarget ?? window;
     this.#listener = (event) => {
       void this.#handle(event);
@@ -76,6 +80,24 @@ export class WidgetBridgeHost {
     const host = new WidgetBridgeHost(options);
     host.#target.addEventListener('message', host.#listener);
     return host;
+  }
+
+  /**
+   * 应用切换明暗主题（D87 P3b）：推送 `{source:'kepcup-host', event:'theme', theme}`，垫片更新
+   * `<html data-theme>` 并派发 `kepcup:theme`；之后的 `theme.get` 也回新主题。同值不推，除非
+   * `force`——iframe 加载完成时重推一次：组件文档就绪前发出的推送会丢（垫片还没在监听）。
+   */
+  setTheme(theme: 'light' | 'dark', options: { force?: boolean } = {}): void {
+    if (this.#destroyed || (theme === this.#theme && options.force !== true)) return;
+    this.#theme = theme;
+    try {
+      this.#frameWindow.postMessage(
+        { source: WIDGET_BRIDGE_HOST_SOURCE, event: WIDGET_HOST_THEME_EVENT, theme },
+        '*',
+      );
+    } catch {
+      // iframe 已卸载：下次挂载按新主题 open。
+    }
   }
 
   /** 拆桥（卡片卸载 / 重载）：移除监听，此后不再收发任何消息。 */
@@ -170,7 +192,7 @@ export class WidgetBridgeHost {
         return { value: await this.#options.openLink(url) };
       }
       case 'theme.get':
-        return { value: this.#options.theme };
+        return { value: this.#theme };
       default:
         return { error: '不支持的能力', code: 'NOT_IMPLEMENTED' };
     }

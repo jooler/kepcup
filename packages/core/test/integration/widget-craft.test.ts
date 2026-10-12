@@ -173,4 +173,85 @@ describe('widget_craft end to end (D87)', () => {
       ['edit', 'ls', 'read', 'stage_done', 'widget_check', 'widget_template', 'write'].sort(),
     );
   });
+
+  it('预览宿主已绑定（P3b）：GATE 跑 S2，干净的组件交付为 passed；HTML 仍只在阶段 run 里', async () => {
+    const previews: unknown[] = [];
+    const stack = await createTestStack({
+      widgetPreviewRpc: {
+        run: async (input) => {
+          previews.push(input);
+          return {
+            viewports: input.viewports.map((v) => ({
+              width: v.width,
+              theme: v.theme,
+              status: 'ok' as const,
+              detail: '',
+              findings: [],
+              acceptance: (input.acceptance ?? []).map((item) => ({
+                id: item.id,
+                must: item.must,
+                passed: true,
+                detail: '',
+              })),
+              outline: 'h3 标题',
+              openedLinks: [],
+            })),
+          };
+        },
+      },
+    });
+    stacks.push(stack);
+    const bot = await makeBot(stack.core, '小组件二');
+    const conv = await openDirect(stack.core, bot.id);
+    stack.llm.script('mock-main', [
+      step()
+        .expect(isTask)
+        .replyToolCall('widget_craft', { brief: '做个点击计数器', title: '计数器' }),
+      step()
+        .expect(isStage('SPEC'))
+        .replyToolCall('write', { path: 'spec.md', content: '> 点击计数器\n' }),
+      step()
+        .expect(isStage('SPEC'))
+        .replyToolCall('write', { path: 'acceptance.json', content: ACCEPTANCE }),
+      step().expect(isStage('SPEC')).replyToolCall('stage_done', { summary: '规格已写' }),
+      step().expect(isStage('BUILD')).replyToolCall('write', { path: 'index.html', content: GOOD }),
+      step().expect(isStage('BUILD')).replyToolCall('stage_done', { summary: '已写' }),
+      step()
+        .expect((req) => isTask(req) && body(req).includes('已交付'))
+        .replyText('做好了'),
+      step()
+        .expect(
+          (req) =>
+            !req.lastUserText().includes('<stage>') && !req.lastUserText().includes('<task_brief'),
+        )
+        .replyText('好的'),
+    ]);
+    const taskId = stack.core.services.orchestrator!.tasks.start(turnIdentity(bot.id, conv.id), {
+      title: '做组件',
+      instruction: `做一个计数器组件 ${MARKER}`,
+      sourceMessageIds: [],
+      writes: false,
+    }).taskId;
+    const runs = stack.core.services.domain!.runs;
+    await waitFor(
+      () => {
+        const run = runs.get(taskId);
+        return run !== null && run.status === 'completed' ? run : null;
+      },
+      { label: 'task completed', timeoutMs: 30_000 },
+    );
+    expect(previews).toHaveLength(1);
+    const receipt = runs
+      .stepsFor(taskId)
+      .find((s) => s.type === 'tool_result' && s.payload['toolName'] === 'widget_craft');
+    expect(String(receipt?.payload['content'])).toContain('已通过自检');
+    const messages = await listAllMessages(stack.core, conv.id);
+    const card = messages.find(
+      (m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType === 'bot_widget',
+    );
+    expect(
+      (card!.content as unknown as { widget: { checkStatus: string } }).widget.checkStatus,
+    ).toBe('passed');
+    expect(JSON.stringify(runs.stepsFor(taskId))).not.toMatch(/<!DOCTYPE|<script/i);
+  });
 });

@@ -159,11 +159,20 @@ export interface WidgetCraftDeps {
   clock: Clock;
   /** run.status fan-out：界面看到阶段 run 出现与结束。 */
   publishRunStatus: (run: Run) => void;
-  /** S2 预览宿主（P3b 由主进程绑定）；缺省 / 返回 null = S2 skipped → 交付为 unverified。 */
-  preview?: () => WidgetPreviewRunner | null;
+  /**
+   * S2 预览（主进程预览宿主的适配，`widgets/preview.ts`）；缺省 / 返回 null / 宿主未绑定 =
+   * S2 skipped → 交付为 unverified。`screenshots` 只在模型自查时要（截图交给支持图片的模型，
+   * 不落库）。
+   */
+  preview?: (options: {
+    screenshots: boolean;
+  }) =>
+    (WidgetPreviewRunner & { screenshots?(): Array<{ mimeType: string; base64: string }> }) | null;
   /** 测试注入（真实默认值为 WIDGET_CRAFT_* 常量）。 */
   timeoutMs?: number;
   tokenBudget?: number;
+  /** 单次检查的兜底时限（缺省 WIDGET_CHECK_TIMEOUT_MS + 余量）。 */
+  checkTimeoutMs?: number;
   tokenPollMs?: number;
 }
 
@@ -185,6 +194,9 @@ interface CraftSession {
   /** 已为「只剩警告」花过一轮修复（警告最多修一次，设计 32 §6 风险表）。 */
   warningFixDone: boolean;
 }
+
+/** core 兜底时限比给宿主的预算多出的余量（宿主按预算收尾、回传结果要一点时间）。 */
+const WIDGET_CHECK_GRACE_MS = 5_000;
 
 const STOP_TEXT: Readonly<Record<StopReason, string>> = {
   cancelled: '制作被取消',
@@ -621,9 +633,10 @@ export class WidgetCraftService {
   }
 
   /**
-   * GATE 的检查：带制作的 signal 与 WIDGET_CHECK_TIMEOUT_MS 时限（S2 预览挂住不能拖住整次制作）。
-   * 预览被取消 / 超时就退回只跑 S0 / S1（确定性、毫秒级）——仍留下一张回执（S2 skipped =
-   * 最多 unverified）；超时另记一条阻断项 preview.timeout。
+   * GATE 的检查：带制作的 signal 与时限。预览宿主按调用方给的预算（`budgetMs`，见 preview.ts）
+   * 自己收尾——组件真的挂住时宿主在视口时限内回 `preview.timeout`（阻断项）。core 这边的时限
+   * 只是兜底（宿主没回音 / 排队太久）：那是宿主的问题不是组件的，退回只跑 S0 / S1，S2 记
+   * skipped（这一轮最多算 unverified），不冤枉组件。
    */
   async #check(session: CraftSession): Promise<WidgetCheckReport> {
     const base = {
@@ -631,7 +644,7 @@ export class WidgetCraftService {
       validateQueries: (defs: WidgetQueryDef[]) => this.#deps.widgets.validateQueries(defs),
       now: this.#deps.clock.now(),
     };
-    const preview = this.#deps.preview?.() ?? null;
+    const preview = this.#deps.preview?.({ screenshots: false }) ?? null;
     if (preview === null || session.controller.signal.aborted) {
       return runWidgetCheck({ ...base, preview: null });
     }
@@ -642,29 +655,26 @@ export class WidgetCraftService {
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort('widget check timeout');
-    }, WIDGET_CHECK_TIMEOUT_MS);
+    }, this.#deps.checkTimeoutMs ?? WIDGET_CHECK_TIMEOUT_MS + WIDGET_CHECK_GRACE_MS);
     timer.unref?.();
     try {
-      return await runWidgetCheck({ ...base, preview, signal: controller.signal });
+      // 与中止本身竞速：预览实现没理会 signal 也不能把 GATE 挂住。
+      return await raceAbort(
+        runWidgetCheck({ ...base, preview, signal: controller.signal }),
+        controller.signal,
+      );
     } catch (error) {
       if (!controller.signal.aborted) throw error;
       const report = await runWidgetCheck({ ...base, preview: null });
-      if (!timedOut) return report;
-      const issue: WidgetCheckIssue = {
-        rule: 'preview.timeout',
-        level: 'error',
-        stage: 'S2',
-        blocking: true,
-        file: 'index.html',
-        message: `预览运行超过 ${WIDGET_CHECK_TIMEOUT_MS / 1000} 秒没有结束（可能有死循环或长时间阻塞的脚本）`,
-        hint: '检查循环与定时器，避免同步的长计算',
-      };
       return {
         ...report,
-        issues: [issue, ...report.issues],
-        blockers: report.blockers + 1,
-        score: report.score + 100,
-        verdict: 'blocked',
+        stages: {
+          ...report.stages,
+          S2: {
+            status: 'skipped',
+            reason: timedOut ? '预览宿主没有按时回应（繁忙或异常），本轮未经运行验证' : '制作已停止，预览未完成',
+          },
+        },
       };
     } finally {
       clearTimeout(timer);
@@ -674,21 +684,44 @@ export class WidgetCraftService {
 
   /** 模型的 widget_check：同一检查器、同一报告格式；只是自查，不留回执。 */
   async #selfCheck(session: CraftSession, signal: AbortSignal): Promise<ToolResult> {
+    // 自查要截图（模型支持图片时引擎才会带上，run_steps 只存文本）；同样受检查时限约束。
+    const preview = this.#deps.preview?.({ screenshots: true }) ?? null;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(
+      () => controller.abort('widget check timeout'),
+      this.#deps.checkTimeoutMs ?? WIDGET_CHECK_TIMEOUT_MS + WIDGET_CHECK_GRACE_MS,
+    );
+    timer.unref?.();
     try {
-      const report = await runWidgetCheck({
-        draftDir: session.draft.dir,
-        validateQueries: (defs) => this.#deps.widgets.validateQueries(defs),
-        preview: this.#deps.preview?.() ?? null,
-        now: this.#deps.clock.now(),
-        signal,
-      });
-      return { ok: true, content: formatCheckReport(report) };
+      const report = await raceAbort(
+        runWidgetCheck({
+          draftDir: session.draft.dir,
+          validateQueries: (defs) => this.#deps.widgets.validateQueries(defs),
+          preview,
+          now: this.#deps.clock.now(),
+          signal: controller.signal,
+        }),
+        controller.signal,
+      );
+      const images = preview?.screenshots?.() ?? [];
+      return {
+        ok: true,
+        content: formatCheckReport(report),
+        ...(images.length > 0 ? { images } : {}),
+      };
     } catch (error) {
       return {
         ok: false,
-        content: `检查器出错：${error instanceof Error ? error.message : String(error)}`,
+        content: controller.signal.aborted
+          ? '自查被中止（超时或制作已取消）；宿主在阶段结束后仍会检查'
+          : `检查器出错：${error instanceof Error ? error.message : String(error)}`,
         errorCode: 'TOOL_FAILED',
       };
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -1045,6 +1078,25 @@ export class WidgetCraftService {
 // --- helpers ------------------------------------------------------------------------
 
 const CIRCLED = ['①', '②', '③', '④', '⑤'];
+
+/** 等 promise，或 signal 先中止就立刻 reject（不依赖被等的那一方理会 signal）。 */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('aborted'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
 
 function invalid(content: string, errorCode = 'INVALID_INPUT'): ToolResult {
   return { ok: false, content, errorCode };

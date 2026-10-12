@@ -245,8 +245,9 @@ function harness(
     logger,
     clock,
     publishRunStatus: () => undefined,
-    ...(options.preview !== undefined ? { preview: () => options.preview! } : {}),
+    ...(options.preview !== undefined ? { preview: () => options.preview } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.checkTimeoutMs !== undefined ? { checkTimeoutMs: options.checkTimeoutMs } : {}),
     ...(options.tokenBudget !== undefined
       ? { tokenBudget: options.tokenBudget, tokenPollMs: 5 }
       : {}),
@@ -693,6 +694,38 @@ describe('review fixes (D87 P3a)', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'WIDGET_CRAFT_FAILED' });
     expect(result.content).toContain('engine exploded');
     expect(stageRuns(h).map((r) => r.status)).toEqual(['failed']);
+  });
+});
+
+describe('S2 接入（D87 P3b）', () => {
+  it('预览宿主没按时回应 → 这一轮 S2 记 skipped（不冤枉组件），交付为 unverified', async () => {
+    const preview: WidgetPreviewRunner = { run: () => new Promise(() => undefined) };
+    const h = harness({ preview, checkTimeoutMs: 50 });
+    h.engine.add('SPEC', specScript).add('BUILD', buildScript(GOOD));
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    const check = h.deliveries[0]!.input['check'] as { status: string };
+    expect(check.status).toBe('unverified');
+  });
+
+  it('预览跑通且无问题 → passed；模型自查拿到截图（ToolResult.images）', async () => {
+    let selfCheck: ToolResult | null = null;
+    const preview = {
+      run: async () => ({ issues: [], acceptance: [], outline: 'h3 标题' }),
+      screenshots: () => [{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }],
+    };
+    const h = harness({ preview });
+    h.engine.add('SPEC', specScript).add('BUILD', async (tools, spec) => {
+      await tools.call('write', { path: 'index.html', content: GOOD });
+      selfCheck = await tools.call('widget_check', {});
+      await tools.call('stage_done', { summary: '已写' });
+      void spec;
+    });
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('已通过自检');
+    expect((h.deliveries[0]!.input['check'] as { status: string }).status).toBe('passed');
+    expect(selfCheck!.images).toEqual([{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }]);
   });
 });
 

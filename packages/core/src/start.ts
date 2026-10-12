@@ -149,6 +149,12 @@ import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
 import { WidgetQueryRunner } from './widgets/query-runner.js';
 import { WidgetCraftService } from './widgets/craft/service.js';
+import {
+  createWidgetPreviewRpc,
+  createWidgetPreviewRunner,
+  type DeferredWidgetPreviewRpc,
+  type WidgetPreviewHostRpc,
+} from './widgets/preview.js';
 import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
@@ -336,6 +342,11 @@ export interface CoreServicesOptions {
    */
   shellRpc?: ShellHostRpc;
   /**
+   * D87 P3b test hook: the widget preview host (`widgetPreview.run`, S2). The Electron entry
+   * binds the deferred default to the platform channel; tests may inject a fake.
+   */
+  widgetPreviewRpc?: Pick<WidgetPreviewHostRpc, 'run'>;
+  /**
    * D73 test hooks for the OAuth engine (all honoured only when NODE_ENV=test in
    * a test-hooks build, like KEPCUP_KEYSTORE): extra loopback hosts the SSRF-safe
    * fetch may reach over plain http (`hostname` or `host:port`, e.g. the fake
@@ -520,6 +531,8 @@ export interface CoreServices {
   browserRpc: DeferredBrowserHostRpc;
   /** D73 system shell (open the browser for OAuth consent); same deferred pattern as browserRpc. */
   shellRpc: DeferredShellHostRpc;
+  /** D87 P3b widget preview host (S2 of the authoring loop); same deferred pattern as shellRpc. */
+  widgetPreviewRpc: DeferredWidgetPreviewRpc;
   /** D73 connected apps: Token Vault, connection rows, interactive auth flows (null while locked / errored). */
   apps: AppServices | null;
   /** D73 runtime auth (provider registry, disconnect / removal, audit); null with `apps`. */
@@ -768,6 +781,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
     shellRpc: createShellHostRpc(),
+    widgetPreviewRpc: createWidgetPreviewRpc(),
     apps: null,
     appRuntime: null,
     mcpb: null,
@@ -858,6 +872,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   // app binds the platform channel in process-entry (services.browserRpc.bind).
   if (options.browserRpc !== undefined) services.browserRpc.bindFacade(options.browserRpc);
   if (options.shellRpc !== undefined) services.shellRpc.bindFacade(options.shellRpc);
+  if (options.widgetPreviewRpc !== undefined) {
+    services.widgetPreviewRpc.bindFacade(options.widgetPreviewRpc);
+  }
 
   const systemMethods = createSystemMethods(services, options.appVersion, options.diskUsageBudget);
   const fail = (message: string): CoreServices => {
@@ -1779,7 +1796,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
 
     // D87 组件制作 loop：widget_craft 的宿主状态机（阶段 run 嵌套在任务 run 下，交付凭检查回执）。
-    // S2 预览宿主在 P3b 由主进程绑定；此前 S2 记 skipped，交付为「未经运行验证」。
+    // S2 预览宿主由主进程经端口 B 绑定（`widgetPreview.run`）；未绑定（无界面装配）时 S2 记
+    // skipped，交付为「未经运行验证」。
     const widgetCraft = new WidgetCraftService({
       engine,
       router: llmRouter,
@@ -1793,6 +1811,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       clock,
       publishRunStatus: (run) => events.emit('run.status', { run }),
+      preview: (opts) =>
+        createWidgetPreviewRunner({ rpc: services.widgetPreviewRpc, screenshots: opts.screenshots }),
     });
     try {
       widgetCraft.sweepDrafts();

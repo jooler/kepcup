@@ -118,20 +118,20 @@ P3a 测试：见 §5.1–§5.2。
 ### P3b 预览宿主（S2）+ 主题变量 + 模板
 
 core：
-- [ ] `sdk-injection.ts`：`injectPreviewProbe(html)`（垫片之后、组件脚本之前；只用于预览资源）；探针脚本：错误 / 拒绝 / CSP 违规 / console 收集、DOM 静默等待、渲染体检、乱点冒烟、验收步骤执行、大纲生成，经 `parent.postMessage({source:'kepcup-probe', …})` 回报。
-- [ ] `widgets/preview-facade.ts`：`DeferredWidgetPreviewRpc`（照抄 `apps/shell-facade.ts` 的 `createShellHostRpc` / `DeferredShellHostRpc`），`process-entry.ts` 在 platform-port 绑定时 `bind`。
-- [ ] `run-check.ts` 接入 S2：两视口；结果并入报告；截图在制作模型支持图片时作为 `ToolResult.images` 交给 BUILD / FIX 阶段的 `widget_check`（GATE 报告本身只存文本）。
-- [ ] 主题：`widgets.ui.open` 增可选 `theme`；垫片注入 `data-theme` / `color-scheme` / `--kc-*` 变量；监听 `{source:'kepcup-host', event:'theme'}` 并派发 `kepcup:theme`。
-- [ ] `kepcup-kit`：带 `<meta name="kepcup-kit" content="1">` 时注入基础样式（`:where()`）与 `kepcup.ui`（SVG 柱 / 折 / 饼 + 数字格式化）；更新 `WIDGET_SDK_SHIM` 指纹版本（`-v2`）并保持注入幂等。
-- [ ] 模板：`widgets/templates/` 下 `blank`、`form-calculator`、`list-tracker`、`dashboard`，每个模板都必须过 S0/S1/S2 全绿（单测锁住）。
+- [x] `sdk-injection.ts`：`injectPreviewProbe(html)`（垫片之后、组件脚本之前；只用于预览资源）；探针脚本：错误 / 拒绝 / CSP 违规 / console 收集、DOM 静默等待、渲染体检、乱点冒烟、验收步骤执行、大纲生成，经 `parent.postMessage({source:'kepcup-probe', …})` 回报。
+- [x] `widgets/preview-facade.ts`：`DeferredWidgetPreviewRpc`（照抄 `apps/shell-facade.ts` 的 `createShellHostRpc` / `DeferredShellHostRpc`），`process-entry.ts` 在 platform-port 绑定时 `bind`。
+- [x] `run-check.ts` 接入 S2：两视口；结果并入报告；截图在制作模型支持图片时作为 `ToolResult.images` 交给 BUILD / FIX 阶段的 `widget_check`（GATE 报告本身只存文本）。
+- [x] 主题：`widgets.ui.open` 增可选 `theme`；垫片注入 `data-theme` 与 `--kc-*` 变量（`color-scheme` 只在 kit 里设，见 §8.3）；监听 `{source:'kepcup-host', event:'theme'}` 并派发 `kepcup:theme`。
+- [x] `kepcup-kit`：带 `<meta name="kepcup-kit" content="1">` 时注入基础样式（`:where()`）与 `kepcup.ui`（SVG 柱 / 折 / 饼 + 数字格式化）；更新 `WIDGET_SDK_SHIM` 指纹版本（`-v2`）并保持注入幂等。
+- [x] 模板：`widgets/templates/` 下 `blank`、`form-calculator`、`list-tracker`、`dashboard`，每个模板都必须过 S0/S1/S2 全绿（S0/S1 由单测锁住，S2 由真机 harness 锁住）。
 
 desktop main：
-- [ ] `widget-preview.ts`：隐藏窗口（`show:false`）+ `session.fromPartition('widget-preview')`（不带 `persist:`）+ 外壳页（preload 只暴露上报通道）+ 该分区上的协议处理器（只服务内存里的预览资源，CSP 同 `buildAppCspHeader` 空域）+ 导航 / 新窗口 / 权限全部拒绝 + 串行队列 + 视口时限与 `forcefullyCrashRenderer` 重建 + `capturePage`。
-- [ ] 外壳页里的模拟能力桥：按现有桥协议（`widget-bridge-guard.ts` 的方法白名单与回执形状）回执 storage（内存 KV、fixtures 初值）/ query（fixtures）/ openLink 与 setHeight（记录）/ theme（视口）。协议常量从 shared 取，不另写一份。
-- [ ] `widget-preview-methods.ts`（`widgetPreviewMethodSpecs`）注册到 `index.ts` 的平台方法表。
+- [x] `widget-preview.ts`：隐藏窗口（`show:false`）+ `session.fromPartition('widget-preview')`（不带 `persist:`）+ 外壳页（`file://`，无 preload，主进程 `executeJavaScript` 驱动）+ 该分区上的协议处理器（只服务内存里的预览资源，CSP 同 `buildAppCspHeader` 空域）+ 导航 / 新窗口 / 权限全部拒绝 + 串行队列 + 视口时限与「移除 iframe → 杀组件进程 → 重建窗口」回收 + `capturePage`（spike 结论，不用 `forcefullyCrashRenderer`）。
+- [x] 外壳页里的模拟能力桥：按现有桥协议（`widget-bridge-guard.ts` 的方法白名单与回执形状）回执 storage（内存 KV、fixtures 初值）/ query（fixtures）/ openLink 与 setHeight（记录）/ theme（视口）。协议常量从 shared 取，不另写一份。
+- [x] `widget-preview-methods.ts`（`widgetPreviewMethodSpecs`）注册到 `index.ts` 的平台方法表。
 
 renderer：
-- [ ] `BotWidgetCard.svelte`：open 时传 `theme`；`mode` 变化时向 iframe 推送 theme 事件。
+- [x] `BotWidgetCard.svelte`：open 时传 `theme`；`mode` 变化时向 iframe 推送 theme 事件。
 
 ### P3c 独立审查 + 自检状态上卡 + 基准
 
@@ -263,4 +263,16 @@ renderer：
 **测试**：定向——检查器 6 文件（规则正反例与行列、注释 / 字符串不误报、20 份坏组件语料每份至少一条阻断项、3 份好组件零错误、报告排序截断评分、提示与注册表同源）、`widget-craft-loop.test.ts`（假引擎驱动状态机：一次写对、GATE → FIX、回归回滚、收缩模式、轮数用尽不交付 + 续做、只剩警告、修改模式、父取消 / cancelStageRun、时限、预算、回执关卡拒绝、交付失败、验收点重写、入参与每 run 上限 / 无模型、守卫，及评审修复 6 例）、`integration/widget-craft.test.ts`（真实 core + 脚本化模型：阶段 run 挂在任务下、**任务 run_steps 里没有 HTML**、卡片与版本行的自检状态、任务 / 对话轮 / 阶段 run 的工具面）、`widget-tools` / `widgets-service` / `tool-effects` / `create-core` / `subagent`，Docker 全绿。**全量一次**（评审修复前，Docker `kepcup-test:trixie`）：4168 例，4140 通过 / 26 失败，26 例全部在环境基线文件内（`sandbox-isolation` 10、`skills-authoring` 4、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2、`projects` OS 沙箱 1、`environment` checksum 1），与 D73 记录的 26 例基线集合一致，无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
 
 **留给后续**：P3a 没有 S2，交付状态是 `unverified`（卡片徽标与说明在 P3c）；`blank` 之外的模板与主题变量在 P3b。
+
+### 8.3 P3b 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**（§4 P3b 清单已勾）：shared 预览协议（`widgetPreview.run` 的入参 / 出参 schema、`budgetMs`、协议来源常量、`WIDGET_PREVIEW_*` 常量、`widgets.ui.open` 的 `theme`）；core——垫片 v2（单行注入、`--kc-*` 主题变量总注入、`data-theme` 与主题推送事件、`kepcup.theme()` 本地返回）、`kepcup-kit`（`:where()` 基础样式 + `kepcup.ui` 柱 / 折 / 饼 / format，按 meta 静态判定）、预览探针 `preview-probe.ts`（单行，错误 / 拒绝 / CSP / console 收集、DOM 静默、渲染体检、验收、乱点、大纲）、`preview.ts`（延迟绑定的 `widgetPreview.run` 句柄 + 检查器的 S2 适配，进程入口在端口 B 就绪时 `bind`，测试可 `widgetPreviewRpc` 注入）、制作 loop 的 GATE / 自查接入 S2（自查带截图给支持图片的模型）、四个模板（全部带 kit，`dashboard` 附查询示例）、提示词补主题与 kit 的 API；desktop main——`widget-preview.ts`（隐藏窗口 + 内存分区 + `file://` 外壳页 + 与正式卡片相同的 iframe / CSP，串行队列、视口时限、回收、崩溃识别、console-message 兜底、截图）、`widget-preview-shell.ts`（外壳页与模拟能力桥）、`widget-preview-policy.ts`（纯函数）、`widget-preview-methods.ts`，`index.ts` 注册与退出时 dispose；renderer——`BotWidgetCard` 按当前主题 open、主题变化推送、iframe load 时强制重推，`WidgetBridgeHost.setTheme`。
+
+**实施中的新决定**（已回写设计 32 §11.8.3 / §11.9 / §11.13）：`color-scheme` 只在 kit 里设（存量组件写死白底时不能跟着暗色改默认文字色）；注入全部单行、垫片指纹升 v2；外壳页无 preload、主进程 `executeJavaScript` 驱动；隐藏窗口里组件框架常停在 0×0——预览进行时每 100ms 截 4×4 逼帧、探针等视口非零才报 ready；一个视口超时不再跑其余视口；验收先于乱点、截图与大纲取自加载完成的页面；评审修复的口径见设计 32 §11.9「审查修复后的口径」。
+
+**评审**：独立评审一轮（只读）：无 P0；P1 五条（排队时间被算进 core 时限导致冤枉组件、探针沉默被当成宿主故障放行、截图时机、外壳在两次预览之间崩溃被记到组件头上、预览分区的 WebRTC 出网）与 P2 十二条全部修复。宿主侧的修复原派给实现它的 agent，该 agent 因用量上限中途停止，余下由本会话完成；回归用例补进 harness（7 例）与单测。
+
+**测试**：定向——core `sdk-injection`（单行、折行后 acorn 可解析、主题、kit 开关、v1 兼容）、`widget-templates`（四模板 S0 / S1 零问题、查询示例过交付校验）、`widget-preview-runner`（未绑定 skipped、按视口注入、映射级别 / 阻断 / 视口 / 触发、崩溃、宿主失败带阻断问题照算、只带警告的半截预览 skipped、取消）、`widget-preview-probe`、`widget-craft-loop`（S2 两例：宿主不回应 → skipped / unverified；跑通 → passed + 自查截图）、`integration/widget-craft`（绑定预览宿主后交付 `passed`）；desktop `widget-preview-policy`（含模拟桥的配额与限流）、`shell-methods`、renderer widgets（`setTheme`），Docker 全绿。**真机 harness**（`kepcup-test:trixie-xvfb`，Electron 44.4.5）25 / 25，连续两轮。**全量一次**（评审修复前）：4218 例，4189 通过 / 27 失败——26 例为既有环境基线，另 1 例 `web-tools` 是已知的负载超时，单跑通过；无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**手工验收项**（真机）：macOS / Windows 上复跑 harness（截图与隐藏窗口逼帧是平台相关的）；打包产物（带 OS 沙箱）里让 Bot 做一个组件，确认任务卡看到「第 N 轮检查」、卡片说明与主题切换正常。
 
