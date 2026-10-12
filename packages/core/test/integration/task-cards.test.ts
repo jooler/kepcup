@@ -267,6 +267,91 @@ describe('D75 task cards (W3)', () => {
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   }, 60_000);
 
+  it('ask_user form (D87 P4 L2): the card carries the fields; structured values are checked and reach the task as untrusted JSON', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小表');
+    const conv = await openDirect(core, bot.id);
+    const final = step()
+      .inTask()
+      .expect((req) => contextText(req).includes('用户在问题卡上的回答（表单'))
+      .replyText('RESULT 已按 12 人订好');
+    llm.script('mock-main', [
+      step().inTurn().expect(turnWith('订个场地')).replyToolCall('start_task', {
+        title: '订场地',
+        instruction: '订一个聚会场地',
+        source_message_ids: [],
+        writes: false,
+      }),
+      step().inTurn().replyText('ACK 开始订'),
+      step()
+        .inTask()
+        .replyToolCall('ask_user', {
+          question: '补充一下聚会信息',
+          mode: 'form',
+          fields: [
+            { name: 'guests', label: '人数', type: 'number', required: true },
+            { name: 'date', label: '日期', type: 'date', required: true },
+            { name: 'venue', label: '场地', type: 'select', options: ['室内', '室外'] },
+          ],
+        }),
+      final,
+      step().inTurn().expect(isWake).replyText('RELAY 订好了'),
+    ]);
+
+    await sendBatch(core, conv.id, ['订个场地']);
+    const question = await waitFor(
+      async () =>
+        (await listMessages(core, conv.id)).find(
+          (m) =>
+            m.kind === 'system_event' &&
+            'event' in m.content &&
+            m.content.event === 'task_question',
+        ) ?? null,
+      { label: 'form question card' },
+    );
+    expect(question.content).toMatchObject({
+      questionMode: 'form',
+      questionFields: [
+        expect.objectContaining({ name: 'guests', type: 'number', required: true }),
+        expect.objectContaining({ name: 'date', type: 'date' }),
+        expect.objectContaining({ name: 'venue', options: ['室内', '室外'] }),
+      ],
+    });
+    // 校验与 core 同一份：必填缺失、非数字、不在选项里都被拒，问题仍在等。
+    await expect(
+      core.rpc.call('tasks.answer', {
+        messageId: question.id,
+        answer: 'x',
+        values: { date: '2026-11-01' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(
+      core.rpc.call('tasks.answer', {
+        messageId: question.id,
+        answer: 'x',
+        values: { guests: '很多', date: '2026-11-01' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await core.rpc.call('tasks.answer', {
+      messageId: question.id,
+      answer: '（卡片会重新生成显示行）',
+      values: { guests: '12', date: '2026-11-01', venue: '室内' },
+    });
+    const taskId = onlyTaskId(stack, conv.id);
+    await waitRun(stack, taskId, ['completed'], 'task completed');
+    expect(final.consumed).toBe(true);
+    const result = domain(stack)
+      .runs.stepsFor(taskId)
+      .find((step) => step.type === 'tool_result' && step.payload['toolName'] === 'ask_user');
+    expect(String(result?.payload['content'])).toContain(
+      '<untrusted>{"guests":12,"date":"2026-11-01","venue":"室内"}</untrusted>',
+    );
+    const card = domain(stack).messages.getById(question.id)!;
+    expect(card.content).toMatchObject({ answer: '人数：12；日期：2026-11-01；场地：室内' });
+    await waitVisible(stack, conv.id, 'RELAY');
+  }, 60_000);
+
   it("a free-text answer relayed by the turn's inject_task answers the open question", async () => {
     const stack = await start();
     const { core, llm } = stack;

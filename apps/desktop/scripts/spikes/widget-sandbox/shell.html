@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>widget preview shell (spike)</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #fff;
+      }
+      iframe {
+        display: block;
+        border: 0;
+        width: 100%;
+        height: 600px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="host"></div>
+    <script>
+      // D87 P3-0 spike shell: mounts the widget exactly like BotWidgetCard does (sandbox="allow-scripts",
+      // allow="", no-referrer) and forwards probe messages from that iframe only.
+      let frame = null;
+      window.addEventListener('message', (event) => {
+        if (frame === null || event.source !== frame.contentWindow) return;
+        const msg = event.data;
+        if (msg && msg.source === 'kepcup-probe') spike.report('probe', msg);
+      });
+      spike.onCommand((cmd) => {
+        if (cmd.op === 'unload') {
+          if (frame) frame.remove();
+          frame = null;
+        }
+        if (cmd.op === 'load') {
+          if (frame) frame.remove();
+          frame = document.createElement('iframe');
+          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.setAttribute('allow', '');
+          frame.setAttribute('referrerpolicy', 'no-referrer');
+          frame.style.width = cmd.width + 'px';
+          frame.addEventListener('load', () => spike.report('frame-load', { url: cmd.url }));
+          frame.src = cmd.url;
+          document.getElementById('host').appendChild(frame);
+        }
+      });
+      setInterval(() => spike.report('heartbeat', { t: Date.now() }), 100);
+      spike.report('shell-ready', {});
+    </script>
+  </body>
+</html>

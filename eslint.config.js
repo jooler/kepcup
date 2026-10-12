@@ -26,6 +26,9 @@ export default tseslint.config(
       // require('electron') 改 dev 壳 Info.plist——均为构建工具链，非应用代码。
       'apps/desktop/scripts/generate-icons-electron.cjs',
       'apps/desktop/scripts/patch-dev-electron.cjs',
+      // D87 P3-0 spike: a standalone Electron main-process script (CommonJS, run by the electron
+      // binary directly) kept for re-running the sandbox measurements on macOS / Windows.
+      'apps/desktop/scripts/spikes/**',
     ],
   },
   js.configs.recommended,

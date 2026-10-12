@@ -1,5 +1,10 @@
 <script lang="ts">
-  import type { Message } from '@kepcup/shared';
+  import {
+    checkAskUserAnswer,
+    type AskUserField,
+    type AskUserMode,
+    type Message,
+  } from '@kepcup/shared';
   import { Check, MessageCircleQuestion } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
@@ -17,9 +22,21 @@
 
   const content = $derived(
     message.kind === 'system_event'
-      ? (message.content as { text?: string; options?: string[]; answer?: string })
+      ? (message.content as {
+          text?: string;
+          options?: string[];
+          answer?: string;
+          questionMode?: AskUserMode;
+          questionFields?: AskUserField[];
+        })
       : {},
   );
+  /** D87 P4 L2：多选 / 表单（存量卡缺省单选）。 */
+  const mode = $derived<AskUserMode>(content.questionMode ?? 'single');
+  const fields = $derived(content.questionFields ?? []);
+  let picked = $state<string[]>([]);
+  let formValues = $state<Record<string, string>>({});
+  let formError = $state<string | null>(null);
   const taskId = $derived(message.taskId ?? '');
   $effect(() => {
     void tasks.ensure(taskId);
@@ -30,6 +47,32 @@
   const expired = $derived(answer === null && task !== null && !isActiveTask(task));
   const ownerName = $derived(task?.botId != null ? chat.botName(task.botId) : '');
   let submitting = $state(false);
+
+  /** 多选 / 表单的提交：先用与 core 相同的校验给即时提示，再提交结构化回答。 */
+  async function submitStructured(): Promise<void> {
+    if (submitting || answer !== null || expired) return;
+    const values = mode === 'multi' ? picked : formValues;
+    const checked = checkAskUserAnswer({ mode, options: content.options ?? [], fields }, values);
+    if (!checked.ok) {
+      formError = checked.message;
+      return;
+    }
+    formError = null;
+    submitting = true;
+    try {
+      await tasks.answer(message.id, checked.display, values);
+    } catch (error) {
+      toast.error(
+        errorText((error as { code?: string } | undefined)?.code, t('task.answerFailed')),
+      );
+    } finally {
+      submitting = false;
+    }
+  }
+
+  function toggle(option: string): void {
+    picked = picked.includes(option) ? picked.filter((o) => o !== option) : [...picked, option];
+  }
 
   async function pick(option: string): Promise<void> {
     if (submitting || answer !== null || expired) return;
@@ -75,6 +118,81 @@
     <p class="text-xs text-muted-foreground" data-testid="task-question-expired">
       {t('task.questionExpired')}
     </p>
+  {:else if mode === 'multi'}
+    <div class="flex flex-col gap-1.5" data-testid="task-question-multi">
+      {#each content.options ?? [] as option, index (option)}
+        <label
+          class="flex cursor-pointer items-center gap-2 rounded-lg border bg-background px-3 py-2 hover:bg-accent"
+        >
+          <input
+            type="checkbox"
+            checked={picked.includes(option)}
+            disabled={submitting}
+            onchange={() => toggle(option)}
+            data-testid={`task-question-check-${index}`}
+          />
+          <span class="min-w-0 truncate">{option}</span>
+        </label>
+      {/each}
+    </div>
+    {#if formError !== null}<p class="text-xs text-destructive" role="alert">{formError}</p>{/if}
+    <div class="flex items-center justify-between gap-2">
+      <p class="text-xs text-muted-foreground">{t('task.questionFreeText')}</p>
+      <button
+        type="button"
+        class="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-60"
+        disabled={submitting || picked.length === 0}
+        onclick={() => void submitStructured()}
+        data-testid="task-question-submit">{t('task.questionSubmit')}</button
+      >
+    </div>
+  {:else if mode === 'form'}
+    <form
+      class="flex flex-col gap-2"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void submitStructured();
+      }}
+      data-testid="task-question-form"
+    >
+      {#each fields as field (field.name)}
+        <label class="flex flex-col gap-1 text-xs">
+          <span>{field.label}{field.required ? ' *' : ''}</span>
+          {#if field.type === 'select'}
+            <select
+              class="h-8 rounded-md border bg-background px-2 text-sm"
+              bind:value={formValues[field.name]}
+              disabled={submitting}
+              data-testid={`task-question-field-${field.name}`}
+            >
+              <option value="">—</option>
+              {#each field.options ?? [] as option (option)}
+                <option value={option}>{option}</option>
+              {/each}
+            </select>
+          {:else}
+            <input
+              class="h-8 rounded-md border bg-background px-2 text-sm"
+              type={field.type === 'date' ? 'date' : 'text'}
+              inputmode={field.type === 'number' ? 'decimal' : undefined}
+              bind:value={formValues[field.name]}
+              disabled={submitting}
+              data-testid={`task-question-field-${field.name}`}
+            />
+          {/if}
+        </label>
+      {/each}
+      {#if formError !== null}<p class="text-xs text-destructive" role="alert">{formError}</p>{/if}
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-xs text-muted-foreground">{t('task.questionFreeText')}</p>
+        <button
+          type="submit"
+          class="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground disabled:opacity-60"
+          disabled={submitting}
+          data-testid="task-question-submit">{t('task.questionSubmit')}</button
+        >
+      </div>
+    </form>
   {:else}
     <div class="flex flex-col gap-1.5">
       {#each content.options ?? [] as option, index (option)}

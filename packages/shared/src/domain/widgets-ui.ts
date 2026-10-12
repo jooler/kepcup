@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MCP_APP_SCHEME, appsUiResourceInputSchema, appsUiResourceOutputSchema } from './apps-ui.js';
+import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema, widgetThemeSchema } from './widget-craft.js';
 
 /**
  * Bot 自制交互组件（Bot Widgets，D81，设计 32）：Bot 在任务里用 `widget_create` /
@@ -138,6 +139,13 @@ export const widgetCardSchema = z.object({
   /** 产出组件的 Bot；仅展示用。 */
   botId: z.string().nullable(),
   createdAt: z.number(),
+  /**
+   * D87 自检状态（设计 32 §11.12）：审查态的徽标；`legacy`（存量卡 / 旧版本）不显示。
+   * 自检只是质量闸，不改变按版本人工确认。
+   */
+  checkStatus: widgetCheckStatusSchema.default('legacy'),
+  /** 面向用户的已知问题（`issues` 时列出，≤ WIDGET_KNOWN_ISSUES_MAX 条）。 */
+  knownIssues: z.array(z.string()).max(WIDGET_KNOWN_ISSUES_MAX).default([]),
 });
 export type WidgetCard = z.infer<typeof widgetCardSchema>;
 
@@ -158,7 +166,14 @@ export const widgetsUiSourceOutputSchema = z.object({
 export type WidgetsUiSourceOutput = z.infer<typeof widgetsUiSourceOutputSchema>;
 
 /** `widgets.ui.open`：卡片挂载，登记内存资源并返回 iframe 地址。 */
-export const widgetsUiOpenInputSchema = z.object({ messageId: z.string().min(1) });
+export const widgetsUiOpenInputSchema = z.object({
+  messageId: z.string().min(1),
+  /**
+   * D87 P3b：卡片当前的明暗主题——垫片在组件脚本之前设好 `<html data-theme>` 与 `--kc-*` 变量
+   * （缺省 light）；之后的切换由卡片推送 `{source:'kepcup-host', event:'theme'}`。
+   */
+  theme: widgetThemeSchema.optional(),
+});
 export const widgetsUiOpenOutputSchema = z.object({
   /** 一次性不透明资源 id（iframe 路径与后续调用的凭据）。 */
   resourceId: z.string(),
@@ -224,6 +239,27 @@ export const widgetsUiOpenLinkInputSchema = z.object({
 });
 export const widgetsUiOpenLinkOutputSchema = z.object({ ok: z.boolean() });
 
+// --- 回传（D87 P4 L3，设计 32 §12.3）--------------------------------------------
+
+/** `kepcup.reply(text)` 的长度上限、每卡冷却、`widget_read_state` 的回执上限。 */
+export const WIDGET_REPLY_MAX_CHARS = 2_000;
+export const WIDGET_REPLY_COOLDOWN_MS = 5_000;
+export const WIDGET_READ_STATE_MAX_BYTES = 64 * 1024;
+
+/**
+ * `widgets.ui.reply`：用户在卡内确认条上同意后，组件的文字以**用户消息**发进卡片所在对话（带来源
+ * `origin: 'widget'`，正常触发 Bot；上下文里按 `<untrusted source="widget">` 渲染）。只能在用户手势
+ * 里调用（垫片检查）、必须确认、单例确认条 + 每卡冷却——不能静默发送。
+ */
+export const widgetsUiReplyInputSchema = z.object({
+  resourceId: z.string().min(1),
+  text: z.string().min(1).max(WIDGET_REPLY_MAX_CHARS),
+});
+export const widgetsUiReplyOutputSchema = z.object({
+  ok: z.boolean(),
+  messageId: z.string().optional(),
+});
+
 /**
  * `widgets.ui.query`（能力桥结构化查询，P2）：按名字调用本组件**当前卡片版本**登记的
  * 只读查询模板。core 用 resourceId 反查登记资源拿 widgetId + version（版本钉住：
@@ -266,6 +302,8 @@ export const widgetsListItemSchema = z.object({
   sizeBytes: z.number().int(),
   queriesCount: z.number().int(),
   updatedAt: z.number(),
+  /** 最新版本的自检状态（D87）。 */
+  checkStatus: widgetCheckStatusSchema.default('legacy'),
 });
 export const widgetsListOutputSchema = z.object({
   widgets: z.array(widgetsListItemSchema),
