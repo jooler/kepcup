@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createTestStack, listAllMessages, makeBot, openDirect, waitFor, type TestStack } from '@kepcup/testkit';
-import type { Message } from '@kepcup/shared';
+import type { AppNoticePayload, Message } from '@kepcup/shared';
 import type { JobRow, JobsService, EnqueueJobInput } from '../../src/domain/jobs.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 import type { FetchedMail } from '../../src/mail/message.js';
@@ -21,6 +21,7 @@ interface Local {
   smtp: FakeSmtpServer;
   jobs: EnqueueJobInput[];
   alerts: Array<{ botId: string; conversationId: string; text: string }>;
+  notices: AppNoticePayload[];
   clock: { t: number; now(): number };
   cleanup(): Promise<void>;
 }
@@ -46,6 +47,7 @@ async function setup(
   if (domain === null || services.mainDb === null || services.taint === null) throw new Error('core not ready');
   const jobs: EnqueueJobInput[] = [];
   const alerts: Local['alerts'] = [];
+  const notices: AppNoticePayload[] = [];
   const clock = { t: Date.now(), now: () => clock.t };
   const stubJobs = {
     enqueue: (input: EnqueueJobInput) => {
@@ -68,6 +70,7 @@ async function setup(
     deliverAlert: (input) => alerts.push(input),
     publishAccount: () => undefined,
     publishMessage: () => undefined,
+    notice: (notice) => notices.push(notice),
     sessionBackoffMs: () => 15,
     ...options.mail,
   });
@@ -78,6 +81,7 @@ async function setup(
     smtp,
     jobs,
     alerts,
+    notices,
     clock,
     async cleanup() {
       mail.stop();
@@ -162,7 +166,7 @@ function fetched(uid: number, overrides: Partial<FetchedMail> = {}): FetchedMail
   };
 }
 
-async function cards(local: Local, conversationId: string, event: string): Promise<Message[]> {
+async function cards(local: Local, conversationId: string, event: 'arrived'): Promise<Message[]> {
   const all = await listAllMessages(local.stack.core, conversationId);
   return all.filter(
     (message) =>
@@ -264,10 +268,12 @@ describe('authentication failure stops the retry loop (review #8)', () => {
     expect(local.imap.loginAttempts - before).toBe(1);
     const account = local.mail.get(id);
     expect(account.lastError).toContain('停止重试');
-    const errorCards = await cards(local, direct.id, 'error');
-    expect(errorCards).toHaveLength(1);
-    const card = errorCards[0]?.content as { mailSummary?: string };
-    expect(card.mailSummary).toContain('更新授权码');
+    // 认证被拒只是应用状态：立即弹一条错误提示，不在对话里留任何卡片。
+    const errors = local.notices.filter((n) => n.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ key: `mail-conn:${id}`, action: 'open_mail_settings' });
+    expect(errors[0]?.text).toContain('更新授权码');
+    expect(await listAllMessages(local.stack.core, direct.id)).toHaveLength(0);
 
     // 用户更新授权码：测连通过、会话重启。
     local.imap.rejectLogin = false;
@@ -382,27 +388,28 @@ describe('taint on envelope-returning tools (review #5)', () => {
   });
 });
 
-describe('alert and error cards are not swallowed by their dedupe keys (review #12)', () => {
-  it('posts a new paused card each time the storm limit is hit again after resuming', async () => {
+describe('status changes are transient notices, never conversation cards', () => {
+  it('notices the storm pause each time it is hit again, dismisses it on resume, and posts no card', async () => {
     const local = await setup();
     const bot = await makeBot(local.stack.core, '甲');
     const direct = await openDirect(local.stack.core, bot.id);
     const id = insertAccount(local, [bot.id]);
     local.mail.ingest(id, Array.from({ length: 31 }, (_v, index) => fetched(index + 1)));
-    expect(await cards(local, direct.id, 'paused')).toHaveLength(1);
+    const key = `mail-paused:${id}:${bot.id}`;
+    expect(local.notices.filter((n) => n.key === key && n.dismiss !== true)).toHaveLength(1);
     expect(local.jobs).toHaveLength(30);
     local.mail.resumeAlerts(id, bot.id);
+    expect(local.notices.at(-1)).toMatchObject({ key, dismiss: true });
     local.mail.ingest(id, Array.from({ length: 31 }, (_v, index) => fetched(index + 100)));
-    // 恢复后再次被限流：recent.length 同样是 30，旧的键会让第二张卡被丢掉。
-    expect(await cards(local, direct.id, 'paused')).toHaveLength(2);
+    expect(local.notices.filter((n) => n.key === key && n.dismiss !== true)).toHaveLength(2);
+    // 提醒暂停不是对话内容：对话里没有任何邮件卡。
+    expect(await listAllMessages(local.stack.core, direct.id)).toHaveLength(0);
   });
 
-  it('posts one error card per outage, a new one after a later outage, and not for a flapping connection', async () => {
+  it('stays silent for a brief blip, notices a sustained outage once, and dismisses it on recovery', async () => {
     const attempts: Array<() => MockImap | Error> = [];
-    const clockRef: { t: number } = { t: Date.now() };
     const local = await setup({
       mail: {
-        clock: { now: () => clockRef.t },
         openImap: async () => {
           const next = attempts.shift();
           if (next === undefined) throw new Error('no more scripted connections');
@@ -414,30 +421,30 @@ describe('alert and error cards are not swallowed by their dedupe keys (review #
     });
     const bot = await makeBot(local.stack.core, '甲');
     const direct = await openDirect(local.stack.core, bot.id);
-    const droppingClient = (): MockImap => {
-      const client = new MockImap();
-      client.idleImpl = async () => {
-        await sleep(20);
-        throw new Error('connection reset by peer');
-      };
-      return client;
-    };
-    // 1) 连不上；2) 连上又很快掉线（同一波抖动，10 分钟内不再发卡）；
-    // 3) 十几分钟后又一次中断（新的事件，要发卡）；之后保持连接。
-    attempts.push(
-      () => new Error('connect ECONNREFUSED'),
-      droppingClient,
-      () => {
-        clockRef.t += 11 * 60_000;
-        return droppingClient();
-      },
-      () => new MockImap(),
-    );
+    // 1) 一次连不上就恢复（休眠唤醒那类瞬时断线）：不打扰用户。
+    attempts.push(() => new Error('connect ECONNREFUSED'), () => new MockImap());
     const id = insertAccount(local, [bot.id]);
     local.mail.start();
+    await waitFor(() => (local.mail.get(id).status === 'running' ? true : null), { label: 'recovered' });
+    expect(local.notices).toEqual([]);
+
+    // 2) 连续失败到阈值：提示一次；连接恢复后撤掉。
+    local.mail.pause(id);
+    attempts.push(
+      () => new Error('connect ECONNREFUSED'),
+      () => new Error('connect ECONNREFUSED'),
+      () => new Error('connect ECONNREFUSED'),
+      () => new MockImap(),
+    );
+    local.mail.resume(id);
     await waitFor(() => (attempts.length === 0 ? true : null), { label: 'all scripted connections used' });
-    await waitFor(() => (local.mail.get(id).status === 'running' ? true : null), { label: 'finally running' });
-    expect(await cards(local, direct.id, 'error')).toHaveLength(2);
+    await waitFor(() => (local.mail.get(id).status === 'running' ? true : null), { label: 'running again' });
+    const key = `mail-conn:${id}`;
+    const shown = local.notices.filter((n) => n.key === key && n.dismiss !== true);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({ level: 'warning', action: 'open_mail_settings' });
+    expect(local.notices.at(-1)).toMatchObject({ key, dismiss: true });
+    expect(await listAllMessages(local.stack.core, direct.id)).toHaveLength(0);
   });
 });
 

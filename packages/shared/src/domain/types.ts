@@ -862,36 +862,29 @@ export const cardContentSchema = z.object({
   delegationId: z.string().optional(),
   /**
    * Watch cards only (W7, cardType `watch`): the watch, which moment the card
-   * marks (created / alert / paused), the alert sequence, the idempotency key
-   * (`watch:{id}:{seq}:{hash}` / `watch-error:{id}:{streak}:paused`) and the
-   * alert's page-diff summary (web content: untrusted when shown to a bot).
+   * marks (created / alert), the alert sequence, the idempotency key
+   * (`watch:{id}:{seq}:{hash}`) and the alert's page-diff summary (web content:
+   * untrusted when shown to a bot). Pauses are not cards: see `app.notice`.
    */
   watchId: z.string().optional(),
-  watchEvent: z.enum(['created', 'alert', 'paused']).optional(),
+  watchEvent: z.enum(['created', 'alert']).optional(),
   watchSeq: z.number().int().optional(),
   watchKey: z.string().optional(),
   watchSummary: z.string().optional(),
   /**
-   * Paused cards only: why (`failures` / `too_frequent`) and, for failures,
-   * the streak length at the time — the card keeps reading right after a
-   * resume reset the live counter.
-   */
-  watchPauseReason: z.enum(['failures', 'too_frequent']).optional(),
-  watchFailures: z.number().int().optional(),
-  /**
-   * Mail cards only (D84, cardType `mail`): which account, which moment
-   * (arrived / paused / error), the IMAP UID and a short summary. The body
-   * stays out of the card; the bot reads it with mail_read.
+   * Mail cards only (D84, cardType `mail`): which account, the IMAP UID and a
+   * short summary of the arrived mail. The body stays out of the card; the bot
+   * reads it with mail_read. Connection / pause states are not cards: see
+   * `app.notice`.
    */
   mailAccountId: z.string().optional(),
-  mailEvent: z.enum(['arrived', 'paused', 'error']).optional(),
+  mailEvent: z.enum(['arrived']).optional(),
   mailUid: z.number().int().optional(),
   mailKey: z.string().optional(),
   mailFrom: z.string().optional(),
   mailSubject: z.string().optional(),
   mailDate: z.string().optional(),
   mailSummary: z.string().optional(),
-  mailPauseReason: z.enum(['too_frequent']).optional(),
   /** MCP Apps cards only (D73 P3, cardType `mcp_app`): the descriptor; no HTML, no tokens. */
   appUi: appUiCardSchema.optional(),
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */

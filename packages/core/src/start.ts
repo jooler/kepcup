@@ -22,6 +22,7 @@ import {
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
   type AgentCatalogEntry,
+  type AppNoticePayload,
   type Bot,
   type CoreStatus,
   type CustomModel,
@@ -1905,6 +1906,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
     scheduleService = schedules;
+    // 应用状态提示（邮件连接中断、监看被暂停…）：推给界面弹一条轻量提示，不落库。
+    // 需要用户处理的错误级提示在窗口不在前台时还发一条系统通知。
+    const publishAppNotice = (notice: AppNoticePayload): void => {
+      events.emit('app.notice', notice);
+      if (notice.level === 'error' && notice.dismiss !== true) {
+        events.emit('platform.notify', { conversationId: null, title: 'KepCup', body: notice.text });
+      }
+    };
     // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
     // （browser.fetchText），用 Bot 的生效浏览器资料（W8）；本机地址只在对话
     // 绑定了 project 时可访问（与浏览器工具同一规则）。
@@ -1925,6 +1934,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       deliverAlert: (input) => orchestrator.deliverWatchAlertToBot(input),
       publish: (event, payload) => events.emit(event as never, payload as never),
+      notice: publishAppNotice,
     });
     watchService = watches;
     const mail = new MailService({
@@ -1944,6 +1954,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         events.emit('mail.account_updated', { accountId, account }),
       publishMessage: (message) =>
         events.emit('message.created', { conversationId: message.conversationId, message }),
+      notice: publishAppNotice,
     });
     mail.start();
     mailService = mail;

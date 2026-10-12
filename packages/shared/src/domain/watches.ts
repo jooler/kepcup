@@ -107,12 +107,12 @@ export const watchEntrySchema = watchSchema.extend({
 export type WatchEntry = z.infer<typeof watchEntrySchema>;
 
 /** In-conversation watch cards (`cardType: 'watch'`, `watchEvent`). */
-export const watchCardEventSchema = z.enum(['created', 'alert', 'paused']);
+export const watchCardEventSchema = z.enum(['created', 'alert']);
 export type WatchCardEvent = z.infer<typeof watchCardEventSchema>;
 
 /**
- * Why a paused card was posted: consecutive failed checks (`failures`), or too
- * many alerts in 24 hours (`too_frequent`, WATCH_MAX_ALERTS_PER_DAY).
+ * Why a watch was paused by the system: consecutive failed checks (`failures`),
+ * or too many alerts in 24 hours (`too_frequent`, WATCH_MAX_ALERTS_PER_DAY).
  */
 export const watchPauseReasonSchema = z.enum(['failures', 'too_frequent']);
 export type WatchPauseReason = z.infer<typeof watchPauseReasonSchema>;

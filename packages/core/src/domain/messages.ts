@@ -125,18 +125,16 @@ export interface AppendMessageInput {
   cardWatch?:
     | {
         watchId: string;
-        watchEvent: 'created' | 'alert' | 'paused';
+        watchEvent: 'created' | 'alert';
         watchSeq?: number | undefined;
         watchKey?: string | undefined;
         watchSummary?: string | undefined;
-        watchPauseReason?: 'failures' | 'too_frequent' | undefined;
-        watchFailures?: number | undefined;
       }
     | undefined;
   /** Mail cards only (D84, cardType `mail`). */
   cardMail?:
     | {
-        mailEvent: 'arrived' | 'paused' | 'error';
+        mailEvent: 'arrived';
         mailAccountId: string;
         mailKey: string;
         mailUid?: number | undefined;
@@ -144,7 +142,6 @@ export interface AppendMessageInput {
         mailSubject?: string | undefined;
         mailDate?: string | undefined;
         mailSummary?: string | undefined;
-        mailPauseReason?: 'too_frequent' | undefined;
       }
     | undefined;
   replyTo?: string | null;
@@ -305,12 +302,6 @@ export class MessagesService {
                       ...(input.cardWatch.watchSummary !== undefined
                         ? { watchSummary: input.cardWatch.watchSummary }
                         : {}),
-                      ...(input.cardWatch.watchPauseReason !== undefined
-                        ? { watchPauseReason: input.cardWatch.watchPauseReason }
-                        : {}),
-                      ...(input.cardWatch.watchFailures !== undefined
-                        ? { watchFailures: input.cardWatch.watchFailures }
-                        : {}),
                     }
                   : {}),
                 ...(input.cardMail !== undefined
@@ -326,9 +317,6 @@ export class MessagesService {
                       ...(input.cardMail.mailDate !== undefined ? { mailDate: input.cardMail.mailDate } : {}),
                       ...(input.cardMail.mailSummary !== undefined
                         ? { mailSummary: input.cardMail.mailSummary }
-                        : {}),
-                      ...(input.cardMail.mailPauseReason !== undefined
-                        ? { mailPauseReason: input.cardMail.mailPauseReason }
                         : {}),
                     }
                   : {}),

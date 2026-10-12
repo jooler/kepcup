@@ -10,25 +10,20 @@
 
   /**
    * 对话内的监看卡（W7，cardType `watch`）：创建卡（created）、提醒卡（alert，
-   * 带本次的增删改摘要）、暂停卡（paused，连续失败或提醒过于频繁后出现，可
-   * 「恢复」）。都按监看行实时重绘（watch.updated）；暂停卡的标题用卡片里记下的
-   * 原因与失败次数（恢复后实时计数已清零，旧卡仍要读得对）。「全部监看」打开
-   * 右栏的定时与监看标签。
+   * 带本次的增删改摘要）。都按监看行实时重绘（watch.updated）。监看被系统暂停
+   * 只是应用状态，走 `app.notice` 提示，不进对话。「全部监看」打开右栏的定时与
+   * 监看标签。
    */
   let {
     watchId,
     watchEvent,
     watchSeq = undefined,
     watchSummary = undefined,
-    watchPauseReason = undefined,
-    watchFailures = undefined,
   }: {
     watchId: string;
     watchEvent: string;
     watchSeq?: number | undefined;
     watchSummary?: string | undefined;
-    watchPauseReason?: string | undefined;
-    watchFailures?: number | undefined;
   } = $props();
 
   $effect(() => {
@@ -45,17 +40,8 @@
   const title = $derived(
     watchEvent === 'alert'
       ? t('watches.card.alert', { seq: watchSeq ?? '?' })
-      : watchEvent === 'paused'
-        ? pausedTitle(watchPauseReason, watchFailures)
-        : t('watches.card.created'),
+      : t('watches.card.created'),
   );
-
-  function pausedTitle(reason: string | undefined, failures: number | undefined): string {
-    if (reason === 'too_frequent') return t('watches.card.pausedTooFrequent');
-    return failures !== undefined
-      ? t('watches.card.paused', { count: failures })
-      : t('watches.card.pausedFailures');
-  }
 
   async function act(action: 'pause' | 'resume' | 'stop'): Promise<void> {
     busy = true;
@@ -85,10 +71,7 @@
   >
 {:else}
   <div
-    class="w-full max-w-[85%] rounded-lg border p-3 text-sm {watchEvent === 'paused' &&
-    watch.status === 'paused'
-      ? 'border-amber-500/40 bg-amber-500/5'
-      : 'bg-background/80'}"
+    class="w-full max-w-[85%] rounded-lg border bg-background/80 p-3 text-sm"
     data-testid={`watch-card-${watchEvent}-${watchId}`}
     data-watch-status={removed ? 'removed' : watch.status}
   >
@@ -123,18 +106,6 @@
         data-testid="watch-card-summary"
       >
         {watchSummary}
-      </p>
-    {/if}
-    {#if watchEvent === 'paused' && watch.status === 'paused'}
-      <p class="mt-2 text-xs text-amber-700 dark:text-amber-400" data-testid="watch-card-error">
-        {watch.lastError ?? ''}
-      </p>
-      <p class="mt-1 text-xs text-muted-foreground">
-        {t(
-          watchPauseReason === 'too_frequent'
-            ? 'watches.card.pausedTooFrequentHint'
-            : 'watches.card.pausedHint',
-        )}
       </p>
     {/if}
     <div class="mt-2 flex flex-wrap justify-end gap-1">
