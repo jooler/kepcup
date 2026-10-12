@@ -152,6 +152,18 @@ export function botSkillDir(paths: AppPaths, botId: string, name: string): strin
   return path.join(botSkillsRoot(paths, botId), name);
 }
 
+// --- widget drafts (D87) -------------------------------------------------------
+
+/** Drafts of the widget authoring loop: `bots/{id}/widget-drafts/` (design 32 §11.5). */
+export function botWidgetDraftsDir(paths: AppPaths, botId: string): string {
+  return path.join(paths.home, 'bots', botId, 'widget-drafts');
+}
+
+/** One craft's draft directory: `bots/{id}/widget-drafts/{craftId}/`. */
+export function botWidgetDraftDir(paths: AppPaths, botId: string, craftId: string): string {
+  return path.join(botWidgetDraftsDir(paths, botId), craftId);
+}
+
 // --- wiki (P09) ---------------------------------------------------------------
 
 /** Root of a bot's wiki (es-git versioned): `bots/{id}/wiki/`. */

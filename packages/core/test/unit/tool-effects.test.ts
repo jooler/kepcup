@@ -166,9 +166,11 @@ function scannedBuiltinToolNames(): string[] {
       'web-tools.ts',
       'watch-tools.ts',
       'wiki-tools.ts',
+      'widget-tools.ts',
     ].map((file) => path.join(root, 'tools', file)),
     path.join(root, 'wiki', 'maintenance-tools.ts'),
     path.join(root, 'skills', 'authoring-tools.ts'),
+    path.join(root, 'widgets', 'craft', 'tools.ts'),
   ];
   const names = new Set<string>();
   for (const file of files) {

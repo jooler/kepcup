@@ -148,6 +148,7 @@ import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
 import { WidgetQueryRunner } from './widgets/query-runner.js';
+import { WidgetCraftService } from './widgets/craft/service.js';
 import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
@@ -533,7 +534,7 @@ export interface CoreServices {
   taint: TaintService | null;
   /** D73 P3 §7.5 MCP Apps rendering (UI resources, UI-initiated tool calls, links); null with `apps`. */
   appUi: McpAppUiService | null;
-  /** D81 Bot 自制交互组件（widget_create / widget_update 落库发卡 + 沙箱资源登记）；null with `apps`. */
+  /** D81 Bot 自制交互组件（制作 loop 交付落库发卡 + 沙箱资源登记，D87）；null with `apps`. */
   widgets: WidgetService | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
@@ -1777,6 +1778,28 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
     });
 
+    // D87 组件制作 loop：widget_craft 的宿主状态机（阶段 run 嵌套在任务 run 下，交付凭检查回执）。
+    // S2 预览宿主在 P3b 由主进程绑定；此前 S2 记 skipped，交付为「未经运行验证」。
+    const widgetCraft = new WidgetCraftService({
+      engine,
+      router: llmRouter,
+      settings,
+      bots,
+      runs,
+      usage,
+      secrets,
+      widgets: widgetService,
+      paths,
+      logger,
+      clock,
+      publishRunStatus: (run) => events.emit('run.status', { run }),
+    });
+    try {
+      widgetCraft.sweepDrafts();
+    } catch (error) {
+      logger.warn({ error: String(error) }, 'widget draft sweep failed');
+    }
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -1816,7 +1839,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       connectedApps,
       localConnectors,
       appUi,
-      widgets: widgetService,
+      widgets: {
+        craft: (input) => widgetCraft.craft(input),
+        publish: (input) => widgetService.publish(input),
+      },
+      widgetCraft,
       skills: {
         promptSection: (botId) => skills.promptSection(botId),
         readableDirs: (botId) => skills.readableDirs(botId),

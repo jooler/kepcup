@@ -42,6 +42,8 @@ export const ID_PREFIXES = {
   stc: 'stc_',
   /** Bot 自制交互组件（D81，main.db widgets）。 */
   wgt: 'wgt_',
+  /** 组件制作（D87，草稿目录名 / craftId）。 */
+  wcf: 'wcf_',
   /** 邮件账号（D84，main.db mail_accounts）。 */
   mal: 'mal_',
 } as const;

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>单位换算</title></head>
+<body>
+  <label>公里 <input id="km" type="number" oninput="convert(this.value)"></label>
+  <p>= <span id="miles">0</span> 英里</p>
+  <p id="hint"></p>
+  <script type="module">
+    const RATIO = 0.621371;
+    function convert(value) {
+      const km = Number(value);
+      document.getElementById('miles').textContent = Number.isFinite(km) ? (km * RATIO).toFixed(3) : '—';
+    }
+    window.convert = convert;
+    const theme = await kepcup.theme();
+    document.documentElement.dataset.theme = theme;
+    const [last, notes] = await Promise.all([kepcup.storage.get('last'), kepcup.storage.list()]);
+    if (typeof last === 'number') convert(last);
+    document.getElementById('hint').textContent = notes.length + ' 条记录';
+  </script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>费用分摊</title>
+<style>
+  :root { --bg: var(--kc-bg, #fff); --fg: var(--kc-fg, #222); --accent: var(--kc-accent, #3b82f6); }
+  [data-theme="dark"] { --bg: var(--kc-bg, #111); --fg: var(--kc-fg, #eee); }
+  body { margin: 0; padding: 12px; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  input { flex: 1 1 120px; min-width: 0; padding: 6px; }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: inherit; }
+  .danger { color: var(--kc-danger, #dc2626); }
+  #status { min-height: 1.2em; font-size: 13px; opacity: .8; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 4px; border-bottom: 1px solid var(--kc-border, #ddd); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+  <h2>费用分摊</h2>
+  <div class="row">
+    <input id="who" placeholder="谁付的钱">
+    <input id="amount" type="number" min="0" step="0.01" placeholder="金额">
+    <button id="add" type="button">添加</button>
+  </div>
+  <table><tbody id="rows"></tbody></table>
+  <p>合计：<strong id="total">0.00</strong>，每人：<strong id="each">0.00</strong></p>
+  <div class="row">
+    <button id="clear" type="button" class="danger">清空</button>
+  </div>
+  <p id="status"></p>
+  <script>
+    const STORAGE_KEY = 'expenses';
+    let expenses = [];
+    let confirmingClear = false;
+
+    const els = {
+      who: document.getElementById('who'),
+      amount: document.getElementById('amount'),
+      rows: document.getElementById('rows'),
+      total: document.getElementById('total'),
+      each: document.getElementById('each'),
+      status: document.getElementById('status'),
+      clear: document.getElementById('clear'),
+    };
+
+    function showStatus(text) {
+      els.status.textContent = text;
+    }
+
+    function render() {
+      els.rows.replaceChildren();
+      expenses.forEach((item, index) => {
+        const tr = document.createElement('tr');
+        const name = document.createElement('td');
+        name.textContent = item.who;
+        const money = document.createElement('td');
+        money.textContent = item.amount.toFixed(2);
+        const action = document.createElement('td');
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.textContent = '删除';
+        del.addEventListener('click', () => removeExpense(index));
+        action.append(del);
+        tr.append(name, money, action);
+        els.rows.append(tr);
+      });
+      const total = expenses.reduce((sum, item) => sum + item.amount, 0);
+      const people = new Set(expenses.map((item) => item.who)).size;
+      els.total.textContent = total.toFixed(2);
+      els.each.textContent = people > 0 ? (total / people).toFixed(2) : '0.00';
+    }
+
+    async function save() {

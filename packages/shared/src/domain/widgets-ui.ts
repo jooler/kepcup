@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MCP_APP_SCHEME, appsUiResourceInputSchema, appsUiResourceOutputSchema } from './apps-ui.js';
+import { WIDGET_KNOWN_ISSUES_MAX, widgetCheckStatusSchema } from './widget-craft.js';
 
 /**
  * Bot 自制交互组件（Bot Widgets，D81，设计 32）：Bot 在任务里用 `widget_create` /
@@ -138,6 +139,13 @@ export const widgetCardSchema = z.object({
   /** 产出组件的 Bot；仅展示用。 */
   botId: z.string().nullable(),
   createdAt: z.number(),
+  /**
+   * D87 自检状态（设计 32 §11.12）：审查态的徽标；`legacy`（存量卡 / 旧版本）不显示。
+   * 自检只是质量闸，不改变按版本人工确认。
+   */
+  checkStatus: widgetCheckStatusSchema.default('legacy'),
+  /** 面向用户的已知问题（`issues` 时列出，≤ WIDGET_KNOWN_ISSUES_MAX 条）。 */
+  knownIssues: z.array(z.string()).max(WIDGET_KNOWN_ISSUES_MAX).default([]),
 });
 export type WidgetCard = z.infer<typeof widgetCardSchema>;
 
@@ -266,6 +274,8 @@ export const widgetsListItemSchema = z.object({
   sizeBytes: z.number().int(),
   queriesCount: z.number().int(),
   updatedAt: z.number(),
+  /** 最新版本的自检状态（D87）。 */
+  checkStatus: widgetCheckStatusSchema.default('legacy'),
 });
 export const widgetsListOutputSchema = z.object({
   widgets: z.array(widgetsListItemSchema),

@@ -171,7 +171,7 @@ export interface ResponseToolDeps {
   tasks?: TaskToolFacade | undefined;
   /**
    * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：present 时任务注册
-   * widget_create / widget_update（对话轮不注册：组件交付是任务的写行为）。
+   * widget_craft / widget_publish（D87；对话轮不注册：组件交付是任务的写行为）。
    */
   widgets?: WidgetToolFacade | undefined;
 }

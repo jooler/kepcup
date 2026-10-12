@@ -245,7 +245,7 @@ P0–P2 只保证「组件安全地跑」，不保证「组件写对」：`widge
 
 | 工具 | 参数 | 行为 |
 |---|---|---|
-| `widget_craft` | `brief`（必填：目标、主要交互、数据来源与是否保存、风格；尽量引用用户原话）、`widget_id`?（修改已有组件，以其最新版 HTML 与查询为起点）、`title`?（新建时）、`scope`?（同 §4）、`acceptance`?（用户明确提出的验收点，自然语言数组）、`resume_craft_id`?（继续一次未交付的制作） | 跑完 §11.6 的状态机，交付或如实失败；回执见 §11.6 末 |
+| `widget_craft` | `brief`（必填：目标、主要交互、数据来源与是否保存、风格；尽量引用用户原话）、`widget_id`?（修改已有组件，以其最新版 HTML 与查询为起点）、`title`?（新建时必填）、`scope`?（同 §4）、`acceptance`?（用户明确提出的验收点，自然语言数组）、`resume_craft_id`?（继续一次未交付的制作） | 跑完 §11.6 的状态机，交付或如实失败；回执见 §11.6 末 |
 | `widget_publish` | 同 §4 | 不变 |
 
 - 每 run 至多 `WIDGET_CRAFTS_PER_RUN_MAX`（3）次制作；交付占用既有的每 run 8 张发卡名额。
@@ -257,7 +257,7 @@ P0–P2 只保证「组件安全地跑」，不保证「组件写对」：`widge
 | 工具 | 阶段 | 说明 |
 |---|---|---|
 | `read` / `ls` | 全部 | pi 工具工厂 + 草稿目录守卫（同 `skills/authoring-tools.ts` 的写法） |
-| `write` | SPEC、BUILD、FIX | 写文件。FIX 阶段的 `write` 只能新建文件，守卫拒绝整份覆盖已存在的 `index.html`——逼出补丁式修复，防回归 |
+| `write` | SPEC、BUILD、FIX | 写文件，按阶段白名单：SPEC 只写 `spec.md` / `acceptance.json`；BUILD / FIX 只写 `index.html` / `queries.json` / `fixtures.json`（规格与验收点在 SPEC 之后只读——编码阶段不能靠删验收点「通过」）。FIX 阶段的 `write` 只能新建文件，守卫拒绝整份覆盖已存在的文件——逼出补丁式修复，防回归 |
 | `edit` | BUILD、FIX | 补丁式修改 |
 | `widget_template` | BUILD | 列出 / 把骨架模板（§11.13）写入 `index.html` |
 | `widget_check` | BUILD、FIX | 模型可在阶段内**自查**（同一检查器、同一报告格式）；宿主的 GATE 无论如何都会再跑一次，模型自查不算数 |
@@ -303,10 +303,11 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 | `WIDGET_CRAFT_TOKEN_BUDGET` | 400 000 | 全部阶段 run 合计（input+output），宿主轮询各 handle 的 `tokensSoFar()` 封顶，同 subagent |
 | 各阶段 `maxTurns` | SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 | 单阶段兜底 |
 
-- **评分与最佳快照**：每次 GATE 计分（阻断项 ×100 + 错误 ×10 + 警告 ×1 + 未通过的 must 验收点 ×50）。分数比最佳快照更差，就在下一轮 FIX 之前**回滚到最佳快照**，并在 FIX 的输入里写明「上一次修改引入了回归（列出新增问题），已回滚，请换一种改法」。
+- **GATE 先快照再检查**（快照与检查读到的是同一份文件）。**合格** = 没有错误（含必需验收点失败）；只剩警告时最多花一轮 FIX（警告不进 FIX 清单，除非已经没有错误）。检查器自身出错（S0 / S1 记 skipped）合成一条阻断项 `checker.failed`：没检查过的代码不能当作合格。
+- **评分与最佳快照**：每次 GATE 计分（阻断项 ×100 + 其余错误 ×10 + 警告 ×1 + 未通过的 must 验收点 ×50 + 未通过的非 must 验收点 ×5）。分数比最佳快照更差，就在下一轮 FIX 之前**回滚到最佳快照**，并在 FIX 的输入里写明「上一次修改引入了回归（列出新增问题），已回滚，请换一种改法」。
 - **防震荡**：同一组问题签名（规则 id + 位置）连续两次 GATE 都出现时，下一轮 FIX 进入「收缩」模式：输入要求按 spec 删减到只保留 must 验收点覆盖的功能，或回到骨架模板重写出错的模块。
 - **阻断项**（任何一项存在都不可交付）：S0 / S1 的 error；S2 的未捕获异常、页面空白、预览超时（死循环）；must 验收点失败；查询模板未通过交付侧校验。
-- **交付判定**（按最佳快照）：
+- **交付判定**（按最佳快照：可交付回执里分数最低的一条，同分取较新的；只有全部回执都阻断时才按分数最低的阻断回执给失败原因——分数不能单独决定，一个只差一条必需验收点的版本可能比带若干警告的可交付版本分数还低）：
   - 无任何问题，且最后一轮审查没有 P0/P1 → `passed`。
   - 无阻断项，但仍有警告、非 must 验收点失败或未修完的审查 P1 → `issues`：照常交付，卡片列出「已知问题」（≤5 条，面向用户的中文）。
   - S2 不可用（预览宿主未绑定，如无界面的测试装配）且 S0 / S1 无 error → `unverified`：交付，卡片标「未经运行验证」。
@@ -316,11 +317,11 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 
 ### 11.7 各阶段的输入与提示
 
-各阶段的系统提示集中在 `core/widgets/craft-prompts.ts`，共用三段：平台事实（沙箱规则、`window.kepcup` API 全文、限额）、**沙箱雷区清单**（由检查规则注册表生成，§11.8.1；规则与提示同源，改一处两处同步）、文件约定。三段只出现在制作 loop 里，任务面的工具描述因此可以瘦身到一句话。
+各阶段的系统提示集中在 `core/widgets/craft/prompts.ts`，共用三段：平台事实（沙箱规则、`window.kepcup` API 全文、限额）、**沙箱雷区清单**（由检查规则注册表生成，§11.8.1；规则与提示同源，改一处两处同步）、文件约定。三段只出现在制作 loop 里，任务面的工具描述因此可以瘦身到一句话。
 
 | 阶段 | 用户消息（宿主拼装） | 要求 |
 |---|---|---|
-| SPEC | brief、acceptance 提示、（修改时）原组件的 spec 摘要与文件结构概要 | 写 `spec.md`（≤60 行）与 `acceptance.json`（3–8 条，至少 2 条 must，按 §11.8.4 的选择器与断言写）。不写代码 |
+| SPEC | brief、acceptance 提示、（修改时）原组件的 spec 摘要与文件结构概要 | 写 `spec.md`（≤60 行，第一行 `> 一句话说明`——交付时作为卡片说明 / 改动说明）与 `acceptance.json`（3–8 条，至少 2 条 must，按 §11.8.4 的选择器与断言写）。不写代码 |
 | BUILD | spec.md 全文、acceptance.json、模板目录 | 先选模板再填充；写 `index.html`（必要时 `queries.json` / `fixtures.json`）；鼓励写完调一次 `widget_check` 自查 |
 | FIX | spec.md、**本轮要修的问题清单**（来自 GATE 报告或审查的 P0/P1，按严重度排序、每条带行号与修改建议）、回滚 / 收缩说明（如有） | 只改清单里的问题，用 `edit`；不顺手重构；改完可 `widget_check` 自查 |
 | REVIEW | spec.md、acceptance.json、最新 GATE 报告摘要（告诉审查者这些已经机器验证过，不要重复） | 读 `index.html`，按清单审查，调 `submit_review` |
@@ -333,6 +334,7 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 
 | 规则 | 级别 | 说明 |
 |---|---|---|
+| `html.missing` | error | 草稿没有 `index.html` 或内容为空 |
 | `html.truncated` | error | 缺 `</html>` / `</body>`、`<script>` 或 `<style>` 未闭合（截断输出的典型症状；parse5 自身会容错补全，所以对原文单独计数） |
 | `html.size` | error | 超 `BOT_WIDGET_HTML_MAX_BYTES` |
 | `html.doctype` | warning | 缺 `<!DOCTYPE html>`（quirks mode） |
@@ -345,10 +347,14 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 | `sandbox.submit-button` | warning | `type=submit` 或表单内不写 type 的 `<button>`、但没有 submit 处理函数——按钮自身的 click 处理照常执行（实测），只是 Enter 提交与默认提交无效；建议显式 `type="button"` |
 | `sandbox.popup` | error | `target="_blank"`、`window.open`——改用 `kepcup.openLink` |
 | `sandbox.top-nav` | error | 改写 `location` / `top.location` |
+| `sandbox.link-navigation` | warning | `<a href="http(s)://…">`（含 `mailto:` / `tel:`）不带 target——宿主拦截组件框架的一切导航，点了没反应；改用 `kepcup.openLink`（onclick 里 `preventDefault` 的不算） |
 | `sandbox.download` / `sandbox.clipboard` | warning | `a[download]`、`navigator.clipboard`——在沙箱里不可用 |
 | `theme.media-query` | warning | 用 `prefers-color-scheme` 跟随系统而不是应用主题；改用 `[data-theme]` 与宿主变量（§11.13） |
 | `query.invalid` | error | `queries.json` 未通过交付侧校验（复用 `WidgetService` 的 `#cleanQueries` 与名字闸，报错原样转出） |
-| `query.unknown-name` | error | 代码里 `kepcup.query('x', …)` 的字面量名字不在 `queries.json` 里 |
+| `query.unknown-name` | error | 代码里 `kepcup.query('x', …)` 的字面量名字不在 `queries.json` 里（`queries.json` 不合法时不报，已由 `query.invalid` 拦下） |
+| `acceptance.invalid` / `fixtures.invalid` | warning | `acceptance.json` / `fixtures.json` 不符合 schema：验收点不执行（只跑乱点冒烟）/ 预览按空数据跑 |
+
+S0 里涉及代码的规则（storage / network / modals / popup / top-nav / form-submit / query 名字）看的是 acorn 语法树，不看注释与字符串内容；外链判定覆盖 `script.src = …` / `setAttribute('src', …)` 等动态写法与 JS `import`。实现见 `core/widgets/check/`（`source.ts` 是 S0 / S1 共用的 parse5 + acorn 模型与位置映射）。
 
 沙箱行为以 Electron 当前版本的实测为准（Electron 44.4.5 / Chromium 152 的实测与逐条结论见执行文档 §8.1；`alert` 与「只有 submit 按钮」两条按实测降为 warning）。
 
@@ -359,7 +365,7 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 | `js.syntax` | error | 每个内联 `<script>` 用 acorn 解析（`type=module` 按 module），错误位置映射回文件行列 |
 | `js.handler-syntax` | error | `on*` 属性体按函数体解析 |
 | `js.handler-undefined` | error | `onclick="fn()"` 的 `fn` 不是全局函数——典型成因：函数写在 `DOMContentLoaded` 回调或 `type=module` 里，内联处理器看不到 |
-| `js.undefined-name` | error（被调用）/ warning | 使用了未声明、也不在浏览器全局表（`globals` 包的 browser 集合）与 `kepcup` 里的标识符 |
+| `js.undefined-name` | error（被调用，阻断）/ warning（只读取，不阻断） | 使用了未声明、也不在浏览器全局表（`globals` 包的 browser 集合）与 `kepcup` 里的标识符；任何脚本里声明过即算声明（轻量分析，宁漏勿误报），元素 id 算作全局 |
 | `js.redeclare` | error | 多个经典 `<script>` 之间 `let` / `const` / `class` 同名——共享全局词法作用域，运行时抛 SyntaxError |
 | `dom.id-missing` | error | `getElementById('x')` / `querySelector('#x')` 的字面量 id 在 HTML 里不存在，且源码别处也没出现 `x`（排除动态生成的误报） |
 | `dom.duplicate-id` | warning | 重复 id |
