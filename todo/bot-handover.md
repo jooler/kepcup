@@ -176,6 +176,11 @@
 
 修复后定向回归（Docker）：handover 三个文件 + butler-team / butler / schedule / context-assembly / approvals / model-selection-single-source / external-agent-p4b / bot-app-connections / public-skills-migration / create-core / shared handover / message-content，15 文件 127 例全绿；core / desktop typecheck、eslint 通过。全量与 e2e 结果见下。
 
+审查修复后复验（2026-10-12，协调会话执行，ee86880）：
+- **全量**（Docker `kh-full3`）：4041 通过 / 27 失败 / 2 跳过。26 例为环境基线文件（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1）；另 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」1 例在全量负载下 5 秒超时，单跑 12/12 通过，为偶发。无新增失败。
+- **e2e**（`kepcup-test:trixie-xvfb`，`kh-e2e3`）：85 通过 / 7 失败；`handover.spec`、`butler-proposal.spec` 通过。失败：`wiki.spec`、`sandbox.spec` 状态行（已知基线 / 偶发）+ `debug-dev-pin`、`external-agents` ×3、`local-connectors`（在 main@064cbdd 上同样失败，环境问题，e2e 基线记录待更新）。
+- **迁移号**：D87 已先合入 main（4184d87）并占用 0035；本分支合入时须改为 **0036**（同步 `create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表）。
+
 ## 7. 风险
 
 - **用户隔几天才确认**：资产已变化 → 执行前逐项重新校验，不成立的标 `skipped` 并写原因。
