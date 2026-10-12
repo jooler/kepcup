@@ -10,6 +10,7 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { projects } from '$lib/stores/projects.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
+  import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
@@ -55,6 +56,7 @@
     started = true;
     void core.start();
     updateStore.start();
+    appNotices.start();
     // 通知点击 → 打开对应对话（主进程经 ipc 转发）。
     window.kepcup.onNavigateConversation((conversationId) => {
       void chat.select(conversationId);
