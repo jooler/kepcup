@@ -2,7 +2,9 @@ import {
   accessApprovalPayloadSchema,
   agentToolApprovalPayloadSchema,
   approvalDurationSchema,
+  botHandoverPayloadSchema,
   butlerProposalPayloadSchema,
+  selectableHandoverKeys,
   egressApprovalPayloadSchema,
   environmentApprovalPayloadSchema,
   profileChangeApprovalPayloadSchema,
@@ -127,15 +129,21 @@ type Resolver = (outcome: ApprovalOutcome) => void;
  * - butler_proposal (D70): creates contacts / groups — always waits for the user.
  * - mail_send (D84): outbound email to arbitrary recipients — always a human click,
  *   even when unattended is on (defence in depth with requireHuman on the request).
+ * - bot_handover (D88): changes who owns mailboxes / apps / schedules — always waits.
  */
-const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set(['butler_proposal', 'mail_send']);
+const NEVER_AUTO_DECIDED: ReadonlySet<ApprovalKind> = new Set([
+  'butler_proposal',
+  'mail_send',
+  // D88: moves mailboxes / apps / schedules between bots — always waits for the user.
+  'bot_handover',
+]);
 
 /**
  * Non-blocking kinds whose card must outlive the requesting run: the tool
  * returned immediately and the run usually settles long before the user
- * decides (`environment` P06, `butler_proposal` D70).
+ * decides (`environment` P06, `butler_proposal` D70, `bot_handover` D88).
  */
-const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal'];
+const SURVIVES_RUN: ApprovalKind[] = ['environment', 'butler_proposal', 'bot_handover'];
 
 /**
  * The approval mechanism (docs/dev/phases/P03-permissions.md "审批框架").
@@ -462,6 +470,8 @@ export class ApprovalsService {
     /** W4: the hash of the payload the renderer showed; a mismatch → APPROVAL_STALE. */
     payloadHash?: string,
     routineSelection?: string[],
+    /** D88 `bot_handover`: item keys the user kept (incl. `resp:to` / `resp:from`). */
+    handoverSelection?: string[],
   ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
@@ -495,6 +505,19 @@ export class ApprovalsService {
         keptSelection ??= (approval.payload['bots'] as unknown[]).map((_, index) => index);
       }
     }
+    // D88: handover items the user kept; keys outside the card are rejected. Nothing kept
+    // and no new bot to create = a denial (like an empty butler selection).
+    let keptHandover: string[] | undefined;
+    if (handoverSelection !== undefined) {
+      if (approval.kind !== 'bot_handover') {
+        throw new AppError('INVALID_INPUT', '只有移交卡支持勾选移交条目');
+      }
+      if (approve) {
+        const checked = validateHandoverSelection(approval.payload, handoverSelection);
+        keptHandover = checked.kept;
+        if (checked.kept.length === 0 && !checked.createsBot) approve = false;
+      }
+    }
     // D73 duration degradation: a wider choice is honoured only where the card
     // offered it (`payload.durations`). `bot` ("always for this bot") exists for
     // `mcp_tool` only; `grants` and `agent_tool` never see anything but
@@ -522,14 +545,16 @@ export class ApprovalsService {
     }
     const now = this.#deps.clock.now();
     const decision: ApprovalDecision | null =
-      approve && duration !== undefined
-        ? { duration }
-        : approve && keptSelection !== undefined
-          ? {
-              selection: keptSelection,
-              ...(keptRoutines !== undefined ? { routineSelection: keptRoutines } : {}),
-            }
-          : null;
+      approve && keptHandover !== undefined
+        ? { handoverSelection: keptHandover }
+        : approve && duration !== undefined
+          ? { duration }
+          : approve && keptSelection !== undefined
+            ? {
+                selection: keptSelection,
+                ...(keptRoutines !== undefined ? { routineSelection: keptRoutines } : {}),
+              }
+            : null;
     this.#db
       .prepare('update approvals set status = ?, decision_json = ?, decided_at = ? where id = ?')
       .run(approve ? 'approved' : 'denied', decision ? JSON.stringify(decision) : null, now, id);
@@ -879,6 +904,8 @@ export class ApprovalsService {
       }
       case 'butler_proposal':
         return `${botName} ${describeButlerProposal(approval.payload)}`;
+      case 'bot_handover':
+        return `${botName} ${describeBotHandover(approval.payload)}`;
       case 'mcp_tool': {
         const payload = mcpToolApprovalPayloadSchema.safeParse(approval.payload);
         if (!payload.success) return 'MCP 工具调用请求';
@@ -1024,6 +1051,23 @@ export class ApprovalsService {
           return `[系统] 已取消：${botName} ${label}`;
         case 'failed':
           return `[系统] 处理失败：${label}${failureSuffix(approval)}`;
+      }
+    }
+    if (approval.kind === 'bot_handover') {
+      const label = describeBotHandover(approval.payload);
+      const kept = approval.decision?.handoverSelection;
+      const keptNote = kept !== undefined ? `（用户保留了 ${kept.length} 项）` : '';
+      switch (approval.status) {
+        case 'pending':
+          return `[系统] 等待用户确认：${botName} ${label}`;
+        case 'approved':
+          return `[系统] 用户确认了${label}${keptNote}，宿主正在执行，结果会另行通知`;
+        case 'denied':
+          return `[系统] 用户拒绝了${label}`;
+        case 'cancelled':
+          return `[系统] 已取消：${botName} ${label}`;
+        case 'failed':
+          return `[系统] 已执行但未全部成功：${label}${failureSuffix(approval)}`;
       }
     }
     if (approval.kind === 'egress') {
@@ -1420,6 +1464,20 @@ function describeButlerProposal(payload: Record<string, unknown>): string {
 }
 
 /**
+ * One-line summary of a handover card (D88). Bot names are user-visible contact names
+ * (host snapshot), item labels are left out (the card lists them).
+ */
+function describeBotHandover(payload: Record<string, unknown>): string {
+  const parsed = botHandoverPayloadSchema.safeParse(payload);
+  if (!parsed.success) return '提议移交资产';
+  const data = parsed.data;
+  const target =
+    data.target.kind === 'new' ? `新建「${data.target.bot.name}」` : `「${data.target.botName}」`;
+  const count = data.items.filter((item) => item.blocked === undefined).length;
+  return `提议把「${data.fromBotName}」的 ${count} 项资产移交给${target}`;
+}
+
+/**
  * One-line summary of an agent_tool payload (D72): action + target. With
  * `untrusted` (conversation context, review L1) the agent-supplied parts —
  * title, command, paths — are wrapped in `<untrusted>` like tool output.
@@ -1697,6 +1755,30 @@ function validateButlerSelection(payload: Record<string, unknown>, selection: nu
     throw new AppError('INVALID_INPUT', '勾选的条目不在提议之中');
   }
   return kept;
+}
+
+/**
+ * `approvals.decide` selection of a handover card (D88): keys must be selectable on the
+ * card (unblocked items, the responsibilities rewrites that are present); deduplicated in
+ * card order.
+ */
+function validateHandoverSelection(
+  payload: Record<string, unknown>,
+  selection: string[],
+): { kept: string[]; createsBot: boolean } {
+  const parsed = botHandoverPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new AppError('INVALID_INPUT', '移交卡内容无效');
+  const selectable = selectableHandoverKeys(parsed.data);
+  const wanted = new Set(selection);
+  for (const key of wanted) {
+    if (!selectable.includes(key)) {
+      throw new AppError('INVALID_INPUT', '勾选的条目不在移交卡之中（或不可执行）');
+    }
+  }
+  return {
+    kept: selectable.filter((key) => wanted.has(key)),
+    createsBot: parsed.data.target.kind === 'new',
+  };
 }
 
 /**

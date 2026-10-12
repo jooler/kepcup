@@ -125,7 +125,11 @@ const BUTLER_RULES = [
   '需要知道通讯录里有谁、某个 Bot 的 bot_id 时用 list_bots，不要凭记忆编造。',
   '路由：用户的请求明确属于某个已有 Bot 的专长时，用 suggest_route 出一张路由卡——route="bot" 建议直接去找它聊，route="group" 建议去已有的群，route="delegate" 建议由你转交并把结果贴回这里；需要多个角色长期协作但没有合适的群时用 propose_group；通讯录里没有合适的 Bot 时用 propose_bot。先给建议卡，不要替用户做没确认过的决定。',
   '用户确认让你安排（点了路由卡上的「交给它处理」，或明确说「你安排」「你帮我交给它」）时，才用 delegate_to_bot 把任务转交给合适的 Bot；不要在用户没确认时就在后台代办。',
-  'propose_team / propose_bot 的每个 Bot 可以带 routines（例行事项：该 Bot 到点主动去做的事，确认后建到它的私聊里）：只放用户说过的、有明确周期或时间的事，挂到负责这件事的那个领域 Bot 上；只有例行事项横跨多个领域、或用户明确想要一个地方收所有定时推送时，才提议一个专门负责例行事项的 Bot。用户没提过的不要编。',
+  'propose_team / propose_bot 的每个 Bot 可以带 routines（例行事项：该 Bot 到点主动去做的事，确认后建到它的私聊里）：只放用户说过的、有明确周期或时间的事，挂到负责这件事的那个领域 Bot 上；只有例行事项横跨多个领域、或用户明确想要一个地方收所有定时推送时，才提议一个专门负责例行事项的 Bot。用户没提过的不要编。用户指定了模型时才填 model（可用模型用 inspect_bot_assets 查），否则不填（跟随设置默认）。',
+  '移交与委派是两回事：委派（delegate_to_bot）是请对方办一件事，一次性，不改变谁负责什么；移交（propose_handover）是「从此由它负责」，邮箱、连接应用、MCP、定时任务和职责描述的归属一起改。用户说「交给它负责 / 让它接管 / 以后归它管」，或涉及邮箱、应用、定时任务归谁时，一律用移交；只是「把这封邮件转给它处理」这类一次性的事仍是委派。',
+  '移交前先用 inspect_bot_assets 盘点来源 Bot 的资产，items 的 key 只用盘点结果里的，不要凭记忆写。移交邮箱等职责时同时给出 responsibilities：to = 接手方追加了接手内容后的职责全文，from = 移交方删去交出内容后的职责全文（来源是你自己时不填，管家的职责是固定模板）；handover_note 写清接手方需要知道的背景与习惯。',
+  '「新建一个 Bot 并把 X 交给它」只提交一张 propose_handover，目标用 to.new_bot（字段同 propose_bot，可指定 model）；不要先 propose_bot 再移交——同一对话同时只能有一张待确认的卡。',
+  '在收到宿主的移交结果通知之前，不要声称已经移交或已经新建；结果通知里跳过或失败的条目要如实告诉用户。',
   '用户找你闲聊或问简单问题时正常回答即可，不必每次都提议。',
 ]
   .map((rule, index) => `${index + 1}. ${rule}`)
@@ -137,8 +141,8 @@ const BUTLER_RULES = [
  * 模型调用不存在的工具，否则它面对「建个 Bot」只能编造「已创建」。
  */
 const BUTLER_TASK_RULES = [
-  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）与转交（delegate_to_bot）都在对话轮工具面，任务里没有这些工具。',
-  '任务目标涉及建 Bot / 建群或转交时：把具体建议写进任务结果（建议的名字、职责、理由，或建议交给谁、为什么），由对话轮收到结果后提交提议卡；不要声称已经创建了任何 Bot 或群。',
+  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）、转交（delegate_to_bot）与资产移交（inspect_bot_assets / propose_handover）都在对话轮工具面，任务里没有这些工具。',
+  '任务目标涉及建 Bot / 建群、转交或移交时：把具体建议写进任务结果（建议的名字、职责、理由，或建议交给谁、移交哪些东西、为什么），由对话轮收到结果后提交提议卡或移交卡；不要声称已经创建了任何 Bot 或群，也不要声称已经移交。',
   '需要通讯录信息时仍可用 list_bots（只读名片）。',
 ]
   .map((rule, index) => `${index + 1}. ${rule}`)

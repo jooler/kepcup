@@ -1,0 +1,91 @@
+import type { Bot, HandoverAction, HandoverAssetType } from '@kepcup/shared';
+
+/**
+ * 资产清单层（D88，docs/design/37 §5.4）：每类资产一个适配器（盘点 / 校验 / 执行 /
+ * 描述）。移交引擎（`dispatch/handover.ts`）、卡片与结果通知只认这个接口；新增资产类型
+ * 只加适配器，不改引擎。
+ */
+
+/** 盘点出的一项资产。 */
+export interface HandoverEntry {
+  /** 全局唯一的条目 key：`{type}:{id}`（如 `mail:mal_x`、`schedule:sch_x`）。 */
+  key: string;
+  type: HandoverAssetType;
+  /** 名称（邮箱地址、应用账号、任务标题……）。 */
+  label: string;
+  /** 补充说明（定时任务的时间、应用名……），可为空。 */
+  detail: string;
+  /** 可用动作，第一个之外的为可选动作。 */
+  actions: HandoverAction[];
+  defaultAction: HandoverAction;
+  /** 与目标无关、盘点时就能判定的不可执行原因（如全局已停用、随承诺 P1 支持）。 */
+  blocked?: string | undefined;
+  /** label / detail 含外部或用户 / 模型写的文本：工具结果里包 `<untrusted>`。 */
+  external: boolean;
+}
+
+/** 盘点参数（记忆 / Wiki 的查询，P1 / P2 起使用）。 */
+export interface InventoryQuery {
+  memoryQuery?: string | undefined;
+  wikiQuery?: string | undefined;
+}
+
+/**
+ * 一次校验 / 执行的上下文。`toBot` 为 null 表示新建目标还没建（提议时的校验）：适配器
+ * 按「一个空白的新 Bot」判断（没有任何连接 / 绑定，只在自己的私聊里）。
+ */
+export interface HandoverContext {
+  handoverId: string;
+  fromBot: Bot;
+  toBot: Bot | null;
+  /** 目标显示名（新建目标建好前用提议里的名字）。 */
+  toName: string;
+}
+
+/** 一项的执行结果。 */
+export interface HandoverItemResult {
+  /** 写进 `bot_handover_items.result_json`（如重建后的定时任务 id）。 */
+  result?: Record<string, unknown> | undefined;
+  /** 执行成功但值得告诉用户的副作用（如「A 有 2 个运行中的任务被中断」）。 */
+  notes?: string[] | undefined;
+}
+
+export interface HandoverAdapter {
+  readonly type: HandoverAssetType;
+  /** §5.3 的执行阶段：2 = 配置类，3 = 知识类，4 = 职责类。移交动作的 A 侧撤除统一在阶段 5。 */
+  readonly stage: number;
+  /** `key` 是否属于本适配器（按前缀）。 */
+  owns(key: string): boolean;
+  /** 盘点源 Bot 名下的这类资产。 */
+  inventory(botId: string, query?: InventoryQuery): HandoverEntry[];
+  /**
+   * 盘点之外仍合法的 key（如 `model:<ref>`：可用模型列表里的任何 ref）。返回条目 =
+   * 合法；null = 编造的 key。缺省只认盘点里的。
+   */
+  resolve?(fromBotId: string, key: string): HandoverEntry | null;
+  /** 针对目标的校验：null = 可执行，否则是不可执行的原因（卡上置灰 / 执行时跳过）。 */
+  validate(ctx: HandoverContext, key: string, action: HandoverAction): string | null;
+  /**
+   * 执行（阶段 2–4 的那部分：让 B 获得）。必须可重入：重复执行不重复建、不重复绑。
+   * 失败抛错（错误文案进结果通知）。
+   */
+  apply(
+    ctx: HandoverContext & { toBot: Bot },
+    key: string,
+    action: HandoverAction,
+  ): Promise<HandoverItemResult>;
+  /**
+   * 移交（move）的 A 侧撤除（阶段 5），只对需要分两步的资产（连接应用、MCP）实现；其余
+   * 适配器在 `apply` 里一次做完。可重入。
+   */
+  release?(ctx: HandoverContext & { toBot: Bot }, key: string): Promise<HandoverItemResult>;
+  /**
+   * 崩溃恢复：这一项是否已经完整生效（例如邮箱已只绑 B）。为真则直接记 done，不再校验 /
+   * 执行。缺省 = 依赖 `apply` 自身可重入。
+   */
+  isApplied?(ctx: HandoverContext & { toBot: Bot }, key: string, action: HandoverAction): boolean;
+  /** 卡片与结果通知里的一行（「把邮箱 x 移交给 B」）。 */
+  describe(entry: HandoverEntry, action: HandoverAction, toName: string): string;
+  /** 卡片上的风险提示（如 A 正在运行的任务会被中断）。 */
+  warnings?(ctx: HandoverContext, entry: HandoverEntry, action: HandoverAction): string[];
+}

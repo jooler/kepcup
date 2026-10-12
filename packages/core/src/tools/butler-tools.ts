@@ -41,6 +41,11 @@ export interface ButlerToolFacade {
    * zone); null = valid, otherwise why not. Created only on confirmation.
    */
   validateRoutineWhen(when: string, timezone: string | null): string | null;
+  /**
+   * D88: checks a proposed bot's model ref against the available chat models (the same
+   * source as the Bot detail model dropdown); null = valid, otherwise why not.
+   */
+  validateModelRef(ref: string): string | null;
 }
 
 /** Where the butler suggests the user's request should go (D70 §2.4). */
@@ -69,7 +74,7 @@ const proposedRoutineSchema = Type.Object(
   { additionalProperties: false },
 );
 
-const proposedBotSchema = Type.Object(
+export const proposedBotSchema = Type.Object(
   {
     name: Type.String({ description: 'Bot 的名字（简短，2~8 个字为宜）' }),
     bio: Type.String({ description: '一句话简介：它是谁、帮用户做什么' }),
@@ -81,24 +86,31 @@ const proposedBotSchema = Type.Object(
         description: `例行事项（≤ ${BUTLER_ROUTINES_PER_BOT_MAX} 条）：用户说过的、有固定周期或时间点的事，确认后建到该 Bot 的私聊里由它到点去做；没有就不填`,
       }),
     ),
+    model: Type.Optional(
+      Type.String({
+        description:
+          '对话模型：可用模型列表里的 ref（如 "openai/gpt-4o"，先用 inspect_bot_assets 查看可用模型）。只在用户指定了模型时填；不填 = 跟随设置默认',
+      }),
+    ),
   },
   { additionalProperties: false },
 );
 
-interface ProposedRoutineParams {
+export interface ProposedRoutineParams {
   title: string;
   when: string;
   timezone?: string;
   note: string;
 }
 
-interface ProposedBotParams {
+export interface ProposedBotParams {
   name: string;
   bio: string;
   expertise: string;
   responsibilities: string;
   reason: string;
   routines?: ProposedRoutineParams[];
+  model?: string;
 }
 
 function invalid(content: string): ToolResult {
@@ -131,9 +143,10 @@ function cleanRoutines(
 }
 
 /** Normalizes + validates proposed bots; returns an error text or the clean list. */
-function cleanProposedBots(
+export function cleanProposedBots(
   raw: ProposedBotParams[],
   validateWhen: ButlerToolFacade['validateRoutineWhen'],
+  validateModel: ButlerToolFacade['validateModelRef'],
 ): string | ButlerProposedBot[] {
   const bots: ButlerProposedBot[] = [];
   const seen = new Set<string>();
@@ -147,6 +160,11 @@ function cleanProposedBots(
     if (responsibilities.length === 0) return `「${name}」缺少职责说明`;
     const routines = cleanRoutines(name, item.routines, validateWhen);
     if (typeof routines === 'string') return routines;
+    const model = (item.model ?? '').trim();
+    if (model.length > 0) {
+      const error = validateModel(model);
+      if (error !== null) return `「${name}」的模型不可用：${error}`;
+    }
     bots.push({
       name,
       bio: item.bio.trim().slice(0, FIELD_MAX_CHARS),
@@ -154,6 +172,7 @@ function cleanProposedBots(
       responsibilities: responsibilities.slice(0, FIELD_MAX_CHARS),
       reason: item.reason.trim().slice(0, FIELD_MAX_CHARS),
       routines,
+      model,
     });
   }
   return bots;
@@ -278,7 +297,11 @@ export function buildButlerTools(input: {
           `组队提议需要 ${BUTLER_TEAM_SIZE_MIN}~${BUTLER_TEAM_SIZE_MAX} 个 Bot；只需要一个时用 propose_bot。`,
         );
       }
-      const bots = cleanProposedBots(params.bots, (when, tz) => butler.validateRoutineWhen(when, tz));
+      const bots = cleanProposedBots(
+        params.bots,
+        (when, tz) => butler.validateRoutineWhen(when, tz),
+        (ref) => butler.validateModelRef(ref),
+      );
       if (typeof bots === 'string') return invalid(bots);
       return submitted(
         butler.propose(identity, {
@@ -302,7 +325,11 @@ export function buildButlerTools(input: {
       { additionalProperties: false },
     ),
     execute: async (params) => {
-      const bots = cleanProposedBots([params.bot], (when, tz) => butler.validateRoutineWhen(when, tz));
+      const bots = cleanProposedBots(
+        [params.bot],
+        (when, tz) => butler.validateRoutineWhen(when, tz),
+        (ref) => butler.validateModelRef(ref),
+      );
       if (typeof bots === 'string') return invalid(bots);
       return submitted(
         butler.propose(identity, {

@@ -32,6 +32,8 @@ import {
   butlerAcceptRouteInputSchema,
   butlerAcceptRouteOutputSchema,
   delegationIdInputSchema,
+  handoversGetInputSchema,
+  handoversGetOutputSchema,
   delegationGetOutputSchema,
   taskGetOutputSchema,
   effectsListOutputSchema,
@@ -989,6 +991,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           input.selection,
           input.payloadHash,
           input.routineSelection,
+          input.handoverSelection,
         ),
       }),
     ),
@@ -1005,6 +1008,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       delegationGetOutputSchema,
       async (input) => ({ delegation: orchestrator.cancelDelegation(input.id) }),
     ),
+
+    // D88: execution progress of a handover card (renders after a reload; live updates
+    // arrive as handover.updated).
+    'handovers.get': method(handoversGetInputSchema, handoversGetOutputSchema, async (input) => ({
+      handover: services.handover?.view(input.approvalId) ?? null,
+    })),
 
     // D75 W3 (design 30 §4.3 / §2.4.6): task cards, the status line, question cards.
     'tasks.get': method(taskIdInputSchema, taskGetOutputSchema, async (input) => ({

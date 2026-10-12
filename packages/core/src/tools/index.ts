@@ -34,6 +34,7 @@ import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
+import { buildHandoverTools, type HandoverToolFacade } from './handover-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
 import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
 import type { SubagentToolFacade } from '../agent/subagent.js';
@@ -158,6 +159,11 @@ export interface ResponseToolDeps {
    * propose_bot / propose_group。
    */
   butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
+  /**
+   * Bot 资产移交（D88，docs/design/37）：present 且 `butler.isButler` 时对话轮注册
+   * inspect_bot_assets / propose_handover（P0 仅管家；任务不注册）。
+   */
+  handover?: HandoverToolFacade | undefined;
   /**
    * 跨 Bot 委派宿主（D71）：present 时注册 delegate_to_bot / cancel_delegation。
    * orchestrator 对 triggerReason='delegation' 的 run 不传（少给模型一个无用
@@ -999,12 +1005,15 @@ export function buildResponseTools(input: {
   const widgetTools =
     deps.widgets !== undefined ? buildWidgetTools({ identity, widgets: deps.widgets }) : [];
 
-  // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家。
+  // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家；D88 移交工具 P0 同样仅管家。
   const butlerTools =
     deps.butler !== undefined
       ? [
           buildListBotsTool({ identity, butler: deps.butler.host }),
           ...(deps.butler.isButler ? buildButlerTools({ identity, butler: deps.butler.host }) : []),
+          ...(deps.butler.isButler && deps.handover !== undefined
+            ? buildHandoverTools({ identity, handover: deps.handover })
+            : []),
         ]
       : [];
 
@@ -1078,8 +1087,8 @@ export function buildResponseTools(input: {
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined
       ? [buildAskUserTool({ identity, ask: deps.tasks.ask.bind(deps.tasks) })]
       : []),
-    // Tasks keep list_bots (read-only cards); routing to other bots and the
-    // butler's proposals are the turn's (design 30 §1.2).
+    // Tasks keep list_bots (read-only cards); routing to other bots, the
+    // butler's proposals and handovers (D88) are the turn's (design 30 §1.2).
     ...(deps.butler !== undefined ? [buildListBotsTool({ identity, butler: deps.butler.host })] : []),
     ...mcpTools,
     ...appTools,

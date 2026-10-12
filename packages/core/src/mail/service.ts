@@ -338,6 +338,67 @@ export class MailService {
     }
   }
 
+  /**
+   * D88 移交：给邮箱单条加一个绑定 Bot（已绑定则不变，保留其唤醒状态）。新绑定的唤醒状态
+   * 从零开始；其他 Bot 的绑定不受影响。
+   */
+  addBinding(accountId: string, botId: string): MailAccount {
+    this.#require(accountId);
+    this.#assertBots([botId]);
+    this.store.addBinding(accountId, botId, this.#deps.clock.now());
+    const account = this.get(accountId);
+    this.#deps.publishAccount(account, accountId);
+    return account;
+  }
+
+  /** D88 移交：解除一个 Bot 对邮箱的绑定（没有绑定则不变）。其他绑定不受影响。 */
+  removeBinding(accountId: string, botId: string): MailAccount {
+    this.#require(accountId);
+    if (this.store.removeBinding(accountId, botId)) {
+      // 解绑后不再有该绑定的「已暂停提醒」提示。
+      this.#deps.notice({ key: pausedNoticeKey(accountId, botId), level: 'info', text: '', dismiss: true });
+    }
+    const account = this.get(accountId);
+    this.#deps.publishAccount(account, accountId);
+    return account;
+  }
+
+  /**
+   * D88 移交：A 名下还在排队的 `mail_alert` 作业（如免打扰停放、或还没轮到的）改投 B——
+   * 按新去重键 `mail:{acc}:{uid}:{B}` 入队、旧作业取消。必须在解除 A 的绑定之前调用：
+   * `runAlertJob` 遇到绑定已不存在的作业会静默丢弃，这些信就两边都收不到提醒了。
+   * B 必须已绑定该邮箱。返回改投的作业数。
+   */
+  retargetPendingAlerts(accountId: string, fromBotId: string, toBotId: string): number {
+    this.#require(accountId);
+    if (!this.store.bindings(accountId).some((binding) => binding.botId === toBotId)) {
+      throw new AppError('MAIL_NOT_BOUND', '接手的 Bot 还没有绑定该邮箱');
+    }
+    const prefix = `mail:${accountId}:`;
+    const suffix = `:${fromBotId}`;
+    let moved = 0;
+    this.#deps.db.transaction(() => {
+      for (const job of this.#deps.jobs.pendingByDedupePrefix(prefix)) {
+        if (job.type !== 'mail_alert' || job.dedupe_key?.endsWith(suffix) !== true) continue;
+        const payload = parseAlert(job.payload_json);
+        if (payload === null || payload.botId !== fromBotId) continue;
+        const key = mailAlertDedupeKey(accountId, payload.uid, toBotId);
+        this.#deps.jobs.enqueue({
+          type: 'mail_alert',
+          botId: toBotId,
+          conversationId: this.#deps.conversations.openDirect(toBotId).conversation.id,
+          payload: { ...payload, botId: toBotId, key },
+          priority: job.priority,
+          dedupeKey: key,
+          runAfter: job.run_after,
+        });
+        this.#deps.jobs.cancelPending(job.id);
+        moved += 1;
+      }
+    })();
+    return moved;
+  }
+
   pause(id: string): MailAccount {
     const current = this.#require(id);
     this.#hub.stop(id);

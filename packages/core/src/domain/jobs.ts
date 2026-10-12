@@ -176,6 +176,31 @@ export class JobsService {
       .run(this.clock.now(), `${prefix}%`).changes;
   }
 
+  /**
+   * 去重键以此前缀开头的待执行作业（D88：移交邮箱时找出 A 名下排队中的 mail_alert）。
+   * LIKE 的 `_` 是通配符，这里再按前缀精确过滤一遍。
+   */
+  pendingByDedupePrefix(prefix: string): JobRow[] {
+    return (
+      this.db
+        .prepare(
+          "select * from jobs where status = 'pending' and dedupe_key like ? order by created_at",
+        )
+        .all(`${prefix}%`) as JobRow[]
+    ).filter((row) => row.dedupe_key?.startsWith(prefix) === true);
+  }
+
+  /** 取消一条待执行作业（已在跑 / 已结束的不动）。返回是否取消了。 */
+  cancelPending(id: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "update jobs set status = 'cancelled', updated_at = ? where id = ? and status = 'pending'",
+        )
+        .run(this.clock.now(), id).changes > 0
+    );
+  }
+
   deleteByBot(botId: string): void {
     this.db.prepare('delete from jobs where bot_id = ?').run(botId);
   }

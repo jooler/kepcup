@@ -21,6 +21,7 @@ import { connectorTierSchema } from '../domain/connector-catalog.js';
 import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
 import { mailAccountSchema } from '../domain/mail.js';
+import { handoverViewSchema } from '../domain/handover.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -312,6 +313,14 @@ export const appNoticePayloadSchema = z.object({
 });
 export type AppNoticePayload = z.infer<typeof appNoticePayloadSchema>;
 
+/**
+ * D88 资产移交：执行进度 / 结果（卡片逐项打勾）。决定前不推送；执行中每完成一项推一次。
+ */
+export const handoverUpdatedPayloadSchema = z.object({
+  conversationId: z.string(),
+  handover: handoverViewSchema,
+});
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -349,6 +358,7 @@ export const rpcEventSchemas = {
   'tasks.interrupted': tasksInterruptedPayloadSchema,
   'watch.updated': watchUpdatedPayloadSchema,
   'mail.account_updated': mailAccountUpdatedPayloadSchema,
+  'handover.updated': handoverUpdatedPayloadSchema,
   'app.notice': appNoticePayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,

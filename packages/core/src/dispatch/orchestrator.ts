@@ -203,6 +203,7 @@ import {
   butlerProfileTemplate,
 } from '../domain/butler.js';
 import { ButlerHost } from './butler.js';
+import type { HandoverToolFacade } from '../tools/handover-tools.js';
 import {
   buildEffectsBeforeInterruptSegment,
   buildTaskBriefSegment,
@@ -353,6 +354,11 @@ export interface OrchestratorDeps {
   watch?: OrchestratorWatchFacade | undefined;
   /** D84 邮件通道：mail_* 工具、`<mail_accounts>` 与邮件卡的上下文行。 */
   mail?: MailService | undefined;
+  /**
+   * D88 Bot 资产移交（lazy facade from start.ts：宿主在 mail / schedule 之后构造）：
+   * 管家的 inspect_bot_assets / propose_handover，以及 propose_bot 的可用模型列表。
+   */
+  handover?: HandoverToolFacade | undefined;
   /**
    * P11 browser capability hosted by the main process (port B); omitted in
    * stripped test setups, which then simply have no browser_* tools.
@@ -780,6 +786,8 @@ export class Orchestrator {
       logger: deps.logger,
       // D80: proposal routines are created through the schedule domain.
       ...(deps.schedule !== undefined ? { schedule: deps.schedule } : {}),
+      // D88: a proposed bot's model must be one of the available chat models.
+      modelOptions: () => deps.handover?.modelOptions() ?? [],
       publish: (event, payload) => deps.publish(event as never, payload as never),
       deliverDirect: (conversationId, botId, message) => {
         const conversation = deps.conversations.getOrThrow(conversationId);
@@ -3470,6 +3478,8 @@ export class Orchestrator {
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+          // D88 资产移交：注册与否随 butler.isButler（tools/index.ts）。
+          ...(this.#deps.handover !== undefined ? { handover: this.#deps.handover } : {}),
           // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主
           // 执行时按 run_id 反查，这里只是少给模型一个无用工具）。
           ...(batch.reason === 'delegation' ? {} : { delegation: this.#delegationHost }),

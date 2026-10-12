@@ -9,6 +9,7 @@ import type {
   SandboxStatusOutput,
   Settings,
 } from '@kepcup/shared';
+import { chatModelOptions } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 
 export interface ModelOption {
@@ -39,17 +40,8 @@ class SettingsState {
    * 各自配置，不产生这里的选择项。
    */
   get availableModelOptions(): ModelOption[] {
-    const options: ModelOption[] = [];
-    for (const provider of this.providers) {
-      if (!provider.hasKey) continue;
-      for (const model of provider.models) {
-        options.push({
-          ref: `${provider.id}/${model.id}`,
-          label: `${provider.name} · ${model.name}`,
-        });
-      }
-    }
-    return options;
+    // 与 core 的 D88 移交可用模型列表同源（shared chatModelOptions）。
+    return chatModelOptions(this.providers);
   }
 
   start(): void {

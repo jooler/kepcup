@@ -140,7 +140,14 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     category: 'host',
     default: 'inject',
     tools: ['list_bots', 'delegate_to_bot', 'cancel_delegation'],
-    butlerTools: ['propose_bot', 'propose_group', 'propose_team', 'suggest_route'],
+    butlerTools: [
+      'propose_bot',
+      'propose_group',
+      'propose_team',
+      'suggest_route',
+      'inspect_bot_assets',
+      'propose_handover',
+    ],
   }),
   pack({
     id: 'browser',
