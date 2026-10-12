@@ -295,6 +295,23 @@ export const mailAccountUpdatedPayloadSchema = z.object({
   account: mailAccountSchema.nullable(),
 });
 
+/**
+ * 应用状态提示（不落库、不进对话上下文）：邮件连接丢失、监看被暂停之类
+ * 「当前状态有变化，请留意」的信息。渲染层弹一条轻量提示；提示消失后用户下次
+ * 用到相关功能时仍会自然发现问题，所以它不是对话内容。
+ * `key` 同一件事共用：重复推送会替换同 key 的提示，`dismiss` 撤掉它（如故障恢复）。
+ */
+export const appNoticePayloadSchema = z.object({
+  key: z.string().min(1),
+  level: z.enum(['info', 'warning', 'error']),
+  text: z.string(),
+  /** 提示上的跳转按钮；缺省则只有文字。 */
+  action: z.enum(['open_mail_settings', 'open_schedules']).optional(),
+  /** true = 撤掉同 key 的提示（text 忽略）。 */
+  dismiss: z.boolean().optional(),
+});
+export type AppNoticePayload = z.infer<typeof appNoticePayloadSchema>;
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -332,6 +349,7 @@ export const rpcEventSchemas = {
   'tasks.interrupted': tasksInterruptedPayloadSchema,
   'watch.updated': watchUpdatedPayloadSchema,
   'mail.account_updated': mailAccountUpdatedPayloadSchema,
+  'app.notice': appNoticePayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,
 } as const;
