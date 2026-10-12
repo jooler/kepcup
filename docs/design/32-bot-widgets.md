@@ -336,11 +336,13 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 | `html.truncated` | error | 缺 `</html>` / `</body>`、`<script>` 或 `<style>` 未闭合（截断输出的典型症状；parse5 自身会容错补全，所以对原文单独计数） |
 | `html.size` | error | 超 `BOT_WIDGET_HTML_MAX_BYTES` |
 | `html.doctype` | warning | 缺 `<!DOCTYPE html>`（quirks mode） |
-| `sandbox.external-resource` | error | `script[src]` / `link[href]` / `img[src]` / CSS `@import` 与 `url()` 指向 http(s) 或 `//`——CSP 静默拦截 |
+| `sandbox.external-resource` | error | `script[src]` / `link[href]` / `img[src]` / CSS `@import` 与 `url()` 指向 http(s) 或 `//`——CSP 拦截（实测 CSS `url()` 被拦时连 CSP 事件都没有，只有本条静态规则能发现） |
 | `sandbox.storage` | error | `localStorage` / `sessionStorage` / `indexedDB` / `document.cookie`——不透明 origin 下抛 SecurityError；改用 `kepcup.storage` |
 | `sandbox.network` | error | `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` / `sendBeacon` |
-| `sandbox.modals` | error | `alert` / `confirm` / `prompt`——无 `allow-modals`，不弹窗，`confirm` 恒为 false；改用页内确认 UI |
-| `sandbox.form-submit` | error | `<form>` 的 submit 事件或 `onsubmit`、`type=submit`——无 `allow-forms`，提交被拦，submit 处理函数不执行；改用 `type="button"` + click |
+| `sandbox.modals` | error | `confirm` / `prompt`——无 `allow-modals`，不弹窗，实测 0ms 返回 `false` / `null`，`if (confirm(…))` 的分支永远不执行；改用页内确认 UI |
+| `sandbox.alert` | warning | `alert`——不弹窗、0ms 返回，控制流照常（只丢了提示）；改用页内提示 |
+| `sandbox.form-submit` | error | 注册了 submit 处理函数（`onsubmit` 属性、`addEventListener('submit')`、`.onsubmit =`）或调用 `requestSubmit()` / `.submit()`——无 `allow-forms`，实测点击 submit 按钮、`requestSubmit()`、输入框里按 Enter 都**不触发** submit 事件；改用 `type="button"` + click |
+| `sandbox.submit-button` | warning | `type=submit` 或表单内不写 type 的 `<button>`、但没有 submit 处理函数——按钮自身的 click 处理照常执行（实测），只是 Enter 提交与默认提交无效；建议显式 `type="button"` |
 | `sandbox.popup` | error | `target="_blank"`、`window.open`——改用 `kepcup.openLink` |
 | `sandbox.top-nav` | error | 改写 `location` / `top.location` |
 | `sandbox.download` / `sandbox.clipboard` | warning | `a[download]`、`navigator.clipboard`——在沙箱里不可用 |
@@ -348,7 +350,7 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 | `query.invalid` | error | `queries.json` 未通过交付侧校验（复用 `WidgetService` 的 `#cleanQueries` 与名字闸，报错原样转出） |
 | `query.unknown-name` | error | 代码里 `kepcup.query('x', …)` 的字面量名字不在 `queries.json` 里 |
 
-沙箱行为（尤其 form 提交与 modals）以 Electron 当前版本的实测为准（执行文档的 spike 任务），实测与表不符时调整级别。
+沙箱行为以 Electron 当前版本的实测为准（Electron 44.4.5 / Chromium 152 的实测与逐条结论见执行文档 §8.1；`alert` 与「只有 submit 按钮」两条按实测降为 warning）。
 
 #### 11.8.2 S1 JavaScript（acorn + 轻量作用域分析）
 
@@ -373,7 +375,9 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 2. **渲染体检**：`render.blank`（body 无可见文本，且没有尺寸非零的 canvas / svg / img → error）、`render.overflow-x`（360px 下横向溢出 → warning）、`render.bad-text`（可见文本含 `NaN` / `undefined` / `[object Object]` / 孤立的 `null` → warning）。
 3. **乱点冒烟**：收集可操作元素（button、`[onclick]`、input、select、textarea、`[role=button]`、`a[href^="#"]`，至多 30 个），按类型给输入框填样例值（数字 12、文本「测试」、日期今天、勾选、选第二项），再按 DOM 顺序点击（文字含「删除 / 清空 / 重置」的排在最后）。每步之后收集新增错误与坏文本，报告里指明触发它的元素（选择器 + 文字）。
 4. **验收步骤**：逐条执行 `acceptance.json`，得出每条的通过 / 失败与失败时的实际值。
-5. **大纲**：输出一份 DOM 文本大纲（标签 / 角色 / 标签名 / 文字，≤2000 字），让不看图的模型也「看见」页面；制作模型支持图片输入时，另附两张截图（`ToolResult.images`，不落库）。
+5. **大纲**：输出一份 DOM 文本大纲（标签 / 角色 / 标签名 / 文字，≤2000 字），让不看图的模型也「看见」页面；制作模型支持图片输入时，另附两张截图（`ToolResult.images`，不落库）。截图在 DOM 静默之后截取 iframe 的矩形；跨进程 iframe 的首帧要 100–200ms 才合成，整幅与底色一致时每 50ms 重试、至多 1s。
+
+报告里的行号就是草稿 `index.html` 的行号：预览注入（垫片 + 探针）写成不含换行的一行，紧跟在原有 `<head>` 之后。
 
 预览里的能力桥是模拟的：storage 为内存 KV（以 `fixtures.storage` 为初值、每个视口重置），`query` 按名字返回 `fixtures.queries[名]`（缺省空数组），`openLink` / `setHeight` 只记录，`theme` 按视口。预览从不读真实库。
 
@@ -404,11 +408,11 @@ SPEC ─► BUILD ─► GATE ─┬─ 合格 ───────────
 
 - **通道**：core → 主进程的平台方法 `widgetPreview.run`，走与 `browser.*` 相同的端口 B 延迟绑定（`DeferredHostRpc` 模式）。未绑定（测试装配、无界面）时 S2 记为 skipped，判定按 §11.6 的 `unverified`。
 - **输入**：预览版 HTML（core 注入 SDK 垫片 + **预览探针**）、视口列表、验收点、fixtures、时限。**输出**：§11.8.3 的结构化结果 + 可选截图。
-- **运行环境**：一个复用的隐藏窗口（`show:false`，离屏仍绘制，同 `browser-host.ts` 先例），独立的内存分区 `widget-preview`（不落盘）。窗口加载宿主自己的**预览外壳页**（带 preload，只暴露「上报结果」一个通道），外壳页里用与正式卡片**完全相同**的 `<iframe sandbox="allow-scripts">` 加载组件；组件资源由该分区上的协议处理器返回，响应头 CSP 同 §5（`buildAppCspHeader` 空域）。导航拦截、新窗口拒绝、权限一律拒绝，与正式环境同口径。
-- **探针**：core 在垫片之后、组件脚本之前注入的预览专用脚本（`sdk-injection.ts` 的 `injectPreviewProbe`）。它挂 `error` / `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`，执行外壳页下发的乱点与验收步骤，经 `parent.postMessage`（来源标记 `kepcup-probe`）回报。外壳页同时扮演模拟的能力桥宿主。探针与组件代码在同一个 realm 里，组件理论上能干扰它——这可以接受：预览是质量闸，不是安全闸（§8 第 8 条）。
-- **超时与死循环**：主进程对每个视口设硬时限；时限内收不到外壳页的完成消息（组件死循环会冻住渲染进程）就 `forcefullyCrashRenderer` 并重建窗口，报 `preview.timeout`（阻断项）。
+- **运行环境**：一个复用的隐藏窗口（`show:false`，离屏仍绘制，同 `browser-host.ts` 先例），独立的内存分区 `widget-preview`（无 `persist:`，实测不落盘）。窗口加载宿主自己的**预览外壳页**（`file://`——组件 CSP 的 `frame-ancestors file: http://localhost:*` 要求嵌入方是应用自己的页面；带 preload，只暴露「上报结果」一个通道），外壳页里用与正式卡片**完全相同**的 `<iframe sandbox="allow-scripts" allow="" referrerpolicy="no-referrer">` 加载组件；组件资源由该分区上的协议处理器返回（特权协议的处理器必须注册在嵌入方窗口所在的 session 上），响应头同 §5（`buildAppCspHeader` 空域 + `appUiResponseHeaders`）。导航拦截、新窗口拒绝、权限一律拒绝，与正式环境同口径。每次预览给组件一个新的 host（`widget-preview-{随机}`），避免被分进上一个还没回收的进程。
+- **探针**：core 在垫片之后、组件脚本之前注入的预览专用脚本（`sdk-injection.ts` 的 `injectPreviewProbe`）。它挂 `error`（捕获阶段，含资源加载失败）/ `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`，执行外壳页下发的乱点与验收步骤，经 `parent.postMessage`（来源标记 `kepcup-probe`）回报。外壳页同时扮演模拟的能力桥宿主。探针与组件代码在同一个 realm 里，组件理论上能干扰它——这可以接受：预览是质量闸，不是安全闸（§8 第 8 条）。**防篡改对照**：主进程同时监听窗口 `webContents` 的 `console-message`（实测含子框架的未捕获异常、promise 拒绝、CSP 违规与 console 输出，带 `frame`），把组件框架的 error 级消息并入结果并按文本去重——组件就算覆盖了探针，未捕获异常也丢不掉。不需要 CDP。
+- **超时与死循环**（按实测修订）：Chromium 把 opaque-origin 的 sandbox iframe 放进独立渲染进程，组件死循环只冻住组件进程，外壳页照常运行。主进程对每个视口设硬时限；超时就让外壳页**移除 iframe**（实测组件进程 3s 内被回收），3s 后进程仍在就 `process.kill(frame.osProcessId)`，外壳页本身也不回应时销毁窗口重建（实测 2.6s 恢复）；报 `preview.timeout`（阻断项）。不用 `forcefullyCrashRenderer`：它杀的是外壳页而不是组件，实测之后同一 webContents 重载外壳得 `ERR_FAILED`。
 - **并发**：串行队列，一次一个预览；单次检查总时限 `WIDGET_CHECK_TIMEOUT_MS`（20s）。
-- **备选**：若 spike 发现探针方案漏报（例如跨进程 iframe 的某类错误），改用 `webContents.debugger`（CDP 的 `Runtime.exceptionThrown` / `Log.entryAdded`，`Target.setAutoAttach` flatten 覆盖子框架）——`browser-host.ts` 已有 CDP 先例。
+- **CDP 不启用**：spike 实测探针 + `console-message` 已覆盖全部错误类型（含后续脚本的解析错误与跨进程 iframe），原备选方案（`webContents.debugger`）不实施。
 
 ### 11.10 独立审查（REVIEW）
 
