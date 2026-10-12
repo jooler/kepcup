@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; }
+  .habit { display: flex; justify-content: space-between; padding: 6px 0; }
+  .done { text-decoration: line-through; opacity: .6; }
+  a.help { color: var(--kc-accent, #2563eb); }
+</style>
+</head>
+<body>
+  <form id="new-habit" onsubmit="return false">
+    <input id="habit-name" placeholder="新习惯">
+    <button type="button" onclick="addHabit()">添加</button>
+  </form>
+  <ul id="list"></ul>
+  <p><a class="help" href="#list">回到列表</a> · <button type="button" onclick="kepcup.openLink('https://example.com/habits')">了解习惯养成</button></p>
+  <script>
+    var habits = [];
+    function renderHabits() {
+      const list = document.getElementById('list');
+      list.innerHTML = habits
+        .map((h, i) => `<li class="habit ${h.done ? 'done' : ''}"><span>${h.name}</span><button type="button" onclick="toggleHabit(${i})">切换</button></li>`)
+        .join('');
+    }
+    function addHabit() {
+      const input = document.getElementById('habit-name');
+      if (input.value.trim() === '') return;
+      habits.push({ name: input.value.trim(), done: false });
+      input.value = '';
+      persist();
+    }
+    function toggleHabit(i) {
+      habits[i].done = !habits[i].done;
+      persist();
+    }
+    function persist() {
+      renderHabits();
+      kepcup.storage.set('habits', habits).catch((err) => console.warn(err));
+    }
+    kepcup.storage.get('habits').then((saved) => {
+      habits = Array.isArray(saved) ? saved : [];
+      renderHabits();
+    });
+  </script>
+</body>
+</html>

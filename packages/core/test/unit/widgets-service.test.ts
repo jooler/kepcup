@@ -1379,7 +1379,7 @@ describe('WidgetService 审查修复（资源存活 / 存量上限 / 体积列�
     const cardsBefore = h.cards.length;
     const over = h.service.create({ ...base, title: 'one more', html: HTML, runId: '' });
     expect(over).toMatchObject({ ok: false, code: 'WIDGET_LIMIT' });
-    if (!over.ok) expect(over.message).toContain('widget_update');
+    if (!over.ok) expect(over.message).toContain('widget_craft');
     expect(h.cards).toHaveLength(cardsBefore);
     // 别的 Bot 不受影响。
     expect(h.service.create({ ...base, botId: 'bot_b', title: 'b', html: HTML, runId: '' }).ok).toBe(true);

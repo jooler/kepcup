@@ -392,10 +392,15 @@ export interface OrchestratorDeps {
   /** D73 P3 §7.5: tool results with `_meta.ui.resourceUri` become MCP App cards. */
   appUi?: McpToolUiSink | null;
   /**
-   * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：widget_create /
-   * widget_update 的落库与发卡。null / 缺省 = 没有该能力（不注册工具）。
+   * Bot 自制交互组件（D81 / D87，docs/design/32-bot-widgets.md）：widget_craft（独立制作
+   * loop，交付凭检查回执）与 widget_publish。null / 缺省 = 没有该能力（不注册工具）。
    */
   widgets?: WidgetToolFacade | null;
+  /**
+   * D87 制作 loop 的阶段 run（`widget_authoring`）不在 #activeRuns 里：runs.cancel 落到它们时
+   * 经这里中止整次制作（草稿保留）。
+   */
+  widgetCraft?: { cancelStageRun(runId: string, reason?: string): boolean } | null;
 }
 
 /** The slice of the wiki domain the response loop consumes. */
@@ -1302,6 +1307,17 @@ export class Orchestrator {
       this.#deps.approvals.cancelPendingForRun(runId);
       void this.#deps.projects.releaseRun(runId).catch(() => {});
       return this.#deps.runs.get(runId) ?? run;
+    }
+    // D87：制作 loop 的阶段 run 由制作服务持有：取消它 = 中止整次制作，阶段 run 由自己的
+    // unwind settle（绝不走下面「排队未开始」的分支）。
+    if (run.loopType === 'widget_authoring') {
+      if (this.#deps.widgetCraft?.cancelStageRun(runId, 'user cancelled') === true) {
+        return this.#deps.runs.get(runId) ?? run;
+      }
+      // 没有制作在持有它（遗留的 running 行）：直接结算，别让它挂到下次启动。
+      const settled = this.#deps.runs.update(runId, { status: 'cancelled' });
+      this.#deps.publish('run.status', { run: settled });
+      return settled;
     }
     // Queued but not started: cancel directly.
     this.#cancelledBeforeStart.add(runId);

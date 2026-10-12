@@ -86,32 +86,32 @@ export type WidgetCheckStatus = 'legacy' | 'passed' | 'issues' | 'unverified';
 ### P3a 制作 loop 骨架 + 静态检查 + 工具面切换
 
 shared：
-- [ ] `domain/widget-craft.ts`：常量、`WidgetCheckStatus`、`checkReportSchema`、`acceptanceSchema`（§11.8.4）、`reviewResultSchema`（§11.10）、`craftManifestSchema`；包入口导出。
-- [ ] `loopTypeSchema` 加 `'widget_authoring'`；错误码登记 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`（errors.ts + zh-CN `chats.errorCode.*`）。
-- [ ] `widgetCardSchema` 加 `checkStatus`（default `'legacy'`）与 `knownIssues`（default `[]`）。
+- [x] `domain/widget-craft.ts`：常量、`WidgetCheckStatus`、`checkReportSchema`、`acceptanceSchema`（§11.8.4）、`reviewResultSchema`（§11.10）、`craftManifestSchema`；包入口导出。
+- [x] `loopTypeSchema` 加 `'widget_authoring'`；错误码登记 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`（errors.ts + zh-CN `chats.errorCode.*`）。
+- [x] `widgetCardSchema` 加 `checkStatus`（default `'legacy'`）与 `knownIssues`（default `[]`）。
 
 core：检查器（`widgets/check/`）：
-- [ ] `rules.ts`：规则注册表（`{id, level:'error'|'warning', stage:'S0'|'S1'|'S2', title, hint}`）+ `sandboxPitfallsPrompt()`（从注册表生成提示词段落）。
-- [ ] `static-check.ts`（S0）：parse5 带位置解析；设计 32 §11.8.1 全部规则；`query.invalid` 复用 `WidgetService` 的查询校验（把 `#cleanQueries` 的纯校验部分抽成可导出的函数，`service.ts` 与检查器共用，行为不变）。
-- [ ] `js-check.ts`（S1）：acorn 解析内联脚本与 `on*` 属性；位置映射回文件；全局作用域收集（经典脚本共享、module 隔离）；`globals` 的 browser 集合 + `kepcup`；设计 32 §11.8.2 全部规则。
-- [ ] `report.ts`：合并 S0/S1/S2 结果 → JSON 报告 + 给模型的文本（按级别排序、截断到 `WIDGET_CHECK_REPORT_MAX_CHARS`）+ 评分（设计 32 §11.6）+ 阻断项判定。
-- [ ] `run-check.ts`：`runWidgetCheck({draftDir, preview?})` → 报告；`preview` 缺省时 S2 记 skipped。
+- [x] `rules.ts`：规则注册表（`{id, level:'error'|'warning', stage:'S0'|'S1'|'S2', title, hint}`）+ `sandboxPitfallsPrompt()`（从注册表生成提示词段落）。
+- [x] `static-check.ts`（S0）：parse5 带位置解析；设计 32 §11.8.1 全部规则；`query.invalid` 复用 `WidgetService` 的查询校验（把 `#cleanQueries` 的纯校验部分抽成可导出的函数，`service.ts` 与检查器共用，行为不变）。
+- [x] `js-check.ts`（S1）：acorn 解析内联脚本与 `on*` 属性；位置映射回文件；全局作用域收集（经典脚本共享、module 隔离）；`globals` 的 browser 集合 + `kepcup`；设计 32 §11.8.2 全部规则。
+- [x] `report.ts`：合并 S0/S1/S2 结果 → JSON 报告 + 给模型的文本（按级别排序、截断到 `WIDGET_CHECK_REPORT_MAX_CHARS`）+ 评分（设计 32 §11.6）+ 阻断项判定。
+- [x] `run-check.ts`：`runWidgetCheck({draftDir, preview?})` → 报告；`preview` 缺省时 S2 记 skipped。
 
 core：制作 loop（`widgets/craft/`）：
-- [ ] `infra/paths.ts`：`botWidgetDraftsDir` / `botWidgetDraftDir`。
-- [ ] `draft.ts`：草稿目录的创建 / 读写 manifest（宿主独占）/ 快照 / 回滚 / 过期清理（启动时 + 新建制作时）；修改模式下用组件最新版初始化 `index.html` 与 `queries.json`。
-- [ ] `tools.ts`：阶段工具集——基于 `skills/authoring-tools.ts` 的守卫写法实现 read / ls / write / edit（pi 的 `createEditToolDefinition` 等），守卫：只能访问本草稿目录、拒写 `manifest.json`、FIX 阶段拒绝覆盖已存在的 `index.html`；`widget_check`（自查，调 `runWidgetCheck`）、`widget_template`（P3a 先只有 `blank`）、`stage_done`（终止型）。
-- [ ] `prompts.ts`（设计 32 §11.7）：平台事实（`WIDGET_HTML_GUIDE` 原文迁来，扩写成 API 参考）+ `sandboxPitfallsPrompt()` + 文件约定 + 各阶段的输入拼装函数。
-- [ ] `service.ts`（`WidgetCraftService`）：状态机、阶段 run 的创建（`runs.create({loopType:'widget_authoring', parentRunId})` + `routeFor(…,'widget_authoring')` + `persistEngineSteps` + `publishRunStatus`，照抄 subagent）、整体时限与 token 轮询封顶、父 signal 级联、评分 / 最佳快照 / 回滚 / 问题签名去重与收缩模式、回执关卡、交付判定、调 `WidgetService.create/update` 交付、回执文本。P3a 的 GATE = S0 + S1；没有 REVIEW（直接按 GATE 结果交付）。
-- [ ] `llm-router.ts`：`LlmPurpose` 加 `'widget_authoring'`（P3c 再加 `'widget_review'`）；路由规则与 `skill_authoring` 同。
-- [ ] `WidgetService.create/update` 增入参 `check?: {status, summary}`，落 `widget_versions.check_status` / `check_summary_json` 并带进卡片描述符；`listForBot` 输出带上 `checkStatus`。
-- [ ] 迁移 `migrations/main/0035_widget_check.sql`（合并时重编号）：两列，默认 `'legacy'` / `''`。
+- [x] `infra/paths.ts`：`botWidgetDraftsDir` / `botWidgetDraftDir`。
+- [x] `draft.ts`：草稿目录的创建 / 读写 manifest（宿主独占）/ 快照 / 回滚 / 过期清理（启动时 + 新建制作时）；修改模式下用组件最新版初始化 `index.html` 与 `queries.json`。
+- [x] `tools.ts`：阶段工具集——基于 `skills/authoring-tools.ts` 的守卫写法实现 read / ls / write / edit（pi 的 `createEditToolDefinition` 等），守卫：只能访问本草稿目录、拒写 `manifest.json`、FIX 阶段拒绝覆盖已存在的 `index.html`；`widget_check`（自查，调 `runWidgetCheck`）、`widget_template`（P3a 先只有 `blank`）、`stage_done`（终止型）。
+- [x] `prompts.ts`（设计 32 §11.7）：平台事实（`WIDGET_HTML_GUIDE` 原文迁来，扩写成 API 参考）+ `sandboxPitfallsPrompt()` + 文件约定 + 各阶段的输入拼装函数。
+- [x] `service.ts`（`WidgetCraftService`）：状态机、阶段 run 的创建（`runs.create({loopType:'widget_authoring', parentRunId})` + `routeFor(…,'widget_authoring')` + `persistEngineSteps` + `publishRunStatus`，照抄 subagent）、整体时限与 token 轮询封顶、父 signal 级联、评分 / 最佳快照 / 回滚 / 问题签名去重与收缩模式、回执关卡、交付判定、调 `WidgetService.create/update` 交付、回执文本。P3a 的 GATE = S0 + S1；没有 REVIEW（直接按 GATE 结果交付）。
+- [x] `llm-router.ts`：`LlmPurpose` 加 `'widget_authoring'`（P3c 再加 `'widget_review'`）；路由规则与 `skill_authoring` 同。
+- [x] `WidgetService.create/update` 增入参 `check?: {status, summary}`，落 `widget_versions.check_status` / `check_summary_json` 并带进卡片描述符；`listForBot` 输出带上 `checkStatus`。
+- [x] 迁移 `migrations/main/0035_widget_check.sql`（合并时重编号）：两列，默认 `'legacy'` / `''`。
 
 core：工具面切换：
-- [ ] `tools/widget-tools.ts`：新增 `widget_craft`（参数与回执见设计 32 §11.4 / §11.6），保留 `widget_publish`；`widget_create` / `widget_update` 不再注册（删掉工具定义，`WidgetToolFacade` 改为 `{craft, publish}`）；工具描述瘦身。
-- [ ] orchestrator / `start.ts` 装配 `WidgetCraftService`（依赖：engine、router、runs、usage、secrets、widgets、paths、logger、clock、预览宿主 facade〔P3b 前为未绑定〕）。
-- [ ] `system-prompt.ts:187` 规则改写：何时用 `widget_craft`、brief 要包含什么、不要自己写 HTML、未交付时如实告知。
-- [ ] 文档回写：dev `04-agent-runtime.md`（工具目录与 loop 表）、`03-data-model.md`（两列）、`02-architecture.md`（若列有 loop 类型）。
+- [x] `tools/widget-tools.ts`：新增 `widget_craft`（参数与回执见设计 32 §11.4 / §11.6），保留 `widget_publish`；`widget_create` / `widget_update` 不再注册（删掉工具定义，`WidgetToolFacade` 改为 `{craft, publish}`）；工具描述瘦身。
+- [x] orchestrator / `start.ts` 装配 `WidgetCraftService`（依赖：engine、router、runs、usage、secrets、widgets、paths、logger、clock、预览宿主 facade〔P3b 前为未绑定〕）。
+- [x] `system-prompt.ts:187` 规则改写：何时用 `widget_craft`、brief 要包含什么、不要自己写 HTML、未交付时如实告知。
+- [x] 文档回写：dev `04-agent-runtime.md`（工具目录与 loop 表）、`03-data-model.md`（两列）、`02-architecture.md`（若列有 loop 类型）。
 
 P3a 测试：见 §5.1–§5.2。
 
@@ -155,7 +155,7 @@ renderer：
 - **已知坏组件语料**：收集 10–20 份典型的 LLM 坏组件（用 CDN、localStorage、confirm、form submit、onclick 指向闭包内函数、截断、NaN 显示……），断言每份都被至少一条 error 拦下——这是检查器召回率的回归锁。
 
 ### 5.2 制作 loop（P3a 起，mock-llm 脚本化）
-- 状态机：一次写对 → 直接交付 `passed`（P3a 无审查时）；GATE 失败 → FIX → 通过；FIX 引入回归 → 回滚到最佳快照且下一轮输入带回归说明；同一问题签名连续两次 → 收缩模式输入；修复轮数用尽：无阻断项 → `issues` 交付并列已知问题，有阻断项 → 不交付、回执带原因与 craftId、草稿保留；时限与 token 预算中止；父 signal 中止 → 阶段 run `cancelled`、草稿保留。
+- 状态机：一次写对 → 直接交付（P3a 没有 S2 → `unverified`；P3b 接上预览后为 `passed`）；GATE 失败 → FIX → 通过；FIX 引入回归 → 回滚到最佳快照且下一轮输入带回归说明；同一问题签名连续两次 → 收缩模式输入；修复轮数用尽：无阻断项 → `issues` 交付并列已知问题，有阻断项 → 不交付、回执带原因与 craftId、草稿保留；时限与 token 预算中止；父 signal 中止 → 阶段 run `cancelled`、草稿保留。
 - 回执关卡：GATE 之后改动文件（模拟）→ DELIVER 拒绝；`resume_craft_id` 续做。
 - 上下文隔离：任务 run 的 `run_steps` 里只有工具参数与回执（断言回执不含 `<html`、`<script`、报告片段，长度 ≤ 上限）。
 - 守卫：越界路径、写 manifest、FIX 阶段覆盖 index.html 都被拒。
@@ -242,3 +242,25 @@ renderer：
 **分区**：`session.fromPartition('widget-preview')`（无 `persist:`）`isPersistent()` 为 false、`storagePath` 为 null——预览不落盘。
 
 **对设计 32 的修订**（已回写 §11.8.1、§11.8.3、§11.9）：`alert` 降为 warning（`sandbox.alert`）；`sandbox.form-submit` 收窄到 submit 处理函数与 `requestSubmit()` / `.submit()`，`type=submit` 本身拆为 warning（`sandbox.submit-button`）；CSS `url()` 只有静态规则能发现；死循环处理改为「外壳移除 iframe → 杀组件进程 → 重建窗口」，不用 `forcefullyCrashRenderer`；错误收集 = 探针 + 主进程 `console-message`，不用 CDP；预览注入保持单行以保留行号；截图要等首帧。
+
+### 8.2 P3a 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**（与 §4 清单一一对应，清单已勾）：shared `domain/widget-craft.ts`（常量、检查报告 / 验收点 / 审查结论 / 制作清单 / fixtures schema）、`loopTypeSchema` + core `LoopType` 加 `widget_authoring`、错误码 `WIDGET_CRAFT_FAILED` / `WIDGET_CRAFT_UNAVAILABLE`、id 前缀 `wcf`、卡片 `checkStatus` / `knownIssues` 与列表 `checkStatus`；迁移 `0035_widget_check.sql`（**合并时按 main 下一个空闲编号重命名**，同步 `create-core.test.ts` 的 user_version；`public-skills-migration` 按 `mainVersionsAfter` 动态取，无需改）；检查器 `widgets/check/`（规则注册表 41 条 + S0 / S1 + 报告 + `runWidgetCheck`，S0 / S1 共用 `source.ts` 的 parse5 + acorn 模型）；查询校验抽成 `widgets/query-validate.ts`（交付与检查器同一份代码）；制作 loop `widgets/craft/`（`draft.ts` / `tools.ts` / `prompts.ts` / `service.ts`）+ `widgets/templates/`（P3a 只有 `blank`）；任务面切换为 `widget_craft` + `widget_publish`；`system-prompt.ts` 规则改写；effects 分类表登记 widget 工具（`widget-tools.ts` 原先不在覆盖扫描里，一并补上）；orchestrator `cancelRun` 的 `widget_authoring` 分支；start.ts 装配 + 启动清理过期草稿；dev 文档 02 / 03 / 04 同步。
+
+**实施中的新决定**（已回写设计 32 §11）：
+- 写入按阶段白名单：SPEC 只写 spec.md / acceptance.json，BUILD / FIX 只写交付文件；规格与验收点在 SPEC 之后只读（编码阶段不能靠删验收点「通过」）。新建组件 `title` 必填。
+- 合格 = 没有错误（含必需验收点失败）；只剩警告最多修一轮，那一轮反而修出错误就停、交付只剩警告的版本。
+- GATE 先快照再检查；GATE 有制作的 signal 与 `WIDGET_CHECK_TIMEOUT_MS` 时限，预览被取消 / 超时退回只跑 S0 / S1（超时另记 `preview.timeout` 阻断项）。
+- 最佳版本与交付同口径：可交付的回执优先、分数最低、同分取新；回滚也按这个口径（不会从可交付版本退回阻断版本）。
+- 交付只读一次文件、按读到的字节复算摘要，取同一摘要的**最后一次**回执及其报告；修改模式下制作期间组件已有新版本（基于的 `baseVersion` 过时）→ 不覆盖、如实失败。
+- 检查器自身异常（S0 / S1 skipped 且原因带 `检查器内部错误：` 前缀）合成阻断项 `checker.failed`，不当作合格；`缺少 index.html` 走 `html.missing` 的正常 FIX。没有源码的草稿续做回到 BUILD。
+- 卡片说明 / 改动说明取 spec.md 第一条 `>` 引用行（SPEC 按约定写）。修改已有组件时 BUILD 不提供 `widget_template`。
+- 草稿写入不重建草稿目录本身（Bot 删除后进行中的制作不会把 `bots/{id}` 写回来）。
+- 规则补充：`html.missing`、`sandbox.link-navigation`（warning）、`acceptance.invalid` / `fixtures.invalid`（warning）；`js.undefined-name` 只读取时降为不阻断的 warning；`location.href = '#x'` 视为同文档跳转不报。
+
+**评审**：独立评审一轮（只读），无 P0；P1 一条（缺 index.html 被当作检查器故障、续做死循环）与 P2 十一条全部修复并补回归测试（见上「新决定」与 `widget-craft-loop.test.ts` 的 review fixes、`widget-check-js/static.test.ts`）。
+
+**测试**：定向——检查器 6 文件（规则正反例与行列、注释 / 字符串不误报、20 份坏组件语料每份至少一条阻断项、3 份好组件零错误、报告排序截断评分、提示与注册表同源）、`widget-craft-loop.test.ts`（假引擎驱动状态机：一次写对、GATE → FIX、回归回滚、收缩模式、轮数用尽不交付 + 续做、只剩警告、修改模式、父取消 / cancelStageRun、时限、预算、回执关卡拒绝、交付失败、验收点重写、入参与每 run 上限 / 无模型、守卫，及评审修复 6 例）、`integration/widget-craft.test.ts`（真实 core + 脚本化模型：阶段 run 挂在任务下、**任务 run_steps 里没有 HTML**、卡片与版本行的自检状态、任务 / 对话轮 / 阶段 run 的工具面）、`widget-tools` / `widgets-service` / `tool-effects` / `create-core` / `subagent`，Docker 全绿。**全量一次**（评审修复前，Docker `kepcup-test:trixie`）：4168 例，4140 通过 / 26 失败，26 例全部在环境基线文件内（`sandbox-isolation` 10、`skills-authoring` 4、`skills` 3、`workspace-tools` 3、`toolchain-sandbox` 2、`wiki-url` 2、`projects` OS 沙箱 1、`environment` checksum 1），与 D73 记录的 26 例基线集合一致，无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**留给后续**：P3a 没有 S2，交付状态是 `unverified`（卡片徽标与说明在 P3c）；`blank` 之外的模板与主题变量在 P3b。
+

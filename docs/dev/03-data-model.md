@@ -579,7 +579,7 @@ CREATE INDEX stickies_conversation ON stickies(conversation_id);
 
 ### widgets（Bot 自制交互组件，D81，main 0028）
 
-Bot 在任务里用 `widget_create` / `widget_update` 交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
+Bot 在任务里用 `widget_craft`（D87 制作 loop，凭检查回执经 `WidgetService.create` / `update` 落库）交付的单文件 HTML 组件（[design/32](../design/32-bot-widgets.md)）：卡片消息只存描述符（`cardContentSchema.widget`），HTML 只在这里；版本只增不改，旧卡永远指向旧版本。
 
 ```sql
 CREATE TABLE widgets (
@@ -602,6 +602,10 @@ CREATE TABLE widget_versions (
   html           TEXT NOT NULL,           -- ≤ BOT_WIDGET_HTML_MAX_BYTES（2MB）
   sha256         TEXT NOT NULL,           -- 渲染端按它记忆用户确认（同版本只确认一次）
   queries_sha256 TEXT NOT NULL DEFAULT '', -- 0029：该版本查询模板摘要（确认指纹含它）
+  size_bytes     INTEGER NOT NULL DEFAULT 0, -- 0032：HTML 的 UTF-8 字节数（列表与配额只读它）
+  queries_reviewed_at INTEGER,             -- 0032：含模板的版本被展开审查 SQL 的时间（open 强制预审）
+  check_status   TEXT NOT NULL DEFAULT 'legacy', -- 0035（D87）：legacy / passed / issues / unverified
+  check_summary_json TEXT NOT NULL DEFAULT '',   -- 0035：检查摘要（轮数、已知问题 ≤5、craftId；不含源码）
   created_by_run TEXT NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   PRIMARY KEY (widget_id, version)
@@ -627,8 +631,9 @@ CREATE TABLE widget_docs (
 
 - `scope='conversation'` 的组件 `conversation_id` 非空，删除对话时 FK 级联清除；`scope='bot'` 的组件 `conversation_id` 为 NULL（不受会话删除影响，跨对话存活）。删除 Bot 时 bots 行改占位、`bot_id` 的 FK 不触发，由 `lifecycle.deleteBot` 经 `WidgetService.deleteForBot` 显式清除该 Bot 四表（见删除级联表）；管理界面删除走 `widgets.delete` → `WidgetService.delete`（级联相同，另摘除在途内存资源）。
 - `widget_docs` 是能力桥的每组件命名空间 KV（P1 起由 `widgets.ui.storage` 写入：值存 JSON 文本，配额单值 256KB / 总量 1MB / 1000 键，见设计 32 §6）；组件删除时随 widgets 行级联清除。
-- `widget_queries`（P2）是能力桥查询的模板表：由 `widget_create` / `widget_update` 的 `queries` 参数写入（每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
+- `widget_queries`（P2）是能力桥查询的模板表：由交付时的 `queries` 清单写入（D87 起来自制作草稿的 `queries.json`；每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
 - 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
+- `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
 
 ### delegations（D71，main 0016；0021 重建）
 

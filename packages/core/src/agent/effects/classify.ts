@@ -29,7 +29,7 @@ export interface EffectClassContext {
 type Rule = EffectClass | ((params: Record<string, unknown>) => EffectClass);
 
 /**
- * 内置工具词表（tools/**、wiki/maintenance-tools.ts、skills/authoring-tools.ts 的
+ * 内置工具词表（tools/**、wiki/maintenance-tools.ts、skills/authoring-tools.ts、widgets/craft/tools.ts 的
  * 全部 ToolDefinition 名；pi-coding-agent 的 read / write / edit / ls / find /
  * grep / bash）。新增内置工具必须在这里登记。
  */
@@ -153,6 +153,13 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   generate_image: 'local',
   generate_speech: 'local',
   generate_video: 'local',
+
+  // --- Bot 组件（D81 / D87）：本机库写入 + 发卡；制作 loop 的工具只动草稿目录 ---
+  widget_craft: 'local',
+  widget_publish: 'local',
+  widget_check: 'none',
+  widget_template: 'local',
+  stage_done: 'none',
 
   // --- 技能、引导、管家 ---
   install_skill: 'local',

@@ -47,6 +47,8 @@ export type LlmPurpose =
   | 'profile_curation'
   | 'wiki_maintenance'
   | 'skill_authoring'
+  /** D87 组件制作 loop 的 SPEC / BUILD / FIX 阶段（设计 32 §11.11）。 */
+  | 'widget_authoring'
   | 'subagent_compaction';
 
 /**
@@ -79,6 +81,8 @@ const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
   // Wiki 维护 / 技能生成：Bot 主模型 → 全局主模型。
   wiki_maintenance: 'main_for_bot',
   skill_authoring: 'main_for_bot',
+  // 组件制作（D87）：与发起任务同一个 Bot 主模型。
+  widget_authoring: 'main_for_bot',
   // 摘要 / 反思 / 整理：全局轻量 → 全局主；画像整理：全局主模型。
   summary: 'app_light',
   reflection: 'app_light',

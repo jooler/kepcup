@@ -1044,6 +1044,11 @@ export const loopTypeSchema = z.enum([
   /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
   'subagent',
   /**
+   * D87 组件制作 loop（docs/design/32-bot-widgets.md §11）：widget_craft 的每个阶段一条
+   * 嵌套子 run（parent_run_id = 发起的任务 run），不产生对话消息。
+   */
+  'widget_authoring',
+  /**
    * D75（docs/design/30-supervisor-and-tasks.md）：对话轮（沟通与调度，只读，
    * 秒级，替代原 'response'）与任务（执行，可并行）。
    */
