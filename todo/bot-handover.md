@@ -174,7 +174,10 @@
 
 未加专门回归用例的：9b、9e 需要在 `announceCreatedBot` / 写库处注入异常，现有测试夹具没有对应注入点，为它们改生产代码的接缝不划算；两处改动都是把异常收进 try/catch 并按已有路径结算，已靠 review 与其余用例覆盖的路径验证。
 
-修复后定向回归（Docker）：handover 三个文件 + butler-team / butler / schedule / context-assembly / approvals / model-selection-single-source / external-agent-p4b / bot-app-connections / public-skills-migration / create-core / shared handover / message-content，15 文件 127 例全绿；core / desktop typecheck、eslint 通过。全量与 e2e 结果见下。
+修复后定向回归（Docker）：handover 三个文件 + butler-team / butler / schedule / context-assembly / approvals / model-selection-single-source / external-agent-p4b / bot-app-connections / public-skills-migration / create-core / shared handover / message-content，15 文件 127 例全绿；core / desktop typecheck、eslint 通过。全量与 e2e（审查修复后，提交 `ee86880`）：
+
+- 全量（容器 `kh-full3`）：4070 例，4041 通过 / 27 失败。26 条为既有基线文件（同前）；另 1 条 `connected-apps-runtime`「listing failure at run start」是负载偶发，单跑 13/13 通过，修复前的全量里也是通过的。无新增失败。
+- e2e（容器 `kh-e2e-full3`，92 例）：85 通过 / 6 失败 / 1 flaky，`handover.spec` 通过。失败与上一轮完全相同：`wiki.spec`（已知基线）与 `debug-dev-pin`、`external-agents` ×3、`local-connectors`（在 main@064cbdd 上同样失败，已核实）；`sandbox.spec`「run status line」重试后通过（已知基线 flaky）。
 
 审查修复后复验（2026-10-12，协调会话执行，ee86880）：
 - **全量**（Docker `kh-full3`）：4041 通过 / 27 失败 / 2 跳过。26 例为环境基线文件（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1）；另 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」1 例在全量负载下 5 秒超时，单跑 12/12 通过，为偶发。无新增失败。
