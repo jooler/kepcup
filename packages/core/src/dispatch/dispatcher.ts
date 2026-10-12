@@ -9,7 +9,7 @@ import {
 import { completeStructured } from '../agent/structured.js';
 import { renderMessageLine } from '../agent/context/conversation.js';
 import type { AgentEngine, RunIdentity } from '../agent/types.js';
-import { builtinRoute, type LlmRouter } from '../agent/llm-router.js';
+import { builtinModelRef, builtinRoute, type LlmRouter } from '../agent/llm-router.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
 import type { BotsService } from '../domain/bots.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -133,10 +133,7 @@ export function lightModelRefForBot(
   settings: SettingsService,
   botId: string,
 ): string {
-  const bot = bots.get(botId);
-  const app = settings.get();
-  const light = bot?.profile.runtime.light_model || app.defaultLightModel;
-  return light || bot?.profile.runtime.model || app.defaultMainModel;
+  return builtinModelRef('triage', settings.get(), bots.get(botId));
 }
 
 /**

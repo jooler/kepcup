@@ -3,6 +3,7 @@ import {
   backoffDelayMs,
   createRetryingFetch,
   DEFAULT_MODEL_RETRY_POLICY,
+  isQuotaExhaustedBody,
   isRetryableStatus,
   MODEL_RETRY_MAX_RETRIES,
   modelRetryPolicyFromEnv,
@@ -168,6 +169,28 @@ describe('createRetryingFetch', () => {
     expect((await pending).status).toBe(200);
     expect(notices[0]).toMatchObject({ status: 429, delayMs: 7000 });
     expect(warn.mock.calls[0]![0]).toMatchObject({ status: 429, retryAfterMs: 7000 });
+  });
+
+  it('429 quota exhausted (Zhipu 1310) is surfaced at once, body still readable', async () => {
+    const body =
+      '{"code":"1310","message":"您已达到每周/每月使用上限，您的限额将在 2026-10-14 重置。"}';
+    const inner = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 429 }));
+    const { warn, notices, wrapped } = setup(inner);
+
+    const response = await wrapped(URL_, { body: '{}' });
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe(body);
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(notices).toEqual([]);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ reason: 'quota_exhausted', willRetry: false });
+  });
+
+  it('classifies quota-exhausted bodies, not plain rate limits', () => {
+    expect(isQuotaExhaustedBody('{"code":"1310","message":"x"}')).toBe(true);
+    expect(isQuotaExhaustedBody('{"code":1113,"message":"x"}')).toBe(true);
+    expect(isQuotaExhaustedBody('{"error":{"code":"insufficient_quota"}}')).toBe(true);
+    expect(isQuotaExhaustedBody('{"code":"1302","message":"您的账户已达到速率限制"}')).toBe(false);
+    expect(isQuotaExhaustedBody('{"error":{"message":"status 429"}}')).toBe(false);
   });
 
   it('a quota-length Retry-After (> 5 min) is surfaced at once', async () => {

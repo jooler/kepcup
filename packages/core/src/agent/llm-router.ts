@@ -49,6 +49,14 @@ export type LlmPurpose =
   | 'skill_authoring'
   | 'subagent_compaction';
 
+/**
+ * 模型选取的唯一入口（所有推理调用的 purpose）：后台用途 + `conversation`
+ * （对话轮与任务，Bot 主模型 → 全局主模型）。内置模型一律经
+ * {@link builtinModelRef} 取，业务代码不再自己拼 `bot.runtime.model ||
+ * settings.default*`——设置 / Bot 改模型后各处才不会各走各的。
+ */
+export type ModelPurpose = LlmPurpose | 'conversation';
+
 export interface LlmRoute {
   engine: AgentEngine;
   /** 内置 `provider/model`，或外部 Agent 的伪 ref `agent:{id}/{model|default}`。 */
@@ -62,7 +70,9 @@ export interface LlmRoute {
 /** 内置模型的取法（与 P6 之前各调用点一致）。 */
 type BuiltinRule = 'light_for_bot' | 'main_for_bot' | 'app_light' | 'app_main';
 
-const BUILTIN_RULES: Readonly<Record<LlmPurpose, BuiltinRule>> = {
+const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
+  // 对话轮 / 任务：Bot 主模型 → 全局主模型。
+  conversation: 'main_for_bot',
   // 群聊判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
   triage: 'light_for_bot',
   subagent_compaction: 'light_for_bot',
@@ -215,10 +225,7 @@ export class LlmRouter {
 
   #resolve(purpose: LlmPurpose, bot: Bot | null): LlmRoute | null {
     const settings = this.#deps.settings.get();
-    const builtin = builtinRoute(
-      this.#deps.builtin,
-      builtinRef(BUILTIN_RULES[purpose], settings, bot),
-    );
+    const builtin = builtinRoute(this.#deps.builtin, builtinModelRef(purpose, settings, bot));
     if (builtin !== null) return builtin;
     return this.#agentRoute(purpose, settings, bot);
   }
@@ -276,9 +283,17 @@ export class LlmRouter {
   }
 }
 
-function builtinRef(rule: BuiltinRule, settings: Settings, bot: Bot | null): string {
+/**
+ * 某用途当下该用的内置模型 ref（'' = 没有）。每次调用都读当前 settings /
+ * Bot，不缓存——「改设置立即生效」只靠这一点成立。
+ */
+export function builtinModelRef(
+  purpose: ModelPurpose,
+  settings: Settings,
+  bot: Bot | null,
+): string {
   const runtime = bot?.profile.runtime;
-  switch (rule) {
+  switch (BUILTIN_RULES[purpose]) {
     case 'light_for_bot':
       return (
         runtime?.light_model ||
@@ -345,4 +360,18 @@ export function routeFor(
       builtin: deps.engine,
     });
   return botId === null ? router.resolveDefault(purpose) : router.resolveForBot(botId, purpose);
+}
+
+/**
+ * 路由是否仍指向 `modelRef`（给引擎的 `isRouteCurrent`）：设置 / Bot 改了模型
+ * 后，对旧模型的同模型重试随即停止。后台 run 与结构化调用都用它，口径与
+ * `routeFor` 一致。
+ */
+export function routeStillCurrent(
+  deps: RoutedLoopDeps,
+  purpose: LlmPurpose,
+  botId: string | null,
+  modelRef: string,
+): boolean {
+  return routeFor(deps, purpose, botId)?.modelRef === modelRef;
 }

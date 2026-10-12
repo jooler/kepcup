@@ -93,6 +93,21 @@ export function isRetryableStatus(status: number, headers?: Headers): boolean {
 }
 
 /**
+ * 429 that means "quota / balance used up" rather than "slow down": retrying
+ * cannot succeed until the user tops up or the window resets (hours to weeks),
+ * so the 10-retry backoff only delays the real error by minutes. Matched on the
+ * vendor's own markers: Zhipu code 1310 (周/月用量上限) / 1113 (余额不足),
+ * OpenAI `insufficient_quota` / `billing_hard_limit_reached`.
+ */
+export function isQuotaExhaustedBody(bodyText: string): boolean {
+  return (
+    /"code"\s*:\s*"?(1310|1113)"?[,}\s]/.test(bodyText) ||
+    /insufficient_quota|billing_hard_limit_reached/.test(bodyText) ||
+    /(用量|使用)上限|余额不足|额度.{0,4}(用尽|耗尽|不足)/.test(bodyText)
+  );
+}
+
+/**
  * Server-requested delay (retry-after-ms, then Retry-After seconds or HTTP
  * date), or undefined when absent/unparseable/non-positive.
  */
@@ -220,6 +235,14 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
         return response;
       }
       if (!isRetryableStatus(response.status, response.headers)) return response;
+      // Quota exhausted: the SDK turns the response into its usual APIError at once.
+      if (response.status === 429 && (await isQuotaExhausted(response))) {
+        logger.warn(
+          { ...base, attempt: retry + 1, status: 429, willRetry: false, reason: 'quota_exhausted' },
+          'model request quota exhausted; not retrying',
+        );
+        return response;
+      }
 
       const serverDelay = retryAfterMs(response.headers);
       const tooLong = serverDelay !== undefined && serverDelay > policy.maxRetryAfterMs;
@@ -253,6 +276,15 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
       await sleepOrStale(wait, delayMs, signal, stillCurrent, logger, base, retry + 1);
     }
   };
+}
+
+/** Peeks the error body on a clone so the SDK still reads the original. */
+async function isQuotaExhausted(response: Response): Promise<boolean> {
+  try {
+    return isQuotaExhaustedBody((await response.clone().text()).slice(0, 2_000));
+  } catch {
+    return false;
+  }
 }
 
 /** How often a backoff wait re-checks whether the route is still current. */
