@@ -7,9 +7,12 @@ import {
 } from '@kepcup/shared';
 import { isMailLoopbackHost, mailPrivateHostsAllowed, resolveMailHost } from './hosts.js';
 import {
+  mailHostNeedsImapId,
   parseMailSource,
+  safeIsoDate,
   type FetchedMail,
   type MailImap,
+  type MailboxState,
   type MailImapOpenInput,
   type MailSearchQuery,
 } from './message.js';
@@ -19,7 +22,8 @@ import {
  *
  * - 连接前 resolveMailHost 钉死 IP，TLS SNI 仍用原主机名，避免 DNS 重绑定。
  * - `starttls` 设 doSTARTTLS=true，服务器不升级就失败，绝不落明文。
- * - 每条连接在登录后、SELECT 前发送 IMAP ID（RFC 2971，`name=KepCup`）。
+ * - IMAP ID（RFC 2971，`name=KepCup`）：库对广告了 ID 的服务器自己会发；网易系不广告却要求，这里补发。
+ * - 连接级 `error` 事件在 open 时就接住，转给会话层；绝不让它变成未处理异常。
  * - list/search 用 UID 窗口，不跑 SEARCH ALL。
  */
 
@@ -78,31 +82,97 @@ export async function openImapflow(input: MailImapOpenInput): Promise<MailImap> 
   const resolved = await resolveMailHost(input.host);
   const options = buildImapflowConnectOptions(input, resolved);
   const client = new ImapFlow(options);
-  await client.connect();
-  // 163 的 CAPABILITY 经常不含 ID，而库只在广告了 ID 时才发。SELECT 前强制再发一次。
-  if (!client.capabilities.has('ID')) client.capabilities.set('ID', true);
-  await (
-    client as ImapFlow & {
-      run(command: string, info: { name: string; version: string }): Promise<unknown>;
-    }
-  ).run('ID', { name: MAIL_IMAP_ID_NAME, version: MAIL_IMAP_ID_VERSION });
-  return new ImapflowMail(client);
+  // imapflow 在连接建立之后出的错（socket 复位、协议错、超时）只会 emit('error')；
+  // 没有监听器就是未处理异常，直接带崩 core。必须在 connect 之前就挂上，且整个连接生命周期都不摘。
+  const mail = new ImapflowMail(client);
+  try {
+    await client.connect();
+    await sendImapIdIfNeeded(client, input);
+  } catch (error) {
+    mail.dispose();
+    client.close();
+    throw error;
+  }
+  return mail;
+}
+
+/**
+ * 网易系（163/126/yeah.net/188）的 CAPABILITY 不广告 ID，却要求 SELECT 前见过 ID；库只在广告了
+ * ID 时才发，所以这里补一次。其余服务器不需要：已广告 ID 的，库在登录前后已经发过；
+ * 不支持 ID 的（Courier、hMailServer、部分 Exchange）收到会回 BAD，甚至断连——所以不强发。
+ * 强发的这一次也吞掉 NO/BAD：服务器不吃就算了，能不能登录由后面的 SELECT 决定。
+ */
+async function sendImapIdIfNeeded(client: ImapFlow, input: MailImapOpenInput): Promise<void> {
+  const force = input.forceId ?? mailHostNeedsImapId(input.host);
+  if (!force || client.capabilities.has('ID')) return;
+  // 库的 ID 命令以 capabilities 里有 ID 为前提，临时置位，发完还原，不把假能力暴露给调用方。
+  client.capabilities.set('ID', true);
+  try {
+    await (
+      client as ImapFlow & {
+        run(command: string, info: { name: string; version: string }): Promise<unknown>;
+      }
+    ).run('ID', { name: MAIL_IMAP_ID_NAME, version: MAIL_IMAP_ID_VERSION });
+  } catch {
+    // BAD / NO：忽略。
+  } finally {
+    client.capabilities.delete('ID');
+  }
 }
 
 class ImapflowMail implements MailImap {
   #closed = false;
+  #failure: Error | null = null;
+  readonly #errorListeners = new Set<(error: Error) => void>();
+  readonly #handleError = (error: unknown): void => {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.#failure ??= failure;
+    for (const listener of [...this.#errorListeners]) {
+      try {
+        listener(failure);
+      } catch {
+        // 订阅方的异常不能再冒出来。
+      }
+    }
+  };
 
-  constructor(private readonly client: ImapFlow) {}
+  constructor(private readonly client: ImapFlow) {
+    client.on('error', this.#handleError);
+  }
 
   get capabilities(): readonly string[] {
     return [...this.client.capabilities.keys()];
   }
 
-  async selectInbox(): Promise<{ uidNext: number; unseen: number | null }> {
+  onError(listener: (error: Error) => void): () => void {
+    if (this.#closed) return () => undefined;
+    this.#errorListeners.add(listener);
+    const early = this.#failure;
+    // 订阅之前已经出过错（open 与订阅之间的间隙）：补发一次，别漏。
+    if (early !== null) queueMicrotask(() => this.#errorListeners.has(listener) && listener(early));
+    return () => {
+      this.#errorListeners.delete(listener);
+    };
+  }
+
+  /** 订阅方清空。库自己的 error 处理器保留：关闭过程中库仍可能 emit，没人接就会崩进程。 */
+  dispose(): void {
+    this.#errorListeners.clear();
+  }
+
+  async selectInbox(): Promise<MailboxState> {
     const mailbox = await this.client.mailboxOpen('INBOX', { readOnly: true });
+    // mailbox.unseen 是 SELECT 的 [UNSEEN n]——第一封未读的序号，不是数量；数量要用 STATUS。
+    const unseen = await this.client
+      .status('INBOX', { unseen: true })
+      .then((status) => (status && typeof status.unseen === 'number' ? status.unseen : null))
+      // 个别服务器不允许对已选中的邮箱 STATUS：未读数未知，不影响收信。
+      .catch(() => null);
+    const validity = mailbox.uidValidity === undefined ? null : Number(mailbox.uidValidity);
     return {
       uidNext: mailbox.uidNext ?? 1,
-      unseen: typeof mailbox.unseen === 'number' ? mailbox.unseen : null,
+      uidValidity: validity !== null && Number.isSafeInteger(validity) && validity > 0 ? validity : null,
+      unseen,
     };
   }
 
@@ -128,25 +198,20 @@ class ImapflowMail implements MailImap {
 
   async fetch(uids: number[], withSource: boolean): Promise<FetchedMail[]> {
     if (uids.length === 0) return [];
-    const query = withSource
-      ? { uid: true, envelope: true, source: { start: 0, maxLength: SOURCE_MAX_BYTES } }
-      : { uid: true, envelope: true };
+    const query = {
+      uid: true,
+      envelope: true,
+      internalDate: true,
+      ...(withSource ? { source: { start: 0, maxLength: SOURCE_MAX_BYTES } } : {}),
+    };
     const out: FetchedMail[] = [];
     for await (const message of this.client.fetch(uids, query, { uid: true })) {
-      const fromSource =
-        withSource && message.source
-          ? await parseMailSource(Buffer.isBuffer(message.source) ? message.source : Buffer.from(message.source))
-          : null;
-      const envelope = message.envelope;
-      out.push({
-        uid: message.uid,
-        from: fromSource?.from || envelopeFrom(envelope),
-        to: fromSource?.to ?? [],
-        subject: fromSource?.subject || envelope?.subject || '',
-        date: fromSource?.date || (envelope?.date ? new Date(envelope.date).toISOString() : ''),
-        text: fromSource?.text ?? '',
-        attachments: fromSource?.attachments ?? [],
-      });
+      // 单封信解析不了不能拖垮整批：降级成信封（或空壳），让调用方的 UID 游标照常越过它。
+      try {
+        out.push(await toFetchedMail(message, withSource));
+      } catch {
+        out.push({ uid: message.uid, from: '', to: [], subject: '', date: '', text: '', attachments: [] });
+      }
     }
     return out;
   }
@@ -201,12 +266,40 @@ class ImapflowMail implements MailImap {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    this.dispose();
     try {
       await this.client.logout();
     } catch {
       this.client.close();
     }
   }
+}
+
+type FetchedMessage = Exclude<Awaited<ReturnType<ImapFlow['fetchOne']>>, false | undefined>;
+
+async function toFetchedMail(message: FetchedMessage, withSource: boolean): Promise<FetchedMail> {
+  let parsed: Awaited<ReturnType<typeof parseMailSource>> | null = null;
+  if (withSource && message.source) {
+    try {
+      parsed = await parseMailSource(
+        Buffer.isBuffer(message.source) ? message.source : Buffer.from(message.source),
+      );
+    } catch {
+      parsed = null;
+    }
+  }
+  const envelope = message.envelope;
+  return {
+    uid: message.uid,
+    from: parsed?.from || envelopeFrom(envelope),
+    to: parsed?.to ?? [],
+    subject: parsed?.subject || envelope?.subject || '',
+    // Date 头不可解析时 imapflow 把 envelope.date 留成原始字符串（mailparser 则悄悄换成「现在」）：
+    // 信封日期有效就用它，否则用服务器的 INTERNALDATE，最后才用正文解析出的日期。
+    date: safeIsoDate(envelope?.date) || safeIsoDate(message.internalDate) || parsed?.date || '',
+    text: parsed?.text ?? '',
+    attachments: parsed?.attachments ?? [],
+  };
 }
 
 function envelopeFrom(envelope: { from?: Array<{ name?: string; address?: string }> } | undefined): string {

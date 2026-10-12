@@ -109,7 +109,11 @@ Bot 可以接管用户邮箱：宿主用 IMAP 收信、SMTP 发信，新信到�
    - `SELECT INBOX`（只读会话即可；需要改旗标时另开短连接或升级，见 §6）；
    - 进入 IDLE；收到 `EXISTS` / `RECENT` 等 → `DONE` → UID 增量拉取 → 再 IDLE；
    - 定时（默认 9 分钟，且 ≤25 分钟）主动 `DONE` 并重发 IDLE，避免被服务器踢；
-   - 断开 / BYE → 指数退避重连（封顶 15 分钟），成功后从 UID 游标补洞。
+   - 断开 / BYE → 指数退避重连（封顶 15 分钟），成功后从 UID 游标补洞。失败计数在**连接就绪（SELECT 成功）时清零**，连上后才掉线的重试从 1 秒起（就绪不足 30 秒就又掉线算抖动，退避继续放大）；库在空闲时 emit 的连接级 `error` 由适配层接住并打断当前等待，立即走重连，绝不当作未处理异常；
+   - **认证失败（服务器对 LOGIN/AUTHENTICATE 回 NO/BAD，且不是「登录太频繁」类限流）→ 停止重试**，账号置 `error` 并贴一张明确的错误卡，等用户在扩展中心更新授权码（`mail.accounts.update`）后自动重启会话；继续重试只会把 163/QQ 试到限流或锁号；
+   - **UIDVALIDITY**：账号存 `uid_validity`。每次 SELECT 后与存储值比较，变了（服务器重建邮箱 / 账号改成另一个邮箱）或游标跑到 UIDNEXT 之前，旧游标作废，重新取基线（之前的邮件不当新信提醒）。改 IMAP 主机 / 端口 / 加密 / 登录名同样清空 `last_uid` 与 `uid_validity`；
+   - 工具调用（`mail_*`）与收信循环共用一条连接并串行；有调用在排队时主循环不进 IDLE，避免后到的调用被 IDLE 堵到刷新间隔；
+   - 停止 / 暂停 / 重启之后迟到的就绪回调与补拉结果一律丢弃，不改状态、不入库、不产生提醒。
 3. **Poll**：
    - 按 `poll_interval_sec` 对 INBOX 做 `UID SEARCH` / `UID FETCH` 信封；
    - 复用长连接 + 周期性 `NOOP`，禁止每次新建 TCP（尤其 163）；
@@ -146,6 +150,7 @@ CREATE TABLE mail_accounts (
   status          TEXT NOT NULL DEFAULT 'idle'
                   CHECK (status IN ('idle','running','paused','error')),
   last_uid        INTEGER,                 -- INBOX 已处理最大 UID（按账号）
+  uid_validity    INTEGER,                 -- 取 last_uid 时 INBOX 的 UIDVALIDITY（0034）；变了就重取基线
   last_error      TEXT,
   last_ok_at      INTEGER,
   created_at      INTEGER NOT NULL,
@@ -188,7 +193,7 @@ CREATE TABLE mail_bot_cursors (
 - 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）。P1 若加 `mail_set_flag` / `mail_move` 按写处理。
 - 账号范围：工具参数 `account_id` 必须属于当前 Bot 绑定，否则 `MAIL_NOT_BOUND`。
 - 对话轮只读：`mail_send` 在对话轮执行期 `RUN_READ_ONLY`。
-- 污点：任一成功的 `mail_read` / 新信唤醒进入对话后，该（Bot, 对话）打污点（与 D73 应用读同类），持续 24 小时；期间 `mail_send`、`web_fetch`、写 MCP 等外发即使「总是允许」也每次确认。
+- 污点：任一返回邮件内容的工具（`mail_read`，以及返回发件人 / 主题的 `mail_list` / `mail_search`，空结果除外）或新信唤醒进入对话后，该（Bot, 对话）打污点（与 D73 应用读同类），持续 24 小时；期间 `mail_send`、`web_fetch`、写 MCP 等外发即使「总是允许」也每次确认。
 
 ## 7 新信唤醒
 
@@ -197,7 +202,7 @@ CREATE TABLE mail_bot_cursors (
 3. 对每个绑定 Bot：
    - 解析该 Bot 的私聊 `conversation_id`（不存在则创建，同现有 ensure-DM 路径）；
    - 入队 `mail_alert`，去重键 `mail:{accountId}:{uid}:{botId}`；
-   - 作业：贴 `mail` 卡（`arrived`）→ 内部事件唤醒对话轮（`trigger_reason=mail`），消息含账号标签、UID、信封、摘要，摘要包 `<untrusted>`。
+   - 作业：贴 `mail` 卡（`arrived`）→ 内部事件唤醒对话轮（`trigger_reason=mail`），消息含账号标签、UID，**发件人 / 主题 / 时间 / 摘要整块包在 `<untrusted>` 里**（入库与渲染前去换行、限长：发件人 200、主题 300 字符）；历史里的 `[系统]` 卡片行只陈述事实，不内嵌邮件字段。
 4. 免打扰：与事件 / 监看相同——停放到时段结束；**不计入**每日主动消息上限（与 D79 一致）。
 5. 提醒风暴：同一（account, bot）滚动 1 小时内超过 `MAIL_MAX_ALERTS_PER_HOUR`（建议 30）→ 暂停该绑定的唤醒并贴卡，用户确认后恢复；UID 游标仍前进，避免恢复后洪峰重放。
 
@@ -247,7 +252,7 @@ IMAP/SMTP 客户端库选型实施期定：优先维护活跃、支持 IDLE 与�
 
 1. 扩展中心可见「邮件」；添加 QQ 授权码账号 → 状态「IDLE 中」→ 网页往该邮箱发一封 → 绑定 Bot 的私聊出现新信卡并开始对话轮。
 2. 同一邮箱绑两个 Bot → 两个私聊都收到卡；去重键保证刷新不双开。
-3. 163 账号不发 `ID` 的实现在测试中必须失败；发 `ID` 后轮询可列出新信。
+3. 163 账号不发 `ID` 的实现在测试中必须失败；发 `ID` 后轮询可列出新信。`ID` 只对网易系主机（163 / 126 / yeah.net / 188）强发并吞掉 BAD/NO；其余服务器仅在 CAPABILITY 广告了 `ID` 时由库自己发，不额外强发（Courier、hMailServer 等回 BAD）。
 4. Bot 在任务里 `mail_send` → 审批卡含完整收件人与正文 → 同意后对方收到。
 5. 撤销某 Bot 绑定后，新信不再唤醒该 Bot；其他绑定仍唤醒。
 6. 休眠唤醒后 IDLE/轮询恢复，UID 空洞补拉不丢、不洪泛重放。

@@ -103,6 +103,12 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
 
     // 键盘：方向键切换分组。
     await dialog.locator('[data-testid="extension-center-tab-mcp"]').press('ArrowRight');
+    await expect(dialog.locator('[data-testid="extension-center-tab-mail"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    // 末项再往右循环回第一项。
+    await dialog.locator('[data-testid="extension-center-tab-mail"]').press('ArrowRight');
     await expect(dialog.locator('[data-testid="extension-center-tab-skills"]')).toHaveAttribute(
       'aria-selected',
       'true',
