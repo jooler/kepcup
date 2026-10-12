@@ -3639,6 +3639,11 @@ export class Orchestrator {
       const handle = engine!.startRun({
         identity,
         model: modelRef,
+        // Stop retrying a provider the user has since switched this Bot away
+        // from (other Bots' changes do not matter).
+        isRouteCurrent: () =>
+          (isTask ? this.#modelRefForBot(batch.botId) : this.#turnModelRef(batch.botId)) ===
+          modelRef,
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {

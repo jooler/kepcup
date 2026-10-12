@@ -64,7 +64,7 @@ export async function runProfileCurationJob(deps: CurationJobDeps): Promise<void
     const { engine, modelRef: mainRef } = route!;
     const output = await completeStructured<CurationOutput>({
       complete: (req) => engine.complete(req),
-      resolveModel: () => routeFor(deps, 'profile_curation', null)?.modelRef ?? '',
+      resolveRoute: () => routeFor(deps, 'profile_curation', null),
       identity: { runId: run.id, botId: null, conversationId: null, loopType: 'profile_curation' },
       model: mainRef,
       systemPrompt: CURATION_PROMPT,

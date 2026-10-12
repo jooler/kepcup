@@ -181,8 +181,7 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
 
     for (let retry = 0; ; retry++) {
       if (retry > 0) throwIfAborted(signal);
-      const routeStillCurrent = stillCurrent === undefined || stillCurrent();
-      const canRetry = replayable && retry < policy.maxRetries && routeStillCurrent;
+      const canRetry = replayable && retry < policy.maxRetries;
       let response: Response;
       try {
         response = await inner(input, init);
@@ -201,12 +200,10 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
           },
           'model request network error',
         );
-        if (delayMs === null) {
-          if (!routeStillCurrent && replayable && retry < policy.maxRetries) {
-            throwStale(logger, base, retry + 1);
-          }
-          throw error;
-        }
+        if (delayMs === null) throw error;
+        // Only a retry we would actually have made is cut short by a route
+        // change; a non-retryable failure keeps its own error.
+        if (!isCurrent(stillCurrent)) throwStale(logger, base, retry + 1);
         options.onRetry?.({
           retry: retry + 1,
           maxRetries: policy.maxRetries,
@@ -240,17 +237,12 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
         'model request retryable status',
       );
       // Out of retries (or a quota-length Retry-After): the SDK turns the
-      // response into its usual APIError. Route change: stop same-model
-      // retries so the outer call can re-resolve.
-      if (delayMs === null) {
-        if (!routeStillCurrent && replayable && retry < policy.maxRetries) {
-          await response.body?.cancel().catch(() => undefined);
-          throwStale(logger, base, retry + 1);
-        }
-        return response;
-      }
+      // response into its usual APIError.
+      if (delayMs === null) return response;
       // Release the connection; the body of an error response is not needed.
       await response.body?.cancel().catch(() => undefined);
+      // Route change: stop same-model retries so the caller can re-resolve.
+      if (!isCurrent(stillCurrent)) throwStale(logger, base, retry + 1);
       options.onRetry?.({
         retry: retry + 1,
         maxRetries: policy.maxRetries,
@@ -261,6 +253,13 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
       await sleepOrStale(wait, delayMs, signal, stillCurrent, logger, base, retry + 1);
     }
   };
+}
+
+/** How often a backoff wait re-checks whether the route is still current. */
+const ROUTE_POLL_MS = 1000;
+
+function isCurrent(stillCurrent: (() => boolean) | undefined): boolean {
+  return stillCurrent === undefined || stillCurrent();
 }
 
 async function sleepOrStale(
@@ -277,26 +276,21 @@ async function sleepOrStale(
     throwIfAborted(signal);
     return;
   }
-  // Chunk long backoffs so a mid-wait settings change wakes within ~250ms
+  // Chunk long backoffs so a mid-wait settings change wakes within ~1s
   // instead of finishing a 46s sleep against the old model.
-  const chunkMs = 250;
   let remaining = delayMs;
   while (remaining > 0) {
     if (signal?.aborted === true) {
       throwIfAborted(signal);
       return;
     }
-    if (!stillCurrent()) {
-      throwStale(logger, base, attempt);
-    }
-    const step = Math.min(chunkMs, remaining);
+    if (!stillCurrent()) throwStale(logger, base, attempt);
+    const step = Math.min(ROUTE_POLL_MS, remaining);
     await wait(step, signal);
     remaining -= step;
   }
   throwIfAborted(signal);
-  if (!stillCurrent()) {
-    throwStale(logger, base, attempt);
-  }
+  if (!stillCurrent()) throwStale(logger, base, attempt);
 }
 
 function throwStale(
