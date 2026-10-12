@@ -482,12 +482,13 @@ export function buildResponseTools(input: {
       if (identity.conversationId === null || identity.botId === null) {
         return { ok: false, content: '没有可用对话', errorCode: 'INVALID_INPUT' };
       }
-      const runs = deps.runs
-        .listByConversation(identity.conversationId, 20)
-        // D75: the bot's turns and tasks (a task's process is read via get_run).
-        .filter(
-          (r) => r.botId === identity.botId && (r.loopType === 'turn' || r.loopType === 'task'),
-        );
+      // D75: the bot's turns and tasks (a task's process is read via get_run).
+      const runs = deps.runs.listByBotInConversation(
+        identity.conversationId,
+        identity.botId,
+        ['turn', 'task'],
+        20,
+      );
       if (runs.length === 0) return { ok: true, content: '还没有执行记录。' };
       const lines = runs.map(
         (r) =>

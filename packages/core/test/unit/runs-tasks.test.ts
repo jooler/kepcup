@@ -201,3 +201,36 @@ describe('任务查询', () => {
     });
   });
 });
+
+describe('listByBotInConversation（list_my_runs 的窗口）', () => {
+  it('在 SQL 里按 Bot 与 loop_type 过滤：别人的 run 不挤占本 Bot 的窗口', () => {
+    withRuns((runs) => {
+      const mine = createTask(runs, { botId: 'bot_x' });
+      const turn = runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'turn',
+        triggerReason: 'direct',
+        triggerMessageIds: [],
+      });
+      // 之后到达的 25 条：别的 Bot 的 run 与本 Bot 的后台 run，足以占满对话级 LIMIT 20。
+      for (let i = 0; i < 20; i += 1) createTask(runs, { botId: 'bot_y' });
+      for (let i = 0; i < 5; i += 1) {
+        runs.create({
+          botId: 'bot_x',
+          conversationId: 'conv_a',
+          loopType: 'background',
+          triggerReason: null,
+          triggerMessageIds: [],
+        });
+      }
+      // 别的对话的同 Bot run 也不进来。
+      createTask(runs, { botId: 'bot_x', conversationId: 'conv_b' });
+
+      const listed = runs.listByBotInConversation('conv_a', 'bot_x', ['turn', 'task'], 20);
+      expect(listed.map((r) => r.id).sort()).toEqual([mine.id, turn.id].sort());
+      expect(runs.listByBotInConversation('conv_a', 'bot_x', [], 20)).toEqual([]);
+      expect(runs.listByBotInConversation('conv_a', 'bot_x', ['turn', 'task'], 1)).toHaveLength(1);
+    });
+  });
+});
