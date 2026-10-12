@@ -87,21 +87,20 @@
     appliedConcurrency = Number(conc.lastApplied);
   });
 
-  async function saveModels(options: { toast?: boolean } = {}): Promise<void> {
+  /** `auto`：下拉变更触发的自动保存，不弹 toast；点「保存」总是提示。 */
+  async function saveModels(auto = false): Promise<void> {
     const settings = settingsStore.settings;
-    if (
+    const unchanged =
       settings !== null &&
       mainModel === settings.defaultMainModel &&
-      lightModel === settings.defaultLightModel
-    ) {
-      return;
+      lightModel === settings.defaultLightModel;
+    if (!unchanged) {
+      await settingsStore.update({
+        defaultMainModel: mainModel,
+        defaultLightModel: lightModel,
+      });
     }
-    await settingsStore.update({
-      defaultMainModel: mainModel,
-      defaultLightModel: lightModel,
-    });
-    // 下拉变更自动保存不弹 toast；点「保存」仍提示。
-    if (options.toast !== false) toast.success(t('settings.saved'));
+    if (!auto) toast.success(t('settings.saved'));
   }
 
   /**
@@ -116,7 +115,7 @@
     if (main === settings.defaultMainModel && light === settings.defaultLightModel) return;
     // 尚未完成从 store 的首次同步时不写回。
     if (appliedMain === null || appliedLight === null) return;
-    const timer = setTimeout(() => void saveModels({ toast: false }), 200);
+    const timer = setTimeout(() => void saveModels(true), 200);
     return () => clearTimeout(timer);
   });
 
@@ -228,7 +227,7 @@
         </div>
       </div>
     </div>
-    <Button size="sm" onclick={saveModels} data-testid="save-models">{t('settings.save')}</Button>
+    <Button size="sm" onclick={() => saveModels()} data-testid="save-models">{t('settings.save')}</Button>
     <div class="flex items-end gap-3">
       <div class="grid gap-1.5">
         <Label for="concurrency">{t('settings.concurrency')}</Label>
