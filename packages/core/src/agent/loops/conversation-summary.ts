@@ -101,6 +101,7 @@ export async function runConversationSummaryJob(deps: {
     const lightRef = route.modelRef;
     const result = await completeStructured({
       complete: (req) => route.engine.complete(req),
+      resolveModel: () => routeFor(deps, 'summary', ownerBotId)?.modelRef ?? '',
       identity: {
         runId: run.id,
         botId: job.bot_id,

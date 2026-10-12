@@ -10,6 +10,10 @@ import {
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import {
+  botRuntimeAffectsModelRouting,
+  bumpModelRoutingGeneration,
+} from '../agent/model-routing-generation.js';
 
 /** 对话式新建（setup interview）期间 bots.setup_state 的唯一取值。 */
 export const BOT_SETUP_INTERVIEWING = 'interviewing';
@@ -319,6 +323,9 @@ export class BotsService {
         this.clock.now(),
         id,
       );
+    if (botRuntimeAffectsModelRouting(existing.profile.runtime, profile.runtime)) {
+      bumpModelRoutingGeneration();
+    }
     return this.getOrThrow(id);
   }
 
@@ -349,6 +356,9 @@ export class BotsService {
         this.clock.now(),
         id,
       );
+    if (botRuntimeAffectsModelRouting(existing.profile.runtime, merged.runtime)) {
+      bumpModelRoutingGeneration();
+    }
     return this.getOrThrow(id);
   }
 

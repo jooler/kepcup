@@ -1,6 +1,29 @@
 import type { CoreLogger } from '../infra/logger.js';
 
 /**
+ * Thrown when in-flight same-model retries should stop because settings /
+ * Bot model routing changed. Callers (PiEngine.complete) may re-resolve the
+ * model and start a fresh request; conversation runs surface it as failure.
+ */
+export class ModelRouteChangedError extends Error {
+  constructor(message = '模型设置已变更，中止对旧模型的重试') {
+    super(message);
+    this.name = 'ModelRouteChangedError';
+  }
+}
+
+/** True for ModelRouteChangedError, including when an SDK wraps it as `cause`. */
+export function isModelRouteChangedError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current !== undefined && current !== null; depth++) {
+    if (current instanceof ModelRouteChangedError) return true;
+    if (current instanceof Error && current.name === 'ModelRouteChangedError') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
  * Model request retry (pi-ai calls the OpenAI/Anthropic SDKs with
  * `maxRetries: 0`, so without this one dropped socket or one 429/503 failed
  * the whole run with "Connection error." / "429 …").
@@ -121,6 +144,12 @@ export interface RetryingFetchOptions {
   onRetry?: (notice: ModelRetryNotice) => void;
   /** A request succeeded after at least one retry. */
   onRecovered?: (retries: number) => void;
+  /**
+   * Called before scheduling / resuming a retry. Return false when the
+   * intended model/route has changed (settings or Bot profile) so remaining
+   * same-model attempts stop instead of hammering the old provider.
+   */
+  shouldContinueRetry?: () => boolean;
   random?: () => number;
   sleep?: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
 }
@@ -135,6 +164,7 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
   const random = options.random ?? Math.random;
   const wait = options.sleep ?? abortableSleep;
   const { logger, context } = options;
+  const stillCurrent = options.shouldContinueRetry;
 
   return async (input, init) => {
     const inner = options.inner ?? globalThis.fetch;
@@ -151,7 +181,8 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
 
     for (let retry = 0; ; retry++) {
       if (retry > 0) throwIfAborted(signal);
-      const canRetry = replayable && retry < policy.maxRetries;
+      const routeStillCurrent = stillCurrent === undefined || stillCurrent();
+      const canRetry = replayable && retry < policy.maxRetries && routeStillCurrent;
       let response: Response;
       try {
         response = await inner(input, init);
@@ -170,7 +201,12 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
           },
           'model request network error',
         );
-        if (delayMs === null) throw error;
+        if (delayMs === null) {
+          if (!routeStillCurrent && replayable && retry < policy.maxRetries) {
+            throwStale(logger, base, retry + 1);
+          }
+          throw error;
+        }
         options.onRetry?.({
           retry: retry + 1,
           maxRetries: policy.maxRetries,
@@ -178,7 +214,7 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
           status: null,
           code: typeof cause?.['code'] === 'string' ? cause['code'] : null,
         });
-        await wait(delayMs, signal);
+        await sleepOrStale(wait, delayMs, signal, stillCurrent, logger, base, retry + 1);
         continue;
       }
 
@@ -204,8 +240,15 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
         'model request retryable status',
       );
       // Out of retries (or a quota-length Retry-After): the SDK turns the
-      // response into its usual APIError.
-      if (delayMs === null) return response;
+      // response into its usual APIError. Route change: stop same-model
+      // retries so the outer call can re-resolve.
+      if (delayMs === null) {
+        if (!routeStillCurrent && replayable && retry < policy.maxRetries) {
+          await response.body?.cancel().catch(() => undefined);
+          throwStale(logger, base, retry + 1);
+        }
+        return response;
+      }
       // Release the connection; the body of an error response is not needed.
       await response.body?.cancel().catch(() => undefined);
       options.onRetry?.({
@@ -215,9 +258,57 @@ export function createRetryingFetch(options: RetryingFetchOptions): typeof globa
         status: response.status,
         code: null,
       });
-      await wait(delayMs, signal);
+      await sleepOrStale(wait, delayMs, signal, stillCurrent, logger, base, retry + 1);
     }
   };
+}
+
+async function sleepOrStale(
+  wait: (ms: number, signal: AbortSignal | undefined) => Promise<void>,
+  delayMs: number,
+  signal: AbortSignal | undefined,
+  stillCurrent: (() => boolean) | undefined,
+  logger: Pick<CoreLogger, 'warn'>,
+  base: Record<string, unknown>,
+  attempt: number,
+): Promise<void> {
+  if (stillCurrent === undefined) {
+    await wait(delayMs, signal);
+    throwIfAborted(signal);
+    return;
+  }
+  // Chunk long backoffs so a mid-wait settings change wakes within ~250ms
+  // instead of finishing a 46s sleep against the old model.
+  const chunkMs = 250;
+  let remaining = delayMs;
+  while (remaining > 0) {
+    if (signal?.aborted === true) {
+      throwIfAborted(signal);
+      return;
+    }
+    if (!stillCurrent()) {
+      throwStale(logger, base, attempt);
+    }
+    const step = Math.min(chunkMs, remaining);
+    await wait(step, signal);
+    remaining -= step;
+  }
+  throwIfAborted(signal);
+  if (!stillCurrent()) {
+    throwStale(logger, base, attempt);
+  }
+}
+
+function throwStale(
+  logger: Pick<CoreLogger, 'warn'>,
+  base: Record<string, unknown>,
+  attempt: number,
+): never {
+  logger.warn(
+    { ...base, attempt, willRetry: false, reason: 'model_route_changed' },
+    'model request retry aborted: model settings changed',
+  );
+  throw new ModelRouteChangedError();
 }
 
 /** Resolves early on abort; the caller then rethrows the abort. */

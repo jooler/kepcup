@@ -98,6 +98,7 @@ export async function runReflectionJob(deps: ReflectionJobDeps): Promise<void> {
     const existing = await deps.memory.recall(botId, conversationId, triggerText(triggerMessages));
     const output = await completeStructured<ReflectionOutput>({
       complete: (req) => route.engine.complete(req),
+      resolveModel: () => routeFor(deps, 'reflection', botId)?.modelRef ?? '',
       identity: {
         runId: reflectionRun.id,
         botId,
