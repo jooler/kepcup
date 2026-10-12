@@ -951,6 +951,8 @@ export const zhCN = {
   'handover.action.share': '共享',
   'handover.action.copy': '复制',
   'handover.blocked': '不可执行：{reason}',
+  'handover.mark.external_import': '外部导入',
+  'handover.mark.sensitive': '敏感',
   'handover.responsibilities': '职责改写',
   'handover.respTo': '{name} 的职责（追加接手的内容）',
   'handover.respFrom': '{name} 的职责（删去交出的内容）',
@@ -960,7 +962,8 @@ export const zhCN = {
   'handover.note': '交接要点（会写进 {name} 的私聊）',
   'handover.notTransferred':
     '不移交：对话历史、路径授权、应用写授权、审批记录、浏览器资料与登录态、workspace、网络策略、进行中的委派与任务。',
-  'handover.hint': '勾掉不需要的再确认；确认后由系统逐项执行，结果会写回这张卡。',
+  'handover.hint':
+    '勾掉不需要的再确认（标「敏感」的记忆默认不勾，需要时手动勾上）；确认后由系统逐项执行，结果会写回这张卡。',
   'handover.confirm': '确认移交',
   'handover.status.proposed': '等待确认',
   'handover.status.applying': '执行中…',
@@ -1251,6 +1254,7 @@ export const zhCN = {
   'watches.card.created': '已开始监看网页',
   'watches.card.alert': '监看提醒 · 第 {seq} 次',
   'watches.card.removed': '该监看已删除',
+  'watches.card.handedOver': '已移交给 {name}，由它继续检查',
   'watches.card.loading': '正在加载监看…',
 
   // --- P11 浏览器工具（查看窗口，任务 5） ----------------------------------------------

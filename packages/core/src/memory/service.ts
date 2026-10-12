@@ -1029,6 +1029,56 @@ export class MemoryService {
     this.#emitCommitmentInvalidated(botId, item);
   }
 
+  // --- D88 asset handover (docs/design/37 §3.1) ---------------------------------
+
+  /** Active entries of a bot (never creates a missing database). */
+  activeItemsFor(botId: string): MemoryItem[] {
+    if (!this.#manager.exists(botId)) return [];
+    return this.storeFor(botId).activeItems();
+  }
+
+  /** FTS candidates of a bot's active entries (never creates a missing database). */
+  searchActiveFor(botId: string, query: string, limit: number): MemoryItem[] {
+    if (!this.#manager.exists(botId)) return [];
+    return this.storeFor(botId).searchFts(query, limit);
+  }
+
+  /** The copy a handover already wrote into `botId`'s memory (idempotency), or null. */
+  findHandoverCopy(botId: string, handoverId: string, fromItemId: string): MemoryItem | null {
+    if (!this.#manager.exists(botId)) return null;
+    return this.storeFor(botId).findHandoverCopy(handoverId, fromItemId);
+  }
+
+  /** An active entry of `botId` with exactly this content (handover duplicate check). */
+  activeWithContentFor(botId: string, content: string): MemoryItem | null {
+    if (!this.#manager.exists(botId)) return null;
+    return this.storeFor(botId).activeWithContent(content);
+  }
+
+  /**
+   * Writes a handover copy into `botId`'s memory. Deliberately bypasses the write checks
+   * and the commitment events: the content was already accepted into the source bot's
+   * memory, and a copied commitment must not spawn a second schedule (the handover links
+   * the rebuilt one itself). The caller embeds it afterwards (`embedItem`, best-effort).
+   */
+  insertHandoverCopy(botId: string, item: NewMemoryItem): MemoryItem {
+    return this.storeFor(botId).insert(item);
+  }
+
+  /**
+   * Voids a commitment of `botId` (handover: it moved to another bot with its schedule).
+   * Emits the invalidation so any other schedule still linked to it is cancelled too.
+   * Re-entrant: an already non-active entry is left alone.
+   */
+  voidCommitment(botId: string, id: string): boolean {
+    if (!this.#manager.exists(botId)) return false;
+    const store = this.storeFor(botId);
+    const item = store.getItem(id);
+    if (item === null || !store.voidItem(id)) return false;
+    this.#emitCommitmentInvalidated(botId, item);
+    return true;
+  }
+
   listProfile(): ProfileItem[] {
     return this.#profileStore.list('active');
   }

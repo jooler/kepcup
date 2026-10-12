@@ -166,8 +166,9 @@ export interface ResponseToolDeps {
    */
   butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
   /**
-   * Bot 资产移交（D88，docs/design/37）：present 且 `butler.isButler` 时对话轮注册
-   * inspect_bot_assets / propose_handover（P0 仅管家；任务不注册）。
+   * Bot 资产移交（D88，docs/design/37）：present（且 `butler` present）时对话轮注册
+   * inspect_bot_assets / propose_handover——管家与普通 Bot 都有（P1），参数面按
+   * `butler.isButler` 区分；任务不注册。
    */
   handover?: HandoverToolFacade | undefined;
   /**
@@ -1025,14 +1026,20 @@ export function buildResponseTools(input: {
   const presentTools =
     deps.present !== undefined ? buildPresentTools({ identity, present: deps.present }) : [];
 
-  // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家；D88 移交工具 P0 同样仅管家。
+  // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家。D88 移交工具 P1 起人人
+  // 都有（对话轮）：管家可以以任何 Bot 为来源、可以新建目标；普通 Bot 只能交出自己的、交给
+  // 已有 Bot（宿主 HandoverHost 同样校验）。
   const butlerTools =
     deps.butler !== undefined
       ? [
           buildListBotsTool({ identity, butler: deps.butler.host }),
           ...(deps.butler.isButler ? buildButlerTools({ identity, butler: deps.butler.host }) : []),
-          ...(deps.butler.isButler && deps.handover !== undefined
-            ? buildHandoverTools({ identity, handover: deps.handover })
+          ...(deps.handover !== undefined
+            ? buildHandoverTools({
+                identity,
+                handover: deps.handover,
+                butler: deps.butler.isButler,
+              })
             : []),
         ]
       : [];

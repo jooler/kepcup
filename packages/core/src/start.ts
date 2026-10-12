@@ -141,6 +141,9 @@ import { AppAdapter } from './handover/adapters/app.js';
 import { McpAdapter } from './handover/adapters/mcp.js';
 import { MailAdapter } from './handover/adapters/mail.js';
 import { ScheduleAdapter } from './handover/adapters/schedule.js';
+import { WatchAdapter } from './handover/adapters/watch.js';
+import { SkillAdapter } from './handover/adapters/skill.js';
+import { MemoryAdapter, type HandoverMemoryPort } from './handover/adapters/memory.js';
 import type { HandoverBotWriter } from './handover/adapters/common.js';
 import type { HandoverToolFacade } from './tools/handover-tools.js';
 import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
@@ -2074,6 +2077,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       defaultPermission: (agentId) =>
         findAgentEntry(agentCatalog, agentId)?.tier === 'preview' ? 'ask' : 'workspace',
     };
+    // P1：记忆按条复制、承诺随定时任务迁移（每个 Bot 一个 memory.db，按 Bot 取库）。
+    const handoverMemory: HandoverMemoryPort = {
+      get: (botId, itemId) => memory.getItemFor(botId, itemId),
+      activeItems: (botId) => memory.activeItemsFor(botId),
+      search: (botId, query, limit) => memory.searchActiveFor(botId, query, limit),
+      findCopy: (botId, handoverId, fromItemId) =>
+        memory.findHandoverCopy(botId, handoverId, fromItemId),
+      activeWithContent: (botId, content) => memory.activeWithContentFor(botId, content),
+      insertCopy: (botId, item) => memory.insertHandoverCopy(botId, item),
+      embed: (botId, item) => memory.embedItem(botId, item),
+      voidCommitment: (botId, itemId) => memory.voidCommitment(botId, itemId),
+    };
+    const handoverConversations = {
+      get: (conversationId: string) => conversations.get(conversationId),
+      memberBotIds: (conversationId: string) => conversations.memberBotIds(conversationId),
+      directIdFor: (botId: string) => conversations.openDirect(botId).conversation.id,
+    };
     const handover = new HandoverHost({
       db: mainDb,
       logger,
@@ -2120,12 +2140,35 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             transferredTo: (scheduleId, botId) => schedules.transferredTo(scheduleId, botId),
             describeWhen: (row) => schedules.describeWhen(row),
           },
-          conversations: {
-            get: (conversationId) => conversations.get(conversationId),
-            memberBotIds: (conversationId) => conversations.memberBotIds(conversationId),
-            directIdFor: (botId) => conversations.openDirect(botId).conversation.id,
+          conversations: handoverConversations,
+          memory: handoverMemory,
+        }),
+        new WatchAdapter({
+          watches: {
+            listLiveForBot: (botId) => watches.listLiveForBot(botId),
+            get: (watchId) => watches.get(watchId),
+            countLiveForBot: (botId) => watches.countLiveForBot(botId),
+            transferTo: (watchId, target) => watches.transferTo(watchId, target),
+            profileKeyFor: (botId) => watches.profileKeyFor(botId),
+          },
+          conversations: handoverConversations,
+        }),
+        new SkillAdapter({
+          skills: {
+            privateEntries: (botId) =>
+              skills.listForBot(botId).filter((entry) => entry.scope === 'private'),
+            privateEntry: (botId, name) =>
+              skills.botSkillRow(botId, name) === null ? null : skills.entryFor(botId, name),
+            contentAvailable: (botId, name) => {
+              const row = skills.botSkillRow(botId, name);
+              return row !== null && skills.dirOf(row) !== null;
+            },
+            isHandoverCopy: (fromBotId, toBotId, name) =>
+              skills.isHandoverCopy(fromBotId, toBotId, name),
+            copyForHandover: (input) => skills.copyForHandover(input),
           },
         }),
+        new MemoryAdapter({ memory: handoverMemory, clock: () => clock.now() }),
       ]),
       modelOptions: handoverModelOptions,
       agents: handoverAgents,

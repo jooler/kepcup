@@ -19,11 +19,14 @@
     watchEvent,
     watchSeq = undefined,
     watchSummary = undefined,
+    conversationId = undefined,
   }: {
     watchId: string;
     watchEvent: string;
     watchSeq?: number | undefined;
     watchSummary?: string | undefined;
+    /** The conversation this card sits in (D88: a watch handed over moved elsewhere). */
+    conversationId?: string | undefined;
   } = $props();
 
   $effect(() => {
@@ -32,7 +35,13 @@
 
   const watch = $derived(watches.byId[watchId] ?? null);
   const removed = $derived(watches.removed[watchId] === true);
-  const actions = $derived(watch !== null && !removed ? watchActions(watch) : null);
+  // D88：私聊里的监看移交给了别的 Bot，行已改到对方的私聊——旧卡只说明去向，不再给操作。
+  const handedOver = $derived(
+    watch !== null && conversationId !== undefined && watch.conversationId !== conversationId,
+  );
+  const actions = $derived(
+    watch !== null && !removed && !handedOver ? watchActions(watch) : null,
+  );
   let busy = $state(false);
   let expanded = $state(false);
   let confirmingStop = $state(false);
@@ -96,6 +105,11 @@
           )} · {chat.botName(watch.botId)} ·
           {removed ? t('watches.card.removed') : t(`watches.status.${watch.status}`)}
         </p>
+        {#if handedOver && !removed}
+          <p class="text-xs text-muted-foreground" data-testid="watch-card-handed-over">
+            {t('watches.card.handedOver', { name: chat.botName(watch.botId) })}
+          </p>
+        {/if}
       </div>
     </div>
     {#if watchEvent === 'alert' && watchSummary}

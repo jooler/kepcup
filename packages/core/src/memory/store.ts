@@ -319,6 +319,46 @@ export class MemoryStore {
     return affected.map((row) => row.id);
   }
 
+  /**
+   * D88 承诺随定时任务移交：来源 Bot 的这条承诺作废（不再进 `<my_state>`）。只动 active
+   * 的；返回是否真的改了（已经 void = false，可重入）。
+   */
+  voidItem(id: string): boolean {
+    const changed = this.#db
+      .prepare(
+        "update memory_items set status = 'void', updated_at = ? where id = ? and status = 'active'",
+      )
+      .run(this.#clock(), id).changes;
+    if (changed === 0) return false;
+    this.#deleteFts(id);
+    this.#deleteVecRow(id);
+    return true;
+  }
+
+  /**
+   * D88 移交复制的幂等判据：这个库里由 `handoverId` 从 `fromItemId` 复制来的那条（任何
+   * 状态；没有 = null）。来源记录在 `evidence_json` 的 `{handoverId, fromBotId, fromItemId}`。
+   */
+  findHandoverCopy(handoverId: string, fromItemId: string): MemoryItem | null {
+    const row = this.#db
+      .prepare(
+        `select m.* from memory_items m
+         where exists (
+           select 1 from json_each(m.evidence_json) e
+           where json_extract(e.value, '$.handoverId') = ?
+             and json_extract(e.value, '$.fromItemId') = ?
+         )
+         order by m.rowid limit 1`,
+      )
+      .get(handoverId, fromItemId) as MemoryItemRow | undefined;
+    return row ? rowToItem(this.#id, row) : null;
+  }
+
+  /** Active, unexpired entry with exactly this content (trimmed), or null. */
+  activeWithContent(content: string): MemoryItem | null {
+    return this.#exactActive(content);
+  }
+
   /** Injected entries get their usage counters bumped (P07 任务 3). */
   markUsed(ids: string[]): void {
     const now = this.#clock();

@@ -3,6 +3,7 @@
     HANDOVER_RESP_FROM_KEY,
     HANDOVER_RESP_TO_KEY,
     botHandoverPayloadSchema,
+    defaultHandoverKeys,
     describeScheduleWhen,
     selectableHandoverKeys,
     type Approval,
@@ -29,6 +30,7 @@
    * 置灰并写明原因）；职责改写前后对照、可单独勾掉；交接要点只读。确认后卡片转为执行
    * 进度（`handover.updated` 逐项打勾），结束后显示完成 / 部分未完成与原因。
    * 待确认的交互卡在 dock 里（variant='card'），消息流里是折叠记录 / 进度。
+   * P1：技能标「外部导入」（确认即授权）、记忆标「敏感」且默认不勾。
    */
   let {
     approval,
@@ -57,14 +59,20 @@
         }),
   );
 
-  /** Keys the user unchecked on the pending card (default: keep every selectable one). */
-  let dropped = $state<string[]>([]);
+  /**
+   * Keys the user flipped away from the card's default (default: every selectable item
+   * except the ones marked `defaultSelected: false` — sensitive memories).
+   */
+  let toggled = $state<string[]>([]);
   const selectable = $derived(payload !== null ? selectableHandoverKeys(payload) : []);
-  const kept = $derived(selectable.filter((key) => !dropped.includes(key)));
+  const defaults = $derived(payload !== null ? defaultHandoverKeys(payload) : []);
+  const kept = $derived(
+    selectable.filter((key) => defaults.includes(key) !== toggled.includes(key)),
+  );
   const createsBot = $derived(payload?.target.kind === 'new');
 
   function toggle(key: string): void {
-    dropped = dropped.includes(key) ? dropped.filter((k) => k !== key) : [...dropped, key];
+    toggled = toggled.includes(key) ? toggled.filter((k) => k !== key) : [...toggled, key];
   }
 
   /** Assets grouped by type, in the card's order. */
@@ -188,6 +196,7 @@
   detail: string,
   blocked: string | undefined,
   extra: string[],
+  marks: string[],
 )}
   {@const state = itemStatus(key)}
   <li>
@@ -215,7 +224,15 @@
         </span>
       {/if}
       <span class="grid min-w-0 gap-0.5">
-        <span class="break-all">{title}</span>
+        <span class="break-all"
+          >{title}{#each marks as mark (mark)}<span
+              class="ml-1.5 inline-block rounded px-1 py-px align-middle text-[10px] {mark ===
+              'sensitive'
+                ? 'bg-destructive/10 text-destructive'
+                : 'bg-sky-500/10 text-sky-700 dark:text-sky-400'}"
+              data-testid={`handover-mark-${mark}`}>{t(`handover.mark.${mark}` as MessageKey)}</span
+            >{/each}</span
+        >
         {#if detail.length > 0}<span class="text-xs whitespace-pre-wrap text-muted-foreground"
             >{detail}</span
           >{/if}
@@ -330,7 +347,7 @@
         <p class="mb-1 text-xs font-medium text-muted-foreground">
           {t(`handover.group.${type}` as MessageKey)}
         </p>
-        <ul class="grid gap-1.5">
+        <ul class="grid gap-1.5 {items.length > 8 ? 'max-h-80 overflow-y-auto pr-1' : ''}">
           {#each items as item (item.key)}
             {@render itemRow(
               item.key,
@@ -338,6 +355,7 @@
               item.detail,
               item.blocked,
               item.blocked === undefined ? item.warnings : [],
+              item.marks,
             )}
           {/each}
         </ul>
@@ -358,6 +376,7 @@
               `${t('handover.before')}：${resp.toBefore || t('handover.emptyText')}\n${t('handover.after')}：${resp.to}`,
               undefined,
               [],
+              [],
             )}
           {/if}
           {#if resp?.from !== undefined}
@@ -366,6 +385,7 @@
               t('handover.respFrom', { name: payload.fromBotName }),
               `${t('handover.before')}：${resp.fromBefore || t('handover.emptyText')}\n${t('handover.after')}：${resp.from}`,
               undefined,
+              [],
               [],
             )}
           {/if}

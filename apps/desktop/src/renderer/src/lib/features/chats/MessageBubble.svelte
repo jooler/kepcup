@@ -230,6 +230,7 @@
       watchEvent={watchCard.watchEvent}
       watchSeq={watchCard.watchSeq}
       watchSummary={watchCard.watchSummary}
+      conversationId={message.conversationId}
     />
   </div>
 {:else if mailCard !== null}
