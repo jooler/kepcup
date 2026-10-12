@@ -14,6 +14,9 @@ import {
   BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
   BOT_WIDGET_TITLE_MAX_CHARS,
   BOT_WIDGET_VERSIONS_KEPT,
+  WIDGET_READ_STATE_MAX_BYTES,
+  WIDGET_REPLY_COOLDOWN_MS,
+  WIDGET_REPLY_MAX_CHARS,
   MCP_APP_SCHEME,
   buildAppCspHeader,
   newId,
@@ -189,10 +192,15 @@ export type WidgetWriteResult =
     }
   | { ok: false; message: string; code?: 'NOT_FOUND' | 'FORBIDDEN' | 'INVALID_INPUT' | 'WIDGET_LIMIT' };
 
+/** widget_read_state 里放不下的大值给出的开头片段长度（字符）。 */
+const READ_STATE_PREVIEW_CHARS = 1_000;
+
 export class WidgetService {
   readonly store: WidgetResourceStore;
   readonly #deps: WidgetServiceDeps;
   readonly #cardsByRun = new Map<string, number>();
+  /** 回传冷却：卡片消息 id → 上次回传时间（按卡，不按资源：重开 / 重载 / 重新挂载换资源 id）。 */
+  readonly #lastReplyAt = new Map<string, number>();
   readonly #gate = new WidgetQueryGate();
 
   constructor(deps: WidgetServiceDeps, store?: WidgetResourceStore) {
@@ -751,6 +759,96 @@ export class WidgetService {
     } finally {
       release();
     }
+  }
+
+  /**
+   * 回传（D87 P4 L3，设计 32 §12.3）：用户在卡内确认条上同意后，取组件文字要发往的对话与来源。
+   * 资源必须存活；每张卡（按卡片消息，资源重开不重置）至少间隔 WIDGET_REPLY_COOLDOWN_MS（渲染端
+   * 也有冷却，这里是不依赖 UI 的那一侧）。真正发消息由绑定层调 orchestrator.sendMessage（带 `origin: 'widget'`）。
+   */
+  prepareReply(input: { resourceId: string; text: string }): {
+    conversationId: string;
+    widgetId: string;
+    version: number;
+    text: string;
+  } {
+    const entry = this.#requireLiveEntry(input.resourceId);
+    const text = input.text.trim();
+    if (text === '') throw new AppError('INVALID_INPUT', '回传的内容不能为空');
+    if (text.length > WIDGET_REPLY_MAX_CHARS) {
+      throw new AppError('INVALID_INPUT', `回传的内容过长（最多 ${WIDGET_REPLY_MAX_CHARS} 字）`);
+    }
+    const now = this.#deps.clock.now();
+    const last = this.#lastReplyAt.get(entry.messageId);
+    if (last !== undefined && now - last < WIDGET_REPLY_COOLDOWN_MS) {
+      throw new AppError('WIDGET_RATE_LIMITED', '组件回传太频繁，请稍后再试');
+    }
+    if (this.#lastReplyAt.size > 1000) {
+      // 只清已过冷却的项（全清会让正在冷却的卡也解禁）。
+      for (const [key, at] of this.#lastReplyAt) {
+        if (now - at >= WIDGET_REPLY_COOLDOWN_MS) this.#lastReplyAt.delete(key);
+      }
+    }
+    this.#lastReplyAt.set(entry.messageId, now);
+    return { conversationId: entry.conversationId, widgetId: entry.widgetId, version: entry.version, text };
+  }
+
+  /**
+   * `widget_read_state`（D87 P4 L3）：Bot 读自己组件的 KV（全部或指定键），回执上限
+   * WIDGET_READ_STATE_MAX_BYTES；只能读本 Bot 的组件。返回的 JSON 已把 `<` 转成 `\u003c`（仍是合法
+   * JSON，字节数按转义后计），由工具层包 <untrusted>。单个值放不下时**跳过并报告**（键、字节数、
+   * 开头片段），不中断——单值上限 256KB 大于回执上限，否则一个大键会让整份数据都读不到。
+   */
+  readState(input: { botId: string; widgetId: string; keys?: string[] }):
+    | {
+        ok: true;
+        json: string;
+        truncated: boolean;
+        count: number;
+        skipped: Array<{ key: string; bytes: number; preview: string }>;
+      }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' } {
+    const widget = this.#widgetOf(input.widgetId.trim());
+    if (widget === null) return { ok: false, message: '找不到这个组件（widget_id 不存在）', code: 'NOT_FOUND' };
+    if (widget.bot_id !== input.botId) {
+      return { ok: false, message: '这个组件不是你创建的，不能读取它的数据', code: 'FORBIDDEN' };
+    }
+    const rows = this.#deps.db
+      .prepare('select key, value_json from widget_docs where widget_id = ? order by key')
+      .all(widget.id) as Array<{ key: string; value_json: string }>;
+    const wanted = input.keys !== undefined && input.keys.length > 0 ? new Set(input.keys) : null;
+    const escape = (text: string): string => text.replace(/</g, '\\u003c');
+    const pieces: string[] = [];
+    const skipped: Array<{ key: string; bytes: number; preview: string }> = [];
+    let bytes = 2;
+    let truncated = false;
+    for (const row of rows) {
+      if (wanted !== null && !wanted.has(row.key)) continue;
+      let value: string;
+      try {
+        value = escape(JSON.stringify(JSON.parse(row.value_json) as unknown));
+      } catch {
+        continue;
+      }
+      const piece = `${escape(JSON.stringify(row.key))}:${value}`;
+      const size = Buffer.byteLength(piece) + 1;
+      if (bytes + size > WIDGET_READ_STATE_MAX_BYTES) {
+        truncated = true;
+        // 片段也占预算；预算不够时只报键名与大小。
+        const preview = value.slice(0, READ_STATE_PREVIEW_CHARS);
+        const previewSize = Buffer.byteLength(preview) + row.key.length + 32;
+        if (bytes + previewSize <= WIDGET_READ_STATE_MAX_BYTES) {
+          bytes += previewSize;
+          skipped.push({ key: row.key, bytes: Buffer.byteLength(row.value_json), preview });
+        } else {
+          skipped.push({ key: row.key, bytes: Buffer.byteLength(row.value_json), preview: '' });
+        }
+        continue;
+      }
+      bytes += size;
+      pieces.push(piece);
+    }
+    return { ok: true, json: `{${pieces.join(',')}}`, truncated, count: pieces.length, skipped };
   }
 
   /** 能力桥外链：渲染端已出确认条征得同意，这里再核 https-only / 无凭据后经主进程打开。 */

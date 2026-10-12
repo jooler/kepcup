@@ -364,6 +364,10 @@ export function reflectionInput(input: {
       const what = event?.phase === 'failure' ? '失败报告' : '结果';
       return `[${m.id} | 任务 ${event?.taskId ?? ''} 的${what}] <untrusted>${neutralizeUntrusted(content?.text ?? '')}</untrusted>`;
     }
+    if (m.senderType === 'user' && content?.origin === 'widget') {
+      // D87 P4 L3：组件代码生成、用户确认发出的文字——不是用户本人写的话，按数据看待。
+      return `[${m.id} | 用户经组件发出（组件生成的文字，非用户本人的话）] <untrusted>${neutralizeUntrusted(content.text ?? '')}</untrusted>`;
+    }
     // D71：委派代发消息是其他 Bot 代用户转交的文字，不是用户本人的话。
     const sender =
       m.senderType === 'user' && content?.origin === 'delegation'

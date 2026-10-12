@@ -11,6 +11,8 @@ import {
   BOT_WIDGET_STORAGE_KEYS_MAX,
   BOT_WIDGET_STORAGE_QUOTA_BYTES,
   BOT_WIDGET_STORAGE_VALUE_MAX_BYTES,
+  WIDGET_REPLY_COOLDOWN_MS,
+  WIDGET_REPLY_MAX_CHARS,
 } from '@kepcup/shared';
 import { sandboxPitfallsPrompt } from '../check/rules.js';
 import { WIDGET_QUERY_SCOPE_GUIDE } from '../query-gate.js';
@@ -40,6 +42,7 @@ export const WIDGET_PLATFORM_FACTS = [
   `- kepcup.storage.get(key) → 值（不存在为 undefined）；set(key, value)（value 是可 JSON 序列化的值）；delete(key)；list() → 键名数组。每个组件独立的命名空间，数据只存本机、重启仍在；单值 ≤${kb(BOT_WIDGET_STORAGE_VALUE_MAX_BYTES)}、总量 ≤${kb(BOT_WIDGET_STORAGE_QUOTA_BYTES)} / ${BOT_WIDGET_STORAGE_KEYS_MAX} 个键。不要存敏感信息。`,
   `- kepcup.query(name, params) → { rows, truncated }：执行 queries.json 里声明的命名只读查询模板（单条 SELECT 或 WITH…SELECT，:name 占位参数；至多 ${BOT_WIDGET_QUERIES_MAX} 条）。${WIDGET_QUERY_SCOPE_GUIDE}rows 是「列名→值」对象数组，最多 ${BOT_WIDGET_QUERY_ROWS_MAX} 行，超出时 truncated=true；单次执行超过 ${BOT_WIDGET_QUERY_TIMEOUT_MS / 1000} 秒会被中止。查询 SQL 会展示给用户审查。`,
   '- kepcup.openLink(url)：打开 https 网页（会先请用户确认）。页面里的外链一律用它，不要用 <a href> 或 window.open。',
+  `- kepcup.reply(text) → 是否已发出：把一段文字（≤${WIDGET_REPLY_MAX_CHARS} 字）作为用户消息发回对话，让 Bot 接着处理（如「把这份清单发给 Bot」按钮）。只能在按钮点击等用户操作里调用（否则直接返回 false），用户确认后才发出、取消也返回 false，每张卡 ${WIDGET_REPLY_COOLDOWN_MS / 1000} 秒至多一次；不要自动或循环调用。`,
   `- kepcup.theme() → 'light' | 'dark'；kepcup.setHeight(像素)：让卡片高度贴合内容（夹取 ${BOT_WIDGET_HEIGHT_MIN}–${BOT_WIDGET_HEIGHT_MAX}），内容高度变化后调用。`,
   '',
   '## 主题与 kepcup-kit（推荐，所有骨架模板都已带上）',

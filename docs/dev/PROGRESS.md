@@ -31,6 +31,7 @@
 | 组件制作流程 P3a（D87） | 待验收 | 2026-10-12 | — | `widget_craft` 独立制作 loop（SPEC → BUILD → GATE ⇄ FIX → DELIVER，阶段 run `widget_authoring` 挂在任务下）+ 确定性检查器 S0 / S1（41 条规则）+ 回执关卡 + 任务面切换（`widget_create` / `widget_update` 移出 Bot 工具面）+ 迁移 0035（自检状态两列，合并时重编号）；P3-0 沙箱实测已修订设计 32；分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8 |
 | 组件制作流程 P3b（D87） | 待验收 | 2026-10-12 | — | S2 真实预览（主进程隐藏窗口 + 内存分区 + 与正式卡片相同的沙箱，探针收集错误 / 渲染体检 / 验收 / 乱点 / 截图，死循环回收与崩溃识别，无出网）、垫片 v2（单行注入、主题变量与推送）、`kepcup-kit`（基础样式 + SVG 图表）、四个骨架模板；独立评审一轮（P1 ×5 / P2 ×12）全部修复；真机 harness 25 例。分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8.3 |
 | 组件制作流程 P3c（D87） | 待验收 | 2026-10-12 | — | 独立审查阶段（全新上下文只读 run，P0 / P1 进修复，两轮封顶）、「组件审查模型」设置、卡片自检徽标与已知问题、管理列表状态；独立评审一轮（P1 ×4 / P2 全部修复）。**效果基准待跑**（脚本就绪，需真实模型 Key）。分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8.4 |
+| 组件交付形态分层 P4（D87） | 待验收 | 2026-10-12 | — | `present` 声明式展示卡（8 种 kind，自绘 SVG 图表，对话轮与任务都能发）、`ask_user` 多选 / 表单（结构化回答以 `<untrusted>` JSON 交回任务）、组件回传 `kepcup.reply`（手势 + 卡内确认 + 每卡冷却，作为带来源的用户消息发出）与任务工具 `widget_read_state`；独立评审一轮（P1 ×2 / P2 ×7 全部修复）。分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8.5 |
 
 
 ## 验收记录

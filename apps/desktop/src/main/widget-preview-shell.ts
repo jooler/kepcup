@@ -13,6 +13,7 @@ import {
   WIDGET_BRIDGE_WIDGET_SOURCE,
   WIDGET_PROBE_HOST_SOURCE,
   WIDGET_PROBE_SOURCE,
+  WIDGET_REPLY_MAX_CHARS,
 } from '@kepcup/shared';
 
 /**
@@ -45,9 +46,10 @@ import {
  * 写法：只用 ES5 语法、不依赖外层变量（源码被原样内联）。
  */
 export const PREVIEW_SHELL_BRIDGE_JS = String.raw`function kcBridgeHandle(state, msg) {
-  var METHODS = { 'storage.get': 1, 'storage.set': 1, 'storage.delete': 1, 'storage.list': 1, query: 1, openLink: 1, 'theme.get': 1, setHeight: 1 };
+  var METHODS = { 'storage.get': 1, 'storage.set': 1, 'storage.delete': 1, 'storage.list': 1, query: 1, openLink: 1, reply: 1, 'theme.get': 1, setHeight: 1 };
   var KEY_MAX = ${BOT_WIDGET_STORAGE_KEY_MAX_CHARS};
   var NAME_MAX = ${BOT_WIDGET_QUERY_NAME_MAX_CHARS};
+  var REPLY_MAX = ${WIDGET_REPLY_MAX_CHARS};
   var H_MIN = ${BOT_WIDGET_HEIGHT_MIN};
   var H_MAX = ${BOT_WIDGET_HEIGHT_MAX};
   var MSG_MAX = 1048576;
@@ -134,6 +136,12 @@ export const PREVIEW_SHELL_BRIDGE_JS = String.raw`function kcBridgeHandle(state,
     }
     if (url === null) return fail(id, '只支持打开 https 链接', 'INVALID_INPUT');
     if (state.links.length < 50) state.links.push(url);
+    return ok(id, false);
+  }
+  if (method === 'reply') {
+    var text = typeof payload.text === 'string' ? payload.text.trim() : '';
+    if (text.length === 0) return fail(id, 'kepcup.reply 需要一段非空文字', 'INVALID_INPUT');
+    if (text.length > REPLY_MAX) return fail(id, '回传的内容过长（最多 ' + REPLY_MAX + ' 字）', 'INVALID_INPUT');
     return ok(id, false);
   }
   return ok(id, state.theme);

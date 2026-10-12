@@ -143,9 +143,9 @@ renderer：
 
 ### P4 交付形态分层（设计 32 §12；P3c 后开始，可拆给另一个会话）
 
-- [ ] L1 `present`：shared 每种 kind 的 zod schema 与 `PRESENT_DATA_MAX_BYTES` / `PRESENT_CONTEXT_MAX_CHARS`；core 工具（对话轮 + 任务）与卡片消息 `content.present`、上下文紧凑回放；renderer 每种 kind 一个组件（图表库选型记 §8，约束见设计 32 §12.1）；系统提示加「展示类结果优先 `present`，要交互才 `widget_craft`」。
-- [ ] L2 `ask_user` 加 `mode: single | multi | form`（缺省 single，现有行为不变）；问题卡渲染多选与表单；回答以结构化 JSON（`<untrusted>`）回到任务。
-- [ ] L3 回传：垫片 `kepcup.reply(text)`（仅用户手势内有效）→ 卡内确认条（单例 + 冷却，复用 `LinkConfirmBar` 模式）→ 作为用户消息发出、带 `origin:{kind:'widget', widgetId, version}`，上下文渲染 `<untrusted source="widget">`；任务面 `widget_read_state{widget_id, keys?}`（只读本 Bot 组件、≤64KB、`<untrusted>`）。桥白名单、垫片、错误码、i18n 同步。
+- [x] L1 `present`：shared 每种 kind 的 zod schema 与 `PRESENT_DATA_MAX_BYTES` / `PRESENT_CONTEXT_MAX_CHARS`；core 工具（对话轮 + 任务）与卡片消息 `content.present`、上下文紧凑回放；renderer 每种 kind 一个组件（图表库选型记 §8，约束见设计 32 §12.1）；系统提示加「展示类结果优先 `present`，要交互才 `widget_craft`」。
+- [x] L2 `ask_user` 加 `mode: single | multi | form`（缺省 single，现有行为不变）；问题卡渲染多选与表单；回答以结构化 JSON（`<untrusted>`）回到任务。
+- [x] L3 回传：垫片 `kepcup.reply(text)`（仅用户手势内有效）→ 卡内确认条（单例 + 冷却，复用 `LinkConfirmBar` 模式）→ 作为用户消息发出、带 `origin:{kind:'widget', widgetId, version}`，上下文渲染 `<untrusted source="widget">`；任务面 `widget_read_state{widget_id, keys?}`（只读本 Bot 组件、≤64KB、`<untrusted>`）。桥白名单、垫片、错误码、i18n 同步。
 
 ## 5. 测试
 
@@ -288,3 +288,44 @@ renderer：
 
 **效果基准（§5.4）——待跑**：用户决定暂不跑（本机没有模型 Key）。命令与环境变量见 `docs/dev/05-testing.md`「组件制作效果基准」；建议在 `kepcup-test:trixie-xvfb` 里带 `KEPCUP_BENCH_PREVIEW=1` 跑，结果 JSON 的 `baseline.delivered` / `full.delivered`（无阻断项交付数，目标完整流程 ≥ 8/10 且明显高于基线）、`passed`、轮数、token、耗时写回本节与 PROGRESS。
 
+
+### 8.5 P4 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**：
+- L1 `present`：shared `present.ts`（8 种 kind 的最小 zod schema、`validatePresent`、`presentContextText`）；core `tools/present-tools.ts`（对话轮 + 任务都注册，副作用 `local`），orchestrator 发系统卡片消息（`cardType: 'present'`）并在上下文回放；renderer `features/present/`（`PresentCard.svelte` + `present-geometry.ts`）。
+- L2 `ask_user` 的 `mode` / `fields`：shared `ask-user.ts`（`checkAskUserAnswer` 由 core 与问题卡共用）；问题卡记 `questionMode` / `questionFields`；`tasks.answer` 带 `values`，回答以 `<untrusted>` JSON 交回任务；`TaskQuestionCard` 渲染多选与表单。
+- L3 回传：垫片 `kepcup.reply`、桥白名单与 `WidgetBridgeHost` 的 `reply`、`BotWidgetCard` 确认条、`widgets.ui.reply`（`WidgetService.prepareReply` → `orchestrator.sendMessage`，消息带 `origin: 'widget'`），上下文渲染「用户（经组件 … 发出）」+ `<untrusted source="widget">`；任务工具 `widget_read_state`（副作用 `none`）；S2 预览的模拟桥认 `reply`；制作提示的 API 清单补 `kepcup.reply`。
+
+**实施中的新决定**（已回写设计 32 §12）：
+- 图表不引第三方库，自绘 SVG：零依赖、主题变量、`role="img"` + 数据 `aria-label`，刻度取 1 / 2 / 5 × 10ⁿ。
+- 展示卡是系统卡片消息，回放时标明发卡的 Bot、数据包 `<untrusted>`；每 run ≤8 张。
+- 来源标记沿用 content 上的扁平 `origin` 字段（`origin: 'widget'` + `widgetId` + `widgetVersion`）。
+- 没有手势时 `kepcup.reply` 得 `false`、不抛错（S2 合成点击）；宿主桥再核一次手势。
+- 回传确认条与外链确认条共用单例；core 侧也有每卡冷却（按卡片消息 id）。
+- `widget_read_state` 按键名排序、按转义后字节计，放不下的值跳过并报告。
+- 问题卡上的可读一行截到 500 字，完整内容只走结构化 JSON。
+- 组件发出的消息在记忆 / 反思里按「非用户本人的话」处理。
+
+**评审**：独立评审一轮（只读），无 P0。P1 ×2 与 P2 ×7 全部修复：
+
+| 级别 | 问题 | 修复 |
+|---|---|---|
+| P1 | 展示卡回放以 `[系统]` 身份带出 Bot 给的数据 | 回放标明发卡的 Bot，数据包 `<untrusted>` |
+| P1 | `widget_read_state` 遇到 >64KB 的单值就停，用 `keys` 也读不到 | 跳过大值并报告键名、大小与开头片段；按转义后字节计 |
+| P2 | 长表单回答超出 `tasks.answer` 的 4000 字上限 | 卡上的可读一行截到 500 字 |
+| P2 | 回传冷却按资源计，重开即重置 | 改按卡片消息 id；超量时只清已过冷却的项 |
+| P2 | 手势检查只在组件里的垫片 | 宿主桥再核一次 |
+| P2 | 组件消息被当作用户本人的话进入记忆 / 反思 | 与委派代发同等处理 |
+| P2 | 对话轮提示没讲组件消息 | 对话轮规则补一句 |
+| P2 | 展示卡没有每 run 上限 | 每 run ≤8 张 |
+| P2 | 极小量级的刻度重复 | 刻度按有效数字取整；Svelte 用下标作 key |
+
+**测试**：新增 / 扩展：
+
+| 范围 | 文件与用例 |
+|---|---|
+| shared | `present` / `ask-user`（含截断） |
+| core | `present-tools`（每 run 上限）、`widget-tools`（读状态的包裹与转义、keys、大值跳过、跨 Bot、回传冷却按卡）、`sdk-injection`（reply）、`context-assembly`（组件消息）、`memory-reflection-input`（组件消息包裹）、`integration/present`、`integration/widget-reply`、`integration/task-cards`（表单） |
+| desktop | `widget-bridge-host`（reply 与无手势）、`present-geometry`（含极值刻度）；真机 harness 26 例（reply 无手势得 false） |
+
+**全量一次**（评审修复后）：4280 例，4231 通过 / 27 失败。其中 26 例是环境基线（sandbox / skills / workspace-tools / wiki-url / projects / environment），另 1 例 `integration/widget-craft` 是本次引入的：`widget_read_state` 的工具说明提到了 `kepcup.storage`，撞上「任务上下文不含组件代码」的断言。已改说明，单跑通过。core / desktop typecheck（svelte-check 0 错误）与改动文件的 eslint 均通过。

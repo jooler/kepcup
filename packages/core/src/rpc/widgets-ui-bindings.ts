@@ -12,6 +12,8 @@ import {
   widgetsUiOpenInputSchema,
   widgetsUiOpenLinkInputSchema,
   widgetsUiOpenLinkOutputSchema,
+  widgetsUiReplyInputSchema,
+  widgetsUiReplyOutputSchema,
   widgetsUiOpenOutputSchema,
   widgetsUiQueryInputSchema,
   widgetsUiQueryOutputSchema,
@@ -74,6 +76,16 @@ export function bindWidgetsUiMethods(services: CoreServices): {
         widgetsUiOpenLinkOutputSchema,
         async (input) => ui().openLink(input),
       ),
+      // D87 P4 L3：用户确认后，组件文字作为用户消息发进卡片所在对话（带 origin 'widget'）。
+      'widgets.ui.reply': method(widgetsUiReplyInputSchema, widgetsUiReplyOutputSchema, async (input) => {
+        const reply = ui().prepareReply(input);
+        if (services.orchestrator === null) throw new AppError('NOT_IMPLEMENTED', '对话模块未就绪');
+        const sent = services.orchestrator.sendMessage(reply.conversationId, {
+          text: reply.text,
+          widgetOrigin: { widgetId: reply.widgetId, version: reply.version },
+        });
+        return { ok: true, messageId: sent.message.id };
+      }),
       'widgets.ui.query': method(
         widgetsUiQueryInputSchema,
         widgetsUiQueryOutputSchema,

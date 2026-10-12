@@ -239,6 +239,27 @@ export const widgetsUiOpenLinkInputSchema = z.object({
 });
 export const widgetsUiOpenLinkOutputSchema = z.object({ ok: z.boolean() });
 
+// --- 回传（D87 P4 L3，设计 32 §12.3）--------------------------------------------
+
+/** `kepcup.reply(text)` 的长度上限、每卡冷却、`widget_read_state` 的回执上限。 */
+export const WIDGET_REPLY_MAX_CHARS = 2_000;
+export const WIDGET_REPLY_COOLDOWN_MS = 5_000;
+export const WIDGET_READ_STATE_MAX_BYTES = 64 * 1024;
+
+/**
+ * `widgets.ui.reply`：用户在卡内确认条上同意后，组件的文字以**用户消息**发进卡片所在对话（带来源
+ * `origin: 'widget'`，正常触发 Bot；上下文里按 `<untrusted source="widget">` 渲染）。只能在用户手势
+ * 里调用（垫片检查）、必须确认、单例确认条 + 每卡冷却——不能静默发送。
+ */
+export const widgetsUiReplyInputSchema = z.object({
+  resourceId: z.string().min(1),
+  text: z.string().min(1).max(WIDGET_REPLY_MAX_CHARS),
+});
+export const widgetsUiReplyOutputSchema = z.object({
+  ok: z.boolean(),
+  messageId: z.string().optional(),
+});
+
 /**
  * `widgets.ui.query`（能力桥结构化查询，P2）：按名字调用本组件**当前卡片版本**登记的
  * 只读查询模板。core 用 resourceId 反查登记资源拿 widgetId + version（版本钉住：

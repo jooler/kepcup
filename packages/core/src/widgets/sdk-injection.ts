@@ -21,7 +21,7 @@ import {
  * 的 HTML）才前置到文档最开头。已知失效模式（垫片被注释 / 属性值吞掉，`window.kepcup`
  * 不存在）：Bot 把 `<head>` 字样写进注释或属性——自伤且无副作用，不做廉价探测。
  *
- * 暴露的 API（P1 storage/openLink/theme/setHeight，P2 query）：全部 promise 化
+ * 暴露的 API（P1 storage/openLink/theme/setHeight，P2 query，D87 P4 reply）：全部 promise 化
  * （setHeight 是通知）；被拒时 reject 的 Error 带 `code`（机器可读错误码）。
  *
  * 宿主侧约束（给组件作者的契约，工具说明 widget-tools.ts 里同样写给 Bot）：
@@ -32,6 +32,10 @@ import {
  *   `BOT_WIDGET_QUERY_TIMEOUT_MS` 或内存超限得 `WIDGET_QUERY_TIMEOUT`。
  * - 卡片闲置后资源过期（`WIDGET_RESOURCE_EXPIRED`）由宿主卡片自动重开并重放调用，
  *   组件通常感知不到；只有组件已被删除 / 版本已修剪时才会真的收到这个错误。
+ *
+ * D87 P4 L3：`kepcup.reply(text)` 只在用户手势（`navigator.userActivation.isActive`）里有效；
+ * 不在手势里直接得 `false`（不报错：S2 预览的合成点击没有手势，报错会被记成未处理的拒绝）。
+ * 手势之外宿主卡片还会出确认条，并有每卡冷却。
  *
  * D87 P3b（设计 32 §11.13）：
  * - **单行注入**：注入的全部内容（主题变量、垫片、可选的 kit）不含换行——S2 预览与运行时
@@ -170,6 +174,16 @@ const SHIM_SOURCE = `<script>/* ${WIDGET_SDK_MARKER} */
         return Promise.reject(new Error('kepcup.openLink 需要一个 https 网址'));
       }
       return send('openLink', { url: url });
+    },
+    reply: function (text) {
+      var activation = typeof navigator === 'undefined' ? null : navigator.userActivation;
+      if (activation && !activation.isActive) {
+        return Promise.resolve(false);
+      }
+      if (typeof text !== 'string' || text.trim().length === 0) {
+        return Promise.reject(new Error('kepcup.reply 需要一段非空文字'));
+      }
+      return send('reply', { text: text });
     },
     theme: function () { return Promise.resolve(currentTheme); },
     setHeight: function (height) {

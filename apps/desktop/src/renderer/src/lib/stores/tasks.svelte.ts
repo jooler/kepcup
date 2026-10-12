@@ -1,4 +1,4 @@
-import type { Run, TaskView } from '@kepcup/shared';
+import type { AskUserValues, Run, TaskView } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { applyFetchedViews, pruneTaskViews } from '$lib/features/tasks/task-view';
 
@@ -138,8 +138,12 @@ class TasksState {
   }
 
   /** The user picked an option on a task question card: straight into the task (§2.4.6). */
-  async answer(messageId: string, answer: string): Promise<void> {
-    await core.call('tasks.answer', { messageId, answer });
+  async answer(messageId: string, answer: string, values?: AskUserValues): Promise<void> {
+    await core.call('tasks.answer', {
+      messageId,
+      answer,
+      ...(values !== undefined ? { values } : {}),
+    });
   }
 }
 
