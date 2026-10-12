@@ -33,6 +33,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import McpRiskBadge from './McpRiskBadge.svelte';
+  import HandoverCard from '$lib/features/handover/HandoverCard.svelte';
   import {
     APPROVAL_DURATION_LABEL_KEYS,
     appToolArgsView,
@@ -362,7 +363,10 @@
   );
 </script>
 
-{#if variant === 'folded' || !pending}
+{#if approval.kind === 'bot_handover'}
+  <!-- D88 移交卡：逐项勾选、执行进度与结果都在专用组件里 -->
+  <HandoverCard {approval} {autofocus} {variant} />
+{:else if variant === 'folded' || !pending}
   <!-- 处理后折叠为一行记录（docs/design/12-ui-layout.md 焦点三） -->
   <div
     class="mx-auto flex w-full max-w-3xl items-center gap-2 px-3 py-1 text-xs text-muted-foreground"

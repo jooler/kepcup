@@ -55,7 +55,11 @@
       </p>
       <p class="text-xs text-muted-foreground" data-testid="schedule-receipt-when">
         {when}{#if showBot} · {chat.botName(schedule.botId)}{/if}
-        {#if schedule.status === 'cancelled'} · {t('schedules.receiptCancelled')}{/if}
+        {#if schedule.status === 'cancelled' && schedule.handedOverTo !== undefined}
+          · <span data-testid="schedule-receipt-handed-over"
+            >{t('schedules.receiptHandedOver', { name: schedule.handedOverTo.name })}</span
+          >
+        {:else if schedule.status === 'cancelled'} · {t('schedules.receiptCancelled')}{/if}
         {#if schedule.status === 'done'} · {t('schedules.receiptDone')}{/if}
         {#if schedule.origin === 'commitment'} · {t('schedules.commitment')}{/if}
       </p>

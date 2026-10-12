@@ -8,6 +8,7 @@
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
+  import HandoverNoteCard from '$lib/features/handover/HandoverNoteCard.svelte';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
   import MailCard from '$lib/features/mail/MailCard.svelte';
@@ -171,6 +172,14 @@
       (message.content.event === 'schedule_created' || message.content.event === 'schedule_offer'),
   );
 
+  // D88 交接记录：接手方的「从 A 接手了」与移交方的「已移交给 B」。
+  const isHandoverNote = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      (message.content.event === 'bot_handover' || message.content.event === 'bot_handed_over'),
+  );
+
   function assign(botId: string): void {
     if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
   }
@@ -259,6 +268,10 @@
 {:else if isScheduleCard}
   <div class="flex w-full py-1">
     <ScheduleCard {message} />
+  </div>
+{:else if isHandoverNote}
+  <div class="flex w-full py-1">
+    <HandoverNoteCard {message} />
   </div>
 {:else if isSystem}
   <div class="flex flex-col items-center gap-1 py-1" data-testid="system-message">
