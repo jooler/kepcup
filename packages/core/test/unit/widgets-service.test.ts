@@ -743,7 +743,7 @@ describe('WidgetService SDK 垫片注入（P1）', () => {
     const page = h.service.resource({ resourceId, host });
     // doctype 仍是文档第一个非空内容（quirks-mode 防线），垫片插在 <head> 之后。
     expect(page.html.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(page.html).toContain('<head><script>');
+    expect(page.html).toContain('<head><style data-kepcup="theme">');
     expect(page.html).toContain("source: 'kepcup-widget'");
     expect(page.html).toContain('</script><title>t</title>');
     expect(page.html).toContain('<body><p>x</p></body>');
@@ -754,9 +754,9 @@ describe('WidgetService SDK 垫片注入（P1）', () => {
 
   it('injectWidgetSdk：无 head 时退到 doctype 之后；两者都无时前置；幂等', () => {
     const afterDoctype = injectWidgetSdk('<!doctype html><html><body></body></html>');
-    expect(afterDoctype.startsWith('<!doctype html><script>')).toBe(true);
+    expect(afterDoctype.startsWith('<!doctype html><style data-kepcup="theme">')).toBe(true);
     const prepended = injectWidgetSdk('<html><body></body></html>');
-    expect(prepended.startsWith('<script>')).toBe(true);
+    expect(prepended.startsWith('<style data-kepcup="theme">')).toBe(true);
     // 已含垫片（例如重复调用）原样返回。
     expect(injectWidgetSdk(afterDoctype)).toBe(afterDoctype);
     // 垫片自身不含 </script> 以外的意外标签闭合。
@@ -1379,7 +1379,7 @@ describe('WidgetService 审查修复（资源存活 / 存量上限 / 体积列�
     const cardsBefore = h.cards.length;
     const over = h.service.create({ ...base, title: 'one more', html: HTML, runId: '' });
     expect(over).toMatchObject({ ok: false, code: 'WIDGET_LIMIT' });
-    if (!over.ok) expect(over.message).toContain('widget_update');
+    if (!over.ok) expect(over.message).toContain('widget_craft');
     expect(h.cards).toHaveLength(cardsBefore);
     // 别的 Bot 不受影响。
     expect(h.service.create({ ...base, botId: 'bot_b', title: 'b', html: HTML, runId: '' }).ok).toBe(true);

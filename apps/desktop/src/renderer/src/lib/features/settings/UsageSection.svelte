@@ -18,6 +18,7 @@
     skill_authoring: 'usage.loop.skill_authoring',
     conversation_summary: 'usage.loop.conversation_summary',
     subagent: 'usage.loop.subagent',
+    widget_authoring: 'usage.loop.widget_authoring',
     turn: 'usage.loop.turn',
     task: 'usage.loop.task',
     memory: 'usage.loop.memory',

@@ -47,6 +47,10 @@ export type LlmPurpose =
   | 'profile_curation'
   | 'wiki_maintenance'
   | 'skill_authoring'
+  /** D87 组件制作 loop 的 SPEC / BUILD / FIX 阶段（设计 32 §11.11）。 */
+  | 'widget_authoring'
+  /** D87 P3c 组件制作 loop 的独立审查（设置「组件审查模型」，缺省跟随 Bot 主模型）。 */
+  | 'widget_review'
   | 'subagent_compaction';
 
 /**
@@ -79,6 +83,9 @@ const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
   // Wiki 维护 / 技能生成：Bot 主模型 → 全局主模型。
   wiki_maintenance: 'main_for_bot',
   skill_authoring: 'main_for_bot',
+  // 组件制作（D87）：与发起任务同一个 Bot 主模型。
+  widget_authoring: 'main_for_bot',
+  widget_review: 'main_for_bot',
   // 摘要 / 反思 / 整理：全局轻量 → 全局主；画像整理：全局主模型。
   summary: 'app_light',
   reflection: 'app_light',
@@ -293,6 +300,12 @@ export function builtinModelRef(
   bot: Bot | null,
 ): string {
   const runtime = bot?.profile.runtime;
+  // 组件审查可以单独指定模型（评估者与生成者不同源）；未指定 = 跟随 Bot 主模型。Bot 固定了自己的
+  // 主模型（如出于数据去向选的本地 / 私有模型）时尊重它，不把 brief 与源码发给另一家（审查修复）。
+  const reviewModel = settings.widgetReviewModel ?? '';
+  if (purpose === 'widget_review' && reviewModel.length > 0 && !(runtime?.model ?? '')) {
+    return reviewModel;
+  }
   switch (BUILTIN_RULES[purpose]) {
     case 'light_for_bot':
       return (

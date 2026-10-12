@@ -59,6 +59,8 @@ export interface CreateTestCoreOptions {
   agentSpawn?: unknown;
   /** D73 test hook: replaces the main process's `shell.openExternal` (drive `simulateBrowser`). */
   shellRpc?: unknown;
+  /** D87 P3b: fake widget preview host (`widgetPreview.run`). */
+  widgetPreviewRpc?: unknown;
   /** D73 test hooks for the OAuth engine (see CoreServicesOptions.oauth*). */
   oauthLoopbackAllowlist?: string[];
   oauthCimdUrl?: string;
@@ -129,6 +131,9 @@ export async function createTestCore(options: CreateTestCoreOptions = {}): Promi
     ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
     ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn as never } : {}),
     ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc as never } : {}),
+    ...(options.widgetPreviewRpc !== undefined
+      ? { widgetPreviewRpc: options.widgetPreviewRpc as never }
+      : {}),
     ...(options.oauthLoopbackAllowlist !== undefined
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
       : {}),

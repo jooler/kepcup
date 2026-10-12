@@ -17,6 +17,8 @@ export type LoopType =
   | 'conversation_summary'
   /** 宿主 SubAgent（D66）：delegate_task 委派的嵌套子 run，不产生对话消息。 */
   | 'subagent'
+  /** D87 组件制作 loop 的阶段 run（widget_craft，嵌套在任务 run 下，不产生对话消息）。 */
+  | 'widget_authoring'
   /** D75 对话轮（替代原 'response'；只读，执行期由工具网关硬拒写）。 */
   | 'turn'
   /** D75 任务（task_writes=false 时只读）。 */

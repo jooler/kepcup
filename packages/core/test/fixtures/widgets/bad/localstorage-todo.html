@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>待办</title></head>
+<body>
+  <input id="task" placeholder="要做什么？">
+  <button type="button" id="add">添加</button>
+  <ul id="list"></ul>
+  <script>
+    let todos = JSON.parse(localStorage.getItem('todos') || '[]');
+    function render() {
+      document.getElementById('list').innerHTML = todos.map((t) => '<li>' + t + '</li>').join('');
+    }
+    document.getElementById('add').addEventListener('click', () => {
+      todos.push(document.getElementById('task').value);
+      localStorage.setItem('todos', JSON.stringify(todos));
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>
