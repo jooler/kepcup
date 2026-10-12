@@ -239,6 +239,16 @@ export function triageOneBot(input: TriageInput): Promise<TriageDecision> {
           );
           const result = await completeStructured({
             complete: (req) => route.engine.complete(req),
+            resolveModel: () => {
+              const next =
+                input.router !== undefined
+                  ? input.router.resolveForBot(input.botId, 'triage')
+                  : builtinRoute(
+                      input.engine,
+                      lightModelRefForBot(input.bots, input.settings, input.botId),
+                    );
+              return next?.modelRef ?? '';
+            },
             identity: {
               runId: run.id,
               botId: input.botId,

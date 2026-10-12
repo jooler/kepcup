@@ -31,6 +31,11 @@ export interface CompleteStructuredInput<T> {
     cacheWrite: number;
     costUsd: number | null;
   } | null) => void;
+  /**
+   * Re-resolve model when settings change mid-flight (passed through to
+   * CompletionRequest so PiEngine can switch provider on retry abort).
+   */
+  resolveModel?: () => string;
 }
 
 /**
@@ -74,12 +79,13 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
     try {
       result = await input.complete({
         identity: input.identity,
-        model: input.model,
+        model: input.resolveModel?.() || input.model,
         systemPrompt,
         messages,
         ...(jsonOnly ? {} : { tools: [submit] }),
         maxTokens: input.maxTokens,
         signal: input.signal,
+        ...(input.resolveModel ? { resolveModel: input.resolveModel } : {}),
       });
     } catch (error) {
       // A failed / timed-out external agent call still spent a session of the
