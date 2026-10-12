@@ -244,7 +244,7 @@ CREATE TABLE usage_ledger (
   run_id          TEXT NOT NULL,
   bot_id          TEXT,
   conversation_id TEXT,
-  loop_type       TEXT NOT NULL,         -- 与 runs.loop_type 同值（turn / task / subagent / triage / …；main 0020 已把旧的 response 改为 turn）
+  loop_type       TEXT NOT NULL,         -- 与 runs.loop_type 同值（turn / task / subagent / triage / …；main 0020 已把旧的 response 改为 turn）；另有两个只出现在账本里的值：memory（记忆向量化 / 重排）、voice_input（语音输入转写，不计入后台预算）
   provider        TEXT NOT NULL,
   model           TEXT NOT NULL,
   input_tokens    INTEGER NOT NULL,
@@ -256,6 +256,8 @@ CREATE TABLE usage_ledger (
 );
 CREATE INDEX usage_by_bot_day ON usage_ledger(bot_id, created_at);
 ```
+
+媒体调用（`MediaService`：embed / rerank / 图片理解 / 语音转写与合成 / 图片与视频生成）成功后各记一行：一次调用一行，`provider` = 厂商 id，`model` = 实际模型 id，token 为 0（适配器暂不上报）、`cost_usd` 为 NULL；次数按行统计，`usage.summary` 的 `calls` 即行数。无所属 run 的调用（记忆、语音输入）`run_id` 取 `media_` 前缀的合成 id。连通性测试（`testCapability`）不记账。
 
 ### audit_log（P02）
 

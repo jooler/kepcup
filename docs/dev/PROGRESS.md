@@ -1326,3 +1326,13 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **审查裁决不加的**：`widgets.changed` 事件（Tab 激活刷新 + 手动刷新足够，主场景是盯对话不是盯右栏）；publish RPC 的发卡配额（用户手点属自主行为）；`#gateReadonlyQuery` 与 query() 双查不收敛（错误语义不同：INVALID_INPUT vs WIDGET_QUERY_FAILED）。
 - **验证**：`widgets-service.test.ts` 33→37 例（字节上限 / bigint 拒绝 / `__proto__` 拒绝 / 摘要复算 / deleteForBot 摘资源）、`widget-tools.test.ts` 扩 publish 失败文案断言；`supervisor-turn` 等提示词波及面回归绿；shared / core / desktop（svelte-check 0 错误）typecheck 干净；改动文件 eslint 干净。收口全量一次的甄别结论见下。
 - 工作区提示：本轮树上有并行会话的 `docs/design/34-supplier.md`（D83）与 design README 的 D83/34 行，与本功能无关，提交时需拆分。
+
+## 现有业务修正（D83 / D85 方案审查衍生，2026-10-12，`t/review-fixes`，未推送）
+
+实施依据 `todo/review-fixes-2026-10-12.md`。
+
+- **Wiki 来源 mime 嗅探（任务 1）**：`wiki/source.ts` 新增 `sniffSourceKind`（魔数优先：PDF/PNG/JPEG/GIF/WebP/ZIP→docx·xlsx·pptx·epub/OLE/MP4·MOV/WebM·MKV/MP3/WAV/OGG/FLAC；无魔数时前 8KB 无 NUL 且 UTF-8 无损→文本，再按扩展名细分；其余 binary，窗口截断在多字节字符中间不误判）。file 与 attachment 来源都以嗅探结果为准，`inlineTextFor` 只内联 text/html 且再确认无 NUL；二进制来源的任务消息给「二进制资料：{kind}，{文件名}…不要用 read 读取原件」兜底，维护提示词补一条禁读 raw/ 二进制。修复前 file 来源 PDF 等会被按 utf8 解码成最多 2 万字乱码进入 `<material>`。
+- **Wiki 服务过时注释清理（任务 4，同提交）**：去掉 `recall cascade` 描述（wiki 侧只有 ingest 时复核来源消息状态）；删除未使用的 `MessagesFacade` 与 `WikiServiceDeps.messages` 注入。
+- **媒体调用记账（任务 2）**：`MediaService` 各能力方法增可选 `usage` 上下文，成功后写一行 `usage_ledger`（provider=厂商 id、model=实际模型、token 0、cost NULL，无迁移）；失败 / 省略 / null 不记，记账异常只打日志。工具调用沿用所在 run（loopType turn/task）；记忆向量与重排记 `memory`；语音输入 RPC 记 `voice_input` 且排除在后台预算外。shared 契约：`loopTypeSchema` 增两值，`usageSummaryEntry` 增 `calls`；用量页增「调用次数」列与两个类型文案。限制：适配器目前不上报 token，故 token 恒 0；memory 行因 embedder 无 Bot 上下文而不归属 Bot；除 `transcribeSpeech` 外的 `media.*` 直调 RPC 暂不记账（无调用方）。
+- **验证**：新增 `wiki-source-sniff`（6）、`media-service-usage`（9）单测，`wiki.test.ts` 二进制来源用例，`memory.test.ts` / `response-loop.test.ts` 账本断言；`pnpm typecheck` 与 eslint 干净。全量 4028 例 26 失败（低于已记录基线 28–33，全部在 sandbox / skills / workspace-tools / environment / projects / wiki-url 等环境类文件；`wiki-url` 2 例在未改动的 main 上同样失败）。
+- **未做**：任务 3（邮件通道 P0 实机验收）需要真实 QQ / 163 / Gmail 邮箱与授权码，未执行，35 号文档状态保持「实机验收待完成」。
