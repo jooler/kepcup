@@ -1,6 +1,8 @@
 # MinerU 文档解析预置技能（实施方案）
 
 > 状态：**已实现（2026-10-04）**。设计依据 [docs/design/17-mineru-document-parsing.md](../docs/design/17-mineru-document-parsing.md)（决策 D57）；实现与测试证据记录在 `docs/dev/PROGRESS.md` 同名小节。
+>
+> **2026-10-12 部分被 D85 取代**：本文「Bot 用 mineru 导出 md 后 `wiki_enqueue(file)` 入库」的 Wiki 整合路径已废弃，入库改由宿主派生管线负责（见 [36-wiki-multimodal-ingest.md](../docs/design/36-wiki-multimodal-ingest.md)）；技能本身仍用于对话中读原文。
 
 ## 1. 背景与目标
 
