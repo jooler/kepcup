@@ -1040,17 +1040,24 @@ export class ScheduleService {
    * 待触发的那一次照旧），出一张新回执卡；原任务取消，其回执卡快照标「已移交给 {B}」。
    * 重建、取消、新回执卡与已排队的触发作业改投在同一事务里：崩溃后不会两边都有、也不会
    * 两边都没有，接手方也不会缺回执卡；已经排进队列（`schedule_fire:{旧 id}:*`）的那一次
-   * 改由新任务触发，只触发一次。承诺联动的任务不在此列（P1 随承诺一起迁移）。
+   * 改由新任务触发，只触发一次。
+   *
+   * 承诺联动的任务（D88 P1，设计 37 §3.1）：调用方先把承诺复制给接手方，`commitmentId`
+   * 传接手方的那一条，重建的任务接到它上面；原任务的承诺由调用方在之后作废。没给
+   * `commitmentId` 的承诺任务拒绝移交（不能让重建的任务指向别人的记忆）。
    */
   transferTo(
     scheduleId: string,
-    target: { botId: string; botName: string; conversationId: string },
+    target: { botId: string; botName: string; conversationId: string; commitmentId?: string },
   ): Schedule {
     const row = this.store.get(scheduleId);
     if (row === null) throw new AppError('NOT_FOUND', `定时任务 ${scheduleId} 不存在`);
     if (row.status !== 'active') throw new AppError('INVALID_INPUT', '该任务已结束，无法移交');
-    if (row.commitmentId !== null) {
-      throw new AppError('INVALID_INPUT', '与承诺联动的定时任务暂不支持移交');
+    if (row.commitmentId !== null && (target.commitmentId ?? '').length === 0) {
+      throw new AppError('INVALID_INPUT', '与承诺联动的定时任务要连同承诺一起移交');
+    }
+    if (row.commitmentId === null && target.commitmentId !== undefined) {
+      throw new AppError('INVALID_INPUT', '这条定时任务没有关联承诺');
     }
     if (row.botId === target.botId) throw new AppError('INVALID_INPUT', '任务已经属于该 Bot');
     this.#assertFireable(target.botId, target.conversationId);
@@ -1080,6 +1087,7 @@ export class ScheduleService {
         note: row.note,
         title: row.title,
         origin: row.origin,
+        commitmentId: target.commitmentId ?? null,
         nextFireAt,
       });
       created = inserted;

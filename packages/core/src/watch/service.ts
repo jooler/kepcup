@@ -405,8 +405,11 @@ export class WatchService {
       return current;
     }
     this.#assertTarget(target.botId, target.conversationId);
-    if (this.store.countLive(target.botId) >= WATCH_MAX_PER_BOT && current.status !== 'stopped') {
-      throw new AppError('INVALID_INPUT', `接手方的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`);
+    if (current.status !== 'stopped' && this.store.countLive(target.botId) >= WATCH_MAX_PER_BOT) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `接手方的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`,
+      );
     }
     for (let attempt = 0; attempt < 3 && current !== null; attempt += 1) {
       const from: StoredWatch = current;
@@ -442,6 +445,25 @@ export class WatchService {
       current = this.store.get(id);
     }
     throw new AppError('INTERNAL', '监看状态刚刚变化，请重试');
+  }
+
+  /** D88 盘点：一个 Bot 在所有对话里未停止的监看（建得早的在前）。 */
+  listLiveForBot(botId: string): Watch[] {
+    return this.store
+      .listForBot(botId)
+      .filter((row) => row.status !== 'stopped')
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(publicWatch);
+  }
+
+  /** D88 校验：接手方未停止的监看数（每个 Bot 有上限）。 */
+  countLiveForBot(botId: string): number {
+    return this.store.countLive(botId);
+  }
+
+  /** D88 提示：Bot 实际使用的浏览器资料（两边不同 = 登录态不随监看移交）。 */
+  profileKeyFor(botId: string): string {
+    return this.#deps.profileKeyFor(botId);
   }
 
   /** A user action wins over an in-flight check (CAS: the check's write then conflicts). */

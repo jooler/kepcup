@@ -29,7 +29,7 @@ import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { truncateToBudget } from '../agent/tokens.js';
-import { copySkillTree } from './library.js';
+import { copySkillTree, hashDirectory } from './library.js';
 import { parseSkillDir, readSkillMarkdown, sanitizeSkillName } from './parse.js';
 
 export interface SkillsDeps {
@@ -1103,6 +1103,86 @@ export class SkillsService {
       throw new AppError('SKILL_IMPORT_FAILED', '技能目录不存在（可能已被删除或回收）');
     }
     return { name, content: readSkillMarkdown(dir), dirPath: dir };
+  }
+
+  // --- D88 asset handover (docs/design/37 §3) -------------------------------------
+
+  /**
+   * Copies one of `fromBotId`'s private skills to `toBotId` (handover, action copy). The
+   * caller checked that the target has no private row of that name. The stored status
+   * (active / disabled / incompatible) carries over.
+   *
+   * - imported: a new `bot_skills` row pointing at the same `library_id` — no re-clone, no
+   *   separate `skill_import` approval (the confirmed handover card is the approval).
+   * - authored: the directory is copied into the target's authored-skills repository and
+   *   committed「从 {A} 复制 {name}」(serialized with the target's other authoring writes).
+   *
+   * Re-entrant: an authored copy re-run after a crash overwrites the half-copied directory
+   * and commits again (a no-op commit when nothing changed).
+   */
+  async copyForHandover(input: {
+    fromBotId: string;
+    toBotId: string;
+    name: string;
+    fromName: string;
+  }): Promise<void> {
+    const source = this.botSkillRow(input.fromBotId, input.name);
+    if (source === null || source.status === 'draft') {
+      throw new AppError('NOT_FOUND', `技能 ${input.name} 已不在来源 Bot 上`);
+    }
+    const existing = this.botSkillRow(input.toBotId, input.name);
+    if (existing !== null && !this.isHandoverCopy(input.fromBotId, input.toBotId, input.name)) {
+      throw new AppError('ALREADY_EXISTS', `接手方已有同名技能 ${input.name}`);
+    }
+    const dir = this.dirOf(source);
+    if (dir === null) throw new AppError('NOT_FOUND', `技能 ${input.name} 的内容已不存在`);
+    if (source.kind === 'imported') {
+      this.#upsertBotSkill(input.toBotId, {
+        name: input.name,
+        kind: 'imported',
+        libraryId: source.library_id,
+        status: source.status,
+        statusReason: source.status_reason,
+      });
+    } else if (source.kind === 'authored') {
+      await this.#authoredRepos.run(input.toBotId, async () => {
+        const root = botSkillsRoot(this.#paths, input.toBotId);
+        mkdirSync(root, { recursive: true });
+        const target = botSkillDir(this.#paths, input.toBotId, input.name);
+        if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+        copySkillTree(dir, target);
+        await authoredGitCommit(
+          root,
+          `从 ${input.fromName} 复制 ${input.name}`,
+          this.#deps.logger,
+        );
+      });
+      this.#upsertBotSkill(input.toBotId, {
+        name: input.name,
+        kind: 'authored',
+        libraryId: null,
+        status: source.status,
+        statusReason: source.status_reason,
+      });
+    } else {
+      throw new AppError('INVALID_INPUT', `内置技能 ${input.name} 不需要复制`);
+    }
+    this.publishChanged(input.toBotId);
+  }
+
+  /**
+   * Whether `toBotId`'s row `name` is a copy of `fromBotId`'s (crash recovery of a
+   * handover): imported → the same library version; authored → identical directory content.
+   */
+  isHandoverCopy(fromBotId: string, toBotId: string, name: string): boolean {
+    const source = this.botSkillRow(fromBotId, name);
+    const copy = this.botSkillRow(toBotId, name);
+    if (source === null || copy === null || copy.kind !== source.kind) return false;
+    if (source.kind === 'imported') return copy.library_id === source.library_id;
+    if (source.kind !== 'authored') return false;
+    const from = this.dirOf(source);
+    const to = this.dirOf(copy);
+    return from !== null && to !== null && hashDirectory(from) === hashDirectory(to);
   }
 
   // --- lifecycle hooks (03-data-model.md 删除级联) ------------------------------

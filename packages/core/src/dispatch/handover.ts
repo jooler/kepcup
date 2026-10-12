@@ -2,11 +2,14 @@ import {
   BOT_HANDED_OVER_EVENT,
   BOT_HANDOVER_EVENT,
   BOT_HANDOVER_FOLLOWUP_EVENT,
+  HANDOVER_ITEMS_MAX,
+  HANDOVER_MEMORY_MAX_ITEMS,
   HANDOVER_RESP_FROM_KEY,
   HANDOVER_RESP_TO_KEY,
   botHandoverPayloadSchema,
-  newId,
+  defaultHandoverKeys,
   selectableHandoverKeys,
+  newId,
   type Bot,
   type BotHandoverPayload,
   type BotProfile,
@@ -53,6 +56,9 @@ import {
  * 配置类 → 职责类 → 移交的 A 侧撤除 → 职责改写 → 两侧交接说明 → 结算，逐项记录在
  * `bot_handover_items`，以 internal follow-up 通知发起方。执行中崩溃由 `recover()` 接着做
  * 剩余的 pending 项（已完成项不重复）。
+ *
+ * 发起权（§决策 7）：管家可以以任何 Bot 为来源（含自己），目标可以新建；普通 Bot（P1）只能
+ * 盘点、交出**自己的**资产，目标必须是已有 Bot。宿主在这里校验，不只靠工具注册。
  */
 
 export interface HandoverHostDeps {
@@ -139,29 +145,41 @@ export class HandoverHost implements HandoverToolFacade {
     }
   }
 
-  /** P0：只有管家可以盘点 / 发起（来源可以是任何 Bot，含自己）。 */
-  #assertInitiator(identity: RunIdentity): { botId: string; conversationId: string } | string {
+  /**
+   * 发起方：对话里的一个 active Bot。管家可以以任何 Bot 为来源；普通 Bot 只能是自己
+   * （由 inspect / propose 分别校验）。
+   */
+  #assertInitiator(
+    identity: RunIdentity,
+  ): { botId: string; conversationId: string; butler: boolean } | string {
     const { botId, conversationId } = identity;
     if (botId === null || conversationId === null) return '当前执行没有对话上下文，无法发起移交';
-    if (this.#deps.bots.get(botId)?.systemRole !== 'butler') {
-      return '目前只有管家可以盘点其他 Bot 的资产、提议移交；需要的话请用户去找管家';
-    }
-    return { botId, conversationId };
+    const bot = this.#deps.bots.get(botId);
+    if (bot === null || bot.status !== 'active') return '发起方 Bot 不存在或已删除';
+    return { botId, conversationId, butler: bot.systemRole === 'butler' };
   }
 
   inspect(
     identity: RunIdentity,
-    input: { botId: string },
+    input: { botId: string; memoryQuery?: string | undefined; wikiQuery?: string | undefined },
   ): { ok: true; inspection: HandoverInspection } | { ok: false; message: string } {
     const initiator = this.#assertInitiator(identity);
     if (typeof initiator === 'string') return { ok: false, message: initiator };
-    const bot = this.#deps.bots.get(input.botId);
+    const botId = input.botId.length > 0 ? input.botId : initiator.botId;
+    if (!initiator.butler && botId !== initiator.botId) {
+      return {
+        ok: false,
+        message: '你只能盘点自己名下的资产（bot_id 填你自己或不填）；其他 Bot 的资产由它自己或管家处理',
+      };
+    }
+    const bot = this.#deps.bots.get(botId);
     if (bot === null || bot.status !== 'active') {
       return {
         ok: false,
-        message: `Bot ${input.botId} 不存在或已删除（先用 list_bots 查看通讯录）`,
+        message: `Bot ${botId} 不存在或已删除（先用 list_bots 查看通讯录）`,
       };
     }
+    const memoryQuery = input.memoryQuery?.trim() ?? '';
     return {
       ok: true,
       inspection: {
@@ -171,7 +189,12 @@ export class HandoverHost implements HandoverToolFacade {
           butler: bot.systemRole === 'butler',
           responsibilities: bot.profile.role.responsibilities,
         },
-        entries: this.#deps.registry.inventory(bot.id),
+        entries: this.#deps.registry.inventory(bot.id, {
+          memoryQuery: memoryQuery.length > 0 ? memoryQuery : undefined,
+        }),
+        summaries: this.#deps.registry.summaries(bot.id),
+        memoryQuery: memoryQuery.length > 0 ? memoryQuery : null,
+        self: bot.id === initiator.botId,
         modelOptions: this.modelOptions(),
       },
     };
@@ -181,6 +204,21 @@ export class HandoverHost implements HandoverToolFacade {
     const initiator = this.#assertInitiator(identity);
     if (typeof initiator === 'string') return { ok: false, message: initiator };
     const { botId: proposerId, conversationId } = initiator;
+    // 普通 Bot 只能交出自己的资产、交给已有 Bot（建 Bot 是管家专属）。
+    if (!initiator.butler) {
+      if (input.fromBotId !== proposerId) {
+        return {
+          ok: false,
+          message: '你只能交出自己名下的资产：from_bot_id 必须是你自己。其他 Bot 的资产由它自己或管家处理。',
+        };
+      }
+      if (input.target.kind === 'new') {
+        return {
+          ok: false,
+          message: '只有管家可以新建 Bot：目标请选一个已有的 Bot（to.bot_id），或请用户去找管家新建。',
+        };
+      }
+    }
     // 同一对话同时只允许一张待定提议（移交卡与管家提议卡互斥）。
     if (
       this.#deps.approvals.pendingOfKind(conversationId, 'bot_handover').length > 0 ||
@@ -220,6 +258,7 @@ export class HandoverHost implements HandoverToolFacade {
     // 逐项：编造的 key / 不合法的动作直接退回；与目标冲突的置灰。
     const seen = new Set<string>();
     const unknown: string[] = [];
+    const refused: string[] = [];
     const badActions: string[] = [];
     const cardItems: HandoverCardItem[] = [];
     const ctx: HandoverContext = { handoverId: '', fromBot: from, toBot, toName };
@@ -232,7 +271,10 @@ export class HandoverHost implements HandoverToolFacade {
       seen.add(item.key);
       const found = this.#deps.registry.entry(from.id, item.key);
       if (found === null) {
-        unknown.push(item.key);
+        // 存在但永远不能移交的（如 private_to_bot 记忆）：按原因退回，不当作编造的 key。
+        const reason = this.#deps.registry.refusal(from.id, item.key);
+        if (reason !== null) refused.push(`${item.key}（${reason}）`);
+        else unknown.push(item.key);
         continue;
       }
       const { adapter, entry } = found;
@@ -259,7 +301,15 @@ export class HandoverHost implements HandoverToolFacade {
         detail: adapter.describe(entry, action, toName),
         warnings: blocked === undefined ? (adapter.warnings?.(ctx, entry, action) ?? []) : [],
         ...(blocked !== undefined ? { blocked } : {}),
+        marks: entry.marks ?? [],
+        defaultSelected: entry.defaultSelected ?? true,
       });
+    }
+    if (refused.length > 0) {
+      return {
+        ok: false,
+        message: `这些条目不能移交：${refused.join('、')}。把它们从 items 里去掉再提交。`,
+      };
     }
     if (unknown.length > 0) {
       return {
@@ -271,6 +321,16 @@ export class HandoverHost implements HandoverToolFacade {
       return { ok: false, message: `这些条目的动作不合法：${badActions.join('、')}` };
     }
     if (modelItems > 1) return { ok: false, message: '模型条目最多一个' };
+    const memoryCount = cardItems.filter((item) => item.assetType === 'memory').length;
+    if (memoryCount > HANDOVER_MEMORY_MAX_ITEMS) {
+      return {
+        ok: false,
+        message: `记忆条目太多（一次最多 ${HANDOVER_MEMORY_MAX_ITEMS} 条），挑最重要的，或分几张卡提交`,
+      };
+    }
+    if (cardItems.length - memoryCount > HANDOVER_ITEMS_MAX) {
+      return { ok: false, message: `条目太多（记忆之外最多 ${HANDOVER_ITEMS_MAX} 个），分几张卡提交` };
+    }
 
     // 职责改写：B 追加、A 删去；管家的职责是固定模板，不改。
     const responsibilities: BotHandoverPayload['responsibilities'] = {
@@ -436,7 +496,8 @@ export class HandoverHost implements HandoverToolFacade {
   /** Approved: the kept items become pending rows and the handover `applying` (one transaction). */
   #begin(record: HandoverRecord, selection: string[] | undefined): void {
     const plan = record.plan;
-    const kept = new Set(selection ?? selectableHandoverKeys(plan));
+    // 没带勾选（不经卡片的决定）= 卡上的默认勾选：敏感记忆默认不勾，不会被带进来。
+    const kept = new Set(selection ?? defaultHandoverKeys(plan));
     const rows: Array<{ key: string; assetType: string; action: string }> = [];
     if (plan.target.kind === 'new')
       rows.push({ key: NEW_BOT_KEY, assetType: 'bot', action: 'create' });
@@ -800,7 +861,12 @@ export class HandoverHost implements HandoverToolFacade {
     const done = new Set(items.filter((item) => item.status === 'done').map((item) => item.key));
     const doneItems = record.plan.items.filter((item) => done.has(item.key));
     const moved = doneItems.filter((item) => item.action === 'move').map((item) => item.detail);
-    const kept = doneItems.filter((item) => item.action !== 'move').map((item) => item.detail);
+    const kept = doneItems
+      .filter((item) => item.action !== 'move' && item.assetType !== 'memory')
+      .map((item) => item.detail);
+    // 记忆按条复制、可能上百条：交接记录里只记条数（内容已在接手方的记忆里）。
+    const memories = doneItems.filter((item) => item.assetType === 'memory').length;
+    if (memories > 0) kept.push(`复制了 ${memories} 条记忆`);
     if (done.has(HANDOVER_RESP_TO_KEY)) moved.push(`更新了接手方的职责描述`);
     if (done.has(HANDOVER_RESP_FROM_KEY)) moved.push(`更新了移交方的职责描述`);
     return { moved, kept };
@@ -978,12 +1044,16 @@ export class HandoverHost implements HandoverToolFacade {
         `没有新建 ${toName}：${untrusted(newBot.error ?? '未知原因')}；其余条目都没有执行。`,
       );
     }
-    const doneLines = items
-      .filter((item) => item.status === 'done' && item.key !== NEW_BOT_KEY)
+    const doneUnits = items.filter((item) => item.status === 'done' && item.key !== NEW_BOT_KEY);
+    const doneLines = doneUnits
+      .filter((item) => item.assetType !== 'memory')
       .map((item) => {
         const label = this.#itemLabel(record, item.key);
         return `- ${this.#isAssetKey(record, item.key) ? untrusted(label) : label}`;
       });
+    // 记忆可能上百条：只给条数，不把内容再灌回发起方的上下文。
+    const copiedMemories = doneUnits.filter((item) => item.assetType === 'memory').length;
+    if (copiedMemories > 0) doneLines.push(`- 复制了 ${copiedMemories} 条记忆给 ${toName}`);
     if (doneLines.length > 0) lines.push('已完成：', ...doneLines);
     const skipped = items
       .filter((item) => item.status === 'skipped' && item.key !== NEW_BOT_KEY)
