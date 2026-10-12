@@ -2235,6 +2235,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         );
       });
 
+    // Orphaned attachments (rows never bound to a message past their TTL, and
+    // files no row references — e.g. the pre-D86 send queue's leftovers):
+    // best-effort, conservative, logged.
+    try {
+      const swept = attachments.sweepOrphans();
+      if (swept.expiredRows > 0 || swept.orphanFiles > 0) {
+        logger.info(swept, 'orphaned attachments swept');
+      }
+    } catch (error) {
+      warnQuietly('attachment orphan sweep failed', error);
+    }
+
     services.mainDb = mainDb;
     services.runsDb = runsDb;
     services.domain = {

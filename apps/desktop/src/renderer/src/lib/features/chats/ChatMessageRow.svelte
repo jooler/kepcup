@@ -120,7 +120,14 @@
   }
 
   async function copyText(): Promise<void> {
-    await navigator.clipboard.writeText(messageText);
+    try {
+      await navigator.clipboard.writeText(messageText);
+    } catch {
+      // 剪贴板写入会因权限 / 失焦被拒（NotAllowedError）：给出明确失败提示，
+      // 不让它变成未处理的 promise rejection，也不能假装「已复制」。
+      toast.error(t('messages.copyFailed'));
+      return;
+    }
     toast.success(t('messages.copied'));
   }
 

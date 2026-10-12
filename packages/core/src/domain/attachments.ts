@@ -1,12 +1,36 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AppError, newId, type Attachment } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
-const MAX_ATTACHMENT_BYTES = 30_000_000;
+/** Per-attachment byte ceiling (upload rejects larger payloads). */
+export const MAX_ATTACHMENT_BYTES = 30_000_000;
+
+/**
+ * 未绑定（message_id 为空）附件的存活期。上传后到随消息发出之间的 chip 可跨重启
+ * 留在输入框草稿里，所以不能立刻回收；超过该期限仍没发出的视为被遗弃
+ * （关闭应用、卸载草稿缓存、D86 前遗留的队列附件等），行与文件一起回收。
+ */
+export const UNBOUND_ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** 磁盘上「没有任何行引用」的文件至少放过这么久才删（避开写文件与插行之间的窗口）。 */
+export const ORPHAN_FILE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export interface AttachmentSweepResult {
+  /** 回收的过期未绑定附件行数。 */
+  expiredRows: number;
+  /** 删除的、不再被任何行引用的文件数。 */
+  orphanFiles: number;
+  /** 上述两类回收的字节数（行的 size + 孤儿文件大小）。 */
+  freedBytes: number;
+}
+
+export interface AttachmentStatusEntry {
+  id: string;
+  state: 'pending' | 'sent' | 'missing';
+}
 
 interface AttachmentRow {
   id: string;
@@ -106,6 +130,29 @@ export class AttachmentsService {
     return row ? rowToAttachment(row) : null;
   }
 
+  /**
+   * 批量存在性查询（输入框草稿水合 / 发送失败后判因用，一次往返，不读字节）：
+   * - `pending`：属于该对话、尚未随消息发出、文件仍在——chip 可继续使用；
+   * - `sent`：已绑定消息（多半是上一次发送 core 已受理而响应丢失）；
+   * - `missing`：行不存在 / 不属于该对话 / 文件已被清理（过期回收、手动删除）。
+   */
+  statusOf(ids: readonly string[], conversationId: string): AttachmentStatusEntry[] {
+    const select = this.#db.prepare('select * from attachments where id = ?');
+    return ids.map((id) => {
+      const row = select.get(id) as AttachmentRow | undefined;
+      if (!row || row.conversation_id !== conversationId) {
+        return { id, state: 'missing' as const };
+      }
+      if (row.message_id !== null) return { id, state: 'sent' as const };
+      try {
+        statSync(this.absolutePath(rowToAttachment(row)));
+      } catch {
+        return { id, state: 'missing' as const };
+      }
+      return { id, state: 'pending' as const };
+    });
+  }
+
   getOrThrow(id: string): Attachment {
     const att = this.get(id);
     if (!att) throw new AppError('NOT_FOUND', `Attachment ${id} does not exist`);
@@ -159,6 +206,82 @@ export class AttachmentsService {
     });
     run.immediate();
     this.#deleteFile(attachment);
+  }
+
+  /**
+   * 孤儿附件回收（启动时调用，best-effort）。保守两步，且都只碰「确定没人用」的：
+   * 1. 删除 message_id 为空且创建超过 UNBOUND_ATTACHMENT_TTL_MS 的行及其文件——
+   *    未过期的正常上传（输入框里的 chip）不动；已绑定消息的附件永远不动。
+   * 2. 扫描 `conversations/<id>/attachments/` 下的普通文件，删除没有任何 attachments
+   *    行引用、且 mtime 早于 ORPHAN_FILE_GRACE_MS 的文件（崩溃遗留、步骤 1 删行后
+   *    的残余、已删会话的残留）。不跟随符号链接，不删目录。
+   */
+  sweepOrphans(): AttachmentSweepResult {
+    const now = this.#clock.now();
+    const result: AttachmentSweepResult = { expiredRows: 0, orphanFiles: 0, freedBytes: 0 };
+
+    const expired = this.#db
+      .prepare(
+        'select * from attachments where message_id is null and created_at < ? order by created_at',
+      )
+      .all(now - UNBOUND_ATTACHMENT_TTL_MS) as AttachmentRow[];
+    if (expired.length > 0) {
+      const run = this.#db.transaction(() => {
+        for (const row of expired) {
+          // 再次带上 message_id is null：并发的 claim 把它绑走则不删。
+          const info = this.#db
+            .prepare('delete from attachments where id = ? and message_id is null')
+            .run(row.id);
+          if (info.changes === 0) continue;
+          result.expiredRows += 1;
+          result.freedBytes += row.size;
+          this.#deleteFile(rowToAttachment(row));
+        }
+      });
+      run.immediate();
+    }
+
+    const conversationsRoot = path.join(this.#paths.home, 'conversations');
+    let conversationDirs: string[];
+    try {
+      conversationDirs = readdirSync(conversationsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return result;
+    }
+    const referenced = this.#db.prepare(
+      'select rel_path from attachments where conversation_id = ?',
+    );
+    for (const conversationId of conversationDirs) {
+      const dir = this.#conversationDir(conversationId);
+      let files: string[];
+      try {
+        files = readdirSync(dir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name);
+      } catch {
+        continue;
+      }
+      if (files.length === 0) continue;
+      const known = new Set(
+        (referenced.all(conversationId) as Array<{ rel_path: string }>).map((row) => row.rel_path),
+      );
+      for (const name of files) {
+        if (known.has(name)) continue;
+        const target = path.join(dir, name);
+        try {
+          const stat = statSync(target);
+          if (now - stat.mtimeMs < ORPHAN_FILE_GRACE_MS) continue;
+          rmSync(target, { force: true });
+          result.orphanFiles += 1;
+          result.freedBytes += stat.size;
+        } catch {
+          // 单个文件删不了不影响其余。
+        }
+      }
+    }
+    return result;
   }
 
   #deleteFile(attachment: Attachment): void {

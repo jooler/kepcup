@@ -104,6 +104,11 @@ export const zhCN = {
   'composer.attachmentRemove': '移除附件',
   'composer.attachmentTooLarge': '{name} 超过 30MB 附件上限',
   'composer.attachmentUploadFailed': '{name} 上传失败',
+  'composer.attachmentExpired': '附件已过期被清理，已从输入框移除：{names}。请重新添加',
+  'composer.attachmentIssueMissing':
+    '附件已不存在（未发送的附件超过 7 天会被清理），已从输入框移除：{names}。请重新添加后再发送',
+  'composer.attachmentIssueSent':
+    '附件已随先前的消息发出（可能上次发送已成功、只是没收到确认），已从输入框移除：{names}。请先查看会话，必要时再重新发送',
   // 语音输入（docs/design/26-voice-input.md）：点击式录音（语音对话模式暂缓）
   'composer.voiceStart': '开始语音输入',
   'composer.recordingStop': '停止录音并转为文字',
@@ -655,6 +660,7 @@ export const zhCN = {
   'messages.quote': '引用',
   'messages.copy': '复制',
   'messages.copied': '已复制',
+  'messages.copyFailed': '复制失败，请手动选中文本后复制',
   'messages.pinMessage': '固定整条消息',
   'messages.quotedLine': '引用 {name}：{text}',
   'messages.quotedDeleted': '引用的消息已撤回或删除',

@@ -75,6 +75,8 @@ import {
   attachmentsUploadOutputSchema,
   attachmentsGetInputSchema,
   attachmentsGetOutputSchema,
+  attachmentsStatusInputSchema,
+  attachmentsStatusOutputSchema,
   attachmentsDetachInputSchema,
   attachmentsDetachOutputSchema,
   mcpRemoveSecretInputSchema,
@@ -850,6 +852,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           dataBase64: domain.attachments.readBytes(attachment).toString('base64'),
         };
       },
+    ),
+    'attachments.status': method(
+      attachmentsStatusInputSchema,
+      attachmentsStatusOutputSchema,
+      async (input) => ({
+        statuses: domain.attachments.statusOf(input.ids, input.conversationId),
+      }),
     ),
     'attachments.detach': method(
       attachmentsDetachInputSchema,

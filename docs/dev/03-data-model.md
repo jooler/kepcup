@@ -207,7 +207,7 @@ CREATE TABLE attachments (
 );
 ```
 
-D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下线）；附件以 `messages.send` 的 `attachmentIds` 同事务转正（校验归属对话且无主）；`attachments.detach` 仅允许移除未随消息发出的上传（行与文件一起删）。
+D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下线）；附件以 `messages.send` 的 `attachmentIds` 同事务转正（校验归属对话且无主）；`attachments.detach` 仅允许移除未随消息发出的上传（行与文件一起删）。未绑定消息的附件（message_id 为空）创建超过 7 天仍未发出视为遗弃：main 0033 一次性清理存量行，core 启动时 `AttachmentsService.sweepOrphans()` 回收过期行与无任何行引用（且 mtime 超过 24h 宽限）的附件文件。
 
 ### jobs（P01）
 

@@ -164,7 +164,12 @@ describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
       workspacePath: workspace,
       attachments: attachmentsFake({}),
       gateway: gatewayFake(root),
-      delivery: { send: (files, caption) => sent.push({ files, caption }) },
+      delivery: {
+        send: (files, caption) => {
+          sent.push({ files, caption });
+          return { delivered: files, failed: [] };
+        },
+      },
     });
     const image = tools.find((tool) => tool.name === 'generate_image')!;
     const result = await image.execute({ prompt: '一只猫', file_name: 'cat' }, ctx());
@@ -186,7 +191,12 @@ describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
       workspacePath: workspace,
       attachments: attachmentsFake({}),
       gateway: gatewayFake(root),
-      delivery: { send: (files, caption) => sent.push({ files, caption }) },
+      delivery: {
+        send: (files, caption) => {
+          sent.push({ files, caption });
+          return { delivered: files, failed: [] };
+        },
+      },
     });
     const speech = tools.find((tool) => tool.name === 'generate_speech')!;
     const result = await speech.execute({ text: '你好', file_name: 'greeting' }, ctx());
@@ -196,6 +206,95 @@ describe('生成产物的确定性投递（GeneratedMediaDelivery）', () => {
     ]);
     expect(result.content).toContain('已作为消息附件显示在用户的对话界面中');
     expect(result.content).not.toContain(workspace);
+  });
+});
+
+describe('投递失败时的工具结果（不得谎称已显示）', () => {
+  const failedOutcome = (file: string, reason: string) => ({
+    delivered: [],
+    failed: [{ path: file, reason }],
+  });
+
+  it('generate_image 多张：部分失败 → 已送达数量 + 失败项路径与原因，ok 仍为 true', async () => {
+    const workspace = path.join(root, 'ws-delivery-partial');
+    const tools = buildImageTools({
+      identity,
+      media: facade({
+        generateImage: async () => ({
+          images: [
+            { b64: Buffer.from('a').toString('base64') },
+            { b64: Buffer.from('b').toString('base64') },
+          ],
+        }),
+      }),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      delivery: {
+        send: (files) => ({
+          delivered: [files[0]!],
+          failed: [{ path: files[1]!, reason: '文件过大（31.0MB，附件上限 30.0MB）' }],
+        }),
+      },
+    });
+    const image = tools.find((tool) => tool.name === 'generate_image')!;
+    const result = await image.execute({ prompt: 'x', file_name: 'p', n: 2 }, ctx());
+    const second = path.join(workspace, '.generated', 'p-2.png');
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('其中 1 个文件已作为消息附件显示');
+    expect(result.content).toContain(second);
+    expect(result.content).toContain('文件过大');
+    // 已送达的那张不再列为待补发。
+    expect(result.content).not.toContain(path.join(workspace, '.generated', 'p-1.png'));
+    expect(result.content).toContain('send_message');
+  });
+
+  it('generate_speech：全部失败 → 回路径与原因，不说「已显示」', async () => {
+    const workspace = path.join(root, 'ws-delivery-speech-fail');
+    const tools = buildSpeechTools({
+      identity,
+      media: facade(),
+      workspacePath: workspace,
+      attachments: attachmentsFake({}),
+      gateway: gatewayFake(root),
+      delivery: {
+        send: (files) => failedOutcome(files[0]!, '没有读取权限（测试）'),
+      },
+    });
+    const speech = tools.find((tool) => tool.name === 'generate_speech')!;
+    const result = await speech.execute({ text: '你好', file_name: 'g' }, ctx());
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain(path.join(workspace, '.generated', 'g.mp3'));
+    expect(result.content).toContain('没有读取权限');
+    expect(result.content).toContain('投递到对话失败');
+    expect(result.content).not.toContain('无需再调 send_message');
+  });
+
+  it('generate_video：超过附件上限 → 回路径与原因', async () => {
+    const workspace = path.join(root, 'ws-delivery-video-fail');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(new Uint8Array([1, 2, 3]), { status: 200 })) as typeof fetch;
+    try {
+      const tools = buildSpeechTools({
+        identity,
+        media: facade(),
+        workspacePath: workspace,
+        attachments: attachmentsFake({}),
+        gateway: gatewayFake(root),
+        delivery: {
+          send: (files) => failedOutcome(files[0]!, '文件过大（40.0MB，附件上限 30.0MB）'),
+        },
+      });
+      const video = tools.find((tool) => tool.name === 'generate_video')!;
+      const result = await video.execute({ prompt: 'x', file_name: 'v' }, ctx());
+      expect(result.ok).toBe(true);
+      expect(result.content).toContain(path.join(workspace, '.generated', 'v.mp4'));
+      expect(result.content).toContain('文件过大');
+      expect(result.content).not.toContain('无需再调 send_message');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

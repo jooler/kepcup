@@ -40,6 +40,14 @@ interface MessageRow {
 
 export interface AppendMessageInput {
   conversationId: string;
+  /**
+   * Bot-generated attachments (already uploaded, unbound) to attach to the new
+   * message **in the same transaction** as the insert: either the message and
+   * its attachments both land, or neither does (no attachment-less shell
+   * message when binding fails). Each id must exist; otherwise the whole
+   * append rolls back with INVALID_INPUT.
+   */
+  attachmentIds?: readonly string[] | undefined;
   senderType: 'user' | 'bot' | 'system';
   senderBotId?: string | null;
   kind: MessageKind;
@@ -382,6 +390,14 @@ export class MessagesService {
           .prepare('update conversations set last_seq = ? where id = ?')
           .run(seq, input.conversationId);
       }
+      for (const attachmentId of input.attachmentIds ?? []) {
+        const bound = this.db
+          .prepare('update attachments set message_id = ? where id = ?')
+          .run(id, attachmentId);
+        if (bound.changes !== 1) {
+          throw new AppError('INVALID_INPUT', `Attachment ${attachmentId} does not exist`);
+        }
+      }
       // task_event text is indexed too; per-bot filtering of search results
       // joins messages.owner_bot_id at query time (D75 §2.4.3, W1-B).
       const ftsText =
@@ -418,6 +434,9 @@ export class MessagesService {
       };
     });
     run.immediate();
+    if ((input.attachmentIds?.length ?? 0) > 0) {
+      message!.attachments = this.attachmentsFor(id);
+    }
     return message!;
   }
 
@@ -789,7 +808,6 @@ export class MessagesService {
       id: r['id'] as string,
       conversationId: r['conversation_id'] as string,
       messageId: r['message_id'] as string | null,
-      draftId: r['draft_id'] as string | null,
       fileName: r['file_name'] as string,
       mime: r['mime'] as string,
       size: r['size'] as number,

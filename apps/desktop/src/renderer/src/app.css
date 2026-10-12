@@ -288,18 +288,14 @@ html.platform-mac main {
 /*
  * streamdown 行内 code（codespan）：长路径等无断行机会的 token 按 min-content
  * 溢出所在段落，会戳破气泡（p 自身宽度正常，溢出的是 code 里的长 token）。
- * 把 codespan 收成 inline-block 并限宽到所在块（max-width:100%），放不下时在
- * code 内部出横向滚动条，而不是让滚动条/溢出落在 p 上；overscroll-behavior
- * 截住触控板滚动链，滚到 code 末尾不再带动整页横移。含空格的短 codespan 仍
- * 按普通文本换行。注意 overflow 非 visible 会把 inline-block 的基线变成盒底
- * 边缘，这里显式用 middle 对齐，避免 code 相邻文字上下错位。
+ * 保持 inline（不要变 inline-block / 不加 overflow：原子盒放不下就整体跳到下一行、
+ * 盒内再换行，含空格的整条命令会在段落里留下大块空白）。含空格的 code 照常在
+ * 空格处换行；只有单个 token 比一整行还宽时才由 overflow-wrap:anywhere 在任意
+ * 字符处折行——anywhere 还会把可折行点计入 min-content，所以 flex/表格等收缩
+ * 容器里也不会被它撑宽。
  */
 [data-streamdown-codespan] {
-  display: inline-block;
-  max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 
 /*
