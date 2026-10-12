@@ -139,15 +139,15 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     id: 'collaboration',
     category: 'host',
     default: 'inject',
-    tools: ['list_bots', 'delegate_to_bot', 'cancel_delegation'],
-    butlerTools: [
-      'propose_bot',
-      'propose_group',
-      'propose_team',
-      'suggest_route',
+    // D88 P1：移交工具人人有（普通 Bot 只能交出自己的资产）。
+    tools: [
+      'list_bots',
+      'delegate_to_bot',
+      'cancel_delegation',
       'inspect_bot_assets',
       'propose_handover',
     ],
+    butlerTools: ['propose_bot', 'propose_group', 'propose_team', 'suggest_route'],
   }),
   pack({
     id: 'browser',

@@ -391,6 +391,59 @@ export class WatchService {
     return { ok: true, message: '已停止该监看' };
   }
 
+  /**
+   * D88 移交（docs/design/37 §3）：把监看交给另一个 Bot。私聊里的改到接手方的私聊，群里的
+   * 留在原群（接手方必须是成员——由移交适配器校验，这里再按 `#assertTarget` 兜底）。行就地
+   * 改归属（同一个 id），last_hash / last_quiet_hash / 提醒序号原样保留：接手方不会把旧变化
+   * 再提醒一次。换了对话时在接手方对话里补一张「已创建」卡（与行同一事务），排队中的
+   * `watch_alert` 作业一并改到接手方名下。可重入：已经在目标名下 = 直接返回。CAS：与进行中
+   * 的检查冲突时重读再改（检查结果随之作废，下一次检查用接手方的浏览器资料）。
+   */
+  transferTo(id: string, target: { botId: string; conversationId: string }): StoredWatch {
+    let current: StoredWatch | null = this.#getOrThrow(id);
+    if (current.botId === target.botId && current.conversationId === target.conversationId) {
+      return current;
+    }
+    this.#assertTarget(target.botId, target.conversationId);
+    if (this.store.countLive(target.botId) >= WATCH_MAX_PER_BOT && current.status !== 'stopped') {
+      throw new AppError('INVALID_INPUT', `接手方的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`);
+    }
+    for (let attempt = 0; attempt < 3 && current !== null; attempt += 1) {
+      const from: StoredWatch = current;
+      const moved = from.conversationId !== target.conversationId;
+      let updated: StoredWatch | null = null;
+      let card: Message | null = null;
+      this.#deps.db.transaction(() => {
+        updated = this.store.reassign(from.id, from.version, target);
+        if (updated === null) return;
+        this.#deps.db
+          .prepare(
+            `update jobs set bot_id = ?, conversation_id = ?
+             where type = 'watch_alert' and status = 'pending' and dedupe_key like ?`,
+          )
+          .run(target.botId, target.conversationId, `watch:${from.id}:%`);
+        if (moved) {
+          card = this.#deps.messages.append({
+            conversationId: target.conversationId,
+            senderType: 'system',
+            kind: 'card',
+            cardType: WATCH_CARD_TYPE,
+            cardWatch: { watchId: from.id, watchEvent: 'created' },
+          });
+        }
+      })();
+      const done = updated as StoredWatch | null;
+      if (done !== null) {
+        if (card !== null) this.#publishCard(card);
+        this.#publishWatch(done);
+        this.#reload();
+        return done;
+      }
+      current = this.store.get(id);
+    }
+    throw new AppError('INTERNAL', '监看状态刚刚变化，请重试');
+  }
+
   /** A user action wins over an in-flight check (CAS: the check's write then conflicts). */
   #userWrite(row: StoredWatch, patch: WatchPatch): Watch {
     // Retry on a concurrent check's write: re-read and re-apply the user's intent.
@@ -727,6 +780,11 @@ export class WatchService {
     const row = this.store.get(String(content.watchId ?? ''));
     if (row === null) return '（监看记录已清理）';
     const target = untrustedLine(`${row.source.url}（${describeCondition(row.condition)}）`);
+    // D88：私聊里的监看移交给了别的 Bot（行已改到对方私聊）——这张旧卡只说明去向。
+    if (row.conversationId !== message.conversationId) {
+      const owner = this.#deps.bots.get(row.botId);
+      return `[系统] 网页监看 ${row.id} 已移交给 ${owner?.profile.identity.name || owner?.name || row.botId}，由它继续检查：${target}`;
+    }
     switch (content.watchEvent) {
       case 'alert':
         return `[系统] 监看 ${row.id} 第 ${content.watchSeq ?? '?'} 次提醒（卡片，用户可见）：${target}`;

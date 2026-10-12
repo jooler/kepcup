@@ -1,4 +1,4 @@
-import type { Bot, HandoverAction, HandoverAssetType } from '@kepcup/shared';
+import type { Bot, HandoverAction, HandoverAssetType, HandoverMark } from '@kepcup/shared';
 
 /**
  * 资产清单层（D88，docs/design/37 §5.4）：每类资产一个适配器（盘点 / 校验 / 执行 /
@@ -22,6 +22,10 @@ export interface HandoverEntry {
   blocked?: string | undefined;
   /** label / detail 含外部或用户 / 模型写的文本：工具结果里包 `<untrusted>`。 */
   external: boolean;
+  /** 卡上的标记（P1：外部导入的技能、敏感记忆）。 */
+  marks?: HandoverMark[] | undefined;
+  /** 卡上默认勾选（缺省 true；敏感记忆为 false）。 */
+  defaultSelected?: boolean | undefined;
 }
 
 /** 盘点参数（记忆 / Wiki 的查询，P1 / P2 起使用）。 */
@@ -52,12 +56,22 @@ export interface HandoverItemResult {
 
 export interface HandoverAdapter {
   readonly type: HandoverAssetType;
-  /** §5.3 的执行阶段：2 = 配置类，3 = 知识类，4 = 职责类。移交动作的 A 侧撤除统一在阶段 5。 */
+  /** §5.3 的执行阶段：2 = 配置类，3 = 知识类（Skill、记忆），4 = 职责类（邮箱、定时任务、监看）。移交动作的 A 侧撤除统一在阶段 5。 */
   readonly stage: number;
   /** `key` 是否属于本适配器（按前缀）。 */
   owns(key: string): boolean;
-  /** 盘点源 Bot 名下的这类资产。 */
+  /**
+   * 盘点源 Bot 名下的这类资产。按条复制的资产（记忆）只在给了查询时列条目；没有查询时
+   * 返回空，统计走 `summary`。
+   */
   inventory(botId: string, query?: InventoryQuery): HandoverEntry[];
+  /** 盘点结果里这类资产的一行统计（如记忆的数量与按 kind 分布）；null = 不出。 */
+  summary?(botId: string): string | null;
+  /**
+   * 存在、但永远不能移交的 key 的拒绝原因（如 `private_to_bot` 记忆）：提议里出现即退回并
+   * 说明原因，而不是当作编造的 key。null = 不是这种情况。
+   */
+  refusal?(fromBotId: string, key: string): string | null;
   /**
    * 盘点之外仍合法的 key（如 `model:<ref>`：可用模型列表里的任何 ref）。返回条目 =
    * 合法；null = 编造的 key。缺省只认盘点里的。

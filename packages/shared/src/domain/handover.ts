@@ -4,13 +4,17 @@ import { butlerProposedBotSchema } from './types.js';
 /**
  * Bot 资产移交（D88，docs/design/37-bot-asset-handover.md）的契约。
  *
- * 发起方（P0 只有管家）用 `inspect_bot_assets` 盘点、`propose_handover` 提交一张
+ * 发起方（管家可以以任何 Bot 为来源；普通 Bot 只能交出自己的，P1）用 `inspect_bot_assets`
+ * 盘点、`propose_handover` 提交一张
  * `bot_handover` 审批卡；卡片渲染所需的展示字段在提交时由 core 生成并快照进 payload
  * （渲染端不再查询）。用户逐项勾选后确认（`handoverSelection`），core 按清单确定性执行，
  * 进度经 `handover.updated` 推送。
  */
 
-/** 资产类型（适配器的 `type`）。P0：model / app / mcp / mail / schedule；其余为后续期预留。 */
+/**
+ * 资产类型（适配器的 `type`）。P0：model / app / mcp / mail / schedule；P1：watch / skill /
+ * memory；wiki / widget 为 P2 预留。
+ */
 export const handoverAssetTypeSchema = z.enum([
   'model',
   'app',
@@ -33,6 +37,13 @@ export type HandoverAction = z.infer<typeof handoverActionSchema>;
 export const HANDOVER_RESP_TO_KEY = 'resp:to';
 export const HANDOVER_RESP_FROM_KEY = 'resp:from';
 
+/**
+ * 条目标记（P1）：`external_import` = 外部导入的技能（卡上标「外部导入」：确认移交卡即
+ * 授权，不再走 skill_import 审批）；`sensitive` = 敏感记忆（标「敏感」，默认不勾）。
+ */
+export const handoverMarkSchema = z.enum(['external_import', 'sensitive']);
+export type HandoverMark = z.infer<typeof handoverMarkSchema>;
+
 /** 卡片上的一行资产（core 生成的展示快照）。 */
 export const handoverCardItemSchema = z.object({
   key: z.string(),
@@ -46,6 +57,10 @@ export const handoverCardItemSchema = z.object({
   warnings: z.array(z.string()).default([]),
   /** 不可执行的原因：卡上置灰、不能勾选、不会执行。缺省 = 可勾选。 */
   blocked: z.string().optional(),
+  /** 标记（外部导入 / 敏感）。 */
+  marks: z.array(handoverMarkSchema).default([]),
+  /** 卡上默认是否勾选（敏感记忆默认不勾）；不影响可勾选性。 */
+  defaultSelected: z.boolean().default(true),
 });
 export type HandoverCardItem = z.infer<typeof handoverCardItemSchema>;
 
@@ -100,6 +115,17 @@ export function selectableHandoverKeys(payload: BotHandoverPayload): string[] {
   if (payload.responsibilities?.to !== undefined) keys.push(HANDOVER_RESP_TO_KEY);
   if (payload.responsibilities?.from !== undefined) keys.push(HANDOVER_RESP_FROM_KEY);
   return keys;
+}
+
+/**
+ * 卡上默认勾选的 key：可勾选的里去掉 `defaultSelected: false` 的（敏感记忆）。卡片的
+ * 初始勾选与「决定里没带 handoverSelection」时 core 的缺省都用它。
+ */
+export function defaultHandoverKeys(payload: BotHandoverPayload): string[] {
+  const optOut = new Set(
+    payload.items.filter((item) => !item.defaultSelected).map((item) => item.key),
+  );
+  return selectableHandoverKeys(payload).filter((key) => !optOut.has(key));
 }
 
 export const handoverStatusSchema = z.enum([
