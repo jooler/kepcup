@@ -41,6 +41,7 @@
 | 摘要 / 反思 / 记忆整理 | `summary` / `reflection` / `consolidation`（全局轻量 → 全局主） | `routeFor` |
 | 画像整理 | `profile_curation`（全局主） | `routeFor` |
 | Wiki 维护 / 技能生成 | `wiki_maintenance` / `skill_authoring`（Bot 主 → 全局主） | `routeFor` |
+| 组件审查（REVIEW 阶段 run，P3c） | `widget_review`（设置 `widgetReviewModel` → Bot 主 → 全局主；解析不到退回制作的路由） | `routeFor`（`widgets/craft/service.ts`） |
 | 组件制作（SPEC / BUILD / FIX 阶段 run） | `widget_authoring`（Bot 主 → 全局主；无内置模型时按「后台任务」设置走外部 Agent，都没有 → `widget_craft` 以 `WIDGET_CRAFT_UNAVAILABLE` 失败） | `routeFor`（`widgets/craft/service.ts`） |
 
 **设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（对话轮、任务、Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录实际使用的模型）。
@@ -468,7 +469,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 | 画像整理 | 默认主模型 | 单次结构化调用 | — | 2 | P07 |
 | Wiki 维护 | 主模型 | 完整 loop | 文件工具，限定在该 Bot 的 wiki 目录（读写）与 `raw/`（只读）；`delete` 工具限删 `pages/` 下的页面 | 2 | P09 |
 | 技能生成 | 主模型 | 完整 loop | 文件工具与 bash，限定在技能草稿目录 | 2 | P08 |
-| 组件制作 | Bot 主模型（`widget_authoring`） | 宿主状态机：每阶段一个完整 loop（SPEC 6 / BUILD 30 / FIX 15 轮） | read / ls / write / edit / `widget_check` / `widget_template` / `stage_done`，限定在本次制作的草稿目录 | 嵌套在发起的任务 run 下（不经调度器） | D87 |
+| 组件制作 | Bot 主模型（`widget_authoring`）；审查用 `widget_review`（设置「组件审查模型」，缺省跟随 Bot 主模型） | 宿主状态机：每阶段一个完整 loop（SPEC 6 / BUILD 30 / FIX 15 / REVIEW 10 轮） | read / ls / write / edit / `widget_check` / `widget_template` / `stage_done`（REVIEW 只有 read / ls / `submit_review`），限定在本次制作的草稿目录 | 嵌套在发起的任务 run 下（不经调度器） | D87 |
 
 模型解析顺序：Bot Profile 中的设置 → 设置页默认值。轻量模型未配置时使用主模型。没有内置主模型、只配了外部智能体的 Bot，对话轮按设计 30 §8.4 第 2 级降级：不调模型、宿主确定性路由（`#routeWithoutModel`，DEV-011）。
 
@@ -504,6 +505,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 - **草稿目录** `bots/{botId}/widget-drafts/{craftId}/`（`craft/draft.ts`）：`manifest.json`（宿主独占，原子写）、`spec.md`、`acceptance.json`、`index.html`、`queries.json`、`fixtures.json`、`reports/check-{n}.json`、`snapshots/round-{n}/`。交付即删；未交付保留 `WIDGET_CRAFT_DRAFT_TTL_DAYS`（7）天供 `resume_craft_id`，core 启动时与新建制作时清理过期草稿。
 - **阶段工具**（`craft/tools.ts`）：read / ls 全阶段；write 按阶段白名单（SPEC 只写 spec.md / acceptance.json；BUILD / FIX 只写 index.html / queries.json / fixtures.json），FIX 的 write 拒绝覆盖已存在的文件（逼出 edit 补丁）；manifest 恒只读；`widget_check` 自查（同一检查器，不留回执）；`widget_template`（BUILD，P3a 只有 `blank`）；`stage_done` 终止本阶段。没有 bash、网络与任何宿主副作用工具。
 - **GATE** 由宿主执行 `runWidgetCheck`（`widgets/check/`：S0 静态 + S1 JS + S2 预览——`widgets/preview.ts` 按视口〔360 亮 / 720 暗〕注入垫片与探针〔`preview-probe.ts`，单行，行号与原文一致〕，经端口 B 调主进程 `widgetPreview.run`〔`apps/desktop/src/main/widget-preview.ts`：隐藏窗口 + 内存分区 `widget-preview` + `file://` 外壳页 + 与正式卡片相同的沙箱 iframe 与 CSP，模拟能力桥以 `fixtures.json` 为数据〕；未绑定时 skipped）：先快照再检查，报告与回执 `{round, htmlSha256, queriesSha256, verdict, score, previewed}` 记入 manifest。有错误（含必需验收点失败）→ FIX（只给 error 清单）；只剩警告最多修一轮。分数比最佳快照差 → 回滚到最佳快照并在 FIX 输入写明新增问题；同一组错误签名连续两轮 → 收缩模式。修复轮数 `WIDGET_CRAFT_FIX_ROUNDS_MAX`（4）、时限 `WIDGET_CRAFT_TIMEOUT_MS`（15 分钟）、token 预算 `WIDGET_CRAFT_TOKEN_BUDGET`（40 万，轮询 `tokensSoFar()`）任一用尽即按最佳快照判定。
+- **REVIEW**（P3c）：GATE 合格后的独立审查 run（`craft/prompts.ts` 的 `reviewSystemPrompt`，工具只有 read / ls / `submit_review`，路由 `widget_review` = 设置「组件审查模型」或 Bot 主模型）；同一份文件只审一次，至多 `WIDGET_CRAFT_REVIEW_ROUNDS_MAX`（2）轮，P0 / P1 进 FIX，P2 只记 `reports/review-{n}.json`；用尽仍有 P0 / P1 → 交付为 `issues` 并列入已知问题；没交结论 → skipped。
 - **DELIVER**：可交付回执里分数最低的一条（都阻断 → 不交付，回执给原因 ≤5 条 + craftId，草稿保留）；复算当前文件摘要，必须与一条非阻断回执一致才调 `WidgetService.create` / `update`（带 `check{status, summary}`），状态 = 未运行 S2 → `unverified`，否则 `passed` / `issues`。
 
 ## 结构化输出

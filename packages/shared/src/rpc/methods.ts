@@ -269,6 +269,8 @@ export const settingsUpdateInputSchema = z.object({
   vendorProviders: z.array(vendorProviderSchema).optional(),
   defaultMainModel: z.string().optional(),
   defaultLightModel: z.string().optional(),
+  /** D87 P3c 组件审查模型；'' = 跟随 Bot 主模型。 */
+  widgetReviewModel: z.string().optional(),
   /** 能力模型配置（整体覆盖 patch；UI 传完整 capabilityModels）。 */
   capabilityModels: capabilityModelsSchema.optional(),
   providerConcurrency: providerConcurrencySchema.optional(),

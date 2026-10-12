@@ -549,6 +549,8 @@ export interface CoreServices {
   appUi: McpAppUiService | null;
   /** D81 Bot 自制交互组件（制作 loop 交付落库发卡 + 沙箱资源登记，D87）；null with `apps`. */
   widgets: WidgetService | null;
+  /** D87 组件制作 loop（widget_craft 的执行体；基准评测直接调用）；null with `widgets`. */
+  widgetCraft: WidgetCraftService | null;
   /** D73 P1 connection → tool exposure facade (catalog connections as synthesized servers). */
   connectedApps: ConnectedApps | null;
   /** D73 P1 connector catalog (gate-filtered). */
@@ -790,6 +792,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     taint: null,
     appUi: null,
     widgets: null,
+    widgetCraft: null,
     connectedApps: null,
     connectorCatalog: null,
     localConnectors: null,
@@ -1811,6 +1814,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       clock,
       publishRunStatus: (run) => events.emit('run.status', { run }),
+      // 审查模型可用性：厂商在、有 key、模型登记了（换了厂商 / 删了 key 时退回制作的模型）。
+      modelUsable: (modelRef) => {
+        const slash = modelRef.indexOf('/');
+        if (slash <= 0) return false;
+        const providerId = modelRef.slice(0, slash);
+        const modelId = modelRef.slice(slash + 1);
+        try {
+          const provider = providers.list().find((info) => info.id === providerId);
+          return provider !== undefined && provider.hasKey && provider.models.some((m) => m.id === modelId);
+        } catch {
+          return false;
+        }
+      },
       preview: (opts) =>
         createWidgetPreviewRunner({ rpc: services.widgetPreviewRpc, screenshots: opts.screenshots }),
     });
@@ -2357,6 +2373,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.taint = taint;
     services.appUi = appUi;
     services.widgets = widgetService;
+    services.widgetCraft = widgetCraft;
     services.connectedApps = connectedApps;
     services.connectorCatalog = connectorCatalog;
     services.localConnectors = localConnectors;

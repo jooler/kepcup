@@ -436,11 +436,12 @@ S0 里涉及代码的规则（storage / network / modals / popup / top-nav / for
 - **结论 schema**（`submit_review` 参数）：`{ verdict: 'pass' | 'fix', findings: [{ severity: 'P0' | 'P1' | 'P2', line?: number, problem, scenario, fixHint }] }`。P0 = 主要功能不可用或数据会丢失 / 写错；P1 = 一条明确的使用路径出错；P2 = 体验问题。每条必须给出具体失败场景（输入 / 操作 → 错误结果），没有场景的条目宿主丢弃。
 - 只有 P0/P1 进入 FIX；P2 记入报告，不修。审查 run 没有调用 `submit_review` 就结束（或超出 `maxTurns`）时，这一轮记为 skipped，不阻断交付，回执里如实注明「审查未完成」。
 - 只在 GATE 合格后才审查，不把审查花在跑不起来的代码上。
+- **实施口径**（P3c）：同一份文件（按 HTML + 查询摘要）只审一次；第一轮的 P0 / P1 进 FIX（输入就是审查意见，带场景与改法），修完回到 GATE 全量回归，合格后第二轮审查只核对上一轮的问题 + 新 P0。审查轮数用尽（第二轮）仍有 P0 / P1 不再修：照常交付，状态 `issues`，问题列入卡片「已知问题」——P0 不算阻断项（机器检查与必需验收点都已通过，审查意见可能误判），但必须如实告诉用户。审查 run 失败、没交结论或超出轮数都记 skipped（不停制作、不阻断交付），回执写「审查未完成」，交付状态为 `issues`、已知问题列「未完成独立审查」——`passed` 要求交付的那份文件审查过且没有剩余 P0 / P1。审查意见计入「最好的版本」的分数（P0 ×50、P1 ×10）：修好审查问题却多了一个警告的版本不会被回滚到审查出问题的版本；回滚到的版本若还有没修的审查问题，FIX 输入里照样带上。审查者的 `problem` 是给用户看的一句话现象（不引用代码），上卡与回执时加「审查：」前缀。审查用 `widget_review` 路由（设置「组件审查模型」；Bot 固定了自己的主模型时尊重它，不把源码发给另一家）；解析不到、或解析到的内置模型眼下不可用（厂商 / key / 模型已不在）就退回制作的路由并记日志。`loop_type` 仍是 `widget_authoring`。
 
 ### 11.11 模型路由
 
 - `LlmPurpose` 增 `widget_authoring`（SPEC / BUILD / FIX）与 `widget_review`（REVIEW），经 `llm-router` 的 `routeFor` 取路由。缺省都解析为该 Bot 的主模型（与任务一致）；无内置模型时按「后台任务」设置决定是否改走外部 Agent，两者都没有就让 `widget_craft` 直接失败并说明原因（同 `skill_authoring` 的处理）。
-- P3c 增设置项「组件审查模型」（缺省 = 跟随 Bot 主模型）：允许给审查单独指定一个更强或不同厂商的模型——评估者与生成者用不同模型，能减少同源盲区。
+- P3c 增设置项「组件审查模型」（`settings.widgetReviewModel`，设置页「模型」的默认模型区里的下拉——不放在只在实验开关下才出现的「后台任务」里；选项 = 已配置的对话模型，选中即保存、失败回滚；缺省 = 跟随 Bot 主模型）：允许给审查单独指定一个更强或不同厂商的模型——评估者与生成者用不同模型，能减少同源盲区。
 - 每个阶段 run 落一行 `runs`（`loop_type='widget_authoring'`，`parent_run_id` = 发起的任务 run），步骤照常落 `run_steps`，用量照常记入 `usage_ledger`，不产生任何对话消息（同 subagent 的落库方式）。`loopTypeSchema` 加值即可：runs.db 的 `loop_type` 列没有 CHECK 约束。
 
 ### 11.12 交付与卡片上的自检状态

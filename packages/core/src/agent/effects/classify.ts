@@ -160,6 +160,7 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   widget_check: 'none',
   widget_template: 'local',
   stage_done: 'none',
+  submit_review: 'none',
 
   // --- 技能、引导、管家 ---
   install_skill: 'local',

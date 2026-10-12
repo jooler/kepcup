@@ -65,7 +65,7 @@ const ACCEPTANCE = JSON.stringify([
   { id: 'nobad', desc: '无坏文本', must: true, expect: [{ noBadText: true }] },
 ]);
 
-type Stage = 'SPEC' | 'BUILD' | 'FIX';
+type Stage = 'SPEC' | 'BUILD' | 'FIX' | 'REVIEW';
 
 /** 一个阶段 run 的脚本：拿到阶段工具后要做的事。 */
 type StageScript = (tools: Tools, spec: RunSpec) => Promise<void>;
@@ -107,7 +107,7 @@ class CraftEngine {
 
   startRun(spec: RunSpec): RunHandle {
     this.specs.push(spec);
-    const stage = (/<stage>(SPEC|BUILD|FIX)<\/stage>/.exec(spec.messages[0]!.content)?.[1] ??
+    const stage = (/<stage>(SPEC|BUILD|FIX|REVIEW)<\/stage>/.exec(spec.messages[0]!.content)?.[1] ??
       'SPEC') as Stage;
     const index = this.scripts.findIndex((s) => s.stage === stage);
     const script = index >= 0 ? this.scripts.splice(index, 1)[0]! : null;
@@ -173,7 +173,10 @@ function harness(
     preview?: WidgetPreviewRunner | null;
     timeoutMs?: number;
     tokenBudget?: number;
+    checkTimeoutMs?: number;
     deliverFails?: string;
+    reviewModel?: string;
+    modelUsable?: (ref: string) => boolean;
   } = {},
 ): Harness {
   const runsDb = new Database(':memory:') as SqliteDatabase;
@@ -234,7 +237,11 @@ function harness(
     engine: engine as never,
     settings: {
       get: () =>
-        ({ defaultMainModel: options.model ?? 'mock/main', defaultLightModel: '' }) as never,
+        ({
+          defaultMainModel: options.model ?? 'mock/main',
+          defaultLightModel: '',
+          widgetReviewModel: options.reviewModel ?? '',
+        }) as never,
     },
     bots: { get: () => null },
     runs,
@@ -248,6 +255,7 @@ function harness(
     ...(options.preview !== undefined ? { preview: () => options.preview } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.checkTimeoutMs !== undefined ? { checkTimeoutMs: options.checkTimeoutMs } : {}),
+    ...(options.modelUsable !== undefined ? { modelUsable: options.modelUsable } : {}),
     ...(options.tokenBudget !== undefined
       ? { tokenBudget: options.tokenBudget, tokenPollMs: 5 }
       : {}),
@@ -343,7 +351,8 @@ describe('widget craft loop (D87)', () => {
     );
 
     const runs = stageRuns(h);
-    expect(runs).toHaveLength(2);
+    // SPEC、BUILD + 审查（脚本里没有审查结论 → 记 skipped，不阻断交付）。
+    expect(runs).toHaveLength(3);
     for (const run of runs) {
       expect(run.parentRunId).toBe('run_task');
       expect(run.status).toBe('completed');
@@ -351,7 +360,7 @@ describe('widget craft loop (D87)', () => {
     const usage = h.mainDb
       .prepare("select count(*) as n from usage_ledger where loop_type = 'widget_authoring'")
       .get() as { n: number };
-    expect(usage.n).toBe(2);
+    expect(usage.n).toBe(3);
     // SPEC 的输入带 brief 与用户验收要求；任务面拿不到这些阶段的任何内容（只有回执）。
     expect(h.engine.specs[0]!.messages[0]!.content).toContain('刷新后计数还在');
     expect(progress.some((p) => p.includes('已交付 v1'))).toBe(true);
@@ -375,7 +384,7 @@ describe('widget craft loop (D87)', () => {
     expect(
       (h.deliveries[0]!.input['check'] as { summary: { gateRounds: number } }).summary.gateRounds,
     ).toBe(2);
-    expect(stageRuns(h)).toHaveLength(3);
+    expect(stageRuns(h)).toHaveLength(4);
   });
 
   it('FIX 引入回归 → 回滚到最佳快照，下一轮输入写明回归', async () => {
@@ -432,7 +441,10 @@ describe('widget craft loop (D87)', () => {
     );
     expect(resumed.ok).toBe(true);
     expect(h.deliveries[0]!.input['runId']).toBe('run_task2');
-    expect(h.engine.specs.at(-1)!.messages[0]!.content).toContain('<resume_note>');
+    const lastFix = h.engine.specs
+      .filter((spec) => spec.messages[0]!.content.includes('<stage>FIX</stage>'))
+      .at(-1)!;
+    expect(lastFix.messages[0]!.content).toContain('<resume_note>');
     expect(
       h.engine.specs.filter((s) => s.messages[0]!.content.includes('<stage>SPEC</stage>')),
     ).toHaveLength(1);
@@ -715,17 +727,218 @@ describe('S2 接入（D87 P3b）', () => {
       screenshots: () => [{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }],
     };
     const h = harness({ preview });
-    h.engine.add('SPEC', specScript).add('BUILD', async (tools, spec) => {
-      await tools.call('write', { path: 'index.html', content: GOOD });
-      selfCheck = await tools.call('widget_check', {});
-      await tools.call('stage_done', { summary: '已写' });
-      void spec;
-    });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', async (tools) => {
+        await tools.call('write', { path: 'index.html', content: GOOD });
+        selfCheck = await tools.call('widget_check', {});
+        await tools.call('stage_done', { summary: '已写' });
+      })
+      .add('REVIEW', async (tools) => {
+        await tools.call('submit_review', { verdict: 'pass', findings: [] });
+      });
     const result = await craft(h, { brief: '计数器', title: '计数器' });
     expect(result.ok).toBe(true);
     expect(result.content).toContain('已通过自检');
     expect((h.deliveries[0]!.input['check'] as { status: string }).status).toBe('passed');
     expect(selfCheck!.images).toEqual([{ mimeType: 'image/png', base64: 'iVBORw0KGgo=' }]);
+  });
+});
+
+describe('独立审查 REVIEW（D87 P3c）', () => {
+  const passing = {
+    run: async () => ({ issues: [], acceptance: [], outline: 'h3 标题' }),
+  };
+  const submit =
+    (result: unknown): StageScript =>
+    async (tools) => {
+      await tools.call('submit_review', result);
+    };
+  const p1 = {
+    severity: 'P1',
+    line: 44,
+    problem: '计数没有上限检查',
+    scenario: '连点 1000 次 → 数字溢出显示科学计数法',
+    fixHint: '限制最大值',
+  };
+
+  it('审查通过 → passed，回执写明审查轮数；审查 run 只有只读工具与 submit_review', async () => {
+    const h = harness({ preview: passing });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', async (tools, spec) => {
+        expect(spec.tools.map((t) => t.name).sort()).toEqual(['ls', 'read', 'submit_review']);
+        expect(spec.messages[0]!.content).toContain('<machine_check>');
+        await submit({ verdict: 'pass', findings: [] })(tools, spec);
+      });
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('审查 1 轮');
+    expect(result.content).not.toContain('审查未完成');
+    const check = h.deliveries[0]!.input['check'] as {
+      status: string;
+      summary: { reviewRounds: number; reviewSkipped: boolean };
+    };
+    expect(check.status).toBe('passed');
+    expect(check.summary).toMatchObject({ reviewRounds: 1, reviewSkipped: false });
+  });
+
+  it('审查提出 P1 → FIX（输入是审查意见）→ GATE → 第二轮审查只核对上一轮 → 通过', async () => {
+    const h = harness({ preview: passing });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add(
+        'REVIEW',
+        submit({ verdict: 'fix', findings: [p1, { ...p1, severity: 'P2', problem: '按钮太小' }] }),
+      )
+      .add('FIX', async (tools, spec) => {
+        const input = spec.messages[0]!.content;
+        expect(input).toContain('独立审查提出 1 个要修的问题');
+        expect(input).toContain('计数没有上限检查');
+        expect(input).not.toContain('按钮太小');
+        await editScript('state.count += 1;', 'state.count = Math.min(state.count + 1, 999);')(
+          tools,
+          spec,
+        );
+      })
+      .add('REVIEW', async (tools, spec) => {
+        expect(spec.messages[0]!.content).toContain('<previous_findings>');
+        await submit({ verdict: 'pass', findings: [] })(tools, spec);
+      });
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect((h.deliveries[0]!.input['check'] as { status: string }).status).toBe('passed');
+    expect(String(h.deliveries[0]!.input['html'])).toContain('Math.min');
+  });
+
+  it('两轮审查后仍有 P1 → 照常交付但状态 issues，问题列入已知问题', async () => {
+    const h = harness({ preview: passing });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', submit({ verdict: 'fix', findings: [p1] }))
+      .add('FIX', editScript('state.count += 1;', 'state.count += 1; /* 试图修 */'))
+      .add('REVIEW', submit({ verdict: 'fix', findings: [p1] }));
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('已知问题');
+    const check = h.deliveries[0]!.input['check'] as {
+      status: string;
+      summary: { knownIssues: string[] };
+    };
+    expect(check.status).toBe('issues');
+    expect(check.summary.knownIssues[0]).toBe('审查：计数没有上限检查');
+    expect(
+      h.engine.specs.filter((s) => s.messages[0]!.content.includes('<stage>FIX</stage>')),
+    ).toHaveLength(1);
+  });
+
+  it('审查没交结论 → 记 skipped，不阻断交付，回执写明「审查未完成」', async () => {
+    const h = harness({ preview: passing });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', async () => undefined);
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('审查未完成');
+    const check = h.deliveries[0]!.input['check'] as {
+      status: string;
+      summary: { reviewSkipped: boolean; knownIssues: string[] };
+    };
+    // 没审过的文件不是「已通过自检」（审查修复 #1）。
+    expect(check.status).toBe('issues');
+    expect(check.summary.reviewSkipped).toBe(true);
+    expect(check.summary.knownIssues).toContain('未完成独立审查');
+  });
+
+  it('审查修好了 P1 但多了一个警告：不回滚到被审查出问题的版本（审查意见计入最佳版本的分数）', async () => {
+    const h = harness({ preview: passing });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', submit({ verdict: 'fix', findings: [p1] }))
+      // 修好了 P1，顺带多了一个警告（alert）。
+      .add(
+        'FIX',
+        editScript(
+          'state.count += 1;',
+          "state.count = Math.min(state.count + 1, 999); alert('满了');",
+        ),
+      )
+      // 只剩警告的那一轮修复：什么都没改。
+      .add('FIX', async (tools, spec) => {
+        expect(spec.messages[0]!.content).not.toContain('<rollback>');
+        await tools.call('stage_done', { summary: '没改' });
+      })
+      .add('REVIEW', submit({ verdict: 'pass', findings: [] }));
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(result.ok).toBe(true);
+    expect(String(h.deliveries[0]!.input['html'])).toContain('Math.min');
+    const check = h.deliveries[0]!.input['check'] as { summary: { knownIssues: string[] } };
+    expect(check.summary.knownIssues.some((issue) => issue.includes('计数没有上限检查'))).toBe(
+      false,
+    );
+  });
+
+  it('审查模型不可用（换了厂商 / 删了 key）→ 退回制作的模型审查', async () => {
+    const h = harness({
+      preview: passing,
+      reviewModel: 'gone/reviewer',
+      modelUsable: (ref) => ref !== 'gone/reviewer',
+    });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', submit({ verdict: 'pass', findings: [] }));
+    await craft(h, { brief: '计数器', title: '计数器' });
+    const review = h.engine.specs.find((spec) =>
+      spec.messages[0]!.content.includes('<stage>REVIEW</stage>'),
+    )!;
+    expect(review.model).toBe('mock/main');
+  });
+
+  it('submit_review：格式不对要求重交；没有失败场景的条目丢弃', async () => {
+    const h = harness({ preview: passing });
+    const replies: ToolResult[] = [];
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', async (tools) => {
+        replies.push(await tools.call('submit_review', { verdict: 'maybe', findings: [] }));
+        replies.push(
+          await tools.call('submit_review', {
+            verdict: 'fix',
+            findings: [{ severity: 'P1', problem: '感觉不好', scenario: '  ' }],
+          }),
+        );
+      });
+    const result = await craft(h, { brief: '计数器', title: '计数器' });
+    expect(replies[0]).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
+    expect(replies[1]).toMatchObject({ ok: true, terminate: true });
+    expect(replies[1]!.content).toContain('1 条没有失败场景已丢弃');
+    // 唯一的条目被丢弃 → 没有要修的问题 → 通过。
+    expect(result.ok).toBe(true);
+    expect((h.deliveries[0]!.input['check'] as { status: string }).status).toBe('passed');
+  });
+
+  it('设置了「组件审查模型」→ 审查 run 用它，制作阶段仍用 Bot 主模型', async () => {
+    const h = harness({ preview: passing, reviewModel: 'mock/reviewer' });
+    h.engine
+      .add('SPEC', specScript)
+      .add('BUILD', buildScript(GOOD))
+      .add('REVIEW', submit({ verdict: 'pass', findings: [] }));
+    await craft(h, { brief: '计数器', title: '计数器' });
+    const models = Object.fromEntries(
+      h.engine.specs.map((spec) => [
+        /<stage>(\w+)<\/stage>/.exec(spec.messages[0]!.content)![1],
+        spec.model,
+      ]),
+    );
+    expect(models).toEqual({ SPEC: 'mock/main', BUILD: 'mock/main', REVIEW: 'mock/reviewer' });
+    expect(stageRuns(h).find((r) => r.model === 'mock/reviewer')).toBeDefined();
   });
 });
 

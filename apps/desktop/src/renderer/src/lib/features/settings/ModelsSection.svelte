@@ -208,6 +208,21 @@
     });
     await settingsStore.removeKey(providerId);
   }
+
+  // D87 P3c 组件审查模型：选中即保存；失败时下拉回到已存的值（不留一个没生效的选择）。
+  const reviewModel = $derived(settingsStore.settings?.widgetReviewModel ?? '');
+  let reviewSaving = $state(false);
+  async function saveReviewModel(select: HTMLSelectElement): Promise<void> {
+    reviewSaving = true;
+    try {
+      await settingsStore.update({ widgetReviewModel: select.value });
+    } catch (error) {
+      select.value = reviewModel;
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      reviewSaving = false;
+    }
+  }
 </script>
 
 <div class="space-y-6" data-testid="settings-models">
@@ -224,6 +239,31 @@
         <span class="text-sm" id="default-light-label">{t('settings.defaultLightModel')}</span>
         <div class="w-64 max-w-[60%]">
           <ModelSelectField bind:value={lightModel} testid="default-light-model" labelledBy="default-light-label" />
+        </div>
+      </div>
+      <!-- D87 P3c「组件审查模型」：选中即保存（失败回滚）；缺省跟随 Bot 主模型。 -->
+      <div class="flex items-center justify-between gap-4 py-3.5">
+        <div class="min-w-0">
+          <span class="text-sm" id="widget-review-model-label">{t('settings.widgetReviewModel')}</span>
+          <p class="text-xs text-muted-foreground">{t('settings.widgetReviewModelHint')}</p>
+        </div>
+        <div class="w-64 max-w-[60%] shrink-0">
+          <select
+            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+            aria-labelledby="widget-review-model-label"
+            value={reviewModel}
+            disabled={reviewSaving}
+            onchange={(event) => void saveReviewModel(event.currentTarget)}
+            data-testid="widget-review-model-select"
+          >
+            <option value="">{t('settings.widgetReviewModelFollow')}</option>
+            {#each settingsStore.availableModelOptions as option (option.ref)}
+              <option value={option.ref}>{option.label}</option>
+            {/each}
+            {#if reviewModel !== '' && !settingsStore.availableModelOptions.some((option) => option.ref === reviewModel)}
+              <option value={reviewModel}>{reviewModel}{t('settings.widgetReviewModelUnavailable')}</option>
+            {/if}
+          </select>
         </div>
       </div>
     </div>
