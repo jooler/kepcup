@@ -77,12 +77,26 @@
   /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「加载」。 */
   const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
 
+  function currentTheme(): 'light' | 'dark' {
+    return mode.current === 'dark' ? 'dark' : 'light';
+  }
+
+  // D87 P3b：应用切换明暗时推给已挂载的组件（垫片更新 data-theme 并派发 kepcup:theme）。
+  $effect(() => {
+    const theme = currentTheme();
+    bridge?.setTheme(theme);
+  });
+
   async function start(): Promise<void> {
     const gen = ++generation;
     cardState = 'loading';
     errorCode = undefined;
     try {
-      const out = widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId }));
+      // 垫片按 open 时的主题烘焙进 HTML：桥从同一个主题起步（期间切换会在 load 时重推）。
+      const openedTheme = currentTheme();
+      const out = widgetsUiOpenOutputSchema.parse(
+        await core.call('widgets.ui.open', { messageId, theme: openedTheme }),
+      );
       if (gen !== generation) {
         void core.call('widgets.ui.close', { resourceId: out.resourceId }).catch(() => undefined);
         return;
@@ -92,7 +106,7 @@
       lease = new WidgetResourceLease({
         resourceId: out.resourceId,
         reopen: async () =>
-          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId })).resourceId,
+          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId, theme: currentTheme() })).resourceId,
         discard: (resourceId) => {
           void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
         },
@@ -111,7 +125,7 @@
       bridge = WidgetBridgeHost.connect({
         frameWindow,
         resourceId: out.resourceId,
-        theme: mode.current === 'dark' ? 'dark' : 'light',
+        theme: openedTheme,
         storage: (input) => callStorage(input),
         query: (input) => callQuery(input),
         openLink: (url) =>
@@ -132,6 +146,14 @@
         bridge = null;
         return;
       }
+      const connected = bridge;
+      frame.addEventListener(
+        'load',
+        () => {
+          connected.setTheme(currentTheme(), { force: true });
+        },
+        { once: true },
+      );
       frame.src = out.url;
       cardState = 'ready';
     } catch (error) {

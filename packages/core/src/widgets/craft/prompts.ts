@@ -41,6 +41,12 @@ export const WIDGET_PLATFORM_FACTS = [
   `- kepcup.query(name, params) → { rows, truncated }：执行 queries.json 里声明的命名只读查询模板（单条 SELECT 或 WITH…SELECT，:name 占位参数；至多 ${BOT_WIDGET_QUERIES_MAX} 条）。${WIDGET_QUERY_SCOPE_GUIDE}rows 是「列名→值」对象数组，最多 ${BOT_WIDGET_QUERY_ROWS_MAX} 行，超出时 truncated=true；单次执行超过 ${BOT_WIDGET_QUERY_TIMEOUT_MS / 1000} 秒会被中止。查询 SQL 会展示给用户审查。`,
   '- kepcup.openLink(url)：打开 https 网页（会先请用户确认）。页面里的外链一律用它，不要用 <a href> 或 window.open。',
   `- kepcup.theme() → 'light' | 'dark'；kepcup.setHeight(像素)：让卡片高度贴合内容（夹取 ${BOT_WIDGET_HEIGHT_MIN}–${BOT_WIDGET_HEIGHT_MAX}），内容高度变化后调用。`,
+  '',
+  '## 主题与 kepcup-kit（推荐，所有骨架模板都已带上）',
+  '- 宿主总会注入 CSS 变量：--kc-bg / --kc-surface / --kc-fg / --kc-muted / --kc-border / --kc-accent / --kc-danger / --kc-radius / --kc-font，并在 <html data-theme="light|dark"> 上标明当前主题；应用切换明暗时属性会变，并在 window 上派发 kepcup:theme 事件。颜色一律用这些变量，不要用 prefers-color-scheme。',
+  '- 在 <head> 里写 <meta name="kepcup-kit" content="1"> 即启用 kit：零优先级的基础样式（body / button / input / table，class 有 primary、danger、kc-row、kc-card、kc-muted、kc-error），以及 kepcup.ui：',
+  "  - kepcup.ui.bar(容器, [{label, value}], {height?, empty?})、kepcup.ui.line(容器, [{label, value}] 或 {labels, series: [{name, values}]})、kepcup.ui.pie(容器, [{label, value}])——纯 SVG 图表，容器是元素或 '#id'；",
+  '  - kepcup.ui.format(数值, {decimals?, percent?, currency?}) → 中文数字格式（非有限数显示 —，不会出现 NaN）。',
   `- storage 与 query 合计按卡片限流：瞬时突发 ${BOT_WIDGET_CALLS_BURST} 次、持续每秒 ${BOT_WIDGET_CALLS_PER_SECOND} 次、同时在途至多 ${BOT_WIDGET_CALLS_INFLIGHT_MAX} 个；不要高频轮询，输入框保存要防抖。`,
   '- 被拒绝时 Promise reject，error.code 可程序化区分：WIDGET_RATE_LIMITED（太频繁，稍后重试）、WIDGET_STORAGE_QUOTA（存储满）、WIDGET_RESOURCE_EXPIRED（请用户重新打开卡片）、WIDGET_QUERY_UNKNOWN（查询名没登记）、WIDGET_QUERY_FAILED（参数不对或执行出错）、WIDGET_QUERY_TIMEOUT（查询太慢被中止）、INVALID_INPUT（参数不对）；error.message 是可直接展示的中文。每个 await 都要 try/catch，把错误显示在页面上。',
 ].join('\n');

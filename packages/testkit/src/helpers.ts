@@ -48,6 +48,7 @@ export async function createTestStack(
     agentSpawn?: CreateTestCoreOptions['agentSpawn'];
     /** D73 test hooks (see CreateTestCoreOptions). */
     shellRpc?: CreateTestCoreOptions['shellRpc'];
+    widgetPreviewRpc?: CreateTestCoreOptions['widgetPreviewRpc'];
     oauthLoopbackAllowlist?: CreateTestCoreOptions['oauthLoopbackAllowlist'];
     oauthCimdUrl?: CreateTestCoreOptions['oauthCimdUrl'];
     oauthCallbackPorts?: CreateTestCoreOptions['oauthCallbackPorts'];
@@ -78,6 +79,7 @@ export async function createTestStack(
     ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
     ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn } : {}),
     ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc } : {}),
+    ...(options.widgetPreviewRpc !== undefined ? { widgetPreviewRpc: options.widgetPreviewRpc } : {}),
     ...(options.oauthLoopbackAllowlist !== undefined
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
       : {}),

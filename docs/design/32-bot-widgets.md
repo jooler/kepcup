@@ -379,9 +379,9 @@ S0 里涉及代码的规则（storage / network / modals / popup / top-nav / for
 
 1. **加载**：等 `load` 后 DOM 静默 300ms（上限 3s）。收集 `runtime.error`（未捕获异常，含后续脚本的解析错误）、`runtime.rejection`、`console.error`（error）/ `console.warn`（warning）、`csp.violation`（error）。
 2. **渲染体检**：`render.blank`（body 无可见文本，且没有尺寸非零的 canvas / svg / img → error）、`render.overflow-x`（360px 下横向溢出 → warning）、`render.bad-text`（可见文本含 `NaN` / `undefined` / `[object Object]` / 孤立的 `null` → warning）。
-3. **乱点冒烟**：收集可操作元素（button、`[onclick]`、input、select、textarea、`[role=button]`、`a[href^="#"]`，至多 30 个），按类型给输入框填样例值（数字 12、文本「测试」、日期今天、勾选、选第二项），再按 DOM 顺序点击（文字含「删除 / 清空 / 重置」的排在最后）。每步之后收集新增错误与坏文本，报告里指明触发它的元素（选择器 + 文字）。
-4. **验收步骤**：逐条执行 `acceptance.json`，得出每条的通过 / 失败与失败时的实际值。
-5. **大纲**：输出一份 DOM 文本大纲（标签 / 角色 / 标签名 / 文字，≤2000 字），让不看图的模型也「看见」页面；制作模型支持图片输入时，另附两张截图（`ToolResult.images`，不落库）。截图在 DOM 静默之后截取 iframe 的矩形；跨进程 iframe 的首帧要 100–200ms 才合成，整幅与底色一致时每 50ms 重试、至多 1s。
+3. **验收步骤**：逐条执行 `acceptance.json`（同一页面上按顺序执行），得出每条的通过 / 失败与失败时的实际值。先于乱点执行——乱点会把页面状态弄乱（文字含「清空 / 删除」的最后点）。
+4. **乱点冒烟**：收集可操作元素（button、`[onclick]`、input、select、textarea、`[role=button]`、`a[href^="#"]`，至多 30 个），按类型给输入框填样例值（数字 12、文本「测试」、日期今天、勾选、选第二项），再按 DOM 顺序点击（文字含「删除 / 清空 / 重置」的排在最后）。每步之后收集新增错误与坏文本，报告里指明触发它的元素（选择器 + 文字）。
+5. **大纲**（与截图一样取自加载完成、验收与乱点之前的页面）：输出一份 DOM 文本大纲（标签 / 角色 / 标签名 / 文字，≤2000 字），让不看图的模型也「看见」页面；制作模型支持图片输入时，另附两张截图（`ToolResult.images`，不落库）。截图在 DOM 静默之后截取 iframe 的矩形；跨进程 iframe 的首帧要 100–200ms 才合成，整幅与底色一致时每 50ms 重试、至多 1s。
 
 报告里的行号就是草稿 `index.html` 的行号：预览注入（垫片 + 探针）写成不含换行的一行，紧跟在原有 `<head>` 之后。
 
@@ -414,10 +414,19 @@ S0 里涉及代码的规则（storage / network / modals / popup / top-nav / for
 
 - **通道**：core → 主进程的平台方法 `widgetPreview.run`，走与 `browser.*` 相同的端口 B 延迟绑定（`DeferredHostRpc` 模式）。未绑定（测试装配、无界面）时 S2 记为 skipped，判定按 §11.6 的 `unverified`。
 - **输入**：预览版 HTML（core 注入 SDK 垫片 + **预览探针**）、视口列表、验收点、fixtures、时限。**输出**：§11.8.3 的结构化结果 + 可选截图。
-- **运行环境**：一个复用的隐藏窗口（`show:false`，离屏仍绘制，同 `browser-host.ts` 先例），独立的内存分区 `widget-preview`（无 `persist:`，实测不落盘）。窗口加载宿主自己的**预览外壳页**（`file://`——组件 CSP 的 `frame-ancestors file: http://localhost:*` 要求嵌入方是应用自己的页面；带 preload，只暴露「上报结果」一个通道），外壳页里用与正式卡片**完全相同**的 `<iframe sandbox="allow-scripts" allow="" referrerpolicy="no-referrer">` 加载组件；组件资源由该分区上的协议处理器返回（特权协议的处理器必须注册在嵌入方窗口所在的 session 上），响应头同 §5（`buildAppCspHeader` 空域 + `appUiResponseHeaders`）。导航拦截、新窗口拒绝、权限一律拒绝，与正式环境同口径。每次预览给组件一个新的 host（`widget-preview-{随机}`），避免被分进上一个还没回收的进程。
+- **运行环境**：一个复用的隐藏窗口（`show:false`，离屏仍绘制，同 `browser-host.ts` 先例），独立的内存分区 `widget-preview`（无 `persist:`，实测不落盘）。窗口加载宿主自己的**预览外壳页**（`file://`——组件 CSP 的 `frame-ancestors file: http://localhost:*` 要求嵌入方是应用自己的页面；**没有 preload**：主进程用 `executeJavaScript('window.__kcPreview.run(…)')` 驱动外壳并拿回它 resolve 的结果，组件框架是跨进程的 opaque origin，碰不到外壳的全局），外壳页里用与正式卡片**完全相同**的 `<iframe sandbox="allow-scripts" allow="" referrerpolicy="no-referrer">` 加载组件；组件资源由该分区上的协议处理器返回（特权协议的处理器必须注册在嵌入方窗口所在的 session 上），响应头同 §5（`buildAppCspHeader` 空域 + `appUiResponseHeaders`）。导航拦截、新窗口拒绝、权限一律拒绝，与正式环境同口径。每次预览给组件一个新的 host（`widget-preview-{随机}`），避免被分进上一个还没回收的进程。
 - **探针**：core 在垫片之后、组件脚本之前注入的预览专用脚本（`sdk-injection.ts` 的 `injectPreviewProbe`）。它挂 `error`（捕获阶段，含资源加载失败）/ `unhandledrejection` / `securitypolicyviolation`、包装 `console.error/warn`，执行外壳页下发的乱点与验收步骤，经 `parent.postMessage`（来源标记 `kepcup-probe`）回报。外壳页同时扮演模拟的能力桥宿主。探针与组件代码在同一个 realm 里，组件理论上能干扰它——这可以接受：预览是质量闸，不是安全闸（§8 第 8 条）。**防篡改对照**：主进程同时监听窗口 `webContents` 的 `console-message`（实测含子框架的未捕获异常、promise 拒绝、CSP 违规与 console 输出，带 `frame`），把组件框架的 error 级消息并入结果并按文本去重——组件就算覆盖了探针，未捕获异常也丢不掉。不需要 CDP。
 - **超时与死循环**（按实测修订）：Chromium 把 opaque-origin 的 sandbox iframe 放进独立渲染进程，组件死循环只冻住组件进程，外壳页照常运行。主进程对每个视口设硬时限；超时就让外壳页**移除 iframe**（实测组件进程 3s 内被回收），3s 后进程仍在就 `process.kill(frame.osProcessId)`，外壳页本身也不回应时销毁窗口重建（实测 2.6s 恢复）；报 `preview.timeout`（阻断项）。不用 `forcefullyCrashRenderer`：它杀的是外壳页而不是组件，实测之后同一 webContents 重载外壳得 `ERR_FAILED`。
-- **并发**：串行队列，一次一个预览；单次检查总时限 `WIDGET_CHECK_TIMEOUT_MS`（20s）。
+- **并发**：串行队列，一次一个预览；单个视口硬时限 `WIDGET_PREVIEW_VIEWPORT_TIMEOUT_MS`（8s，探针拿到 `budgetMs` 提前收尾）；一个视口超时就不再跑其余视口（同一份代码换个视口照样挂）；core 侧单次检查总时限 `WIDGET_CHECK_TIMEOUT_MS`（20s），超出则退回只跑 S0 / S1 并记 `preview.timeout`。
+- **实施中的实测补充**（P3b 真机 harness）：隐藏窗口里组件框架在加载后常有 0.3–1.5s 停在 0×0（不合成就不布局，渲染体检 / 乱点 / 大纲会静默出错）——预览进行时主进程每 100ms 截一块 4×4 像素逼出一帧，探针等到视口非零才报 ready，仍是 0×0 的结果记 `failed`（宿主问题，不算组件的错）。点击后立刻进入同步死循环会吞掉探针刚发出的步骤消息——探针先让出 5ms 再执行动作，超时问题能指明卡死的元素。外链 `<script src>` 等元素级 CSP 违规 Chromium 不给行号，这类问题没有位置。未被 CSP 覆盖的资源加载失败记 `console.error`。预览里 `kepcup.openLink` 只记录网址并回「用户取消」（`ok:true, value:false`），不让组件因拒绝而抛未处理异常。
+- **审查修复后的口径**（P3b 独立评审）：
+  - 调用方给预算 `budgetMs`（含排队，从宿主收到请求起算），剩余时间不够跑一个视口就不跑、按「宿主繁忙」回 `failed`；core 自己的兜底时限触发时只把这一轮 S2 记 skipped（最多 unverified），**不**记阻断——宿主忙不能冒充成组件死循环。真正挂住的组件由宿主在视口时限内回 `preview.timeout`。
+  - 探针没回报但组件框架还能应答（长任务占满事件循环、或组件弄坏了探针）记阻断的 `preview.timeout` 并保留 `console-message` 兜到的问题，不当作宿主故障放行；外壳本身不应答 / 外壳进程退出才是宿主故障（`failed`，后者在新窗口上透明重试一次）。宿主自身出错的视口带回的阻断问题照算。
+  - 截图在加载完成之后、验收与乱点之前（外壳 ready 后停住，主进程截图后 `go()`）；大纲同样取自这一刻。
+  - 预览分区无出网：WebRTC 只许走代理（`disable_non_proxied_udp`）、分区设死代理（kepcup-app / file 不走网络栈），harness 以回环服务器 0 次命中断言 fetch / WebSocket / img / sendBeacon / RTCPeerConnection / 弹窗 / 顶层与自导航全部无效。
+  - 外壳只认带本次随机 nonce 的第一条探针结果（组件伪造的 result 不算数）；模拟能力桥用正式的单值 / 总量 / 键数配额与 storage + query 令牌桶限流（预览不比真实卡片宽松）；配置经 `JSON.parse` 传入外壳；补刀前确认 pid 不承载任何活着的框架（防 pid 复用误杀）；外壳临时文件丢失时重写、启动时清理崩溃遗留的临时目录。
+  - 错误位置：落在注入那一行（垫片 / kit / 探针）的栈帧不算，定位到组件自己的调用处，找不到就不给位置。
+- **复跑**：`apps/desktop/scripts/run-widget-preview-harness.mjs`（esbuild 打包 `apps/desktop/test/electron/widget-preview.harness.ts` 后用真实 Electron 跑，25 例：正确组件 / 各类错误与行号 / 探针被破坏时的 console-message 兜底 / 乱点触发 / 验收失败实际值 / 死循环回收 / 进程崩溃 / 截图 / 四个模板零问题 / 忙页面 / 伪造结果 / 无出网 / kit 边界值 / 排队预算 / 外壳崩溃恢复 / 运行中关闭）。
 - **CDP 不启用**：spike 实测探针 + `console-message` 已覆盖全部错误类型（含后续脚本的解析错误与跨进程 iframe），原备选方案（`webContents.debugger`）不实施。
 
 ### 11.10 独立审查（REVIEW）
@@ -443,8 +452,9 @@ S0 里涉及代码的规则（storage / network / modals / popup / top-nav / for
 ### 11.13 面向非一线模型的减负
 
 - **骨架模板**（`core/widgets/templates/`，TS 字符串模块，经 `widget_template` 取用）：`blank`、`form-calculator`、`list-tracker`（storage 增删改）、`dashboard`（查询 + 图表）。模板本身就满足全部 S0 / S1 规则，带好主题变量、窄屏布局、`kepcup` 调用的错误处理范式，把模型的工作从「从零写页面」降到「往骨架里填业务」。
-- **主题变量（宿主注入）**：`widgets.ui.open` 增可选参数 `theme`；垫片在组件脚本之前设置 `<html data-theme>` 与 `color-scheme`，并注入一组 CSS 变量（`--kc-bg` / `--kc-fg` / `--kc-muted` / `--kc-border` / `--kc-accent` / `--kc-danger` / `--kc-radius` / `--kc-font`）。宿主在应用切换主题时推送 `{source:'kepcup-host', event:'theme'}`，垫片更新属性并派发 `kepcup:theme` 事件。变量总是注入（对存量组件无副作用）。
-- **基础样式与小工具（按需）**：组件带 `<meta name="kepcup-kit" content="1">` 时，垫片额外注入基础样式（`:where()` 零优先级的 body / button / input / table 样式）与 `kepcup.ui` 小工具（纯 SVG 的柱状 / 折线 / 饼图与数字格式化）。沙箱禁网、用不了 CDN 图表库，让弱模型徒手画 canvas 是 bug 的主要来源之一；模板默认带这个 meta。存量组件不带它，外观不变。
+- **主题变量（宿主注入）**：`widgets.ui.open` 增可选参数 `theme`；注入内容总带一段只定义变量的样式（`--kc-bg` / `--kc-surface` / `--kc-fg` / `--kc-muted` / `--kc-border` / `--kc-accent` / `--kc-danger` / `--kc-radius` / `--kc-font`，`:root` 亮色、`:root[data-theme=dark]` 暗色——对存量组件无副作用），垫片在组件脚本之前设好 `<html data-theme>`（open 时的主题，缺省 light）。卡片在应用切换主题时推送 `{source:'kepcup-host', event:'theme', theme}`，垫片更新属性并在 window 上派发 `kepcup:theme`；`kepcup.theme()` 直接返回当前主题（不再走桥）。**`color-scheme` 只在 kit 里设**（实施时的修订）：存量组件可能写死了白底，跟着暗色把默认文字变成浅色会看不清。
+- **单行注入**（实施时的决定）：主题样式、垫片、kit 全部折成一行插在原有 `<head>` 之后（垫片源码不写 `//` 注释、语句以分号结束）——运行时与 S2 预览报错的行号就是 Bot 原文的行号。垫片指纹升为 `kepcup-widget-sdk-v2`（含 v1 指纹的 HTML 同样视为已注入）。
+- **基础样式与小工具（按需）**：组件带 `<meta name="kepcup-kit" content="1">` 时（core 注入时按原文静态判定），另注入 `:where()` 零优先级的基础样式（只在 `<html data-kc-kit>` 下生效：body / button〔`primary` / `danger`〕/ input / table 与 `kc-row` / `kc-card` / `kc-muted` / `kc-error`，`color-scheme` 跟随 data-theme）与 `kepcup.ui`：`bar` / `line` / `pie`（纯 SVG，容器是元素或 `#id`，文字一律 textContent）与 `format`（`Intl.NumberFormat('zh-CN')`，非有限数显示「—」）。沙箱禁网、用不了 CDN 图表库，让弱模型徒手画 canvas 是 bug 的主要来源之一；四个骨架模板（`blank` / `form-calculator` / `list-tracker` / `dashboard`，后者附带 `queries.json` 示例）都带这个 meta，并由单测锁住 S0 / S1 零问题。存量组件不带它，外观不变。
 - **任务面工具描述瘦身**：`WIDGET_HTML_GUIDE` 移入制作 loop 的系统提示（§11.7），`widget_craft` 的描述只讲何时用、brief 写什么。
 
 ### 11.14 不做

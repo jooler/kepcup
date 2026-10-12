@@ -120,6 +120,8 @@ export function startCoreProcess(options: StartCoreProcessOptions = {}): void {
         services.browserRpc.bind(platformServer);
         // D73: …and shell.openExternal (OAuth consent page in the system browser).
         services.shellRpc.bind(platformServer);
+        // D87 P3b: …and widgetPreview.run (S2 of the widget authoring loop).
+        services.widgetPreviewRpc.bind(platformServer);
         // The main process creates the window once it sees a terminal status.
         services.pushStatusTo(platformServer);
         // P13 任务 3: the main process reconciles the OS login item with the

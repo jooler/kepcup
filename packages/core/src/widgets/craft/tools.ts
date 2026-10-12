@@ -210,9 +210,14 @@ function buildTemplateTool(drafts: string): ToolDefinition {
         };
       }
       writeFileSync(path.join(drafts, DRAFT_HTML), template.html, 'utf-8');
+      const queriesPath = path.join(drafts, DRAFT_QUERIES);
+      const seedQueries = template.queries !== undefined && !existsSync(queriesPath);
+      if (seedQueries) {
+        writeFileSync(queriesPath, `${JSON.stringify(template.queries, null, 2)}\n`, 'utf-8');
+      }
       return {
         ok: true,
-        content: `已把模板「${template.name}」写入 index.html（${template.html.split('\n').length} 行）。先 read 它，再用 edit 填业务。`,
+        content: `已把模板「${template.name}」写入 index.html（${template.html.split('\n').length} 行）${seedQueries ? '，并写了示例 queries.json（按需求改 SQL 与查询名）' : ''}。先 read 它，再用 edit 填业务。`,
       };
     },
   };
