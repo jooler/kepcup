@@ -16,6 +16,15 @@ import { BOT_WIDGET_HEIGHT_MAX, BOT_WIDGET_HEIGHT_MIN } from '@kepcup/shared';
  *
  * 暴露的 API（P1 storage/openLink/theme/setHeight，P2 query）：全部 promise 化
  * （setHeight 是通知）；被拒时 reject 的 Error 带 `code`（机器可读错误码）。
+ *
+ * 宿主侧约束（给组件作者的契约，工具说明 widget-tools.ts 里同样写给 Bot）：
+ * - storage 与 query 合计按卡片限流——令牌桶容量 `BOT_WIDGET_CALLS_BURST`（20，看板
+ *   一次性并发拉取全部查询模板没问题）、每秒回填 `BOT_WIDGET_CALLS_PER_SECOND`（5）、
+ *   同时在途至多 `BOT_WIDGET_CALLS_INFLIGHT_MAX`（20）；超出得 `WIDGET_RATE_LIMITED`。
+ * - query 只能读作用域视图 `widget_kv` / `conversation_messages`，单次执行超过
+ *   `BOT_WIDGET_QUERY_TIMEOUT_MS` 或内存超限得 `WIDGET_QUERY_TIMEOUT`。
+ * - 卡片闲置后资源过期（`WIDGET_RESOURCE_EXPIRED`）由宿主卡片自动重开并重放调用，
+ *   组件通常感知不到；只有组件已被删除 / 版本已修剪时才会真的收到这个错误。
  */
 
 /** 垫片的唯一指纹：幂等判定与「确认注入成功」都认它，不用协议里组件也会写的字段值。 */

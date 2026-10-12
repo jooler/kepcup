@@ -265,6 +265,23 @@ describe('WidgetBridgeHost', () => {
     }
   });
 
+  test('destroy cancels a pending trailing setHeight (no stale height after the card resets it)', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.emit(widgetMessage({ id: 0, type: 'setHeight', payload: { height: 300 } }));
+      // 节流窗口内的第二次上报排进尾随定时器。
+      h.emit(widgetMessage({ id: 0, type: 'setHeight', payload: { height: 700 } }));
+      expect(h.heights).toEqual([300]);
+      // 卡片 stop()：拆桥并把高度复位；尾随定时器之后到点也不能把 700 写回去。
+      h.host.destroy();
+      vi.advanceTimersByTime(500);
+      expect(h.heights).toEqual([300]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('destroy stops listening and replying', async () => {
     const h = harness();
     h.host.destroy();

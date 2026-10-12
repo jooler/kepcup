@@ -1983,7 +1983,7 @@ export const zhCN = {
   'botWidget.reviewNote':
     '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网、读不到你的其他数据；建议先查看源码再加载。',
   'botWidget.reviewNoteQueries':
-    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网；数据库查询仅限下方列出的只读模板；建议先查看源码再加载。',
+    '这是 Bot 生成的交互组件，在隔离沙箱中运行：不能联网；数据库查询仅限下方列出的只读模板，且只能读这个组件自己存的数据和本对话的文字消息。',
   'botWidget.queriesNote':
     '本版本声明了 {n} 个数据库查询（只读模板），SQL 全文在「查看源码」里，请一并审查',
   'botWidget.load': '加载运行',
@@ -1992,6 +1992,7 @@ export const zhCN = {
   'botWidget.sourceLoading': '正在读取源码…',
   'botWidget.sourceUnavailable': '源码已不可用（组件可能已被删除）',
   'botWidget.loading': '正在加载组件…',
+  'botWidget.reviewQueriesFirst': '这个版本带数据库查询，请先「查看源码」审查查询 SQL，再加载运行',
   'botWidget.loadFailed': '无法加载这个组件',
   'botWidget.retry': '重试',
   'botWidget.reload': '重新加载组件',
@@ -2022,7 +2023,10 @@ export const zhCN = {
   'chats.errorCode.WIDGET_RATE_LIMITED': '组件调用宿主能力过于频繁，请稍后再试',
   'chats.errorCode.WIDGET_STORAGE_QUOTA': '这个组件的存储空间已用完',
   'chats.errorCode.WIDGET_QUERY_UNKNOWN': '组件调用了未登记的查询模板（需要 Bot 发新版本）',
-  'chats.errorCode.WIDGET_QUERY_FAILED': '组件查询执行失败（参数不符或模板已损坏）',
+  'chats.errorCode.WIDGET_QUERY_FAILED': '组件查询执行失败（参数不符、读了范围外的数据或模板已损坏）',
+  'chats.errorCode.WIDGET_QUERY_TIMEOUT': '组件查询太慢或太耗内存，已被中止',
+  'chats.errorCode.WIDGET_REVIEW_REQUIRED': '这个组件带数据库查询，请先查看源码审查 SQL 再加载',
+  'chats.errorCode.WIDGET_LIMIT': '这个 Bot 的组件数量或占用空间已达上限',
   'chats.errorCode.MAIL_NOT_BOUND': '这个邮箱没有交给当前 Bot',
   'chats.errorCode.MAIL_AUTH_FAILED': '邮箱登录失败。请使用授权码或应用专用密码，不要填写登录密码',
   'chats.errorCode.MAIL_CONNECT_FAILED': '邮箱服务器连接失败',

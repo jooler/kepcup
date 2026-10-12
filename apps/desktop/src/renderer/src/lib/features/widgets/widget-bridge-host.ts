@@ -111,8 +111,15 @@ export class WidgetBridgeHost {
     }
   }
 
-  /** 组件高频 setHeight（如 rAF 循环）不能让宿主逐帧重排版（同 MCP Apps 的 size-changed）。 */
-  readonly #onHeight = createThrottle<number>(100, (height) => this.#options.onHeight(height));
+  /**
+   * 组件高频 setHeight（如 rAF 循环）不能让宿主逐帧重排版（同 MCP Apps 的 size-changed）。
+   * 节流的尾随上报是定时器触发的：拆桥后（卡片 stop 已把高度复位为缺省值）它仍可能
+   * 到点，这里以 #destroyed 守卫，旧高度不会被写回。
+   */
+  readonly #onHeight = createThrottle<number>(100, (height) => {
+    if (this.#destroyed) return;
+    this.#options.onHeight(height);
+  });
 
   async #dispatch(
     method: string,

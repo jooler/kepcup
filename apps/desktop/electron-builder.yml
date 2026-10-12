@@ -28,6 +28,10 @@ asar: true
 # 运行：解出 asar，core 的 resolveStdioProxyPath 把路径映射到 app.asar.unpacked。
 asarUnpack:
   - out/main/core-entry/stdio-proxy.mjs
+  # D81 组件查询子进程（同样是 ELECTRON_RUN_AS_NODE）require 的 SQLite 驱动：整包解出，
+  # core 的 resolveQueryDriverPath 映射到 app.asar.unpacked。smartUnpack 本就会因 .node
+  # 整包解出，这里显式写出，不依赖启发式；afterPack（pack-hooks.cjs）硬校验并做一次真实查询。
+  - '**/node_modules/better-sqlite3-multiple-ciphers/**/*'
 # 原生模块（better-sqlite3-multiple-ciphers、@napi-rs/keyring、es-git）按目标平台
 # 架构重编译；smartUnpack 自动把 .node 解包出 asar。
 npmRebuild: true

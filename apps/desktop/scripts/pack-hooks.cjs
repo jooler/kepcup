@@ -14,9 +14,15 @@
  *      （mock 模型服务与测试夹具）不得进入 asar；
  *   3. macOS/Linux 产物必须自带平台 rg（resources/bin/{os}-{arch}/rg，
  *      extraResources 落在 asar 外的 resources/bin/）。
+ *   4. 组件查询子进程（D81，设计 32 §6.1；`ELECTRON_RUN_AS_NODE=1`）加载的 SQLite
+ *      驱动整包解出在 app.asar.unpacked 下（core resolveQueryDriverPath 的落点），且带
+ *      目标平台的原生库；目标平台 = 构建机平台时，再用产物里的 Electron（Node 模式）
+ *      对加密临时库做一次真实读写查询（与查询子进程同一加载路径）。
  */
 
-const { existsSync, mkdirSync, readdirSync, readFileSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const PLATFORM_DIR_NAME = { mac: 'darwin', win: 'win', linux: 'linux' };
@@ -58,6 +64,77 @@ function archName(context) {
   // mac arches back to back).
   const ARCH_NAMES = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' };
   return ARCH_NAMES[context.arch] ?? process.arch;
+}
+
+/** 组件查询子进程 require 的 SQLite 驱动（与 core widgets/query-runner.ts 同名）。 */
+const QUERY_DRIVER = 'better-sqlite3-multiple-ciphers';
+
+/**
+ * 校验查询驱动整包解出在 `<resources>/app.asar.unpacked/node_modules/<驱动>/`：入口 JS
+ * 与目标平台原生库（prebuilds/{platform}-{arch}.node 或 node-gyp 的 build/Release）
+ * 都在磁盘上。返回入口路径（导出供单测）。
+ */
+function assertQueryDriverUnpacked(resourcesPath, platform, arch) {
+  const packageDir = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', QUERY_DRIVER);
+  const entry = path.join(packageDir, 'lib', 'index.js');
+  if (!existsSync(entry)) {
+    throw new Error(
+      `[pack] 组件查询驱动未解出 asar：缺少 ${entry}——子进程（ELECTRON_RUN_AS_NODE）只能退回 asar 内路径，` +
+        '依赖 Electron 的 asar 补丁（检查 electron-builder.yml 的 asarUnpack 规则）',
+    );
+  }
+  if (arch === 'x64' || arch === 'arm64') {
+    const prebuild = path.join(packageDir, 'prebuilds', `${platform}-${arch}.node`);
+    const built = path.join(packageDir, 'build', 'Release', 'better_sqlite3.node');
+    if (!existsSync(prebuild) && !existsSync(built)) {
+      throw new Error(`[pack] 组件查询驱动缺少 ${platform}-${arch} 原生库（${prebuild} 或 ${built}）`);
+    }
+  }
+  return entry;
+}
+
+/**
+ * 用 `execPath`（打包产物里的 Electron，以 Node 模式运行）在子进程里加载 `driverEntry`，
+ * 对一个 chacha20 加密的临时库建表写入、再以 readonly + query_only 打开读回——与组件
+ * 查询子进程的加载与开库方式一致。返回读回的行（导出供单测）；失败抛错（构建失败）。
+ */
+function smokeQueryDriver(execPath, driverEntry) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'kepcup-pack-query-'));
+  const script = [
+    "'use strict';",
+    'const Database = require(process.argv[1]);',
+    "const key = 'key=\"x\\'' + '5a'.repeat(32) + '\\'\"';",
+    'const w = new Database(process.argv[2]);',
+    "w.pragma(\"cipher='chacha20'\"); w.pragma(key);",
+    "w.exec(\"create table t (v text); insert into t values ('ok')\"); w.close();",
+    'const r = new Database(process.argv[2], { readonly: true, fileMustExist: true });',
+    "r.pragma(\"cipher='chacha20'\"); r.pragma(key); r.pragma('query_only = ON');",
+    "process.stdout.write(JSON.stringify(r.prepare('select v from t').get()) + '\\n');",
+  ].join('\n');
+  try {
+    const result = spawnSync(execPath, ['-e', script, driverEntry, path.join(dir, 'smoke.db')], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf8',
+      timeout: 60_000,
+      windowsHide: true,
+    });
+    if (result.status !== 0) {
+      const reason = result.error?.message ?? (result.stderr.trim() || `退出码 ${result.status}`);
+      throw new Error(`[pack] 组件查询驱动冒烟失败（${execPath} 加载 ${driverEntry}）：${reason}`);
+    }
+    const lines = result.stdout.trim().split('\n');
+    return JSON.parse(lines[lines.length - 1]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** 产物里的 Electron 可执行文件。 */
+function packagedExecutable(context, appBundle) {
+  const name = context.packager.appInfo.productFilename;
+  if (appBundle !== undefined) return path.join(context.appOutDir, appBundle, 'Contents', 'MacOS', name);
+  if (context.electronPlatformName === 'win32') return path.join(context.appOutDir, `${name}.exe`);
+  return path.join(context.appOutDir, context.packager.executableName ?? name.toLowerCase());
 }
 
 function beforePack(context) {
@@ -134,9 +211,33 @@ function afterPack(context) {
       throw new Error(`[pack] 缺少托盘图标资源 ${name}（extraResources resources/tray）`);
     }
   }
+  // 组件查询子进程的 SQLite 驱动（D81 §6.1）：整包解出 + 目标平台原生库；能在本机
+  // 运行产物时（目标平台 = 构建机平台）再跑一次真实查询。
+  const driverPlatform = context.electronPlatformName === 'mas' ? 'darwin' : context.electronPlatformName;
+  const driverEntry = assertQueryDriverUnpacked(resourcesPath, driverPlatform, archName(context));
+  if (driverPlatform === process.platform && archName(context) === process.arch) {
+    const row = smokeQueryDriver(packagedExecutable(context, appBundle), driverEntry);
+    if (row === null || typeof row !== 'object' || row.v !== 'ok') {
+      throw new Error(`[pack] 组件查询驱动冒烟读回异常：${JSON.stringify(row)}`);
+    }
+    console.log('[pack] 组件查询驱动冒烟通过（Electron Node 模式加载 app.asar.unpacked 驱动，加密库读写）。');
+  } else {
+    console.warn(
+      `[pack] 跨平台构建（${driverPlatform}-${archName(context)}），跳过组件查询驱动的运行冒烟；` +
+        '到目标平台按 docs/design/32-bot-widgets.md §6.1 的打包态验证步骤手工验证。',
+    );
+  }
+
   console.log(
     `[pack] afterPack 校验通过（${dirName}-${archName(context)}，无测试路径标记，无工作区包）。`,
   );
 }
 
-module.exports = { beforePack, afterPack, FORBIDDEN_MARKERS, findForbiddenMarker };
+module.exports = {
+  beforePack,
+  afterPack,
+  FORBIDDEN_MARKERS,
+  findForbiddenMarker,
+  assertQueryDriverUnpacked,
+  smokeQueryDriver,
+};
