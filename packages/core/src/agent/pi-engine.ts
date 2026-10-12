@@ -18,7 +18,15 @@ import type {
 import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
-import { createRetryingFetch, retryProgressText, type ModelRetryPolicy } from './model-retry.js';
+import {
+  createRetryingFetch,
+  isModelRouteChangedError,
+  ModelRouteChangedError,
+  retryProgressText,
+  type ModelRetryPolicy,
+} from './model-retry.js';
+import { modelRoutingGeneration } from './model-routing-generation.js';
+import { AppError } from '@kepcup/shared';
 import type { EffectRecorder } from './effects/recorder.js';
 
 interface Deps {
@@ -138,22 +146,27 @@ export class PiEngine implements AgentEngine {
           timestamp: m.timestamp,
         })),
       },
-      streamFn: (m, context, options) =>
-        models.streamSimple(m, context, {
+      streamFn: (m, context, options) => {
+        const routeGen = modelRoutingGeneration();
+        return models.streamSimple(m, context, {
           ...options,
           // Retries (network + 408/409/429/5xx, Retry-After, backoff) happen
           // before the first token; each one shows on the run status line.
+          // Settings / Bot model changes bump the routing generation so we
+          // stop hammering the old provider mid-backoff.
           fetch: createRetryingFetch({
             ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
             logger: this.#deps.logger,
             context: retryContext(model, spec.identity.runId),
             ...(options?.fetch ? { inner: options.fetch } : {}),
+            shouldContinueRetry: () => modelRoutingGeneration() === routeGen,
             onRetry: (notice) =>
               handleRef?.emit({ type: 'progress', payload: { text: retryProgressText(notice) } }),
             onRecovered: () =>
               handleRef?.emit({ type: 'progress', payload: { text: '已重新连接模型服务' } }),
           }),
-        }),
+        });
+      },
       steeringMode: 'all',
     });
 
@@ -196,12 +209,44 @@ export class PiEngine implements AgentEngine {
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
+    const resolve = req.resolveModel;
+    let modelRef = req.model;
+    const maxRouteSwitches = 5;
+    for (let switchCount = 0; ; switchCount++) {
+      try {
+        return await this.#completeOnce({ ...req, model: modelRef });
+      } catch (error) {
+        if (!isModelRouteChangedError(error)) throw mapProviderError(error);
+        const next = resolve?.() ?? modelRef;
+        if (
+          next === modelRef ||
+          next.length === 0 ||
+          switchCount >= maxRouteSwitches ||
+          resolve === undefined
+        ) {
+          throw new AppError(
+            'PROVIDER_UNAVAILABLE',
+            '模型设置已变更，当前请求已中止；请重试',
+          );
+        }
+        this.#deps.logger.info(
+          { from: modelRef, to: next, runId: req.identity.runId },
+          'model route changed mid-request; switching provider',
+        );
+        modelRef = next;
+      }
+    }
+  }
+
+  async #completeOnce(req: CompletionRequest): Promise<CompletionResult> {
     const models = buildModelRegistry({
       settings: this.#deps.settings.get(),
       secrets: this.#deps.secrets,
       logger: this.#deps.logger,
     });
     const model = resolveModel(models, req.model);
+    const routeGen = modelRoutingGeneration();
+    const resolve = req.resolveModel;
     try {
       const result = await models.complete(
         model,
@@ -221,6 +266,14 @@ export class PiEngine implements AgentEngine {
             ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
             logger: this.#deps.logger,
             context: retryContext(model, null),
+            // Prefer resolveModel: only stop when THIS call's target changed
+            // (e.g. reflection stays on app_light when only Bot main model
+            // changes). Fall back to the global routing generation for
+            // callers that omit resolveModel.
+            shouldContinueRetry: () => {
+              if (resolve !== undefined) return resolve() === req.model;
+              return modelRoutingGeneration() === routeGen;
+            },
           }),
         },
       );
@@ -234,6 +287,7 @@ export class PiEngine implements AgentEngine {
         stopReason: result.stopReason,
       };
     } catch (error) {
+      if (isModelRouteChangedError(error)) throw new ModelRouteChangedError();
       throw mapProviderError(error);
     }
   }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { X, Monitor, Pencil } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
@@ -32,6 +32,7 @@
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
   import { showBrowser } from './show-browser';
+  import { isEngineOnlyChange, shouldReloadBotDraft } from './bot-draft';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const isGroup = $derived(conversation?.type === 'group');
@@ -95,13 +96,28 @@
    */
   let savedProfile = $state<BotProfile | null>(null);
 
+  /** 当前草稿所属 Bot；换 Bot 才强制重载，同 Bot 的推送不冲掉未保存改动。 */
+  let draftBotId = $state<string | null>(null);
+
   $effect(() => {
     if (bot && bot.status === 'active') {
-      draft = structuredClone($state.snapshot(bot.profile)) as BotProfile;
-      savedProfile = bot.profile;
+      const sameBot = draftBotId === bot.id;
+      // 草稿本身不进依赖：用户改模型只走自动保存 effect，不重跑本同步。
+      const action = shouldReloadBotDraft({
+        sameBot,
+        draft: untrack(() => draft),
+        savedProfile: untrack(() => savedProfile),
+        serverProfile: $state.snapshot(bot.profile) as BotProfile,
+      });
+      if (action === 'reload') {
+        draft = structuredClone($state.snapshot(bot.profile)) as BotProfile;
+        savedProfile = bot.profile;
+        draftBotId = bot.id;
+      }
     } else {
       draft = null;
       savedProfile = null;
+      draftBotId = null;
     }
   });
 
@@ -125,7 +141,16 @@
     if (!currentBot || !currentDraft) return;
     const snapshot = JSON.stringify($state.snapshot(currentDraft));
     if (savedProfile && JSON.stringify($state.snapshot(savedProfile)) === snapshot) return;
-    const timer = setTimeout(() => void saveProfile(currentBot.id, currentDraft), 500);
+    // 主/轻量模型与 Agent 切换立即落盘，避免 500ms 窗口内发消息仍打旧模型。
+    const delay =
+      savedProfile !== null &&
+      isEngineOnlyChange(
+        $state.snapshot(savedProfile) as BotProfile,
+        $state.snapshot(currentDraft) as BotProfile,
+      )
+        ? 0
+        : 500;
+    const timer = setTimeout(() => void saveProfile(currentBot.id, currentDraft), delay);
     return () => {
       clearTimeout(timer);
       // 防抖期间切换到其它 Bot（draft 被整体重克隆）会清掉定时器，窗口内的

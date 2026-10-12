@@ -303,6 +303,11 @@ export interface CompletionRequest {
   tools?: Array<{ name: string; description: string; parameters: unknown }>;
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * Re-resolve the model mid-flight when settings / Bot profile change.
+   * PiEngine aborts same-model HTTP retries and calls this to switch provider.
+   */
+  resolveModel?: () => ModelRef;
 }
 
 export interface CompletionToolCall {
