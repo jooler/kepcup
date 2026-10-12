@@ -65,9 +65,9 @@ export function buildMailTools(input: {
       limit: Type.Optional(Type.Number({ description: '最多多少封，1–50，默认 20' })),
     }),
     execute: async (params) => {
-      if (botId === null) return noContext();
+      if (botId === null || conversationId === null) return noContext();
       try {
-        const text = await mail.listMessages(botId, {
+        const text = await mail.listMessages(botId, conversationId, {
           accountId: params.account_id,
           ...(params.unseen !== undefined ? { unseen: params.unseen } : {}),
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
@@ -123,9 +123,9 @@ export function buildMailTools(input: {
       limit: Type.Optional(Type.Number({ description: '最多多少封，1–50，默认 20' })),
     }),
     execute: async (params) => {
-      if (botId === null) return noContext();
+      if (botId === null || conversationId === null) return noContext();
       try {
-        const text = await mail.searchMessages(botId, {
+        const text = await mail.searchMessages(botId, conversationId, {
           accountId: params.account_id,
           query: {
             ...(params.from !== undefined ? { from: params.from } : {}),

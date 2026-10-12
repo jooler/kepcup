@@ -37,6 +37,8 @@
   let smtpHost = $state('');
   let imapPort = $state('993');
   let smtpPort = $state('465');
+  let newPassword = $state('');
+  let passwordBusy = $state(false);
 
   const selected = $derived(accounts.find((account) => account.id === selectedId) ?? null);
   const preset = $derived(MAIL_PROVIDER_PRESETS[provider]);
@@ -47,10 +49,6 @@
     if (account.listen === 'idle') return t('mail.status.idle');
     if (account.listen === 'poll') return t('mail.status.poll');
     return t('mail.status.connecting');
-  }
-
-  function botName(id: string): string {
-    return bots.find((bot) => bot.id === id)?.name ?? id;
   }
 
   async function reload(): Promise<void> {
@@ -119,6 +117,22 @@
       formError = explain(error);
     } finally {
       busy = false;
+    }
+  }
+
+  /** 授权码失效（登录被拒后会话已停止重试）或换了新码：测连通过后保存并重新连接。 */
+  async function updatePassword(account: MailAccount): Promise<void> {
+    if (newPassword.length === 0) return;
+    passwordBusy = true;
+    try {
+      await core.call('mail.accounts.update', { id: account.id, password: newPassword });
+      newPassword = '';
+      await reload();
+      toast.success(t('mail.passwordUpdated'));
+    } catch (error) {
+      toast.error(explain(error));
+    } finally {
+      passwordBusy = false;
     }
   }
 
@@ -360,6 +374,32 @@
           <p class="text-xs text-amber-700 dark:text-amber-400">{t('mail.pollWarning')}</p>
         {/if}
       </div>
+      <form
+        class="grid gap-1.5 text-sm"
+        onsubmit={(event) => {
+          event.preventDefault();
+          void updatePassword(selected);
+        }}
+      >
+        <Label for="mail-new-password">{t('mail.updatePassword')}</Label>
+        <div class="flex gap-2">
+          <Input
+            id="mail-new-password"
+            type="password"
+            autocomplete="off"
+            bind:value={newPassword}
+            data-testid="mail-new-password"
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={passwordBusy || newPassword.length === 0}
+            data-testid="mail-update-password"
+          >
+            {passwordBusy ? t('mail.testing') : t('mail.updatePasswordSave')}
+          </Button>
+        </div>
+      </form>
       <div class="space-y-1" data-testid="mail-bots">
         <Label>{t('mail.bots')}</Label>
         {#each bots as bot (bot.id)}

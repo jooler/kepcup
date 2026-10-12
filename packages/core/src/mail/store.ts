@@ -44,6 +44,8 @@ export interface MailAccountRecord {
   status: MailStatus;
   listen: MailListen | null;
   lastUid: number | null;
+  /** INBOX 的 UIDVALIDITY；与 lastUid 配套，变了就要重取基线。 */
+  uidValidity: number | null;
   unseenCount: number | null;
   lastError: string | null;
   lastOkAt: number | null;
@@ -78,6 +80,7 @@ interface AccountSqlRow {
   status: string;
   listen: string | null;
   last_uid: number | null;
+  uid_validity: number | null;
   unseen_count: number | null;
   last_error: string | null;
   last_ok_at: number | null;
@@ -113,6 +116,7 @@ function accountFromRow(row: AccountSqlRow): MailAccountRecord {
     status: row.status as MailStatus,
     listen: row.listen === 'idle' || row.listen === 'poll' ? row.listen : null,
     lastUid: row.last_uid,
+    uidValidity: row.uid_validity,
     unseenCount: row.unseen_count,
     lastError: row.last_error,
     lastOkAt: row.last_ok_at,
@@ -173,7 +177,7 @@ export function toPublicAccount(
 }
 
 const ACCOUNT_COLUMNS = `id, address, label, provider, imap_host, imap_port, imap_secure, smtp_host, smtp_port,
-  smtp_secure, username, mode, poll_interval_sec, status, listen, last_uid, unseen_count, last_error,
+  smtp_secure, username, mode, poll_interval_sec, status, listen, last_uid, uid_validity, unseen_count, last_error,
   last_ok_at, failure_streak, created_at, updated_at, deleted_at`;
 
 export class MailStore {
@@ -198,9 +202,9 @@ export class MailStore {
       .prepare(
         `insert into mail_accounts (
            id, address, label, provider, imap_host, imap_port, imap_secure, smtp_host, smtp_port, smtp_secure,
-           username, mode, poll_interval_sec, status, listen, last_uid, unseen_count, last_error, last_ok_at,
+           username, mode, poll_interval_sec, status, listen, last_uid, uid_validity, unseen_count, last_error, last_ok_at,
            failure_streak, created_at, updated_at, deleted_at
-         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.id,
@@ -219,6 +223,7 @@ export class MailStore {
         row.status,
         row.listen,
         row.lastUid,
+        row.uidValidity,
         row.unseenCount,
         row.lastError,
         row.lastOkAt,
@@ -242,6 +247,7 @@ export class MailStore {
         | 'status'
         | 'listen'
         | 'lastUid'
+        | 'uidValidity'
         | 'unseenCount'
         | 'lastError'
         | 'lastOkAt'
@@ -265,6 +271,7 @@ export class MailStore {
       status: patch.status,
       listen: patch.listen,
       last_uid: patch.lastUid,
+      uid_validity: patch.uidValidity,
       unseen_count: patch.unseenCount,
       last_error: patch.lastError,
       last_ok_at: patch.lastOkAt,
@@ -333,16 +340,29 @@ export class MailStore {
     })();
   }
 
-  /** 全量替换某个 Bot 的邮箱绑定。其它 Bot 的绑定不动。 */
+  /**
+   * 全量替换某个 Bot 的邮箱绑定。其它 Bot 的绑定不动；保留下来的绑定沿用原有的
+   * 暂停状态、唤醒时间和创建时间（与 replaceBots 一致）——保存一次绑定不能悄悄解除风暴暂停。
+   */
   replaceAccountsForBot(botId: string, accountIds: readonly string[], now: number): void {
     const next = [...new Set(accountIds)];
+    const existing = new Map(this.bindingsForBot(botId).map((binding) => [binding.accountId, binding]));
     this.db.transaction(() => {
       this.db.prepare('delete from mail_account_bots where bot_id = ?').run(botId);
       const insert = this.db.prepare(
         `insert into mail_account_bots (account_id, bot_id, alerts_paused, alert_times_json, created_at)
-         values (?, ?, 0, '[]', ?)`,
+         values (?, ?, ?, ?, ?)`,
       );
-      for (const accountId of next) insert.run(accountId, botId, now);
+      for (const accountId of next) {
+        const previous = existing.get(accountId);
+        insert.run(
+          accountId,
+          botId,
+          previous?.alertsPaused === true ? 1 : 0,
+          JSON.stringify(previous?.alertTimes ?? []),
+          previous?.createdAt ?? now,
+        );
+      }
     })();
   }
 

@@ -10,6 +10,9 @@ import { FakeImapServer, FakeSmtpServer, sampleMessage } from '../support/fake-m
 /**
  * D84：假 IMAP 上，不发 ID 的登录在 SELECT 时失败；KepCup 的连接会发 ID，
  * 之后能列出新信。同一封信唤醒每个绑定的 Bot 一次。
+ *
+ * ID 的发送策略（见 mail-imap.test.ts）：广告了 ID 的服务器库自己会发；网易系（CAPABILITY
+ * 不广告却要求）才强制补发。这里 163 风格的服务器用 `forceId: true` 模拟，经服务层的用例用广告 ID 的服务器。
  */
 
 function mailOf(stack: { core: { services: { mail: MailService | null } } }): MailService {
@@ -57,6 +60,7 @@ describe('fake IMAP', () => {
         secure: 'ssl',
         username: 'bot@example.com',
         password: 'authcode',
+        forceId: true,
       });
       try {
         await client.selectInbox();
@@ -80,7 +84,7 @@ describe('mail channel', () => {
   it(
     'wakes every bound bot once, then only the bots that stay bound',
     async () => {
-    const imap = new FakeImapServer({ requireId: true, advertiseIdle: true });
+    const imap = new FakeImapServer({ requireId: true, advertiseIdle: true, advertiseId: true });
     const smtp = new FakeSmtpServer();
     await imap.start();
     await smtp.start();
@@ -271,6 +275,9 @@ describe('mail channel', () => {
       const stack = await createTestStack();
       try {
         const bot = await makeBot(stack.core, '列表');
+        const direct = (await stack.core.rpc.call('conversations.openDirect', { botId: bot.id })) as {
+          conversation: { id: string };
+        };
         await stack.core.rpc.call('mail.accounts.create', {
           provider: 'custom',
           address: 'bot@example.com',
@@ -284,7 +291,7 @@ describe('mail channel', () => {
           botIds: [bot.id],
         });
         imap.lastSearchCommand = '';
-        const listed = await mailOf(stack).listMessages(bot.id, { limit: 5 });
+        const listed = await mailOf(stack).listMessages(bot.id, direct.conversation.id, { limit: 5 });
         expect(listed).toContain('UID');
         // imapflow 把 uid 下界编进 SEARCH；假服务器记下原文。绝不能是光秃秃的 ALL。
         expect(imap.lastSearchCommand.toUpperCase()).toMatch(/UID\s+\d+\s*:/);
