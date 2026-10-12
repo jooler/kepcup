@@ -1878,6 +1878,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       widgets: {
         craft: (input) => widgetCraft.craft(input),
         publish: (input) => widgetService.publish(input),
+        readState: (input) => widgetService.readState(input),
       },
       widgetCraft,
       skills: {

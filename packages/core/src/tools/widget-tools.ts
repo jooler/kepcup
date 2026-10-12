@@ -16,6 +16,7 @@ import type { WidgetWriteResult } from '../widgets/service.js';
 
 export const WIDGET_CRAFT_TOOL = 'widget_craft';
 export const WIDGET_PUBLISH_TOOL = 'widget_publish';
+export const WIDGET_READ_STATE_TOOL = 'widget_read_state';
 
 /** The slice of the widget services the tools need. */
 export interface WidgetToolFacade {
@@ -31,6 +32,16 @@ export interface WidgetToolFacade {
     conversationId: string;
     runId: string | null;
   }): WidgetWriteResult;
+  /** D87 P4 L3：读本 Bot 组件的 KV（只读；不是代码，是用户在组件里填的数据）。 */
+  readState(input: { botId: string; widgetId: string; keys?: string[] }):
+    | {
+        ok: true;
+        json: string;
+        truncated: boolean;
+        count: number;
+        skipped: Array<{ key: string; bytes: number; preview: string }>;
+      }
+    | { ok: false; message: string; code: 'NOT_FOUND' | 'FORBIDDEN' };
 }
 
 export function buildWidgetTools(input: {
@@ -115,5 +126,63 @@ export function buildWidgetTools(input: {
     },
   };
 
-  return [craft, publish] as ToolDefinition[];
+  // D87 P4 L3（设计 32 §12.3）：组件里存的数据是用户填的（不可信）——包进 <untrusted> 再交给模型。
+  const readState: ToolDefinition<{ widget_id?: string; keys?: string[] }> = {
+    name: WIDGET_READ_STATE_TOOL,
+    description:
+      '读取你创建的某个组件在本机保存的键值数据，用于汇总、分析或接着处理用户在组件里填的内容。只读，不改数据；只能读你自己的组件。',
+    parameters: Type.Object({
+      widget_id: Type.String({ description: '组件 ID（交付回执里的 widgetId）' }),
+      keys: Type.Optional(
+        Type.Array(Type.String({ maxLength: 200 }), {
+          maxItems: 50,
+          description: '只读这些键；不给则读全部（总量有上限，超出会截断）',
+        }),
+      ),
+    }),
+    execute: (params) => {
+      const botId = identity.botId;
+      if (botId === null) {
+        return Promise.resolve({
+          ok: false,
+          content: '当前没有 Bot 身份，不能读组件数据',
+          errorCode: 'INVALID_INPUT',
+        });
+      }
+      const widgetId = params.widget_id?.trim() ?? '';
+      if (widgetId === '') {
+        return Promise.resolve({
+          ok: false,
+          content: '需要提供 widget_id',
+          errorCode: 'INVALID_INPUT',
+        });
+      }
+      const result = widgets.readState({
+        botId,
+        widgetId,
+        ...(params.keys !== undefined ? { keys: params.keys } : {}),
+      });
+      if (!result.ok) {
+        return Promise.resolve({ ok: false, content: result.message, errorCode: result.code });
+      }
+      // json / preview 里的 `<` 已由服务转成 \u003c，数据闭合不了边界。
+      const note = result.truncated ? '（数据较多，已截断；可用 keys 只读需要的键）' : '';
+      const skipped =
+        result.skipped.length === 0
+          ? ''
+          : `\n以下键的值太大，没有整体放进来（${result.skipped
+              .map((s) => `${s.key}：${s.bytes} 字节`)
+              .join('；')}）；开头片段（同样是数据）：\n<untrusted source="widget-state">${JSON.stringify(
+              Object.fromEntries(
+                result.skipped.filter((s) => s.preview !== '').map((s) => [s.key, s.preview]),
+              ),
+            ).replace(/</g, '\\u003c')}</untrusted>`;
+      return Promise.resolve({
+        ok: true,
+        content: `组件 ${widgetId} 的数据（${result.count} 个键）${note}：\n<untrusted source="widget-state">${result.json}</untrusted>${skipped}`,
+      });
+    },
+  };
+
+  return [craft, publish, readState] as ToolDefinition[];
 }

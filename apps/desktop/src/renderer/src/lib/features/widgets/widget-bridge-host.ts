@@ -3,6 +3,7 @@ import {
   WIDGET_BRIDGE_HOST_SOURCE,
   WIDGET_HOST_THEME_EVENT,
   BOT_WIDGET_STORAGE_KEY_MAX_CHARS,
+  WIDGET_REPLY_MAX_CHARS,
   type WidgetsUiQueryCall,
   type WidgetsUiQueryOutput,
   type WidgetsUiStorageCall,
@@ -23,6 +24,13 @@ export interface WidgetBridgeListenerTarget {
   removeEventListener(type: 'message', listener: (event: MessageEvent) => void): void;
 }
 
+/** 宿主文档当前是否处于用户激活（iframe 内的点击会传播上来）。 */
+function hostUserActivation(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  const activation = (navigator as { userActivation?: { isActive: boolean } }).userActivation;
+  return activation === undefined ? true : activation.isActive;
+}
+
 /**
  * Bot Widget 能力桥宿主（D81 P1，设计 32 §6）：BotWidgetCard 在挂 iframe **之前**创建本类。
  * 只接收来自这一个 iframe 窗口的消息（`event.source === frameWindow` 是唯一来源凭据——组件
@@ -32,6 +40,8 @@ export interface WidgetBridgeListenerTarget {
  * - `query` → core RPC `widgets.ui.query`（P2：按名字执行随版本预审的只读查询模板）；
  * - `openLink` → 先 renderer 侧 https 规范化，再交给卡片出确认条（用户同意后走
  *   `widgets.ui.openLink`）；一次只挂一条，卡片拒绝后有冷却；
+ * - `reply`（D87 P4 L3）→ 校验长度、核验用户手势，再交给卡片出确认条（同意后走
+ *   `widgets.ui.reply`，以用户消息发出）；与外链确认条互斥；
  * - `theme.get` → 建桥时的宿主主题（一次性，不推送变更）；
  * - `setHeight` → 高度夹取 + 100ms 节流后回调卡片（通知，无回执）。
  *
@@ -52,6 +62,14 @@ export interface WidgetBridgeHostOptions {
   query(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput>;
   /** 外链确认（卡片出确认条；resolve = 用户同意且打开成功）。 */
   openLink(url: string): Promise<boolean>;
+  /** D87 P4 L3 回传：卡片出确认条；resolve = 用户同意且已作为用户消息发出。 */
+  reply(text: string): Promise<boolean>;
+  /**
+   * 回传前核验用户手势（审查修复：不能只靠组件里的垫片——组件可以绕过垫片直接发桥消息）。
+   * iframe 内的激活按规范传播到祖先框架，宿主读自己的 `navigator.userActivation.isActive` 即可；
+   * 缺省如此（环境没有该 API 时放行，确认条仍逐次把关）。测试注入。
+   */
+  userActivation?: (() => boolean) | undefined;
   onHeight(height: number): void;
   /** 监听目标；缺省全局 window（测试注入假体以便在 node 环境跑协议级用例）。 */
   listenerTarget?: WidgetBridgeListenerTarget | undefined;
@@ -190,6 +208,17 @@ export class WidgetBridgeHost {
         const url = normalizeAppLink(payload['url']);
         if (url === null) return { error: '只支持打开 https 链接', code: 'INVALID_INPUT' };
         return { value: await this.#options.openLink(url) };
+      }
+      case 'reply': {
+        // 长度与非空在这里先挡（core 再核一次）；用户手势垫片与这里各查一次，确认由卡片出条。
+        const text = typeof payload['text'] === 'string' ? payload['text'].trim() : '';
+        if (text === '') return { error: 'kepcup.reply 需要一段非空文字', code: 'INVALID_INPUT' };
+        if (text.length > WIDGET_REPLY_MAX_CHARS) {
+          return { error: `回传的内容过长（最多 ${WIDGET_REPLY_MAX_CHARS} 字）`, code: 'INVALID_INPUT' };
+        }
+        // 没有用户手势：如垫片一样静默 resolve false，不出确认条（防反复弹条骚扰 / 点击劫持）。
+        if (!(this.#options.userActivation ?? hostUserActivation)()) return { value: false };
+        return { value: await this.#options.reply(text) };
       }
       case 'theme.get':
         return { value: this.#theme };

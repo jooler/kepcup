@@ -35,6 +35,7 @@ interface KepcupApi {
   };
   query(name: unknown, params: unknown): Promise<unknown>;
   openLink(url: unknown): Promise<unknown>;
+  reply(text: unknown): Promise<unknown>;
   theme(): Promise<unknown>;
   setHeight(height: unknown): void;
 }
@@ -46,7 +47,7 @@ interface ShimHarness {
   replyFromOtherWindow(data: Record<string, unknown>): void;
 }
 
-function installShim(): ShimHarness {
+function installShim(navigator: unknown = {}): ShimHarness {
   const sent: SentMessage[] = [];
   const parent = {
     postMessage: (msg: SentMessage) => {
@@ -62,7 +63,7 @@ function installShim(): ShimHarness {
       listeners.push(fn);
     },
   };
-  new Function('window', 'parent', SHIM_BODY)(win, parent);
+  new Function('window', 'parent', 'navigator', SHIM_BODY)(win, parent, navigator);
   if (win.kepcup === undefined) throw new Error('shim did not install window.kepcup');
   return {
     kepcup: win.kepcup,
@@ -173,6 +174,20 @@ describe('WIDGET_SDK_SHIM 执行路径', () => {
     expect(h.sent[0]).toMatchObject({ type: 'openLink', payload: { url: 'https://example.com' } });
     h.reply({ source: 'kepcup-host', id: 1, ok: true, value: true });
     await expect(opened).resolves.toBe(true);
+  });
+
+  it('reply（D87 P4 L3）：手势里发请求并按回执 resolve；不在手势里直接 false、不发；空文字被拒', async () => {
+    const activation = { isActive: true };
+    const h = installShim({ userActivation: activation });
+    await expect(h.kepcup.reply('  ')).rejects.toThrow(/非空/);
+    const sent = h.kepcup.reply('清单：牛奶');
+    expect(h.sent[0]).toMatchObject({ type: 'reply', payload: { text: '清单：牛奶' } });
+    h.reply({ source: 'kepcup-host', id: 1, ok: true, value: true });
+    await expect(sent).resolves.toBe(true);
+
+    activation.isActive = false;
+    await expect(h.kepcup.reply('再来')).resolves.toBe(false);
+    expect(h.sent).toHaveLength(1);
   });
 
   it('query：请求形状 { name, params }；params 缺省为 {}；按关联 id 配对回执并透传错误码', async () => {

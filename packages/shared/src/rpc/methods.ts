@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
+import { askUserValuesSchema } from '../domain/ask-user.js';
 import {
   widgetPreviewRunInputSchema,
   widgetPreviewRunOutputSchema,
@@ -1065,7 +1066,10 @@ export const tasksActiveOutputSchema = z.object({ tasks: z.array(taskViewSchema)
 /** The user picked an option on a task question card: injected straight into the task. */
 export const tasksAnswerInputSchema = z.object({
   messageId: z.string().min(1),
+  /** 单选：点选的候选；多选 / 表单：卡片上显示的一行（core 以 `values` 为准重新生成）。 */
   answer: z.string().min(1).max(4000),
+  /** D87 P4 L2：多选 = 选中的候选列表；表单 = 字段名 → 文本。单选不带。 */
+  values: askUserValuesSchema.optional(),
 });
 
 // --- grants (P03) -----------------------------------------------------------

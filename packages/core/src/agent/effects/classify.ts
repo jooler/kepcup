@@ -156,7 +156,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
 
   // --- Bot 组件（D81 / D87）：本机库写入 + 发卡；制作 loop 的工具只动草稿目录 ---
   widget_craft: 'local',
+  present: 'local',
   widget_publish: 'local',
+  widget_read_state: 'none',
   widget_check: 'none',
   widget_template: 'local',
   stage_done: 'none',

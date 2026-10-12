@@ -407,6 +407,21 @@ async function main(): Promise<void> {
     return brief(v!);
   });
 
+  await test('reply without a real user gesture resolves false, never sends, no findings', async () => {
+    const src = doc(`<button id="go" type="button">发给 Bot</button>
+<p id="r"></p>
+<script>
+  document.getElementById('go').addEventListener('click', async function () {
+    var sent = await kepcup.reply('清单：牛奶');
+    document.getElementById('r').textContent = sent ? '已发送' : '未发送';
+  });
+</script>`);
+    const [v] = (await preview(src)).viewports;
+    expect(v!.status === 'ok', `status ${v!.status} ${v!.detail}`);
+    expect(v!.findings.length === 0, JSON.stringify(v!.findings));
+    return brief(v!);
+  });
+
   await test('infinite loop at load → timeout, then the next preview works', async () => {
     const t0 = Date.now();
     const [v] = (await preview(doc('<p>spin</p>\n<script>for(;;){}</script>'))).viewports;

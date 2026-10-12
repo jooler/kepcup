@@ -5,6 +5,8 @@ import { agentPermissionTierSchema, agentVersionSchema } from './agent-catalog.j
 import { agentSetupReasonSchema } from './agent-status.js';
 import { appUiCardSchema } from './apps-ui.js';
 import { widgetCardSchema } from './widgets-ui.js';
+import { presentCardSchema } from './present.js';
+import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -750,7 +752,10 @@ export const textContentSchema = z.object({
    * `task`（D75 §2.4.2）：任务发出的可见中间说明（进度），渲染为「你（任务
    * t_x）」；`taskId` 指向任务 run。
    */
-  origin: z.enum(['delegation', 'task']).optional(),
+  origin: z.enum(['delegation', 'task', 'widget']).optional(),
+  /** origin = 'widget'（D87 P4 L3）时发出它的组件与版本：用户经组件回传、确认后发出的消息。 */
+  widgetId: z.string().optional(),
+  widgetVersion: z.number().int().optional(),
   /** origin = 'delegation' 时对应的委派行。 */
   delegationId: z.string().optional(),
   /** origin = 'delegation' 时代为转交的 Bot（A）的 id：UI 标签与上下文渲染用。 */
@@ -787,6 +792,10 @@ export const systemEventContentSchema = z.object({
    * 或对话轮经 inject_task 转交的自由文本）；未答时缺省。
    */
   answer: z.string().optional(),
+  /** 任务提问卡的模式（D87 P4 L2）：缺省 = single（存量卡）。 */
+  questionMode: askUserModeSchema.optional(),
+  /** 表单模式的字段（D87 P4 L2）。 */
+  questionFields: z.array(askUserFieldSchema).optional(),
   /**
    * 任务提问卡（event = task_question）：提问任务所属的 Bot。上下文渲染据此把
    * 问题标成「某 Bot 的任务提问」而不是系统消息（问题文字来自任务的模型输出，
@@ -894,6 +903,11 @@ export const cardContentSchema = z.object({
   appUi: appUiCardSchema.optional(),
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符；不含 HTML。 */
   widget: widgetCardSchema.optional(),
+  /**
+   * 声明式展示卡（D87 P4 L1，cardType `present`）：kind + 标题 + 数据（Bot 自己给的结构化数据，
+   * 不是代码；渲染端再按 kind 校验一次）。
+   */
+  present: presentCardSchema.optional(),
 });
 export type CardContent = z.infer<typeof cardContentSchema>;
 

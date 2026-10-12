@@ -13,6 +13,9 @@ import {
   type ScheduleReceiptSnapshot,
   type TaskEventContent,
   type TaskEventPhase,
+  type AskUserField,
+  type AskUserMode,
+  type PresentCard,
   type WidgetCard,
 } from '@kepcup/shared';
 import { buildFtsQuery, segmentForFts } from '../infra/text-segment.js';
@@ -64,6 +67,8 @@ export interface AppendMessageInput {
    * `origin: 'task'` + the task's run id (rendered as 「你（任务 t_x）」).
    */
   taskOrigin?: { taskId: string } | undefined;
+  /** text messages only (D87 P4 L3): a user message sent from a widget card (confirmed). */
+  widgetOrigin?: { widgetId: string; version: number } | undefined;
   /**
    * task_event messages only (D75 §2.4.1): the entry payload; required for
    * kind 'task_event'. Prefer `appendTaskEvent` (idempotent terminal phases).
@@ -90,6 +95,9 @@ export interface AppendMessageInput {
   options?: string[] | undefined;
   /** system_event extras: the bot whose task asks (task_question, D75 审查 H1). */
   taskBotId?: string | undefined;
+  /** system_event extras (task_question, D87 P4 L2): multi / form question cards. */
+  questionMode?: AskUserMode | undefined;
+  questionFields?: AskUserField[] | undefined;
   /** system_event extras: group-creation question step (group_setup_question). */
   step?: string | undefined;
   /** system_event extras: butler route card target (route_suggestion, D70). */
@@ -121,6 +129,8 @@ export interface AppendMessageInput {
   cardAppUi?: AppUiCard | undefined;
   /** Bot 自制交互组件卡片（D81，cardType `bot_widget`）：描述符（不含 HTML）。 */
   cardWidget?: WidgetCard | undefined;
+  /** 声明式展示卡（D87 P4 L1，cardType `present`）。 */
+  cardPresent?: PresentCard | undefined;
   /** Watch cards only (W7, cardType `watch`). */
   cardWatch?:
     | {
@@ -276,6 +286,13 @@ export class MessagesService {
               ...(input.taskOrigin !== undefined
                 ? { origin: 'task', taskId: input.taskOrigin.taskId }
                 : {}),
+              ...(input.widgetOrigin !== undefined
+                ? {
+                    origin: 'widget',
+                    widgetId: input.widgetOrigin.widgetId,
+                    widgetVersion: input.widgetOrigin.version,
+                  }
+                : {}),
               ...(input.scheduleSource !== undefined
                 ? {
                     scheduleId: input.scheduleSource.scheduleId,
@@ -293,6 +310,7 @@ export class MessagesService {
                   : {}),
                 ...(input.cardAppUi !== undefined ? { appUi: input.cardAppUi } : {}),
                 ...(input.cardWidget !== undefined ? { widget: input.cardWidget } : {}),
+                ...(input.cardPresent !== undefined ? { present: input.cardPresent } : {}),
                 ...(input.cardWatch !== undefined
                   ? {
                       watchId: input.cardWatch.watchId,
@@ -328,6 +346,10 @@ export class MessagesService {
                 ...(input.internal ? { internal: true } : {}),
                 ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
                 ...(input.options !== undefined ? { options: input.options } : {}),
+                ...(input.questionMode !== undefined && input.questionMode !== 'single'
+                  ? { questionMode: input.questionMode }
+                  : {}),
+                ...(input.questionFields !== undefined ? { questionFields: input.questionFields } : {}),
                 ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
                 ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),

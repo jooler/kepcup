@@ -2,12 +2,15 @@
   import { onMount, tick } from 'svelte';
   import { Blocks, Code2, RefreshCw, ShieldCheck } from '@lucide/svelte';
   import { mode } from 'mode-watcher';
+  import { toast } from 'svelte-sonner';
   import {
     BOT_WIDGET_CONSENT_STORAGE_KEY,
     BOT_WIDGET_CONSENTS_MAX,
     BOT_WIDGET_HEIGHT_MAX,
     BOT_WIDGET_HEIGHT_MIN,
     MCP_APP_LINK_COOLDOWN_MS,
+    WIDGET_REPLY_COOLDOWN_MS,
+    widgetsUiReplyOutputSchema,
     widgetsUiOpenLinkOutputSchema,
     widgetsUiOpenOutputSchema,
     widgetsUiQueryOutputSchema,
@@ -73,6 +76,13 @@
   let pendingLink = $state<{ url: string; resolve: (ok: boolean) => void } | null>(null);
   /** 一条外链被取消后的冷却（防反复弹确认条），与 McpAppCard 同值。 */
   let linkBlockedUntil = 0;
+  /**
+   * D87 P4 L3 回传确认（设计 32 §12.3）：组件请求把一段文字作为用户消息发回对话。确认条与外链
+   * 共用单例（同一时刻只挂一条），每次（发出或取消）后冷却 WIDGET_REPLY_COOLDOWN_MS——不能静默
+   * 发送，也不能连发刷屏。
+   */
+  let pendingReply = $state<{ text: string; resolve: (ok: boolean) => void } | null>(null);
+  let replyBlockedUntil = 0;
 
   let bridge: WidgetBridgeHost | null = null;
   let generation = 0;
@@ -135,11 +145,19 @@
         openLink: (url) =>
           new Promise<boolean>((resolve) => {
             // One confirmation at a time; a second request while one is open is refused.
-            if (pendingLink !== null || Date.now() < linkBlockedUntil) {
+            if (pendingLink !== null || pendingReply !== null || Date.now() < linkBlockedUntil) {
               resolve(false);
               return;
             }
             pendingLink = { url, resolve };
+          }),
+        reply: (text) =>
+          new Promise<boolean>((resolve) => {
+            if (pendingLink !== null || pendingReply !== null || Date.now() < replyBlockedUntil) {
+              resolve(false);
+              return;
+            }
+            pendingReply = { text, resolve };
           }),
         onHeight: (value) => {
           height = value;
@@ -203,6 +221,8 @@
     generation += 1;
     pendingLink?.resolve(false);
     pendingLink = null;
+    pendingReply?.resolve(false);
+    pendingReply = null;
     const connected = bridge;
     bridge = null;
     connected?.destroy();
@@ -259,6 +279,30 @@
     pendingLink?.resolve(false);
     pendingLink = null;
     linkBlockedUntil = Date.now() + MCP_APP_LINK_COOLDOWN_MS;
+  }
+
+  async function confirmReply(): Promise<void> {
+    const reply = pendingReply;
+    if (reply === null || lease === null) return;
+    pendingReply = null;
+    replyBlockedUntil = Date.now() + WIDGET_REPLY_COOLDOWN_MS;
+    try {
+      const result = await withResource(async (resourceId) =>
+        widgetsUiReplyOutputSchema.parse(
+          await core.call('widgets.ui.reply', { resourceId, text: reply.text }),
+        ),
+      );
+      reply.resolve(result.ok);
+    } catch (error) {
+      toast.error(errorText((error as { code?: string }).code, t('botWidget.replyFailed')));
+      reply.resolve(false);
+    }
+  }
+
+  function cancelReply(): void {
+    pendingReply?.resolve(false);
+    pendingReply = null;
+    replyBlockedUntil = Date.now() + WIDGET_REPLY_COOLDOWN_MS;
   }
 
   onMount(() => {
@@ -492,6 +536,38 @@
       onconfirm={() => void confirmLink()}
       oncancel={cancelLink}
     />
+  {/if}
+
+  {#if pendingReply !== null}
+    <div
+      class="border-t bg-sky-500/5 px-3 py-2 text-xs"
+      data-testid="bot-widget-reply-confirm"
+      role="alertdialog"
+      aria-label={t('botWidget.replyTitle')}
+    >
+      <p class="font-medium">{t('botWidget.replyTitle')}</p>
+      <p
+        class="mt-1 max-h-32 overflow-y-auto rounded border bg-background px-2 py-1 whitespace-pre-wrap break-words"
+        data-testid="bot-widget-reply-text"
+      >
+        {pendingReply.text}
+      </p>
+      <div class="mt-2 flex justify-end gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          class="h-6 px-2 text-xs"
+          onclick={cancelReply}
+          data-testid="bot-widget-reply-cancel">{t('botWidget.replyCancel')}</Button
+        >
+        <Button
+          size="sm"
+          class="h-6 px-2 text-xs"
+          onclick={() => void confirmReply()}
+          data-testid="bot-widget-reply-send">{t('botWidget.replyConfirm')}</Button
+        >
+      </div>
+    </div>
   {/if}
 
   {#if cardState === 'ready'}
