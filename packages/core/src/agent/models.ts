@@ -22,6 +22,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
+import { isModelRouteChangedError } from './model-retry.js';
 
 /** Secret name holding a provider's API key. */
 export function providerSecretName(providerId: string): string {
@@ -276,6 +277,12 @@ export async function testProvider(deps: {
 
 /** Maps pi/provider errors onto the app error codes. */
 export function mapProviderError(error: unknown): AppError {
+  if (isModelRouteChangedError(error)) {
+    return new AppError(
+      'PROVIDER_UNAVAILABLE',
+      error instanceof Error ? error.message : '模型设置已变更，中止对旧模型的重试',
+    );
+  }
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
   if (

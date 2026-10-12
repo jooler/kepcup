@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { ProviderInfo } from '@kepcup/shared';
   import { AppError, isVendorId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
   import { Plus } from '@lucide/svelte';
@@ -18,6 +19,7 @@
   import CapabilityModelSection from './CapabilityModelSection.svelte';
   import ModelSelectField from './ModelSelectField.svelte';
   import ProviderSetupForm from './ProviderSetupForm.svelte';
+  import { nextLocalFromStore } from './model-defaults-sync';
 
   /**
    * 设置弹框「模型」分组（docs/design/16-capability-models.md）：
@@ -31,6 +33,10 @@
   let mainModel = $state('');
   let lightModel = $state('');
   let concurrency = $state(4);
+  /** 上次从 settings store 应用到本地的值；用于避免 refresh 冲掉未保存选择。 */
+  let appliedMain = $state<string | null>(null);
+  let appliedLight = $state<string | null>(null);
+  let appliedConcurrency = $state<number | null>(null);
   let testingProvider = $state<string | null>(null);
 
   const configuredProviders = $derived(
@@ -54,18 +60,65 @@
   $effect(() => {
     const settings = settingsStore.settings;
     if (!settings) return;
-    mainModel = settings.defaultMainModel;
-    lightModel = settings.defaultLightModel;
-    concurrency = settings.providerConcurrency.default;
+    // 本地草稿不进依赖：用户改下拉不应重跑；只跟 store / applied* 同步。
+    const localMain = untrack(() => mainModel);
+    const localLight = untrack(() => lightModel);
+    const localConc = untrack(() => concurrency);
+    const main = nextLocalFromStore({
+      storeValue: settings.defaultMainModel,
+      lastApplied: appliedMain,
+      localValue: localMain,
+    });
+    mainModel = main.localValue;
+    appliedMain = main.lastApplied;
+    const light = nextLocalFromStore({
+      storeValue: settings.defaultLightModel,
+      lastApplied: appliedLight,
+      localValue: localLight,
+    });
+    lightModel = light.localValue;
+    appliedLight = light.lastApplied;
+    const conc = nextLocalFromStore({
+      storeValue: String(settings.providerConcurrency.default),
+      lastApplied: appliedConcurrency === null ? null : String(appliedConcurrency),
+      localValue: String(localConc),
+    });
+    concurrency = Number(conc.localValue);
+    appliedConcurrency = Number(conc.lastApplied);
   });
 
-  async function saveModels(): Promise<void> {
+  async function saveModels(options: { toast?: boolean } = {}): Promise<void> {
+    const settings = settingsStore.settings;
+    if (
+      settings !== null &&
+      mainModel === settings.defaultMainModel &&
+      lightModel === settings.defaultLightModel
+    ) {
+      return;
+    }
     await settingsStore.update({
       defaultMainModel: mainModel,
       defaultLightModel: lightModel,
     });
-    toast.success(t('settings.saved'));
+    // 下拉变更自动保存不弹 toast；点「保存」仍提示。
+    if (options.toast !== false) toast.success(t('settings.saved'));
   }
+
+  /**
+   * 主/轻量模型一改就落盘（与 Bot 右栏引擎字段一致），避免只改下拉、忘点
+   * 「保存」时下一轮对话仍走旧默认。
+   */
+  $effect(() => {
+    const settings = settingsStore.settings;
+    const main = mainModel;
+    const light = lightModel;
+    if (!settings) return;
+    if (main === settings.defaultMainModel && light === settings.defaultLightModel) return;
+    // 尚未完成从 store 的首次同步时不写回。
+    if (appliedMain === null || appliedLight === null) return;
+    const timer = setTimeout(() => void saveModels({ toast: false }), 200);
+    return () => clearTimeout(timer);
+  });
 
   async function saveConcurrency(): Promise<void> {
     const current = settingsStore.settings;

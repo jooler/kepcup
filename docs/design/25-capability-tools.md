@@ -58,5 +58,5 @@
 
 - 语音输入（用户侧按录转文字 / 语音消息）已另行落地，见 [26](26-voice-input.md)；本篇只覆盖模型侧的 `transcribe_audio` 工具。
 - 长音频分片转写与说话人分离；视频转码与抽帧理解。
-- `understand_image` 不承担批量离线描述任务（Wiki 图片整合另走 17 号 MinerU 路线）。
+- 对话内的 `understand_image` / `transcribe_audio` 仍是即时补位工具；Wiki 批量离线派生由宿主 ingest 管线调用同一 MediaService API（见 [36-wiki-multimodal-ingest.md](36-wiki-multimodal-ingest.md)，D85），不在响应 loop 里让模型逐张「自觉」描述。
 - embedding / rerank 不工具化：它们是记忆检索的内部环节，模型无需感知（16 号定位）。

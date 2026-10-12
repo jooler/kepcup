@@ -259,3 +259,48 @@ describe('createRetryingFetch', () => {
     expect(inner).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('createRetryingFetch model route change', () => {
+  it('aborts remaining same-model retries when shouldContinueRetry flips false mid-backoff', async () => {
+    let current = true;
+    const inner = vi.fn<typeof fetch>().mockResolvedValue(status(429));
+    const warn = vi.fn();
+    const wrapped = createRetryingFetch({
+      logger: { warn },
+      context: CONTEXT,
+      inner,
+      random: () => 1,
+      shouldContinueRetry: () => current,
+    });
+
+    const pending = wrapped(URL_, { body: '{}' });
+    const assertion = expect(pending).rejects.toMatchObject({ name: 'ModelRouteChangedError' });
+    // First attempt failed; backoff is 2000ms (chunked). Flip mid-wait.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(inner).toHaveBeenCalledTimes(1);
+    current = false;
+    await vi.advanceTimersByTimeAsync(250);
+    await assertion;
+    // No second attempt against the old model.
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.some((c) => c[1] === 'model request retry aborted: model settings changed')).toBe(
+      true,
+    );
+  });
+
+  it('does not schedule another attempt when the route is already stale after a failure', async () => {
+    const inner = vi.fn<typeof fetch>().mockResolvedValue(status(503));
+    const wrapped = createRetryingFetch({
+      logger: { warn: vi.fn() },
+      context: CONTEXT,
+      inner,
+      random: () => 1,
+      shouldContinueRetry: () => false,
+    });
+
+    await expect(wrapped(URL_, { body: '{}' })).rejects.toMatchObject({
+      name: 'ModelRouteChangedError',
+    });
+    expect(inner).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,6 +1,10 @@
 import { AppError, isVendorId, settingsSchema, type Settings } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
+import {
+  bumpModelRoutingGeneration,
+  settingsAffectModelRouting,
+} from '../agent/model-routing-generation.js';
 
 const SETTINGS_KEY = 'app';
 
@@ -69,6 +73,9 @@ export class SettingsService {
           'on conflict(key) do update set value_json = excluded.value_json, updated_at = excluded.updated_at',
       )
       .run(SETTINGS_KEY, JSON.stringify(next), this.clock.now());
+    if (settingsAffectModelRouting(current, next)) {
+      bumpModelRoutingGeneration();
+    }
     return next;
   }
 }
