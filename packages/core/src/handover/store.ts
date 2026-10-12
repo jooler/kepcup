@@ -234,6 +234,7 @@ export class HandoverStore {
   view(id: string): HandoverView | null {
     const record = this.get(id);
     if (record === null) return null;
+    const items = this.items(id);
     return {
       id: record.id,
       approvalId: record.approvalId,
@@ -241,13 +242,14 @@ export class HandoverStore {
       status: record.status,
       fromBotId: record.fromBotId,
       toBotId: record.toBotId,
-      items: this.items(id).map((item) => ({
+      items: items.map((item) => ({
         key: item.key,
         assetType: item.assetType,
         status: item.status,
         error: item.error,
       })),
-      updatedAt: record.updatedAt,
+      // Item progress counts as an update of the view (renderer keeps the newest).
+      updatedAt: Math.max(record.updatedAt, ...items.map((item) => item.updatedAt)),
     };
   }
 }

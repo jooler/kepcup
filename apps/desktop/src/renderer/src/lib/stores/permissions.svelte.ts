@@ -140,6 +140,8 @@ class PermissionsState {
     payloadHash?: string,
     /** butler_proposal only (D80): kept routines as "{botIndex}:{routineIndex}". */
     routineSelection?: string[],
+    /** bot_handover only (D88): kept item keys (incl. "resp:to" / "resp:from"). */
+    handoverSelection?: string[],
   ): Promise<void> {
     try {
       const result = (await core.call('approvals.decide', {
@@ -149,6 +151,7 @@ class PermissionsState {
         ...(selection !== undefined ? { selection } : {}),
         ...(payloadHash !== undefined ? { payloadHash } : {}),
         ...(routineSelection !== undefined ? { routineSelection } : {}),
+        ...(handoverSelection !== undefined ? { handoverSelection } : {}),
       })) as { approval: Approval };
       this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);
