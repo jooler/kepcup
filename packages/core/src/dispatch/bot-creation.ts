@@ -45,14 +45,18 @@ export function createProposedBotRecord(
   item: ButlerProposedBot,
   slot: number,
   runtime?: Partial<Pick<BotProfile['runtime'], 'model' | 'light_model' | 'agent'>>,
+  options: { skipDefaultAgent?: boolean } = {},
 ): CreatedBotRecord {
   // 只写 Profile 的配置值（'' = 跟随设置默认）；选取仍由 llm-router 负责。
   const overrides = runtime ?? (item.model.length > 0 ? { model: item.model } : undefined);
-  const bot = deps.bots.create({
-    identity: { name: item.name, bio: item.bio, avatar: proposedBotAvatar(slot) },
-    role: { expertise: item.expertise, responsibilities: item.responsibilities },
-    ...(overrides !== undefined ? { runtime: { ...overrides } as BotProfile['runtime'] } : {}),
-  });
+  const bot = deps.bots.create(
+    {
+      identity: { name: item.name, bio: item.bio, avatar: proposedBotAvatar(slot) },
+      role: { expertise: item.expertise, responsibilities: item.responsibilities },
+      ...(overrides !== undefined ? { runtime: { ...overrides } as BotProfile['runtime'] } : {}),
+    },
+    options.skipDefaultAgent === true ? { skipDefaultAgent: true } : {},
+  );
   const { conversation, created } = deps.conversations.openDirect(bot.id);
   return { bot, conversation, opened: created };
 }

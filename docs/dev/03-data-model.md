@@ -517,7 +517,7 @@ CREATE TABLE schedules (
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 ```
 
-D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。D88 移交定时任务时（`ScheduleService.transferTo`，一个事务）：在 B 的对话里按原字段重建一行并出新回执卡，原行 `cancelled`，原回执卡快照写入 `schedule.handedOverTo = {botId, name}`、文案改为「已移交给 {B}」。交接记录也是 system_event：`bot_handover`（B 私聊）/ `bot_handed_over`（A 私聊），内容带 `handover: {handoverId, fromBotId, fromBotName, toBotId, toBotName, items[], note}`。
+D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。D88 移交定时任务时（`ScheduleService.transferTo`，一个事务）：在 B 的对话里按原字段重建一行并出新回执卡，原行 `cancelled`，原回执卡快照写入 `schedule.handedOverTo = {botId, name}`、文案改为「已移交给 {B}」。交接记录也是 system_event：`bot_handover`（B 私聊）/ `bot_handed_over`（A 私聊），内容带 `handover: {handoverId, fromBotId, fromBotName, toBotId, toBotName, items[]（移交与职责改写）, kept[]（共享 / 复制，移交方仍保留）, note}`。移交时已排队的 `schedule_fire:{旧 id}:*` 作业在同一事务里改投新任务，接手方的新回执卡也在该事务里写入。
 
 ### watches（D79，main 0023）
 
@@ -786,6 +786,7 @@ CREATE TABLE bot_handovers (
   status           TEXT NOT NULL CHECK (status IN (
                      'proposed', 'applying', 'completed', 'partial', 'failed', 'denied', 'cancelled')),
   plan_json        TEXT NOT NULL,              -- 提交时的移交卡 payload 快照
+  notified_at      INTEGER,                    -- 结果已通知发起方（NULL = 未通知，启动恢复补发）
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );

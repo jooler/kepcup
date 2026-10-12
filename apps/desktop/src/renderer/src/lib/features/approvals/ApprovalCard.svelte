@@ -30,6 +30,7 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import McpRiskBadge from './McpRiskBadge.svelte';
@@ -147,6 +148,14 @@
           .filter((index) => !butlerDropped.includes(index))
       : [],
   );
+
+  /** D88: display label of a proposed bot's model ref (stale refs are marked unavailable). */
+  function proposedModelLabel(ref: string): string {
+    return (
+      settingsStore.availableModelOptions.find((option) => option.ref === ref)?.label ??
+      t('contacts.modelUnavailable', { ref })
+    );
+  }
 
   function toggleButlerItem(index: number): void {
     butlerDropped = butlerDropped.includes(index)
@@ -804,6 +813,14 @@
                   <span class="text-xs text-muted-foreground"
                     >{t('approvals.butlerResponsibilities')}：{bot.responsibilities}</span
                   >
+                  {#if bot.model.length > 0}
+                    <!-- D88：提议里指定的模型（与 Bot 详情下拉同源的显示名；不可用时标出） -->
+                    <span
+                      class="text-xs text-muted-foreground"
+                      data-testid={`approval-butler-bot-model-${index}`}
+                      >{t('approvals.butlerModel', { model: proposedModelLabel(bot.model) })}</span
+                    >
+                  {/if}
                   {#if bot.reason.length > 0}
                     <span class="text-xs text-muted-foreground"
                       >{t('approvals.reason')}：{bot.reason}</span

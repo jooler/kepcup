@@ -1038,8 +1038,9 @@ export class ScheduleService {
    * D88 移交：把一条 active 定时任务改由另一个 Bot 负责——在 `conversationId`（B 的私聊，
    * 或 B 也在的群）里按原字段重建（title / note / kind / cron / run_at / timezone / origin，
    * 待触发的那一次照旧），出一张新回执卡；原任务取消，其回执卡快照标「已移交给 {B}」。
-   * 重建与取消在同一事务里：崩溃后不会两边都有、也不会两边都没有。承诺联动的任务不在此列
-   * （P1 随承诺一起迁移）。
+   * 重建、取消、新回执卡与已排队的触发作业改投在同一事务里：崩溃后不会两边都有、也不会
+   * 两边都没有，接手方也不会缺回执卡；已经排进队列（`schedule_fire:{旧 id}:*`）的那一次
+   * 改由新任务触发，只触发一次。承诺联动的任务不在此列（P1 随承诺一起迁移）。
    */
   transferTo(
     scheduleId: string,
@@ -1053,16 +1054,23 @@ export class ScheduleService {
     }
     if (row.botId === target.botId) throw new AppError('INVALID_INPUT', '任务已经属于该 Bot');
     this.#assertFireable(target.botId, target.conversationId);
-    const nextFireAt =
-      row.nextFireAt ??
-      (row.kind === 'cron' && row.cron !== null
-        ? nextCronFireAt(row.cron, row.timezone, this.#deps.clock.now())
-        : row.runAt);
     const handedOverTo = { botId: target.botId, name: target.botName };
     let created: Schedule | null = null;
     let cardIds: string[] = [];
+    let receipt: Message | null = null;
     this.#deps.db.transaction(() => {
-      created = this.store.insert({
+      // 到期时 #onDue 先入队作业、再推进 next_fire_at：已入队的那一次跟着作业走。
+      const queued = this.#deps.jobs
+        .pendingByDedupePrefix(`schedule_fire:${row.id}:`)
+        .filter((job) => job.type === 'schedule_fire');
+      const nextFireAt =
+        row.nextFireAt ??
+        (queued.length > 0
+          ? null
+          : row.kind === 'cron' && row.cron !== null
+            ? nextCronFireAt(row.cron, row.timezone, this.#deps.clock.now())
+            : row.runAt);
+      const inserted = this.store.insert({
         botId: target.botId,
         conversationId: target.conversationId,
         kind: row.kind,
@@ -1074,6 +1082,12 @@ export class ScheduleService {
         origin: row.origin,
         nextFireAt,
       });
+      created = inserted;
+      for (const job of queued) {
+        const fireAt = (JSON.parse(job.payload_json) as { fireAt?: unknown }).fireAt;
+        if (typeof fireAt === 'number') this.#enqueueFireJob(inserted, fireAt);
+        this.#deps.jobs.cancelPending(job.id);
+      }
       this.store.update(row.id, { status: 'cancelled', nextFireAt: null });
       if (this.#deps.messages !== undefined) {
         cardIds = (
@@ -1095,13 +1109,26 @@ export class ScheduleService {
             )
             .run(JSON.stringify(handedOverTo), text, id);
         }
+        // 接手方的回执卡（总是出，含 offer 来源）：与重建同一事务，恢复时不会缺。
+        receipt = this.#deps.messages.append({
+          conversationId: target.conversationId,
+          senderType: 'system',
+          kind: 'system_event',
+          event: SCHEDULE_CREATED_EVENT,
+          text: this.#receiptText(inserted, inserted.status),
+          schedule: this.#snapshot(inserted),
+        });
       }
     })();
     const fresh = created as Schedule | null;
     if (fresh === null) throw new AppError('INTERNAL', '定时任务移交失败');
     for (const id of cardIds) this.#publishMessageUpdated(id);
     this.#publishChanged({ ...row, status: 'cancelled' });
-    this.#appendReceipt(fresh);
+    const card = receipt as Message | null;
+    if (card !== null) {
+      this.#deps.publish?.('message.created', { conversationId: card.conversationId, message: card });
+      this.#publishConversation(card.conversationId);
+    }
     this.#publishChanged(fresh);
     this.#reload();
     return fresh;

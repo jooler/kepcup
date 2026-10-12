@@ -924,6 +924,7 @@ export const zhCN = {
   'approvals.butlerNote': '勾掉不需要的再确认；确认后会立即创建，之后可以在通讯录里修改或删除。',
   'approvals.butlerRoutine': '例行：{when} · {title}',
   'approvals.butlerConfirm': '确认创建',
+  'approvals.butlerModel': '模型：{model}',
   'handover.title': '资产移交',
   'handover.direction': '{from} → {to}',
   'handover.directionNew': '{from} → 新建 {to}',
@@ -971,6 +972,8 @@ export const zhCN = {
   'handover.newBotItem': '新建 {name}',
   'handover.received': '从 {from} 接手了',
   'handover.handedOver': '已移交给 {to}',
+  'handover.sharedWith': '已与 {to} 共享 / 复制',
+  'handover.keptTitle': '共享 / 复制（{from} 仍保留）',
   'handover.noteFrom': '{from} 的交接要点',
   'delegation.loading': '委派记录加载中…',
   'delegation.sentTitle': '已委托给 {name}',
@@ -1132,7 +1135,8 @@ export const zhCN = {
 
   'sidebar.extensionCenter': '扩展中心',
   'extensionCenter.title': '扩展中心',
-  'extensionCenter.description': '为 Bot 添加技能、连接常用应用、管理已安装的 MCP 工具服务器，或让 Bot 接管邮箱。',
+  'extensionCenter.description':
+    '为 Bot 添加技能、连接常用应用、管理已安装的 MCP 工具服务器，或让 Bot 接管邮箱。',
   'extensionCenter.tabs.skills': '技能',
   'extensionCenter.tabs.connections': '连接',
   'extensionCenter.tabs.mcp': 'MCP',
@@ -2048,14 +2052,16 @@ export const zhCN = {
   'botWidget.retry': '重试',
   'botWidget.reload': '重新加载组件',
   'botWidget.sourceTruncated': '源码过长，仅显示前 2 万字符；完整内容以运行组件为准',
-  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
+  'botWidget.capabilities':
+    '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
   'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',
   'botWidget.openLinkHost': '将打开站点：',
   'botWidget.openLinkConfirm': '在浏览器中打开',
   'botWidget.openLinkCancel': '取消',
   'botWidget.queriesTitle': '数据库查询模板（随版本由你审查）',
   // Bot 详情「组件」Tab（D81 P2 管理入口）
-  'widgetsTab.hint': '这个 Bot 制作的交互组件。跨对话资产不随对话删除，可发到任意对话；删除会清除全部版本与数据，历史卡片将无法打开。',
+  'widgetsTab.hint':
+    '这个 Bot 制作的交互组件。跨对话资产不随对话删除，可发到任意对话；删除会清除全部版本与数据，历史卡片将无法打开。',
   'widgetsTab.empty': '还没有组件。在任务里让 Bot 用 widget_create 制作交互组件。',
   'widgetsTab.assetBadge': '跨对话资产',
   'widgetsTab.conversationScopedBadge': '仅本对话',
@@ -2074,7 +2080,8 @@ export const zhCN = {
   'chats.errorCode.WIDGET_RATE_LIMITED': '组件调用宿主能力过于频繁，请稍后再试',
   'chats.errorCode.WIDGET_STORAGE_QUOTA': '这个组件的存储空间已用完',
   'chats.errorCode.WIDGET_QUERY_UNKNOWN': '组件调用了未登记的查询模板（需要 Bot 发新版本）',
-  'chats.errorCode.WIDGET_QUERY_FAILED': '组件查询执行失败（参数不符、读了范围外的数据或模板已损坏）',
+  'chats.errorCode.WIDGET_QUERY_FAILED':
+    '组件查询执行失败（参数不符、读了范围外的数据或模板已损坏）',
   'chats.errorCode.WIDGET_QUERY_TIMEOUT': '组件查询太慢或太耗内存，已被中止',
   'chats.errorCode.WIDGET_REVIEW_REQUIRED': '这个组件带数据库查询，请先查看源码审查 SQL 再加载',
   'chats.errorCode.WIDGET_LIMIT': '这个 Bot 的组件数量或占用空间已达上限',
@@ -2093,10 +2100,14 @@ export const zhCN = {
   'mail.provider.gmail': 'Gmail',
   'mail.provider.outlook': 'Outlook',
   'mail.provider.custom': '自定义',
-  'mail.providerNote.qq': '在 QQ 邮箱网页里开启 IMAP/SMTP，使用 16 位授权码。优先近实时收信；若改成轮询，建议不要短于 2 分钟。',
-  'mail.providerNote.netease_163': '使用客户端授权码。网易邮箱没有推送，默认约 5 分钟轮询一次。间隔太短可能被判定为不安全登录。',
-  'mail.providerNote.netease_126': '使用客户端授权码。网易邮箱没有推送，默认约 5 分钟轮询一次。间隔太短可能被判定为不安全登录。',
-  'mail.providerNote.gmail': '请使用已开启两步验证后生成的应用专用密码。官方 OAuth 连接是以后的事，不在这一页。',
+  'mail.providerNote.qq':
+    '在 QQ 邮箱网页里开启 IMAP/SMTP，使用 16 位授权码。优先近实时收信；若改成轮询，建议不要短于 2 分钟。',
+  'mail.providerNote.netease_163':
+    '使用客户端授权码。网易邮箱没有推送，默认约 5 分钟轮询一次。间隔太短可能被判定为不安全登录。',
+  'mail.providerNote.netease_126':
+    '使用客户端授权码。网易邮箱没有推送，默认约 5 分钟轮询一次。间隔太短可能被判定为不安全登录。',
+  'mail.providerNote.gmail':
+    '请使用已开启两步验证后生成的应用专用密码。官方 OAuth 连接是以后的事，不在这一页。',
   'mail.providerNote.outlook': 'Outlook 个人邮箱需要 OAuth，当前版本还不能用密码或授权码登录。',
   'mail.providerNote.custom': '填写你自己的 IMAP/SMTP 服务器。只会连接你填的公网邮件主机。',
   'mail.help': '如何获取授权码',
@@ -2136,7 +2147,8 @@ export const zhCN = {
   'mail.card.unknownFrom': '未知发件人',
   'mail.card.noSubject': '（无主题）',
   'mail.botSection': '邮箱',
-  'mail.botSectionHint': '勾选后，这个 Bot 会在自己的私聊里处理这些邮箱的新邮件。这和上面的连接应用不是一回事。',
+  'mail.botSectionHint':
+    '勾选后，这个 Bot 会在自己的私聊里处理这些邮箱的新邮件。这和上面的连接应用不是一回事。',
   'mail.botSectionAfterCreate': 'Bot 创建后，可以在这里或扩展中心把邮箱交给它。',
   'mail.botSectionEmpty': '还没有邮箱。到扩展中心的「邮件」页添加。',
   'mail.botSectionBound': '已接管 {count} 个邮箱',

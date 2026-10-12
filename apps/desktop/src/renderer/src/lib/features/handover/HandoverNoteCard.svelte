@@ -29,13 +29,26 @@
         <p class="font-medium">
           {received
             ? t('handover.received', { from: data.fromBotName })
-            : t('handover.handedOver', { to: data.toBotName })}
+            : data.items.length > 0
+              ? t('handover.handedOver', { to: data.toBotName })
+              : t('handover.sharedWith', { to: data.toBotName })}
         </p>
         <ul class="mt-1 grid gap-0.5 text-xs text-muted-foreground">
           {#each data.items as line, index (index)}
             <li class="break-all">· {line}</li>
           {/each}
         </ul>
+        {#if (data.kept ?? []).length > 0}
+          <!-- 共享 / 复制的条目：移交方仍保留 -->
+          <p class="mt-1 text-xs font-medium text-muted-foreground">
+            {t('handover.keptTitle', { from: data.fromBotName })}
+          </p>
+          <ul class="grid gap-0.5 text-xs text-muted-foreground" data-testid="handover-kept">
+            {#each data.kept ?? [] as line, index (index)}
+              <li class="break-all">· {line}</li>
+            {/each}
+          </ul>
+        {/if}
         {#if received && data.note.length > 0}
           <div class="mt-2 rounded-md bg-muted/60 p-2 text-xs" data-testid="handover-received-note">
             <p class="mb-0.5 font-medium text-muted-foreground">

@@ -184,7 +184,15 @@ export class BotsService {
 
   create(
     profileInput: Partial<BotProfile> & { identity: { name: string } },
-    options: { interview?: boolean; systemRole?: BotSystemRole } = {},
+    options: {
+      interview?: boolean;
+      systemRole?: BotSystemRole;
+      /**
+       * D88：不套用 onboarding 的默认外部 Agent（移交「与来源相同」而来源本身就是空的
+       * 模型 / Agent 时，新 Bot 要与来源一样跟随设置默认，而不是被换成外部 Agent）。
+       */
+      skipDefaultAgent?: boolean;
+    } = {},
   ): Bot {
     const profile = botProfileSchema.parse(profileInput);
     this.#assertAppConnections(profile.runtime.app_connection_ids);
@@ -192,6 +200,7 @@ export class BotsService {
     // 默认由 onboarding 选定的外部 Agent 驱动。
     if (
       options.interview !== true &&
+      options.skipDefaultAgent !== true &&
       profile.runtime.model.length === 0 &&
       profile.runtime.agent.id.length === 0
     ) {

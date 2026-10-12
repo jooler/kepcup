@@ -857,7 +857,7 @@ export const systemEventContentSchema = z.object({
     .optional(),
   /**
    * Bot 资产移交（D88，event = bot_handover 写在接手方 B 的私聊、bot_handed_over 写在
-   * 移交方 A 的私聊）：本次移交的条目（一行一项，宿主生成）与发起方写的交接要点
+   * 移交方 A 的私聊）：本次移交 / 共享 / 复制的条目（一行一项，宿主生成）与发起方写的交接要点
    * （仅 B 侧；模型输出，上下文里包 `<untrusted>`）。
    */
   handover: z
@@ -867,7 +867,10 @@ export const systemEventContentSchema = z.object({
       fromBotName: z.string(),
       toBotId: z.string(),
       toBotName: z.string(),
+      /** 移交（move）与职责改写的条目：此后归接手方。 */
       items: z.array(z.string()),
+      /** 共享 / 复制的条目：接手方也有了，移交方仍保留。 */
+      kept: z.array(z.string()).default([]),
       note: z.string().default(''),
     })
     .optional(),

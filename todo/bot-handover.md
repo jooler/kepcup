@@ -139,12 +139,12 @@
 **偏差（需用户确认）**：
 
 - **DEV-001 迁移号**：迁移运行器要求编号连续（`runMigrations` 遇到空号直接 `MIGRATION_FAILED`），不能跳过 D87 暂占的 0035 用 0036，所以本分支用 **0035**（`0035_bot_handover.sql`）。与 D87 的 0035 冲突：后合入的一方改号，并同步 `create-core.test` 的 `user_version`、`public-skills-migration` 的摘表注释与 `docs/dev/03-data-model.md` 迁移表。**推荐**：D87 先合则本分支改 0036；本分支先合则 D87 改 0036。
-- **DEV-002 模型取值**：设计 §1 把模型资产写作 `runtime.{model, light_model, agent}`，所以 `inherit`（新建目标默认值，或已有目标的 `model:inherit` 条目）复制三者；`default` 清空 model / light_model（外部智能体设置不动）；指定 ref 时把 B 切回内置引擎（`agent` 复位），否则外部智能体不会用这个 ref。已有目标改模型的条目 key 直接编码取值：`model:inherit` / `model:default` / `model:<ref>`（盘点只列 `model:inherit`，另两种经适配器 `resolve` 认）。新建目标的模型只能写在 `new_bot.model`，`model:*` 条目被退回。**推荐**：照此。
+- **DEV-002 模型取值**（审查后修订）：设计 §1 把模型资产写作 `runtime.{model, light_model, agent}`。`inherit`（新建目标默认值，或已有目标的 `model:inherit` 条目）复制主模型、轻量模型与**驱动引擎**（外部智能体的 `id` / `model` / `effort`）；**权限档与能力包不复制**——沿用 B 自己的，B 原先是内置引擎或是新建的则取该 Agent 的目录默认权限档（预览档 ask）、能力包跟随默认。换成另一个外部智能体时与 `bots.update` 同一校验（实验开关、在目录中，`assertAgentSelectable`）：已有目标不满足则该条不可执行；新建目标在确认时退回内置引擎并在结果里说明，卡上的模型说明预先提示。`default`（设置里的默认主模型）与指定 ref 都把 B 切回内置引擎（外部智能体不认这些 ref），卡上提示「目前由 X 驱动，之后改由 Y 驱动」。已有目标改模型的条目 key 直接编码取值：`model:inherit` / `model:default` / `model:<ref>`（盘点只列 `model:inherit`，另两种经适配器 `resolve` 认）。新建目标的模型只能写在 `new_bot.model`，`model:*` 条目被退回；来源的模型与 Agent 都为空时新 Bot 不套用 onboarding 的默认外部 Agent（`bots.create` 新增 `skipDefaultAgent`），与来源一样跟随设置默认。**推荐**：照此。
 - **DEV-003 结算口径**：设计只说「有 failed → partial」。实现把执行时重新校验不成立的 `skipped` 也算未完成：全部 done → `completed`；一项都没做成（新建目标也算一项）→ `failed`；其余 → `partial`。非 completed 时卡片 `approvals.fail` 并列出原因。**推荐**：照此（否则「全部跳过」会显示为已完成）。
 - **DEV-004 置灰 vs 退回**：编造的 key、不合法动作、重复 key 直接退回（工具报错）；盘点时就不可执行（全局停用的 MCP、随承诺的定时任务）与对目标冲突（B 已连同一应用另一账号、B 不在群里）的进卡片置灰、不可勾选。已有目标且没有任何可执行条目（含职责改写）时工具退回、不出卡。**推荐**：照此。
 - **DEV-005 职责改写的边界**：新建目标时 `responsibilities.to` 被退回（职责写在 `new_bot.responsibilities`）；来源或目标是管家时对应的改写忽略并在工具结果里说明；改写文本与原文相同时不出该项。**推荐**：照此。
-- **DEV-006 宿主条目**：新建目标、职责改写与交接说明作为宿主条目记在 `bot_handover_items`（key `bot:new` / `resp:to` / `resp:from` / `note:handover`，`asset_type` 为 `bot` / `responsibilities` / `note`），因此 `asset_type` 不设 CHECK；卡片进度与恢复都按它走。新 Bot 建行与回填 `to_bot_id` 在同一事务；例行事项在事务外（崩溃在两者之间时例行事项不补建）。**推荐**：照此。
-- **DEV-007 定时任务的恢复判据**：`transferTo` 在一个事务里完成重建与取消；崩溃在事务提交与记账之间时，`transferredTo` 先看原回执卡的 `handedOverTo`，没有回执卡（D80 之前的老任务、offer 卡任务）时退而按字段比对 B 名下在原任务之后建的同字段任务。重建的任务**总是**出新回执卡（含 `origin='offer'`，否则接手方看不到）。原任务没有回执卡时 A 侧只有「已移交」交接记录，没有「已移交给 {B}」卡。**推荐**：照此。
+- **DEV-006 宿主条目**（审查后修订）：新建目标、职责改写与交接说明作为宿主条目记在 `bot_handover_items`（key `bot:new` / `resp:to` / `resp:from` / `note:handover`，`asset_type` 为 `bot` / `responsibilities` / `note`），因此 `asset_type` 不设 CHECK；卡片进度与恢复都按它走。新 Bot 建行与回填 `to_bot_id` 在同一事务；之后的推送、例行事项与记账失败都不再算「新建失败」（`to_bot_id` 已有 = 建好了）；崩溃后恢复时补建缺的例行事项（按新 Bot 私聊里同标题的 `proposal` 任务判重，不重复建）。结果通知以 `bot_handovers.notified_at` 记账，崩溃在结算与通知之间时启动恢复补发（至少一次）。**推荐**：照此。
+- **DEV-007 定时任务的恢复判据**（审查后修订）：`transferTo` 在一个事务里完成重建、取消、原卡标记、接手方的新回执卡与已排队触发作业（`schedule_fire:{旧 id}:*`）的改投；崩溃在事务提交与记账之间时，`transferredTo` 先看原回执卡的 `handedOverTo`，没有回执卡（D80 之前的老任务、offer 卡任务）时退而按字段比对 B 名下在原任务之后建的同字段任务。重建的任务**总是**出新回执卡（含 `origin='offer'`）。原任务没有回执卡时 A 侧只有交接记录，没有「已移交给 {B}」卡。已被 runner 认领（running）的那一次不改投（极窄窗口）。**推荐**：照此。
 - **DEV-008 模型字段单一入口守卫**：`model-selection-single-source` 只允许少数文件读写 `runtime.model` / `light_model`。移交要复制 / 改写这些**配置值**（不做选取），读写集中在 `handover/adapters/model.ts`（`inheritedModelRuntime` / `botModelLabel`）并加入允许名单；`bot-creation.ts` 只透传。**推荐**：照此。
 - **DEV-009 新增 RPC**：方案没列 `handovers.get`；卡片在重载 / 翻历史时需要读执行进度，所以加了（`handover.updated` 推实时更新）。**推荐**：保留。
 - **DEV-010 交接记录的数据边界**：设计 §4.3 只把交接要点包 `<untrusted>`；实现把条目文字也包进去（含邮箱显示名、任务标题等外部 / 模型写的文本）。**推荐**：照此（更保守）。
@@ -153,6 +153,28 @@
 **评审时请重点看**：`dispatch/handover.ts` 的执行 / 恢复 / 结算顺序与幂等（`isApplied` → `validate` → `apply`，move 的 `release` 在阶段 5）；`MailService.retargetPendingAlerts`（只动 pending、按新去重键入队再取消旧作业）；`ScheduleService.transferTo` 事务与 `transferredTo` 的字段比对兜底；`approvals.decide` 的 `handoverSelection` 校验；`propose` 的 key 校验与置灰；渲染端 `HandoverCard` 的勾选 / 进度状态推导。已知未覆盖：移交时 A 正在运行的、用到该邮箱的任务不会被中断（与在设置页解绑一致，§7 风险已接受）；已在跑（claimed）的 `mail_alert` 作业不改投。
 
 **迁移号**：0035（暂定，见 DEV-001）。
+
+### P0 审查修复（2026-10-12，独立 opus 审查 064cbdd..312cc85，无 critical）
+
+| # | 发现 | 修复 | 回归测试 |
+|---|---|---|---|
+| 1 | 职责改写在执行时不比对原文，会覆盖用户在提议后做的修改 | 执行时比对当前 `role.responsibilities` 与卡上的 `toBefore` / `fromBefore`，不同则该项 `skipped`「职责描述在提议后已被修改」（§5.3 重新校验） | `handover.test`「审查 #1」 |
+| 2 | `model:inherit` 复制了 A 的 `agent.permission` / `capabilities`；换 Agent 不校验；引擎变化卡上不说 | 只复制 `agent.{id, model, effort}`，权限档 / 能力包沿用 B（B 原为内置或新建时取目录默认）；`validate` 走与 `bots.update` 相同的 `assertAgentSelectable`；卡片警告「目前由 X 驱动，之后改由 Y 驱动」；`model:default` 也切回内置引擎（「设置默认」指设置里的默认主模型），说明行写明「内置引擎」 | `handover-adapters`（3 例新增 / 改写） |
+| 3 | 新建目标「与来源相同」而来源模型与 Agent 都空时，`bots.create` 套用 onboarding 默认外部 Agent，与卡上「跟随设置默认」不符 | `bots.create` 增选项 `skipDefaultAgent`，移交新建目标在继承到「空模型 + 内置」时使用 | `handover-services`「审查 #3」（访谈建的管家 + 默认外部 Agent 已开） |
+| 4 | 给发起方的结果通知里条目文字 / 原因（邮箱名、连接账号、任务标题、群名）没有包 `<untrusted>` | 资产条目的名称与原因、例行事项行一律 `<untrusted>`（`neutralizeUntrusted`）；卡片失败原因同样处理（它会进上下文行）；通知末尾加一句数据边界说明 | `handover.test` 触发事件用例断言 |
+| 5 | `propose_bot` / `propose_team` 的 `model` 在卡上不显示，确认时不复查 | 管家提议卡每个 Bot 显示「模型：{显示名}」（`chatModelOptions` 同源，不可用的标出）；确认时 ref 已不可用则退回 `''` 并在结果通知里说明 | `handover.test`「审查 #5」 |
+| 6 | 新建目标在确认来源 / 已有目标是否还在之前就建了 | 阶段 1 之前先查来源（与已有目标）是否 active；不在则所有条目跳过、整单 `failed`，什么都不建 | `handover.test`「审查 #6」 |
+| 7 | A 侧交接记录把共享 / 复制的条目也说成「此后由对方负责」 | 交接记录内容分 `items`（移交与职责改写）与 `kept`（共享 / 复制，A 仍保留；shared 契约新增字段，默认 `[]`）；上下文与渲染端分开写 | `handover.test` 已有目标用例断言 |
+| 8 | 定时任务移交时已排队的 `schedule_fire` 作业会因原任务取消而丢掉这一次 | `transferTo` 事务内把 `schedule_fire:{旧 id}:*` 的待执行作业按同一 `fireAt` 改投新任务、取消旧作业；有排队作业时新行不另算下一次 | `handover-services`「审查 #8」 |
+| 9a | 新 Bot 行提交后到例行事项之间崩溃，例行事项丢失 | 恢复时 `#finishTarget` 补建，按同标题 `proposal` 任务判重 | `handover.test`「审查 #9a / #9d」 |
+| 9b | 建行之后的推送 / 记账抛错被当成「新建失败」 | 只有建行事务失败才算新建失败；之后的推送失败只记日志，结算时 `to_bot_id` 已有则 `bot:new` 记 done | 无专门用例（需注入故障，见下） |
+| 9c | `transferTo` 提交后、补回执卡前崩溃，接手方缺回执卡 | 回执卡写入并入 `transferTo` 事务，提交后才推送事件 | `handover-services` transferTo 用例（回执卡断言） |
+| 9d | 结算后、通知前崩溃，发起方收不到结果 | 迁移 0035 加 `bot_handovers.notified_at`；通知后记账，`recover()` 补发未记账的（completed / partial / failed / denied） | `handover.test`「审查 #9a / #9d」 |
+| 9e | `#begin` 在 `decide()` 内抛错时卡已批准、移交却停在 `proposed` 直到重启 | 捕获后立即把移交置 `failed`、卡片 `approvals.fail`、通知发起方「没能开始执行」 | 无专门用例（需注入故障，见下） |
+
+未加专门回归用例的：9b、9e 需要在 `announceCreatedBot` / 写库处注入异常，现有测试夹具没有对应注入点，为它们改生产代码的接缝不划算；两处改动都是把异常收进 try/catch 并按已有路径结算，已靠 review 与其余用例覆盖的路径验证。
+
+修复后定向回归（Docker）：handover 三个文件 + butler-team / butler / schedule / context-assembly / approvals / model-selection-single-source / external-agent-p4b / bot-app-connections / public-skills-migration / create-core / shared handover / message-content，15 文件 127 例全绿；core / desktop typecheck、eslint 通过。全量与 e2e 结果见下。
 
 ## 7. 风险
 

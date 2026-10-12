@@ -107,7 +107,7 @@ import { LlmRouter } from './agent/llm-router.js';
 import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
 import { HostMcpBridge } from './agent/external/mcp-bridge.js';
 import { AgentHost, type AgentSpawner } from './agent/external/host.js';
-import { effectiveAgentCatalog } from './agent/external/catalog.js';
+import { assertAgentSelectable, effectiveAgentCatalog } from './agent/external/catalog.js';
 import { agentConcurrency } from './agent/external/providers/index.js';
 import { AgentInstaller, nodeRuntimeFromBinDir } from './agent/external/installer.js';
 import { AgentsService } from './domain/agents.js';
@@ -136,7 +136,7 @@ import { MailService } from './mail/service.js';
 import { HandoverHost } from './dispatch/handover.js';
 import { HandoverRegistry } from './handover/registry.js';
 import { HandoverStore } from './handover/store.js';
-import { ModelAdapter } from './handover/adapters/model.js';
+import { ModelAdapter, type HandoverAgentPolicy } from './handover/adapters/model.js';
 import { AppAdapter } from './handover/adapters/app.js';
 import { McpAdapter } from './handover/adapters/mcp.js';
 import { MailAdapter } from './handover/adapters/mail.js';
@@ -1997,6 +1997,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       }
     };
     const handoverModelOptions = () => chatModelOptions(providers.list());
+    // 换外部智能体时的规则与 bots.update / 新建 Bot 同源（实验开关、目录、默认权限档）。
+    const handoverAgents: HandoverAgentPolicy = {
+      selectable: (agentId) => {
+        try {
+          assertAgentSelectable(settings.get(), agentCatalog, agentId);
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+      defaultPermission: (agentId) =>
+        findAgentEntry(agentCatalog, agentId)?.tier === 'preview' ? 'ask' : 'workspace',
+    };
     const handover = new HandoverHost({
       db: mainDb,
       logger,
@@ -2006,7 +2019,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       store: new HandoverStore({ db: mainDb, clock }),
       registry: new HandoverRegistry([
-        new ModelAdapter({ bots: handoverBotWriter, modelOptions: handoverModelOptions }),
+        new ModelAdapter({
+          bots: handoverBotWriter,
+          modelOptions: handoverModelOptions,
+          agents: handoverAgents,
+        }),
         new AppAdapter({
           bots: handoverBotWriter,
           connections: apps.store,
@@ -2047,6 +2064,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         }),
       ]),
       modelOptions: handoverModelOptions,
+      agents: handoverAgents,
       updateProfile: handoverBotWriter.updateProfile,
       schedule: scheduleFacade,
       publish: (event, payload) => events.emit(event as never, payload as never),

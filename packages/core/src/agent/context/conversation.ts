@@ -32,17 +32,39 @@ function renderHandoverLine(message: Message, options: RenderMessageOptions): st
   if (content.event !== BOT_HANDOVER_EVENT && content.event !== BOT_HANDED_OVER_EVENT) return null;
   const data = content.handover;
   if (data === undefined) return null;
-  const items = `<untrusted>${neutralizeUntrusted(data.items.join('；'))}</untrusted>`;
+  const wrap = (lines: readonly string[]) =>
+    `<untrusted>${neutralizeUntrusted(lines.join('；'))}</untrusted>`;
+  const kept = data.kept ?? [];
   if (content.event === BOT_HANDOVER_EVENT) {
-    const who = options.selfBotId === data.toBotId ? '你' : data.toBotName;
-    const note =
-      data.note.length > 0
-        ? `；${data.fromBotName} 的交接要点：<untrusted>${neutralizeUntrusted(data.note)}</untrusted>`
-        : '';
-    return `${who}从 ${data.fromBotName} 接手了：${items}${note}`;
+    const self = options.selfBotId === data.toBotId;
+    const who = self ? '你' : data.toBotName;
+    const parts: string[] = [];
+    if (data.items.length > 0)
+      parts.push(`${who}从 ${data.fromBotName} 接手了：${wrap(data.items)}`);
+    if (kept.length > 0) {
+      parts.push(
+        `${data.fromBotName} 与${self ? '你' : ` ${data.toBotName} `}共享 / 复制了（对方仍保留）：${wrap(kept)}`,
+      );
+    }
+    if (data.note.length > 0) {
+      parts.push(
+        `${data.fromBotName} 的交接要点：<untrusted>${neutralizeUntrusted(data.note)}</untrusted>`,
+      );
+    }
+    return parts.join('；');
   }
-  const who = options.selfBotId === data.fromBotId ? '你' : data.fromBotName;
-  return `${who}已把以下事项移交给 ${data.toBotName}，此后由对方负责：${items}`;
+  const self = options.selfBotId === data.fromBotId;
+  const who = self ? '你' : data.fromBotName;
+  const parts: string[] = [];
+  if (data.items.length > 0) {
+    parts.push(`${who}已把以下事项移交给 ${data.toBotName}，此后由对方负责：${wrap(data.items)}`);
+  }
+  if (kept.length > 0) {
+    parts.push(
+      `${who}与 ${data.toBotName} 共享 / 复制了以下事项（${self ? '你' : data.fromBotName}仍保留）：${wrap(kept)}`,
+    );
+  }
+  return parts.join('；');
 }
 
 /** Formats a UTC-ms timestamp in the given time zone: 2026-09-29 16:08. */
