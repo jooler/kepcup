@@ -366,6 +366,31 @@ export class MailStore {
     })();
   }
 
+  /**
+   * D88 移交：单条增加绑定（已存在则不动——保留其唤醒状态）。返回是否新插入。新绑定的唤醒
+   * 状态从零开始（未暂停、无唤醒记录），其他 Bot 的绑定不受影响。
+   */
+  addBinding(accountId: string, botId: string, now: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `insert into mail_account_bots (account_id, bot_id, alerts_paused, alert_times_json, created_at)
+           values (?, ?, 0, '[]', ?)
+           on conflict(account_id, bot_id) do nothing`,
+        )
+        .run(accountId, botId, now).changes > 0
+    );
+  }
+
+  /** D88 移交：单条删除绑定。返回是否删掉了一行。 */
+  removeBinding(accountId: string, botId: string): boolean {
+    return (
+      this.db
+        .prepare('delete from mail_account_bots where account_id = ? and bot_id = ?')
+        .run(accountId, botId).changes > 0
+    );
+  }
+
   setAlertState(accountId: string, botId: string, paused: boolean, times: readonly number[]): void {
     this.db
       .prepare(

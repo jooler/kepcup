@@ -97,6 +97,9 @@ describe('createCore (integration)', () => {
       // 邮件通道（main 0031，D84）。
       'mail_accounts',
       'mail_account_bots',
+      // Bot 资产移交（main 0035 暂定，D88）。
+      'bot_handovers',
+      'bot_handover_items',
     ]) {
       expect(tables.map((t) => t.name)).toContain(table);
     }
@@ -105,8 +108,10 @@ describe('createCore (integration)', () => {
     // 0029 = D81 P2 widget_queries；0030 = 直发改造（drop drafts / draft_id）；
     // 0031 = D84 邮件通道（mail_accounts，approvals.kind 增加 mail_send）；
     // 0032 = D81 审查修复（widget_versions.size_bytes / queries_reviewed_at）；
-    // 0033 = 回收未绑定附件；0034 = 邮件 UIDVALIDITY。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(34);
+    // 0033 = 回收未绑定附件；0034 = 邮件 UIDVALIDITY；
+    // 0035 = D88 Bot 资产移交（bot_handovers / bot_handover_items，approvals.kind 增加
+    // bot_handover；迁移号暂定，合入 main 时按实况重排）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(35);
     // 0001 init + 0002 runs + 0003 run continuation (D56) + 0004 subagent parent (D66/D67)
     // + 0005 run engine (D72) + 0006 tasks (D75) + 0007 'response' → 'turn' (D75 W2)
     // + 0008 turn trigger parts / retry origin (D75 审查 L3 / L6)

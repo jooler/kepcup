@@ -1,4 +1,6 @@
 import {
+  BOT_HANDED_OVER_EVENT,
+  BOT_HANDOVER_EVENT,
   GROUP_MENTION_PREFIX,
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
@@ -6,6 +8,7 @@ import {
   SCHEDULE_OFFER_EVENT,
   TASK_EVENT_CONTEXT_MAX_CHARS,
   TASK_TRIGGER_RESULT_MAX_CHARS,
+  type HandoverEventContent,
   type Message,
   type RunStatus,
   type TaskEventContent,
@@ -17,6 +20,29 @@ import type { TriggerBatch } from '../../scheduler/mailbox.js';
 
 function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+/**
+ * D88 交接记录（docs/design/37 §4.3）：B 侧「你从 {A} 接手了：…；{A} 的交接要点：…」，
+ * A 侧「你已把 … 移交给 {B}」。条目文字含邮箱名、任务标题等外部 / 模型写的文本，交接
+ * 要点是模型输出——都放进 `<untrusted>`。不是交接记录 = null。
+ */
+function renderHandoverLine(message: Message, options: RenderMessageOptions): string | null {
+  const content = message.content as { event?: unknown; handover?: HandoverEventContent };
+  if (content.event !== BOT_HANDOVER_EVENT && content.event !== BOT_HANDED_OVER_EVENT) return null;
+  const data = content.handover;
+  if (data === undefined) return null;
+  const items = `<untrusted>${neutralizeUntrusted(data.items.join('；'))}</untrusted>`;
+  if (content.event === BOT_HANDOVER_EVENT) {
+    const who = options.selfBotId === data.toBotId ? '你' : data.toBotName;
+    const note =
+      data.note.length > 0
+        ? `；${data.fromBotName} 的交接要点：<untrusted>${neutralizeUntrusted(data.note)}</untrusted>`
+        : '';
+    return `${who}从 ${data.fromBotName} 接手了：${items}${note}`;
+  }
+  const who = options.selfBotId === data.fromBotId ? '你' : data.fromBotName;
+  return `${who}已把以下事项移交给 ${data.toBotName}，此后由对方负责：${items}`;
 }
 
 /** Formats a UTC-ms timestamp in the given time zone: 2026-09-29 16:08. */
@@ -218,6 +244,10 @@ export function renderMessageLine(
     (message.content as { event?: unknown }).event === TASK_UNDELIVERED_EVENT
   ) {
     return `[${message.id} | ${time} | 系统] ${taskUndeliveredLine(message.taskId ?? '')}`;
+  }
+  if (message.kind === 'system_event') {
+    const handoverLine = renderHandoverLine(message, options);
+    if (handoverLine !== null) return `[${message.id} | ${time} | 系统] ${handoverLine}`;
   }
   if (message.kind === 'card') {
     const rendered = options.renderCard?.(message) ?? null;

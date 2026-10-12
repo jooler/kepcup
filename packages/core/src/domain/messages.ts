@@ -10,6 +10,7 @@ import {
   type MessageStatus,
   type RunStatus,
   type ScheduleOfferContent,
+  type HandoverEventContent,
   type ScheduleReceiptSnapshot,
   type TaskEventContent,
   type TaskEventPhase,
@@ -105,6 +106,8 @@ export interface AppendMessageInput {
   schedule?: ScheduleReceiptSnapshot | undefined;
   /** system_event extras: schedule offer card (schedule_offer, D80). */
   offer?: ScheduleOfferContent | undefined;
+  /** system_event extras: asset handover notes (bot_handover / bot_handed_over, D88). */
+  handover?: HandoverEventContent | undefined;
   /**
    * text messages only (D80): sent by a scheduled turn — the schedule and its
    * title snapshot (「⏰ 标题」 tag under the bubble).
@@ -333,6 +336,7 @@ export class MessagesService {
                 ...(input.route !== undefined ? { route: input.route } : {}),
                 ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
                 ...(input.offer !== undefined ? { offer: input.offer } : {}),
+                ...(input.handover !== undefined ? { handover: input.handover } : {}),
               });
     const mentions = input.mentions ?? [];
     let message: Message;

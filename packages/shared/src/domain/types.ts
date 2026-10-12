@@ -213,6 +213,30 @@ export interface ProviderInfo {
   hasKey: boolean;
 }
 
+/** One choice of the bot model dropdown: `{provider}/{model}` ref + display label. */
+export interface ChatModelOption {
+  ref: string;
+  label: string;
+}
+
+/**
+ * 对话模型的可选项（仅已配置 key 的厂商；无 key 的模型永远不会应答）：Bot 详情的模型
+ * 下拉与 D88 移交的可用模型列表同源，都从 `providers.list` 的结果按此推出。
+ */
+export function chatModelOptions(providers: readonly ProviderInfo[]): ChatModelOption[] {
+  const options: ChatModelOption[] = [];
+  for (const provider of providers) {
+    if (!provider.hasKey) continue;
+    for (const model of provider.models) {
+      options.push({
+        ref: `${provider.id}/${model.id}`,
+        label: `${provider.name} · ${model.name}`,
+      });
+    }
+  }
+  return options;
+}
+
 /** Concurrency limits without a container default (reused by the update patch). */
 export const providerConcurrencySchema = z
   .object({ default: z.number().int().min(1).max(16).default(4) })
@@ -824,6 +848,27 @@ export const systemEventContentSchema = z.object({
       timezone: z.string(),
       origin: z.enum(['tool', 'offer', 'proposal', 'commitment']),
       status: z.enum(['active', 'done', 'cancelled']),
+      /**
+       * D88：这条定时任务已移交给另一个 Bot（在对方那边重建，这里随之取消）。卡片显示
+       * 「已移交给 {name}」。
+       */
+      handedOverTo: z.object({ botId: z.string(), name: z.string() }).optional(),
+    })
+    .optional(),
+  /**
+   * Bot 资产移交（D88，event = bot_handover 写在接手方 B 的私聊、bot_handed_over 写在
+   * 移交方 A 的私聊）：本次移交的条目（一行一项，宿主生成）与发起方写的交接要点
+   * （仅 B 侧；模型输出，上下文里包 `<untrusted>`）。
+   */
+  handover: z
+    .object({
+      handoverId: z.string(),
+      fromBotId: z.string(),
+      fromBotName: z.string(),
+      toBotId: z.string(),
+      toBotName: z.string(),
+      items: z.array(z.string()),
+      note: z.string().default(''),
     })
     .optional(),
   /**
@@ -848,6 +893,7 @@ export const systemEventContentSchema = z.object({
 export type SystemEventContent = z.infer<typeof systemEventContentSchema>;
 export type ScheduleReceiptSnapshot = NonNullable<SystemEventContent['schedule']>;
 export type ScheduleOfferContent = NonNullable<SystemEventContent['offer']>;
+export type HandoverEventContent = NonNullable<SystemEventContent['handover']>;
 /**
  * Card message (P03): the payload itself lives in the approvals table; the
  * message row only links to it so collapsed/updated rendering follows the
@@ -1383,6 +1429,11 @@ export const approvalKindSchema = z.enum([
   'egress',
   /** 邮件发送（D84）：完整收件人与正文，用户确认后才 SMTP 发出。 */
   'mail_send',
+  /**
+   * Bot 资产移交（D88，docs/design/37）：A 的邮箱 / 应用 / MCP / 模型 / 定时任务与职责交给
+   * B（已有或新建），用户逐项勾选后确认，core 确定性执行。
+   */
+  'bot_handover',
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
@@ -1607,6 +1658,11 @@ export const butlerProposedBotSchema = z.object({
    * 工具（ISO 8601 一次性 / cron 周期）。
    */
   routines: z.array(butlerProposedRoutineSchema).default([]),
+  /**
+   * D88：新 Bot 的对话模型（`runtime.model`）。'' = 跟随设置默认；否则是可用模型列表
+   * （与 Bot 详情模型下拉同源，`chatModelOptions`）里的 ref。
+   */
+  model: z.string().default(''),
 });
 export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
 
@@ -1678,6 +1734,12 @@ export const approvalDecisionSchema = z.object({
    * `"{botIndex}:{routineIndex}"`. Absent = every routine of the kept bots.
    */
   routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
+  /**
+   * `bot_handover` only (D88): item keys the user kept (`payload.items[].key`, plus the
+   * reserved `resp:to` / `resp:from` for the responsibilities rewrite). Absent = everything
+   * selectable on the card.
+   */
+  handoverSelection: z.array(z.string()).optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });

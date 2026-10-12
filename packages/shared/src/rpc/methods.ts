@@ -19,6 +19,7 @@ import {
   appsSkillsOffersOutputSchema,
 } from '../domain/app-skills.js';
 import { appsDirectoryStatusSchema } from '../domain/directory-index.js';
+import { handoverViewSchema } from '../domain/handover.js';
 import {
   appsLocalConnectorsConfirmInputSchema,
   appsLocalConnectorsConfirmOutputSchema,
@@ -1036,8 +1037,19 @@ export const approvalsDecideInputSchema = z.object({
   payloadHash: z.string().min(1).optional(),
   /** `butler_proposal` only (D80): kept routines as `"{botIndex}:{routineIndex}"`. */
   routineSelection: z.array(z.string().regex(/^\d+:\d+$/)).optional(),
+  /**
+   * `bot_handover` only (D88): item keys the user kept (`resp:to` / `resp:from` for the
+   * responsibilities rewrite); keys outside the card are rejected. Nothing kept and no new
+   * bot = a denial.
+   */
+  handoverSelection: z.array(z.string().min(1)).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
+
+// --- bot asset handover (D88) -----------------------------------------------------
+
+export const handoversGetInputSchema = z.object({ approvalId: z.string().min(1) });
+export const handoversGetOutputSchema = z.object({ handover: handoverViewSchema.nullable() });
 
 // --- cross-bot delegation (D71) -------------------------------------------------
 
@@ -1813,6 +1825,7 @@ export const rpcMethodSchemas = {
   'approvals.decide': { input: approvalsDecideInputSchema, output: approvalsDecideOutputSchema },
   /** 跨 Bot 委派（D71）：A 侧卡片按 id 读委派行 / 用户在发出卡上取消。 */
   'delegations.get': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
+  'handovers.get': { input: handoversGetInputSchema, output: handoversGetOutputSchema },
   'delegations.cancel': { input: delegationIdInputSchema, output: delegationGetOutputSchema },
   'tasks.get': { input: taskIdInputSchema, output: taskGetOutputSchema },
   'tasks.active': { input: tasksActiveInputSchema, output: tasksActiveOutputSchema },
@@ -2182,6 +2195,7 @@ const APP_METHODS = [
   'approvals.list',
   'approvals.decide',
   'delegations.get',
+  'handovers.get',
   'delegations.cancel',
   'tasks.get',
   'tasks.active',

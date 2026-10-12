@@ -5,6 +5,7 @@ import {
   butlerProposalPayloadSchema,
   type Bot,
   type ButlerProposalPayload,
+  type ChatModelOption,
   type Message,
 } from '@kepcup/shared';
 import type { RunIdentity } from '../agent/types.js';
@@ -16,6 +17,11 @@ import type { MessagesService } from '../domain/messages.js';
 import type { ApprovalOutcome, ApprovalsService } from '../permissions/approvals.js';
 import type { BotCardLine, ButlerToolFacade, RouteSuggestion } from '../tools/butler-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
+import {
+  announceCreatedBot,
+  createProposedBotRecord,
+  createProposedRoutines,
+} from './bot-creation.js';
 
 /**
  * 管家提议的宿主侧（D70，docs/design/27-butler-and-delegation.md §2.2）：
@@ -33,6 +39,11 @@ export interface ButlerHostDeps {
   logger: CoreLogger;
   /** D80: routines of proposed bots (optional in stripped setups: routines are dropped). */
   schedule?: Pick<ScheduleToolFacade, 'createFromWhen' | 'validateWhen' | 'describeWhen'> | undefined;
+  /**
+   * D88: the available chat models (same source as the Bot detail dropdown) a proposed
+   * bot's `model` must be one of. Absent = no model can be named.
+   */
+  modelOptions?: (() => ChatModelOption[]) | undefined;
   /** Direct-chat delivery through the setup gate (a user message in the butler's chat). */
   deliverDirect(conversationId: string, botId: string, message: Message): void;
   publish: (event: string, payload: unknown) => void;
@@ -45,10 +56,6 @@ export interface ButlerHostDeps {
     options: { internal?: boolean },
   ): void;
 }
-
-/** Built-in preset avatars handed out to bots created from a proposal (renderer presets). */
-const AVATAR_SHAPES = ['orb', 'cloud', 'tile', 'clover', 'heart', 'blossom', 'drop', 'hex'];
-const AVATAR_COLORS = ['blue', 'green', 'orange', 'teal', 'pink', 'amber', 'red', 'brown'];
 
 export class ButlerHost implements ButlerToolFacade {
   readonly #deps: ButlerHostDeps;
@@ -66,6 +73,14 @@ export class ButlerHost implements ButlerToolFacade {
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
+  }
+
+  validateModelRef(ref: string): string | null {
+    const options = this.#deps.modelOptions?.() ?? [];
+    if (options.some((option) => option.ref === ref)) return null;
+    return options.length === 0
+      ? '当前没有可选的模型（设置里还没有配置模型厂商的 Key）；不填即跟随设置默认'
+      : `「${ref}」不在可用模型列表里（可用：${options.map((option) => option.ref).join('、')}）`;
   }
 
   listBots(selfBotId: string): BotCardLine[] {
@@ -91,7 +106,11 @@ export class ButlerHost implements ButlerToolFacade {
     if (butler?.systemRole !== 'butler') {
       return { ok: false, message: '只有管家可以提议组队 / 建 Bot / 建群' };
     }
-    if (this.#deps.approvals.pendingOfKind(conversationId, 'butler_proposal').length > 0) {
+    // D88: a pending handover card blocks a proposal too (one pending proposal per chat).
+    if (
+      this.#deps.approvals.pendingOfKind(conversationId, 'butler_proposal').length > 0 ||
+      this.#deps.approvals.pendingOfKind(conversationId, 'bot_handover').length > 0
+    ) {
       return {
         ok: false,
         message: '已有一张提议卡在等用户确认：等用户处理完再提新的，不要叠加提议。',
@@ -283,52 +302,19 @@ export class ButlerHost implements ButlerToolFacade {
       const item = proposal.bots[index];
       if (item === undefined) continue;
       try {
-        const slot = offset + order;
-        const bot = this.#deps.bots.create({
-          identity: {
-            name: item.name,
-            bio: item.bio,
-            avatar: `preset:${AVATAR_SHAPES[slot % AVATAR_SHAPES.length]}:${AVATAR_COLORS[slot % AVATAR_COLORS.length]}`,
-          },
-          role: { expertise: item.expertise, responsibilities: item.responsibilities },
-        });
-        this.#deps.publish('bot.updated', { bot });
-        // 新联系人直接出现在左栏（空私聊），用户点开即可开聊。
-        const { conversation, created: opened } = this.#deps.conversations.openDirect(bot.id);
-        // 带上 bot：renderer 把「单聊无 bot」当作已删除，不会加入侧栏。
-        if (opened) {
-          this.#deps.publish('conversation.updated', { conversation: { ...conversation, bot } });
-        }
-        created.push(bot);
-        // D80: the kept routines go into the new bot's direct chat (their
-        // receipt cards are the first thing the user sees there).
-        const schedule = this.#deps.schedule;
-        for (const [routineIndex, routine] of (item.routines ?? []).entries()) {
-          if (keptRoutines !== null && !keptRoutines.has(`${index}:${routineIndex}`)) continue;
-          if (schedule === undefined) {
-            routineFailures.push(`${item.name}「${routine.title}」（当前环境不支持定时任务）`);
-            continue;
-          }
-          try {
-            const row = schedule.createFromWhen({
-              botId: bot.id,
-              conversationId: conversation.id,
-              when: routine.when,
-              timezone: routine.timezone,
-              title: routine.title,
-              note: routine.note,
-              origin: 'proposal',
-            });
-            routineLines.push(`${item.name}「${routine.title}」${schedule.describeWhen(row)}`);
-          } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
-            this.#deps.logger.warn(
-              { approvalId, botId: bot.id, title: routine.title, error: reason },
-              'butler proposal routine creation failed',
-            );
-            routineFailures.push(`${item.name}「${routine.title}」（${reason}）`);
-          }
-        }
+        // D88: the proposed model (''= settings default) is written on creation.
+        const record = createProposedBotRecord(this.#deps, item, offset + order);
+        announceCreatedBot(this.#deps, record);
+        created.push(record.bot);
+        const routines = createProposedRoutines(
+          this.#deps,
+          record,
+          item,
+          (routineIndex) => keptRoutines === null || keptRoutines.has(`${index}:${routineIndex}`),
+          { approvalId },
+        );
+        routineLines.push(...routines.lines);
+        routineFailures.push(...routines.failures);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         this.#deps.logger.warn(

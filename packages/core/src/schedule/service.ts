@@ -1034,6 +1034,103 @@ export class ScheduleService {
     return this.store.get(id) ?? row;
   }
 
+  /**
+   * D88 移交：把一条 active 定时任务改由另一个 Bot 负责——在 `conversationId`（B 的私聊，
+   * 或 B 也在的群）里按原字段重建（title / note / kind / cron / run_at / timezone / origin，
+   * 待触发的那一次照旧），出一张新回执卡；原任务取消，其回执卡快照标「已移交给 {B}」。
+   * 重建与取消在同一事务里：崩溃后不会两边都有、也不会两边都没有。承诺联动的任务不在此列
+   * （P1 随承诺一起迁移）。
+   */
+  transferTo(
+    scheduleId: string,
+    target: { botId: string; botName: string; conversationId: string },
+  ): Schedule {
+    const row = this.store.get(scheduleId);
+    if (row === null) throw new AppError('NOT_FOUND', `定时任务 ${scheduleId} 不存在`);
+    if (row.status !== 'active') throw new AppError('INVALID_INPUT', '该任务已结束，无法移交');
+    if (row.commitmentId !== null) {
+      throw new AppError('INVALID_INPUT', '与承诺联动的定时任务暂不支持移交');
+    }
+    if (row.botId === target.botId) throw new AppError('INVALID_INPUT', '任务已经属于该 Bot');
+    this.#assertFireable(target.botId, target.conversationId);
+    const nextFireAt =
+      row.nextFireAt ??
+      (row.kind === 'cron' && row.cron !== null
+        ? nextCronFireAt(row.cron, row.timezone, this.#deps.clock.now())
+        : row.runAt);
+    const handedOverTo = { botId: target.botId, name: target.botName };
+    let created: Schedule | null = null;
+    let cardIds: string[] = [];
+    this.#deps.db.transaction(() => {
+      created = this.store.insert({
+        botId: target.botId,
+        conversationId: target.conversationId,
+        kind: row.kind,
+        runAt: row.runAt,
+        cron: row.cron,
+        timezone: row.timezone,
+        note: row.note,
+        title: row.title,
+        origin: row.origin,
+        nextFireAt,
+      });
+      this.store.update(row.id, { status: 'cancelled', nextFireAt: null });
+      if (this.#deps.messages !== undefined) {
+        cardIds = (
+          this.#deps.db
+            .prepare(
+              `select id from messages
+               where conversation_id = ? and kind = 'system_event'
+                 and json_extract(content_json, '$.schedule.id') = ?`,
+            )
+            .all(row.conversationId, row.id) as Array<{ id: string }>
+        ).map((entry) => entry.id);
+        const text = `定时任务「${scheduleDisplayTitle(row)}」（${this.describeWhen(row)}）已移交给 ${target.botName}`;
+        for (const id of cardIds) {
+          this.#deps.db
+            .prepare(
+              `update messages set content_json = json_set(content_json,
+                 '$.schedule.status', 'cancelled', '$.schedule.handedOverTo', json(?), '$.text', ?)
+               where id = ?`,
+            )
+            .run(JSON.stringify(handedOverTo), text, id);
+        }
+      }
+    })();
+    const fresh = created as Schedule | null;
+    if (fresh === null) throw new AppError('INTERNAL', '定时任务移交失败');
+    for (const id of cardIds) this.#publishMessageUpdated(id);
+    this.#publishChanged({ ...row, status: 'cancelled' });
+    this.#appendReceipt(fresh);
+    this.#publishChanged(fresh);
+    this.#reload();
+    return fresh;
+  }
+
+  /**
+   * D88 恢复：这条任务是否已经移交给了 `botId`（其回执卡带 `handedOverTo`）。移交在一个
+   * 事务里完成，崩溃在事务提交与记账之间时据此判定「已完成」，不重复重建。
+   */
+  transferredTo(scheduleId: string, botId: string): boolean {
+    const row = this.store.get(scheduleId);
+    if (row === null || row.status !== 'cancelled') return false;
+    const hit = this.#deps.db
+      .prepare(
+        `select 1 from messages
+         where conversation_id = ? and kind = 'system_event'
+           and json_extract(content_json, '$.schedule.id') = ?
+           and json_extract(content_json, '$.schedule.handedOverTo.botId') = ?
+         limit 1`,
+      )
+      .get(row.conversationId, row.id, botId);
+    return hit !== undefined;
+  }
+
+  /** D88 盘点：一个 Bot 在所有对话里的 active 定时任务。 */
+  listActiveForBot(botId: string): Schedule[] {
+    return this.store.listActiveForBot(botId);
+  }
+
   /** cancel_schedule tool: a bot may only cancel its own tasks. */
   cancelOwn(botId: string, scheduleId: string): { ok: boolean; message: string } {
     const row = this.store.get(scheduleId);

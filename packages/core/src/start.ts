@@ -21,6 +21,7 @@ import {
   browserControlReturnedOutputSchema,
   updateCancelActiveOutputSchema,
   diagnosticsOutputSchema,
+  chatModelOptions,
   type AgentCatalogEntry,
   type AppNoticePayload,
   type Bot,
@@ -132,6 +133,16 @@ import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
+import { HandoverHost } from './dispatch/handover.js';
+import { HandoverRegistry } from './handover/registry.js';
+import { HandoverStore } from './handover/store.js';
+import { ModelAdapter } from './handover/adapters/model.js';
+import { AppAdapter } from './handover/adapters/app.js';
+import { McpAdapter } from './handover/adapters/mcp.js';
+import { MailAdapter } from './handover/adapters/mail.js';
+import { ScheduleAdapter } from './handover/adapters/schedule.js';
+import type { HandoverBotWriter } from './handover/adapters/common.js';
+import type { HandoverToolFacade } from './tools/handover-tools.js';
 import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
 import type { ScheduleToolFacade } from './tools/schedule-tools.js';
 import {
@@ -510,6 +521,8 @@ export interface CoreServices {
   watches: WatchService | null;
   /** D84 邮件通道 (null while locked / errored). */
   mail: MailService | null;
+  /** D88 Bot 资产移交 (null while locked / errored). */
+  handover: HandoverHost | null;
   scheduler: Scheduler | null;
   jobsRunner: JobsRunner | null;
   /**
@@ -763,6 +776,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     schedules: null,
     watches: null,
     mail: null,
+    handover: null,
     scheduler: null,
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
@@ -1725,6 +1739,15 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // wake turns through its mailboxes); the tool facade delegates lazily.
     let watchService: WatchService | null = null;
     let mailService: MailService | null = null;
+    // D88: the handover host is constructed after mail / schedules (its adapters use
+    // them); the butler's tools reach it through this lazy facade.
+    let handoverHost: HandoverHost | null = null;
+    const handoverFacade: HandoverToolFacade = {
+      inspect: (identity, input) => handoverHost!.inspect(identity, input),
+      propose: (identity, input) => handoverHost!.propose(identity, input),
+      validateRoutineWhen: (when, timezone) => handoverHost!.validateRoutineWhen(when, timezone),
+      modelOptions: () => handoverHost?.modelOptions() ?? [],
+    };
     const watchFacade: OrchestratorWatchFacade = {
       create: (input) => watchService!.create(input),
       listForBotInConversation: (botId, conversationId) =>
@@ -1846,6 +1869,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       get mail() {
         return mailService ?? undefined;
       },
+      handover: handoverFacade,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
       // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。
@@ -1957,6 +1981,79 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     mail.start();
     mailService = mail;
+    // D88 Bot 资产移交：适配器框架 + 宿主（移交卡、确定性执行、恢复）。
+    const handoverBotWriter: HandoverBotWriter = {
+      get: (botId) => bots.get(botId),
+      updateProfile: (botId, mutate) => {
+        const updated = bots.update(botId, mutate(bots.getOrThrow(botId).profile));
+        events.emit('bot.updated', { bot: updated });
+        return updated;
+      },
+    };
+    const handoverRevoke = (serverId: string, botIds: string[]): void => {
+      const count = revocations.emit({ scope: 'mcp', botIds, serverId });
+      if (count > 0) {
+        events.emit('tasks.interrupted', { count, reason: 'permission_revoked', scope: 'mcp' });
+      }
+    };
+    const handoverModelOptions = () => chatModelOptions(providers.list());
+    const handover = new HandoverHost({
+      db: mainDb,
+      logger,
+      bots,
+      conversations,
+      messages,
+      approvals,
+      store: new HandoverStore({ db: mainDb, clock }),
+      registry: new HandoverRegistry([
+        new ModelAdapter({ bots: handoverBotWriter, modelOptions: handoverModelOptions }),
+        new AppAdapter({
+          bots: handoverBotWriter,
+          connections: apps.store,
+          appName: (connectionId) => connectedApps.view(connectionId)?.appName ?? null,
+          revoke: handoverRevoke,
+        }),
+        new McpAdapter({
+          bots: handoverBotWriter,
+          servers: () => settings.get().mcpServers,
+          revoke: handoverRevoke,
+        }),
+        new MailAdapter({
+          mail: {
+            accountsForBot: (botId) => mail.accountsForBot(botId),
+            boundBotIds: (accountId) =>
+              mail.store.get(accountId) === null
+                ? null
+                : mail.store.bindings(accountId).map((binding) => binding.botId),
+            addBinding: (accountId, botId) => mail.addBinding(accountId, botId),
+            removeBinding: (accountId, botId) => mail.removeBinding(accountId, botId),
+            retargetPendingAlerts: (accountId, fromBotId, toBotId) =>
+              mail.retargetPendingAlerts(accountId, fromBotId, toBotId),
+          },
+        }),
+        new ScheduleAdapter({
+          schedules: {
+            listActiveForBot: (botId) => schedules.listActiveForBot(botId),
+            get: (scheduleId) => schedules.store.get(scheduleId),
+            transferTo: (scheduleId, target) => schedules.transferTo(scheduleId, target),
+            transferredTo: (scheduleId, botId) => schedules.transferredTo(scheduleId, botId),
+            describeWhen: (row) => schedules.describeWhen(row),
+          },
+          conversations: {
+            get: (conversationId) => conversations.get(conversationId),
+            memberBotIds: (conversationId) => conversations.memberBotIds(conversationId),
+            directIdFor: (botId) => conversations.openDirect(botId).conversation.id,
+          },
+        }),
+      ]),
+      modelOptions: handoverModelOptions,
+      updateProfile: handoverBotWriter.updateProfile,
+      schedule: scheduleFacade,
+      publish: (event, payload) => events.emit(event as never, payload as never),
+      deliverEvent: (botId, conversationId, event, text, opts) =>
+        orchestrator.deliverEventToBot(botId, conversationId, event, text, opts),
+    });
+    handoverHost = handover;
     // Commitment linkage (docs/design/04-memory.md): a due-dated commitment
     // creates a one-shot task; void / retracted cancels it. Internal events.
     events.on('memory.commitment_created', (payload) => {
@@ -2108,6 +2205,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // D75 §7.4: task repair → blanket interruption → re-queue + reconciliation.
     orchestrator.recoverInterrupted();
+    // D88: after the pending cards were cancelled above — cancelled cards close their
+    // handovers, interrupted executions continue with their remaining items.
+    try {
+      handover.recover();
+    } catch (error) {
+      warnQuietly('handover recovery failed', error);
+    }
     // D75 §3.2 reaper: re-deliver unconsumed task results, enforce the
     // wall-clock / token caps.
     taskSweepTimer = setInterval(() => {
@@ -2299,6 +2403,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.schedules = schedules;
     services.watches = watches;
     services.mail = mail;
+    services.handover = handover;
     services.scheduler = scheduler;
     services.jobsRunner = jobsRunner;
     services.mcp = mcp;

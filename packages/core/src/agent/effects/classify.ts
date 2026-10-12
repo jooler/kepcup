@@ -164,6 +164,9 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   propose_team: 'local',
   propose_bot: 'local',
   propose_group: 'local',
+  /** D88：只读盘点；移交卡只提交审批，执行在用户确认后由宿主完成。 */
+  inspect_bot_assets: 'none',
+  propose_handover: 'local',
 };
 
 /** All built-in tool names registered in the classifier (tests assert coverage). */

@@ -44,6 +44,8 @@ export const ID_PREFIXES = {
   wgt: 'wgt_',
   /** 邮件账号（D84，main.db mail_accounts）。 */
   mal: 'mal_',
+  /** Bot 资产移交（D88，main.db bot_handovers）。 */
+  hnd: 'hnd_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

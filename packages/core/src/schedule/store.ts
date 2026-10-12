@@ -166,6 +166,14 @@ export class SchedulesStore {
     );
   }
 
+  /** Active schedules of one bot across its conversations (D88 handover inventory). */
+  listActiveForBot(botId: string): Schedule[] {
+    return this.#list(
+      "where bot_id = ? and status = 'active' order by next_fire_at is null, next_fire_at, created_at",
+      botId,
+    );
+  }
+
   /** Every active schedule, soonest first (settings overview / RPC list). */
   listActive(): Schedule[] {
     return this.#list(
