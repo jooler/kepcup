@@ -25,73 +25,73 @@
 
 ### 3.1 契约（packages/shared）
 
-- [ ] `approvalKindSchema` 增 `bot_handover`。
-- [ ] `botHandoverPayloadSchema`：`{ fromBotId, target: {kind:'existing', botId} | {kind:'new', bot: ButlerProposedBot & {model?}}, items: [{key, assetType, action, label, detail, warnings[]}], responsibilities?: {to?, from?, toBefore?, fromBefore?}, handoverNote, note, handoverId }`。卡片渲染所需的展示字段在提交时由 core 生成并快照进 payload（渲染端不再查询）。
-- [ ] `approvalDecisionSchema` 增 `handoverSelection?: string[]`（RPC `approvals.decide` 入参同步）；职责改写用保留 key `resp:to` / `resp:from`。
-- [ ] `butlerProposedBotSchema` 增可选 `model`（`'inherit'` 不适用于 propose_bot；取值 `'' | ref`）。
-- [ ] 事件 `handover.updated`（卡片进度）；系统事件常量 `BOT_HANDOVER_EVENT`（B 侧交接说明）/ `BOT_HANDED_OVER_EVENT`（A 侧已移交）及其 content 形态（参照 `ROUTE_SUGGESTION_EVENT`）。
-- [ ] 常量：`HANDOVER_ITEMS_MAX`（100）、`HANDOVER_NOTE_MAX_CHARS`（2000）、`HANDOVER_MEMORY_MAX_ITEMS`（200，P1 用）。
+- [x] `approvalKindSchema` 增 `bot_handover`。
+- [x] `botHandoverPayloadSchema`：`{ fromBotId, target: {kind:'existing', botId} | {kind:'new', bot: ButlerProposedBot & {model?}}, items: [{key, assetType, action, label, detail, warnings[]}], responsibilities?: {to?, from?, toBefore?, fromBefore?}, handoverNote, note, handoverId }`。卡片渲染所需的展示字段在提交时由 core 生成并快照进 payload（渲染端不再查询）。
+- [x] `approvalDecisionSchema` 增 `handoverSelection?: string[]`（RPC `approvals.decide` 入参同步）；职责改写用保留 key `resp:to` / `resp:from`。
+- [x] `butlerProposedBotSchema` 增可选 `model`（`'inherit'` 不适用于 propose_bot；取值 `'' | ref`）。
+- [x] 事件 `handover.updated`（卡片进度）；系统事件常量 `BOT_HANDOVER_EVENT`（B 侧交接说明）/ `BOT_HANDED_OVER_EVENT`（A 侧已移交）及其 content 形态（参照 `ROUTE_SUGGESTION_EVENT`）。
+- [x] 常量：`HANDOVER_ITEMS_MAX`（100）、`HANDOVER_NOTE_MAX_CHARS`（2000）、`HANDOVER_MEMORY_MAX_ITEMS`（200，P1 用）。
 
 ### 3.2 迁移（main 0036 暂定）
 
-- [ ] `bot_handovers`、`bot_handover_items`（字段见设计 §5.1）。
-- [ ] 重建 `approvals`，CHECK 增 `bot_handover`（照 0031 的写法）。
-- [ ] 同步 `create-core.test.ts` 的 `user_version` 等版本断言。
+- [x] `bot_handovers`、`bot_handover_items`（字段见设计 §5.1）。
+- [x] 重建 `approvals`，CHECK 增 `bot_handover`（照 0031 的写法）。
+- [x] 同步 `create-core.test.ts` 的 `user_version` 等版本断言。
 
 ### 3.3 core：框架
 
-- [ ] `packages/core/src/handover/`：`types.ts`（`HandoverAdapter` 接口、`HandoverEntry`、`HandoverContext`、`HandoverItemResult`）、`registry.ts`（按 stage 排序）、`store.ts`（两表读写）。
-- [ ] `dispatch/handover.ts` `HandoverHost`：
+- [x] `packages/core/src/handover/`：`types.ts`（`HandoverAdapter` 接口、`HandoverEntry`、`HandoverContext`、`HandoverItemResult`）、`registry.ts`（按 stage 排序）、`store.ts`（两表读写）。
+- [x] `dispatch/handover.ts` `HandoverHost`：
   - `inspect(identity, botId, query)` → 汇总各适配器盘点 + 可用模型列表（与 Bot 详情模型下拉**同源**，不另写一份枚举）。
   - `propose(identity, input)`：发起权校验（P0：仅管家，来源任意）、目标校验（active、非访谈、`from≠to`；新建目标仅管家）、逐项 `validate`、同对话已有待定 `bot_handover` / `butler_proposal` 时拒绝；落 `bot_handovers`（`proposed`）→ `submitNonBlocking('bot_handover', …)`。
   - `#onDecided`：拒绝 → `denied` + follow-up；取消 → `cancelled`；批准 → 按 `handoverSelection` 过滤 → `applying` → §5.3 顺序执行 → 结算 → 卡片 `approvals.fail`（部分失败时）→ follow-up。
   - `recover()`：启动时继续 `applying` 的 handover（接在 jobs / approvals 恢复之后）。
-- [ ] 新建目标复用 `ButlerHost` 的建 Bot 逻辑：把 `#createBots` 里单个 Bot 的创建（头像、开私聊、例行事项、**模型**）抽成可复用函数，`ButlerHost` 与 `HandoverHost` 共用；`propose_bot` / `propose_team` 的 `model` 同时生效。
-- [ ] `approvals.ts`：`NEVER_AUTO_DECIDED`、`SURVIVES_RUN` 加 `bot_handover`；selection 校验与 `describe` / `renderContextLine` 分支；`cancelAllPending` 时 handover 落 `cancelled`。
-- [ ] `start.ts` / 服务装配：构造 `HandoverHost`，注入 bots / mail / schedule / conversations / messages / approvals / settings / logger / publish / deliverEvent。
+- [x] 新建目标复用 `ButlerHost` 的建 Bot 逻辑：把 `#createBots` 里单个 Bot 的创建（头像、开私聊、例行事项、**模型**）抽成可复用函数，`ButlerHost` 与 `HandoverHost` 共用；`propose_bot` / `propose_team` 的 `model` 同时生效。
+- [x] `approvals.ts`：`NEVER_AUTO_DECIDED`、`SURVIVES_RUN` 加 `bot_handover`；selection 校验与 `describe` / `renderContextLine` 分支；`cancelAllPending` 时 handover 落 `cancelled`。
+- [x] `start.ts` / 服务装配：构造 `HandoverHost`，注入 bots / mail / schedule / conversations / messages / approvals / settings / logger / publish / deliverEvent。
 
 ### 3.4 core：P0 适配器
 
-- [ ] `model`：仅在新建目标或提议中显式出现 `model:` 项时执行；校验 ref 在可用列表里；`bots.update` 写 `runtime.model`（`inherit` = 取 A 当下的 `runtime.model` 原值，可能为空 = 跟随默认）。
-- [ ] `app`：盘点 A 的 `app_connection_ids`；share / move；同 Connector 冲突校验复用 `bots.ts` 的现有规则；move 时从 A 移除并照 `bindings.ts` ~L658 的方式中断 A 用到它的任务。不复制 `app_tool_grants`。
-- [ ] `mcp`：盘点 A 的 `mcp_server_ids`（过滤全局已不存在 / 停用的）；share / move。
-- [ ] `mail`：盘点 `accountsForBot(A)`；move（默认）/ share。在 `MailService` 增 `addBinding(accountId, botId)` / `removeBinding(accountId, botId)`（单条增删，保留其他绑定的唤醒状态；`publishAccount`），以及 `retargetPendingAlerts(accountId, fromBotId, toBotId)`：把 A 名下未执行的 `mail_alert` 作业按新去重键 `mail:{acc}:{uid}:{B}` 改投 B。顺序：add B → retarget → remove A。
-- [ ] `schedule`：盘点 A 所有 active 的定时任务；`commitment_id` 非空的置灰「随承诺，P1 支持」。A 私聊里的 → `createOnce` / `createCron` 到 B 私聊；群里的 → B 是成员则建到同群，否则置灰。保留 title / note / kind / cron / run_at / timezone / origin。新任务出回执卡；A 侧 `cancel`，回执卡快照增加 `handedOverTo: {botId, name}`，渲染端显示「已移交给 {B}」。
-- [ ] `responsibilities`：`resp:to` / `resp:from` 两项；A 为管家时不出 `resp:from`；写入走 `bots.update`（与 `profile_change` 同一写入路径）。
-- [ ] 交接说明：B 私聊写 `BOT_HANDOVER_EVENT` 系统事件（接手清单 + 交接要点），A 私聊写 `BOT_HANDED_OVER_EVENT`；两者 `renderContextLine`（交接要点包 `untrustedBlock`）；`message.created` + `conversation.updated` 推送。
+- [x] `model`：仅在新建目标或提议中显式出现 `model:` 项时执行；校验 ref 在可用列表里；`bots.update` 写 `runtime.model`（`inherit` = 取 A 当下的 `runtime.model` 原值，可能为空 = 跟随默认）。
+- [x] `app`：盘点 A 的 `app_connection_ids`；share / move；同 Connector 冲突校验复用 `bots.ts` 的现有规则；move 时从 A 移除并照 `bindings.ts` ~L658 的方式中断 A 用到它的任务。不复制 `app_tool_grants`。
+- [x] `mcp`：盘点 A 的 `mcp_server_ids`（过滤全局已不存在 / 停用的）；share / move。
+- [x] `mail`：盘点 `accountsForBot(A)`；move（默认）/ share。在 `MailService` 增 `addBinding(accountId, botId)` / `removeBinding(accountId, botId)`（单条增删，保留其他绑定的唤醒状态；`publishAccount`），以及 `retargetPendingAlerts(accountId, fromBotId, toBotId)`：把 A 名下未执行的 `mail_alert` 作业按新去重键 `mail:{acc}:{uid}:{B}` 改投 B。顺序：add B → retarget → remove A。
+- [x] `schedule`：盘点 A 所有 active 的定时任务；`commitment_id` 非空的置灰「随承诺，P1 支持」。A 私聊里的 → `createOnce` / `createCron` 到 B 私聊；群里的 → B 是成员则建到同群，否则置灰。保留 title / note / kind / cron / run_at / timezone / origin。新任务出回执卡；A 侧 `cancel`，回执卡快照增加 `handedOverTo: {botId, name}`，渲染端显示「已移交给 {B}」。
+- [x] `responsibilities`：`resp:to` / `resp:from` 两项；A 为管家时不出 `resp:from`；写入走 `bots.update`（与 `profile_change` 同一写入路径）。
+- [x] 交接说明：B 私聊写 `BOT_HANDOVER_EVENT` 系统事件（接手清单 + 交接要点），A 私聊写 `BOT_HANDED_OVER_EVENT`；两者 `renderContextLine`（交接要点包 `untrustedBlock`）；`message.created` + `conversation.updated` 推送。
 
 ### 3.5 core：工具与提示词
 
-- [ ] `tools/handover-tools.ts`：`inspect_bot_assets`、`propose_handover`（参数见设计 §4）；`propose_handover` 提交成功返回 `terminate: true`。对话轮注册：P0 仅管家（`tools/index.ts` 管家块）；任务不注册。
-- [ ] `propose_bot` / `propose_team` 的 `model` 参数（说明：先用 `inspect_bot_assets` 看可用模型；不填 = 跟随默认）。
-- [ ] `BUTLER_RULES`：委派与移交的区分；「新建并接手」用一张 `propose_handover`；先盘点再提议；未收到结果前不得声称已移交。`BUTLER_TASK_RULES`：任务里没有移交工具，把建议写进任务结果。
-- [ ] `delegate_to_bot` 说明加一句「委派不改变归属；交出邮箱 / 应用 / 定时任务用 `propose_handover`（管家）」。
-- [ ] `<mail_accounts>` 段不变（绑定改了自然就变）；确认 A 的上下文缓存不会滞留旧绑定。
+- [x] `tools/handover-tools.ts`：`inspect_bot_assets`、`propose_handover`（参数见设计 §4）；`propose_handover` 提交成功返回 `terminate: true`。对话轮注册：P0 仅管家（`tools/index.ts` 管家块）；任务不注册。
+- [x] `propose_bot` / `propose_team` 的 `model` 参数（说明：先用 `inspect_bot_assets` 看可用模型；不填 = 跟随默认）。
+- [x] `BUTLER_RULES`：委派与移交的区分；「新建并接手」用一张 `propose_handover`；先盘点再提议；未收到结果前不得声称已移交。`BUTLER_TASK_RULES`：任务里没有移交工具，把建议写进任务结果。
+- [x] `delegate_to_bot` 说明加一句「委派不改变归属；交出邮箱 / 应用 / 定时任务用 `propose_handover`（管家）」。
+- [x] `<mail_accounts>` 段不变（绑定改了自然就变）；确认 A 的上下文缓存不会滞留旧绑定。
 
 ### 3.6 渲染端
 
-- [ ] `features/handover/HandoverCard.svelte`：头部 A → B / 新建 B（折叠显示新 Bot 字段与模型）；按资产分组的可勾选条目（动作标签、说明、置灰原因）；职责改写前后对照；交接要点；确认 / 拒绝；执行中逐项进度（订阅 `handover.updated`）；结果态。`ApprovalCard.svelte` 按 kind 分流到它；`stores/permissions.svelte.ts` 增 `bot_handover` 分支与 `decide` 的 `handoverSelection`。
-- [ ] 系统事件渲染：B 侧交接说明卡、A 侧已移交提示；定时任务回执卡「已移交给 {B}」状态。
-- [ ] i18n（zh-CN 及其余 locale 的键）。
+- [x] `features/handover/HandoverCard.svelte`：头部 A → B / 新建 B（折叠显示新 Bot 字段与模型）；按资产分组的可勾选条目（动作标签、说明、置灰原因）；职责改写前后对照；交接要点；确认 / 拒绝；执行中逐项进度（订阅 `handover.updated`）；结果态。`ApprovalCard.svelte` 按 kind 分流到它；`stores/permissions.svelte.ts` 增 `bot_handover` 分支与 `decide` 的 `handoverSelection`。
+- [x] 系统事件渲染：B 侧交接说明卡、A 侧已移交提示；定时任务回执卡「已移交给 {B}」状态。
+- [x] i18n（zh-CN 及其余 locale 的键）。
 
 ### 3.7 测试
 
-- [ ] shared 单测：payload / decision schema。
-- [ ] core 单测：每个适配器（盘点、校验、apply 幂等、重复 apply 不重复建）；`retargetPendingAlerts`。
-- [ ] core 集成 `test/integration/handover.test.ts`：
+- [x] shared 单测：payload / decision schema。
+- [x] core 单测：每个适配器（盘点、校验、apply 幂等、重复 apply 不重复建）；`retargetPendingAlerts`。
+- [x] core 集成 `test/integration/handover.test.ts`：
   - 触发事件：管家绑邮箱 M → `propose_handover` 新建目标 → 批准 → 新 Bot 存在、M 只绑新 Bot、两侧系统事件、管家收到 follow-up；新信只给新 Bot 入队 `mail_alert`。
   - 已有目标：连接应用 share（A 保留）、定时任务 move（B 私聊重建 + 回执卡、A 侧取消并标已移交）、群定时 B 非成员置灰。
   - 勾选过滤、拒绝、无人值守不自动批、编造 key 拒绝、非管家调用被拒、同对话叠加被拒。
   - 崩溃恢复：执行到一半中断 → `recover()` 继续，已完成项不重复。
-- [ ] 提示词快照 / 工具注册测试更新（管家有、普通 Bot 无、任务无）。
-- [ ] e2e `apps/desktop/test/e2e/handover.spec.ts`：移交卡渲染、勾掉一项、确认后进度与结果态（参照 `butler-proposal.spec.ts` 的桩法）。
-- [ ] 收口：全量一次 + e2e 一次；独立 code-reviewer 审查（opus），修复后再合。
+- [x] 提示词快照 / 工具注册测试更新（管家有、普通 Bot 无、任务无）。
+- [x] e2e `apps/desktop/test/e2e/handover.spec.ts`：移交卡渲染、勾掉一项、确认后进度与结果态（参照 `butler-proposal.spec.ts` 的桩法）。
+- [ ] 收口：全量一次 + e2e 一次（已跑，见 §6）；独立 code-reviewer 审查（opus），修复后再合（待调度会话安排）。
 
 ### 3.8 文档
 
-- [ ] `docs/design/27-butler-and-delegation.md` §2.3 工具表补 `inspect_bot_assets` / `propose_handover`（指向 37）。
-- [ ] `docs/dev/03-data-model.md` 补两张表与 approvals kind；`docs/dev/04-agent-runtime.md` 补工具面。
-- [ ] 设计 37 状态行与本文件 §6 实施记录。
+- [x] `docs/design/27-butler-and-delegation.md` §2.3 工具表补 `inspect_bot_assets` / `propose_handover`（指向 37）。
+- [x] `docs/dev/03-data-model.md` 补两张表与 approvals kind；`docs/dev/04-agent-runtime.md` 补工具面。
+- [x] 设计 37 状态行与本文件 §6 实施记录。
 
 ## 4. P1：普通 Bot 发起；监看 / Skill / 记忆
 
@@ -113,6 +113,45 @@
 ## 6. 实施记录
 
 （执行中按期追加：完成项、偏差 DEV-xxx（需用户确认的写明推荐）、测试结果、迁移号变化。）
+
+### P0（2026-10-12，`t/handover`，未合入 / 未推送）
+
+**完成项**（§3 全部，独立审查待安排）：
+
+- 契约（shared）：`approvalKindSchema` 增 `bot_handover`；新文件 `domain/handover.ts`（`botHandoverPayloadSchema`、资产类型 / 动作、`selectableHandoverKeys`、`HandoverView` / 状态枚举、保留 key `resp:to` / `resp:from`）；`approvalDecisionSchema` 与 `approvals.decide` 入参增 `handoverSelection`；`butlerProposedBotSchema.model`（`''` = 跟随默认）；事件 `handover.updated`；RPC `handovers.get`；系统事件 `bot_handover` / `bot_handed_over`（content `handover`）与 follow-up `bot_handover_result`；回执卡快照 `schedule.handedOverTo`；常量 `HANDOVER_ITEMS_MAX` / `HANDOVER_NOTE_MAX_CHARS` / `HANDOVER_MEMORY_MAX_ITEMS`；ID 前缀 `hnd_`；`chatModelOptions(providers)`（Bot 详情模型下拉改用它，与移交可用模型同源）；能力包 `collaboration.butlerTools` 增两工具。
+- 迁移 `0035_bot_handover.sql`（见 DEV-001）：两表 + approvals 重建；`create-core.test` 的 `user_version` = 35，`public-skills-migration` 回放测试摘除两表。
+- core 框架：`handover/{types,registry,store}.ts`、`handover/adapters/{model,app,mcp,mail,schedule,common}.ts`；`dispatch/handover.ts` `HandoverHost`（inspect / propose / 决定回调 / 按 stage 执行 / 结算 / follow-up / `recover()` / `view()`）；`dispatch/bot-creation.ts` 抽出单个 Bot 的创建（头像、开私聊、例行事项、模型），`ButlerHost` 与 `HandoverHost` 共用，`propose_bot` / `propose_team` 的 `model` 生效（`ButlerHost.validateModelRef`）。`start.ts` 装配（lazy facade 给 orchestrator；启动恢复接在 `orchestrator.recoverInterrupted()` 之后）。
+- approvals：`NEVER_AUTO_DECIDED` / `SURVIVES_RUN` 加 `bot_handover`；`decide()` 校验 `handoverSelection`（只能是卡上可勾选的 key；一项不留且不新建 = 拒绝）；`describe` / `renderContextLine` 分支；`ButlerHost.propose` 与 `HandoverHost.propose` 互相拦叠加。
+- 服务：`MailService.addBinding` / `removeBinding` / `retargetPendingAlerts`（`MailStore.addBinding` / `removeBinding`，`JobsService.pendingByDedupePrefix` / `cancelPending`）；`ScheduleService.transferTo`（一个事务：重建 + 取消 + 原卡标记）/ `transferredTo` / `listActiveForBot`。
+- 工具与提示词：`tools/handover-tools.ts`（`inspect_bot_assets` / `propose_handover`，对话轮、仅管家）；`BUTLER_RULES` 增委派 ≠ 移交、「新建并接手」一张卡、先盘点、收到结果前不声称；`BUTLER_TASK_RULES` 同步；`delegate_to_bot` 说明加一句；effect 分类 `inspect_bot_assets: none` / `propose_handover: local`；上下文渲染交接记录（条目与交接要点包 `<untrusted>`）。
+- 渲染端：`features/handover/HandoverCard.svelte`（`ApprovalCard` 按 kind 分流）、`HandoverNoteCard.svelte`、`stores/handovers.svelte.ts`、`permissions.decide` 带 `handoverSelection`、`ScheduleReceipt` 显示「已移交给 {B}」、zh-CN 文案（仓库只有这一个 locale）。
+- 文档：设计 27 §2.3 工具表、设计 37 状态行、`docs/dev/03-data-model.md`（两表、approvals kind、删除级联、回执卡标记）、`04-agent-runtime.md` 工具目录、`01-conventions.md` ID 前缀。
+
+**测试**：
+
+- 新增：`packages/shared/test/unit/handover.test.ts`（8）、`packages/core/test/unit/handover-adapters.test.ts`（10）、`packages/core/test/integration/handover-services.test.ts`（3：单条绑定、`retargetPendingAlerts`、`transferTo`）、`packages/core/test/integration/handover.test.ts`（8：**验收锚点 1 触发事件**；锚点 2 已有目标的连接共享 + 定时任务重建 / 原卡标记 + 群任务置灰 + 职责改写；锚点 3 勾选 / 拒绝 / 一项不留；锚点 4 无人值守；锚点 5 崩溃恢复不重复；锚点 6 编造 key；叠加拦截；普通 Bot / 任务无工具与任务版提示词；重启取消；`propose_bot` 指定模型）、e2e `apps/desktop/test/e2e/handover.spec.ts`（1：dock 移交卡、勾掉一项、确认、进度卡完成 / 未勾选、两侧私聊结果）。
+- 改动的既有测试：`create-core`（版本 35 + 两表）、`public-skills-migration`（回放摘表）、`tool-effects`（扫描文件表加 `handover-tools.ts`）、`model-selection-single-source`（允许名单加 `handover/adapters/model.ts`，见 DEV-008）。
+- 定向回归（Docker `kepcup-test:trixie`）：上述新增 + butler-team / butler / butler-route / context-assembly / external-agent-p2 / external-agent-engine / tool-effects / create-core / mail / mail-service-fixes / schedule / approvals / app-approvals / turn-tools-review-fixes / shared agent-catalog / connected-apps / message-content / ids，全绿。
+- 全量（Docker，2026-10-12）：4062 例，首轮 28 失败，其中 2 条是本分支引入（`public-skills-migration` 回放未摘新表、`model-selection-single-source` 新调用点）——已修复并单跑通过；其余 26 条全部在基线文件内（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1；`environment`「checksum mismatch」在 main@064cbdd 的临时 worktree 上同样失败，已核实）。
+- e2e：见下方「e2e 全量」。
+
+**偏差（需用户确认）**：
+
+- **DEV-001 迁移号**：迁移运行器要求编号连续（`runMigrations` 遇到空号直接 `MIGRATION_FAILED`），不能跳过 D87 暂占的 0035 用 0036，所以本分支用 **0035**（`0035_bot_handover.sql`）。与 D87 的 0035 冲突：后合入的一方改号，并同步 `create-core.test` 的 `user_version`、`public-skills-migration` 的摘表注释与 `docs/dev/03-data-model.md` 迁移表。**推荐**：D87 先合则本分支改 0036；本分支先合则 D87 改 0036。
+- **DEV-002 模型取值**：设计 §1 把模型资产写作 `runtime.{model, light_model, agent}`，所以 `inherit`（新建目标默认值，或已有目标的 `model:inherit` 条目）复制三者；`default` 清空 model / light_model（外部智能体设置不动）；指定 ref 时把 B 切回内置引擎（`agent` 复位），否则外部智能体不会用这个 ref。已有目标改模型的条目 key 直接编码取值：`model:inherit` / `model:default` / `model:<ref>`（盘点只列 `model:inherit`，另两种经适配器 `resolve` 认）。新建目标的模型只能写在 `new_bot.model`，`model:*` 条目被退回。**推荐**：照此。
+- **DEV-003 结算口径**：设计只说「有 failed → partial」。实现把执行时重新校验不成立的 `skipped` 也算未完成：全部 done → `completed`；一项都没做成（新建目标也算一项）→ `failed`；其余 → `partial`。非 completed 时卡片 `approvals.fail` 并列出原因。**推荐**：照此（否则「全部跳过」会显示为已完成）。
+- **DEV-004 置灰 vs 退回**：编造的 key、不合法动作、重复 key 直接退回（工具报错）；盘点时就不可执行（全局停用的 MCP、随承诺的定时任务）与对目标冲突（B 已连同一应用另一账号、B 不在群里）的进卡片置灰、不可勾选。已有目标且没有任何可执行条目（含职责改写）时工具退回、不出卡。**推荐**：照此。
+- **DEV-005 职责改写的边界**：新建目标时 `responsibilities.to` 被退回（职责写在 `new_bot.responsibilities`）；来源或目标是管家时对应的改写忽略并在工具结果里说明；改写文本与原文相同时不出该项。**推荐**：照此。
+- **DEV-006 宿主条目**：新建目标、职责改写与交接说明作为宿主条目记在 `bot_handover_items`（key `bot:new` / `resp:to` / `resp:from` / `note:handover`，`asset_type` 为 `bot` / `responsibilities` / `note`），因此 `asset_type` 不设 CHECK；卡片进度与恢复都按它走。新 Bot 建行与回填 `to_bot_id` 在同一事务；例行事项在事务外（崩溃在两者之间时例行事项不补建）。**推荐**：照此。
+- **DEV-007 定时任务的恢复判据**：`transferTo` 在一个事务里完成重建与取消；崩溃在事务提交与记账之间时，`transferredTo` 先看原回执卡的 `handedOverTo`，没有回执卡（D80 之前的老任务、offer 卡任务）时退而按字段比对 B 名下在原任务之后建的同字段任务。重建的任务**总是**出新回执卡（含 `origin='offer'`，否则接手方看不到）。原任务没有回执卡时 A 侧只有「已移交」交接记录，没有「已移交给 {B}」卡。**推荐**：照此。
+- **DEV-008 模型字段单一入口守卫**：`model-selection-single-source` 只允许少数文件读写 `runtime.model` / `light_model`。移交要复制 / 改写这些**配置值**（不做选取），读写集中在 `handover/adapters/model.ts`（`inheritedModelRuntime` / `botModelLabel`）并加入允许名单；`bot-creation.ts` 只透传。**推荐**：照此。
+- **DEV-009 新增 RPC**：方案没列 `handovers.get`；卡片在重载 / 翻历史时需要读执行进度，所以加了（`handover.updated` 推实时更新）。**推荐**：保留。
+- **DEV-010 交接记录的数据边界**：设计 §4.3 只把交接要点包 `<untrusted>`；实现把条目文字也包进去（含邮箱显示名、任务标题等外部 / 模型写的文本）。**推荐**：照此（更保守）。
+- **DEV-011 预留参数**：`inspect_bot_assets` 已接受 `memory_query` / `wiki_query` 但 P0 忽略（说明里标「暂不支持」），P1 / P2 接上。
+
+**评审时请重点看**：`dispatch/handover.ts` 的执行 / 恢复 / 结算顺序与幂等（`isApplied` → `validate` → `apply`，move 的 `release` 在阶段 5）；`MailService.retargetPendingAlerts`（只动 pending、按新去重键入队再取消旧作业）；`ScheduleService.transferTo` 事务与 `transferredTo` 的字段比对兜底；`approvals.decide` 的 `handoverSelection` 校验；`propose` 的 key 校验与置灰；渲染端 `HandoverCard` 的勾选 / 进度状态推导。已知未覆盖：移交时 A 正在运行的、用到该邮箱的任务不会被中断（与在设置页解绑一致，§7 风险已接受）；已在跑（claimed）的 `mail_alert` 作业不改投。
+
+**迁移号**：0035（暂定，见 DEV-001）。
 
 ## 7. 风险
 
