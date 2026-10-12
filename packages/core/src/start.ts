@@ -1026,7 +1026,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const effects = new ToolEffectsStore(runsDb, clock);
     const usage = new UsageService(mainDb, clock);
     // 国内厂商媒体网关先建（providers 按能力测试要路由到这里）。
-    const media = new MediaService({ settings, secrets, logger });
+    const media = new MediaService({ settings, secrets, logger, usage });
     // 联网检索网关（docs/design/21-web-search.md）：web_search/web_fetch 工具与
     // websearch.test 的后端。
     const search = new SearchService({ settings, secrets, logger });
@@ -1467,8 +1467,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
-    // per-bot maintenance mutex, RPC reads, weekly lint scheduling and the
-    // recall cascade (the ingest/lint job runners consume it in jobs-runner).
+    // per-bot maintenance mutex, RPC reads and weekly lint scheduling (the
+    // ingest/lint job runners consume it in jobs-runner).
     const wiki = new WikiService({
       paths,
       clock,
@@ -1476,7 +1476,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       bots,
       conversations,
-      messages,
       memory,
     });
     const gateway = new ToolGateway({

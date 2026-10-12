@@ -19,7 +19,7 @@ import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { AppPaths } from '../infra/paths.js';
 import { truncateToBudget } from '../agent/tokens.js';
-import type { MediaService } from '../media/service.js';
+import type { MediaService, MediaUsageContext } from '../media/service.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -194,7 +194,8 @@ export class MemoryService {
         model: target.model,
         getPersistedDim: () => this.#deps.settings.get().embedding.dim,
         ready: () => media.embeddingReady(),
-        embed: (texts) => media.embedTexts(target.vendor, target.model, texts),
+        embed: (texts) =>
+          media.embedTexts(target.vendor, target.model, texts, MEMORY_MEDIA_USAGE),
       });
     }
     if (config.source === 'local') {
@@ -239,7 +240,10 @@ export class MemoryService {
     if (this.#deps.settings.get().capabilityModels.rerank === null) return null;
     return async (query, documents) => {
       try {
-        const result = await media.rerank({ query, documents, topN: documents.length });
+        const result = await media.rerank(
+          { query, documents, topN: documents.length },
+          MEMORY_MEDIA_USAGE,
+        );
         return result.results.map((row) => row.index);
       } catch (error) {
         this.#deps.logger.warn(
@@ -1171,6 +1175,12 @@ function parseIsoOrThrow(iso: string): number {
 }
 
 /** Whitelisted Profile dot-paths a bot may change (design/03-bot.md). */
+/**
+ * 记忆向量化 / 重排的用量归属：embedder 与重排回调不带 run / Bot 上下文（检索
+ * 在 turn 内、写入在 reflection / consolidation 内、重建在后台），统一记为 memory。
+ */
+const MEMORY_MEDIA_USAGE: MediaUsageContext = { loopType: 'memory' };
+
 const PROFILE_FIELD_SETTERS: Record<string, (profile: BotProfile, value: string) => void> = {
   // identity.name 仅被 setup interview（对话式新建）写入；常规审批路径的
   // 白名单是 PROFILE_CHANGE_FIELDS（不含 name），此处只是写入器的全集。

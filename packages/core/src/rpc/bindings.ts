@@ -478,7 +478,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'media.transcribeSpeech': method(
       mediaTranscribeSpeechInputSchema,
       mediaTranscribeSpeechOutputSchema,
-      async (input) => services.media!.transcribeSpeech(input),
+      async (input) =>
+        // 语音输入（26）：用户前台行为，不属于任何 Bot / 对话。
+        services.media!.transcribeSpeech(input, { loopType: 'voice_input' }),
     ),
     'media.generateVideo': method(
       mediaGenerateVideoInputSchema,
@@ -1220,6 +1222,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           costUsd: number | null;
           agentId?: string;
           turns?: number;
+          calls: number;
         }
       >();
       for (const entry of services.domain!.usage.entriesSince(since)) {
@@ -1236,10 +1239,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           inputTokens: 0,
           outputTokens: 0,
           costUsd: null,
+          calls: 0,
           ...(agentId !== null ? { agentId, turns: 0 } : {}),
         };
         bucket.inputTokens += entry.inputTokens;
         bucket.outputTokens += entry.outputTokens;
+        bucket.calls += 1;
         if (bucket.turns !== undefined) bucket.turns += 1;
         if (entry.costUsd !== null) bucket.costUsd = (bucket.costUsd ?? 0) + entry.costUsd;
         buckets.set(key, bucket);

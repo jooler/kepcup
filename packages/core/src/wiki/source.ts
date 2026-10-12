@@ -207,3 +207,146 @@ export function fetchableTextVerdict(text: string): string | null {
 export function isInsideRoot(target: string, root: string): boolean {
   return isInsidePath(canonicalPath(target), canonicalPath(root));
 }
+
+export type SourceKind = 'text' | 'html' | 'document' | 'image' | 'audio' | 'video' | 'binary';
+
+export interface SniffedSource {
+  mime: string;
+  kind: SourceKind;
+}
+
+const SNIFF_TEXT_WINDOW = 8192;
+
+const TEXT_EXTENSION_MIME: Record<string, string> = {
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  json: 'application/json',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  xml: 'application/xml',
+  yaml: 'application/x-yaml',
+  yml: 'application/x-yaml',
+  sql: 'application/sql',
+  html: 'text/html',
+  htm: 'text/html',
+};
+
+const ZIP_EXTENSION_MIME: Record<string, string> = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  epub: 'application/epub+zip',
+};
+
+const OLE_EXTENSION_MIME: Record<string, string> = {
+  doc: 'application/msword',
+  xls: 'application/vnd.ms-excel',
+  ppt: 'application/vnd.ms-powerpoint',
+};
+
+function startsWith(bytes: Buffer, signature: readonly number[], offset = 0): boolean {
+  if (bytes.length < offset + signature.length) return false;
+  return signature.every((value, index) => bytes[offset + index] === value);
+}
+
+function ascii(bytes: Buffer, start: number, end: number): string {
+  return bytes.subarray(start, end).toString('latin1');
+}
+
+function extensionOf(fileName: string): string {
+  const match = /\.([a-z0-9]+)$/i.exec(fileName);
+  return match?.[1]?.toLowerCase() ?? '';
+}
+
+/** Magic-number detection; null when no known signature matches. */
+function sniffMagic(bytes: Buffer, fileName: string): SniffedSource | null {
+  if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46])) return { mime: 'application/pdf', kind: 'document' };
+  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return { mime: 'image/png', kind: 'image' };
+  if (startsWith(bytes, [0xff, 0xd8, 0xff])) return { mime: 'image/jpeg', kind: 'image' };
+  if (ascii(bytes, 0, 4) === 'GIF8') return { mime: 'image/gif', kind: 'image' };
+  if (ascii(bytes, 0, 4) === 'RIFF') {
+    const form = ascii(bytes, 8, 12);
+    if (form === 'WEBP') return { mime: 'image/webp', kind: 'image' };
+    if (form === 'WAVE') return { mime: 'audio/wav', kind: 'audio' };
+    return { mime: 'application/octet-stream', kind: 'binary' };
+  }
+  if (startsWith(bytes, [0x50, 0x4b, 0x03, 0x04]) || startsWith(bytes, [0x50, 0x4b, 0x05, 0x06])) {
+    const extension = extensionOf(fileName);
+    const known = ZIP_EXTENSION_MIME[extension];
+    if (known !== undefined) return { mime: known, kind: 'document' };
+    return { mime: 'application/zip', kind: 'binary' };
+  }
+  if (startsWith(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
+    const known = OLE_EXTENSION_MIME[extensionOf(fileName)];
+    return { mime: known ?? 'application/x-ole-storage', kind: known !== undefined ? 'document' : 'binary' };
+  }
+  if (ascii(bytes, 4, 8) === 'ftyp') {
+    const brand = ascii(bytes, 8, 12);
+    if (brand.startsWith('M4A') || brand === 'M4B ') return { mime: 'audio/mp4', kind: 'audio' };
+    return { mime: brand.startsWith('qt') ? 'video/quicktime' : 'video/mp4', kind: 'video' };
+  }
+  if (startsWith(bytes, [0x1a, 0x45, 0xdf, 0xa3])) {
+    return extensionOf(fileName) === 'mka'
+      ? { mime: 'audio/x-matroska', kind: 'audio' }
+      : { mime: extensionOf(fileName) === 'webm' ? 'video/webm' : 'video/x-matroska', kind: 'video' };
+  }
+  if (ascii(bytes, 0, 3) === 'ID3' || (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0)) {
+    return { mime: 'audio/mpeg', kind: 'audio' };
+  }
+  if (ascii(bytes, 0, 4) === 'OggS') return { mime: 'audio/ogg', kind: 'audio' };
+  if (ascii(bytes, 0, 4) === 'fLaC') return { mime: 'audio/flac', kind: 'audio' };
+  return null;
+}
+
+/** True when the leading window has no NUL and decodes as lossless UTF-8. */
+function looksLikeUtf8Text(bytes: Buffer): boolean {
+  let window = bytes.subarray(0, SNIFF_TEXT_WINDOW);
+  if (window.includes(0)) return false;
+  // A window cut in the middle of a multi-byte sequence must not count as
+  // invalid UTF-8: drop an incomplete trailing sequence before decoding.
+  if (bytes.length > window.length) {
+    let end = window.length;
+    let back = 0;
+    while (end > 0 && back < 3 && (window[end - 1]! & 0xc0) === 0x80) {
+      end -= 1;
+      back += 1;
+    }
+    if (end > 0 && (window[end - 1]! & 0xc0) === 0xc0) end -= 1;
+    window = window.subarray(0, end);
+  }
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(window);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Classifies ingest source bytes from content, not from the declared mime
+ * (a file source used to be hard-coded `text/plain`, an attachment trusted its
+ * upload-time mime). Magic numbers win; without one, a NUL-free UTF-8 prefix is
+ * text and everything else is opaque binary.
+ */
+export function sniffSourceKind(
+  bytes: Buffer,
+  fileName: string,
+  declaredMime: string | null = null,
+): SniffedSource {
+  const magic = sniffMagic(bytes, fileName);
+  if (magic !== null) return magic;
+  if (bytes.length === 0 || looksLikeUtf8Text(bytes)) {
+    const extension = extensionOf(fileName);
+    const byExtension = TEXT_EXTENSION_MIME[extension];
+    if (byExtension !== undefined) {
+      return { mime: byExtension, kind: byExtension === 'text/html' ? 'html' : 'text' };
+    }
+    const declared = declaredMime?.toLowerCase() ?? '';
+    if (declared === 'text/html') return { mime: declared, kind: 'html' };
+    if (/^(text\/|application\/(json|xml|javascript|x-yaml|sql))/.test(declared)) {
+      return { mime: declared, kind: 'text' };
+    }
+    return { mime: 'text/plain', kind: 'text' };
+  }
+  return { mime: 'application/octet-stream', kind: 'binary' };
+}
