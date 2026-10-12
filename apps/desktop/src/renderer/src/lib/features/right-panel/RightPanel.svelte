@@ -32,7 +32,7 @@
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
   import { showBrowser } from './show-browser';
-  import { isEngineOnlyChange, shouldReloadBotDraft } from './bot-draft';
+  import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const isGroup = $derived(conversation?.type === 'group');
@@ -96,21 +96,21 @@
    */
   let savedProfile = $state<BotProfile | null>(null);
 
-  /** 当前草稿所属 Bot；换 Bot 才强制重载，同 Bot 的推送不冲掉未保存改动。 */
+  /** 当前草稿所属 Bot；换 Bot 才强制重载，同 Bot 的推送与未保存改动按字段合并。 */
   let draftBotId = $state<string | null>(null);
 
   $effect(() => {
     if (bot && bot.status === 'active') {
-      const sameBot = draftBotId === bot.id;
       // 草稿本身不进依赖：用户改模型只走自动保存 effect，不重跑本同步。
-      const action = shouldReloadBotDraft({
-        sameBot,
-        draft: untrack(() => draft),
-        savedProfile: untrack(() => savedProfile),
-        serverProfile: $state.snapshot(bot.profile) as BotProfile,
+      const serverProfile = $state.snapshot(bot.profile) as BotProfile;
+      const result = reconcileBotDraft({
+        sameBot: draftBotId === bot.id,
+        draft: untrack(() => draft && ($state.snapshot(draft) as BotProfile)),
+        savedProfile: untrack(() => savedProfile && ($state.snapshot(savedProfile) as BotProfile)),
+        serverProfile,
       });
-      if (action === 'reload') {
-        draft = structuredClone($state.snapshot(bot.profile)) as BotProfile;
+      if (result.action === 'replace') {
+        draft = structuredClone(result.draft);
         savedProfile = bot.profile;
         draftBotId = bot.id;
       }
@@ -131,7 +131,7 @@
   }
 
   /**
-   * 配置表单自动保存：深度监听 draft（stringify 建立全量依赖），变更后防抖
+   * 配置表单自动保存：深度监听 draft（snapshot 建立全量依赖），变更后防抖
    * 落盘，无需手动保存按钮。与最近保存结果一致时跳过，避免保存回写 store
    * 引发的回声循环。
    */
@@ -139,17 +139,12 @@
     const currentBot = bot;
     const currentDraft = draft;
     if (!currentBot || !currentDraft) return;
-    const snapshot = JSON.stringify($state.snapshot(currentDraft));
-    if (savedProfile && JSON.stringify($state.snapshot(savedProfile)) === snapshot) return;
+    // snapshot 读遍 draft 的每个字段，借此建立全量依赖。
+    const draftSnapshot = $state.snapshot(currentDraft) as BotProfile;
+    const saved = savedProfile && ($state.snapshot(savedProfile) as BotProfile);
+    if (saved && deepEqual(saved, draftSnapshot)) return;
     // 主/轻量模型与 Agent 切换立即落盘，避免 500ms 窗口内发消息仍打旧模型。
-    const delay =
-      savedProfile !== null &&
-      isEngineOnlyChange(
-        $state.snapshot(savedProfile) as BotProfile,
-        $state.snapshot(currentDraft) as BotProfile,
-      )
-        ? 0
-        : 500;
+    const delay = saved && isEngineOnlyChange(saved, draftSnapshot) ? 0 : 500;
     const timer = setTimeout(() => void saveProfile(currentBot.id, currentDraft), delay);
     return () => {
       clearTimeout(timer);
@@ -174,9 +169,7 @@
   /** draft 相对最近一次保存仍有未落盘改动时立即保存。 */
   function flushDirtyDraft(): void {
     if (!bot || !draft || !savedProfile) return;
-    if (JSON.stringify($state.snapshot(draft)) === JSON.stringify($state.snapshot(savedProfile))) {
-      return;
-    }
+    if (deepEqual($state.snapshot(draft), $state.snapshot(savedProfile))) return;
     void saveProfile(bot.id, draft);
   }
 
