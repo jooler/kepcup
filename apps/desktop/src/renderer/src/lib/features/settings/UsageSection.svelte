@@ -20,6 +20,8 @@
     subagent: 'usage.loop.subagent',
     turn: 'usage.loop.turn',
     task: 'usage.loop.task',
+    memory: 'usage.loop.memory',
+    voice_input: 'usage.loop.voice_input',
   };
 
   let budgetTokens = $state<number | null>(null);
@@ -47,7 +49,7 @@
 
   /**
    * Bot rows in bot-then-name order; background usage vs the budget mirrors
-   * BudgetService (turns, tasks and built-in triage never count; agent rows
+   * BudgetService (turns, tasks, voice input and built-in triage never count; agent rows
    * are listed separately).
    */
   const botRows = $derived.by(() => {
@@ -66,6 +68,7 @@
             (entry) =>
               entry.date === today && entry.loopType !== 'turn' &&
                 entry.loopType !== 'task' &&
+                entry.loopType !== 'voice_input' &&
                 entry.loopType !== 'triage',
           )
           .reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0);
@@ -201,6 +204,7 @@
                 <tr>
                   <th class="py-1 font-normal">{t('settings.usageColumnDay')}</th>
                   <th class="py-1 font-normal">{t('settings.usageColumnLoop')}</th>
+                  <th class="py-1 font-normal">{t('settings.usageColumnCalls')}</th>
                   <th class="py-1 font-normal">{t('settings.usageColumnTokens')}</th>
                   <th class="py-1 font-normal">{t('settings.usageColumnCost')}</th>
                 </tr>
@@ -215,6 +219,9 @@
                   >
                     <td class="py-1 tabular-nums">{entry.date}</td>
                     <td class="py-1">{t(LOOP_KEYS[entry.loopType])}</td>
+                    <td class="py-1 tabular-nums" data-testid="usage-entry-calls"
+                      >{entry.calls ?? '—'}</td
+                    >
                     <td class="py-1 tabular-nums" data-testid="usage-entry-tokens"
                       >{tokenText(entry)}</td
                     >

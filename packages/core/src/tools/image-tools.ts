@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import { AppError, TOOL_OUTPUT_MAX_CHARS } from '@kepcup/shared';
 import { truncateToBudget } from '../agent/tokens.js';
+import type { MediaUsageContext } from '../media/service.js';
 import type { ImageGenerationResult } from '../media/types.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
@@ -29,28 +30,43 @@ const UNDERSTAND_IMAGE_MAX_BYTES = 5_000_000;
 
 /** The slice of MediaService the media-generation tools consume (P15/P17/P25). */
 export interface MediaToolFacade {
-  generateImage(input: {
-    prompt: string;
-    images?: string[];
-    n?: number;
-  }): Promise<ImageGenerationResult>;
+  generateImage(
+    input: {
+      prompt: string;
+      images?: string[];
+      n?: number;
+    },
+    usage?: MediaUsageContext | null,
+  ): Promise<ImageGenerationResult>;
   /** 图片理解（understand_image，docs/design/25-capability-tools.md）。 */
-  understandImage(input: { images: string[]; prompt: string }): Promise<{ text: string }>;
+  understandImage(
+    input: { images: string[]; prompt: string },
+    usage?: MediaUsageContext | null,
+  ): Promise<{ text: string }>;
   /** 语音合成（generate_speech，docs/design/20-conversation-media.md）。 */
-  synthesizeSpeech(input: {
-    text: string;
-    voice?: string;
-    format?: 'mp3' | 'wav' | 'opus';
-    speed?: number;
-  }): Promise<{ audioBase64: string; mimeType: string }>;
+  synthesizeSpeech(
+    input: {
+      text: string;
+      voice?: string;
+      format?: 'mp3' | 'wav' | 'opus';
+      speed?: number;
+    },
+    usage?: MediaUsageContext | null,
+  ): Promise<{ audioBase64: string; mimeType: string }>;
   /** 语音转写（transcribe_audio，docs/design/25-capability-tools.md）。 */
-  transcribeSpeech(input: {
-    audioBase64: string;
-    audioMime: string;
-    language?: string;
-  }): Promise<{ text: string }>;
+  transcribeSpeech(
+    input: {
+      audioBase64: string;
+      audioMime: string;
+      language?: string;
+    },
+    usage?: MediaUsageContext | null,
+  ): Promise<{ text: string }>;
   /** 视频生成：提交返回 taskId，状态用 videoStatus 轮询。 */
-  generateVideo(input: { prompt: string }): Promise<{ provider: string; taskId: string }>;
+  generateVideo(
+    input: { prompt: string },
+    usage?: MediaUsageContext | null,
+  ): Promise<{ provider: string; taskId: string }>;
   videoStatus(
     provider: string,
     taskId: string,

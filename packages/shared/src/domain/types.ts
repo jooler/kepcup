@@ -1049,6 +1049,10 @@ export const loopTypeSchema = z.enum([
    */
   'turn',
   'task',
+  /** 记忆向量化 / 重排的媒体调用（无 run 上下文时的归属，每次调用一行、token 常为 0）。 */
+  'memory',
+  /** 语音输入转写（用户前台行为，不计入后台预算）。 */
+  'voice_input',
 ]);
 export type LoopType = z.infer<typeof loopTypeSchema>;
 
@@ -2293,6 +2297,8 @@ export const usageSummaryEntrySchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
   costUsd: z.number().nullable(),
+  /** 账本行数（= 调用次数；媒体调用一行一次，token 可能为 0）。 */
+  calls: z.number().int().optional(),
   /**
    * D72 P5「订阅 / 外部 Agent」：外部智能体（`agent:{id}`）的用量单列——
    * 费用为空、token 常缺失，按轮数计（`turns` = 账本行数 = 模型轮数或

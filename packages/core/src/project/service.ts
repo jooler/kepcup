@@ -5,6 +5,7 @@ import {
   AppError,
   CHECKPOINT_RETENTION_DAYS,
   newId,
+  type LoopType as SharedLoopType,
   type Project,
   type RunChange,
   type RunChangeFile,
@@ -176,7 +177,8 @@ export class ProjectRuntime {
    * unaffected.
    */
   writeDenial(identity: RunIdentity): string | null {
-    let loopType = identity.loopType;
+    // Identity and run rows use two LoopType unions (core vs shared); this walks both.
+    let loopType: RunIdentity['loopType'] | SharedLoopType = identity.loopType;
     let runId = identity.runId;
     for (let depth = 0; loopType === 'subagent'; depth += 1) {
       const parentId =
