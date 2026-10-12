@@ -1108,13 +1108,14 @@ export class ScheduleService {
   }
 
   /**
-   * D88 恢复：这条任务是否已经移交给了 `botId`（其回执卡带 `handedOverTo`）。移交在一个
-   * 事务里完成，崩溃在事务提交与记账之间时据此判定「已完成」，不重复重建。
+   * D88 恢复：这条任务是否已经移交给了 `botId`。移交在一个事务里完成，崩溃在事务提交与
+   * 记账之间时据此判定「已完成」，不重复重建。依据：原回执卡带 `handedOverTo`；没有回执卡
+   * 的老任务 / offer 卡任务，退而看 B 名下是否有一条原字段一致、在原任务之后建的任务。
    */
   transferredTo(scheduleId: string, botId: string): boolean {
     const row = this.store.get(scheduleId);
     if (row === null || row.status !== 'cancelled') return false;
-    const hit = this.#deps.db
+    const marked = this.#deps.db
       .prepare(
         `select 1 from messages
          where conversation_id = ? and kind = 'system_event'
@@ -1123,7 +1124,27 @@ export class ScheduleService {
          limit 1`,
       )
       .get(row.conversationId, row.id, botId);
-    return hit !== undefined;
+    if (marked !== undefined) return true;
+    const rebuilt = this.#deps.db
+      .prepare(
+        `select 1 from schedules
+         where bot_id = ? and id != ? and kind = ? and note = ? and title = ? and origin = ?
+           and run_at is ? and cron is ? and timezone = ? and created_at >= ?
+         limit 1`,
+      )
+      .get(
+        botId,
+        row.id,
+        row.kind,
+        row.note,
+        row.title,
+        row.origin,
+        row.runAt,
+        row.cron,
+        row.timezone,
+        row.createdAt,
+      );
+    return rebuilt !== undefined;
   }
 
   /** D88 盘点：一个 Bot 在所有对话里的 active 定时任务。 */
