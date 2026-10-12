@@ -6,6 +6,8 @@ import {
   WIDGET_CRAFT_BRIEF_MAX_CHARS,
   WIDGET_CRAFT_DRAFT_TTL_DAYS,
   WIDGET_CRAFT_FIX_ROUNDS_MAX,
+  WIDGET_CRAFT_REVIEW_ROUNDS_MAX,
+  WIDGET_KNOWN_ISSUES_MAX,
   WIDGET_CRAFT_PHASE_MAX_TURNS,
   WIDGET_CRAFT_RESULT_MAX_CHARS,
   WIDGET_CRAFT_TIMEOUT_MS,
@@ -24,6 +26,8 @@ import {
   type WidgetCraftManifest,
   type WidgetCraftReceipt,
   type WidgetQueryDef,
+  type WidgetReviewFinding,
+  type WidgetReviewResult,
   type WidgetScope,
 } from '@kepcup/shared';
 import type {
@@ -71,6 +75,8 @@ import {
   buildStageInput,
   craftSystemPrompt,
   fixStageInput,
+  reviewStageInput,
+  reviewSystemPrompt,
   specStageInput,
   type CraftStage,
   type CraftStageContext,
@@ -160,6 +166,11 @@ export interface WidgetCraftDeps {
   /** run.status fan-out：界面看到阶段 run 出现与结束。 */
   publishRunStatus: (run: Run) => void;
   /**
+   * 某个内置模型 ref 眼下能不能用（厂商在、有 key、模型登记了）。审查模型解析出来却不可用（换了
+   * 厂商 / 删了 key）时退回制作的路由，而不是让每次审查都失败成 skipped。缺省不检查。
+   */
+  modelUsable?: (modelRef: string) => boolean;
+  /**
    * S2 预览（主进程预览宿主的适配，`widgets/preview.ts`）；缺省 / 返回 null / 宿主未绑定 =
    * S2 skipped → 交付为 unverified。`screenshots` 只在模型自查时要（截图交给支持图片的模型，
    * 不落库）。
@@ -193,6 +204,16 @@ interface CraftSession {
   resumeNote: string | null;
   /** 已为「只剩警告」花过一轮修复（警告最多修一次，设计 32 §6 风险表）。 */
   warningFixDone: boolean;
+  fixRoundsMax: number;
+  reviewRoundsMax: number;
+  /** 审查用的路由（设置「组件审查模型」；没有就用制作的路由）。 */
+  reviewRoute: LlmRoute;
+  /** 审查过的文件摘要 → 这份文件上审查提出、没修掉的 P0 / P1（交付时作为已知问题）。 */
+  reviewFindings: Map<string, WidgetReviewFinding[]>;
+  /** 有审查轮次没交结论（不阻断交付，回执如实注明）。 */
+  reviewSkipped: boolean;
+  /** 上一轮审查的 P0 / P1（第二轮审查只核对它们 + 新 P0）。 */
+  lastReview: WidgetReviewFinding[];
 }
 
 /** core 兜底时限比给宿主的预算多出的余量（宿主按预算收尾、回传结果要一点时间）。 */
@@ -216,6 +237,25 @@ export class WidgetCraftService {
 
   constructor(deps: WidgetCraftDeps) {
     this.#deps = deps;
+  }
+
+  /** 审查路由：解析不到、或解析到的内置模型眼下不可用时，退回制作的路由（并记日志）。 */
+  #reviewRoute(botId: string, fallback: LlmRoute): LlmRoute {
+    const route = routeFor(this.#deps, 'widget_review', botId);
+    if (route === null) return fallback;
+    if (
+      route.agentId === null &&
+      route.modelRef !== fallback.modelRef &&
+      this.#deps.modelUsable !== undefined &&
+      !this.#deps.modelUsable(route.modelRef)
+    ) {
+      this.#deps.logger.warn(
+        { botId, reviewModel: route.modelRef },
+        'widget review model unavailable; reviewing with the authoring model',
+      );
+      return fallback;
+    }
+    return route;
   }
 
   /** core 启动：清掉全部 Bot 的过期草稿。 */
@@ -242,6 +282,10 @@ export class WidgetCraftService {
     params: WidgetCraftParams;
     signal: AbortSignal;
     progress: (text: string) => void;
+    /**
+     * 只给基准评测用的轮数上限（§5.4 的「一次写成」基线 = 0 修复 / 0 审查）；工具路径从不传。
+     */
+    limits?: { fixRounds?: number; reviewRounds?: number };
   }): Promise<ToolResult> {
     const { identity, params } = input;
     const botId = identity.botId;
@@ -324,6 +368,12 @@ export class WidgetCraftService {
       },
       resumeNote,
       warningFixDone: false,
+      fixRoundsMax: input.limits?.fixRounds ?? WIDGET_CRAFT_FIX_ROUNDS_MAX,
+      reviewRoundsMax: input.limits?.reviewRounds ?? WIDGET_CRAFT_REVIEW_ROUNDS_MAX,
+      reviewRoute: this.#reviewRoute(botId, route),
+      reviewFindings: new Map(),
+      reviewSkipped: false,
+      lastReview: [],
     };
     this.#active.set(manifest.craftId, session);
 
@@ -537,23 +587,54 @@ export class WidgetCraftService {
       // 只为警告修了一轮反而修出了错误：不再继续，按最佳快照（那个只剩警告的版本）收尾。
       if (hasErrors && session.warningFixDone) return;
       const fixRounds = draft.readManifest().rounds.fix;
-      // 合格：没有错误（含验收失败）；只剩警告时最多花一轮修复。
-      if (!hasErrors && (warnings.length === 0 || session.warningFixDone)) return;
-      if (fixRounds >= WIDGET_CRAFT_FIX_ROUNDS_MAX) return;
+      // 合格：没有错误（含验收失败）；只剩警告时最多花一轮修复。合格之后才审查（设计 32 §11.10）。
+      if (!hasErrors && (warnings.length === 0 || session.warningFixDone)) {
+        const review = await this.#review(session, report);
+        if (review === null || session.stop !== null) return;
+        if (fixRounds >= session.fixRoundsMax) return;
+        // 审查的 P0 / P1 进 FIX（P2 只记录）；修完回到 GATE 全量回归。
+        const fixRound = fixRounds + 1;
+        draft.updateManifest((m) => ({
+          ...m,
+          phase: 'fix',
+          rounds: { ...m.rounds, fix: fixRound },
+          updatedAt: this.#deps.clock.now(),
+        }));
+        session.progress(`组件制作：第 ${fixRound} 轮修复（审查意见）`);
+        await this.#stage(
+          session,
+          'fix',
+          fixStageInput({
+            ...this.#stageContext(session),
+            round: fixRound,
+            report: formatReviewFindings(review),
+            rolledBack: null,
+            shrink: false,
+            source: 'review',
+          }),
+        );
+        continue;
+      }
+      if (fixRounds >= session.fixRoundsMax) return;
       if (!hasErrors) session.warningFixDone = true;
 
       // 回归：本轮比之前最好的版本更差 → 先回滚，FIX 的输入写明新增的问题。「最好」与交付同口径
       // （可交付的优先）：不会从一个可交付的版本退回到一个阻断的版本。
       const receipts = draft.readManifest().receipts;
       const current = receipts.find((r) => r.round === round);
-      const best = bestReceipt(receipts.filter((r) => r.round !== round));
+      const penalty = reviewPenalty(session.reviewFindings);
+      const best = bestReceipt(
+        receipts.filter((r) => r.round !== round),
+        penalty,
+      );
       let fixReport = report;
       let rolledBack: string | null = null;
+      let reviewNote: string | null = null;
       if (
         best !== null &&
         current !== undefined &&
         (best.verdict !== 'blocked' || current.verdict === 'blocked') &&
-        report.score > best.score
+        report.score + penalty(current) > best.score + penalty(best)
       ) {
         const bestReport = draft.readReport(best.round);
         if (bestReport !== null) {
@@ -563,6 +644,10 @@ export class WidgetCraftService {
           rolledBack =
             added.length > 0 ? added.slice(0, 8).map(describeIssue).join('\n') : '（分数变差）';
           fixReport = bestReport;
+          // 回滚到的版本审查过、还有没修的 P0 / P1：这一轮 FIX 仍要修它们（不能只剩一份空报告）。
+          const pending = session.reviewFindings.get(`${best.htmlSha256}:${best.queriesSha256}`);
+          if (pending !== undefined && pending.length > 0)
+            reviewNote = formatReviewFindings(pending);
         }
       }
       // 防震荡：同一组错误签名连续两次 GATE 都出现 → 收缩模式。
@@ -592,12 +677,75 @@ export class WidgetCraftService {
         fixStageInput({
           ...this.#stageContext(session),
           round: fixRound,
-          report: formatCheckReport(listed),
+          report:
+            reviewNote !== null
+              ? `${formatCheckReport(listed)}\n\n${reviewNote}`
+              : formatCheckReport(listed),
           rolledBack,
           shrink,
         }),
       );
     }
+  }
+
+  /**
+   * REVIEW（设计 32 §11.10）：全新上下文的只读 run，结论经 submit_review 提交。同一份文件只审一次；
+   * 至多 WIDGET_CRAFT_REVIEW_ROUNDS_MAX 轮。返回要修的 P0 / P1，null = 不用再修（通过 / 跳过 /
+   * 轮数用尽——用尽时没修掉的留作这份文件的已知问题）。
+   */
+  async #review(
+    session: CraftSession,
+    report: WidgetCheckReport,
+  ): Promise<WidgetReviewFinding[] | null> {
+    const { draft } = session;
+    const digestKey = `${report.htmlSha256}:${report.queriesSha256}`;
+    if (session.reviewFindings.has(digestKey)) return null;
+    const round = draft.readManifest().rounds.review + 1;
+    if (round > session.reviewRoundsMax) return null;
+    draft.updateManifest((m) => ({
+      ...m,
+      phase: 'review',
+      rounds: { ...m.rounds, review: round },
+      updatedAt: this.#deps.clock.now(),
+    }));
+    session.progress(`组件制作：独立审查（第 ${round} 轮）`);
+    let submitted: WidgetReviewResult | null = null;
+    await this.#stage(
+      session,
+      'review',
+      reviewStageInput({
+        draftDir: draft.dir,
+        round,
+        spec: draft.read(DRAFT_SPEC),
+        acceptance: draft.read(DRAFT_ACCEPTANCE),
+        checkSummary: formatCheckReport(report, 1_500),
+        previewed: report.stages.S2.status === 'ran',
+        previous: session.lastReview,
+      }),
+      {
+        onSubmitReview: (result) => {
+          submitted = result;
+        },
+      },
+    );
+    const result = submitted as WidgetReviewResult | null;
+    if (result === null) {
+      // 没交结论（自然结束 / 轮数用尽 / 模型失败）：这一轮记 skipped，不阻断交付。
+      session.reviewSkipped = true;
+      draft.writeReport('review', round, { skipped: true });
+      return null;
+    }
+    draft.writeReport('review', round, result);
+    const actionable = result.findings.filter((item) => item.severity !== 'P2');
+    session.reviewFindings.set(digestKey, actionable);
+    session.lastReview = actionable;
+    session.progress(
+      actionable.length > 0
+        ? `组件制作：审查发现 ${actionable.length} 个要修的问题`
+        : '组件制作：审查通过',
+    );
+    if (actionable.length === 0 || round >= session.reviewRoundsMax) return null;
+    return actionable;
   }
 
   /** GATE：宿主执行检查，快照 + 报告 + 回执 + 最佳快照。 */
@@ -652,10 +800,13 @@ export class WidgetCraftService {
     let timedOut = false;
     const onAbort = () => controller.abort(session.controller.signal.reason);
     session.controller.signal.addEventListener('abort', onAbort, { once: true });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort('widget check timeout');
-    }, this.#deps.checkTimeoutMs ?? WIDGET_CHECK_TIMEOUT_MS + WIDGET_CHECK_GRACE_MS);
+    const timer = setTimeout(
+      () => {
+        timedOut = true;
+        controller.abort('widget check timeout');
+      },
+      this.#deps.checkTimeoutMs ?? WIDGET_CHECK_TIMEOUT_MS + WIDGET_CHECK_GRACE_MS,
+    );
     timer.unref?.();
     try {
       // 与中止本身竞速：预览实现没理会 signal 也不能把 GATE 挂住。
@@ -672,7 +823,9 @@ export class WidgetCraftService {
           ...report.stages,
           S2: {
             status: 'skipped',
-            reason: timedOut ? '预览宿主没有按时回应（繁忙或异常），本轮未经运行验证' : '制作已停止，预览未完成',
+            reason: timedOut
+              ? '预览宿主没有按时回应（繁忙或异常），本轮未经运行验证'
+              : '制作已停止，预览未完成',
           },
         },
       };
@@ -726,9 +879,15 @@ export class WidgetCraftService {
   }
 
   /** 一个阶段 = 一个 pi run（照抄 subagent 的落库：runs 行、run_steps、用量、run.status）。 */
-  async #stage(session: CraftSession, stage: CraftStage, userMessage: string): Promise<void> {
+  async #stage(
+    session: CraftSession,
+    stage: CraftStage,
+    userMessage: string,
+    options: { onSubmitReview?: (result: WidgetReviewResult) => void } = {},
+  ): Promise<void> {
     if (session.stop !== null) return;
-    const { identity, route, draft } = session;
+    const { identity, draft } = session;
+    const route = stage === 'review' ? session.reviewRoute : session.route;
     const deps = this.#deps;
     const manifest = draft.readManifest();
     const row = deps.runs.create({
@@ -759,14 +918,18 @@ export class WidgetCraftService {
     let stageDone = false;
     let outcome: RunOutcome;
     try {
-      outcome = await this.#runStage(session, stage, userMessage, row.id, () => {
-        stageDone = true;
+      outcome = await this.#runStage(session, stage, route, userMessage, row.id, {
+        onStageDone: () => {
+          stageDone = true;
+        },
+        ...(options.onSubmitReview !== undefined ? { onSubmitReview: options.onSubmitReview } : {}),
       });
     } catch (error) {
       // 引擎 / 工具装配抛错：阶段 run 也必须结算，不能留一条取消不掉的 running 行。
       const message = error instanceof Error ? error.message : String(error);
       update({ status: 'failed', error: message });
-      if (session.stop === null) {
+      // 审查失败不停制作（记 skipped，见 #review）。
+      if (session.stop === null && stage !== 'review') {
         session.stop = 'stage_failed';
         session.stageError = message;
       }
@@ -776,8 +939,8 @@ export class WidgetCraftService {
       status: outcome.status,
       ...(outcome.error !== undefined ? { error: outcome.error.message } : {}),
     });
-    this.#recordUsage(session, row.id, outcome.usage);
-    if (outcome.status === 'failed' && session.stop === null) {
+    this.#recordUsage(session, route, row.id, outcome.usage);
+    if (outcome.status === 'failed' && session.stop === null && stage !== 'review') {
       session.stop = 'stage_failed';
       session.stageError = outcome.error?.message ?? '未知错误';
     }
@@ -791,11 +954,16 @@ export class WidgetCraftService {
   async #runStage(
     session: CraftSession,
     stage: CraftStage,
+    route: LlmRoute,
     userMessage: string,
     runId: string,
-    onStageDone: () => void,
+    callbacks: {
+      onStageDone: () => void;
+      onSubmitReview?: (result: WidgetReviewResult) => void;
+    },
   ): Promise<RunOutcome> {
-    const { identity, route, draft } = session;
+    const { identity, draft } = session;
+    const purpose = stage === 'review' ? 'widget_review' : 'widget_authoring';
     const deps = this.#deps;
     const subIdentity: RunIdentity = {
       runId,
@@ -807,9 +975,9 @@ export class WidgetCraftService {
       backgroundRunSpec(route, {
         identity: subIdentity,
         model: route.modelRef,
-        isRouteCurrent: () =>
-          routeStillCurrent(deps, 'widget_authoring', identity.botId, route.modelRef),
-        buildSystemPrompt: async () => craftSystemPrompt(),
+        isRouteCurrent: () => routeStillCurrent(deps, purpose, identity.botId, route.modelRef),
+        buildSystemPrompt: async () =>
+          stage === 'review' ? reviewSystemPrompt() : craftSystemPrompt(),
         messages: [{ role: 'user', content: userMessage, timestamp: deps.clock.now() }],
         tools: buildCraftTools({
           draftDir: draft.dir,
@@ -817,7 +985,10 @@ export class WidgetCraftService {
           // 修改已有组件时不给模板工具：它会整份覆盖现有源码。
           templates: draft.readManifest().widgetId === null,
           selfCheck: (signal) => this.#selfCheck(session, signal),
-          onStageDone,
+          onStageDone: callbacks.onStageDone,
+          ...(callbacks.onSubmitReview !== undefined
+            ? { onSubmitReview: callbacks.onSubmitReview }
+            : {}),
         }),
         limits: { maxTurns: WIDGET_CRAFT_PHASE_MAX_TURNS[stage] },
       }),
@@ -853,8 +1024,8 @@ export class WidgetCraftService {
     }
   }
 
-  #recordUsage(session: CraftSession, runId: string, usage: EngineUsage[]): void {
-    const provider = providerOfModelRef(session.route.modelRef);
+  #recordUsage(session: CraftSession, route: LlmRoute, runId: string, usage: EngineUsage[]): void {
+    const provider = providerOfModelRef(route.modelRef);
     for (const entry of usage) {
       try {
         this.#deps.usage.record({
@@ -862,11 +1033,9 @@ export class WidgetCraftService {
           botId: session.identity.botId,
           conversationId: session.identity.conversationId,
           loopType: 'widget_authoring',
-          provider: session.route.agentId === null ? provider : session.route.provider,
+          provider: route.agentId === null ? provider : route.provider,
           model:
-            session.route.agentId === null
-              ? session.route.modelRef.slice(provider.length + 1)
-              : session.route.modelRef,
+            route.agentId === null ? route.modelRef.slice(provider.length + 1) : route.modelRef,
           inputTokens: entry.input,
           outputTokens: entry.output,
           cacheReadTokens: entry.cacheRead,
@@ -922,7 +1091,7 @@ export class WidgetCraftService {
       if (!checked) await this.#gate(session);
     }
     const manifest = draft.readManifest();
-    const best = bestReceipt(manifest.receipts);
+    const best = bestReceipt(manifest.receipts, reviewPenalty(session.reviewFindings));
     const stopNote = session.stop !== null ? stopReasonText(session) : null;
     if (best === null) {
       const reasons = [stopNote ?? '没有产出可检查的组件源码'];
@@ -975,22 +1144,32 @@ export class WidgetCraftService {
       }
     }
     const report = draft.readReport(receipt.round);
+    // 审查对这份文件提出、没修掉的 P0 / P1（轮数用尽）：交付但列为已知问题；没审过这份文件 =
+    // 审查未完成（跳过、或停在审查之前）。
+    const digestKey = `${digest.htmlSha256}:${digest.queriesSha256}`;
+    const reviewed = session.reviewFindings.get(digestKey);
+    const unresolved = reviewed ?? [];
+    const reviewSkipped = session.reviewSkipped || reviewed === undefined;
+    // 「已通过自检」= 机器检查全绿 + 运行验证过 + 交付的这份文件审查过且没有剩余 P0 / P1。
     const status = !receipt.previewed
       ? 'unverified'
-      : receipt.verdict === 'pass'
+      : receipt.verdict === 'pass' && reviewed !== undefined && unresolved.length === 0
         ? 'passed'
         : 'issues';
-    const knownIssues =
-      report !== null
+    const knownIssues = [
+      ...unresolved.map((item) => `审查：${clip(item.problem, 80)}`),
+      ...(reviewed === undefined ? ['未完成独立审查'] : []),
+      ...(report !== null
         ? knownIssuesForUser(report, undefined, acceptanceItems(draft.read(DRAFT_ACCEPTANCE)))
-        : [];
+        : []),
+    ].slice(0, WIDGET_KNOWN_ISSUES_MAX);
     const check: WidgetDeliveryCheck = {
       status,
       summary: {
         craftId: manifest.craftId,
         gateRounds: manifest.rounds.gate,
         reviewRounds: manifest.rounds.review,
-        reviewSkipped: false,
+        reviewSkipped,
         previewed: receipt.previewed,
         knownIssues,
       },
@@ -1040,7 +1219,14 @@ export class WidgetCraftService {
     session.progress(`组件制作：已交付 v${result.version}`);
     return {
       ok: true,
-      content: successText({ result, status, manifest, knownIssues, stop: session.stop }),
+      content: successText({
+        result,
+        status,
+        manifest,
+        knownIssues,
+        stop: session.stop,
+        reviewSkipped,
+      }),
     };
   }
 
@@ -1078,6 +1264,18 @@ export class WidgetCraftService {
 // --- helpers ------------------------------------------------------------------------
 
 const CIRCLED = ['①', '②', '③', '④', '⑤'];
+
+/** 审查意见 → FIX 的问题清单文本（按严重度，带场景与改法）。 */
+function formatReviewFindings(findings: WidgetReviewFinding[]): string {
+  const ordered = [...findings].sort((a, b) => a.severity.localeCompare(b.severity));
+  return [
+    `独立审查提出 ${findings.length} 个要修的问题（P0 = 主要功能不可用或数据会错，P1 = 一条使用路径出错）：`,
+    ...ordered.map(
+      (item) =>
+        `[${item.severity}]${item.line !== undefined ? ` 第 ${item.line} 行` : ''} — ${item.problem} — 场景：${item.scenario}${item.fixHint !== '' ? ` — 改法：${item.fixHint}` : ''}`,
+    ),
+  ].join('\n');
+}
 
 /** 等 promise，或 signal 先中止就立刻 reject（不依赖被等的那一方理会 signal）。 */
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -1132,15 +1330,33 @@ function acceptanceError(text: string | null): string | null {
  * 同分取较新的。分数不能单独决定——一个只差一条必需验收点的版本（阻断）可能比一个有若干
  * 警告的可交付版本分数还低。
  */
-function bestReceipt(receipts: WidgetCraftReceipt[]): WidgetCraftReceipt | null {
+function bestReceipt(
+  receipts: WidgetCraftReceipt[],
+  penalty: (receipt: WidgetCraftReceipt) => number = () => 0,
+): WidgetCraftReceipt | null {
   const pick = (pool: WidgetCraftReceipt[]): WidgetCraftReceipt | null => {
     let best: WidgetCraftReceipt | null = null;
     for (const receipt of pool) {
-      if (best === null || receipt.score <= best.score) best = receipt;
+      if (best === null || receipt.score + penalty(receipt) <= best.score + penalty(best)) {
+        best = receipt;
+      }
     }
     return best;
   };
   return pick(receipts.filter((r) => r.verdict !== 'blocked')) ?? pick(receipts);
+}
+
+/**
+ * 审查意见计入「最好的版本」的分数（审查修复）：检查分只看机器问题，审查出 P1 的版本与修好它、
+ * 却多了一个警告的版本相比，分数反而更低——不加罚分就会把修好的版本回滚掉。P0 ×50、P1 ×10
+ * （与检查分同量级：P0 接近阻断，P1 相当于一个错误）。
+ */
+function reviewPenalty(findings: Map<string, WidgetReviewFinding[]>) {
+  return (receipt: WidgetCraftReceipt): number =>
+    (findings.get(`${receipt.htmlSha256}:${receipt.queriesSha256}`) ?? []).reduce(
+      (sum, item) => sum + (item.severity === 'P0' ? 50 : item.severity === 'P1' ? 10 : 0),
+      0,
+    );
 }
 
 /** 检查器自身出错（S0 / S1 记 skipped）时的合成阻断项：没检查过的代码不能当作合格。 */
@@ -1257,9 +1473,10 @@ function successText(input: {
   manifest: WidgetCraftManifest;
   knownIssues: string[];
   stop: StopReason | null;
+  reviewSkipped: boolean;
 }): string {
   const { result, status, manifest, knownIssues } = input;
-  const rounds = `检查 ${manifest.rounds.gate} 轮、修复 ${manifest.rounds.fix} 轮`;
+  const rounds = `检查 ${manifest.rounds.gate} 轮、修复 ${manifest.rounds.fix} 轮、审查 ${manifest.rounds.review} 轮${input.reviewSkipped ? '（审查未完成）' : ''}`;
   const lines = [
     `组件「${safeText(result.title)}」v${result.version} 已交付（${STATUS_TEXT[status]}：${rounds}）。widgetId: ${result.widgetId}`,
   ];

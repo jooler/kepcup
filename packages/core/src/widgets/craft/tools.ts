@@ -7,7 +7,12 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { BOT_WIDGET_HTML_MAX_BYTES, WIDGET_CRAFT_AUX_FILE_MAX_BYTES } from '@kepcup/shared';
+import {
+  BOT_WIDGET_HTML_MAX_BYTES,
+  WIDGET_CRAFT_AUX_FILE_MAX_BYTES,
+  widgetReviewResultSchema,
+  type WidgetReviewResult,
+} from '@kepcup/shared';
 import { canonicalPath } from '../../infra/paths.js';
 import { isInsidePath } from '../../sandbox/sensitive-paths.js';
 import type { ToolDefinition, ToolResult } from '../../agent/types.js';
@@ -43,23 +48,29 @@ export interface CraftToolDeps {
   selfCheck: (signal: AbortSignal) => Promise<ToolResult>;
   /** stage_done 被调用（附一句说明）。 */
   onStageDone: (summary: string) => void;
+  /** REVIEW：submit_review 通过校验（无场景的条目已丢弃）。 */
+  onSubmitReview?: (result: WidgetReviewResult) => void;
 }
 
 const WRITABLE: Readonly<Record<CraftStage, ReadonlySet<string>>> = {
   spec: new Set([DRAFT_SPEC, DRAFT_ACCEPTANCE]),
   build: new Set([DRAFT_HTML, DRAFT_QUERIES, DRAFT_FIXTURES]),
   fix: new Set([DRAFT_HTML, DRAFT_QUERIES, DRAFT_FIXTURES]),
+  // 审查者只读，不改文件（设计 32 §11.10）。
+  review: new Set(),
 };
 
 const STAGE_LABEL: Readonly<Record<CraftStage, string>> = {
   spec: 'SPEC',
   build: 'BUILD',
   fix: 'FIX',
+  review: 'REVIEW',
 };
 
 export const STAGE_DONE_TOOL = 'stage_done';
 export const WIDGET_CHECK_TOOL = 'widget_check';
 export const WIDGET_TEMPLATE_TOOL = 'widget_template';
+export const SUBMIT_REVIEW_TOOL = 'submit_review';
 
 export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
   // 草稿目录由制作服务建好；这里不重建（Bot 删除后不能被写回来）。
@@ -167,6 +178,10 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
   };
 
   const tools: ToolDefinition[] = [wrap(read), wrap(ls)];
+  if (deps.stage === 'review') {
+    tools.push(buildSubmitReviewTool(deps.onSubmitReview ?? (() => undefined)));
+    return tools;
+  }
   tools.push(wrap(write));
   if (deps.stage !== 'spec') {
     tools.push(wrap(edit));
@@ -183,6 +198,66 @@ export function buildCraftTools(deps: CraftToolDeps): ToolDefinition[] {
   }
   tools.push(stageDone as ToolDefinition);
   return tools;
+}
+
+/**
+ * 审查结论（终止型，参数即 §11.10 的 schema）：zod 校验不过就把错误交回模型重交（不终止）；
+ * 没有具体失败场景的条目丢弃（只靠「感觉不好」的意见不进修复）。
+ */
+function buildSubmitReviewTool(onSubmit: (result: WidgetReviewResult) => void): ToolDefinition {
+  const finding = Type.Object({
+    severity: Type.Union([Type.Literal('P0'), Type.Literal('P1'), Type.Literal('P2')], {
+      description:
+        'P0 = 主要功能不可用或数据会丢失 / 写错；P1 = 一条明确的使用路径出错；P2 = 体验问题',
+    }),
+    line: Type.Optional(
+      Type.Integer({ minimum: 1, description: 'index.html 的行号（能定位时给）' }),
+    ),
+    problem: Type.String({
+      minLength: 1,
+      maxLength: 500,
+      description: '给用户看的一句话现象（不引用代码）',
+    }),
+    scenario: Type.String({
+      maxLength: 500,
+      description: '具体失败场景：输入 / 操作 → 错误结果。给不出场景的不要提',
+    }),
+    fixHint: Type.Optional(Type.String({ maxLength: 500, description: '怎么改（一句话）' })),
+  });
+  const tool: ToolDefinition<{ verdict?: unknown; findings?: unknown }> = {
+    name: SUBMIT_REVIEW_TOOL,
+    description:
+      '提交审查结论并结束审查：verdict 为 pass（没有 P0 / P1）或 fix（有 P0 / P1 要修），findings 列出问题（每条必须有具体失败场景）。',
+    parameters: Type.Object({
+      verdict: Type.Union([Type.Literal('pass'), Type.Literal('fix')]),
+      findings: Type.Array(finding, {
+        maxItems: 20,
+        description: '问题清单（至多 20 条）；没有问题给空数组',
+      }),
+    }),
+    execute: async (params) => {
+      const parsed = widgetReviewResultSchema.safeParse(params);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        const where =
+          issue !== undefined && issue.path.length > 0 ? `${issue.path.join('.')}：` : '';
+        return {
+          ok: false,
+          content: `审查结论不符合格式（${where}${issue?.message ?? '格式错误'}），请改正后重新调用 submit_review`,
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      const findings = parsed.data.findings.filter((item) => item.scenario.trim() !== '');
+      const dropped = parsed.data.findings.length - findings.length;
+      onSubmit({ verdict: parsed.data.verdict, findings });
+      return {
+        ok: true,
+        content: `已记录审查结论（${findings.length} 条${dropped > 0 ? `，${dropped} 条没有失败场景已丢弃` : ''}）。`,
+        terminate: true,
+      };
+    },
+  };
+  return tool as ToolDefinition;
 }
 
 function buildTemplateTool(drafts: string): ToolDefinition {

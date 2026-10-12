@@ -599,6 +599,11 @@ export const settingsSchema = z.object({
   defaultMainModel: z.string().default(''),
   defaultLightModel: z.string().default(''),
   /**
+   * D87 P3c「组件审查模型」：组件制作 loop 的独立审查（REVIEW）用哪个内置模型（"provider/modelId"）；
+   * '' = 跟随 Bot 主模型。评估者与生成者用不同模型能减少同源盲区。
+   */
+  widgetReviewModel: z.string().default(''),
+  /**
    * 非对话模型按能力各配一条（厂商 + 模型），见 16-capability-models.md。
    * 向量来源 source='provider' 时使用 capabilityModels.embedding。
    */

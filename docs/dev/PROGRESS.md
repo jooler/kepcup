@@ -30,6 +30,7 @@
 | 扩展中心（D73） | 待验收 | 2026-10-10 | — | 技能市场升级为「扩展中心」（Skills / 连接 / MCP 三组）：连接组复用目录网格与账号详情，只列放行条目；自定义 MCP / 填 URL / BYO 客户端收进「设置 → 开发者模式」，设置「应用」只管已连接账号；MCP 组 = 已安装 MCP 管理 + MCPB 安装，精选清单空壳；分支 `t/extension-center`（未合入）；X5 逐家适配未开始。详见文末「扩展中心」 |
 | 组件制作流程 P3a（D87） | 待验收 | 2026-10-12 | — | `widget_craft` 独立制作 loop（SPEC → BUILD → GATE ⇄ FIX → DELIVER，阶段 run `widget_authoring` 挂在任务下）+ 确定性检查器 S0 / S1（41 条规则）+ 回执关卡 + 任务面切换（`widget_create` / `widget_update` 移出 Bot 工具面）+ 迁移 0035（自检状态两列，合并时重编号）；P3-0 沙箱实测已修订设计 32；分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8 |
 | 组件制作流程 P3b（D87） | 待验收 | 2026-10-12 | — | S2 真实预览（主进程隐藏窗口 + 内存分区 + 与正式卡片相同的沙箱，探针收集错误 / 渲染体检 / 验收 / 乱点 / 截图，死循环回收与崩溃识别，无出网）、垫片 v2（单行注入、主题变量与推送）、`kepcup-kit`（基础样式 + SVG 图表）、四个骨架模板；独立评审一轮（P1 ×5 / P2 ×12）全部修复；真机 harness 25 例。分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8.3 |
+| 组件制作流程 P3c（D87） | 待验收 | 2026-10-12 | — | 独立审查阶段（全新上下文只读 run，P0 / P1 进修复，两轮封顶）、「组件审查模型」设置、卡片自检徽标与已知问题、管理列表状态；独立评审一轮（P1 ×4 / P2 全部修复）。**效果基准待跑**（脚本就绪，需真实模型 Key）。分支 `t/widget-craft`（未合入）。详见 [todo/bot-widgets-authoring.md](../../todo/bot-widgets-authoring.md) §8.4 |
 
 
 ## 验收记录

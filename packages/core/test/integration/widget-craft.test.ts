@@ -82,6 +82,9 @@ describe('widget_craft end to end (D87)', () => {
       step().expect(isStage('BUILD')).replyToolCall('write', { path: 'index.html', content: GOOD }),
       step().expect(isStage('BUILD')).replyToolCall('stage_done', { summary: '已写' }),
       step()
+        .expect(isStage('REVIEW'))
+        .replyToolCall('submit_review', { verdict: 'pass', findings: [] }),
+      step()
         .expect((req) => isTask(req) && body(req).includes('已交付'))
         .replyText('组件「计数器」做好了，点卡片上的「加载」就能用。'),
       // 任务结束后的唤醒轮（说什么都行）。
@@ -108,11 +111,11 @@ describe('widget_craft end to end (D87)', () => {
       { label: 'task completed', timeoutMs: 30_000 },
     );
 
-    // 阶段 run：两条（SPEC、BUILD），挂在任务下、已完成、不产生对话消息。
+    // 阶段 run：三条（SPEC、BUILD、REVIEW），挂在任务下、已完成、不产生对话消息。
     const stageRuns: Run[] = runs
       .listByConversation(conv.id, 100)
       .filter((r) => r.loopType === 'widget_authoring');
-    expect(stageRuns).toHaveLength(2);
+    expect(stageRuns).toHaveLength(3);
     for (const run of stageRuns) {
       expect(run.parentRunId).toBe(taskId);
       expect(run.status).toBe('completed');
@@ -216,6 +219,9 @@ describe('widget_craft end to end (D87)', () => {
       step().expect(isStage('SPEC')).replyToolCall('stage_done', { summary: '规格已写' }),
       step().expect(isStage('BUILD')).replyToolCall('write', { path: 'index.html', content: GOOD }),
       step().expect(isStage('BUILD')).replyToolCall('stage_done', { summary: '已写' }),
+      step()
+        .expect(isStage('REVIEW'))
+        .replyToolCall('submit_review', { verdict: 'pass', findings: [] }),
       step()
         .expect((req) => isTask(req) && body(req).includes('已交付'))
         .replyText('做好了'),

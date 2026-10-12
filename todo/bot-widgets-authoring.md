@@ -135,11 +135,11 @@ renderer：
 
 ### P3c 独立审查 + 自检状态上卡 + 基准
 
-- [ ] `craft/review.ts`：REVIEW 阶段 run（read / ls / `submit_review`），结论 zod 校验，无场景的条目丢弃，未提交记 skipped；接入状态机（GATE 合格才审查、只修 P0/P1、第二轮审查的输入带上一轮结论）。
-- [ ] `LlmPurpose` 加 `'widget_review'`；设置项「组件审查模型」（`settings` schema 加可空字段，缺省跟随 Bot 主模型；设置页「后台任务」分组加一个选择器）。
-- [ ] renderer：`BotWidgetCard` 审查态徽标（已通过自检 / 有已知问题〔可展开〕/ 未经运行验证；`legacy` 不显示）+ 固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」+ i18n；`WidgetsTab` 列表显示状态。
-- [ ] 基准（§5.4）：跑一次，结果写进 §8 与 `docs/dev/PROGRESS.md`。
-- [ ] 文档：设计 32 §11 按实施结果修订（规则级别、参数值）；dev 文档同步。
+- [x] `craft/review.ts`（实现在 `craft/service.ts` 的 `#review` + `prompts.ts` / `tools.ts`，没有单独成文件）：REVIEW 阶段 run（read / ls / `submit_review`），结论 zod 校验，无场景的条目丢弃，未提交记 skipped；接入状态机（GATE 合格才审查、只修 P0/P1、第二轮审查的输入带上一轮结论）。
+- [x] `LlmPurpose` 加 `'widget_review'`；设置项「组件审查模型」（`settings` schema 加可空字段，缺省跟随 Bot 主模型；选择器放在设置页「模型」，见 §8.4）。
+- [x] renderer：`BotWidgetCard` 审查态徽标（已通过自检 / 有已知问题〔可展开〕/ 未经运行验证；`legacy` 不显示）+ 固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」+ i18n；`WidgetsTab` 列表显示状态。
+- [ ] 基准（§5.4）：跑一次，结果写进 §8 与 `docs/dev/PROGRESS.md`。——**脚本已就绪，用户决定暂不跑**（2026-10-12：本机无模型 Key），见 §8.4。
+- [x] 文档：设计 32 §11 按实施结果修订（规则级别、参数值）；dev 文档同步。
 
 ### P4 交付形态分层（设计 32 §12；P3c 后开始，可拆给另一个会话）
 
@@ -275,4 +275,16 @@ renderer：
 **测试**：定向——core `sdk-injection`（单行、折行后 acorn 可解析、主题、kit 开关、v1 兼容）、`widget-templates`（四模板 S0 / S1 零问题、查询示例过交付校验）、`widget-preview-runner`（未绑定 skipped、按视口注入、映射级别 / 阻断 / 视口 / 触发、崩溃、宿主失败带阻断问题照算、只带警告的半截预览 skipped、取消）、`widget-preview-probe`、`widget-craft-loop`（S2 两例：宿主不回应 → skipped / unverified；跑通 → passed + 自查截图）、`integration/widget-craft`（绑定预览宿主后交付 `passed`）；desktop `widget-preview-policy`（含模拟桥的配额与限流）、`shell-methods`、renderer widgets（`setTheme`），Docker 全绿。**真机 harness**（`kepcup-test:trixie-xvfb`，Electron 44.4.5）25 / 25，连续两轮。**全量一次**（评审修复前）：4218 例，4189 通过 / 27 失败——26 例为既有环境基线，另 1 例 `web-tools` 是已知的负载超时，单跑通过；无新增失败。core / shared / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
 
 **手工验收项**（真机）：macOS / Windows 上复跑 harness（截图与隐藏窗口逼帧是平台相关的）；打包产物（带 OS 沙箱）里让 Bot 做一个组件，确认任务卡看到「第 N 轮检查」、卡片说明与主题切换正常。
+
+### 8.4 P3c 实施记录（2026-10-12，kepcup-9f，分支 `t/widget-craft`）
+
+**落地**：REVIEW 阶段（`craft/service.ts` `#review`、`prompts.ts` `reviewSystemPrompt` / `reviewStageInput`、`tools.ts` 的 review 工具集与 `submit_review`）接入状态机；`LlmPurpose` `widget_review` + 设置 `widgetReviewModel`（设置页「模型」里的下拉）；交付状态 / 已知问题 / 回执纳入审查结论；renderer 自检徽标（`features/widgets/check-status.ts` + `BotWidgetCard` 审查态徽标、已知问题展开、固定说明「自检只说明它能运行，不代表安全；加载前仍需你确认」）与管理列表的状态；`services.widgetCraft` 暴露给基准；基准测试 `test/benchmark/widget-craft.benchmark.test.ts` + 10 条需求 `test/fixtures/widget-briefs/briefs.json` + 真实 Electron 预览服务 `apps/desktop/scripts/widget-preview-server.mjs`（S2 走真实预览宿主）。
+
+**实施中的新决定**（已回写设计 32 §11.10 / §11.11）：同一份文件只审一次；审查用尽仍有 P0 / P1 → 交付为 `issues` 并列入已知问题（P0 不算阻断项——机器检查与必需验收点都已通过，审查可能误判，但必须如实告诉用户）；审查失败 / 没交结论记 skipped，不停制作；`passed` 要求交付的文件审查过且无剩余 P0 / P1，没审过 → `issues` +「未完成独立审查」；审查意见计入最佳版本的分数（P0 ×50、P1 ×10）；审查者的 `problem` 是给用户看的一句话，上卡加「审查：」前缀；Bot 固定了主模型时审查也用它；审查模型不可用时退回制作的模型；设置项不放在实验开关后面。
+
+**评审**：独立评审一轮（只读）：无 P0；P1 四条（没审过的版本被标「已通过自检」、最佳版本与回滚忽略审查结论导致修好的版本被丢掉、设置项藏在实验开关后面、审查模型失效时每次审查都静默跳过）与 P2 全部修复（审查者提示按 S2 是否运行如实描述、`unverified` 也展示已知问题、审查文本面向用户、固定模型的 Bot 不改用审查模型、`submit_review` 的参数限制与 zod 一致、审查意见的修复指令、设置失败回滚、展开按钮的 aria、预览服务的启动失败 / 关闭超时 / 临时目录、基准的阻断项统计）。
+
+**测试**：`widget-craft-loop.test.ts` 31 例（审查 8 例：通过 → passed、P1 → FIX → 第二轮核对 → passed、两轮仍有 P1 → issues + 已知问题、没交结论 → issues +「未完成独立审查」、格式不对重交 / 无场景丢弃、审查模型路由、修好 P1 但多警告不回滚、审查模型不可用退回）、`llm-router`（`widget_review` 覆盖 / 固定模型 / 不影响制作）、`integration/widget-craft`（两例都走 REVIEW）、renderer `check-status`，Docker 全绿；基准文件在全量里整组跳过。**全量一次**（评审修复前）：4250 例，4201 通过 / 27 失败——26 例环境基线，另 1 例 `connected-apps-runtime` 单跑通过（负载偶发）；无新增失败。core / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+**效果基准（§5.4）——待跑**：用户决定暂不跑（本机没有模型 Key）。命令与环境变量见 `docs/dev/05-testing.md`「组件制作效果基准」；建议在 `kepcup-test:trixie-xvfb` 里带 `KEPCUP_BENCH_PREVIEW=1` 跑，结果 JSON 的 `baseline.delivered` / `full.delivered`（无阻断项交付数，目标完整流程 ≥ 8/10 且明显高于基线）、`passed`、轮数、token、耗时写回本节与 PROGRESS。
 

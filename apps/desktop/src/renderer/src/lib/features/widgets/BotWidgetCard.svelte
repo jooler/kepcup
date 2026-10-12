@@ -27,6 +27,7 @@
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
   import { WidgetResourceLease } from './resource-lease';
+  import { checkBadge } from './check-status';
 
   /**
    * 对话里的 Bot 自制交互组件卡片（D81，docs/design/32-bot-widgets.md）。
@@ -64,6 +65,9 @@
   let sourceLoading = $state(false);
   /** 未上报前的缺省高度；组件可用 `kepcup.setHeight` 自适应（夹到 [100, 800]）。 */
   let height = $state(380);
+  /** 自检徽标（`legacy` 为 null）与「已知问题」展开态。 */
+  const badge = $derived(checkBadge(card.checkStatus));
+  let issuesOpen = $state(false);
   /** 查看源码的展示上限：本地库损坏时 html 可能远超 2MB 上限，整段渲染会卡死界面。 */
   const SOURCE_DISPLAY_MAX_CHARS = 20_000;
   let pendingLink = $state<{ url: string; resolve: (ok: boolean) => void } | null>(null);
@@ -337,6 +341,44 @@
 
   {#if cardState === 'review'}
     <div class="border-t px-3 py-2" data-testid="bot-widget-review">
+      {#if badge !== null}
+        <!-- D87 P3c 自检徽标：只说明它能运行、不代表安全；按版本确认照旧（设计 32 §11.12）。 -->
+        <div class="mb-1.5" data-testid="bot-widget-check">
+          <span
+            class="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium {badge.tone}"
+            data-testid="bot-widget-check-badge"
+            data-status={card.checkStatus}>{t(badge.label)}</span
+          >
+          {#if card.knownIssues.length > 0}
+            <button
+              type="button"
+              class="ml-1 text-[11px] text-muted-foreground underline underline-offset-2"
+              aria-expanded={issuesOpen}
+              aria-controls={`known-issues-${messageId}`}
+              onclick={() => (issuesOpen = !issuesOpen)}
+              data-testid="bot-widget-known-issues-toggle"
+            >
+              {t(issuesOpen ? 'botWidget.check.hideIssues' : 'botWidget.check.showIssues', {
+                n: card.knownIssues.length,
+              })}
+            </button>
+            {#if issuesOpen}
+              <ul
+                id={`known-issues-${messageId}`}
+                class="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground"
+                data-testid="bot-widget-known-issues"
+              >
+                {#each card.knownIssues as issue, index (index)}
+                  <li>{issue}</li>
+                {/each}
+              </ul>
+            {/if}
+          {/if}
+          <p class="mt-1 text-[11px] text-muted-foreground" data-testid="bot-widget-check-note">
+            {t('botWidget.check.note')}
+          </p>
+        </div>
+      {/if}
       <p class="flex items-center gap-1.5 text-xs text-muted-foreground">
         <ShieldCheck class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <!-- 声明了查询的版本换专门文案：笼统的「读不到你的其他数据」会与下方查询提示自相矛盾。 -->
