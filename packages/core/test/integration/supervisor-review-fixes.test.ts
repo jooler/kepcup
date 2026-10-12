@@ -375,6 +375,55 @@ describe('L3 / L6: retrying a failed turn', () => {
     expect(tasks[0]!.originRunId).toBe(failed.id);
     expect(runsOf(stack, conv.id, 'turn').filter(isTerminal)).toHaveLength(2);
   }, 40_000);
+
+  it('a retried turn matches same-title tasks one by one (two distinct tasks are not collapsed)', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const argsFor = (instruction: string) => ({
+      title: '整理资料',
+      instruction,
+      source_message_ids: [],
+      writes: false,
+    });
+    const taskIds: string[] = [];
+    llm.script('mock-main', [
+      step().inTurn().replyToolCall('start_task', argsFor('TASK-ONE 第一份')),
+      step().inTurn().replyToolCall('start_task', argsFor('TASK-TWO 第二份')),
+      step().inTurn().failWith(401, 'Incorrect API key provided'),
+      step().inTask().hold().replyText('never'),
+      step().inTask().hold().replyText('never'),
+      step().inTurn().replyToolCall('start_task', argsFor('TASK-ONE 第一份')),
+      step().inTurn().replyToolCall('start_task', argsFor('TASK-TWO 第二份')),
+      step()
+        .inTurn()
+        // Each call resolved to its own task: the second one reports the second task.
+        .expect((req) => {
+          const body = JSON.stringify(req.body.messages);
+          return (
+            taskIds.length === 2 &&
+            body.includes(`任务 ${taskIds[0]} 在被重试`) &&
+            body.includes(`任务 ${taskIds[1]} 在被重试`)
+          );
+        })
+        .replyText('DEDUPED-BOTH 两条都在做了'),
+    ]);
+    await sendBatch(core, conv.id, ['帮我整理两份资料']);
+    const failed = await waitFor(
+      () => runsOf(stack, conv.id, 'turn').find((run) => run.status === 'failed') ?? null,
+      { label: 'turn failed after two start_task calls', timeoutMs: 20_000 },
+    );
+    await waitIdle(stack, bot.id, conv.id);
+    expect(runsOf(stack, conv.id, 'task')).toHaveLength(2);
+    taskIds.push(...runsOf(stack, conv.id, 'task').map((task) => task.id));
+
+    await core.rpc.call('runs.retry', { runId: failed.id });
+    await waitVisible(stack, conv.id, 'DEDUPED-BOTH');
+    const tasks = runsOf(stack, conv.id, 'task');
+    expect(tasks).toHaveLength(2);
+    expect(tasks.every((task) => task.originRunId === failed.id)).toBe(true);
+  }, 40_000);
 });
 
 describe('M5: §8.4 downgrade never drops a message', () => {

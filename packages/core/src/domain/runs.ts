@@ -366,6 +366,26 @@ export class RunsService {
     return rows.map(rowToRun);
   }
 
+  /**
+   * One bot's newest runs of the given loop types in a conversation. Filtered
+   * in SQL (not after a conversation-wide LIMIT) so other members' and
+   * background runs cannot crowd the bot's own out of the window.
+   */
+  listByBotInConversation(
+    conversationId: string,
+    botId: string,
+    loopTypes: LoopType[],
+    limit = 20,
+  ): Run[] {
+    if (loopTypes.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `select * from runs where conversation_id = ? and bot_id = ? and loop_type in (${loopTypes.map(() => '?').join(', ')}) order by created_at desc limit ?`,
+      )
+      .all(conversationId, botId, ...loopTypes, limit) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
   listActiveByConversation(conversationId: string): Run[] {
     const rows = this.db
       .prepare(

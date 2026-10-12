@@ -572,6 +572,8 @@ export class TaskHost implements TaskToolFacade {
   >();
   /** Last published queue reason per submitted task (republished only when it changes). */
   readonly #publishedReasons = new Map<string, string | null>();
+  /** Per retried turn: the earlier-started tasks its start_task calls have claimed so far. */
+  readonly #retryClaims = new Map<string, string[]>();
   #pumping = false;
   #pumpAgain = false;
   /** >0 while a lifecycle abort loops over tasks (pump once at the end). */
@@ -588,6 +590,17 @@ export class TaskHost implements TaskToolFacade {
       questionTtlMs: deps.limits?.questionTtlMs ?? TASK_QUESTION_TTL_MS,
       redeliverMaxAttempts: deps.limits?.redeliverMaxAttempts ?? TASK_REDELIVER_MAX_ATTEMPTS,
     };
+  }
+
+  #claimRetried(runId: string, taskIds: string[]): void {
+    this.#retryClaims.delete(runId);
+    this.#retryClaims.set(runId, taskIds);
+    // A turn lives for seconds: only the newest few ever matter.
+    while (this.#retryClaims.size > 64) {
+      const oldest = this.#retryClaims.keys().next();
+      if (oldest.done === true) break;
+      this.#retryClaims.delete(oldest.value);
+    }
   }
 
   // --- routing (§4.1) --------------------------------------------------------
@@ -612,14 +625,20 @@ export class TaskHost implements TaskToolFacade {
     // unless that one ended without a result (failed / cancelled / interrupted).
     const retried = this.#retryChain(identity.runId);
     if (retried.length > 0) {
+      // Same-title tasks of the retry chain are claimed one per start_task
+      // call, in start order: two distinct tasks sharing a title are not
+      // collapsed into one (a claimed task is skipped on this turn's next call).
+      const claimed = this.#retryClaims.get(identity.runId) ?? [];
       const existing = ownTasks.find(
         (task) =>
           task.originRunId !== null &&
           retried.includes(task.originRunId) &&
           (task.taskTitle ?? '').trim() === title &&
-          (!isTerminalStatus(task.status) || task.status === 'completed'),
+          (!isTerminalStatus(task.status) || task.status === 'completed') &&
+          !claimed.includes(task.id),
       );
       if (existing !== undefined) {
+        this.#claimRetried(identity.runId, [...claimed, existing.id]);
         return {
           taskId: existing.id,
           state: existing.status === 'queued' ? 'submitted' : taskState(existing.status),
