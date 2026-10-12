@@ -20,6 +20,7 @@ interface HandoverRow {
   new_bot_json: string | null;
   status: HandoverStatus;
   plan_json: string;
+  notified_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -45,6 +46,8 @@ export interface HandoverRecord {
   status: HandoverStatus;
   /** 提交时的移交卡 payload 快照。 */
   plan: BotHandoverPayload;
+  /** 结果通知已投递的时间（null = 还没有）。 */
+  notifiedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -70,6 +73,7 @@ function toRecord(row: HandoverRow): HandoverRecord {
     toBotId: row.to_bot_id,
     status: row.status,
     plan: botHandoverPayloadSchema.parse(JSON.parse(row.plan_json)),
+    notifiedAt: row.notified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -164,6 +168,25 @@ export class HandoverStore {
         )
         .all(...statuses) as HandoverRow[]
     ).map(toRecord);
+  }
+
+  /** 结算 / 拒绝了但还没通知发起方的移交（启动恢复补发）。 */
+  listUnnotified(): HandoverRecord[] {
+    return (
+      this.#db
+        .prepare(
+          `select * from bot_handovers
+           where notified_at is null and status in ('completed', 'partial', 'failed', 'denied')
+           order by created_at`,
+        )
+        .all() as HandoverRow[]
+    ).map(toRecord);
+  }
+
+  markNotified(id: string): void {
+    this.#db
+      .prepare('update bot_handovers set notified_at = ? where id = ?')
+      .run(this.#clock.now(), id);
   }
 
   setApproval(id: string, approvalId: string): void {

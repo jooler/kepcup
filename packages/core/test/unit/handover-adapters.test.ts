@@ -66,10 +66,27 @@ function ctxOf(
 
 describe('model adapter', () => {
   const options = [{ ref: 'p/m1', label: 'P · M1' }];
+  const allowAll = {
+    selectable: () => null,
+    defaultPermission: (id: string) =>
+      id === 'preview-agent' ? ('ask' as const) : ('workspace' as const),
+  };
+  const agentOf = (id: string, extra: Partial<Bot['profile']['runtime']['agent']> = {}) => ({
+    id,
+    model: '',
+    effort: '',
+    permission: 'workspace' as const,
+    capabilities: null,
+    ...extra,
+  });
 
   it('inventories model:inherit; resolves default / available refs; rejects the rest', () => {
     const world = botWorld([makeBot('bot_a', 'A', { model: 'p/m1' }), makeBot('bot_b', 'B')]);
-    const adapter = new ModelAdapter({ bots: world, modelOptions: () => options });
+    const adapter = new ModelAdapter({
+      bots: world,
+      modelOptions: () => options,
+      agents: allowAll,
+    });
     expect(adapter.inventory('bot_a')).toEqual([
       expect.objectContaining({ key: 'model:inherit', label: 'P · M1', actions: ['copy'] }),
     ]);
@@ -89,7 +106,11 @@ describe('model adapter', () => {
         agent: { id: 'claude', model: '', effort: '', permission: 'workspace', capabilities: null },
       }),
     ]);
-    const adapter = new ModelAdapter({ bots: world, modelOptions: () => options });
+    const adapter = new ModelAdapter({
+      bots: world,
+      modelOptions: () => options,
+      agents: allowAll,
+    });
     await adapter.apply(ctxOf(world, 'bot_a', 'bot_b'), 'model:inherit');
     expect(world.bot('bot_b').profile.runtime).toMatchObject({
       model: 'p/m1',
@@ -98,6 +119,75 @@ describe('model adapter', () => {
     });
     await adapter.apply(ctxOf(world, 'bot_a', 'bot_b'), 'model:default');
     expect(world.bot('bot_b').profile.runtime).toMatchObject({ model: '', light_model: '' });
+  });
+
+  it('inherit copies the engine (id / model / effort) but keeps B’s own permission and capabilities', async () => {
+    const source = agentOf('preview-agent', {
+      model: 'opus',
+      effort: 'high',
+      permission: 'read_only',
+      capabilities: ['core'],
+    });
+    const world = botWorld([
+      makeBot('bot_a', 'A', { agent: source }),
+      makeBot('bot_b', 'B', {
+        agent: agentOf('other', { permission: 'ask', capabilities: ['web'] }),
+      }),
+      makeBot('bot_c', 'C'),
+    ]);
+    const adapter = new ModelAdapter({
+      bots: world,
+      modelOptions: () => options,
+      agents: allowAll,
+    });
+    await adapter.apply(ctxOf(world, 'bot_a', 'bot_b'), 'model:inherit');
+    expect(world.bot('bot_b').profile.runtime.agent).toEqual({
+      id: 'preview-agent',
+      model: 'opus',
+      effort: 'high',
+      permission: 'ask',
+      capabilities: ['web'],
+    });
+    // A built-in B takes the catalog default permission of the new agent, default packs.
+    await adapter.apply(ctxOf(world, 'bot_a', 'bot_c'), 'model:inherit');
+    expect(world.bot('bot_c').profile.runtime.agent).toEqual({
+      id: 'preview-agent',
+      model: 'opus',
+      effort: 'high',
+      permission: 'ask',
+      capabilities: null,
+    });
+  });
+
+  it('validate refuses an agent bots.update would refuse; the card says when the engine changes', async () => {
+    const world = botWorld([
+      makeBot('bot_a', 'A', { agent: agentOf('claude') }),
+      makeBot('bot_b', 'B'),
+      makeBot('bot_x', 'X', { agent: agentOf('codex') }),
+    ]);
+    const adapter = new ModelAdapter({
+      bots: world,
+      modelOptions: () => options,
+      agents: { selectable: () => '外部智能体是实验功能', defaultPermission: () => 'workspace' },
+    });
+    expect(adapter.validate(ctxOf(world, 'bot_a', 'bot_b'), 'model:inherit', 'copy')).toContain(
+      '外部智能体是实验功能',
+    );
+    // Same engine already: nothing to check.
+    expect(adapter.validate(ctxOf(world, 'bot_b', 'bot_b'), 'model:inherit', 'copy')).toBeNull();
+    const inherit = adapter.inventory('bot_a')[0]!;
+    expect(adapter.warnings(ctxOf(world, 'bot_a', 'bot_b'), inherit)).toEqual([
+      'B 目前由「内置引擎」驱动，之后改由「外部智能体 claude」驱动',
+    ]);
+    // A ref or「default」on an external-agent bot switches it back to the built-in engine.
+    const registry = new HandoverRegistry([adapter]);
+    const byRef = registry.entry('bot_a', 'model:p/m1')!.entry;
+    expect(adapter.warnings(ctxOf(world, 'bot_a', 'bot_x'), byRef)).toEqual([
+      'X 目前由「外部智能体 codex」驱动，之后改由「内置引擎」驱动',
+    ]);
+    expect(adapter.describe(byRef, 'copy', 'X')).toContain('内置引擎');
+    await adapter.apply(ctxOf(world, 'bot_a', 'bot_x'), 'model:default');
+    expect(world.bot('bot_x').profile.runtime).toMatchObject({ model: '', agent: { id: '' } });
   });
 });
 

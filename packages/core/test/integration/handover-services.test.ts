@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { SCHEDULE_CREATED_EVENT, mailAlertDedupeKey, type Message } from '@kepcup/shared';
+import {
+  SCHEDULE_CREATED_EVENT,
+  botHandoverPayloadSchema,
+  mailAlertDedupeKey,
+  type Approval,
+  type Bot,
+  type Message,
+} from '@kepcup/shared';
 import {
   createTestStack,
+  fakeAgentEntry,
   listAllMessages,
   makeBot,
   openDirect,
+  waitFor,
   type TestStack,
 } from '@kepcup/testkit';
 import type { MailService } from '../../src/mail/service.js';
@@ -216,5 +225,120 @@ describe('ScheduleService.transferTo', () => {
       schedules.transferTo(other.id, { botId: b.id, botName: '乙', conversationId: directA.id }),
     ).toThrow(/不在该对话/);
     expect(schedules.store.get(other.id)!.status).toBe('active');
+  });
+});
+
+describe('ScheduleService.transferTo — queued occurrence (审查 #8)', () => {
+  it('a schedule_fire job already queued for the old row is re-keyed to the new one (fires once, for B)', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const schedules = core.services.schedules!;
+    const jobs = core.services.domain!.jobs;
+    const a = await makeBot(core, '甲');
+    const b = await makeBot(core, '乙');
+    const directA = await openDirect(core, a.id);
+    const directB = await openDirect(core, b.id);
+    const source = schedules.createFromWhen({
+      botId: a.id,
+      conversationId: directA.id,
+      when: '0 9 * * *',
+      title: '日报',
+      note: '写日报',
+      origin: 'tool',
+    });
+    // 模拟 #onDue 已入队这一次（作业还在排队，行已推进到下一次）。
+    const fireAt = source.nextFireAt!;
+    const later = fireAt + 24 * 60 * 60 * 1000;
+    jobs.enqueue({
+      type: 'schedule_fire',
+      botId: a.id,
+      conversationId: directA.id,
+      payload: { scheduleId: source.id, fireAt },
+      priority: 2,
+      dedupeKey: `schedule_fire:${source.id}:${fireAt}`,
+      runAfter: fireAt,
+    });
+    core.services
+      .mainDb!.prepare('update schedules set next_fire_at = ? where id = ?')
+      .run(later, source.id);
+    const moved = schedules.transferTo(source.id, {
+      botId: b.id,
+      botName: '乙',
+      conversationId: directB.id,
+    });
+    expect(moved.nextFireAt).toBe(later);
+    const rows = core.services
+      .mainDb!.prepare(
+        "select bot_id, status, dedupe_key from jobs where type = 'schedule_fire' order by created_at",
+      )
+      .all() as Array<{ bot_id: string; status: string; dedupe_key: string }>;
+    expect(rows).toEqual([
+      { bot_id: a.id, status: 'cancelled', dedupe_key: `schedule_fire:${source.id}:${fireAt}` },
+      { bot_id: b.id, status: 'pending', dedupe_key: `schedule_fire:${moved.id}:${fireAt}` },
+    ]);
+  });
+});
+
+describe('new target「与来源相同」with an empty source runtime (审查 #3)', () => {
+  it('the new bot follows the settings default like its source, not the onboarding default agent', async () => {
+    const stack = await createTestStack({
+      env: { KEPCUP_MOCK_LLM_URL: '' },
+      agentCatalog: [fakeAgentEntry('fake-sub', { name: 'Fake Subscription', tier: 'supported' })],
+    });
+    stacks.push(stack);
+    const { core } = stack;
+    await core.rpc.call('settings.update', {
+      experimental: { externalAgents: true },
+      agents: { 'fake-sub': { enabled: true } },
+      defaultAgentId: 'fake-sub',
+    });
+    // 访谈中建的管家：模型与 Agent 都是空的（访谈只在内置引擎上跑）。
+    const ensured = (await core.rpc.call('butler.ensure', { interview: true })) as {
+      bot: Bot;
+      conversationId: string;
+    };
+    expect(ensured.bot.profile.runtime).toMatchObject({ model: '', agent: { id: '' } });
+    // 对照：普通新建 Bot 会套用默认外部 Agent。
+    expect((await makeBot(core, '对照')).profile.runtime.agent.id).toBe('fake-sub');
+
+    const host = core.services.handover!;
+    const identity = {
+      runId: 'run_test',
+      botId: ensured.bot.id,
+      conversationId: ensured.conversationId,
+      loopType: 'turn' as const,
+    };
+    const proposed = host.propose(identity, {
+      fromBotId: ensured.bot.id,
+      target: {
+        kind: 'new',
+        bot: {
+          name: '新管家助理',
+          bio: '',
+          expertise: '',
+          responsibilities: '打杂',
+          reason: '',
+          routines: [],
+          model: 'inherit',
+        },
+      },
+      items: [],
+      handoverNote: '交给你。',
+      note: '',
+    });
+    expect(proposed.ok).toBe(true);
+    const approval = core.services
+      .domain!.approvals.list(ensured.conversationId)
+      .find((a: Approval) => a.kind === 'bot_handover' && a.status === 'pending')!;
+    expect(botHandoverPayloadSchema.parse(approval.payload).target).toMatchObject({
+      kind: 'new',
+      bot: { modelLabel: expect.stringContaining('跟随设置默认') },
+    });
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const created = await waitFor(
+      () =>
+        core.services.domain!.bots.listActive().find((bot) => bot.name === '新管家助理') ?? null,
+    );
+    expect(created.profile.runtime).toMatchObject({ model: '', agent: { id: '' } });
   });
 });

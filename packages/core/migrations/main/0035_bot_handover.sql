@@ -15,6 +15,8 @@ CREATE TABLE bot_handovers (
   status           TEXT NOT NULL CHECK (status IN (
                      'proposed', 'applying', 'completed', 'partial', 'failed', 'denied', 'cancelled')),
   plan_json        TEXT NOT NULL,
+  -- 结果已通知发起方的时间（NULL = 还没通知：崩溃在结算与通知之间时，启动恢复补发）。
+  notified_at      INTEGER,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );

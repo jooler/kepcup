@@ -281,6 +281,10 @@ describe('bot asset handover (D88 P0)', () => {
     );
     expect(followUp.content).toMatchObject({ internal: true });
     expect((followUp.content as { text: string }).text).toContain('邮件助理');
+    // 审查 #4：条目文字（邮箱显示名等外部文本）在给模型的结果通知里包 <untrusted>。
+    expect((followUp.content as { text: string }).text).toMatch(
+      /<untrusted>[^\n]*work@example\.com[^\n]*<\/untrusted>/,
+    );
     await waitFor(async () =>
       (await listAllMessages(core, butlerDirect)).find(
         (m) =>
@@ -438,9 +442,187 @@ describe('bot asset handover (D88 P0)', () => {
     expect(eventsOf(await listAllMessages(core, betaDirect.id), BOT_HANDOVER_EVENT)).toHaveLength(
       1,
     );
-    expect(
-      eventsOf(await listAllMessages(core, alphaDirect.id), BOT_HANDED_OVER_EVENT),
-    ).toHaveLength(1);
+    const alphaNotes = eventsOf(await listAllMessages(core, alphaDirect.id), BOT_HANDED_OVER_EVENT);
+    expect(alphaNotes).toHaveLength(1);
+    // 审查 #7：移交的（定时任务、职责改写）与共享的（连接应用，A 仍保留）分开记。
+    const alphaNote = (alphaNotes[0]!.content as { handover: { items: string[]; kept: string[] } })
+      .handover;
+    expect(alphaNote.items.some((line) => line.includes('日报'))).toBe(true);
+    expect(alphaNote.items.some((line) => line.includes('Notion') || line.includes('notion'))).toBe(
+      false,
+    );
+    expect(alphaNote.kept).toEqual([expect.stringContaining('共享连接应用')]);
+  }, 40_000);
+
+  it('审查 #1：职责描述在提议后被用户改过——改写跳过，不覆盖用户的修改', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = await ensureButler(stack);
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    seedMailAccount(stack, 'mal_a', 'a@example.com', [alpha.id]);
+    for (const [bot, text] of [
+      [alpha, '管邮件；写周报'],
+      [beta, '写日报'],
+    ] as const) {
+      await core.rpc.call('bots.update', {
+        id: bot.id,
+        profile: { ...bot.profile, role: { ...bot.profile.role, responsibilities: text } },
+      });
+    }
+    llm.script('mock-main', [
+      step().replyToolCall('propose_handover', {
+        from_bot_id: alpha.id,
+        to: { bot_id: beta.id },
+        items: [{ key: 'mail:mal_a' }],
+        responsibilities: { to: '写日报；管邮件', from: '写周报' },
+        handover_note: '邮箱交给你。',
+      }),
+    ]);
+    await sendBatch(core, conversationId, ['把阿尔法的邮箱交给贝塔']);
+    const approval = await pendingHandover(stack, conversationId);
+    await waitForRun(core, conversationId, 'completed');
+    // 用户在确认前改了贝塔的职责。
+    const betaNow = core.services.domain!.bots.get(beta.id)!;
+    await core.rpc.call('bots.update', {
+      id: beta.id,
+      profile: {
+        ...betaNow.profile,
+        role: { ...betaNow.profile.role, responsibilities: '只写日报' },
+      },
+    });
+    llm.script('mock-main', [step().replyText('好的。')]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('partial');
+    expect(view.items.find((item) => item.key === 'resp:to')).toMatchObject({
+      status: 'skipped',
+      error: '职责描述在提议后已被修改',
+    });
+    expect(view.items.find((item) => item.key === 'resp:from')?.status).toBe('done');
+    expect(core.services.domain!.bots.get(beta.id)!.profile.role.responsibilities).toBe('只写日报');
+    expect(core.services.domain!.bots.get(alpha.id)!.profile.role.responsibilities).toBe('写周报');
+  }, 40_000);
+
+  it('审查 #6：来源在确认前被删除——新建目标不会被建出来', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = await ensureButler(stack);
+    const alpha = await makeBot(core, '阿尔法');
+    seedMailAccount(stack, 'mal_a', 'a@example.com', [alpha.id]);
+    llm.script('mock-main', [
+      step().replyToolCall('propose_handover', {
+        from_bot_id: alpha.id,
+        to: {
+          new_bot: {
+            name: '接班人',
+            bio: '',
+            expertise: '',
+            responsibilities: '管邮件',
+            reason: '',
+          },
+        },
+        items: [{ key: 'mail:mal_a' }],
+        handover_note: '交给你。',
+      }),
+    ]);
+    await sendBatch(core, conversationId, ['新建一个 Bot 接手阿尔法的邮箱']);
+    const approval = await pendingHandover(stack, conversationId);
+    await waitForRun(core, conversationId, 'completed');
+    await core.rpc.call('bots.delete', { id: alpha.id });
+    llm.script('mock-main', [step().replyText('来源已经没了。')]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('failed');
+    expect(view.toBotId).toBeNull();
+    expect(core.services.domain!.bots.listActive().map((bot) => bot.name)).not.toContain('接班人');
+  }, 40_000);
+
+  it('审查 #9a / #9d：新 Bot 建好后崩溃——恢复补建缺的例行事项（不重复），丢失的结果通知补发一次', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { butler, conversationId } = await ensureButler(stack);
+    const domain = core.services.domain!;
+    const schedules = core.services.schedules!;
+    llm.script('mock-main', [
+      step().replyToolCall('propose_handover', {
+        from_bot_id: butler.id,
+        to: {
+          new_bot: {
+            name: '日程助理',
+            bio: '',
+            expertise: '',
+            responsibilities: '管日程',
+            reason: '',
+            routines: [
+              { title: '早报', when: '0 9 * * *', note: '发早报' },
+              { title: '晚报', when: '0 18 * * *', note: '发晚报' },
+            ],
+          },
+        },
+        items: [],
+        handover_note: '日程交给你。',
+      }),
+    ]);
+    await sendBatch(core, conversationId, ['新建一个日程助理']);
+    const approval = await pendingHandover(stack, conversationId);
+    await waitForRun(core, conversationId, 'completed');
+    const handoverId = botHandoverPayloadSchema.parse(approval.payload).handoverId;
+
+    // 模拟「新 Bot 行已提交（含 to_bot_id 回填）、早报已建，然后崩溃」。
+    const db = core.services.mainDb!;
+    db.prepare("update approvals set status = 'approved', decided_at = ? where id = ?").run(
+      Date.now(),
+      approval.id,
+    );
+    for (const [key, type, action] of [
+      ['bot:new', 'bot', 'create'],
+      ['note:handover', 'note', 'write'],
+    ] as const) {
+      db.prepare(
+        `insert into bot_handover_items (handover_id, key, asset_type, action, status, updated_at)
+         values (?, ?, ?, ?, 'pending', ?)`,
+      ).run(handoverId, key, type, action, Date.now());
+    }
+    const helper = domain.bots.create({
+      identity: { name: '日程助理', bio: '' },
+      role: { expertise: '', responsibilities: '管日程' },
+    });
+    const helperDirect = await openDirect(core, helper.id);
+    schedules.createFromWhen({
+      botId: helper.id,
+      conversationId: helperDirect.id,
+      when: '0 9 * * *',
+      title: '早报',
+      note: '发早报',
+      origin: 'proposal',
+    });
+    db.prepare("update bot_handovers set status = 'applying', to_bot_id = ? where id = ?").run(
+      helper.id,
+      handoverId,
+    );
+
+    llm.script('mock-main', [step().replyText('日程助理建好了。'), step().replyText('（补发）')]);
+    core.services.handover!.recover();
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('completed');
+    const titles = schedules
+      .listForBotInConversation(helper.id, helperDirect.id)
+      .map((row) => row.title)
+      .sort();
+    expect(titles).toEqual(['早报', '晚报'].sort());
+    const followUps = async () =>
+      eventsOf(await listAllMessages(core, conversationId), BOT_HANDOVER_FOLLOWUP_EVENT);
+    await waitFor(async () => ((await followUps()).length === 1 ? true : null));
+    expect(((await followUps())[0]!.content as { text: string }).text).toContain('晚报');
+
+    // 结果通知丢了（崩溃在结算与通知之间）：恢复补发一次，再恢复不重复。
+    db.prepare('update bot_handovers set notified_at = null where id = ?').run(handoverId);
+    core.services.handover!.recover();
+    await waitFor(async () => ((await followUps()).length === 2 ? true : null));
+    core.services.handover!.recover();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await followUps()).toHaveLength(2);
   }, 40_000);
 
   it('勾掉一项只执行剩余项；拒绝什么都不变并通知「未采纳」；无人值守不自动批', async () => {
@@ -756,5 +938,46 @@ describe('bot asset handover (D88 P0)', () => {
       () => core.services.domain!.bots.listActive().find((bot) => bot.name === '甲') ?? null,
     );
     expect(created.profile.runtime.model).toBe(ref);
+  }, 40_000);
+
+  it('审查 #5：确认时提议的模型已不可用——退回跟随设置默认，并在结果通知里说明', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = await ensureButler(stack);
+    await core.rpc.call('providers.setKey', { provider: 'custom:mock', key: 'sk-test' });
+    const ref = core.services.handover!.modelOptions()[0]!.ref;
+    llm.script('mock-main', [
+      step().replyToolCall('propose_bot', {
+        bot: {
+          name: '乙',
+          bio: '',
+          expertise: '',
+          responsibilities: '干活',
+          reason: '',
+          model: ref,
+        },
+      }),
+    ]);
+    await sendBatch(core, conversationId, ['建一个用某模型的 Bot']);
+    const approval = await waitFor(
+      () =>
+        core.services
+          .domain!.approvals.list(conversationId)
+          .find((a) => a.kind === 'butler_proposal' && a.status === 'pending') ?? null,
+    );
+    await waitForRun(core, conversationId, 'completed');
+    expect(approval.payload).toMatchObject({ bots: [{ model: ref }] });
+    await core.rpc.call('providers.removeKey', { provider: 'custom:mock' });
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const created = await waitFor(
+      () => core.services.domain!.bots.listActive().find((bot) => bot.name === '乙') ?? null,
+    );
+    expect(created.profile.runtime.model).toBe('');
+    const followUp = await waitFor(async () =>
+      (await listAllMessages(core, conversationId)).find(
+        (m) => 'event' in m.content && m.content.event === 'butler_proposal_result',
+      ),
+    );
+    expect((followUp.content as { text: string }).text).toContain('已不可用');
   }, 40_000);
 });

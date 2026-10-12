@@ -298,12 +298,23 @@ export class ButlerHost implements ButlerToolFacade {
     const failed: string[] = [];
     const routineLines: string[] = [];
     const routineFailures: string[] = [];
+    const modelNotes: string[] = [];
     for (const [order, index] of indexes.entries()) {
       const item = proposal.bots[index];
       if (item === undefined) continue;
       try {
-        // D88: the proposed model (''= settings default) is written on creation.
-        const record = createProposedBotRecord(this.#deps, item, offset + order);
+        // D88: the proposed model (''= settings default) is written on creation — re-checked
+        // here: the user may confirm days later, after the provider key was removed.
+        const modelGone = item.model.length > 0 && this.validateModelRef(item.model) !== null;
+        if (modelGone) {
+          modelNotes.push(`「${item.name}」指定的模型 ${item.model} 已不可用，改为跟随设置默认`);
+        }
+        const record = createProposedBotRecord(
+          this.#deps,
+          item,
+          offset + order,
+          modelGone ? { model: '' } : undefined,
+        );
         announceCreatedBot(this.#deps, record);
         created.push(record.bot);
         const routines = createProposedRoutines(
@@ -344,6 +355,7 @@ export class ButlerHost implements ButlerToolFacade {
       ...(routineFailures.length > 0
         ? [`例行事项设置失败：${routineFailures.join('、')}（Bot 已建好，用户可以之后再让它设）。`]
         : []),
+      ...modelNotes.map((note) => `注意：${note}。`),
       '请用一两句话告诉用户结果和接下来怎么用（例如直接去找对应的 Bot 聊，需要多角色协作时可以建群；设了例行事项的顺带说一句它会到点主动找用户）；不要再把完整清单复述一遍。',
     ];
   }
