@@ -1467,8 +1467,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
-    // per-bot maintenance mutex, RPC reads, weekly lint scheduling and the
-    // recall cascade (the ingest/lint job runners consume it in jobs-runner).
+    // per-bot maintenance mutex, RPC reads and weekly lint scheduling (the
+    // ingest/lint job runners consume it in jobs-runner).
     const wiki = new WikiService({
       paths,
       clock,
@@ -1476,7 +1476,6 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       bots,
       conversations,
-      messages,
       memory,
     });
     const gateway = new ToolGateway({

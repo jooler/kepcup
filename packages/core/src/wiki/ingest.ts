@@ -12,7 +12,14 @@ import type { SandboxBackend } from '../sandbox/types.js';
 import type { Clock } from '../infra/clock.js';
 import { initWiki } from './init.js';
 import { openRepository } from 'es-git';
-import { fetchUrlInSandbox, findRawByHash, shortHash, rawFileName } from './source.js';
+import {
+  fetchUrlInSandbox,
+  findRawByHash,
+  shortHash,
+  rawFileName,
+  sniffSourceKind,
+  type SourceKind,
+} from './source.js';
 import { htmlToMarkdown, looksLikeHtml } from './html-to-markdown.js';
 import { inlineTextFor, runWikiMaintenance, type WikiMaintenanceDeps } from './maintenance.js';
 import { JOB_MAX_ATTEMPTS } from '../domain/jobs.js';
@@ -125,7 +132,9 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
           sourceDescription: source.description,
           note,
           rawRelPath: `raw/${rawName}`,
-          inlineText: inlineTextFor(source.mime, source.bytes, source.converted),
+          inlineText: inlineTextFor(source.kind, source.bytes, source.converted),
+          sourceKind: source.kind,
+          sourceName: source.name,
         },
       });
 
@@ -186,6 +195,8 @@ interface ResolvedSource {
   bytes: Buffer;
   name: string;
   mime: string;
+  /** Content-sniffed class; decides whether the bytes may be inlined as text. */
+  kind: SourceKind;
   /** HTML → markdown conversion result (URL sources). */
   converted: string | null;
   description: string;
@@ -207,8 +218,7 @@ async function resolveSource(
       throw new AppError('INVALID_INPUT', '附件不属于发起入库的对话');
     }
     // BR-P09-002: the source message may have been recalled between enqueue
-    // and this claim (the recall cascade only removes raw files that already
-    // exist). Recalled material must never enter raw/ — double-check the
+    // and this claim. Recalled material must never enter raw/ — check the
     // source message status (BR-P07-006 / BR-P08-007 precedent).
     if (attachment.messageId !== null) {
       const message = deps.messages.getById(attachment.messageId);
@@ -218,10 +228,12 @@ async function resolveSource(
     }
     const bytes = deps.attachments.readBytes(attachment);
     assertSize(bytes.length, `附件 ${attachment.fileName}`);
+    const sniffed = sniffSourceKind(bytes, attachment.fileName, attachment.mime);
     return {
       bytes,
       name: attachment.fileName,
-      mime: attachment.mime,
+      mime: sniffed.mime,
+      kind: sniffed.kind,
       converted: null,
       description: `附件 ${attachment.fileName}`,
     };
@@ -248,10 +260,12 @@ async function resolveSource(
     const bytes = readFileSync(decision.resolvedPath);
     assertSize(bytes.length, `文件 ${input.ref}`);
     const name = path.basename(input.ref);
+    const sniffed = sniffSourceKind(bytes, name);
     return {
       bytes,
       name,
-      mime: 'text/plain',
+      mime: sniffed.mime,
+      kind: sniffed.kind,
       converted: null,
       description: `文件 ${name}`,
     };
@@ -283,6 +297,7 @@ async function resolveSource(
     bytes: converted !== null ? Buffer.from(converted, 'utf8') : bytes,
     name,
     mime: converted !== null ? 'text/markdown' : 'text/html',
+    kind: converted !== null ? 'text' : 'html',
     converted,
     description: `网页 ${input.ref}`,
   };
