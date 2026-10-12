@@ -1,11 +1,20 @@
 import { Type } from '@earendil-works/pi-ai';
-import type { WidgetScope } from '@kepcup/shared';
+import {
+  BOT_WIDGET_CALLS_BURST,
+  BOT_WIDGET_CALLS_INFLIGHT_MAX,
+  BOT_WIDGET_CALLS_PER_SECOND,
+  BOT_WIDGET_PER_BOT_MAX,
+  BOT_WIDGET_QUERY_TIMEOUT_MS,
+  BOT_WIDGET_VERSIONS_KEPT,
+  type WidgetScope,
+} from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import type {
   WidgetCreateInput,
   WidgetUpdateInput,
   WidgetWriteResult,
 } from '../widgets/service.js';
+import { WIDGET_QUERY_SCOPE_GUIDE } from '../widgets/query-gate.js';
 
 /**
  * Bot 自制交互组件工具（D81，docs/design/32-bot-widgets.md）：`widget_create` /
@@ -33,23 +42,31 @@ export interface WidgetToolFacade {
 const WIDGET_HTML_GUIDE =
   '单文件 HTML（含内联 CSS/JS），不用外链资源、不发网络请求、不用 localStorage/fetch（沙箱里不可用）。' +
   '需要持久化用宿主桥 window.kepcup.storage.get/set/delete/list(key,value)（每组件独立命名空间的 JSON KV，' +
-  '数据只存本机、重启仍在；单值 ≤256KB、总量 ≤1MB/1000 键，不要存敏感信息）；需要读本机数据（统计、记录）' +
+  '数据只存本机、重启仍在；单值 ≤256KB、总量 ≤1MB/1000 键，不要存敏感信息）；需要对数据做统计汇总' +
   '就在 queries 参数里随版本声明命名只读查询模板（单条 SELECT 或 WITH…SELECT，:name 占位参数），组件里用 ' +
-  'window.kepcup.query(name, params) 调用，返回 { rows, truncated }（rows 是「列名→值」对象数组，最多 200 行、' +
+  'window.kepcup.query(name, params) 调用。' +
+  WIDGET_QUERY_SCOPE_GUIDE +
+  '返回 { rows, truncated }（rows 是「列名→值」对象数组，最多 200 行、' +
   '回执总量约 1MB，超出任一上限时 truncated=true；BLOB 列以 base64 字符串返回，超过 ±2^53 的整数会失去精度，' +
-  '超大数值请以文本列处理）。SQL 全文会展示给用户审查（运行时免审批）；模板' +
-  '随版本生效，每次交付都要给完整 queries 清单（不传 = 该版本没有任何查询）。需要打开网页用 ' +
-  'window.kepcup.openLink(url)（仅 https，会先请用户确认）；window.kepcup.theme() 可取当前明暗主题，' +
-  'window.kepcup.setHeight(像素) 让卡片高度自适应内容。这些 API 都是异步的（返回 Promise）；被拒绝时 ' +
-  'Promise reject，error.code 可程序化区分（WIDGET_RATE_LIMITED=调用太频繁、WIDGET_STORAGE_QUOTA=存储满了、' +
+  `超大数值请以文本列处理；单次执行超过 ${BOT_WIDGET_QUERY_TIMEOUT_MS / 1000} 秒会被中止）。SQL 全文会展示给用户审查，` +
+  '用户展开审查后才能加载（运行时免审批）；模板随版本生效，每次交付都要给完整 queries 清单（不传 = 该版本没有任何查询）。' +
+  '需要打开网页用 window.kepcup.openLink(url)（仅 https，会先请用户确认）；window.kepcup.theme() 可取当前明暗主题，' +
+  'window.kepcup.setHeight(像素) 让卡片高度自适应内容。这些 API 都是异步的（返回 Promise）；' +
+  `storage 与 query 合计按卡片限流：允许瞬时突发 ${BOT_WIDGET_CALLS_BURST} 次、持续每秒 ${BOT_WIDGET_CALLS_PER_SECOND} 次、` +
+  `同时在途至多 ${BOT_WIDGET_CALLS_INFLIGHT_MAX} 个（看板一次性并发拉取全部查询没问题，不要写高频轮询）。被拒绝时 ` +
+  'Promise reject，error.code 可程序化区分（WIDGET_RATE_LIMITED=调用太频繁，稍后重试、WIDGET_STORAGE_QUOTA=存储满了、' +
   'WIDGET_RESOURCE_EXPIRED=请用户重新打开卡片、WIDGET_QUERY_UNKNOWN=查询模板名在这个版本没登记、' +
-  'WIDGET_QUERY_FAILED=参数不对或执行出错、INVALID_INPUT=参数不对），error.message 是可直接展示的中文。' +
+  'WIDGET_QUERY_FAILED=参数不对或执行出错、WIDGET_QUERY_TIMEOUT=查询太慢或太耗内存被中止、INVALID_INPUT=参数不对），' +
+  'error.message 是可直接展示的中文。' +
   '组件初始高约 380px，宽度自适应。scope="bot" 的组件是你的跨对话资产（不随对话删除）：' +
-  '可在任何对话里用 widget_update 更新（新卡发给当前对话），或用 widget_publish 把最新版发卡到当前对话。';
+  '可在任何对话里用 widget_update 更新（新卡发给当前对话），或用 widget_publish 把最新版发卡到当前对话。' +
+  `每个 Bot 最多 ${BOT_WIDGET_PER_BOT_MAX} 个组件，每个组件只保留最近 ${BOT_WIDGET_VERSIONS_KEPT} 个版本；` +
+  '改已有组件用 widget_update，不要反复新建。';
 
 const QUERIES_PARAM_DESCRIPTION =
   '随版本登记的命名只读查询模板（每次交付都给完整清单，不传 = 该版本没有查询）。' +
-  '单条 SELECT/WITH…SELECT，用 :参数名 占位；SQL 会展示给用户审查，组件内用 window.kepcup.query(name, params) 调用';
+  '单条 SELECT/WITH…SELECT，用 :参数名 占位；只能读 widget_kv 与 conversation_messages 两张视图；' +
+  'SQL 会展示给用户审查，组件内用 window.kepcup.query(name, params) 调用';
 
 /** 模型给的 queries 条目归一为 {name, sql} 字符串（残缺条目交服务层拒绝并给出人话）。 */
 function normalizeQueries(raw: Array<{ name?: string; sql?: string }> | undefined):
@@ -84,7 +101,9 @@ export function buildWidgetTools(input: {
         Type.Array(
           Type.Object({
             name: Type.String({ description: '查询名（字母/数字/-/_，≤64 字符），如 by_month' }),
-            sql: Type.String({ description: '单条只读 SELECT（或 WITH…SELECT），用 :参数名 占位' }),
+            sql: Type.String({
+              description: '单条只读 SELECT（或 WITH…SELECT），只能读 widget_kv / conversation_messages，用 :参数名 占位',
+            }),
           }),
           { description: QUERIES_PARAM_DESCRIPTION },
         ),
@@ -121,7 +140,7 @@ export function buildWidgetTools(input: {
       }
       // 落库成功但发卡失败（cardMessageId 缺省）：组件此刻在界面上不可见，不能让
       // 模型引导用户去找一张不存在的卡。
-      if (result.cardMessageId === undefined) {
+      if (result.cardMessageId === null) {
         return {
           ok: true,
           content: `组件「${title}」已保存，但卡片消息发送失败，用户暂时看不到它；请如实告知用户组件未能送达，之后用 widget_update 重新发布（会发新卡）。（widgetId: ${result.widgetId}）`,
@@ -148,7 +167,9 @@ export function buildWidgetTools(input: {
         Type.Array(
           Type.Object({
             name: Type.String({ description: '查询名（字母/数字/-/_，≤64 字符），如 by_month' }),
-            sql: Type.String({ description: '单条只读 SELECT（或 WITH…SELECT），用 :参数名 占位' }),
+            sql: Type.String({
+              description: '单条只读 SELECT（或 WITH…SELECT），只能读 widget_kv / conversation_messages，用 :参数名 占位',
+            }),
           }),
           { description: QUERIES_PARAM_DESCRIPTION },
         ),
@@ -181,7 +202,7 @@ export function buildWidgetTools(input: {
       if (!result.ok) {
         return { ok: false, content: result.message, errorCode: result.code ?? 'INVALID_INPUT' };
       }
-      if (result.cardMessageId === undefined) {
+      if (result.cardMessageId === null) {
         return {
           ok: true,
           content: `组件已更新到 v${result.version}，但卡片消息发送失败，用户暂时看不到新版本；请如实告知用户，之后用 widget_update 重新发布（会发新卡）。（widgetId: ${result.widgetId}）`,
@@ -212,7 +233,7 @@ export function buildWidgetTools(input: {
       if (!result.ok) {
         return { ok: false, content: result.message, errorCode: result.code ?? 'INVALID_INPUT' };
       }
-      if (result.cardMessageId === undefined) {
+      if (result.cardMessageId === null) {
         return {
           ok: true,
           content: `组件「${result.title}」（v${result.version}）已引用，但卡片消息发送失败，用户暂时看不到它；请如实告知用户，稍后重试 widget_publish。（widgetId: ${result.widgetId}）`,

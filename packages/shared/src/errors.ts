@@ -151,8 +151,14 @@ export const ERROR_CODES = [
    * （模板随版本声明，更新模板需 widget_update 发新版本）。
    */
   'WIDGET_QUERY_UNKNOWN',
-  /** Bot 组件能力桥查询（D81 P2）：参数不符 / SQL 无法编译 / 执行出错。 */
+  /** Bot 组件能力桥查询（D81 P2）：参数不符 / SQL 无法编译 / 读了作用域外的数据 / 执行出错。 */
   'WIDGET_QUERY_FAILED',
+  /** Bot 组件能力桥查询（D81 审查修复）：执行超过时限或内存上限，查询子进程已被中止。 */
+  'WIDGET_QUERY_TIMEOUT',
+  /** Bot 组件（D81 审查修复）：带查询模板的版本未在审查态展开过 SQL 就请求加载。 */
+  'WIDGET_REVIEW_REQUIRED',
+  /** Bot 组件（D81 审查修复）：每 Bot 组件数 / 版本总字节配额已满。 */
+  'WIDGET_LIMIT',
   /** 邮件通道（D84）：账号没交给当前 Bot / 登录失败 / 连不上 / 厂商预设还不能用。 */
   'MAIL_NOT_BOUND',
   'MAIL_AUTH_FAILED',

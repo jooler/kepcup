@@ -96,7 +96,7 @@ export function bindWidgetsUiMethods(services: CoreServices): {
           const { cardMessageId } = result;
           return {
             ok: true,
-            ...(cardMessageId !== undefined ? { cardMessageId } : {}),
+            ...(cardMessageId !== null ? { cardMessageId } : {}),
           };
         },
       ),

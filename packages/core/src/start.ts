@@ -146,6 +146,7 @@ import { TaintService } from './apps/taint.js';
 import { McpAppUiService } from './apps/ui/service.js';
 import { bindAppsUiMethods } from './rpc/apps-ui-bindings.js';
 import { WidgetService } from './widgets/service.js';
+import { WidgetQueryRunner } from './widgets/query-runner.js';
 import { bindWidgetsUiMethods } from './rpc/widgets-ui-bindings.js';
 import { ConnectorCatalog } from './apps/catalog.js';
 import { createGuardedMcpFetch, LocalConnectors } from './apps/local-connectors.js';
@@ -840,6 +841,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       services.agentsService?.dispose();
       services.agents?.host.dispose();
       await services.agents?.bridge.stop().catch(() => undefined);
+      // D81：杀掉组件查询子进程（它另开了一条到 main.db 的只读连接）。
+      services.widgets?.dispose();
       if (services.mainDb) closeDatabase(services.mainDb);
       if (services.runsDb) closeDatabase(services.runsDb);
       services.mainDb = null;
@@ -1765,6 +1768,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         events.emit('message.created', { conversationId: message.conversationId, message }),
       secrets,
       shell: services.shellRpc,
+      // 组件查询模板只在独立只读子进程里执行（时限 / 内存上限，设计 32 §6.1）。
+      queryRunner: new WidgetQueryRunner({
+        database: { path: paths.mainDbPath, key: deriveKey(masterKey, KEY_INFO.mainDb) },
+        logger,
+      }),
       clock,
       logger,
     });

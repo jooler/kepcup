@@ -26,6 +26,7 @@
   import { core } from '$lib/rpc/client.svelte';
   import LinkConfirmBar from '$lib/features/apps-ui/LinkConfirmBar.svelte';
   import { WidgetBridgeHost } from './widget-bridge-host';
+  import { WidgetResourceLease } from './resource-lease';
 
   /**
    * 对话里的 Bot 自制交互组件卡片（D81，docs/design/32-bot-widgets.md）。
@@ -42,6 +43,12 @@
    * `query` 转发为 `widgets.ui.query`（随版本预审的只读模板），`openLink` 先出卡内
    * 确认条（拒绝后冷却，同 McpAppCard），`setHeight` 夹取后调高度，`theme` 回建桥时
    * 的明暗主题。
+   *
+   * 资源续命：卡片挂着不动超过资源 TTL（或被 LRU 淘汰、或组件版本被修剪）后，下一次
+   * 桥调用会得 `WIDGET_RESOURCE_EXPIRED`——这里自动重新 `widgets.ui.open` 换一个
+   * resourceId 并重放这次调用（iframe 不重载，组件内状态不丢）；重开也失败（组件已被
+   * 删除等）才转错误态。预审强制：带查询模板的版本必须先展开源码（SQL 全文）才能
+   * 加载，core 的 open 同样拒绝未审查的版本（`WIDGET_REVIEW_REQUIRED`）。
    */
   let { messageId, card }: { messageId: string; card: WidgetCard } = $props();
 
@@ -65,7 +72,10 @@
 
   let bridge: WidgetBridgeHost | null = null;
   let generation = 0;
-  let activeResource: string | null = null;
+  /** 当前挂载的资源租约（过期自动重开并重放调用，见 resource-lease.ts）。 */
+  let lease: WidgetResourceLease | null = null;
+  /** 带查询模板的版本：本次会话里已展开过源码（SQL 全文）才放行「加载」。 */
+  const needsReview = $derived(card.queriesCount > 0 && sourceHtml === null);
 
   async function start(): Promise<void> {
     const gen = ++generation;
@@ -79,7 +89,20 @@
       }
       // 确认在资源登记成功后记忆：open 失败不留下次自动重试失败请求的确认。
       rememberConsent(consentKey(card));
-      activeResource = out.resourceId;
+      lease = new WidgetResourceLease({
+        resourceId: out.resourceId,
+        reopen: async () =>
+          widgetsUiOpenOutputSchema.parse(await core.call('widgets.ui.open', { messageId })).resourceId,
+        discard: (resourceId) => {
+          void core.call('widgets.ui.close', { resourceId }).catch(() => undefined);
+        },
+        onRenewFailed: (error) => {
+          // 重开也失败（组件已删除 / 版本已修剪等）：卡片转错误态，不再假装可用。
+          errorCode = (error as { code?: string }).code;
+          cardState = 'error';
+          void stop();
+        },
+      });
       opened = out;
       await tick();
       const frameWindow = frame?.contentWindow;
@@ -113,24 +136,40 @@
       cardState = 'ready';
     } catch (error) {
       if (gen !== generation) return;
-      errorCode = (error as { code?: string }).code;
+      const code = (error as { code?: string }).code;
+      // 失败路径也要释放已登记的资源与半建的桥（例如 frame 不可用时租约已建立），
+      // 不能把资源留到 TTL。stop() 不碰 cardState / errorCode。
+      void stop();
+      if (code === 'WIDGET_REVIEW_REQUIRED') {
+        // core 侧预审强制（例如旧确认记忆下的自动加载）：回到审查态并展开源码。
+        cardState = 'review';
+        if (!sourceOpen) void toggleSource();
+        return;
+      }
+      errorCode = code;
       cardState = 'error';
     }
   }
 
+  /** 经当前租约发一次桥调用（资源过期时租约自动重开并重放）。 */
+  async function withResource<T>(call: (resourceId: string) => Promise<T>): Promise<T> {
+    if (lease === null) throw new Error('组件界面已关闭');
+    return lease.call(call);
+  }
+
   /** `widgets.ui.storage` 的渲染端出站：schema.parse 后原样回给桥（契约纪律同其他 RPC）。 */
   async function callStorage(input: WidgetsUiStorageCall): Promise<WidgetsUiStorageOutput> {
-    if (activeResource === null) throw new Error('组件界面已关闭');
-    return widgetsUiStorageOutputSchema.parse(
-      await core.call('widgets.ui.storage', { ...input, resourceId: activeResource }),
+    return withResource(async (resourceId) =>
+      widgetsUiStorageOutputSchema.parse(
+        await core.call('widgets.ui.storage', { ...input, resourceId }),
+      ),
     );
   }
 
   /** `widgets.ui.query` 的渲染端出站（P2）：同上，错误（code/message）由桥透传给组件。 */
   async function callQuery(input: WidgetsUiQueryCall): Promise<WidgetsUiQueryOutput> {
-    if (activeResource === null) throw new Error('组件界面已关闭');
-    return widgetsUiQueryOutputSchema.parse(
-      await core.call('widgets.ui.query', { ...input, resourceId: activeResource }),
+    return withResource(async (resourceId) =>
+      widgetsUiQueryOutputSchema.parse(await core.call('widgets.ui.query', { ...input, resourceId })),
     );
   }
 
@@ -141,8 +180,8 @@
     const connected = bridge;
     bridge = null;
     connected?.destroy();
-    const resource = activeResource;
-    activeResource = null;
+    const resource = lease?.close() ?? null;
+    lease = null;
     opened = null;
     height = 380;
     if (resource !== null) {
@@ -176,12 +215,13 @@
 
   async function confirmLink(): Promise<void> {
     const link = pendingLink;
-    const resource = activeResource;
-    if (link === null || resource === null) return;
+    if (link === null || lease === null) return;
     pendingLink = null;
     try {
-      const result = widgetsUiOpenLinkOutputSchema.parse(
-        await core.call('widgets.ui.openLink', { resourceId: resource, url: link.url }),
+      const result = await withResource(async (resourceId) =>
+        widgetsUiOpenLinkOutputSchema.parse(
+          await core.call('widgets.ui.openLink', { resourceId, url: link.url }),
+        ),
       );
       link.resolve(result.ok);
     } catch {
@@ -300,11 +340,17 @@
           size="sm"
           class="h-6 px-2 text-xs"
           onclick={() => void start()}
+          disabled={needsReview}
           data-testid="bot-widget-load"
         >
           {t('botWidget.load')}
         </Button>
       </div>
+      {#if needsReview}
+        <p class="mt-1 text-xs text-muted-foreground" data-testid="bot-widget-review-first">
+          {t('botWidget.reviewQueriesFirst')}
+        </p>
+      {/if}
       {#if sourceOpen}
         {#if sourceQueries.length > 0}
           <div class="mt-2 rounded bg-muted p-2 text-[11px]" data-testid="bot-widget-queries">

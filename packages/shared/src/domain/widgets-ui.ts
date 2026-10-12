@@ -45,9 +45,27 @@ export const BOT_WIDGET_STORAGE_VALUE_MAX_BYTES = 256 * 1024;
 /** 每个组件 KV 的总配额（字节）与键数上限（`widget_docs`，命名空间 = widgetId）。 */
 export const BOT_WIDGET_STORAGE_QUOTA_BYTES = 1024 * 1024;
 export const BOT_WIDGET_STORAGE_KEYS_MAX = 1000;
-/** 每张卡每秒最多发起的能力桥调用，与同时在途的上限（同 MCP Apps 语义，独立常量避免语义漂移）。 */
+/**
+ * 能力桥限流（storage / query 合计，按卡片资源计）：令牌桶——桶容量
+ * {@link BOT_WIDGET_CALLS_BURST}（允许看板一次性并发拉取全部查询模板），以每秒
+ * {@link BOT_WIDGET_CALLS_PER_SECOND} 个的速度回填（持续速率上限）；同时在途至多
+ * {@link BOT_WIDGET_CALLS_INFLIGHT_MAX} 个（query 在独立子进程里异步执行，在途是真实并发）。
+ */
 export const BOT_WIDGET_CALLS_PER_SECOND = 5;
-export const BOT_WIDGET_CALLS_INFLIGHT_MAX = 3;
+export const BOT_WIDGET_CALLS_BURST = 20;
+export const BOT_WIDGET_CALLS_INFLIGHT_MAX = 20;
+
+// --- 每 Bot 的存量上限（防循环 run 无限落库）-----------------------------------
+
+/** 每个 Bot 最多持有的组件数（含会话级）；超限 widget_create 得 `WIDGET_LIMIT`。 */
+export const BOT_WIDGET_PER_BOT_MAX = 100;
+/**
+ * 每个组件保留的最近版本数：widget_update 落新版本后，更早的版本（及其查询模板）
+ * 自动修剪——钉着被修剪版本的旧卡加载时得「这个版本的组件已不存在」。
+ */
+export const BOT_WIDGET_VERSIONS_KEPT = 20;
+/** 每个 Bot 全部组件版本 HTML 的总字节配额；超限 create / update 得 `WIDGET_LIMIT`。 */
+export const BOT_WIDGET_BOT_BYTES_QUOTA = 64 * 1024 * 1024;
 
 // --- 命名只读查询模板（P2，设计 32 §6）----------------------------------------
 
@@ -65,6 +83,16 @@ export const BOT_WIDGET_QUERY_ROWS_MAX = 200;
  * 这个量级。值与桥消息的入站上限（WIDGET_BRIDGE_MESSAGE_MAX_CHARS，1MB）对齐。
  */
 export const BOT_WIDGET_QUERY_RESULT_MAX_BYTES = 1024 * 1024;
+/**
+ * 单次查询的执行时限（毫秒）：查询在独立的只读子进程里执行（设计 32 §6.1），超时
+ * 即杀掉子进程（`WIDGET_QUERY_TIMEOUT`）——better-sqlite3 同步执行且编译时去掉了
+ * 进度回调，进程内无法中断一条正在跑的 SQL，只有进程边界能真正止损。
+ */
+export const BOT_WIDGET_QUERY_TIMEOUT_MS = 3_000;
+/** 查询子进程的常驻内存上限（字节，Linux 上按 /proc 采样；超限同样杀进程）。 */
+export const BOT_WIDGET_QUERY_MEMORY_MAX_BYTES = 512 * 1024 * 1024;
+/** 全部组件排队等待执行的查询上限（子进程串行执行）；满了得 `WIDGET_RATE_LIMITED`。 */
+export const BOT_WIDGET_QUERY_QUEUE_MAX = 64;
 
 /**
  * 命名只读查询模板定义（`widget_create` / `widget_update` 的 `queries` 条目）。
@@ -200,8 +228,9 @@ export const widgetsUiOpenLinkOutputSchema = z.object({ ok: z.boolean() });
  * `widgets.ui.query`（能力桥结构化查询，P2）：按名字调用本组件**当前卡片版本**登记的
  * 只读查询模板。core 用 resourceId 反查登记资源拿 widgetId + version（版本钉住：
  * 旧卡永远用旧模板），取该版本的模板执行；参数只有 JSON 标量（boolean 归一为 1/0）。
- * 行数超过 `BOT_WIDGET_QUERY_ROWS_MAX` 截断并标记 `truncated`（超时无法真中断：
- * better-sqlite3 同步执行，见设计 32 §6 与 service 注释）。
+ * 模板只能读作用域视图（本组件 KV / 卡片所在对话的文字消息），在独立只读子进程里
+ * 执行，带时限（`BOT_WIDGET_QUERY_TIMEOUT_MS`）；行数超过 `BOT_WIDGET_QUERY_ROWS_MAX`
+ * 或回执超过字节上限时截断并标记 `truncated`（设计 32 §6.1）。
  */
 export const widgetsUiQueryInputSchema = z.object({
   resourceId: z.string().min(1),

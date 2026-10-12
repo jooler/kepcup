@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { unpackedAsarPath } from '../../infra/asar-path.js';
 
 /**
  * stdio ↔ HTTP MCP 代理脚本（`stdio-proxy.mjs`，D72 §4.4）的运行时路径。
@@ -24,7 +25,5 @@ export function resolveStdioProxyPath(
   return exists(candidate) ? candidate : null;
 }
 
-/** `…/app.asar/…` → `…/app.asar.unpacked/…`（asarUnpack 的落点）。 */
-export function unpackedAsarPath(file: string): string {
-  return file.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
-}
+// 映射规则与组件查询子进程的驱动路径共用（infra/asar-path.ts）。
+export { unpackedAsarPath };
