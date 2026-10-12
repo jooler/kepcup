@@ -2,7 +2,7 @@
 
 用户在对话里说一句「把这件事交给 X 负责」，AI 就能把 A Bot 名下的资产（邮箱、连接应用、MCP、模型、定时任务、Skill、记忆、Wiki……）整理成一份移交清单，用户确认一次，宿主照单执行。用户不需要去设置页逐项操作。决策：**D88**。
 
-**状态：已定稿；P0 已实施**（2026-10-12 定稿；P0 在 `t/handover` 实现，待审查与合入，偏差见 [todo §6](../../todo/bot-handover.md#6-实施记录) DEV-001 起）。执行方案见 [todo/bot-handover.md](../../todo/bot-handover.md)。产品拍板（2026-10-12）：①记忆、Wiki 一律**复制**（源 Bot 保留，不提供「从 A 删除」）；②普通 Bot 交出自己资产的能力按开发节奏排期，但属于本功能的必做范围。
+**状态：已定稿；P0 已实施**（2026-10-12 定稿；P0 在 `t/handover` 实现，待审查与合入，偏差见 [todo §6](../../todo/bot-handover.md#6-实施记录) DEV-001 起）。执行方案见 [todo/bot-handover.md](../../todo/bot-handover.md)。产品拍板（2026-10-12）：①记忆、Wiki 一律**复制**（源 Bot 保留，不提供「从 A 删除」）；②普通 Bot 交出自己资产的能力按开发节奏排期，但属于本功能的必做范围；③承诺随定时任务迁移（A 的承诺置 `void`）作为「一律复制」的唯一例外，确认采用（§3.1）。
 
 相关：D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D80（例行事项，[todo/schedule-nudges.md](../../todo/schedule-nudges.md)）、D73（连接应用，[29](29-connected-apps.md)）、D84（邮件通道，[35](35-mail-channel.md)）、D65（MCP，[23](23-mcp-and-subagent.md)）、[03-bot.md](03-bot.md)、[04-memory.md](04-memory.md)、[05-wiki-and-skills.md](05-wiki-and-skills.md)、D18（Bot 删除）。
 
