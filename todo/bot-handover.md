@@ -178,11 +178,8 @@
 
 - 全量（容器 `kh-full3`）：4070 例，4041 通过 / 27 失败。26 条为既有基线文件（同前）；另 1 条 `connected-apps-runtime`「listing failure at run start」是负载偶发，单跑 13/13 通过，修复前的全量里也是通过的。无新增失败。
 - e2e（容器 `kh-e2e-full3`，92 例）：85 通过 / 6 失败 / 1 flaky，`handover.spec` 通过。失败与上一轮完全相同：`wiki.spec`（已知基线）与 `debug-dev-pin`、`external-agents` ×3、`local-connectors`（在 main@064cbdd 上同样失败，已核实）；`sandbox.spec`「run status line」重试后通过（已知基线 flaky）。
-
-审查修复后复验（2026-10-12，协调会话执行，ee86880）：
-- **全量**（Docker `kh-full3`）：4041 通过 / 27 失败 / 2 跳过。26 例为环境基线文件（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1）；另 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」1 例在全量负载下 5 秒超时，单跑 12/12 通过，为偶发。无新增失败。
-- **e2e**（`kepcup-test:trixie-xvfb`，`kh-e2e3`）：85 通过 / 7 失败；`handover.spec`、`butler-proposal.spec` 通过。失败：`wiki.spec`、`sandbox.spec` 状态行（已知基线 / 偶发）+ `debug-dev-pin`、`external-agents` ×3、`local-connectors`（在 main@064cbdd 上同样失败，环境问题，e2e 基线记录待更新）。
-- **迁移号**：D87 已先合入 main（4184d87）并占用 0035；本分支合入时须改为 **0036**（同步 `create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表）。
+- 另一轮全量复跑（`kh-full3`，协调会话）偶发项换成 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」5 秒超时，单跑 12/12 通过；其余同上，无新增失败。
+- **迁移号**：D87 已先合入 main（4184d87）并占用 0035；本分支合入时改为 **0036**（同步 `create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表）。
 
 ## 7. 风险
 
