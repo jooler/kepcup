@@ -1256,6 +1256,11 @@ export const runSchema = z.object({
    * 的浏览器资料被切换 → 用过浏览器的运行中任务被中断）；其余为 null / 缺省。
    */
   errorReason: z.string().nullable().optional(),
+  /**
+   * 用户关掉了这条失败的横幅或设置卡（error_json.dismissed）。执行记录保留，
+   * 刷新后不再恢复提示；缺省表示未关闭。
+   */
+  failureDismissed: z.boolean().optional(),
   /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
   chainId: z.string().nullable(),
   chainDepth: z.number().nullable(),

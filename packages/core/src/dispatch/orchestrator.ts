@@ -1689,6 +1689,19 @@ export class Orchestrator {
   #setupDismissNotified = new Set<string>();
 
   /**
+   * 用户关闭失败横幅：把该失败标成已读并广播，刷新后 `runs.list` 不再把它
+   * 恢复成横幅。执行记录保留。
+   */
+  dismissFailure(runId: string): Run | null {
+    const before = this.#deps.runs.get(runId);
+    const run = this.#deps.runs.dismissFailure(runId);
+    if (run !== null && before?.failureDismissed !== true && run.failureDismissed === true) {
+      this.#deps.publish('run.status', { run });
+    }
+    return run;
+  }
+
+  /**
    * 用户关闭了「缺设置」卡片、未完成配置（inline setup 的放弃分支）：一次性
    * 通知 Bot 现状，由它给新的反馈。main-model 缺失除外——对话轮本就跑不起
    * 来，通知只会原样失败并再弹同一张卡。返回是否真的发出了通知。

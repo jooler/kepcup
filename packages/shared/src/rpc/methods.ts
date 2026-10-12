@@ -935,6 +935,11 @@ export const runsRetryOutputSchema = z.object({ run: runSchema.nullable() });
  */
 export const runsSetupDismissedOutputSchema = z.object({ notified: z.boolean() });
 /**
+ * 用户关闭失败横幅（或由此收起的设置卡）：把该失败标成已读。run 行保留
+ * （步骤、重试来源都还在），刷新后不再恢复横幅。run 不存在时 run 为 null。
+ */
+export const runsDismissFailureOutputSchema = z.object({ run: runSchema.nullable() });
+/**
  * W3（D78）：`reviewed` = 用户已在「检查后重试」面板核实中断前的外部操作。
  * 中断任务有外部副作用台账行时不带它会得到 REVIEW_REQUIRED；其他调用方不传。
  */
@@ -1823,6 +1828,7 @@ export const rpcMethodSchemas = {
   'runs.cancel': { input: runIdInputSchema, output: runsCancelOutputSchema },
   'runs.retry': { input: runsRetryInputSchema, output: runsRetryOutputSchema },
   'runs.setupDismissed': { input: runIdInputSchema, output: runsSetupDismissedOutputSchema },
+  'runs.dismissFailure': { input: runIdInputSchema, output: runsDismissFailureOutputSchema },
   'runs.steps': { input: runIdInputSchema, output: runsStepsOutputSchema },
   'runs.list': { input: runsListInputSchema, output: runsListOutputSchema },
 
@@ -2207,6 +2213,7 @@ const APP_METHODS = [
   'runs.cancel',
   'runs.retry',
   'runs.setupDismissed',
+  'runs.dismissFailure',
   'runs.steps',
   'runs.list',
   'sandbox.status',

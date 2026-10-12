@@ -165,15 +165,45 @@ export interface AppendMessageInput {
   at?: number | undefined;
 }
 
+/**
+ * 状态类邮件 / 监看卡已改为 `app.notice`，schema 只保留有效信息卡。库里的旧行
+ * （`mailEvent` 为 error / paused，`watchEvent` 为 paused）原样读出会让
+ * `messages.list` 整页校验失败、对话打不开。读出时改写成一条系统提示，不改库。
+ */
+function legacyStatusNotice(content: unknown): { event: string; text: string } | null {
+  if (content === null || typeof content !== 'object') return null;
+  const card = content as {
+    cardType?: unknown;
+    mailEvent?: unknown;
+    mailSummary?: unknown;
+    watchEvent?: unknown;
+    watchSummary?: unknown;
+  };
+  if (card.cardType === 'mail' && (card.mailEvent === 'error' || card.mailEvent === 'paused')) {
+    const summary = typeof card.mailSummary === 'string' ? card.mailSummary.trim() : '';
+    return {
+      event: 'mail_status',
+      text: summary || (card.mailEvent === 'paused' ? '新邮件提醒已暂停' : '邮箱连接失败'),
+    };
+  }
+  if (card.cardType === 'watch' && card.watchEvent === 'paused') {
+    const summary = typeof card.watchSummary === 'string' ? card.watchSummary.trim() : '';
+    return { event: 'watch_status', text: summary || '监看已暂停' };
+  }
+  return null;
+}
+
 export function messageRowToMessage(row: MessageRow): Message {
-  const content = JSON.parse(row.content_json) as Message['content'];
+  const stored = JSON.parse(row.content_json) as Message['content'];
+  const notice = legacyStatusNotice(stored);
+  const content = notice ?? stored;
   return {
     id: row.id,
     conversationId: row.conversation_id,
     seq: row.seq,
     senderType: row.sender_type,
     senderBotId: row.sender_bot_id,
-    kind: row.kind,
+    kind: notice !== null ? 'system_event' : row.kind,
     content,
     replyTo: row.reply_to,
     mentions: JSON.parse(row.mentions_json) as string[],

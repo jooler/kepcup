@@ -198,7 +198,7 @@
             >
               {t('chats.retry')}
             </Button>
-            <!-- 关闭只是收起横幅（会话内不再回弹）；run 本身仍可从失败记录重试。 -->
+            <!-- 关闭把这次失败标成已读（run 保留）；刷新后不再出现。 -->
             <Button
               variant="ghost"
               size="sm"

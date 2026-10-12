@@ -62,6 +62,16 @@ describe('restoredFailedRun', () => {
     const plain = run('p1', { status: 'failed' });
     expect(restoredFailedRun([run('r2'), plain], new Set())).toBe(plain);
     expect(restoredFailedRun([plain], new Set(['p1']))).toBeNull();
+    // 已落库的「已读」在空的会话内集合下也不再恢复（刷新后的路径）。
+    expect(
+      restoredFailedRun([run('p1', { status: 'failed', failureDismissed: true })], new Set()),
+    ).toBeNull();
+    expect(
+      restoredFailedRun(
+        [plain, run('older', { status: 'failed', failureDismissed: true })],
+        new Set(),
+      ),
+    ).toBe(plain);
   });
 
   it('D75: failed tasks surface only with a setup, and only until a task retries them', () => {

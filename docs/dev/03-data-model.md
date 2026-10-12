@@ -864,7 +864,7 @@ CREATE TABLE runs (
   output_message_ids_json TEXT NOT NULL DEFAULT '[]',
   summary              TEXT,
   continued_from_run_ids_json TEXT,    -- 续接来源 run id 列表（Loop 续接，design/02）；null＝无续接
-  error_json           TEXT,           -- {message, setup?, reason?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（`Run.errorReason`：`permission_revoked`、`browser_profile_changed`、`uncertain_repeat_timeout`）
+  error_json           TEXT,           -- {message, setup?, reason?, dismissed?}：setup 为结构化的「设置前置需求」（design/18），仅因缺设置失败时非空；reason 为机器可读原因（`Run.errorReason`：`permission_revoked`、`browser_profile_changed`、`uncertain_repeat_timeout`）；dismissed 为用户已关闭失败横幅（`Run.failureDismissed`），刷新后不再恢复
   parent_run_id        TEXT,           -- 0004：SubAgent 子 run 的委派方 run（D66/D67）；其余为 null
   engine               TEXT NOT NULL DEFAULT 'builtin', -- 0005：执行引擎 'builtin' | 'agent:{id}'（D72）
   agent_session_id     TEXT,           -- 0005：外部 Agent 侧的 ACP sessionId；内置引擎为 null

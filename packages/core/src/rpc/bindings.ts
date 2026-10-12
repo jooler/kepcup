@@ -96,6 +96,7 @@ import {
   runsRetryInputSchema,
   runsRetryOutputSchema,
   runsSetupDismissedOutputSchema,
+  runsDismissFailureOutputSchema,
   runsStepsOutputSchema,
   runsListInputSchema,
   runsListOutputSchema,
@@ -889,6 +890,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'runs.setupDismissed': method(runIdInputSchema, runsSetupDismissedOutputSchema, async (input) => ({
       notified: orchestrator.notifySetupDismissed(input.runId),
     })),
+    'runs.dismissFailure': method(
+      runIdInputSchema,
+      runsDismissFailureOutputSchema,
+      async (input) => ({
+        run: orchestrator.dismissFailure(input.runId),
+      }),
+    ),
     'runs.steps': method(runIdInputSchema, runsStepsOutputSchema, async (input) => ({
       steps: orchestrator.stepsFor(input.runId),
     })),
