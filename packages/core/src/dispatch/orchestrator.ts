@@ -3307,7 +3307,7 @@ export class Orchestrator {
                 ),
             }
           : {}),
-        ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit) } : {}),
+        ...(this.#deps.media !== undefined ? { media: this.#mediaFacade(setupHit, identity) } : {}),
         ...(this.#deps.search !== undefined ? { search: this.#searchFacade(setupHit) } : {}),
         ...(appFacade !== undefined ? { apps: appFacade } : {}),
         logger: this.#deps.logger,
@@ -4420,8 +4420,18 @@ export class Orchestrator {
    * 返回 SETUP_REQUIRED，run 随即被中断并引导设置。其余失败（厂商不支持、
    * 参数问题、网络错误）照常作为工具失败结果回到模型。
    */
-  #mediaFacade(setupHit: { requirement: SetupRequirement | null }): MediaToolFacade {
+  #mediaFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    identity: RunIdentity,
+  ): MediaToolFacade {
     const media = this.#deps.media!;
+    // 工具调用记入所在 run 的用量；媒体工具只在响应 loop 里注册，故 loopType 只有 turn / task。
+    const usage = {
+      runId: identity.runId,
+      botId: identity.botId,
+      conversationId: identity.conversationId,
+      loopType: identity.loopType === 'task' ? ('task' as const) : ('turn' as const),
+    };
     const setupGuard = async <T>(
       capability: 'image' | 'tts' | 'video' | 'multimodal' | 'asr',
       run: () => Promise<T>,
@@ -4439,11 +4449,11 @@ export class Orchestrator {
       }
     };
     return {
-      generateImage: (input) => setupGuard('image', () => media.generateImage(input)),
-      understandImage: (input) => setupGuard('multimodal', () => media.understandImage(input)),
-      synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input)),
-      transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input)),
-      generateVideo: (input) => setupGuard('video', () => media.generateVideo(input)),
+      generateImage: (input) => setupGuard('image', () => media.generateImage(input, usage)),
+      understandImage: (input) => setupGuard('multimodal', () => media.understandImage(input, usage)),
+      synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input, usage)),
+      transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input, usage)),
+      generateVideo: (input) => setupGuard('video', () => media.generateVideo(input, usage)),
       videoStatus: (provider, taskId) => media.videoStatus(provider, taskId),
     };
   }

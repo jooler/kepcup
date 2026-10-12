@@ -824,6 +824,69 @@ describe('P09 Wiki：维护 loop 步骤脱敏与 <untrusted> 边界（BR-P09-001
   }, 120_000);
 });
 
+describe('P09 Wiki：二进制来源不内联进提示词（mime 嗅探）', () => {
+  it('声明为 markdown 实为 PDF 的附件：任务消息不含原件字节，带二进制资料兜底', async () => {
+    const stack = await createTestStack();
+    try {
+      const bot = await makeBot(stack.core, '阿图');
+      const conversationId = (await openDirect(stack.core, bot.id)).id;
+      const pdf = Buffer.concat([
+        Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\nPDFMARKER-ZZZ\n'),
+        Buffer.from([0x00, 0xff, 0xfe, 0x80]),
+        Buffer.from('\n%%EOF\n'),
+      ]);
+      const upload = (await stack.core.rpc.call('attachments.upload', {
+        conversationId,
+        fileName: 'paper.md',
+        mime: 'text/markdown',
+        bytesBase64: pdf.toString('base64'),
+      })) as { attachment: { id: string } };
+
+      stack.llm.script('mock-main', [
+        step()
+          .expect((req) => String(req.lastUserText()).includes('学一下这份论文'))
+          .replyToolCall('wiki_enqueue', {
+            source_type: 'attachment',
+            ref: upload.attachment.id,
+            note: '二进制资料',
+          }),
+        step()
+          .expect((req) => JSON.stringify(req.body).includes('已登记入库任务'))
+          .replyText('登记了'),
+        step()
+          .expect((req) => String(req.lastUserText()).includes('整理进你的 Wiki'))
+          .replyToolCall('write', {
+            path: 'log.md',
+            content: logWith('- 20261001 | 附件 paper.md | 二进制资料，仅登记来源'),
+          }),
+        step().replyText('已登记'),
+      ]);
+      await stack.core.rpc.call('messages.send', { conversationId, text: '学一下这份论文' });
+      await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
+      await waitJobDone(stack.core, 'wiki_ingest', 1);
+
+      const taskRequest = stack.llm
+        .requestsFor('mock-main')
+        .find((req) => String(req.lastUserText()).includes('整理进你的 Wiki'));
+      expect(taskRequest).toBeDefined();
+      const taskText = String(taskRequest!.lastUserText());
+      expect(taskText).not.toContain('PDFMARKER-ZZZ');
+      expect(taskText).not.toContain('%PDF');
+      expect(taskText).toContain('二进制资料：document');
+      expect(taskText).toContain('paper.md');
+      expect(taskText).not.toContain('请用 read 工具读取');
+      // 原件仍原样落到 raw/（只是不内联）。
+      const raw = rawFiles(stack.core, bot.id);
+      expect(raw).toHaveLength(1);
+      expect(
+        readFileSync(path.join(wikiRoot(stack.core, bot.id), 'raw', raw[0]!)).equals(pdf),
+      ).toBe(true);
+    } finally {
+      await stack.cleanup();
+    }
+  }, 120_000);
+});
+
 describe('P09 Wiki：来源消息为遗留已撤回状态时的入库任务防御（BR-P09-002）', () => {
   it('来源消息为遗留已撤回状态：任务认领执行时 resolveSource 重查拦截，任务失败且 raw 无文件', async () => {
     const stack = await createTestStack();

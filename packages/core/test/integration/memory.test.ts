@@ -645,6 +645,30 @@ describe('P07 记忆与画像（集成）', () => {
       const reflectionRow = summary.entries.find((entry) => entry.loopType === 'reflection');
       expect(reflectionRow).toBeDefined();
       expect(/^\d{4}-\d{2}-\d{2}$/.test(reflectionRow!.date)).toBe(true);
+
+      // 媒体调用行（token 为 0）按行数计入 calls；voice_input 不计入后台预算，
+      // memory 属后台（有 token 时计入）。
+      const usage = stack.core.services.domain!.usage;
+      const base = { runId: 'media_x', botId: bot.id, conversationId: null, provider: 'dashscope', model: 'm', costUsd: null };
+      const budget = stack.core.services.budget!;
+      const usedBefore = budget.usedToday(bot.id);
+      usage.record({ ...base, loopType: 'voice_input', inputTokens: 500, outputTokens: 500 });
+      expect(budget.usedToday(bot.id)).toBe(usedBefore);
+      usage.record({ ...base, loopType: 'memory', inputTokens: 7, outputTokens: 0 });
+      usage.record({ ...base, loopType: 'memory', inputTokens: 0, outputTokens: 0 });
+      expect(budget.usedToday(bot.id)).toBe(usedBefore + 7);
+      const again = (await stack.core.rpc.call('usage.summary', { days: 3 })) as {
+        entries: Array<{ botId: string | null; loopType: string; calls?: number }>;
+      };
+      expect(
+        again.entries.find((e) => e.botId === bot.id && e.loopType === 'memory')?.calls,
+      ).toBe(2);
+      expect(
+        again.entries.find((e) => e.botId === bot.id && e.loopType === 'voice_input')?.calls,
+      ).toBe(1);
+      expect(
+        again.entries.find((e) => e.botId === bot.id && e.loopType === 'turn')?.calls,
+      ).toBeGreaterThanOrEqual(1);
     } finally {
       await stack.cleanup();
     }
@@ -815,6 +839,30 @@ describe('P07 记忆与画像（集成）', () => {
       // 混合检索端到端走厂商 embedder（修复前 knn 分支永不进入）。
       const recalled = await memory.recall(bot.id, conv.id, '项目代号是什么');
       expect(recalled.items.some((entry) => entry.id === written.item!.id)).toBe(true);
+
+      // 向量调用记入 usage_ledger：每次 embed 一行，loop_type = memory，token 为 0。
+      const ledger = stack.core.services
+        .mainDb!.prepare(
+          "select loop_type, provider, model, input_tokens, output_tokens, run_id from usage_ledger where loop_type = 'memory'",
+        )
+        .all() as Array<{
+        loop_type: string;
+        provider: string;
+        model: string;
+        input_tokens: number;
+        output_tokens: number;
+        run_id: string;
+      }>;
+      expect(ledger.length).toBeGreaterThanOrEqual(2); // 写入 + 重建 / 检索
+      for (const row of ledger) {
+        expect(row).toMatchObject({
+          provider: 'dashscope',
+          model: 'text-embedding-v4',
+          input_tokens: 0,
+          output_tokens: 0,
+        });
+        expect(row.run_id.startsWith('media_')).toBe(true);
+      }
     } finally {
       await stack.cleanup();
     }

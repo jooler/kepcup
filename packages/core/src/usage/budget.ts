@@ -14,7 +14,7 @@ export interface BudgetServiceDeps {
 /**
  * Per-bot daily background-loop budget (docs/dev/phases/P07-memory.md 任务 12):
  * once today's background usage for a bot (everything but its conversation
- * turns and tasks — the user's own work, D75 — and built-in triage) reaches
+ * turns and tasks — the user's own work, D75 — voice input and built-in triage) reaches
  * the limit, its remaining background jobs (reflection / consolidation / …)
  * defer to the next local day. Turns and tasks are never throttled.
  */
@@ -48,7 +48,7 @@ export class BudgetService {
     const since = localDayStart(this.#deps.clock.now(), this.#deps.timeZone);
     const row = this.#deps.db
       .prepare(
-        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type not in ('turn', 'task') and (loop_type != 'triage' or provider like 'agent:%') and created_at >= ?",
+        "select coalesce(sum(case when provider like 'agent:%' and input_tokens + output_tokens = 0 then ? else input_tokens + output_tokens end), 0) as n from usage_ledger where bot_id = ? and loop_type not in ('turn', 'task', 'voice_input') and (loop_type != 'triage' or provider like 'agent:%') and created_at >= ?",
       )
       .get(AGENT_TURN_BUDGET_TOKENS, botId, since) as { n: number };
     return row.n;

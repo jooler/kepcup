@@ -362,6 +362,26 @@ describe('response loop', () => {
         return all.find((m) => m.senderBotId === bot.id && m.attachments.length > 0) ?? null;
       }, { label: 'bot message with image attachment' });
       expect(withImage?.attachments[0]?.mime).toBe('image/png');
+      // 媒体工具调用记入所在 task run 的用量：一行、归属 Bot / 对话 / run、token 为 0。
+      const taskRun = (await listRuns(core, conv.id)).find((r) => r.loopType === 'task')!;
+      const rows = core.services
+        .mainDb!.prepare(
+          "select run_id, bot_id, conversation_id, loop_type, provider, model, input_tokens, output_tokens, cost_usd from usage_ledger where provider = 'volcengine'",
+        )
+        .all();
+      expect(rows).toEqual([
+        {
+          run_id: taskRun.id,
+          bot_id: bot.id,
+          conversation_id: conv.id,
+          loop_type: 'task',
+          provider: 'volcengine',
+          model: 'doubao-seedream-4-0-250828',
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: null,
+        },
+      ]);
     } finally {
       vi.unstubAllGlobals();
     }

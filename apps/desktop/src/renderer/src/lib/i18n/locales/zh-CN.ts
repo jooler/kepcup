@@ -806,6 +806,7 @@ export const zhCN = {
   'settings.usageEmpty': '最近 7 天没有模型用量。',
   'settings.usageColumnDay': '日期',
   'settings.usageColumnLoop': '类型',
+  'settings.usageColumnCalls': '调用次数',
   'settings.usageColumnTokens': 'Token（输入/输出）',
   'settings.usageColumnCost': '费用',
   'settings.usageAgentSection': '订阅 / 外部 Agent',
@@ -828,6 +829,8 @@ export const zhCN = {
   'usage.loop.subagent': '子代理委派',
   'usage.loop.turn': '对话轮',
   'usage.loop.task': '任务',
+  'usage.loop.memory': '记忆向量/重排',
+  'usage.loop.voice_input': '语音输入',
 
   'settings.embeddingSection': '向量来源',
   'settings.embeddingNote':

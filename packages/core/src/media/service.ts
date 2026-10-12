@@ -1,14 +1,17 @@
 import {
   AppError,
   isVendorId,
+  newId,
   VENDOR_DESCRIPTORS,
   type CapabilityModelKey,
+  type LoopType,
   type ModelCapability,
   type Settings,
   type VendorId,
 } from '@kepcup/shared';
 import { providerCompatBaseUrl, providerSecretName } from '../agent/models.js';
 import type { SettingsService } from '../domain/settings.js';
+import type { UsageService } from '../domain/usage.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { dashscopeAdapter } from './adapters/dashscope.js';
@@ -47,6 +50,18 @@ const ADAPTERS: Record<VendorId, VendorAdapter> = {
   volcengine: volcengineAdapter,
 };
 
+/**
+ * 媒体调用的用量归属（task 2：每次成功调用在 usage_ledger 记一行）。省略或
+ * 传 null = 不记账（设置页连通性测试等）；没有所属 run 的调用（记忆向量、语音
+ * 输入）不给 runId，账本行自动取一个 media_ 前缀的合成 id。
+ */
+export interface MediaUsageContext {
+  runId?: string | null | undefined;
+  botId?: string | null | undefined;
+  conversationId?: string | null | undefined;
+  loopType: LoopType;
+}
+
 /** 除 chat 外的全部模型能力（settings.capabilityModels 的 key）。 */
 type MediaCapability = Exclude<keyof Settings['capabilityModels'], number>;
 
@@ -61,6 +76,7 @@ export class MediaService {
   readonly #settings: SettingsService;
   readonly #secrets: SecretsService;
   readonly #logger: CoreLogger;
+  readonly #usage: UsageService | undefined;
   /** Test seam: injected fetch for adapter unit tests. */
   readonly #fetchImpl?: typeof fetch;
 
@@ -68,11 +84,14 @@ export class MediaService {
     settings: SettingsService;
     secrets: SecretsService;
     logger: CoreLogger;
+    /** 缺省不记账（单测与无账本的装配）。 */
+    usage?: UsageService;
     fetchImpl?: typeof fetch;
   }) {
     this.#settings = deps.settings;
     this.#secrets = deps.secrets;
     this.#logger = deps.logger;
+    this.#usage = deps.usage;
     this.#fetchImpl = deps.fetchImpl;
   }
 
@@ -80,9 +99,10 @@ export class MediaService {
 
   async generateImage(
     input: ImageGenerationParams & { model?: string },
+    usage?: MediaUsageContext | null,
   ): Promise<ImageGenerationResult> {
     const resolved = this.#resolve('image', input.model);
-    return resolved.adapter.generateImage(resolved.context, resolved.modelId, {
+    const result = await resolved.adapter.generateImage(resolved.context, resolved.modelId, {
       prompt: input.prompt,
       images: input.images,
       n: input.n,
@@ -90,35 +110,46 @@ export class MediaService {
       negativePrompt: input.negativePrompt,
       seed: input.seed,
     });
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
+    return result;
   }
 
-  async synthesizeSpeech(input: SpeechParams & { model?: string }): Promise<SpeechResult> {
+  async synthesizeSpeech(
+    input: SpeechParams & { model?: string },
+    usage?: MediaUsageContext | null,
+  ): Promise<SpeechResult> {
     const resolved = this.#resolve('tts', input.model);
     const fn = resolved.adapter.synthesizeSpeech;
     if (fn === undefined) throw this.#unsupported(resolved.vendor, 'tts');
-    return fn(resolved.context, resolved.modelId, {
+    const result = await fn(resolved.context, resolved.modelId, {
       text: input.text,
       voice: input.voice,
       format: input.format,
       speed: input.speed,
     });
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
+    return result;
   }
 
   async transcribeSpeech(
     input: TranscriptionParams & { model?: string },
+    usage?: MediaUsageContext | null,
   ): Promise<TranscriptionResult> {
     const resolved = this.#resolve('asr', input.model);
     const fn = resolved.adapter.transcribeSpeech;
     if (fn === undefined) throw this.#unsupported(resolved.vendor, 'asr');
-    return fn(resolved.context, resolved.modelId, {
+    const result = await fn(resolved.context, resolved.modelId, {
       audioBase64: input.audioBase64,
       audioMime: input.audioMime,
       language: input.language,
     });
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
+    return result;
   }
 
   async generateVideo(
     input: VideoGenerationParams & { model?: string },
+    usage?: MediaUsageContext | null,
   ): Promise<{ provider: string; taskId: string }> {
     const resolved = this.#resolve('video', input.model);
     const handle = await resolved.adapter.submitVideo(resolved.context, resolved.modelId, {
@@ -129,6 +160,8 @@ export class MediaService {
       size: input.size,
       duration: input.duration,
     });
+    // 记在提交成功处：一次任务一行，轮询状态不计。
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
     return { provider: resolved.vendor, taskId: handle.taskId };
   }
 
@@ -137,27 +170,35 @@ export class MediaService {
     return resolved.adapter.videoStatus(resolved.context, taskId);
   }
 
-  async rerank(input: RerankParams & { model?: string }): Promise<RerankResult> {
+  async rerank(
+    input: RerankParams & { model?: string },
+    usage?: MediaUsageContext | null,
+  ): Promise<RerankResult> {
     const resolved = this.#resolve('rerank', input.model);
     const fn = resolved.adapter.rerank;
     if (fn === undefined) throw this.#unsupported(resolved.vendor, 'rerank');
-    return fn(resolved.context, resolved.modelId, {
+    const result = await fn(resolved.context, resolved.modelId, {
       query: input.query,
       documents: input.documents,
       topN: input.topN,
     });
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
+    return result;
   }
 
   async understandImage(
     input: UnderstandImageParams & { model?: string },
+    usage?: MediaUsageContext | null,
   ): Promise<{ text: string }> {
     const resolved = this.#resolve('multimodal', input.model);
     const fn = resolved.adapter.understandImage;
     if (fn === undefined) throw this.#unsupported(resolved.vendor, 'multimodal');
-    return fn(resolved.context, resolved.modelId, {
+    const result = await fn(resolved.context, resolved.modelId, {
       images: input.images,
       prompt: input.prompt,
     });
+    this.#recordUsage(resolved.vendor, resolved.modelId, usage);
+    return result;
   }
 
   /**
@@ -189,9 +230,16 @@ export class MediaService {
   }
 
   /** 厂商向量调用：适配器按模型家族路由（百炼多模态/早期模型走原生端点）。 */
-  async embedTexts(provider: string, model: string, texts: string[]): Promise<number[][]> {
+  async embedTexts(
+    provider: string,
+    model: string,
+    texts: string[],
+    usage?: MediaUsageContext | null,
+  ): Promise<number[][]> {
     const resolved = this.#resolveVendor(provider);
-    return resolved.adapter.embed(resolved.context, model, texts);
+    const vectors = await resolved.adapter.embed(resolved.context, model, texts);
+    this.#recordUsage(resolved.vendor, model, usage);
+    return vectors;
   }
 
   /** 向量来源是否可用（capabilityModels.embedding + key 齐备，不发网络请求）。 */
@@ -311,6 +359,39 @@ export class MediaService {
       this.#logger.warn(
         { vendor, taskId: handle.taskId, error: String(error) },
         'video test cancel failed',
+      );
+    }
+  }
+
+  // --- 用量 ----------------------------------------------------------------
+
+  /**
+   * 一次成功调用 = 账本一行（次数按行统计，不新增列）。适配器目前不上报
+   * token，故 token 记 0、费用留空；失败的调用不记；记账失败只打日志，绝不
+   * 影响调用结果。
+   */
+  #recordUsage(
+    vendor: VendorId,
+    modelId: string,
+    usage: MediaUsageContext | null | undefined,
+  ): void {
+    if (this.#usage === undefined || usage === undefined || usage === null) return;
+    try {
+      this.#usage.record({
+        runId: usage.runId ?? `media_${newId('use')}`,
+        botId: usage.botId ?? null,
+        conversationId: usage.conversationId ?? null,
+        loopType: usage.loopType,
+        provider: vendor,
+        model: modelId,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: null,
+      });
+    } catch (error) {
+      this.#logger.warn(
+        { vendor, error: error instanceof Error ? error.message : String(error) },
+        'media usage record failed',
       );
     }
   }

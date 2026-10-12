@@ -27,8 +27,6 @@ export interface WikiServiceDeps {
   jobs: JobsFacade;
   bots: BotsFacade;
   conversations: ConversationsFacade;
-  /** Attachments of one message (recall cascade). */
-  messages: MessagesFacade;
   /** wiki_fts access (memory.db, per bot). */
   memory: WikiFtsFacade;
 }
@@ -56,10 +54,6 @@ export interface ConversationsFacade {
   memberBotIds(conversationId: string): string[];
 }
 
-export interface MessagesFacade {
-  attachmentsFor(messageId: string): Array<{ id: string; fileName: string; sha256: string }>;
-}
-
 /** The wiki source kinds of wiki_enqueue (docs/dev/phases/P09-wiki.md 工具表). */
 export type WikiSourceType = 'attachment' | 'url' | 'file';
 
@@ -76,7 +70,7 @@ const WIKI_TOPICS_BOUNDARY =
 /**
  * Wiki domain service (P09): the response-loop read/enqueue surface, the RPC
  * surface (tree/page/search/history/rollback/deletePage), the weekly-lint
- * scheduler, the recall cascade and the per-bot maintenance mutex.
+ * scheduler and the per-bot maintenance mutex.
  *
  * Serialization (任务 5): one bot's wiki is one git repository plus one
  * memory.db — ingest, lint and rollback share KeyedMutex keyed by botId
