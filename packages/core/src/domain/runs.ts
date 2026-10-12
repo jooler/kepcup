@@ -62,6 +62,8 @@ interface RunErrorJson {
   setup?: SetupRequirement;
   /** 机器可读原因（W3：`permission_revoked`）。 */
   reason?: string;
+  /** 用户已关闭失败横幅 / 设置卡，刷新后不再恢复。 */
+  dismissed?: boolean;
 }
 
 /**
@@ -69,25 +71,42 @@ interface RunErrorJson {
  * 一侧沿用已存值）；两者都未触及且本无错误时保持 null（不无中生有）。
  */
 function nextErrorJson(
-  patch: { error?: string | null; setup?: SetupRequirement; errorReason?: string | null },
+  patch: {
+    error?: string | null;
+    setup?: SetupRequirement;
+    errorReason?: string | null;
+    failureDismissed?: boolean;
+  },
   existing: Run,
 ): string | null {
   const reason =
     (patch.errorReason !== undefined ? patch.errorReason : existing.errorReason) ?? null;
-  const withReason = (json: RunErrorJson): string =>
-    JSON.stringify(reason !== null ? { ...json, reason } : json);
+  const dismissed =
+    patch.failureDismissed !== undefined
+      ? patch.failureDismissed
+      : existing.failureDismissed === true;
+  const withMeta = (json: RunErrorJson): string => {
+    const next: RunErrorJson = { ...json };
+    if (reason !== null) next.reason = reason;
+    if (dismissed) next.dismissed = true;
+    return JSON.stringify(next);
+  };
   if (patch.error === undefined && patch.setup === undefined) {
-    return existing.error !== null
-      ? withReason(
-          existing.setup !== null
-            ? { message: existing.error, setup: existing.setup }
-            : { message: existing.error },
-        )
-      : null;
+    if (existing.error !== null) {
+      return withMeta(
+        existing.setup !== null
+          ? { message: existing.error, setup: existing.setup }
+          : { message: existing.error },
+      );
+    }
+    if (!dismissed) return null;
+    const body: RunErrorJson = {};
+    if (existing.setup !== null) body.setup = existing.setup;
+    return withMeta(body);
   }
   const message = (patch.error !== undefined ? patch.error : existing.error) ?? '';
   const setup = patch.setup ?? existing.setup ?? null;
-  return withReason(setup !== null ? { message, setup } : { message });
+  return withMeta(setup !== null ? { message, setup } : { message });
 }
 
 function rowToRun(row: RunRow): Run {
@@ -116,6 +135,7 @@ function rowToRun(row: RunRow): Run {
     error: error?.message ?? null,
     setup: error?.setup ?? null,
     errorReason: error?.reason ?? null,
+    ...(error?.dismissed === true ? { failureDismissed: true } : {}),
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskWorkdir: row.task_workdir,
@@ -310,6 +330,8 @@ export class RunsService {
       setup?: SetupRequirement;
       /** Machine-readable reason stored inside error_json (W3 `permission_revoked`). */
       errorReason?: string | null;
+      /** User closed the failure banner; stored inside error_json. */
+      failureDismissed?: boolean;
     },
   ): Run {
     const existing = this.getOrThrow(id);
@@ -357,6 +379,17 @@ export class RunsService {
       );
     }
     return updated;
+  }
+
+  /**
+   * 用户关闭失败横幅：在 error_json 里标已读。run 行、步骤和重试来源都保留。
+   * 非失败 run 原样返回（没有横幅可关）；不存在则 null。重复关闭是空操作。
+   */
+  dismissFailure(id: string): Run | null {
+    const existing = this.get(id);
+    if (existing === null) return null;
+    if (existing.status !== 'failed' || existing.failureDismissed === true) return existing;
+    return this.update(id, { failureDismissed: true });
   }
 
   listByConversation(conversationId: string, limit = 20): Run[] {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { INTERNAL_SYSTEM_EVENTS, type Message } from '@kepcup/shared';
+import { INTERNAL_SYSTEM_EVENTS, messageSchema, type Message } from '@kepcup/shared';
 import { closeDatabase, openDatabase, type SqliteDatabase } from '../../src/infra/db.js';
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { runMigrations } from '../../src/infra/migrate.js';
@@ -225,6 +225,64 @@ describe('latestTextByConversation（左栏「最后一条消息」预览）', (
       const result = rig.messages.latestTextByConversation();
       expect(result[other]).toBeUndefined();
       expect(result[rig.conversationId]).toBeUndefined();
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('旧的邮件 / 监看状态卡读出来是系统提示，能通过 messages.list 的输出校验', () => {
+    const rig = makeRig();
+    try {
+      const mail = append(rig, {
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'mail',
+        cardMail: {
+          mailEvent: 'arrived',
+          mailAccountId: 'acc',
+          mailKey: 'k',
+          mailSummary: '占位',
+        },
+      });
+      const watch = append(rig, {
+        senderType: 'system',
+        kind: 'card',
+        cardType: 'watch',
+        cardWatch: { watchId: 'w1', watchEvent: 'created' },
+      });
+      rig.db.prepare('update messages set content_json = ? where id = ?').run(
+        JSON.stringify({
+          cardType: 'mail',
+          approvalId: '',
+          mailAccountId: 'acc',
+          mailEvent: 'error',
+          mailKey: 'k',
+          mailSummary: '连接被拒绝',
+        }),
+        mail.id,
+      );
+      rig.db.prepare('update messages set content_json = ? where id = ?').run(
+        JSON.stringify({
+          cardType: 'watch',
+          approvalId: '',
+          watchId: 'w1',
+          watchEvent: 'paused',
+          watchSummary: '连续检查失败',
+        }),
+        watch.id,
+      );
+      const listed = rig.messages.listVisible(rig.conversationId);
+      expect(listed.find((message) => message.id === mail.id)).toMatchObject({
+        kind: 'system_event',
+        content: { event: 'mail_status', text: '连接被拒绝' },
+      });
+      expect(listed.find((message) => message.id === watch.id)).toMatchObject({
+        kind: 'system_event',
+        content: { event: 'watch_status', text: '连续检查失败' },
+      });
+      for (const message of listed) {
+        expect(messageSchema.parse(message)).toMatchObject({ id: message.id });
+      }
     } finally {
       closeDatabase(rig.db);
     }

@@ -18,15 +18,20 @@ export function stepAutoContinue(
 
 /**
  * 打开会话时恢复的失败 run（`runs.list` 新→旧）：普通失败照旧取最近一条未
- * 关闭的；带 setup 的失败只有在它之后没有更新的同 Bot 对话轮 时才恢复——
- * 已被后续 run 接手的旧失败不再出现可续跑的设置卡（审查 HIGH #1）。
+ * 关闭的；已标 `failureDismissed` 的（用户关过横幅，落在 error_json）和本会话
+ * 内存里关掉的都跳过。带 setup 的失败只有在它之后没有更新的同 Bot 对话轮时
+ * 才恢复——已被后续 run 接手的旧失败不再出现可续跑的设置卡（审查 HIGH #1）。
  */
 export function restoredFailedRun(
   runs: readonly Run[],
   dismissed: ReadonlySet<string>,
 ): Run | null {
   const index = runs.findIndex(
-    (run) => run.status === 'failed' && !dismissed.has(run.id) && showsFailure(run),
+    (run) =>
+      run.status === 'failed' &&
+      run.failureDismissed !== true &&
+      !dismissed.has(run.id) &&
+      showsFailure(run),
   );
   if (index === -1) return null;
   const failed = runs[index]!;

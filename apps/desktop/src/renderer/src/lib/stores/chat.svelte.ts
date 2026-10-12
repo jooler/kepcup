@@ -93,9 +93,9 @@ class ChatState {
   #chat = $state<CurrentChat | null>(null);
   #lastSeqByConversation: Record<string, number> = {};
   /**
-   * Failed runs the user closed on the run-failed banner (session-scoped):
-   * they never resurface on reselect or later run events; a *new* failure
-   * still shows. Not persisted — a relaunch lists the failure again.
+   * 本会话已关闭的失败横幅。关闭同时经 `runs.dismissFailure` 落库
+   * （`failureDismissed`），刷新后由那条标记挡住；这个集合只盖住落库完成前
+   * 的空窗，以及迟到的、还没带上标记的 run 事件。新的失败仍会显示。
    */
   #dismissedFailedRunIds = new Set<string>();
   /** Failed runs already retried by the in-chat setup card (one-shot). */
@@ -648,10 +648,16 @@ class ChatState {
     }
   }
 
-  /** Closes the run-failed banner; the run stays retryable via runs.list. */
+  /**
+   * 关闭失败横幅：先在本会话收起，再把该失败标成已读。run 行保留（步骤与
+   * 重试来源都还在），刷新后不再恢复。
+   */
   dismissFailedRun(runId: string): void {
     this.#dismissedFailedRunIds.add(runId);
     if (this.#chat?.failedRun?.id === runId) this.#chat.failedRun = null;
+    core.call('runs.dismissFailure', { runId }).catch((error: unknown) => {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+    });
   }
 
   async deleteConversation(id: string): Promise<void> {
@@ -857,9 +863,13 @@ class ChatState {
     } else {
       chat.activeRuns = chat.activeRuns.filter((a) => a.run.id !== run.id);
     }
-    if (run.status === 'failed' && chat.failedRun?.id !== run.id) logFailedRun(run);
+    const failureHidden =
+      run.failureDismissed === true || this.#dismissedFailedRunIds.has(run.id);
+    if (run.status === 'failed' && !failureHidden && chat.failedRun?.id !== run.id) {
+      logFailedRun(run);
+    }
     chat.failedRun =
-      run.status === 'failed' && showsFailure(run) && !this.#dismissedFailedRunIds.has(run.id)
+      run.status === 'failed' && showsFailure(run) && !failureHidden
         ? run
         : chat.failedRun?.id === run.id
           ? null

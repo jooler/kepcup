@@ -120,6 +120,53 @@ describe('runs 任务字段', () => {
       });
     });
   });
+
+  it('dismissFailure 把失败标成已读，后续 update 不冲掉；非失败与缺失不动', () => {
+    withRuns((runs) => {
+      const turn = runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'turn',
+        triggerReason: 'direct',
+        triggerMessageIds: ['msg_1'],
+      });
+      const failed = runs.update(turn.id, {
+        status: 'failed',
+        error: '429 quota',
+        errorReason: 'quota',
+        setup: { kind: 'main-model' },
+      });
+      expect(failed.failureDismissed).toBeUndefined();
+
+      const dismissed = runs.dismissFailure(failed.id);
+      expect(dismissed).not.toBeNull();
+      expect(dismissed).toMatchObject({
+        status: 'failed',
+        error: '429 quota',
+        errorReason: 'quota',
+        setup: { kind: 'main-model' },
+        failureDismissed: true,
+      });
+      expect(runSchema.parse(dismissed!)).toMatchObject({ failureDismissed: true });
+      expect(runs.dismissFailure(failed.id)?.failureDismissed).toBe(true);
+
+      const patched = runs.update(failed.id, { summary: 'noted' });
+      expect(patched.failureDismissed).toBe(true);
+      expect(patched.error).toBe('429 quota');
+      expect(patched.errorReason).toBe('quota');
+      expect(patched.setup).toEqual({ kind: 'main-model' });
+
+      const running = runs.create({
+        botId: 'bot_x',
+        conversationId: 'conv_a',
+        loopType: 'turn',
+        triggerReason: 'direct',
+        triggerMessageIds: ['msg_2'],
+      });
+      expect(runs.dismissFailure(running.id)?.failureDismissed).toBeUndefined();
+      expect(runs.dismissFailure('missing')).toBeNull();
+    });
+  });
 });
 
 describe('任务查询', () => {
