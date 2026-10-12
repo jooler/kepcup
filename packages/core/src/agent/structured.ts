@@ -1,11 +1,16 @@
 import type { Tool } from '@earendil-works/pi-ai';
 import type { ZodType } from 'zod';
 import { parseAgentModelRef } from '@kepcup/shared';
+import { isModelRouteChangedError } from './model-retry.js';
+import { mapProviderError } from './models.js';
 import type { CompletionRequest, CompletionToolCall, EngineMessage, RunIdentity } from './types.js';
 
 export class StructuredParseError extends Error {}
 
 const SUBMIT_TOOL = 'submit';
+
+/** Route re-resolutions allowed within one attempt (settings flapping guard). */
+const MAX_ROUTE_SWITCHES = 3;
 
 export interface CompleteStructuredInput<T> {
   complete(req: CompletionRequest): Promise<{
@@ -32,10 +37,13 @@ export interface CompleteStructuredInput<T> {
     costUsd: number | null;
   } | null) => void;
   /**
-   * Re-resolve model when settings change mid-flight (passed through to
-   * CompletionRequest so PiEngine can switch provider on retry abort).
+   * Re-resolve the route (engine + model) this call runs on. When settings /
+   * the Bot's model change mid-request, same-model retries stop and the call is
+   * re-issued on the new route — engine and model always travel together, so a
+   * switch between the built-in engine and an external agent is safe. `null` =
+   * no route any more (the call fails). Omitted = the route is fixed.
    */
-  resolveModel?: () => string;
+  resolveRoute?: () => { engine: { complete: CompleteStructuredInput<T>['complete'] }; modelRef: string } | null;
 }
 
 /**
@@ -64,41 +72,74 @@ export function jsonOnlyInstruction(parametersSchema: unknown): string {
  * parses the answer and the retry asks for JSON only.
  */
 export async function completeStructured<T>(input: CompleteStructuredInput<T>): Promise<T> {
-  const jsonOnly = parseAgentModelRef(input.model) !== null;
   const submit = {
     name: SUBMIT_TOOL,
     description: '提交结构化结果；必须调用本工具提交。',
     parameters: input.parametersSchema,
   } as Tool;
-  const systemPrompt = jsonOnly
-    ? `${input.systemPrompt}\n\n${jsonOnlyInstruction(input.parametersSchema)}`
-    : input.systemPrompt;
+  // The route of the latest attempt: external agents get no tool, and the
+  // retry feedback below must match the kind that actually answered.
+  let jsonOnly = parseAgentModelRef(input.model) !== null;
+  let target = { complete: input.complete, model: input.model };
+  /**
+   * Follows the current route; keeps the last one when none resolves. Only
+   * built-in → built-in switches are followed: moving onto (or off) an
+   * external agent changes what the call costs and which budgets / throttles
+   * (`LlmRouter.admit`) apply, so that is left to the next scheduled run.
+   */
+  const refreshTarget = (): boolean => {
+    const next = input.resolveRoute?.();
+    if (next === undefined || next === null || next.modelRef === target.model) return false;
+    if (parseAgentModelRef(next.modelRef) !== null || parseAgentModelRef(target.model) !== null) {
+      return false;
+    }
+    target = { complete: (req) => next.engine.complete(req), model: next.modelRef };
+    return true;
+  };
 
   const attempt = async (messages: EngineMessage[]): Promise<T> => {
     let result: Awaited<ReturnType<CompleteStructuredInput<T>['complete']>>;
-    try {
-      result = await input.complete({
-        identity: input.identity,
-        model: input.resolveModel?.() || input.model,
-        systemPrompt,
-        messages,
-        ...(jsonOnly ? {} : { tools: [submit] }),
-        maxTokens: input.maxTokens,
-        signal: input.signal,
-        ...(input.resolveModel ? { resolveModel: input.resolveModel } : {}),
-      });
-    } catch (error) {
-      // A failed / timed-out external agent call still spent a session of the
-      // subscription: a zero-token row (counted as one round by the budgets),
-      // attributed like a successful one. Built-in calls: unchanged.
-      if (jsonOnly) {
-        try {
-          input.onUsage?.({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null });
-        } catch {
-          // Ledger unavailable (core shutting down): the call's error wins.
+    for (let switches = 0; ; switches++) {
+      const route = target;
+      jsonOnly = parseAgentModelRef(route.model) !== null;
+      const systemPrompt = jsonOnly
+        ? `${input.systemPrompt}\n\n${jsonOnlyInstruction(input.parametersSchema)}`
+        : input.systemPrompt;
+      try {
+        result = await route.complete({
+          identity: input.identity,
+          model: route.model,
+          systemPrompt,
+          messages,
+          ...(jsonOnly ? {} : { tools: [submit] }),
+          maxTokens: input.maxTokens,
+          signal: input.signal,
+          ...(input.resolveRoute
+            ? { isRouteCurrent: () => input.resolveRoute!()?.modelRef === route.model }
+            : {}),
+        });
+        break;
+      } catch (error) {
+        // Settings changed under an in-flight retry: re-issue on the new route.
+        if (
+          isModelRouteChangedError(error) &&
+          switches < MAX_ROUTE_SWITCHES &&
+          refreshTarget()
+        ) {
+          continue;
         }
+        // A failed / timed-out external agent call still spent a session of the
+        // subscription: a zero-token row (counted as one round by the budgets),
+        // attributed like a successful one. Built-in calls: unchanged.
+        if (jsonOnly) {
+          try {
+            input.onUsage?.({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: null });
+          } catch {
+            // Ledger unavailable (core shutting down): the call's error wins.
+          }
+        }
+        throw isModelRouteChangedError(error) ? mapProviderError(error) : error;
       }
-      throw error;
     }
     input.onUsage?.(result.usage ?? null);
     const submitted = result.toolCalls.find((c) => c.name === SUBMIT_TOOL);
@@ -114,7 +155,9 @@ export async function completeStructured<T>(input: CompleteStructuredInput<T>): 
     // never after a failed / timed-out / cancelled call.
     if (jsonOnly && !(error instanceof StructuredParseError)) throw error;
     const reason = error instanceof StructuredParseError ? error.message : '调用失败';
-    const feedback = jsonOnly
+    // The retry follows the route as it is now (the failure may be a switch).
+    refreshTarget();
+    const feedback = parseAgentModelRef(target.model) !== null
       ? `你上一次的输出无法通过校验：${reason}。请重新输出：只输出 JSON——一个符合 Schema 的 JSON 对象，不要任何其他文字。`
       : `你上一次的输出无法通过校验：${reason}。请再次输出，直接调用 submit 工具提交结果。`;
     return attempt([...input.messages, { role: 'user', content: feedback, timestamp: Date.now() }]);

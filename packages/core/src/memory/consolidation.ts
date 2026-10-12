@@ -94,7 +94,7 @@ export async function runConsolidationJob(deps: ConsolidationJobDeps): Promise<v
       if (batch.length < 2) continue; // nothing to merge in this batch
       const output = await completeStructured<ConsolidationOutput>({
         complete: (req) => route.engine.complete(req),
-        resolveModel: () => routeFor(deps, 'consolidation', botId)?.modelRef ?? '',
+        resolveRoute: () => routeFor(deps, 'consolidation', botId),
         identity: { runId: run.id, botId, conversationId: null, loopType: 'memory_consolidation' },
         model: lightRef,
         systemPrompt: CONSOLIDATION_PROMPT,

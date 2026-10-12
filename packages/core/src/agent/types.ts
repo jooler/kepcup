@@ -108,6 +108,12 @@ export interface RunSpec {
   messages: EngineMessage[];
   tools: ToolDefinition[];
   limits: { maxTurns: number };
+  /**
+   * Whether `model` is still what this run's Bot would use. PiEngine stops
+   * retrying the old provider once it flips to false (the run then fails with
+   * a "model settings changed" error). Omitted = never stale.
+   */
+  isRouteCurrent?: () => boolean;
   // Cancellation goes through RunHandle.abort() (pi's agent.abort); a spec
   // signal would be dead wiring — the engine never polls it.
   //
@@ -304,10 +310,12 @@ export interface CompletionRequest {
   maxTokens?: number;
   signal?: AbortSignal;
   /**
-   * Re-resolve the model mid-flight when settings / Bot profile change.
-   * PiEngine aborts same-model HTTP retries and calls this to switch provider.
+   * Whether the route this request was resolved for (model + engine) is still
+   * the current one. PiEngine stops same-model HTTP retries once it returns
+   * false and throws `ModelRouteChangedError`; the caller that owns the route
+   * re-resolves and issues a fresh request. Omitted = never stale.
    */
-  resolveModel?: () => ModelRef;
+  isRouteCurrent?: () => boolean;
 }
 
 export interface CompletionToolCall {
