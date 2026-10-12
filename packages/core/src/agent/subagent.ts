@@ -58,8 +58,12 @@ export interface SubagentFacadeInput {
   parent: RunIdentity;
   /** Sub run model = the parent run's main model. */
   modelRef: string;
+  /** Whether `modelRef` is still the parent's model (settings / Bot change → stop retrying the old provider). */
+  isRouteCurrent?: () => boolean;
   /** Compression model ('' = no light model → skip compression, truncate instead). */
   lightModelRef: string;
+  /** Same, for `lightModelRef`. */
+  isLightRouteCurrent?: () => boolean;
   /**
    * Engine for the compression call (D72 P6 router: an external agent when
    * there is no built-in light model); defaults to the runner's engine.
@@ -676,6 +680,7 @@ async function runSubagent(
     handle = engine.startRun({
       identity,
       model: input.modelRef,
+      ...(input.isRouteCurrent ? { isRouteCurrent: input.isRouteCurrent } : {}),
       buildSystemPrompt: input.buildSystemPrompt,
       messages: [{ role: 'user', content: params.task, timestamp: clock.now() }],
       tools: input.buildTools(identity),
@@ -805,6 +810,7 @@ async function compressResult(
       .complete({
         identity,
         model: input.lightModelRef,
+        ...(input.isLightRouteCurrent ? { isRouteCurrent: input.isLightRouteCurrent } : {}),
         systemPrompt: COMPRESSOR_SYSTEM_PROMPT,
         messages: [
           {

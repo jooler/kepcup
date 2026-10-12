@@ -13,9 +13,11 @@ import { fakeAgentEntry } from '@kepcup/testkit';
 import {
   agentBackgroundBlocker,
   backgroundRunSpec,
+  builtinModelRef,
   engineKeyOf,
   LlmRouter,
   routeFor,
+  routeStillCurrent,
   type LlmPurpose,
 } from '../../src/agent/llm-router.js';
 import { triageOneBot } from '../../src/dispatch/dispatcher.js';
@@ -450,5 +452,30 @@ describe('triageOneBot through the router (P6)', () => {
     // Same bot + group right after: throttled — no second agent call.
     expect(await triageOneBot(triageDeps(r).input)).toMatchObject({ decision: 'no_action' });
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('builtinModelRef / routeStillCurrent: the single model-selection entry', () => {
+  const settingsOf = (patch: Partial<Settings>) => settingsSchema.parse(patch);
+
+  it('conversation = bot main → default main, whatever the light settings are', () => {
+    const s = settingsOf({ defaultMainModel: 'custom:m/main', defaultLightModel: 'custom:m/light' });
+    expect(builtinModelRef('conversation', s, null)).toBe('custom:m/main');
+    expect(builtinModelRef('conversation', s, bot({ model: 'custom:b/main' }))).toBe('custom:b/main');
+    expect(builtinModelRef('conversation', settingsOf({}), bot())).toBe('');
+  });
+
+  it('reads settings on every call, so a default change applies to the next call', () => {
+    let current = settingsOf({ defaultMainModel: 'custom:old/main', defaultLightModel: 'custom:old/light' });
+    const deps = {
+      engine: builtin,
+      settings: { get: () => current },
+      bots: { get: () => bot() },
+    };
+    expect(routeFor(deps, 'summary', null)?.modelRef).toBe('custom:old/light');
+    expect(routeStillCurrent(deps, 'summary', null, 'custom:old/light')).toBe(true);
+    current = settingsOf({ defaultMainModel: 'custom:new/main', defaultLightModel: 'custom:new/light' });
+    expect(routeFor(deps, 'summary', null)?.modelRef).toBe('custom:new/light');
+    expect(routeStillCurrent(deps, 'summary', null, 'custom:old/light')).toBe(false);
   });
 });

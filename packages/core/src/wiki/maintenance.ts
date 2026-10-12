@@ -19,7 +19,12 @@ import { pageTitleOf } from './topics.js';
 import type { WikiService } from './service.js';
 import { redactStepPayload } from '../infra/redact.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
-import { backgroundRunSpec, engineKeyOf, routeFor } from '../agent/llm-router.js';
+import {
+  backgroundRunSpec,
+  engineKeyOf,
+  routeFor,
+  routeStillCurrent,
+} from '../agent/llm-router.js';
 import type { LlmRouter } from '../agent/llm-router.js';
 
 export interface WikiMaintenanceDeps {
@@ -128,6 +133,7 @@ export async function runWikiMaintenance(
         loopType: 'wiki_maintenance',
       },
       model: modelRef,
+      isRouteCurrent: () => routeStillCurrent(deps, 'wiki_maintenance', botId, modelRef),
       buildSystemPrompt: async () => MAINTENANCE_PROMPT,
       messages: [{ role: 'user', timestamp: Date.now(), content: taskMessage(task) }],
       tools: buildMaintenanceTools({ wikiRoot: root }),

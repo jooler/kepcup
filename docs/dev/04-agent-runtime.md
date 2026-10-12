@@ -27,6 +27,23 @@
 - pi 的具体 API 名称以锁定版本的文档为准（**需验证**，P01）。发现与上表不符时，按 [README.md](README.md#偏差与问题) 记录，保持 `AgentEngine` 接口不变。
 - 工具参数 schema 使用 pi 要求的格式（**需验证**：当前为 TypeBox）。
 
+### 模型调用清单与选取规则
+
+**推理只经 `AgentEngine`**（`PiEngine.startRun` / `complete`，外部 Agent 同接口）；业务代码不直接调 pi-ai 的 `complete`。唯一的例外是设置页「测试连接」`testProvider`（显式指定模型，不属于业务推理）。向量 / 重排 / 视觉 / 语音 / 图片走 media 网关，按 `settings.capabilityModels` 选型，与对话模型的默认主 / 轻量设置无关。
+
+**选哪个模型只有一个入口**：`agent/llm-router.ts` 的 `builtinModelRef(purpose, settings, bot)`（`LlmRouter` / `routeFor` 都经它）。每次调用都读当前 settings / Bot，不缓存；调用点不得自己写 `runtime.model || settings.default*`（`model-selection-single-source.test.ts` 钉死允许直接读这些字段的文件）。
+
+| 调用点 | purpose（规则） | 入口 |
+|---|---|---|
+| 对话轮 / 任务 run、SubAgent 子 run | `conversation`（Bot 主 → 全局主） | orchestrator `#turnModelRef` / `#modelRefForBot` |
+| 群聊判断 | `triage`（Bot 轻量 → 全局轻量 → Bot 主 → 全局主） | `LlmRouter` |
+| SubAgent 结果压缩 | `subagent_compaction`（同上） | `LlmRouter` |
+| 摘要 / 反思 / 记忆整理 | `summary` / `reflection` / `consolidation`（全局轻量 → 全局主） | `routeFor` |
+| 画像整理 | `profile_curation`（全局主） | `routeFor` |
+| Wiki 维护 / 技能生成 | `wiki_maintenance` / `skill_authoring`（Bot 主 → 全局主） | `routeFor` |
+
+**设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（对话轮、任务、Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录实际使用的模型）。
+
 ## 外部智能体引擎（ACP，D72）
 
 设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。实现位于 `core/src/agent/external/`（通用 ACP 部分 + `providers/` 下各智能体的差异模块），对外仍只暴露 `AgentEngine`（`RunSpec` 的可选扩展见 [02-architecture.md](02-architecture.md#agentenginepi-的封装)）。

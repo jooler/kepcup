@@ -19,7 +19,12 @@ import { parseSkillDir, sanitizeSkillName } from './parse.js';
 import { shQuote } from '../infra/shell.js';
 import { redactStepPayload } from '../infra/redact.js';
 import type { SkillsService } from './registry.js';
-import { backgroundRunSpec, engineKeyOf, routeFor } from '../agent/llm-router.js';
+import {
+  backgroundRunSpec,
+  engineKeyOf,
+  routeFor,
+  routeStillCurrent,
+} from '../agent/llm-router.js';
 import type { LlmRouter } from '../agent/llm-router.js';
 
 export interface AuthoringJobDeps {
@@ -108,6 +113,7 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
   mkdirSync(draftsDir, { recursive: true });
 
   const modelRef = route.modelRef;
+  const authoringBotId = job.bot_id;
   const run = deps.runs.create({
     botId: job.bot_id,
     conversationId: triggerConversationId,
@@ -142,6 +148,7 @@ export async function runSkillAuthoringJob(deps: AuthoringJobDeps): Promise<void
       loopType: 'skill_authoring',
     },
     model: modelRef,
+    isRouteCurrent: () => routeStillCurrent(deps, 'skill_authoring', authoringBotId, modelRef),
     buildSystemPrompt: async () => AUTHORING_PROMPT,
     messages: [
       {

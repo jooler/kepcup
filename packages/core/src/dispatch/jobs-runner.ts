@@ -4,7 +4,7 @@ import type { JobRow, JobsService } from '../domain/jobs.js';
 import type { SettingsService } from '../domain/settings.js';
 import { runConversationSummaryJob } from '../agent/loops/conversation-summary.js';
 import type { AgentEngine } from '../agent/types.js';
-import type { LlmPurpose, LlmRouter } from '../agent/llm-router.js';
+import { builtinModelRef, type LlmPurpose, type LlmRouter } from '../agent/llm-router.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -404,8 +404,7 @@ export class JobsRunner {
       const route = router.resolveForBot(this.#routeBotId(job), purpose);
       if (route !== null && route.agentId !== null) return route.provider;
     }
-    const settings = this.#deps.settings.get();
-    const ref = settings.defaultLightModel || settings.defaultMainModel;
+    const ref = builtinModelRef('summary', this.#deps.settings.get(), null);
     const index = ref.indexOf('/');
     return index > 0 ? ref.slice(0, index) : 'unknown';
   }

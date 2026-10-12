@@ -220,6 +220,7 @@ import { ChainsService } from './chains.js';
 import { GroupTurnCoordinator } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
 import {
+  builtinModelRef,
   builtinRoute,
   type LlmPurpose,
   type LlmRoute,
@@ -2261,10 +2262,28 @@ export class Orchestrator {
   }
 
   /** SubAgent 结果压缩的模型与引擎（'' = 不压缩、截断兜底）。 */
-  #compactionRoute(botId: string): { lightModelRef: string; lightEngine?: AgentEngine } {
+  #compactionRoute(botId: string): {
+    lightModelRef: string;
+    lightEngine?: AgentEngine;
+    isLightRouteCurrent?: () => boolean;
+  } {
     const route = this.#backgroundRoute(botId, 'subagent_compaction');
     if (route === null) return { lightModelRef: '' };
-    return { lightModelRef: route.modelRef, lightEngine: route.engine };
+    return {
+      lightModelRef: route.modelRef,
+      lightEngine: route.engine,
+      isLightRouteCurrent: () =>
+        this.#backgroundRoute(botId, 'subagent_compaction')?.modelRef === route.modelRef,
+    };
+  }
+
+  /**
+   * Whether `modelRef` is still what a bot's conversation turn / task would
+   * run on — the engine stops retrying a provider the user has switched away
+   * from (other Bots' changes do not matter).
+   */
+  #conversationRouteCurrent(isTask: boolean, botId: string, modelRef: string): boolean {
+    return (isTask ? this.#modelRefForBot(botId) : this.#turnModelRef(botId)) === modelRef;
   }
 
   /**
@@ -2295,8 +2314,7 @@ export class Orchestrator {
       if (agent !== undefined && this.#agentIdOf(bot).length > 0) {
         return agentModelRef(agent.id, agent.model);
       }
-      const settings = this.#deps.settings.get();
-      return bot?.profile.runtime.model || settings.defaultMainModel;
+      return builtinModelRef('conversation', this.#deps.settings.get(), bot);
     } catch {
       return '';
     }
@@ -2309,7 +2327,7 @@ export class Orchestrator {
   #turnModelRef(botId: string): string {
     try {
       const bot = this.#deps.bots.get(botId);
-      return bot?.profile.runtime.model || this.#deps.settings.get().defaultMainModel;
+      return builtinModelRef('conversation', this.#deps.settings.get(), bot);
     } catch {
       return '';
     }
@@ -3346,6 +3364,7 @@ export class Orchestrator {
             {
               parent: identity,
               modelRef,
+              isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
               ...this.#compactionRoute(batch.botId),
               buildTools: (subIdentity) =>
                 buildSubagentResearchTools({
@@ -3641,9 +3660,7 @@ export class Orchestrator {
         model: modelRef,
         // Stop retrying a provider the user has since switched this Bot away
         // from (other Bots' changes do not matter).
-        isRouteCurrent: () =>
-          (isTask ? this.#modelRefForBot(batch.botId) : this.#turnModelRef(batch.botId)) ===
-          modelRef,
+        isRouteCurrent: () => this.#conversationRouteCurrent(isTask, batch.botId, modelRef),
         // D72：外部 Agent 的会话参数（PiEngine 忽略）。
         ...(agentRun !== null
           ? {
