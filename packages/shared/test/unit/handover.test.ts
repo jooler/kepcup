@@ -11,6 +11,8 @@ import {
   botHandoverPayloadSchema,
   butlerProposedBotSchema,
   chatModelOptions,
+  defaultHandoverKeys,
+  memoryEvidenceSchema,
   messageContentSchema,
   rpcEventSchemas,
   selectableHandoverKeys,
@@ -85,6 +87,59 @@ describe('botHandoverPayloadSchema', () => {
       HANDOVER_RESP_TO_KEY,
       HANDOVER_RESP_FROM_KEY,
     ]);
+  });
+});
+
+describe('P1 card marks / default selection / memory provenance', () => {
+  it('items default to no marks and checked; sensitive memories opt out of the default selection', () => {
+    const parsed = botHandoverPayloadSchema.parse({
+      ...payload,
+      items: [
+        ...payload.items,
+        {
+          key: 'skill:deploy',
+          assetType: 'skill',
+          action: 'copy',
+          label: 'deploy',
+          marks: ['external_import'],
+        },
+        {
+          key: 'memory:mem_s',
+          assetType: 'memory',
+          action: 'copy',
+          label: '体检安排',
+          marks: ['sensitive'],
+          defaultSelected: false,
+        },
+      ],
+    });
+    expect(parsed.items[0]).toMatchObject({ marks: [], defaultSelected: true });
+    expect(selectableHandoverKeys(parsed)).toContain('memory:mem_s');
+    expect(defaultHandoverKeys(parsed)).toEqual(['mail:mal_1', 'skill:deploy', HANDOVER_RESP_FROM_KEY]);
+    expect(() =>
+      botHandoverPayloadSchema.parse({
+        ...payload,
+        items: [{ ...payload.items[0], marks: ['made_up'] }],
+      }),
+    ).toThrow();
+  });
+
+  it('memory evidence accepts the handover provenance form next to the message form', () => {
+    expect(
+      memoryEvidenceSchema.parse({
+        messageId: null,
+        conversationId: null,
+        runId: null,
+        handoverId: 'hnd_1',
+        fromBotId: 'bot_a',
+        fromItemId: 'mem_1',
+      }),
+    ).toMatchObject({ handoverId: 'hnd_1', fromItemId: 'mem_1' });
+    expect(memoryEvidenceSchema.parse({ messageId: 'msg_1', conversationId: 'c', runId: null })).toEqual({
+      messageId: 'msg_1',
+      conversationId: 'c',
+      runId: null,
+    });
   });
 });
 

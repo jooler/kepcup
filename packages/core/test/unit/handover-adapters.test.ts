@@ -391,7 +391,7 @@ describe('schedule adapter', () => {
     return { world, adapter, transfers, members };
   }
 
-  it('inventories active schedules; commitment-linked ones are greyed out (P1)', () => {
+  it('inventories active schedules; commitment-linked ones are greyed out without a memory port', () => {
     const { adapter } = setup();
     const entries = adapter.inventory('bot_a');
     expect(entries.map((entry) => entry.key)).toEqual([
@@ -421,6 +421,10 @@ describe('schedule adapter', () => {
     await adapter.apply(ctx(), 'schedule:sch_d');
     expect(transfers).toEqual(['sch_d->direct_bot_b']);
     expect(adapter.isApplied(ctx(), 'schedule:sch_d')).toBe(true);
-    expect(adapter.validate(ctx(), 'schedule:sch_d', 'move')).toContain('已结束');
+    // P1：已经移交给 B 的任务对 B 仍「可执行」（崩溃恢复只补剩下的步骤）；对别人已结束。
+    expect(adapter.validate(ctx(), 'schedule:sch_d', 'move')).toBeNull();
+    expect(adapter.validate(ctxOf(world, 'bot_a', null), 'schedule:sch_d', 'move')).toContain(
+      '已结束',
+    );
   });
 });
