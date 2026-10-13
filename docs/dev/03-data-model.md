@@ -825,7 +825,7 @@ CREATE TABLE bot_handover_items (
 - `(handover_id, key)` 是幂等键：执行前查状态，`done` 跳过；启动时 `applying` 的移交继续剩余 `pending` 项，`proposed` 而卡片已被启动恢复取消的落 `cancelled`。
 - 结算：全部 done → `completed`；一项都没做成 → `failed`；其余 → `partial`（跳过与失败都算未完成）。
 - 删除级联：对话物理删除时随 FK 删除；Bot 删除不删（Bot 行是占位行、id 不复用，记录留作历史；对应的待确认卡由「删除 Bot 取消其 approvals」处理，执行中的条目重新校验时因 Bot 已删除而跳过）。
-- P2 后台条目（`wiki:*`、`widget:*`）：确认后的同步阶段不执行，阶段 2–6 之后登记一个 `handover_copy` 作业；作业结束前移交保持 `applying`，交接说明（`note:handover`）与结算在作业完成后才做。`result_json` 约定：`copiedCount`（Wiki 页数 / 组件版本数）、`skippedPaths`（接手方已有同路径、内容不同而没覆盖的页）、Wiki 另有 `missingPaths` / `bytes` / `rawConflicts` / `commit`，组件另有 `widgetId`（副本 id）。执行视图（`handovers.get` / `handover.updated`）把前两项带给卡片，另由宿主算出 `retire`（全部完成、没有跳过的页、来源仍在且不是管家时 = `{botId, botName}`，否则 null）。
+- P2 后台条目（`wiki:*`、`widget:*`）：确认后的同步阶段不执行，阶段 2–6 之后登记一个 `handover_copy` 作业；作业结束前移交保持 `applying`，交接说明（`note:handover`）与结算在作业完成后才做。`result_json` 约定：`copiedCount`（Wiki 页数 / 组件版本数）、`skippedPaths`（接手方已有同路径、内容不同而没覆盖的页）、Wiki 另有 `missingPaths` / `bytes` / `rawConflicts` / `commit`，组件另有 `widgetId`（副本 id）。执行视图（`handovers.get` / `handover.updated`）把前两项带给卡片，另由宿主算出 `retire`（全部完成、没有跳过的页与原件冲突、接手方仍在、来源仍在且不是管家、来源名下已没有邮箱 / 连接应用 / MCP / 定时任务 / 网页监看时 = `{botId, botName, remaining: {memory, wikiPages, skills, widgets}}`，否则 null）。
 
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
@@ -999,7 +999,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 每次 Wiki 维护提交后，按变更的页面增量更新（提交 diff 中被删除的页面同步移除索引行）；界面删除页面走同一条提交通道，`wiki.rollback` 与启动对账则全量重建。
 
-D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进暂存目录 `{cacheDir}/handover-staging/{handoverId}/`（与 `bots/` 同一文件系统；仓外目录是符号链接时不跟随；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。只放复制成功的页所引用的原件与资产。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」；提交之前出错则删掉本次落盘的文件、恢复 log.md 再抛错（不留未提交的文件）。提交之后增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`、给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`），这两步失败只记日志（启动对账兜底）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
+D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进暂存目录 `{cacheDir}/handover-staging/{handoverId}/`（与 `bots/` 同一文件系统；仓外目录是符号链接时不跟随；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。只放复制成功的页所引用的原件与已完成（`derived` / `maintained`）的资产，B 那份清单与 `state.json` 的 `sources` 改为移交来源。落盘前把本次要放的页写进 `bots/{B}/wiki-handover/{handoverId}.json`（续跑时其中的页算已复制），移交到终态时与暂存一起删除，启动时清扫残留。一次复制总量上限 `HANDOVER_WIKI_COPY_MAX_BYTES`。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」；提交之前出错则删掉本次落盘的文件、恢复 log.md 再抛错（不留未提交的文件）。提交之后增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`、给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`），这两步失败只记日志（启动对账兜底）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
 
 ## 删除级联
 

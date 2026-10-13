@@ -294,11 +294,34 @@
 - **DEV-022 Wiki 的选择粒度与冲突口径**：除了按页，还有目录条目（`wiki:pages/` 整本、`wiki:pages/{目录}/`），执行时取目录下**当下**的页（提议后新增的页也会被复制，删掉的计 missing）；盘点不带查询只给目录条目与统计，`wiki_query` 才列页、只给标题与路径（不把正文片段灌进上下文——群聊同样适用）。页条目计入 `HANDOVER_ITEMS_MAX`（100），大量复制用目录条目。B 已有同路径**字节相同**的页算「已复制」（续跑幂等；B 事先就有一模一样的页也算完成）；**不同**才是冲突：单页条目卡上置灰、执行时跳过，目录条目照常执行、结果里列出跳过的路径（条目仍是 done，但会挡住退役，见 DEV-025）。被引用的原件在 B 那里有不同内容时保留 B 的（结果里有 `rawConflicts`，不单独提示用户）。log.md 由宿主追加一行（维护 loop 之外唯一的写入方），index.md 不动，交给排的那次 lint 整合。**推荐**：照此。
 - **DEV-023 后台作业与重试的口径**：组件也进 `handover_copy` 作业（照设计 §5.3；它其实只是一个数据库事务）。「失败可重试」= 作业级自动重试：后台阶段出错时条目留 pending、作业推迟（30 秒 × 已用次数）后重试，至多 `JOB_MAX_ATTEMPTS` 次，末次仍失败记 failed；作业三次都在执行中崩溃（jobs 恢复置 `failed`）时条目记「后台复制多次中断」，不无限重登。没有给用户的「重试失败项」按钮：失败项在卡上 / 通知里列出，用户可以让 Bot 再提一张卡（已复制的页按「字节相同 = 已复制」幂等，等于只补剩下的）。作业 `bot_id` 为空：不受接手方每日后台预算推迟，也不随某个 Bot 被删而被 jobs 取消（作业自己检查两边 Bot 是否还在，不在则跳过）。交接说明在作业完成后才写，所以 B 收到的交接记录包含 Wiki / 组件。**推荐**：照此；若需要卡上「重试」按钮，作为后续小项。
 - **DEV-024 `deletionPreview` 不改用适配器汇总**（§5 可选项，未做）：适配器的 `inventory` 统计的是「可移交」的子集（记忆排除私密 / 自我笔记 / 承诺 / 失效，技能排除草稿与内置，Wiki 盘点是目录条目），用它替换删除确认框里的数字会**少报**删除会毁掉的东西，与该对话框的用途相反；RPC 契约也只有那几个字段。保持 `lifecycle.deletionPreview` 原样。**推荐**：保持。
-- **DEV-025 退役按钮的判定**：由 core 计算（视图 `retire`，契约新增字段），条件：这张卡**勾选执行的条目**全部 done（含交接说明）、没有因同路径跳过的 Wiki 页、接手方存在、来源仍在且不是管家；`partial` / `failed` 不出。只看这次移交，不检查 A 名下是否还有别的资产（例如只交了邮箱、A 还有定时任务时也会出现按钮——删除确认框里有统计，用户自己判断）。按钮只是 D18 删除的另一个入口，同一份确认、同一个 `bots.delete`；通讯录里已没有该 Bot（已删除）时不显示。**推荐**：照此；若希望「A 名下没有剩余可移交资产才出按钮」，可在判定里加一次盘点。
+- **DEV-025 退役按钮的判定**（独立审查后修订）：由 core 计算（视图 `retire`，契约新增字段），条件：这张卡**勾选执行的条目**全部 done（含交接说明）、没有因同路径跳过的 Wiki 页、没有原件冲突、**接手方仍在且 active**、来源仍在且不是管家，并且**来源名下已没有任何移交类资产**（邮箱、连接应用、MCP、定时任务、网页监看——按适配器盘点，含这次没勾或置灰的；共享出去的连接应用 / MCP 因为 A 仍持有也算剩余）；`partial` / `failed` 不出。这对应设计 §6 / §5 的「全部资产移交后」：职责类资产都交出去了，删掉 A 不会让邮箱没人收、定时任务 / 监看消失。知识类资产（记忆、Wiki、技能、组件）不挡按钮，但视图 `retire.remaining` 给出 A 名下还留着、这次没复制给接手方的条数（总数减本次 done：记忆条数、Wiki 复制的页数、技能个数、组件个数），卡片提示「它还留着没复制给 B 的 记忆 N 条、Wiki N 页……，删除会一并删掉」，结果通知也说明。按钮只是 D18 删除的另一个入口，同一份确认、同一个 `bots.delete`；渲染端在通讯录里找不到 A 或 B 时都不显示。**推荐**：照此。
 - **DEV-026 组件的确认状态与同名口径**：D81 的加载确认是渲染端 localStorage 按「HTML sha256 + 查询摘要」记的（不分组件 / Bot），副本内容不变，原版确认过的版本在 B 那里**自动**免确认、没确认过的仍要确认——无需复制任何确认记录；core 强制的 SQL 预审时间（`queries_reviewed_at`）原样复制（用户审过的是同一份 SQL）；D87 自检状态 / 摘要照搬。`widget_docs`（组件自己的存储数据）也复制——B 的副本从 A 当时的数据开始，之后各自独立。同名口径：B 名下任何作用域的同名组件都置灰；会话级组件不移交（只属于所在对话、卡片钉在那里、查询模板读那个对话的消息），盘点只给条数。复制不发卡（B 之后用 `widget_publish` 发到需要的对话）。**推荐**：照此。
 - **DEV-027 契约与服务的新增面**：执行视图 `copiedCount` / `skippedPaths` / `retire`、作业类型 `handover_copy`、常量 `HANDOVER_WIKI_QUERY_LIMIT`（全部带默认值，旧客户端 / 旧推送兼容）；`WikiService` 增 `pageStats` / `pageConflict` / `copyForHandover` / `reconcileFtsFor`（`reconcileFts` 改为逐 Bot 调它）；`JobsService` 增 `activeByDedupeKey` / `latestByDedupeKey` / `postpone` 与 `JobRetryLaterError`（jobs runner 识别它推迟重试；非 pending 的按 `dedupe_key` 查走全表扫描——只在移交执行时调用，jobs 表有定期清理，未加索引以免迁移）；`git.ts` 增 `commitWikiTreeIfChanged`。**推荐**：照此。
 
 **评审时请重点看**：作业恢复——`#execute` 在后台条目未完成时提前返回、`#ensureCopyJob` 的「已有 pending / running 不重登、`failed` 不重登而记失败」、`runCopyJob` 结束时等在途执行再 `#launch` 收尾（两条路径都可能先到，靠状态与 `#running` 判重）、`#launch` 崩溃兜底 `#settle` 会把后台 pending 记失败而作业之后见 `status !== 'applying'` 直接返回；Wiki 锁与原子性——两段式、从不同时持两把锁（相反方向的两张卡不会死锁），来源锁内只读，目标锁内逐文件 rename（同文件系统），崩溃可能留下「已落盘未提交」的页，靠「字节相同 = 已复制」+ `commitWikiTreeIfChanged` 续上（单测覆盖）；FTS 一致——增量 upsert 之后再 `reconcileFtsFor`，提交与 FTS 之间崩溃由启动对账兜底（同 BR-P09-009）；硬链接安全——只链 `wiki-store` 下的不可变文件，`state.json` 与 `raw/` 一律复制，依赖 D85 用原子 rename 写仓外文件（DEV-021）；确认状态复制——见 DEV-026，副本版本行逐列照搬；退役判定——`#retireOffer`（视图里 notes 条目也必须 done）。已知未覆盖：`applyBatch` 暂时失败后的作业级重试路径（抛错 → 立即重试）没有注入故障的专门用例（末次失败与多次中断都有用例）；Wiki 页里用绝对路径（以 `/` 开头）或 wiki 根相对（`raw/...` 不带 `../`）写的引用不会被识别为原件（SCHEMA 约定是相对路径），页照常复制、链接在 B 的 lint 里会被报告。
+
+- **DEV-028 D85 资产的保守处理**（独立审查 #10）：D85 仍未实施，按设计 36 §3.2 的状态名：只复制状态为 `derived` / `maintained` 的资产（看仓外 `state.json` 的 `status`，没有时看 `raw/_assets/{id}.json`），其余（`stored` / `deriving` / `blocked` / `failed`）与没有可读清单的资产一律不复制（页面照常复制，链接在 B 的 lint 里会被报告；结果里有 `skippedAssets`）。复制到 B 的清单与 `state.json` 的 `sources` 改写为 `[{type: 'handover', handoverId, fromBotId}]`（不带 A 的对话 / 附件 id；内容确定，续跑仍是「字节相同 = 已复制」）。设计 36 §6 已补一条同样的约定。**推荐**：照此；D85 落地时把「移交来源」加进 `sources[].type` 的取值。
+- **DEV-029 Wiki 复制的规模与调度**（独立审查 #6）：一次复制（页 + 引用的原件 + D85 资产，含仓外二进制）上限 `HANDOVER_WIKI_COPY_MAX_BYTES` = 1 GiB：单个条目超限在卡上置灰并写明大小，一批合起来超限整批跳过（理由同样写明大小）；文件操作改为异步（拷贝 / 链接 / 比较 / rename），每 16 个文件让出一次事件循环。`handover_copy` 作业不调模型，调度键改为自己的 `host:handover_copy`，不再占摘要模型厂商的并发槽（仍受后台优先级的全局并发约束）。**推荐**：照此；上限可按用户反馈调。
+- **DEV-030 落盘清单**（独立审查 #5）：每次移交在接手方的 `bots/{B}/wiki-handover/{handoverId}.json` 记下它放进 B 的页（rename 之前写，原子替换）；续跑时清单里的页即使已被 B 的维护改过也算「已复制」，不再误报为同路径冲突。移交到终态时连同暂存目录一起删除；启动时清扫不在执行中的移交留下的清单与暂存（独立审查 #9）。**推荐**：照此。
+
+### P2 独立审查修复（2026-10-13，独立 opus 审查 t/handover-p2 @ 267a318，无 critical）
+
+| # | 发现 | 修复 | 回归测试 |
+|---|---|---|---|
+| 1 | 接手方被删除后结果卡仍给「删除 A」 | `#retireOffer` 要求接手方存在且 active；渲染端在通讯录里找不到接手方时也不显示 | `handover-p2`「独立审查 #1 / #2」（删 B 后 `retire` 为 null） |
+| 2 | DEV-025 与设计「全部资产移交后」不符 | 来源名下还有任何移交类资产（邮箱、连接应用、MCP、定时任务、网页监看）时不给；`retire.remaining` 列出没复制的记忆 / Wiki 页 / 技能 / 组件条数，卡片提示与结果通知同步（DEV-025 修订） | 同上（A 还有定时任务 → null；取消后 → 给出且 `remaining` 全 0）；`handover-p2`「作业崩溃恢复…」断言 `remaining = {wikiPages: 2, widgets: 1}` 与通知里的「Wiki 2 页、组件 1 个」 |
+| 3 | 267a318 的邮件规则对管家也注入，与 `BUTLER_RULES` 矛盾 | `mailRequestSetupRule(butler)`：管家用 `propose_handover`（`from_bot_id` 填原来负责的 Bot），普通 Bot 请用户找管家或持有者 | `context-assembly`「D88: the mail setup rule matches the initiator rights…」 |
+| 4 | 后台复制与删除接手方并发：可能重建 `bots/{B}/` 或给已删 Bot 插组件行 | `WikiService` 记下开始删除的 Bot（`prepareBotDeletion`），第二段落盘前与每次 await 后复查；`WidgetService.copyForHandover` 事务内复查两边 Bot（库里 `status` + 已清组件的 Bot）；`#runBackground` 每组前复查两边 Bot | `handover-p2`「独立审查 #4」（B 的维护锁被占住时删除 B → 复制失败待重试、`bots/{B}` 不存在、无组件行；重试后跳过并结算、仍无残留） |
+| 5 | 续跑时被 B 维护改过的已复制页误报为冲突 | 落盘清单（DEV-030） | `handover-wiki-copy`「独立审查 #5 / #8 / #9 / #10 / #6」 |
+| 6 | 大 Wiki：无总量上限、同步长循环、占摘要模型厂商的调度槽 | DEV-029 | `handover-adapters-p2`「size cap」；`handover-wiki-copy`（`copySize`） |
+| 7 | `rawConflicts` 按整批挂到每个 Wiki 条目 | 按该条目复制的页所引用的原件过滤（`outcome.pageFiles`） | `handover-adapters-p2` applyBatch 用例 |
+| 8 | Wiki key 原样打印，页路径可能含控制字符 / 换行 | `isWikiPagePath` / `pageStats` 拒绝控制字符与尖括号；`formatInspection` 里 Wiki key 包 `<untrusted>`（并说明只抄标签里的文字） | `handover-wiki-copy`（含换行 / 尖括号的页不列、不读）；`handover-p2` 盘点断言 |
+| 9 | 作业 `failed` 后暂存目录残留 | 移交终态时丢弃暂存与清单；`#ensureCopyJob` 记失败时也丢；`recover()` 启动清扫不在执行中的 | `handover-wiki-copy`（`sweep` / `discard`） |
+| 10 | D85 未完成资产与 A 的 `sources[]` 被带到 B | DEV-028 | `handover-wiki-copy`（`deriving` 资产不复制；B 的清单 / `state.json` 的 `sources` 为移交来源）；`handover-p2` 断言 B 的清单来源 |
+
+提交：`6580d35`（#3）、`2c1d74f`（#1 #2）、`2aae7b7`（#4）、`d28b6fa`（#5–#10）、本次文档提交。测试结果见下。
+
+REVIEW_RESULTS_PLACEHOLDER
 
 **迁移号**：P2 无迁移（main 最大仍为 D88 的 0036）。
 
