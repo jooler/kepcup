@@ -84,7 +84,7 @@ Onboarding / 首次进入（新用户，尚无领域 Bot）
 | `suggest_route` | 对用户当前意图给出路由建议（管家 / 直聊某 Bot / 群 / 委派）→ 路由卡 |
 | `delegate_to_bot` | 同 D71；管家与普通 Bot 均可具备，管家提示词更强调路由。委派不改变谁负责什么 |
 | `inspect_bot_assets` | D88：只读盘点某个 Bot 名下的资产（模型 / 连接应用 / MCP / 邮箱 / 定时任务）与可用模型列表，见 [37 §4.1](37-bot-asset-handover.md#41-inspect_bot_assets只读) |
-| `propose_handover` | D88：把 A 的资产与职责长期交给已有或新建的 B → 移交卡（`bot_handover`），用户逐项勾选确认后宿主确定性执行，见 [37 §4.2](37-bot-asset-handover.md#42-propose_handover)。P0 仅管家注册 |
+| `propose_handover` | D88：把 A 的资产与职责长期交给已有或新建的 B → 移交卡（`bot_handover`），用户逐项勾选确认后宿主确定性执行，见 [37 §4.2](37-bot-asset-handover.md#42-propose_handover)。P0 仅管家注册；P1 起普通 Bot 的对话轮也注册（只能交出自己的、目标只能是已有 Bot） |
 
 普通领域 Bot **默认不**暴露 `propose_*` / `suggest_route`（避免人人建队）；`delegate_to_bot` 首期：**管家与普通 Bot 默认都开，且都是单跳**。委派目标从哪来：非群对话的提示词里目前没有任何其他 Bot 的名单（`members` 只在群聊注入），普通 Bot 不知道 B 的 `bot_id`——所以**只读的 `list_bots` 与 `delegate_to_bot` 一起注册**给所有 Bot（返回名片：id / name / bio / 职责摘要，不含 Profile 其它内容），不往每个 Bot 的系统提示里塞通讯录。
 
