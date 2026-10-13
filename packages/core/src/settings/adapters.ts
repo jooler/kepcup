@@ -62,7 +62,11 @@ export interface ItemWrite {
 export type NormalizeResult = { ok: true; values: SettingValues } | { ok: false; message: string };
 
 export interface ItemAdapter {
-  read(item: SettingItem, target: SettingTargetRef): ItemSnapshot;
+  /**
+   * `focus`：条目内「按键寻址」时的键（如 agents.external 的 `agent`）——有就读这一个键对应的值，
+   * CAS 只比对它，兄弟键（别的智能体）的并发修改不算冲突。宿主传本次的建议值 / 期望值。
+   */
+  read(item: SettingItem, target: SettingTargetRef, focus?: SettingValues): ItemSnapshot;
   /** 动态可选值（`options` 不是 static 的字段）；缺省 = 没有可列的选项。 */
   options?(field: SettingFieldSpec, item: SettingItem, target: SettingTargetRef): SettingOption[];
   /** 校验并规范化 Bot / 卡片给的非敏感值（如模型引用补全厂商前缀）。缺省 = 原样接受。 */
@@ -568,21 +572,34 @@ function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
 
 function externalAgentsAdapter(deps: AdapterDeps): ItemAdapter {
   return {
-    read: () => {
+    // 按智能体寻址（focus.agent）：值是「这一个智能体是否启用」；概况列出全部已启用的。
+    // 不给 focus 时值是「已启用的全部智能体」（排序后以逗号连接），CAS 覆盖整个集合。
+    read: (_item, _target, focus) => {
       const agents = deps.settings.get().agents;
       const enabled = Object.entries(agents)
         .filter(([, value]) => value.enabled)
-        .map(([id]) => id);
-      return enabled.length > 0
-        ? snapshot(
-            'configured',
-            { agent: enabled[0]!, enabled: true },
-            `已启用：${enabled.map((id) => clean(id, 30)).join('、')}`,
-            { login: true },
-          )
-        : snapshot('unconfigured', { agent: '', enabled: false }, '没有启用的外部智能体', {
-            login: false,
-          });
+        .map(([id]) => id)
+        .sort();
+      const summary =
+        enabled.length > 0
+          ? `已启用：${enabled.map((id) => clean(id, 30)).join('、')}`
+          : '没有启用的外部智能体';
+      const status = enabled.length > 0 ? 'configured' : 'unconfigured';
+      const focused = str(focus?.agent);
+      if (focused !== undefined && focused.length > 0) {
+        const on = agents[focused]?.enabled === true;
+        return snapshot(
+          on ? 'configured' : status === 'configured' ? 'partial' : 'unconfigured',
+          { agent: focused, enabled: on },
+          summary,
+          {
+            login: on,
+          },
+        );
+      }
+      return snapshot(status, { agent: enabled.join(','), enabled: enabled.length > 0 }, summary, {
+        login: enabled.length > 0,
+      });
     },
     options: (field) =>
       field.options === 'agents'

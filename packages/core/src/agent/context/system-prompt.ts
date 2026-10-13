@@ -610,9 +610,14 @@ const HOST_POLICY_LINES: ReadonlyArray<{ tools: readonly string[]; text: (names:
   },
   { tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'], text: (names) => `查阅与收录知识库用 ${names}。` },
   { tools: ['install_skill', 'create_skill'], text: (names) => `安装或创建技能用 ${names}。` },
+  // 能力包 settings：settings_change 按 Bot 单独开启，两行分别随实际注入的工具出现。
   {
-    tools: ['settings_search', 'settings_read', 'settings_change'],
-    text: (names) => `查看（与修改）KepCup 自身的设置用 ${names}，不要去改 KepCup 的配置文件。`,
+    tools: ['settings_search', 'settings_read'],
+    text: (names) => `查看 KepCup 自身的设置用 ${names}，不要去读 KepCup 的配置文件。`,
+  },
+  {
+    tools: ['settings_change'],
+    text: (names) => `修改 KepCup 自身的设置用 ${names}，不要去改 KepCup 的配置文件。`,
   },
 ];
 

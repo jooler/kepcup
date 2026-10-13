@@ -22,7 +22,14 @@ import { MessagesService } from '../../src/domain/messages.js';
 import { SettingsService } from '../../src/domain/settings.js';
 import { SettingsCatalogHost, type SettingsRunContext } from '../../src/settings/host.js';
 import { SettingsWriteLock } from '../../src/settings/write-lock.js';
-import { isUntrustedReadTool, triggerFromUser } from '../../src/settings/context.js';
+import {
+  TRUSTED_TOOLS,
+  UNTRUSTED_TOOLS,
+  isUntrustedReadTool,
+  triggerCarriesUntrusted,
+  triggerFromUser,
+} from '../../src/settings/context.js';
+import { CLASSIFIED_BUILTIN_TOOLS } from '../../src/agent/effects/classify.js';
 import { renderSettingCardLine } from '../../src/settings/render.js';
 import { buildSettingsTools } from '../../src/tools/settings-tools.js';
 import type { RunIdentity } from '../../src/agent/types.js';
@@ -170,6 +177,11 @@ function makeRig(): Rig {
             : null,
     },
     taint: { isTainted: (botId, conv) => tainted.has(`${botId}:${conv}`) },
+    agentCatalog: () =>
+      [
+        { id: 'agent-a', name: 'Agent A' },
+        { id: 'agent-b', name: 'Agent B' },
+      ] as never,
     publish: (event, payload) => void published.push({ event, payload }),
     wake: (input) => void wakes.push(input),
   });
@@ -215,6 +227,7 @@ function runCtx(
     isGroup: over.isGroup ?? identity.conversationId === rig.groupId,
     isButler: over.isButler ?? false,
     touchedUntrusted: over.touchedUntrusted ?? (() => over.untrusted === true),
+    ...(over.externalEngine !== undefined ? { externalEngine: over.externalEngine } : {}),
     onSetupRequired: (requirement) => void setup.push(requirement),
     setup,
   };
@@ -289,15 +302,57 @@ describe('settings catalog: mode context helpers', () => {
     ]) {
       expect(isUntrustedReadTool(name), name).toBe(true);
     }
-    for (const name of [
-      'send_message',
-      'settings_read',
-      'app_request_connection',
-      'remember',
-      'read',
-    ]) {
+    for (const name of ['send_message', 'settings_read', 'app_request_connection', 'remember']) {
       expect(isUntrustedReadTool(name), name).toBe(false);
     }
+    // Workspace files, history, memory, wiki and task results may carry foreign content.
+    for (const name of [
+      'read',
+      'grep',
+      'search_messages',
+      'recall_memory',
+      'wiki_read',
+      'list_tasks',
+      'get_run',
+    ]) {
+      expect(isUntrustedReadTool(name), name).toBe(true);
+    }
+    // Unknown / new tools default to untrusted.
+    expect(isUntrustedReadTool('some_future_tool')).toBe(true);
+  });
+
+  it('every built-in tool is explicitly classified trusted or untrusted (new tools force a decision)', () => {
+    const unclassified = CLASSIFIED_BUILTIN_TOOLS.filter(
+      (name) => !TRUSTED_TOOLS.has(name) && !UNTRUSTED_TOOLS.has(name),
+    );
+    expect(unclassified).toEqual([]);
+    expect([...TRUSTED_TOOLS].filter((name) => UNTRUSTED_TOOLS.has(name))).toEqual([]);
+    // No stale names either.
+    expect(
+      [...TRUSTED_TOOLS, ...UNTRUSTED_TOOLS].filter(
+        (name) => !CLASSIFIED_BUILTIN_TOOLS.includes(name),
+      ),
+    ).toEqual([]);
+  });
+
+  it('a trigger with attachments starts untrusted; task results / other bots are not the user', () => {
+    expect(triggerCarriesUntrusted([{ ...user, attachments: [] } as Message])).toBe(false);
+    expect(
+      triggerCarriesUntrusted([{ ...user, attachments: [{ id: 'att_1' }] } as unknown as Message]),
+    ).toBe(true);
+    const taskResult = {
+      senderType: 'bot',
+      kind: 'text',
+      content: { text: 'done', origin: 'task', taskId: 't_1' },
+    } as unknown as Message;
+    const taskEvent = {
+      senderType: 'bot',
+      kind: 'task_event',
+      content: { phase: 'result' },
+    } as unknown as Message;
+    expect(triggerFromUser({ messages: [taskResult] })).toBe(false);
+    expect(triggerFromUser({ messages: [taskEvent] })).toBe(false);
+    expect(triggerFromUser({ messages: [user, taskEvent] })).toBe(false);
   });
 });
 
@@ -753,3 +808,223 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(descriptions).not.toContain('models.default-main');
   });
 });
+
+describe('settings catalog host: review fixes', () => {
+  it('#1 an external-agent (ACP) run is always untrusted: a direct item becomes a confirm card', async () => {
+    const rig = makeRig();
+    const result = await rig.host
+      .forRun(runCtx(rig, { triggerReason: 'direct', triggerFromUser: true, externalEngine: true }))
+      .change(CHANGE_MAIN_ALT);
+    expect(result.ok).toBe(true);
+    expect(rig.settings.get().defaultMainModel).toBe('custom:mock/mock-main');
+    const card = cardOf(rig, messageIdIn(result.content));
+    expect(card).toMatchObject({ mode: 'confirm', state: 'pending' });
+    expect(card.modeReason).toContain('读过网页');
+  });
+
+  it('#3 complete settles a card the user saved with a different value, recording the actual value', async () => {
+    const rig = makeRig();
+    const ctx = runCtx(rig, { triggerReason: 'mail', triggerFromUser: false });
+    const result = await rig.host.forRun(ctx).change(CHANGE_MAIN_ALT);
+    const id = messageIdIn(result.content);
+    // The user edited the confirm card to another model and the embedded component saved it.
+    rig.settings.update({ defaultMainModel: 'custom:mock/mock-x' });
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, id).applied).toEqual({ model: 'custom:mock/mock-x' });
+    expect(rig.wakes).toHaveLength(1);
+    expect(rig.wakes[0]!.resolved.after).toEqual({ model: 'custom:mock/mock-x' });
+    // Settled once: a second complete does not wake again.
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: null });
+    expect(rig.wakes).toHaveLength(1);
+  });
+
+  it('#4 a dismiss racing an apply wins cleanly: nothing is written, one wake', async () => {
+    const rig = makeRig();
+    const ctx = runCtx(rig, { triggerReason: 'mail', triggerFromUser: false });
+    const id = messageIdIn((await rig.host.forRun(ctx).change(CHANGE_MAIN_ALT)).content);
+    const card = cardOf(rig, id);
+    const applying = rig.host.applyItem({
+      itemId: 'models.default-main',
+      values: card.proposed!,
+      expected: card.before,
+      messageId: id,
+    });
+    // The dismiss lands while the apply waits for the write lock.
+    expect(rig.host.dismissCard(id)).toEqual({ state: 'dismissed' });
+    await expect(applying).rejects.toThrow('已经处理过了');
+    expect(rig.settings.get().defaultMainModel).toBe('custom:mock/mock-main');
+    expect(cardOf(rig, id).state).toBe('dismissed');
+    expect(rig.wakes.map((wake) => wake.resolved.outcome)).toEqual(['dismissed']);
+
+    // The other order: apply settles the card first; the later dismiss sees applied.
+    const second = messageIdIn(
+      (
+        await rig.host
+          .forRun(runCtx(rig, { triggerReason: 'mail', triggerFromUser: false }))
+          .change(CHANGE_MAIN_ALT)
+      ).content,
+    );
+    const applied = rig.host.applyItem({
+      itemId: 'models.default-main',
+      values: cardOf(rig, second).proposed!,
+      expected: cardOf(rig, second).before,
+      messageId: second,
+    });
+    await applied;
+    expect(rig.host.dismissCard(second)).toEqual({ state: 'applied' });
+    expect(rig.wakes.map((wake) => wake.resolved.outcome)).toEqual(['dismissed', 'applied']);
+  });
+
+  it('#5 with a messageId the target must match the card', async () => {
+    const rig = makeRig();
+    const result = await rig.host
+      .forRun(runCtx(rig, { isButler: true }))
+      .change({
+        id: 'bot.model',
+        values: { model: 'custom:mock/mock-alt' },
+        reason: '换',
+        botId: 'bot_b',
+      });
+    const id = messageIdIn(result.content);
+    await expect(
+      rig.host.applyItem({
+        itemId: 'bot.model',
+        values: { model: 'custom:mock/mock-alt' },
+        expected: null,
+        target: { botId: 'bot_a' },
+        messageId: id,
+      }),
+    ).rejects.toThrow('作用对象与设置卡不一致');
+    expect(rig.bots.get('bot_a')!.profile.runtime.model).toBe('');
+    // Matching (or omitted) target: the card's target is used.
+    await rig.host.applyItem({
+      itemId: 'bot.model',
+      values: { model: 'custom:mock/mock-alt' },
+      expected: null,
+      target: { botId: 'bot_b' },
+      messageId: id,
+    });
+    expect(rig.bots.get('bot_b')!.profile.runtime.model).toBe('custom:mock/mock-alt');
+  });
+
+  it('#6 the per-run card cap holds under parallel tool calls', async () => {
+    const rig = makeRig();
+    const facade = rig.host.forRun(runCtx(rig));
+    const results = await Promise.all([
+      facade.change({
+        id: 'models.default-main',
+        values: { model: 'custom:mock/mock-x' },
+        reason: 'a',
+      }),
+      facade.change({
+        id: 'models.default-light',
+        values: { model: 'custom:mock/mock-x' },
+        reason: 'b',
+      }),
+      facade.change({ id: 'bot.model', values: { model: 'custom:mock/mock-x' }, reason: 'c' }),
+      facade.change({
+        id: 'bot.light-model',
+        values: { model: 'custom:mock/mock-x' },
+        reason: 'd',
+      }),
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(SETTING_CARDS_PER_RUN_MAX);
+    expect(results.filter((result) => result.errorCode === 'LIMIT_REACHED')).toHaveLength(1);
+    expect(cards(rig)).toHaveLength(SETTING_CARDS_PER_RUN_MAX);
+  });
+
+  it('#7 task required still honors the per-item decline back-off', async () => {
+    const rig = makeRig();
+    for (const reason of ['a', 'b']) {
+      const result = await rig.host.forRun(runCtx(rig)).change({ id: 'capability.image', reason });
+      rig.host.dismissCard(messageIdIn(result.content));
+    }
+    const ctx = runCtx(rig, { loopType: 'task' });
+    const result = await rig.host
+      .forRun(ctx)
+      .change({ id: 'capability.image', reason: 'c', required: true });
+    expect(result).toMatchObject({ ok: false, errorCode: 'LIMIT_REACHED' });
+    expect(result.content).toContain('也不能为它暂停任务');
+    expect(ctx.setup).toEqual([]);
+  });
+
+  it('#8 settings_read of another bot: refused for a normal bot, allowed for the butler', () => {
+    const rig = makeRig();
+    const refused = rig.host.forRun(runCtx(rig)).read('bot.model', 'bot_b');
+    expect(refused.ok).toBe(false);
+    expect(refused.content).toContain('只能查看你自己的配置');
+    const butler = rig.host.forRun(runCtx(rig, { isButler: true })).read('bot.model', 'bot_b');
+    expect(butler.ok).toBe(true);
+    expect(butler.content).toContain('出确认卡');
+    expect(rig.host.forRun(runCtx(rig, { isButler: true })).read('bot.model', 'bot_zz').ok).toBe(
+      false,
+    );
+    // Global items ignore bot_id.
+    expect(rig.host.forRun(runCtx(rig)).read('models.default-main', 'bot_b').ok).toBe(true);
+  });
+
+  it('#10 agents.external: CAS per agent, a concurrent change to another agent is no conflict', async () => {
+    const rig = makeRig();
+    rig.settings.update({ agents: { 'agent-a': { enabled: true } } as never });
+    const result = await rig.host
+      .forRun(runCtx(rig))
+      .change({
+        id: 'agents.external',
+        values: { agent: 'agent-b', enabled: true },
+        reason: '用 B',
+      });
+    const id = messageIdIn(result.content);
+    const card = cardOf(rig, id);
+    expect(card.before).toEqual({ agent: 'agent-b', enabled: false });
+    // Meanwhile agent-a is switched off elsewhere.
+    rig.settings.update({ agents: { 'agent-a': { enabled: false } } as never });
+    const applied = await rig.host.applyItem({
+      itemId: 'agents.external',
+      values: { agent: 'agent-b', enabled: true },
+      expected: card.before,
+      messageId: id,
+    });
+    expect(applied.status).toBe('applied');
+    expect(rig.settings.get().agents['agent-b']?.enabled).toBe(true);
+    expect(rig.settings.get().agents['agent-a']?.enabled).toBe(false);
+    // The unfocused read covers every enabled agent.
+    rig.settings.update({
+      agents: { ...rig.settings.get().agents, 'agent-a': { enabled: true } } as never,
+    });
+    expect(
+      rig.host.read('agents.external', { botId: null, conversationId: null, projectId: null }),
+    ).toMatchObject({
+      values: { agent: 'agent-a,agent-b', enabled: true },
+      summary: '已启用：agent-a、agent-b',
+    });
+  });
+
+  it('#11 the write lock fails a waiter after the bounded wait instead of stalling forever', async () => {
+    const lock = new SettingsWriteLock({ waitMs: 50 });
+    let release!: () => void;
+    const hung = lock.run(
+      () => new Promise<string>((resolve) => (release = () => resolve('first'))),
+    );
+    await expect(lock.run(() => 'second')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    let ran = false;
+    const third = lock.run(() => {
+      ran = true;
+      return 'third';
+    });
+    release();
+    await expect(hung).resolves.toBe('first');
+    // The third waiter either got in after the release or timed out; it never jumped the queue.
+    const outcome = await third.then(
+      (value) => value,
+      (error: { code?: string }) => error.code,
+    );
+    expect(['third', 'TIMEOUT']).toContain(outcome);
+    expect(ran).toBe(outcome === 'third');
+  });
+});
+
+const CHANGE_MAIN_ALT = {
+  id: 'models.default-main',
+  values: { model: 'custom:mock/mock-alt' },
+  reason: '换模型',
+};
