@@ -1,6 +1,6 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态：**待办（方案已定，2026-10-13；未开工）**。方案经重写、复审，§十 的四项决策已由用户拍板（全部采纳建议）。本文只记录需求与方案，未改任何代码。
+> 状态：**P0 已实现（待审查收口），P1/P2 未开工**（2026-10-13）。提交范围 `e74defd..32b88d1`（分支 `t/settings`，worktree `/home/jyy/wt/kepcup-settings`，未推送；方案本身 `572e856`）：shared 契约 `e74defd` → desktop `c7fddad` → core `37aa4cd` → 测试 `9e5aae0` / `79f3d9e` / `32b88d1`。方案经重写、复审，§十 的四项决策已由用户拍板（全部采纳建议）。实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。**下文 §一～§十是原方案原文，以设计篇 38 为准；§八 的 P0 条目已逐项标注完成情况。**
 >
 > 需求来源：[jooler/kepcup#3](https://github.com/jooler/kepcup/issues/3)「在对话中指挥一切」（提出人 jooler，2026-10-13）。
 >
@@ -263,46 +263,46 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ## 八、拆分步骤
 
-- **P0：骨架 + D58 已嵌用过的组件**
+- **P0：骨架 + D58 已嵌用过的组件**（✅ 已实现，待审查收口；下面逐项标 ✅ / ⏳）
   - shared：
-    - 设置目录：§4.2 全部条目一次登记齐。P0 只把 D58 用过的组件升级为内嵌卡，其余先登记为 link 档；
-    - `setting_card` 事件 schema；
-    - `setupRequirementSchema` 增加 `kind:'setting'`；
-    - 事件 `settings.changed{itemIds}`；
-    - RPC `settings.items.apply{itemId, values, expected}`。
+    - ✅ 设置目录：§4.2 全部条目一次登记齐。P0 只把 D58 用过的组件升级为内嵌卡，其余先登记为 link 档；（实际 58 条、9 个卡片键）
+    - ✅ `setting_card` 事件 schema（另有 `setting_card_resolved`）；
+    - ✅ `setupRequirementSchema` 增加 `kind:'setting'`；
+    - ✅ 事件 `settings.changed{itemIds}`；
+    - ✅ RPC `settings.items.apply{itemId, values, expected}`（另有 `settings.cards.dismiss/complete/undo`，`apply` 增 `target?` / `messageId?`）。
   - core：
-    - 目录适配器（读 / 写 / 撤销）：在设置写锁内做条目级 CAS，写成功后发 `settings.changed`；设置页原有的保存路径也补发这个事件；
-    - `settings_search` / `settings_read` / `settings_change`；
-    - 档位裁定（§5.3），包括按 run 记录的「已接触不可信内容」标志；
-    - 卡片状态写回；
-    - `setting_card_resolved` 唤醒对话轮；
-    - 提示词规则 + 输入标志 `hasSettingsTools`；
-    - ACP 能力包 `settings`。
+    - ✅ 目录适配器（读 / 写 / 撤销）：在设置写锁内做条目级 CAS，写成功后发 `settings.changed`；设置页原有的保存路径也补发这个事件；
+    - ✅ `settings_search` / `settings_read` / `settings_change`（`settings_read` / `settings_change` 增 `bot_id`）；
+    - ✅ 档位裁定（§5.3），包括按 run 记录的「已接触不可信内容」标志；
+    - ✅ 卡片状态写回；
+    - ✅ `setting_card_resolved` 唤醒对话轮；
+    - ✅ 提示词规则 + 输入标志 `hasSettingsTools`；
+    - ✅ ACP 能力包 `settings`（`settings:change` 选项）。
   - desktop：
-    - `SettingCard` 宿主与组件映射；
-    - 组件 props 补齐，统一为 `embedded` / `prefill` / `onSaved`：
+    - ✅ `SettingCard` 宿主与组件映射；
+    - ✅ 组件 props 补齐，统一为 `embedded` / `prefill` / `onSaved`：
       - `ProviderSetupForm`：补 `embedded`、`prefill`；
       - `CapabilityModelSection`、`WebSearchSection`：补 `prefill`；
       - `AgentCard`：补 `onSaved`、`prefill`；
       - `ConnectAppPanel`：`onDone` 适配成 `onSaved`；
       - `SensorCard`：补 `embedded`、`onSaved`；
       - 新建 `DefaultModelsCard`（包住 `ModelSelectField` 并自带保存）和 Bot 模型片段卡（自带 `bots.update`）；
-    - `settingsStore` 订阅 `settings.changed`；
-    - 回执卡 + 撤销；
-    - link 卡 + 设置变化回写 `applied`。
+    - ✅ `settingsStore` 订阅 `settings.changed`；
+    - ✅ 回执卡 + 撤销；
+    - ✅ link 卡 + 设置变化回写 `applied`。
   - 测试：
-    - 覆盖率测试（§4.3）；
-    - 档位裁定单测，矩阵为触发源（含其他 Bot 的 mention / reply）× 不可信内容 / 污点 × 群聊 × 跨 Bot × 放宽权限；
-    - 条目级 CAS 单测：撤销不覆盖兄弟字段的并发修改；
-    - 集成测试：
+    - ✅ 覆盖率测试（§4.3）；
+    - ✅ 档位裁定单测，矩阵为触发源（含其他 Bot 的 mention / reply）× 不可信内容 / 污点 × 群聊 × 跨 Bot × 放宽权限；
+    - ✅ 条目级 CAS 单测：撤销不覆盖兄弟字段的并发修改；
+    - ✅ 集成测试（八个场景全部覆盖，`packages/core/test/integration/settings-cards.test.ts`）：
       - 「换个默认模型」走 direct，生成回执卡，撤销能复原；
       - 「我想让你帮我生成图片」：search 发现图像能力未配 → form 卡 → 用户应用 → 对话轮被唤醒后接着生成；
       - 邮件唤醒的轮次请求改设置，被收紧到 confirm；用户触发的轮次先 `web_fetch` 后改设置，同样被收紧到 confirm；
       - 群聊里请求修改白名单项，被收紧到 confirm；
       - 请求「开启无人值守」时出 user-only 空白卡，Bot 给的 `values` 不被采用；
       - ACP 智能体默认没有 `settings_change`；
-    - e2e 一条，覆盖卡片 → 应用 → Bot 续答。
-- **P1：组件化扩面**，按用户价值排序，每做完一个就把对应条目从 link 升级为内嵌卡片：
+    - ✅ e2e 一条，覆盖卡片 → 应用 → Bot 续答（`apps/desktop/test/e2e/setting-card.spec.ts`，另含 direct 回执撤销）。
+- **P1：组件化扩面**（⏳ 未开工；完整的条目级清单见设计篇 38 §10），按用户价值排序，每做完一个就把对应条目从 link 升级为内嵌卡片：
   - `BotProfileForm` 其余片段（浏览器资料 / 网络 / MCP / 连接 / 技能，卡片自带 `bots.update`）
   - `EmbeddingSection`
   - `UnattendedSection`
@@ -311,13 +311,13 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
   - 群设置、项目设置片段
   - `AppConnectionDetail` 的工具策略片段
   - 这些组件都已存在，做法同 D58：只加 `embedded` / `prefill` / `onSaved` props，设置页的行为不变。
-- **P2：收拢**
+- **P2：收拢**（⏳ 未开工）
   - D58 的 7 个旧 kind 改由 `SettingCard` 分发；
   - 评估把 `APP_REQUEST_CONNECTION_RULE` / `MAIL_REQUEST_SETUP_RULE` 并入新规则，以减少常驻提示词；
   - 评估设置页各分区直接由「目录卡片」组成，让卡片成为设置的唯一渲染单元。
-- **文档**：
-  - 新设计篇（编号与决策号在合并时取下一个空号）；
-  - 回写 design/18（通用 `setting` kind）、design/02（工具面）、`docs/dev/04-agent-runtime.md`（工具目录）、design README 索引。
+- **文档**（✅ 已写回）：
+  - 新设计篇 `docs/design/38-conversational-settings.md`（决策 D89；编号在合并时以最后一个空号为准）；
+  - 回写 design/18（通用 `setting` kind）、design/02 与 design/30（工具面）、`docs/dev/04-agent-runtime.md`（工具目录）、`docs/dev/03-data-model.md`（`setting_card` / `setting_card_resolved` 内容形状）、design README 索引与决策行、PROGRESS 与 DEVIATIONS（DEV-026）。
 
 ## 九、非目标
 

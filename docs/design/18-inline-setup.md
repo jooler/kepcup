@@ -71,6 +71,14 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 | `ModelSelectField` | 默认模型下拉（选项 = 已配置 key 的厂商对话模型） | 设置页默认模型、main-model 卡片第二段 |
 | `CapabilityModelSection` | 增 `embedded`（隐藏标题）/ `onSaved` props | 设置页能力模型、capability 卡片 |
 
+## 通用 `setting` kind 与消息流里的设置卡（D89）
+
+D89（[38-conversational-settings.md](38-conversational-settings.md)）在本机制之上加了一条**提议链**，并把「缺什么设置」的表达泛化：
+
+- `setupRequirementSchema` 新增通用 kind `{kind:'setting', itemId, prefill?, reason}`：`itemId` 是**设置目录**（`shared/settings-catalog`）的条目 id。任务里 `settings_change{required:true}` 得到需要用户处理的档位时，不再为每种设置新增 kind，而是带这个 kind 走本篇的失败续跑链（失败 → `run.setup` → 输入坞上方 `SetupRequiredCard` → `continueAfterSetup` → `runs.retry`）。`SetupRequiredCard` 遇到该 kind 复用 `SettingSetupBody` → `SettingCardEmbed` 的同一套按目录分发，预填取 `prefill`（仅非敏感字段）；没有内嵌组件的条目给「在设置中打开」与「已设置好，继续」。
+- **两类卡并存、互不替代**：本篇的设置卡是输入坞上方**单张**的失败等待卡，不落 messages；提议链的设置卡（`system_event` `setting_card`）是**消息流里**的卡，落 messages、可并存多张、带回执与撤销，用户处理后唤醒 Bot 续答，不会让任何 run 失败。前者回答「任务做到一半发现缺配置」，后者回答「用户要求改设置 / Bot 判断需要改设置」。
+- 原有 7 个 kind（`main-model` / `capability-model` / `web-search` / `agent` / `connect-app` / `confirm-local-connector` / `mail-account`）与发送门禁**不动**，P2 再改由 `SettingCard` 分发并收拢。
+
 ## 测试锚点
 
 - 集成（response-loop）：无模型失败带 `setup={kind:'main-model'}` 且配置后 `runs.retry` 续跑成功；`generate_image` 未配置能力 → failed + `capability-model`（失败条目带「自动继续」指引），配置后重试不再命中；关闭卡片 → `runs.setupDismissed` 返回 `notified=true` 并唤醒对话轮给新反馈，重复调用 `notified=false`。
@@ -81,4 +89,4 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 
 - 轻量模型 / 向量 / 重排等其他能力的引导卡片：机制已就绪（`capability-model` 枚举已含全部能力），按需追加触发点。
 - 厂商 Key 失效（401）等运行期错误的引导：沿用失败横幅，不在此机制内。
-- 卡片不做消息持久化：它是随状态出现/消失的常驻交互区，不落 messages 表（无去重与历史噪音问题）。
+- 卡片不做消息持久化（指本篇输入坞上方的失败续跑卡；消息流里的提议卡见上节 D89）：它是随状态出现/消失的常驻交互区，不落 messages 表（无去重与历史噪音问题）。

@@ -467,3 +467,23 @@
 - 推荐：方案 1。设计已把选型交给实施。163 不在 CAPABILITY 里广告 ID 时，连接后仍强制发 `ID name=KepCup`（库默认只在广告了 ID 时才发）。
 - 决定：采用方案 1。
 - 已更新的文档：`docs/dev/03-data-model.md` 删除 Bot 级联增加邮箱绑定。
+
+### DEV-026 对话内应用设置 P0 实现对 todo/conversational-app-setup.md 的偏差与补充（D89）
+
+- 状态：已落实（编号与 D89 / design 38 一样，合并时以最后一个空号为准）
+- 阶段：D89 对话内应用设置 P0
+- 是否阻塞：否
+- 问题：方案按「P0 实现前逐项复核」落地时，以下几处与方案文字不同或方案未写：
+  1. **`maxMode` 与 `effectiveMode` 的 link 兜底**：目录里 `maxMode` 记的是**目标**档位（如 `bot.network` 为 confirm / 放宽 user-only、`unattended.enable` 为 user-only）；没有内嵌组件（`card = null`）的条目由 `effectiveMode` 兜底成 `link`（规则代号 `no-card`）。P0 内嵌卡只有 9 个键 18 个条目，其余 core 条目当前出的都是跳转卡，不是方案表里的 confirm / user-only 内嵌卡（方案 §八 P0 本就只要求 D58 用过的组件嵌入化，这里只是把「表里的档位」与「当次实际档位」分开说明）。
+  2. **`settings_read` / `settings_change` 增 `bot_id`**：方案只在 §5.3 第 4 条提到管家可改别的 Bot，未给参数。实现为两个工具各增可选 `bot_id`（默认自己；只对 Bot 范围条目有意义）；普通 Bot 指向别的 Bot 直接 `refused`，管家最多 confirm。
+  3. **目录条目比方案 §4.2 示例多**：共 58 条，另登记了 `models.widget-review`、`models.concurrency`、`connections.taint-guard`、`agents.default`、`bot.agent`、`bot.file-access`、`developer.mode`、`diagnostics.*` 等，覆盖率测试要求设置界面每个位置都有条目或排除理由，登记齐比只登示例更稳。
+  4. **loop 限制**：方案说「对话轮与任务都注册」；实现里 `effectiveMode` 对 turn / task 之外的 loop（后台作业、制作 loop 等）一律 `refused`（规则 `loop`），防止后台 loop 改设置。
+  5. **`unattended.enable` 出跳转卡**：方案写「开启无人值守出 user-only 空白卡」。`UnattendedSection` 尚未嵌入化，P0 实际出的是 user-only 档的**跳转卡**（`card = null` → link），`values` 同样不被采用；空白卡等 P1。关闭（`unattended.disable`）由宿主直接调 `unattended.disable`。
+  6. **pending 卡 TTL**：方案只写「过期标 `expired`」。实现为 pending 卡 7 天无人处理过期（`SETTING_CARD_PENDING_TTL_MS`，与拒绝窗口同值），惰性判定；回执卡不过期（24 小时撤销窗口）。
+  7. **自定义 / 新厂商缺 Key → form**：`needsSensitiveInput` 在要换到没有 Key 的厂商（含自定义厂商）时把档位收紧为 form；因此种子 mock 厂商没配 Key 的环境里，「换默认模型」从 direct 变成 form 卡（e2e 先给 mock 厂商补 Key 再测 direct）。
+  8. **不可信内容判定范围**：方案列了网页 / 邮件 / 浏览器 / MCP / 连接应用 / 附件正文；实现还把 `delegate_task`、`collect_delegate_results`、`widget_read_state`、`understand_image`、`transcribe_audio` 算进去，并以 `tool_call` 发生（而非 `tool_result`）即置位，避免同一步里并行发出的调用漏判。
+  9. **「已经是想要的值」不出卡；任务 `required` 且已配好直接放行**：方案未写，避免无意义的卡和重复失败续跑。
+  10. **`settings.cards.complete` 增核对语义**：link 卡 / 渲染层条目点「我已设置好」，core 能核对的核对一次（未通过卡片保持 pending），渲染层 / 只读条目按用户所说标 applied；方案只写「改由用户点我已设置好」。
+- 影响范围：design/38、`packages/shared/src/settings-catalog/*`、`packages/core/src/settings/*`、`tools/settings-tools.ts`、`features/settings-card/*`。
+- 推荐 / 决定：以上均按现状保留；方案文档已就 P0 状态做了标注，设计篇 38 记录的是实际行为。
+- 已更新的文档：`docs/design/38-conversational-settings.md`、`docs/design/README.md`（D89）、`docs/design/18-inline-setup.md`、`docs/design/02-execution.md`、`docs/design/30-supervisor-and-tasks.md`、`docs/dev/03-data-model.md`、`docs/dev/04-agent-runtime.md`、`todo/conversational-app-setup.md`。
