@@ -560,7 +560,7 @@ CREATE INDEX watches_bot ON watches(bot_id, status);
 - `alert_times_json` 支撑 `WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡。
 - 读行时 `source_json` / `condition_json` 用 zod `safeParse`：解析不了的行在列表 / 上下文里跳过并记日志；到期查询遇到它时直接改 `paused`（`last_error` 说明记录损坏），避免永远到期、空转 worker；删除级联按 SQL 一并删除。
 - 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
-- D88 移交（P1，`WatchService.transferTo`，无迁移）：同一行就地改 `bot_id` / `conversation_id`（`version + 1`，CAS），`last_hash` / `last_quiet_hash` / `last_text` / `last_matched` / `alert_seq` 原样保留，接手方不会把已提醒过的状态再提醒一次；私聊里的改到接手方私聊（同一事务在那里补一张 `created` 卡），群里的留在原群；排队中的 `watch_alert` 作业（`dedupe_key like 'watch:{id}:%'`）同一事务改到接手方名下。原对话里的旧卡因 `conversation_id` 不同而显示「已移交给 {B}」。
+- D88 移交（P1，`WatchService.transferTo`，无迁移）：同一行就地改 `bot_id` / `conversation_id`（`version + 1`，CAS），`last_text` / `last_matched` / `alert_seq` 原样保留，接手方不会把已提醒过的状态再提醒一次；`last_hash` / `last_quiet_hash` 在两边浏览器资料相同时保留，不同时清空（接手方第一次检查只建基线，不因换了资料误报「页面变化」）；私聊里的改到接手方私聊（同一事务在那里补一张 `created` 卡），群里的留在原群；排队中的 `watch_alert` 作业（`dedupe_key like 'watch:{id}:%'`）同一事务改到接手方名下。原对话里的旧卡因 `conversation_id` 不同而显示「已移交给 {B}」。
 - `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
 
 ### stickies（辅助阅读便签，main 0024）
@@ -982,7 +982,7 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(segmented_text, item_id UNINDEXED, to
 ```
 
 - `void`：承诺因对话删除或 Bot 被移出群而作废；D88 起也包括「承诺随定时任务移交给了别的 Bot」（来源 Bot 的那条置 `void`，不再进 `<my_state>`，联动任务按 `memory.commitment_invalidated` 取消）。
-- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出群时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。
+- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出群时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。承诺联动的定时任务没移交成时，本次移交写给接手方、没接上任何 active 任务的承诺副本置 `void`（不留孤儿承诺）；`findHandoverCopy` 取 active 优先、其次最新的一条。
 
 ### wiki_fts（P09）
 
