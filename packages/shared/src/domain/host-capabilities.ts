@@ -228,7 +228,7 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     id: 'mail',
     category: 'host',
     default: 'inject',
-    tools: ['mail_list', 'mail_read', 'mail_search', 'mail_send', 'mail_accounts'],
+    tools: ['mail_list', 'mail_read', 'mail_search', 'mail_send', 'mail_accounts', 'mail_request_setup'],
   }),
 ];
 

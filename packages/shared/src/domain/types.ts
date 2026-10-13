@@ -7,6 +7,7 @@ import { appUiCardSchema } from './apps-ui.js';
 import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
+import { mailProviderSchema } from './mail.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -1225,6 +1226,18 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     kind: z.literal('confirm-local-connector'),
     proposalId: z.string(),
     card: localConnectorCardSchema,
+  }),
+  /**
+   * 需要添加邮箱并交给当前 Bot（D84 + design 18）：模型调用 `mail_request_setup`
+   * 时携带；设置卡内嵌与扩展中心同构的添加表单，测连保存后绑定当前 Bot，再经
+   * `runs.retry` 续跑。与「把已有邮箱从另一个 Bot 移交过来」（propose_handover）不同。
+   */
+  z.object({
+    kind: z.literal('mail-account'),
+    /** 可选的厂商预填（qq / gmail / …）；用户仍可改选。 */
+    provider: mailProviderSchema.optional(),
+    /** 给用户看的简短原因。 */
+    reason: z.string().optional(),
   }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;

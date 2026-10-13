@@ -140,6 +140,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
+import type { MailSetupFacade } from '../tools/mail-tools.js';
 import {
   buildAppDiscoveryTools,
   type AppToolFacade,
@@ -3361,7 +3362,12 @@ export class Orchestrator {
           : {}),
         ...(this.#deps.schedule !== undefined ? { schedule: this.#deps.schedule } : {}),
         ...(this.#deps.watch !== undefined ? { watch: this.#deps.watch } : {}),
-        ...(this.#deps.mail !== undefined ? { mail: this.#deps.mail } : {}),
+        ...(this.#deps.mail !== undefined
+          ? {
+              mail: this.#deps.mail,
+              mailSetup: this.#mailSetupFacade(setupHit, identity),
+            }
+          : {}),
         // D81：组件工具只在任务分支注册（tools/index.ts），门面这里无条件给。
         ...(this.#deps.widgets != null ? { widgets: this.#deps.widgets } : {}),
         // D87 P4 L1：展示卡对话轮与任务都有（只发一条卡片消息）。
@@ -3826,6 +3832,7 @@ export class Orchestrator {
               : {}),
             ...(connectedAppsSection.length > 0 ? { connectedApps: connectedAppsSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
+            ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
             // resolution timed out), so the prompt does not flip between turns.
             ...(!isTask && mcpResolution.hasServers
@@ -4768,7 +4775,38 @@ export class Orchestrator {
    * 缺配置/缺 key 时记下结构化 setup 需求（工具返回 SETUP_REQUIRED，run 中断
    * 引导设置后自动续跑）；web_fetch 独立可用，失败照常回到模型。
    */
-  #searchFacade(setupHit: { requirement: SetupRequirement | null }): SearchToolFacade {
+  /**
+   * D84 `mail_request_setup`：记下 `mail-account` 需求（工具随即返回 SETUP_REQUIRED，
+   * run 中断 → 对话里出添加邮箱卡 → 保存并绑定当前 Bot 后 runs.retry）。
+   */
+  #mailSetupFacade(
+    setupHit: { requirement: SetupRequirement | null },
+    identity: RunIdentity,
+  ): MailSetupFacade {
+    return {
+      requestSetup: (input) => {
+        if (identity.botId === null) {
+          return { ok: false, message: '当前执行没有 Bot 上下文，无法请求添加邮箱' };
+        }
+        const bound = this.#deps.mail?.accountsForBot(identity.botId) ?? [];
+        setupHit.requirement = {
+          kind: 'mail-account',
+          ...(input.provider !== undefined ? { provider: input.provider } : {}),
+          ...(input.reason !== undefined ? { reason: input.reason } : {}),
+        };
+        const extra =
+          bound.length > 0
+            ? `你已有 ${bound.length} 个已绑定邮箱；这张卡用来再添加一个并交给你。`
+            : '保存后该邮箱会交给你，新信会进你的私聊。';
+        return {
+          ok: true,
+          message: `已请求用户添加邮箱并交给你：本次执行暂停，用户在对话里填好并测试保存后会自动继续。${extra}不要让用户把授权码贴进聊天。`,
+        };
+      },
+    };
+  }
+
+    #searchFacade(setupHit: { requirement: SetupRequirement | null }): SearchToolFacade {
     const search = this.#deps.search!;
     return {
       search: async (query, maxResults, signal) => {
@@ -5068,6 +5106,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
         : requirement.reason === 'expired'
           ? '应用连接已失效：请在设置中重新连接'
           : '应用尚未连接：请先在设置中连接该应用';
+    case 'mail-account':
+      return '需要添加邮箱：请在对话里的设置卡完成添加，完成后会自动继续';
   }
 }
 

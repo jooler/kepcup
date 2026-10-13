@@ -100,6 +100,10 @@ export const zhCN = {
   'setupCard.webSearchTitle': '需要联网检索',
   'setupCard.webSearchHint':
     'Bot 正在联网检索，但尚未配置检索服务。选择供应商并填写 API key 后自动继续。',
+  'setupCard.mailAccountTitle': '添加邮箱，交给这个 Bot',
+  'setupCard.mailAccountHint':
+    '填写授权码或应用专用密码并测试保存后，这个 Bot 就能代你收发；完成后对话会自动继续。',
+  'setupCard.mailAccountNoBot': '找不到当前 Bot，无法绑定邮箱。请关闭卡片后重试，或到扩展中心添加。',
   'composer.attach': '添加附件',
   'composer.attachmentRemove': '移除附件',
   'composer.attachmentTooLarge': '{name} 超过 30MB 附件上限',
