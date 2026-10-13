@@ -208,3 +208,116 @@ test('handover card: uncheck one item, confirm, progress and results render', as
     await closeSession(session);
   }
 });
+
+/**
+ * D88 P1：普通 Bot 自己发起。阿尔法用 remember / schedule 工具记下两条记忆（其中一条
+ * 「只告诉你」）与一条定时任务；阿尔法自己 inspect_bot_assets（memory_query）→ 私密记忆
+ * 不在候选里 → propose_handover 把一条记忆与定时任务交给贝塔；dock 里的卡按组展示记忆
+ * 与定时任务 → 确认 → 进度卡完成；贝塔的记忆里有副本，阿尔法的私密记忆没有过去。
+ */
+test('handover P1: a regular bot hands its own memory and schedule over', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-handover-p1-');
+  const { page, llm } = session;
+  try {
+    const alpha = (await rpc(page, 'bots.create', { profile: botProfile({ name: '阿尔法' }) })) as {
+      bot: { id: string };
+    };
+    const beta = (await rpc(page, 'bots.create', { profile: botProfile({ name: '贝塔' }) })) as {
+      bot: { id: string };
+    };
+    const alphaChat = (await rpc(page, 'conversations.openDirect', { botId: alpha.bot.id })) as {
+      conversation: { id: string };
+    };
+    await rpc(page, 'conversations.openDirect', { botId: beta.bot.id });
+    type MemoryList = { items: Array<{ id: string; content: string }> };
+
+    llm.script('mock-main', [
+      step().replyToolCall('remember', { content: '用户喜欢周报用三段式写', kind: 'preference' }),
+      step().replyToolCall('remember', {
+        content: '只告诉你：周报其实是外包写的',
+        kind: 'fact',
+        private_to_bot: true,
+      }),
+      step().replyToolCall('schedule', { when: '0 18 * * 5', title: '周报', note: '写周报' }),
+      step().replyText('都记下了。'),
+    ]);
+    await rpc(page, 'messages.send', {
+      conversationId: alphaChat.conversation.id,
+      text: '记住我喜欢三段式周报，每周五提醒我写周报',
+    });
+    let weekly = '';
+    let pref = '';
+    let secret = '';
+    await expect
+      .poll(
+        async () => {
+          const { schedules } = (await rpc(page, 'schedules.list', {
+            conversationId: alphaChat.conversation.id,
+          })) as { schedules: Array<{ id: string; title: string }> };
+          weekly = schedules.find((entry) => entry.title === '周报')?.id ?? '';
+          const { items } = (await rpc(page, 'memory.list', { botId: alpha.bot.id })) as MemoryList;
+          pref = items.find((item) => item.content.includes('三段式'))?.id ?? '';
+          secret = items.find((item) => item.content.includes('外包'))?.id ?? '';
+          return weekly.length > 0 && pref.length > 0 && secret.length > 0;
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+
+    // 阿尔法自己盘点、自己提交移交卡。
+    await openChat(page, '阿尔法');
+    llm.script('mock-main', [
+      step().replyToolCall('inspect_bot_assets', { memory_query: '周报' }),
+      step()
+        .expect((request) => {
+          const text = JSON.stringify(request.body.messages);
+          return text.includes(`memory:${pref}`) && !text.includes(`memory:${secret}`);
+        })
+        .replyToolCall('propose_handover', {
+          to: { bot_id: beta.bot.id },
+          items: [{ key: `memory:${pref}` }, { key: `schedule:${weekly}` }],
+          handover_note: '用户喜欢三段式周报。',
+        }),
+    ]);
+    await rpc(page, 'messages.send', {
+      conversationId: alphaChat.conversation.id,
+      text: '以后周报的事交给贝塔吧',
+    });
+    const card = page.locator('[data-testid^="approval-card-"][data-approval-kind="bot_handover"]');
+    await expect(card).toBeVisible({ timeout: 60_000 });
+    await expect(card.locator('[data-testid="handover-direction"]')).toHaveText('阿尔法 → 贝塔');
+    await expect(card.locator('[data-testid="handover-group-memory"]')).toContainText('三段式');
+    await expect(card.locator(`[data-testid="handover-item-check-memory:${pref}"]`)).toBeChecked();
+    await expect(card.locator(`[data-testid="handover-item-schedule:${weekly}"]`)).toContainText(
+      '周报',
+    );
+
+    llm.script('mock-main', [step().replyText('周报已经交给贝塔了。')]);
+    await card.locator('[data-testid="approval-approve"]').click();
+    await expect(card).toHaveCount(0, { timeout: 15_000 });
+    const progress = page.locator('[data-testid^="handover-progress-"]');
+    await expect(progress.locator('[data-testid="handover-status"]')).toHaveAttribute(
+      'data-status',
+      'completed',
+      { timeout: 30_000 },
+    );
+    await expect(
+      progress.locator(`[data-testid="handover-item-status-memory:${pref}"]`),
+    ).toHaveAttribute('data-status', 'done');
+
+    // 贝塔得到记忆副本；私密记忆没有过去；阿尔法的记忆原样保留。
+    await expect
+      .poll(async () => {
+        const { items } = (await rpc(page, 'memory.list', { botId: beta.bot.id })) as MemoryList;
+        return items.map((item) => item.content);
+      })
+      .toEqual(expect.arrayContaining(['用户喜欢周报用三段式写']));
+    const betaItems = (await rpc(page, 'memory.list', { botId: beta.bot.id })) as MemoryList;
+    expect(betaItems.items.some((item) => item.content.includes('外包'))).toBe(false);
+    const alphaItems = (await rpc(page, 'memory.list', { botId: alpha.bot.id })) as MemoryList;
+    expect(alphaItems.items.some((item) => item.id === pref)).toBe(true);
+  } finally {
+    await closeSession(session);
+  }
+});
