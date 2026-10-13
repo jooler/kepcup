@@ -140,6 +140,26 @@ async function mentionAndSend(page: Page, botName: string, text: string): Promis
   await composer.press('ControlOrMeta+Enter');
 }
 
+/**
+ * 种子的 custom:mock 厂商没有 Key：模型选项（与宿主的「已配置厂商」判断）只认有 Key 的厂商，
+ * 不补 Key 时宿主会把换模型收紧为 form。经设置「模型」分区的卡片补一个 Key。
+ */
+async function giveMockProviderAKey(page: Page): Promise<void> {
+  await page.locator('[data-testid="user-menu-trigger"]').click();
+  await page.locator('[data-testid="menu-settings"]').click();
+  await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
+  await page.locator('[data-testid="settings-nav-models"]').click();
+  await page.locator('[data-testid="key-dialog-custom:mock"]').click();
+  await expect(page.locator('[data-testid="provider-add-dialog"]')).toBeVisible();
+  await page.locator('[data-testid="key-input-custom:mock"]').fill('sk-setting-card-e2e');
+  await page.locator('[data-testid="provider-add-save"]').click();
+  await expect(page.locator('[data-testid="key-state-custom:mock"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
+}
+
 function settingCard(page: Page, itemId: string) {
   return page.locator(`[data-setting-card="${itemId}"]`).last();
 }
@@ -150,6 +170,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
   const { page, llm } = session;
   try {
     await waitReady(page);
+    await giveMockProviderAKey(page);
     await createBot(page, '阿甲');
 
     // --- ① 单聊、用户本人发起：默认主模型 direct → 回执卡 → 撤销 -----------------------
