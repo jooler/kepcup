@@ -2186,6 +2186,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
               }
             },
             search: (botId, query, limit) => wiki.search(botId, query, limit),
+            copySize: (botId, pages) => wiki.copySize(botId, pages),
             pageConflict: (fromBotId, toBotId, pagePath) =>
               wiki.pageConflict(fromBotId, toBotId, pagePath),
             copyForHandover: (input) => wiki.copyForHandover(input),
@@ -2209,6 +2210,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       updateProfile: handoverBotWriter.updateProfile,
       schedule: scheduleFacade,
       jobs,
+      copyLeftovers: {
+        discard: (handoverId, toBotId) => wiki.discardHandoverLeftovers(handoverId, toBotId),
+        sweep: (keep) => wiki.sweepHandoverLeftovers(keep),
+      },
       assetCounts: (botId) => ({
         memory: memory.activeItemsFor(botId).length,
         wikiPages: wiki.pageStats(botId).length,

@@ -76,7 +76,11 @@ async function seedWiki(stack: TestStack, bot: Bot): Promise<void> {
   write(root, 'pages/shared.md', `# 共享\n\n${bot.name} 写的版本。\n`);
   write(root, 'raw/20261001-aaaaaaaaaaaa-guide.md', '指南原文');
   write(root, 'raw/20261002-bbbbbbbbbbbb-rules.md', '规则原文');
-  write(root, `raw/_assets/${ASSET}.json`, JSON.stringify({ id: ASSET, storage: 'store' }));
+  write(
+    root,
+    `raw/_assets/${ASSET}.json`,
+    JSON.stringify({ id: ASSET, storage: 'store', status: 'maintained', sources: [] }),
+  );
   write(root, `raw/_derived/${ASSET}/full.md`, 'deck 全文');
   write(path.join(botWikiStoreRoot(paths, bot.id), ASSET), 'original', Buffer.from('%PDF-1.7'));
   await commitWikiTree(root, 'seed');
@@ -293,7 +297,6 @@ describe('bot asset handover P2 (D88)', () => {
       'pages/ops/runbook.md',
       'raw/20261001-aaaaaaaaaaaa-guide.md',
       'raw/20261002-bbbbbbbbbbbb-rules.md',
-      `raw/_assets/${ASSET}.json`,
       `raw/_derived/${ASSET}/full.md`,
     ]) {
       expect(readFileSync(path.join(betaRoot, rel), 'utf8'), rel).toBe(
@@ -301,6 +304,9 @@ describe('bot asset handover P2 (D88)', () => {
       );
     }
     expect(existsSync(path.join(botWikiStoreRoot(paths, beta.id), ASSET, 'original'))).toBe(true);
+    expect(
+      JSON.parse(readFileSync(path.join(betaRoot, `raw/_assets/${ASSET}.json`), 'utf8')).sources,
+    ).toEqual([{ type: 'handover', handoverId: view.id, fromBotId: alpha.id }]);
     expect(readFileSync(path.join(betaRoot, 'pages/shared.md'), 'utf8')).toContain(
       '贝塔 自己的版本',
     );

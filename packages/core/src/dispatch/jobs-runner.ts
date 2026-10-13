@@ -411,6 +411,8 @@ export class JobsRunner {
    * the pre-P6 key (the app light / main model's provider) exactly (审查 C4).
    */
   #providerFor(job: JobRow): string {
+    // D88 P2: the handover copy makes no model calls — never take a model provider's slot.
+    if (job.type === 'handover_copy') return 'host:handover_copy';
     const purpose = JOB_PURPOSES[job.type];
     const router = this.#deps.router;
     if (purpose !== undefined && router !== undefined) {

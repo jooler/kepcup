@@ -1,4 +1,9 @@
-import { HANDOVER_WIKI_QUERY_LIMIT, type Bot, type HandoverAction } from '@kepcup/shared';
+import {
+  HANDOVER_WIKI_COPY_MAX_BYTES,
+  HANDOVER_WIKI_QUERY_LIMIT,
+  type Bot,
+  type HandoverAction,
+} from '@kepcup/shared';
 import type { WikiCopyOutcome } from '../../wiki/service.js';
 import type {
   HandoverAdapter,
@@ -31,6 +36,8 @@ export interface HandoverWikiPort {
   /** One page's title (first heading, else the file name). */
   pageTitle(botId: string, pagePath: string): string;
   search(botId: string, query: string, limit: number): Array<{ path: string; title: string }>;
+  /** Bytes a copy of these pages would move (pages + originals + assets). */
+  copySize(botId: string, pages: readonly string[]): number;
   pageConflict(
     fromBotId: string,
     toBotId: string,
@@ -202,7 +209,18 @@ export class WikiAdapter implements HandoverAdapter {
         ? `${ctx.toName} 的 Wiki 里已有同路径、内容不同的页（不覆盖、不改名）`
         : `${ctx.toName} 的 Wiki 里已有全部这些路径、内容不同的页（不覆盖、不改名）`;
     }
-    return null;
+    return this.#sizeRefusal(
+      ctx.fromBot.id,
+      pages.map((page) => page.path),
+    );
+  }
+
+  /** Over `HANDOVER_WIKI_COPY_MAX_BYTES` (pages + originals + assets): the reason, with the size. */
+  #sizeRefusal(fromBotId: string, pages: readonly string[]): string | null {
+    const size = this.#deps.wiki.copySize(fromBotId, pages);
+    return size > HANDOVER_WIKI_COPY_MAX_BYTES
+      ? `连同引用的原件共 ${formatBytes(size)}，超过一次复制的上限 ${formatBytes(HANDOVER_WIKI_COPY_MAX_BYTES)}：请按主题目录或按页分几张卡移交`
+      : null;
   }
 
   /** The copy itself runs in the background job (`applyBatch`); never inline. */
@@ -222,6 +240,16 @@ export class WikiAdapter implements HandoverAdapter {
   ): Promise<Map<string, HandoverBatchOutcome>> {
     const byKey = new Map(keys.map((key) => [key, this.#pagesFor(ctx.fromBot.id, key)]));
     const union = [...new Set([...byKey.values()].flatMap((pages) => pages.map((p) => p.path)))];
+    // Each key passed the cap; together they may not.
+    const tooBig = this.#sizeRefusal(ctx.fromBot.id, union);
+    if (tooBig !== null) {
+      return new Map(
+        keys.map((key) => [
+          key,
+          { status: 'skipped', reason: tooBig, result: { copiedCount: 0, skippedPaths: [] } },
+        ]),
+      );
+    }
     const outcome = await this.#deps.wiki.copyForHandover({
       fromBotId: ctx.fromBot.id,
       toBotId: ctx.toBot.id,
@@ -231,6 +259,7 @@ export class WikiAdapter implements HandoverAdapter {
     });
     const copied = new Set(outcome.copied);
     const conflicts = new Set(outcome.conflicts);
+    const rawConflicts = new Set(outcome.rawConflicts);
     const results = new Map<string, HandoverBatchOutcome>();
     for (const [key, pages] of byKey) {
       const paths = pages.map((page) => page.path);
@@ -241,7 +270,11 @@ export class WikiAdapter implements HandoverAdapter {
         skippedPaths,
         missingPaths: paths.filter((p) => !copied.has(p) && !conflicts.has(p)),
         bytes: pages.filter((page) => copied.has(page.path)).reduce((s, p) => s + p.bytes, 0),
-        rawConflicts: outcome.rawConflicts,
+        // Only the originals this key's copied pages reference (not the whole batch's).
+        rawConflicts: [...new Set(done.flatMap((p) => outcome.pageFiles[p] ?? []))].filter((file) =>
+          rawConflicts.has(file),
+        ),
+        skippedAssets: outcome.skippedAssets,
         commit: outcome.commit,
       };
       if (done.length === 0) {

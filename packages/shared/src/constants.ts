@@ -125,6 +125,11 @@ export const HANDOVER_MEMORY_QUERY_LIMIT = 50;
  */
 export const HANDOVER_WIKI_QUERY_LIMIT = 100;
 /**
+ * 一次 Wiki 移交复制的总字节上限（D88 P2 独立审查 #6）：页 + 引用的原件 + D85 资产（含仓外
+ * 二进制）。超过时条目在卡上置灰并写明大小，分目录 / 按页分几张卡移交。
+ */
+export const HANDOVER_WIKI_COPY_MAX_BYTES = 1024 * 1024 * 1024;
+/**
  * system_event name of the follow-up injected into a bot after the user
  * decided on the propose_profile_change card a supervisor turn submitted
  * without waiting (D75 审查 M4).
