@@ -2,7 +2,7 @@
 
 用户在对话里说一句「把这件事交给 X 负责」，AI 就能把 A Bot 名下的资产（邮箱、连接应用、MCP、模型、定时任务、Skill、记忆、Wiki……）整理成一份移交清单，用户确认一次，宿主照单执行。用户不需要去设置页逐项操作。决策：**D88**。
 
-**状态：已定稿；P0 已合入 main，P1 已实施**（2026-10-12 定稿；P0 在 `t/handover` 实现、审查修复后合入 main（迁移 0036）；P1——普通 Bot 发起、网页监看、Skill、记忆按条复制、承诺随定时任务迁移——在 `t/handover-p1` 实现，无新迁移，待独立审查与合入；偏差见 [todo §6](../../todo/bot-handover.md#6-实施记录) DEV-001 起，P1 的为 DEV-012 起；P2 未开始）。执行方案见 [todo/bot-handover.md](../../todo/bot-handover.md)。产品拍板（2026-10-12）：①记忆、Wiki 一律**复制**（源 Bot 保留，不提供「从 A 删除」）；②普通 Bot 交出自己资产的能力按开发节奏排期，但属于本功能的必做范围；③承诺随定时任务迁移（A 的承诺置 `void`）作为「一律复制」的唯一例外，确认采用（§3.1）。
+**状态：已定稿；P0 已合入 main，P1、P2 已实施**（2026-10-12 定稿；P0 在 `t/handover` 实现、审查修复后合入 main（迁移 0036）；P1——普通 Bot 发起、网页监看、Skill、记忆按条复制、承诺随定时任务迁移——在 `t/handover-p1` 实现并经审查修复，无新迁移；P2——Wiki 与组件在后台 `handover_copy` 作业里复制、「退役」按钮——在 `t/handover-p2`（基于 P1）实现，无新迁移，待独立审查与合入；偏差见 [todo §6](../../todo/bot-handover.md#6-实施记录) DEV-001 起，P1 的为 DEV-012 起，P2 的为 DEV-021 起）。执行方案见 [todo/bot-handover.md](../../todo/bot-handover.md)。产品拍板（2026-10-12）：①记忆、Wiki 一律**复制**（源 Bot 保留，不提供「从 A 删除」）；②普通 Bot 交出自己资产的能力按开发节奏排期，但属于本功能的必做范围；③承诺随定时任务迁移（A 的承诺置 `void`）作为「一律复制」的唯一例外，确认采用（§3.1）。
 
 相关：D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D80（例行事项，[todo/schedule-nudges.md](../../todo/schedule-nudges.md)）、D73（连接应用，[29](29-connected-apps.md)）、D84（邮件通道，[35](35-mail-channel.md)）、D65（MCP，[23](23-mcp-and-subagent.md)）、[03-bot.md](03-bot.md)、[04-memory.md](04-memory.md)、[05-wiki-and-skills.md](05-wiki-and-skills.md)、D18（Bot 删除）。
 
@@ -107,6 +107,7 @@
 - **复制**：页文件 + 页引用到的 `raw/` 原件 + `wiki-store` 二进制资产（内容寻址，可硬链接 / 复制）+ `_assets` / `_derived` 清单，进 B 的 wiki；持 B 的维护锁写入，git 提交「从 {A} 复制 N 页」，之后 `reconcileFts` 重建 B 的 `wiki_fts`，并给 B 排一次 lint（让它把新页整合进自己的索引）。
 - **冲突**：B 已有同路径的页 → 跳过并在结果里列出，不覆盖、不改名（改名会打断页间链接）。
 - **耗时**：放进 `handover_copy` 后台作业，卡片在作业完成前显示「进行中」；失败可重试，按条目幂等。
+- **实现（P2）**：key 为页 `wiki:pages/a.md` 或目录 `wiki:pages/`（整本）/ `wiki:pages/{目录}/`（执行时取目录下当下的全部页）。盘点默认给整本与各主题目录，`wiki_query` 列页（`*` / `pages/{目录}/` / 关键词）。复制分两段、从不同时持两把锁：来源的维护锁内快照到接手方旁的暂存目录，接手方的维护锁内 rename 落盘（同路径字节相同 = 已复制，可续跑；不同 = 跳过并列出）。D85 尚未实施，`_assets` / `_derived` / `wiki-store` 按 [36](36-wiki-multimodal-ingest.md) §3.1 的布局前向兼容处理（仓外文件硬链接）。单页条目在接手方已有同路径不同内容时卡上置灰；目录条目只提示会跳过哪些。见 todo §6 P2、DEV-021 起。
 
 ## 4 工具
 
@@ -192,7 +193,9 @@ interface HandoverAdapter {
 }
 ```
 
-`lifecycle.deletionPreview` 的计数改为从同一组适配器的 `inventory` 汇总（P2，可选）。
+`lifecycle.deletionPreview` 的计数改为从同一组适配器的 `inventory` 汇总（P2，可选）——未采用，见 DEV-024。
+
+P2 在接口上增加两项：`background`（后台条目：确认后的同步阶段不执行，宿主在阶段 2–6 之后登记一个 `handover_copy` 作业；作业结束前移交保持 `applying`，交接说明与结算在作业完成后才做）与可选的 `applyBatch(ctx, keys)`（后台批量执行，Wiki 用它一次提交 N 页；抛错 = 整批暂时失败，作业按 jobs 机制重试，末次仍失败时条目记 failed）。
 
 ## 6 分期
 
@@ -200,7 +203,7 @@ interface HandoverAdapter {
 |---|---|
 | **P0** | 迁移（两表 + approvals kind）、适配器框架与 `HandoverHost`、`inspect_bot_assets` / `propose_handover`（仅管家；目标可新建）、`propose_bot` / `propose_team` 增 `model`；适配器：模型、连接应用、MCP、邮箱、定时任务（不含承诺联动）、职责改写、交接说明；移交卡（渲染端）；提示词；触发事件的端到端用例 |
 | **P1** | 普通 Bot 发起（来源只能是自己）、网页监看、Skill、记忆（按条复制 + 承诺随定时任务迁移） |
-| **P2** | Wiki（后台作业）、组件；「退役」流程：全部资产移交后结果卡给出「删除 {A}」按钮（走既有 D18 删除确认，不自动删）；`deletionPreview` 改用适配器汇总 |
+| **P2** | Wiki（后台作业）、组件；「退役」流程：全部资产移交后结果卡给出「删除 {A}」按钮（走既有 D18 删除确认，不自动删）；`deletionPreview` 改用适配器汇总（未采用，DEV-024）——已实施（`t/handover-p2`） |
 
 ## 7 非目标
 
