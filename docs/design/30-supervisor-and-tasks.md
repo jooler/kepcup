@@ -85,7 +85,7 @@
 | 并发          | 每（Bot, 对话）同时最多一个（mailbox 不变）；调度优先级沿用今天的响应 run 规则 |
 | 引擎          | **固定内置 pi**（§8.4 降级除外）                           |
 | 轮次上限        | 不设（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的（动手或连续多步）用 `start_task`；没派任务也不因步数失败 |
-| 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、网页监看、技能生成请求（异步托管动作）  |
+| 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、网页监看、技能生成请求、应用设置（异步托管动作）  |
 | 不可写         | 文件、命令、浏览器、媒体生成、技能安装、环境安装——一律经任务                  |
 | 结束          | 最终回复自动发送（D48 不变）；无话可说时 `skip_reply`              |
 
@@ -98,7 +98,7 @@
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
 | 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
-| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
+| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89：档位由宿主裁定，写入与出设置卡均由宿主确定性执行，见 [38](38-conversational-settings.md)）、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；不设步数上限（见 DEV-017）                                                                                       |
 
 

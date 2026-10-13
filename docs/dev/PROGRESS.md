@@ -1340,3 +1340,16 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **媒体调用记账（任务 2）**：`MediaService` 各能力方法增可选 `usage` 上下文，成功后写一行 `usage_ledger`（provider=厂商 id、model=实际模型、token 0、cost NULL，无迁移）；失败 / 省略 / null 不记，记账异常只打日志。工具调用沿用所在 run（loopType turn/task）；记忆向量与重排记 `memory`；语音输入 RPC 记 `voice_input` 且排除在后台预算外。shared 契约：`loopTypeSchema` 增两值，`usageSummaryEntry` 增 `calls`；用量页增「调用次数」列与两个类型文案。限制：适配器目前不上报 token，故 token 恒 0；memory 行因 embedder 无 Bot 上下文而不归属 Bot；除 `transcribeSpeech` 外的 `media.*` 直调 RPC 暂不记账（无调用方）。
 - **验证**：新增 `wiki-source-sniff`（6）、`media-service-usage`（9）单测，`wiki.test.ts` 二进制来源用例，`memory.test.ts` / `response-loop.test.ts` 账本断言；`pnpm typecheck` 与 eslint 干净。全量 4028 例 26 失败（低于已记录基线 28–33，全部在 sandbox / skills / workspace-tools / environment / projects / wiki-url 等环境类文件；`wiki-url` 2 例在未改动的 main 上同样失败）。
 - **未做**：任务 3（邮件通道 P0 实机验收）需要真实 QQ / 163 / Gmail 邮箱与授权码，未执行，35 号文档状态保持「实机验收待完成」。
+
+## 对话内应用设置 P0（D89，2026-10-13，`t/settings`，待审查收口，未推送）
+
+实施依据 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)，设计见 [design/38](../design/38-conversational-settings.md)。提交范围 `e74defd`（shared 契约）→ `c7fddad`（desktop）→ `37aa4cd`（core）→ `9e5aae0` / `79f3d9e` / `32b88d1`（测试与 e2e）；无 DB 迁移。
+
+- **shared**：`settings-catalog/`（`types` / `items` / `mode` / `query` / `coverage` / `cards`）——58 条目录（含 7 条能力模型）、`DIRECT_ITEM_IDS`、`effectiveMode` 纯函数、搜索 / 概览 / `settings.changed` 映射、覆盖率与组件映射检查；`setting_card` / `setting_card_resolved` 事件 schema、`setupRequirement` 通用 kind `setting`、事件 `settings.changed`、RPC `settings.items.apply` / `settings.cards.{dismiss,complete,undo}`；能力包 `settings` 与「包内选项」`optIns`（`settings:change`）。
+- **core**：`settings/{adapters,host,context,render,prompt,write-lock}.ts`（条目适配器与条目级 CAS、`SettingsCatalogHost`、触发源 / 不可信读取判定、上下文回放、提示词规则、设置写锁）、`tools/settings-tools.ts`、`rpc/settings-bindings.ts`；`settings.update` / `bots.update` 等原有保存路径纳入同一把写锁并补发 `settings.changed`；orchestrator 按 run 绑定裁定上下文（`hasSettingsTools`、tool_call 置位不可信标志、`required` 走 `setupHit`）、`deliverEventToBot` 支持 `settingResolved`；ACP 按 `optIns` 注入。
+- **desktop**：`features/settings-card/`（`SettingCard` 宿主、`SettingCardEmbed` 分发、`DefaultModelsCard`、`BotModelCard`、`SettingSetupBody`、深链与渲染层条目写入）；`ProviderSetupForm` / `CapabilityModelSection` / `WebSearchSection` / `AgentCard` / `ConnectAppPanel` / `SensorCard` 补 `embedded` / `prefill` / `onSaved`；`BotProfileForm` / 群设置 / 项目设置补 `data-settings-anchor`，`shell.openBotPanel` / `openProjectSettings`；`settingsStore` 订阅 `settings.changed`；能力包页「允许修改设置」开关。
+- **测试**：shared 265/265；core 新增单测与集成 17 + 4 + 8 例通过（`settings-catalog-host` / `settings-prompt-acp` / `settings-cards`，集成对应方案 §八 P0 的八个场景）；desktop 627 通过；e2e `setting-card.spec` 通过（单聊 direct 回执卡撤销；群聊 confirm 卡应用后唤醒 Bot 续答）。
+- **已知既有失败（在干净的 `e74defd` 上复现，与本功能无关）**：`response-loop` 的「interim delivery is capped at eight per run」、`external-agent-p3` 的「agent write task holds the project lease」；e2e 另有 4 例失败（3 例 external-agents 对话框遮挡、1 例 projects 的 `getByText` 歧义），不是本车道引入。
+- **全量结果：待收口填写**（由编排者在收口时补全量套件的最终数字）。
+- **偏差**：见 DEVIATIONS DEV-026。
+- **未做**：P1（其余组件嵌入化，清单见 design/38 §10）、P2（旧 7 个 kind 收拢、提示词规则合并评估）；真实模型下「帮我生成图片」类场景的端到端观察。
