@@ -545,6 +545,18 @@ export class WikiService {
         if (bot === null || bot.status !== 'active') {
           throw new AppError('NOT_FOUND', '接手方 Bot 已被删除');
         }
+        if (snapshot.pages.length === 0) {
+          return {
+            copied: [],
+            conflicts: [],
+            missing: snapshot.missing,
+            rawFiles: 0,
+            rawConflicts: [],
+            assets: 0,
+            bytes: 0,
+            commit: null,
+          };
+        }
         await initWiki(this.#paths, toBotId, this.#deps.logger);
         /** Moves a staged file into place unless the target already has the path. */
         const place = (staged: string, dest: string | null): 'placed' | 'same' | 'conflict' => {
