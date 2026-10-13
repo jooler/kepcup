@@ -8,7 +8,7 @@ import {
 } from '@kepcup/shared';
 import type { HandoverAdapter, HandoverContext, HandoverEntry } from '../types.js';
 import { keyId } from './common.js';
-import { handoverMemoryCopy, type HandoverMemoryPort } from './memory.js';
+import { embedBestEffort, handoverMemoryCopy, type HandoverMemoryPort } from './memory.js';
 
 /**
  * 定时任务（D88 §3）：只能移交。A 私聊里的 → 在 B 私聊重建；群里的 → B 是该群成员则在
@@ -82,7 +82,8 @@ export class ScheduleAdapter implements HandoverAdapter {
   /** Why a commitment-linked task cannot move (null = it can, or it has no commitment). */
   #commitmentBlocked(row: Schedule, ownerName: string): string | null {
     if (row.commitmentId === null) return null;
-    if (this.#deps.memory === undefined) return '这条定时任务与一条承诺联动，当前环境不支持迁移承诺';
+    if (this.#deps.memory === undefined)
+      return '这条定时任务与一条承诺联动，当前环境不支持迁移承诺';
     const commitment = this.#commitment(row);
     if (commitment === null || commitment.status !== 'active') {
       return '这条定时任务关联的承诺已失效';
@@ -169,7 +170,7 @@ export class ScheduleAdapter implements HandoverAdapter {
             conversationId,
           ),
         );
-        await memory.embed(ctx.toBot.id, copy);
+        await embedBestEffort(memory, ctx.toBot.id, copy);
       }
       commitmentId = copy.id;
     }

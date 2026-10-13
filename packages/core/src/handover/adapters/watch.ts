@@ -1,4 +1,10 @@
-import { WATCH_MAX_PER_BOT, type Bot, type Conversation, type HandoverAction, type Watch } from '@kepcup/shared';
+import {
+  WATCH_MAX_PER_BOT,
+  type Bot,
+  type Conversation,
+  type HandoverAction,
+  type Watch,
+} from '@kepcup/shared';
 import { describeCondition } from '../../watch/conditions.js';
 import type { HandoverAdapter, HandoverContext, HandoverEntry } from '../types.js';
 import { keyId } from './common.js';
@@ -77,7 +83,10 @@ export class WatchAdapter implements HandoverAdapter {
     if (row.status === 'stopped') return '这个监看已停止';
     if (row.botId !== ctx.fromBot.id) return `这个监看已不属于 ${ctx.fromBot.name}`;
     // 新建目标还没建：一个空白的新 Bot 没有任何监看，只在自己的私聊里。
-    if (ctx.toBot !== null && this.#deps.watches.countLiveForBot(ctx.toBot.id) >= WATCH_MAX_PER_BOT) {
+    if (
+      ctx.toBot !== null &&
+      this.#deps.watches.countLiveForBot(ctx.toBot.id) >= WATCH_MAX_PER_BOT
+    ) {
       return `${ctx.toName} 的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`;
     }
     if (this.#isDirectOf(row.conversationId, row.botId)) return null;
@@ -119,7 +128,9 @@ export class WatchAdapter implements HandoverAdapter {
       this.#deps.watches.profileKeyFor(ctx.fromBot.id) !==
         this.#deps.watches.profileKeyFor(ctx.toBot.id);
     return differs
-      ? [`之后用 ${ctx.toName} 的浏览器资料检查：需要登录才能看的页面，要在 ${ctx.toName} 那边重新登录`]
+      ? [
+          `之后用 ${ctx.toName} 的浏览器资料检查：需要登录才能看的页面，要在 ${ctx.toName} 那边重新登录`,
+        ]
       : [];
   }
 }

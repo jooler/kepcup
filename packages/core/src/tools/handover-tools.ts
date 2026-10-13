@@ -329,7 +329,9 @@ export function buildHandoverTools(input: {
       }
       const memoryItems = params.items.filter((item) => item.key.trim().startsWith('memory:'));
       if (memoryItems.length > HANDOVER_MEMORY_MAX_ITEMS) {
-        return invalid(`记忆条目太多（≤ ${HANDOVER_MEMORY_MAX_ITEMS} 条），挑最重要的，或分几张卡提交`);
+        return invalid(
+          `记忆条目太多（≤ ${HANDOVER_MEMORY_MAX_ITEMS} 条），挑最重要的，或分几张卡提交`,
+        );
       }
       if (params.items.length - memoryItems.length > HANDOVER_ITEMS_MAX) {
         return invalid(`条目太多（记忆之外 ≤ ${HANDOVER_ITEMS_MAX} 个），分几张卡提交`);

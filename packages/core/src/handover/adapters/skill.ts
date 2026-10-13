@@ -62,7 +62,9 @@ export class SkillAdapter implements HandoverAdapter {
       key: `skill:${skill.name}`,
       type: 'skill',
       label: skill.name,
-      detail: [origin, status, skill.description].filter((part) => (part ?? '').length > 0).join('；'),
+      detail: [origin, status, skill.description]
+        .filter((part) => (part ?? '').length > 0)
+        .join('；'),
       actions: ['copy'],
       defaultAction: 'copy',
       // 描述与来源网址来自技能仓库或模型。
@@ -107,7 +109,11 @@ export class SkillAdapter implements HandoverAdapter {
   }
 
   isApplied(ctx: HandoverContext & { toBot: Bot }, key: string): boolean {
-    return this.#deps.skills.isHandoverCopy(ctx.fromBot.id, ctx.toBot.id, keyId(key, 'skill') ?? '');
+    return this.#deps.skills.isHandoverCopy(
+      ctx.fromBot.id,
+      ctx.toBot.id,
+      keyId(key, 'skill') ?? '',
+    );
   }
 
   describe(entry: HandoverEntry, _action: HandoverAction, toName: string): string {

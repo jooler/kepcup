@@ -11,12 +11,16 @@ import {
   type Message,
 } from '@kepcup/shared';
 import {
+  createFakeBrowserHost,
   createTestStack,
   listAllMessages,
+  listMessages,
+  listRuns,
   makeBot,
   openDirect,
   sendBatch,
   step,
+  TestClock,
   waitFor,
   waitForRun,
   type TestStack,
@@ -47,7 +51,11 @@ async function start(): Promise<TestStack> {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-function remember(stack: TestStack, botId: string, item: Partial<NewMemoryItem> & { content: string }): MemoryItem {
+function remember(
+  stack: TestStack,
+  botId: string,
+  item: Partial<NewMemoryItem> & { content: string },
+): MemoryItem {
   return stack.core.services.memory!.storeFor(botId).insert({
     kind: 'preference',
     subject: null,
@@ -519,5 +527,105 @@ describe('bot asset handover P1 (D88)', () => {
     expect(betaItems.find((entry) => entry.content === w.sensitive.content)!.sensitivity).toBe(
       'sensitive',
     );
+  }, 60_000);
+
+  it('监看移交后接着上次的检查结果：同一状态不再提醒（A、B 都不），之后的新变化只提醒 B、用 B 的浏览器资料', async () => {
+    const clock = new TestClock();
+    const browser = createFakeBrowserHost();
+    const stack = await createTestStack({ clock, timers: clock, browserRpc: browser });
+    stacks.push(stack);
+    const { core, llm } = stack;
+    const watches = core.services.watches!;
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    const alphaDirect = (await openDirect(core, alpha.id)).id;
+    const betaDirect = (await openDirect(core, beta.id)).id;
+    llm.script(
+      'mock-main',
+      Array.from({ length: 4 }, () =>
+        step()
+          .expect((request) => request.lastUserText().includes('<trigger reason="watch"'))
+          .replyText('监看有变化了'),
+      ),
+    );
+    const url = 'https://shop.example.com/item/9';
+    const alertCards = async (conversationId: string, watchId: string) =>
+      (await listMessages(core, conversationId)).filter(
+        (message) =>
+          message.kind === 'card' &&
+          (message.content as { watchId?: string; watchEvent?: string }).watchId === watchId &&
+          (message.content as { watchEvent?: string }).watchEvent === 'alert',
+      ).length;
+    const wakeRuns = async (conversationId: string) =>
+      (await listRuns(core, conversationId)).filter(
+        (run) =>
+          run.triggerReason === 'watch' && run.loopType === 'turn' && run.status === 'completed',
+      ).length;
+
+    // A：100 → 90（< 95）提醒一次。
+    browser.pageTexts.set(url, '商品\n现价 ¥100');
+    const watch = watches.create({
+      botId: alpha.id,
+      conversationId: alphaDirect,
+      source: { kind: 'web_page', url },
+      condition: { kind: 'number_below', value: 95 },
+      intervalSec: 300,
+    });
+    await watches.whenIdle();
+    browser.pageTexts.set(url, '商品\n现价 ¥90');
+    clock.advance(5 * 60_000);
+    await watches.whenIdle();
+    await waitFor(
+      async () =>
+        (await alertCards(alphaDirect, watch.id)) === 1 && (await wakeRuns(alphaDirect)) === 1
+          ? true
+          : null,
+      { label: 'alpha alerted once' },
+    );
+
+    // 移交给 B（同一行改归属）：B 的私聊出一张「已创建」卡。
+    watches.transferTo(watch.id, { botId: beta.id, conversationId: betaDirect });
+    expect(
+      (await listMessages(core, betaDirect)).filter(
+        (message) =>
+          message.kind === 'card' &&
+          (message.content as { watchEvent?: string; watchId?: string }).watchId === watch.id &&
+          (message.content as { watchEvent?: string }).watchEvent === 'created',
+      ),
+    ).toHaveLength(1);
+
+    // 仍是 90：B 接着 A 的结果检查，不重复提醒（两边都没有新卡 / 新唤醒）。
+    clock.advance(5 * 60_000);
+    await watches.whenIdle();
+    expect(watches.get(watch.id)!).toMatchObject({
+      botId: beta.id,
+      alertSeq: 1,
+      lastMatched: true,
+    });
+    const lastFetch = browser.calls.filter((call) => call.method === 'browser.fetchText').at(-1)!;
+    expect(lastFetch.input).toMatchObject({ botId: beta.id, profileKey: `bot:${beta.id}` });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(await alertCards(betaDirect, watch.id)).toBe(0);
+    expect(await wakeRuns(betaDirect)).toBe(0);
+    expect(await alertCards(alphaDirect, watch.id)).toBe(1);
+    expect(await wakeRuns(alphaDirect)).toBe(1);
+
+    // 回到 100 再跌到 90：新变化只提醒 B。
+    browser.pageTexts.set(url, '商品\n现价 ¥100');
+    clock.advance(5 * 60_000);
+    await watches.whenIdle();
+    browser.pageTexts.set(url, '商品\n现价 ¥90');
+    clock.advance(5 * 60_000);
+    await watches.whenIdle();
+    expect(watches.get(watch.id)!.alertSeq).toBe(2);
+    await waitFor(
+      async () =>
+        (await alertCards(betaDirect, watch.id)) === 1 && (await wakeRuns(betaDirect)) === 1
+          ? true
+          : null,
+      { label: 'beta alerted once' },
+    );
+    expect(await alertCards(alphaDirect, watch.id)).toBe(1);
+    expect(await wakeRuns(alphaDirect)).toBe(1);
   }, 60_000);
 });
