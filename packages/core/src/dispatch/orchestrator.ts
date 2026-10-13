@@ -16,10 +16,10 @@ import {
   presentContextText,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   TASK_MAX_TURNS,
+  TURN_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
-  TURN_MAX_TURNS,
   TURN_MCP_RESOLVE_TIMEOUT_MS,
   BUILTIN_ENGINE,
   CONTINUATION_WINDOW_MS,
@@ -554,7 +554,7 @@ interface ActiveRunEntry {
  * How one execution of the shared run skeleton (`#executeRun`) is used:
  * - `turn` (D75 design 30 §2.1): the mailbox-driven supervisor turn —
  *   built-in engine only (an external agent is the bot's TASK engine, §8.1),
- *   read-only toolset with task management, TURN_MAX_TURNS, `<tasks>`
+ *   read-only toolset with task management, no step ceiling, `<tasks>`
  *   segment, no D56 auto continuation (§7.1), visible final reply; at its
  *   terminal state the task results in its trigger are consumed (§3.2), the
  *   mailbox releases (buffered batches start the next turn) and group turns /
@@ -3850,8 +3850,10 @@ export class Orchestrator {
         ],
         // D72：外部 Agent 的宿主工具已按能力包过滤，经宿主 MCP 桥注入。
         tools: agentRun?.tools ?? responseTools,
-        // §2.1: a turn has no long tool chains (TURN_MAX_TURNS).
-        // Task Agent loops: TASK_MAX_TURNS (0 = unlimited; wall + token budget remain).
+        // No step ceiling for turns or tasks (maxTurns ≤ 0). A turn is prompted
+        // to estimate the work and start_task when it is heavy; the host does
+        // not fail a turn for taking more steps, dispatched or not. Tasks stay
+        // on TASK_MAX_TURNS (0 = unlimited; wall + token budget remain).
         limits: { maxTurns: isTask ? TASK_MAX_TURNS : TURN_MAX_TURNS },
       });
 
@@ -3887,21 +3889,6 @@ export class Orchestrator {
         });
       }
 
-      // §2.1 TURN_MAX_TURNS: the engine just stops at the limit; a turn whose
-      // last allowed model turn still called a tool (other than the
-      // terminating skip_reply) ran out of steps.
-      let assistantTurns = 0;
-      let lastStopReason: string | null = null;
-      let skipped = false;
-      const unsubscribeStop = handle.onEvent((event) => {
-        if (event.type === 'tool_result') {
-          if ((event.payload as { toolName?: string }).toolName === 'skip_reply') skipped = true;
-          return;
-        }
-        if (event.type !== 'assistant') return;
-        assistantTurns += 1;
-        lastStopReason = (event.payload as { stopReason?: string }).stopReason ?? null;
-      });
       const unsubscribe = this.#persistSteps(runId, batch.conversationId, handle);
       const unsubscribeSetup = handle.onEvent((event) => {
         if (event.type !== 'tool_result') return;
@@ -3926,7 +3913,6 @@ export class Orchestrator {
         unsubscribe();
         unsubscribeSetup();
         unsubscribeInterim();
-        unsubscribeStop();
         unsubscribeSteerConfirm();
         if (exec.kind === 'task') exec.control.detach();
         else this.#activeRuns.delete(runId);
@@ -4010,31 +3996,6 @@ export class Orchestrator {
         settle('failed', outcome.error?.message ?? null, agentSetup);
         this.#maybeEnqueueSummary(batch.conversationId);
         return;
-      }
-
-      // §2.1: a turn that ran out of steps with no reply is settled failed with
-      // a hint — unless it already started a task: the work belongs there, so
-      // burning the remaining steps must not fail the dispatch.
-      if (
-        !isTask &&
-        outcome.status === 'completed' &&
-        !outcome.skipReply &&
-        !skipped &&
-        outcome.finalText.trim().length === 0 &&
-        assistantTurns >= TURN_MAX_TURNS &&
-        lastStopReason === 'toolUse'
-      ) {
-        const startedTask = runs
-          .listTasks({ conversationId: batch.conversationId, botId: batch.botId })
-          .some((task) => task.originRunId === runId);
-        if (!startedTask) {
-          settle(
-            'failed',
-            `对话轮超过 ${TURN_MAX_TURNS} 步上限仍未给出回复：较长的工作应派成任务（start_task）`,
-          );
-          this.#maybeEnqueueSummary(batch.conversationId);
-          return;
-        }
       }
 
       settle(

@@ -17,7 +17,7 @@
 | 触发 | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
 | 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 workdir 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
-| 轮数 / 时限 | `TURN_MAX_TURNS`（8）；用完仍未回复且未派出任务按 `failed` 结算并提示「较长的工作应派成任务」；已 `start_task` 则不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
+| 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
 | 工具面 | 对话核心 + 只读查询（含只读且免审批的 MCP 工具）+ 任务管理 + 异步托管动作（[dev/04](../dev/04-agent-runtime.md#工具目录)） | 完整工具面，去掉任务管理、跨 Bot 委派与管家提议；多一个 `ask_user` |
 | 最终文本 | 自动作为可见消息发出（D48） | 写入私有 `result` 条目，**不直接发给用户** |
 | 深度 | — | 1：任务内 `start_task` 一律拒绝 |

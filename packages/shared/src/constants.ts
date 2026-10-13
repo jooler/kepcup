@@ -596,11 +596,12 @@ export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;
 // --- Supervisor turns & tasks (D75, docs/design/30-supervisor-and-tasks.md) -----
 
 /**
- * Max model turns of one supervisor turn (`loop_type='turn'`, §2.1): a turn
- * talks and dispatches, it should never run a long tool chain; over the cap it
- * settles as failed (unless it already started a task — work belongs there).
+ * Max model turns of one supervisor turn (`loop_type='turn'`). `0` = no step
+ * ceiling: whether to `start_task` is prompt guidance. The host does not fail
+ * a turn for taking more steps, whether or not it already dispatched a task.
+ * pi-engine and Claude treat maxTurns ≤ 0 as unlimited.
  */
-export const TURN_MAX_TURNS = 8;
+export const TURN_MAX_TURNS = 0;
 /**
  * Max model turns of one task Agent loop (`loop_type='task'`). `0` = no step
  * ceiling: coding / long Agent work is bounded by TASK_MAX_WALL_MS and

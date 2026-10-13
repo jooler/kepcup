@@ -84,7 +84,7 @@
 | 触发          | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑、网页监看条件满足（D79，`watch`） |
 | 并发          | 每（Bot, 对话）同时最多一个（mailbox 不变）；调度优先级沿用今天的响应 run 规则 |
 | 引擎          | **固定内置 pi**（§8.4 降级除外）                           |
-| 轮次上限        | `TURN_MAX_TURNS`（建议 8）——对话轮不该出现长工具链；超限且未派出任务按失败结算；已 `start_task` 不因步数失败   |
+| 轮次上限        | 不设（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的（动手或连续多步）用 `start_task`；没派任务也不因步数失败 |
 | 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、网页监看、技能生成请求（异步托管动作）  |
 | 不可写         | 文件、命令、浏览器、媒体生成、技能安装、环境安装——一律经任务                  |
 | 结束          | 最终回复自动发送（D48 不变）；无话可说时 `skip_reply`              |
@@ -99,7 +99,7 @@
 | 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
 | 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
-| 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；计入 `TURN_MAX_TURNS`                                                                                       |
+| 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；不设步数上限（见 DEV-017）                                                                                       |
 
 
 **网页监看（D79）在对话轮工具面**：创建监看只是登记一个由宿主确定性执行的只读检查（取页在宿主的隐藏后台页里完成，不操作页面），与定时任务同属异步托管动作，对话轮可直接 `watch_create`；任务的工具面也有这三个工具。监看本身见 [02 §网页监看](02-execution.md#网页监看d79)。
@@ -669,7 +669,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/tools/index.ts` | `search_messages` / `get_messages_around` 按 Bot 视角；对话轮新增 `forward_task_result` |
 | `packages/core/src/agent/loops/conversation-summary.ts` | 只摘共享行 |
 | shared types | `textContentSchema.origin` 增 `'task'`（+ `taskId`）；`messageKindSchema` 增 `task_event`；`TriggerBatch.reason` 增 `'task'` |
-| shared constants                                  | `TURN_MAX_TURNS`、`TASK_MAX_TURNS`（0 = 任务 Agent 不设步数上限）、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（见 DEV-018） |
+| shared constants                                  | `TURN_MAX_TURNS`（0 = 对话轮不设步数上限）、`TASK_MAX_TURNS`（0 = 任务不设步数上限）、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（见 DEV-018） |
 
 
 项目处在早期开发阶段，不需要向后兼容、不需要迁移旧数据，因此 `loop_type='response'` 直接改名而不保留别名。
@@ -691,7 +691,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 
 ## 12 开放决策点
 
-1. **对话轮是否允许** `web_search` **/** `web_fetch`：允许则「我先查一下再答你」不必起任务，体验更顺；但对话轮的时间预算会被不可控的网络调用撑开。倾向：允许，但计入 `TURN_MAX_TURNS` 且单轮最多一次。
+1. **对话轮是否允许** `web_search` **/** `web_fetch`：允许则「我先查一下再答你」不必起任务，体验更顺；但对话轮的时间预算会被不可控的网络调用撑开。倾向：允许。不设步数硬上限；工作量由 Bot 在提示词里自行估计，决定直接查还是 `start_task`。
 2. **纯对话轮的反思去抖窗口取值**：对话轮数量显著增加后，逐轮反思不可行；窗口太长则偏好类记忆捕捉变慢。
 3. **私有条目是否进入摘要**：本稿规定对话摘要只摘共享行，私有往返滑出最近窗口后靠任务登记与反思记忆。若长对话里对话轮频繁需要回看早期任务的往返，再考虑按（Bot, 对话）维护一份私有摘要。
 4. **任务私有子目录（**`workspaces/{conv}/tasks/{id}/`**）是否在 T3 就提供**，还是等到确有并行写需求再加。倾向：先不提供，租约排队已经正确。
