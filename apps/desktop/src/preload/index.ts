@@ -82,6 +82,19 @@ const api = {
     title: string,
     labels?: { agent: string; user: string; handback: string },
   ): Promise<void> => ipcRenderer.invoke('browser:show', botId, conversationId, title, labels),
+  /** Open bot browser pages (bot × conversation); pushed on every open / close. */
+  getBotBrowserPages: (): Promise<Array<{ botId: string; conversationId: string }>> =>
+    ipcRenderer.invoke('browser:pages'),
+  onBotBrowserPagesChanged: (
+    callback: (pages: Array<{ botId: string; conversationId: string }>) => void,
+  ): (() => void) => {
+    const listener = (_event: unknown, pages: Array<{ botId: string; conversationId: string }>) =>
+      callback(pages);
+    ipcRenderer.on('browser:pages', listener);
+    return () => {
+      ipcRenderer.removeListener('browser:pages', listener);
+    };
+  },
   onCoreProcessState: (callback: (state: string) => void): (() => void) => {
     const listener = (_event: unknown, state: string) => callback(state);
     ipcRenderer.on('core-process-state', listener);

@@ -130,6 +130,10 @@ function bootstrap(): void {
     onControlReturned: (input) => {
       coreHost?.callPlatform('browser.controlReturned', input).catch(() => {});
     },
+    // 右栏「查看浏览器」只在该 Bot 有打开的页面时显示。
+    onPagesChanged: (pages) => {
+      if (window && !window.isDestroyed()) window.webContents.send('browser:pages', pages);
+    },
   });
   // P13 任务 2: assigned once the updater is wired below (tray builds first).
   let checkUpdates: () => void = () => {};
@@ -276,6 +280,7 @@ function bootstrap(): void {
   // visible window. Capability only — whether showing is appropriate is the
   // renderer's / core's decision, not the main process's.
   // W8: the toolbar copy (labels) is localized in the renderer, like the title.
+  ipcMain.handle('browser:pages', () => browserHost?.openPages() ?? []);
   ipcMain.handle(
     'browser:show',
     (_event, botId: string, conversationId: string, title?: string, labels?: unknown) => {

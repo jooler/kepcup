@@ -37,6 +37,10 @@ declare global {
         title: string,
         labels?: { agent: string; user: string; handback: string },
       ): Promise<void>;
+      getBotBrowserPages(): Promise<Array<{ botId: string; conversationId: string }>>;
+      onBotBrowserPagesChanged(
+        callback: (pages: Array<{ botId: string; conversationId: string }>) => void,
+      ): () => void;
       onCoreProcessState(callback: (state: string) => void): () => void;
       onNavigateConversation(callback: (conversationId: string) => void): () => void;
       /** P13 任务 6 诊断: reveals the logs directory in the OS file manager. */
