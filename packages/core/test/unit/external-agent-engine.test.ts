@@ -348,9 +348,23 @@ describe('host capability registry vs real tools', () => {
   it('every packed tool name exists among the response tools', () => {
     const toolsDir = fileURLToPath(new URL('../../src/tools', import.meta.url));
     const names = new Set<string>();
-    for (const file of readdirSync(toolsDir).filter((f) => f.endsWith('.ts'))) {
-      const source = readFileSync(path.join(toolsDir, file), 'utf8');
+    const sources = readdirSync(toolsDir)
+      .filter((f) => f.endsWith('.ts'))
+      .map((file) => readFileSync(path.join(toolsDir, file), 'utf8'));
+    // 工具名既可以直接写字面量（`name: 'mail_list'`），也可以写成常量（`name: MAIL_REQUEST_SETUP_TOOL`，
+    // 常量在 tools 目录里 `const X = 'tool_name'` 定义，供 orchestrator / 提示词共用）。
+    const constants = new Map<string, string>();
+    for (const source of sources) {
+      for (const match of source.matchAll(/^(?:export )?const ([A-Z][A-Z0-9_]*) = '([a-z_]+)'/gm)) {
+        constants.set(match[1]!, match[2]!);
+      }
+    }
+    for (const source of sources) {
       for (const match of source.matchAll(/^\s+name: '([a-z_]+)'/gm)) names.add(match[1]!);
+      for (const match of source.matchAll(/^\s+name: ([A-Z][A-Z0-9_]*),/gm)) {
+        const resolved = constants.get(match[1]!);
+        if (resolved !== undefined) names.add(resolved);
+      }
     }
     for (const capability of HOST_CAPABILITIES) {
       for (const tool of [...capability.tools, ...capability.butlerTools]) {
