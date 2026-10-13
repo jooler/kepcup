@@ -321,3 +321,108 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
     await closeSession(session);
   }
 });
+
+/**
+ * D88 P2：阿尔法有一本 Wiki（测试直接写进它的数据目录并 git 提交）；阿尔法自己
+ * inspect_bot_assets（wiki_query）→ propose_handover 整本 Wiki 给贝塔 → dock 里的卡显示
+ * Wiki 组 → 确认 → 后台作业复制完成后进度卡「已完成」、条目显示复制了几页 → 结果卡给出
+ * 「删除 阿尔法」→ 走删除确认 → 阿尔法被删除；贝塔的 Wiki 里有这两页。
+ */
+test('handover P2: wiki copied in the background, then the retire button deletes the source', async () => {
+  test.setTimeout(240_000);
+  const session = await startSession('kepcup-e2e-handover-p2-');
+  const { page, llm, home } = session;
+  try {
+    const alpha = (await rpc(page, 'bots.create', { profile: botProfile({ name: '阿尔法' }) })) as {
+      bot: { id: string };
+    };
+    const beta = (await rpc(page, 'bots.create', { profile: botProfile({ name: '贝塔' }) })) as {
+      bot: { id: string };
+    };
+    const alphaChat = (await rpc(page, 'conversations.openDirect', { botId: alpha.bot.id })) as {
+      conversation: { id: string };
+    };
+    await rpc(page, 'conversations.openDirect', { botId: beta.bot.id });
+
+    // 阿尔法的 Wiki：两页 + 一份被引用的原件，git 提交。
+    const { execFileSync } = await import('node:child_process');
+    const { mkdirSync, writeFileSync, realpathSync } = await import('node:fs');
+    const wikiRoot = path.join(realpathSync(home), 'bots', alpha.bot.id, 'wiki');
+    const files: Record<string, string> = {
+      'SCHEMA.md': '# Wiki 维护规范\n',
+      'index.md': '# 目录\n',
+      'log.md': '# 变更日志\n',
+      'pages/guide.md': '# 部署指南\n\n见 [原文](../raw/20261001-aaaaaaaaaaaa-guide.md)。\n',
+      'pages/ops/runbook.md': '# 值班手册\n\n值班步骤。\n',
+      'raw/20261001-aaaaaaaaaaaa-guide.md': '指南原文',
+    };
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(wikiRoot, rel)), { recursive: true });
+      writeFileSync(path.join(wikiRoot, rel), content);
+    }
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
+        cwd: wikiRoot,
+      });
+    git('init', '-q');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'seed');
+
+    await openChat(page, '阿尔法');
+    llm.script('mock-main', [
+      step().replyToolCall('inspect_bot_assets', { wiki_query: '*' }),
+      step()
+        .expect((request) => JSON.stringify(request.body.messages).includes('wiki:pages/guide.md'))
+        .replyToolCall('propose_handover', {
+          to: { bot_id: beta.bot.id },
+          items: [{ key: 'wiki:pages/' }],
+          handover_note: '部署相关的资料都在 Wiki 里。',
+        }),
+      step()
+        .expect((request) => JSON.stringify(request.body.messages).includes('移交处理结果'))
+        .replyText('Wiki 已经复制给贝塔了。'),
+    ]);
+    await rpc(page, 'messages.send', {
+      conversationId: alphaChat.conversation.id,
+      text: '把你的 Wiki 交给贝塔吧',
+    });
+    const card = page.locator('[data-testid^="approval-card-"][data-approval-kind="bot_handover"]');
+    await expect(card).toBeVisible({ timeout: 60_000 });
+    await expect(card.locator('[data-testid="handover-group-wiki"]')).toContainText('整本 Wiki');
+    await card.locator('[data-testid="approval-approve"]').click();
+    await expect(card).toHaveCount(0, { timeout: 15_000 });
+
+    const progress = page.locator('[data-testid^="handover-progress-"]');
+    await expect(progress.locator('[data-testid="handover-status"]')).toHaveAttribute(
+      'data-status',
+      'completed',
+      { timeout: 60_000 },
+    );
+    await expect(progress.locator('[data-testid="handover-item-copied"]')).toHaveText(
+      '已复制 2 页',
+    );
+    const tree = (await rpc(page, 'wiki.tree', { botId: beta.bot.id })) as {
+      pages: Array<{ path: string }>;
+    };
+    expect(tree.pages.map((entry) => entry.path).sort()).toEqual([
+      'pages/guide.md',
+      'pages/ops/runbook.md',
+    ]);
+
+    // 退役：全部完成 → 「删除 阿尔法」→ D18 删除确认 → 删除。
+    const retire = progress.locator('[data-testid="handover-retire-button"]');
+    await expect(retire).toHaveText(/删除 阿尔法/);
+    await retire.click();
+    const dialog = page.locator('[data-testid="handover-retire-dialog"]');
+    await expect(dialog).toBeVisible();
+    await dialog.locator('[data-testid="handover-retire-confirm"]').click();
+    await expect
+      .poll(async () => {
+        const { bots } = (await rpc(page, 'bots.list')) as { bots: Array<{ id: string }> };
+        return bots.some((bot) => bot.id === alpha.bot.id);
+      })
+      .toBe(false);
+  } finally {
+    await closeSession(session);
+  }
+});
