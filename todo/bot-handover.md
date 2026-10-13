@@ -321,7 +321,7 @@
 
 提交：`6580d35`（#3）、`2c1d74f`（#1 #2）、`2aae7b7`（#4）、`d28b6fa`（#5–#10）、本次文档提交。测试结果见下。
 
-REVIEW_RESULTS_PLACEHOLDER
+**测试**（修复后）：定向——`handover-p2`（7）、`handover-wiki-copy`（7）、`handover-adapters-p2`（8）、`context-assembly`、`mail-request-setup`、`widgets-service`，全绿。typecheck（shared / core / desktop，svelte-check 0 错误 1 条既有 warning）、改动文件 eslint 通过。全量（容器 `kh2-full3`，提交 `d28b6fa`）：4401 例，4352 通过 / 27 失败 / 22 跳过——26 条为既有基线文件（同前）；另 1 条 `external-agent-engine`「every packed tool name exists among the response tools」（`mail:mail_request_setup` 不在响应工具里）在 **main@1dd394d 上同样失败**（临时 worktree 单跑核实），与本分支无关，建议记入基线并另行修复。e2e 全量（容器 `kh2-e2e-full3`，94 例）：87 通过 / 7 失败，`handover.spec` 三例通过；失败与既有基线完全相同（`wiki.spec`、`debug-dev-pin`、`external-agents` ×3、`local-connectors`、`sandbox.spec`「run status line」）。
 
 **迁移号**：P2 无迁移（main 最大仍为 D88 的 0036）。
 
