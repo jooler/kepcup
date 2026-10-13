@@ -231,7 +231,7 @@ describe('append 扩展', () => {
       expect(messageSchema.parse(rig.messages.getOrThrow(progress.id)).content).toEqual(
         progress.content,
       );
-      expect(isVisibleToUser(progress)).toBe(true);
+      expect(isVisibleToUser(progress)).toBe(false);
     });
   });
 

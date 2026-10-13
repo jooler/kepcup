@@ -276,7 +276,14 @@ function stateLine(summary: TaskSummary): string {
   const parts = [`[${summary.taskId}] ${summary.title}`, summary.state];
   if (summary.queueReason) parts.push(summary.queueReason);
   if (summary.awaitingInput) parts.push('等待用户输入');
-  // Progress is UI-only (task card); list_tasks must not feed it to the model.
+  // In-flight progress stays off the model (status overlay only). Incomplete
+  // stops keep the last line so the Bot can see where the task stopped.
+  if (
+    summary.lastProgress &&
+    (summary.state === 'cancelled' || summary.state === 'failed' || summary.state === 'interrupted')
+  ) {
+    parts.push(`停在：${summary.lastProgress}`);
+  }
   if (summary.error) parts.push(`错误：${summary.error}`);
   if (summary.state === 'submitted' || summary.state === 'running') {
     parts.push(`可注入：${summary.injectable ? '是' : '否'}`);
@@ -301,7 +308,7 @@ export function buildTaskTools(input: {
     name: 'start_task',
     description:
       '把一件需要动手或耗时的事派成一个后台任务（文件、命令、浏览器、生成图片 / 语音 / 视频、长时间研究都在任务里做），立即返回 task_id，不等它完成。' +
-      '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中它的简短进度会直接显示在对话里。' +
+      '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
       'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +
       '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后简短告诉用户你去做了什么。',

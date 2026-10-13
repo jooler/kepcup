@@ -4852,21 +4852,19 @@ export class Orchestrator {
   }
 
   /**
-   * Interim visibility (todo/loop-interim-updates.md): the prose the model
-   * writes on a toolUse assistant turn is delivered into the conversation as
-   * a real bot message, so long tasks narrate instead of staying silent.
-   * Guardrails cap the per-run count (lower in groups) and the length of each
-   * text; over-cap or empty text stays only in run_steps (#persistSteps).
-   * 'stop' turns land separately via outcome.finalText, so they never
-   * duplicate here, and already-delivered texts survive a later failure or
-   * cancel — they are communication that already happened.
+   * Interim visibility (todo/loop-interim-updates.md):
+   * - Turn loops: prose on toolUse assistant turns becomes real bot messages
+   *   (capped per run; over-cap stays in run_steps only).
+   * - Task loops: prose updates a **single** status overlay (`runs.last_progress`
+   *   + status line / task card) — never stacked chat bubbles; cleared on
+   *   successful settle, kept on incomplete stop.
    */
   #deliverInterimTexts(
     runId: string,
     batch: TriggerBatch,
     isGroup: boolean,
     handle: RunHandle,
-    /** D75 §6.1: a task's interim texts carry `origin:'task'` (same guardrails). */
+    /** D75 §6.1: non-null = task run; status overlay instead of chat bubbles. */
     taskId: string | null = null,
   ): () => void {
     let delivered = 0;
@@ -4877,6 +4875,20 @@ export class Orchestrator {
       if (stopReason !== 'toolUse') return;
       const trimmed = (text ?? '').trim();
       if (trimmed.length === 0) return;
+      const clipped =
+        trimmed.length > INTERIM_TEXT_MAX_CHARS
+          ? `${trimmed.slice(0, INTERIM_TEXT_MAX_CHARS)}…`
+          : trimmed;
+      if (taskId !== null) {
+        // Single mutable status notification — overwrite, do not stack bubbles.
+        this.#taskHost.recordStatus(taskId, clipped);
+        this.#deps.publish('run.progress', {
+          runId,
+          conversationId: batch.conversationId,
+          text: clipped,
+        });
+        return;
+      }
       delivered += 1;
       if (delivered > max) return;
       const message = this.#deps.messages.append({
@@ -4884,12 +4896,8 @@ export class Orchestrator {
         senderType: 'bot',
         senderBotId: batch.botId,
         kind: 'text',
-        text:
-          trimmed.length > INTERIM_TEXT_MAX_CHARS
-            ? `${trimmed.slice(0, INTERIM_TEXT_MAX_CHARS)}…`
-            : trimmed,
+        text: clipped,
         runId,
-        ...(taskId !== null ? { taskOrigin: { taskId, interim: true } } : {}),
       });
       this.#recordBotMessage(runId, message);
     });

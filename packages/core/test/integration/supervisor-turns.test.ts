@@ -226,9 +226,14 @@ describe('D75 supervisor turns (W2)', () => {
     expect(firstUserText(turn2Request)).toContain('<tasks>');
     expect(firstUserText(turn2Request)).toContain(`[${taskId}] <untrusted>写报告</untrusted>  running`);
     expect(firstUserText(turn2Request)).not.toContain('<continuation>');
-    // The task's interim narration reached the user directly.
-    const progress = await waitVisible(stack, conv.id, 'TASK-PROGRESS');
-    expect(progress.content).toMatchObject({ origin: 'task', taskId });
+    // The task's interim narration is a single status overlay on the run / task card.
+    await waitFor(
+      () => {
+        const run = domain(stack).runs.getOrThrow(taskId);
+        return run.lastProgress?.includes('TASK-PROGRESS') ? true : null;
+      },
+      { label: 'task status overlay' },
+    );
 
     taskFinal.release();
     await waitRun(stack, taskId, ['completed'], 'task completed');

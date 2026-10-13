@@ -1260,6 +1260,11 @@ export const runSchema = z.object({
   model: z.string().nullable(),
   outputMessageIds: z.array(z.string()),
   summary: z.string().nullable(),
+  /**
+   * 任务最近一条过程状态（单一状态通知，覆盖写）。成功交付后清空；
+   * 取消 / 失败 / 中断保留。非任务 run 为 null。
+   */
+  lastProgress: z.string().nullable().optional(),
   /** Runs whose process records were replayed into this run's context (Loop 续接); [] when none. */
   continuedFromRunIds: z.array(z.string()),
   error: z.string().nullable(),
@@ -2525,7 +2530,10 @@ export const taskViewSchema = z.object({
   /** The cancel entry's reason (cancel_task / the user), null when not cancelled that way. */
   cancelReason: z.string().nullable(),
   injects: z.array(taskInjectViewSchema),
-  /** Latest visible progress line (clipped). */
+  /**
+   * Latest task status line (single, overwritten). Cleared when the task
+   * completes successfully; kept on cancel / fail / interrupt.
+   */
   lastProgress: z.string().nullable(),
   changes: taskChangesSchema.nullable(),
   /** Structured setup a failed task needs (D58 §7.5: complete it, then retry). */

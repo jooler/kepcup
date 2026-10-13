@@ -28,6 +28,7 @@
     }
     if (view?.awaitingInput === true) return t('task.awaitingInput');
     if (entry.progress.length > 0) return entry.progress;
+    if (view?.lastProgress) return view.lastProgress;
     const verb = toolVerb(entry.toolName);
     if (verb !== null) return t('runStatus.callingVerb', { verb });
     if (entry.toolName.length > 0) return t('runStatus.callingTool', { tool: entry.toolName });

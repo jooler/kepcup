@@ -262,6 +262,8 @@ function userVisibleFilter(): { sql: string; params: string[] } {
   return {
     sql:
       "kind != 'task_event' and owner_bot_id is null and " +
+      // Task interim status is a single overlay (task card / status line), not chat bubbles.
+      `not (kind = 'text' and coalesce(json_extract(content_json, '$.interim'), 0) = 1) and ` +
       `not (sender_type = 'system' and kind = 'system_event' and (` +
       `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
       `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')})))`,
@@ -279,6 +281,11 @@ function userVisibleFilter(): { sql: string; params: string[] } {
 export function isVisibleToUser(message: Message): boolean {
   // D75 §2.4.3: task_event rows and bot-owned private rows never reach the user.
   if (message.kind === 'task_event' || (message.ownerBotId ?? null) !== null) return false;
+  // Task interim progress is a single status overlay — not a chat bubble.
+  if (message.kind === 'text') {
+    const content = message.content as { interim?: unknown };
+    if (content.interim === true) return false;
+  }
   if (message.senderType !== 'system' || message.kind !== 'system_event') return true;
   const content = message.content as { internal?: boolean; event?: string };
   if (content.internal === true) return false;
@@ -660,6 +667,25 @@ export class MessagesService {
       )
       .get(conversationId, afterSeq, ...filter.params) as { n: number };
     return row.n;
+  }
+
+  /**
+   * Deletes every auto interim status bubble of a task (legacy stacked D54
+   * rows). Status now lives on `runs.last_progress` as a single overlay.
+   * Returns deleted message ids (caller may push UI removals).
+   */
+  purgeTaskInterim(taskId: string): string[] {
+    const rows = this.db
+      .prepare(
+        "select id from messages where kind = 'text' and json_extract(content_json, '$.origin') = 'task' and json_extract(content_json, '$.taskId') = ? and coalesce(json_extract(content_json, '$.interim'), 0) = 1",
+      )
+      .all(taskId) as Array<{ id: string }>;
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const placeholders = ids.map(() => '?').join(', ');
+    this.db.prepare(`delete from messages_fts where message_id in (${placeholders})`).run(...ids);
+    this.db.prepare(`delete from messages where id in (${placeholders})`).run(...ids);
+    return ids;
   }
 
   /** Edit a user message: content replaced, marked `edited`, FTS updated. */

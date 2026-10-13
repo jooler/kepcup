@@ -709,6 +709,14 @@ class ChatState {
   }
 
   #ingestMessage(conversationId: string, message: Message, own: boolean): void {
+    // Task interim is a status overlay, not a chat bubble (may still arrive from older cores).
+    if (
+      message.kind === 'text' &&
+      'interim' in message.content &&
+      message.content.interim === true
+    ) {
+      return;
+    }
     this.#lastSeqByConversation[conversationId] = Math.max(
       this.#lastSeqByConversation[conversationId] ?? 0,
       message.seq,

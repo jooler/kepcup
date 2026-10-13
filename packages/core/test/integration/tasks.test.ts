@@ -111,7 +111,7 @@ function wakeRuns(stack: { core: CoreHarness }, conversationId: string): Run[] {
 }
 
 describe('D75 task layer (TaskHost)', () => {
-  it('start → execute → private result entry, no visible final message, interim origin:task, wake + consume', async () => {
+  it('start → execute → private result entry, no visible final message, status overlay cleared on success, wake + consume', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
@@ -158,16 +158,15 @@ describe('D75 task layer (TaskHost)', () => {
     const resultEntry = domain(stack).messages.terminalTaskEvent(taskId!)!;
     expect(resultEntry.ownerBotId).toBe(bot.id);
 
-    // No visible final message; the interim note is visible with origin 'task'.
+    // No visible final message; interim is a status overlay (cleared on success), not chat bubbles.
     const visible = domain(stack).messages.listVisible(conv.id, { limit: 100 });
     expect(
       visible.some((m) => 'text' in m.content && m.content.text.includes('RESULT-ALPHA')),
     ).toBe(false);
-    const interim = visible.find(
-      (m) => 'text' in m.content && m.content.text.includes('INTERIM-ALPHA'),
-    );
-    expect(interim?.content).toMatchObject({ origin: 'task', taskId });
-    expect(interim?.senderBotId).toBe(bot.id);
+    expect(
+      visible.some((m) => 'text' in m.content && m.content.text.includes('INTERIM-ALPHA')),
+    ).toBe(false);
+    expect(runOf(stack, taskId!).lastProgress ?? null).toBeNull();
 
     // The wake hook delivered the entry as a reason:'task' trigger batch …
     const wake = await waitFor(

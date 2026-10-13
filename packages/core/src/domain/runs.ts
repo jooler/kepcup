@@ -31,6 +31,7 @@ interface RunRow {
   model: string | null;
   output_message_ids_json: string;
   summary: string | null;
+  last_progress: string | null;
   continued_from_run_ids_json: string | null;
   error_json: string | null;
   task_title: string | null;
@@ -128,6 +129,7 @@ function rowToRun(row: RunRow): Run {
     model: row.model,
     outputMessageIds: JSON.parse(row.output_message_ids_json) as string[],
     summary: row.summary,
+    lastProgress: row.last_progress ?? null,
     continuedFromRunIds:
       row.continued_from_run_ids_json !== null
         ? (JSON.parse(row.continued_from_run_ids_json) as string[])
@@ -315,6 +317,7 @@ export class RunsService {
         | 'provider'
         | 'model'
         | 'summary'
+        | 'lastProgress'
         | 'error'
         | 'outputMessageIds'
         | 'continuedFromRunIds'
@@ -339,7 +342,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
+        "update runs set status = ?, provider = ?, model = ?, engine = ?, agent_session_id = ?, summary = ?, last_progress = ?, continued_from_run_ids_json = ?, error_json = ?, output_message_ids_json = ?, chain_id = ?, chain_depth = ?, result_consumed_at = ?, awaiting_input = ?, started_at = coalesce(started_at, ?), ended_at = case when ? in ('completed','failed','cancelled','interrupted') then ? else ended_at end where id = ?",
       )
       .run(
         status,
@@ -348,6 +351,7 @@ export class RunsService {
         patch.engine ?? existing.engine,
         patch.agentSessionId ?? existing.agentSessionId,
         patch.summary ?? existing.summary,
+        patch.lastProgress !== undefined ? patch.lastProgress : (existing.lastProgress ?? null),
         patch.continuedFromRunIds !== undefined
           ? JSON.stringify(patch.continuedFromRunIds)
           : existing.continuedFromRunIds.length > 0

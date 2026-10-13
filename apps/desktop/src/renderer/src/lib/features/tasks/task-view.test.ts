@@ -62,6 +62,27 @@ describe('taskCardModel', () => {
     expect(model.canCancel).toBe(true);
   });
 
+  it('an incomplete stop keeps the last status line; a completed task does not', () => {
+    expect(
+      taskCardModel(
+        view({
+          state: 'cancelled',
+          status: 'cancelled',
+          lastProgress: '停在跑测试',
+        }),
+      ).progress,
+    ).toBe('停在跑测试');
+    expect(
+      taskCardModel(
+        view({
+          state: 'completed',
+          status: 'completed',
+          lastProgress: '不应再显示',
+        }),
+      ).progress,
+    ).toBeNull();
+  });
+
   it('a cancelled project write task offers the whole-run revert with its counts', () => {
     const model = taskCardModel(
       view({

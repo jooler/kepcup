@@ -89,7 +89,11 @@ export function taskCardModel(task: TaskView): TaskCardModel {
   return {
     tone: task.state === 'failed' || task.state === 'interrupted' ? 'error' : 'normal',
     queueReason: task.state === 'submitted' ? (task.queueReason ?? '') : null,
-    progress: task.state === 'running' && task.lastProgress !== null ? task.lastProgress : null,
+    // Running: live status. Incomplete stop: keep last line. Completed: cleared in core.
+    progress:
+      (task.state === 'running' || endedEarly) && task.lastProgress !== null
+        ? task.lastProgress
+        : null,
     cancelReason,
     errorLine,
     revoked,

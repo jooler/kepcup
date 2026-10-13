@@ -19,9 +19,14 @@
   // 初始化问询的用户回答（setupAnswer）不渲染气泡——回答由问题卡片的已答行
   // 展示；消息本身仍在（上下文/引用/记忆证据都用得到）。
   const messages = $derived(
-    (chat.current?.messages ?? []).filter(
-      (m) => !(m.kind === 'text' && 'setupAnswer' in m.content && m.content.setupAnswer === true),
-    ),
+    (chat.current?.messages ?? []).filter((m) => {
+      if (m.kind === 'text' && 'setupAnswer' in m.content && m.content.setupAnswer === true) {
+        return false;
+      }
+      // Task interim is a single status overlay (task card / status line), not bubbles.
+      if (m.kind === 'text' && 'interim' in m.content && m.content.interim === true) return false;
+      return true;
+    }),
   );
   // 状态行签名：出现/让位/工具名切换都会改变列表末尾的排版。
   const statusSignature = $derived(

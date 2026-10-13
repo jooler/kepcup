@@ -315,12 +315,8 @@ describe('agent failures after visible work stay ordinary failures (review #4)',
     const second = await nextSettledTask(stack, conv.id, [first.id]);
     expect(second.status).toBe('failed');
     expect(second.setup).toBeNull();
-    expect(second.outputMessageIds.length).toBeGreaterThan(0);
-    // The interim text reached the user as the task's progress.
-    const progress = await waitForMessage(stack.core, conv.id, (m) =>
-      textOf(m).includes('我先看看文件'),
-    );
-    expect(progress.content).toMatchObject({ origin: 'task', taskId: second.id });
+    // Incomplete stop keeps the last status overlay so user/Bot can see where it stopped.
+    expect(second.lastProgress ?? '').toContain('我先看看文件');
   }, 30_000);
 });
 
