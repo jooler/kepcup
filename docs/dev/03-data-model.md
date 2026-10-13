@@ -221,7 +221,8 @@ D86（直发）语义：`draft_id` 列已删除（main 0030，待发送队列下
 CREATE TABLE jobs (
   id            TEXT PRIMARY KEY,
   type          TEXT NOT NULL,            -- conversation_summary | reflection | memory_consolidation | profile_curation
-                                          -- | wiki_ingest | wiki_lint | skill_authoring | schedule_fire | watch_alert ...
+                                          -- | wiki_ingest | wiki_lint | skill_authoring | schedule_fire | watch_alert
+                                          -- | mail_alert | handover_copy（D88 P2）...
   bot_id        TEXT,
   conversation_id TEXT,
   payload_json  TEXT NOT NULL,
@@ -237,6 +238,8 @@ CREATE TABLE jobs (
 CREATE INDEX jobs_pending ON jobs(status, run_after, priority);
 CREATE UNIQUE INDEX jobs_dedupe ON jobs(dedupe_key) WHERE status = 'pending';
 ```
+
+- `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；作业多次中断而 `failed` 时不再重登，其条目记失败。
 
 启动时把 `running` 改回 `pending`（`attempts + 1`）；超过 3 次标记为 `failed`。
 
@@ -642,6 +645,7 @@ CREATE TABLE widget_docs (
 - `widget_docs` 是能力桥的每组件命名空间 KV（P1 起由 `widgets.ui.storage` 写入：值存 JSON 文本，配额单值 256KB / 总量 1MB / 1000 键，见设计 32 §6）；组件删除时随 widgets 行级联清除。
 - `widget_queries`（P2）是能力桥查询的模板表：由交付时的 `queries` 清单写入（D87 起来自制作草稿的 `queries.json`；每版本全量快照，≤20 条）；运行时 `widgets.ui.query` 按卡片钉住的版本取模板执行（旧卡用旧模板），SQL 在交付时被人工预审（审查态「查看源码」可见全文），运行时输入只有参数。
 - 服务层在 `core/src/widgets/service.ts`；HTML 与 SQL 永不进模型上下文（卡片在 `renderCard` 只渲染一行固定文案）。
+- D88 移交复制（P2，`WidgetService.copyForHandover`，无迁移）：只有 `scope='bot'` 的组件可复制（会话级随所在对话，不移交）。一个事务里给接手方插入新 `widgets` 行（新 id、仍为 Bot 级、`conversation_id` NULL、`latest_version` 照搬），`widget_versions` 全部行按原样复制（`html` / `sha256` / `queries_sha256` / `size_bytes` / `created_by_run` / `created_at` / `queries_reviewed_at` / `check_status` / `check_summary_json`），`widget_queries`、`widget_docs` 全部复制；不发卡。接手方已有同名组件、组件数或字节配额超限时不复制。渲染端的加载确认按「HTML sha256 + 查询摘要」记在本机（不分组件 / Bot），副本摘要不变，所以原版已确认的版本在接手方那里同样免确认。幂等判据：接手方名下同名、版本序列（版本号 + 两项摘要）完全相同的 Bot 级组件。
 - `check_status` / `check_summary_json`（0035，D87）：制作 loop 交付时凭检查回执写入，卡片描述符同步带 `checkStatus` / `knownIssues`（审查态徽标，`legacy` 不显示）；`widget_publish` 发的卡沿用版本的状态。自检只是质量闸，不改变按版本人工确认。制作草稿不在库里：`bots/{botId}/widget-drafts/{craftId}/`（文件，交付即删，未交付保留 7 天，Bot 删除随 `bots/{id}` 目录删除）。
 
 ### delegations（D71，main 0016；0021 重建）
@@ -821,6 +825,7 @@ CREATE TABLE bot_handover_items (
 - `(handover_id, key)` 是幂等键：执行前查状态，`done` 跳过；启动时 `applying` 的移交继续剩余 `pending` 项，`proposed` 而卡片已被启动恢复取消的落 `cancelled`。
 - 结算：全部 done → `completed`；一项都没做成 → `failed`；其余 → `partial`（跳过与失败都算未完成）。
 - 删除级联：对话物理删除时随 FK 删除；Bot 删除不删（Bot 行是占位行、id 不复用，记录留作历史；对应的待确认卡由「删除 Bot 取消其 approvals」处理，执行中的条目重新校验时因 Bot 已删除而跳过）。
+- P2 后台条目（`wiki:*`、`widget:*`）：确认后的同步阶段不执行，阶段 2–6 之后登记一个 `handover_copy` 作业；作业结束前移交保持 `applying`，交接说明（`note:handover`）与结算在作业完成后才做。`result_json` 约定：`copiedCount`（Wiki 页数 / 组件版本数）、`skippedPaths`（接手方已有同路径、内容不同而没覆盖的页）、Wiki 另有 `missingPaths` / `bytes` / `rawConflicts` / `commit`，组件另有 `widgetId`（副本 id）。执行视图（`handovers.get` / `handover.updated`）把前两项带给卡片，另由宿主算出 `retire`（全部完成、没有跳过的页、来源仍在且不是管家时 = `{botId, botName}`，否则 null）。
 
 ### agent_sessions（D72，迁移 0017；D75 迁移 0019 重建为按任务分）
 
@@ -993,6 +998,8 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 ```
 
 每次 Wiki 维护提交后，按变更的页面增量更新（提交 diff 中被删除的页面同步移除索引行）；界面删除页面走同一条提交通道，`wiki.rollback` 与启动对账则全量重建。
+
+D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进接手方旁边的暂存目录 `bots/{B}/wiki-handover-staging/{handoverId}/`（同一文件系统；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」、增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`，最后给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
 
 ## 删除级联
 
