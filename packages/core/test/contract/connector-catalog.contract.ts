@@ -112,5 +112,17 @@ export function runConnectorCatalogContract(target: ConnectorCatalogContractTarg
         if (auth.registration === 'preregistered') expect(auth.clientRef, slug).not.toBeNull();
       }
     });
+
+    it('Google entries use the preregistered google client and full-URL scopes', () => {
+      for (const entry of parsed()) {
+        const { auth, slug } = connectorMetaOf(entry);
+        if (auth.clientRef !== 'google') continue;
+        expect(auth.registration, slug).toBe('preregistered');
+        expect(auth.scopes.default.length, slug).toBeGreaterThan(0);
+        for (const scope of auth.scopes.default) {
+          expect(scope, slug).toMatch(/^https:\/\/www\.googleapis\.com\/auth\//);
+        }
+      }
+    });
   });
 }

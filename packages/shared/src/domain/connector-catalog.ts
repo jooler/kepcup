@@ -176,6 +176,16 @@ export const connectorMetaSchema = z.object({
    * （fail-closed，见 {@link filterReleasedConnectors}）。开发构建与测试不受影响。
    */
   releaseGate: z.string().min(1),
+  /**
+   * 暂缓开放：`true` 的条目在**所有**构建（含 `pnpm dev`、测试缺省加载）里都不出现在目录中，
+   * 代码与配置（图标、预注册客户端、授权参数）原样保留，便于以后直接恢复。
+   * 与 `releaseGate` 不同：门禁只管发行构建，`hidden` 连开发构建也隐藏。
+   * 当前用途：Google Calendar / Drive（`gcalendar` / `gdrive`）——Google Workspace MCP 暂缓开放，
+   * 方案待定（内置客户端仅 `drive.file` / `calendar.events` 范围有限；完整 `drive` / Gmail 需过 CASA；
+   * 测试模式刷新令牌 7 天过期；备选 Mac 本机 EventKit + 同步盘方案）。
+   * 恢复：删掉 `catalog.json` 里该条目的 `"hidden": true` 即可（见 todo/connected-apps.md §6.4）。
+   */
+  hidden: z.boolean().optional(),
 });
 export type ConnectorMeta = z.infer<typeof connectorMetaSchema>;
 
@@ -258,13 +268,19 @@ export function connectorToolPrefix(slug: string): string {
  * 按发行门禁过滤目录（fail-closed，照 {@link filterReleasedAgents}）。
  * `approvedGates === null` = 不过滤（开发构建 / 测试）；否则只留 `releaseGate`
  * 在放行清单里的条目，没有 `releaseGate` 的视为未放行。
+ * `hidden: true` 的条目无论门禁如何一律剔除（开发构建也不例外）。
  */
 export function filterReleasedConnectors(
   catalog: readonly ConnectorCatalogEntry[],
   approvedGates: readonly string[] | null,
 ): ConnectorCatalogEntry[] {
-  if (approvedGates === null) return [...catalog];
-  return catalog.filter((entry) => {
+  // `hidden` 条目任何构建都不放出（见 connectorMetaSchema.hidden），先于门禁判断。
+  const visible = catalog.filter(
+    (entry) =>
+      (entry._meta?.[CONNECTOR_META_KEY] as { hidden?: unknown } | undefined)?.hidden !== true,
+  );
+  if (approvedGates === null) return visible;
+  return visible.filter((entry) => {
     const gate = (entry._meta?.[CONNECTOR_META_KEY] as { releaseGate?: unknown } | undefined)
       ?.releaseGate;
     return typeof gate === 'string' && gate.length > 0 && approvedGates.includes(gate);
