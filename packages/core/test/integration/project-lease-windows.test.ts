@@ -19,9 +19,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 
 /**
  * D75 审查批 E（project 租约窗口）：
- * - 一个 run 多次持有租约（强制收回关掉一个窗口、非钉住的 run 再次取得）时，
- *   改动记录跨窗口累积，整次回退撤销全部窗口；别人夹在两个窗口之间改过的
- *   文件按冲突处理；
+ * - 改动摘要 / run_changes / 整次回退已退役——租约窗口不再落库改动记录；
  * - 被强制收回的写任务（钉住的租约）失去写权限（design 30 §5.1），之后的
  *   写入以「写入租约已被用户收回」失败，不再悄悄重新取得租约。
  */
@@ -72,7 +70,7 @@ function filesOf(stack: TestStack, runId: string): string[] {
 }
 
 describe('a run with several lease windows', () => {
-  it('accumulates every window into one record; revert undoes them all', async () => {
+  it('force revoke closes a window without recording run_changes; disk writes stay', async () => {
     const stack = await start();
     const { conv, project } = await setup(stack);
     const runtime = stack.core.services.projectRuntime!;
@@ -82,7 +80,6 @@ describe('a run with several lease windows', () => {
     await runtime.ensureWriteLease(holder, project.path);
     writeFileSync(file('a.txt'), 'A1\n');
     writeFileSync(file('README.md'), '# changed once\n');
-    // The user force-revokes: the first window closes with its own changes.
     expect(
       (
         (await stack.core.rpc.call('projects.revokeLease', { conversationId: conv.id })) as {
@@ -90,74 +87,24 @@ describe('a run with several lease windows', () => {
         }
       ).revoked,
     ).toBe(true);
-    expect(filesOf(stack, holder.runId)).toEqual(['README.md:modified', 'a.txt:added']);
+    expect(filesOf(stack, holder.runId)).toEqual([]);
+    expect(existsSync(file('a.txt'))).toBe(true);
 
-    // A non-pinned run takes the lease again on its next write: second window.
     await runtime.ensureWriteLease(holder, project.path);
     writeFileSync(file('b.txt'), 'B\n');
     writeFileSync(file('a.txt'), 'A2\n');
     await runtime.releaseRun(holder.runId);
 
-    expect(filesOf(stack, holder.runId)).toEqual([
-      'README.md:modified',
-      'a.txt:added',
-      'b.txt:added',
-    ]);
-    const { diffText } = (await stack.core.rpc.call('projects.diff', {
+    expect(filesOf(stack, holder.runId)).toEqual([]);
+    expect(existsSync(file('b.txt'))).toBe(true);
+    expect(readFileSync(file('a.txt'), 'utf8')).toBe('A2\n');
+    const { change } = (await stack.core.rpc.call('projects.diff', {
       runId: holder.runId,
-    })) as { diffText: string };
-    expect(diffText).toContain('a.txt');
-    expect(diffText).toContain('b.txt');
-    expect(diffText).toContain('README.md');
-
-    const revert = (await stack.core.rpc.call('projects.revert', {
-      runId: holder.runId,
-      force: false,
-    })) as { ok: boolean; conflicts: string[] };
-    expect(revert).toMatchObject({ ok: true, conflicts: [] });
-    expect(existsSync(file('a.txt'))).toBe(false);
-    expect(existsSync(file('b.txt'))).toBe(false);
-    expect(readFileSync(file('README.md'), 'utf8')).toBe('# demo\n');
-  }, 60_000);
-
-  it("a file someone else changed between the run's windows is a revert conflict", async () => {
-    const stack = await start();
-    const { conv, project } = await setup(stack);
-    const runtime = stack.core.services.projectRuntime!;
-    const holder = host('host_interleaved', conv.id);
-    const other = host('host_other', conv.id);
-    const readme = path.join(project.path, 'README.md');
-
-    await runtime.ensureWriteLease(holder, project.path);
-    writeFileSync(readme, '# holder 1\n');
-    await stack.core.rpc.call('projects.revokeLease', { conversationId: conv.id });
-    // Another writer changes the same file in between …
-    await runtime.ensureWriteLease(other, project.path);
-    writeFileSync(readme, '# other\n');
-    await runtime.releaseRun(other.runId);
-    // … and the holder changes it again in its second window.
-    await runtime.ensureWriteLease(holder, project.path);
-    writeFileSync(readme, '# holder 2\n');
-    await runtime.releaseRun(holder.runId);
-
-    const change = runtime.changesOf(holder.runId)!;
-    expect(change.files).toEqual([
-      expect.objectContaining({ path: 'README.md', change: 'modified', interleaved: true }),
-    ]);
-    // The file still holds the holder's last content, yet restoring the
-    // holder's `before` would also undo the other writer's change.
-    const refused = (await stack.core.rpc.call('projects.revert', {
-      runId: holder.runId,
-      force: false,
-    })) as { ok: boolean; conflicts: string[] };
-    expect(refused).toMatchObject({ ok: false, conflicts: ['README.md'] });
-    expect(readFileSync(readme, 'utf8')).toBe('# holder 2\n');
-    const forced = (await stack.core.rpc.call('projects.revert', {
-      runId: holder.runId,
-      force: true,
-    })) as { ok: boolean };
-    expect(forced.ok).toBe(true);
-    expect(readFileSync(readme, 'utf8')).toBe('# demo\n');
+    })) as { change: unknown };
+    expect(change).toBeNull();
+    await expect(
+      stack.core.rpc.call('projects.revert', { runId: holder.runId, force: false }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   }, 60_000);
 });
 
@@ -197,7 +144,7 @@ describe('a force-revoked write task loses its write permission (design 30 §5.1
     expect(after.consumed).toBe(true);
     expect(existsSync(path.join(project.path, 'a2.txt'))).toBe(false);
     expect(readFileSync(path.join(project.path, 'a.txt'), 'utf8')).toBe('A1');
-    expect(filesOf(stack, task.id)).toEqual(['a.txt:added']);
+    expect(filesOf(stack, task.id)).toEqual([]);
     expect(
       core.services.projectRuntime!.holdsLease(
         { runId: task.id, botId: task.botId, conversationId: conv.id, loopType: 'task' },

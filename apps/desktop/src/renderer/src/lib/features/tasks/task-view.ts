@@ -36,11 +36,8 @@ export interface TaskCardModel {
   /** Which host interruption `revoked` stands for (null when not revoked). */
   interruptReason: 'permission_revoked' | 'browser_profile_changed' | null;
   /**
-   * Change summary of a write task that ended without completing (§4.3: the
-   * cancel card): project → counts + whole-run revert; workspace → the files
-   * its file tools wrote and a plain "no revert"; none → nothing changed.
-   * Null for read-only tasks, running tasks and completed ones (a completed
-   * project task has its own run-changes card).
+   * Retired: change summary / revert on the task card is no longer shown.
+   * Always null.
    */
   changes: TaskCardChanges | null;
   /** The failure needs a setup first (the in-chat setup card retries it). */
@@ -52,6 +49,7 @@ export interface TaskCardModel {
    * effects (completed / unknown outcome); the review panel must be ticked first.
    */
   needsReview: boolean;
+  /** Retired with the change summary — always false. */
   canRevert: boolean;
   clip(text: string): string;
 }
@@ -64,14 +62,6 @@ export function taskCardModel(task: TaskView): TaskCardModel {
   const active = isActiveTask(task);
   const endedEarly =
     task.state === 'cancelled' || task.state === 'failed' || task.state === 'interrupted';
-  let changes: TaskCardChanges | null = null;
-  if (task.writes && endedEarly) {
-    changes = task.changes ?? { kind: 'none' };
-    // A workspace task without recorded writes still gets the plain "no revert" note.
-    if (changes.kind === 'none' && task.workdirKind === 'workspace') {
-      changes = { kind: 'workspace', files: [], more: 0 };
-    }
-  }
   const cancelReason =
     task.state === 'cancelled' ? (task.cancelReason ?? task.error ?? '').trim() : null;
   const interruptReason =
@@ -98,16 +88,13 @@ export function taskCardModel(task: TaskView): TaskCardModel {
     errorLine,
     revoked,
     interruptReason,
-    changes,
+    // Change summary / file list / whole-run revert retired.
+    changes: null,
     setupHint: task.state === 'failed' && task.setup !== null,
     canCancel: active,
     canRetry,
     needsReview: canRetry && task.state === 'interrupted' && task.reviewRequired === true,
-    canRevert:
-      changes !== null &&
-      changes.kind === 'project' &&
-      !changes.reverted &&
-      changes.added + changes.modified + changes.deleted > 0,
+    canRevert: false,
     clip: (text) => clipLine(text),
   };
 }

@@ -4,7 +4,6 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
-  import RunChangesCard from '$lib/features/projects/RunChangesCard.svelte';
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
@@ -109,9 +108,6 @@
       ? message.content.present
       : null,
   );
-  const cardRunId = $derived(
-    isChangesCard && 'runId' in message.content ? String(message.content.runId ?? '') : '',
-  );
   const cardApproval = $derived(
     isCard &&
       !isChangesCard &&
@@ -198,10 +194,7 @@
 </script>
 
 {#if isChangesCard}
-  <!-- 改动摘要卡片（docs/design/12-ui-layout.md 卡片表）：信息展示，不进 dock -->
-  <div class="flex py-1" data-testid="card-message">
-    <RunChangesCard runId={cardRunId} />
-  </div>
+  <!-- Retired: change summary / diff / revert card is no longer shown. -->
 {:else if delegationCard !== null}
   <!-- 跨 Bot 委派卡（D71）：信息卡，居中；发出卡可取消，结果卡可跳到 B 的原文 -->
   <div class="flex py-1" data-testid="card-message">
