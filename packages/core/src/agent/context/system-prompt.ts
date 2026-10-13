@@ -12,7 +12,7 @@ import {
 } from '@kepcup/shared';
 import { truncateToBudget } from '../tokens.js';
 import { APP_REQUEST_CONNECTION_RULE } from '../../apps/prompt.js';
-import { MAIL_REQUEST_SETUP_RULE } from '../../mail/prompt.js';
+import { MAIL_REQUEST_SETUP_RULE, mailRequestSetupRule } from '../../mail/prompt.js';
 
 export interface AccessPromptInfo {
   /** Sandbox verdict for this machine; unavailable means confirm mode. */
@@ -390,7 +390,8 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       rules = [...rules, `${rules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`];
     }
     if (input.hasMail === true) {
-      rules = [...rules, `${rules.length + 1}. ${MAIL_REQUEST_SETUP_RULE}`];
+      // 管家可以以任何 Bot 为来源提移交（BUTLER_RULES），普通 Bot 只能交出自己的（D88 P1）。
+      rules = [...rules, `${rules.length + 1}. ${mailRequestSetupRule(isButler)}`];
     }
     return rules;
   })();

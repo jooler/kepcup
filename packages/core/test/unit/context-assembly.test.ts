@@ -103,6 +103,28 @@ describe('system prompt assembly', () => {
     expect(task).not.toContain('用 suggest_route 出一张路由卡');
   });
 
+  it('D88: the mail setup rule matches the initiator rights — butler moves another bot\'s mailbox itself, a regular bot asks the user', () => {
+    const butler = makeBot('bot_butler', '管家');
+    butler.systemRole = 'butler';
+    const common = {
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+      loop: 'turn' as const,
+      hasMail: true,
+    };
+    const forButler = buildSystemPrompt({ ...common, bot: butler });
+    expect(forButler).toContain('from_bot_id 填原来负责的 Bot');
+    expect(forButler).not.toContain('你自己不能替对方提移交');
+    const forBot = buildSystemPrompt({ ...common, bot: makeBot('bot_self', '小艾') });
+    expect(forBot).toContain('你自己不能替对方提移交');
+    expect(forBot).not.toContain('from_bot_id 填原来负责的 Bot');
+    // No mail surface → no rule at all.
+    expect(buildSystemPrompt({ ...common, hasMail: false, bot: butler })).not.toContain(
+      'mail_request_setup',
+    );
+  });
+
   it('non-butler bots get no butler rules section', () => {
     const prompt = buildSystemPrompt({
       bot: makeBot('bot_self', '小艾'),
