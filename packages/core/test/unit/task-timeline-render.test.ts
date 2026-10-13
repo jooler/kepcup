@@ -8,6 +8,7 @@ import {
 import {
   buildConversationContext,
   buildTriggerSegment,
+  isTaskInterimProgress,
   renderMessageLine,
   type RenderMessageOptions,
 } from '../../src/agent/context/conversation.js';
@@ -148,20 +149,34 @@ describe('renderMessageLine: origin=task 的可见进度', () => {
 describe('截断（§2.4.4）', () => {
   const longResult = 'r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS + 50);
 
-  it('最近窗口：任务行截到 TASK_EVENT_CONTEXT_MAX_CHARS 并提示 get_messages_around', () => {
+  it('最近窗口：任务结果截到 TASK_EVENT_CONTEXT_MAX_CHARS；中间进度不进上下文', () => {
     const line = renderMessageLine(entry('m_20', { phase: 'result', text: longResult }), options);
     expect(line).toBe(
       `[m_20 | ${TIME} | 任务 run_t7→你（结果）] ${'r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS)}…（已截断，共 ${longResult.length} 字；全文用 get_messages_around 查看 m_20）`,
     );
+    const context = buildConversationContext({
+      summary: null,
+      recent: [entry('m_20', { phase: 'result', text: longResult })],
+      options,
+    });
+    expect(context).toContain(`${'r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS)}…（已截断`);
+    expect(context).not.toContain('r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS + 1));
+
     const progress = makeMessage({
       id: 'm_21',
       senderType: 'bot',
       senderBotId: 'bot_x',
-      content: { text: longResult, origin: 'task', taskId: 'run_t7' },
+      runId: 'run_t7',
+      content: { text: '先跑一遍测试', origin: 'task', taskId: 'run_t7', interim: true },
     });
-    const context = buildConversationContext({ summary: null, recent: [progress], options });
-    expect(context).toContain(`${'r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS)}…（已截断`);
-    expect(context).not.toContain('r'.repeat(TASK_EVENT_CONTEXT_MAX_CHARS + 1));
+    expect(isTaskInterimProgress(progress)).toBe(true);
+    const withoutProgress = buildConversationContext({
+      summary: null,
+      recent: [progress, makeMessage({ id: 'm_22', content: { text: '用户补充' } })],
+      options,
+    });
+    expect(withoutProgress).not.toContain('先跑一遍测试');
+    expect(withoutProgress).toContain('用户补充');
   });
 
   it("'full' 模式（消息工具）不截断", () => {

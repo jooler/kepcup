@@ -9,9 +9,10 @@ function ago(ms: number): string {
 }
 
 /**
- * Model-chosen / task-produced text (the title start_task was given, the
- * task's latest progress line) is data, not instructions (审查 L4): wrapped in
+ * Model-chosen title text is data, not instructions (审查 L4): wrapped in
  * <untrusted> like other bots' words, a stray closing tag neutralized.
+ * Latest progress stays on the task card / UI only — not in this segment
+ * (progress must not pollute the turn's context).
  */
 function untrusted(text: string): string {
   return `<untrusted>${text.replace(/<\/?untrusted>/gi, (tag) => tag.replace('<', '‹').replace('>', '›'))}</untrusted>`;
@@ -22,7 +23,7 @@ function taskLine(task: TaskSummary, now: number): string {
   parts.push(`派出 ${ago(now - task.createdAt)}`);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入（问题卡已发给用户）');
-  if (task.lastProgress !== null) parts.push(`最近：${untrusted(task.lastProgress)}`);
+  if (task.error) parts.push(`错误：${untrusted(task.error)}`);
   parts.push(`可注入：${task.injectable ? '是' : '否'}`);
   return parts.join('  ');
 }

@@ -7,7 +7,7 @@ import {
   type Message,
 } from '@kepcup/shared';
 import { completeStructured } from '../agent/structured.js';
-import { renderMessageLine } from '../agent/context/conversation.js';
+import { isTaskInterimProgress, renderMessageLine } from '../agent/context/conversation.js';
 import type { AgentEngine, RunIdentity } from '../agent/types.js';
 import { builtinModelRef, builtinRoute, type LlmRouter } from '../agent/llm-router.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
@@ -334,7 +334,10 @@ function buildTriageUserMessage(input: {
     botNames: names,
   };
   const render = (messages: Message[]) =>
-    messages.map((m) => renderMessageLine(m, options)).join('\n');
+    messages
+      .filter((m) => !isTaskInterimProgress(m))
+      .map((m) => renderMessageLine(m, options))
+      .join('\n');
   return [
     '<group_context>',
     // Trusted input (own card/responsibilities): outside <untrusted>; only the

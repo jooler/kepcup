@@ -3223,8 +3223,8 @@ export class Orchestrator {
           );
         }
       }
-      // §4.2: the turn sees its in-flight tasks (state, queue reason, latest
-      // progress) — deterministic, no model call.
+      // §4.2: the turn sees its in-flight tasks (state, queue reason) —
+      // deterministic, no model call. Progress is UI-only (not in the segment).
       const tasksSegment = isTask
         ? ''
         : buildTasksSegment(this.#taskHost.list(identity), this.#deps.clock.now());
@@ -4889,7 +4889,7 @@ export class Orchestrator {
             ? `${trimmed.slice(0, INTERIM_TEXT_MAX_CHARS)}…`
             : trimmed,
         runId,
-        ...(taskId !== null ? { taskOrigin: { taskId } } : {}),
+        ...(taskId !== null ? { taskOrigin: { taskId, interim: true } } : {}),
       });
       this.#recordBotMessage(runId, message);
     });

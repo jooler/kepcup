@@ -276,7 +276,7 @@ function stateLine(summary: TaskSummary): string {
   const parts = [`[${summary.taskId}] ${summary.title}`, summary.state];
   if (summary.queueReason) parts.push(summary.queueReason);
   if (summary.awaitingInput) parts.push('等待用户输入');
-  if (summary.lastProgress) parts.push(`最近：${summary.lastProgress}`);
+  // Progress is UI-only (task card); list_tasks must not feed it to the model.
   if (summary.error) parts.push(`错误：${summary.error}`);
   if (summary.state === 'submitted' || summary.state === 'running') {
     parts.push(`可注入：${summary.injectable ? '是' : '否'}`);

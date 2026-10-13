@@ -102,9 +102,28 @@ export interface RenderMessageOptions {
   renderCard?: (message: Message) => string | null;
 }
 
+
 /**
- * How task-related lines (task_event rows, origin 'task' progress) are cut
- * (D75 design 30 §2.4.4); other lines are never cut:
+ * Task auto-progress bubble (D54 interim under a task run): shown in the UI
+ * and on the task card, but never fed to a model as conversation history.
+ * `forward_task_result` keeps `origin:'task'` without `interim` (and uses the
+ * turn's run id). Rows written before the `interim` flag still match when
+ * `runId === taskId` (the task's own run emitted them).
+ */
+export function isTaskInterimProgress(message: Message): boolean {
+  if (message.kind !== 'text' || message.senderType !== 'bot') return false;
+  const content = message.content as { origin?: unknown; taskId?: unknown; interim?: unknown };
+  if (content.origin !== 'task' || typeof content.taskId !== 'string') return false;
+  if (content.interim === true) return true;
+  // Legacy / task-emitted under the task run (not a turn's forward_task_result).
+  return message.runId === content.taskId;
+}
+
+/**
+ * How task-related lines (task_event rows, forwarded `origin:'task'` results)
+ * are cut (D75 design 30 §2.4.4); other lines are never cut. Auto interim
+ * progress (`interim: true`) is omitted from model context entirely — see
+ * {@link isTaskInterimProgress}.
  * - 'context': recent window, deltas, triage — TASK_EVENT_CONTEXT_MAX_CHARS,
  *   full text via get_messages_around;
  * - 'trigger': the entry that woke the turn — in full up to
@@ -386,6 +405,8 @@ export function buildConversationContext(input: {
   for (let i = input.recent.length - 1; i >= 0; i -= 1) {
     const message = input.recent[i];
     if (!message || message.status === 'recalled') continue;
+    // Task interim progress stays in the UI; it must not crowd the turn / task window.
+    if (isTaskInterimProgress(message)) continue;
     const line = renderMessageLine(message, input.options, 'context');
     const cost = estimateTokens(line);
     if (selected.length >= RECENT_MESSAGES_MAX || tokens + cost > RECENT_MESSAGES_TOKEN_BUDGET) {
@@ -405,7 +426,7 @@ export function buildConversationContext(input: {
  */
 export function buildConversationDelta(messages: Message[], options: RenderMessageOptions): string {
   const lines = messages
-    .filter((message) => message.status !== 'recalled')
+    .filter((message) => message.status !== 'recalled' && !isTaskInterimProgress(message))
     .map((message) => renderMessageLine(message, options, 'context'));
   if (lines.length === 0) return '';
   return `<conversation_delta>\n（你上次回复之后对话里的新消息）\n${lines.join('\n')}\n</conversation_delta>`;

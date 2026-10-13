@@ -1,9 +1,10 @@
 import { Type } from '@earendil-works/pi-ai';
 import { z } from 'zod';
-import { AppError } from '@kepcup/shared';
+import { AppError, type Message } from '@kepcup/shared';
 import { routeFor, type LlmRouter } from '../llm-router.js';
 import { completeStructured } from '../structured.js';
 import {
+  isTaskInterimProgress,
   TASK_QUESTION_EVENT,
   TASK_UNDELIVERED_EVENT,
   taskUndeliveredLine,
@@ -152,16 +153,12 @@ export async function runConversationSummaryJob(deps: {
 }
 
 export function renderForSummary(
-  messages: Array<{
-    id: string;
-    createdAt: number;
-    senderType: string;
-    senderBotId: string | null;
-    content: unknown;
-    taskId?: string | null;
-  }>,
+  messages: Array<
+    Pick<Message, 'id' | 'createdAt' | 'senderType' | 'senderBotId' | 'content' | 'taskId' | 'kind' | 'runId'>
+  >,
 ): string {
   return messages
+    .filter((m) => !isTaskInterimProgress(m as Message))
     .map((m) => {
       const event = m.content as { event?: unknown; text?: unknown; taskBotId?: unknown } | null;
       if (m.senderType === 'system' && event?.event === TASK_QUESTION_EVENT) {

@@ -64,10 +64,11 @@ export interface AppendMessageInput {
    */
   delegation?: { delegationId: string; delegatedBy: string } | undefined;
   /**
-   * text messages only (D75): a visible interim message sent by a task —
+   * text messages only (D75): a visible message attributed to a task —
    * `origin: 'task'` + the task's run id (rendered as 「你（任务 t_x）」).
+   * `interim: true` marks auto-delivered progress (UI only; not model context).
    */
-  taskOrigin?: { taskId: string } | undefined;
+  taskOrigin?: { taskId: string; interim?: boolean } | undefined;
   /** text messages only (D87 P4 L3): a user message sent from a widget card (confirmed). */
   widgetOrigin?: { widgetId: string; version: number } | undefined;
   /**
@@ -317,7 +318,11 @@ export class MessagesService {
                   }
                 : {}),
               ...(input.taskOrigin !== undefined
-                ? { origin: 'task', taskId: input.taskOrigin.taskId }
+                ? {
+                    origin: 'task',
+                    taskId: input.taskOrigin.taskId,
+                    ...(input.taskOrigin.interim === true ? { interim: true } : {}),
+                  }
                 : {}),
               ...(input.widgetOrigin !== undefined
                 ? {

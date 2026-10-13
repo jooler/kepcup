@@ -788,6 +788,12 @@ export const textContentSchema = z.object({
   /** origin = 'task' 时发出该消息的任务（run id）。 */
   taskId: z.string().optional(),
   /**
+   * origin = 'task' 且为任务自动投送的中间说明（D54 / D75 §6.1）：界面可见，
+   * 不进 Bot / 任务的模型上下文（滚动摘要、最近窗口、消息工具、`<tasks>`）。
+   * `forward_task_result` 与任务主动 `send_message` 不带此标记。
+   */
+  interim: z.boolean().optional(),
+  /**
    * 定时触发的对话轮发出的消息（D80）：来源定时任务与其标题快照，气泡下方
    * 显示「⏰ 标题」，点开定时任务列表。
    */
