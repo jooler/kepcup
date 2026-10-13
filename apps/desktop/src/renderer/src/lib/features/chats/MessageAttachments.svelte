@@ -88,7 +88,7 @@
   });
 </script>
 
-<div class="mt-1 flex flex-wrap gap-1">
+<div class="mb-1 flex flex-wrap gap-1">
   {#each attachments as attachment (attachment.id)}
     {@const kind = kindOf(attachment.mime)}
     {@const state = stateOf(attachment)}

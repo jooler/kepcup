@@ -23,7 +23,8 @@
   /**
    * 消息渲染调度层：按消息种类分发——改动摘要卡 / 审批卡 / 初始化访谈
    * 问题卡 / 系统事件各自成形态；普通用户与 Bot 消息交给 ChatMessageRow
-   * （布局交互）→ MessageBody（气泡内容）+ MessageAttachments（附件）。
+   * （布局交互）→ MessageAttachments（附件，在上）+ MessageBody（气泡
+   * 正文，在下）。
    * merge 是连排信息（列表里上/下相邻条目是否同一发送者，由 MessageList
    * 计算），气泡与问题卡据此缩小对齐侧圆角。后续追加内容形态时：卡片类
    * 在调度层加分支；气泡内新内容（多模态等）扩展 MessageBody /
