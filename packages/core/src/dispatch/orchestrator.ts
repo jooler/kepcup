@@ -15,7 +15,7 @@ import {
   presentCardSchema,
   presentContextText,
   PROFILE_CHANGE_FOLLOWUP_EVENT,
-  RUN_MAX_TURNS,
+  TASK_MAX_TURNS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
@@ -3858,7 +3858,8 @@ export class Orchestrator {
         // D72：外部 Agent 的宿主工具已按能力包过滤，经宿主 MCP 桥注入。
         tools: agentRun?.tools ?? responseTools,
         // §2.1: a turn has no long tool chains (TURN_MAX_TURNS).
-        limits: { maxTurns: isTask ? RUN_MAX_TURNS : TURN_MAX_TURNS },
+        // Task Agent loops: TASK_MAX_TURNS (0 = unlimited; wall + token budget remain).
+        limits: { maxTurns: isTask ? TASK_MAX_TURNS : TURN_MAX_TURNS },
       });
 
       startedHandle = handle;
@@ -4018,8 +4019,9 @@ export class Orchestrator {
         return;
       }
 
-      // §2.1: a turn that ran out of steps is settled failed with a hint (the
-      // failure banner offers a retry); the work belongs in a task.
+      // §2.1: a turn that ran out of steps with no reply is settled failed with
+      // a hint — unless it already started a task: the work belongs there, so
+      // burning the remaining steps must not fail the dispatch.
       if (
         !isTask &&
         outcome.status === 'completed' &&
@@ -4029,12 +4031,17 @@ export class Orchestrator {
         assistantTurns >= TURN_MAX_TURNS &&
         lastStopReason === 'toolUse'
       ) {
-        settle(
-          'failed',
-          `对话轮超过 ${TURN_MAX_TURNS} 步上限仍未给出回复：较长的工作应派成任务（start_task）`,
-        );
-        this.#maybeEnqueueSummary(batch.conversationId);
-        return;
+        const startedTask = runs
+          .listTasks({ conversationId: batch.conversationId, botId: batch.botId })
+          .some((task) => task.originRunId === runId);
+        if (!startedTask) {
+          settle(
+            'failed',
+            `对话轮超过 ${TURN_MAX_TURNS} 步上限仍未给出回复：较长的工作应派成任务（start_task）`,
+          );
+          this.#maybeEnqueueSummary(batch.conversationId);
+          return;
+        }
       }
 
       settle(

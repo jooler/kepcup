@@ -190,7 +190,8 @@ export class PiEngine implements AgentEngine {
     let turns = 0;
     agent.finishTurn = async () => {
       turns += 1;
-      if (turns >= spec.limits.maxTurns) return { action: 'end' };
+      // maxTurns ≤ 0 = unlimited (task Agent loops: TASK_MAX_TURNS).
+      if (spec.limits.maxTurns > 0 && turns >= spec.limits.maxTurns) return { action: 'end' };
       return undefined;
     };
 

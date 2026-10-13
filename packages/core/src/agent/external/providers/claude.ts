@@ -157,7 +157,8 @@ export const claudeProvider: AgentProvider = {
           : {}),
         claudeCode: {
           options: {
-            maxTurns,
+            // ≤ 0 = unlimited (task Agent loops); omit so Claude Code has no host step cap.
+            ...(maxTurns > 0 ? { maxTurns } : {}),
             // 后台精简会话不给任何原生工具（宿主 MCP 桥的工具不受影响）。
             ...(oneShot === true ? { tools: [] } : {}),
             ...(disallowedTools.length > 0 ? { disallowedTools } : {}),

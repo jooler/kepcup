@@ -14,7 +14,7 @@
 | `abort(reason)` | `agent.abort()`；`AbortSignal` 传入每个工具 |
 | 工具网关 | 工具的 `execute` 内部调用网关；`beforeToolCall` 只做最后一道校验（工具是否属于本 loop 的工具集） |
 | 执行步骤持久化 | 订阅事件（`message_end`、`tool_execution_start`、`tool_execution_end`、`turn_end`、`agent_end`），**等待写库完成**后再继续（pi 的事件订阅支持异步屏障） |
-| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS`，任务 `RUN_MAX_TURNS`；对话轮用完仍未回复按 `failed` 结算） |
+| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS`；任务 `TASK_MAX_TURNS=0` 即不设上限；对话轮用完仍未回复且未派出任务按 `failed` 结算） |
 | 用量 | 每条助手消息的 usage 写入 usage_ledger |
 | 单次调用 `complete()` | `@earendil-works/pi-ai` 的单次请求接口 |
 | 模型与厂商 | `pi-ai` 的模型注册表；自定义接口通过 `baseUrl`；API key 通过自定义 `CredentialStore` 提供——`read(providerId)` 在每次请求的鉴权解析时从 secrets 表解密（DEV-002，不用 `Agent` 的 `getApiKey` 覆盖） |
@@ -159,7 +159,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 对话层读法 | `listForBot`：共享行 + 本 Bot 的私有任务条目 | `listShared`：只共享行 |
 | 续接 / 任务段 | `<tasks>` | `<continuation>`（`continues_task_id`） |
 | 触发 | 每个来源批一个 `<trigger>` | `<task_brief>` |
-| 轮数 | `TURN_MAX_TURNS` | `RUN_MAX_TURNS` |
+| 轮数 | `TURN_MAX_TURNS` | 无上限（`TASK_MAX_TURNS=0`） |
 | 引擎 / 模型 | 内置引擎，Bot 的内置主模型（`runtime.model` → 全局默认） | Bot 的任务引擎（外部智能体为伪 ref `agent:{id}/…`） |
 
 > 使用单条用户消息承载上下文与触发内容，避免多人对话被映射为交替的 user / assistant 角色而造成混淆，也避免部分厂商对连续同角色消息的限制。
@@ -483,6 +483,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 | 常量 | 值 | 用途 |
 |---|---|---|
 | `TURN_MAX_TURNS` | 8 | 对话轮步数上限 |
+| `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 已启动任务的对话级 / 全局封顶 |
 | `TASK_START_MAX_PER_TURN` | 2 | 一个对话轮最多派出的任务数（按 `origin_run_id`） |
 | `TASK_MAX_WALL_MS` / `TASK_TOKEN_BUDGET` | 4 h / 2,000,000 | reaper 强制 `failed` 的时长 / 用量上限 |

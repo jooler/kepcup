@@ -168,6 +168,7 @@ kepcup/
 | `CHECKPOINT_RETENTION_DAYS` | 30 | 检查点保留天数 |
 | `MAX_PROACTIVE_PER_DAY` | 5 | 每个 Bot 每天主动消息上限（Profile 可覆盖） |
 | `TURN_MAX_TURNS` | 8 | 对话轮（D75）的最大轮数 |
+| `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 任务并发：对话级 / 全局 |
 | `TASK_START_MAX_PER_TURN` | 2 | 单个对话轮最多起的任务数 |
 | `TASK_MAX_WALL_MS` | 4 小时 | 单个任务的墙钟上限（reaper 强制 `failed`） |
