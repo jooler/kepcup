@@ -3,7 +3,7 @@ import { AppError, TOOL_OUTPUT_MAX_CHARS, type Message } from '@kepcup/shared';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
-import { renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
+import { isTaskInterimProgress, renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -414,7 +414,9 @@ export function buildResponseTools(input: {
         limit: Math.min(50, params.limit ?? 20),
       });
       if (found.length === 0) return { ok: true, content: '没有找到匹配的消息。' };
-      const lines = found.map((m) => renderMessageLine(m, deps.renderOptions, 'full'));
+      const visible = found.filter((m) => !isTaskInterimProgress(m));
+      if (visible.length === 0) return { ok: true, content: '没有找到匹配的消息。' };
+      const lines = visible.map((m) => renderMessageLine(m, deps.renderOptions, 'full'));
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
     },
   };
@@ -440,7 +442,9 @@ export function buildResponseTools(input: {
         return { ok: false, content: '消息不存在或不属于当前对话', errorCode: 'NOT_FOUND' };
       }
       const n = Math.max(1, Math.min(20, Math.floor(params.n ?? 5)));
-      const around = deps.messages.around(identity.conversationId, anchor.seq, n, viewerBotId);
+      const around = deps.messages
+        .around(identity.conversationId, anchor.seq, n, viewerBotId)
+        .filter((m) => !isTaskInterimProgress(m));
       const lines = around.map((m) => renderMessageLine(m, deps.renderOptions, 'full'));
       return { ok: true, content: `<untrusted>\n${lines.join('\n')}\n</untrusted>` };
     },

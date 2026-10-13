@@ -210,7 +210,7 @@ describe('appendTaskEvent', () => {
 });
 
 describe('append 扩展', () => {
-  it("文本消息 taskOrigin 落 origin:'task' + taskId；普通消息 owner / taskId 为 null", () => {
+  it("文本消息 taskOrigin 落 origin:'task' + taskId；interim 可标记；普通消息 owner / taskId 为 null", () => {
     withRig((rig) => {
       const progress = rig.messages.append({
         conversationId: rig.conversationId,
@@ -218,12 +218,13 @@ describe('append 扩展', () => {
         senderBotId: 'bot_x',
         kind: 'text',
         text: '先跑一遍现有测试',
-        taskOrigin: { taskId: 'run_t1' },
+        taskOrigin: { taskId: 'run_t1', interim: true },
       });
       expect(progress.content).toEqual({
         text: '先跑一遍现有测试',
         origin: 'task',
         taskId: 'run_t1',
+        interim: true,
       });
       expect(progress.ownerBotId).toBeNull();
       expect(progress.taskId).toBeNull();
