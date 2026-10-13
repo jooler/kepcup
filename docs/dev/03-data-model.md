@@ -239,7 +239,7 @@ CREATE INDEX jobs_pending ON jobs(status, run_after, priority);
 CREATE UNIQUE INDEX jobs_dedupe ON jobs(dedupe_key) WHERE status = 'pending';
 ```
 
-- `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；作业多次中断而 `failed` 时不再重登，其条目记失败。
+- `handover_copy`（D88 P2，无迁移：`type` 没有 CHECK）：一次 Bot 资产移交的后台阶段（Wiki 页、Bot 级组件复制），`dedupe_key = handover_copy:{handoverId}`，`payload = {handoverId}`，`bot_id` / `conversation_id` 为 NULL（不受每日后台预算推迟，也不随某个 Bot / 对话被取消——作业自己按 Bot 是否还在跳过）。宿主保证同一移交最多一个 pending / running 作业；后台阶段暂时失败时作业抛 `JobRetryLaterError`，jobs runner 照常记一次失败并把 `run_after` 推后（30 秒 × 已用次数，`JobsService.postpone`），末次失败时条目记失败并结算；作业多次中断而 `failed` 时不再重登，其条目记失败。
 
 启动时把 `running` 改回 `pending`（`attempts + 1`）；超过 3 次标记为 `failed`。
 
@@ -999,7 +999,7 @@ CREATE VIRTUAL TABLE wiki_fts USING fts5(
 
 每次 Wiki 维护提交后，按变更的页面增量更新（提交 diff 中被删除的页面同步移除索引行）；界面删除页面走同一条提交通道，`wiki.rollback` 与启动对账则全量重建。
 
-D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进接手方旁边的暂存目录 `bots/{B}/wiki-handover-staging/{handoverId}/`（同一文件系统；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」、增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`，最后给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
+D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来源 Bot 的维护锁内把选中的页、页面链接到的 `raw/` 原件与 D85 资产（`raw/_assets/{id}.json`、`raw/_derived/{id}/`、仓外 `bots/{id}/wiki-store/{id}/`，`staging/` 除外）快照进暂存目录 `{cacheDir}/handover-staging/{handoverId}/`（与 `bots/` 同一文件系统；仓外目录是符号链接时不跟随；仓外资产硬链接，跨设备时复制；实时状态 `state.json` 总是复制）；再在接手方的维护锁内逐个 rename 进 `bots/{B}/wiki/` 与 `bots/{B}/wiki-store/`——目标已有同路径：字节相同 = 已复制（续跑幂等），不同 = 保留接手方的、在结果里列出（页面不覆盖不改名；原件不覆盖）。只放复制成功的页所引用的原件与资产。然后 log.md 追加一行（每个移交只一行）、树有变化时提交「从 {A} 复制 N 页」；提交之前出错则删掉本次落盘的文件、恢复 log.md 再抛错（不留未提交的文件）。提交之后增量写这些页的 `wiki_fts` 并 `reconcileFtsFor(B)`、给 B 排一次 `wiki_lint`（`dedupe_key = wiki_lint:{B}:handover`），这两步失败只记日志（启动对账兜底）。暂存目录在结束时删除。来源 Bot 的 Wiki 不被修改。
 
 ## 删除级联
 
