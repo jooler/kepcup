@@ -337,7 +337,8 @@ export class MemoryStore {
 
   /**
    * D88 移交复制的幂等判据：这个库里由 `handoverId` 从 `fromItemId` 复制来的那条（任何
-   * 状态；没有 = null）。来源记录在 `evidence_json` 的 `{handoverId, fromBotId, fromItemId}`。
+   * 状态，active 的优先、其次最新的；没有 = null）。来源记录在 `evidence_json` 的
+   * `{handoverId, fromBotId, fromItemId}`。
    */
   findHandoverCopy(handoverId: string, fromItemId: string): MemoryItem | null {
     const row = this.#db
@@ -348,7 +349,7 @@ export class MemoryStore {
            where json_extract(e.value, '$.handoverId') = ?
              and json_extract(e.value, '$.fromItemId') = ?
          )
-         order by m.rowid limit 1`,
+         order by (m.status = 'active') desc, m.rowid desc limit 1`,
       )
       .get(handoverId, fromItemId) as MemoryItemRow | undefined;
     return row ? rowToItem(this.#id, row) : null;

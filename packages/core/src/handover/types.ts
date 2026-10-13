@@ -31,6 +31,8 @@ export interface HandoverEntry {
 /** 盘点参数（记忆 / Wiki 的查询，P1 / P2 起使用）。 */
 export interface InventoryQuery {
   memoryQuery?: string | undefined;
+  /** 群聊里盘点：敏感记忆不作候选（同检索的群聊过滤）。 */
+  excludeSensitiveMemory?: boolean | undefined;
   wikiQuery?: string | undefined;
 }
 
@@ -98,6 +100,12 @@ export interface HandoverAdapter {
    * 执行。缺省 = 依赖 `apply` 自身可重入。
    */
   isApplied?(ctx: HandoverContext & { toBot: Bot }, key: string, action: HandoverAction): boolean;
+  /**
+   * 执行时这一项没做成（重新校验不成立 → skipped，或 `apply` 抛错 → failed）：撤掉本次
+   * 移交在接手方那边留下的半成品（如承诺联动的定时任务没移交成，B 的承诺副本要作废）。
+   * best-effort、可重入；宿主吞掉它的异常。
+   */
+  abandon?(ctx: HandoverContext & { toBot: Bot }, key: string): void;
   /** 卡片与结果通知里的一行（「把邮箱 x 移交给 B」）。 */
   describe(entry: HandoverEntry, action: HandoverAction, toName: string): string;
   /** 卡片上的风险提示（如 A 正在运行的任务会被中断）。 */

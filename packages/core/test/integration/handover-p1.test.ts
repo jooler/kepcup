@@ -318,13 +318,14 @@ describe('bot asset handover P1 (D88)', () => {
     expect(view.items.find((entry) => entry.key === `memory:${w.sensitive.id}`)).toBeUndefined();
 
     const betaDirect = core.services.domain!.conversations.listDirectByBot(w.beta.id)[0]!.id;
-    // 监看：同一行改到贝塔私聊，检查状态保留（不重复提醒）。
+    // 监看：同一行改到贝塔私聊，提醒序号保留；两边浏览器资料不同（bot:{id}），页面哈希
+    // 清空、贝塔第一次检查重新记基线（审查 #2）。
     const watch = core.services.watches!.store.get(w.watchId)!;
     expect(watch).toMatchObject({
       botId: w.beta.id,
       conversationId: betaDirect,
-      lastHash: 'hash-1',
-      lastQuietHash: 'quiet-1',
+      lastHash: null,
+      lastQuietHash: null,
       alertSeq: 2,
       status: 'active',
     });
@@ -440,6 +441,23 @@ describe('bot asset handover P1 (D88)', () => {
         note: '',
       }),
     ).toMatchObject({ ok: false, message: expect.stringContaining('你只能交出自己名下的资产') });
+    // 审查 #9 / DEV-020：普通 Bot 不能改接手方的模型——盘点里没有模型条目与可用模型，
+    // 提议里出现 model:* 退回。
+    const own = host.inspect(identity, { botId: '' });
+    expect(own.ok).toBe(true);
+    if (own.ok) {
+      expect(own.inspection.entries.some((entry) => entry.type === 'model')).toBe(false);
+      expect(own.inspection.modelOptions).toEqual([]);
+    }
+    expect(
+      host.propose(identity, {
+        fromBotId: alpha.id,
+        target: { kind: 'existing', botId: beta.id },
+        items: [{ key: 'model:inherit' }],
+        handoverNote: '交给你。',
+        note: '',
+      }),
+    ).toMatchObject({ ok: false, message: expect.stringContaining('模型不是你自己的资产') });
     expect(handoverApprovals(stack, alphaDirect)).toHaveLength(0);
   }, 30_000);
 
@@ -529,6 +547,47 @@ describe('bot asset handover P1 (D88)', () => {
     );
   }, 60_000);
 
+  it('审查 #7：执行时不成立的记忆按原因汇总成条数，不逐条列出', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    const alphaDirect = (await openDirect(core, alpha.id)).id;
+    await openDirect(core, beta.id);
+    const kept = remember(stack, alpha.id, { content: '用户每周一开周会' });
+    const gone = [
+      remember(stack, alpha.id, { content: '用户喜欢用表格汇报进度' }),
+      remember(stack, alpha.id, { content: '用户习惯下午写周报' }),
+    ];
+    llm.script('mock-main', [
+      step().replyToolCall('propose_handover', {
+        to: { bot_id: beta.id },
+        items: [kept, ...gone].map((item) => ({ key: `memory:${item.id}` })),
+        handover_note: '交给你。',
+      }),
+    ]);
+    await sendBatch(core, alphaDirect, ['把周报相关的记忆交给贝塔']);
+    const approval = await pendingHandover(stack, alphaDirect);
+    await waitForRun(core, alphaDirect, 'completed');
+    // 提议之后用户把两条标成「只告诉阿尔法」。
+    for (const item of gone)
+      core.services.memory!.storeFor(alpha.id).setPrivateToBot(item.id, true);
+    llm.script('mock-main', [step().replyText('部分完成。')]);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('partial');
+    const followUp = await waitFor(
+      async () =>
+        eventsOf(await listAllMessages(core, alphaDirect), BOT_HANDOVER_FOLLOWUP_EVENT)[0],
+    );
+    const text = (followUp.content as { text: string }).text;
+    expect(text.match(/记忆 2 条：/g)).toHaveLength(1);
+    for (const item of gone) expect(text).not.toContain(item.content);
+    const card = core.services.domain!.approvals.get(approval.id)!;
+    expect(card.status).toBe('failed');
+    expect(JSON.stringify(card.decision)).toContain('记忆 2 条');
+  }, 60_000);
+
   it('监看移交后接着上次的检查结果：同一状态不再提醒（A、B 都不），之后的新变化只提醒 B、用 B 的浏览器资料', async () => {
     const clock = new TestClock();
     const browser = createFakeBrowserHost();
@@ -562,6 +621,17 @@ describe('bot asset handover P1 (D88)', () => {
           run.triggerReason === 'watch' && run.loopType === 'turn' && run.status === 'completed',
       ).length;
 
+    // 审查 #2：另一个 `changed` 监看——两边浏览器资料不同，B 的第一次检查只重新记基线。
+    const url2 = 'https://news.example.com/list';
+    browser.pageTexts.set(url2, '公告\n第一条');
+    const changed = watches.create({
+      botId: alpha.id,
+      conversationId: alphaDirect,
+      source: { kind: 'web_page', url: url2 },
+      condition: { kind: 'changed' },
+      intervalSec: 300,
+    });
+
     // A：100 → 90（< 95）提醒一次。
     browser.pageTexts.set(url, '商品\n现价 ¥100');
     const watch = watches.create({
@@ -585,6 +655,13 @@ describe('bot asset handover P1 (D88)', () => {
 
     // 移交给 B（同一行改归属）：B 的私聊出一张「已创建」卡。
     watches.transferTo(watch.id, { botId: beta.id, conversationId: betaDirect });
+    expect(watches.get(changed.id)!.lastQuietHash).not.toBeNull();
+    watches.transferTo(changed.id, { botId: beta.id, conversationId: betaDirect });
+    // 测试栈里每个 Bot 的浏览器资料不同（bot:{id}）：哈希清空，提醒序号与条件状态保留。
+    expect(watches.get(changed.id)!).toMatchObject({ lastHash: null, lastQuietHash: null });
+    expect(watches.get(watch.id)!).toMatchObject({ lastMatched: true, alertSeq: 1 });
+    // B 的资料看到的页面不同（例如没登录）：只建基线，不误报「页面变化」。
+    browser.pageTexts.set(url2, '公告\n第一条\n（未登录，部分内容隐藏）');
     expect(
       (await listMessages(core, betaDirect)).filter(
         (message) =>
@@ -606,6 +683,9 @@ describe('bot asset handover P1 (D88)', () => {
     expect(lastFetch.input).toMatchObject({ botId: beta.id, profileKey: `bot:${beta.id}` });
     await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(await alertCards(betaDirect, watch.id)).toBe(0);
+    expect(await alertCards(betaDirect, changed.id)).toBe(0);
+    expect(watches.get(changed.id)!.lastQuietHash).not.toBeNull();
+    expect(watches.get(changed.id)!.alertSeq).toBe(0);
     expect(await wakeRuns(betaDirect)).toBe(0);
     expect(await alertCards(alphaDirect, watch.id)).toBe(1);
     expect(await wakeRuns(alphaDirect)).toBe(1);

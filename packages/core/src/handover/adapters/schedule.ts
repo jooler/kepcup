@@ -44,6 +44,10 @@ export interface ScheduleAdapterDeps {
   memory?: Pick<HandoverMemoryPort, 'get' | 'findCopy' | 'insertCopy' | 'embed' | 'voidCommitment'>;
 }
 
+/** 关联私密承诺的定时任务在盘点 / 卡片上的名字（不露承诺原文）。 */
+export const PRIVATE_COMMITMENT_LABEL = '一条私密承诺的提醒';
+const WITH_COMMITMENT = '；连同承诺「';
+
 function clip(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > 80 ? `${flat.slice(0, 80)}…` : flat;
@@ -95,18 +99,25 @@ export class ScheduleAdapter implements HandoverAdapter {
   inventory(botId: string): HandoverEntry[] {
     return this.#deps.schedules.listActiveForBot(botId).map((row) => {
       const commitment = this.#commitment(row);
+      // 私密承诺（用户说过「只告诉 A」）：任务标题 / 说明就是承诺原文，盘点与卡片里一律
+      // 换成中性说法（这一项本来就不可执行）。
+      const secret = commitment?.privateToBot === true;
+      const sensitive = !secret && commitment?.sensitivity === 'sensitive';
+      const where = `${this.#deps.schedules.describeWhen(row)}，${this.#where(row)}`;
       return {
         key: `schedule:${row.id}`,
         type: 'schedule' as const,
-        label: scheduleDisplayTitle(row),
-        detail: `${this.#deps.schedules.describeWhen(row)}，${this.#where(row)}${
-          commitment !== null ? `；连同承诺「${clip(commitment.content)}」` : ''
-        }`,
+        label: secret ? PRIVATE_COMMITMENT_LABEL : scheduleDisplayTitle(row),
+        detail: secret
+          ? where
+          : `${where}${commitment !== null ? `${WITH_COMMITMENT}${clip(commitment.content)}」` : ''}`,
         actions: ['move'],
         defaultAction: 'move',
         blocked: this.#commitmentBlocked(row, '来源 Bot') ?? undefined,
         // 标题 / 说明 / 承诺内容来自模型或用户；群名来自用户。
         external: true,
+        // 敏感承诺跟记忆一样：卡上标「敏感」、默认不勾。
+        ...(sensitive ? { marks: ['sensitive' as const], defaultSelected: false } : {}),
       };
     });
   }
@@ -116,10 +127,8 @@ export class ScheduleAdapter implements HandoverAdapter {
     const scheduleId = keyId(key, 'schedule') ?? '';
     const row = this.#deps.schedules.get(scheduleId);
     if (row === null) return '这条定时任务已被删除';
-    // 崩溃恢复：任务已经移交给 B、只差作废 A 的承诺——继续执行（apply 只补剩下的）。
-    if (ctx.toBot !== null && this.#deps.schedules.transferredTo(scheduleId, ctx.toBot.id)) {
-      return null;
-    }
+    // 崩溃恢复：本次移交已经把任务交给 B、只差作废 A 的承诺——继续执行（apply 只补剩下的）。
+    if (ctx.toBot !== null && this.#resumable(ctx, row)) return null;
     if (row.status !== 'active') return '这条定时任务已结束或已取消';
     if (row.botId !== ctx.fromBot.id) return `这条定时任务已不属于 ${ctx.fromBot.name}`;
     const blocked = this.#commitmentBlocked(row, ctx.fromBot.name);
@@ -141,7 +150,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     const row = this.#deps.schedules.get(scheduleId);
     if (row === null) throw new Error('这条定时任务已被删除');
     const memory = this.#deps.memory;
-    if (this.#deps.schedules.transferredTo(scheduleId, ctx.toBot.id)) {
+    if (this.#resumable(ctx, row)) {
       // Resumed after a crash between the transfer and voiding A's commitment.
       if (row.commitmentId !== null && memory !== undefined) {
         memory.voidCommitment(row.botId, row.commitmentId);
@@ -154,9 +163,9 @@ export class ScheduleAdapter implements HandoverAdapter {
     let commitmentId: string | undefined;
     if (row.commitmentId !== null) {
       if (memory === undefined) throw new Error('当前环境不支持迁移承诺');
-      // 1. B 的承诺副本（按来源记录幂等）。
+      // 1. B 的承诺副本（按来源记录幂等；上一次没移交成而被作废的不复用，重新复制）。
       let copy = memory.findCopy(ctx.toBot.id, ctx.handoverId, row.commitmentId);
-      if (copy === null) {
+      if (copy === null || copy.status !== 'active') {
         const commitment = memory.get(row.botId, row.commitmentId);
         if (commitment === null || commitment.status !== 'active') {
           throw new Error('这条定时任务关联的承诺已失效');
@@ -174,13 +183,21 @@ export class ScheduleAdapter implements HandoverAdapter {
       }
       commitmentId = copy.id;
     }
-    // 2. 重建 + 取消 + 回执卡（一个事务）。
-    const created = this.#deps.schedules.transferTo(scheduleId, {
-      botId: ctx.toBot.id,
-      botName: ctx.toBot.name,
-      conversationId,
-      ...(commitmentId !== undefined ? { commitmentId } : {}),
-    });
+    // 2. 重建 + 取消 + 回执卡（一个事务）。没成（用户在 embed 期间取消了任务、B 退群、
+    //    对话变只读……）就作废刚才给 B 的承诺副本，否则 B 的 <my_state> 里会多一条没有
+    //    任务、A 也照旧负责的承诺。
+    let created: Schedule;
+    try {
+      created = this.#deps.schedules.transferTo(scheduleId, {
+        botId: ctx.toBot.id,
+        botName: ctx.toBot.name,
+        conversationId,
+        ...(commitmentId !== undefined ? { commitmentId } : {}),
+      });
+    } catch (error) {
+      if (row.commitmentId !== null) this.#dropOrphanCopy(ctx, row.commitmentId);
+      throw error;
+    }
     // 3. A 的承诺作废（不再进 <my_state>、不再提醒）。
     if (row.commitmentId !== null && memory !== undefined) {
       memory.voidCommitment(row.botId, row.commitmentId);
@@ -199,13 +216,48 @@ export class ScheduleAdapter implements HandoverAdapter {
     if (!this.#deps.schedules.transferredTo(scheduleId, ctx.toBot.id)) return false;
     const row = this.#deps.schedules.get(scheduleId);
     if (row === null || row.commitmentId === null) return true;
-    // 承诺联动的：A 的承诺也作废了才算完成。
+    // 承诺联动的：本次移交确实给了 B 承诺副本，且 A 的承诺也作废了才算完成。
+    if (!this.#resumable(ctx, row)) return false;
     const commitment = this.#deps.memory?.get(row.botId, row.commitmentId) ?? null;
     return commitment === null || commitment.status !== 'active';
   }
 
+  /** 没做成的一项（跳过 / 失败）：作废本次移交留给 B 的、没接上任务的承诺副本。 */
+  abandon(ctx: HandoverContext & { toBot: Bot }, key: string): void {
+    const row = this.#deps.schedules.get(keyId(key, 'schedule') ?? '');
+    if (row !== null && row.commitmentId !== null) this.#dropOrphanCopy(ctx, row.commitmentId);
+  }
+
+  /**
+   * 崩溃恢复的捷径只在**本次移交**确实做过第 1 步时走：任务已移交给 B（回执卡标记，或
+   * 字段比对兜底），且承诺联动的任务在 B 那里有本次移交的承诺副本——不单靠宽松的字段比对。
+   */
+  #resumable(ctx: HandoverContext & { toBot: Bot | null }, row: Schedule): boolean {
+    if (ctx.toBot === null) return false;
+    if (row.commitmentId === null) return false;
+    const memory = this.#deps.memory;
+    if (memory === undefined || ctx.handoverId.length === 0) return false;
+    if (memory.findCopy(ctx.toBot.id, ctx.handoverId, row.commitmentId) === null) return false;
+    return this.#deps.schedules.transferredTo(row.id, ctx.toBot.id);
+  }
+
+  /**
+   * 本次移交给 B 的承诺副本若没有接上 B 的任何 active 任务，就作废它（可重入；已接上的不动——
+   * 同一承诺的另一条任务可能已经移交成功）。
+   */
+  #dropOrphanCopy(ctx: HandoverContext & { toBot: Bot }, commitmentId: string): void {
+    const memory = this.#deps.memory;
+    if (memory === undefined) return;
+    const copy = memory.findCopy(ctx.toBot.id, ctx.handoverId, commitmentId);
+    if (copy === null || copy.status !== 'active') return;
+    const linked = this.#deps.schedules
+      .listActiveForBot(ctx.toBot.id)
+      .some((schedule) => schedule.commitmentId === copy.id);
+    if (!linked) memory.voidCommitment(ctx.toBot.id, copy.id);
+  }
+
   describe(entry: HandoverEntry, _action: HandoverAction, toName: string): string {
-    return entry.detail.includes('；连同承诺「')
+    return entry.detail.includes(WITH_COMMITMENT)
       ? `把定时任务「${entry.label}」（${entry.detail}）移交给 ${toName}：${toName} 接手这条承诺并按时提醒，原来的承诺作废、不再提醒`
       : `把定时任务「${entry.label}」（${entry.detail}）移交给 ${toName}`;
   }

@@ -117,10 +117,12 @@ export class SkillAdapter implements HandoverAdapter {
   }
 
   describe(entry: HandoverEntry, _action: HandoverAction, toName: string): string {
+    // 卡片替代了 skill_import 审批：来源网址、说明与状态都要让用户看到（entry.detail）。
     const imported = entry.marks?.includes('external_import') === true;
+    const detail = entry.detail.length > 0 ? `（${entry.detail}）` : '';
     return imported
-      ? `给 ${toName} 装上同一个版本的技能 ${entry.label}（外部导入；确认移交即授权，不再单独审批）`
-      : `把技能 ${entry.label} 复制一份给 ${toName}（之后两边各改各的）`;
+      ? `给 ${toName} 装上同一个版本的技能 ${entry.label}${detail}：确认移交即授权安装，不再单独审批`
+      : `把技能 ${entry.label}${detail}复制一份给 ${toName}（之后两边各改各的）`;
   }
 
   warnings(ctx: HandoverContext, entry: HandoverEntry): string[] {

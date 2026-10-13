@@ -2150,6 +2150,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
             countLiveForBot: (botId) => watches.countLiveForBot(botId),
             transferTo: (watchId, target) => watches.transferTo(watchId, target),
             profileKeyFor: (botId) => watches.profileKeyFor(botId),
+            allowsLoopback: (conversationId) => watches.allowsLoopback(conversationId),
           },
           conversations: handoverConversations,
         }),

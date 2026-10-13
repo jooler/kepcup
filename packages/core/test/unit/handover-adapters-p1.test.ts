@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { Bot, Conversation, MemoryItem, Schedule, SkillEntry, Watch } from '@kepcup/shared';
 import { botProfile } from '@kepcup/testkit';
 import { HandoverRegistry } from '../../src/handover/registry.js';
-import { WatchAdapter } from '../../src/handover/adapters/watch.js';
+import { WatchAdapter, isLoopbackUrl } from '../../src/handover/adapters/watch.js';
 import { SkillAdapter } from '../../src/handover/adapters/skill.js';
 import {
   MemoryAdapter,
+  handoverMemoryCopy,
   memoryRefusal,
   type HandoverMemoryPort,
 } from '../../src/handover/adapters/memory.js';
-import { ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
+import { PRIVATE_COMMITMENT_LABEL, ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
 import type { NewMemoryItem } from '../../src/memory/store.js';
 import { checkProfileCandidate } from '../../src/memory/validate.js';
 import type { HandoverContext } from '../../src/handover/types.js';
@@ -81,7 +82,13 @@ describe('watch adapter', () => {
     } as Watch;
   }
 
-  function setup(opts: { liveOfB?: number; profiles?: Record<string, string> } = {}) {
+  function setup(
+    opts: {
+      liveOfB?: number;
+      profiles?: Record<string, string>;
+      loopback?: Record<string, boolean>;
+    } = {},
+  ) {
     const rows = new Map<string, Watch>([
       ['wat_d', watch('wat_d', 'conv_a')],
       ['wat_g', watch('wat_g', 'conv_g', { status: 'paused' })],
@@ -106,6 +113,7 @@ describe('watch adapter', () => {
           return moved;
         },
         profileKeyFor: (botId) => opts.profiles?.[botId] ?? `bot:${botId}`,
+        allowsLoopback: (conversationId) => opts.loopback?.[conversationId] ?? false,
       },
       conversations: conversationPort(members),
     });
@@ -163,8 +171,32 @@ describe('watch adapter', () => {
     const { adapter } = setup();
     const entry = adapter.inventory('bot_a')[0]!;
     expect(adapter.warnings(ctx(), entry)[0]).toContain('重新登录');
+    expect(adapter.warnings(ctx(), entry)[0]).toContain('重新记下页面基线');
     const shared = setup({ profiles: { bot_a: 'shared:x', bot_b: 'shared:x' } });
     expect(shared.adapter.warnings(ctx(), entry)).toEqual([]);
+  });
+
+  it('审查 #2: a localhost watch does not move into a DM with a different loopback rule; other URLs only get a warning', () => {
+    const local = setup({ loopback: { conv_a: true } });
+    local.rows.set(
+      'wat_l',
+      watch('wat_l', 'conv_a', { source: { kind: 'web_page', url: 'http://localhost:5173/' } }),
+    );
+    expect(local.adapter.validate(ctx(), 'watch:wat_l', 'move')).toContain('本机地址');
+    expect(local.adapter.validate(ctx(null), 'watch:wat_l', 'move')).toContain('本机地址');
+    const same = setup({ loopback: { conv_a: true, direct_bot_b: true } });
+    same.rows.set(
+      'wat_l',
+      watch('wat_l', 'conv_a', { source: { kind: 'web_page', url: 'http://127.0.0.1:8080/x' } }),
+    );
+    expect(same.adapter.validate(ctx(), 'watch:wat_l', 'move')).toBeNull();
+    // A public URL still moves; the card says the loopback rule now follows B's DM.
+    const entry = local.adapter.inventory('bot_a').find((e) => e.key === 'watch:wat_d')!;
+    expect(local.adapter.validate(ctx(), 'watch:wat_d', 'move')).toBeNull();
+    expect(local.adapter.warnings(ctx(), entry).join('\n')).toContain('项目绑定');
+    expect(isLoopbackUrl('http://[::1]:3000/')).toBe(true);
+    expect(isLoopbackUrl('http://dev.localhost/')).toBe(true);
+    expect(isLoopbackUrl('https://shop.test/')).toBe(false);
   });
 });
 
@@ -236,6 +268,11 @@ describe('skill adapter', () => {
     expect(entries[1]!.marks).toEqual([]);
     expect(entries[1]!.detail).toContain('已停用');
     expect(adapter.describe(entries[0]!, 'copy', 'B')).toContain('不再单独审批');
+    // 审查 #3: the card replaces the skill_import approval, so it shows what the skill is.
+    const imported = adapter.describe(entries[0]!, 'copy', 'B');
+    expect(imported).toContain('https://example.com/deploy.git');
+    expect(imported).toContain('deploy 的描述');
+    expect(adapter.describe(entries[1]!, 'copy', 'B')).toContain('已停用');
   });
 
   it('a same-name private skill on B greys the item out; a draft / unknown one is not copyable', () => {
@@ -269,10 +306,13 @@ function memoryWorld(seed: Record<string, MemoryItem[]>) {
       (items.get(botId) ?? []).filter(
         (item) => item.status === 'active' && item.content.includes(query),
       ),
-    findCopy: (botId, handoverId, fromItemId) =>
-      (items.get(botId) ?? []).find((item) =>
+    findCopy: (botId, handoverId, fromItemId) => {
+      // Same order as MemoryStore.findHandoverCopy: active first, then the latest.
+      const copies = (items.get(botId) ?? []).filter((item) =>
         item.evidence.some((e) => e.handoverId === handoverId && e.fromItemId === fromItemId),
-      ) ?? null,
+      );
+      return copies.find((item) => item.status === 'active') ?? copies.at(-1) ?? null;
+    },
     activeWithContent: (botId, content) =>
       (items.get(botId) ?? []).find(
         (item) => item.status === 'active' && item.content.trim() === content.trim(),
@@ -362,6 +402,15 @@ describe('memory adapter', () => {
     expect(adapter.inventory('bot_a', { memoryQuery: '*' }).map((entry) => entry.key)).toEqual(
       listed,
     );
+  });
+
+  it('审查 #8: inspecting from a group chat leaves sensitive candidates out', () => {
+    const { adapter } = setup();
+    expect(
+      adapter
+        .inventory('bot_a', { memoryQuery: '周报', excludeSensitiveMemory: true })
+        .map((entry) => entry.key),
+    ).toEqual(['memory:mem_pref']);
   });
 
   it('sensitive items are marked and default-unchecked', () => {
@@ -567,18 +616,114 @@ describe('schedule adapter: commitment moves with its schedule', () => {
     expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(true);
   });
 
-  it('crash between copying and the transfer: the re-run reuses the copy (no second commitment)', async () => {
-    const { adapter, items, failNext, voided } = setup();
-    failNext(true);
-    await expect(adapter.apply(ctx(), 'schedule:sch_c')).rejects.toThrow('crash');
-    expect(items.get('bot_b')!.filter((item) => item.kind === 'commitment')).toHaveLength(1);
-    expect(voided).toEqual([]);
-    failNext(false);
+  it('process crash between copying and the transfer: the re-run reuses the copy (no second commitment)', async () => {
+    const { adapter, items, port, voided } = setup();
+    // Step 1 happened, then the process died (no catch ran).
+    port.insertCopy(
+      'bot_b',
+      handoverMemoryCopy(port.get('bot_a', 'mem_com')!, {
+        handoverId: 'hnd_1',
+        fromBotId: 'bot_a',
+      }),
+    );
     expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(false);
     expect(adapter.validate(ctx(), 'schedule:sch_c', 'move')).toBeNull();
     await adapter.apply(ctx(), 'schedule:sch_c');
-    expect(items.get('bot_b')!.filter((item) => item.kind === 'commitment')).toHaveLength(1);
+    const commitments = items.get('bot_b')!.filter((item) => item.kind === 'commitment');
+    expect(commitments).toHaveLength(1);
+    expect(commitments[0]!.status).toBe('active');
     expect(voided).toEqual(['mem_com']);
+  });
+
+  it('审查 #1: the transfer throws → B’s fresh copy is voided (A keeps both); a retry copies again and links it', async () => {
+    const { adapter, items, failNext, voided, port } = setup();
+    failNext(true);
+    await expect(adapter.apply(ctx(), 'schedule:sch_c')).rejects.toThrow('crash');
+    const first = items.get('bot_b')!.find((item) => item.kind === 'commitment')!;
+    expect(first.status).toBe('void');
+    expect(voided).toEqual([first.id]);
+    expect(port.get('bot_a', 'mem_com')!.status).toBe('active');
+    failNext(false);
+    await adapter.apply(ctx(), 'schedule:sch_c');
+    const active = items
+      .get('bot_b')!
+      .filter((item) => item.kind === 'commitment' && item.status === 'active');
+    expect(active).toHaveLength(1);
+    expect(active[0]!.id).not.toBe(first.id);
+    expect(port.get('bot_a', 'mem_com')!.status).toBe('void');
+    expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(true);
+  });
+
+  it('审查 #1: a crash after copying, then the user cancels the task → skipped at re-validation, abandon voids B’s orphan copy', () => {
+    const { adapter, rows, items, port } = setup();
+    port.insertCopy(
+      'bot_b',
+      handoverMemoryCopy(port.get('bot_a', 'mem_com')!, {
+        handoverId: 'hnd_1',
+        fromBotId: 'bot_a',
+      }),
+    );
+    rows.set('sch_c', { ...rows.get('sch_c')!, status: 'cancelled' });
+    expect(adapter.validate(ctx(), 'schedule:sch_c', 'move')).toContain('已结束或已取消');
+    adapter.abandon(ctx(), 'schedule:sch_c');
+    expect(items.get('bot_b')!.find((item) => item.kind === 'commitment')!.status).toBe('void');
+    // A copy already linked to one of B's active tasks is left alone.
+    const linked = setup();
+    const copy = linked.port.insertCopy(
+      'bot_b',
+      handoverMemoryCopy(linked.port.get('bot_a', 'mem_com')!, {
+        handoverId: 'hnd_1',
+        fromBotId: 'bot_a',
+      }),
+    );
+    linked.rows.set('sch_b', {
+      ...linked.rows.get('sch_c')!,
+      id: 'sch_b',
+      botId: 'bot_b',
+      commitmentId: copy.id,
+    });
+    linked.adapter.abandon(ctx(), 'schedule:sch_c');
+    expect(linked.port.get('bot_b', copy.id)!.status).toBe('active');
+  });
+
+  it('审查 #5: the resume shortcut needs this handover’s copy, not just a field-matching task on B', () => {
+    const { adapter, rows } = setup();
+    // Another task of B matches the loose fallback, the original was cancelled by the user.
+    rows.set('sch_c', { ...rows.get('sch_c')!, status: 'cancelled' });
+    rows.set('sch_other', {
+      ...rows.get('sch_c')!,
+      id: 'sch_other',
+      botId: 'bot_b',
+      status: 'active',
+    });
+    expect(adapter.validate(ctx(), 'schedule:sch_c', 'move')).toContain('已结束或已取消');
+    expect(adapter.isApplied(ctx(), 'schedule:sch_c')).toBe(false);
+  });
+
+  it('审查 #4 / #6: a private commitment’s task never shows the commitment text; a sensitive one is marked and unchecked', () => {
+    const { adapter, rows, port } = setup();
+    rows.set('sch_p', {
+      ...rows.get('sch_c')!,
+      id: 'sch_p',
+      title: '只告诉你：周五前交私事',
+      note: '只告诉你：周五前交私事',
+      commitmentId: 'mem_pc',
+    });
+    const priv = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_p')!;
+    expect(priv.label).toBe(PRIVATE_COMMITMENT_LABEL);
+    expect(JSON.stringify(priv)).not.toContain('私事');
+    expect(adapter.describe(priv, 'move', 'B')).not.toContain('私事');
+    expect(priv.blocked).toContain('只告诉');
+    const plain = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_c')!;
+    expect(plain.marks ?? []).toEqual([]);
+    expect(plain.defaultSelected ?? true).toBe(true);
+    const items = port.activeItems('bot_a');
+    Object.assign(
+      items.find((item) => item.id === 'mem_com')!,
+      { sensitivity: 'sensitive' },
+    );
+    const sensitive = adapter.inventory('bot_a').find((entry) => entry.key === 'schedule:sch_c')!;
+    expect(sensitive).toMatchObject({ marks: ['sensitive'], defaultSelected: false });
   });
 
   it('crash between the transfer and voiding A’s commitment: not applied yet, still valid, re-run only voids', async () => {

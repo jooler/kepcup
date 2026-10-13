@@ -30,6 +30,8 @@ export interface HandoverInspection {
   memoryQuery: string | null;
   /** 盘点的是发起方自己。 */
   self: boolean;
+  /** 发起方是管家（普通 Bot 的盘点不含模型条目与可用模型列表，DEV-020）。 */
+  initiatorButler: boolean;
   modelOptions: ChatModelOption[];
 }
 
@@ -111,6 +113,10 @@ export function formatInspection(inspection: HandoverInspection): string {
   }
   for (const [type, label] of Object.entries(GROUP_LABELS)) {
     const list = groups.get(type) ?? [];
+    if (type === 'model' && !inspection.initiatorButler) {
+      lines.push(`${label}：不在你能移交的范围内（改接手方的模型只能由管家提议）`);
+      continue;
+    }
     if (type === 'memory') {
       // 记忆默认只给统计；给了 memory_query 才列候选（内容是数据，包 untrusted）。
       const summary = summaries.find((line) => line.type === 'memory')?.text ?? '';
@@ -141,12 +147,14 @@ export function formatInspection(inspection: HandoverInspection): string {
       );
     }
   }
-  lines.push(
-    modelOptions.length > 0
-      ? `可用模型（新建目标的 new_bot.model，或给已有目标改模型的 model:<ref> 条目；model:inherit = 与 ${bot.name} 相同，model:default = 跟随设置默认）：`
-      : '可用模型：（设置里还没有配置模型厂商的 Key；只能用 inherit / default）',
-  );
-  for (const option of modelOptions) lines.push(`- ${option.ref} | ${option.label}`);
+  if (inspection.initiatorButler) {
+    lines.push(
+      modelOptions.length > 0
+        ? `可用模型（新建目标的 new_bot.model，或给已有目标改模型的 model:<ref> 条目；model:inherit = 与 ${bot.name} 相同，model:default = 跟随设置默认）：`
+        : '可用模型：（设置里还没有配置模型厂商的 Key；只能用 inherit / default）',
+    );
+    for (const option of modelOptions) lines.push(`- ${option.ref} | ${option.label}`);
+  }
   lines.push(NOT_TRANSFERRED);
   return lines.join('\n');
 }
@@ -175,7 +183,10 @@ export function buildHandoverTools(input: {
   const inspect: ToolDefinition<{ bot_id?: string; memory_query?: string; wiki_query?: string }> = {
     name: 'inspect_bot_assets',
     description:
-      `盘点${butler ? '某个 Bot' : '你自己'}名下的资产（只读）：模型、连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目），以及可用模型列表。每项带 key、可用动作与默认动作、不可执行的原因。` +
+      (butler
+        ? '盘点某个 Bot 名下的资产（只读）：模型、连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目），以及可用模型列表。'
+        : '盘点你自己名下的资产（只读）：连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目）；改接手方的模型只能由管家提议，不在你的范围内。') +
+      '每项带 key、可用动作与默认动作、不可执行的原因。' +
       '用 propose_handover 移交之前必须先调用它，key 只能用这里返回的，不要凭记忆编造。',
     parameters: Type.Object(
       {
@@ -223,7 +234,7 @@ export function buildHandoverTools(input: {
   const propose: ToolDefinition<ProposeHandoverParams> = {
     name: 'propose_handover',
     description:
-      `把${butler ? '一个 Bot' : '你自己'}名下的资产（邮箱、连接应用、MCP、模型、定时任务、网页监看、技能、记忆）和对应的职责长期交给另一个 Bot 负责，以移交卡给用户确认；用户逐项勾选确认后由系统执行，你会收到结果通知。` +
+      `把${butler ? '一个 Bot 名下的资产（邮箱、连接应用、MCP、模型、定时任务、网页监看、技能、记忆）' : '你自己名下的资产（邮箱、连接应用、MCP、定时任务、网页监看、技能、记忆；不含模型）'}和对应的职责长期交给另一个 Bot 负责，以移交卡给用户确认；用户逐项勾选确认后由系统执行，你会收到结果通知。` +
       '移交不是委派：委派（delegate_to_bot）是请对方办一件事，不改变谁负责什么；「交给它负责 / 让它接管 / 以后由它管」以及涉及邮箱、应用、定时任务归属的说法都用移交。技能与记忆是复制（原 Bot 保留）；与承诺联动的定时任务连同承诺一起移交。' +
       (butler
         ? '目标可以是已有 Bot（to.bot_id），也可以是一个待新建的 Bot（to.new_bot，字段同 propose_bot）——「新建一个 Bot 并把 X 交给它」只提交这一张卡，不要先 propose_bot。'

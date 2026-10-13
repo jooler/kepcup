@@ -181,6 +181,16 @@ export class HandoverHost implements HandoverToolFacade {
       };
     }
     const memoryQuery = input.memoryQuery?.trim() ?? '';
+    // 群聊里盘点：敏感记忆不作候选（同检索的群聊过滤，passesFilters）——候选内容会进群里的
+    // 上下文。
+    const inGroup = this.#deps.conversations.get(initiator.conversationId)?.type === 'group';
+    const entries = this.#deps.registry
+      .inventory(bot.id, {
+        memoryQuery: memoryQuery.length > 0 ? memoryQuery : undefined,
+        excludeSensitiveMemory: inGroup,
+      })
+      // DEV-020：模型条目只给管家（普通 Bot 不能改接手方的模型）。
+      .filter((entry) => initiator.butler || entry.type !== 'model');
     return {
       ok: true,
       inspection: {
@@ -190,13 +200,12 @@ export class HandoverHost implements HandoverToolFacade {
           butler: bot.systemRole === 'butler',
           responsibilities: bot.profile.role.responsibilities,
         },
-        entries: this.#deps.registry.inventory(bot.id, {
-          memoryQuery: memoryQuery.length > 0 ? memoryQuery : undefined,
-        }),
+        entries,
         summaries: this.#deps.registry.summaries(bot.id),
         memoryQuery: memoryQuery.length > 0 ? memoryQuery : null,
         self: bot.id === initiator.botId,
-        modelOptions: this.modelOptions(),
+        initiatorButler: initiator.butler,
+        modelOptions: initiator.butler ? this.modelOptions() : [],
       },
     };
   }
@@ -288,6 +297,14 @@ export class HandoverHost implements HandoverToolFacade {
       }
       if (adapter.type === 'model') {
         modelItems += 1;
+        // DEV-020：模型 / 驱动引擎是接手方自己的配置，普通 Bot 不能改。
+        if (!initiator.butler) {
+          return {
+            ok: false,
+            message:
+              '模型不是你自己的资产：改接手方的模型只能由管家提议（或用户在接手方的详情页改）。把 model:* 条目从 items 里去掉再提交。',
+          };
+        }
         if (input.target.kind === 'new') {
           return {
             ok: false,
@@ -656,8 +673,11 @@ export class HandoverHost implements HandoverToolFacade {
           this.#deps.store.setItem(handoverId, item.key, 'done', null);
           continue;
         }
-        const invalid = adapter.validate(ctx, item.key, action);
+        const invalid =
+          this.#proposerOnlyRefusal(record, item.assetType) ??
+          adapter.validate(ctx, item.key, action);
         if (invalid !== null) {
+          this.#abandon(adapter, ctx, item.key);
           this.#deps.store.setItem(handoverId, item.key, 'skipped', invalid);
           continue;
         }
@@ -673,6 +693,7 @@ export class HandoverHost implements HandoverToolFacade {
           { handoverId, key: item.key, error: reason },
           'handover item failed',
         );
+        this.#abandon(adapter, ctx, item.key);
         this.#deps.store.setItem(handoverId, item.key, 'failed', reason);
       } finally {
         this.#publish(handoverId);
@@ -753,6 +774,29 @@ export class HandoverHost implements HandoverToolFacade {
 
     // 8. 结算 + 通知发起方。
     this.#settle(this.#deps.store.getOrThrow(handoverId), null);
+  }
+
+  /** Best-effort cleanup of what a not-done item left on the target (adapter `abandon`). */
+  #abandon(adapter: HandoverAdapter, ctx: HandoverContext & { toBot: Bot }, key: string): void {
+    try {
+      adapter.abandon?.(ctx, key);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { handoverId: ctx.handoverId, key, error: errorText(error) },
+        'handover item cleanup failed',
+      );
+    }
+  }
+
+  /**
+   * DEV-020：改接手方的模型（`model:*`）只能由管家提议——普通 Bot 只能交出自己的资产，
+   * 模型 / 驱动引擎是接手方自己的配置。提议时已拒绝；执行时再兜一次（旧卡 / 绕过）。
+   */
+  #proposerOnlyRefusal(record: HandoverRecord, assetType: string): string | null {
+    if (assetType !== 'model') return null;
+    return this.#deps.bots.get(record.proposerBotId)?.systemRole === 'butler'
+      ? null
+      : '只有管家可以改接手方的模型';
   }
 
   #item(handoverId: string, key: string): HandoverItemRecord | null {
@@ -985,12 +1029,14 @@ export class HandoverHost implements HandoverToolFacade {
     this.#setStatus(record, status);
     const fresh = this.#deps.store.getOrThrow(record.id);
     if (status !== 'completed') {
-      const reasons = this.#deps.store
-        .items(record.id)
-        .filter(
-          (item) => isUnit(item.key) && (item.status === 'skipped' || item.status === 'failed'),
-        )
-        .map((item) => this.#reasonLine(fresh, item));
+      const reasons = this.#reasonLines(
+        fresh,
+        this.#deps.store
+          .items(record.id)
+          .filter(
+            (item) => isUnit(item.key) && (item.status === 'skipped' || item.status === 'failed'),
+          ),
+      );
       this.#failCard(
         record.approvalId,
         `${status === 'failed' ? '移交失败' : '部分未完成'}：${(crash !== null ? [crash, ...reasons] : reasons).join('；')}`,
@@ -1008,6 +1054,25 @@ export class HandoverHost implements HandoverToolFacade {
     const label = this.#itemLabel(record, item.key);
     const text = `${label}：${item.error ?? '未知原因'}`;
     return this.#isAssetKey(record, item.key) ? untrusted(text) : text;
+  }
+
+  /**
+   * Not-done lines; memory items (up to HANDOVER_MEMORY_MAX_ITEMS) collapse into one line
+   * per reason with a count instead of one unlabeled line each.
+   */
+  #reasonLines(record: HandoverRecord, items: HandoverItemRecord[]): string[] {
+    const lines: string[] = [];
+    const memory = new Map<string, number>();
+    for (const item of items) {
+      if (item.assetType === 'memory') {
+        const reason = item.error ?? '未知原因';
+        memory.set(reason, (memory.get(reason) ?? 0) + 1);
+      } else {
+        lines.push(this.#reasonLine(record, item));
+      }
+    }
+    for (const [reason, count] of memory) lines.push(untrusted(`记忆 ${count} 条：${reason}`));
+    return lines;
   }
 
   #isAssetKey(record: HandoverRecord, key: string): boolean {
@@ -1061,13 +1126,15 @@ export class HandoverHost implements HandoverToolFacade {
     const copiedMemories = doneUnits.filter((item) => item.assetType === 'memory').length;
     if (copiedMemories > 0) doneLines.push(`- 复制了 ${copiedMemories} 条记忆给 ${toName}`);
     if (doneLines.length > 0) lines.push('已完成：', ...doneLines);
-    const skipped = items
-      .filter((item) => item.status === 'skipped' && item.key !== NEW_BOT_KEY)
-      .map((item) => `- ${this.#reasonLine(record, item)}`);
+    const skipped = this.#reasonLines(
+      record,
+      items.filter((item) => item.status === 'skipped' && item.key !== NEW_BOT_KEY),
+    ).map((line) => `- ${line}`);
     if (skipped.length > 0) lines.push('跳过（执行时已不成立）：', ...skipped);
-    const failed = items
-      .filter((item) => item.status === 'failed' && item.key !== NEW_BOT_KEY)
-      .map((item) => `- ${this.#reasonLine(record, item)}`);
+    const failed = this.#reasonLines(
+      record,
+      items.filter((item) => item.status === 'failed' && item.key !== NEW_BOT_KEY),
+    ).map((line) => `- ${line}`);
     if (failed.length > 0) lines.push('失败：', ...failed);
     const keptKeys = new Set(items.map((item) => item.key));
     const dropped = plan.items.filter(

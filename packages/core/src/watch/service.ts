@@ -398,6 +398,10 @@ export class WatchService {
    * 再提醒一次。换了对话时在接手方对话里补一张「已创建」卡（与行同一事务），排队中的
    * `watch_alert` 作业一并改到接手方名下。可重入：已经在目标名下 = 直接返回。CAS：与进行中
    * 的检查冲突时重读再改（检查结果随之作废，下一次检查用接手方的浏览器资料）。
+   *
+   * 两边浏览器资料不同（登录态 / Cookie 不同，页面内容可能不同）时清掉 last_hash /
+   * last_quiet_hash：接手方的第一次检查只建基线，不会因为「换了资料」而误报「页面变化」；
+   * last_matched 保留（数值 / 包含类条件已满足的不重复提醒）。
    */
   transferTo(id: string, target: { botId: string; conversationId: string }): StoredWatch {
     let current: StoredWatch | null = this.#getOrThrow(id);
@@ -414,10 +418,12 @@ export class WatchService {
     for (let attempt = 0; attempt < 3 && current !== null; attempt += 1) {
       const from: StoredWatch = current;
       const moved = from.conversationId !== target.conversationId;
+      const resetBaseline =
+        this.#deps.profileKeyFor(from.botId) !== this.#deps.profileKeyFor(target.botId);
       let updated: StoredWatch | null = null;
       let card: Message | null = null;
       this.#deps.db.transaction(() => {
-        updated = this.store.reassign(from.id, from.version, target);
+        updated = this.store.reassign(from.id, from.version, target, { resetBaseline });
         if (updated === null) return;
         this.#deps.db
           .prepare(
@@ -464,6 +470,11 @@ export class WatchService {
   /** D88 提示：Bot 实际使用的浏览器资料（两边不同 = 登录态不随监看移交）。 */
   profileKeyFor(botId: string): string {
     return this.#deps.profileKeyFor(botId);
+  }
+
+  /** D88 校验：在这个对话里检查网页时能否访问本机地址（项目绑定决定）。 */
+  allowsLoopback(conversationId: string): boolean {
+    return this.#deps.allowLoopback(conversationId);
   }
 
   /** A user action wins over an in-flight check (CAS: the check's write then conflicts). */

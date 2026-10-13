@@ -29,6 +29,7 @@ export interface HandoverMemoryPort {
   get(botId: string, itemId: string): MemoryItem | null;
   activeItems(botId: string): MemoryItem[];
   search(botId: string, query: string, limit: number): MemoryItem[];
+  /** The copy a handover wrote (active first, else the latest; any status). */
   findCopy(botId: string, handoverId: string, fromItemId: string): MemoryItem | null;
   activeWithContent(botId: string, content: string): MemoryItem | null;
   insertCopy(botId: string, item: NewMemoryItem): MemoryItem;
@@ -166,8 +167,10 @@ export class MemoryAdapter implements HandoverAdapter {
         ? this.#deps.memory.activeItems(botId)
         : // Over-fetch: ineligible hits are dropped below.
           this.#deps.memory.search(botId, text, limit * 2);
+    const excludeSensitive = query?.excludeSensitiveMemory === true;
     return items
       .filter((item) => this.#eligible(item))
+      .filter((item) => !excludeSensitive || item.sensitivity !== 'sensitive')
       .slice(0, limit)
       .map((item) => this.#entry(item));
   }

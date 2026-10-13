@@ -225,16 +225,20 @@ export class WatchesStore {
   /**
    * D88 移交：把监看改到另一个 Bot / 对话名下（CAS on `version`）。其余列——last_hash /
    * last_quiet_hash / last_text / last_matched / alert_seq——原样保留，所以接手方不会把
-   * 已经提醒过的状态再提醒一次。Returns the updated row, or null on a conflict.
+   * 已经提醒过的状态再提醒一次；`resetBaseline` 时清掉两个哈希（浏览器资料不同）。
+   * Returns the updated row, or null on a conflict.
    */
   reassign(
     id: string,
     expectedVersion: number,
     target: { botId: string; conversationId: string },
+    options: { resetBaseline?: boolean } = {},
   ): StoredWatch | null {
+    // resetBaseline：两边浏览器资料不同——接手方第一次检查重新建基线（last_matched 保留）。
+    const reset = options.resetBaseline === true ? ', last_hash = null, last_quiet_hash = null' : '';
     const changes = this.db
       .prepare(
-        `update watches set bot_id = ?, conversation_id = ?, version = version + 1, updated_at = ?
+        `update watches set bot_id = ?, conversation_id = ?, version = version + 1, updated_at = ?${reset}
          where id = ? and version = ?`,
       )
       .run(target.botId, target.conversationId, this.clock.now(), id, expectedVersion).changes;
