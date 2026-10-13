@@ -9,6 +9,7 @@ import {
   AppError,
   CONNECTOR_INDEX_MAX_BYTES,
   CONNECTOR_INDEX_PUBLIC_KEYS,
+  SETTING_CARD_RESOLVED_EVENT,
   TASK_SETTLE_SWEEP_MS,
   findAgentEntry,
   systemInfoOutputSchema,
@@ -134,6 +135,8 @@ import { ScheduleService } from './schedule/service.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
 import { HandoverHost } from './dispatch/handover.js';
+import { SettingsCatalogHost } from './settings/host.js';
+import { SettingsWriteLock } from './settings/write-lock.js';
 import { HandoverRegistry } from './handover/registry.js';
 import { HandoverStore } from './handover/store.js';
 import { ModelAdapter, type HandoverAgentPolicy } from './handover/adapters/model.js';
@@ -540,6 +543,11 @@ export interface CoreServices {
   mail: MailService | null;
   /** D88 Bot 资产移交 (null while locked / errored). */
   handover: HandoverHost | null;
+  /**
+   * 对话内应用设置（todo/conversational-app-setup.md）：目录适配器、条目级 CAS 写入与设置卡
+   * (null while locked / errored)。
+   */
+  settingsCatalog: SettingsCatalogHost | null;
   scheduler: Scheduler | null;
   jobsRunner: JobsRunner | null;
   /**
@@ -798,6 +806,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     watches: null,
     mail: null,
     handover: null,
+    settingsCatalog: null,
     scheduler: null,
     jobsRunner: null,
     browserRpc: createBrowserHostRpc(),
@@ -1864,6 +1873,34 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger.warn({ error: String(error) }, 'widget draft sweep failed');
     }
 
+    // 对话内应用设置（todo/conversational-app-setup.md）：目录适配器 + 三个工具 + 设置卡的宿主。
+    // 设置卡落定后经 orchestrator 唤醒出卡 Bot（晚绑定：orchestrator 在下面构造）。
+    const settingsCatalog = new SettingsCatalogHost({
+      db: mainDb,
+      messages,
+      clock,
+      logger,
+      lock: new SettingsWriteLock(),
+      settings,
+      secrets,
+      providers,
+      bots,
+      conversations,
+      unattended,
+      agentCatalog: () => agentCatalog,
+      taint,
+      publish: (event, payload) => events.emit(event as never, payload as never),
+      wake: (input) =>
+        orchestrator.deliverEventToBot(
+          input.botId,
+          input.conversationId,
+          SETTING_CARD_RESOLVED_EVENT,
+          input.text,
+          { internal: true, settingResolved: input.resolved },
+        ),
+    });
+    services.settingsCatalog = settingsCatalog;
+
     const orchestrator = new Orchestrator({
       engine,
       effects,
@@ -1939,6 +1976,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         return mailService ?? undefined;
       },
       handover: handoverFacade,
+      settingsCatalog,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
       // 两条路径——预置轻授权装公共技能；外部仓库 prepare/commit + 阻塞审批。

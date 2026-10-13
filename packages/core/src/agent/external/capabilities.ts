@@ -1,5 +1,6 @@
 import {
   capabilityOfTool,
+  isHostToolInjected,
   NEVER_INJECTED_TOOLS,
   SUPPLEMENT_TOOL_DESCRIPTION_PREFIX,
   type AgentCatalogEntry,
@@ -13,7 +14,8 @@ import type { AgentProvider } from './types.js';
 /**
  * 能力包落地（docs/design/28-external-agents-acp.md §4，D72）：外部智能体 run
  * 的宿主工具 = `buildResponseTools` 的结果 → 去掉永不注入的工具 → 只留所属
- * 能力包被选中的工具（不属于任何包的一律不注入）→ 补位类工具描述加
+ * 能力包被选中的工具（不属于任何包的一律不注入；包内受选项控制的工具还要该 Bot 开启了
+ * 选项，如 `settings_change` 需要 `settings:change`）→ 补位类工具描述加
  * 「[补充能力]」前缀（原生优先，§4.2）。`capabilities` 由 shared 的
  * `resolveCapabilities` 算出（null 用默认、core 必选、管家必含协作包）；
  * 用户 MCP 工具已按 Bot 的 `mcp_server_ids` 构建，归 `mcp` 包。
@@ -21,6 +23,11 @@ import type { AgentProvider } from './types.js';
 export function buildExternalAgentTools(input: {
   responseTools: readonly ToolDefinition[];
   capabilities: readonly HostCapabilityId[];
+  /**
+   * 该 Bot 开启的包内选项（`resolveCapabilityOptIns`，如 `settings:change`）：受选项控制的工具
+   * 只在选项开启时注入（`isHostToolInjected`）。缺省 = 一个都没开。
+   */
+  optIns?: readonly string[];
   /**
    * Longest tool name the agent can see once prefixed
    * (`MAX_AGENT_TOOL_NAME - namer('').length`); longer names (user MCP tools)
@@ -34,6 +41,7 @@ export function buildExternalAgentTools(input: {
     if (NEVER_INJECTED_TOOLS.includes(tool.name)) continue;
     const capability = capabilityOfTool(tool.name);
     if (capability === null || !selected.has(capability.id)) continue;
+    if (!isHostToolInjected(tool.name, input.capabilities, input.optIns ?? [])) continue;
     const name =
       input.maxNameLength !== undefined ? fitToolName(tool.name, input.maxNameLength) : tool.name;
     tools.push({
