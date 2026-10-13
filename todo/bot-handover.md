@@ -95,12 +95,12 @@
 
 ## 4. P1：普通 Bot 发起；监看 / Skill / 记忆
 
-- [ ] 发起权：普通 Bot 注册 `inspect_bot_assets`（只能查自己）与 `propose_handover`（`from_bot_id` 必须是自己、目标必须是已有 Bot）；平台规则加一句。
-- [ ] `watch` 适配器：规则同定时任务；保留 `last_hash` / `last_quiet_hash`，不重新告警。
-- [ ] `skill` 适配器：导入的 → B 加 `bot_skills` 行指向同一 `library_id`（`installImported` 的复用路径，跳过 `skill_import` 审批，卡上标「外部导入」）；自写的 → 复制目录 + git 初始提交「从 {A} 复制」+ authored 行；同名置灰；停用状态照搬。
-- [ ] `memory` 适配器：`inspect_bot_assets` 的 `memory_query`；过滤 `private_to_bot` / `self_note` / 非 active；敏感默认不勾；写入 B（新 id，`evidence_json` 改为 `{handoverId, fromBotId, fromItemId}`，memory schema 增此证据形态；`origin_conversation_id` 置空）→ `embedItem`。
-- [ ] 承诺：commitment 定时任务解除置灰；B 得到承诺副本并接上重建的定时任务，A 的承诺置 `void`（不进 `<my_state>`）。
-- [ ] 测试：普通 Bot 只能交自己的；`private_to_bot` 永不出现；记忆副本可被 B 检索到；承诺迁移后 A 不再提醒。
+- [x] 发起权：普通 Bot 注册 `inspect_bot_assets`（只能查自己）与 `propose_handover`（`from_bot_id` 必须是自己、目标必须是已有 Bot）；平台规则加一句。
+- [x] `watch` 适配器：规则同定时任务；保留 `last_hash` / `last_quiet_hash`，不重新告警。
+- [x] `skill` 适配器：导入的 → B 加 `bot_skills` 行指向同一 `library_id`（`installImported` 的复用路径，跳过 `skill_import` 审批，卡上标「外部导入」）；自写的 → 复制目录 + git 初始提交「从 {A} 复制」+ authored 行；同名置灰；停用状态照搬。
+- [x] `memory` 适配器：`inspect_bot_assets` 的 `memory_query`；过滤 `private_to_bot` / `self_note` / 非 active；敏感默认不勾；写入 B（新 id，`evidence_json` 改为 `{handoverId, fromBotId, fromItemId}`，memory schema 增此证据形态；`origin_conversation_id` 置空）→ `embedItem`。
+- [x] 承诺：commitment 定时任务解除置灰；B 得到承诺副本并接上重建的定时任务，A 的承诺置 `void`（不进 `<my_state>`）。
+- [x] 测试：普通 Bot 只能交自己的；`private_to_bot` 永不出现；记忆副本可被 B 检索到；承诺迁移后 A 不再提醒。
 
 ## 5. P2：Wiki / 组件 / 退役
 

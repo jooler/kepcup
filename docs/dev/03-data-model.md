@@ -309,7 +309,7 @@ CREATE INDEX approvals_pending ON approvals(status, conversation_id);
 
 `egress`（D73 P2，迁移 `0027_egress_approval.sql` 重建表加入 CHECK）：污点期间（见 `app_taint`）外发通道的逐次确认，payload `{channel: 'web_fetch'|'web_search'|'browser'|'app_tool'|'mcp_tool'|'bash'|'git_remote'|'watch', target, summary, taintedSince?}`——`target` 是外发内容全文（URL / 查询词 / 命令 / 工具名 + 参数 JSON，脱敏后最多 `EGRESS_TARGET_MAX_CHARS`），卡片完整展示；时长只有 `once`（`decide()` 把 `conversation` / `bot` 降为 once；payload 不带 `durations`）。网关 `egressCheck` 发起：应用 / 自定义 MCP 非只读且 `openWorldHint !== false` 的工具（持续授权与 `auto` 策略在污点期间不起作用：本会免卡的调用改弹 `egress` 卡；本来就要弹 `mcp_tool` 卡的调用不叠第二张——该卡 payload 带 `tainted: true` / `taintedSince` 并展示完整参数 `argsFull`）、`web_fetch` / `web_search`、浏览器 `browser_open` 与点击按钮 / 链接 / 按 Enter、沙箱 `bash`（Bot `network_policy === 'open'`）、`watch_create`（网页监看，创建时与之后每个间隔都会用 Bot 的浏览器资料访问该 URL）；ACP 权限桥对 fetch 类与 agent 沙箱内自动放行的命令也发该卡。`git_remote`、确认模式的 `command` 卡与上述 `mcp_tool` 卡不新增 kind，payload 带 `tainted: true`（`git_remote` / `mcp_tool` 另带 `taintedSince`），卡片附加提示。对话轮 / 子代理不等待审批（D75）：非无人值守时直接失败并引导 `start_task`。无人值守按 D41 自动批准，另写审计 `egress_tainted`（`{approvalId, kind, channel, target(≤1000), approved, via}`），Bot 详情经 RPC `apps.egressSummary` 汇总。
 
-`bot_handover`（D88，迁移 `0036_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
+`bot_handover`（D88，迁移 `0036_bot_handover.sql` 重建表加入 CHECK）：Bot 资产移交卡，payload 见 `botHandoverPayloadSchema`：`{handoverId, fromBotId, fromBotName, target: {kind:'existing', botId, botName} | {kind:'new', bot: {…propose_bot 字段, model, modelLabel}}, items[{key, assetType, action, label, detail, warnings[], blocked?, marks[]（P1：`external_import` / `sensitive`）, defaultSelected（P1：敏感记忆为 false）}], responsibilities?{to?, from?, toBefore, fromBefore}, handoverNote, note}`——展示字段在提交时由 core 快照（渲染端不再查询）。非阻塞提交、发起 run 结束不取消、**无人值守不自动批准**；`decision_json` 可带 `handoverSelection`（用户保留的条目 key，含职责改写的保留 key `resp:to` / `resp:from`，只能是卡上可勾选的；一项不留且不新建 = 拒绝；不带时按卡上的默认勾选 `defaultHandoverKeys`，敏感记忆不在其中）。执行结果部分未完成 / 失败时卡片落 `failed`（`{error}` 列出原因），执行进度在 `bot_handovers` / `bot_handover_items`。
 
 > 新增 kind 必须重建 approvals 表（SQLite 不能改 CHECK），且要把**现有全部 kind** 带上（0010 → 0015 曾漏过 `skill_preset`）。
 
@@ -495,6 +495,8 @@ CREATE TABLE public_skills (
 
 同名遮蔽规则：某 Bot 拥有私有同名技能（bot_skills 有行，任意状态）时，公共版本对该 Bot 隐藏（列表、提示词、可读目录均不见）；其他 Bot 不受影响。
 
+D88 移交复制技能（P1，`SkillsService.copyForHandover`，无迁移）：导入的给接手方加一行 `bot_skills`，指向同一 `library_id`（引用计数照常，不重新克隆、不走 `skill_import` 审批）；自写的把目录复制进接手方的 `bots/{id}/skills/{name}/` 并在其仓库提交「从 {A} 复制 {name}」，再加 authored 行。两种都照搬 `status` / `status_reason`（停用的复制后仍停用）；接手方已有同名私有行时不复制。
+
 ### schedules（P10）
 
 ```sql
@@ -558,6 +560,7 @@ CREATE INDEX watches_bot ON watches(bot_id, status);
 - `alert_times_json` 支撑 `WATCH_MAX_ALERTS_PER_DAY` 滚动 24 小时提醒上限：超出的边沿不唤醒，同一事务改 `paused` + 暂停卡。
 - 读行时 `source_json` / `condition_json` 用 zod `safeParse`：解析不了的行在列表 / 上下文里跳过并记日志；到期查询遇到它时直接改 `paused`（`last_error` 说明记录损坏），避免永远到期、空转 worker；删除级联按 SQL 一并删除。
 - 边沿提醒与 `alert_seq + 1` 在同一事务里登记 `watch_alert` 作业（`jobs.dedupe_key = watch:{id}:{seq}:{hash}`）；提醒卡与暂停卡是 messages 里的 card（`cardType: 'watch'`，内容带 `watchId` / `watchEvent`（created / alert / paused）/ `watchSeq` / `watchKey` / `watchSummary`，暂停卡另带 `watchPauseReason`（`failures` / `too_frequent`）与 `watchFailures`（暂停时的连续失败次数）），不另建表；唤醒 Bot 的是内部 system_event `watch_alert`（文本以「监看提醒（{id}，第 {seq} 次）」开头，作业重跑据此判断唤醒是否已记录）。
+- D88 移交（P1，`WatchService.transferTo`，无迁移）：同一行就地改 `bot_id` / `conversation_id`（`version + 1`，CAS），`last_hash` / `last_quiet_hash` / `last_text` / `last_matched` / `alert_seq` 原样保留，接手方不会把已提醒过的状态再提醒一次；私聊里的改到接手方私聊（同一事务在那里补一张 `created` 卡），群里的留在原群；排队中的 `watch_alert` 作业（`dedupe_key like 'watch:{id}:%'`）同一事务改到接手方名下。原对话里的旧卡因 `conversation_id` 不同而显示「已移交给 {B}」。
 - `stopped` 行保留（不出现在列表里）；删除对话 / Bot、移出群时删除。
 
 ### stickies（辅助阅读便签，main 0024）
@@ -955,7 +958,7 @@ CREATE TABLE memory_items (
   content         TEXT NOT NULL,
   subject         TEXT,
   source          TEXT NOT NULL CHECK (source IN ('explicit', 'inferred')),
-  evidence_json   TEXT NOT NULL,          -- [{ messageId, conversationId, runId }]
+  evidence_json   TEXT NOT NULL,          -- [{ messageId, conversationId, runId }]；D88 移交副本见下
   origin          TEXT NOT NULL CHECK (origin IN ('private', 'group')),
   origin_conversation_id TEXT,
   confidence      REAL NOT NULL,
@@ -978,7 +981,8 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(segmented_text, item_id UNINDEXED, to
 -- CREATE VIRTUAL TABLE memory_vec USING vec0(item_rowid INTEGER PRIMARY KEY, embedding float[<dim>]);
 ```
 
-- `void`：承诺因对话删除或 Bot 被移出群而作废。
+- `void`：承诺因对话删除或 Bot 被移出群而作废；D88 起也包括「承诺随定时任务移交给了别的 Bot」（来源 Bot 的那条置 `void`，不再进 `<my_state>`，联动任务按 `memory.commitment_invalidated` 取消）。
+- **D88 移交副本**（P1，无 schema 变更、无迁移）：Bot 资产移交按条复制的记忆写进接手方的库，新 id；kind / content / subject / source / origin / confidence / sensitivity / due_at / valid_until 照搬，`private_to_bot` 恒为 0（`private_to_bot=1` / `self_note` / 非 active / 已过期的条目从不复制），`origin_conversation_id` 置空；`evidence_json` 是来源记录 `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 的可选字段），既是幂等判据（同一 `handoverId` + `fromItemId` 只写一条），也表明它不是用户对接手方说的话——没有消息 id，不能作为画像提议的证据。随定时任务移交的承诺副本例外：`origin_conversation_id` = 重建任务所在的对话（对话删除 / 移出群时照常作废）。写入后 best-effort 入向量（失败由向量重建补齐）。
 
 ### wiki_fts（P09）
 

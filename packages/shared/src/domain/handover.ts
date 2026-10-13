@@ -108,7 +108,8 @@ export type BotHandoverPayload = z.infer<typeof botHandoverPayloadSchema>;
 
 /**
  * 卡上可以勾选的 key：未置灰的资产条目 + 出现了的职责改写。core 校验
- * `handoverSelection` 不得超出这个集合；缺省选择 = 全部。
+ * `handoverSelection` 不得超出这个集合；缺省选择见 `defaultHandoverKeys`（P1 起去掉
+ * 默认不勾的敏感记忆）。
  */
 export function selectableHandoverKeys(payload: BotHandoverPayload): string[] {
   const keys = payload.items.filter((item) => item.blocked === undefined).map((item) => item.key);
