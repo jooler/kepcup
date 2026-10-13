@@ -56,10 +56,21 @@ export interface HandoverItemResult {
   notes?: string[] | undefined;
 }
 
+/** 后台批量执行里一项的结果（`applyBatch`）。 */
+export type HandoverBatchOutcome =
+  | { status: 'done'; result?: Record<string, unknown> | undefined }
+  | { status: 'skipped'; reason: string; result?: Record<string, unknown> | undefined };
+
 export interface HandoverAdapter {
   readonly type: HandoverAssetType;
-  /** §5.3 的执行阶段：2 = 配置类，3 = 知识类（Skill、记忆），4 = 职责类（邮箱、定时任务、监看）。移交动作的 A 侧撤除统一在阶段 5。 */
+  /** §5.3 的执行阶段：2 = 配置类，3 = 知识类（Skill、记忆；Wiki、组件在后台），4 = 职责类（邮箱、定时任务、监看）。移交动作的 A 侧撤除统一在阶段 5。 */
   readonly stage: number;
+  /**
+   * P2：后台条目（Wiki、组件，设计 37 §5.3 阶段 3）。确认后的同步阶段不执行它们，宿主在
+   * 阶段 2–6 之后登记一个 `handover_copy` 作业（jobs 表，崩溃后按既有机制恢复）在后台执行；
+   * 作业结束前移交保持 `applying`（卡片「进行中」），交接说明与结算在作业完成后才做。
+   */
+  readonly background?: boolean;
   /** `key` 是否属于本适配器（按前缀）。 */
   owns(key: string): boolean;
   /**
@@ -106,6 +117,16 @@ export interface HandoverAdapter {
    * best-effort、可重入；宿主吞掉它的异常。
    */
   abandon?(ctx: HandoverContext & { toBot: Bot }, key: string): void;
+  /**
+   * 后台条目的批量执行（Wiki：N 页一次提交）。宿主已对每项做过 `isApplied` / 校验，只传
+   * 仍要执行的 key；返回每个 key 的结果（缺的记 failed）。必须可重入：重跑时已经做过的
+   * 部分记 done、不重复写。抛错 = 整批暂时失败：作业按 jobs 机制重试，最后一次仍失败时
+   * 宿主把这些条目记 failed。缺省 = 宿主逐项调用 `apply`。
+   */
+  applyBatch?(
+    ctx: HandoverContext & { toBot: Bot },
+    keys: string[],
+  ): Promise<Map<string, HandoverBatchOutcome>>;
   /** 卡片与结果通知里的一行（「把邮箱 x 移交给 B」）。 */
   describe(entry: HandoverEntry, action: HandoverAction, toName: string): string;
   /** 卡片上的风险提示（如 A 正在运行的任务会被中断）。 */

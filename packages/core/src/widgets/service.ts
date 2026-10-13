@@ -192,6 +192,23 @@ export type WidgetWriteResult =
     }
   | { ok: false; message: string; code?: 'NOT_FOUND' | 'FORBIDDEN' | 'INVALID_INPUT' | 'WIDGET_LIMIT' };
 
+/** 移交盘点的一行（D88 P2）：Bot 级组件。 */
+export interface WidgetHandoverCandidate {
+  widgetId: string;
+  title: string;
+  description: string;
+  latestVersion: number;
+  versionCount: number;
+  /** 全部版本 HTML 的字节数。 */
+  bytes: number;
+  /** 最新版本的查询模板数。 */
+  queriesCount: number;
+  /** storage 文档（widget_docs）的键数。 */
+  docsCount: number;
+  /** 最新版本的 D87 自检状态。 */
+  checkStatus: WidgetCheckStatus;
+}
+
 /** widget_read_state 里放不下的大值给出的开头片段长度（字符）。 */
 const READ_STATE_PREVIEW_CHARS = 1_000;
 
@@ -695,6 +712,161 @@ export class WidgetService {
       message: `组件「${widget.title}」（v${version.version}）已发卡到当前对话，等用户确认加载。`,
       cardMessageId: card?.id ?? null,
     };
+  }
+
+  // --- Bot 资产移交（D88 P2，设计 37 §3）--------------------------------------------
+
+  /**
+   * 可移交的组件：只有 Bot 级（`scope='bot'`，跨对话资产）。会话级组件随所在对话生灭、
+   * 卡片钉在那个对话里，不移交（盘点只给条数）。
+   */
+  handoverCandidates(botId: string): WidgetHandoverCandidate[] {
+    const rows = this.#deps.db
+      .prepare(
+        `select w.id, w.title, w.description, w.latest_version,
+                (select count(*) from widget_versions v where v.widget_id = w.id) as versions,
+                (select coalesce(sum(v.size_bytes), 0) from widget_versions v where v.widget_id = w.id) as bytes,
+                (select count(*) from widget_queries q where q.widget_id = w.id and q.version = w.latest_version) as queries,
+                (select count(*) from widget_docs d where d.widget_id = w.id) as docs,
+                (select v.check_status from widget_versions v where v.widget_id = w.id and v.version = w.latest_version) as check_status
+         from widgets w where w.bot_id = ? and w.scope = 'bot'
+         order by w.updated_at desc`,
+      )
+      .all(botId) as Array<{
+      id: string;
+      title: string;
+      description: string;
+      latest_version: number;
+      versions: number | bigint;
+      bytes: number | bigint;
+      queries: number | bigint;
+      docs: number | bigint;
+      check_status: WidgetCheckStatus | null;
+    }>;
+    return rows.map((row) => ({
+      widgetId: row.id,
+      title: row.title,
+      description: row.description,
+      latestVersion: row.latest_version,
+      versionCount: Number(row.versions),
+      bytes: Number(row.bytes),
+      queriesCount: Number(row.queries),
+      docsCount: Number(row.docs),
+      checkStatus: row.check_status ?? 'legacy',
+    }));
+  }
+
+  /** 会话级组件的条数（盘点说明「不移交」用）。 */
+  conversationScopedCount(botId: string): number {
+    return Number(
+      (
+        this.#deps.db
+          .prepare("select count(*) as n from widgets where bot_id = ? and scope = 'conversation'")
+          .get(botId) as { n: number | bigint }
+      ).n,
+    );
+  }
+
+  /** 版本指纹序列（版本号 + HTML 摘要 + 查询摘要）：判定「同一组件的副本」。 */
+  #versionPrint(widgetId: string): string {
+    const rows = this.#deps.db
+      .prepare(
+        'select version, sha256, queries_sha256 from widget_versions where widget_id = ? order by version',
+      )
+      .all(widgetId) as Array<{ version: number; sha256: string; queries_sha256: string }>;
+    return rows.map((row) => `${row.version}:${row.sha256}:${row.queries_sha256}`).join('|');
+  }
+
+  /**
+   * 接手方名下与来源组件完全相同的副本（同名 Bot 级组件、版本序列一致）：移交复制的幂等
+   * 判据（崩溃在复制事务提交与记账之间时，重跑认它为已完成）。
+   */
+  findHandoverCopy(widgetId: string, toBotId: string): string | null {
+    const source = this.#widgetOf(widgetId);
+    if (source === null) return null;
+    const print = this.#versionPrint(widgetId);
+    const candidates = this.#deps.db
+      .prepare("select id from widgets where bot_id = ? and scope = 'bot' and title = ? and id <> ?")
+      .all(toBotId, source.title, widgetId) as Array<{ id: string }>;
+    return candidates.find((row) => this.#versionPrint(row.id) === print)?.id ?? null;
+  }
+
+  /** 复制给接手方的阻断原因（同名、数量上限、字节配额）；null = 可以复制。 */
+  handoverCopyBlocker(widgetId: string, toBotId: string, toName: string): string | null {
+    const source = this.#widgetOf(widgetId);
+    if (source === null || source.scope !== 'bot') return '这个组件已不存在';
+    const sameName = this.#deps.db
+      .prepare('select 1 from widgets where bot_id = ? and title = ? limit 1')
+      .get(toBotId, source.title);
+    if (sameName !== undefined) return `${toName} 已有同名组件「${source.title}」`;
+    const owned = Number(
+      (
+        this.#deps.db.prepare('select count(*) as n from widgets where bot_id = ?').get(toBotId) as {
+          n: number | bigint;
+        }
+      ).n,
+    );
+    if (owned >= BOT_WIDGET_PER_BOT_MAX) {
+      return `${toName} 的组件已达上限（${BOT_WIDGET_PER_BOT_MAX} 个）`;
+    }
+    const bytes = Number(
+      (
+        this.#deps.db
+          .prepare('select coalesce(sum(size_bytes), 0) as bytes from widget_versions where widget_id = ?')
+          .get(widgetId) as { bytes: number | bigint }
+      ).bytes,
+    );
+    if (this.#bytesQuotaError(toBotId, bytes, 0) !== null) {
+      return `${toName} 的组件存储空间不够放下这个组件（含历史版本）`;
+    }
+    return null;
+  }
+
+  /**
+   * 把一个 Bot 级组件连同全部版本（HTML、摘要、自检状态与摘要、查询模板的人工预审时间
+   * 照搬）、查询模板与 storage 文档复制给接手方：新 id、仍为 Bot 级、不发卡（接手方之后用
+   * `widget_publish` 发到需要的对话）。一个事务；阻断条件在事务内复查。
+   *
+   * 确认状态：渲染端按「HTML sha256 + 查询摘要」记忆用户的加载确认（不分组件 / Bot），
+   * 副本的每个版本两项摘要都与原版相同，所以原版已确认过的版本在接手方那里同样免确认；
+   * 未确认过的仍要确认。`queries_reviewed_at`（core 强制的 SQL 预审）同样照搬。
+   */
+  copyForHandover(widgetId: string, toBotId: string, toName: string): { widgetId: string; versions: number } {
+    const newWidgetId = newId('wgt');
+    let versions = 0;
+    this.#deps.db.transaction(() => {
+      const blocked = this.handoverCopyBlocker(widgetId, toBotId, toName);
+      if (blocked !== null) throw new AppError('INVALID_INPUT', blocked);
+      const source = this.#widgetOf(widgetId)!;
+      const now = this.#deps.clock.now();
+      this.#deps.db
+        .prepare(
+          "insert into widgets (id, bot_id, conversation_id, scope, title, description, latest_version, created_at, updated_at) values (?, ?, null, 'bot', ?, ?, ?, ?, ?)",
+        )
+        .run(newWidgetId, toBotId, source.title, source.description, source.latest_version, now, now);
+      versions = Number(
+        this.#deps.db
+          .prepare(
+            `insert into widget_versions (widget_id, version, html, sha256, created_by_run, created_at,
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json)
+             select ?, version, html, sha256, created_by_run, created_at,
+               queries_sha256, size_bytes, queries_reviewed_at, check_status, check_summary_json
+             from widget_versions where widget_id = ?`,
+          )
+          .run(newWidgetId, widgetId).changes,
+      );
+      this.#deps.db
+        .prepare(
+          'insert into widget_queries (widget_id, version, name, sql) select ?, version, name, sql from widget_queries where widget_id = ?',
+        )
+        .run(newWidgetId, widgetId);
+      this.#deps.db
+        .prepare(
+          'insert into widget_docs (widget_id, key, value_json, updated_at) select ?, key, value_json, updated_at from widget_docs where widget_id = ?',
+        )
+        .run(newWidgetId, widgetId);
+    })();
+    return { widgetId: newWidgetId, versions };
   }
 
   /**

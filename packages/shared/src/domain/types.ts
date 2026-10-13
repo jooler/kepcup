@@ -1399,6 +1399,8 @@ export const jobTypeSchema = z.enum([
   'watch_alert',
   // D84：新信唤醒（去重键 mail:{accountId}:{uid}:{botId}）。卡片和对话轮由作业投递。
   'mail_alert',
+  // D88 P2：Bot 资产移交的后台阶段（Wiki 页、组件复制；去重键 handover_copy:{handoverId}）。
+  'handover_copy',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 

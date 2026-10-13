@@ -72,6 +72,8 @@ export interface JobsRunnerDeps {
   watches?: WatchService | undefined;
   /** D84 mail domain (mail_alert consumer). */
   mail?: MailService | undefined;
+  /** D88 P2 handover host (handover_copy consumer: the background wiki / widget copy). */
+  handover?: { runCopyJob(job: JobRow): Promise<void> } | undefined;
   /** Sandbox backend for the skill generation loop (P08). */
   sandbox?: SandboxBackend | undefined;
   paths?: AppPaths | undefined;
@@ -368,6 +370,14 @@ export class JobsRunner {
           throw new Error('mail domain not wired; cannot run mail_alert');
         }
         this.#deps.mail.runAlertJob(job);
+        return;
+      case 'handover_copy':
+        // D88 P2: the background stage of a confirmed handover (wiki pages, widgets). The
+        // host marks its items and settles the handover; a throw retries the job.
+        if (this.#deps.handover === undefined) {
+          throw new Error('handover host not wired; cannot run handover_copy');
+        }
+        await this.#deps.handover.runCopyJob(job);
         return;
       case 'event_delivery':
         // P10 (BR-P10-006): an event response trigger parked for quiet hours —

@@ -100,6 +100,24 @@ function toItem(row: ItemRow): HandoverItemRecord {
   };
 }
 
+/**
+ * The copy summary of a P2 item for the card (`result.copiedCount` / `result.skippedPaths`,
+ * written by the wiki / widget adapters).
+ */
+function copySummary(result: Record<string, unknown> | null): {
+  copiedCount: number | null;
+  skippedPaths: string[];
+} {
+  const count = result?.['copiedCount'];
+  const skipped = result?.['skippedPaths'];
+  return {
+    copiedCount: typeof count === 'number' && Number.isInteger(count) ? count : null,
+    skippedPaths: Array.isArray(skipped)
+      ? skipped.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+  };
+}
+
 export class HandoverStore {
   readonly #db: SqliteDatabase;
   readonly #clock: Clock;
@@ -270,7 +288,10 @@ export class HandoverStore {
         assetType: item.assetType,
         status: item.status,
         error: item.error,
+        ...copySummary(item.result),
       })),
+      // Computed by the host (it knows the bots); the bare store never offers it.
+      retire: null,
       // Item progress counts as an update of the view (renderer keeps the newest).
       updatedAt: Math.max(record.updatedAt, ...items.map((item) => item.updatedAt)),
     };
