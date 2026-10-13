@@ -115,7 +115,11 @@ describe('P1 card marks / default selection / memory provenance', () => {
     });
     expect(parsed.items[0]).toMatchObject({ marks: [], defaultSelected: true });
     expect(selectableHandoverKeys(parsed)).toContain('memory:mem_s');
-    expect(defaultHandoverKeys(parsed)).toEqual(['mail:mal_1', 'skill:deploy', HANDOVER_RESP_FROM_KEY]);
+    expect(defaultHandoverKeys(parsed)).toEqual([
+      'mail:mal_1',
+      'skill:deploy',
+      HANDOVER_RESP_FROM_KEY,
+    ]);
     expect(() =>
       botHandoverPayloadSchema.parse({
         ...payload,
@@ -135,7 +139,9 @@ describe('P1 card marks / default selection / memory provenance', () => {
         fromItemId: 'mem_1',
       }),
     ).toMatchObject({ handoverId: 'hnd_1', fromItemId: 'mem_1' });
-    expect(memoryEvidenceSchema.parse({ messageId: 'msg_1', conversationId: 'c', runId: null })).toEqual({
+    expect(
+      memoryEvidenceSchema.parse({ messageId: 'msg_1', conversationId: 'c', runId: null }),
+    ).toEqual({
       messageId: 'msg_1',
       conversationId: 'c',
       runId: null,

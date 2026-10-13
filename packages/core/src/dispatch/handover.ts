@@ -169,7 +169,8 @@ export class HandoverHost implements HandoverToolFacade {
     if (!initiator.butler && botId !== initiator.botId) {
       return {
         ok: false,
-        message: '你只能盘点自己名下的资产（bot_id 填你自己或不填）；其他 Bot 的资产由它自己或管家处理',
+        message:
+          '你只能盘点自己名下的资产（bot_id 填你自己或不填）；其他 Bot 的资产由它自己或管家处理',
       };
     }
     const bot = this.#deps.bots.get(botId);
@@ -209,13 +210,15 @@ export class HandoverHost implements HandoverToolFacade {
       if (input.fromBotId !== proposerId) {
         return {
           ok: false,
-          message: '你只能交出自己名下的资产：from_bot_id 必须是你自己。其他 Bot 的资产由它自己或管家处理。',
+          message:
+            '你只能交出自己名下的资产：from_bot_id 必须是你自己。其他 Bot 的资产由它自己或管家处理。',
         };
       }
       if (input.target.kind === 'new') {
         return {
           ok: false,
-          message: '只有管家可以新建 Bot：目标请选一个已有的 Bot（to.bot_id），或请用户去找管家新建。',
+          message:
+            '只有管家可以新建 Bot：目标请选一个已有的 Bot（to.bot_id），或请用户去找管家新建。',
         };
       }
     }
@@ -329,7 +332,10 @@ export class HandoverHost implements HandoverToolFacade {
       };
     }
     if (cardItems.length - memoryCount > HANDOVER_ITEMS_MAX) {
-      return { ok: false, message: `条目太多（记忆之外最多 ${HANDOVER_ITEMS_MAX} 个），分几张卡提交` };
+      return {
+        ok: false,
+        message: `条目太多（记忆之外最多 ${HANDOVER_ITEMS_MAX} 个），分几张卡提交`,
+      };
     }
 
     // 职责改写：B 追加、A 删去；管家的职责是固定模板，不改。

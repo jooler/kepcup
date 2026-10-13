@@ -74,6 +74,23 @@ export function memoryRefusal(item: MemoryItem, now: number, ownerName: string):
   return null;
 }
 
+/**
+ * Vector sync of a copied entry: never blocks or fails the copy (设计 37 §7 风险——向量模型
+ * 未就绪 / 出错时由既有的向量重建路径补齐)。`MemoryService.embedItem` already swallows its
+ * own errors; this guards the port contract too.
+ */
+export async function embedBestEffort(
+  memory: Pick<HandoverMemoryPort, 'embed'>,
+  botId: string,
+  item: MemoryItem,
+): Promise<void> {
+  try {
+    await memory.embed(botId, item);
+  } catch {
+    // Left for the vector rebuild path.
+  }
+}
+
 /** The copy written into the target (new id; provenance instead of message evidence). */
 export function handoverMemoryCopy(
   item: MemoryItem,
@@ -202,7 +219,7 @@ export class MemoryAdapter implements HandoverAdapter {
       ctx.toBot.id,
       handoverMemoryCopy(item, { handoverId: ctx.handoverId, fromBotId: ctx.fromBot.id }),
     );
-    await this.#deps.memory.embed(ctx.toBot.id, copy);
+    await embedBestEffort(this.#deps.memory, ctx.toBot.id, copy);
     return { result: { itemId: copy.id } };
   }
 

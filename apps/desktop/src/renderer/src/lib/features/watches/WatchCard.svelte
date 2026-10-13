@@ -39,9 +39,7 @@
   const handedOver = $derived(
     watch !== null && conversationId !== undefined && watch.conversationId !== conversationId,
   );
-  const actions = $derived(
-    watch !== null && !removed && !handedOver ? watchActions(watch) : null,
-  );
+  const actions = $derived(watch !== null && !removed && !handedOver ? watchActions(watch) : null);
   let busy = $state(false);
   let expanded = $state(false);
   let confirmingStop = $state(false);

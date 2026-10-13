@@ -109,7 +109,11 @@ describe('SkillsService.copyForHandover (D88 P1)', () => {
     });
     const source = rig.skills.botSkillRow('bot_a', 'deploy')!;
     const copy = rig.skills.botSkillRow('bot_b', 'deploy')!;
-    expect(copy).toMatchObject({ kind: 'imported', library_id: source.library_id, status: 'disabled' });
+    expect(copy).toMatchObject({
+      kind: 'imported',
+      library_id: source.library_id,
+      status: 'disabled',
+    });
     // No re-clone: still one library version, shared by reference.
     expect(libraries()).toBe(1);
     expect(rig.skills.isHandoverCopy('bot_a', 'bot_b', 'deploy')).toBe(true);
@@ -132,7 +136,12 @@ describe('SkillsService.copyForHandover (D88 P1)', () => {
     installImported(rig, 'bot_a', 'deploy');
     await authorSkill(rig, 'bot_b', 'deploy');
     await expect(
-      rig.skills.copyForHandover({ fromBotId: 'bot_a', toBotId: 'bot_b', name: 'deploy', fromName: 'A' }),
+      rig.skills.copyForHandover({
+        fromBotId: 'bot_a',
+        toBotId: 'bot_b',
+        name: 'deploy',
+        fromName: 'A',
+      }),
     ).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
     expect(rig.skills.botSkillRow('bot_b', 'deploy')!.kind).toBe('authored');
   });
@@ -168,6 +177,25 @@ describe('SkillsService.copyForHandover (D88 P1)', () => {
     // Edits on one side do not affect the other (an independent copy).
     rig.skills.disable('bot_a', 'weekly');
     expect(rig.skills.botSkillRow('bot_b', 'weekly')!.status).toBe('active');
+  });
+
+  it('authored: a disabled skill stays disabled on B', async () => {
+    const rig = makeRig();
+    await authorSkill(rig, 'bot_a', 'weekly');
+    rig.skills.disable('bot_a', 'weekly');
+    await rig.skills.copyForHandover({
+      fromBotId: 'bot_a',
+      toBotId: 'bot_b',
+      name: 'weekly',
+      fromName: 'A',
+    });
+    expect(rig.skills.botSkillRow('bot_b', 'weekly')).toMatchObject({
+      kind: 'authored',
+      status: 'disabled',
+    });
+    expect((await rig.skills.history('bot_b', 'weekly')).map((e) => e.message)).toEqual([
+      '从 A 复制 weekly',
+    ]);
   });
 
   it('authored crash recovery: a half-copied directory without a row is redone', async () => {

@@ -11,6 +11,7 @@ import {
 } from '../../src/handover/adapters/memory.js';
 import { ScheduleAdapter } from '../../src/handover/adapters/schedule.js';
 import type { NewMemoryItem } from '../../src/memory/store.js';
+import { checkProfileCandidate } from '../../src/memory/validate.js';
 import type { HandoverContext } from '../../src/handover/types.js';
 
 /**
@@ -426,12 +427,40 @@ describe('memory adapter', () => {
 
   it('an embedding failure does not block the write', async () => {
     const world = memoryWorld({ bot_a: [memory('mem_1', '用户住在杭州')] });
+    // MemoryService.embedItem swallows its own errors; the adapter guards the port too.
     world.port.embed = async () => {
-      // MemoryService.embedItem never throws; a port that resolves after a failed embed is the contract.
+      throw new Error('embedder not ready');
     };
     const adapter = new MemoryAdapter({ memory: world.port, clock: () => 10 });
-    await adapter.apply(ctx(), 'memory:mem_1');
+    const { result } = await adapter.apply(ctx(), 'memory:mem_1');
     expect(world.items.get('bot_b')).toHaveLength(1);
+    expect(world.items.get('bot_b')![0]!.id).toBe(result['itemId']);
+    expect(adapter.isApplied(ctx(), 'memory:mem_1')).toBe(true);
+  });
+
+  it('a copy is never evidence of what the user said to B: no message ids, so it cannot back a profile proposal', async () => {
+    const { adapter, items } = setup();
+    const { result } = await adapter.apply(ctx(), 'memory:mem_sens');
+    const copy = items.get('bot_b')!.find((item) => item.id === result['itemId'])!;
+    const messageIds = copy.evidence
+      .map((evidence) => evidence.messageId)
+      .filter((id): id is string => id !== null);
+    expect(messageIds).toEqual([]);
+    // The profile gate (信任隔离) needs a user message: a proposal resting on the copy is dropped.
+    const verdict = checkProfileCandidate(
+      {
+        content: copy.content,
+        source: copy.source,
+        evidenceMessageIds: messageIds,
+        confidence: copy.confidence,
+      },
+      'bot_b',
+      { getMessage: () => null, botConversationIds: () => new Set() },
+    );
+    expect(verdict).toMatchObject({
+      verdict: 'drop',
+      reason: expect.stringContaining('user message'),
+    });
   });
 
   it('memoryRefusal is shared with the schedule adapter’s commitment rule', () => {
@@ -580,7 +609,9 @@ describe('schedule adapter: commitment moves with its schedule', () => {
 describe('registry refusal', () => {
   it('routes refusal() to the owning adapter', () => {
     const world = memoryWorld({ bot_a: [memory('mem_priv', 'x', { privateToBot: true })] });
-    const registry = new HandoverRegistry([new MemoryAdapter({ memory: world.port, clock: () => 0 })]);
+    const registry = new HandoverRegistry([
+      new MemoryAdapter({ memory: world.port, clock: () => 0 }),
+    ]);
     expect(registry.entry('bot_a', 'memory:mem_priv')).toBeNull();
     expect(registry.refusal('bot_a', 'memory:mem_priv')).toContain('只告诉');
     expect(registry.refusal('bot_a', 'mail:mal_x')).toBeNull();
