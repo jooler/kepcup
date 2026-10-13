@@ -486,6 +486,68 @@ describe('bot asset handover P2 (D88)', () => {
     expect(core.services.handover!.view(approval.id)!.retire).toBeNull();
   }, 60_000);
 
+  it('独立审查 #4：复制途中删除接手方——不重建 bots/{B}/、不给它插组件行，移交随后跳过并结算', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    const alphaDirect = (await openDirect(core, alpha.id)).id;
+    await seedWiki(stack, alpha);
+    const widgetId = seedWidgets(stack, alpha.id, alphaDirect);
+    const host = core.services.handover!;
+    const approval = propose(stack, alpha, alphaDirect, beta, [
+      'wiki:pages/',
+      `widget:${widgetId}`,
+    ]);
+    core.services.jobsRunner!.stop();
+    scriptFollowUp(stack);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    await waitFor(() => (copyJobs(stack).length > 0 ? true : null), { label: 'handover_copy job' });
+    const payloadJson = (
+      core.services
+        .mainDb!.prepare("select payload_json from jobs where type = 'handover_copy'")
+        .get() as { payload_json: string }
+    ).payload_json;
+
+    // Hold B's wiki maintenance lock so the copy's phase 2 queues behind it.
+    let release!: () => void;
+    const gate = core.services.wiki!.runExclusively(
+      beta.id,
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    const copying = host.runCopyJob({ payload_json: payloadJson, attempts: 1 }).then(
+      () => 'resolved',
+      (error: unknown) => (error instanceof JobRetryLaterError ? 'retry-later' : String(error)),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const deleting = core.rpc.call('bots.delete', { id: beta.id });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    await gate;
+    await deleting;
+    expect(await copying).toBe('retry-later');
+    const betaHome = path.join(core.services.paths.home, 'bots', beta.id);
+    expect(existsSync(betaHome)).toBe(false);
+    const widgetRows = () =>
+      (
+        core.services
+          .mainDb!.prepare('select count(*) as n from widgets where bot_id = ?')
+          .get(beta.id) as { n: number }
+      ).n;
+    expect(widgetRows()).toBe(0);
+
+    // The retried job sees B deleted: items skipped, the handover settles, still no orphans.
+    await host.runCopyJob({ payload_json: payloadJson, attempts: 2 });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('failed');
+    expect(view.items.find((item) => item.key === 'wiki:pages/')!.status).toBe('skipped');
+    expect(existsSync(betaHome)).toBe(false);
+    expect(widgetRows()).toBe(0);
+    expect(existsSync(path.join(core.services.paths.cacheDir, 'handover-staging', view.id))).toBe(
+      false,
+    );
+  }, 60_000);
+
   it('作业多次中断而失败：恢复时条目记失败（不无限重登），移交结算为失败、不给退役', async () => {
     const stack = await start();
     const { core } = stack;
