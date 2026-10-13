@@ -35,7 +35,12 @@ import type {
 import type { HandoverRegistry } from '../handover/registry.js';
 import type { HandoverStore, HandoverItemRecord, HandoverRecord } from '../handover/store.js';
 import type { HandoverAdapter, HandoverBatchOutcome, HandoverContext } from '../handover/types.js';
-import { JOB_MAX_ATTEMPTS, type EnqueueJobInput, type JobRow } from '../domain/jobs.js';
+import {
+  JOB_MAX_ATTEMPTS,
+  JobRetryLaterError,
+  type EnqueueJobInput,
+  type JobRow,
+} from '../domain/jobs.js';
 import {
   MODEL_INHERIT,
   botModelLabel,
@@ -113,6 +118,9 @@ const NOTES_KEY = 'note:handover';
 function copyJobKey(handoverId: string): string {
   return `handover_copy:${handoverId}`;
 }
+
+/** Back-off between attempts of a background copy that failed transiently (× attempt). */
+const COPY_RETRY_DELAY_MS = 30_000;
 
 const TERMINAL_STATUSES: ReadonlySet<HandoverStatus> = new Set([
   'completed',
@@ -887,9 +895,30 @@ export class HandoverHost implements HandoverToolFacade {
     }
     const record = this.#deps.store.get(handoverId);
     if (record === null || record.status !== 'applying') return;
+    const lastAttempt = job.attempts >= JOB_MAX_ATTEMPTS;
     const items = this.#backgroundPending(handoverId);
-    if (items.length > 0)
-      await this.#runBackground(record, items, job.attempts >= JOB_MAX_ATTEMPTS);
+    if (items.length > 0) {
+      try {
+        await this.#runBackground(record, items, lastAttempt);
+      } catch (error) {
+        const reason = errorText(error);
+        this.#deps.logger.warn(
+          { handoverId, error: reason, attempts: job.attempts, lastAttempt },
+          'handover background stage failed',
+        );
+        if (!lastAttempt) {
+          // Items stay pending; the job retries later (not on the next poll).
+          throw new JobRetryLaterError(reason, COPY_RETRY_DELAY_MS * Math.max(1, job.attempts));
+        }
+        // Last attempt: never leave the handover `applying` with nobody to finish it.
+        if (this.#deps.store.get(handoverId)?.status === 'applying') {
+          for (const item of this.#backgroundPending(handoverId)) {
+            this.#deps.store.setItem(handoverId, item.key, 'failed', `后台复制失败：${reason}`);
+          }
+          this.#publish(handoverId);
+        }
+      }
+    }
     // Let the regular path write the notes and settle (after any in-flight execution).
     while (this.#running.has(handoverId)) await this.#runs.get(handoverId);
     await this.#launch(handoverId);
@@ -929,6 +958,9 @@ export class HandoverHost implements HandoverToolFacade {
       groups.set(adapter, [...(groups.get(adapter) ?? []), item]);
     }
     for (const [adapter, group] of [...groups.entries()].sort(([a], [b]) => a.stage - b.stage)) {
+      // A concurrent execution may have settled the handover meanwhile (restart race): its
+      // item statuses are final then.
+      if (!this.#stillApplying(handoverId)) return;
       const ctx = context();
       const toRun: HandoverItemRecord[] = [];
       for (const item of group) {
@@ -967,6 +999,7 @@ export class HandoverHost implements HandoverToolFacade {
             'handover background batch failed',
           );
           if (!lastAttempt) throw error;
+          if (!this.#stillApplying(handoverId)) return;
           for (const item of toRun) {
             this.#abandon(adapter, ctx, item.key);
             this.#deps.store.setItem(handoverId, item.key, 'failed', reason);
@@ -974,6 +1007,7 @@ export class HandoverHost implements HandoverToolFacade {
           this.#publish(handoverId);
           continue;
         }
+        if (!this.#stillApplying(handoverId)) return;
         for (const item of toRun) {
           const outcome = outcomes.get(item.key);
           if (outcome === undefined) {
@@ -1010,6 +1044,10 @@ export class HandoverHost implements HandoverToolFacade {
         }
       }
     }
+  }
+
+  #stillApplying(handoverId: string): boolean {
+    return this.#deps.store.get(handoverId)?.status === 'applying';
   }
 
   /** Best-effort cleanup of what a not-done item left on the target (adapter `abandon`). */
@@ -1364,10 +1402,17 @@ export class HandoverHost implements HandoverToolFacade {
     // P2：Wiki 条目做完了但有同路径的页没覆盖——如实说出来（路径是数据）。
     for (const item of doneUnits) {
       const skippedPaths = (item.result?.['skippedPaths'] as string[] | undefined) ?? [];
-      if (skippedPaths.length === 0) continue;
-      doneLines.push(
-        `- ${untrusted(`${this.#itemLabel(record, item.key)}：${toName} 已有同路径、内容不同的页，没有覆盖：${skippedPaths.slice(0, 20).join('、')}${skippedPaths.length > 20 ? ` 等 ${skippedPaths.length} 页` : ''}`)}`,
-      );
+      if (skippedPaths.length > 0) {
+        doneLines.push(
+          `- ${untrusted(`${this.#itemLabel(record, item.key)}：${toName} 已有同路径、内容不同的页，没有覆盖：${skippedPaths.slice(0, 20).join('、')}${skippedPaths.length > 20 ? ` 等 ${skippedPaths.length} 页` : ''}`)}`,
+        );
+      }
+      const rawConflicts = this.#rawConflicts(item);
+      if (rawConflicts.length > 0) {
+        doneLines.push(
+          `- ${untrusted(`${this.#itemLabel(record, item.key)}：页面引用的原件 ${rawConflicts.slice(0, 10).join('、')}${rawConflicts.length > 10 ? ` 等 ${rawConflicts.length} 个` : ''} 在 ${toName} 那里已有内容不同的同名文件，保留了 ${toName} 的（复制过去的页会链接到它）`)}`,
+        );
+      }
     }
     if (doneLines.length > 0) lines.push('已完成：', ...doneLines);
     const skipped = this.#reasonLines(
@@ -1448,9 +1493,22 @@ export class HandoverHost implements HandoverToolFacade {
     if (view.items.some((item) => item.status !== 'done' || item.skippedPaths.length > 0)) {
       return null;
     }
+    // A referenced original B already had with other bytes: B's copy points at B's version,
+    // A's would be lost with A.
+    if (this.#deps.store.items(view.id).some((item) => this.#rawConflicts(item).length > 0)) {
+      return null;
+    }
     const from = this.#deps.bots.get(view.fromBotId);
     if (from === null || from.status !== 'active' || from.systemRole === 'butler') return null;
     return { botId: from.id, botName: from.name };
+  }
+
+  /** Wiki originals the target already had with other bytes (`result.rawConflicts`). */
+  #rawConflicts(item: HandoverItemRecord): string[] {
+    const raw = item.result?.['rawConflicts'];
+    return Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === 'string')
+      : [];
   }
 
   #setStatus(record: HandoverRecord, status: HandoverStatus): void {

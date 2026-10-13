@@ -1,6 +1,6 @@
 import type { Orchestrator } from '../dispatch/orchestrator.js';
 import type { Scheduler } from '../scheduler/scheduler.js';
-import type { JobRow, JobsService } from '../domain/jobs.js';
+import { JobRetryLaterError, type JobRow, type JobsService } from '../domain/jobs.js';
 import type { SettingsService } from '../domain/settings.js';
 import { runConversationSummaryJob } from '../agent/loops/conversation-summary.js';
 import type { AgentEngine } from '../agent/types.js';
@@ -194,6 +194,9 @@ export class JobsRunner {
               'job failed',
             );
             this.#deps.jobs.fail(job.id, error instanceof Error ? error.message : String(error));
+            if (error instanceof JobRetryLaterError) {
+              this.#deps.jobs.postpone(job.id, this.#deps.clock.now() + error.delayMs);
+            }
           }
         } finally {
           this.#inFlight.delete(job.id);
