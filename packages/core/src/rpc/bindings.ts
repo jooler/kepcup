@@ -343,62 +343,66 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     if (settingsCatalog !== null) settingsCatalog.publishChanged(itemIds);
     else if (itemIds.length > 0) publish('settings.changed', { itemIds: [...new Set(itemIds)] });
   };
-  const settingsLocked = <T>(task: () => Promise<T>): Promise<T> =>
-    settingsCatalog !== null ? settingsCatalog.runLocked(task) : task();
+  const settingsLocked = <T>(task: () => T | Promise<T>): Promise<T> =>
+    settingsCatalog !== null ? settingsCatalog.runLocked(task) : Promise.resolve().then(task);
 
   const methods: Record<string, RpcMethodSpec> = {
     'settings.get': method(voidInput, settingsGetOutputSchema, async () => domain.settings.get()),
-    'settings.update': method(settingsUpdateInputSchema, settingsGetOutputSchema, (input) =>
-      settingsLocked(async () => {
-        const previous = domain.settings.get();
-        // P13 任务 4: the onboarding patch is partial; store the merged state so
-        // a step writing one flag never erases the others.
-        const {
-          onboarding: onboardingPatch,
-          experimental: experimentalPatch,
-          apps: appsPatch,
-          agents: agentsPatch,
-          backgroundTasks: backgroundTasksPatch,
-          ...rest
-        } = input;
-        for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
-          if (
-            agentId !== undefined &&
-            agentId.length > 0 &&
-            !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
-          ) {
-            throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
+    // 写锁只罩住「读最新 → 合并 → 写回」的同步关键区；MCP 断连 / 清理 / 撤销授权等网络副作用在锁外。
+    // 注意：设置页按整对象保存（capabilityModels / webSearch / mcpServers 由表单快照整体提交）的老问题
+    // 仍在——过期表单可能覆盖别处刚做的修改；对话里的直改只靠回执卡撤销时的冲突报告兜底。
+    'settings.update': method(settingsUpdateInputSchema, settingsGetOutputSchema, async (input) => {
+      const previous = domain.settings.get();
+      // P13 任务 4: the onboarding patch is partial; store the merged state so
+      // a step writing one flag never erases the others.
+      const {
+        onboarding: onboardingPatch,
+        experimental: experimentalPatch,
+        apps: appsPatch,
+        agents: agentsPatch,
+        backgroundTasks: backgroundTasksPatch,
+        ...rest
+      } = input;
+      for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
+        if (
+          agentId !== undefined &&
+          agentId.length > 0 &&
+          !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
+        ) {
+          throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
+        }
+      }
+      if (input.mcpServers !== undefined) {
+        // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
+        // connection id as the synthesized server's id), so a custom server may not take it.
+        const reserved = input.mcpServers.find((server) => isCatalogConnectionId(server.id));
+        if (reserved !== undefined) {
+          throw new AppError('INVALID_INPUT', `MCP 服务器 ID 不能以「conn_」开头（保留给连接应用）：${reserved.id}`);
+        }
+        // D73: an OAuth server switched to none/headers, or pointed at another URL, must
+        // lose its connection first (revoke + clear the vault) — the tokens are bound to
+        // the old URL. Done before the replacement so no run can pair old tokens with the
+        // new URL; an in-flight interactive flow for it is cancelled too.
+        for (const server of previous.mcpServers) {
+          const after = input.mcpServers.find((entry) => entry.id === server.id);
+          if (after !== undefined && oauthBindingChanged(server, after)) {
+            services.apps?.flows.cancelForServer(server.id);
           }
         }
-        if (input.mcpServers !== undefined) {
-          // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
-          // connection id as the synthesized server's id), so a custom server may not take it.
-          const reserved = input.mcpServers.find((server) => isCatalogConnectionId(server.id));
-          if (reserved !== undefined) {
-            throw new AppError('INVALID_INPUT', `MCP 服务器 ID 不能以「conn_」开头（保留给连接应用）：${reserved.id}`);
-          }
-          // D73: an OAuth server switched to none/headers, or pointed at another URL, must
-          // lose its connection first (revoke + clear the vault) — the tokens are bound to
-          // the old URL. Done before the replacement so no run can pair old tokens with the
-          // new URL; an in-flight interactive flow for it is cancelled too.
-          for (const server of previous.mcpServers) {
-            const after = input.mcpServers.find((entry) => entry.id === server.id);
-            if (after !== undefined && oauthBindingChanged(server, after)) {
-              services.apps?.flows.cancelForServer(server.id);
-            }
-          }
-          await services.appRuntime?.disconnector.reconcileServers(
-            previous.mcpServers,
-            input.mcpServers,
-          );
-        }
-        // `apps` 一律对**最新**设置合并（上面有 await：期间 core 自有字段，如 `localConnectors`，
-        // 可能被 `apps.localConnectors.*` 改过，拿读取时的快照回写会丢掉 / 复活条目）。
-        const latestApps = domain.settings.get().apps;
+        await services.appRuntime?.disconnector.reconcileServers(
+          previous.mcpServers,
+          input.mcpServers,
+        );
+      }
+      // 合并一律基于锁内读到的**最新**设置（上面有 await：期间 core 自有字段，如
+      // `apps.localConnectors`、agents 的安装状态，可能被别的路径改过，拿旧快照回写会丢改动）。
+      const { current, next } = await settingsLocked(() => {
+        const current = domain.settings.get();
+        const latestApps = current.apps;
         const next = domain.settings.update({
           ...rest,
           ...(onboardingPatch !== undefined
-            ? { onboarding: { ...previous.onboarding, ...onboardingPatch } }
+            ? { onboarding: { ...current.onboarding, ...onboardingPatch } }
             : {}),
           // agents: merged per id onto the stored value (never a whole-map
           // overwrite: a stale renderer snapshot must not undo a finished
@@ -406,11 +410,11 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           ...(agentsPatch !== undefined
             ? {
                 agents: {
-                  ...previous.agents,
+                  ...current.agents,
                   ...Object.fromEntries(
                     Object.entries(agentsPatch).map(([id, value]) => [
                       id,
-                      agentSettingSchema.parse({ ...(previous.agents[id] ?? {}), ...value }),
+                      agentSettingSchema.parse({ ...(current.agents[id] ?? {}), ...value }),
                     ]),
                   ),
                 },
@@ -420,7 +424,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             ? {
                 experimental: {
                   externalAgents:
-                    experimentalPatch.externalAgents ?? previous.experimental.externalAgents,
+                    experimentalPatch.externalAgents ?? current.experimental.externalAgents,
                 },
               }
             : {}),
@@ -437,50 +441,51 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
             : {}),
           // P6 后台任务：部分 patch，与已存值合并。
           ...(backgroundTasksPatch !== undefined
-            ? { backgroundTasks: { ...previous.backgroundTasks, ...backgroundTasksPatch } }
+            ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
             : {}),
         });
-        services.scheduler?.setConcurrency(next.providerConcurrency);
-        if (input.mcpServers !== undefined) {
-          // D73 P1: a server dropped by this replacement (not via `mcp.removeServer`) takes its
-          // tool-lock rows, connection row and tokens with it — no orphans left behind. Only a
-          // server that is really gone from the saved settings is cleaned.
-          for (const server of previous.mcpServers) {
-            if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
-            await services.appRuntime?.disconnector.removeCustomServer(server.id);
-            await services.mcpb?.afterServerRemoved(previous.mcpServers, server.id);
-          }
+        return { current, next };
+      });
+      services.scheduler?.setConcurrency(next.providerConcurrency);
+      if (input.mcpServers !== undefined) {
+        // D73 P1: a server dropped by this replacement (not via `mcp.removeServer`) takes its
+        // tool-lock rows, connection row and tokens with it — no orphans left behind. Only a
+        // server that is really gone from the saved settings is cleaned.
+        for (const server of previous.mcpServers) {
+          if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
+          await services.appRuntime?.disconnector.removeCustomServer(server.id);
+          await services.mcpb?.afterServerRemoved(previous.mcpServers, server.id);
         }
-        if (input.mcpServers !== undefined) {
-          // W3（D78）: server switched off / removed, autoApprove on → off, a tool
-          // policy auto → ask or disabled — the bots using it lose their running tasks.
-          const allBots = domain.bots.listActive();
-          revokeMcp(
-            mcpRevocationsBetween(
-              previous.mcpServers,
-              next.mcpServers,
-              (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
-              (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
-            ).map((entry) => ({ ...entry, botIds: botsUsingServer(allBots, entry.serverId) })),
-          );
-        }
-        if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
-          // P13 任务 3: the main process applies the OS login item on this event
-          // (platform port B → setLoginItemSettings / XDG autostart).
-          publish('platform.autostart', { enabled: next.launchAtLogin });
-        }
-        publishSettingsChanged(
-          itemIdsForSettingsPaths(
-            changedSettingsPaths(
-              previous as unknown as Record<string, unknown>,
-              next as unknown as Record<string, unknown>,
-              Object.keys(input),
-            ),
-          ),
+      }
+      if (input.mcpServers !== undefined) {
+        // W3（D78）: server switched off / removed, autoApprove on → off, a tool
+        // policy auto → ask or disabled — the bots using it lose their running tasks.
+        const allBots = domain.bots.listActive();
+        revokeMcp(
+          mcpRevocationsBetween(
+            previous.mcpServers,
+            next.mcpServers,
+            (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
+            (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
+          ).map((entry) => ({ ...entry, botIds: botsUsingServer(allBots, entry.serverId) })),
         );
-        return next;
-      }),
-    ),
+      }
+      if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
+        // P13 任务 3: the main process applies the OS login item on this event
+        // (platform port B → setLoginItemSettings / XDG autostart).
+        publish('platform.autostart', { enabled: next.launchAtLogin });
+      }
+      publishSettingsChanged(
+        itemIdsForSettingsPaths(
+          changedSettingsPaths(
+            current as unknown as Record<string, unknown>,
+            next as unknown as Record<string, unknown>,
+            Object.keys(input),
+          ),
+        ),
+      );
+      return next;
+    }),
 
     'providers.list': method(voidInput, providersListOutputSchema, async () => ({
       providers: domain.providers.list(),

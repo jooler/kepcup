@@ -116,6 +116,12 @@ describe('ACP settings pack', () => {
     const full = promptFor(['send_message', 'settings_search', 'settings_read', 'settings_change']);
     expect(full).toContain('mcp__kepcup__settings_change');
     expect(full).not.toContain('你在这里不能修改设置');
+    // <tool_policy> follows the injected tools: read-only wording without settings_change.
+    expect(readOnly).toContain(
+      '查看 KepCup 自身的设置用 mcp__kepcup__settings_search / mcp__kepcup__settings_read',
+    );
+    expect(readOnly).not.toContain('修改 KepCup 自身的设置');
+    expect(full).toContain('修改 KepCup 自身的设置用 mcp__kepcup__settings_change');
     const none = promptFor(['send_message']);
     expect(none).not.toContain('settings_search');
     expect(SETTINGS_READ_ONLY_RULE).not.toContain('settings_change');

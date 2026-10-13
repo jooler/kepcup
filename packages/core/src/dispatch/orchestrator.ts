@@ -60,7 +60,11 @@ import {
 } from '@kepcup/shared';
 import type { MailService } from '../mail/service.js';
 import type { SettingsCatalogHost } from '../settings/host.js';
-import { isUntrustedReadTool, triggerFromUser } from '../settings/context.js';
+import {
+  isUntrustedReadTool,
+  triggerCarriesUntrusted,
+  triggerFromUser,
+} from '../settings/context.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { agentRunGate, agentSetupMessage } from '../agent/external/catalog.js';
@@ -3348,7 +3352,8 @@ export class Orchestrator {
       const scheduleSource = isTask ? null : this.#scheduleSourceOf(batch);
       // 对话内应用设置（§5.3）：本 run 是否调用过读取不可信内容的工具（tool_call 一发生即置位，
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
-      const untrusted = { touched: false };
+      // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
+      const untrusted = { touched: triggerCarriesUntrusted(batch.messages) };
       const settingsFacade =
         this.#deps.settingsCatalog !== undefined
           ? this.#deps.settingsCatalog.forRun({
@@ -3364,6 +3369,8 @@ export class Orchestrator {
               isGroup: conv.type === 'group',
               isButler: bot.systemRole === 'butler',
               touchedUntrusted: () => untrusted.touched,
+              // 外部智能体的原生工具不经宿主分类、会话跨 run 保留：整个 run 按不可信处理。
+              externalEngine: agentId.length > 0,
               onSetupRequired: (requirement) => {
                 setupHit.requirement = requirement;
               },

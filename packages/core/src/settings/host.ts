@@ -100,8 +100,13 @@ export interface SettingsRunContext {
   triggerFromUser: boolean;
   isGroup: boolean;
   isButler: boolean;
-  /** 本 run 已调用过读取不可信内容的工具（随 run 推进而变）。 */
+  /** 本 run 已调用过读取不可信内容的工具（随 run 推进而变；触发批带附件时一开始就为真）。 */
   touchedUntrusted: () => boolean;
+  /**
+   * 本 run 由外部智能体（ACP）执行：它的原生工具（自带的抓网页、读文件、命令、MCP）不经宿主分类，
+   * 会话还跨 run 保留——一律按读过不可信内容处理（最多 confirm）。
+   */
+  externalEngine?: boolean;
   /** 任务里 `required: true` 且需要用户处理：写进本 run 的 setupHit（失败续跑链）。 */
   onSetupRequired?: (requirement: SetupRequirement) => void;
 }
@@ -164,6 +169,11 @@ const STATUS_WORDS: Readonly<Record<ItemSnapshot['status'], string>> = {
 export class SettingsCatalogHost {
   readonly #deps: SettingsCatalogHostDeps;
   readonly #adapterOf: (item: SettingItem) => ItemAdapter;
+  /**
+   * 每 run 已占用、还没落库的出卡名额（§6.1 每 run 上限）：工具可能并行执行，计数在第一个 await
+   * 之前同步占位，出卡（或失败）后释放。
+   */
+  readonly #reservedCards = new Map<string, number>();
 
   constructor(deps: SettingsCatalogHostDeps) {
     this.#deps = deps;
@@ -235,7 +245,7 @@ export class SettingsCatalogHost {
     const modeCtx: SettingModeContext = {
       triggerReason: ctx.triggerReason,
       triggerFromUser: ctx.triggerFromUser,
-      runTouchedUntrusted: ctx.touchedUntrusted(),
+      runTouchedUntrusted: ctx.externalEngine === true || ctx.touchedUntrusted(),
       tainted,
       isGroup: ctx.isGroup,
       targetsOtherBot: item.scope === 'bot' && target.botId !== null && target.botId !== botId,
@@ -308,6 +318,24 @@ export class SettingsCatalogHost {
       };
     }
     const target = this.#targetFor(item, ctx, botId);
+    if (item.scope === 'bot' && target.botId !== ctx.identity.botId) {
+      // 别的 Bot 的配置：普通 Bot 不能看（同 settings_change 的 other-bot-refused）；管家能看的
+      // 与它能出的卡一致（脱敏后的当前值）。
+      if (!ctx.isButler) {
+        return {
+          ok: false,
+          content: '只能查看你自己的配置；别的 Bot 的配置请交给管家或用户。',
+          errorCode: 'INVALID_INPUT',
+        };
+      }
+      if (target.botId === null || this.#deps.bots.get(target.botId) === null) {
+        return {
+          ok: false,
+          content: `没有 Bot「${clip(target.botId ?? '', 40)}」`,
+          errorCode: 'NOT_FOUND',
+        };
+      }
+    }
     const adapter = this.#adapterOf(item);
     const snapshot = adapter.read(item, target);
     const decision = this.#decide(item, ctx, target, snapshot, null);
@@ -408,13 +436,14 @@ export class SettingsCatalogHost {
 
     const target = this.#targetFor(item, ctx, input.botId);
     const adapter = this.#adapterOf(item);
-    const snapshot = adapter.read(item, target);
     let values: SettingValues | null = Object.keys(raw).length > 0 ? { ...raw } : null;
     if (values !== null && adapter.normalize !== undefined) {
       const normalized = adapter.normalize(item, values, target);
       if (!normalized.ok) return reject(normalized.message);
       values = normalized.values;
     }
+    // 按键寻址的条目（如 agents.external）读本次涉及的那个键。
+    const snapshot = adapter.read(item, target, values ?? undefined);
     const decision = this.#decide(item, ctx, target, snapshot, values);
     if (decision.mode === 'refused')
       return reject(`不能修改「${item.title}」：${decision.reason ?? ''}`);
@@ -438,7 +467,23 @@ export class SettingsCatalogHost {
       };
     }
 
-    // 任务里缺了就做不下去：走失败续跑链（不出消息流里的卡）。
+    // 按条目的拒绝退避（§6.1）对出卡与任务里的 required（失败续跑卡）一样生效。
+    const conversationId = identity.conversationId;
+    if (decision.mode !== 'direct') {
+      const declined = this.#recentDeclines(identity.botId, conversationId, item.id);
+      if (declined >= SETTING_CARD_DECLINE_MAX) {
+        return reject(
+          `用户最近 7 天已在本对话拒绝 ${declined} 次「${item.title}」的设置卡，不能再出${
+            input.required === true ? '，也不能为它暂停任务' : ''
+          }。不要再提这一项；用户之后想改可以自己去设置页${
+            isTask ? '；任务里缺了它就如实在结果里说明做不了的部分' : ''
+          }。`,
+          'LIMIT_REACHED',
+        );
+      }
+    }
+
+    // 任务里缺了就做不下去：走失败续跑链（不出消息流里的卡；一次只会让本任务失败一次，不占出卡名额）。
     if (
       decision.mode !== 'direct' &&
       input.required === true &&
@@ -458,14 +503,47 @@ export class SettingsCatalogHost {
       };
     }
 
-    const conversationId = identity.conversationId;
-    if (this.#countRunCards(identity.runId) >= SETTING_CARDS_PER_RUN_MAX) {
+    // 每 run 出卡上限：在第一个 await 之前同步占位（工具可能并行执行）。
+    const runId = identity.runId;
+    const reserved = this.#reservedCards.get(runId) ?? 0;
+    if (this.#countRunCards(runId) + reserved >= SETTING_CARDS_PER_RUN_MAX) {
       return reject(
         `本轮已经出了 ${SETTING_CARDS_PER_RUN_MAX} 张设置卡，不能再出。先等用户处理已有的卡，或在回复里说明还需要改什么。`,
         'LIMIT_REACHED',
       );
     }
+    this.#reservedCards.set(runId, reserved + 1);
+    try {
+      return await this.#emitCard(ctx, { item, target, values, snapshot, decision, reason });
+    } finally {
+      const left = (this.#reservedCards.get(runId) ?? 1) - 1;
+      if (left > 0) this.#reservedCards.set(runId, left);
+      else this.#reservedCards.delete(runId);
+    }
+  }
 
+  /** 出卡（direct = 执行 + 回执卡；其余 = 设置卡）。调用方已占好本 run 的出卡名额。 */
+  async #emitCard(
+    ctx: SettingsRunContext,
+    input: {
+      item: SettingItem;
+      target: SettingTargetRef;
+      values: SettingValues | null;
+      snapshot: ItemSnapshot;
+      decision: SettingModeDecision;
+      reason: string;
+    },
+  ): Promise<ToolResult> {
+    const { item, target, values, snapshot, decision, reason } = input;
+    const identity = ctx.identity;
+    const botId = identity.botId!;
+    const conversationId = identity.conversationId!;
+    const isTask = identity.loopType === 'task';
+    const reject = (content: string, errorCode = 'INVALID_INPUT'): ToolResult => ({
+      ok: false,
+      content,
+      errorCode,
+    });
     if (decision.mode === 'direct') {
       if (values === null) return reject('直接修改需要给出 values（要改成的值）');
       let outcome: WriteOutcome;
@@ -484,7 +562,7 @@ export class SettingsCatalogHost {
       this.#supersedePending(conversationId, item.id, target, null);
       const now = this.#deps.clock.now();
       const card: SettingCardContent = {
-        botId: identity.botId,
+        botId,
         runId: identity.runId,
         itemId: item.id,
         mode: 'direct',
@@ -506,20 +584,16 @@ export class SettingsCatalogHost {
       };
     }
 
-    // 出卡（confirm / form / user-only / link）。
-    const declined = this.#recentDeclines(identity.botId, conversationId, item.id);
-    if (declined >= SETTING_CARD_DECLINE_MAX) {
-      return reject(
-        `用户最近 7 天已在本对话拒绝 ${declined} 次「${item.title}」的设置卡，不能再出。不要再提这一项；用户之后想改可以自己去设置页。`,
-        'LIMIT_REACHED',
-      );
-    }
+    // 出卡（confirm / form / user-only / link；拒绝退避已在调用方查过）。
     this.#expireStale(conversationId);
     this.#supersedePending(conversationId, item.id, target, null);
     const proposed = decision.acceptValues ? values : null;
     const mode = decision.mode;
+    if (mode === 'refused' || mode === 'redirect') {
+      return reject(`不能修改「${item.title}」：${decision.reason ?? ''}`);
+    }
     const card: SettingCardContent = {
-      botId: identity.botId,
+      botId,
       runId: identity.runId,
       itemId: item.id,
       mode,
@@ -566,14 +640,23 @@ export class SettingsCatalogHost {
     values: SettingValues,
     secrets: Readonly<Record<string, string>>,
     expected: SettingValues | null,
+    hooks: {
+      /** 锁内、写之前：抛错即放弃（如设置卡已不再 pending）。 */
+      precheck?: () => void;
+      /** 锁内、写之后（同一个同步关键区）：如把设置卡标 applied。 */
+      onWritten?: (before: SettingValues | null, after: SettingValues | null) => void;
+    } = {},
   ): Promise<WriteOutcome> {
     const adapter = this.#adapterOf(item);
     const write = adapter.write;
     if (write === undefined) {
       throw new AppError('INVALID_INPUT', `「${item.title}」暂不支持在对话里保存，请在设置页修改`);
     }
+    // 按键寻址的条目只读、只比对本次涉及的键（兄弟键的并发修改不算冲突）。
+    const focus = { ...(expected ?? {}), ...values };
     const outcome = await this.#deps.lock.run((): WriteOutcome => {
-      const current = adapter.read(item, target);
+      hooks.precheck?.();
+      const current = adapter.read(item, target, focus);
       if (expected !== null) {
         const sensitive = new Set(sensitiveFieldNames(item));
         const mismatch = Object.entries(expected).some(
@@ -582,11 +665,9 @@ export class SettingsCatalogHost {
         if (mismatch) return { status: 'conflict', current: current.values };
       }
       write(item, { next: { ...(current.values ?? {}), ...values }, secrets }, target);
-      return {
-        status: 'applied',
-        before: current.values,
-        after: adapter.read(item, target).values,
-      };
+      const after = adapter.read(item, target, focus).values;
+      hooks.onWritten?.(current.values, after);
+      return { status: 'applied', before: current.values, after };
     });
     if (outcome.status === 'applied') this.publishChanged([item.id]);
     return outcome;
@@ -617,9 +698,17 @@ export class SettingsCatalogHost {
     if (row !== null && row.card.itemId !== item.id) {
       throw new AppError('INVALID_INPUT', '设置卡与设置项不一致');
     }
+    if (row !== null && input.target !== undefined) {
+      // 带卡片时作用对象以卡为准：调用方给的 target 只能与卡一致（不能借卡改别的 Bot / 群）。
+      const cardTarget = row.card.target ?? {};
+      const mismatch = (Object.keys(input.target) as Array<keyof SettingTarget>).some(
+        (key) => input.target![key] !== undefined && input.target![key] !== cardTarget[key],
+      );
+      if (mismatch) throw new AppError('INVALID_INPUT', '作用对象与设置卡不一致');
+    }
     const target = this.#resolveTarget(
       item,
-      input.target ?? row?.card.target ?? {},
+      row !== null ? (row.card.target ?? {}) : (input.target ?? {}),
       row?.message.conversationId ?? null,
     );
     const known = new Map(item.fields.map((field) => [field.name, field]));
@@ -636,12 +725,32 @@ export class SettingsCatalogHost {
       }
     }
 
+    // 带卡片时：卡片在写锁内、写之前再确认一次仍是 pending（与「不用了」/ 顶替 / 过期竞争时
+    // 不写），写完在同一个同步关键区里标 applied（占住卡片），之后的「不用了」只会看到 applied。
+    const cardId = row?.message.id ?? null;
+    const claim = (): CardRow | null => {
+      if (cardId === null) return null;
+      const latest = this.#cardRow(cardId);
+      const current = latest === null ? null : this.#expireIfStale(latest);
+      if (current === null || current.card.state !== 'pending') {
+        throw new AppError(
+          'INVALID_INPUT',
+          `这张设置卡已经处理过了（${current?.card.state ?? '不存在'}），没有保存`,
+        );
+      }
+      return current;
+    };
+    let settled: { row: CardRow; applied: SettingValues; before: SettingValues | null } | null =
+      null;
+
     let before: SettingValues | null;
     let after: SettingValues;
     if (item.owner === 'renderer') {
-      // core 写不了渲染层条目：渲染层自己保存，这里只结卡。
+      // core 写不了渲染层条目：渲染层自己保存，这里只结卡（同步，无竞争窗口）。
+      const claimed = claim();
       before = null;
       after = plain;
+      if (claimed !== null) settled = { row: claimed, applied: after, before: claimed.card.before };
       this.publishChanged([item.id]);
     } else {
       const adapter = this.#adapterOf(item);
@@ -651,21 +760,44 @@ export class SettingsCatalogHost {
         if (!normalized.ok) throw new AppError('INVALID_INPUT', normalized.message);
         values = normalized.values;
       }
-      const outcome = await this.#writeItem(item, target, values, secrets, input.expected);
+      let claimed: CardRow | null = null;
+      const outcome = await this.#writeItem(item, target, values, secrets, input.expected, {
+        precheck: () => {
+          claimed = claim();
+        },
+        onWritten: (writtenBefore, writtenAfter) => {
+          if (claimed === null) return;
+          const card: SettingCardContent = {
+            ...claimed.card,
+            state: 'applied',
+            before: writtenBefore ?? claimed.card.before,
+            applied: writtenAfter ?? values,
+            decidedAt: this.#deps.clock.now(),
+          };
+          this.#writeCard(claimed.message, card);
+          settled = {
+            row: { message: claimed.message, card },
+            applied: card.applied!,
+            before: card.before,
+          };
+        },
+      });
       if (outcome.status === 'conflict') {
         return { status: 'conflict', itemId: item.id, current: outcome.current };
       }
       before = outcome.before;
       after = outcome.after ?? values;
     }
-    if (row !== null) {
-      // 写入期间卡片可能已被别处结掉（顶替 / 过期）：只结仍在 pending 的。
-      const latest = this.#cardRow(row.message.id);
-      if (latest !== null && latest.card.state === 'pending') {
-        this.#resolveCard(latest, 'applied', {
-          applied: after,
-          before: before ?? latest.card.before,
-        });
+    const done = settled as {
+      row: CardRow;
+      applied: SettingValues;
+      before: SettingValues | null;
+    } | null;
+    if (done !== null) {
+      if (done.row.card.state === 'pending') {
+        this.#resolveCard(done.row, 'applied', { applied: done.applied, before: done.before });
+      } else {
+        this.#wakeResolved(done.row, 'applied');
       }
     }
     return { status: 'applied', itemId: item.id, before, values: after };
@@ -694,17 +826,25 @@ export class SettingsCatalogHost {
       return { state: 'applied', verified: null };
     }
     const target = this.#resolveTarget(item, current.card.target, current.message.conversationId);
-    const snapshot = this.#adapterOf(item).read(item, target);
+    const snapshot = this.#adapterOf(item).read(
+      item,
+      target,
+      current.card.proposed ?? current.card.before ?? undefined,
+    );
     if (snapshot.status === 'unknown' || snapshot.status === 'readonly') {
       this.#resolveCard(current, 'applied');
       return { state: 'applied', verified: null };
     }
     const { proposed, before } = current.card;
+    // 用户可能在卡上改成了别的值（确认卡）或填了与预填不同的值（待填卡）：只要已配置好，或本条目
+    // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值。
     const verified =
-      proposed !== null
-        ? Object.entries(proposed).every(([key, value]) => jsonEqual(snapshot.values?.[key], value))
-        : snapshot.status === 'configured' ||
-          (before !== null && snapshot.values !== null && !jsonEqual(before, snapshot.values));
+      (proposed !== null &&
+        Object.entries(proposed).every(([key, value]) =>
+          jsonEqual(snapshot.values?.[key], value),
+        )) ||
+      snapshot.status === 'configured' ||
+      (before !== null && snapshot.values !== null && !jsonEqual(before, snapshot.values));
     if (!verified) return { state: 'pending', verified: false };
     this.#resolveCard(
       current,
@@ -894,6 +1034,12 @@ export class SettingsCatalogHost {
       decidedAt: this.#deps.clock.now(),
     };
     this.#writeCard(row.message, card);
+    this.#wakeResolved({ message: row.message, card }, state);
+  }
+
+  /** 唤醒出卡 Bot 一次（§6.2）：卡片已写成落定状态之后调用。 */
+  #wakeResolved(row: CardRow, state: 'applied' | 'dismissed'): void {
+    const card = row.card;
     const title = settingTitle(card.itemId);
     const text =
       state === 'applied'
