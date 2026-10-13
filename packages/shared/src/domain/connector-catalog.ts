@@ -270,6 +270,19 @@ export function connectorToolPrefix(slug: string): string {
  * 在放行清单里的条目，没有 `releaseGate` 的视为未放行。
  * `hidden: true` 的条目无论门禁如何一律剔除（开发构建也不例外）。
  */
+/**
+ * 打包目录里当前标了 `hidden: true` 的 slug（与 catalog.json 同步）。
+ * core 的 `filterReleasedConnectors` 已会剔除它们；渲染端（扩展中心目录卡、
+ * Bot 详情应用区）再滤一次，避免陈旧 `apps.catalog.list` 缓存或残留连接把
+ * 暂缓应用重新露出来。恢复开放时：删掉 catalog.json 的 `"hidden": true`，
+ * 并同步改掉本常量（见 todo/connected-apps.md §6.4）。
+ */
+export const HIDDEN_CONNECTOR_SLUGS = ['gcalendar', 'gdrive'] as const;
+
+export function isHiddenConnectorId(connectorId: string): boolean {
+  return (HIDDEN_CONNECTOR_SLUGS as readonly string[]).includes(connectorId);
+}
+
 export function filterReleasedConnectors(
   catalog: readonly ConnectorCatalogEntry[],
   approvedGates: readonly string[] | null,

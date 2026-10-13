@@ -30,6 +30,10 @@
     void reload().catch((caught: unknown) => {
       error = caught instanceof AppError ? errorText(caught.code, caught.message) : String(caught);
     });
+    // 对话内 mail setup / 扩展中心增删改绑定时推送；右栏开着时也要立刻刷新勾选列表。
+    return core.onEvent('mail.account_updated', () => {
+      void reload().catch(() => undefined);
+    });
   });
 
   async function toggle(account: MailAccount, on: boolean): Promise<void> {
