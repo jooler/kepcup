@@ -1525,6 +1525,27 @@ export const approvalKindSchema = z.enum([
 ]);
 export type ApprovalKind = z.infer<typeof approvalKindSchema>;
 
+/**
+ * Mid-turn permission popups. The dock above the composer is their only
+ * user-facing surface; the message row still feeds the bot's context.
+ * Skill import, environment install, presets, mail, proposals, profile
+ * changes, and handover stay in the transcript — their folded record is the
+ * failure / progress surface.
+ */
+export const EPHEMERAL_APPROVAL_CARD_TYPES = [
+  'access',
+  'unsandboxed',
+  'command',
+  'git_remote',
+  'mcp_tool',
+  'agent_tool',
+  'egress',
+] as const satisfies readonly ApprovalKind[];
+
+export function isEphemeralApprovalCardType(cardType: string): boolean {
+  return (EPHEMERAL_APPROVAL_CARD_TYPES as readonly string[]).includes(cardType);
+}
+
 export const approvalStatusSchema = z.enum([
   'pending',
   'approved',

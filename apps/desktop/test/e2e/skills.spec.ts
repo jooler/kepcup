@@ -153,7 +153,7 @@ test('import flow: approval card shows scan results; approval lands in the Skill
     );
     await expect(card.locator('[data-testid="approval-skill-risks"]')).toContainText('curl');
 
-    // Approve → folded record + system message; skills.changed refreshes the tab.
+    // Approve → folded record stays (failure of a later finalize is this surface).
     await card.locator('[data-testid="approval-approve"]').click();
     const record = page.locator('[data-testid^="approval-record-"]');
     await expect(record).toBeVisible({ timeout: 60_000 });

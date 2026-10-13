@@ -113,7 +113,7 @@ async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
   await expect(backdrop).toHaveCount(0);
 }
 
-test('access approval card appears, keyboard approval works, card folds to a record', async () => {
+test('access approval card appears above the composer and leaves the transcript', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-approval-');
   const { page, llm } = session;
@@ -137,10 +137,9 @@ test('access approval card appears, keyboard approval works, card folds to a rec
     await card.press('2');
     await card.press('Enter');
 
-    // The card folds into a one-line record; the task completes and its result is relayed.
-    const record = page.locator('[data-testid^="approval-record-"]');
-    await expect(record).toBeVisible({ timeout: 60_000 });
-    await expect(record).toContainText('本对话内一直允许');
+    // The popup goes away. The transcript does not keep a folded record.
+    await expect(card).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('[data-testid^="approval-record-"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="chat-view"]').getByText('读完了')).toBeVisible({
       timeout: 60_000,
     });
@@ -182,11 +181,10 @@ test('left sidebar shows the pending marker while an approval waits; Esc denies'
       timeout: 15_000,
     });
 
-    // Esc 拒绝；卡片折叠为已拒绝记录，任务继续完成，结果由对话轮转述。
+    // Esc 拒绝；弹出卡片消失，对话里不留记录，任务继续完成，结果由对话轮转述。
     await card.press('Escape');
-    await expect(page.locator('[data-testid^="approval-record-"]')).toBeVisible({
-      timeout: 60_000,
-    });
+    await expect(card).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('[data-testid^="approval-record-"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="chat-view"]').getByText('被拒了就算了')).toBeVisible({
       timeout: 60_000,
     });
@@ -235,9 +233,8 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
     await expect(page.locator('[data-testid="chat-view"]').getByText('自动批准了')).toBeVisible({
       timeout: 120_000,
     });
-    await expect(page.locator('[data-testid^="approval-record-"]')).toContainText('无人值守', {
-      timeout: 15_000,
-    });
+    // 自动批准同样不在对话里留一行记录；汇总仍在关闭无人值守时弹出。
+    await expect(page.locator('[data-testid^="approval-record-"]')).toHaveCount(0);
 
     // 关闭后弹出汇总（设置弹框仍开着：先关再从菜单重开到无人值守分组）。
     await page.keyboard.press('Escape');
