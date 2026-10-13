@@ -137,6 +137,8 @@ const WIKI_TOPICS_BOUNDARY =
 export class WikiService {
   readonly #deps: WikiServiceDeps;
   readonly #mutex = new KeyedMutex();
+  /** Bots whose deletion has started (handover copies into them abort; D88 P2). */
+  readonly #deleting = new Set<string>();
 
   constructor(deps: WikiServiceDeps) {
     this.#deps = deps;
@@ -579,10 +581,18 @@ export class WikiService {
 
       // Phase 2 — place under the target lock.
       return await this.#mutex.run(toBotId, async () => {
-        const bot = this.#deps.bots.get(toBotId);
-        if (bot === null || bot.status !== 'active') {
-          throw new AppError('NOT_FOUND', '接手方 Bot 已被删除');
-        }
+        /**
+         * The target can be deleted while this runs (lifecycle drains this lock, then removes
+         * bots/{B}/ later): re-checked before the first write and after every await, so
+         * nothing recreates the directory of a bot being deleted.
+         */
+        const assertTargetAlive = (): void => {
+          const bot = this.#deps.bots.get(toBotId);
+          if (bot === null || bot.status !== 'active' || this.#deleting.has(toBotId)) {
+            throw new AppError('NOT_FOUND', '接手方 Bot 已被删除');
+          }
+        };
+        assertTargetAlive();
         const empty: WikiCopyOutcome = {
           copied: [],
           conflicts: [],
@@ -595,6 +605,7 @@ export class WikiService {
         };
         if (snapshot.pages.length === 0) return empty;
         await initWiki(this.#paths, toBotId, this.#deps.logger);
+        assertTargetAlive();
         const logPath = path.join(toRoot, 'log.md');
         const logBefore = existsSync(logPath) ? readFileSync(logPath, 'utf8') : null;
         /** Files this run renamed into the target (rolled back if the commit never lands). */
@@ -660,6 +671,7 @@ export class WikiService {
               toRoot,
               `从 ${input.fromName} 复制 ${copied.length} 页`,
             );
+            assertTargetAlive();
           }
         } catch (error) {
           // Nothing committed: take back what this run placed so the target's worktree is
@@ -852,6 +864,9 @@ export class WikiService {
    * through its own bot re-checks (BR-P08-007 precedent).
    */
   async prepareBotDeletion(botId: string): Promise<void> {
+    // D88 P2: a handover copy queued behind the drained chain must not recreate
+    // bots/{id}/wiki after the directory is removed (ids are never reused).
+    this.#deleting.add(botId);
     await this.#mutex.forget(botId);
   }
 }

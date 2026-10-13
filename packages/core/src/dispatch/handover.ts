@@ -997,6 +997,16 @@ export class HandoverHost implements HandoverToolFacade {
       // A concurrent execution may have settled the handover meanwhile (restart race): its
       // item statuses are final then.
       if (!this.#stillApplying(handoverId)) return;
+      // Either bot may have been deleted while an earlier group ran.
+      const fromNow = this.#deps.bots.get(fromBot.id);
+      const toNow = this.#deps.bots.get(toBot.id);
+      if (fromNow?.status !== 'active' || toNow?.status !== 'active') {
+        for (const item of group) {
+          this.#deps.store.setItem(handoverId, item.key, 'skipped', '来源或目标 Bot 已被删除');
+        }
+        this.#publish(handoverId);
+        continue;
+      }
       const ctx = context();
       const toRun: HandoverItemRecord[] = [];
       for (const item of group) {

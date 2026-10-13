@@ -219,6 +219,8 @@ export class WidgetService {
   /** 回传冷却：卡片消息 id → 上次回传时间（按卡，不按资源：重开 / 重载 / 重新挂载换资源 id）。 */
   readonly #lastReplyAt = new Map<string, number>();
   readonly #gate = new WidgetQueryGate();
+  /** Bots whose widgets were cleared for deletion (handover copies into / from them refuse). */
+  readonly #deletedBots = new Set<string>();
 
   constructor(deps: WidgetServiceDeps, store?: WidgetResourceStore) {
     this.#deps = deps;
@@ -567,6 +569,8 @@ export class WidgetService {
    * 存活组件在 TTL 内打到已消失的库行、收到裸 SQLite 错误。返回删除数。
    */
   deleteForBot(botId: string): number {
+    // D88 P2: a handover copy that runs after this point must not insert rows for the bot.
+    this.#deletedBots.add(botId);
     const rows = this.#deps.db
       .prepare('select id from widgets where bot_id = ?')
       .all(botId) as Array<{ id: string }>;
@@ -835,6 +839,17 @@ export class WidgetService {
     const newWidgetId = newId('wgt');
     let versions = 0;
     this.#deps.db.transaction(() => {
+      // Both bots must still be live inside the transaction (a deletion clears widgets and
+      // only later tombstones the row: never insert rows for a bot being deleted).
+      const owner = this.#widgetOf(widgetId);
+      for (const botId of [toBotId, owner?.bot_id ?? '']) {
+        const row = this.#deps.db.prepare('select status from bots where id = ?').get(botId) as
+          | { status: string }
+          | undefined;
+        if (row?.status !== 'active' || this.#deletedBots.has(botId)) {
+          throw new AppError('NOT_FOUND', '来源或接手方 Bot 已被删除');
+        }
+      }
       const blocked = this.handoverCopyBlocker(widgetId, toBotId, toName);
       if (blocked !== null) throw new AppError('INVALID_INPUT', blocked);
       const source = this.#widgetOf(widgetId)!;
