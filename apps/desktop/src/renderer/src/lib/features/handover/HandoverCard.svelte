@@ -23,6 +23,7 @@
   import { handovers } from '$lib/stores/handovers.svelte';
   import { Button } from '$lib/components/ui/button';
   import { decisionBinding } from '../approvals/approval-effect';
+  import RetireBotButton from './RetireBotButton.svelte';
 
   /**
    * 移交卡（D88，docs/design/37 §2.2）：头部「A → B」或「A → 新建 B」（新 Bot 的字段与
@@ -31,6 +32,9 @@
    * 进度（`handover.updated` 逐项打勾），结束后显示完成 / 部分未完成与原因。
    * 待确认的交互卡在 dock 里（variant='card'），消息流里是折叠记录 / 进度。
    * P1：技能标「外部导入」（确认即授权）、记忆标「敏感」且默认不勾。
+   * P2：Wiki（整本 / 目录 / 页）与 Bot 级组件在后台复制——完成前条目显示「后台复制中」、
+   * 卡片保持「执行中」；完成后显示复制了多少、因同路径没覆盖的页；全部完成时给出「删除
+   * {A}」（core 的 `view.retire`，走 D18 删除确认）。
    */
   let {
     approval,
@@ -111,6 +115,15 @@
   function itemError(key: string): string | null {
     return view?.items.find((item) => item.key === key)?.error ?? null;
   }
+  /** P2 copy summary of a decided wiki / widget item. */
+  function copySummary(key: string): { copied: number | null; skipped: string[] } {
+    const item = view?.items.find((entry) => entry.key === key);
+    return { copied: item?.copiedCount ?? null, skipped: item?.skippedPaths ?? [] };
+  }
+  function isBackground(key: string): boolean {
+    return key.startsWith('wiki:') || key.startsWith('widget:');
+  }
+  const retire = $derived(!pending && view !== null ? (view.retire ?? null) : null);
   const newBotStatus = $derived(createsBot && !pending ? itemStatus('bot:new') : null);
 
   /** Pending: the local choice; decided: whether the item ran. */
@@ -243,6 +256,10 @@
           <span class="text-xs text-muted-foreground" data-testid="handover-item-blocked"
             >{t('handover.blocked', { reason: blocked })}</span
           >
+        {:else if !pending && state === 'pending' && isBackground(key) && status === 'applying'}
+          <span class="text-xs text-muted-foreground" data-testid="handover-item-background"
+            >{t('handover.item.background')}</span
+          >
         {:else if !pending && state !== null && state !== 'done' && state !== 'pending'}
           <span
             class="text-xs {state === 'failed' ? 'text-destructive' : 'text-muted-foreground'}"
@@ -251,6 +268,26 @@
               ? t('handover.item.notSelected')
               : `${t(`handover.item.${state}` as MessageKey)}${itemError(key) !== null ? `：${itemError(key)}` : ''}`}</span
           >
+        {/if}
+        {#if !pending && state === 'done' && isBackground(key)}
+          {@const summary = copySummary(key)}
+          {#if summary.copied !== null}
+            <span class="text-xs text-muted-foreground" data-testid="handover-item-copied"
+              >{t(
+                key.startsWith('wiki:')
+                  ? 'handover.item.copiedPages'
+                  : 'handover.item.copiedVersions',
+                { count: summary.copied },
+              )}</span
+            >
+          {/if}
+          {#if summary.skipped.length > 0}
+            <span
+              class="text-xs break-all text-amber-700 dark:text-amber-400"
+              data-testid="handover-item-skipped-paths"
+              >{t('handover.item.skippedPaths', { paths: summary.skipped.join('、') })}</span
+            >
+          {/if}
         {/if}
       </span>
     </label>
@@ -403,6 +440,10 @@
     {/if}
 
     <p class="text-[11px] text-muted-foreground">{t('handover.notTransferred')}</p>
+
+    {#if retire !== null}
+      <RetireBotButton botId={retire.botId} botName={retire.botName} />
+    {/if}
 
     {#if pending}
       <p class="mt-1 text-xs text-muted-foreground">{t('handover.hint')}</p>

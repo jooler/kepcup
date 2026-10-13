@@ -190,6 +190,26 @@ export class JobsService {
     ).filter((row) => row.dedupe_key?.startsWith(prefix) === true);
   }
 
+  /** The pending / running job with this dedupe key (D88 P2: one live handover_copy). */
+  activeByDedupeKey(dedupeKey: string): JobRow | null {
+    return (
+      (this.db
+        .prepare(
+          "select * from jobs where dedupe_key = ? and status in ('pending', 'running') order by created_at desc limit 1",
+        )
+        .get(dedupeKey) as JobRow | undefined) ?? null
+    );
+  }
+
+  /** The most recent job with this dedupe key, any status (null = none / purged). */
+  latestByDedupeKey(dedupeKey: string): JobRow | null {
+    return (
+      (this.db
+        .prepare('select * from jobs where dedupe_key = ? order by created_at desc, rowid desc limit 1')
+        .get(dedupeKey) as JobRow | undefined) ?? null
+    );
+  }
+
   /** 取消一条待执行作业（已在跑 / 已结束的不动）。返回是否取消了。 */
   cancelPending(id: string): boolean {
     return (

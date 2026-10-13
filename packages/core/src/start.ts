@@ -144,6 +144,8 @@ import { ScheduleAdapter } from './handover/adapters/schedule.js';
 import { WatchAdapter } from './handover/adapters/watch.js';
 import { SkillAdapter } from './handover/adapters/skill.js';
 import { MemoryAdapter, type HandoverMemoryPort } from './handover/adapters/memory.js';
+import { WikiAdapter } from './handover/adapters/wiki.js';
+import { WidgetAdapter } from './handover/adapters/widget.js';
 import type { HandoverBotWriter } from './handover/adapters/common.js';
 import type { HandoverToolFacade } from './tools/handover-tools.js';
 import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
@@ -2170,11 +2172,43 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
         }),
         new MemoryAdapter({ memory: handoverMemory, clock: () => clock.now() }),
+        // P2：Wiki 与组件在后台 handover_copy 作业里复制。
+        new WikiAdapter({
+          wiki: {
+            exists: (botId) => wiki.exists(botId),
+            pageStats: (botId) => wiki.pageStats(botId),
+            tree: (botId) => wiki.tree(botId),
+            pageTitle: (botId, pagePath) => {
+              try {
+                return wiki.readPage(botId, pagePath).title;
+              } catch {
+                return pagePath;
+              }
+            },
+            search: (botId, query, limit) => wiki.search(botId, query, limit),
+            pageConflict: (fromBotId, toBotId, pagePath) =>
+              wiki.pageConflict(fromBotId, toBotId, pagePath),
+            copyForHandover: (input) => wiki.copyForHandover(input),
+          },
+          publish: (event, payload) => events.emit(event as never, payload as never),
+        }),
+        new WidgetAdapter({
+          widgets: {
+            candidates: (botId) => widgetService.handoverCandidates(botId),
+            conversationScopedCount: (botId) => widgetService.conversationScopedCount(botId),
+            findCopy: (widgetId, toBotId) => widgetService.findHandoverCopy(widgetId, toBotId),
+            blocker: (widgetId, toBotId, toName) =>
+              widgetService.handoverCopyBlocker(widgetId, toBotId, toName),
+            copy: (widgetId, toBotId, toName) =>
+              widgetService.copyForHandover(widgetId, toBotId, toName),
+          },
+        }),
       ]),
       modelOptions: handoverModelOptions,
       agents: handoverAgents,
       updateProfile: handoverBotWriter.updateProfile,
       schedule: scheduleFacade,
+      jobs,
       publish: (event, payload) => events.emit(event as never, payload as never),
       deliverEvent: (botId, conversationId, event, text, opts) =>
         orchestrator.deliverEventToBot(botId, conversationId, event, text, opts),
@@ -2307,6 +2341,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules,
       watches,
       mail,
+      handover,
       gateway,
       attachments,
     });

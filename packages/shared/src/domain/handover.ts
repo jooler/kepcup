@@ -13,7 +13,7 @@ import { butlerProposedBotSchema } from './types.js';
 
 /**
  * 资产类型（适配器的 `type`）。P0：model / app / mcp / mail / schedule；P1：watch / skill /
- * memory；wiki / widget 为 P2 预留。
+ * memory；P2：wiki / widget（后台 `handover_copy` 作业）。
  */
 export const handoverAssetTypeSchema = z.enum([
   'model',
@@ -150,6 +150,10 @@ export const handoverItemViewSchema = z.object({
   status: handoverItemStatusSchema,
   /** skipped / failed 的原因。 */
   error: z.string().nullable(),
+  /** P2 复制类条目的结果：复制了多少（Wiki 页 / 组件版本）；null = 不适用或还没做完。 */
+  copiedCount: z.number().int().nullable().default(null),
+  /** P2 Wiki：接手方已有同路径的页、没有覆盖的路径（结果里列出）。 */
+  skippedPaths: z.array(z.string()).default([]),
 });
 export type HandoverItemView = z.infer<typeof handoverItemViewSchema>;
 
@@ -163,6 +167,12 @@ export const handoverViewSchema = z.object({
   /** 新建目标在建好后回填。 */
   toBotId: z.string().nullable(),
   items: z.array(handoverItemViewSchema),
+  /**
+   * P2「退役」：这次移交的每一项都已完成（`completed`，Wiki 没有因同路径跳过的页）、来源
+   * Bot 仍在且不是管家时，结果卡给出「删除 {A}」按钮（走既有 D18 删除确认，不自动删）。
+   * null = 不出按钮。
+   */
+  retire: z.object({ botId: z.string(), botName: z.string() }).nullable().default(null),
   updatedAt: z.number(),
 });
 export type HandoverView = z.infer<typeof handoverViewSchema>;

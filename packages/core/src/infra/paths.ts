@@ -182,6 +182,15 @@ export function botWikiPagesDir(paths: AppPaths, botId: string): string {
 }
 
 /**
+ * Out-of-git binary asset store of a bot's wiki (D85, design 36 §3.1):
+ * `bots/{id}/wiki-store/{assetId}/`. Content-addressed (assetId from sha256); the wiki
+ * repository only holds the `raw/_assets/{assetId}.json` pointers.
+ */
+export function botWikiStoreRoot(paths: AppPaths, botId: string): string {
+  return path.join(paths.home, 'bots', botId, 'wiki-store');
+}
+
+/**
  * Checkpoint (shadow) repository of one project:
  * `projects/{projectId}/checkpoints.git` (docs/dev/phases/P04-project.md).
  * Its `core.worktree` points at the project directory; nothing of the shadow

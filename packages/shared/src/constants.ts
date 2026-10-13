@@ -120,6 +120,11 @@ export const HANDOVER_MEMORY_MAX_ITEMS = 200;
 /** D88 P1：`inspect_bot_assets` 的 memory_query 一次最多列出的候选记忆条数。 */
 export const HANDOVER_MEMORY_QUERY_LIMIT = 50;
 /**
+ * `inspect_bot_assets` 的 `wiki_query` 一次最多列出的页（D88 P2）。整本或整个目录用目录条目
+ * （`wiki:pages/`、`wiki:pages/{目录}/`）一项复制，不受它限制。
+ */
+export const HANDOVER_WIKI_QUERY_LIMIT = 100;
+/**
  * system_event name of the follow-up injected into a bot after the user
  * decided on the propose_profile_change card a supervisor turn submitted
  * without waiting (D75 审查 M4).

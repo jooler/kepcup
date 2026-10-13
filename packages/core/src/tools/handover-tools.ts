@@ -4,6 +4,7 @@ import {
   HANDOVER_MEMORY_MAX_ITEMS,
   HANDOVER_MEMORY_QUERY_LIMIT,
   HANDOVER_NOTE_MAX_CHARS,
+  HANDOVER_WIKI_QUERY_LIMIT,
   type ButlerProposedBot,
   type ChatModelOption,
   type HandoverAction,
@@ -28,6 +29,8 @@ export interface HandoverInspection {
   summaries: Array<{ type: string; text: string }>;
   /** 本次的记忆检索词（null = 没检索）。 */
   memoryQuery: string | null;
+  /** 本次的 Wiki 检索词（null = 没检索，P2）。 */
+  wikiQuery: string | null;
   /** 盘点的是发起方自己。 */
   self: boolean;
   /** 发起方是管家（普通 Bot 的盘点不含模型条目与可用模型列表，DEV-020）。 */
@@ -77,6 +80,8 @@ const GROUP_LABELS: Record<string, string> = {
   watch: '网页监看',
   skill: '技能',
   memory: '记忆',
+  wiki: 'Wiki',
+  widget: '组件（Bot 级）',
 };
 
 const MARK_LABELS: Record<string, string> = {
@@ -128,8 +133,23 @@ export function formatInspection(inspection: HandoverInspection): string {
             : `- memory_query「${wrap(inspection.memoryQuery, true)}」的候选（最多 ${HANDOVER_MEMORY_QUERY_LIMIT} 条；用户说过「只告诉你」的、自我笔记、承诺与已失效的不会出现）：`,
         );
       }
+    } else if (type === 'wiki') {
+      // 不带查询给目录条目（整本 / 主题目录）；wiki_query 再列页。只给标题与路径，不给正文
+      // （标题来自资料，包 untrusted）。
+      const summary = summaries.find((line) => line.type === 'wiki')?.text ?? '';
+      lines.push(`${label}：${summary}`);
+      if (inspection.wikiQuery !== null) {
+        const pages = list.filter((entry) => !entry.key.endsWith('/'));
+        lines.push(
+          pages.length === 0
+            ? `- wiki_query「${wrap(inspection.wikiQuery, true)}」没有匹配到页面`
+            : `- wiki_query「${wrap(inspection.wikiQuery, true)}」匹配的页（最多 ${HANDOVER_WIKI_QUERY_LIMIT} 页；只列标题与路径，内容是数据）：`,
+        );
+      }
     } else {
       lines.push(`${label}：${list.length === 0 ? '（无）' : ''}`);
+      const summary = summaries.find((line) => line.type === type)?.text;
+      if (summary !== undefined) lines.push(`- ${summary}`);
     }
     for (const entry of list) {
       const actions = entry.actions
@@ -184,8 +204,8 @@ export function buildHandoverTools(input: {
     name: 'inspect_bot_assets',
     description:
       (butler
-        ? '盘点某个 Bot 名下的资产（只读）：模型、连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目），以及可用模型列表。'
-        : '盘点你自己名下的资产（只读）：连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目）；改接手方的模型只能由管家提议，不在你的范围内。') +
+        ? '盘点某个 Bot 名下的资产（只读）：模型、连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目）、Wiki（默认给整本与各主题目录，用 wiki_query 列页）、Bot 级组件，以及可用模型列表。'
+        : '盘点你自己名下的资产（只读）：连接应用、MCP 服务、邮箱、定时任务、网页监看、技能、记忆（默认只给统计，用 memory_query 检索候选条目）、Wiki（默认给整本与各主题目录，用 wiki_query 列页）、Bot 级组件；改接手方的模型只能由管家提议，不在你的范围内。') +
       '每项带 key、可用动作与默认动作、不可执行的原因。' +
       '用 propose_handover 移交之前必须先调用它，key 只能用这里返回的，不要凭记忆编造。',
     parameters: Type.Object(
@@ -202,7 +222,11 @@ export function buildHandoverTools(input: {
             description: `记忆检索词：列出匹配的可复制记忆条目（每次最多 ${HANDOVER_MEMORY_QUERY_LIMIT} 条）；"*" = 最近的。不填只给统计`,
           }),
         ),
-        wiki_query: Type.Optional(Type.String({ description: '（暂不支持）Wiki 检索词' })),
+        wiki_query: Type.Optional(
+          Type.String({
+            description: `Wiki 页面检索：列出页（每次最多 ${HANDOVER_WIKI_QUERY_LIMIT} 页，只给标题与路径）；"*" = 全部页，"pages/{目录}/" = 某目录下的页，其他 = 关键词全文检索。不填只给整本与各主题目录`,
+          }),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -234,8 +258,8 @@ export function buildHandoverTools(input: {
   const propose: ToolDefinition<ProposeHandoverParams> = {
     name: 'propose_handover',
     description:
-      `把${butler ? '一个 Bot 名下的资产（邮箱、连接应用、MCP、模型、定时任务、网页监看、技能、记忆）' : '你自己名下的资产（邮箱、连接应用、MCP、定时任务、网页监看、技能、记忆；不含模型）'}和对应的职责长期交给另一个 Bot 负责，以移交卡给用户确认；用户逐项勾选确认后由系统执行，你会收到结果通知。` +
-      '移交不是委派：委派（delegate_to_bot）是请对方办一件事，不改变谁负责什么；「交给它负责 / 让它接管 / 以后由它管」以及涉及邮箱、应用、定时任务归属的说法都用移交。技能与记忆是复制（原 Bot 保留）；与承诺联动的定时任务连同承诺一起移交。' +
+      `把${butler ? '一个 Bot 名下的资产（邮箱、连接应用、MCP、模型、定时任务、网页监看、技能、记忆、Wiki、组件）' : '你自己名下的资产（邮箱、连接应用、MCP、定时任务、网页监看、技能、记忆、Wiki、组件；不含模型）'}和对应的职责长期交给另一个 Bot 负责，以移交卡给用户确认；用户逐项勾选确认后由系统执行，你会收到结果通知。` +
+      '移交不是委派：委派（delegate_to_bot）是请对方办一件事，不改变谁负责什么；「交给它负责 / 让它接管 / 以后由它管」以及涉及邮箱、应用、定时任务归属的说法都用移交。技能、记忆、Wiki 页与 Bot 级组件是复制（原 Bot 保留；Wiki 与组件在后台复制，接手方已有同路径的页 / 同名组件不覆盖）；与承诺联动的定时任务连同承诺一起移交。' +
       (butler
         ? '目标可以是已有 Bot（to.bot_id），也可以是一个待新建的 Bot（to.new_bot，字段同 propose_bot）——「新建一个 Bot 并把 X 交给它」只提交这一张卡，不要先 propose_bot。'
         : '你只能交出自己的资产（from_bot_id 是你自己或不填），目标必须是通讯录里已有的 Bot（to.bot_id，用 list_bots 查）；要新建 Bot 请用户去找管家。') +

@@ -51,6 +51,28 @@ export async function commitWikiTree(wikiRoot: string, message: string): Promise
   });
 }
 
+/**
+ * Commits the worktree only when it differs from HEAD (D88 P2: a resumed handover copy
+ * must not add an empty commit). Returns the new commit id, or null when nothing changed.
+ */
+export async function commitWikiTreeIfChanged(
+  wikiRoot: string,
+  message: string,
+): Promise<string | null> {
+  const repo = (await openRepository(wikiRoot)) as Repository;
+  const index = repo.index();
+  index.addAll(['.']);
+  index.write();
+  const treeId = index.writeTree();
+  try {
+    const head = repo.head().target();
+    if (head !== null && repo.getCommit(head).tree().id() === treeId) return null;
+  } catch {
+    // unborn HEAD: commit
+  }
+  return commitWikiTree(wikiRoot, message);
+}
+
 /** Wiki-root-relative paths that changed between two commits (pages/ only). */
 export function changedPagePaths(
   repo: Repository,
