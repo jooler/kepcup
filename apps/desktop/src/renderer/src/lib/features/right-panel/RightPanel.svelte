@@ -32,11 +32,17 @@
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
   import { showBrowser } from './show-browser';
+  import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const isGroup = $derived(conversation?.type === 'group');
   const bot = $derived(chat.current?.conversation.bot ?? null);
+  browserPages.start();
+  // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。
+  const browserOpen = $derived(
+    bot !== null && conversation !== null && browserPages.has(bot.id, conversation.id),
+  );
   const grants = $derived(permissions.grants);
   const confirmMode = $derived(permissions.sandbox !== null && !permissions.sandbox.available);
   // 窄屏（33-narrow-layout），或宽屏但放不下并排右栏：本组件渲染为全屏 Bot 详情覆盖层
@@ -268,11 +274,11 @@
   >
     <div class="app-no-drag flex items-center gap-1">
       <!-- P11 任务 5: 查看该 Bot 在当前对话中的浏览器页面（直聊才有单一 Bot）。 -->
-      {#if !isGroup && bot?.status === 'active' && conversation}
+      {#if !isGroup && bot?.status === 'active' && conversation && browserOpen}
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
-          class="h-7 gap-1 px-2 text-xs"
+          class="h-7 gap-1 border-emerald-600/60 px-2 text-xs text-emerald-600 hover:bg-emerald-600/10 hover:text-emerald-700 dark:border-emerald-400/50 dark:text-emerald-400 dark:hover:bg-emerald-400/10 dark:hover:text-emerald-300"
           title={t('rightPanel.browserShowHint')}
           onclick={() => void showBrowser(bot.id, conversation.id, bot.name)}
           data-testid="browser-show"

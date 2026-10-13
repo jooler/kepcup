@@ -137,6 +137,13 @@ export interface BrowserHostOptions {
     conversationId: string;
     reason: HandbackReason;
   }) => void;
+  /** The set of open pages changed (opened / closed): the renderer shows「查看浏览器」only while one exists. */
+  onPagesChanged?: (pages: BrowserPageRef[]) => void;
+}
+
+export interface BrowserPageRef {
+  botId: string;
+  conversationId: string;
 }
 
 export class BrowserHost {
@@ -166,6 +173,15 @@ export class BrowserHost {
     for (const page of [...this.#pages.values()]) {
       this.#destroyPage(page, { permanent: false });
     }
+  }
+
+  /** Open pages (bot × conversation) — drives the renderer's「查看浏览器」button. */
+  openPages(): BrowserPageRef[] {
+    return [...this.#pages.values()].map((p) => ({ botId: p.botId, conversationId: p.conversationId }));
+  }
+
+  #notifyPages(): void {
+    this.#options.onPagesChanged?.(this.openPages());
   }
 
   // --- port B methods ---------------------------------------------------------
@@ -262,6 +278,7 @@ export class BrowserHost {
     };
     this.#pages.set(key, page);
     this.#pagesByWebContents.set(wc.id, page);
+    this.#notifyPages();
     return { ok: true };
   }
 
@@ -970,6 +987,7 @@ export class BrowserHost {
     this.#pages.delete(key);
     this.#pagesByWebContents.delete(page.wc.id);
     if (options.permanent) this.#tombstonedPairs.add(key);
+    this.#notifyPages();
     // The lease dies with the page: no idle timer, no handback report.
     page.lease.dispose();
     // A visible viewer must not outlive its page: close it first (its
