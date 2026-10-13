@@ -188,7 +188,7 @@
 **完成项**（§4 全部）：
 
 - 发起权：`inspect_bot_assets` / `propose_handover` 对话轮人人注册（任务仍不注册）；能力包 `collaboration` 把两者从 `butlerTools` 移到 `tools`。普通 Bot 的参数面没有 `to.new_bot`、`bot_id` / `from_bot_id` 可省（= 自己）；**宿主** `HandoverHost.inspect` / `propose` 校验：普通 Bot 只能盘点 / 交出自己的、目标只能是已有 Bot（直接调宿主同样被拒，有测试）。`TURN_PLATFORM_RULES` 加一句（注明管家以 `<butler_rules>` 为准）。
-- `watch` 适配器（stage 4，只能移交）：`WatchService.transferTo` 同一行就地改 `bot_id` / `conversation_id`（CAS），检查状态（`last_hash` / `last_quiet_hash` / `last_text` / `last_matched` / `alert_seq`）与暂停状态原样保留；私聊的改到 B 私聊（同一事务补「已创建」卡），群里的要求 B 是成员；排队中的 `watch_alert` 作业改到 B；B 的监看上限校验；两边浏览器资料不同时卡上提示要重新登录。原对话里的旧卡显示「已移交给 {B}」（上下文行与渲染端）。
+- `watch` 适配器（stage 4，只能移交）：`WatchService.transferTo` 同一行就地改 `bot_id` / `conversation_id`（CAS），检查状态（`last_hash` / `last_quiet_hash` / `last_text` / `last_matched` / `alert_seq`）与暂停状态原样保留（两边浏览器资料不同时清空两个哈希，见审查修复 #2）；私聊的改到 B 私聊（同一事务补「已创建」卡），群里的要求 B 是成员；排队中的 `watch_alert` 作业改到 B；B 的监看上限校验；两边浏览器资料不同时卡上提示要重新登录。原对话里的旧卡显示「已移交给 {B}」（上下文行与渲染端）。
 - `skill` 适配器（stage 3，只能复制）：导入的 → B 加一行指向同一 `library_id`（不克隆、不走 `skill_import` 审批，卡上标「外部导入」）；自写的 → 目录复制进 B 的仓库并提交「从 {A} 复制 {name}」+ authored 行；`status` / `status_reason` 照搬；B 有同名私有行 → 置灰；草稿 / 内置 / 公共技能不列；幂等（导入看同一 library，自写看目录哈希）。
 - `memory` 适配器（stage 3，只能复制）：盘点默认只给统计（数量、按 kind 分布、敏感条数），`memory_query`（FTS；`*` = 最近）列候选（≤ `HANDOVER_MEMORY_QUERY_LIMIT` = 50）；`private_to_bot` / `self_note` / 承诺 / 非 active / 已过期在盘点、提议（出现即整张退回并说明原因）、执行（重新校验 → `skipped`）三处过滤；敏感条目标「敏感」、`defaultSelected: false`（卡片初始不勾；决定不带 `handoverSelection` 时 core 也按 `defaultHandoverKeys`，不带敏感项）；B 已有同样内容的置灰。写入 B：新 id，字段照搬，`private_to_bot` = 0，`origin_conversation_id` 置空，`evidence_json` = `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 增三个可选键），按 `handoverId` + `fromItemId` 幂等；写入后 best-effort `embedItem`（适配器再包一层 try/catch）。交接记录与结果通知里记忆只给条数，不把内容灌回上下文。
 - 承诺随定时任务：承诺联动的定时任务解除置灰（卡上写「连同承诺」）；执行顺序「B 的承诺副本（按来源记录幂等）→ `ScheduleService.transferTo(…, commitmentId = 副本)`（事务）→ `MemoryService.voidCommitment(A)`（发 `memory.commitment_invalidated`）」，每步可重入（`isApplied` 要求 A 的承诺已失效；崩溃在移交与作废之间时 `validate` 放行、`apply` 只补作废）。A 的承诺 `void` 后不进 `<my_state>`、联动任务取消；B 的副本 active、接上重建的任务。
@@ -224,6 +224,31 @@
 **评审时请重点看**：`ScheduleAdapter.apply` / `isApplied` / `validate` 的承诺三步与可重入（尤其 `validate` 在「已移交给 B」时直接放行）；`MemoryService.voidCommitment` 发出的失效事件会取消 A 名下**所有**联动同一承诺的任务（若同一承诺联动了多条任务而只移交其中一条，另一条会被一并取消——正常路径一条承诺只建一条任务，未专门处理）；`WatchService.transferTo` 的事务（行 CAS、`watch_alert` 作业改投、补卡）与渲染端「已移交」判据；`SkillsService.copyForHandover` 在接手方作者仓库锁内覆盖半拷贝目录；`HandoverHost.propose` 的 `refusal` → 整张退回 与 `resolve` 的边界（编造 key vs 永不移交）；`TURN_PLATFORM_RULES` 与 `BUTLER_RULES` 的措辞关系。已知未覆盖：自写技能在 B 侧 git 提交失败时（`authoredGitCommit` 抛错）该项记 `failed`，目录已复制进 B 的仓库但没有 `bot_skills` 行（B 看不到它；同名校验按行，重试会覆盖目录重做），没有专门用例；嵌入模型真实就绪时的向量写入只靠既有 `embedItem` 测试覆盖，P1 测试环境没有嵌入器。
 
 **迁移号**：P1 无迁移（main 最大仍为 D88 的 0036）。
+
+### P1 审查修复（2026-10-13，独立 opus 审查 67766ee..d3362a5，无 blocker）
+
+提交 `d1d0cbd`。
+
+| # | 发现 | 修复 | 回归测试 |
+|---|---|---|---|
+| 1 | 承诺联动的定时任务移交失败时，B 留下一条没接上任务的 active 承诺副本（第 2 步 `transferTo` 抛错：embed 等待期间用户取消了任务、B 退群、对话变只读；或崩溃在第 1、2 步之间后用户取消任务 / 作废 A 的承诺，恢复时校验跳过） | 适配器新增可选钩子 `abandon(ctx, key)`，宿主在执行时 `skipped` / `failed` 都调用（best-effort）。`ScheduleAdapter`：`transferTo` 外包 try/catch，失败即作废本次移交给 B 的、**没接上 B 任何 active 任务**的承诺副本（已接上的不动——同一承诺的另一条任务可能已移交成功）；`abandon` 同样处理。作废过的副本不复用，重试重新复制；`MemoryStore.findHandoverCopy` 改为 active 优先、其次最新 | `handover-adapters-p1`「审查 #1」两例（抛错 → 作废、A 不变、重试新副本；崩溃后用户取消 → 跳过 + abandon 作废；已接上的不作废）；原「崩溃在复制与移交之间」改为模拟进程崩溃（副本保留、重跑复用） |
+| 2 | 监看移交给浏览器资料不同的 Bot：`changed` 监看用 B 的资料检查时页面不同 → 安静哈希不同 → 误报「页面变化」 | `WatchesStore.reassign` 增 `resetBaseline`：两边 `profileKeyFor` 不同时清空 `last_hash` / `last_quiet_hash`（`last_matched`、`alert_seq` 保留），B 第一次检查只建基线；卡片警告写明（并说明 B 登录前后页面不同时仍可能提醒一次）。本机访问（`allowLoopback`）随对话的项目绑定：私聊监看改到 B 私聊后规则可能不同——选更安全的做法：**字面本机网址**（localhost / 127.x / ::1 / 0.0.0.0 / *.localhost）在两边规则不同时**不可移交**（置灰说明）；其余网址照常移交，卡上提示「之后能否访问本机地址改按 B 私聊的项目绑定决定」 | `handover-p1`「监看移交后…」增 `changed` 监看（B 的资料看到的页面不同，不提醒、只建基线）与哈希清空断言；`handover-adapters-p1`「审查 #2」（本机网址置灰 / 规则相同放行 / 公网网址提示、`isLoopbackUrl`）；全流程用例改断言哈希清空 |
+| 3 | 导入技能的卡片说明不含来源网址 / 描述 / 状态，而这张卡替代了 `skill_import` 审批 | `SkillAdapter.describe` 带上 `entry.detail`（外部导入 + 来源网址、状态、描述） | `handover-adapters-p1` skill 用例「审查 #3」 |
+| 4 | 私密（`private_to_bot`）承诺的原文经联动定时任务的标题 / 说明与「连同承诺「…」」泄露到盘点结果与卡片 | 关联私密承诺的任务：label 用「一条私密承诺的提醒」、detail 只有时间与位置（该项本来就置灰）；执行结果、交接记录只列 done 项，置灰项不会进去 | 「审查 #4 / #6」（盘点条目序列化后不含原文、`describe` 不含） |
+| 5 | `validate` 的崩溃恢复捷径依赖 `transferredTo` 的宽松字段比对兜底 | 捷径（`validate` / `apply` 的「只补作废」/ `isApplied` 的承诺分支）只在**本次移交**在 B 那里有承诺副本（`findCopy(B, handoverId, commitmentId)`）且任务已移交给 B 时走；无承诺的任务仍由 `isApplied` 判定 | 「审查 #5」（B 有字段相同的别的任务、原任务被用户取消 → 跳过、未应用）；P0 单测相应改回「已结束」 |
+| 6 | 敏感承诺随任务默认勾选移交 | 关联承诺 `sensitivity='sensitive'` 的任务条目标「敏感」、`defaultSelected: false` | 「审查 #4 / #6」 |
+| 7 | 跳过 / 失败的记忆在结果通知与卡片失败原因里逐条列出（最多 200 行、没有标签） | `#reasonLines`：记忆按原因汇总为「记忆 N 条：{原因}」（包 `<untrusted>`），其余条目照旧逐条 | `handover-p1`「审查 #7」（两条在提议后被标私密 → 通知里只有一行「记忆 2 条：」、不含内容；卡片 `failed` 原因同样汇总） |
+| 8 | 群聊里 `memory_query` 会列出敏感候选（检索在群里会过滤掉它们） | `InventoryQuery.excludeSensitiveMemory`：发起对话是群聊时敏感记忆不作候选（同 `passesFilters`）；统计行仍只给条数 | 「审查 #8」 |
+| 9 | 普通 Bot 提议 `model:*` 会改写 B 的模型 / 驱动引擎，这不是它自己的资产 | 见 DEV-020：普通 Bot 的盘点不列模型条目与可用模型、`propose` 退回 `model:*`、执行时再兜一次（提议方不是管家 → `skipped`）；工具说明同步。`BUTLER_RULES` 的移交说明补上网页监看、技能与记忆 | `handover-p1`「宿主侧校验…」增模型断言 |
+
+未做 / 仍存在：`abandon` 在原定时任务行已被删除（对话删除级联）时拿不到 `commitmentId`，无法定位 B 的副本——此时副本所在对话通常也已删除，承诺按 P07 级联作废；执行时「提议方不是管家的模型条目」只能靠改库构造，没有专门用例（提议侧已有测试）。
+
+修复后定向回归（Docker，21 文件 227 例，全绿）：handover 7 个文件 + watch / watches-migration / schedule / schedule-service / memory / memory-store / memory-lifecycle / my-state / skills-registry / skill-tools / context-assembly / butler / approvals / tool-effects；core / desktop typecheck（svelte-check 0 错误）、改动文件 eslint 通过。
+
+- 全量（容器 `kh1-full2`，提交 `d1d0cbd`）：4356 例，4307 通过 / 27 失败，失败文件与条数与审查前完全相同——26 条基线文件 + `connected-apps-runtime`「listing failure at run start」负载偶发（单跑 13/13 通过）。**无新增失败。**
+- e2e 全量（`kh1-e2e-full2`，93 例）：86 通过 / 7 失败，`handover.spec` 两例通过；失败与审查前同一组基线（wiki、debug-dev-pin、external-agents ×3、local-connectors、sandbox status line）。
+
+- **DEV-020 模型条目只给管家**：设计 §决策 7 只说普通 Bot 只能交出**自己的**资产。`model:inherit` / `model:<ref>` 实际是改写**接手方** B 的模型与驱动引擎，不是 A 的资产，所以普通 Bot 发起时不提供（盘点不列、提议退回、执行时兜底），改 B 的模型仍可由管家提议或用户在 B 的详情页改。**推荐**：保持限制；用户若希望普通 Bot 也能设置接手方的模型再放开。
 
 ## 7. 风险
 
