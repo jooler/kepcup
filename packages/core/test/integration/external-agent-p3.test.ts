@@ -735,16 +735,12 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
     await waitTask(stack, builtinConv.id, 'completed');
     expect(readFileSync(path.join(projectPath, 'builtin.txt'), 'utf8')).toBe('from builtin');
 
+    // Change tracking retired: both agents' disk writes remain; no run_changes.
     const diff = (await stack.core.rpc.call('projects.diff', { runId: agentTask.id })) as {
       change: { files: Array<{ path: string; change: string }> } | null;
     };
-    expect(diff.change?.files.map((f) => `${f.path}:${f.change}`)).toEqual(['agent.txt:added']);
-    const revert = (await stack.core.rpc.call('projects.revert', {
-      runId: agentTask.id,
-      force: false,
-    })) as { ok: boolean };
-    expect(revert.ok).toBe(true);
-    expect(existsSync(path.join(project, 'agent.txt'))).toBe(false);
+    expect(diff.change).toBeNull();
+    expect(existsSync(path.join(project, 'agent.txt'))).toBe(true);
     expect(existsSync(path.join(project, 'builtin.txt'))).toBe(true);
   }, 120_000);
 });

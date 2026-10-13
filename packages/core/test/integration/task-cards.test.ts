@@ -187,7 +187,7 @@ describe('D75 task cards (W3)', () => {
     );
     expect(cancelled).toMatchObject({
       cancelReason: '用户取消',
-      changes: { kind: 'workspace', files: ['notes/a.txt'], more: 0 },
+      changes: null,
       queueReason: null,
     });
     expect((await taskView(stack, taskId)).state).toBe('cancelled');

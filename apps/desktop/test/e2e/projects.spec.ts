@@ -112,7 +112,7 @@ async function openProjectSelector(page: Page): Promise<void> {
   await page.locator('[data-testid="project-selector-trigger"]').click();
 }
 
-test('project selection, switching block while running, changes card, diff and revert', async () => {
+test('project selection, switching block while running; no changes card after writes', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-project-');
   const { page, app, llm } = session;
@@ -152,8 +152,7 @@ test('project selection, switching block while running, changes card, diff and r
     await expect(page.locator('[data-testid="run-status"]')).not.toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-testid="project-selector-trigger"]')).toBeEnabled();
 
-    // 一次有改动的执行 → 改动摘要卡片 → 查看 diff → 整次回退
-    // D75：写在写任务里（任务启动前整任务持有项目写租约），结果经对话轮转述。
+    // 一次有改动的写任务：磁盘文件保留，对话中不再出现改动摘要卡 / diff / 回退。
     llm.script(
       'mock-main',
       viaTask({
@@ -168,21 +167,9 @@ test('project selection, switching block while running, changes card, diff and r
     await page.locator('[data-testid="composer-input"]').fill('写一个文件');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
-    const card = page.locator('[data-testid="run-changes-card"]');
-    await expect(card).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText('写好了')).toBeVisible({ timeout: 120_000 });
     expect(existsSync(path.join(project, 'demo.txt'))).toBe(true);
-
-    await card.locator('[data-testid="run-changes-diff"]').click();
-    await expect(page.locator('[data-testid="diff-dialog"]')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-testid="diff-body"]')).toContainText('demo.txt', {
-      timeout: 30_000,
-    });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="diff-dialog"]')).not.toBeVisible();
-
-    await card.locator('[data-testid="run-changes-revert"]').click();
-    await expect(card).not.toBeVisible({ timeout: 30_000 });
-    expect(existsSync(path.join(project, 'demo.txt'))).toBe(false);
+    await expect(page.locator('[data-testid="run-changes-card"]')).toHaveCount(0);
     expect(readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# demo\n');
   } finally {
     rmSync(project, { recursive: true, force: true });

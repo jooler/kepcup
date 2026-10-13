@@ -93,11 +93,6 @@ export const LEASE_REVOKED_READ_ONLY_REASON =
 /** Bound on the set of revoked pinned runs remembered (oldest forgotten first). */
 const REVOKED_RUNS_REMEMBERED = 512;
 
-/** Same file content in two snapshots (null = absent). */
-function sameContent(a: Buffer | null, b: Buffer | null): boolean {
-  return a === null || b === null ? a === b : a.equals(b);
-}
-
 /** Bound on the sub run → parent run walk (sub runs do not nest today). */
 const SUBAGENT_PARENT_MAX_DEPTH = 4;
 
@@ -122,10 +117,11 @@ interface RunLeaseState {
 
 /**
  * Project runtime (docs/dev/phases/P04-project.md): binding lifecycle, write
- * leases with waiting/running state transitions, checkpoint bookkeeping
- * (before at acquire / after at release → run_changes + summary card),
- * diff/revert and git remote execution. The gateway consults it for path
- * decisions and sandbox policy input; RPC binds user actions here.
+ * leases with waiting/running state transitions, and git remote execution.
+ * Change-summary cards / run_changes persistence / whole-run revert UX are
+ * retired — disk writes stay; lease windows no longer snapshot or record.
+ * The gateway consults it for path decisions and sandbox policy input; RPC
+ * binds user actions here. Diff/revert RPCs remain only for legacy rows.
  */
 export class ProjectRuntime {
   readonly #deps: ProjectRuntimeDeps;
@@ -251,10 +247,10 @@ export class ProjectRuntime {
    * Acquires the write lease covering `resolvedPath`: the bound project root,
    * the identity's own workspace (`ws:{botId}:{conversationId}`, D75 §5.2),
    * or the longest covering write grant outside both. Parks the run in
-   * `waiting_lease` (publishing `lease.waiting`) while queued; snapshots the
-   * project `before` once the lease is granted (workspace / grant targets
-   * have no checkpoint). Aborting the signal leaves the queue cleanly.
-   * Read-only identities (writeDenial) are refused with RUN_READ_ONLY.
+   * `waiting_lease` (publishing `lease.waiting`) while queued. Aborting the
+   * signal leaves the queue cleanly. Read-only identities (writeDenial) are
+   * refused with RUN_READ_ONLY. Lease windows no longer snapshot / record
+   * run_changes (change-summary UX retired).
    *
    * Workspace writes never *require* the lease (the gateway allows them
    * outright); only callers that ask for it — D75 write tasks, pinned for the
@@ -277,9 +273,9 @@ export class ProjectRuntime {
       throw new AppError('INVALID_INPUT', '该路径不涉及 project 或 workspace，无需写入租约');
     }
     // Same run, same key, already being acquired (parallel write / edit
-    // calls): join it — also until its `before` snapshot is taken. A second
-    // acquisition would release the run's lease window and cancel the first
-    // wait. Another key still replaces the run's one lease (cancelling it).
+    // calls): join it. A second acquisition would release the run's lease
+    // window and cancel the first wait. Another key still replaces the run's
+    // one lease (cancelling it).
     const inflight = this.#acquiring.get(identity.runId);
     if (inflight !== undefined && inflight.key === target.key) {
       return joinUnlessAborted(inflight.promise, options.signal);
@@ -311,7 +307,7 @@ export class ProjectRuntime {
     target: LeaseTarget,
     options: { signal?: AbortSignal; pin?: boolean },
   ): Promise<LeaseTarget> {
-    // One lease per run: close out the previous window first (after snapshot).
+    // One lease per run: close out the previous window first.
     await this.releaseRun(identity.runId);
 
     await this.#deps.leases.acquire(identity, target.key, {
@@ -332,69 +328,28 @@ export class ProjectRuntime {
       throw new AppError('APPROVAL_DENIED', '执行已取消，未取得写入租约');
     }
 
-    if (target.project !== null) {
-      const before = await this.#deps.checkpoints.snapshot(target.project);
-      this.#runLeases.set(identity.runId, {
-        key: target.key,
-        project: target.project,
-        beforeOid: before.oid,
-        ...(options.pin === true ? { pinned: true } : {}),
-      });
-    } else {
-      this.#runLeases.set(identity.runId, {
-        key: target.key,
-        project: null,
-        beforeOid: null,
-        ...(options.pin === true ? { pinned: true } : {}),
-      });
-    }
+    // Track the lease window for revoke / pin only — no before snapshot.
+    // Change cards and run_changes persistence were retired.
+    this.#runLeases.set(identity.runId, {
+      key: target.key,
+      project: target.project,
+      beforeOid: null,
+      ...(options.pin === true ? { pinned: true } : {}),
+    });
 
     this.#setRunStatus(identity.runId, 'running');
     return target;
   }
 
   /**
-   * Ends the run's lease window: cancels queued waits, releases the lease and
-   * (for project leases) commits the `after` snapshot, records run_changes
-   * and appends the changes summary card when files actually changed.
+   * Ends the run's lease window: cancels queued waits and releases the lease.
    * Idempotent; safe to call from every settle path.
+   * No after-snapshot / run_changes / summary card — that UX was retired.
    */
   async releaseRun(runId: string): Promise<void> {
     this.#deps.leases.cancelWaitersOfRun(runId);
     this.#deps.leases.release(runId);
-    const state = this.#runLeases.get(runId);
-    if (state === undefined) return;
     this.#runLeases.delete(runId);
-    if (state.project === null || state.beforeOid === null) return;
-    try {
-      const after = await this.#deps.checkpoints.snapshot(state.project);
-      const files = await this.#deps.checkpoints.diffFiles(state.project.id, state.beforeOid, after.oid);
-      const conv = this.#deps.runs.get(runId);
-      // A run may hold the lease in several windows (a force revoke closes
-      // one; a non-pinned run re-takes it on its next write): its record
-      // accumulates them — never overwritten by the latest window.
-      const previous = this.#deps.projects.getChange(runId);
-      const accumulate =
-        previous !== null && previous.revertedAt === null && previous.afterOid !== null;
-      const change = this.#deps.projects.recordChange({
-        runId,
-        projectId: state.project.id,
-        conversationId: conv?.conversationId ?? null,
-        beforeOid: accumulate ? previous.beforeOid : state.beforeOid,
-        afterOid: after.oid,
-        files: accumulate
-          ? await this.#mergeWindow(previous, state.project.id, state.beforeOid, after.oid, files)
-          : files,
-      });
-      if (files.length > 0 && change.conversationId !== null) {
-        this.#insertChangesCard(change.conversationId, runId);
-      }
-    } catch (error) {
-      this.#deps.logger.error(
-        { runId, error: error instanceof Error ? error.message : String(error) },
-        'checkpoint after-snapshot failed',
-      );
-    }
   }
 
   // --- binding (RPC) -----------------------------------------------------------
@@ -413,7 +368,7 @@ export class ProjectRuntime {
       this.#systemMessage(conversationId, `项目已绑定为 ${label}`);
       this.#systemMessage(
         conversationId,
-        '授权范围：此对话中的所有 Bot 都可以读写该目录；写入按租约串行执行，每次执行的改动可以在对话中查看 diff 或整次回退。目录中的 .env、*.pem 等敏感文件默认不可读，可在权限设置中调整。',
+        '授权范围：此对话中的所有 Bot 都可以读写该目录；写入按租约串行执行。目录中的 .env、*.pem 等敏感文件默认不可读，可在权限设置中调整。',
       );
     } else {
       this.#systemMessage(conversationId, `项目已从 ${previous?.name ?? previousId} 切换为 ${label}`);
@@ -464,10 +419,8 @@ export class ProjectRuntime {
 
   /**
    * User force-revoke of the lease held on the conversation's project. The
-   * holder's lease window is closed first (its `after` snapshot records its
-   * own changes and drops the run's bookkeeping), so a later settle of the
-   * revoked run can never fold other holders' changes into its run_changes
-   * (BR-P04-001).
+   * holder's lease window is closed first so a later settle of the revoked
+   * run cannot re-take a pinned lease (BR-P04-001 / design 30 §5.1).
    */
   async revokeLease(conversationId: string): Promise<boolean> {
     const project = this.boundProject(conversationId);
@@ -749,83 +702,6 @@ export class ProjectRuntime {
       text,
     });
     this.#deps.publish('message.created', { conversationId, message });
-  }
-
-  /**
-   * Folds one more lease window (`beforeOid` → `afterOid`, its `files`) into
-   * a run's record. Each file keeps the snapshot before the run first changed
-   * it and the one after the run last changed it (revert restores the first,
-   * conflict detection compares against the last); the net change is
-   * recomputed across the windows (added then deleted = no change). A file
-   * someone else changed between two of the run's windows is marked
-   * `interleaved`: reverting it would also undo their change, so the revert
-   * reports it as a conflict.
-   */
-  async #mergeWindow(
-    previous: RunChange,
-    projectId: string,
-    beforeOid: string,
-    afterOid: string,
-    files: RunChangeFile[],
-  ): Promise<RunChangeFile[]> {
-    const read = (oid: string, file: string) =>
-      this.#deps.checkpoints.readFileAt(projectId, oid, file);
-    const merged = new Map<string, RunChangeFile>();
-    for (const file of previous.files) {
-      merged.set(file.path, {
-        ...file,
-        beforeOid: file.beforeOid ?? previous.beforeOid,
-        afterOid: file.afterOid ?? previous.afterOid ?? beforeOid,
-      });
-    }
-    for (const file of files) {
-      const earlier = merged.get(file.path);
-      if (earlier === undefined) {
-        merged.set(file.path, { path: file.path, change: file.change, beforeOid, afterOid });
-        continue;
-      }
-      const first = earlier.beforeOid ?? previous.beforeOid;
-      const interleaved =
-        earlier.interleaved === true ||
-        !sameContent(await read(earlier.afterOid ?? beforeOid, file.path), await read(beforeOid, file.path));
-      const original = await read(first, file.path);
-      const latest = await read(afterOid, file.path);
-      if (original === null && latest === null && !interleaved) {
-        merged.delete(file.path);
-        continue;
-      }
-      merged.set(file.path, {
-        path: file.path,
-        change: original === null ? 'added' : latest === null ? 'deleted' : 'modified',
-        beforeOid: first,
-        afterOid,
-        ...(interleaved ? { interleaved: true } : {}),
-      });
-    }
-    return [...merged.values()].sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  #insertChangesCard(conversationId: string, runId: string): void {
-    // One card per run: a later lease window updates the record it renders.
-    const existing = this.#deps.db
-      .prepare(
-        "select id from messages where conversation_id = ? and run_id = ? and kind = 'card' and json_extract(content_json, '$.cardType') = 'run_changes' limit 1",
-      )
-      .get(conversationId, runId) as { id: string } | undefined;
-    if (existing !== undefined) {
-      const card = this.#deps.messages.getById(existing.id);
-      if (card !== null) this.#deps.publish('message.updated', { conversationId, message: card });
-      return;
-    }
-    const card = this.#deps.messages.append({
-      conversationId,
-      senderType: 'system',
-      kind: 'card',
-      cardType: 'run_changes',
-      cardRunId: runId,
-      runId,
-    });
-    this.#deps.publish('message.created', { conversationId, message: card });
   }
 
   #setRunStatus(runId: string, status: 'waiting_lease' | 'running'): void {

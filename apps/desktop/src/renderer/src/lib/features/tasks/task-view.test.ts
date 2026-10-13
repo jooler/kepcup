@@ -83,8 +83,8 @@ describe('taskCardModel', () => {
     ).toBeNull();
   });
 
-  it('a cancelled project write task offers the whole-run revert with its counts', () => {
-    const model = taskCardModel(
+  it('cancelled write tasks no longer show a change summary or revert', () => {
+    const project = taskCardModel(
       view({
         state: 'cancelled',
         status: 'cancelled',
@@ -92,30 +92,12 @@ describe('taskCardModel', () => {
         changes: { kind: 'project', added: 1, modified: 2, deleted: 0, reverted: false },
       }),
     );
-    expect(model.cancelReason).toBe('用户改主意');
-    expect(model.changes).toEqual({
-      kind: 'project',
-      added: 1,
-      modified: 2,
-      deleted: 0,
-      reverted: false,
-    });
-    expect(model.canRevert).toBe(true);
-    expect(model.canCancel).toBe(false);
-    // Already reverted → no second revert.
-    expect(
-      taskCardModel(
-        view({
-          state: 'cancelled',
-          status: 'cancelled',
-          changes: { kind: 'project', added: 1, modified: 0, deleted: 0, reverted: true },
-        }),
-      ).canRevert,
-    ).toBe(false);
-  });
+    expect(project.cancelReason).toBe('用户改主意');
+    expect(project.changes).toBeNull();
+    expect(project.canRevert).toBe(false);
+    expect(project.canCancel).toBe(false);
 
-  it('a cancelled workspace write task says plainly there is no revert, even without recorded files', () => {
-    const withFiles = taskCardModel(
+    const workspace = taskCardModel(
       view({
         state: 'cancelled',
         status: 'cancelled',
@@ -123,17 +105,9 @@ describe('taskCardModel', () => {
         changes: { kind: 'workspace', files: ['notes/a.txt'], more: 0 },
       }),
     );
-    expect(withFiles.changes).toEqual({ kind: 'workspace', files: ['notes/a.txt'], more: 0 });
-    expect(withFiles.canRevert).toBe(false);
-    const none = taskCardModel(
-      view({ state: 'cancelled', status: 'cancelled', workdirKind: 'workspace' }),
-    );
-    expect(none.changes).toEqual({ kind: 'workspace', files: [], more: 0 });
-    // A project task without changes: "no file changes".
-    expect(taskCardModel(view({ state: 'cancelled', status: 'cancelled' })).changes).toEqual({
-      kind: 'none',
-    });
-    // Read-only tasks never show a change summary.
+    expect(workspace.changes).toBeNull();
+    expect(workspace.canRevert).toBe(false);
+    expect(taskCardModel(view({ state: 'cancelled', status: 'cancelled' })).changes).toBeNull();
     expect(
       taskCardModel(view({ state: 'cancelled', status: 'cancelled', writes: false })).changes,
     ).toBeNull();
@@ -228,7 +202,7 @@ describe('taskCardModel', () => {
     expect(effectBadge('denied')).toBe('denied');
   });
 
-  it('a completed task has no change summary (its run-changes card covers project tasks)', () => {
+  it('a completed task has no change summary', () => {
     const model = taskCardModel(
       view({
         state: 'completed',

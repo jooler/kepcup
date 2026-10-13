@@ -25,6 +25,10 @@
       }
       // Task interim is a single status overlay (task card / status line), not bubbles.
       if (m.kind === 'text' && 'interim' in m.content && m.content.interim === true) return false;
+      // Retired: local change summary / diff / revert cards are not shown or kept in view.
+      if (m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes') {
+        return false;
+      }
       return true;
     }),
   );

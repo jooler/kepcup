@@ -19,7 +19,6 @@ import {
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
-  TASK_CHANGED_FILES_SHOWN,
   TURN_MAX_TURNS,
   TURN_MCP_RESOLVE_TIMEOUT_MS,
   BUILTIN_ENGINE,
@@ -591,8 +590,6 @@ export class Orchestrator {
    * while that turn is live.
    */
   readonly #turnTaskHolds = new Map<string, Set<string>>();
-  /** Change summaries of settled workspace write tasks (D75 审查 L5; bounded). */
-  readonly #workspaceChangesCache = new Map<string, TaskChanges | null>();
   readonly #activeRuns = new Map<string, ActiveRunEntry>();
   readonly #cancelledBeforeStart = new Set<string>();
   /** Per-run file-read hashes (staleness detection, P04). */
@@ -2240,13 +2237,9 @@ export class Orchestrator {
         if ('runId' in content && content.cardType === TASK_CARD) {
           return this.#renderTaskCard(String(content.runId ?? ''));
         }
+        // Retired: run_changes cards are hidden and not injected into context.
         if ('runId' in content && content.cardType === 'run_changes') {
-          const change = this.#deps.projects.changesOf(String(content.runId ?? ''));
-          if (change === null) return '（改动记录已清理）';
-          if (change.revertedAt !== null) return `[系统] 执行 ${content.runId} 的改动已整次回退`;
-          const counts = { added: 0, modified: 0, deleted: 0 };
-          for (const file of change.files) counts[file.change] += 1;
-          return `[系统] 本次执行改动了 ${change.files.length} 个文件（新增 ${counts.added}、修改 ${counts.modified}、删除 ${counts.deleted}），可在界面查看 diff 或整次回退`;
+          return null;
         }
         const approvalId =
           content && 'approvalId' in content ? String(content.approvalId ?? '') : '';
@@ -5000,7 +4993,7 @@ export class Orchestrator {
    */
   #describeTaskWorkdir(
     task: Run,
-    withChanges: boolean,
+    _withChanges: boolean,
   ): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
@@ -5008,66 +5001,9 @@ export class Orchestrator {
         : null;
     const kind =
       task.taskWorkdir !== null && task.taskWorkdir !== workspace ? 'project' : 'workspace';
-    if (!withChanges) return { kind, changes: null };
-    if (kind === 'project') {
-      // A checkpoint lookup by run id (the revert state can still change).
-      const change = this.#deps.projects.changesOf(task.id);
-      if (change === null || change.files.length === 0) return { kind: 'project', changes: null };
-      const counts = { added: 0, modified: 0, deleted: 0 };
-      for (const file of change.files) counts[file.change] += 1;
-      return {
-        kind: 'project',
-        changes: { kind: 'project', ...counts, reverted: change.revertedAt !== null },
-      };
-    }
-    if (task.taskWrites !== true || workspace === null || task.conversationId === null) {
-      return { kind: 'workspace', changes: null };
-    }
-    // A settled task's file list no longer changes: computed once (审查 L5).
-    const cached = this.#workspaceChangesCache.get(task.id);
-    if (cached !== undefined) return { kind: 'workspace', changes: cached };
-    // No checkpoint in the workspace (§5.2): the files its file tools wrote —
-    // through the conversation index (audit_log has none on run_id).
-    const rows = this.#deps.db
-      .prepare(
-        "select detail_json from audit_log where conversation_id = ? and run_id = ? and action = 'fs_write' order by created_at",
-      )
-      .all(task.conversationId, task.id) as Array<{ detail_json: string }>;
-    const files: string[] = [];
-    for (const row of rows) {
-      let detail: { path?: unknown; op?: unknown };
-      try {
-        detail = JSON.parse(row.detail_json) as { path?: unknown; op?: unknown };
-      } catch {
-        continue;
-      }
-      const target = detail.path;
-      // Parent directories the write tool created are not changes of their own.
-      if (typeof target !== 'string' || detail.op === 'mkdir') continue;
-      const relative = nodePath.relative(workspace, target);
-      const shown =
-        relative.length > 0 && !relative.startsWith('..') && !nodePath.isAbsolute(relative)
-          ? relative
-          : target;
-      if (!files.includes(shown)) files.push(shown);
-    }
-    const changes: TaskChanges | null =
-      files.length === 0
-        ? null
-        : {
-            kind: 'workspace',
-            files: files.slice(0, TASK_CHANGED_FILES_SHOWN),
-            more: Math.max(0, files.length - TASK_CHANGED_FILES_SHOWN),
-          };
-    // Only once the execution is over (an unwinding tool may still write).
-    if (!this.#taskHost.isExecuting(task.id)) {
-      if (this.#workspaceChangesCache.size >= 256) {
-        const oldest = this.#workspaceChangesCache.keys().next().value;
-        if (oldest !== undefined) this.#workspaceChangesCache.delete(oldest);
-      }
-      this.#workspaceChangesCache.set(task.id, changes);
-    }
-    return { kind: 'workspace', changes };
+    // Change summary / file list / revert on the task card was retired —
+    // never attach changes (disk writes still happen).
+    return { kind, changes: null };
   }
 
   #publishConversation(conversationId: string): void {

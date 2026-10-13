@@ -120,7 +120,7 @@ async function openProjectSelector(page: Page): Promise<void> {
 
 // D75 W3（docs/design/30-supervisor-and-tasks.md §4.3 / §6 / §2.4.6）：派任务 →
 // 任务卡（状态 / 进度归属 / 追加行）→ 结果经对话轮转述 → 卡片上取消（工作区
-// 如实说明不能回退；项目可整次回退）→ 问题卡点选直注任务。
+// 改动摘要 / 回退已退役）→ 问题卡点选直注任务。
 
 const turnWith = (fragment: string) => (req: MockChatRequest) =>
   !isTaskRequest(req) && req.lastUserText().includes(fragment);
@@ -242,9 +242,7 @@ test('start a task → task card → progress attributed → inject line → res
     await card2.locator('[data-testid="task-cancel"]').click();
     await expect(card2).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
     await expect(card2.locator('[data-testid="task-cancel-reason"]')).toContainText('用户取消');
-    const changes = card2.locator('[data-testid="task-changes"]');
-    await expect(changes).toContainText('无法整次回退');
-    await expect(changes).toContainText('notes/b.md');
+    await expect(card2.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card2.locator('[data-testid="task-revert"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="run-status"]')).toHaveCount(0, { timeout: 30_000 });
     // Cancelling never wakes the bot: still only the one waking turn (the first task's).
@@ -256,7 +254,7 @@ test('start a task → task card → progress attributed → inject line → res
   }
 });
 
-test('a project write task cancelled from its card offers the whole-run revert', async () => {
+test('a project write task cancelled from its card leaves disk changes and no revert UI', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-tasks-project-');
   const { page, app, llm } = session;
@@ -288,15 +286,9 @@ test('a project write task cancelled from its card offers the whole-run revert',
 
     await card.locator('[data-testid="task-cancel"]').click();
     await expect(card).toHaveAttribute('data-task-state', 'cancelled', { timeout: 30_000 });
-    // The checkpoint summary lands once the lease is released (after-snapshot).
-    await expect(card.locator('[data-testid="task-changes"]')).toContainText('新增 1', {
-      timeout: 30_000,
-    });
-    await card.locator('[data-testid="task-revert"]').click();
-    await expect(card.locator('[data-testid="task-changes-reverted"]')).toBeVisible({
-      timeout: 30_000,
-    });
-    expect(existsSync(path.join(project, 'demo.txt'))).toBe(false);
+    await expect(card.locator('[data-testid="task-changes"]')).toHaveCount(0);
+    await expect(card.locator('[data-testid="task-revert"]')).toHaveCount(0);
+    expect(existsSync(path.join(project, 'demo.txt'))).toBe(true);
     expect(readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# demo\n');
   } finally {
     llm.releaseAll();

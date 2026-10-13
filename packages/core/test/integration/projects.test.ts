@@ -310,9 +310,11 @@ describe('projects (P04)', () => {
     expect(runOf(core, bTask.id).status).toBe('completed');
     expect(toolResult(await stepsOf(core, bTask.id), 'write')?.ok).toBe(true);
     expect(leaseWaits).toEqual([]);
-    // One checkpoint window per task: no interleaving of the two tasks' changes.
-    expect(await changedFiles(core, aTask.id)).toEqual(['a.txt:added']);
-    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
+    // Change tracking retired: files stay on disk; no run_changes rows.
+    expect(await changedFiles(core, aTask.id)).toBeNull();
+    expect(await changedFiles(core, bTask.id)).toBeNull();
+    expect(existsSync(path.join(project.path, 'a.txt'))).toBe(true);
+    expect(existsSync(path.join(project.path, 'b.txt'))).toBe(true);
   }, 180_000);
 
   // D75 §2.1 / §5.1: turns and read-only tasks cannot write the project at all
@@ -407,9 +409,9 @@ describe('projects (P04)', () => {
     expect(existsSync(path.join(project.path, 'with-lease.txt'))).toBe(true);
     expect(existsSync(path.join(project.path, 'with-lease-bash.txt'))).toBe(true);
     expect(llm.requestBodiesContain('acquire_project_write')).toBe(true);
-    // The lease ends with the task; both writes land in its checkpoint window.
+    // The lease ends with the task; disk writes stay (no run_changes row).
     expect(runtime.holdsLease(taskIdentity(task), project.path)).toBe(false);
-    expect(await changedFiles(core, task.id)).toEqual(['with-lease-bash.txt:added', 'with-lease.txt:added']);
+    expect(await changedFiles(core, task.id)).toBeNull();
   }, 120_000);
 
   it('commands get a read-only project mount in read-only tasks and a writable one in write tasks (gateway policy)', async () => {
@@ -530,10 +532,9 @@ describe('projects (P04)', () => {
     expect(secondRead?.ok).toBe(true);
   }, 240_000);
 
-  // D75: the checkpoint window is the write task's (pinned at its start,
-  // closed when it ends) — summary card, diff and whole-task revert are keyed
-  // by the task id. File tools here; command-made changes in the next case.
-  it("summarizes a write task's changes, diffs them and reverts the whole task (with conflict detection)", async () => {
+  // Change summary / diff / whole-run revert UX retired: writes stay on disk,
+  // no run_changes card or row is created.
+  it('a write task keeps disk changes without a run_changes card or record', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小改');
     const conv = await openDirect(core, bot.id);
@@ -556,77 +557,20 @@ describe('projects (P04)', () => {
     const task = (await taskRuns(core, conv.id))[0]!;
     expect(task.status).toBe('completed');
 
-    // The changes card belongs to the task: after the turn's dispatch ack,
-    // before the waking turn relays the result.
     const messages = await listMessages(core, conv.id);
     const card = messages.find(
       (m) => m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes',
     );
-    expect(card).toBeDefined();
-    expect((card!.content as { runId?: string }).runId).toBe(task.id);
-    const ack = messages.findIndex((m) => m.senderBotId === bot.id && m.kind === 'text');
-    const relay = messages.findIndex(
-      (m) => m.senderBotId === bot.id && 'text' in m.content && m.content.text === 'RELAY-CHANGE-1',
-    );
-    expect(ack).toBeGreaterThanOrEqual(0);
-    expect(messages.indexOf(card!)).toBeGreaterThan(ack);
-    expect(messages.indexOf(card!)).toBeLessThan(relay);
-
-    const { diffText } = await runChangesRow(core, task.id);
-    expect(await changedFiles(core, task.id)).toEqual(['created.txt:added', 'existing.txt:modified']);
-    expect(diffText).toContain('brand-new-content');
-
-    // Revert without conflicts: files return to their before-state.
-    const revert = (await core.rpc.call('projects.revert', { runId: task.id, force: false })) as {
-      ok: boolean;
-      conflicts: string[];
-      reverted: string[];
-    };
-    expect(revert.ok).toBe(true);
-    expect(existsSync(path.join(project.path, 'created.txt'))).toBe(false);
-    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toBe('original\n');
-
-    // Reverting twice is refused.
+    expect(card).toBeUndefined();
+    expect(await changedFiles(core, task.id)).toBeNull();
+    expect(existsSync(path.join(project.path, 'created.txt'))).toBe(true);
+    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toBe('modified-content\n');
     await expect(core.rpc.call('projects.revert', { runId: task.id })).rejects.toMatchObject({
-      code: 'INVALID_INPUT',
+      code: 'NOT_FOUND',
     });
-
-    // Second task: external edits create a conflict for the revert.
-    llm.script(
-      'mock-main',
-      inWriteTask(
-        [
-          step().replyToolCall('write', { path: 'existing.txt', content: 'round-two\n' }),
-          step().replyText('又改了'),
-        ],
-        'RELAY-CHANGE-2',
-      ),
-    );
-    await sendBatch(core, conv.id, ['再改一次']);
-    await waitRelay(core, conv.id, 'RELAY-CHANGE-2');
-    const task2 = (await taskRuns(core, conv.id)).find((r) => r.id !== task.id)!;
-    expect(task2.status).toBe('completed');
-    expect(await changedFiles(core, task2.id)).toEqual(['existing.txt:modified']);
-    writeFileSync(path.join(project.path, 'existing.txt'), 'user-edited-after-run\n');
-
-    const conflict = (await core.rpc.call('projects.revert', { runId: task2.id, force: false })) as {
-      ok: boolean;
-      conflicts: string[];
-      reverted: string[];
-    };
-    expect(conflict.ok).toBe(false);
-    expect(conflict.conflicts).toEqual(['existing.txt']);
-    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toBe('user-edited-after-run\n');
-
-    const forced = (await core.rpc.call('projects.revert', { runId: task2.id, force: true })) as {
-      ok: boolean;
-      reverted: string[];
-    };
-    expect(forced.ok).toBe(true);
-    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toBe('original\n');
   }, 180_000);
 
-  it("records command-made changes in the write task's checkpoint and reverts them", async () => {
+  it('command-made project writes stay on disk without a run_changes record', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小令');
     const conv = await openDirect(core, bot.id);
@@ -651,16 +595,12 @@ describe('projects (P04)', () => {
     const task = (await taskRuns(core, conv.id))[0]!;
     expect(toolResult(await stepsOf(core, task.id), 'bash')?.ok).toBe(true);
 
-    const { diffText } = await runChangesRow(core, task.id);
-    expect(await changedFiles(core, task.id)).toEqual(['created.txt:added', 'existing.txt:modified']);
-    expect(diffText).toContain('brand-new-content');
-    const revert = (await core.rpc.call('projects.revert', { runId: task.id, force: false })) as { ok: boolean };
-    expect(revert.ok).toBe(true);
-    expect(existsSync(path.join(project.path, 'created.txt'))).toBe(false);
-    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toBe('original\n');
+    expect(await changedFiles(core, task.id)).toBeNull();
+    expect(existsSync(path.join(project.path, 'created.txt'))).toBe(true);
+    expect(readFileSync(path.join(project.path, 'existing.txt'), 'utf8')).toContain('modified-content');
   }, 120_000);
 
-  it('never touches the project own .git during checkpointing', async () => {
+  it('a write task never touches the project own .git', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小影');
     const conv = await openDirect(core, bot.id);
@@ -679,12 +619,9 @@ describe('projects (P04)', () => {
     await waitRelay(core, conv.id, 'RELAY-SHADOW');
 
     expect(hashDir(path.join(project.path, '.git'))).toBe(before);
-    // The shadow repo lives in the data directory; the project only gained the bot's file.
     expect(readdirSync(project.path).sort()).toEqual(
       ['.git', '.gitignore', 'README.md', 'shadow.txt'].sort(),
     );
-    expect(core.services.paths.home).toContain('kepcup');
-    expect(existsSync(path.join(core.services.paths.home, 'projects'))).toBe(true);
   }, 240_000);
 
   it('runs approved git remote operations outside the sandbox and skips denied ones', async () => {
@@ -901,7 +838,7 @@ describe('projects (P04)', () => {
     ).rejects.toMatchObject({ code: 'PATH_OUT_OF_SCOPE' });
   }, 120_000);
 
-  it('removes run_changes with the conversation and everything with the project', async () => {
+  it('removing a project unbinds conversations (no run_changes are created anymore)', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小删');
     const conv = await openDirect(core, bot.id);
@@ -917,7 +854,8 @@ describe('projects (P04)', () => {
     await sendBatch(core, conv.id, ['写一个']);
     const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 120_000, loopType: 'task' });
     await waitRelay(core, conv.id, 'RELAY-GONE');
-    expect((await runChangesRow(core, run.id)).change).not.toBeNull();
+    expect((await runChangesRow(core, run.id)).change).toBeNull();
+    expect(existsSync(path.join(project.path, 'gone.txt'))).toBe(true);
 
     await core.rpc.call('conversations.delete', { id: conv.id });
     const mainDb = core.services.mainDb!;
@@ -926,12 +864,10 @@ describe('projects (P04)', () => {
       .get(conv.id) as { n: number };
     expect(remaining.n).toBe(0);
 
-    // Removing the project drops its records and checkpoint repo, unbinds others.
     const other = await makeBot(core, '小留');
     const otherConv = await openDirect(core, other.id);
     await bindProject(core, otherConv.id, project.path);
     await core.rpc.call('projects.remove', { id: project.id });
-    expect(existsSync(path.join(core.services.paths.home, 'projects', project.id))).toBe(false);
     const bound = (await core.rpc.call('conversations.get', { id: otherConv.id })) as {
       conversation: { projectId: string | null };
     };
@@ -1071,26 +1007,20 @@ describe('projects (P04)', () => {
     };
     expect(revoked.revoked).toBe(true);
     expect(runtime.holdsLease(holder, project.path)).toBe(false);
-    expect(runtime.changesOf(holder.runId)?.files).toEqual([{ path: 'a.txt', change: 'added' }]);
+    expect(runtime.changesOf(holder.runId)).toBeNull();
 
     await waitRelay(core, convB.id, 'RELAY-B');
     expect(readFileSync(path.join(project.path, 'b.txt'), 'utf8')).toBe('B-change');
-    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
+    expect(await changedFiles(core, bTask.id)).toBeNull();
 
-    // 持有方随后结束：其 settle 不得把乙的文件并入自己的改动
     await runtime.releaseRun(holder.runId);
-    expect(runtime.changesOf(holder.runId)?.files).toEqual([{ path: 'a.txt', change: 'added' }]);
-    // Nothing left to revoke.
+    expect(runtime.changesOf(holder.runId)).toBeNull();
     expect(
       ((await core.rpc.call('projects.revokeLease', { conversationId: convB.id })) as { revoked: boolean }).revoked,
     ).toBe(false);
 
-    // 乙可独立回退：只删除 b.txt，a.txt（持有方的改动）不受影响
-    const revert = (await core.rpc.call('projects.revert', { runId: bTask.id, force: false })) as {
-      ok: boolean;
-    };
-    expect(revert.ok).toBe(true);
-    expect(existsSync(path.join(project.path, 'b.txt'))).toBe(false);
+    // Disk writes from both holders remain (no whole-run revert anymore).
+    expect(existsSync(path.join(project.path, 'b.txt'))).toBe(true);
     expect(existsSync(path.join(project.path, 'a.txt'))).toBe(true);
   }, 180_000);
 
@@ -1137,7 +1067,7 @@ describe('projects (P04)', () => {
     };
     expect(revoked.revoked).toBe(true);
     expect(runtime.holdsLease(taskIdentity(aTask), project.path)).toBe(false);
-    expect(await changedFiles(core, aTask.id)).toEqual(['a.txt:added']);
+    expect(await changedFiles(core, aTask.id)).toBeNull();
     // … but B stays submitted behind A in the task layer.
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(taskViews(core, botB.id, convB.id).find((t) => t.taskId === bTask.id)).toMatchObject({
@@ -1152,14 +1082,8 @@ describe('projects (P04)', () => {
     await waitRelay(core, convA.id, 'RELAY-A');
     await waitRelay(core, convB.id, 'RELAY-B');
     expect(readFileSync(path.join(project.path, 'b.txt'), 'utf8')).toBe('B-change');
-    expect(await changedFiles(core, aTask.id)).toEqual(['a.txt:added']);
-    expect(await changedFiles(core, bTask.id)).toEqual(['b.txt:added']);
-
-    const revert = (await core.rpc.call('projects.revert', { runId: bTask.id, force: false })) as {
-      ok: boolean;
-    };
-    expect(revert.ok).toBe(true);
-    expect(existsSync(path.join(project.path, 'b.txt'))).toBe(false);
+    expect(await changedFiles(core, aTask.id)).toBeNull();
+    expect(await changedFiles(core, bTask.id)).toBeNull();
     expect(existsSync(path.join(project.path, 'a.txt'))).toBe(true);
   }, 180_000);
 

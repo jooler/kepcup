@@ -11,7 +11,6 @@
   } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
-  import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -21,9 +20,9 @@
   /**
    * 任务卡（D75，docs/design/30-supervisor-and-tasks.md §4.3）：对话轮
    * start_task 时出现，随 `task.updated` 重绘——标题、状态、排队原因、最近
-   * 进度、追加的指令（含之后降级为未送达）、取消按钮；结算后转终态：取消卡
-   * 附改动摘要（项目写任务可整次回退；工作区没有检查点，如实说明不能回退），
+   * 进度、追加的指令（含之后降级为未送达）、取消按钮；结算后转终态，
    * 失败卡可重试（新任务接续它）。结果本身由对话轮转述，不在卡上。
+   * 改动摘要 / diff / 整次回退已退役（磁盘上的代码改动保留）。
    * W3（D78）：中断卡也可重试；中断前留下外部副作用（已完成 / 结果未知）的，
    * 按钮是「检查后重试」，展开台账清单、勾「我已核实」后才能重试。
    */
@@ -41,7 +40,6 @@
       : '',
   );
   let busy = $state(false);
-  let reverted = $state(false);
   let reviewing = $state(false);
 
   function codeOf(error: unknown): string | undefined {
@@ -77,26 +75,6 @@
     }
   }
 
-  async function revert(): Promise<void> {
-    busy = true;
-    try {
-      const result = (await core.call('projects.revert', { runId: taskId, force: false })) as {
-        ok: boolean;
-        conflicts: string[];
-      };
-      if (!result.ok) {
-        toast.error(t('task.revertConflicts', { count: result.conflicts.length }));
-        return;
-      }
-      reverted = true;
-      toast.success(t('changes.reverted'));
-      void tasks.ensure(taskId);
-    } catch (error) {
-      toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 {#if task === null || model === null}
@@ -193,40 +171,6 @@
       <p class="mt-1.5 text-xs text-muted-foreground" data-testid="task-error">{model.errorLine}</p>
     {/if}
 
-    {#if model.changes !== null}
-      <div class="mt-2 rounded-md bg-muted/50 px-2 py-1.5 text-xs" data-testid="task-changes">
-        {#if model.changes.kind === 'project'}
-          {#if model.changes.reverted || reverted}
-            <span data-testid="task-changes-reverted">{t('task.changesReverted')}</span>
-          {:else}
-            <span
-              >{t('task.changesProject', {
-                added: model.changes.added,
-                modified: model.changes.modified,
-                deleted: model.changes.deleted,
-              })}</span
-            >
-          {/if}
-        {:else if model.changes.kind === 'workspace'}
-          <p>{t('task.changesWorkspace')}</p>
-          {#if model.changes.files.length > 0}
-            <p class="mt-1 text-muted-foreground">{t('task.changesWorkspaceFiles')}</p>
-            <ul class="mt-0.5 space-y-0.5" data-testid="task-changes-files">
-              {#each model.changes.files as file (file)}
-                <li><code class="break-all">{file}</code></li>
-              {/each}
-            </ul>
-            {#if model.changes.more > 0}
-              <p class="mt-0.5 text-muted-foreground">
-                {t('task.changesMore', { count: model.changes.more })}
-              </p>
-            {/if}
-          {/if}
-        {:else}
-          <span>{t('task.changesNone')}</span>
-        {/if}
-      </div>
-    {/if}
 
     {#if model.setupHint}
       <p class="mt-1.5 text-xs text-muted-foreground">{t('task.setupHint')}</p>
@@ -237,18 +181,8 @@
       </p>
     {/if}
 
-    {#if model.canCancel || model.canRetry || model.canRevert}
+    {#if model.canCancel || model.canRetry}
       <div class="mt-2 flex justify-end gap-2">
-        {#if model.canRevert && !reverted}
-          <Button
-            size="sm"
-            variant="outline"
-            class="h-7"
-            disabled={busy}
-            onclick={() => void revert()}
-            data-testid="task-revert">{t('changes.revert')}</Button
-          >
-        {/if}
         {#if model.canRetry && model.needsReview}
           <Button
             size="sm"
