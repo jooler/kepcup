@@ -12,6 +12,7 @@ import {
   butlerProposedBotSchema,
   chatModelOptions,
   defaultHandoverKeys,
+  jobTypeSchema,
   memoryEvidenceSchema,
   messageContentSchema,
   rpcEventSchemas,
@@ -182,6 +183,33 @@ describe('decision / RPC / events', () => {
       },
     });
     expect(event.handover.items[0]?.status).toBe('done');
+    // P2 additions default for views pushed without them (older cores / non-copy items).
+    expect(event.handover.items[0]).toMatchObject({ copiedCount: null, skippedPaths: [] });
+    expect(event.handover.retire).toBeNull();
+    expect(
+      rpcEventSchemas['handover.updated'].parse({
+        conversationId: 'conv_1',
+        handover: {
+          ...event.handover,
+          status: 'completed',
+          items: [
+            {
+              key: 'wiki:pages/',
+              assetType: 'wiki',
+              status: 'done',
+              error: null,
+              copiedCount: 3,
+              skippedPaths: ['pages/a.md'],
+            },
+          ],
+          retire: { botId: 'bot_a', botName: 'A' },
+        },
+      }).handover,
+    ).toMatchObject({
+      items: [{ copiedCount: 3, skippedPaths: ['pages/a.md'] }],
+      retire: { botId: 'bot_a', botName: 'A' },
+    });
+    expect(jobTypeSchema.parse('handover_copy')).toBe('handover_copy');
     expect(
       rpcEventSchemas['handover.updated'].safeParse({
         conversationId: 'c',
