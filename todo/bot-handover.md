@@ -181,6 +181,50 @@
 - 另一轮全量复跑（`kh-full3`，协调会话）偶发项换成 `web-tools.test.ts`「web_fetch：二进制内容拒绝…」5 秒超时，单跑 12/12 通过；其余同上，无新增失败。
 - **迁移号**：D87 已先合入 main（4184d87）并占用 0035；合入时已改为 **0036**（`create-core.test` 的 `user_version`、public-skills-migration 注释、dev/03 迁移表已同步）。
 
+### P1（2026-10-13，t/handover-p1）
+
+分支 `t/handover-p1` @ `/home/jyy/wt/kepcup-handover-p1`，从 main（67766ee，含 P0）拉出。实现分两次提交（`0fd0420` 功能、`8ccd7c2` 测试，由前一会话写成但未验证），本次复核、修补并跑完测试（`d87fd89` 修复与补测、`4d0c7e7` e2e）。**无新迁移**（记忆证据形态是 JSON 字段的可选键，监看就地改归属，技能复用既有表）。
+
+**完成项**（§4 全部）：
+
+- 发起权：`inspect_bot_assets` / `propose_handover` 对话轮人人注册（任务仍不注册）；能力包 `collaboration` 把两者从 `butlerTools` 移到 `tools`。普通 Bot 的参数面没有 `to.new_bot`、`bot_id` / `from_bot_id` 可省（= 自己）；**宿主** `HandoverHost.inspect` / `propose` 校验：普通 Bot 只能盘点 / 交出自己的、目标只能是已有 Bot（直接调宿主同样被拒，有测试）。`TURN_PLATFORM_RULES` 加一句（注明管家以 `<butler_rules>` 为准）。
+- `watch` 适配器（stage 4，只能移交）：`WatchService.transferTo` 同一行就地改 `bot_id` / `conversation_id`（CAS），检查状态（`last_hash` / `last_quiet_hash` / `last_text` / `last_matched` / `alert_seq`）与暂停状态原样保留；私聊的改到 B 私聊（同一事务补「已创建」卡），群里的要求 B 是成员；排队中的 `watch_alert` 作业改到 B；B 的监看上限校验；两边浏览器资料不同时卡上提示要重新登录。原对话里的旧卡显示「已移交给 {B}」（上下文行与渲染端）。
+- `skill` 适配器（stage 3，只能复制）：导入的 → B 加一行指向同一 `library_id`（不克隆、不走 `skill_import` 审批，卡上标「外部导入」）；自写的 → 目录复制进 B 的仓库并提交「从 {A} 复制 {name}」+ authored 行；`status` / `status_reason` 照搬；B 有同名私有行 → 置灰；草稿 / 内置 / 公共技能不列；幂等（导入看同一 library，自写看目录哈希）。
+- `memory` 适配器（stage 3，只能复制）：盘点默认只给统计（数量、按 kind 分布、敏感条数），`memory_query`（FTS；`*` = 最近）列候选（≤ `HANDOVER_MEMORY_QUERY_LIMIT` = 50）；`private_to_bot` / `self_note` / 承诺 / 非 active / 已过期在盘点、提议（出现即整张退回并说明原因）、执行（重新校验 → `skipped`）三处过滤；敏感条目标「敏感」、`defaultSelected: false`（卡片初始不勾；决定不带 `handoverSelection` 时 core 也按 `defaultHandoverKeys`，不带敏感项）；B 已有同样内容的置灰。写入 B：新 id，字段照搬，`private_to_bot` = 0，`origin_conversation_id` 置空，`evidence_json` = `[{messageId: null, conversationId: null, runId: null, handoverId, fromBotId, fromItemId}]`（`memoryEvidenceSchema` 增三个可选键），按 `handoverId` + `fromItemId` 幂等；写入后 best-effort `embedItem`（适配器再包一层 try/catch）。交接记录与结果通知里记忆只给条数，不把内容灌回上下文。
+- 承诺随定时任务：承诺联动的定时任务解除置灰（卡上写「连同承诺」）；执行顺序「B 的承诺副本（按来源记录幂等）→ `ScheduleService.transferTo(…, commitmentId = 副本)`（事务）→ `MemoryService.voidCommitment(A)`（发 `memory.commitment_invalidated`）」，每步可重入（`isApplied` 要求 A 的承诺已失效；崩溃在移交与作废之间时 `validate` 放行、`apply` 只补作废）。A 的承诺 `void` 后不进 `<my_state>`、联动任务取消；B 的副本 active、接上重建的任务。
+- 契约：`handoverMarkSchema`（`external_import` / `sensitive`）、卡片条目 `marks` / `defaultSelected`、`defaultHandoverKeys`、`HANDOVER_MEMORY_QUERY_LIMIT`；记忆条目另计上限（`HANDOVER_MEMORY_MAX_ITEMS` = 200，其余条目仍 ≤ 100）。
+- 渲染端：`HandoverCard` 标记徽标、默认勾选按 `defaultHandoverKeys`、条目多时组内滚动、提示语；`WatchCard` 已移交状态（不再给操作）；zh-CN 文案。
+
+**本次复核修补**（`d87fd89`）：
+
+- 平台规则里「你只能交出自己的东西、交给已有 Bot」对管家同样注入（`TURN_PLATFORM_RULES` 人人都有），与 `BUTLER_RULES` 矛盾 → 注明「你是管家时以 `<butler_rules>` 为准」。
+- 记忆 / 承诺副本的 `embed` 由适配器兜底（端口抛错时副本照写、照记账）；原「embed 失败不阻塞」用例其实没有制造失败，改为端口抛错。
+- 补测试：监看移交后同一页面状态不再提醒（A、B 都不），之后的新变化只提醒 B、用 B 的浏览器资料（`TestClock` + 假后台页）；记忆副本没有消息证据、不能支撑画像提议（`checkProfileCandidate` 拒绝）；自写技能停用状态照搬；e2e 普通 Bot 自己盘点（私密记忆不在候选里）并移交记忆与定时任务。
+- P1 新文件与 main 上原本 prettier 干净的文件按 prettier 格式化（main 上本就不干净的文件不动）。
+
+**测试**：
+
+- P1 用例：`core/test/integration/handover-p1.test.ts`（4：普通 Bot 全流程——盘点别人被拒、以别人为来源被拒、`private_to_bot` 出现整张退回、监看 / 技能 / 记忆 / 承诺一张卡完成、敏感默认不勾、B 能 `recall` 到副本、A 的承诺 void 且不在 `<my_state>`、A 无 active 任务；宿主侧直接调用也拒绝新建 / 别人来源 / 盘点别人；勾上敏感记忆 + 崩溃恢复只补剩下的；监看不重复提醒）、`unit/handover-adapters-p1.test.ts`（21）、`unit/handover-skill-copy.test.ts`（5，真实 es-git 仓库）、shared `handover.test.ts`（+2）、`handover.test.ts` / `handover-adapters.test.ts` 按 P1 改写的 2 例；e2e `handover.spec.ts` +1。
+- 定向回归（Docker）：handover 全部 7 个文件 + memory（memory / consolidation / lifecycle / reflection / review-fixes / store / retrieval / validate / my-state / reflection-input / reflection-output）、watch / watches-migration、schedule（integration / service / tools / nudges / scheduler）、butler / butler-team / butler-route、approvals / app-approvals、context-assembly、app-prompt-capabilities、external-agent-engine / p2 / p6、mcp-tools-auth、llm-router、turn-tools-review-fixes、tool-effects（unit / integration）、skills-registry、skill-tools、shared agent-catalog、create-core、public-skills-migration、model-selection-single-source：全绿（39 文件 402 例 + handover 7 文件）。`skills.test` / `skills-authoring.test` 是 es-git 基线失败文件，单跑 3 + 4 条失败与基线一致；P1 的技能测试不在这两个文件里（`handover-skill-copy.test.ts` 用真实 es-git，在容器里通过）。
+- typecheck（shared / core / desktop，svelte-check 0 错误 1 条既有 warning）、改动文件 eslint 通过。
+- 全量（容器 `kh1-full`，提交 `d87fd89`）：4349 例，4300 通过 / 27 失败 / 22 跳过。26 条为既有基线文件（sandbox-isolation 10、skills-authoring 4、skills 3、workspace-tools 3、toolchain-sandbox 2、wiki-url 2、projects 1、environment 1）；另 1 条 `connected-apps-runtime`「listing failure at run start」是已知负载偶发，单跑 13/13 通过。**无新增失败。**
+- e2e 全量（`kepcup-test:trixie-xvfb`，容器 `kh1-e2e-full`，提交 `4d0c7e7`，93 例）：86 通过 / 7 失败，`handover.spec` 两例（P0 + 新增 P1）都通过。失败均为既有基线：`wiki.spec`、`debug-dev-pin`、`external-agents` ×3、`local-connectors`（P0 时已在 main 上核实同样失败）与 `sandbox.spec`「run status line」（文档记录的容器环境基线；本轮单跑仍失败，P0 两轮里一次失败、一次重试通过）。
+
+**偏差（需用户确认）**：
+
+- **DEV-012 承诺不单独复制**：设计 §3.1 只说 `private_to_bot` / `self_note` / 非 active 永不提供；实现把**承诺（commitment）**也排除在记忆条目之外——承诺只随关联的定时任务一起移交（否则 A、B 各有一条、两边都提醒）。后果：**没有到期时间、因此没有联动定时任务的承诺无法移交**（盘点不列、提议退回并说明「跟着关联的定时任务一起移交」）。**推荐**：照此；若要支持，再加「承诺单独移交」（复制给 B + 作废 A，与随任务迁移同一语义），放 P2。
+- **DEV-013 承诺副本的来源对话**：普通记忆副本 `origin_conversation_id` 置空（设计原文）；随定时任务移交的承诺副本改为**重建任务所在的对话**，以便删除对话 / 移出群时照常作废（P07 级联按它查）。**推荐**：照此。
+- **DEV-014 承诺定时任务的置灰条件**：关联承诺已失效（非 active）或 `private_to_bot` 时，该定时任务置灰、不可移交（设计未写）。**推荐**：照此（私密承诺不该出现在 B 那里；已失效的承诺其任务本也会在触发时被取消）。
+- **DEV-015 记忆盘点细节**：`memory_query="*"` 列最近的；候选上限 `HANDOVER_MEMORY_QUERY_LIMIT` = 50（新常量）；已过期（`valid_until` 已过）也永不提供；B 已有一字不差的 active 条目时置灰（「已经记着同样的内容」）；记忆条目与其他条目分开计上限（≤ 200 + ≤ 100）。**推荐**：照此。
+- **DEV-016 监看就地移交**：定时任务是「B 侧重建 + A 侧取消」，监看则是同一行改归属（同一个 id），这样检查状态、提醒序号与排队的提醒作业天然延续；私聊的在 B 私聊补「已创建」卡，A 私聊的旧卡靠「行的对话已不同」显示已移交。群监看留在原群，群里的旧卡不加「已移交」标记（卡上显示的归属 Bot 会变成 B）。暂停状态照搬。移交瞬间正在进行的那次检查因 CAS 冲突作废，下一次用 B 的浏览器资料。**推荐**：照此。
+- **DEV-017 决定不带勾选时的缺省**：P0 是「缺省 = 全部可勾选项」；P1 改为卡上的默认勾选（`defaultHandoverKeys`，敏感记忆不在其中），避免绕过卡片的决定把敏感记忆带过去。渲染端总会带 `handoverSelection`，此改动只影响非卡片路径。**推荐**：照此。
+- **DEV-018 能力包与可省参数**：`collaboration` 包的 `tools` 加入两个移交工具（外部智能体驱动的普通 Bot 选中该包即注入，设计 28 表已同步）；管家的 `bot_id` / `from_bot_id` 也改为可省（= 自己）。**推荐**：照此。
+- **DEV-019 记忆副本的可追溯性只在数据层**：来源记录在 `evidence_json`，但记忆面板（`MemoryTab`）只显示有消息 id 的证据，所以界面上看不出「从 A 复制」；之后 A 侧对原条目的修改 / 撤回不会同步到 B 的副本（独立副本，符合「一律复制」）。副本 `source`（explicit / inferred）照搬，B 的上下文里与普通记忆无异。**推荐**：P1 接受；记忆面板显示「从 {A} 移交复制」作为小的后续项（不阻塞合入）。
+
+**评审时请重点看**：`ScheduleAdapter.apply` / `isApplied` / `validate` 的承诺三步与可重入（尤其 `validate` 在「已移交给 B」时直接放行）；`MemoryService.voidCommitment` 发出的失效事件会取消 A 名下**所有**联动同一承诺的任务（若同一承诺联动了多条任务而只移交其中一条，另一条会被一并取消——正常路径一条承诺只建一条任务，未专门处理）；`WatchService.transferTo` 的事务（行 CAS、`watch_alert` 作业改投、补卡）与渲染端「已移交」判据；`SkillsService.copyForHandover` 在接手方作者仓库锁内覆盖半拷贝目录；`HandoverHost.propose` 的 `refusal` → 整张退回 与 `resolve` 的边界（编造 key vs 永不移交）；`TURN_PLATFORM_RULES` 与 `BUTLER_RULES` 的措辞关系。已知未覆盖：自写技能在 B 侧 git 提交失败时（`authoredGitCommit` 抛错）该项记 `failed`，目录已复制进 B 的仓库但没有 `bot_skills` 行（B 看不到它；同名校验按行，重试会覆盖目录重做），没有专门用例；嵌入模型真实就绪时的向量写入只靠既有 `embedItem` 测试覆盖，P1 测试环境没有嵌入器。
+
+**迁移号**：P1 无迁移（main 最大仍为 D88 的 0036）。
+
 ## 7. 风险
 
 - **用户隔几天才确认**：资产已变化 → 执行前逐项重新校验，不成立的标 `skipped` 并写原因。
