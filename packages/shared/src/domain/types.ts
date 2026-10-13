@@ -8,6 +8,11 @@ import { widgetCardSchema } from './widgets-ui.js';
 import { presentCardSchema } from './present.js';
 import { askUserFieldSchema, askUserModeSchema } from './ask-user.js';
 import { mailProviderSchema } from './mail.js';
+import {
+  settingCardContentSchema,
+  settingCardResolvedSchema,
+  settingValuesSchema,
+} from '../settings-catalog/cards.js';
 
 /**
  * Domain types for P01 (docs/design/03-bot.md Profile, docs/design/01-conversation.md
@@ -913,6 +918,17 @@ export const systemEventContentSchema = z.object({
       decidedAt: z.number().optional(),
     })
     .optional(),
+  /**
+   * 对话内设置卡（event = setting_card，todo/conversational-app-setup.md §6.1）：Bot 用
+   * settings_change 出的卡（含 direct 档的回执卡）；`state` 随用户操作 / 过期 / 被新卡顶替回写，
+   * 写回方式同 schedule_offer。
+   */
+  setting: settingCardContentSchema.optional(),
+  /**
+   * 设置卡落定后唤醒 Bot 的一次性内部事件（event = setting_card_resolved，§6.2）的结构化部分；
+   * 消息本身带 `internal: true`。
+   */
+  settingResolved: settingCardResolvedSchema.optional(),
 });
 export type SystemEventContent = z.infer<typeof systemEventContentSchema>;
 export type ScheduleReceiptSnapshot = NonNullable<SystemEventContent['schedule']>;
@@ -1244,6 +1260,20 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     provider: mailProviderSchema.optional(),
     /** 给用户看的简短原因。 */
     reason: z.string().optional(),
+  }),
+  /**
+   * 通用设置项（todo/conversational-app-setup.md §6.2）：任务里 `settings_change` 带
+   * `required: true` 且需要用户处理时携带；`SetupRequiredCard` 复用 `SettingCard` 按目录条目
+   * 分发，完成后经 `runs.retry` 续跑。以后加设置项不再改这个契约（原有 7 个 kind 到 P2 再收拢）。
+   */
+  z.object({
+    kind: z.literal('setting'),
+    /** 设置目录条目 id（`SETTING_ITEMS`）。 */
+    itemId: z.string(),
+    /** Bot 给的非敏感预填值（宿主按 `effectiveMode.acceptValues` 过滤后才写入）。 */
+    prefill: settingValuesSchema.optional(),
+    /** 给用户看的一句话原因。 */
+    reason: z.string(),
   }),
 ]);
 export type SetupRequirement = z.infer<typeof setupRequirementSchema>;

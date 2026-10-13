@@ -45,6 +45,7 @@ describe('host capability packs', () => {
       'skills',
       'host_ops',
       'mail',
+      'settings',
     ]) {
       expect(category[id]).toBe('host');
     }

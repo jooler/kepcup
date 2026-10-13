@@ -321,6 +321,17 @@ export const handoverUpdatedPayloadSchema = z.object({
   handover: handoverViewSchema,
 });
 
+/**
+ * 设置变化（todo/conversational-app-setup.md §4.1「广播」）：目录条目被写入后发出——
+ * `settings.items.apply`、Bot 的 direct 修改、撤销，以及设置页原有的保存路径（core 按
+ * `itemIdsForSettingsPaths` 等映射补发）。渲染层的 `settingsStore`、打开着的设置弹框与 link 卡
+ * 据此刷新 / 把自己标成 applied。`itemIds` 是设置目录条目 id，非空。
+ */
+export const settingsChangedPayloadSchema = z.object({
+  itemIds: z.array(z.string()).min(1),
+});
+export type SettingsChangedPayload = z.infer<typeof settingsChangedPayloadSchema>;
+
 export const rpcEventSchemas = {
   'core.status': coreStatusPayloadSchema,
   'message.created': messageCreatedPayloadSchema,
@@ -359,6 +370,8 @@ export const rpcEventSchemas = {
   'watch.updated': watchUpdatedPayloadSchema,
   'mail.account_updated': mailAccountUpdatedPayloadSchema,
   'handover.updated': handoverUpdatedPayloadSchema,
+  /** 设置目录条目被写入（§4.1）。 */
+  'settings.changed': settingsChangedPayloadSchema,
   'app.notice': appNoticePayloadSchema,
   /** 外部智能体（D72）本机状态变化：安装进度、登录输出、启停。 */
   'agent.status': agentStatusPayloadSchema,

@@ -5015,6 +5015,8 @@ function setupRequirementErrorText(requirement: SetupRequirement): string {
           : '应用尚未连接：请先在设置中连接该应用';
     case 'mail-account':
       return '需要添加邮箱：请在对话里的设置卡完成添加，完成后会自动继续';
+    case 'setting':
+      return `需要完成一项设置：${requirement.reason}（请在对话里的设置卡完成，完成后会自动继续）`;
   }
 }
 

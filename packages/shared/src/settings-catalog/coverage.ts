@@ -1,0 +1,237 @@
+import { SETTING_ITEMS } from './items.js';
+import { CARD_KEYS, type CardKey, type SettingItem } from './types.js';
+
+/**
+ * 覆盖率约束（todo/conversational-app-setup.md §4.3）：设置界面上的每个位置都要对应至少一个
+ * 目录条目，或在这里的排除表写明理由；每个条目的深链都要落在真实存在的锚点上；每个
+ * `card !== null` 的条目在渲染层映射里都要有组件。
+ *
+ * 这里只放纯函数与数据：扫描 Svelte 源码（fs）的部分在测试里（shared 单测扫一遍，
+ * desktop 可用 `import.meta.glob` 自己扫后调用同一套函数）。
+ */
+
+/** 界面位置的种类。`action` 不对应扫描结果，只用来登记「删除类动作不入目录」的理由。 */
+export type SettingsUiLocationKind =
+  'settings-section' | 'anchor' | 'extension-tab' | 'bot-panel-tab' | 'action';
+
+export interface ExcludedSettingLocation {
+  kind: SettingsUiLocationKind;
+  /** 分区 / 锚点 / 页签 id；动态锚点写成「前缀*」；action 写对应 RPC 方法名。 */
+  id: string;
+  reason: string;
+}
+
+/**
+ * 显式排除表（§4.2「明确不纳入」、§九）：删除类、破坏性动作沿用原有入口和二次确认，
+ * 不是「设置」；纯数据 / 产出物的页签也不是设置。
+ */
+export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
+  {
+    kind: 'anchor',
+    id: 'agent-*',
+    reason: 'AgentCard 按智能体生成的动态锚点；由 agents.external 经分区锚点 agents 覆盖',
+  },
+  {
+    kind: 'settings-section',
+    id: 'contacts',
+    reason:
+      '通讯录：新建 / 删除 Bot 是对象管理而非设置（删除类不入目录）；单个 Bot 的配置由 bot.* 条目覆盖',
+  },
+  {
+    kind: 'bot-panel-tab',
+    id: 'memory',
+    reason: '记忆条目是 Bot 的数据，不是设置；改写走 remember / forget',
+  },
+  { kind: 'bot-panel-tab', id: 'widgets', reason: 'Bot 自制组件是产出物，不是设置' },
+  {
+    kind: 'bot-panel-tab',
+    id: 'wiki',
+    reason: '知识库内容是 Bot 的数据，不是设置；收录走 wiki_enqueue',
+  },
+  { kind: 'bot-panel-tab', id: 'other', reason: '「其它」只有移除 Bot：删除类破坏性动作（§九）' },
+  { kind: 'action', id: 'bots.delete', reason: '删除 Bot：破坏性动作，沿用原入口与二次确认' },
+  { kind: 'action', id: 'conversations.delete', reason: '删除会话：破坏性动作' },
+  { kind: 'action', id: 'browserProfiles.delete', reason: '删除浏览器资料：破坏性动作' },
+  { kind: 'action', id: 'browserProfiles.clear', reason: '清空浏览器资料（登录状态）：破坏性动作' },
+  { kind: 'action', id: 'apps.disconnect', reason: '断开连接：破坏性动作' },
+  { kind: 'action', id: 'mail.accounts.delete', reason: '删除邮箱：破坏性动作' },
+  { kind: 'action', id: 'mcp.removeServer', reason: '删除 MCP 服务：破坏性动作' },
+  { kind: 'action', id: 'skills.uninstall', reason: '卸载技能：破坏性动作' },
+  { kind: 'action', id: 'environment.remove', reason: '删除工具链：破坏性动作' },
+  { kind: 'action', id: 'wiki.deletePage', reason: '删除知识库页面：破坏性动作' },
+  {
+    kind: 'action',
+    id: 'grants.revoke',
+    reason: '撤销目录授权：在 Bot「访问」页签逐条撤销，不经对话',
+  },
+  { kind: 'action', id: 'projects.remove', reason: '移除项目：破坏性动作（项目设置对话框内）' },
+  { kind: 'action', id: 'groups.delete', reason: '解散群：破坏性动作（群设置对话框内）' },
+  {
+    kind: 'action',
+    id: 'profile.retract',
+    reason: '删除用户画像条目：破坏性动作；改写走设置页「用户画像」',
+  },
+];
+
+/**
+ * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
+ * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。Bot 面板、群设置、项目设置对话框
+ * 目前没有任何 `data-settings-anchor`（§4.3「给它们补上锚点」）。
+ */
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
+  'bot-model',
+  'bot-browser-profile',
+  'bot-network',
+  'bot-mcp',
+  'bot-apps',
+  'bot-agent',
+  'bot-identity',
+  'group-title',
+  'group-members',
+  'project-protect',
+  'project-ports',
+];
+
+/** 对话框类深链的固定 section 名。 */
+export const DIALOG_SURFACE_SECTIONS = {
+  'group-dialog': 'group-settings',
+  'project-dialog': 'project-settings',
+} as const;
+
+/** 从渲染层源码扫出来的界面位置。 */
+export interface SettingsUiScan {
+  /** 设置弹框分区（`data-settings-section`）。 */
+  settingsSections: readonly string[];
+  /** 全部 `data-settings-anchor`；模板串里的动态锚点记成「静态前缀*」（`agent-*`）。 */
+  anchors: readonly string[];
+  /** 能判定所在分区的锚点 → 分区（SettingsSectionView 里直接包在分区下的）。 */
+  anchorSections: Readonly<Record<string, string>>;
+  /** 扩展中心页签（`EXTENSION_CENTER_TABS`）。 */
+  extensionCenterTabs: readonly string[];
+  /** Bot 详情右栏页签（RightPanel 的 `tabItems`）。 */
+  botPanelTabs: readonly string[];
+}
+
+function excluded(
+  list: readonly ExcludedSettingLocation[],
+  kind: SettingsUiLocationKind,
+  id: string,
+): boolean {
+  return list.some(
+    (entry) =>
+      entry.kind === kind &&
+      (entry.id === id || (entry.id.endsWith('*') && id.startsWith(entry.id.slice(0, -1)))),
+  );
+}
+
+/**
+ * 覆盖率与深链检查（§4.3 测试一、测试二的深链部分）。返回问题清单，空 = 通过：
+ * - 每个设置分区 / 锚点 / 扩展中心页签 / Bot 面板页签都有条目或排除理由；
+ * - 每个条目的深链：section 存在于对应界面，anchor 存在（或登记在 `pending`），
+ *   能判定分区的锚点要与 section 一致；
+ * - `pending` 里的锚点不能已经存在（加了就删掉登记），排除表不能指向已不存在的位置。
+ */
+export function settingsCoverageProblems(
+  scan: SettingsUiScan,
+  options: {
+    items?: readonly SettingItem[];
+    excludedLocations?: readonly ExcludedSettingLocation[];
+    pendingAnchors?: readonly string[];
+  } = {},
+): string[] {
+  const items = options.items ?? SETTING_ITEMS;
+  const exclusions = options.excludedLocations ?? EXCLUDED_SETTING_LOCATIONS;
+  const pending = new Set(options.pendingAnchors ?? PENDING_DESKTOP_ANCHORS);
+  const anchors = new Set(scan.anchors);
+  const problems: string[] = [];
+
+  const linked = (surface: string, section: string) =>
+    items.some((entry) => entry.deepLink.surface === surface && entry.deepLink.section === section);
+  for (const section of scan.settingsSections) {
+    if (!linked('settings', section) && !excluded(exclusions, 'settings-section', section)) {
+      problems.push(`设置分区 ${section} 没有目录条目，也不在排除表里`);
+    }
+  }
+  for (const anchor of scan.anchors) {
+    const covered = items.some((entry) => entry.deepLink.anchor === anchor);
+    if (!covered && !excluded(exclusions, 'anchor', anchor)) {
+      problems.push(`锚点 ${anchor} 没有目录条目，也不在排除表里`);
+    }
+  }
+  for (const tab of scan.extensionCenterTabs) {
+    if (!linked('extension-center', tab) && !excluded(exclusions, 'extension-tab', tab)) {
+      problems.push(`扩展中心页签 ${tab} 没有目录条目，也不在排除表里`);
+    }
+  }
+  for (const tab of scan.botPanelTabs) {
+    if (!linked('bot-panel', tab) && !excluded(exclusions, 'bot-panel-tab', tab)) {
+      problems.push(`Bot 面板页签 ${tab} 没有目录条目，也不在排除表里`);
+    }
+  }
+
+  for (const entry of items) {
+    const { surface, section, anchor } = entry.deepLink;
+    const sections: readonly string[] =
+      surface === 'settings'
+        ? scan.settingsSections
+        : surface === 'extension-center'
+          ? scan.extensionCenterTabs
+          : surface === 'bot-panel'
+            ? scan.botPanelTabs
+            : [DIALOG_SURFACE_SECTIONS[surface]];
+    if (!sections.includes(section)) {
+      problems.push(`${entry.id}：深链 ${surface}/${section} 的 section 不存在`);
+    }
+    if (anchor === undefined) continue;
+    if (!anchors.has(anchor) && !pending.has(anchor)) {
+      problems.push(`${entry.id}：深链锚点 ${anchor} 不存在（也未登记为待补锚点）`);
+    }
+    const anchorSection = scan.anchorSections[anchor];
+    if (surface === 'settings' && anchorSection !== undefined && anchorSection !== section) {
+      problems.push(`${entry.id}：锚点 ${anchor} 在分区 ${anchorSection}，深链却写 ${section}`);
+    }
+  }
+
+  for (const anchor of pending) {
+    if (anchors.has(anchor))
+      problems.push(`待补锚点 ${anchor} 已存在：从 PENDING_DESKTOP_ANCHORS 删掉`);
+  }
+  for (const entry of exclusions) {
+    const present =
+      entry.kind === 'settings-section'
+        ? scan.settingsSections.includes(entry.id)
+        : entry.kind === 'extension-tab'
+          ? scan.extensionCenterTabs.includes(entry.id)
+          : entry.kind === 'bot-panel-tab'
+            ? scan.botPanelTabs.includes(entry.id)
+            : entry.kind === 'anchor'
+              ? scan.anchors.some((anchor) => excluded([entry], 'anchor', anchor))
+              : true;
+    if (!present) problems.push(`排除表的 ${entry.kind} ${entry.id} 在界面上已不存在`);
+  }
+  return problems;
+}
+
+/**
+ * 渲染层组件映射检查（§4.3 测试二的组件部分，desktop 车道在自己的测试里调用）：
+ * `componentKeys` = `CardKey → Svelte 组件` 映射的键。返回问题清单，空 = 通过：
+ * 条目用到的卡片键都有组件；映射里没有目录不认识的键。
+ */
+export function cardComponentProblems(
+  componentKeys: Iterable<string>,
+  items: readonly SettingItem[] = SETTING_ITEMS,
+): string[] {
+  const mapped = new Set(componentKeys);
+  const problems: string[] = [];
+  const used = new Set<CardKey>();
+  for (const entry of items) if (entry.card !== null) used.add(entry.card);
+  for (const key of used) {
+    if (!mapped.has(key)) problems.push(`卡片键 ${key} 在渲染层映射里没有组件`);
+  }
+  for (const key of mapped) {
+    if (!(CARD_KEYS as readonly string[]).includes(key)) {
+      problems.push(`渲染层映射里的 ${key} 不是 CARD_KEYS 里的卡片键`);
+    }
+  }
+  return problems;
+}

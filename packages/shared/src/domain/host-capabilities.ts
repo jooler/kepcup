@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  SETTINGS_CHANGE_TOOL,
+  SETTINGS_READ_TOOL,
+  SETTINGS_SEARCH_TOOL,
+} from '../settings-catalog/cards.js';
 
 /**
  * 宿主能力包登记表（docs/design/28-external-agents-acp.md §4.1，D72）。
@@ -26,6 +31,7 @@ export const hostCapabilityIdSchema = z.enum([
   'mcp',
   'apps',
   'mail',
+  'settings',
 ]);
 export type HostCapabilityId = z.infer<typeof hostCapabilityIdSchema>;
 
@@ -62,6 +68,20 @@ export type HostCapabilityPrerequisite =
   | { kind: 'web-search' }
   | { kind: 'capability-model'; capability: 'image' | 'multimodal' | 'tts' | 'asr' | 'video' };
 
+/**
+ * 包内的单独开关（按 Bot 在能力包选项里开启）：选项 id 与包 id 一起存在 Bot 的
+ * `runtime.agent.capabilities` 里（`包id:名字`，`resolveCapabilities` 只认包 id，不受影响）；
+ * 选项未开时，`tools` 里的工具即使所属包已选中也不注入（`isHostToolInjected`）。
+ */
+export interface HostCapabilityOptIn {
+  /** 选项 id，形如 `settings:change`。 */
+  id: string;
+  /** 选项开启才注入的工具（仍列在所属包的 `tools` 里，归包不变）。 */
+  tools: readonly string[];
+  /** 界面文案 key（名称 `{i18nKey}.name`、说明 `{i18nKey}.description`）。 */
+  i18nKey: string;
+}
+
 export interface HostCapabilityDescriptor {
   id: HostCapabilityId;
   category: HostCapabilityCategory;
@@ -75,6 +95,8 @@ export interface HostCapabilityDescriptor {
   /** 与 Agent 原生能力的重叠键；null = 无重叠（宿主语义类）。 */
   overlapsNative: NativeCapabilityKey | null;
   prerequisite: HostCapabilityPrerequisite | null;
+  /** 包内默认不注入、按 Bot 单独开启的工具组；空 = 包内工具随包注入。 */
+  optIns: readonly HostCapabilityOptIn[];
   /** 界面文案 key（名称 `{i18nKey}.name`、说明 `{i18nKey}.description`）。 */
   i18nKey: string;
 }
@@ -89,6 +111,7 @@ function pack(
     butlerTools: [],
     overlapsNative: null,
     prerequisite: null,
+    optIns: [],
     ...input,
     i18nKey: `agents.capabilities.${input.id}`,
   };
@@ -230,6 +253,22 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     default: 'inject',
     tools: ['mail_list', 'mail_read', 'mail_search', 'mail_send', 'mail_accounts', 'mail_request_setup'],
   }),
+  // 对话内应用设置（todo/conversational-app-setup.md §5.3 第 7 条，已定）：默认只注入
+  // settings_search / settings_read；settings_change 按 Bot 在能力包选项里单独开启
+  // （`settings:change`），开启后同样受宿主档位裁定约束。
+  pack({
+    id: 'settings',
+    category: 'host',
+    default: 'inject',
+    tools: [SETTINGS_SEARCH_TOOL, SETTINGS_READ_TOOL, SETTINGS_CHANGE_TOOL],
+    optIns: [
+      {
+        id: 'settings:change',
+        tools: [SETTINGS_CHANGE_TOOL],
+        i18nKey: 'agents.capabilities.settings.change',
+      },
+    ],
+  }),
 ];
 
 /**
@@ -306,6 +345,48 @@ export function resolveCapabilities(
   return HOST_CAPABILITIES.filter((capability) => chosen.has(capability.id)).map(
     (capability) => capability.id,
   );
+}
+
+/** 全部包内选项（登记表顺序）。 */
+export const HOST_CAPABILITY_OPT_INS: readonly HostCapabilityOptIn[] = HOST_CAPABILITIES.flatMap(
+  (capability) => capability.optIns,
+);
+
+/** 工具所属的包内选项；不受选项控制（随包注入）返回 null。 */
+export function optInOfTool(toolName: string): HostCapabilityOptIn | null {
+  return HOST_CAPABILITY_OPT_INS.find((optIn) => optIn.tools.includes(toolName)) ?? null;
+}
+
+/**
+ * 一个 Bot 开启的包内选项：`selected`（Bot 的 `runtime.agent.capabilities`）里认得的选项 id，
+ * 且所属包在 `capabilities`（`resolveCapabilities` 的结果）里。`selected` 为 null（跟随默认）
+ * = 一个都不开——选项都是默认关闭的。纯函数，结果按登记表顺序。
+ */
+export function resolveCapabilityOptIns(
+  selected: readonly string[] | null,
+  capabilities: readonly HostCapabilityId[],
+): string[] {
+  if (selected === null) return [];
+  const chosen = new Set(selected);
+  return HOST_CAPABILITIES.filter((capability) => capabilities.includes(capability.id)).flatMap(
+    (capability) =>
+      capability.optIns.filter((optIn) => chosen.has(optIn.id)).map((optIn) => optIn.id),
+  );
+}
+
+/**
+ * 外部 Agent 下某个宿主工具是否注入：所属包已选中，且（不受选项控制，或其选项已开启）。
+ * 不属于任何包的工具返回 false（`NEVER_INJECTED_TOOLS` 由调用方另行排除）。
+ */
+export function isHostToolInjected(
+  toolName: string,
+  capabilities: readonly HostCapabilityId[],
+  optIns: readonly string[],
+): boolean {
+  const capability = capabilityOfTool(toolName);
+  if (capability === null || !capabilities.includes(capability.id)) return false;
+  const optIn = optInOfTool(toolName);
+  return optIn === null || optIns.includes(optIn.id);
 }
 
 /**
