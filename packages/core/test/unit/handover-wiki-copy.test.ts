@@ -266,9 +266,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
         dedupeKey: 'wiki_lint:bot_b:handover',
       }),
     ]);
-    expect(existsSync(path.join(rig.paths.home, 'bots/bot_b/wiki-handover-staging/hnd_1'))).toBe(
-      false,
-    );
+    expect(existsSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_1'))).toBe(false);
 
     // Re-run (a retried job): same result, no new commit, no second log line.
     const headBefore = (await headSummary(b)).oid;
@@ -297,11 +295,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
     // The previous attempt died after renaming one page into place (uncommitted) and
     // left a half-filled staging directory behind.
     write(b, 'pages/deploy.md', readFileSync(path.join(a, 'pages/deploy.md')));
-    write(
-      path.join(rig.paths.home, 'bots/bot_b/wiki-handover-staging/hnd_2/wiki'),
-      'pages/junk.md',
-      'junk',
-    );
+    write(path.join(rig.paths.cacheDir, 'handover-staging/hnd_2/wiki'), 'pages/junk.md', 'junk');
 
     const outcome = await rig.wiki.copyForHandover({
       fromBotId: 'bot_a',
@@ -346,9 +340,74 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
         pages: ['pages/deploy.md'],
       }),
     ).rejects.toThrow('接手方');
-    expect(existsSync(path.join(rig.paths.home, 'bots/bot_b/wiki-handover-staging/hnd_4'))).toBe(
-      false,
+    expect(existsSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_4'))).toBe(false);
+  });
+
+  it('review fixes: a skipped page brings no originals; a symlinked store is not followed; a failed commit takes back what it placed', async () => {
+    const rig = makeRig();
+    await seedSource(rig);
+    await seedTarget(rig);
+    const a = botWikiRoot(rig.paths, 'bot_a');
+    const b = botWikiRoot(rig.paths, 'bot_b');
+    // pages/shared.md (conflict) now references its own original: it must not be placed.
+    write(
+      a,
+      'pages/shared.md',
+      '# 共享页\n\n见 [私有原件](../raw/20261009-dddddddddddd-only-shared.md)。\n',
     );
+    write(a, 'raw/20261009-dddddddddddd-only-shared.md', '只有 shared 引用的原件');
+    const skipped = await rig.wiki.copyForHandover({
+      fromBotId: 'bot_a',
+      toBotId: 'bot_b',
+      fromName: '阿尔法',
+      handoverId: 'hnd_6',
+      pages: ['pages/shared.md', 'pages/topic/rollback.md'],
+    });
+    expect(skipped.conflicts).toEqual(['pages/shared.md']);
+    expect(existsSync(path.join(b, 'raw/20261009-dddddddddddd-only-shared.md'))).toBe(false);
+    expect(existsSync(path.join(b, 'raw/20261002-bbbbbbbbbbbb-rules.md'))).toBe(true);
+
+    // A symlinked asset directory in the source store is never followed.
+    const outside = path.join(dir, `outside-${Math.random().toString(36).slice(2, 8)}`);
+    write(outside, 'secret.txt', 'host file');
+    const storeA = botWikiStoreRoot(rig.paths, 'bot_a');
+    const { symlinkSync } = await import('node:fs');
+    symlinkSync(outside, path.join(storeA, 'ast_linked'));
+    write(a, 'pages/linked.md', '# 链接\n\n[x](../raw/_assets/ast_linked.json)\n');
+    const linked = await rig.wiki.copyForHandover({
+      fromBotId: 'bot_a',
+      toBotId: 'bot_b',
+      fromName: '阿尔法',
+      handoverId: 'hnd_7',
+      pages: ['pages/linked.md'],
+    });
+    expect(linked.copied).toEqual(['pages/linked.md']);
+    expect(existsSync(path.join(botWikiStoreRoot(rig.paths, 'bot_b'), 'ast_linked'))).toBe(false);
+
+    // The target's repository is broken: the commit throws → placed files are removed and
+    // log.md is restored (nothing uncommitted left behind); the error propagates.
+    const c = await (async () => {
+      const r = makeRig();
+      await seedSource(r);
+      const root = botWikiRoot(r.paths, 'bot_b');
+      write(root, 'SCHEMA.md', '# x');
+      write(root, 'log.md', '# 变更日志\n');
+      mkdirSync(path.join(root, '.git'), { recursive: true });
+      return { r, root };
+    })();
+    await expect(
+      c.r.wiki.copyForHandover({
+        fromBotId: 'bot_a',
+        toBotId: 'bot_b',
+        fromName: '阿尔法',
+        handoverId: 'hnd_8',
+        pages: ['pages/deploy.md'],
+      }),
+    ).rejects.toThrow();
+    expect(existsSync(path.join(c.root, 'pages/deploy.md'))).toBe(false);
+    expect(existsSync(path.join(c.root, 'raw/20261001-abcdef123456-spec.md'))).toBe(false);
+    expect(readFileSync(path.join(c.root, 'log.md'), 'utf8')).toBe('# 变更日志\n');
+    expect(existsSync(path.join(c.r.paths.cacheDir, 'handover-staging/hnd_8'))).toBe(false);
   });
 
   it('page paths outside pages/ or escaping the root are never read', async () => {

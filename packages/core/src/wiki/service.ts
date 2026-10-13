@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -81,6 +82,15 @@ export interface ConversationsFacade {
 }
 
 /** Result of {@link WikiService.copyForHandover}. */
+/** A directory that is not a symlink (the copy never follows links out of the store). */
+function isRealDirectory(dir: string): boolean {
+  try {
+    return lstatSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export interface WikiCopyOutcome {
   /** Pages now present in the target with the source's bytes (written now, or already). */
   copied: string[];
@@ -420,7 +430,11 @@ export class WikiService {
    * (an earlier copy / resumed run) or a different page at the same path (never
    * overwritten).
    */
-  pageConflict(fromBotId: string, toBotId: string, pagePath: string): 'absent' | 'same' | 'different' {
+  pageConflict(
+    fromBotId: string,
+    toBotId: string,
+    pagePath: string,
+  ): 'absent' | 'same' | 'different' {
     if (!isWikiPagePath(pagePath)) return 'different';
     const dest = resolveInside(this.wikiRoot(toBotId), pagePath);
     if (dest === null) return 'different';
@@ -464,7 +478,9 @@ export class WikiService {
     }
     const fromRoot = this.wikiRoot(fromBotId);
     const toRoot = this.wikiRoot(toBotId);
-    const staging = path.join(this.#paths.home, 'bots', toBotId, 'wiki-handover-staging', handoverId);
+    // Private to this handover, under the app cache (same filesystem as bots/ for renames
+    // and hard links; never inside a bot directory a concurrent deletion could be removing).
+    const staging = path.join(this.#paths.cacheDir, 'handover-staging', handoverId);
     const stagedWiki = path.join(staging, 'wiki');
     const stagedStore = path.join(staging, 'store');
     try {
@@ -474,17 +490,66 @@ export class WikiService {
         mkdirSync(stagedWiki, { recursive: true });
         const pages: string[] = [];
         const missing: string[] = [];
-        const files: string[] = [];
-        const storeFiles: string[] = [];
-        const assets = new Set<string>();
-        const refs: WikiPageReferences = { rawFiles: new Set(), assetIds: new Set() };
+        /** Per page: the staged wiki files (raw / manifests / derived) and store files it references. */
+        const refsOf = new Map<
+          string,
+          { files: string[]; storeFiles: string[]; assets: string[] }
+        >();
+        const stagedFiles = new Map<string, boolean>();
         const stageWikiFile = (rel: string): boolean => {
-          if (files.includes(rel)) return true;
+          const known = stagedFiles.get(rel);
+          if (known !== undefined) return known;
           const src = resolveInside(fromRoot, rel);
-          if (src === null || !existsSync(src) || !statSync(src).isFile()) return false;
-          copyFile(src, path.join(stagedWiki, rel));
-          files.push(rel);
-          return true;
+          const ok = src !== null && existsSync(src) && statSync(src).isFile();
+          if (ok) copyFile(src, path.join(stagedWiki, rel));
+          stagedFiles.set(rel, ok);
+          return ok;
+        };
+        const assetFiles = new Map<string, { files: string[]; storeFiles: string[] } | null>();
+        const storeRoot = botWikiStoreRoot(this.#paths, fromBotId);
+        /** Stages one D85 asset once; null = nothing of it exists. */
+        const stageAsset = (id: string): { files: string[]; storeFiles: string[] } | null => {
+          if (assetFiles.has(id)) return assetFiles.get(id)!;
+          const files: string[] = [];
+          const add = (rel: string): void => {
+            if (stageWikiFile(rel) && !files.includes(rel)) files.push(rel);
+          };
+          add(`raw/_assets/${id}.json`);
+          // Text originals of `storage: "git"` assets and the readable layers.
+          try {
+            const manifest = JSON.parse(
+              readFileSync(path.join(stagedWiki, `raw/_assets/${id}.json`), 'utf8'),
+            ) as { rawRelPath?: unknown; readable?: unknown };
+            const candidates = [
+              manifest.rawRelPath,
+              ...(Array.isArray(manifest.readable) ? manifest.readable : []),
+            ];
+            for (const candidate of candidates) {
+              if (typeof candidate === 'string' && candidate.startsWith('raw/')) add(candidate);
+            }
+          } catch {
+            // no / unreadable manifest: the derived dir and the store still go along
+          }
+          const derived = resolveInside(fromRoot, `raw/_derived/${id}`);
+          if (derived !== null && existsSync(derived) && statSync(derived).isDirectory()) {
+            for (const rel of listFilesRecursive(derived)) add(`raw/_derived/${id}/${rel}`);
+          }
+          const storeFiles: string[] = [];
+          const storeDir = path.join(storeRoot, id);
+          // Real directories only: a symlinked store root / asset dir is never followed.
+          if (isRealDirectory(storeRoot) && isRealDirectory(storeDir)) {
+            for (const rel of listFilesRecursive(storeDir, ['staging'])) {
+              const from = path.join(storeDir, rel);
+              const to = path.join(stagedStore, id, rel);
+              // The live status file is rewritten in place by D85: never share its inode.
+              if (rel === 'state.json') copyFile(from, to);
+              else linkOrCopy(from, to);
+              storeFiles.push(`${id}/${rel}`);
+            }
+          }
+          const staged = files.length > 0 || storeFiles.length > 0 ? { files, storeFiles } : null;
+          assetFiles.set(id, staged);
+          return staged;
         };
         for (const rel of [...new Set(input.pages)]) {
           const src = isWikiPagePath(rel) ? resolveInside(fromRoot, rel) : null;
@@ -496,47 +561,20 @@ export class WikiService {
           mkdirSync(path.dirname(path.join(stagedWiki, rel)), { recursive: true });
           writeFileSync(path.join(stagedWiki, rel), bytes);
           pages.push(rel);
+          const refs: WikiPageReferences = { rawFiles: new Set(), assetIds: new Set() };
           pageReferences(rel, bytes.toString('utf8'), refs);
+          const own = { files: [] as string[], storeFiles: [] as string[], assets: [] as string[] };
+          for (const raw of refs.rawFiles) if (stageWikiFile(raw)) own.files.push(raw);
+          for (const id of refs.assetIds) {
+            const asset = stageAsset(id);
+            if (asset === null) continue;
+            own.files.push(...asset.files);
+            own.storeFiles.push(...asset.storeFiles);
+            own.assets.push(id);
+          }
+          refsOf.set(rel, own);
         }
-        for (const rel of refs.rawFiles) stageWikiFile(rel);
-        for (const id of refs.assetIds) {
-          let found = stageWikiFile(`raw/_assets/${id}.json`);
-          // Text originals of `storage: "git"` assets and the readable layers.
-          try {
-            const manifest = JSON.parse(
-              readFileSync(path.join(stagedWiki, `raw/_assets/${id}.json`), 'utf8'),
-            ) as { rawRelPath?: unknown; readable?: unknown };
-            const candidates = [
-              manifest.rawRelPath,
-              ...(Array.isArray(manifest.readable) ? manifest.readable : []),
-            ];
-            for (const candidate of candidates) {
-              if (typeof candidate === 'string' && candidate.startsWith('raw/')) {
-                stageWikiFile(candidate);
-              }
-            }
-          } catch {
-            // no / unreadable manifest: the derived dir and the store still go along
-          }
-          const derived = resolveInside(fromRoot, `raw/_derived/${id}`);
-          if (derived !== null && existsSync(derived) && statSync(derived).isDirectory()) {
-            for (const rel of listFilesRecursive(derived)) {
-              found = stageWikiFile(`raw/_derived/${id}/${rel}`) || found;
-            }
-          }
-          const storeDir = path.join(botWikiStoreRoot(this.#paths, fromBotId), id);
-          for (const rel of listFilesRecursive(storeDir, ['staging'])) {
-            const from = path.join(storeDir, rel);
-            const to = path.join(stagedStore, id, rel);
-            // The live status file is rewritten in place by D85: never share its inode.
-            if (rel === 'state.json') copyFile(from, to);
-            else linkOrCopy(from, to);
-            storeFiles.push(`${id}/${rel}`);
-            found = true;
-          }
-          if (found) assets.add(id);
-        }
-        return { pages, missing, files, storeFiles, assets: assets.size };
+        return { pages, missing, refsOf };
       });
 
       // Phase 2 — place under the target lock.
@@ -545,79 +583,126 @@ export class WikiService {
         if (bot === null || bot.status !== 'active') {
           throw new AppError('NOT_FOUND', '接手方 Bot 已被删除');
         }
-        if (snapshot.pages.length === 0) {
-          return {
-            copied: [],
-            conflicts: [],
-            missing: snapshot.missing,
-            rawFiles: 0,
-            rawConflicts: [],
-            assets: 0,
-            bytes: 0,
-            commit: null,
-          };
-        }
+        const empty: WikiCopyOutcome = {
+          copied: [],
+          conflicts: [],
+          missing: snapshot.missing,
+          rawFiles: 0,
+          rawConflicts: [],
+          assets: 0,
+          bytes: 0,
+          commit: null,
+        };
+        if (snapshot.pages.length === 0) return empty;
         await initWiki(this.#paths, toBotId, this.#deps.logger);
+        const logPath = path.join(toRoot, 'log.md');
+        const logBefore = existsSync(logPath) ? readFileSync(logPath, 'utf8') : null;
+        /** Files this run renamed into the target (rolled back if the commit never lands). */
+        const placed: string[] = [];
         /** Moves a staged file into place unless the target already has the path. */
         const place = (staged: string, dest: string | null): 'placed' | 'same' | 'conflict' => {
           if (dest === null) return 'conflict';
           if (existsSync(dest)) return sameFileContent(staged, dest) ? 'same' : 'conflict';
           mkdirSync(path.dirname(dest), { recursive: true });
           renameSync(staged, dest);
+          placed.push(dest);
           return 'placed';
         };
         const copied: string[] = [];
         const conflicts: string[] = [];
-        let bytes = 0;
-        for (const rel of snapshot.pages) {
-          const staged = path.join(stagedWiki, rel);
-          const size = statSync(staged).size;
-          const outcome = place(staged, resolveInside(toRoot, rel));
-          if (outcome === 'conflict') {
-            conflicts.push(rel);
-          } else {
-            copied.push(rel);
-            bytes += size;
-          }
-        }
         const rawConflicts: string[] = [];
+        const assets = new Set<string>();
         let rawFiles = 0;
-        if (copied.length > 0) {
-          for (const rel of snapshot.files) {
-            const outcome = place(path.join(stagedWiki, rel), resolveInside(toRoot, rel));
-            if (outcome === 'conflict') rawConflicts.push(rel);
+        let bytes = 0;
+        let commit: string | null = null;
+        try {
+          for (const rel of snapshot.pages) {
+            const staged = path.join(stagedWiki, rel);
+            const size = statSync(staged).size;
+            if (place(staged, resolveInside(toRoot, rel)) === 'conflict') {
+              conflicts.push(rel);
+            } else {
+              copied.push(rel);
+              bytes += size;
+            }
+          }
+          // Only what the copied pages reference (a skipped page brings nothing along).
+          const files = new Set<string>();
+          const storeFiles = new Set<string>();
+          for (const rel of copied) {
+            const own = snapshot.refsOf.get(rel);
+            for (const file of own?.files ?? []) files.add(file);
+            for (const file of own?.storeFiles ?? []) storeFiles.add(file);
+            for (const id of own?.assets ?? []) assets.add(id);
+          }
+          for (const rel of files) {
+            const staged = path.join(stagedWiki, rel);
+            // Already placed for another page of this run (same staged file).
+            if (!existsSync(staged)) {
+              rawFiles += 1;
+              continue;
+            }
+            if (place(staged, resolveInside(toRoot, rel)) === 'conflict') rawConflicts.push(rel);
             else rawFiles += 1;
           }
           const storeRoot = botWikiStoreRoot(this.#paths, toBotId);
-          for (const rel of snapshot.storeFiles) {
+          for (const rel of storeFiles) {
             const dest = path.join(storeRoot, rel);
             // Content-addressed: an existing asset file is the same content.
             if (existsSync(dest)) continue;
             mkdirSync(path.dirname(dest), { recursive: true });
             renameSync(path.join(stagedStore, rel), dest);
+            placed.push(dest);
           }
+          if (copied.length > 0) {
+            this.#appendHandoverLog(toBotId, input.fromName, handoverId, copied);
+            commit = await commitWikiTreeIfChanged(
+              toRoot,
+              `从 ${input.fromName} 复制 ${copied.length} 页`,
+            );
+          }
+        } catch (error) {
+          // Nothing committed: take back what this run placed so the target's worktree is
+          // not left with uncommitted, unindexed files (a retry places them again).
+          for (const file of placed.reverse()) rmSync(file, { force: true });
+          if (logBefore !== null) writeFileSync(logPath, logBefore, 'utf8');
+          throw error;
         }
-        let commit: string | null = null;
         if (copied.length > 0) {
-          this.#appendHandoverLog(toBotId, input.fromName, handoverId, copied);
-          commit = await commitWikiTreeIfChanged(
-            toRoot,
-            `从 ${input.fromName} 复制 ${copied.length} 页`,
-          );
-          const store = this.#deps.memory.storeFor(toBotId);
-          for (const rel of copied) {
-            const content = readFileSync(path.join(toRoot, rel), 'utf8');
-            store.wikiUpsertPage(rel, pageTitleOf(content, rel), content);
+          // The commit landed: FTS / lint problems never fail the copy (the startup
+          // reconciliation rebuilds a divergent index, BR-P09-009).
+          try {
+            const store = this.#deps.memory.storeFor(toBotId);
+            for (const rel of copied) {
+              const content = readFileSync(path.join(toRoot, rel), 'utf8');
+              store.wikiUpsertPage(rel, pageTitleOf(content, rel), content);
+            }
+            this.reconcileFtsFor(toBotId);
+          } catch (error) {
+            this.#deps.logger.warn(
+              {
+                toBotId,
+                handoverId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+              'wiki_fts update after handover copy failed; startup reconciliation repairs it',
+            );
           }
-          this.reconcileFtsFor(toBotId);
-          // B integrates the new pages into its own index.md / links on its next lint.
-          this.#deps.jobs.enqueue({
-            type: 'wiki_lint',
-            botId: toBotId,
-            payload: { trigger: 'handover', handoverId },
-            priority: 2,
-            dedupeKey: `wiki_lint:${toBotId}:handover`,
-          });
+          try {
+            // B integrates the new pages into its own index.md / links on its next lint.
+            this.#deps.jobs.enqueue({
+              type: 'wiki_lint',
+              botId: toBotId,
+              payload: { trigger: 'handover', handoverId },
+              priority: 2,
+              dedupeKey: `wiki_lint:${toBotId}:handover`,
+            });
+          } catch (error) {
+            this.#deps.logger.warn(
+              { toBotId, error: error instanceof Error ? error.message : String(error) },
+              'wiki lint enqueue after handover copy failed',
+            );
+          }
         }
         this.#deps.logger.info(
           {
@@ -637,7 +722,7 @@ export class WikiService {
           missing: snapshot.missing,
           rawFiles,
           rawConflicts,
-          assets: snapshot.assets,
+          assets: assets.size,
           bytes,
           commit,
         };

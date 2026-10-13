@@ -26,8 +26,12 @@
   let deleting = $state(false);
 
   async function ask(): Promise<void> {
-    preview = await contacts.deletionPreview(botId);
-    open = true;
+    try {
+      preview = await contacts.deletionPreview(botId);
+      open = true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function confirm(): Promise<void> {
@@ -36,6 +40,8 @@
       await contacts.remove(botId);
       open = false;
       toast.success(t('contacts.deleteTitle', { name: botName }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
     } finally {
       deleting = false;
     }

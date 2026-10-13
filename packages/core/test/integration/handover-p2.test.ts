@@ -23,6 +23,7 @@ import { botWikiRoot, botWikiStoreRoot } from '../../src/infra/paths.js';
 import { initWiki } from '../../src/wiki/init.js';
 import { commitWikiTree } from '../../src/wiki/git.js';
 import { formatInspection } from '../../src/tools/handover-tools.js';
+import { JobRetryLaterError } from '../../src/domain/jobs.js';
 
 /**
  * D88 P2（docs/design/37 §3.2、§6；todo/bot-handover.md §5）：Wiki 与组件在后台
@@ -466,6 +467,60 @@ describe('bot asset handover P2 (D88)', () => {
       existsSync(path.join(botWikiRoot(core.services.paths, beta.id), 'pages/ops/runbook.md')),
     ).toBe(false);
     core.services.jobsRunner!.start();
+  }, 60_000);
+
+  it('后台批量暂时失败：作业推迟重试（不在下一次轮询就耗尽次数）、条目留 pending；末次记失败并结算，不卡在执行中', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    const alphaDirect = (await openDirect(core, alpha.id)).id;
+    await seedWiki(stack, alpha);
+    const host = core.services.handover!;
+    const approval = propose(stack, alpha, alphaDirect, beta, ['wiki:pages/ops/']);
+    core.services.jobsRunner!.stop();
+    scriptFollowUp(stack);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    await waitFor(() => (copyJobs(stack).length > 0 ? true : null), { label: 'handover_copy job' });
+    // B's wiki root is a plain file: placing anything there fails (initWiki throws).
+    const betaHome = path.join(core.services.paths.home, 'bots', beta.id);
+    mkdirSync(betaHome, { recursive: true });
+    writeFileSync(path.join(betaHome, 'wiki'), 'not a directory');
+
+    // The real runner: the first attempt fails and is postponed (attempts = 1, run_after
+    // pushed out), the items stay pending and the handover stays applying.
+    const startedAt = Date.now();
+    core.services.jobsRunner!.start();
+    const row = await waitFor(
+      () => {
+        const job = core.services
+          .mainDb!.prepare(
+            "select status, attempts, run_after, payload_json from jobs where type = 'handover_copy'",
+          )
+          .get() as { status: string; attempts: number; run_after: number; payload_json: string };
+        return job.attempts === 1 && job.status === 'pending' ? job : null;
+      },
+      { label: 'postponed handover_copy' },
+    );
+    core.services.jobsRunner!.stop();
+    expect(row.run_after).toBeGreaterThan(startedAt + 20_000);
+    expect(host.view(approval.id)).toMatchObject({ status: 'applying' });
+    expect(host.view(approval.id)!.items.find((i) => i.key === 'wiki:pages/ops/')!.status).toBe(
+      'pending',
+    );
+    // Not the last attempt → the host asks for a later retry.
+    await expect(
+      host.runCopyJob({ payload_json: row.payload_json, attempts: 2 }),
+    ).rejects.toBeInstanceOf(JobRetryLaterError);
+    // Last attempt → the items fail and the handover settles (no stuck「执行中」).
+    await host.runCopyJob({ payload_json: row.payload_json, attempts: 3 });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('failed');
+    expect(view.items.find((item) => item.key === 'wiki:pages/ops/')).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('ENOTDIR'),
+    });
+    expect(view.retire).toBeNull();
   }, 60_000);
 
   it('来源是管家：全部完成也不给退役；同路径单页条目在卡上置灰', async () => {

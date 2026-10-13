@@ -5,6 +5,22 @@ import type { Clock } from '../infra/clock.js';
 /** Attempts before a repeatedly failing job reaches the `failed` terminal. */
 export const JOB_MAX_ATTEMPTS = 3;
 
+/**
+ * A failure worth retrying later rather than on the next poll (D88 P2 `handover_copy`: a
+ * git index lock / EBUSY / ENOSPC would otherwise burn every attempt within a second). The
+ * runner records the failure as usual (attempts count) and pushes a still-pending job's
+ * `run_after` out by `delayMs`.
+ */
+export class JobRetryLaterError extends Error {
+  constructor(
+    message: string,
+    readonly delayMs: number,
+  ) {
+    super(message);
+    this.name = 'JobRetryLaterError';
+  }
+}
+
 export interface JobRow {
   id: string;
   type: JobType;
@@ -123,6 +139,13 @@ export class JobsService {
       .prepare(
         "update jobs set status = 'pending', run_after = ?, attempts = max(attempts - 1, 0), updated_at = ? where id = ?",
       )
+      .run(runAfter, this.clock.now(), id);
+  }
+
+  /** Pushes a pending job's next run out (attempts unchanged; running / terminal rows untouched). */
+  postpone(id: string, runAfter: number): void {
+    this.db
+      .prepare("update jobs set run_after = ?, updated_at = ? where id = ? and status = 'pending'")
       .run(runAfter, this.clock.now(), id);
   }
 
