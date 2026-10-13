@@ -63,6 +63,7 @@
     name,
     allowDisconnect = true,
     onDone,
+    onSaved,
     testid = 'connect-app',
   }: {
     target: AppConnectTarget;
@@ -88,6 +89,11 @@
      */
     onDone?:
       ((connectionId: string | undefined, grant: { botId: string } | null) => void) | undefined;
+    /**
+     * 统一的嵌入回调（对话内设置卡，todo/conversational-app-setup.md §6.1）：流程 `done` 时与
+     * `onDone` 同时回调一次，不带参数。
+     */
+    onSaved?: (() => void) | undefined;
     testid?: string;
   } = $props();
 
@@ -152,7 +158,10 @@
     if (done === null || notifiedFlowId === done.flowId) return;
     notifiedFlowId = done.flowId;
     const grant = untrack(() => effectiveGrantBotId);
-    untrack(() => onDone?.(done.connectionId, grant !== undefined ? { botId: grant } : null));
+    untrack(() => {
+      onDone?.(done.connectionId, grant !== undefined ? { botId: grant } : null);
+      onSaved?.();
+    });
   });
 
   let busy = $state(false);

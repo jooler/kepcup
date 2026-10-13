@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { WebSearchProviderId } from '@kepcup/shared';
+  import type { SettingValues, WebSearchProviderId } from '@kepcup/shared';
+  import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { settingsStore } from '$lib/stores/settings.svelte';
@@ -12,17 +13,21 @@
    * 「联网检索」section（docs/design/21-web-search.md，D62）：检索供应商
    * 三选一 + API key（存密钥表 `websearch:{provider}`）+ 连通性测试。
    * embedded=true 时隐藏标题与说明（对话内设置卡片自带），保存成功后回调
-   * onSaved（inline setup 的继续对话钩子）。
+   * onSaved（inline setup 的继续对话钩子）。prefill：对话内设置卡里 Bot 给的非敏感预填
+   * （`provider`；Key 永远由用户自己填），挂载时套用一次。
    */
   let {
     testid,
     embedded = false,
+    prefill = null,
     onSaved,
   }: {
     /** data-testid 前缀。 */
     testid: string;
     /** 紧凑形态：不渲染 section 标题与说明（对话内卡片场景）。 */
     embedded?: boolean;
+    /** 非敏感预填（对话内设置卡）。 */
+    prefill?: SettingValues | null;
     onSaved?: () => void;
   } = $props();
 
@@ -47,6 +52,16 @@
     if (dirty) return;
     provider = settingsStore.settings?.webSearch.provider ?? '';
     key = '';
+  });
+
+  // 预填（设置卡）：在上面的同步之后套用一次；与已存值不同即成为「编辑中」。
+  let prefillApplied = false;
+  $effect(() => {
+    if (prefillApplied || prefill === null) return;
+    prefillApplied = true;
+    const wanted = prefill.provider;
+    const known = PROVIDERS.find((entry) => entry.id === wanted);
+    if (known !== undefined) untrack(() => (provider = known.id));
   });
 
   /** 落盘供应商与 key（key 留空 = 保持不变）。 */

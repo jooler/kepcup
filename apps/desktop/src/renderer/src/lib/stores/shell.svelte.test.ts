@@ -69,7 +69,7 @@ describe('宽 / 窄切换统一复位（审查 #7）', () => {
 describe('窄屏设置页返回（审查 #11d）', () => {
   it('深链直达详情页：返回一次直接关闭（回到来源页）', () => {
     setNarrow(true);
-    shell.openSettings('models', 'models-default');
+    shell.openSettings('models', 'default-models');
     expect(shell.narrowSettingsSection).toBe('models');
     shell.backNarrowSettings();
     expect(shell.narrowSettingsOpen).toBe(false);
@@ -119,5 +119,37 @@ describe('窄屏断点滞回（宽度 → narrow，真实 store）', () => {
     expect(narrowLayout.narrow).toBe(false);
     narrowLayout.windowWidth = 650;
     expect(narrowLayout.narrow).toBe(false);
+  });
+});
+
+describe('对话内设置卡深链：Bot 详情 / 项目设置（todo/conversational-app-setup.md §6.1）', () => {
+  beforeEach(() => {
+    shell.rightPanelCollapsed = true;
+    shell.rightPanelTabRequest = null;
+    shell.botPanelAnchor = null;
+    shell.projectSettingsRequest = null;
+  });
+
+  it('宽屏：展开右栏、请求页签与锚点', () => {
+    shell.openBotPanel('profile', 'bot-model');
+    expect(shell.rightPanelCollapsed).toBe(false);
+    expect(narrowLayout.botDetailOpen).toBe(false);
+    expect(shell.rightPanelTabRequest).toBe('profile');
+    expect(shell.botPanelAnchor).toBe('bot-model');
+  });
+
+  it('窄屏：打开 Bot 详情覆盖层而不是展开右栏', () => {
+    setNarrow(true);
+    shell.openBotPanel('skills');
+    expect(narrowLayout.botDetailOpen).toBe(true);
+    expect(shell.rightPanelCollapsed).toBe(true);
+    expect(shell.rightPanelTabRequest).toBe('skills');
+    expect(shell.botPanelAnchor).toBeNull();
+  });
+
+  it('项目设置：先到 Bot 配置页签，再留一个带锚点的请求给 ProjectSelector', () => {
+    shell.openProjectSettings('project-ports');
+    expect(shell.rightPanelTabRequest).toBe('profile');
+    expect(shell.projectSettingsRequest).toEqual({ anchor: 'project-ports' });
   });
 });

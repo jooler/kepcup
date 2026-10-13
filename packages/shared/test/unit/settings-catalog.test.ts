@@ -366,8 +366,9 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
 
   it('pending anchors are still missing in the UI (delete them once the desktop adds them)', () => {
     for (const anchor of PENDING_DESKTOP_ANCHORS) expect(scan.anchors).not.toContain(anchor);
-    const added: SettingsUiScan = { ...scan, anchors: [...scan.anchors, 'bot-model'] };
-    expect(settingsCoverageProblems(added)).toEqual([
+    // 登记为待补、界面上却已经有了：提示删掉登记（desktop 已补齐 bot-model，借它构造）。
+    expect(scan.anchors).toContain('bot-model');
+    expect(settingsCoverageProblems(scan, { pendingAnchors: ['bot-model'] })).toEqual([
       '待补锚点 bot-model 已存在：从 PENDING_DESKTOP_ANCHORS 删掉',
     ]);
   });

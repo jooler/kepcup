@@ -7,6 +7,8 @@ import {
   normalizeCapabilities,
   parseEngineValue,
   toggleCapability,
+  toggleCapabilityOptIn,
+  toolCountOf,
 } from './agent-capabilities';
 
 const codexLike = { nativeCapabilities: { web: ['web_search'], image_generation: ['image_gen'] } };
@@ -60,5 +62,52 @@ describe('agent capability packs (Bot runtime form)', () => {
     expect(engineValue({ model: 'deepseek/chat', agent: { id: 'codex' } })).toBe('@agent:codex');
     expect(parseEngineValue('@agent:codex')).toEqual({ agentId: 'codex' });
     expect(parseEngineValue('')).toEqual({ model: '' });
+  });
+});
+
+describe('包内选项（settings:change，todo/conversational-app-setup.md §5.3 第 7 条）', () => {
+  it('settings 包默认注入、三个工具；修改设置默认关闭（行里只计两个）', () => {
+    expect(toolCountOf('settings')).toBe(3);
+    expect(effectiveCapabilities(null, codexLike)).toContain('settings');
+    expect(effectiveCapabilities(null, codexLike)).not.toContain('settings:change');
+    const row = capabilityRows(null, { ...codexLike, prerequisiteReady: ready }).find(
+      (entry) => entry.id === 'settings',
+    )!;
+    expect(row.optIns).toEqual([
+      { id: 'settings:change', checked: false, i18nKey: 'agents.capabilities.settings.change' },
+    ]);
+    expect(row.toolCount).toBe(2);
+  });
+
+  it('开启选项后保留在显式集合里，行里计入工具，且不再等同默认值', () => {
+    const on = toggleCapabilityOptIn(null, 'settings:change', true, codexLike);
+    expect(on).toContain('settings');
+    expect(on).toContain('settings:change');
+    expect(effectiveCapabilities(on, codexLike)).toContain('settings:change');
+    expect(normalizeCapabilities(on, codexLike)).toEqual(on);
+    const row = capabilityRows(on, { ...codexLike, prerequisiteReady: ready }).find(
+      (entry) => entry.id === 'settings',
+    )!;
+    expect(row.optIns[0]!.checked).toBe(true);
+    expect(row.toolCount).toBe(3);
+    // 关掉选项：回到默认值（null）。
+    const off = toggleCapabilityOptIn(on, 'settings:change', false, codexLike);
+    expect(off).not.toContain('settings:change');
+    expect(normalizeCapabilities(off, codexLike)).toBeNull();
+  });
+
+  it('勾选 / 取消其它包时保留已开启的选项；取消所属包时选项随之去掉', () => {
+    const on = toggleCapabilityOptIn(null, 'settings:change', true, codexLike);
+    const withWeb = toggleCapability(on, 'web', true, codexLike);
+    expect(withWeb).toContain('web');
+    expect(withWeb).toContain('settings:change');
+    const withoutSettings = toggleCapability(withWeb, 'settings', false, codexLike);
+    expect(withoutSettings).not.toContain('settings');
+    expect(withoutSettings).not.toContain('settings:change');
+    // 所属包没选时开选项不生效；不认识的选项 id 忽略。
+    expect(
+      toggleCapabilityOptIn(withoutSettings, 'settings:change', true, codexLike),
+    ).not.toContain('settings:change');
+    expect(toggleCapabilityOptIn(null, 'bogus:x', true, codexLike)).not.toContain('bogus:x');
   });
 });

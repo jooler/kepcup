@@ -17,7 +17,27 @@
    * 新增传感器只需在注册表加一行并在这里挂一个测试插槽。
    */
 
-  let { kind }: { kind: SensorKind } = $props();
+  let {
+    kind,
+    embedded = false,
+    onSaved,
+  }: {
+    kind: SensorKind;
+    /** 紧凑形态（对话内设置卡）：不渲染测试区（麦克风电平 / 摄像头预览）。 */
+    embedded?: boolean;
+    /** 启用开关 / 设备选择变更后回调（对话内设置卡据此标为已应用）。 */
+    onSaved?: () => void;
+  } = $props();
+
+  function setEnabled(enabled: boolean): void {
+    sensors.setEnabled(kind, enabled);
+    onSaved?.();
+  }
+
+  function setDevice(deviceId: string): void {
+    sensors.setDeviceId(kind, deviceId);
+    onSaved?.();
+  }
 
   // 文案 key 显式登记（i18n 键为字面量联合类型，不能由 kind 拼接）；新增 kind 时
   // Record 的穷尽检查会逼出这里。
@@ -79,7 +99,7 @@
       <Checkbox
         id="sensor-enabled-{kind}"
         checked={snap.enabled}
-        onCheckedChange={(checked) => sensors.setEnabled(kind, checked === true)}
+        onCheckedChange={(checked) => setEnabled(checked === true)}
         data-testid="sensor-enabled-{kind}"
       />
       <Label for="sensor-enabled-{kind}" class="text-xs text-muted-foreground">
@@ -110,7 +130,7 @@
       class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm disabled:opacity-50"
       value={snap.deviceId}
       disabled={!snap.enabled}
-      onchange={(event) => sensors.setDeviceId(kind, event.currentTarget.value)}
+      onchange={(event) => setDevice(event.currentTarget.value)}
       data-testid="sensor-device-{kind}"
     >
       <option value="">{t('sensors.deviceDefault')}</option>
@@ -164,11 +184,13 @@
     {/if}
   </div>
 
-  <div class="max-w-xl">
-    {#if kind === 'microphone'}
-      <MicrophoneTest />
-    {:else if kind === 'camera'}
-      <CameraPreview />
-    {/if}
-  </div>
+  {#if !embedded}
+    <div class="max-w-xl">
+      {#if kind === 'microphone'}
+        <MicrophoneTest />
+      {:else if kind === 'camera'}
+        <CameraPreview />
+      {/if}
+    </div>
+  {/if}
 </section>

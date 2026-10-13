@@ -7,6 +7,7 @@
 import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
+import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
 import { resolveSettingsSection } from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 
@@ -168,6 +169,35 @@ class ShellState {
   openSchedules(): void {
     this.rightPanelCollapsed = false;
     this.rightPanelTabRequest = 'schedules';
+  }
+
+  /**
+   * 右栏切到页签后要滚动到的锚点（[data-settings-anchor]，如 Bot 配置里的「模型」）；
+   * RightPanel 渲染完目标页签后消费并复位。
+   */
+  botPanelAnchor = $state<string | null>(null);
+
+  /**
+   * 打开 Bot 详情并切到页签、滚到锚点（对话内设置卡的「在设置中打开」，
+   * todo/conversational-app-setup.md §6.1）。窄屏 / 宽屏放不下并排右栏时右栏是覆盖层
+   * （BotDetailOverlay），其余展开右栏。
+   */
+  openBotPanel(tab: string, anchor?: string): void {
+    if (sidebarLayout.panelAsOverlay) narrowLayout.openBotDetail();
+    else this.rightPanelCollapsed = false;
+    this.rightPanelTabRequest = tab;
+    this.botPanelAnchor = anchor ?? null;
+  }
+
+  /**
+   * 请求打开当前会话所绑项目的「项目设置」对话框（可带锚点）：ProjectSelector（Bot 配置页签 /
+   * 群信息里）消费并复位；会话还没绑项目时改开项目选择框。
+   */
+  projectSettingsRequest = $state<{ anchor: string | null } | null>(null);
+
+  openProjectSettings(anchor?: string): void {
+    this.openBotPanel('profile');
+    this.projectSettingsRequest = { anchor: anchor ?? null };
   }
 }
 

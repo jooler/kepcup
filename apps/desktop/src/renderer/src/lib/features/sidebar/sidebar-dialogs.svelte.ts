@@ -25,6 +25,8 @@ class SidebarDialogsState {
   /** 群设置。 */
   groupSettingsOpen = $state(false);
   groupSettingsId = $state<string | null>(null);
+  /** 群设置打开后要聚焦的锚点（对话内设置卡深链）；对话框消费后复位。 */
+  groupSettingsAnchor = $state<string | null>(null);
 
   openFormCreate(): void {
     this.draftProfile = emptyProfile();
@@ -37,8 +39,9 @@ class SidebarDialogsState {
     this.renameOpen = true;
   }
 
-  openGroupSettings(conversationId: string): void {
+  openGroupSettings(conversationId: string, anchor?: string): void {
     this.groupSettingsId = conversationId;
+    this.groupSettingsAnchor = anchor ?? null;
     this.groupSettingsOpen = true;
   }
 

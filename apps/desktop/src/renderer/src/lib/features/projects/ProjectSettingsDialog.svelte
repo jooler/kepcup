@@ -5,8 +5,25 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { Textarea } from '$lib/components/ui/textarea';
+  import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
 
-  let { open = $bindable(false), project }: { open: boolean; project: Project | null } = $props();
+  let {
+    open = $bindable(false),
+    project,
+    anchor = $bindable(null),
+  }: {
+    open: boolean;
+    project: Project | null;
+    /** 打开后要聚焦的锚点（对话内设置卡深链：project-protect / project-ports）；消费后复位。 */
+    anchor?: string | null;
+  } = $props();
+
+  $effect(() => {
+    const target = anchor;
+    if (!open || target === null || project === null) return;
+    anchor = null;
+    void revealDialogAnchor(document, target);
+  });
 
   // 名称不再是可编辑字段：项目名固定为所选文件夹的名字（bind 时取 basename）。
   let denyRead = $state('');
@@ -81,15 +98,18 @@
     </Dialog.Header>
     {#if project !== null}
       <div class="space-y-3">
-        <label class="block space-y-1">
-          <span class="text-xs text-muted-foreground">{t('projects.settingsDenyRead')}</span>
-          <Textarea bind:value={denyRead} rows={5} class="font-mono text-xs" data-testid="project-deny-read-input" />
-        </label>
-        <label class="block space-y-1">
-          <span class="text-xs text-muted-foreground">{t('projects.settingsDenyWrite')}</span>
-          <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="project-deny-write-input" />
-        </label>
-        <label class="block space-y-1">
+        <!-- data-settings-anchor：对话内设置卡「在设置中打开」的落点（settings-catalog 深链）。 -->
+        <div class="space-y-3" data-settings-anchor="project-protect">
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{t('projects.settingsDenyRead')}</span>
+            <Textarea bind:value={denyRead} rows={5} class="font-mono text-xs" data-testid="project-deny-read-input" />
+          </label>
+          <label class="block space-y-1">
+            <span class="text-xs text-muted-foreground">{t('projects.settingsDenyWrite')}</span>
+            <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="project-deny-write-input" />
+          </label>
+        </div>
+        <label class="block space-y-1" data-settings-anchor="project-ports">
           <span class="text-xs text-muted-foreground">{t('projects.settingsPorts')}</span>
           <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="project-ports-input" />
           <span class="block text-[10px] text-muted-foreground">{t('projects.settingsPortsHint')}</span>

@@ -7,8 +7,24 @@
   import { Input } from '$lib/components/ui/input';
   import { Separator } from '$lib/components/ui/separator';
   import * as Dialog from '$lib/components/ui/dialog';
-  let { conversationId, open = $bindable(false) }: { conversationId: string; open?: boolean } =
-    $props();
+  import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
+  let {
+    conversationId,
+    open = $bindable(false),
+    anchor = $bindable(null),
+  }: {
+    conversationId: string;
+    open?: boolean;
+    /** 打开后要聚焦的锚点（对话内设置卡深链：group-title / group-members）；消费后复位。 */
+    anchor?: string | null;
+  } = $props();
+
+  $effect(() => {
+    const target = anchor;
+    if (!open || target === null) return;
+    anchor = null;
+    void revealDialogAnchor(document, target);
+  });
 
   let title = $state('');
   let addBotId = $state('');
@@ -65,7 +81,8 @@
     </Dialog.Header>
 
     <div class="space-y-4">
-      <div class="flex items-end gap-2">
+      <!-- data-settings-anchor：对话内设置卡「在设置中打开」的落点（settings-catalog 深链）。 -->
+      <div class="flex items-end gap-2" data-settings-anchor="group-title">
         <div class="flex-1 space-y-1.5">
           <label class="text-sm font-medium" for="group-rename">{t('group.renameLabel')}</label>
           <Input id="group-rename" bind:value={title} data-testid="group-rename-input" />
@@ -77,7 +94,7 @@
 
       <Separator />
 
-      <div class="space-y-1.5">
+      <div class="space-y-1.5" data-settings-anchor="group-members">
         <p class="text-sm font-medium">
           {t('group.memberCount', { count: members.length })}
         </p>

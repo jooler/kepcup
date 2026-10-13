@@ -1,6 +1,8 @@
 <script lang="ts">
-import type { CapabilityModelKey, VendorId } from '@kepcup/shared';
+import type { CapabilityModelKey, SettingValues, VendorId } from '@kepcup/shared';
 import { AppError, VENDOR_DESCRIPTORS, vendorsForCapability } from '@kepcup/shared';
+import { untrack } from 'svelte';
+import { capabilityPrefill } from '$lib/features/settings-card/setting-card-model';
 import { t } from '$lib/i18n';
 import { toast } from 'svelte-sonner';
 import { settingsStore } from '$lib/stores/settings.svelte';
@@ -16,12 +18,14 @@ import { Badge } from '$lib/components/ui/badge';
    * 直接用当前填写的厂商 / 模型 / Key 发一次最小真实请求，不落库；落库只经
    * 「保存」。embedded=true 时隐藏标题与说明（对话内设置卡片自带），测试
    * 成功后把「保存」换成「保存并关闭」，保存成功后回调 onSaved（inline
-   * setup 的继续对话钩子，卡片随之关闭）。
+   * setup 的继续对话钩子，卡片随之关闭）。prefill：对话内设置卡里 Bot 给的非敏感预填
+   * （`provider` / `model`；Key 永远由用户自己填），挂载时套用一次。
    */
   let {
     capability,
     testid,
     embedded = false,
+    prefill = null,
     onSaved,
   }: {
     capability: CapabilityModelKey;
@@ -29,6 +33,8 @@ import { Badge } from '$lib/components/ui/badge';
     testid: string;
     /** 紧凑形态：不渲染 section 标题与说明（对话内卡片场景）。 */
     embedded?: boolean;
+    /** 非敏感预填（对话内设置卡）。 */
+    prefill?: SettingValues | null;
     onSaved?: () => void;
   } = $props();
 
@@ -68,6 +74,22 @@ import { Badge } from '$lib/components/ui/badge';
     vendor = current?.vendor ?? '';
     model = current?.model ?? '';
     key = '';
+  });
+
+  // 预填（设置卡）：在上面的同步之后套用一次；与已存值不同即成为「编辑中」，不再被同步覆盖。
+  let prefillApplied = false;
+  $effect(() => {
+    if (prefillApplied || prefill === null) return;
+    prefillApplied = true;
+    const next = capabilityPrefill(
+      prefill,
+      vendors.map((entry) => entry.id),
+    );
+    if (next === null) return;
+    untrack(() => {
+      vendor = next.vendor as VendorId;
+      if (next.model !== null) model = next.model;
+    });
   });
 
   /** 落盘配置与 key（key 留空 = 保持不变）。 */

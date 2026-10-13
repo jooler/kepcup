@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ANCHOR_SCROLL_MARGIN,
+  focusSettingsAnchor,
   revealSettingsAnchor,
   scrollToSettingsAnchor,
   type AnchorScrollContainer,
@@ -31,8 +32,8 @@ function container(
 describe('scrollToSettingsAnchor', () => {
   test('按目标相对容器的偏移 + 当前 scrollTop 减留白算滚动位置', () => {
     const el = container({ containerTop: 100, targetTop: 300, scrollTop: 50 });
-    expect(scrollToSettingsAnchor(el, 'models-default')).toBe(true);
-    expect(el.queries).toEqual(['[data-settings-anchor="models-default"]']);
+    expect(scrollToSettingsAnchor(el, 'default-models')).toBe(true);
+    expect(el.queries).toEqual(['[data-settings-anchor="default-models"]']);
     expect(el.scrolls).toEqual([50 + 200 - ANCHOR_SCROLL_MARGIN]);
   });
 
@@ -84,5 +85,55 @@ describe('revealSettingsAnchor', () => {
       clear: () => void (cleared += 1),
     });
     expect(cleared).toBe(2);
+  });
+
+  test('内容异步就绪：attempts 内重试直到找到目标（右栏 Bot 配置）', async () => {
+    let ready = 0;
+    const waits: string[] = [];
+    const found = await revealSettingsAnchor({
+      anchor: 'bot-model',
+      container: () => container({ targetTop: ready >= 2 ? 300 : null }),
+      flush: async () => {},
+      wait: async () => {
+        ready += 1;
+        waits.push('wait');
+      },
+      clear: () => undefined,
+      attempts: 5,
+    });
+    expect(found).toBe(true);
+    expect(waits).toEqual(['wait', 'wait']);
+  });
+
+  test('重试用尽仍找不到：返回 false 并清锚点', async () => {
+    let cleared = false;
+    const found = await revealSettingsAnchor({
+      anchor: 'bot-model',
+      container: () => container({ targetTop: null }),
+      flush: async () => {},
+      clear: () => void (cleared = true),
+      attempts: 3,
+    });
+    expect(found).toBe(false);
+    expect(cleared).toBe(true);
+  });
+});
+
+describe('focusSettingsAnchor（群设置 / 项目设置对话框）', () => {
+  test('滚进视野并聚焦锚点内第一个输入控件', () => {
+    const calls: string[] = [];
+    const root = {
+      querySelector: (selector: string) =>
+        selector === '[data-settings-anchor="group-title"]'
+          ? {
+              scrollIntoView: () => calls.push('scroll'),
+              querySelector: (inner: string) =>
+                inner === 'input, textarea, select' ? { focus: () => calls.push('focus') } : null,
+            }
+          : null,
+    };
+    expect(focusSettingsAnchor(root, 'group-title')).toBe(true);
+    expect(calls).toEqual(['scroll', 'focus']);
+    expect(focusSettingsAnchor(root, 'missing')).toBe(false);
   });
 });

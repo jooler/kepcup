@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest';
+import { getSettingItem, SETTING_ITEMS } from '@kepcup/shared';
+import { settingDeepLinkAction } from './deep-link';
+import { applyRendererValues } from './renderer-items';
+
+describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
+  it('目录里每个深链都落到认得的分区 / 页签（不走兜底）', () => {
+    for (const entry of SETTING_ITEMS) {
+      const action = settingDeepLinkAction(entry.deepLink, {}, 'conv_1');
+      expect(action.kind, entry.id).toBe(entry.deepLink.surface);
+      if (action.kind === 'settings') expect(action.section, entry.id).toBe(entry.deepLink.section);
+      if (action.kind === 'extension-center')
+        expect(action.tab, entry.id).toBe(entry.deepLink.section);
+    }
+  });
+
+  it('设置分区带锚点；不认识的分区退回「通用」', () => {
+    expect(
+      settingDeepLinkAction(
+        { surface: 'settings', section: 'models', anchor: 'default-models' },
+        {},
+        null,
+      ),
+    ).toEqual({ kind: 'settings', section: 'models', anchor: 'default-models' });
+    expect(settingDeepLinkAction({ surface: 'settings', section: 'nope' }, {}, null)).toEqual({
+      kind: 'settings',
+      section: 'general',
+      anchor: null,
+    });
+    expect(
+      settingDeepLinkAction({ surface: 'extension-center', section: 'nope' }, {}, null),
+    ).toEqual({
+      kind: 'extension-center',
+      tab: 'skills',
+    });
+  });
+
+  it('Bot 面板带作用 Bot；群设置缺省用卡片所在会话；项目设置带锚点', () => {
+    const bot = getSettingItem('bot.network')!;
+    expect(settingDeepLinkAction(bot.deepLink, { botId: 'bot_b' }, 'conv_1')).toEqual({
+      kind: 'bot-panel',
+      tab: 'profile',
+      anchor: 'bot-network',
+      botId: 'bot_b',
+    });
+    const group = getSettingItem('group.members')!;
+    expect(settingDeepLinkAction(group.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'group-dialog',
+      conversationId: 'conv_g',
+      anchor: 'group-members',
+    });
+    expect(
+      settingDeepLinkAction(group.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
+    ).toMatchObject({
+      conversationId: 'conv_x',
+    });
+    const project = getSettingItem('project.ports')!;
+    expect(settingDeepLinkAction(project.deepLink, {}, 'conv_1')).toEqual({
+      kind: 'project-dialog',
+      anchor: 'project-ports',
+    });
+  });
+});
+
+describe('applyRendererValues（渲染层条目的本机写入）', () => {
+  it('硬件条目写启用开关与设备；其余条目不写', () => {
+    const calls: string[] = [];
+    const writers = {
+      setSensorEnabled: (kind: string, enabled: boolean) => calls.push(`${kind}:${enabled}`),
+      setSensorDevice: (kind: string, device: string) => calls.push(`${kind}@${device}`),
+    };
+    expect(
+      applyRendererValues(getSettingItem('hardware.microphone')!, { enabled: true }, writers),
+    ).toBe(true);
+    expect(
+      applyRendererValues(
+        getSettingItem('hardware.camera')!,
+        { enabled: false, device: 'cam-2' },
+        writers,
+      ),
+    ).toBe(true);
+    expect(calls).toEqual(['microphone:true', 'camera:false', 'camera@cam-2']);
+    expect(applyRendererValues(getSettingItem('hardware.camera')!, {}, writers)).toBe(false);
+    expect(applyRendererValues(getSettingItem('general.theme')!, { theme: 'dark' }, writers)).toBe(
+      false,
+    );
+  });
+});
