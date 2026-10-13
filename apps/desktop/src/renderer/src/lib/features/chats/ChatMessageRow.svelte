@@ -19,8 +19,9 @@
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
    * 排列、群聊头像列、引用行、已编辑标记、hover 操作（引用/复制/固定/编辑）与
    * 右键菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
-   * MessageAttachments：后续多模态支持（图片、音频、视频等）只扩展那两
-   * 层，本行的布局与操作保持稳定。merge 为连排信息，透传给 MessageBody
+   * MessageAttachments（附件在上、正文在下）：后续多模态支持（图片、音
+   * 频、视频等）只扩展那两层，本行的布局与操作保持稳定。merge 为连排信
+   * 息，透传给 MessageBody
    * 决定对齐侧圆角。
    */
   let {
@@ -222,16 +223,16 @@
       </button>
     {/if}
 
+    {#if message.attachments.length > 0}
+      <MessageAttachments attachments={message.attachments} />
+    {/if}
+
     <MessageBody {message} {merge} bind:isEditing bind:editText onsave={() => void saveEdit()} />
 
     {#if message.status === 'edited' && !isEditing}
       <span class="mt-0.5 text-[11px] text-muted-foreground" data-testid="message-edited"
         >{t('chats.edited')}</span
       >
-    {/if}
-
-    {#if message.attachments.length > 0}
-      <MessageAttachments attachments={message.attachments} />
     {/if}
 
     {#if scheduleTitle !== null}
