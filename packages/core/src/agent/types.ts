@@ -109,7 +109,7 @@ export interface RunSpec {
   buildSystemPrompt: () => Promise<string>;
   messages: EngineMessage[];
   tools: ToolDefinition[];
-  /** maxTurns ≤ 0 = unlimited (task Agent loops). */
+  /** maxTurns ≤ 0 = unlimited (supervisor turns and task Agent loops). */
   limits: { maxTurns: number };
   /**
    * Whether `model` is still what this run's Bot would use. PiEngine stops

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_AGENT_RUNTIME, TURN_MAX_TURNS, type Bot, type Conversation, type Message } from '@kepcup/shared';
+import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Message } from '@kepcup/shared';
 import {
   canShareTurn,
   Mailbox,
@@ -404,7 +404,9 @@ describe('turn version of <platform_rules>', () => {
     expect(prompt).toContain('cancel_task');
     expect(prompt).toContain('forward_task_result');
     expect(prompt).toContain('不要无声地路由');
-    expect(prompt).toContain(`一轮最多 ${TURN_MAX_TURNS} 步工具调用`);
+    expect(prompt).toContain('先自行估计这件事的工作量再决定怎么做');
+    expect(prompt).not.toContain('步上限');
+    expect(prompt).not.toContain('步工具调用');
     expect(prompt).toContain('这一轮只读，任务可读写');
     expect(prompt).not.toContain('沙箱状态');
     expect(prompt).not.toContain('<recommended_skills>');

@@ -522,9 +522,9 @@ describe('response loop', () => {
     void llm;
   });
 
-  // D75 W2: a turn has at most TURN_MAX_TURNS steps, so long narrated work is
-  // a task's — the cap (8 per run) applies to the task's interim texts; its
-  // final text is the private result the waking turn relays.
+  // Interim texts are capped at INTERIM_TEXT_MAX_PER_RUN (8) per run. Long
+  // narrated work is a task's; its final text is the private result the
+  // waking turn relays. A turn itself has no step ceiling.
   it('interim delivery is capped at eight per run and the overflow stays in run steps only', async () => {
     const { core, llm } = await start();
     const script = Array.from({ length: 9 }, (_, i) =>

@@ -623,9 +623,9 @@ export class TaskHost implements TaskToolFacade {
       throw new AppError('INVALID_INPUT', 'title 与 instruction 不能为空');
     }
     const ownTasks = this.#deps.runs.listTasks({ conversationId, botId });
-    // A retried turn (审查 L6: e.g. it failed on TURN_MAX_TURNS after its
-    // start_task calls) does not start again what the turn it re-runs already
-    // started: the same title from a turn of its retry chain is that task —
+    // A retried turn (审查 L6: e.g. it failed after its start_task calls)
+    // does not start again what the turn it re-runs already started: the same
+    // title from a turn of its retry chain is that task —
     // unless that one ended without a result (failed / cancelled / interrupted).
     const retried = this.#retryChain(identity.runId);
     if (retried.length > 0) {

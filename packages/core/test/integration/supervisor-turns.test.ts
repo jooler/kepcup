@@ -519,23 +519,24 @@ describe('D75 supervisor turns (W2)', () => {
     expect(wakeTurns.map((t) => t.botId)).toEqual([x.id]);
   }, 60_000);
 
-  it('a turn that runs out of steps (TURN_MAX_TURNS) settles failed with a hint', async () => {
+  it('a turn may take more than eight tool steps without a task and still reply', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
     const conv = await openDirect(core, bot.id);
-    llm.script(
-      'mock-main',
-      Array.from({ length: 8 }, () => step().inTurn().replyToolCall('list_tasks', {})),
-    );
+    llm.script('mock-main', [
+      ...Array.from({ length: 9 }, () => step().inTurn().replyToolCall('list_tasks', {})),
+      step().inTurn().replyText('查完了，没有要派的任务'),
+    ]);
     await sendBatch(core, conv.id, ['一直查']);
     const [turn] = await waitTurns(stack, conv.id, 1, 'turn settled');
-    expect(turn).toMatchObject({ status: 'failed' });
-    expect(turn!.error).toContain('步上限');
-    expect(llm.requestsFor('mock-main')).toHaveLength(8);
+    expect(turn).toMatchObject({ status: 'completed', error: null });
+    expect(llm.requestsFor('mock-main')).toHaveLength(10);
+    expect(runsOf(stack, conv.id, 'task')).toHaveLength(0);
+    await waitVisible(stack, conv.id, '查完了');
   }, 30_000);
 
-  it('a turn that already started a task then burns remaining steps settles completed (not failed)', async () => {
+  it('a turn that starts a task and keeps working past eight steps still replies', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const bot = await makeBot(core, '小艾');
@@ -550,8 +551,8 @@ describe('D75 supervisor turns (W2)', () => {
           source_message_ids: [],
           writes: true,
         }),
-      // 7 more tool turns → hit TURN_MAX_TURNS without a final text reply.
-      ...Array.from({ length: 7 }, () => step().inTurn().replyToolCall('list_tasks', {})),
+      ...Array.from({ length: 8 }, () => step().inTurn().replyToolCall('list_tasks', {})),
+      step().inTurn().replyText('已经派出去了'),
       taskHold,
     ]);
     await sendBatch(core, conv.id, ['帮我写代码']);
@@ -559,6 +560,7 @@ describe('D75 supervisor turns (W2)', () => {
     expect(turn).toMatchObject({ status: 'completed', error: null });
     expect(runsOf(stack, conv.id, 'task')).toHaveLength(1);
     expect(runsOf(stack, conv.id, 'task')[0]!.originRunId).toBe(turn!.id);
+    await waitVisible(stack, conv.id, '已经派出去了');
     taskHold.release();
   }, 30_000);
 

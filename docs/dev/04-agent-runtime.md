@@ -14,7 +14,7 @@
 | `abort(reason)` | `agent.abort()`；`AbortSignal` 传入每个工具 |
 | 工具网关 | 工具的 `execute` 内部调用网关；`beforeToolCall` 只做最后一道校验（工具是否属于本 loop 的工具集） |
 | 执行步骤持久化 | 订阅事件（`message_end`、`tool_execution_start`、`tool_execution_end`、`turn_end`、`agent_end`），**等待写库完成**后再继续（pi 的事件订阅支持异步屏障） |
-| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS`；任务 `TASK_MAX_TURNS=0` 即不设上限；对话轮用完仍未回复且未派出任务按 `failed` 结算） |
+| 最大轮数 | `finishTurn` 中计数，超过 `RunSpec.limits.maxTurns` 返回结束（对话轮 `TURN_MAX_TURNS=0`、任务 `TASK_MAX_TURNS=0`，即不设步数上限；任务另有墙钟与 token 预算。对话轮是否派任务只由提示词引导，不因步数失败） |
 | 用量 | 每条助手消息的 usage 写入 usage_ledger |
 | 单次调用 `complete()` | `@earendil-works/pi-ai` 的单次请求接口 |
 | 模型与厂商 | `pi-ai` 的模型注册表；自定义接口通过 `baseUrl`；API key 通过自定义 `CredentialStore` 提供——`read(providerId)` 在每次请求的鉴权解析时从 secrets 表解密（DEV-002，不用 `Agent` 的 `getApiKey` 覆盖） |
@@ -159,7 +159,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 | 对话层读法 | `listForBot`：共享行 + 本 Bot 的私有任务条目 | `listShared`：只共享行 |
 | 续接 / 任务段 | `<tasks>` | `<continuation>`（`continues_task_id`） |
 | 触发 | 每个来源批一个 `<trigger>` | `<task_brief>` |
-| 轮数 | `TURN_MAX_TURNS` | 无上限（`TASK_MAX_TURNS=0`） |
+| 轮数 | 无步数上限（`TURN_MAX_TURNS=0`）；是否派任务由提示词里的工作量判断决定 | 无上限（`TASK_MAX_TURNS=0`） |
 | 引擎 / 模型 | 内置引擎，Bot 的内置主模型（`runtime.model` → 全局默认） | Bot 的任务引擎（外部智能体为伪 ref `agent:{id}/…`） |
 
 > 使用单条用户消息承载上下文与触发内容，避免多人对话被映射为交替的 user / assistant 角色而造成混淆，也避免部分厂商对连续同角色消息的限制。
@@ -221,7 +221,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 **对话轮版 `<platform_rules>`**（`system-prompt.ts` `TURN_PLATFORM_RULES`，措辞可调整、含义不变）：
 
 1. 联系人身份、像真人交流、回复语言跟随用户；最终回复自动作为聊天消息发出，保持聊天风格。
-2. 负责沟通与调度、这一轮要快：能直接答的（闲聊、依据对话记录 / 记忆 / 少量只读查询）直接答；需要动手（改文件、执行命令、浏览器、生成媒体、安装环境或技能、外部工具）或耗时较长（通读大量材料、多步调研）的用 `start_task` 派成后台任务并简短告诉用户；一轮最多 `TURN_MAX_TURNS` 步。
+2. 负责沟通与调度：先自行估计工作量。轻的（闲聊、依据对话记录 / 记忆 / 少量只读查询）直接答；重的（改文件、执行命令、浏览器、生成媒体、安装环境或技能、外部工具，或连续多步、通读大量材料、多步调研）用 `start_task` 派成后台任务并简短告诉用户。不设步数硬上限。
 3. 这一轮只读：只能查看消息、附件、执行记录与文件（read / ls / find / grep），写文件和执行命令只在任务里，不要尝试绕过。
 4. `start_task` 的 instruction 写清目标、结果与约束，`source_message_ids` 填用户原消息 id；改文件设 `writes=true`，只读调研设 `false`；独立的事可以并行多个任务。
 5. 媒体生成路由：用户要图片、图标、海报、配音、短视频等真实媒体文件时照常 `start_task`，instruction 写明用任务里的 `generate_image` / `generate_speech` / `generate_video` 产出真实文件；不以「我不能生成图片」为由拒绝、不用文字方案代替文件、不推荐 Midjourney / DALL·E 等外部第三方工具——缺模型配置时系统弹设置卡引导配置并自动续跑，只有任务结果表明应用确实提供不了才如实说明并给替代做法（与工具描述、`SETUP_REQUIRED` 内联设置同一取向：能力触发是确定性的，提示词只是兜底）。
@@ -463,7 +463,7 @@ D56 的自动续接（L1 窗口 + L2 轻量模型仲裁）已随 D75 移除：�
 
 | loop | 模型 | 方式 | 工具 | 优先级 | 阶段 |
 |---|---|---|---|---|---|
-| 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS`） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、连锁） | D75（原「响应」，P01） |
+| 对话轮 | Bot 的内置主模型 | 完整 loop（`TURN_MAX_TURNS=0`，不设步数上限） | 上表中 T 列 | 0（用户触发、任务结算、委派）/ 1（定时、事件、连锁） | D75（原「响应」，P01） |
 | 任务 | Bot 的任务引擎（内置主模型或外部智能体） | 完整 loop（`RUN_MAX_TURNS`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`） | 上表中 K 列 | 写任务 0（已持租约）/ 只读任务 1 | D75 |
 | 群聊判断 | 轻量模型 | 单次结构化调用 | — | 0 | P05 |
 | 对话摘要 | 轻量模型 | 单次结构化调用 | — | 2 | P01 |
@@ -482,7 +482,7 @@ D75 常量（`packages/shared/src/constants.ts`）：
 
 | 常量 | 值 | 用途 |
 |---|---|---|
-| `TURN_MAX_TURNS` | 8 | 对话轮步数上限 |
+| `TURN_MAX_TURNS` | 0 | 对话轮步数上限（0 = 不设上限；是否派任务由提示词引导，不因步数失败） |
 | `TASK_MAX_TURNS` | 0 | 任务 Agent 步数上限（0 = 不设上限） |
 | `TASK_CONCURRENCY_PER_CONVERSATION` / `TASK_CONCURRENCY_GLOBAL` | 3 / 8 | 已启动任务的对话级 / 全局封顶 |
 | `TASK_START_MAX_PER_TURN` | 2 | 一个对话轮最多派出的任务数（按 `origin_run_id`） |
