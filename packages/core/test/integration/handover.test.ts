@@ -695,7 +695,7 @@ describe('bot asset handover (D88 P0)', () => {
     expect(empty.approval.status).toBe('denied');
   }, 40_000);
 
-  it('编造的 key 被退回；同一对话已有待定卡时不能叠加；普通 Bot 与任务里没有移交工具', async () => {
+  it('编造的 key 被退回；同一对话已有待定卡时不能叠加；普通 Bot 的对话轮也有移交工具（P1，没有 new_bot）', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { conversationId } = await ensureButler(stack);
@@ -751,15 +751,30 @@ describe('bot asset handover (D88 P0)', () => {
     expect(stacked).toContain('已有一张移交卡或提议卡在等用户确认');
     expect(stacked).toContain('已有一张提议卡在等用户确认');
 
-    // 普通 Bot：对话轮没有移交工具。
+    // 普通 Bot（P1）：对话轮也有移交工具，但目标只能是已有 Bot（参数里没有 new_bot），
+    // 平台规则里有一句「交出自己的东西用 propose_handover」。
     const plain = await openDirect(core, alpha.id);
     llm.script('mock-main', [step().replyText('好的。')]);
     await sendBatch(core, plain.id, ['你好']);
     await waitForRun(core, plain.id, 'completed');
-    const plainTools = toolNames(llm.requestsFor('mock-main').at(-1)!);
-    expect(plainTools).toContain('list_bots');
-    expect(plainTools).not.toContain('inspect_bot_assets');
-    expect(plainTools).not.toContain('propose_handover');
+    const plainRequest = llm.requestsFor('mock-main').at(-1)!;
+    const plainTools = toolNames(plainRequest);
+    expect(plainTools).toEqual(
+      expect.arrayContaining(['list_bots', 'inspect_bot_assets', 'propose_handover']),
+    );
+    expect(plainTools).not.toContain('propose_bot');
+    const proposeTool = (
+      plainRequest.body.tools as Array<{
+        function: { name: string; parameters: { properties: Record<string, unknown> } };
+      }>
+    ).find((tool) => tool.function.name === 'propose_handover')!;
+    const toSchema = proposeTool.function.parameters.properties['to'] as {
+      properties: Record<string, unknown>;
+    };
+    expect(Object.keys(toSchema.properties)).toEqual(['bot_id']);
+    expect(JSON.stringify(plainRequest.body.messages)).toContain(
+      '你只能交出自己的东西、交给通讯录里已有的 Bot',
+    );
   }, 40_000);
 
   it('任务里没有移交工具，提示词是任务版', async () => {
