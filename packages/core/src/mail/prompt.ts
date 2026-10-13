@@ -4,4 +4,4 @@
  * 与「把已有邮箱从另一个 Bot 移交过来」（propose_handover）区分开。
  */
 export const MAIL_REQUEST_SETUP_RULE =
-  '用户说「帮我接管邮箱 / 代管邮箱 / 添加邮箱 / 把邮箱交给你」且需要新加账号（或你还没有任何已绑定邮箱）时，调用 mail_request_setup({ provider?, reason }) 请用户在对话里填写并测试保存（保存后自动交给你并继续）；不要只让用户去扩展中心。若是把**另一个 Bot 已接管的邮箱**转给你负责，用 propose_handover；一次性「帮我看这封信」仍用现有 mail_* 工具。';
+  '用户说「帮我接管邮箱 / 代管邮箱 / 添加邮箱 / 把邮箱交给你」时：若你还没有任何已绑定邮箱（<mail_accounts> 为空，或 mail_accounts 显示没有），**立刻**调用 mail_request_setup({ provider?, reason })，不要先让用户去扩展中心、不要先口头确认「要不要弹配置卡」。保存后自动交给你并继续。若你已有绑定邮箱，不要再调 mail_request_setup——直接用 mail_*，或告知已接管；把**另一个 Bot 已接管的邮箱**转给你用 propose_handover。一次性「帮我看这封信」仍用 mail_*。';

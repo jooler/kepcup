@@ -190,7 +190,7 @@ CREATE TABLE mail_bot_cursors (
 | `mail_search` | ✓ | ✓ | IMAP SEARCH 条件子集（from/to/subject/since/unseen） |
 | `mail_send` | ✗ | ✓ | SMTP 发送；**写 / 外发**；审批卡展示完整 to/cc/bcc 与正文（复用 recipients 逻辑） |
 | `mail_accounts` | ✓ | ✓ | 列出本 Bot 已绑定账号与状态（无密钥） |
-| `mail_request_setup` | ✓ | ✓ | 请用户在对话里添加邮箱并绑定当前 Bot（`setup.kind=mail-account`，见 18-inline-setup）；与移交已有绑定（`propose_handover`）不同 |
+| `mail_request_setup` | ✓ | ✓ | 请用户在对话里添加邮箱并绑定当前 Bot（`setup.kind=mail-account`，见 18-inline-setup）；**已有绑定则拒绝且不写 setup**（防续跑再弹卡）；与移交已有绑定（`propose_handover`）不同 |
 
 - 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）。P1 若加 `mail_set_flag` / `mail_move` 按写处理。
 - 账号范围：工具参数 `account_id` 必须属于当前 Bot 绑定，否则 `MAIL_NOT_BOUND`。
