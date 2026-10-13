@@ -99,6 +99,13 @@ export interface HandoverHostDeps {
     activeByDedupeKey(dedupeKey: string): JobRow | null;
     latestByDedupeKey(dedupeKey: string): JobRow | null;
   };
+  /**
+   * P2 退役提示：来源名下的知识类资产总数（active 记忆、Wiki 页、私有技能、组件）；缺省 =
+   * 不统计（提示里不列）。
+   */
+  assetCounts?:
+    | ((botId: string) => { memory: number; wikiPages: number; skills: number; widgets: number })
+    | undefined;
   publish: (event: string, payload: unknown) => void;
   /** deliverEventToBot (internal follow-up into the proposer's conversation). */
   deliverEvent(
@@ -122,6 +129,18 @@ function copyJobKey(handoverId: string): string {
 /** Back-off between attempts of a background copy that failed transiently (× attempt). */
 const COPY_RETRY_DELAY_MS = 30_000;
 
+/**
+ * 「移交类」资产（会把职责 / 通道交出去的）：来源名下还有任何一项时不给退役——删掉 A 会让
+ * 邮箱没人收、定时任务 / 监看消失、连接与 MCP 从 A 身上掉（独立审查 #2，DEV-025）。
+ */
+const RETIRE_BLOCKING_TYPES: ReadonlySet<string> = new Set([
+  'mail',
+  'app',
+  'mcp',
+  'schedule',
+  'watch',
+]);
+
 const TERMINAL_STATUSES: ReadonlySet<HandoverStatus> = new Set([
   'completed',
   'partial',
@@ -129,6 +148,23 @@ const TERMINAL_STATUSES: ReadonlySet<HandoverStatus> = new Set([
   'denied',
   'cancelled',
 ]);
+
+/** 「记忆 3 条、Wiki 2 页」：退役提示里来源还留着的知识类资产（全 0 = 空串）。 */
+function retireRemainingText(remaining: {
+  memory: number;
+  wikiPages: number;
+  skills: number;
+  widgets: number;
+}): string {
+  return [
+    remaining.memory > 0 ? `记忆 ${remaining.memory} 条` : '',
+    remaining.wikiPages > 0 ? `Wiki ${remaining.wikiPages} 页` : '',
+    remaining.skills > 0 ? `技能 ${remaining.skills} 个` : '',
+    remaining.widgets > 0 ? `组件 ${remaining.widgets} 个` : '',
+  ]
+    .filter((part) => part.length > 0)
+    .join('、');
+}
 
 /** Execution status of the unit items (asset + responsibilities + new bot). */
 function isUnit(key: string): boolean {
@@ -1433,9 +1469,11 @@ export class HandoverHost implements HandoverToolFacade {
     if (doneLines.length > 0) {
       lines.push(`两边的私聊里都写了交接记录：${toName} 会看到交接要点。`);
     }
-    if (this.#view(record.id)?.retire != null) {
+    const retire = this.#view(record.id)?.retire ?? null;
+    if (retire !== null) {
+      const left = retireRemainingText(retire.remaining);
       lines.push(
-        `这次移交的条目都已完成，结果卡上给了用户「删除 ${plan.fromBotName}」的按钮（会先弹出删除确认，不会自动删除）。不要催用户删除，也不要声称已经删除。`,
+        `${plan.fromBotName} 名下的移交类资产（邮箱、连接应用、MCP、定时任务、网页监看）都已交出，结果卡上给了用户「删除 ${plan.fromBotName}」的按钮（会先弹出删除确认，不会自动删除）${left.length > 0 ? `；${plan.fromBotName} 还留着没复制给对方的 ${left}，删除会一并删掉` : ''}。不要催用户删除，也不要声称已经删除。`,
       );
     }
     lines.push(
@@ -1500,7 +1538,54 @@ export class HandoverHost implements HandoverToolFacade {
     }
     const from = this.#deps.bots.get(view.fromBotId);
     if (from === null || from.status !== 'active' || from.systemRole === 'butler') return null;
-    return { botId: from.id, botName: from.name };
+    // 接手方被删了：交出去的东西已经随它没了，不能再引导删 A。
+    const to = this.#deps.bots.get(view.toBotId);
+    if (to === null || to.status !== 'active') return null;
+    // A 名下还有任何移交类资产（含这次没勾、置灰的）：还不是「全部移交完」。
+    const stillHolds = this.#deps.registry
+      .list()
+      .filter((adapter) => RETIRE_BLOCKING_TYPES.has(adapter.type))
+      .some((adapter) => adapter.inventory(from.id).length > 0);
+    if (stillHolds) return null;
+    return { botId: from.id, botName: from.name, remaining: this.#remaining(view) };
+  }
+
+  /**
+   * 来源名下还留着、这次没有复制给接手方的知识类资产：总数减去本次 done 的条目（记忆条数、
+   * Wiki 复制的页数、技能个数、组件个数），下限 0。
+   */
+  #remaining(view: HandoverView): {
+    memory: number;
+    wikiPages: number;
+    skills: number;
+    widgets: number;
+  } {
+    const counts = this.#safeCounts(view.fromBotId);
+    const done = view.items.filter((item) => item.status === 'done');
+    const copied = (type: string): number => done.filter((item) => item.assetType === type).length;
+    const wikiPages = done
+      .filter((item) => item.assetType === 'wiki')
+      .reduce((sum, item) => sum + (item.copiedCount ?? 0), 0);
+    return {
+      memory: Math.max(0, counts.memory - copied('memory')),
+      wikiPages: Math.max(0, counts.wikiPages - wikiPages),
+      skills: Math.max(0, counts.skills - copied('skill')),
+      widgets: Math.max(0, counts.widgets - copied('widget')),
+    };
+  }
+
+  #safeCounts(botId: string): {
+    memory: number;
+    wikiPages: number;
+    skills: number;
+    widgets: number;
+  } {
+    try {
+      return this.#deps.assetCounts?.(botId) ?? { memory: 0, wikiPages: 0, skills: 0, widgets: 0 };
+    } catch (error) {
+      this.#deps.logger.warn({ botId, error: errorText(error) }, 'handover asset counts failed');
+      return { memory: 0, wikiPages: 0, skills: 0, widgets: 0 };
+    }
   }
 
   /** Wiki originals the target already had with other bytes (`result.rawConflicts`). */

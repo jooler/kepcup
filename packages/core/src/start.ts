@@ -2209,6 +2209,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       updateProfile: handoverBotWriter.updateProfile,
       schedule: scheduleFacade,
       jobs,
+      assetCounts: (botId) => ({
+        memory: memory.activeItemsFor(botId).length,
+        wikiPages: wiki.pageStats(botId).length,
+        skills: skills.skillCount(botId),
+        widgets: widgetService.listForBot(botId).length,
+      }),
       publish: (event, payload) => events.emit(event as never, payload as never),
       deliverEvent: (botId, conversationId, event, text, opts) =>
         orchestrator.deliverEventToBot(botId, conversationId, event, text, opts),

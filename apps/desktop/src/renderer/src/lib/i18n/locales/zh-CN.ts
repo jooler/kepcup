@@ -982,7 +982,14 @@ export const zhCN = {
   'handover.item.copiedVersions': '已复制 {count} 个版本',
   'handover.item.skippedPaths': '接手方已有同路径、内容不同的页，没有覆盖：{paths}',
   'handover.retire': '删除 {name}',
-  'handover.retireHint': '这次移交的条目都已完成。{name} 不再需要时可以删除它（会先确认）。',
+  'handover.retireHint':
+    '这次移交的条目都已完成，{name} 名下已没有邮箱、连接应用、MCP、定时任务或网页监看。不再需要它时可以删除（会先确认）。',
+  'handover.retireHintRemaining':
+    '这次移交的条目都已完成，{name} 名下已没有邮箱、连接应用、MCP、定时任务或网页监看；但它还留着没复制给 {to} 的 {items}，删除 {name} 会一并删掉。',
+  'handover.remaining.memory': '记忆 {count} 条',
+  'handover.remaining.wikiPages': 'Wiki {count} 页',
+  'handover.remaining.skills': '技能 {count} 个',
+  'handover.remaining.widgets': '组件 {count} 个',
   'handover.newBotItem': '新建 {name}',
   'handover.received': '从 {from} 接手了',
   'handover.handedOver': '已移交给 {to}',

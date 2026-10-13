@@ -442,7 +442,12 @@
     <p class="text-[11px] text-muted-foreground">{t('handover.notTransferred')}</p>
 
     {#if retire !== null}
-      <RetireBotButton botId={retire.botId} botName={retire.botName} />
+      <RetireBotButton
+        botId={retire.botId}
+        botName={retire.botName}
+        toBotId={view?.toBotId ?? ''}
+        remaining={retire.remaining ?? { memory: 0, wikiPages: 0, skills: 0, widgets: 0 }}
+      />
     {/if}
 
     {#if pending}

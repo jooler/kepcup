@@ -18,9 +18,35 @@
    * 走同一个 `bots.delete`；从不自动删除。管家与已删除的 Bot 不出按钮（core 的
    * `view.retire` 已排除管家；这里再按通讯录确认 Bot 仍在）。
    */
-  let { botId, botName }: { botId: string; botName: string } = $props();
+  let {
+    botId,
+    botName,
+    toBotId,
+    remaining,
+  }: {
+    botId: string;
+    botName: string;
+    toBotId: string;
+    remaining: { memory: number; wikiPages: number; skills: number; widgets: number };
+  } = $props();
 
   const bot = $derived(contacts.bots.find((candidate) => candidate.id === botId) ?? null);
+  /** The receiving bot must still exist too (its deletion took the handed-over assets). */
+  const target = $derived(contacts.bots.find((candidate) => candidate.id === toBotId) ?? null);
+  /** What the source still holds that was not copied (deleting it destroys these). */
+  const remainingText = $derived(
+    (
+      [
+        ['memory', remaining.memory],
+        ['wikiPages', remaining.wikiPages],
+        ['skills', remaining.skills],
+        ['widgets', remaining.widgets],
+      ] as const
+    )
+      .filter(([, count]) => count > 0)
+      .map(([kind, count]) => t(`handover.remaining.${kind}`, { count }))
+      .join('、'),
+  );
   let open = $state(false);
   let preview = $state({ conversations: 0, messages: 0 });
   let deleting = $state(false);
@@ -48,10 +74,16 @@
   }
 </script>
 
-{#if bot !== null && bot.systemRole !== 'butler'}
+{#if bot !== null && target !== null && bot.systemRole !== 'butler'}
   <div class="mt-2 flex flex-wrap items-center gap-2" data-testid="handover-retire">
-    <p class="min-w-0 flex-1 text-xs text-muted-foreground">
-      {t('handover.retireHint', { name: bot.name })}
+    <p class="min-w-0 flex-1 text-xs text-muted-foreground" data-testid="handover-retire-hint">
+      {remainingText.length > 0
+        ? t('handover.retireHintRemaining', {
+            name: bot.name,
+            to: target.name,
+            items: remainingText,
+          })
+        : t('handover.retireHint', { name: bot.name })}
     </p>
     <Button
       size="sm"
