@@ -267,7 +267,7 @@ bots/{id}/
 - **消息撤回**：core 目前没有消息撤回的写路径，只有 ingest 时的来源复核。将来接入撤回时，对「所有 `sources` 都已撤回」的资产调用同一删除函数；仍有其它来源的只移除对应 `sources` 条目。
 - **已知局限**：派生文本（full.md / transcript / caption）与页面一样留在 git 历史中；原件与关键帧在仓外，删除后不可恢复。清洗 git 历史不在本期。
 - **回滚**（`wiki.rollback`）：只作用于 git 仓库，不动 `wiki-store/`。回滚后清单快照在树中消失、但仓外仍存在的资产标为 `derived`（可重新维护）；快照存在、但仓外原件已删除的资产，在 UI 中显示「原件已删除」，lint 报告悬空引用。
-- **移交复制（D88 P2，[37](37-bot-asset-handover.md) §3.2，已实现、早于本篇落地）**：页面链接到的 `raw/_assets/{id}.json` / `raw/_derived/{id}/` 随页复制进接手方的 Wiki；仓外 `wiki-store/{id}/` 的不可变文件（原件、关键帧）**硬链接**到接手方的 `wiki-store/{id}/`（跨设备时复制），实时状态 `state.json` 复制、`staging/` 不复制。依赖本篇的两条约定：仓外文件按 assetId 内容寻址、写入用原子 rename 而不就地改写（否则硬链接会让两个 Bot 共享改动）；删除资产只删本 Bot 的那一份链接。
+- **移交复制（D88 P2，[37](37-bot-asset-handover.md) §3.2，已实现、早于本篇落地）**：页面链接到的 `raw/_assets/{id}.json` / `raw/_derived/{id}/` 随页复制进接手方的 Wiki；仓外 `wiki-store/{id}/` 的不可变文件（原件、关键帧）**硬链接**到接手方的 `wiki-store/{id}/`（跨设备时复制），实时状态 `state.json` 复制、`staging/` 不复制。依赖本篇的两条约定：仓外文件按 assetId 内容寻址、写入用原子 rename 而不就地改写（否则硬链接会让两个 Bot 共享改动）；删除资产只删本 Bot 的那一份链接。只复制状态为 `derived` / `maintained` 的资产（其余状态的派生流水与暂存属于来源 Bot），接手方那份清单与 `state.json` 的 `sources` 改为 `{type: 'handover', handoverId, fromBotId}`（D88 DEV-028；D85 落地时把这种来源列入 `sources[].type`）。
 
 ## 7 检索
 
