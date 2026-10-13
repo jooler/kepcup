@@ -409,7 +409,12 @@ describe('bot asset handover P2 (D88)', () => {
     const view = await settled(stack, approval.id);
     expect(view.status).toBe('completed');
     expect(view.items.every((item) => item.status === 'done')).toBe(true);
-    expect(view.retire).toEqual({ botId: alpha.id, botName: '阿尔法' });
+    expect(view.retire).toEqual({
+      botId: alpha.id,
+      botName: '阿尔法',
+      // 3 页里复制了 1 页；会话级组件没复制。
+      remaining: { memory: 0, wikiPages: 2, skills: 0, widgets: 1 },
+    });
     const history = await headMessages(betaRoot);
     expect(history.filter((message) => message === '从 阿尔法 复制 1 页')).toHaveLength(1);
     expect(existsSync(path.join(betaRoot, 'raw/20261001-aaaaaaaaaaaa-guide.md'))).toBe(true);
@@ -426,14 +431,59 @@ describe('bot asset handover P2 (D88)', () => {
         eventsOf(await listAllMessages(core, alphaDirect), BOT_HANDOVER_FOLLOWUP_EVENT)[0] ?? null,
     );
     expect((followUp.content as { text: string }).text).toContain('删除 阿尔法');
+    expect((followUp.content as { text: string }).text).toContain('Wiki 2 页、组件 1 个');
 
     // RPC 视图同样给出退役；删除 A（D18 路径）之后不再给。
     const viaRpc = (await core.rpc.call('handovers.get', { approvalId: approval.id })) as {
       handover: HandoverView;
     };
-    expect(viaRpc.handover.retire).toEqual({ botId: alpha.id, botName: '阿尔法' });
+    expect(viaRpc.handover.retire).toEqual(view.retire);
     await core.rpc.call('bots.delete', { id: alpha.id });
     expect(host.view(approval.id)!.retire).toBeNull();
+  }, 60_000);
+
+  it('独立审查 #1 / #2：来源还有移交类资产（定时任务）时不给退役，取消后才给；接手方被删后不再给', async () => {
+    const stack = await start();
+    const { core } = stack;
+    const alpha = await makeBot(core, '阿尔法');
+    const beta = await makeBot(core, '贝塔');
+    const alphaDirect = (await openDirect(core, alpha.id)).id;
+    await seedWiki(stack, alpha);
+    const daily = core.services.schedules!.createFromWhen({
+      botId: alpha.id,
+      conversationId: alphaDirect,
+      when: '0 9 * * *',
+      title: '日报',
+      note: '写日报',
+      origin: 'tool',
+    });
+    scriptFollowUp(stack);
+    const approval = propose(stack, alpha, alphaDirect, beta, ['wiki:pages/']);
+    await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
+    const view = await settled(stack, approval.id);
+    expect(view.status).toBe('completed');
+    // 阿尔法还负责「日报」（没交出去）：删除它会让定时任务消失，不给退役。
+    expect(view.retire).toBeNull();
+    const followText = (
+      (
+        await waitFor(
+          async () =>
+            eventsOf(await listAllMessages(core, alphaDirect), BOT_HANDOVER_FOLLOWUP_EVENT)[0] ??
+            null,
+        )
+      ).content as { text: string }
+    ).text;
+    expect(followText).not.toContain('删除 阿尔法');
+    // 定时任务取消后（A 名下已没有移交类资产），重新读视图就给退役；Wiki 全部复制过去了。
+    core.services.schedules!.cancel(daily.id);
+    expect(core.services.handover!.view(approval.id)!.retire).toEqual({
+      botId: alpha.id,
+      botName: '阿尔法',
+      remaining: { memory: 0, wikiPages: 0, skills: 0, widgets: 0 },
+    });
+    // 接手方被删除：交出去的东西随它没了，不再引导删 A。
+    await core.rpc.call('bots.delete', { id: beta.id });
+    expect(core.services.handover!.view(approval.id)!.retire).toBeNull();
   }, 60_000);
 
   it('作业多次中断而失败：恢复时条目记失败（不无限重登），移交结算为失败、不给退役', async () => {

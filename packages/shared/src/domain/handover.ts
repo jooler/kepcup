@@ -168,11 +168,27 @@ export const handoverViewSchema = z.object({
   toBotId: z.string().nullable(),
   items: z.array(handoverItemViewSchema),
   /**
-   * P2「退役」：这次移交的每一项都已完成（`completed`，Wiki 没有因同路径跳过的页）、来源
-   * Bot 仍在且不是管家时，结果卡给出「删除 {A}」按钮（走既有 D18 删除确认，不自动删）。
-   * null = 不出按钮。
+   * P2「退役」：这次移交的每一项都已完成（`completed`，Wiki 没有因同路径跳过的页、没有原件
+   * 冲突）、接手方仍在、来源 Bot 仍在且不是管家、来源名下已没有任何「移交类」资产（邮箱、
+   * 连接应用、MCP、定时任务、网页监看）时，结果卡给出「删除 {A}」按钮（走既有 D18 删除
+   * 确认，不自动删）。`remaining` = 来源名下还留着、这次没有复制给接手方的知识类资产（卡上
+   * 提示删除会一并删掉）。null = 不出按钮。
    */
-  retire: z.object({ botId: z.string(), botName: z.string() }).nullable().default(null),
+  retire: z
+    .object({
+      botId: z.string(),
+      botName: z.string(),
+      remaining: z
+        .object({
+          memory: z.number().int().default(0),
+          wikiPages: z.number().int().default(0),
+          skills: z.number().int().default(0),
+          widgets: z.number().int().default(0),
+        })
+        .default({ memory: 0, wikiPages: 0, skills: 0, widgets: 0 }),
+    })
+    .nullable()
+    .default(null),
   updatedAt: z.number(),
 });
 export type HandoverView = z.infer<typeof handoverViewSchema>;
