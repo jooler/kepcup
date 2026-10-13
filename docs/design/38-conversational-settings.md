@@ -107,7 +107,7 @@
 1. **起点** = `maxMode`；`direct` 但不在 `DIRECT_ITEM_IDS` → 降为 `confirm`。
 2. **下限（逐条取最严）**：
    - **触发源**：只有 `triggerReason ∈ {direct, mention, reply}` 且**触发批的发送者是用户本人**才允许 direct，其余至少 confirm。用户本人 = 批里每条消息都是 `senderType = user` 的普通文本、不带 `origin`（组件回传 `widget`、跨 Bot 代发 `delegation` 都不算），合并批各部分的触发原因也都在白名单内；任务的触发是 `task`，不在白名单；scheduled / event / watch / mail / chain / broadcast / background / 其他 Bot 的 mention / reply 都被排除。
-   - **不可信内容**：本 run 读过不可信内容 → 至少 confirm。`tool_call` 一发生就置位（同步并行的调用，模型决定它们时还没看到返回内容）：`web_fetch` / `web_search` / `mail_read` / `mail_search` / `mail_list` / `get_attachment` / `understand_image` / `transcribe_audio` / `app_search_tools` / `app_call_tool` / `delegate_task` / `collect_delegate_results` / `widget_read_state`，以及前缀 `browser_` / `mcp_` / `app_`（宿主自己的 `app_request_connection` 等三个除外）。与 D73 污点（按（Bot, 对话）计，目前只有 `app_*` 读取置位）取**并集**——污点单独防不住网页、邮件里的注入。
+   - **不可信内容**：本 run 读过不可信内容 → 至少 confirm。判定是**可信白名单**（`settings/context.ts` 的 `TRUSTED_TOOLS`：发消息、出卡 / 提议、设置、定时、记忆写入、任务与委派的管理动作、宿主侧的写与申请等只回执不回外部内容的工具）——**不在白名单里的工具一律按不可信**，含 `mcp_*` / `app_*` 动态工具与以后新增的工具；显式登记为不可信的有网页、邮件、浏览器、附件、`read` / `grep` / `ls` / `find` 与命令输出、历史消息、记忆、知识库、任务 / 子代理结果（`list_tasks`、`get_run`、`delegate_task` …）。每个内置工具都必须在两个集合之一显式登记（单测对照效果分类的全部工具名），新工具不登记过不了测试。`tool_call` 一发生就置位（同步并行的调用，模型决定它们时还没看到返回内容）。另外两种情况本 run **一开始就算不可信**：触发批带附件（图片进视觉通道、附件正文随时可读）；本 run 由**外部智能体（ACP）**执行（它的原生工具——抓网页、读文件、命令、自带 MCP——不经宿主分类，会话还跨 run 保留，所以整个 run 最多 confirm）。与 D73 污点（按（Bot, 对话）计，目前只有 `app_*` 读取置位）取**并集**——污点单独防不住网页、邮件里的注入。
    - **群聊** → 至少 confirm（群聊里只能出卡）。
    - **别的 Bot 的配置**（只有管家能走到这一步）→ 至少 confirm，不允许直改。
    - **`widensPermission`** → 至少 confirm（永不 direct）。
@@ -151,7 +151,7 @@
 |---|---|
 | `settings.items.apply{itemId, values, expected, target?, messageId?}` | 卡片 / 设置页按条目保存（条目级 CAS）。`values` 来自用户亲手填写，**可含敏感字段**，按适配器分发到 secrets，永不回显。返回 `applied{before, values}` 或 `conflict{current}`；带 `messageId` 时成功后卡片标 applied 并唤醒 Bot |
 | `settings.cards.dismiss{messageId}` | 「不用了」：标 dismissed，唤醒 Bot 一次；已落定的卡原样返回状态 |
-| `settings.cards.complete{messageId}` | 「我已设置好」（link 卡 / 渲染层条目）：core 能用适配器核对的核对一次——`verified: false` 保持 pending 并提示，`null` 无法核对按用户所说标 applied |
+| `settings.cards.complete{messageId}` | 「我已设置好」（link 卡 / 渲染层条目 / 内嵌组件自己保存后）：core 能用适配器核对的核对一次——与建议值一致、**或已配置好、或本条目字段与出卡时不同**（用户在卡上改成了别的值 / 填了与预填不同的值）都算完成，卡上记**实际值**并唤醒一次；`verified: false` 保持 pending 并提示，`null` 无法核对按用户所说标 applied |
 | `settings.cards.undo{messageId}` | 回执卡撤销：用卡上的旧值经同一套 CAS 写回，当前值已不是回执上的新值 → `conflict` 不覆盖；成功标 `reverted`，不唤醒 |
 | 事件 `settings.changed{itemIds}` | 见 §1.5 |
 
@@ -159,10 +159,12 @@
 
 - **顶替**：同一对话里同一项（同一作用对象）出新卡时，旧的 pending 卡标 `superseded`；direct 回执也会顶替同一项的旧 pending 卡。
 - **过期**：pending 卡 7 天无人处理标 `expired`（`SETTING_CARD_PENDING_TTL_MS`，P0 与拒绝窗口取同值）；惰性判定——出新卡时顺手清、用户对旧卡操作时先判。回执卡不过期（有自己的 24 小时撤销窗口）。
-- **每 run 上限 3 张**（`SETTING_CARDS_PER_RUN_MAX`，按 `messages.run_id` 计，含回执卡）：超过返回 `LIMIT_REACHED`，让 Bot 在回复里说明还需要改什么。
+- **每 run 上限 3 张**（`SETTING_CARDS_PER_RUN_MAX`，按 `messages.run_id` 计，含回执卡）：超过返回 `LIMIT_REACHED`，让 Bot 在回复里说明还需要改什么。工具会并行执行（pi 并行跑同一步的工具调用），所以名额在第一个 `await` 之前**同步占位**（已落库的卡 + 进行中的占位），出卡或失败后释放。
 - **拒绝退避**：同一 Bot 在同一对话里对同一项 7 天内被拒（`dismissed`）≥2 次（`SETTING_CARD_DECLINE_MAX` / `_WINDOW_MS`）后，宿主拒绝再出卡，提示「不要再提这一项」。参照 D80 改写：D80 按 Bot 和对话计次，这里**按条目**计。
 - **回执卡**：direct 执行后必出，`undoUntil = now + 24h`（`SETTING_RECEIPT_UNDO_WINDOW_MS`）；只有 `mode = direct`、`state = applied`、窗口内、有旧值才可撤销；撤销写回 `reverted`，并在 Bot 的上下文回放里留一行「用户撤销了 X，已恢复为 …」。
-- **CAS 冲突**：confirm 卡应用时若当前值在出卡之后变过，返回 `conflict`，卡片提示「设置已在别处修改」，刷新对比后再让用户确认。
+- **CAS 冲突**：confirm 卡应用时若当前值在出卡之后变过，返回 `conflict`，卡片提示「设置已在别处修改」，刷新对比后再让用户确认。按键寻址的条目（`agents.external` 按智能体）只读、只比对本次涉及的那个键，兄弟键（别的智能体）的并发修改不算冲突；不带键时值覆盖全部已启用的智能体。
+- **应用与「不用了」的竞争（pending → applying 占位）**：`settings.items.apply` 带卡片时，在写锁里**写之前**再确认卡片仍是 pending（已被「不用了」/ 顶替 / 过期就报错、不写），写完在**同一个同步关键区**里把卡标 applied；之后到的「不用了」只会看到 applied。带卡片时作用对象以卡为准，调用方给的 `target` 只能与卡一致。
+- **写锁**：锁里只放「读最新 → 比对 → 合并 → 写回」的同步关键区；`settings.update` 的 MCP 断连 / 清理 / 撤销授权等网络副作用在锁外。等锁有上限（10 秒，超时 `TIMEOUT`），卡住的写路径不会拖住所有设置写入。设置页按整对象保存（表单快照整体提交）时过期表单覆盖别处修改是既有问题，对话里的直改只靠回执卡撤销时的冲突报告兜底。
 - **审计**：每次改动都在消息流里留下回执卡或设置卡（谁、哪个对话、旧值 → 新值）。P0 不新建表；将来要跨对话查再考虑 `setting_changes` 表。
 
 ### 4.5 Bot 上下文回放
@@ -182,7 +184,7 @@
 
 任务里 `settings_change` 得到非 direct 档：
 
-- 带 `required: true` 且宿主有 `onSetupRequired`：写 `setupHit.requirement = {kind:'setting', itemId, prefill?, reason}` 并返回 `SETUP_REQUIRED`，走 D58 原链——orchestrator 延后一拍 abort、settle `failed` + `run.setup`，输入坞上方的 `SetupRequiredCard` 遇到 `kind: 'setting'` 复用 `SettingSetupBody` → `SettingCardEmbed` 的同一套分发，预填取 `requirement.prefill`（仅在 `acceptValues` 时带）；完成后 `chat.continueAfterSetup` → `runs.retry`。这种情形**不在消息流里出卡**、不占每 run 3 张的名额。
+- 带 `required: true` 且宿主有 `onSetupRequired`：写 `setupHit.requirement = {kind:'setting', itemId, prefill?, reason}` 并返回 `SETUP_REQUIRED`，走 D58 原链——orchestrator 延后一拍 abort、settle `failed` + `run.setup`，输入坞上方的 `SetupRequiredCard` 遇到 `kind: 'setting'` 复用 `SettingSetupBody` → `SettingCardEmbed` 的同一套分发，预填取 `requirement.prefill`（仅在 `acceptValues` 时带）；完成后 `chat.continueAfterSetup` → `runs.retry`。这种情形**不在消息流里出卡**、不占每 run 3 张的名额（一次只会让本任务失败一次），但**同样受按条目的 7 天拒绝退避约束**：用户已拒绝两次的项，宿主既不出卡也不为它暂停任务，返回 `LIMIT_REACHED`，Bot 在结果里如实说明做不了的部分。
 - 不带 `required`：发一张**不阻塞**的消息流卡，任务继续往下跑。
 
 `setupRequirementSchema` 的通用 kind 让以后加设置项不再改契约；原有 7 个 kind（`main-model` / `capability-model` / `web-search` / `agent` / `connect-app` / `confirm-local-connector` / `mail-account`）不迁移（P2）。
@@ -197,6 +199,8 @@
 - 设置卡不是审批：不进 approvals 表，不受无人值守自动决定影响，不继承任何审批绕过。
 
 ## 7 ACP 外部智能体能力包 `settings`
+
+ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使开启了 `settings:change`，外部智能体也最多出确认卡，不会直改。`<tool_policy>` 的设置行按实际注入的工具分「查看」「修改」两行。
 
 `HOST_CAPABILITIES` 新增包 `settings`（category host，默认 inject，`tools = settings_search / settings_read / settings_change`）。包新增「包内选项」概念 `optIns`：`settings:change` 管 `settings_change`。选项 id 存在 Bot 的 `runtime.agent.capabilities` 里（`包id:名字`，`resolveCapabilities` 只认包 id，不受影响）；默认关闭；`resolveCapabilityOptIns` 解出该 Bot 开启的选项，`isHostToolInjected(tool, capabilities, optIns)` 判断是否注入（所属包选中且——若受选项控制——选项已开启）。orchestrator 把 `optIns` 传给 ACP 能力装配。
 

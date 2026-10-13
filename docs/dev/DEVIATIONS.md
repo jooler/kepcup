@@ -481,9 +481,13 @@
   5. **`unattended.enable` 出跳转卡**：方案写「开启无人值守出 user-only 空白卡」。`UnattendedSection` 尚未嵌入化，P0 实际出的是 user-only 档的**跳转卡**（`card = null` → link），`values` 同样不被采用；空白卡等 P1。关闭（`unattended.disable`）由宿主直接调 `unattended.disable`。
   6. **pending 卡 TTL**：方案只写「过期标 `expired`」。实现为 pending 卡 7 天无人处理过期（`SETTING_CARD_PENDING_TTL_MS`，与拒绝窗口同值），惰性判定；回执卡不过期（24 小时撤销窗口）。
   7. **自定义 / 新厂商缺 Key → form**：`needsSensitiveInput` 在要换到没有 Key 的厂商（含自定义厂商）时把档位收紧为 form；因此种子 mock 厂商没配 Key 的环境里，「换默认模型」从 direct 变成 form 卡（e2e 先给 mock 厂商补 Key 再测 direct）。
-  8. **不可信内容判定范围**：方案列了网页 / 邮件 / 浏览器 / MCP / 连接应用 / 附件正文；实现还把 `delegate_task`、`collect_delegate_results`、`widget_read_state`、`understand_image`、`transcribe_audio` 算进去，并以 `tool_call` 发生（而非 `tool_result`）即置位，避免同一步里并行发出的调用漏判。
+  8. **不可信内容判定范围（审查后改为可信白名单）**：方案列了网页 / 邮件 / 浏览器 / MCP / 连接应用 / 附件正文。实现改为**可信白名单**（`TRUSTED_TOOLS`）——不在白名单里的工具一律按不可信，含动态的 `mcp_*` / `app_*` 与未来新增的工具；`read` / `grep` / `ls` / `find`、历史消息、记忆、知识库、任务 / 子代理结果（`list_tasks`、`get_run`、`delegate_task` …）都算不可信；每个内置工具必须在可信或不可信集合里显式登记（单测强制）。以 `tool_call` 发生（而非 `tool_result`）即置位；触发批带附件时 run 一开始就算不可信。
   9. **「已经是想要的值」不出卡；任务 `required` 且已配好直接放行**：方案未写，避免无意义的卡和重复失败续跑。
-  10. **`settings.cards.complete` 增核对语义**：link 卡 / 渲染层条目点「我已设置好」，core 能核对的核对一次（未通过卡片保持 pending），渲染层 / 只读条目按用户所说标 applied；方案只写「改由用户点我已设置好」。
+  10. **`settings.cards.complete` 增核对语义**：link 卡 / 渲染层条目点「我已设置好」，core 能核对的核对一次（与建议值一致、已配置好、或字段与出卡时不同都算完成，卡上记实际值；未通过卡片保持 pending），渲染层 / 只读条目按用户所说标 applied；方案只写「改由用户点我已设置好」。
+  11. **ACP 一律按不可信**：方案只说 ACP 默认不注入 `settings_change`。审查后决定：外部智能体执行的 run 从一开始就按读过不可信内容处理（它的原生工具不经宿主分类、会话跨 run 保留），开启 `settings:change` 也最多 confirm。
+  12. **`required:true` 的限制**：方案只说走失败续跑链。实现里它不占每 run 出卡名额（不在消息流里出卡），但同样受按条目的 7 天拒绝退避约束——用户拒绝两次的项既不出卡、也不为它暂停任务。
+  13. **应用与「不用了」的竞争（pending → applying 占位）**：`settings.items.apply` 带卡片时在写锁内、写之前再确认卡片仍是 pending，写后在同一同步关键区标 applied；被抢先「不用了」的应用报错且不写。带卡片时作用对象以卡为准。每 run 出卡名额在第一个 `await` 前同步占位，并行工具调用不超限。
+  14. **写锁范围与等待上限**：锁只罩同步的读-合并-写，`settings.update` 的网络副作用在锁外；等锁上限 10 秒（`TIMEOUT`）。设置页整对象保存的既有覆盖问题不在 P0 解决，只靠回执卡撤销时的冲突报告兜底。
 - 影响范围：design/38、`packages/shared/src/settings-catalog/*`、`packages/core/src/settings/*`、`tools/settings-tools.ts`、`features/settings-card/*`。
 - 推荐 / 决定：以上均按现状保留；方案文档已就 P0 状态做了标注，设计篇 38 记录的是实际行为。
 - 已更新的文档：`docs/design/38-conversational-settings.md`、`docs/design/README.md`（D89）、`docs/design/18-inline-setup.md`、`docs/design/02-execution.md`、`docs/design/30-supervisor-and-tasks.md`、`docs/dev/03-data-model.md`、`docs/dev/04-agent-runtime.md`、`todo/conversational-app-setup.md`。
