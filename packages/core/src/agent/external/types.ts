@@ -60,7 +60,7 @@ export interface SessionContext {
   capabilities: readonly string[];
   /** 会话级提示词：仅 `meta-append` 模式下传入（由 Provider 放进 `_meta`）。 */
   sessionPrompt: string | null;
-  /** 单次 run 的轮数上限（`RunSpec.limits.maxTurns`）。 */
+  /** 单次 run 的轮数上限（`RunSpec.limits.maxTurns`）；≤ 0 = 不设上限。 */
   maxTurns: number;
   /** 用户开启「加载我的个人配置」（`settings.agents[id].loadUserConfig`）。 */
   loadUserConfig: boolean;

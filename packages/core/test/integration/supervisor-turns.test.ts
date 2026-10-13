@@ -530,6 +530,33 @@ describe('D75 supervisor turns (W2)', () => {
     expect(llm.requestsFor('mock-main')).toHaveLength(8);
   }, 30_000);
 
+  it('a turn that already started a task then burns remaining steps settles completed (not failed)', async () => {
+    const stack = await start();
+    const { core, llm } = stack;
+    const bot = await makeBot(core, '小艾');
+    const conv = await openDirect(core, bot.id);
+    const taskHold = step().inTask().hold().replyText('RESULT-TASK 编码完成');
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .replyToolCall('start_task', {
+          title: '编码',
+          instruction: 'TASK-CODE 实现功能',
+          source_message_ids: [],
+          writes: true,
+        }),
+      // 7 more tool turns → hit TURN_MAX_TURNS without a final text reply.
+      ...Array.from({ length: 7 }, () => step().inTurn().replyToolCall('list_tasks', {})),
+      taskHold,
+    ]);
+    await sendBatch(core, conv.id, ['帮我写代码']);
+    const [turn] = await waitTurns(stack, conv.id, 1, 'turn settled after start_task');
+    expect(turn).toMatchObject({ status: 'completed', error: null });
+    expect(runsOf(stack, conv.id, 'task')).toHaveLength(1);
+    expect(runsOf(stack, conv.id, 'task')[0]!.originRunId).toBe(turn!.id);
+    taskHold.release();
+  }, 30_000);
+
   it('§8.4 downgrade: an agent-only bot without a built-in model routes messages to a task and forwards its result', async () => {
     const started: FakeAcpAgentHandle[] = [];
     const stack = await createTestStack({

@@ -37,7 +37,11 @@ export const SKILLS_LIST_TOKEN_BUDGET = 500;
 export const PROJECT_CONTEXT_TOKEN_BUDGET = 1500;
 /** Max characters of a single tool output returned to the model. */
 export const TOOL_OUTPUT_MAX_CHARS = 30_000;
-/** Max turns of a single run. */
+/**
+ * Max turns of a single non-task run that still uses a step ceiling
+ * (wiki / skill authoring / similar). Task Agent loops do **not** use this:
+ * see TASK_MAX_TURNS (0 = unlimited; wall clock + token budget remain).
+ */
 export const RUN_MAX_TURNS = 60;
 
 // --- Host SubAgent (delegate_task, docs/design/23-mcp-and-subagent.md D66) ------
@@ -594,9 +598,15 @@ export const AGENT_TRIAGE_MIN_INTERVAL_MS = 2 * 60_000;
 /**
  * Max model turns of one supervisor turn (`loop_type='turn'`, §2.1): a turn
  * talks and dispatches, it should never run a long tool chain; over the cap it
- * settles as failed.
+ * settles as failed (unless it already started a task — work belongs there).
  */
 export const TURN_MAX_TURNS = 8;
+/**
+ * Max model turns of one task Agent loop (`loop_type='task'`). `0` = no step
+ * ceiling: coding / long Agent work is bounded by TASK_MAX_WALL_MS and
+ * TASK_TOKEN_BUDGET only (pi-engine and Claude omit maxTurns when ≤ 0).
+ */
+export const TASK_MAX_TURNS = 0;
 /** Max simultaneously running tasks per conversation (§2.2); more wait as `queued` (submitted). */
 export const TASK_CONCURRENCY_PER_CONVERSATION = 3;
 /** Max simultaneously running tasks across all conversations (§2.2). */
@@ -607,10 +617,10 @@ export const TASK_START_MAX_PER_TURN = 2;
 export const TASK_MAX_WALL_MS = 4 * 60 * 60_000;
 /**
  * Token budget (input+output, cumulative over all model calls) of one task
- * (§2.2). A task takes over today's long response run, which has no token cap
- * and is bounded only by RUN_MAX_TURNS (60); SUBAGENT_TOKEN_BUDGET (150k for
- * 20 turns) is far too small for that. 60 turns × ~30k context tokens per
- * call ≈ 1.8M, so the cap sits just above what a full-length run can consume.
+ * (§2.2). Tasks have no step ceiling (TASK_MAX_TURNS = 0); this budget and
+ * TASK_MAX_WALL_MS are the hard stops. Sized for a long coding Agent run
+ * (~2M ≈ many tens of tool turns at typical context sizes); SUBAGENT_TOKEN_BUDGET
+ * (150k for 20 turns) is far too small for that.
  */
 export const TASK_TOKEN_BUDGET = 2_000_000;
 /**

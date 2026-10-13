@@ -84,7 +84,7 @@
 | 触发          | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑、网页监看条件满足（D79，`watch`） |
 | 并发          | 每（Bot, 对话）同时最多一个（mailbox 不变）；调度优先级沿用今天的响应 run 规则 |
 | 引擎          | **固定内置 pi**（§8.4 降级除外）                           |
-| 轮次上限        | `TURN_MAX_TURNS`（建议 8）——对话轮不该出现长工具链；超限按失败结算并提示   |
+| 轮次上限        | `TURN_MAX_TURNS`（建议 8）——对话轮不该出现长工具链；超限且未派出任务按失败结算；已 `start_task` 不因步数失败   |
 | 可写          | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、网页监看、技能生成请求（异步托管动作）  |
 | 不可写         | 文件、命令、浏览器、媒体生成、技能安装、环境安装——一律经任务                  |
 | 结束          | 最终回复自动发送（D48 不变）；无话可说时 `skip_reply`              |
@@ -669,7 +669,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/tools/index.ts` | `search_messages` / `get_messages_around` 按 Bot 视角；对话轮新增 `forward_task_result` |
 | `packages/core/src/agent/loops/conversation-summary.ts` | 只摘共享行 |
 | shared types | `textContentSchema.origin` 增 `'task'`（+ `taskId`）；`messageKindSchema` 增 `task_event`；`TriggerBatch.reason` 增 `'task'` |
-| shared constants                                  | `TURN_MAX_TURNS`、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（见 DEV-018） |
+| shared constants                                  | `TURN_MAX_TURNS`、`TASK_MAX_TURNS`（0 = 任务 Agent 不设步数上限）、`TASK_CONCURRENCY_PER_CONVERSATION`、`TASK_CONCURRENCY_GLOBAL`、`TASK_START_MAX_PER_TURN`、`TASK_MAX_WALL_MS`、`TASK_TOKEN_BUDGET`、`TASK_SETTLE_SWEEP_MS`、`TASK_EVENT_CONTEXT_MAX_CHARS`、`GRANT_ABSOLUTE_TTL_MS`；实现期新增 `TASK_REDELIVER_MAX_ATTEMPTS`、`TASK_QUESTION_TTL_MS`、`ASK_USER_OPTION_MAX_CHARS`、`SUBAGENT_CLOSE_GRACE_MS`（见 DEV-018） |
 
 
 项目处在早期开发阶段，不需要向后兼容、不需要迁移旧数据，因此 `loop_type='response'` 直接改名而不保留别名。
