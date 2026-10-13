@@ -9,6 +9,8 @@ import {
   connectorMetaOf,
   connectorRemoteOf,
   filterReleasedConnectors,
+  HIDDEN_CONNECTOR_SLUGS,
+  isHiddenConnectorId,
   findConnectorBySlug,
   type ConnectorCatalogEntry,
 } from '@kepcup/shared';
@@ -153,6 +155,9 @@ describe('filterReleasedConnectors', () => {
       .filter((m) => m.slug === 'gcalendar' || m.slug === 'gdrive');
     expect(google.map((m) => m.slug)).toEqual(['gcalendar', 'gdrive']);
     expect(google.every((m) => m.hidden)).toBe(true);
+    // 渲染端兜底常量必须与 catalog.json 的 hidden 条目对齐。
+    expect([...HIDDEN_CONNECTOR_SLUGS].sort()).toEqual(['gcalendar', 'gdrive']);
+    expect(google.every((m) => isHiddenConnectorId(m.slug))).toBe(true);
   });
 
   it('null gates = no filtering (dev/test builds), returns a copy', () => {

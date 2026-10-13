@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { AppCatalogEntry, AppsDirectoryStatus } from '@kepcup/shared';
+  import {
+    isHiddenConnectorId,
+    type AppCatalogEntry,
+    type AppsDirectoryStatus,
+  } from '@kepcup/shared';
   import { ChevronRight, Search, ShieldCheck } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { t } from '$lib/i18n';
@@ -46,7 +50,9 @@
     catalogLoadState({ loaded: appsStore.catalogLoaded, error: appsStore.catalogError }),
   );
   // 本机条目只在扩展中心「本机自建」区出现一次（按 origin 过滤），不进这张预置目录网格。
-  const catalog = $derived(withoutLocalEntries(appsStore.catalog));
+  const catalog = $derived(
+    withoutLocalEntries(appsStore.catalog).filter((entry) => !isHiddenConnectorId(entry.connectorId)),
+  );
   const categories = $derived(catalogCategories(catalog));
   const entries = $derived(catalogView(catalog, { query, category }));
   // 分级分组（D73 P3 §7.2）：内置在前、已认证带徽标；社区应用单独成组，默认折叠。
