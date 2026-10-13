@@ -179,6 +179,11 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   /** D88：只读盘点；移交卡只提交审批，执行在用户确认后由宿主完成。 */
   inspect_bot_assets: 'none',
   propose_handover: 'local',
+
+  // --- 对话内应用设置：查目录只读；修改 = 本机设置写入 / 出卡（回执卡可撤销）---
+  settings_search: 'none',
+  settings_read: 'none',
+  settings_change: 'local',
 };
 
 /** All built-in tool names registered in the classifier (tests assert coverage). */

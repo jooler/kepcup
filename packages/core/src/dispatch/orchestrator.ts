@@ -32,6 +32,8 @@ import {
   groupMentionToken,
   newId,
   resolveCapabilities,
+  resolveCapabilityOptIns,
+  type SettingCardResolved,
   type AgentCatalogEntry,
   type AgentToolApprovalPayload,
   type AgentPermissionTier,
@@ -57,6 +59,8 @@ import {
   type TaskStateView,
 } from '@kepcup/shared';
 import type { MailService } from '../mail/service.js';
+import type { SettingsCatalogHost } from '../settings/host.js';
+import { isUntrustedReadTool, triggerFromUser } from '../settings/context.js';
 import type { Clock } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { agentRunGate, agentSetupMessage } from '../agent/external/catalog.js';
@@ -362,6 +366,12 @@ export interface OrchestratorDeps {
    * 管家的 inspect_bot_assets / propose_handover，以及 propose_bot 的可用模型列表。
    */
   handover?: HandoverToolFacade | undefined;
+  /**
+   * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
+   * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
+   * 提示词带上那一条规则（`hasSettingsTools`）。缺省（精简测试装配）= 不注册。
+   */
+  settingsCatalog?: SettingsCatalogHost | undefined;
   /**
    * P11 browser capability hosted by the main process (port B); omitted in
    * stripped test setups, which then simply have no browser_* tools.
@@ -1578,7 +1588,7 @@ export class Orchestrator {
     conversationId: string,
     event: string,
     text: string,
-    options: { internal?: boolean } = {},
+    options: { internal?: boolean; settingResolved?: SettingCardResolved } = {},
   ): void {
     const conversation = this.#deps.conversations.get(conversationId);
     const bot = this.#deps.bots.get(botId);
@@ -1587,6 +1597,7 @@ export class Orchestrator {
     if (!this.#deps.conversations.memberBotIds(conversationId).includes(botId)) return;
     const message = this.#appendSystemMessage(conversationId, event, text, {
       ...(options.internal ? { internal: true } : {}),
+      ...(options.settingResolved !== undefined ? { settingResolved: options.settingResolved } : {}),
     });
     const quiet = parseQuietHours(bot.profile.behavior.quiet_hours);
     const now = this.#deps.clock.now();
@@ -1978,6 +1989,7 @@ export class Orchestrator {
       options?: string[];
       step?: string;
       internal?: boolean;
+      settingResolved?: SettingCardResolved;
     } = {},
   ): Message {
     const message = this.#deps.messages.append({
@@ -1991,6 +2003,7 @@ export class Orchestrator {
       ...(extra.options !== undefined ? { options: extra.options } : {}),
       ...(extra.step !== undefined ? { step: extra.step } : {}),
       ...(extra.internal ? { internal: true } : {}),
+      ...(extra.settingResolved !== undefined ? { settingResolved: extra.settingResolved } : {}),
     });
     // 内部事务事件不是对话内容：不向 UI 推送（读取侧也会过滤）。
     if (!extra.internal) {
@@ -2523,6 +2536,8 @@ export class Orchestrator {
       const tools = buildExternalAgentTools({
         responseTools: input.responseTools,
         capabilities,
+        // 包内按 Bot 单独开启的工具（settings:change 等）：未开启不注入。
+        optIns: resolveCapabilityOptIns(bot.profile.runtime.agent.capabilities, capabilities),
         maxNameLength: MAX_AGENT_TOOL_NAME - toolName('').length,
       });
       const sessionPrompt = buildAgentSessionPrompt({
@@ -3331,6 +3346,29 @@ export class Orchestrator {
         : undefined;
       // D80: a scheduled turn's messages carry the 「⏰ 标题」 tag.
       const scheduleSource = isTask ? null : this.#scheduleSourceOf(batch);
+      // 对话内应用设置（§5.3）：本 run 是否调用过读取不可信内容的工具（tool_call 一发生即置位，
+      // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
+      const untrusted = { touched: false };
+      const settingsFacade =
+        this.#deps.settingsCatalog !== undefined
+          ? this.#deps.settingsCatalog.forRun({
+              identity,
+              triggerReason: batch.reason,
+              // 任务的触发是 'task'（不在直改白名单里）：来源消息即使是用户的也不算本人直接发起。
+              triggerFromUser: triggerFromUser({
+                messages: batch.messages,
+                ...(batch.parts !== undefined
+                  ? { partReasons: batch.parts.map((part) => part.reason) }
+                  : {}),
+              }),
+              isGroup: conv.type === 'group',
+              isButler: bot.systemRole === 'butler',
+              touchedUntrusted: () => untrusted.touched,
+              onSetupRequired: (requirement) => {
+                setupHit.requirement = requirement;
+              },
+            })
+          : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         messages,
@@ -3361,6 +3399,7 @@ export class Orchestrator {
               mailSetup: this.#mailSetupFacade(setupHit, identity),
             }
           : {}),
+        ...(settingsFacade !== undefined ? { settings: settingsFacade } : {}),
         // D81：组件工具只在任务分支注册（tools/index.ts），门面这里无条件给。
         ...(this.#deps.widgets != null ? { widgets: this.#deps.widgets } : {}),
         // D87 P4 L1：展示卡对话轮与任务都有（只发一条卡片消息）。
@@ -3826,6 +3865,8 @@ export class Orchestrator {
             ...(connectedAppsSection.length > 0 ? { connectedApps: connectedAppsSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
+            // 与 settings_* 工具是否注册同源（toolDeps.settings）。
+            ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
             // resolution timed out), so the prompt does not flip between turns.
             ...(!isTask && mcpResolution.hasServers
@@ -3890,6 +3931,11 @@ export class Orchestrator {
       }
 
       const unsubscribe = this.#persistSteps(runId, batch.conversationId, handle);
+      const unsubscribeUntrusted = handle.onEvent((event) => {
+        if (event.type === 'tool_call' && isUntrustedReadTool(event.payload.toolName)) {
+          untrusted.touched = true;
+        }
+      });
       const unsubscribeSetup = handle.onEvent((event) => {
         if (event.type !== 'tool_result') return;
         if ((event.payload as { errorCode?: string }).errorCode !== TOOL_SETUP_REQUIRED) return;
@@ -3912,6 +3958,7 @@ export class Orchestrator {
       } finally {
         unsubscribe();
         unsubscribeSetup();
+        unsubscribeUntrusted();
         unsubscribeInterim();
         unsubscribeSteerConfirm();
         if (exec.kind === 'task') exec.control.detach();

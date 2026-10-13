@@ -13,6 +13,7 @@ import {
 import { truncateToBudget } from '../tokens.js';
 import { APP_REQUEST_CONNECTION_RULE } from '../../apps/prompt.js';
 import { MAIL_REQUEST_SETUP_RULE, mailRequestSetupRule } from '../../mail/prompt.js';
+import { SETTINGS_READ_ONLY_RULE, SETTINGS_RULE } from '../../settings/prompt.js';
 
 export interface AccessPromptInfo {
   /** Sandbox verdict for this machine; unavailable means confirm mode. */
@@ -57,6 +58,11 @@ export interface SystemPromptInput {
   mailAccounts?: string | undefined;
   /** D84：邮件工具可用（含 mail_request_setup），即使尚无已绑定账号。 */
   hasMail?: boolean | undefined;
+  /**
+   * 对话内应用设置：settings_search / settings_read / settings_change 已注册（与工具注册同源，
+   * orchestrator 按 `settingsCatalog` 是否装配给出）；为假时那一条规则不出现。
+   */
+  hasSettingsTools?: boolean | undefined;
   /** Top-k relevant memories (with ids) for <relevant_memories> (P07). */
   relevantMemories?: string | undefined;
   /** Wiki topic index (index.md titles) for <wiki_topics> (P09). */
@@ -393,6 +399,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       // 管家可以以任何 Bot 为来源提移交（BUTLER_RULES），普通 Bot 只能交出自己的（D88 P1）。
       rules = [...rules, `${rules.length + 1}. ${mailRequestSetupRule(isButler)}`];
     }
+    if (input.hasSettingsTools === true) {
+      rules = [...rules, `${rules.length + 1}. ${SETTINGS_RULE}`];
+    }
     return rules;
   })();
   return [
@@ -490,7 +499,12 @@ export interface AgentRunContextInput {
  * 专属的规则（request_access、acquire_project_write、delegate_task）去掉；
  * 提到宿主工具的规则只在该工具注入时出现（`tools`：全部存在才收录）。
  */
-const AGENT_PLATFORM_RULES: ReadonlyArray<{ text: string; tools?: readonly string[] }> = [
+const AGENT_PLATFORM_RULES: ReadonlyArray<{
+  text: string;
+  tools?: readonly string[];
+  /** 这些工具任一注入时不收录（同一规则的另一版本接管）。 */
+  unlessTools?: readonly string[];
+}> = [
   {
     text: '你是用户通讯录中的一个联系人，在聊天应用中与用户对话；按你的人设像真人一样交流。回复语言跟随用户。',
   },
@@ -534,6 +548,13 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{ text: string; tools?: readonly strin
   { text: APP_REQUEST_CONNECTION_RULE, tools: ['app_request_connection'] },
   // D84：对话内添加邮箱；工具未注入则不出现。
   { text: MAIL_REQUEST_SETUP_RULE, tools: ['mail_request_setup'] },
+  // 对话内应用设置：settings_change 默认不注入（按 Bot 开启 settings:change），只读版本兜底。
+  { text: SETTINGS_RULE, tools: ['settings_search', 'settings_read', 'settings_change'] },
+  {
+    text: SETTINGS_READ_ONLY_RULE,
+    tools: ['settings_search', 'settings_read'],
+    unlessTools: ['settings_change'],
+  },
 ];
 
 /** 补位类能力的称呼（`<tool_policy>`）。 */
@@ -589,6 +610,10 @@ const HOST_POLICY_LINES: ReadonlyArray<{ tools: readonly string[]; text: (names:
   },
   { tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'], text: (names) => `查阅与收录知识库用 ${names}。` },
   { tools: ['install_skill', 'create_skill'], text: (names) => `安装或创建技能用 ${names}。` },
+  {
+    tools: ['settings_search', 'settings_read', 'settings_change'],
+    text: (names) => `查看（与修改）KepCup 自身的设置用 ${names}，不要去改 KepCup 的配置文件。`,
+  },
 ];
 
 const GENERATION_TOOLS: readonly string[] = ['generate_image', 'generate_speech', 'generate_video'];
@@ -685,7 +710,11 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
   const { bot, tools } = input;
   const present = (required: readonly string[] | undefined) =>
     required === undefined || required.every((name) => tools.toolNames.includes(name));
-  const rules = AGENT_PLATFORM_RULES.filter((rule) => present(rule.tools)).map(
+  const rules = AGENT_PLATFORM_RULES.filter(
+    (rule) =>
+      present(rule.tools) &&
+      !(rule.unlessTools ?? []).some((name) => tools.toolNames.includes(name)),
+  ).map(
     (rule, index) => `${index + 1}. ${rule.text}`,
   );
   const { identity, persona } = identityAndPersona(bot);

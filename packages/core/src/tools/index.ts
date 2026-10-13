@@ -42,6 +42,7 @@ import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
 import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
 import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
+import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
 import type { BrowserHostRpc } from '../browser/facade.js';
 import type { FileReadState } from './fs-state.js';
 
@@ -192,6 +193,12 @@ export interface ResponseToolDeps {
    * 卡片消息，没有其他副作用，不破坏对话轮的只读纪律）。
    */
   present?: PresentToolFacade | undefined;
+  /**
+   * 对话内应用设置（todo/conversational-app-setup.md §5.2）：present 时对话轮与任务都注册
+   * settings_search / settings_read / settings_change（异步托管动作：写入与出卡由宿主确定性
+   * 执行，档位由宿主裁定）。orchestrator 已按 run 绑定好上下文。
+   */
+  settings?: SettingsToolFacade | undefined;
 }
 
 /**
@@ -260,7 +267,7 @@ function guessMime(fileName: string): string {
  *   (message / attachment / run lookups, read / ls / find / grep), task
  *   management + forward_task_result, async hosted actions (delegate_to_bot,
  *   schedules, watches (W7), wiki ingest, memory candidates, skill authoring, butler
- *   proposals), web_search / web_fetch and read-only MCP tools (W5: risk
+ *   proposals, app settings — settings_* cards / host-decided changes), web_search / web_fetch and read-only MCP tools (W5: risk
  *   `read` with effective approval `auto`, capped). No writes, commands,
  *   browser, media generation, other MCP tools, skill / environment installs,
  *   access requests or delegate_task — those are a task's work. (The gateway
@@ -1030,6 +1037,10 @@ export function buildResponseTools(input: {
   const presentTools =
     deps.present !== undefined ? buildPresentTools({ identity, present: deps.present }) : [];
 
+  // 对话内应用设置：对话轮与任务都有（宿主裁定档位，Bot 不能自选）。
+  const settingsTools =
+    deps.settings !== undefined ? buildSettingsTools({ settings: deps.settings }) : [];
+
   // 管家（D70）：list_bots 人人可用（只读名片），提议类工具仅管家。D88 移交工具 P1 起人人
   // 都有（对话轮）：管家可以以任何 Bot 为来源、可以新建目标；普通 Bot 只能交出自己的、交给
   // 已有 Bot（宿主 HandoverHost 同样校验）。
@@ -1074,6 +1085,7 @@ export function buildResponseTools(input: {
       ...watchTools,
       ...mailTools,
       ...presentTools,
+      ...settingsTools,
       // D80: the offer card is the turn's (cards facing the user, D75).
       ...(deps.schedule !== undefined
         ? [buildOfferScheduleTool({ identity, schedule: deps.schedule })]
@@ -1115,6 +1127,7 @@ export function buildResponseTools(input: {
     ...skillTools,
     ...delegateTools,
     ...presentTools,
+    ...settingsTools,
     ...widgetTools,
     // §2.4.6: a task asks the user on a question card bound to it.
     ...(identity.loopType === 'task' && deps.tasks?.ask !== undefined

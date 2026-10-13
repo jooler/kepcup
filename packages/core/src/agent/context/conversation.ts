@@ -15,6 +15,7 @@ import {
   type TaskEventPhase,
 } from '@kepcup/shared';
 import { neutralizeUntrusted } from '../../infra/data-boundary.js';
+import { renderSettingCardLine } from '../../settings/render.js';
 import { estimateTokens } from '../tokens.js';
 import type { TriggerBatch } from '../../scheduler/mailbox.js';
 
@@ -305,6 +306,9 @@ export function renderMessageLine(
   if (message.kind === 'system_event') {
     const handoverLine = renderHandoverLine(message, options);
     if (handoverLine !== null) return `[${message.id} | ${time} | 系统] ${handoverLine}`;
+    // 对话内设置卡 / 落定通知：按结构化内容渲染，卡上的值与理由放进 <untrusted>。
+    const settingLine = renderSettingCardLine(message, options);
+    if (settingLine !== null) return `[${message.id} | ${time} | 系统] ${settingLine}`;
   }
   if (message.kind === 'card') {
     const rendered = options.renderCard?.(message) ?? null;

@@ -11,6 +11,8 @@ import {
   type RunStatus,
   type ScheduleOfferContent,
   type HandoverEventContent,
+  type SettingCardContent,
+  type SettingCardResolved,
   type ScheduleReceiptSnapshot,
   type TaskEventContent,
   type TaskEventPhase,
@@ -117,6 +119,10 @@ export interface AppendMessageInput {
   offer?: ScheduleOfferContent | undefined;
   /** system_event extras: asset handover notes (bot_handover / bot_handed_over, D88). */
   handover?: HandoverEventContent | undefined;
+  /** system_event extras: 对话内设置卡（setting_card，含回执卡）。 */
+  setting?: SettingCardContent | undefined;
+  /** system_event extras: 设置卡落定后唤醒 Bot 的内部事件（setting_card_resolved）的结构化部分。 */
+  settingResolved?: SettingCardResolved | undefined;
   /**
    * text messages only (D80): sent by a scheduled turn — the schedule and its
    * title snapshot (「⏰ 标题」 tag under the bubble).
@@ -401,6 +407,10 @@ export class MessagesService {
                 ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
                 ...(input.offer !== undefined ? { offer: input.offer } : {}),
                 ...(input.handover !== undefined ? { handover: input.handover } : {}),
+                ...(input.setting !== undefined ? { setting: input.setting } : {}),
+                ...(input.settingResolved !== undefined
+                  ? { settingResolved: input.settingResolved }
+                  : {}),
               });
     const mentions = input.mentions ?? [];
     let message: Message;
