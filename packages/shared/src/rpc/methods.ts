@@ -26,6 +26,11 @@ import {
 import { appsDirectoryStatusSchema } from '../domain/directory-index.js';
 import { handoverViewSchema } from '../domain/handover.js';
 import {
+  settingCardStateSchema,
+  settingTargetSchema,
+  settingValuesSchema,
+} from '../settings-catalog/cards.js';
+import {
   appsLocalConnectorsConfirmInputSchema,
   appsLocalConnectorsConfirmOutputSchema,
   appsLocalConnectorsListOutputSchema,
@@ -309,6 +314,67 @@ export const settingsUpdateInputSchema = z.object({
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
   defaultAgentId: z.string().optional(),
 });
+
+// --- 设置目录（todo/conversational-app-setup.md §4.1 / §6）---------------------
+
+/**
+ * 卡片 / 设置页按目录条目保存（条目级 CAS）：core 在设置写锁内「读 → 只比对并改本条目的
+ * 字段 → 写回」，不发整对象，撤销或过期卡不会覆盖兄弟字段的并发修改。来自渲染层（用户亲手
+ * 填写），`values` 可以含敏感字段（如 Key），core 按条目适配器分发到 secrets，永不回显。
+ */
+export const settingsItemsApplyInputSchema = z.object({
+  itemId: z.string().min(1),
+  values: settingValuesSchema,
+  /**
+   * 期望的当前值（卡片出卡时的 `before`）：与 core 读到的本条目非敏感字段逐键比对，不一致即
+   * `conflict`、不写入。null = 不比对（设置页直接保存、渲染层条目）。
+   */
+  expected: settingValuesSchema.nullable(),
+  /** 作用对象（bot / group / project 条目必填对应 id）。 */
+  target: settingTargetSchema.optional(),
+  /** 从设置卡应用时带卡片消息 id：成功后卡片标 applied 并唤醒 Bot（§6.2）。 */
+  messageId: z.string().min(1).optional(),
+});
+export const settingsItemsApplyOutputSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('applied'),
+    itemId: z.string(),
+    /** 写入前的非敏感字段值（回执 / 撤销用）；渲染层条目为 null。 */
+    before: settingValuesSchema.nullable(),
+    /** 写入后的非敏感字段值（敏感字段不回显）。 */
+    values: settingValuesSchema,
+  }),
+  z.object({
+    status: z.literal('conflict'),
+    itemId: z.string(),
+    /** 当前的非敏感字段值：卡片据此刷新「当前 → 建议」对比后再让用户确认。 */
+    current: settingValuesSchema.nullable(),
+  }),
+]);
+export type SettingsItemsApplyOutput = z.infer<typeof settingsItemsApplyOutputSchema>;
+
+/** 设置卡动作（同 D80 提议卡）：卡片的消息 id。 */
+export const settingsCardInputSchema = z.object({ messageId: z.string().min(1) });
+/** 「不用了」：卡片标 dismissed，唤醒 Bot 一次（§6.2）；已落定的卡原样返回其状态。 */
+export const settingsCardsDismissOutputSchema = z.object({ state: settingCardStateSchema });
+/**
+ * 「我已设置好」（link 卡 / 渲染层条目，§6.1）：core 能用适配器核对的核对一次——
+ * `verified`：true 核对通过、false 核对未通过（卡片保持 pending 并提示）、null 无法核对
+ * （渲染层 / 只读条目，按用户所说标 applied）。
+ */
+export const settingsCardsCompleteOutputSchema = z.object({
+  state: settingCardStateSchema,
+  verified: z.boolean().nullable(),
+});
+/**
+ * 回执卡「撤销」（§5.3）：用卡上保存的旧值经同一套 CAS 写回；当前值已不是新值 → conflict、
+ * 不覆盖。撤销成功卡片标 reverted，不唤醒 Bot。
+ */
+export const settingsCardsUndoOutputSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('reverted'), values: settingValuesSchema }),
+  z.object({ status: z.literal('conflict'), current: settingValuesSchema.nullable() }),
+]);
+export type SettingsCardsUndoOutput = z.infer<typeof settingsCardsUndoOutputSchema>;
 
 // --- MCP（D65）--------------------------------------------------------------
 
@@ -1612,6 +1678,19 @@ export const rpcMethodSchemas = {
 
   'settings.get': { input: voidInput, output: settingsGetOutputSchema },
   'settings.update': { input: settingsUpdateInputSchema, output: settingsGetOutputSchema },
+  'settings.items.apply': {
+    input: settingsItemsApplyInputSchema,
+    output: settingsItemsApplyOutputSchema,
+  },
+  'settings.cards.dismiss': {
+    input: settingsCardInputSchema,
+    output: settingsCardsDismissOutputSchema,
+  },
+  'settings.cards.complete': {
+    input: settingsCardInputSchema,
+    output: settingsCardsCompleteOutputSchema,
+  },
+  'settings.cards.undo': { input: settingsCardInputSchema, output: settingsCardsUndoOutputSchema },
 
   'providers.list': { input: voidInput, output: providersListOutputSchema },
   'providers.setKey': { input: providersSetKeyInputSchema, output: okOutput },
@@ -2121,6 +2200,10 @@ const APP_METHODS = [
   'diagnostics.get',
   'settings.get',
   'settings.update',
+  'settings.items.apply',
+  'settings.cards.dismiss',
+  'settings.cards.complete',
+  'settings.cards.undo',
   'providers.list',
   'providers.setKey',
   'providers.removeKey',

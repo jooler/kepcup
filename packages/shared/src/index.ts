@@ -24,6 +24,7 @@ export * from './domain/mail.js';
 export * from './domain/handover.js';
 export * from './domain/stickies.js';
 export * from './domain/agent-status.js';
+export * from './settings-catalog/index.js';
 export * from './rpc/index.js';
 export * from './browser/net-rules.js';
 export * from './browser/axtree.js';
