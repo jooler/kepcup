@@ -421,10 +421,8 @@ describe('schedule adapter', () => {
     await adapter.apply(ctx(), 'schedule:sch_d');
     expect(transfers).toEqual(['sch_d->direct_bot_b']);
     expect(adapter.isApplied(ctx(), 'schedule:sch_d')).toBe(true);
-    // P1：已经移交给 B 的任务对 B 仍「可执行」（崩溃恢复只补剩下的步骤）；对别人已结束。
-    expect(adapter.validate(ctx(), 'schedule:sch_d', 'move')).toBeNull();
-    expect(adapter.validate(ctxOf(world, 'bot_a', null), 'schedule:sch_d', 'move')).toContain(
-      '已结束',
-    );
+    // 没有承诺的任务移交后就是「已结束」（宿主先看 isApplied → done，不会走到 validate）；
+    // 只有承诺联动、且本次移交给过 B 承诺副本的才走恢复捷径（审查 #5，见 P1 测试）。
+    expect(adapter.validate(ctx(), 'schedule:sch_d', 'move')).toContain('已结束');
   });
 });
