@@ -140,7 +140,7 @@ D75（[design/02](../design/02-execution.md#bot-如何发消息)）：正式交�
 
 - **对话轮的最终文本自动发送**：对话轮结束时，模型的最终文本作为一条 Bot 消息写入对话；为空（去除空白后）时不发送。
 - **任务的最终文本不发送**：写入私有 `result` 条目（`skip_reply` = 空结果），由唤醒的对话轮转述或 `forward_task_result(task_id)` 原文转发（宿主以 Bot 身份发出结果条目全文，`origin:'task'`，每个任务只能转发一次）。失败 / 取消 / 中断写 `failure` 条目（状态、错误、`buildRunDigest` 尾部摘要，`TASK_FAILURE_DIGEST_TOKEN_BUDGET`）。
-- **中间说明**：带工具调用的回复里的说明文字自动作为消息发出（D54 护栏：每 run 直聊 `INTERIM_TEXT_MAX_PER_RUN` / 群聊 `INTERIM_TEXT_MAX_PER_RUN_GROUP` 条，单条 `INTERIM_TEXT_MAX_CHARS` 截断）；任务的中间说明带 `origin:'task'` + `taskId` + `interim:true`——**界面与任务卡可见，不进入对话轮 / 任务的模型上下文**（最近窗口、滚动摘要、消息工具、`<tasks>` 段均排除；结果 / 失败私有条目与 `forward_task_result` 仍进入）。
+- **中间说明**：对话轮仍自动投送中间文字为消息（D54 护栏：直聊 / 群聊条数与字数上限）；**任务**改为单一状态通知（覆盖写 `runs.last_progress` → 状态行 / 任务卡，成功清空、未完成保留），不堆气泡、不进模型上下文（未完成时 `list_tasks` 可带「停在：…」；结果 / 失败私有条目与 `forward_task_result` 仍进入）。
 - **中途发消息**：`send_message(text, mention_bot_ids?, reply_to?, attachment_paths?)`，用于 @ 其他成员、发附件、主动分多条。任务的 `send_message` 没有 `mention_bot_ids`（任务不 @ 群成员，也不进 Bot 连锁）。
 - **不回复**：调用 `skip_reply(reason)`，执行立即结束，不发送最终文本。
 - **@ 其他 Bot 只能通过 `send_message` 的 `mention_bot_ids` 参数**；文本中的 `@名字` 不触发任何 Bot。

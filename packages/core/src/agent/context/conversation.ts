@@ -104,8 +104,9 @@ export interface RenderMessageOptions {
 
 
 /**
- * Task auto-progress bubble (D54 interim under a task run): shown in the UI
- * and on the task card, but never fed to a model as conversation history.
+ * Legacy task interim chat bubble (D54). New path stores a single status on
+ * `runs.last_progress` (status line / task card); leftover interim rows stay
+ * out of every model-facing conversation path.
  * `forward_task_result` keeps `origin:'task'` without `interim` (and uses the
  * turn's run id). Rows written before the `interim` flag still match when
  * `runId === taskId` (the task's own run emitted them).

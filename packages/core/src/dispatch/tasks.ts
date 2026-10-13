@@ -1107,6 +1107,25 @@ export class TaskHost implements TaskToolFacade {
     this.publishUpdate(taskId);
   }
 
+  /**
+   * Single mutable task status notification (user UI overlay): overwrites
+   * `runs.last_progress`, pushes `task.updated`. Does not append chat bubbles.
+   * Cleared on successful settle; kept on cancel / fail / interrupt.
+   */
+  recordStatus(taskId: string, text: string): void {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null || task.loopType !== 'task' || isTerminalStatus(task.status)) return;
+    const trimmed = text.trim().replace(/\s+/g, ' ');
+    if (trimmed.length === 0) return;
+    const line = clip(trimmed, 120);
+    if ((task.lastProgress ?? null) === line) {
+      this.publishUpdate(taskId);
+      return;
+    }
+    this.#deps.runs.update(taskId, { lastProgress: line });
+    this.publishUpdate(taskId);
+  }
+
   // --- views (D75 W3, design 30 §4.3 / §6.3) ----------------------------------
 
   /** The card / status-line projection of a task (null = not a task). */
@@ -1295,11 +1314,23 @@ export class TaskHost implements TaskToolFacade {
     // earlier writer won the unique index.
     const errorReason =
       entry !== null && !created ? taskEventOf(entry)?.errorReason : outcome.errorReason;
+    // Before purge: incomplete stops keep the last interim line on the run.
+    let keepProgress: string | null | undefined;
+    if (status === 'completed') {
+      keepProgress = null;
+    } else if ((this.#deps.runs.get(taskId)?.lastProgress ?? null) === null) {
+      keepProgress = this.#legacyLastInterim(taskId);
+    }
     const updated = this.#deps.runs.update(taskId, {
       status,
       ...(status !== 'completed' && error !== null ? { error } : {}),
       ...(outcome.setup !== undefined ? { setup: outcome.setup } : {}),
       ...(status !== 'completed' && errorReason !== undefined ? { errorReason } : {}),
+      ...(keepProgress !== undefined ? { lastProgress: keepProgress } : {}),
+    });
+    // Chat bubbles for interim are obsolete (status lives on the run); purge leftovers.
+    this.#safely(() => {
+      this.#deps.messages.purgeTaskInterim(taskId);
     });
     const launched = this.#launched.get(taskId);
     if (launched !== undefined) {
@@ -2447,16 +2478,37 @@ export class TaskHost implements TaskToolFacade {
     }
   }
 
-  #summary(task: Run): TaskSummary {
-    let lastProgress: string | null = null;
-    for (let i = task.outputMessageIds.length - 1; i >= 0 && lastProgress === null; i -= 1) {
+  /** Last interim chat bubble text for a task (legacy D54 stacking). */
+  #legacyLastInterim(taskId: string): string | null {
+    const task = this.#deps.runs.get(taskId);
+    if (task === null) return null;
+    for (let i = task.outputMessageIds.length - 1; i >= 0; i -= 1) {
       const message = this.#deps.messages.getById(task.outputMessageIds[i] ?? '');
-      const content = message?.content as { text?: unknown } | undefined;
-      if (typeof content?.text === 'string' && content.text.trim().length > 0) {
-        lastProgress = clip(content.text.trim().replace(/\s+/g, ' '), 120);
+      const content = message?.content as { text?: unknown; interim?: unknown } | undefined;
+      if (content?.interim !== true) continue;
+      if (typeof content.text === 'string' && content.text.trim().length > 0) {
+        return clip(content.text.trim().replace(/\s+/g, ' '), 120);
       }
     }
+    return null;
+  }
+
+  #summary(task: Run): TaskSummary {
     const terminal = isTerminalStatus(task.status);
+    // Successful delivery clears the status overlay; incomplete keeps the last line.
+    let lastProgress: string | null =
+      task.status === 'completed' ? null : (task.lastProgress ?? null);
+    // Legacy fallback: stacked interim chat bubbles (pre single-status).
+    if (lastProgress === null && task.status !== 'completed') {
+      for (let i = task.outputMessageIds.length - 1; i >= 0 && lastProgress === null; i -= 1) {
+        const message = this.#deps.messages.getById(task.outputMessageIds[i] ?? '');
+        const content = message?.content as { text?: unknown; interim?: unknown } | undefined;
+        if (content?.interim !== true) continue;
+        if (typeof content?.text === 'string' && content.text.trim().length > 0) {
+          lastProgress = clip(content.text.trim().replace(/\s+/g, ' '), 120);
+        }
+      }
+    }
     return {
       taskId: task.id,
       title: task.taskTitle ?? '',

@@ -142,14 +142,17 @@ describe('D75 task cards (W3)', () => {
     expect(card!.seq).toBeLessThan(ack.seq);
     expect(views.some((view) => view.taskId === taskId)).toBe(true);
 
-    // Running, with its progress attributed to the task.
+    // Running, with its progress on the single status overlay (task card / lastProgress).
     await waitFor(() => (taskHeld.consumed ? true : null), { label: 'task held' });
-    const progress = await waitVisible(stack, conv.id, 'PROGRESS');
-    expect(progress.content).toMatchObject({ origin: 'task', taskId });
-    expect(progress.runId).toBe(taskId);
     const running = await waitFor(
-      () => views.find((view) => view.taskId === taskId && view.state === 'running') ?? null,
-      { label: 'running view' },
+      () =>
+        views.find(
+          (view) =>
+            view.taskId === taskId &&
+            view.state === 'running' &&
+            (view.lastProgress ?? '').includes('PROGRESS'),
+        ) ?? null,
+      { label: 'running view with status' },
     );
     expect(running).toMatchObject({ title: '写文件', writes: true, workdirKind: 'workspace' });
     const active = (await core.rpc.call('tasks.active', { conversationId: conv.id })) as {

@@ -187,7 +187,7 @@ describe('external agent engine (P1, fake agent)', () => {
     });
   }, 20_000);
 
-  it('a fake-agent bot works a task: built-in turn, agent task steps, interim text, private result', async () => {
+  it('a fake-agent bot works a task: built-in turn, agent task steps, status overlay, private result', async () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
@@ -236,10 +236,9 @@ describe('external agent engine (P1, fake agent)', () => {
       { label: 'relay of the result' },
     );
     const visible = await botMessages(stack, conv.id, bot.id);
-    // Interim prose at the tool boundary (D54) is visible, attributed to the task.
-    const interim = visible.filter((m) => textOf(m) === '我先查一下笔记。');
-    expect(interim).toHaveLength(1);
-    expect(interim[0]!.content).toMatchObject({ origin: 'task', taskId: task.id });
+    // Interim prose updates the single status overlay (cleared on success), not chat bubbles.
+    expect(visible.map(textOf)).not.toContain('我先查一下笔记。');
+    expect(task.lastProgress ?? null).toBeNull();
     expect(visible.map(textOf)).not.toContain('查好了：答案是 42。');
     expect(visible.map(textOf)).toEqual(
       expect.arrayContaining(['好的，我去处理。', '答案是 42。']),
