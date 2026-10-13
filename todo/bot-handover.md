@@ -1,6 +1,6 @@
 # Bot 资产移交：实施方案
 
-> 状态：**已定稿，待实施**（2026-10-12；用户拍板：①记忆、Wiki 一律复制；②普通 Bot 交出自己资产按开发节奏排期，但属本功能必做范围，P0–P2 全部要落地；③DEV-001～011 按建议确认、P0 合入 main；④承诺例外（承诺随定时任务迁移、A 的承诺置 void）确认，P1 实施）。
+> 状态：**P0–P2 已全部实施并合入 main**（2026-10-13；下为 2026-10-12 定稿时的拍板记录；用户拍板：①记忆、Wiki 一律复制；②普通 Bot 交出自己资产按开发节奏排期，但属本功能必做范围，P0–P2 全部要落地；③DEV-001～011 按建议确认、P0 合入 main；④承诺例外（承诺随定时任务迁移、A 的承诺置 void）确认，P1 实施）。
 > 设计：[docs/design/37-bot-asset-handover.md](../docs/design/37-bot-asset-handover.md)，决策 **D88**。
 > 分支 / worktree：`t/handover` @ `/home/jyy/wt/kepcup-handover`（从 main 拉）。主工作树由多个会话共用，**不在主树里改代码**；D87 在 `/home/jyy/wt/kepcup-widget-craft` 并行进行，不碰它。
 > 迁移号：写迁移时取 main 的下一个空号。当前 main 最大为 0034，D87 暂记 0035（未合入）——本方案先记 **0036（暂定）**，合入时以 main 实况重排，并同步 `create-core.test.ts` 的 `user_version` 与 public-skills-migration 测试里的版本号。
@@ -324,6 +324,17 @@
 **测试**（修复后）：定向——`handover-p2`（7）、`handover-wiki-copy`（7）、`handover-adapters-p2`（8）、`context-assembly`、`mail-request-setup`、`widgets-service`，全绿。typecheck（shared / core / desktop，svelte-check 0 错误 1 条既有 warning）、改动文件 eslint 通过。全量（容器 `kh2-full3`，提交 `d28b6fa`）：4401 例，4352 通过 / 27 失败 / 22 跳过——26 条为既有基线文件（同前）；另 1 条 `external-agent-engine`「every packed tool name exists among the response tools」（`mail:mail_request_setup` 不在响应工具里）在 **main@1dd394d 上同样失败**（临时 worktree 单跑核实），与本分支无关，建议记入基线并另行修复。e2e 全量（容器 `kh2-e2e-full3`，94 例）：87 通过 / 7 失败，`handover.spec` 三例通过；失败与既有基线完全相同（`wiki.spec`、`debug-dev-pin`、`external-agents` ×3、`local-connectors`、`sandbox.spec`「run status line」）。
 
 **迁移号**：P2 无迁移（main 最大仍为 D88 的 0036）。
+
+### 用户决定（2026-10-13）
+
+核对记录：此前 DEV-012～030 我曾逐批提请确认，用户的回复只有「P1 合入主分支」「P2 可以合入」，那是**合入许可**，不是逐条表态；DEV-001～011 与承诺例外的「用户确认」是另一会话（kepcup-4b）转述的。2026-10-13 用户在本会话里明确表态如下，此前「推断接受」的部分以此为准：
+
+1. **移交卡上的确认点击保留**。不做「AI 直接执行、事后撤销」；无人值守模式也不自动批准（与 D70 一致）。
+2. **其余偏差由开发方选择并记录**（用户授权）。选择与理由：
+   - **邮箱、定时任务、网页监看保持「移交」**（先给 B 再从 A 撤），不改成复制。原始场景就是把邮箱「转交」出去；复制会让两个 Bot 同时收信、同时提醒。记忆、Wiki、Skill、组件仍一律复制。
+   - **没有到期时间的承诺暂不可移交**（DEV-012）：承诺只随定时任务走，避免 A、B 各留一条而重复提醒；以后确有需要再做「单独移承诺」。
+   - **普通 Bot 发起的移交不能改目标的模型**（DEV-020）：那是改写 B 而不是交出 A 的资产；管家发起可以。
+   - **DEV-001～030 全部接受**。其中两项功能性缺口记为后续待办、本期不做：DEV-023 的手动「重试失败项」按钮（现为作业级自动重试）、DEV-024 删除确认框改用适配器汇总（适配器只统计可移交子集，改了会少报）。DEV-019（记忆面板标注「复制自 A」）也列为后续小改进。
 
 ## 7. 风险
 
