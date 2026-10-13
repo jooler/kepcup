@@ -296,7 +296,8 @@ describe('bot asset handover (D88 P0)', () => {
     // 管家下一轮的上下文里有「已移交」记录（包 untrusted），没有邮箱段。
     const lastButlerRequest = JSON.stringify(llm.requestsFor('mock-main').at(-1)!.body.messages);
     expect(lastButlerRequest).toContain('已把以下事项移交给 邮件助理');
-    expect(lastButlerRequest).not.toContain('<mail_accounts>');
+    // 邮箱段的内容（而不是标签名：邮件提示词规则里的固定文字会提到 <mail_accounts>）。
+    expect(lastButlerRequest).not.toContain('这些邮箱已交给你代为处理');
 
     // 新信只给新 Bot 入队 mail_alert。
     llm.script('mock-main', [step().replyText('收到新邮件。')]);
