@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Bot } from '@kepcup/shared';
+import { HANDOVER_WIKI_COPY_MAX_BYTES, type Bot } from '@kepcup/shared';
 import { botProfile } from '@kepcup/testkit';
 import { HandoverRegistry } from '../../src/handover/registry.js';
 import { WikiAdapter, type HandoverWikiPort } from '../../src/handover/adapters/wiki.js';
@@ -66,6 +66,7 @@ function wikiPort(overrides: Partial<HandoverWikiPort> = {}): HandoverWikiPort &
         .filter((page) => titles[page.path]!.includes(query))
         .map((page) => ({ path: page.path, title: titles[page.path]! })),
     pageConflict: (_from, _to, p) => (differentInB.has(p) ? 'different' : 'absent'),
+    copySize: (_botId, list) => list.length * 1000,
     copyForHandover: async (input): Promise<WikiCopyOutcome> => {
       copies.push({ pages: input.pages });
       const conflicts = input.pages.filter((p) => differentInB.has(p));
@@ -74,7 +75,11 @@ function wikiPort(overrides: Partial<HandoverWikiPort> = {}): HandoverWikiPort &
         conflicts,
         missing: [],
         rawFiles: 1,
-        rawConflicts: [],
+        rawConflicts: input.pages.includes('pages/ops/c.md') ? ['raw/c-src.md'] : [],
+        pageFiles: Object.fromEntries(
+          input.pages.map((p) => [p, p === 'pages/ops/c.md' ? ['raw/c-src.md'] : []]),
+        ),
+        skippedAssets: [],
         assets: 0,
         bytes: 0,
         commit: 'c0ffee',
@@ -83,6 +88,19 @@ function wikiPort(overrides: Partial<HandoverWikiPort> = {}): HandoverWikiPort &
     ...overrides,
   };
 }
+
+describe('wiki adapter: size cap (独立审查 #6)', () => {
+  it('greys a key over HANDOVER_WIKI_COPY_MAX_BYTES with the size; a batch over the cap is skipped', async () => {
+    const huge = HANDOVER_WIKI_COPY_MAX_BYTES + 1;
+    const port = wikiPort({ copySize: (_b, list) => (list.length >= 3 ? huge : 10) });
+    const adapter = new WikiAdapter({ wiki: port, publish: () => {} });
+    expect(adapter.validate(ctx(), 'wiki:pages/ops/c.md', 'copy')).toBeNull();
+    expect(adapter.validate(ctx(), 'wiki:pages/ops/', 'copy')).toContain('超过一次复制的上限');
+    const outcomes = await adapter.applyBatch(ctx(), ['wiki:pages/']);
+    expect(outcomes.get('wiki:pages/')).toMatchObject({ status: 'skipped' });
+    expect(port.copies).toHaveLength(0);
+  });
+});
 
 describe('wiki adapter', () => {
   it('inventory: whole wiki + topic directories without a query; pages with wiki_query; titles are untrusted', () => {
@@ -177,8 +195,10 @@ describe('wiki adapter', () => {
     });
     expect(outcomes.get('wiki:pages/ops/c.md')).toMatchObject({
       status: 'done',
-      result: { copiedCount: 1 },
+      result: { copiedCount: 1, rawConflicts: ['raw/c-src.md'] },
     });
+    // Review #7: a key whose pages do not reference the conflicting original is clean.
+    expect(outcomes.get('wiki:pages/a.md')).toMatchObject({ result: { rawConflicts: [] } });
     expect(outcomes.get('wiki:pages/a.md')).toMatchObject({
       status: 'skipped',
       result: { copiedCount: 0, skippedPaths: ['pages/a.md'] },

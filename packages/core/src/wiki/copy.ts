@@ -12,6 +12,7 @@ import {
   readSync,
   statSync,
 } from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import { canonicalPath } from '../infra/paths.js';
@@ -24,13 +25,22 @@ import { isInsidePath } from '../sandbox/sensitive-paths.js';
  * `WikiService.copyForHandover`。
  */
 
-/** `pages/**.md`, wiki-root relative, POSIX separators, no `..`. */
+/**
+ * Characters a handover-addressable page path may not contain: control characters (a
+ * newline in a file name would forge lines in tool output / prompts) and the angle
+ * brackets of the `<untrusted>` data boundary.
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const UNSAFE_PATH_CHARS = /[\u0000-\u001f\u007f<>]/;
+
+/** `pages/**.md`, wiki-root relative, POSIX separators, no `..`, no control characters. */
 export function isWikiPagePath(rel: string): boolean {
   return (
     rel.startsWith('pages/') &&
     rel.toLowerCase().endsWith('.md') &&
     !rel.split('/').some((part) => part === '..' || part === '.' || part.length === 0) &&
-    !rel.includes('\\')
+    !rel.includes('\\') &&
+    !UNSAFE_PATH_CHARS.test(rel)
   );
 }
 
@@ -175,4 +185,57 @@ export function linkOrCopy(from: string, to: string): 'link' | 'copy' {
 export function copyFile(from: string, to: string): void {
   mkdirSync(path.dirname(to), { recursive: true });
   copyFileSync(from, to, fsConstants.COPYFILE_FICLONE);
+}
+
+// --- async variants (D88 P2 review #6: large wikis never block the event loop) ----------
+
+/** Lets other work run between file operations of a long copy. */
+export function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Async {@link copyFile} (libuv thread pool; reflink where supported). */
+export async function copyFileAsync(from: string, to: string): Promise<void> {
+  await fsp.mkdir(path.dirname(to), { recursive: true });
+  await fsp.copyFile(from, to, fsConstants.COPYFILE_FICLONE);
+}
+
+/** Async {@link linkOrCopy}. */
+export async function linkOrCopyAsync(from: string, to: string): Promise<'link' | 'copy'> {
+  await fsp.mkdir(path.dirname(to), { recursive: true });
+  try {
+    await fsp.link(from, to);
+    return 'link';
+  } catch {
+    await fsp.copyFile(from, to, fsConstants.COPYFILE_FICLONE);
+    return 'copy';
+  }
+}
+
+async function sha256OfFileAsync(file: string): Promise<string> {
+  const hash = createHash('sha256');
+  const handle = await fsp.open(file, 'r');
+  try {
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+  return hash.digest('hex');
+}
+
+/** Async {@link sameFileContent}. */
+export async function sameFileContentAsync(a: string, b: string): Promise<boolean> {
+  const [sa, sb] = await Promise.all([fsp.stat(a), fsp.stat(b)]);
+  if (sa.size !== sb.size) return false;
+  if (sa.ino === sb.ino && sa.dev === sb.dev) return true;
+  if (sa.size <= COMPARE_IN_MEMORY_MAX_BYTES) {
+    const [ba, bb] = await Promise.all([fsp.readFile(a), fsp.readFile(b)]);
+    return ba.equals(bb);
+  }
+  return (await sha256OfFileAsync(a)) === (await sha256OfFileAsync(b));
 }

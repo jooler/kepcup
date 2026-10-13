@@ -106,6 +106,16 @@ export interface HandoverHostDeps {
   assetCounts?:
     | ((botId: string) => { memory: number; wikiPages: number; skills: number; widgets: number })
     | undefined;
+  /**
+   * P2 后台复制的残留（暂存目录、Wiki 落盘清单）：移交结束时丢弃、启动时清扫不再执行中的。
+   * 缺省 = 不清理。
+   */
+  copyLeftovers?:
+    | {
+        discard(handoverId: string, toBotId: string | null): void;
+        sweep(keep: ReadonlySet<string>): void;
+      }
+    | undefined;
   publish: (event: string, payload: unknown) => void;
   /** deliverEventToBot (internal follow-up into the proposer's conversation). */
   deliverEvent(
@@ -899,6 +909,7 @@ export class HandoverHost implements HandoverToolFacade {
       for (const item of this.#backgroundPending(handoverId)) {
         this.#deps.store.setItem(handoverId, item.key, 'failed', reason);
       }
+      this.#discardLeftovers(handoverId);
       return;
     }
     this.#deps.jobs.enqueue({
@@ -1089,6 +1100,23 @@ export class HandoverHost implements HandoverToolFacade {
           this.#publish(handoverId);
         }
       }
+    }
+  }
+
+  /** Best-effort: the background copy's staging dir / placement manifests of a handover. */
+  #discardLeftovers(handoverId: string): void {
+    if (this.#deps.copyLeftovers === undefined) return;
+    try {
+      const record = this.#deps.store.get(handoverId);
+      const toBotId =
+        record?.toBotId ??
+        (record?.plan.target.kind === 'existing' ? record.plan.target.botId : null);
+      this.#deps.copyLeftovers.discard(handoverId, toBotId ?? null);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { handoverId, error: errorText(error) },
+        'discarding handover copy leftovers failed',
+      );
     }
   }
 
@@ -1517,6 +1545,17 @@ export class HandoverHost implements HandoverToolFacade {
     }
     // A crash between settling and notifying lost the follow-up: deliver it now.
     for (const record of this.#deps.store.listUnnotified()) this.#notifyOnce(record);
+    // Leftovers of copies that are no longer executing (crashed, failed, settled).
+    try {
+      this.#deps.copyLeftovers?.sweep(
+        new Set(this.#deps.store.listByStatus(['applying']).map((record) => record.id)),
+      );
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: errorText(error) },
+        'sweeping handover copy leftovers failed',
+      );
+    }
   }
 
   view(approvalId: string): HandoverView | null {
@@ -1610,6 +1649,7 @@ export class HandoverHost implements HandoverToolFacade {
     this.#deps.store.setStatus(record.id, status);
     this.#publish(record.id);
     if (TERMINAL_STATUSES.has(status)) {
+      this.#discardLeftovers(record.id);
       const waiters = this.#settleWaiters.get(record.id) ?? [];
       this.#settleWaiters.delete(record.id);
       for (const resolve of waiters) resolve();

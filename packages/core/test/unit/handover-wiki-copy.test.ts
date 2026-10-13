@@ -143,8 +143,10 @@ async function seedSource(rig: Rig): Promise<string> {
     JSON.stringify({
       id: ASSET,
       storage: 'store',
+      status: 'maintained',
       rawRelPath: null,
       readable: [`raw/_derived/${ASSET}/full.md`],
+      sources: [{ type: 'attachment', ref: 'att_A', conversationId: 'cnv_A', at: 1 }],
     }),
   );
   write(root, `raw/_derived/${ASSET}/manifest.json`, '{"steps":[]}');
@@ -153,7 +155,11 @@ async function seedSource(rig: Rig): Promise<string> {
   const store = path.join(botWikiStoreRoot(rig.paths, 'bot_a'), ASSET);
   write(store, 'original', Buffer.from([0x25, 0x50, 0x44, 0x46, 1, 2, 3]));
   write(store, 'frames/000123.jpg', Buffer.from([0xff, 0xd8, 0xff]));
-  write(store, 'state.json', '{"status":"maintained"}');
+  write(
+    store,
+    'state.json',
+    JSON.stringify({ status: 'maintained', sources: [{ type: 'attachment', ref: 'att_A' }] }),
+  );
   write(store, 'staging/partial.bin', 'half-written derive output');
   await commitWikiTree(root, 'seed');
   return (await headSummary(root)).oid;
@@ -219,7 +225,6 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
       'pages/topic/rollback.md',
       'raw/20261001-abcdef123456-spec.md',
       'raw/20261002-bbbbbbbbbbbb-rules.md',
-      `raw/_assets/${ASSET}.json`,
       `raw/_derived/${ASSET}/manifest.json`,
       `raw/_derived/${ASSET}/full.md`,
       `raw/_derived/${ASSET}/frames.md`,
@@ -245,6 +250,18 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
       statSync(path.join(storeA, 'state.json')).ino,
     );
     expect(existsSync(path.join(storeB, 'staging'))).toBe(false);
+    // Review #10: B's manifest / state name the handover as source, not A's attachment.
+    const manifestB = JSON.parse(readFileSync(path.join(b, `raw/_assets/${ASSET}.json`), 'utf8'));
+    expect(manifestB).toMatchObject({ id: ASSET, status: 'maintained' });
+    expect(manifestB.sources).toEqual([
+      { type: 'handover', handoverId: 'hnd_1', fromBotId: 'bot_a' },
+    ]);
+    expect(JSON.parse(readFileSync(path.join(storeB, 'state.json'), 'utf8')).sources).toEqual([
+      { type: 'handover', handoverId: 'hnd_1', fromBotId: 'bot_a' },
+    ]);
+    expect(outcome.pageFiles['pages/topic/rollback.md']).toEqual([
+      'raw/20261002-bbbbbbbbbbbb-rules.md',
+    ]);
 
     // One commit on B; A's history untouched.
     expect((await headSummary(b)).message).toBe('从 阿尔法 复制 2 页');
@@ -408,6 +425,94 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
     expect(existsSync(path.join(c.root, 'raw/20261001-abcdef123456-spec.md'))).toBe(false);
     expect(readFileSync(path.join(c.root, 'log.md'), 'utf8')).toBe('# 变更日志\n');
     expect(existsSync(path.join(c.r.paths.cacheDir, 'handover-staging/hnd_8'))).toBe(false);
+  });
+
+  it('独立审查 #5 / #8 / #9 / #10 / #6: placement manifest on resume; unsafe page names; leftovers; unfinished assets; size', async () => {
+    const rig = makeRig();
+    await seedSource(rig);
+    await initWiki(rig.paths, 'bot_b', stubLogger);
+    const a = botWikiRoot(rig.paths, 'bot_a');
+    const b = botWikiRoot(rig.paths, 'bot_b');
+    const copy = (handoverId: string, pages: string[]) =>
+      rig.wiki.copyForHandover({
+        fromBotId: 'bot_a',
+        toBotId: 'bot_b',
+        fromName: '阿尔法',
+        handoverId,
+        pages,
+      });
+
+    // #5: the copy committed, then (before the item was recorded) B's maintenance edited
+    // the page; the resumed run still counts it as copied, not as a same-path conflict.
+    expect((await copy('hnd_9', ['pages/deploy.md'])).copied).toEqual(['pages/deploy.md']);
+    write(b, 'pages/deploy.md', '# 部署手册\n\nB 整理过的版本。\n');
+    const resumed = await copy('hnd_9', ['pages/deploy.md']);
+    expect(resumed.copied).toEqual(['pages/deploy.md']);
+    expect(resumed.conflicts).toEqual([]);
+    expect(readFileSync(path.join(b, 'pages/deploy.md'), 'utf8')).toContain('B 整理过的版本');
+    // …while another handover still sees a different page at that path as a conflict.
+    expect((await copy('hnd_10', ['pages/deploy.md'])).conflicts).toEqual(['pages/deploy.md']);
+
+    // #9: leftovers — the placement manifest is dropped on discard / by the startup sweep.
+    const manifest = path.join(rig.paths.home, 'bots/bot_b/wiki-handover/hnd_9.json');
+    expect(existsSync(manifest)).toBe(true);
+    mkdirSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_dead'), { recursive: true });
+    mkdirSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_live'), { recursive: true });
+    rig.wiki.sweepHandoverLeftovers(new Set(['hnd_live', 'hnd_10']));
+    expect(existsSync(manifest)).toBe(false);
+    expect(existsSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_dead'))).toBe(false);
+    expect(existsSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_live'))).toBe(true);
+    expect(existsSync(path.join(rig.paths.home, 'bots/bot_b/wiki-handover/hnd_10.json'))).toBe(
+      true,
+    );
+    rig.wiki.discardHandoverLeftovers('hnd_10', null);
+    expect(existsSync(path.join(rig.paths.home, 'bots/bot_b/wiki-handover/hnd_10.json'))).toBe(
+      false,
+    );
+
+    // #8: page paths with control characters / angle brackets are not addressable.
+    write(a, 'pages/evil\nline.md', '# x');
+    write(a, 'pages/<b>.md', '# y');
+    expect(rig.wiki.pageStats('bot_a').map((page) => page.path)).not.toEqual(
+      expect.arrayContaining(['pages/evil\nline.md']),
+    );
+    expect(rig.wiki.pageStats('bot_a').some((page) => /[\n<>]/.test(page.path))).toBe(false);
+    expect((await copy('hnd_11', ['pages/evil\nline.md'])).missing).toEqual([
+      'pages/evil\nline.md',
+    ]);
+
+    // #10: an asset still deriving is not copied (its manifest / derived layer / store stay with A).
+    write(
+      a,
+      'raw/_assets/ast_deriving.json',
+      JSON.stringify({ id: 'ast_deriving', status: 'deriving' }),
+    );
+    write(a, 'raw/_derived/ast_deriving/full.md', '半成品');
+    write(path.join(botWikiStoreRoot(rig.paths, 'bot_a'), 'ast_deriving'), 'original', 'x');
+    write(a, 'pages/wip.md', '# 进行中\n\n[源](../raw/_assets/ast_deriving.json)\n');
+    const wip = await copy('hnd_12', ['pages/wip.md']);
+    expect(wip.copied).toEqual(['pages/wip.md']);
+    expect(wip.skippedAssets).toEqual(['ast_deriving']);
+    expect(existsSync(path.join(b, 'raw/_assets/ast_deriving.json'))).toBe(false);
+    expect(existsSync(path.join(b, 'raw/_derived/ast_deriving/full.md'))).toBe(false);
+    expect(existsSync(path.join(botWikiStoreRoot(rig.paths, 'bot_b'), 'ast_deriving'))).toBe(false);
+
+    // #6: copySize counts pages + originals + asset files (store included, staging not).
+    const size = rig.wiki.copySize('bot_a', ['pages/deploy.md']);
+    const expected = [
+      'pages/deploy.md',
+      'raw/20261001-abcdef123456-spec.md',
+      `raw/_assets/${ASSET}.json`,
+      `raw/_derived/${ASSET}/manifest.json`,
+      `raw/_derived/${ASSET}/full.md`,
+      `raw/_derived/${ASSET}/frames.md`,
+    ].reduce((sum, rel) => sum + statSync(path.join(a, rel)).size, 0);
+    const storeA = path.join(botWikiStoreRoot(rig.paths, 'bot_a'), ASSET);
+    const storeBytes = ['original', 'frames/000123.jpg', 'state.json'].reduce(
+      (sum, rel) => sum + statSync(path.join(storeA, rel)).size,
+      0,
+    );
+    expect(size).toBe(expected + storeBytes);
   });
 
   it('page paths outside pages/ or escaping the root are never read', async () => {
