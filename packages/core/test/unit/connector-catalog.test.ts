@@ -119,10 +119,12 @@ describe('shipped catalog', () => {
     for (const gate of approved) expect(known).toContain(gate);
   });
 
-  it('only contains auto-registration (CIMD/DCR) vendors on streamable-http', () => {
+  it('uses auto registration (CIMD/DCR) or the preregistered google client, on streamable-http', () => {
     for (const raw of shipped.connectors) {
       const entry = connectorCatalogEntrySchema.parse(raw);
-      expect(connectorMetaOf(entry).auth.registration).toBe('auto');
+      const { auth } = connectorMetaOf(entry);
+      if (auth.registration === 'preregistered') expect(auth.clientRef).toBe('google');
+      else expect(auth.registration).toBe('auto');
       expect(connectorRemoteOf(entry)?.type).toBe('streamable-http');
     }
   });
@@ -134,6 +136,24 @@ describe('filterReleasedConnectors', () => {
   const a = connectorCatalogEntrySchema.parse(sample('alpha'));
   const b = connectorCatalogEntrySchema.parse(sample('beta'));
   const catalog = [a, b];
+
+  it('drops hidden entries in every build, even with null gates (dev)', () => {
+    const raw = sample('gamma') as { _meta: Record<string, Record<string, unknown>> };
+    raw._meta[CONNECTOR_META_KEY]!.hidden = true;
+    const hidden = connectorCatalogEntrySchema.parse(raw);
+    expect(connectorMetaOf(hidden).hidden).toBe(true);
+    expect(connectorMetaOf(a).hidden).toBeUndefined();
+    expect(filterReleasedConnectors([a, hidden], null)).toEqual([a]);
+    expect(filterReleasedConnectors([a, hidden], ['alpha', 'gamma'])).toEqual([a]);
+  });
+
+  it('shipped Google entries are parked as hidden (code kept)', () => {
+    const google = shipped.connectors
+      .map((c) => connectorMetaOf(connectorCatalogEntrySchema.parse(c)))
+      .filter((m) => m.slug === 'gcalendar' || m.slug === 'gdrive');
+    expect(google.map((m) => m.slug)).toEqual(['gcalendar', 'gdrive']);
+    expect(google.every((m) => m.hidden)).toBe(true);
+  });
 
   it('null gates = no filtering (dev/test builds), returns a copy', () => {
     const out = filterReleasedConnectors(catalog, null);

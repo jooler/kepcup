@@ -679,7 +679,9 @@ export class ConnectFlowManager {
       // 2. 目录 `clientRef` → 预注册表；自定义 server 按 issuer 在表里找。表项的 issuer 与
       //    发现到的不符则不用（不把 KepCup 的客户端发给别的授权服务器）。预注册条目（有
       //    `clientRef`）绝不退回 DCR / CIMD：那会拿 KepCup 的名义去别的授权服务器注册。
-      const pre = autoOnly ? { kind: 'missing' as const } : this.#preregistered.lookup(issuer, clientRef);
+      const pre = autoOnly
+        ? { kind: 'missing' as const }
+        : this.#preregistered.lookup(issuer, clientRef);
       if (pre.kind === 'ok') {
         return { kind: 'stored', info: pre.info, source: 'preregistered', redirectUris: [] };
       }
@@ -767,6 +769,7 @@ export class ConnectFlowManager {
       state,
       resource,
     });
+    applyIssuerAuthorizationParams(authorizationUrl, issuer);
     this.#assertEndpoint(authorizationUrl.href, loopbackHosts);
 
     // 5. 同意与打开 -----------------------------------------------------------
@@ -1382,4 +1385,22 @@ export function hintFromClaims(claims: Record<string, unknown>): AccountHint {
   const sub = text(claims['sub']);
   const label = text(claims['email']) ?? text(claims['preferred_username']) ?? text(claims['name']);
   return { ...(sub !== undefined ? { sub } : {}), ...(label !== undefined ? { label } : {}) };
+}
+
+/**
+ * 授权服务器的非标准参数。Google 不认 `offline_access` scope，只有带 `access_type=offline`
+ * 才发 refresh token；`prompt=consent` 保证重新授权（换 scope / 旧 refresh token 失效）时
+ * 也会再发一次，而不是只回 access token。
+ */
+export function applyIssuerAuthorizationParams(url: URL, issuer: string): void {
+  let host: string;
+  try {
+    host = new URL(issuer).hostname.toLowerCase();
+  } catch {
+    return;
+  }
+  if (host === 'accounts.google.com') {
+    url.searchParams.set('access_type', 'offline');
+    url.searchParams.set('prompt', 'consent');
+  }
 }

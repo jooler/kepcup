@@ -101,6 +101,43 @@ for (const [ref, client] of Object.entries(oauthClients)) {
     throw new Error(`[dist] oauth-clients.json: invalid entry "${ref}"`);
   }
 }
+// Env-sourced clients (kept out of git): process.env over the repo-root .env (gitignored).
+// Same table as packages/core/src/apps/oauth-clients.ts ENV_OAUTH_CLIENTS.
+const ENV_OAUTH_CLIENTS = [
+  {
+    clientRef: 'google',
+    issuer: 'https://accounts.google.com',
+    idVar: 'GOOGLE_CLIENT_ID',
+    secretVar: 'GOOGLE_CLIENT_SECRET',
+  },
+];
+{
+  const fileEnv = {};
+  const envFile = path.join(repoDir, '.env');
+  if (existsSync(envFile)) {
+    for (const rawLine of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (line.length === 0 || line.startsWith('#')) continue;
+      const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+      if (match === null) continue;
+      let value = match[2];
+      const quoted = /^(['"])(.*)\1$/.exec(value);
+      value = quoted !== null ? quoted[2] : value.replace(/\s+#.*$/, '').trim();
+      fileEnv[match[1]] = value;
+    }
+  }
+  const env = { ...fileEnv, ...process.env };
+  for (const spec of ENV_OAUTH_CLIENTS) {
+    const clientId = env[spec.idVar]?.trim();
+    if (!clientId) continue;
+    const clientSecret = env[spec.secretVar]?.trim();
+    oauthClients[spec.clientRef] = {
+      issuer: spec.issuer,
+      clientId,
+      ...(clientSecret ? { clientSecret } : {}),
+    };
+  }
+}
 console.log(`[dist] pre-registered oauth clients: ${JSON.stringify(Object.keys(oauthClients))}`);
 const coreEntry = path.join(appDir, 'src/core-entry/index.ts');
 const outfile = path.join(appDir, 'out/main/core-entry/index.js');

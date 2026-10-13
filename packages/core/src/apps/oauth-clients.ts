@@ -20,6 +20,9 @@ import { normalizeIssuer, type TokenVault } from './token-vault.js';
  * `__KEPCUP_OAUTH_CLIENTS__`；开发 / 测试构建没有注入，退回读该文件（或测试注入的表）。
  * 表里只能放平台定义为**非保密**的桌面 / 原生客户端凭据。
  *
+ * 环境变量来源（{@link ENV_OAUTH_CLIENTS}）：真实凭据不进 git。开发态从 `process.env` 与仓库根
+ * `.env`（已 gitignore）读取并覆盖文件表同名条目；发行构建由 `dist.mjs` 以同样规则并入注入表。
+ *
  * BYO 客户端 = Token Vault 里 `source: 'manual'` 的 issuer 客户端：流程里它先于
  * 预注册表、CIMD、DCR。secret 只写不读——任何列表 / RPC 返回都不含它。
  */
@@ -27,6 +30,73 @@ import { normalizeIssuer, type TokenVault } from './token-vault.js';
 /** 发行构建注入的表；未注入（开发 / 测试）= null。 */
 export function injectedOauthClients(): PreregisteredClientTable | null {
   return typeof __KEPCUP_OAUTH_CLIENTS__ === 'undefined' ? null : __KEPCUP_OAUTH_CLIENTS__;
+}
+
+/**
+ * 从环境变量组装的预注册客户端（`clientRef` → issuer + 变量名）。与 `apps/desktop/scripts/dist.mjs`
+ * 的 `ENV_OAUTH_CLIENTS` 保持一致。
+ */
+export const ENV_OAUTH_CLIENTS: ReadonlyArray<{
+  clientRef: string;
+  issuer: string;
+  idVar: string;
+  secretVar: string;
+}> = [
+  {
+    clientRef: 'google',
+    issuer: 'https://accounts.google.com',
+    idVar: 'GOOGLE_CLIENT_ID',
+    secretVar: 'GOOGLE_CLIENT_SECRET',
+  },
+];
+
+/** 最小 `.env` 解析：`KEY=value`，支持 `export ` 前缀、引号与 `#` 注释行。 */
+export function parseDotEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (match === null) continue;
+    let value = match[2]!;
+    const quoted = /^(['"])(.*)\1$/.exec(value);
+    if (quoted !== null) value = quoted[2]!;
+    else value = value.replace(/\s+#.*$/, '').trim();
+    out[match[1]!] = value;
+  }
+  return out;
+}
+
+/** 按 {@link ENV_OAUTH_CLIENTS} 从环境变量取客户端；id 为空的条目跳过。 */
+export function oauthClientsFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): PreregisteredClientTable {
+  const out: PreregisteredClientTable = {};
+  for (const spec of ENV_OAUTH_CLIENTS) {
+    const clientId = env[spec.idVar]?.trim();
+    if (clientId === undefined || clientId.length === 0) continue;
+    const clientSecret = env[spec.secretVar]?.trim();
+    out[spec.clientRef] = {
+      issuer: spec.issuer,
+      clientId,
+      ...(clientSecret !== undefined && clientSecret.length > 0 ? { clientSecret } : {}),
+    };
+  }
+  return out;
+}
+
+/** 开发态环境：仓库根 `.env` 之上叠加 `process.env`（进程环境优先）。 */
+function devEnv(repoRoot: string | null): Record<string, string | undefined> {
+  let fileEnv: Record<string, string> = {};
+  if (repoRoot !== null) {
+    const envFile = path.join(repoRoot, '.env');
+    try {
+      if (existsSync(envFile)) fileEnv = parseDotEnv(readFileSync(envFile, 'utf8'));
+    } catch {
+      fileEnv = {};
+    }
+  }
+  return { ...fileEnv, ...process.env };
 }
 
 /** 向上查找 `apps/desktop/oauth-clients.json`（开发态）；找不到 = null。 */
@@ -70,15 +140,18 @@ export function loadPreregisteredClients(
   const injected = injectedOauthClients();
   if (injected !== null) return parsePreregisteredClients(injected, logger);
   const file = findClientsFile();
-  if (file === null) return {};
+  const repoRoot = file === null ? null : path.resolve(path.dirname(file), '..', '..');
+  const fromEnv = parsePreregisteredClients(oauthClientsFromEnv(devEnv(repoRoot)), logger);
+  if (file === null) return fromEnv;
   try {
-    return parsePreregisteredClients(JSON.parse(readFileSync(file, 'utf8')), logger);
+    const fromFile = parsePreregisteredClients(JSON.parse(readFileSync(file, 'utf8')), logger);
+    return { ...fromFile, ...fromEnv };
   } catch (error) {
     logger?.warn(
       { file, error: error instanceof Error ? error.message : String(error) },
       'oauth-clients.json unreadable',
     );
-    return {};
+    return fromEnv;
   }
 }
 

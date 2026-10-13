@@ -3,7 +3,12 @@ import type { AppConnectFlowPayload } from '@kepcup/shared';
 import { startFakeOAuthMcpServer } from '@kepcup/testkit';
 import { ConnectFlowManager, type CatalogFlowHost } from '../../src/apps/auth/flow.js';
 import { AppConnectionStore } from '../../src/apps/connection-store.js';
-import { PreregisteredClients } from '../../src/apps/oauth-clients.js';
+import {
+  oauthClientsFromEnv,
+  parseDotEnv,
+  PreregisteredClients,
+} from '../../src/apps/oauth-clients.js';
+import { applyIssuerAuthorizationParams } from '../../src/apps/auth/flow.js';
 import { TokenVault } from '../../src/apps/token-vault.js';
 import { openRealMainDb } from '../support/real-secrets.js';
 
@@ -105,5 +110,39 @@ describe('flow: catalog entry whose clientRef is missing from the table', () => 
     expect(fake.registrations).toHaveLength(0);
     expect(fake.cimdFetches).toHaveLength(0);
     flows.cancel(flowId);
+  });
+});
+
+describe('env-sourced preregistered clients', () => {
+  it('parses .env lines (export, quotes, comments)', () => {
+    expect(parseDotEnv('# c\nexport A=1\nB="two words"\nC=\'x\'\nD=v # tail\nbad line\n')).toEqual({
+      A: '1',
+      B: 'two words',
+      C: 'x',
+      D: 'v',
+    });
+  });
+
+  it('maps GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET to the google clientRef', () => {
+    expect(oauthClientsFromEnv({ GOOGLE_CLIENT_ID: ' id ', GOOGLE_CLIENT_SECRET: 's' })).toEqual({
+      google: { issuer: 'https://accounts.google.com', clientId: 'id', clientSecret: 's' },
+    });
+    expect(oauthClientsFromEnv({ GOOGLE_CLIENT_ID: 'id' })).toEqual({
+      google: { issuer: 'https://accounts.google.com', clientId: 'id' },
+    });
+    expect(oauthClientsFromEnv({ GOOGLE_CLIENT_SECRET: 's' })).toEqual({});
+    const clients = new PreregisteredClients(oauthClientsFromEnv({ GOOGLE_CLIENT_ID: 'id' }));
+    // PRM 给的是带末尾斜杠的 issuer。
+    expect(clients.lookup('https://accounts.google.com/', 'google').kind).toBe('ok');
+  });
+
+  it('adds offline access params only for Google', () => {
+    const google = new URL('https://accounts.google.com/o/oauth2/v2/auth?client_id=x');
+    applyIssuerAuthorizationParams(google, 'https://accounts.google.com/');
+    expect(google.searchParams.get('access_type')).toBe('offline');
+    expect(google.searchParams.get('prompt')).toBe('consent');
+    const other = new URL('https://as.example.com/authorize');
+    applyIssuerAuthorizationParams(other, 'https://as.example.com');
+    expect(other.search).toBe('');
   });
 });
