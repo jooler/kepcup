@@ -8,6 +8,7 @@ import type {
   ProviderInfo,
   SandboxStatusOutput,
   Settings,
+  SettingsChangedPayload,
 } from '@kepcup/shared';
 import { chatModelOptions } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
@@ -32,6 +33,12 @@ class SettingsState {
   settings = $state<Settings | null>(null);
   providers = $state<ProviderInfo[]>([]);
   sandboxStatus = $state<SandboxStatusOutput | null>(null);
+  /**
+   * 最近一次 `settings.changed` 的条目（todo/conversational-app-setup.md §4.1「广播」）与序号：
+   * 对话内的 link 设置卡据此把自己标成 applied（同一批变化只认一次，见 `changeSeq`）。
+   */
+  lastChangedItemIds = $state<readonly string[]>([]);
+  changeSeq = $state(0);
   #started = false;
 
   /**
@@ -44,9 +51,25 @@ class SettingsState {
     return chatModelOptions(this.providers);
   }
 
+  /**
+   * 订阅 `settings.changed`：条目被写入（设置卡应用、Bot 直改、撤销、设置页保存）后重新拉取
+   * 快照——设置页各分区直接读 `settings` / `providers`，打开着的设置弹框随之刷新。
+   */
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    core.onEvent('settings.changed', (payload) => {
+      void this.handleChanged(payload as SettingsChangedPayload);
+    });
+  }
+
+  /** `settings.changed` 的处理（单测直接调用）：记下变化条目，再刷新快照。 */
+  async handleChanged(payload: SettingsChangedPayload): Promise<void> {
+    this.lastChangedItemIds = [...payload.itemIds];
+    this.changeSeq += 1;
+    // 未加载过快照（启动早期）不抢先拉：App 启动流程会整体 refresh。
+    if (this.settings === null) return;
+    await this.refresh().catch(() => undefined);
   }
 
   /**

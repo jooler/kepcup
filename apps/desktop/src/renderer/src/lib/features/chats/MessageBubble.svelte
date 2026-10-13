@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Message } from '@kepcup/shared';
+  import { SETTING_CARD_RESOLVED_EVENT } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -8,6 +9,8 @@
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
   import HandoverNoteCard from '$lib/features/handover/HandoverNoteCard.svelte';
+  import SettingCard from '$lib/features/settings-card/SettingCard.svelte';
+  import { settingCardOf } from '$lib/features/settings-card/setting-card-model';
   import TaskCard from '$lib/features/tasks/TaskCard.svelte';
   import WatchCard from '$lib/features/watches/WatchCard.svelte';
   import MailCard from '$lib/features/mail/MailCard.svelte';
@@ -189,6 +192,16 @@
       (message.content.event === 'bot_handover' || message.content.event === 'bot_handed_over'),
   );
 
+  // 对话内设置卡（todo/conversational-app-setup.md §六）：消息流里的卡，同一对话可并存多张。
+  const isSettingCard = $derived(isSystem && settingCardOf(message) !== null);
+  // 设置卡落定后唤醒 Bot 的一次性内部事件：给 Bot 看的，不在消息流里显示。
+  const isSettingResolved = $derived(
+    isSystem &&
+      message.kind === 'system_event' &&
+      'event' in message.content &&
+      message.content.event === SETTING_CARD_RESOLVED_EVENT,
+  );
+
   function assign(botId: string): void {
     if (noClaimBatchId !== null) void chat.redistribute(noClaimBatchId, botId);
   }
@@ -285,6 +298,12 @@
   <div class="flex w-full py-1">
     <HandoverNoteCard {message} />
   </div>
+{:else if isSettingCard}
+  <div class="flex w-full py-1">
+    <SettingCard {message} />
+  </div>
+{:else if isSettingResolved}
+  <!-- setting_card_resolved：唤醒 Bot 的内部事件，不显示 -->
 {:else if isSystem}
   <div class="flex flex-col items-center gap-1 py-1" data-testid="system-message">
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">

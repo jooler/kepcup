@@ -71,7 +71,11 @@
 </script>
 
 <Tooltip.Provider delayDuration={0}>
-  <GroupSettingsDialog conversationId={ui.groupSettingsId ?? ''} bind:open={ui.groupSettingsOpen} />
+  <GroupSettingsDialog
+    conversationId={ui.groupSettingsId ?? ''}
+    bind:open={ui.groupSettingsOpen}
+    bind:anchor={ui.groupSettingsAnchor}
+  />
 
   <Dialog
     open={ui.deleteTargetId !== null}

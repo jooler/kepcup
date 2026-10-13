@@ -17,6 +17,7 @@
   import ConnectAppSetupBody from './ConnectAppSetupBody.svelte';
   import ConfirmLocalConnectorBody from './ConfirmLocalConnectorBody.svelte';
   import MailAccountSetupBody from './MailAccountSetupBody.svelte';
+  import SettingSetupBody from '$lib/features/settings-card/SettingSetupBody.svelte';
 
   /**
    * 消息列表内的「缺设置」引导卡片（docs/design/18-inline-setup.md）：数据源
@@ -27,7 +28,9 @@
    * （AgentSetupBody）；connect-app（D73）：内嵌 ConnectAppPanel
    * （ConnectAppSetupBody），连接完成后同一条「收起 + runs.retry」路径；
    * confirm-local-connector（本机连接）：确认卡（ConfirmLocalConnectorBody），添加后接 connect-app 链路；
-   * mail-account（D84）：内嵌添加邮箱表单（MailAccountSetupBody），保存并绑定当前 Bot 后续跑。确认 / 保存后 chat.continueAfterSetup() 自动续跑
+   * mail-account（D84）：内嵌添加邮箱表单（MailAccountSetupBody），保存并绑定当前 Bot 后续跑；
+   * setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流设置卡同一套分发
+   * （SettingSetupBody → SettingCardEmbed，预填取 requirement.prefill）。确认 / 保存后 chat.continueAfterSetup() 自动续跑
    * （重试原 run 或冲掉保留的草稿）。
    * 两段切换只认「保存」点击：「测试连接」为完成探测会先落盘 key
    * （providers.test 只读已存 key），availableModelOptions 随之翻转为非空，
@@ -125,6 +128,8 @@
     <ConfirmLocalConnectorBody {requirement} />
   {:else if requirement.kind === 'mail-account'}
     <MailAccountSetupBody {requirement} />
+  {:else if requirement.kind === 'setting'}
+    <SettingSetupBody {requirement} />
   {:else if requirement.kind === 'web-search'}
     <div class="space-y-0.5 pr-6">
       <p class="text-sm font-medium" data-testid="setup-card-title">

@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { projects } from '$lib/stores/projects.svelte';
+  import { shell } from '$lib/stores/shell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -16,12 +17,27 @@
 
   let pickerOpen = $state(false);
   let settingsOpen = $state(false);
+  let settingsAnchor = $state<string | null>(null);
 
   const current = $derived(projects.boundOf(conversationId, projectId));
   const missing = $derived(current !== null && current.status === 'missing');
   // 有 Bot 正在执行时禁用（docs/design/08-project.md "选择与切换"）。
   const running = $derived((chat.current?.activeRuns.length ?? 0) > 0);
   const effectiveDisabled = $derived(disabled === true || running);
+
+  // 对话内设置卡的「在设置中打开」（shell.openProjectSettings）：已绑项目直接开项目设置并
+  // 聚焦锚点；还没绑项目先开选择框（绑定后用户再点「权限设置」）。
+  $effect(() => {
+    const request = shell.projectSettingsRequest;
+    if (request === null) return;
+    shell.projectSettingsRequest = null;
+    if (current !== null) {
+      settingsAnchor = request.anchor;
+      settingsOpen = true;
+    } else if (!effectiveDisabled) {
+      pickerOpen = true;
+    }
+  });
 
   async function handleSelect(path: string): Promise<void> {
     // 绑定后保持弹框打开：用户看到 ✓ 与刚出现的「权限设置」，可继续配置。
@@ -125,4 +141,4 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<ProjectSettingsDialog bind:open={settingsOpen} project={current} />
+<ProjectSettingsDialog bind:open={settingsOpen} bind:anchor={settingsAnchor} project={current} />

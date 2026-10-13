@@ -75,22 +75,10 @@ export const EXCLUDED_SETTING_LOCATIONS: readonly ExcludedSettingLocation[] = [
 
 /**
  * 条目深链里**计划中、尚未加到界面上**的锚点（desktop 车道补 `data-settings-anchor` 后从这里
- * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。Bot 面板、群设置、项目设置对话框
- * 目前没有任何 `data-settings-anchor`（§4.3「给它们补上锚点」）。
+ * 删掉；测试同时检查这里的锚点确实还不存在，防止遗留）。P0 desktop 已给 Bot 面板、群设置、
+ * 项目设置对话框补齐锚点（§4.3「给它们补上锚点」），目前为空。
  */
-export const PENDING_DESKTOP_ANCHORS: readonly string[] = [
-  'bot-model',
-  'bot-browser-profile',
-  'bot-network',
-  'bot-mcp',
-  'bot-apps',
-  'bot-agent',
-  'bot-identity',
-  'group-title',
-  'group-members',
-  'project-protect',
-  'project-ports',
-];
+export const PENDING_DESKTOP_ANCHORS: readonly string[] = [];
 
 /** 对话框类深链的固定 section 名。 */
 export const DIALOG_SURFACE_SECTIONS = {

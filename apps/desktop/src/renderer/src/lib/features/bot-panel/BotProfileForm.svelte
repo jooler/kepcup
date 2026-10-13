@@ -34,6 +34,7 @@
     normalizeCapabilities,
     parseEngineValue,
     toggleCapability,
+    toggleCapabilityOptIn,
     AGENT_OPTION_PREFIX,
   } from './agent-capabilities';
   import {
@@ -393,6 +394,17 @@
     if (id === 'apps' && checked) maybeShowAcpAppsNotice();
   }
 
+  /** 包内单独开关（如 `settings:change`：允许外部智能体修改设置，默认关闭）。 */
+  function toggleAgentCapabilityOptIn(id: string, checked: boolean): void {
+    const next = toggleCapabilityOptIn(
+      profile.runtime.agent.capabilities,
+      id,
+      checked,
+      capabilityContext,
+    );
+    profile.runtime.agent.capabilities = normalizeCapabilities(next, capabilityContext);
+  }
+
   function toggleMcpServer(id: string, checked: boolean): void {
     const selected = profile.runtime.mcp_server_ids.filter((entry) => entry !== id);
     profile.runtime.mcp_server_ids = checked ? [...selected, id] : selected;
@@ -436,7 +448,8 @@
       />
     </div>
   {/if}
-  <div class="grid gap-1.5">
+  <!-- data-settings-anchor：对话内设置卡「在设置中打开」的落点（settings-catalog 深链）。 -->
+  <div class="grid gap-1.5" data-settings-anchor="bot-identity">
     <Label for="bot-personality">{t('contacts.personality')}</Label>
     <Textarea
       id="bot-personality"
@@ -477,7 +490,7 @@
     <Label for="bot-boundaries">{t('contacts.boundaries')}</Label>
     <Textarea id="bot-boundaries" bind:value={boundariesText} oninput={syncBoundaries} rows={2} />
   </div>
-  <div class="grid gap-1.5">
+  <div class="grid gap-1.5" data-settings-anchor="bot-network">
     <Label for="bot-network-policy">{t('contacts.networkPolicy')}</Label>
     <select
       id="bot-network-policy"
@@ -502,7 +515,7 @@
       />
     </div>
   {/if}
-  <div class="grid gap-1.5">
+  <div class="grid gap-1.5" data-settings-anchor="bot-browser-profile">
     <Label for="bot-browser-profile">{t('contacts.browserProfile')}</Label>
     <select
       id="bot-browser-profile"
@@ -554,7 +567,7 @@
       </p>
     {/if}
   </div>
-  <div class="grid gap-4 sm:grid-cols-2">
+  <div class="grid gap-4 sm:grid-cols-2" data-settings-anchor="bot-model">
     <div class="grid gap-1.5">
       <Label for="bot-model"
         >{agentOptions.length > 0 ? t('contacts.mainModelOrAgent') : t('contacts.mainModel')}</Label
@@ -609,7 +622,11 @@
     {/if}
   </div>
   {#if selectedAgentId.length > 0}
-    <div class="space-y-3 rounded-lg border px-3 py-3" data-testid="bot-agent-settings">
+    <div
+      class="space-y-3 rounded-lg border px-3 py-3"
+      data-testid="bot-agent-settings"
+      data-settings-anchor="bot-agent"
+    >
       <p class="text-xs text-muted-foreground">{t('contacts.agentIsolationNote')}</p>
       <div class="grid gap-4 sm:grid-cols-3">
         <div class="grid gap-1.5">
@@ -720,6 +737,26 @@
                 {/if}
               </span>
             </label>
+            {#if row.checked}
+              {#each row.optIns as optIn (optIn.id)}
+                <!-- 包内单独开关（默认关闭，按 Bot 开启）：缩进挂在所属包下面 -->
+                <label class="ml-6 flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={optIn.checked}
+                    disabled={!capabilitiesReady}
+                    onCheckedChange={(checked) =>
+                      toggleAgentCapabilityOptIn(optIn.id, checked === true)}
+                    data-testid={`bot-agent-capability-opt-in-${optIn.id.replace(':', '-')}`}
+                  />
+                  <span class="space-y-0.5">
+                    <span class="block">{t(`${optIn.i18nKey}.name` as MessageKey)}</span>
+                    <span class="block text-xs text-muted-foreground"
+                      >{t(`${optIn.i18nKey}.description` as MessageKey)}</span
+                    >
+                  </span>
+                </label>
+              {/each}
+            {/if}
           {/each}
         </div>
         <p class="text-xs text-muted-foreground" data-testid="bot-agent-tool-count">
@@ -739,7 +776,7 @@
     </div>
   {/if}
   {#if mcpOptions.length > 0}
-    <div class="grid gap-1.5">
+    <div class="grid gap-1.5" data-settings-anchor="bot-mcp">
       <Label>{t('contacts.mcpServers')}</Label>
       <div class="space-y-1.5" data-testid="bot-mcp-servers">
         {#each mcpOptions as server (server.id)}
@@ -777,7 +814,7 @@
   {/if}
   {#if appsStore.catalogLoaded && appGroups.length > 0}
     <!-- D73 §5.7 / §5.9：连接应用按应用分组，单选账号；未连接的应用「去连接」 -->
-    <div class="grid gap-1.5">
+    <div class="grid gap-1.5" data-settings-anchor="bot-apps">
       <Label>{t('contacts.apps')}</Label>
       <div class="space-y-2" data-testid="bot-apps">
         {#each appGroups as group (group.connectorId)}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AgentStatus, AgentTestResult, AgentView } from '@kepcup/shared';
+  import type { AgentStatus, AgentTestResult, AgentView, SettingValues } from '@kepcup/shared';
   import { t, type MessageKey } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -28,17 +28,29 @@
    * 设置页「智能体」、对话内 Agent 设置卡（D58）与 onboarding 订阅分支共用
    * 同一份卡片与保存 RPC；`embedded` 时只保留「启用 / 安装确认 / 登录 /
    * API key / 测试连接」（停用、卸载与高级项只在设置页）。
+   *
+   * 对话内设置卡（todo/conversational-app-setup.md §6.1）另用：`prefill`（Bot 的非敏感预填，
+   * `enabled: true` = 建议启用，未启用时在启用按钮旁给一行提示）与 `onSaved`（测试连接通过、
+   * API key 保存成功后回调，卡片据此核对并标为已应用）。
    */
   let {
     agent,
     embedded = false,
+    prefill = null,
     onTested,
+    onSaved,
   }: {
     agent: AgentView;
     embedded?: boolean;
+    /** 非敏感预填（对话内设置卡）。 */
+    prefill?: SettingValues | null;
     /** 测试连接完成（对话内设置卡据此续跑）。 */
     onTested?: (result: AgentTestResult) => void;
+    /** 设置完成（测试连接通过 / API key 已保存）。 */
+    onSaved?: () => void;
   } = $props();
+
+  const suggestEnable = $derived(prefill?.enabled === true && !agent.enabled);
 
   let busy = $state(false);
   let testResult = $state<AgentTestResult | null>(null);
@@ -128,6 +140,7 @@
       const result = await agentsStore.test(agent.id);
       testResult = result;
       onTested?.(result);
+      if (result.ok) onSaved?.();
     });
   }
 
@@ -154,6 +167,7 @@
       await agentsStore.login(agent.id, { apiKey: key });
       apiKeyDraft = '';
       toast.success(t('agents.apiKeySaved'));
+      onSaved?.();
     });
   }
 
@@ -248,6 +262,11 @@
       >
         {agent.status === 'error' ? t('agents.retry') : t('agents.enable')}
       </Button>
+      {#if suggestEnable}
+        <span class="text-xs text-muted-foreground" data-testid={`agent-suggest-enable-${agent.id}`}
+          >{t('agents.suggestEnable')}</span
+        >
+      {/if}
     {/if}
     {#if agent.enabled && (agent.status === 'update_available' || agent.status === 'error')}
       <Button size="sm" disabled={busy} onclick={() => openInstall()}>

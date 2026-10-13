@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { CustomProvider, VendorId, VendorProvider } from '@kepcup/shared';
+  import type { CustomProvider, SettingValues, VendorId, VendorProvider } from '@kepcup/shared';
   import { AppError, isVendorId, VENDOR_DESCRIPTORS } from '@kepcup/shared';
+  import { untrack } from 'svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
@@ -20,12 +21,17 @@
    * 「测试连接」会先落盘（providers.test 只读已存 key）——对话内引导卡据
    * 此要求 blockSaveAfterFailedTest：任一测试（表单级/厂商行内）失败后禁用
    * 保存，直到某次测试通过（切换厂商重置表单即重置），失败绝不放行。
+   * embedded：对话内设置卡（含 todo/conversational-app-setup.md 的设置卡）的紧凑形态，
+   * 不带弹框用的滚动区与负边距；prefill：Bot 给的非敏感预填（add 模式下 `provider`
+   * 选中对应厂商，Key 永远由用户自己填）。
    */
   let {
     mode,
     target,
     testidPrefix = 'provider-add',
     blockSaveAfterFailedTest = false,
+    embedded = false,
+    prefill = null,
     onSaved,
   }: {
     mode: 'add' | 'key' | 'edit';
@@ -35,11 +41,26 @@
     testidPrefix?: string;
     /** 测试失败后禁用保存（对话内设置卡片用；设置页保存不设限）。 */
     blockSaveAfterFailedTest?: boolean;
+    /** 紧凑形态（对话内卡片）：不渲染弹框用的滚动区。 */
+    embedded?: boolean;
+    /** 非敏感预填（`provider`：add 模式下预选的厂商 id）。 */
+    prefill?: SettingValues | null;
     onSaved?: (providerId: string) => void;
   } = $props();
 
+  /** add 模式下预填的厂商（认得的厂商 / 未配置的内置厂商 / 'custom'）优先于 target。 */
+  const initialTarget = $derived.by(() => {
+    const wanted = prefill?.provider;
+    if (mode !== 'add' || typeof wanted !== 'string' || wanted.length === 0) return target;
+    const known =
+      wanted === 'custom' ||
+      isVendorId(wanted) ||
+      settingsStore.providers.some((provider) => provider.id === wanted);
+    return known ? wanted : target;
+  });
+
   // 弹框选择的目标（add 模式下可在表单内切换）；props 变化时在下方 effect 跟随。
-  let selectedTarget = $state(target);
+  let selectedTarget = $state(untrack(() => initialTarget));
 
   let addKey = $state('');
   let customDraft = $state<CustomProvider>(emptyCustom());
@@ -117,8 +138,9 @@
   // 只依赖 props（target/mode），不读 selectedTarget——用户在表单内切换目标
   // 不能触发本 effect（否则会被回写为 props 值）。
   $effect(() => {
-    selectedTarget = target;
-    resetDraftsFor(target);
+    const next = initialTarget;
+    selectedTarget = next;
+    resetDraftsFor(next);
   });
 
   function parseModels(text: string): CustomProvider['models'] {
@@ -264,7 +286,10 @@
   }
 </script>
 
-<div class="-mr-4 min-h-0 space-y-4 overflow-y-auto pr-4 pl-2" data-testid={`${testidPrefix}-form`}>
+<div
+  class={embedded ? 'min-w-0 space-y-4' : '-mr-4 min-h-0 space-y-4 overflow-y-auto pr-4 pl-2'}
+  data-testid={`${testidPrefix}-form`}
+>
   {#if mode === 'add'}
     <div class="grid gap-1.5">
       <Label for={`${testidPrefix}-target`}>{t('settings.chooseProvider')}</Label>

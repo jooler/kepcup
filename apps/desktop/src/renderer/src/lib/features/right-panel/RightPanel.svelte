@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { X, Monitor, Pencil } from '@lucide/svelte';
   import type { BotProfile } from '@kepcup/shared';
   import { t } from '$lib/i18n';
@@ -34,6 +34,7 @@
   import { showBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
+  import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
 
   const conversation = $derived(chat.current?.conversation ?? null);
   const isGroup = $derived(conversation?.type === 'group');
@@ -58,6 +59,20 @@
     if (requested === null) return;
     if (tabItems.some((tab) => tab.value === requested)) activeTab = requested;
     shell.rightPanelTabRequest = null;
+  });
+  // 对话内设置卡的深链（shell.openBotPanel）：切到页签后滚到 [data-settings-anchor]。草稿
+  // 克隆完才渲染配置表单，找不到就逐帧重试一小会儿（anchor-scroll.ts）。
+  $effect(() => {
+    const anchor = shell.botPanelAnchor;
+    if (anchor === null) return;
+    void revealSettingsAnchor({
+      anchor,
+      container: () => document.getElementById(`tab-panel-${untrack(() => activeTab)}`),
+      flush: tick,
+      wait: nextFrame,
+      attempts: 30,
+      clear: () => (shell.botPanelAnchor = null),
+    });
   });
 
   /**
