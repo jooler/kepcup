@@ -31,7 +31,7 @@
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
   import AvatarPicker from './AvatarPicker.svelte';
   import EgressSummary from '$lib/features/bot-panel/EgressSummary.svelte';
-  import { showBrowser } from './show-browser';
+  import { showBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
   import { browserPages } from '$lib/stores/browser-pages.svelte';
   import { deepEqual, isEngineOnlyChange, reconcileBotDraft } from './bot-draft';
 
@@ -278,7 +278,7 @@
         <Button
           variant="outline"
           size="sm"
-          class="h-7 gap-1 border-emerald-600/60 px-2 text-xs text-emerald-600 hover:bg-emerald-600/10 hover:text-emerald-700 dark:border-emerald-400/50 dark:text-emerald-400 dark:hover:bg-emerald-400/10 dark:hover:text-emerald-300"
+          class={BROWSER_SHOW_BTN_CLASS}
           title={t('rightPanel.browserShowHint')}
           onclick={() => void showBrowser(bot.id, conversation.id, bot.name)}
           data-testid="browser-show"

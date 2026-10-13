@@ -1,18 +1,22 @@
 <script lang="ts">
   import type { Grant } from '@kepcup/shared';
   import type { GroupMemberView } from '$lib/stores/chat.svelte';
+  import { Monitor } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
+  import { browserPages, hasBrowserPage } from '$lib/stores/browser-pages.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
   import SchedulesPanel from './SchedulesPanel.svelte';
   import WatchesPanel from '$lib/features/watches/WatchesPanel.svelte';
-  import { showBrowser } from './show-browser';
+  import { showBrowser, BROWSER_SHOW_BTN_CLASS } from './show-browser';
 
   let { conversationId }: { conversationId: string } = $props();
+
+  browserPages.start();
 
   const members = $derived(
     chat.current?.conversation.id === conversationId ? (chat.current?.members ?? []) : [],
@@ -23,6 +27,10 @@
   const conversation = $derived(chat.current?.conversation ?? null);
 
   let detail = $state<GroupMemberView | null>(null);
+  // 成员详情弹窗：仅当该 Bot 在本群对话已拉起浏览器时显示「查看浏览器」。
+  const detailBrowserOpen = $derived(
+    detail !== null && hasBrowserPage(browserPages.pages, detail.bot.id, conversationId),
+  );
 
   /**
    * Grants grouped by bot so every member's access is visible at a glance.
@@ -59,10 +67,14 @@
     </p>
     <ul class="space-y-1" data-testid="group-member-cards">
       {#each members as member (member.bot.id)}
-        <li>
+        {@const memberBrowserOpen = hasBrowserPage(browserPages.pages, member.bot.id, conversationId)}
+        <li
+          class="flex items-center gap-1 rounded-md border p-1.5"
+          data-testid={`group-member-row-${member.bot.id}`}
+        >
           <button
             type="button"
-            class="flex w-full items-center gap-2 rounded-md border p-2 text-left transition-colors hover:bg-accent"
+            class="flex min-w-0 flex-1 items-center gap-2 rounded-md p-0.5 text-left transition-colors hover:bg-accent"
             onclick={() => (detail = member)}
             data-testid={`group-member-card-${member.bot.id}`}
           >
@@ -79,6 +91,20 @@
               </span>
             </span>
           </button>
+          <!-- 与单聊右栏同一套 botId×conversationId：仅该成员在本群开着页面时显示。 -->
+          {#if memberBrowserOpen}
+            <Button
+              variant="outline"
+              size="sm"
+              class={BROWSER_SHOW_BTN_CLASS}
+              title={t('rightPanel.browserShowHint')}
+              onclick={() => void showBrowser(member.bot.id, conversationId, member.bot.name)}
+              data-testid={`group-member-browser-show-${member.bot.id}`}
+            >
+              <Monitor class="size-3.5" aria-hidden="true" />
+              {t('rightPanel.browserShow')}
+            </Button>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -157,16 +183,20 @@
           <span class="text-xs text-muted-foreground">{t('group.responsibilities')}：</span>
           {detail.bot.profile.role.responsibilities || '—'}
         </p>
-        <!-- P11 任务 5: 该成员在本群对话中的浏览器页面。 -->
-        <Button
-          variant="outline"
-          size="sm"
-          class="w-full gap-1"
-          onclick={() => void showBrowser(detail!.bot.id, conversationId, detail!.bot.name)}
-          data-testid="group-browser-show"
-        >
-          {t('rightPanel.browserShow')}
-        </Button>
+        <!-- P11 任务 5: 该成员在本群对话中的浏览器页面（与列表行同一套显隐规则）。 -->
+        {#if detailBrowserOpen}
+          <Button
+            variant="outline"
+            size="sm"
+            class="w-full {BROWSER_SHOW_BTN_CLASS}"
+            title={t('rightPanel.browserShowHint')}
+            onclick={() => void showBrowser(detail!.bot.id, conversationId, detail!.bot.name)}
+            data-testid="group-browser-show"
+          >
+            <Monitor class="size-3.5" aria-hidden="true" />
+            {t('rightPanel.browserShow')}
+          </Button>
+        {/if}
       </div>
     {/if}
   </Dialog.Content>

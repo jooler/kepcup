@@ -1,7 +1,8 @@
 /**
  * Open bot browser pages (main process BrowserHost), kept live over ipc
- * `browser:pages`. The right panel shows「查看浏览器」only while the bot has a
- * page in the current conversation.
+ * `browser:pages`. Pages are keyed botId × conversationId (DM conversation id,
+ * or group conversation id + member bot id). UI shows「查看浏览器」only while
+ * that pair has an open page (right panel DM header, group member row / popup).
  */
 export interface BrowserPageRef {
   botId: string;
