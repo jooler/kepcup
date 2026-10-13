@@ -1339,8 +1339,10 @@ export class ApprovalsService {
       approvalId: approval.id,
       cardType: approval.kind,
     });
-    // The message flow renders the card (folded after resolution) — announce
-    // it like any other message.
+    // The row feeds the bot's context. Mid-turn permission cards (access,
+    // command, …) are hidden from the transcript — the dock is the popup.
+    // Import, install, and handover cards stay, so a failed finalize still
+    // has a folded record.
     this.#deps.publish('message.created', {
       conversationId: card.conversationId,
       message: card,

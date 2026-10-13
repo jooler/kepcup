@@ -26,6 +26,7 @@ import {
   loadLastConversationId,
   saveLastConversationId,
 } from '../features/chats/last-conversation-persist';
+import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { mergeUnreadCount } from '../features/chats/unread';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
@@ -717,6 +718,9 @@ class ChatState {
     ) {
       return;
     }
+    // Mid-turn permission popups are a dock card. Drop the message.created
+    // payload so it never sits in the open conversation's message list.
+    if (isEphemeralApprovalCard(message)) return;
     this.#lastSeqByConversation[conversationId] = Math.max(
       this.#lastSeqByConversation[conversationId] ?? 0,
       message.seq,

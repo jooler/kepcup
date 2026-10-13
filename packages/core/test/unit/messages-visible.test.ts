@@ -91,18 +91,59 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
         text: '标记生效',
         internal: true,
       });
-      // 审批卡：可见
+      // 中途权限弹窗：不进用户可见流。导入 / 安装 / 移交卡留在对话里。
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'access' });
       append(rig, { senderType: 'system', kind: 'card', cardType: 'environment' });
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'skill_import' });
+      // 移交进度卡与任务卡：可见。
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'bot_handover' });
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'task' });
       // 空 event 名的 system_event：可见（与谓词的 `?? ''` 行为一致）
       append(rig, { senderType: 'system', kind: 'system_event', event: '', text: '无名事件' });
 
       const all = rig.messages.list(rig.conversationId, { limit: 200 });
-      expect(all).toHaveLength(8);
+      expect(all).toHaveLength(12);
       const visible = rig.messages.listVisible(rig.conversationId, { limit: 200 });
       expect(visible).toEqual(all.filter(isVisibleToUser));
-      expect(visible).toHaveLength(5);
+      expect(visible).toHaveLength(8);
+      expect(
+        visible.map((m) =>
+          m.kind === 'card' ? (m.content as { cardType: string }).cardType : m.kind,
+        ),
+      ).toEqual([
+        'text',
+        'text',
+        'system_event',
+        'environment',
+        'skill_import',
+        'bot_handover',
+        'task',
+        'system_event',
+      ]);
       // list 不变：Bot 上下文仍含内部事件。
       expect(all.filter((m) => m.kind === 'system_event')).toHaveLength(5);
+    } finally {
+      closeDatabase(rig.db);
+    }
+  });
+
+  it('中途权限卡不推进 last_message_at，安装卡会', () => {
+    const rig = makeRig();
+    try {
+      append(rig, { senderType: 'user', kind: 'text', text: '你好', at: 5_000 });
+      const readAt = () =>
+        (
+          rig.db.prepare('select last_message_at as at from conversations where id = ?').get(
+            rig.conversationId,
+          ) as { at: number }
+        ).at;
+      expect(readAt()).toBe(5_000);
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'access', at: 9_000 });
+      expect(readAt()).toBe(5_000);
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'environment', at: 11_000 });
+      expect(readAt()).toBe(11_000);
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'bot_handover', at: 12_000 });
+      expect(readAt()).toBe(12_000);
     } finally {
       closeDatabase(rig.db);
     }

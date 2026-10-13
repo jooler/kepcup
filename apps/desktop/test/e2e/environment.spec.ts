@@ -192,6 +192,7 @@ test('environment approval card shows size and source, install progress, setting
     );
 
     // 批准 → 进度条出现（本地服务器很快，出现与否取决于时机）→ 安装完成标记。
+    // 折叠记录留在对话里，是批准之后的落点。
     await card.locator('[data-testid="approval-approve"]').click();
     const doneOrFolded = page
       .locator('[data-testid="approval-environment-done"]')

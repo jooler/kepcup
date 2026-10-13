@@ -255,7 +255,7 @@
     <TaskCard taskId={taskCardId} />
   </div>
 {:else if isCard}
-  <!-- 审批卡片：消息流里显示折叠记录，交互卡片在输入区上方的 dock 中 -->
+  <!-- 留在消息流里的审批卡（导入、安装、移交等）。中途权限弹窗只在 dock。 -->
   <div class="flex py-1" data-testid="card-message">
     {#if cardApproval}
       <div class="w-full max-w-[85%]">
