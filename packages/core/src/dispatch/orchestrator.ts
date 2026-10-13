@@ -140,7 +140,7 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import type { MailSetupFacade } from '../tools/mail-tools.js';
+import { decideMailSetupRequest, type MailSetupFacade } from '../tools/mail-tools.js';
 import {
   buildAppDiscoveryTools,
   type AppToolFacade,
@@ -4785,23 +4785,18 @@ export class Orchestrator {
   ): MailSetupFacade {
     return {
       requestSetup: (input) => {
-        if (identity.botId === null) {
-          return { ok: false, message: '当前执行没有 Bot 上下文，无法请求添加邮箱' };
-        }
-        const bound = this.#deps.mail?.accountsForBot(identity.botId) ?? [];
-        setupHit.requirement = {
-          kind: 'mail-account',
+        const bound = identity.botId === null
+          ? []
+          : (this.#deps.mail?.accountsForBot(identity.botId) ?? []);
+        const decided = decideMailSetupRequest({
+          botId: identity.botId,
+          bound,
           ...(input.provider !== undefined ? { provider: input.provider } : {}),
           ...(input.reason !== undefined ? { reason: input.reason } : {}),
-        };
-        const extra =
-          bound.length > 0
-            ? `你已有 ${bound.length} 个已绑定邮箱；这张卡用来再添加一个并交给你。`
-            : '保存后该邮箱会交给你，新信会进你的私聊。';
-        return {
-          ok: true,
-          message: `已请求用户添加邮箱并交给你：本次执行暂停，用户在对话里填好并测试保存后会自动继续。${extra}不要让用户把授权码贴进聊天。`,
-        };
+        });
+        if (!decided.ok) return { ok: false, message: decided.message };
+        setupHit.requirement = decided.requirement;
+        return { ok: true, message: decided.message };
       },
     };
   }

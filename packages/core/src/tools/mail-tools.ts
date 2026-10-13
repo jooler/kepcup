@@ -1,5 +1,5 @@
 import { Type } from '@earendil-works/pi-ai';
-import { AppError, type MailProvider } from '@kepcup/shared';
+import { AppError, type MailProvider, type SetupRequirement } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import type { MailService } from '../mail/service.js';
@@ -15,6 +15,44 @@ import { TOOL_SETUP_REQUIRED } from './image-tools.js';
  */
 
 export const MAIL_REQUEST_SETUP_TOOL = 'mail_request_setup';
+
+/**
+ * `mail_request_setup` 决策（供 orchestrator 门面与单测共用）：
+ * - 无 Bot → 拒绝
+ * - 已有绑定 → 拒绝且**不**产生 setup（避免保存后续跑再弹卡）
+ * - 否则 → 产出 mail-account 需求
+ */
+export function decideMailSetupRequest(input: {
+  botId: string | null;
+  bound: ReadonlyArray<{ label: string; address: string }>;
+  provider?: MailProvider | undefined;
+  reason?: string | undefined;
+}):
+  | { ok: true; requirement: Extract<SetupRequirement, { kind: 'mail-account' }>; message: string }
+  | { ok: false; message: string } {
+  if (input.botId === null) {
+    return { ok: false, message: '当前执行没有 Bot 上下文，无法请求添加邮箱' };
+  }
+  if (input.bound.length > 0) {
+    const list = input.bound.map((row) => `${row.label} <${row.address}>`).join('、');
+    return {
+      ok: false,
+      message: `你已有绑定邮箱（${list}），无需再弹添加卡。直接用 mail_list / mail_read / mail_search / mail_send；若要把另一个 Bot 的邮箱转给你，用 propose_handover。再添加账号请让用户去「扩展中心 → 邮件」。`,
+    };
+  }
+  const requirement: Extract<SetupRequirement, { kind: 'mail-account' }> = {
+    kind: 'mail-account',
+    ...(input.provider !== undefined ? { provider: input.provider } : {}),
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+  };
+  return {
+    ok: true,
+    requirement,
+    message:
+      '已请求用户添加邮箱并交给你：本次执行暂停，用户在对话里填好并测试保存后会自动继续（保存后该邮箱交给你，新信进你的私聊）。不要让用户把授权码贴进聊天。',
+  };
+}
+
 
 /** 对话内「添加邮箱」卡的门面（orchestrator 写入本 run 的 setupHit）。 */
 export interface MailSetupFacade {
@@ -61,7 +99,13 @@ export function buildMailTools(input: {
     execute: async () => {
       if (botId === null) return noContext();
       const rows = mail.accountsForBot(botId);
-      if (rows.length === 0) return { ok: true, content: '当前没有交给你的邮箱。' };
+      if (rows.length === 0) {
+        return {
+          ok: true,
+          content:
+            '当前没有交给你的邮箱。若用户要你接管 / 代管 / 添加邮箱，立刻调用 mail_request_setup，不要只让用户去扩展中心。',
+        };
+      }
       return {
         ok: true,
         content: rows
@@ -206,7 +250,7 @@ export function buildMailTools(input: {
     const requestSetup: ToolDefinition<{ provider?: string; reason?: string }> = {
       name: MAIL_REQUEST_SETUP_TOOL,
       description:
-        '请用户在对话里添加邮箱并交给你：当用户说「帮我接管邮箱 / 代管邮箱 / 添加邮箱」且需要新加账号（或你还没有已绑定邮箱）时调用。provider 可选（qq / netease_163 / netease_126 / gmail / custom）；reason 简述为什么需要（给用户看）。调用后本次执行会暂停，用户填好并测试保存后自动继续。不要只让用户去扩展中心；不要索要授权码让用户贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover，不要用本工具。',
+        '请用户在对话里添加邮箱并交给你。用户一说「帮我接管邮箱 / 代管邮箱 / 添加邮箱 / 把邮箱交给你」且你还没有任何已绑定邮箱时，**立刻**调用本工具——不要先指路扩展中心、不要先口头确认。provider 可选（qq / netease_163 / netease_126 / gmail / custom）；reason 简述原因（给用户看）。调用后本次执行暂停，用户填好并测试保存后自动继续并绑定给你。你已有绑定邮箱时不要调用（会失败）；再加账号让用户去扩展中心。不要索要授权码贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover。',
       parameters: Type.Object({
         provider: Type.Optional(
           Type.String({

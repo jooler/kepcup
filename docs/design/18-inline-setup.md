@@ -26,7 +26,7 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 
 另有 `web-search`（联网检索供应商，21-web-search）与 `agent`（D72 外部智能体：`{kind:'agent', agentId, reason}`，未开实验 / 未启用 / 未安装 / 未登录 / 版本不兼容 / 暂不可用 / 沙箱不可用（`sandbox_unavailable`，如 Linux 缺 bubblewrap / socat）时由 run 门禁或引擎失败给出，卡片内嵌设置页同一张 Agent 卡片，完成后自动重试原 run，见 28-external-agents-acp §9.1）。
 
-另有 `mail-account`（D84 邮件通道，35-mail-channel）：模型调用 `mail_request_setup` 时携带（可选 `provider` / `reason`）；卡片内嵌与扩展中心同构的添加邮箱表单，测连保存后绑定当前 Bot，再经 `runs.retry` 续跑。与把已有邮箱从另一个 Bot 移交过来（`propose_handover`）不同——后者不走本设置卡。
+另有 `mail-account`（D84 邮件通道，35-mail-channel）：模型调用 `mail_request_setup` 时携带（可选 `provider` / `reason`）；卡片内嵌与扩展中心同构的添加邮箱表单，测连保存后绑定当前 Bot，再经 `runs.retry` 续跑。当前 Bot **已有绑定邮箱**时工具拒绝且不写 setup（避免续跑再次弹卡）；再加账号走扩展中心。与把已有邮箱从另一个 Bot 移交过来（`propose_handover`）不同——后者不走本设置卡。
 
 落盘：`runs.error_json` 由 `{message}` 扩展为 `{message, setup?}`（无 DB 迁移）。`run.error` 仍是用户可读文案，`run.setup` 供界面路由到对应表单。
 
