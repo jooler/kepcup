@@ -2,7 +2,7 @@
 
 Bot 可以接管用户邮箱：宿主用 IMAP 收信、SMTP 发信，新信到达时唤醒绑定的 Bot 私聊处理。这是与 D73「连接应用」并列的本机**通道（Channel）**——协议是 IMAP/SMTP，不是 MCP；入口在扩展中心「邮件」页签。决策：**D84**。
 
-**状态：P0 已实现（2026-10-12，main：e0f6500 + 审查修复 7b0aa93 + 提示改造 ae79978），实机验收（§9：QQ IDLE、163 ID + 轮询、发信审批卡）待完成；P1 未开始。** 产品拍板（2026-10-12）：扩展中心页签叫「邮件」；同一邮箱可被多个 Bot 接管；新信唤醒进**该 Bot 的私聊（DM）**；P0 必须收发都支持；优先做接近邮件客户端的近实时（IMAP IDLE），否则可配轮询间隔。
+**状态：P0 已实现（2026-10-12，main：e0f6500 + 审查修复 7b0aa93 + 提示改造 ae79978），实机验收（§9：QQ IDLE、163 ID + 轮询、发信审批卡）待完成；P1 未开始。** 产品拍板（2026-10-12）：扩展中心页签叫「邮件」；同一邮箱可被多个 Bot 接管；新信唤醒进**该 Bot 的私聊（DM）**；P0 必须收发都支持；优先做接近邮件客户端的近实时（IMAP IDLE），否则可配轮询间隔。；**对话内添加邮箱卡**（`mail_request_setup` → `mail-account` 设置卡，2026-10-13）已接入。
 
 相关：D73（连接应用 / 污点 / 外发审批）、D75（对话轮 mailbox）、D79（网页监看：确定性轮询 → 持久作业 → 唤醒）、D37 / D78（审批与副作用）、D65（工具风险档）、[29 §16](29-connected-apps.md#16-扩展中心extension-center2026-10-10)（扩展中心信息架构）。
 
@@ -190,6 +190,7 @@ CREATE TABLE mail_bot_cursors (
 | `mail_search` | ✓ | ✓ | IMAP SEARCH 条件子集（from/to/subject/since/unseen） |
 | `mail_send` | ✗ | ✓ | SMTP 发送；**写 / 外发**；审批卡展示完整 to/cc/bcc 与正文（复用 recipients 逻辑） |
 | `mail_accounts` | ✓ | ✓ | 列出本 Bot 已绑定账号与状态（无密钥） |
+| `mail_request_setup` | ✓ | ✓ | 请用户在对话里添加邮箱并绑定当前 Bot（`setup.kind=mail-account`，见 18-inline-setup）；与移交已有绑定（`propose_handover`）不同 |
 
 - 风险：`mail_list` / `mail_read` / `mail_search` / `mail_accounts` = read；`mail_send` = write（外发）。P1 若加 `mail_set_flag` / `mail_move` 按写处理。
 - 账号范围：工具参数 `account_id` 必须属于当前 Bot 绑定，否则 `MAIL_NOT_BOUND`。

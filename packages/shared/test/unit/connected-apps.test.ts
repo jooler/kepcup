@@ -132,6 +132,22 @@ describe('连接应用 schema', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('setupRequirementSchema 的 mail-account 变体', () => {
+    expect(
+      setupRequirementSchema.parse({ kind: 'mail-account' }),
+    ).toMatchObject({ kind: 'mail-account' });
+    expect(
+      setupRequirementSchema.parse({
+        kind: 'mail-account',
+        provider: 'qq',
+        reason: '帮我接管邮箱',
+      }),
+    ).toMatchObject({ kind: 'mail-account', provider: 'qq', reason: '帮我接管邮箱' });
+    expect(
+      setupRequirementSchema.safeParse({ kind: 'mail-account', provider: 'nope' }).success,
+    ).toBe(false);
+  });
 });
 
 describe('连接应用常量、错误码、RPC 与事件', () => {

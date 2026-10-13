@@ -1,19 +1,35 @@
 import { Type } from '@earendil-works/pi-ai';
-import { AppError } from '@kepcup/shared';
+import { AppError, type MailProvider } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import type { MailService } from '../mail/service.js';
 import { readOnlyRefusal } from './read-only.js';
 import type { ToolGateway } from '../gateway/index.js';
+import { TOOL_SETUP_REQUIRED } from './image-tools.js';
 
 /**
  * 邮件工具（D84）。读工具对话轮和任务都有，结果包 `<untrusted>`。
  * `mail_send` 是外发写操作，对话轮直接拒绝，任务里先出审批卡。
+ * `mail_request_setup`：用户要接管邮箱且需新加账号时，记下 mail-account 需求并
+ * SETUP_REQUIRED → 对话出现添加卡 → 保存并绑定当前 Bot 后 runs.retry（design 18）。
  */
+
+export const MAIL_REQUEST_SETUP_TOOL = 'mail_request_setup';
+
+/** 对话内「添加邮箱」卡的门面（orchestrator 写入本 run 的 setupHit）。 */
+export interface MailSetupFacade {
+  requestSetup(input: { provider?: MailProvider; reason?: string }): {
+    ok: boolean;
+    message: string;
+  };
+}
+
 export function buildMailTools(input: {
   identity: RunIdentity;
   mail: MailService;
   gateway: Pick<ToolGateway, 'writeDenial'>;
+  /** 有则注册 mail_request_setup（正常运行时总是提供）。 */
+  setup?: MailSetupFacade | undefined;
 }): ToolDefinition[] {
   const { identity, mail, gateway } = input;
   const botId = identity.botId;
@@ -183,5 +199,55 @@ export function buildMailTools(input: {
     },
   };
 
-  return [accounts, list, read, search, send];
+  const tools: ToolDefinition[] = [accounts, list, read, search, send];
+
+  if (input.setup !== undefined) {
+    const setupFacade = input.setup;
+    const requestSetup: ToolDefinition<{ provider?: string; reason?: string }> = {
+      name: MAIL_REQUEST_SETUP_TOOL,
+      description:
+        '请用户在对话里添加邮箱并交给你：当用户说「帮我接管邮箱 / 代管邮箱 / 添加邮箱」且需要新加账号（或你还没有已绑定邮箱）时调用。provider 可选（qq / netease_163 / netease_126 / gmail / custom）；reason 简述为什么需要（给用户看）。调用后本次执行会暂停，用户填好并测试保存后自动继续。不要只让用户去扩展中心；不要索要授权码让用户贴进聊天。把已有邮箱从另一个 Bot 转给你用 propose_handover，不要用本工具。',
+      parameters: Type.Object({
+        provider: Type.Optional(
+          Type.String({
+            description: '邮箱厂商预填：qq、netease_163、netease_126、gmail、custom（outlook 当前不可用）',
+          }),
+        ),
+        reason: Type.Optional(Type.String({ description: '为什么需要这个邮箱（给用户看）' })),
+      }),
+      execute: async (params) => {
+        if (botId === null) return noContext();
+        const clean = (value: string | undefined): string | undefined => {
+          const trimmed = value?.trim();
+          return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+        };
+        const provider = clean(params.provider);
+        const reason = clean(params.reason);
+        const allowed = new Set([
+          'qq',
+          'netease_163',
+          'netease_126',
+          'gmail',
+          'outlook',
+          'custom',
+        ]);
+        if (provider !== undefined && !allowed.has(provider)) {
+          return {
+            ok: false,
+            content: `不支持的邮箱厂商「${provider}」：可用 qq、netease_163、netease_126、gmail、custom`,
+            errorCode: 'INVALID_INPUT',
+          };
+        }
+        const result = setupFacade.requestSetup({
+          ...(provider !== undefined ? { provider: provider as MailProvider } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        });
+        if (!result.ok) return { ok: false, content: result.message, errorCode: 'INVALID_INPUT' };
+        return { ok: false, content: result.message, errorCode: TOOL_SETUP_REQUIRED };
+      },
+    };
+    tools.push(requestSetup);
+  }
+
+  return tools;
 }

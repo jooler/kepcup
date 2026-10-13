@@ -26,6 +26,8 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 
 另有 `web-search`（联网检索供应商，21-web-search）与 `agent`（D72 外部智能体：`{kind:'agent', agentId, reason}`，未开实验 / 未启用 / 未安装 / 未登录 / 版本不兼容 / 暂不可用 / 沙箱不可用（`sandbox_unavailable`，如 Linux 缺 bubblewrap / socat）时由 run 门禁或引擎失败给出，卡片内嵌设置页同一张 Agent 卡片，完成后自动重试原 run，见 28-external-agents-acp §9.1）。
 
+另有 `mail-account`（D84 邮件通道，35-mail-channel）：模型调用 `mail_request_setup` 时携带（可选 `provider` / `reason`）；卡片内嵌与扩展中心同构的添加邮箱表单，测连保存后绑定当前 Bot，再经 `runs.retry` 续跑。与把已有邮箱从另一个 Bot 移交过来（`propose_handover`）不同——后者不走本设置卡。
+
 落盘：`runs.error_json` 由 `{message}` 扩展为 `{message, setup?}`（无 DB 迁移）。`run.error` 仍是用户可读文案，`run.setup` 供界面路由到对应表单。
 
 两个触发点（core）：
@@ -53,6 +55,7 @@ runSchema.setup  // SetupRequirement | null，仅因缺设置而失败时非空
 |---|---|
 | `main-model` | 两段式：尚无已配置厂商时内嵌**供应商表单**（`ProviderSetupForm`）；之后选默认主模型 + 可选「这个 Bot 的模型」（`bots.update`），确认后继续。**切段只由「保存」进入**：「测试连接」为完成探测会先落盘 key（`providers.test` 只读已存 key），`availableModelOptions` 随之翻转，不能用它派生切段——测试无论成败都不自动跳段；引导卡场景下任一测试失败后「保存」禁用（`blockSaveAfterFailedTest`），直到某次测试通过（切换厂商重置表单即重置），设置页用法不设此限 |
 | `capability-model` | 内嵌对应能力的**能力模型配置**（`CapabilityModelSection embedded`），保存即继续。卡片内「测试」**未保存先测**（与 websearch.test 同一取向）：直接用表单里的厂商 / 模型 / Key 发一次最小真实请求（`providers.test` 带 `keyOverride`，不落库；Key 留空用已存 key），不再「先保存再测试」；测试通过后「保存」换为「**保存并关闭**」（同一保存路径，保存即继续、卡片收起）——用户不必对着禁用的保存按钮猜配置是否已落库。表单任一字段一变，「测试通过」即失效、按钮还原 |
+| `mail-account` | 内嵌添加邮箱表单（与扩展中心「邮件」同源 `MailAccountAddForm`），保存时绑定当前 Bot，完成后 `continueAfterSetup` |
 
 确认 / 保存后 `continueAfterSetup()`：失败路径收起横幅并自动 `runs.retry`（原触发消息照常续跑）；门禁路径无事可做——内容一直留在输入框，用户再按一次发送即可。卡片右上角可「暂不设置」——门禁撤销、失败横幅收起，下次发送会再次拦下。
 

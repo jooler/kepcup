@@ -13,6 +13,7 @@ import {
 } from '@kepcup/shared';
 import { truncateToBudget } from '../tokens.js';
 import { APP_REQUEST_CONNECTION_RULE } from '../../apps/prompt.js';
+import { MAIL_REQUEST_SETUP_RULE } from '../../mail/prompt.js';
 
 export interface AccessPromptInfo {
   /** Sandbox verdict for this machine; unavailable means confirm mode. */
@@ -55,6 +56,8 @@ export interface SystemPromptInput {
   watches?: string | undefined;
   /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
   mailAccounts?: string | undefined;
+  /** D84：邮件工具可用（含 mail_request_setup），即使尚无已绑定账号。 */
+  hasMail?: boolean | undefined;
   /** Top-k relevant memories (with ids) for <relevant_memories> (P07). */
   relevantMemories?: string | undefined;
   /** Wiki topic index (index.md titles) for <wiki_topics> (P09). */
@@ -381,10 +384,16 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
 
   // D73: the app rule only exists when the bot has app sections to act on.
   const baseRules = isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES;
-  const platformRules =
-    (input.connectedApps ?? '').length > 0 || (input.availableApps ?? '').length > 0
-      ? [...baseRules, `${baseRules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`]
-      : baseRules;
+  const platformRules = (() => {
+    let rules = [...baseRules];
+    if ((input.connectedApps ?? '').length > 0 || (input.availableApps ?? '').length > 0) {
+      rules = [...rules, `${rules.length + 1}. ${APP_REQUEST_CONNECTION_RULE}`];
+    }
+    if (input.hasMail === true) {
+      rules = [...rules, `${rules.length + 1}. ${MAIL_REQUEST_SETUP_RULE}`];
+    }
+    return rules;
+  })();
   return [
     section('platform_rules', platformRules.join('\n')),
     // 管家规则按循环面取版本：propose_* / suggest_route / delegate_to_bot 只在
@@ -462,6 +471,8 @@ export interface AgentRunContextInput {
   watches?: string | undefined;
   /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
   mailAccounts?: string | undefined;
+  /** D84：邮件工具可用（含 mail_request_setup），即使尚无已绑定账号。 */
+  hasMail?: boolean | undefined;
   relevantMemories?: string | undefined;
   wikiTopics?: string | undefined;
   skills?: string | undefined;
@@ -520,6 +531,8 @@ const AGENT_PLATFORM_RULES: ReadonlyArray<{ text: string; tools?: readonly strin
   },
   // D73：应用相关段落（<connected_apps> / <available_apps>）的行动规则；工具未注入则不出现。
   { text: APP_REQUEST_CONNECTION_RULE, tools: ['app_request_connection'] },
+  // D84：对话内添加邮箱；工具未注入则不出现。
+  { text: MAIL_REQUEST_SETUP_RULE, tools: ['mail_request_setup'] },
 ];
 
 /** 补位类能力的称呼（`<tool_policy>`）。 */

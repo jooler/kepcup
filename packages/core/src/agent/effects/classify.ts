@@ -142,6 +142,8 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   mail_read: 'none',
   mail_search: 'none',
   mail_accounts: 'none',
+  /** 对话内请用户添加邮箱（不改外部状态，只中断等设置）。 */
+  mail_request_setup: 'local',
   /** 发出去的信收不回来。 */
   mail_send: 'external',
 

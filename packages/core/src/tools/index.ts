@@ -23,7 +23,7 @@ import {
   type ScheduleToolFacade,
 } from './schedule-tools.js';
 import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
-import { buildMailTools } from './mail-tools.js';
+import { buildMailTools, type MailSetupFacade } from './mail-tools.js';
 import type { MailService } from '../mail/service.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
@@ -107,6 +107,11 @@ export interface ResponseToolDeps {
   watch?: WatchToolFacade | undefined;
   /** D84 邮件通道。读工具随时可用；发信在对话轮被 readOnlyRefusal 拒绝。 */
   mail?: MailService | undefined;
+  /**
+   * 对话内添加邮箱卡（design 18）：present 时注册 mail_request_setup；
+   * orchestrator 写入 setupHit。缺省则不注册该工具（单测可省略）。
+   */
+  mailSetup?: MailSetupFacade | undefined;
   /**
    * P11 browser capability hosted by the main process (port B). Present in
    * the real core; tests may omit it (no browser_* tools are registered).
@@ -904,7 +909,12 @@ export function buildResponseTools(input: {
 
   const mailTools =
     deps.mail !== undefined
-      ? buildMailTools({ identity, mail: deps.mail, gateway })
+      ? buildMailTools({
+          identity,
+          mail: deps.mail,
+          gateway,
+          ...(deps.mailSetup !== undefined ? { setup: deps.mailSetup } : {}),
+        })
       : [];
 
   // P11 browser tools (docs/dev/04-agent-runtime.md 工具目录, R 列; access=network
