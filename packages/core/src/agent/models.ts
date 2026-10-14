@@ -23,33 +23,10 @@ import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { isModelRouteChangedError } from './model-retry.js';
-import type { RunIdentity } from './types.js';
 
 /** Secret name holding a provider's API key. */
 export function providerSecretName(providerId: string): string {
   return `provider:${providerId}`;
-}
-
-/**
- * Per-conversation session id for model requests. pi-ai forwards it as the
- * `x-opencode-session` header on OpenCode providers (required for routing and
- * prompt caching; https://opencode.ai/v2/docs/console/go) and ignores it
- * elsewhere unless a provider has its own session-affinity/caching support.
- * Stable across a conversation's runs (the whole point of the routing hint);
- * conversation-less one-shot calls fall back to their run id. The `kep-`
- * prefix keeps our ids from colliding with other clients on the shared service.
- */
-export function modelSessionId(identity: Pick<RunIdentity, 'conversationId' | 'runId'>): string {
-  return `kep-${identity.conversationId ?? identity.runId}`;
-}
-
-/**
- * Session id for a provider "测试连接" request. There is no conversation, so
- * repeated tests of the same provider share one stable session (OpenCode's
- * routing hint stays meaningful); other providers ignore it like any other.
- */
-export function providerTestSessionId(providerId: string): string {
-  return `kep-provider-test:${providerId}`;
 }
 
 /** Custom providers are namespaced to avoid clashing with built-in ids. */
@@ -277,7 +254,10 @@ export async function testProvider(deps: {
   models: Models;
   model: AnyModel;
   signal?: AbortSignal;
-  /** OpenCode routing/prompt-cache session id (see modelSessionId). */
+  /**
+   * Opaque session id (`providerTestSessionId` in model-session-id.ts). pi-ai
+   * sends it to the provider as routing / prompt-cache hints.
+   */
   sessionId?: string;
 }): Promise<void> {
   let result;
