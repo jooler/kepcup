@@ -67,7 +67,7 @@
 <Dialog.Root bind:open={shell.settingsOpen}>
   <Dialog.Content
     class="grid h-[80vh] max-w-[calc(100%_-_1rem)] grid-cols-1 grid-rows-[auto_1fr] gap-0 overflow-hidden p-0
-      sm:max-w-4xl sm:grid-cols-[13rem_1fr] sm:grid-rows-[auto_auto]"
+      sm:max-w-4xl sm:grid-cols-[13rem_1fr] sm:grid-rows-1"
     onInteractOutside={(event) => event.preventDefault()}
     data-testid="settings-dialog"
   >
