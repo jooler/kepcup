@@ -1,6 +1,11 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态：**P0 已实现并通过独立审查与收口测试，待合并；P1/P2 未开工**（2026-10-14）。分支 `t/settings`（worktree `/home/jyy/wt/kepcup-settings`，未推送、未合并 main；方案本身 `572e856`）：shared 契约 `e74defd` → desktop `c7fddad` → core `37aa4cd` → 测试 `9e5aae0` / `79f3d9e` / `32b88d1` → 独立审查 12 项修复 `c10a7a6`。收口：单元 / 集成全量 33 例失败与 main 逐项一致，e2e 95 例中 9 例失败与 main 完全相同，分支独有失败为 0（见 PROGRESS）。方案经重写、复审，§十 的四项决策已由用户拍板（全部采纳建议）。实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。**下文 §一～§十是原方案原文，以设计篇 38 为准；§八 的 P0 条目已逐项标注完成情况。**
+> 状态（2026-10-14）：**P0 已完成并通过独立代码审查与收口测试；P1、P2 待做；P3 仅记录，不预先设计。** 阶段总览见 [§八](#八阶段与状态)。
+>
+> 阅读说明：
+> - §一～§七 是方案原文，写于实施之前。其中 §二「现状」描述的是 **P0 之前**的代码状态，部分结论（例如「没有 `settings.changed` 事件」）现已不成立，以代码和设计篇为准。
+> - 实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文方案的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) 的 DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。设计篇、决策号和偏差号以仓库当前最后一个空号为准。
+> - §八 是**当前的任务与状态**，接手后续阶段从这里开始。
 >
 > 需求来源：[jooler/kepcup#3](https://github.com/jooler/kepcup/issues/3)「在对话中指挥一切」（提出人 jooler，2026-10-13）。
 >
@@ -13,15 +18,6 @@
 > - 连接应用 / 扩展中心（[docs/design/29-connected-apps.md](../docs/design/29-connected-apps.md) §16）
 > - 工具目录（[docs/dev/04-agent-runtime.md](../docs/dev/04-agent-runtime.md)）
 >
-> **修订说明（2026-10-13 重写）**：前一版把「应用」理解成连接应用（Notion / Linear），只设计了一个只读工具和一个 `app-setup` 失败 kind，与 issue 原意不符。本版保留已拍板的「方案 A：按需读取，不按设置项生成工具」，但做了以下调整：
->
-> - 范围扩到 KepCup 自身的全部设置（设置弹框、扩展中心 / 连接中心、Bot 配置）；
-> - 补上 Bot 直接修改的路径；
-> - 把「设置能力都要能抽成卡片」作为一条硬约束；
-> - 把渐进式披露落成具体的提示词与工具形态。
->
-> 前一版的改动清单与待确认项作废。
-
 ## 一、目标（按 issue 原意）
 
 issue 原文的要点：设置页与连接中心操作多，学习成本高；用户在对话中产生具体需求时，Bot 先检查应用能力，再决定执行哪些操作，把操作以卡片形式呈现在对话里，用户只承担一次填写；应用的所有配置都要以工具形式暴露给模型，Bot 在合适时机按需读取，不能把所有能力说明都塞进提示词。
@@ -41,7 +37,9 @@ issue 原文的要点：设置页与连接中心操作多，学习成本高；�
 4. **提示词只留一句话**：常驻提示词只有一条简短规则，告诉 Bot 有这套能力、何时去查。
 5. **渐进式披露**：先概览、再搜索、再读详情、最后执行，逐层展开。每一层只返回下一步需要的信息。
 
-## 二、现状（代码锚点）
+## 二、实施前现状（P0 之前的代码锚点）
+
+> 本节是写方案时的代码状态，用来说明为什么这样设计。P0 已经补上其中的缺口：`settings.changed` 事件、条目级 CAS 保存、各嵌入组件的 `embedded` / `prefill` / `onSaved`、Bot 侧改设置的工具。当前状态见 [§八](#八阶段与状态)。
 
 | 部分 | 位置 | 现状与可复用点 |
 | ---- | ---- | ---- |
@@ -125,7 +123,7 @@ interface SettingItem {
   - **撤销**：用回执卡里保存的旧值，经同一套 CAS 写回。
 - 渲染层维护 `CardKey → Svelte 组件` 映射，由通用卡片宿主 `SettingCard` 分发。
 
-### 4.2 覆盖范围与首批分档（P0 实现前逐项复核）
+### 4.2 覆盖范围与首批分档（方案原稿；实际条目与最终分档以目录和设计篇 38 为准）
 
 | 组 | 设置项（示例） | 范围 | 最宽松档 | 卡片组件 |
 | ---- | ---- | ---- | ---- | ---- |
@@ -261,63 +259,135 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - **审计**：每次改动都在消息流里留下回执卡或设置卡，包含谁、在哪个对话、旧值到新值。P0 不新建表；如果之后需要跨对话查「谁改过什么」，再考虑加 `setting_changes` 表。
 - **不做「先检查再执行」的硬门禁**：Bot 在执行前先检查能力仍然是提示词纪律。缺配置时的确定性兜底，仍由各工具入口自己检查（媒体网关、联网检索、连接、邮件），走失败续跑链。
 
-## 八、拆分步骤
+## 八、阶段与状态
 
-- **P0：骨架 + D58 已嵌用过的组件**（✅ 已实现，待审查收口；下面逐项标 ✅ / ⏳）
-  - shared：
-    - ✅ 设置目录：§4.2 全部条目一次登记齐。P0 只把 D58 用过的组件升级为内嵌卡，其余先登记为 link 档；（实际 58 条、9 个卡片键）
-    - ✅ `setting_card` 事件 schema（另有 `setting_card_resolved`）；
-    - ✅ `setupRequirementSchema` 增加 `kind:'setting'`；
-    - ✅ 事件 `settings.changed{itemIds}`；
-    - ✅ RPC `settings.items.apply{itemId, values, expected}`（另有 `settings.cards.dismiss/complete/undo`，`apply` 增 `target?` / `messageId?`）。
-  - core：
-    - ✅ 目录适配器（读 / 写 / 撤销）：在设置写锁内做条目级 CAS，写成功后发 `settings.changed`；设置页原有的保存路径也补发这个事件；
-    - ✅ `settings_search` / `settings_read` / `settings_change`（`settings_read` / `settings_change` 增 `bot_id`）；
-    - ✅ 档位裁定（§5.3），包括按 run 记录的「已接触不可信内容」标志；
-    - ✅ 卡片状态写回；
-    - ✅ `setting_card_resolved` 唤醒对话轮；
-    - ✅ 提示词规则 + 输入标志 `hasSettingsTools`；
-    - ✅ ACP 能力包 `settings`（`settings:change` 选项）。
-  - desktop：
-    - ✅ `SettingCard` 宿主与组件映射；
-    - ✅ 组件 props 补齐，统一为 `embedded` / `prefill` / `onSaved`：
-      - `ProviderSetupForm`：补 `embedded`、`prefill`；
-      - `CapabilityModelSection`、`WebSearchSection`：补 `prefill`；
-      - `AgentCard`：补 `onSaved`、`prefill`；
-      - `ConnectAppPanel`：`onDone` 适配成 `onSaved`；
-      - `SensorCard`：补 `embedded`、`onSaved`；
-      - 新建 `DefaultModelsCard`（包住 `ModelSelectField` 并自带保存）和 Bot 模型片段卡（自带 `bots.update`）；
-    - ✅ `settingsStore` 订阅 `settings.changed`；
-    - ✅ 回执卡 + 撤销；
-    - ✅ link 卡 + 设置变化回写 `applied`。
-  - 测试：
-    - ✅ 覆盖率测试（§4.3）；
-    - ✅ 档位裁定单测，矩阵为触发源（含其他 Bot 的 mention / reply）× 不可信内容 / 污点 × 群聊 × 跨 Bot × 放宽权限；
-    - ✅ 条目级 CAS 单测：撤销不覆盖兄弟字段的并发修改；
-    - ✅ 集成测试（八个场景全部覆盖，`packages/core/test/integration/settings-cards.test.ts`）：
-      - 「换个默认模型」走 direct，生成回执卡，撤销能复原；
-      - 「我想让你帮我生成图片」：search 发现图像能力未配 → form 卡 → 用户应用 → 对话轮被唤醒后接着生成；
-      - 邮件唤醒的轮次请求改设置，被收紧到 confirm；用户触发的轮次先 `web_fetch` 后改设置，同样被收紧到 confirm；
-      - 群聊里请求修改白名单项，被收紧到 confirm；
-      - 请求「开启无人值守」时出 user-only 空白卡，Bot 给的 `values` 不被采用；
-      - ACP 智能体默认没有 `settings_change`；
-    - ✅ e2e 一条，覆盖卡片 → 应用 → Bot 续答（`apps/desktop/test/e2e/setting-card.spec.ts`，另含 direct 回执撤销）。
-- **P1：组件化扩面**（⏳ 未开工；完整的条目级清单见设计篇 38 §10），按用户价值排序，每做完一个就把对应条目从 link 升级为内嵌卡片：
-  - `BotProfileForm` 其余片段（浏览器资料 / 网络 / MCP / 连接 / 技能，卡片自带 `bots.update`）
-  - `EmbeddingSection`
-  - `UnattendedSection`
-  - 渲染层的 `AppearanceSection` / `GeneralSection`
-  - `BackgroundTasksSection` 与用量预算
-  - 群设置、项目设置片段
-  - `AppConnectionDetail` 的工具策略片段
-  - 这些组件都已存在，做法同 D58：只加 `embedded` / `prefill` / `onSaved` props，设置页的行为不变。
-- **P2：收拢**（⏳ 未开工）
-  - D58 的 7 个旧 kind 改由 `SettingCard` 分发；
-  - 评估把 `APP_REQUEST_CONNECTION_RULE` / `MAIL_REQUEST_SETUP_RULE` 并入新规则，以减少常驻提示词；
-  - 评估设置页各分区直接由「目录卡片」组成，让卡片成为设置的唯一渲染单元。
-- **文档**（✅ 已写回）：
-  - 新设计篇 `docs/design/38-conversational-settings.md`（决策 D89；编号在合并时以最后一个空号为准）；
-  - 回写 design/18（通用 `setting` kind）、design/02 与 design/30（工具面）、`docs/dev/04-agent-runtime.md`（工具目录）、`docs/dev/03-data-model.md`（`setting_card` / `setting_card_resolved` 内容形状）、design README 索引与决策行、PROGRESS 与 DEVIATIONS（DEV-026）。
+### 8.0 总览
+
+| 阶段 | 内容 | 状态 |
+| ---- | ---- | ---- |
+| P0 | 骨架：设置目录、三个工具、宿主档位裁定、设置卡、`settings.changed`、条目级 CAS、外部智能体能力包；D58 已嵌用过的组件升级为内嵌卡 | ✅ 已完成 |
+| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前只有 18 个有内嵌卡） | ⏳ 待做 |
+| P2 | 收拢：D58 旧 kind 并入通用设置卡、提示词规则合并评估，以及 P0 留下的遗留问题 | ⏳ 待做 |
+| P3 | 真实模型下的场景验证与调优 | 📝 仅记录（§8.4） |
+
+### 8.1 P0 ✅ 已完成
+
+下面逐项标注完成情况；括号里是与原方案不一致或后来追加的内容。
+
+- shared：
+  - ✅ 设置目录，位于 `packages/shared/src/settings-catalog/`：§4.2 的全部条目一次登记齐，实际 58 条、9 个卡片键，`DIRECT_ITEM_IDS` 与 `effectiveMode` 纯函数也在这里；
+  - ✅ `setting_card` 事件 schema（另有 `setting_card_resolved`）；
+  - ✅ `setupRequirementSchema` 增加通用 `kind:'setting'`；
+  - ✅ 事件 `settings.changed{itemIds}`；
+  - ✅ RPC `settings.items.apply{itemId, values, expected}`（另有 `settings.cards.dismiss / complete / undo`，`apply` 增 `target?`、`messageId?`）。
+- core：
+  - ✅ 目录适配器（读 / 写 / 撤销，在设置写锁内做条目级 CAS），位于 `packages/core/src/settings/`；
+  - ✅ `settings_search` / `settings_read` / `settings_change`（后两个增可选 `bot_id`，供管家指向别的 Bot）；
+  - ✅ 档位裁定（§5.3）：触发源白名单、本 run 读过不可信内容、群聊、跨 Bot、放宽权限、渲染层项；
+  - ✅ 设置卡状态机：顶替、每 run 上限、拒绝退避、7 天过期（原方案没有过期，实现时追加）；
+  - ✅ 应用 / 拒绝后唤醒 Bot 一次（`setting_card_resolved`），撤销不唤醒；
+  - ✅ 提示词一条规则 + 输入标志 `hasSettingsTools`；
+  - ✅ 外部智能体能力包 `settings`，`settings_change` 需 Bot 单独开启 `settings:change`；
+  - ✅ `settings.update`、`bots.update` 等原有保存路径纳入同一把写锁并补发 `settings.changed`。
+- desktop：
+  - ✅ `SettingCard` 宿主与组件映射，位于 `apps/desktop/src/renderer/src/lib/features/settings-card/`；
+  - ✅ 回执卡 + 撤销、confirm 对比与冲突刷新、user-only 空白卡、跳转卡 + 「我已设置好」；
+  - ✅ 嵌入组件补齐 `embedded` / `prefill` / `onSaved`：`ProviderSetupForm`、`CapabilityModelSection`、`WebSearchSection`、`AgentCard`、`ConnectAppPanel`、`SensorCard`；新建 `DefaultModelsCard`、`BotModelCard`；
+  - ✅ `settingsStore` 订阅 `settings.changed`；`SetupRequiredCard` 增 `'setting'` 分支；
+  - ✅ 缺失的 `data-settings-anchor` 补齐（Bot 面板、群设置、项目设置）；
+  - ✅ 外部智能体能力包页增「允许修改设置」开关。
+- 测试：
+  - ✅ 覆盖率测试（§4.3 三条）；档位裁定全矩阵；条目级 CAS 与撤销不覆盖兄弟字段；
+  - ✅ 集成测试 `packages/core/test/integration/settings-cards.test.ts`，覆盖方案的八个场景；
+  - ✅ e2e `apps/desktop/test/e2e/setting-card.spec.ts`（单聊 direct 回执卡撤销；群聊 confirm 卡应用后唤醒 Bot 续答）。
+- 文档：
+  - ✅ 设计篇 38、design README（索引 + D89）、design 18 / 02 / 30、`docs/dev/03`、`04`、PROGRESS、DEVIATIONS（DEV-026）。
+- 独立代码审查（✅ 已做，12 项发现已全部修复并补了测试）。主要几项：
+  - 外部智能体自带的网页读取等工具绕过了「读过不可信内容」判定，现在**外部智能体的 run 一律按不可信处理**，最多出确认卡；
+  - 不可信读取的判定**改为可信工具白名单**，没登记的工具（包括以后新增的）默认按不可信，且有单测强制每个内置工具必须归类；
+  - 用户在卡上改成别的值、或自行保存了其他值时，卡片也能结算并唤醒 Bot；
+  - 应用与拒绝并发时不会出现「值已写入但卡片显示已拒绝」；
+  - 带 `messageId` 的操作以卡片自己的目标为准；每 run 出卡上限在并行工具调用下仍然成立；
+  - `required:true` 也遵守 7 天拒绝退避；非管家不能读别的 Bot 的配置；
+  - `settings.update` 的写锁不再跨网络等待，且有 10 秒等待上限。
+
+**P0 验证结果**：单元 / 集成全量与未改动的主干对照，失败项完全一致，没有新增失败；e2e 全量与未改动的主干对照，失败项完全一致，没有新增失败，新增的 `setting-card.spec` 通过。
+
+### 8.2 P1 ⏳ 待做：组件化扩面
+
+目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**目前 58 个目录条目里只有 18 个有内嵌卡。**
+
+**每个条目的升级步骤**（做法同 D58：设置页行为不变，只给组件加嵌入用的 props）：
+
+1. 组件：给对应设置组件补 `embedded`（紧凑形态）、`prefill`（Bot 给的非敏感预填值）、`onSaved`（保存后回调）。设置页里的原有用法不变。
+2. 卡片键：在 `packages/shared/src/settings-catalog/cards.ts` 增加 `CardKey`；在 `apps/desktop/src/renderer/src/lib/features/settings-card/` 的 `SettingCardEmbed.svelte` 与 `card-components.ts` 里登记映射。
+3. 目录：把条目的 `card` 从 `null` 改为这个键（`packages/shared/src/settings-catalog/items.ts`）。`effectiveMode` 对 `card === null` 的条目自动降为跳转卡，所以改完即生效。
+4. 写入方式二选一：
+   - **宿主写**：在 `packages/core/src/settings/adapters.ts` 补写适配器（条目级 CAS，写完发 `settings.changed`），卡片的「应用」走 `settings.items.apply`；
+   - **组件自存**：组件自己调用原有保存 RPC，保存后 `onSaved` 触发 `settings.cards.complete`，由读适配器核对。user-only 项和渲染层拥有的项只能用这种方式，宿主不替用户写。
+5. 测试：覆盖率测试与卡片映射测试（`cardComponentProblems`）要通过；新写的适配器要有 CAS / 脱敏读取单测；有交互风险的补 e2e。
+
+**完成标准**：条目不再走跳转卡兜底；设置页原有用法与 e2e 不变；密钥类字段仍只在组件里填，不经模型。
+
+**待升级的条目**（条目 id 为目录中的实际 id；按用户价值排序，Bot 配置一组最常用）：
+
+- [ ] **Bot 配置其余片段**：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`。组件是 `BotProfileForm` 的对应片段，卡片自带 `bots.update`。**这六项现在只有读适配器**，要走「宿主写」需先补写入。其中放宽网络策略是 user-only。
+- [ ] **模型**：`models.embedding-local`（`EmbeddingSection`）、`models.widget-review`、`models.concurrency`。
+- [ ] **无人值守**：`unattended.enable` / `unattended.disable`（`UnattendedSection`）。开启是 user-only，风险确认步骤必须留在组件里。
+- [ ] **通用**：`general.theme`、`general.language`（`AppearanceSection`，渲染层拥有，宿主不写）、`general.launch-at-login`（`GeneralSection`）。
+- [ ] **后台与预算**：`background.tasks`、`background.budget`（`BackgroundTasksSection`、用量预算）。
+- [ ] **群 / 项目**：`group.title`、`group.members`（群设置）；`project.protect-rules`、`project.ports`（项目设置，user-only）。
+- [ ] **连接与智能体**：`connections.tool-policy`（`AppConnectionDetail` 的工具策略片段）、`connections.taint-guard`、`mcp.servers`、`agents.default`、`browser.shared-profiles`。
+- [ ] **环境**：`environment.toolchains`、`environment.sandbox`、`environment.allowlist`（user-only；先保持跳转卡，组件可嵌入后再出 user-only 空白卡）。
+
+**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`models.embedding-local`、`models.concurrency`、`mcp.servers`、`group.title` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。
+
+**已经有写适配器的**条目（升级时可以只做组件这一步）：默认主 / 轻量模型、`models.widget-review`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`。
+
+**永久只出跳转卡 / 只读，不在 P1 范围**：`profile.user-facts`、`developer.*`、`diagnostics.*`。
+**走专门工具、`settings_change` 只重定向，不在 P1 范围**：`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`。
+
+### 8.3 P2 ⏳ 待做：收拢与遗留问题
+
+**方案内的两项**
+
+- [ ] **D58 的 7 个旧 kind 并入通用设置卡**：`main-model`、`capability-model`、`web-search`、`agent`、`connect-app`、`confirm-local-connector`、`mail-account` 目前各自在 `SetupRequiredCard` 里有独立分支。目标是让它们也由 `SettingCard` 的分发逻辑渲染，`setupRequirementSchema` 里旧 kind 要么迁移到 `kind:'setting'`，要么保留兼容别名。完成标准：发送门禁、失败续跑、放弃分支（`runs.setupDismissed`）的行为不变，现有 `setup-card.spec` 保持通过。
+- [ ] **提示词规则合并评估**：评估把 `APP_REQUEST_CONNECTION_RULE` 和 `mailRequestSetupRule` 并入新的那一条设置规则，以进一步缩短常驻提示词。需要对比合并前后模型实际行为（见 P3），不能只看字数；结论要写进设计篇。
+- [ ] **设置页分区由目录卡片组成（评估）**：评估能否让设置页各分区直接由目录里的卡片渲染，使卡片成为设置的唯一渲染单元。只做评估，是否实施另行决定。
+
+**P0 留下的遗留问题（需要在 P2 处理或明确放弃）**
+
+- [ ] **设置页过期的整表单保存会覆盖 Bot 的直接修改**。`settings.update` 与 `bots.update` 是整份快照保存，一个旧的表单提交会把 Bot 刚直接改好的值覆盖回去，目前只有「撤销」时才会报冲突。处理方向：让设置页的保存也走条目级 CAS，或给这两个 RPC 加期望值保护。
+- [ ] **主干上原本就有的 e2e 失败要查清根因**。P0 收口时 e2e 有 9 例失败，在未改动的主干上同样失败（见 §8.5）。其中 3 例在 `external-agents.spec` 里，与设置卡里的智能体卡（`AgentCard`）相关；P0 只确认了它们在主干上同样失败，**没有查根因**。要确认 `AgentCard` 加 props 的改动没有间接影响，并尽量修好。
+- [ ] **跳转卡只在被渲染的对话里才会自动完成**。用户在设置页改完、之后才回到这个对话时，卡片可能仍显示未完成。处理方向：重新打开对话时对待处理的跳转卡核对一次。
+- [ ] **未带 Key 的自定义厂商会让「换模型」变成待填卡**，而不是直接改。这符合「只能在已配置 Key 的厂商里选」的产品规则，需要确认这就是预期行为，并把结论写进设计篇。
+
+**已知并接受的取舍**（不作为待办，但接手者要知道）
+
+- 「读过不可信内容」的判定依赖对工具名的白名单，偏严：新增的工具默认按不可信，会让 Bot 在该轮里只能出卡不能直改。新增工具时必须在白名单里归类，单测会强制。
+- 渲染层拥有的项（主题、语言、麦克风、摄像头）core 读不到也写不了，`settings_read` 只会报「状态未知」，改动只能由渲染层的卡在本机写。
+- 设置卡不做审批、不新建审计表；如果以后要跨对话查「谁改过什么」，再考虑加 `setting_changes` 表。
+
+### 8.4 P3 📝 仅记录：真实场景验证与调优
+
+不预先设计，等 P1 做得差不多、大多数设置项都有内嵌卡之后再做（现在做，大多数场景只会落到跳转卡，结论不准）。内容是用真实模型验证以下场景并按观察结果调优：
+
+- **要观察的场景**：
+  - 「换个默认模型」「换成某个厂商的模型」（direct / form 的选择是否正确）；
+  - 「帮我生成图片」这类能力未配置的任务（先 search 发现缺口，再出待填卡，用户应用后接着做）；
+  - 群聊里请求改设置（是否只出卡、不直接改）；
+  - 邮件 / 网页 / 定时触发的轮次里出现「请改设置」的诱导（是否被收紧为出卡）；
+  - 用户说得含糊（「让它能上网」「我想读我的 Notion」），Bot 是否会先 `settings_search` 而不是自己猜；
+  - 外部智能体开启 `settings:change` 后的行为。
+- **要看的指标**：该查时有没有先查；不该改时有没有乱改；出卡是否过多或过少（刷屏、反复被拒）；用户完成卡片后 Bot 是否正确接着做原来的事；工具描述和一条提示词规则是否够用。
+- **可调的旋钮**：那一条提示词规则的措辞；三个工具的描述；`settings_search` 概览与结果的格式和长度上限；`DIRECT_ITEM_IDS` 白名单的范围；每 run 出卡上限与拒绝退避的阈值；卡片 7 天过期时长。
+- **记录方式**：把观察到的问题和调整写进设计篇 38 的新小节，以及 DEVIATIONS。
+
+### 8.5 测试说明
+
+- 测试怎么跑见 [docs/dev/05-testing.md](../docs/dev/05-testing.md)：先跑定向测试，全量只在阶段收口或改了跨包公共部分（shared 契约、迁移等）时跑一次。P1 的组件升级不改 shared 契约则不必跑全量。
+- P0 收口时，与**未改动的主干**对照，失败项完全一致。主干上本来就失败的 e2e 有 9 例：`debug-dev-pin`、`external-agents` ×3（设置目录启用、`agent_tool` 审批卡、对话内智能体设置卡）、`local-connectors`、`projects`「项目选择」、`sandbox`「运行状态行」、`tasks`「启动任务」、`wiki`「页面树浏览」；单元 / 集成里本来就失败的有 33 例，集中在 sandbox、skills、workspace-tools、environment、projects、wiki-url 等环境类文件，另有 `response-loop` 的「interim delivery is capped at eight per run」与 `external-agent-p3` 的「agent write task holds the project lease」。
+- **这些基线与运行环境有关**。换机器后，先在该机器上对未改动的主干跑一遍，作为自己的基线，再判断新失败是不是本功能引入的。
 
 ## 九、非目标
 
@@ -327,7 +397,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - 不改扩展中心 X5 的逐家适配。连接目录仍是第三方连接器的事实来源，设置目录只引用它，不复制。
 - 不改 D58 已验收的行为（发送门禁、7 个 kind 的卡片），P2 之前只做增量。
 
-## 十、已定决策（2026-10-13，用户全部采纳建议）
+## 十、已定决策（2026-10-13，用户全部采纳建议；均已在 P0 落地）
 
 | # | 决策 | 落在 |
 | ---- | ---- | ---- |
