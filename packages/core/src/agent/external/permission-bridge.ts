@@ -691,7 +691,10 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         return allow('auto', 'allowlisted read-only command (sandboxed)', { command });
     }
     if (ctx.tier === 'read_only') return reject('auto', '只读档：不允许执行命令', { command });
-    if (sandboxed && ctx.tier === 'workspace') {
+    // workspace + ask: once the provider confirms the OS sandbox, coding commands
+    // (tests / lint / builds) stay inside it — same floor as Claude Code auto for
+    // sandboxed bash. Writes still follow the tier (ask confirms edits).
+    if (sandboxed && (ctx.tier === 'workspace' || ctx.tier === 'ask')) {
       // D73 P2: the agent sandbox does not bound the network — while tainted an
       // allowlisted read-only command (above) is the only command left unconfirmed.
       const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
@@ -708,7 +711,13 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
           reject,
         );
       }
-      return allow('auto', 'runs inside the agent sandbox', { command });
+      return allow(
+        'auto',
+        ctx.tier === 'ask'
+          ? 'runs inside the agent sandbox (ask tier: sandboxed exec auto)'
+          : 'runs inside the agent sandbox',
+        { command },
+      );
     }
     // Past here the command runs outside any sandbox once approved. Without
     // the bound project's lease (审查 M2) it must provably stay out of the

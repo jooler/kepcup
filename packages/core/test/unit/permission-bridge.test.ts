@@ -218,8 +218,11 @@ describe('tiers and modes', () => {
       },
     });
     expect(claudeSandboxSettings('ask')).toMatchObject({
-      autoAllowBashIfSandboxed: false,
+      autoAllowBashIfSandboxed: true,
       failIfUnavailable: true,
+    });
+    expect(claudeSandboxSettings('read_only')).toMatchObject({
+      autoAllowBashIfSandboxed: false,
     });
     const entry = AGENT_CATALOG.find((e) => e.id === 'claude-acp')!;
     const meta = claudeProvider.sessionNew({
@@ -716,6 +719,17 @@ describe('AgentPermissionBridge decisions', () => {
         await decide(
           { toolCallId: 'c', kind: 'execute', rawInput: { command: 'npm test' } },
           'workspace',
+          claudeProvider,
+        )
+      ).decision,
+    ).toBe('allowed');
+    expect(requested).toEqual([]);
+    // ask tier: sandboxed exec is also auto (writes still confirm); matches Claude Code auto for bash-in-sandbox.
+    expect(
+      (
+        await decide(
+          { toolCallId: 'c-ask', kind: 'execute', rawInput: { command: 'pnpm test' } },
+          'ask',
           claudeProvider,
         )
       ).decision,

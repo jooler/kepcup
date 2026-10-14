@@ -6,6 +6,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 import { commandTouchesDataDir, replaceHomeVariables } from '../../src/permissions/approvals.js';
 import { GRANT_ABSOLUTE_TTL_MS } from '@kepcup/shared';
 import { GrantsService } from '../../src/permissions/grants.js';
+import { AllowlistService, BUILTIN_PATTERNS } from '../../src/permissions/allowlist.js';
 import { runInToolCall } from '../../src/permissions/tool-call-scope.js';
 import { systemClock, type Clock } from '../../src/infra/clock.js';
 
@@ -200,5 +201,39 @@ describe('GrantsService「仅这一次」= 单次工具调用 (D75 §7.3)', () =
     now += 60_000;
     grants.listActive('conv_1');
     expect(grants.get(once.id)?.revokedAt).toBe(1_000_000 + GRANT_ABSOLUTE_TTL_MS);
+  });
+});
+
+describe('AllowlistService seed sync', () => {
+  it('inserts missing built-ins without re-enabling a user-disabled row', () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      create table command_allowlist (
+        id text primary key,
+        platform text not null,
+        pattern text not null,
+        builtin integer not null,
+        enabled integer not null,
+        created_at integer not null
+      );
+    `);
+    const clock: Clock = { now: () => 1_700_000_000_000 };
+    db.prepare(
+      'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, 1, 0, ?)',
+    ).run('alw_old', 'posix', 'ls', clock.now());
+
+    const service = new AllowlistService({ db: db as never, clock, osPlatform: 'linux' });
+    const rows = service.list().filter((row) => row.platform === 'posix' && row.builtin);
+    expect(rows.length).toBe(BUILTIN_PATTERNS.posix.length);
+    expect(rows.find((row) => row.pattern === 'ls')).toMatchObject({ enabled: false, builtin: true });
+    expect(rows.find((row) => row.pattern === 'pnpm --version')).toMatchObject({
+      enabled: true,
+      builtin: true,
+    });
+    // Second construct must be idempotent.
+    new AllowlistService({ db: db as never, clock, osPlatform: 'linux' });
+    expect(service.list().filter((row) => row.platform === 'posix' && row.builtin)).toHaveLength(
+      BUILTIN_PATTERNS.posix.length,
+    );
   });
 });

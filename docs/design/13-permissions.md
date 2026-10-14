@@ -87,7 +87,7 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 - 同样不成立的还有：project `protectRules` 的禁读 / 禁写、Bot 的 `network_policy`、以及「project 以外的读取需授权」——智能体沙箱一般允许全盘只读，只有智能体主动请求权限时才能拦截。
 - 智能体的工作目录限定为 project（未绑定则 workspace）；智能体自身沙箱必须开启（Claude 原生沙箱、Codex `workspace-write`），**永不**使用其 bypass / auto / full-access 模式；智能体侧的仓库配置（Claude `.claude/settings.json` 的 hooks 与 allow 规则）不加载。
-- 智能体发起的权限请求（ACP `session/request_permission`）由宿主分级：KepCup 自身工具（经宿主 MCP 桥）直接放行、在桥内另走本文的审批；路径先判「工作目录与技能目录」→「应用数据目录其余部分：一律拒绝」→ 常规访问范围；工作目录内按 Bot 的权限档位（只读 / 工作区 / 每次确认）自动放行或拒绝；越界读写走「授权」卡片（审批类型 `agent_tool`，有效期仍为“仅这一次 / 本对话内”）；命令命中只读白名单可放行，否则弹卡且只有“仅这一次”。
+- 智能体发起的权限请求（ACP `session/request_permission`）由宿主分级：KepCup 自身工具（经宿主 MCP 桥）直接放行、在桥内另走本文的审批；路径先判「工作目录与技能目录」→「应用数据目录其余部分：一律拒绝」→ 常规访问范围；工作目录内按 Bot 的权限档位（只读 / 工作区 / 每次确认）自动放行或拒绝；越界读写走「授权」卡片（审批类型 `agent_tool`，有效期仍为“仅这一次 / 本对话内”）；命令命中只读白名单可放行，否则弹卡且只有“仅这一次”。**工作区与每次确认档**：智能体能确认「命令在其 OS 沙箱内」时，沙箱内执行（含测试 / lint）自动放行（逼近 Claude Code 对 sandboxed bash 的 auto）；每次确认档仍对工作目录内**写入**逐次确认。
 - 无人值守模式对 `agent_tool` 自动批准并审计，但与沙箱外执行相同受数据目录底线约束：命令或路径触及应用数据目录（workspace 与技能目录除外）时拒绝。
 - 写入租约在 run 开工前显式取得、整个 run 持有，检查点按租约起止前后快照，回退照常可用。（D75：外部智能体只跑任务；只读任务强制 `read_only` 档、不取租约，写任务的租约由任务层在启动前取得。）
 - 没有 OS 沙箱的智能体（如 OpenCode）在「工作区」档下工作目录内编辑可放行，但每条命令都弹卡；沙箱不可用的平台（如 Windows 上的 Claude Agent）强制「每次确认」档，等同逐条确认模式。
@@ -98,7 +98,7 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 逐条确认模式下，白名单中的命令**无需确认**直接执行。沙箱可用时命令本就无需确认，白名单不起作用。
 
-- 内置默认白名单只包含只读命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`，以及 `git status`、`git diff`、`git log`、`git show`。
+- 内置默认白名单只包含只读 / 探测命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`、`echo`、`dirname`、`basename`、`realpath`，`git status` / `diff` / `log` / `show` / `branch` / `rev-parse` / `blame` / `ls-files` 等，以及 `node --version`、`pnpm --version`、`tsc --version` 这类版本探测。**不**包含 `npm test`、`pnpm build`、`curl`、`rm` 等会执行项目代码或改系统的命令（用户可自定义添加并自担风险）。
 - 严格匹配，以下情况不豁免：
   - 整条命令中有任何一段不在白名单中（管道、`&&`、`;` 连接的每一段都要命中）
   - 出现写入重定向（`>`、`>>`）、`tee`、命令替换（`$()`、反引号）、后台执行（`&`）、子 shell、变量赋值前缀

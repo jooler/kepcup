@@ -47,6 +47,13 @@ const DANGEROUS_OPTIONS: Record<string, string[]> = {
     '--ext-diff',
     '--textconv',
     '--exec-path',
+    // git branch mutations (entry prefix "git branch" would otherwise exempt these)
+    '-d',
+    '-D',
+    '-m',
+    '-M',
+    '--delete',
+    '--move',
   ],
   sed: ['-i', '--in-place'],
   sort: ['-o', '--output', '--compress-program'],
