@@ -76,6 +76,27 @@ describe('mergeThreeWay', () => {
     expect(mergePatchOnto({ a: 1 }, undefined, latest)).toEqual({ a: 1 });
   });
 
+  it('record keys like __proto__ / constructor are merged as plain own keys', () => {
+    const parse = (json: string) => JSON.parse(json) as Record<string, unknown>;
+    const base = parse('{"__proto__":{"enabled":false},"constructor":1,"x":1}');
+    const mine = parse('{"__proto__":{"enabled":true},"constructor":1,"x":1}');
+    const theirs = parse('{"__proto__":{"enabled":false},"constructor":2,"x":2}');
+    const merged = mergeThreeWay(base, mine, theirs) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect(Object.hasOwn(merged, '__proto__')).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(merged, '__proto__')?.value).toEqual({ enabled: true });
+    expect(merged.constructor).toBe(2);
+    expect(merged.x).toBe(2);
+    // A key missing on one side is not read from the prototype chain.
+    expect(
+      settingsDeepEqual({ a: 1 }, Object.fromEntries([['a', 1], ['constructor', undefined]])),
+    ).toBe(true);
+    expect(settingsDeepEqual(parse('{"toString":1}'), parse('{"toString":1}'))).toBe(true);
+    const patched = mergePatchOnto(parse('{"__proto__":{"a":2}}'), parse('{"__proto__":{"a":1}}'), parse('{"__proto__":{"a":1}}'));
+    expect(Object.getPrototypeOf(patched)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(patched, '__proto__')?.value).toEqual({ a: 2 });
+  });
+
   it('deep equality ignores key order and undefined keys', () => {
     expect(settingsDeepEqual({ a: 1, b: { c: [1, 2] } }, { b: { c: [1, 2] }, a: 1 })).toBe(true);
     expect(settingsDeepEqual({ a: 1, b: undefined }, { a: 1 })).toBe(true);
