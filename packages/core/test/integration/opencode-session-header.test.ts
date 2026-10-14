@@ -97,4 +97,31 @@ describe('OpenCode session header (PiEngine)', () => {
       expect(captured.every((value) => value === null)).toBe(true);
     });
   }, 30_000);
+
+  it('sends x-opencode-session on a provider test connection (providers.test)', async () => {
+    await withStack(RETRY_ENV, async (stack) => {
+      const captured: Array<string | null> = [];
+      const realFetch = globalThis.fetch;
+      vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        if (fetchUrl(input).startsWith('https://opencode.ai/')) {
+          captured.push(sessionHeader(init));
+          return Promise.resolve(
+            new Response(JSON.stringify({ error: { message: 'unauthorized' } }), {
+              status: 401,
+              headers: { 'content-type': 'application/json', 'x-should-retry': 'false' },
+            }),
+          );
+        }
+        return realFetch(input, init);
+      });
+
+      await stack.core.rpc.call('providers.setKey', { provider: 'opencode-go', key: 'test-key' });
+      await expect(
+        stack.core.rpc.call('providers.test', { provider: 'opencode-go' }),
+      ).rejects.toBeTruthy();
+
+      expect(captured.length).toBeGreaterThan(0);
+      expect(captured.every((value) => value === 'kep-provider-test:opencode-go')).toBe(true);
+    });
+  }, 30_000);
 });
