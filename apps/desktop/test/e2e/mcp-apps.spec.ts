@@ -12,6 +12,8 @@ import {
   _electron,
 } from '@playwright/test';
 import {
+import { createBotAndOpenChat } from './helpers/create-bot';
+
   startFakeMcpAppServer,
   startMockLlm,
   step,
@@ -103,18 +105,6 @@ async function waitReady(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 60_000 });
   const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
   if (await backdrop.isVisible()) await backdrop.click({ timeout: 2_000 }).catch(() => {});
-}
-
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
 }
 
 type Rpc = (method: string, input?: unknown) => Promise<unknown>;
@@ -575,3 +565,4 @@ test('an app whose server went away shows an expired state and can be reloaded',
     await closeSession(session);
   }
 });
+

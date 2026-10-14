@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * P12-B e2e（docs/dev/phases/P12-windows-and-enhanced-sandbox.md 任务 7）：
@@ -109,21 +110,6 @@ async function openSettings(page: Page): Promise<void> {
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-}
-
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-
-  // 「+」面板的自动展开是启动恢复的异步尾巴，可能落在建 Bot 之后（慢机器）；
-  // 其全屏 backdrop 会拦截后续一切点击，进入测试主体前确保它已收起。
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
 }
 
 test('settings page shows the current backend and the enhanced (Lima) state; wizard shows no Windows content on macOS', async () => {
@@ -319,3 +305,4 @@ test('skipping the wizard keeps per-command confirm mode; preparation stays avai
     await closeSession(session);
   }
 });
+

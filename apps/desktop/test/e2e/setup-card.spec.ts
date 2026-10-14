@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 对话内设置引导（docs/design/18-inline-setup.md）：不设 KEPCUP_MOCK_LLM_URL
@@ -12,6 +13,7 @@ import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
  *    → 选默认模型确认 → 原 run 自动重试、访谈继续。
  * ② 发送门禁：正常 Bot 的消息发送被拦截（草稿保留、无失败 run）→ 卡片出现
  *    → 完成设置确认后草稿自动发出、Bot 回复。
+ *    非访谈 Bot 经测试缝 `__kepcupRpc`（`createBotAndOpenChat`）创建，等价原「高级新建」。
  * ③ 测试连接闸门：卡片内「测试连接」失败 → 卡片停在第一段、保存禁用；
  *    重测通过 → 保存解锁但仍不自动跳段——切段只由「保存」进入。
  */
@@ -185,13 +187,8 @@ test('send gate holds the message: no failed run, card completes setup, resend s
   const session = await startSession('kepcup-e2e-setup-gate-');
   const { page, llm } = session;
   try {
-    // 高级新建（非访谈 Bot）→ 自动进入直聊。
-    await page.locator('[data-testid="new-chat-button"]').click();
-    await page.locator('[data-testid="bot-create-form"]').click();
-    await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="bot-name-input"]').fill('小门');
-    await page.locator('[data-testid="bot-create-save"]').click();
-    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    // 非访谈直聊（测试缝，等价原「高级新建」）：无模型时发送应被门禁拦住。
+    await createBotAndOpenChat(page, '小门');
 
     // 发送被门禁拦截：内容留在输入框、无用户气泡、无失败 run、卡片出现。
     llm.script('mock-main', [step().replyText('模型已配置，我们继续。')]);

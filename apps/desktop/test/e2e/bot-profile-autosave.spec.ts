@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 右栏 Bot 配置表单自动保存：不再有手动保存按钮，表单值变化（防抖）即经
@@ -73,21 +74,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-async function createBot(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-
-  // 「+」面板的自动展开是启动恢复的异步尾巴，可能落在建 Bot 之后（慢机器）；
-  // 其全屏 backdrop 会拦截后续一切点击，进入下一步前确保它已收起。
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
-
 async function openProfileTab(page: Page): Promise<void> {
   // 右栏默认收起：需要时经顶部药丸展开（toggle 语义，不能盲点）。
   if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
@@ -103,7 +89,7 @@ test('right panel profile form autosaves on change (no save button)', async () =
   const { page } = session;
   try {
     await waitReady(page);
-    await createBot(page, '小启');
+    await createBotAndOpenChat(page, '小启');
     await openProfileTab(page);
 
     // 保存按钮已移除：值变化即自动保存，不存在手动落盘入口。
@@ -116,7 +102,7 @@ test('right panel profile form autosaves on change (no save button)', async () =
 
     // 建第二个 Bot 触发会话切换（也在防抖窗口内）：切换时未落盘改动会被
     // 立即补救保存，而不是丢弃。
-    await createBot(page, '阿快');
+    await createBotAndOpenChat(page, '阿快');
 
     // 切回第一个 Bot：draft 由 store 重新克隆，值在即说明自动保存已落盘。
     await page.locator('[data-testid^="conversation-row-"]').filter({ hasText: '小启' }).click();
@@ -127,3 +113,4 @@ test('right panel profile form autosaves on change (no save button)', async () =
     await closeSession(session);
   }
 });
+

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -71,14 +72,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-async function createBot(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-}
-
 /** setup 卡定位：对话内群创建（19/D60）按 step 渲染四问。 */
 function groupSetupCard(page: Page, step: string) {
   return page.locator(`[data-testid="group-setup-card"][data-step="${step}"]`);
@@ -137,8 +130,8 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
   const { page, llm } = session;
   try {
     await waitReady(page);
-    await createBot(page, '阿甲');
-    await createBot(page, '阿乙');
+    await createBotAndOpenChat(page, '阿甲');
+    await createBotAndOpenChat(page, '阿乙');
     await createGroupViaUi(page, '项目讨论组', ['阿甲', '阿乙']);
 
     // Right panel shows the group info and member cards（右栏默认收起，先展开）。
@@ -285,8 +278,8 @@ test('group settings: rename, member management, delete', async () => {
   const { page, llm } = session;
   try {
     await waitReady(page);
-    await createBot(page, '阿甲');
-    await createBot(page, '阿乙');
+    await createBotAndOpenChat(page, '阿甲');
+    await createBotAndOpenChat(page, '阿乙');
     await createGroupViaUi(page, '旧群名', ['阿甲', '阿乙']);
     // 右栏（群信息）默认收起，先经顶部药丸展开，后续改名/成员管理断言用它。
     if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
@@ -323,7 +316,7 @@ test('group settings: rename, member management, delete', async () => {
 
     // Add a member (create one more bot first).
     await page.keyboard.press('Escape');
-    await createBot(page, '阿丙');
+    await createBotAndOpenChat(page, '阿丙');
     await page
       .locator('li', { hasText: '新群名' })
       .locator('[data-testid^="conversation-row-"]')
@@ -360,3 +353,4 @@ test('group settings: rename, member management, delete', async () => {
     await closeSession(session);
   }
 });
+

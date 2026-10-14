@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 // Throwaway spec: reproduce the dev-renderer pin failure. Requires the
 // renderer dev server on :5173 (`pnpm dev` running separately); launches the
@@ -41,11 +42,7 @@ test('debug dev-mode pin', async () => {
     await expect(page.locator('[data-testid="ping-result"]')).toContainText('ping ✓', {
       timeout: 60_000,
     });
-    await page.locator('[data-testid="new-chat-button"]').click();
-    await page.locator('[data-testid="bot-create-form"]').click();
-    await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill('小艾');
-    await page.locator('[data-testid="bot-create-save"]').click();
-    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await createBotAndOpenChat(page, '小艾');
     const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
     if (await backdrop.isVisible()) await backdrop.click();
 
@@ -78,3 +75,4 @@ test('debug dev-mode pin', async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
+

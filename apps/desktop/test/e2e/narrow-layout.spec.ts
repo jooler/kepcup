@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 窄屏布局（features/shell/narrow-layout，docs/design/33-narrow-layout.md）：
@@ -86,15 +87,6 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(400);
 }
 
-/** 通过界面建一个 Bot 并直接进入其对话（高级新建表单，窄屏下同样可达）。 */
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-}
 
 /**
  * 结构性断言：页面上「用户实际看得见、点得到」的可交互控件，其有效 -webkit-app-region
@@ -542,3 +534,4 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await llm.stop();
   }
 });
+
