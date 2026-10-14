@@ -107,6 +107,10 @@ export abstract class ContainerSandboxBackend implements SandboxBackend {
     return this.#availability;
   }
 
+  lastAvailability(): SandboxAvailability | null {
+    return this.#availability;
+  }
+
   async #probeOnce(): Promise<SandboxAvailability> {
     const cli = await this.cliAvailable();
     if (!cli.available) {

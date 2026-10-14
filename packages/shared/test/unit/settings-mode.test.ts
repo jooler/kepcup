@@ -310,11 +310,14 @@ describe('effectiveMode: individual rules', () => {
       rules: [],
     });
     const sandbox = item('environment.sandbox');
-    expect(sandbox.card).toBeNull();
+    expect(sandbox.card).toBe('environment-sandbox');
+    expect(sandbox.fields).toEqual([]);
+    expect(sandbox.write.wideningMode).toBeUndefined();
+    expect(sandbox.write.widensPermission).toBe(true);
     expect(effectiveMode(sandbox, ctx())).toMatchObject({
-      mode: 'link',
+      mode: 'user-only',
       acceptValues: false,
-      rules: ['no-card'],
+      rules: [],
     });
     expect(item('environment.allowlist').card).toBeNull();
     expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
@@ -388,9 +391,13 @@ describe('effectiveMode: individual rules', () => {
   });
 
   it('cardless items become link cards; permanent link items stay link', () => {
-    expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
+    expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
       mode: 'link',
       rules: ['no-card'],
+    });
+    expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
     });
     expect(effectiveMode(item('group.title'), ctx())).toMatchObject({
       mode: 'confirm',

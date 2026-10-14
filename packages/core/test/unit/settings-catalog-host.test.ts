@@ -84,6 +84,7 @@ function makeRig(
   extras: {
     appConnections?: AdapterDeps['appConnections'];
     environment?: AdapterDeps['environment'];
+    sandbox?: AdapterDeps['sandbox'];
   } = {},
 ): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
@@ -192,6 +193,7 @@ function makeRig(
     wake: (input) => void wakes.push(input),
     ...(extras.appConnections !== undefined ? { appConnections: extras.appConnections } : {}),
     ...(extras.environment !== undefined ? { environment: extras.environment } : {}),
+    ...(extras.sandbox !== undefined ? { sandbox: extras.sandbox } : {}),
   });
   return {
     db,
@@ -858,6 +860,70 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
     expect(cardOf(rig, id).applied).toBeUndefined();
     expect(JSON.stringify(cardOf(rig, id))).not.toContain('env_row_');
+  });
+
+  it('sandbox: a blank user-only card; complete passes only after the last probe says available', async () => {
+    const leaked = {
+      available: false,
+      fixHint: 'sudo apt install bubblewrap socat',
+      reason: '/Users/someone/.local/share/kepcup',
+    };
+    let last: { available: boolean } | null = null;
+    const rig = makeRig({
+      sandbox: { lastAvailability: () => last },
+    });
+    const rejected = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.sandbox',
+      values: { enabled: true },
+      reason: '打开沙箱',
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.content).toContain('没有字段');
+    expect(cards(rig)).toHaveLength(0);
+
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.sandbox',
+      reason: '准备沙箱',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('空白卡');
+    const id = messageIdIn(result.content);
+    expect(cardOf(rig, id)).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+      state: 'pending',
+      before: null,
+    });
+    const unread = rig.host.forRun(runCtx(rig)).read('environment.sandbox', undefined);
+    expect(unread.content).toContain('还没检测过沙箱');
+    expect(unread.content).toContain('你给的 values 不会被采用');
+    expect(unread.content).not.toContain('sudo');
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: null });
+
+    const again = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.sandbox',
+      reason: '再看一次沙箱',
+    });
+    const pendingId = messageIdIn(again.content);
+    last = leaked;
+    const unavailable = rig.host.forRun(runCtx(rig)).read('environment.sandbox', undefined);
+    expect(unavailable.content).toContain('沙箱不可用');
+    expect(unavailable.content).not.toContain('sudo');
+    expect(unavailable.content).not.toContain('/Users/');
+    expect(rig.host.completeCard(pendingId)).toEqual({ state: 'pending', verified: false });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'environment.sandbox',
+        values: {},
+        expected: null,
+        messageId: pendingId,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+    expect(cardOf(rig, pendingId).state).toBe('pending');
+    last = { available: true };
+    expect(rig.host.completeCard(pendingId)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, pendingId).applied).toBeUndefined();
+    expect(JSON.stringify(cardOf(rig, pendingId))).not.toContain('sudo');
   });
 
   it('user-only: a blank card, the bot values are not used', async () => {

@@ -1919,6 +1919,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         listInstalls: () => environment.listInstalls(),
         systemStatuses: () => environment.systemStatuses(),
       },
+      sandbox: {
+        lastAvailability: () => {
+          const cached = sandbox.lastAvailability();
+          return cached === null ? null : { available: cached.available };
+        },
+      },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wake: (input) =>

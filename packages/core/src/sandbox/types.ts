@@ -69,6 +69,11 @@ export interface SandboxBackend {
   kind: SandboxBackendKind;
   /** `force` re-runs the detection instead of returning the cached verdict. */
   probe(force?: boolean): Promise<SandboxAvailability>;
+  /**
+   * 最近一次 `probe` 写入的可用性。还没检测过为 null。
+   * 同步返回缓存，不重新探测。
+   */
+  lastAvailability(): SandboxAvailability | null;
   exec(req: SandboxExecRequest): Promise<SandboxExecResult>;
 }
 
@@ -83,6 +88,10 @@ export class UnavailableSandboxBackend implements SandboxBackend {
 
   probe(): Promise<SandboxAvailability> {
     return Promise.resolve(this.#availability);
+  }
+
+  lastAvailability(): SandboxAvailability | null {
+    return this.#availability;
   }
 
   exec(): Promise<SandboxExecResult> {

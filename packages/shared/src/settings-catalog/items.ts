@@ -874,7 +874,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['沙箱', '隔离', 'bubblewrap', 'WSL'],
     scope: 'global',
     write: write('user-only', { widensPermission: true }),
-    card: null,
+    card: 'environment-sandbox',
     deepLink: { surface: 'settings', section: 'environment', anchor: 'sandbox' },
     store: { kind: 'service', methods: ['sandbox.wslPrepare'] },
   }),

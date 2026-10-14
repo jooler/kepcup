@@ -15,6 +15,7 @@
   import McpSection from '$lib/features/settings/McpSection.svelte';
   import BrowserProfilesSection from '$lib/features/settings/BrowserProfilesSection.svelte';
   import EnvironmentSection from '$lib/features/settings/EnvironmentSection.svelte';
+  import SandboxSection from '$lib/features/settings/SandboxSection.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -214,6 +215,8 @@
   <BrowserProfilesSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-toolchains'}
   <EnvironmentSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'environment-sandbox'}
+  <SandboxSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'project-settings' && project !== null}
   <ProjectSettingsDialog
     embedded

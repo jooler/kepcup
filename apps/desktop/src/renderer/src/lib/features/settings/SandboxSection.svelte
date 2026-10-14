@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { sandboxWizard } from '$lib/stores/sandbox-wizard.svelte';
@@ -11,6 +12,25 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
+
+  /**
+   * 环境页的沙箱：状态、重新检测、准备向导、修复提示。
+   * `embedded`：对话内设置卡露出同样的状态和按钮。准备向导仍由 `sandboxWizard.show()`
+   * 打开，不把向导整页嵌进卡片。user-only 没有预填，`prefill` 收下但不用来填任何东西。
+   * 重新检测成功后 `onSaved`；向导完成不结卡，用户仍用「我已设置好」。
+   */
+  let {
+    embedded = false,
+    prefill: _prefill = null,
+    onSaved,
+  }: {
+    /** 对话内设置卡。设置页不传。 */
+    embedded?: boolean;
+    /** 空白卡不采用。保留参数以对齐其它嵌入组件的调用形状。 */
+    prefill?: SettingValues | null;
+    /** 重新检测成功后通知设置卡结卡。 */
+    onSaved?: () => void;
+  } = $props();
 
   let fixDialogOpen = $state(false);
   let probing = $state(false);
@@ -26,6 +46,7 @@
     probing = true;
     try {
       await settingsStore.refreshSandbox(true);
+      if (embedded) onSaved?.();
     } finally {
       probing = false;
       copied = false;
@@ -54,8 +75,13 @@
   }
 </script>
 
-<section class="space-y-3" data-testid="settings-sandbox">
-  <h3 class="text-sm font-medium">{t('settings.sandboxSection')}</h3>
+<section
+  class="space-y-3"
+  data-testid={embedded ? 'environment-sandbox-embedded' : 'settings-sandbox'}
+>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('settings.sandboxSection')}</h3>
+  {/if}
   {#if status === null}
     <p class="text-xs text-muted-foreground">{t('settings.sandboxChecking')}</p>
   {:else}
@@ -91,11 +117,13 @@
         {/if}
       </div>
     {/if}
-    <p class="text-xs text-muted-foreground">{t('settings.sandboxNote')}</p>
-    {#if status.backend === 'wsl'}
-      <p class="text-xs text-muted-foreground" data-testid="sandbox-shared-vm-note">
-        {t('settings.sandboxSharedVmNote')}
-      </p>
+    {#if !embedded}
+      <p class="text-xs text-muted-foreground">{t('settings.sandboxNote')}</p>
+      {#if status.backend === 'wsl'}
+        <p class="text-xs text-muted-foreground" data-testid="sandbox-shared-vm-note">
+          {t('settings.sandboxSharedVmNote')}
+        </p>
+      {/if}
     {/if}
     <div class="flex gap-2">
       <Button size="sm" variant="outline" disabled={probing} onclick={() => void reprobe()} data-testid="sandbox-reprobe">

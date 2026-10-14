@@ -114,6 +114,10 @@ export class WslSandboxBackend implements SandboxBackend {
     return verdict;
   }
 
+  lastAvailability(): SandboxAvailability | null {
+    return this.#availability;
+  }
+
   async exec(req: SandboxExecRequest): Promise<SandboxExecResult> {
     const availability = await this.probe();
     if (!availability.available) {

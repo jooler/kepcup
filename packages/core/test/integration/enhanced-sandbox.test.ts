@@ -37,6 +37,10 @@ class StubEnhancedBackend implements SandboxBackend {
     this.available = available;
   }
 
+  lastAvailability(): SandboxAvailability | null {
+    return null;
+  }
+
   async probe(): Promise<SandboxAvailability> {
     return this.available
       ? { backend: 'lima', available: true }

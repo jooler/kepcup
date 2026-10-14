@@ -17,6 +17,7 @@ function harness(
   patch: Partial<Settings> = {},
   runtime: Partial<Bot['profile']['runtime']> = {},
   environment?: AdapterDeps['environment'],
+  sandbox?: AdapterDeps['sandbox'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -95,6 +96,7 @@ function harness(
       },
     },
     ...(environment !== undefined ? { environment } : {}),
+    ...(sandbox !== undefined ? { sandbox } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -571,5 +573,62 @@ describe('environment toolchains read adapter', () => {
       secrets: {},
       summary: '还看不到工具链状态',
     });
+  });
+});
+
+describe('environment sandbox read adapter', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+  const leaked = {
+    available: false,
+    fixHint: 'sudo apt install bubblewrap socat',
+    reason: '/Users/someone/.local/share/kepcup',
+  };
+
+  function read(sandbox?: AdapterDeps['sandbox']) {
+    const { adapters } = harness({}, {}, undefined, sandbox);
+    const adapter = adapters(item('environment.sandbox'));
+    return { adapter, snapshot: adapter.read(item('environment.sandbox'), target) };
+  }
+
+  it('has not been probed yet', () => {
+    const { adapter, snapshot } = read({ lastAvailability: () => null });
+    expect(adapter.write).toBeUndefined();
+    expect(snapshot).toEqual({
+      status: 'unknown',
+      values: null,
+      secrets: {},
+      summary: '还没检测过沙箱',
+    });
+  });
+
+  it('is unknown when the sandbox dependency is not wired', () => {
+    const { snapshot } = read();
+    expect(snapshot).toEqual({
+      status: 'unknown',
+      values: null,
+      secrets: {},
+      summary: '还没检测过沙箱',
+    });
+  });
+
+  it('is configured only when the last probe says available, and omits hints and paths', () => {
+    expect(read({ lastAvailability: () => ({ available: true }) }).snapshot).toEqual({
+      status: 'configured',
+      values: null,
+      secrets: {},
+      summary: '沙箱可用',
+    });
+    const unavailable = read({ lastAvailability: () => leaked }).snapshot;
+    expect(unavailable).toEqual({
+      status: 'unconfigured',
+      values: null,
+      secrets: {},
+      summary: '沙箱不可用',
+    });
+    const encoded = JSON.stringify(unavailable);
+    expect(encoded).not.toContain('sudo');
+    expect(encoded).not.toContain('bubblewrap');
+    expect(encoded).not.toContain('fixHint');
+    expect(encoded).not.toContain('/Users/');
   });
 });
