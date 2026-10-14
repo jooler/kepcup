@@ -7,7 +7,8 @@
   import MessageBubble from './MessageBubble.svelte';
   import RunStatusLine from './RunStatusLine.svelte';
   import SelectionPinToolbar from './SelectionPinToolbar.svelte';
-  import { isEphemeralApprovalCard } from '$lib/features/approvals/ephemeral-approval';
+  import { hiddenFromTranscript } from '$lib/features/approvals/ephemeral-approval';
+  import { permissions } from '$lib/stores/permissions.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
   let { bottomInset = 0 }: { bottomInset?: number } = $props();
@@ -30,9 +31,10 @@
       if (m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes') {
         return false;
       }
-      // Mid-turn permission popups: the dock is the only user-facing surface.
+      // Mid-turn permission popups: the dock is the only user-facing surface;
+      // auto-decided and egress / taint records show folded once resolved.
       // Import / install / handover cards stay, including failure records.
-      if (isEphemeralApprovalCard(m)) return false;
+      if (hiddenFromTranscript(m, permissions.approvals)) return false;
       return true;
     }),
   );

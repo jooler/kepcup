@@ -44,8 +44,10 @@ import type { AgentIsolation, AgentProvider } from './types.js';
  * 3. 路径优先级：工作目录（cwd 与本 run 的 workspace）与技能目录（只读）→
  *    应用数据目录其余部分（拒绝）→ 网关 `checkPath`（已授权放行，其余弹卡）；
  *    工作目录内按档位：read_only 拒写、workspace 放行、ask 弹卡；
- * 4. 执行：只读白名单（D40）放行；read_only 其余拒绝；workspace 档且 Agent
- *    有 OS 沙箱、Provider 确认该命令在沙箱内 → 放行；否则弹卡（只有「仅这一次」）；
+ * 4. 执行：内置只读白名单（D40）放行（自定义条目在 read_only 档与污点期间不算）；
+ *    read_only 其余拒绝；workspace / ask 档且 Agent 有 OS 沙箱、Provider 确认该
+ *    命令在沙箱内 → 放行（污点期间弹 egress 卡）；否则弹卡（只有「仅这一次」）；
+ *    沙箱内命令的联网询问（`sandboxNetworkHost`）：污点期间 egress 卡，否则弹卡；
  * 5. 选项只按 Provider 的 optionId 白名单选 allow_once / reject_once
  *    （`selectPermissionOption`）；路径类「本对话内」记为 access 授权；
  * 6. 卡片经 `approvals.request`（无人值守并入数据目录底线、run 进
@@ -330,6 +332,11 @@ export interface AgentPermissionBridgeDeps {
    * （fetch 类工具、agent 沙箱内自动放行的命令）降为逐次确认（`egress` 卡）。缺省 = 不降级。
    */
   taint?: Pick<TaintService, 'guard'> | undefined;
+  /**
+   * 污点外发控制开关（`settings.apps.taintGuard`）此刻是否开着；缺省 = 有 `taint`
+   * 即视为开着。决定沙箱内命令由谁放行（`hostGatesSandboxedExec`）。
+   */
+  taintGuardEnabled?: () => boolean;
   /** 用户主目录（`~` 展开；缺省 os.homedir()）。 */
   homeDir?: string;
   logger: CoreLogger;
@@ -356,6 +363,11 @@ export interface AgentPermissionHandler {
     ctx: PermissionRequestContext,
   ): Promise<PermissionVerdict>;
   isolationFor(identity: RunIdentity, workdir: string): AgentIsolation;
+  /**
+   * 建会话时：沙箱内命令是否必须经宿主裁决（`SessionContext.hostGatesSandboxedExec`）。
+   * 缺省（测试替身）= 交给 Agent 自己放行。
+   */
+  hostGatesSandboxedExec?(identity: RunIdentity): boolean;
   audit(identity: RunIdentity, action: string, detail: Record<string, unknown>): void;
 }
 
@@ -408,6 +420,17 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
           ]
         : [roots.dataHome],
     };
+  }
+
+  /**
+   * D73 × f2b9627（review P0）：污点控制开着时，沙箱内命令一律经宿主裁决——污点
+   * 可能在会话中途出现，而 Agent 侧的自动放行只能在建会话时设定。未污点时
+   * `#decideExec` 照样自动放行（档位语义不变），污点期间弹外发卡。
+   */
+  hostGatesSandboxedExec(_identity: RunIdentity): boolean {
+    void _identity;
+    if (this.#deps.taint === undefined) return false;
+    return this.#deps.taintGuardEnabled?.() ?? true;
   }
 
   audit(identity: RunIdentity, action: string, detail: Record<string, unknown>): void {
@@ -464,6 +487,12 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     }
 
     const roots = this.#roots(ctx.identity, ctx.workdir);
+    // A sandboxed command asking to reach a host (Claude Code's sandbox proxy):
+    // the network side of sandboxed exec, judged before the generic categories.
+    const networkHost = ctx.provider.sandboxNetworkHost?.(toolCall as AcpToolCallLike) ?? null;
+    if (networkHost !== null) {
+      return this.#decideSandboxNetwork(request, ctx, classified, roots, networkHost, allow, reject);
+    }
     // D73 P2: network reads while tainted are a per-request confirmation, whatever the tier.
     if (classified.category === 'fetch') {
       const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
@@ -677,6 +706,8 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     const sandboxed =
       hasOsSandbox(ctx.provider, this.#platform) &&
       ctx.provider.execSandboxed?.(request.toolCall as AcpToolCallLike) === true;
+    const taintNow = () =>
+      this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId) ?? null;
     if (sandboxed && cwdInScope) {
       const verdict = this.#deps.allowlist.match(command, {
         isPathAllowed: (candidate) =>
@@ -687,18 +718,27 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
             'read',
           ).kind === 'allow',
       });
-      if (verdict.exempt)
-        return allow('auto', 'allowlisted read-only command (sandboxed)', { command });
+      // A user-added entry is not proven read-only (review P1): it never exempts in
+      // the read-only tier nor while tainted; built-in entries do.
+      const custom = (verdict as { custom?: boolean }).custom === true;
+      if (verdict.exempt && !(custom && (ctx.tier === 'read_only' || taintNow() !== null))) {
+        return allow('auto', 'allowlisted read-only command (sandboxed)', {
+          command,
+          ...(custom ? { customEntry: true } : {}),
+        });
+      }
     }
     if (ctx.tier === 'read_only') return reject('auto', '只读档：不允许执行命令', { command });
     // workspace + ask: once the provider confirms the OS sandbox, coding commands
     // (tests / lint / builds) stay inside it — same floor as Claude Code auto for
     // sandboxed bash. Writes still follow the tier (ask confirms edits).
     if (sandboxed && (ctx.tier === 'workspace' || ctx.tier === 'ask')) {
-      // D73 P2: the agent sandbox does not bound the network — while tainted an
-      // allowlisted read-only command (above) is the only command left unconfirmed.
-      const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
-      if (tainted !== null && tainted !== undefined) {
+      // D73 P2: while tainted every sandboxed command is an egress card — only a
+      // built-in allowlisted read-only command (above) stays unconfirmed. Reached for
+      // Claude only when the host gates sandboxed exec (`hostGatesSandboxedExec`);
+      // its network requests are judged separately (`#decideSandboxNetwork`).
+      const tainted = taintNow();
+      if (tainted !== null) {
         return this.#askEgress(
           ctx,
           {
@@ -772,6 +812,47 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       reason: analysis.safe
         ? base
         : `${base}；⚠ 可能触及应用数据目录 / 无法静态分析（${analysis.reason ?? ''}）`,
+    });
+  }
+
+  /**
+   * A sandboxed command wants to reach `host` (Claude Code's proxy asks once per
+   * host; an approval lets the whole agent session reach it from then on — the
+   * card says so). Read-only tier: refused (Bash is disabled there anyway).
+   * Tainted: an `egress` card (D73) — this also covers a command that started
+   * before the taint appeared. Otherwise an `agent_tool` card in every tier, as
+   * before (the Bot network policy does not reach agents; the per-host question
+   * is the only network control the agent sandbox offers).
+   */
+  async #decideSandboxNetwork(
+    request: AcpRequestPermissionRequest,
+    ctx: PermissionRequestContext,
+    classified: ClassifiedPermission,
+    roots: Roots,
+    host: string,
+    allow: (via: string, reason: string, extra?: object) => PermissionVerdict,
+    reject: (via: string, reason: string, extra?: object) => PermissionVerdict,
+  ): Promise<PermissionVerdict> {
+    if (ctx.tier === 'read_only') return reject('auto', '只读档：沙箱内命令不能联网', { host });
+    const tainted = this.#deps.taint?.guard(ctx.identity.botId, ctx.identity.conversationId);
+    if (tainted !== null && tainted !== undefined) {
+      return this.#askEgress(
+        ctx,
+        {
+          channel: 'bash',
+          target: this.#redactCapped(host),
+          summary: `智能体沙箱内的命令要连接 ${host}（批准后该智能体本次会话内可继续连接此主机）`,
+          since: tainted.firstAt,
+        },
+        allow,
+        reject,
+      );
+    }
+    return this.#ask(request, ctx, classified, roots, {
+      kind: 'other',
+      locations: [],
+      durations: ['once'],
+      reason: `智能体沙箱内的命令要连接 ${host}（批准后该智能体本次会话内可继续连接此主机）`,
     });
   }
 

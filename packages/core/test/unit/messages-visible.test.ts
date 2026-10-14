@@ -100,12 +100,17 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
       append(rig, { senderType: 'system', kind: 'card', cardType: 'task' });
       // 空 event 名的 system_event：可见（与谓词的 `?? ''` 行为一致）
       append(rig, { senderType: 'system', kind: 'system_event', event: '', text: '无名事件' });
+      // 折叠记录：自动决定 / 外发 / 污点相关的中途权限卡（record）留在对话里。
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'command', cardRecord: true });
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'egress', cardRecord: true });
+      // 普通中途权限卡（用户在 dock 里处理过的）仍不进用户可见流；非权限卡的 record 不影响。
+      append(rig, { senderType: 'system', kind: 'card', cardType: 'mcp_tool' });
 
       const all = rig.messages.list(rig.conversationId, { limit: 200 });
-      expect(all).toHaveLength(12);
+      expect(all).toHaveLength(15);
       const visible = rig.messages.listVisible(rig.conversationId, { limit: 200 });
       expect(visible).toEqual(all.filter(isVisibleToUser));
-      expect(visible).toHaveLength(8);
+      expect(visible).toHaveLength(10);
       expect(
         visible.map((m) =>
           m.kind === 'card' ? (m.content as { cardType: string }).cardType : m.kind,
@@ -119,7 +124,14 @@ describe('messages.listVisible（消息原则的存储层过滤）', () => {
         'bot_handover',
         'task',
         'system_event',
+        'command',
+        'egress',
       ]);
+      expect(
+        visible
+          .filter((m) => m.kind === 'card')
+          .map((m) => (m.content as { record?: boolean }).record ?? false),
+      ).toEqual([false, false, false, false, true, true]);
       // list 不变：Bot 上下文仍含内部事件。
       expect(all.filter((m) => m.kind === 'system_event')).toHaveLength(5);
     } finally {

@@ -6,7 +6,11 @@ import Database from 'better-sqlite3-multiple-ciphers';
 import { commandTouchesDataDir, replaceHomeVariables } from '../../src/permissions/approvals.js';
 import { GRANT_ABSOLUTE_TTL_MS } from '@kepcup/shared';
 import { GrantsService } from '../../src/permissions/grants.js';
-import { AllowlistService, BUILTIN_PATTERNS } from '../../src/permissions/allowlist.js';
+import {
+  AllowlistService,
+  BUILTIN_PATTERNS,
+  RETIRED_BUILTIN_PATTERNS,
+} from '../../src/permissions/allowlist.js';
 import { runInToolCall } from '../../src/permissions/tool-call-scope.js';
 import { systemClock, type Clock } from '../../src/infra/clock.js';
 
@@ -226,7 +230,7 @@ describe('AllowlistService seed sync', () => {
     const rows = service.list().filter((row) => row.platform === 'posix' && row.builtin);
     expect(rows.length).toBe(BUILTIN_PATTERNS.posix.length);
     expect(rows.find((row) => row.pattern === 'ls')).toMatchObject({ enabled: false, builtin: true });
-    expect(rows.find((row) => row.pattern === 'pnpm --version')).toMatchObject({
+    expect(rows.find((row) => row.pattern === 'git branch')).toMatchObject({
       enabled: true,
       builtin: true,
     });
@@ -237,3 +241,98 @@ describe('AllowlistService seed sync', () => {
     );
   });
 });
+
+function allowlistDb() {
+  const db = new Database(':memory:');
+  db.exec(`
+    create table command_allowlist (
+      id text primary key,
+      platform text not null,
+      pattern text not null,
+      builtin integer not null,
+      enabled integer not null,
+      created_at integer not null
+    );
+  `);
+  return db;
+}
+
+describe('AllowlistService: retired built-ins, add() policy, custom matches (review P0 / P1)', () => {
+  const clock: Clock = { now: () => 1_700_000_000_000 };
+
+  it('an upgrade deletes retired built-in probe rows but keeps a same-text custom row', () => {
+    const db = allowlistDb();
+    const insert = db.prepare(
+      'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, ?, 1, ?)',
+    );
+    for (const pattern of RETIRED_BUILTIN_PATTERNS.posix) {
+      insert.run(`alw_${pattern}`, 'posix', pattern, 1, clock.now());
+    }
+    insert.run('alw_custom', 'posix', 'cargo --version', 0, clock.now());
+    const service = new AllowlistService({ db: db as never, clock, osPlatform: 'linux' });
+    const rows = service.list();
+    for (const pattern of RETIRED_BUILTIN_PATTERNS.posix) {
+      expect(rows.some((row) => row.builtin && row.pattern === pattern), pattern).toBe(false);
+    }
+    expect(rows.find((row) => row.id === 'alw_custom')).toMatchObject({ builtin: false });
+    // The seeded set itself never contains them.
+    for (const pattern of RETIRED_BUILTIN_PATTERNS.posix) {
+      expect(BUILTIN_PATTERNS.posix).not.toContain(pattern);
+    }
+  });
+
+  it('add() refuses interpreters, shells, wrappers, network / destructive tools and run verbs', () => {
+    const service = new AllowlistService({ db: allowlistDb() as never, clock, osPlatform: 'linux' });
+    for (const pattern of [
+      'bash',
+      'bash -c',
+      'sh -c ls',
+      'python',
+      'python3 -c',
+      'node',
+      'node -e',
+      'curl',
+      'curl https://a.b',
+      'wget',
+      'ssh host',
+      'rm',
+      'rm -rf node_modules',
+      'sudo ls',
+      'env',
+      'xargs',
+      'npx',
+      'npx some-tool',
+      'npm',
+      'npm run',
+      'npm exec',
+      'pnpm dlx create-x',
+      'pnpm exec',
+      'yarn dlx x',
+      'yarn run',
+      'git',
+      'git -c core.pager=x log',
+      'ls; rm -rf /',
+      'cat $(whoami)',
+    ]) {
+      expect(() => service.add(pattern), pattern).toThrow(
+        expect.objectContaining({ code: 'INVALID_INPUT' }),
+      );
+    }
+    // Specific, user-owned entries stay possible (user risk, design 13).
+    for (const pattern of ['npm test', 'pnpm test', 'npm run build', 'python scripts/check.py', 'git push']) {
+      expect(() => service.add(pattern), pattern).not.toThrow();
+    }
+  });
+
+  it('match() reports a custom entry; built-ins win when both could match', () => {
+    const service = new AllowlistService({ db: allowlistDb() as never, clock, osPlatform: 'linux' });
+    service.add('npm test');
+    const ctx = { isPathAllowed: () => true };
+    expect(service.match('npm test -- --watch=false', ctx)).toMatchObject({ exempt: true, custom: true });
+    expect(service.match('ls -la', ctx)).toMatchObject({ exempt: true, custom: false });
+    expect(service.match('ls && npm test', ctx)).toMatchObject({ exempt: true, custom: true });
+    service.add('git status --short');
+    expect(service.match('git status --short', ctx)).toMatchObject({ exempt: true, custom: false });
+  });
+});
+
