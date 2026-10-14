@@ -63,7 +63,8 @@ describe('CardKey → 组件映射', () => {
 
 describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
   it('无卡片键不能嵌', () => {
-    expect(cardEmbeddable(item('general.theme'), context())).toBe(false);
+    expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(false);
+    expect(cardEmbeddable(item('general.theme'), context())).toBe(true);
   });
 
   it('bot 范围卡要有作用 Bot', () => {

@@ -7,10 +7,12 @@ import { sensorOfItem } from './setting-card-model';
  * applied（无法核对，按用户所说）。只认目录登记过的非敏感字段。
  */
 
-/** 本机写入口（注入便于单测；生产用 sensors store）。 */
+/** 本机写入口（注入便于单测；生产用 sensors store / mode-watcher / i18n）。 */
 export interface RendererWriters {
   setSensorEnabled(kind: SensorKind, enabled: boolean): void;
   setSensorDevice(kind: SensorKind, deviceId: string): void;
+  setTheme?(theme: 'light' | 'dark' | 'system'): void;
+  setLanguage?(language: string): void;
 }
 
 /** 写入成功返回 true；这一项本机还不会写（卡片退回「在设置中打开」）返回 false。 */
@@ -19,6 +21,20 @@ export function applyRendererValues(
   values: SettingValues,
   writers: RendererWriters,
 ): boolean {
+  if (item.id === 'general.theme') {
+    const theme = values.theme;
+    if (theme !== 'light' && theme !== 'dark' && theme !== 'system') return false;
+    if (writers.setTheme === undefined) return false;
+    writers.setTheme(theme);
+    return true;
+  }
+  if (item.id === 'general.language') {
+    const language = values.language;
+    if (typeof language !== 'string' || language.length === 0) return false;
+    if (writers.setLanguage === undefined) return false;
+    writers.setLanguage(language);
+    return true;
+  }
   const sensor = sensorOfItem(item.id);
   if (sensor === null) return false;
   const enabled = values.enabled;

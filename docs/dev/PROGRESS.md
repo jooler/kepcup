@@ -1353,4 +1353,12 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **全量结果（单元 / 集成，审查修复 `c10a7a6` 之后，`kepcup-test:trixie`）**：416 个文件、4534 例；401 个文件通过，14 个文件 33 例失败、22 例跳过、4479 通过。失败的 33 例与 main（`0fdcd26`）上同一批文件的失败逐项一致（agents-service / create-core / environment / external-agent-p3 / projects / response-loop / skills* / tasks-review-fixes-e / wiki-url / workspace-tools / sandbox ×2 / task-events-migration / tool-effects-migration），本分支独有的失败为 0。首轮全量曾多出 `model-selection-single-source`（设置目录适配器合法读写模型配置值，已加入该守卫的放行表，`a7b2f31`）与一次 `agents-service` 登录用例并发偶发（单跑通过），收口轮均已消失。
 - **全量结果（e2e，`kepcup-test:trixie-xvfb`，分支与 main `0fdcd26` 各完整跑一次，构建均在审查修复之后）**：分支 95 例（86 通过、9 失败）；main 94 例（85 通过、9 失败）。两边的 9 例失败**完全相同**：`debug-dev-pin`、`external-agents` ×3（设置目录启用、agent_tool 审批卡、对话内智能体设置卡）、`local-connectors`、`projects`「项目选择」、`sandbox`「运行状态行」、`tasks`「启动任务」、`wiki`「页面树浏览」；分支独有的失败为 0。差的 1 例是新增的 `setting-card.spec`（单聊 direct 回执卡撤销 + 群聊 confirm 卡应用后唤醒 Bot，已通过）；`setup-card.spec` 3 例仍全部通过。此前车道汇报里「e2e 另有 4 例失败」的数字不准确，以这里为准。
 - **偏差**：见 DEVIATIONS DEV-026。
-- **未做**：P1（其余组件嵌入化，清单见 design/38 §10）、P2（旧 7 个 kind 收拢、提示词规则合并评估）；真实模型下「帮我生成图片」类场景的端到端观察。
+- **未做**：P1 剩余条目（群 / 项目、连接逐工具策略、MCP 服务列表、共享浏览器资料、环境三项仍保持跳转卡）、P2（旧 7 个 kind 收拢、提示词规则合并评估）；真实模型下「帮我生成图片」类场景的端到端观察。
+
+## 对话内应用设置 P1（进行中，2026-10-14）
+
+依据 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md) §8.2。58 个目录条目里内嵌卡从 18 增至 36。无 DB 迁移，未改 RPC 契约。
+
+- **已升级**：Bot 配置六项（`bot-config` / `bot-skills`，写入适配器落到 `bots.update` 与 `skills.enable` / `disable`；放开网络、换外部任务引擎或提高权限档仍是 user-only）、`models.embedding-local`（`EmbeddingSection`，写入走 `embedding.configure`）、`models.widget-review`、`models.concurrency`、`agents.default`、`general.theme` / `general.language`（渲染层草稿后本机写入）、`general.launch-at-login`、`background.tasks` / `background.budget`、`unattended.enable` / `disable`（开启的风险确认留在 `UnattendedSection`）、`connections.taint-guard`。
+- **仍是跳转卡**：群名与成员、项目保护规则与端口、连接逐工具策略、已安装 MCP 列表、共享浏览器资料；环境三项按方案保持跳转卡，等组件可嵌入后再出 user-only 卡。永久跳转 / 只读 / 专门工具项不在 P1 范围。
+- **验证**：`settings-item-writes`、`settings-mode`、`settings-catalog`、`settings-catalog-host`、desktop `settings-card` 定向测试通过；`@kepcup/core` 与 `@kepcup/desktop` typecheck 通过。未跑全量。

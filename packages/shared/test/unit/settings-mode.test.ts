@@ -296,11 +296,17 @@ describe('effectiveMode: individual rules', () => {
   it('user-only items never take values; without an embedded card they fall back to link', () => {
     const enable = item('unattended.enable');
     expect(effectiveMode(enable, ctx())).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
+      rules: [],
+    });
+    const sandbox = item('environment.sandbox');
+    expect(effectiveMode(sandbox, ctx())).toMatchObject({
       mode: 'link',
       acceptValues: false,
       rules: ['no-card'],
     });
-    expect(effectiveMode(withCard(enable), ctx())).toMatchObject({
+    expect(effectiveMode(withCard(sandbox), ctx())).toMatchObject({
       mode: 'user-only',
       acceptValues: false,
       rules: [],
@@ -329,14 +335,17 @@ describe('effectiveMode: individual rules', () => {
       acceptValues: true,
       rules: [],
     });
-    // 目前没有内嵌组件：一律跳转卡。
-    expect(effectiveMode(item('bot.network'), ctx({ valuesWiden: false })).mode).toBe('link');
+    expect(effectiveMode(item('bot.network'), ctx({ valuesWiden: false })).mode).toBe('confirm');
   });
 
   it('cardless items become link cards; permanent link items stay link', () => {
-    expect(effectiveMode(item('general.theme'), ctx())).toMatchObject({
+    expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
       mode: 'link',
       rules: ['no-card'],
+    });
+    expect(effectiveMode(item('general.theme'), ctx())).toMatchObject({
+      mode: 'confirm',
+      acceptValues: true,
     });
     expect(effectiveMode(item('developer.custom-mcp'), ctx())).toMatchObject({
       mode: 'link',

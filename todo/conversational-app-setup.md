@@ -1,6 +1,6 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态（2026-10-14）：**P0 已完成并通过独立代码审查与收口测试；P1、P2 待做；P3 仅记录，不预先设计。** 阶段总览见 [§八](#八阶段与状态)。
+> 状态（2026-10-14）：**P0 已完成；P1 进行中**（58 个目录条目里 36 个已有内嵌卡，原先 18 个）。P2 待做；P3 仅记录，不预先设计。阶段总览见 [§八](#八阶段与状态)。
 >
 > 阅读说明：
 > - §一～§七 是方案原文，写于实施之前。其中 §二「现状」描述的是 **P0 之前**的代码状态，部分结论（例如「没有 `settings.changed` 事件」）现已不成立，以代码和设计篇为准。
@@ -266,7 +266,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 | 阶段 | 内容 | 状态 |
 | ---- | ---- | ---- |
 | P0 | 骨架：设置目录、三个工具、宿主档位裁定、设置卡、`settings.changed`、条目级 CAS、外部智能体能力包；D58 已嵌用过的组件升级为内嵌卡 | ✅ 已完成 |
-| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前只有 18 个有内嵌卡） | ⏳ 待做 |
+| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前 36 个有内嵌卡） | ⏳ 进行中 |
 | P2 | 收拢：D58 旧 kind 并入通用设置卡、提示词规则合并评估，以及 P0 留下的遗留问题 | ⏳ 待做 |
 | P3 | 真实模型下的场景验证与调优 | 📝 仅记录（§8.4） |
 
@@ -315,7 +315,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ### 8.2 P1 ⏳ 待做：组件化扩面
 
-目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**目前 58 个目录条目里只有 18 个有内嵌卡。**
+目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 36 个有内嵌卡**（P0 结束时是 18 个）。
 
 **每个条目的升级步骤**（做法同 D58：设置页行为不变，只给组件加嵌入用的 props）：
 
@@ -331,18 +331,18 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 **待升级的条目**（条目 id 为目录中的实际 id；按用户价值排序，Bot 配置一组最常用）：
 
-- [ ] **Bot 配置其余片段**：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`。组件是 `BotProfileForm` 的对应片段，卡片自带 `bots.update`。**这六项现在只有读适配器**，要走「宿主写」需先补写入。其中放宽网络策略是 user-only。
-- [ ] **模型**：`models.embedding-local`（`EmbeddingSection`）、`models.widget-review`、`models.concurrency`。
-- [ ] **无人值守**：`unattended.enable` / `unattended.disable`（`UnattendedSection`）。开启是 user-only，风险确认步骤必须留在组件里。
-- [ ] **通用**：`general.theme`、`general.language`（`AppearanceSection`，渲染层拥有，宿主不写）、`general.launch-at-login`（`GeneralSection`）。
-- [ ] **后台与预算**：`background.tasks`、`background.budget`（`BackgroundTasksSection`、用量预算）。
+- [x] **Bot 配置其余片段**：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`。卡片键 `bot-config` / `bot-skills`，保存走 `settings.items.apply`（core 落到 `bots.update` 或 `skills.enable` / `skills.disable`）。放宽网络策略、把任务引擎换成外部智能体或提高权限档，仍是 user-only，卡上不采用 Bot 的预填。
+- [x] **模型**：`models.embedding-local`（`EmbeddingSection`）、`models.widget-review`、`models.concurrency`。本地向量的写入走 `embedding.configure`。
+- [x] **无人值守**：`unattended.enable` / `unattended.disable`（`UnattendedSection`）。开启是 user-only，风险确认步骤留在组件里。关闭没有可编辑字段，卡片直接展开关闭按钮。
+- [x] **通用**：`general.theme`、`general.language`（`AppearanceSection`，渲染层拥有，宿主不写）、`general.launch-at-login`。
+- [x] **后台与预算**：`background.tasks`、`background.budget`（`BackgroundTasksSection`、用量预算字段卡）。
 - [ ] **群 / 项目**：`group.title`、`group.members`（群设置）；`project.protect-rules`、`project.ports`（项目设置，user-only）。
-- [ ] **连接与智能体**：`connections.tool-policy`（`AppConnectionDetail` 的工具策略片段）、`connections.taint-guard`、`mcp.servers`、`agents.default`、`browser.shared-profiles`。
+- [ ] **连接与智能体**：`connections.tool-policy`（`AppConnectionDetail` 的工具策略片段）、`mcp.servers`、`browser.shared-profiles`。`connections.taint-guard`、`agents.default` 已升级。
 - [ ] **环境**：`environment.toolchains`、`environment.sandbox`、`environment.allowlist`（user-only；先保持跳转卡，组件可嵌入后再出 user-only 空白卡）。
 
-**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`models.embedding-local`、`models.concurrency`、`mcp.servers`、`group.title` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。
+**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`mcp.servers`、`group.title` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency` 已补写入。
 
-**已经有写适配器的**条目（升级时可以只做组件这一步）：默认主 / 轻量模型、`models.widget-review`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`。
+**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`。`unattended.enable` 仍不由宿主写（风险确认留在组件里）。
 
 **永久只出跳转卡 / 只读，不在 P1 范围**：`profile.user-facts`、`developer.*`、`diagnostics.*`。
 **走专门工具、`settings_change` 只重定向，不在 P1 范围**：`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`。

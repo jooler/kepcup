@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { AGENT_BACKGROUND_EVERY_N_RUNS, agentSetupReasonOf, type Settings } from '@kepcup/shared';
+  import {
+    AGENT_BACKGROUND_EVERY_N_RUNS,
+    agentSetupReasonOf,
+    type Settings,
+    type SettingValues,
+  } from '@kepcup/shared';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -13,6 +18,17 @@
    * 关闭）与降配项（技能生成默认关、群聊仅 @ 响应默认开）。哪些用途仍走内置
    * 模型按两个默认模型逐用途提示；不能用于后台的智能体列出原因（审查 S1）。
    */
+
+  let {
+    embedded = false,
+    prefill: _prefill = null,
+    onSaved,
+  }: {
+    /** 对话内设置卡：隐藏分区标题。保存仍走设置页同一条 `settings.update`。 */
+    embedded?: boolean;
+    prefill?: SettingValues | null;
+    onSaved?: () => void;
+  } = $props();
 
   const OFF = 'off';
   const AUTO = '';
@@ -67,6 +83,7 @@
     busy = true;
     try {
       await settingsStore.update(patch);
+      onSaved?.();
       return true;
     } catch (error) {
       toast.error(
@@ -93,8 +110,10 @@
 </script>
 
 <section class="space-y-3" data-testid="background-tasks-section">
-  <h3 class="text-sm font-medium">{t('agents.background.title')}</h3>
-  <p class="text-xs text-muted-foreground">{t('agents.background.hint')}</p>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('agents.background.title')}</h3>
+    <p class="text-xs text-muted-foreground">{t('agents.background.hint')}</p>
+  {/if}
   {#if builtinScope === 'all'}
     <p class="text-xs text-muted-foreground" data-testid="background-tasks-builtin">
       {t('agents.background.builtinActive')}

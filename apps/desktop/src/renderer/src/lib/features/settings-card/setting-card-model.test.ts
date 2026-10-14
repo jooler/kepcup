@@ -213,7 +213,8 @@ describe('卡片形态的分发', () => {
     expect(embeddedCardKey(item('capability.image'), 'form', always)).toBe('capability-model');
     expect(embeddedCardKey(item('capability.image'), 'link', always)).toBeNull();
     expect(embeddedCardKey(item('models.default-main'), 'receipt', always)).toBeNull();
-    expect(embeddedCardKey(item('general.theme'), 'confirm', always)).toBeNull();
+    expect(embeddedCardKey(item('environment.sandbox'), 'confirm', always)).toBeNull();
+    expect(embeddedCardKey(item('general.theme'), 'confirm', always)).toBe('appearance');
     expect(embeddedCardKey(item('capability.image'), 'form', () => false)).toBeNull();
   });
 

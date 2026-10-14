@@ -90,6 +90,19 @@ export interface AdapterDeps {
   conversations?: { get(id: string): { title: string | null; type: string } | null };
   unattended?: { effective(): UnattendedState; disable(reason?: string): UnattendedState };
   agentCatalog?: () => readonly AgentCatalogEntry[];
+  /**
+   * 本地向量来源。与设置页 `embedding.configure` 同一方法（重置维度并排队重建）；
+   * 缺省时只写 `settings.embedding.source`。
+   */
+  embedding?: {
+    configure(input: { source: 'local' | 'provider' }): void;
+  };
+  /** 技能启停，与设置页 `skills.enable` / `skills.disable` 同一方法。 */
+  skills?: {
+    list(botId: string): ReadonlyArray<{ name: string; status: string }>;
+    enable(botId: string, name: string): void;
+    disable(botId: string, name: string): void;
+  };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
 }
@@ -103,6 +116,43 @@ function clean(text: string, max = NAME_MAX): string {
 
 function str(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() : undefined;
+}
+
+/** 多值字段：数组，或模型写成的换行 / 逗号分隔字符串。 */
+function asStringList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return value
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+  if (typeof value === 'string') return asStringList(value.split(/[\n,]/));
+  return undefined;
+}
+
+function intIn(value: unknown, min: number, max: number): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
+    ? value
+    : undefined;
+}
+
+const NETWORK_RANK: Readonly<Record<string, number>> = { none: 0, allowlist: 1, open: 2 };
+const PERMISSION_RANK: Readonly<Record<string, number>> = { read_only: 0, ask: 1, workspace: 2 };
+
+function requireBot(deps: AdapterDeps, target: SettingTargetRef): Bot {
+  const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
+  if (bot === null) throw new AppError('NOT_FOUND', 'Bot 不存在');
+  return bot;
+}
+
+function writeRuntime(
+  deps: AdapterDeps,
+  target: SettingTargetRef,
+  patch: (runtime: Bot['profile']['runtime']) => Bot['profile']['runtime'],
+): void {
+  const bot = requireBot(deps, target);
+  const updated = deps.bots.update(bot.id, { ...bot.profile, runtime: patch(bot.profile.runtime) });
+  deps.publish('bot.updated', { bot: updated });
 }
 
 function bool(value: unknown): boolean | undefined {
@@ -672,6 +722,361 @@ function unattendedAdapter(deps: AdapterDeps, kind: 'enable' | 'disable'): ItemA
   };
 }
 
+// --- P1：模型并发、本地向量、Bot 配置片段 -------------------------------------------
+
+function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const concurrency = deps.settings.get().providerConcurrency;
+      const limit = concurrency.default;
+      return snapshot('configured', { provider: 'default', limit }, `默认每家 ${limit} 个并发`);
+    },
+    options: (field) =>
+      field.name === 'provider'
+        ? [
+            { value: 'default', label: '默认（每家厂商）' },
+            ...deps.providers.list().map((provider) => ({
+              value: provider.id,
+              label: clean(provider.name),
+            })),
+          ]
+        : staticOptions(field),
+    normalize: (_item, values) => {
+      if (!('limit' in values)) return { ok: true, values };
+      return intIn(values.limit, 1, 16) !== undefined
+        ? { ok: true, values }
+        : { ok: false, message: 'limit 应为 1 到 16 的整数' };
+    },
+    write: (_item, { next }) => {
+      const limit = intIn(next.limit, 1, 16);
+      if (limit === undefined) throw new AppError('INVALID_INPUT', 'limit 应为 1 到 16 的整数');
+      const provider = str(next.provider) ?? 'default';
+      const latest = deps.settings.get().providerConcurrency;
+      deps.settings.update({
+        providerConcurrency:
+          provider.length === 0 || provider === 'default'
+            ? { ...latest, default: limit }
+            : { ...latest, [provider]: limit },
+      });
+    },
+  };
+}
+
+function embeddingLocalAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const source = deps.settings.get().embedding.source;
+      return source === ''
+        ? snapshot('unconfigured', { source: '' }, '未配置（记忆检索退化为全文搜索）')
+        : snapshot('configured', { source }, source === 'local' ? '本地模型' : '厂商接口');
+    },
+    normalize: (_item, values) => {
+      if (!('source' in values)) return { ok: true, values };
+      const source = str(values.source) ?? '';
+      return source === 'local' || source === 'provider'
+        ? { ok: true, values: { ...values, source } }
+        : { ok: false, message: 'source 应为 local（本地模型）或 provider（厂商接口）' };
+    },
+    write: (_item, { next }) => {
+      const source = str(next.source);
+      if (source !== 'local' && source !== 'provider') {
+        throw new AppError('INVALID_INPUT', '需要选择本地模型或厂商接口');
+      }
+      if (deps.embedding !== undefined) {
+        deps.embedding.configure({ source });
+        return;
+      }
+      const current = deps.settings.get().embedding;
+      deps.settings.update({ embedding: { ...current, source } });
+    },
+  };
+}
+
+function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const profileId = botField(deps, target, (bot) => bot.profile.runtime.browser_profile);
+      if (profileId === null) return snapshot('unknown', null, 'Bot 不存在');
+      if (profileId.length === 0) return snapshot('configured', { profile: '' }, '私有资料');
+      const shared = deps.settings.get().browserProfiles.find((profile) => profile.id === profileId);
+      return snapshot(
+        'configured',
+        { profile: profileId },
+        `共享资料「${clean(shared?.name ?? profileId, 30)}」`,
+      );
+    },
+    options: () => [
+      { value: '', label: '私有资料' },
+      ...deps.settings.get().browserProfiles.map((profile) => ({
+        value: profile.id,
+        label: clean(profile.name),
+      })),
+    ],
+    normalize: (_item, values) =>
+      'profile' in values && str(values.profile) === undefined && typeof values.profile !== 'string'
+        ? { ok: false, message: 'profile 应为资料 id，空串表示私有资料' }
+        : { ok: true, values },
+    write: (_item, { next }, target) => {
+      const profile = str(next.profile) ?? '';
+      if (
+        profile.length > 0 &&
+        !deps.settings.get().browserProfiles.some((entry) => entry.id === profile)
+      ) {
+        throw new AppError('INVALID_INPUT', `没有浏览器资料「${clean(profile)}」`);
+      }
+      writeRuntime(deps, target, (runtime) => ({ ...runtime, browser_profile: profile }));
+    },
+  };
+}
+
+function networkAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const runtime = botField(deps, target, (bot) => bot.profile.runtime);
+      if (runtime === null) return snapshot('unknown', null, 'Bot 不存在');
+      const label =
+        { none: '不联网', allowlist: '白名单', open: '开放' }[runtime.network_policy] ??
+        runtime.network_policy;
+      return snapshot(
+        'configured',
+        {
+          policy: runtime.network_policy,
+          allowlist: runtime.network_allowlist.map((domain) => clean(domain, 100)),
+        },
+        label,
+      );
+    },
+    normalize: (_item, values) => {
+      const next = { ...values };
+      if ('policy' in next) {
+        const policy = str(next.policy);
+        if (policy !== 'none' && policy !== 'allowlist' && policy !== 'open') {
+          return { ok: false, message: 'policy 应为 none / allowlist / open' };
+        }
+        next.policy = policy;
+      }
+      if ('allowlist' in next) {
+        const allowlist = asStringList(next.allowlist);
+        if (allowlist === undefined) return { ok: false, message: 'allowlist 应为域名列表' };
+        next.allowlist = allowlist;
+      }
+      return { ok: true, values: next };
+    },
+    write: (_item, { next }, target) => {
+      const policy = str(next.policy);
+      if (policy !== 'none' && policy !== 'allowlist' && policy !== 'open') {
+        throw new AppError('INVALID_INPUT', '需要选择网络策略');
+      }
+      const allowlist = asStringList(next.allowlist) ?? [];
+      writeRuntime(deps, target, (runtime) => ({
+        ...runtime,
+        network_policy: policy,
+        network_allowlist: allowlist,
+      }));
+    },
+    // 放开网络，或在白名单里新增域名，都是放宽。未知方向由宿主按放宽处理。
+    valuesWiden: (_item, before, proposed) => {
+      const beforePolicy = str(before?.policy) ?? 'none';
+      const nextPolicy = str(proposed.policy) ?? beforePolicy;
+      if ((NETWORK_RANK[nextPolicy] ?? 0) > (NETWORK_RANK[beforePolicy] ?? 0)) return true;
+      if (nextPolicy !== 'allowlist') return false;
+      const beforeList = asStringList(before?.allowlist) ?? [];
+      const nextList = asStringList(proposed.allowlist);
+      if (nextList === undefined) return true;
+      const known = new Set(beforeList);
+      return nextList.some((domain) => !known.has(domain));
+    },
+  };
+}
+
+function botMcpAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const ids = botField(deps, target, (bot) => bot.profile.runtime.mcp_server_ids);
+      if (ids === null) return snapshot('unknown', null, 'Bot 不存在');
+      return snapshot(
+        ids.length > 0 ? 'configured' : 'unconfigured',
+        { servers: [...ids] },
+        `启用 ${ids.length} 个 MCP 服务`,
+      );
+    },
+    options: () =>
+      deps.settings
+        .get()
+        .mcpServers.filter((server) => server.enabled !== false)
+        .map((server) => ({ value: server.id, label: clean(server.name) })),
+    normalize: (_item, values) => {
+      if (!('servers' in values)) return { ok: true, values };
+      const servers = asStringList(values.servers);
+      return servers === undefined
+        ? { ok: false, message: 'servers 应为 MCP 服务 id 列表' }
+        : { ok: true, values: { ...values, servers } };
+    },
+    write: (_item, { next }, target) => {
+      const servers = asStringList(next.servers);
+      if (servers === undefined) throw new AppError('INVALID_INPUT', '需要给出 MCP 服务列表');
+      const known = new Set(
+        deps.settings
+          .get()
+          .mcpServers.filter((server) => server.enabled !== false)
+          .map((server) => server.id),
+      );
+      const current = requireBot(deps, target).profile.runtime.mcp_server_ids;
+      for (const id of current) known.add(id);
+      const unknown = servers.find((id) => !known.has(id));
+      if (unknown !== undefined) {
+        throw new AppError('INVALID_INPUT', `没有已安装的 MCP 服务「${clean(unknown)}」`);
+      }
+      writeRuntime(deps, target, (runtime) => ({ ...runtime, mcp_server_ids: servers }));
+    },
+  };
+}
+
+function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const ids = botField(deps, target, (bot) => bot.profile.runtime.app_connection_ids);
+      if (ids === null) return snapshot('unknown', null, 'Bot 不存在');
+      return snapshot(
+        ids.length > 0 ? 'configured' : 'unconfigured',
+        { connections: [...ids] },
+        `授权了 ${ids.length} 个连接`,
+      );
+    },
+    normalize: (_item, values) => {
+      if (!('connections' in values)) return { ok: true, values };
+      const connections = asStringList(values.connections);
+      return connections === undefined
+        ? { ok: false, message: 'connections 应为连接 id 列表' }
+        : { ok: true, values: { ...values, connections } };
+    },
+    write: (_item, { next }, target) => {
+      const connections = asStringList(next.connections);
+      if (connections === undefined) throw new AppError('INVALID_INPUT', '需要给出连接列表');
+      // 连接是否存在由 bots.update 校验（与 Bot 配置表单同一条路径）。
+      writeRuntime(deps, target, (runtime) => ({ ...runtime, app_connection_ids: connections }));
+    },
+  };
+}
+
+function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const agent = botField(deps, target, (bot) => bot.profile.runtime.agent);
+      if (agent === null) return snapshot('unknown', null, 'Bot 不存在');
+      const values = { agent: agent.id, model: agent.model, permission: agent.permission };
+      return agent.id.length === 0
+        ? snapshot('configured', values, '内置引擎')
+        : snapshot('configured', values, `外部智能体 ${clean(agent.id, 30)}`);
+    },
+    options: (field) => {
+      if (field.name === 'agent') {
+        return [
+          { value: '', label: '内置引擎' },
+          ...(deps.agentCatalog?.() ?? []).map((entry) => ({
+            value: entry.id,
+            label: clean(entry.name),
+          })),
+        ];
+      }
+      return staticOptions(field);
+    },
+    normalize: (_item, values) => {
+      const next = { ...values };
+      if ('permission' in next) {
+        const permission = str(next.permission);
+        if (permission !== 'read_only' && permission !== 'ask' && permission !== 'workspace') {
+          return { ok: false, message: 'permission 应为 read_only / ask / workspace' };
+        }
+        next.permission = permission;
+      }
+      if ('agent' in next && typeof next.agent === 'string') next.agent = next.agent.trim();
+      if ('model' in next && typeof next.model === 'string') next.model = next.model.trim();
+      return { ok: true, values: next };
+    },
+    write: (_item, { next }, target) => {
+      const bot = requireBot(deps, target);
+      const current = bot.profile.runtime.agent;
+      const id = str(next.agent) ?? current.id;
+      if (id.length > 0 && !(deps.agentCatalog?.() ?? []).some((entry) => entry.id === id)) {
+        throw new AppError('INVALID_INPUT', `智能体「${clean(id)}」不在目录中`);
+      }
+      const permission = str(next.permission) ?? current.permission;
+      if (permission !== 'read_only' && permission !== 'ask' && permission !== 'workspace') {
+        throw new AppError('INVALID_INPUT', '权限档位无效');
+      }
+      writeRuntime(deps, target, (runtime) => ({
+        ...runtime,
+        agent: {
+          ...runtime.agent,
+          id,
+          model: str(next.model) ?? current.model,
+          permission,
+        },
+      }));
+    },
+    valuesWiden: (_item, before, proposed) => {
+      const beforeId = str(before?.agent) ?? '';
+      const nextId = str(proposed.agent) ?? beforeId;
+      if (beforeId.length === 0 && nextId.length > 0) return true;
+      const beforePermission = str(before?.permission) ?? 'read_only';
+      const nextPermission = str(proposed.permission) ?? beforePermission;
+      if ((PERMISSION_RANK[nextPermission] ?? 0) > (PERMISSION_RANK[beforePermission] ?? 0)) {
+        return true;
+      }
+      return false;
+    },
+  };
+}
+
+function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
+  const listed = (botId: string): ReadonlyArray<{ name: string; status: string }> =>
+    deps.skills?.list(botId) ?? [];
+  return {
+    read: (_item, target, focus) => {
+      if (deps.skills === undefined || target.botId === null) {
+        return snapshot('unknown', null, '状态未知');
+      }
+      const skills = listed(target.botId);
+      const enabled = skills.filter((skill) => skill.status === 'active').map((skill) => skill.name);
+      const summary =
+        enabled.length > 0
+          ? `已启用 ${enabled.length} 个技能`
+          : skills.length > 0
+            ? '没有启用的技能'
+            : '没有已安装的技能';
+      const focused = str(focus?.skill);
+      if (focused !== undefined && focused.length > 0) {
+        const skill = skills.find((entry) => entry.name === focused);
+        const on = skill?.status === 'active';
+        return snapshot(on ? 'configured' : 'unconfigured', { skill: focused, enabled: on }, summary);
+      }
+      return snapshot(skills.length > 0 ? 'configured' : 'unconfigured', null, summary);
+    },
+    options: (_field, _item, target) =>
+      target.botId === null
+        ? []
+        : listed(target.botId).map((skill) => ({ value: skill.name, label: clean(skill.name) })),
+    normalize: (_item, values) => {
+      if ('enabled' in values && bool(values.enabled) === undefined) {
+        return { ok: false, message: 'enabled 应为 true / false' };
+      }
+      return { ok: true, values };
+    },
+    write: (_item, { next }, target) => {
+      if (deps.skills === undefined || target.botId === null) {
+        throw new AppError('NOT_IMPLEMENTED', '技能服务未就绪');
+      }
+      const skill = str(next.skill);
+      if (skill === undefined || skill.length === 0) {
+        throw new AppError('INVALID_INPUT', '需要选择技能');
+      }
+      if (bool(next.enabled) === false) deps.skills.disable(target.botId, skill);
+      else deps.skills.enable(target.botId, skill);
+    },
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -707,16 +1112,8 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'models.default-light': settingsModelAdapter(deps, 'defaultLightModel', null),
     'models.widget-review': settingsModelAdapter(deps, 'widgetReviewModel', '跟随 Bot 主模型'),
     'models.provider': providerKeyAdapter(deps),
-    'models.embedding-local': readOnlyAdapter(() => {
-      const source = deps.settings.get().embedding.source;
-      return source === ''
-        ? snapshot('unconfigured', { source: '' }, '未配置（记忆检索退化为全文搜索）')
-        : snapshot('configured', { source }, source === 'local' ? '本地模型' : '厂商接口');
-    }),
-    'models.concurrency': readOnlyAdapter(() => {
-      const limit = deps.settings.get().providerConcurrency.default;
-      return snapshot('configured', { provider: 'default', limit }, `默认每家 ${limit} 个并发`);
-    }),
+    'models.embedding-local': embeddingLocalAdapter(deps),
+    'models.concurrency': concurrencyAdapter(deps),
     'search.provider': webSearchAdapter(deps),
     'mcp.servers': readOnlyAdapter(() => {
       const servers = deps.settings.get().mcpServers;
@@ -730,63 +1127,12 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'agents.default': agentsDefaultAdapter(deps),
     'bot.model': botModelAdapter(deps, 'model'),
     'bot.light-model': botModelAdapter(deps, 'light_model'),
-    'bot.browser-profile': readOnlyAdapter((target) => {
-      const profileId = botField(deps, target, (bot) => bot.profile.runtime.browser_profile);
-      if (profileId === null) return snapshot('unknown', null, 'Bot 不存在');
-      if (profileId.length === 0) return snapshot('configured', { profile: '' }, '私有资料');
-      const shared = deps.settings
-        .get()
-        .browserProfiles.find((profile) => profile.id === profileId);
-      return snapshot(
-        'configured',
-        { profile: profileId },
-        `共享资料「${clean(shared?.name ?? profileId, 30)}」`,
-      );
-    }),
-    'bot.network': readOnlyAdapter((target) => {
-      const runtime = botField(deps, target, (bot) => bot.profile.runtime);
-      if (runtime === null) return snapshot('unknown', null, 'Bot 不存在');
-      const label =
-        { none: '不联网', allowlist: '白名单', open: '开放' }[runtime.network_policy] ??
-        runtime.network_policy;
-      return snapshot(
-        'configured',
-        {
-          policy: runtime.network_policy,
-          allowlist: runtime.network_allowlist.map((domain) => clean(domain, 100)),
-        },
-        label,
-      );
-    }),
-    'bot.mcp-servers': readOnlyAdapter((target) => {
-      const ids = botField(deps, target, (bot) => bot.profile.runtime.mcp_server_ids);
-      if (ids === null) return snapshot('unknown', null, 'Bot 不存在');
-      return snapshot(
-        ids.length > 0 ? 'configured' : 'unconfigured',
-        null,
-        `启用 ${ids.length} 个 MCP 服务`,
-      );
-    }),
-    'bot.apps': readOnlyAdapter((target) => {
-      const ids = botField(deps, target, (bot) => bot.profile.runtime.app_connection_ids);
-      if (ids === null) return snapshot('unknown', null, 'Bot 不存在');
-      return snapshot(
-        ids.length > 0 ? 'configured' : 'unconfigured',
-        null,
-        `授权了 ${ids.length} 个连接`,
-      );
-    }),
-    'bot.agent': readOnlyAdapter((target) => {
-      const agent = botField(deps, target, (bot) => bot.profile.runtime.agent);
-      if (agent === null) return snapshot('unknown', null, 'Bot 不存在');
-      return agent.id.length === 0
-        ? snapshot('configured', { agent: '' }, '内置引擎')
-        : snapshot(
-            'configured',
-            { agent: agent.id, permission: agent.permission },
-            `外部智能体 ${clean(agent.id, 30)}`,
-          );
-    }),
+    'bot.browser-profile': browserProfileAdapter(deps),
+    'bot.network': networkAdapter(deps),
+    'bot.mcp-servers': botMcpAdapter(deps),
+    'bot.apps': botAppsAdapter(deps),
+    'bot.skills': botSkillsAdapter(deps),
+    'bot.agent': botAgentAdapter(deps),
     'group.title': readOnlyAdapter((target) => {
       const conversation =
         target.conversationId !== null

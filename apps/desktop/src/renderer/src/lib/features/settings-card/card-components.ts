@@ -16,7 +16,15 @@ export const SETTING_CARD_COMPONENTS = {
   'mail-account': 'MailAccountAddForm',
   agent: 'AgentCard',
   'bot-model': 'BotModelCard',
+  'bot-config': 'BotConfigCard',
+  'bot-skills': 'BotSkillsCard',
   sensor: 'SensorCard',
+  'field-editor': 'FieldEditorCard',
+  embedding: 'EmbeddingSection',
+  appearance: 'AppearanceSection',
+  'background-tasks': 'BackgroundTasksSection',
+  unattended: 'UnattendedSection',
+  'taint-guard': 'UnattendedSection',
 } as const satisfies Record<CardKey, string>;
 
 /** 内嵌时需要的上下文（谁的卡、作用对象、可用的外部智能体）。 */
@@ -46,8 +54,17 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'sensor':
       return sensorOfItem(item.id) !== null;
     case 'bot-model':
+    case 'bot-config':
+    case 'bot-skills':
     case 'mail-account':
       return context.botId !== null;
+    case 'field-editor':
+    case 'embedding':
+    case 'appearance':
+    case 'background-tasks':
+    case 'unattended':
+    case 'taint-guard':
+      return true;
     case 'connect-app':
       return prefillString(context.prefill, 'app') !== null;
     case 'agent':

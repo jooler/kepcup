@@ -84,5 +84,21 @@ describe('applyRendererValues（渲染层条目的本机写入）', () => {
     expect(applyRendererValues(getSettingItem('general.theme')!, { theme: 'dark' }, writers)).toBe(
       false,
     );
+    const themeCalls: string[] = [];
+    expect(
+      applyRendererValues(getSettingItem('general.theme')!, { theme: 'dark' }, {
+        ...writers,
+        setTheme: (theme) => themeCalls.push(theme),
+        setLanguage: (language) => themeCalls.push(language),
+      }),
+    ).toBe(true);
+    expect(
+      applyRendererValues(getSettingItem('general.language')!, { language: 'zh-CN' }, {
+        ...writers,
+        setTheme: () => undefined,
+        setLanguage: (language) => themeCalls.push(language),
+      }),
+    ).toBe(true);
+    expect(themeCalls).toEqual(['dark', 'zh-CN']);
   });
 });

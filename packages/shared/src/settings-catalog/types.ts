@@ -168,8 +168,24 @@ export const CARD_KEYS = [
   'agent',
   /** Bot 模型片段卡（自带 `bots.update`）。 */
   'bot-model',
+  /** Bot 配置其余片段（浏览器资料 / 网络 / MCP / 连接 / 任务引擎）。 */
+  'bot-config',
+  /** 这个 Bot 的技能启停。 */
+  'bot-skills',
   /** `SensorCard{kind}`。 */
   'sensor',
+  /** 目录字段编辑（审查模型、并发、默认智能体、开机启动、预算）。 */
+  'field-editor',
+  /** `EmbeddingSection`。 */
+  'embedding',
+  /** `AppearanceSection`（主题 / 语言，渲染层拥有）。 */
+  'appearance',
+  /** `BackgroundTasksSection`。 */
+  'background-tasks',
+  /** `UnattendedSection` 的开启 / 关闭。 */
+  'unattended',
+  /** 污点防护开关（`UnattendedSection` 的对应行）。 */
+  'taint-guard',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

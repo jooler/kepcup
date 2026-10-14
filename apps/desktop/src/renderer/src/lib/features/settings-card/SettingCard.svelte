@@ -1,9 +1,10 @@
 <script lang="ts">
   import { getSettingItem, type Message, type SettingValues } from '@kepcup/shared';
   import { ExternalLink, SlidersHorizontal } from '@lucide/svelte';
+  import { userPrefersMode } from 'mode-watcher';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { t } from '$lib/i18n';
+  import { i18n, t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -24,6 +25,7 @@
     embeddedCardKey,
     hostApplies,
     linkCardSettled,
+    confirmHasFields,
     nonSensitiveValues,
     offersManualComplete,
     receiptUndo,
@@ -102,8 +104,14 @@
   });
   const selfApplying = $derived(embedKey !== null && SELF_APPLYING_CARD_KEYS.has(embedKey));
   const showHostApply = $derived(item !== null && pending && hostApplies(item, view, after));
+  /** 没有可编辑字段的 confirm 卡（如关闭无人值守）直接展开组件。 */
+  const embedImmediately = $derived(
+    item !== null && view === 'confirm' && !confirmHasFields(item),
+  );
   /** 组件区：自带应用的卡与 form / user-only 直接展开；confirm 的其余组件点「改一下」才展开。 */
-  const showEmbed = $derived(embedKey !== null && (selfApplying || view !== 'confirm' || editing));
+  const showEmbed = $derived(
+    embedKey !== null && (selfApplying || view !== 'confirm' || editing || embedImmediately),
+  );
   /** 没有可内嵌组件（或本来就是 link 档）：给「在设置中打开」。 */
   const showOpen = $derived(item !== null && pending && (view === 'link' || embedKey === null));
   // 撤销截止按渲染时刻判定（卡片随 message.updated 重绘；过期后点击 core 同样拒绝）。
@@ -141,6 +149,12 @@
         const written = applyRendererValues(entry, values, {
           setSensorEnabled: sensors.setEnabled,
           setSensorDevice: sensors.setDeviceId,
+          setTheme: (theme) => {
+            userPrefersMode.current = theme;
+          },
+          setLanguage: (language) => {
+            i18n.locale = language;
+          },
         });
         if (!written) {
           await openSettingDeepLink(entry, content.target);
@@ -328,7 +342,7 @@
           {t('settingCard.openSettings')}
         </Button>
       {/if}
-      {#if view === 'confirm' && embedKey !== null && !selfApplying}
+      {#if view === 'confirm' && embedKey !== null && !selfApplying && item !== null && confirmHasFields(item)}
         <Button
           size="sm"
           variant="ghost"
