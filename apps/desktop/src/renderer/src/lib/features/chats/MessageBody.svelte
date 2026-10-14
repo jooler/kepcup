@@ -99,7 +99,7 @@
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
         {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleColor?.hex}
-      style:color={userBubbleColor ? avatarColorForeground(userBubbleColor) : undefined}
+      style:color={userBubbleColor ? avatarColorForeground(userBubbleColor, 'text') : undefined}
       data-testid="user-bubble"
     >
       {#each userSegments as segment, index (index)}

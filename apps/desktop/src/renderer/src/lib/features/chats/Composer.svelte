@@ -167,10 +167,14 @@
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
+   * 图标色按填充色算出黑 / 白，保证 ≥ 3:1（avatarColorForeground）。
    */
   const botAvatarButtonPaint = $derived(
     botAvatarColor
-      ? { background: botAvatarColor.hex, color: avatarColorForeground(botAvatarColor) }
+      ? {
+          background: botAvatarColor.hex,
+          color: avatarColorForeground(botAvatarColor, 'graphic'),
+        }
       : null,
   );
 
