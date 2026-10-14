@@ -98,10 +98,27 @@ class SettingsState {
     this.sandboxStatus = (await core.call('sandbox.status', { probe })) as SandboxStatusOutput;
   }
 
-  async update(patch: Partial<Settings>): Promise<Settings> {
+  /**
+   * 保存一份设置补丁。`base` 是补丁出发时的快照（缺省 = 调用这一刻的本地快照）：core 按补丁里的
+   * 顶层键与最新设置三方合并——补丁没改的字段保留最新值，所以本地快照过期（Bot 刚直改了默认模型、
+   * 设置卡刚写过、别处刚加了 MCP 服务）时，这次保存不会把它们覆盖回去（D89 审查修复）。表单若
+   * 持有更早的草稿，应传入它自己出发时的快照。
+   */
+  async update(patch: Partial<Settings>, base: Settings | null = this.settings): Promise<Settings> {
     // 调用方常直接引用 settings $state 里的嵌套对象（如 customProviders），
     // Svelte 代理无法过 MessagePort 的结构化克隆——统一在此快照成纯对象。
-    const next = (await core.call('settings.update', $state.snapshot(patch))) as Settings;
+    const plain = $state.snapshot(patch) as Record<string, unknown>;
+    const from = base === null ? null : ($state.snapshot(base) as Record<string, unknown>);
+    const baseKeys =
+      from === null
+        ? []
+        : Object.keys(plain).filter((key) => Object.hasOwn(from, key) && key !== 'base');
+    const next = (await core.call('settings.update', {
+      ...plain,
+      ...(from !== null && baseKeys.length > 0
+        ? { base: Object.fromEntries(baseKeys.map((key) => [key, from[key]])) }
+        : {}),
+    })) as Settings;
     this.settings = next;
     return next;
   }
