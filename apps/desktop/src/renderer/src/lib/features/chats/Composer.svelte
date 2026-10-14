@@ -30,6 +30,7 @@
   import {
     COMPOSER_SINGLE_LINE_MAX_PX,
     nextMultiline,
+    singleLineWidth,
   } from './composer-multiline';
   import {
     MAX_RECORDING_MS,
@@ -204,13 +205,14 @@
     const layout = pill?.dataset.multiline === 'true' ? 'stacked' : 'single';
     const pillWidth = pill?.getBoundingClientRect().width ?? null;
     const prose = host.querySelector<HTMLElement>('.ProseMirror');
-    let singleLineWidthPx: number | null = null;
-    if (layout === 'single' && prose !== null) {
-      singleLineWidthPx = contentBoxWidth(prose);
-      if (pillWidth !== null) singleLineChromePx = pillWidth - singleLineWidthPx;
-    } else if (pillWidth !== null && singleLineChromePx !== null) {
-      singleLineWidthPx = pillWidth - singleLineChromePx;
-    }
+    const widths = singleLineWidth({
+      layout,
+      pillWidthPx: pillWidth,
+      editorWidthPx: prose !== null ? contentBoxWidth(prose) : null,
+      chromePx: singleLineChromePx,
+    });
+    singleLineChromePx = widths.chromePx;
+    const singleLineWidthPx = widths.singleLineWidthPx;
     let contentWidthPx: number | null = null;
     if (!wraps && prose !== null) {
       // 只量第一个文本块的内联内容：选中整个块会把块级盒（满宽）算进去。
@@ -496,6 +498,19 @@
       editorInstance = null;
       editor = null;
     };
+  });
+
+  /**
+   * 渲染出的布局或按键变了就在新布局里重测：附件出现 / 清空（stacked 跟着变，
+   * 不经编辑器事务）、发送键与语音键互换（hasContent，改变单行可用宽度）、引用条
+   * 出现 / 消失。$effect 在 DOM 更新后运行；重测改 multiline 会让本 effect 再跑
+   * 一次，判定有滞回，第二次结果不变即停（composer-multiline.test「settle」）。
+   */
+  $effect(() => {
+    void stacked;
+    void hasContent;
+    void (replyTo !== null);
+    untrack(() => measureMultiline());
   });
 
   /** 输入坞宽度变化（拖窗口等）时重测：单行可用宽度随药丸宽度变。 */

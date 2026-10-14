@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COMPOSER_MULTILINE_EXIT_MARGIN_PX,
   nextMultiline,
+  singleLineWidth,
   type MultilineMeasurement,
 } from './composer-multiline';
 
@@ -174,5 +175,82 @@ describe('nextMultiline', () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe('singleLineWidth', () => {
+  it('measures directly in the single layout and records the chrome', () => {
+    expect(
+      singleLineWidth({ layout: 'single', pillWidthPx: 500, editorWidthPx: 400, chromePx: null }),
+    ).toEqual({ singleLineWidthPx: 400, chromePx: 100 });
+  });
+
+  it('estimates from the pill width in the stacked layout; unknown chrome = unknown width', () => {
+    expect(
+      singleLineWidth({ layout: 'stacked', pillWidthPx: 640, editorWidthPx: 620, chromePx: 100 }),
+    ).toEqual({ singleLineWidthPx: 540, chromePx: 100 });
+    expect(
+      singleLineWidth({ layout: 'stacked', pillWidthPx: 640, editorWidthPx: 620, chromePx: null }),
+    ).toEqual({ singleLineWidthPx: null, chromePx: null });
+  });
+});
+
+describe('re-measure when the rendered layout changes (attachments)', () => {
+  const PILL = 500;
+  /** Real single-line editor width: the send button is 4 px wider than the voice button. */
+  const realSingle = (hasText: boolean) => (hasText ? 400 : 404);
+
+  /** One measurement the way Composer does it, in the given rendered layout. */
+  function measureIn(
+    state: { multiline: boolean; chromePx: number | null },
+    layout: 'single' | 'stacked',
+    textWidthPx: number,
+  ): { multiline: boolean; chromePx: number | null } {
+    const editor = layout === 'single' ? realSingle(textWidthPx > 0) : PILL - 20;
+    const widths = singleLineWidth({
+      layout,
+      pillWidthPx: PILL,
+      editorWidthPx: editor,
+      chromePx: state.chromePx,
+    });
+    const wraps = textWidthPx > editor;
+    return {
+      multiline: nextMultiline({
+        multiline: state.multiline,
+        layout,
+        empty: textWidthPx === 0,
+        wraps,
+        contentWidthPx: wraps ? null : textWidthPx,
+        singleLineWidthPx: widths.singleLineWidthPx,
+      }),
+      chromePx: widths.chromePx,
+    };
+  }
+
+  it('attachments removed: the single-layout re-measure fixes a stale estimate without oscillating', () => {
+    // Empty composer, single layout: chrome is calibrated with the (narrower) voice button.
+    let state = measureIn({ multiline: false, chromePx: null }, 'single', 0);
+    expect(state.chromePx).toBe(PILL - 404);
+    // A file is attached (stacked by attachments) and 402 px of text typed: the
+    // stale estimate (404) says it fits one line.
+    state = measureIn(state, 'stacked', 402);
+    expect(state.multiline).toBe(false);
+    // The attachment is removed: the layout renders single, where 402 px wraps
+    // (the send button leaves 400). Without a re-measure the composer would stay
+    // single-line while wrapping; the layout-change re-measure enters multiline…
+    state = measureIn(state, 'single', 402);
+    expect(state).toEqual({ multiline: true, chromePx: PILL - 400 });
+    // …and the follow-up measurement in the new (stacked) layout keeps it: no flip back.
+    const again = measureIn(state, 'stacked', 402);
+    expect(again.multiline).toBe(true);
+    expect(measureIn(again, 'stacked', 402).multiline).toBe(true);
+  });
+
+  it('attachments added to a one-line draft: stays not-multiline, and returns to one line when removed', () => {
+    let state = measureIn({ multiline: false, chromePx: null }, 'single', 200);
+    state = measureIn(state, 'stacked', 200);
+    expect(state.multiline).toBe(false);
+    state = measureIn(state, 'single', 200);
+    expect(state.multiline).toBe(false);
   });
 });

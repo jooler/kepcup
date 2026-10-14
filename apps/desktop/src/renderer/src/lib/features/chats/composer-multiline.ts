@@ -54,3 +54,29 @@ export function nextMultiline(m: MultilineMeasurement): boolean {
     : m.singleLineWidthPx;
   return m.contentWidthPx > limit;
 }
+
+/**
+ * 单行布局下编辑区可用宽度。单行布局里直接测得，并记下「药丸宽度 − 它」（附件键、
+ * 发送 / 语音键、间距：chrome）；沉底布局里用药丸宽度减最近一次的 chrome 推算。
+ * 推算可能过时（发送键与语音键宽度不同、药丸里出现附件条）：所以布局一变就要在
+ * 新布局里重测一次，单行布局的测量会把 chrome 校准回来。
+ */
+export function singleLineWidth(input: {
+  layout: 'single' | 'stacked';
+  pillWidthPx: number | null;
+  /** 当前编辑区的内容区宽度（单行布局里即单行可用宽度）。 */
+  editorWidthPx: number | null;
+  chromePx: number | null;
+}): { singleLineWidthPx: number | null; chromePx: number | null } {
+  const { layout, pillWidthPx, editorWidthPx, chromePx } = input;
+  if (layout === 'single' && editorWidthPx !== null) {
+    return {
+      singleLineWidthPx: editorWidthPx,
+      chromePx: pillWidthPx !== null ? pillWidthPx - editorWidthPx : chromePx,
+    };
+  }
+  return {
+    singleLineWidthPx: pillWidthPx !== null && chromePx !== null ? pillWidthPx - chromePx : null,
+    chromePx,
+  };
+}
