@@ -1401,3 +1401,17 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **e2e 全量**（`kepcup-test:trixie-xvfb`）：96 例，86 通过、10 失败。10 例里 9 例在当前 main 上同样失败（单独在 main 上重跑这些 spec 复核）：`debug-dev-pin`、`external-agents` ×3（设置目录启用、`agent_tool` 审批卡、对话内智能体设置卡）、`local-connectors`、`projects`「项目选择」、`sandbox`「运行状态行」、`tasks`「启动任务」、`wiki`「页面树浏览」。第 10 例是 `approvals`「无人值守」：它断言自动批准不留记录，而权限线有意改成留一行折叠记录（用户亲手回答的弹窗仍不留），断言已更新并单跑通过。新增的 `setting-card`、`composer-layout` 与既有的 `setup-card` 全部通过。
 - **类型检查**：shared / core / desktop（含 svelte-check）0 错误；eslint 在全部改动文件上干净。
 - **独立复审**：对修复本身做了一轮只读复审，无 P0；5 条 P1（白名单只含选项的前缀、卡片建议过宽、git 目录间接引用、Windows 下的 git 解析、MCP 编辑框把刚停用的服务改回启用）和一批 P2 已修，修复处用真实 git 行为核对过（`git branch --format -l evil` 会创建分支，`-l evil` 只是列出）。
+
+## 对话内应用设置 P2（2026-10-14）
+
+依据 [todo/conversational-settings-p2.md](../../todo/conversational-settings-p2.md)（方案 §8.3）。9 条任务做了 8 条、跳过 1 条（任务 7 等审查收口），每条单独提交；结论集中写进设计篇 38 §5.3 / §11。
+
+- **旧 kind 收拢（任务 1–3，`5178e09` / `001a6a2` / `2d50324`）**：`SetupRequiredCard` 成为纯外壳，失败续跑卡全部 kind 的 body 选择与别名转换集中在 `SettingSetupBody`。`capability-model` / `web-search` / `mail-account` 经 `setupAliasOf`（`chats/setup-alias.ts`）转成 `kind:'setting'` 走 `SettingCardEmbed` 目录分发（`mail-account` 的 `provider` 映到 `prefill.provider`，`MailAccountSetupBody` 删除）；`agent` / `connect-app` 不压平——载荷里比目录条目多的字段与随附行为（自动续跑基线、实验开关、自定义 target / 重连 / scopes 并集、候选继续）由各自别名 body 消费；`main-model` 保留独立 kind，两段式原样拆成 `MainModelSetupBody`（切段仍只认「保存」，放弃不唤醒 Bot 的 core 行为不变）；`confirm-local-connector` 保持独立 kind 与独立 body（不是设置目录条目，走 `apps.localConnectors.confirm/reject`）。`setupRequirementSchema` 未动，旧 kind 全部保留为兼容别名。
+- **提示词合并评估（任务 4，`51b54e4`，只写文档）**：结论「现在不并」。合并会丢的差异逐条核对（邮件规则的「立刻调用不先口头确认」、应用规则只在有应用段落时出现、管家 / 普通 Bot 移交句、ACP 只读变体、注入门控独立）；P3 要观察的证据列在 §11.1（含现状 `SETTINGS_RULE` 点名「连接、邮箱」可能让模型绕 `settings_search` 一圈的疑点，与收紧措辞的非合并替代）。
+- **设置页改由目录卡片组成（任务 5，`753bf93`，只写文档）**：结论「不做」。设置页与卡片已共用同一批组件，「只写一次 UI」在组件层已达成；页 = 卡的代价（破坏性操作无家可归、保存模型冲突、渲染层 / 永久跳转分区覆盖不了、环境页一分区三条目、卡片自带对话语义）逐条在 §11.2。若将来要做，第一刀切「联网检索」分区。
+- **整表保存覆盖 Bot 直改（任务 6）**：P2 原评估倾向 `expected` / `SETTINGS_CONFLICT`；**合并后审查修复已用 §1.5 `base` 三方合并落地**（见上文「对话内应用设置 合并后审查修复」与设计篇 38 §11.3 归档说明），rebase 时保留 `base`、不引入期望值拒绝。重开对话核对仍落地为 `settings.cards.recheck`（任务 8）。
+- **重开对话核对跳转卡（任务 8，`21792c7`）**：新 RPC `settings.cards.recheck`，`chat.select` / `loadEarlier` 对载入消息里 pending 的 link 卡逐张触发；核对规则同 complete 但只认有值证据（兜底适配器恒回 configured 的条目不擅自标完成），通过才 applied + 唤醒一次。
+- **无 Key 自定义厂商待填卡（任务 9，`4a39d45`，只写文档）**：确认为预期（§11.4），不改代码。
+- **任务 7（e2e 基线失败根因）未做**：交接约定「等审查收口」，本轮开工时 main 上无审查提交 / 分支 / 工作树，PROGRESS 的 P1 仍标进行中，无法确认收口。已留证据：`external-agents`「对话内智能体设置卡」在打开设置页一步被对话框遮罩拦截（未走到设置卡断言），与本轮改动无关；`local-connectors` 的第二次提案失败已在未改动基线 `e3c662c` 上复现同一失败（worktree 对照）。
+- **验证**：定向——setup-alias / settings-card 单测、settings-catalog-host 38 例（含 recheck 4 例）、settings-cards / settings-item-writes 集成、shared 契约 36 例、desktop typecheck（每任务收口各跑）；e2e——`setup-card.spec` 3 例在任务 1 / 2 / 3 后各通过一轮；`external-agents`（单条）与 `local-connectors` 失败方式与基线一致。未跑全量 e2e（审查未收口，交接明令）。
+- **全量（单元 / 集成，本机 macOS arm64，改了 shared 契约后的收口轮）**：426 文件 4615 例，4582 通过 / 10 失败 / 23 跳过。失败与 Docker 基线（§8.5 的 33 例环境类）对照：`create-core` / `environment` / `external-agent-p3` / `response-loop` / `tasks-review-fixes-e` / `task-events-migration` / `tool-effects-migration` ×2 在基线清单内；`connected-apps-runtime` 1 例单跑通过（全量负载下偶发）；`approvals` 2 例为本机特有——无人值守下 `command` 类不自动批准、越工作区读不出审批卡，都依赖 Linux 沙箱（macOS 无 bubblewrap），与设置卡改动无交集（首跑即未改动过审批域）。本机基线此前未建立（05-testing：换机器应先对主干跑一遍），若需精确判定可另跑对照。

@@ -302,6 +302,10 @@ P2 任务 6 原评估倾向给 `settings.update` / `bots.update` 加 `expected`�
 
 已接线：`settingsStore.update` 默认带补丁顶层键的本地快照作 `base`；右栏 Profile 自动保存带最近保存的版本；不带 `base` 的调用方行为不变（整体覆盖）。
 
+### 11.4 换到没配 Key 的自定义厂商出待填卡：预期行为，不改
+
+「换成某个还没填 Key 的（自定义）厂商」不是 direct——`modelNeedsKey`（`settings/adapters.ts`）在厂商不存在或 `hasKey === false` 时让 `needsSensitiveInput` 为真，`effectiveMode` 收紧为 form（DEV-026 第 7 条；e2e 先给 mock 厂商补 Key 再测 direct）。**确认这就是预期**：direct 白名单的前提是「只能在已配置 Key 的厂商里选」（已定决策 1 / §1.1），没配 Key 的厂商选了也跑不起来；出待填卡让用户在卡里填 Key，正是「密钥永不经模型」的唯一路径。只有产品决定改变「direct 限于已配 Key 厂商」这条规则时才动 `needsSensitiveInput`，本轮不改代码。
+
 ## 12 合并后审查修复（2026-10-14）
 
 - **Bot 配置写入只有一条路径**（§1.4）：设置卡 / Bot 直改 / 撤销与 `bots.update` 共用 `applyBotProfileUpdate`；从 Bot 拿掉 MCP 服务、连接或切换共享浏览器资料时，它正在跑的任务被中断（此前适配器直接调服务，跳过了这些）。
@@ -316,7 +320,3 @@ P2 任务 6 原评估倾向给 `settings.update` / `bots.update` 加 `expected`�
 - **整份快照保存的三方合并**（§1.5）与 **`values` 形状校验**（§1.4），界面语言只认已注册的语言（目录静态选项与 i18n `localeOptions` 一致，desktop 单测核对）。
 - **打开对话时核对待处理卡**（§4.3 `auto`）。
 - **集成复审跟进**：MCP 编辑框只保存真改过的字段（启用 / 免审批 / 逐工具策略取当前值），不再借改名把 Bot 刚停用的服务改回启用；写后收尾收回授权排在最前、逐步兜错、在 `finally` 里执行；三方合并只读写自有键；`settings.cards.complete{auto}` 只在卡上要的事做成时结卡（满足建议值 / 放宽卡只认放宽方向）。
-
-### 11.4 换到没配 Key 的自定义厂商出待填卡：预期行为，不改
-
-「换成某个还没填 Key 的（自定义）厂商」不是 direct——`modelNeedsKey`（`settings/adapters.ts`）在厂商不存在或 `hasKey === false` 时让 `needsSensitiveInput` 为真，`effectiveMode` 收紧为 form（DEV-026 第 7 条；e2e 先给 mock 厂商补 Key 再测 direct）。**确认这就是预期**：direct 白名单的前提是「只能在已配置 Key 的厂商里选」（已定决策 1 / §1.1），没配 Key 的厂商选了也跑不起来；出待填卡让用户在卡里填 Key，正是「密钥永不经模型」的唯一路径。只有产品决定改变「direct 限于已配 Key 厂商」这条规则时才动 `needsSensitiveInput`，本轮不改代码。
