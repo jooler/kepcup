@@ -2,7 +2,7 @@
 
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
-**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §11；P2（旧 7 个 kind 收拢）未开工。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
+**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §12；P2 评估决策见 §11；P2（旧 7 个 kind 收拢）未开工。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
 
 
 相关：D58 对话内设置引导（[18](18-inline-setup.md)，失败续跑链与 7 个旧 kind）、D75 对话轮与任务分治（[02](02-execution.md)、[30](30-supervisor-and-tasks.md)，对话轮只读、异步托管动作由宿主确定性执行）、D80 定时提议卡（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)，消息流里的提议卡先例）、D73 连接应用（[29](29-connected-apps.md)，污点）、D72 外部智能体能力包（[28](28-external-agents-acp.md)）、D88 盘点 → 提议（[37](37-bot-asset-handover.md)）。工具目录见 [dev/04](../dev/04-agent-runtime.md)。
@@ -226,7 +226,7 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 - **core 集成**（`settings-cards.test.ts`，对应方案 §八 P0 的八个场景）：「换个默认模型」走 direct → 回执 → 撤销复原；「帮我生成图片」search → form 卡 → 用户应用 → 对话轮被唤醒后接着做；邮件唤醒的轮次请求改设置被收紧到 confirm；用户触发的轮次先 `web_fetch` 再改被收紧到 confirm；群聊里白名单项被收紧到 confirm；「开启无人值守」出空白 user-only 卡且 `values` 不被采用；设置页原有保存路径补发 `settings.changed`；任务 + `required` → 失败带 `kind:'setting'` 的 setup，应用后重试续跑。
 - **desktop**：`setting-card-model.test.ts`（形态、对比行、预填过滤、撤销窗口、link 自标 applied）、`card-components.test.ts`（映射与 `cardEmbeddable`）、`deep-link.test.ts`、`anchor-scroll.test.ts`、`settings-changed.svelte.test.ts`、`shell.svelte.test.ts`、`agent-capabilities.test.ts`。
 - **e2e**（`setting-card.spec.ts`）：单聊 direct 回执卡撤销；群聊 confirm 卡应用后唤醒 Bot 续答。
-- **审查修复（§11）**：shared `settings-merge-validate.test.ts`（三方合并、形状校验、契约）；core `settings-item-writes.test.ts`（公共技能、网络放宽、脱敏、MCP 写入、并发校验、Bot 写入收尾交给宿主）、`settings-catalog-host.test.ts`「D89 review round 2」（真实 `applyBotProfileUpdate` 下的 MCP / 连接收回、浏览器资料 / 外部智能体校验报错、project / environment 空白卡、群成员只加、形状校验、required 带 before、allowlist 自动核对）、集成 `settings-cards.test.ts` (9)–(12)（卡片收回 MCP 中断运行中任务、校验报错、`base` 三方合并）；desktop `group-members.test.ts`、`settings.svelte.test.ts`（base）、`deep-link.test.ts`（语言）。
+- **审查修复（§12）**：shared `settings-merge-validate.test.ts`（三方合并、形状校验、契约）；core `settings-item-writes.test.ts`（公共技能、网络放宽、脱敏、MCP 写入、并发校验、Bot 写入收尾交给宿主）、`settings-catalog-host.test.ts`「D89 review round 2」（真实 `applyBotProfileUpdate` 下的 MCP / 连接收回、浏览器资料 / 外部智能体校验报错、project / environment 空白卡、群成员只加、形状校验、required 带 before、allowlist 自动核对）、集成 `settings-cards.test.ts` (9)–(12)（卡片收回 MCP 中断运行中任务、校验报错、`base` 三方合并）；desktop `group-members.test.ts`、`settings.svelte.test.ts`（base）、`deep-link.test.ts`（语言）。
 
 ## 9 非目标
 
@@ -254,7 +254,33 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 
 **P2 收拢**：D58 的 7 个旧 kind 改由 `SettingCard` 分发；评估把 `APP_REQUEST_CONNECTION_RULE` / `MAIL_REQUEST_SETUP_RULE` 并入新规则以减少常驻提示词；评估设置页各分区直接由「目录卡片」组成，让卡片成为设置的唯一渲染单元。
 
-## 11 合并后审查修复（2026-10-14）
+## 11 P2 评估与遗留问题的决策（2026-10-14）
+
+### 11.1 提示词规则合并：现在不并（P3 拿真实模型对比后再定）
+
+三条规则目前的注入条件与内容（`system-prompt.ts`）：
+
+- `SETTINGS_RULE`（`settings/prompt.ts`）：`hasSettingsTools === true` 时追加进 `TURN_PLATFORM_RULES` / `PLATFORM_RULES`；ACP 侧在 `AGENT_PLATFORM_RULES` 里注入了 `settings_change` 用这一条，只有只读工具时用 `SETTINGS_READ_ONLY_RULE`（`unlessTools` 互斥）。
+- `APP_REQUEST_CONNECTION_RULE`（`apps/prompt.ts`）：对话轮只在已有 `<connected_apps>` 或 `<available_apps>` 段落时追加；ACP 按工具 `app_request_connection` 门控。
+- `mailRequestSetupRule`（`mail/prompt.ts`）：`hasMail === true` 时追加；普通 Bot 与管家措辞不同（移交只能由持有者或管家发起，D88）；ACP 用不含管家分支的 `MAIL_REQUEST_SETUP_RULE`，按工具 `mail_request_setup` 门控。
+
+并进去会丢掉的差异，逐条核对后**都还在、且各有作用**：
+
+1. **邮件规则的紧迫措辞**：「还没有绑定邮箱时**立刻**调用 mail_request_setup，不要先口头确认」——通用设置规则是「先 search 再 read 最后 change」的从容三步；把邮件并进去，模型很容易退化成先问「要我打开配置卡吗？」。这条措辞正是为了防那个退化。
+2. **应用规则的条件出现**：只在上下文里有应用段落时注入；并进常驻设置规则后，没有任何应用的对话也会一直带着连接指引。
+3. **管家与普通 Bot 的移交句不同**：合并稿要么两句都带（更长），要么按角色再分叉两个变体（等于没省）。
+4. **ACP 只读设置是另一条规则**：合并后 ACP 需要「只读设置 + 邮件（无管家）+ 应用」的第三个组合变体，组合数不降反升。
+5. **三者的注入门控独立**（`hasSettingsTools` / 应用段落存在 / `hasMail`）：合并成一条就得按并集注入——在更多上下文里变长，与「缩短常驻提示词」的初衷相反。
+
+**结论：现在不并。** 三条加起来约 400 字，合并可省的只有重复的引导词（约几十字），却要以上述差异为赌注；方案要求拿合并前后的**模型行为**对比（不是字数），P3 才具备对比条件。P3 要看的证据（都观察到了再考虑重提）：
+
+- 「帮我接管邮箱」类请求：模型是否**不先口头确认**直接调 `mail_request_setup`（合并稿最可能退化的一处）；
+- 「连一下 Notion」类请求：模型走 `app_request_connection` 还是被 `SETTINGS_RULE` 里「连接、邮箱」的字样带去 `settings_search` → `settings_read` 拿到 redirect 再绕回专门工具（**现状就有这个多绕一圈的可能**——`SETTINGS_RULE` 的领域清单点名了连接与邮箱，而这两项在目录里是 `via` 专门工具的重定向项。若 P3 观察到确有绕路，便宜的改法是收紧 `SETTINGS_RULE` 措辞让它指向专门工具，仍然不是合并）；
+- ACP 只读包下的行为是否仍与 `SETTINGS_READ_ONLY_RULE` 一致。
+
+若 P3 后仍要合并，合并稿必须逐字保留第 1、3 条差异并按注入条件做变体；那种合并节省有限，预期结论仍是维持现状。
+
+## 12 合并后审查修复（2026-10-14）
 
 - **Bot 配置写入只有一条路径**（§1.4）：设置卡 / Bot 直改 / 撤销与 `bots.update` 共用 `applyBotProfileUpdate`；从 Bot 拿掉 MCP 服务、连接或切换共享浏览器资料时，它正在跑的任务被中断（此前适配器直接调服务，跳过了这些）。
 - **`bot.skills` 只管这个 Bot 自己的技能**：公共技能（没有私有行）启停会改全局，适配器拒绝并指向技能页；快照带 `scope`（public / private），卡片对公共技能只给「在技能页管理」。
