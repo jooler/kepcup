@@ -9,6 +9,7 @@ import {
   webSearchProviderSchema,
   type AgentCatalogEntry,
   type CapabilityModelKey,
+  type McpServer,
   type McpToolPolicy,
   type ProviderInfo,
   type Settings,
@@ -19,6 +20,7 @@ import {
   type SettingValues,
   type UnattendedState,
 } from '@kepcup/shared';
+import { homedir } from 'node:os';
 import { providerSecretName } from '../agent/models.js';
 import type { Bot } from '@kepcup/shared';
 
@@ -60,6 +62,15 @@ export interface ItemWrite {
   secrets: Readonly<Record<string, string>>;
 }
 
+/**
+ * 写入的收尾（写锁之外做）：要一并补发 `settings.changed` 的条目，以及写之后的异步副作用
+ * （中断任务、关闭浏览器页面）。写锁里只放同步的「读 → 比对 → 写」关键区。
+ */
+export interface ItemWriteEffects {
+  changedItemIds?: readonly string[];
+  afterUnlock?: () => Promise<void> | void;
+}
+
 export type NormalizeResult = { ok: true; values: SettingValues } | { ok: false; message: string };
 
 export interface ItemAdapter {
@@ -72,8 +83,16 @@ export interface ItemAdapter {
   options?(field: SettingFieldSpec, item: SettingItem, target: SettingTargetRef): SettingOption[];
   /** 校验并规范化 Bot / 卡片给的非敏感值（如模型引用补全厂商前缀）。缺省 = 原样接受。 */
   normalize?(item: SettingItem, values: SettingValues, target: SettingTargetRef): NormalizeResult;
-  /** 写入（在写锁内、CAS 之后调用）。缺省 = 这一项不能由宿主写，只能出卡 / 跳转。 */
-  write?(item: SettingItem, write: ItemWrite, target: SettingTargetRef): void;
+  /**
+   * 写入（在写锁内、CAS 之后调用；必须是同步的）。缺省 = 这一项不能由宿主写，只能出卡 / 跳转。
+   * 返回的收尾由宿主在释放写锁之后执行。
+   */
+  write?(item: SettingItem, write: ItemWrite, target: SettingTargetRef): void | ItemWriteEffects;
+  /**
+   * 只用于 Bot 的提议（`settings_change`）：把 Bot 给的值整理成「建议值」——例如群成员只能加、
+   * 不能借预填移除。用户在卡上亲手保存（`settings.items.apply`）不经过这里。
+   */
+  proposal?(item: SettingItem, values: SettingValues, snapshot: ItemSnapshot): SettingValues;
   /** 这次修改需要用户自填敏感字段（缺 Key、新厂商……）→ 至少 form。 */
   needsSensitiveInput?(item: SettingItem, proposed: SettingValues, snapshot: ItemSnapshot): boolean;
   /** 这次修改是不是放宽方向（只对带 `wideningMode` 的条目有意义）；缺省 = 未知（按放宽处理）。 */
@@ -93,9 +112,26 @@ export interface AdapterDeps {
   providers: { list(): ProviderInfo[]; setKey(provider: string, key: string): void };
   bots: {
     get(id: string): Bot | null;
-    update(id: string, profile: Bot['profile']): Bot;
     /** 群成员选项。缺省时卡片仍用通讯录，读适配器不列可选值。 */
     listActive?(): readonly Bot[];
+  };
+  /**
+   * 写 Bot 配置的唯一入口：生产装配为 `applyBotProfileUpdate`（与 `bots.update` RPC 同一个函数：
+   * 浏览器资料 / 外部智能体校验、`bot.updated`，写后中断任务与收回 MCP / 连接授权）。
+   * 适配器不直接调 `bots.update`。
+   */
+  botProfiles: {
+    apply(
+      botId: string,
+      profile: Bot['profile'],
+    ): { bot: Bot; changedItemIds: readonly string[]; settle(): Promise<void> };
+  };
+  /**
+   * 已安装 MCP 服务变化后的撤销（与 `settings.update` 同一套 `mcpRevocationsBetween`）：停用正在
+   * 用的服务会中断任务。缺省时 `mcp.servers` 不能由宿主写。
+   */
+  mcpServers?: {
+    revokeChanges(previous: readonly McpServer[], next: readonly McpServer[]): void;
   };
   conversations?: {
     get(id: string): { title: string | null; type: string } | null;
@@ -108,10 +144,14 @@ export interface AdapterDeps {
   /** 项目保护规则与端口（只读；写入留在项目设置组件）。 */
   projects?: {
     get(id: string): {
+      /** 项目目录（只用于把规则里的绝对路径脱敏成 `<project>/…`，不进快照）。 */
+      path?: string | null;
       protectRules: { denyRead: readonly string[]; denyWrite: readonly string[] };
       allowedPorts: ReadonlyArray<readonly [number, number]> | null;
     } | null;
   };
+  /** 用户家目录（只用于脱敏：规则里的家目录路径显示成 `~/…`）；缺省取 `os.homedir()`。 */
+  homeDir?: string;
   /**
    * 目录连接的逐工具策略（只读）。写入留在 `apps.connections.setToolPolicy`：
    * 那条 RPC 在策略变严时会中断正在使用该连接的任务，写锁里只调服务方法会丢掉这段。
@@ -129,9 +169,12 @@ export interface AdapterDeps {
   embedding?: {
     configure(input: { source: 'local' | 'provider' }): void;
   };
-  /** 技能启停，与设置页 `skills.enable` / `skills.disable` 同一方法。 */
+  /**
+   * 技能启停，与设置页 `skills.enable` / `skills.disable` 同一方法。`scope`：`private` = 这个 Bot
+   * 自己的技能（bot_skills 行）；`public` = 公共技能（所有 Bot 共用，启停是全局的）。
+   */
   skills?: {
-    list(botId: string): ReadonlyArray<{ name: string; status: string }>;
+    list(botId: string): ReadonlyArray<{ name: string; status: string; scope?: string }>;
     enable(botId: string, name: string): void;
     disable(botId: string, name: string): void;
   };
@@ -156,7 +199,7 @@ export interface AdapterDeps {
    * 不提供 write：添加和启停留在组件，走原来的 `allowlist.add` / `allowlist.update`。
    */
   allowlist?: {
-    list(): ReadonlyArray<{ enabled: boolean }>;
+    list(): ReadonlyArray<{ enabled: boolean; builtin?: boolean }>;
   };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
@@ -200,14 +243,21 @@ function requireBot(deps: AdapterDeps, target: SettingTargetRef): Bot {
   return bot;
 }
 
+/**
+ * Bot runtime 的条目写入：在最新 Profile 上只改本条目的字段，经 `botProfiles.apply`（与
+ * `bots.update` RPC 同一条路径）写入；写后的任务中断 / 授权收回交给宿主在锁外执行。
+ */
 function writeRuntime(
   deps: AdapterDeps,
   target: SettingTargetRef,
   patch: (runtime: Bot['profile']['runtime']) => Bot['profile']['runtime'],
-): void {
+): ItemWriteEffects {
   const bot = requireBot(deps, target);
-  const updated = deps.bots.update(bot.id, { ...bot.profile, runtime: patch(bot.profile.runtime) });
-  deps.publish('bot.updated', { bot: updated });
+  const update = deps.botProfiles.apply(bot.id, {
+    ...bot.profile,
+    runtime: patch(bot.profile.runtime),
+  });
+  return { changedItemIds: update.changedItemIds, afterUnlock: () => update.settle() };
 }
 
 function bool(value: unknown): boolean | undefined {
@@ -338,11 +388,6 @@ function settingsModelAdapter(
 
 /** 本 Bot 的主 / 轻量模型（runtime.model / runtime.light_model；'' = 跟随默认）。 */
 function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model'): ItemAdapter {
-  const botOf = (target: SettingTargetRef): Bot => {
-    const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
-    if (bot === null) throw new AppError('NOT_FOUND', 'Bot 不存在');
-    return bot;
-  };
   return {
     read: (_item, target) => {
       const bot = target.botId !== null ? deps.bots.get(target.botId) : null;
@@ -363,15 +408,8 @@ function botModelAdapter(deps: AdapterDeps, key: 'model' | 'light_model'): ItemA
     },
     options: (field) => (field.type === 'model' ? chatModelOptionsOf(deps) : staticOptions(field)),
     normalize: (_item, values) => normalizeChatModel(values, deps.providers.list(), true),
-    write: (_item, { next }, target) => {
-      const bot = botOf(target);
-      const profile = {
-        ...bot.profile,
-        runtime: { ...bot.profile.runtime, [key]: str(next.model) ?? '' },
-      };
-      const updated = deps.bots.update(bot.id, profile);
-      deps.publish('bot.updated', { bot: updated });
-    },
+    write: (_item, { next }, target) =>
+      writeRuntime(deps, target, (runtime) => ({ ...runtime, [key]: str(next.model) ?? '' })),
     needsSensitiveInput: (_item, proposed) =>
       modelNeedsKey(str(proposed.model) ?? '', deps.providers.list()),
   };
@@ -620,6 +658,13 @@ function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
             label: clean(entry.name),
           }))
         : staticOptions(field),
+    normalize: (_item, values) => {
+      const agent = str(values.agent);
+      if (agent === undefined || agent.length === 0) return { ok: true, values };
+      return (deps.agentCatalog?.() ?? []).some((entry) => entry.id === agent)
+        ? { ok: true, values: { ...values, agent } }
+        : { ok: false, message: `智能体「${clean(agent)}」不在目录中` };
+    },
     write: (_item, { next }) => {
       const latest = deps.settings.get();
       deps.settings.update({
@@ -671,7 +716,9 @@ function agentsDefaultAdapter(deps: AdapterDeps): ItemAdapter {
         ? { ok: true, values }
         : { ok: false, message: `智能体「${clean(agent)}」不在目录中` };
     },
-    write: (_item, { next }) => deps.settings.update({ defaultAgentId: str(next.agent) ?? '' }),
+    write: (_item, { next }) => {
+      deps.settings.update({ defaultAgentId: str(next.agent) ?? '' });
+    },
   };
 }
 
@@ -779,7 +826,17 @@ function unattendedAdapter(deps: AdapterDeps, kind: 'enable' | 'disable'): ItemA
 
 // --- P1：模型并发、本地向量、Bot 配置片段 -------------------------------------------
 
+/** 每家厂商并发上限的取值范围上界（与设置页一致）。 */
+const CONCURRENCY_MAX = 16;
+
 function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
+  // 键空间与 `providerConcurrency` 一致：default、已接入的厂商 id、外部智能体（`agent:{id}`）。
+  const knownConcurrencyProvider = (provider: string): boolean =>
+    provider.length === 0 ||
+    provider === 'default' ||
+    deps.providers.list().some((entry) => entry.id === provider) ||
+    (provider.startsWith('agent:') &&
+      (deps.agentCatalog?.() ?? []).some((entry) => `agent:${entry.id}` === provider));
   return {
     read: () => {
       const concurrency = deps.settings.get().providerConcurrency;
@@ -797,15 +854,31 @@ function concurrencyAdapter(deps: AdapterDeps): ItemAdapter {
           ]
         : staticOptions(field),
     normalize: (_item, values) => {
-      if (!('limit' in values)) return { ok: true, values };
-      return intIn(values.limit, 1, 16) !== undefined
-        ? { ok: true, values }
-        : { ok: false, message: 'limit 应为 1 到 16 的整数' };
+      if ('limit' in values && intIn(values.limit, 1, CONCURRENCY_MAX) === undefined) {
+        return { ok: false, message: `limit 应为 1 到 ${CONCURRENCY_MAX} 的整数` };
+      }
+      if ('provider' in values) {
+        const provider = str(values.provider) ?? '';
+        if (!knownConcurrencyProvider(provider)) {
+          return {
+            ok: false,
+            message: `没有已接入的厂商「${clean(provider, 40)}」：provider 填 default 或 settings_read 给出的厂商 id`,
+          };
+        }
+        return { ok: true, values: { ...values, provider } };
+      }
+      return { ok: true, values };
     },
     write: (_item, { next }) => {
-      const limit = intIn(next.limit, 1, 16);
-      if (limit === undefined) throw new AppError('INVALID_INPUT', 'limit 应为 1 到 16 的整数');
+      const limit = intIn(next.limit, 1, CONCURRENCY_MAX);
+      if (limit === undefined) {
+        throw new AppError('INVALID_INPUT', `limit 应为 1 到 ${CONCURRENCY_MAX} 的整数`);
+      }
       const provider = str(next.provider) ?? 'default';
+      // 写锁里再核对一次：只给已接入的厂商写上限，不让任意字符串进 providerConcurrency。
+      if (!knownConcurrencyProvider(provider)) {
+        throw new AppError('INVALID_INPUT', `没有已接入的厂商「${clean(provider, 40)}」`);
+      }
       const latest = deps.settings.get().providerConcurrency;
       deps.settings.update({
         providerConcurrency:
@@ -871,15 +944,10 @@ function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
       'profile' in values && str(values.profile) === undefined && typeof values.profile !== 'string'
         ? { ok: false, message: 'profile 应为资料 id，空串表示私有资料' }
         : { ok: true, values },
+    // 资料是否存在由 `botProfiles.apply` 的 `assertSelectable` 校验（与 bots.update 同一处）。
     write: (_item, { next }, target) => {
       const profile = str(next.profile) ?? '';
-      if (
-        profile.length > 0 &&
-        !deps.settings.get().browserProfiles.some((entry) => entry.id === profile)
-      ) {
-        throw new AppError('INVALID_INPUT', `没有浏览器资料「${clean(profile)}」`);
-      }
-      writeRuntime(deps, target, (runtime) => ({ ...runtime, browser_profile: profile }));
+      return writeRuntime(deps, target, (runtime) => ({ ...runtime, browser_profile: profile }));
     },
   };
 }
@@ -951,23 +1019,25 @@ function networkAdapter(deps: AdapterDeps): ItemAdapter {
       if (policy !== 'none' && policy !== 'allowlist' && policy !== 'open') {
         throw new AppError('INVALID_INPUT', '需要选择网络策略');
       }
-      const allowlist = asStringList(next.allowlist) ?? [];
-      writeRuntime(deps, target, (runtime) => ({
+      // 白名单只在「白名单」策略下可见（卡片与右栏都只在这一档露出输入框）：别的策略下保持已存的
+      // 白名单不动，不存用户在卡上看不到的域名——否则之后切到白名单时它们会悄悄生效。
+      const allowlist = policy === 'allowlist' ? (asStringList(next.allowlist) ?? []) : null;
+      return writeRuntime(deps, target, (runtime) => ({
         ...runtime,
         network_policy: policy,
-        network_allowlist: allowlist,
+        network_allowlist: allowlist ?? runtime.network_allowlist,
       }));
     },
-    // 放开网络，或在白名单里新增域名，都是放宽。未知方向由宿主按放宽处理。
+    // 放开网络、或给出任何一个现在没有的域名，都是放宽（与策略无关：策略不是白名单时域名虽然不
+    // 生效，也会在之后切到白名单时生效）。看不出方向由宿主按放宽处理。
     valuesWiden: (_item, before, proposed) => {
       const beforePolicy = str(before?.policy) ?? 'none';
       const nextPolicy = str(proposed.policy) ?? beforePolicy;
       if ((NETWORK_RANK[nextPolicy] ?? 0) > (NETWORK_RANK[beforePolicy] ?? 0)) return true;
-      if (nextPolicy !== 'allowlist') return false;
-      const beforeList = asStringList(before?.allowlist) ?? [];
+      if (!('allowlist' in proposed)) return false;
       const nextList = asStringList(proposed.allowlist);
       if (nextList === undefined) return true;
-      const known = new Set(beforeList);
+      const known = new Set(asStringList(before?.allowlist) ?? []);
       return nextList.some((domain) => !known.has(domain));
     },
   };
@@ -1011,7 +1081,7 @@ function botMcpAdapter(deps: AdapterDeps): ItemAdapter {
       if (unknown !== undefined) {
         throw new AppError('INVALID_INPUT', `没有已安装的 MCP 服务「${clean(unknown)}」`);
       }
-      writeRuntime(deps, target, (runtime) => ({ ...runtime, mcp_server_ids: servers }));
+      return writeRuntime(deps, target, (runtime) => ({ ...runtime, mcp_server_ids: servers }));
     },
   };
 }
@@ -1038,7 +1108,10 @@ function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
       const connections = asStringList(next.connections);
       if (connections === undefined) throw new AppError('INVALID_INPUT', '需要给出连接列表');
       // 连接是否存在由 bots.update 校验（与 Bot 配置表单同一条路径）。
-      writeRuntime(deps, target, (runtime) => ({ ...runtime, app_connection_ids: connections }));
+      return writeRuntime(deps, target, (runtime) => ({
+        ...runtime,
+        app_connection_ids: connections,
+      }));
     },
   };
 }
@@ -1081,15 +1154,13 @@ function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
     write: (_item, { next }, target) => {
       const bot = requireBot(deps, target);
       const current = bot.profile.runtime.agent;
+      // 换成另一个外部智能体时的实验开关与目录校验在 `botProfiles.apply` 里（与 bots.update 同一处）。
       const id = str(next.agent) ?? current.id;
-      if (id.length > 0 && !(deps.agentCatalog?.() ?? []).some((entry) => entry.id === id)) {
-        throw new AppError('INVALID_INPUT', `智能体「${clean(id)}」不在目录中`);
-      }
       const permission = str(next.permission) ?? current.permission;
       if (permission !== 'read_only' && permission !== 'ask' && permission !== 'workspace') {
         throw new AppError('INVALID_INPUT', '权限档位无效');
       }
-      writeRuntime(deps, target, (runtime) => ({
+      return writeRuntime(deps, target, (runtime) => ({
         ...runtime,
         agent: {
           ...runtime.agent,
@@ -1113,37 +1184,69 @@ function botAgentAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * 这个 Bot 的技能启停。条目说的是「这个 Bot」：只能启停 Bot 自己的（私有）技能。公共技能没有
+ * 这个 Bot 的私有行，`skills.enable` / `disable` 会改公共行、对所有 Bot 生效——这里拒绝并说明
+ * 去技能页管理，不让一张「这个 Bot」的卡改全局状态。快照带 `scope`（public / private）。
+ */
 function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
-  const listed = (botId: string): ReadonlyArray<{ name: string; status: string }> =>
+  const listed = (botId: string): ReadonlyArray<{ name: string; status: string; scope?: string }> =>
     deps.skills?.list(botId) ?? [];
+  const isPublic = (skill: { scope?: string } | undefined): boolean => skill?.scope === 'public';
+  const publicRefusal = (name: string): string =>
+    `「${clean(name, 40)}」是公共技能，启停会影响所有 Bot，不能在这个 Bot 的设置卡上改；请在技能页（扩展中心「Skills」）管理公共技能`;
   return {
     read: (_item, target, focus) => {
       if (deps.skills === undefined || target.botId === null) {
         return snapshot('unknown', null, '状态未知');
       }
       const skills = listed(target.botId);
-      const enabled = skills.filter((skill) => skill.status === 'active').map((skill) => skill.name);
-      const summary =
+      const own = skills.filter((skill) => !isPublic(skill));
+      const enabled = own.filter((skill) => skill.status === 'active').map((skill) => skill.name);
+      const publicCount = skills.length - own.length;
+      const summary = [
         enabled.length > 0
-          ? `已启用 ${enabled.length} 个技能`
-          : skills.length > 0
-            ? '没有启用的技能'
-            : '没有已安装的技能';
+          ? `自己的技能启用 ${enabled.length} 个`
+          : own.length > 0
+            ? '自己的技能都没有启用'
+            : '没有自己的技能',
+        ...(publicCount > 0 ? [`另有 ${publicCount} 个公共技能（在技能页管理）`] : []),
+      ].join('；');
       const focused = str(focus?.skill);
       if (focused !== undefined && focused.length > 0) {
         const skill = skills.find((entry) => entry.name === focused);
         const on = skill?.status === 'active';
-        return snapshot(on ? 'configured' : 'unconfigured', { skill: focused, enabled: on }, summary);
+        const scope = skill === undefined ? '' : isPublic(skill) ? 'public' : 'private';
+        return snapshot(
+          on ? 'configured' : 'unconfigured',
+          { skill: focused, enabled: on, scope },
+          scope === 'public'
+            ? `「${clean(focused, 40)}」是公共技能（${on ? '已启用' : '已停用'}，所有 Bot 共用）`
+            : summary,
+        );
       }
-      return snapshot(skills.length > 0 ? 'configured' : 'unconfigured', null, summary);
+      return snapshot(own.length > 0 ? 'configured' : 'unconfigured', null, summary);
     },
     options: (_field, _item, target) =>
       target.botId === null
         ? []
-        : listed(target.botId).map((skill) => ({ value: skill.name, label: clean(skill.name) })),
-    normalize: (_item, values) => {
+        : listed(target.botId).map((skill) => ({
+            value: skill.name,
+            label: isPublic(skill)
+              ? `${clean(skill.name)}（公共技能，只能在技能页管理）`
+              : clean(skill.name),
+          })),
+    normalize: (_item, values, target) => {
       if ('enabled' in values && bool(values.enabled) === undefined) {
         return { ok: false, message: 'enabled 应为 true / false' };
+      }
+      const name = str(values.skill);
+      if (name !== undefined && name.length > 0 && target.botId !== null) {
+        const skill = listed(target.botId).find((entry) => entry.name === name);
+        if (skill === undefined) {
+          return { ok: false, message: `这个 Bot 没有技能「${clean(name, 40)}」` };
+        }
+        if (isPublic(skill)) return { ok: false, message: publicRefusal(name) };
       }
       return { ok: true, values };
     },
@@ -1155,6 +1258,12 @@ function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
       if (skill === undefined || skill.length === 0) {
         throw new AppError('INVALID_INPUT', '需要选择技能');
       }
+      // 写锁里再查一次：读快照之后才变成公共技能（或私有行被删）时同样拒绝，不碰公共行。
+      const row = listed(target.botId).find((entry) => entry.name === skill);
+      if (row === undefined) {
+        throw new AppError('INVALID_INPUT', `这个 Bot 没有技能「${clean(skill, 40)}」`);
+      }
+      if (isPublic(row)) throw new AppError('INVALID_INPUT', publicRefusal(skill));
       if (bool(next.enabled) === false) deps.skills.disable(target.botId, skill);
       else deps.skills.enable(target.botId, skill);
     },
@@ -1290,7 +1399,63 @@ function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
         value: bot.id,
         label: clean(bot.name),
       })),
+    // Bot 只能提议「拉谁进群」：建议值 = 现有成员 ∪ Bot 给的。移出成员只能由用户在卡上亲手取消
+    // 勾选（卡片把「将移出」单独列出来），预填永远不会少掉现有成员。
+    proposal: (_item, values, current) => {
+      if (!('bots' in values)) return values;
+      const existing = Array.isArray(current.values?.bots)
+        ? current.values.bots.filter((id): id is string => typeof id === 'string')
+        : [];
+      const proposed = asStringList(values.bots) ?? [];
+      return { ...values, bots: [...new Set([...existing, ...proposed])] };
+    },
   };
+}
+
+/** 保护规则快照里每类最多列几条（其余只计数）。 */
+const PROTECT_PATTERNS_SHOWN = 20;
+/** 每条规则形状的长度上限。 */
+const PROTECT_PATTERN_MAX = 60;
+
+function isAbsolutePattern(pattern: string): boolean {
+  return pattern.startsWith('/') || pattern.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(pattern);
+}
+
+function stripPrefix(pattern: string, prefix: string): string | null {
+  const normalized = prefix.replace(/[\\/]+$/, '');
+  if (normalized.length === 0) return null;
+  if (pattern === normalized) return '';
+  for (const separator of ['/', '\\']) {
+    if (pattern.startsWith(`${normalized}${separator}`)) {
+      return pattern.slice(normalized.length + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * 一条保护规则的脱敏形状：项目目录下 → `<project>/…`，家目录下 → `~/…`，其余绝对路径只留最后一段
+ * （`…/文件名`）；相对的 glob（`*.pem`、`.git/config`）原样。都过 `sanitizeDisplayText` 并截短。
+ */
+export function redactPathPattern(
+  pattern: string,
+  projectRoot: string | null,
+  homeDir: string | null,
+): string {
+  let shape = pattern;
+  if (projectRoot !== null) {
+    const rest = stripPrefix(pattern, projectRoot);
+    if (rest !== null) shape = rest.length > 0 ? `<project>/${rest}` : '<project>';
+  }
+  if (shape === pattern && homeDir !== null) {
+    const rest = stripPrefix(pattern, homeDir);
+    if (rest !== null) shape = rest.length > 0 ? `~/${rest}` : '~';
+  }
+  if (shape === pattern && isAbsolutePattern(pattern)) {
+    const segments = pattern.split(/[\\/]+/).filter((segment) => segment.length > 0);
+    shape = `…/${segments.at(-1) ?? ''}`;
+  }
+  return clean(shape, PROTECT_PATTERN_MAX);
 }
 
 function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
@@ -1308,11 +1473,16 @@ function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAd
           ports.length === 0 ? '不限制本机端口' : clean(ports.join('、'), SUMMARY_MAX),
         );
       }
-      const denyRead = project.protectRules.denyRead.map((pattern) => clean(pattern, 200));
-      const denyWrite = project.protectRules.denyWrite.map((pattern) => clean(pattern, 200));
+      // 读也要脱敏（方案 §七）：规则可能写成本机绝对路径——只回条数和脱敏后的形状
+      // （家目录 → `~`、项目目录 → `<project>`、其余绝对路径只留文件名），每条截短、条数封顶。
+      const redact = (patterns: readonly string[]): string[] =>
+        patterns
+          .slice(0, PROTECT_PATTERNS_SHOWN)
+          .map((pattern) => redactPathPattern(pattern, project.path ?? null, deps.homeDir ?? homedir()));
+      const { denyRead, denyWrite } = project.protectRules;
       return snapshot(
         'configured',
-        { denyRead, denyWrite },
+        { denyRead: redact(denyRead), denyWrite: redact(denyWrite) },
         `禁止读取 ${denyRead.length} 条，禁止写入 ${denyWrite.length} 条`,
       );
     },
@@ -1332,10 +1502,13 @@ function mcpServerWidens(before: SettingValues | null, proposed: SettingValues):
 
 /**
  * 已安装 MCP 的启停。有 focus 时快照带上 `server` 和当前 `enabled`（user-only 会清空整份预填，
- * 卡片靠 before 定位是哪一个服务）；没有 focus 时仍回安装概要。不提供 write——组件读当前
- * `mcpServers` 后只改这一条的 `enabled`，再走 `settings.update`。那条 RPC 在锁外做两段：写之前
- * 对 OAuth 绑定变化 `disconnector.reconcileServers`，写之后用 `mcpRevocationsBetween` 调
- * `revokeMcp`（停用正在用的服务会中断任务）。写锁里直接 `settings.update` 会丢掉这两段。
+ * 卡片靠 before 定位是哪一个服务）；没有 focus 时仍回安装概要。
+ *
+ * 写入（D89 审查修复）：在写锁里读**最新**的 `mcpServers`，只改这一个服务的 `enabled`（兄弟服务、
+ * `toolPolicies`、并发新增的服务都不动，CAS 比对 `enabled`），锁外再用 `mcpRevocationsBetween`
+ * 收回授权（停用正在用的服务会中断任务，与 `settings.update` 同一套）。启停不改 URL / 认证方式，
+ * 所以不需要 `reconcileServers`。卡片的组件经 `settings.items.apply` 走这里，不再从渲染层缓存
+ * 整表提交 `settings.update`。启用（放宽）仍是 user-only：只有用户在卡上亲手点才会写。
  */
 function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
   return {
@@ -1367,6 +1540,31 @@ function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
         value: server.id,
         label: clean(server.name),
       }));
+    },
+    normalize: (_item, values) => {
+      if (!('server' in values)) return { ok: true, values };
+      const serverId = str(values.server) ?? '';
+      return deps.settings.get().mcpServers.some((server) => server.id === serverId)
+        ? { ok: true, values: { ...values, server: serverId } }
+        : { ok: false, message: `没有已安装的 MCP 服务「${clean(serverId)}」` };
+    },
+    write: (_item, { next }) => {
+      const revoke = deps.mcpServers;
+      if (revoke === undefined) throw new AppError('NOT_IMPLEMENTED', 'MCP 模块未就绪');
+      const serverId = str(next.server) ?? '';
+      const enabled = bool(next.enabled);
+      if (serverId.length === 0 || enabled === undefined) {
+        throw new AppError('INVALID_INPUT', '需要指定 MCP 服务和启用状态');
+      }
+      const previous = deps.settings.get().mcpServers;
+      if (!previous.some((server) => server.id === serverId)) {
+        throw new AppError('INVALID_INPUT', `没有已安装的 MCP 服务「${clean(serverId)}」`);
+      }
+      const updated = previous.map((server) =>
+        server.id === serverId ? { ...server, enabled } : server,
+      );
+      deps.settings.update({ mcpServers: updated });
+      return { afterUnlock: () => revoke.revokeChanges(previous, updated) };
     },
     valuesWiden: (_item, before, proposed) => mcpServerWidens(before, proposed),
   };
@@ -1420,24 +1618,37 @@ function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
 }
 
 /**
- * 命令白名单只读概要。目录没有字段，快照 `values` 保持 null。
- * 只数启用几条、停用几条：有启用为 `configured`，一条启用都没有为 `unconfigured`
- * （空名单上「我已设置好」核对不过）。不放条目 id，也不把命令模式放进快照。
- * 不提供 write：添加和启停由组件调用原来的 RPC。加一条命令豁免是放宽，保持 user-only。
+ * 命令白名单只读概要。目录没有字段，快照 `values` 保持 null，不放条目 id 或命令模式。
+ *
+ * 状态恒为 `unknown`：Bot 要的是「某一条命令能不能免审批」，名单里有没有启用的条目（内置条目
+ * 默认就是启用的）说明不了这件事。所以：
+ * - 任务里 `required:true` 不会因为「已配置」直接放行（只有 `configured` 才会）；
+ * - 「已经是想要的值」的短路也不会命中；
+ * - 用户点「我已设置好」按用户所说结卡（无法核对）；打开对话时的自动核对（`auto`）只在名单
+ *   相对出卡时变过（概要里的条数变了）才结卡。
+ * 概要分开数内置与自定义、启用与停用。加一条命令豁免是放宽，保持 user-only，不提供 write。
  */
 function environmentAllowlistAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
       const allowlist = deps.allowlist;
-      if (allowlist === undefined) return snapshot('unconfigured', null, '还看不到命令白名单');
-      let enabled = 0;
-      let disabled = 0;
+      if (allowlist === undefined) return snapshot('unknown', null, '还看不到命令白名单');
+      let customEnabled = 0;
+      let customDisabled = 0;
+      let builtinEnabled = 0;
+      let builtinDisabled = 0;
       for (const entry of allowlist.list()) {
-        if (entry.enabled === true) enabled += 1;
-        else disabled += 1;
+        if (entry.builtin === true) {
+          if (entry.enabled) builtinEnabled += 1;
+          else builtinDisabled += 1;
+        } else if (entry.enabled) customEnabled += 1;
+        else customDisabled += 1;
       }
-      const status = enabled > 0 ? 'configured' : 'unconfigured';
-      return snapshot(status, null, `启用 ${enabled} 条，停用 ${disabled} 条`);
+      return snapshot(
+        'unknown',
+        null,
+        `自定义启用 ${customEnabled} 条、停用 ${customDisabled} 条；内置启用 ${builtinEnabled} 条、停用 ${builtinDisabled} 条`,
+      );
     },
   };
 }

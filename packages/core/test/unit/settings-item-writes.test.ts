@@ -67,10 +67,12 @@ function harness(
     providers: { list: () => [], setKey: () => undefined },
     bots: {
       get: (id) => (id === bot.id ? bot : null),
-      update: (id, next) => {
+    },
+    botProfiles: {
+      apply: (id, next) => {
         if (id !== bot.id) throw new Error('missing bot');
         bot.profile = next;
-        return bot;
+        return { bot, changedItemIds: [], settle: async () => undefined };
       },
     },
     agentCatalog: () => [{ id: 'codex', name: 'Codex' }] as never,
@@ -204,11 +206,37 @@ describe('P1 setting item writes', () => {
     const rig = harness();
     const adapter = rig.adapters(item('bot.skills'));
     const before = adapter.read(item('bot.skills'), rig.target, { skill: 'note' });
-    expect(before.values).toEqual({ skill: 'note', enabled: false });
+    expect(before.values).toEqual({ skill: 'note', enabled: false, scope: 'private' });
     adapter.write!(item('bot.skills'), { next: { skill: 'note', enabled: true }, secrets: {} }, rig.target);
     expect(rig.skills.enabled).toEqual(['note']);
     adapter.write!(item('bot.skills'), { next: { skill: 'note', enabled: false }, secrets: {} }, rig.target);
     expect(rig.skills.disabled).toEqual(['note']);
+  });
+
+  it('a public skill is not toggled through the per-bot item (it would flip it for every bot)', () => {
+    const rig = harness();
+    rig.skills.rows = [
+      { name: 'note', status: 'disabled' },
+      { name: 'shared-pdf', status: 'active', scope: 'public' } as never,
+    ];
+    const entry = item('bot.skills');
+    const adapter = rig.adapters(entry);
+    const snapshot = adapter.read(entry, rig.target, { skill: 'shared-pdf' });
+    expect(snapshot.values).toEqual({ skill: 'shared-pdf', enabled: true, scope: 'public' });
+    expect(snapshot.summary).toContain('公共技能');
+    const overview = adapter.read(entry, rig.target);
+    expect(overview.summary).toContain('另有 1 个公共技能');
+    const normalized = adapter.normalize!(entry, { skill: 'shared-pdf', enabled: false }, rig.target);
+    expect(normalized).toMatchObject({ ok: false });
+    expect(normalized.ok ? '' : normalized.message).toContain('技能页');
+    expect(() =>
+      adapter.write!(entry, { next: { skill: 'shared-pdf', enabled: false }, secrets: {} }, rig.target),
+    ).toThrow(/公共技能/);
+    expect(rig.skills.disabled).toEqual([]);
+    expect(
+      adapter.options!(entry.fields[0]!, entry, rig.target).find((option) => option.value === 'shared-pdf')
+        ?.label,
+    ).toContain('只能在技能页管理');
   });
 });
 
@@ -235,8 +263,10 @@ describe('group and project setting reads', () => {
       providers: { list: () => [], setKey: () => undefined },
       bots: {
         get: (id) => (id === bot.id ? bot : null),
-        update: () => bot,
         listActive: () => [bot],
+      },
+      botProfiles: {
+        apply: () => ({ bot, changedItemIds: [], settle: async () => undefined }),
       },
       conversations: {
         get: () => ({ title, type: 'group' }),
@@ -279,6 +309,20 @@ describe('group and project setting reads', () => {
     ).toThrow(/群名不能为空/);
   });
 
+  it('a bot proposal can only add members: the proposal keeps every existing member', () => {
+    const rigged = rig();
+    const entry = item('group.members');
+    const members = rigged.adapters(entry);
+    const snapshot = members.read(entry, rigged.target);
+    expect(members.proposal!(entry, { bots: ['bot_new'] }, snapshot)).toEqual({
+      bots: ['bot_a', 'bot_b', 'bot_new'],
+    });
+    // 想借预填「移出」bot_b 也做不到：建议值永远是现有成员的超集。
+    expect(members.proposal!(entry, { bots: ['bot_a'] }, snapshot)).toEqual({
+      bots: ['bot_a', 'bot_b'],
+    });
+  });
+
   it('member and project reads do not expose a host write', () => {
     const rigged = rig();
     const members = rigged.adapters(item('group.members'));
@@ -300,6 +344,66 @@ describe('group and project setting reads', () => {
   });
 });
 
+describe('project protect-rule redaction', () => {
+  function rules(denyRead: string[], denyWrite: string[]) {
+    const deps: AdapterDeps = {
+      settings: { get: () => settingsSchema.parse({}), update: (next) => settingsSchema.parse(next) },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: { list: () => [], setKey: () => undefined },
+      bots: { get: () => null },
+      botProfiles: {
+        apply: () => {
+          throw new Error('no bot');
+        },
+      },
+      projects: {
+        get: () => ({
+          path: '/home/alice/work/site',
+          protectRules: { denyRead, denyWrite },
+          allowedPorts: null,
+        }),
+      },
+      homeDir: '/home/alice',
+      publish: () => undefined,
+    };
+    const entry = item('project.protect-rules');
+    return buildItemAdapters(deps)(entry).read(entry, {
+      botId: null,
+      conversationId: null,
+      projectId: 'proj_1',
+    });
+  }
+
+  it('replaces project, home and other absolute prefixes; keeps relative globs; caps length and count', () => {
+    const snapshot = rules(
+      [
+        '/home/alice/work/site/config/prod.env',
+        '/home/alice/.ssh/id_ed25519',
+        '/etc/shadow',
+        'C:\\Users\\alice\\secrets\\token.txt',
+        '*.pem',
+        `.git/${'x'.repeat(200)}`,
+      ],
+      Array.from({ length: 30 }, (_, index) => `secrets/${index}/**`),
+    );
+    expect(snapshot.values?.denyRead).toEqual([
+      '<project>/config/prod.env',
+      '~/.ssh/id_ed25519',
+      '…/shadow',
+      '…/token.txt',
+      '*.pem',
+      expect.stringMatching(/^\.git\/x+/),
+    ]);
+    expect(String((snapshot.values?.denyRead as string[])[5]).length).toBeLessThanOrEqual(61);
+    expect((snapshot.values?.denyWrite as string[]).length).toBe(20);
+    expect(snapshot.summary).toBe('禁止读取 6 条，禁止写入 30 条');
+    const encoded = JSON.stringify(snapshot);
+    expect(encoded).not.toContain('/home/alice');
+    expect(encoded).not.toContain('Users');
+    expect(encoded).not.toContain('/etc/');
+  });
+});
+
 describe('connection tool policy reads', () => {
   const target = { botId: null, conversationId: null, projectId: null };
 
@@ -311,7 +415,12 @@ describe('connection tool policy reads', () => {
       },
       secrets: { hasValue: () => false, setValue: () => undefined },
       providers: { list: () => [], setKey: () => undefined },
-      bots: { get: () => null, update: () => { throw new Error('no bot'); } },
+      bots: { get: () => null },
+      botProfiles: {
+        apply: () => {
+          throw new Error('no bot');
+        },
+      },
       ...(peek !== undefined ? { appConnections: peek } : {}),
       publish: () => undefined,
     };
@@ -408,9 +517,8 @@ describe('installed MCP server reads', () => {
     return { adapter: adapters(item('mcp.servers')), settings };
   }
 
-  it('reads the focused server into the snapshot and does not write', () => {
+  it('reads the focused server into the snapshot', () => {
     const { adapter, settings } = rig();
-    expect(adapter.write).toBeUndefined();
     const overview = adapter.read(item('mcp.servers'), target);
     expect(overview.values).toBeNull();
     expect(overview.summary).toBe('已安装 2 个，启用 1 个');
@@ -430,6 +538,77 @@ describe('installed MCP server reads', () => {
     expect(settings().mcpServers.find((server) => server.id === 'notes')?.toolPolicies).toEqual({
       search: { approval: 'ask' },
     });
+  });
+
+  it('writes only this server\'s enabled flag on the latest list and revokes after the lock', async () => {
+    const revoked: Array<{ previous: string[]; next: string[] }> = [];
+    const { adapters, settings } = harness({
+      mcpServers: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          transport: 'stdio',
+          command: 'echo',
+          enabled: true,
+          toolPolicies: { search: { approval: 'ask' } },
+        },
+        { id: 'off', name: 'Off', transport: 'stdio', command: 'echo', enabled: false },
+      ],
+    });
+    const entry = item('mcp.servers');
+    const bare = adapters(entry);
+    // Without the revocation dependency the host cannot write (it would skip the interruption).
+    expect(() =>
+      bare.write!(entry, { next: { server: 'notes', enabled: false }, secrets: {} }, target),
+    ).toThrow(/MCP 模块未就绪/);
+    let stored = settings();
+    const writes: unknown[] = [];
+    const live = buildItemAdapters({
+      settings: {
+        get: () => stored,
+        update: (patch) => {
+          writes.push(patch);
+          stored = settingsSchema.parse({ ...stored, ...patch });
+          return stored;
+        },
+      },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: { list: () => [], setKey: () => undefined },
+      bots: { get: () => null },
+      botProfiles: {
+        apply: () => {
+          throw new Error('no bot');
+        },
+      },
+      mcpServers: {
+        revokeChanges: (previous, next) =>
+          void revoked.push({
+            previous: previous.filter((server) => server.enabled).map((server) => server.id),
+            next: next.filter((server) => server.enabled).map((server) => server.id),
+          }),
+      },
+      publish: () => undefined,
+    })(entry);
+    expect(live.normalize!(entry, { server: 'gone' }, target)).toMatchObject({ ok: false });
+    // A server added concurrently (after the card was issued) survives the write.
+    stored = settingsSchema.parse({
+      ...stored,
+      mcpServers: [
+        ...stored.mcpServers,
+        { id: 'fresh', name: 'Fresh', transport: 'stdio', command: 'echo', enabled: true },
+      ],
+    });
+    const effects = live.write!(entry, { next: { server: 'notes', enabled: false }, secrets: {} }, target);
+    expect(stored.mcpServers.map((server) => [server.id, server.enabled])).toEqual([
+      ['notes', false],
+      ['off', false],
+      ['fresh', true],
+    ]);
+    expect(stored.mcpServers[0]!.toolPolicies).toEqual({ search: { approval: 'ask' } });
+    expect(revoked).toEqual([]);
+    await effects!.afterUnlock!();
+    expect(revoked).toEqual([{ previous: ['notes', 'fresh'], next: ['fresh'] }]);
+    expect(writes).toHaveLength(1);
   });
 
   it('treats enable as widening and disable as not; unknown direction widens', () => {
@@ -640,6 +819,7 @@ describe('environment allowlist read adapter', () => {
   const leaked = [
     { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true },
     { id: 'alw_off', pattern: 'curl http://evil.example', enabled: false },
+    { id: 'alw_cat', pattern: 'cat', enabled: true, builtin: true },
   ];
 
   function read(allowlist?: AdapterDeps['allowlist']) {
@@ -648,15 +828,15 @@ describe('environment allowlist read adapter', () => {
     return { adapter, snapshot: adapter.read(item('environment.allowlist'), target) };
   }
 
-  it('counts enabled and disabled, keeps values null, and omits ids and patterns', () => {
+  it('counts custom and built-in entries, keeps values null, and omits ids and patterns', () => {
     const { adapter, snapshot } = read({ list: () => leaked });
     expect(adapter.write).toBeUndefined();
     expect(adapter.valuesWiden).toBeUndefined();
     expect(snapshot).toEqual({
-      status: 'configured',
+      status: 'unknown',
       values: null,
       secrets: {},
-      summary: '启用 1 条，停用 1 条',
+      summary: '自定义启用 1 条、停用 1 条；内置启用 1 条、停用 0 条',
     });
     const encoded = JSON.stringify(snapshot);
     expect(encoded).not.toContain('alw_');
@@ -665,27 +845,107 @@ describe('environment allowlist read adapter', () => {
     expect(encoded).not.toContain('evil');
   });
 
-  it('is unconfigured when nothing is enabled, including an empty list', () => {
-    expect(read({ list: () => [{ id: 'alw_off', pattern: 'ls', enabled: false }] }).snapshot).toEqual({
-      status: 'unconfigured',
-      values: null,
-      secrets: {},
-      summary: '启用 0 条，停用 1 条',
-    });
+  it('never reports configured: enabled built-ins (the default) say nothing about the command the bot needs', () => {
+    expect(read({ list: () => [{ enabled: true, builtin: true }] }).snapshot.status).toBe('unknown');
     expect(read({ list: () => [] }).snapshot).toEqual({
-      status: 'unconfigured',
+      status: 'unknown',
       values: null,
       secrets: {},
-      summary: '启用 0 条，停用 0 条',
+      summary: '自定义启用 0 条、停用 0 条；内置启用 0 条、停用 0 条',
     });
   });
 
-  it('stays unconfigured when the allowlist service is not wired', () => {
+  it('is unknown when the allowlist service is not wired', () => {
     expect(read().snapshot).toEqual({
-      status: 'unconfigured',
+      status: 'unknown',
       values: null,
       secrets: {},
       summary: '还看不到命令白名单',
     });
+  });
+});
+
+describe('validation and widening fixes (D89 review)', () => {
+  it('network: any new domain widens regardless of the policy; hidden domains are never stored', () => {
+    const rig = harness();
+    const entry = item('bot.network');
+    const adapter = rig.adapters(entry);
+    expect(adapter.valuesWiden!(entry, { policy: 'none', allowlist: [] }, { allowlist: ['evil.com'] })).toBe(
+      true,
+    );
+    expect(
+      adapter.valuesWiden!(entry, { policy: 'none', allowlist: ['example.com'] }, { policy: 'none', allowlist: ['evil.com'] }),
+    ).toBe(true);
+    expect(
+      adapter.valuesWiden!(entry, { policy: 'allowlist', allowlist: ['a.com', 'b.com'] }, { allowlist: ['a.com'] }),
+    ).toBe(false);
+    adapter.write!(entry, { next: { policy: 'none', allowlist: ['evil.com'] }, secrets: {} }, rig.target);
+    expect(rig.bot.profile.runtime.network_policy).toBe('none');
+    expect(rig.bot.profile.runtime.network_allowlist).toEqual(['example.com']);
+    adapter.write!(entry, { next: { policy: 'allowlist', allowlist: ['ok.test'] }, secrets: {} }, rig.target);
+    expect(rig.bot.profile.runtime.network_allowlist).toEqual(['ok.test']);
+  });
+
+  it('bot runtime writes hand their side effects to the host instead of running them in the lock', () => {
+    const settled: string[] = [];
+    const rig = harness();
+    const entry = item('bot.mcp-servers');
+    const adapters = buildItemAdapters({
+      settings: { get: rig.settings, update: () => rig.settings() },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: { list: () => [], setKey: () => undefined },
+      bots: { get: () => rig.bot },
+      botProfiles: {
+        apply: (_id, profile) => {
+          rig.bot.profile = profile;
+          return {
+            bot: rig.bot,
+            changedItemIds: ['bot.mcp-servers'],
+            settle: async () => void settled.push('settled'),
+          };
+        },
+      },
+      publish: () => undefined,
+    });
+    const effects = adapters(entry).write!(entry, { next: { servers: [] }, secrets: {} }, rig.target);
+    expect(rig.bot.profile.runtime.mcp_server_ids).toEqual([]);
+    expect(settled).toEqual([]);
+    expect(effects).toMatchObject({ changedItemIds: ['bot.mcp-servers'] });
+    void effects!.afterUnlock!();
+    expect(settled).toEqual(['settled']);
+  });
+
+  it('concurrency: only known providers and 1..16', () => {
+    const rig = harness();
+    const entry = item('models.concurrency');
+    const adapter = buildItemAdapters({
+      settings: { get: rig.settings, update: () => rig.settings() },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: {
+        list: () => [{ id: 'openai', name: 'OpenAI', kind: 'builtin', models: [], hasKey: true }] as never,
+        setKey: () => undefined,
+      },
+      bots: { get: () => null },
+      botProfiles: {
+        apply: () => {
+          throw new Error('no bot');
+        },
+      },
+      agentCatalog: () => [{ id: 'codex', name: 'Codex' }] as never,
+      publish: () => undefined,
+    })(entry);
+    expect(adapter.normalize!(entry, { provider: 'openai', limit: 3 }, rig.target)).toMatchObject({ ok: true });
+    expect(adapter.normalize!(entry, { provider: 'agent:codex', limit: 3 }, rig.target)).toMatchObject({
+      ok: true,
+    });
+    expect(adapter.normalize!(entry, { provider: '__proto__', limit: 3 }, rig.target)).toMatchObject({
+      ok: false,
+    });
+    expect(adapter.normalize!(entry, { provider: 'openai', limit: 99 }, rig.target)).toMatchObject({
+      ok: false,
+    });
+    expect(() =>
+      adapter.write!(entry, { next: { provider: 'nobody', limit: 2 }, secrets: {} }, rig.target),
+    ).toThrow(/没有已接入的厂商/);
   });
 });

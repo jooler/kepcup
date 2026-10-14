@@ -303,6 +303,8 @@ describe('conversational app settings', () => {
     expect(failed.setup).toEqual({
       kind: 'setting',
       itemId: 'capability.image',
+      // 出卡时的当前值：失败续跑卡的组件靠它定位目标与做 CAS（D89 审查修复）。
+      before: { provider: '', model: '' },
       reason: '生成图片需要图像模型',
     });
     expect(failed.error ?? '').toContain('需要完成一项设置');
@@ -330,4 +332,172 @@ describe('conversational app settings', () => {
       .filter((req) => JSON.stringify(req.body.messages).includes('<task_brief'));
     expect(JSON.stringify(taskRequests.at(-1)!.body.messages)).toContain('已经配置好了');
   }, 40_000);
+
+  // --- D89 审查修复（第二轮）--------------------------------------------------
+
+  it('(9) removing an MCP server via the bot\'s setting card interrupts its running task (same path as bots.update)', async () => {
+    const { core, llm } = await start();
+    const server = {
+      id: 'srv1',
+      name: '备注服务',
+      transport: 'stdio' as const,
+      command: process.execPath,
+      args: ['-e', '0'],
+      env: {},
+      enabled: true,
+      autoApprove: false,
+    };
+    await core.rpc.call('settings.update', { mcpServers: [server] });
+    const made = await makeBot(core, '小服');
+    await core.rpc.call('bots.update', {
+      id: made.id,
+      profile: { ...made.profile, runtime: { ...made.profile.runtime, mcp_server_ids: ['srv1'] } },
+    });
+    llm.script('mock-main', [
+      step().replyToolCall('settings_change', {
+        id: 'bot.mcp-servers',
+        values: { servers: [] },
+        reason: '这个 Bot 不再需要备注服务',
+      }),
+      step().replyText('我出了一张确认卡'),
+      step().replyText('已经去掉了'),
+    ]);
+    const conv = await openDirect(core, made.id);
+    await sendBatch(core, conv.id, ['把备注服务从你身上去掉']);
+    await waitForRun(core, conv.id, 'completed');
+    const { message, card } = await waitForCard(core, conv.id);
+    expect(card).toMatchObject({ mode: 'confirm', proposed: { servers: [] } });
+
+    // A task of this bot that is running with the server.
+    const domain = core.services.domain!;
+    const task = domain.runs.create({
+      botId: made.id,
+      conversationId: conv.id,
+      loopType: 'task',
+      triggerReason: null,
+      triggerMessageIds: [],
+      taskTitle: 'USES-SRV1',
+      taskWrites: false,
+      originRunId: 'run_turn_seed',
+    });
+    domain.messages.appendTaskEvent({
+      conversationId: conv.id,
+      ownerBotId: made.id,
+      taskId: task.id,
+      phase: 'brief',
+      text: 'USES-SRV1 的交代',
+      title: 'USES-SRV1',
+      writes: false,
+    });
+    domain.runs.update(task.id, { status: 'running' });
+    const interrupted: unknown[] = [];
+    core.onEvent('tasks.interrupted', (payload) => void interrupted.push(payload));
+
+    const applied = (await core.rpc.call('settings.items.apply', {
+      itemId: 'bot.mcp-servers',
+      values: { servers: [] },
+      expected: card.before,
+      target: card.target,
+      messageId: message.id,
+    })) as { status: string };
+    expect(applied.status).toBe('applied');
+    expect(domain.bots.getOrThrow(made.id).profile.runtime.mcp_server_ids).toEqual([]);
+    expect(domain.runs.getOrThrow(task.id)).toMatchObject({
+      status: 'interrupted',
+      errorReason: 'permission_revoked',
+    });
+    await waitFor(() => (interrupted.length > 0 ? true : null), { label: 'tasks.interrupted' });
+    expect(interrupted).toEqual([{ count: 1, reason: 'permission_revoked', scope: 'mcp' }]);
+  }, 30_000);
+
+  it('(10) bot config writes through settings.items.apply validate like bots.update: clean errors, nothing written', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小浏');
+    await expect(
+      core.rpc.call('settings.items.apply', {
+        itemId: 'bot.browser-profile',
+        values: { profile: 'bpf_missing' },
+        expected: null,
+        target: { botId: bot.id },
+      }),
+    ).rejects.toThrow(/浏览器资料 bpf_missing 不存在/);
+    await expect(
+      core.rpc.call('settings.items.apply', {
+        itemId: 'bot.agent',
+        values: { agent: 'claude-code', permission: 'ask' },
+        expected: null,
+        target: { botId: bot.id },
+      }),
+    ).rejects.toThrow(/实验功能/);
+    const after = core.services.domain!.bots.getOrThrow(bot.id).profile.runtime;
+    expect(after.browser_profile).toBe('');
+    expect(after.agent.id).toBe('');
+  }, 30_000);
+
+  it('(11) a stale bot form saved with its base keeps the bot\'s direct model change', async () => {
+    const { core } = await start();
+    const bot = await makeBot(core, '小模');
+    const base = core.services.domain!.bots.getOrThrow(bot.id).profile;
+    // The bot (or a card) changes its own model in the meantime.
+    await core.rpc.call('settings.items.apply', {
+      itemId: 'bot.model',
+      values: { model: 'custom:mock/mock-light' },
+      expected: null,
+      target: { botId: bot.id },
+    });
+    // The right panel still holds the old profile and saves a bio edit with its base.
+    const saved = (await core.rpc.call('bots.update', {
+      id: bot.id,
+      profile: { ...base, identity: { ...base.identity, bio: '新的简介' } },
+      base,
+    })) as { bot: Bot };
+    expect(saved.bot.profile.identity.bio).toBe('新的简介');
+    expect(saved.bot.profile.runtime.model).toBe('custom:mock/mock-light');
+    // Without a base the old whole-profile semantics stay (the caller's value wins).
+    const overwritten = (await core.rpc.call('bots.update', { id: bot.id, profile: base })) as {
+      bot: Bot;
+    };
+    expect(overwritten.bot.profile.runtime.model).toBe(base.runtime.model);
+  }, 30_000);
+
+  it('(12) a stale settings form saved with its base keeps concurrent changes (fields and id-keyed lists)', async () => {
+    const { core } = await start();
+    const server = (id: string) => ({
+      id,
+      name: id,
+      transport: 'stdio' as const,
+      command: process.execPath,
+      args: ['-e', '0'],
+      env: {},
+      enabled: false,
+      autoApprove: false,
+    });
+    await core.rpc.call('settings.update', { mcpServers: [server('a')] });
+    const stale = await settingsOf(core);
+    // Concurrent writers: the bot changes the default model, another save adds a server.
+    await core.rpc.call('settings.items.apply', {
+      itemId: 'models.default-main',
+      values: { model: 'custom:mock/mock-light' },
+      expected: null,
+    });
+    await core.rpc.call('settings.update', { mcpServers: [server('a'), server('b')] });
+    // The stale page toggles server a and re-sends the light model it saw.
+    await core.rpc.call('settings.update', {
+      mcpServers: stale.mcpServers.map((entry) => ({ ...entry, enabled: true })),
+      defaultMainModel: stale.defaultMainModel,
+      defaultLightModel: 'custom:mock/mock-main',
+      base: {
+        mcpServers: stale.mcpServers,
+        defaultMainModel: stale.defaultMainModel,
+        defaultLightModel: stale.defaultLightModel,
+      },
+    });
+    const now = await settingsOf(core);
+    expect(now.defaultMainModel).toBe('custom:mock/mock-light');
+    expect(now.defaultLightModel).toBe('custom:mock/mock-main');
+    expect(now.mcpServers.map((entry) => [entry.id, entry.enabled])).toEqual([
+      ['a', true],
+      ['b', false],
+    ]);
+  }, 30_000);
 });
