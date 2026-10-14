@@ -118,8 +118,11 @@ export interface BotProfileUpdate {
   bot: Bot;
   /** 受影响的设置目录条目（按 runtime 差异），供调用方补发 `settings.changed`。 */
   changedItemIds: string[];
-  /** 写之后的收尾（中断任务、关页面）；调用方在设置写锁之外 await。只能调一次。 */
-  settle(): Promise<void>;
+  /**
+   * 写之后的收尾（收回授权、中断任务、关页面）；调用方在设置写锁之外 await。只能调一次。
+   * 每一步各自兜住异常、互不影响（收回授权排在最前），不会抛；返回各步的失败说明，调用方记日志。
+   */
+  settle(): Promise<string[]>;
 }
 
 /**
@@ -162,32 +165,47 @@ export function applyBotProfileUpdate(
     bot,
     changedItemIds,
     settle: async () => {
-      if (settled) return;
+      if (settled) return [];
       settled = true;
       const runtime = bot.profile.runtime;
+      const warnings: string[] = [];
+      const step = async (name: string, run: () => unknown): Promise<void> => {
+        try {
+          await run();
+        } catch (error) {
+          warnings.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
+      // 收回授权排在最前、各自独立：后面关浏览器页面失败也不会让 MCP / 连接的授权留在 Bot 手里。
+      // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
+      await step('revoke mcp servers', () =>
+        deps.effects.revokeMcp(
+          serversRemovedFromBot(
+            previousRuntime.mcp_server_ids,
+            runtime.mcp_server_ids,
+            deps.settings.get().mcpServers,
+          ).map((serverId) => ({ serverId, botIds: [bot.id] })),
+        ),
+      );
+      // D73: connections taken off the bot's authorization (their server id is the
+      // connection id) interrupt its running tasks the same way.
+      await step('revoke app connections', () =>
+        deps.effects.revokeMcp(
+          previousRuntime.app_connection_ids
+            .filter((connectionId) => !runtime.app_connection_ids.includes(connectionId))
+            .map((serverId) => ({ serverId, botIds: [bot.id] })),
+        ),
+      );
       // W8: a different effective browser profile = the identity changed under
       // the bot's browser-using tasks → interrupted; its pages are closed.
-      if (deps.browserProfiles.profileKeyFor(bot.id) !== previousProfileKey) {
+      await step('browser profile switch', async () => {
+        if (deps.browserProfiles.profileKeyFor(bot.id) === previousProfileKey) return;
         deps.effects.publishInterrupted(
           await deps.browserProfiles.onBotProfileChanged(bot.id),
           'browser_profile',
         );
-      }
-      // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
-      deps.effects.revokeMcp(
-        serversRemovedFromBot(
-          previousRuntime.mcp_server_ids,
-          runtime.mcp_server_ids,
-          deps.settings.get().mcpServers,
-        ).map((serverId) => ({ serverId, botIds: [bot.id] })),
-      );
-      // D73: connections taken off the bot's authorization (their server id is the
-      // connection id) interrupt its running tasks the same way.
-      deps.effects.revokeMcp(
-        previousRuntime.app_connection_ids
-          .filter((connectionId) => !runtime.app_connection_ids.includes(connectionId))
-          .map((serverId) => ({ serverId, botIds: [bot.id] })),
-      );
+      });
+      return warnings;
     },
   };
 }

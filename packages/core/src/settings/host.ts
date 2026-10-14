@@ -681,39 +681,49 @@ export class SettingsCatalogHost {
     // 按键寻址的条目只读、只比对本次涉及的键（兄弟键的并发修改不算冲突）。
     const focus = { ...(expected ?? {}), ...values };
     let effects: ItemWriteEffects | null = null;
-    const outcome = await this.#deps.lock.run((): WriteOutcome => {
-      hooks.precheck?.();
-      const current = adapter.read(item, target, focus);
-      if (expected !== null) {
-        const sensitive = new Set(sensitiveFieldNames(item));
-        const mismatch = Object.entries(expected).some(
-          ([key, value]) => !sensitive.has(key) && !jsonEqual(current.values?.[key], value),
-        );
-        if (mismatch) return { status: 'conflict', current: current.values };
-      }
-      effects =
-        write(item, { next: { ...(current.values ?? {}), ...values }, secrets }, target) ?? null;
-      const after = adapter.read(item, target, focus).values;
-      hooks.onWritten?.(current.values, after);
-      return { status: 'applied', before: current.values, after };
-    });
-    if (outcome.status === 'applied') {
-      // 写后的副作用（中断任务、关浏览器页面、收回 MCP 授权）在写锁之外做：它们会 await，
-      // 锁里只放同步关键区。值已经写进去了，副作用失败只记日志、不把写入报成失败。
-      const done = effects as ItemWriteEffects | null;
-      if (done?.afterUnlock !== undefined) {
-        try {
-          await done.afterUnlock();
-        } catch (error) {
-          this.#deps.logger.warn(
-            { itemId: item.id, error: error instanceof Error ? error.message : String(error) },
-            'setting write side effects failed',
+    let outcome: WriteOutcome;
+    try {
+      outcome = await this.#deps.lock.run((): WriteOutcome => {
+        hooks.precheck?.();
+        const current = adapter.read(item, target, focus);
+        if (expected !== null) {
+          const sensitive = new Set(sensitiveFieldNames(item));
+          const mismatch = Object.entries(expected).some(
+            ([key, value]) => !sensitive.has(key) && !jsonEqual(current.values?.[key], value),
           );
+          if (mismatch) return { status: 'conflict', current: current.values };
         }
+        effects =
+          write(item, { next: { ...(current.values ?? {}), ...values }, secrets }, target) ?? null;
+        const after = adapter.read(item, target, focus).values;
+        hooks.onWritten?.(current.values, after);
+        return { status: 'applied', before: current.values, after };
+      });
+    } finally {
+      // 写后的副作用（收回 MCP / 连接授权、中断任务、关浏览器页面）在写锁之外做：它们会 await，
+      // 锁里只放同步关键区。只要写入已经发生（拿到了收尾），即使写之后的读 / 标卡抛错也照样执行——
+      // 授权不能因为后面的步骤失败就留在 Bot 手里。副作用失败只记日志、不把写入报成失败。
+      const done = effects as ItemWriteEffects | null;
+      if (done !== null) {
+        await this.#runAfterUnlock(item.id, done);
+        this.publishChanged([item.id, ...(done.changedItemIds ?? [])]);
       }
-      this.publishChanged([item.id, ...(done?.changedItemIds ?? [])]);
     }
+    if (outcome.status === 'applied' && effects === null) this.publishChanged([item.id]);
     return outcome;
+  }
+
+  async #runAfterUnlock(itemId: string, effects: ItemWriteEffects): Promise<void> {
+    if (effects.afterUnlock === undefined) return;
+    let warnings: readonly string[];
+    try {
+      warnings = (await effects.afterUnlock()) ?? [];
+    } catch (error) {
+      warnings = [error instanceof Error ? error.message : String(error)];
+    }
+    if (warnings.length > 0) {
+      this.#deps.logger.warn({ itemId, warnings }, 'setting write side effects failed');
+    }
   }
 
   /**
@@ -914,21 +924,43 @@ export class SettingsCatalogHost {
       snapshot.summary !== beforeText &&
       (snapshot.status === 'configured' || snapshot.status === 'unknown');
     const changed = valuesChanged || summaryChanged;
+    const proposedMet =
+      proposed !== null &&
+      Object.entries(proposed).every(([key, value]) => jsonEqual(snapshot.values?.[key], value));
+    if (auto) {
+      // 自动核对（用户没点任何东西）要证明「卡上要的事做成了」，不是「这一项动过」：
+      // - 有建议值：当前值满足建议值才算；
+      // - 没有建议值的放宽类空白卡（user-only）：变化必须是放宽方向（`valuesWiden`）——别处的
+      //   反向收紧不能把「请你放开网络」的卡结成「已应用」，误导被唤醒的 Bot；
+      // - 其余：变过即可（概要类条目另要求现在不是未配置 / 部分可用，见上）。
+      const adapter = this.#adapterOf(item);
+      const directional =
+        proposed === null &&
+        current.card.mode === 'user-only' &&
+        item.write.widensPermission &&
+        adapter.valuesWiden !== undefined &&
+        before !== null &&
+        snapshot.values !== null;
+      const done =
+        proposed !== null
+          ? proposedMet
+          : changed &&
+            (!directional || adapter.valuesWiden!(item, before, snapshot.values ?? {}));
+      if (!done) return { state: 'pending', verified: false };
+      this.#resolveCard(
+        current,
+        'applied',
+        snapshot.values !== null ? { applied: snapshot.values } : {},
+      );
+      return { state: 'applied', verified: true };
+    }
     if (snapshot.status === 'unknown' || snapshot.status === 'readonly') {
-      if (auto && !changed) return { state: 'pending', verified: false };
       this.#resolveCard(current, 'applied', snapshot.values !== null ? { applied: snapshot.values } : {});
-      return { state: 'applied', verified: auto ? true : null };
+      return { state: 'applied', verified: null };
     }
     // 用户可能在卡上改成了别的值（确认卡）或填了与预填不同的值（待填卡）：只要已配置好，或本条目
-    // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值。自动核对只认「变过」。
-    const verified = auto
-      ? changed
-      : (proposed !== null &&
-          Object.entries(proposed).every(([key, value]) =>
-            jsonEqual(snapshot.values?.[key], value),
-          )) ||
-        snapshot.status === 'configured' ||
-        changed;
+    // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值（用户亲手点的「我已设置好」）。
+    const verified = proposedMet || snapshot.status === 'configured' || changed;
     if (!verified) return { state: 'pending', verified: false };
     this.#resolveCard(
       current,

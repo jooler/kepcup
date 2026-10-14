@@ -664,7 +664,10 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         applyBotProfileUpdate(botProfileDeps, input.id, input.profile, input.base),
       );
       publishSettingsChanged(update.changedItemIds);
-      await update.settle();
+      const warnings = await update.settle();
+      if (warnings.length > 0) {
+        services.logger.warn({ botId: input.id, warnings }, 'bots.update side effects failed');
+      }
       return { bot: update.bot };
     }),
     'bots.avatar.upload': method(
