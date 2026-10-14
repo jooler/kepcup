@@ -1949,6 +1949,8 @@ export const zhCN = {
     'Cursor 的用量计入你的 Cursor 套餐额度。未开启「加载我的个人配置」时，KepCup 不使用你的 Cursor 个人 CLI 配置（其中的命令白名单会绕过逐条确认）。',
   'agents.terms.antigravity':
     '不要使用 Google 个人账号登录：Google 条款禁止第三方软件经个人账号访问 Antigravity，违者可能被封号（含 Gemini CLI）。KepCup 目前只提供 Gemini API key 登录（Vertex AI 需要的项目配置入口尚未提供）。',
+  'agents.terms.inkcop':
+    'InkCop 须先启动并登录；任务经本机 inkcop-acp 附着其主对话。LLM 密钥只在 InkCop 应用内，KepCup 不注入、不保存。写作任务走 ACP；独立知识库管理请直连 LoomVec，不要经本智能体代管。',
   'agents.enable': '启用',
   'agents.update': '更新',
   'agents.retry': '重试',
