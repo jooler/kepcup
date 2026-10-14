@@ -22,6 +22,15 @@ export interface AllowlistVerdict {
   exempt: boolean;
   /** Why the command still needs confirmation (or was rejected). */
   reason?: string;
+  /**
+   * Exempt verdicts: the entry patterns the segments matched (in segment order;
+   * callers tell built-in from user-added entries — only built-ins are proven
+   * read-only). Entries are tried in the order given, so callers list built-ins
+   * first.
+   */
+  matched?: string[];
+  /** Exempt verdicts: the program of every segment (`git`, `ls` …). */
+  programs?: string[];
 }
 
 /**
@@ -38,6 +47,7 @@ const DANGEROUS_OPTIONS: Record<string, string[]> = {
   // so our per-argument path check would judge the wrong locations (宁可漏判).
   // `--output` writes a file; `--ext-diff` / `--textconv` run programs from
   // the repository configuration; `--exec-path` re-points git's helpers.
+  // `git branch` has its own listing-only validator (`gitBranchArgsReason`).
   git: [
     '-c',
     '-C',
@@ -47,13 +57,7 @@ const DANGEROUS_OPTIONS: Record<string, string[]> = {
     '--ext-diff',
     '--textconv',
     '--exec-path',
-    // git branch mutations (entry prefix "git branch" would otherwise exempt these)
-    '-d',
-    '-D',
-    '-m',
-    '-M',
-    '--delete',
-    '--move',
+    '--config-env',
   ],
   sed: ['-i', '--in-place'],
   sort: ['-o', '--output', '--compress-program'],
@@ -182,18 +186,82 @@ function entryMatches(words: string[], entryWords: string[]): boolean {
   return entryWords.every((w, i) => words[i] === w);
 }
 
+/**
+ * `git branch` lists, creates, deletes, renames, copies and re-points branches
+ * under one name; the built-in entry may only list. Accepted (review P1):
+ * no positional argument (a name creates a branch) unless `--list` / `-l` makes
+ * them patterns; long options from a listing-only set (`--contains` /
+ * `--no-contains` / `--merged` / `--no-merged` / `--points-at` take a value,
+ * attached with `=` or as the next word); short flags only from `a r v l`,
+ * bundled or not (`-av`, `-vv`). Everything else — `-d` / `-D` / `-m` / `-M` /
+ * `-c` / `-C` / `-f` / `-u` / `-t` / `-q` and bundles such as `-qD`, `--force`,
+ * `--copy`, `--set-upstream-to`, `--unset-upstream`, `--track`,
+ * `--edit-description`, `--create-reflog`, unknown options — needs a card.
+ * Returns the reason, or null when the arguments only list.
+ */
+export function gitBranchArgsReason(args: readonly string[]): string | null {
+  const flagOnly = new Set([
+    '--all',
+    '--remotes',
+    '--verbose',
+    '--list',
+    '--show-current',
+    '--no-color',
+    '--ignore-case',
+    '--no-column',
+    '--omit-empty',
+  ]);
+  const withValue = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at']);
+  const attachedValue = new Set(['--sort', '--format', '--color', '--abbrev', '--column']);
+  const listing = args.some((arg) => arg === '--list' || (/^-[A-Za-z]+$/.test(arg) && arg.includes('l')));
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
+    if (arg === '--') {
+      // Everything after `--` is a positional (branch name / pattern).
+      if (!listing && i + 1 < args.length) return `参数 ${args[i + 1]} 会新建分支，不豁免`;
+      break;
+    }
+    if (arg.startsWith('--')) {
+      const name = arg.split('=', 1)[0] ?? arg;
+      const hasValue = arg.includes('=');
+      if (flagOnly.has(name) && !hasValue) continue;
+      if (attachedValue.has(name)) continue;
+      if (withValue.has(name)) {
+        // `--contains X` consumes X (git: the next word is the value unless it
+        // is the last argument); a value can never create a branch.
+        if (!hasValue && i + 1 < args.length && !(args[i + 1] ?? '').startsWith('-')) i += 1;
+        continue;
+      }
+      return `参数 ${arg} 可能修改分支（git branch 只豁免列出），不豁免`;
+    }
+    if (arg.startsWith('-') && arg.length > 1) {
+      if (!/^-[arvl]+$/.test(arg)) return `参数 ${arg} 可能修改分支（git branch 只豁免列出），不豁免`;
+      continue;
+    }
+    // A positional: a pattern under --list / -l, otherwise a new branch name.
+    if (!listing) return `参数 ${arg} 会新建分支，不豁免`;
+  }
+  return null;
+}
+
 function checkPosixSegment(
   segment: Segment,
   entries: string[][],
   ctx: AllowlistCheckContext,
+  matched: string[],
 ): string | null {
   const words = [segment.name, ...segment.args];
   const entry = entries.find((candidate) => entryMatches(words, candidate));
   if (entry === undefined) return `命令不在白名单中：${segment.name}`;
+  matched.push(entry.join(' '));
 
   const command = entry[0] ?? segment.name;
   const dangerous = DANGEROUS_OPTIONS[command] ?? [];
   const rest = words.slice(entry.length);
+  if (isGitBranchEntry(entry)) {
+    const branchReason = gitBranchArgsReason(rest);
+    if (branchReason !== null) return branchReason;
+  }
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (arg === undefined) continue;
@@ -217,8 +285,22 @@ function checkPosixSegment(
   return null;
 }
 
+/** The built-in `git branch` entry (Windows entries compare case-insensitively). */
+function isGitBranchEntry(entry: readonly string[]): boolean {
+  return (
+    entry.length === 2 &&
+    (entry[0] ?? '').toLowerCase() === 'git' &&
+    (entry[1] ?? '').toLowerCase() === 'branch'
+  );
+}
+
 /** Windows: only bare single commands (no pipes, redirections, substitution). */
-function checkWindows(command: string, entries: string[][], ctx: AllowlistCheckContext): string | null {
+function checkWindows(
+  command: string,
+  entries: string[][],
+  ctx: AllowlistCheckContext,
+  matched: string[],
+): string | null {
   const risky = /[|&;<>()`$\n]|\btry\b\s*\{/i;
   if (risky.test(command)) return '命令包含管道、重定向或替换结构，不豁免';
   const words = command.trim().split(/\s+/).map((w) => w.replace(/^"(.*)"$/, '$1'));
@@ -227,8 +309,13 @@ function checkWindows(command: string, entries: string[][], ctx: AllowlistCheckC
     entryMatches(words.map((w) => w.toLowerCase()), candidate.map((w) => w.toLowerCase())),
   );
   if (entry === undefined) return `命令不在白名单中：${words[0] ?? ''}`;
+  matched.push(entry.join(' '));
   const program = (entry[0] ?? '').toLowerCase();
   const dangerous = DANGEROUS_OPTIONS[program] ?? [];
+  if (isGitBranchEntry(entry)) {
+    const branchReason = gitBranchArgsReason(words.slice(entry.length));
+    if (branchReason !== null) return branchReason;
+  }
   for (const arg of words.slice(entry.length)) {
     if (dangerous.some((option) => isDangerousOption(program, arg, option))) {
       return `参数 ${arg} 具有写入或执行语义，不豁免`;
@@ -329,20 +416,24 @@ export function matchAllowlistCommand(
   const entries = ctx.entries
     .map((pattern) => pattern.trim().split(/\s+/).filter((w) => w.length > 0))
     .filter((words) => words.length > 0);
+  const matched: string[] = [];
+  const programOf = (pattern: string) => (pattern.split(' ')[0] ?? '').toLowerCase();
   try {
     if (ctx.platform === 'windows') {
-      const reason = checkWindows(command, entries, ctx);
-      return reason === null ? { exempt: true } : { exempt: false, reason };
+      const reason = checkWindows(command, entries, ctx, matched);
+      return reason === null
+        ? { exempt: true, matched, programs: matched.map(programOf) }
+        : { exempt: false, reason };
     }
     const segments: Segment[] = [];
     if (segmentsOf(parse(command), segments) === null) {
       return { exempt: false, reason: '命令包含白名单不允许的结构（管道段、替换、赋值前缀、重定向等）' };
     }
     for (const segment of segments) {
-      const reason = checkPosixSegment(segment, entries, ctx);
+      const reason = checkPosixSegment(segment, entries, ctx, matched);
       if (reason !== null) return { exempt: false, reason };
     }
-    return { exempt: true };
+    return { exempt: true, matched, programs: matched.map(programOf) };
   } catch {
     return { exempt: false, reason: '命令无法解析，不豁免' };
   }
