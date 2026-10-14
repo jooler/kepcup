@@ -579,6 +579,11 @@ export const zhCN = {
     '自定义条目可能不是只读的（例如 npm test 会执行项目代码），风险由你承担。',
   'allowlist.reset': '恢复默认',
   'allowlist.empty': '没有条目。',
+  'allowlist.addFromCard': '加入白名单',
+  'allowlist.addAndApprove': '添加并批准',
+  'allowlist.addFromCardCancel': '取消',
+  'allowlist.addFromCardHint': '以后匹配此前缀的命令将直接放行（仍受路径范围约束）。',
+  'allowlist.addFailed': '无法加入白名单',
   'settings.sandboxNoteP03': '沙箱不可用时进入逐条确认模式：每条命令经你确认后在沙箱外执行。',
 
   // --- P04 Project --------------------------------------------------------------

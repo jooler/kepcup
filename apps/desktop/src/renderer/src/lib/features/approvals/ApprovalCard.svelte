@@ -26,13 +26,17 @@
     Bot,
     Globe,
   } from '@lucide/svelte';
-  import { t, type MessageKey } from '$lib/i18n';
+  import { t, errorText, type MessageKey } from '$lib/i18n';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { Input } from '$lib/components/ui/input';
+  import { core } from '$lib/rpc/client.svelte';
+  import { toast } from 'svelte-sonner';
+  import { suggestAllowlistPrefix } from './suggest-allowlist-prefix';
   import McpRiskBadge from './McpRiskBadge.svelte';
   import HandoverCard from '$lib/features/handover/HandoverCard.svelte';
   import {
@@ -72,6 +76,11 @@
 
   let cardEl: HTMLDivElement | undefined = $state();
   let duration = $state<ApprovalDuration>('once');
+
+  /** kind===command only: expand「加入白名单」editor before add+approve. */
+  let allowlistOpen = $state(false);
+  let allowlistPattern = $state('');
+  let allowlistBusy = $state(false);
 
   // D65 mcp_tool payload: MCP 工具调用卡（服务器/工具/参数摘要）。
   const mcpTool = $derived.by(() => {
@@ -237,6 +246,39 @@
     void permissions.decide(approval.id, false, undefined, undefined, boundHash);
   }
 
+  /** Only mid-turn `command` cards (not unsandboxed / git_remote / access / …). */
+  const canAddAllowlist = $derived(pending && approval.kind === 'command' && command.trim().length > 0);
+
+  function openAllowlist(): void {
+    allowlistPattern = suggestAllowlistPrefix(command);
+    allowlistOpen = true;
+  }
+
+  function cancelAllowlist(): void {
+    allowlistOpen = false;
+    allowlistPattern = '';
+  }
+
+  async function addAllowlistAndApprove(): Promise<void> {
+    const trimmed = allowlistPattern.trim();
+    if (trimmed.length === 0 || allowlistBusy) return;
+    allowlistBusy = true;
+    try {
+      await core.call('allowlist.add', { pattern: trimmed });
+      toast.success(t('settings.saved'));
+      allowlistOpen = false;
+      approve();
+    } catch (error) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : undefined;
+      toast.error(errorText(code, t('allowlist.addFailed')));
+    } finally {
+      allowlistBusy = false;
+    }
+  }
+
   // W4 回执：已批准的卡片底部显示执行结果（已完成 / 失败 / 结果未知 / 已拒绝 /
   // 执行中）；去重门的「上次同样的操作结果未知」提示在待决卡片顶部。
   const effectLine = $derived(approvalEffectLine(approval));
@@ -247,6 +289,16 @@
 
   function onKeydown(event: KeyboardEvent): void {
     if (!pending) return;
+    if (allowlistOpen) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void addAllowlistAndApprove();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelAllowlist();
+      }
+      return;
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       approve();
@@ -1154,24 +1206,66 @@
       </div>
     {/if}
 
-    <div class="mt-3 flex items-center gap-2">
-      <Button
-        size="sm"
-        onclick={approve}
-        disabled={approval.kind === 'butler_proposal' &&
-          butlerProposal !== null &&
-          butlerProposal.proposalType !== 'group' &&
-          butlerKept.length === 0}
-        data-testid="approval-approve"
-        >{approval.kind === 'butler_proposal'
-          ? t('approvals.butlerConfirm')
-          : approval.kind === 'egress'
-            ? t('approvals.egress.allowOnce')
-            : t('approvals.approve')}</Button
+    {#if canAddAllowlist && allowlistOpen}
+      <div
+        class="mt-3 space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2"
+        data-testid="approval-allowlist-editor"
       >
-      <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
-        >{t('approvals.deny')}</Button
-      >
-    </div>
+        <p class="text-xs text-muted-foreground">{t('allowlist.addFromCardHint')}</p>
+        <Input
+          class="font-mono text-sm"
+          bind:value={allowlistPattern}
+          placeholder={t('allowlist.addPlaceholder')}
+          data-testid="approval-allowlist-pattern"
+        />
+        <p class="text-xs text-amber-700 dark:text-amber-400">{t('allowlist.addWarning')}</p>
+        <div class="flex items-center gap-2">
+          <Button
+            size="sm"
+            onclick={() => void addAllowlistAndApprove()}
+            disabled={allowlistBusy || allowlistPattern.trim().length === 0}
+            data-testid="approval-allowlist-confirm"
+            >{t('allowlist.addAndApprove')}</Button
+          >
+          <Button
+            size="sm"
+            variant="ghost"
+            onclick={cancelAllowlist}
+            disabled={allowlistBusy}
+            data-testid="approval-allowlist-cancel"
+            >{t('allowlist.addFromCardCancel')}</Button
+          >
+        </div>
+      </div>
+    {:else}
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          onclick={approve}
+          disabled={approval.kind === 'butler_proposal' &&
+            butlerProposal !== null &&
+            butlerProposal.proposalType !== 'group' &&
+            butlerKept.length === 0}
+          data-testid="approval-approve"
+          >{approval.kind === 'butler_proposal'
+            ? t('approvals.butlerConfirm')
+            : approval.kind === 'egress'
+              ? t('approvals.egress.allowOnce')
+              : t('approvals.approve')}</Button
+        >
+        <Button size="sm" variant="outline" onclick={deny} data-testid="approval-deny"
+          >{t('approvals.deny')}</Button
+        >
+        {#if canAddAllowlist}
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={openAllowlist}
+            data-testid="approval-allowlist-open"
+            >{t('allowlist.addFromCard')}</Button
+          >
+        {/if}
+      </div>
+    {/if}
   </div>
 {/if}
