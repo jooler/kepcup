@@ -31,6 +31,7 @@ import { mergeUnreadCount } from '../features/chats/unread';
 import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
+import { botMessageMutesRun } from '../features/chats/run-status-mute';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -297,7 +298,9 @@ class ChatState {
         run,
         progress: '',
         toolName: '',
-        muted: false,
+        // Same yield as live message.created ingest: a bot message of this run
+        // already in the loaded page means the status line starts hidden.
+        muted: botMessageMutesRun(messages, run.id),
         at: run.startedAt ?? run.createdAt,
       })),
       failedRun: failed,
@@ -949,6 +952,7 @@ function isActive(status: Run['status']): boolean {
     status === 'waiting_lease'
   );
 }
+
 
 function errorCode(error: unknown): string | undefined {
   return (error as { code?: string } | undefined)?.code;

@@ -236,7 +236,7 @@ test('start a task → task card → progress attributed → inject line → res
     await expect(card2).toHaveAttribute('data-task-state', 'running', { timeout: 60_000 });
     await expect.poll(() => held2.consumed, { timeout: 30_000 }).toBe(true);
     // The status line shows the task's activity (no cancel there).
-    await expect(page.locator('[data-testid="run-status"]').first()).toContainText('长任务', {
+    await expect(page.locator('[data-testid="task-status"]').first()).toContainText('长任务', {
       timeout: 30_000,
     });
     await card2.locator('[data-testid="task-cancel"]').click();
@@ -244,7 +244,7 @@ test('start a task → task card → progress attributed → inject line → res
     await expect(card2.locator('[data-testid="task-cancel-reason"]')).toContainText('用户取消');
     await expect(card2.locator('[data-testid="task-changes"]')).toHaveCount(0);
     await expect(card2.locator('[data-testid="task-revert"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="run-status"]')).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator('[data-testid="task-status"]')).toHaveCount(0, { timeout: 30_000 });
     // Cancelling never wakes the bot: still only the one waking turn (the first task's).
     await page.waitForTimeout(1_500);
     expect(llm.requestsFor('mock-main').filter(isWake)).toHaveLength(1);
