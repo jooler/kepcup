@@ -48,7 +48,15 @@
       return isMode(userPrefersMode.current) ? userPrefersMode.current : 'system';
     }),
   );
-  let draftLanguage = $state(untrack(() => prefillString(prefill, 'language') ?? i18n.locale));
+  // 预填只认支持的界面语言；别的值（Bot 随口给的 'en' 之类）忽略，草稿停在当前语言。
+  let draftLanguage = $state(
+    untrack(() => {
+      const wanted = prefillString(prefill, 'language');
+      return wanted !== null && localeOptions.some((option) => option.id === wanted)
+        ? wanted
+        : i18n.locale;
+    }),
+  );
   let busy = $state(false);
 
   async function applyEmbedded(): Promise<void> {

@@ -46,25 +46,26 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'field-editor',
   'appearance',
   'group-title',
+  // 已安装 MCP 的启停：组件经 settings.items.apply（core 写锁 + CAS，锁外收回授权）。
+  'mcp-servers',
 ]);
 
 /**
- * 组件用原来的保存 RPC 自己写，成功后 `onSaved` 让宿主核对结卡。
- * 宿主不另给「应用」：群成员的移出是异步级联，不能放进设置写锁；项目两项是 user-only，
- * 保护规则由用户在组件里改，宿主不写。连接的逐工具策略由组件调用
- * `apps.connections.setToolPolicy`（策略变严时中断正在使用该连接的任务）；写锁里只调
- * `setToolPolicy` 会丢掉这段。已安装 MCP 的启停由组件调用 `settings.update`（写之前对
- * OAuth 绑定变化做 `reconcileServers`，写之后 `mcpRevocationsBetween` 调 `revokeMcp`）；
- * 写锁里直接 `settings.update` 会丢掉这两段。共享浏览器资料的新建由组件调用
- * `browserProfiles.create`（服务读当前列表再追加一条）；写锁里整表替换会丢掉这段，也可能
- * 覆盖刚建的另一条资料。工具链的重新检测和失败项重装、沙箱的重新检测、命令白名单的添加和启停
- * 也会 `onSaved`，但空白卡仍保留「我已设置好」，所以不放进这个集合。
+ * 组件用原来的**条目级**保存 RPC 自己写（都不是整表快照提交），成功后 `onSaved` 让宿主核对结卡。
+ * 宿主不另给「应用」：
+ * - 群成员：`groups.addMembers` / `groups.removeMember` 按 Bot 增删（移出是异步级联，不能放进
+ *   设置写锁）；卡片只提交用户亲手勾 / 不勾的差异，见 `group-members.ts`。
+ * - 项目两项是 user-only，保护规则与风险确认留在组件，宿主不写。
+ * - 连接的逐工具策略：`apps.connections.setToolPolicy` 只改这一条工具（同步写一行），策略变严时
+ *   中断正在使用该连接的任务。
+ * - 共享浏览器资料的新建：`browserProfiles.create` 在服务里读当前列表再追加一条。
+ * 工具链的重新检测和失败项重装、沙箱的重新检测、命令白名单的添加和启停也会 `onSaved`，但空白卡
+ * 仍保留「我已设置好」，所以不放进这个集合。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'group-members',
   'project-settings',
   'tool-policy',
-  'mcp-servers',
   'browser-profiles',
 ]);
 
@@ -235,6 +236,14 @@ export function hostApplies(
 /** 「我已设置好」：用户亲手设置的形态（form / user-only / link）给，confirm 与回执卡不给。 */
 export function offersManualComplete(view: SettingCardView): boolean {
   return view === 'form' || view === 'user-only' || view === 'link';
+}
+
+/**
+ * 打开对话时自动核对一次的形态（与 core `completeCard({auto})` 一致）：用户在别处完成的
+ * link / user-only / form；confirm 有宿主「应用」，回执卡不需要。
+ */
+export function autoVerifiable(view: SettingCardView): boolean {
+  return view === 'link' || view === 'user-only' || view === 'form';
 }
 
 /**

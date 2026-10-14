@@ -4,7 +4,7 @@
   import { userPrefersMode } from 'mode-watcher';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import { i18n, t } from '$lib/i18n';
+  import { i18n, localeOptions, t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
@@ -16,6 +16,7 @@
   import { applyRendererValues } from './renderer-items';
   import {
     applySettingItem,
+    autoVerifySettingCardOnce,
     completeSettingCard,
     dismissSettingCard,
     undoSettingCard,
@@ -29,6 +30,7 @@
     confirmHasFields,
     nonSensitiveValues,
     offersManualComplete,
+    autoVerifiable,
     receiptUndo,
     settingCardOf,
     settingCardPrefill,
@@ -160,6 +162,7 @@
           setLanguage: (language) => {
             i18n.locale = language;
           },
+          languages: localeOptions.map((option) => option.id),
         });
         if (!written) {
           await openSettingDeepLink(entry, content.target);
@@ -209,6 +212,14 @@
       undoConflict = out.status === 'conflict';
     });
   }
+
+  // 打开对话时：待处理的 link / user-only / form 卡核对一次（用户可能在卡片没挂着时已在设置页做完）。
+  // 每张卡本会话只请求一次，core 只在条目确实变过时结卡并唤醒 Bot。
+  $effect(() => {
+    if (!pending || !autoVerifiable(view)) return;
+    const id = message.id;
+    untrack(() => void autoVerifySettingCardOnce(id));
+  });
 
   // link 卡：在设置页保存后 core 广播 settings.changed，含本条目即自动完成（§6.1）。只认挂载
   // 之后的变化（序号比挂载时新），同一张卡只发一次。

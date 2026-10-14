@@ -18,7 +18,8 @@
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
   import { mcpTargetLocked } from './mcp-edit';
-  import { mcpServerId, patchMcpServerEnabled } from './mcp-server-patch';
+  import { mcpServerId } from './mcp-server-patch';
+  import { applySettingItem } from '$lib/features/settings-card/apply';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
   /**
@@ -35,9 +36,11 @@
    * 把测试时看到的定义哈希交给 `apps.tools.approveAfterTest`；批准前工具不暴露给
    * Bot，行上显示待批准数（`apps.connections.tools`，连接 id `custom:{serverId}`）。
    *
-   * `embedded`：对话内设置卡只改 before 指向的那一个服务的启用开关。保存时读当前
-   * `mcpServers`，只改这一条的 `enabled`，再走 `settings.update`（OAuth 对账与停用后的
-   * 任务中断留在那条 RPC 里）。不带编辑、密钥、删除、免审批、逐工具策略和 .mcpb 安装。
+   * `embedded`：对话内设置卡只改 before 指向的那一个服务的启用开关。保存经
+   * `settings.items.apply`（条目 `mcp.servers`）：core 在设置写锁里读最新的 `mcpServers`、
+   * 按 before 做 CAS、只改这一条的 `enabled`，锁外收回授权（停用正在用的服务会中断任务）——
+   * 不再从渲染层缓存整表提交 `settings.update`，过期缓存覆盖不了别处的修改。带卡片 id 时
+   * core 直接把卡标 applied。不带编辑、密钥、删除、免审批、逐工具策略和 .mcpb 安装。
    * 服务 id 从 before 取，不从预填取——user-only 会把预填整份清空。
    */
 
@@ -46,15 +49,21 @@
     embedded = false,
     before = null,
     prefill = null,
+    messageId = undefined,
     onSaved,
+    onConflict,
   }: {
     variant?: 'manage' | 'full';
     embedded?: boolean;
-    /** 出卡时的当前值（读适配器快照）：`server`。 */
+    /** 出卡时的当前值（读适配器快照）：`server`、`enabled`；也是 CAS 的 `expected`。 */
     before?: SettingValues | null;
     /** 停用时的建议值（`enabled: false`）。启用是放宽，预填为 null。 */
     prefill?: SettingValues | null;
+    /** 设置卡消息 id：成功后 core 把卡标 applied 并唤醒 Bot。 */
+    messageId?: string | undefined;
     onSaved?: () => void;
+    /** 出卡之后这个服务的启用状态在别处变过（CAS 冲突）。 */
+    onConflict?: (current: SettingValues | null) => void;
   } = $props();
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
@@ -108,13 +117,17 @@
     if (embeddedId === null || embeddedServer === null || savingEmbedded) return;
     savingEmbedded = true;
     try {
-      const existing = settingsStore.settings?.mcpServers ?? [];
-      const patched = patchMcpServerEnabled(existing, embeddedId, embeddedEnabled);
-      if (!patched.ok) {
-        toast.error(t('settingCard.mcp.notFound'));
+      const out = await applySettingItem({
+        itemId: 'mcp.servers',
+        values: { server: embeddedId, enabled: embeddedEnabled },
+        expected: before,
+        messageId,
+      });
+      if (out.status === 'conflict') {
+        onConflict?.(out.current);
         return;
       }
-      await settingsStore.update({ mcpServers: patched.servers });
+      toast.success(t('settingCard.appliedToast'));
       onSaved?.();
     } catch (error) {
       toast.error(String((error as Error).message ?? error));
