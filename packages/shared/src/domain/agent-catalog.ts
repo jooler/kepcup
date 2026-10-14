@@ -523,9 +523,43 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
 };
 
 /**
+ * InkCop（design 28 / InkCop ACP 规划 §10）：本机已装 `inkcop-acp` stdio 适配器，
+ * 经通用 ACP Provider 附着已运行的 InkCop 主对话。密钥与登录态只在 InkCop 应用内；
+ * 发行门禁 `inkcop` 预览期不放行（agent-release-gates.json）。
+ */
+const INKCOP_AGENT_ENTRY: AgentCatalogEntry = {
+  id: 'inkcop',
+  name: 'InkCop',
+  version: '0.1.0',
+  description: 'InkCop 主对话（写作），经 ACP 暴露给 KepCup 任务引擎',
+  authors: ['InkCop'],
+  license: 'proprietary',
+  icon: 'inkcop.svg',
+  distribution: {
+    system: {
+      cmd: 'inkcop-acp',
+      detect: ['--version'],
+      versionRange: '>=0.1.0',
+    },
+  },
+  provider: 'generic-acp',
+  transport: 'acp',
+  tier: 'preview',
+  // P0 工具默认关；P1 只读工具名再核对后填入。
+  nativeCapabilities: {},
+  auth: {
+    kinds: ['anonymous'],
+    note: '请先启动并登录 InkCop；密钥不经 KepCup 注入',
+  },
+  terms: { noticeKey: 'agents.terms.inkcop' },
+  releaseGate: 'inkcop',
+};
+
+/**
  * 策展目录：只在实验开关 `settings.experimental.externalAgents` 打开时可选。
  * P2 收录 Claude Agent 与 Codex（安装器在 P4：此前只能经测试缝启动）；
- * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity。
+ * P5 收录 OpenCode、DeepSeek Harness、Cursor、Google Antigravity；
+ * InkCop 以 system 分发挂入（本机 `inkcop-acp`）。
  */
 export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
   FAKE_AGENT_ENTRY,
@@ -535,6 +569,7 @@ export const AGENT_CATALOG: readonly AgentCatalogEntry[] = [
   DSH_AGENT_ENTRY,
   CURSOR_AGENT_ENTRY,
   ANTIGRAVITY_AGENT_ENTRY,
+  INKCOP_AGENT_ENTRY,
 ];
 
 export function findAgentEntry(

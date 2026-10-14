@@ -123,7 +123,7 @@ describe('capability resolution (P2)', () => {
 });
 
 describe('agent catalog', () => {
-  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2) and the P5 agents', () => {
+  it('ships only schema-valid entries: the testkit fake, Claude Agent, Codex (P2), the P5 agents, and InkCop', () => {
     for (const entry of AGENT_CATALOG) {
       expect(agentCatalogEntrySchema.safeParse(entry).success).toBe(true);
     }
@@ -135,6 +135,7 @@ describe('agent catalog', () => {
       'dsh',
       'cursor',
       'antigravity-acp',
+      'inkcop',
     ]);
     expect(AGENT_CATALOG[0]).toMatchObject({ provider: 'generic-acp', releaseGate: 'testkit' });
     expect(AGENT_CATALOG[1]).toMatchObject({
@@ -228,6 +229,23 @@ describe('agent catalog', () => {
     // Fail-closed: an entry without a gate is not shipped either.
     expect(filterReleasedAgents(entries, []).map((e) => e.id)).toEqual([]);
     expect(filterReleasedAgents(entries, ['claude']).map((e) => e.id)).toEqual(['claude']);
+  });
+
+  it('InkCop: system inkcop-acp via generic-acp, anonymous auth, preview gate', () => {
+    const inkcop = AGENT_CATALOG.find((entry) => entry.id === 'inkcop')!;
+    expect(inkcop).toMatchObject({
+      provider: 'generic-acp',
+      transport: 'acp',
+      tier: 'preview',
+      releaseGate: 'inkcop',
+      auth: { kinds: ['anonymous'] },
+      terms: { noticeKey: 'agents.terms.inkcop' },
+      distribution: {
+        system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
+      },
+    });
+    expect(inkcop.distribution.npx).toBeUndefined();
+    expect(inkcop.distribution.binary).toBeUndefined();
   });
 
   it('every curated entry declares its release gate', () => {
