@@ -313,6 +313,13 @@ export const settingsUpdateInputSchema = z.object({
     .optional(),
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
   defaultAgentId: z.string().optional(),
+  /**
+   * D89 审查修复：这份补丁是从哪一版设置快照改出来的（只需带补丁里的顶层键）。给了就由 core 按
+   * 键三方合并（`mergeThreeWay`）：表单没改的字段保留最新值（Bot 直改、设置卡、别处保存的不被
+   * 过期表单覆盖），按 id 寻址的数组按条合并；两边都改了同一字段以这次保存为准。不给 = 整体覆盖
+   * （老行为）。
+   */
+  base: z.record(z.string(), z.unknown()).optional(),
 });
 
 // --- 设置目录（todo/conversational-app-setup.md §4.1 / §6）---------------------
@@ -355,6 +362,13 @@ export type SettingsItemsApplyOutput = z.infer<typeof settingsItemsApplyOutputSc
 
 /** 设置卡动作（同 D80 提议卡）：卡片的消息 id。 */
 export const settingsCardInputSchema = z.object({ messageId: z.string().min(1) });
+/**
+ * 「我已设置好」的输入。`auto`：打开对话时渲染层对待处理卡片的自动核对（用户没点任何东西）——
+ * 只在条目相对出卡时确实变过才结卡，否则原样 pending，不唤醒 Bot（同一张卡有限频）。
+ */
+export const settingsCardsCompleteInputSchema = settingsCardInputSchema.extend({
+  auto: z.boolean().optional(),
+});
 /** 「不用了」：卡片标 dismissed，唤醒 Bot 一次（§6.2）；已落定的卡原样返回其状态。 */
 export const settingsCardsDismissOutputSchema = z.object({ state: settingCardStateSchema });
 /**
@@ -753,6 +767,11 @@ export const botsCreateInputSchema = z
 export const botsUpdateInputSchema = z.object({
   id: z.string().min(1),
   profile: namedProfile,
+  /**
+   * D89 审查修复：表单是从哪一版 Profile 改出来的。给了就由 core 与最新 Profile 三方合并——表单没
+   * 碰的字段（如 Bot 刚直改的模型）不被过期表单覆盖；不给 = 整份覆盖（老行为）。
+   */
+  base: z.record(z.string(), z.unknown()).optional(),
 });
 /**
  * Upload an avatar image for a bot. The renderer sends the (already
@@ -1687,7 +1706,7 @@ export const rpcMethodSchemas = {
     output: settingsCardsDismissOutputSchema,
   },
   'settings.cards.complete': {
-    input: settingsCardInputSchema,
+    input: settingsCardsCompleteInputSchema,
     output: settingsCardsCompleteOutputSchema,
   },
   'settings.cards.undo': { input: settingsCardInputSchema, output: settingsCardsUndoOutputSchema },
