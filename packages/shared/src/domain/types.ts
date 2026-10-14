@@ -942,6 +942,11 @@ export type HandoverEventContent = NonNullable<SystemEventContent['handover']>;
 export const cardContentSchema = z.object({
   cardType: z.string(),
   approvalId: z.string().default(''),
+  /**
+   * Mid-turn permission cards only: keep a folded record in the transcript
+   * (auto-decided, egress or taint-flagged; see `isApprovalRecordCard`).
+   */
+  record: z.boolean().optional(),
   /** Run-changes cards only: the run the changes belong to. */
   runId: z.string().optional(),
   /** Delegation cards only (D71, cardType delegation_sent / delegation_result). */
@@ -1544,6 +1549,31 @@ export const EPHEMERAL_APPROVAL_CARD_TYPES = [
 
 export function isEphemeralApprovalCardType(cardType: string): boolean {
   return (EPHEMERAL_APPROVAL_CARD_TYPES as readonly string[]).includes(cardType);
+}
+
+/**
+ * Whether a mid-turn permission card stays in the transcript as a one-line
+ * folded record (card content `record: true`, set by the approvals service
+ * when the card is created): cards decided automatically (unattended mode —
+ * they never reach the dock, so the record is the user's only trace) and
+ * egress / taint-flagged cards (the D73 trail). The renderer still hides a
+ * record while it is pending: the dock is the popup.
+ */
+export function isApprovalRecordCard(content: { cardType?: unknown; record?: unknown }): boolean {
+  return (
+    typeof content.cardType === 'string' &&
+    isEphemeralApprovalCardType(content.cardType) &&
+    content.record === true
+  );
+}
+
+/** Ephemeral permission card that is not kept as a record: hidden from the transcript. */
+export function isHiddenApprovalCard(content: { cardType?: unknown; record?: unknown }): boolean {
+  return (
+    typeof content.cardType === 'string' &&
+    isEphemeralApprovalCardType(content.cardType) &&
+    content.record !== true
+  );
 }
 
 export const approvalStatusSchema = z.enum([

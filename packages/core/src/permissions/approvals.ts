@@ -1329,6 +1329,14 @@ export class ApprovalsService {
 
   /** Card message: content links to the approval; payload stays in the row. */
   #insertCard(approval: Approval) {
+    // Mid-turn permission cards are hidden from the transcript (the dock is the
+    // popup) unless they are a record the user must be able to find later: an
+    // automatic decision (unattended — it never reached the dock) or an egress /
+    // taint-flagged card (D73 trail). Other kinds ignore the flag.
+    const record =
+      approval.autoApproved === true ||
+      approval.kind === 'egress' ||
+      approval.payload['tainted'] === true;
     const card = this.#deps.messages.append({
       conversationId: approval.conversationId ?? '',
       senderType: 'system',
@@ -1338,9 +1346,10 @@ export class ApprovalsService {
       runId: approval.runId,
       approvalId: approval.id,
       cardType: approval.kind,
+      ...(record ? { cardRecord: true } : {}),
     });
     // The row feeds the bot's context. Mid-turn permission cards (access,
-    // command, …) are hidden from the transcript — the dock is the popup.
+    // command, …) are hidden from the transcript except the records above.
     // Import, install, and handover cards stay, so a failed finalize still
     // has a folded record.
     this.#deps.publish('message.created', {
