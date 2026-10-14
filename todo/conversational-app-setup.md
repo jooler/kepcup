@@ -353,18 +353,20 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ### 8.3 P2 ⏳ 待做：收拢与遗留问题
 
+交接说明（给另开的对话，按条做、做完就停）：[todo/conversational-settings-p2.md](conversational-settings-p2.md)。本节清单仍是原文；开工以交接文档和当前代码为准。
+
 **方案内的两项**
 
-- [ ] **D58 的 7 个旧 kind 并入通用设置卡**：`main-model`、`capability-model`、`web-search`、`agent`、`connect-app`、`confirm-local-connector`、`mail-account` 目前各自在 `SetupRequiredCard` 里有独立分支。目标是让它们也由 `SettingCard` 的分发逻辑渲染，`setupRequirementSchema` 里旧 kind 要么迁移到 `kind:'setting'`，要么保留兼容别名。完成标准：发送门禁、失败续跑、放弃分支（`runs.setupDismissed`）的行为不变，现有 `setup-card.spec` 保持通过。
-- [ ] **提示词规则合并评估**：评估把 `APP_REQUEST_CONNECTION_RULE` 和 `mailRequestSetupRule` 并入新的那一条设置规则，以进一步缩短常驻提示词。需要对比合并前后模型实际行为（见 P3），不能只看字数；结论要写进设计篇。
-- [ ] **设置页分区由目录卡片组成（评估）**：评估能否让设置页各分区直接由目录里的卡片渲染，使卡片成为设置的唯一渲染单元。只做评估，是否实施另行决定。
+- [x] **D58 的 7 个旧 kind 并入通用设置卡**（P2 已做，2026-10-14）：`SetupRequiredCard` 成为外壳，分发集中在 `SettingSetupBody`。三个一对一的 kind（capability-model / web-search / mail-account）转成 `kind:'setting'` 走目录分发；`agent` / `connect-app` 保留别名 body（多出的字段与随附行为不压平）；`main-model` 两段式与 `confirm-local-connector` 保留独立 kind。详见设计篇 38 §5.3。
+- [x] **提示词规则合并评估**：结论「现在不并」，P3 拿真实模型行为对比后再定（设计篇 38 §11.1）。
+- [x] **设置页分区由目录卡片组成（评估）**：结论「不做」；若将来要做第一刀切「联网检索」分区（设计篇 38 §11.2）。
 
 **P0 留下的遗留问题（需要在 P2 处理或明确放弃）**
 
-- [x] **设置页过期的整表单保存会覆盖 Bot 的直接修改**（审查修复已解决）：两个 RPC 增可选 `base`，core 在写锁里与最新值三方合并（表单没改的字段保留最新值，按 id 寻址的数组按条合并，两边改同一字段以这次保存为准）；`settingsStore.update` 默认带本地快照，右栏 Profile 保存带最近保存的版本。选三方合并而不是乐观并发版本号：两处都是自动保存，版本冲突会频繁报错。**仍然留着的**：不带 `base` 的 `bots.update` 调用方（右栏表单以外的入口：失败续跑卡、连接授权卡、侧栏对话框、头像）仍是整份覆盖，但它们都是「读当前 Bot → 改一处 → 立刻保存」，窗口极短；持有长期草稿的表单若绕过 `settingsStore.update` 需自己传出发快照。
-- [ ] **主干上原本就有的 e2e 失败要查清根因**。P0 收口时 e2e 有 9 例失败，在未改动的主干上同样失败（见 §8.5）。其中 3 例在 `external-agents.spec` 里，与设置卡里的智能体卡（`AgentCard`）相关；P0 只确认了它们在主干上同样失败，**没有查根因**。要确认 `AgentCard` 加 props 的改动没有间接影响，并尽量修好。
-- [x] **跳转卡只在被渲染的对话里才会自动完成**（审查修复已解决）：待处理的 link / user-only / form 卡挂载时调 `settings.cards.complete{auto:true}` 一次（每张卡本会话一次，core 同一张卡 30 秒限频），core 只在条目相对出卡时确实变过才结卡并唤醒一次，没变或无法核对都保持 pending。
-- [ ] **未带 Key 的自定义厂商会让「换模型」变成待填卡**，而不是直接改。这符合「只能在已配置 Key 的厂商里选」的产品规则，需要确认这就是预期行为，并把结论写进设计篇。
+- [x] **设置页过期的整表单保存会覆盖 Bot 的直接修改**（审查修复已解决）：两个 RPC 增可选 `base`，core 在写锁里与最新值三方合并（表单没改的字段保留最新值，按 id 寻址的数组按条合并，两边改同一字段以这次保存为准）；`settingsStore.update` 默认带本地快照，右栏 Profile 保存带最近保存的版本。选三方合并而不是乐观并发版本号：两处都是自动保存，版本冲突会频繁报错。P2 原评估的 `expected` / `SETTINGS_CONFLICT` 未采用（设计篇 38 §11.3）。**仍然留着的**：不带 `base` 的 `bots.update` 调用方（右栏表单以外的入口：失败续跑卡、连接授权卡、侧栏对话框、头像）仍是整份覆盖，但它们都是「读当前 Bot → 改一处 → 立刻保存」，窗口极短；持有长期草稿的表单若绕过 `settingsStore.update` 需自己传出发快照。
+- [ ] **主干上原本就有的 e2e 失败要查清根因**（P2 未做：交接约定等审查收口后再查；本轮只确认了 `external-agents` / `local-connectors` 的失败方式与未改动基线一致，见 PROGRESS「对话内应用设置 P2」）。
+- [x] **跳转卡只在被渲染的对话里才会自动完成**（审查修复 + P2）：待处理的 link / user-only / form 卡挂载时调 `settings.cards.complete{auto:true}` 一次；另增 `settings.cards.recheck`，`chat.select` / `loadEarlier` 对 pending 的 link 卡再核对一次（核对不了的不擅自标完成，设计篇 38 §4.3）。
+- [x] **未带 Key 的自定义厂商会让「换模型」变成待填卡**：确认为预期，不改代码（设计篇 38 §11.4）。
 
 **已知并接受的取舍**（不作为待办，但接手者要知道）
 
