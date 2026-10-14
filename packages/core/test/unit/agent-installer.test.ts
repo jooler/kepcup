@@ -706,6 +706,40 @@ describe('AgentInstaller — system CLI', () => {
     });
     expect(installer.systemInvocation(systemEntry())).toBeNull();
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'runs extension-less Node system CLIs via Electron/Node (no shebang PATH)',
+    async () => {
+      const dir = tempDir('kepcup-agent-nodecli-');
+      const file = path.join(dir, 'inkcop-acp');
+      writeFileSync(
+        file,
+        "#!/usr/bin/env node\nprocess.stdout.write('inkcop-acp 0.1.0\\n');\n",
+      );
+      chmodSync(file, 0o755);
+      const installer = installerFor(tempDir('kepcup-agent-sys-'), {
+        env: { PATH: dir },
+      });
+      const entry = baseEntry({
+        distribution: {
+          system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
+        },
+      });
+      const invocation = installer.systemInvocation(entry);
+      expect(invocation).toMatchObject({
+        command: process.execPath,
+        prefixArgs: [file],
+        args: [],
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+      });
+      expect(await installer.detectSystem(entry)).toMatchObject({
+        found: true,
+        path: file,
+        version: '0.1.0',
+        compatible: true,
+      });
+    },
+  );
 });
 
 describe('installer helpers', () => {

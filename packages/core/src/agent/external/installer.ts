@@ -32,7 +32,7 @@ import {
   type AgentPlatform,
   type AgentSystemCli,
 } from '@kepcup/shared';
-import { buildAgentEnv, findOnPath, prepareSpawn } from './host.js';
+import { buildAgentEnv, findOnPath, isNodeScript, prepareSpawn, withUserPath } from './host.js';
 import { AGENT_NPX_LOCKFILES } from './npx-lockfiles.generated.js';
 
 /**
@@ -825,16 +825,40 @@ export class AgentInstaller {
     };
   }
 
+  /**
+   * Env for system CLI lookup / detect. Test seams pass an exact `deps.env`
+   * (isolated PATH); production augments with {@link withUserPath} so Dock-
+   * launched Electron still sees `~/.local/bin` (InkCop) and Homebrew.
+   */
+  #systemLookupEnv(): NodeJS.ProcessEnv {
+    if (this.#deps.env !== undefined) return this.#deps.env;
+    return withUserPath(process.env, { platform: this.#platform });
+  }
+
   /** system 来源的启动方式（同步 PATH 查找）；未找到 = null。 */
   systemInvocation(entry: AgentCatalogEntry): AgentInvocation | null {
     const system = entry.distribution.system;
     if (system === undefined) return null;
+    const lookupEnv = this.#systemLookupEnv();
     const command = findOnPath(system.cmd, {
-      ...(this.#deps.env !== undefined ? { env: this.#deps.env } : {}),
+      env: lookupEnv,
       platform: this.#platform,
     });
     if (command === null) return null;
-    return { command, prefixArgs: [], args: [...(system.args ?? [])], env: {} };
+    const args = [...(system.args ?? [])];
+    // Extension-less Node bins (`inkcop-acp` → `…/inkcop-acp.mjs`) need a
+    // runtime: GUI PATH often lacks `node`, so run via env-manager Node or
+    // Electron (`ELECTRON_RUN_AS_NODE`) — same pattern as managed npx agents.
+    if (isNodeScript(command)) {
+      const node = this.#deps.installedNode?.() ?? null;
+      return {
+        command: node ?? process.execPath,
+        prefixArgs: [command],
+        args,
+        env: node === null ? { ELECTRON_RUN_AS_NODE: '1' } : {},
+      };
+    }
+    return { command, prefixArgs: [], args, env: {} };
   }
 
   /** 探测用户已装的官方 CLI 与版本范围（「使用系统已安装的 CLI」）。 */
@@ -846,15 +870,23 @@ export class AgentInstaller {
     if (invocation === null) {
       return { found: false, path: null, version: null, versionRange, compatible: false };
     }
-    const result = await this.#exec(invocation.command, system.detect, {
-      timeoutMs: DETECT_TIMEOUT_MS,
-      ...(this.#deps.env !== undefined ? { env: this.#deps.env } : {}),
-    });
+    const detectEnv = buildAgentEnv(this.#systemLookupEnv(), invocation.env);
+    const result = await this.#exec(
+      invocation.command,
+      [...invocation.prefixArgs, ...system.detect],
+      {
+        timeoutMs: DETECT_TIMEOUT_MS,
+        env: detectEnv,
+      },
+    );
     const version = result.code === 0 ? extractVersion(`${result.stdout}\n${result.stderr}`) : null;
+    // For Node-script CLIs, `path` is the script (prefixArgs[0]), not Electron.
+    const reportedPath =
+      invocation.prefixArgs.length > 0 ? invocation.prefixArgs[0]! : invocation.command;
     const compatible =
       result.code === 0 &&
       (versionRange === null || (version !== null && satisfiesRange(version, versionRange)));
-    return { found: true, path: invocation.command, version, versionRange, compatible };
+    return { found: true, path: reportedPath, version, versionRange, compatible };
   }
 
   // --- install / uninstall ---------------------------------------------------------

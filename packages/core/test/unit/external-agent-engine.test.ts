@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,8 +15,11 @@ import {
   AgentHost,
   buildAgentEnv,
   findOnPath,
+  isNodeScript,
   prepareSpawn,
   spawnAgentProcess,
+  userPathDirs,
+  withUserPath,
 } from '../../src/agent/external/host.js';
 import { decidePermission } from '../../src/agent/external/acp/client.js';
 import {
@@ -271,6 +274,31 @@ describe('ACP client helpers', () => {
         isExecutable: (file) => file === '/opt/npm/codex',
       }),
     ).toBe('/opt/npm/codex');
+  });
+
+  it('withUserPath prepends ~/.local/bin and Homebrew when present', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
+    const localBin = path.join(home, '.local', 'bin');
+    mkdirSync(localBin, { recursive: true });
+    const dirs = userPathDirs({ home, platform: 'darwin' });
+    expect(dirs).toContain(localBin);
+    const env = withUserPath({ PATH: '/usr/bin:/bin' }, { home, platform: 'darwin' });
+    expect(env.PATH?.split(':')[0]).toBe(localBin);
+    // idempotent
+    expect(withUserPath(env, { home, platform: 'darwin' }).PATH).toBe(env.PATH);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('isNodeScript detects extension-less bins with a node shebang', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-nodescript-'));
+    const bin = path.join(dir, 'inkcop-acp');
+    writeFileSync(bin, '#!/usr/bin/env node\nconsole.log("0.1.0")\n');
+    chmodSync(bin, 0o755);
+    expect(isNodeScript(bin)).toBe(true);
+    const sh = path.join(dir, 'plain');
+    writeFileSync(sh, '#!/bin/sh\necho hi\n');
+    expect(isNodeScript(sh)).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('runs Windows .cmd shims through cmd.exe with escaped arguments', () => {

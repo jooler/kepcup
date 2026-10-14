@@ -107,7 +107,7 @@ import { ExternalAgentEngine } from './agent/external/engine.js';
 import { LlmRouter } from './agent/llm-router.js';
 import { AgentPermissionBridge } from './agent/external/permission-bridge.js';
 import { HostMcpBridge } from './agent/external/mcp-bridge.js';
-import { AgentHost, type AgentSpawner } from './agent/external/host.js';
+import { AgentHost, withUserPath, type AgentSpawner } from './agent/external/host.js';
 import { assertAgentSelectable, effectiveAgentCatalog } from './agent/external/catalog.js';
 import { agentConcurrency } from './agent/external/providers/index.js';
 import { AgentInstaller, nodeRuntimeFromBinDir } from './agent/external/installer.js';
@@ -751,6 +751,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // pi's tool helpers resolve rg via PATH; make the bundled binary win.
     process.env.PATH = `${bundledBinDir}${path.delimiter}${process.env.PATH ?? ''}`;
   }
+  // Dock / Finder launches omit `~/.local/bin` and Homebrew — system Agent
+  // CLIs (InkCop `inkcop-acp`) and `#!/usr/bin/env node` shebangs need them.
+  process.env.PATH = withUserPath(process.env).PATH ?? process.env.PATH;
 
   let status: CoreStatus = 'starting';
   let statusReason: string | undefined;
