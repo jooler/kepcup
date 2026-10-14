@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EmbeddingStatus } from '@kepcup/shared';
+  import type { EmbeddingStatus, SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
@@ -12,15 +12,35 @@
    * 「向量来源」section（docs/design/16-capability-models.md）：本地模型或
    * 使用「向量模型」section 的厂商配置（capabilityModels.embedding）。
    */
+  let {
+    embedded = false,
+    prefill = null,
+    onSaved,
+  }: {
+    /** 对话内设置卡：隐藏分区标题，保存成功后回调。设置页不传。 */
+    embedded?: boolean;
+    prefill?: SettingValues | null;
+    onSaved?: () => void;
+  } = $props();
+
   let status = $state<EmbeddingStatus | null>(null);
   let source = $state<'local' | 'provider'>('local');
   let saving = $state(false);
   let downloading = $state(false);
+  let prefillApplied = false;
 
   $effect(() => {
     environmentStore.start();
     void environmentStore.refresh();
     void refresh();
+  });
+
+  $effect(() => {
+    if (prefillApplied || prefill === null) return;
+    const wanted = prefill.source;
+    if (wanted !== 'local' && wanted !== 'provider') return;
+    prefillApplied = true;
+    source = wanted;
   });
 
   /** 本地向量模型的安装行（environment.changed / progress 事件实时更新）。 */
@@ -53,6 +73,7 @@
 
   async function refresh(): Promise<void> {
     status = (await core.call('embedding.status')) as EmbeddingStatus;
+    if (prefillApplied) return;
     if (status.source === 'provider') {
       source = 'provider';
     } else if (status.source === 'local') {
@@ -65,6 +86,7 @@
     try {
       status = (await core.call('embedding.configure', { source })) as EmbeddingStatus;
       toast.success(t('settings.embeddingSaved'));
+      onSaved?.();
     } catch {
       toast.error(t('common.actionFailed'));
     } finally {
@@ -87,8 +109,10 @@
 </script>
 
 <section class="space-y-3" data-testid="settings-embedding">
-  <h3 class="text-sm font-medium">{t('settings.embeddingSection')}</h3>
-  <p class="text-xs text-muted-foreground">{t('settings.embeddingNote')}</p>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('settings.embeddingSection')}</h3>
+    <p class="text-xs text-muted-foreground">{t('settings.embeddingNote')}</p>
+  {/if}
 
   {#if status}
     <div class="flex flex-wrap items-center gap-2 text-sm" data-testid="embedding-status">
@@ -123,7 +147,7 @@
       <label class="flex items-center gap-1.5 text-sm">
         <input
           type="radio"
-          name="embedding-source"
+          name={embedded ? 'embedding-source-card' : 'embedding-source'}
           value="local"
           bind:group={source}
           data-testid="embedding-source-local"
@@ -133,7 +157,7 @@
       <label class="flex items-center gap-1.5 text-sm">
         <input
           type="radio"
-          name="embedding-source"
+          name={embedded ? 'embedding-source-card' : 'embedding-source'}
           value="provider"
           bind:group={source}
           data-testid="embedding-source-provider"

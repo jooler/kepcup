@@ -41,7 +41,19 @@ export function settingCardOf(message: Message): SettingCardContent | null {
 export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'default-models',
   'bot-model',
+  'bot-config',
+  'bot-skills',
+  'field-editor',
+  'appearance',
 ]);
+
+/**
+ * confirm 卡有没有可编辑的非敏感字段。没有（如「关闭无人值守」）就直接展开组件，
+ * 不靠「改一下」——宿主没有建议值可以代为应用。
+ */
+export function confirmHasFields(item: SettingItem): boolean {
+  return item.fields.some((field) => !field.sensitive);
+}
 
 /** 文案：值格式化时的固定词（调用方从 i18n 取，保持本文件无 UI 依赖）。 */
 export interface ValueText {

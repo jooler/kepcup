@@ -1888,6 +1888,20 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       conversations,
       unattended,
       agentCatalog: () => agentCatalog,
+      embedding: {
+        configure: (input) => {
+          memory.configureEmbedding(input);
+        },
+      },
+      skills: {
+        list: (botId) => skills.listForBot(botId),
+        enable: (botId, name) => {
+          skills.enable(botId, name);
+        },
+        disable: (botId, name) => {
+          skills.disable(botId, name);
+        },
+      },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wake: (input) =>

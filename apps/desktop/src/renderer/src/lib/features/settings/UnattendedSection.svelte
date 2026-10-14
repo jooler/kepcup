@@ -16,6 +16,20 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
 
+  let {
+    embedded = false,
+    focus = 'all' as 'all' | 'enable' | 'disable' | 'taint',
+    onSaved,
+  }: {
+    /** 对话内设置卡：只显示开启、关闭或污点防护其中一块。设置页为 `all`。 */
+    embedded?: boolean;
+    focus?: 'all' | 'enable' | 'disable' | 'taint';
+    onSaved?: () => void;
+  } = $props();
+
+  const showEnable = $derived(focus === 'all' || focus === 'enable' || focus === 'disable');
+  const showTaint = $derived(focus === 'all' || focus === 'taint');
+
   let dialogOpen = $state(false);
   let acknowledged = $state(false);
   let hours = $state<null | number>(null);
@@ -32,6 +46,7 @@
     if (!current) return;
     try {
       await settingsStore.update({ apps: { ...current.apps, taintGuard: checked } });
+      onSaved?.();
     } catch (error) {
       // 保存失败：开关回到已存的值，并提示原因。
       taintGuard = current.apps.taintGuard;
@@ -52,18 +67,29 @@
 
   async function confirmEnable(): Promise<void> {
     const ok = await permissions.enableUnattended(hours);
-    if (ok) dialogOpen = false;
+    if (ok) {
+      dialogOpen = false;
+      onSaved?.();
+    }
   }
 
   async function disable(): Promise<void> {
     // 关闭确认汇总要让位于设置弹框之上展示：先收起设置弹框再停用。窄屏的设置是全屏页、
     // 不是模态弹框（确认汇总作为弹层天然压在它之上），不必把用户踢出设置页。
-    if (!narrowLayout.narrow) shell.closeSettings();
+    if (!embedded && !narrowLayout.narrow) shell.closeSettings();
+    const wasEnabled = permissions.unattended.enabled;
     await permissions.disableUnattended();
-  }</script>
+    // 停用失败时 store 会停在开启（并已 toast）；不要把对话里的卡标成已完成。
+    if (wasEnabled && permissions.unattended.enabled) return;
+    onSaved?.();
+  }
+</script>
 
 <section class="space-y-3" data-testid="settings-unattended">
-  <h3 class="text-sm font-medium">{t('unattended.settingsSection')}</h3>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('unattended.settingsSection')}</h3>
+  {/if}
+  {#if showEnable}
   <div class="flex items-center gap-2" data-testid="unattended-state">
     <Badge variant={enabled ? 'default' : 'outline'} data-testid="unattended-badge">
       {enabled ? t('unattended.statusOn') : t('unattended.statusOff')}
@@ -79,15 +105,19 @@
             })
           : t('unattended.untilManual')}
       </span>
-      <Button size="sm" variant="outline" onclick={() => void disable()} data-testid="unattended-disable">
-        {t('unattended.disable')}
-      </Button>
-    {:else}
+      {#if focus === 'all' || focus === 'disable'}
+        <Button size="sm" variant="outline" onclick={() => void disable()} data-testid="unattended-disable">
+          {t('unattended.disable')}
+        </Button>
+      {/if}
+    {:else if focus === 'all' || focus === 'enable'}
       <Button size="sm" variant="destructive" onclick={openDialog} data-testid="unattended-open-dialog">
         {t('unattended.enable')}
       </Button>
     {/if}
   </div>
+  {/if}
+  {#if showTaint}
   <label class="flex items-start gap-3" data-testid="settings-taint-guard-row">
     <Checkbox
       bind:checked={taintGuard}
@@ -99,6 +129,7 @@
       <span class="text-xs text-muted-foreground">{t('settings.taintGuardHint')}</span>
     </span>
   </label>
+  {/if}
 </section>
 
 <Dialog bind:open={dialogOpen}>

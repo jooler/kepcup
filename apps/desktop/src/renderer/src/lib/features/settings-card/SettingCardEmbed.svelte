@@ -13,6 +13,13 @@
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
+  import BotConfigCard from './BotConfigCard.svelte';
+  import BotSkillsCard from './BotSkillsCard.svelte';
+  import FieldEditorCard from './FieldEditorCard.svelte';
+  import EmbeddingSection from '$lib/features/settings/EmbeddingSection.svelte';
+  import AppearanceSection from '$lib/features/settings/AppearanceSection.svelte';
+  import BackgroundTasksSection from '$lib/features/settings/BackgroundTasksSection.svelte';
+  import UnattendedSection from '$lib/features/settings/UnattendedSection.svelte';
   import { embeddedAgentId } from './card-components';
   import { capabilityOfItem, prefillString, sensorOfItem } from './setting-card-model';
 
@@ -83,6 +90,59 @@
     {expected}
     {messageId}
     testid={`${testidPrefix}-default-models`}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'field-editor'}
+  <FieldEditorCard
+    {item}
+    {prefill}
+    {expected}
+    {messageId}
+    testid={`${testidPrefix}-fields`}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'embedding'}
+  <EmbeddingSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'appearance'}
+  <AppearanceSection
+    embedded
+    focus={item.id === 'general.language' ? 'language' : 'theme'}
+    {prefill}
+    {messageId}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'background-tasks'}
+  <BackgroundTasksSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'unattended' || item.card === 'taint-guard'}
+  <UnattendedSection
+    embedded
+    focus={item.id === 'unattended.disable'
+      ? 'disable'
+      : item.id === 'connections.taint-guard'
+        ? 'taint'
+        : 'enable'}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'bot-config' && botId !== null}
+  <BotConfigCard
+    itemId={item.id}
+    {botId}
+    {prefill}
+    {expected}
+    {messageId}
+    testid={`${testidPrefix}-bot-config`}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'bot-skills' && botId !== null}
+  <BotSkillsCard
+    {botId}
+    {prefill}
+    {expected}
+    {messageId}
+    testid={`${testidPrefix}-bot-skills`}
     onSaved={() => onSaved()}
     {onConflict}
   />
