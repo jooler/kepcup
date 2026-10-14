@@ -492,7 +492,7 @@
 - 推荐 / 决定：以上均按现状保留；方案文档已就 P0 状态做了标注，设计篇 38 记录的是实际行为。
 - 已更新的文档：`docs/design/38-conversational-settings.md`、`docs/design/README.md`（D89）、`docs/design/18-inline-setup.md`、`docs/design/02-execution.md`、`docs/design/30-supervisor-and-tasks.md`、`docs/dev/03-data-model.md`、`docs/dev/04-agent-runtime.md`、`todo/conversational-app-setup.md`。
 
-### DEV-027 模型请求 session id 由原始对话 id 改为按安装派生的不透明值（编号合并时以最后一个空号为准）
+### DEV-027 模型请求 session id 由原始对话 id 改为按安装派生的不透明值
 
 - 状态：已落实
 - 阶段：评审修复（f3126b7 / 8720d1e）
@@ -501,6 +501,10 @@
 - 决定：保留 session id（OpenCode 必需，其余供应商的提示缓存有实际收益），但值改为 `kep-` + HMAC-SHA256 前 128 位（hex，共 36 字符，低于 OpenAI 64 字符上限）。密钥 `SecretsService.modelSessionKey()` 由每次安装随机、存在系统钥匙串里的主密钥按 HKDF 派生（`KEY_INFO.modelSession = 'model-session:v1'`），不新增存储。输入为供应商 id、锚点（对话 + Bot；无对话 = Bot；都没有 = run，每次新值）与用途（`loop` / `oneshot` + loopType）；测试连接为（`provider-test`，供应商 id）。不按供应商关闭：值不透明后，供应商能得到的只是「这些请求属于同一会话」，这从共享提示词前缀本来就看得出。
 - 未做：系统提示词的 workspace 段含 `bots/<botId>/workspaces/<conversationId>` 路径，原始 id 仍随**提示词内容**到达供应商（模型需要这个路径）；集成测试的「不泄露」断言因此覆盖请求头、会话字段与正文里内容以外的字段，不含 messages / input / instructions / tools。
 - 已更新的文档：`docs/dev/04-agent-runtime.md`（模型请求的 session id）。
+- **集成复审后的补充（2026-10-14）**：
+  - 深色前景取纯黑 `#000000`：用 `#0a0a0a` 时正文的保证对比度只有约 4.40:1，原先写的 4.58:1 不成立；现在对任意 `#rrggbb` 都满足图标 3:1、正文 4.5:1，测试按全部灰度级与 RGB 网格计算最坏情况。
+  - 取不到 session 密钥（读取抛错或密钥短于 16 字节）时整条 session id 省略，不使用任何回退密钥，也不崩溃；供应商测试在没有密钥时不发 `x-session-id`，仍返回供应商自己的错误。
+  - 输入框在布局或按键变化后（附件清空、发送 / 语音键切换、回复栏出现）在新布局里重测单行宽度；宽度估算抽成纯函数 `singleLineWidth`。
 
 ### DEV-028 权限审查修复：沙箱内命令自动放行与污点、只读白名单、中途权限卡的留痕（f2b9627 / ef2a565 补记）
 
@@ -527,10 +531,18 @@
 - 影响范围：`packages/core/src/agent/external/{permission-bridge,engine,types}.ts`、`providers/claude.ts`、`start.ts`（一行接线）、`permissions/{allowlist,allowlist-match,git-config-risk,approvals}.ts`、`gateway/index.ts`、`sandbox/confirm-executor.ts`、`domain/messages.ts`、`packages/shared/src/{policy/allowlist-pattern,domain/types}.ts`、desktop `features/approvals/*`、`MessageList.svelte`、`zh-CN.ts`（权限 / 白名单文案）。
 - 集成时已补改（原先留给其他车道的两处）：设置目录里 Bot 智能体档位的 `ask` 标签改为「编辑前确认（沙箱内命令自动）」，与 `contacts.agentPermissionAsk` 一致；`agent/context/system-prompt.ts` 的确认模式提示改为「命中白名单的命令无需确认（自定义条目在只读任务里仍不会执行，污点期间仍需确认）」。
 - 已更新的文档：`docs/design/13-permissions.md`（档位表、白名单、回执、界面）、`10-sandbox.md`、`12-ui-layout.md`、`28-external-agents-acp.md`。
+- **集成复审后的补充（2026-10-14）**：
+  - 自定义白名单条目按「前缀之后还能接什么」判断：条目必须已经固定了要执行什么（具体脚本或子命令），固定部分不得含加载代码、联网或改配置的参数；只有选项的前缀（`python -u`、`node --no-warnings`、`npm --silent`）和 `-m` / `--import` / `--require` / `--loader` 等一律拒绝。参数决定一切的程序（awk、sed、tar、docker、podman、kubectl、gh、make、man、编辑器、DNS 工具）无论写成什么形式都拒绝；git 的 `config`、`submodule`、`rebase` 和联网子命令（`push` / `fetch` 等）也拒绝，**此前允许的 `git push` 自定义条目不再接受**。卡片默认建议整条命令。
+  - 豁免的 git 命令执行前先问 git 要读哪个仓库：git 目录、common 目录和所有 alternates 对象目录都必须通过读权限检查，否则改为普通确认卡；解析失败也退回确认卡。文件工具写 `.git` 指针文件、`commondir`、`worktrees/<n>/gitdir`、`objects/info/alternates`、子模块的 `info/attributes` / config / hooks 需要授权。子模块递归被阻止。
+  - 仓库配置检查只看这些只读命令真正会执行的键：`core.fsmonitor`、`diff.external`、diff textconv / command、`filter.*`、`include` / `includeIf`、`core.worktree`、`gpg.program`。去掉了 `core.hooksPath`、`core.editor`、`sequence.editor`、`core.sshCommand`、merge driver、`core.pager` / `pager.*`（husky 等工具会在本地设置 hooksPath，导致每条 `git status` 都弹卡；无终端时不会启动分页器）。检查改为异步 spawn，超时即杀。
+  - git 用清洗后 PATH 解析出的绝对路径运行（排除工作区与项目目录），Windows 设置 `NoDefaultCurrentDirectoryInExePath=1`，PowerShell 也用绝对路径启动。豁免命令的 PATH 去掉位于工作区 / 项目里的条目并设置 `VOLTA_BYPASS=1`；pyenv / rbenv / asdf 的垫片只选择已安装版本、不执行项目代码，只做记录不拦截。
+  - `git branch` 的参数按 git 自己的规则吃掉取值（`--format -l evil` 在 git 2.34 里会把 `-l` 当作 `--format` 的值并创建分支 `evil`），「只是列出」在取值之后才判定；`git branch -l evil` 是按模式列出，不创建。
+  - 折叠记录只在批准项确知仍待决时才隐藏，批准列表上限 200 条之外的旧记录照常显示。
+  - **剩余风险**：检查与执行之间，由用户批准的并行沙箱外命令可能改了仓库配置或新增过滤器；已知并记录。
 
 ### DEV-029 对话内应用设置合并后审查修复的取舍（D89）
 
-- 状态：已落实（编号取 DEV-026 + 1，合并时以最后一个空号为准）
+- 状态：已落实
 - 阶段：D89 P0 + P1 合并后审查修复（`t/fix-settings`）
 - 是否阻塞：否
 - 问题与决定：
@@ -548,3 +560,8 @@
   7. **`general.language` 改为静态选项**（目录写死 `zh-CN`），core 按它校验；渲染层 `localeOptions` 加语言时同步目录，desktop 单测核对两边一致。
 - 影响范围：`packages/shared/src/settings-catalog/{merge,validate,items}.ts`、`rpc/methods.ts`、`domain/types.ts`；`packages/core/src/settings/*`、`rpc/{bindings,settings-bindings}.ts`、`start.ts`（设置目录宿主的装配）；desktop `features/settings-card/*`、`McpSection`、`AppearanceSection`、`GroupSettingsDialog`、`RightPanel` 的保存、`stores/{settings,contacts}`。
 - 已更新的文档：`docs/design/38-conversational-settings.md`（§1.4 / §1.5 / §4 / §11）、`todo/conversational-app-setup.md`（§8.2 / §8.3 / §8.6）、`docs/dev/PROGRESS.md`。
+- **集成复审后的补充（2026-10-14）**：
+  - MCP 编辑框只保存真正改过的字段：编辑开始时记下初始副本，保存时取当前服务、只套用与初始副本不同的字段，`enabled`、`autoApprove`、`toolPolicies` 始终取当前值（编辑框没有这些控件）；编辑期间服务在别处被删除则报错、不重建。长期存在的草稿必须自己记录打开时的快照。
+  - 写后收尾：先撤销授权（MCP、连接），再关浏览器页；每一步各自 try/catch，`settle()` 不抛错、返回失败列表由调用方记日志；宿主写入发生后 `afterUnlock` 放在 `finally` 里，失败只记日志、不当作写入失败。
+  - 三方合并 `mergeThreeWay` / `mergePatchOnto` 只读写自有键，`__proto__` / `constructor` 当普通键处理。
+  - `settings.cards.complete{auto}` 只在卡片要的事做成时关闭：有建议值的卡要求当前值满足建议值；放宽权限的 user-only 卡没有建议值时，只在放宽方向的变化上关闭。**偏保守**：Bot 想收紧一个会放宽权限的条目（例如把污点保护重新打开）时，卡不会自动关闭，用户点「我已设置好」即可。
