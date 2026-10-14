@@ -4,7 +4,7 @@
 >
 > 阅读说明：
 > - §一～§七 是方案原文，写于实施之前。其中 §二「现状」描述的是 **P0 之前**的代码状态，部分结论（例如「没有 `settings.changed` 事件」）现已不成立，以代码和设计篇为准。
-> - 实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文方案的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) 的 DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。设计篇、决策号和偏差号以仓库当前最后一个空号为准。
+> - 实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文方案的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) 的 DEV-026（P0 / P1）与 DEV-029（合并后审查修复），实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。
 > - §八 是**当前的任务与状态**，接手后续阶段从这里开始。
 >
 > 需求来源：[jooler/kepcup#3](https://github.com/jooler/kepcup/issues/3)「在对话中指挥一切」（提出人 jooler，2026-10-13）。
@@ -344,7 +344,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - [x] **沙箱**：`environment.sandbox`（`SandboxSection`，卡片键 `environment-sandbox`）。user-only，`widensPermission: true`，目录没有字段，不预填，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出状态、重新检测、打开准备向导，以及已有的修复提示框。准备向导仍由 `sandboxWizard.show()` 打开，不把 `SandboxWizard` 整页嵌进卡片。重新检测成功后 `onSaved` → `settings.cards.complete`。向导完成不由这张卡监听，用户仍用「我已设置好」结卡。不进 `COMPONENT_SAVE_CARD_KEYS`。读适配器只读最近一次可用性，不在 read 里探测，也不调用 `sandbox.wslPrepare` 或 `probe(true)`。还没检测过回「还没检测过沙箱」、`unknown`；可用为 `configured`，不可用为 `unconfigured`（沙箱仍不可用时「我已设置好」核对不过）。快照 `values` 为 null，不放 `fixHint`、本机路径或修复命令。
 - [x] **命令白名单**：`environment.allowlist`（`AllowlistSection`，卡片键 `environment-allowlist`）。user-only，`widensPermission: true`，目录没有字段，不预填，不把 `pattern` 加进目录字段，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出添加、启停和已有的风险提示；空模式不提交。`allowlist.reset` 会清掉自定义条目，留在非嵌入形态。添加或启停成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。`prefill` 可以收下，但不写进输入框。读适配器分开数自定义与内置、启用与停用；**状态恒为 `unknown`**（审查修复：内置条目默认就是启用的，原来的「有启用即 configured」让 required 直接放行、「我已设置好」总能通过）——required 不再短路，「我已设置好」按用户所说结卡，打开对话时的自动核对只在名单变过时结卡。快照 `values` 为 null，不放条目 id，也不把命令模式放进快照。设置页原用法不变。
 
-**目前只有读适配器的**条目（走「组件自存」）：`environment.allowlist`、`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy`、`unattended.enable`，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。它们调用的都是**条目级**的原 RPC（按 Bot 增删成员、改一条工具策略、追加一份资料、user-only 的组件内保存），不是整表快照提交；理由见 DEVIATIONS 的审查修复条目。
+**目前只有读适配器的**条目（走「组件自存」）：`environment.allowlist`、`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy`、`unattended.enable`，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。它们调用的都是**条目级**的原 RPC（按 Bot 增删成员、改一条工具策略、追加一份资料、user-only 的组件内保存），不是整表快照提交；理由见 DEVIATIONS DEV-029。
 
 **已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`、`mcp.servers`（审查修复新增）。Bot 条目的写入都经 `applyBotProfileUpdate`；写后需要 await 的收尾（中断任务、关页面、收回授权）由宿主在释放写锁之后执行。`environment.toolchains` 也不由宿主写：安装仍走环境审批，重新检测和失败项重装由组件调用原来的 RPC。`environment.sandbox` 也不由宿主写：重新检测和准备向导留在组件，读路径只看最近一次可用性。`environment.allowlist` 也不由宿主写：添加和启停由组件调用原来的 `allowlist.add` / `allowlist.update`，`allowlist.reset` 留在设置页；读路径只数启用和停用。
 
@@ -374,7 +374,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ### 8.6 合并后审查修复（2026-10-14，分支 `t/fix-settings`）
 
-审查对 P0 + P1 合并结果提了 13 项发现，全部处理（细节见设计篇 38 §11、DEVIATIONS 本轮条目、PROGRESS）：
+审查对 P0 + P1 合并结果提了 13 项发现，全部处理（细节见设计篇 38 §11、DEVIATIONS DEV-029、PROGRESS）：
 
 1. Bot 条目写入与 `bots.update` 共用 `applyBotProfileUpdate`：校验（外部智能体实验开关、共享浏览器资料存在）+ 写后中断任务 / 关页面 / 收回 MCP 与连接授权；校验失败是干净的 `AppError`，不写。
 2. `bot.skills` 不再经「这个 Bot」的卡改公共技能（会对所有 Bot 生效）；快照带 `scope`，卡片对公共技能指向技能页。
@@ -389,6 +389,8 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 11. `GroupSettingsDialog.svelte` 的 `svelte/prefer-svelte-reactivity` 报错已消除。
 12. 打开对话时核对待处理卡（`auto`），见 §8.3。
 13. 文档：PROGRESS 里过期的「仍保持跳转卡」已改；本节、设计篇 §11、DEVIATIONS；补测试（host 级 project / environment 空白卡、`bot.apps` / `bot.mcp-servers` 确认卡与收回授权、公共技能路径）。
+
+集成复审（合入 `t/fix-int` 后）的跟进，同样已修：MCP 编辑框保存会把 Bot 刚停用的服务改回启用（改为只叠真改过的字段、受把守字段取当前值）；写后收尾某步抛错会跳过后面的收回授权、写后抛错不执行收尾（改为收回授权在前、逐步兜错、`finally`）；三方合并读到原型链上的键；自动核对把反方向的变化当成「已应用」（改为满足建议值 / 放宽方向才结卡）。
 
 ### 8.4 P3 📝 仅记录：真实场景验证与调优
 
