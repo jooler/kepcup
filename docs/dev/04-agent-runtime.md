@@ -46,6 +46,8 @@
 
 **设置 / Bot 换模型后的行为**：下一次调用按新模型；正在对旧模型退避重试的请求经 `isRouteCurrent`（对话轮、任务、Wiki 维护、技能生成、SubAgent 子 run 与压缩；结构化调用经 `resolveRoute`）在 ≤ 1 s 内停止重试。额度类 429（智谱 1310 / 1113、OpenAI `insufficient_quota`，`isQuotaExhaustedBody`）不重试，直接按 `PROVIDER_RATE_LIMITED` 失败——重试到用量窗口重置没有意义。Bot 在 profile 里**固定了**模型（`runtime.model` / `light_model` 非空）时不跟随全局默认，这是设计；排查「改了默认却仍走旧模型」先看该 Bot 是否固定了模型（run 的 `model` 列记录实际使用的模型）。
 
+**模型请求的 session id**（`agent/model-session-id.ts`）：`PiEngine.startRun` / `complete` 与「测试连接」都给 pi-ai 传 `sessionId`。pi-ai 不只把它发给 OpenCode（`x-opencode-session`，路由 + 提示缓存，必需），还按线协议与地址发成 OpenAI Responses 的 `session_id` / `x-client-request-id` 与 `prompt_cache_key`、Azure 的 `prompt_cache_key`、OpenRouter 识别出的端点的 `x-session-id`、地址含 `api.openai.com` 的 Chat Completions（含代理）的 `prompt_cache_key`、Mistral 的 `x-affinity` 与 `prompt_cache_key`、开了 session affinity 的 Anthropic 兼容端点的 `x-session-affinity`。所以它是发给第三方的标识：取值为 `kep-` + HMAC-SHA256 前 128 位（hex），密钥 `SecretsService.modelSessionKey()` 由每次安装随机的主密钥按 HKDF（`KEY_INFO.modelSession`）派生，不另存、不出进程；输入为（供应商 id，锚点，用途）。锚点：有对话 = 对话 + Bot（群里各 Bot 的提示词不同），无对话 = Bot（同一 Bot 的后台 loop 前缀相同），都没有 = run（每次新 id）。用途 = `loop|oneshot` + loopType，使对话轮、任务、摘要、群聊判断、记忆、Wiki、SubAgent 等不同提示词前缀不共用缓存键。测试连接为（`provider-test`，供应商 id）。于是同一对话在同一供应商稳定（路由与提示缓存照常生效），跨供应商、跨安装互不相关，原始 id 不出现在请求头或会话字段里（`opencode-session-header.test.ts`）。不按供应商关闭：值不透明后，供应商从中能得到的只是「这些请求属于同一会话」，这从共享的提示词前缀本来就看得出；关掉只会丢提示缓存。
+
 ## 外部智能体引擎（ACP，D72）
 
 设计见 [design/28-external-agents-acp.md](../design/28-external-agents-acp.md)，执行方案见 `todo/acp-external-agents.md`。实现位于 `core/src/agent/external/`（通用 ACP 部分 + `providers/` 下各智能体的差异模块），对外仍只暴露 `AgentEngine`（`RunSpec` 的可选扩展见 [02-architecture.md](02-architecture.md#agentenginepi-的封装)）。
