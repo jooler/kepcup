@@ -137,7 +137,7 @@ export class ProvidersService {
     await testProvider({
       models,
       model,
-      sessionId: providerTestSessionId(this.#secrets.modelSessionKey(), provider),
+      sessionId: providerTestSessionId(() => this.#secrets.modelSessionKey(), provider),
     });
   }
 
