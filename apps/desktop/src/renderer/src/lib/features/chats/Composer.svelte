@@ -8,7 +8,8 @@
   import { untrack } from 'svelte';
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
-  import { Button } from '$lib/components/ui/button';
+  import { Button, buttonVariants } from '$lib/components/ui/button';
+  import { cn } from '$lib/utils.js';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -22,7 +23,7 @@
     composerNodes,
     mergeMentionTokens,
   } from './composer-editor';
-  import { parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarColorForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
@@ -144,12 +145,20 @@
   );
 
   /**
-   * @ 文字色：当前会话 Bot 的预置头像色（单聊取 direct Bot；群聊无单一
-   * Bot，回退主色）。与用户气泡取色同源（MessageBody）。经 CSS 变量下发，
-   * mention 节点的渲染无需感知会话切换。
+   * 当前会话 Bot 的预置头像色（单聊取 direct Bot；群聊无单一 Bot、上传
+   * 头像等取不到时为 null）。@ 文字色、发送键、语音键与用户气泡同源
+   * （MessageBody）。hex 可能是 var()（黑白随主题），必须经 style 下发。
    */
-  const mentionColor = $derived(
+  const botAvatarColor = $derived(
     parsePresetAvatar(chat.current?.conversation.bot?.avatar ?? null)?.color ?? null,
+  );
+  /**
+   * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
+   */
+  const botAvatarButtonPaint = $derived(
+    botAvatarColor
+      ? { background: botAvatarColor.hex, color: avatarColorForeground(botAvatarColor) }
+      : null,
   );
 
   // --- TipTap 编辑器 -----------------------------------------------------------
@@ -939,27 +948,35 @@
             </Button>
           {/snippet}
           {#snippet sendButton()}
-            <Button
-              size="icon"
-              class="size-8 shrink-0 rounded-full"
+            <!-- 原生 button 才能吃 style:（Button 组件不转发该指令）。
+                 取到预置色时内联盖住 primary；悬停改透明度，避免 hover 主色盖回来。 -->
+            <button
+              type="button"
+              class={cn(
+                buttonVariants({ size: 'icon' }),
+                'shrink-0 rounded-full',
+                botAvatarButtonPaint ? 'hover:opacity-90' : '',
+              )}
+              style:background={botAvatarButtonPaint?.background}
+              style:color={botAvatarButtonPaint?.color}
               onclick={onSendClick}
               disabled={readOnly}
               data-testid="composer-send"
               aria-label={t('composer.send')}
             >
               <ArrowUp class="size-4" />
-            </Button>
+            </button>
           {/snippet}
           <!-- 两态布局（参考 Grok）：单行＝附件键｜输入｜发送键；沉底＝输入
-               占满整行，附件键/发送键落到底部两角。@ 提及文字色取当前 Bot
-               头像色，经 --mention-color 下发给 .composer-mention -->
+               占满整行，附件键/发送键落到底部两角。@ 文字色与发送/语音键
+               取当前 Bot 头像色；mention 经 --mention-color 下发。 -->
           <div class="flex {stacked ? 'flex-col' : 'flex-row items-center'}">
             {#if !stacked}
               {@render attachButton()}
             {/if}
             <div
               class={stacked ? 'w-full' : 'w-auto min-w-0 flex-1'}
-              style:--mention-color={mentionColor?.hex ?? ''}
+              style:--mention-color={botAvatarColor?.hex ?? ''}
             >
               <div bind:this={editorHostEl}></div>
             </div>
@@ -1005,7 +1022,11 @@
                        此位让给发送键。语音对话模式暂缓，入口隐藏。 -->
                   <button
                     type="button"
-                    class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90"
+                    class="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full transition-opacity hover:opacity-90 {botAvatarButtonPaint
+                      ? ''
+                      : 'bg-foreground text-background'}"
+                    style:background={botAvatarButtonPaint?.background}
+                    style:color={botAvatarButtonPaint?.color}
                     onclick={() => void startRecording()}
                     disabled={readOnly}
                     aria-label={t('composer.voiceStart')}
