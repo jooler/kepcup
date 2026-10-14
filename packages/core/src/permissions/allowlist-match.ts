@@ -58,6 +58,13 @@ const DANGEROUS_OPTIONS: Record<string, string[]> = {
     '--textconv',
     '--exec-path',
     '--config-env',
+    // Submodule recursion runs git in each submodule — with ITS config (fsmonitor,
+    // textconv …) and gitdir, which the gateway's repository checks never saw.
+    '--submodule',
+    '--recurse-submodules',
+    // `git grep -O<cmd>` opens the matches in a program.
+    '--open-files-in-pager',
+    '-O',
   ],
   sed: ['-i', '--in-place'],
   sort: ['-o', '--output', '--compress-program'],
@@ -200,6 +207,9 @@ function entryMatches(words: string[], entryWords: string[]): boolean {
  * Returns the reason, or null when the arguments only list.
  */
 export function gitBranchArgsReason(args: readonly string[]): string | null {
+  // Option tables follow git's parse-options for `git branch` (review P2: the
+  // value of a required-argument option is the NEXT WORD whatever it looks like —
+  // `--format -l evil` takes `-l` as the format and then CREATES `evil`).
   const flagOnly = new Set([
     '--all',
     '--remotes',
@@ -210,37 +220,55 @@ export function gitBranchArgsReason(args: readonly string[]): string | null {
     '--ignore-case',
     '--no-column',
     '--omit-empty',
+    '--no-abbrev',
   ]);
-  const withValue = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at']);
-  const attachedValue = new Set(['--sort', '--format', '--color', '--abbrev', '--column']);
-  const listing = args.some((arg) => arg === '--list' || (/^-[A-Za-z]+$/.test(arg) && arg.includes('l')));
+  /** Required argument: `--opt=v` or the next word, unconditionally. */
+  const requiredValue = new Set(['--format', '--sort', '--points-at']);
+  /** PARSE_OPT_LASTARG_DEFAULT: the next word unless it is absent or starts with `-`. */
+  const lastArgDefault = new Set(['--contains', '--no-contains', '--merged', '--no-merged']);
+  /** Optional argument: only `--opt=v` (a separate word is a positional). */
+  const attachedOnly = new Set(['--color', '--abbrev', '--column']);
+  let listing = false;
+  const positionals: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (arg === '--') {
-      // Everything after `--` is a positional (branch name / pattern).
-      if (!listing && i + 1 < args.length) return `参数 ${args[i + 1]} 会新建分支，不豁免`;
+      positionals.push(...args.slice(i + 1));
       break;
     }
     if (arg.startsWith('--')) {
-      const name = arg.split('=', 1)[0] ?? arg;
-      const hasValue = arg.includes('=');
-      if (flagOnly.has(name) && !hasValue) continue;
-      if (attachedValue.has(name)) continue;
-      if (withValue.has(name)) {
-        // `--contains X` consumes X (git: the next word is the value unless it
-        // is the last argument); a value can never create a branch.
+      const eq = arg.indexOf('=');
+      const name = eq >= 0 ? arg.slice(0, eq) : arg;
+      const hasValue = eq >= 0;
+      if (flagOnly.has(name) && !hasValue) {
+        if (name === '--list') listing = true;
+        continue;
+      }
+      if (attachedOnly.has(name)) continue;
+      if (requiredValue.has(name)) {
+        if (!hasValue) {
+          if (i + 1 >= args.length) return `参数 ${arg} 缺少取值，不豁免`;
+          i += 1; // the value, whatever it looks like
+        }
+        continue;
+      }
+      if (lastArgDefault.has(name)) {
         if (!hasValue && i + 1 < args.length && !(args[i + 1] ?? '').startsWith('-')) i += 1;
         continue;
       }
+      // Unknown, abbreviated (`--form`) or mutating: fail closed.
       return `参数 ${arg} 可能修改分支（git branch 只豁免列出），不豁免`;
     }
     if (arg.startsWith('-') && arg.length > 1) {
       if (!/^-[arvl]+$/.test(arg)) return `参数 ${arg} 可能修改分支（git branch 只豁免列出），不豁免`;
+      if (arg.includes('l')) listing = true;
       continue;
     }
-    // A positional: a pattern under --list / -l, otherwise a new branch name.
-    if (!listing) return `参数 ${arg} 会新建分支，不豁免`;
+    positionals.push(arg);
   }
+  // Decided after every value was consumed: a positional is a pattern only under
+  // --list / -l; otherwise it names a branch to create.
+  if (positionals.length > 0 && !listing) return `参数 ${positionals[0]} 会新建分支，不豁免`;
   return null;
 }
 
@@ -257,10 +285,14 @@ function checkPosixSegment(
 
   const command = entry[0] ?? segment.name;
   const dangerous = DANGEROUS_OPTIONS[command] ?? [];
-  const rest = words.slice(entry.length);
+  let rest = words.slice(entry.length);
+  // `git branch`: its own parser is authoritative — option VALUES (`--sort
+  // -committerdate`) must not be read as options, and no argument is a path
+  // (redirects below are still checked).
   if (isGitBranchEntry(entry)) {
     const branchReason = gitBranchArgsReason(rest);
     if (branchReason !== null) return branchReason;
+    rest = [];
   }
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
@@ -312,10 +344,7 @@ function checkWindows(
   matched.push(entry.join(' '));
   const program = (entry[0] ?? '').toLowerCase();
   const dangerous = DANGEROUS_OPTIONS[program] ?? [];
-  if (isGitBranchEntry(entry)) {
-    const branchReason = gitBranchArgsReason(words.slice(entry.length));
-    if (branchReason !== null) return branchReason;
-  }
+  if (isGitBranchEntry(entry)) return gitBranchArgsReason(words.slice(entry.length));
   for (const arg of words.slice(entry.length)) {
     if (dangerous.some((option) => isDangerousOption(program, arg, option))) {
       return `参数 ${arg} 具有写入或执行语义，不豁免`;

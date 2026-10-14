@@ -313,13 +313,22 @@ describe('AllowlistService: retired built-ins, add() policy, custom matches (rev
       'git -c core.pager=x log',
       'ls; rm -rf /',
       'cat $(whoami)',
+      // Review P1-1 / P1-2: flag-only prefixes and argument-sensitive programs.
+      'python -u',
+      'node --no-warnings',
+      'npm --silent',
+      'python -m pytest',
+      'node --import ./x.mjs app.js',
+      'docker run hello-world',
+      'make test',
+      'git config user.name',
     ]) {
       expect(() => service.add(pattern), pattern).toThrow(
         expect.objectContaining({ code: 'INVALID_INPUT' }),
       );
     }
     // Specific, user-owned entries stay possible (user risk, design 13).
-    for (const pattern of ['npm test', 'pnpm test', 'npm run build', 'python scripts/check.py', 'git push']) {
+    for (const pattern of ['npm test', 'pnpm test', 'npm run build', 'python scripts/check.py', 'git log --oneline']) {
       expect(() => service.add(pattern), pattern).not.toThrow();
     }
   });
