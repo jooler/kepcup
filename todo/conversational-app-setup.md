@@ -1,6 +1,6 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态（2026-10-14）：**P0 已完成；P1 进行中**（58 个目录条目里 46 个已有内嵌卡，原先 18 个）。P2 待做；P3 仅记录，不预先设计。阶段总览见 [§八](#八阶段与状态)。
+> 状态（2026-10-14）：**P0、P1 已完成**（58 个目录条目里 46 个有内嵌卡，原先 18 个；其余 12 个是永久跳转 / 只读或走专门工具，不在 P1 范围）；合并后审查的 13 项发现已修复（§8.6）。P2 待做；P3 仅记录，不预先设计。阶段总览见 [§八](#八阶段与状态)。
 >
 > 阅读说明：
 > - §一～§七 是方案原文，写于实施之前。其中 §二「现状」描述的是 **P0 之前**的代码状态，部分结论（例如「没有 `settings.changed` 事件」）现已不成立，以代码和设计篇为准。
@@ -266,8 +266,8 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 | 阶段 | 内容 | 状态 |
 | ---- | ---- | ---- |
 | P0 | 骨架：设置目录、三个工具、宿主档位裁定、设置卡、`settings.changed`、条目级 CAS、外部智能体能力包；D58 已嵌用过的组件升级为内嵌卡 | ✅ 已完成 |
-| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前 46 个有内嵌卡） | ⏳ 进行中 |
-| P2 | 收拢：D58 旧 kind 并入通用设置卡、提示词规则合并评估，以及 P0 留下的遗留问题 | ⏳ 待做 |
+| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里 46 个有内嵌卡，余下 12 个不在范围） | ✅ 已完成 |
+| P2 | 收拢：D58 旧 kind 并入通用设置卡、提示词规则合并评估，以及 P0 留下的遗留问题（其中两项已在审查修复里解决，§8.3） | ⏳ 待做 |
 | P3 | 真实模型下的场景验证与调优 | 📝 仅记录（§8.4） |
 
 ### 8.1 P0 ✅ 已完成
@@ -313,9 +313,9 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 **P0 验证结果**：单元 / 集成全量与未改动的主干对照，失败项完全一致，没有新增失败；e2e 全量与未改动的主干对照，失败项完全一致，没有新增失败，新增的 `setting-card.spec` 通过。
 
-### 8.2 P1 ⏳ 待做：组件化扩面
+### 8.2 P1 ✅ 已完成：组件化扩面
 
-目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 46 个有内嵌卡**（P0 结束时是 18 个）。
+目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里 46 个有内嵌卡**（P0 结束时是 18 个；按目录重数：`card !== null` 46 条、26 个卡片键）。没有卡的 12 条都不在 P1 范围：永久跳转 / 只读 7 条（`profile.user-facts`、`developer.*` ×4、`diagnostics.*` ×2）与走专门工具 5 条（`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*` ×2），见本节末尾。
 
 **每个条目的升级步骤**（做法同 D58：设置页行为不变，只给组件加嵌入用的 props）：
 
@@ -331,22 +331,22 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 **待升级的条目**（条目 id 为目录中的实际 id；按用户价值排序，Bot 配置一组最常用）：
 
-- [x] **Bot 配置其余片段**：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`。卡片键 `bot-config` / `bot-skills`，保存走 `settings.items.apply`（core 落到 `bots.update` 或 `skills.enable` / `skills.disable`）。放宽网络策略、把任务引擎换成外部智能体或提高权限档，仍是 user-only，卡上不采用 Bot 的预填。
+- [x] **Bot 配置其余片段**：`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`。卡片键 `bot-config` / `bot-skills`，保存走 `settings.items.apply`（core 落到与 `bots.update` RPC 同一个 `applyBotProfileUpdate`——校验、写后中断任务与收回授权都一样，§8.6；技能落到 `skills.enable` / `skills.disable`，只管这个 Bot 自己的技能，公共技能指向技能页）。放宽网络策略（含任何新域名）、把任务引擎换成外部智能体或提高权限档，仍是 user-only，卡上不采用 Bot 的预填。
 - [x] **模型**：`models.embedding-local`（`EmbeddingSection`）、`models.widget-review`、`models.concurrency`。本地向量的写入走 `embedding.configure`。
 - [x] **无人值守**：`unattended.enable` / `unattended.disable`（`UnattendedSection`）。开启是 user-only，风险确认步骤留在组件里。关闭没有可编辑字段，卡片直接展开关闭按钮。
 - [x] **通用**：`general.theme`、`general.language`（`AppearanceSection`，渲染层拥有，宿主不写）、`general.launch-at-login`。
 - [x] **后台与预算**：`background.tasks`、`background.budget`（`BackgroundTasksSection`、用量预算字段卡）。
-- [x] **群 / 项目**：`group.title`、`group.members`（群设置，卡片键 `group-title` / `group-members`）。群名保存走 `settings.items.apply`（`groups.rename`）。成员由组件调用原来的 `groups.addMembers` / `groups.removeMember`（移出是异步级联，不放进设置写锁）。`project.protect-rules`、`project.ports`（项目设置，user-only，卡片键 `project-settings`）：保护规则和风险确认留在 `ProjectSettingsDialog`，宿主不预填、不代写，组件自己 `projects.update` 后结卡。群 / 项目设置页原用法不变。
+- [x] **群 / 项目**：`group.title`、`group.members`（群设置，卡片键 `group-title` / `group-members`）。群名保存走 `settings.items.apply`（`groups.rename`）。成员由组件调用原来的 `groups.addMembers` / `groups.removeMember`（移出是异步级联，不放进设置写锁）；Bot 的提议只能加人，卡片分开列「将加入 / 将移出」，移出只来自用户亲手取消勾选（§8.6）。`project.protect-rules`、`project.ports`（项目设置，user-only，卡片键 `project-settings`）：保护规则和风险确认留在 `ProjectSettingsDialog`，宿主不预填、不代写，组件自己 `projects.update` 后结卡。群 / 项目设置页原用法不变。
 - [x] **连接逐工具策略**：`connections.tool-policy`（`AppConnectionDetail` 的工具策略片段，卡片键 `tool-policy`）。目录档是 confirm，放宽为 user-only。读适配器把 `connection` / `tool` 放进快照并实现 `valuesWiden`（未知按放宽）。组件用 before 定位这一条，调用原来的 `apps.connections.setToolPolicy`（策略变严时中断任务），不经宿主写锁。放宽不预填；收紧按页面档位（`auto` / `disabled`）保存，不把目录的 `allow` / `deny` 写进 `McpToolPolicy`。设置页原用法不变，嵌入时不带断开连接和重新授权。
-- [x] **已安装的 MCP**：`mcp.servers`（`McpSection` 的启用开关，卡片键 `mcp-servers`）。目录档是 confirm，放宽为 user-only。读适配器按 focus 读这一条，把 `server` 放进快照并实现 `valuesWiden`（从停用改为启用是放宽，未知按放宽）。组件用 before 定位这一个服务，保存时读当前 `mcpServers`，只改这一条的 `enabled`（兄弟服务和 `toolPolicies` 不动），调用原来的 `settings.update`。那条 RPC 在锁外做两段：写之前对 OAuth 绑定变化做 `reconcileServers`，写之后用 `mcpRevocationsBetween` 调 `revokeMcp`（停用或删掉正在用的服务会中断任务）。写锁里直接 `settings.update` 会丢掉这两段，所以不补写入适配器。启用不预填；停用可以预填。扩展中心和设置页的 `variant="manage"` 原用法不变，嵌入时不带编辑、密钥、删除、免审批、逐工具策略和 `.mcpb` 安装。
+- [x] **已安装的 MCP**：`mcp.servers`（`McpSection` 的启用开关，卡片键 `mcp-servers`）。目录档是 confirm，放宽为 user-only。读适配器按 focus 读这一条，把 `server` 放进快照并实现 `valuesWiden`（从停用改为启用是放宽，未知按放宽）。组件用 before 定位这一个服务。**审查修复后改为宿主写**：组件经 `settings.items.apply`，core 在写锁里读最新 `mcpServers`、CAS 比对 `enabled`、只改这一条（兄弟服务、`toolPolicies`、并发新增的服务不动），锁外 `mcpRevocationsBetween` 收回授权；启停不改 URL / 认证方式，不需要 `reconcileServers`。卡片键进 `SELF_APPLYING_CARD_KEYS`。启用不预填；停用可以预填。扩展中心和设置页的 `variant="manage"` 原用法不变，嵌入时不带编辑、密钥、删除、免审批、逐工具策略和 `.mcpb` 安装。
 - [x] **共享浏览器资料的新建**：`browser.shared-profiles`（`BrowserProfilesSection` 的名称和「新建」，卡片键 `browser-profiles`）。目录档是 confirm，不放宽。读适配器没有 focus 时回有几份共享资料；focus 里有 `name` 时，已有同名资料回 `{ name }` 且 configured（再建一个同名的不出卡），还没有回空名称、unconfigured。快照不放资料 id。组件调用原来的 `browserProfiles.create`（服务读当前列表再追加），不经宿主写锁，以免整表替换丢掉新建或覆盖刚建的另一条。保存后 `settingsStore.refresh()` 再 `onSaved`。嵌入只露出新建；列表、重命名、清除、删除留在设置页。`connections.taint-guard`、`agents.default`、`mcp.servers` 已升级。
 - [x] **工具链**：`environment.toolchains`（`EnvironmentSection`，卡片键 `environment-toolchains`）。user-only，目录没有字段，不预填，不补写入适配器，不加 `wideningMode`。嵌入只露出已安装列表、重新检测、失败项重装；卸载确认留在设置页（删掉工具链是破坏性操作，方案 §九）。不在卡片里做「安装工具」表单，安装仍走原来的环境审批。重新检测或重装成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。读适配器只回报已安装几项、失败或缺失几项；快照 `values` 为 null，不放安装记录 id。有失败或缺失时状态不是 `configured`，「我已设置好」核对不过。
 - [x] **沙箱**：`environment.sandbox`（`SandboxSection`，卡片键 `environment-sandbox`）。user-only，`widensPermission: true`，目录没有字段，不预填，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出状态、重新检测、打开准备向导，以及已有的修复提示框。准备向导仍由 `sandboxWizard.show()` 打开，不把 `SandboxWizard` 整页嵌进卡片。重新检测成功后 `onSaved` → `settings.cards.complete`。向导完成不由这张卡监听，用户仍用「我已设置好」结卡。不进 `COMPONENT_SAVE_CARD_KEYS`。读适配器只读最近一次可用性，不在 read 里探测，也不调用 `sandbox.wslPrepare` 或 `probe(true)`。还没检测过回「还没检测过沙箱」、`unknown`；可用为 `configured`，不可用为 `unconfigured`（沙箱仍不可用时「我已设置好」核对不过）。快照 `values` 为 null，不放 `fixHint`、本机路径或修复命令。
-- [x] **命令白名单**：`environment.allowlist`（`AllowlistSection`，卡片键 `environment-allowlist`）。user-only，`widensPermission: true`，目录没有字段，不预填，不把 `pattern` 加进目录字段，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出添加、启停和已有的风险提示；空模式不提交。`allowlist.reset` 会清掉自定义条目，留在非嵌入形态。添加或启停成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。`prefill` 可以收下，但不写进输入框。读适配器只数启用几条、停用几条；有启用的为 `configured`，一条启用都没有为 `unconfigured`（空名单上「我已设置好」核对不过）。快照 `values` 为 null，不放条目 id，也不把命令模式放进快照。设置页原用法不变。
+- [x] **命令白名单**：`environment.allowlist`（`AllowlistSection`，卡片键 `environment-allowlist`）。user-only，`widensPermission: true`，目录没有字段，不预填，不把 `pattern` 加进目录字段，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出添加、启停和已有的风险提示；空模式不提交。`allowlist.reset` 会清掉自定义条目，留在非嵌入形态。添加或启停成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。`prefill` 可以收下，但不写进输入框。读适配器分开数自定义与内置、启用与停用；**状态恒为 `unknown`**（审查修复：内置条目默认就是启用的，原来的「有启用即 configured」让 required 直接放行、「我已设置好」总能通过）——required 不再短路，「我已设置好」按用户所说结卡，打开对话时的自动核对只在名单变过时结卡。快照 `values` 为 null，不放条目 id，也不把命令模式放进快照。设置页原用法不变。
 
-**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`environment.allowlist`、`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`mcp.servers`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency`、`group.title` 已补写入。`browser.shared-profiles`、`group.members`、项目两项、`connections.tool-policy`、`mcp.servers`、`environment.toolchains`、`environment.sandbox` 与 `environment.allowlist` 走组件自存。
+**目前只有读适配器的**条目（走「组件自存」）：`environment.allowlist`、`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy`、`unattended.enable`，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。它们调用的都是**条目级**的原 RPC（按 Bot 增删成员、改一条工具策略、追加一份资料、user-only 的组件内保存），不是整表快照提交；理由见 DEVIATIONS 的审查修复条目。
 
-**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`。`unattended.enable`、项目保护规则、放行端口、`connections.tool-policy`、`mcp.servers` 与 `browser.shared-profiles` 仍不由宿主写（风险确认、`setToolPolicy` 的任务中断、`settings.update` 在锁外的 OAuth 对账与 `revokeMcp`，或 `browserProfiles.create` 读当前列表再追加——写锁里整表替换会丢掉这段并可能覆盖刚建的另一条，留在组件原来的保存路径里）。`environment.toolchains` 也不由宿主写：安装仍走环境审批，重新检测和失败项重装由组件调用原来的 RPC。`environment.sandbox` 也不由宿主写：重新检测和准备向导留在组件，读路径只看最近一次可用性。`environment.allowlist` 也不由宿主写：添加和启停由组件调用原来的 `allowlist.add` / `allowlist.update`，`allowlist.reset` 留在设置页；读路径只数启用和停用。
+**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`、`mcp.servers`（审查修复新增）。Bot 条目的写入都经 `applyBotProfileUpdate`；写后需要 await 的收尾（中断任务、关页面、收回授权）由宿主在释放写锁之后执行。`environment.toolchains` 也不由宿主写：安装仍走环境审批，重新检测和失败项重装由组件调用原来的 RPC。`environment.sandbox` 也不由宿主写：重新检测和准备向导留在组件，读路径只看最近一次可用性。`environment.allowlist` 也不由宿主写：添加和启停由组件调用原来的 `allowlist.add` / `allowlist.update`，`allowlist.reset` 留在设置页；读路径只数启用和停用。
 
 **永久只出跳转卡 / 只读，不在 P1 范围**：`profile.user-facts`、`developer.*`、`diagnostics.*`。
 **走专门工具、`settings_change` 只重定向，不在 P1 范围**：`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`。
@@ -361,9 +361,9 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 **P0 留下的遗留问题（需要在 P2 处理或明确放弃）**
 
-- [ ] **设置页过期的整表单保存会覆盖 Bot 的直接修改**。`settings.update` 与 `bots.update` 是整份快照保存，一个旧的表单提交会把 Bot 刚直接改好的值覆盖回去，目前只有「撤销」时才会报冲突。处理方向：让设置页的保存也走条目级 CAS，或给这两个 RPC 加期望值保护。
+- [x] **设置页过期的整表单保存会覆盖 Bot 的直接修改**（审查修复已解决）：两个 RPC 增可选 `base`，core 在写锁里与最新值三方合并（表单没改的字段保留最新值，按 id 寻址的数组按条合并，两边改同一字段以这次保存为准）；`settingsStore.update` 默认带本地快照，右栏 Profile 保存带最近保存的版本。选三方合并而不是乐观并发版本号：两处都是自动保存，版本冲突会频繁报错。**仍然留着的**：不带 `base` 的 `bots.update` 调用方（右栏表单以外的入口：失败续跑卡、连接授权卡、侧栏对话框、头像）仍是整份覆盖，但它们都是「读当前 Bot → 改一处 → 立刻保存」，窗口极短；持有长期草稿的表单若绕过 `settingsStore.update` 需自己传出发快照。
 - [ ] **主干上原本就有的 e2e 失败要查清根因**。P0 收口时 e2e 有 9 例失败，在未改动的主干上同样失败（见 §8.5）。其中 3 例在 `external-agents.spec` 里，与设置卡里的智能体卡（`AgentCard`）相关；P0 只确认了它们在主干上同样失败，**没有查根因**。要确认 `AgentCard` 加 props 的改动没有间接影响，并尽量修好。
-- [ ] **跳转卡只在被渲染的对话里才会自动完成**。用户在设置页改完、之后才回到这个对话时，卡片可能仍显示未完成。处理方向：重新打开对话时对待处理的跳转卡核对一次。
+- [x] **跳转卡只在被渲染的对话里才会自动完成**（审查修复已解决）：待处理的 link / user-only / form 卡挂载时调 `settings.cards.complete{auto:true}` 一次（每张卡本会话一次，core 同一张卡 30 秒限频），core 只在条目相对出卡时确实变过才结卡并唤醒一次，没变或无法核对都保持 pending。
 - [ ] **未带 Key 的自定义厂商会让「换模型」变成待填卡**，而不是直接改。这符合「只能在已配置 Key 的厂商里选」的产品规则，需要确认这就是预期行为，并把结论写进设计篇。
 
 **已知并接受的取舍**（不作为待办，但接手者要知道）
@@ -371,6 +371,24 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - 「读过不可信内容」的判定依赖对工具名的白名单，偏严：新增的工具默认按不可信，会让 Bot 在该轮里只能出卡不能直改。新增工具时必须在白名单里归类，单测会强制。
 - 渲染层拥有的项（主题、语言、麦克风、摄像头）core 读不到也写不了，`settings_read` 只会报「状态未知」，改动只能由渲染层的卡在本机写。
 - 设置卡不做审批、不新建审计表；如果以后要跨对话查「谁改过什么」，再考虑加 `setting_changes` 表。
+
+### 8.6 合并后审查修复（2026-10-14，分支 `t/fix-settings`）
+
+审查对 P0 + P1 合并结果提了 13 项发现，全部处理（细节见设计篇 38 §11、DEVIATIONS 本轮条目、PROGRESS）：
+
+1. Bot 条目写入与 `bots.update` 共用 `applyBotProfileUpdate`：校验（外部智能体实验开关、共享浏览器资料存在）+ 写后中断任务 / 关页面 / 收回 MCP 与连接授权；校验失败是干净的 `AppError`，不写。
+2. `bot.skills` 不再经「这个 Bot」的卡改公共技能（会对所有 Bot 生效）；快照带 `scope`，卡片对公共技能指向技能页。
+3. `group.members`：Bot 预填只能加人，卡片分开列「将加入 / 将移出」，移出只来自用户亲手取消勾选；卡片挂着时别处新加的成员不会被移出。
+4. `bot.network`：任何新域名都算放宽；非白名单策略下不存看不见的域名。
+5. 失败续跑卡带出卡时快照 `before`，按它定位目标的组件不再显示「缺目标」。
+6. `environment.allowlist` 状态恒为 `unknown`，不再短路 required、不再自动通过核对。
+7. `project.protect-rules` 读取脱敏（`<project>/…`、`~/…`、`…/文件名`，截短、封顶）。
+8. `values` 在 core 写入前统一形状校验（未登记键、类型、静态选项、长度）；界面语言只认已注册的；并发上限只认已接入厂商与 1–16。
+9. `mcp.servers` 改为宿主写（写锁 + CAS + 锁外收回授权），渲染层不再拼整表；其余组件自存的条目都是条目级 RPC，理由记在 DEVIATIONS。
+10. 整份快照保存的三方合并（`base`），见 §8.3。
+11. `GroupSettingsDialog.svelte` 的 `svelte/prefer-svelte-reactivity` 报错已消除。
+12. 打开对话时核对待处理卡（`auto`），见 §8.3。
+13. 文档：PROGRESS 里过期的「仍保持跳转卡」已改；本节、设计篇 §11、DEVIATIONS；补测试（host 级 project / environment 空白卡、`bot.apps` / `bot.mcp-servers` 确认卡与收回授权、公共技能路径）。
 
 ### 8.4 P3 📝 仅记录：真实场景验证与调优
 

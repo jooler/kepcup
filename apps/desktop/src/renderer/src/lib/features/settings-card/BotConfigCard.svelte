@@ -163,13 +163,16 @@
       case 'bot.browser-profile':
         return { profile };
       case 'bot.network':
-        return {
-          policy,
-          allowlist: allowlist
-            .split(/[\n,]/)
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0),
-        };
+        // 白名单输入框只在「白名单」策略下可见：别的策略不提交域名（core 也不会存看不见的域名）。
+        return policy === 'allowlist'
+          ? {
+              policy,
+              allowlist: allowlist
+                .split(/[\n,]/)
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0),
+            }
+          : { policy };
       case 'bot.mcp-servers':
         return { servers };
       case 'bot.apps':

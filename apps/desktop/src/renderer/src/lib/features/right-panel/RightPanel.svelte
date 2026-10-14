@@ -143,8 +143,14 @@
   });
 
   async function saveProfile(id: string, profile: BotProfile): Promise<void> {
+    // base = 草稿出发时的版本（最近一次保存 / 合并进来的服务端 profile）：core 据此三方合并，
+    // 草稿没碰的字段不会把 Bot 刚直改或设置卡刚写的值覆盖回去。换 Bot 的补救保存不带 base。
+    const base =
+      savedProfile !== null && draftBotId === id
+        ? ($state.snapshot(savedProfile) as BotProfile)
+        : null;
     try {
-      const updated = await contacts.update(id, $state.snapshot(profile) as BotProfile);
+      const updated = await contacts.update(id, $state.snapshot(profile) as BotProfile, base);
       savedProfile = updated.profile;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
@@ -210,6 +216,7 @@
           ...base,
           identity: { ...base.identity, ...patch },
         }) as BotProfile,
+        $state.snapshot(base) as BotProfile,
       );
       savedProfile = updated.profile;
     } catch (error) {

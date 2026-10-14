@@ -16,7 +16,8 @@
    * §6.2）：任务里 `settings_change` 带 `required: true` 需要用户处理时出现。与消息流设置卡
    * 同一套分发（`SettingCardEmbed`，预填取 requirement.prefill）；没有内嵌组件的条目给
    * 「在设置中打开」+「已设置好，继续」。完成后走既有的 `chat.continueAfterSetup`（收起 +
-   * `runs.retry`）。
+   * `runs.retry`）。`requirement.before` 是出卡时的当前值：按它定位目标的组件（连接工具策略、
+   * MCP 服务）和做条目级 CAS 的组件都从这里拿 `expected`。
    */
   let { requirement }: { requirement: Extract<SetupRequirement, { kind: 'setting' }> } = $props();
 
@@ -66,6 +67,7 @@
     {botId}
     conversationId={chat.currentId}
     projectId={chat.current?.conversation.projectId ?? null}
+    expected={requirement.before ?? null}
     testidPrefix="setup-card-setting"
     onSaved={proceed}
   />

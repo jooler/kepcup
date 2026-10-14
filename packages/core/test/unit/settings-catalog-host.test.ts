@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  AppError,
   SETTING_CARDS_PER_RUN_MAX,
   SETTING_CARD_DECLINE_WINDOW_MS,
   SETTING_RECEIPT_UNDO_WINDOW_MS,
+  type AgentCatalogEntry,
   type Bot,
   type Message,
   type ProviderInfo,
@@ -23,6 +25,11 @@ import { SettingsService } from '../../src/domain/settings.js';
 import type { AdapterDeps } from '../../src/settings/adapters.js';
 import { SettingsCatalogHost, type SettingsRunContext } from '../../src/settings/host.js';
 import { SettingsWriteLock } from '../../src/settings/write-lock.js';
+import {
+  applyBotProfileUpdate,
+  createPermissionEffects,
+} from '../../src/settings/bot-profile-update.js';
+import type { PermissionRevokedEvent } from '../../src/permissions/revocations.js';
 import {
   TRUSTED_TOOLS,
   UNTRUSTED_TOOLS,
@@ -63,6 +70,12 @@ interface Rig {
   conversationId: string;
   groupId: string;
   tainted: Set<string>;
+  /** `mcp.servers` 写入后的撤销（旧 → 新里被停掉的服务 id）。 */
+  mcpRevoked: string[][];
+  /** 真实 `applyBotProfileUpdate` 发出的撤销事件（`realBotProfiles` 时）。 */
+  revocations: PermissionRevokedEvent[];
+  /** 浏览器资料切换后关页面 / 中断的 Bot（`realBotProfiles` 时）。 */
+  profileSwitches: string[];
 }
 
 let rigCount = 0;
@@ -86,6 +99,13 @@ function makeRig(
     environment?: AdapterDeps['environment'];
     sandbox?: AdapterDeps['sandbox'];
     allowlist?: AdapterDeps['allowlist'];
+    skills?: AdapterDeps['skills'];
+    /** 直聊会话绑定的项目（project.* 条目的作用对象）。 */
+    projectId?: string;
+    projects?: AdapterDeps['projects'];
+    /** Bot 条目写入走真实的 `applyBotProfileUpdate`（校验 + 锁外中断 / 收回授权）。 */
+    realBotProfiles?: boolean;
+    experimentalAgents?: boolean;
   } = {},
 ): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
@@ -153,6 +173,63 @@ function makeRig(
   const published: Rig['published'] = [];
   const wakes: Rig['wakes'] = [];
   const tainted = new Set<string>();
+  const mcpRevoked: string[][] = [];
+  const revocations: PermissionRevokedEvent[] = [];
+  const profileSwitches: string[] = [];
+  if (extras.experimentalAgents === true) {
+    settings.update({ experimental: { externalAgents: true } } as never);
+  }
+  const catalog = [
+    { id: 'agent-a', name: 'Agent A' },
+    { id: 'agent-b', name: 'Agent B' },
+  ] as never as AgentCatalogEntry[];
+  const realBotProfiles: AdapterDeps['botProfiles'] = {
+    apply: (botId, profile) =>
+      applyBotProfileUpdate(
+        {
+          bots: {
+            getOrThrow: (id) => {
+              const found = bots.get(id);
+              if (found === undefined) throw new Error(`no bot ${id}`);
+              return found;
+            },
+            update: (id, next) => {
+              const updated = { ...bots.get(id)!, profile: next } as Bot;
+              bots.set(id, updated);
+              return updated;
+            },
+          },
+          settings,
+          agentCatalog: () => catalog,
+          browserProfiles: {
+            assertSelectable: (next, previous) => {
+              if (next.length === 0 || next === previous) return;
+              if (!settings.get().browserProfiles.some((entry) => entry.id === next)) {
+                throw new AppError('NOT_FOUND', `浏览器资料 ${next} 不存在`);
+              }
+            },
+            profileKeyFor: (id) => `${id}:${bots.get(id)?.profile.runtime.browser_profile ?? ''}`,
+            onBotProfileChanged: async (id) => {
+              profileSwitches.push(id);
+              return 1;
+            },
+          },
+          effects: createPermissionEffects({
+            revocations: {
+              emit: (event) => {
+                revocations.push(event);
+                return 1;
+              },
+            },
+            publish: (event, payload) => void published.push({ event, payload }),
+            listBots: () => [...bots.values()],
+          }),
+          publish: (event, payload) => void published.push({ event, payload }),
+        },
+        botId,
+        profile,
+      ),
+  };
   const host = new SettingsCatalogHost({
     db,
     messages,
@@ -170,32 +247,48 @@ function makeRig(
     },
     bots: {
       get: (id) => bots.get(id) ?? null,
-      update: (id, profile) => {
-        const next = { ...bots.get(id)!, profile } as Bot;
-        bots.set(id, next);
-        return next;
-      },
     },
+    botProfiles:
+      extras.realBotProfiles === true
+        ? realBotProfiles
+        : {
+            apply: (id, profile) => {
+              const next = { ...bots.get(id)!, profile } as Bot;
+              bots.set(id, next);
+              published.push({ event: 'bot.updated', payload: { bot: next } });
+              return { bot: next, changedItemIds: [], settle: async () => undefined };
+            },
+          },
     conversations: {
       get: (id) =>
         id === conversationId
-          ? { title: null, type: 'direct', projectId: null }
+          ? { title: null, type: 'direct', projectId: extras.projectId ?? null }
           : id === groupId
             ? { title: '项目群', type: 'group', projectId: null }
             : null,
+      memberBotIds: (id) => (id === groupId ? ['bot_a'] : []),
     },
     taint: { isTainted: (botId, conv) => tainted.has(`${botId}:${conv}`) },
-    agentCatalog: () =>
-      [
-        { id: 'agent-a', name: 'Agent A' },
-        { id: 'agent-b', name: 'Agent B' },
-      ] as never,
+    agentCatalog: () => catalog,
     publish: (event, payload) => void published.push({ event, payload }),
     wake: (input) => void wakes.push(input),
+    mcpServers: {
+      revokeChanges: (previous, next) =>
+        void mcpRevoked.push(
+          previous
+            .filter(
+              (server) =>
+                server.enabled && next.find((entry) => entry.id === server.id)?.enabled !== true,
+            )
+            .map((server) => server.id),
+        ),
+    },
     ...(extras.appConnections !== undefined ? { appConnections: extras.appConnections } : {}),
     ...(extras.environment !== undefined ? { environment: extras.environment } : {}),
     ...(extras.sandbox !== undefined ? { sandbox: extras.sandbox } : {}),
     ...(extras.allowlist !== undefined ? { allowlist: extras.allowlist } : {}),
+    ...(extras.skills !== undefined ? { skills: extras.skills } : {}),
+    ...(extras.projects !== undefined ? { projects: extras.projects } : {}),
   });
   return {
     db,
@@ -210,6 +303,9 @@ function makeRig(
     conversationId,
     groupId,
     tainted,
+    mcpRevoked,
+    revocations,
+    profileSwitches,
   };
 }
 
@@ -732,18 +828,22 @@ describe('settings catalog host: settings_change and cards', () => {
       proposed: { server: 'notes', enabled: false },
       before: { server: 'notes', enabled: true },
     });
-    await expect(
-      rig.host.applyItem({
-        itemId: 'mcp.servers',
-        values: { server: 'notes', enabled: false },
-        expected: cardOf(rig, tightCard!.id).before,
-        messageId: tightCard!.id,
-      }),
-    ).rejects.toThrow(/暂不支持在对话里保存/);
+    // 卡片组件经 settings.items.apply 写：写锁里只改这一个服务的 enabled（兄弟服务、toolPolicies
+    // 不动），锁外按 mcpRevocationsBetween 收回授权。
+    const applied = await rig.host.applyItem({
+      itemId: 'mcp.servers',
+      values: { server: 'notes', enabled: false },
+      expected: cardOf(rig, tightCard!.id).before,
+      messageId: tightCard!.id,
+    });
+    expect(applied).toMatchObject({ status: 'applied', values: { server: 'notes', enabled: false } });
     expect(rig.settings.get().mcpServers.find((server) => server.id === 'notes')).toMatchObject({
-      enabled: true,
+      enabled: false,
       toolPolicies: { search: { approval: 'ask' } },
     });
+    expect(rig.settings.get().mcpServers.find((server) => server.id === 'off')?.enabled).toBe(false);
+    expect(rig.mcpRevoked).toEqual([['notes']]);
+    expect(cardOf(rig, tightCard!.id).state).toBe('applied');
 
     const widen = await rig.host.forRun(runCtx(rig)).change({
       id: 'mcp.servers',
@@ -959,12 +1059,14 @@ describe('settings catalog host: settings_change and cards', () => {
       before: null,
     });
     const read = rig.host.forRun(runCtx(rig)).read('environment.allowlist', undefined);
-    expect(read.content).toContain('启用 0 条，停用 2 条');
+    expect(read.content).toContain('自定义启用 0 条、停用 2 条');
+    expect(read.content).toContain('状态未知');
     expect(read.content).toContain('你给的 values 不会被采用');
     expect(read.content).not.toContain('alw_');
     expect(read.content).not.toContain('rm -rf');
     expect(read.content).not.toContain('npm test');
-    expect(rig.host.completeCard(id)).toEqual({ state: 'pending', verified: false });
+    // 打开对话时的自动核对：名单没变 → 保持 pending，不唤醒。
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
     await expect(
       rig.host.applyItem({
         itemId: 'environment.allowlist',
@@ -975,10 +1077,33 @@ describe('settings catalog host: settings_change and cards', () => {
     ).rejects.toThrow(/暂不支持在对话里保存/);
     expect(cardOf(rig, id).state).toBe('pending');
     entries[0] = { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true };
-    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
+    // 自动核对限频：30 秒内同一张卡不再核对。
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    rig.clock.advance(31_000);
+    // 名单变了（概要条数不同）→ 自动核对结卡并唤醒一次。
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
+    expect(rig.wakes).toHaveLength(1);
     expect(cardOf(rig, id).applied).toBeUndefined();
     expect(JSON.stringify(cardOf(rig, id))).not.toContain('alw_');
     expect(JSON.stringify(cardOf(rig, id))).not.toContain('rm -rf');
+
+    // 「已配置」不再由「有启用的条目」得出：任务里 required:true 不会被直接放行，用户点
+    // 「我已设置好」按用户所说结卡（无法核对）。
+    const ctx = runCtx(rig, { loopType: 'task' });
+    const required = await rig.host.forRun(ctx).change({
+      id: 'environment.allowlist',
+      reason: '需要免审批运行 npm test',
+      required: true,
+    });
+    expect(required).toMatchObject({ ok: false, errorCode: 'SETUP_REQUIRED' });
+    const manual = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.allowlist',
+      reason: '再放行一条',
+    });
+    expect(rig.host.completeCard(messageIdIn(manual.content))).toEqual({
+      state: 'applied',
+      verified: null,
+    });
   });
 
   it('user-only: a blank card, the bot values are not used', async () => {
@@ -1122,7 +1247,12 @@ describe('settings catalog host: settings_change and cards', () => {
     });
     expect(result).toMatchObject({ ok: false, errorCode: 'SETUP_REQUIRED' });
     expect(ctx.setup).toEqual([
-      { kind: 'setting', itemId: 'capability.image', reason: '生成图片需要图像模型' },
+      {
+        kind: 'setting',
+        itemId: 'capability.image',
+        before: { provider: '', model: '' },
+        reason: '生成图片需要图像模型',
+      },
     ]);
     expect(cards(rig)).toHaveLength(0);
     // Not required: a non-blocking card, the task goes on.
@@ -1378,3 +1508,297 @@ const CHANGE_MAIN_ALT = {
   values: { model: 'custom:mock/mock-alt' },
   reason: '换模型',
 };
+
+
+describe('settings catalog host: D89 review round 2', () => {
+  function withServer(rig: Rig): void {
+    rig.settings.update({
+      mcpServers: [
+        { id: 'srv', name: 'Srv', transport: 'stdio', command: 'echo', enabled: true },
+      ],
+      browserProfiles: [{ id: 'bpf_work', name: 'Work', createdAt: 1 }],
+    } as never);
+    const bot = rig.bots.get('bot_a')!;
+    rig.bots.set('bot_a', {
+      ...bot,
+      profile: {
+        ...bot.profile,
+        runtime: {
+          ...bot.profile.runtime,
+          mcp_server_ids: ['srv'],
+          app_connection_ids: ['conn_notion'],
+        },
+      },
+    } as Bot);
+  }
+
+  it('bot.mcp-servers: a confirm card; applying the removal revokes the bot\'s MCP access after the write', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    withServer(rig);
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.mcp-servers',
+      values: { servers: [] },
+      reason: '这个 Bot 不再需要 MCP',
+    });
+    const id = messageIdIn(result.content);
+    const card = cardOf(rig, id);
+    expect(card).toMatchObject({ mode: 'confirm', proposed: { servers: [] } });
+    expect(rig.revocations).toEqual([]);
+    const out = await rig.host.applyItem({
+      itemId: 'bot.mcp-servers',
+      values: { servers: [] },
+      expected: card.before,
+      target: card.target,
+      messageId: id,
+    });
+    expect(out.status).toBe('applied');
+    expect(rig.bots.get('bot_a')!.profile.runtime.mcp_server_ids).toEqual([]);
+    expect(rig.revocations).toEqual([{ scope: 'mcp', botIds: ['bot_a'], serverId: 'srv' }]);
+    expect(rig.published.some((entry) => entry.event === 'tasks.interrupted')).toBe(true);
+    expect(rig.published.some((entry) => entry.event === 'bot.updated')).toBe(true);
+    expect(cardOf(rig, id).state).toBe('applied');
+  });
+
+  it('bot.apps: a confirm card; taking a connection away revokes it for this bot', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    withServer(rig);
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.apps',
+      values: { connections: [] },
+      reason: '收回 Notion 授权',
+    });
+    const id = messageIdIn(result.content);
+    expect(cardOf(rig, id)).toMatchObject({ mode: 'confirm', proposed: { connections: [] } });
+    await rig.host.applyItem({
+      itemId: 'bot.apps',
+      values: { connections: [] },
+      expected: cardOf(rig, id).before,
+      messageId: id,
+    });
+    expect(rig.revocations).toEqual([{ scope: 'mcp', botIds: ['bot_a'], serverId: 'conn_notion' }]);
+  });
+
+  it('bot.browser-profile: an unknown shared profile is a clean error and writes nothing; a real switch closes the pages', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    withServer(rig);
+    await expect(
+      rig.host.applyItem({
+        itemId: 'bot.browser-profile',
+        values: { profile: 'bpf_gone' },
+        expected: null,
+        target: { botId: 'bot_a' },
+      }),
+    ).rejects.toThrow(/浏览器资料 bpf_gone 不存在/);
+    expect(rig.bots.get('bot_a')!.profile.runtime.browser_profile).toBe('');
+    expect(rig.profileSwitches).toEqual([]);
+    await rig.host.applyItem({
+      itemId: 'bot.browser-profile',
+      values: { profile: 'bpf_work' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.bots.get('bot_a')!.profile.runtime.browser_profile).toBe('bpf_work');
+    expect(rig.profileSwitches).toEqual(['bot_a']);
+  });
+
+  it('bot.agent: switching to an external agent honors the experimental switch like bots.update', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'bot.agent',
+        values: { agent: 'agent-a', permission: 'ask' },
+        expected: null,
+        target: { botId: 'bot_a' },
+      }),
+    ).rejects.toThrow(/实验功能/);
+    expect(rig.bots.get('bot_a')!.profile.runtime.agent.id).toBe('');
+    const enabled = makeRig({ realBotProfiles: true, experimentalAgents: true });
+    await enabled.host.applyItem({
+      itemId: 'bot.agent',
+      values: { agent: 'agent-a', permission: 'ask' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(enabled.bots.get('bot_a')!.profile.runtime.agent).toMatchObject({
+      id: 'agent-a',
+      permission: 'ask',
+    });
+  });
+
+  it('project.* with values: a blank user-only card, the values are not used', async () => {
+    const rig = makeRig({
+      projectId: 'proj_1',
+      projects: {
+        get: () => ({
+          path: '/home/alice/site',
+          protectRules: { denyRead: ['/home/alice/site/.env'], denyWrite: [] },
+          allowedPorts: [[3000, 3000]],
+        }),
+      },
+    });
+    for (const [id, values] of [
+      ['project.protect-rules', { denyRead: [], denyWrite: [] }],
+      ['project.ports', { ports: [1, 65535] }],
+    ] as const) {
+      const result = await rig.host.forRun(runCtx(rig)).change({
+        id,
+        values: values as never,
+        reason: '帮我放开',
+      });
+      expect(result.ok).toBe(true);
+      expect(result.content).toContain('空白卡');
+      expect(result.content).toContain('没有采用');
+      const card = cardOf(rig, messageIdIn(result.content));
+      expect(card).toMatchObject({ mode: 'user-only', proposed: null, target: { projectId: 'proj_1' } });
+      expect(JSON.stringify(card)).not.toContain('/home/alice');
+    }
+  });
+
+  it('environment.* with values: rejected (no fields); without values a blank user-only card', async () => {
+    const rig = makeRig({ sandbox: { lastAvailability: () => null } });
+    for (const id of ['environment.toolchains', 'environment.sandbox', 'environment.allowlist']) {
+      const rejected = await rig.host.forRun(runCtx(rig)).change({
+        id,
+        values: { enabled: true },
+        reason: '打开',
+      });
+      expect(rejected).toMatchObject({ ok: false });
+      const blank = await rig.host.forRun(runCtx(rig)).change({ id, reason: '请你设置一下' });
+      expect(blank.ok).toBe(true);
+      expect(cardOf(rig, messageIdIn(blank.content))).toMatchObject({
+        mode: 'user-only',
+        proposed: null,
+      });
+    }
+  });
+
+  it('bot.network: a domain the card would hide is widening → a blank user-only card', async () => {
+    const rig = makeRig();
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.network',
+      values: { allowlist: ['evil.com'] },
+      reason: '加个域名',
+    });
+    expect(result.content).toContain('没有采用');
+    expect(cardOf(rig, messageIdIn(result.content))).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+    });
+  });
+
+  it('bot.skills: a public skill is refused with a pointer to the skills page; a private one is a confirm card', async () => {
+    const rig = makeRig({
+      skills: {
+        list: () => [
+          { name: 'mine', status: 'disabled', scope: 'private' },
+          { name: 'shared', status: 'active', scope: 'public' },
+        ],
+        enable: () => undefined,
+        disable: () => {
+          throw new Error('must not flip a public skill');
+        },
+      },
+    });
+    const refused = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.skills',
+      values: { skill: 'shared', enabled: false },
+      reason: '停掉这个技能',
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.content).toContain('技能页');
+    expect(cards(rig)).toHaveLength(0);
+    await expect(
+      rig.host.applyItem({
+        itemId: 'bot.skills',
+        values: { skill: 'shared', enabled: false },
+        expected: null,
+        target: { botId: 'bot_a' },
+      }),
+    ).rejects.toThrow(/公共技能/);
+    const own = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.skills',
+      values: { skill: 'mine', enabled: true },
+      reason: '启用我的技能',
+    });
+    expect(cardOf(rig, messageIdIn(own.content))).toMatchObject({
+      mode: 'confirm',
+      before: { skill: 'mine', enabled: false, scope: 'private' },
+    });
+  });
+
+  it('group.members: a bot proposal never drops an existing member', async () => {
+    const rig = makeRig();
+    const result = await rig.host.forRun(runCtx(rig, { conversationId: rig.groupId })).change({
+      id: 'group.members',
+      values: { bots: ['bot_b'] },
+      reason: '把 bot_b 拉进群',
+    });
+    expect(cardOf(rig, messageIdIn(result.content))).toMatchObject({
+      mode: 'confirm',
+      before: { bots: ['bot_a'] },
+      proposed: { bots: ['bot_a', 'bot_b'] },
+    });
+  });
+
+  it('values are shape-checked in core for both the bot and the renderer', async () => {
+    const rig = makeRig();
+    const bad = await rig.host.forRun(runCtx(rig)).change({
+      id: 'models.concurrency',
+      values: { provider: 'default', limit: '8' },
+      reason: '调大并发',
+    });
+    expect(bad).toMatchObject({ ok: false });
+    expect(bad.content).toContain('limit 应为数字');
+    const unknownProvider = await rig.host.forRun(runCtx(rig)).change({
+      id: 'models.concurrency',
+      values: { provider: 'nobody', limit: 8 },
+      reason: '调大并发',
+    });
+    expect(unknownProvider.content).toContain('没有已接入的厂商');
+    const language = await rig.host.forRun(runCtx(rig)).change({
+      id: 'general.language',
+      values: { language: 'xx-YY' },
+      reason: '换语言',
+    });
+    expect(language.content).toContain('language 只能是 zh-CN');
+    await expect(
+      rig.host.applyItem({ itemId: 'general.language', values: { language: 'fr' }, expected: null }),
+    ).rejects.toThrow(/只能是 zh-CN/);
+    await expect(
+      rig.host.applyItem({ itemId: 'general.theme', values: { theme: 'neon' }, expected: null }),
+    ).rejects.toThrow(/theme 只能是/);
+    await expect(
+      rig.host.applyItem({
+        itemId: 'background.budget',
+        values: { tokens: 10, extra: 1 },
+        expected: null,
+      }),
+    ).rejects.toThrow(/没有字段 extra/);
+    expect(cards(rig)).toHaveLength(0);
+  });
+
+  it('required:true on a user-only item carries the located target (before) for the setup card', async () => {
+    const rig = makeRig();
+    rig.settings.update({
+      mcpServers: [
+        { id: 'off', name: 'Off', transport: 'stdio', command: 'echo', enabled: false },
+      ],
+    } as never);
+    const ctx = runCtx(rig, { loopType: 'task' });
+    const result = await rig.host.forRun(ctx).change({
+      id: 'mcp.servers',
+      values: { server: 'off', enabled: true },
+      reason: '任务需要这个服务',
+      required: true,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'SETUP_REQUIRED' });
+    expect(ctx.setup).toEqual([
+      {
+        kind: 'setting',
+        itemId: 'mcp.servers',
+        before: { server: 'off', enabled: false },
+        reason: '任务需要这个服务',
+      },
+    ]);
+  });
+});

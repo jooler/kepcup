@@ -211,7 +211,14 @@
     onSaved={() => onSaved()}
   />
 {:else if item.card === 'mcp-servers'}
-  <McpSection embedded before={expected} {prefill} onSaved={() => onSaved()} />
+  <McpSection
+    embedded
+    before={expected}
+    {prefill}
+    {messageId}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
 {:else if item.card === 'browser-profiles'}
   <BrowserProfilesSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-toolchains'}

@@ -13,6 +13,8 @@ export interface RendererWriters {
   setSensorDevice(kind: SensorKind, deviceId: string): void;
   setTheme?(theme: 'light' | 'dark' | 'system'): void;
   setLanguage?(language: string): void;
+  /** 支持的界面语言（i18n `localeOptions`）；不在里面的值不写。 */
+  languages?: readonly string[];
 }
 
 /** 写入成功返回 true；这一项本机还不会写（卡片退回「在设置中打开」）返回 false。 */
@@ -32,6 +34,7 @@ export function applyRendererValues(
     const language = values.language;
     if (typeof language !== 'string' || language.length === 0) return false;
     if (writers.setLanguage === undefined) return false;
+    if (writers.languages !== undefined && !writers.languages.includes(language)) return false;
     writers.setLanguage(language);
     return true;
   }

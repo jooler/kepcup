@@ -772,7 +772,14 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['语言', 'language', '英文', '中文'],
     scope: 'global',
     owner: 'renderer',
-    fields: [field('language', '语言', 'select', { options: 'languages' })],
+    // 支持的界面语言写死在这里（core 写入前按静态选项校验）；渲染层的 `localeOptions` 加语言时
+    // 同步加一行，desktop 单测核对两边一致。
+    fields: [
+      field('language', '语言', 'select', {
+        options: 'static',
+        staticOptions: [{ value: 'zh-CN', label: '简体中文' }],
+      }),
+    ],
     write: write('confirm'),
     card: 'appearance',
     deepLink: { surface: 'settings', section: 'general', anchor: 'appearance' },

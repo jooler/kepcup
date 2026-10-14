@@ -1277,6 +1277,11 @@ export const setupRequirementSchema = z.discriminatedUnion('kind', [
     itemId: z.string(),
     /** Bot 给的非敏感预填值（宿主按 `effectiveMode.acceptValues` 过滤后才写入）。 */
     prefill: settingValuesSchema.optional(),
+    /**
+     * 出卡时条目的当前值（脱敏快照，与消息流卡片的 `before` 同义）：失败续跑卡的组件靠它定位目标
+     * （哪条连接工具、哪个 MCP 服务），并作为条目级 CAS 的 `expected`。user-only 不带 prefill 时也有。
+     */
+    before: settingValuesSchema.optional(),
     /** 给用户看的一句话原因。 */
     reason: z.string(),
   }),

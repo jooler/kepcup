@@ -136,6 +136,7 @@ import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
 import { HandoverHost } from './dispatch/handover.js';
 import { SettingsCatalogHost } from './settings/host.js';
+import { applyBotProfileUpdate, createPermissionEffects } from './settings/bot-profile-update.js';
 import { SettingsWriteLock } from './settings/write-lock.js';
 import { HandoverRegistry } from './handover/registry.js';
 import { HandoverStore } from './handover/store.js';
@@ -1876,6 +1877,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
 
     // 对话内应用设置（todo/conversational-app-setup.md）：目录适配器 + 三个工具 + 设置卡的宿主。
     // 设置卡落定后经 orchestrator 唤醒出卡 Bot（晚绑定：orchestrator 在下面构造）。
+    // Bot 条目写入与 `bots.update` RPC 同一个 applyBotProfileUpdate（校验、中断任务、收回授权）。
+    const settingsPermissionEffects = createPermissionEffects({
+      revocations,
+      publish: (event, payload) => events.emit(event as never, payload as never),
+      listBots: () => bots.listActive(),
+      mcpRiskOf: (serverId, toolName) => mcp.riskOf(serverId, toolName).risk,
+      mcpKnownTools: (serverId) => mcp.knownToolNames(serverId),
+    });
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -1886,6 +1895,25 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       providers,
       bots,
+      botProfiles: {
+        apply: (botId, profile) =>
+          applyBotProfileUpdate(
+            {
+              bots,
+              settings,
+              agentCatalog: () => agentCatalog,
+              browserProfiles,
+              effects: settingsPermissionEffects,
+              publish: (event, payload) => events.emit(event as never, payload as never),
+            },
+            botId,
+            profile,
+          ),
+      },
+      mcpServers: {
+        revokeChanges: (previous, next) =>
+          settingsPermissionEffects.revokeMcpServerChanges(previous, next),
+      },
       conversations,
       groups: {
         rename: (conversationId, title) => {

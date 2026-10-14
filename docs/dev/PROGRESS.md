@@ -1353,9 +1353,9 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **全量结果（单元 / 集成，审查修复 `c10a7a6` 之后，`kepcup-test:trixie`）**：416 个文件、4534 例；401 个文件通过，14 个文件 33 例失败、22 例跳过、4479 通过。失败的 33 例与 main（`0fdcd26`）上同一批文件的失败逐项一致（agents-service / create-core / environment / external-agent-p3 / projects / response-loop / skills* / tasks-review-fixes-e / wiki-url / workspace-tools / sandbox ×2 / task-events-migration / tool-effects-migration），本分支独有的失败为 0。首轮全量曾多出 `model-selection-single-source`（设置目录适配器合法读写模型配置值，已加入该守卫的放行表，`a7b2f31`）与一次 `agents-service` 登录用例并发偶发（单跑通过），收口轮均已消失。
 - **全量结果（e2e，`kepcup-test:trixie-xvfb`，分支与 main `0fdcd26` 各完整跑一次，构建均在审查修复之后）**：分支 95 例（86 通过、9 失败）；main 94 例（85 通过、9 失败）。两边的 9 例失败**完全相同**：`debug-dev-pin`、`external-agents` ×3（设置目录启用、agent_tool 审批卡、对话内智能体设置卡）、`local-connectors`、`projects`「项目选择」、`sandbox`「运行状态行」、`tasks`「启动任务」、`wiki`「页面树浏览」；分支独有的失败为 0。差的 1 例是新增的 `setting-card.spec`（单聊 direct 回执卡撤销 + 群聊 confirm 卡应用后唤醒 Bot，已通过）；`setup-card.spec` 3 例仍全部通过。此前车道汇报里「e2e 另有 4 例失败」的数字不准确，以这里为准。
 - **偏差**：见 DEVIATIONS DEV-026。
-- **未做**：P1 剩余条目（连接逐工具策略、MCP 服务列表、共享浏览器资料、环境三项仍保持跳转卡；见下一节）、P2（旧 7 个 kind 收拢、提示词规则合并评估）；真实模型下「帮我生成图片」类场景的端到端观察。
+- **未做（P0 收口时）**：P1 条目（P0 收口时连接逐工具策略、MCP 服务列表、共享浏览器资料、环境三项仍是跳转卡；P1 已全部升级为内嵌卡，见下一节）、P2（旧 7 个 kind 收拢、提示词规则合并评估）；真实模型下「帮我生成图片」类场景的端到端观察。
 
-## 对话内应用设置 P1（进行中，2026-10-14）
+## 对话内应用设置 P1（已完成，2026-10-14）
 
 依据 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md) §8.2。58 个目录条目里内嵌卡从 18 增至 46。无 DB 迁移，未改 RPC 契约。
 
@@ -1381,3 +1381,13 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **折叠记录（P2）**：自动决定、外发、带污点标记的中途权限卡决定后在对话里留一行记录。
 - **文案**：`ask` 档改名「编辑前确认（沙箱内命令自动）」，白名单 / 污点外发保护说明按实际行为改写；design 10 / 12 / 13 / 28 同步。
 - **测试**：新增 `gateway-allowlist-hardening`（自定义条目 × 只读 run / 污点、仓库配置 fsmonitor / diff.external 标记脚本不执行、`.git` 控制文件写入、加固环境）、shared `allowlist-pattern`、`permission-bridge-taint`（宿主裁决、会话中途污点、主机询问、自定义条目）、`external-agent-p6`（会话沙箱设置随污点控制）、`allowlist-match`（git branch 正反、内置集合形状）、`permissions`（退役行、add 拒绝、custom 标记）、`messages-visible` / desktop `ephemeral-approval`（record 卡）、`suggest-allowlist-prefix`；`approvals` 集成测试顺带修正被 ef2a565 / f2b9627 打断的两处断言并检查 record。定向测试见提交说明；未跑全量。
+
+## 对话内应用设置 合并后审查修复（D89，2026-10-14，`t/fix-settings`，未推送）
+
+依据合并后审查的 13 项发现（todo/conversational-app-setup.md §8.6），设计见 design/38 §11，偏差见 DEVIATIONS DEV-029（编号合并时以最后一个空号为准）。无 DB 迁移；shared 契约有增量（`settings.update` / `bots.update` 的可选 `base`、`settings.cards.complete` 的可选 `auto`、`kind:'setting'` 的可选 `before`、`general.language` 改静态选项）。
+
+- **shared**：`settings-catalog/validate.ts`（`settingValuesProblems`）、`settings-catalog/merge.ts`（`mergeThreeWay` / `mergePatchOnto`）。
+- **core**：`settings/bot-profile-update.ts`（`applyBotProfileUpdate` 与 `createPermissionEffects`，`bots.update` RPC 与 Bot 条目适配器共用）；适配器写入可返回锁外收尾；`bot.skills` 拒绝公共技能；`bot.network` 放宽判定与隐藏域名；`group.members` 的 `proposal`；`mcp.servers` 宿主写；`environment.allowlist` 状态 `unknown`；`project.protect-rules` 脱敏；`models.concurrency` / `background.tasks` 语义校验；宿主 `settingValuesProblems`、`completeCard({auto})`、required 带 `before`；`settings.update` / `bots.update` 带 `base` 三方合并。
+- **desktop**：群成员卡（`group-members.ts`，只加不预删，列出将加入 / 将移出，修 lint）；MCP 卡经 `settings.items.apply`；网络卡非白名单不提交域名；失败续跑卡传 `before`；语言预填 / 本机写入只认已注册语言；技能卡对公共技能指向技能页；待处理卡挂载时自动核对一次；`settingsStore.update` / `contacts.update` / 右栏保存带 `base`。
+- **测试**：shared `settings-merge-validate`；core 单测 `settings-item-writes`、`settings-catalog-host`（新增「D89 review round 2」），集成 `settings-cards` (9)–(12)；desktop `group-members`、`settings.svelte`、`deep-link`、`setting-card-model`、`mcp-server-patch`。定向结果见下。
+
