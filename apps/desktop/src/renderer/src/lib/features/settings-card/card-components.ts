@@ -33,6 +33,7 @@ export const SETTING_CARD_COMPONENTS = {
   'browser-profiles': 'BrowserProfilesSection',
   'environment-toolchains': 'EnvironmentSection',
   'environment-sandbox': 'SandboxSection',
+  'environment-allowlist': 'AllowlistSection',
 } as const satisfies Record<CardKey, string>;
 
 /** 内嵌时需要的上下文（谁的卡、作用对象、可用的外部智能体）。 */
@@ -86,6 +87,7 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'browser-profiles':
     case 'environment-toolchains':
     case 'environment-sandbox':
+    case 'environment-allowlist':
       return true;
     case 'connect-app':
       return prefillString(context.prefill, 'app') !== null;

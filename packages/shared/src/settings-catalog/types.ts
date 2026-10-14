@@ -202,6 +202,8 @@ export const CARD_KEYS = [
   'environment-toolchains',
   /** 沙箱（`SandboxSection`：状态、重新检测、准备向导；向导页本身不嵌进卡片）。 */
   'environment-sandbox',
+  /** 命令白名单（`AllowlistSection`：添加、启停、风险提示；恢复默认留在设置页）。 */
+  'environment-allowlist',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

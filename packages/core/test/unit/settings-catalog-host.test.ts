@@ -85,6 +85,7 @@ function makeRig(
     appConnections?: AdapterDeps['appConnections'];
     environment?: AdapterDeps['environment'];
     sandbox?: AdapterDeps['sandbox'];
+    allowlist?: AdapterDeps['allowlist'];
   } = {},
 ): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
@@ -194,6 +195,7 @@ function makeRig(
     ...(extras.appConnections !== undefined ? { appConnections: extras.appConnections } : {}),
     ...(extras.environment !== undefined ? { environment: extras.environment } : {}),
     ...(extras.sandbox !== undefined ? { sandbox: extras.sandbox } : {}),
+    ...(extras.allowlist !== undefined ? { allowlist: extras.allowlist } : {}),
   });
   return {
     db,
@@ -924,6 +926,59 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(rig.host.completeCard(pendingId)).toEqual({ state: 'applied', verified: true });
     expect(cardOf(rig, pendingId).applied).toBeUndefined();
     expect(JSON.stringify(cardOf(rig, pendingId))).not.toContain('sudo');
+  });
+
+  it('allowlist: a blank user-only card; complete passes only when at least one entry is enabled', async () => {
+    const entries = [
+      { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: false },
+      { id: 'alw_off', pattern: 'curl http://evil.example', enabled: false },
+    ];
+    const rig = makeRig({
+      allowlist: { list: () => entries },
+    });
+    const rejected = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.allowlist',
+      values: { pattern: 'npm test' },
+      reason: '放行一条命令',
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.content).toContain('没有字段');
+    expect(cards(rig)).toHaveLength(0);
+
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.allowlist',
+      reason: '看一下命令白名单',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('空白卡');
+    const id = messageIdIn(result.content);
+    expect(cardOf(rig, id)).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+      state: 'pending',
+      before: null,
+    });
+    const read = rig.host.forRun(runCtx(rig)).read('environment.allowlist', undefined);
+    expect(read.content).toContain('启用 0 条，停用 2 条');
+    expect(read.content).toContain('你给的 values 不会被采用');
+    expect(read.content).not.toContain('alw_');
+    expect(read.content).not.toContain('rm -rf');
+    expect(read.content).not.toContain('npm test');
+    expect(rig.host.completeCard(id)).toEqual({ state: 'pending', verified: false });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'environment.allowlist',
+        values: {},
+        expected: null,
+        messageId: id,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+    expect(cardOf(rig, id).state).toBe('pending');
+    entries[0] = { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true };
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, id).applied).toBeUndefined();
+    expect(JSON.stringify(cardOf(rig, id))).not.toContain('alw_');
+    expect(JSON.stringify(cardOf(rig, id))).not.toContain('rm -rf');
   });
 
   it('user-only: a blank card, the bot values are not used', async () => {

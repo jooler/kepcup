@@ -1,6 +1,6 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态（2026-10-14）：**P0 已完成；P1 进行中**（58 个目录条目里 43 个已有内嵌卡，原先 18 个）。P2 待做；P3 仅记录，不预先设计。阶段总览见 [§八](#八阶段与状态)。
+> 状态（2026-10-14）：**P0 已完成；P1 进行中**（58 个目录条目里 46 个已有内嵌卡，原先 18 个）。P2 待做；P3 仅记录，不预先设计。阶段总览见 [§八](#八阶段与状态)。
 >
 > 阅读说明：
 > - §一～§七 是方案原文，写于实施之前。其中 §二「现状」描述的是 **P0 之前**的代码状态，部分结论（例如「没有 `settings.changed` 事件」）现已不成立，以代码和设计篇为准。
@@ -266,7 +266,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 | 阶段 | 内容 | 状态 |
 | ---- | ---- | ---- |
 | P0 | 骨架：设置目录、三个工具、宿主档位裁定、设置卡、`settings.changed`、条目级 CAS、外部智能体能力包；D58 已嵌用过的组件升级为内嵌卡 | ✅ 已完成 |
-| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前 43 个有内嵌卡） | ⏳ 进行中 |
+| P1 | 组件化扩面：把仍是「跳转卡」的设置项逐个升级为内嵌卡（58 个目录条目里目前 46 个有内嵌卡） | ⏳ 进行中 |
 | P2 | 收拢：D58 旧 kind 并入通用设置卡、提示词规则合并评估，以及 P0 留下的遗留问题 | ⏳ 待做 |
 | P3 | 真实模型下的场景验证与调优 | 📝 仅记录（§8.4） |
 
@@ -315,7 +315,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ### 8.2 P1 ⏳ 待做：组件化扩面
 
-目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 45 个有内嵌卡**（P0 结束时是 18 个）。
+目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 46 个有内嵌卡**（P0 结束时是 18 个）。
 
 **每个条目的升级步骤**（做法同 D58：设置页行为不变，只给组件加嵌入用的 props）：
 
@@ -342,11 +342,11 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - [x] **共享浏览器资料的新建**：`browser.shared-profiles`（`BrowserProfilesSection` 的名称和「新建」，卡片键 `browser-profiles`）。目录档是 confirm，不放宽。读适配器没有 focus 时回有几份共享资料；focus 里有 `name` 时，已有同名资料回 `{ name }` 且 configured（再建一个同名的不出卡），还没有回空名称、unconfigured。快照不放资料 id。组件调用原来的 `browserProfiles.create`（服务读当前列表再追加），不经宿主写锁，以免整表替换丢掉新建或覆盖刚建的另一条。保存后 `settingsStore.refresh()` 再 `onSaved`。嵌入只露出新建；列表、重命名、清除、删除留在设置页。`connections.taint-guard`、`agents.default`、`mcp.servers` 已升级。
 - [x] **工具链**：`environment.toolchains`（`EnvironmentSection`，卡片键 `environment-toolchains`）。user-only，目录没有字段，不预填，不补写入适配器，不加 `wideningMode`。嵌入只露出已安装列表、重新检测、失败项重装；卸载确认留在设置页（删掉工具链是破坏性操作，方案 §九）。不在卡片里做「安装工具」表单，安装仍走原来的环境审批。重新检测或重装成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。读适配器只回报已安装几项、失败或缺失几项；快照 `values` 为 null，不放安装记录 id。有失败或缺失时状态不是 `configured`，「我已设置好」核对不过。
 - [x] **沙箱**：`environment.sandbox`（`SandboxSection`，卡片键 `environment-sandbox`）。user-only，`widensPermission: true`，目录没有字段，不预填，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出状态、重新检测、打开准备向导，以及已有的修复提示框。准备向导仍由 `sandboxWizard.show()` 打开，不把 `SandboxWizard` 整页嵌进卡片。重新检测成功后 `onSaved` → `settings.cards.complete`。向导完成不由这张卡监听，用户仍用「我已设置好」结卡。不进 `COMPONENT_SAVE_CARD_KEYS`。读适配器只读最近一次可用性，不在 read 里探测，也不调用 `sandbox.wslPrepare` 或 `probe(true)`。还没检测过回「还没检测过沙箱」、`unknown`；可用为 `configured`，不可用为 `unconfigured`（沙箱仍不可用时「我已设置好」核对不过）。快照 `values` 为 null，不放 `fixHint`、本机路径或修复命令。
-- [ ] **环境**：`environment.allowlist`（user-only；保持跳转卡，组件可嵌入后再出 user-only 空白卡）。
+- [x] **命令白名单**：`environment.allowlist`（`AllowlistSection`，卡片键 `environment-allowlist`）。user-only，`widensPermission: true`，目录没有字段，不预填，不把 `pattern` 加进目录字段，不补写入适配器，不加 `wideningMode`，也不 `valuesWiden`。嵌入露出添加、启停和已有的风险提示；空模式不提交。`allowlist.reset` 会清掉自定义条目，留在非嵌入形态。添加或启停成功后 `onSaved` → `settings.cards.complete`。不进 `COMPONENT_SAVE_CARD_KEYS`，「我已设置好」仍由 user-only 形态提供。`prefill` 可以收下，但不写进输入框。读适配器只数启用几条、停用几条；有启用的为 `configured`，一条启用都没有为 `unconfigured`（空名单上「我已设置好」核对不过）。快照 `values` 为 null，不放条目 id，也不把命令模式放进快照。设置页原用法不变。
 
-**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`mcp.servers`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency`、`group.title` 已补写入。`browser.shared-profiles`、`group.members`、项目两项、`connections.tool-policy`、`mcp.servers`、`environment.toolchains` 与 `environment.sandbox` 走组件自存。
+**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`environment.allowlist`、`environment.sandbox`、`environment.toolchains`、`browser.shared-profiles`、`mcp.servers`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency`、`group.title` 已补写入。`browser.shared-profiles`、`group.members`、项目两项、`connections.tool-policy`、`mcp.servers`、`environment.toolchains`、`environment.sandbox` 与 `environment.allowlist` 走组件自存。
 
-**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`。`unattended.enable`、项目保护规则、放行端口、`connections.tool-policy`、`mcp.servers` 与 `browser.shared-profiles` 仍不由宿主写（风险确认、`setToolPolicy` 的任务中断、`settings.update` 在锁外的 OAuth 对账与 `revokeMcp`，或 `browserProfiles.create` 读当前列表再追加——写锁里整表替换会丢掉这段并可能覆盖刚建的另一条，留在组件原来的保存路径里）。`environment.toolchains` 也不由宿主写：安装仍走环境审批，重新检测和失败项重装由组件调用原来的 RPC。`environment.sandbox` 也不由宿主写：重新检测和准备向导留在组件，读路径只看最近一次可用性。
+**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`。`unattended.enable`、项目保护规则、放行端口、`connections.tool-policy`、`mcp.servers` 与 `browser.shared-profiles` 仍不由宿主写（风险确认、`setToolPolicy` 的任务中断、`settings.update` 在锁外的 OAuth 对账与 `revokeMcp`，或 `browserProfiles.create` 读当前列表再追加——写锁里整表替换会丢掉这段并可能覆盖刚建的另一条，留在组件原来的保存路径里）。`environment.toolchains` 也不由宿主写：安装仍走环境审批，重新检测和失败项重装由组件调用原来的 RPC。`environment.sandbox` 也不由宿主写：重新检测和准备向导留在组件，读路径只看最近一次可用性。`environment.allowlist` 也不由宿主写：添加和启停由组件调用原来的 `allowlist.add` / `allowlist.update`，`allowlist.reset` 留在设置页；读路径只数启用和停用。
 
 **永久只出跳转卡 / 只读，不在 P1 范围**：`profile.user-facts`、`developer.*`、`diagnostics.*`。
 **走专门工具、`settings_change` 只重定向，不在 P1 范围**：`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`。
