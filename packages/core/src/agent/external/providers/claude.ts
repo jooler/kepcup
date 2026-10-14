@@ -23,8 +23,9 @@ import { genericAcpProvider } from './generic-acp.js';
  *   allowUnsandboxedCommands / filesystem.{denyRead,allowRead,denyWrite}）：
  *   一律开启、禁止 `dangerouslyDisableSandbox` 逃逸；数据目录不可读（workspace
  *   与技能目录除外）、不可写（含 toolchains/）；所有档位 failIfUnavailable
- *   （沙箱起不来就让 run 失败，不降级）；workspace 档沙箱内命令自动放行，
- *   其余档命令逐条走宿主；
+ *   （沙箱起不来就让 run 失败，不降级）；workspace / ask 档沙箱内命令不弹卡
+ *   （由 Claude Code 放行，污点控制开着时改由宿主权限桥放行 / 弹外发卡，见
+ *   `claudeSandboxSettings`），read_only 档禁用 Bash；
  *   filesystem 规则只约束 Bash，Read / Edit 工具越界由权限请求兜底；
  * - 宿主强制项：适配器把 `_meta.claudeCode.options` 展开后，再以
  *   `allowDangerouslySkipPermissions: allowBypass`（我方传 false 即 false）与
@@ -38,6 +39,9 @@ import { genericAcpProvider } from './generic-acp.js';
 
 /** 永不进入的模式（Provider 层过滤，UI 不出现）。 */
 export const CLAUDE_FORBIDDEN_MODES: readonly string[] = ['bypassPermissions', 'dontAsk', 'auto'];
+
+/** Claude Code 沙箱网络代理询问宿主时用的工具名（claude-agent-acp 0.86.0）。 */
+export const CLAUDE_SANDBOX_NETWORK_TOOL = 'SandboxNetworkAccess';
 
 /** 保留的登录方式（terminal 类，P4 改写为目录安装路径后运行）。 */
 const CLAUDE_AUTH_METHODS: readonly string[] = ['claude-ai-login', 'console-login'];
@@ -68,10 +72,27 @@ export function isClaudeSandboxUnavailable(error: AgentErrorInfo): boolean {
   return /sandbox/i.test(message) && /\b(bubblewrap|bwrap|socat|sandbox-exec)\b/i.test(message);
 }
 
-/** 原生沙箱设置（SDK `Options.sandbox`）；`isolation` 缺省 = 探测会话。 */
+/**
+ * 原生沙箱设置（SDK `Options.sandbox`）；`isolation` 缺省 = 探测会话。
+ *
+ * 沙箱内 Bash 的自动放行（f2b9627，用户决定保留：工作区与「编辑前确认」档的沙箱内
+ * 命令不弹卡）有两种落实方式：
+ * - `hostGatesExec` 为 false / 缺省：交给 Claude Code（`autoAllowBashIfSandboxed`），
+ *   宿主看不到这些命令；
+ * - `hostGatesExec` 为 true（D73 污点外发控制开着时，见 `SessionContext`）：关掉
+ *   SDK 的自动放行，每条 Bash 经 `session/request_permission` 到权限桥——未污点时
+ *   桥照样自动放行（用户感受不变），污点期间逐条弹外发卡。SDK 只在建会话时读这项
+ *   （ACP 没有中途改沙箱设置的入口，`applyFlagSettings` 只用于模型 / effort），污点
+ *   又可能在会话中途出现，所以只能「开着污点控制就一直由宿主裁决」。
+ *
+ * 网络：沙箱内命令连接不在 `network.allowedDomains`（未配置）里的主机时，Claude Code
+ * 的代理逐主机询问宿主（`SandboxNetworkAccess`），批准后本会话内该主机不再询问；
+ * 权限桥在污点期间把它变成外发卡（见 `sandboxNetworkHost`）。
+ */
 export function claudeSandboxSettings(
   tier: AgentPermissionTier,
   isolation?: AgentIsolation,
+  hostGatesExec = false,
 ): Record<string, unknown> {
   return {
     enabled: true,
@@ -79,9 +100,10 @@ export function claudeSandboxSettings(
     // 整 run 失败，绝不静默降级为沙箱外执行——`execSandboxed` 的「在沙箱
     // 内」判断以此为前提（安全复核第 2 轮）。
     failIfUnavailable: true,
-    // workspace + ask: sandboxed bash is auto (Claude Code-like); read_only keeps asking
-    // the host so Bash can stay in disallowedTools without a silent side channel.
-    autoAllowBashIfSandboxed: tier !== 'read_only',
+    // read_only: Bash is in disallowedTools and never auto. workspace / ask: sandboxed
+    // Bash runs without a card — decided by Claude Code, or by the host bridge when
+    // taint control needs to see every command (`hostGatesExec`).
+    autoAllowBashIfSandboxed: tier !== 'read_only' && !hostGatesExec,
     // `dangerouslyDisableSandbox` 被忽略：命令只能在沙箱内运行。
     allowUnsandboxedCommands: false,
     ...(isolation !== undefined
@@ -147,7 +169,15 @@ export const claudeProvider: AgentProvider = {
   // 后台精简会话：`tools: []` 关掉全部原生工具（宿主桥 MCP 工具不受影响），
   // `settingSources: []` 不加载任何设置（会话级，与进程无关）。
   backgroundNoNativeTools: true,
-  sessionNew: ({ sessionPrompt, maxTurns, loadUserConfig, permission, isolation, oneShot }) => {
+  sessionNew: ({
+    sessionPrompt,
+    maxTurns,
+    loadUserConfig,
+    permission,
+    isolation,
+    oneShot,
+    hostGatesSandboxedExec,
+  }) => {
     const disallowedTools = claudeDisallowedTools(permission);
     const prompt = sessionPrompt !== null && sessionPrompt.trim().length > 0 ? sessionPrompt : null;
     return {
@@ -165,7 +195,7 @@ export const claudeProvider: AgentProvider = {
             ...(oneShot === true ? { tools: [] } : {}),
             ...(disallowedTools.length > 0 ? { disallowedTools } : {}),
             // Host-enforced keys last: nothing merged above may override them.
-            sandbox: claudeSandboxSettings(permission, isolation),
+            sandbox: claudeSandboxSettings(permission, isolation, hostGatesSandboxedExec === true),
             // 后台精简会话一律不加载任何设置（含个人配置）。
             settingSources: loadUserConfig && oneShot !== true ? ['user'] : [],
             allowDangerouslySkipPermissions: false,
@@ -190,6 +220,18 @@ export const claudeProvider: AgentProvider = {
       typeof input === 'object' &&
       input.dangerouslyDisableSandbox === true
     );
+  },
+  // claude-agent-acp 0.86.0：Claude Code 沙箱代理的主机询问以工具名
+  // `SandboxNetworkAccess`（ACP kind other、title = 主机、rawInput {host}）发来；
+  // 2.1.x CLI 的 createSandboxAskCallback 在批准后 addSessionAllowedHost。
+  sandboxNetworkHost: (toolCall) => {
+    const name =
+      (typeof toolCall.name === 'string' && toolCall.name.length > 0 ? toolCall.name : null) ??
+      metaToolName(toolCall._meta);
+    if (name !== CLAUDE_SANDBOX_NETWORK_TOOL) return null;
+    const input = toolCall.rawInput as { host?: unknown } | null | undefined;
+    const host = input !== null && typeof input === 'object' ? input.host : undefined;
+    return typeof host === 'string' && host.length > 0 ? host : '（未知主机）';
   },
   bridgeToolFromCall: (toolCall, serverName) => {
     const name =

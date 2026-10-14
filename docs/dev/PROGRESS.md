@@ -1369,3 +1369,15 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **头像色前景（`cd1ad9c`）**：`avatarColorForeground(color, 'graphic' | 'text')` 按 WCAG 对比度在白 / 近黑间计算（白够用就白）；输入框两键 ≥ 3:1，用户气泡文字 ≥ 4.5:1；琥珀、青碧、石灰的眼睛与按键图标改深色。禁用态（`opacity-50`）属 WCAG 豁免，不单独处理。
 - **输入框单行 / 沉底（`9434963`）**：按测得宽度判定（单行可用宽度 = 药丸宽度 − 单行布局下测得的按键与间距），回单行需窄 8px；替换按字符数的锁定。纯函数单测 11 例；e2e `composer-layout.spec`（真实 Electron，旧实现失败、新实现连续 4 次通过，单次约 20 s）。
 - **任务卡宽度（a88351a）**：单聊里任务卡与 Bot 气泡同宽同左缘；群聊里气泡列前有头像（28px + 8px 间距），任务卡没有，左缘差 36px、最大宽度相同。不是一行能改好（需要群聊标记与偏移），未改。
+
+## 权限 / 审批审查修复（t/fix-perms，2026-10-14）
+
+依据独立审查的 9 条发现（含 f2b9627、ef2a565 补记），偏差与决定见 DEVIATIONS DEV-028。无 DB 迁移。
+
+- **Claude 沙箱内命令 × 污点（P0）**：保留 f2b9627 的自动放行；污点外发控制开着时 Claude 会话关闭 `autoAllowBashIfSandboxed`，由权限桥放行（未污点）或弹 `egress` 卡（污点期间，含会话中途出现的污点）；`SandboxNetworkAccess` 主机询问污点期间弹外发卡。残留风险见 DEV-027。
+- **内置白名单（P0）**：去掉 pnpm / yarn / cargo / rustc / go 探测并清理旧内置行；豁免执行的命令用加固环境（相对 PATH、corepack / go / npm 网络、git pager / 锁 / fsmonitor）。
+- **git（P1）**：`git branch` 只豁免列出（含捆绑短参数）；豁免的 git 命令遇到会执行程序的仓库配置改为弹卡；文件工具写 `.git/config` / hooks / info/attributes 需授权。
+- **自定义条目（P1）**：shared `allowlistPatternRefusal` 拒绝 shell / 包装器 / 解释器裸写 / 联网 / 删改 / run 与 dlx 动词；审批卡默认建议完整命令；自定义条目不绕过 D75 只读与 D73 污点。
+- **折叠记录（P2）**：自动决定、外发、带污点标记的中途权限卡决定后在对话里留一行记录。
+- **文案**：`ask` 档改名「编辑前确认（沙箱内命令自动）」，白名单 / 污点外发保护说明按实际行为改写；design 10 / 12 / 13 / 28 同步。
+- **测试**：新增 `gateway-allowlist-hardening`（自定义条目 × 只读 run / 污点、仓库配置 fsmonitor / diff.external 标记脚本不执行、`.git` 控制文件写入、加固环境）、shared `allowlist-pattern`、`permission-bridge-taint`（宿主裁决、会话中途污点、主机询问、自定义条目）、`external-agent-p6`（会话沙箱设置随污点控制）、`allowlist-match`（git branch 正反、内置集合形状）、`permissions`（退役行、add 拒绝、custom 标记）、`messages-visible` / desktop `ephemeral-approval`（record 卡）、`suggest-allowlist-prefix`；`approvals` 集成测试顺带修正被 ef2a565 / f2b9627 打断的两处断言并检查 record。定向测试见提交说明；未跑全量。

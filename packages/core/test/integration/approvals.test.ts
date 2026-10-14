@@ -6,6 +6,7 @@ import { step, viaTask, type TestStack } from '@kepcup/testkit';
 import {
   createTestCore,
   createTestStack,
+  listAllMessages,
   listMessages,
   startMockLlm,
   makeBot,
@@ -137,11 +138,20 @@ describe('access approvals for file tools (P03)', () => {
 
     // Two approval cards for run 1 (one per tool call); nothing outlives the
     // calls. (The task's own card — D75 W3 — is not an approval card.)
-    const messages1 = await listMessages(core, conv.id);
+    // (ef2a565: they are rows for the bot's context, not transcript content.)
+    const messages1 = await listAllMessages(core, conv.id);
     const approvalCards = messages1.filter(
       (m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType !== 'task',
     );
     expect(approvalCards.length).toBe(2);
+    // User-answered popups leave no transcript record (the dock was the surface).
+    for (const card of approvalCards) {
+      expect((card.content as { record?: boolean }).record).toBeUndefined();
+    }
+    const visible1 = await listMessages(core, conv.id);
+    expect(
+      visible1.filter((m) => m.kind === 'card' && (m.content as { cardType?: string }).cardType === 'access'),
+    ).toEqual([]);
     const left = (await core.rpc.call('grants.list', { conversationId: conv.id })) as {
       grants: unknown[];
     };
@@ -441,7 +451,8 @@ describe('access approvals for file tools (P03)', () => {
       inTask([
         step().replyToolCall('request_access', { path: outside, access: 'read', reason: 'r' }),
         step().replyToolCall('request_unsandboxed', { command: 'echo unattended-ok', reason: '需要沙箱外' }),
-        step().replyToolCall('bash', { command: 'echo confirm-ok' }),
+        // Not a built-in allowlist entry (echo is, since f2b9627): a real command card.
+        step().replyToolCall('bash', { command: 'touch confirm-ok.txt' }),
         step().replyText('都批准了'),
       ]),
     );
@@ -453,6 +464,14 @@ describe('access approvals for file tools (P03)', () => {
     };
     const auto = approvals.approvals.filter((a) => a.autoApproved);
     expect(new Set(auto.map((a) => a.kind))).toEqual(new Set(['access', 'unsandboxed', 'command']));
+    // Auto-decided cards never reach the dock: each keeps a folded transcript record.
+    const autoCards = (await listMessages(core, conv.id)).filter(
+      (m) =>
+        m.kind === 'card' &&
+        auto.some((a) => a.id === (m.content as { approvalId?: string }).approvalId),
+    );
+    expect(autoCards).toHaveLength(auto.length);
+    for (const card of autoCards) expect((card.content as { record?: boolean }).record).toBe(true);
 
     // Audit trail for every auto-approval.
     const audit = core.services.domain!.audit.listByConversation(conv.id, 100);

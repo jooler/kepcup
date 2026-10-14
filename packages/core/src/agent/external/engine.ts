@@ -965,6 +965,12 @@ class ExternalRunHandle implements RunHandle {
         ...(this.#deps.permissions !== undefined
           ? { isolation: this.#deps.permissions.isolationFor(spec.identity, spec.workdir) }
           : {}),
+        // D73 × sandboxed auto-allow (review P0): the host decides every sandboxed
+        // command while taint control is on (part of `_meta` → the session
+        // fingerprint: a switch flip recycles the kept session).
+        ...(this.#deps.permissions?.hostGatesSandboxedExec?.(spec.identity) === true
+          ? { hostGatesSandboxedExec: true }
+          : {}),
       });
       phase = 'session_new';
       const opened = await this.#openSession(entry, lease, sessionOptions, acceptsImages);

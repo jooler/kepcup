@@ -1,4 +1,10 @@
-import { newId, type AllowlistEntry, type AllowlistPlatform } from '@kepcup/shared';
+import {
+  AppError,
+  allowlistPatternRefusal,
+  newId,
+  type AllowlistEntry,
+  type AllowlistPlatform,
+} from '@kepcup/shared';
 import { matchAllowlistCommand, type AllowlistCheckContext, type AllowlistVerdict } from './allowlist-match.js';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
@@ -23,7 +29,19 @@ function rowToEntry(row: AllowlistRow): AllowlistEntry {
   };
 }
 
-/** docs/design/13-permissions.md "只读命令白名单" built-ins. */
+/**
+ * docs/design/13-permissions.md "只读命令白名单" built-ins.
+ *
+ * Every entry must be read-only AND unable to load project-controlled code or
+ * reach the network when run unsandboxed in confirm mode (review P0):
+ * package-manager / toolchain-proxy probes are excluded on purpose — `pnpm` /
+ * `yarn --version` go through corepack (downloads the `packageManager`
+ * version), `cargo` / `rustc` through rustup (`rust-toolchain.toml`), `go
+ * version` through `GOTOOLCHAIN` (may download a toolchain). The remaining
+ * probes resolve a global binary (exempt runs strip relative PATH entries, see
+ * `exemptCommandEnv`) and print a constant. `allowlist-builtins.test.ts`
+ * pins the shape: adding an entry needs an explicit decision there.
+ */
 export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
   posix: [
     // Inspect / list
@@ -31,20 +49,17 @@ export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
     'which', 'grep', 'rg', 'find',
     'echo', 'printf', 'true', 'false', 'dirname', 'basename', 'realpath', 'readlink',
     'uname',
-    // Read-only git (mutating branch flags are blocked in allowlist-match)
+    // Read-only git (`git branch` is listing-only in allowlist-match; repository
+    // config that runs programs makes exempt git commands ask, see the gateway)
     'git status', 'git diff', 'git log', 'git show',
     'git branch', 'git rev-parse', 'git describe', 'git blame',
     'git ls-files', 'git ls-tree', 'git shortlog',
     // Version probes only (exact prefix; never bare `npm` / `node`)
     'node --version', 'node -v',
     'npm --version', 'npm -v',
-    'pnpm --version', 'pnpm -v',
-    'yarn --version', 'yarn -v',
     'python --version', 'python -V',
     'python3 --version', 'python3 -V',
     'pip --version', 'pip3 --version',
-    'cargo --version', 'rustc --version',
-    'go version',
     'tsc --version', 'eslint --version', 'prettier --version',
     'ruby --version', 'php --version',
   ],
@@ -56,13 +71,23 @@ export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
     'git ls-files', 'git ls-tree', 'git shortlog',
     'node --version', 'node -v',
     'npm --version', 'npm -v',
-    'pnpm --version', 'pnpm -v',
-    'yarn --version', 'yarn -v',
     'python --version', 'python -V',
     'python3 --version', 'python3 -V',
-    'go version',
     'tsc --version', 'eslint --version', 'prettier --version',
   ],
+};
+
+/**
+ * Built-ins seeded by an earlier version and since retired (review P0: they
+ * could run project-controlled code or download toolchains). `#seed` deletes
+ * their built-in rows so an upgraded install does not keep exempting them.
+ */
+export const RETIRED_BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
+  posix: [
+    'pnpm --version', 'pnpm -v', 'yarn --version', 'yarn -v',
+    'cargo --version', 'rustc --version', 'go version',
+  ],
+  windows: ['pnpm --version', 'pnpm -v', 'yarn --version', 'yarn -v', 'go version'],
 };
 
 export function platformOf(osPlatform: string): AllowlistPlatform {
@@ -90,8 +115,18 @@ export class AllowlistService {
   }
 
   #seed(): void {
+    // Retired built-ins go away (their rows were seeded enabled; a user-added
+    // custom row with the same text stays — that one is the user's decision).
+    const retire = this.#db.prepare(
+      'delete from command_allowlist where platform = ? and pattern = ? and builtin = 1',
+    );
+    for (const pattern of RETIRED_BUILTIN_PATTERNS[this.#platform]) {
+      retire.run(this.#platform, pattern);
+    }
     // Insert any missing built-ins (first install and later list expansions).
     // Never re-enable a built-in the user turned off: match on platform+pattern.
+    // A new built-in on an existing install starts enabled (DEVIATIONS: the
+    // list holds only read-only, project-code-free entries, pinned by test).
     const insert = this.#db.prepare(
       'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, 1, 1, ?)',
     );
@@ -118,8 +153,15 @@ export class AllowlistService {
     return rows.map((r) => r.pattern);
   }
 
+  /**
+   * Adds a user entry. Refused (INVALID_INPUT, the reason in the message) when
+   * the prefix would exempt arbitrary code, network or destructive commands —
+   * the shared `allowlistPatternRefusal` the approval card also uses.
+   */
   add(pattern: string): AllowlistEntry[] {
     const trimmed = pattern.trim();
+    const refusal = allowlistPatternRefusal(trimmed);
+    if (refusal !== null) throw new AppError('INVALID_INPUT', refusal);
     this.#db
       .prepare(
         'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, 0, 1, ?)',
@@ -146,12 +188,32 @@ export class AllowlistService {
     return this.list();
   }
 
-  /** The single entry point the gateway uses; never throws. */
-  match(command: string, ctx: Omit<AllowlistCheckContext, 'platform' | 'entries'>): AllowlistVerdict {
-    return matchAllowlistCommand(command, {
+  /**
+   * The single entry point the gateway uses; never throws. Built-in entries
+   * are tried first; `custom` is true when any segment needed a user-added
+   * entry — those are not proven read-only, so callers keep the D75 read-only
+   * and D73 taint guards for them (review P1).
+   */
+  match(
+    command: string,
+    ctx: Omit<AllowlistCheckContext, 'platform' | 'entries'>,
+  ): AllowlistVerdict & { custom: boolean } {
+    const rows = this.#db
+      .prepare('select pattern, builtin from command_allowlist where platform = ? and enabled = 1')
+      .all(this.#platform) as Array<{ pattern: string; builtin: number }>;
+    const norm = (p: string) => p.trim().split(/\s+/).join(' ');
+    const builtins = new Set(rows.filter((r) => r.builtin === 1).map((r) => norm(r.pattern)));
+    const ordered = [
+      ...rows.filter((r) => r.builtin === 1),
+      ...rows.filter((r) => r.builtin !== 1),
+    ].map((r) => r.pattern);
+    const verdict = matchAllowlistCommand(command, {
       platform: this.#platform,
-      entries: this.listEnabled(),
+      entries: ordered,
       ...ctx,
     });
+    const custom =
+      verdict.exempt && (verdict.matched ?? []).some((pattern) => !builtins.has(pattern));
+    return { ...verdict, custom };
   }
 }

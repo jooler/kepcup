@@ -36,7 +36,8 @@
   import { Input } from '$lib/components/ui/input';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
-  import { suggestAllowlistPrefix } from './suggest-allowlist-prefix';
+  import { allowlistSuggestionRefusal, suggestAllowlistPrefix } from './suggest-allowlist-prefix';
+  import { allowlistPatternRefusal } from '@kepcup/shared';
   import McpRiskBadge from './McpRiskBadge.svelte';
   import HandoverCard from '$lib/features/handover/HandoverCard.svelte';
   import {
@@ -254,6 +255,13 @@
     allowlistOpen = true;
   }
 
+  // Review P1: the same refusal list core enforces in allowlist.add — the editor
+  // says why up front instead of failing on submit.
+  const allowlistSuggestionBlocked = $derived(allowlistSuggestionRefusal(command));
+  const allowlistPatternProblem = $derived(
+    allowlistPattern.trim().length === 0 ? null : allowlistPatternRefusal(allowlistPattern),
+  );
+
   function cancelAllowlist(): void {
     allowlistOpen = false;
     allowlistPattern = '';
@@ -261,7 +269,7 @@
 
   async function addAllowlistAndApprove(): Promise<void> {
     const trimmed = allowlistPattern.trim();
-    if (trimmed.length === 0 || allowlistBusy) return;
+    if (trimmed.length === 0 || allowlistBusy || allowlistPatternRefusal(trimmed) !== null) return;
     allowlistBusy = true;
     try {
       await core.call('allowlist.add', { pattern: trimmed });
@@ -1212,18 +1220,30 @@
         data-testid="approval-allowlist-editor"
       >
         <p class="text-xs text-muted-foreground">{t('allowlist.addFromCardHint')}</p>
+        {#if allowlistSuggestionBlocked !== null && allowlistPattern.trim().length === 0}
+          <p class="text-xs text-amber-700 dark:text-amber-400" data-testid="approval-allowlist-refused">
+            {t('allowlist.addFromCardRefused', { reason: allowlistSuggestionBlocked })}
+          </p>
+        {/if}
         <Input
           class="font-mono text-sm"
           bind:value={allowlistPattern}
           placeholder={t('allowlist.addPlaceholder')}
           data-testid="approval-allowlist-pattern"
         />
+        {#if allowlistPatternProblem !== null}
+          <p class="text-xs text-destructive" data-testid="approval-allowlist-problem">
+            {allowlistPatternProblem}
+          </p>
+        {/if}
         <p class="text-xs text-amber-700 dark:text-amber-400">{t('allowlist.addWarning')}</p>
         <div class="flex items-center gap-2">
           <Button
             size="sm"
             onclick={() => void addAllowlistAndApprove()}
-            disabled={allowlistBusy || allowlistPattern.trim().length === 0}
+            disabled={allowlistBusy ||
+              allowlistPattern.trim().length === 0 ||
+              allowlistPatternProblem !== null}
             data-testid="approval-allowlist-confirm"
             >{t('allowlist.addAndApprove')}</Button
           >

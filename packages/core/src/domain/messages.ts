@@ -3,6 +3,7 @@ import {
   EPHEMERAL_APPROVAL_CARD_TYPES,
   INTERNAL_SYSTEM_EVENTS,
   isEphemeralApprovalCardType,
+  isHiddenApprovalCard,
   TERMINAL_TASK_EVENT_PHASES,
   newId,
   taskEventContentSchema,
@@ -133,6 +134,11 @@ export interface AppendMessageInput {
   /** Card messages only: the approval the card belongs to. */
   cardType?: string | undefined;
   approvalId?: string | undefined;
+  /**
+   * Mid-turn permission cards only: keep a folded transcript record (auto-decided,
+   * egress or taint-flagged; shared `isApprovalRecordCard`).
+   */
+  cardRecord?: boolean | undefined;
   /** Run-changes cards only: the run whose changes the card summarizes. */
   cardRunId?: string | undefined;
   /** Delegation cards only (D71): the delegation the card renders. */
@@ -276,8 +282,10 @@ function userVisibleFilter(): { sql: string; params: string[] } {
       `not (sender_type = 'system' and kind = 'system_event' and (` +
       `coalesce(json_extract(content_json, '$.internal'), 0) = 1 or ` +
       `coalesce(json_extract(content_json, '$.event'), '') in (${eventNames.map(() => '?').join(', ')}))) and ` +
-      // Mid-turn permission cards: dock popup only, not transcript history.
-      `not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') in (${ephemeralCards.map(() => '?').join(', ')}))`,
+      // Mid-turn permission cards: dock popup only, not transcript history — except
+      // the folded records (auto-decided, egress / taint-flagged: `record`).
+      `not (kind = 'card' and coalesce(json_extract(content_json, '$.cardType'), '') in (${ephemeralCards.map(() => '?').join(', ')}) ` +
+      `and coalesce(json_extract(content_json, '$.record'), 0) != 1)`,
     params: [...eventNames, ...ephemeralCards],
   };
 }
@@ -288,8 +296,10 @@ function userVisibleFilter(): { sql: string; params: string[] } {
  * `internal` 标记或属于 INTERNAL_SYSTEM_EVENTS（历史存量行没有标记）的
  * system_event 只进 Bot 的上下文与触发，不进用户可见的消息流；其余消息
  * （用户/Bot 发言、移交进度卡、访谈卡、群聊认领提示、执行中断等）都可见。
- * 中途权限弹窗（访问、命令、MCP 等）只在输入区上方弹出，不进用户可见流。
- * 技能导入、环境安装、移交等卡片留在对话里，失败与进度靠折叠记录。
+ * 中途权限弹窗（访问、命令、MCP 等）只在输入区上方弹出，不进用户可见流；
+ * 例外是带 `record` 标记的折叠记录：自动决定的卡（无人值守，用户从没在 dock
+ * 里见过它）与外发 / 污点相关的卡（D73 留痕）。技能导入、环境安装、移交等
+ * 卡片留在对话里，失败与进度靠折叠记录。
  */
 export function isVisibleToUser(message: Message): boolean {
   // D75 §2.4.3: task_event rows and bot-owned private rows never reach the user.
@@ -299,9 +309,8 @@ export function isVisibleToUser(message: Message): boolean {
     const content = message.content as { interim?: unknown };
     if (content.interim === true) return false;
   }
-  if (message.kind === 'card') {
-    const cardType = (message.content as { cardType?: unknown }).cardType;
-    if (typeof cardType === 'string' && isEphemeralApprovalCardType(cardType)) return false;
+  if (message.kind === 'card' && isHiddenApprovalCard(message.content as { cardType?: unknown })) {
+    return false;
   }
   if (message.senderType !== 'system' || message.kind !== 'system_event') return true;
   const content = message.content as { internal?: boolean; event?: string };
@@ -366,6 +375,7 @@ export class MessagesService {
             ? JSON.stringify({
                 cardType: input.cardType ?? '',
                 approvalId: input.approvalId ?? '',
+                ...(input.cardRecord === true ? { record: true } : {}),
                 ...(input.cardRunId !== undefined ? { runId: input.cardRunId } : {}),
                 ...(input.cardDelegationId !== undefined
                   ? { delegationId: input.cardDelegationId }

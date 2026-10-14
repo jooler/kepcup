@@ -501,3 +501,29 @@
 - 决定：保留 session id（OpenCode 必需，其余供应商的提示缓存有实际收益），但值改为 `kep-` + HMAC-SHA256 前 128 位（hex，共 36 字符，低于 OpenAI 64 字符上限）。密钥 `SecretsService.modelSessionKey()` 由每次安装随机、存在系统钥匙串里的主密钥按 HKDF 派生（`KEY_INFO.modelSession = 'model-session:v1'`），不新增存储。输入为供应商 id、锚点（对话 + Bot；无对话 = Bot；都没有 = run，每次新值）与用途（`loop` / `oneshot` + loopType）；测试连接为（`provider-test`，供应商 id）。不按供应商关闭：值不透明后，供应商能得到的只是「这些请求属于同一会话」，这从共享提示词前缀本来就看得出。
 - 未做：系统提示词的 workspace 段含 `bots/<botId>/workspaces/<conversationId>` 路径，原始 id 仍随**提示词内容**到达供应商（模型需要这个路径）；集成测试的「不泄露」断言因此覆盖请求头、会话字段与正文里内容以外的字段，不含 messages / input / instructions / tools。
 - 已更新的文档：`docs/dev/04-agent-runtime.md`（模型请求的 session id）。
+
+### DEV-028 权限审查修复：沙箱内命令自动放行与污点、只读白名单、中途权限卡的留痕（f2b9627 / ef2a565 补记）
+
+- 状态：已落实（编号按当时最大号 + 1，合并时以最后一个空号为准）
+- 阶段：权限 / 审批审查修复（t/fix-perms）
+- 是否阻塞：否
+- 问题：
+  1. **f2b9627 没有记录**：外部智能体「每次确认」档（`ask`）在 Agent 确认 OS 沙箱时沙箱内命令自动放行（Claude 开 `autoAllowBashIfSandboxed`），扩充内置只读白名单并给已有安装补种。用户决定保留「沙箱内命令自动放行」。后果：Claude Code 自己放行沙箱内 Bash，宿主权限桥里的 D73 污点闸门对 Claude 永远到不了（workspace 档在 f2b9627 之前就已如此）；文档里「每次确认档仍对写入逐次确认」对沙箱内命令的写入不成立。
+  2. **ef2a565 没有记录**：中途权限卡（access / command / mcp_tool / agent_tool / egress / git_remote / unsandboxed）不再进对话消息流。无人值守自动决定的卡从不进 dock，于是用户完全看不到；W4 回执行随之消失。
+  3. 白名单的若干漏洞：pnpm / yarn / cargo / rustc / go 版本探测会经 corepack / rustup / GOTOOLCHAIN 按项目文件下载或执行工具链；`git branch` 前缀放过 `-qD`、`-f`、建分支等写法；豁免的 git 命令遵从 Bot 可写的仓库配置（fsmonitor、diff.external、filter …）；审批卡「加入白名单」会把 `bash -c …`、`curl …` 缩成裸程序；自定义条目在只读 run 与污点期间仍被豁免。
+- 核对结果（claude-agent-acp 0.86.0、claude-agent-sdk 0.3.287 d.ts、Claude Code 2.1.x 二进制字符串）：
+  - SDK 的 `sandbox` 只在 `query()` / `session/new` 读取；适配器只把 `applyFlagSettings` 用于模型 / effort / fastMode，ACP 没有中途改沙箱设置或权限规则的入口。
+  - 沙箱网络并非不受限：不在 `network.allowedDomains`（我方未配置）里的主机，Claude Code 的代理以 `SandboxNetworkAccess`（ACP kind `other`、`rawInput.host`）逐主机询问宿主，批准后 `addSessionAllowedHost`——本会话内该主机不再询问。
+- 决定：
+  1. **污点外发控制开着时（默认）由宿主裁决沙箱内命令**：`hostGatesSandboxedExec` → Claude 会话 `autoAllowBashIfSandboxed: false`，每条 Bash 经权限桥；未污点时桥自动放行（`ask` / `workspace` 档的用户感受与 f2b9627 相同，且留下审计），污点期间逐条弹 `egress` 卡。控制关闭时与 f2b9627 一样由 Claude Code 放行。该项进 `_meta` → 会话指纹，开关切换后不复用旧会话。没有选「只在建会话时已污点才关」：污点来源（本 run 的应用工具、邮件、群里别的 Bot、委派继承）都可能在会话中途出现，而 SDK 设置改不了。
+  2. 权限桥把 `SandboxNetworkAccess` 识别为联网：污点期间弹 `egress` 卡（覆盖污点出现前已在跑的命令的新连接），否则仍弹卡并写明批准对整个会话有效；只读档拒绝。
+  3. **残留风险（不声称已防住）**：本会话里污点出现前批准过的主机，Claude Code 不再询问——污点出现前已在运行的命令连向这些主机时不弹卡（污点出现后发起的命令都会先弹外发卡）；「加载我的个人配置」时用户 Claude 配置的 `allowedDomains` / `WebFetch(domain:…)` 不经宿主；关闭污点控制即回到 f2b9627 行为。
+  4. 内置白名单去掉 pnpm / yarn / cargo / rustc / go 探测并在升级时删除旧内置行（同文本自定义行保留）；内置集合由单测钉住形状与精确内容，新增需显式决定。node / npm / python / pip / tsc / eslint / prettier / ruby / php 的 `--version` 保留：它们解析全局程序、打印常量；豁免执行时 PATH 去掉相对项（不会解析到 `node_modules/.bin`），关闭 corepack / go / npm / pip 的网络与更新检查。版本管理器 shim（volta / asdf / pyenv）仍可能按工作目录里的版本文件选版本（volta 可能下载官方 node），不执行项目代码，未处理。
+  5. 豁免 git：执行前 `git config --list --show-scope -z` 读仓库级（local / worktree）配置，有会执行程序的项或读取失败（含 git < 2.26）即改为弹卡；另加 `GIT_PAGER=cat`、`GIT_OPTIONAL_LOCKS=0`、`GIT_CONFIG_COUNT`（`core.fsmonitor=false`、`core.pager=cat`，git ≥ 2.31 生效）。**没有**设 `GIT_CONFIG_NOSYSTEM`：系统配置由管理员写、不归 Bot，且 Git for Windows / git-lfs 的系统级 filter 去掉后 `git status` 会给出错误结果；也没有给 diff/log/show 追加 `--no-ext-diff --no-textconv`（改写命令文本；仓库级驱动已由配置检查拦下，全局驱动是用户自己的）。文件工具写 `.git/config`、`.git/hooks/**`、`.git/info/attributes` 需要敏感授权（project 内先看租约）。
+  6. `git branch` 只豁免列出；通用 git 危险参数里去掉 `-d/-D/-m/-M`（原先误伤 `git diff -M`、`git log -m`）。
+  7. 自定义条目准入规则放在 shared（`allowlistPatternRefusal`），`AllowlistService.add` 与审批卡共用；自定义条目在只读 run 里不执行、污点期间改弹带污点标记的命令卡、不豁免沙箱联网命令的外发卡；外部智能体桥同样（只读档 / 污点期间不算）。
+  8. 中途权限卡加 `record` 标记：无人值守自动决定的卡、`egress` 卡、payload 带 `tainted` 的卡在对话里留一行折叠记录（待决时仍只在 dock）；用户在 dock 里处理的普通权限卡维持 ef2a565 的不留痕，回执只在审计 / 台账。「策略自动批准」（MCP auto 策略、持续授权）不建审批行，本来就没有卡，未改。
+  9. 新增内置条目在已有安装上默认启用（f2b9627 起）。「新增」标记需要新列或迁移，且设置页白名单组件不在本车道，未做。
+- 影响范围：`packages/core/src/agent/external/{permission-bridge,engine,types}.ts`、`providers/claude.ts`、`start.ts`（一行接线）、`permissions/{allowlist,allowlist-match,git-config-risk,approvals}.ts`、`gateway/index.ts`、`sandbox/confirm-executor.ts`、`domain/messages.ts`、`packages/shared/src/{policy/allowlist-pattern,domain/types}.ts`、desktop `features/approvals/*`、`MessageList.svelte`、`zh-CN.ts`（权限 / 白名单文案）。
+- 未改、需其他车道跟进：`packages/shared/src/settings-catalog/items.ts` 里 Bot 智能体档位的 `ask` 标签仍是「每次询问」（应与 `contacts.agentPermissionAsk` 一致改为「编辑前确认（沙箱内命令自动）」）；`agent/context/system-prompt.ts` 的确认模式提示仍写「白名单中的只读命令无需确认」。
+- 已更新的文档：`docs/design/13-permissions.md`（档位表、白名单、回执、界面）、`10-sandbox.md`、`12-ui-layout.md`、`28-external-agents-acp.md`。

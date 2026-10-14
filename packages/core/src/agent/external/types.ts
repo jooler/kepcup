@@ -78,6 +78,16 @@ export interface SessionContext {
    * 已强制只读档、空临时目录、只放行桥工具）。
    */
   oneShot?: boolean;
+  /**
+   * D73 × 沙箱内命令自动放行（review P0）：true = 沙箱内命令也要经宿主的
+   * `session/request_permission`，由权限桥裁决（未污点时照样自动放行、污点期间
+   * 弹外发卡）。Agent 自己的「沙箱内命令自动放行」（Claude
+   * `autoAllowBashIfSandboxed`）会让宿主看不到命令、污点外发控制形同虚设，而
+   * 污点可能在会话中途出现（应用工具、邮件、群里别的 Bot、委派继承），会话
+   * 选项又不能中途改——所以污点控制开着时一律由宿主裁决。随 `_meta` 进会话
+   * 指纹，开关变化后会话不再复用。缺省 = Agent 自己放行（与 f2b9627 一致）。
+   */
+  hostGatesSandboxedExec?: boolean;
 }
 
 /** 数据目录隔离（权限桥按 run 计算，见 permission-bridge.ts `isolationFor`）。 */
@@ -179,6 +189,13 @@ export interface AgentProvider {
    * 下发来的命令请求都是越出其沙箱的提权，永远 false。
    */
   execSandboxed?(toolCall: AcpToolCallLike): boolean;
+  /**
+   * 沙箱内命令要连接某主机时 Agent 发来的权限请求（Claude Code 的沙箱网络代理
+   * 对不在 allowedDomains 里的主机询问宿主：`SandboxNetworkAccess`，
+   * `rawInput.host`）：返回该主机，其余请求 null。批准后 Agent 在本会话内对该
+   * 主机不再询问（Claude Code `addSessionAllowedHost`）。
+   */
+  sandboxNetworkHost?(toolCall: AcpToolCallLike): string | null;
   /**
    * 写入类权限请求是否仍在 Agent 自身沙箱的允许范围内（安全审查 H1）：
    * false = 该 Agent 只为沙箱拒绝的写入发请求（Codex workspace-write：越出

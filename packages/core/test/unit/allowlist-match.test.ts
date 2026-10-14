@@ -80,8 +80,11 @@ describe('allowlist matcher (posix)', () => {
     expect(matchAllowlistCommand('git rev-parse HEAD', ctx()).exempt).toBe(true);
     expect(matchAllowlistCommand('git ls-files', ctx()).exempt).toBe(true);
     expect(matchAllowlistCommand('echo hello', ctx()).exempt).toBe(true);
-    expect(matchAllowlistCommand('pnpm --version', ctx()).exempt).toBe(true);
     expect(matchAllowlistCommand('node -v', ctx()).exempt).toBe(true);
+    // Package-manager / toolchain-proxy probes are not built-ins (review P0).
+    for (const probe of ['pnpm --version', 'yarn -v', 'cargo --version', 'rustc --version', 'go version']) {
+      expect(matchAllowlistCommand(probe, ctx()).exempt).toBe(false);
+    }
     expect(matchAllowlistCommand('git branch -D stale', ctx()).exempt).toBe(false);
     expect(matchAllowlistCommand('git branch --delete stale', ctx()).exempt).toBe(false);
     expect(matchAllowlistCommand('pnpm test', ctx()).exempt).toBe(false);
@@ -180,11 +183,169 @@ describe('allowlist matcher (windows, single commands only)', () => {
   });
 });
 
+describe('git branch is listing-only (review P1)', () => {
+  const exempt = (command: string) => matchAllowlistCommand(command, ctx()).exempt;
+  const wexempt = (command: string) =>
+    matchAllowlistCommand(command, { ...ctx(), platform: 'windows', entries: BUILTIN_PATTERNS.windows })
+      .exempt;
+
+  it('accepts listing forms with their value options', () => {
+    for (const command of [
+      'git branch',
+      'git branch -a',
+      'git branch -r',
+      'git branch -av',
+      'git branch -vv',
+      'git branch --all --verbose',
+      'git branch --show-current',
+      'git branch --list',
+      'git branch --list "feat/*"',
+      'git branch -l feat',
+      'git branch --contains',
+      'git branch --contains HEAD~3',
+      'git branch --contains=abc123',
+      'git branch --merged main',
+      'git branch --no-merged=main -a',
+      'git branch --points-at HEAD',
+      'git branch --sort=-committerdate',
+    ]) {
+      expect(exempt(command), command).toBe(true);
+    }
+    expect(wexempt('git branch -a')).toBe(true);
+  });
+
+  it('refuses every writing form, including bundled short flags', () => {
+    for (const command of [
+      'git branch newbranch',
+      'git branch newbranch HEAD~1',
+      'git branch -- newbranch',
+      'git branch -d stale',
+      'git branch -D stale',
+      'git branch -qD stale',
+      'git branch -dr origin/x',
+      'git branch -Dq stale',
+      'git branch -f main HEAD~1',
+      'git branch --force main',
+      'git branch -m old new',
+      'git branch -M new',
+      'git branch -c a b',
+      'git branch -C a b',
+      'git branch --copy a b',
+      'git branch --move a b',
+      'git branch --delete stale',
+      'git branch -u origin/main',
+      'git branch --set-upstream-to=origin/main',
+      'git branch --unset-upstream',
+      'git branch --track x origin/x',
+      'git branch -t x origin/x',
+      'git branch --edit-description',
+      'git branch --create-reflog x',
+      'git branch -q',
+      'git branch -a newbranch',
+      'git branch --contains HEAD newbranch',
+    ]) {
+      expect(exempt(command), command).toBe(false);
+    }
+    expect(wexempt('git branch -qD stale')).toBe(false);
+    expect(wexempt('git branch newbranch')).toBe(false);
+  });
+
+  it('other git subcommands keep -M / -m (rename detection, merge diffs) exempt', () => {
+    expect(exempt('git diff -M')).toBe(true);
+    expect(exempt('git log -m --stat')).toBe(true);
+  });
+});
+
+/**
+ * Review P0 / P2: the built-ins are run unsandboxed without a card in confirm
+ * mode. Shape rules — any new built-in must fit them, or this test changes
+ * with an explicit decision (DEVIATIONS).
+ */
 describe('built-in patterns', () => {
+  const VERSION_PROBE_PROGRAMS = new Set([
+    'node', 'npm', 'python', 'python3', 'pip', 'pip3', 'tsc', 'eslint', 'prettier', 'ruby', 'php',
+  ]);
+  /** Programs that proxy to a project-pinned toolchain or run project code. */
+  const FORBIDDEN_PROGRAMS = [
+    'pnpm', 'yarn', 'corepack', 'bun', 'deno', 'npx', 'cargo', 'rustc', 'rustup', 'go', 'uv',
+    'poetry', 'pipx', 'gradle', 'gradlew', 'mvn', 'make', 'bash', 'sh', 'zsh', 'env', 'xargs',
+    'curl', 'wget', 'rm', 'mv', 'cp',
+  ];
+
+  it('contain no package-manager / toolchain-proxy / interpreter-running entries', () => {
+    for (const platform of ['posix', 'windows'] as const) {
+      for (const pattern of BUILTIN_PATTERNS[platform]) {
+        const [program = '', ...rest] = pattern.split(' ');
+        expect(FORBIDDEN_PROGRAMS, `${platform}: ${pattern}`).not.toContain(program.toLowerCase());
+        if (VERSION_PROBE_PROGRAMS.has(program)) {
+          // Interpreters / package managers only as an exact version probe.
+          expect(rest.length, pattern).toBe(1);
+          expect(['--version', '-v', '-V'], pattern).toContain(rest[0]);
+        }
+      }
+    }
+  });
+
+  it('pin the exact set (a new entry is an explicit decision)', () => {
+    expect([...BUILTIN_PATTERNS.posix].sort()).toMatchInlineSnapshot(`
+      [
+        "basename",
+        "cat",
+        "dirname",
+        "du",
+        "echo",
+        "eslint --version",
+        "false",
+        "file",
+        "find",
+        "git blame",
+        "git branch",
+        "git describe",
+        "git diff",
+        "git log",
+        "git ls-files",
+        "git ls-tree",
+        "git rev-parse",
+        "git shortlog",
+        "git show",
+        "git status",
+        "grep",
+        "head",
+        "ls",
+        "node --version",
+        "node -v",
+        "npm --version",
+        "npm -v",
+        "php --version",
+        "pip --version",
+        "pip3 --version",
+        "prettier --version",
+        "printf",
+        "pwd",
+        "python --version",
+        "python -V",
+        "python3 --version",
+        "python3 -V",
+        "readlink",
+        "realpath",
+        "rg",
+        "ruby --version",
+        "stat",
+        "tail",
+        "tree",
+        "true",
+        "tsc --version",
+        "uname",
+        "wc",
+        "which",
+      ]
+    `);
+  });
+
   it('stay read-only oriented and include coding inspect extras', () => {
     expect(BUILTIN_PATTERNS.posix).toContain('git status');
     expect(BUILTIN_PATTERNS.posix).toContain('git branch');
-    expect(BUILTIN_PATTERNS.posix).toContain('pnpm --version');
+    expect(BUILTIN_PATTERNS.posix).not.toContain('pnpm --version');
     expect(BUILTIN_PATTERNS.posix).not.toContain('npm test');
     expect(BUILTIN_PATTERNS.posix).not.toContain('rm');
     expect(BUILTIN_PATTERNS.windows).toContain('git status');
