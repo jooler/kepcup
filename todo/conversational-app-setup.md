@@ -315,7 +315,7 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 
 ### 8.2 P1 ⏳ 待做：组件化扩面
 
-目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 41 个有内嵌卡**（P0 结束时是 18 个）。
+目标：把仍是「跳转卡」的设置项升级为内嵌卡，让「所有设置能力都能成卡」成为现实。**58 个目录条目里目前 42 个有内嵌卡**（P0 结束时是 18 个）。
 
 **每个条目的升级步骤**（做法同 D58：设置页行为不变，只给组件加嵌入用的 props）：
 
@@ -338,12 +338,13 @@ direct 档执行后必出**回执卡**，内容是「旧值 → 新值」，带�
 - [x] **后台与预算**：`background.tasks`、`background.budget`（`BackgroundTasksSection`、用量预算字段卡）。
 - [x] **群 / 项目**：`group.title`、`group.members`（群设置，卡片键 `group-title` / `group-members`）。群名保存走 `settings.items.apply`（`groups.rename`）。成员由组件调用原来的 `groups.addMembers` / `groups.removeMember`（移出是异步级联，不放进设置写锁）。`project.protect-rules`、`project.ports`（项目设置，user-only，卡片键 `project-settings`）：保护规则和风险确认留在 `ProjectSettingsDialog`，宿主不预填、不代写，组件自己 `projects.update` 后结卡。群 / 项目设置页原用法不变。
 - [x] **连接逐工具策略**：`connections.tool-policy`（`AppConnectionDetail` 的工具策略片段，卡片键 `tool-policy`）。目录档是 confirm，放宽为 user-only。读适配器把 `connection` / `tool` 放进快照并实现 `valuesWiden`（未知按放宽）。组件用 before 定位这一条，调用原来的 `apps.connections.setToolPolicy`（策略变严时中断任务），不经宿主写锁。放宽不预填；收紧按页面档位（`auto` / `disabled`）保存，不把目录的 `allow` / `deny` 写进 `McpToolPolicy`。设置页原用法不变，嵌入时不带断开连接和重新授权。
-- [ ] **连接与智能体其余**：`mcp.servers`、`browser.shared-profiles`。`connections.taint-guard`、`agents.default` 已升级。
+- [x] **已安装的 MCP**：`mcp.servers`（`McpSection` 的启用开关，卡片键 `mcp-servers`）。目录档是 confirm，放宽为 user-only。读适配器按 focus 读这一条，把 `server` 放进快照并实现 `valuesWiden`（从停用改为启用是放宽，未知按放宽）。组件用 before 定位这一个服务，保存时读当前 `mcpServers`，只改这一条的 `enabled`（兄弟服务和 `toolPolicies` 不动），调用原来的 `settings.update`。那条 RPC 在锁外做两段：写之前对 OAuth 绑定变化做 `reconcileServers`，写之后用 `mcpRevocationsBetween` 调 `revokeMcp`（停用或删掉正在用的服务会中断任务）。写锁里直接 `settings.update` 会丢掉这两段，所以不补写入适配器。启用不预填；停用可以预填。扩展中心和设置页的 `variant="manage"` 原用法不变，嵌入时不带编辑、密钥、删除、免审批、逐工具策略和 `.mcpb` 安装。
+- [ ] **连接与智能体其余**：`browser.shared-profiles`。`connections.taint-guard`、`agents.default`、`mcp.servers` 已升级。
 - [ ] **环境**：`environment.toolchains`、`environment.sandbox`、`environment.allowlist`（user-only；先保持跳转卡，组件可嵌入后再出 user-only 空白卡）。
 
-**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`mcp.servers`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency`、`group.title` 已补写入。`group.members`、项目两项与 `connections.tool-policy` 走组件自存。
+**目前只有读适配器的**条目（要走「宿主写」就得补写入，否则只能走「组件自存」）：`mcp.servers`、`group.members`、`project.protect-rules`、`project.ports`、`connections.tool-policy` 等，以 `packages/core/src/settings/adapters.ts` 里没有 `write` 的适配器为准。Bot 配置六项、`models.embedding-local`、`models.concurrency`、`group.title` 已补写入。`group.members`、项目两项、`connections.tool-policy` 与 `mcp.servers` 走组件自存。
 
-**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`。`unattended.enable`、项目保护规则、放行端口与 `connections.tool-policy` 仍不由宿主写（风险确认或 `setToolPolicy` 的任务中断留在组件原来的保存路径里）。
+**已经有写适配器的**条目：默认主 / 轻量模型、`models.widget-review`、`models.embedding-local`、`models.concurrency`、厂商 Key、`capability.*`、`search.provider`、`agents.external`、`agents.default`、`bot.model`、`bot.light-model`、`bot.browser-profile`、`bot.network`、`bot.mcp-servers`、`bot.apps`、`bot.skills`、`bot.agent`、`general.launch-at-login`、`background.*`、`connections.taint-guard`、`unattended.disable`、`group.title`。`unattended.enable`、项目保护规则、放行端口、`connections.tool-policy` 与 `mcp.servers` 仍不由宿主写（风险确认、`setToolPolicy` 的任务中断，或 `settings.update` 在锁外的 OAuth 对账与 `revokeMcp`，留在组件原来的保存路径里）。
 
 **永久只出跳转卡 / 只读，不在 P1 范围**：`profile.user-facts`、`developer.*`、`diagnostics.*`。
 **走专门工具、`settings_change` 只重定向，不在 P1 范围**：`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`。

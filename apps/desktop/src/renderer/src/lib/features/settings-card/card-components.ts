@@ -29,6 +29,7 @@ export const SETTING_CARD_COMPONENTS = {
   'group-members': 'GroupSettingsDialog',
   'project-settings': 'ProjectSettingsDialog',
   'tool-policy': 'AppConnectionDetail',
+  'mcp-servers': 'McpSection',
 } as const satisfies Record<CardKey, string>;
 
 /** 内嵌时需要的上下文（谁的卡、作用对象、可用的外部智能体）。 */
@@ -78,6 +79,7 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'unattended':
     case 'taint-guard':
     case 'tool-policy':
+    case 'mcp-servers':
       return true;
     case 'connect-app':
       return prefillString(context.prefill, 'app') !== null;

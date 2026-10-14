@@ -338,6 +338,22 @@ describe('effectiveMode: individual rules', () => {
     expect(effectiveMode(item('bot.network'), ctx({ valuesWiden: false })).mode).toBe('confirm');
   });
 
+  it('enabling an installed MCP server is user-only; disabling stays confirm', () => {
+    const servers = item('mcp.servers');
+    expect(servers.card).toBe('mcp-servers');
+    expect(effectiveMode(servers, ctx({ valuesWiden: true }))).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
+      rules: ['widening-values'],
+    });
+    expect(effectiveMode(servers, ctx()).mode).toBe('user-only');
+    expect(effectiveMode(servers, ctx({ valuesWiden: false }))).toMatchObject({
+      mode: 'confirm',
+      acceptValues: true,
+      rules: [],
+    });
+  });
+
   it('cardless items become link cards; permanent link items stay link', () => {
     expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
       mode: 'link',

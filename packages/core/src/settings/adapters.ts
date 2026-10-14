@@ -1267,6 +1267,59 @@ function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAd
   };
 }
 
+/**
+ * 放宽：从停用改为启用。停用（true → false）返回 false，可以预填。
+ * 看不出方向（缺旧值、缺新值、不是布尔）按放宽。
+ */
+function mcpServerWidens(before: SettingValues | null, proposed: SettingValues): boolean {
+  const next = bool(proposed.enabled);
+  const current = bool(before?.enabled);
+  if (next === undefined || current === undefined) return true;
+  return current === false && next === true;
+}
+
+/**
+ * 已安装 MCP 的启停。有 focus 时快照带上 `server` 和当前 `enabled`（user-only 会清空整份预填，
+ * 卡片靠 before 定位是哪一个服务）；没有 focus 时仍回安装概要。不提供 write——组件读当前
+ * `mcpServers` 后只改这一条的 `enabled`，再走 `settings.update`。那条 RPC 在锁外做两段：写之前
+ * 对 OAuth 绑定变化 `disconnector.reconcileServers`，写之后用 `mcpRevocationsBetween` 调
+ * `revokeMcp`（停用正在用的服务会中断任务）。写锁里直接 `settings.update` 会丢掉这两段。
+ */
+function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, _target, focus) => {
+      const servers = deps.settings.get().mcpServers;
+      const enabledCount = servers.filter((server) => server.enabled === true).length;
+      const overview =
+        servers.length === 0
+          ? '没有安装 MCP 服务'
+          : `已安装 ${servers.length} 个，启用 ${enabledCount} 个`;
+      const serverId = str(focus?.server);
+      if (serverId === undefined || serverId.length === 0) {
+        return snapshot(servers.length === 0 ? 'unconfigured' : 'configured', null, overview);
+      }
+      const server = servers.find((entry) => entry.id === serverId);
+      if (server === undefined) {
+        return snapshot('unconfigured', { server: serverId }, '没有这个 MCP 服务');
+      }
+      const on = server.enabled === true;
+      return snapshot(
+        on ? 'configured' : 'unconfigured',
+        { server: serverId, enabled: on },
+        `「${clean(server.name, 40)}」${on ? '已启用' : '已停用'}`,
+      );
+    },
+    options: (field) => {
+      if (field.options !== 'mcp-servers') return [];
+      return deps.settings.get().mcpServers.map((server) => ({
+        value: server.id,
+        label: clean(server.name),
+      }));
+    },
+    valuesWiden: (_item, before, proposed) => mcpServerWidens(before, proposed),
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -1305,13 +1358,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'models.embedding-local': embeddingLocalAdapter(deps),
     'models.concurrency': concurrencyAdapter(deps),
     'search.provider': webSearchAdapter(deps),
-    'mcp.servers': readOnlyAdapter(() => {
-      const servers = deps.settings.get().mcpServers;
-      const enabled = servers.filter((server) => server.enabled !== false).length;
-      return servers.length === 0
-        ? snapshot('unconfigured', null, '没有安装 MCP 服务')
-        : snapshot('configured', null, `已安装 ${servers.length} 个，启用 ${enabled} 个`);
-    }),
+    'mcp.servers': mcpServersAdapter(deps),
     'connections.taint-guard': taintGuardAdapter(deps),
     'connections.tool-policy': toolPolicyAdapter(deps),
     'agents.external': externalAgentsAdapter(deps),

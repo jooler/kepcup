@@ -334,7 +334,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'mcp.servers',
     group: 'mcp',
     title: '已安装的 MCP 服务',
-    summary: '启用或停用已安装的 MCP 服务，以及它们的逐工具策略',
+    summary: '启用或停用某一个已安装的 MCP 服务',
     enables: ['使用 MCP 工具'],
     keywords: ['MCP', '服务', '工具', '启用', '停用'],
     scope: 'global',
@@ -342,8 +342,10 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
       field('server', 'MCP 服务', 'select', { options: 'mcp-servers' }),
       field('enabled', '启用', 'toggle'),
     ],
+    // 停用 = confirm（可预填）；启用（从停用改为启用）= user-only。未知方向按放宽。
+    // 卡片只改这一个服务的 enabled，组件自己 settings.update。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
-    card: null,
+    card: 'mcp-servers',
     deepLink: { surface: 'extension-center', section: 'mcp' },
     store: { kind: 'settings', paths: ['mcpServers'] },
   }),

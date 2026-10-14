@@ -375,3 +375,68 @@ describe('connection tool policy reads', () => {
     expect(widen(entry, { connection: 'conn-1', tool: 'search' }, { policy: 'deny' })).toBe(true);
   });
 });
+
+describe('installed MCP server reads', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+
+  function rig() {
+    const { adapters, settings } = harness({
+      mcpServers: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          transport: 'stdio',
+          command: 'echo',
+          enabled: true,
+          toolPolicies: { search: { approval: 'ask' } },
+        },
+        {
+          id: 'off',
+          name: 'Off',
+          transport: 'stdio',
+          command: 'echo',
+          enabled: false,
+        },
+      ],
+    });
+    return { adapter: adapters(item('mcp.servers')), settings };
+  }
+
+  it('reads the focused server into the snapshot and does not write', () => {
+    const { adapter, settings } = rig();
+    expect(adapter.write).toBeUndefined();
+    const overview = adapter.read(item('mcp.servers'), target);
+    expect(overview.values).toBeNull();
+    expect(overview.summary).toBe('已安装 2 个，启用 1 个');
+    expect(
+      adapter.read(item('mcp.servers'), target, { server: 'notes', enabled: false }).values,
+    ).toEqual({ server: 'notes', enabled: true });
+    const disabled = adapter.read(item('mcp.servers'), target, { server: 'off', enabled: true });
+    expect(disabled.status).toBe('unconfigured');
+    expect(disabled.values).toEqual({ server: 'off', enabled: false });
+    const missing = adapter.read(item('mcp.servers'), target, { server: 'gone' });
+    expect(missing.status).toBe('unconfigured');
+    expect(missing.values).toEqual({ server: 'gone' });
+    expect(adapter.options!(item('mcp.servers').fields[0]!, item('mcp.servers'), target)).toEqual([
+      { value: 'notes', label: 'Notes' },
+      { value: 'off', label: 'Off' },
+    ]);
+    expect(settings().mcpServers.find((server) => server.id === 'notes')?.toolPolicies).toEqual({
+      search: { approval: 'ask' },
+    });
+  });
+
+  it('treats enable as widening and disable as not; unknown direction widens', () => {
+    const { adapter } = rig();
+    const widen = adapter.valuesWiden!;
+    const entry = item('mcp.servers');
+    expect(widen(entry, { server: 'off', enabled: false }, { enabled: true })).toBe(true);
+    expect(widen(entry, { server: 'notes', enabled: true }, { enabled: false })).toBe(false);
+    expect(widen(entry, { enabled: true }, { enabled: true })).toBe(false);
+    expect(widen(entry, { enabled: false }, { enabled: false })).toBe(false);
+    expect(widen(entry, null, { enabled: false })).toBe(true);
+    expect(widen(entry, { enabled: true }, { server: 'notes' })).toBe(true);
+    expect(widen(entry, { server: 'notes' }, { enabled: false })).toBe(true);
+    expect(widen(entry, { enabled: true }, { enabled: 'no' })).toBe(true);
+  });
+});

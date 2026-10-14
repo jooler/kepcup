@@ -194,6 +194,8 @@ export const CARD_KEYS = [
   'project-settings',
   /** 一条连接工具的策略（`AppConnectionDetail` 片段；组件自己 `setToolPolicy`）。 */
   'tool-policy',
+  /** 一个已安装 MCP 服务的启用开关（`McpSection` 片段；组件自己 `settings.update`）。 */
+  'mcp-servers',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

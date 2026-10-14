@@ -156,6 +156,9 @@ describe('预填过滤', () => {
     expect(settingCardPrefill(item('connections.tool-policy'), 'confirm', toolPolicy)).toEqual(
       toolPolicy,
     );
+    const mcpServer = { server: 'notes', enabled: true };
+    expect(settingCardPrefill(item('mcp.servers'), 'user-only', mcpServer)).toBeNull();
+    expect(settingCardPrefill(item('mcp.servers'), 'confirm', mcpServer)).toEqual(mcpServer);
   });
 
   it('能力模型预填：厂商须已适配该能力；厂商/模型写法拆开', () => {
@@ -244,6 +247,9 @@ describe('卡片形态的分发', () => {
         policy: 'deny',
       }),
     ).toBe(false);
+    expect(hostApplies(item('mcp.servers'), 'confirm', { server: 'notes', enabled: false })).toBe(
+      false,
+    );
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {
