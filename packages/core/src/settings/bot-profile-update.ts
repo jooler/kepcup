@@ -88,7 +88,7 @@ export function createPermissionEffects(deps: PermissionEffectsDeps): Permission
   };
 }
 
-/** Bot Profile 前后真正变化的 runtime 路径（`runtime.model`……）。 */
+/** Bot Profile 前后真正变化的 runtime 路径（模型、浏览器资料、MCP……）。 */
 export function changedBotRuntimePaths(
   previous: Record<string, unknown>,
   next: Record<string, unknown>,
