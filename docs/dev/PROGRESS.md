@@ -1365,7 +1365,7 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 
 ## 评审修复：模型 session id / 输入框（2026-10-14，`t/fix-misc`，未推送）
 
-- **session id（`8042a8c`）**：`agent/model-session-id.ts` 按安装密钥派生不透明 id（见 DEVIATIONS DEV-027，编号合并时以最后一个空号为准）；`PiEngine.startRun` / `complete` 与 `ProvidersService.test` 改用它；改正 models.ts / pi-engine.ts 的错误注释。测试：`model-session-id`（9：稳定、跨用途 / 对话 / Bot / 供应商 / 安装不同、不含原始 id、4000 例无碰撞、锚点种类不混、密钥来自主密钥且不落表）、`provider-test-session-id`（2）、集成 `opencode-session-header`（6：OpenCode 仍发 `x-opencode-session` 且同对话稳定；普通自定义端点无会话字段；OpenRouter 识别端点只发 `x-session-id`；`api.openai.com` 代理只发 `prompt_cache_key`；OpenAI Responses 与 Mistral 各字段同一不透明值；测试连接按供应商稳定；两次安装取值不同；所有请求头 / 会话字段 / 内容以外的正文字段不含对话 id、Bot id、run id）。
+- **session id（`8042a8c`）**：`agent/model-session-id.ts` 按安装密钥派生不透明 id（见 DEVIATIONS DEV-027）；`PiEngine.startRun` / `complete` 与 `ProvidersService.test` 改用它；改正 models.ts / pi-engine.ts 的错误注释。测试：`model-session-id`（9：稳定、跨用途 / 对话 / Bot / 供应商 / 安装不同、不含原始 id、4000 例无碰撞、锚点种类不混、密钥来自主密钥且不落表）、`provider-test-session-id`（2）、集成 `opencode-session-header`（6：OpenCode 仍发 `x-opencode-session` 且同对话稳定；普通自定义端点无会话字段；OpenRouter 识别端点只发 `x-session-id`；`api.openai.com` 代理只发 `prompt_cache_key`；OpenAI Responses 与 Mistral 各字段同一不透明值；测试连接按供应商稳定；两次安装取值不同；所有请求头 / 会话字段 / 内容以外的正文字段不含对话 id、Bot id、run id）。
 - **头像色前景（`cd1ad9c`）**：`avatarColorForeground(color, 'graphic' | 'text')` 按 WCAG 对比度在白 / 近黑间计算（白够用就白）；输入框两键 ≥ 3:1，用户气泡文字 ≥ 4.5:1；琥珀、青碧、石灰的眼睛与按键图标改深色。禁用态（`opacity-50`）属 WCAG 豁免，不单独处理。
 - **输入框单行 / 沉底（`9434963`）**：按测得宽度判定（单行可用宽度 = 药丸宽度 − 单行布局下测得的按键与间距），回单行需窄 8px；替换按字符数的锁定。纯函数单测 11 例；e2e `composer-layout.spec`（真实 Electron，旧实现失败、新实现连续 4 次通过，单次约 20 s）。
 - **任务卡宽度（a88351a）**：单聊里任务卡与 Bot 气泡同宽同左缘；群聊里气泡列前有头像（28px + 8px 间距），任务卡没有，左缘差 36px、最大宽度相同。不是一行能改好（需要群聊标记与偏移），未改。
@@ -1384,7 +1384,7 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 
 ## 对话内应用设置 合并后审查修复（D89，2026-10-14，`t/fix-settings`，未推送）
 
-依据合并后审查的 13 项发现（todo/conversational-app-setup.md §8.6），设计见 design/38 §11，偏差见 DEVIATIONS DEV-029（编号合并时以最后一个空号为准）。无 DB 迁移；shared 契约有增量（`settings.update` / `bots.update` 的可选 `base`、`settings.cards.complete` 的可选 `auto`、`kind:'setting'` 的可选 `before`、`general.language` 改静态选项）。
+依据合并后审查的 13 项发现（todo/conversational-app-setup.md §8.6），设计见 design/38 §11，偏差见 DEVIATIONS DEV-029。无 DB 迁移；shared 契约有增量（`settings.update` / `bots.update` 的可选 `base`、`settings.cards.complete` 的可选 `auto`、`kind:'setting'` 的可选 `before`、`general.language` 改静态选项）。
 
 - **shared**：`settings-catalog/validate.ts`（`settingValuesProblems`）、`settings-catalog/merge.ts`（`mergeThreeWay` / `mergePatchOnto`）。
 - **core**：`settings/bot-profile-update.ts`（`applyBotProfileUpdate` 与 `createPermissionEffects`，`bots.update` RPC 与 Bot 条目适配器共用）；适配器写入可返回锁外收尾；`bot.skills` 拒绝公共技能；`bot.network` 放宽判定与隐藏域名；`group.members` 的 `proposal`；`mcp.servers` 宿主写；`environment.allowlist` 状态 `unknown`；`project.protect-rules` 脱敏；`models.concurrency` / `background.tasks` 语义校验；宿主 `settingValuesProblems`、`completeCard({auto})`、required 带 `before`；`settings.update` / `bots.update` 带 `base` 三方合并。
