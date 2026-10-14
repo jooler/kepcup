@@ -458,15 +458,13 @@
       data-testid="bot-personality-input"
     />
   </div>
-  <div class="grid gap-4 sm:grid-cols-2">
-    <div class="grid gap-1.5">
-      <Label for="bot-tone">{t('contacts.tone')}</Label>
-      <Input id="bot-tone" bind:value={profile.persona.tone} />
-    </div>
-    <div class="grid gap-1.5">
-      <Label for="bot-style">{t('contacts.style')}</Label>
-      <Input id="bot-style" bind:value={profile.persona.style} />
-    </div>
+  <div class="grid gap-1.5">
+    <Label for="bot-tone">{t('contacts.tone')}</Label>
+    <Input id="bot-tone" bind:value={profile.persona.tone} />
+  </div>
+  <div class="grid gap-1.5">
+    <Label for="bot-style">{t('contacts.style')}</Label>
+    <Input id="bot-style" bind:value={profile.persona.style} />
   </div>
   <div class="grid gap-1.5">
     <Label for="bot-values">{t('contacts.values')}</Label>
@@ -476,15 +474,13 @@
     <Label for="bot-samples">{t('contacts.sampleDialogues')}</Label>
     <Textarea id="bot-samples" bind:value={profile.persona.sample_dialogues} rows={3} />
   </div>
-  <div class="grid gap-4 sm:grid-cols-2">
-    <div class="grid gap-1.5">
-      <Label for="bot-expertise">{t('contacts.expertise')}</Label>
-      <Input id="bot-expertise" bind:value={profile.role.expertise} />
-    </div>
-    <div class="grid gap-1.5">
-      <Label for="bot-responsibilities">{t('contacts.responsibilities')}</Label>
-      <Input id="bot-responsibilities" bind:value={profile.role.responsibilities} />
-    </div>
+  <div class="grid gap-1.5">
+    <Label for="bot-expertise">{t('contacts.expertise')}</Label>
+    <Input id="bot-expertise" bind:value={profile.role.expertise} />
+  </div>
+  <div class="grid gap-1.5">
+    <Label for="bot-responsibilities">{t('contacts.responsibilities')}</Label>
+    <Input id="bot-responsibilities" bind:value={profile.role.responsibilities} />
   </div>
   <div class="grid gap-1.5">
     <Label for="bot-boundaries">{t('contacts.boundaries')}</Label>
@@ -567,7 +563,7 @@
       </p>
     {/if}
   </div>
-  <div class="grid gap-4 sm:grid-cols-2" data-settings-anchor="bot-model">
+  <div class="grid gap-4" data-settings-anchor="bot-model">
     <div class="grid gap-1.5">
       <Label for="bot-model"
         >{agentOptions.length > 0 ? t('contacts.mainModelOrAgent') : t('contacts.mainModel')}</Label
@@ -628,7 +624,7 @@
       data-settings-anchor="bot-agent"
     >
       <p class="text-xs text-muted-foreground">{t('contacts.agentIsolationNote')}</p>
-      <div class="grid gap-4 sm:grid-cols-3">
+      <div class="grid gap-4">
         <div class="grid gap-1.5">
           <Label for="bot-agent-model">{t('contacts.agentModel')}</Label>
           <select
