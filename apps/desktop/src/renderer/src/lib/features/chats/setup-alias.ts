@@ -16,7 +16,9 @@ export type SetupAliasText = (key: MessageKey) => string;
  * 自动续跑基线与实验开关、连接的自定义目标 / 重连 / scope 并集 / 已在别处连好的
  * 一键继续）表达不进通用分发，压平会改掉已验收行为——它们原样交给
  * `SettingSetupBody` 的别名分支（各自的 `*SetupBody` 消费，设计篇 38 §5.3）。
- * `main-model` / `confirm-local-connector` 由 `SetupRequiredCard` 专门处理。
+ * `main-model`（两段式，不是单条目录条目）与 `confirm-local-connector`（不是设置
+ * 目录条目）同样保留独立 kind，由 `SettingSetupBody` 分发到各自的独立 body。
+ * `setting` kind 直通返回（同一个出口分发）。
  */
 export function setupAliasOf(
   requirement: SetupRequirement,
@@ -46,6 +48,9 @@ export function setupAliasOf(
             ? requirement.reason
             : text('setupCard.mailAccountHint'),
       };
+    case 'setting':
+      // 已是通用 kind：直通（SettingSetupBody 用同一个出口分发）。
+      return requirement;
     default:
       return null;
   }
