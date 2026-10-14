@@ -192,6 +192,13 @@
 
 `setupRequirementSchema` 的通用 kind 让以后加设置项不再改契约；原有 7 个 kind（`main-model` / `capability-model` / `web-search` / `agent` / `connect-app` / `confirm-local-connector` / `mail-account`）不迁移（P2）。
 
+### 5.3 P2 收拢：旧 kind 的渲染归并（2026-10-14）
+
+失败续跑卡（`SetupRequiredCard`）不再逐 kind 自带分支，body 选择统一交给 `SettingSetupBody`；旧 kind 在 `setupRequirementSchema` 里**原样保留为兼容别名**（库里的 run 与测试仍有旧值，core 产生路径不改），只在渲染层归并：
+
+- **一对一映射的三个 kind 转成 `kind:'setting'` 再渲染**（`chats/setup-alias.ts` 的 `setupAliasOf`）：`capability-model` → `capability.{能力}`、`web-search` → `search.provider`、`mail-account` → `mail.account`（`provider` 映到 `prefill.provider`，`reason` 原样展示；厂商预填仍只是初选，用户可改）。原卡片的 hint 文案转作 reason 行，标题统一为 `settingCard.setupTitle` + 条目名。
+- **`agent` 与 `connect-app` 不压平**。两者虽有目录条目（`agents.external` / `connections.connect`），但旧载荷的字段与随附行为表达不进通用分发：`agent` 的 `reason` / `detail`（`agentSetupReasonSchema`）、实验开关、config_unsafe 详情框、沙箱提示、「不可用 → 可用」自动续跑基线（`stepAutoContinue`）；`connect-app` 的自定义 `target`、`connectionId` 重连、`scopes` 并集、已在别处连好时的一键继续（含 needsGrant 补写 Profile）与群聊 `onDone` 补授权。通用分发只认 `onSaved`，压平会丢这些已验收行为（开工约定不改失败续跑链的结果），且 `reason` / `detail` / `target` 不得写进设置目录字段。这两个 kind 由 `SettingSetupBody` 分发到各自的别名 body（`AgentSetupBody` / `ConnectAppSetupBody`，内嵌组件仍是目录登记的 `AgentCard` / `ConnectAppPanel`）；`confirm-local-connector` 添加成功后接上的连接步骤仍由 `ConnectAppSetupBody` 承载，链路不变。
+
 ## 6 安全与边界
 
 - **密钥永不经模型**：`values` 带敏感字段直接拒；`settings_read` 只回已配置 / 未配置；提示词有「不要让用户贴令牌 / 密钥」；用户在卡里填的 Key 只经 `settings.items.apply` 到 secrets，永不回显、不进快照、不进 `before` / `applied`。

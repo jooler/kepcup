@@ -9,9 +9,14 @@ export type SetupAliasText = (key: MessageKey) => string;
  * 任务 1）：`capability-model` / `web-search` / `mail-account` 的失败续跑卡改由
  * `SettingSetupBody` → `SettingCardEmbed` 按目录条目渲染。`setupRequirementSchema`
  * 里旧 kind 原样保留（库与测试仍有旧值，core 产生路径不变），只在渲染层读到后
- * 转成已存在的 `kind:'setting'`。映射不出来的 kind（`main-model` / `agent` /
- * `connect-app` / `confirm-local-connector`，字段比目录条目多或行为特殊）返回
- * null，由 `SetupRequiredCard` 各自的分支渲染。
+ * 转成已存在的 `kind:'setting'`。
+ *
+ * `agent` / `connect-app` 不在这里映射：载荷里比目录条目多的字段（`agentId` /
+ * `reason` / `detail`；`target` / `connectionId` / `scopes`）与随附行为（Agent 的
+ * 自动续跑基线与实验开关、连接的自定义目标 / 重连 / scope 并集 / 已在别处连好的
+ * 一键继续）表达不进通用分发，压平会改掉已验收行为——它们原样交给
+ * `SettingSetupBody` 的别名分支（各自的 `*SetupBody` 消费，设计篇 38 §5.3）。
+ * `main-model` / `confirm-local-connector` 由 `SetupRequiredCard` 专门处理。
  */
 export function setupAliasOf(
   requirement: SetupRequirement,
