@@ -209,7 +209,9 @@ import {
   mediaRerankOutputSchema,
   mediaUnderstandImageInputSchema,
   mediaUnderstandImageOutputSchema,
+  mergePatchOnto,
   type Conversation,
+  type Settings,
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { WatchService } from '../watch/service.js';
@@ -230,17 +232,14 @@ import { bindAppsConnectionMethods } from './apps-connections-bindings.js';
 import { bindAppsSkillsMethods } from './apps-skills-bindings.js';
 import {
   bindSettingsCatalogMethods,
-  changedBotRuntimePaths,
   changedSettingsPaths,
-  itemIdsForBotPaths,
   itemIdsForSettingsPaths,
   withSettingsChangedEvents,
 } from './settings-bindings.js';
 import {
-  botsUsingServer,
-  mcpRevocationsBetween,
-  serversRemovedFromBot,
-} from '../permissions/revocations.js';
+  applyBotProfileUpdate,
+  createPermissionEffects,
+} from '../settings/bot-profile-update.js';
 import type { LoopType } from '@kepcup/shared';
 
 const voidInput = z.void();
@@ -292,28 +291,27 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const domain = services.domain!;
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
-  /** W3: the revoking site toasts 「已中断 N 个进行中的任务」 (W8: also a profile switch). */
-  const publishInterrupted = (count: number, scope: 'path' | 'mcp' | 'browser_profile'): void => {
-    if (count > 0) {
-      publish('tasks.interrupted', {
-        count,
-        reason: scope === 'browser_profile' ? 'browser_profile_changed' : 'permission_revoked',
-        scope,
-      });
-    }
-  };
-  /** W3: MCP permissions the user took back → interrupt the affected tasks. */
-  const revokeMcp = (revoked: Array<{ serverId: string; toolName?: string; botIds: string[] }>) => {
-    let count = 0;
-    for (const entry of revoked) {
-      count += domain.revocations.emit({
-        scope: 'mcp',
-        botIds: entry.botIds,
-        serverId: entry.serverId,
-        ...(entry.toolName !== undefined ? { toolName: entry.toolName } : {}),
-      });
-    }
-    publishInterrupted(count, 'mcp');
+  /**
+   * W3 / W8：收回授权 → 中断受影响的任务并推「已中断 N 个进行中的任务」。与设置目录的条目适配器
+   * 共用同一份实现（settings/bot-profile-update.ts）。
+   */
+  const permissionEffects = createPermissionEffects({
+    revocations: domain.revocations,
+    publish,
+    listBots: () => domain.bots.listActive(),
+    mcpRiskOf: (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
+    mcpKnownTools: (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
+  });
+  const publishInterrupted = permissionEffects.publishInterrupted;
+  const revokeMcp = permissionEffects.revokeMcp;
+  /** `bots.update` 与设置目录 Bot 条目共用的写入路径（校验 → 写 → 锁外中断 / 收回授权）。 */
+  const botProfileDeps = {
+    bots: domain.bots,
+    settings: domain.settings,
+    agentCatalog: () => services.agents?.catalog() ?? [],
+    browserProfiles: domain.browserProfiles,
+    effects: permissionEffects,
+    publish,
   };
   // P12-B: one in-flight preparation at a time (per services instance) — the
   // wizard reopening mid-import shares the running state-machine pass.
@@ -349,20 +347,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const methods: Record<string, RpcMethodSpec> = {
     'settings.get': method(voidInput, settingsGetOutputSchema, async () => domain.settings.get()),
     // 写锁只罩住「读最新 → 合并 → 写回」的同步关键区；MCP 断连 / 清理 / 撤销授权等网络副作用在锁外。
-    // 注意：设置页按整对象保存（capabilityModels / webSearch / mcpServers 由表单快照整体提交）的老问题
-    // 仍在——过期表单可能覆盖别处刚做的修改；对话里的直改只靠回执卡撤销时的冲突报告兜底。
-    'settings.update': method(settingsUpdateInputSchema, settingsGetOutputSchema, async (input) => {
+    // 设置页按整对象保存（capabilityModels / webSearch / mcpServers 由表单快照整体提交）：渲染层带上
+    // 补丁出发时的快照 `base`，锁内与最新设置三方合并（mergePatchOnto）——表单没改的字段保留最新值，
+    // 过期表单不再覆盖 Bot 直改、设置卡或别处刚做的修改。不带 `base` 的老调用方仍是整体覆盖。
+    'settings.update': method(settingsUpdateInputSchema, settingsGetOutputSchema, async (rawInput) => {
       const previous = domain.settings.get();
-      // P13 任务 4: the onboarding patch is partial; store the merged state so
-      // a step writing one flag never erases the others.
-      const {
-        onboarding: onboardingPatch,
-        experimental: experimentalPatch,
-        apps: appsPatch,
-        agents: agentsPatch,
-        backgroundTasks: backgroundTasksPatch,
-        ...rest
-      } = input;
+      const { base, ...patch } = rawInput;
+      /** 补丁按最新设置三方合并后的样子（`base` 缺省时就是补丁本身）。 */
+      const resolve = (latest: Settings): typeof patch =>
+        mergePatchOnto(patch, base, latest as unknown as Record<string, unknown>);
+      const input = resolve(previous);
       for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
         if (
           agentId !== undefined &&
@@ -398,7 +392,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       // `apps.localConnectors`、agents 的安装状态，可能被别的路径改过，拿旧快照回写会丢改动）。
       const { current, next } = await settingsLocked(() => {
         const current = domain.settings.get();
+        const {
+          onboarding: onboardingPatch,
+          experimental: experimentalPatch,
+          apps: appsPatch,
+          agents: agentsPatch,
+          backgroundTasks: backgroundTasksPatch,
+          ...rest
+        } = resolve(current);
         const latestApps = current.apps;
+        // P13 任务 4: the onboarding patch is partial; store the merged state so
+        // a step writing one flag never erases the others.
         const next = domain.settings.update({
           ...rest,
           ...(onboardingPatch !== undefined
@@ -460,15 +464,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       if (input.mcpServers !== undefined) {
         // W3（D78）: server switched off / removed, autoApprove on → off, a tool
         // policy auto → ask or disabled — the bots using it lose their running tasks.
-        const allBots = domain.bots.listActive();
-        revokeMcp(
-          mcpRevocationsBetween(
-            previous.mcpServers,
-            next.mcpServers,
-            (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
-            (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
-          ).map((entry) => ({ ...entry, botIds: botsUsingServer(allBots, entry.serverId) })),
-        );
+        permissionEffects.revokeMcpServerChanges(previous.mcpServers, next.mcpServers);
       }
       if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
         // P13 任务 3: the main process applies the OS login item on this event
@@ -480,7 +476,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
           changedSettingsPaths(
             current as unknown as Record<string, unknown>,
             next as unknown as Record<string, unknown>,
-            Object.keys(input),
+            Object.keys(patch),
           ),
         ),
       );
@@ -660,54 +656,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         return { message };
       },
     ),
+    // 与设置目录的 Bot 条目适配器同一条写入路径（settings/bot-profile-update.ts）：校验 → 写 →
+    // bot.updated；锁外再中断任务 / 关页面 / 收回 MCP 与连接授权。带 `base` 时与最新 Profile
+    // 三方合并，右栏过期的整表单不再覆盖 Bot 刚直改的字段。
     'bots.update': method(botsUpdateInputSchema, botGetOutputSchema, async (input) => {
-      // D72 实验开关：只拦「改成另一个外部 Agent」，已在用的 Bot 仍可编辑其余字段。
-      const nextAgentId = input.profile.runtime.agent.id;
-      if (nextAgentId !== domain.bots.getOrThrow(input.id).profile.runtime.agent.id) {
-        assertAgentSelectable(domain.settings.get(), services.agents?.catalog() ?? [], nextAgentId);
-      }
-      const previousRuntime = domain.bots.getOrThrow(input.id).profile.runtime;
-      const previousServerIds = previousRuntime.mcp_server_ids;
-      // W8: the browser profile may only point at an existing shared profile.
-      domain.browserProfiles.assertSelectable(
-        input.profile.runtime.browser_profile,
-        previousRuntime.browser_profile,
+      const update = await settingsLocked(() =>
+        applyBotProfileUpdate(botProfileDeps, input.id, input.profile, input.base),
       );
-      const previousProfileKey = domain.browserProfiles.profileKeyFor(input.id);
-      const bot = domain.bots.update(input.id, input.profile);
-      publish('bot.updated', { bot });
-      publishSettingsChanged(
-        itemIdsForBotPaths(
-          changedBotRuntimePaths(
-            previousRuntime as unknown as Record<string, unknown>,
-            bot.profile.runtime as unknown as Record<string, unknown>,
-          ),
-        ),
-      );
-      // W8: a different effective browser profile = the identity changed under
-      // the bot's browser-using tasks → interrupted; its pages are closed.
-      if (domain.browserProfiles.profileKeyFor(bot.id) !== previousProfileKey) {
-        publishInterrupted(
-          await domain.browserProfiles.onBotProfileChanged(bot.id),
-          'browser_profile',
-        );
-      }
-      // W3（D78）: servers taken out of the bot's tool surface interrupt its running tasks.
-      revokeMcp(
-        serversRemovedFromBot(
-          previousServerIds,
-          bot.profile.runtime.mcp_server_ids,
-          domain.settings.get().mcpServers,
-        ).map((serverId) => ({ serverId, botIds: [bot.id] })),
-      );
-      // D73: connections taken off the bot's authorization (their server id is the
-      // connection id) interrupt its running tasks the same way.
-      revokeMcp(
-        previousRuntime.app_connection_ids
-          .filter((connectionId) => !bot.profile.runtime.app_connection_ids.includes(connectionId))
-          .map((serverId) => ({ serverId, botIds: [bot.id] })),
-      );
-      return { bot };
+      publishSettingsChanged(update.changedItemIds);
+      await update.settle();
+      return { bot: update.bot };
     }),
     'bots.avatar.upload': method(
       botsAvatarUploadInputSchema,

@@ -16,6 +16,7 @@ import {
   sanitizeDisplayText,
   searchSettingItems,
   sensitiveFieldNames,
+  settingValuesProblems,
   type LoopType as SharedLoopType,
   type Message,
   type SettingCardContent,
@@ -44,6 +45,7 @@ import {
   type AdapterDeps,
   type ItemAdapter,
   type ItemSnapshot,
+  type ItemWriteEffects,
   type SettingTargetRef,
 } from './adapters.js';
 import { SETTING_MODE_WORDS, settingTitle, settingValueText, settingValuesText } from './render.js';
@@ -63,6 +65,17 @@ import type { SettingsWriteLock } from './write-lock.js';
 
 /** pending 卡多久没人处理算过期（P0 取与拒绝窗口相同的 7 天）。 */
 export const SETTING_CARD_PENDING_TTL_MS = SETTING_CARD_DECLINE_WINDOW_MS;
+
+/** 自动核对只看用户在别处完成的形态（confirm 有宿主「应用」，回执卡不需要）。 */
+const AUTO_COMPLETE_MODES: ReadonlySet<SettingCardContent['mode']> = new Set([
+  'link',
+  'user-only',
+  'form',
+]);
+/** 同一张卡两次自动核对的最小间隔。 */
+export const AUTO_COMPLETE_INTERVAL_MS = 30_000;
+/** 自动核对时刻最多记多少张卡（超出丢最早的）。 */
+const AUTO_COMPLETE_MEMORY = 500;
 
 const REASON_MAX = 200;
 const TEXT_MAX = 120;
@@ -174,6 +187,8 @@ export class SettingsCatalogHost {
    * 之前同步占位，出卡（或失败）后释放。
    */
   readonly #reservedCards = new Map<string, number>();
+  /** 自动核对（`completeCard({auto})`）上次核对每张卡的时刻：同一张卡限频，防重复唤醒。 */
+  readonly #autoChecked = new Map<string, number>();
 
   constructor(deps: SettingsCatalogHostDeps) {
     this.#deps = deps;
@@ -431,6 +446,10 @@ export class SettingsCatalogHost {
         }`,
       );
     }
+    const shapeProblems = settingValuesProblems(item, raw);
+    if (shapeProblems.length > 0) {
+      return reject(`「${item.title}」的 values 不合法：${shapeProblems.join('；')}`);
+    }
     const reason = clip(input.reason, REASON_MAX);
     if (reason.length === 0) return reject('reason 不能为空：用一句话说明为什么要改');
 
@@ -444,6 +463,10 @@ export class SettingsCatalogHost {
     }
     // 按键寻址的条目（如 agents.external）读本次涉及的那个键。
     const snapshot = adapter.read(item, target, values ?? undefined);
+    // Bot 的提议再按条目整理（群成员只能加、不能借预填移除）。
+    if (values !== null && adapter.proposal !== undefined) {
+      values = adapter.proposal(item, values, snapshot);
+    }
     const decision = this.#decide(item, ctx, target, snapshot, values);
     if (decision.mode === 'refused')
       return reject(`不能修改「${item.title}」：${decision.reason ?? ''}`);
@@ -494,6 +517,9 @@ export class SettingsCatalogHost {
         kind: 'setting',
         itemId: item.id,
         ...(decision.acceptValues && values !== null ? { prefill: values } : {}),
+        // 出卡时的当前值（脱敏快照）：失败续跑卡的组件靠它定位目标（哪条连接工具、哪个 MCP 服务）
+        // 并做条目级 CAS，与消息流卡片的 `before` 同义。
+        ...(snapshot.values !== null ? { before: snapshot.values } : {}),
         reason,
       });
       return {
@@ -654,6 +680,7 @@ export class SettingsCatalogHost {
     }
     // 按键寻址的条目只读、只比对本次涉及的键（兄弟键的并发修改不算冲突）。
     const focus = { ...(expected ?? {}), ...values };
+    let effects: ItemWriteEffects | null = null;
     const outcome = await this.#deps.lock.run((): WriteOutcome => {
       hooks.precheck?.();
       const current = adapter.read(item, target, focus);
@@ -664,12 +691,28 @@ export class SettingsCatalogHost {
         );
         if (mismatch) return { status: 'conflict', current: current.values };
       }
-      write(item, { next: { ...(current.values ?? {}), ...values }, secrets }, target);
+      effects =
+        write(item, { next: { ...(current.values ?? {}), ...values }, secrets }, target) ?? null;
       const after = adapter.read(item, target, focus).values;
       hooks.onWritten?.(current.values, after);
       return { status: 'applied', before: current.values, after };
     });
-    if (outcome.status === 'applied') this.publishChanged([item.id]);
+    if (outcome.status === 'applied') {
+      // 写后的副作用（中断任务、关浏览器页面、收回 MCP 授权）在写锁之外做：它们会 await，
+      // 锁里只放同步关键区。值已经写进去了，副作用失败只记日志、不把写入报成失败。
+      const done = effects as ItemWriteEffects | null;
+      if (done?.afterUnlock !== undefined) {
+        try {
+          await done.afterUnlock();
+        } catch (error) {
+          this.#deps.logger.warn(
+            { itemId: item.id, error: error instanceof Error ? error.message : String(error) },
+            'setting write side effects failed',
+          );
+        }
+      }
+      this.publishChanged([item.id, ...(done?.changedItemIds ?? [])]);
+    }
     return outcome;
   }
 
@@ -711,6 +754,10 @@ export class SettingsCatalogHost {
       row !== null ? (row.card.target ?? {}) : (input.target ?? {}),
       row?.message.conversationId ?? null,
     );
+    const shapeProblems = settingValuesProblems(item, input.values);
+    if (shapeProblems.length > 0) {
+      throw new AppError('INVALID_INPUT', `「${item.title}」的值不合法：${shapeProblems.join('；')}`);
+    }
     const known = new Map(item.fields.map((field) => [field.name, field]));
     const plain: SettingValues = {};
     const secrets: Record<string, string> = {};
@@ -814,14 +861,38 @@ export class SettingsCatalogHost {
 
   /**
    * 「我已设置好」（link 卡 / 渲染层条目，§6.1）：能核对的用适配器核对一次。核对不通过 → 卡片保持
-   * pending（verified false）；无法核对（渲染层 / 只读）→ 按用户所说标 applied（verified null）。
+   * pending（verified false）；无法核对（渲染层 / 只读 / 状态未知）→ 按用户所说标 applied
+   * （verified null）。
+   *
+   * `auto`（打开对话时渲染层对待处理卡片的自动核对，用户没有点任何东西）更严：只看 link /
+   * user-only / form 卡，只在本条目相对出卡时**确实变过**（值或概要不同）时才结卡；无法核对、
+   * 没变化、或同一张卡 {@link AUTO_COMPLETE_INTERVAL_MS} 内已经自动核对过，都原样保持 pending，
+   * 不唤醒 Bot。所以它是幂等的，反复打开对话也不会把没动过的卡结掉或刷屏唤醒。
    */
-  completeCard(messageId: string): { state: SettingCardState; verified: boolean | null } {
+  completeCard(
+    messageId: string,
+    options: { auto?: boolean } = {},
+  ): { state: SettingCardState; verified: boolean | null } {
+    const auto = options.auto === true;
     const row = this.#cardOrThrow(messageId);
     const current = this.#expireIfStale(row);
     if (current.card.state !== 'pending') return { state: current.card.state, verified: null };
+    if (auto) {
+      if (!AUTO_COMPLETE_MODES.has(current.card.mode)) return { state: 'pending', verified: false };
+      const now = this.#deps.clock.now();
+      const last = this.#autoChecked.get(messageId);
+      if (last !== undefined && now - last < AUTO_COMPLETE_INTERVAL_MS) {
+        return { state: 'pending', verified: false };
+      }
+      this.#autoChecked.set(messageId, now);
+      if (this.#autoChecked.size > AUTO_COMPLETE_MEMORY) {
+        const oldest = this.#autoChecked.keys().next().value;
+        if (oldest !== undefined) this.#autoChecked.delete(oldest);
+      }
+    }
     const item = getSettingItem(current.card.itemId);
     if (item === null || item.owner === 'renderer' || item.readOnly) {
+      if (auto) return { state: 'pending', verified: false };
       this.#resolveCard(current, 'applied');
       return { state: 'applied', verified: null };
     }
@@ -831,20 +902,33 @@ export class SettingsCatalogHost {
       target,
       current.card.proposed ?? current.card.before ?? undefined,
     );
+    const { proposed, before, beforeText } = current.card;
+    // 出卡之后本条目变过：值不同；或（值为 null 的概要类条目，如命令白名单、沙箱）概要不同且现在
+    // 不是「未配置 / 部分可用」——沙箱从「没检测过」变成「不可用」不算设置好了。
+    const valuesChanged =
+      before !== null && snapshot.values !== null && !jsonEqual(before, snapshot.values);
+    const summaryChanged =
+      snapshot.values === null &&
+      beforeText !== undefined &&
+      current.card.mode !== 'direct' &&
+      snapshot.summary !== beforeText &&
+      (snapshot.status === 'configured' || snapshot.status === 'unknown');
+    const changed = valuesChanged || summaryChanged;
     if (snapshot.status === 'unknown' || snapshot.status === 'readonly') {
-      this.#resolveCard(current, 'applied');
-      return { state: 'applied', verified: null };
+      if (auto && !changed) return { state: 'pending', verified: false };
+      this.#resolveCard(current, 'applied', snapshot.values !== null ? { applied: snapshot.values } : {});
+      return { state: 'applied', verified: auto ? true : null };
     }
-    const { proposed, before } = current.card;
     // 用户可能在卡上改成了别的值（确认卡）或填了与预填不同的值（待填卡）：只要已配置好，或本条目
-    // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值。
-    const verified =
-      (proposed !== null &&
-        Object.entries(proposed).every(([key, value]) =>
-          jsonEqual(snapshot.values?.[key], value),
-        )) ||
-      snapshot.status === 'configured' ||
-      (before !== null && snapshot.values !== null && !jsonEqual(before, snapshot.values));
+    // 的字段与出卡时不同，就算完成——记的是实际值，不是建议值。自动核对只认「变过」。
+    const verified = auto
+      ? changed
+      : (proposed !== null &&
+          Object.entries(proposed).every(([key, value]) =>
+            jsonEqual(snapshot.values?.[key], value),
+          )) ||
+        snapshot.status === 'configured' ||
+        changed;
     if (!verified) return { state: 'pending', verified: false };
     this.#resolveCard(
       current,
