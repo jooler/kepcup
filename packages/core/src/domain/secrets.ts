@@ -33,6 +33,7 @@ export class SecretsService {
    * value; Map insertion order doubles as the LRU order (re-adding refreshes).
    */
   readonly #redactOnly = new Map<string, true>();
+  #modelSessionKey: Buffer | undefined;
 
   constructor(deps: {
     db: SqliteDatabase;
@@ -165,6 +166,17 @@ export class SecretsService {
       this.#logger.info({ prefix, count: names.length }, 'secrets removed by prefix');
     }
     return names;
+  }
+
+  /**
+   * Per-install HMAC key for the session ids sent to model providers
+   * (agent/model-session-id.ts). Derived from the master key, which is random per
+   * install and kept in the OS keystore, so no extra row is stored and the
+   * key never leaves the process.
+   */
+  modelSessionKey(): Buffer {
+    this.#modelSessionKey ??= deriveKey(this.#masterKey, KEY_INFO.modelSession);
+    return this.#modelSessionKey;
   }
 
   /** Names of all stored secrets (no values). */

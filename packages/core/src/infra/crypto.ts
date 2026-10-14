@@ -16,6 +16,11 @@ export const KEY_INFO = {
   mainDb: 'db:main',
   runsDb: 'db:runs',
   secrets: 'secrets:v1',
+  /**
+   * HMAC key for the opaque session ids sent to model providers
+   * (agent/model-session-id.ts). Per install because the master key is.
+   */
+  modelSession: 'model-session:v1',
 } as const;
 
 /** Per-bot memory database info: `db:memory:<botId>` (docs/dev/03-data-model.md). */

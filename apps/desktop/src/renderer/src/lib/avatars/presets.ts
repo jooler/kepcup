@@ -1,5 +1,6 @@
 /**
- * 预置 Bot 头像（参考 Grok Bot 的「形状 × 单色 + 白色眼睛」风格）。
+ * 预置 Bot 头像（参考 Grok Bot 的「形状 × 单色 + 白色眼睛」风格；
+ * 填充色太浅时眼睛改深色，见 avatarColorForeground）。
  *
  * `bots.avatar` 的取值约定（identity.avatar / bots 列，core 原样存储）：
  * - `preset:{shapeId}:{colorId}` —— 纯渲染端 SVG，不落盘；
@@ -200,7 +201,10 @@ export interface AvatarPresetColor {
    * 所有 Bot 头像与用户气泡同步翻转。
    */
   hex: string;
-  /** 填充色之上的前景色（眼睛 / 用户气泡文字）；缺省白色。 */
+  /**
+   * 填充色之上的前景色（眼睛 / 用户气泡文字 / 输入框按键图标）。只给 var()
+   * 主题色（算不出对比度）；固定色缺省按对比度计算，见 avatarColorForeground。
+   */
   contrast?: string;
 }
 
@@ -252,9 +256,52 @@ export function parsePresetAvatar(value: string | null | undefined): ParsedPrese
   return { shape, color };
 }
 
-/** 填充色之上的前景（眼睛 / 用户气泡文字）：动态色取对比变量，其余一律白。 */
-export function avatarColorForeground(color: AvatarPresetColor): string {
-  return color.contrast ?? '#ffffff';
+/** 固定色上可选的两种前景：白（预置风格，优先）与近黑（同 --avatar-mono 亮色）。 */
+export const AVATAR_FOREGROUND_LIGHT = '#ffffff';
+export const AVATAR_FOREGROUND_DARK = '#0a0a0a';
+
+/**
+ * WCAG 2.x 最低对比度：图标等非文字图形 3:1（1.4.11），正文 4.5:1（1.4.3）。
+ */
+export const AVATAR_MIN_CONTRAST = { graphic: 3, text: 4.5 } as const;
+export type AvatarForegroundUse = keyof typeof AVATAR_MIN_CONTRAST;
+
+/** WCAG 相对亮度；只接受 #rrggbb，其余（var() 等）返回 null。 */
+export function relativeLuminance(color: string): number | null {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return null;
+  const value = Number.parseInt(match[1]!, 16);
+  const channel = (shift: number): number => {
+    const c = ((value >> shift) & 0xff) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+}
+
+/** WCAG 对比度（1–21）；任一方不是 #rrggbb 时为 null。 */
+export function contrastRatio(a: string, b: string): number | null {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  if (la === null || lb === null) return null;
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/**
+ * 填充色之上的前景（眼睛、输入框发送 / 语音键图标用 `graphic`，用户气泡文字用
+ * `text`）。动态色取其对比变量；固定色按对比度算：白色够该用途的最低对比度就用
+ * 白（保持预置的白眼睛风格），否则取黑白里对比度更高的一个——黑白之一总能到
+ * 4.58:1 以上，所以两种用途都必然达标。只依赖颜色本身，结果确定。
+ */
+export function avatarColorForeground(
+  color: AvatarPresetColor,
+  use: AvatarForegroundUse = 'graphic',
+): string {
+  if (color.contrast !== undefined) return color.contrast;
+  const onLight = contrastRatio(color.hex, AVATAR_FOREGROUND_LIGHT);
+  const onDark = contrastRatio(color.hex, AVATAR_FOREGROUND_DARK);
+  if (onLight === null || onDark === null) return AVATAR_FOREGROUND_LIGHT;
+  if (onLight >= AVATAR_MIN_CONTRAST[use]) return AVATAR_FOREGROUND_LIGHT;
+  return onDark > onLight ? AVATAR_FOREGROUND_DARK : AVATAR_FOREGROUND_LIGHT;
 }
 
 /** `upload:{fileName}` 的文件名；非上传值返回 null。 */
