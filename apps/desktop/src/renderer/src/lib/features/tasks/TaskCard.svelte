@@ -14,6 +14,7 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { Button } from '$lib/components/ui/button';
+  import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { taskCardModel } from './task-view';
   import TaskEffectsReview from './TaskEffectsReview.svelte';
 
@@ -23,6 +24,8 @@
    * 进度、追加的指令（含之后降级为未送达）、取消按钮；结算后转终态，
    * 失败卡可重试（新任务接续它）。结果本身由对话轮转述，不在卡上。
    * 改动摘要 / diff / 整次回退已退役（磁盘上的代码改动保留）。
+   * 列表形态与消息气泡同宽同圆角：宽屏 max-w-[78%]（窄屏 calc(100%-32px)），
+   * rounded-[22px]，对齐 ChatMessageRow / MessageBody 的 Bot 气泡。
    * W3（D78）：中断卡也可重试；中断前留下外部副作用（已完成 / 结果未知）的，
    * 按钮是「检查后重试」，展开台账清单、勾「我已核实」后才能重试。
    */
@@ -83,7 +86,9 @@
   >
 {:else}
   <div
-    class="w-full max-w-[85%] rounded-lg border p-3 text-sm {model.tone === 'error'
+    class="w-full border p-3 text-sm {narrowLayout.narrow
+      ? 'max-w-[calc(100%-32px)]'
+      : 'max-w-[78%]'} rounded-[22px] {model.tone === 'error'
       ? 'border-destructive/40 bg-destructive/5'
       : 'bg-background/80'}"
     data-testid={`task-card-${taskId}`}
