@@ -38,9 +38,15 @@ function rowToEntry(row: AllowlistRow): AllowlistEntry {
  * `yarn --version` go through corepack (downloads the `packageManager`
  * version), `cargo` / `rustc` through rustup (`rust-toolchain.toml`), `go
  * version` through `GOTOOLCHAIN` (may download a toolchain). The remaining
- * probes resolve a global binary (exempt runs strip relative PATH entries, see
- * `exemptCommandEnv`) and print a constant. `allowlist-builtins.test.ts`
- * pins the shape: adding an entry needs an explicit decision there.
+ * probes resolve whatever the cleaned PATH yields (exempt runs drop relative
+ * entries and entries inside the workspace / project, see `exemptCommandEnv`),
+ * so never a Bot-written executable. That is not always a plain global binary:
+ * a version-manager shim (pyenv / rbenv / nodenv / asdf) may pick an installed
+ * version from files in the working directory — it runs no project code;
+ * Volta shims, which can download a pinned toolchain, are bypassed
+ * (`VOLTA_BYPASS=1`), so a probe may then report the system version or fail.
+ * The shape is pinned by `allowlist-match.test.ts` ("built-in patterns"):
+ * adding an entry needs an explicit decision there.
  */
 export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
   posix: [

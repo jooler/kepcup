@@ -14,13 +14,22 @@ import type { SandboxExecResult } from './types.js';
  * secret-bearing variable ever reaches an unsandboxed command.
  */
 
-/** On Windows the confirm mode runs commands through PowerShell (pwsh first). */
+/**
+ * On Windows the confirm mode runs commands through PowerShell (pwsh first),
+ * by ABSOLUTE path (review P1-4): `cmd.exe` would otherwise look the bare name
+ * up in the command's working directory — the workspace — before PATH.
+ * `where` runs from the app's own working directory, never the workspace.
+ */
 export function resolveWindowsShell(): string {
   for (const candidate of ['pwsh.exe', 'powershell.exe']) {
-    const probe = spawnSync('where', [candidate], { stdio: 'ignore' });
-    if (probe.status === 0) return candidate;
+    const probe = spawnSync('where', [candidate], { encoding: 'utf8', windowsHide: true });
+    if (probe.status === 0) {
+      const first = (probe.stdout ?? '').split(/\r?\n/).find((line) => /^[a-zA-Z]:[\\/]/.test(line));
+      if (first !== undefined) return `"${first.trim()}"`;
+    }
   }
-  return 'powershell.exe';
+  const root = process.env['SystemRoot'] ?? 'C:\\Windows';
+  return `"${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"`;
 }
 
 export interface UnsandboxedExecRequest {
@@ -40,8 +49,9 @@ export interface UnsandboxedExecRequest {
  * Environment overlay for commands the read-only allowlist exempts from
  * confirmation (confirm mode: they run unsandboxed without a card). Review P0:
  *
- * - PATH loses empty / relative entries (`.`, `node_modules/.bin`): a bare
- *   `tsc --version` must never resolve to an executable inside the project;
+ * - PATH loses empty / relative entries (`.`, `node_modules/.bin`) and absolute
+ *   entries inside the workspace / project: a bare `tsc --version` must never
+ *   resolve to an executable the Bot can write;
  * - corepack / yarn / go / npm / pip are told not to fetch anything
  *   (`COREPACK_ENABLE_NETWORK=0`, `YARN_IGNORE_PATH=1`, `GOTOOLCHAIN=local`,
  *   update notifiers off) — belt and braces, the built-ins no longer contain
@@ -58,18 +68,37 @@ export interface UnsandboxedExecRequest {
 export function exemptCommandEnv(
   overlay: Record<string, string>,
   platform: string = process.platform,
+  /**
+   * Directories the Bot can write (workspace, bound project): absolute PATH
+   * entries inside them are dropped too (direnv `PATH_add bin`, a venv's
+   * `bin` …) — review P2.
+   */
+  untrustedRoots: readonly string[] = [],
 ): Record<string, string> {
-  const separator = platform === 'win32' ? ';' : ':';
+  const win = platform === 'win32';
+  const separator = win ? ';' : ':';
   const rawPath = overlay['PATH'] ?? process.env['PATH'] ?? '';
   const isAbsolute = (entry: string) =>
-    platform === 'win32' ? /^([a-zA-Z]:[\\/]|\\\\)/.test(entry) : entry.startsWith('/');
+    win ? /^([a-zA-Z]:[\\/]|\\\\)/.test(entry) : entry.startsWith('/');
+  const norm = (p: string) => {
+    const unified = (win ? p.replaceAll('\\', '/').toLowerCase() : p).replace(/\/+$/, '');
+    return unified.length === 0 ? '/' : unified;
+  };
+  const roots = untrustedRoots.map(norm);
+  const inUntrustedRoot = (entry: string) => {
+    const candidate = norm(entry);
+    return roots.some((root) => candidate === root || candidate.startsWith(`${root}/`));
+  };
   const cleanPath = rawPath
     .split(separator)
-    .filter((entry) => entry.length > 0 && isAbsolute(entry))
+    .filter((entry) => entry.length > 0 && isAbsolute(entry) && !inUntrustedRoot(entry))
     .join(separator);
   return {
     ...overlay,
     PATH: cleanPath,
+    // Windows: never resolve a program name in the current directory (cmd.exe /
+    // CreateProcess honour it).
+    ...(win ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}),
     COREPACK_ENABLE_NETWORK: '0',
     COREPACK_ENABLE_AUTO_PIN: '0',
     YARN_IGNORE_PATH: '1',
@@ -77,15 +106,24 @@ export function exemptCommandEnv(
     NPM_CONFIG_UPDATE_NOTIFIER: 'false',
     NO_UPDATE_NOTIFIER: '1',
     PIP_DISABLE_PIP_VERSION_CHECK: '1',
+    // Volta shims read package.json `volta` pins and may download a toolchain;
+    // bypass makes them run the next tool on PATH (a probe may then report the
+    // system version or fail — never download). pyenv / rbenv / nodenv / asdf
+    // shims only SELECT an installed version from cwd files; left as they are.
+    VOLTA_BYPASS: '1',
     GIT_PAGER: 'cat',
     PAGER: 'cat',
     GIT_OPTIONAL_LOCKS: '0',
     GIT_TERMINAL_PROMPT: '0',
-    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_COUNT: '3',
     GIT_CONFIG_KEY_0: 'core.fsmonitor',
     GIT_CONFIG_VALUE_0: 'false',
     GIT_CONFIG_KEY_1: 'core.pager',
     GIT_CONFIG_VALUE_1: 'cat',
+    // status / diff would otherwise run git inside each submodule — with the
+    // submodule's own config and git dir, which nobody checked.
+    GIT_CONFIG_KEY_2: 'diff.ignoreSubmodules',
+    GIT_CONFIG_VALUE_2: 'all',
   };
 }
 
