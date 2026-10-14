@@ -233,8 +233,13 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
     await expect(page.locator('[data-testid="chat-view"]').getByText('自动批准了')).toBeVisible({
       timeout: 120_000,
     });
-    // 自动批准同样不在对话里留一行记录；汇总仍在关闭无人值守时弹出。
-    await expect(page.locator('[data-testid^="approval-record-"]')).toHaveCount(0);
+    // 弹窗不会留在对话里，但系统代用户放行的这一次要留一行折叠记录（用户亲手回答的
+    // 弹窗才不留记录，见上一个用例）；汇总仍在关闭无人值守时弹出。
+    const autoRecord = page.locator('[data-testid^="approval-record-"]');
+    await expect(autoRecord).toHaveCount(1);
+    await expect(autoRecord).toHaveAttribute('data-approval-status', 'approved');
+    await expect(autoRecord).toContainText('自动批准');
+    await expect(page.locator('[data-testid^="approval-card-"]')).toHaveCount(0);
 
     // 关闭后弹出汇总（设置弹框仍开着：先关再从菜单重开到无人值守分组）。
     await page.keyboard.press('Escape');
