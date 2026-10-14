@@ -23,10 +23,24 @@ import { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 import type { SecretsService } from '../domain/secrets.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { isModelRouteChangedError } from './model-retry.js';
+import type { RunIdentity } from './types.js';
 
 /** Secret name holding a provider's API key. */
 export function providerSecretName(providerId: string): string {
   return `provider:${providerId}`;
+}
+
+/**
+ * Per-conversation session id for model requests. pi-ai forwards it as the
+ * `x-opencode-session` header on OpenCode providers (required for routing and
+ * prompt caching; https://opencode.ai/v2/docs/console/go) and ignores it
+ * elsewhere unless a provider has its own session-affinity/caching support.
+ * Stable across a conversation's runs (the whole point of the routing hint);
+ * conversation-less one-shot calls fall back to their run id. The `kep-`
+ * prefix keeps our ids from colliding with other clients on the shared service.
+ */
+export function modelSessionId(identity: Pick<RunIdentity, 'conversationId' | 'runId'>): string {
+  return `kep-${identity.conversationId ?? identity.runId}`;
 }
 
 /** Custom providers are namespaced to avoid clashing with built-in ids. */
