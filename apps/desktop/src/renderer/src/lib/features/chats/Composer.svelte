@@ -29,7 +29,7 @@
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
   import {
     COMPOSER_SINGLE_LINE_MAX_PX,
-    nextMultilineLayoutState,
+    nextMultiline,
   } from './composer-multiline';
   import {
     MAX_RECORDING_MS,
@@ -65,10 +65,11 @@
   /** 药丸两态（参考 Grok Bot）：内容换行或有待发送附件时输入占满整行。 */
   let multiline = $state(false);
   /**
-   * 进入多行时的内容长度滞回：满宽后 scrollHeight 可能不再 > 单行阈值，
-   * 若仍按高度切回单行会与「变窄再换行」振荡。长度短于 latch 才允许回单行。
+   * 单行布局下药丸外壳宽度与编辑区文字可用宽度之差（附件键、发送键、间距）。
+   * 每次在单行布局里测量时更新；沉底时用「药丸宽度 − 它」推算单行可用宽度，
+   * 判定回不回单行（composer-multiline.ts）。null = 还没在单行布局里测过。
    */
-  let multilineLatchLength: number | null = null;
+  let singleLineChromePx: number | null = null;
   /** 药丸外壳（宽度不随单行↔沉底切换），供 ResizeObserver 判定真·宽度变化。 */
   let composerPillEl: HTMLDivElement | null = $state(null);
   let lastPillWidth = 0;
@@ -167,38 +168,70 @@
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
+   * 图标色按填充色算出黑 / 白，保证 ≥ 3:1（avatarColorForeground）。
    */
   const botAvatarButtonPaint = $derived(
     botAvatarColor
-      ? { background: botAvatarColor.hex, color: avatarColorForeground(botAvatarColor) }
+      ? {
+          background: botAvatarColor.hex,
+          color: avatarColorForeground(botAvatarColor, 'graphic'),
+        }
       : null,
   );
 
   // --- TipTap 编辑器 -----------------------------------------------------------
 
+  /** 元素内容区宽度（clientWidth 去掉左右内边距）。 */
+  function contentBoxWidth(el: HTMLElement): number {
+    const style = getComputedStyle(el);
+    return (
+      el.clientWidth - (Number.parseFloat(style.paddingLeft) || 0) -
+      (Number.parseFloat(style.paddingRight) || 0)
+    );
+  }
+
   /**
-   * 测量单行 / 多行：高度换行进入并锁定内容长度；宽度变化时丢弃锁定重测。
+   * 测量单行 / 多行：始终按「单行布局下放不放得下」判定（composer-multiline.ts）。
    * 从多行塌回单行后 rAF 再测一次，让软换行能在收窄后立刻重新进入，无需等下一键。
    */
-  function measureMultiline(widthChanged = false): void {
+  function measureMultiline(): void {
     const host = editorHostEl;
+    const pill = composerPillEl;
     if (host === null) return;
-    const contentLength = (editorInstance ?? editor)?.getText().length ?? 0;
+    const empty = ((editorInstance ?? editor)?.getText().length ?? 0) === 0;
     const wraps = host.scrollHeight > COMPOSER_SINGLE_LINE_MAX_PX;
+    // 以已渲染的布局为准（状态可能已改、DOM 尚未刷新）。
+    const layout = pill?.dataset.multiline === 'true' ? 'stacked' : 'single';
+    const pillWidth = pill?.getBoundingClientRect().width ?? null;
+    const prose = host.querySelector<HTMLElement>('.ProseMirror');
+    let singleLineWidthPx: number | null = null;
+    if (layout === 'single' && prose !== null) {
+      singleLineWidthPx = contentBoxWidth(prose);
+      if (pillWidth !== null) singleLineChromePx = pillWidth - singleLineWidthPx;
+    } else if (pillWidth !== null && singleLineChromePx !== null) {
+      singleLineWidthPx = pillWidth - singleLineChromePx;
+    }
+    let contentWidthPx: number | null = null;
+    if (!wraps && prose !== null) {
+      // 只量第一个文本块的内联内容：选中整个块会把块级盒（满宽）算进去。
+      const range = document.createRange();
+      range.selectNodeContents(prose.querySelector('p') ?? prose);
+      contentWidthPx = range.getBoundingClientRect().width;
+    }
     const wasMultiline = multiline;
-    const next = nextMultilineLayoutState({
-      contentLength,
+    multiline = nextMultiline({
+      multiline,
+      layout,
+      empty,
       wraps,
-      latchLength: multilineLatchLength,
-      widthChanged,
+      contentWidthPx,
+      singleLineWidthPx,
     });
-    multiline = next.multiline;
-    multilineLatchLength = next.latchLength;
-    if (wasMultiline && !next.multiline) {
+    if (wasMultiline && !multiline) {
       if (remasureAfterCollapse !== null) cancelAnimationFrame(remasureAfterCollapse);
       remasureAfterCollapse = requestAnimationFrame(() => {
         remasureAfterCollapse = null;
-        measureMultiline(false);
+        measureMultiline();
       });
     }
   }
@@ -208,7 +241,7 @@
     docJson = ed.getJSON();
     mentionTokens = collectMentionTokens(docJson);
     queueMicrotask(() => {
-      measureMultiline(false);
+      measureMultiline();
     });
   }
 
@@ -465,7 +498,7 @@
     };
   });
 
-  /** 输入坞宽度变化（拖窗口等）时丢弃长度滞回并重测，避免错锁在旧宽度的 latch。 */
+  /** 输入坞宽度变化（拖窗口等）时重测：单行可用宽度随药丸宽度变。 */
   $effect(() => {
     const pill = composerPillEl;
     if (pill === null) return;
@@ -477,7 +510,7 @@
       }
       if (Math.abs(width - lastPillWidth) < 0.5) return;
       lastPillWidth = width;
-      measureMultiline(true);
+      measureMultiline();
     });
     ro.observe(pill);
     return () => {
@@ -503,8 +536,7 @@
       untrack(() => {
         composerDrafts.hydrate(conversationId);
         const saved = composerDrafts.loadDraft(conversationId);
-        // 换会话时丢掉上一会话的多行长度滞回，按新草稿重新测量。
-        multilineLatchLength = null;
+        // 换会话时回单行，按新草稿重新测量。
         multiline = false;
         if (remasureAfterCollapse !== null) {
           cancelAnimationFrame(remasureAfterCollapse);

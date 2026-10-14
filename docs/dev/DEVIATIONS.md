@@ -491,3 +491,13 @@
 - 影响范围：design/38、`packages/shared/src/settings-catalog/*`、`packages/core/src/settings/*`、`tools/settings-tools.ts`、`features/settings-card/*`。
 - 推荐 / 决定：以上均按现状保留；方案文档已就 P0 状态做了标注，设计篇 38 记录的是实际行为。
 - 已更新的文档：`docs/design/38-conversational-settings.md`、`docs/design/README.md`（D89）、`docs/design/18-inline-setup.md`、`docs/design/02-execution.md`、`docs/design/30-supervisor-and-tasks.md`、`docs/dev/03-data-model.md`、`docs/dev/04-agent-runtime.md`、`todo/conversational-app-setup.md`。
+
+### DEV-027 模型请求 session id 由原始对话 id 改为按安装派生的不透明值（编号合并时以最后一个空号为准）
+
+- 状态：已落实
+- 阶段：评审修复（f3126b7 / 8720d1e）
+- 是否阻塞：否
+- 问题：`f3126b7` 给每个模型请求附加 `kep-<conversationId>`（无对话回退 `kep-<runId>`），测试连接附加 `kep-provider-test:<provider>`，注释称「pi-ai 只发给 OpenCode、其它供应商忽略」。核对 pi-ai 1.0.2 源码，实际不只 OpenCode：OpenAI Responses 发 `session_id` / `x-client-request-id` 与 body `prompt_cache_key`；Azure Responses 发 `prompt_cache_key`；Mistral 发 `x-affinity` 与 `prompt_cache_key`；Chat Completions 对 OpenRouter 识别出的端点发 `x-session-id`，对地址含 `api.openai.com` 的端点（含代理）发 `prompt_cache_key`；Anthropic Messages 对 OpenRouter 发 `x-session-id`。原始内部 id 因此稳定地发给第三方，跨供应商可关联；且所有用途（对话轮、任务、摘要、记忆……）共用一个缓存键。
+- 决定：保留 session id（OpenCode 必需，其余供应商的提示缓存有实际收益），但值改为 `kep-` + HMAC-SHA256 前 128 位（hex，共 36 字符，低于 OpenAI 64 字符上限）。密钥 `SecretsService.modelSessionKey()` 由每次安装随机、存在系统钥匙串里的主密钥按 HKDF 派生（`KEY_INFO.modelSession = 'model-session:v1'`），不新增存储。输入为供应商 id、锚点（对话 + Bot；无对话 = Bot；都没有 = run，每次新值）与用途（`loop` / `oneshot` + loopType）；测试连接为（`provider-test`，供应商 id）。不按供应商关闭：值不透明后，供应商能得到的只是「这些请求属于同一会话」，这从共享提示词前缀本来就看得出。
+- 未做：系统提示词的 workspace 段含 `bots/<botId>/workspaces/<conversationId>` 路径，原始 id 仍随**提示词内容**到达供应商（模型需要这个路径）；集成测试的「不泄露」断言因此覆盖请求头、会话字段与正文里内容以外的字段，不含 messages / input / instructions / tools。
+- 已更新的文档：`docs/dev/04-agent-runtime.md`（模型请求的 session id）。
