@@ -61,10 +61,18 @@ describe('setupAliasOf（旧 kind → kind:"setting" 兼容别名）', () => {
         target: { kind: 'custom', serverId: 'srv' },
         reason: 'not_connected',
       },
-      { kind: 'setting', itemId: 'models.provider', reason: 'r' },
     ];
     for (const requirement of others) {
       expect(setupAliasOf(requirement, text)).toBeNull();
     }
+  });
+
+  it('已是通用 setting kind 的直通', () => {
+    const requirement: SetupRequirement = {
+      kind: 'setting',
+      itemId: 'models.provider',
+      reason: 'r',
+    };
+    expect(setupAliasOf(requirement, text)).toBe(requirement);
   });
 });
