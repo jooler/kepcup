@@ -64,6 +64,11 @@ export function bindSettingsCatalogMethods(services: CoreServices): Record<strin
           input.auto === true ? { auto: true } : {},
         ),
     ),
+    'settings.cards.recheck': method(
+      settingsCardInputSchema,
+      settingsCardsCompleteOutputSchema,
+      async (input) => requireHost(services).recheckCard(input.messageId),
+    ),
     'settings.cards.undo': method(
       settingsCardInputSchema,
       settingsCardsUndoOutputSchema,

@@ -28,6 +28,7 @@ import {
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
 import { mergeUnreadCount } from '../features/chats/unread';
+import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
 import { settingsStore } from '$lib/stores/settings.svelte';
@@ -309,6 +310,8 @@ class ChatState {
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
     // 或群聊），而不是按最近消息时间挑一个。
     saveLastConversationId(globalThis.localStorage ?? null, conversationId);
+    // 重新打开对话：对 pending 的 link 卡核对一次（P2，design 38 §4.3）。
+    this.#recheckPendingLinkCards(messages);
     // 切换会话撤销门禁缺设置卡（与 close 同理；失败 run 的 setup 卡随
     // failedRun 天然按会话生效，无需处理）。
     this.#pendingSetup = null;
@@ -509,8 +512,28 @@ class ChatState {
       })) as { messages: Message[] };
       chat.messages = [...result.messages, ...chat.messages];
       chat.hasEarlier = result.messages.length >= PAGE_SIZE;
+      // 翻页翻出的更早的 pending link 卡同样核对一次。
+      this.#recheckPendingLinkCards(result.messages);
     } finally {
       chat.loadingEarlier = false;
+    }
+  }
+
+  /**
+   * 重新打开对话（或翻出更早消息）时，对消息里 pending 的 link 卡用读适配器核对一次
+   * （P2，todo/conversational-settings-p2.md 任务 8）：SettingCard 的自动完成只认挂载之后的
+   * settings.changed，用户在设置页改完、之后才回到这个对话时卡会一直挂着。核对由 core 做
+   * （settings.cards.recheck）：通过才标 applied 并唤醒一次；核对不了（渲染层 / 只读 /
+   * unknown / 兜底适配器）保持 pending，不擅自标完成。confirm / user-only / form 卡不在
+   * 此列——那些要用户在卡上操作。结果经 message.updated 回来，无需本地处理。
+   */
+  #recheckPendingLinkCards(messages: readonly Message[]): void {
+    for (const message of messages) {
+      const setting = settingCardOf(message);
+      if (setting === null || setting.state !== 'pending' || setting.mode !== 'link') continue;
+      core.call('settings.cards.recheck', { messageId: message.id }).catch(() => {
+        // 核对失败不影响打开对话；卡片保持 pending，用户仍可手动结卡。
+      });
     }
   }
 

@@ -1709,6 +1709,11 @@ export const rpcMethodSchemas = {
     input: settingsCardsCompleteInputSchema,
     output: settingsCardsCompleteOutputSchema,
   },
+  /** 重新打开对话时对 pending 的 link 卡核对一次（P2，design 38 §4.3）：核对通过才标 applied 并唤醒；核对不了保持 pending。 */
+  'settings.cards.recheck': {
+    input: settingsCardInputSchema,
+    output: settingsCardsCompleteOutputSchema,
+  },
   'settings.cards.undo': { input: settingsCardInputSchema, output: settingsCardsUndoOutputSchema },
 
   'providers.list': { input: voidInput, output: providersListOutputSchema },
