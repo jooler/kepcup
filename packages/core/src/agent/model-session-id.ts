@@ -46,7 +46,31 @@ export interface ModelSessionScope {
   call: ModelCallKind;
 }
 
-function keyedId(key: Uint8Array, parts: readonly string[]): string {
+/** Shortest key accepted (HKDF output is 32 bytes). */
+const MIN_KEY_BYTES = 16;
+
+/**
+ * The per-install key, or a getter for it (`() => secrets.modelSessionKey()`).
+ * A getter that throws or yields a short key means "no key": the id is then
+ * omitted (undefined) rather than derived from any fallback key — a constant
+ * fallback would make ids correlatable across installs — and the request goes
+ * out without session id (no OpenCode routing hint, no prompt-cache key) instead
+ * of failing.
+ */
+export type ModelSessionKeySource = Uint8Array | (() => Uint8Array);
+
+function resolveKey(source: ModelSessionKeySource): Uint8Array | null {
+  try {
+    const key = typeof source === 'function' ? source() : source;
+    return key instanceof Uint8Array && key.length >= MIN_KEY_BYTES ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+function keyedId(source: ModelSessionKeySource, parts: readonly string[]): string | undefined {
+  const key = resolveKey(source);
+  if (key === null) return undefined;
   // JSON array encoding keeps field boundaries unambiguous.
   const digest = createHmac('sha256', key)
     .update(JSON.stringify([DOMAIN, ...parts]))
@@ -54,8 +78,11 @@ function keyedId(key: Uint8Array, parts: readonly string[]): string {
   return `${PREFIX}${digest.slice(0, DIGEST_HEX_CHARS)}`;
 }
 
-/** Session id for a model request made on behalf of a run. */
-export function modelSessionId(key: Uint8Array, scope: ModelSessionScope): string {
+/** Session id for a model request made on behalf of a run; undefined without a key. */
+export function modelSessionId(
+  key: ModelSessionKeySource,
+  scope: ModelSessionScope,
+): string | undefined {
   const { identity } = scope;
   const anchor =
     identity.conversationId !== null
@@ -75,6 +102,9 @@ export function modelSessionId(key: Uint8Array, scope: ModelSessionScope): strin
  * Session id for a provider "测试连接" request: no run, so one stable id per
  * provider (repeated tests share OpenCode routing).
  */
-export function providerTestSessionId(key: Uint8Array, providerId: string): string {
+export function providerTestSessionId(
+  key: ModelSessionKeySource,
+  providerId: string,
+): string | undefined {
   return keyedId(key, ['provider-test', providerId]);
 }

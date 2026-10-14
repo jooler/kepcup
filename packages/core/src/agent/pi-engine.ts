@@ -151,7 +151,7 @@ export class PiEngine implements AgentEngine {
           // Opaque keyed id, stable per (provider, conversation/Bot, loop): pi-ai
           // sends it as OpenCode's `x-opencode-session` and as other providers'
           // session-affinity headers / prompt-cache keys (model-session-id.ts).
-          sessionId: modelSessionId(this.#deps.secrets.modelSessionKey(), {
+          sessionId: modelSessionId(() => this.#deps.secrets.modelSessionKey(), {
             provider: m.provider,
             identity: spec.identity,
             call: 'loop',
@@ -237,7 +237,7 @@ export class PiEngine implements AgentEngine {
           maxTokens: req.maxTokens,
           signal: req.signal,
           // See startRun; a separate purpose from the agent loop's prompt prefix.
-          sessionId: modelSessionId(this.#deps.secrets.modelSessionKey(), {
+          sessionId: modelSessionId(() => this.#deps.secrets.modelSessionKey(), {
             provider: model.provider,
             identity: req.identity,
             call: 'oneshot',

@@ -156,6 +156,47 @@ describe('providerTestSessionId', () => {
   });
 });
 
+describe('missing key', () => {
+  it('omits the id (undefined) when the key getter throws or yields no usable key — no fallback key', () => {
+    const throwing = () => {
+      throw new Error('keystore locked');
+    };
+    expect(modelSessionId(throwing, scope())).toBeUndefined();
+    expect(providerTestSessionId(throwing, 'opencode-go')).toBeUndefined();
+    for (const bad of [Buffer.alloc(0), Buffer.alloc(8, 1)]) {
+      expect(modelSessionId(bad, scope())).toBeUndefined();
+      expect(modelSessionId(() => bad, scope())).toBeUndefined();
+      expect(providerTestSessionId(bad, 'opencode-go')).toBeUndefined();
+    }
+  });
+
+  it('a key getter derives exactly what the key itself derives', () => {
+    expect(modelSessionId(() => KEY_A, scope())).toBe(modelSessionId(KEY_A, scope()));
+    expect(providerTestSessionId(() => KEY_A, 'openai')).toBe(
+      providerTestSessionId(KEY_A, 'openai'),
+    );
+  });
+});
+
+describe('wire value never carries the derivation inputs', () => {
+  it('ids shaped like our own output (hex, kep- prefix) do not pass through', () => {
+    const hexLike = 'a'.repeat(32);
+    const tricky = [hexLike, `kep-${hexLike}`, 'conv_"]["x', 'ünïcødé-会话'];
+    for (const raw of tricky) {
+      for (const value of [
+        modelSessionId(KEY_A, scope({ conversationId: raw, botId: raw, runId: raw })),
+        modelSessionId(KEY_A, scope({ conversationId: null, botId: null, runId: raw })),
+        modelSessionId(KEY_A, scope({ provider: raw })),
+        providerTestSessionId(KEY_A, raw),
+      ]) {
+        expect(value).toMatch(ID_FORMAT);
+        expect(value).not.toContain(raw);
+        expect(value).not.toBe(`kep-${raw}`);
+      }
+    }
+  });
+});
+
 describe('SecretsService.modelSessionKey', () => {
   it('is derived from the per-install master key and stable for that install', () => {
     const real = openRealMainDb();
