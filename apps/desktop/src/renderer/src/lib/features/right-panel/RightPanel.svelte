@@ -204,19 +204,20 @@
   // 未落盘改动立即保存，live draft/bot 就是待保存值。
   onMount(() => () => flushDirtyDraft());
 
-  /** 头像 / 名称 / 简介的点按直编：在最近保存的 profile 上做字段级合并。 */
+  /** 名称 / 简介的点按直编：在最近保存的 profile 上做字段级合并，并带上这份基线。 */
   async function patchIdentity(patch: Partial<BotProfile['identity']>): Promise<void> {
     if (!bot) return;
-    const base = savedProfile ?? bot.profile;
+    // base = 写入前所基于的整份 profile（savedProfile ?? bot.profile）：core 三方合并，
+    // 没改的字段（如 Bot 刚直改的模型）不会被这份改名 / 简介盖回去。
+    const base = $state.snapshot(savedProfile ?? bot.profile) as BotProfile;
     try {
-      // profile 来自响应式 store，RPC 走 structured clone，先 snapshot 成纯数据。
       const updated = await contacts.update(
         bot.id,
-        $state.snapshot({
+        {
           ...base,
           identity: { ...base.identity, ...patch },
-        }) as BotProfile,
-        $state.snapshot(base) as BotProfile,
+        } as BotProfile,
+        base,
       );
       savedProfile = updated.profile;
     } catch (error) {

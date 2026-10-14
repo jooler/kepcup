@@ -56,13 +56,16 @@
   async function applyAvatar(avatarValue: string): Promise<void> {
     try {
       // profile 来自响应式 store，嵌套对象仍是代理——RPC 走 structured clone，
-      // 必须先 snapshot 成纯数据，否则 postMessage 直接抛错。
+      // 必须先 snapshot 成纯数据，否则 postMessage 直接抛错。base = 这份写入前的
+      // profile：core 三方合并，没改的字段（如模型）不会被盖回去。
+      const base = $state.snapshot(bot.profile) as Bot['profile'];
       await contacts.update(
         bot.id,
-        $state.snapshot({
-          ...bot.profile,
-          identity: { ...bot.profile.identity, avatar: avatarValue },
-        }) as Bot['profile'],
+        {
+          ...base,
+          identity: { ...base.identity, avatar: avatarValue },
+        },
+        base,
       );
     } catch (error) {
       toast.error(

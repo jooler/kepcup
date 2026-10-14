@@ -62,11 +62,19 @@
     const bot = ui.renameBot;
     const name = ui.renameName.trim();
     if (!bot || name.length === 0) return;
-    const profile = structuredClone($state.snapshot(bot.profile)) as BotProfile;
-    profile.identity = { ...profile.identity, name };
-    await contacts.update(bot.id, profile);
-    ui.renameOpen = false;
-    toast.success(t('settings.saved'));
+    // base = 打开对话框时这份 profile：core 三方合并，没改的字段不会被盖回去。
+    const base = structuredClone($state.snapshot(bot.profile)) as BotProfile;
+    const profile: BotProfile = {
+      ...base,
+      identity: { ...base.identity, name },
+    };
+    try {
+      await contacts.update(bot.id, profile, base);
+      ui.renameOpen = false;
+      toast.success(t('settings.saved'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
   }
 </script>
 

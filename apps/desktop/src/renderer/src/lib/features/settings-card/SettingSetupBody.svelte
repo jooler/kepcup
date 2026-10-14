@@ -20,7 +20,8 @@
    * 失败续跑卡（D58 SetupRequiredCard）的通用 body 与分发（todo/conversational-app-setup.md
    * §6.2 + P2 收拢，设计篇 38 §5.3）。`kind:'setting'` 与消息流设置卡同一套分发
    * （`SettingCardEmbed`，预填取 requirement.prefill）；没有内嵌组件的条目给「在设置中打开」+
-   * 「已设置好，继续」。完成后走既有的 `chat.continueAfterSetup`（收起 + `runs.retry`）。
+   * 「已设置好，继续」。`mail.account` 在没有当前 Bot 时不嵌入表单，也不给出「已设置好，继续」，
+   * 只提示找不到 Bot。完成后走既有的 `chat.continueAfterSetup`（收起 + `runs.retry`）。
    * `requirement.before` 是出卡时的当前值：按它定位目标的组件（连接工具策略、MCP 服务）和做
    * 条目级 CAS 的组件都从这里拿 `expected`。
    *
@@ -110,6 +111,11 @@
       testidPrefix="setup-card-setting"
       onSaved={proceed}
     />
+  {:else if setting.itemId === 'mail.account' && botId === null}
+    <!-- 没有 Bot 时不能嵌入邮箱表单，也不能「已设置好，继续」裸续跑。 -->
+    <p class="text-xs text-muted-foreground" data-testid="setup-card-mail-no-bot">
+      {t('setupCard.mailAccountNoBot')}
+    </p>
   {:else}
     <div class="flex flex-wrap items-center justify-end gap-2">
       {#if item !== null}

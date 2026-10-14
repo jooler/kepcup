@@ -1885,6 +1885,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       mcpRiskOf: (serverId, toolName) => mcp.riskOf(serverId, toolName).risk,
       mcpKnownTools: (serverId) => mcp.knownToolNames(serverId),
     });
+    // 定时 / 监看服务同样在下面才构造；这里先占位，构造完再换上只回条数的读法。
+    const linkCounts = {
+      schedules: (_botId: string): number => 0,
+      watches: (_botId: string): number => 0,
+    };
     const settingsCatalog = new SettingsCatalogHost({
       db: mainDb,
       messages,
@@ -1956,6 +1961,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       allowlist: {
         list: () => allowlist.list(),
+      },
+      oauthClients: {
+        count: () => apps.oauthClients.list().length,
+      },
+      fileGrants: {
+        countForBot: (botId) => grants.countActiveForBot(botId),
+      },
+      schedules: {
+        countForBot: (botId) => linkCounts.schedules(botId),
+      },
+      watches: {
+        countForBot: (botId) => linkCounts.watches(botId),
       },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
@@ -2136,6 +2153,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       notice: publishAppNotice,
     });
     watchService = watches;
+    linkCounts.schedules = (botId) => schedules.listActiveForBot(botId).length;
+    linkCounts.watches = (botId) => watches.listLiveForBot(botId).length;
     const mail = new MailService({
       db: mainDb,
       clock,
