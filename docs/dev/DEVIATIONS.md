@@ -525,5 +525,5 @@
   8. 中途权限卡加 `record` 标记：无人值守自动决定的卡、`egress` 卡、payload 带 `tainted` 的卡在对话里留一行折叠记录（待决时仍只在 dock）；用户在 dock 里处理的普通权限卡维持 ef2a565 的不留痕，回执只在审计 / 台账。「策略自动批准」（MCP auto 策略、持续授权）不建审批行，本来就没有卡，未改。
   9. 新增内置条目在已有安装上默认启用（f2b9627 起）。「新增」标记需要新列或迁移，且设置页白名单组件不在本车道，未做。
 - 影响范围：`packages/core/src/agent/external/{permission-bridge,engine,types}.ts`、`providers/claude.ts`、`start.ts`（一行接线）、`permissions/{allowlist,allowlist-match,git-config-risk,approvals}.ts`、`gateway/index.ts`、`sandbox/confirm-executor.ts`、`domain/messages.ts`、`packages/shared/src/{policy/allowlist-pattern,domain/types}.ts`、desktop `features/approvals/*`、`MessageList.svelte`、`zh-CN.ts`（权限 / 白名单文案）。
-- 未改、需其他车道跟进：`packages/shared/src/settings-catalog/items.ts` 里 Bot 智能体档位的 `ask` 标签仍是「每次询问」（应与 `contacts.agentPermissionAsk` 一致改为「编辑前确认（沙箱内命令自动）」）；`agent/context/system-prompt.ts` 的确认模式提示仍写「白名单中的只读命令无需确认」。
+- 集成时已补改（原先留给其他车道的两处）：设置目录里 Bot 智能体档位的 `ask` 标签改为「编辑前确认（沙箱内命令自动）」，与 `contacts.agentPermissionAsk` 一致；`agent/context/system-prompt.ts` 的确认模式提示改为「命中白名单的命令无需确认（自定义条目在只读任务里仍不会执行，污点期间仍需确认）」。
 - 已更新的文档：`docs/design/13-permissions.md`（档位表、白名单、回执、界面）、`10-sandbox.md`、`12-ui-layout.md`、`28-external-agents-acp.md`。
