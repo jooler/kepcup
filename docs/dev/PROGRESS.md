@@ -1391,3 +1391,11 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **desktop**：群成员卡（`group-members.ts`，只加不预删，列出将加入 / 将移出，修 lint）；MCP 卡经 `settings.items.apply`；网络卡非白名单不提交域名；失败续跑卡传 `before`；语言预填 / 本机写入只认已注册语言；技能卡对公共技能指向技能页；待处理卡挂载时自动核对一次；`settingsStore.update` / `contacts.update` / 右栏保存带 `base`。
 - **测试**：shared `settings-merge-validate`；core 单测 `settings-item-writes`、`settings-catalog-host`（新增「D89 review round 2」），集成 `settings-cards` (9)–(12)；desktop `group-members`、`settings.svelte`、`deep-link`、`setting-card-model`、`mcp-server-patch`。定向结果见下。
 
+## 合并后审查修复的收口结果（2026-10-14，集成分支 `t/fix-int`）
+
+对象：合并后审查的全部发现（权限 / 审批、设置卡、会话 id / 界面三线）及其独立复审的后续修复。无 DB 迁移。偏差见 DEV-027 / DEV-028 / DEV-029。
+
+- **单元 / 集成全量**（`kepcup-test:trixie`）：429 个文件、4728 例；4673 通过、33 失败、22 跳过。33 例失败全部在当前 main（`e3c662c`）同一轮基线的失败清单里，**分支独有的失败为 0**。分支比该轮 main 基线少 9 例失败：`approvals` 的 2 例是权限线修好的（main 上被 `ef2a565` / `f2b9627` 弄坏的断言）；`sign-connector-index` 的 7 例在那一轮 main 上失败、此前一轮 main 上通过，属不稳定，不算本次成果。
+- **e2e 全量**（`kepcup-test:trixie-xvfb`）：96 例，86 通过、10 失败。10 例里 9 例在当前 main 上同样失败（单独在 main 上重跑这些 spec 复核）：`debug-dev-pin`、`external-agents` ×3（设置目录启用、`agent_tool` 审批卡、对话内智能体设置卡）、`local-connectors`、`projects`「项目选择」、`sandbox`「运行状态行」、`tasks`「启动任务」、`wiki`「页面树浏览」。第 10 例是 `approvals`「无人值守」：它断言自动批准不留记录，而权限线有意改成留一行折叠记录（用户亲手回答的弹窗仍不留），断言已更新并单跑通过。新增的 `setting-card`、`composer-layout` 与既有的 `setup-card` 全部通过。
+- **类型检查**：shared / core / desktop（含 svelte-check）0 错误；eslint 在全部改动文件上干净。
+- **独立复审**：对修复本身做了一轮只读复审，无 P0；5 条 P1（白名单只含选项的前缀、卡片建议过宽、git 目录间接引用、Windows 下的 git 解析、MCP 编辑框把刚停用的服务改回启用）和一批 P2 已修，修复处用真实 git 行为核对过（`git branch --format -l evil` 会创建分支，`-l evil` 只是列出）。
