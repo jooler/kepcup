@@ -65,9 +65,9 @@ describe('approval records in the transcript', () => {
     expect(isEphemeralApprovalCard(record)).toBe(false);
     expect(hiddenFromTranscript(record, { apr_1: approval('approved', true) })).toBe(false);
     expect(hiddenFromTranscript(record, { apr_1: approval('denied') })).toBe(false);
-    // Pending: the dock is the popup; unknown approval: nothing to render.
+    // Pending: the dock is the popup. Unknown (older than the loaded 200): still shown.
     expect(hiddenFromTranscript(record, { apr_1: approval('pending') })).toBe(true);
-    expect(hiddenFromTranscript(record, {})).toBe(true);
+    expect(hiddenFromTranscript(record, {})).toBe(false);
   });
 
   it('still hides user-answered popups and never hides non-permission cards', () => {

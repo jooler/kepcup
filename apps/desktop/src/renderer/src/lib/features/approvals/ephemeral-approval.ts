@@ -12,9 +12,11 @@ export function isEphemeralApprovalCard(message: Message): boolean {
 }
 
 /**
- * Transcript filter: hidden popups never show; a record card shows only once
- * its approval is resolved (while pending the dock is the popup — no duplicate
- * line in the message flow). Unknown approval (not loaded yet) = not shown.
+ * Transcript filter: hidden popups never show; a record card is hidden only
+ * while its approval is KNOWN to be pending (the dock is the popup — no
+ * duplicate line in the message flow). An approval that is not loaded (older
+ * than the 200 `approvals.list` returns) still shows: a record must not vanish
+ * from older history (review P2).
  */
 export function hiddenFromTranscript(
   message: Message,
@@ -25,5 +27,5 @@ export function hiddenFromTranscript(
   if (isHiddenApprovalCard(content)) return true;
   if (!isApprovalRecordCard(content)) return false;
   const approval = typeof content.approvalId === 'string' ? approvals[content.approvalId] : undefined;
-  return approval === undefined || approval.status === 'pending';
+  return approval !== undefined && approval.status === 'pending';
 }
