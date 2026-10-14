@@ -16,12 +16,11 @@
     DialogTitle,
   } from '$lib/components/ui/dialog';
   import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
-  import BotProfileForm from '$lib/features/bot-panel/BotProfileForm.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs as ui } from './sidebar-dialogs.svelte';
 
   /**
-   * 侧栏触发的模态对话框（新建 Bot 表单 / 重命名 / 删除会话 / 群设置），挂在 App 根；
+   * 侧栏触发的模态对话框（重命名 / 删除会话 / 群设置），挂在 App 根；
    * 状态在 sidebar-dialogs store（宽窄切换时 AppSidebar 整个重挂载，状态不能放在它里面）。
    * Tooltip.Provider 自带：宽屏由 Sidebar.Provider 隐式提供、窄屏由 NarrowShell 提供，
    * 挂在 App 根这两者都不覆盖。
@@ -39,14 +38,6 @@
     const conversation = chat.conversations.find((c) => c.id === ui.deleteTargetId);
     return (conversation?.bot?.profile.runtime.agent.id ?? '').length > 0;
   });
-
-  async function createWithForm(): Promise<void> {
-    if (ui.draftProfile.identity.name.trim().length === 0) return;
-    const bot = await contacts.create($state.snapshot(ui.draftProfile) as BotProfile);
-    ui.formCreateOpen = false;
-    toast.success(t('settings.saved'));
-    await chat.openDirect(bot.id);
-  }
 
   async function confirmDelete(): Promise<void> {
     const id = ui.deleteTargetId;
@@ -146,36 +137,6 @@
           data-testid="bot-rename-save"
         >
           {t('settings.save')}
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
-
-  <Dialog bind:open={ui.formCreateOpen}>
-    <DialogContent
-      class="flex max-h-[85vh] max-w-xl flex-col overflow-hidden"
-      data-testid="bot-create-dialog"
-    >
-      <DialogHeader class="shrink-0">
-        <DialogTitle>{t('contacts.advancedCreate')}</DialogTitle>
-      </DialogHeader>
-      <div class="min-h-0 flex-1 overflow-y-auto pr-0.5">
-        <BotProfileForm bind:profile={ui.draftProfile} />
-      </div>
-      <DialogFooter class="shrink-0 pt-2">
-        <Button
-          variant="outline"
-          onclick={() => (ui.formCreateOpen = false)}
-          data-testid="bot-create-cancel"
-        >
-          {t('contacts.cancel')}
-        </Button>
-        <Button
-          onclick={createWithForm}
-          disabled={ui.draftProfile.identity.name.trim().length === 0}
-          data-testid="bot-create-save"
-        >
-          {t('contacts.create')}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -1550,7 +1550,6 @@ export const zhCN = {
   'settings.languageHint': '更多语言支持即将推出',
   'settings.sectionModels': '默认模型与厂商',
   'contacts.createHint': '创建后 Bot 会主动发起提问，根据你的回答完善它自己的人设。',
-  'contacts.advancedCreate': '高级新建',
   'setup.systemEvent': '新 Bot 初始化：{name} 正在向你了解它应该成为什么样的助手。',
   'setup.interviewBadge': '初始化中',
 

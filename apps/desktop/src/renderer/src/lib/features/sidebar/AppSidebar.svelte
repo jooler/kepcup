@@ -42,7 +42,7 @@
    * 头像 + 名称 + 最后一条消息的单行预览（无消息且无未读/执行中/待确认
    * 信号时预览行整行不渲染，只剩名称与头像垂直居中），管理操作（重命名/
    * 复制会话 id/群设置/删除会话）收进右键上下文菜单，不再有常驻「…」按钮。
-   * 新建只保留「+」一个入口（对话式新建 + 高级新建）。搜索按钮打开全局
+   * 新建只保留「+」面板里的对话式新建和新建群聊。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
    * 宽度可拖拽调节（右缘手柄，sidebar-layout）：收窄到 macOS 红绿灯占位宽
@@ -168,11 +168,6 @@
   async function startConversationalCreate(): Promise<void> {
     plusOpen = false;
     await createBotConversational();
-  }
-
-  function openFormCreate(): void {
-    plusOpen = false;
-    sidebarDialogs.openFormCreate();
   }
 
   async function openCreateGroup(): Promise<void> {
@@ -602,7 +597,7 @@
   {/if}
 </Sidebar.Root>
 
-<!-- 「新增」面板内容（宽窄两形态共用）：搜索过滤 + 三个新建入口 + Bot 名单。 -->
+<!-- 「新增」面板内容（宽窄两形态共用）：搜索过滤 + 两个新建入口 + Bot 名单。 -->
 {#snippet plusPanelBody()}
   <Input
     bind:value={plusQuery}
@@ -621,17 +616,6 @@
         <Plus class="size-4" />
       </span>
       {t('sidebar.createBot')}
-    </button>
-    <button
-      type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={openFormCreate}
-      data-testid="bot-create-form"
-    >
-      <span class="flex size-7 items-center justify-center rounded-full bg-muted">
-        <Pencil class="size-4" />
-      </span>
-      {t('contacts.advancedCreate')}
     </button>
     <button
       type="button"
