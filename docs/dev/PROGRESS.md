@@ -1357,8 +1357,8 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 
 ## 对话内应用设置 P1（进行中，2026-10-14）
 
-依据 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md) §8.2。58 个目录条目里内嵌卡从 18 增至 40。无 DB 迁移，未改 RPC 契约。
+依据 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md) §8.2。58 个目录条目里内嵌卡从 18 增至 41。无 DB 迁移，未改 RPC 契约。
 
-- **已升级**：Bot 配置六项（`bot-config` / `bot-skills`，写入适配器落到 `bots.update` 与 `skills.enable` / `disable`；放开网络、换外部任务引擎或提高权限档仍是 user-only）、`models.embedding-local`（`EmbeddingSection`，写入走 `embedding.configure`）、`models.widget-review`、`models.concurrency`、`agents.default`、`general.theme` / `general.language`（渲染层草稿后本机写入）、`general.launch-at-login`、`background.tasks` / `background.budget`、`unattended.enable` / `disable`（开启的风险确认留在 `UnattendedSection`）、`connections.taint-guard`、群名（`groups.rename`）与群成员（组件调用原来的成员 RPC）、项目保护规则与放行端口（user-only，规则和风险确认留在项目设置组件，宿主不预填、不代写）。
-- **仍是跳转卡**：连接逐工具策略、已安装 MCP 列表、共享浏览器资料；环境三项按方案保持跳转卡，等组件可嵌入后再出 user-only 卡。永久跳转 / 只读 / 专门工具项不在 P1 范围。
+- **已升级**：Bot 配置六项（`bot-config` / `bot-skills`，写入适配器落到 `bots.update` 与 `skills.enable` / `disable`；放开网络、换外部任务引擎或提高权限档仍是 user-only）、`models.embedding-local`（`EmbeddingSection`，写入走 `embedding.configure`）、`models.widget-review`、`models.concurrency`、`agents.default`、`general.theme` / `general.language`（渲染层草稿后本机写入）、`general.launch-at-login`、`background.tasks` / `background.budget`、`unattended.enable` / `disable`（开启的风险确认留在 `UnattendedSection`）、`connections.taint-guard`、群名（`groups.rename`）与群成员（组件调用原来的成员 RPC）、项目保护规则与放行端口（user-only，规则和风险确认留在项目设置组件，宿主不预填、不代写）、`connections.tool-policy`（卡片键 `tool-policy`：嵌入只改这一条工具，组件调用 `apps.connections.setToolPolicy`，不经宿主写锁，以免丢掉策略变严时的任务中断；放宽不预填，收紧按页面档位 `auto` / `disabled` 保存）。
+- **仍是跳转卡**：已安装 MCP 列表、共享浏览器资料；环境三项按方案保持跳转卡，等组件可嵌入后再出 user-only 卡。永久跳转 / 只读 / 专门工具项不在 P1 范围。
 - **验证**：`settings-item-writes`、`settings-mode`、`settings-catalog`、`settings-catalog-host`、desktop `settings-card` 定向测试通过；`@kepcup/core` 与 `@kepcup/desktop` typecheck 通过。未跑全量。

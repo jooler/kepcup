@@ -1,4 +1,10 @@
-import type { AppToolDefinition, AppToolState, AppToolView, McpToolPolicy } from '@kepcup/shared';
+import type {
+  AppToolDefinition,
+  AppToolState,
+  AppToolView,
+  McpToolPolicy,
+  SettingValues,
+} from '@kepcup/shared';
 import type { MessageKey } from '$lib/i18n';
 
 /**
@@ -67,6 +73,40 @@ export function policyForChoice(choice: ToolPolicyChoice): McpToolPolicy {
     default:
       return {};
   }
+}
+
+/**
+ * 目录字段 `ask` / `allow` / `deny` → 页面下拉。`allow` 是直接允许（`auto`），`deny` 是停用。
+ * 保存仍走 {@link policyForChoice}，不要把目录词写进 `McpToolPolicy`。
+ */
+export function choiceForCatalogPolicy(value: unknown): ToolPolicyChoice | null {
+  switch (value) {
+    case 'allow':
+    case 'auto':
+      return 'auto';
+    case 'deny':
+    case 'disabled':
+      return 'disabled';
+    case 'ask':
+      return 'ask';
+    case 'default':
+      return 'default';
+    default:
+      return null;
+  }
+}
+
+/**
+ * 出卡时 before（带 focus 的读快照）里的连接和工具。user-only 会把整份预填清空，
+ * 连接 id 和工具名不能从 prefill 取。
+ */
+export function toolPolicyTarget(
+  before: SettingValues | null | undefined,
+): { connectionId: string; toolName: string } | null {
+  const connectionId = typeof before?.connection === 'string' ? before.connection.trim() : '';
+  const toolName = typeof before?.tool === 'string' ? before.tool.trim() : '';
+  if (connectionId.length === 0 || toolName.length === 0) return null;
+  return { connectionId, toolName };
 }
 
 // --- 定义对比 ------------------------------------------------------------------

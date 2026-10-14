@@ -293,3 +293,85 @@ describe('group and project setting reads', () => {
     });
   });
 });
+
+describe('connection tool policy reads', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+
+  function rig(peek: AdapterDeps['appConnections']) {
+    const deps: AdapterDeps = {
+      settings: {
+        get: () => settingsSchema.parse({}),
+        update: (next) => settingsSchema.parse(next),
+      },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: { list: () => [], setKey: () => undefined },
+      bots: { get: () => null, update: () => { throw new Error('no bot'); } },
+      ...(peek !== undefined ? { appConnections: peek } : {}),
+      publish: () => undefined,
+    };
+    return buildItemAdapters(deps)(item('connections.tool-policy'));
+  }
+
+  const notion = {
+    list: () => [{ id: 'conn-1', label: 'Notion 工作区' }],
+    peekTool: (connectionId: string, toolName: string) =>
+      connectionId === 'conn-1' && toolName === 'search'
+        ? { policy: { approval: 'auto' as const }, enabled: true, approval: 'auto' as const }
+        : connectionId === 'conn-1' && toolName === 'archive'
+          ? { policy: { enabled: false }, enabled: false, approval: 'ask' as const }
+          : null,
+  };
+
+  it('puts the focused connection and tool in the snapshot and does not write', () => {
+    const adapter = rig(notion);
+    expect(adapter.write).toBeUndefined();
+    expect(
+      adapter.read(item('connections.tool-policy'), target, {
+        connection: 'conn-1',
+        tool: 'search',
+        policy: 'deny',
+      }).values,
+    ).toEqual({ connection: 'conn-1', tool: 'search', policy: 'allow' });
+    expect(
+      adapter.read(item('connections.tool-policy'), target, {
+        connection: 'conn-1',
+        tool: 'archive',
+      }).values,
+    ).toEqual({ connection: 'conn-1', tool: 'archive', policy: 'deny' });
+    const missing = adapter.read(item('connections.tool-policy'), target, {
+      connection: 'conn-1',
+      tool: 'gone',
+    });
+    expect(missing.status).toBe('unconfigured');
+    expect(missing.values).toEqual({ connection: 'conn-1', tool: 'gone' });
+    expect(adapter.options!(item('connections.tool-policy').fields[0]!, item('connections.tool-policy'), target)).toEqual([
+      { value: 'conn-1', label: 'Notion 工作区' },
+    ]);
+  });
+
+  it('keeps the ids when the connection service is not wired', () => {
+    const adapter = rig(undefined);
+    const snapshot = adapter.read(item('connections.tool-policy'), target, {
+      connection: 'conn-1',
+      tool: 'search',
+    });
+    expect(snapshot.status).toBe('unknown');
+    expect(snapshot.values).toEqual({ connection: 'conn-1', tool: 'search' });
+  });
+
+  it('treats allow and re-enable as widening; tightening and unknown stay distinct', () => {
+    const adapter = rig(notion);
+    const widen = adapter.valuesWiden!;
+    const entry = item('connections.tool-policy');
+    expect(widen(entry, { policy: 'ask' }, { policy: 'allow' })).toBe(true);
+    expect(widen(entry, { policy: 'deny' }, { policy: 'ask' })).toBe(true);
+    expect(widen(entry, { policy: 'deny' }, { policy: 'allow' })).toBe(true);
+    expect(widen(entry, { policy: 'allow' }, { policy: 'deny' })).toBe(false);
+    expect(widen(entry, { policy: 'allow' }, { policy: 'ask' })).toBe(false);
+    expect(widen(entry, { policy: 'ask' }, { policy: 'deny' })).toBe(false);
+    expect(widen(entry, { policy: 'allow' }, { policy: 'allow' })).toBe(false);
+    expect(widen(entry, null, { policy: 'deny' })).toBe(true);
+    expect(widen(entry, { policy: 'ask' }, { connection: 'conn-1' })).toBe(true);
+    expect(widen(entry, { connection: 'conn-1', tool: 'search' }, { policy: 'deny' })).toBe(true);
+  });
+});

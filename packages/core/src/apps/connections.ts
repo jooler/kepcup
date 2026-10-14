@@ -647,6 +647,27 @@ export class AppConnectionsService {
   }
 
   /**
+   * 本地缓存里一条目录连接工具的策略（不连 server）。自定义 server、没有这条连接或没有这条工具时
+   * 返回 null。设置卡只读这一份；写入仍走 {@link setToolPolicy} 的 RPC，以便策略变严时中断任务。
+   */
+  peekCatalogTool(
+    connectionId: string,
+    toolName: string,
+  ): { policy: McpToolPolicy | null; enabled: boolean; approval: 'auto' | 'ask' } | null {
+    if (isCustomConnectionId(connectionId)) return null;
+    if (this.#deps.store.get(connectionId) === null) return null;
+    const row = this.#deps.toolLock.list(connectionId).find((tool) => tool.toolName === toolName);
+    if (row === undefined) return null;
+    const view = this.#viewOf(row, undefined, this.#tierOf(connectionId));
+    return { policy: view.policy, enabled: view.enabled, approval: view.approval };
+  }
+
+  /** 目录连接（不含自定义 MCP），供设置目录的连接选项。 */
+  catalogConnectionOptions(): Array<{ id: string; label: string }> {
+    return this.#deps.store.list().map((row) => ({ id: row.id, label: row.label }));
+  }
+
+  /**
    * 目录连接的逐工具策略（`policy` 与 W5 `mcpToolPolicy` 同形；空对象 = 清除）。自定义 server 继续
    * 用 `settings.mcpServers[].toolPolicies`。返回策略是否比之前更严（停用 / 免审批改为每次确认），
    * 调用方据此中断受影响的运行中任务（W3）。

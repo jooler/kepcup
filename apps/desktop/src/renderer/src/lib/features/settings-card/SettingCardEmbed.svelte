@@ -11,6 +11,7 @@
   import SensorCard from '$lib/features/settings/SensorCard.svelte';
   import MailAccountAddForm from '$lib/features/mail/MailAccountAddForm.svelte';
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
+  import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -194,6 +195,13 @@
     embedded
     focus="members"
     {conversationId}
+    {prefill}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'tool-policy'}
+  <AppConnectionDetail
+    embedded
+    before={expected}
     {prefill}
     onSaved={() => onSaved()}
   />

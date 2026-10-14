@@ -9,6 +9,7 @@ import {
   webSearchProviderSchema,
   type AgentCatalogEntry,
   type CapabilityModelKey,
+  type McpToolPolicy,
   type ProviderInfo,
   type Settings,
   type SettingFieldSpec,
@@ -79,6 +80,13 @@ export interface ItemAdapter {
   valuesWiden?(item: SettingItem, before: SettingValues | null, proposed: SettingValues): boolean;
 }
 
+/** 一条目录连接工具的当前策略（用户覆盖 + 有效结果）。`policy === null` 表示按风险档默认。 */
+export interface CatalogToolPolicyView {
+  policy: McpToolPolicy | null;
+  enabled: boolean;
+  approval: 'auto' | 'ask';
+}
+
 export interface AdapterDeps {
   settings: { get(): Settings; update(patch: Partial<Settings>): Settings };
   secrets: { hasValue(name: string): boolean; setValue(name: string, value: string): void };
@@ -103,6 +111,14 @@ export interface AdapterDeps {
       protectRules: { denyRead: readonly string[]; denyWrite: readonly string[] };
       allowedPorts: ReadonlyArray<readonly [number, number]> | null;
     } | null;
+  };
+  /**
+   * 目录连接的逐工具策略（只读）。写入留在 `apps.connections.setToolPolicy`：
+   * 那条 RPC 在策略变严时会中断正在使用该连接的任务，写锁里只调服务方法会丢掉这段。
+   */
+  appConnections?: {
+    list(): ReadonlyArray<{ id: string; label: string }>;
+    peekTool(connectionId: string, toolName: string): CatalogToolPolicyView | null;
   };
   unattended?: { effective(): UnattendedState; disable(reason?: string): UnattendedState };
   agentCatalog?: () => readonly AgentCatalogEntry[];
@@ -1093,6 +1109,76 @@ function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+type CatalogPolicy = 'ask' | 'allow' | 'deny';
+
+function catalogPolicyWord(value: unknown): CatalogPolicy | null {
+  return value === 'ask' || value === 'allow' || value === 'deny' ? value : null;
+}
+
+/** 有效策略 → 目录词。停用是 deny；直接允许（含按风险档默认就是免审批）是 allow。 */
+function catalogPolicyOf(tool: Pick<CatalogToolPolicyView, 'enabled' | 'approval'>): CatalogPolicy {
+  if (!tool.enabled) return 'deny';
+  return tool.approval === 'auto' ? 'allow' : 'ask';
+}
+
+/**
+ * 放宽：改为直接允许，或把已禁用的工具重新启用。收紧（改为每次询问、停用）返回 false，可以预填。
+ * 看不出方向（缺旧值、缺新值、不是目录词）按放宽。
+ */
+function toolPolicyWidens(before: SettingValues | null, proposed: SettingValues): boolean {
+  const next = catalogPolicyWord(proposed.policy);
+  const current = catalogPolicyWord(before?.policy);
+  if (next === null || current === null) return true;
+  if (next === 'allow' && current !== 'allow') return true;
+  if (current === 'deny' && next !== 'deny') return true;
+  return false;
+}
+
+/**
+ * 连接的逐工具策略。只读：快照带上 `connection` 和 `tool`（user-only 会清空整份预填，卡片靠
+ * before 定位是哪一条）。不提供 write——组件调用 `apps.connections.setToolPolicy`，策略变严时
+ * 那条 RPC 会中断正在使用该连接的任务。
+ */
+function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, _target, focus) => {
+      const connection = str(focus?.connection);
+      const tool = str(focus?.tool);
+      const located: SettingValues = {};
+      if (connection !== undefined && connection.length > 0) located.connection = connection;
+      if (tool !== undefined && tool.length > 0) located.tool = tool;
+      const hasTarget = located.connection !== undefined && located.tool !== undefined;
+      if (!hasTarget) {
+        return snapshot(
+          'unknown',
+          Object.keys(located).length > 0 ? located : null,
+          '需要指定连接和工具',
+        );
+      }
+      if (deps.appConnections === undefined) {
+        return snapshot('unknown', located, '状态未知');
+      }
+      const found = deps.appConnections.peekTool(String(located.connection), String(located.tool));
+      if (found === null) return snapshot('unconfigured', located, '没有这条工具');
+      const policy = catalogPolicyOf(found);
+      const word = policy === 'allow' ? '直接允许' : policy === 'deny' ? '已禁用' : '每次询问';
+      return snapshot(
+        'configured',
+        { ...located, policy },
+        `「${clean(String(located.tool), 40)}」${word}`,
+      );
+    },
+    options: (field) => {
+      if (field.options !== 'connections' || deps.appConnections === undefined) return [];
+      return deps.appConnections.list().map((row) => ({
+        value: row.id,
+        label: clean(row.label.length > 0 ? row.label : row.id),
+      }));
+    },
+    valuesWiden: (_item, before, proposed) => toolPolicyWidens(before, proposed),
+  };
+}
+
 function groupConversation(
   deps: AdapterDeps,
   target: SettingTargetRef,
@@ -1227,6 +1313,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
         : snapshot('configured', null, `已安装 ${servers.length} 个，启用 ${enabled} 个`);
     }),
     'connections.taint-guard': taintGuardAdapter(deps),
+    'connections.tool-policy': toolPolicyAdapter(deps),
     'agents.external': externalAgentsAdapter(deps),
     'agents.default': agentsDefaultAdapter(deps),
     'bot.model': botModelAdapter(deps, 'model'),

@@ -1277,6 +1277,8 @@ export const zhCN = {
   'settingCard.group.noBots': '还没有可以加入的 Bot。',
   'settingCard.project.protectAck': '我确认按这些规则限制本项目的读取和写入',
   'settingCard.project.portsAck': '我确认放行这些本机端口（留空表示不限制）',
+  'settingCard.toolPolicy.missing': '这张卡没有带上要改的连接和工具。',
+  'settingCard.toolPolicy.notFound': '这条连接上没有这个工具。',
   'settingCard.botModel.followDefaultLight': '跟随默认轻量模型',
   'settingCard.state.applied': '已应用',
   'settingCard.state.receipt': '已修改',

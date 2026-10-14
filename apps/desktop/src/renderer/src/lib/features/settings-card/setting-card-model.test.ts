@@ -147,6 +147,15 @@ describe('预填过滤', () => {
     expect(settingCardPrefill(capability, 'form', proposed)).toEqual({ provider: 'dashscope' });
     expect(settingCardPrefill(capability, 'confirm', null)).toBeNull();
     expect(nonSensitiveValues(capability, { apiKey: 'sk-x' })).toBeNull();
+    const toolPolicy = {
+      connection: 'conn-1',
+      tool: 'search',
+      policy: 'allow',
+    };
+    expect(settingCardPrefill(item('connections.tool-policy'), 'user-only', toolPolicy)).toBeNull();
+    expect(settingCardPrefill(item('connections.tool-policy'), 'confirm', toolPolicy)).toEqual(
+      toolPolicy,
+    );
   });
 
   it('能力模型预填：厂商须已适配该能力；厂商/模型写法拆开', () => {
@@ -228,6 +237,13 @@ describe('卡片形态的分发', () => {
     expect(hostApplies(item('group.title'), 'confirm', { title: '新群名' })).toBe(false);
     expect(hostApplies(item('group.members'), 'confirm', { bots: ['bot_b'] })).toBe(false);
     expect(hostApplies(item('project.protect-rules'), 'user-only', { denyRead: [] })).toBe(false);
+    expect(
+      hostApplies(item('connections.tool-policy'), 'confirm', {
+        connection: 'conn-1',
+        tool: 'search',
+        policy: 'deny',
+      }),
+    ).toBe(false);
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {
