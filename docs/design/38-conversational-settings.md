@@ -56,7 +56,7 @@
 | 通用 | `general.theme` / `general.language`（renderer）/ `general.launch-at-login` | confirm | 无 |
 | 后台 | `background.tasks` / `background.budget` | confirm | 无 |
 | 无人值守 | `unattended.enable`（user-only）/ `unattended.disable`（confirm） | — | 无 |
-| 环境 | `environment.toolchains` / `environment.sandbox`；`.allowlist` 保持跳转卡 | user-only | `environment-toolchains` / `environment-sandbox` / 无 |
+| 环境 | `environment.toolchains` / `environment.sandbox` / `environment.allowlist` | user-only | `environment-toolchains` / `environment-sandbox` / `environment-allowlist` |
 | 开发者 | `developer.mode` / `.custom-mcp` / `.oauth-clients` / `.mcpb` | link（永久） | 无 |
 | 诊断 | `diagnostics.status` / `diagnostics.usage` | 只读 | 无 |
 
@@ -235,7 +235,7 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 - `background.tasks` / `background.budget`（`BackgroundTasksSection`、用量预算）；
 - `group.title` / `group.members`、`project.protect-rules` / `project.ports`（群 / 项目设置对话框片段）；
 - `connections.tool-policy`（`AppConnectionDetail` 工具策略片段）、`connections.taint-guard`、`mcp.servers`、`agents.default`、`browser.shared-profiles`；
-- `environment.toolchains`（`EnvironmentSection`，user-only 空白卡 `environment-toolchains`）；`environment.sandbox`（`SandboxSection`，user-only 空白卡 `environment-sandbox`）；`.allowlist` 保持跳转卡，组件嵌入化后再出 user-only 空白卡。
+- `environment.toolchains`（`EnvironmentSection`，user-only 空白卡 `environment-toolchains`）；`environment.sandbox`（`SandboxSection`，user-only 空白卡 `environment-sandbox`）；`environment.allowlist`（`AllowlistSection`，user-only 空白卡 `environment-allowlist`：添加与启停由组件自存，宿主不预填、不代写）。
 
 永久只出跳转卡 / 只读：`profile.user-facts`、`developer.*`、`diagnostics.*`。`via` 专门工具的项（`connections.connect`、`mail.account`、`bot.identity`、`bot.file-access`、`skills.install`、`schedules.*`）由各自工具负责，`settings_change` 只重定向。
 

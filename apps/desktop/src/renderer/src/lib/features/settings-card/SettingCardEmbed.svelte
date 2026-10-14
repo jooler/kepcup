@@ -16,6 +16,7 @@
   import BrowserProfilesSection from '$lib/features/settings/BrowserProfilesSection.svelte';
   import EnvironmentSection from '$lib/features/settings/EnvironmentSection.svelte';
   import SandboxSection from '$lib/features/settings/SandboxSection.svelte';
+  import AllowlistSection from '$lib/features/settings/AllowlistSection.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -217,6 +218,8 @@
   <EnvironmentSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'environment-sandbox'}
   <SandboxSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'environment-allowlist'}
+  <AllowlistSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'project-settings' && project !== null}
   <ProjectSettingsDialog
     embedded

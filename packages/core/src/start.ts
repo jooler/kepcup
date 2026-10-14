@@ -1925,6 +1925,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           return cached === null ? null : { available: cached.available };
         },
       },
+      allowlist: {
+        list: () => allowlist.list(),
+      },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wake: (input) =>

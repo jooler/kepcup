@@ -150,6 +150,14 @@ export interface AdapterDeps {
   sandbox?: {
     lastAvailability(): { available: boolean } | null;
   };
+  /**
+   * 命令白名单（只读概要）。`allowlist.list` 是同步的。
+   * 适配器只数启用和停用，不把条目 id 或命令模式放进快照。
+   * 不提供 write：添加和启停留在组件，走原来的 `allowlist.add` / `allowlist.update`。
+   */
+  allowlist?: {
+    list(): ReadonlyArray<{ enabled: boolean }>;
+  };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
 }
@@ -1411,6 +1419,29 @@ function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * 命令白名单只读概要。目录没有字段，快照 `values` 保持 null。
+ * 只数启用几条、停用几条：有启用为 `configured`，一条启用都没有为 `unconfigured`
+ * （空名单上「我已设置好」核对不过）。不放条目 id，也不把命令模式放进快照。
+ * 不提供 write：添加和启停由组件调用原来的 RPC。加一条命令豁免是放宽，保持 user-only。
+ */
+function environmentAllowlistAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const allowlist = deps.allowlist;
+      if (allowlist === undefined) return snapshot('unconfigured', null, '还看不到命令白名单');
+      let enabled = 0;
+      let disabled = 0;
+      for (const entry of allowlist.list()) {
+        if (entry.enabled === true) enabled += 1;
+        else disabled += 1;
+      }
+      const status = enabled > 0 ? 'configured' : 'unconfigured';
+      return snapshot(status, null, `启用 ${enabled} 条，停用 ${disabled} 条`);
+    },
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -1474,6 +1505,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'unattended.disable': unattendedAdapter(deps, 'disable'),
     'environment.toolchains': environmentToolchainsAdapter(deps),
     'environment.sandbox': environmentSandboxAdapter(deps),
+    'environment.allowlist': environmentAllowlistAdapter(deps),
     'developer.mode': readOnlyAdapter(() => {
       const enabled = deps.settings.get().apps.developerMode;
       return snapshot('configured', null, enabled ? '已开启' : '未开启');

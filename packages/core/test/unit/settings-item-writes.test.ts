@@ -18,6 +18,7 @@ function harness(
   runtime: Partial<Bot['profile']['runtime']> = {},
   environment?: AdapterDeps['environment'],
   sandbox?: AdapterDeps['sandbox'],
+  allowlist?: AdapterDeps['allowlist'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -97,6 +98,7 @@ function harness(
     },
     ...(environment !== undefined ? { environment } : {}),
     ...(sandbox !== undefined ? { sandbox } : {}),
+    ...(allowlist !== undefined ? { allowlist } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -630,5 +632,60 @@ describe('environment sandbox read adapter', () => {
     expect(encoded).not.toContain('bubblewrap');
     expect(encoded).not.toContain('fixHint');
     expect(encoded).not.toContain('/Users/');
+  });
+});
+
+describe('environment allowlist read adapter', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+  const leaked = [
+    { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true },
+    { id: 'alw_off', pattern: 'curl http://evil.example', enabled: false },
+  ];
+
+  function read(allowlist?: AdapterDeps['allowlist']) {
+    const { adapters } = harness({}, {}, undefined, undefined, allowlist);
+    const adapter = adapters(item('environment.allowlist'));
+    return { adapter, snapshot: adapter.read(item('environment.allowlist'), target) };
+  }
+
+  it('counts enabled and disabled, keeps values null, and omits ids and patterns', () => {
+    const { adapter, snapshot } = read({ list: () => leaked });
+    expect(adapter.write).toBeUndefined();
+    expect(adapter.valuesWiden).toBeUndefined();
+    expect(snapshot).toEqual({
+      status: 'configured',
+      values: null,
+      secrets: {},
+      summary: '启用 1 条，停用 1 条',
+    });
+    const encoded = JSON.stringify(snapshot);
+    expect(encoded).not.toContain('alw_');
+    expect(encoded).not.toContain('rm -rf');
+    expect(encoded).not.toContain('curl');
+    expect(encoded).not.toContain('evil');
+  });
+
+  it('is unconfigured when nothing is enabled, including an empty list', () => {
+    expect(read({ list: () => [{ id: 'alw_off', pattern: 'ls', enabled: false }] }).snapshot).toEqual({
+      status: 'unconfigured',
+      values: null,
+      secrets: {},
+      summary: '启用 0 条，停用 1 条',
+    });
+    expect(read({ list: () => [] }).snapshot).toEqual({
+      status: 'unconfigured',
+      values: null,
+      secrets: {},
+      summary: '启用 0 条，停用 0 条',
+    });
+  });
+
+  it('stays unconfigured when the allowlist service is not wired', () => {
+    expect(read().snapshot).toEqual({
+      status: 'unconfigured',
+      values: null,
+      secrets: {},
+      summary: '还看不到命令白名单',
+    });
   });
 });

@@ -886,7 +886,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['白名单', '访问', '放行'],
     scope: 'global',
     write: write('user-only', { widensPermission: true }),
-    card: null,
+    card: 'environment-allowlist',
     deepLink: { surface: 'settings', section: 'environment', anchor: 'allowlist' },
     store: { kind: 'service', methods: ['allowlist.add', 'allowlist.update'] },
   }),

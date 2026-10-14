@@ -319,11 +319,20 @@ describe('effectiveMode: individual rules', () => {
       acceptValues: false,
       rules: [],
     });
-    expect(item('environment.allowlist').card).toBeNull();
-    expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
-      mode: 'link',
+    const allowlist = item('environment.allowlist');
+    expect(allowlist.card).toBe('environment-allowlist');
+    expect(allowlist.fields).toEqual([]);
+    expect(allowlist.write.wideningMode).toBeUndefined();
+    expect(allowlist.write.widensPermission).toBe(true);
+    expect(effectiveMode(allowlist, ctx())).toMatchObject({
+      mode: 'user-only',
       acceptValues: false,
-      rules: ['no-card'],
+      rules: [],
+    });
+    expect(effectiveMode(allowlist, ctx({ valuesWiden: false }))).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
+      rules: [],
     });
     expect(effectiveMode(withCard(sandbox), ctx())).toMatchObject({
       mode: 'user-only',
@@ -391,9 +400,13 @@ describe('effectiveMode: individual rules', () => {
   });
 
   it('cardless items become link cards; permanent link items stay link', () => {
-    expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
+    expect(effectiveMode({ ...item('environment.allowlist'), card: null }, ctx())).toMatchObject({
       mode: 'link',
       rules: ['no-card'],
+    });
+    expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
     });
     expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
       mode: 'user-only',

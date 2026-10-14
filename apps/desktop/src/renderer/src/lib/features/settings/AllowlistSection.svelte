@@ -1,11 +1,30 @@
 <script lang="ts">
-  import type { AllowlistEntry } from '@kepcup/shared';
+  import type { AllowlistEntry, SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
+
+  /**
+   * 环境页的命令白名单：添加、启停、恢复默认。
+   * `embedded`：对话内设置卡露出添加、启停和已有的风险提示。恢复默认会清掉自定义条目，
+   * 留在设置页。加一条命令豁免是放宽，user-only 不预填：`prefill` 收下但不写进输入框。
+   * 空模式不提交。添加或启停成功后 `onSaved`。
+   */
+  let {
+    embedded = false,
+    prefill: _prefill = null,
+    onSaved,
+  }: {
+    /** 对话内设置卡。设置页不传。 */
+    embedded?: boolean;
+    /** 空白卡不采用。保留参数以对齐其它嵌入组件的调用形状。 */
+    prefill?: SettingValues | null;
+    /** 添加或启停成功后通知设置卡结卡。 */
+    onSaved?: () => void;
+  } = $props();
 
   let entries = $state<AllowlistEntry[]>([]);
   let pattern = $state('');
@@ -31,6 +50,7 @@
     entries = result.entries;
     pattern = '';
     toast.success(t('settings.saved'));
+    if (embedded) onSaved?.();
   }
 
   async function toggle(entry: AllowlistEntry): Promise<void> {
@@ -39,6 +59,7 @@
       enabled: !entry.enabled,
     })) as { entries: AllowlistEntry[] };
     entries = result.entries;
+    if (embedded) onSaved?.();
   }
 
   async function reset(): Promise<void> {
@@ -47,8 +68,13 @@
   }
 </script>
 
-<section class="space-y-3" data-testid="settings-allowlist">
-  <h3 class="text-sm font-medium">{t('allowlist.settingsSection')}</h3>
+<section
+  class="space-y-3"
+  data-testid={embedded ? 'environment-allowlist-embedded' : 'settings-allowlist'}
+>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('allowlist.settingsSection')}</h3>
+  {/if}
   <p class="text-xs text-muted-foreground">{t('allowlist.note')}</p>
 
   <div class="flex items-center gap-2">
@@ -61,9 +87,11 @@
     <Button size="sm" variant="outline" onclick={() => void add()} data-testid="allowlist-add">
       {t('allowlist.add')}
     </Button>
-    <Button size="sm" variant="ghost" onclick={() => void reset()} data-testid="allowlist-reset">
-      {t('allowlist.reset')}
-    </Button>
+    {#if !embedded}
+      <Button size="sm" variant="ghost" onclick={() => void reset()} data-testid="allowlist-reset">
+        {t('allowlist.reset')}
+      </Button>
+    {/if}
   </div>
   <p class="text-xs text-amber-600 dark:text-amber-400">{t('allowlist.addWarning')}</p>
 
