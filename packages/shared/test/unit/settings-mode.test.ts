@@ -343,10 +343,19 @@ describe('effectiveMode: individual rules', () => {
       mode: 'link',
       rules: ['no-card'],
     });
+    expect(effectiveMode(item('group.title'), ctx())).toMatchObject({
+      mode: 'confirm',
+      acceptValues: true,
+    });
     expect(effectiveMode(item('general.theme'), ctx())).toMatchObject({
       mode: 'confirm',
       acceptValues: true,
     });
+    expect(effectiveMode(item('project.protect-rules'), ctx())).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
+    });
+    expect(effectiveMode(item('project.ports'), ctx()).acceptValues).toBe(false);
     expect(effectiveMode(item('developer.custom-mcp'), ctx())).toMatchObject({
       mode: 'link',
       rules: [],

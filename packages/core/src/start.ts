@@ -1886,6 +1886,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       providers,
       bots,
       conversations,
+      groups: {
+        rename: (conversationId, title) => {
+          groups.rename(conversationId, title);
+        },
+      },
+      projects: {
+        get: (id) => projectsService.get(id),
+      },
       unattended,
       agentCatalog: () => agentCatalog,
       embedding: {

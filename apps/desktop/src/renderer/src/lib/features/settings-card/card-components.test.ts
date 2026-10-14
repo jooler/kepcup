@@ -30,6 +30,8 @@ function item(id: string): SettingItem {
 
 const context = (patch: Partial<EmbedContext> = {}): EmbedContext => ({
   botId: 'bot_a',
+  conversationId: 'conv_group',
+  projectId: 'proj_1',
   prefill: null,
   agent: (id) => (id === 'codex' ? ({ id: 'codex' } as AgentView) : null),
   defaultAgentId: null,
@@ -65,6 +67,13 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
   it('无卡片键不能嵌', () => {
     expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(false);
     expect(cardEmbeddable(item('general.theme'), context())).toBe(true);
+  });
+
+  it('群卡要有群会话，项目卡要有项目', () => {
+    expect(cardEmbeddable(item('group.title'), context({ conversationId: null }))).toBe(false);
+    expect(cardEmbeddable(item('group.members'), context())).toBe(true);
+    expect(cardEmbeddable(item('project.ports'), context({ projectId: null }))).toBe(false);
+    expect(cardEmbeddable(item('project.protect-rules'), context())).toBe(true);
   });
 
   it('bot 范围卡要有作用 Bot', () => {

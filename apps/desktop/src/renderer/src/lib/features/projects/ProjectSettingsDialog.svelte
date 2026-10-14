@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { Project } from '@kepcup/shared';
+  import type { Project, SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { projects } from '$lib/stores/projects.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
   import { Textarea } from '$lib/components/ui/textarea';
   import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
 
@@ -11,11 +12,20 @@
     open = $bindable(false),
     project,
     anchor = $bindable(null),
+    embedded = false,
+    focus = 'protect' as 'protect' | 'ports',
+    prefill: _prefill = null,
+    onSaved,
   }: {
-    open: boolean;
+    open?: boolean;
     project: Project | null;
     /** 打开后要聚焦的锚点（对话内设置卡深链：project-protect / project-ports）；消费后复位。 */
     anchor?: string | null;
+    /** 对话内设置卡：只显示保护规则或端口，并要求亲手确认。不采用 Bot 的预填。 */
+    embedded?: boolean;
+    focus?: 'protect' | 'ports';
+    prefill?: SettingValues | null;
+    onSaved?: () => void;
   } = $props();
 
   $effect(() => {
@@ -25,18 +35,31 @@
     void revealDialogAnchor(document, target);
   });
 
-  // 名称不再是可编辑字段：项目名固定为所选文件夹的名字（bind 时取 basename）。
   let denyRead = $state('');
   let denyWrite = $state('');
   let ports = $state('');
   let loadedFor = $state<string | null>(null);
+  let loadedEmbedded = $state<string | null>(null);
+  let acknowledged = $state(false);
+  let saving = $state(false);
+
+  function loadFromProject(current: Project): void {
+    denyRead = current.protectRules.denyRead.join('\n');
+    denyWrite = current.protectRules.denyWrite.join('\n');
+    ports = (current.allowedPorts ?? []).map(([from, to]) => (from === to ? `${from}` : `${from}-${to}`)).join('\n');
+  }
 
   $effect(() => {
-    if (!open || project === null || loadedFor === project.id) return;
-    denyRead = project.protectRules.denyRead.join('\n');
-    denyWrite = project.protectRules.denyWrite.join('\n');
-    ports = (project.allowedPorts ?? []).map(([from, to]) => (from === to ? `${from}` : `${from}-${to}`)).join('\n');
+    if (embedded || !open || project === null || loadedFor === project.id) return;
+    loadFromProject(project);
     loadedFor = project.id;
+  });
+
+  $effect(() => {
+    if (!embedded || project === null || loadedEmbedded === project.id) return;
+    loadFromProject(project);
+    loadedEmbedded = project.id;
+    acknowledged = false;
   });
 
   function parseLines(raw: string): string[] {
@@ -68,6 +91,25 @@
     open = false;
   }
 
+  async function saveEmbedded(): Promise<void> {
+    if (project === null || !acknowledged || saving) return;
+    saving = true;
+    try {
+      if (focus === 'ports') {
+        await projects.update(project.id, { allowedPorts: parsePorts(ports) });
+      } else {
+        await projects.update(project.id, {
+          protectRules: { denyRead: parseLines(denyRead), denyWrite: parseLines(denyWrite) },
+        });
+      }
+      onSaved?.();
+    } catch {
+      // projects.update 已经 toast 过失败原因。
+    } finally {
+      saving = false;
+    }
+  }
+
   let removeArmed = $state(false);
   let removeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -90,6 +132,40 @@
   }
 </script>
 
+{#if embedded && project !== null}
+  <div class="grid gap-2" data-testid="project-settings-embedded">
+    {#if focus === 'protect'}
+      <label class="block space-y-1">
+        <span class="text-xs text-muted-foreground">{t('projects.settingsDenyRead')}</span>
+        <Textarea bind:value={denyRead} rows={4} class="font-mono text-xs" data-testid="project-card-deny-read" />
+      </label>
+      <label class="block space-y-1">
+        <span class="text-xs text-muted-foreground">{t('projects.settingsDenyWrite')}</span>
+        <Textarea bind:value={denyWrite} rows={3} class="font-mono text-xs" data-testid="project-card-deny-write" />
+      </label>
+    {:else}
+      <label class="block space-y-1">
+        <span class="text-xs text-muted-foreground">{t('projects.settingsPorts')}</span>
+        <Textarea bind:value={ports} rows={2} class="font-mono text-xs" data-testid="project-card-ports" />
+        <span class="block text-[10px] text-muted-foreground">{t('projects.settingsPortsHint')}</span>
+      </label>
+    {/if}
+    <label class="flex items-start gap-2 text-sm">
+      <Checkbox bind:checked={acknowledged} data-testid="project-card-ack" />
+      <span>{focus === 'ports' ? t('settingCard.project.portsAck') : t('settingCard.project.protectAck')}</span>
+    </label>
+    <div class="flex justify-end">
+      <Button
+        size="sm"
+        disabled={!acknowledged || saving}
+        onclick={() => void saveEmbedded()}
+        data-testid="project-card-save"
+      >
+        {t('settingCard.apply')}
+      </Button>
+    </div>
+  </div>
+{:else}
 <Dialog.Root bind:open>
   <Dialog.Content class="max-w-lg" data-testid="project-settings-dialog">
     <Dialog.Header>
@@ -132,3 +208,4 @@
     {/if}
   </Dialog.Content>
 </Dialog.Root>
+{/if}

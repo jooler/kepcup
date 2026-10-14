@@ -20,6 +20,9 @@
   import AppearanceSection from '$lib/features/settings/AppearanceSection.svelte';
   import BackgroundTasksSection from '$lib/features/settings/BackgroundTasksSection.svelte';
   import UnattendedSection from '$lib/features/settings/UnattendedSection.svelte';
+  import GroupSettingsDialog from '$lib/features/chats/GroupSettingsDialog.svelte';
+  import ProjectSettingsDialog from '$lib/features/projects/ProjectSettingsDialog.svelte';
+  import { projects } from '$lib/stores/projects.svelte';
   import { embeddedAgentId } from './card-components';
   import { capabilityOfItem, prefillString, sensorOfItem } from './setting-card-model';
 
@@ -36,6 +39,8 @@
     item,
     prefill,
     botId,
+    conversationId = null,
+    projectId = null,
     expected = null,
     messageId,
     testidPrefix = 'setting-card',
@@ -47,6 +52,10 @@
     prefill: SettingValues | null;
     /** bot 范围条目的作用 Bot（邮箱绑定 / 连接授权 / Bot 模型）。 */
     botId: string | null;
+    /** 群范围条目的群会话。 */
+    conversationId?: string | null;
+    /** 项目范围条目的项目。 */
+    projectId?: string | null;
     expected?: SettingValues | null;
     messageId?: string | undefined;
     testidPrefix?: string;
@@ -59,6 +68,8 @@
   const agentId = $derived(
     embeddedAgentId({
       botId,
+      conversationId,
+      projectId,
       prefill,
       agent: (id) => agentsStore.get(id),
       defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -76,10 +87,20 @@
     return { id: botId, name: bot !== undefined && bot.name.length > 0 ? bot.name : botId };
   });
 
+  const project = $derived(
+    projectId === null ? null : projects.boundOf(conversationId, projectId),
+  );
+
   $effect(() => {
     if (item.card !== 'agent') return;
     agentsStore.start();
     if (!agentsStore.loaded) void agentsStore.refresh().catch(() => undefined);
+  });
+
+  $effect(() => {
+    if (item.card !== 'project-settings') return;
+    projects.start();
+    if (projects.recent.length === 0) void projects.refresh().catch(() => undefined);
   });
 </script>
 
@@ -156,6 +177,32 @@
     testid={`${testidPrefix}-bot-model`}
     onSaved={() => onSaved()}
     {onConflict}
+  />
+{:else if item.card === 'group-title' && conversationId !== null}
+  <GroupSettingsDialog
+    embedded
+    focus="title"
+    {conversationId}
+    {prefill}
+    {expected}
+    {messageId}
+    onSaved={() => onSaved()}
+    {onConflict}
+  />
+{:else if item.card === 'group-members' && conversationId !== null}
+  <GroupSettingsDialog
+    embedded
+    focus="members"
+    {conversationId}
+    {prefill}
+    onSaved={() => onSaved()}
+  />
+{:else if item.card === 'project-settings' && project !== null}
+  <ProjectSettingsDialog
+    embedded
+    focus={item.id === 'project.ports' ? 'ports' : 'protect'}
+    {project}
+    onSaved={() => onSaved()}
   />
 {:else if item.card === 'provider-setup'}
   <ProviderSetupForm
