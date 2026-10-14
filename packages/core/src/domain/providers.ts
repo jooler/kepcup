@@ -10,6 +10,7 @@ import {
   buildModelRegistry,
   providerInfoList,
   providerSecretName,
+  providerTestSessionId,
   resolveModel,
   testProvider,
 } from '../agent/models.js';
@@ -133,7 +134,7 @@ export class ProvidersService {
     const target = modelId ?? modelPool[0]?.id;
     if (!target) throw new AppError('NOT_FOUND', `Provider "${provider}" has no models`);
     const model = resolveModel(models, `${provider}/${target}`);
-    await testProvider({ models, model });
+    await testProvider({ models, model, sessionId: providerTestSessionId(provider) });
   }
 
   #assertProviderExists(provider: string): void {

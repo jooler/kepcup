@@ -43,6 +43,15 @@ export function modelSessionId(identity: Pick<RunIdentity, 'conversationId' | 'r
   return `kep-${identity.conversationId ?? identity.runId}`;
 }
 
+/**
+ * Session id for a provider "测试连接" request. There is no conversation, so
+ * repeated tests of the same provider share one stable session (OpenCode's
+ * routing hint stays meaningful); other providers ignore it like any other.
+ */
+export function providerTestSessionId(providerId: string): string {
+  return `kep-provider-test:${providerId}`;
+}
+
 /** Custom providers are namespaced to avoid clashing with built-in ids. */
 export function customProviderId(id: string): string {
   return `custom:${id}`;
@@ -268,6 +277,8 @@ export async function testProvider(deps: {
   models: Models;
   model: AnyModel;
   signal?: AbortSignal;
+  /** OpenCode routing/prompt-cache session id (see modelSessionId). */
+  sessionId?: string;
 }): Promise<void> {
   let result;
   try {
@@ -278,7 +289,7 @@ export async function testProvider(deps: {
         messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }],
         tools: [],
       },
-      { maxTokens: 1_024 },
+      { maxTokens: 1_024, ...(deps.sessionId !== undefined ? { sessionId: deps.sessionId } : {}) },
     );
   } catch (error) {
     throw mapProviderError(error);
