@@ -65,7 +65,7 @@ describe('CardKey → 组件映射', () => {
 
 describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
   it('无卡片键不能嵌', () => {
-    expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(false);
+    expect(cardEmbeddable(item('environment.allowlist'), context())).toBe(false);
     expect(cardEmbeddable(item('general.theme'), context())).toBe(true);
   });
 
@@ -92,12 +92,15 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('browser.shared-profiles'), context({ botId: null }))).toBe(true);
   });
 
-  it('工具链不靠预填也能嵌；沙箱和白名单仍是跳转卡', () => {
+  it('工具链和沙箱不靠预填也能嵌；白名单仍是跳转卡', () => {
     expect(cardEmbeddable(item('environment.toolchains'), context())).toBe(true);
     expect(
       cardEmbeddable(item('environment.toolchains'), context({ prefill: null, botId: null })),
     ).toBe(true);
-    expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(false);
+    expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(true);
+    expect(
+      cardEmbeddable(item('environment.sandbox'), context({ prefill: null, botId: null })),
+    ).toBe(true);
     expect(cardEmbeddable(item('environment.allowlist'), context())).toBe(false);
   });
 

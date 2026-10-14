@@ -200,6 +200,8 @@ export const CARD_KEYS = [
   'browser-profiles',
   /** 工具链（`EnvironmentSection`：已安装列表、重新检测、失败项重装；卸载留在设置页）。 */
   'environment-toolchains',
+  /** 沙箱（`SandboxSection`：状态、重新检测、准备向导；向导页本身不嵌进卡片）。 */
+  'environment-sandbox',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

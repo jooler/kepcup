@@ -232,9 +232,12 @@ describe('卡片形态的分发', () => {
     expect(embeddedCardKey(item('capability.image'), 'form', always)).toBe('capability-model');
     expect(embeddedCardKey(item('capability.image'), 'link', always)).toBeNull();
     expect(embeddedCardKey(item('models.default-main'), 'receipt', always)).toBeNull();
-    expect(embeddedCardKey(item('environment.sandbox'), 'confirm', always)).toBeNull();
+    expect(embeddedCardKey(item('environment.allowlist'), 'confirm', always)).toBeNull();
     expect(embeddedCardKey(item('environment.toolchains'), 'user-only', always)).toBe(
       'environment-toolchains',
+    );
+    expect(embeddedCardKey(item('environment.sandbox'), 'user-only', always)).toBe(
+      'environment-sandbox',
     );
     expect(embeddedCardKey(item('general.theme'), 'confirm', always)).toBe('appearance');
     expect(embeddedCardKey(item('capability.image'), 'form', () => false)).toBeNull();
@@ -263,6 +266,8 @@ describe('卡片形态的分发', () => {
     expect(hostApplies(item('browser.shared-profiles'), 'confirm', { name: '工作' })).toBe(false);
     expect(hostApplies(item('environment.toolchains'), 'user-only', null)).toBe(false);
     expect(COMPONENT_SAVE_CARD_KEYS.has('environment-toolchains')).toBe(false);
+    expect(hostApplies(item('environment.sandbox'), 'user-only', null)).toBe(false);
+    expect(COMPONENT_SAVE_CARD_KEYS.has('environment-sandbox')).toBe(false);
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {

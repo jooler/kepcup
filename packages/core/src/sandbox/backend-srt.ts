@@ -144,6 +144,10 @@ export class SrtSandboxBackend implements SandboxBackend {
     return verdict;
   }
 
+  lastAvailability(): SandboxAvailability | null {
+    return this.#availability;
+  }
+
   async #probeOnce(): Promise<SandboxAvailability> {
     if (this.#opts.platform !== 'darwin' && this.#opts.platform !== 'linux') {
       return {

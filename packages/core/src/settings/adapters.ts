@@ -143,6 +143,13 @@ export interface AdapterDeps {
     listInstalls(): ReadonlyArray<{ status: string }>;
     systemStatuses(): ReadonlyArray<{ available: boolean }>;
   };
+  /**
+   * 沙箱最近一次可用性（只读）。还没检测过为 null。
+   * read 只读这个，不调用 `probe`，也不调用 `sandbox.wslPrepare`。
+   */
+  sandbox?: {
+    lastAvailability(): { available: boolean } | null;
+  };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
 }
@@ -1386,6 +1393,24 @@ function environmentToolchainsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * 沙箱只读概要。目录没有字段，快照 `values` 保持 null。
+ * 只读最近一次可用性：还没检测过是 `unknown`（「还没检测过沙箱」）；
+ * 可用为 `configured`，不可用为 `unconfigured`（沙箱仍不可用时「我已设置好」核对不过）。
+ * 不放 fixHint、本机路径或修复命令。不提供 write：重新检测和准备向导留在组件。
+ */
+function environmentSandboxAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const last = deps.sandbox?.lastAvailability() ?? null;
+      if (last === null) return snapshot('unknown', null, '还没检测过沙箱');
+      return last.available
+        ? snapshot('configured', null, '沙箱可用')
+        : snapshot('unconfigured', null, '沙箱不可用');
+    },
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -1448,6 +1473,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'unattended.enable': unattendedAdapter(deps, 'enable'),
     'unattended.disable': unattendedAdapter(deps, 'disable'),
     'environment.toolchains': environmentToolchainsAdapter(deps),
+    'environment.sandbox': environmentSandboxAdapter(deps),
     'developer.mode': readOnlyAdapter(() => {
       const enabled = deps.settings.get().apps.developerMode;
       return snapshot('configured', null, enabled ? '已开启' : '未开启');

@@ -20,6 +20,7 @@ afterAll(() => {
 function realShellSandbox(): SandboxBackend {
   return {
     kind: 'srt',
+    lastAvailability: () => null,
     async probe() {
       return { available: true };
     },
