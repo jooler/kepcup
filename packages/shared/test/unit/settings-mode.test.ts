@@ -354,6 +354,23 @@ describe('effectiveMode: individual rules', () => {
     });
   });
 
+  it('creating a shared browser profile stays confirm and keeps the proposed name', () => {
+    const profiles = item('browser.shared-profiles');
+    expect(profiles.card).toBe('browser-profiles');
+    expect(profiles.write.wideningMode).toBeUndefined();
+    expect(profiles.write.maxMode).toBe('confirm');
+    expect(effectiveMode(profiles, ctx())).toMatchObject({
+      mode: 'confirm',
+      acceptValues: true,
+      rules: [],
+    });
+    expect(effectiveMode(profiles, ctx({ valuesWiden: true }))).toMatchObject({
+      mode: 'confirm',
+      acceptValues: true,
+      rules: [],
+    });
+  });
+
   it('cardless items become link cards; permanent link items stay link', () => {
     expect(effectiveMode(item('environment.sandbox'), ctx())).toMatchObject({
       mode: 'link',

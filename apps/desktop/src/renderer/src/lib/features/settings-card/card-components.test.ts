@@ -87,6 +87,11 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('mcp.servers'), context())).toBe(true);
   });
 
+  it('新建共享浏览器资料不靠作用对象也能嵌', () => {
+    expect(cardEmbeddable(item('browser.shared-profiles'), context())).toBe(true);
+    expect(cardEmbeddable(item('browser.shared-profiles'), context({ botId: null }))).toBe(true);
+  });
+
   it('连接应用要知道连哪个（预填 app）', () => {
     expect(cardEmbeddable(item('connections.connect'), context())).toBe(false);
     expect(

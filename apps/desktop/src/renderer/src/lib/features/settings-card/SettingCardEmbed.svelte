@@ -13,6 +13,7 @@
   import ConnectAppPanel from '$lib/features/apps/ConnectAppPanel.svelte';
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import McpSection from '$lib/features/settings/McpSection.svelte';
+  import BrowserProfilesSection from '$lib/features/settings/BrowserProfilesSection.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -208,6 +209,8 @@
   />
 {:else if item.card === 'mcp-servers'}
   <McpSection embedded before={expected} {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'browser-profiles'}
+  <BrowserProfilesSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'project-settings' && project !== null}
   <ProjectSettingsDialog
     embedded

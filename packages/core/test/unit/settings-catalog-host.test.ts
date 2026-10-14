@@ -752,6 +752,56 @@ describe('settings catalog host: settings_change and cards', () => {
     });
   });
 
+  it('shared browser profiles: a new name is a confirm card; the same name is already done; the host does not write', async () => {
+    const rig = makeRig();
+    rig.settings.update({
+      browserProfiles: [{ id: 'bpf_work', name: '工作', createdAt: 1 }],
+    });
+    const same = await rig.host.forRun(runCtx(rig)).change({
+      id: 'browser.shared-profiles',
+      values: { name: '工作' },
+      reason: '再建一个同名的',
+    });
+    expect(same.ok).toBe(true);
+    expect(same.content).toContain('已经是这个值');
+    expect(cards(rig)).toHaveLength(0);
+
+    const created = await rig.host.forRun(runCtx(rig)).change({
+      id: 'browser.shared-profiles',
+      values: { name: '私人' },
+      reason: '新建一份共享资料',
+    });
+    expect(created.ok).toBe(true);
+    const id = messageIdIn(created.content);
+    expect(cardOf(rig, id)).toMatchObject({
+      mode: 'confirm',
+      proposed: { name: '私人' },
+      before: { name: '' },
+    });
+    expect(JSON.stringify(cardOf(rig, id))).not.toContain('bpf_');
+    await expect(
+      rig.host.applyItem({
+        itemId: 'browser.shared-profiles',
+        values: { name: '私人' },
+        expected: { name: '' },
+        messageId: id,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+    expect(rig.settings.get().browserProfiles).toEqual([
+      { id: 'bpf_work', name: '工作', createdAt: 1 },
+    ]);
+    expect(rig.host.completeCard(id)).toEqual({ state: 'pending', verified: false });
+    rig.settings.update({
+      browserProfiles: [
+        { id: 'bpf_work', name: '工作', createdAt: 1 },
+        { id: 'bpf_new', name: '私人', createdAt: 2 },
+      ],
+    });
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, id).applied).toEqual({ name: '私人' });
+    expect(JSON.stringify(cardOf(rig, id).applied)).not.toContain('bpf_');
+  });
+
   it('user-only: a blank card, the bot values are not used', async () => {
     const rig = makeRig();
     const result = await rig.host.forRun(runCtx(rig)).change({
