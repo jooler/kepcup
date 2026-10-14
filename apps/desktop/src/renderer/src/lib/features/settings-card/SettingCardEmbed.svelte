@@ -14,6 +14,7 @@
   import AppConnectionDetail from '$lib/features/apps/AppConnectionDetail.svelte';
   import McpSection from '$lib/features/settings/McpSection.svelte';
   import BrowserProfilesSection from '$lib/features/settings/BrowserProfilesSection.svelte';
+  import EnvironmentSection from '$lib/features/settings/EnvironmentSection.svelte';
   import DefaultModelsCard from './DefaultModelsCard.svelte';
   import BotModelCard from './BotModelCard.svelte';
   import BotConfigCard from './BotConfigCard.svelte';
@@ -211,6 +212,8 @@
   <McpSection embedded before={expected} {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'browser-profiles'}
   <BrowserProfilesSection embedded {prefill} onSaved={() => onSaved()} />
+{:else if item.card === 'environment-toolchains'}
+  <EnvironmentSection embedded {prefill} onSaved={() => onSaved()} />
 {:else if item.card === 'project-settings' && project !== null}
   <ProjectSettingsDialog
     embedded

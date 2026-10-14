@@ -300,8 +300,24 @@ describe('effectiveMode: individual rules', () => {
       acceptValues: false,
       rules: [],
     });
+    const toolchains = item('environment.toolchains');
+    expect(toolchains.card).toBe('environment-toolchains');
+    expect(toolchains.fields).toEqual([]);
+    expect(toolchains.write.wideningMode).toBeUndefined();
+    expect(effectiveMode(toolchains, ctx())).toMatchObject({
+      mode: 'user-only',
+      acceptValues: false,
+      rules: [],
+    });
     const sandbox = item('environment.sandbox');
+    expect(sandbox.card).toBeNull();
     expect(effectiveMode(sandbox, ctx())).toMatchObject({
+      mode: 'link',
+      acceptValues: false,
+      rules: ['no-card'],
+    });
+    expect(item('environment.allowlist').card).toBeNull();
+    expect(effectiveMode(item('environment.allowlist'), ctx())).toMatchObject({
       mode: 'link',
       acceptValues: false,
       rules: ['no-card'],

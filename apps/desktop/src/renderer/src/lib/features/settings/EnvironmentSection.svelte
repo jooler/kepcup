@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { EnvInstall } from '@kepcup/shared';
+  import type { EnvInstall, SettingValues } from '@kepcup/shared';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { environmentStore } from '$lib/stores/environment.svelte';
@@ -13,6 +13,25 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
+
+  /**
+   * 环境页的工具链：已安装列表、重新检测、失败项重装、卸载确认。
+   * `embedded`：对话内设置卡只露出列表、重新检测、失败项重装。卸载是破坏性操作，
+   * 留在设置页。安装仍走原来的环境审批，卡片里不另做安装表单。
+   * user-only 没有预填，`prefill` 收下但不用来填任何东西。重新检测或重装成功后 `onSaved`。
+   */
+  let {
+    embedded = false,
+    prefill: _prefill = null,
+    onSaved,
+  }: {
+    /** 对话内设置卡。设置页不传。 */
+    embedded?: boolean;
+    /** 空白卡不采用。保留参数以对齐其它嵌入组件的调用形状。 */
+    prefill?: SettingValues | null;
+    /** 重新检测或重装成功后通知设置卡结卡。 */
+    onSaved?: () => void;
+  } = $props();
 
   let confirmRemove = $state<EnvInstall | null>(null);
   let removeDialogOpen = $state(false);
@@ -54,6 +73,7 @@
     try {
       await environmentStore.recheck();
       toast.success(t('settings.envRecheckDone'));
+      if (embedded) onSaved?.();
     } catch {
       toast.error(t('settings.envActionFailed'));
     } finally {
@@ -80,15 +100,21 @@
     try {
       await environmentStore.reinstall(install.id);
       toast.success(t('settings.envReinstallStarted'));
+      if (embedded) onSaved?.();
     } catch {
       toast.error(t('settings.envActionFailed'));
     }
   }
 </script>
 
-<section class="space-y-3" data-testid="settings-environment">
-  <h3 class="text-sm font-medium">{t('settings.envSection')}</h3>
-  <p class="text-xs text-muted-foreground">{t('settings.envNote')}</p>
+<section
+  class="space-y-3"
+  data-testid={embedded ? 'environment-toolchains-embedded' : 'settings-environment'}
+>
+  {#if !embedded}
+    <h3 class="text-sm font-medium">{t('settings.envSection')}</h3>
+    <p class="text-xs text-muted-foreground">{t('settings.envNote')}</p>
+  {/if}
 
   {#if environmentStore.installs.length === 0 && environmentStore.system.length === 0}
     <p class="text-xs text-muted-foreground" data-testid="environment-empty">
@@ -111,7 +137,7 @@
                   {t('settings.envReinstall')}
                 </Button>
               {/if}
-              {#if install.status === 'installed' || install.status === 'failed'}
+              {#if !embedded && (install.status === 'installed' || install.status === 'failed')}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -152,6 +178,7 @@
   </div>
 </section>
 
+{#if !embedded}
 <Dialog bind:open={removeDialogOpen}>
   <DialogContent data-testid="environment-remove-dialog">
     <DialogHeader>
@@ -166,3 +193,4 @@
     </DialogFooter>
   </DialogContent>
 </Dialog>
+{/if}

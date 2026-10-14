@@ -1915,6 +1915,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           skills.disable(botId, name);
         },
       },
+      environment: {
+        listInstalls: () => environment.listInstalls(),
+        systemStatuses: () => environment.systemStatuses(),
+      },
       taint,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wake: (input) =>

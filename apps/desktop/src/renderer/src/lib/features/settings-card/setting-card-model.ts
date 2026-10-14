@@ -57,7 +57,8 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
  * OAuth 绑定变化做 `reconcileServers`，写之后 `mcpRevocationsBetween` 调 `revokeMcp`）；
  * 写锁里直接 `settings.update` 会丢掉这两段。共享浏览器资料的新建由组件调用
  * `browserProfiles.create`（服务读当前列表再追加一条）；写锁里整表替换会丢掉这段，也可能
- * 覆盖刚建的另一条资料。
+ * 覆盖刚建的另一条资料。工具链的重新检测和失败项重装也会 `onSaved`，但空白卡仍保留
+ * 「我已设置好」，所以不放进这个集合。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'group-members',

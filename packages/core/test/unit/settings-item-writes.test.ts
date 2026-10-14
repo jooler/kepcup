@@ -16,6 +16,7 @@ function item(id: string) {
 function harness(
   patch: Partial<Settings> = {},
   runtime: Partial<Bot['profile']['runtime']> = {},
+  environment?: AdapterDeps['environment'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -93,6 +94,7 @@ function harness(
         skills.disabled.push(name);
       },
     },
+    ...(environment !== undefined ? { environment } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -502,5 +504,72 @@ describe('browser shared profiles', () => {
     expect(overview.summary).toBe('有 2 份共享资料');
     expect(overview.values).toBeNull();
     expect(JSON.stringify(overview)).not.toContain('bpf_');
+  });
+});
+
+describe('environment toolchains read adapter', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+  const rows = [
+    { id: 'env_row_installed', status: 'installed' },
+    { id: 'env_row_failed', status: 'failed' },
+    { id: 'env_row_installing', status: 'installing' },
+    { id: 'env_row_removed', status: 'removed' },
+  ];
+  const system = [
+    { item: 'git', available: true },
+    { item: 'missing-git', available: false },
+  ];
+
+  it('counts installed and failed-or-missing, keeps values null, and omits install ids', () => {
+    const { adapters } = harness({}, {}, {
+      listInstalls: () => rows,
+      systemStatuses: () => system,
+    });
+    const adapter = adapters(item('environment.toolchains'));
+    const snapshot = adapter.read(item('environment.toolchains'), target);
+    expect(adapter.write).toBeUndefined();
+    expect(snapshot.values).toBeNull();
+    expect(snapshot.status).toBe('partial');
+    expect(snapshot.summary).toBe('已安装 2 项，失败或缺失 2 项');
+    const encoded = JSON.stringify(snapshot);
+    expect(encoded).not.toContain('env_row_');
+    expect(encoded).not.toContain('missing-git');
+  });
+
+  it('is configured only when nothing failed or is missing', () => {
+    const healthy = harness({}, {}, {
+      listInstalls: () => [{ id: 'env_row_ok', status: 'installed' }],
+      systemStatuses: () => [{ available: true }],
+    });
+    expect(healthy.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+      status: 'configured',
+      values: null,
+      summary: '已安装 2 项，失败或缺失 0 项',
+    });
+    const empty = harness({}, {}, { listInstalls: () => [], systemStatuses: () => [] });
+    expect(empty.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+      status: 'configured',
+      values: null,
+      summary: '已安装 0 项，失败或缺失 0 项',
+    });
+    const broken = harness({}, {}, {
+      listInstalls: () => [{ id: 'env_row_bad', status: 'failed' }],
+      systemStatuses: () => [{ available: false }],
+    });
+    expect(broken.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+      status: 'unconfigured',
+      values: null,
+      summary: '已安装 0 项，失败或缺失 2 项',
+    });
+  });
+
+  it('stays unconfigured when the environment service is not wired', () => {
+    const { adapters } = harness();
+    expect(adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toEqual({
+      status: 'unconfigured',
+      values: null,
+      secrets: {},
+      summary: '还看不到工具链状态',
+    });
   });
 });

@@ -135,6 +135,14 @@ export interface AdapterDeps {
     enable(botId: string, name: string): void;
     disable(botId: string, name: string): void;
   };
+  /**
+   * 工具链安装行与系统项检测（只读概要）。写入留在环境页和原来的安装审批；
+   * 适配器只数状态，不把安装记录 id 放进快照。
+   */
+  environment?: {
+    listInstalls(): ReadonlyArray<{ status: string }>;
+    systemStatuses(): ReadonlyArray<{ available: boolean }>;
+  };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
 }
@@ -1349,6 +1357,35 @@ function mcpServersAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * 工具链只读概要。目录没有字段，快照 `values` 保持 null，也不放安装记录 id。
+ * 已安装：`status === 'installed'` 的安装行，加上检测为可用的系统项。
+ * 失败或缺失：`status === 'failed'` 的安装行，加上检测为不可用的系统项。
+ * 正在安装、已卸载不计入。没有失败或缺失时 `configured`（「我已设置好」才能通过）；
+ * 有问题时，已经有安装为 `partial`，一项都没有为 `unconfigured`。
+ * 不提供 write：安装仍走环境审批，重新检测和重装由组件自己调原来的 RPC。
+ */
+function environmentToolchainsAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const environment = deps.environment;
+      if (environment === undefined) return snapshot('unconfigured', null, '还看不到工具链状态');
+      let installed = 0;
+      let problems = 0;
+      for (const row of environment.listInstalls()) {
+        if (row.status === 'installed') installed += 1;
+        else if (row.status === 'failed') problems += 1;
+      }
+      for (const system of environment.systemStatuses()) {
+        if (system.available) installed += 1;
+        else problems += 1;
+      }
+      const status = problems > 0 ? (installed > 0 ? 'partial' : 'unconfigured') : 'configured';
+      return snapshot(status, null, `已安装 ${installed} 项，失败或缺失 ${problems} 项`);
+    },
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -1410,6 +1447,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'background.budget': budgetAdapter(deps),
     'unattended.enable': unattendedAdapter(deps, 'enable'),
     'unattended.disable': unattendedAdapter(deps, 'disable'),
+    'environment.toolchains': environmentToolchainsAdapter(deps),
     'developer.mode': readOnlyAdapter(() => {
       const enabled = deps.settings.get().apps.developerMode;
       return snapshot('configured', null, enabled ? '已开启' : '未开启');
