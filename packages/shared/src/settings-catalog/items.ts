@@ -530,7 +530,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
         options: 'static',
         staticOptions: [
           { value: 'read_only', label: '只读' },
-          { value: 'ask', label: '逐次询问' },
+          { value: 'ask', label: '编辑前确认（沙箱内命令自动）' },
           { value: 'workspace', label: '工作区内自动' },
         ],
       }),
