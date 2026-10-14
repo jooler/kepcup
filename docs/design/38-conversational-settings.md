@@ -2,9 +2,8 @@
 
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
-**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §11；P2（旧 7 个 kind 收拢）未开工。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
+**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §11；P2（旧 7 个 kind 收拢）未开工。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
 
-> 编号说明：本篇文件号 38 与决策号 D89 是写作时（main 上最大为 37 / D88）取的下一个空号；与并行分支合并时以最后一个空号为准，同步改本篇标题、README 索引与决策行。
 
 相关：D58 对话内设置引导（[18](18-inline-setup.md)，失败续跑链与 7 个旧 kind）、D75 对话轮与任务分治（[02](02-execution.md)、[30](30-supervisor-and-tasks.md)，对话轮只读、异步托管动作由宿主确定性执行）、D80 定时提议卡（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)，消息流里的提议卡先例）、D73 连接应用（[29](29-connected-apps.md)，污点）、D72 外部智能体能力包（[28](28-external-agents-acp.md)）、D88 盘点 → 提议（[37](37-bot-asset-handover.md)）。工具目录见 [dev/04](../dev/04-agent-runtime.md)。
 
@@ -73,8 +72,8 @@
 `packages/core/src/settings/adapters.ts`：每个条目一个适配器 `{read, options?, normalize?, write?, needsSensitiveInput?, valuesWiden?}`，做法同 D88 资产适配器。
 
 - **读**返回脱敏快照 `{status: configured|unconfigured|partial|unknown|readonly, values, secrets, summary}`；永不返回密钥、本机路径、日志、画像原文，用户自填名称一律过 `sanitizeDisplayText`；渲染层条目回「状态未知（只在本机界面可见）」。
-- **写**调用设置页用的同一批服务，只改本条目字段（`capabilityModels` / `webSearch` / `agents` / `backgroundTasks` / `apps` / `mcpServers` 等整对象一律在**最新**设置上按字段合并，不发整对象）。写必须是同步的；需要 await 的收尾（中断任务、关浏览器页面、收回授权）以 `ItemWriteEffects.afterUnlock` 返回，宿主在释放写锁之后执行并补发 `settings.changed`。有写实现的条目以 `adapters.ts` 里带 `write` 的适配器为准（todo §8.2 有清单）。
-- **Bot 配置的写入只有一条路径**：所有 Bot runtime 条目（模型、浏览器资料、网络、MCP、连接、任务引擎）经 `deps.botProfiles.apply`，生产装配为 `settings/bot-profile-update.ts` 的 `applyBotProfileUpdate`——`bots.update` RPC 用的是同一个函数：写之前 `assertAgentSelectable`（换外部智能体时的实验开关与目录）与 `browserProfiles.assertSelectable`，写后发 `bot.updated`，锁外 `browserProfiles.onBotProfileChanged`（有效资料变了 → 中断用过浏览器的任务、关页面）与 `revokeMcp`（从 Bot 拿掉的 MCP 服务 / 连接 → 中断它的任务）。适配器的依赖里没有 `bots.update`，绕不过去。
+- **写**调用设置页用的同一批服务，只改本条目字段（`capabilityModels` / `webSearch` / `agents` / `backgroundTasks` / `apps` / `mcpServers` 等整对象一律在**最新**设置上按字段合并，不发整对象）。写必须是同步的；需要 await 的收尾（中断任务、关浏览器页面、收回授权）以 `ItemWriteEffects.afterUnlock` 返回，宿主在释放写锁之后执行并补发 `settings.changed`；只要写已经发生，即使写之后的读 / 标卡抛错，收尾也在 `finally` 里照样执行，失败只记日志。有写实现的条目以 `adapters.ts` 里带 `write` 的适配器为准（todo §8.2 有清单）。
+- **Bot 配置的写入只有一条路径**：所有 Bot runtime 条目（模型、浏览器资料、网络、MCP、连接、任务引擎）经 `deps.botProfiles.apply`，生产装配为 `settings/bot-profile-update.ts` 的 `applyBotProfileUpdate`——`bots.update` RPC 用的是同一个函数：写之前 `assertAgentSelectable`（换外部智能体时的实验开关与目录）与 `browserProfiles.assertSelectable`，写后发 `bot.updated`，锁外依次 `revokeMcp`（从 Bot 拿掉的 MCP 服务、连接 → 中断它的任务，排在最前）与 `browserProfiles.onBotProfileChanged`（有效资料变了 → 中断用过浏览器的任务、关页面）；每一步各自兜错、互不影响，`settle()` 不抛，返回失败说明由调用方记日志——关页面失败不会让授权留在 Bot 手里。适配器的依赖里没有 `bots.update`，绕不过去。
 - **`values` 形状校验**：`settings_change` 与 `settings.items.apply` 在 core 写入前都过 `settingValuesProblems`（shared `validate.ts`）：只认目录字段，按字段类型核对（toggle 布尔、number 有限数、text / model 字符串 ≤500、多值 ≤200 条），静态选项以外的值拒绝；语义校验（厂商 id 是否已接入、并发 1–16、智能体在目录里、MCP 服务存在……）在各适配器的 `normalize`，写锁里再核对一次。
 - **Bot 的提议只能「加」的条目**：适配器可带 `proposal`，只作用于 `settings_change` 的建议值（用户在卡上保存不经过它）。`group.members` 的建议值 = 现有成员 ∪ Bot 给的，Bot 不能借预填移出成员；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选。
 - **值格式**（`values` 的键 = 字段名）：对话模型字段为 `{model: "厂商/模型id"}`（`''` = 跟随默认，仅限 Bot 模型与组件审查模型；写入前补全 / 校验厂商前缀并核对该厂商下确有此模型）；能力模型 `{provider, model: "厂商/模型id"}`（厂商须支持该能力）；联网 `{provider}`；开关类 `{enabled: boolean}`；预算 `{tokens: 非负整数, 0 = 不限}`；后台任务 `{agentEnabled, agent}`；外部智能体 `{agent, enabled}`；Bot 网络策略 `{policy, allowlist}`（白名单只在 `allowlist` 策略下写入）；Bot 技能 `{skill, enabled}`（快照另带 `scope`）；MCP 服务 `{server, enabled}`；群成员 `{bots}`。
@@ -83,7 +82,7 @@
 
 ### 1.5 写锁、条目级 CAS 与 `settings.changed`
 
-- **整份快照保存的三方合并（审查修复）**：`settings.update` / `bots.update` 增可选 `base`（补丁出发时的快照）。给了就由 core 在写锁里用 `mergeThreeWay`（shared `merge.ts`）与最新值合并：表单没改的字段保留最新值；只有表单改了用表单的值；两边都是对象逐键递归；两边都是按 id 寻址的数组（`mcpServers`、`customProviders`……）按条合并（别处新增保留、别处删除而表单没碰的不复活）；两边都改了同一叶子以这次保存为准。`settingsStore.update` 默认带补丁顶层键的本地快照，右栏 Profile 保存带最近保存的版本。不带 `base` 的调用方行为不变（整体覆盖）。选它而不是乐观并发版本号：设置页和右栏都是自动保存，版本冲突会频繁报错，而三方合并只在两边改同一字段时才需要取舍。
+- **整份快照保存的三方合并（审查修复）**：`settings.update` / `bots.update` 增可选 `base`（补丁出发时的快照）。给了就由 core 在写锁里用 `mergeThreeWay`（shared `merge.ts`）与最新值合并：表单没改的字段保留最新值；只有表单改了用表单的值；两边都是对象逐键递归；两边都是按 id 寻址的数组（`mcpServers`、`customProviders`……）按条合并（别处新增保留、别处删除而表单没碰的不复活）；两边都改了同一叶子以这次保存为准。只读写自有键（以用户输入为键的记录里 `__proto__` / `constructor` 也按普通键合并）。`base` 必须是表单**出发时**的快照：持有长期草稿的编辑器要自己记打开时的快照——MCP 编辑框打开时记下服务快照，保存时以当前服务为底只叠真改过的字段，启用 / 免审批 / 逐工具策略（放宽权限，宿主按 user-only 把守）永远取当前值（`editedServerForSave`），开着编辑框时 Bot 的「停用」卡不会被一次改名改回去。`settingsStore.update` 默认带补丁顶层键的本地快照，右栏 Profile 保存带最近保存的版本。不带 `base` 的调用方行为不变（整体覆盖）。选它而不是乐观并发版本号：设置页和右栏都是自动保存，版本冲突会频繁报错，而三方合并只在两边改同一字段时才需要取舍。
 - `SettingsWriteLock`（`settings/write-lock.ts`）是进程内 promise 链互斥。设置页原有的 `settings.update` RPC 在读旧值与写回之间有 await，所以**两条写路径（设置页保存、目录适配器写入 / 撤销）都在这把锁里串行**，否则适配器 CAS 可能读到旧值又被 RPC 拿旧快照写回的顶层键覆盖。锁不可重入。
 - 写入：锁内读当前值 → `expected` 非 null 时逐键比对**本条目的非敏感字段**，不一致返回 `conflict`（带当前值），一致才与当前值合并写入 → 再读 → 成功后发 `settings.changed`。
 - `settings.changed{itemIds}`（非空）由：`settings.items.apply`、Bot direct 修改与撤销、**设置页原有保存路径**（`settings.update` 按前后差异 `changedSettingsPaths` → `itemIdsForSettingsPaths`；`bots.update` 按 runtime 差异 → `itemIdsForBotPaths`；`providers.setKey` / `websearch.setKey` / `embedding.configure` / `mcp.*` / `agents.*` / 服务类 RPC 按 `itemIdsForMethod` 包装补发）发出。桌面端 `settingsStore` 订阅后重新拉快照，打开着的设置弹框随之刷新，link 卡据此自标 applied。
@@ -155,7 +154,7 @@
 |---|---|
 | `settings.items.apply{itemId, values, expected, target?, messageId?}` | 卡片 / 设置页按条目保存（条目级 CAS）。`values` 来自用户亲手填写，**可含敏感字段**，按适配器分发到 secrets，永不回显。返回 `applied{before, values}` 或 `conflict{current}`；带 `messageId` 时成功后卡片标 applied 并唤醒 Bot |
 | `settings.cards.dismiss{messageId}` | 「不用了」：标 dismissed，唤醒 Bot 一次；已落定的卡原样返回状态 |
-| `settings.cards.complete{messageId, auto?}` | 「我已设置好」（link 卡 / 渲染层条目 / 内嵌组件自己保存后）：core 能用适配器核对的核对一次——与建议值一致、**或已配置好、或本条目相对出卡时变过**（值不同；值为 null 的概要类条目看概要是否不同且现在不是未配置 / 部分可用）都算完成，卡上记**实际值**并唤醒一次；`verified: false` 保持 pending 并提示，`null` 无法核对（渲染层 / 只读 / 状态未知）按用户所说标 applied。`auto: true`：渲染层在卡片挂载时（打开对话）对待处理的 link / user-only / form 卡自动核对一次，只认「变过」，无法核对或没变都保持 pending、不唤醒；每张卡本会话只请求一次，core 侧同一张卡 30 秒限频 |
+| `settings.cards.complete{messageId, auto?}` | 「我已设置好」（link 卡 / 渲染层条目 / 内嵌组件自己保存后）：core 能用适配器核对的核对一次——与建议值一致、**或已配置好、或本条目相对出卡时变过**（值不同；值为 null 的概要类条目看概要是否不同且现在不是未配置 / 部分可用）都算完成，卡上记**实际值**并唤醒一次；`verified: false` 保持 pending 并提示，`null` 无法核对（渲染层 / 只读 / 状态未知）按用户所说标 applied。`auto: true`：渲染层在卡片挂载时（打开对话）对待处理的 link / user-only / form 卡自动核对一次，要证明卡上要的事做成了——有建议值时当前值满足建议值；没有建议值的放宽类空白卡（user-only）只认放宽方向的变化（`valuesWiden`），别处的反向收紧不算；其余卡变过即可；无法核对或不满足都保持 pending、不唤醒；每张卡本会话只请求一次，core 侧同一张卡 30 秒限频 |
 | `settings.cards.undo{messageId}` | 回执卡撤销：用卡上的旧值经同一套 CAS 写回，当前值已不是回执上的新值 → `conflict` 不覆盖；成功标 `reverted`，不唤醒 |
 | 事件 `settings.changed{itemIds}` | 见 §1.5 |
 
@@ -253,10 +252,10 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 - **`bot.network`**：给出任何一个现在没有的域名都算放宽（与策略无关）→ user-only；策略不是白名单时不存卡上看不见的域名。
 - **`group.members`**：Bot 的提议只能加人（§1.4 `proposal`）；卡片把「将加入 / 将移出」分开列，移出只来自用户亲手取消勾选；用户的勾选按 Bot 记，卡片挂着时别处新拉进群的 Bot 不会被移出。
 - **`mcp.servers` 改为宿主写**：锁内读最新列表、CAS 比对 `enabled`、只改这一个服务，锁外 `mcpRevocationsBetween`；卡片组件经 `settings.items.apply`，不再从渲染层缓存整表提交。启停不改 URL / 认证方式，不需要 `reconcileServers`。
-- **仍由组件调用原 RPC 保存的条目**（都是条目级操作，不是整表快照）：`connections.tool-policy`（`setToolPolicy` 同步改一行）、`browser.shared-profiles`（`create` 读当前列表再追加）、`group.members`（`addMembers` / `removeMember` 按 Bot 增删）、项目两项（user-only，风险确认在组件里），以及环境三项的重新检测 / 重装 / 白名单增改。理由见 DEVIATIONS 的本轮条目。
+- **仍由组件调用原 RPC 保存的条目**（都是条目级操作，不是整表快照）：`connections.tool-policy`（`setToolPolicy` 同步改一行）、`browser.shared-profiles`（`create` 读当前列表再追加）、`group.members`（`addMembers` / `removeMember` 按 Bot 增删）、项目两项（user-only，风险确认在组件里），以及环境三项的重新检测 / 重装 / 白名单增改。理由见 DEVIATIONS DEV-029。
 - **`environment.allowlist` 状态恒为 `unknown`**：内置条目默认就是启用的，「有启用的条目」说明不了 Bot 要的那条命令能否免审批；因此 `required:true` 不再被「已配置」直接放行，「我已设置好」按用户所说结卡，自动核对只在名单变过时结卡。
 - **`project.protect-rules` 读取脱敏**：项目目录下 → `<project>/…`、家目录下 → `~/…`、其余绝对路径只留最后一段，每条 ≤60 字、每类最多列 20 条，条数在概要里。
 - **失败续跑卡带 `before`**：`setupRequirement` 的 `kind:'setting'` 增 `before`（出卡时快照），`SettingSetupBody` 把它作为 `expected` 交给组件，靠它定位目标的组件（逐工具策略、MCP 服务）在 required:true 下不再显示「缺目标」。
 - **整份快照保存的三方合并**（§1.5）与 **`values` 形状校验**（§1.4），界面语言只认已注册的语言（目录静态选项与 i18n `localeOptions` 一致，desktop 单测核对）。
 - **打开对话时核对待处理卡**（§4.3 `auto`）。
-
+- **集成复审跟进**：MCP 编辑框只保存真改过的字段（启用 / 免审批 / 逐工具策略取当前值），不再借改名把 Bot 刚停用的服务改回启用；写后收尾收回授权排在最前、逐步兜错、在 `finally` 里执行；三方合并只读写自有键；`settings.cards.complete{auto}` 只在卡上要的事做成时结卡（满足建议值 / 放宽卡只认放宽方向）。
