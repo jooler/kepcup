@@ -10,6 +10,7 @@ import {
 import {
   capabilityOfItem,
   capabilityPrefill,
+  COMPONENT_SAVE_CARD_KEYS,
   embeddedCardKey,
   formatSettingValue,
   hostApplies,
@@ -164,6 +165,7 @@ describe('预填过滤', () => {
     expect(settingCardPrefill(item('browser.shared-profiles'), 'confirm', profileName)).toEqual(
       profileName,
     );
+    expect(settingCardPrefill(item('environment.toolchains'), 'user-only', { item: 'python' })).toBeNull();
   });
 
   it('能力模型预填：厂商须已适配该能力；厂商/模型写法拆开', () => {
@@ -231,6 +233,9 @@ describe('卡片形态的分发', () => {
     expect(embeddedCardKey(item('capability.image'), 'link', always)).toBeNull();
     expect(embeddedCardKey(item('models.default-main'), 'receipt', always)).toBeNull();
     expect(embeddedCardKey(item('environment.sandbox'), 'confirm', always)).toBeNull();
+    expect(embeddedCardKey(item('environment.toolchains'), 'user-only', always)).toBe(
+      'environment-toolchains',
+    );
     expect(embeddedCardKey(item('general.theme'), 'confirm', always)).toBe('appearance');
     expect(embeddedCardKey(item('capability.image'), 'form', () => false)).toBeNull();
   });
@@ -256,6 +261,8 @@ describe('卡片形态的分发', () => {
       false,
     );
     expect(hostApplies(item('browser.shared-profiles'), 'confirm', { name: '工作' })).toBe(false);
+    expect(hostApplies(item('environment.toolchains'), 'user-only', null)).toBe(false);
+    expect(COMPONENT_SAVE_CARD_KEYS.has('environment-toolchains')).toBe(false);
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {

@@ -80,7 +80,12 @@ function makeBot(id: string, overrides: Partial<Bot['profile']['runtime']> = {})
   } as unknown as Bot;
 }
 
-function makeRig(extras: { appConnections?: AdapterDeps['appConnections'] } = {}): Rig {
+function makeRig(
+  extras: {
+    appConnections?: AdapterDeps['appConnections'];
+    environment?: AdapterDeps['environment'];
+  } = {},
+): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
   mkdirSync(home, { recursive: true });
   const db = openDatabase({
@@ -186,6 +191,7 @@ function makeRig(extras: { appConnections?: AdapterDeps['appConnections'] } = {}
     publish: (event, payload) => void published.push({ event, payload }),
     wake: (input) => void wakes.push(input),
     ...(extras.appConnections !== undefined ? { appConnections: extras.appConnections } : {}),
+    ...(extras.environment !== undefined ? { environment: extras.environment } : {}),
   });
   return {
     db,
@@ -800,6 +806,58 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
     expect(cardOf(rig, id).applied).toEqual({ name: '私人' });
     expect(JSON.stringify(cardOf(rig, id).applied)).not.toContain('bpf_');
+  });
+
+  it('toolchains: a blank user-only card; complete passes only when nothing failed or is missing', async () => {
+    const installs = [
+      { id: 'env_row_py', status: 'installed' },
+      { id: 'env_row_node', status: 'failed' },
+    ];
+    const system = [{ available: false }];
+    const rig = makeRig({
+      environment: {
+        listInstalls: () => installs,
+        systemStatuses: () => system,
+      },
+    });
+    const rejected = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.toolchains',
+      values: { item: 'python' },
+      reason: '装一下 Python',
+    });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.content).toContain('没有字段');
+    expect(cards(rig)).toHaveLength(0);
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'environment.toolchains',
+      reason: '看一下工具链',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.content).toContain('空白卡');
+    const id = messageIdIn(result.content);
+    const card = cardOf(rig, id);
+    expect(card).toMatchObject({ mode: 'user-only', proposed: null, state: 'pending', before: null });
+    expect(JSON.stringify(card)).not.toContain('env_row_');
+    expect(JSON.stringify(card)).not.toContain('python');
+    const read = rig.host.forRun(runCtx(rig)).read('environment.toolchains', undefined);
+    expect(read.content).toContain('已安装 1 项，失败或缺失 2 项');
+    expect(read.content).toContain('你给的 values 不会被采用');
+    expect(read.content).not.toContain('env_row_');
+    expect(rig.host.completeCard(id)).toEqual({ state: 'pending', verified: false });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'environment.toolchains',
+        values: {},
+        expected: null,
+        messageId: id,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+    expect(cardOf(rig, id).state).toBe('pending');
+    installs.splice(1, 1);
+    system[0] = { available: true };
+    expect(rig.host.completeCard(id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, id).applied).toBeUndefined();
+    expect(JSON.stringify(cardOf(rig, id))).not.toContain('env_row_');
   });
 
   it('user-only: a blank card, the bot values are not used', async () => {

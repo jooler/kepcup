@@ -198,6 +198,8 @@ export const CARD_KEYS = [
   'mcp-servers',
   /** 新建共享浏览器资料（`BrowserProfilesSection` 的名称和「新建」；重命名 / 清除 / 删除留在设置页）。 */
   'browser-profiles',
+  /** 工具链（`EnvironmentSection`：已安装列表、重新检测、失败项重装；卸载留在设置页）。 */
+  'environment-toolchains',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

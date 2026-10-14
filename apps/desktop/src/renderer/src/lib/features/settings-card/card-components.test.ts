@@ -92,6 +92,15 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('browser.shared-profiles'), context({ botId: null }))).toBe(true);
   });
 
+  it('工具链不靠预填也能嵌；沙箱和白名单仍是跳转卡', () => {
+    expect(cardEmbeddable(item('environment.toolchains'), context())).toBe(true);
+    expect(
+      cardEmbeddable(item('environment.toolchains'), context({ prefill: null, botId: null })),
+    ).toBe(true);
+    expect(cardEmbeddable(item('environment.sandbox'), context())).toBe(false);
+    expect(cardEmbeddable(item('environment.allowlist'), context())).toBe(false);
+  });
+
   it('连接应用要知道连哪个（预填 app）', () => {
     expect(cardEmbeddable(item('connections.connect'), context())).toBe(false);
     expect(

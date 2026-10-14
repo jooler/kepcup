@@ -862,7 +862,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['工具链', '环境', 'Python', 'Node', '安装'],
     scope: 'global',
     write: write('user-only', { widensPermission: true }),
-    card: null,
+    card: 'environment-toolchains',
     deepLink: { surface: 'settings', section: 'environment', anchor: 'environment' },
     store: { kind: 'service', methods: ['environment.reinstall'] },
   }),
