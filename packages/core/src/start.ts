@@ -1681,6 +1681,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const agentPermissions = new AgentPermissionBridge({
       paths,
       taint,
+      taintGuardEnabled: () => settings.get().apps.taintGuard,
       gateway,
       approvals,
       grants,
