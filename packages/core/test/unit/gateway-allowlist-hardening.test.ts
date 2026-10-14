@@ -10,7 +10,7 @@ import { ToolGateway, isGitControlPath, type GatewayDeps } from '../../src/gatew
 import { ProjectRuntime } from '../../src/project/service.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { AllowlistService } from '../../src/permissions/allowlist.js';
-import { riskyGitConfigKeys } from '../../src/permissions/git-config-risk.js';
+import { resolveExecutable, riskyGitConfigKeys } from '../../src/permissions/git-config-risk.js';
 import { exemptCommandEnv } from '../../src/sandbox/confirm-executor.js';
 import { UnavailableSandboxBackend } from '../../src/sandbox/types.js';
 import type { RunIdentity } from '../../src/agent/types.js';
@@ -178,21 +178,110 @@ describe.skipIf(!hasGit)('allowlisted git obeys no program-running repository co
     expect(existsSync(marker)).toBe(false);
   });
 
-  it('textconv / filter drivers and includes in the local config also make git ask', () => {
+  it('textconv / filter drivers and includes make git ask; hook / editor / pager settings do not', () => {
     const scoped = (entries: Array<[string, string]>) =>
       entries.map(([scope, kv]) => `${scope}\0${kv}`).join('\0') + '\0';
     expect(
       riskyGitConfigKeys(
         scoped([
-          ['global', 'core.pager\nless'],
+          ['global', 'core.fsmonitor\n/usr/bin/watchman-hook'],
           ['local', 'diff.pdf.textconv\npdftotext'],
           ['local', 'filter.lfs.clean\ngit-lfs clean'],
           ['local', 'include.path\n../x'],
           ['local', 'core.fsmonitor\nfalse'],
           ['worktree', 'core.fsmonitor\n./hook'],
+          ['local', 'gpg.program\n./sign'],
+          // Review P2 false positives: not run by read-only commands.
+          ['local', 'core.hookspath\n.husky/_'],
+          ['local', 'core.editor\nvim'],
+          ['local', 'sequence.editor\nvim'],
+          ['local', 'merge.ours.driver\ntrue'],
+          ['local', 'core.sshcommand\nssh -i x'],
+          ['local', 'core.pager\nless'],
+          ['local', 'pager.log\nless'],
         ]),
       ),
-    ).toEqual(['diff.pdf.textconv', 'filter.lfs.clean', 'include.path', 'core.fsmonitor']);
+    ).toEqual([
+      'diff.pdf.textconv',
+      'filter.lfs.clean',
+      'include.path',
+      'core.fsmonitor',
+      'gpg.program',
+    ]);
+  });
+
+  it('a husky-style core.hooksPath does not cost a card', async () => {
+    gitInit(workspace());
+    spawnSync('git', ['config', 'core.hooksPath', '.husky/_'], { cwd: workspace() });
+    const gateway = makeGateway();
+    const status = await gateway.exec(writeTask, { command: 'git status --short', network: none });
+    expect(status.exitCode).toBe(0);
+    expect(approvals).toEqual([]);
+  });
+
+  it('review P1-3: a .git pointer file to a repository outside the workspace makes git ask', async () => {
+    const privateRepo = path.join(path.dirname(home), 'private');
+    mkdirSync(privateRepo, { recursive: true });
+    gitInit(privateRepo);
+    writeFileSync(path.join(privateRepo, 'secrets.env'), 'TOKEN=s3cret\n');
+    spawnSync('git', ['add', 'secrets.env'], { cwd: privateRepo });
+    spawnSync('git', ['commit', '-q', '-m', 'secret'], { cwd: privateRepo });
+    // The Bot plants a gitdir pointer (written here directly: the file tools would ask).
+    writeFileSync(path.join(workspace(), '.git'), `gitdir: ${path.join(privateRepo, '.git')}\n`);
+    const gateway = makeGateway();
+    for (const command of ['git show HEAD:secrets.env', 'git log -p', 'git status']) {
+      await expect(gateway.exec(writeTask, { command, network: none }), command).rejects.toMatchObject({
+        code: 'APPROVAL_DENIED',
+      });
+    }
+    expect(approvals.map((a) => a.kind)).toEqual(['command', 'command', 'command']);
+  });
+
+  it('review P1-3: objects/info/alternates borrowing another repository makes git ask', async () => {
+    const privateRepo = path.join(path.dirname(home), 'private2');
+    mkdirSync(privateRepo, { recursive: true });
+    gitInit(privateRepo);
+    gitInit(workspace());
+    writeFileSync(
+      path.join(workspace(), '.git', 'objects', 'info', 'alternates'),
+      `${path.join(privateRepo, '.git', 'objects')}\n`,
+    );
+    const gateway = makeGateway();
+    await expect(
+      gateway.exec(writeTask, { command: 'git log --oneline', network: none }),
+    ).rejects.toMatchObject({ code: 'APPROVAL_DENIED' });
+    expect(approvals).toHaveLength(1);
+  });
+});
+
+describe('resolving git without the current directory (review P1-4)', () => {
+  it('searches only absolute PATH entries, with PATHEXT on win32', () => {
+    const present = new Set(['C:\\Git\\cmd\\git.exe', '/usr/bin/git', 'D:\\tools\\git.cmd']);
+    const exists = (candidate: string) => present.has(candidate);
+    expect(resolveExecutable('git', '.;bin;C:\\Git\\cmd', 'win32', { exists })).toBe(
+      'C:\\Git\\cmd\\git.exe',
+    );
+    // `\foo` (drive-relative) and relative entries are skipped.
+    expect(resolveExecutable('git', '\\tools;D:\\tools', 'win32', { exists, pathExt: '.EXE;.CMD' })).toBe(
+      'D:\\tools\\git.cmd',
+    );
+    expect(resolveExecutable('git', '', 'win32', { exists })).toBeNull();
+    expect(resolveExecutable('git', '.:node_modules/.bin:/usr/bin', 'linux', { exists })).toBe('/usr/bin/git');
+    expect(resolveExecutable('git', '.:bin', 'linux', { exists: () => true })).toBeNull();
+  });
+
+  it('the hardened env drops PATH entries inside Bot-writable roots and sets the Windows guard', () => {
+    const env = exemptCommandEnv(
+      { PATH: '/w/space/bin:/w/space:/usr/bin:/w/spaceship/bin' },
+      'linux',
+      ['/w/space'],
+    );
+    expect(env['PATH']).toBe('/usr/bin:/w/spaceship/bin');
+    expect(env['VOLTA_BYPASS']).toBe('1');
+    expect(env['NoDefaultCurrentDirectoryInExePath']).toBeUndefined();
+    const win = exemptCommandEnv({ PATH: 'C:\\W\\Space\\bin;C:\\Git\\cmd' }, 'win32', ['c:\\w\\space']);
+    expect(win['PATH']).toBe('C:\\Git\\cmd');
+    expect(win['NoDefaultCurrentDirectoryInExePath']).toBe('1');
   });
 });
 
@@ -204,7 +293,16 @@ describe('Bot writes to repository control files need a grant (#4)', () => {
     expect(isGitControlPath('/w/.git/hooks')).toBe(true);
     expect(isGitControlPath('/w/.git/info/attributes')).toBe(true);
     expect(isGitControlPath('/w/.git/modules/sub/config')).toBe(true);
+    // Review P1-3: files that re-point git at another repository.
+    expect(isGitControlPath('/w/.git')).toBe(true);
+    expect(isGitControlPath('/w/sub/.git')).toBe(true);
+    expect(isGitControlPath('/w/.git/commondir')).toBe(true);
+    expect(isGitControlPath('/w/.git/worktrees/x/gitdir')).toBe(true);
+    expect(isGitControlPath('/w/.git/objects/info/alternates')).toBe(true);
+    expect(isGitControlPath('/w/.git/modules/sub/info/attributes')).toBe(true);
+    expect(isGitControlPath('/w/.git/modules/sub/hooks/post-checkout')).toBe(true);
     expect(isGitControlPath('/w/.git/HEAD')).toBe(false);
+    expect(isGitControlPath('/w/.gitignore')).toBe(false);
     expect(isGitControlPath('/w/src/config')).toBe(false);
     expect(isGitControlPath('/w/.github/hooks/x')).toBe(false);
   });
@@ -218,6 +316,10 @@ describe('Bot writes to repository control files need a grant (#4)', () => {
     });
     expect(gateway.checkPath(writeTask, path.join(workspace(), '.git', 'hooks', 'post-checkout'), 'write'))
       .toMatchObject({ kind: 'needs_grant' });
+    expect(gateway.checkPath(writeTask, path.join(workspace(), 'sub', '.git'), 'write')).toMatchObject({
+      kind: 'needs_grant',
+      sensitive: true,
+    });
     expect(gateway.checkPath(writeTask, config, 'read').kind).toBe('allowed');
     expect(gateway.checkPath(writeTask, path.join(workspace(), 'src', 'a.ts'), 'write').kind).toBe(
       'allowed',
