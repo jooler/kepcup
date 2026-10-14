@@ -358,7 +358,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       accessLines.push(
         `沙箱状态：不可用，当前处于逐条确认模式${input.access.confirmShell ? `（shell：${input.access.confirmShell}）` : ''}。` +
           `原因：${input.access.confirmModeReason ?? '沙箱不可用'}。` +
-          '每条命令都需要用户确认后才能在沙箱外执行；白名单中的只读命令无需确认。',
+          '每条命令都需要用户确认后才能在沙箱外执行；命中白名单的命令无需确认（自定义条目在只读任务里仍不会执行，污点期间仍需确认）。',
       );
     }
     accessLines.push(grantsLine(input.access.grants));
