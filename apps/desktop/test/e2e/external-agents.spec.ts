@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
+import { createBotAndOpenChat } from './helpers/create-bot';
+
   agentTurn,
   FAKE_ACP_AGENT_BIN,
   readFakeAgentRecord,
@@ -132,18 +134,6 @@ async function enableFakeAgent(page: Page, agentId = 'fake'): Promise<void> {
   await closeSettings(page);
 }
 
-async function createBot(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
-
 async function openProfileTab(page: Page): Promise<void> {
   if (!(await page.locator('[data-testid="right-panel-tabs"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
@@ -185,7 +175,7 @@ test('settings catalog: enable the agent, background tasks; bot switches to it w
   try {
     await waitReady(page);
     await enableFakeAgent(page);
-    await createBot(page, '外援');
+    await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
 
     // 能力包：core 灰显必选；勾掉「图像生成」后工具数随之变化（自动保存）。
@@ -233,7 +223,7 @@ test('agent_tool approval card: an out-of-workspace write asks the user; approva
   try {
     await waitReady(page);
     await enableFakeAgent(page);
-    await createBot(page, '外援');
+    await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
 
     await send(page, '帮我在外面写个文件');
@@ -259,7 +249,7 @@ test('in-chat agent setup card: a disabled agent holds the message; enabling in 
   try {
     await waitReady(page);
     await enableFakeAgent(page);
-    await createBot(page, '外援');
+    await createBotAndOpenChat(page, '外援');
     await switchBotToAgent(page);
 
     // 设置页停用（有 Bot 在用 → 确认框）。
@@ -341,3 +331,4 @@ test('onboarding subscription branch: enable an agent, the butler runs on it', a
     await session.close();
   }
 });
+

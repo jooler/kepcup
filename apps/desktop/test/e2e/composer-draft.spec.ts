@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 输入框草稿的按会话缓存：文本 / @ 提及 / 引用回复 / 待发送附件随会话保留——
@@ -72,27 +73,6 @@ async function waitReady(page: Page): Promise<void> {
 }
 
 /** Creates one bot through the UI and opens its chat. */
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page
-    .locator('[data-testid="bot-create-dialog"] [data-testid="bot-personality-input"]')
-    .fill('认真可靠');
-  await page.locator('[data-testid="bot-create-save"]').click();
-  // 等 Bot 药丸标题切到新 Bot：旧会话的 chat-view 本来就在，不能作为「已切
-  // 过去」的信号。
-  await expect(page.locator('[data-testid="right-panel-toggle"]')).toContainText(name, {
-    timeout: 30_000,
-  });
-
-  // 「+」面板的自动展开是启动恢复的异步尾巴，可能落在建 Bot 之后（慢机器）；
-  // 其全屏 backdrop 会拦截后续一切点击，进入测试主体前确保它已收起。
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
 
 /** 点击侧栏里名字对应的会话条目并等输入坞头部切换过去。 */
 async function openConversation(page: Page, name: string): Promise<void> {
@@ -125,7 +105,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-      await createBotAndOpenChat(page, '画图甲');
+    await createBotAndOpenChat(page, '画图甲');
       llm.script('mock-main', [step().replyText('收到图片了')]);
 
       const imagePath = path.join(session.home, 'fixture.png');
@@ -136,7 +116,7 @@ test.describe('输入框草稿按会话缓存', () => {
       await attachImage(page, imagePath);
 
       // 切到第二个 Bot 的会话：输入框为空，输入另一份草稿。
-      await createBotAndOpenChat(page, '记录乙');
+    await createBotAndOpenChat(page, '记录乙');
       await expect(composer).toHaveText('');
       await composer.fill('乙会话的草稿');
       await expect(page.locator('[data-testid="composer-pending-attachments"]')).toHaveCount(0);
@@ -173,7 +153,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, home, llm } = session;
     try {
       await waitReady(page);
-      await createBotAndOpenChat(page, '画图丙');
+    await createBotAndOpenChat(page, '画图丙');
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.fill('重启后应该还在的草稿');
 
@@ -227,8 +207,8 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-      await createBotAndOpenChat(page, '提及甲');
-      await createBotAndOpenChat(page, '提及乙');
+    await createBotAndOpenChat(page, '提及甲');
+    await createBotAndOpenChat(page, '提及乙');
 
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.click();
@@ -263,7 +243,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page } = session;
     try {
       await waitReady(page);
-      await createBotAndOpenChat(page, '列表甲');
+    await createBotAndOpenChat(page, '列表甲');
 
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.click();
@@ -295,3 +275,4 @@ test.describe('输入框草稿按会话缓存', () => {
     }
   });
 });
+

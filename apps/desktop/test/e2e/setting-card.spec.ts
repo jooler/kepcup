@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockChatRequest, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 对话内设置卡（todo/conversational-app-setup.md §六，P0「e2e 一条：卡片 → 应用 → Bot 续答」）。
@@ -87,17 +88,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-async function createBot(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
-
 function groupSetupCard(page: Page, stepName: string) {
   return page.locator(`[data-testid="group-setup-card"][data-step="${stepName}"]`);
 }
@@ -171,7 +161,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
   try {
     await waitReady(page);
     await giveMockProviderAKey(page);
-    await createBot(page, '阿甲');
+    await createBotAndOpenChat(page, '阿甲');
 
     // --- ① 单聊、用户本人发起：默认主模型 direct → 回执卡 → 撤销 -----------------------
     llm.script('mock-main', [
@@ -209,7 +199,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
     await expect(receipt.locator('[data-testid="setting-card-undo"]')).toHaveCount(0);
 
     // --- ② 群聊：同类白名单项被收紧为 confirm → 卡上应用 → Bot 被唤醒续答 -------------------
-    await createBot(page, '阿乙');
+    await createBotAndOpenChat(page, '阿乙');
     await createGroupViaUi(page, '设置讨论组', ['阿甲', '阿乙']);
 
     llm.script('mock-main', [
@@ -261,3 +251,4 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
     await closeSession(session);
   }
 });
+

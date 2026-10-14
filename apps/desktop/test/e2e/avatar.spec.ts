@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -64,13 +65,7 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
       .click({ timeout: 15_000 })
       .catch(() => {});
 
-    await page.locator('[data-testid="new-chat-button"]').click();
-    await page.locator('[data-testid="bot-create-form"]').click();
-    await page
-      .locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]')
-      .fill('小启');
-    await page.locator('[data-testid="bot-create-save"]').click();
-    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await createBotAndOpenChat(page, '小启');
     // 右栏（Bot 详情）默认收起：经顶部药丸展开再操作。
     await page.locator('[data-testid="right-panel-toggle"]').click();
     await expect(
@@ -126,3 +121,4 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     await rm(home, { recursive: true, force: true });
   }
 });
+

@@ -41,12 +41,40 @@ async function main() {
   // 收起启动自动拉开的「+」面板
   await page.locator('[data-testid="start-chat-backdrop"]').click({ timeout: 15_000 }).catch(() => {});
 
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill('小启');
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-bio-input"]').fill('要认真可靠地完成每一件小事');
-  await page.locator('[data-testid="bot-create-save"]').click();
+  // 非访谈建 Bot（测试缝，等价原「高级新建」），再打开右栏做视觉验收。
+  await page.evaluate(async () => {
+    const rpc = window.__kepcupRpc;
+    const profile = {
+      identity: { name: '小启', bio: '要认真可靠地完成每一件小事', avatar: undefined },
+      persona: { personality: '', tone: '', style: '', values: '', sample_dialogues: '' },
+      role: { expertise: '', responsibilities: '' },
+      boundaries: [],
+      runtime: {
+        model: '',
+        light_model: '',
+        network_policy: 'open',
+        network_allowlist: [],
+        mcp_server_ids: [],
+        app_connection_ids: [],
+        browser_profile: '',
+        agent: { id: '', model: '', effort: '', permission: 'workspace', capabilities: null },
+      },
+      behavior: { proactive: true, quiet_hours: null, max_proactive_per_day: null },
+    };
+    const { bot } = await rpc('bots.create', { profile });
+    await rpc('conversations.openDirect', { botId: bot.id });
+  });
+  await page
+    .locator('[data-testid^="conversation-item-"]')
+    .filter({ has: page.locator('[data-testid="conversation-name"]', { hasText: /^小启$/ }) })
+    .first()
+    .click();
   await page.locator('[data-testid="chat-view"]').waitFor({ timeout: 15_000 });
+  const panel = page.locator('[data-testid="right-panel"]');
+  if (!(await panel.isVisible())) {
+    await page.locator('[data-testid="right-panel-toggle"]').click();
+    await panel.waitFor();
+  }
   await page.waitForTimeout(600);
   await shot('01-right-panel-new-layout');
 

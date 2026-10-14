@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 对话附件（docs/design/20-conversation-media.md，P17）：回形针上传图片 →
@@ -64,23 +65,6 @@ async function waitReady(page: Page): Promise<void> {
 }
 
 /** Creates one bot through the UI and opens its chat. */
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page
-    .locator('[data-testid="bot-create-dialog"] [data-testid="bot-personality-input"]')
-    .fill('认真可靠');
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 30_000 });
-
-  // 「+」面板的自动展开是启动恢复的异步尾巴，可能落在建 Bot 之后（慢机器）；
-  // 其全屏 backdrop 会拦截后续一切点击，进入测试主体前确保它已收起。
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
 
 /** 1x1 红色像素 PNG。 */
 const PNG_BYTES = Buffer.from(
@@ -95,7 +79,7 @@ test.describe('对话附件与媒体', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-      await createBotAndOpenChat(page, '画图甲');
+    await createBotAndOpenChat(page, '画图甲');
       llm.script('mock-main', [step().replyText('收到图片了')]);
 
       const imagePath = path.join(session.home, 'fixture.png');
@@ -139,3 +123,4 @@ test.describe('对话附件与媒体', () => {
     }
   });
 });
+

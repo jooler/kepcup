@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startFakeOAuthMcpServer, startMockLlm, step } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 本机连接（设计 29 §17，todo/local-connector-authoring.md L4）端到端——真实 Electron + 真实 core +
@@ -31,18 +32,6 @@ async function waitReady(page: Page): Promise<void> {
   if (await startBackdrop.isVisible()) {
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
   }
-}
-
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
 }
 
 async function openSettings(page: Page, section: string): Promise<void> {
@@ -301,3 +290,4 @@ test('local connectors: a cross-site authorization server gets a red warning and
     await rm(home, { recursive: true, force: true });
   }
 });
+

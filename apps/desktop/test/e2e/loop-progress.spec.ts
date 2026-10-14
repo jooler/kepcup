@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 interface Session {
   app: ElectronApplication;
@@ -54,20 +55,6 @@ async function waitReady(page: Page): Promise<void> {
 }
 
 /** Creates one bot through the UI and opens its chat. */
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page
-    .locator('[data-testid="bot-create-dialog"] [data-testid="bot-personality-input"]')
-    .fill('认真可靠');
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
-}
 
 test('loop narration: status line sits under the last message, yields to interim messages and names the running tool', async () => {
   test.setTimeout(180_000);
@@ -131,3 +118,4 @@ test('loop narration: status line sits under the last message, yields to interim
     await closeSession(session);
   }
 });
+

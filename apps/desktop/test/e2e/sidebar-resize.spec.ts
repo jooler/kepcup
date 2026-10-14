@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 左栏拖拽调宽（features/sidebar/sidebar-layout）：
@@ -56,15 +57,7 @@ async function waitReady(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="start-chat-backdrop"]')).toHaveCount(0);
 }
 
-/** 通过界面建一个 Bot 并直接进入其对话（高级新建表单）。 */
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-}
+/** 通过界面建一个 Bot 并直接进入其对话（对话式新建）。 */
 
 /** 沿右缘手柄横向拖到指定窗口 x 坐标后松手（宽度 = x - 侧栏左缘）。 */
 async function dragHandleTo(page: Page, x: number): Promise<void> {
@@ -145,3 +138,4 @@ test('sidebar drag-resize: icon mode at min width, double-click reset, persisten
     await rm(home, { recursive: true, force: true });
   }
 });
+

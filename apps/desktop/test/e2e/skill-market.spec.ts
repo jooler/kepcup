@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 扩展中心 Skills 分组（原技能市场）e2e：左栏底部「扩展中心」入口 → 弹框（默认落在 Skills）→ 点「添加」
@@ -54,18 +55,6 @@ async function waitReady(page: Page): Promise<void> {
   if (await startBackdrop.isVisible()) {
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
   }
-}
-
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
 }
 
 test('extension center / skills: sidebar entry → dialog → add installs a PUBLIC skill → Skills tab shows it active with the public badge', async () => {
@@ -163,3 +152,4 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await rm(home, { recursive: true, force: true });
   }
 });
+

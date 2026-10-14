@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -58,13 +59,7 @@ test('renders the three-column skeleton and reaches the core service', async () 
   await page.keyboard.press('Escape');
 
   // Bot 药丸在对话存在时才渲染：建一个 Bot 后检查右栏经药丸收合。
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await page
-    .locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]')
-    .fill('小架');
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await createBotAndOpenChat(page, '小架');
   // 右栏（Bot 详情）默认收起，保持界面简单：经顶部药丸展开、再收合。
   await expect(page.locator('[data-testid="right-panel"]')).toBeHidden();
   await expect(page.locator('[data-testid="panel-expand-hint"]')).toBeVisible();
@@ -87,13 +82,7 @@ test('input echo is instantaneous (P13 验收标准「按键到字符显示无�
   });
 
   // 建一个 Bot 进入对话（空态没有输入框）。
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await page
-    .locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]')
-    .fill('小延迟');
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    await createBotAndOpenChat(page, '小延迟');
 
   // 「+」面板的空态引导可能与建 Bot 竞态（bootstrap 尾巴把面板拉起来）：
   // 与上一个用例相同，进对话前确保全屏 backdrop 已收起。
@@ -153,3 +142,4 @@ test('input echo is instantaneous (P13 验收标准「按键到字符显示无�
   await app.close();
   await rm(home, { recursive: true, force: true });
 });
+

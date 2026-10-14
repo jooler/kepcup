@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, viaTask, type MockLlmServer } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * D75: conversation turns never wait on the user — an out-of-scope read fails
@@ -95,22 +96,6 @@ async function waitReady(page: Page): Promise<void> {
     // 各测试自己的既有处理（它们大多自带 try-click 收尾），不在这里硬等。
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
   }
-}
-
-async function createBotAndOpenChat(page: Page, name: string): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-
-  await page.locator('[data-testid="bot-create-form"]').click();
-  await expect(page.locator('[data-testid="bot-create-dialog"]')).toBeVisible();
-  await page.locator('[data-testid="bot-create-dialog"] [data-testid="bot-name-input"]').fill(name);
-  await page.locator('[data-testid="bot-create-save"]').click();
-  await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
-
-  // 「+」面板的自动展开是启动恢复的异步尾巴，可能落在建 Bot 之后（慢机器）；
-  // 其全屏 backdrop 会拦截后续一切点击，进入测试主体前确保它已收起。
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click();
-  await expect(backdrop).toHaveCount(0);
 }
 
 test('access approval card appears above the composer and leaves the transcript', async () => {
@@ -257,3 +242,4 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
     await closeSession(session);
   }
 });
+
