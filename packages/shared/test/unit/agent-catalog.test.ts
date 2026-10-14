@@ -238,7 +238,10 @@ describe('agent catalog', () => {
       transport: 'acp',
       tier: 'preview',
       releaseGate: 'inkcop',
-      auth: { kinds: ['anonymous'] },
+      auth: {
+        kinds: ['anonymous'],
+        note: expect.stringContaining('设置 → 服务 → ACP 智能体'),
+      },
       terms: { noticeKey: 'agents.terms.inkcop' },
       distribution: {
         system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },

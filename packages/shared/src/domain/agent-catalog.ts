@@ -524,8 +524,8 @@ const ANTIGRAVITY_AGENT_ENTRY: AgentCatalogEntry = {
 
 /**
  * InkCop（design 28 / InkCop ACP 规划 §10）：本机已装 `inkcop-acp` stdio 适配器，
- * 经通用 ACP Provider 附着已运行的 InkCop 主对话。密钥与登录态只在 InkCop 应用内；
- * 发行门禁 `inkcop` 预览期不放行（agent-release-gates.json）。
+ * 经通用 ACP Provider 附着已运行的 InkCop 主对话。密钥与登录态只在 InkCop 应用内
+ * （桥开关：InkCop「设置 → 服务 → ACP 智能体」）；发行门禁 `inkcop` 预览期不放行。
  */
 const INKCOP_AGENT_ENTRY: AgentCatalogEntry = {
   id: 'inkcop',
@@ -549,7 +549,7 @@ const INKCOP_AGENT_ENTRY: AgentCatalogEntry = {
   nativeCapabilities: {},
   auth: {
     kinds: ['anonymous'],
-    note: '请先启动并登录 InkCop；密钥不经 KepCup 注入',
+    note: '请先启动并登录 InkCop，并在 InkCop「设置 → 服务 → ACP 智能体」开启桥；密钥不经 KepCup 注入',
   },
   terms: { noticeKey: 'agents.terms.inkcop' },
   releaseGate: 'inkcop',
