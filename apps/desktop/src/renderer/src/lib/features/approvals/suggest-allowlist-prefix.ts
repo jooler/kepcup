@@ -1,7 +1,22 @@
+import { allowlistPatternRefusal, allowlistProgramKey } from '@kepcup/shared';
+
+/**
+ * Programs with a subcommand structure where `<program> <subcommand>` is the
+ * natural, specific prefix (`git status`, `pnpm test`, `cargo check`).
+ */
+const SUBCOMMAND_PROGRAMS = new Set([
+  'git', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go', 'make', 'docker', 'kubectl', 'gh',
+]);
+
 /**
  * Default command_allowlist pattern when the user picks「加入白名单」on a
- * kind===command card. Prefix match (allowlist-match entryMatches): first
- * 1–2 words of the first simple segment, editable before add.
+ * kind===command card (review P1). Entries match by PREFIX (allowlist-match
+ * entryMatches), so a short suggestion silently widens what runs without a
+ * card: the default is the FULL first simple command (before | / && / ;),
+ * shortened only to `<program> <subcommand>` for subcommand-style tools. When
+ * the result is not allowed as an entry at all (`bash -c …`, `curl …`, bare
+ * interpreters, `npm run` / `npx` …; shared `allowlistPatternRefusal`) the
+ * suggestion is empty and the card shows the reason instead.
  */
 export function suggestAllowlistPrefix(command: string): string {
   const trimmed = command.trim();
@@ -14,18 +29,25 @@ export function suggestAllowlistPrefix(command: string): string {
   const words =
     firstSegment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((w) => w.replace(/^['"]|['"]$/g, '')) ??
     [];
-  if (words.length === 0) return '';
-
   const first = words[0];
-  const second = words[1];
   if (first === undefined || first.length === 0) return '';
-  if (second === undefined || second.length === 0) return first;
+  const second = words[1];
 
-  // Flag → program only (ls -la → ls).
-  if (second.startsWith('-')) return first;
-  // Path-like → program only (cat ./a.ts → cat).
-  if (/[\\/]/.test(second) || second.includes('.') || second.startsWith('~')) return first;
+  let suggestion = words.join(' ');
+  if (
+    SUBCOMMAND_PROGRAMS.has(allowlistProgramKey(first)) &&
+    second !== undefined &&
+    /^[A-Za-z][\w:-]*$/.test(second) &&
+    allowlistPatternRefusal(`${first} ${second}`) === null
+  ) {
+    suggestion = `${first} ${second}`;
+  }
+  return allowlistPatternRefusal(suggestion) === null ? suggestion : '';
+}
 
-  // Subcommand-style (git status, pnpm test, npm run).
-  return `${first} ${second}`;
+/** Why the first command of `command` cannot become an allowlist entry (null = it can). */
+export function allowlistSuggestionRefusal(command: string): string | null {
+  const firstSegment = command.trim().split(/(?:&&|\|\||[;|])/)[0]?.trim() ?? '';
+  if (firstSegment.length === 0) return null;
+  return suggestAllowlistPrefix(command) === '' ? allowlistPatternRefusal(firstSegment) : null;
 }

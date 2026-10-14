@@ -544,7 +544,7 @@ export const zhCN = {
   'unattended.settingsSection': '无人值守模式',
   'settings.taintGuard': '污点外发保护（高级）',
   'settings.taintGuardHint':
-    'Bot 读取过连接应用的数据后 24 小时内，联网、浏览器、写入类应用工具、沙箱联网命令等外发操作每次都要确认；无人值守模式下自动批准并在 Bot 详情中汇总。默认开启，关闭会降低对提示注入的防护。',
+    'Bot 读取过连接应用的数据后 24 小时内，联网、浏览器、写入类应用工具、可联网的命令（内置只读白名单命令除外）、外部智能体的沙箱内命令与联网请求等外发操作每次都要确认；无人值守模式下自动批准并在 Bot 详情中汇总。默认开启，关闭会降低对提示注入的防护（外部智能体沙箱内的命令也不再经 KepCup 判断）。',
   'bot.egressSummary': '读取应用数据后，无人值守下已自动放行 {count} 次外发操作',
   'bot.egressSummaryRefused': '另有 {count} 次被拒绝',
   'bot.egressApproved': '已放行',
@@ -568,7 +568,7 @@ export const zhCN = {
   'unattended.summaryJump': '查看对话',
   'allowlist.settingsSection': '只读命令白名单',
   'allowlist.note':
-    '逐条确认模式下，白名单中的只读命令无需确认直接执行；严格匹配，宁可漏判不误判。',
+    '逐条确认模式（沙箱不可用）下，命中白名单的命令不再询问、直接在沙箱外执行。内置条目只有只读命令与版本探测；自定义条目不保证只读，只读任务里不会执行，读过连接应用数据的对话里仍逐条确认。严格匹配，宁可漏判不误判。',
   'allowlist.builtin': '内置',
   'allowlist.custom': '自定义',
   'allowlist.enabled': '已启用',
@@ -582,7 +582,9 @@ export const zhCN = {
   'allowlist.addFromCard': '加入白名单',
   'allowlist.addAndApprove': '添加并批准',
   'allowlist.addFromCardCancel': '取消',
-  'allowlist.addFromCardHint': '以后匹配此前缀的命令将直接放行（仍受路径范围约束）。',
+  'allowlist.addFromCardHint':
+    '以后以这个前缀开头的命令在逐条确认模式下不再询问、直接在沙箱外执行。参数里的路径须在可读范围内，但命令本身可以写入任何位置；只读任务与读过连接应用数据的对话里仍会询问。',
+  'allowlist.addFromCardRefused': '这条命令不能加入白名单：{reason}。可以只批准这一次。',
   'allowlist.addFailed': '无法加入白名单',
   'settings.sandboxNoteP03': '沙箱不可用时进入逐条确认模式：每条命令经你确认后在沙箱外执行。',
 
@@ -2069,7 +2071,7 @@ export const zhCN = {
   'contacts.agentPermission': '权限档位',
   'contacts.agentPermissionReadOnly': '只读',
   'contacts.agentPermissionWorkspace': '工作区内可写（默认）',
-  'contacts.agentPermissionAsk': '每次询问',
+  'contacts.agentPermissionAsk': '编辑前确认（沙箱内命令自动）',
   'contacts.agentCapabilities': '注入 KepCup 能力',
   'contacts.agentCapabilitiesHint':
     '勾选的能力以工具形式提供给智能体；默认不注入它自带的同类能力。',

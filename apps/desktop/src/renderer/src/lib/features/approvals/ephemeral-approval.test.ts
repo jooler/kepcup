@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { approvalKindSchema, EPHEMERAL_APPROVAL_CARD_TYPES, type Message } from '@kepcup/shared';
+import {
+  approvalKindSchema,
+  EPHEMERAL_APPROVAL_CARD_TYPES,
+  type Approval,
+  type Message,
+} from '@kepcup/shared';
 import { hiddenFromTranscript, isEphemeralApprovalCard } from './ephemeral-approval';
 
 function card(content: Record<string, unknown>, kind: Message['kind'] = 'card'): Message {
@@ -53,7 +58,7 @@ describe('isEphemeralApprovalCard', () => {
 
 describe('approval records in the transcript', () => {
   const approval = (status: string, autoApproved = false) =>
-    ({ id: 'apr_1', status, autoApproved }) as unknown as import('@kepcup/shared').Approval;
+    ({ id: 'apr_1', status, autoApproved }) as unknown as Approval;
 
   it('keeps auto-decided / egress records, hidden only while pending', () => {
     const record = card({ cardType: 'command', approvalId: 'apr_1', record: true });
