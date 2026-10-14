@@ -95,10 +95,23 @@
       mainModel === settings.defaultMainModel &&
       lightModel === settings.defaultLightModel;
     if (!unchanged) {
-      await settingsStore.update({
-        defaultMainModel: mainModel,
-        defaultLightModel: lightModel,
-      });
+      // 期望值 = 上次从 store 应用到本地的基线（P2，design 38 §11.3）：Bot 刚直改过默认模型时
+      // 这份（可能过期的）表单提交被拒，不把直改盖回去。
+      try {
+        await settingsStore.update(
+          { defaultMainModel: mainModel, defaultLightModel: lightModel },
+          {
+            expected: {
+              ...(appliedMain !== null ? { defaultMainModel: appliedMain } : {}),
+              ...(appliedLight !== null ? { defaultLightModel: appliedLight } : {}),
+            },
+          },
+        );
+      } catch (error) {
+        // 冲突（SETTINGS_CONFLICT）文案提示确认最新值后再保存；别的保存失败也不再静默。
+        toast.error(error instanceof Error ? error.message : String(error));
+        return;
+      }
     }
     if (!auto) toast.success(t('settings.saved'));
   }
