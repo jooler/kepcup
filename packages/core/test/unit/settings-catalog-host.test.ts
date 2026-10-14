@@ -3,11 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
-<<<<<<< HEAD
   AppError,
-=======
   SETTING_CARD_EVENT,
->>>>>>> 21792c7 (feat(settings): 重开对话时对 pending 的跳转卡用读适配器核对一次)
   SETTING_CARDS_PER_RUN_MAX,
   SETTING_CARD_DECLINE_WINDOW_MS,
   SETTING_RECEIPT_UNDO_WINDOW_MS,
@@ -1513,7 +1510,6 @@ const CHANGE_MAIN_ALT = {
   reason: '换模型',
 };
 
-<<<<<<< HEAD
 
 describe('settings catalog host: D89 review round 2', () => {
   function withServer(rig: Rig): void {
@@ -1968,7 +1964,7 @@ describe('settings catalog host: D89 review round 3', () => {
       expected: null,
     });
     expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
-=======
+
 describe('settings catalog host: recheck pending link cards on conversation reopen (P2)', () => {
   /** 手造一张卡消息（历史 pending 卡：出卡时条目还没有内嵌卡，mode 是 link）。 */
   function appendCard(
@@ -2047,6 +2043,5 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(cardOf(rig, readonly.id).state).toBe('pending');
     expect(cardOf(rig, confirm.id).state).toBe('pending');
     expect(rig.wakes).toHaveLength(0);
->>>>>>> 21792c7 (feat(settings): 重开对话时对 pending 的跳转卡用读适配器核对一次)
   });
 });

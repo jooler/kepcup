@@ -2227,6 +2227,7 @@ const APP_METHODS = [
   'settings.items.apply',
   'settings.cards.dismiss',
   'settings.cards.complete',
+  'settings.cards.recheck',
   'settings.cards.undo',
   'providers.list',
   'providers.setKey',
