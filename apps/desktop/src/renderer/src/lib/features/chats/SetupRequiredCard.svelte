@@ -10,28 +10,27 @@
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import ProviderSetupForm from '$lib/features/settings/ProviderSetupForm.svelte';
-  import CapabilityModelSection from '$lib/features/settings/CapabilityModelSection.svelte';
-  import WebSearchSection from '$lib/features/settings/WebSearchSection.svelte';
   import ModelSelectField from '$lib/features/settings/ModelSelectField.svelte';
   import AgentSetupBody from './AgentSetupBody.svelte';
   import ConnectAppSetupBody from './ConnectAppSetupBody.svelte';
   import ConfirmLocalConnectorBody from './ConfirmLocalConnectorBody.svelte';
-  import MailAccountSetupBody from './MailAccountSetupBody.svelte';
   import SettingSetupBody from '$lib/features/settings-card/SettingSetupBody.svelte';
+  import { setupAliasOf } from './setup-alias';
 
   /**
    * 消息列表内的「缺设置」引导卡片（docs/design/18-inline-setup.md）：数据源
    * 是 chat.setupRequirement（发送门禁置起，或失败 run 携带的结构化 setup）。
    * main-model：两段式——无已配置厂商时先内嵌供应商表单（与设置页同一份
-   * 保存逻辑），之后选默认主模型（可顺带指定 Bot 模型）确认；capability：
-   * 内嵌对应能力模型配置；agent（D72 P4）：内嵌设置页的 Agent 卡片
-   * （AgentSetupBody）；connect-app（D73）：内嵌 ConnectAppPanel
-   * （ConnectAppSetupBody），连接完成后同一条「收起 + runs.retry」路径；
-   * confirm-local-connector（本机连接）：确认卡（ConfirmLocalConnectorBody），添加后接 connect-app 链路；
-   * mail-account（D84）：内嵌添加邮箱表单（MailAccountSetupBody），保存并绑定当前 Bot 后续跑；
-   * setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流设置卡同一套分发
-   * （SettingSetupBody → SettingCardEmbed，预填取 requirement.prefill）。确认 / 保存后 chat.continueAfterSetup() 自动续跑
-   * （重试原 run 或冲掉保留的草稿）。
+   * 保存逻辑），之后选默认主模型（可顺带指定 Bot 模型）确认；
+   * agent（D72 P4）：内嵌设置页的 Agent 卡片（AgentSetupBody）；
+   * connect-app（D73）：内嵌 ConnectAppPanel（ConnectAppSetupBody），连接完成后
+   * 同一条「收起 + runs.retry」路径；confirm-local-connector（本机连接）：确认卡
+   * （ConfirmLocalConnectorBody），添加后接 connect-app 链路；
+   * setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流设置卡
+   * 同一套分发（SettingSetupBody → SettingCardEmbed，预填取 requirement.prefill）。
+   * capability-model / web-search / mail-account（P2 收拢）经 setupAliasOf 转成
+   * kind:'setting' 走同一分发（旧 kind 在契约里保留为兼容别名）。
+   * 确认 / 保存后 chat.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
    * 两段切换只认「保存」点击：「测试连接」为完成探测会先落盘 key
    * （providers.test 只读已存 key），availableModelOptions 随之翻转为非空，
    * 直接以它派生切段会让测试失败也自动跳到第二段；故仅在挂载时已配置
@@ -40,9 +39,8 @@
   let { requirement }: { requirement: SetupRequirement } = $props();
 
   const isMainModel = $derived(requirement.kind === 'main-model');
-  const capability = $derived(
-    requirement.kind === 'capability-model' ? requirement.capability : null,
-  );
+  /** 旧 kind 的兼容别名（capability-model / web-search / mail-account → setting）。 */
+  const settingAlias = $derived(setupAliasOf(requirement, t));
   const hasModelOptions = $derived(settingsStore.availableModelOptions.length > 0);
   // 挂载时是否已配置（untrack：故意只取初值，不随后续 key 落盘翻转）。
   const readyAtMount = untrack(() => hasModelOptions);
@@ -126,22 +124,11 @@
   {:else if requirement.kind === 'confirm-local-connector'}
     <!-- 本机连接（设计 29 §17）：Bot 提议添加，core 探测后生成的确认卡 -->
     <ConfirmLocalConnectorBody {requirement} />
-  {:else if requirement.kind === 'mail-account'}
-    <MailAccountSetupBody {requirement} />
   {:else if requirement.kind === 'setting'}
     <SettingSetupBody {requirement} />
-  {:else if requirement.kind === 'web-search'}
-    <div class="space-y-0.5 pr-6">
-      <p class="text-sm font-medium" data-testid="setup-card-title">
-        {t('setupCard.webSearchTitle')}
-      </p>
-      <p class="text-xs text-muted-foreground">{t('setupCard.webSearchHint')}</p>
-    </div>
-    <WebSearchSection
-      testid="setup-card-web-search"
-      embedded
-      onSaved={() => void chat.continueAfterSetup()}
-    />
+  {:else if settingAlias !== null}
+    <!-- capability-model / web-search / mail-account 旧 kind 经别名转成 setting -->
+    <SettingSetupBody requirement={settingAlias} />
   {:else if isMainModel}
     <div class="space-y-0.5 pr-6">
       <p class="text-sm font-medium" data-testid="setup-card-title">
@@ -197,20 +184,5 @@
         </Button>
       </div>
     {/if}
-  {:else if capability !== null}
-    <div class="space-y-0.5 pr-6">
-      <p class="text-sm font-medium" data-testid="setup-card-title">
-        {t('setupCard.capabilityTitle', {
-          capability: t(`settings.capabilityTitle.${capability}`),
-        })}
-      </p>
-      <p class="text-xs text-muted-foreground">{t('setupCard.capabilityHint')}</p>
-    </div>
-    <CapabilityModelSection
-      {capability}
-      testid="setup-card-capability"
-      embedded
-      onSaved={() => void chat.continueAfterSetup()}
-    />
   {/if}
 </div>

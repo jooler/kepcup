@@ -97,13 +97,10 @@ export const zhCN = {
   'settings.webSearchTestOk': '连接正常（{count} 条结果，{ms}ms）',
   'settings.webSearchTestFailed': '测试失败',
   'settings.webSearchClear': '清除配置',
-  'setupCard.webSearchTitle': '需要联网检索',
   'setupCard.webSearchHint':
     'Bot 正在联网检索，但尚未配置检索服务。选择供应商并填写 API key 后自动继续。',
-  'setupCard.mailAccountTitle': '添加邮箱，交给这个 Bot',
   'setupCard.mailAccountHint':
     '填写授权码或应用专用密码并测试保存后，这个 Bot 就能代你收发；完成后对话会自动继续。',
-  'setupCard.mailAccountNoBot': '找不到当前 Bot，无法绑定邮箱。请关闭卡片后重试，或到扩展中心添加。',
   'composer.attach': '添加附件',
   'composer.attachmentRemove': '移除附件',
   'composer.attachmentTooLarge': '{name} 超过 30MB 附件上限',
@@ -1557,7 +1554,6 @@ export const zhCN = {
   'setupCard.mainModelTitle': '先选择模型，对话才能继续',
   'setupCard.mainModelHint':
     '还没有可用的对话模型：先添加厂商并填入 API Key，再选择默认模型；确认后对话自动继续。',
-  'setupCard.capabilityTitle': '先配置{capability}，然后对话会自动继续',
   'setupCard.capabilityHint': '配置与「设置 → 模型」是同一份数据，随时可以在设置中修改。',
   'setupCard.botModelLabel': '这个 Bot 使用的模型',
   'setupCard.botModelFollowDefault': '跟随默认主模型',
