@@ -256,9 +256,12 @@ export function parsePresetAvatar(value: string | null | undefined): ParsedPrese
   return { shape, color };
 }
 
-/** 固定色上可选的两种前景：白（预置风格，优先）与近黑（同 --avatar-mono 亮色）。 */
+/**
+ * 固定色上可选的两种前景：白（预置风格，优先）与纯黑。黑必须是纯黑：近黑
+ * #0a0a0a 在白色刚好不够正文 4.5:1 的颜色上只有约 4.40:1（见 avatarColorForeground）。
+ */
 export const AVATAR_FOREGROUND_LIGHT = '#ffffff';
-export const AVATAR_FOREGROUND_DARK = '#0a0a0a';
+export const AVATAR_FOREGROUND_DARK = '#000000';
 
 /**
  * WCAG 2.x 最低对比度：图标等非文字图形 3:1（1.4.11），正文 4.5:1（1.4.3）。
@@ -288,9 +291,11 @@ export function contrastRatio(a: string, b: string): number | null {
 
 /**
  * 填充色之上的前景（眼睛、输入框发送 / 语音键图标用 `graphic`，用户气泡文字用
- * `text`）。动态色取其对比变量；固定色按对比度算：白色够该用途的最低对比度就用
- * 白（保持预置的白眼睛风格），否则取黑白里对比度更高的一个——黑白之一总能到
- * 4.58:1 以上，所以两种用途都必然达标。只依赖颜色本身，结果确定。
+ * `text`）。动态色取其对比变量；固定色按对比度算：白色够该用途的最低对比度 T
+ * 就用白（保持预置的白眼睛风格），否则用黑。白色不够 T 意味着填充色相对亮度
+ * L > 1.05 / T − 0.05，此时纯黑的对比度 (L + 0.05) / 0.05 > 21 / T——正文
+ * （T = 4.5）> 4.67、图标（T = 3）> 7。所以任何 #rrggbb 都至少达到该用途的 T：
+ * 下限就是 T 本身（白色恰好达标时）。只依赖颜色本身，结果确定。
  */
 export function avatarColorForeground(
   color: AvatarPresetColor,
