@@ -12,6 +12,10 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { revealDialogAnchor } from '$lib/features/settings/anchor-scroll';
   import { applySettingItem } from '$lib/features/settings-card/apply';
+  import {
+    groupMemberPlan,
+    proposedMemberIds,
+  } from '$lib/features/settings-card/group-members';
   let {
     conversationId,
     open = $bindable(false),
@@ -94,8 +98,8 @@
 
   let cardTitle = $state('');
   let cardTitleReady = false;
-  let selected = $state<string[]>([]);
-  let membersReady = false;
+  /** 用户在卡上亲手勾 / 不勾的 Bot（没碰过的跟随当前成员与 Bot 的建议，见 group-members.ts）。 */
+  let memberChoices = $state<Record<string, boolean>>({});
   let cardBusy = $state(false);
 
   const showTitle = $derived(!embedded || focus === 'all' || focus === 'title');
@@ -114,29 +118,27 @@
     cardTitleReady = true;
   });
 
-  $effect(() => {
-    if (!embedded || focus === 'title' || membersReady) return;
-    const wanted = prefill?.bots;
-    if (Array.isArray(wanted)) {
-      selected = wanted.filter((entry): entry is string => typeof entry === 'string');
-      membersReady = true;
-      return;
-    }
-    if (chat.current?.conversation.id !== conversationId) return;
-    selected = members.map((member) => member.bot.id);
-    membersReady = true;
-  });
+  // Bot 的预填只表示「建议拉进群的 Bot」：现有成员默认勾选，预填只会多勾、不会预先取消勾选谁。
+  const proposedIds = $derived(proposedMemberIds(prefill));
+  const memberIds = $derived(members.map((member) => member.bot.id));
+  const memberPlan = $derived(groupMemberPlan(memberIds, proposedIds, memberChoices));
 
   const roster = $derived.by(() => {
-    const byId = new Map(contacts.bots.map((bot) => [bot.id, bot.name]));
+    const rows = contacts.bots.map((bot) => ({ id: bot.id, name: bot.name }));
     for (const member of members) {
-      if (!byId.has(member.bot.id)) byId.set(member.bot.id, member.bot.name);
+      if (!rows.some((row) => row.id === member.bot.id)) {
+        rows.push({ id: member.bot.id, name: member.bot.name });
+      }
     }
-    return [...byId.entries()].map(([id, name]) => ({ id, name }));
+    return rows;
   });
 
+  function rosterNames(ids: readonly string[]): string {
+    return ids.map((id) => roster.find((row) => row.id === id)?.name ?? id).join('、');
+  }
+
   function toggleMember(id: string, on: boolean): void {
-    selected = on ? (selected.includes(id) ? selected : [...selected, id]) : selected.filter((entry) => entry !== id);
+    memberChoices = { ...memberChoices, [id]: on };
   }
 
   async function applyCardTitle(): Promise<void> {
@@ -172,10 +174,8 @@
     if (cardBusy) return;
     cardBusy = true;
     try {
-      const current = new Set(members.map((member) => member.bot.id));
-      const next = new Set(selected);
-      const toAdd = [...next].filter((id) => !current.has(id));
-      const toRemove = [...current].filter((id) => !next.has(id));
+      // 按当前成员重新算：卡片挂着期间别处拉进群的 Bot 不会被移出，移出只来自用户亲手取消勾选。
+      const { toAdd, toRemove } = memberPlan;
       if (toAdd.length > 0 && !(await chat.addGroupMembers(conversationId, toAdd))) return;
       for (const id of toRemove) {
         if (!(await chat.removeGroupMember(conversationId, id))) return;
@@ -206,7 +206,7 @@
       </div>
     {/if}
     {#if showMembers}
-      <p class="text-sm font-medium">{t('group.memberCount', { count: selected.length })}</p>
+      <p class="text-sm font-medium">{t('group.memberCount', { count: memberPlan.count })}</p>
       {#if roster.length === 0}
         <p class="text-xs text-muted-foreground">{t('settingCard.group.noBots')}</p>
       {:else}
@@ -214,7 +214,7 @@
           {#each roster as bot (bot.id)}
             <label class="flex items-center gap-2 text-sm">
               <Checkbox
-                checked={selected.includes(bot.id)}
+                checked={memberPlan.checked(bot.id)}
                 onCheckedChange={(checked) => toggleMember(bot.id, checked === true)}
                 data-testid={`group-card-member-${bot.id}`}
               />
@@ -223,10 +223,20 @@
           {/each}
         </div>
       {/if}
+      {#if memberPlan.toAdd.length > 0}
+        <p class="text-xs text-muted-foreground" data-testid="group-card-will-add">
+          {t('settingCard.group.willAdd', { names: rosterNames(memberPlan.toAdd) })}
+        </p>
+      {/if}
+      {#if memberPlan.toRemove.length > 0}
+        <p class="text-xs text-destructive" data-testid="group-card-will-remove">
+          {t('settingCard.group.willRemove', { names: rosterNames(memberPlan.toRemove) })}
+        </p>
+      {/if}
       <div class="flex justify-end">
         <Button
           size="sm"
-          disabled={cardBusy}
+          disabled={cardBusy || (memberPlan.toAdd.length === 0 && memberPlan.toRemove.length === 0)}
           onclick={() => void applyCardMembers()}
           data-testid="group-card-members-save"
         >

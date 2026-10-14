@@ -47,6 +47,24 @@ export function completeSettingCard(
   }>;
 }
 
+/** 本次会话里已经自动核对过的卡（每张卡只核对一次，打开 / 滚动对话不会反复请求）。 */
+const autoVerified = new Set<string>();
+
+/**
+ * 打开对话时对待处理的 link / user-only / form 卡自动核对一次（D89 审查修复）：用户可能早就在
+ * 设置页做完了，而卡片当时没挂在界面上、收不到 `settings.changed`。core 只在条目相对出卡时确实
+ * 变过才结卡（并唤醒 Bot 一次），否则原样 pending；同一张卡 core 侧另有限频。失败静默。
+ */
+export async function autoVerifySettingCardOnce(messageId: string): Promise<void> {
+  if (autoVerified.has(messageId)) return;
+  autoVerified.add(messageId);
+  try {
+    await core.call('settings.cards.complete', { messageId, auto: true });
+  } catch {
+    // 核对失败不影响卡片：用户仍可手动「我已设置好」。
+  }
+}
+
 export function undoSettingCard(messageId: string): Promise<SettingsCardsUndoOutput> {
   return core.call('settings.cards.undo', { messageId }) as Promise<SettingsCardsUndoOutput>;
 }
