@@ -11,8 +11,6 @@
   import { Label } from '$lib/components/ui/label';
   import ProviderSetupForm from '$lib/features/settings/ProviderSetupForm.svelte';
   import ModelSelectField from '$lib/features/settings/ModelSelectField.svelte';
-  import AgentSetupBody from './AgentSetupBody.svelte';
-  import ConnectAppSetupBody from './ConnectAppSetupBody.svelte';
   import ConfirmLocalConnectorBody from './ConfirmLocalConnectorBody.svelte';
   import SettingSetupBody from '$lib/features/settings-card/SettingSetupBody.svelte';
   import { setupAliasOf } from './setup-alias';
@@ -20,17 +18,18 @@
   /**
    * 消息列表内的「缺设置」引导卡片（docs/design/18-inline-setup.md）：数据源
    * 是 chat.setupRequirement（发送门禁置起，或失败 run 携带的结构化 setup）。
-   * main-model：两段式——无已配置厂商时先内嵌供应商表单（与设置页同一份
-   * 保存逻辑），之后选默认主模型（可顺带指定 Bot 模型）确认；
-   * agent（D72 P4）：内嵌设置页的 Agent 卡片（AgentSetupBody）；
-   * connect-app（D73）：内嵌 ConnectAppPanel（ConnectAppSetupBody），连接完成后
-   * 同一条「收起 + runs.retry」路径；confirm-local-connector（本机连接）：确认卡
-   * （ConfirmLocalConnectorBody），添加后接 connect-app 链路；
-   * setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流设置卡
-   * 同一套分发（SettingSetupBody → SettingCardEmbed，预填取 requirement.prefill）。
-   * capability-model / web-search / mail-account（P2 收拢）经 setupAliasOf 转成
-   * kind:'setting' 走同一分发（旧 kind 在契约里保留为兼容别名）。
+   * 除 main-model（两段式，见下）与 confirm-local-connector（确认卡，独立 body）外，
+   * 其余 kind 都由 SettingSetupBody 统一分发（P2 收拢）：
+   * - setting（通用设置项，todo/conversational-app-setup.md §6.2）：与消息流设置卡
+   *   同一套分发（SettingSetupBody → SettingCardEmbed，预填取 requirement.prefill）；
+   * - capability-model / web-search / mail-account：经 setupAliasOf 转成 kind:'setting'
+   *   走同一分发（旧 kind 在契约里保留为兼容别名）；
+   * - agent / connect-app：SettingSetupBody 分发到各自的别名 body（载荷里的额外字段
+   *   与随附行为由 body 消费，设计篇 38 §5.3）。
    * 确认 / 保存后 chat.continueAfterSetup() 自动续跑（重试原 run 或冲掉保留的草稿）。
+   *
+   * main-model 两段式：无已配置厂商时先内嵌供应商表单（与设置页同一份保存逻辑），
+   * 之后选默认主模型（可顺带指定 Bot 模型）确认。
    * 两段切换只认「保存」点击：「测试连接」为完成探测会先落盘 key
    * （providers.test 只读已存 key），availableModelOptions 随之翻转为非空，
    * 直接以它派生切段会让测试失败也自动跳到第二段；故仅在挂载时已配置
@@ -117,14 +116,13 @@
     <X class="size-3.5" aria-hidden="true" />
   </Button>
 
-  {#if requirement.kind === 'agent'}
-    <AgentSetupBody {requirement} />
-  {:else if requirement.kind === 'connect-app'}
-    <ConnectAppSetupBody {requirement} />
-  {:else if requirement.kind === 'confirm-local-connector'}
+  {#if requirement.kind === 'confirm-local-connector'}
     <!-- 本机连接（设计 29 §17）：Bot 提议添加，core 探测后生成的确认卡 -->
     <ConfirmLocalConnectorBody {requirement} />
   {:else if requirement.kind === 'setting'}
+    <SettingSetupBody {requirement} />
+  {:else if requirement.kind === 'agent' || requirement.kind === 'connect-app'}
+    <!-- 别名 kind：由 SettingSetupBody 分发到各自的别名 body（P2 收拢任务 2） -->
     <SettingSetupBody {requirement} />
   {:else if settingAlias !== null}
     <!-- capability-model / web-search / mail-account 旧 kind 经别名转成 setting -->
