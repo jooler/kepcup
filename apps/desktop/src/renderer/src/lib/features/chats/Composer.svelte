@@ -28,6 +28,10 @@
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
   import {
+    COMPOSER_SINGLE_LINE_MAX_PX,
+    nextMultilineLayoutState,
+  } from './composer-multiline';
+  import {
     MAX_RECORDING_MS,
     MIN_RECORDING_MS,
     formatRecordingDuration,
@@ -60,6 +64,15 @@
   let editor = $state<Editor | null>(null);
   /** 药丸两态（参考 Grok Bot）：内容换行或有待发送附件时输入占满整行。 */
   let multiline = $state(false);
+  /**
+   * 进入多行时的内容长度滞回：满宽后 scrollHeight 可能不再 > 单行阈值，
+   * 若仍按高度切回单行会与「变窄再换行」振荡。长度短于 latch 才允许回单行。
+   */
+  let multilineLatchLength: number | null = null;
+  /** 药丸外壳（宽度不随单行↔沉底切换），供 ResizeObserver 判定真·宽度变化。 */
+  let composerPillEl: HTMLDivElement | null = $state(null);
+  let lastPillWidth = 0;
+  let remasureAfterCollapse: number | null = null;
   /** IME 组合中（handleKeyDown 的 Enter 拦截要避开候选确认）。 */
   let composing = false;
   /**
@@ -163,12 +176,39 @@
 
   // --- TipTap 编辑器 -----------------------------------------------------------
 
+  /**
+   * 测量单行 / 多行：高度换行进入并锁定内容长度；宽度变化时丢弃锁定重测。
+   * 从多行塌回单行后 rAF 再测一次，让软换行能在收窄后立刻重新进入，无需等下一键。
+   */
+  function measureMultiline(widthChanged = false): void {
+    const host = editorHostEl;
+    if (host === null) return;
+    const contentLength = (editorInstance ?? editor)?.getText().length ?? 0;
+    const wraps = host.scrollHeight > COMPOSER_SINGLE_LINE_MAX_PX;
+    const wasMultiline = multiline;
+    const next = nextMultilineLayoutState({
+      contentLength,
+      wraps,
+      latchLength: multilineLatchLength,
+      widthChanged,
+    });
+    multiline = next.multiline;
+    multilineLatchLength = next.latchLength;
+    if (wasMultiline && !next.multiline) {
+      if (remasureAfterCollapse !== null) cancelAnimationFrame(remasureAfterCollapse);
+      remasureAfterCollapse = requestAnimationFrame(() => {
+        remasureAfterCollapse = null;
+        measureMultiline(false);
+      });
+    }
+  }
+
   /** 编辑器原生 JSON → docJson/mentionTokens 单向同步 + 多行形态测量。 */
   function syncFromEditor(ed: Editor): void {
     docJson = ed.getJSON();
     mentionTokens = collectMentionTokens(docJson);
     queueMicrotask(() => {
-      multiline = (editorHostEl?.scrollHeight ?? 0) > 48;
+      measureMultiline(false);
     });
   }
 
@@ -425,6 +465,30 @@
     };
   });
 
+  /** 输入坞宽度变化（拖窗口等）时丢弃长度滞回并重测，避免错锁在旧宽度的 latch。 */
+  $effect(() => {
+    const pill = composerPillEl;
+    if (pill === null) return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? pill.getBoundingClientRect().width;
+      if (lastPillWidth === 0) {
+        lastPillWidth = width;
+        return;
+      }
+      if (Math.abs(width - lastPillWidth) < 0.5) return;
+      lastPillWidth = width;
+      measureMultiline(true);
+    });
+    ro.observe(pill);
+    return () => {
+      ro.disconnect();
+      if (remasureAfterCollapse !== null) {
+        cancelAnimationFrame(remasureAfterCollapse);
+        remasureAfterCollapse = null;
+      }
+    };
+  });
+
   /** 会话草稿的按会话缓存：水合（JSON → 编辑器）与保存（编辑器 → JSON）。 */
   let activeConversationId: string | null = null;
   $effect(() => {
@@ -439,6 +503,13 @@
       untrack(() => {
         composerDrafts.hydrate(conversationId);
         const saved = composerDrafts.loadDraft(conversationId);
+        // 换会话时丢掉上一会话的多行长度滞回，按新草稿重新测量。
+        multilineLatchLength = null;
+        multiline = false;
+        if (remasureAfterCollapse !== null) {
+          cancelAnimationFrame(remasureAfterCollapse);
+          remasureAfterCollapse = null;
+        }
         // 草稿缓存是编辑器原生 JSON：mention/列表节点原样回位，无需任何转换。
         ed.commands.setContent(saved.doc);
         syncFromEditor(ed);
@@ -819,6 +890,7 @@
           class="relative flex flex-col gap-1 rounded-3xl border bg-surface-raised px-1.5 py-0.5 transition-colors focus-within:border-ring/40 {dragOver
             ? 'border-ring/60'
             : ''}"
+          bind:this={composerPillEl}
           data-testid="composer-pill"
           data-multiline={stacked ? 'true' : 'false'}
           role="group"
