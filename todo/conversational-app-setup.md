@@ -1,6 +1,6 @@
 # 对话中指挥一切：应用设置按需披露、Bot 直改或对话内出卡
 
-> 状态：**P0 已实现（待审查收口），P1/P2 未开工**（2026-10-13）。提交范围 `e74defd..32b88d1`（分支 `t/settings`，worktree `/home/jyy/wt/kepcup-settings`，未推送；方案本身 `572e856`）：shared 契约 `e74defd` → desktop `c7fddad` → core `37aa4cd` → 测试 `9e5aae0` / `79f3d9e` / `32b88d1`。方案经重写、复审，§十 的四项决策已由用户拍板（全部采纳建议）。实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。**下文 §一～§十是原方案原文，以设计篇 38 为准；§八 的 P0 条目已逐项标注完成情况。**
+> 状态：**P0 已实现并通过独立审查与收口测试，待合并；P1/P2 未开工**（2026-10-14）。分支 `t/settings`（worktree `/home/jyy/wt/kepcup-settings`，未推送、未合并 main；方案本身 `572e856`）：shared 契约 `e74defd` → desktop `c7fddad` → core `37aa4cd` → 测试 `9e5aae0` / `79f3d9e` / `32b88d1` → 独立审查 12 项修复 `c10a7a6`。收口：单元 / 集成全量 33 例失败与 main 逐项一致，e2e 95 例中 9 例失败与 main 完全相同，分支独有失败为 0（见 PROGRESS）。方案经重写、复审，§十 的四项决策已由用户拍板（全部采纳建议）。实现后的设计篇是 [docs/design/38-conversational-settings.md](../docs/design/38-conversational-settings.md)（决策 D89）；与本文的偏差见 [docs/dev/DEVIATIONS.md](../docs/dev/DEVIATIONS.md) DEV-026，实施记录见 [docs/dev/PROGRESS.md](../docs/dev/PROGRESS.md)。**下文 §一～§十是原方案原文，以设计篇 38 为准；§八 的 P0 条目已逐项标注完成情况。**
 >
 > 需求来源：[jooler/kepcup#3](https://github.com/jooler/kepcup/issues/3)「在对话中指挥一切」（提出人 jooler，2026-10-13）。
 >
