@@ -107,6 +107,10 @@ function makeRig(
     /** Bot 条目写入走真实的 `applyBotProfileUpdate`（校验 + 锁外中断 / 收回授权）。 */
     realBotProfiles?: boolean;
     experimentalAgents?: boolean;
+    oauthClients?: AdapterDeps['oauthClients'];
+    fileGrants?: AdapterDeps['fileGrants'];
+    schedules?: AdapterDeps['schedules'];
+    watches?: AdapterDeps['watches'];
   } = {},
 ): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
@@ -290,6 +294,10 @@ function makeRig(
     ...(extras.allowlist !== undefined ? { allowlist: extras.allowlist } : {}),
     ...(extras.skills !== undefined ? { skills: extras.skills } : {}),
     ...(extras.projects !== undefined ? { projects: extras.projects } : {}),
+    ...(extras.oauthClients !== undefined ? { oauthClients: extras.oauthClients } : {}),
+    ...(extras.fileGrants !== undefined ? { fileGrants: extras.fileGrants } : {}),
+    ...(extras.schedules !== undefined ? { schedules: extras.schedules } : {}),
+    ...(extras.watches !== undefined ? { watches: extras.watches } : {}),
   });
   return {
     db,
@@ -2022,10 +2030,42 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(rig.wakes).toHaveLength(0);
   });
 
+  it('仍是 link 的 developer.mode：出卡记下 enabled；没变保持 pending，变了才 applied 并只唤醒一次', async () => {
+    const rig = makeRig();
+    const created = await rig.host.forRun(runCtx(rig)).change({
+      id: 'developer.mode',
+      reason: '打开开发者模式',
+    });
+    expect(created.ok).toBe(true);
+    const card = cards(rig).at(-1)!;
+    expect(cardOf(rig, card.id)).toMatchObject({
+      mode: 'link',
+      state: 'pending',
+      before: { enabled: false },
+    });
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
+    expect(rig.wakes).toHaveLength(0);
+
+    const current = rig.settings.get();
+    rig.settings.update({ apps: { ...current.apps, developerMode: true } });
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, card.id).applied).toEqual({ enabled: true });
+    expect(rig.wakes).toHaveLength(1);
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: null });
+    expect(rig.wakes).toHaveLength(1);
+  });
+
   it('兜底适配器恒回 configured 的条目（profile.user-facts）不擅自标完成；手动「我已设置好」仍可以', async () => {
     const rig = makeRig();
     const card = appendCard(rig, { itemId: 'profile.user-facts', mode: 'link' });
-    // 兜底适配器恒回 configured 但拿不出值证据：核对不通过（false），保持 pending。
+    // 没有不含原文的安全信号：values 保持 null。configured 不算核对通过。
+    expect(
+      rig.host.read('profile.user-facts', {
+        botId: null,
+        conversationId: null,
+        projectId: null,
+      }),
+    ).toMatchObject({ status: 'configured', values: null });
     expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
     expect(cardOf(rig, card.id).state).toBe('pending');
     expect(rig.wakes).toHaveLength(0);
@@ -2043,5 +2083,178 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(cardOf(rig, readonly.id).state).toBe('pending');
     expect(cardOf(rig, confirm.id).state).toBe('pending');
     expect(rig.wakes).toHaveLength(0);
+    expect(
+      rig.host.read('diagnostics.status', {
+        botId: null,
+        conversationId: null,
+        projectId: null,
+      }),
+    ).toMatchObject({ status: 'readonly', values: null });
+  });
+
+  it('跳转卡快照只有开关、条数或摘要，不含路径、密钥、人设原文', async () => {
+    const persona = '人设原文-UNIQUE_PERSONA_7f3a';
+    const duty = '职责原文-UNIQUE_DUTY_7f3a';
+    const boundary = '边界原文-UNIQUE_BOUNDARY_7f3a';
+    const command = 'npx /Users/secret/bin/mcp --token sk-live-SECRETVALUE';
+    const envSecret = 'sk-env-SECRETVALUE';
+    const mcpbPath = '/Users/secret/toolchains/mcpb/LocalPkg@1.2.3/start';
+    const skillName = 'UNIQUE_SKILL_7f3a';
+    const rig = makeRig({
+      oauthClients: { count: () => 2 },
+      fileGrants: { countForBot: (botId) => (botId === 'bot_a' ? 3 : 0) },
+      schedules: { countForBot: (botId) => (botId === 'bot_a' ? 4 : 0) },
+      watches: { countForBot: (botId) => (botId === 'bot_a' ? 5 : 0) },
+      skills: {
+        list: () => [{ name: skillName, status: 'active' }],
+        enable: () => undefined,
+        disable: () => undefined,
+      },
+    });
+    const bot = rig.bots.get('bot_a')!;
+    bot.profile = {
+      ...bot.profile,
+      persona: { ...bot.profile.persona, personality: persona },
+      role: { ...bot.profile.role, responsibilities: duty },
+      boundaries: [boundary],
+    };
+    rig.settings.update({
+      mcpServers: [
+        {
+          id: 'custom-1',
+          name: 'Custom',
+          transport: 'stdio',
+          command,
+          env: { TOKEN: envSecret },
+          enabled: true,
+          autoApprove: false,
+          auth: 'none',
+        },
+        {
+          id: 'pkg-1',
+          name: 'From package',
+          transport: 'stdio',
+          command: mcpbPath,
+          enabled: true,
+          autoApprove: false,
+          auth: 'none',
+          source: {
+            kind: 'mcpb',
+            name: 'LocalPkg',
+            version: '1.2.3',
+            sha256: 'ab'.repeat(32),
+          },
+        },
+      ] as never,
+    });
+
+    const globalTarget = { botId: null, conversationId: null, projectId: null };
+    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, projectId: null };
+    const mode = rig.host.read('developer.mode', globalTarget);
+    const custom = rig.host.read('developer.custom-mcp', globalTarget);
+    const oauth = rig.host.read('developer.oauth-clients', globalTarget);
+    const mcpb = rig.host.read('developer.mcpb', globalTarget);
+    const identity = rig.host.read('bot.identity', botTarget);
+    const access = rig.host.read('bot.file-access', botTarget);
+    const skills = rig.host.read('skills.install', botTarget);
+    const schedule = rig.host.read('schedules.schedule', botTarget);
+    const watch = rig.host.read('schedules.watch', botTarget);
+    expect(mode).toMatchObject({ values: { enabled: false } });
+    expect(custom).toMatchObject({ values: { count: 1 } });
+    expect(oauth).toMatchObject({ values: { count: 2 } });
+    expect(mcpb).toMatchObject({ values: { count: 1 } });
+    expect(identity?.values).toEqual({ digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(access).toMatchObject({ values: { count: 3 } });
+    expect(skills).toMatchObject({ values: { count: 1 } });
+    expect(schedule).toMatchObject({ values: { count: 4 } });
+    expect(watch).toMatchObject({ values: { count: 5 } });
+
+    const dumped = JSON.stringify({
+      mode,
+      custom,
+      oauth,
+      mcpb,
+      identity,
+      access,
+      skills,
+      schedule,
+      watch,
+    });
+    for (const secret of [
+      persona,
+      duty,
+      boundary,
+      command,
+      envSecret,
+      mcpbPath,
+      skillName,
+      'LocalPkg',
+    ]) {
+      expect(dumped).not.toContain(secret);
+    }
+    const facade = rig.host.forRun(runCtx(rig));
+    expect(facade.read('developer.custom-mcp', undefined).content).not.toContain(command);
+    expect(facade.read('skills.install', undefined).content).not.toContain(skillName);
+    expect(facade.read('bot.identity', undefined).content).not.toContain(persona);
+    expect(facade.read('bot.identity', undefined).content).not.toContain(duty);
+  });
+
+  it('自定义 MCP 条数变了才结卡；人设摘要变了才结卡，没变保持 pending', async () => {
+    const rig = makeRig();
+    const created = await rig.host.forRun(runCtx(rig)).change({
+      id: 'developer.custom-mcp',
+      reason: '加一个自定义 MCP',
+    });
+    expect(created.ok).toBe(true);
+    const mcpCard = cards(rig).at(-1)!;
+    expect(cardOf(rig, mcpCard.id).before).toEqual({ count: 0 });
+    expect(rig.host.recheckCard(mcpCard.id)).toEqual({ state: 'pending', verified: false });
+
+    const command = 'npx /Users/secret/bin/mcp --token sk-live-SECRETVALUE';
+    rig.settings.update({
+      mcpServers: [
+        {
+          id: 'custom-1',
+          name: 'Custom',
+          transport: 'stdio',
+          command,
+          env: { TOKEN: 'sk-env-SECRETVALUE' },
+          enabled: true,
+          autoApprove: false,
+          auth: 'none',
+        },
+      ] as never,
+    });
+    expect(rig.host.recheckCard(mcpCard.id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, mcpCard.id).applied).toEqual({ count: 1 });
+    expect(JSON.stringify(cardOf(rig, mcpCard.id))).not.toContain(command);
+    expect(JSON.stringify(cardOf(rig, mcpCard.id))).not.toContain('sk-env-SECRETVALUE');
+    expect(rig.wakes).toHaveLength(1);
+
+    const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, projectId: null };
+    const before = rig.host.read('bot.identity', botTarget);
+    const identityCard = appendCard(rig, {
+      itemId: 'bot.identity',
+      mode: 'link',
+      before: before?.values ?? null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.host.recheckCard(identityCard.id)).toEqual({ state: 'pending', verified: false });
+    const bot = rig.bots.get('bot_a')!;
+    const persona = '人设原文-UNIQUE_PERSONA_7f3a';
+    bot.profile = {
+      ...bot.profile,
+      persona: { ...bot.profile.persona, personality: persona },
+      role: { ...bot.profile.role, responsibilities: '职责原文-UNIQUE_DUTY_7f3a' },
+      boundaries: ['边界原文-UNIQUE_BOUNDARY_7f3a'],
+    };
+    expect(rig.host.recheckCard(identityCard.id)).toEqual({ state: 'applied', verified: true });
+    const applied = cardOf(rig, identityCard.id).applied;
+    expect(applied).toEqual({ digest: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(applied).not.toEqual(before?.values);
+    expect(JSON.stringify(applied)).not.toContain(persona);
+    expect(rig.wakes).toHaveLength(2);
+    expect(rig.host.recheckCard(identityCard.id)).toEqual({ state: 'applied', verified: null });
+    expect(rig.wakes).toHaveLength(2);
   });
 });

@@ -136,6 +136,18 @@ export class GrantsService {
     return row ? rowToGrant(row) : null;
   }
 
+  /**
+   * Active grants of one bot across conversations. Only the count — callers
+   * that feed setting snapshots must not receive paths.
+   */
+  countActiveForBot(botId: string): number {
+    this.#expireOverdueOnce();
+    const row = this.#db
+      .prepare('select count(*) as n from grants where bot_id = ? and revoked_at is null')
+      .get(botId) as { n: number };
+    return row.n;
+  }
+
   /** Active grants of one conversation, newest first (right panel). */
   listActive(conversationId: string): Grant[] {
     this.#expireOverdueOnce();

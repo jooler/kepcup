@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   AppError,
   CAPABILITY_SETTING_IDS,
@@ -206,6 +207,28 @@ export interface AdapterDeps {
    */
   allowlist?: {
     list(): ReadonlyArray<{ enabled: boolean; builtin?: boolean }>;
+  };
+  /**
+   * OAuth 客户端条数（只读）。只数个数，不把 client id / secret 放进快照。
+   * 缺省时 `developer.oauth-clients` 回 unknown（recheck 不结卡）。
+   */
+  oauthClients?: {
+    count(): number;
+  };
+  /**
+   * 一个 Bot 当前有效的目录授权条数（只读）。不把路径放进快照。
+   * 缺省时 `bot.file-access` 回 unknown。
+   */
+  fileGrants?: {
+    countForBot(botId: string): number;
+  };
+  /** 一个 Bot 的 active 定时任务条数（只读）。不把标题放进快照。缺省时回 unknown。 */
+  schedules?: {
+    countForBot(botId: string): number;
+  };
+  /** 一个 Bot 未停止的网页监看条数（只读）。不把地址放进快照。缺省时回 unknown。 */
+  watches?: {
+    countForBot(botId: string): number;
   };
   /** Bot 改动后广播（bot.updated）/ 开机启动变化（platform.autostart）。 */
   publish(event: string, payload: unknown): void;
@@ -1659,10 +1682,149 @@ function environmentAllowlistAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-// --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
+// --- 仍是跳转卡的条目：非敏感 values，供重开对话时 recheck（design 38 §4.3）--------
+//
+// `settings_read` 会把 values / summary 给模型，出卡时 before 也记下这份快照。
+// 这里只放开关、条数或稳定摘要，不放命令、环境变量、密钥、本机路径、技能名、
+// 网页地址、画像或人设原文。`profile.user-facts` 没有这样的安全信号，继续走下面的
+// 兜底适配器（configured + values null），recheck 不把它标完成。
 
-function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
-  return { read: (_item, target) => read(target) };
+function counted(count: number, none: string, some: string): ItemSnapshot {
+  return snapshot('configured', { count }, count > 0 ? some : none);
+}
+
+/** 人设 / 职责 / 边界的稳定摘要。原文不进快照；摘要变了才算改过。 */
+function identityDigest(profile: Bot['profile']): string {
+  const canonical = JSON.stringify({
+    personality: profile.persona.personality,
+    tone: profile.persona.tone,
+    style: profile.persona.style,
+    values: profile.persona.values,
+    sample_dialogues: profile.persona.sample_dialogues,
+    expertise: profile.role.expertise,
+    responsibilities: profile.role.responsibilities,
+    boundaries: profile.boundaries,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+function identityFilled(profile: Bot['profile']): boolean {
+  const persona = profile.persona;
+  return (
+    persona.personality.length > 0 ||
+    persona.tone.length > 0 ||
+    persona.style.length > 0 ||
+    persona.values.length > 0 ||
+    persona.sample_dialogues.length > 0 ||
+    profile.role.expertise.length > 0 ||
+    profile.role.responsibilities.length > 0 ||
+    profile.boundaries.some((entry) => entry.length > 0)
+  );
+}
+
+function botIdentityAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const profile = botField(deps, target, (bot) => bot.profile);
+      if (profile === null) return snapshot('unknown', null, 'Bot 不存在');
+      return snapshot(
+        'configured',
+        { digest: identityDigest(profile) },
+        identityFilled(profile) ? '已填写人设' : '还没有填写人设',
+      );
+    },
+  };
+}
+
+function botFileAccessAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      if (deps.fileGrants === undefined || target.botId === null) {
+        return snapshot('unknown', null, '还看不到目录授权');
+      }
+      const count = deps.fileGrants.countForBot(target.botId);
+      return counted(count, '还没有目录授权', `授权 ${count} 条`);
+    },
+  };
+}
+
+function skillInstallAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      if (deps.skills === undefined || target.botId === null) {
+        return snapshot('unknown', null, '还看不到已安装的技能');
+      }
+      const count = deps.skills.list(target.botId).length;
+      return counted(count, '还没有安装技能', `已安装 ${count} 个技能`);
+    },
+  };
+}
+
+function scheduleCountAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      if (deps.schedules === undefined || target.botId === null) {
+        return snapshot('unknown', null, '还看不到定时任务');
+      }
+      const count = deps.schedules.countForBot(target.botId);
+      return counted(count, '还没有定时任务', `${count} 个定时任务`);
+    },
+  };
+}
+
+function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      if (deps.watches === undefined || target.botId === null) {
+        return snapshot('unknown', null, '还看不到网页监看');
+      }
+      const count = deps.watches.countForBot(target.botId);
+      return counted(count, '还没有网页监看', `${count} 个网页监看`);
+    },
+  };
+}
+
+function developerModeAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const enabled = deps.settings.get().apps.developerMode;
+      return snapshot('configured', { enabled }, enabled ? '已开启' : '未开启');
+    },
+  };
+}
+
+function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const count = deps.settings
+        .get()
+        .mcpServers.filter((server) => server.source?.kind !== 'mcpb').length;
+      return counted(count, '还没有自定义 MCP', `${count} 个自定义 MCP`);
+    },
+  };
+}
+
+function developerOauthClientsAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      if (deps.oauthClients === undefined) {
+        return snapshot('unknown', null, '还看不到 OAuth 客户端');
+      }
+      const count = deps.oauthClients.count();
+      return counted(count, '还没有 OAuth 客户端', `${count} 个 OAuth 客户端`);
+    },
+  };
+}
+
+function developerMcpbAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const count = deps.settings
+        .get()
+        .mcpServers.filter((server) => server.source?.kind === 'mcpb').length;
+      return counted(count, '还没有 .mcpb 包', `${count} 个 .mcpb 包`);
+    },
+  };
 }
 
 function botField<T>(deps: AdapterDeps, target: SettingTargetRef, pick: (bot: Bot) => T): T | null {
@@ -1723,11 +1885,17 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'environment.toolchains': environmentToolchainsAdapter(deps),
     'environment.sandbox': environmentSandboxAdapter(deps),
     'environment.allowlist': environmentAllowlistAdapter(deps),
-    'developer.mode': readOnlyAdapter(() => {
-      const enabled = deps.settings.get().apps.developerMode;
-      return snapshot('configured', null, enabled ? '已开启' : '未开启');
-    }),
+    'developer.mode': developerModeAdapter(deps),
+    'developer.custom-mcp': developerCustomMcpAdapter(deps),
+    'developer.oauth-clients': developerOauthClientsAdapter(deps),
+    'developer.mcpb': developerMcpbAdapter(deps),
+    'bot.identity': botIdentityAdapter(deps),
+    'bot.file-access': botFileAccessAdapter(deps),
+    'skills.install': skillInstallAdapter(deps),
+    'schedules.schedule': scheduleCountAdapter(deps),
+    'schedules.watch': watchCountAdapter(deps),
   };
+  // profile.user-facts 停在这里：没有不含原文的安全信号，不为了结卡去造一个。
   const fallback: ItemAdapter = { read: () => snapshot('configured', null, '详情以设置页为准') };
   return (item) => {
     if (item.readOnly) return READONLY_ITEM_ADAPTER;
