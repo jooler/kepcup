@@ -328,6 +328,68 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
   });
 });
 
+describe('Claude sessions: who auto-allows sandboxed Bash (review P0, D73 × f2b9627)', () => {
+  const dirs: string[] = [];
+  const hosts: AgentHost[] = [];
+  afterEach(() => {
+    for (const host of hosts.splice(0)) host.dispose();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function sandboxFor(hostGates: boolean | undefined) {
+    const entry = fakeAgentEntry('fake-claude-gate', { provider: 'claude' });
+    const workspace = mkdtempSync(path.join(tmpdir(), 'kepcup-gate-ws-'));
+    dirs.push(workspace);
+    const started: FakeAcpAgentHandle[] = [];
+    const host = new AgentHost({
+      logger,
+      redact: (text) => text,
+      appVersion: '1.0.0',
+      resolveLaunch: () => ({ command: 'unused', args: [], env: {} }),
+      spawn: fakeAgentSpawner(
+        { [entry.id]: { modes: CLAUDE_MODES, turns: [agentTurn().text('ok')] } },
+        started,
+      ) as never,
+    });
+    hosts.push(host);
+    const permissions: AgentPermissionHandler = {
+      decide: vi.fn(),
+      isolationFor: () => ({ dataHome: '/x', denyRead: [], allowRead: [], denyWrite: [] }),
+      ...(hostGates !== undefined ? { hostGatesSandboxedExec: () => hostGates } : {}),
+      audit: () => {},
+    };
+    const engine = new ExternalAgentEngine({ host, catalog: () => [entry], logger, permissions });
+    const outcome = await engine.startRun({
+      identity: { runId: 'run_gate', botId: 'bot_1', conversationId: 'conv_1', loopType: 'task' },
+      model: agentModelRef(entry.id, ''),
+      buildSystemPrompt: async () => 'S',
+      messages: [{ role: 'user', content: 'go', timestamp: 0 }],
+      tools: [],
+      limits: { maxTurns: 10 },
+      workdir: workspace,
+      external: { agentId: entry.id, permission: 'ask', capabilities: [], sessionKey: 'k' },
+    }).done;
+    expect(outcome.status).toBe('completed');
+    const meta = started[0]!.observed.sessions[0]!.meta as {
+      claudeCode: { options: { sandbox: Record<string, unknown> } };
+    };
+    return meta.claudeCode.options.sandbox;
+  }
+
+  it('taint control on → session/new turns the SDK auto-allow off (the host bridge decides)', async () => {
+    expect(await sandboxFor(true)).toMatchObject({
+      autoAllowBashIfSandboxed: false,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
+    });
+  });
+
+  it('taint control off (or no gate) → the ask tier keeps the SDK auto-allow of f2b9627', async () => {
+    expect(await sandboxFor(false)).toMatchObject({ autoAllowBashIfSandboxed: true });
+    expect(await sandboxFor(undefined)).toMatchObject({ autoAllowBashIfSandboxed: true });
+  });
+});
+
 describe('completeStructured with an external agent (JSON only, P6)', () => {
   const schema = z.object({ decision: z.enum(['respond', 'no_action']) });
   const parametersSchema = Type.Object({
