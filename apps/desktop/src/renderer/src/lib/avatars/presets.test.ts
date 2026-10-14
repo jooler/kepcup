@@ -98,3 +98,49 @@ describe('avatarColorForeground', () => {
     }
   });
 });
+
+describe('avatarColorForeground guaranteed floor (any #rrggbb, not just presets)', () => {
+  const hex = (r: number, g: number, b: number): string =>
+    `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+  /** Every grey level plus an RGB grid (step 5): covers the whole luminance range. */
+  const samples: string[] = [];
+  for (let v = 0; v < 256; v++) samples.push(hex(v, v, v));
+  for (let r = 0; r < 256; r += 5) {
+    for (let g = 0; g < 256; g += 5) {
+      for (let b = 0; b < 256; b += 5) samples.push(hex(r, g, b));
+    }
+  }
+
+  /** Worst contrast the rule yields over all samples, and where. */
+  function worstCase(pick: (fill: string) => string): { ratio: number; fill: string } {
+    let worst = { ratio: Infinity, fill: '' };
+    for (const fill of samples) {
+      const ratio = contrastRatio(fill, pick(fill))!;
+      if (ratio < worst.ratio) worst = { ratio, fill };
+    }
+    return worst;
+  }
+
+  it.each(['graphic', 'text'] as const)(
+    '%s: worst case over the luminance range ≥ its minimum',
+    (use) => {
+      const worst = worstCase((fill) =>
+        avatarColorForeground({ id: 'x', label: 'x', hex: fill }, use),
+      );
+      expect(worst.ratio, `worst at ${worst.fill}`).toBeGreaterThanOrEqual(
+        AVATAR_MIN_CONTRAST[use],
+      );
+      // The floor is the threshold itself: white is kept down to exactly T.
+      expect(worst.ratio).toBeLessThan(AVATAR_MIN_CONTRAST[use] + 0.1);
+    },
+  );
+
+  it('pure black is needed: a near-black #0a0a0a would miss 4.5:1 for text right past the white switch', () => {
+    const t = AVATAR_MIN_CONTRAST.text;
+    const nearBlack = worstCase((fill) =>
+      contrastRatio(fill, AVATAR_FOREGROUND_LIGHT)! >= t ? AVATAR_FOREGROUND_LIGHT : '#0a0a0a',
+    );
+    expect(nearBlack.ratio).toBeLessThan(t);
+    expect(AVATAR_FOREGROUND_DARK).toBe('#000000');
+  });
+});
