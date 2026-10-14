@@ -164,14 +164,12 @@
     if (!appsStore.connections.some((item) => item.id === connectionId)) {
       await appsStore.refresh().catch(() => undefined);
     }
-    const next = profileWithAppConnection(
-      $state.snapshot(bot.profile) as BotProfile,
-      appsStore.connections,
-      connectionId,
-    );
+    // base = 这份写入所基于的 profile：core 三方合并，只改连接授权，不盖回别处刚改的字段。
+    const base = $state.snapshot(bot.profile) as BotProfile;
+    const next = profileWithAppConnection(base, appsStore.connections, connectionId);
     if (next === null) return;
     try {
-      await contacts.update(bot.id, next);
+      await contacts.update(bot.id, next, base);
     } catch (error) {
       toast.error(
         t('apps.card.grantFailed', {

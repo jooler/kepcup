@@ -2,7 +2,7 @@
 
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
-**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §12；P2 评估决策见 §11；P2（旧 7 个 kind 收拢）未开工。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
+**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
 
 
 相关：D58 对话内设置引导（[18](18-inline-setup.md)，失败续跑链与 7 个旧 kind）、D75 对话轮与任务分治（[02](02-execution.md)、[30](30-supervisor-and-tasks.md)，对话轮只读、异步托管动作由宿主确定性执行）、D80 定时提议卡（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)，消息流里的提议卡先例）、D73 连接应用（[29](29-connected-apps.md)，污点）、D72 外部智能体能力包（[28](28-external-agents-acp.md)）、D88 盘点 → 提议（[37](37-bot-asset-handover.md)）。工具目录见 [dev/04](../dev/04-agent-runtime.md)。
@@ -300,7 +300,7 @@ P2 任务 6 原评估倾向给 `settings.update` / `bots.update` 加 `expected`�
 
 不采用期望值拒绝的理由（与 §1.5 一致）：设置页和右栏都是自动保存，乐观并发会频繁报错打断；三方合并只在两边改同一叶子时才需要取舍。条目级 CAS（`settings.items.apply` 的 `expected`）仍只服务对话内设置卡，与整表保存无关。
 
-已接线：`settingsStore.update` 默认带补丁顶层键的本地快照作 `base`；右栏 Profile 自动保存、点按改名 / 简介（`RightPanel.patchIdentity`）、换头像（`AvatarPicker`）、侧栏重命名（`SidebarDialogs`）都带出发时的 profile 作 `base`；不带 `base` 的调用方行为不变（整体覆盖）。
+已接线：`settingsStore.update` 默认带补丁顶层键的本地快照作 `base`；右栏 Profile 自动保存、点按改名 / 简介（`RightPanel.patchIdentity`）、换头像（`AvatarPicker`）、侧栏重命名（`SidebarDialogs`）、对话内「选主模型」顺带写 Bot 模型（`MainModelSetupBody`）、连接后授权给 Bot（`ConnectAppSetupBody`）都带出发时的 profile 作 `base`；不带 `base` 的调用方行为不变（整体覆盖）。
 
 ### 11.4 换到没配 Key 的自定义厂商出待填卡：预期行为，不改
 

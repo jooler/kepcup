@@ -1415,3 +1415,9 @@ P1 能力桥之上补齐结构化数据与管理入口，P0–P2 全部落地：
 - **任务 7（e2e 基线失败根因）未做**：交接约定「等审查收口」，本轮开工时 main 上无审查提交 / 分支 / 工作树，PROGRESS 的 P1 仍标进行中，无法确认收口。已留证据：`external-agents`「对话内智能体设置卡」在打开设置页一步被对话框遮罩拦截（未走到设置卡断言），与本轮改动无关；`local-connectors` 的第二次提案失败已在未改动基线 `e3c662c` 上复现同一失败（worktree 对照）。
 - **验证**：定向——setup-alias / settings-card 单测、settings-catalog-host 38 例（含 recheck 4 例）、settings-cards / settings-item-writes 集成、shared 契约 36 例、desktop typecheck（每任务收口各跑）；e2e——`setup-card.spec` 3 例在任务 1 / 2 / 3 后各通过一轮；`external-agents`（单条）与 `local-connectors` 失败方式与基线一致。未跑全量 e2e（审查未收口，交接明令）。
 - **全量（单元 / 集成，本机 macOS arm64，改了 shared 契约后的收口轮）**：426 文件 4615 例，4582 通过 / 10 失败 / 23 跳过。失败与 Docker 基线（§8.5 的 33 例环境类）对照：`create-core` / `environment` / `external-agent-p3` / `response-loop` / `tasks-review-fixes-e` / `task-events-migration` / `tool-effects-migration` ×2 在基线清单内；`connected-apps-runtime` 1 例单跑通过（全量负载下偶发）；`approvals` 2 例为本机特有——无人值守下 `command` 类不自动批准、越工作区读不出审批卡，都依赖 Linux 沙箱（macOS 无 bubblewrap），与设置卡改动无交集（首跑即未改动过审批域）。本机基线此前未建立（05-testing：换机器应先对主干跑一遍），若需精确判定可另跑对照。
+
+### 对话内应用设置 P2 拉取后审查（2026-10-14）
+
+- `settings-catalog-host.test.ts` 在 `8c19cb3` 里新增的 recheck `describe` 嵌进了上一个用例（缺 `});` `});`），文件语法错误、整个文件不可执行；补上闭合后该文件 56 例全过。此前记录的「38 例」是更早的状态。
+- 仍整份写 profile 却没带 `base` 的两处调用方（`MainModelSetupBody` 的 Bot 模型、`ConnectAppSetupBody` 的授权兜底）补上 `base`，与其余调用方一致（设计篇 38 §11.3）；`MainModelSetupBody` 改走 `contacts.update`，不再直接 `core.call('bots.update')`。
+- 验证：`settings-catalog-host` + `setup-alias` 定向 62 例通过；core / desktop typecheck 通过（`@kepcup/shared` 先 build，dist 过期会让 core 报一串缺导出）。未跑全量、未跑 e2e。
