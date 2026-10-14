@@ -26,13 +26,42 @@ function rowToEntry(row: AllowlistRow): AllowlistEntry {
 /** docs/design/13-permissions.md "只读命令白名单" built-ins. */
 export const BUILTIN_PATTERNS: Record<AllowlistPlatform, string[]> = {
   posix: [
+    // Inspect / list
     'ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'file', 'stat', 'du', 'tree',
     'which', 'grep', 'rg', 'find',
+    'echo', 'printf', 'true', 'false', 'dirname', 'basename', 'realpath', 'readlink',
+    'uname',
+    // Read-only git (mutating branch flags are blocked in allowlist-match)
     'git status', 'git diff', 'git log', 'git show',
+    'git branch', 'git rev-parse', 'git describe', 'git blame',
+    'git ls-files', 'git ls-tree', 'git shortlog',
+    // Version probes only (exact prefix; never bare `npm` / `node`)
+    'node --version', 'node -v',
+    'npm --version', 'npm -v',
+    'pnpm --version', 'pnpm -v',
+    'yarn --version', 'yarn -v',
+    'python --version', 'python -V',
+    'python3 --version', 'python3 -V',
+    'pip --version', 'pip3 --version',
+    'cargo --version', 'rustc --version',
+    'go version',
+    'tsc --version', 'eslint --version', 'prettier --version',
+    'ruby --version', 'php --version',
   ],
   windows: [
     'dir', 'type', 'Get-ChildItem', 'Get-Content', 'Select-String', 'Get-Location',
+    'echo', 'Write-Output',
     'git status', 'git diff', 'git log', 'git show',
+    'git branch', 'git rev-parse', 'git describe', 'git blame',
+    'git ls-files', 'git ls-tree', 'git shortlog',
+    'node --version', 'node -v',
+    'npm --version', 'npm -v',
+    'pnpm --version', 'pnpm -v',
+    'yarn --version', 'yarn -v',
+    'python --version', 'python -V',
+    'python3 --version', 'python3 -V',
+    'go version',
+    'tsc --version', 'eslint --version', 'prettier --version',
   ],
 };
 
@@ -61,14 +90,16 @@ export class AllowlistService {
   }
 
   #seed(): void {
-    const existing = this.#db
-      .prepare("select count(*) as n from command_allowlist where platform = ? and builtin = 1")
-      .get(this.#platform) as { n: number };
-    if (existing.n > 0) return;
+    // Insert any missing built-ins (first install and later list expansions).
+    // Never re-enable a built-in the user turned off: match on platform+pattern.
     const insert = this.#db.prepare(
       'insert into command_allowlist (id, platform, pattern, builtin, enabled, created_at) values (?, ?, ?, 1, 1, ?)',
     );
+    const exists = this.#db.prepare(
+      'select 1 as ok from command_allowlist where platform = ? and pattern = ? limit 1',
+    );
     for (const pattern of BUILTIN_PATTERNS[this.#platform]) {
+      if (exists.get(this.#platform, pattern) !== undefined) continue;
       insert.run(newId('alw'), this.#platform, pattern, this.#clock.now());
     }
   }

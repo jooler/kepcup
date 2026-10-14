@@ -79,7 +79,9 @@ export function claudeSandboxSettings(
     // 整 run 失败，绝不静默降级为沙箱外执行——`execSandboxed` 的「在沙箱
     // 内」判断以此为前提（安全复核第 2 轮）。
     failIfUnavailable: true,
-    autoAllowBashIfSandboxed: tier === 'workspace',
+    // workspace + ask: sandboxed bash is auto (Claude Code-like); read_only keeps asking
+    // the host so Bash can stay in disallowedTools without a silent side channel.
+    autoAllowBashIfSandboxed: tier !== 'read_only',
     // `dangerouslyDisableSandbox` 被忽略：命令只能在沙箱内运行。
     allowUnsandboxedCommands: false,
     ...(isolation !== undefined

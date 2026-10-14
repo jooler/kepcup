@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { matchAllowlistCommand } from '../../src/permissions/allowlist-match.js';
 import { BUILTIN_PATTERNS } from '../../src/permissions/allowlist.js';
 
-const POSIX = ['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'file', 'stat', 'du', 'tree', 'which', 'grep', 'rg', 'find', 'git status', 'git diff', 'git log', 'git show'];
+const POSIX = BUILTIN_PATTERNS.posix;
 
 function ctx(overrides: Partial<Parameters<typeof matchAllowlistCommand>[1]> = {}) {
   return {
@@ -75,6 +75,19 @@ describe('allowlist matcher (posix)', () => {
     expect(matchAllowlistCommand('"cat" file.txt', ctx()).exempt).toBe(true);
   });
 
+  it('exempts inspect extras and version probes; refuses git branch deletes', () => {
+    expect(matchAllowlistCommand('git branch', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('git rev-parse HEAD', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('git ls-files', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('echo hello', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('pnpm --version', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('node -v', ctx()).exempt).toBe(true);
+    expect(matchAllowlistCommand('git branch -D stale', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('git branch --delete stale', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('pnpm test', ctx()).exempt).toBe(false);
+    expect(matchAllowlistCommand('npm run build', ctx()).exempt).toBe(false);
+  });
+
   it('does not exempt unknown commands', () => {
     expect(matchAllowlistCommand('rm -rf /', ctx()).exempt).toBe(false);
     expect(matchAllowlistCommand('curl example.com', ctx()).exempt).toBe(false);
@@ -134,7 +147,7 @@ describe('allowlist matcher (posix)', () => {
   });
 });
 
-const WIN_ENTRIES = ['dir', 'type', 'Get-ChildItem', 'Get-Content', 'Select-String', 'Get-Location', 'git status', 'git diff', 'git log', 'git show'];
+const WIN_ENTRIES = BUILTIN_PATTERNS.windows;
 
 describe('allowlist matcher (windows, single commands only)', () => {
   function wctx(overrides: Partial<Parameters<typeof matchAllowlistCommand>[1]> = {}) {
@@ -168,8 +181,13 @@ describe('allowlist matcher (windows, single commands only)', () => {
 });
 
 describe('built-in patterns', () => {
-  it('match the design list on both platforms', () => {
-    expect(BUILTIN_PATTERNS.posix).toEqual(POSIX);
-    expect(BUILTIN_PATTERNS.windows).toEqual(WIN_ENTRIES);
+  it('stay read-only oriented and include coding inspect extras', () => {
+    expect(BUILTIN_PATTERNS.posix).toContain('git status');
+    expect(BUILTIN_PATTERNS.posix).toContain('git branch');
+    expect(BUILTIN_PATTERNS.posix).toContain('pnpm --version');
+    expect(BUILTIN_PATTERNS.posix).not.toContain('npm test');
+    expect(BUILTIN_PATTERNS.posix).not.toContain('rm');
+    expect(BUILTIN_PATTERNS.windows).toContain('git status');
+    expect(BUILTIN_PATTERNS.windows).toContain('git branch');
   });
 });
