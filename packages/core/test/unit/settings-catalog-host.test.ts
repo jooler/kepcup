@@ -1972,6 +1972,8 @@ describe('settings catalog host: D89 review round 3', () => {
       expected: null,
     });
     expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
+  });
+});
 
 describe('settings catalog host: recheck pending link cards on conversation reopen (P2)', () => {
   /** 手造一张卡消息（历史 pending 卡：出卡时条目还没有内嵌卡，mode 是 link）。 */

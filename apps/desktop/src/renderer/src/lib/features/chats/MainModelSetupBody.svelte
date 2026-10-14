@@ -4,7 +4,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { settingsStore } from '$lib/stores/settings.svelte';
-  import { core } from '$lib/rpc/client.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { toast } from 'svelte-sonner';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
@@ -61,12 +61,14 @@
             : currentBot.name.trim().length > 0
               ? currentBot.name
               : currentBot.id;
-        const profile = $state.snapshot({
-          ...currentBot.profile,
-          identity: { ...currentBot.profile.identity, name: identityName },
-          runtime: { ...currentBot.profile.runtime, model: botModel },
-        } satisfies BotProfile);
-        await core.call('bots.update', { id: currentBot.id, profile });
+        // base = 写入前的 profile：core 三方合并，只落模型（与占位名回落），不盖回别处刚改的字段。
+        const base = $state.snapshot(currentBot.profile) as BotProfile;
+        const profile = {
+          ...base,
+          identity: { ...base.identity, name: identityName },
+          runtime: { ...base.runtime, model: botModel },
+        } satisfies BotProfile;
+        await contacts.update(currentBot.id, profile, base);
       }
       await chat.continueAfterSetup();
     } catch (error) {
