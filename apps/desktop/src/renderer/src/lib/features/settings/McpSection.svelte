@@ -18,7 +18,7 @@
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
   import { mcpTargetLocked } from './mcp-edit';
-  import { mcpServerId } from './mcp-server-patch';
+  import { editedServerForSave, mcpServerId } from './mcp-server-patch';
   import { applySettingItem } from '$lib/features/settings-card/apply';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
@@ -303,18 +303,27 @@
 
   function addServer(): void {
     draft = emptyDraft(newKind);
+    editInitial = null;
     editingId = null;
     resetTestResults();
   }
 
+  /**
+   * 编辑框打开时的服务快照：保存时只把与它不同的字段（用户真改过的）叠到当前服务上
+   * （`editedServerForSave`），启用 / 免审批 / 逐工具策略永远取当前值。
+   */
+  let editInitial = $state<McpServer | null>(null);
+
   function editServer(server: McpServer): void {
     draft = { ...server, secretDrafts: {} };
+    editInitial = $state.snapshot(server) as McpServer;
     editingId = server.id;
     resetTestResults();
   }
 
   function cancelEdit(): void {
     draft = null;
+    editInitial = null;
     editingId = null;
   }
 
@@ -360,12 +369,17 @@
       }
       const existing = settingsStore.settings?.mcpServers ?? [];
       const index = existing.findIndex((entry) => entry.id === serverId);
-      // W5: the form does not edit per-tool policies — keep the live ones
-      // (changed in the tool list while the form was open), not the snapshot.
-      const merged = (
-        index >= 0 ? { ...server, toolPolicies: existing[index]!.toolPolicies } : server
-      ) as McpServer;
-      if (merged.toolPolicies === undefined) delete merged.toolPolicies;
+      // 只叠用户在表单里真改过的字段；启用 / 免审批 / 逐工具策略（W5）取当前值——编辑期间 Bot 的
+      // 停用卡、列表开关、工具列表里的策略修改都不会被这次保存改回去。
+      const merged = editedServerForSave(
+        index >= 0 ? existing[index] : undefined,
+        editingId === null ? null : editInitial,
+        server,
+      );
+      if (merged === null) {
+        toast.error(t('settingCard.mcp.notFound'));
+        return;
+      }
       const next =
         index >= 0
           ? existing.map((entry, i) => (i === index ? merged : entry))
@@ -376,6 +390,7 @@
       }
       toast.success(t('settings.saved'));
       draft = null;
+      editInitial = null;
       editingId = null;
       draftTestTools = null;
       draftTestHashes = null;
