@@ -640,7 +640,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     scope: 'global',
     fields: [field('name', '资料名称', 'text')],
     write: write('confirm'),
-    card: null,
+    card: 'browser-profiles',
     deepLink: { surface: 'settings', section: 'browser', anchor: 'browser-profiles' },
     store: { kind: 'service', methods: ['browserProfiles.create', 'browserProfiles.rename'] },
   }),

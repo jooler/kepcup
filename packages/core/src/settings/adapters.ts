@@ -861,6 +861,35 @@ function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+/**
+ * 共享浏览器资料的新建。没有 focus 时回有几份；focus 里有 `name` 时，已有同名资料回
+ * `{ name }` 且 configured（再建一个同名的不出卡），还没有回空名称、unconfigured。
+ * 快照不带资料 id。不提供 write——组件走 `browserProfiles.create`，服务读当前列表再追加
+ * （`newId` + `cleanName`）。写锁里整表替换会丢掉这段，也可能覆盖刚建的另一条资料。
+ * 重命名要资料 id，目录里没有这个字段；清除和删除会把挂在上面的 Bot 退回私有资料并中断任务，
+ * 都留在设置页。
+ */
+function browserSharedProfilesAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, _target, focus) => {
+      const profiles = deps.settings.get().browserProfiles;
+      const name = str(focus?.name);
+      if (name === undefined || name.length === 0) {
+        return snapshot(
+          profiles.length === 0 ? 'unconfigured' : 'configured',
+          null,
+          profiles.length === 0 ? '还没有共享浏览器资料' : `有 ${profiles.length} 份共享资料`,
+        );
+      }
+      const existing = profiles.find((profile) => profile.name === name);
+      if (existing === undefined) {
+        return snapshot('unconfigured', { name: '' }, '还没有这份共享资料');
+      }
+      return snapshot('configured', { name }, `已有共享资料「${clean(name, 40)}」`);
+    },
+  };
+}
+
 function networkAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
@@ -1366,6 +1395,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'bot.model': botModelAdapter(deps, 'model'),
     'bot.light-model': botModelAdapter(deps, 'light_model'),
     'bot.browser-profile': browserProfileAdapter(deps),
+    'browser.shared-profiles': browserSharedProfilesAdapter(deps),
     'bot.network': networkAdapter(deps),
     'bot.mcp-servers': botMcpAdapter(deps),
     'bot.apps': botAppsAdapter(deps),

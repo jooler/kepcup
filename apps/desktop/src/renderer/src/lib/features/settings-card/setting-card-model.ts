@@ -55,13 +55,16 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
  * `apps.connections.setToolPolicy`（策略变严时中断正在使用该连接的任务）；写锁里只调
  * `setToolPolicy` 会丢掉这段。已安装 MCP 的启停由组件调用 `settings.update`（写之前对
  * OAuth 绑定变化做 `reconcileServers`，写之后 `mcpRevocationsBetween` 调 `revokeMcp`）；
- * 写锁里直接 `settings.update` 会丢掉这两段。
+ * 写锁里直接 `settings.update` 会丢掉这两段。共享浏览器资料的新建由组件调用
+ * `browserProfiles.create`（服务读当前列表再追加一条）；写锁里整表替换会丢掉这段，也可能
+ * 覆盖刚建的另一条资料。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'group-members',
   'project-settings',
   'tool-policy',
   'mcp-servers',
+  'browser-profiles',
 ]);
 
 /**

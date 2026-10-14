@@ -440,3 +440,67 @@ describe('installed MCP server reads', () => {
     expect(widen(entry, { enabled: true }, { enabled: 'no' })).toBe(true);
   });
 });
+
+describe('browser shared profiles', () => {
+  const target = { botId: null, conversationId: null, projectId: null };
+
+  it('reads a name-only snapshot and does not write', () => {
+    const { adapters, settings } = harness();
+    const adapter = adapters(item('browser.shared-profiles'));
+    expect(adapter.write).toBeUndefined();
+    expect(adapter.valuesWiden).toBeUndefined();
+
+    const overview = adapter.read(item('browser.shared-profiles'), target);
+    expect(overview.status).toBe('configured');
+    expect(overview.values).toBeNull();
+    expect(overview.summary).toBe('有 1 份共享资料');
+    expect(JSON.stringify(overview)).not.toContain('shared-1');
+
+    const existing = adapter.read(item('browser.shared-profiles'), target, { name: 'Work' });
+    expect(existing.status).toBe('configured');
+    expect(existing.values).toEqual({ name: 'Work' });
+    expect(JSON.stringify(existing)).not.toContain('shared-1');
+
+    const padded = adapter.read(item('browser.shared-profiles'), target, { name: '  Work  ' });
+    expect(padded.status).toBe('configured');
+    expect(padded.values).toEqual({ name: 'Work' });
+
+    const missing = adapter.read(item('browser.shared-profiles'), target, { name: 'Home' });
+    expect(missing.status).toBe('unconfigured');
+    expect(missing.values).toEqual({ name: '' });
+    expect(JSON.stringify(missing)).not.toContain('shared-1');
+
+    const blank = adapter.read(item('browser.shared-profiles'), target, { name: '   ' });
+    expect(blank.values).toBeNull();
+    expect(blank.summary).toBe('有 1 份共享资料');
+
+    expect(settings().browserProfiles).toEqual([{ id: 'shared-1', name: 'Work', createdAt: 1 }]);
+  });
+
+  it('summarizes when there are no shared profiles', () => {
+    const { adapters } = harness({ browserProfiles: [] });
+    const overview = adapters(item('browser.shared-profiles')).read(
+      item('browser.shared-profiles'),
+      target,
+    );
+    expect(overview.status).toBe('unconfigured');
+    expect(overview.values).toBeNull();
+    expect(overview.summary).toBe('还没有共享浏览器资料');
+  });
+
+  it('counts every shared profile and still omits ids', () => {
+    const { adapters } = harness({
+      browserProfiles: [
+        { id: 'bpf_a', name: '工作', createdAt: 1 },
+        { id: 'bpf_b', name: '私人', createdAt: 2 },
+      ],
+    });
+    const overview = adapters(item('browser.shared-profiles')).read(
+      item('browser.shared-profiles'),
+      target,
+    );
+    expect(overview.summary).toBe('有 2 份共享资料');
+    expect(overview.values).toBeNull();
+    expect(JSON.stringify(overview)).not.toContain('bpf_');
+  });
+});

@@ -159,6 +159,11 @@ describe('预填过滤', () => {
     const mcpServer = { server: 'notes', enabled: true };
     expect(settingCardPrefill(item('mcp.servers'), 'user-only', mcpServer)).toBeNull();
     expect(settingCardPrefill(item('mcp.servers'), 'confirm', mcpServer)).toEqual(mcpServer);
+    const profileName = { name: '工作' };
+    expect(settingCardPrefill(item('browser.shared-profiles'), 'user-only', profileName)).toBeNull();
+    expect(settingCardPrefill(item('browser.shared-profiles'), 'confirm', profileName)).toEqual(
+      profileName,
+    );
   });
 
   it('能力模型预填：厂商须已适配该能力；厂商/模型写法拆开', () => {
@@ -250,6 +255,7 @@ describe('卡片形态的分发', () => {
     expect(hostApplies(item('mcp.servers'), 'confirm', { server: 'notes', enabled: false })).toBe(
       false,
     );
+    expect(hostApplies(item('browser.shared-profiles'), 'confirm', { name: '工作' })).toBe(false);
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {
