@@ -12,7 +12,9 @@ import {
 
 import { isInsidePath, readOnlyRoots, sensitivePaths } from '../sandbox/sensitive-paths.js';
 import { buildSandboxPolicy } from '../sandbox/policy.js';
-import { executeUnsandboxed } from '../sandbox/confirm-executor.js';
+import { executeUnsandboxed, exemptCommandEnv } from '../sandbox/confirm-executor.js';
+import { childEnvFor } from '../sandbox/backend-srt.js';
+import { gitRepoConfigRisk } from '../permissions/git-config-risk.js';
 import type { SandboxBackend, SandboxExecResult, SandboxNetworkPolicy } from '../sandbox/types.js';
 import { expandTilde, workspacePathFor, type AppPaths } from '../infra/paths.js';
 import type { AuditService } from '../domain/audit.js';
@@ -118,6 +120,28 @@ export type PathDecision =
   | { kind: 'needs_lease'; resolvedPath: string; reason: string }
   /** `readOnlyRun`: refused because the run may not write at all (D75, RUN_READ_ONLY). */
   | { kind: 'forbidden'; resolvedPath: string; reason: string; readOnlyRun?: true };
+
+
+/**
+ * Repository control files whose content git executes or obeys: `.git/config`
+ * (and `config.worktree`, submodule configs under `.git/modules/`), anything
+ * under a `.git/hooks` directory, `.git/info/attributes` (selects filter / diff
+ * drivers). Review P1: allowlisted git commands run unsandboxed in confirm
+ * mode and follow this config, so a Bot write here needs the user's grant —
+ * never silently (the external-agent bridge already cards any `.git` write).
+ * `p` is the resolved, compare-normalized path.
+ */
+export function isGitControlPath(p: string): boolean {
+  const segments = p.split(/[\\/]+/);
+  const dotGit = segments.lastIndexOf('.git');
+  if (dotGit < 0) return false;
+  const tail = segments.slice(dotGit + 1);
+  if (tail.length === 0) return false;
+  if (tail.includes('hooks')) return true;
+  const last = tail[tail.length - 1] ?? '';
+  if (last === 'config' || last === 'config.worktree') return true;
+  return tail.length === 2 && tail[0] === 'info' && tail[1] === 'attributes';
+}
 
 /** Upper bound for the workspace link scan in `hasExternalHardlink`. */
 const HARDLINK_SCAN_ENTRY_CAP = 20_000;
@@ -356,6 +380,9 @@ export class ToolGateway {
           reason: '目标文件存在 workspace 之外的硬链接',
         };
       }
+      if (mode === 'write' && isGitControlPath(resolvedNorm)) {
+        return this.#gitControlDecision(identity, resolved);
+      }
       return { kind: 'allowed', resolvedPath: resolved };
     }
 
@@ -395,6 +422,8 @@ export class ToolGateway {
       }
       if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
       if (this.#deps.projects.holdsLease(identity, project.path)) {
+        // Lease first (a grant never replaces it), then the git control files.
+        if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
         return { kind: 'allowed', resolvedPath: resolved };
       }
       return {
@@ -449,6 +478,29 @@ export class ToolGateway {
       resolvedPath: resolved,
       reason: '位于当前 workspace 与系统目录之外',
       sensitive: false,
+    };
+  }
+
+  /**
+   * A write to a repository control file (`isGitControlPath`) inside the
+   * workspace / the leased project: allowed only under a write grant the user
+   * gave for it (or a parent), else a sensitive access card.
+   */
+  #gitControlDecision(identity: RunIdentity, resolved: string): PathDecision {
+    const norm = (p: string) => normalizeForCompare(p, this.#platform);
+    const grant = this.#deps.grants.hasEffectiveGrant(identity, resolved, 'write', (grantPath, candidate) =>
+      isInsidePath(norm(candidate), norm(grantPath)),
+    );
+    if (grant !== null) {
+      this.#deps.approvals.noteGrantUsed(grant.id, identity);
+      this.#deps.grants.noteOnceUse(grant);
+      return { kind: 'allowed', resolvedPath: resolved };
+    }
+    return {
+      kind: 'needs_grant',
+      resolvedPath: resolved,
+      reason: '写入仓库的 git 配置或 hooks（git 会按它执行程序）需要授权',
+      sensitive: true,
     };
   }
 
@@ -675,14 +727,13 @@ export class ToolGateway {
       // D73 P2 (design 29 §8.3): while tainted, a sandboxed command with the network
       // open is a per-command confirmation (`egress`, channel bash) — `allowlist` / `none`
       // policies keep the original rules (the sandbox itself bounds egress there).
-      // Commands the read-only allowlist vouches for (ls / cat / grep …: no network) are not a
-      // channel and stay unconfirmed.
+      // Commands the BUILT-IN read-only allowlist vouches for (ls / cat / grep …: no
+      // network) are not a channel and stay unconfirmed; user-added entries are not
+      // proven read-only (`npm test` may fetch) and get the card (review P1).
       if (
         req.network.mode === 'open' &&
         this.taintOf(identity) !== null &&
-        !this.#deps.allowlist.match(req.command, {
-          isPathAllowed: (p) => this.checkPath(identity, p, 'read').kind === 'allowed',
-        }).exempt
+        !this.#builtinExempt(identity, req.command, cwd, policyEnv)
       ) {
         await this.egressCheck(
           identity,
@@ -749,23 +800,26 @@ export class ToolGateway {
     }
 
     // Confirm mode: every command is confirmed (allowlist) or approved.
-    const verdict = this.#deps.allowlist.match(req.command, {
-      isPathAllowed: (p) => this.checkPath(identity, p, 'read').kind === 'allowed',
-    });
-    if (verdict.exempt) {
+    // A user-added entry is not proven read-only: it never exempts a read-only
+    // run's command (D75) nor a tainted conversation's (D73) — review P1.
+    const verdict = this.#exemptVerdict(identity, req.command, cwd, policyEnv);
+    const customBlocked =
+      verdict.custom && (readOnlyReason !== null || this.taintOf(identity) !== null);
+    if (verdict.exempt && !customBlocked) {
       const result = await executeUnsandboxed({
         command: req.command,
         cwd,
         timeoutMs: req.timeoutMs ?? BASH_TIMEOUT_DEFAULT_MS,
         signal: req.signal,
         onOutput: req.onOutput,
-        ...(Object.keys(policyEnv).length > 0 ? { envOverlay: policyEnv } : {}),
+        envOverlay: exemptCommandEnv(policyEnv, this.#platform),
       });
       this.audit(identity, 'exec_confirm_allowlist', {
         command: req.command,
         cwd,
         exitCode: result.exitCode,
         sandboxUnavailable: availability.reason ?? '',
+        ...(verdict.custom ? { customEntry: true } : {}),
       });
       return { ...result, policyApplied: false };
     }
@@ -773,7 +827,7 @@ export class ToolGateway {
     if (readOnlyReason !== null) {
       throw new AppError(
         'RUN_READ_ONLY',
-        `${readOnlyReason}。当前沙箱不可用，只能执行只读白名单内的命令：${req.command}`,
+        `${readOnlyReason}。当前沙箱不可用，只能执行内置只读白名单内的命令${verdict.exempt ? '（自定义白名单条目不算只读）' : ''}：${req.command}`,
       );
     }
 
@@ -800,6 +854,47 @@ export class ToolGateway {
       'confirm-mode',
       Object.keys(policyEnv).length > 0 ? policyEnv : undefined,
     );
+  }
+
+  /**
+   * Allowlist verdict for running `command` in `cwd` without a card. On top of
+   * the matcher: an exempt verdict that runs git is withdrawn when the
+   * repository's own config would make git execute a program
+   * (`gitRepoConfigRisk`, review P1). `custom` = a user-added entry matched.
+   */
+  #exemptVerdict(
+    identity: RunIdentity,
+    command: string,
+    cwd: string,
+    policyEnv: Record<string, string>,
+  ): { exempt: boolean; custom: boolean; reason?: string } {
+    const verdict = this.#deps.allowlist.match(command, {
+      isPathAllowed: (p) => this.checkPath(identity, p, 'read').kind === 'allowed',
+    });
+    const custom = (verdict as { custom?: boolean }).custom === true;
+    if (!verdict.exempt) {
+      return { exempt: false, custom, ...(verdict.reason !== undefined ? { reason: verdict.reason } : {}) };
+    }
+    if ((verdict.programs ?? []).includes('git')) {
+      // The scan sees the repository as git will, minus our own GIT_CONFIG_*
+      // overrides (they would list as `command` scope).
+      const hardened = exemptCommandEnv(policyEnv, this.#platform);
+      const env = childEnvFor(process.env, { PATH: hardened['PATH'] ?? '', GIT_TERMINAL_PROMPT: '0' });
+      const risk = gitRepoConfigRisk(cwd, env);
+      if (risk !== null) return { exempt: false, custom, reason: risk };
+    }
+    return { exempt: true, custom };
+  }
+
+  /** Exempt by BUILT-IN entries only (the taint gate's exemption). */
+  #builtinExempt(
+    identity: RunIdentity,
+    command: string,
+    cwd: string,
+    policyEnv: Record<string, string>,
+  ): boolean {
+    const verdict = this.#exemptVerdict(identity, command, cwd, policyEnv);
+    return verdict.exempt && !verdict.custom;
   }
 
   /**
