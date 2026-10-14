@@ -2,7 +2,7 @@ import { Agent } from '@earendil-works/pi-agent-core';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { Message as PiAgentMessage } from '@earendil-works/pi-ai';
 import { executeToolSafely, toolResultBlocks } from './tool-execution.js';
-import { buildModelRegistry, mapProviderError, resolveModel } from './models.js';
+import { buildModelRegistry, mapProviderError, modelSessionId, resolveModel } from './models.js';
 import type {
   AgentEngine,
   CompletionRequest,
@@ -147,6 +147,10 @@ export class PiEngine implements AgentEngine {
       streamFn: (m, context, options) =>
         models.streamSimple(m, context, {
           ...options,
+          // Stable per-conversation session id: OpenCode providers require it
+          // as `x-opencode-session` (routing + prompt caching); others ignore
+          // it unless they support session affinity/caching.
+          sessionId: modelSessionId(spec.identity),
           // Retries (network + 408/409/429/5xx, Retry-After, backoff) happen
           // before the first token; each one shows on the run status line.
           // A model change for this run's Bot (spec.isRouteCurrent) stops us
@@ -227,6 +231,7 @@ export class PiEngine implements AgentEngine {
         {
           maxTokens: req.maxTokens,
           signal: req.signal,
+          sessionId: modelSessionId(req.identity),
           fetch: createRetryingFetch({
             ...(this.#deps.modelRetry ? { policy: this.#deps.modelRetry } : {}),
             logger: this.#deps.logger,
