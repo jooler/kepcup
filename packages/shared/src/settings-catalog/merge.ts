@@ -18,6 +18,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 只读自有键：设置里有以用户输入为键的记录（智能体 id、工具名、环境变量名……），`__proto__` /
+ * `constructor` 这类键不能从原型链上读到东西。写出一律走 `Object.fromEntries`（建自有属性，
+ * 不会改原型）。
+ */
+function own(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 /** 结构相等（与键顺序无关；`undefined` 键视同缺省）。 */
 export function settingsDeepEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -32,7 +41,7 @@ export function settingsDeepEqual(a: unknown, b: unknown): boolean {
   if (!isPlainObject(a) || !isPlainObject(b)) return false;
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    if (!settingsDeepEqual(a[key], b[key])) return false;
+    if (!settingsDeepEqual(own(a, key), own(b, key))) return false;
   }
   return true;
 }
@@ -79,12 +88,12 @@ export function mergeThreeWay(base: unknown, mine: unknown, theirs: unknown): un
   if (settingsDeepEqual(theirs, base)) return mine;
   if (settingsDeepEqual(mine, theirs)) return mine;
   if (isPlainObject(base) && isPlainObject(mine) && isPlainObject(theirs)) {
-    const out: Record<string, unknown> = {};
+    const entries: Array<[string, unknown]> = [];
     for (const key of new Set([...Object.keys(mine), ...Object.keys(theirs)])) {
-      const value = mergeThreeWay(base[key], mine[key], theirs[key]);
-      if (value !== undefined) out[key] = value;
+      const value = mergeThreeWay(own(base, key), own(mine, key), own(theirs, key));
+      if (value !== undefined) entries.push([key, value]);
     }
-    return out;
+    return Object.fromEntries(entries);
   }
   if (idKeyed(base) && idKeyed(mine) && idKeyed(theirs)) return mergeById(base, mine, theirs);
   return mine;
@@ -100,10 +109,12 @@ export function mergePatchOnto<T extends Record<string, unknown>>(
   latest: Readonly<Record<string, unknown>>,
 ): T {
   if (base === undefined) return patch;
-  const out: Record<string, unknown> = { ...patch };
-  for (const key of Object.keys(patch)) {
-    if (!Object.hasOwn(base, key)) continue;
-    out[key] = mergeThreeWay(base[key], patch[key], latest[key]);
-  }
-  return out as T;
+  return Object.fromEntries(
+    Object.keys(patch).map((key) => [
+      key,
+      Object.hasOwn(base, key)
+        ? mergeThreeWay(own(base, key), own(patch, key), own(latest, key))
+        : own(patch, key),
+    ]),
+  ) as T;
 }
