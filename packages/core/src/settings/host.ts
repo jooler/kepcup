@@ -870,6 +870,49 @@ export class SettingsCatalogHost {
   }
 
   /**
+   * 重新打开对话时对 pending 的 link 卡核对一次（P2，todo/conversational-settings-p2.md 任务 8）：
+   * 用户可能在设置页改完、回到对话之前卡就挂了——挂载后的 `settings.changed` 等不到。核对规则同
+   * `completeCard`，但**只认有值证据的通过**（建议值一致、或本条目当前值与出卡时不同）；核对不了
+   * （非 link 卡、渲染层 / 只读、unknown，以及兜底适配器恒回 configured 的条目——那会把没做过的
+   * 设置擅自标完成）一律保持 pending、不唤醒，由用户在卡上「我已设置好」。核对通过才标 applied
+   * 并唤醒一次。
+   */
+  recheckCard(messageId: string): { state: SettingCardState; verified: boolean | null } {
+    const row = this.#cardOrThrow(messageId);
+    const current = this.#expireIfStale(row);
+    if (current.card.state !== 'pending' || current.card.mode !== 'link') {
+      return { state: current.card.state, verified: null };
+    }
+    const item = getSettingItem(current.card.itemId);
+    if (item === null || item.owner === 'renderer' || item.readOnly) {
+      return { state: 'pending', verified: null };
+    }
+    const target = this.#resolveTarget(item, current.card.target, current.message.conversationId);
+    const snapshot = this.#adapterOf(item).read(
+      item,
+      target,
+      current.card.proposed ?? current.card.before ?? undefined,
+    );
+    if (snapshot.status === 'unknown' || snapshot.status === 'readonly') {
+      return { state: 'pending', verified: null };
+    }
+    const { proposed, before } = current.card;
+    const verified =
+      (proposed !== null &&
+        Object.entries(proposed).every(([key, value]) =>
+          jsonEqual(snapshot.values?.[key], value),
+        )) ||
+      (before !== null && snapshot.values !== null && !jsonEqual(before, snapshot.values));
+    if (!verified) return { state: 'pending', verified: false };
+    this.#resolveCard(
+      current,
+      'applied',
+      snapshot.values !== null ? { applied: snapshot.values } : {},
+    );
+    return { state: 'applied', verified: true };
+  }
+
+  /**
    * 「我已设置好」（link 卡 / 渲染层条目，§6.1）：能核对的用适配器核对一次。核对不通过 → 卡片保持
    * pending（verified false）；无法核对（渲染层 / 只读 / 状态未知）→ 按用户所说标 applied
    * （verified null）。

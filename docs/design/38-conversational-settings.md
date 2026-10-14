@@ -154,7 +154,12 @@
 |---|---|
 | `settings.items.apply{itemId, values, expected, target?, messageId?}` | 卡片 / 设置页按条目保存（条目级 CAS）。`values` 来自用户亲手填写，**可含敏感字段**，按适配器分发到 secrets，永不回显。返回 `applied{before, values}` 或 `conflict{current}`；带 `messageId` 时成功后卡片标 applied 并唤醒 Bot |
 | `settings.cards.dismiss{messageId}` | 「不用了」：标 dismissed，唤醒 Bot 一次；已落定的卡原样返回状态 |
+<<<<<<< HEAD
 | `settings.cards.complete{messageId, auto?}` | 「我已设置好」（link 卡 / 渲染层条目 / 内嵌组件自己保存后）：core 能用适配器核对的核对一次——与建议值一致、**或已配置好、或本条目相对出卡时变过**（值不同；值为 null 的概要类条目看概要是否不同且现在不是未配置 / 部分可用）都算完成，卡上记**实际值**并唤醒一次；`verified: false` 保持 pending 并提示，`null` 无法核对（渲染层 / 只读 / 状态未知）按用户所说标 applied。`auto: true`：渲染层在卡片挂载时（打开对话）对待处理的 link / user-only / form 卡自动核对一次，要证明卡上要的事做成了——有建议值时当前值满足建议值；没有建议值的放宽类空白卡（user-only）只认放宽方向的变化（`valuesWiden`），别处的反向收紧不算；其余卡变过即可；无法核对或不满足都保持 pending、不唤醒；每张卡本会话只请求一次，core 侧同一张卡 30 秒限频 |
+=======
+| `settings.cards.complete{messageId}` | 「我已设置好」（link 卡 / 渲染层条目 / 内嵌组件自己保存后）：core 能用适配器核对的核对一次——与建议值一致、**或已配置好、或本条目字段与出卡时不同**（用户在卡上改成了别的值 / 填了与预填不同的值）都算完成，卡上记**实际值**并唤醒一次；`verified: false` 保持 pending 并提示，`null` 无法核对按用户所说标 applied |
+| `settings.cards.recheck{messageId}` | 重新打开对话时对 pending 的 link 卡核对一次（P2）：挂载后的 `settings.changed` 等不到用户在设置页已完成的修改。规则同 complete，但**只认有值证据的通过**（建议值一致、或本条目当前值与出卡时不同）；核对不了（非 link 卡、渲染层 / 只读、unknown、兜底适配器恒回 configured 的条目）一律保持 pending 不唤醒，由用户在卡上操作。桌面端在 `chat.select` / `loadEarlier` 对载入消息里的 pending link 卡逐张触发，结果经 `message.updated` 回流 |
+>>>>>>> 21792c7 (feat(settings): 重开对话时对 pending 的跳转卡用读适配器核对一次)
 | `settings.cards.undo{messageId}` | 回执卡撤销：用卡上的旧值经同一套 CAS 写回，当前值已不是回执上的新值 → `conflict` 不覆盖；成功标 `reverted`，不唤醒 |
 | 事件 `settings.changed{itemIds}` | 见 §1.5 |
 

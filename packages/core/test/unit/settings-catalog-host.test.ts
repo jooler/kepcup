@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+<<<<<<< HEAD
   AppError,
+=======
+  SETTING_CARD_EVENT,
+>>>>>>> 21792c7 (feat(settings): 重开对话时对 pending 的跳转卡用读适配器核对一次)
   SETTING_CARDS_PER_RUN_MAX,
   SETTING_CARD_DECLINE_WINDOW_MS,
   SETTING_RECEIPT_UNDO_WINDOW_MS,
@@ -1509,6 +1513,7 @@ const CHANGE_MAIN_ALT = {
   reason: '换模型',
 };
 
+<<<<<<< HEAD
 
 describe('settings catalog host: D89 review round 2', () => {
   function withServer(rig: Rig): void {
@@ -1963,5 +1968,85 @@ describe('settings catalog host: D89 review round 3', () => {
       expected: null,
     });
     expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
+=======
+describe('settings catalog host: recheck pending link cards on conversation reopen (P2)', () => {
+  /** 手造一张卡消息（历史 pending 卡：出卡时条目还没有内嵌卡，mode 是 link）。 */
+  function appendCard(
+    rig: Rig,
+    card: Pick<SettingCardContent, 'itemId' | 'mode'> &
+      Partial<Pick<SettingCardContent, 'proposed' | 'before' | 'target' | 'botId'>>,
+  ): Message {
+    return rig.messages.append({
+      conversationId: rig.conversationId,
+      senderType: 'system',
+      kind: 'system_event',
+      event: SETTING_CARD_EVENT,
+      text: '设置卡',
+      runId: null,
+      setting: {
+        botId: 'bot_a',
+        runId: null,
+        target: {},
+        proposed: null,
+        before: null,
+        reason: 'r',
+        state: 'pending',
+        ...card,
+      } satisfies SettingCardContent,
+    });
+  }
+
+  it('值已在别处改好 → 标 applied 并唤醒一次；再核对不重复', async () => {
+    const rig = makeRig();
+    // 出卡时开着开机启动（before 快照），用户后来在设置页关掉了。
+    const card = appendCard(rig, {
+      itemId: 'general.launch-at-login',
+      mode: 'link',
+      before: { enabled: true },
+    });
+    rig.settings.update({ launchAtLogin: false });
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: true });
+    expect(cardOf(rig, card.id).state).toBe('applied');
+    expect(cardOf(rig, card.id).applied).toEqual({ enabled: false });
+    expect(rig.wakes).toHaveLength(1);
+    // 已落定的卡再核对（重复打开对话）原样返回，不重复唤醒。
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: null });
+    expect(rig.wakes).toHaveLength(1);
+  });
+
+  it('值还没变 → 保持 pending，不唤醒', async () => {
+    const rig = makeRig();
+    const card = appendCard(rig, {
+      itemId: 'general.launch-at-login',
+      mode: 'link',
+      before: { enabled: true },
+    });
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
+    expect(cardOf(rig, card.id).state).toBe('pending');
+    expect(rig.wakes).toHaveLength(0);
+  });
+
+  it('兜底适配器恒回 configured 的条目（profile.user-facts）不擅自标完成；手动「我已设置好」仍可以', async () => {
+    const rig = makeRig();
+    const card = appendCard(rig, { itemId: 'profile.user-facts', mode: 'link' });
+    // 兜底适配器恒回 configured 但拿不出值证据：核对不通过（false），保持 pending。
+    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
+    expect(cardOf(rig, card.id).state).toBe('pending');
+    expect(rig.wakes).toHaveLength(0);
+    // 用户亲手点的 complete 仍按「已配置」结卡（既有行为不变）。
+    expect(rig.host.completeCard(card.id)).toEqual({ state: 'applied', verified: true });
+    expect(rig.wakes).toHaveLength(1);
+  });
+
+  it('只读条目（diagnostics）与非 link 卡不核对、不落定', async () => {
+    const rig = makeRig();
+    const readonly = appendCard(rig, { itemId: 'diagnostics.status', mode: 'link' });
+    expect(rig.host.recheckCard(readonly.id)).toEqual({ state: 'pending', verified: null });
+    const confirm = appendCard(rig, { itemId: 'general.launch-at-login', mode: 'confirm' });
+    expect(rig.host.recheckCard(confirm.id)).toEqual({ state: 'pending', verified: null });
+    expect(cardOf(rig, readonly.id).state).toBe('pending');
+    expect(cardOf(rig, confirm.id).state).toBe('pending');
+    expect(rig.wakes).toHaveLength(0);
+>>>>>>> 21792c7 (feat(settings): 重开对话时对 pending 的跳转卡用读适配器核对一次)
   });
 });
