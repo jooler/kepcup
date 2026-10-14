@@ -1,5 +1,5 @@
 import { spawn as spawnChild } from 'node:child_process';
-import { accessSync, constants as fsConstants } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -151,6 +151,80 @@ interface LiveAgent {
    * this one closes once its last lease / session is gone.
    */
   retiring: boolean;
+}
+
+/**
+ * Directories GUI-launched macOS/Linux apps often miss on PATH (Dock / Finder
+ * launchd PATH is typically `/usr/bin:/bin:/usr/sbin:/sbin`). InkCop installs
+ * `inkcop-acp` into `~/.local/bin`; Homebrew lives under `/opt/homebrew/bin`.
+ * Only existing absolute dirs are returned (deduped).
+ */
+export function userPathDirs(
+  options: { home?: string; platform?: NodeJS.Platform } = {},
+): string[] {
+  const platform = options.platform ?? process.platform;
+  if (platform === 'win32') return [];
+  const home = options.home ?? os.homedir();
+  const candidates = [
+    path.posix.join(home, '.local', 'bin'),
+    path.posix.join(home, 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+  ];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const dir of candidates) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    if (existsSync(dir)) out.push(dir);
+  }
+  return out;
+}
+
+/** Prepends {@link userPathDirs} onto PATH (idempotent). */
+export function withUserPath(
+  env: NodeJS.ProcessEnv,
+  options: { home?: string; platform?: NodeJS.Platform } = {},
+): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  if (platform === 'win32') return env;
+  const delimiter = ':';
+  const extras = userPathDirs(options);
+  if (extras.length === 0) return env;
+  const key = env.PATH !== undefined ? 'PATH' : env.Path !== undefined ? 'Path' : 'PATH';
+  const current = env[key] ?? '';
+  const existing = new Set(current.split(delimiter).filter((dir) => dir.length > 0));
+  const prefix = extras.filter((dir) => !existing.has(dir));
+  if (prefix.length === 0) return env;
+  return { ...env, [key]: `${prefix.join(delimiter)}${current.length > 0 ? delimiter : ''}${current}` };
+}
+
+/**
+ * True when `file` is a Node entrypoint (`.js` / `.mjs` / `.cjs`, or a
+ * `#!/usr/bin/env node` shebang). Extension-less bins like `inkcop-acp` need
+ * this so GUI apps without `node` on PATH can still run them via Electron.
+ */
+export function isNodeScript(file: string): boolean {
+  try {
+    const resolved = realpathSync(file);
+    if (/\.(?:m?js|cjs)$/i.test(resolved)) return true;
+  } catch {
+    // fall through to shebang probe
+  }
+  try {
+    const fd = openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(80);
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      const head = buf.subarray(0, n).toString('utf8');
+      const line = head.split(/\r?\n/, 1)[0] ?? '';
+      return /^#!.*\bnode(?:\s|$)/.test(line);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
 }
 
 /**

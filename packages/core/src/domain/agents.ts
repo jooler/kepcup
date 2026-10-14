@@ -570,10 +570,16 @@ export class AgentsService {
     if (this.#source(entry, setting) === 'system') {
       const invocation = installer.systemInvocation(entry);
       if (invocation !== null) return invocation;
-      throw new AppError(
-        'AGENT_UNAVAILABLE',
-        `智能体「${entry.name}」未在系统中找到 ${entry.distribution.system?.cmd ?? ''}：请先安装其官方 CLI，或改用应用内安装`,
-      );
+      {
+        const cmd = entry.distribution.system?.cmd ?? '';
+        const hasManaged = installer.managedKind(entry) !== null;
+        throw new AppError(
+          'AGENT_UNAVAILABLE',
+          hasManaged
+            ? `智能体「${entry.name}」未在系统中找到 ${cmd}：请先安装其官方 CLI，或改用应用内安装`
+            : `智能体「${entry.name}」未在系统中找到 ${cmd}：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中`,
+        );
+      }
     }
     const version = this.#installedVersion(entry, setting);
     const installed = version === null ? null : installer.installed(entry.id, version);
@@ -783,9 +789,13 @@ export class AgentsService {
     if (wanted === 'system' && !this.#deps.launchOverride?.(entry)) {
       const detected = await this.#refreshSystemCli(entry, true);
       if (detected === null || !detected.found) {
+        const cmd = entry.distribution.system?.cmd ?? entry.name;
+        const hasManaged = this.#deps.installer.managedKind(entry) !== null;
         throw new AppError(
           'AGENT_UNAVAILABLE',
-          `未在系统中找到 ${entry.distribution.system?.cmd ?? entry.name}：请先安装其官方 CLI，或改用应用内安装`,
+          hasManaged
+            ? `未在系统中找到 ${cmd}：请先安装其官方 CLI，或改用应用内安装`
+            : `未在系统中找到 ${cmd}：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中（macOS 从程序坞启动时尤其需要）`,
         );
       }
       if (!detected.compatible) {
