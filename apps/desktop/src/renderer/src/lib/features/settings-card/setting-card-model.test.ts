@@ -11,12 +11,14 @@ import {
   capabilityOfItem,
   capabilityPrefill,
   COMPONENT_SAVE_CARD_KEYS,
+  SELF_APPLYING_CARD_KEYS,
   embeddedCardKey,
   formatSettingValue,
   hostApplies,
   linkCardSettled,
   nonSensitiveValues,
   offersManualComplete,
+  autoVerifiable,
   receiptUndo,
   sensorOfItem,
   settingCardOf,
@@ -269,6 +271,9 @@ describe('卡片形态的分发', () => {
     expect(hostApplies(item('browser.shared-profiles'), 'confirm', { name: '工作' })).toBe(false);
     expect(hostApplies(item('environment.toolchains'), 'user-only', null)).toBe(false);
     expect(COMPONENT_SAVE_CARD_KEYS.has('environment-toolchains')).toBe(false);
+    // 已安装 MCP 的启停改经 settings.items.apply（core 写锁 + CAS），组件自己的「应用」就是宿主的应用。
+    expect(COMPONENT_SAVE_CARD_KEYS.has('mcp-servers')).toBe(false);
+    expect(SELF_APPLYING_CARD_KEYS.has('mcp-servers')).toBe(true);
     expect(hostApplies(item('environment.sandbox'), 'user-only', null)).toBe(false);
     expect(COMPONENT_SAVE_CARD_KEYS.has('environment-sandbox')).toBe(false);
     expect(hostApplies(item('environment.allowlist'), 'user-only', null)).toBe(false);
@@ -276,6 +281,9 @@ describe('卡片形态的分发', () => {
   });
 
   it('「我已设置好」只给用户亲手设置的形态', () => {
+    expect(['receipt', 'confirm', 'form', 'user-only', 'link'].filter((view) =>
+      autoVerifiable(view as Parameters<typeof autoVerifiable>[0]),
+    )).toEqual(['form', 'user-only', 'link']);
     expect(offersManualComplete('form')).toBe(true);
     expect(offersManualComplete('user-only')).toBe(true);
     expect(offersManualComplete('link')).toBe(true);

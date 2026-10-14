@@ -527,3 +527,24 @@
 - 影响范围：`packages/core/src/agent/external/{permission-bridge,engine,types}.ts`、`providers/claude.ts`、`start.ts`（一行接线）、`permissions/{allowlist,allowlist-match,git-config-risk,approvals}.ts`、`gateway/index.ts`、`sandbox/confirm-executor.ts`、`domain/messages.ts`、`packages/shared/src/{policy/allowlist-pattern,domain/types}.ts`、desktop `features/approvals/*`、`MessageList.svelte`、`zh-CN.ts`（权限 / 白名单文案）。
 - 集成时已补改（原先留给其他车道的两处）：设置目录里 Bot 智能体档位的 `ask` 标签改为「编辑前确认（沙箱内命令自动）」，与 `contacts.agentPermissionAsk` 一致；`agent/context/system-prompt.ts` 的确认模式提示改为「命中白名单的命令无需确认（自定义条目在只读任务里仍不会执行，污点期间仍需确认）」。
 - 已更新的文档：`docs/design/13-permissions.md`（档位表、白名单、回执、界面）、`10-sandbox.md`、`12-ui-layout.md`、`28-external-agents-acp.md`。
+
+### DEV-029 对话内应用设置合并后审查修复的取舍（D89）
+
+- 状态：已落实（编号取 DEV-026 + 1，合并时以最后一个空号为准）
+- 阶段：D89 P0 + P1 合并后审查修复（`t/fix-settings`）
+- 是否阻塞：否
+- 问题与决定：
+  1. **过期整表单保存（P0 遗留，§8.3）选三方合并，不选乐观并发版本号**：`settings.update` / `bots.update` 增可选 `base`，core 在写锁里用 `mergeThreeWay` 与最新值合并。设置页与右栏 Profile 都是自动保存，版本号冲突会让每次并发都弹错；三方合并只在两边改了同一字段时需要取舍（以这次保存为准——那是用户刚亲手改的值）。按 id 寻址的数组按条合并。不带 `base` 的调用方保持整份覆盖：右栏以外直接调 `bots.update` 的入口（失败续跑卡、连接授权卡、侧栏对话框、头像）都是「读当前 → 改一处 → 立刻保存」，窗口极短，未改。
+  2. **仍由组件调用原 RPC 保存（不经宿主写锁 / CAS）的条目**，审查后逐项核对，它们都不是整表快照提交：
+     - `connections.tool-policy`：`apps.connections.setToolPolicy` 同步改一条工具的策略行（不写 settings），策略变严时中断任务；卡片保存的是用户亲手选的档位，无快照可过期。
+     - `browser.shared-profiles`：`browserProfiles.create` 在服务里同步读当前列表再追加一条，不会覆盖别处的新建。
+     - `group.members`：`groups.addMembers` / `groups.removeMember` 按 Bot 增删（移出是异步级联，不能放进写锁）；卡片改为只提交用户亲手勾 / 不勾的差异（`group-members.ts`），卡片挂着时别处新加的成员不会被移出。原实现按挂载时的成员快照算差异，会把之后加进来的 Bot 移出——这是真问题，已修。
+     - 项目两项、`unattended.enable`、环境三项：user-only，保存与风险确认留在组件里，宿主不写。
+     - `mcp.servers` **原来是**从渲染层缓存整表提交 `settings.update`（会把并发修改覆盖回去）——改为宿主写入适配器（写锁里读最新列表、CAS、只改 `enabled`，锁外 `mcpRevocationsBetween`）。
+  3. **适配器写入的锁外收尾**：`ItemAdapter.write` 仍是同步的，需要 await 的副作用（中断任务、关浏览器页面、收回授权）以 `afterUnlock` 返回，宿主释放写锁后执行；副作用失败只记日志，不把已完成的写入报成失败（与 `bots.update` RPC 原来的行为一致）。
+  4. **`environment.allowlist` 状态恒为 `unknown`**：没有能说明「Bot 要的那条命令是否免审批」的状态，`configured` 会让 required 直接放行、核对直接通过。代价：用户点「我已设置好」时无法核对，按用户所说结卡（与渲染层条目相同）。没有给白名单加任何写入路径。
+  5. **`bot.skills` 拒绝公共技能**，没有做「按 Bot 覆盖公共技能」：注册表没有这种行，新增它要动技能的数据模型。
+  6. **自动核对（`settings.cards.complete{auto}`）只认「变过」**：值不同；值为 null 的概要类条目看概要变了且现在不是未配置 / 部分可用。手动「我已设置好」的核对也加了概要变化这一条（此前值为 null 的条目只能靠 `configured`）。
+  7. **`general.language` 改为静态选项**（目录写死 `zh-CN`），core 按它校验；渲染层 `localeOptions` 加语言时同步目录，desktop 单测核对两边一致。
+- 影响范围：`packages/shared/src/settings-catalog/{merge,validate,items}.ts`、`rpc/methods.ts`、`domain/types.ts`；`packages/core/src/settings/*`、`rpc/{bindings,settings-bindings}.ts`、`start.ts`（设置目录宿主的装配）；desktop `features/settings-card/*`、`McpSection`、`AppearanceSection`、`GroupSettingsDialog`、`RightPanel` 的保存、`stores/{settings,contacts}`。
+- 已更新的文档：`docs/design/38-conversational-settings.md`（§1.4 / §1.5 / §4 / §11）、`todo/conversational-app-setup.md`（§8.2 / §8.3 / §8.6）、`docs/dev/PROGRESS.md`。

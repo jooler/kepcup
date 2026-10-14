@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { getSettingItem, SETTING_ITEMS } from '@kepcup/shared';
 import { settingDeepLinkAction } from './deep-link';
@@ -100,5 +101,34 @@ describe('applyRendererValues（渲染层条目的本机写入）', () => {
       }),
     ).toBe(true);
     expect(themeCalls).toEqual(['dark', 'zh-CN']);
+  });
+});
+
+describe('界面语言（D89 审查修复：只认支持的语言）', () => {
+  it('不支持的语言不写，卡片退回「在设置中打开」', () => {
+    const written: string[] = [];
+    const writers = {
+      setSensorEnabled: () => undefined,
+      setSensorDevice: () => undefined,
+      setLanguage: (language: string) => written.push(language),
+      languages: ['zh-CN'],
+    };
+    const item = getSettingItem('general.language')!;
+    expect(applyRendererValues(item, { language: 'xx-YY' }, writers)).toBe(false);
+    expect(applyRendererValues(item, { language: 'zh-CN' }, writers)).toBe(true);
+    expect(written).toEqual(['zh-CN']);
+  });
+
+  it('目录里 general.language 的静态选项与 i18n 注册的语言一致（core 按它校验）', () => {
+    const source = readFileSync(
+      new URL('../../i18n/state.svelte.ts', import.meta.url),
+      'utf8',
+    );
+    const block = /localeOptions: LocaleOption\[\] = \[([^\]]*)\]/.exec(source)?.[1] ?? '';
+    const ids = [...block.matchAll(/id: '([^']+)'/g)].map((match) => match[1]);
+    const field = getSettingItem('general.language')!.fields.find((entry) => entry.name === 'language')!;
+    expect(field.options).toBe('static');
+    expect(ids.length).toBeGreaterThan(0);
+    expect((field.staticOptions ?? []).map((option) => option.value)).toEqual(ids);
   });
 });

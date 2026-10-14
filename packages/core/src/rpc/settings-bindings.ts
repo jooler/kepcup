@@ -6,6 +6,7 @@ import {
   itemIdsForServiceMethod,
   itemIdsForSettingsPaths,
   settingsCardInputSchema,
+  settingsCardsCompleteInputSchema,
   settingsCardsCompleteOutputSchema,
   settingsCardsDismissOutputSchema,
   settingsCardsUndoOutputSchema,
@@ -55,9 +56,13 @@ export function bindSettingsCatalogMethods(services: CoreServices): Record<strin
       async (input) => requireHost(services).dismissCard(input.messageId),
     ),
     'settings.cards.complete': method(
-      settingsCardInputSchema,
+      settingsCardsCompleteInputSchema,
       settingsCardsCompleteOutputSchema,
-      async (input) => requireHost(services).completeCard(input.messageId),
+      async (input) =>
+        requireHost(services).completeCard(
+          input.messageId,
+          input.auto === true ? { auto: true } : {},
+        ),
     ),
     'settings.cards.undo': method(
       settingsCardInputSchema,
@@ -95,15 +100,6 @@ export function changedSettingsPaths(
   return paths;
 }
 
-/** Bot Profile 前后真正变化的 runtime 路径（`runtime.model`……）。 */
-export function changedBotRuntimePaths(
-  previous: Record<string, unknown>,
-  next: Record<string, unknown>,
-): string[] {
-  return [...new Set([...Object.keys(previous), ...Object.keys(next)])]
-    .filter((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]))
-    .map((key) => `runtime.${key}`);
-}
 
 /**
  * 设置页原有的保存路径（专用 RPC）成功后受影响的目录条目（§4.1「设置页原有的保存路径也补发」）。
@@ -168,3 +164,4 @@ export function withSettingsChangedEvents(
 }
 
 export { itemIdsForBotPaths, itemIdsForSettingsPaths };
+export { changedBotRuntimePaths } from '../settings/bot-profile-update.js';

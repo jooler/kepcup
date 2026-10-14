@@ -34,8 +34,16 @@ class ContactsState {
     return result.bot;
   }
 
-  async update(id: string, profile: Bot['profile']): Promise<Bot> {
-    const result = (await core.call('bots.update', { id, profile })) as { bot: Bot };
+  /**
+   * `base`：表单是从哪一版 Profile 改出来的。给了就由 core 与最新 Profile 三方合并，表单没碰的
+   * 字段（如 Bot 刚直改的模型、设置卡刚收回的 MCP）不会被过期表单覆盖（D89 审查修复）。
+   */
+  async update(id: string, profile: Bot['profile'], base?: Bot['profile'] | null): Promise<Bot> {
+    const result = (await core.call('bots.update', {
+      id,
+      profile,
+      ...(base !== undefined && base !== null ? { base } : {}),
+    })) as { bot: Bot };
     return result.bot;
   }
 

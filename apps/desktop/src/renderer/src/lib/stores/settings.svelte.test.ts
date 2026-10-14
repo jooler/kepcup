@@ -53,3 +53,30 @@ describe('settingsStore.test（能力探测）', () => {
     expect(call?.params).toEqual({ provider: 'dashscope', model: 'qwen-image', capability: 'image' });
   });
 });
+
+describe('settingsStore.update 带出发快照（D89 审查修复）', () => {
+  beforeEach(() => {
+    calls.length = 0;
+  });
+
+  it('只带补丁里的顶层键作为 base，core 据此三方合并', async () => {
+    settingsStore.settings = {
+      defaultMainModel: 'a/old',
+      defaultLightModel: 'a/light',
+      mcpServers: [],
+    } as never;
+    await settingsStore.update({ defaultLightModel: 'a/new' });
+    const call = calls.find((entry) => entry.method === 'settings.update');
+    expect(call?.params).toEqual({
+      defaultLightModel: 'a/new',
+      base: { defaultLightModel: 'a/light' },
+    });
+  });
+
+  it('显式传 null（或还没有快照）时不带 base（整体覆盖的老行为）', async () => {
+    await settingsStore.update({ defaultLightModel: 'a/x' }, null);
+    expect(calls.find((entry) => entry.method === 'settings.update')?.params).toEqual({
+      defaultLightModel: 'a/x',
+    });
+  });
+});
