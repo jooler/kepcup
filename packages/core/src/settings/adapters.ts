@@ -86,8 +86,24 @@ export interface AdapterDeps {
   bots: {
     get(id: string): Bot | null;
     update(id: string, profile: Bot['profile']): Bot;
+    /** 群成员选项。缺省时卡片仍用通讯录，读适配器不列可选值。 */
+    listActive?(): readonly Bot[];
   };
-  conversations?: { get(id: string): { title: string | null; type: string } | null };
+  conversations?: {
+    get(id: string): { title: string | null; type: string } | null;
+    memberBotIds?(id: string): readonly string[];
+  };
+  /** 群名。与设置页 `groups.rename` 同一方法；缺省时不能由宿主写。 */
+  groups?: {
+    rename(conversationId: string, title: string): void;
+  };
+  /** 项目保护规则与端口（只读；写入留在项目设置组件）。 */
+  projects?: {
+    get(id: string): {
+      protectRules: { denyRead: readonly string[]; denyWrite: readonly string[] };
+      allowedPorts: ReadonlyArray<readonly [number, number]> | null;
+    } | null;
+  };
   unattended?: { effective(): UnattendedState; disable(reason?: string): UnattendedState };
   agentCatalog?: () => readonly AgentCatalogEntry[];
   /**
@@ -1077,6 +1093,94 @@ function botSkillsAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+function groupConversation(
+  deps: AdapterDeps,
+  target: SettingTargetRef,
+): { title: string | null; type: string } | null {
+  if (target.conversationId === null) return null;
+  return deps.conversations?.get(target.conversationId) ?? null;
+}
+
+function groupTitleAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const conversation = groupConversation(deps, target);
+      if (conversation === null || conversation.type !== 'group') {
+        return snapshot('unknown', null, '当前不是群聊');
+      }
+      const title = clean(conversation.title ?? '', 60);
+      return snapshot('configured', { title }, title.length > 0 ? title : '（未命名）');
+    },
+    normalize: (_item, values) => {
+      if (!('title' in values)) return { ok: true, values };
+      const title = str(values.title);
+      return title !== undefined && title.length > 0
+        ? { ok: true, values: { ...values, title } }
+        : { ok: false, message: '群名不能为空' };
+    },
+    write: (_item, { next }, target) => {
+      const title = str(next.title);
+      if (title === undefined || title.length === 0) {
+        throw new AppError('INVALID_INPUT', '群名不能为空');
+      }
+      if (target.conversationId === null || deps.groups === undefined) {
+        throw new AppError('NOT_IMPLEMENTED', '群服务未就绪');
+      }
+      deps.groups.rename(target.conversationId, title);
+    },
+  };
+}
+
+function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const conversationId = target.conversationId;
+      if (conversationId === null) return snapshot('unknown', null, '当前不是群聊');
+      const conversation = deps.conversations?.get(conversationId) ?? null;
+      if (conversation === null || conversation.type !== 'group') {
+        return snapshot('unknown', null, '当前不是群聊');
+      }
+      const ids = deps.conversations?.memberBotIds?.(conversationId);
+      if (ids === undefined) return snapshot('unknown', null, '状态未知');
+      const names = ids.map((id) => clean(deps.bots.get(id)?.name ?? id, 30));
+      const summary =
+        names.length === 0 ? '还没有成员' : clean(names.join('、'), SUMMARY_MAX);
+      return snapshot('configured', { bots: [...ids] }, summary);
+    },
+    options: () =>
+      (deps.bots.listActive?.() ?? []).map((bot) => ({
+        value: bot.id,
+        label: clean(bot.name),
+      })),
+  };
+}
+
+function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const project = target.projectId !== null ? (deps.projects?.get(target.projectId) ?? null) : null;
+      if (project === null) return snapshot('unknown', null, '当前对话没有绑定项目');
+      if (kind === 'ports') {
+        const ports = (project.allowedPorts ?? []).map(([from, to]) =>
+          from === to ? `${from}` : `${from}-${to}`,
+        );
+        return snapshot(
+          'configured',
+          { ports },
+          ports.length === 0 ? '不限制本机端口' : clean(ports.join('、'), SUMMARY_MAX),
+        );
+      }
+      const denyRead = project.protectRules.denyRead.map((pattern) => clean(pattern, 200));
+      const denyWrite = project.protectRules.denyWrite.map((pattern) => clean(pattern, 200));
+      return snapshot(
+        'configured',
+        { denyRead, denyWrite },
+        `禁止读取 ${denyRead.length} 条，禁止写入 ${denyWrite.length} 条`,
+      );
+    },
+  };
+}
+
 // --- 只读概要（没有写入实现的 core 条目）-------------------------------------------
 
 function readOnlyAdapter(read: (target: SettingTargetRef) => ItemSnapshot): ItemAdapter {
@@ -1133,20 +1237,10 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'bot.apps': botAppsAdapter(deps),
     'bot.skills': botSkillsAdapter(deps),
     'bot.agent': botAgentAdapter(deps),
-    'group.title': readOnlyAdapter((target) => {
-      const conversation =
-        target.conversationId !== null
-          ? (deps.conversations?.get(target.conversationId) ?? null)
-          : null;
-      if (conversation === null || conversation.type !== 'group') {
-        return snapshot('unknown', null, '当前不是群聊');
-      }
-      return snapshot(
-        'configured',
-        { title: clean(conversation.title ?? '', 60) },
-        clean(conversation.title ?? '（未命名）', 60),
-      );
-    }),
+    'group.title': groupTitleAdapter(deps),
+    'group.members': groupMembersAdapter(deps),
+    'project.protect-rules': projectRulesAdapter(deps, 'rules'),
+    'project.ports': projectRulesAdapter(deps, 'ports'),
     'general.launch-at-login': launchAtLoginAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),
     'background.budget': budgetAdapter(deps),

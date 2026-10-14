@@ -22,6 +22,7 @@
   } from './apply';
   import {
     SELF_APPLYING_CARD_KEYS,
+    COMPONENT_SAVE_CARD_KEYS,
     embeddedCardKey,
     hostApplies,
     linkCardSettled,
@@ -96,6 +97,8 @@
     if (item === null || !pending) return null;
     const context = {
       botId: targetBotId,
+      conversationId: content.target.conversationId ?? chat.currentId,
+      projectId: content.target.projectId ?? chat.current?.conversation.projectId ?? null,
       prefill,
       agent: (id: string) => agentsStore.get(id),
       defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -103,6 +106,7 @@
     return embeddedCardKey(item, view, (entry) => cardEmbeddable(entry, context));
   });
   const selfApplying = $derived(embedKey !== null && SELF_APPLYING_CARD_KEYS.has(embedKey));
+  const componentSaves = $derived(embedKey !== null && COMPONENT_SAVE_CARD_KEYS.has(embedKey));
   const showHostApply = $derived(item !== null && pending && hostApplies(item, view, after));
   /** 没有可编辑字段的 confirm 卡（如关闭无人值守）直接展开组件。 */
   const embedImmediately = $derived(
@@ -110,7 +114,8 @@
   );
   /** 组件区：自带应用的卡与 form / user-only 直接展开；confirm 的其余组件点「改一下」才展开。 */
   const showEmbed = $derived(
-    embedKey !== null && (selfApplying || view !== 'confirm' || editing || embedImmediately),
+    embedKey !== null &&
+      (selfApplying || componentSaves || view !== 'confirm' || editing || embedImmediately),
   );
   /** 没有可内嵌组件（或本来就是 link 档）：给「在设置中打开」。 */
   const showOpen = $derived(item !== null && pending && (view === 'link' || embedKey === null));
@@ -313,6 +318,8 @@
           {item}
           {prefill}
           botId={targetBotId}
+          conversationId={content.target.conversationId ?? chat.currentId}
+          projectId={content.target.projectId ?? chat.current?.conversation.projectId ?? null}
           expected={before}
           messageId={message.id}
           onSaved={embedSaved}
@@ -342,7 +349,7 @@
           {t('settingCard.openSettings')}
         </Button>
       {/if}
-      {#if view === 'confirm' && embedKey !== null && !selfApplying && item !== null && confirmHasFields(item)}
+      {#if view === 'confirm' && embedKey !== null && !selfApplying && !componentSaves && item !== null && confirmHasFields(item)}
         <Button
           size="sm"
           variant="ghost"

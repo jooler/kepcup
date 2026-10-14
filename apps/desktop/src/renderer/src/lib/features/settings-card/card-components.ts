@@ -25,12 +25,19 @@ export const SETTING_CARD_COMPONENTS = {
   'background-tasks': 'BackgroundTasksSection',
   unattended: 'UnattendedSection',
   'taint-guard': 'UnattendedSection',
+  'group-title': 'GroupSettingsDialog',
+  'group-members': 'GroupSettingsDialog',
+  'project-settings': 'ProjectSettingsDialog',
 } as const satisfies Record<CardKey, string>;
 
 /** 内嵌时需要的上下文（谁的卡、作用对象、可用的外部智能体）。 */
 export interface EmbedContext {
   /** bot 范围条目的作用 Bot（卡片 target.botId，缺省为出卡 Bot）。 */
   botId: string | null;
+  /** 群范围条目的群会话。 */
+  conversationId: string | null;
+  /** 项目范围条目的项目。 */
+  projectId: string | null;
   prefill: SettingValues | null;
   /** 外部智能体目录（未加载为 null）。 */
   agent(id: string): AgentView | null;
@@ -58,6 +65,11 @@ export function cardEmbeddable(item: SettingItem, context: EmbedContext): boolea
     case 'bot-skills':
     case 'mail-account':
       return context.botId !== null;
+    case 'group-title':
+    case 'group-members':
+      return context.conversationId !== null;
+    case 'project-settings':
+      return context.projectId !== null;
     case 'field-editor':
     case 'embedding':
     case 'appearance':

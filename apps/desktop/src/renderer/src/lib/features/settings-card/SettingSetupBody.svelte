@@ -30,6 +30,8 @@
     item !== null &&
       cardEmbeddable(item, {
         botId,
+        conversationId: chat.currentId,
+        projectId: chat.current?.conversation.projectId ?? null,
         prefill,
         agent: (id) => agentsStore.get(id),
         defaultAgentId: settingsStore.settings?.defaultAgentId ?? null,
@@ -58,7 +60,15 @@
   </p>
 </div>
 {#if item !== null && embeddable}
-  <SettingCardEmbed {item} {prefill} {botId} testidPrefix="setup-card-setting" onSaved={proceed} />
+  <SettingCardEmbed
+    {item}
+    {prefill}
+    {botId}
+    conversationId={chat.currentId}
+    projectId={chat.current?.conversation.projectId ?? null}
+    testidPrefix="setup-card-setting"
+    onSaved={proceed}
+  />
 {:else}
   <div class="flex flex-wrap items-center justify-end gap-2">
     {#if item !== null}

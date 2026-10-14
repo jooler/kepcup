@@ -186,6 +186,12 @@ export const CARD_KEYS = [
   'unattended',
   /** 污点防护开关（`UnattendedSection` 的对应行）。 */
   'taint-guard',
+  /** 群名（`GroupSettingsDialog` 的改名片段）。 */
+  'group-title',
+  /** 群成员（`GroupSettingsDialog` 的成员片段；组件自己调 groups RPC）。 */
+  'group-members',
+  /** 项目保护规则 / 放行端口（`ProjectSettingsDialog`，user-only，组件自己保存）。 */
+  'project-settings',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

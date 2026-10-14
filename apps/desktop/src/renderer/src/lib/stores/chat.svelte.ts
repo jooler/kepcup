@@ -405,21 +405,25 @@ class ChatState {
     }
   }
 
-  async addGroupMembers(conversationId: string, botIds: string[]): Promise<void> {
+  async addGroupMembers(conversationId: string, botIds: string[]): Promise<boolean> {
     try {
       await core.call('groups.addMembers', { conversationId, botIds });
       await this.reloadMembers();
+      return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 
-  async removeGroupMember(conversationId: string, botId: string): Promise<void> {
+  async removeGroupMember(conversationId: string, botId: string): Promise<boolean> {
     try {
       await core.call('groups.removeMember', { conversationId, botId });
       await this.reloadMembers();
+      return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 

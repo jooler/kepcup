@@ -205,3 +205,91 @@ describe('P1 setting item writes', () => {
     expect(rig.skills.disabled).toEqual(['note']);
   });
 });
+
+describe('group and project setting reads', () => {
+  function rig() {
+    let title = '旧群名';
+    const renamed: string[] = [];
+    const members = ['bot_a', 'bot_b'];
+    const settingsUpdates: string[] = [];
+    const bot = {
+      id: 'bot_a',
+      name: '甲',
+      profile: botProfile({ name: '甲' }),
+    } as Bot;
+    const deps: AdapterDeps = {
+      settings: {
+        get: () => settingsSchema.parse({}),
+        update: (next) => {
+          settingsUpdates.push(Object.keys(next).join(','));
+          return settingsSchema.parse(next);
+        },
+      },
+      secrets: { hasValue: () => false, setValue: () => undefined },
+      providers: { list: () => [], setKey: () => undefined },
+      bots: {
+        get: (id) => (id === bot.id ? bot : null),
+        update: () => bot,
+        listActive: () => [bot],
+      },
+      conversations: {
+        get: () => ({ title, type: 'group' }),
+        memberBotIds: () => members,
+      },
+      groups: {
+        rename: (_id, next) => {
+          renamed.push(next);
+          title = next;
+        },
+      },
+      projects: {
+        get: () => ({
+          protectRules: { denyRead: ['.env*'], denyWrite: ['secrets/**'] },
+          allowedPorts: [[3000, 3010]],
+        }),
+      },
+      publish: () => undefined,
+    };
+    const adapters = buildItemAdapters(deps);
+    const target = { botId: null, conversationId: 'conv_group', projectId: 'proj_1' };
+    return { adapters, target, renamed, members, settingsUpdates, title: () => title };
+  }
+
+  it('renaming a group only changes the title', () => {
+    const rigged = rig();
+    const adapter = rigged.adapters(item('group.title'));
+    expect(adapter.read(item('group.title'), rigged.target).values).toEqual({ title: '旧群名' });
+    adapter.write!(
+      item('group.title'),
+      { next: { title: '  新群名  ' }, secrets: {} },
+      rigged.target,
+    );
+    expect(rigged.renamed).toEqual(['新群名']);
+    expect(rigged.title()).toBe('新群名');
+    expect(rigged.members).toEqual(['bot_a', 'bot_b']);
+    expect(rigged.settingsUpdates).toEqual([]);
+    expect(() =>
+      adapter.write!(item('group.title'), { next: { title: '   ' }, secrets: {} }, rigged.target),
+    ).toThrow(/群名不能为空/);
+  });
+
+  it('member and project reads do not expose a host write', () => {
+    const rigged = rig();
+    const members = rigged.adapters(item('group.members'));
+    expect(members.write).toBeUndefined();
+    expect(members.read(item('group.members'), rigged.target).values).toEqual({
+      bots: ['bot_a', 'bot_b'],
+    });
+    const rules = rigged.adapters(item('project.protect-rules'));
+    const ports = rigged.adapters(item('project.ports'));
+    expect(rules.write).toBeUndefined();
+    expect(ports.write).toBeUndefined();
+    expect(rules.read(item('project.protect-rules'), rigged.target).values).toEqual({
+      denyRead: ['.env*'],
+      denyWrite: ['secrets/**'],
+    });
+    expect(ports.read(item('project.ports'), rigged.target).values).toEqual({
+      ports: ['3000-3010'],
+    });
+  });
+});

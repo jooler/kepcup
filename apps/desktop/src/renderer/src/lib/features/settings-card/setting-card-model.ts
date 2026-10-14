@@ -45,6 +45,17 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'bot-skills',
   'field-editor',
   'appearance',
+  'group-title',
+]);
+
+/**
+ * 组件用原来的保存 RPC 自己写，成功后 `onSaved` 让宿主核对结卡。
+ * 宿主不另给「应用」：群成员的移出是异步级联，不能放进设置写锁；项目两项是 user-only，
+ * 保护规则由用户在组件里改，宿主不写。
+ */
+export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
+  'group-members',
+  'project-settings',
 ]);
 
 /**
@@ -207,7 +218,8 @@ export function hostApplies(
   proposed: SettingValues | null,
 ): boolean {
   if (view !== 'confirm' || proposed === null) return false;
-  return item.card === null || !SELF_APPLYING_CARD_KEYS.has(item.card);
+  if (item.card === null) return true;
+  return !SELF_APPLYING_CARD_KEYS.has(item.card) && !COMPONENT_SAVE_CARD_KEYS.has(item.card);
 }
 
 /** 「我已设置好」：用户亲手设置的形态（form / user-only / link）给，confirm 与回执卡不给。 */
