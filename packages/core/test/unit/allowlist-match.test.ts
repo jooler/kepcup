@@ -208,6 +208,10 @@ describe('git branch is listing-only (review P1)', () => {
       'git branch --no-merged=main -a',
       'git branch --points-at HEAD',
       'git branch --sort=-committerdate',
+      "git branch --format '%(refname)' -l feat",
+      'git branch --sort -committerdate --list',
+      'git branch --points-at HEAD --list x',
+      'git branch --abbrev=7 -v',
     ]) {
       expect(exempt(command), command).toBe(true);
     }
@@ -243,11 +247,25 @@ describe('git branch is listing-only (review P1)', () => {
       'git branch -q',
       'git branch -a newbranch',
       'git branch --contains HEAD newbranch',
+      // Review P2: a required-argument option takes the next word as its value.
+      'git branch --format -l evil',
+      'git branch --sort -l evil',
+      'git branch --points-at -l evil',
+      'git branch --format',
+      'git branch --abbrev 7',
+      'git branch --form=x',
+      'git branch --set-upstream-to origin/main',
     ]) {
       expect(exempt(command), command).toBe(false);
     }
     expect(wexempt('git branch -qD stale')).toBe(false);
     expect(wexempt('git branch newbranch')).toBe(false);
+  });
+
+  it('submodule recursion and pager options are not exempt', () => {
+    expect(exempt('git diff --submodule=diff')).toBe(false);
+    expect(exempt('git ls-files --recurse-submodules')).toBe(false);
+    expect(exempt('git log --oneline')).toBe(true);
   });
 
   it('other git subcommands keep -M / -m (rename detection, merge diffs) exempt', () => {
