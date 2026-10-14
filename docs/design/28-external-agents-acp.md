@@ -117,7 +117,7 @@ interface AgentCatalogEntry {
 
 - 运行配置的「主模型」选择器改为分组下拉「模型 / 智能体」：模型组 = 现有内置模型；智能体组 = 已启用（`ready` 或 `needs_auth`）的 Agent。选模型 → `runtime.agent.id = ''`（内置引擎，其余行为不变）；选 Agent → 展开 Agent 专属设置：
   - **模型 / 推理强度**：来自该 Agent 会话返回的 config options（类别 `model` / `thought_level`），缓存后供下拉；留空 = Agent 默认。
-  - **权限档位**：`read_only` / `workspace`（默认）/ `ask`；Agent 不具备 OS 沙箱时 `workspace` 档的命令也逐条确认（§6）。
+  - **权限档位**：`read_only` / `workspace`（默认）/ `ask`（界面名「编辑前确认（沙箱内命令自动）」）；Agent 不具备 OS 沙箱时 `workspace` 档的命令也逐条确认（§6）。`ask` 档只逐次确认**文件工具**的写入与联网读取；Agent 能确认在其 OS 沙箱内的命令（目前只有 Claude）自动放行，包括它们的写入（f2b9627，见 [13 §外部智能体引擎](13-permissions.md#外部智能体引擎d72) 的档位表）。
   - **注入能力**：能力包勾选清单（§4），显示预计注入的工具数。
 - 「轻量模型」保留，语义为「该 Bot 后台任务用的内置模型」；没有内置模型时隐藏（后台任务走 §8）。
 - 首次把 Bot 切到外部 Agent：弹框说明 §1 的让渡项（同 D41 的告知方式）；Bot 详情显示 Agent 徽标与「隔离由 Agent 自身沙箱提供」。
@@ -221,8 +221,9 @@ interface AgentCatalogEntry {
 | 工作目录             | `cwd` = 对话绑定的 project，未绑定则 workspace（位于 `~/.kepcup` 内）；不传 `additionalDirectories`                                                                                              |
 | Agent 自身沙箱       | 有 OS 沙箱的 Agent 必须开启（Claude 原生沙箱 + `denyRead`/`denyWrite` 覆盖 `~/.kepcup` 其余部分；Codex `workspace-write`）；**永不**使用 bypass / auto / dontAsk / full-access 一类模式（Provider 层过滤，UI 不出现） |
 | 无 OS 沙箱的 Agent   | （如 OpenCode、DeepSeek Harness、Cursor、Antigravity）`workspace` 档下工作目录内编辑可放行，但**每条命令都弹卡**（等同 D39 逐条确认），经其权限配置（如 `OPENCODE_PERMISSION`）强制命令走询问                                         |
-| 权限档位             | `read_only` · `workspace`（默认）· `ask`；`preview` 档 Agent 默认 `ask`；收到 `current_mode_update` 偏离档位时改回并审计                                                                            |
-| PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37：仅这一次 / 本对话内）；命令命中白名单（D40）放行，否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
+| 权限档位             | `read_only` · `workspace`（默认）· `ask`（编辑前确认：文件工具写入与联网读取逐次确认；沙箱内命令及其写入自动放行，f2b9627）；`preview` 档 Agent 默认 `ask`；收到 `current_mode_update` 偏离档位时改回并审计；各档实际行为见 [13 档位表](13-permissions.md#外部智能体引擎d72) |
+| 沙箱内命令与污点（D73 × f2b9627，DEV-027） | 污点外发控制开着时（默认）Claude 会话关闭 `autoAllowBashIfSandboxed`，每条 Bash 经权限桥：未污点自动放行、污点期间弹 `egress` 卡；控制关闭时由 Claude Code 自动放行。原因：SDK 只在 `session/new` 读沙箱设置，ACP 无中途修改入口，污点却可能在会话中途出现。沙箱网络代理的逐主机询问（`SandboxNetworkAccess`）污点期间弹 `egress` 卡、否则弹卡。残留：本会话内已批准过的主机 Claude Code 不再询问（污点前已在跑的命令连向这些主机不再弹卡）；「加载我的个人配置」里的 `allowedDomains` 不经宿主 |
+| PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37：仅这一次 / 本对话内）；命令命中内置白名单（D40）放行（自定义条目在只读档与污点期间不算），否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
 | 选项映射             | 只按 Provider 声明的 **optionId 白名单**选 `allow_once` / `reject_once`；不选 `allow_always`、不选任何会切换模式的选项                                                                                  |
 | 无人值守（D41）        | `agent_tool` 自动批准并审计，但并入数据目录底线：命令或路径触及应用数据目录（workspace / 技能目录除外）时拒绝                                                                                                            |
 | 写入租约 / 检查点       | project 绑定且档位可写时，run 开工前显式取租约（现有租约是首次写工具调用时懒取），整 run 持有，前后快照照常                                                                                                                 |
@@ -367,7 +368,7 @@ interface AgentProvider {
 | 1a  | Antigravity 的登录方式            | 只开放 API key / Vertex / Enterprise；个人 Google 账号登录不开放（条款明确禁止） |
 | 2   | 能力包默认值                       | 「Agent 原生没有的全部注入」；未知原生能力视为没有                                |
 | 3   | 是否加载用户个人 Agent 配置            | 默认否，提供开关                                                    |
-| 4   | 无 OS 沙箱的 Agent               | `workspace` 档命令逐条确认；Windows 上一律 `ask`                       |
+| 4   | 无 OS 沙箱的 Agent               | `workspace` / `ask` 档命令逐条确认；Windows 上一律 `ask`（有 OS 沙箱的 Agent：两档的沙箱内命令都自动放行，f2b9627） |
 | 5   | 后台 loop 走外部 Agent            | 仅当无内置模型时；L2 仲裁关、反思 / 摘要降频、技能生成默认关                           |
 | 6   | 管家可否用外部 Agent                | 可以；onboarding 只有订阅的新用户默认如此                                  |
 | 7   | 社区 Agent（运行时同步 ACP Registry） | 本期不做；架构上已支持（通用 Provider）                                    |

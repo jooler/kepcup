@@ -11,12 +11,14 @@
 
 | 位置 | 默认 |
 |---|---|
-| 当前 workspace | 读写 |
-| 当前对话的 project | 读写（写入需持有写入租约，见 [08-project.md](08-project.md#并发写入租约)） |
+| 当前 workspace | 读写（仓库控制文件除外，见下） |
+| 当前对话的 project | 读写（写入需持有写入租约，见 [08-project.md](08-project.md#并发写入租约)；仓库控制文件除外） |
 | 系统目录、工具链目录 | 只读 |
 | 本机其他位置 | 读、写都需授权 |
 | `~/.ssh`、系统钥匙串、`~/.aws`、`~/.config/gh` 等敏感位置 | 需授权，授权卡片醒目警告 |
 | `~/.kepcup`（应用数据目录） | 永远不可授权 |
+
+- **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `.git/hooks/` 下的文件、`.git/info/attributes`）：即使在 workspace / 持有租约的 project 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks），而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-027）。读取不受影响。
 
 ## 授权
 
@@ -87,7 +89,21 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 - 同样不成立的还有：project `protectRules` 的禁读 / 禁写、Bot 的 `network_policy`、以及「project 以外的读取需授权」——智能体沙箱一般允许全盘只读，只有智能体主动请求权限时才能拦截。
 - 智能体的工作目录限定为 project（未绑定则 workspace）；智能体自身沙箱必须开启（Claude 原生沙箱、Codex `workspace-write`），**永不**使用其 bypass / auto / full-access 模式；智能体侧的仓库配置（Claude `.claude/settings.json` 的 hooks 与 allow 规则）不加载。
-- 智能体发起的权限请求（ACP `session/request_permission`）由宿主分级：KepCup 自身工具（经宿主 MCP 桥）直接放行、在桥内另走本文的审批；路径先判「工作目录与技能目录」→「应用数据目录其余部分：一律拒绝」→ 常规访问范围；工作目录内按 Bot 的权限档位（只读 / 工作区 / 每次确认）自动放行或拒绝；越界读写走「授权」卡片（审批类型 `agent_tool`，有效期仍为“仅这一次 / 本对话内”）；命令命中只读白名单可放行，否则弹卡且只有“仅这一次”。**工作区与每次确认档**：智能体能确认「命令在其 OS 沙箱内」时，沙箱内执行（含测试 / lint）自动放行（逼近 Claude Code 对 sandboxed bash 的 auto）；每次确认档仍对工作目录内**写入**逐次确认。
+- 智能体发起的权限请求（ACP `session/request_permission`）由宿主分级：KepCup 自身工具（经宿主 MCP 桥）直接放行、在桥内另走本文的审批；路径先判「工作目录与技能目录」→「应用数据目录其余部分：一律拒绝」→ 常规访问范围；越界读写走「授权」卡片（审批类型 `agent_tool`，有效期仍为“仅这一次 / 本对话内”）。三个权限档位实际做的事（f2b9627 起；`ask` 档界面名「编辑前确认（沙箱内命令自动）」，键名不变）：
+
+  | | 只读 `read_only` | 工作区 `workspace`（默认） | 编辑前确认 `ask` |
+  |---|---|---|---|
+  | 工作目录内的文件工具写入（Edit / Write …） | 拒绝 | 自动放行（`.git` 内与智能体配置文件除外：弹卡） | 逐次弹卡（「本对话内」授权后不再问） |
+  | 沙箱内命令（智能体确认在其 OS 沙箱内，目前只有 Claude） | Claude 禁用 Bash；其余拒绝（内置只读白名单除外） | 自动放行 | 自动放行 |
+  | 沙箱内命令的写入（如 `sed -i`、`npm install`、构建产物） | — | 随命令放行，只受智能体沙箱的写入范围约束（工作目录） | **同样随命令放行，不逐次确认**——「编辑前确认」只管文件工具 |
+  | 沙箱内命令要连接新主机（Claude 沙箱代理逐主机询问） | 拒绝 | 弹卡；批准后该会话内对此主机不再询问 | 同左 |
+  | 沙箱外命令（无 OS 沙箱的智能体、Codex 的全部命令请求） | 拒绝 | 逐条弹卡（只有「仅这一次」） | 逐条弹卡 |
+  | 联网读取（WebFetch / WebSearch） | 放行 | 放行 | 逐次弹卡 |
+  | 污点期间（D73，见下） | 联网读取弹外发卡 | 沙箱内命令、主机询问、联网读取都逐次弹外发卡（内置只读白名单命令除外） | 同左 |
+
+  命令命中**内置**只读白名单且在智能体沙箱内可直接放行；用户自定义条目在只读档与污点期间不算。
+- **沙箱内命令的自动放行由谁执行（D73 × f2b9627，DEV-027）**：Claude 的 `autoAllowBashIfSandboxed` 让 Claude Code 自己放行沙箱内 Bash，宿主看不到这些命令，污点外发闸门就无从生效；而 SDK 只在建会话时读沙箱设置（ACP 没有中途修改的入口），污点又可能在会话中途出现。因此**污点外发控制开着时（默认）**宿主关掉 SDK 的自动放行，每条 Bash 经权限请求由宿主裁决：未污点时照样自动放行（用户感受不变，并留下审计），污点期间逐条弹外发卡；该开关关闭时交给 Claude Code 自动放行。开关进会话指纹，切换后会话不再复用。
+  - **残留风险**：沙箱代理对**本会话里已批准过的主机**不再询问（Claude Code 按会话记住），所以污点出现前已在运行、且连接的是此前批准过的主机的命令，其流量不会再弹卡；「加载我的个人配置」开启时，用户 Claude 配置里的 `sandbox.network.allowedDomains` / `WebFetch(domain:…)` 放行规则同样不经宿主。污点出现**之后**发起的每条命令都会先弹外发卡。
 - 无人值守模式对 `agent_tool` 自动批准并审计，但与沙箱外执行相同受数据目录底线约束：命令或路径触及应用数据目录（workspace 与技能目录除外）时拒绝。
 - 写入租约在 run 开工前显式取得、整个 run 持有，检查点按租约起止前后快照，回退照常可用。（D75：外部智能体只跑任务；只读任务强制 `read_only` 档、不取租约，写任务的租约由任务层在启动前取得。）
 - 没有 OS 沙箱的智能体（如 OpenCode）在「工作区」档下工作目录内编辑可放行，但每条命令都弹卡；沙箱不可用的平台（如 Windows 上的 Claude Agent）强制「每次确认」档，等同逐条确认模式。
@@ -98,13 +114,17 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 逐条确认模式下，白名单中的命令**无需确认**直接执行。沙箱可用时命令本就无需确认，白名单不起作用。
 
-- 内置默认白名单只包含只读 / 探测命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`、`echo`、`dirname`、`basename`、`realpath`，`git status` / `diff` / `log` / `show` / `branch` / `rev-parse` / `blame` / `ls-files` 等，以及 `node --version`、`pnpm --version`、`tsc --version` 这类版本探测。**不**包含 `npm test`、`pnpm build`、`curl`、`rm` 等会执行项目代码或改系统的命令（用户可自定义添加并自担风险）。
+- 内置默认白名单只包含只读 / 探测命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`、`echo`、`dirname`、`basename`、`realpath`，`git status` / `diff` / `log` / `show` / `branch`（只豁免列出）/ `rev-parse` / `blame` / `ls-files` 等，以及 `node` / `npm` / `python` / `pip` / `tsc` / `eslint` / `prettier` / `ruby` / `php` 的版本探测。**不**包含会加载项目控制的代码或联网下载工具链的探测：`pnpm` / `yarn`（corepack 按 `packageManager` 下载）、`cargo` / `rustc`（rustup 按 `rust-toolchain.toml`）、`go version`（`GOTOOLCHAIN`）；也不包含 `npm test`、`pnpm build`、`curl`、`rm` 等（用户可自定义添加并自担风险）。内置集合由单测按形状钉住，新增条目要显式决定；旧版本补种过的这些探测在升级后删除。
+- 新版本新增的内置条目在已有安装上默认启用（用户停用过的条目不会被重新启用）；界面暂无「新增」标记（DEV-027）。
+- 豁免执行的命令（沙箱外、无卡片）用加固的环境：`PATH` 去掉相对项（`.`、`node_modules/.bin`），关闭 corepack / go / npm / pip 的下载与更新检查，git 不用 pager、不取可选锁、`core.fsmonitor=false`。豁免的 git 命令执行前先读仓库级配置（local / worktree）：其中有会执行程序的项（`core.fsmonitor`、`core.pager`、`diff.external`、`diff.*.textconv` / `command`、`filter.*`、`include.path` / `includeIf`、`core.worktree` 等）或读不到配置时，该命令改为弹卡。
+- `git branch` 只豁免列出形式（`-a` / `-r` / `-v` / `-l` 及其组合、`--list`、`--show-current`、`--contains` / `--merged` / `--points-at` 等带值选项）；带分支名（新建）、`-d` / `-D` / `-m` / `-c` / `-f` / `-u` 等及其捆绑写法（如 `-qD`）都要确认。
 - 严格匹配，以下情况不豁免：
   - 整条命令中有任何一段不在白名单中（管道、`&&`、`;` 连接的每一段都要命中）
   - 出现写入重定向（`>`、`>>`）、`tee`、命令替换（`$()`、反引号）、后台执行（`&`）、子 shell、变量赋值前缀
   - 带有写入或执行语义的参数，例如 `find -exec`、`find -delete`、`sed -i`、`git -c`
 - 白名单不放宽访问范围：命令参数中的路径超出可访问范围时，仍需访问授权。
-- 用户可以在设置中查看、增删白名单条目。自定义条目不一定是只读的（例如 `npm test` 会执行项目代码），添加时提示风险由用户承担。
+- 用户可以在设置中查看、增删白名单条目。自定义条目不一定是只读的（例如 `npm test` 会执行项目代码），添加时提示风险由用户承担。因此自定义条目：只读 run（D75 对话轮、只读任务）里不执行（`RUN_READ_ONLY`）；污点期间（D73）不豁免，改为带污点标记的命令卡；也不豁免沙箱联网命令的外发卡。
+- 不能添加的条目（`allowlist.add` 拒绝，审批卡「加入白名单」也不会建议）：shell、包装器（`env` / `sudo` / `xargs` / `timeout` …）、`npx` 一类下载执行、联网（`curl` / `wget` / `ssh` …）、删改（`rm` / `mv` / `cp` / `chmod` …）程序的任何形式；裸写的解释器、包管理器与 `git`；解释器就地执行代码的参数（`python -c`、`node -e`）；`npm run` / `pnpm run` 等裸写的运行动词与 `exec` / `dlx` 动词；`git` 的全局选项；含管道、重定向、替换的条目。审批卡的默认建议是第一段完整命令（子命令式工具取「程序 子命令」），不再缩成裸程序。
 
 ## 无人值守模式
 
@@ -119,7 +139,7 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 - 自动批准的访问授权按“仅这一次”处理，模式关闭后不遗留授权。
 - MCP 工具调用（`mcp_tool`）在无人值守下**所有风险档**（只读 / 写入 / 破坏性）都自动批准，不拒绝、不排队（D65）；任务里重复的外部操作除外——去重门先于自动批准：已完成或被用户拒绝过的相同调用不建卡、直接返回，带「上次结果未知 / 已执行过」提示的卡不自动批准、等用户（见 [§审批去重与执行回执](#审批去重与执行回执d78)）；数据目录底线只作用于命令与路径类审批，不涉及 MCP。审批与审计记录带风险档，执行记录写明「无人值守自动批准（写入 / 破坏性）」；Bot 详情的 MCP 区常驻风险提示（见 [23-mcp-and-subagent.md](23-mcp-and-subagent.md)「风险分级与逐工具策略」）。
 - 开启期间窗口顶部显示持续的醒目横幅，托盘图标同步显示状态。
-- 自动批准的每一项都记入审计记录（Bot、对话、操作、时间）；用户回来或关闭模式时汇总展示。检查点照常生成，可以回退。
+- 自动批准的每一项都记入审计记录（Bot、对话、操作、时间）；用户回来或关闭模式时汇总展示。自动决定的卡从不进输入区上方的待确认区，在对话里留一行折叠记录（「已自动批准」/「已拒绝」+ 回执）。检查点照常生成，可以回退。
 
 ## 审批去重与执行回执（D78）
 
@@ -140,7 +160,7 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 **防过期决定**：审批输出带 `payloadHash`（payload 规范化 JSON 的 sha256，读取时算、不落库）；界面决定时回传卡片渲染时的值，与当前不符 → `APPROVAL_STALE`，界面提示并重新拉取该对话的审批。不传则不校验。
 
-**执行回执**：审批输出带 `effect {status, receipt?, settledAt?}`（来自台账，[24 §10.4](24-durable-execution.md#104-审批关联与回执)），见于 `approvals.list`、`approvals.decide` 的返回值、`approval.created` / `approval.resolved` 事件与无人值守汇总；台账落定时重推 `approval.resolved`。已批准卡片的折叠记录末尾显示 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中 与回执文本（纯文本，不做链接）；无人值守汇总条目显示执行结果。
+**执行回执**：审批输出带 `effect {status, receipt?, settledAt?}`（来自台账，[24 §10.4](24-durable-execution.md#104-审批关联与回执)），见于 `approvals.list`、`approvals.decide` 的返回值、`approval.created` / `approval.resolved` 事件与无人值守汇总；台账落定时重推 `approval.resolved`。折叠记录末尾显示 已完成 / 失败 / 结果未知 / 已拒绝 / 执行中 与回执文本（纯文本，不做链接）；无人值守汇总条目显示执行结果。折叠记录只出现在留在对话里的卡上（ef2a565 起）：中途权限卡（访问、命令、MCP、git 远程、沙箱外执行、`agent_tool`、外发）用户在输入区上方处理后不在对话里留记录，回执随之只在审计 / 台账里；**自动决定的卡**（无人值守）与**外发 / 带污点标记的卡**决定后留一行折叠记录（含回执）。
 
 **收件方完整列出**：写入 / 破坏性 MCP 工具的审批卡把参数里的收件方类字段（键名归一后为 to / cc / bcc / recipient(s) / channel(s) / channel_id / email(s) / phone / phone_number / user(s) / user_id / chat_id；嵌套对象最多 3 层，键路径如 `message.to`；值只取字符串 / 数字及其数组）逐项完整列出（经 `secrets.redact`，最多 20 项），不参与参数摘要的 400 字截断；系统通知与无人值守汇总里截到 200 字。
 
@@ -150,5 +170,5 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 ## 界面
 
-- 对话中的卡片：授权、沙箱外执行确认、逐条确认模式下的命令确认。
+- 待确认卡片（授权、沙箱外执行确认、逐条确认模式下的命令确认、MCP / 智能体工具、外发）在输入区上方弹出，处理后消失、不留在对话里（ef2a565）；例外是自动决定的卡与外发 / 污点相关的卡，决定后在对话里留一行折叠记录。技能导入、环境安装、移交等卡片一直留在对话里。
 - 右栏显示当前对话中各 Bot 的有效授权列表，可以撤销。
