@@ -1894,6 +1894,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       projects: {
         get: (id) => projectsService.get(id),
       },
+      appConnections: {
+        list: () => appConnections.catalogConnectionOptions(),
+        peekTool: (connectionId, toolName) =>
+          appConnections.peekCatalogTool(connectionId, toolName),
+      },
       unattended,
       agentCatalog: () => agentCatalog,
       embedding: {

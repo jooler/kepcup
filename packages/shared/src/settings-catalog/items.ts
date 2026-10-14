@@ -307,9 +307,10 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
         ],
       }),
     ],
-    // 收紧 = confirm；放宽（如改为直接允许）= user-only。
+    // 收紧 = confirm（可预填）；放宽（改为直接允许，或重新启用已禁用的工具）= user-only。
+    // 卡片按页面档位保存（allow → auto，deny → 停用），不把目录词写进 McpToolPolicy。
     write: write('confirm', { widensPermission: true, wideningMode: 'user-only' }),
-    card: null,
+    card: 'tool-policy',
     deepLink: { surface: 'settings', section: 'apps', anchor: 'apps-connected' },
     store: { kind: 'service', methods: ['apps.connections.setToolPolicy'] },
   }),

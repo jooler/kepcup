@@ -192,6 +192,8 @@ export const CARD_KEYS = [
   'group-members',
   /** 项目保护规则 / 放行端口（`ProjectSettingsDialog`，user-only，组件自己保存）。 */
   'project-settings',
+  /** 一条连接工具的策略（`AppConnectionDetail` 片段；组件自己 `setToolPolicy`）。 */
+  'tool-policy',
 ] as const;
 export const cardKeySchema = z.enum(CARD_KEYS);
 export type CardKey = z.infer<typeof cardKeySchema>;

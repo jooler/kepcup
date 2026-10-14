@@ -9,10 +9,12 @@ import {
   isPendingTool,
   pendingToolNames,
   pendingTotal,
+  choiceForCatalogPolicy,
   policyForChoice,
   splitTools,
   toolDefinitionDiff,
   toolPolicyChoice,
+  toolPolicyTarget,
 } from './app-tools';
 
 /** 连接详情的工具视图纯函数（D73 §5.9）：待复核拆分、策略映射、定义对比。 */
@@ -83,6 +85,24 @@ describe('policies', () => {
     for (const choice of TOOL_POLICY_CHOICES) {
       expect(toolPolicyChoice({ policy: policyForChoice(choice) })).toBe(choice);
     }
+  });
+
+  it('maps catalog words onto page choices before saving', () => {
+    expect(choiceForCatalogPolicy('allow')).toBe('auto');
+    expect(choiceForCatalogPolicy('deny')).toBe('disabled');
+    expect(choiceForCatalogPolicy('ask')).toBe('ask');
+    expect(policyForChoice(choiceForCatalogPolicy('allow')!)).toEqual({ approval: 'auto' });
+    expect(policyForChoice(choiceForCatalogPolicy('deny')!)).toEqual({ enabled: false });
+    expect(policyForChoice(choiceForCatalogPolicy('ask')!)).toEqual({ approval: 'ask' });
+    expect(choiceForCatalogPolicy('nope')).toBeNull();
+  });
+
+  it('locates the tool from the before snapshot, not from a missing prefill', () => {
+    expect(
+      toolPolicyTarget({ connection: 'conn-1', tool: 'search', policy: 'deny' }),
+    ).toEqual({ connectionId: 'conn-1', toolName: 'search' });
+    expect(toolPolicyTarget({ policy: 'allow' })).toBeNull();
+    expect(toolPolicyTarget(null)).toBeNull();
   });
 });
 

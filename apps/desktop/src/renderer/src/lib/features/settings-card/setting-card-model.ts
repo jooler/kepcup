@@ -51,11 +51,14 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
 /**
  * 组件用原来的保存 RPC 自己写，成功后 `onSaved` 让宿主核对结卡。
  * 宿主不另给「应用」：群成员的移出是异步级联，不能放进设置写锁；项目两项是 user-only，
- * 保护规则由用户在组件里改，宿主不写。
+ * 保护规则由用户在组件里改，宿主不写。连接的逐工具策略由组件调用
+ * `apps.connections.setToolPolicy`（策略变严时中断正在使用该连接的任务）；写锁里只调
+ * `setToolPolicy` 会丢掉这段。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'group-members',
   'project-settings',
+  'tool-policy',
 ]);
 
 /**

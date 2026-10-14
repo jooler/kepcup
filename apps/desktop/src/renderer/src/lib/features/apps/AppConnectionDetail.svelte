@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AppToolView } from '@kepcup/shared';
+  import type { AppToolView, SettingValues } from '@kepcup/shared';
   import { ArrowLeft, Eye, EyeOff } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
@@ -35,11 +35,13 @@
   import {
     TOOL_POLICY_CHOICES,
     TOOL_STATE_LABEL_KEYS,
+    choiceForCatalogPolicy,
     diffStats,
     policyForChoice,
     splitTools,
     toolDefinitionDiff,
     toolPolicyChoice,
+    toolPolicyTarget,
     type ToolPolicyChoice,
   } from './app-tools';
 
@@ -49,14 +51,30 @@
    * 接受、持续授权（Bot 级 / 对话级）的撤销、重新连接（ConnectAppPanel）与断开
    * （确认框列出受影响 Bot）。数据来自 appsStore（连接行）与 appDetailStore（工具 /
    * 授权缓存）。
+   *
+   * `embedded`：对话内设置卡只改 before 指向的那一条工具策略，保存仍走
+   * `appDetailStore.setToolPolicy`（策略变严时中断正在使用该连接的任务）。不带断开、
+   * 重新授权。连接和工具从 before 取，不从预填取——user-only 会把预填整份清空。
    */
   let {
-    connectionId,
-    onBack,
+    connectionId = '',
+    onBack = () => {},
+    embedded = false,
+    before = null,
+    prefill = null,
+    onSaved,
   }: {
-    connectionId: string;
-    onBack: () => void;
+    connectionId?: string;
+    onBack?: () => void;
+    embedded?: boolean;
+    /** 出卡时的当前值（读适配器快照）：`connection` 与 `tool`。 */
+    before?: SettingValues | null;
+    /** 收紧时的建议策略（目录词 ask / allow / deny）。放宽时为 null。 */
+    prefill?: SettingValues | null;
+    onSaved?: () => void;
   } = $props();
+
+  const embeddedTarget = $derived(embedded ? toolPolicyTarget(before) : null);
 
   const connection = $derived(
     appsStore.connections.find((item) => item.id === connectionId) ?? null,
@@ -70,6 +88,7 @@
   const impact = $derived(disconnectImpact(contacts.bots, connectionId));
 
   $effect(() => {
+    if (embedded) return;
     appsStore.start();
     appDetailStore.start();
   });
@@ -81,6 +100,7 @@
   const toolsLoadable = $derived(connection !== null && toolsLoadableStatus(connection.status));
 
   $effect(() => {
+    if (embedded) return;
     const id = connectionId;
     if (!exists) return;
     const withTools = toolsLoadable;
@@ -161,6 +181,74 @@
     }
   }
 
+  const embeddedTools = $derived(
+    embeddedTarget === null ? null : appDetailStore.toolsFor(embeddedTarget.connectionId),
+  );
+  const embeddedTool = $derived(
+    embeddedTarget === null
+      ? null
+      : (embeddedTools?.tools.find((tool) => tool.toolName === embeddedTarget.toolName) ?? null),
+  );
+  const embeddedConnection = $derived(
+    embeddedTarget === null
+      ? null
+      : (appsStore.connections.find((item) => item.id === embeddedTarget.connectionId) ?? null),
+  );
+  let policyChoice = $state<ToolPolicyChoice | null>(null);
+  let policyChoiceFor = $state<string | null>(null);
+  let policyLoadError = $state<string | null>(null);
+  let savingEmbedded = $state(false);
+
+  const embeddedChoice = $derived.by((): ToolPolicyChoice => {
+    if (embeddedTool === null || embeddedTarget === null) return 'default';
+    const key = `${embeddedTarget.connectionId}\n${embeddedTool.toolName}`;
+    if (policyChoiceFor === key && policyChoice !== null) return policyChoice;
+    return choiceForCatalogPolicy(prefill?.policy) ?? toolPolicyChoice(embeddedTool);
+  });
+
+  $effect(() => {
+    if (!embedded) return;
+    const id = embeddedTarget?.connectionId ?? null;
+    if (id === null) return;
+    policyLoadError = null;
+    appsStore.start();
+    appDetailStore.start();
+    untrack(() => {
+      void appDetailStore.loadTools(id).then(
+        () => {
+          policyLoadError = null;
+        },
+        (error: unknown) => {
+          policyLoadError = rpcError(error);
+          toast.error(policyLoadError, { id: `tool-policy-load-${id}` });
+        },
+      );
+    });
+  });
+
+  function pickEmbeddedPolicy(next: ToolPolicyChoice): void {
+    if (embeddedTarget === null) return;
+    policyChoice = next;
+    policyChoiceFor = `${embeddedTarget.connectionId}\n${embeddedTarget.toolName}`;
+  }
+
+  async function saveEmbeddedPolicy(): Promise<void> {
+    if (embeddedTarget === null || embeddedTool === null || savingEmbedded) return;
+    savingEmbedded = true;
+    try {
+      await appDetailStore.setToolPolicy(
+        embeddedTarget.connectionId,
+        embeddedTool.toolName,
+        policyForChoice(embeddedChoice),
+      );
+      onSaved?.();
+    } catch (error) {
+      toast.error(rpcError(error));
+    } finally {
+      savingEmbedded = false;
+    }
+  }
+
   async function changePolicy(tool: AppToolView, choice: ToolPolicyChoice): Promise<void> {
     savingPolicy = tool.toolName;
     try {
@@ -236,6 +324,58 @@
   }
 </script>
 
+{#if embedded}
+  <div class="space-y-2" data-testid="tool-policy-embedded">
+    {#if embeddedTarget === null}
+      <p class="text-xs text-muted-foreground" data-testid="tool-policy-missing">
+        {t('settingCard.toolPolicy.missing')}
+      </p>
+    {:else if policyLoadError !== null && embeddedTools === null}
+      <p class="text-xs text-destructive" data-testid="tool-policy-load-error">{policyLoadError}</p>
+    {:else if embeddedTools === null}
+      <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
+    {:else if embeddedTool === null}
+      <p class="text-xs text-muted-foreground" data-testid="tool-policy-not-found">
+        {t('settingCard.toolPolicy.notFound')}
+      </p>
+    {:else}
+      <p class="text-xs text-muted-foreground">
+        {embeddedConnection?.label ?? embeddedTarget.connectionId}
+      </p>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <code class="rounded bg-muted px-1.5 py-0.5">{embeddedTool.toolName}</code>
+        {#if embeddedTool.title !== undefined && embeddedTool.title !== embeddedTool.toolName}
+          <span class="truncate text-muted-foreground">{embeddedTool.title}</span>
+        {/if}
+        <McpRiskBadge risk={embeddedTool.risk} testid="tool-policy-risk" />
+      </div>
+      <label class="flex items-center gap-2 text-xs">
+        <span class="text-muted-foreground">{t('apps.detail.policy')}</span>
+        <select
+          class="h-7 rounded-md border border-input bg-background px-2 text-xs"
+          value={embeddedChoice}
+          disabled={savingEmbedded}
+          onchange={(event) => pickEmbeddedPolicy(event.currentTarget.value as ToolPolicyChoice)}
+          data-testid="tool-policy-choice"
+        >
+          {#each TOOL_POLICY_CHOICES as option (option)}
+            <option value={option}>{policyLabel(option, embeddedTool)}</option>
+          {/each}
+        </select>
+      </label>
+      <div class="flex justify-end">
+        <Button
+          size="sm"
+          disabled={savingEmbedded}
+          onclick={() => void saveEmbeddedPolicy()}
+          data-testid="tool-policy-save"
+        >
+          {t('settingCard.apply')}
+        </Button>
+      </div>
+    {/if}
+  </div>
+{:else}
 <div class="space-y-4" data-testid="apps-detail" data-connection-id={connectionId}>
   <Button size="sm" variant="ghost" class="-ml-2" onclick={onBack} data-testid="apps-detail-back">
     <ArrowLeft class="size-4" aria-hidden="true" />
@@ -607,3 +747,4 @@
     </DialogFooter>
   </DialogContent>
 </Dialog>
+{/if}

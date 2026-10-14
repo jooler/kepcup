@@ -20,6 +20,7 @@ import { runMigrations } from '../../src/infra/migrate.js';
 import { migrationsUrl } from '../../src/start.js';
 import { MessagesService } from '../../src/domain/messages.js';
 import { SettingsService } from '../../src/domain/settings.js';
+import type { AdapterDeps } from '../../src/settings/adapters.js';
 import { SettingsCatalogHost, type SettingsRunContext } from '../../src/settings/host.js';
 import { SettingsWriteLock } from '../../src/settings/write-lock.js';
 import {
@@ -79,7 +80,7 @@ function makeBot(id: string, overrides: Partial<Bot['profile']['runtime']> = {})
   } as unknown as Bot;
 }
 
-function makeRig(): Rig {
+function makeRig(extras: { appConnections?: AdapterDeps['appConnections'] } = {}): Rig {
   const home = path.join(dir, `home-${rigCount++}`);
   mkdirSync(home, { recursive: true });
   const db = openDatabase({
@@ -184,6 +185,7 @@ function makeRig(): Rig {
       ] as never,
     publish: (event, payload) => void published.push({ event, payload }),
     wake: (input) => void wakes.push(input),
+    ...(extras.appConnections !== undefined ? { appConnections: extras.appConnections } : {}),
   });
   return {
     db,
@@ -629,6 +631,58 @@ describe('settings catalog host: settings_change and cards', () => {
     });
     expect(rig.bots.get('bot_b')!.profile.runtime.model).toBe('custom:mock/mock-alt');
     expect(rig.bots.get('bot_a')!.profile.runtime.model).toBe('');
+  });
+
+  it('tool policy: tightening keeps the prefill; widening drops it but before still names the tool', async () => {
+    const tools = new Map<string, { enabled: boolean; approval: 'auto' | 'ask' }>([
+      ['search', { enabled: true, approval: 'auto' }],
+    ]);
+    const appConnections: AdapterDeps['appConnections'] = {
+      list: () => [{ id: 'conn-1', label: 'Notion' }],
+      peekTool: (connectionId, toolName) => {
+        if (connectionId !== 'conn-1') return null;
+        const tool = tools.get(toolName);
+        return tool === undefined ? null : { policy: null, ...tool };
+      },
+    };
+    const rig = makeRig({ appConnections });
+    const tighten = await rig.host.forRun(runCtx(rig)).change({
+      id: 'connections.tool-policy',
+      values: { connection: 'conn-1', tool: 'search', policy: 'deny' },
+      reason: '先停掉搜索',
+    });
+    expect(tighten.ok).toBe(true);
+    const [tightCard] = cards(rig);
+    expect(cardOf(rig, tightCard!.id)).toMatchObject({
+      mode: 'confirm',
+      proposed: { connection: 'conn-1', tool: 'search', policy: 'deny' },
+      before: { connection: 'conn-1', tool: 'search', policy: 'allow' },
+    });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'connections.tool-policy',
+        values: { connection: 'conn-1', tool: 'search', policy: 'deny' },
+        expected: cardOf(rig, tightCard!.id).before,
+        messageId: tightCard!.id,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+
+    tools.set('search', { enabled: false, approval: 'ask' });
+    const widen = await rig.host.forRun(runCtx(rig)).change({
+      id: 'connections.tool-policy',
+      values: { connection: 'conn-1', tool: 'search', policy: 'ask' },
+      reason: '重新启用',
+    });
+    expect(widen.ok).toBe(true);
+    expect(widen.content).toContain('没有采用');
+    const blank = cards(rig)
+      .map((message) => cardOf(rig, message.id))
+      .find((card) => card.state === 'pending');
+    expect(blank).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+      before: { connection: 'conn-1', tool: 'search', policy: 'deny' },
+    });
   });
 
   it('user-only: a blank card, the bot values are not used', async () => {
