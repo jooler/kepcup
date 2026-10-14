@@ -82,8 +82,9 @@ describe('cardEmbeddable（缺上下文时退回跳转卡）', () => {
     expect(cardEmbeddable(item('mail.account'), context({ botId: null }))).toBe(false);
   });
 
-  it('逐工具策略不靠预填也能嵌（user-only 会清空预填，定位在 before）', () => {
+  it('逐工具策略和 MCP 启停不靠预填也能嵌（user-only 会清空预填，定位在 before）', () => {
     expect(cardEmbeddable(item('connections.tool-policy'), context())).toBe(true);
+    expect(cardEmbeddable(item('mcp.servers'), context())).toBe(true);
   });
 
   it('连接应用要知道连哪个（预填 app）', () => {

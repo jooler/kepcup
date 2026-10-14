@@ -685,6 +685,73 @@ describe('settings catalog host: settings_change and cards', () => {
     });
   });
 
+  it('mcp servers: disabling keeps the prefill; enabling drops it but before still names the server', async () => {
+    const rig = makeRig();
+    rig.settings.update({
+      mcpServers: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          transport: 'stdio',
+          command: 'echo',
+          enabled: true,
+          autoApprove: false,
+          auth: 'none',
+          toolPolicies: { search: { approval: 'ask' } },
+        },
+        {
+          id: 'off',
+          name: 'Off',
+          transport: 'stdio',
+          command: 'echo',
+          enabled: false,
+          autoApprove: false,
+          auth: 'none',
+        },
+      ],
+    });
+    const tighten = await rig.host.forRun(runCtx(rig)).change({
+      id: 'mcp.servers',
+      values: { server: 'notes', enabled: false },
+      reason: '先停掉这个服务',
+    });
+    expect(tighten.ok).toBe(true);
+    const [tightCard] = cards(rig);
+    expect(cardOf(rig, tightCard!.id)).toMatchObject({
+      mode: 'confirm',
+      proposed: { server: 'notes', enabled: false },
+      before: { server: 'notes', enabled: true },
+    });
+    await expect(
+      rig.host.applyItem({
+        itemId: 'mcp.servers',
+        values: { server: 'notes', enabled: false },
+        expected: cardOf(rig, tightCard!.id).before,
+        messageId: tightCard!.id,
+      }),
+    ).rejects.toThrow(/暂不支持在对话里保存/);
+    expect(rig.settings.get().mcpServers.find((server) => server.id === 'notes')).toMatchObject({
+      enabled: true,
+      toolPolicies: { search: { approval: 'ask' } },
+    });
+
+    const widen = await rig.host.forRun(runCtx(rig)).change({
+      id: 'mcp.servers',
+      values: { server: 'off', enabled: true },
+      reason: '重新启用',
+    });
+    expect(widen.ok).toBe(true);
+    expect(widen.content).toContain('没有采用');
+    const blank = cards(rig)
+      .map((message) => cardOf(rig, message.id))
+      .find((card) => card.state === 'pending');
+    expect(blank).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+      before: { server: 'off', enabled: false },
+    });
+  });
+
   it('user-only: a blank card, the bot values are not used', async () => {
     const rig = makeRig();
     const result = await rig.host.forRun(runCtx(rig)).change({

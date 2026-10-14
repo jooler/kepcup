@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { McpServer, McpToolRisk } from '@kepcup/shared';
+  import type { McpServer, McpToolRisk, SettingValues } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
@@ -18,6 +18,7 @@
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
   import { mcpTargetLocked } from './mcp-edit';
+  import { mcpServerId, patchMcpServerEnabled } from './mcp-server-patch';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
   /**
@@ -33,9 +34,28 @@
    * D73 P1（§5.5 工具锁定）：「测试」成功后列出工具（带风险档），「批准」/「保存并批准」
    * 把测试时看到的定义哈希交给 `apps.tools.approveAfterTest`；批准前工具不暴露给
    * Bot，行上显示待批准数（`apps.connections.tools`，连接 id `custom:{serverId}`）。
+   *
+   * `embedded`：对话内设置卡只改 before 指向的那一个服务的启用开关。保存时读当前
+   * `mcpServers`，只改这一条的 `enabled`，再走 `settings.update`（OAuth 对账与停用后的
+   * 任务中断留在那条 RPC 里）。不带编辑、密钥、删除、免审批、逐工具策略和 .mcpb 安装。
+   * 服务 id 从 before 取，不从预填取——user-only 会把预填整份清空。
    */
 
-  let { variant = 'full' }: { variant?: 'manage' | 'full' } = $props();
+  let {
+    variant = 'full',
+    embedded = false,
+    before = null,
+    prefill = null,
+    onSaved,
+  }: {
+    variant?: 'manage' | 'full';
+    embedded?: boolean;
+    /** 出卡时的当前值（读适配器快照）：`server`。 */
+    before?: SettingValues | null;
+    /** 停用时的建议值（`enabled: false`）。启用是放宽，预填为 null。 */
+    prefill?: SettingValues | null;
+    onSaved?: () => void;
+  } = $props();
 
   type Draft = McpServer & { secretDrafts: Record<string, string> };
 
@@ -65,7 +85,46 @@
     mcpTargetLocked({ variant, developerMode, editing: editingId !== null }),
   );
 
+  const embeddedId = $derived(embedded ? mcpServerId(before) : null);
+  const embeddedServer = $derived(
+    embeddedId === null ? null : (servers.find((entry) => entry.id === embeddedId) ?? null),
+  );
+  let enabledChoice = $state<boolean | null>(null);
+  let enabledChoiceFor = $state<string | null>(null);
+  let savingEmbedded = $state(false);
+  const embeddedEnabled = $derived.by(() => {
+    if (embeddedServer === null || embeddedId === null) return false;
+    if (enabledChoiceFor === embeddedId && enabledChoice !== null) return enabledChoice;
+    return typeof prefill?.enabled === 'boolean' ? prefill.enabled : embeddedServer.enabled;
+  });
+
+  function pickEmbeddedEnabled(enabled: boolean): void {
+    if (embeddedId === null) return;
+    enabledChoice = enabled;
+    enabledChoiceFor = embeddedId;
+  }
+
+  async function saveEmbeddedEnabled(): Promise<void> {
+    if (embeddedId === null || embeddedServer === null || savingEmbedded) return;
+    savingEmbedded = true;
+    try {
+      const existing = settingsStore.settings?.mcpServers ?? [];
+      const patched = patchMcpServerEnabled(existing, embeddedId, embeddedEnabled);
+      if (!patched.ok) {
+        toast.error(t('settingCard.mcp.notFound'));
+        return;
+      }
+      await settingsStore.update({ mcpServers: patched.servers });
+      onSaved?.();
+    } catch (error) {
+      toast.error(String((error as Error).message ?? error));
+    } finally {
+      savingEmbedded = false;
+    }
+  }
+
   $effect(() => {
+    if (embedded) return;
     appsStore.start();
     appDetailStore.start();
   });
@@ -74,6 +133,7 @@
   // 触发一次连接，留到用户点「测试」时再做）。正在拉的跳过，免得连接列表刷新时并发重复
   // 请求；loadingTools 不追踪——否则失败（缓存仍空）→ 清 loading → 重跑 → 再拉，会循环。
   $effect(() => {
+    if (embedded) return;
     const known = new Set(appsStore.connections.map((connection) => connection.id));
     for (const server of servers) {
       const id = customConnectionId(server.id);
@@ -438,6 +498,40 @@
   }
 </script>
 
+{#if embedded}
+  <div class="space-y-2" data-testid="mcp-server-embedded">
+    {#if embeddedId === null}
+      <p class="text-xs text-muted-foreground" data-testid="mcp-server-missing">
+        {t('settingCard.mcp.missing')}
+      </p>
+    {:else if embeddedServer === null}
+      <p class="text-xs text-muted-foreground" data-testid="mcp-server-not-found">
+        {t('settingCard.mcp.notFound')}
+      </p>
+    {:else}
+      <p class="text-xs text-muted-foreground">{embeddedServer.name}</p>
+      <label class="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={embeddedEnabled}
+          disabled={savingEmbedded}
+          onCheckedChange={(checked) => pickEmbeddedEnabled(checked === true)}
+          data-testid="mcp-server-enabled"
+        />
+        {t('settings.mcpEnabled')}
+      </label>
+      <div class="flex justify-end">
+        <Button
+          size="sm"
+          disabled={savingEmbedded}
+          onclick={() => void saveEmbeddedEnabled()}
+          data-testid="mcp-server-save"
+        >
+          {t('settingCard.apply')}
+        </Button>
+      </div>
+    {/if}
+  </div>
+{:else}
 <section class="space-y-3" data-testid="mcp-section">
   <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
   <p class="text-xs text-muted-foreground">
@@ -836,3 +930,4 @@
     <OAuthClientsPanel />
   {/if}
 </section>
+{/if}

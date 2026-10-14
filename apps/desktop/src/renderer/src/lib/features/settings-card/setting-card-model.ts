@@ -53,12 +53,15 @@ export const SELF_APPLYING_CARD_KEYS: ReadonlySet<CardKey> = new Set([
  * 宿主不另给「应用」：群成员的移出是异步级联，不能放进设置写锁；项目两项是 user-only，
  * 保护规则由用户在组件里改，宿主不写。连接的逐工具策略由组件调用
  * `apps.connections.setToolPolicy`（策略变严时中断正在使用该连接的任务）；写锁里只调
- * `setToolPolicy` 会丢掉这段。
+ * `setToolPolicy` 会丢掉这段。已安装 MCP 的启停由组件调用 `settings.update`（写之前对
+ * OAuth 绑定变化做 `reconcileServers`，写之后 `mcpRevocationsBetween` 调 `revokeMcp`）；
+ * 写锁里直接 `settings.update` 会丢掉这两段。
  */
 export const COMPONENT_SAVE_CARD_KEYS: ReadonlySet<CardKey> = new Set([
   'group-members',
   'project-settings',
   'tool-policy',
+  'mcp-servers',
 ]);
 
 /**

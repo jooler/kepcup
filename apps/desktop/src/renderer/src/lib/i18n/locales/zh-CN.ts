@@ -1279,6 +1279,8 @@ export const zhCN = {
   'settingCard.project.portsAck': '我确认放行这些本机端口（留空表示不限制）',
   'settingCard.toolPolicy.missing': '这张卡没有带上要改的连接和工具。',
   'settingCard.toolPolicy.notFound': '这条连接上没有这个工具。',
+  'settingCard.mcp.missing': '这张卡没有带上要改的 MCP 服务。',
+  'settingCard.mcp.notFound': '没有这个已安装的 MCP 服务。',
   'settingCard.botModel.followDefaultLight': '跟随默认轻量模型',
   'settingCard.state.applied': '已应用',
   'settingCard.state.receipt': '已修改',
