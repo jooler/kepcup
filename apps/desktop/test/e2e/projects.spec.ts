@@ -208,7 +208,7 @@ test('a write task queued behind another conversation\'s write task shows the wa
     await page.locator('[data-testid="composer-input"]').fill('开始工作');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
     await expect(
-      page.locator('[data-testid="run-status"]').filter({ hasText: '占用项目' }),
+      page.locator('[data-testid="task-status"]').filter({ hasText: '占用项目' }),
     ).toBeVisible({ timeout: 30_000 });
     // The task's request is parked on the held step (the script is replaced next).
     await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
@@ -239,7 +239,7 @@ test('a write task queued behind another conversation\'s write task shows the wa
     await page.locator('[data-testid="composer-input"]').fill('也写一个');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
-    const status = page.locator('[data-testid="run-status-text"]').filter({ hasText: '也写一个' });
+    const status = page.locator('[data-testid="task-status-text"]').filter({ hasText: '也写一个' });
     await expect(status).toContainText('等写入租约', { timeout: 60_000 });
     const card = page.locator('[data-testid^="task-card-"]').filter({ hasText: '也写一个' });
     await expect(card).toHaveAttribute('data-task-state', 'submitted');

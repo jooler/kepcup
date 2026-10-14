@@ -71,8 +71,9 @@
   const chainKeys = $derived(messages.map(chainKey));
 
   // D75 §6.3: turns keep their own (short) status line; tasks share one line.
+  // Only real turns — reflection / summary / subagent must not show as「请稍等」.
   const turnEntries = $derived(
-    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType !== 'task'),
+    (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'turn'),
   );
   const taskEntries = $derived(
     (chat.current?.activeRuns ?? []).filter((entry) => entry.run.loopType === 'task'),

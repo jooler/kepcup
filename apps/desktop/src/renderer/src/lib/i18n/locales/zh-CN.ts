@@ -1090,6 +1090,8 @@ export const zhCN = {
   'task.answerFailed': '回答没有送达',
   'task.statusOne': '任务「{title}」：{activity}',
   'task.statusMany': '{count} 个任务进行中 · 「{title}」：{activity}',
+  /** Footer task status line fallback when no tool/progress text yet. */
+  'task.working': '进行中…',
   'task.originProgress': '任务「{title}」的进度',
   'task.originResult': '任务「{title}」的结果',
   'route.openBot': '去和 {name} 聊',

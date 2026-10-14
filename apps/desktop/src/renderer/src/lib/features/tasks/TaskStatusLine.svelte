@@ -32,7 +32,7 @@
     const verb = toolVerb(entry.toolName);
     if (verb !== null) return t('runStatus.callingVerb', { verb });
     if (entry.toolName.length > 0) return t('runStatus.callingTool', { tool: entry.toolName });
-    return t('runStatus.pleaseWait');
+    return t('task.working');
   }
 
   const activities = $derived(
@@ -79,7 +79,7 @@
   <div class="flex flex-col py-1 text-sm text-muted-foreground">
     <div
       class="flex items-center gap-2"
-      data-testid="run-status"
+      data-testid="task-status"
       data-run-id={latest.taskId}
       data-task-count={summary.count}
     >
@@ -102,7 +102,7 @@
           {:else}
             <ChevronRight class="size-3.5 shrink-0" aria-hidden="true" />
           {/if}
-          <span class="min-w-0 truncate" data-testid="run-status-text"
+          <span class="min-w-0 truncate" data-testid="task-status-text"
             >{t('task.statusMany', {
               count: summary.count,
               title: latest.title,
@@ -111,7 +111,7 @@
           >
         </button>
       {:else}
-        <span class="min-w-0 truncate" data-testid="run-status-text">
+        <span class="min-w-0 truncate" data-testid="task-status-text">
           {#if lease !== undefined}
             <span class="inline-flex items-center gap-1.5" data-testid="lease-waiting-text">
               <Hourglass class="size-3.5 animate-pulse" aria-hidden="true" />
