@@ -18,7 +18,7 @@
 | `~/.ssh`、系统钥匙串、`~/.aws`、`~/.config/gh` 等敏感位置 | 需授权，授权卡片醒目警告 |
 | `~/.kepcup`（应用数据目录） | 永远不可授权 |
 
-- **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `.git/hooks/` 下的文件、`.git/info/attributes`）：即使在 workspace / 持有租约的 project 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks），而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-028）。读取不受影响。
+- **仓库控制文件**（`.git/config`、`config.worktree`、`.git/modules/*/config`、任何 `hooks/` 下的文件、`info/attributes`（含子模块的），以及会把 git 指向别的仓库的文件：`.git` 指针文件本身、`commondir`、`worktrees/<名>/gitdir`、`objects/info/alternates`）：即使在 workspace / 持有租约的 project 内，文件工具写入也需授权（卡片按敏感位置醒目警告）。git 会按这些文件执行程序（fsmonitor、diff / filter 驱动、hooks）或改读别的仓库，而只读白名单里的 git 命令在逐条确认模式下不经确认、在沙箱外运行（审查修复，DEV-028）。读取不受影响。
 
 ## 授权
 
@@ -116,15 +116,15 @@ Bot 使用外部智能体引擎（Claude Agent / Codex 等，见 [28-external-ag
 
 - 内置默认白名单只包含只读 / 探测命令，例如 `ls`、`pwd`、`cat`、`head`、`tail`、`wc`、`file`、`stat`、`du`、`tree`、`which`、`grep`、`rg`、`find`、`echo`、`dirname`、`basename`、`realpath`，`git status` / `diff` / `log` / `show` / `branch`（只豁免列出）/ `rev-parse` / `blame` / `ls-files` 等，以及 `node` / `npm` / `python` / `pip` / `tsc` / `eslint` / `prettier` / `ruby` / `php` 的版本探测。**不**包含会加载项目控制的代码或联网下载工具链的探测：`pnpm` / `yarn`（corepack 按 `packageManager` 下载）、`cargo` / `rustc`（rustup 按 `rust-toolchain.toml`）、`go version`（`GOTOOLCHAIN`）；也不包含 `npm test`、`pnpm build`、`curl`、`rm` 等（用户可自定义添加并自担风险）。内置集合由单测按形状钉住，新增条目要显式决定；旧版本补种过的这些探测在升级后删除。
 - 新版本新增的内置条目在已有安装上默认启用（用户停用过的条目不会被重新启用）；界面暂无「新增」标记（DEV-028）。
-- 豁免执行的命令（沙箱外、无卡片）用加固的环境：`PATH` 去掉相对项（`.`、`node_modules/.bin`），关闭 corepack / go / npm / pip 的下载与更新检查，git 不用 pager、不取可选锁、`core.fsmonitor=false`。豁免的 git 命令执行前先读仓库级配置（local / worktree）：其中有会执行程序的项（`core.fsmonitor`、`core.pager`、`diff.external`、`diff.*.textconv` / `command`、`filter.*`、`include.path` / `includeIf`、`core.worktree` 等）或读不到配置时，该命令改为弹卡。
-- `git branch` 只豁免列出形式（`-a` / `-r` / `-v` / `-l` 及其组合、`--list`、`--show-current`、`--contains` / `--merged` / `--points-at` 等带值选项）；带分支名（新建）、`-d` / `-D` / `-m` / `-c` / `-f` / `-u` 等及其捆绑写法（如 `-qD`）都要确认。
+- 豁免执行的命令（沙箱外、无卡片）用加固的环境：`PATH` 只留绝对路径，且去掉位于 workspace / project 内的项（`.`、`node_modules/.bin`、direnv 加的 `bin`）；Windows 另设 `NoDefaultCurrentDirectoryInExePath=1`、PowerShell 用绝对路径（不从工作目录捡同名程序）；关闭 corepack / go / npm / pip 的下载与更新检查，Volta shim 绕过（`VOLTA_BYPASS=1`，探测可能报系统版本或失败；pyenv / rbenv / asdf 等 shim 仍可能按工作目录里的版本文件**选择**已安装的版本，不执行项目代码）；git 不用 pager、不取可选锁、`core.fsmonitor=false`、`diff.ignoreSubmodules=all`（不进子模块）。豁免的 git 命令执行前（异步、5 秒上限，git 从清理后的 PATH 解析为绝对路径）先问 git 两件事，任一不过或问不出来（含 git < 2.26）就改为弹卡：① 要读的仓库——git dir、common dir、`objects/info/alternates` 里的对象目录都必须在可读范围内（防 `.git` 指针文件把 `git show HEAD:secrets.env` 引到别的仓库）；② 仓库级配置（local / worktree）里有没有只读命令真会执行的项：`core.fsmonitor`、`diff.external`、`diff.*.textconv` / `command`、`filter.*`、`include.path` / `includeIf`、`core.worktree`、`gpg.program`。`core.hooksPath`（husky）、`core.editor`、`sequence.editor`、`core.sshCommand`、`merge.*.driver`、`core.pager` / `pager.*` 不算（只读命令不会运行它们；输出不是终端时 git 不分页）。**残留**：检查与执行之间仍有极短窗口，期间另一条并行的、已获批准的沙箱外命令若改了配置或加了 filter 驱动，git 会照新配置执行（文件工具写这些文件要授权，沙箱内命令写不了 `.git/config` / hooks）。
+- `git branch` 只豁免列出形式（`-a` / `-r` / `-v` / `-l` 及其组合、`--list`、`--show-current` 等），按 git 自己的参数规则解析：`--format` / `--sort` / `--points-at` 的取值是**下一个词**（`--format -l evil` 里 `-l` 是格式、`evil` 会新建分支），`--contains` / `--merged` 一类只在下一个词不以 `-` 开头时取值，`--abbrev` / `--color` / `--column` 只认 `=` 形式；取完值之后，剩下的位置参数只有在 `--list` / `-l` 下才是模式，否则就是新建分支、要确认。未知选项、缩写、`-d` / `-D` / `-m` / `-c` / `-f` / `-u` 等及其捆绑写法（如 `-qD`）都要确认。`--submodule` / `--recurse-submodules` / `-O` 在任何 git 命令里都不豁免。
 - 严格匹配，以下情况不豁免：
   - 整条命令中有任何一段不在白名单中（管道、`&&`、`;` 连接的每一段都要命中）
   - 出现写入重定向（`>`、`>>`）、`tee`、命令替换（`$()`、反引号）、后台执行（`&`）、子 shell、变量赋值前缀
   - 带有写入或执行语义的参数，例如 `find -exec`、`find -delete`、`sed -i`、`git -c`
 - 白名单不放宽访问范围：命令参数中的路径超出可访问范围时，仍需访问授权。
 - 用户可以在设置中查看、增删白名单条目。自定义条目不一定是只读的（例如 `npm test` 会执行项目代码），添加时提示风险由用户承担。因此自定义条目：只读 run（D75 对话轮、只读任务）里不执行（`RUN_READ_ONLY`）；污点期间（D73）不豁免，改为带污点标记的命令卡；也不豁免沙箱联网命令的外发卡。
-- 不能添加的条目（`allowlist.add` 拒绝，审批卡「加入白名单」也不会建议）：shell、包装器（`env` / `sudo` / `xargs` / `timeout` …）、`npx` 一类下载执行、联网（`curl` / `wget` / `ssh` …）、删改（`rm` / `mv` / `cp` / `chmod` …）程序的任何形式；裸写的解释器、包管理器与 `git`；解释器就地执行代码的参数（`python -c`、`node -e`）；`npm run` / `pnpm run` 等裸写的运行动词与 `exec` / `dlx` 动词；`git` 的全局选项；含管道、重定向、替换的条目。审批卡的默认建议是第一段完整命令（子命令式工具取「程序 子命令」），不再缩成裸程序。
+- 不能添加的条目（`allowlist.add` 拒绝，审批卡「加入白名单」也不会建议）按一条原则判断：条目按前缀匹配，后面还能接任意参数，所以条目里必须已经固定下要执行的东西（具体脚本 / 子命令），固定部分本身不含加载代码、联网、改配置的参数。具体：shell、包装器（`env` / `sudo` / `xargs` / `timeout` …）、`npx` 一类下载执行、联网（`curl` / `wget` / `ssh` / `dig` …）、删改（`rm` / `mv` / `cp` / `chmod` …）程序，以及参数决定一切、没有安全前缀的程序（`awk`、`sed`、`tar`、`docker`、`podman`、`kubectl`、`gh`、`make`、`man`、编辑器）——任何形式；解释器必须写到具体脚本（`python scripts/check.py`），脚本前只允许 `-u` / `--no-warnings` 等少数无害选项，`-c` / `-e` / `-m` / `-r` / `--import` / `--require` / `--loader` 等与远程脚本一律拒绝，只有选项的前缀（`python -u`）拒绝；包管理器的动词取第一个非选项词，只有选项的前缀（`npm --silent`）拒绝，安装 / 下载执行类动词（`install` / `add` / `exec` / `dlx` …）拒绝，`run` 后必须跟具体脚本；`git` 必须带子命令，全局选项与 `config` / `submodule` / `rebase` / `push` / `fetch` 等改配置、联网、跑外部程序的子命令拒绝；含管道、重定向、替换的条目拒绝。审批卡的默认建议是第一段**完整**命令，从不缩短。
 
 ## 无人值守模式
 
