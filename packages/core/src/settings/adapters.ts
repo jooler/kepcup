@@ -68,7 +68,8 @@ export interface ItemWrite {
  */
 export interface ItemWriteEffects {
   changedItemIds?: readonly string[];
-  afterUnlock?: () => Promise<void> | void;
+  /** 返回的字符串是各步的失败说明（宿主记日志）；抛出同样只记日志，不影响已完成的写入。 */
+  afterUnlock?: () => Promise<readonly string[] | void> | readonly string[] | void;
 }
 
 export type NormalizeResult = { ok: true; values: SettingValues } | { ok: false; message: string };
@@ -124,7 +125,12 @@ export interface AdapterDeps {
     apply(
       botId: string,
       profile: Bot['profile'],
-    ): { bot: Bot; changedItemIds: readonly string[]; settle(): Promise<void> };
+    ): {
+      bot: Bot;
+      changedItemIds: readonly string[];
+      /** 锁外收尾；返回各步的失败说明。 */
+      settle(): Promise<readonly string[] | void>;
+    };
   };
   /**
    * 已安装 MCP 服务变化后的撤销（与 `settings.update` 同一套 `mcpRevocationsBetween`）：停用正在

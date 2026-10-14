@@ -1802,3 +1802,166 @@ describe('settings catalog host: D89 review round 2', () => {
     ]);
   });
 });
+
+describe('settings catalog host: D89 review round 3', () => {
+  it('settle: revocations run first and a throwing step never skips the others', async () => {
+    const revoked: PermissionRevokedEvent[] = [];
+    const interrupted: unknown[] = [];
+    const bot = makeBot('bot_s', {
+      mcp_server_ids: ['srv'],
+      app_connection_ids: ['conn_a'],
+      browser_profile: '',
+    });
+    let current = bot;
+    let mcpCalls = 0;
+    const update = applyBotProfileUpdate(
+      {
+        bots: {
+          getOrThrow: () => current,
+          update: (_id, profile) => (current = { ...current, profile } as Bot),
+        },
+        settings: {
+          get: () =>
+            ({
+              mcpServers: [{ id: 'srv', name: 'S', transport: 'stdio', command: 'x', enabled: true }],
+              browserProfiles: [{ id: 'bpf', name: 'B', createdAt: 1 }],
+              experimental: { externalAgents: false },
+            }) as never,
+        },
+        agentCatalog: () => [],
+        browserProfiles: {
+          assertSelectable: () => undefined,
+          profileKeyFor: () => `${current.profile.runtime.browser_profile}`,
+          onBotProfileChanged: async () => {
+            throw new Error('browser host gone');
+          },
+        },
+        effects: {
+          publishInterrupted: (count, scope) => void interrupted.push({ count, scope }),
+          revokeMcp: (entries) => {
+            mcpCalls += 1;
+            // The first revocation call (servers) blows up; the connection one must still run.
+            if (mcpCalls === 1) throw new Error('listener exploded');
+            for (const entry of entries) {
+              revoked.push({ scope: 'mcp', botIds: entry.botIds, serverId: entry.serverId });
+            }
+          },
+          revokeMcpServerChanges: () => undefined,
+        },
+        publish: () => undefined,
+      },
+      'bot_s',
+      {
+        ...bot.profile,
+        runtime: {
+          ...bot.profile.runtime,
+          mcp_server_ids: [],
+          app_connection_ids: [],
+          browser_profile: 'bpf',
+        },
+      },
+    );
+    const warnings = await update.settle();
+    expect(revoked).toEqual([{ scope: 'mcp', botIds: ['bot_s'], serverId: 'conn_a' }]);
+    expect(warnings).toEqual([
+      'revoke mcp servers: listener exploded',
+      'browser profile switch: browser host gone',
+    ]);
+    // Second call is a no-op.
+    expect(await update.settle()).toEqual([]);
+  });
+
+  it('a throw after the committed write still runs the unlock side effects (revocation is not lost)', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    rig.settings.update({
+      mcpServers: [{ id: 'srv', name: 'Srv', transport: 'stdio', command: 'echo', enabled: true }],
+    } as never);
+    const bot = rig.bots.get('bot_a')!;
+    rig.bots.set('bot_a', {
+      ...bot,
+      profile: { ...bot.profile, runtime: { ...bot.profile.runtime, mcp_server_ids: ['srv'] } },
+    } as Bot);
+    // After the write lands, the follow-up read inside the lock throws.
+    const originalSet = rig.bots.set.bind(rig.bots);
+    const originalGet = rig.bots.get.bind(rig.bots);
+    let armed = false;
+    rig.bots.set = (id, value) => {
+      armed = true;
+      return originalSet(id, value);
+    };
+    rig.bots.get = (id) => {
+      if (armed) throw new Error('read after write failed');
+      return originalGet(id);
+    };
+    await expect(
+      rig.host.applyItem({
+        itemId: 'bot.mcp-servers',
+        values: { servers: [] },
+        expected: null,
+        target: { botId: 'bot_a' },
+      }),
+    ).rejects.toThrow(/read after write failed/);
+    expect(rig.revocations).toEqual([{ scope: 'mcp', botIds: ['bot_a'], serverId: 'srv' }]);
+  });
+
+  it('auto verification: an opposite-direction change does not close a widening card', async () => {
+    const rig = makeRig({ realBotProfiles: true });
+    const bot = rig.bots.get('bot_a')!;
+    rig.bots.set('bot_a', {
+      ...bot,
+      profile: {
+        ...bot.profile,
+        runtime: { ...bot.profile.runtime, network_policy: 'allowlist', network_allowlist: ['a.com'] },
+      },
+    } as Bot);
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'bot.network',
+      values: { policy: 'open' },
+      reason: '需要访问外网',
+    });
+    const id = messageIdIn(result.content);
+    expect(cardOf(rig, id)).toMatchObject({ mode: 'user-only', proposed: null });
+    // Someone tightens the network elsewhere: changed, but not what the card asked for.
+    await rig.host.applyItem({
+      itemId: 'bot.network',
+      values: { policy: 'none' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    expect(rig.wakes).toHaveLength(0);
+    rig.clock.advance(31_000);
+    await rig.host.applyItem({
+      itemId: 'bot.network',
+      values: { policy: 'open' },
+      expected: null,
+      target: { botId: 'bot_a' },
+    });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
+    expect(rig.wakes).toHaveLength(1);
+  });
+
+  it('auto verification: a card with proposed values settles only when they are met', async () => {
+    const rig = makeRig();
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'capability.image',
+      values: { provider: 'dashscope', model: 'dashscope/qwen-image-plus' },
+      reason: '要画图',
+    });
+    const id = messageIdIn(result.content);
+    expect(cardOf(rig, id)).toMatchObject({ mode: 'form' });
+    await rig.host.applyItem({
+      itemId: 'capability.image',
+      values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: SECRET },
+      expected: null,
+    });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    rig.clock.advance(31_000);
+    await rig.host.applyItem({
+      itemId: 'capability.image',
+      values: { provider: 'dashscope', model: 'dashscope/qwen-image-plus' },
+      expected: null,
+    });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
+  });
+});

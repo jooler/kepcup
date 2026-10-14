@@ -500,4 +500,35 @@ describe('conversational app settings', () => {
       ['b', false],
     ]);
   }, 30_000);
+
+  it('(13) an MCP editor saved with its open-time base keeps the bot\'s disable', async () => {
+    const { core } = await start();
+    const initial = {
+      id: 'srv',
+      name: 'Old',
+      transport: 'stdio' as const,
+      command: process.execPath,
+      args: ['-e', '0'],
+      env: {},
+      enabled: true,
+      autoApprove: false,
+    };
+    await core.rpc.call('settings.update', { mcpServers: [initial] });
+    const opened = (await settingsOf(core)).mcpServers;
+    // While the editor is open the bot's 「停用」 card is applied.
+    await core.rpc.call('settings.items.apply', {
+      itemId: 'mcp.servers',
+      values: { server: 'srv', enabled: false },
+      expected: null,
+    });
+    // The editor saves a rename of its whole open-time copy, with that copy as the base.
+    await core.rpc.call('settings.update', {
+      mcpServers: opened.map((entry) => ({ ...entry, name: 'New' })),
+      base: { mcpServers: opened },
+    });
+    const saved = (await settingsOf(core)).mcpServers.find((entry) => entry.id === 'srv')!;
+    expect(saved.name).toBe('New');
+    expect(saved.enabled).toBe(false);
+  }, 30_000);
 });
+
