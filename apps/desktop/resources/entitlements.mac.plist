@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the Developer ID build (electron-builder.yml mac.entitlements).
+  Not an App Sandbox build: KepCup spawns host CLIs and sandbox-exec, which the Mac App Store
+  sandbox forbids (docs/dev/06-release.md).
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8 JIT in Electron. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Native modules (better-sqlite3-multiple-ciphers, @napi-rs/keyring, es-git) loaded by the
+         helper processes and ELECTRON_RUN_AS_NODE children. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Voice input (docs/design/26-voice-input.md) and camera sensor (docs/design/31-sensors.md). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+  </dict>
+</plist>

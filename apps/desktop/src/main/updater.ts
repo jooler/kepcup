@@ -49,6 +49,21 @@ export function updateFeedUrlFromEnv(env: NodeJS.ProcessEnv): string | null {
   return url !== undefined && url.length > 0 ? url : null;
 }
 
+/**
+ * Distribution channels whose updates the platform owns (docs/dev/06-release.md
+ * 「各渠道的更新方式」): Microsoft Store (MSIX), Mac App Store and Flatpak
+ * (Flathub). There electron-updater must never run — it cannot replace a
+ * store-signed or sandboxed install, and a GitHub feed would fight the store.
+ */
+export function externalUpdateChannel(
+  proc: { windowsStore?: boolean; mas?: boolean; env: NodeJS.ProcessEnv } = process,
+): 'microsoft-store' | 'mac-app-store' | 'flatpak' | null {
+  if (proc.windowsStore === true) return 'microsoft-store';
+  if (proc.mas === true) return 'mac-app-store';
+  if (proc.env.FLATPAK_ID !== undefined && proc.env.FLATPAK_ID.length > 0) return 'flatpak';
+  return null;
+}
+
 export function wireUpdater(options: {
   host: UpdateHost;
   listActiveRuns: () => Promise<unknown[]>;
@@ -58,8 +73,13 @@ export function wireUpdater(options: {
   scheduleChecks?: boolean;
 }): UpdaterWiring {
   const { host } = options;
+  const external = externalUpdateChannel();
   const feedUrl = updateFeedUrlFromEnv(options.env ?? process.env);
-  if (feedUrl !== null) {
+  if (external !== null) {
+    // Store / Flatpak build: the gate stays wired (the ipc surface expects it)
+    // but no feed is configured and nothing is ever checked — phase stays idle.
+    host.log(`updates managed by ${external}; in-app updater disabled`);
+  } else if (feedUrl !== null) {
     // 可替换更新源: generic HTTPS feed wins over the baked app-update.yml.
     autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
     host.log(`update feed override: ${feedUrl}`);
@@ -109,7 +129,7 @@ export function wireUpdater(options: {
   const timers: NodeJS.Timeout[] = [];
   // e2e (NODE_ENV=test) never contacts the update feed: no check scheduling,
   // deterministic runs. The ipc surface stays available for tests.
-  if (options.scheduleChecks !== false && process.env.NODE_ENV !== 'test') {
+  if (external === null && options.scheduleChecks !== false && process.env.NODE_ENV !== 'test') {
     const first = setTimeout(() => {
       void checkQuietly();
       const interval = setInterval(() => void checkQuietly(), UPDATE_CHECK_INTERVAL_MS);
@@ -121,6 +141,7 @@ export function wireUpdater(options: {
   }
 
   async function checkQuietly(): Promise<void> {
+    if (external !== null) return;
     try {
       await autoUpdater.checkForUpdates();
     } catch (error) {

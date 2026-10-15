@@ -36,12 +36,14 @@ asarUnpack:
 # 架构重编译；smartUnpack 自动把 .node 解包出 asar。
 npmRebuild: true
 
-# --- 自动更新源（P13 任务 2：默认 GitHub Releases 占位，可替换） ----------------
+# --- 自动更新源（P13 任务 2；发行流程见 docs/dev/06-release.md） ----------------
+# 写进 app-update.yml，electron-updater 匿名读公开仓库的 Releases（仓库必须公开）。
 # 运行时可用 KEPCUP_UPDATE_URL 环境变量指向任意 generic HTTPS 源，无需重打包。
-# 正式发布仓库确定后改这里（owner/repo 为占位）。
+# 上传不由 electron-builder 做：scripts/dist.mjs 固定 --publish never，
+# release.yml 的 publish job 合并清单后用 gh 一次性发布。
 publish:
   provider: github
-  owner: kepcup-app
+  owner: jooler
   repo: kepcup
 
 # --- macOS：dmg + zip（自动更新走 zip），arm64 与 x64 分别构建 ------------------
@@ -60,10 +62,15 @@ mac:
     NSMicrophoneUsageDescription: 语音输入需要使用麦克风，用于把语音转为文字或发送语音消息。
     # 摄像头用途声明（传感器 D76，docs/design/31-sensors.md）：设置页预览摄像头及将来的监看。
     NSCameraUsageDescription: 需要使用摄像头，用于在设置中预览画面，以及将来让 Bot 协助监看。
-  # 本机无 Developer ID 证书：显式跳过签名（CSC_IDENTITY_AUTO_DISCOVERY=false
-  # 由 scripts/dist.mjs 设置）。分发前必须签名 + 公证（CI 机密注入），见
-  # todo/cross-platform-acceptance.md P13 小节。
-  identity: null
+  # 签名：CSC_LINK（Developer ID Application .p12）存在时签名，否则 scripts/dist.mjs
+  # 设 CSC_IDENTITY_AUTO_DISCOVERY=false 跳过（本机未签名构建）。不要写 identity: null——
+  # 它会无视 CSC_LINK 直接跳过签名与公证。
+  # 公证：签名成功后，APPLE_API_KEY(.p8 文件路径)/APPLE_API_KEY_ID/APPLE_API_ISSUER 三件套
+  # 存在即公证（mac.notarize 未设 = 有凭据就公证）。凭据走 CI 机密，见 docs/dev/06-release.md。
+  hardenedRuntime: true
+  # JIT/原生模块 + 麦克风/摄像头（hardened runtime 下缺声明会被系统直接拒绝）。
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
   extraResources:
     # 托盘四件套（tray.ts 运行时经 app-brand.trayIconPath 读取，process.resourcesPath/tray）。
     # 按平台各写一份而非顶层 extraResources：electron-builder 的平台块对同名
@@ -82,12 +89,18 @@ mac:
       to: connectors
 
 # --- Windows：NSIS，x64 与 arm64 ------------------------------------------------
+# 文件名不能有空格：latest.yml 记录的是连字符形式，gh 上传带空格的文件会被 GitHub 改成点号，
+# 更新就会 404。
+nsis:
+  artifactName: ${productName}-Setup-${version}.${ext}
 win:
   target:
     - target: nsis
       arch: [x64, arm64]
-  # 代码签名：CI 注入 CSC_LINK/CSC_KEY_PASSWORD（或 Azure Trusted Signing 三元组）
-  # 时自动签名；无凭据时跳过（登记跨系统清单）。
+  # 代码签名：CI 注入 CSC_LINK/CSC_KEY_PASSWORD（机密 WIN_CSC_LINK/WIN_CSC_KEY_PASSWORD）
+  # 时自动签名；无凭据时跳过——GitHub 下载的 exe 会有 SmartScreen 提示。
+  # 两个架构在同一次构建里出一个合并安装包和唯一的 latest.yml（分开构建会互相覆盖）。
+  # 商店包（appx/MSIX）由 release.yml 按仓库变量追加目标与身份字段，商店负责签名与更新。
   # icon.png（1024 圆角母图）由 electron-builder 转 exe 内嵌 ico。
   icon: resources/icon.png
   extraResources:
@@ -107,6 +120,9 @@ win:
       to: connectors
 
 # --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
+# deb 默认名用 package.json 的 name（@kepcup/desktop），斜杠会把文件写进子目录。
+deb:
+  artifactName: kepcup_${version}_${arch}.${ext}
 linux:
   target:
     - target: AppImage
