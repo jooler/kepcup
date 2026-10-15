@@ -67,6 +67,8 @@ export async function openConversationByName(page: Page, name: string): Promise<
 export type CreateBotOptions = {
   /** 写入 profile.identity.bio（默认 testkit 的「测试 Bot」）。 */
   bio?: string;
+  /** 主动消息开关（profile.behavior.proactive，默认开）；工作台派发不应受它约束。 */
+  proactive?: boolean;
 };
 
 /**
@@ -83,6 +85,7 @@ export async function createBotAndOpenChat(
 ): Promise<{ botId: string; conversationId: string }> {
   const profile = botProfile({ name });
   if (options.bio !== undefined) profile.identity.bio = options.bio;
+  if (options.proactive !== undefined) profile.behavior.proactive = options.proactive;
 
   const created = (await rpc(page, 'bots.create', { profile })) as { bot: { id: string } };
   const opened = (await rpc(page, 'conversations.openDirect', { botId: created.bot.id })) as {
