@@ -17,7 +17,7 @@
    * 后续新增内容形态（图片、音频、视频等多模态消息）在 MessageContent 联合
    * 类型上加成员并在这里加分支即可，不涉及消息行布局与操作层。
    * 圆角规律（参考 Grok）：半径取单行气泡高度的一半——用户气泡 py-2 + 行高
-   * 20px＝36px → 18px，Bot 气泡 py-3 → 44px → 22px，单行整好成药丸形；
+   * 20px＝36px → 18px，Bot 气泡 text-xs + py-2 → 约 32px → 16px，单行整好成药丸形；
    * merge 标记上/下相邻条目是否同一发送者（MessageList 计算），连排时把
    * 对齐侧的两个角缩到约 1/3（用户在右减右角、Bot 在左减左角），同方连发
    * 在对齐侧看上去是一整块。
@@ -117,8 +117,8 @@
   {/if}
 {:else if hasBotText}
   <div
-    class="max-w-full min-w-0 rounded-[22px] bg-muted px-4 py-3 text-sm
-      {merge.above ? 'rounded-tl-[7px]' : ''} {merge.below ? 'rounded-bl-[7px]' : ''}"
+    class="max-w-full min-w-0 rounded-[16px] bg-muted px-3 py-2 text-xs
+      {merge.above ? 'rounded-tl-[5px]' : ''} {merge.below ? 'rounded-bl-[5px]' : ''}"
     data-testid="bot-bubble"
   >
     <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">
