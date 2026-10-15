@@ -608,24 +608,22 @@
   </button>
 {/snippet}
 
-<!-- 工作台入口图标（展开/图标两模式共用）：44px，无圆形底；明暗两套实色稿。 -->
+<!-- 工作台入口图标：与会话 Bot 头像同一尺寸 class（size-11 = 44px），无圆形底。 -->
 {#snippet workbenchIcon()}
-  <span class="relative inline-flex size-11 shrink-0 items-center justify-center">
-    <img
-      src={workbenchIconLightUrl}
-      alt=""
-      class="size-11 dark:hidden"
-      draggable="false"
-      aria-hidden="true"
-    />
-    <img
-      src={workbenchIconDarkUrl}
-      alt=""
-      class="hidden size-11 dark:block"
-      draggable="false"
-      aria-hidden="true"
-    />
-  </span>
+  <img
+    src={workbenchIconLightUrl}
+    alt=""
+    class="size-11 shrink-0 object-contain dark:hidden"
+    draggable="false"
+    aria-hidden="true"
+  />
+  <img
+    src={workbenchIconDarkUrl}
+    alt=""
+    class="hidden size-11 shrink-0 object-contain dark:block"
+    draggable="false"
+    aria-hidden="true"
+  />
 {/snippet}
 
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
@@ -773,7 +771,7 @@
               <Sidebar.MenuItem class="w-auto">
                 <Tooltip.Root>
                   <Tooltip.Trigger
-                    class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
+                    class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
                       dark:data-active:bg-[oklch(0.16_0_0)]"
                     data-active={workbenchActive ? 'true' : undefined}
