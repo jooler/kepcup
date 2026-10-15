@@ -578,6 +578,85 @@ test('failed execution returns the todo to draft with the reason; start retries'
   }
 });
 
+test('in progress: editing the notes tells the executor — an update card appears in the chat, the running turn is not interrupted', async () => {
+  test.setTimeout(300_000);
+  const session = await startSession('kepcup-e2e-wb-update-');
+  const { page, llm } = session;
+  try {
+    await waitReady(page);
+    await createBotAndOpenChat(page, '阿改');
+
+    // 第一轮被挂起 = 事项处于进行中；更新消息要等它结束才进入下一轮（不打断）。
+    llm.script('mock-main', [
+      step()
+        .expect((r) => r.lastUserText().includes('【工作台】整理合同'))
+        .hold()
+        .replyText('合同整理好了。'),
+      step()
+        .expect((r) => r.lastUserText().includes('事项更新：整理合同'))
+        .replyText('收到更新，沿用当前做法。'),
+    ]);
+    reflections(llm);
+
+    await openWorkbench(page);
+    await quickAdd(page, '整理合同');
+    await todoCard(page, '整理合同').locator('[data-testid="todo-card-assign"]').click();
+    await pickAssignee(page, '阿改');
+    await page.locator('[data-testid="todo-when-now"]').click();
+    await page.locator('[data-testid="todo-save"]').click();
+    const card = todoCard(page, '整理合同');
+    await expect(card).toHaveAttribute('data-status', 'in_progress', { timeout: 30_000 });
+
+    // 进行中的事项可以改说明；抽屉里提示会通知执行者。
+    await card.click();
+    const drawer = page.locator('[data-testid="todo-drawer"]');
+    await expect(drawer).toBeVisible();
+    await expect(page.locator('[data-testid="todo-notes-notify-hint"]')).toBeVisible();
+    await page.locator('[data-testid="todo-notes"]').fill('只看 2026 年签的合同');
+    await page.locator('[data-testid="todo-save"]').click();
+    await expect(
+      page.locator('[data-sonner-toast]').filter({ hasText: '已通知执行者' }),
+    ).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(drawer).toHaveCount(0, { timeout: 15_000 });
+
+    // 去抖约 10 秒后，私聊里出现「事项更新」卡（变体），谁改的标「你修改了」。
+    await card.locator('[data-testid="todo-card-open-chat"]').click();
+    await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
+    const updateCard = page.locator('[data-testid="dispatch-card"][data-variant="update"]');
+    await expect(updateCard).toBeVisible({ timeout: 60_000 });
+    await expect(updateCard.locator('[data-testid="dispatch-card-label"]')).toContainText(
+      '事项更新',
+    );
+    await expect(updateCard.locator('[data-testid="dispatch-card-updated-by"]')).toContainText(
+      '你修改了',
+    );
+    await expect(updateCard.locator('[data-testid="dispatch-card-title"]')).toHaveText('整理合同');
+    await expect(updateCard.locator('[data-testid="dispatch-card-notes"]')).toHaveText(
+      '只看 2026 年签的合同',
+    );
+    // 卡里不显示正文末尾那行「（由用户修改；…）」。
+    await expect(updateCard).not.toContainText('由用户修改');
+    // 原来的派发卡仍在，两张是不同的变体。
+    await expect(
+      page.locator('[data-testid="dispatch-card"][data-variant="dispatch"]'),
+    ).toHaveCount(1);
+    await shot(page, '17-chat-update-card');
+
+    // 第一轮没有被打断：放行后它正常回复，更新进入下一轮。
+    llm.releaseAll();
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '合同整理好了' }),
+    ).toBeVisible({ timeout: 60_000 });
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '收到更新，沿用当前做法' }),
+    ).toBeVisible({ timeout: 60_000 });
+  } finally {
+    await closeSession(session);
+  }
+});
+
 test('bot self-schedule shows in the bot lane with a source tag and can be cancelled', async () => {
   test.setTimeout(240_000);
   const session = await startSession('kepcup-e2e-wb-self-');
