@@ -849,6 +849,11 @@ export const textContentSchema = z.object({
    */
   scheduleId: z.string().optional(),
   scheduleTitle: z.string().optional(),
+  /**
+   * 工作台事项派发引出的对话轮回复（D90 §4.5）：不带 `origin`，但带
+   * `todoId` / `todoRunId` 与标题快照，气泡下方显示「📋 标题」，点开工作台该事项。
+   */
+  todoTitle: z.string().optional(),
 });
 export const systemEventContentSchema = z.object({
   event: z.string(),
