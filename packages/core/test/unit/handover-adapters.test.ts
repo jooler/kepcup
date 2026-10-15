@@ -349,6 +349,7 @@ describe('schedule adapter', () => {
       title: '日报',
       origin: 'tool',
       commitmentId: null,
+      todoId: null,
       status: 'active',
       nextFireAt: 1,
       lastFiredAt: null,
@@ -406,6 +407,52 @@ describe('schedule adapter', () => {
     });
     expect(entries[1]!.detail).toContain('群「周报群」');
     expect(entries[2]!.blocked).toContain('承诺');
+  });
+
+  it('D90 工作台排期：盘点标「工作台事项」；移交后通知 TodoService；无负责 Bot 的群排期（bot_id 为空）不可执行也不崩', async () => {
+    const moved: string[] = [];
+    const rows = new Map<string, Schedule>([
+      ['sch_w', row('sch_w', 'conv_a', { origin: 'workbench', todoId: 'todo_1', title: '周报' })],
+      ['sch_n', row('sch_n', 'conv_g', { origin: 'workbench', todoId: 'todo_2', botId: null })],
+    ]);
+    const conversations: Record<string, Partial<Conversation>> = {
+      conv_a: { id: 'conv_a', type: 'direct', directBotId: 'bot_a', readOnly: false, title: null },
+      conv_g: { id: 'conv_g', type: 'group', directBotId: null, readOnly: false, title: '周报群' },
+    };
+    const world = botWorld([makeBot('bot_a', 'A'), makeBot('bot_b', 'B')]);
+    const adapter = new ScheduleAdapter({
+      schedules: {
+        // bot_id 为空的行本来就不会出现在任何 Bot 的盘点里，这里故意塞进去验证适配器自己也判空。
+        listActiveForBot: () => [...rows.values()],
+        get: (id) => rows.get(id) ?? null,
+        transferTo: (id, target) => {
+          rows.set(id, { ...rows.get(id)!, status: 'cancelled' });
+          return row(`${id}_new`, target.conversationId, {
+            botId: target.botId,
+            origin: 'workbench',
+            todoId: rows.get(id)!.todoId,
+          });
+        },
+        transferredTo: (id) => rows.get(id)?.status === 'cancelled',
+        describeWhen: () => '周五 09:00',
+      },
+      conversations: {
+        get: (id) => (conversations[id] as Conversation | undefined) ?? null,
+        memberBotIds: () => ['bot_a', 'bot_b'],
+        directIdFor: (botId) => `direct_${botId}`,
+      },
+      todos: { onScheduleTransferred: (schedule) => moved.push(`${schedule.todoId}->${schedule.botId}`) },
+    });
+    const entries = adapter.inventory('bot_a');
+    expect(entries.map((e) => e.key)).toEqual(['schedule:sch_w', 'schedule:sch_n']);
+    expect(entries[0]!.detail).toBe('工作台事项，周五 09:00，私聊');
+    // 空 botId：不当成「私聊」，也不属于任何 Bot。
+    expect(entries[1]!.detail).toBe('工作台事项，周五 09:00，群「周报群」');
+    const ctx = ctxOf(world, 'bot_a', 'bot_b');
+    expect(adapter.validate(ctx, 'schedule:sch_n', 'move')).toContain('已不属于');
+    expect(adapter.validate(ctx, 'schedule:sch_w', 'move')).toBeNull();
+    await adapter.apply(ctx, 'schedule:sch_w');
+    expect(moved).toEqual(['todo_1->bot_b']);
   });
 
   it('a group schedule needs B in the group; a direct one moves to B’s direct chat once', async () => {

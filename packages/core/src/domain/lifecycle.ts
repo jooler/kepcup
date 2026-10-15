@@ -96,6 +96,18 @@ export interface LifecycleDeps {
         cancelForBotInConversation(botId: string, conversationId: string): number;
       }
     | undefined;
+  /**
+   * D90 workbench todos (no-op when absent): a deleted conversation / bot or a bot removed from
+   * a group sends the todos that depended on it back to draft with a reason.
+   */
+  workbench?:
+    | {
+        /** Before the conversation row goes (the group FK is `ON DELETE SET NULL`). */
+        onConversationDeleting(conversationId: string): void;
+        /** After the bot / membership change took effect. */
+        onExecutorChanged(): void;
+      }
+    | undefined;
   /** W7 watch cascades (删除监看), no-op when absent. */
   watches?:
     | {
@@ -213,6 +225,11 @@ export class LifecycleService {
       );
     }
 
+    // D90: todos assigned to this group (or scheduled in it) fall back to draft before the FK
+    // nulls their group column and the schedules disappear.
+    this.#cascade('workbench conversation cascade failed', { conversationId }, () =>
+      this.deps.workbench?.onConversationDeleting(conversationId),
+    );
     // P10: the conversation's schedules are deleted (03-data-model 删除级联;
     // the FK also cascades on the conversations row delete below).
     try {
@@ -421,6 +438,10 @@ export class LifecycleService {
     }
     rmSync(path.join(paths.home, 'bots', botId), { recursive: true, force: true });
 
+    // D90: todos this bot executed (or led) fall back to draft.
+    this.#cascade('workbench bot cascade failed', { botId }, () =>
+      this.deps.workbench?.onExecutorChanged(),
+    );
     this.deps.logger.info({ botId }, 'bot deleted');
   }
 
@@ -495,6 +516,9 @@ export class LifecycleService {
       force: true,
     });
 
+    this.#cascade('workbench group-removal cascade failed', { botId, conversationId }, () =>
+      this.deps.workbench?.onExecutorChanged(),
+    );
     this.deps.logger.info({ conversationId, botId }, 'group member removed');
   }
 
