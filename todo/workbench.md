@@ -320,16 +320,20 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 
 ### 6.2 权限边界（宿主强制）
 
-判据与设置工具的 `effectiveMode` 一致，看这一轮是不是用户本人触发（`triggerFromUser`）：
+判据与设置工具的 `effectiveMode` 一致，看这一轮是不是用户本人触发（`triggerFromUser`），再加一条「本轮是否读过外部内容」（2026-10-15 审查后追加）：
 
-| 操作 | 用户本人触发的一轮 | 非本人触发（定时、事件、委派回执、代发） |
-| ---- | ---- | ---- |
-| 读取（`list_*`） | ✅ | ✅ |
-| 记备忘、建草案（无执行者、无时间） | ✅ 直接执行 | ✅ 直接执行（无副作用，可撤回） |
-| 指派、排期、立即开始、改派、改期 | ✅ 直接执行 | ❌ 拒绝，提示「需要用户确认，请在回复里向用户提议」 |
-| 收尾（完成 / 取消）、删除备忘 | ✅ 直接执行 | ❌ 同上 |
+| 操作 | 本人触发，没读过外部内容 | 本人触发，读过外部内容 | 非本人触发（定时、事件、委派回执、代发） |
+| ---- | ---- | ---- | ---- |
+| 读取（`list_*`） | ✅ | ✅ | ✅ |
+| 记备忘、置顶备忘 | ✅ | ✅ | ✅ |
+| 改备忘正文（整段覆盖，不可恢复） | ✅ | ✅ | ❌ |
+| 建草案（无执行者、无时间）、改草案的标题和说明 | ✅ | ✅ | ✅（无副作用，可撤回） |
+| 指派、排期、立即开始、改派、改期 | ✅ | ❌ 先向用户复述 | ❌ 提示「需要用户确认，请在回复里向用户提议」 |
+| 收尾（完成 / 取消）、删除备忘 | ✅ | ❌ 同上 | ❌ 同上 |
 
-理由：「让别的员工动起来」和「删东西」只在用户当面交代时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替你派活。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。
+「读过外部内容」= 本 run 调用过会带进外部内容的工具（设置工具的 `touchedUntrusted` 同口径，含触发消息的附件）或该对话处于 D73 污点期；工作台自己的 `list_todos` / `list_memos` 不算。执行时实时判断。
+
+理由：「让别的员工动起来」和「删东西」只在用户当面交代、且管家没被外部内容左右时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替你派活。被拒绝时，管家在回复里列出建议（复述标题、说明、执行者、时间），用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。
 
 **可见性**：
 
@@ -572,9 +576,22 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - `triggerFromUser` 取法：orchestrator 在 run 开始时算 `fromUser = triggerFromUser(batch.messages, partReasons)`（设置工具共用），工作台工具额外要求 `batch.reason ∈ SETTING_DIRECT_TRIGGERS`，即 `effectiveMode` 的 `userTriggered` 口径；作为布尔值随工具构造传入，不依赖提示词。
 - 偏差：
   - `list_todos` / `list_memos` 在 `classify.ts` 归 `none` 而非 `local`：`READ_ONLY_TOOLS` 里的工具必须是 `none`（tool-effects 单测强制），与 `list_schedules` 一致；写工具为 `local`。
-  - shared 向后兼容新增：八个工具名加进 `collaboration` 包的 `butlerTools`（外部 Agent 桥只注入属于某个包的工具；管家恒带该包）。
   - `list_*` 登记为不可信工具（读用户写的内容，调用后同一 run 的设置写入按「接触过不可信内容」处理），写工具为可信。
   - `close_todo.reason` 只回显给管家，不落库（事项无对应字段）。
   - 「逾期未交付」口径：进行中且派发超过 24 小时未交付，或排期已过点仍未发出；设计未定义，可调（`WORKBENCH_OVERDUE_MS`）。
-  - 一个 run 中途 steer 进来的消息不改变 `triggerFromUser`（run 开始时算定，偏保守）。
 - 容器内全量：5021 例，4964 通过、35 失败；其中 1 条是本次改 `BUTLER_TASK_RULES` 措辞误伤 `handover` 集成断言（已改回，定向通过），其余 34 条与 W1-core 基线一致（沙箱 / skills / workspace-tools / wiki-url / projects、runs 迁移版本断言、`response-loop` interim、`tasks-review-fixes-e`、`environment`、`external-agent-p3`、`web-tools` 偶发）。
+
+**W2-butler 审查修复（2026-10-15，分支 `t/wb-butler`）**
+
+- 读过外部内容后收紧（协调会话拍板）：用户本人触发的轮里，本 run 读过外部内容（orchestrator 的 `workbenchExternal`：与设置的 `untrusted.touched` 同源，含触发消息附件，但工作台自己的 `list_todos` / `list_memos` 不算）或对话处于 D73 污点期时，派活（`create_todo` 带 assignee / when、`update_todo` 改执行者 / 时间 / `when:'now'`）、`close_todo`、`delete_memo` 返回 `ok:false`（`EXTERNAL_CONTENT`，文案见 §6.2）；起草和记备忘照常。`touchedExternal` 在每次 `execute` 时实时读取。
+- `update_todo(when:'now')` 对周期事项（cron 排期）：工具层改走新增的 facade `startTodo`（= `TodoService.start`），语义是「额外执行一次、保留周期」；要停周期用 `close_todo` 或 `clear_when`。**与界面的语义刻意不同**：界面「把重复改成立即」是结束周期，由 core 的 `update(when:'now')` 实现，未改。
+- 非本人触发的轮里 `update_memo` 只允许改 `pinned`，改 `body` 拒绝（整段覆盖不可恢复）。
+- effects 分类参数敏感：`create_todo` / `update_todo` 带 `when === 'now'` → `external`，其余 `local`（`tool-effects` 约束仍满足：`READ_ONLY_TOOLS` 只含 `none`）。
+- `<workbench>` 段闭合注入：`neutralizeSectionTag` 中和用户文字里的 `<workbench` / `</workbench`（大小写不敏感）；同时 `system-prompt.ts` 的 `section()` 通用地中和正文里本段自己的开 / 闭标签（`<\tag`），对所有段生效，全量测试无影响。
+- 写工具结果只回 id 与状态，不回显标题 / 执行者名。
+- `update_todo` / `create_todo` 的 schema 改扁平：`assignee: { bot_id?, group_id?, lead_bot_id? }` + `clear_assignee`，`when` + `clear_when`；形状校验在 `execute`。
+- `BUTLER_RULES` 补「提议派活时复述标题 / 说明 / 执行者 / 时间」；工作台规则拆成独立数组，turn 版始终带，外部引擎的 `buildAgentSessionPrompt` 只在实际注入了 `create_todo` 时才带（task 面没有，所以不会被要求使用不存在的工具）。
+- 文档：dev/04 去掉「经 collaboration 包注入」的说法；**撤销** W2 对 shared `host-capabilities.ts` 的改动（turn 不走外部引擎、task 不注册这些工具，该改动不生效；`butlerTools` 恢复原样，shared 无改动）；「steer 进来的消息不改变 `triggerFromUser`」说明删除（turn 不会被 steer）。
+- 后续（不改，存量问题，不在 D90 范围）：**统一门控**——`delegate_to_bot`、带 @ 的 `send_message`、`start_task` 没有 `triggerFromUser` 门控，非本人触发的管家轮仍能通过这些旧工具把活推给其它 Bot。
+
+- 合入 W1-core 修复轮（`63b0ed9`，无冲突）后接 actor：工具层的 `create_todo` / `update_todo` 以及周期事项分流的 `startTodo` 一律显式传 `actor: 'butler'`（facade 的 `startTodo(id, actor)`），所以管家指派 / 开始用户建的事项，派发也带 `viaButler` 与「（管家代你安排）」；管家起草（`source='butler'`）的事项另带 `butlerDrafted`。测试里依赖 `viaButler` 旧含义的只有「管家建 + 立即开始」那条，含义未变（操作者是管家），并补了 `butlerDrafted` 断言；新增「管家开始用户建的草案 / 周期事项」两条集成测试（带 `viaButler`、不带 `butlerDrafted`）。`list_todos` 对 core 新增的各种 `blocked_reason`（执行失败 / 执行已被取消 / 派发失败 / 对话已删除 / Bot 设置中）原样显示（折叠成一行、在 `<untrusted>` 内）；`<workbench>` 段只计数，这些事项按草案计入。
