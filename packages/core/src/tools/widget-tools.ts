@@ -58,7 +58,7 @@ export function buildWidgetTools(input: {
       '修改已有组件传 widget_id（以它的最新版为起点）；继续一次未交付的制作传 resume_craft_id（可在 brief 里补充说明）。',
     parameters: Type.Object({
       brief: Type.String({
-        description: `组件需求（≤${WIDGET_CRAFT_BRIEF_MAX_CHARS} 字）：目标、主要界面与交互、数据从哪来以及要不要保存（保存在本机）、风格偏好；尽量引用用户原话。修改时写清要改什么`,
+        description: `组件需求（≤${WIDGET_CRAFT_BRIEF_MAX_CHARS} 字）：只转述用户要看到的内容、数据从哪来、要不要保存在本机、风格；尽量引用用户原话。不要写入用户没说的点击、展开、查看源码或预览切换。修改时写清要改什么`,
       }),
       title: Type.Optional(
         Type.String({

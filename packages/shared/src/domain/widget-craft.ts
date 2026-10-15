@@ -49,7 +49,7 @@ export const WIDGET_CRAFT_BRIEF_MAX_CHARS = 4_000;
 /** 每条用户验收提示的长度上限与条数上限。 */
 export const WIDGET_CRAFT_ACCEPTANCE_HINT_MAX_CHARS = 300;
 export const WIDGET_CRAFT_ACCEPTANCE_HINTS_MAX = 8;
-/** 验收点的条数范围（SPEC 提示要求 3–8 条，schema 放宽到 1–12）。 */
+/** 验收点的条数范围（SPEC 提示要求 1–8 条，schema 放宽到 1–12）。 */
 export const WIDGET_ACCEPTANCE_ITEMS_MAX = 12;
 /** 草稿目录里单个文件的体积上限（index.html 同 BOT_WIDGET_HTML_MAX_BYTES，其余文件更小）。 */
 export const WIDGET_CRAFT_AUX_FILE_MAX_BYTES = 256 * 1024;
