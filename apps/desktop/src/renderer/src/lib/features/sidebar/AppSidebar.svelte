@@ -618,14 +618,14 @@
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'group'}
-    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-12" />
+    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
       botId={conversation.directBotId ?? conversation.id}
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
-      class="size-12"
-      fallbackClass="text-lg"
+      class="size-11"
+      fallbackClass="text-base"
       testId="conversation-avatar"
     />
   {/if}
@@ -805,7 +805,7 @@
               <Sidebar.MenuItem class="w-auto">
                 <Tooltip.Root>
                   <Tooltip.Trigger
-                    class="relative flex size-14 cursor-pointer items-center justify-center rounded-xl
+                    class="relative flex size-[52px] cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
                       dark:data-active:bg-[oklch(0.16_0_0)]"
                     data-active={activeConversationId === conversation.id ? 'true' : undefined}
