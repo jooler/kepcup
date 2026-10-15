@@ -6,6 +6,7 @@ import {
   AVATAR_FOREGROUND_LIGHT,
   AVATAR_MIN_CONTRAST,
   avatarColorForeground,
+  avatarOnFillForeground,
   contrastRatio,
   relativeLuminance,
 } from './presets';
@@ -95,6 +96,18 @@ describe('avatarColorForeground', () => {
       const yFg = Number(fg) ** 3;
       const ratio = (Math.max(yFill, yFg) + 0.05) / (Math.min(yFill, yFg) + 0.05);
       expect(ratio).toBeGreaterThanOrEqual(AVATAR_MIN_CONTRAST.text);
+    }
+  });
+});
+
+describe('avatarOnFillForeground', () => {
+  it('inverts the themed mono colour and keeps every other preset white', () => {
+    expect(themedColors.map((color) => color.id)).toEqual(['mono']);
+    for (const color of themedColors) {
+      expect(avatarOnFillForeground(color)).toBe(color.contrast);
+    }
+    for (const color of fixedColors) {
+      expect(avatarOnFillForeground(color)).toBe(AVATAR_FOREGROUND_LIGHT);
     }
   });
 });
