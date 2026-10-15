@@ -9,19 +9,19 @@
   import { Label } from '$lib/components/ui/label';
 
   /**
-   * P13-B 任务 3 设置页「通用」分区: 开机自启开关（写 settings.launchAtLogin，
-   * 变更经 platform.autostart 事件由主进程应用到 OS；应用结果经
-   * autostart:result 推回，失败以 toast 说明原因、成功提示已应用）+ 版本与
-   * 手动检查更新（消费 P13-A 的 preload 契约；结果事件驱动判定——
-   * update-not-available → 「已是最新」，失败给出原因，有更新由横幅接管）。
+   * 设置页「通用」：开机自启（P13-B）+ 工作台侧栏入口（D90，默认关）+ 版本与检查更新。
    */
 
   let autostart = $state(true);
+  let workbench = $state(false);
   let checking = $state(false);
 
   $effect(() => {
     const settings = settingsStore.settings;
-    if (settings) autostart = settings.launchAtLogin;
+    if (settings) {
+      autostart = settings.launchAtLogin;
+      workbench = settings.workbenchEnabled;
+    }
   });
 
   // 打包后的应用：主进程应用登录项后推送结果；失败给出原因，成功也提示
@@ -41,6 +41,10 @@
 
   function toggleAutostart(checked: boolean): void {
     void settingsStore.update({ launchAtLogin: checked });
+  }
+
+  function toggleWorkbench(checked: boolean): void {
+    void settingsStore.update({ workbenchEnabled: checked });
   }
 
   async function checkUpdate(): Promise<void> {
@@ -77,6 +81,17 @@
     <span class="grid gap-0.5">
       <Label class="font-medium">{t('settings.launchAtLogin')}</Label>
       <span class="text-xs text-muted-foreground">{t('settings.launchAtLoginHint')}</span>
+    </span>
+  </label>
+  <label class="flex items-start gap-3" data-settings-anchor="general-workbench">
+    <Checkbox
+      bind:checked={workbench}
+      onCheckedChange={(checked) => toggleWorkbench(checked === true)}
+      data-testid="settings-workbench-enabled"
+    />
+    <span class="grid gap-0.5">
+      <Label class="font-medium">{t('settings.workbenchEnabled')}</Label>
+      <span class="text-xs text-muted-foreground">{t('settings.workbenchEnabledHint')}</span>
     </span>
   </label>
   <div class="flex items-center gap-3 text-sm">

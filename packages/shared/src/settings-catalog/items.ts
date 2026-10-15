@@ -800,6 +800,20 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     store: { kind: 'settings', paths: ['launchAtLogin'] },
   }),
 
+  item({
+    id: 'general.workbench',
+    group: 'general',
+    title: '工作台',
+    summary: '在侧栏显示工作台入口，统筹事项与备忘',
+    keywords: ['工作台', '事项', '备忘', '待办'],
+    scope: 'global',
+    fields: [field('enabled', '显示工作台', 'toggle')],
+    write: write('confirm'),
+    card: 'field-editor',
+    deepLink: { surface: 'settings', section: 'general', anchor: 'general-workbench' },
+    store: { kind: 'settings', paths: ['workbenchEnabled'] },
+  }),
+
   // --- 后台 ---------------------------------------------------------------
   item({
     id: 'background.tasks',

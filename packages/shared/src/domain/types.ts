@@ -688,6 +688,16 @@ export const settingsSchema = z.object({
    */
   launchAtLogin: z.boolean().default(true),
   /**
+   * 侧栏「工作台」入口（D90）：默认关闭；设置 → 通用 或定时任务增多时的引导可打开。
+   * 关闭时不显示入口与其分隔线。
+   */
+  workbenchEnabled: z.boolean().default(false),
+  /**
+   * 用户在「定时任务增多 → 启用工作台？」引导里点了「暂不启用」并确认「知道了」后为 true，
+   * 之后不再弹出任一层引导。
+   */
+  workbenchNudgeDismissed: z.boolean().default(false),
+  /**
    * First-run onboarding state (P13 任务 4), stored in the existing settings
    * row — no new migration. `modelSkipped` drives the persistent "no model
    * configured" prompt on the main window (docs/dev/phases/P13-release.md
