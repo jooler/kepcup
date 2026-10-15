@@ -82,8 +82,26 @@ function isDelegationBatch(batch: TriggerBatch): boolean {
 }
 
 /**
+ * A D90 workbench dispatch batch (the host's visible user message handing a todo to its
+ * executor). Like a delegation it gets a turn of its own, so each todo run settles on its own
+ * turn and the reply belongs to exactly one todo.
+ */
+function isWorkbenchBatch(batch: TriggerBatch): boolean {
+  return triggerParts(batch).some((part) =>
+    part.messages.some(
+      (message) =>
+        message.senderType === 'user' &&
+        message.kind === 'text' &&
+        (message.content as { origin?: string }).origin === 'workbench',
+    ),
+  );
+}
+
+/**
  * Whether two batches may be handled by one turn (merged on release, or
  * absorbed by a turn as it begins):
+ * - a D90 workbench dispatch batch has a turn of its own too (each todo run settles on its own
+ *   turn; see isWorkbenchBatch);
  * - a D71 delegation batch has a turn of its own (审查 M2): the delegation's
  *   result is that turn's final reply (DelegationHost matches by run), so a
  *   user message or task result folded into it would be posted back to the
@@ -99,6 +117,7 @@ function isDelegationBatch(batch: TriggerBatch): boolean {
  */
 export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
   if (isDelegationBatch(a) || isDelegationBatch(b)) return false;
+  if (isWorkbenchBatch(a) || isWorkbenchBatch(b)) return false;
   if (a.chain !== undefined && b.chain !== undefined) return a.chain.id === b.chain.id;
   if (a.chain === undefined && b.chain === undefined) return true;
   const unchained = a.chain === undefined ? a : b;

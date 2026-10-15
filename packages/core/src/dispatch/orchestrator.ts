@@ -286,8 +286,16 @@ export interface OrchestratorTodoFacade {
   settleDelivered(todoRunId: string, resultMessageId: string | null): void;
   /** The group round ended with nobody taking the dispatch. */
   settleUnclaimed(todoRunId: string): void;
-  /** The executor's turn failed. */
-  settleFailed(todoRunId: string): void;
+  /** The executor's turn failed or was cancelled: the todo returns to draft with the reason. */
+  settleFailed(todoRunId: string, outcome: TodoRunFailure): void;
+}
+
+/** A todo run that did not deliver because its executor's turn failed / was cancelled. */
+export type TodoRunFailure = { kind: 'failed'; error: string | null } | { kind: 'cancelled' };
+
+interface TodoRef {
+  todoId: string;
+  todoRunId: string;
 }
 
 export interface OrchestratorDeps {
@@ -998,9 +1006,10 @@ export class Orchestrator {
     todoId: string;
     todoRunId: string;
     viaButler: boolean;
+    butlerDrafted?: boolean | undefined;
     leadBotId: string | null;
     onAppended?: ((message: Message) => void) | undefined;
-  }): { message: Message; runId: string | null } {
+  }): { message: Message; runId: string | null; held: boolean } {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
     if (conv.readOnly) {
       throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
@@ -1017,6 +1026,7 @@ export class Orchestrator {
         todoId: input.todoId,
         todoRunId: input.todoRunId,
         ...(input.viaButler ? { viaButler: true } : {}),
+        ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
     });
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });
@@ -1024,12 +1034,13 @@ export class Orchestrator {
     input.onAppended?.(message);
     if (conv.type === 'group') {
       this.#groupTurns.onUserBatch(input.conversationId, batchId, [message]);
-      return { message, runId: null };
+      return { message, runId: null, held: false };
     }
-    if (conv.directBotId !== null) {
+    // `held`: the setup-interview gate keeps the delivery back until the bot's setup is done.
+    const held =
+      conv.directBotId !== null &&
       this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
-    }
-    return { message, runId: this.#latestRunId(input.conversationId, conv.directBotId) };
+    return { message, runId: this.#latestRunId(input.conversationId, conv.directBotId), held };
   }
 
   /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
@@ -1901,7 +1912,7 @@ export class Orchestrator {
   // --- workbench delivery tracking (D90, docs/design/39-workbench.md §3.5) -----
 
   /** The workbench dispatch (todo + run) in a message, if it is one. */
-  #workbenchRefOf(message: Message): { todoId: string; todoRunId: string } | null {
+  #workbenchRefOf(message: Message): TodoRef | null {
     if (message.senderType !== 'user' || message.kind !== 'text') return null;
     const content = message.content as { origin?: string; todoId?: unknown; todoRunId?: unknown };
     if (content.origin !== 'workbench') return null;
@@ -1910,36 +1921,50 @@ export class Orchestrator {
   }
 
   /**
-   * The todo run a turn belongs to: its trigger holds the workbench dispatch message, or a
-   * task result of a turn that does (`origin_run_id` chain, like `#scheduleSourceOf`).
+   * Every todo run a trigger message list belongs to: dispatch messages in it, and the todo runs
+   * of the turns that started the tasks whose results are in it (`origin_run_id` chain, like
+   * `#scheduleSourceOf`). Dispatch batches get a turn of their own (mailbox `canShareTurn`), but
+   * several task results — of different todos — may still share one turn, so all are collected.
    */
-  #todoRefOfRun(runId: string, depth = 0): { todoId: string; todoRunId: string } | null {
-    if (depth > 4) return null;
+  #todoRefsOfMessages(messages: readonly Message[], depth = 0): TodoRef[] {
+    const refs = new Map<string, TodoRef>();
+    for (const message of messages) {
+      const direct = this.#workbenchRefOf(message);
+      if (direct !== null) {
+        refs.set(direct.todoRunId, direct);
+        continue;
+      }
+      if (message.kind === 'task_event' && message.taskId !== null && depth <= 4) {
+        const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
+        if (originRunId === null) continue;
+        for (const ref of this.#todoRefsOfRun(originRunId, depth + 1)) refs.set(ref.todoRunId, ref);
+      }
+    }
+    return [...refs.values()];
+  }
+
+  /** The todo runs a turn belongs to (see {@link #todoRefsOfMessages}). */
+  #todoRefsOfRun(runId: string, depth = 0): TodoRef[] {
+    if (depth > 4) return [];
     const run = this.#deps.runs.get(runId);
-    if (run === null) return null;
+    if (run === null) return [];
     const parts = this.#deps.runs.triggerPartsOf(runId) ?? [
       { reason: run.triggerReason, messageIds: run.triggerMessageIds },
     ];
+    const messages: Message[] = [];
     for (const part of parts) {
       for (const messageId of part.messageIds) {
         const message = this.#deps.messages.getById(messageId);
-        if (message === null) continue;
-        const direct = this.#workbenchRefOf(message);
-        if (direct !== null) return direct;
-        if (message.kind === 'task_event' && message.taskId !== null) {
-          const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
-          if (originRunId === null) continue;
-          const found = this.#todoRefOfRun(originRunId, depth + 1);
-          if (found !== null) return found;
-        }
+        if (message !== null) messages.push(message);
       }
     }
-    return null;
+    return this.#todoRefsOfMessages(messages, depth);
   }
 
   /**
    * The workbench todo a turn's reply belongs to (「📋 标题」 tag): a batch carrying a dispatch
-   * message, or the result of a task started by such a turn. Null for everything else.
+   * message, or the result of a task started by such a turn. When a batch belongs to several
+   * todos the tag names the first. Null for everything else.
    */
   #todoSourceOf(
     batch: TriggerBatch,
@@ -1947,19 +1972,11 @@ export class Orchestrator {
     const facade = this.#deps.todos;
     if (facade === undefined) return null;
     try {
-      let ref: { todoId: string; todoRunId: string } | null = null;
-      for (const message of batch.messages) {
-        ref = this.#workbenchRefOf(message);
-        if (ref !== null) break;
-        if (message.kind === 'task_event' && message.taskId !== null) {
-          const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
-          ref = originRunId === null ? null : this.#todoRefOfRun(originRunId);
-          if (ref !== null) break;
-        }
+      for (const ref of this.#todoRefsOfMessages(batch.messages)) {
+        const todoTitle = facade.titleOf(ref.todoId);
+        if (todoTitle !== null) return { ...ref, todoTitle };
       }
-      if (ref === null) return null;
-      const todoTitle = facade.titleOf(ref.todoId);
-      return todoTitle === null ? null : { ...ref, todoTitle };
+      return null;
     } catch (error) {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
@@ -1977,50 +1994,53 @@ export class Orchestrator {
     });
     return open.some((task) => {
       if (task.originRunId === null || task.id === exceptRunId) return false;
-      return this.#todoRefOfRun(task.originRunId)?.todoRunId === todoRunId;
+      return this.#todoRefsOfRun(task.originRunId).some((ref) => ref.todoRunId === todoRunId);
     });
   }
 
   /**
-   * A supervisor turn reached a terminal state: if it belongs to a dispatched todo and no task
-   * of the same chain is still open, the todo run is delivered (the reply is the result).
+   * A supervisor turn reached a terminal state. For every todo run it belongs to:
+   * - completed, and no task of the same chain still open → delivered (the reply is the result);
+   * - failed / cancelled / interrupted → the executor did not deliver: the todo returns to draft
+   *   with the reason (the user can start it again).
    * Anything untraceable leaves the todo in progress — tracking is an enhancement.
    */
   #trackTodoDelivery(run: Run): void {
     const facade = this.#deps.todos;
     if (facade === undefined || run.conversationId === null) return;
     try {
-      const ref = this.#todoRefOfRun(run.id);
-      if (ref === null) return;
-      if (run.status === 'failed') {
-        // Only the turn that was handed the dispatch itself is the executor's failure.
-        const parts = this.#deps.runs.triggerPartsOf(run.id) ?? [];
-        const direct = parts.some((part) =>
-          part.messageIds.some((id) => {
-            const message = this.#deps.messages.getById(id);
-            return message !== null && this.#workbenchRefOf(message) !== null;
-          }),
-        );
-        if (direct) facade.settleFailed(ref.todoRunId);
-        return;
+      const refs = this.#todoRefsOfRun(run.id);
+      for (const ref of refs) {
+        if (run.status === 'failed') {
+          facade.settleFailed(ref.todoRunId, { kind: 'failed', error: run.error });
+          continue;
+        }
+        if (run.status === 'cancelled') {
+          facade.settleFailed(ref.todoRunId, { kind: 'cancelled' });
+          continue;
+        }
+        if (run.status === 'interrupted') {
+          facade.settleFailed(ref.todoRunId, { kind: 'failed', error: '执行被中断' });
+          continue;
+        }
+        if (run.status !== 'completed') continue;
+        if (this.#todoChainHasOpenTasks(run.conversationId, ref.todoRunId, run.id)) continue;
+        let resultId = run.outputMessageIds[run.outputMessageIds.length - 1] ?? null;
+        if (resultId === null) {
+          // A silent turn (skip_reply) closing a chain whose earlier turn already replied.
+          const row = this.#deps.db
+            .prepare(
+              `select id from messages
+               where conversation_id = ? and sender_type = 'bot' and kind = 'text'
+                 and json_extract(content_json, '$.todoRunId') = ?
+               order by seq desc limit 1`,
+            )
+            .get(run.conversationId, ref.todoRunId) as { id: string } | undefined;
+          resultId = row?.id ?? null;
+          if (resultId === null) continue;
+        }
+        facade.settleDelivered(ref.todoRunId, resultId);
       }
-      if (run.status !== 'completed') return;
-      if (this.#todoChainHasOpenTasks(run.conversationId, ref.todoRunId, run.id)) return;
-      let resultId = run.outputMessageIds[run.outputMessageIds.length - 1] ?? null;
-      if (resultId === null) {
-        // A silent turn (skip_reply) closing a chain whose earlier turn already replied.
-        const row = this.#deps.db
-          .prepare(
-            `select id from messages
-             where conversation_id = ? and sender_type = 'bot' and kind = 'text'
-               and json_extract(content_json, '$.todoRunId') = ?
-             order by seq desc limit 1`,
-          )
-          .get(run.conversationId, ref.todoRunId) as { id: string } | undefined;
-        resultId = row?.id ?? null;
-        if (resultId === null) return;
-      }
-      facade.settleDelivered(ref.todoRunId, resultId);
     } catch (error) {
       this.#deps.logger.warn(
         { runId: run.id, error: error instanceof Error ? error.message : String(error) },
@@ -2031,7 +2051,8 @@ export class Orchestrator {
 
   /**
    * A group round ended (GroupTurnCoordinator): nobody claimed the dispatch (triage found no
-   * responder / `group_no_claim`), or every executed turn stayed silent without starting a task.
+   * responder / `group_no_claim`), the executed turns failed or were cancelled, or every executed
+   * turn stayed silent without starting a task.
    */
   #onGroupRoundEnded(info: GroupRoundEnd): void {
     const facade = this.#deps.todos;
@@ -2039,14 +2060,14 @@ export class Orchestrator {
     try {
       const refs = info.messages
         .map((message) => this.#workbenchRefOf(message))
-        .filter((ref): ref is { todoId: string; todoRunId: string } => ref !== null);
+        .filter((ref): ref is TodoRef => ref !== null);
       if (refs.length === 0) return;
+      if (info.outcome === 'failed') {
+        for (const ref of refs) facade.settleFailed(ref.todoRunId, info.failure);
+        return;
+      }
       if (info.outcome === 'silent') {
-        const started = info.runIds.some((runId) =>
-          this.#deps.runs
-            .listTasks({ conversationId: info.conversationId })
-            .some((task) => task.originRunId === runId),
-        );
+        const started = this.#deps.runs.hasTasksOriginatingFrom(info.runIds);
         if (started) return;
       }
       for (const ref of refs) facade.settleUnclaimed(ref.todoRunId);

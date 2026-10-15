@@ -1281,9 +1281,10 @@ export function applyProfileChanges(
  * wrote it), D87 P4 L3 widget reply (the widget's code composed it, the user only confirmed) or
  * a D90 workbench dispatch of a butler-made todo (the butler wrote the title and notes).
  */
-function isProxiedUserText(message: Message): boolean {
+export function isProxiedUserText(message: Message): boolean {
   if (message.kind !== 'text' || !('origin' in message.content)) return false;
-  const content = message.content as { origin?: string; viaButler?: boolean };
-  if (content.origin === 'workbench') return content.viaButler === true;
+  const content = message.content as { origin?: string; viaButler?: boolean; butlerDrafted?: boolean };
+  // A butler-made dispatch, or a todo the butler drafted (its notes may carry external content).
+  if (content.origin === 'workbench') return content.viaButler === true || content.butlerDrafted === true;
   return content.origin === 'delegation' || content.origin === 'widget';
 }

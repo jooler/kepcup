@@ -370,7 +370,8 @@ export function reflectionInput(input: {
     }
     if (m.senderType === 'user' && content?.origin === 'workbench') {
       // D90：管家创建的事项由宿主代发——标题和说明是管家写的；用户自己创建的事项仍是用户的话。
-      if ((m.content as { viaButler?: boolean }).viaButler === true) {
+      const flags = m.content as { viaButler?: boolean; butlerDrafted?: boolean };
+      if (flags.viaButler === true || flags.butlerDrafted === true) {
         return `[${m.id} | 工作台派发（管家代用户安排的事项，非用户本人的话）] <untrusted>${neutralizeUntrusted(content.text ?? '')}</untrusted>`;
       }
       return `[${m.id} | 用户（经工作台派发）] ${content.text ?? ''}`;

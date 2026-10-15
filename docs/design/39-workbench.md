@@ -138,7 +138,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 派发 = 宿主在目标对话里追加一条**可见消息**，然后按用户消息路由。消息构成：
 
-- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；管家创建的事项另带 `viaButler: true`。
+- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；触发这次派发的操作是管家做的另带 `viaButler: true`（到点派发取最后一次设置排期的操作者）；事项由管家起草过另带 `butlerDrafted: true`（说明按不可信数据对待）。
 - 正文为 `【工作台】标题` + 说明。管家建的事项另加「（管家代你安排）」。
 - 群里指定了负责 Bot 时，加结构化 @。
 - 界面上渲染成「派发卡」而不是普通气泡：标题、说明、「在工作台查看」。
@@ -167,6 +167,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - 批次里含 `origin='workbench'` 的消息，或任务的 `origin_run_id` 的触发里含它 → 这一轮属于该 `todoRunId`。
 - 该轮结算时出了可见回复，且同链路没有未结算任务（`runs.origin_run_id` = 该轮且非终态）→ `todo_runs.status='delivered'`，`result_message_id` = 该回复，事项进入 `delivered`。
 - 回复带「📋 标题」标签，对照现有「⏰ 标题」。
+- 执行者的轮失败 / 被取消 → 执行记录 `failed`，事项退回草案，原因为「执行失败：…」/「执行已被取消」，用户可重新开始。
 - 群：一轮结束仍无人响应、出现 `group_no_claim` → `unclaimed`，事项退回草案，原因为「群里无人认领」。多个 Bot 响应时，以最后结算者为准，所有回复都挂在执行记录下。
 - 兜底：执行者正在跑时消息会被 steer 进当前 run，归属可能落到别的批次。追踪失败时事项停在「进行中」，用户可手动标完成。**追踪是增强，不是正确性前提。**
 
