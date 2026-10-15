@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeUnreadCount } from './unread';
+import { isSilentOnArrival, mergeUnreadCount } from './unread';
 
 describe('mergeUnreadCount (D75: never count private task rows)', () => {
   it('takes the server count when the payload carries one', () => {
@@ -29,5 +29,24 @@ describe('mergeUnreadCount (D75: never count private task rows)', () => {
       count: 0,
       refetch: true,
     });
+  });
+});
+
+describe('isSilentOnArrival', () => {
+  const receipt = (origin: string) => ({
+    senderType: 'system',
+    kind: 'system_event',
+    content: { event: 'schedule_created', schedule: { origin } },
+  });
+  it('workbench schedule receipts and user messages never add unread', () => {
+    expect(isSilentOnArrival(receipt('workbench'))).toBe(true);
+    expect(isSilentOnArrival({ senderType: 'user', kind: 'text', content: { text: 'x' } })).toBe(true);
+  });
+  it('other receipts and bot messages still do', () => {
+    expect(isSilentOnArrival(receipt('tool'))).toBe(false);
+    expect(isSilentOnArrival({ senderType: 'bot', kind: 'text', content: { text: 'x' } })).toBe(false);
+    expect(
+      isSilentOnArrival({ senderType: 'system', kind: 'system_event', content: { event: 'group_no_claim' } }),
+    ).toBe(false);
   });
 });

@@ -32,7 +32,7 @@ import {
   saveLastConversationId,
 } from '../features/chats/last-conversation-persist';
 import { isEphemeralApprovalCard } from '../features/approvals/ephemeral-approval';
-import { mergeUnreadCount } from '../features/chats/unread';
+import { isSilentOnArrival, mergeUnreadCount } from '../features/chats/unread';
 import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
@@ -895,7 +895,7 @@ class ChatState {
             lastSeq: Math.max(c.lastSeq, message.seq),
             lastMessageAt: message.createdAt,
             unreadCount:
-              this.isViewing(c.id) || message.senderType === 'user'
+              this.isViewing(c.id) || isSilentOnArrival(message)
                 ? (c.unreadCount ?? 0)
                 : (c.unreadCount ?? 0) + 1,
           }
