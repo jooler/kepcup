@@ -294,8 +294,15 @@ function stateLine(summary: TaskSummary): string {
 export function buildTaskTools(input: {
   identity: RunIdentity;
   tasks: TaskToolFacade;
+  /** D90: this turn only read 「事项更新」 notices (see ResponseToolDeps.updateNotice). */
+  updateNotice?:
+    | {
+        messageIds: readonly string[];
+        startBlocked: () => string | null;
+      }
+    | undefined;
 }): ToolDefinition[] {
-  const { identity, tasks } = input;
+  const { identity, tasks, updateNotice } = input;
 
   const startTask: ToolDefinition<{
     title: string;
@@ -339,6 +346,8 @@ export function buildTaskTools(input: {
         if (identity.loopType === 'task') {
           return fail('NOT_SUPPORTED', '任务内不能再派任务；需要并行的子问题请用 delegate_task');
         }
+        const blocked = updateNotice?.startBlocked() ?? null;
+        if (blocked !== null) return fail('INVALID_INPUT', blocked);
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
         if (typeof params.writes !== 'boolean') return fail('INVALID_INPUT', 'writes 必须是布尔值');
@@ -393,8 +402,14 @@ export function buildTaskTools(input: {
     ),
     execute: async (params) =>
       guarded(() => {
-        const ids = sourceIds(params.source_message_ids);
-        if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
+        const given = sourceIds(params.source_message_ids);
+        if (typeof given === 'string') return fail('INVALID_INPUT', given);
+        // D90: relaying a 「事项更新」 — the notice itself travels with the injection (original text and
+        // its <untrusted> marking), so the task never gets the executor's paraphrase alone.
+        const ids = [...new Set([...given, ...(updateNotice?.messageIds ?? [])])].slice(
+          0,
+          TASK_SOURCE_MESSAGES_MAX,
+        );
         const result = tasks.inject(identity, {
           taskId: nonEmpty(params.task_id, 'task_id', 200),
           text: nonEmpty(params.text, 'text', TASK_INSTRUCTION_MAX_CHARS),

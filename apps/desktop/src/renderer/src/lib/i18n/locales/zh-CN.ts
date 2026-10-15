@@ -2344,7 +2344,7 @@ export const zhCN = {
   'workbench.drawer.titleRequired': '标题不能为空。',
   'workbench.drawer.save': '保存',
   'workbench.drawer.saved': '已保存',
-  'workbench.drawer.savedNotified': '已保存，已通知执行者',
+  'workbench.drawer.savedNotified': '已保存，将通知执行者',
   'workbench.drawer.notifyHint': '事项已在执行：保存后会把新的标题 / 说明通知执行者，由它决定是否调整做法，不会打断它。',
   'workbench.drawer.saveFailed': '保存失败',
   'workbench.drawer.warnings': '提示',

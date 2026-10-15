@@ -313,6 +313,11 @@ export function buildWorkbenchTools(input: {
    * `list_todos` / `list_memos`）。每次执行时调用：读外部内容可能发生在同一轮的工具调用之间。
    */
   touchedExternal?: (() => boolean) | undefined;
+  /**
+   * 本轮的触发批是这些事项的「事项更新」通知（D90）：不得再改它们的标题 / 说明——执行者（管家作为执行者时
+   * 也一样）回改会形成「改 → 通知 → 再改」的循环。
+   */
+  updateNoticeTodoIds?: ReadonlySet<string> | undefined;
 }): ToolDefinition[] {
   const { identity, workbench, triggerFromUser } = input;
   const touchedExternal = input.touchedExternal ?? (() => false);
@@ -545,6 +550,15 @@ export function buildWorkbenchTools(input: {
       const denied = butlerOnly();
       if (denied !== null) return denied;
       if (typeof params.id !== 'string' || params.id.trim() === '') return invalid('id 不能为空');
+      // 本轮是这条事项的「事项更新」通知：不得回头再改它的文字（会循环通知）。
+      if (
+        (params.title !== undefined || params.notes !== undefined) &&
+        input.updateNoticeTodoIds?.has(params.id.trim()) === true
+      ) {
+        return invalid(
+          '本轮是这条事项的「事项更新」通知，不能再改它的标题 / 说明（会再次通知执行者，形成循环）；请直接按更新调整做法。',
+        );
+      }
       // null 不是「清空」：要清空用 clear_*，免得 null 被静默当成没填。
       if ((params.assignee as unknown) === null || (params.when as unknown) === null) {
         return invalid(CLEAR_WITH_FLAGS_MESSAGE);

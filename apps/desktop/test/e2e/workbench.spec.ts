@@ -615,7 +615,7 @@ test('in progress: editing the notes tells the executor — an update card appea
     await page.locator('[data-testid="todo-notes"]').fill('只看 2026 年签的合同');
     await page.locator('[data-testid="todo-save"]').click();
     await expect(
-      page.locator('[data-sonner-toast]').filter({ hasText: '已通知执行者' }),
+      page.locator('[data-sonner-toast]').filter({ hasText: '将通知执行者' }),
     ).toBeVisible({
       timeout: 15_000,
     });

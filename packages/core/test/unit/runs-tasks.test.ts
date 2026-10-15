@@ -281,3 +281,39 @@ describe('listByBotInConversation（list_my_runs 的窗口）', () => {
     });
   });
 });
+
+describe('turnBotIdsTriggeredBy（D90：群里谁接了那条派发）', () => {
+  const turn = (runs: RunsService, overrides: Partial<Parameters<RunsService['create']>[0]> = {}) =>
+    runs.create({
+      botId: 'bot_a',
+      conversationId: 'conv_g',
+      loopType: 'turn',
+      triggerReason: 'broadcast',
+      triggerMessageIds: [],
+      ...overrides,
+    });
+
+  it('按触发消息 id 找对话轮的 Bot：只认对话轮、只认本对话、去重并按先后；合批的 parts 里的也算', () => {
+    withRuns((runs) => {
+      turn(runs, { botId: 'bot_a', triggerMessageIds: ['msg_1'] });
+      turn(runs, { botId: 'bot_b', triggerMessageIds: ['msg_1', 'msg_2'] });
+      turn(runs, { botId: 'bot_a', triggerMessageIds: ['msg_1'] });
+      // 合批：msg_1 只在 parts 里。
+      turn(runs, {
+        botId: 'bot_c',
+        triggerMessageIds: ['msg_9'],
+        triggerParts: [
+          { reason: 'task', messageIds: ['msg_9'] },
+          { reason: 'broadcast', messageIds: ['msg_1'] },
+        ],
+      });
+      // 不算：别的消息、别的对话、任务、id 只是前缀相同（msg_10 ≠ msg_1）。
+      turn(runs, { botId: 'bot_x', triggerMessageIds: ['msg_2'] });
+      turn(runs, { botId: 'bot_y', conversationId: 'conv_other', triggerMessageIds: ['msg_1'] });
+      turn(runs, { botId: 'bot_z', loopType: 'task', triggerMessageIds: ['msg_1'] });
+      turn(runs, { botId: 'bot_w', triggerMessageIds: ['msg_10'] });
+      expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_1')).toEqual(['bot_a', 'bot_b', 'bot_c']);
+      expect(runs.turnBotIdsTriggeredBy('conv_g', 'msg_404')).toEqual([]);
+    });
+  });
+});

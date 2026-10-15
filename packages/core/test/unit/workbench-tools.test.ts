@@ -183,6 +183,8 @@ function toolsFor(
     botId?: string | null;
     /** 本 run 是否读过外部内容（每次执行时实时读）。 */
     touchedExternal?: () => boolean;
+    /** 本轮的触发批是这些事项的「事项更新」通知。 */
+    updateNoticeTodoIds?: ReadonlySet<string>;
   },
 ) {
   const identity = {
@@ -196,6 +198,9 @@ function toolsFor(
     workbench: rig.facade,
     triggerFromUser: options.triggerFromUser,
     ...(options.touchedExternal !== undefined ? { touchedExternal: options.touchedExternal } : {}),
+    ...(options.updateNoticeTodoIds !== undefined
+      ? { updateNoticeTodoIds: options.updateNoticeTodoIds }
+      : {}),
   }) as unknown as Tool[];
   const byName = Object.fromEntries(list.map((tool) => [tool.name, tool])) as Record<string, Tool>;
   const call = (name: string, params: Record<string, unknown>) =>
@@ -770,6 +775,26 @@ describe('权限边界矩阵（§6.2，宿主强制）', () => {
     for (const update of updates) {
       expect((update.args[1] as { actor?: string }).actor).toBe('butler');
     }
+  });
+
+  it('防自循环：本轮是某事项的「事项更新」通知时，不得再改那条事项的标题 / 说明（别的事项、非文字改动不受影响）', async () => {
+    const rig = makeRig();
+    const bot = { kind: 'bot' as const, botId: 'bot_1' };
+    rig.state.todos = [
+      todo({ id: 'todo_notified', status: 'in_progress', assignee: bot }),
+      todo({ id: 'todo_other', status: 'in_progress', assignee: bot }),
+    ];
+    const { call } = toolsFor(rig, {
+      triggerFromUser: false,
+      updateNoticeTodoIds: new Set(['todo_notified']),
+    });
+    for (const patch of [{ notes: '回改' }, { title: '回改' }]) {
+      const denied = await call('update_todo', { id: 'todo_notified', ...patch });
+      expect(denied).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
+      expect(denied.content).toContain('事项更新');
+    }
+    expect(rig.calls.filter((c) => c.method === 'updateTodo')).toEqual([]);
+    expect((await call('update_todo', { id: 'todo_other', notes: '别的事项' })).ok).toBe(true);
   });
 
   it('改进行中事项的说明：core 排好通知时，工具结果告诉管家「执行者会收到更新、别再派活」；没通知则不提', async () => {
