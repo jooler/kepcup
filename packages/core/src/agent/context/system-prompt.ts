@@ -163,7 +163,7 @@ const BUTLER_RULES = [
  * 模型调用不存在的工具，否则它面对「建个 Bot」只能编造「已创建」。
  */
 const BUTLER_TASK_RULES = [
-  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）、转交（delegate_to_bot）、资产移交（inspect_bot_assets / propose_handover）与工作台的事项 / 备忘工具（list_todos / create_todo / create_memo 等）都在对话轮工具面，任务里没有这些工具。',
+  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）、转交（delegate_to_bot）与资产移交（inspect_bot_assets / propose_handover）都在对话轮工具面，任务里没有这些工具；工作台的事项 / 备忘工具（list_todos / create_todo / create_memo 等）同样只在对话轮。',
   '任务目标涉及建 Bot / 建群、转交或移交时：把具体建议写进任务结果（建议的名字、职责、理由，或建议交给谁、移交哪些东西、为什么），由对话轮收到结果后提交提议卡或移交卡；不要声称已经创建了任何 Bot 或群，也不要声称已经移交。',
   '需要通讯录信息时仍可用 list_bots（只读名片）。',
 ]
