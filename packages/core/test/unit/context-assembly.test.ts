@@ -163,8 +163,8 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
       userProfile: '画像卡片内容',
-      myState: '<my_state>\n- 承诺（2026-10-02 前）：交报告\n</my_state>',
-      relevantMemories: '<relevant_memories>\n- [mem_1] 内容\n</relevant_memories>',
+      myState: '- 承诺（2026-10-02 前）：交报告',
+      relevantMemories: '- [mem_1] 内容',
     });
     // 平台规则 9~11（P07 起；自我迭代条随对话式创建一并加入；过程沟通规则
     // 3/4 为 loop 中间过程投送新增，todo/loop-interim-updates.md）。D75 W2：

@@ -184,7 +184,7 @@ import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profile
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import type { WatchToolFacade } from '../tools/watch-tools.js';
-import type { WorkbenchToolFacade } from '../tools/workbench-tools.js';
+import { WORKBENCH_OWN_READ_TOOLS, type WorkbenchToolFacade } from '../tools/workbench-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
 import {
   createSubagentFacade,
@@ -3630,6 +3630,10 @@ export class Orchestrator {
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
       // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
       const untrusted = { touched: triggerCarriesUntrusted(batch.messages) };
+      // 工作台工具（D90 §6.2）用的同类标记：读过外部内容后派活 / 收尾 / 删备忘一律拒绝。与
+      // `untrusted` 同源，但工作台自己的 list_todos / list_memos 不算（它们在设置的分类里仍按
+      // 不可信处理，不变）——否则「列出草案再安排」走不通。
+      const workbenchExternal = { touched: untrusted.touched };
       // 本 run 的触发是否来自用户本人：设置工具的档位裁定与工作台工具的权限边界（D90 §6.2）共用。
       // 工作台派发、委派代发、组件回传、定时 / 事件唤醒都不算。
       const fromUser = triggerFromUser({
@@ -3893,6 +3897,7 @@ export class Orchestrator {
                   // 与 effectiveMode（shared/settings-catalog/mode.ts）同一口径：触发批全是用户本人
                   // 的普通消息，且触发原因在直改白名单里（direct / mention / reply）。
                   triggerFromUser: fromUser && SETTING_DIRECT_TRIGGERS.has(batch.reason),
+                  touchedExternal: () => workbenchExternal.touched,
                 },
               }
             : {}),
@@ -4175,6 +4180,8 @@ export class Orchestrator {
             ...(todoSource !== null ? { workbenchDispatch: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
+            // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
+            ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
             // resolution timed out), so the prompt does not flip between turns.
             ...(!isTask && mcpResolution.hasServers
@@ -4242,6 +4249,9 @@ export class Orchestrator {
       const unsubscribeUntrusted = handle.onEvent((event) => {
         if (event.type === 'tool_call' && isUntrustedReadTool(event.payload.toolName)) {
           untrusted.touched = true;
+          if (!WORKBENCH_OWN_READ_TOOLS.has(event.payload.toolName)) {
+            workbenchExternal.touched = true;
+          }
         }
       });
       const unsubscribeSetup = handle.onEvent((event) => {

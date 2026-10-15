@@ -63,6 +63,14 @@ export function previewText(text: string, max: number): string {
   return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat;
 }
 
+/**
+ * 用户写的文字里的 `<workbench` / `</workbench`（大小写不敏感）改成 `<\\workbench`，不能关闭或
+ * 伪造本段（`untrustedBlock` 只中和 `<untrusted` 标签；系统提示的 `section()` 另有通用兜底）。
+ */
+export function neutralizeSectionTag(text: string): string {
+  return text.replace(/<(\/?workbench)(?=[\s>/]|$)/gi, (_match, name: string) => `<\\${name}`);
+}
+
 export interface WorkbenchSectionInput {
   /** 未关闭的事项（草案 / 已排期 / 进行中 / 待验收）。 */
   todos: readonly TodoEntry[];
@@ -138,7 +146,7 @@ export function buildWorkbenchSection(input: WorkbenchSectionInput): string {
 
   return [
     ...countLines,
-    ...(data.length > 0 ? [untrustedBlock(data.join('\n'))] : []),
+    ...(data.length > 0 ? [untrustedBlock(neutralizeSectionTag(data.join('\n')))] : []),
     '需要细节用 list_todos / list_memos。',
   ].join('\n');
 }

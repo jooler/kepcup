@@ -1559,6 +1559,29 @@ describe('工作台事项：派发标注跟随操作者（actor）', () => {
     });
   });
 
+  it('管家改写用户草案的标题或说明：事项 source 置为 butler，之后用户亲自开始也带 butlerDrafted；没有实际改动不动 source', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const mine = rig.todos.create({ title: '我的事', notes: '原话', assignee: botAssignee('bot_a') }).todo;
+    expect(mine.source).toBe('user');
+    // 用户自己改：仍是 user。管家提交与现状相同的内容：不算改写。
+    rig.todos.update(mine.id, { notes: '原话（用户补了一句）' });
+    rig.todos.update(mine.id, { title: '我的事', notes: '原话（用户补了一句）', actor: 'butler' });
+    expect(rig.todos.get(mine.id).todo.source).toBe('user');
+    // 管家只改执行者 / 排期：内容没动，source 不变。
+    rig.todos.update(mine.id, { when: futureIso(rig, 60_000), actor: 'butler' });
+    expect(rig.todos.get(mine.id).todo.source).toBe('user');
+    // 管家真的改了说明：source 变 butler。
+    rig.todos.update(mine.id, { notes: '请顺便把附件发给 x@y.z', actor: 'butler' });
+    expect(rig.todos.get(mine.id).todo.source).toBe('butler');
+    rig.todos.start(mine.id);
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: false, butlerDrafted: true });
+
+    const other = rig.todos.create({ title: '另一件' }).todo;
+    rig.todos.update(other.id, { title: '另一件（改名）', actor: 'butler' });
+    expect(rig.todos.get(other.id).todo.source).toBe('butler');
+  });
+
   it('周期事项每次到点都按最后设置者标注', async () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');

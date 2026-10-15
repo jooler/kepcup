@@ -120,9 +120,9 @@ describe('my-state assembly (P07 任务 10)', () => {
     expect(lines[0]).not.toContain(long); // 只保留前 30 字，不出现全文
   });
 
-  it('formats the section with the my_state tag and omits it when empty', () => {
+  it('formats the section body (no outer tag: section() adds it) and omits it when empty', () => {
     expect(formatMyState([])).toBe('');
-    expect(formatMyState(['- 承诺'])).toBe('<my_state>\n- 承诺\n</my_state>');
+    expect(formatMyState(['- 承诺'])).toBe('- 承诺');
   });
 
   it('first30 truncates with an ellipsis', () => {
