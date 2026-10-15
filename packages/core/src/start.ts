@@ -1802,6 +1802,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       deleteMemo: (id) => memoService!.delete(id),
       describeWhen: (row) => scheduleService!.describeWhen(row),
       isTainted: (botId, conversationId) => taint.isTainted(botId, conversationId),
+      now: () => clock.now(),
       describeTime: (ms) => describeTime(ms, clock.now(), workbenchTimeZone),
       contextSection: () => {
         if (todoService === null || memoService === null) return '';
