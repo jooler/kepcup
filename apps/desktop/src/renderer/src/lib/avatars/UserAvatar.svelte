@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * 当前用户头像占位（尚无个人资料头像）。群聊马赛克与侧栏菜单共用；
-   * 之后接上真实头像时只改本组件即可。
+   * 之后接上真实头像时只改本组件即可。字号按头像边长走（cqmin），em 只认继承字号，
+   * 不会随 size-* 变。
    */
   import { t } from '$lib/i18n';
 
@@ -24,13 +25,13 @@
 </script>
 
 <span
-  class="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-muted-foreground {klass}"
+  class="[container-type:size] inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-muted-foreground {klass}"
   style={shadowVars}
   data-testid={testId}
   aria-hidden="true"
 >
   <span
-    class="select-none text-[0.55em] font-semibold leading-none {glyphShadowOffset
+    class="[font-size:35cqmin] leading-none font-semibold select-none {glyphShadowOffset
       ? 'group-avatar-letter-shadow'
       : ''}">{t('sidebar.userFallback')}</span
   >
