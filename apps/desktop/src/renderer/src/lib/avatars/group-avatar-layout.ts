@@ -9,9 +9,12 @@ export interface GroupAvatarSlot {
   z: number;
 }
 
+/** 群头像马赛克里代表「当前用户」的固定 id（不入库，仅 UI）。 */
+export const GROUP_AVATAR_USER_ID = '__user__';
+
 /**
  * 群头像堆叠：
- * - 2 个并排
+ * - 2 个并排（略放大、可重叠）
  * - 3 个品字形（上一下二）
  * - 4 个田字
  * - 5 个及以上按种子随机位置、随机层叠；直径相对差异不超过 20%
@@ -25,23 +28,23 @@ export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[]
   if (count === 1) return [{ x: 50, y: 50, size: 100, z: 1 }];
   if (count === 2) {
     return [
-      { x: 34, y: 50, size: 58, z: 1 },
-      { x: 68, y: 50, size: 58, z: 2 },
+      { x: 36, y: 50, size: 72, z: 1 },
+      { x: 66, y: 50, size: 72, z: 2 },
     ];
   }
   if (count === 3) {
     return [
-      { x: 50, y: 32, size: 52, z: 3 },
-      { x: 30, y: 70, size: 52, z: 1 },
-      { x: 70, y: 70, size: 52, z: 2 },
+      { x: 50, y: 34, size: 66, z: 3 },
+      { x: 32, y: 68, size: 66, z: 1 },
+      { x: 68, y: 68, size: 66, z: 2 },
     ];
   }
   if (count === 4) {
     return [
-      { x: 30, y: 30, size: 48, z: 1 },
-      { x: 70, y: 30, size: 48, z: 2 },
-      { x: 30, y: 70, size: 48, z: 3 },
-      { x: 70, y: 70, size: 48, z: 4 },
+      { x: 32, y: 32, size: 60, z: 1 },
+      { x: 68, y: 32, size: 60, z: 2 },
+      { x: 32, y: 68, size: 60, z: 3 },
+      { x: 68, y: 68, size: 60, z: 4 },
     ];
   }
 
@@ -50,7 +53,7 @@ export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[]
   for (let i = 0; i < count; i += 1) {
     // 1.00–1.20：最大比最小多 20%。
     const scale = 1 + rng() * 0.2;
-    const size = 48 * scale;
+    const size = 58 * scale;
     slots.push({
       x: 28 + rng() * 44,
       y: 28 + rng() * 44,
@@ -67,6 +70,21 @@ export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[]
   }
   for (let z = 0; z < order.length; z += 1) slots[order[z]!]!.z = z;
   return slots;
+}
+
+/**
+ * 字影投影：1px 朝向群头像中心（字素 alpha 投影，不是瓦片容器 box-shadow）。
+ * 中心位无方向时略向下。
+ */
+export function shadowOffsetTowardCenter(slot: Pick<GroupAvatarSlot, 'x' | 'y'>): {
+  x: number;
+  y: number;
+} {
+  const dx = 50 - slot.x;
+  const dy = 50 - slot.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return { x: 0, y: 1 };
+  return { x: dx / len, y: dy / len };
 }
 
 function hashString(value: string): number {

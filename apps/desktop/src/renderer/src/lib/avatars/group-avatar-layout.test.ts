@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
-import { groupAvatarSlots } from './group-avatar-layout';
+import {
+  GROUP_AVATAR_USER_ID,
+  groupAvatarSlots,
+  shadowOffsetTowardCenter,
+} from './group-avatar-layout';
 
 describe('groupAvatarSlots', () => {
-  it('places two avatars side by side', () => {
+  it('places two avatars side by side with overlap room', () => {
     const slots = groupAvatarSlots(2, 'a|b');
     expect(slots).toHaveLength(2);
     expect(slots[0]!.y).toBe(slots[1]!.y);
     expect(slots[0]!.x).toBeLessThan(slots[1]!.x);
+    expect(slots[0]!.size).toBeGreaterThan(60);
   });
 
   it('places three avatars in a triangle, one above two', () => {
@@ -18,16 +23,18 @@ describe('groupAvatarSlots', () => {
     expect(top!.y).toBeLessThan(right!.y);
     expect(left!.x).toBeLessThan(right!.x);
     expect(top!.z).toBeGreaterThan(left!.z);
+    expect(top!.size).toBeGreaterThan(60);
   });
 
   it('places four avatars in a two-by-two grid', () => {
     const slots = groupAvatarSlots(4, 'a|b|c|d');
     expect(slots.map((slot) => [slot.x, slot.y])).toEqual([
-      [30, 30],
-      [70, 30],
-      [30, 70],
-      [70, 70],
+      [32, 32],
+      [68, 32],
+      [32, 68],
+      [68, 68],
     ]);
+    expect(slots.every((slot) => slot.size === 60)).toBe(true);
   });
 
   it('keeps five-or-more sizes within 20% and stable for the same seed', () => {
@@ -39,6 +46,7 @@ describe('groupAvatarSlots', () => {
     const max = Math.max(...sizes);
     expect(max / min).toBeLessThanOrEqual(1.2 + 1e-9);
     expect(new Set(first.map((slot) => slot.z)).size).toBe(6);
+    expect(min).toBeGreaterThanOrEqual(58);
   });
 
   it('caps a large group at GROUP_MEMBER_PREVIEW_MAX slots', () => {
@@ -48,5 +56,24 @@ describe('groupAvatarSlots', () => {
     expect(slots).toHaveLength(GROUP_MEMBER_PREVIEW_MAX);
     expect(new Set(slots.map((slot) => slot.z)).size).toBe(GROUP_MEMBER_PREVIEW_MAX);
     expect(groupAvatarSlots(0, '')).toEqual([]);
+  });
+});
+
+describe('shadowOffsetTowardCenter', () => {
+  it('points one unit toward the mosaic center', () => {
+    const offset = shadowOffsetTowardCenter({ x: 32, y: 32 });
+    expect(offset.x).toBeCloseTo(Math.SQRT1_2, 5);
+    expect(offset.y).toBeCloseTo(Math.SQRT1_2, 5);
+    expect(Math.hypot(offset.x, offset.y)).toBeCloseTo(1, 5);
+  });
+
+  it('falls back slightly downward when already centered', () => {
+    expect(shadowOffsetTowardCenter({ x: 50, y: 50 })).toEqual({ x: 0, y: 1 });
+  });
+});
+
+describe('GROUP_AVATAR_USER_ID', () => {
+  it('is a stable reserved id', () => {
+    expect(GROUP_AVATAR_USER_ID).toBe('__user__');
   });
 });
