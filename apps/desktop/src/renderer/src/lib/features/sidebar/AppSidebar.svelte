@@ -608,20 +608,20 @@
   </button>
 {/snippet}
 
-<!-- 工作台入口图标（展开/图标两模式共用）：与会话头像同尺寸，行高对齐；明暗两套实色稿。 -->
+<!-- 工作台入口图标（展开/图标两模式共用）：44px，无圆形底；明暗两套实色稿。 -->
 {#snippet workbenchIcon()}
-  <span class="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+  <span class="relative inline-flex size-11 shrink-0 items-center justify-center">
     <img
       src={workbenchIconLightUrl}
       alt=""
-      class="size-5 dark:hidden"
+      class="size-11 dark:hidden"
       draggable="false"
       aria-hidden="true"
     />
     <img
       src={workbenchIconDarkUrl}
       alt=""
-      class="hidden size-5 dark:block"
+      class="hidden size-11 dark:block"
       draggable="false"
       aria-hidden="true"
     />
