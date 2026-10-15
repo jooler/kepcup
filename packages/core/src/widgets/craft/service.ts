@@ -295,7 +295,7 @@ export class WidgetCraftService {
     }
     const brief = String(params.brief ?? '').trim();
     if (brief === '') {
-      return invalid('需要 brief：目标、主要交互、数据来源与是否保存、风格（尽量引用用户原话）');
+      return invalid('需要 brief：要呈现什么、数据从哪来、要不要保存（尽量引用用户原话）');
     }
     if (brief.length > WIDGET_CRAFT_BRIEF_MAX_CHARS) {
       return invalid(`brief 过长（最多 ${WIDGET_CRAFT_BRIEF_MAX_CHARS} 字），只写组件需要的信息`);
@@ -1494,7 +1494,7 @@ function successText(input: {
     );
   } else {
     lines.push(
-      '卡片已发进对话，请用户点「加载」使用（加载前用户仍要确认源码）。不要用文字复述代码；要修改时再调 widget_craft 并传 widget_id。',
+      '卡片已发进对话，请用户点「加载」使用。不要用文字复述代码，也不要把加载说成组件里的查看源码；要修改时再调 widget_craft 并传 widget_id。',
     );
   }
   return clip(lines.join('\n'), WIDGET_CRAFT_RESULT_MAX_CHARS);

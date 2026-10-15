@@ -36,7 +36,12 @@ export const WIDGET_PLATFORM_FACTS = [
   `- 组件是一个单文件 HTML（内联 CSS / JS，≤${Math.round(BOT_WIDGET_HTML_MAX_BYTES / 1024 / 1024)}MB），运行在聊天卡片里的沙箱 iframe（sandbox="allow-scripts"，不透明 origin）中。宽度自适应卡片（窄屏约 360px），初始高约 380px。`,
   '- 响应头 CSP：只允许内联脚本与内联样式，图片 / 字体只能用 data: 或 blob:；没有网络（任何 http(s) 资源、fetch、WebSocket 都会被拦），没有弹窗，没有表单提交，没有页面跳转。',
   '- 没有任何第三方库可用（CDN 被拦）：图表用内联 SVG 或 canvas 手绘，日期 / 数字格式化用 Intl 或手写函数。',
-  '- 用户每次加载都会看到你的源码并确认；组件不能做用户没要求的事。',
+  '- 宿主在加载前展示源码并请用户确认，确认后 iframe 里只运行内容本身。组件不能做用户没要求的事。',
+  '',
+  '## 页面里放什么',
+  '- iframe 里的文档就是用户要看、要操作的那一份内容，不要再套一层预览壳。',
+  '- 宿主卡片已经有标题、一句说明、版本、刷新，以及加载前的源码审查。组件里不要再做：预览 / 源码切换、源码面板、页眉工具条，以及解释「本卡是复刻 / 不是原文件 / 沙箱 / 测试数据」的脚注或状态条。',
+  '- 用户要复刻一页版式、一张海报或一段结果时，那一页就是整个 body。不要另加点击展开、模式切换或查看源码；只有用户原文里明确要求的操作才做。',
   '',
   '## window.kepcup（宿主能力桥，全部异步，返回 Promise）',
   `- kepcup.storage.get(key) → 值（不存在为 undefined）；set(key, value)（value 是可 JSON 序列化的值）；delete(key)；list() → 键名数组。每个组件独立的命名空间，数据只存本机、重启仍在；单值 ≤${kb(BOT_WIDGET_STORAGE_VALUE_MAX_BYTES)}、总量 ≤${kb(BOT_WIDGET_STORAGE_QUOTA_BYTES)} / ${BOT_WIDGET_STORAGE_KEYS_MAX} 个键。不要存敏感信息。`,
@@ -66,10 +71,14 @@ export const WIDGET_FILE_CONVENTIONS = [
 ].join('\n');
 
 const ACCEPTANCE_FORMAT = [
-  '## acceptance.json 的格式（3–8 条，至少 2 条 must）',
+  '## acceptance.json 的格式（1–8 条，至少 1 条 must）',
+  '没有操作的页面：steps 用空数组，只断言已经在页面上的文字，不要为了能点而加展开、切换或查看源码。',
+  '[{"id": "title-visible", "desc": "标题可见", "must": true, "steps": [],',
+  '  "expect": [{"selector": "#title", "textContains": "进展"}, {"noBadText": true}]}]',
+  '用户原文明确要求了操作时，才写动作：',
   '[{"id": "add-expense", "desc": "添加一笔费用后合计更新", "must": true,',
   '  "steps": [{"fill": "#amount", "value": "12"}, {"click": "#add"}],',
-  '  "expect": [{"selector": "#total", "textContains": "12"}, {"selector": ".row", "count": 1}, {"noBadText": true}]}]',
+  '  "expect": [{"selector": "#total", "textContains": "12"}]}]',
   '- 动作：click / fill(+value) / select(+value) / check(+value 布尔) / press(键名，可带 selector) / wait(毫秒 ≤1000)。',
   '- 断言：{selector, exists} / {selector, textContains} / {selector, textEquals} / {selector, valueEquals} / {selector, count} / {noBadText: true} / {noErrors: true}。',
   '- 选择器用 #id 或稳定的 class，写进 spec.md 让编码阶段照着用。',
@@ -147,9 +156,10 @@ export function specStageInput(
       ? [`上一次写的 acceptance.json 不合格：${escapeTags(ctx.retryError)}。请按格式重写。`]
       : []),
     '任务：',
-    '1. 写 spec.md（≤60 行）：第一行写「> 一句话说明」（给用户看，≤60 字；修改时写这次改了什么），然后是目标、界面元素（标注 #id）、交互、数据（storage 键名与结构 / 查询）、边界情况（空状态、非法输入、超长文本）。',
-    '2. 写 acceptance.json（格式见下）。用户给的验收提示（<user_acceptance>）都要覆盖，并设为 must。',
+    '1. 写 spec.md（≤60 行）：第一行写「> 一句话说明」（给用户看，≤60 字；只复述要呈现的内容，不追加点击、展开、查看源码等操作；修改时写这次改了什么）。然后是目标、要出现的内容（标注 #id）。用户没要求操作就不写交互。有保存或查询再写数据。',
+    '2. 写 acceptance.json（格式见下）。用户给的验收提示（<user_acceptance>）都要覆盖，并设为 must。没有操作就用空 steps 断言可见文字。',
     '3. 不写代码，不建 index.html。完成后调用 stage_done。',
+    '不要规划预览/源码切换、源码面板，或解释卡片机制的脚注和状态条。',
     '',
     ACCEPTANCE_FORMAT,
   ].join('\n');
@@ -171,6 +181,7 @@ export function buildStageInput(ctx: CraftStageContext): string {
       ? 'index.html 已是现有组件的源码：先 read，在它的基础上用 edit 做规格要求的改动，不要整份重写，不要删掉没要求删的功能。'
       : `先用 widget_template 选一个骨架模板写入 index.html，再往里填业务。可用模板：\n${templates}`,
     '要求：选择器与 spec / 验收点里的 #id 一致；所有 kepcup 调用 await + try/catch；按钮写 type="button"；不用 <form> 提交。需要查询就写 queries.json，需要预览数据就写 fixtures.json。',
+    'body 就是内容本身：复刻一页时那一页铺满文档，不要再套工具条、源码视图或关于卡片机制的说明。',
     '写完调一次 widget_check 自查，按报告修好 error 再调用 stage_done。',
   ].join('\n');
 }
@@ -228,6 +239,7 @@ export function reviewSystemPrompt(): string {
     '5. 窄屏（约 360px）与暗色主题下是否可用（颜色是否用了 --kc-* 变量）。',
     '6. 可访问性：按钮有文字、输入有 label。',
     '7. 沙箱雷区里机器没覆盖到的变体（见下方清单）。',
+    '8. 外壳：页面是否把内容套进预览壳（预览/源码切换、源码面板、解释卡片机制的脚注或状态条）。宿主已经提供这些；出现就记 P1——用户打开后看到的不是所要的内容。',
     '',
     '## 严重度',
     '- P0：主要功能不可用，或数据会丢失 / 写错。',

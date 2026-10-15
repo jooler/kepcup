@@ -129,6 +129,10 @@ describe('widget tools', () => {
     expect(craft.description).toContain('不要自己写 HTML');
     expect(craft.description).not.toContain('localStorage');
     expect(craft.description.length).toBeLessThan(600);
+    const brief = (craft.parameters as { properties: { brief: { description: string } } }).properties
+      .brief;
+    expect(brief.description).toContain('不要写入用户没说的点击、展开、查看源码');
+    expect(brief.description).not.toContain('主要交互');
   });
 
   it('widget_publish：缺参 / 无对话拒绝；成功时带 runId 调门面；失败透传 code', async () => {
