@@ -30,9 +30,9 @@
   import { permissions } from '$lib/stores/permissions.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { createBotConversational } from '$lib/features/bot-setup';
-  import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
+  import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
@@ -618,14 +618,14 @@
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'group'}
-    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-10" />
+    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-12" />
   {:else}
     <BotAvatar
       botId={conversation.directBotId ?? conversation.id}
       name={conversation.bot?.name ?? conversation.directBotId ?? '?'}
       avatar={conversation.bot?.avatar ?? null}
-      class="size-10"
-      fallbackClass="text-base"
+      class="size-12"
+      fallbackClass="text-lg"
       testId="conversation-avatar"
     />
   {/if}
@@ -805,7 +805,7 @@
               <Sidebar.MenuItem class="w-auto">
                 <Tooltip.Root>
                   <Tooltip.Trigger
-                    class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
+                    class="relative flex size-14 cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
                       dark:data-active:bg-[oklch(0.16_0_0)]"
                     data-active={activeConversationId === conversation.id ? 'true' : undefined}
@@ -971,9 +971,7 @@
                 title={t('sidebar.userName')}
                 data-testid="user-menu-trigger"
               >
-                <Avatar.Root class="size-10">
-                  <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
-                </Avatar.Root>
+                <UserAvatar class="size-10" testId="user-menu-avatar" />
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="center" class="min-w-40">
@@ -1006,9 +1004,7 @@
                 title={t('sidebar.userName')}
                 data-testid="user-menu-trigger"
               >
-                <Avatar.Root class="size-10">
-                  <Avatar.Fallback class="text-xs">{t('sidebar.userFallback')}</Avatar.Fallback>
-                </Avatar.Root>
+                <UserAvatar class="size-10" testId="user-menu-avatar" />
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Content side="top" align="start" class="min-w-40">

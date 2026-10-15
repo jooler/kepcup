@@ -2,7 +2,7 @@
   import { ChevronRight, Settings2 } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
-  import * as Avatar from '$lib/components/ui/avatar';
+  import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import ProfileSection from '$lib/features/settings/ProfileSection.svelte';
   import NarrowPage from './NarrowPage.svelte';
 
@@ -17,9 +17,7 @@
 <NarrowPage testid="narrow-me-page">
   <div class="space-y-4 p-4 pb-8">
     <div class="flex items-center gap-3">
-      <Avatar.Root class="size-14">
-        <Avatar.Fallback class="text-lg">{t('sidebar.userFallback')}</Avatar.Fallback>
-      </Avatar.Root>
+      <UserAvatar class="size-14" testId="narrow-me-avatar" />
       <div class="min-w-0">
         <p class="truncate text-base font-medium">{t('sidebar.userName')}</p>
         <p class="truncate text-xs text-muted-foreground">{t('sidebar.userEmail')}</p>

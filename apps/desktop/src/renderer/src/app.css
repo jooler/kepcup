@@ -324,6 +324,28 @@ html.platform-mac main {
 }
 
 /*
+ * 群头像马赛克字影：朝向中心 1px，颜色与主题相反（亮色用深影、暗色用浅影）。
+ * 挂在字形 SVG / 字母上，不是瓦片容器的 box-shadow。偏移由 --group-avatar-sx/sy 注入。
+ */
+.group-avatar-glyph-shadow {
+  filter: drop-shadow(
+    var(--group-avatar-sx, 0px) var(--group-avatar-sy, 0px) 0.35px rgba(0, 0, 0, 0.45)
+  );
+}
+.dark .group-avatar-glyph-shadow {
+  filter: drop-shadow(
+    var(--group-avatar-sx, 0px) var(--group-avatar-sy, 0px) 0.35px rgba(255, 255, 255, 0.45)
+  );
+}
+.group-avatar-letter-shadow {
+  text-shadow: var(--group-avatar-sx, 0px) var(--group-avatar-sy, 0px) 0.35px rgba(0, 0, 0, 0.45);
+}
+.dark .group-avatar-letter-shadow {
+  text-shadow: var(--group-avatar-sx, 0px) var(--group-avatar-sy, 0px) 0.35px
+    rgba(255, 255, 255, 0.45);
+}
+
+/*
  * 预置 Bot 头像动效（参考 Grok Bot）：眼睛四处看 + 眨眼 + 整体轻缓摇摆。
  * 动画类挂在 SVG 内部 group 上，但 {@html} 注入的形状节点拿不到 Svelte
  * scoped class，因此这里的规则必须是全局的；prefers-reduced-motion 时全关。
