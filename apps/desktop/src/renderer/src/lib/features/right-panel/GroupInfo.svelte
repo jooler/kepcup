@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Grant } from '@kepcup/shared';
+  import { GROUP_MEMBER_PREVIEW_MAX, type Grant } from '@kepcup/shared';
   import type { GroupMemberView } from '$lib/stores/chat.svelte';
   import { Monitor, Plus, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -30,12 +30,15 @@
 
   let detail = $state<GroupMemberView | null>(null);
   let titleDraft = $state('');
-  let syncedTitle = $state<string | null>(null);
+  /** 上次同步进输入框的标题（只给下面的同步 effect 比对用，不需要响应式）。 */
+  let syncedTitle: string | null = null;
+  /** 改名请求在途：回车后紧跟的 blur 不再重复提交。 */
+  let renaming = false;
   let addOpen = $state(false);
   let addQuery = $state('');
 
   const faces = $derived(
-    members.map((member) => ({
+    members.slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -59,22 +62,48 @@
     titleDraft = title;
   });
 
+  function savedTitle(): string {
+    return chat.current?.conversation.id === conversationId
+      ? (chat.current.conversation.title ?? '')
+      : '';
+  }
+
   async function saveTitle(): Promise<void> {
+    if (renaming) return;
     const next = titleDraft.trim();
-    const current =
-      chat.current?.conversation.id === conversationId
-        ? (chat.current.conversation.title ?? '')
-        : '';
+    const current = savedTitle();
     if (next.length === 0) {
       titleDraft = current;
       return;
     }
     if (next === current) return;
-    await chat.renameGroup(conversationId, next);
+    renaming = true;
+    try {
+      // 失败（已 toast）时退回已保存的标题，不让输入框停在没生效的名字上。
+      if (!(await chat.renameGroup(conversationId, next))) titleDraft = savedTitle();
+    } finally {
+      renaming = false;
+    }
+  }
+
+  function onTitleKeydown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      // 交给 blur 统一保存，回车 + 失焦只提交一次。
+      event.preventDefault();
+      event.currentTarget.blur();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      titleDraft = savedTitle();
+      event.currentTarget.blur();
+    }
   }
 
   async function addMember(botId: string): Promise<void> {
-    if (await chat.addGroupMembers(conversationId, [botId])) addQuery = '';
+    if (await chat.addGroupMembers(conversationId, [botId])) {
+      addQuery = '';
+      addOpen = false;
+    }
   }
   // 成员详情弹窗：仅当该 Bot 在本群对话已拉起浏览器时显示「查看浏览器」。
   const detailBrowserOpen = $derived(
@@ -111,12 +140,7 @@
       class="w-full border-b border-transparent bg-transparent text-center text-base font-medium outline-none focus:border-border"
       aria-label={t('group.renameLabel')}
       data-testid="group-info-title"
-      onkeydown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          void saveTitle();
-        }
-      }}
+      onkeydown={onTitleKeydown}
       onblur={() => void saveTitle()}
     />
   </section>
@@ -224,7 +248,7 @@
               </li>
             {:else}
               <li class="px-1 py-1.5 text-xs text-muted-foreground">
-                {t('groupCompose.emptyList')}
+                {t('group.noAddableBots')}
               </li>
             {/each}
           </ul>

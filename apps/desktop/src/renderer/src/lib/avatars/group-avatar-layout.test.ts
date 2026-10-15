@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
 import { groupAvatarSlots } from './group-avatar-layout';
 
 describe('groupAvatarSlots', () => {
@@ -38,5 +39,14 @@ describe('groupAvatarSlots', () => {
     const max = Math.max(...sizes);
     expect(max / min).toBeLessThanOrEqual(1.2 + 1e-9);
     expect(new Set(first.map((slot) => slot.z)).size).toBe(6);
+  });
+
+  it('caps a large group at GROUP_MEMBER_PREVIEW_MAX slots', () => {
+    expect(GROUP_MEMBER_PREVIEW_MAX).toBeLessThanOrEqual(9);
+    const seed = Array.from({ length: 50 }, (_, i) => `m${i}`).join('|');
+    const slots = groupAvatarSlots(50, seed);
+    expect(slots).toHaveLength(GROUP_MEMBER_PREVIEW_MAX);
+    expect(new Set(slots.map((slot) => slot.z)).size).toBe(GROUP_MEMBER_PREVIEW_MAX);
+    expect(groupAvatarSlots(0, '')).toEqual([]);
   });
 });

@@ -256,18 +256,6 @@ export function needsClientCredentials(flow: FlowView | null | undefined): boole
   return flow?.phase === 'failed' && flow.error?.code === OAUTH_CLIENT_REQUIRED_CODE;
 }
 
-/**
- * 在 OAUTH_CLIENT_REQUIRED 时手填 client_id / secret 的表单是否可用。
- * 自定义 MCP / BYO OAuth 客户端已迁到扩展中心且不再挂开发者模式门禁后，一律给出表单。
- */
-export function clientFormMode(_input: {
-  target: AppConnectTarget;
-  developerMode: boolean;
-  customServerExists: boolean;
-}): 'form' | 'unavailable' {
-  return 'form';
-}
-
 // --- 授权 URL ------------------------------------------------------------------
 
 export interface SplitUrl {

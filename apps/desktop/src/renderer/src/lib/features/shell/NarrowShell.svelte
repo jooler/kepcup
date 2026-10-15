@@ -30,8 +30,11 @@
    * 窄屏不渲染它——消息行等处的 Tooltip.Root 需要这里补一个，否则取上下文
    * 直接抛错（Context "Tooltip.Provider" not found）。
    */
+  // 组群输入（chat.composingGroup）与打开的会话一样占据详情层：列表页点「新建群聊」
+  // 时 currentId 为 null，只看 currentId 会让点击没有任何反应。
+  const showDetail = $derived(chat.currentId !== null || chat.composingGroup);
   const showTabBar = $derived(
-    showNarrowTabBar(narrowLayout.tab, chat.currentId !== null, narrowLayout.botDetailOpen),
+    showNarrowTabBar(narrowLayout.tab, showDetail, narrowLayout.botDetailOpen),
   );
 
   // 会话变化 → 对话 tab；扩展中心深链 → 扩展 tab。两条 effect 共享 tab，依赖细节与
@@ -47,7 +50,7 @@
   <div class="flex min-h-0 flex-1 flex-col" data-testid="narrow-shell">
     {#if narrowLayout.tab === 'chats'}
       <NoModelBanner />
-      {#if chat.currentId !== null}
+      {#if showDetail}
         <!-- 会话详情层：显式铺不透明背景（macOS 毛玻璃只保留在列表页侧栏）。 -->
         <div class="flex min-h-0 flex-1 flex-col bg-background">
           <ChatsArea />

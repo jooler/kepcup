@@ -31,7 +31,8 @@
 
   const PROVIDERS = Object.values(MAIL_PROVIDER_PRESETS);
 
-  let provider = $state<MailProvider>('qq');
+  // initialProvider 变化时同步厂商（可写 derived：用户手选后保持到下次 prop 变化）。
+  let provider = $derived<MailProvider>(initialProvider);
   let address = $state('');
   let password = $state('');
   let label = $state('');
@@ -43,11 +44,6 @@
   let formError = $state('');
 
   const preset = $derived(MAIL_PROVIDER_PRESETS[provider]);
-
-  $effect(() => {
-    // 新的 requirement / 预填变化时同步厂商（不重置用户已填的地址）。
-    provider = initialProvider;
-  });
 
   function explain(error: unknown): string {
     if (error instanceof AppError) return errorText(error.code, error.message);

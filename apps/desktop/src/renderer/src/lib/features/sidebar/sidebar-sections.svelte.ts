@@ -4,9 +4,11 @@ import {
   deleteSection,
   loadSidebarSections,
   moveSectionBefore,
+  pruneSidebarSections,
   renameSection,
   saveSidebarSections,
   toggleSectionCollapsed,
+  unassignConversation,
   type SidebarSectionsState,
 } from './sidebar-sections';
 
@@ -24,6 +26,21 @@ class SidebarSectionsStore {
 
   assign(conversationId: string, sectionId: string): void {
     this.#write(assignConversation(this.state, conversationId, sectionId));
+  }
+
+  /** 移回「未指定」且不展开它（后台清理用，不是用户的移动操作）。 */
+  unassign(conversationId: string): void {
+    if (this.state.assignments[conversationId] === undefined) return;
+    this.#write(unassignConversation(this.state, conversationId));
+  }
+
+  /** 列表刷新 / 删除后丢掉已不存在对话的归属；没有变化时不落盘。 */
+  prune(existingConversationIds: Iterable<string>): void {
+    const next = pruneSidebarSections(this.state, existingConversationIds);
+    if (Object.keys(next.assignments).length === Object.keys(this.state.assignments).length) {
+      return;
+    }
+    this.#write(next);
   }
 
   /** 新建分组并把当前对话立刻放进去。名称无效时返回 null。 */

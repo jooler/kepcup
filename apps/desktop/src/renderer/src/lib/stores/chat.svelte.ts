@@ -1,5 +1,9 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
-import { groupTitleFromMemberNames, isSparseBotProfile } from '@kepcup/shared';
+import {
+  GROUP_MEMBER_PREVIEW_MAX,
+  groupTitleFromMemberNames,
+  isSparseBotProfile,
+} from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
 export interface GroupMemberView {
@@ -32,7 +36,8 @@ import { mergeUnreadCount } from '../features/chats/unread';
 import { settingCardOf } from '../features/settings-card/setting-card-model';
 import { tasks } from '$lib/stores/tasks.svelte';
 import { activeRunsOf } from '../features/tasks/task-view';
-import { botMessageMutesRun } from '../features/chats/run-status-mute';
+import { botMessageMutesRun, isInterimMessage } from '../features/chats/run-status-mute';
+import { sidebarSections } from '../features/sidebar/sidebar-sections.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -115,9 +120,19 @@ class ChatState {
    */
   #pendingSetup = $state<{ requirement: SetupRequirement; fromVoice: boolean } | null>(null);
   #started = false;
+  /** conversations.list 至少成功过一次（之前 conversations 为空不代表真的没有会话）。 */
+  #listLoaded = false;
 
   get current(): CurrentChat | null {
     return this.#chat;
+  }
+
+  /**
+   * 左栏高亮的会话：组群输入打开时主区域不再是 currentId 那个会话，不高亮它
+   * （currentId 本身保留，取消组群后回到原会话）。
+   */
+  get activeId(): string | null {
+    return this.composingGroup ? null : this.currentId;
   }
 
   /**
@@ -152,6 +167,7 @@ class ChatState {
     core.onEvent('conversation.deleted', (payload) => {
       const data = payload as { id: string };
       this.conversations = this.conversations.filter((c) => c.id !== data.id);
+      this.#pruneSidebarSections();
       if (this.currentId === data.id) this.close();
     });
     core.onEvent('run.status', (payload) => {
@@ -206,7 +222,10 @@ class ChatState {
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
       // 删除效果）；群聊历史里它经 botName 回退为其 id。
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
+      this.#pruneSidebarSections();
       if (this.#chat?.conversation.directBotId === data.id) this.close();
+      // 正在组群的成员里有它：移出，免得用一个已删除的 Bot 建群。
+      if (this.composeMemberIds.includes(data.id)) this.removeComposeMember(data.id);
     });
     core.onEvent('group.turn', (payload) => {
       const data = payload as GroupTurnState & { conversationId: string };
@@ -254,6 +273,8 @@ class ChatState {
       }
     }
     this.lastMessageText = lastMessageText;
+    this.#listLoaded = true;
+    this.#pruneSidebarSections();
   }
 
   /** Opens (or switches to) the direct chat with a bot. */
@@ -372,7 +393,8 @@ class ChatState {
   }
 
   #syncMemberPreviews(conversationId: string, members: GroupMemberView[]): void {
-    const memberPreviews = members.map((member) => ({
+    // 与 core 下发的 memberPreviews 同一上限（左栏群头像只画这么多）。
+    const memberPreviews = members.slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -410,11 +432,17 @@ class ChatState {
     this.composeMemberIds = this.composeMemberIds.filter((id) => id !== botId);
   }
 
-  /** 空回车：用成员名拼接群名并创建。不足 2 人时不创建。 */
+  /**
+   * 空回车：用成员名拼接群名并创建。只算通讯录里还在的 Bot（删除事件与
+   * 通讯录刷新之间可能有残留 id），不足 2 人时不创建。
+   */
   async commitGroupCompose(): Promise<boolean> {
-    const ids = [...this.composeMemberIds];
-    if (ids.length < 2) return false;
-    const names = ids.map((id) => contacts.bots.find((bot) => bot.id === id)?.name ?? id);
+    const members = this.composeMemberIds
+      .map((id) => contacts.bots.find((bot) => bot.id === id))
+      .filter((bot) => bot !== undefined);
+    if (members.length < 2) return false;
+    const ids = members.map((bot) => bot.id);
+    const names = members.map((bot) => bot.name);
     const title = groupTitleFromMemberNames(names);
     try {
       const result = (await core.call('groups.create', {
@@ -431,22 +459,10 @@ class ChatState {
     }
   }
 
-  /**
-   * 对话内群创建（19/D60）：不再弹框——直接创建「创建中」的群对话并进入，
-   * 四问以卡片在对话中逐题收集（零模型调用），完成后群数据一次性生效。
+  /*
+   * 对话内群创建（19/D60）的入口已由 GroupComposeBar 取代；下面两个方法只服务
+   * 库里遗留的「创建中」群对话（GroupSetupCard 仍渲染这些卡片）。
    */
-  async createGroupViaSetup(): Promise<Conversation | null> {
-    try {
-      const result = (await core.call('groups.setup.start')) as { conversation: Conversation };
-      await this.refresh();
-      await this.select(result.conversation.id);
-      return result.conversation;
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('group.createFailed')));
-      return null;
-    }
-  }
-
   async answerGroupSetup(
     conversationId: string,
     step: 'title' | 'purpose' | 'members' | 'project',
@@ -473,6 +489,7 @@ class ChatState {
     try {
       await core.call('groups.setup.cancel', { conversationId });
       this.conversations = this.conversations.filter((c) => c.id !== conversationId);
+      this.#pruneSidebarSections();
       if (this.currentId === conversationId) this.close();
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
@@ -491,14 +508,16 @@ class ChatState {
     }
   }
 
-  async renameGroup(conversationId: string, title: string): Promise<void> {
+  async renameGroup(conversationId: string, title: string): Promise<boolean> {
     try {
       const result = (await core.call('groups.rename', { conversationId, title })) as {
         conversation: Conversation;
       };
       this.#upsertConversation(result.conversation);
+      return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
     }
   }
 
@@ -786,6 +805,7 @@ class ChatState {
     try {
       await core.call('conversations.delete', { id });
       this.conversations = this.conversations.filter((c) => c.id !== id);
+      this.#pruneSidebarSections();
       if (this.currentId === id) this.close();
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
@@ -797,6 +817,15 @@ class ChatState {
   }
 
   // --- internals -----------------------------------------------------------------
+
+  /**
+   * 左栏分组归属跟随会话列表：不在列表里的会话不再占着归属。首次 refresh
+   * 之前列表还是空的，此时清理会抹掉全部归属，所以要等列表加载过。
+   */
+  #pruneSidebarSections(): void {
+    if (!this.#listLoaded) return;
+    sidebarSections.prune(this.conversations.map((c) => c.id));
+  }
 
   /** Records the sidebar's single-line「最后一条消息」preview (text messages only). */
   #noteLastMessage(conversationId: string, message: Message | null): boolean {
@@ -832,13 +861,7 @@ class ChatState {
 
   #ingestMessage(conversationId: string, message: Message, own: boolean): void {
     // Task interim is a status overlay, not a chat bubble (may still arrive from older cores).
-    if (
-      message.kind === 'text' &&
-      'interim' in message.content &&
-      message.content.interim === true
-    ) {
-      return;
-    }
+    if (isInterimMessage(message)) return;
     // Mid-turn permission popups are a dock card. Drop the message.created
     // payload so it never sits in the open conversation's message list.
     if (isEphemeralApprovalCard(message)) return;

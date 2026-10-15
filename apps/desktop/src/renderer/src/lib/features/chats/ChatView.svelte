@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
   import { ChevronLeft, ChevronRight, MessageSquare, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
@@ -74,7 +75,7 @@
   const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
   const groupFaces = $derived(
-    (current?.members ?? []).map((member) => ({
+    (current?.members ?? []).slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -85,7 +86,9 @@
 </script>
 
 {#if chat.composingGroup}
-  <div class="relative h-full min-h-0 min-w-0 flex-1" data-testid="group-compose-view">
+  <!-- 整个组群视图是拖拽区（与空态一致）；输入条与候选列表自身 app-no-drag，
+       写在后面，重叠处 no-drag 胜出。 -->
+  <div class="app-drag relative h-full min-h-0 min-w-0 flex-1" data-testid="group-compose-view">
     <div class="absolute inset-x-0 top-0 z-30 px-4 pt-3 {narrow && isMac ? 'pl-20' : ''}">
       <GroupComposeBar />
     </div>

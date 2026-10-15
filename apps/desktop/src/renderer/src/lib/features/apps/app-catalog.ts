@@ -237,7 +237,7 @@ export function appInitial(title: string): string {
 
 // --- 已连接 --------------------------------------------------------------------
 
-/** 自定义 server 的占位连接（`custom:{serverId}`）：归扩展中心「MCP」/ 开发者模式的自定义 MCP 管理，不进已连接列表。 */
+/** 自定义 server 的占位连接（`custom:{serverId}`）：归扩展中心「MCP」的自定义 MCP 管理，不进已连接列表。 */
 export function isCustomConnection(connection: Pick<AppConnection, 'id' | 'connectorId'>): boolean {
   return connection.id.startsWith('custom:') || connection.connectorId.startsWith('custom:');
 }

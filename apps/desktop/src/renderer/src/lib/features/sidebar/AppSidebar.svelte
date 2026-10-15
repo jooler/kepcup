@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { Component } from 'svelte';
+  import { tick, type Component } from 'svelte';
   import {
+    ArrowDown,
+    ArrowUp,
     Search,
     Plus,
     Users,
@@ -45,6 +47,7 @@
     isSectionMoveNoop,
     layoutSidebarSections,
     sectionIdOf,
+    sectionStepTarget,
   } from './sidebar-sections';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
@@ -98,8 +101,9 @@
   let sectionDraft = $state('');
   let sectionNameInput = $state<HTMLInputElement | null>(null);
   let moveCloseTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 自定义分组的右键菜单（重命名 / 删除）。「未指定」没有这个菜单。 */
+  /** 自定义分组的右键菜单（重命名 / 上移 / 下移 / 删除）。「未指定」没有这个菜单。 */
   let sectionMenu = $state<{ x: number; y: number; sectionId: string } | null>(null);
+  let sectionMenuEl = $state<HTMLElement | null>(null);
   let renamingSectionId = $state<string | null>(null);
   let renameDraft = $state('');
   let renameInput = $state<HTMLInputElement | null>(null);
@@ -158,9 +162,15 @@
       priority: ESCAPE_PRIORITY.popover,
       onEscape: () => {
         closeContextMenu();
-        sectionMenu = null;
+        closeSectionMenu();
       },
     });
+  });
+  // 分组菜单打开（右键或 Shift+F10 / 菜单键）：焦点进第一项，键盘可直接操作。
+  $effect(() => {
+    const menu = sectionMenuEl;
+    if (sectionMenu === null || menu === null) return;
+    menu.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])')?.focus();
   });
   $effect(() => {
     if (!creatingSection) return;
@@ -241,13 +251,14 @@
   ]);
   const contextIsButler = $derived(isButlerConversation(contextConversation ?? undefined));
 
-  // 管家不能留在分组里。之前若被移入过，这里把归属清掉。
+  // 管家不能留在分组里。之前若被移入过，这里把归属清掉（不展开「未指定」：
+  // 这不是用户的移动操作）。
   $effect(() => {
     const assigned = butlerConversations.filter(
       (conversation) => sidebarSections.state.assignments[conversation.id] !== undefined,
     );
     for (const conversation of assigned) {
-      sidebarSections.assign(conversation.id, UNASSIGNED_SECTION_ID);
+      sidebarSections.unassign(conversation.id);
     }
   });
 
@@ -363,11 +374,75 @@
     event.stopPropagation();
     if (sectionId === UNASSIGNED_SECTION_ID) return;
     closeContextMenu();
+    // 键盘触发（Shift+F10 / 菜单键）时没有指针坐标：贴着标题按钮出现。
+    let { clientX: x, clientY: y } = event;
+    if (x === 0 && y === 0 && event.currentTarget instanceof HTMLElement) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      x = rect.left + 8;
+      y = rect.bottom;
+    }
     sectionMenu = {
-      x: Math.min(event.clientX, window.innerWidth - 200),
-      y: Math.min(event.clientY, window.innerHeight - 96),
+      x: Math.min(x, window.innerWidth - 200),
+      y: Math.min(y, window.innerHeight - 160),
       sectionId,
     };
+  }
+
+  function focusSectionHeader(sectionId: string): void {
+    void tick().then(() => {
+      const header = [...document.querySelectorAll<HTMLElement>('[data-section-header]')].find(
+        (element) => element.dataset.sectionId === sectionId,
+      );
+      header?.focus();
+    });
+  }
+
+  /** 关闭分组菜单；restoreFocus 时焦点回到该分组标题（键盘用户不丢位置）。 */
+  function closeSectionMenu(restoreFocus = true): void {
+    if (sectionMenu === null) return;
+    const { sectionId } = sectionMenu;
+    sectionMenu = null;
+    if (restoreFocus) focusSectionHeader(sectionId);
+  }
+
+  function onSectionMenuKeydown(event: KeyboardEvent): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const menu = event.currentTarget;
+    if (!(menu instanceof HTMLElement)) return;
+    event.preventDefault();
+    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')];
+    if (items.length === 0) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowDown'
+            ? (index + 1) % items.length
+            : (index - 1 + items.length) % items.length;
+    items[next]?.focus();
+  }
+
+  const sectionMenuUp = $derived(
+    sectionMenu === null
+      ? undefined
+      : sectionStepTarget(sidebarSections.state.order, sectionMenu.sectionId, 'up'),
+  );
+  const sectionMenuDown = $derived(
+    sectionMenu === null
+      ? undefined
+      : sectionStepTarget(sidebarSections.state.order, sectionMenu.sectionId, 'down'),
+  );
+
+  /** 分组右键菜单「上移 / 下移」：拖拽排序的键盘替代。 */
+  function moveSectionStep(direction: 'up' | 'down'): void {
+    if (!sectionMenu) return;
+    const { sectionId } = sectionMenu;
+    const beforeId = sectionStepTarget(sidebarSections.state.order, sectionId, direction);
+    if (beforeId === undefined) return;
+    sidebarSections.move(sectionId, beforeId);
+    closeSectionMenu();
   }
 
   function startRenameFromMenu(): void {
@@ -375,7 +450,8 @@
     renameDraft = sectionLabel(sectionMenu.sectionId);
     renameCancelled = false;
     renamingSectionId = sectionMenu.sectionId;
-    sectionMenu = null;
+    // 焦点交给行内改名输入框（见上面的 renamingSectionId effect）。
+    closeSectionMenu(false);
   }
 
   function commitRename(sectionId: string): void {
@@ -394,7 +470,7 @@
   function deleteSectionFromMenu(): void {
     if (!sectionMenu) return;
     sidebarSections.remove(sectionMenu.sectionId);
-    sectionMenu = null;
+    closeSectionMenu(false);
     toast.success(t('sidebar.sectionDeleted'));
   }
 
@@ -506,12 +582,16 @@
   onclick: () => void,
   testid: string,
   destructive = false,
+  disabled = false,
 )}
   {@const Icon = icon as unknown as Component<{ class?: string }>}
   <button
     type="button"
+    role="menuitem"
     class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent
+      focus-visible:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50
       {destructive ? 'text-destructive hover:text-destructive' : ''}"
+    {disabled}
     {onclick}
     data-testid={testid}
   >
@@ -561,7 +641,7 @@
       <Sidebar.MenuButton
         class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
           dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
-        isActive={chat.currentId === conversation.id}
+        isActive={chat.activeId === conversation.id}
         onclick={() => void selectConversation(conversation.id)}
         data-testid={`conversation-item-${conversation.id}`}
       >
@@ -673,7 +753,7 @@
                     class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
                       dark:data-active:bg-[oklch(0.16_0_0)]"
-                    data-active={chat.currentId === conversation.id ? 'true' : undefined}
+                    data-active={chat.activeId === conversation.id ? 'true' : undefined}
                     onclick={() => void selectConversation(conversation.id)}
                     oncontextmenu={(event) => openContextMenu(event, conversation.id)}
                     data-testid={`conversation-item-${conversation.id}`}
@@ -1058,12 +1138,17 @@
   <div
     class="app-no-drag fixed z-50 w-52 rounded-xl border bg-popover p-1 shadow-xl"
     style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+    role="menu"
+    aria-label={contextConversation ? nameOf(contextConversation) : undefined}
     use:mountAboveDragRegion
     data-testid={`conversation-context-${contextMenu.conversationId}`}
   >
     {#if !contextIsButler}
       <button
         type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={moveMenu !== null}
         class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-accent
           {moveMenu !== null ? 'bg-accent' : ''}"
         onpointerenter={(event) => {
@@ -1175,21 +1260,43 @@
     type="button"
     class="app-no-drag fixed inset-0 z-40 cursor-default"
     aria-label={t('common.close')}
-    onclick={() => (sectionMenu = null)}
+    tabindex="-1"
+    onclick={() => closeSectionMenu(false)}
     use:mountAboveDragRegion
     oncontextmenu={(event) => {
       event.preventDefault();
-      sectionMenu = null;
+      closeSectionMenu(false);
     }}
     data-testid="section-context-backdrop"
   ></button>
   <div
+    bind:this={sectionMenuEl}
     class="app-no-drag fixed z-50 w-44 rounded-xl border bg-popover p-1 shadow-xl"
     style="left: {sectionMenu.x}px; top: {sectionMenu.y}px;"
+    role="menu"
+    tabindex="-1"
+    aria-label={sectionLabel(sectionMenu.sectionId)}
+    onkeydown={onSectionMenuKeydown}
     use:mountAboveDragRegion
     data-testid={`section-context-${sectionMenu.sectionId}`}
   >
     {@render contextItem(Pencil, t('sidebar.sectionRename'), startRenameFromMenu, 'section-rename')}
+    {@render contextItem(
+      ArrowUp,
+      t('sidebar.sectionMoveUp'),
+      () => moveSectionStep('up'),
+      'section-move-up',
+      false,
+      sectionMenuUp === undefined,
+    )}
+    {@render contextItem(
+      ArrowDown,
+      t('sidebar.sectionMoveDown'),
+      () => moveSectionStep('down'),
+      'section-move-down',
+      false,
+      sectionMenuDown === undefined,
+    )}
     {@render contextItem(
       Trash2,
       t('sidebar.sectionDelete'),

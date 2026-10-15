@@ -3,13 +3,17 @@
   import ChatView from './ChatView.svelte';
   import RightPanel from '$lib/features/right-panel/RightPanel.svelte';
   import { shell } from '$lib/stores/shell.svelte';
+  import { chat } from '$lib/stores/chat.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
 
   // 右栏的开合由聊天区顶部的 Bot 药丸接管（收起时药丸内出现「>」提示）。
   // 并排右栏放不下时（窗口窄于 聊天区最小宽 + 右栏最小宽 + 侧栏，sidebar-layout.ts）一律不
   // 渲染：Bot 药丸改开全屏 Bot 详情覆盖层（BotDetailOverlay），聊天区永远留得出可用宽度。
-  const rightCollapsed = $derived(shell.rightPanelCollapsed || !sidebarLayout.panelFits);
+  // 组群输入期间主区域不是任何会话：不挂上一会话的右栏（收起偏好不变）。
+  const rightCollapsed = $derived(
+    shell.rightPanelCollapsed || !sidebarLayout.panelFits || chat.composingGroup,
+  );
   // 窄屏（33-narrow-layout）：单栏，右栏不常驻——Bot 详情经顶部药丸以全屏
   // 覆盖层呈现（NarrowShell 渲染，不走这里的 Resizable 分栏）。
   const narrow = $derived(narrowLayout.narrow);

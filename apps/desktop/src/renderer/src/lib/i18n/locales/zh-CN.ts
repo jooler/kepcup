@@ -6,9 +6,7 @@ export const zhCN = {
   'shell.coreFailed': '核心服务未能启动',
   'shell.coreFailedHint': '连续多次启动失败已停止重试。请查看日志目录了解原因。',
   'shell.logsHint': '日志目录：{path}',
-  'shell.rightPanelShow': '显示右栏',
   'shell.rightPanelHide': '收起右栏',
-  'sidebar.header': '对话',
   'sidebar.chatsEmpty': '还没有对话，点右上角「+」开始',
   'sidebar.runningSuffix': '正在执行',
   'sidebar.resizeHandle': '拖拽调节宽度，双击复位',
@@ -28,7 +26,6 @@ export const zhCN = {
   'chats.loadEarlier': '加载更早消息',
   'chats.recalled': '消息已撤回',
   'chats.edited': '已编辑',
-  'chats.systemInterrupted': '上次执行因应用退出而中断',
   'chats.deleteConversation': '删除对话',
   'chats.deleteConversationTitle': '删除与 {name} 的对话',
   'chats.deleteConversationBody': '对话的消息、附件与执行记录将一并删除，此操作不可恢复。',
@@ -37,7 +34,6 @@ export const zhCN = {
   'chats.cancelEdit': '取消',
   'chats.retry': '重试',
   'chats.runFailed': '执行失败：{reason}',
-  'chats.runCancelled': '已取消',
   'chats.setupCustomPlaceholder': '或输入你的回答…',
   'chats.setupCustomSubmit': '提交回答',
   'chats.setupAnswerFailed': '回答提交失败，请重试',
@@ -164,7 +160,6 @@ export const zhCN = {
   'sensors.testFailed': '无法打开设备：{reason}',
   'attachments.openPreview': '查看 {name}',
   'attachments.playVideo': '播放 {name}',
-  'attachments.download': '下载',
   'lightbox.close': '关闭',
   'lightbox.download': '下载',
   'lightbox.zoomIn': '放大',
@@ -232,7 +227,6 @@ export const zhCN = {
   'settings.capability.asr': '语音识别',
   'settings.capability.video': '视频生成',
   'settings.modelPlaceholder': '选择模型（provider/模型 id）',
-  'settings.modelUnavailable': '{ref}（该厂商未配置 key）',
   'settings.concurrency': '厂商并发上限',
   'settings.providersSection': '模型厂商与接口',
   'settings.providerKey': 'API Key',
@@ -241,11 +235,9 @@ export const zhCN = {
   'settings.save': '保存',
   'settings.remove': '移除',
   // --- MCP（docs/design/23-mcp-and-subagent.md D65）-------------------------
-  // D73 §5.9 / 扩展中心：自定义 MCP 服务器在「设置 → 开发者模式」，已安装 server 的管理在「扩展中心 → MCP」。
+  // D73 §5.9 / 扩展中心：自定义 MCP 服务器的新建与管理都在「扩展中心 → MCP」。
   'settings.navApps': '应用',
   'settings.mcpTitle': 'MCP 服务器',
-  'settings.mcpHint':
-    '配置 Model Context Protocol 工具服务器（stdio 命令、Streamable HTTP 或旧版 SSE 端点）。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
   'settings.mcpAdd': '添加服务器',
   'settings.mcpEdit': '编辑',
   'settings.mcpCancel': '取消',
@@ -287,7 +279,6 @@ export const zhCN = {
   'settings.mcpToolMissing': '已不在工具列表中（配置保留）',
   // D73 §5.5：自定义 server「测试 → 保存」后批准测试时看到的工具；批准前不暴露给 Bot。
   'settings.mcpToolsPending': '{count} 个工具待批准',
-  'settings.mcpToolsTested': '测试到的工具',
   'settings.mcpToolsApprove': '批准这些工具',
   'settings.mcpToolsSaveApprove': '保存并批准工具',
   'settings.mcpToolsApproveHint':
@@ -329,14 +320,7 @@ export const zhCN = {
   'settings.mcpbInstalled': '已安装「{name}」。请在列表里点「测试」查看并批准它的工具。',
   'settings.mcpbInstallFailed': '安装失败：{reason}',
   'settings.mcpbCancel': '取消',
-  // D73 P2 §6.6 开发者模式
-  'settings.devMode': '开发者模式',
-  'settings.navDeveloper': '开发者模式',
-  'settings.devModeOffHint':
-    '开启后可自行添加 MCP 服务器（命令或网址）、配置手填 OAuth 客户端，并查看原始工具定义与授权日志。普通使用不需要开启；常用应用请到「扩展中心 → 连接」添加，已安装的 MCP 服务器在「扩展中心 → MCP」管理。',
-  'settings.devModeOpenMcp': '打开 扩展中心 → MCP',
-  'settings.devModeHint':
-    '开启后，每个自定义服务器会显示原始工具定义（含注解）、授权流程事件日志，并可手动刷新工具。日志不含令牌。',
+  // D73 P2 §6.6 MCP 调试（原始工具定义 / 授权流程日志 / 手动刷新），扩展中心 MCP 里始终可用
   'settings.devModeToolsTitle': '原始工具定义',
   'settings.devModeLoadTools': '查看原始定义',
   'settings.devModeToolsEmpty': '没有工具。',
@@ -362,7 +346,6 @@ export const zhCN = {
   'settings.testFailed': '连接失败：{reason}',
   'settings.saveBlockedAfterFailedTest': '上次「测试连接」未通过：请修正后重新测试，通过后再保存。',
   'settings.customProviders': '自定义接口（OpenAI 兼容 / Ollama）',
-  'settings.addCustom': '新增自定义接口',
   'settings.customId': '接口 id（英文）',
   'settings.customName': '名称',
   'settings.customBaseUrl': 'Base URL',
@@ -397,7 +380,6 @@ export const zhCN = {
   'settings.deleteVendor': '删除厂商',
   'contacts.title': '通讯录',
   'contacts.empty': '还没有 Bot，点击上方「新建 Bot」开始',
-  'contacts.create': '新建 Bot',
   'contacts.openChat': '发消息',
   'contacts.delete': '删除 Bot',
   'contacts.name': '名字',
@@ -474,7 +456,6 @@ export const zhCN = {
   'rightPanel.otherSection': '其它',
   'rightPanel.removeBot': '移除 Bot',
   'rightPanel.butlerUndeletable': '管家是你的固定入口，不能删除；可以改名、换头像或调整人设。',
-  'rightPanel.empty': '暂无信息',
   'rightPanel.tabProfile': '配置',
   'rightPanel.tabMemory': '记忆',
   'rightPanel.tabSkills': 'Skills',
@@ -513,14 +494,12 @@ export const zhCN = {
   'approvals.command': '命令',
   'approvals.cwd': '工作目录',
   'approvals.sensitiveWarning': '该路径属于敏感位置（可能包含凭据），请谨慎授权。',
-  'approvals.noRollbackNote': '命令对该目录的改动不保证可以回退。',
   'approvals.unsandboxedRisk': '该命令将在沙箱外以本机权限执行，改动不保证可以回退。',
   'approvals.approve': '批准',
   'approvals.deny': '拒绝',
   'approvals.once': '仅这一次',
   'approvals.conversation': '本对话内一直允许',
   'approvals.durationHint': '按 1 选择「仅这一次」，按 2 选择「本对话内一直允许」',
-  'approvals.pending': '等待你的确认',
   'approvals.foldedApprovedOnce': '已允许（仅这一次）',
   'approvals.foldedApprovedConversation': '已允许（本对话内一直允许）',
   'approvals.foldedAutoApproved': '已自动批准（无人值守模式）',
@@ -595,14 +574,12 @@ export const zhCN = {
   'projects.manage': '权限设置…',
   'projects.removeCurrent': '移除当前目录',
   'projects.switchBlocked': '有 Bot 正在执行，无法切换项目',
-  'projects.selectFailed': '无法选择该目录',
   'projects.settingsTitle': '权限设置',
   'projects.settingsDenyRead': '禁止读取（glob，每行一条）',
   'projects.settingsDenyWrite': '禁止写入（glob，每行一条）',
   'projects.settingsPorts': '允许的本机端口范围（可选，如 3000-3010，每行一条）',
   'projects.settingsPortsHint': '留空表示不限制；当前沙箱版本不强制端口范围，仅记录配置。',
   'projects.save': '保存',
-  'projects.saved': '已保存',
   'projects.removeBody':
     '将删除项目的改动记录与检查点，并取消所有对话的绑定。project 目录中的文件不会被改动。此操作不可恢复。',
   'projects.removeConfirm': '移除',
@@ -611,15 +588,11 @@ export const zhCN = {
   'projects.leaseRevoked': '已收回租约',
   'projects.leaseNothing': '当前没有可收回的租约',
   'changes.title': '本次执行的改动',
-  'changes.empty': '没有文件改动。',
   'changes.added': '新增',
   'changes.modified': '修改',
   'changes.deleted': '删除',
   'changes.viewDiff': '查看 diff',
   'changes.revert': '整次回退',
-  'changes.revertConfirmTitle': '整次回退这次执行的改动',
-  'changes.revertConfirmBody':
-    '将把 {count} 个文件恢复到执行前的状态。此操作会先尝试收回写入租约。',
   'changes.reverted': '已整次回退',
   'changes.revertConflictTitle': '回退存在冲突',
   'changes.revertConflictBody':
@@ -627,13 +600,7 @@ export const zhCN = {
   'changes.revertForce': '强制回退',
   'changes.diffTitle': '改动对比（{runId}）',
   'changes.diffUnavailable': '该检查点已超出保留期，无法显示 diff。',
-  'changes.loadFailed': '加载改动信息失败',
-  'sidebar.newGroup': '发起群聊',
-  'group.createTitle': '发起群聊',
-  'group.nameLabel': '群名称',
   'group.namePlaceholder': '给群起个名字',
-  'group.pickMembers': '选择成员（至少 2 个）',
-  'group.create': '创建群聊',
   'group.createFailed': '创建群聊失败',
   'group.settings': '群设置',
   'group.settingsTitle': '群设置',
@@ -643,12 +610,11 @@ export const zhCN = {
   'group.addMembersButton': '添加',
   'group.removeMember': '移出群聊',
   'group.deleteGroup': '删除群聊',
-  'group.deleteTitle': '删除群聊 {name}',
   'group.deleteBody': '群聊的消息、附件与执行记录将一并删除，此操作不可恢复。',
   'group.memberCount': '{count} 个成员',
   'group.addMember': '添加成员',
   'group.searchBots': '搜索 Bot',
-  'group.infoTitle': '群信息',
+  'group.noAddableBots': '没有可添加的 Bot',
   'group.membersTitle': '成员名片',
   'group.grantsTitle': '各成员的授权',
   'group.grantsEmpty': '当前群没有有效授权。',
@@ -668,6 +634,9 @@ export const zhCN = {
   'groupCompose.needMembers': '至少添加 2 个成员，再直接回车创建群聊',
   'groupCompose.remove': '移除 {name}',
   'groupCompose.cancel': '取消新建群聊',
+  'groupCompose.inputLabel': '群成员',
+  'groupCompose.listLabel': '可添加的 Bot',
+  'groupCompose.alreadyAdded': '「{name}」已在成员里',
   'turn.triaging': '正在确认由谁回复…',
   'turn.running': '{current} 正在回复，{queue} 排队中',
   'turn.single': '{current} 正在回复',
@@ -783,10 +752,8 @@ export const zhCN = {
   'memory.status.void': '已作废',
   'memory.privateBadge': '只属于该 Bot',
   'memory.privateToggle': '只属于该 Bot',
-  'memory.privateHint': '勾选后这条记忆不会进入共享用户画像。',
   'memory.viewEvidence': '查看证据',
   'memory.evidenceDeleted': '来源对话已删除',
-  'memory.evidenceMissing': '证据消息不存在或已被删除',
   'memory.deleteTitle': '删除这条记忆？',
   'memory.deleteBody': '删除后 Bot 不再记得这条内容（状态变为已撤回），此操作不可恢复。',
   'memory.saved': '已保存',
@@ -810,7 +777,6 @@ export const zhCN = {
   'settings.profileContributedUnknown': '贡献：未知来源',
   'settings.profileSourceExplicit': '用户明确说过',
   'settings.profileSourceInferred': '推断',
-  'settings.profileEditTitle': '编辑画像条目',
   'settings.profileCategoryLabel': '分类',
   'settings.profileDeleteTitle': '删除这条画像？',
   'settings.profileDeleteBody':
@@ -898,7 +864,6 @@ export const zhCN = {
   'approvals.appIrreversible':
     '这是不可撤销的操作：执行后无法撤回，只能「仅这一次」批准。请核对下方完整参数。',
   'approvals.durationBot': '对该 Bot 总是允许',
-  'approvals.durationOnlyOnce': '该操作不可撤销，每次都需要确认',
   'approvals.foldedApprovedBot': '已允许（对该 Bot 总是允许）',
   // W4（D78）：收件方完整展示、执行回执、去重提示
   'approvals.mcpRecipient': '收件方',
@@ -1056,14 +1021,6 @@ export const zhCN = {
   'task.injectNotDelivered': '（未送达：任务已在收尾，需要时可让 Bot 接着重做）',
   'task.cancelledBecause': '已取消：{reason}',
   'task.cancelledPlain': '已取消',
-  'task.changesProject':
-    '它已产生的改动：新增 {added}、修改 {modified}、删除 {deleted}。可以整次回退。',
-  'task.changesReverted': '它产生的改动已整次回退。',
-  'task.changesWorkspace':
-    '它在 Bot 工作区里做的改动不会自动撤销；工作区没有检查点，无法整次回退。',
-  'task.changesWorkspaceFiles': '它用文件工具写过的文件（命令造成的改动不在此列）：',
-  'task.changesMore': '另有 {count} 个文件',
-  'task.changesNone': '没有产生文件改动。',
   'task.setupHint': '缺少设置：在下方完成设置后会自动重试这个任务。',
   'task.retried': '已重新执行（见下方的新任务卡）',
   'task.retry': '重试',
@@ -1089,8 +1046,6 @@ export const zhCN = {
   'task.effect.pending': '等待审批（未执行）',
   'task.interruptedByRevoke': '已中断 {count} 个进行中的任务',
   'task.cancel': '取消任务',
-  'task.revertConflicts':
-    '有 {count} 个文件在任务之后又被修改，未回退；可在改动摘要卡上查看并强制回退',
   'task.questionFrom': '任务「{title}」需要你决定',
   'task.questionFromBot': '{name} 的任务需要你决定',
   'task.questionExpired': '任务已结束，这个问题不再需要回答。',
@@ -1181,7 +1136,6 @@ export const zhCN = {
   'extensionCenter.connections.back': '返回应用列表',
   'extensionCenter.mcp.hint':
     '添加与管理 MCP 工具服务器（命令、网址或 .mcpb 本地包），并可配置手填 OAuth 客户端。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。常用应用请到「连接」分组添加。',
-  'extensionCenter.mcp.targetLocked': '命令、参数与地址当前不可修改。',
   'extensionCenter.mcp.empty':
     '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
@@ -1228,7 +1182,6 @@ export const zhCN = {
   'schedules.emptyConversation': '当前对话没有进行中的定时任务。',
   'schedules.emptyAll': '没有任何进行中的定时任务。',
   'schedules.nextFire': '下次触发：{time}',
-  'schedules.cron': '周期「{expr}」({tz})',
   'schedules.deferred': '已推迟：{reason}',
   'schedules.commitment': '承诺',
   'schedules.commitmentHint': '由到期承诺自动创建，触发时附带承诺内容',
@@ -1382,7 +1335,6 @@ export const zhCN = {
   'wizard.sharedVmNote': '已知限制：同一台机器上的所有 WSL2 发行版共享一个虚拟机。',
   'wizard.helpLink': '查看 WSL 帮助文档',
   'wizard.skip': '跳过，保持逐条确认模式',
-  'wizard.skipHint': '跳过后命令保持逐条确认模式；可随时回到设置页重新开始准备。',
   'wizard.enhancedIntro': '声明“需要增强沙箱”的技能需要这一级后端；未安装时这些技能标记为不兼容。',
   'prompt.title': '完成沙箱准备',
   'prompt.body':
@@ -1510,7 +1462,6 @@ export const zhCN = {
   'sidebar.startChatPlaceholder': '搜索 Bot…',
   'sidebar.createBot': '新建 Bot',
   'sidebar.createGroup': '新建群聊',
-  'sidebar.botsEmpty': '还没有 Bot',
   'sidebar.renameBot': '重命名 Bot',
   'sidebar.copyConversationId': '复制会话 ID',
   'sidebar.copiedConversationId': '已复制会话 ID',
@@ -1521,6 +1472,8 @@ export const zhCN = {
   'sidebar.createSectionConfirm': '创建',
   'sidebar.sectionRename': '重命名分组',
   'sidebar.sectionDelete': '删除分组',
+  'sidebar.sectionMoveUp': '上移',
+  'sidebar.sectionMoveDown': '下移',
   'sidebar.sectionDeleted': '已删除分组，其中的对话回到了「未指定」',
   'chatHeader.expandPanel': '展开 Bot 面板',
   'chatHeader.collapsePanel': '收起 Bot 面板',
@@ -1565,10 +1518,6 @@ export const zhCN = {
   'settings.themeDark': '深色',
   'settings.language': '语言',
   'settings.languageHint': '更多语言支持即将推出',
-  'settings.sectionModels': '默认模型与厂商',
-  'contacts.createHint': '创建后 Bot 会主动发起提问，根据你的回答完善它自己的人设。',
-  'setup.systemEvent': '新 Bot 初始化：{name} 正在向你了解它应该成为什么样的助手。',
-  'setup.interviewBadge': '初始化中',
 
   // --- 对话内设置引导（docs/design/18-inline-setup.md） ---------------------------
   'setupCard.mainModelTitle': '先选择模型，对话才能继续',
@@ -1632,7 +1581,6 @@ export const zhCN = {
   'apps.doneHint': '已连接 {name}。',
   'apps.cancelledHint': '已取消连接。',
   'apps.clientRequiredTitle': '需要你提供 OAuth 客户端',
-  'apps.clientUnavailable': '该应用需要预注册客户端，暂不可用。',
   'apps.clientRequiredHint':
     '这个服务既不支持客户端元数据文档，也不支持动态注册。请在该服务的开发者后台创建 OAuth 应用（类型选桌面 / 原生应用），把下方所有回调地址登记为 Redirect URI，再把得到的 client id（如有 client secret 一并）填在这里。',
   'apps.issuer': '授权服务器（issuer）',
@@ -1721,7 +1669,6 @@ export const zhCN = {
   'settings.mcpAuthOauthHint':
     '通过浏览器登录授权，令牌由 KepCup 加密保存并自动刷新，不会出现在配置里。需要先保存服务器，再点「连接」。',
   'settings.mcpAuthOauthSaveFirst': '请先保存服务器，保存后即可在这里连接。',
-  'settings.mcpAuthOauthHttpOnly': 'OAuth 仅支持 Streamable HTTP 类型。',
   'settings.mcpOauthSection': 'OAuth 连接',
   // --- 设置「应用」分区（已连接账号管理）与扩展中心「连接」分组共用 ------------------
   'apps.pointer.text': '这里只管理已连接的账号。要连接新的应用，请到「扩展中心 → 连接」。',
@@ -1742,7 +1689,6 @@ export const zhCN = {
   'apps.catalog.unavailable': '暂不可用',
   'apps.catalog.connectedAccounts': '已连接 {count} 个账号',
   'apps.catalog.close': '收起',
-  'apps.catalog.website': '官网',
   'apps.catalog.category.productivity': '效率',
   'apps.catalog.category.development': '开发',
   'apps.catalog.category.project': '项目管理',
@@ -1780,7 +1726,6 @@ export const zhCN = {
   'apps.local.card.expiresIn': '{minutes} 分钟内有效',
   'apps.local.card.expired': '这个添加请求已过期，无法再添加。请让 Bot 重新发起。',
   'apps.local.card.added': '已添加「{name}」。接下来连接账号，完成后对话会自动继续。',
-  'apps.local.card.rejected': '已取消，没有添加。',
   'apps.local.error.expired': '这个添加请求已过期或已处理（重启后也会失效），请让 Bot 重新发起。',
   'apps.local.error.ackRequired':
     '这个服务的授权服务器与它自己的域名不是同一个站点，需要先勾选「我了解」才能添加。',
@@ -1788,8 +1733,6 @@ export const zhCN = {
   'apps.local.card.crossSiteBody':
     '服务域名是 {mcp}，但它使用的登录授权服务器是 {issuer}。如果你并不知道它们有关联，这可能是借用别家的登录来骗取授权。',
   'apps.local.card.crossSiteAck': '我了解授权服务器属于另一个站点，仍要添加',
-  'apps.local.error.developerMode':
-    '添加本机连接失败：当前环境不允许（开发者模式相关限制已移除，若仍看到此提示请重启应用）。',
   'apps.local.error.rejected': '没有通过校验，未添加',
   'apps.local.section.title': '本机自建',
   'apps.local.section.hint':
@@ -1891,14 +1834,11 @@ export const zhCN = {
   'chats.errorCode.APP_CONNECTION_NOT_FOUND': '找不到这个连接',
   'chats.errorCode.LOCAL_CONNECTOR_REJECTED': '本机连接未通过校验',
   'chats.errorCode.LOCAL_CONNECTOR_EXPIRED': '这个添加请求已过期或已处理',
-  'chats.errorCode.DEVELOPER_MODE_REQUIRED': '需要先打开开发者模式',
 
   // --- 全局搜索（侧栏搜索按钮 / Cmd+K 弹框） -------------------------------------
   'search.open': '搜索',
   'search.placeholder': '搜索',
   'search.groupBots': 'Bots',
-  'search.groupConversations': '对话',
-  'search.groupSettings': '设置',
   'search.quickSettings': '高频设置',
   'search.settingsEntry': '设置',
   'search.noResults': '没有匹配的结果',
@@ -1997,12 +1937,10 @@ export const zhCN = {
   'agents.installSystem': '将使用系统中已安装的官方 CLI：{path}',
   'agents.installConfirm': '安装并启用',
   'agents.cancel': '取消',
-  'agents.loginTitle': '登录 {name}',
   'agents.loginHint':
     '登录在厂商官方流程中完成（通常会打开浏览器授权）。KepCup 只运行官方登录命令并显示其输出，不读取、不保存任何凭据。',
   'agents.loginLoading': '正在读取登录方式…',
   'agents.loginNoMethods': '该智能体没有可由 KepCup 发起的登录方式。',
-  'agents.loginStart': '开始登录',
   'agents.loginRunning': '登录进行中…',
   'agents.loginDone': '登录成功',
   'agents.loginFailed': '登录失败：{error}',
@@ -2077,9 +2015,6 @@ export const zhCN = {
   'agents.capabilities.settings.change.description':
     '开启后可用 settings_change 修改设置或在对话里出设置卡；仍受宿主档位裁定约束，默认关闭',
   'agents.suggestEnable': 'Bot 建议启用它',
-  'agents.appsPackNotice.title': '连接应用的使用范围',
-  'agents.appsPackNotice.body':
-    '连接应用的工具在 KepCup 里执行，会经过审批与风险策略；但该智能体自带的 shell、网络请求与它自己的 MCP 配置不受 KepCup 管控——它读取到应用里的内容后，可能经这些渠道把内容发往别处。仅在信任该智能体时启用。',
   'contacts.mainModelOrAgent': '主模型 / 任务智能体（留空用默认模型）',
   'contacts.agentTaskEngineHint':
     '选智能体时，由它执行该 Bot 派出的任务（对话本身仍由内置模型进行）；没有内置模型时对话会降级：新消息直接转给进行中的任务或派成新任务，结果原文转发。',

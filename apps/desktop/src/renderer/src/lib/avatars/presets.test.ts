@@ -2,87 +2,34 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   AVATAR_COLORS,
-  AVATAR_FOREGROUND_DARK,
   AVATAR_FOREGROUND_LIGHT,
-  AVATAR_MIN_CONTRAST,
-  avatarColorForeground,
+  AVATAR_SHAPES,
   avatarOnFillForeground,
-  contrastRatio,
-  relativeLuminance,
+  parsePresetAvatar,
+  presetForName,
 } from './presets';
 
 /**
- * avatarColorForeground 按对比度在白 / 黑之间选择：图标 ≥ 3:1（WCAG 1.4.11），
- * 文字 ≥ 4.5:1（1.4.3）。预置眼睛、气泡文字、按键图标走 avatarOnFillForeground：
- * 第一种「黑白」取对比变量，其余预置色一律白。
+ * 预置眼睛、气泡文字、按键图标走 avatarOnFillForeground：第一种「黑白」取对比
+ * 变量，其余预置色一律白（产品取舍）。
  */
 
 const fixedColors = AVATAR_COLORS.filter((color) => color.contrast === undefined);
 const themedColors = AVATAR_COLORS.filter((color) => color.contrast !== undefined);
 
-describe('contrastRatio', () => {
-  it('matches the WCAG reference values', () => {
-    expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 5);
-    expect(contrastRatio('#ffffff', '#ffffff')).toBeCloseTo(1, 5);
-    // WCAG's classic example: #777777 on white ≈ 4.48:1.
-    expect(contrastRatio('#777777', '#ffffff')).toBeCloseTo(4.48, 2);
-    expect(relativeLuminance('var(--x)')).toBeNull();
-    expect(contrastRatio('var(--x)', '#ffffff')).toBeNull();
-  });
-});
-
-describe('avatarColorForeground', () => {
-  it('every fixed preset is a computable #rrggbb colour', () => {
-    expect(fixedColors.length).toBeGreaterThan(0);
-    for (const color of fixedColors) expect(color.hex).toMatch(/^#[0-9a-f]{6}$/i);
-  });
-
-  it.each(fixedColors.map((color) => [color.id, color] as const))(
-    '%s: icon ≥ 3:1 and text ≥ 4.5:1',
-    (_id, color) => {
-      const icon = avatarColorForeground(color, 'graphic');
-      const text = avatarColorForeground(color, 'text');
-      expect([AVATAR_FOREGROUND_LIGHT, AVATAR_FOREGROUND_DARK]).toContain(icon);
-      expect(contrastRatio(color.hex, icon)!).toBeGreaterThanOrEqual(AVATAR_MIN_CONTRAST.graphic);
-      expect(contrastRatio(color.hex, text)!).toBeGreaterThanOrEqual(AVATAR_MIN_CONTRAST.text);
-      // The default use is the icon one.
-      expect(avatarColorForeground(color)).toBe(icon);
-    },
-  );
-
-  it('keeps the white preset style wherever white is good enough, dark only where it is not', () => {
-    for (const color of fixedColors) {
-      for (const use of ['graphic', 'text'] as const) {
-        const whiteOk =
-          contrastRatio(color.hex, AVATAR_FOREGROUND_LIGHT)! >= AVATAR_MIN_CONTRAST[use];
-        expect(avatarColorForeground(color, use)).toBe(
-          whiteOk ? AVATAR_FOREGROUND_LIGHT : AVATAR_FOREGROUND_DARK,
-        );
-      }
-    }
-    // The reported failures (white ≈ 2.1:1 on amber, 2.6:1 on gray, 2.9:1 on teal) flip.
-    const byId = new Map(AVATAR_COLORS.map((color) => [color.id, color]));
-    for (const id of ['amber', 'gray', 'teal']) {
-      expect(avatarColorForeground(byId.get(id)!, 'graphic')).toBe(AVATAR_FOREGROUND_DARK);
-    }
-  });
-
-  it('is deterministic: depends on the colour value only', () => {
-    for (const color of AVATAR_COLORS) {
-      const copy = { ...color, id: `${color.id}-copy`, label: 'x' };
-      for (const use of ['graphic', 'text'] as const) {
-        expect(avatarColorForeground(copy, use)).toBe(avatarColorForeground(color, use));
-        expect(avatarColorForeground(color, use)).toBe(avatarColorForeground(color, use));
-      }
-    }
-  });
-
-  it('themed (var) presets use their paired contrast variable, which passes in both themes', () => {
+describe('avatarOnFillForeground', () => {
+  it('inverts the themed mono colour and keeps every other preset white', () => {
     expect(themedColors.map((color) => color.id)).toEqual(['mono']);
     for (const color of themedColors) {
-      expect(avatarColorForeground(color, 'graphic')).toBe(color.contrast);
-      expect(avatarColorForeground(color, 'text')).toBe(color.contrast);
+      expect(avatarOnFillForeground(color)).toBe(color.contrast);
     }
+    for (const color of fixedColors) {
+      expect(color.hex).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(avatarOnFillForeground(color)).toBe(AVATAR_FOREGROUND_LIGHT);
+    }
+  });
+
+  it('the themed mono pair passes 4.5:1 in both themes (app.css)', () => {
     // app.css defines both variables as achromatic oklch per theme; for
     // chroma 0, relative luminance Y = L³.
     const css = readFileSync(new URL('../../app.css', import.meta.url), 'utf8');
@@ -96,65 +43,27 @@ describe('avatarColorForeground', () => {
       const yFill = Number(fill) ** 3;
       const yFg = Number(fg) ** 3;
       const ratio = (Math.max(yFill, yFg) + 0.05) / (Math.min(yFill, yFg) + 0.05);
-      expect(ratio).toBeGreaterThanOrEqual(AVATAR_MIN_CONTRAST.text);
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
 
-describe('avatarOnFillForeground', () => {
-  it('inverts the themed mono colour and keeps every other preset white', () => {
-    expect(themedColors.map((color) => color.id)).toEqual(['mono']);
-    for (const color of themedColors) {
-      expect(avatarOnFillForeground(color)).toBe(color.contrast);
-    }
-    for (const color of fixedColors) {
-      expect(avatarOnFillForeground(color)).toBe(AVATAR_FOREGROUND_LIGHT);
+describe('presetForName', () => {
+  it('is stable for the same name and always a valid preset', () => {
+    for (const name of ['阿甲', 'Alice', '', '🙂 emoji', 'a'.repeat(200)]) {
+      const avatar = presetForName(name);
+      expect(presetForName(name)).toBe(avatar);
+      const parsed = parsePresetAvatar(avatar);
+      expect(parsed).not.toBeNull();
+      expect(AVATAR_SHAPES).toContain(parsed!.shape);
+      expect(AVATAR_COLORS).toContain(parsed!.color);
     }
   });
-});
 
-describe('avatarColorForeground guaranteed floor (any #rrggbb, not just presets)', () => {
-  const hex = (r: number, g: number, b: number): string =>
-    `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
-  /** Every grey level plus an RGB grid (step 5): covers the whole luminance range. */
-  const samples: string[] = [];
-  for (let v = 0; v < 256; v++) samples.push(hex(v, v, v));
-  for (let r = 0; r < 256; r += 5) {
-    for (let g = 0; g < 256; g += 5) {
-      for (let b = 0; b < 256; b += 5) samples.push(hex(r, g, b));
-    }
-  }
-
-  /** Worst contrast the rule yields over all samples, and where. */
-  function worstCase(pick: (fill: string) => string): { ratio: number; fill: string } {
-    let worst = { ratio: Infinity, fill: '' };
-    for (const fill of samples) {
-      const ratio = contrastRatio(fill, pick(fill))!;
-      if (ratio < worst.ratio) worst = { ratio, fill };
-    }
-    return worst;
-  }
-
-  it.each(['graphic', 'text'] as const)(
-    '%s: worst case over the luminance range ≥ its minimum',
-    (use) => {
-      const worst = worstCase((fill) =>
-        avatarColorForeground({ id: 'x', label: 'x', hex: fill }, use),
-      );
-      expect(worst.ratio, `worst at ${worst.fill}`).toBeGreaterThanOrEqual(
-        AVATAR_MIN_CONTRAST[use],
-      );
-      // The floor is the threshold itself: white is kept down to exactly T.
-      expect(worst.ratio).toBeLessThan(AVATAR_MIN_CONTRAST[use] + 0.1);
-    },
-  );
-
-  it('pure black is needed: a near-black #0a0a0a would miss 4.5:1 for text right past the white switch', () => {
-    const t = AVATAR_MIN_CONTRAST.text;
-    const nearBlack = worstCase((fill) =>
-      contrastRatio(fill, AVATAR_FOREGROUND_LIGHT)! >= t ? AVATAR_FOREGROUND_LIGHT : '#0a0a0a',
-    );
-    expect(nearBlack.ratio).toBeLessThan(t);
-    expect(AVATAR_FOREGROUND_DARK).toBe('#000000');
+  it('spreads typical names over different presets', () => {
+    const names = ['阿甲', '阿乙', '阿丙', '阿丁', '研究员', '写手', 'Alice', 'Bob'];
+    const avatars = new Set(names.map(presetForName));
+    expect(avatars.size).toBeGreaterThanOrEqual(names.length - 1);
+    expect(presetForName('阿甲')).not.toBe(presetForName('阿乙'));
   });
 });
