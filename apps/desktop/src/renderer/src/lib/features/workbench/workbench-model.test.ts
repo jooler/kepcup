@@ -303,6 +303,7 @@ describe('parseDispatchText', () => {
       title: '整理竞品',
       notes: '看价格与渠道\n第二行',
       byButler: false,
+      lateNote: null,
     });
   });
   it('管家代安排的标注被剥掉并记为 byButler', () => {
@@ -310,12 +311,18 @@ describe('parseDispatchText', () => {
       title: '整理竞品',
       notes: '',
       byButler: true,
+      lateNote: null,
     });
     expect(parseDispatchText('【工作台】整理竞品（管家代你安排）\n说明').byButler).toBe(true);
   });
   it('容错：没有前缀 / 空文本', () => {
     expect(parseDispatchText('随便一句').title).toBe('随便一句');
-    expect(parseDispatchText('')).toEqual({ title: '', notes: '', byButler: false });
+    expect(parseDispatchText('')).toEqual({
+      title: '',
+      notes: '',
+      byButler: false,
+      lateNote: null,
+    });
   });
 });
 
@@ -417,5 +424,49 @@ describe('cutUtf16', () => {
     expect(draft.title.length).toBeLessThanOrEqual(120);
     expect(draft.title).toBe('😀'.repeat(60));
     expect(draft.notes.length).toBe(200);
+  });
+});
+
+describe('parseDispatchText：core 的实际格式', () => {
+  it('标题 + 空行 + 说明', () => {
+    expect(parseDispatchText('【工作台】整理竞品\n\n看价格与渠道')).toEqual({
+      title: '整理竞品',
+      notes: '看价格与渠道',
+      byButler: false,
+      lateNote: null,
+    });
+  });
+
+  it('管家来源：标注在第一行末尾', () => {
+    expect(parseDispatchText('【工作台】整理竞品（管家代你安排）\n\n看价格')).toEqual({
+      title: '整理竞品',
+      notes: '看价格',
+      byButler: true,
+      lateNote: null,
+    });
+  });
+
+  it('补发迟到：末尾那一行单独取出，不混进说明', () => {
+    const parsed = parseDispatchText(
+      '【工作台】整理竞品\n\n看价格\n\n（原定 昨天 09:00，延迟派发）',
+    );
+    expect(parsed.notes).toBe('看价格');
+    expect(parsed.lateNote).toBe('（原定 昨天 09:00，延迟派发）');
+  });
+
+  it('没有说明、只有迟到标注；三者同时出现', () => {
+    expect(parseDispatchText('【工作台】T\n\n（原定 今天 08:00，延迟派发）')).toEqual({
+      title: 'T',
+      notes: '',
+      byButler: false,
+      lateNote: '（原定 今天 08:00，延迟派发）',
+    });
+    const all = parseDispatchText(
+      '【工作台】T（管家代你安排）\n\n说明一\n说明二\n\n（原定 10月12日（周一）09:00，延迟派发）',
+    );
+    expect(all.byButler).toBe(true);
+    expect(all.title).toBe('T');
+    expect(all.notes).toBe('说明一\n说明二');
+    expect(all.lateNote).toContain('延迟派发');
   });
 });

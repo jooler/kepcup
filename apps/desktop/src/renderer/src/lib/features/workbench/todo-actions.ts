@@ -27,6 +27,8 @@ function codeOf(error: unknown): string | undefined {
  */
 export function rpcErrorText(error: unknown, fallback: string): string {
   const { code, message } = (error ?? {}) as { code?: string; message?: string };
+  if (code === 'CONVERSATION_READ_ONLY') return t('workbench.error.groupReadOnly');
+  if (code === 'NOT_FOUND') return t('workbench.error.targetGone');
   if (code === 'INVALID_INPUT' && typeof message === 'string' && message.trim().length > 0) {
     return message.trim();
   }

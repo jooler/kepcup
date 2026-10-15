@@ -395,23 +395,31 @@ const BUTLER_NOTE = '（管家代你安排）';
 export interface DispatchText {
   title: string;
   notes: string;
-  /** 事项由管家建的（正文带「（管家代你安排）」）。 */
+  /** 事项由管家建的（正文带「（管家代你安排）」）；界面优先用 `content.viaButler`，这里只作兜底。 */
   byButler: boolean;
+  /** 补发迟到时末尾的「（原定 X，延迟派发）」；单独成行显示，不混进说明。 */
+  lateNote: string | null;
 }
 
+// X 里可能带全角括号（「10月12日（周一）09:00」），所以不能排除括号，用非贪婪匹配到「延迟派发）」。
+const LATE_NOTE = /（原定[^\n]*?延迟派发）/;
+
 /**
- * 解析派发消息正文：`【工作台】标题` + 说明（+ 管家代安排的标注）。
+ * 解析派发消息正文（core 的实际格式）：
+ *   `【工作台】标题` + 空行 + 说明
+ *   管家来源：第一行是 `【工作台】标题（管家代你安排）`
+ *   补发迟到：末尾再空一行加 `（原定 X，延迟派发）`
  * 容错：没有前缀 / 没有说明 / 标注在任意行都能解析；群派发的 @ 提及不影响标题。
  */
 export function parseDispatchText(text: string): DispatchText {
   const byButler = text.includes(BUTLER_NOTE);
-  const cleaned = text
-    .split(BUTLER_NOTE)
-    .join('')
-    .replace(/^\s+|\s+$/g, '');
-  const [headLine = '', ...rest] = cleaned.split(/\r?\n/);
+  let body = text.split(BUTLER_NOTE).join('');
+  const late = LATE_NOTE.exec(body);
+  const lateNote = late === null ? null : late[0];
+  if (late !== null) body = body.replace(late[0], '');
+  const [headLine = '', ...rest] = body.replace(/^\s+|\s+$/g, '').split(/\r?\n/);
   let title = headLine.trim();
   if (title.startsWith(DISPATCH_PREFIX)) title = title.slice(DISPATCH_PREFIX.length).trim();
   const notes = rest.join('\n').trim();
-  return { title, notes, byButler };
+  return { title, notes, byButler, lateNote };
 }

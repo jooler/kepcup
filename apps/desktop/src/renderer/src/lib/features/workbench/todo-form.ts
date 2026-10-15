@@ -35,3 +35,11 @@ export function buildUpdateInput(
   }
   return Object.keys(input).length === 1 ? null : input;
 }
+
+/**
+ * `warnings` 里只是说明、不是问题的条目（排期落在免打扰时段：「不受免打扰限制，会照常发出」）：
+ * 界面用中性样式，不渲染成警示。
+ */
+export function isInfoWarning(warning: string): boolean {
+  return warning.includes('不受免打扰限制');
+}
