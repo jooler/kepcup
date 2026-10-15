@@ -608,19 +608,19 @@
   </button>
 {/snippet}
 
-<!-- 工作台入口图标：与会话 Bot 头像同一尺寸 class（size-11 = 44px），无圆形底。 -->
+<!-- 工作台入口图标：无圆形底。 -->
 {#snippet workbenchIcon()}
   <img
     src={workbenchIconLightUrl}
     alt=""
-    class="size-11 shrink-0 object-contain dark:hidden"
+    class="size-10 shrink-0 object-contain dark:hidden"
     draggable="false"
     aria-hidden="true"
   />
   <img
     src={workbenchIconDarkUrl}
     alt=""
-    class="hidden size-11 shrink-0 object-contain dark:block"
+    class="hidden size-10 shrink-0 object-contain dark:block"
     draggable="false"
     aria-hidden="true"
   />
@@ -786,7 +786,7 @@
               </Sidebar.MenuItem>
             </Sidebar.Menu>
           {:else}
-            <Sidebar.Menu class="mb-2">
+            <Sidebar.Menu>
               <Sidebar.MenuItem>
                 <Sidebar.MenuButton
                   class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
@@ -803,6 +803,7 @@
               </Sidebar.MenuItem>
             </Sidebar.Menu>
           {/if}
+          <Sidebar.Separator class="my-2" data-testid="workbench-nav-separator" />
         {/if}
         {#if chat.conversations.length === 0}
           {#if !collapsed}
