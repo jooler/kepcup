@@ -1,6 +1,6 @@
 /**
  * 预置 Bot 头像（参考 Grok Bot 的「形状 × 单色 + 白色眼睛」风格；
- * 填充色太浅时眼睛改深色，见 avatarColorForeground）。
+ * 第一种「黑白」眼睛随主题取反，其余预置色眼睛一律白，见 avatarOnFillForeground）。
  *
  * `bots.avatar` 的取值约定（identity.avatar / bots 列，core 原样存储）：
  * - `preset:{shapeId}:{colorId}` —— 纯渲染端 SVG，不落盘；
@@ -202,9 +202,8 @@ export interface AvatarPresetColor {
    */
   hex: string;
   /**
-   * 填充色之上、随主题取反的前景色。只给 var() 主题色（算不出对比度）：
-   * 用户气泡文字与输入框按键图标见 avatarOnFillForeground；眼睛仍按对比度
-   * 计算，见 avatarColorForeground。
+   * 填充色之上、随主题取反的前景色。只给 var() 主题色（算不出对比度）。
+   * 眼睛、用户气泡文字、输入框按键图标都走 avatarOnFillForeground。
    */
   contrast?: string;
 }
@@ -291,9 +290,10 @@ export function contrastRatio(a: string, b: string): number | null {
 }
 
 /**
- * 填充色之上的前景（眼睛、输入框发送 / 语音键图标用 `graphic`，用户气泡文字用
- * `text`）。动态色取其对比变量；固定色按对比度算：白色够该用途的最低对比度 T
- * 就用白（保持预置的白眼睛风格），否则用黑。白色不够 T 意味着填充色相对亮度
+ * 填充色之上按对比度选出的前景（`graphic` / `text`）。动态色取其对比变量；
+ * 固定色按对比度算：白色够该用途的最低对比度 T 就用白，否则用黑。预置头像
+ * 眼睛、气泡文字和按键图标不走这里，见 avatarOnFillForeground。白色不够 T
+ * 意味着填充色相对亮度
  * L > 1.05 / T − 0.05，此时纯黑的对比度 (L + 0.05) / 0.05 > 21 / T——正文
  * （T = 4.5）> 4.67、图标（T = 3）> 7。所以任何 #rrggbb 都至少达到该用途的 T：
  * 下限就是 T 本身（白色恰好达标时）。只依赖颜色本身，结果确定。
@@ -311,9 +311,9 @@ export function avatarColorForeground(
 }
 
 /**
- * 铺在头像填充色上的前景：用户气泡文字、输入框右侧发送 / 语音键图标。
- * 第一种「黑白」用对比变量，亮色黑底白字、暗色白底黑字；其余预置色都是
- * 深色底，无论应用明暗，一律白色。眼睛不走这里（浅底仍改深色）。
+ * 铺在头像填充色上的前景：预置头像眼睛、用户气泡文字、输入框右侧发送 / 语音键图标。
+ * 第一种「黑白」用对比变量，亮色黑底白前景、暗色白底黑前景；其余预置色无论
+ * 应用明暗，一律白色。
  */
 export function avatarOnFillForeground(color: AvatarPresetColor): string {
   return color.contrast ?? AVATAR_FOREGROUND_LIGHT;
