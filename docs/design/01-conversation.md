@@ -23,7 +23,8 @@
 ## 群聊
 
 - 用户在一个群中与多个 Bot 对话，由 Bot 按需响应。响应规则见 [02-execution.md](02-execution.md#群聊响应)。
-- 群定位（本群主要处理什么事务）在创建时以对话内问答收集，存于对话的 `description` 并注入群内 Bot 的上下文；创建流程见 [19-work-path-and-group-setup.md](19-work-path-and-group-setup.md)。
+- 新建群：「+」→「新建群聊」在主区域顶部点选成员（或输入名字回车新建 Bot），成员 ≥2 时空回车直接创建，群名默认为成员名用「, 」拼接；创建后在右栏「群详情」改名、加减成员、绑定目录。
+- 群定位（本群主要处理什么事务）存于对话的 `description`，非空时注入群内 Bot 的上下文。2026-10-15（`0254e1b`）起创建流程不再收集它（原 D60 对话内四问已被取代、后端保留），UI 新建的群 `description` 为空、不注入；之后在哪里设置群定位尚待决定（[DEV-030](../dev/DEVIATIONS.md)）。创建流程见 [19-work-path-and-group-setup.md](19-work-path-and-group-setup.md)。
 
 ### 成员变动
 

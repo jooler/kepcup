@@ -4,6 +4,8 @@
 
 依赖：P04（project 绑定）、P05（群聊）、P15（对话式新建与对话内引导的既有范式）。
 
+> **2026-10-15 已被 `0254e1b` 部分取代**：新建群的 UI 改为主区域顶部点选成员、空回车即调 `groups.create` 直接建群（群名为成员名拼接，无事务描述、无目录绑定、无创建完成系统消息），下文目标 2 与 renderer 中「新建群聊入口改调 `groups.setup.start`」不再成立。`groups.setup.*` RPC、orchestrator 四问流程、`GroupSetupCard` 与 store 的 `createGroupViaSetup` / `answerGroupSetup` / `cancelGroupSetup` 保留但 UI 不可达；验收标准 3、4 只对经 RPC 走 setup 流程的群成立。UI 新建的群不注入「本群主要处理」，群定位在哪里设置见 [DEV-030](../DEVIATIONS.md)。新建 Bot 的目录闸门（目标 1）不受影响。
+
 ## 目标
 
 1. 把「对话 = 工作路径」的既有绑定模型在创建时刻引导落地：新建 Bot 访谈在首问作答后、任何 LLM 调用前插入「工作目录」一问；新建群在对话内问答中收集目录。

@@ -12,6 +12,8 @@
 1. 把它**在创建时刻引导落地**：新建 Bot 与新建群时，把「选择工作目录」作为创建流程的固定一步。
 2. 把群创建**从弹框搬进对话**，并在创建流程中补齐此前缺失的群语义（本群主要处理什么事务）。
 
+> **2026-10-15 修订（`0254e1b`）**：第 2 点与下文「群：对话内创建（D60）」一节已被**顶部成员输入**取代，群创建不再收集事务描述与工作目录，详见该节开头的修订说明。第 1 点只剩新建 Bot 一侧仍然有效。
+
 并发安全（多个 Bot 共用同一目录）沿用 [08-project.md](08-project.md#并发写入租约) 的写入租约：同一目录同一时刻只有一个 loop 可写，读不受限；租约按目录生效、跨对话共用。**本篇不新增并发逻辑。**
 
 ## 创建期引导（D59）
@@ -40,6 +42,15 @@
 - 访谈指引提示词同步声明：工作目录由界面询问，run 开始时已是既成事实，不要再问。
 
 ### 群：对话内创建（D60）
+
+> **2026-10-15 已被 `0254e1b` 取代**（「新建群聊改为点选成员后直接创建」）。现行流程：「+」→「新建群聊」在主区域顶部展开成员输入（`GroupComposeBar`，不打开任何对话）；点选已有 Bot，或输入名字回车新建一个画像为空的 Bot（对话式新建的访谈状态）并加入；空输入时 Backspace 删去最后一位成员，Esc 取消；成员 ≥2 时空回车调用 `groups.create`，群名取成员名用「, 」拼接（`groupTitleFromMemberNames`，受群名长度上限截断），随即进入该群；不足 2 人只出提示、不建群。之后改名、加减成员、绑定目录都在右栏「群详情」里做（`group-info`，含 project 选择器）。
+>
+> 行为变化：
+>
+> - **创建时不再收集「主要事务」与工作目录**。UI 建的群 `conversations.description` 为空、`project_id` 为空、`setup_state` 为空，也不落「群聊创建完成」系统消息；因此 `<conversation_info>` 里的「本群主要处理：…」**对 UI 新建的群不会出现**（system-prompt 只在 `description` 非空时注入）。目录可在群详情里补绑；群定位目前没有任何编辑入口，见 [DEV-030](../dev/DEVIATIONS.md)。
+> - **保留但 UI 不可达的后端**（代码未删，下文描述仍是它们的语义）：RPC `groups.setup.start` / `groups.setup.answer` / `groups.setup.cancel`，core `orchestrator.beginGroupSetup` / `answerGroupSetup` 等四问流程，渲染端 `GroupSetupCard`（`MessageBubble` 仍按 `group_setup_question` 事件渲染，旧数据里创建中的群可继续作答或取消）与 store 的 `createGroupViaSetup` / `answerGroupSetup` / `cancelGroupSetup`。`chat.createGroupViaSetup` 已没有任何 UI 入口。
+>
+> 以下为 D60 原设计，作为上述后端的说明保留。
 
 新建群不再弹框：点击「新建群聊」即创建一个**创建中**的群对话（`conversations.setup_state = 'creating'`），四问以确定性卡片在对话中逐题出现，全部由 core 下发、不经任何 LLM：
 
@@ -70,4 +81,4 @@ Conversation
 
 - 「有 Bot 正在执行时不能切换 project」不变：目录绑定发生在任何 run 之前，天然无冲突。
 - 「选择与切换在对话中产生系统消息」不变：创建期绑定复用同一条通路，用户与 Bot 看到的授权说明一致。
-- 群创建完成后，改名 / 加减成员 / 换绑目录都走既有入口，不在本篇范围内。
+- 群创建完成后，改名 / 加减成员 / 换绑目录都走既有入口，不在本篇范围内（2026-10-15 起这三项都在右栏「群详情」；群定位没有编辑入口，见 DEV-030）。

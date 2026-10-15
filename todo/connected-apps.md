@@ -120,7 +120,7 @@
 ```
 P0 MCP OAuth 地基（自定义 HTTP server 走通 OAuth；假授权服务器；运行时/交互授权分离；Token Vault；CIMD 文件）
  → P1 连接应用 MVP（目录 + 连接 + Bot 授权 + 风险分级审批 + 工具锁定 + 对话内连接 + 设置「应用」分区 + ACP 能力包）
- → P2 规模化与大平台（step-up、污点外发、按需工具发现、预注册客户端、Google/Microsoft/Slack、MCPB、开发者模式、协议升级）
+ → P2 规模化与大平台（step-up、污点外发、按需工具发现、预注册客户端、Google/Microsoft/Slack、MCPB、开发者模式〔2026-10-15 移除，并入扩展中心 MCP〕、协议升级）
  → P3 开放平台基座（签名目录索引、子注册表 Worker、校验器 CLI、分级信任、MCP Apps 渲染、随附 Skills）
  → P4 企业与托管网关（只出任务书）
 ```
@@ -381,6 +381,8 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 
 **扩展中心修订（2026-10-10，extension-center X1–X4）**：本节的页签结构已调整——「目录」页签并入扩展中心「连接」组，「自定义」页签移到「设置 → 开发者模式」分区（`mcp` 别名与 `apps` + `custom` 旧参数落该分区），「应用」分区只留已连接账号管理；`appsTabForKey` 随页签移除。组件（`AppCatalogGrid` / `AppConnectionsList` / `AppConnectionDetail` / `McpSection`）不变，只换承载位置。详见设计 29 §16 与 [extension-center.md](extension-center.md)。
 
+**再修订（2026-10-15，e75b950）**：「设置 → 开发者模式」分区移除；原「自定义」页的全部内容（新建 / 编辑 server、`OAuthClientsPanel`、`McpDevTools`、`McpbInstall`）改在扩展中心「MCP」组（`McpSection` 的 `full` 形态），不再受开发者模式门禁；`mcp` / `developer` / `apps`+`custom` 旧深链由 `shell.openSettings` 改开扩展中心 MCP（`settingsSectionOpensExtensionMcp`）。取代上段「`mcp` 别名与 `apps` + `custom` 旧参数落该分区」。
+
 ### 5.10 外部智能体（ACP）
 
 - [x] `HOST_CAPABILITIES` 增 `apps` 能力包（`category: 'supplement'`、`default: 'follow_bot'`、`toolPrefixes: ['app_']`、无 `overlapsNative`）；`app_request_connection` 归入该包（前缀即可命中 `capabilityOfTool`）。
@@ -461,6 +463,8 @@ P0 内各项可按 §4 顺序推进；P1 的设置 UI 可在 P1 后端完成一�
 **实施记录（2026-10-10，§6.5）**：`core/src/apps/mcpb/{manifest,zip,install,index}.ts`、`rpc/mcpb-bindings.ts`、shared `domain/mcpb.ts`（RPC `mcpb.inspect` / `mcpb.install({path, sha256, userConfig, conversationId?, fromCatalog?})`）、`mcpServerSchema.source{kind:'mcpb',name,version,sha256}`（`name` / `version` 正则约束，不含路径分隔符）+ `tier`；错误码 `MCPB_INVALID` / `MCPB_INCOMPATIBLE` / `MCPB_RUNTIME_MISSING`。流程：包文件先拷成私有快照（防检视后被替换的 TOCTOU）→ `inspect`（sha256、manifest v0.1–v0.3、兼容性、zip 加固：zip-slip、符号链接、绝对路径、盘符、Windows 设备名、冒号、尾随点 / 空格、重名与大小写冲突、条目数 / 单条 / 解压总量 / 文件大小上限、中央目录声明大小自洽——伪造的 `compressedSize` 曾使进程中止，已修）→ 解到 `{toolchains}/mcpb/{name@version 小写}/`（暂存目录 + 标记文件〔sha256 + 目录树哈希〕，复用前重新校验，只删标记匹配的目录）。`sensitive` 的 `user_config` 存 secrets `mcp:{serverId}:env:{KEY}`，设置里只留 `secret:env:KEY` 占位符且必须是整个参数 / 环境变量值；`mcp_config.command` 不得依赖 `user_config`。运行时经环境管理器（`envManagerRuntimeResolver`；`CoreServicesOptions.mcpbRuntimes` 为测试钩子），缺运行时给可读错误、不下载任何东西（未走「按需安装」，留待后续）；binary 包直接运行。同意方式：设置页没有对话可承载审批卡，以对话框内确认面板（完整启动命令、来源、sha256、体积）为同意，`mcpb.install` 必须回传面板上的 `sha256`；带 `conversationId` 才出 `environment` 类审批卡（完整命令，密钥遮蔽）。**已知隐患**：D41 无人值守会自动批准该 `environment` 卡（`integration/mcpb` 有用例锁定该行为），任何将来由 Agent 发起的安装入口必须先加「永不自动批准」标记；本期无此入口。审计 `mcpb_install` / `mcpb_uninstall`（只含包标识）；`mcp.removeServer` 与 `settings.update` 移除 server 都经 `afterServerRemoved` 清解包目录与密钥。入口：渲染端 `McpbInstall.svelte`（「自定义」页，选文件走主进程 `dialog:selectFile`）；目录条目 `packages[].registryType==='mcpb'` 的后端路径 `fromCatalog`（须匹配固定的 `fileSha256`，且不带 `developer` 档）已实现，**界面按钮「安装本地包」与 URL 下载安装未做**。延后：python / uv 的端到端测试、启动前自动复验。偏差见 DEV-021 第 1 / 5 项。测试：`unit/mcpb`、`integration/mcpb`、渲染端 `settings/mcpb-install.test.ts`、testkit `mcpb-fixture.ts`。
 
 ### 6.6 开发者模式
+
+> **2026-10-15（e75b950）取代**：开关与「设置 → 开发者模式」分区已移除（设置目录项 `developer.mode` 一并删除）；原始工具定义 / 授权事件日志 / 手动刷新（`McpDevTools`）在扩展中心「MCP」组对每个已安装 server 始终可用。`settings.apps.developerMode` 保留为遗留字段（`settings.update` 仍可写，`integration/developer-mode` 只验读写），不再作任何门禁；core 不再抛 `DEVELOPER_MODE_REQUIRED`。`developer` **分级**（MCPB 安装、本机连接）不受影响。决定：本机连接工具（`app_local_connector_guide` / `app_propose_local_connector`）同步改为对所有 Bot 提供，保存仍须用户在确认卡上点「添加」（设计 29 §17.1 第 6 条）。下面两条按当时状态保留。
 
 - [x] 设置开关（扩展中心修订后：设置 → 开发者模式分区）；开启后「自定义」页显示原始工具定义（含注解）、授权流程事件日志（不含令牌）、手动刷新工具；自定义条目 tier `developer`：所有工具每次确认（可手动放宽，`destructive` 除外）。
   - 实施记录（2026-10-10）：事件日志 = `apps.flowLog`（进程内环形缓冲，每 server 100 条，授权地址只留 host+path，错误文案过脱敏）；原始定义 = `mcp.rawTools`；手动刷新 = `mcp.refreshTools`（丢弃缓存重新列出，工具锁定照常登记；未开开发者模式也允许调用，只是界面隐藏）。**偏离**：「developer 档 = 全部每次确认」只对 `McpServer.tier === 'developer'` 的 server 生效（`mcp/policy.ts` 的 `isDeveloperTier`，MCPB 包安装生成的 server 带该标记），**不**对所有自定义 server 生效——否则会改变 W5 已落地的「只读自动」默认，用户未要求；普通自定义 server 保持 W5 默认。
@@ -707,7 +711,7 @@ node packages/core/scripts/connector-spike/probe.mjs [--only notion,linear] [--o
 
 ### B.8 Notion / Linear 适配结论（2026-10-10，逐家适配 · [extension-center.md](extension-center.md) §4）
 
-数据来源：用户在桌面端开发者模式导出的真实 `tools/list`，存为 `packages/core/test/fixtures/connectors/{notion,linear}.tools.json`（汇总命令 `node packages/core/scripts/connector-spike/summarize-tools.mjs`，风险分档用产品里的 `classifyRiskDetailed`）。
+数据来源：用户在桌面端开发者模式（现为扩展中心「MCP」组）导出的真实 `tools/list`，存为 `packages/core/test/fixtures/connectors/{notion,linear}.tools.json`（汇总命令 `node packages/core/scripts/connector-spike/summarize-tools.mjs`，风险分档用产品里的 `classifyRiskDetailed`）。
 
 | 项 | Notion | Linear |
 | -- | ------ | ------ |
