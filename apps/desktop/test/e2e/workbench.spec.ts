@@ -214,18 +214,17 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
       '别忘了附上数据',
     );
 
-    // 编辑：原地改，回车保存。
-    await card('买咖啡豆').locator('[data-testid="memo-edit"]').click();
-    const edit = page.locator('[data-testid="memo-edit-input"]');
-    await expect(edit).toBeFocused();
-    await edit.fill('买咖啡豆和滤纸');
-    await edit.press('Enter');
-    await expect(card('买咖啡豆和滤纸')).toBeVisible();
-    await expect(page.locator('[data-testid="memo-edit-input"]')).toHaveCount(0);
+    // 编辑：点正文即改，防抖保存；Esc 放弃未保存改动。
+    const coffeeBody = card('买咖啡豆').locator('[data-testid="memo-body"]');
+    await coffeeBody.click();
+    await expect(coffeeBody).toBeFocused();
+    await coffeeBody.fill('买咖啡豆和滤纸');
+    await expect(card('买咖啡豆和滤纸')).toBeVisible({ timeout: 5_000 });
     // Esc 放弃编辑。
-    await card('买咖啡豆和滤纸').locator('[data-testid="memo-edit"]').click();
-    await page.locator('[data-testid="memo-edit-input"]').fill('不会保存的改动');
-    await page.locator('[data-testid="memo-edit-input"]').press('Escape');
+    const editedBody = card('买咖啡豆和滤纸').locator('[data-testid="memo-body"]');
+    await editedBody.click();
+    await editedBody.fill('不会保存的改动');
+    await editedBody.press('Escape');
     await expect(card('买咖啡豆和滤纸')).toBeVisible();
     await expect(card('不会保存的改动')).toHaveCount(0);
 

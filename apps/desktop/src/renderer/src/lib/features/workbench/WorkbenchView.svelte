@@ -68,22 +68,21 @@
       </div>
     {/if}
 
-    <div class="flex min-h-0 flex-1 gap-5 px-5 pb-4">
+    <div class="flex min-h-0 flex-1 gap-8 px-5 pb-4">
       {#if !tabbed || tab === 'todos'}
         <section
           class="flex min-h-0 min-w-0 flex-[3] flex-col gap-3"
           aria-label={t('workbench.todos.title')}
         >
           {#if !tabbed}
-            <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
+            <h2
+              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
+            >
               {t('workbench.todos.title')}
             </h2>
           {/if}
           <TodoPane />
         </section>
-      {/if}
-      {#if !tabbed}
-        <div class="w-px shrink-0 bg-border"></div>
       {/if}
       {#if !tabbed || tab === 'memos'}
         <section
@@ -91,7 +90,9 @@
           aria-label={t('workbench.memo.title')}
         >
           {#if !tabbed}
-            <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
+            <h2
+              class="w-full shrink-0 border-b border-border pb-2 text-sm font-medium text-muted-foreground"
+            >
               {t('workbench.memo.title')}
             </h2>
           {/if}
