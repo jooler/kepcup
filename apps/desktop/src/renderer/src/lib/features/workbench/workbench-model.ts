@@ -415,7 +415,15 @@ export interface DispatchText {
   byButler: boolean;
   /** 补发迟到时末尾的「（原定 X，延迟派发）」；单独成行显示，不混进说明。 */
   lateNote: string | null;
+  /** 「事项更新」通知（`【工作台】事项更新：标题` …）；派发正文没有这个字段。 */
+  update?: boolean;
+  /** 事项更新：谁改的（正文末尾「（由用户 / 管家修改；…）」）；认不出时为 null。 */
+  updatedBy?: 'user' | 'butler' | null;
 }
+
+const UPDATE_PREFIX = '【工作台】事项更新：';
+// 末尾一行：「（由用户修改；这是对你已在做的这件事的补充，…）」，整行去掉不显示。
+const UPDATE_FOOTER = /\n*（由(用户|管家)修改；[^\n]*）\s*$/;
 
 // X 里可能带全角括号（「10月12日（周一）09:00」），所以不能排除括号，用非贪婪匹配到「延迟派发）」。
 const LATE_NOTE = /（原定[^\n]*?延迟派发）/;
@@ -426,8 +434,33 @@ const LATE_NOTE = /（原定[^\n]*?延迟派发）/;
  *   管家来源：第一行是 `【工作台】标题（管家代你安排）`
  *   补发迟到：末尾再空一行加 `（原定 X，延迟派发）`
  * 容错：没有前缀 / 没有说明 / 标注在任意行都能解析；群派发的 @ 提及不影响标题。
+ * 事项更新通知（`update`，D90）：`【工作台】事项更新：标题` + 空行 + 说明 + 空行 + `（由用户 / 管家修改；…）`，
+ * 末尾那一行取出为 `updatedBy` 不进说明。
  */
-export function parseDispatchText(text: string): DispatchText {
+export function parseDispatchText(text: string, update?: boolean): DispatchText {
+  const trimmed = text.replace(/^\s+/, '');
+  // `update`：消息内容里的 `todoUpdate` 标记（权威）；没给时按正文前缀判断。标题恰好以「事项更新：」
+  // 开头的派发会和更新正文撞车，所以有标记时以标记为准。
+  if (update ?? trimmed.startsWith(UPDATE_PREFIX)) {
+    // 事项更新：`【工作台】事项更新：标题` + 空行 + 说明 + 空行 + `（由用户 / 管家修改；…）`。
+    const footer = UPDATE_FOOTER.exec(trimmed);
+    const withoutFooter = footer === null ? trimmed : trimmed.slice(0, footer.index);
+    const body = (
+      withoutFooter.startsWith(UPDATE_PREFIX)
+        ? withoutFooter.slice(UPDATE_PREFIX.length)
+        : withoutFooter
+    ).replace(/^\s+|\s+$/g, '');
+    const [headLine = '', ...rest] = body.split(/\r?\n/);
+    const updatedBy = footer === null ? null : footer[1] === '管家' ? 'butler' : 'user';
+    return {
+      title: headLine.trim(),
+      notes: rest.join('\n').trim(),
+      byButler: updatedBy === 'butler',
+      lateNote: null,
+      update: true,
+      updatedBy,
+    };
+  }
   const byButler = text.includes(BUTLER_NOTE);
   let body = text.split(BUTLER_NOTE).join('');
   const late = LATE_NOTE.exec(body);

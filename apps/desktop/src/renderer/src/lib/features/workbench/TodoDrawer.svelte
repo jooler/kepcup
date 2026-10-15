@@ -442,7 +442,7 @@
     formError = null;
     saving = true;
     try {
-      let result: { todo: TodoEntry; warnings: string[] };
+      let result: { todo: TodoEntry; warnings: string[]; notified?: boolean };
       const assignee = assigneeFromForm();
       if (drawer?.kind === 'new') {
         const input: Record<string, unknown> = { title: title.trim() };
@@ -477,7 +477,12 @@
         return true;
       }
       if (!quiet) {
-        toast.success(t('workbench.drawer.saved'));
+        // 进行中事项改了标题 / 说明：core 已排好给执行者的更新通知。
+        toast.success(
+          result.notified === true
+            ? t('workbench.drawer.savedNotified')
+            : t('workbench.drawer.saved'),
+        );
         workbench.closeDrawer();
       } else if (created) {
         workbench.openTodo(result.todo.id);
@@ -707,6 +712,11 @@
               rows={4}
               data-testid="todo-notes"
             />
+            {#if status === 'in_progress'}
+              <p class="text-xs text-muted-foreground" data-testid="todo-notes-notify-hint">
+                {t('workbench.drawer.notifyHint')}
+              </p>
+            {/if}
           </div>
 
           <div class="space-y-1.5">

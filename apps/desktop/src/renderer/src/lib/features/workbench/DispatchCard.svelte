@@ -12,11 +12,21 @@
    * 标题、说明（最多 6 行）、「在工作台查看」→ 切到工作台并打开该事项。正文格式
    * `【工作台】标题` + 空行 + 说明，管家建的事项标题行末尾有「（管家代你安排）」，补发迟到时末尾有
    * 「（原定 X，延迟派发）」，见 parseDispatchText；管家徽标优先用 `content.viaButler`（触发这次派发的是管家），`butlerDrafted` 只作弱标注。
+   *
+   * 变体「事项更新」：`content.todoUpdate`（或正文以「【工作台】事项更新：」开头）。已派发事项的标题 / 说明被改后
+   * 宿主发给执行者的通知：标「更新」和谁改的（`viaButler` → 管家，否则你），不是新任务。
    */
   let { message }: { message: Message } = $props();
 
   const text = $derived('text' in message.content ? message.content.text : '');
-  const parsed = $derived(parseDispatchText(text));
+  // `todoUpdate` 标记是权威（派发标题恰好以「事项更新：」开头时不会被当成更新）；老消息没有该字段，按正文判断。
+  const updateFlag = $derived(
+    'todoUpdate' in message.content && typeof message.content.todoUpdate === 'boolean'
+      ? message.content.todoUpdate
+      : undefined,
+  );
+  const parsed = $derived(parseDispatchText(text, updateFlag));
+  const isUpdate = $derived(parsed.update === true);
   // 管家徽标优先看 content.viaButler（core 写入），没有该字段再用正文里的标注兜底。
   const viaButler = $derived(
     'viaButler' in message.content && typeof message.content.viaButler === 'boolean'
@@ -38,16 +48,26 @@
   class="w-full max-w-[85%] rounded-lg border bg-background/80 p-3 text-sm"
   data-testid="dispatch-card"
   data-todo-id={todoId ?? ''}
+  data-variant={isUpdate ? 'update' : 'dispatch'}
 >
   <div class="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
     <ClipboardList class="size-3.5" aria-hidden="true" />
-    <span data-testid="dispatch-card-label">{t('workbench.dispatch.label')}</span>
+    <span data-testid="dispatch-card-label"
+      >{isUpdate ? t('workbench.dispatch.updateLabel') : t('workbench.dispatch.label')}</span
+    >
+    {#if isUpdate}
+      <span data-testid="dispatch-card-updated-by"
+        >· {viaButler
+          ? t('workbench.dispatch.updateByButler')
+          : t('workbench.dispatch.updateByUser')}</span
+      >
+    {/if}
     {#if butlerDrafted}
       <span class="opacity-70" data-testid="dispatch-card-drafted"
         >· {t('workbench.dispatch.drafted')}</span
       >
     {/if}
-    {#if viaButler}
+    {#if viaButler && !isUpdate}
       <span data-testid="dispatch-card-butler">· {t('workbench.dispatch.byButler')}</span>
     {/if}
   </div>
@@ -60,6 +80,11 @@
       data-testid="dispatch-card-notes"
     >
       {parsed.notes}
+    </p>
+  {/if}
+  {#if isUpdate}
+    <p class="mt-1 text-xs text-muted-foreground" data-testid="dispatch-card-update-hint">
+      {t('workbench.dispatch.updateHint')}
     </p>
   {/if}
   {#if parsed.lateNote !== null}
