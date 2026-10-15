@@ -807,7 +807,7 @@
                data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
           <div
             role="separator"
-            class="mx-3 my-2 h-px shrink-0 bg-foreground/20 dark:bg-foreground/25"
+            class="mx-3 my-2 h-px shrink-0 bg-foreground/50"
             data-testid="workbench-nav-separator"
           ></div>
         {/if}
