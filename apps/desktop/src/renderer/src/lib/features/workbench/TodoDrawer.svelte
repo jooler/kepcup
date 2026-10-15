@@ -26,7 +26,7 @@
     whenFromDraft,
     type WhenDraft,
   } from './when-presets';
-  import { buildUpdateInput, type TodoFormValues } from './todo-form';
+  import { buildUpdateInput, isInfoWarning, type TodoFormValues } from './todo-form';
   import { botMembers, groupMembers, type MemberInfo } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
@@ -607,19 +607,36 @@
           </div>
         {:else}
           {#if warnings.length > 0}
-            <div
-              class="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
-              role="status"
-              data-testid="todo-warnings"
-            >
-              <p class="mb-1 flex items-center gap-1 font-medium">
-                <CircleAlert class="size-3.5" aria-hidden="true" />{t('workbench.drawer.warnings')}
-              </p>
-              <ul class="list-disc space-y-0.5 pl-4">
-                {#each warnings as warning, index (index)}
-                  <li>{warning}</li>
-                {/each}
-              </ul>
+            {@const problems = warnings.filter((warning) => !isInfoWarning(warning))}
+            {@const infos = warnings.filter(isInfoWarning)}
+            <div class="space-y-2" role="status" data-testid="todo-warnings">
+              {#if problems.length > 0}
+                <div
+                  class="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+                  data-testid="todo-warnings-problems"
+                >
+                  <p class="mb-1 flex items-center gap-1 font-medium">
+                    <CircleAlert class="size-3.5" aria-hidden="true" />{t(
+                      'workbench.drawer.warnings',
+                    )}
+                  </p>
+                  <ul class="list-disc space-y-0.5 pl-4">
+                    {#each problems as warning, index (index)}
+                      <li>{warning}</li>
+                    {/each}
+                  </ul>
+                </div>
+              {/if}
+              {#if infos.length > 0}
+                <ul
+                  class="space-y-0.5 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground"
+                  data-testid="todo-warnings-info"
+                >
+                  {#each infos as note, index (index)}
+                    <li>{note}</li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
           {/if}
           {#if entry?.blockedReason && status === 'draft'}

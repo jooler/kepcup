@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildUpdateInput, type TodoFormValues } from './todo-form';
+import { buildUpdateInput, isInfoWarning, type TodoFormValues } from './todo-form';
 import { draftFromSchedule, emptyWhenDraft, type WhenDraft } from './when-presets';
 
 const base = (patch: Partial<TodoFormValues> = {}): TodoFormValues => ({
@@ -116,5 +116,12 @@ describe('buildUpdateInput', () => {
       id: 't1',
       assignee: { kind: 'group', conversationId: 'g', leadBotId: 'b' },
     });
+  });
+});
+
+describe('isInfoWarning', () => {
+  it('免打扰时段的说明是信息，其余是警示', () => {
+    expect(isInfoWarning('该时间在 Bot 的免打扰时段内，不受免打扰限制，会照常发出')).toBe(true);
+    expect(isInfoWarning('该 Bot 未配置可用模型')).toBe(false);
   });
 });

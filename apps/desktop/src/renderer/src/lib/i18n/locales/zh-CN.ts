@@ -2230,6 +2230,8 @@ export const zhCN = {
   'sidebar.workbench': '工作台',
   'workbench.title': '工作台',
   'workbench.loading': '加载中…',
+  'workbench.error.groupReadOnly': '这个群已是只读，不能派活。',
+  'workbench.error.targetGone': '执行者或群已不存在，请重新选择。',
   'workbench.status.stopped': '已停止',
   'workbench.card.lastRunInProgress': '最近一次：进行中',
   'workbench.card.lastRunDelivered': '最近一次：已交付',
