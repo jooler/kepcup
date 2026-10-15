@@ -1,0 +1,360 @@
+import type {
+  Todo,
+  TodoAssignee,
+  TodoRun,
+  TodoRunStatus,
+  TodoSource,
+  TodoStatus,
+} from '@kepcup/shared';
+import { newId } from '@kepcup/shared';
+import type { SqliteDatabase } from '../infra/db.js';
+import type { Clock } from '../infra/clock.js';
+
+interface TodoRow {
+  id: string;
+  title: string;
+  notes: string;
+  assignee_bot_id: string | null;
+  assignee_group_id: string | null;
+  status: TodoStatus;
+  source: TodoSource;
+  memo_id: string | null;
+  blocked_reason: string | null;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+}
+
+interface TodoRunRow {
+  id: string;
+  todo_id: string;
+  conversation_id: string;
+  message_id: string | null;
+  status: TodoRunStatus;
+  result_message_id: string | null;
+  dispatched_at: number;
+  settled_at: number | null;
+}
+
+/**
+ * Executor encoding (docs/design/39-workbench.md §4.1): a group assignee has
+ * `assignee_group_id` set (`assignee_bot_id` = optional lead bot); a bot
+ * assignee has only `assignee_bot_id`; both empty = unassigned.
+ */
+function assigneeFromRow(row: TodoRow): TodoAssignee | null {
+  if (row.assignee_group_id !== null) {
+    return {
+      kind: 'group',
+      conversationId: row.assignee_group_id,
+      leadBotId: row.assignee_bot_id,
+    };
+  }
+  if (row.assignee_bot_id !== null) return { kind: 'bot', botId: row.assignee_bot_id };
+  return null;
+}
+
+function assigneeToColumns(assignee: TodoAssignee | null): {
+  botId: string | null;
+  groupId: string | null;
+} {
+  if (assignee === null) return { botId: null, groupId: null };
+  if (assignee.kind === 'bot') return { botId: assignee.botId, groupId: null };
+  return { botId: assignee.leadBotId, groupId: assignee.conversationId };
+}
+
+export function rowToTodo(row: TodoRow): Todo {
+  return {
+    id: row.id,
+    title: row.title,
+    notes: row.notes,
+    assignee: assigneeFromRow(row),
+    status: row.status,
+    source: row.source,
+    memoId: row.memo_id,
+    blockedReason: row.blocked_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    closedAt: row.closed_at,
+  };
+}
+
+export function rowToTodoRun(row: TodoRunRow): TodoRun {
+  return {
+    id: row.id,
+    todoId: row.todo_id,
+    conversationId: row.conversation_id,
+    messageId: row.message_id,
+    status: row.status,
+    resultMessageId: row.result_message_id,
+    dispatchedAt: row.dispatched_at,
+    settledAt: row.settled_at,
+  };
+}
+
+export interface InsertTodoInput {
+  title: string;
+  notes?: string | undefined;
+  assignee?: TodoAssignee | null | undefined;
+  /** Defaults to 'draft'. */
+  status?: TodoStatus | undefined;
+  source: TodoSource;
+  memoId?: string | null | undefined;
+  blockedReason?: string | null | undefined;
+}
+
+export interface UpdateTodoPatch {
+  title?: string;
+  notes?: string;
+  /** null = unassigned. */
+  assignee?: TodoAssignee | null;
+  status?: TodoStatus;
+  blockedReason?: string | null;
+  /** done / cancelled time; null = reopened. */
+  closedAt?: number | null;
+}
+
+export interface ListTodosFilter {
+  statuses?: readonly TodoStatus[] | undefined;
+  /** Substring match on title and notes (LIKE; P0 volumes are in the low thousands). */
+  query?: string | undefined;
+  /**
+   * Hide done / cancelled todos closed before this time (UTC ms); omit to list
+   * closed todos of any age.
+   */
+  closedAfter?: number | undefined;
+}
+
+export interface InsertTodoRunInput {
+  todoId: string;
+  conversationId: string;
+  messageId?: string | null | undefined;
+  /** Defaults to 'dispatched'. */
+  status?: TodoRunStatus | undefined;
+}
+
+export interface UpdateTodoRunPatch {
+  messageId?: string | null;
+  status?: TodoRunStatus;
+  resultMessageId?: string | null;
+  settledAt?: number | null;
+}
+
+export const CLOSED_TODO_STATUSES: readonly TodoStatus[] = ['done', 'cancelled'];
+
+/** Escapes LIKE wildcards so user queries match literally (paired with `escape '\\'`). */
+export function likePattern(query: string): string {
+  return `%${query.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
+/**
+ * Data access for the todos / todo_runs tables (main.db, docs/dev/03-data-model.md
+ * "todos"). Pure persistence — the state machine, validation, scheduling and
+ * dispatch live in TodoService.
+ */
+export class TodoStore {
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly clock: Clock,
+  ) {}
+
+  insert(input: InsertTodoInput): Todo {
+    const id = newId('todo');
+    const now = this.clock.now();
+    const status = input.status ?? 'draft';
+    const { botId, groupId } = assigneeToColumns(input.assignee ?? null);
+    this.db
+      .prepare(
+        `insert into todos
+           (id, title, notes, assignee_bot_id, assignee_group_id, status, source,
+            memo_id, blocked_reason, created_at, updated_at, closed_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.title,
+        input.notes ?? '',
+        botId,
+        groupId,
+        status,
+        input.source,
+        input.memoId ?? null,
+        input.blockedReason ?? null,
+        now,
+        now,
+        CLOSED_TODO_STATUSES.includes(status) ? now : null,
+      );
+    return this.#getOrThrow(id);
+  }
+
+  get(id: string): Todo | null {
+    const row = this.db.prepare('select * from todos where id = ?').get(id) as TodoRow | undefined;
+    return row ? rowToTodo(row) : null;
+  }
+
+  #getOrThrow(id: string): Todo {
+    const todo = this.get(id);
+    if (todo === null) throw new Error(`todo ${id} disappeared after insert`);
+    return todo;
+  }
+
+  /** Partial update; bumps `updated_at`. Returns null when the todo does not exist. */
+  update(id: string, patch: UpdateTodoPatch): Todo | null {
+    const current = this.get(id);
+    if (current === null) return null;
+    const assignee = patch.assignee !== undefined ? patch.assignee : current.assignee;
+    const { botId, groupId } = assigneeToColumns(assignee);
+    this.db
+      .prepare(
+        `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_group_id = ?,
+           status = ?, blocked_reason = ?, closed_at = ?, updated_at = ?
+         where id = ?`,
+      )
+      .run(
+        patch.title ?? current.title,
+        patch.notes ?? current.notes,
+        botId,
+        groupId,
+        patch.status ?? current.status,
+        patch.blockedReason !== undefined ? patch.blockedReason : current.blockedReason,
+        patch.closedAt !== undefined ? patch.closedAt : current.closedAt,
+        this.clock.now(),
+        id,
+      );
+    return this.get(id);
+  }
+
+  /** Hard delete (cascades todo_runs; schedules.todo_id is set null). Tools never call it. */
+  delete(id: string): boolean {
+    return this.db.prepare('delete from todos where id = ?').run(id).changes > 0;
+  }
+
+  /** Most recently updated first. */
+  list(filter: ListTodosFilter = {}): Todo[] {
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    if (filter.statuses !== undefined) {
+      if (filter.statuses.length === 0) return [];
+      where.push(`status in (${filter.statuses.map(() => '?').join(', ')})`);
+      params.push(...filter.statuses);
+    }
+    if (filter.query !== undefined && filter.query.trim() !== '') {
+      where.push("(title like ? escape '\\' or notes like ? escape '\\')");
+      const pattern = likePattern(filter.query.trim());
+      params.push(pattern, pattern);
+    }
+    if (filter.closedAfter !== undefined) {
+      where.push("(status not in ('done', 'cancelled') or coalesce(closed_at, updated_at) >= ?)");
+      params.push(filter.closedAfter);
+    }
+    const clause = where.length > 0 ? `where ${where.join(' and ')}` : '';
+    return (
+      this.db
+        .prepare(`select * from todos ${clause} order by updated_at desc, id desc`)
+        .all(...params) as TodoRow[]
+    ).map(rowToTodo);
+  }
+
+  /** Todos whose executor is this bot (bot assignee or group lead bot). */
+  listByAssigneeBot(botId: string): Todo[] {
+    return (
+      this.db
+        .prepare('select * from todos where assignee_bot_id = ? order by updated_at desc, id desc')
+        .all(botId) as TodoRow[]
+    ).map(rowToTodo);
+  }
+
+  /** Todos assigned to this group. */
+  listByAssigneeGroup(conversationId: string): Todo[] {
+    return (
+      this.db
+        .prepare(
+          'select * from todos where assignee_group_id = ? order by updated_at desc, id desc',
+        )
+        .all(conversationId) as TodoRow[]
+    ).map(rowToTodo);
+  }
+
+  /** D88 handover: move every todo of `fromBotId` (bot executor or group lead) to `toBotId`. */
+  reassignBot(fromBotId: string, toBotId: string): number {
+    return this.db
+      .prepare('update todos set assignee_bot_id = ?, updated_at = ? where assignee_bot_id = ?')
+      .run(toBotId, this.clock.now(), fromBotId).changes;
+  }
+
+  // --- todo_runs -------------------------------------------------------------
+
+  insertRun(input: InsertTodoRunInput): TodoRun {
+    const id = newId('tdr');
+    this.db
+      .prepare(
+        `insert into todo_runs
+           (id, todo_id, conversation_id, message_id, status, result_message_id,
+            dispatched_at, settled_at)
+         values (?, ?, ?, ?, ?, null, ?, null)`,
+      )
+      .run(
+        id,
+        input.todoId,
+        input.conversationId,
+        input.messageId ?? null,
+        input.status ?? 'dispatched',
+        this.clock.now(),
+      );
+    const run = this.getRun(id);
+    if (run === null) throw new Error(`todo run ${id} disappeared after insert`);
+    return run;
+  }
+
+  getRun(id: string): TodoRun | null {
+    const row = this.db.prepare('select * from todo_runs where id = ?').get(id) as
+      TodoRunRow | undefined;
+    return row ? rowToTodoRun(row) : null;
+  }
+
+  updateRun(id: string, patch: UpdateTodoRunPatch): TodoRun | null {
+    const current = this.getRun(id);
+    if (current === null) return null;
+    this.db
+      .prepare(
+        `update todo_runs set message_id = ?, status = ?, result_message_id = ?, settled_at = ?
+         where id = ?`,
+      )
+      .run(
+        patch.messageId !== undefined ? patch.messageId : current.messageId,
+        patch.status ?? current.status,
+        patch.resultMessageId !== undefined ? patch.resultMessageId : current.resultMessageId,
+        patch.settledAt !== undefined ? patch.settledAt : current.settledAt,
+        id,
+      );
+    return this.getRun(id);
+  }
+
+  /** Every run of a todo, newest dispatch first. */
+  listRuns(todoId: string): TodoRun[] {
+    return (
+      this.db
+        .prepare('select * from todo_runs where todo_id = ? order by dispatched_at desc, id desc')
+        .all(todoId) as TodoRunRow[]
+    ).map(rowToTodoRun);
+  }
+
+  lastRun(todoId: string): TodoRun | null {
+    const row = this.db
+      .prepare(
+        'select * from todo_runs where todo_id = ? order by dispatched_at desc, id desc limit 1',
+      )
+      .get(todoId) as TodoRunRow | undefined;
+    return row ? rowToTodoRun(row) : null;
+  }
+
+  /** Runs dispatched into one conversation that are not settled yet (delivery tracking). */
+  listOpenRunsForConversation(conversationId: string): TodoRun[] {
+    return (
+      this.db
+        .prepare(
+          "select * from todo_runs where conversation_id = ? and status = 'dispatched' order by dispatched_at, id",
+        )
+        .all(conversationId) as TodoRunRow[]
+    ).map(rowToTodoRun);
+  }
+}
