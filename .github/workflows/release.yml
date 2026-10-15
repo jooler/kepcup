@@ -1,40 +1,76 @@
-# P13 任务 1：按平台矩阵构建安装包（docs/dev/phases/P13-release.md）。
+# 发行流水线（docs/dev/06-release.md）。
 #
-# 触发：手动（workflow_dispatch）或推 tag（v*）。tag 推送只产出构建工件
-# （upload-artifact），绝不发布——scripts/dist.mjs 固定传 `--publish never`
-# （BR-P13-003：electron-builder 在 CI + tag + GH_TOKEN 下默认 onTagOrDraft
-# 隐式发布，必须显式钉死）。发布（publish）默认关闭；接入真实发布仓库后
-# 取消注释 publish 步骤并配置机密（该步骤显式调用 --publish）。
+# 触发：推送 main（或手动 workflow_dispatch）。只有当 apps/desktop/package.json 的版本
+# X.Y.Z 对应的 tag vX.Y.Z 还不存在时才构建并发布——日常推 main（没改版本号）只跑 CI，
+# 不发版；0.0.0 与预发布版本（带 -）永不发布。
 #
-# 签名/公证凭据只存在于 CI 机密（任务书注意事项），全部为占位名：
-#   macOS 签名+公证：CSC_LINK / CSC_KEY_PASSWORD（或 Apple 开发者证书导出）、
-#                    APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（notarytool）
-#   Windows 代码签名：WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD
-#                    （或 Azure Trusted Signing：AZURE_TENANT_ID / AZURE_CLIENT_ID /
-#                     AZURE_CLIENT_SECRET / AZURE_SIGNING_ACCOUNT_NAME / AZURE_SIGNING_ACCOUNT_ENDPOINT）
-#   GitHub Releases 发布凭据：GH_TOKEN
-# 未配置机密时 electron-builder 跳过签名（产物未签名，仅用于测试）。
+# 流程：prepare（判定版本）→ rootfs（Windows 包要的 WSL rootfs）→ build（五个平台 job，
+# 一律 --publish never，见 BR-P13-003）→ publish（合并 mac 双架构更新清单，草稿 Release
+# 上传全部产物后再转正式，用户端 electron-updater 不会看到缺文件的半成品）。
+# 任一平台构建失败则整个版本不发布；修好后重新推送或手动重跑本工作流即可。
+#
+# 机密（Settings → Secrets → Actions；用 scripts/release/sync-github-secrets.mjs 从
+# .env.release 同步）：
+#   MAC_CSC_LINK / MAC_CSC_KEY_PASSWORD          Developer ID Application 证书（base64 .p12）
+#   APPLE_API_KEY_BASE64 / APPLE_API_KEY_ID / APPLE_API_ISSUER   公证（App Store Connect API 密钥）
+#   WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD          Windows 代码签名证书（可选）
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET      打进产物的 Google OAuth 桌面客户端（可选，dist.mjs 读取）
+# 变量（Settings → Variables → Actions，公开信息）：
+#   MSSTORE_IDENTITY_NAME / MSSTORE_PUBLISHER / MSSTORE_PUBLISHER_DISPLAY_NAME
+#     Partner Center「产品标识」三项；设置后 Windows job 额外产出商店用 MSIX（workflow 工件 store-msix）。
 
 name: release
 
 on:
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish to GitHub Releases（需先配置机密与真实 publish 仓库）'
-        type: boolean
-        default: false
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    name: Decide version
+    # 手动触发也只从 main 发布。
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$version" = "0.0.0" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "版本 $version 不发布（只发布大于 0.0.0 的 X.Y.Z）。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # --exit-code：0 = tag 存在，2 = 不存在，其他 = 网络/鉴权错误（直接失败，不能当成「不存在」）。
+            status=0
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
+            if [ "$status" = 0 ]; then
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              echo "v$version 已发布；没有新版本号，跳过。" >> "$GITHUB_STEP_SUMMARY"
+            elif [ "$status" = 2 ]; then
+              echo "release=true" >> "$GITHUB_OUTPUT"
+              echo "发布 v$version。" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "git ls-remote failed with $status"; exit 1
+            fi
+          fi
+
   # rootfs.tar 是 Windows 安装包的一部分（P12 CI 产出方案接线，P13 落地）。
-  # 脚本本身不在此执行环境重复校验——见 build-rootfs.sh 头注释（产物守卫内置）。
   rootfs:
     name: WSL rootfs (Debian 12, for Windows targets)
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -50,30 +86,38 @@ jobs:
 
   build:
     name: ${{ matrix.name }}
-    needs: rootfs
+    needs: [prepare, rootfs]
     strategy:
       fail-fast: false
+      # 目标必须写全（dmg zip / AppImage deb）：只给架构时 electron-builder 会沿用配置里的
+      # arch 列表，两个架构都构建，跨 job 产出同名文件。
       matrix:
         include:
-          - name: macOS arm64 (dmg+zip, unsigned locally)
+          - name: macOS arm64
             os: macos-latest
-            args: --mac --arm64
-          - name: macOS x64 (dmg+zip)
-            os: macos-13
-            args: --mac --x64
-          - name: Windows x64 (nsis)
+            platform: mac
+            args: --mac dmg zip --arm64
+          - name: macOS x64
+            os: macos-15-intel
+            platform: mac
+            args: --mac dmg zip --x64
+          # x64 + arm64 必须同一次构建：合并成一个 NSIS 安装包和唯一的 latest.yml。
+          - name: Windows x64+arm64
             os: windows-latest
-            args: --win --x64
-          - name: Windows arm64 (nsis)
-            os: windows-latest
-            args: --win --arm64
-          - name: Linux x64 (AppImage+deb)
+            platform: win
+            args: --win nsis --x64 --arm64
+          - name: Linux x64
             os: ubuntu-24.04
-            args: --linux --x64
-          - name: Linux arm64 (AppImage+deb)
+            platform: linux
+            args: --linux AppImage deb --x64
+          - name: Linux arm64
             os: ubuntu-24.04-arm
-            args: --linux --arm64
+            platform: linux
+            args: --linux AppImage deb --arm64
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -83,49 +127,119 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
-      # Windows 安装包需要 rootfs.tar（rootfs job 产出）；其他平台忽略下载失败。
       - uses: actions/download-artifact@v4
+        if: matrix.platform == 'win'
         with:
           name: wsl-rootfs
           path: apps/desktop/resources/wsl
-        continue-on-error: true
-      - name: Build distributable
-        # 签名凭据经机密注入（见文件头占位说明）；环境变量名与 electron-builder
-        # 约定一致，未配置时自动跳过签名。macOS 公证需要 APPLE_* 三元组。
+      - name: Prepare macOS signing
+        if: matrix.platform == 'mac'
         env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-          # Azure Trusted Signing（可选替代，占位）：
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter @kepcup/desktop dist ${{ matrix.args }}
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          if [ -z "$MAC_CSC_LINK" ]; then
+            echo "::warning::MAC_CSC_LINK 未配置：macOS 产物未签名未公证，用户会被 Gatekeeper 拦截，且自动更新不可用。"
+          fi
+          # electron-builder 26 的 APPLE_API_KEY 必须是 .p8 文件路径（不接受 base64 内容）。
+          if [ -n "$APPLE_API_KEY_BASE64" ]; then
+            echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          fi
+      - name: Build distributable
+        working-directory: apps/desktop
+        env:
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || matrix.platform == 'win' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MSSTORE_IDENTITY_NAME: ${{ vars.MSSTORE_IDENTITY_NAME }}
+          MSSTORE_PUBLISHER: ${{ vars.MSSTORE_PUBLISHER }}
+          MSSTORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MSSTORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          # 机密缺失时 Actions 给的是空字符串，electron-builder 在 mac 上会把 "" 当成证书路径而失败。
+          [ -n "${CSC_LINK:-}" ] || unset CSC_LINK CSC_KEY_PASSWORD
+          # 没有 APPLE_API_KEY 时不公证；只留 ID/ISSUER 会让 electron-builder 报「三项缺一」。
+          [ -n "${APPLE_API_KEY:-}" ] || unset APPLE_API_KEY_ID APPLE_API_ISSUER
+          read -ra args <<< "${{ matrix.args }}"
+          node scripts/dist.mjs "${args[@]}"
+          if [ "${{ matrix.platform }}" = "win" ] && [ -n "$MSSTORE_IDENTITY_NAME" ]; then
+            # 商店 MSIX 单独构建、不签名（商店重签；用 Windows 证书签会因发布者不符而失败），
+            # 输出到 release-store/ 以免覆盖上面的 NSIS 产物。
+            env -u CSC_LINK -u CSC_KEY_PASSWORD node scripts/dist.mjs --win appx --x64 \
+              "-c.directories.output=release-store" \
+              "-c.appx.identityName=$MSSTORE_IDENTITY_NAME" \
+              "-c.appx.publisher=$MSSTORE_PUBLISHER" \
+              "-c.appx.publisherDisplayName=$MSSTORE_PUBLISHER_DISPLAY_NAME" \
+              "-c.appx.applicationId=KepCup"
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ strategy.job-index }}
-          path: apps/desktop/release/
+          name: dist-${{ matrix.platform }}-${{ strategy.job-index }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
           retention-days: 14
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.platform == 'win' && vars.MSSTORE_IDENTITY_NAME != ''
+        with:
+          name: store-msix
+          path: apps/desktop/release-store/*.appx
+          # 公开仓库上限 90 天；过期后该版本只能等下一个版本再上商店（重跑会因 tag 已存在而跳过）。
+          retention-days: 90
+          if-no-files-found: error
 
-  # 接入真实发布仓库后启用（默认关闭——publish 仓库 owner/repo 目前是占位）。
-  # publish:
-  #   name: Publish to GitHub Releases
-  #   needs: build
-  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || inputs.publish
-  #   runs-on: ubuntu-24.04
-  #   steps:
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         path: dist-artifacts
-  #     - name: Publish
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GH_TOKEN }}
-  #       run: |
-  #         npx electron-builder --publish always
-  #       # 或用 gh release create 上传 dist-artifacts 内的 dmg/zip/exe/AppImage/deb 与 latest*.yml
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: v${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+      - name: Collect assets
+        run: |
+          mkdir -p assets
+          # 两个 macOS runner 各写一份 latest-mac.yml，合并后才是完整的更新清单。
+          mapfile -t mac_manifests < <(find dist -name latest-mac.yml)
+          if [ "${#mac_manifests[@]}" -ne 2 ]; then
+            echo "expected 2 latest-mac.yml, found ${#mac_manifests[@]}"; exit 1
+          fi
+          node scripts/release/merge-update-manifests.mjs assets/latest-mac.yml "${mac_manifests[@]}"
+          while IFS= read -r file; do
+            name=$(basename "$file")
+            [ ! -e "assets/$name" ] || { echo "duplicate asset $name (two jobs built the same file)"; exit 1; }
+            cp "$file" "assets/$name"
+          done < <(find dist -type f ! -name latest-mac.yml)
+          ls -la assets
+          for required in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do
+            [ -f "assets/$required" ] || { echo "missing $required"; exit 1; }
+          done
+      - name: Create release
+        run: |
+          notes="docs/releases/$TAG.md"
+          if [ -f "$notes" ]; then notes_args=(--notes-file "$notes"); else notes_args=(--generate-notes); fi
+          # 上次 publish 中途失败留下的草稿先删掉（草稿还没有 tag）；已正式发布则不应走到这里。
+          if is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            [ "$is_draft" = true ] || { echo "$TAG is already published"; exit 1; }
+            gh release delete "$TAG" --yes
+          fi
+          # 先建草稿并上传全部文件，再转正式：electron-updater 只看已发布的 Release。
+          gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "KepCup ${TAG#v}" "${notes_args[@]}"
+          gh release upload "$TAG" assets/*
+          gh release edit "$TAG" --draft=false --latest
+          echo "已发布 [$TAG](https://github.com/$GH_REPO/releases/tag/$TAG)。商店上传：本地运行 node scripts/release/store-upload.mjs ${TAG#v}" >> "$GITHUB_STEP_SUMMARY"

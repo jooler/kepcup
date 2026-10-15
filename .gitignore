@@ -23,9 +23,11 @@ playwright-report/
 .env
 .env.*
 !.env.example
+!.env.release.example
 
 # packaging artifacts (P13)
 apps/desktop/release/
+apps/desktop/release-store/
 
 # ZCode session-local state (plans etc.) and its sync file
 .zcode/
