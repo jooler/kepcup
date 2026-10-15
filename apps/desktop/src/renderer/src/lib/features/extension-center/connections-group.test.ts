@@ -9,11 +9,10 @@ import {
   manageTarget,
   showManageButton,
 } from '../apps/app-catalog';
-import { clientFormMode } from '../apps/connect-flow';
 
 /**
- * 扩展中心「连接」组的视图逻辑（卡片 / 已连接状态与账号数 / 「管理」去向 / 目录加载态 /
- * 手填客户端表单的可用性）。组件本身没有 DOM 测试环境，逻辑都落在这些纯函数里；真实渲染见
+ * 扩展中心「连接」组的视图逻辑（卡片 / 已连接状态与账号数 / 「管理」去向 / 目录加载态）。
+ * 组件本身没有 DOM 测试环境，逻辑都落在这些纯函数里；真实渲染见
  * e2e `extension-center.spec.ts`。发行门禁的语义由 core `connector-catalog.test.ts` 覆盖。
  */
 
@@ -96,26 +95,6 @@ describe('catalogLoadState（目录读取失败不再一直「正在读取」）
   it('加载成功过之后刷新失败仍显示旧目录', () => {
     expect(catalogLoadState({ loaded: true, error: null })).toBe('ready');
     expect(catalogLoadState({ loaded: true, error: 'later failure' })).toBe('ready');
-  });
-});
-
-describe('clientFormMode（OAUTH_CLIENT_REQUIRED 时的手填客户端表单）', () => {
-  const catalogTarget = { kind: 'catalog', connectorId: 'x' } as const;
-  const customTarget = { kind: 'custom', serverId: 's' } as const;
-
-  it('一律给出手填表单（不再挂开发者模式门禁）', () => {
-    expect(
-      clientFormMode({ target: catalogTarget, developerMode: false, customServerExists: false }),
-    ).toBe('form');
-    expect(
-      clientFormMode({ target: catalogTarget, developerMode: true, customServerExists: false }),
-    ).toBe('form');
-    expect(
-      clientFormMode({ target: customTarget, developerMode: false, customServerExists: true }),
-    ).toBe('form');
-    expect(
-      clientFormMode({ target: customTarget, developerMode: false, customServerExists: false }),
-    ).toBe('form');
   });
 });
 

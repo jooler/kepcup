@@ -5,12 +5,7 @@ import { core } from '$lib/rpc/client.svelte';
 import { chat } from '$lib/stores/chat.svelte';
 import { contacts } from '$lib/stores/contacts.svelte';
 import { shell } from '$lib/stores/shell.svelte';
-import {
-  AVATAR_COLORS,
-  AVATAR_SHAPES,
-  DEFAULT_AVATAR,
-  formatPresetAvatar,
-} from '$lib/avatars/presets';
+import { DEFAULT_AVATAR, presetForName } from '$lib/avatars/presets';
 
 export function emptyProfile(): BotProfile {
   return {
@@ -59,16 +54,6 @@ export async function createBotConversational(): Promise<Bot | null> {
   }
 }
 
-/** 名字哈希到预置头像，让同一批新建 Bot 在群头像堆叠里彼此分得开。 */
-function presetForName(name: string): string {
-  let hash = 0;
-  for (const char of name) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
-  const shape = AVATAR_SHAPES[hash % AVATAR_SHAPES.length] ?? AVATAR_SHAPES[0];
-  const color = AVATAR_COLORS[(hash >>> 8) % AVATAR_COLORS.length] ?? AVATAR_COLORS[0];
-  if (shape === undefined || color === undefined) return DEFAULT_AVATAR;
-  return formatPresetAvatar(shape.id, color.id);
-}
-
 /**
  * 在组群输入里回车新建：只有名字和一张预置头像，简介 / 职责 / 性格先空着。
  * 进入访谈状态，但不打开私聊——单聊打开时才问定位，在此之前留在组群输入。
@@ -78,11 +63,8 @@ export async function createNamedBot(name: string): Promise<Bot | null> {
   if (trimmed.length === 0) return null;
   const profile = emptyProfile();
   profile.identity.name = trimmed;
-  profile.identity.bio = '';
+  // 名字哈希到预置头像，让同一批新建 Bot 在群头像堆叠里彼此分得开。
   profile.identity.avatar = presetForName(trimmed);
-  profile.persona = { personality: '', tone: '', style: '', values: '', sample_dialogues: '' };
-  profile.role = { expertise: '', responsibilities: '' };
-  profile.boundaries = [];
   try {
     const created = (await core.call('bots.create', {
       profile,

@@ -1,3 +1,5 @@
+import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
+
 /** 一个成员头像在堆叠容器里的位置。x/y 是中心点占容器边长的百分比。 */
 export interface GroupAvatarSlot {
   x: number;
@@ -14,9 +16,11 @@ export interface GroupAvatarSlot {
  * - 4 个田字
  * - 5 个及以上按种子随机位置、随机层叠；直径相对差异不超过 20%
  *
- * 种子相同则布局稳定，避免每次渲染都跳。
+ * 种子相同则布局稳定，避免每次渲染都跳。count 超过 GROUP_MEMBER_PREVIEW_MAX（与 core
+ * 下发的成员预览同一上限）时只给前这么多个位置：再多既看不清，也白白多渲染元素。
  */
-export function groupAvatarSlots(count: number, seed: string): GroupAvatarSlot[] {
+export function groupAvatarSlots(total: number, seed: string): GroupAvatarSlot[] {
+  const count = Math.min(total, GROUP_MEMBER_PREVIEW_MAX);
   if (count <= 0) return [];
   if (count === 1) return [{ x: 50, y: 50, size: 100, z: 1 }];
   if (count === 2) {

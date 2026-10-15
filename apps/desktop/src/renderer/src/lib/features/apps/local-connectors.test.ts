@@ -14,7 +14,6 @@ import {
   localCardPhase,
   localConnectorError,
   localEntries,
-  localSectionVisible,
   minutesLeft,
   msUntilExpiry,
   removeImpactKey,
@@ -81,15 +80,6 @@ describe('目录去重：本机条目只出现在「本机自建」区一次', (
     expect([...grid, ...local].sort()).toEqual(all.map((item) => item.connectorId).sort());
     // origin 缺省（旧 core）按预置处理
     expect(isLocalEntry(entry('x'))).toBe(false);
-  });
-});
-
-describe('localSectionVisible', () => {
-  it('开发者模式开启，或已有条目时可见；关闭且无条目时不可见', () => {
-    expect(localSectionVisible({ developerMode: false, count: 0 })).toBe(true);
-    expect(localSectionVisible({ developerMode: true, count: 0 })).toBe(true);
-    expect(localSectionVisible({ developerMode: false, count: 2 })).toBe(true);
-    expect(localSectionVisible({ developerMode: true, count: 2 })).toBe(true);
   });
 });
 
@@ -161,10 +151,6 @@ describe('错误映射', () => {
     expect(localConnectorError(err('LOCAL_CONNECTOR_EXPIRED'))).toEqual({
       key: 'apps.local.error.expired',
       stale: true,
-    });
-    expect(localConnectorError(err('DEVELOPER_MODE_REQUIRED'))).toEqual({
-      key: 'apps.local.error.developerMode',
-      stale: false,
     });
     expect(localConnectorError(err('LOCAL_CONNECTOR_ACK_REQUIRED'))).toEqual({
       key: 'apps.local.error.ackRequired',

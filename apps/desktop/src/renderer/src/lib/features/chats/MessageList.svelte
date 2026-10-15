@@ -8,6 +8,7 @@
   import RunStatusLine from './RunStatusLine.svelte';
   import SelectionPinToolbar from './SelectionPinToolbar.svelte';
   import { hiddenFromTranscript } from '$lib/features/approvals/ephemeral-approval';
+  import { isInterimMessage } from './run-status-mute';
   import { permissions } from '$lib/stores/permissions.svelte';
   import TaskStatusLine from '$lib/features/tasks/TaskStatusLine.svelte';
 
@@ -26,7 +27,7 @@
         return false;
       }
       // Task interim is a single status overlay (task card / status line), not bubbles.
-      if (m.kind === 'text' && 'interim' in m.content && m.content.interim === true) return false;
+      if (isInterimMessage(m)) return false;
       // Retired: local change summary / diff / revert cards are not shown or kept in view.
       if (m.kind === 'card' && 'cardType' in m.content && m.content.cardType === 'run_changes') {
         return false;

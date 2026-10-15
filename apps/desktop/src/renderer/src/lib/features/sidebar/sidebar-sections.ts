@@ -110,7 +110,11 @@ export function normalizeSidebarSections(input: unknown): SidebarSectionsState {
   push(UNASSIGNED_SECTION_ID);
 
   const assignments: Record<string, string> = {};
-  if (raw.assignments !== null && typeof raw.assignments === 'object' && !Array.isArray(raw.assignments)) {
+  if (
+    raw.assignments !== null &&
+    typeof raw.assignments === 'object' &&
+    !Array.isArray(raw.assignments)
+  ) {
     for (const [conversationId, sectionId] of Object.entries(raw.assignments)) {
       if (conversationId.length === 0 || typeof sectionId !== 'string') continue;
       if (!known.has(sectionId)) continue;
@@ -119,7 +123,11 @@ export function normalizeSidebarSections(input: unknown): SidebarSectionsState {
   }
 
   const collapsed: Record<string, boolean> = {};
-  if (raw.collapsed !== null && typeof raw.collapsed === 'object' && !Array.isArray(raw.collapsed)) {
+  if (
+    raw.collapsed !== null &&
+    typeof raw.collapsed === 'object' &&
+    !Array.isArray(raw.collapsed)
+  ) {
     for (const [sectionId, value] of Object.entries(raw.collapsed)) {
       if (value !== true) continue;
       if (sectionId !== UNASSIGNED_SECTION_ID && !known.has(sectionId)) continue;
@@ -141,7 +149,10 @@ export function loadSidebarSections(storage: SectionStorage | null): SidebarSect
   }
 }
 
-export function saveSidebarSections(storage: SectionStorage | null, state: SidebarSectionsState): void {
+export function saveSidebarSections(
+  storage: SectionStorage | null,
+  state: SidebarSectionsState,
+): void {
   if (storage === null) return;
   try {
     storage.setItem(SIDEBAR_SECTIONS_STORAGE_KEY, JSON.stringify(normalizeSidebarSections(state)));
@@ -263,6 +274,35 @@ export function assignConversation(
   return expanded(next, target);
 }
 
+/** 把对话移回「未指定」，不改任何折叠状态（用于后台清理，例如管家被移入过分组）。 */
+export function unassignConversation(
+  state: SidebarSectionsState,
+  conversationId: string,
+): SidebarSectionsState {
+  const normalized = normalizeSidebarSections(state);
+  if (normalized.assignments[conversationId] === undefined) return normalized;
+  const assignments = { ...normalized.assignments };
+  delete assignments[conversationId];
+  return { ...normalized, assignments };
+}
+
+/**
+ * 丢掉指向已不存在对话的归属（对话被删、Bot 被删后直聊不再列出）。
+ * existingConversationIds 必须是完整列表：调用方只在列表刷新完成后调用。
+ */
+export function pruneSidebarSections(
+  state: SidebarSectionsState,
+  existingConversationIds: Iterable<string>,
+): SidebarSectionsState {
+  const normalized = normalizeSidebarSections(state);
+  const existing = new Set(existingConversationIds);
+  const stale = Object.keys(normalized.assignments).filter((id) => !existing.has(id));
+  if (stale.length === 0) return normalized;
+  const assignments = { ...normalized.assignments };
+  for (const id of stale) delete assignments[id];
+  return { ...normalized, assignments };
+}
+
 export function renameSection(
   state: SidebarSectionsState,
   sectionId: string,
@@ -281,7 +321,10 @@ export function renameSection(
 }
 
 /** 删除自定义分组。里面的对话回到「未指定」。 */
-export function deleteSection(state: SidebarSectionsState, sectionId: string): SidebarSectionsState {
+export function deleteSection(
+  state: SidebarSectionsState,
+  sectionId: string,
+): SidebarSectionsState {
   if (sectionId === UNASSIGNED_SECTION_ID) return normalizeSidebarSections(state);
   const normalized = normalizeSidebarSections(state);
   if (!normalized.sections.some((section) => section.id === sectionId)) return normalized;
@@ -291,9 +334,13 @@ export function deleteSection(state: SidebarSectionsState, sectionId: string): S
   }
   const collapsed = { ...normalized.collapsed };
   delete collapsed[sectionId];
+  const sections = normalized.sections.filter((section) => section.id !== sectionId);
+  // 没有自定义分组时组名不显示、「未指定」不可折叠；残留的折叠标记会在下次
+  // 新建分组时让「未指定」一出现就是收起的。
+  if (sections.length === 0) delete collapsed[UNASSIGNED_SECTION_ID];
   return normalizeSidebarSections({
     ...normalized,
-    sections: normalized.sections.filter((section) => section.id !== sectionId),
+    sections,
     order: normalized.order.filter((id) => id !== sectionId),
     assignments,
     collapsed,
@@ -346,6 +393,22 @@ export function moveSectionBefore(
   if (beforeId === null || index < 0) order.push(sectionId);
   else order.splice(index, 0, sectionId);
   return { ...normalized, order };
+}
+
+/**
+ * 键盘排序（分组右键菜单「上移 / 下移」）：返回交给 moveSectionBefore 的 beforeId；
+ * 已在顶端 / 末端或分组不存在时返回 undefined（菜单项置灰）。
+ */
+export function sectionStepTarget(
+  order: readonly string[],
+  sectionId: string,
+  direction: 'up' | 'down',
+): string | null | undefined {
+  const index = order.indexOf(sectionId);
+  if (index < 0) return undefined;
+  if (direction === 'up') return index === 0 ? undefined : order[index - 1];
+  if (index === order.length - 1) return undefined;
+  return order[index + 2] ?? null;
 }
 
 /** 指针落在哪条分组标题的上半区，就插到它前面；都过了中线则落到末尾。跳过正在拖的那条。 */

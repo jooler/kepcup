@@ -17,7 +17,6 @@
   import McpToolPolicies from './McpToolPolicies.svelte';
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
-  import { mcpTargetLocked } from './mcp-edit';
   import { editedServerForSave, mcpServerId } from './mcp-server-patch';
   import { applySettingItem } from '$lib/features/settings-card/apply';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
@@ -45,7 +44,6 @@
    */
 
   let {
-    variant = 'full',
     embedded = false,
     before = null,
     prefill = null,
@@ -53,7 +51,6 @@
     onSaved,
     onConflict,
   }: {
-    variant?: 'manage' | 'full';
     embedded?: boolean;
     /** 出卡时的当前值（读适配器快照）：`server`、`enabled`；也是 CAS 的 `expected`。 */
     before?: SettingValues | null;
@@ -87,12 +84,6 @@
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
   /** W5：展开了逐工具策略的 server。 */
   let toolsOpen = $state<Record<string, boolean>>({});
-  /** 原始工具定义 / 授权事件日志 / 手动刷新：扩展中心 MCP 全量管理形态下始终可用。 */
-  const developerMode = $derived(settingsStore.developerMode);
-  /** 连接目标是否只读（自定义 MCP 迁到扩展中心后恒为 false）。 */
-  const targetLocked = $derived(
-    mcpTargetLocked({ variant, developerMode, editing: editingId !== null }),
-  );
 
   const embeddedId = $derived(embedded ? mcpServerId(before) : null);
   const embeddedServer = $derived(
@@ -560,385 +551,368 @@
     {/if}
   </div>
 {:else}
-<section class="space-y-3" data-testid="mcp-section">
-  <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
-  <p class="text-xs text-muted-foreground">
-    {variant === 'manage' ? t('extensionCenter.mcp.hint') : t('settings.mcpHint')}
-  </p>
-
-  {#if variant === 'manage' && servers.length === 0 && draft === null}
-    <p class="text-xs text-muted-foreground" data-testid="mcp-empty">
-      {t('extensionCenter.mcp.empty')}
+  <section class="space-y-3" data-testid="mcp-section">
+    <h3 class="text-sm font-medium">{t('settings.mcpTitle')}</h3>
+    <p class="text-xs text-muted-foreground">
+      {t('extensionCenter.mcp.hint')}
     </p>
-  {/if}
 
-  {#each servers as server (server.id)}
-    <div class="space-y-2 rounded-xl border px-4 py-3.5" data-testid={`mcp-server-${server.id}`}>
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge>{server.name}</Badge>
-        <Badge variant="outline"
-          >{server.transport === 'stdio'
-            ? server.command || 'stdio'
-            : server.transport === 'sse'
-              ? 'SSE'
-              : 'HTTP'}</Badge
-        >
-        {#if !server.enabled}
-          <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
-        {/if}
-        {#if appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
-          <Badge
-            variant="outline"
-            class="border-amber-500/60 text-amber-700 dark:text-amber-400"
-            data-testid={`mcp-pending-${server.id}`}
-          >
-            {t('settings.mcpToolsPending', {
-              count: appDetailStore.pendingFor(customConnectionId(server.id)),
-            })}
-          </Badge>
-        {/if}
-        <div class="ml-auto flex items-center gap-3">
-          <label class="flex items-center gap-1.5 text-xs">
-            <Checkbox
-              checked={server.enabled}
-              onCheckedChange={(checked) => void toggleEnabled(server, checked === true)}
-            />
-            {t('settings.mcpEnabled')}
-          </label>
-        </div>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <label class="flex items-center gap-1.5 text-xs" data-testid={`mcp-auto-${server.id}`}>
-          <Checkbox
-            checked={server.autoApprove}
-            onCheckedChange={(checked) => void toggleAutoApprove(server, checked === true)}
-          />
-          {t('settings.mcpAutoApprove')}
-        </label>
-        {#if server.autoApprove}
-          <span class="text-xs text-amber-600 dark:text-amber-400"
-            >{t('settings.mcpAutoApproveWarn')}</span
-          >
-        {/if}
-        <div class="ml-auto flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={testing}
-            onclick={() => void test(server)}
-          >
-            {testing ? t('settings.testing') : t('settings.test')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onclick={() => (toolsOpen = { ...toolsOpen, [server.id]: !toolsOpen[server.id] })}
-            data-testid={`mcp-tools-toggle-${server.id}`}
-          >
-            {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onclick={() => editServer(server)}
-            data-testid={`mcp-edit-${server.id}`}
-          >
-            {t('settings.mcpEdit')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            class="text-destructive hover:text-destructive"
-            disabled={busy}
-            onclick={() => void removeServer(server)}
-          >
-            {t('settings.mcpRemove')}
-          </Button>
-        </div>
-      </div>
-      {#if testServerId === server.id}
-        {#if testTools !== null && testError === null}
-          <div class="space-y-1.5" data-testid={`mcp-tools-${server.id}`}>
-            <p class="text-xs text-emerald-600 dark:text-emerald-400">
-              {t('settings.mcpToolsFound', { count: testTools.length })}
-            </p>
-            {#if testTools.length > 0}
-              <div class="flex flex-wrap gap-1.5" data-testid={`mcp-tested-${server.id}`}>
-                <!-- 按位置键：server 返回的工具名可能重复，重名会让按名键的 each 崩掉 -->
-                {#each testTools as name, index (index)}
-                  {@const risk = riskOf(server.id, name)}
-                  <span class="flex items-center gap-1 text-xs">
-                    <code class="rounded bg-muted px-1.5 py-0.5">{name}</code>
-                    {#if risk !== null}
-                      <McpRiskBadge {risk} testid={`mcp-tested-risk-${server.id}-${name}`} />
-                    {/if}
-                  </span>
-                {/each}
-              </div>
-              {#if testHashes !== null && appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
-                {@const hashes = testHashes}
-                <div class="flex flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    disabled={approving}
-                    onclick={() => void approveTested(server.id, hashes)}
-                    data-testid={`mcp-approve-${server.id}`}
-                  >
-                    {t('settings.mcpToolsApprove')}
-                  </Button>
-                  <span class="text-xs text-muted-foreground">
-                    {t('settings.mcpToolsApproveHint')}
-                  </span>
-                </div>
-              {/if}
-            {/if}
-          </div>
-        {:else if testError !== null}
-          <p class="text-xs text-destructive">{testError}</p>
-        {/if}
-      {/if}
-      {#if server.auth === 'oauth'}
-        <div class="space-y-1.5 border-t pt-2.5" data-testid={`mcp-oauth-${server.id}`}>
-          <p class="text-xs font-medium">{t('settings.mcpOauthSection')}</p>
-          <ConnectAppPanel
-            target={{ kind: 'custom', serverId: server.id }}
-            name={server.name}
-            testid={`mcp-connect-${server.id}`}
-          />
-        </div>
-      {/if}
-      {#if toolsOpen[server.id]}
-        <McpToolPolicies {server} />
-      {/if}
-      {#if variant === 'full'}
-        <McpDevTools {server} />
-      {/if}
-    </div>
-  {/each}
+    {#if servers.length === 0 && draft === null}
+      <p class="text-xs text-muted-foreground" data-testid="mcp-empty">
+        {t('extensionCenter.mcp.empty')}
+      </p>
+    {/if}
 
-  {#if draft !== null}
-    <div class="space-y-3 rounded-xl border px-4 py-3.5" data-testid="mcp-edit-form">
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div class="grid gap-1.5">
-          <Label for="mcp-name">{t('settings.mcpNameLabel')}</Label>
-          <Input id="mcp-name" class="h-9" bind:value={draft.name} placeholder="filesystem" />
-        </div>
-        {#if editingId === null}
-          <div class="grid gap-1.5">
-            <Label for="mcp-transport">{t('settings.mcpTransportLabel')}</Label>
-            <select
-              id="mcp-transport"
-              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-              bind:value={draft.transport}
+    {#each servers as server (server.id)}
+      <div class="space-y-2 rounded-xl border px-4 py-3.5" data-testid={`mcp-server-${server.id}`}>
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge>{server.name}</Badge>
+          <Badge variant="outline"
+            >{server.transport === 'stdio'
+              ? server.command || 'stdio'
+              : server.transport === 'sse'
+                ? 'SSE'
+                : 'HTTP'}</Badge
+          >
+          {#if !server.enabled}
+            <Badge variant="outline">{t('settings.mcpDisabled')}</Badge>
+          {/if}
+          {#if appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
+            <Badge
+              variant="outline"
+              class="border-amber-500/60 text-amber-700 dark:text-amber-400"
+              data-testid={`mcp-pending-${server.id}`}
             >
-              <option value="stdio">stdio</option>
-              <option value="http">Streamable HTTP</option>
-              <option value="sse">SSE（旧版）</option>
+              {t('settings.mcpToolsPending', {
+                count: appDetailStore.pendingFor(customConnectionId(server.id)),
+              })}
+            </Badge>
+          {/if}
+          <div class="ml-auto flex items-center gap-3">
+            <label class="flex items-center gap-1.5 text-xs">
+              <Checkbox
+                checked={server.enabled}
+                onCheckedChange={(checked) => void toggleEnabled(server, checked === true)}
+              />
+              {t('settings.mcpEnabled')}
+            </label>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="flex items-center gap-1.5 text-xs" data-testid={`mcp-auto-${server.id}`}>
+            <Checkbox
+              checked={server.autoApprove}
+              onCheckedChange={(checked) => void toggleAutoApprove(server, checked === true)}
+            />
+            {t('settings.mcpAutoApprove')}
+          </label>
+          {#if server.autoApprove}
+            <span class="text-xs text-amber-600 dark:text-amber-400"
+              >{t('settings.mcpAutoApproveWarn')}</span
+            >
+          {/if}
+          <div class="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={testing}
+              onclick={() => void test(server)}
+            >
+              {testing ? t('settings.testing') : t('settings.test')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onclick={() => (toolsOpen = { ...toolsOpen, [server.id]: !toolsOpen[server.id] })}
+              data-testid={`mcp-tools-toggle-${server.id}`}
+            >
+              {toolsOpen[server.id] ? t('settings.mcpToolsHide') : t('settings.mcpTools')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onclick={() => editServer(server)}
+              data-testid={`mcp-edit-${server.id}`}
+            >
+              {t('settings.mcpEdit')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="text-destructive hover:text-destructive"
+              disabled={busy}
+              onclick={() => void removeServer(server)}
+            >
+              {t('settings.mcpRemove')}
+            </Button>
+          </div>
+        </div>
+        {#if testServerId === server.id}
+          {#if testTools !== null && testError === null}
+            <div class="space-y-1.5" data-testid={`mcp-tools-${server.id}`}>
+              <p class="text-xs text-emerald-600 dark:text-emerald-400">
+                {t('settings.mcpToolsFound', { count: testTools.length })}
+              </p>
+              {#if testTools.length > 0}
+                <div class="flex flex-wrap gap-1.5" data-testid={`mcp-tested-${server.id}`}>
+                  <!-- 按位置键：server 返回的工具名可能重复，重名会让按名键的 each 崩掉 -->
+                  {#each testTools as name, index (index)}
+                    {@const risk = riskOf(server.id, name)}
+                    <span class="flex items-center gap-1 text-xs">
+                      <code class="rounded bg-muted px-1.5 py-0.5">{name}</code>
+                      {#if risk !== null}
+                        <McpRiskBadge {risk} testid={`mcp-tested-risk-${server.id}-${name}`} />
+                      {/if}
+                    </span>
+                  {/each}
+                </div>
+                {#if testHashes !== null && appDetailStore.pendingFor(customConnectionId(server.id)) > 0}
+                  {@const hashes = testHashes}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      disabled={approving}
+                      onclick={() => void approveTested(server.id, hashes)}
+                      data-testid={`mcp-approve-${server.id}`}
+                    >
+                      {t('settings.mcpToolsApprove')}
+                    </Button>
+                    <span class="text-xs text-muted-foreground">
+                      {t('settings.mcpToolsApproveHint')}
+                    </span>
+                  </div>
+                {/if}
+              {/if}
+            </div>
+          {:else if testError !== null}
+            <p class="text-xs text-destructive">{testError}</p>
+          {/if}
+        {/if}
+        {#if server.auth === 'oauth'}
+          <div class="space-y-1.5 border-t pt-2.5" data-testid={`mcp-oauth-${server.id}`}>
+            <p class="text-xs font-medium">{t('settings.mcpOauthSection')}</p>
+            <ConnectAppPanel
+              target={{ kind: 'custom', serverId: server.id }}
+              name={server.name}
+              testid={`mcp-connect-${server.id}`}
+            />
+          </div>
+        {/if}
+        {#if toolsOpen[server.id]}
+          <McpToolPolicies {server} />
+        {/if}
+        <McpDevTools {server} />
+      </div>
+    {/each}
+
+    {#if draft !== null}
+      <div class="space-y-3 rounded-xl border px-4 py-3.5" data-testid="mcp-edit-form">
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid gap-1.5">
+            <Label for="mcp-name">{t('settings.mcpNameLabel')}</Label>
+            <Input id="mcp-name" class="h-9" bind:value={draft.name} placeholder="filesystem" />
+          </div>
+          {#if editingId === null}
+            <div class="grid gap-1.5">
+              <Label for="mcp-transport">{t('settings.mcpTransportLabel')}</Label>
+              <select
+                id="mcp-transport"
+                class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                bind:value={draft.transport}
+              >
+                <option value="stdio">stdio</option>
+                <option value="http">Streamable HTTP</option>
+                <option value="sse">SSE（旧版）</option>
+              </select>
+            </div>
+          {/if}
+        </div>
+
+        {#if draft.transport === 'stdio'}
+          <div class="grid gap-1.5">
+            <Label for="mcp-command">{t('settings.mcpCommandLabel')}</Label>
+            <Input id="mcp-command" class="h-9" bind:value={draft.command} placeholder="npx" />
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="mcp-args">{t('settings.mcpArgsLabel')}</Label>
+            <Input
+              id="mcp-args"
+              class="h-9"
+              value={(draft.args ?? []).join(' ')}
+              oninput={(event) => {
+                const text = event.currentTarget.value;
+                draft!.args = text.length === 0 ? [] : text.split(' ');
+              }}
+              placeholder="-y @modelcontextprotocol/server-filesystem /path"
+            />
+          </div>
+        {:else}
+          <div class="grid gap-1.5">
+            <Label for="mcp-url">{t('settings.mcpUrlLabel')}</Label>
+            <Input
+              id="mcp-url"
+              class="h-9"
+              bind:value={draft.url}
+              placeholder={draft.transport === 'sse'
+                ? 'https://mcp.example.com/sse'
+                : 'https://mcp.example.com/mcp'}
+            />
+          </div>
+        {/if}
+
+        {#if draft.transport === 'http'}
+          <div class="grid gap-1.5">
+            <Label for="mcp-auth">{t('settings.mcpAuthLabel')}</Label>
+            <select
+              id="mcp-auth"
+              class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+              bind:value={draft.auth}
+              data-testid="mcp-auth"
+            >
+              <option value="none">{t('settings.mcpAuthNone')}</option>
+              <option value="headers">{t('settings.mcpAuthHeaders')}</option>
+              <option value="oauth">{t('settings.mcpAuthOauth')}</option>
             </select>
           </div>
         {/if}
-      </div>
 
-      {#if targetLocked}
-        <p class="text-xs text-muted-foreground" data-testid="mcp-target-locked">
-          {t('extensionCenter.mcp.targetLocked')}
-        </p>
-      {/if}
-
-      {#if draft.transport === 'stdio'}
-        <div class="grid gap-1.5">
-          <Label for="mcp-command">{t('settings.mcpCommandLabel')}</Label>
-          <Input
-            id="mcp-command"
-            class="h-9"
-            bind:value={draft.command}
-            placeholder="npx"
-            readonly={targetLocked}
-          />
-        </div>
-        <div class="grid gap-1.5">
-          <Label for="mcp-args">{t('settings.mcpArgsLabel')}</Label>
-          <Input
-            id="mcp-args"
-            class="h-9"
-            value={(draft.args ?? []).join(' ')}
-            readonly={targetLocked}
-            oninput={(event) => {
-              const text = event.currentTarget.value;
-              draft!.args = text.length === 0 ? [] : text.split(' ');
-            }}
-            placeholder="-y @modelcontextprotocol/server-filesystem /path"
-          />
-        </div>
-      {:else}
-        <div class="grid gap-1.5">
-          <Label for="mcp-url">{t('settings.mcpUrlLabel')}</Label>
-          <Input
-            id="mcp-url"
-            class="h-9"
-            bind:value={draft.url}
-            readonly={targetLocked}
-            placeholder={draft.transport === 'sse'
-              ? 'https://mcp.example.com/sse'
-              : 'https://mcp.example.com/mcp'}
-          />
-        </div>
-      {/if}
-
-      {#if draft.transport === 'http'}
-        <div class="grid gap-1.5">
-          <Label for="mcp-auth">{t('settings.mcpAuthLabel')}</Label>
-          <select
-            id="mcp-auth"
-            class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-            bind:value={draft.auth}
-            data-testid="mcp-auth"
-          >
-            <option value="none">{t('settings.mcpAuthNone')}</option>
-            <option value="headers">{t('settings.mcpAuthHeaders')}</option>
-            <option value="oauth">{t('settings.mcpAuthOauth')}</option>
-          </select>
-        </div>
-      {/if}
-
-      {#if draft.transport === 'http' && draft.auth === 'oauth'}
-        <p class="text-xs text-muted-foreground" data-testid="mcp-auth-oauth-hint">
-          {t('settings.mcpAuthOauthHint')}
-          {#if editingId === null}{t('settings.mcpAuthOauthSaveFirst')}{/if}
-        </p>
-      {:else if draft.transport !== 'http' || draft.auth === 'headers'}
-        <p class="text-xs text-muted-foreground">{t('settings.mcpSecretHint')}</p>
-      {/if}
-
-      {#if draft.transport === 'stdio'}
-        <div class="space-y-1.5">
-          <Label>{t('settings.mcpEnvLabel')}</Label>
-          {#each envEntries(draft) as entry (entry.name)}
-            <div class="flex items-center gap-2">
-              <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{entry.name}</code>
-              <Input
-                class="h-8 flex-1"
-                type="password"
-                placeholder={t('settings.providerKeySet')}
-                bind:value={draft.secretDrafts[entry.name]}
-              />
-              <Button size="sm" variant="ghost" onclick={() => removeEnv(entry.name)}>✕</Button>
-            </div>
-          {/each}
-          <div class="flex items-center gap-2">
-            <Input
-              class="h-8 w-40 shrink-0"
-              placeholder={t('settings.mcpAddEnvName')}
-              bind:value={envDraftName}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') submitEnv();
-              }}
-            />
-            <Input
-              class="h-8 flex-1"
-              placeholder={t('settings.mcpAddEnvValue')}
-              bind:value={envDraftValue}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') submitEnv();
-              }}
-            />
-          </div>
-        </div>
-      {:else if draft.transport !== 'http' || draft.auth === 'headers'}
-        <div class="space-y-1.5">
-          <Label>{t('settings.mcpHeadersLabel')}</Label>
-          {#each Object.keys(draft.headers ?? {}) as name (name)}
-            <div class="flex items-center gap-2">
-              <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{name}</code>
-              <Input
-                class="h-8 flex-1"
-                type="password"
-                placeholder={t('settings.providerKeySet')}
-                bind:value={draft.secretDrafts[`h:${name}`]}
-              />
-              <Button size="sm" variant="ghost" onclick={() => removeHeader(name)}>✕</Button>
-            </div>
-          {/each}
-          <div class="flex items-center gap-2">
-            <Input
-              class="h-8 w-40 shrink-0"
-              placeholder={t('settings.mcpAddHeaderName')}
-              bind:value={headerDraftName}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') submitHeader();
-              }}
-            />
-            <Input
-              class="h-8 flex-1"
-              placeholder={t('settings.mcpAddHeaderValue')}
-              bind:value={headerDraftValue}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') submitHeader();
-              }}
-            />
-          </div>
-        </div>
-      {/if}
-
-      <div class="flex flex-wrap items-center gap-2">
-        {#if draftTestHashes !== null && Object.keys(draftTestHashes).length > 0 && draftTestError === null}
-          <!-- §5.5：测试到的工具批准前不暴露给 Bot；保存即批准测试时看到的定义。 -->
-          <Button
-            size="sm"
-            disabled={busy || approving}
-            onclick={() => void save(true)}
-            data-testid="mcp-save-approve"
-          >
-            {t('settings.mcpToolsSaveApprove')}
-          </Button>
-        {/if}
-        <Button
-          size="sm"
-          variant={draftTestHashes !== null && draftTestError === null ? 'secondary' : 'default'}
-          disabled={busy}
-          onclick={() => void save()}
-          data-testid="mcp-save"
-        >
-          {t('settings.save')}
-        </Button>
-        {#if !(draft.transport === 'http' && draft.auth === 'oauth')}
-          <!-- OAuth 的草稿无令牌可测：保存并连接后在列表里测试。 -->
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={draftTesting}
-            onclick={() => void testDraft()}
-            data-testid="mcp-test-draft"
-          >
-            {draftTesting ? t('settings.testing') : t('settings.test')}
-          </Button>
-        {/if}
-        <Button size="sm" variant="ghost" onclick={cancelEdit}>{t('settings.mcpCancel')}</Button>
-      </div>
-
-      {#if draftTestTools !== null && draftTestError === null}
-        <div class="space-y-1.5" data-testid="mcp-draft-test-ok">
-          <p class="text-xs text-emerald-600 dark:text-emerald-400">
-            {t('settings.mcpToolsFound', { count: draftTestTools.length })}
+        {#if draft.transport === 'http' && draft.auth === 'oauth'}
+          <p class="text-xs text-muted-foreground" data-testid="mcp-auth-oauth-hint">
+            {t('settings.mcpAuthOauthHint')}
+            {#if editingId === null}{t('settings.mcpAuthOauthSaveFirst')}{/if}
           </p>
-          {#if draftTestTools.length > 0}
-            <div class="flex flex-wrap gap-1.5" data-testid="mcp-draft-tested">
-              {#each draftTestTools as name, index (index)}
-                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{name}</code>
-              {/each}
+        {:else if draft.transport !== 'http' || draft.auth === 'headers'}
+          <p class="text-xs text-muted-foreground">{t('settings.mcpSecretHint')}</p>
+        {/if}
+
+        {#if draft.transport === 'stdio'}
+          <div class="space-y-1.5">
+            <Label>{t('settings.mcpEnvLabel')}</Label>
+            {#each envEntries(draft) as entry (entry.name)}
+              <div class="flex items-center gap-2">
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{entry.name}</code>
+                <Input
+                  class="h-8 flex-1"
+                  type="password"
+                  placeholder={t('settings.providerKeySet')}
+                  bind:value={draft.secretDrafts[entry.name]}
+                />
+                <Button size="sm" variant="ghost" onclick={() => removeEnv(entry.name)}>✕</Button>
+              </div>
+            {/each}
+            <div class="flex items-center gap-2">
+              <Input
+                class="h-8 w-40 shrink-0"
+                placeholder={t('settings.mcpAddEnvName')}
+                bind:value={envDraftName}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') submitEnv();
+                }}
+              />
+              <Input
+                class="h-8 flex-1"
+                placeholder={t('settings.mcpAddEnvValue')}
+                bind:value={envDraftValue}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') submitEnv();
+                }}
+              />
             </div>
-            <p class="text-xs text-muted-foreground">{t('settings.mcpToolsApproveHint')}</p>
+          </div>
+        {:else if draft.transport !== 'http' || draft.auth === 'headers'}
+          <div class="space-y-1.5">
+            <Label>{t('settings.mcpHeadersLabel')}</Label>
+            {#each Object.keys(draft.headers ?? {}) as name (name)}
+              <div class="flex items-center gap-2">
+                <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{name}</code>
+                <Input
+                  class="h-8 flex-1"
+                  type="password"
+                  placeholder={t('settings.providerKeySet')}
+                  bind:value={draft.secretDrafts[`h:${name}`]}
+                />
+                <Button size="sm" variant="ghost" onclick={() => removeHeader(name)}>✕</Button>
+              </div>
+            {/each}
+            <div class="flex items-center gap-2">
+              <Input
+                class="h-8 w-40 shrink-0"
+                placeholder={t('settings.mcpAddHeaderName')}
+                bind:value={headerDraftName}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') submitHeader();
+                }}
+              />
+              <Input
+                class="h-8 flex-1"
+                placeholder={t('settings.mcpAddHeaderValue')}
+                bind:value={headerDraftValue}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') submitHeader();
+                }}
+              />
+            </div>
+          </div>
+        {/if}
+
+        <div class="flex flex-wrap items-center gap-2">
+          {#if draftTestHashes !== null && Object.keys(draftTestHashes).length > 0 && draftTestError === null}
+            <!-- §5.5：测试到的工具批准前不暴露给 Bot；保存即批准测试时看到的定义。 -->
+            <Button
+              size="sm"
+              disabled={busy || approving}
+              onclick={() => void save(true)}
+              data-testid="mcp-save-approve"
+            >
+              {t('settings.mcpToolsSaveApprove')}
+            </Button>
           {/if}
+          <Button
+            size="sm"
+            variant={draftTestHashes !== null && draftTestError === null ? 'secondary' : 'default'}
+            disabled={busy}
+            onclick={() => void save()}
+            data-testid="mcp-save"
+          >
+            {t('settings.save')}
+          </Button>
+          {#if !(draft.transport === 'http' && draft.auth === 'oauth')}
+            <!-- OAuth 的草稿无令牌可测：保存并连接后在列表里测试。 -->
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={draftTesting}
+              onclick={() => void testDraft()}
+              data-testid="mcp-test-draft"
+            >
+              {draftTesting ? t('settings.testing') : t('settings.test')}
+            </Button>
+          {/if}
+          <Button size="sm" variant="ghost" onclick={cancelEdit}>{t('settings.mcpCancel')}</Button>
         </div>
-      {:else if draftTestError !== null}
-        <p class="text-xs text-destructive" data-testid="mcp-draft-test-error">
-          {draftTestError}
-        </p>
-      {/if}
-    </div>
-  {:else}
-    <div class="flex items-center gap-2">
-      {#if variant === 'full'}
+
+        {#if draftTestTools !== null && draftTestError === null}
+          <div class="space-y-1.5" data-testid="mcp-draft-test-ok">
+            <p class="text-xs text-emerald-600 dark:text-emerald-400">
+              {t('settings.mcpToolsFound', { count: draftTestTools.length })}
+            </p>
+            {#if draftTestTools.length > 0}
+              <div class="flex flex-wrap gap-1.5" data-testid="mcp-draft-tested">
+                {#each draftTestTools as name, index (index)}
+                  <code class="rounded bg-muted px-1.5 py-0.5 text-xs">{name}</code>
+                {/each}
+              </div>
+              <p class="text-xs text-muted-foreground">{t('settings.mcpToolsApproveHint')}</p>
+            {/if}
+          </div>
+        {:else if draftTestError !== null}
+          <p class="text-xs text-destructive" data-testid="mcp-draft-test-error">
+            {draftTestError}
+          </p>
+        {/if}
+      </div>
+    {:else}
+      <div class="flex items-center gap-2">
         <select
           class="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
           bind:value={newKind}
@@ -949,13 +923,10 @@
           <option value="sse">SSE（旧版）</option>
         </select>
         <Button size="sm" onclick={addServer} data-testid="mcp-add">{t('settings.mcpAdd')}</Button>
-      {/if}
-      <McpbInstall />
-    </div>
-  {/if}
+        <McpbInstall />
+      </div>
+    {/if}
 
-  {#if variant === 'full'}
     <OAuthClientsPanel />
-  {/if}
-</section>
+  </section>
 {/if}

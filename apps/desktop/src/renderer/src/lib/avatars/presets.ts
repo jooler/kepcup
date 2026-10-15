@@ -242,6 +242,19 @@ export function formatPresetAvatar(shapeId: string, colorId: string): string {
 /** Reset 语义：预置第一个形状 + 第一种颜色。 */
 export const DEFAULT_AVATAR = formatPresetAvatar(AVATAR_SHAPES[0]!.id, AVATAR_COLORS[0]!.id);
 
+/**
+ * 名字哈希到一个预置头像（形状 × 颜色）：同一名字结果稳定，一批新建 Bot 在群头像
+ * 堆叠里彼此分得开。
+ */
+export function presetForName(name: string): string {
+  let hash = 0;
+  for (const char of name) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+  const shape = AVATAR_SHAPES[hash % AVATAR_SHAPES.length];
+  const color = AVATAR_COLORS[(hash >>> 8) % AVATAR_COLORS.length];
+  if (shape === undefined || color === undefined) return DEFAULT_AVATAR;
+  return formatPresetAvatar(shape.id, color.id);
+}
+
 export interface ParsedPresetAvatar {
   shape: AvatarPresetShape;
   color: AvatarPresetColor;
@@ -256,59 +269,8 @@ export function parsePresetAvatar(value: string | null | undefined): ParsedPrese
   return { shape, color };
 }
 
-/**
- * 固定色上可选的两种前景：白（预置风格，优先）与纯黑。黑必须是纯黑：近黑
- * #0a0a0a 在白色刚好不够正文 4.5:1 的颜色上只有约 4.40:1（见 avatarColorForeground）。
- */
+/** 固定色上的前景：一律白色（预置风格，产品取舍，见 avatarOnFillForeground）。 */
 export const AVATAR_FOREGROUND_LIGHT = '#ffffff';
-export const AVATAR_FOREGROUND_DARK = '#000000';
-
-/**
- * WCAG 2.x 最低对比度：图标等非文字图形 3:1（1.4.11），正文 4.5:1（1.4.3）。
- */
-export const AVATAR_MIN_CONTRAST = { graphic: 3, text: 4.5 } as const;
-export type AvatarForegroundUse = keyof typeof AVATAR_MIN_CONTRAST;
-
-/** WCAG 相对亮度；只接受 #rrggbb，其余（var() 等）返回 null。 */
-export function relativeLuminance(color: string): number | null {
-  const match = /^#([0-9a-f]{6})$/i.exec(color);
-  if (!match) return null;
-  const value = Number.parseInt(match[1]!, 16);
-  const channel = (shift: number): number => {
-    const c = ((value >> shift) & 0xff) / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
-}
-
-/** WCAG 对比度（1–21）；任一方不是 #rrggbb 时为 null。 */
-export function contrastRatio(a: string, b: string): number | null {
-  const la = relativeLuminance(a);
-  const lb = relativeLuminance(b);
-  if (la === null || lb === null) return null;
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-}
-
-/**
- * 填充色之上按对比度选出的前景（`graphic` / `text`）。动态色取其对比变量；
- * 固定色按对比度算：白色够该用途的最低对比度 T 就用白，否则用黑。预置头像
- * 眼睛、气泡文字和按键图标不走这里，见 avatarOnFillForeground。白色不够 T
- * 意味着填充色相对亮度
- * L > 1.05 / T − 0.05，此时纯黑的对比度 (L + 0.05) / 0.05 > 21 / T——正文
- * （T = 4.5）> 4.67、图标（T = 3）> 7。所以任何 #rrggbb 都至少达到该用途的 T：
- * 下限就是 T 本身（白色恰好达标时）。只依赖颜色本身，结果确定。
- */
-export function avatarColorForeground(
-  color: AvatarPresetColor,
-  use: AvatarForegroundUse = 'graphic',
-): string {
-  if (color.contrast !== undefined) return color.contrast;
-  const onLight = contrastRatio(color.hex, AVATAR_FOREGROUND_LIGHT);
-  const onDark = contrastRatio(color.hex, AVATAR_FOREGROUND_DARK);
-  if (onLight === null || onDark === null) return AVATAR_FOREGROUND_LIGHT;
-  if (onLight >= AVATAR_MIN_CONTRAST[use]) return AVATAR_FOREGROUND_LIGHT;
-  return onDark > onLight ? AVATAR_FOREGROUND_DARK : AVATAR_FOREGROUND_LIGHT;
-}
 
 /**
  * 铺在头像填充色上的前景：预置头像眼睛、用户气泡文字、输入框右侧发送 / 语音键图标。

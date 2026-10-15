@@ -13,10 +13,13 @@ import {
   loadSidebarSections,
   moveSectionBefore,
   normalizeSidebarSections,
+  pruneSidebarSections,
   renameSection,
   saveSidebarSections,
   sectionIdOf,
+  sectionStepTarget,
   toggleSectionCollapsed,
+  unassignConversation,
   type SectionStorage,
 } from './sidebar-sections';
 
@@ -76,7 +79,11 @@ describe('layoutSidebarSections', () => {
 describe('分组变更', () => {
   test('空名称不建分组；名称去掉首尾空白并截断', () => {
     expect(createSection(emptySidebarSections(), '   ')).toBeNull();
-    const created = createSection(emptySidebarSections(), `  ${'项'.repeat(SECTION_NAME_MAX + 5)}  `, 'sec_long');
+    const created = createSection(
+      emptySidebarSections(),
+      `  ${'项'.repeat(SECTION_NAME_MAX + 5)}  `,
+      'sec_long',
+    );
     expect(created?.state.sections[0]?.name).toHaveLength(SECTION_NAME_MAX);
     expect(created?.state.order[0]).toBe('sec_long');
   });
@@ -134,6 +141,122 @@ describe('分组变更', () => {
       'sec_b',
       'sec_a',
     ]);
+  });
+});
+
+describe('清理与键盘排序', () => {
+  function twoSections() {
+    let state = createSection(emptySidebarSections(), '甲', 'sec_a')!.state;
+    state = createSection(state, '乙', 'sec_b')!.state;
+    state = assignConversation(state, 'a', 'sec_a');
+    state = assignConversation(state, 'b', 'sec_b');
+    return state;
+  }
+
+  test('pruneSidebarSections 丢掉已不存在对话的归属，其余不动', () => {
+    const state = twoSections();
+    const pruned = pruneSidebarSections(state, ['a', 'other']);
+    expect(pruned.assignments).toEqual({ a: 'sec_a' });
+    expect(pruned.sections).toEqual(state.sections);
+    expect(pruned.order).toEqual(state.order);
+    expect(pruneSidebarSections(state, new Set(['a', 'b'])).assignments).toEqual(state.assignments);
+    expect(pruneSidebarSections(state, []).assignments).toEqual({});
+  });
+
+  test('unassignConversation 移回未指定但不展开它', () => {
+    let state = twoSections();
+    state = toggleSectionCollapsed(state, UNASSIGNED_SECTION_ID);
+    const back = unassignConversation(state, 'a');
+    expect(sectionIdOf(back, 'a')).toBe(UNASSIGNED_SECTION_ID);
+    expect(back.collapsed[UNASSIGNED_SECTION_ID]).toBe(true);
+    // 对照：assignConversation 是用户的移动操作，会展开目标
+    expect(assignConversation(state, 'a', UNASSIGNED_SECTION_ID).collapsed).toEqual({});
+    expect(unassignConversation(back, 'a').assignments).toEqual({ b: 'sec_b' });
+  });
+
+  test('删掉最后一个自定义分组时清掉未指定的折叠标记', () => {
+    let state = createSection(emptySidebarSections(), '甲', 'sec_a')!.state;
+    state = toggleSectionCollapsed(state, UNASSIGNED_SECTION_ID);
+    const removed = deleteSection(state, 'sec_a');
+    expect(removed.collapsed).toEqual({});
+    // 再建分组时未指定不会一出现就是收起的
+    const again = createSection(removed, '乙', 'sec_b')!.state;
+    expect(layoutSidebarSections(items, again).groups[1]?.collapsed).toBe(false);
+    // 仍有其它分组时保留
+    let two = twoSections();
+    two = toggleSectionCollapsed(two, UNASSIGNED_SECTION_ID);
+    expect(deleteSection(two, 'sec_a').collapsed[UNASSIGNED_SECTION_ID]).toBe(true);
+  });
+
+  test('sectionStepTarget 给出上移 / 下移的 beforeId，两端为 undefined', () => {
+    const order = ['sec_b', 'sec_a', UNASSIGNED_SECTION_ID];
+    expect(sectionStepTarget(order, 'sec_b', 'up')).toBeUndefined();
+    expect(sectionStepTarget(order, 'sec_a', 'up')).toBe('sec_b');
+    expect(sectionStepTarget(order, 'sec_b', 'down')).toBe(UNASSIGNED_SECTION_ID);
+    expect(sectionStepTarget(order, 'sec_a', 'down')).toBeNull();
+    expect(sectionStepTarget(order, UNASSIGNED_SECTION_ID, 'down')).toBeUndefined();
+    expect(sectionStepTarget(order, 'missing', 'up')).toBeUndefined();
+
+    const state = twoSections();
+    const down = moveSectionBefore(
+      state,
+      'sec_b',
+      sectionStepTarget(state.order, 'sec_b', 'down')!,
+    );
+    expect(down.order).toEqual(['sec_a', 'sec_b', UNASSIGNED_SECTION_ID]);
+    const toEnd = moveSectionBefore(down, 'sec_b', sectionStepTarget(down.order, 'sec_b', 'down')!);
+    expect(toEnd.order).toEqual(['sec_a', UNASSIGNED_SECTION_ID, 'sec_b']);
+    const up = moveSectionBefore(toEnd, 'sec_b', sectionStepTarget(toEnd.order, 'sec_b', 'up')!);
+    expect(up.order).toEqual(['sec_a', 'sec_b', UNASSIGNED_SECTION_ID]);
+  });
+});
+
+describe('normalizeSidebarSections', () => {
+  test('非对象输入回到缺省', () => {
+    for (const input of [null, undefined, 42, 'x', [], true]) {
+      expect(normalizeSidebarSections(input)).toEqual(emptySidebarSections());
+    }
+  });
+
+  test('丢掉坏条目、重复 id、未指定冒名与空名，名称去空白截断', () => {
+    const state = normalizeSidebarSections({
+      sections: [
+        { id: 'sec_a', name: ' 甲 ' },
+        { id: 'sec_a', name: '重复' },
+        { id: UNASSIGNED_SECTION_ID, name: '冒名' },
+        { id: 'sec_empty', name: '   ' },
+        { id: '', name: '无 id' },
+        { id: 'sec_num', name: 7 },
+        null,
+        'sec_str',
+        { id: 'sec_long', name: '长'.repeat(SECTION_NAME_MAX + 3) },
+      ],
+    });
+    expect(state.sections.map((section) => section.id)).toEqual(['sec_a', 'sec_long']);
+    expect(state.sections[0]?.name).toBe('甲');
+    expect(state.sections[1]?.name).toHaveLength(SECTION_NAME_MAX);
+  });
+
+  test('order 去重、丢未知 id、补齐遗漏的分组与未指定', () => {
+    const state = normalizeSidebarSections({
+      sections: [
+        { id: 'sec_a', name: '甲' },
+        { id: 'sec_b', name: '乙' },
+      ],
+      order: ['sec_b', 'sec_b', 'ghost', 3, UNASSIGNED_SECTION_ID, UNASSIGNED_SECTION_ID],
+    });
+    expect(state.order).toEqual(['sec_b', UNASSIGNED_SECTION_ID, 'sec_a']);
+  });
+
+  test('归属与折叠只保留指向已知分组的合法值', () => {
+    const state = normalizeSidebarSections({
+      sections: [{ id: 'sec_a', name: '甲' }],
+      assignments: { a: 'sec_a', b: 'ghost', c: 5, '': 'sec_a', d: UNASSIGNED_SECTION_ID },
+      collapsed: { sec_a: true, ghost: true, [UNASSIGNED_SECTION_ID]: true, sec_b: 'yes' },
+    });
+    expect(state.assignments).toEqual({ a: 'sec_a' });
+    expect(state.collapsed).toEqual({ sec_a: true, [UNASSIGNED_SECTION_ID]: true });
+    expect(normalizeSidebarSections({ assignments: [], collapsed: null }).assignments).toEqual({});
   });
 });
 

@@ -31,14 +31,6 @@ export function localEntries(entries: readonly AppCatalogEntry[]): AppCatalogEnt
   return entries.filter(isLocalEntry);
 }
 
-/**
- * 「本机自建」区可见：自定义 MCP / 本机连接不再挂开发者模式门禁后始终显示
- * （空态引导 Bot 提案或等待已有条目）。
- */
-export function localSectionVisible(_input: { developerMode: boolean; count: number }): boolean {
-  return true;
-}
-
 // --- 确认卡 --------------------------------------------------------------------------
 
 /** 卡上的 MCP 地址对应的本机条目 slug（与 core 同一派生规则）；地址非法 = null。 */
@@ -107,8 +99,6 @@ export function localConnectorError(error: unknown): LocalConnectorErrorView | n
       return { key: 'apps.local.error.expired', stale: true };
     case 'LOCAL_CONNECTOR_ACK_REQUIRED':
       return { key: 'apps.local.error.ackRequired', stale: false };
-    case 'DEVELOPER_MODE_REQUIRED':
-      return { key: 'apps.local.error.developerMode', stale: false };
     case 'LOCAL_CONNECTOR_REJECTED':
       return {
         key: 'apps.local.error.rejected',

@@ -236,15 +236,8 @@ class SettingsState {
     return (await core.call('mcp.toolRisks', { serverId })) as McpToolRisksOutput;
   }
 
-  // --- 连接应用 P2：开发者模式 / BYO OAuth 客户端（D73 §6.4 / §6.6）---------------
-
-  get developerMode(): boolean {
-    return this.settings?.apps.developerMode === true;
-  }
-
-  async setDeveloperMode(on: boolean): Promise<void> {
-    await this.update({ apps: { developerMode: on } } as Partial<Settings>);
-  }
+  // --- 连接应用 P2：MCP 调试 / BYO OAuth 客户端（D73 §6.4 / §6.6）-----------------
+  // `settings.apps.developerMode` 是 core 保留的遗留字段，界面不再读写。
 
   /** 原始工具定义（含 annotations / inputSchema）。 */
   async rawMcpTools(serverId: string): Promise<Array<Record<string, unknown>>> {

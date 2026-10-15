@@ -2,6 +2,7 @@
   import { Users } from '@lucide/svelte';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from './BotAvatar.svelte';
+  import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
   import { groupAvatarSlots } from './group-avatar-layout';
 
   let {
@@ -12,8 +13,9 @@
     class?: string;
   } = $props();
 
-  const seed = $derived(members.map((member) => member.id).join('|'));
-  const slots = $derived(groupAvatarSlots(members.length, seed));
+  const shown = $derived(members.slice(0, GROUP_MEMBER_PREVIEW_MAX));
+  const seed = $derived(shown.map((member) => member.id).join('|'));
+  const slots = $derived(groupAvatarSlots(shown.length, seed));
 </script>
 
 {#if members.length === 0}
@@ -31,7 +33,7 @@
     data-testid="group-avatar-stack"
     aria-hidden="true"
   >
-    {#each members as member, index (member.id)}
+    {#each shown as member, index (member.id)}
       {@const slot = slots[index]}
       {#if slot}
         <span
