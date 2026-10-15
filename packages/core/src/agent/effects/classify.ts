@@ -33,8 +33,11 @@ type Rule = EffectClass | ((params: Record<string, unknown>) => EffectClass);
  * 全部 ToolDefinition 名；pi-coding-agent 的 read / write / edit / ls / find /
  * grep / bash）。新增内置工具必须在这里登记。
  */
-/** D90：`when === 'now'`（立即派发给执行者）→ external，其余 local。 */
-const whenNow: Rule = (params) => (params['when'] === 'now' ? 'external' : 'local');
+/** D90：`when` 是 now（立即派发给执行者；与 core 的 parseWhen 同口径，忽略大小写与首尾空白）→ external，其余 local。 */
+const whenNow: Rule = (params) => {
+  const when = params['when'];
+  return typeof when === 'string' && when.trim().toLowerCase() === 'now' ? 'external' : 'local';
+};
 
 const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   // --- 文件与命令（coding-tools；wiki 维护 / 技能生成各有同名的受限版本）---
