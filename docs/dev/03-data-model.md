@@ -187,7 +187,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, deliveries? }`（`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
 - 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
 - 组件回传（D87 P4 L3）：用户在组件卡上确认后经 `widgets.ui.reply` 发出的用户消息，`text` 消息的 `content_json` 带 `origin: 'widget'` + `widgetId` + `widgetVersion`（同样免加列）；上下文发送者渲染为「用户（经组件 … 发出）」，正文包 `<untrusted source="widget">`；记忆与反思把它当「非用户本人的话」（同委派代发）。
-- 工作台派发（D90）：到点或「立即开始」时宿主在目标对话里追加的用户消息，`text` 消息的 `content_json` 带 `origin: 'workbench'` + `todoId` + `todoRunId`（免加列）；界面渲染为派发卡；`source='butler'` 的事项另加「（管家代你安排）」，记忆与反思不把它当用户原话（同委派代发）。
+- 工作台派发（D90）：到点或「立即开始」时宿主在目标对话里追加的用户消息，`text` 消息的 `content_json` 带 `origin: 'workbench'` + `todoId` + `todoRunId`（免加列）；界面渲染为派发卡；操作者是管家时另加「（管家代你安排）」（`viaButler`），`source='butler'`（内容由管家起草或改写过）的事项另带 `butlerDrafted`，两者都让记忆与反思不把它当用户原话、执行者上下文按不可信包裹（同委派代发）。
 - 任务卡（D75 W3）：共享的 `card` 行，`content_json = { cardType: 'task', runId: <任务 id> }`，`task_id` = 任务；`start_task` 与失败任务的重试各写一张。上下文中渲染为一行状态（[design/30](../design/30-supervisor-and-tasks.md) §4.3）。
 - MCP Apps 卡（D73 P3，`cardType: 'mcp_app'`）：共享的 `card` 行，`content_json = { cardType: 'mcp_app', appUi: {…} }`，`appUi` 是描述符（server id、`ui://` URI、工具名、脱敏并截断后的入参 / 结果，入参 ≤ 16 KiB、结果 ≤ 64 KiB 字符，超出丢弃并标记 truncated），**不含 HTML 与令牌**；页面 HTML 只在 core 内存里的一次性资源（128 位随机 id，≤ 64 条、30 分钟滑动 TTL），不落库。上下文中渲染为一行固定文案。
 - 展示卡（D87 P4 L1，`cardType: 'present'`）：`sender_type = 'system'` 的 `card` 行（`run_id` = 发出它的对话轮或任务），`content_json = { cardType: 'present', present: { kind, title, data, botId? } }`，`data` 是 Bot 给的 JSON（按 kind 的 schema 校验，≤64KB），`botId` 是发卡的 Bot；上下文按 kind 回放成紧凑文字（≤1200 字），标明发卡的 Bot、数据包 `<untrusted>`。
@@ -613,7 +613,7 @@ CREATE TABLE todos (
   assignee_group_id TEXT,                            -- 群执行者；不设 FK（删群由 TodoService / 对账处理）
   status            TEXT NOT NULL CHECK (status IN
                       ('draft', 'scheduled', 'in_progress', 'delivered', 'done', 'cancelled')),
-  source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),
+  source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),   -- 内容出处：管家创建，或管家改写过标题 / 说明
   memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
   blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
   created_at        INTEGER NOT NULL,

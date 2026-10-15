@@ -96,7 +96,7 @@ Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任�
 
 main 库三张新表（迁移 `0037_workbench`，字段见 [dev/03-data-model.md](../dev/03-data-model.md)）：
 
-- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`；执行者编码在 `assignee_bot_id` + `assignee_group_id` 上。
+- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`（内容出处：用户建的，或内容由管家起草 / 改写过，见 §5.2）；执行者编码在 `assignee_bot_id` + `assignee_group_id` 上。
 - `todo_runs`：每次派发一条（单次事项通常只有一条）。`status ∈ {dispatched, delivered, unclaimed, failed}`；`conversation_id` 不设外键，对话删了记录仍可读。
 - `memos`：备忘。`deleted_at` 非空 = 在「最近删除」。
 
@@ -157,7 +157,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 约束：
 
 - **不算用户本人触发**：与 D71 委派代发相同，`triggerFromUser=false`。执行者在这一轮里做敏感设置写入，仍按「非本人」出卡确认。到点时用户未必在场，不能借派发消息绕过确认。
-- **记忆证据**：`source='butler'` 的事项派发消息不算用户原话。反思不能把它当用户偏好的证据，对齐 D71。
+- **记忆证据**：`source='butler'` 的事项派发消息不算用户原话。反思不能把它当用户偏好的证据，对齐 D71。`source` 的语义是「内容由管家起草或改写过」：管家创建的事项是 `butler`；用户建的事项一旦被管家（`actor='butler'`）改了标题或说明，`TodoService.update` 也把它置为 `butler`，之后无论谁派发，消息都带 `butlerDrafted`，执行者上下文按不可信包裹。
 - **执行者提示**：系统提示加一条规则：「工作台派发的事项：做完给出明确结论；做不了说明原因与需要什么。」便于用户验收。
 
 ### 3.5 交付追踪
@@ -271,13 +271,13 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | ---- | ---- | ---- |
 | `list_todos` | `status?`、`assignee?`、`query?`、`limit?` | 只读；结果包 `untrustedBlock`（标题 / 说明可能来自网页摘录） |
 | `create_todo` | `title`、`notes?`、`assignee?`（`{bot}` / `{group, lead_bot?}`）、`when?`（`now` / ISO / cron）、`from_memo?` | 不填执行者和时间即为草案 |
-| `update_todo` | `id` + 任意字段；`assignee: null` / `when: null` 为清空 | 改派、改期、退回草案 |
+| `update_todo` | `id` + 任意字段；清空用 `clear_assignee` / `clear_when`（传 `null` 返回 invalid） | 改派、改期、退回草案 |
 | `close_todo` | `id`、`outcome: 'done' \| 'cancelled'`、`reason?` | 收尾；不提供硬删除 |
 | `list_memos` | `query?`、`limit?`、`include_trashed?` | 只读，`untrustedBlock` |
 | `create_memo` / `update_memo` | `body` / `id, body?, pinned?` | 「帮我记一下…」 |
 | `delete_memo` | `id` | 移入最近删除，可恢复 |
 
-工具注册清单要同步更新：`effects/classify.ts` 的写工具归为 `local`、`list_*` 归为 `none`（`READ_ONLY_TOOLS` 里的工具必须是 `none`，tool-effects 单测强制）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`；`settings/context.ts`：`list_*` 读用户写的内容，登记为不可信，写工具登记为可信。`create_todo` / `update_todo` 的 effects 分类参数敏感：`when === 'now'`（让另一个 Bot 立刻动起来）为 `external`，其余 `local`。
+工具注册清单要同步更新：`effects/classify.ts` 的写工具归为 `local`、`list_*` 归为 `none`（`READ_ONLY_TOOLS` 里的工具必须是 `none`，tool-effects 单测强制）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`；`settings/context.ts`：`list_*` 读用户写的内容，登记为不可信，写工具登记为可信。`create_todo` / `update_todo` 的 effects 分类参数敏感：`when` 是 now（trim、忽略大小写，同 core 的 `parseWhen`；让另一个 Bot 立刻动起来）为 `external`，其余 `local`。`external` 的含义是**记入台账、续接时标为结果未知**，不是防重复派发；工具层另有轻量去重：`create_todo(now)` 在 2 分钟内已有管家创建的、标题与执行者都相同、且已派出（`in_progress` / `delivered`）的事项时，直接返回该事项（「刚刚已经派发过同一事项，未重复派发」）。
 
 落地（W2-butler）：
 
@@ -293,14 +293,20 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | ---- | ---- | ---- | ---- |
 | 读取（`list_*`） | 允许 | 允许 | 允许 |
 | 记备忘、置顶备忘 | 直接执行 | 直接执行 | 直接执行（可撤回） |
-| 改备忘正文（整段覆盖，不可恢复） | 直接执行 | 直接执行 | 拒绝 |
-| 建草案（无执行者、无时间）、改草案的标题和说明 | 直接执行 | 直接执行 | 直接执行（无副作用，可撤回） |
+| 改备忘正文（整段覆盖，不可恢复） | 直接执行 | 拒绝，要求先向用户复述 | 拒绝 |
+| 建草案（无执行者、无时间）、改「无执行者的草案」的标题和说明 | 直接执行 | 直接执行 | 直接执行（无副作用，可撤回） |
+| 改已有执行者或已排期事项的标题和说明（新文字会同步进排期、到点派给执行者，等同派活） | 直接执行 | 拒绝，同上 | 拒绝，同上 |
 | 指派、排期、立即开始、改派、改期 | 直接执行 | 拒绝，要求先向用户复述 | 拒绝，提示「需要用户确认，请在回复里向用户提议」 |
 | 收尾（完成 / 取消）、删除备忘 | 直接执行 | 拒绝，同上 | 拒绝，同上 |
 
 **读过外部内容**：本 run 已经调用过会带进外部内容的工具（邮件、网页、附件、连接应用、MCP、历史消息搜索等，口径同设置工具的 `touchedUntrusted`，含触发消息自带附件），或该对话处于 D73 污点期。**工作台自己的 `list_todos` / `list_memos` 不算**（它们在设置的工具分类里仍按不可信处理，但对工作台工具不算污点，否则「列出草案再安排」走不通）。执行时实时判断，读外部内容可以发生在同一轮的工具调用之间。被拒绝的文案：「本轮读取过外部内容（邮件 / 网页 / 附件等），不能直接执行；请向用户复述要做的事（标题、说明、执行者、时间），用户确认后再执行」。
 
-理由：「让别的员工动起来」和「删东西」只在用户当面交代、且管家没被外部内容左右时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替用户派活；读了邮件 / 网页之后同理，要先把要做的事（含可能混入外部内容的说明）摆给用户过目。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。改备忘正文是整段覆盖且不可恢复，比删除（进最近删除，可恢复）更危险，所以非本人触发的轮只允许改置顶。
+理由：「让别的员工动起来」和「删东西」只在用户当面交代、且管家没被外部内容左右时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替用户派活；读了邮件 / 网页之后同理，要先把要做的事（含可能混入外部内容的说明）摆给用户过目。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。改备忘正文是整段覆盖且不可恢复，比删除（进最近删除，可恢复）更危险，所以和派活走同一道闸门（非本人触发、或读过外部内容都拒绝），置顶任何一轮都放行。
+
+**已知残余风险及其缓解**：
+
+- 非本人触发的轮里，管家可以改**用户建的草案**的标题和说明（上表允许，无副作用）。缓解：`TodoService.update` 在 `actor='butler'` 且标题或说明实际变化时把事项 `source` 置为 `butler`，之后即使用户亲自派发，消息也带 `butlerDrafted`，执行者上下文把标题和说明包进 `<untrusted source="butler">`、按非本人指令处理，不会被当成用户原话。
+- 「`list_*` 不算外部内容」带来的链：管家读到含注入的事项 / 备忘文字后，在本人触发的轮里被诱导派活。缓解：派活本身要用户当面交代；管家起草 / 改写过的内容到执行者那里按不可信包裹（同上）；`list_*` 结果自身包 `<untrusted>`。这是缓解，不是消除——用户在管家复述时仍需过目。
 
 **周期事项上的 `update_todo(when:'now')`**：工具语义是「额外执行一次、保留周期」（走 `start`）；要停掉周期用 `close_todo` 或 `clear_when`。界面上「把重复改成立即」的语义是结束周期，由 core 的 `update(when:'now')` 实现；两处刻意不同。
 
