@@ -52,6 +52,11 @@ export interface SystemPromptInput {
   myState?: string | undefined;
   /** This bot's active schedules here + declined offers for <schedules> (D80). */
   schedules?: string | undefined;
+  /**
+   * 管家的工作台概况 `<workbench>`（D90 §6.3）：计数与要紧条目。只在管家的对话轮出现
+   * （其它 Bot / 任务给了也不渲染）。
+   */
+  workbench?: string | undefined;
   /** This bot's live web-page watches here for <watches> (W7). */
   watches?: string | undefined;
   /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
@@ -143,6 +148,10 @@ const BUTLER_RULES = [
   '移交前先用 inspect_bot_assets 盘点来源 Bot 的资产，items 的 key 只用盘点结果里的，不要凭记忆写。移交邮箱等职责时同时给出 responsibilities：to = 接手方追加了接手内容后的职责全文，from = 移交方删去交出内容后的职责全文（来源是你自己时不填，管家的职责是固定模板）；handover_note 写清接手方需要知道的背景与习惯。',
   '「新建一个 Bot 并把 X 交给它」只提交一张 propose_handover，目标用 to.new_bot（字段同 propose_bot，可指定 model）；不要先 propose_bot 再移交——同一对话同时只能有一张待确认的卡。',
   '在收到宿主的移交结果通知之前，不要声称已经移交或已经新建；结果通知里跳过或失败的条目要如实告诉用户。',
+  '工作台（<workbench> 是概况，细节用 list_todos / list_memos 查）：用户说「记一下 / 别忘了 / 帮我记着」→ 用 create_memo 记备忘，或用 create_todo 建草案；只有用户给出了明确的执行人和时间，才建排期事项（assignee + when，执行人的 id 先用 list_bots 查）。',
+  '用户说「帮我安排 / 排一下」→ 先用 list_todos 和 list_bots 了解现状（有哪些草案、各员工手上有什么），给出一份指派方案（谁做哪件、什么时候），用户点头后再用 create_todo / update_todo 落地。',
+  '事项与委派不同：用户要你在当前对话里等结果、拿到后贴回来，用 delegate_to_bot；「交给谁去办、回头再看」才建事项（create_todo 指派给执行者，工作台会以用户的名义把事项发给它）。事项的验收也归用户：执行者交付后事项停在「待验收」，用户说算完成了再用 close_todo 收尾。',
+  '指派、排期、立即开始、改派、改期、收尾（close_todo）、删除备忘（delete_memo）只能在用户本人发起的这一轮做；定时、事件、委派回执、工作台派发引起的轮次，这些调用会被宿主拒绝——此时只做读取、记备忘、建草案，把建议写在回复里，等用户同意（用户的下一句话就是用户本人发起的一轮）。工具失败或被拒绝时如实告诉用户，不要声称已经办好。',
   '用户找你闲聊或问简单问题时正常回答即可，不必每次都提议。',
 ]
   .map((rule, index) => `${index + 1}. ${rule}`)
@@ -154,7 +163,7 @@ const BUTLER_RULES = [
  * 模型调用不存在的工具，否则它面对「建个 Bot」只能编造「已创建」。
  */
 const BUTLER_TASK_RULES = [
-  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）、转交（delegate_to_bot）与资产移交（inspect_bot_assets / propose_handover）都在对话轮工具面，任务里没有这些工具。',
+  '你是管家，但这是一次任务执行：建 Bot / 建群的提议（propose_team / propose_bot / propose_group）、路由建议（suggest_route）、转交（delegate_to_bot）与资产移交（inspect_bot_assets / propose_handover）都在对话轮工具面，任务里没有这些工具；工作台的事项 / 备忘工具（list_todos / create_todo / create_memo 等）同样只在对话轮。',
   '任务目标涉及建 Bot / 建群、转交或移交时：把具体建议写进任务结果（建议的名字、职责、理由，或建议交给谁、移交哪些东西、为什么），由对话轮收到结果后提交提议卡或移交卡；不要声称已经创建了任何 Bot 或群，也不要声称已经移交。',
   '需要通讯录信息时仍可用 list_bots（只读名片）。',
 ]
@@ -440,6 +449,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('user_profile', input.userProfile ?? ''),
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
+    section('workbench', isTurn && isButler ? (input.workbench ?? '') : ''),
     section('watches', input.watches ?? ''),
     section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
@@ -502,6 +512,11 @@ export interface AgentRunContextInput {
   userProfile?: string | undefined;
   myState?: string | undefined;
   schedules?: string | undefined;
+  /**
+   * 管家的工作台概况 `<workbench>`（D90 §6.3）：计数与要紧条目。只在管家的对话轮出现
+   * （其它 Bot / 任务给了也不渲染）。
+   */
+  workbench?: string | undefined;
   /** This bot's live web-page watches here for <watches> (W7). */
   watches?: string | undefined;
   /** Bound mailboxes for <mail_accounts> (D84). No message bodies. */
@@ -816,6 +831,7 @@ export function buildAgentRunContext(input: AgentRunContextInput): string {
     section('user_profile', input.userProfile ?? ''),
     section('my_state', input.myState ?? ''),
     section('schedules', input.schedules ?? ''),
+    section('workbench', input.workbench ?? ''),
     section('watches', input.watches ?? ''),
     section('mail_accounts', input.mailAccounts ?? ''),
     section('relevant_memories', input.relevantMemories ?? ''),
