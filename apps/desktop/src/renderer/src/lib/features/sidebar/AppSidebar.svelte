@@ -12,6 +12,10 @@
     Copy,
     Trash2,
     ChevronLeft,
+    ChevronRight,
+    Folder,
+    FolderPlus,
+    Check,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -32,16 +36,28 @@
   import ExtensionCenterDialog from '$lib/features/extension-center/ExtensionCenterDialog.svelte';
   import { isButlerConversation } from './butler';
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
+  import { sidebarSections } from './sidebar-sections.svelte';
+  import {
+    UNASSIGNED_SECTION_ID,
+    SECTION_NAME_MAX,
+    dropBeforeId,
+    isSectionMoveNoop,
+    layoutSidebarSections,
+    sectionIdOf,
+  } from './sidebar-sections';
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import { sidebarLayout } from './sidebar-layout.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
 
   /**
-   * 左栏（参考 Grok Bot）：顶部只有搜索与新增，对话直接平铺列出；条目是
-   * 头像 + 名称 + 最后一条消息的单行预览（无消息且无未读/执行中/待确认
-   * 信号时预览行整行不渲染，只剩名称与头像垂直居中），管理操作（重命名/
-   * 复制会话 id/群设置/删除会话）收进右键上下文菜单，不再有常驻「…」按钮。
+   * 左栏（参考 Grok Bot）：顶部只有搜索与新增。对话按分组列出：默认都在
+   * 「未指定」，只有这一组时不显示组名；建了分组后，点组名折叠（折叠时右侧
+   * 是本组对话数），组名可拖拽排序。管家私聊不参与分组，始终在列表第一位。
+   * 条目是头像 + 名称 + 最后一条消息的单行
+   * 预览（无消息且无未读/执行中/待确认信号时预览行整行不渲染，只剩名称与头像
+   * 垂直居中）。管理操作（移动到分组 / 重命名 / 复制会话 id / 群设置 / 删除）
+   * 收进右键上下文菜单，不再有常驻「…」按钮。
    * 新建只保留「+」面板里的对话式新建和新建群聊。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
@@ -75,6 +91,22 @@
 
   /** 右键上下文菜单（视口坐标 + 目标会话）。 */
   let contextMenu = $state<{ x: number; y: number; conversationId: string } | null>(null);
+  /** 「移动到」子菜单。creatingSection 为真时子菜单里是名称输入，不因指针移出而收起。 */
+  let moveMenu = $state<{ x: number; y: number } | null>(null);
+  let creatingSection = $state(false);
+  let sectionDraft = $state('');
+  let sectionNameInput = $state<HTMLInputElement | null>(null);
+  let moveCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 自定义分组的右键菜单（重命名 / 删除）。「未指定」没有这个菜单。 */
+  let sectionMenu = $state<{ x: number; y: number; sectionId: string } | null>(null);
+  let renamingSectionId = $state<string | null>(null);
+  let renameDraft = $state('');
+  let renameInput = $state<HTMLInputElement | null>(null);
+  let renameCancelled = false;
+  /** 分组标题拖拽。beforeId 为 null 表示落到末尾。 */
+  let sectionDrag = $state<{ id: string; beforeId: string | null } | null>(null);
+  let sectionDragMoved = false;
+  let sectionDragSeq = 0;
   const contextConversation = $derived(
     contextMenu === null
       ? null
@@ -120,13 +152,23 @@
 
   // 右键菜单 / 「+」面板的 Esc：窄屏的「开始对话」是 z-50 全屏页，宽屏的面板是局部弹出层。
   $effect(() => {
-    if (contextMenu === null) return;
+    if (contextMenu === null && sectionMenu === null) return;
     return registerEscapeLayer({
       priority: ESCAPE_PRIORITY.popover,
       onEscape: () => {
-        contextMenu = null;
+        closeContextMenu();
+        sectionMenu = null;
       },
     });
+  });
+  $effect(() => {
+    if (!creatingSection) return;
+    sectionNameInput?.focus();
+  });
+  $effect(() => {
+    if (renamingSectionId === null) return;
+    renameInput?.focus();
+    renameInput?.select();
   });
   $effect(() => {
     if (!plusOpen) return;
@@ -176,24 +218,250 @@
     await chat.createGroupViaSetup();
   }
 
-  /** 侧栏顺序：管家私聊置顶，其余保持 store 的时间顺序。 */
-  const orderedConversations = $derived.by(() => {
-    const butler = chat.conversations.filter((c) => isButlerConversation(c));
-    if (butler.length === 0) return chat.conversations;
-    return [...butler, ...chat.conversations.filter((c) => !isButlerConversation(c))];
+  /**
+   * 管家不进入任何分组，单独排在列表最前。其余对话保持 store 的时间顺序，
+   * 再按分组装桶。
+   */
+  const butlerConversations = $derived(
+    chat.conversations.filter((conversation) => isButlerConversation(conversation)),
+  );
+  const sectionLayout = $derived(
+    layoutSidebarSections(
+      chat.conversations.filter((conversation) => !isButlerConversation(conversation)),
+      sidebarSections.state,
+    ),
+  );
+  /**
+   * 图标模式没有组名可点，折叠会把对话藏起来且无法展开，所以这里忽略折叠，
+   * 只沿用分组顺序。管家仍在最前。
+   */
+  const iconConversations = $derived([
+    ...butlerConversations,
+    ...sectionLayout.groups.flatMap((group) => group.conversations),
+  ]);
+  const contextIsButler = $derived(isButlerConversation(contextConversation ?? undefined));
+
+  // 管家不能留在分组里。之前若被移入过，这里把归属清掉。
+  $effect(() => {
+    const assigned = butlerConversations.filter(
+      (conversation) => sidebarSections.state.assignments[conversation.id] !== undefined,
+    );
+    for (const conversation of assigned) {
+      sidebarSections.assign(conversation.id, UNASSIGNED_SECTION_ID);
+    }
   });
+
+  /** 只有「未指定」时管家并进同一条列表；有分组标题时管家留在标题之外。 */
+  function conversationsInGroup(
+    groupId: string,
+    conversations: ConversationView[],
+  ): ConversationView[] {
+    if (sectionLayout.showHeaders || groupId !== UNASSIGNED_SECTION_ID) return conversations;
+    return [...butlerConversations, ...conversations];
+  }
+  const contextSectionId = $derived(
+    contextMenu === null
+      ? UNASSIGNED_SECTION_ID
+      : sectionIdOf(sidebarSections.state, contextMenu.conversationId),
+  );
+
+  function sectionLabel(sectionId: string): string {
+    if (sectionId === UNASSIGNED_SECTION_ID) return t('sidebar.sectionUnassigned');
+    return (
+      sidebarSections.state.sections.find((section) => section.id === sectionId)?.name ??
+      t('sidebar.sectionUnassigned')
+    );
+  }
 
   function openContextMenu(event: MouseEvent, conversationId: string): void {
     event.preventDefault();
+    sectionMenu = null;
+    renameCancelled = true;
+    renamingSectionId = null;
     contextMenu = {
       x: Math.min(event.clientX, window.innerWidth - 220),
-      y: Math.min(event.clientY, window.innerHeight - 180),
+      y: Math.min(event.clientY, window.innerHeight - 220),
       conversationId,
     };
+    moveMenu = null;
+    creatingSection = false;
+    sectionDraft = '';
   }
 
   function closeContextMenu(): void {
     contextMenu = null;
+    moveMenu = null;
+    creatingSection = false;
+    sectionDraft = '';
+    if (moveCloseTimer !== null) {
+      clearTimeout(moveCloseTimer);
+      moveCloseTimer = null;
+    }
+  }
+
+  function openMoveMenu(anchor: HTMLElement): void {
+    if (moveCloseTimer !== null) {
+      clearTimeout(moveCloseTimer);
+      moveCloseTimer = null;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const menuWidth = 208;
+    let x = rect.right - 6;
+    if (x + menuWidth > window.innerWidth - 8) x = Math.max(8, rect.left - menuWidth + 6);
+    const rows = sectionLayout.groups.length + 1;
+    const height = Math.min(320, rows * 32 + 52);
+    let y = rect.top - 4;
+    if (y + height > window.innerHeight - 8) y = Math.max(8, window.innerHeight - 8 - height);
+    moveMenu = { x, y };
+  }
+
+  function scheduleCloseMoveMenu(): void {
+    if (creatingSection) return;
+    if (moveCloseTimer !== null) clearTimeout(moveCloseTimer);
+    // 从「移动到」移进子菜单时，按钮的 pointerleave 会晚于子菜单的 pointerenter。
+    // 延后看指针还在不在这两块上，避免子菜单刚打开就被收起。
+    moveCloseTimer = setTimeout(() => {
+      moveCloseTimer = null;
+      if (creatingSection) return;
+      const hovered = document.querySelector(
+        '[data-testid="conversation-move-menu"]:hover, [data-testid="context-move-to"]:hover',
+      );
+      if (hovered) return;
+      moveMenu = null;
+    }, 120);
+  }
+
+  function cancelCloseMoveMenu(): void {
+    if (moveCloseTimer !== null) {
+      clearTimeout(moveCloseTimer);
+      moveCloseTimer = null;
+    }
+  }
+
+  function moveConversationTo(sectionId: string): void {
+    if (!contextMenu || contextIsButler) return;
+    sidebarSections.assign(contextMenu.conversationId, sectionId);
+    closeContextMenu();
+  }
+
+  function beginCreateSection(): void {
+    creatingSection = true;
+    sectionDraft = '';
+    cancelCloseMoveMenu();
+  }
+
+  function confirmCreateSection(event?: Event): void {
+    event?.preventDefault();
+    if (!contextMenu || contextIsButler) return;
+    const id = sidebarSections.createAndAssign(sectionDraft, contextMenu.conversationId);
+    if (id === null) return;
+    closeContextMenu();
+  }
+
+  function openSectionMenu(event: MouseEvent, sectionId: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (sectionId === UNASSIGNED_SECTION_ID) return;
+    closeContextMenu();
+    sectionMenu = {
+      x: Math.min(event.clientX, window.innerWidth - 200),
+      y: Math.min(event.clientY, window.innerHeight - 96),
+      sectionId,
+    };
+  }
+
+  function startRenameFromMenu(): void {
+    if (!sectionMenu) return;
+    renameDraft = sectionLabel(sectionMenu.sectionId);
+    renameCancelled = false;
+    renamingSectionId = sectionMenu.sectionId;
+    sectionMenu = null;
+  }
+
+  function commitRename(sectionId: string): void {
+    if (renameCancelled || renamingSectionId !== sectionId) return;
+    renamingSectionId = null;
+    sidebarSections.rename(sectionId, renameDraft);
+  }
+
+  function cancelRename(event: KeyboardEvent): void {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    renameCancelled = true;
+    renamingSectionId = null;
+  }
+
+  function deleteSectionFromMenu(): void {
+    if (!sectionMenu) return;
+    sidebarSections.remove(sectionMenu.sectionId);
+    sectionMenu = null;
+    toast.success(t('sidebar.sectionDeleted'));
+  }
+
+  function dropIsNoop(beforeId: string | null, draggingId: string): boolean {
+    return isSectionMoveNoop(sidebarSections.state.order, draggingId, beforeId);
+  }
+
+  function onSectionPointerDown(event: PointerEvent, sectionId: string): void {
+    if (event.button !== 0 || event.ctrlKey || renamingSectionId !== null) return;
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    sectionDragMoved = false;
+    try {
+      target.setPointerCapture(pointerId);
+    } catch {
+      // 指针已松开时捕获会失败，退回普通点击。
+    }
+
+    const finish = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return;
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', finish);
+      target.removeEventListener('pointercancel', finish);
+      if (sectionDragMoved && sectionDrag !== null) {
+        sidebarSections.move(sectionDrag.id, sectionDrag.beforeId);
+      }
+      sectionDrag = null;
+      // click 紧跟 pointerup。拖过之后吞掉这一下；若浏览器没派发 click，稍后放行下一次点击。
+      if (sectionDragMoved) {
+        const seq = (sectionDragSeq += 1);
+        setTimeout(() => {
+          if (sectionDragSeq === seq) sectionDragMoved = false;
+        }, 50);
+      }
+    };
+    const move = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointerId) return;
+      if (!sectionDragMoved && Math.abs(ev.clientY - startY) < 4) return;
+      sectionDragMoved = true;
+      const scroller = target.closest('[data-slot="sidebar-content"]');
+      if (scroller instanceof HTMLElement) {
+        const bounds = scroller.getBoundingClientRect();
+        if (ev.clientY < bounds.top + 28) scroller.scrollTop -= 10;
+        else if (ev.clientY > bounds.bottom - 28) scroller.scrollTop += 10;
+      }
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-section-header]')].map(
+        (header) => {
+          const rect = header.getBoundingClientRect();
+          return { id: header.dataset.sectionId ?? '', top: rect.top, bottom: rect.bottom };
+        },
+      );
+      sectionDrag = { id: sectionId, beforeId: dropBeforeId(rows, ev.clientY, sectionId) };
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', finish);
+    target.addEventListener('pointercancel', finish);
+  }
+
+  function onSectionClick(sectionId: string): void {
+    if (sectionDragMoved) {
+      sectionDragMoved = false;
+      sectionDragSeq += 1;
+      return;
+    }
+    sidebarSections.toggle(sectionId);
   }
 
   function openGroupSettings(): void {
@@ -275,6 +543,82 @@
   {/if}
 {/snippet}
 
+{#snippet conversationRow(conversation: ConversationView)}
+  <!-- 预览行只在有内容（预览文本或未读/执行中/待确认信号）时渲染：
+       什么都没有的条目只剩名称一行，与头像垂直居中。 -->
+  {@const preview = previewOf(conversation)}
+  {@const showMetaRow =
+    preview.length > 0 ||
+    ((conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id) ||
+    (conversation.runningBotIds?.length ?? 0) > 0 ||
+    (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+  <Sidebar.MenuItem>
+    <div
+      class="group/conversation flex w-full items-center"
+      role="presentation"
+      oncontextmenu={(event) => openContextMenu(event, conversation.id)}
+      data-testid={`conversation-row-${conversation.id}`}
+    >
+      <!-- [&_svg]:size-auto 解开 MenuButton 基础样式 [&_svg]:size-4 的钉死：
+           否则预置头像 svg 被压成 16px，盖过自身的 size-full。
+           激活态背景本地覆盖：--sidebar-accent 与 hover 共用、对比不够。
+           亮色相对侧栏（0.985）压到 0.93。暗色侧栏在 macOS 上是半透明
+           毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
+           比侧栏底色 0.205 再暗一档。 -->
+      <Sidebar.MenuButton
+        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.93_0_0)]
+          dark:data-active:bg-[oklch(0.16_0_0)] [&_svg]:size-auto"
+        isActive={chat.currentId === conversation.id}
+        onclick={() => void selectConversation(conversation.id)}
+        data-testid={`conversation-item-${conversation.id}`}
+      >
+        {@render conversationAvatar(conversation)}
+        <span class="grid min-w-0 flex-1 gap-0.5 text-left leading-tight">
+          <span class="flex items-center justify-between gap-1">
+            <span class="truncate text-sm font-medium" data-testid="conversation-name">
+              {nameOf(conversation)}
+            </span>
+          </span>
+          <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
+          {#if showMetaRow}
+            <span class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
+                <span
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                  data-testid="unread-badge"
+                >
+                  {conversation.unreadCount}
+                </span>
+              {/if}
+              {#if (conversation.runningBotIds?.length ?? 0) > 0}
+                <span
+                  class="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
+                  title={t('sidebar.runningSuffix')}
+                  data-testid="running-dot"
+                ></span>
+              {/if}
+              {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
+                <span
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
+                  title={t('sidebar.pendingSuffix')}
+                  data-testid="pending-badge"
+                >
+                  {permissions.pendingByConversation[conversation.id]}
+                </span>
+              {/if}
+              {#if preview.length > 0}
+                <span class="truncate" data-testid="conversation-preview">
+                  {preview}
+                </span>
+              {/if}
+            </span>
+          {/if}
+        </span>
+      </Sidebar.MenuButton>
+    </div>
+  </Sidebar.MenuItem>
+{/snippet}
+
 <!-- relative：右缘调宽手柄的定位基准；拖拽中不加 width 过渡（跟手），
      松手吸附/复位时恢复平滑动画。 -->
 <Sidebar.Root
@@ -329,7 +673,7 @@
           <!-- 图标模式：只剩头像，名称/预览走 hover 提示；未读/待确认/执行中
                叠在头像角上（待确认优先于未读，都是必须看见的信号）。 -->
           <Sidebar.Menu class="items-center">
-            {#each orderedConversations as conversation (conversation.id)}
+            {#each iconConversations as conversation (conversation.id)}
               <Sidebar.MenuItem class="w-auto">
                 <Tooltip.Root>
                   <Tooltip.Trigger
@@ -382,85 +726,81 @@
             {/each}
           </Sidebar.Menu>
         {:else}
-          <Sidebar.Menu>
-            {#each orderedConversations as conversation (conversation.id)}
-              <!-- 预览行只在有内容（预览文本或未读/执行中/待确认信号）时渲染：
-                   什么都没有的条目只剩名称一行，与头像垂直居中。 -->
-              {@const preview = previewOf(conversation)}
-              {@const showMetaRow =
-                preview.length > 0 ||
-                ((conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id) ||
-                (conversation.runningBotIds?.length ?? 0) > 0 ||
-                (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-              <Sidebar.MenuItem>
-                <div
-                  class="group/conversation flex w-full items-center"
-                  role="presentation"
-                  oncontextmenu={(event) => openContextMenu(event, conversation.id)}
-                  data-testid={`conversation-row-${conversation.id}`}
-                >
-                  <!-- [&_svg]:size-auto 解开 MenuButton 基础样式 [&_svg]:size-4 的钉死：
-                       否则预置头像 svg 被压成 16px，盖过自身的 size-full。
-                       激活态背景本地覆盖：--sidebar-accent 与 hover 共用、对比不够。
-                       亮色相对侧栏（0.985）压到 0.93。暗色侧栏在 macOS 上是半透明
-                       毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
-                       比侧栏底色 0.205 再暗一档。 -->
-                  <Sidebar.MenuButton
-                    class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.93_0_0)]
-                      dark:data-active:bg-[oklch(0.16_0_0)] [&_svg]:size-auto"
-                    isActive={chat.currentId === conversation.id}
-                    onclick={() => void selectConversation(conversation.id)}
-                    data-testid={`conversation-item-${conversation.id}`}
+          {#if sectionLayout.showHeaders && butlerConversations.length > 0}
+            <!-- 管家不归属任何分组，固定在分组标题之上。 -->
+            <Sidebar.Menu class="mb-4">
+              {#each butlerConversations as conversation (conversation.id)}
+                {@render conversationRow(conversation)}
+              {/each}
+            </Sidebar.Menu>
+          {/if}
+          {#each sectionLayout.groups as group, groupIndex (group.id)}
+            {@const rows = conversationsInGroup(group.id, group.conversations)}
+            <div class="relative {sectionLayout.showHeaders && groupIndex > 0 ? 'mt-4' : ''}">
+              {#if sectionLayout.showHeaders}
+                {#if sectionDrag !== null && sectionDrag.beforeId === group.id && !dropIsNoop(sectionDrag.beforeId, sectionDrag.id)}
+                  <div
+                    class="pointer-events-none absolute inset-x-2 top-0 z-10 h-0.5 -translate-y-1/2 rounded-full bg-foreground/70"
+                    data-testid="section-drop-line"
+                  ></div>
+                {/if}
+                {#if renamingSectionId === group.id}
+                  <form
+                    onsubmit={(event) => {
+                      event.preventDefault();
+                      commitRename(group.id);
+                    }}
                   >
-                    {@render conversationAvatar(conversation)}
-                    <span class="grid min-w-0 flex-1 gap-0.5 text-left leading-tight">
-                      <span class="flex items-center justify-between gap-1">
-                        <span class="truncate text-sm font-medium" data-testid="conversation-name">
-                          {nameOf(conversation)}
-                        </span>
+                    <Input
+                      bind:value={renameDraft}
+                      bind:ref={renameInput}
+                      maxlength={SECTION_NAME_MAX}
+                      class="h-8 text-sm"
+                      data-testid={`section-rename-input-${group.id}`}
+                      onkeydown={cancelRename}
+                      onblur={() => commitRename(group.id)}
+                    />
+                  </form>
+                {:else}
+                  <button
+                    type="button"
+                    class="flex w-full touch-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground select-none hover:bg-sidebar-accent hover:text-foreground
+                      {sectionDrag?.id === group.id ? 'cursor-grabbing opacity-50' : 'cursor-pointer'}"
+                    aria-expanded={!group.collapsed}
+                    data-section-header
+                    data-section-id={group.id}
+                    data-testid={`section-header-${group.id}`}
+                    onclick={() => onSectionClick(group.id)}
+                    onpointerdown={(event) => onSectionPointerDown(event, group.id)}
+                    oncontextmenu={(event) => openSectionMenu(event, group.id)}
+                  >
+                    <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
+                    {#if group.collapsed}
+                      <span
+                        class="shrink-0 tabular-nums"
+                        data-testid={`section-count-${group.id}`}
+                      >
+                        {group.count}
                       </span>
-                      <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
-                      {#if showMetaRow}
-                        <span
-                          class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground"
-                        >
-                          {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
-                            <span
-                              class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
-                              data-testid="unread-badge"
-                            >
-                              {conversation.unreadCount}
-                            </span>
-                          {/if}
-                          {#if (conversation.runningBotIds?.length ?? 0) > 0}
-                            <span
-                              class="size-2 shrink-0 animate-pulse rounded-full bg-emerald-500"
-                              title={t('sidebar.runningSuffix')}
-                              data-testid="running-dot"
-                            ></span>
-                          {/if}
-                          {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
-                            <span
-                              class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
-                              title={t('sidebar.pendingSuffix')}
-                              data-testid="pending-badge"
-                            >
-                              {permissions.pendingByConversation[conversation.id]}
-                            </span>
-                          {/if}
-                          {#if preview.length > 0}
-                            <span class="truncate" data-testid="conversation-preview">
-                              {preview}
-                            </span>
-                          {/if}
-                        </span>
-                      {/if}
-                    </span>
-                  </Sidebar.MenuButton>
-                </div>
-              </Sidebar.MenuItem>
+                    {/if}
+                  </button>
+                {/if}
+              {/if}
+              {#if !group.collapsed && rows.length > 0}
+          <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
+            {#each rows as conversation (conversation.id)}
+              {@render conversationRow(conversation)}
             {/each}
           </Sidebar.Menu>
+              {/if}
+              {#if sectionLayout.showHeaders && groupIndex === sectionLayout.groups.length - 1 && sectionDrag !== null && sectionDrag.beforeId === null && !dropIsNoop(null, sectionDrag.id)}
+                <div
+                  class="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0.5 translate-y-1/2 rounded-full bg-foreground/70"
+                  data-testid="section-drop-line"
+                ></div>
+              {/if}
+            </div>
+          {/each}
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
@@ -731,6 +1071,25 @@
     use:mountAboveDragRegion
     data-testid={`conversation-context-${contextMenu.conversationId}`}
   >
+    {#if !contextIsButler}
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-accent
+          {moveMenu !== null ? 'bg-accent' : ''}"
+        onpointerenter={(event) => {
+          if (event.currentTarget instanceof HTMLElement) openMoveMenu(event.currentTarget);
+        }}
+        onpointerleave={scheduleCloseMoveMenu}
+        onclick={(event) => {
+          if (event.currentTarget instanceof HTMLElement) openMoveMenu(event.currentTarget);
+        }}
+        data-testid="context-move-to"
+      >
+        <Folder class="size-3.5" />
+        <span class="min-w-0 flex-1 truncate">{t('sidebar.moveTo')}</span>
+        <ChevronRight class="size-3.5 text-muted-foreground" />
+      </button>
+    {/if}
     {#if contextConversation?.type === 'group' && contextConversation.setupState !== 'creating'}
       {@render contextItem(
         Settings2,
@@ -752,6 +1111,100 @@
       t('chats.deleteConversation'),
       deleteFromContext,
       'context-delete-conversation',
+      true,
+    )}
+  </div>
+  {#if moveMenu && !contextIsButler}
+    <div
+      class="app-no-drag fixed z-50 w-52 rounded-xl border bg-popover p-1 shadow-xl"
+      style="left: {moveMenu.x}px; top: {moveMenu.y}px;"
+      role="group"
+      aria-label={t('sidebar.moveTo')}
+      use:mountAboveDragRegion
+      onpointerenter={cancelCloseMoveMenu}
+      onpointerleave={scheduleCloseMoveMenu}
+      data-testid="conversation-move-menu"
+    >
+      <div class="max-h-80 overflow-y-auto">
+        {#each sectionLayout.groups as group (group.id)}
+          {@const current = contextSectionId === group.id}
+          <button
+            type="button"
+            class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onclick={() => moveConversationTo(group.id)}
+            data-current={current ? 'true' : undefined}
+            data-testid={group.id === UNASSIGNED_SECTION_ID
+              ? 'context-move-unassigned'
+              : `context-move-section-${group.id}`}
+          >
+            {#if current}
+              <Check class="size-3.5 shrink-0" />
+            {:else}
+              <Folder class="size-3.5 shrink-0" />
+            {/if}
+            <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="my-1 h-px bg-border"></div>
+      {#if creatingSection}
+        <form class="flex items-center gap-1 px-1 py-1" onsubmit={confirmCreateSection}>
+          <Input
+            bind:value={sectionDraft}
+            bind:ref={sectionNameInput}
+            maxlength={SECTION_NAME_MAX}
+            placeholder={t('sidebar.sectionNamePlaceholder')}
+            class="h-8 min-w-0 flex-1 text-sm"
+            data-testid="section-name-input"
+          />
+          <button
+            type="submit"
+            class="shrink-0 rounded-lg px-2 py-1.5 text-sm hover:bg-accent"
+            data-testid="section-create-confirm"
+          >
+            {t('sidebar.createSectionConfirm')}
+          </button>
+        </form>
+      {:else}
+        <button
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-accent"
+          onclick={beginCreateSection}
+          data-testid="context-create-section"
+        >
+          <FolderPlus class="size-3.5" />
+          {t('sidebar.createSection')}
+        </button>
+      {/if}
+    </div>
+  {/if}
+{/if}
+
+{#if sectionMenu}
+  <button
+    type="button"
+    class="app-no-drag fixed inset-0 z-40 cursor-default"
+    aria-label={t('common.close')}
+    onclick={() => (sectionMenu = null)}
+    use:mountAboveDragRegion
+    oncontextmenu={(event) => {
+      event.preventDefault();
+      sectionMenu = null;
+    }}
+    data-testid="section-context-backdrop"
+  ></button>
+  <div
+    class="app-no-drag fixed z-50 w-44 rounded-xl border bg-popover p-1 shadow-xl"
+    style="left: {sectionMenu.x}px; top: {sectionMenu.y}px;"
+    use:mountAboveDragRegion
+    data-testid={`section-context-${sectionMenu.sectionId}`}
+  >
+    {@render contextItem(Pencil, t('sidebar.sectionRename'), startRenameFromMenu, 'section-rename')}
+    {@render contextItem(
+      Trash2,
+      t('sidebar.sectionDelete'),
+      deleteSectionFromMenu,
+      'section-delete',
       true,
     )}
   </div>
