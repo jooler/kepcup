@@ -152,4 +152,3 @@ test('extension center / skills: sidebar entry → dialog → add installs a PUB
     await rm(home, { recursive: true, force: true });
   }
 });
-

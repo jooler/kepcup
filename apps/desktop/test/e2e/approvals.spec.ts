@@ -242,4 +242,3 @@ test('unattended mode: enable dialog requires the risk checkbox, banner shows, s
     await closeSession(session);
   }
 });
-

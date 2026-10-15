@@ -54,8 +54,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-/** Creates one bot through the UI and opens its chat. */
-
 test('loop narration: status line sits under the last message, yields to interim messages and names the running tool', async () => {
   test.setTimeout(180_000);
   const session = await startSession('kepcup-e2e-loop-progress-');
@@ -68,14 +66,13 @@ test('loop narration: status line sits under the last message, yields to interim
     // 正在调用工具 → 最终回复」每个状态都稳定可断言（search_messages 执行
     // 只有毫秒级，不 hold 的话状态一闪而过）。保留 step 引用逐个 release。
     const step1 = step().hold().replyToolCall('search_messages', { query: '背景' });
-    const step2 = step().hold().replyTextAndToolCall('收到，我来处理…', 'search_messages', { query: '背景' });
-    const step3 = step().hold().replyTextAndToolCall('让我再检索一些细节…', 'search_messages', { query: '细节' });
-    llm.script('mock-main', [
-      step1,
-      step2,
-      step3,
-      step().replyText('调研完成：这是最终结论。'),
-    ]);
+    const step2 = step()
+      .hold()
+      .replyTextAndToolCall('收到，我来处理…', 'search_messages', { query: '背景' });
+    const step3 = step()
+      .hold()
+      .replyTextAndToolCall('让我再检索一些细节…', 'search_messages', { query: '细节' });
+    llm.script('mock-main', [step1, step2, step3, step().replyText('调研完成：这是最终结论。')]);
 
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('帮我调研一下');
@@ -90,8 +87,12 @@ test('loop narration: status line sits under the last message, yields to interim
       timeout: 15_000,
     });
     // 状态行在消息列表内，而不是输入坞里（todo/loop-interim-updates.md 拍板 1）。
-    await expect(page.locator('[data-testid="message-list"] [data-testid="run-status"]')).toBeVisible();
-    await expect(page.locator('[data-testid="composer-dock"] [data-testid="run-status"]')).toHaveCount(0);
+    await expect(
+      page.locator('[data-testid="message-list"] [data-testid="run-status"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('[data-testid="composer-dock"] [data-testid="run-status"]'),
+    ).toHaveCount(0);
 
     // 2) 放行第一个请求：无文本的工具调用 → 状态行显示工具动词，且稳定
     //    （第二个请求 hold 中）。
@@ -118,4 +119,3 @@ test('loop narration: status line sits under the last message, yields to interim
     await closeSession(session);
   }
 });
-

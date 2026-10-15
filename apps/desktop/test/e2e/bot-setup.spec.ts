@@ -67,6 +67,8 @@ test('conversational create: fixed first question card, option/custom answers, p
     // 侧栏「+」→ 开始对话面板 → 新建 Bot（对话式，无表单）。
     await page.locator('[data-testid="new-chat-button"]').click();
     await expect(page.locator('[data-testid="start-chat-panel"]')).toBeVisible();
+    // 「高级新建」（表单）入口已移除：面板里只剩对话式新建与新建群聊。
+    await expect(page.locator('[data-testid="bot-create-form"]')).toHaveCount(0);
     await page.locator('[data-testid="start-chat-create-bot"]').click();
 
     // 直接落到新 Bot 的对话：问候气泡 + 固定首问卡片（占位名）。

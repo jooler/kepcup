@@ -751,9 +751,9 @@ test('查看窗口显示 Bot 当前页面；关闭后回到隐藏托管且不中
     const composer = page.locator('[data-testid="composer-input"]');
     await composer.fill('看看页面');
     await composer.press('ControlOrMeta+Enter');
-    // The task's status line (the turn that started it has its own, briefly).
+    // The task's status line (task-status, not the turn's run-status).
     await expect(
-      page.locator('[data-testid="run-status"]').filter({ hasText: '看看页面' }),
+      page.locator('[data-testid="task-status"]').filter({ hasText: '看看页面' }),
     ).toBeVisible({ timeout: 30_000 });
 
     // 「查看浏览器」按钮在右栏头部（右栏默认收起，先经顶部药丸展开）。

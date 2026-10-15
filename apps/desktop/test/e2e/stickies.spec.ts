@@ -62,8 +62,6 @@ async function waitReady(page: Page): Promise<void> {
   if (await backdrop.isVisible()) await backdrop.click({ timeout: 2_000 }).catch(() => {});
 }
 
-/** Creates one bot through the UI and opens its chat. */
-
 /** Selects the full text of the first bot bubble with a real DOM selection. */
 async function selectBotBubbleText(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -250,4 +248,3 @@ test('pin a whole message from the hover button and the context menu', async () 
     await closeSession(session);
   }
 });
-

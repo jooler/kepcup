@@ -64,8 +64,6 @@ async function waitReady(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 60_000 });
 }
 
-/** Creates one bot through the UI and opens its chat. */
-
 /** 1x1 红色像素 PNG。 */
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -79,7 +77,7 @@ test.describe('对话附件与媒体', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '画图甲');
+      await createBotAndOpenChat(page, '画图甲');
       llm.script('mock-main', [step().replyText('收到图片了')]);
 
       const imagePath = path.join(session.home, 'fixture.png');
@@ -123,4 +121,3 @@ test.describe('对话附件与媒体', () => {
     }
   });
 });
-

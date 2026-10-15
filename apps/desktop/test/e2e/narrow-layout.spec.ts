@@ -87,7 +87,6 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(400);
 }
 
-
 /**
  * 结构性断言：页面上「用户实际看得见、点得到」的可交互控件，其有效 -webkit-app-region
  * 不得是 drag。Electron 把 drag 区矩形当窗口拖拽区，区内的输入框 / 按钮真实鼠标点击、
@@ -534,4 +533,3 @@ test('narrow layout: deep links in detail, Esc layering, focus containment, layo
     await llm.stop();
   }
 });
-

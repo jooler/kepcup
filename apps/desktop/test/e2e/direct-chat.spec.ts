@@ -76,8 +76,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-/** Creates one bot through the UI and opens its chat. Returns its card name. */
-
 /**
  * 「+」面板的自动展开是启动恢复（bootstrap）的异步尾巴，可能落在测试早期
  * 交互之后；其全屏 backdrop 会拦截后续点击，关键交互前确保它已收起。
@@ -326,4 +324,3 @@ test('deleting the conversation removes it; deleting the bot removes its entry a
     await closeSession(session);
   }
 });
-

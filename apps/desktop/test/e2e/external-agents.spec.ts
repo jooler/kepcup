@@ -3,8 +3,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   agentTurn,
   FAKE_ACP_AGENT_BIN,
   readFakeAgentRecord,
@@ -12,6 +10,7 @@ import { createBotAndOpenChat } from './helpers/create-bot';
   type FakeAgentObservation,
   type FakeAgentScript,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * 外部智能体（D72，todo/acp-external-agents.md §9.1 e2e）：testkit 的剧本化假
@@ -331,4 +330,3 @@ test('onboarding subscription branch: enable an agent, the butler runs on it', a
     await session.close();
   }
 });
-

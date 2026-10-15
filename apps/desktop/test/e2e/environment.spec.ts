@@ -6,8 +6,6 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   startFileServer,
   startMockLlm,
   step,
@@ -15,6 +13,7 @@ import { createBotAndOpenChat } from './helpers/create-bot';
   type MockLlmServer,
   type TestFileServer,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * P06 e2e (docs/dev/phases/P06-environment.md 测试要求): the environment
@@ -213,4 +212,3 @@ test('environment approval card shows size and source, install progress, setting
     await closeSession(session);
   }
 });
-

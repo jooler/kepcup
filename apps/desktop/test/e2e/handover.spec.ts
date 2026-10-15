@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { botProfile, startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
+import { openConversationByName, rpc } from './helpers/create-bot';
 
 /**
  * D88 移交卡（docs/design/37 §2.2，todo/bot-handover.md §3.6 / §3.7）：真实 core 栈里
@@ -11,8 +12,6 @@ import { botProfile, startMockLlm, step, type MockLlmServer } from '@kepcup/test
  * 勾掉的一项标「未勾选」；贝塔私聊出现重建的回执卡与交接说明，阿尔法的原回执卡标
  * 「已移交给 贝塔」。全程 mock LLM。
  */
-
-type Rpc = (method: string, input?: unknown) => Promise<unknown>;
 
 interface Session {
   app: ElectronApplication;
@@ -58,31 +57,6 @@ async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
   await rm(session.home, { recursive: true, force: true });
-}
-
-function rpc(page: Page, method: string, input?: unknown): Promise<unknown> {
-  return page.evaluate(
-    ([m, i]) => (window as unknown as { __kepcupRpc: Rpc }).__kepcupRpc(m as string, i),
-    [method, input] as const,
-  );
-}
-
-async function openChat(page: Page, name: string): Promise<void> {
-  const backdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await backdrop.isVisible()) await backdrop.click().catch(() => {});
-  // 按会话名精确匹配（预览行里可能出现别的 Bot 的名字）。
-  await page
-    .locator('[data-testid^="conversation-item-"]')
-    .filter({
-      has: page.locator('[data-testid="conversation-name"]', { hasText: new RegExp(`^${name}$`) }),
-    })
-    .first()
-    .click();
-  await expect(
-    page.locator(
-      '[data-testid^="conversation-item-"][data-active="true"] [data-testid="conversation-name"]',
-    ),
-  ).toHaveText(name, { timeout: 15_000 });
 }
 
 test('handover card: uncheck one item, confirm, progress and results render', async () => {
@@ -133,7 +107,7 @@ test('handover card: uncheck one item, confirm, progress and results render', as
     const [daily, weekly] = scheduleIds as [string, string];
 
     // 管家出移交卡。
-    await openChat(page, '管家');
+    await openConversationByName(page, '管家');
     llm.script('mock-main', [
       step().replyToolCall('propose_handover', {
         from_bot_id: alpha.bot.id,
@@ -182,7 +156,7 @@ test('handover card: uncheck one item, confirm, progress and results render', as
     ).toBeVisible({ timeout: 60_000 });
 
     // 贝塔私聊：重建的回执卡 + 交接说明。
-    await openChat(page, '贝塔');
+    await openConversationByName(page, '贝塔');
     await expect(page.locator('[data-testid="handover-received"]')).toContainText(
       '从 阿尔法 接手了',
     );
@@ -194,7 +168,7 @@ test('handover card: uncheck one item, confirm, progress and results render', as
     ).toContainText('日报');
 
     // 阿尔法私聊：原回执卡标已移交，周报不动；已移交提示。
-    await openChat(page, '阿尔法');
+    await openConversationByName(page, '阿尔法');
     await expect(page.locator('[data-testid="schedule-receipt-handed-over"]')).toHaveText(
       '已移交给 贝塔',
     );
@@ -266,7 +240,7 @@ test('handover P1: a regular bot hands its own memory and schedule over', async 
       .toBe(true);
 
     // 阿尔法自己盘点、自己提交移交卡。
-    await openChat(page, '阿尔法');
+    await openConversationByName(page, '阿尔法');
     llm.script('mock-main', [
       step().replyToolCall('inspect_bot_assets', { memory_query: '周报' }),
       step()
@@ -368,7 +342,7 @@ test('handover P2: wiki copied in the background, then the retire button deletes
     git('add', '-A');
     git('commit', '-q', '-m', 'seed');
 
-    await openChat(page, '阿尔法');
+    await openConversationByName(page, '阿尔法');
     llm.script('mock-main', [
       step().replyToolCall('inspect_bot_assets', { wiki_query: '*' }),
       step()

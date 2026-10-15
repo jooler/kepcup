@@ -36,12 +36,21 @@ async function main() {
   const shot = (name) => page.screenshot({ path: path.join(OUT_DIR, `${name}.png`) });
 
   await page.locator('[data-testid="app-shell"]').waitFor({ timeout: 60_000 });
-  await page.locator('[data-testid="ping-result"]').filter({ hasText: 'ping ✓' }).waitFor({ timeout: 60_000 });
+  await page
+    .locator('[data-testid="ping-result"]')
+    .filter({ hasText: 'ping ✓' })
+    .waitFor({ timeout: 60_000 });
 
   // 收起启动自动拉开的「+」面板
-  await page.locator('[data-testid="start-chat-backdrop"]').click({ timeout: 15_000 }).catch(() => {});
+  await page
+    .locator('[data-testid="start-chat-backdrop"]')
+    .click({ timeout: 15_000 })
+    .catch(() => {});
 
   // 非访谈建 Bot（测试缝，等价原「高级新建」），再打开右栏做视觉验收。
+  // profile 手抄了 testkit 的 botProfile()（e2e 用 helpers/create-bot.ts）：本脚本是
+  // 直接用 node 跑的 .mjs，而 @kepcup/testkit 只导出 TS 源码，无法 import。
+  // BotProfile 契约变化时要同步这里。
   await page.evaluate(async () => {
     const rpc = window.__kepcupRpc;
     const profile = {

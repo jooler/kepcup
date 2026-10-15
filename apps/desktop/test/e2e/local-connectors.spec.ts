@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startFakeOAuthMcpServer, startMockLlm, step } from '@kepcup/testkit';
-import { createBotAndOpenChat } from './helpers/create-bot';
+import { createBotAndOpenChat, rpc } from './helpers/create-bot';
 
 /**
  * 本机连接（设计 29 §17，todo/local-connector-authoring.md L4）端到端——真实 Electron + 真实 core +
@@ -34,13 +34,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-
-declare global {
-  interface Window {
-    __kepcupRpc: (method: string, input?: unknown) => Promise<unknown>;
-  }
-}
-
 test('local connectors: section always visible; Bot proposal → card → add → listed (未审核, once) → delete; cancel discards', async () => {
   test.setTimeout(300_000);
   const llm = await startMockLlm();
@@ -65,8 +58,6 @@ test('local connectors: section always visible; Bot proposal → card → add �
     const page = await app.firstWindow();
     await waitReady(page);
     const dialog = page.locator('[data-testid="extension-center-dialog"]');
-    const rpc = (method: string, input?: unknown) =>
-      page.evaluate(([m, i]) => window.__kepcupRpc(m as string, i), [method, input] as const);
 
     // --- 「本机自建」区始终可见（空态）----------------------------------------------------
     await page.locator('[data-testid="extension-center-button"]').click();
@@ -120,7 +111,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await expect(page.locator('[data-testid="local-connector-add"]')).toBeEnabled();
     // Bot 自己没有保存任何东西。
     expect(
-      ((await rpc('apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
+      ((await rpc(page, 'apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
     ).toEqual([]);
 
     // --- 添加 → 接上连接步骤；条目进「本机自建」区，不进预置网格 ---------------------------
@@ -132,7 +123,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await expect(page.locator('[data-testid="setup-card-connect"]')).toBeVisible({
       timeout: 15_000,
     });
-    const listed = (await rpc('apps.localConnectors.list')) as {
+    const listed = (await rpc(page, 'apps.localConnectors.list')) as {
       connectors: Array<{ connectorId: string; mcpHost: string }>;
     };
     expect(listed.connectors).toHaveLength(1);
@@ -169,7 +160,7 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await expect(entry).toHaveCount(0, { timeout: 30_000 });
     await expect(dialog.locator('[data-testid="local-connectors-empty"]')).toBeVisible();
     expect(
-      ((await rpc('apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
+      ((await rpc(page, 'apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
     ).toEqual([]);
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
@@ -189,9 +180,9 @@ test('local connectors: section always visible; Bot proposal → card → add �
     const proposalId = await card.getAttribute('data-proposal-id');
     await page.locator('[data-testid="local-connector-cancel"]').click();
     await expect(card).toHaveCount(0, { timeout: 15_000 });
-    await expect(rpc('apps.localConnectors.confirm', { proposalId })).rejects.toThrow();
+    await expect(rpc(page, 'apps.localConnectors.confirm', { proposalId })).rejects.toThrow();
     expect(
-      ((await rpc('apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
+      ((await rpc(page, 'apps.localConnectors.list')) as { connectors: unknown[] }).connectors,
     ).toEqual([]);
   } finally {
     await app?.close();
@@ -267,4 +258,3 @@ test('local connectors: a cross-site authorization server gets a red warning and
     await rm(home, { recursive: true, force: true });
   }
 });
-
