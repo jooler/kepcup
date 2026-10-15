@@ -531,3 +531,11 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 ### 12.4 实施记录
 
 （各波次合入后在此追加：提交、测试结果、偏差。）
+
+**W0 契约（2026-10-15，分支 `t/wb`）**
+
+- 提交：`feat(shared,core)` 迁移 0037 + shared 契约 + `bot_id` 可空修补；`feat(core)` TodoStore / MemoStore；`docs` 设计 39 + D90 + 数据模型。
+- 迁移 0037 在 main 0036 之后；合入 main 时按实况重编（`workbench-migration.test.ts`、`create-core.test.ts`、`public-skills-migration.test.ts` 里的版本号 / 回放逻辑需同步）。`public-skills-migration` 回放测试原先靠 `alter table schedules drop column title/origin` 回退，0037 之后带外键的 `todo_id` 列删不掉，改为把 schedules 还原成 0011 形态再摘三张新表。
+- `bot_id` 可空的最小修补（判空跳过，行为不变）：`schedule/service.ts`（`fireabilityWarnings`、`#afterCreate`、`#fire`、`listEntries`、`#deferredReason`）、`handover/adapters/schedule.ts`（`#isDirectOf`、`#commitment`、`apply`、`isApplied`）、`ScheduleReceipt.svelte`。§4.2 列的语义改造（`contextSection`、`prepareBotDeletion`、`#fire` 的 workbench 分支等）仍归 W1-core；`#fire` 目前遇到空 `botId` 的行按「目标已不存在」取消，W1-core 加 workbench 分支时需先于此判断处理。
+- 容器内全量：4824 例，4766 通过、36 失败，均不在 W0 引入：沙箱 / projects / skills / workspace-tools / wiki-url 等基线环境项；runs 库已有 0011（`a608ccd`）而 `create-core`、`task-events-migration`、`tool-effects-migration` 仍断言 10；`response-loop`「interim delivery 上限」、`tasks-review-fixes-e`、`environment`「checksum mismatch」、`external-agent-p3`「write task lease」在 W0 起点 `1d5c392` 同样失败；`agents-service`、`connected-apps-runtime`、`web-tools` 为负载偶发，单跑通过。
+
