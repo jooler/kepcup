@@ -4,6 +4,7 @@
   import { toast } from 'svelte-sonner';
   import { errorText, t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
+  import { chat } from '$lib/stores/chat.svelte';
   import { Button } from '$lib/components/ui/button';
   import { describeAt, localTimeZone } from './describe';
   import { selfScheduleSource } from './workbench-model';
@@ -26,6 +27,11 @@
       ? describeAt(schedule.nextFireAt)
       : null,
   );
+  /** 在群里安排的任务：标注来源群（私聊里的不标）。 */
+  const groupName = $derived.by(() => {
+    const conversation = chat.conversations.find((item) => item.id === schedule.conversationId);
+    return conversation?.type === 'group' ? (conversation.title ?? conversation.id) : null;
+  });
   let confirming = $state(false);
   let cancelling = $state(false);
 
@@ -65,7 +71,10 @@
   </div>
   <p class="mt-1 text-xs text-muted-foreground" data-testid="self-schedule-when">
     {whenText}{#if nextText !== null}
-      · {t('schedules.nextFire', { time: nextText })}{/if}
+      · {t('schedules.nextFire', { time: nextText })}{/if}{#if groupName !== null}
+      · <span data-testid="self-schedule-group"
+        >{t('workbench.self.fromGroup', { name: groupName })}</span
+      >{/if}
   </p>
   {#if schedule.deferredReason !== null}
     <p

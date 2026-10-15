@@ -4,7 +4,7 @@
   import { TODO_NOTES_MAX_CHARS, TODO_TITLE_MAX_CHARS } from '@kepcup/shared';
   import { CircleAlert, X } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import { errorText, t } from '$lib/i18n';
+  import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -15,16 +15,18 @@
   import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
   import WhenPicker from './WhenPicker.svelte';
   import { describeAt } from './describe';
-  import { openConversation, transitionTodo } from './todo-actions';
+  import { openConversation, rpcErrorText, transitionTodo } from './todo-actions';
   import {
     draftFromSchedule,
     emptyWhenDraft,
     fromLocalInput,
+    isPastOnce,
     nextFireOfPreset,
     sameWhen,
     whenFromDraft,
     type WhenDraft,
   } from './when-presets';
+  import { buildUpdateInput, type TodoFormValues } from './todo-form';
   import { botMembers, groupMembers, type MemberInfo } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
@@ -43,6 +45,14 @@
   let runsFailed = $state(false);
   let loading = $state(false);
   let notFound = $state(false);
+  /** 编辑态下 todos.get 失败（非 NOT_FOUND）且还没拿到过事项：只显示错误与重试，不渲染表单。 */
+  let loadFailed = $state(false);
+  /** 脏表单上的破坏性操作先确认：`message` 是提示，`run` 是确认后执行的动作。 */
+  let pendingDiscard = $state.raw<{ message: string; run: () => void | Promise<void> } | null>(
+    null,
+  );
+  let titleEl = $state<HTMLInputElement | null>(null);
+  let asideEl = $state<HTMLElement | null>(null);
 
   let title = $state('');
   let notes = $state('');
@@ -161,8 +171,11 @@
     };
   }
 
-  /** 读一条事项（+ 执行记录）。`fill` = 用服务端数据覆盖表单（打开时 / 表单没改过时）。 */
-  async function load(todoId: string, fill: boolean): Promise<void> {
+  /**
+   * 读一条事项（+ 执行记录）。`initial` = 打开时的首次载入（直接填表）；否则是刷新：
+   * 响应回来时表单仍没被改过才覆盖（等待期间用户开始编辑了就只更新事项与执行记录）。
+   */
+  async function load(todoId: string, initial: boolean): Promise<void> {
     loading = entry === null;
     try {
       const result = (await core.call('todos.get', { id: todoId })) as {
@@ -174,11 +187,13 @@
       entry = result.todo;
       runs = result.runs;
       runsFailed = false;
+      loadFailed = false;
       memoId = result.todo.memoId;
-      if (fill) applyForm(result.todo);
+      if (initial || (!dirty && !saving)) applyForm(result.todo);
     } catch (error) {
       if (workbench.drawer?.kind !== 'edit' || workbench.drawer.todoId !== todoId) return;
       if ((error as { code?: string } | undefined)?.code === 'NOT_FOUND') notFound = true;
+      else if (entry === null) loadFailed = true;
       else runsFailed = true;
     } finally {
       loading = false;
@@ -190,6 +205,9 @@
     runs = [];
     runsFailed = false;
     notFound = false;
+    loadFailed = false;
+    pendingDiscard = null;
+    groupMembersOf = {};
     warnings = [];
     formError = null;
     confirmCancel = false;
@@ -230,7 +248,7 @@
     seenVersion = version;
     untrack(() => {
       const current = workbench.drawer;
-      if (current?.kind === 'edit') void load(current.todoId, !dirty && !saving);
+      if (current?.kind === 'edit') void load(current.todoId, false);
     });
   });
 
@@ -239,6 +257,20 @@
     const groupId = selectedGroupId;
     if (groupId === null || groupMembersOf[groupId] !== undefined) return;
     untrack(() => void loadGroupMembers(groupId));
+  });
+
+  // 群成员变了（会话更新 / Bot 增删）：丢掉缓存的成员名单，选着的群重新取。
+  $effect(() => {
+    if (drawer === null) return;
+    const invalidate = (): void => {
+      groupMembersOf = {};
+    };
+    const offs = [
+      core.onEvent('conversation.updated', invalidate),
+      core.onEvent('bot.updated', invalidate),
+      core.onEvent('bot.deleted', invalidate),
+    ];
+    return () => offs.forEach((off) => off());
   });
 
   async function loadGroupMembers(groupId: string): Promise<void> {
@@ -261,9 +293,74 @@
     if (drawer === null) return;
     return registerEscapeLayer({
       priority: ESCAPE_PRIORITY.overlay,
-      onEscape: () => workbench.closeDrawer(),
+      onEscape: () => requestClose(),
     });
   });
+
+  /** 关闭（遮罩 / Esc / 关闭按钮）：表单脏了先确认；确认条开着时 Esc 只收起确认条。 */
+  function requestClose(): void {
+    if (pendingDiscard !== null) {
+      pendingDiscard = null;
+      return;
+    }
+    if (dirty && !saving) {
+      pendingDiscard = {
+        message: t('workbench.drawer.discardTitle'),
+        run: () => workbench.closeDrawer(),
+      };
+      return;
+    }
+    workbench.closeDrawer();
+  }
+
+  // --- 焦点 -------------------------------------------------------------------
+  // 打开时记住触发元素，关闭后还原焦点；打开后焦点进标题框；Tab 在抽屉内循环。
+  let opener: HTMLElement | null = null;
+  let wasOpen = false;
+  let focusedFor: unknown = null;
+  $effect(() => {
+    const open = drawer !== null;
+    untrack(() => {
+      if (open && !wasOpen) opener = document.activeElement as HTMLElement | null;
+      if (!open && wasOpen) {
+        const target = opener;
+        opener = null;
+        focusedFor = null;
+        queueMicrotask(() => {
+          if (target?.isConnected) target.focus();
+        });
+      }
+      wasOpen = open;
+    });
+  });
+  $effect(() => {
+    const el = titleEl;
+    const current = drawer;
+    if (el === null || current === null || focusedFor === current) return;
+    focusedFor = current;
+    el.focus();
+  });
+
+  const FOCUSABLE =
+    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  function trapTab(event: KeyboardEvent): void {
+    if (event.key !== 'Tab' || asideEl === null) return;
+    const items = [...asideEl.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+      (el) => el.getClientRects().length > 0,
+    );
+    if (items.length === 0) return;
+    const first = items[0]!;
+    const last = items[items.length - 1]!;
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !asideEl.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !asideEl.contains(active))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   // --- 时间提示 ----------------------------------------------------------------
   const nextText = $derived.by((): string => {
@@ -289,59 +386,72 @@
   });
 
   const whenValue = $derived(whenFromDraft(whenDraft));
-  const problem = $derived.by((): string | null => {
+  const whenDirty = $derived(!sameWhen(whenDraft, base.when));
+  const fieldsDirty = $derived(
+    title !== base.title ||
+      notes !== base.notes ||
+      assigneeKey !== base.assigneeKey ||
+      leadBotId !== base.leadBotId,
+  );
+
+  function formValues(): TodoFormValues {
+    return {
+      title,
+      notes,
+      assigneeKey,
+      leadBotId,
+      assignee: assigneeFromForm(),
+      when: whenDraft,
+    };
+  }
+
+  /** 保存前的校验；`omitWhen`：这次保存不带时间（「立即开始」只存其余字段）。 */
+  function problemOf(omitWhen: boolean): string | null {
     if (title.trim().length === 0) return t('workbench.drawer.titleRequired');
+    if (omitWhen) return null;
     if (whenDraft.mode !== 'none' && assigneeKey === '') return t('workbench.drawer.needAssignee');
     if (whenValue === undefined) return t('workbench.drawer.whenIncomplete');
+    // 只在用户改了时间时拦「已过去」；没改的旧时间（比如已过期未触发的）不拦其它字段的保存。
+    if (whenDirty && isPastOnce(whenDraft, Date.now())) return t('workbench.drawer.whenPast');
     return null;
-  });
-
+  }
   // --- 保存 --------------------------------------------------------------------
   /** 创建后抽屉要从「新建」切到「编辑」，期间把 warnings 带过去。 */
   let pendingWarnings: string[] = [];
 
-  /** 返回 true = 保存成功（或没有改动）。`quiet`：不关抽屉、不 toast（保存后紧接别的操作）。 */
-  async function save(quiet = false): Promise<boolean> {
+  /**
+   * 返回 true = 保存成功（或没有改动）。`quiet`：不关抽屉、不 toast（保存后紧接别的操作）；
+   * `omitWhen`：不带时间（「立即开始」只存标题 / 说明 / 执行者）。
+   */
+  async function save(options: { quiet?: boolean; omitWhen?: boolean } = {}): Promise<boolean> {
+    const quiet = options.quiet === true;
+    const omitWhen = options.omitWhen === true;
     if (saving) return false;
-    if (problem !== null) {
-      formError = problem;
+    const blocking = problemOf(omitWhen);
+    if (blocking !== null) {
+      formError = blocking;
       return false;
     }
     formError = null;
     saving = true;
     try {
       let result: { todo: TodoEntry; warnings: string[] };
-      let startAfter = false;
       const assignee = assigneeFromForm();
       if (drawer?.kind === 'new') {
         const input: Record<string, unknown> = { title: title.trim() };
         if (notes.trim().length > 0) input.notes = notes;
         if (assignee !== null) input.assignee = assignee;
-        if (whenValue !== null) input.when = whenValue;
+        // 「立即」也走 create 的 when:'now'（创建即派发）。
+        if (!omitWhen && whenValue !== null && whenValue !== undefined) input.when = whenValue;
         if (memoId !== null) input.memoId = memoId;
         result = (await core.call('todos.create', input)) as typeof result;
       } else if (entry !== null) {
-        const input: Record<string, unknown> = { id: entry.id };
-        if (title !== base.title) input.title = title.trim();
-        if (notes !== base.notes) input.notes = notes;
-        const assigneeChanged = assigneeKey !== base.assigneeKey || leadBotId !== base.leadBotId;
-        if (assigneeChanged) input.assignee = assignee;
-        if (!planLocked) {
-          if (whenDraft.mode === 'now') {
-            startAfter = !sameWhen(whenDraft, base.when);
-          } else if (!sameWhen(whenDraft, base.when) || (assigneeChanged && whenValue !== null)) {
-            input.when = whenValue;
-          }
-        }
-        if (Object.keys(input).length === 1 && !startAfter) {
+        const input = buildUpdateInput(entry.id, base, formValues(), { planLocked, omitWhen });
+        if (input === null) {
           if (!quiet) workbench.closeDrawer();
           return true;
         }
         result = (await core.call('todos.update', input)) as typeof result;
-        if (startAfter) {
-          const started = (await core.call('todos.start', { id: entry.id })) as { todo: TodoEntry };
-          result = { ...result, todo: started.todo };
-        }
       } else {
         return false;
       }
@@ -370,25 +480,54 @@
       }
       return true;
     } catch (error) {
-      formError = errorText(
-        (error as { code?: string } | undefined)?.code,
-        t('workbench.drawer.saveFailed'),
-      );
+      formError = rpcErrorText(error, t('workbench.drawer.saveFailed'));
       return false;
     } finally {
       saving = false;
     }
   }
 
-  async function transition(kind: 'start' | 'complete' | 'cancel' | 'reopen' | 'toDraft') {
+  /** 状态迁移。表单脏了先确认（取消事项本身已有两步确认，不再叠一层）。 */
+  async function transition(
+    kind: 'complete' | 'cancel' | 'reopen' | 'toDraft',
+    confirmed = false,
+  ): Promise<void> {
     if (entry === null) return;
-    if (kind === 'start' && dirty && !(await save(true))) return;
+    if (!confirmed && dirty && kind !== 'cancel') {
+      pendingDiscard = {
+        message: t('workbench.drawer.discardTitle'),
+        run: () => transition(kind, true),
+      };
+      return;
+    }
+    pendingDiscard = null;
     confirmCancel = false;
     const next = await transitionTodo(kind, entry.id);
     if (next === null) return;
     entry = next;
     applyForm(next);
     if (kind === 'complete' || kind === 'cancel') workbench.closeDrawer();
+  }
+
+  /**
+   * 底部「立即开始」：只保存标题 / 说明 / 执行者，再调 `todos.start`——不带时间草稿，
+   * 否则会把「某时」先存成排期、或「立即」派两次。时间草稿有未保存的修改时先确认放弃。
+   */
+  async function startNow(confirmed = false): Promise<void> {
+    if (entry === null) return;
+    if (!confirmed && whenDirty) {
+      pendingDiscard = {
+        message: t('workbench.drawer.discardTimeOnly'),
+        run: () => startNow(true),
+      };
+      return;
+    }
+    pendingDiscard = null;
+    if (fieldsDirty && !(await save({ quiet: true, omitWhen: true }))) return;
+    const next = await transitionTodo('start', entry.id);
+    if (next === null) return;
+    entry = next;
+    applyForm(next);
   }
 
   function onAssigneeChange(value: string): void {
@@ -409,18 +548,23 @@
       type="button"
       class="absolute inset-0 cursor-default bg-black/20"
       aria-label={t('workbench.drawer.close')}
-      onclick={() => workbench.closeDrawer()}
+      onclick={requestClose}
       tabindex="-1"
     ></button>
-    <aside
+    <div
+      bind:this={asideEl}
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
       class="relative flex h-full w-full max-w-md flex-col border-l bg-background shadow-xl"
-      aria-label={isNew ? t('workbench.drawer.titleNew') : t('workbench.drawer.titleEdit')}
+      aria-labelledby="todo-drawer-heading"
+      onkeydown={trapTab}
       data-testid="todo-drawer"
       data-todo-id={entry?.id ?? ''}
       data-status={isNew ? 'new' : status}
     >
       <header class="flex items-center gap-2 border-b px-4 py-3">
-        <h2 class="min-w-0 flex-1 truncate text-sm font-medium">
+        <h2 id="todo-drawer-heading" class="min-w-0 flex-1 truncate text-sm font-medium">
           {isNew ? t('workbench.drawer.titleNew') : t('workbench.drawer.titleEdit')}
         </h2>
         {#if !isNew}
@@ -432,7 +576,7 @@
           variant="ghost"
           size="icon-sm"
           aria-label={t('workbench.drawer.close')}
-          onclick={() => workbench.closeDrawer()}
+          onclick={requestClose}
           data-testid="todo-drawer-close"
         >
           <X class="size-4" />
@@ -444,8 +588,23 @@
           <p class="text-sm text-muted-foreground" data-testid="todo-drawer-notfound">
             {t('workbench.drawer.notFound')}
           </p>
-        {:else if loading && entry === null}
+        {:else if loading && entry === null && !isNew}
           <p class="text-sm text-muted-foreground">…</p>
+        {:else if loadFailed && entry === null && !isNew}
+          <div class="space-y-2" data-testid="todo-drawer-load-failed">
+            <p class="text-sm text-muted-foreground">{t('workbench.drawer.loadFailed')}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onclick={() => {
+                const current = workbench.drawer;
+                if (current?.kind === 'edit') void load(current.todoId, true);
+              }}
+              data-testid="todo-drawer-retry"
+            >
+              {t('workbench.retry')}
+            </Button>
+          </div>
         {:else}
           {#if warnings.length > 0}
             <div
@@ -486,6 +645,7 @@
             </label>
             <Input
               id="todo-title"
+              bind:ref={titleEl}
               bind:value={title}
               maxlength={TODO_TITLE_MAX_CHARS}
               disabled={closed}
@@ -516,7 +676,7 @@
             >
               <Select.Trigger
                 class="w-full"
-                aria-label={t('workbench.drawer.fieldAssignee')}
+                aria-label={`${t('workbench.drawer.fieldAssignee')}：${assigneeLabel}`}
                 data-testid="todo-assignee"
               >
                 {assigneeLabel}
@@ -568,7 +728,7 @@
                 >
                   <Select.Trigger
                     class="w-full"
-                    aria-label={t('workbench.drawer.fieldLead')}
+                    aria-label={`${t('workbench.drawer.fieldLead')}：${leadLabel}`}
                     data-testid="todo-lead-bot"
                   >
                     {leadLabel}
@@ -651,17 +811,49 @@
       </div>
 
       <footer class="flex flex-wrap items-center gap-2 border-t px-4 py-3">
+        {#if pendingDiscard !== null}
+          <div
+            class="flex w-full flex-wrap items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+            role="alertdialog"
+            aria-label={pendingDiscard.message}
+            data-testid="todo-discard"
+          >
+            <span class="min-w-0 flex-1">{pendingDiscard.message}</span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onclick={() => (pendingDiscard = null)}
+              data-testid="todo-discard-back"
+            >
+              {t('workbench.drawer.discardBack')}
+            </Button>
+            <Button
+              size="xs"
+              variant="destructive"
+              onclick={() => {
+                const action = pendingDiscard;
+                pendingDiscard = null;
+                void action?.run();
+              }}
+              data-testid="todo-discard-continue"
+            >
+              {t('workbench.drawer.discardContinue')}
+            </Button>
+          </div>
+        {/if}
         {#if !isNew && entry !== null}
           {#if status === 'draft'}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={saving || assigneeKey === ''}
-              onclick={() => void transition('start')}
-              data-testid="todo-drawer-start"
-            >
-              {t('workbench.action.start')}
-            </Button>
+            {#if whenDraft.mode !== 'now'}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={saving || assigneeKey === ''}
+                onclick={() => void startNow()}
+                data-testid="todo-drawer-start"
+              >
+                {t('workbench.action.start')}
+              </Button>
+            {/if}
           {:else if status === 'scheduled'}
             <Button
               size="sm"
@@ -725,7 +917,7 @@
           {/if}
         {/if}
         <span class="flex-1"></span>
-        {#if !closed}
+        {#if !closed && (isNew || entry !== null)}
           <Button
             size="sm"
             disabled={saving || (!isNew && !dirty)}
@@ -736,6 +928,6 @@
           </Button>
         {/if}
       </footer>
-    </aside>
+    </div>
   </div>
 {/if}

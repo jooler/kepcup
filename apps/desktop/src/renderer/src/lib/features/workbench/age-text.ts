@@ -1,4 +1,4 @@
-import { t } from '$lib/i18n';
+import { i18n, t } from '$lib/i18n';
 import { ageOf } from './workbench-model';
 
 /** 距今多久的人话：刚刚 / N 分钟前 / N 小时前 / N 天前 / 「10月12日」。 */
@@ -14,6 +14,6 @@ export function ageText(at: number, now: number = Date.now()): string {
     case 'days':
       return t('workbench.age.days', { n: age.n });
     case 'date':
-      return new Date(age.at).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+      return new Date(age.at).toLocaleDateString(i18n.locale, { month: 'long', day: 'numeric' });
   }
 }

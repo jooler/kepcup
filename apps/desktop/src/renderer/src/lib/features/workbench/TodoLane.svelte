@@ -55,7 +55,7 @@
       type="button"
       class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
       aria-expanded={!collapsed}
-      aria-label={t('workbench.lane.toggle')}
+      aria-label={t('workbench.lane.toggleNamed', { name: title })}
       onclick={() => (collapsed = !collapsed)}
       data-testid="todo-lane-toggle"
     >

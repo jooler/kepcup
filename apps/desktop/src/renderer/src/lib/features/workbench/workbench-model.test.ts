@@ -5,6 +5,8 @@ import {
   botMembers,
   buildLanes,
   closedTodos,
+  cutUtf16,
+  effectiveStatus,
   filterMemos,
   groupMembers,
   idleMembers,
@@ -357,5 +359,63 @@ describe('成员名单', () => {
   it('runningBotSet 取各会话 runningBotIds 的并集', () => {
     const set = runningBotSet([{ runningBotIds: ['a'] }, {}, { runningBotIds: ['a', 'b'] }]);
     expect([...set].sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('周期事项的最近一次执行', () => {
+  const run = (status: 'dispatched' | 'delivered' | 'unclaimed') =>
+    ({
+      id: 'r',
+      todoId: 't',
+      conversationId: 'c',
+      messageId: null,
+      status,
+      resultMessageId: null,
+      dispatchedAt: 1,
+      settledAt: null,
+    }) as TodoEntry['lastRun'];
+
+  it('effectiveStatus：scheduled 且最近一次在跑 / 已交付，按执行状态算', () => {
+    expect(effectiveStatus({ status: 'scheduled', lastRun: run('dispatched') })).toBe(
+      'in_progress',
+    );
+    expect(effectiveStatus({ status: 'scheduled', lastRun: run('delivered') })).toBe('delivered');
+    expect(effectiveStatus({ status: 'scheduled', lastRun: run('unclaimed') })).toBe('scheduled');
+    expect(effectiveStatus({ status: 'scheduled', lastRun: null })).toBe('scheduled');
+    expect(effectiveStatus({ status: 'draft', lastRun: run('delivered') })).toBe('draft');
+  });
+
+  it('道头计数与排序体现它（每条只计一次）', () => {
+    const lanes = buildLanes({
+      todos: [
+        todo(
+          'weekly',
+          toBot('a', { status: 'scheduled', schedule: sched(9), lastRun: run('delivered') }),
+        ),
+        todo('daily', toBot('b', { status: 'scheduled', schedule: sched(5) })),
+      ],
+      schedules: [],
+      bots,
+      groups,
+    });
+    expect(lanes.map((lane) => lane.memberId)).toEqual(['a', 'b']);
+    expect(lanes[0]!.counts).toEqual({ draft: 0, scheduled: 0, inProgress: 0, delivered: 1 });
+    expect(lanes[1]!.counts.scheduled).toBe(1);
+  });
+});
+
+describe('cutUtf16', () => {
+  it('按 UTF-16 长度截断，不切开代理对', () => {
+    expect(cutUtf16('abc', 5)).toBe('abc');
+    expect(cutUtf16('abcdef', 3)).toBe('abc');
+    expect(cutUtf16('a😀b', 2)).toBe('a');
+    expect(cutUtf16('a😀b', 3)).toBe('a😀');
+  });
+
+  it('memoToTodoDraft 的标题不超过 120 个 UTF-16 单元', () => {
+    const draft = memoToTodoDraft('😀'.repeat(100));
+    expect(draft.title.length).toBeLessThanOrEqual(120);
+    expect(draft.title).toBe('😀'.repeat(60));
+    expect(draft.notes.length).toBe(200);
   });
 });

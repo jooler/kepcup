@@ -33,7 +33,15 @@ class ShellState {
     return this.mainView === 'workbench' && !narrowLayout.narrow;
   }
 
+  /**
+   * 用户主动打开工作台的次数。`chat.select()` 在开始时记下它，结算时若已变化（慢 select /
+   * 启动恢复期间用户打开了工作台）就不把视图拉回对话；用户之后主动点对话行的 select
+   * 记下的是新值，照常回到对话。
+   */
+  workbenchIntent = 0;
+
   openWorkbench(): void {
+    this.workbenchIntent += 1;
     this.mainView = 'workbench';
   }
 

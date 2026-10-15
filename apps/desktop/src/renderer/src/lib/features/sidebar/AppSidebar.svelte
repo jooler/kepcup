@@ -84,8 +84,8 @@
   const collapsed = $derived(narrow ? false : sidebarLayout.collapsed);
 
   /** 高亮的对话行：只在对话视图里有（`mainView === 'chats' && id === currentId`，组群输入时无）。 */
-  const activeConversationId = $derived(shell.mainView === 'chats' ? chat.activeId : null);
-  const workbenchActive = $derived(shell.mainView === 'workbench');
+  const activeConversationId = $derived(shell.workbenchShown ? null : chat.activeId);
+  const workbenchActive = $derived(shell.workbenchShown);
 
   /**
    * Electron 按 DOM 顺序合并 app-region，后出现的矩形胜出。开始对话面板和

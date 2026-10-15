@@ -73,6 +73,17 @@ export interface LaneInput {
   groups: readonly MemberInfo[];
 }
 
+/**
+ * 周期事项自身停在 scheduled，但最近一次执行可能正在跑 / 已交付：卡片与道头按这次执行的
+ * 状态呈现（进行中 / 待验收），一条事项只计一次。
+ */
+export function effectiveStatus(todo: Pick<TodoEntry, 'status' | 'lastRun'>): TodoStatus {
+  if (todo.status !== 'scheduled' || todo.lastRun === null) return todo.status;
+  if (todo.lastRun.status === 'dispatched') return 'in_progress';
+  if (todo.lastRun.status === 'delivered') return 'delivered';
+  return todo.status;
+}
+
 /** 同一道内的事项顺序：待验收 → 进行中 → 已排期（下次时间近者在前）→ 草案（新改动在前）。 */
 const STATUS_RANK: Record<TodoStatus, number> = {
   delivered: 0,
@@ -84,7 +95,7 @@ const STATUS_RANK: Record<TodoStatus, number> = {
 };
 
 export function compareTodos(a: TodoEntry, b: TodoEntry): number {
-  const rank = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+  const rank = STATUS_RANK[effectiveStatus(a)] - STATUS_RANK[effectiveStatus(b)];
   if (rank !== 0) return rank;
   if (a.status === 'scheduled') {
     const an = a.schedule?.nextFireAt ?? Number.POSITIVE_INFINITY;
@@ -175,10 +186,11 @@ export function buildLanes(input: LaneInput): WorkbenchLane[] {
   for (const lane of lanes.values()) {
     lane.todos.sort(compareTodos);
     for (const todo of lane.todos) {
-      if (todo.status === 'draft') lane.counts.draft += 1;
-      else if (todo.status === 'scheduled') lane.counts.scheduled += 1;
-      else if (todo.status === 'in_progress') lane.counts.inProgress += 1;
-      else if (todo.status === 'delivered') lane.counts.delivered += 1;
+      const status = effectiveStatus(todo);
+      if (status === 'draft') lane.counts.draft += 1;
+      else if (status === 'scheduled') lane.counts.scheduled += 1;
+      else if (status === 'in_progress') lane.counts.inProgress += 1;
+      else if (status === 'delivered') lane.counts.delivered += 1;
     }
     lane.nextAt = earliest([
       ...lane.todos.map((todo) => todo.schedule?.nextFireAt),
@@ -337,14 +349,21 @@ export function filterMemos(memos: readonly Memo[], query: string): Memo[] {
 export function memoToTodoDraft(body: string): { title: string; notes: string } {
   const lines = body.split(/\r?\n/);
   const first = lines.find((line) => line.trim().length > 0) ?? '';
-  const title = Array.from(first.trim()).slice(0, TODO_TITLE_MAX_CHARS).join('');
+  const title = cutUtf16(first.trim(), TODO_TITLE_MAX_CHARS);
   const rest = body.trim();
-  // 标题被截断时说明保留全文（否则超出的部分就丢了）。
-  const titleIsAll = rest === title;
-  return {
-    title,
-    notes: titleIsAll ? '' : Array.from(rest).slice(0, TODO_NOTES_MAX_CHARS).join(''),
-  };
+  // 标题已是全文时说明为空，避免重复；标题被截断时说明保留全文（否则超出的部分就丢了）。
+  return { title, notes: rest === title ? '' : cutUtf16(rest, TODO_NOTES_MAX_CHARS) };
+}
+
+/**
+ * 按 UTF-16 长度截断（与 zod 的 `.max()` 同口径，shared 的上限就是按 `.length` 校验的），
+ * 且不把代理对从中间切开。
+ */
+export function cutUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const code = text.charCodeAt(max - 1);
+  const cut = code >= 0xd800 && code <= 0xdbff ? max - 1 : max;
+  return text.slice(0, cut);
 }
 
 // ---------------------------------------------------------------------------

@@ -314,6 +314,7 @@ class ChatState {
   }
 
   async select(conversationId: string): Promise<void> {
+    const workbenchIntent = shell.workbenchIntent;
     const result = (await core.call('conversations.get', { id: conversationId })) as {
       conversation: ConversationView | null;
     };
@@ -352,7 +353,8 @@ class ChatState {
     };
     this.currentId = conversationId;
     // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
-    shell.mainView = 'chats';
+    // 慢 select 期间用户主动打开了工作台：尊重它，只更新当前会话。
+    if (shell.workbenchIntent === workbenchIntent) shell.mainView = 'chats';
     this.replyTo = null;
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
     // 或群聊），而不是按最近消息时间挑一个。

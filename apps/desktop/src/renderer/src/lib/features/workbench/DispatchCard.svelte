@@ -35,7 +35,9 @@
       <span data-testid="dispatch-card-butler">· {t('workbench.dispatch.byButler')}</span>
     {/if}
   </div>
-  <p class="font-medium break-words" data-testid="dispatch-card-title">{parsed.title}</p>
+  <p class="font-medium break-words" data-testid="dispatch-card-title">
+    {parsed.title.length > 0 ? parsed.title : t('workbench.dispatch.untitled')}
+  </p>
   {#if parsed.notes.length > 0}
     <p
       class="mt-1 line-clamp-6 text-xs break-words whitespace-pre-wrap text-muted-foreground"

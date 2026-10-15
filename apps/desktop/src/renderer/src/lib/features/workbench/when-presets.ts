@@ -166,10 +166,17 @@ export interface ScheduleLike {
   kind: 'once' | 'cron';
   runAt: number | null;
   cron: string | null;
+  timezone: string;
 }
 
-/** 从事项现有排期还原选择器草稿；没有排期 = 不定。 */
-export function draftFromSchedule(schedule: ScheduleLike | null): WhenDraft {
+/**
+ * 从事项现有排期还原选择器草稿；没有排期 = 不定。cron 在别的时区下算（与 `localZone`
+ * 不同）时不识别成预设——预设按本机时区解读，认成预设会改写含义——按只读 cron 回显。
+ */
+export function draftFromSchedule(
+  schedule: ScheduleLike | null,
+  localZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): WhenDraft {
   const draft = emptyWhenDraft();
   if (schedule === null) return draft;
   if (schedule.kind === 'once') {
@@ -181,7 +188,7 @@ export function draftFromSchedule(schedule: ScheduleLike | null): WhenDraft {
   }
   draft.mode = 'repeat';
   const cron = schedule.cron ?? '';
-  const preset = cronToPreset(cron);
+  const preset = schedule.timezone === localZone ? cronToPreset(cron) : null;
   if (preset !== null) draft.preset = preset;
   else draft.customCron = cron.trim() === '' ? null : cron.trim();
   return draft;
@@ -249,4 +256,21 @@ export function nextFireOfPreset(preset: RepeatPreset, now: number): number | nu
     }
   }
   return null;
+}
+
+/** 「某时」是否已过（草稿填完整但不晚于 `now`）；没填完整不算。 */
+export function isPastOnce(draft: WhenDraft, now: number): boolean {
+  if (draft.mode !== 'once') return false;
+  const at = fromLocalInput(draft.onceLocal);
+  return at !== null && at <= now;
+}
+
+/** 每月 29–31 号：没有该日的月份不会执行（界面据此给一行提示）。 */
+export function skipsShortMonths(draft: WhenDraft): boolean {
+  return (
+    draft.mode === 'repeat' &&
+    draft.customCron === null &&
+    draft.preset.kind === 'monthly' &&
+    draft.preset.day >= 29
+  );
 }

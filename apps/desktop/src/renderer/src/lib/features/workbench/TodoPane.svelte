@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
-  import { errorText, t } from '$lib/i18n';
+  import { t } from '$lib/i18n';
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
@@ -17,6 +17,7 @@
     idleMembers,
     runningBotSet,
   } from './workbench-model';
+  import { rpcErrorText } from './todo-actions';
   import { workbench } from './workbench.svelte';
   import type { TodoEntry } from '@kepcup/shared';
   import { TODO_TITLE_MAX_CHARS } from '@kepcup/shared';
@@ -26,7 +27,23 @@
    * （未指派在前，其后有事的 Bot 与群）→ 空闲成员条 → 最近结束。
    */
   const bots = $derived(botMembers(contacts.bots));
-  const groups = $derived(groupMembers(chat.conversations));
+  // 会话列表每条消息都会换新数组：只取成员签名（群 id / 标题、在跑的 Bot），签名不变就不重算分道。
+  const SEP = '\u0001';
+  const groupSig = $derived(
+    groupMembers(chat.conversations)
+      .map((group) => `${group.id}${SEP}${group.name}`)
+      .join(SEP + SEP),
+  );
+  const groups = $derived(
+    groupSig === ''
+      ? []
+      : groupSig.split(SEP + SEP).map((entry) => {
+          const [id = '', name = ''] = entry.split(SEP);
+          return { id, name };
+        }),
+  );
+  const runningSig = $derived([...runningBotSet(chat.conversations)].sort().join(','));
+  const running = $derived(new Set(runningSig === '' ? [] : runningSig.split(',')));
   const lanes = $derived(
     buildLanes({ todos: workbench.todos, schedules: workbench.schedules, bots, groups }),
   );
@@ -34,7 +51,6 @@
     idleMembers({ todos: workbench.todos, schedules: workbench.schedules, bots, groups }),
   );
   const closed = $derived(closedTodos(workbench.todos));
-  const running = $derived(runningBotSet(chat.conversations));
 
   let draft = $state('');
   let saving = $state(false);
@@ -50,12 +66,7 @@
       workbench.upsertTodo(result.todo);
       draft = '';
     } catch (error) {
-      toast.error(
-        errorText(
-          (error as { code?: string } | undefined)?.code,
-          t('workbench.todos.quickAddFailed'),
-        ),
-      );
+      toast.error(rpcErrorText(error, t('workbench.todos.quickAddFailed')));
     } finally {
       saving = false;
       input?.focus();
@@ -83,9 +94,15 @@
 
   <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
     {#if lanes.length === 0 && closed.length === 0}
-      <p class="py-6 text-center text-sm text-muted-foreground" data-testid="todo-empty">
-        {t('workbench.todos.empty')}
-      </p>
+      {#if workbench.loadState === 'loading' || workbench.loadState === 'idle'}
+        <p class="py-6 text-center text-sm text-muted-foreground" data-testid="todo-loading">
+          {t('workbench.loading')}
+        </p>
+      {:else if workbench.loadState !== 'error'}
+        <p class="py-6 text-center text-sm text-muted-foreground" data-testid="todo-empty">
+          {t('workbench.todos.empty')}
+        </p>
+      {/if}
     {/if}
 
     {#each lanes as lane (lane.id)}
