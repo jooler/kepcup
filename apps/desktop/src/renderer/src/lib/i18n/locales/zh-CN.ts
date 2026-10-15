@@ -2390,6 +2390,7 @@ export const zhCN = {
   'workbench.age.days': '{n} 天前',
   'workbench.dispatch.label': '工作台',
   'workbench.dispatch.byButler': '管家代你安排',
+  'workbench.dispatch.drafted': '管家起草',
   'workbench.dispatch.view': '在工作台查看',
   'workbench.todoSource.hint': '这条回复来自工作台事项，点击在工作台查看',
   'schedules.workbench': '工作台',
