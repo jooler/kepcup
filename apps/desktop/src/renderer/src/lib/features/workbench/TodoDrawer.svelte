@@ -81,6 +81,13 @@
   const closed = $derived(status === 'done' || status === 'cancelled');
   const started = $derived(status === 'in_progress' || status === 'delivered');
   const planLocked = $derived(closed || started);
+  /** 已开始 / 已结束事项的时间说明：最近一次派发的时刻；没派发过就说明没有。 */
+  const lockedWhenText = $derived.by(() => {
+    const dispatchedAt = entry?.lastRun?.dispatchedAt ?? null;
+    return dispatchedAt === null
+      ? t('workbench.drawer.whenNeverDispatched')
+      : t('workbench.drawer.whenDispatchedAt', { when: describeAt(dispatchedAt) });
+  });
   const dirty = $derived(
     title !== base.title ||
       notes !== base.notes ||
@@ -782,15 +789,20 @@
 
           <div class="space-y-1.5">
             <span class="text-xs font-medium">{t('workbench.drawer.fieldWhen')}</span>
-            {#if started}
-              <p class="text-xs text-muted-foreground">{t('workbench.drawer.whenLocked')}</p>
+            {#if planLocked}
+              <!-- 已开始 / 已结束的事项：时间不可改，只读显示实际情况，不再摆一个选不了的选择器。 -->
+              {#if started}
+                <p class="text-xs text-muted-foreground">{t('workbench.drawer.whenLocked')}</p>
+              {/if}
+              <p class="text-sm" data-testid="todo-when-readonly">{lockedWhenText}</p>
+            {:else}
+              <WhenPicker
+                bind:draft={whenDraft}
+                disabled={planLocked}
+                hasAssignee={assigneeKey !== ''}
+                next={nextText}
+              />
             {/if}
-            <WhenPicker
-              bind:draft={whenDraft}
-              disabled={planLocked}
-              hasAssignee={assigneeKey !== ''}
-              next={nextText}
-            />
           </div>
 
           {#if !isNew}
