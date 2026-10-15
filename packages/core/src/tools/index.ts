@@ -38,6 +38,7 @@ import { buildSkillTools, type SkillInstallFacade } from './skill-tools.js';
 import { readOnlyRefusal } from './read-only.js';
 import { buildDelegateTools } from './delegate-tools.js';
 import { buildButlerTools, buildListBotsTool, type ButlerToolFacade } from './butler-tools.js';
+import { buildWorkbenchTools, type WorkbenchToolFacade } from './workbench-tools.js';
 import { buildHandoverTools, type HandoverToolFacade } from './handover-tools.js';
 import { buildDelegationTools, type DelegationToolFacade } from './delegation-tools.js';
 import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-tools.js';
@@ -174,6 +175,12 @@ export interface ResponseToolDeps {
    * propose_bot / propose_group。
    */
   butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
+  /**
+   * 工作台（D90 §6）：present 且 `butler.isButler` 时对话轮注册事项 / 备忘工具；任务与普通 Bot
+   * 没有。`triggerFromUser` 是本轮的触发是否来自用户本人（settings/context.ts 同一口径，run 开始
+   * 时算定），宿主在工具执行处据此强制权限边界（§6.2）。
+   */
+  workbench?: { host: WorkbenchToolFacade; triggerFromUser: boolean } | undefined;
   /**
    * Bot 资产移交（D88，docs/design/37）：present（且 `butler` present）时对话轮注册
    * inspect_bot_assets / propose_handover——管家与普通 Bot 都有（P1），参数面按
@@ -1065,6 +1072,16 @@ export function buildResponseTools(input: {
         ]
       : [];
 
+  // 工作台工具（D90）：只给管家，只在对话轮工具面。
+  const workbenchTools =
+    deps.workbench !== undefined && deps.butler?.isButler === true
+      ? buildWorkbenchTools({
+          identity,
+          workbench: deps.workbench.host,
+          triggerFromUser: deps.workbench.triggerFromUser,
+        })
+      : [];
+
   // D73 §5.7 global dedupe: an MCP / app tool may never shadow a built-in one (a connector
   // slug `request` + tool `connection` would spell `app_request_connection`).
   const external = new Set<ToolDefinition>(mcpTools);
@@ -1099,6 +1116,7 @@ export function buildResponseTools(input: {
       ...webTools,
       ...delegationTools,
       ...butlerTools,
+      ...workbenchTools,
       // W5: read-only MCP tools (call-time re-check in the gateway).
       ...mcpTools,
       ...appTools,

@@ -72,6 +72,13 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'delegate_to_bot',
   'cancel_delegation',
   'list_bots',
+  // 工作台（D90）：写入是宿主侧的事项 / 备忘变更，只回执（list_* 读用户写的内容，在 UNTRUSTED_TOOLS）
+  'create_todo',
+  'update_todo',
+  'close_todo',
+  'create_memo',
+  'update_memo',
+  'delete_memo',
   // 宿主侧的写、申请与安装（只回执，不回外部内容）
   'write',
   'edit',
@@ -118,6 +125,8 @@ export const UNTRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'list_my_runs',
   'get_run',
   'list_tasks',
+  'list_todos',
+  'list_memos',
   'recall_memory',
   'list_commitments',
   'wiki_search',
