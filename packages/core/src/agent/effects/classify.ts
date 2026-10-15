@@ -180,6 +180,20 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   inspect_bot_assets: 'none',
   propose_handover: 'local',
 
+  /**
+   * D90 工作台（仅管家、仅对话轮）：事项 / 备忘都是应用内状态且可撤销（事项「已取消」可重新打开、
+   * 备忘软删可恢复）；派发消息由宿主在目标对话里追加，不离开本机。`list_*` 只读 = none
+   * （与 external/capabilities.ts 的 READ_ONLY_TOOLS 一致，tool-effects 单测强制）。
+   */
+  list_todos: 'none',
+  create_todo: 'local',
+  update_todo: 'local',
+  close_todo: 'local',
+  list_memos: 'none',
+  create_memo: 'local',
+  update_memo: 'local',
+  delete_memo: 'local',
+
   // --- 对话内应用设置：查目录只读；修改 = 本机设置写入 / 出卡（回执卡可撤销）---
   settings_search: 'none',
   settings_read: 'none',

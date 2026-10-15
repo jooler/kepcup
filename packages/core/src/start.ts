@@ -134,6 +134,7 @@ import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
 import { MemoService } from './workbench/memo-service.js';
 import { TodoService } from './workbench/todo-service.js';
+import { buildWorkbenchSection, describeTime } from './workbench/context.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
 import { HandoverHost } from './dispatch/handover.js';
@@ -156,6 +157,7 @@ import type { HandoverBotWriter } from './handover/adapters/common.js';
 import type { HandoverToolFacade } from './tools/handover-tools.js';
 import type { OrchestratorTodoFacade, OrchestratorWatchFacade } from './dispatch/orchestrator.js';
 import type { ScheduleToolFacade } from './tools/schedule-tools.js';
+import type { WorkbenchToolFacade } from './tools/workbench-tools.js';
 import {
   createBrowserHostRpc,
   type BrowserHostRpc,
@@ -1781,6 +1783,34 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       settleUnclaimed: (todoRunId) => todoService?.settleUnclaimed(todoRunId),
       settleFailed: (todoRunId) => todoService?.settleFailed(todoRunId),
     };
+    // D90: the butler's workbench tools + <workbench> section (lazy: the services are built after
+    // the orchestrator; the butler check is the host's second look at the caller).
+    let memoService: MemoService | null = null;
+    const workbenchTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const workbenchFacade: WorkbenchToolFacade = {
+      isButler: (botId) => bots.get(botId)?.systemRole === 'butler',
+      listTodos: (filter) => todoService!.list(filter),
+      getTodo: (id) => todoService!.get(id).todo,
+      createTodo: (input) => todoService!.create(input),
+      updateTodo: (id, input) => todoService!.update(id, input),
+      completeTodo: (id) => todoService!.complete(id),
+      cancelTodo: (id) => todoService!.cancel(id),
+      listMemos: (filter) => memoService!.list(filter),
+      createMemo: (input) => memoService!.create(input),
+      updateMemo: (id, patch) => memoService!.update(id, patch),
+      deleteMemo: (id) => memoService!.delete(id),
+      describeWhen: (row) => scheduleService!.describeWhen(row),
+      describeTime: (ms) => describeTime(ms, clock.now(), workbenchTimeZone),
+      contextSection: () => {
+        if (todoService === null || memoService === null) return '';
+        return buildWorkbenchSection({
+          todos: todoService.list({ statuses: ['draft', 'scheduled', 'in_progress', 'delivered'] }),
+          memos: memoService.list(),
+          now: clock.now(),
+          timeZone: workbenchTimeZone,
+        });
+      },
+    };
     const scheduleFacade: ScheduleToolFacade = {
       createFromWhen: (input) => scheduleService!.createFromWhen(input),
       validateWhen: (when, timezone) => scheduleService!.validateWhen(when, timezone),
@@ -2085,6 +2115,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       handover: handoverFacade,
       todos: todoFacade,
+      workbench: workbenchFacade,
       settingsCatalog,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
@@ -2170,6 +2201,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       publish: publishEvent,
     });
+    memoService = memos;
     // A schedule cancelled / ended outside the todo flows (the receipt's cancel button, a
     // deleted conversation's cascade) leaves its todo `scheduled` without a schedule: reconcile.
     events.on('schedules.changed', () => {
