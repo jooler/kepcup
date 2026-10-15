@@ -1601,7 +1601,9 @@ export class Orchestrator {
     if (!this.#deps.conversations.memberBotIds(conversationId).includes(botId)) return;
     const message = this.#appendSystemMessage(conversationId, event, text, {
       ...(options.internal ? { internal: true } : {}),
-      ...(options.settingResolved !== undefined ? { settingResolved: options.settingResolved } : {}),
+      ...(options.settingResolved !== undefined
+        ? { settingResolved: options.settingResolved }
+        : {}),
     });
     const quiet = parseQuietHours(bot.profile.behavior.quiet_hours);
     const now = this.#deps.clock.now();
@@ -2151,7 +2153,14 @@ export class Orchestrator {
           { serverIds },
           'mcp tool lists not ready within the turn budget; turn runs without MCP tools',
         );
-        return { entries: [], unavailable: [], locked: [], apps, hasServers: true, resolved: false };
+        return {
+          entries: [],
+          unavailable: [],
+          locked: [],
+          apps,
+          hasServers: true,
+          resolved: false,
+        };
       }
       return { ...resolution, apps, hasServers: true, resolved: true };
     } finally {
@@ -2585,7 +2594,11 @@ export class Orchestrator {
     const tools = session.tools;
     const hostToolOf = hostToolNamer(provider, session.hostServerName);
     const mapAppToolNames = (text: string): string =>
-      mapToolNames(text, tools.map((tool) => tool.name), hostToolOf);
+      mapToolNames(
+        text,
+        tools.map((tool) => tool.name),
+        hostToolOf,
+      );
     const access = await this.#accessPromptInfo(input.identity);
     const project = input.hasProject
       ? await this.#deps.projects.promptSection(conversation.id, {
@@ -3608,6 +3621,7 @@ export class Orchestrator {
           // bot.updated 让 UI 实时反映新名字与 profile。
           ...(bot.setupState === 'interviewing'
             ? {
+                setupSurface: conv.type === 'group' ? ('group' as const) : ('direct' as const),
                 setup: {
                   saveProfile: (
                     setupBotId: string,
@@ -4574,7 +4588,8 @@ export class Orchestrator {
     };
     return {
       generateImage: (input) => setupGuard('image', () => media.generateImage(input, usage)),
-      understandImage: (input) => setupGuard('multimodal', () => media.understandImage(input, usage)),
+      understandImage: (input) =>
+        setupGuard('multimodal', () => media.understandImage(input, usage)),
       synthesizeSpeech: (input) => setupGuard('tts', () => media.synthesizeSpeech(input, usage)),
       transcribeSpeech: (input) => setupGuard('asr', () => media.transcribeSpeech(input, usage)),
       generateVideo: (input) => setupGuard('video', () => media.generateVideo(input, usage)),
@@ -4589,7 +4604,9 @@ export class Orchestrator {
    */
   #stepUpAllowed(identity: RunIdentity, requirement: SetupRequirement): boolean {
     const connectionId = stepUpConnectionOf(requirement);
-    return connectionId === null || this.#appStepUp.isAvailable(identity.conversationId, connectionId);
+    return (
+      connectionId === null || this.#appStepUp.isAvailable(identity.conversationId, connectionId)
+    );
   }
 
   /** 卡片真正发出（run 带着胜出的 setup 需求收尾）时才占用 step-up 名额。 */
@@ -4620,7 +4637,9 @@ export class Orchestrator {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
     const candidates =
-      mcp == null ? [] : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
+      mcp == null
+        ? []
+        : mcp.serversForBot(selectedServerIds).filter((server) => server.auth === 'oauth');
     const localConnectors = this.#localConnectorFacade(setupHit, identity);
     if (
       candidates.length === 0 &&
@@ -4800,9 +4819,8 @@ export class Orchestrator {
   ): MailSetupFacade {
     return {
       requestSetup: (input) => {
-        const bound = identity.botId === null
-          ? []
-          : (this.#deps.mail?.accountsForBot(identity.botId) ?? []);
+        const bound =
+          identity.botId === null ? [] : (this.#deps.mail?.accountsForBot(identity.botId) ?? []);
         const decided = decideMailSetupRequest({
           botId: identity.botId,
           bound,
@@ -4816,7 +4834,7 @@ export class Orchestrator {
     };
   }
 
-    #searchFacade(setupHit: { requirement: SetupRequirement | null }): SearchToolFacade {
+  #searchFacade(setupHit: { requirement: SetupRequirement | null }): SearchToolFacade {
     const search = this.#deps.search!;
     return {
       search: async (query, maxResults, signal) => {

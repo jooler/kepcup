@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { createGroupViaUi } from './helpers/create-group';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -72,43 +73,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-/** setup 卡定位：对话内群创建（19/D60）按 step 渲染四问。 */
-function groupSetupCard(page: Page, step: string) {
-  return page.locator(`[data-testid="group-setup-card"][data-step="${step}"]`);
-}
-
-async function createGroupViaUi(page: Page, title: string, memberNames: string[]): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="start-chat-create-group"]').click();
-  // 对话内创建：名称 → 主要事务 → 成员 → 目录（跳过），零模型调用。
-  await expect(groupSetupCard(page, 'title')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'title').locator('[data-testid="group-setup-input"]').fill(title);
-  await groupSetupCard(page, 'title').locator('[data-testid="group-setup-submit"]').click();
-
-  await expect(groupSetupCard(page, 'purpose')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'purpose')
-    .locator('[data-testid="group-setup-input"]')
-    .fill('协作处理日常事务');
-  await groupSetupCard(page, 'purpose').locator('[data-testid="group-setup-submit"]').click();
-
-  await expect(groupSetupCard(page, 'members')).toBeVisible({ timeout: 15_000 });
-  for (const name of memberNames) {
-    await groupSetupCard(page, 'members')
-      .locator('label', { hasText: name })
-      .locator('button[role="checkbox"]')
-      .click();
-  }
-  await groupSetupCard(page, 'members').locator('[data-testid="group-setup-submit"]').click();
-
-  await expect(groupSetupCard(page, 'project')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'project').locator('[data-testid="group-setup-skip"]').click();
-
-  // Wait for the sidebar entry (finalized title) so later clicks hit the group.
-  await expect(page.locator('[data-testid="conversation-name"]', { hasText: title })).toBeVisible({
-    timeout: 15_000,
-  });
-}
-
 /** Types text with an @ mention picked from the popup (keyboard Enter). */
 async function mentionAndType(page: Page, botName: string, text: string): Promise<void> {
   const composer = page.locator('[data-testid="composer-input"]');
@@ -139,7 +103,7 @@ test('group chat: create, @ mention, reply-quote, turn status, no-claim click', 
       await page.locator('[data-testid="right-panel-toggle"]').click();
     }
     await expect(page.locator('[data-testid="group-info"]')).toBeVisible();
-    await expect(page.locator('[data-testid="group-info-title"]')).toHaveText('项目讨论组');
+    await expect(page.locator('[data-testid="group-info-title"]')).toHaveValue('项目讨论组');
     await expect(page.locator('[data-testid^="group-member-card-"]')).toHaveCount(2);
 
     const composer = page.locator('[data-testid="composer-input"]');
@@ -310,7 +274,7 @@ test('group settings: rename, member management, delete', async () => {
     // Rename.
     await page.locator('[data-testid="group-rename-input"]').fill('新群名');
     await page.locator('[data-testid="group-rename-save"]').click();
-    await expect(page.locator('[data-testid="group-info-title"]')).toHaveText('新群名', {
+    await expect(page.locator('[data-testid="group-info-title"]')).toHaveValue('新群名', {
       timeout: 10_000,
     });
 
@@ -353,4 +317,3 @@ test('group settings: rename, member management, delete', async () => {
     await closeSession(session);
   }
 });
-

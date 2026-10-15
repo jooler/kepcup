@@ -103,7 +103,7 @@ describe('system prompt assembly', () => {
     expect(task).not.toContain('用 suggest_route 出一张路由卡');
   });
 
-  it('D88: the mail setup rule matches the initiator rights — butler moves another bot\'s mailbox itself, a regular bot asks the user', () => {
+  it("D88: the mail setup rule matches the initiator rights — butler moves another bot's mailbox itself, a regular bot asks the user", () => {
     const butler = makeBot('bot_butler', '管家');
     butler.systemRole = 'butler';
     const common = {
@@ -216,6 +216,41 @@ describe('system prompt assembly', () => {
       now: new Date(),
     });
     expect(prompt).not.toContain('<persona>');
+  });
+
+  it('an interviewing bot asks its positioning in a direct chat and fills in from group instructions', () => {
+    const bot = makeBot('bot_new', '咨询');
+    bot.bio = '';
+    bot.profile.identity.bio = '';
+    bot.profile.persona = {
+      personality: '',
+      tone: '',
+      style: '',
+      values: '',
+      sample_dialogues: '',
+    };
+    bot.profile.role = { expertise: '', responsibilities: '' };
+    bot.profile.boundaries = [];
+    bot.setupState = 'interviewing';
+    const now = new Date('2026-09-29T08:00:00Z');
+    const direct = buildSystemPrompt({
+      bot,
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now,
+    });
+    expect(direct).toContain('主动询问你的定位');
+    expect(direct).toContain('ask_question');
+
+    const group = buildSystemPrompt({
+      bot,
+      conversation: { ...makeConversation(), type: 'group', directBotId: null, title: '咨询' },
+      timeZone: TIME_ZONE,
+      now,
+    });
+    expect(group).toContain('不要在群里发初始化问卷');
+    expect(group).toContain('save_profile');
+    expect(group).not.toContain('ask_question');
   });
 });
 

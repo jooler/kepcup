@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { createGroupViaUi } from './helpers/create-group';
 
 /**
  * P07 e2e (docs/dev/phases/P07-memory.md 测试要求「端到端」): the right-panel
@@ -233,31 +234,7 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
     await createBotAndOpenChat(page, '阿乙');
     // A second bot so the group can be created (needs >= 2 members).
     await createBotAndOpenChat(page, '阿丙');
-
-    await page.locator('[data-testid="new-chat-button"]').click();
-    await page.locator('[data-testid="start-chat-create-group"]').click();
-    // 对话内创建（19/D60）：名称 → 主要事务 → 成员 → 目录（跳过）。
-    const card = (step: string) =>
-      page.locator(`[data-testid="group-setup-card"][data-step="${step}"]`);
-    await expect(card('title')).toBeVisible({ timeout: 15_000 });
-    await card('title').locator('[data-testid="group-setup-input"]').fill('产品组');
-    await card('title').locator('[data-testid="group-setup-submit"]').click();
-    await expect(card('purpose')).toBeVisible({ timeout: 15_000 });
-    await card('purpose').locator('[data-testid="group-setup-input"]').fill('协作处理产品事务');
-    await card('purpose').locator('[data-testid="group-setup-submit"]').click();
-    await expect(card('members')).toBeVisible({ timeout: 15_000 });
-    for (const name of ['阿乙', '阿丙']) {
-      await card('members')
-        .locator('label', { hasText: name })
-        .locator('button[role="checkbox"]')
-        .click();
-    }
-    await card('members').locator('[data-testid="group-setup-submit"]').click();
-    await expect(card('project')).toBeVisible({ timeout: 15_000 });
-    await card('project').locator('[data-testid="group-setup-skip"]').click();
-    await expect(
-      page.locator('[data-testid="conversation-name"]', { hasText: '产品组' }),
-    ).toBeVisible({ timeout: 15_000 });
+    await createGroupViaUi(page, '产品组', ['阿乙', '阿丙']);
 
     // 阿乙 remembers something in the group (evidence lives in the group).
     llm.script('mock-main', [
@@ -485,4 +462,3 @@ test('usage page: per bot/loop/day tokens, budget edit, exceeded hint', async ()
     await closeSession(session);
   }
 });
-

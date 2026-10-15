@@ -1,4 +1,5 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
+import { groupTitleFromMemberNames, isSparseBotProfile } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
 export interface GroupMemberView {
@@ -75,6 +76,9 @@ const PAGE_SIZE = 60;
 class ChatState {
   conversations = $state<ConversationView[]>([]);
   currentId = $state<string | null>(null);
+  /** 新建群聊：主区域顶部的成员输入，尚未落库。 */
+  composingGroup = $state(false);
+  composeMemberIds = $state<string[]>([]);
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
   /** Group turn state (P05), per conversation. */
@@ -175,11 +179,26 @@ class ChatState {
     });
     core.onEvent('bot.updated', (payload) => {
       const data = payload as { bot: Bot };
-      this.conversations = this.conversations.map((c) =>
-        c.bot?.id === data.bot.id ? { ...c, bot: data.bot } : c,
-      );
-      if (this.#chat?.conversation.bot?.id === data.bot.id) {
-        this.#chat.conversation = { ...this.#chat.conversation, bot: data.bot };
+      const bot = data.bot;
+      this.conversations = this.conversations.map((conversation) => {
+        const withBot = conversation.bot?.id === bot.id ? { ...conversation, bot } : conversation;
+        if (!withBot.memberPreviews?.some((member) => member.id === bot.id)) return withBot;
+        return {
+          ...withBot,
+          memberPreviews: withBot.memberPreviews.map((member) =>
+            member.id === bot.id ? { id: bot.id, name: bot.name, avatar: bot.avatar } : member,
+          ),
+        };
+      });
+      const chatState = this.#chat;
+      if (!chatState) return;
+      if (chatState.conversation.bot?.id === bot.id) {
+        chatState.conversation = { ...chatState.conversation, bot };
+      }
+      if (chatState.members.some((member) => member.bot.id === bot.id)) {
+        chatState.members = chatState.members.map((member) =>
+          member.bot.id === bot.id ? { ...member, bot } : member,
+        );
       }
     });
     core.onEvent('bot.deleted', (payload) => {
@@ -277,6 +296,7 @@ class ChatState {
       conversation: ConversationView | null;
     };
     if (!result.conversation) return;
+    this.cancelGroupCompose();
     this.#upsertConversation(result.conversation);
     const messages = await this.#loadLatest(conversationId);
     // D75: several tasks may be in flight next to the turns — look further back.
@@ -324,6 +344,7 @@ class ChatState {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
     if (result.conversation.type === 'group') await this.reloadMembers();
+    else await this.#startSparseInterview(result.conversation);
     await this.#markRead();
     await permissions.loadForConversation(conversationId);
   }
@@ -336,9 +357,79 @@ class ChatState {
       conversationId: chatState.conversation.id,
     })) as { members: GroupMemberView[] };
     chatState.members = result.members;
+    this.#syncMemberPreviews(chatState.conversation.id, result.members);
+  }
+
+  /** 空画像的新 Bot 第一次打开私聊时，主动发出定位提问。已经问过的不重复发。 */
+  async #startSparseInterview(conversation: ConversationView): Promise<void> {
+    const bot = conversation.bot;
+    if (!bot || bot.setupState !== 'interviewing' || !isSparseBotProfile(bot.profile)) return;
+    try {
+      await core.call('bots.interview.start', { id: bot.id });
+    } catch (error) {
+      console.warn('[kepcup] interview start failed', error);
+    }
+  }
+
+  #syncMemberPreviews(conversationId: string, members: GroupMemberView[]): void {
+    const memberPreviews = members.map((member) => ({
+      id: member.bot.id,
+      name: member.bot.name,
+      avatar: member.bot.avatar,
+    }));
+    this.conversations = this.conversations.map((conversation) =>
+      conversation.id === conversationId ? { ...conversation, memberPreviews } : conversation,
+    );
+    if (this.#chat?.conversation.id === conversationId) {
+      this.#chat.conversation = { ...this.#chat.conversation, memberPreviews };
+    }
   }
 
   // --- group management (P05) --------------------------------------------------
+
+  /**
+   * 新建群聊：主区域顶部展开成员输入，点选已有 Bot，或回车用输入的名字
+   * 新建一个画像为空的 Bot。空回车才真正创建群。
+   */
+  beginGroupCompose(): void {
+    this.composingGroup = true;
+    this.composeMemberIds = [];
+  }
+
+  cancelGroupCompose(): void {
+    this.composingGroup = false;
+    this.composeMemberIds = [];
+  }
+
+  addComposeMember(botId: string): void {
+    if (this.composeMemberIds.includes(botId)) return;
+    this.composeMemberIds = [...this.composeMemberIds, botId];
+  }
+
+  removeComposeMember(botId: string): void {
+    this.composeMemberIds = this.composeMemberIds.filter((id) => id !== botId);
+  }
+
+  /** 空回车：用成员名拼接群名并创建。不足 2 人时不创建。 */
+  async commitGroupCompose(): Promise<boolean> {
+    const ids = [...this.composeMemberIds];
+    if (ids.length < 2) return false;
+    const names = ids.map((id) => contacts.bots.find((bot) => bot.id === id)?.name ?? id);
+    const title = groupTitleFromMemberNames(names);
+    try {
+      const result = (await core.call('groups.create', {
+        title,
+        memberBotIds: ids,
+      })) as { conversation: Conversation };
+      this.cancelGroupCompose();
+      await this.refresh();
+      await this.select(result.conversation.id);
+      return true;
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('group.createFailed')));
+      return false;
+    }
+  }
 
   /**
    * 对话内群创建（19/D60）：不再弹框——直接创建「创建中」的群对话并进入，
@@ -821,6 +912,7 @@ class ChatState {
       this.conversations[index] = {
         ...merged,
         bot: conversation.bot ?? existing.bot,
+        memberPreviews: conversation.memberPreviews ?? existing.memberPreviews,
       };
       this.conversations = [...this.conversations];
     } else {
@@ -830,6 +922,7 @@ class ChatState {
       this.#chat.conversation = {
         ...merged,
         bot: conversation.bot ?? this.#chat.conversation.bot,
+        memberPreviews: conversation.memberPreviews ?? this.#chat.conversation.memberPreviews,
       };
     }
   }
@@ -905,8 +998,7 @@ class ChatState {
     } else {
       chat.activeRuns = chat.activeRuns.filter((a) => a.run.id !== run.id);
     }
-    const failureHidden =
-      run.failureDismissed === true || this.#dismissedFailedRunIds.has(run.id);
+    const failureHidden = run.failureDismissed === true || this.#dismissedFailedRunIds.has(run.id);
     if (run.status === 'failed' && !failureHidden && chat.failedRun?.id !== run.id) {
       logFailedRun(run);
     }
@@ -952,7 +1044,6 @@ function isActive(status: Run['status']): boolean {
     status === 'waiting_lease'
   );
 }
-
 
 function errorCode(error: unknown): string | undefined {
   return (error as { code?: string } | undefined)?.code;

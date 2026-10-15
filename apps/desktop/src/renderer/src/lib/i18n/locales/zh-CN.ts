@@ -646,6 +646,8 @@ export const zhCN = {
   'group.deleteTitle': '删除群聊 {name}',
   'group.deleteBody': '群聊的消息、附件与执行记录将一并删除，此操作不可恢复。',
   'group.memberCount': '{count} 个成员',
+  'group.addMember': '添加成员',
+  'group.searchBots': '搜索 Bot',
   'group.infoTitle': '群信息',
   'group.membersTitle': '成员名片',
   'group.grantsTitle': '各成员的授权',
@@ -660,6 +662,12 @@ export const zhCN = {
   'groupSetup.purposePlaceholder': '描述这个群主要处理什么事务',
   'groupSetup.confirm': '确定',
   'groupSetup.cancel': '放弃创建',
+  'groupCompose.to': 'To:',
+  'groupCompose.placeholder': '输入名称，回车新建 Bot',
+  'groupCompose.emptyList': '没有可添加的 Bot。输入名称后回车，会新建一个 Bot',
+  'groupCompose.needMembers': '至少添加 2 个成员，再直接回车创建群聊',
+  'groupCompose.remove': '移除 {name}',
+  'groupCompose.cancel': '取消新建群聊',
   'turn.triaging': '正在确认由谁回复…',
   'turn.running': '{current} 正在回复，{queue} 排队中',
   'turn.single': '{current} 正在回复',
@@ -1173,8 +1181,7 @@ export const zhCN = {
   'extensionCenter.connections.back': '返回应用列表',
   'extensionCenter.mcp.hint':
     '添加与管理 MCP 工具服务器（命令、网址或 .mcpb 本地包），并可配置手填 OAuth 客户端。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。常用应用请到「连接」分组添加。',
-  'extensionCenter.mcp.targetLocked':
-    '命令、参数与地址当前不可修改。',
+  'extensionCenter.mcp.targetLocked': '命令、参数与地址当前不可修改。',
   'extensionCenter.mcp.empty':
     '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
@@ -1268,7 +1275,8 @@ export const zhCN = {
   'settingCard.appliedToast': '设置已应用',
   'settingCard.actionFailed': '操作失败：{error}',
   'settingCard.userOnlyHint': '这一项涉及安全边界，需要你亲手设置，Bot 不能替你填写。',
-  'settingCard.linkHint': '这一项需要在设置页完成；设置好后卡片会自动更新，也可以点「我已设置好」。',
+  'settingCard.linkHint':
+    '这一项需要在设置页完成；设置好后卡片会自动更新，也可以点「我已设置好」。',
   'settingCard.unknownItem': '这一项设置已不存在（{id}）',
   'settingCard.defaultModelsHint': '只能在已配置 Key 的厂商里选。',
   'settingCard.concurrencyDefault': '默认（每家厂商）',
@@ -1280,7 +1288,8 @@ export const zhCN = {
   'settingCard.group.noBots': '还没有可以加入的 Bot。',
   'settingCard.group.willAdd': '将加入：{names}',
   'settingCard.group.willRemove': '将移出：{names}（由你取消勾选）',
-  'settingCard.skills.publicHint': '「{name}」是公共技能，所有 Bot 共用，启停会影响每个 Bot，请到技能页管理。',
+  'settingCard.skills.publicHint':
+    '「{name}」是公共技能，所有 Bot 共用，启停会影响每个 Bot，请到技能页管理。',
   'settingCard.skills.openSkillsPage': '在技能页管理',
   'settingCard.project.protectAck': '我确认按这些规则限制本项目的读取和写入',
   'settingCard.project.portsAck': '我确认放行这些本机端口（留空表示不限制）',
@@ -1779,7 +1788,8 @@ export const zhCN = {
   'apps.local.card.crossSiteBody':
     '服务域名是 {mcp}，但它使用的登录授权服务器是 {issuer}。如果你并不知道它们有关联，这可能是借用别家的登录来骗取授权。',
   'apps.local.card.crossSiteAck': '我了解授权服务器属于另一个站点，仍要添加',
-  'apps.local.error.developerMode': '添加本机连接失败：当前环境不允许（开发者模式相关限制已移除，若仍看到此提示请重启应用）。',
+  'apps.local.error.developerMode':
+    '添加本机连接失败：当前环境不允许（开发者模式相关限制已移除，若仍看到此提示请重启应用）。',
   'apps.local.error.rejected': '没有通过校验，未添加',
   'apps.local.section.title': '本机自建',
   'apps.local.section.hint':
@@ -2061,7 +2071,8 @@ export const zhCN = {
   'agents.capabilities.mail.name': '邮件',
   'agents.capabilities.mail.description': '用 IMAP/SMTP 代收代发已绑定的邮箱',
   'agents.capabilities.settings.name': '应用设置',
-  'agents.capabilities.settings.description': '查看 KepCup 的设置与就绪情况（settings_search / settings_read）',
+  'agents.capabilities.settings.description':
+    '查看 KepCup 的设置与就绪情况（settings_search / settings_read）',
   'agents.capabilities.settings.change.name': '允许修改设置',
   'agents.capabilities.settings.change.description':
     '开启后可用 settings_change 修改设置或在对话里出设置卡；仍受宿主档位裁定约束，默认关闭',
@@ -2165,9 +2176,11 @@ export const zhCN = {
   'botWidget.check.note': '自检只说明它能运行，不代表安全；加载前仍需你确认',
   'settings.widgetReviewModel': '组件审查模型',
   'settings.widgetReviewModelFollow': '跟随 Bot 主模型',
-  'settings.widgetReviewModelHint': 'Bot 做交互组件时由这个模型独立审查代码，换一个与主模型不同的模型能发现更多问题。Bot 固定了自己的模型时仍用 Bot 的模型。',
+  'settings.widgetReviewModelHint':
+    'Bot 做交互组件时由这个模型独立审查代码，换一个与主模型不同的模型能发现更多问题。Bot 固定了自己的模型时仍用 Bot 的模型。',
   'settings.widgetReviewModelUnavailable': '（不可用，将改用 Bot 主模型）',
-  'botWidget.capabilities': '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
+  'botWidget.capabilities':
+    '沙箱内运行 · 不能联网 · 数据仅保存在本机（每组件独立）· 查库仅限已审查的只读模板',
   'botWidget.openLinkTitle': '这个组件想在浏览器中打开链接',
   'botWidget.openLinkHost': '将打开站点：',
   'botWidget.openLinkConfirm': '在浏览器中打开',
@@ -2178,8 +2191,10 @@ export const zhCN = {
   'botWidget.replyFailed': '发送失败',
   'botWidget.queriesTitle': '数据库查询模板（随版本由你审查）',
   // Bot 详情「组件」Tab（D81 P2 管理入口）
-  'widgetsTab.hint': '这个 Bot 制作的交互组件。跨对话资产不随对话删除，可发到任意对话；删除会清除全部版本与数据，历史卡片将无法打开。',
-  'widgetsTab.empty': '还没有组件。让 Bot 给你做一个交互组件（如「做个记账小工具」），做好后会出现在这里。',
+  'widgetsTab.hint':
+    '这个 Bot 制作的交互组件。跨对话资产不随对话删除，可发到任意对话；删除会清除全部版本与数据，历史卡片将无法打开。',
+  'widgetsTab.empty':
+    '还没有组件。让 Bot 给你做一个交互组件（如「做个记账小工具」），做好后会出现在这里。',
   'widgetsTab.assetBadge': '跨对话资产',
   'widgetsTab.conversationScopedBadge': '仅本对话',
   'widgetsTab.conversationSection': '会话级组件（随所属对话删除）',

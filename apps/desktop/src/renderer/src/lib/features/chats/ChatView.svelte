@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, MessageSquare, Users, X } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, MessageSquare, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -7,10 +7,11 @@
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
   import { Button } from '$lib/components/ui/button';
-  import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
+  import GroupComposeBar from './GroupComposeBar.svelte';
   import SetupRequiredCard from './SetupRequiredCard.svelte';
   import MediaLightbox from './MediaLightbox.svelte';
   import StickiesLayer from './StickiesLayer.svelte';
@@ -72,11 +73,24 @@
   // Bot 详情走全屏覆盖层：窄屏，或宽屏但窗口放不下并排右栏（sidebar-layout.ts）。
   const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
+  const groupFaces = $derived(
+    (current?.members ?? []).map((member) => ({
+      id: member.bot.id,
+      name: member.bot.name,
+      avatar: member.bot.avatar,
+    })),
+  );
 
   let composerDockHeight = $state(0);
 </script>
 
-{#if !current}
+{#if chat.composingGroup}
+  <div class="relative h-full min-h-0 min-w-0 flex-1" data-testid="group-compose-view">
+    <div class="absolute inset-x-0 top-0 z-30 px-4 pt-3 {narrow && isMac ? 'pl-20' : ''}">
+      <GroupComposeBar />
+    </div>
+  </div>
+{:else if !current}
   <div class="app-drag flex h-full flex-1 items-center justify-center p-8" data-testid="chat-empty">
     <div class="text-center text-muted-foreground">
       <MessageSquare class="mx-auto mb-3 size-8 opacity-60" aria-hidden="true" />
@@ -122,11 +136,7 @@
         data-testid="right-panel-toggle"
       >
         {#if isGroup}
-          <Avatar.Root class="size-5">
-            <Avatar.Fallback class="text-[10px]">
-              <Users class="size-3" aria-hidden="true" />
-            </Avatar.Fallback>
-          </Avatar.Root>
+          <GroupAvatarStack members={groupFaces} class="size-8" />
         {:else}
           <BotAvatar
             botId={current.conversation.directBotId ?? ''}
@@ -136,7 +146,7 @@
             fallbackClass="text-[10px]"
           />
         {/if}
-        <span class="max-w-48 truncate pr-1.5">{headerTitle}</span>
+        <span class="truncate pr-1.5 {isGroup ? 'max-w-md' : 'max-w-48'}">{headerTitle}</span>
         {#if panelCollapsed && !panelOverlay}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
                外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的

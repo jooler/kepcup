@@ -3,7 +3,11 @@ import { AppError, TOOL_OUTPUT_MAX_CHARS, type Message } from '@kepcup/shared';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { truncateToBudget } from '../agent/tokens.js';
-import { isTaskInterimProgress, renderMessageLine, type RenderMessageOptions } from '../agent/context/conversation.js';
+import {
+  isTaskInterimProgress,
+  renderMessageLine,
+  type RenderMessageOptions,
+} from '../agent/context/conversation.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 import type { AttachmentsService } from '../domain/attachments.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -125,6 +129,8 @@ export interface ResponseToolDeps {
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
    */
   setup?: SetupToolFacade | undefined;
+  /** 访谈工具面：群聊只注册 save_profile。缺省按单聊。 */
+  setupSurface?: 'direct' | 'group' | undefined;
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）：present 时注册
    * generate_image 工具；未配置能力时工具返回 SETUP_REQUIRED，由
@@ -537,11 +543,7 @@ export function buildResponseTools(input: {
       const run = deps.runs.get(params.run_id);
       // Only this bot's own runs in this conversation (审查 L2): another
       // member's turns / tasks are its private process.
-      if (
-        !run ||
-        run.conversationId !== identity.conversationId ||
-        run.botId !== identity.botId
-      ) {
+      if (!run || run.conversationId !== identity.conversationId || run.botId !== identity.botId) {
         return { ok: false, content: '执行记录不存在', errorCode: 'RUN_NOT_FOUND' };
       }
       const steps = deps.runs.stepsFor(run.id);
@@ -956,6 +958,7 @@ export function buildResponseTools(input: {
           identity,
           setup: deps.setup,
           variant: deps.butler?.isButler === true ? 'butler' : 'bot',
+          surface: deps.setupSurface ?? 'direct',
         })
       : [];
 
@@ -1135,7 +1138,9 @@ export function buildResponseTools(input: {
       : []),
     // Tasks keep list_bots (read-only cards); routing to other bots, the
     // butler's proposals and handovers (D88) are the turn's (design 30 §1.2).
-    ...(deps.butler !== undefined ? [buildListBotsTool({ identity, butler: deps.butler.host })] : []),
+    ...(deps.butler !== undefined
+      ? [buildListBotsTool({ identity, butler: deps.butler.host })]
+      : []),
     ...mcpTools,
     ...appTools,
     ...setupTools,
@@ -1224,7 +1229,11 @@ export function buildSubagentResearchTools(input: {
         })
       : [];
   const mcpTools = input.deps.mcp?.tools ?? [];
-  return dropBuiltinNameConflicts([...coding, ...web, ...mcpTools], new Set(mcpTools), input.deps.logger);
+  return dropBuiltinNameConflicts(
+    [...coding, ...web, ...mcpTools],
+    new Set(mcpTools),
+    input.deps.logger,
+  );
 }
 
 /** W8: the browser tools' profile-key resolver bound to the run's bot. */

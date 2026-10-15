@@ -236,10 +236,7 @@ import {
   itemIdsForSettingsPaths,
   withSettingsChangedEvents,
 } from './settings-bindings.js';
-import {
-  applyBotProfileUpdate,
-  createPermissionEffects,
-} from '../settings/bot-profile-update.js';
+import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
 import type { LoopType } from '@kepcup/shared';
 
 const voidInput = z.void();
@@ -299,7 +296,8 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     revocations: domain.revocations,
     publish,
     listBots: () => domain.bots.listActive(),
-    mcpRiskOf: (serverId, toolName) => services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
+    mcpRiskOf: (serverId, toolName) =>
+      services.mcp?.riskOf(serverId, toolName).risk ?? 'destructive',
     mcpKnownTools: (serverId) => services.mcp?.knownToolNames(serverId) ?? null,
   });
   const publishInterrupted = permissionEffects.publishInterrupted;
@@ -330,6 +328,15 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversation.directBotId !== null
         ? (domain.bots.get(conversation.directBotId) ?? null)
         : null,
+    ...(conversation.type === 'group'
+      ? {
+          memberPreviews: domain.groups.members(conversation.id).map((member) => ({
+            id: member.bot.id,
+            name: member.bot.name,
+            avatar: member.bot.avatar,
+          })),
+        }
+      : {}),
   });
 
   /**
@@ -350,138 +357,145 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     // 设置页按整对象保存（capabilityModels / webSearch / mcpServers 由表单快照整体提交）：渲染层带上
     // 补丁出发时的快照 `base`，锁内与最新设置三方合并（mergePatchOnto）——表单没改的字段保留最新值，
     // 过期表单不再覆盖 Bot 直改、设置卡或别处刚做的修改。不带 `base` 的老调用方仍是整体覆盖。
-    'settings.update': method(settingsUpdateInputSchema, settingsGetOutputSchema, async (rawInput) => {
-      const previous = domain.settings.get();
-      const { base, ...patch } = rawInput;
-      /** 补丁按最新设置三方合并后的样子（`base` 缺省时就是补丁本身）。 */
-      const resolve = (latest: Settings): typeof patch =>
-        mergePatchOnto(patch, base, latest as unknown as Record<string, unknown>);
-      const input = resolve(previous);
-      for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
-        if (
-          agentId !== undefined &&
-          agentId.length > 0 &&
-          !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
-        ) {
-          throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
-        }
-      }
-      if (input.mcpServers !== undefined) {
-        // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
-        // connection id as the synthesized server's id), so a custom server may not take it.
-        const reserved = input.mcpServers.find((server) => isCatalogConnectionId(server.id));
-        if (reserved !== undefined) {
-          throw new AppError('INVALID_INPUT', `MCP 服务器 ID 不能以「conn_」开头（保留给连接应用）：${reserved.id}`);
-        }
-        // D73: an OAuth server switched to none/headers, or pointed at another URL, must
-        // lose its connection first (revoke + clear the vault) — the tokens are bound to
-        // the old URL. Done before the replacement so no run can pair old tokens with the
-        // new URL; an in-flight interactive flow for it is cancelled too.
-        for (const server of previous.mcpServers) {
-          const after = input.mcpServers.find((entry) => entry.id === server.id);
-          if (after !== undefined && oauthBindingChanged(server, after)) {
-            services.apps?.flows.cancelForServer(server.id);
+    'settings.update': method(
+      settingsUpdateInputSchema,
+      settingsGetOutputSchema,
+      async (rawInput) => {
+        const previous = domain.settings.get();
+        const { base, ...patch } = rawInput;
+        /** 补丁按最新设置三方合并后的样子（`base` 缺省时就是补丁本身）。 */
+        const resolve = (latest: Settings): typeof patch =>
+          mergePatchOnto(patch, base, latest as unknown as Record<string, unknown>);
+        const input = resolve(previous);
+        for (const agentId of [input.defaultAgentId, input.backgroundAgentId]) {
+          if (
+            agentId !== undefined &&
+            agentId.length > 0 &&
+            !(services.agents?.catalog() ?? []).some((entry) => entry.id === agentId)
+          ) {
+            throw new AppError('INVALID_INPUT', `智能体「${agentId}」不在目录中`);
           }
         }
-        await services.appRuntime?.disconnector.reconcileServers(
-          previous.mcpServers,
-          input.mcpServers,
-        );
-      }
-      // 合并一律基于锁内读到的**最新**设置（上面有 await：期间 core 自有字段，如
-      // `apps.localConnectors`、agents 的安装状态，可能被别的路径改过，拿旧快照回写会丢改动）。
-      const { current, next } = await settingsLocked(() => {
-        const current = domain.settings.get();
-        const {
-          onboarding: onboardingPatch,
-          experimental: experimentalPatch,
-          apps: appsPatch,
-          agents: agentsPatch,
-          backgroundTasks: backgroundTasksPatch,
-          ...rest
-        } = resolve(current);
-        const latestApps = current.apps;
-        // P13 任务 4: the onboarding patch is partial; store the merged state so
-        // a step writing one flag never erases the others.
-        const next = domain.settings.update({
-          ...rest,
-          ...(onboardingPatch !== undefined
-            ? { onboarding: { ...current.onboarding, ...onboardingPatch } }
-            : {}),
-          // agents: merged per id onto the stored value (never a whole-map
-          // overwrite: a stale renderer snapshot must not undo a finished
-          // install). installedVersion / source are core-owned (agents.*).
-          ...(agentsPatch !== undefined
-            ? {
-                agents: {
-                  ...current.agents,
-                  ...Object.fromEntries(
-                    Object.entries(agentsPatch).map(([id, value]) => [
-                      id,
-                      agentSettingSchema.parse({ ...(current.agents[id] ?? {}), ...value }),
-                    ]),
-                  ),
-                },
-              }
-            : {}),
-          ...(experimentalPatch !== undefined
-            ? {
-                experimental: {
-                  externalAgents:
-                    experimentalPatch.externalAgents ?? current.experimental.externalAgents,
-                },
-              }
-            : {}),
-          // D73 P2: only `developerMode` is renderer-writable; the other apps fields are core-owned.
-          ...(appsPatch !== undefined
-            ? {
-                apps: {
-                  ...latestApps,
-                  developerMode: appsPatch.developerMode ?? latestApps.developerMode,
-                  taintGuard: appsPatch.taintGuard ?? latestApps.taintGuard,
-                  directorySync: appsPatch.directorySync ?? latestApps.directorySync,
-                },
-              }
-            : {}),
-          // P6 后台任务：部分 patch，与已存值合并。
-          ...(backgroundTasksPatch !== undefined
-            ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
-            : {}),
-        });
-        return { current, next };
-      });
-      services.scheduler?.setConcurrency(next.providerConcurrency);
-      if (input.mcpServers !== undefined) {
-        // D73 P1: a server dropped by this replacement (not via `mcp.removeServer`) takes its
-        // tool-lock rows, connection row and tokens with it — no orphans left behind. Only a
-        // server that is really gone from the saved settings is cleaned.
-        for (const server of previous.mcpServers) {
-          if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
-          await services.appRuntime?.disconnector.removeCustomServer(server.id);
-          await services.mcpb?.afterServerRemoved(previous.mcpServers, server.id);
+        if (input.mcpServers !== undefined) {
+          // D73 P1: the `conn_` id prefix is reserved for catalog connections (McpService uses the
+          // connection id as the synthesized server's id), so a custom server may not take it.
+          const reserved = input.mcpServers.find((server) => isCatalogConnectionId(server.id));
+          if (reserved !== undefined) {
+            throw new AppError(
+              'INVALID_INPUT',
+              `MCP 服务器 ID 不能以「conn_」开头（保留给连接应用）：${reserved.id}`,
+            );
+          }
+          // D73: an OAuth server switched to none/headers, or pointed at another URL, must
+          // lose its connection first (revoke + clear the vault) — the tokens are bound to
+          // the old URL. Done before the replacement so no run can pair old tokens with the
+          // new URL; an in-flight interactive flow for it is cancelled too.
+          for (const server of previous.mcpServers) {
+            const after = input.mcpServers.find((entry) => entry.id === server.id);
+            if (after !== undefined && oauthBindingChanged(server, after)) {
+              services.apps?.flows.cancelForServer(server.id);
+            }
+          }
+          await services.appRuntime?.disconnector.reconcileServers(
+            previous.mcpServers,
+            input.mcpServers,
+          );
         }
-      }
-      if (input.mcpServers !== undefined) {
-        // W3（D78）: server switched off / removed, autoApprove on → off, a tool
-        // policy auto → ask or disabled — the bots using it lose their running tasks.
-        permissionEffects.revokeMcpServerChanges(previous.mcpServers, next.mcpServers);
-      }
-      if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
-        // P13 任务 3: the main process applies the OS login item on this event
-        // (platform port B → setLoginItemSettings / XDG autostart).
-        publish('platform.autostart', { enabled: next.launchAtLogin });
-      }
-      publishSettingsChanged(
-        itemIdsForSettingsPaths(
-          changedSettingsPaths(
-            current as unknown as Record<string, unknown>,
-            next as unknown as Record<string, unknown>,
-            Object.keys(patch),
+        // 合并一律基于锁内读到的**最新**设置（上面有 await：期间 core 自有字段，如
+        // `apps.localConnectors`、agents 的安装状态，可能被别的路径改过，拿旧快照回写会丢改动）。
+        const { current, next } = await settingsLocked(() => {
+          const current = domain.settings.get();
+          const {
+            onboarding: onboardingPatch,
+            experimental: experimentalPatch,
+            apps: appsPatch,
+            agents: agentsPatch,
+            backgroundTasks: backgroundTasksPatch,
+            ...rest
+          } = resolve(current);
+          const latestApps = current.apps;
+          // P13 任务 4: the onboarding patch is partial; store the merged state so
+          // a step writing one flag never erases the others.
+          const next = domain.settings.update({
+            ...rest,
+            ...(onboardingPatch !== undefined
+              ? { onboarding: { ...current.onboarding, ...onboardingPatch } }
+              : {}),
+            // agents: merged per id onto the stored value (never a whole-map
+            // overwrite: a stale renderer snapshot must not undo a finished
+            // install). installedVersion / source are core-owned (agents.*).
+            ...(agentsPatch !== undefined
+              ? {
+                  agents: {
+                    ...current.agents,
+                    ...Object.fromEntries(
+                      Object.entries(agentsPatch).map(([id, value]) => [
+                        id,
+                        agentSettingSchema.parse({ ...(current.agents[id] ?? {}), ...value }),
+                      ]),
+                    ),
+                  },
+                }
+              : {}),
+            ...(experimentalPatch !== undefined
+              ? {
+                  experimental: {
+                    externalAgents:
+                      experimentalPatch.externalAgents ?? current.experimental.externalAgents,
+                  },
+                }
+              : {}),
+            // D73 P2: only `developerMode` is renderer-writable; the other apps fields are core-owned.
+            ...(appsPatch !== undefined
+              ? {
+                  apps: {
+                    ...latestApps,
+                    developerMode: appsPatch.developerMode ?? latestApps.developerMode,
+                    taintGuard: appsPatch.taintGuard ?? latestApps.taintGuard,
+                    directorySync: appsPatch.directorySync ?? latestApps.directorySync,
+                  },
+                }
+              : {}),
+            // P6 后台任务：部分 patch，与已存值合并。
+            ...(backgroundTasksPatch !== undefined
+              ? { backgroundTasks: { ...current.backgroundTasks, ...backgroundTasksPatch } }
+              : {}),
+          });
+          return { current, next };
+        });
+        services.scheduler?.setConcurrency(next.providerConcurrency);
+        if (input.mcpServers !== undefined) {
+          // D73 P1: a server dropped by this replacement (not via `mcp.removeServer`) takes its
+          // tool-lock rows, connection row and tokens with it — no orphans left behind. Only a
+          // server that is really gone from the saved settings is cleaned.
+          for (const server of previous.mcpServers) {
+            if (next.mcpServers.some((entry) => entry.id === server.id)) continue;
+            await services.appRuntime?.disconnector.removeCustomServer(server.id);
+            await services.mcpb?.afterServerRemoved(previous.mcpServers, server.id);
+          }
+        }
+        if (input.mcpServers !== undefined) {
+          // W3（D78）: server switched off / removed, autoApprove on → off, a tool
+          // policy auto → ask or disabled — the bots using it lose their running tasks.
+          permissionEffects.revokeMcpServerChanges(previous.mcpServers, next.mcpServers);
+        }
+        if (input.launchAtLogin !== undefined && input.launchAtLogin !== previous.launchAtLogin) {
+          // P13 任务 3: the main process applies the OS login item on this event
+          // (platform port B → setLoginItemSettings / XDG autostart).
+          publish('platform.autostart', { enabled: next.launchAtLogin });
+        }
+        publishSettingsChanged(
+          itemIdsForSettingsPaths(
+            changedSettingsPaths(
+              current as unknown as Record<string, unknown>,
+              next as unknown as Record<string, unknown>,
+              Object.keys(patch),
+            ),
           ),
-        ),
-      );
-      return next;
-    }),
+        );
+        return next;
+      },
+    ),
 
     'providers.list': method(voidInput, providersListOutputSchema, async () => ({
       providers: domain.providers.list(),
@@ -892,9 +906,13 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     })),
     // 缺设置卡片被用户关闭（未完成配置）：一次性通知 Bot 现状，由它给新的
     // 反馈（internal event → 对话轮）；无可通知时 notified=false。
-    'runs.setupDismissed': method(runIdInputSchema, runsSetupDismissedOutputSchema, async (input) => ({
-      notified: orchestrator.notifySetupDismissed(input.runId),
-    })),
+    'runs.setupDismissed': method(
+      runIdInputSchema,
+      runsSetupDismissedOutputSchema,
+      async (input) => ({
+        notified: orchestrator.notifySetupDismissed(input.runId),
+      }),
+    ),
     'runs.dismissFailure': method(
       runIdInputSchema,
       runsDismissFailureOutputSchema,

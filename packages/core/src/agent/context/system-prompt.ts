@@ -368,25 +368,36 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   // 对话式新建（UI 改版）：初始化访谈期间的专属指引——此时 profile 还是
   // 空壳，Bot 以初始化专员身份通过结构化提问（ask_question 卡片）收集信息、
   // 用 setup 工具落 profile 并结束访谈。正常运行的 Bot 不注入此段。
+  // 群聊里不发问卷：空画像的 Bot 按自己的名字和用户点名下达的指令，用
+  // save_profile 慢慢补全；单聊才主动问定位。
   const isButler = bot.systemRole === 'butler';
   const setupSection =
     bot.setupState === 'interviewing' && isButler
       ? BUTLER_INTERVIEW_GUIDANCE
-      : bot.setupState === 'interviewing'
+      : bot.setupState === 'interviewing' && input.conversation.type === 'group'
         ? [
-          '你刚刚被创建，profile 还是空的：这是一个初始化访谈。你的目标是通过 3~5 个问题了解用户希望你成为什么样的助手，并把自己的 Profile 填好。',
-          '第一个问题（用户希望你协助处理哪些事务，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
-          '工作目录不用你过问：界面会在首答之后固定问一次（选择目录或暂不设置），你开始本轮时这件事已是既成事实（看 <project> 段与对话里的系统消息即可），不要重复询问。',
-          '每一轮固定做三件事：',
-          '1. 用一句话简短确认用户的回答（放进 ask_question 的 acknowledgement 参数，不要单独发消息）；',
-          '2. 先用 save_profile 把从这条回答中提炼的字段写入 profile（增量保存，不必等全部信息齐备）；',
-          '3. 再用 ask_question 提出下一个问题：一次只问一个，给 2~4 个贴合用户已透露业务的具体候选答案；自定义回答输入框由界面自动提供，不要在选项里放「其他/自定义」之类的兜底项。',
-          '问题规划（3~5 问内完成，用户已经回答的不重复问）：优先覆盖——希望给你起什么名字、具体职责与典型工作场景、语气与交流风格、职责边界或特别要求；某维度用户已说清楚就直接跳过。',
-          '周期性的事：用户描述的职责里有固定周期或时间点（「每天」「每周」「定期盯着」「月底」）时，用一问确认要不要你到点主动做——问题写成具体的一句（如「要我每个工作日 9:00 主动给你发行业早报吗？」），候选给「就这个时间」「换个时间（如 …）」「先不用」；用户同意就在 finish_setup 之前用 schedule 建好（title 写短名，note 写到点要做什么），总结里提一句。用户没提周期就不要问。',
-          '信息足够（或收到已达问题上限的提示）时：用 save_profile 补齐剩余字段（用户同意的周期事项此时已用 schedule 建好），调用 finish_setup 结束访谈，再用你的最终回复向用户总结你记住了什么、之后可以怎么使唤你。此时不要再提问。',
-          '约束：save_profile 只写你从用户回答中提炼的内容，不要编造用户没说过的东西；用户回答含糊时用更具体的选项降低回答成本，不要一次抛出长问卷。',
-        ].join('\n')
-        : '';
+            '你还在初始化，画像可能不完整。当前是群聊：不要在群里发初始化问卷，也不要追问用户你自己的定位。',
+            '用户在群里让你做事时，正常把那件事做完。',
+            '若简介、擅长或职责仍是空的，根据你的名字，以及用户在本群明确下达给你的指令（点名、@ 你、或显然在吩咐你），用 save_profile 逐步写下能确定的简介、擅长与职责。',
+            '只写指令里能确定的内容，不要编造。一次指令不够就先写确定的部分，之后的指令再补。',
+            '不要在群里结束访谈。等用户与你单独对话时，再把还空着的定位问清楚。',
+          ].join('\n')
+        : bot.setupState === 'interviewing'
+          ? [
+              '你刚刚被创建，profile 还是空的：这是一个初始化访谈。你的目标是通过 3~5 个问题了解用户希望你成为什么样的助手，并把自己的 Profile 填好。',
+              '若简介、职责、擅长或性格仍为空，主动询问你的定位（协助哪些事务、职责边界、语气），不要等用户先来定义你。',
+              '第一个问题（用户希望你协助处理哪些事务，含候选答案）已经由界面发出，用户刚刚作答——从这里继续，不要重复问。',
+              '工作目录不用你过问：界面会在首答之后固定问一次（选择目录或暂不设置），你开始本轮时这件事已是既成事实（看 <project> 段与对话里的系统消息即可），不要重复询问。',
+              '每一轮固定做三件事：',
+              '1. 用一句话简短确认用户的回答（放进 ask_question 的 acknowledgement 参数，不要单独发消息）；',
+              '2. 先用 save_profile 把从这条回答中提炼的字段写入 profile（增量保存，不必等全部信息齐备）；',
+              '3. 再用 ask_question 提出下一个问题：一次只问一个，给 2~4 个贴合用户已透露业务的具体候选答案；自定义回答输入框由界面自动提供，不要在选项里放「其他/自定义」之类的兜底项。',
+              '问题规划（3~5 问内完成，用户已经回答的不重复问）：优先覆盖——希望给你起什么名字、具体职责与典型工作场景、语气与交流风格、职责边界或特别要求；某维度用户已说清楚就直接跳过。',
+              '周期性的事：用户描述的职责里有固定周期或时间点（「每天」「每周」「定期盯着」「月底」）时，用一问确认要不要你到点主动做——问题写成具体的一句（如「要我每个工作日 9:00 主动给你发行业早报吗？」），候选给「就这个时间」「换个时间（如 …）」「先不用」；用户同意就在 finish_setup 之前用 schedule 建好（title 写短名，note 写到点要做什么），总结里提一句。用户没提周期就不要问。',
+              '信息足够（或收到已达问题上限的提示）时：用 save_profile 补齐剩余字段（用户同意的周期事项此时已用 schedule 建好），调用 finish_setup 结束访谈，再用你的最终回复向用户总结你记住了什么、之后可以怎么使唤你。此时不要再提问。',
+              '约束：save_profile 只写你从用户回答中提炼的内容，不要编造用户没说过的东西；用户回答含糊时用更具体的选项降低回答成本，不要一次抛出长问卷。',
+            ].join('\n')
+          : '';
 
   // D73: the app rule only exists when the bot has app sections to act on.
   const baseRules = isTurn ? TURN_PLATFORM_RULES : PLATFORM_RULES;
@@ -574,7 +585,10 @@ const SUPPLEMENT_LABELS: Readonly<Record<string, string>> = {
  * 宿主语义类（宿主优先）：涉及 KepCup 自身语义的事只用注入工具。`tools` 中
  * 任一注入即收录该条（文中只点名实际注入的那些）。
  */
-const HOST_POLICY_LINES: ReadonlyArray<{ tools: readonly string[]; text: (names: string) => string }> = [
+const HOST_POLICY_LINES: ReadonlyArray<{
+  tools: readonly string[];
+  text: (names: string) => string;
+}> = [
   {
     tools: ['send_message'],
     text: (names) =>
@@ -597,7 +611,8 @@ const HOST_POLICY_LINES: ReadonlyArray<{ tools: readonly string[]; text: (names:
   },
   {
     tools: ['list_bots', 'delegate_to_bot', 'cancel_delegation'],
-    text: (names) => `找其他 Bot、把任务交给其他 Bot 用 ${names}，不要用你自带的子代理冒充其他 Bot。`,
+    text: (names) =>
+      `找其他 Bot、把任务交给其他 Bot 用 ${names}，不要用你自带的子代理冒充其他 Bot。`,
   },
   {
     tools: ['request_environment'],
@@ -608,7 +623,10 @@ const HOST_POLICY_LINES: ReadonlyArray<{ tools: readonly string[]; text: (names:
     tools: ['git_remote'],
     text: (names) => `与 git 远端交互（push / pull / fetch）用 ${names}，它会处理授权与凭据。`,
   },
-  { tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'], text: (names) => `查阅与收录知识库用 ${names}。` },
+  {
+    tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'],
+    text: (names) => `查阅与收录知识库用 ${names}。`,
+  },
   { tools: ['install_skill', 'create_skill'], text: (names) => `安装或创建技能用 ${names}。` },
   // 能力包 settings：settings_change 按 Bot 单独开启，两行分别随实际注入的工具出现。
   {
@@ -642,7 +660,9 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
     if (injected.length === 0) continue;
     const label = SUPPLEMENT_LABELS[capability.id] ?? capability.id;
     const native =
-      capability.overlapsNative !== null ? tools.nativeCapabilities[capability.overlapsNative] : undefined;
+      capability.overlapsNative !== null
+        ? tools.nativeCapabilities[capability.overlapsNative]
+        : undefined;
     if (capability.id === 'apps') {
       // D73: no native counterpart — the host tools are the only way to act on the
       // user's connected accounts (and they carry the approval / lock policy).
@@ -683,7 +703,11 @@ export function buildAgentToolPolicy(tools: AgentPromptTools): string {
  * (`remember` → `mcp__kepcup__remember`). Whole names only: `schedule`
  * inside `cancel_schedule` stays untouched.
  */
-export function mapToolNames(text: string, names: readonly string[], toolName: (tool: string) => string): string {
+export function mapToolNames(
+  text: string,
+  names: readonly string[],
+  toolName: (tool: string) => string,
+): string {
   if (names.length === 0) return text;
   const sorted = [...new Set(names)].sort((a, b) => b.length - a.length);
   const pattern = new RegExp(`(?<![\\w])(${sorted.join('|')})(?![\\w])`, 'g');
@@ -719,9 +743,7 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     (rule) =>
       present(rule.tools) &&
       !(rule.unlessTools ?? []).some((name) => tools.toolNames.includes(name)),
-  ).map(
-    (rule, index) => `${index + 1}. ${rule.text}`,
-  );
+  ).map((rule, index) => `${index + 1}. ${rule.text}`);
   const { identity, persona } = identityAndPersona(bot);
   const map = (text: string) => mapToolNames(text, tools.toolNames, tools.toolName);
   return [
@@ -731,7 +753,10 @@ export function buildAgentSessionPrompt(input: AgentSessionPromptInput): string 
     section('file_handling', map(agentFileHandling(tools.toolNames))),
     section('identity', identity),
     section('persona', persona),
-    section('conversation_info', conversationInfoLines(input.conversation, input.members).join('\n')),
+    section(
+      'conversation_info',
+      conversationInfoLines(input.conversation, input.members).join('\n'),
+    ),
   ]
     .filter(Boolean)
     .join('\n\n');

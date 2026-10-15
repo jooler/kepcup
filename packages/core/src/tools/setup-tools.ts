@@ -84,6 +84,11 @@ export function buildSetupTools(input: {
    * propose_team 收尾；管家 Profile 是固定模板，不注册 save_profile。
    */
   variant?: 'bot' | 'butler';
+  /**
+   * 群聊里只留 save_profile：空画像按群里的指令补全，不在群里发问卷、
+   * 也不在群里结束访谈（单聊才问定位）。
+   */
+  surface?: 'direct' | 'group';
 }): ToolDefinition[] {
   const { identity, setup } = input;
   const butler = input.variant === 'butler';
@@ -191,6 +196,7 @@ export function buildSetupTools(input: {
     },
   };
 
+  if (input.surface === 'group' && !butler) return [saveProfile];
   return butler ? [askQuestion, finishSetup] : [saveProfile, askQuestion, finishSetup];
 }
 
