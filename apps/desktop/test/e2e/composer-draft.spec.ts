@@ -72,8 +72,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-/** Creates one bot through the UI and opens its chat. */
-
 /** 点击侧栏里名字对应的会话条目并等输入坞头部切换过去。 */
 async function openConversation(page: Page, name: string): Promise<void> {
   await page
@@ -105,7 +103,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '画图甲');
+      await createBotAndOpenChat(page, '画图甲');
       llm.script('mock-main', [step().replyText('收到图片了')]);
 
       const imagePath = path.join(session.home, 'fixture.png');
@@ -116,7 +114,7 @@ test.describe('输入框草稿按会话缓存', () => {
       await attachImage(page, imagePath);
 
       // 切到第二个 Bot 的会话：输入框为空，输入另一份草稿。
-    await createBotAndOpenChat(page, '记录乙');
+      await createBotAndOpenChat(page, '记录乙');
       await expect(composer).toHaveText('');
       await composer.fill('乙会话的草稿');
       await expect(page.locator('[data-testid="composer-pending-attachments"]')).toHaveCount(0);
@@ -153,7 +151,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, home, llm } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '画图丙');
+      await createBotAndOpenChat(page, '画图丙');
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.fill('重启后应该还在的草稿');
 
@@ -207,8 +205,8 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page, llm } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '提及甲');
-    await createBotAndOpenChat(page, '提及乙');
+      await createBotAndOpenChat(page, '提及甲');
+      await createBotAndOpenChat(page, '提及乙');
 
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.click();
@@ -243,7 +241,7 @@ test.describe('输入框草稿按会话缓存', () => {
     const { page } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '列表甲');
+      await createBotAndOpenChat(page, '列表甲');
 
       const composer = page.locator('[data-testid="composer-input"]');
       await composer.click();
@@ -275,4 +273,3 @@ test.describe('输入框草稿按会话缓存', () => {
     }
   });
 });
-

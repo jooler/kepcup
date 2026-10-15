@@ -4,14 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   isTaskRequest,
   startMockLlm,
   step,
   type MockChatRequest,
   type MockLlmServer,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -325,4 +324,3 @@ test('a task question card: picking an option goes straight into the task', asyn
     await closeSession(session);
   }
 });
-

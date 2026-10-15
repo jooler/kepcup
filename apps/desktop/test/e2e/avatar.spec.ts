@@ -121,4 +121,3 @@ test('avatar: preset picker applies instantly, reset restores default, upload pe
     await rm(home, { recursive: true, force: true });
   }
 });
-

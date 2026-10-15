@@ -12,8 +12,6 @@ import {
   _electron,
 } from '@playwright/test';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   startFakeMcpAppServer,
   startMockLlm,
   step,
@@ -21,6 +19,7 @@ import { createBotAndOpenChat } from './helpers/create-bot';
   type FakeMcpAppServer,
   type MockLlmServer,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat, rpc } from './helpers/create-bot';
 
 /**
  * D73 P3 §7.5 MCP Apps rendering in the real Electron app (security gate): a tool result with
@@ -334,11 +333,11 @@ test('MCP App card: sandboxed iframe, CSP-limited network, bridge, approvals, li
     await page.waitForTimeout(800);
     // The real core still answers on the real port (settings, bots), and the page's own port
     // never received a single call.
-    const settings = (await page.evaluate(() => window.__kepcupRpc('settings.get'))) as {
+    const settings = (await rpc(page, 'settings.get')) as {
       settings?: { mcpServers?: Array<{ id: string }> };
     };
     expect(JSON.stringify(settings)).toContain('app1');
-    const botsAfter = (await page.evaluate(() => window.__kepcupRpc('bots.list'))) as {
+    const botsAfter = (await rpc(page, 'bots.list')) as {
       bots: unknown[];
     };
     expect(botsAfter.bots.length).toBeGreaterThanOrEqual(1);
@@ -553,7 +552,7 @@ test('an app whose server went away shows an expired state and can be reloaded',
     await attachFakeServer(page, session.fake);
     await openCard(session);
     // Remove the server, then reload the card: the resource can no longer be registered.
-    await page.evaluate(() => window.__kepcupRpc('settings.update', { mcpServers: [] }));
+    await rpc(page, 'settings.update', { mcpServers: [] });
     await page.locator('[data-testid="mcp-app-reload"]').click();
     await expect(page.locator('[data-testid="mcp-app-error"]')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-testid="mcp-app-card"]')).toHaveAttribute(
@@ -565,4 +564,3 @@ test('an app whose server went away shows an expired state and can be reloaded',
     await closeSession(session);
   }
 });
-

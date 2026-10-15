@@ -72,8 +72,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-/** Creates one bot through the UI and opens its chat. */
-
 /** 连续若干帧采样药丸的布局标记（data-multiline）。 */
 async function sampleLayout(page: Page, frames: number): Promise<string[]> {
   return page.evaluate(async (count) => {
@@ -94,7 +92,7 @@ test.describe('输入框单行 / 沉底布局', () => {
     const { page } = session;
     try {
       await waitReady(page);
-    await createBotAndOpenChat(page, '排版甲');
+      await createBotAndOpenChat(page, '排版甲');
       const composer = page.locator('[data-testid="composer-input"]');
       const pill = page.locator('[data-testid="composer-pill"]');
       await expect(pill).toHaveAttribute('data-multiline', 'false');
@@ -128,4 +126,3 @@ test.describe('输入框单行 / 沉底布局', () => {
     }
   });
 });
-

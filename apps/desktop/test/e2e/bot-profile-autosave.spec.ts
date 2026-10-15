@@ -113,4 +113,3 @@ test('right panel profile form autosaves on change (no save button)', async () =
     await closeSession(session);
   }
 });
-

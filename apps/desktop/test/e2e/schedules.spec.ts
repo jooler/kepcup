@@ -165,7 +165,9 @@ test('schedules tab and settings overview: list display and two-step cancel', as
     // D80: no title given → the note is the display title; one-shot times in words.
     await expect(item.locator('[data-testid="schedule-title"]')).toHaveText('提醒用户看报表');
     await expect(item.locator('[data-testid="schedule-bot"]')).toHaveText('阿点');
-    await expect(item.locator('[data-testid="schedule-when"]')).toContainText(/今天|明天|\d+月\d+日/);
+    await expect(item.locator('[data-testid="schedule-when"]')).toContainText(
+      /今天|明天|\d+月\d+日/,
+    );
     // D80: the creation left a visible receipt card in the chat.
     await expect(
       page.locator('[data-testid^="schedule-receipt-msg_"]').filter({ hasText: '提醒用户看报表' }),
@@ -331,4 +333,3 @@ test('D80 offer card: the bot offers a time, one click creates it, the card beco
     await closeSession(session);
   }
 });
-

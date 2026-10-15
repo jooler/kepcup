@@ -165,7 +165,7 @@ test('project selection, switching block while running; no changes card after wr
 // D75（DEV-015）：同一 project 的写任务在任务层排队（还没去申请写租约），
 // 状态行与任务卡显示「等写入租约（任务 … 持有）」；「强制收回」对这种排队
 // 不起作用——放行方式是取消（或等完）持有它的那条任务。
-test('a write task queued behind another conversation\'s write task shows the wait and runs once that task is cancelled', async () => {
+test("a write task queued behind another conversation's write task shows the wait and runs once that task is cancelled", async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-lease-');
   const { page, app, llm } = session;
@@ -186,10 +186,7 @@ test('a write task queued behind another conversation\'s write task shows the wa
 
     // D75：甲的写任务启动前取得项目租约并整任务持有（挂在工具调用上保持执行中）。
     const held = step().hold().replyToolCall('bash', { command: 'sleep 30' });
-    llm.script(
-      'mock-main',
-      viaTask({ title: '占用项目', ack: '甲开始工作', taskSteps: [held] }),
-    );
+    llm.script('mock-main', viaTask({ title: '占用项目', ack: '甲开始工作', taskSteps: [held] }));
     await page.locator('[data-testid="composer-input"]').fill('开始工作');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
     await expect(
@@ -231,10 +228,7 @@ test('a write task queued behind another conversation\'s write task shows the wa
     await expect(card.locator('[data-testid="task-queue-reason"]')).toContainText('等写入租约');
 
     // 回到甲的对话，在甲的任务卡上取消 → 乙的任务取得租约并完成写入
-    await page
-      .locator('[data-testid^="conversation-item-"]', { hasText: '甲' })
-      .first()
-      .click();
+    await page.locator('[data-testid^="conversation-item-"]', { hasText: '甲' }).first().click();
     const holder = page.locator('[data-testid^="task-card-"]').filter({ hasText: '占用项目' });
     await expect(holder).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
     await holder.locator('[data-testid="task-cancel"]').click();
@@ -243,10 +237,7 @@ test('a write task queued behind another conversation\'s write task shows the wa
       .poll(() => existsSync(path.join(project, '乙.txt')), { timeout: 60_000 })
       .toBe(true);
     expect(readFileSync(path.join(project, '乙.txt'), 'utf8')).toBe('from-b');
-    await page
-      .locator('[data-testid^="conversation-item-"]', { hasText: '乙' })
-      .first()
-      .click();
+    await page.locator('[data-testid^="conversation-item-"]', { hasText: '乙' }).first().click();
     await expect(card).toHaveAttribute('data-task-state', 'completed', { timeout: 60_000 });
     await expect(
       page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写完了' }),
@@ -256,4 +247,3 @@ test('a write task queued behind another conversation\'s write task shows the wa
     await closeSession(session);
   }
 });
-

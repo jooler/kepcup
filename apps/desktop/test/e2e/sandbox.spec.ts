@@ -125,18 +125,17 @@ test('run status line shows the command description while a command executes', a
     // Cmd/Ctrl+Enter 发送队列中的全部草稿（Enter 只入队）。
     await composer.press('ControlOrMeta+Enter');
 
-    // The bash progress text ("正在执行命令 …") must appear while the run is
-    // active. The command finishes quickly, so poll generously.
+    // The bash progress text ("正在执行命令 …") must appear on the task status
+    // line while the task is active. The command finishes quickly, so poll generously.
     await expect
-      .poll(async () => page.locator('[data-testid="run-status-text"]').textContent(), {
+      .poll(async () => page.locator('[data-testid="task-status-text"]').textContent(), {
         timeout: 60_000,
       })
       .toContain('正在执行命令');
 
-    await expect(page.locator('[data-testid="run-status"]')).toBeHidden({ timeout: 120_000 });
+    await expect(page.locator('[data-testid="task-status"]')).toBeHidden({ timeout: 120_000 });
     await expect(page.locator('[data-testid="chat-view"]').getByText('执行完了')).toBeVisible();
   } finally {
     await closeSession(session);
   }
 });
-

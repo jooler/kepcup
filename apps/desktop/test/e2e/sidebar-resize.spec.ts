@@ -57,8 +57,6 @@ async function waitReady(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="start-chat-backdrop"]')).toHaveCount(0);
 }
 
-/** 通过界面建一个 Bot 并直接进入其对话（对话式新建）。 */
-
 /** 沿右缘手柄横向拖到指定窗口 x 坐标后松手（宽度 = x - 侧栏左缘）。 */
 async function dragHandleTo(page: Page, x: number): Promise<void> {
   const box = (await page.locator('[data-testid="sidebar-resize-handle"]').boundingBox())!;
@@ -138,4 +136,3 @@ test('sidebar drag-resize: icon mode at min width, double-click reset, persisten
     await rm(home, { recursive: true, force: true });
   }
 });
-

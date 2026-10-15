@@ -280,4 +280,3 @@ test('P12: a skill declaring sandbox: enhanced is incompatible while the enhance
     await repo.cleanup();
   }
 });
-

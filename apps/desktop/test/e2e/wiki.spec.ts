@@ -3,14 +3,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   startFileServer,
   startMockLlm,
   step,
   type MockLlmServer,
   type TestFileServer,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
 
 /**
  * P09 e2e (docs/dev/phases/P09-wiki.md 测试要求「端到端」): the right-panel
@@ -300,4 +299,3 @@ test('wiki tab: browse the page tree, read rendered markdown, search, history an
     await closeSession(session);
   }
 });
-

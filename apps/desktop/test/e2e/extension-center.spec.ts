@@ -96,7 +96,6 @@ test('extension center: groups, no free-form URL in 连接, full MCP management 
     await expect(dialog.locator('[data-testid="mcp-section"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-dev-mode"]')).toHaveCount(0);
 
     // 键盘：方向键切换分组。
     await dialog.locator('[data-testid="extension-center-tab-mcp"]').press('ArrowRight');

@@ -305,4 +305,3 @@ test('skipping the wizard keeps per-command confirm mode; preparation stays avai
     await closeSession(session);
   }
 });
-
