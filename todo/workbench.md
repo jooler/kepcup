@@ -519,6 +519,13 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - `memo-store.ts`：含 `purgeTrashed(before)`。
 - 单测覆盖行映射、迁移（旧 schedules 行原样保留、新 CHECK 拒绝未知 origin、`bot_id` 可空）。
 
+**W0 落地时对契约的补充**（2026-10-15；均为向后兼容的补全，名称与形状不变）：
+
+- **ID 前缀**（`ids.ts`）：`todo: 'todo_'`、`tdr: 'tdr_'`、`memo: 'memo_'`（备忘用 `memo_`，与记忆条目 `mem_` 区分；`isId('mem', 'memo_…')` 为假）。`docs/dev/01-conventions.md` 的 ID 表与常量表同步。
+- **回执卡快照**（`systemEventContentSchema.schedule`，`ScheduleReceiptSnapshot`）：`botId` 改为可空、`origin` 增 `'workbench'`、增可选 `todoId`，否则 §4.3 的「工作台安排」回执卡无法落成同一结构。渲染端 `ScheduleReceipt.svelte` 对空 `botId` 不显示 Bot 名。
+- **入参校验**：`title` 为 `min(1).max(TODO_TITLE_MAX_CHARS)`，`notes` 为 `max(TODO_NOTES_MAX_CHARS)`，备忘 `body` 为 `min(1).max(MEMO_BODY_MAX_CHARS)`；`when` 为 `z.string().min(1).nullable()`（`optional` 区分「省略」与 `null`）；`TodoAssignee` 里的 id 为 `min(1)`。
+- **存储层多出的方法**：`SchedulesStore.listActiveForTodo`；`TodoStore.listByAssigneeBot` / `listByAssigneeGroup` / `reassignBot`（D88 移交用）/ `listOpenRunsForConversation` / `lastRun` / `listRuns` / `updateRun`；`TodoStore.list` 的 `closedAfter` 过滤（`TODO_CLOSED_VISIBLE_MS` 的落点，由 TodoService 传入）。`MemoStore.softDelete` / `restore` 不改 `updated_at`，恢复后备忘回到原位。
+
 **`bot_id` 可空的编译期波及**：shared 改为可空后，core 与 renderer 的类型错误由 W0 做最小修补（判空跳过，行为不变），让分支能构建。语义改造（§4.2 列表）归 W1-core。
 
 ### 12.4 实施记录
