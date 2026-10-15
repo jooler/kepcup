@@ -732,7 +732,11 @@ export class MessagesService {
     const filter = userVisibleFilter();
     const row = this.db
       .prepare(
-        `select count(*) as n from messages where conversation_id = ? and seq > ? and ${filter.sql}`,
+        `select count(*) as n from messages where conversation_id = ? and seq > ? and ${filter.sql} and ` +
+          // D90: the receipt card of a workbench schedule is the user's own action (or the butler's,
+          // explained in its chat): visible, but not "unread".
+          `not (kind = 'system_event' and coalesce(json_extract(content_json, '$.event'), '') = 'schedule_created' ` +
+          `and coalesce(json_extract(content_json, '$.schedule.origin'), '') = 'workbench')`,
       )
       .get(conversationId, afterSeq, ...filter.params) as { n: number };
     return row.n;

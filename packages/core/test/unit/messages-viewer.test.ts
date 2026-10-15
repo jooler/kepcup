@@ -211,6 +211,36 @@ describe('摘要、预览、未读', () => {
     });
   });
 
+  it('countVisibleAfter 不计工作台排期的回执卡（用户自己的操作），其他来源的回执照计', () => {
+    withRig((rig) => {
+      const receipt = (origin: 'workbench' | 'tool'): void => {
+        rig.messages.append({
+          conversationId: rig.conversationId,
+          senderType: 'system',
+          kind: 'system_event',
+          event: 'schedule_created',
+          text: '回执',
+          schedule: {
+            id: `sch_${origin}`,
+            botId: origin === 'workbench' ? null : 'bot_x',
+            title: 't',
+            note: '',
+            kind: 'once',
+            runAt: 1,
+            cron: null,
+            timezone: 'UTC',
+            origin,
+            status: 'active',
+          },
+        });
+      };
+      receipt('workbench');
+      expect(rig.messages.countVisibleAfter(rig.conversationId, 0)).toBe(0);
+      receipt('tool');
+      expect(rig.messages.countVisibleAfter(rig.conversationId, 0)).toBe(1);
+    });
+  });
+
   it('countVisibleAfter 只数用户可见行（私有条目与内部事件不计）', () => {
     withRig((rig) => {
       seed(rig);
