@@ -49,7 +49,7 @@
 
 ### 3.1 事项（todo）
 
-一件要做的事。字段：标题（必填）、说明（可空，派发时给执行者看）、执行者（空 / Bot / 群[+可选负责 Bot]）、时间（空 / 立即 / 某时 / 周期）、来源（用户 / 管家）、可选来源备忘。
+一件要做的事。字段：标题（必填）、说明（可空，派发时给执行者看）、执行者（空 / Bot / 群[+可选负责 Bot]）、时间（空 / 立即 / 某时 / 周期）、来源（用户 / 管家：内容由谁起草——管家创建的，或用户建的事项被管家改写过标题 / 说明后，都记为管家）、可选来源备忘。
 
 **不变式**：
 
@@ -111,7 +111,7 @@ CREATE TABLE todos (
   assignee_group_id TEXT,                            -- 群执行者；不设 FK（见 §12.4：FK 置空会把群事项读成 Bot 执行者）
   status            TEXT NOT NULL CHECK (status IN
                       ('draft','scheduled','in_progress','delivered','done','cancelled')),
-  source            TEXT NOT NULL CHECK (source IN ('user','butler')),
+  source            TEXT NOT NULL CHECK (source IN ('user','butler')),   -- 内容出处：管家创建，或管家改写过标题 / 说明（第二轮审查修复）
   memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
   blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
   created_at        INTEGER NOT NULL,
@@ -309,14 +309,14 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 | 工具 | 参数 | 说明 |
 | ---- | ---- | ---- |
 | `list_todos` | `status?`、`assignee?`、`query?`、`limit?` | 只读；结果包 `untrustedBlock`（标题 / 说明可能来自网页摘录） |
-| `create_todo` | `title`、`notes?`、`assignee?`（`{bot}` / `{group, lead_bot?}`）、`when?`（`now` / ISO / cron）、`from_memo?` | 不填执行者和时间即为草案 |
-| `update_todo` | `id` + 任意字段；`assignee: null` / `when: null` 为清空 | 改派、改期、退回草案 |
+| `create_todo` | `title`、`notes?`、`assignee?`（扁平：`{ bot_id? , group_id?, lead_bot_id? }`，只填 `bot_id` 或只填 `group_id`）、`when?`（`now` / ISO / cron；`now` 忽略大小写与首尾空白）、`from_memo?` | 不填执行者和时间即为草案；`when:'now'` 2 分钟内同标题同执行者已派出则不重复派 |
+| `update_todo` | `id` + 任意字段；清空用 `clear_assignee: true` / `clear_when: true`（传 `null` 返回 invalid） | 改派、改期、退回草案 |
 | `close_todo` | `id`、`outcome: 'done' \| 'cancelled'`、`reason?` | 收尾；不提供硬删除 |
 | `list_memos` | `query?`、`limit?`、`include_trashed?` | 只读，`untrustedBlock` |
 | `create_memo` / `update_memo` | `body` / `id, body?, pinned?` | 「帮我记一下…」 |
 | `delete_memo` | `id` | 移入最近删除，可恢复 |
 
-工具注册清单要同步更新：`effects/classify.ts` 全部归为 `local`；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`。
+工具注册清单要同步更新：`effects/classify.ts`：写工具 `local`、`list_*` `none`，`create_todo` / `update_todo` 的 `when` 是 now（trim、忽略大小写）时归为 `external`（记入台账、续接时标为结果未知，不是防重复派发）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`。
 
 ### 6.2 权限边界（宿主强制）
 
@@ -326,18 +326,26 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 | ---- | ---- | ---- | ---- |
 | 读取（`list_*`） | ✅ | ✅ | ✅ |
 | 记备忘、置顶备忘 | ✅ | ✅ | ✅ |
-| 改备忘正文（整段覆盖，不可恢复） | ✅ | ✅ | ❌ |
-| 建草案（无执行者、无时间）、改草案的标题和说明 | ✅ | ✅ | ✅（无副作用，可撤回） |
+| 改备忘正文（整段覆盖，不可恢复） | ✅ | ❌ 先向用户复述 | ❌ |
+| 建草案（无执行者、无时间）、改「无执行者的草案」的标题和说明 | ✅ | ✅ | ✅（无副作用，可撤回） |
+| 改已有执行者或已排期事项的标题和说明（新文字会同步进排期、到点派给执行者，等同派活） | ✅ | ❌ 同上 | ❌ 同上 |
 | 指派、排期、立即开始、改派、改期 | ✅ | ❌ 先向用户复述 | ❌ 提示「需要用户确认，请在回复里向用户提议」 |
 | 收尾（完成 / 取消）、删除备忘 | ✅ | ❌ 同上 | ❌ 同上 |
 
 「读过外部内容」= 本 run 调用过会带进外部内容的工具（设置工具的 `touchedUntrusted` 同口径，含触发消息的附件）或该对话处于 D73 污点期；工作台自己的 `list_todos` / `list_memos` 不算。执行时实时判断。
 
+改备忘正文是整段覆盖、不可恢复，和派活走同一道闸门，置顶任何一轮放行。
+
 理由：「让别的员工动起来」和「删东西」只在用户当面交代、且管家没被外部内容左右时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替你派活。被拒绝时，管家在回复里列出建议（复述标题、说明、执行者、时间），用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。
+
+**已知残余风险及其缓解**：
+
+- 非本人触发的轮里管家可以改**用户建的草案**的标题和说明（上表允许）。缓解：`TodoService.update` 在 `actor='butler'` 且标题或说明实际变化时把事项 `source` 置为 `butler`；之后用户亲自派发，消息也带 `butlerDrafted`，执行者上下文把标题和说明包进 `<untrusted source="butler">`，不会被当成用户原话。
+- 「`list_*` 不算外部内容」带来的链：管家读到含注入的事项 / 备忘文字后，在本人触发的轮里被诱导派活。缓解：派活要用户当面交代；管家起草 / 改写过的内容到执行者那里按不可信包裹；`list_*` 结果自身包 `<untrusted>`。是缓解不是消除，用户在管家复述时仍需过目。
 
 **可见性**：
 
-- 管家的写操作都带 `source='butler'` 标记。工作台卡片显示「管家」徽标，`todos.changed` 让工作台实时刷新。
+- 管家的写操作都带 `source='butler'` 标记（用户建的事项被管家改了标题 / 说明后也置为 `butler`）。工作台卡片显示「管家」徽标，`todos.changed` 让工作台实时刷新。
 - 管家私聊里，工具调用照常显示在活动记录中，管家在回复里说明改了什么。
 - 备忘可从「最近删除」恢复，事项的「已取消」可 `reopen`。管家犯错都能撤回。
 
@@ -487,7 +495,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 **shared 类型**（`packages/shared/src/domain/types.ts`）：
 
 - `todoStatusSchema = z.enum(['draft','scheduled','in_progress','delivered','done','cancelled'])`
-- `todoSourceSchema = z.enum(['user','butler'])`
+- `todoSourceSchema = z.enum(['user','butler'])`（语义：内容出处。管家创建的事项是 `butler`；用户建的事项被管家改了标题 / 说明后也置为 `butler`，派发带 `butlerDrafted`）
 - `todoAssigneeSchema = z.discriminatedUnion('kind', [{ kind:'bot', botId }, { kind:'group', conversationId, leadBotId: string|null }])`
 - `todoSchema`：`{ id, title, notes, assignee: todoAssigneeSchema.nullable(), status, source, memoId: string|null, blockedReason: string|null, createdAt, updatedAt, closedAt: number|null }`
 - `todoRunStatusSchema = z.enum(['dispatched','delivered','unclaimed','failed'])`
@@ -586,8 +594,8 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - 读过外部内容后收紧（协调会话拍板）：用户本人触发的轮里，本 run 读过外部内容（orchestrator 的 `workbenchExternal`：与设置的 `untrusted.touched` 同源，含触发消息附件，但工作台自己的 `list_todos` / `list_memos` 不算）或对话处于 D73 污点期时，派活（`create_todo` 带 assignee / when、`update_todo` 改执行者 / 时间 / `when:'now'`）、`close_todo`、`delete_memo` 返回 `ok:false`（`EXTERNAL_CONTENT`，文案见 §6.2）；起草和记备忘照常。`touchedExternal` 在每次 `execute` 时实时读取。
 - `update_todo(when:'now')` 对周期事项（cron 排期）：工具层改走新增的 facade `startTodo`（= `TodoService.start`），语义是「额外执行一次、保留周期」；要停周期用 `close_todo` 或 `clear_when`。**与界面的语义刻意不同**：界面「把重复改成立即」是结束周期，由 core 的 `update(when:'now')` 实现，未改。
 - 非本人触发的轮里 `update_memo` 只允许改 `pinned`，改 `body` 拒绝（整段覆盖不可恢复）。
-- effects 分类参数敏感：`create_todo` / `update_todo` 带 `when === 'now'` → `external`，其余 `local`（`tool-effects` 约束仍满足：`READ_ONLY_TOOLS` 只含 `none`）。
-- `<workbench>` 段闭合注入：`neutralizeSectionTag` 中和用户文字里的 `<workbench` / `</workbench`（大小写不敏感）；同时 `system-prompt.ts` 的 `section()` 通用地中和正文里本段自己的开 / 闭标签（`<\tag`），对所有段生效，全量测试无影响。
+- effects 分类参数敏感：`create_todo` / `update_todo` 带 `when === 'now'` → `external`，其余 `local`（`tool-effects` 约束仍满足：`READ_ONLY_TOOLS` 只含 `none`）。`external` 的含义是记入台账、续接时标为结果未知，**不是**防重复派发（第二轮审查修复改成 trim + 忽略大小写，并在工具层加了轻量去重）。
+- `<workbench>` 段闭合注入：`neutralizeSectionTag` 中和用户文字里的 `<workbench` / `</workbench`（大小写不敏感）；同时 `system-prompt.ts` 的 `section()` 通用地中和正文里本段自己的开 / 闭标签（`<\tag`），对所有段生效，全量测试无影响。（第二轮审查修复：改为只中和闭合标签，且各段生产者只返回正文。）
 - 写工具结果只回 id 与状态，不回显标题 / 执行者名。
 - `update_todo` / `create_todo` 的 schema 改扁平：`assignee: { bot_id?, group_id?, lead_bot_id? }` + `clear_assignee`，`when` + `clear_when`；形状校验在 `execute`。
 - `BUTLER_RULES` 补「提议派活时复述标题 / 说明 / 执行者 / 时间」；工作台规则拆成独立数组，turn 版始终带，外部引擎的 `buildAgentSessionPrompt` 只在实际注入了 `create_todo` 时才带（task 面没有，所以不会被要求使用不存在的工具）。
@@ -595,3 +603,33 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - 后续（不改，存量问题，不在 D90 范围）：**统一门控**——`delegate_to_bot`、带 @ 的 `send_message`、`start_task` 没有 `triggerFromUser` 门控，非本人触发的管家轮仍能通过这些旧工具把活推给其它 Bot。
 
 - 合入 W1-core 修复轮（`63b0ed9`，无冲突）后接 actor：工具层的 `create_todo` / `update_todo` 以及周期事项分流的 `startTodo` 一律显式传 `actor: 'butler'`（facade 的 `startTodo(id, actor)`），所以管家指派 / 开始用户建的事项，派发也带 `viaButler` 与「（管家代你安排）」；管家起草（`source='butler'`）的事项另带 `butlerDrafted`。测试里依赖 `viaButler` 旧含义的只有「管家建 + 立即开始」那条，含义未变（操作者是管家），并补了 `butlerDrafted` 断言；新增「管家开始用户建的草案 / 周期事项」两条集成测试（带 `viaButler`、不带 `butlerDrafted`）。`list_todos` 对 core 新增的各种 `blocked_reason`（执行失败 / 执行已被取消 / 派发失败 / 对话已删除 / Bot 设置中）原样显示（折叠成一行、在 `<untrusted>` 内）；`<workbench>` 段只计数，这些事项按草案计入。
+
+**W2-butler 第二轮审查修复（2026-10-15，分支 `t/wb-butler`）**
+
+提交（自 `303910f` 起）：
+
+1. `fix(core): 管家改写事项标题或说明后 source 置为 butler…`（第 5 条）
+2. `fix(core): section() 只中和闭合标签，my_state / relevant_memories / recommended_skills 只返回正文；管家规则按工作台工具是否注册取舍`（第 6、11 条）
+3. `fix(core): 管家工具第二轮审查修复——…`（第 1、2、3、4、7、8、9 条）
+4. `docs: …`（第 10 条与全部文档口径：§3.1 / §4.1 / §6.1 / §6.2 / §12.3 / §12.4、design 39、dev 03 / 04）
+
+每条的处理：
+
+1. 【高】改已排期事项的标题 / 说明：`update_todo` 在只改 `title` / `notes` 时，事项不是「无执行者的纯草案」（`status !== 'draft'` 或已有执行者）就走 `actionGate()`；被拒文案同其它派活类操作（非本人轮 `NOT_FROM_USER`，读过外部内容 / 污点期 `EXTERNAL_CONTENT`）。纯草案放行。注意「草案但已有执行者」也算在内（比旧规则收紧：旧规则非本人轮可改它）。
+2. 【中高】`when` 变体：工具层 `normalizeWhen`（trim 后小写等于 `now` → 回写 `'now'`）用于 `create_todo` / `update_todo`，周期分流与透传给 core 的都是归一后的值；`effects/classify.ts` 的 `whenNow` 同口径（字符串、trim、忽略大小写）。测试覆盖 `'NOW'`、`' now '`、`'Now'`。
+3. 【中】周期分支：`when:now` 同时带 `clear_assignee` / `clear_when` / `assignee`（目标是周期事项时）直接 `invalid`，文案「对周期事项『立即执行一次』时不能同时改执行者或清空排期，请分两步」（先于通用的互斥提示；非周期事项不受影响）。只改标题 / 说明 + now：先 update 再 start，start 失败返回「标题 / 说明已更新，但这次立即执行失败：<原因>」；没有改文字时 start 失败仍按普通失败报告。
+4. 【中】`update_memo` 改 `body` 走 `actionGate()`（非本人轮、读过外部内容、污点期都拒绝），`pinned` 任何一轮放行；§6.2 表格已改（todo 与 design 39）。
+5. 【中】`TodoStore.update` 增 `source` 补丁字段；`TodoService.update` 在 `actor === 'butler'` 且标题或说明**实际变化**（清洗后与现值不同）时置 `source='butler'`（只改执行者 / 排期、或提交相同内容不动）。shared `TodoSource` / `todoSchema.source` / `butlerDrafted` 的注释改为「内容出处」，类型不变；§3.1 / §4.1 / §12.3 / §6.2 与 design 39 / dev 03 同步。「list 豁免后再派活」的残余注入链写进 §6.2「已知残余风险及其缓解」。集成测试：管家定时轮改用户草案说明 → 用户 `todos.update(assignee)` + `todos.start` → 派发消息 `butlerDrafted:true` 且无 `viaButler`，执行者上下文是 `<untrusted source="butler">`。
+6. 【中低】`section()` 回归：`formatMyState` 只返回正文；同类问题还有两处一并改了：`MemoryService.relevantMemoriesSection`（原自带 `<relevant_memories>`）、`SkillPresets.promptSection`（原自带 `<recommended_skills>`），三者外层标签都由 `section()` 加；`context-assembly.test.ts` / `my-state.test.ts` 同步。`section()` 只中和闭合标签（`</tag`、`< /tag`、`</ tag`、制表符等空白变体，大小写不敏感），开标签与 `<project>/x` 保持原样。其余生产者（schedules / watches / mail_accounts / project / wiki_topics / skills / connected_apps / available_apps / mcp_tools / user_profile / workbench）核对过，不自带外层标签。整段断言：带承诺 + 记忆的管家提示词不含 `<\`，`<my_state>`、`<relevant_memories>` 各恰好一对。
+7. 【低】`create_todo(now)`：文档改口为「记入台账、续接时标为结果未知」（§12.4 旧记录、design 39 §5.1、dev 04 工具表）；工具层去重——`when:'now'` 且有执行者时，2 分钟内已有 `source='butler'`、标题（trim）与执行者（含群的负责 Bot）都相同、状态 `in_progress` / `delivered` 的事项就直接返回「刚刚已经派发过同一事项（id：…），未重复派发。」。facade 新增 `now()`（宿主时钟）。去重在闸门之后。
+8. 【低】`update_todo` 的 `assignee` / `when` 传 `null` 返回 `invalid('要清空请用 clear_assignee / clear_when')`（`create_todo` 里 null 仍等于没填，已有测试保持）。补了测试断言。
+9. 【低】测试缺口，走真实 orchestrator（mock LLM + 真 core）：触发消息带附件、run 开始即置位，派活被拒、草案放行；非本人轮 `update_memo` 改 body 被拒 / 改 pinned 放行；本人轮读过外部内容后改已排期事项说明、改备忘正文被拒、纯草案放行；`' NOW '` 对周期事项保留周期、与 `clear_assignee` 同给被拒；butlerDrafted 链路（第 5 条）。工具单测另有第 1–4、7、8 条的全部用例。
+10. 【低】`todo/workbench.md` §6.1 表格改为扁平参数（`bot_id` / `group_id` / `lead_bot_id` + `clear_assignee` / `clear_when`），并写明 `when` 是 now 时归为 `external`。
+11. 【低】做了：`SystemPromptInput.hasWorkbenchTools`，orchestrator 在 `deps.workbench` 存在时传 `true`；缺省（精简装配、管家没有工作台工具）时对话轮的管家规则不带工作台那几条（`BUTLER_RULES_NO_WORKBENCH`）。与外部引擎一侧「按工具是否存在」同口径。
+
+偏差 / 说明：
+
+- `prettier --check` 在 HEAD 上就不通过的文件（`todo-store.ts`、`todo-service.ts`、`workbench-service.test.ts`、`memory/service.ts`、`skills/presets.ts`、`my-state.test.ts`、`start.ts`）没有整文件格式化，只做最小改动；HEAD 上格式干净的文件（`workbench-tools.ts`、`workbench-tools.test.ts`、`workbench-section.test.ts`、`workbench-butler.test.ts`、`classify.ts`）已按 prettier 格式化。
+- 纯草案的判据是「`draft` 且无执行者」；「草案但已有执行者」的文字改动在非本人轮也被拒（旧规则允许）。如协调会话认为过严，把 `current.assignee !== null` 去掉即可，第 5 条的 `butlerDrafted` 仍兜底。
+
+验证：见交付说明里的测试数量（定向 + 全量）、`pnpm typecheck`（shared / core / desktop 全过）、`pnpm lint`（干净）。
