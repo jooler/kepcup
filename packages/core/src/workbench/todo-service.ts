@@ -686,7 +686,7 @@ export class TodoService implements WorkbenchDispatchPort {
         blockedReason:
           outcome.kind === 'cancelled'
             ? BLOCKED_RUN_CANCELLED
-            : `${BLOCKED_RUN_FAILED_PREFIX}${clip(outcome.error ?? '未知原因')}`,
+            : `${BLOCKED_RUN_FAILED_PREFIX}${humanizeRunError(outcome.error)}`,
       });
     }
     this.#changed(run.todoId);
@@ -1047,6 +1047,46 @@ function parseWhen(when: string | null | undefined): string | null {
 
 function errorText(error: unknown): string {
   return clip(error instanceof Error ? error.message : String(error));
+}
+
+/**
+ * A run's raw error (`run.error` keeps it untouched) as one readable line for `blocked_reason`:
+ * a JSON body's `message` is lifted out, an HTTP status prefix (`500: {…}`) becomes
+ * 「模型服务出错（500）：…」, newlines collapse, 120 chars at most.
+ */
+export function humanizeRunError(raw: string | null | undefined): string {
+  const text = (raw ?? '').trim();
+  if (text.length === 0) return '未知原因';
+  let status: string | null = null;
+  let body = text;
+  const prefixed = /^(?:HTTP\s*)?([1-5]\d\d)\b\s*(?:status code\b)?[:：\s-]*([\s\S]*)$/i.exec(text);
+  if (prefixed !== null) {
+    status = prefixed[1] ?? null;
+    body = (prefixed[2] ?? '').trim();
+  }
+  const start = body.indexOf('{');
+  if (start >= 0) {
+    try {
+      const parsed: unknown = JSON.parse(body.slice(start));
+      const message = pickMessage(parsed);
+      if (message !== null) body = `${body.slice(0, start)}${message}`.trim();
+    } catch {
+      // not JSON: keep the text as is
+    }
+  }
+  body = body.replace(/\s+/g, ' ').trim();
+  if (body.length === 0) body = status === null ? '未知原因' : '无详细信息';
+  const line = status === null ? body : `模型服务出错（${status}）：${body}`;
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+}
+
+function pickMessage(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record['message'] === 'string' && record['message'].trim().length > 0) {
+    return record['message'];
+  }
+  return pickMessage(record['error']);
 }
 
 function clip(text: string): string {

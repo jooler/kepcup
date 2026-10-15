@@ -29,6 +29,7 @@ import {
   TODO_TRANSITIONS,
   TodoService,
   canTransitionTodo,
+  humanizeRunError,
 } from '../../src/workbench/todo-service.js';
 import { MemoService } from '../../src/workbench/memo-service.js';
 
@@ -842,6 +843,37 @@ describe('工作台事项：交付结算', () => {
     rig.todos.settleDelivered(rig.lastDispatch().todoRunId, 'msg_ok');
     rig.todos.settleFailed(rig.lastDispatch().todoRunId, { kind: 'failed', error: 'x' });
     expect(rig.todos.get(todo.id).todo.status).toBe('delivered');
+  });
+
+  it('humanizeRunError：取出 JSON 里的 message，HTTP 状态码加前缀，去换行并限 120 字', () => {
+    expect(humanizeRunError('500: {"message":"模型服务暂时不可用"}')).toBe(
+      '模型服务出错（500）：模型服务暂时不可用',
+    );
+    expect(humanizeRunError('429 {"error":{"message":"Rate limit reached","type":"x"}}')).toBe(
+      '模型服务出错（429）：Rate limit reached',
+    );
+    expect(humanizeRunError('provider unavailable')).toBe('provider unavailable');
+    expect(humanizeRunError('第一行\n  第二行\r\n第三行')).toBe('第一行 第二行 第三行');
+    expect(humanizeRunError('503')).toBe('模型服务出错（503）：无详细信息');
+    expect(humanizeRunError('{not json')).toBe('{not json');
+    expect(humanizeRunError(null)).toBe('未知原因');
+    expect(humanizeRunError('   ')).toBe('未知原因');
+    const long = humanizeRunError(`500: ${'x'.repeat(300)}`);
+    expect(long.length).toBeLessThanOrEqual(121);
+    expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('settleFailed 写入 blocked_reason 前清洗原始错误', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const todo = rig.todos.create({ title: 't', assignee: botAssignee('bot_a'), when: 'now' }).todo;
+    rig.todos.settleFailed(rig.lastDispatch().todoRunId, {
+      kind: 'failed',
+      error: '500: {"message":"模型服务暂时不可用"}',
+    });
+    expect(rig.todos.get(todo.id).todo.blockedReason).toBe(
+      '执行失败：模型服务出错（500）：模型服务暂时不可用',
+    );
   });
 
   it('只有该事项最新的一次派发能推进事项：迟到的旧执行记录只更新自己', () => {
