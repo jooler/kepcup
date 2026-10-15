@@ -1,7 +1,15 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import type { Message } from '@kepcup/shared';
-  import { AlarmClock, Copy, Pencil, Pin, Reply, type LucideIcon } from '@lucide/svelte';
+  import {
+    AlarmClock,
+    ClipboardList,
+    Copy,
+    Pencil,
+    Pin,
+    Reply,
+    type LucideIcon,
+  } from '@lucide/svelte';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
@@ -13,6 +21,7 @@
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageAttachments from './MessageAttachments.svelte';
+  import { workbench } from '$lib/features/workbench/workbench.svelte';
   import { stickies } from './stickies.svelte';
 
   /**
@@ -60,6 +69,15 @@
   const scheduleTitle = $derived(
     !isUser && 'scheduleId' in message.content && message.content.scheduleId
       ? (message.content.scheduleTitle ?? '')
+      : null,
+  );
+  /** D90：工作台事项派发引出的回复——气泡下方「📋 标题」，点开工作台该事项。 */
+  const todoSource = $derived(
+    !isUser &&
+      'todoId' in message.content &&
+      message.content.todoId &&
+      message.content.todoTitle !== undefined
+      ? { id: message.content.todoId, title: message.content.todoTitle }
       : null,
   );
   // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
@@ -245,6 +263,28 @@
       >
         <AlarmClock class="size-3" aria-hidden="true" />{scheduleTitle}
       </button>
+    {/if}
+
+    {#if todoSource !== null}
+      <!-- 窄屏暂无工作台入口（P1）：标签只读。 -->
+      {#if narrowLayout.narrow}
+        <span
+          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+          data-testid="todo-source"
+        >
+          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+        </span>
+      {:else}
+        <button
+          type="button"
+          class="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          title={t('workbench.todoSource.hint')}
+          onclick={() => workbench.focusTodo(todoSource.id)}
+          data-testid="todo-source"
+        >
+          <ClipboardList class="size-3" aria-hidden="true" />{todoSource.title}
+        </button>
+      {/if}
     {/if}
   </div>
 
