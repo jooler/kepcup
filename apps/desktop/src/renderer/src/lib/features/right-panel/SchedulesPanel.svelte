@@ -3,6 +3,7 @@
   import { errorText, t } from '$lib/i18n';
   import { toast } from 'svelte-sonner';
   import { core } from '$lib/rpc/client.svelte';
+  import { chat } from '$lib/stores/chat.svelte';
   import { Button } from '$lib/components/ui/button';
 
   /**
@@ -88,6 +89,13 @@
     );
   }
 
+  /** 执行者：Bot 名；派给群且没指定负责 Bot 的工作台排期没有 botId，显示群名。 */
+  function ownerText(entry: ScheduleEntry): string {
+    if (entry.botId !== null) return entry.botName ?? entry.botId;
+    const group = chat.conversations.find((conversation) => conversation.id === entry.conversationId);
+    return t('schedules.workbenchGroup', { name: group?.title ?? entry.conversationId });
+  }
+
   function whenText(entry: ScheduleEntry): string {
     return describeScheduleWhen(entry, { localTimeZone, now: Date.now() });
   }
@@ -121,6 +129,14 @@
             <p class="min-w-0 flex-1 font-medium" data-testid="schedule-title">
               {scheduleDisplayTitle(entry)}
             </p>
+            {#if entry.origin === 'workbench'}
+              <span
+                class="shrink-0 rounded-md bg-sky-500/10 px-1.5 py-0.5 text-xs text-sky-700 dark:text-sky-400"
+                data-testid="schedule-workbench"
+              >
+                {t('schedules.workbench')}
+              </span>
+            {/if}
             {#if entry.commitmentId !== null}
               <span
                 class="shrink-0 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400"
@@ -137,7 +153,7 @@
             </p>
           {/if}
           <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-bot">
-            {entry.botName ?? entry.botId}
+            {ownerText(entry)}
           </p>
           <p class="mt-0.5 text-xs text-muted-foreground" data-testid="schedule-when">
             {whenText(entry)}{#if entry.kind === 'cron'} · {t('schedules.nextFire', {

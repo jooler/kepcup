@@ -24,6 +24,10 @@
 
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const when = $derived(describeScheduleWhen(schedule, { localTimeZone, now: Date.now() }));
+  /** 派给群且没指定负责 Bot 的工作台排期没有 botId：回执卡就在那个群里，显示群名。 */
+  const groupName = $derived(
+    schedule.botId === null ? (chat.current?.conversation.title ?? chat.current?.conversation.id ?? '') : null,
+  );
   let confirming = $state(false);
   let cancelling = $state(false);
 
@@ -54,7 +58,7 @@
         {schedule.title}
       </p>
       <p class="text-xs text-muted-foreground" data-testid="schedule-receipt-when">
-        {when}{#if showBot && schedule.botId !== null} · {chat.botName(schedule.botId)}{/if}
+        {when}{#if schedule.botId === null && groupName !== null} · <span data-testid="schedule-receipt-group">{t('schedules.workbenchGroup', { name: groupName })}</span>{:else if showBot && schedule.botId !== null} · {chat.botName(schedule.botId)}{/if}
         {#if schedule.status === 'cancelled' && schedule.handedOverTo !== undefined}
           · <span data-testid="schedule-receipt-handed-over"
             >{t('schedules.receiptHandedOver', { name: schedule.handedOverTo.name })}</span
@@ -62,6 +66,7 @@
         {:else if schedule.status === 'cancelled'} · {t('schedules.receiptCancelled')}{/if}
         {#if schedule.status === 'done'} · {t('schedules.receiptDone')}{/if}
         {#if schedule.origin === 'commitment'} · {t('schedules.commitment')}{/if}
+        {#if schedule.origin === 'workbench'} · <span data-testid="schedule-receipt-workbench">{t('schedules.workbench')}</span>{/if}
       </p>
     </div>
   </div>

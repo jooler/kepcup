@@ -8,6 +8,7 @@
   import DelegationCard from '$lib/features/delegations/DelegationCard.svelte';
   import RouteCard from '$lib/features/delegations/RouteCard.svelte';
   import ScheduleCard from '$lib/features/schedules/ScheduleCard.svelte';
+  import DispatchCard from '$lib/features/workbench/DispatchCard.svelte';
   import HandoverNoteCard from '$lib/features/handover/HandoverNoteCard.svelte';
   import SettingCard from '$lib/features/settings-card/SettingCard.svelte';
   import { settingCardOf } from '$lib/features/settings-card/setting-card-model';
@@ -192,6 +193,14 @@
       (message.content.event === 'bot_handover' || message.content.event === 'bot_handed_over'),
   );
 
+  // D90 工作台派发卡：工作台代用户发出的事项派发消息（origin = 'workbench' 的 user 文本消息）。
+  const isWorkbenchDispatch = $derived(
+    message.senderType === 'user' &&
+      message.kind === 'text' &&
+      'origin' in message.content &&
+      message.content.origin === 'workbench',
+  );
+
   // 对话内设置卡（todo/conversational-app-setup.md §六）：消息流里的卡，同一对话可并存多张。
   const isSettingCard = $derived(isSystem && settingCardOf(message) !== null);
   // 设置卡落定后唤醒 Bot 的一次性内部事件：给 Bot 看的，不在消息流里显示。
@@ -293,6 +302,10 @@
 {:else if isScheduleCard}
   <div class="flex w-full py-1">
     <ScheduleCard {message} />
+  </div>
+{:else if isWorkbenchDispatch}
+  <div class="flex w-full justify-end py-1" data-testid="dispatch-message">
+    <DispatchCard {message} />
   </div>
 {:else if isHandoverNote}
   <div class="flex w-full py-1">
