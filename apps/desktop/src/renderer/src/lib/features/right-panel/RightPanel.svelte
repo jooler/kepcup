@@ -314,7 +314,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="size-9 rounded-full border border-border bg-background text-muted-foreground shadow-none hover:text-foreground"
+        class="size-8 rounded-full border border-border bg-background text-muted-foreground shadow-none hover:text-foreground"
         onclick={() => (narrow ? narrowLayout.closeBotDetail() : shell.toggleRightPanel())}
         data-testid="right-panel-hide"
         aria-label={t('shell.rightPanelHide')}
