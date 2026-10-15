@@ -135,6 +135,9 @@ kepcup/
 | 共享浏览器资料（D77） | `bpf_` | |
 | 网页监看（D79） | `wat_` | |
 | Bot 资产移交（D88） | `hnd_` | |
+| 工作台事项（D90） | `todo_` | |
+| 工作台事项的一次派发（D90） | `tdr_` | |
+| 工作台备忘（D90） | `memo_` | 与记忆条目 `mem_` 无关 |
 
 ## 可调参数
 
@@ -192,6 +195,10 @@ kepcup/
 | `WATCH_FETCH_DEADLINE_MS` | 45000 | 后台页一次取正文的总时限（宿主侧，超时关页并计失败，D79） |
 | `WATCH_DIFF_SUMMARY_MAX_CHARS` | 1500 | 监看提醒里增删改摘要的长度上限（D79） |
 | `WATCH_FETCH_TEXT_MAX_CHARS` / `WATCH_STORED_TEXT_MAX_CHARS` | 200000 / 50000 | 后台页返回的正文上限 / 为下次 diff 保存的上一版文本上限（D79） |
+| `TODO_TITLE_MAX_CHARS` / `TODO_NOTES_MAX_CHARS` | 120 / 4000 | 工作台事项标题 / 说明长度上限（D90） |
+| `MEMO_BODY_MAX_CHARS` | 10000 | 工作台备忘正文长度上限（D90） |
+| `MEMO_TRASH_RETENTION_MS` | 30 天 | 备忘在「最近删除」里保留多久，之后启动时清理（D90） |
+| `TODO_CLOSED_VISIBLE_MS` | 7 天 | `todos.list` 默认隐藏关闭超过该时长的 done / cancelled 事项（D90） |
 | `WATCH_CONDITION_TEXT_MAX_CHARS` / `WATCH_SELECTOR_MAX_CHARS` | 200 / 300 | 监看条件文字 / CSS 选择器长度上限（D79） |
 
 ## 日志

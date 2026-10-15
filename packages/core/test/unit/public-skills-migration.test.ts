@@ -49,9 +49,33 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table app_connection_tools;');
     db.exec('drop table app_connections;');
     db.exec('drop table oauth_clients;');
-    // 0022（D80）的 schedules 新列同样摘除。
-    db.exec('alter table schedules drop column title;');
-    db.exec('alter table schedules drop column origin;');
+    // 0022（D80）的 schedules 新列与 0037（D90 工作台）的重建同样回退：schedules 还原成
+    // 0011 的形态（0037 的 todo_id 外键列不能直接 drop column），再摘掉工作台三表。
+    db.exec(`create table schedules_old (
+      id              TEXT PRIMARY KEY,
+      bot_id          TEXT NOT NULL,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      kind            TEXT NOT NULL CHECK (kind IN ('once', 'cron')),
+      run_at          INTEGER,
+      cron            TEXT,
+      timezone        TEXT NOT NULL,
+      note            TEXT NOT NULL,
+      commitment_id   TEXT,
+      status          TEXT NOT NULL CHECK (status IN ('active', 'done', 'cancelled')),
+      next_fire_at    INTEGER,
+      last_fired_at   INTEGER,
+      created_at      INTEGER NOT NULL
+    );`);
+    db.exec(
+      `insert into schedules_old select id, bot_id, conversation_id, kind, run_at, cron, timezone,
+         note, commitment_id, status, next_fire_at, last_fired_at, created_at from schedules;`,
+    );
+    db.exec('drop table schedules;');
+    db.exec('alter table schedules_old rename to schedules;');
+    db.exec('create index schedules_next on schedules(status, next_fire_at);');
+    db.exec('drop table todo_runs;');
+    db.exec('drop table todos;');
+    db.exec('drop table memos;');
     // main 0023（W7）的 watches 表同样摘除。
     db.exec('drop table watches;');
     // main 0024（辅助阅读便签）的 stickies 表同样摘除。

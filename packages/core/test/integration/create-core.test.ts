@@ -100,6 +100,10 @@ describe('createCore (integration)', () => {
       // Bot 资产移交（main 0036，D88）。
       'bot_handovers',
       'bot_handover_items',
+      // 工作台（main 0037，D90）。
+      'todos',
+      'todo_runs',
+      'memos',
     ]) {
       expect(tables.map((t) => t.name)).toContain(table);
     }
@@ -110,8 +114,10 @@ describe('createCore (integration)', () => {
     // 0032 = D81 审查修复（widget_versions.size_bytes / queries_reviewed_at）；
     // 0033 = 回收未绑定附件；0034 = 邮件 UIDVALIDITY；0035 = D87 组件自检状态
     // （widget_versions.check_status / check_summary_json）；0036 = D88 Bot 资产移交
-    // （bot_handovers / bot_handover_items，approvals.kind 增加 bot_handover）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(36);
+    // （bot_handovers / bot_handover_items，approvals.kind 增加 bot_handover）；
+    // 0037 = D90 工作台（todos / todo_runs / memos，schedules 重建：bot_id 可空、
+    // origin 加 workbench、todo_id）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(37);
     const versionColumns = (
       services.mainDb!.prepare('pragma table_info(widget_versions)').all() as Array<{
         name: string;

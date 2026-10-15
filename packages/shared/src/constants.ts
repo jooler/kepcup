@@ -698,3 +698,15 @@ export const ASK_USER_OPTION_MAX_CHARS = 200;
  * lists what the task's file tools wrote instead of offering a revert).
  */
 export const TASK_CHANGED_FILES_SHOWN = 20;
+
+// --- Workbench (D90, docs/design/39-workbench.md) ---------------------------------
+/** Max characters of a todo title. */
+export const TODO_TITLE_MAX_CHARS = 120;
+/** Max characters of a todo's notes (handed to the executor on dispatch). */
+export const TODO_NOTES_MAX_CHARS = 4000;
+/** Max characters of a memo body (plain text). */
+export const MEMO_BODY_MAX_CHARS = 10_000;
+/** A memo in 最近删除 is purged for good after this long (checked at startup). */
+export const MEMO_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** todos.list hides done / cancelled todos closed longer ago than this (unless includeClosed). */
+export const TODO_CLOSED_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;

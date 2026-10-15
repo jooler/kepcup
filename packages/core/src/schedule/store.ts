@@ -5,7 +5,7 @@ import type { Clock } from '../infra/clock.js';
 
 interface ScheduleRow {
   id: string;
-  bot_id: string;
+  bot_id: string | null;
   conversation_id: string;
   kind: 'once' | 'cron';
   run_at: number | null;
@@ -15,6 +15,7 @@ interface ScheduleRow {
   title: string;
   origin: ScheduleOrigin;
   commitment_id: string | null;
+  todo_id: string | null;
   status: 'active' | 'done' | 'cancelled';
   next_fire_at: number | null;
   last_fired_at: number | null;
@@ -34,6 +35,7 @@ function rowToSchedule(row: ScheduleRow): Schedule {
     title: row.title,
     origin: row.origin,
     commitmentId: row.commitment_id,
+    todoId: row.todo_id,
     status: row.status,
     nextFireAt: row.next_fire_at,
     lastFiredAt: row.last_fired_at,
@@ -42,7 +44,8 @@ function rowToSchedule(row: ScheduleRow): Schedule {
 }
 
 export interface InsertScheduleInput {
-  botId: string;
+  /** Null only for a workbench todo assigned to a group without a lead bot (D90). */
+  botId: string | null;
   conversationId: string;
   kind: 'once' | 'cron';
   runAt?: number | null;
@@ -52,6 +55,8 @@ export interface InsertScheduleInput {
   title?: string | undefined;
   origin?: ScheduleOrigin | undefined;
   commitmentId?: string | null;
+  /** Workbench todo this schedule fires for (origin = 'workbench', D90). */
+  todoId?: string | null;
   nextFireAt: number | null;
 }
 
@@ -78,8 +83,8 @@ export class SchedulesStore {
       .prepare(
         `insert into schedules
            (id, bot_id, conversation_id, kind, run_at, cron, timezone, note,
-            title, origin, commitment_id, status, next_fire_at, last_fired_at, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?)`,
+            title, origin, commitment_id, todo_id, status, next_fire_at, last_fired_at, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, null, ?)`,
       )
       .run(
         id,
@@ -93,6 +98,7 @@ export class SchedulesStore {
         input.title ?? '',
         input.origin ?? (input.commitmentId ? 'commitment' : 'tool'),
         input.commitmentId ?? null,
+        input.todoId ?? null,
         input.nextFireAt,
         this.clock.now(),
       );
@@ -171,6 +177,14 @@ export class SchedulesStore {
     return this.#list(
       "where bot_id = ? and status = 'active' order by next_fire_at is null, next_fire_at, created_at",
       botId,
+    );
+  }
+
+  /** Active schedules of one workbench todo (D90: at most one by invariant). */
+  listActiveForTodo(todoId: string): Schedule[] {
+    return this.#list(
+      "where todo_id = ? and status = 'active' order by next_fire_at is null, next_fire_at, created_at",
+      todoId,
     );
   }
 

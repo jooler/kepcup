@@ -114,9 +114,14 @@ import {
   providerConcurrencySchema,
   runSchema,
   runStepSchema,
+  memoSchema,
   scheduleEntrySchema,
   scheduleSchema,
   settingsSchema,
+  todoAssigneeSchema,
+  todoEntrySchema,
+  todoRunSchema,
+  todoStatusSchema,
   browserProfileSchema,
   skillCandidateSchema,
   mcpServerSchema,
@@ -138,7 +143,13 @@ import {
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
-import { BROWSER_PROFILE_NAME_MAX_CHARS, WATCH_SELECTOR_MAX_CHARS } from '../constants.js';
+import {
+  BROWSER_PROFILE_NAME_MAX_CHARS,
+  MEMO_BODY_MAX_CHARS,
+  TODO_NOTES_MAX_CHARS,
+  TODO_TITLE_MAX_CHARS,
+  WATCH_SELECTOR_MAX_CHARS,
+} from '../constants.js';
 import { watchEntrySchema } from '../domain/watches.js';
 import {
   STICKIE_TEXT_MAX_CHARS,
@@ -1442,6 +1453,69 @@ export const schedulesOfferInputSchema = z.object({ messageId: z.string().min(1)
 export const schedulesAcceptOfferOutputSchema = z.object({ schedule: scheduleSchema });
 export const schedulesDeclineOfferOutputSchema = z.object({ ok: z.literal(true) });
 
+// --- workbench (D90, docs/design/39-workbench.md §4.6) -------------------------------
+
+/**
+ * `when` of todos.create / todos.update: `'now'` = dispatch immediately; an ISO 8601
+ * instant = one-off; anything else is parsed as cron (same semantics as `createFromWhen`).
+ * `null` = clear the schedule; omitted = unchanged (on create: not scheduled).
+ */
+const todoWhenSchema = z.string().min(1).nullable();
+const todoTitleSchema = z.string().min(1).max(TODO_TITLE_MAX_CHARS);
+const todoNotesSchema = z.string().max(TODO_NOTES_MAX_CHARS);
+
+export const todosListInputSchema = z.object({
+  statuses: z.array(todoStatusSchema).optional(),
+  query: z.string().optional(),
+  /** Include done / cancelled todos closed longer ago than TODO_CLOSED_VISIBLE_MS. */
+  includeClosed: z.boolean().optional(),
+});
+export const todosListOutputSchema = z.object({ todos: z.array(todoEntrySchema) });
+export const todosIdInputSchema = z.object({ id: z.string().min(1) });
+export const todosGetOutputSchema = z.object({
+  todo: todoEntrySchema,
+  runs: z.array(todoRunSchema),
+});
+export const todosCreateInputSchema = z.object({
+  title: todoTitleSchema,
+  notes: todoNotesSchema.optional(),
+  assignee: todoAssigneeSchema.nullable().optional(),
+  when: todoWhenSchema.optional(),
+  /** The memo this todo is converted from. */
+  memoId: z.string().min(1).optional(),
+});
+export const todosUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  title: todoTitleSchema.optional(),
+  notes: todoNotesSchema.optional(),
+  /** null = clear the assignee (also clears the schedule; back to draft). */
+  assignee: todoAssigneeSchema.nullable().optional(),
+  when: todoWhenSchema.optional(),
+});
+/** `warnings`: pre-dispatch hints rendered in place ("该 Bot 未配置模型" / "群已只读"). */
+export const todosWriteOutputSchema = z.object({
+  todo: todoEntrySchema,
+  warnings: z.array(z.string()),
+});
+export const todosTransitionOutputSchema = z.object({ todo: todoEntrySchema });
+
+export const memosListInputSchema = z.object({
+  query: z.string().optional(),
+  /** true = 最近删除 (soft-deleted memos); default = live memos. */
+  trashed: z.boolean().optional(),
+});
+export const memosListOutputSchema = z.object({ memos: z.array(memoSchema) });
+export const memosIdInputSchema = z.object({ id: z.string().min(1) });
+export const memosCreateInputSchema = z.object({
+  body: z.string().min(1).max(MEMO_BODY_MAX_CHARS),
+});
+export const memosUpdateInputSchema = z.object({
+  id: z.string().min(1),
+  body: z.string().min(1).max(MEMO_BODY_MAX_CHARS).optional(),
+  pinned: z.boolean().optional(),
+});
+export const memosMemoOutputSchema = z.object({ memo: memoSchema });
+
 // --- watches (W7) -------------------------------------------------------------------
 export const watchesListInputSchema = z.object({
   conversationId: z.string().min(1).optional(),
@@ -2065,6 +2139,21 @@ export const rpcMethodSchemas = {
     output: schedulesDeclineOfferOutputSchema,
   },
 
+  // D90 工作台：事项（派给 Bot / 群，到点由宿主代发）与备忘。
+  'todos.list': { input: todosListInputSchema, output: todosListOutputSchema },
+  'todos.get': { input: todosIdInputSchema, output: todosGetOutputSchema },
+  'todos.create': { input: todosCreateInputSchema, output: todosWriteOutputSchema },
+  'todos.update': { input: todosUpdateInputSchema, output: todosWriteOutputSchema },
+  'todos.start': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
+  'todos.complete': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
+  'todos.cancel': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
+  'todos.reopen': { input: todosIdInputSchema, output: todosTransitionOutputSchema },
+  'memos.list': { input: memosListInputSchema, output: memosListOutputSchema },
+  'memos.create': { input: memosCreateInputSchema, output: memosMemoOutputSchema },
+  'memos.update': { input: memosUpdateInputSchema, output: memosMemoOutputSchema },
+  'memos.delete': { input: memosIdInputSchema, output: memosMemoOutputSchema },
+  'memos.restore': { input: memosIdInputSchema, output: memosMemoOutputSchema },
+
   // W7 确定性监看：右侧面板列表与对话内监看卡。
   'watches.list': { input: watchesListInputSchema, output: watchesListOutputSchema },
   'watches.get': { input: watchIdInputSchema, output: watchGetOutputSchema },
@@ -2402,6 +2491,19 @@ const APP_METHODS = [
   'wiki.deletePage',
   'schedules.list',
   'schedules.cancel',
+  'todos.list',
+  'todos.get',
+  'todos.create',
+  'todos.update',
+  'todos.start',
+  'todos.complete',
+  'todos.cancel',
+  'todos.reopen',
+  'memos.list',
+  'memos.create',
+  'memos.update',
+  'memos.delete',
+  'memos.restore',
   'watches.list',
   'watches.get',
   'watches.pause',

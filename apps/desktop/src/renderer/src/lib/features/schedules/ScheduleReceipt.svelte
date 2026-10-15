@@ -54,7 +54,7 @@
         {schedule.title}
       </p>
       <p class="text-xs text-muted-foreground" data-testid="schedule-receipt-when">
-        {when}{#if showBot} · {chat.botName(schedule.botId)}{/if}
+        {when}{#if showBot && schedule.botId !== null} · {chat.botName(schedule.botId)}{/if}
         {#if schedule.status === 'cancelled' && schedule.handedOverTo !== undefined}
           · <span data-testid="schedule-receipt-handed-over"
             >{t('schedules.receiptHandedOver', { name: schedule.handedOverTo.name })}</span

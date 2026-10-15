@@ -821,7 +821,13 @@ export const textContentSchema = z.object({
    * `task`（D75 §2.4.2）：任务发出的可见中间说明（进度），渲染为「你（任务
    * t_x）」；`taskId` 指向任务 run。
    */
-  origin: z.enum(['delegation', 'task', 'widget']).optional(),
+  origin: z.enum(['delegation', 'task', 'widget', 'workbench']).optional(),
+  /**
+   * origin = 'workbench'（D90）时：工作台代用户派发事项的可见消息，对应的事项与
+   * 执行记录。界面渲染成派发卡；记忆反思不把 source='butler' 的派发当用户原话。
+   */
+  todoId: z.string().optional(),
+  todoRunId: z.string().optional(),
   /** origin = 'widget'（D87 P4 L3）时发出它的组件与版本：用户经组件回传、确认后发出的消息。 */
   widgetId: z.string().optional(),
   widgetVersion: z.number().int().optional(),
@@ -904,14 +910,17 @@ export const systemEventContentSchema = z.object({
   schedule: z
     .object({
       id: z.string(),
-      botId: z.string(),
+      /** Null for a workbench todo assigned to a group without a lead bot (D90). */
+      botId: z.string().nullable(),
       title: z.string(),
       note: z.string(),
       kind: z.enum(['once', 'cron']),
       runAt: z.number().nullable(),
       cron: z.string().nullable(),
       timezone: z.string(),
-      origin: z.enum(['tool', 'offer', 'proposal', 'commitment']),
+      origin: z.enum(['tool', 'offer', 'proposal', 'commitment', 'workbench']),
+      /** origin = 'workbench' (D90): the todo the receipt card belongs to. */
+      todoId: z.string().optional(),
       status: z.enum(['active', 'done', 'cancelled']),
       /**
        * D88：这条定时任务已移交给另一个 Bot（在对方那边重建，这里随之取消）。卡片显示
@@ -2501,13 +2510,24 @@ export type ScheduleStatus = z.infer<typeof scheduleStatusSchema>;
  * `proposal` = a routine of a butler team / bot proposal; `commitment` = the
  * commitment linkage (P10 任务 6).
  */
-export const scheduleOriginSchema = z.enum(['tool', 'offer', 'proposal', 'commitment']);
+export const scheduleOriginSchema = z.enum([
+  'tool',
+  'offer',
+  'proposal',
+  'commitment',
+  /** D90 工作台事项的排期：到点由 TodoService 派发，不走主动消息护栏。 */
+  'workbench',
+]);
 export type ScheduleOrigin = z.infer<typeof scheduleOriginSchema>;
 
 /** One row of the schedules table (docs/dev/03-data-model.md "schedules"). */
 export const scheduleSchema = z.object({
   id: z.string(),
-  botId: z.string(),
+  /**
+   * Null only for a workbench todo assigned to a group without a lead bot
+   * (D90); every other origin keeps it set (service-level check).
+   */
+  botId: z.string().nullable(),
   conversationId: z.string(),
   kind: scheduleKindSchema,
   /** once: the fire time (UTC ms). */
@@ -2522,6 +2542,8 @@ export const scheduleSchema = z.object({
   origin: scheduleOriginSchema,
   /** Commitment (memory.db) this task was created for, if any. */
   commitmentId: z.string().nullable(),
+  /** Workbench todo (D90) this schedule belongs to; null for every other origin. */
+  todoId: z.string().nullable(),
   status: scheduleStatusSchema,
   /** The pending occurrence; null once done/cancelled (or while unschedulable). */
   nextFireAt: z.number().nullable(),
@@ -2540,6 +2562,110 @@ export const scheduleEntrySchema = scheduleSchema.extend({
   deferredReason: z.string().nullable(),
 });
 export type ScheduleEntry = z.infer<typeof scheduleEntrySchema>;
+
+// --- workbench (D90, docs/design/39-workbench.md) --------------------------------
+
+/** draft → scheduled → in_progress → delivered → done; any open state → cancelled. */
+export const todoStatusSchema = z.enum([
+  'draft',
+  'scheduled',
+  'in_progress',
+  'delivered',
+  'done',
+  'cancelled',
+]);
+export type TodoStatus = z.infer<typeof todoStatusSchema>;
+
+/** Who created a todo / memo: the user, or the butler through its tools. */
+export const todoSourceSchema = z.enum(['user', 'butler']);
+export type TodoSource = z.infer<typeof todoSourceSchema>;
+
+/**
+ * Executor of a todo. `bot` = that bot's direct chat; `group` = that group
+ * (`leadBotId` = optional lead bot, which the dispatch message @-mentions).
+ * No assignee at all = unassigned draft (the todo's `assignee` is null).
+ */
+export const todoAssigneeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('bot'), botId: z.string().min(1) }),
+  z.object({
+    kind: z.literal('group'),
+    conversationId: z.string().min(1),
+    leadBotId: z.string().min(1).nullable(),
+  }),
+]);
+export type TodoAssignee = z.infer<typeof todoAssigneeSchema>;
+
+/** One row of the todos table (docs/dev/03-data-model.md "todos"). */
+export const todoSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  notes: z.string(),
+  assignee: todoAssigneeSchema.nullable(),
+  status: todoStatusSchema,
+  source: todoSourceSchema,
+  /** Memo this todo was converted from (no FK: memo purge does not touch it). */
+  memoId: z.string().nullable(),
+  /** Why the todo fell back to draft ("群里无人认领" / "负责 Bot 已删除"…); display only. */
+  blockedReason: z.string().nullable(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  /** done / cancelled time. */
+  closedAt: z.number().nullable(),
+});
+export type Todo = z.infer<typeof todoSchema>;
+
+export const todoRunStatusSchema = z.enum(['dispatched', 'delivered', 'unclaimed', 'failed']);
+export type TodoRunStatus = z.infer<typeof todoRunStatusSchema>;
+
+/** One dispatch of a todo (one row per fire; a one-off todo normally has one). */
+export const todoRunSchema = z.object({
+  id: z.string(),
+  todoId: z.string(),
+  /** The conversation the todo was dispatched into (no FK: readable after it is deleted). */
+  conversationId: z.string(),
+  /** The visible dispatch message. */
+  messageId: z.string().nullable(),
+  status: todoRunStatusSchema,
+  /** The executor's reply that settled the run as delivered. */
+  resultMessageId: z.string().nullable(),
+  dispatchedAt: z.number(),
+  settledAt: z.number().nullable(),
+});
+export type TodoRun = z.infer<typeof todoRunSchema>;
+
+/** todos.list / get row: the todo plus what the workbench renders alongside. */
+export const todoEntrySchema = todoSchema.extend({
+  /** Bot name (bot assignee) or group title (group assignee); null when unassigned / gone. */
+  assigneeName: z.string().nullable(),
+  /** Name of the lead bot of a group assignee. */
+  leadBotName: z.string().nullable(),
+  /** The active schedule of the todo (time lives only there); null = not scheduled. */
+  schedule: z
+    .object({
+      id: z.string(),
+      kind: scheduleKindSchema,
+      runAt: z.number().nullable(),
+      cron: z.string().nullable(),
+      timezone: z.string(),
+      nextFireAt: z.number().nullable(),
+    })
+    .nullable(),
+  lastRun: todoRunSchema.nullable(),
+});
+export type TodoEntry = z.infer<typeof todoEntrySchema>;
+
+/** A flash note (main.db memos). Not bound to any conversation or bot context. */
+export const memoSchema = z.object({
+  id: z.string(),
+  body: z.string(),
+  pinned: z.boolean(),
+  source: todoSourceSchema,
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  /** Non-null = in 最近删除 (purged after MEMO_TRASH_RETENTION_MS). */
+  deletedAt: z.number().nullable(),
+});
+export type Memo = z.infer<typeof memoSchema>;
 
 /** Per bot / loop type / local day usage aggregate (usage.summary RPC). */
 export const usageSummaryEntrySchema = z.object({
