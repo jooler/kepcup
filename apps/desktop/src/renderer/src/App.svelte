@@ -28,6 +28,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import ChatsArea from '$lib/features/chats/ChatsArea.svelte';
+  import WorkbenchView from '$lib/features/workbench/WorkbenchView.svelte';
   import { composerDrafts } from '$lib/features/chats/composer-drafts.svelte';
   import { stickies } from '$lib/features/chats/stickies.svelte';
   import SettingsDialog from '$lib/features/settings/SettingsDialog.svelte';
@@ -231,7 +232,13 @@
             <PlaceholderPage title={t('shell.coreStarting')} message="" testid="core-starting" />
           {:else}
             <NoModelBanner />
-            <ChatsArea />
+            <!-- 宽屏主区二选一（D90）：工作台开着时对话区卸载；草稿在 composerDrafts 里，
+                 回到对话（chat.select）后重新水合。 -->
+            {#if shell.mainView === 'workbench'}
+              <WorkbenchView />
+            {:else}
+              <ChatsArea />
+            {/if}
           {/if}
         </main>
       </Sidebar.Provider>
