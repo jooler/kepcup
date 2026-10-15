@@ -79,8 +79,10 @@ if [ "${SIZE}" -lt "${MIN_ROOTFS_BYTES}" ]; then
   echo "build-rootfs: rootfs.tar 只有 ${SIZE} 字节（下限 ${MIN_ROOTFS_BYTES}）——容器内安装未完成" >&2
   exit 1
 fi
+# 不用「tar | grep -q」：grep -q 命中后提前关管道，pipefail 下 tar 收到 SIGPIPE
+# 会让整段判失败，误报「缺少成员」（CI 上已复现）。改成按路径直接列成员。
 for member in opt/kepcup/bin/kepcup-sandbox opt/kepcup/bin/kepcup-mount opt/kepcup/bin/node opt/kepcup/bin/uv opt/kepcup/node/bin/node; do
-  if ! tar -tf "${TAR_PATH}" | grep -q "^\./${member}\$"; then
+  if ! tar -tf "${TAR_PATH}" "./${member}" >/dev/null 2>&1; then
     echo "build-rootfs: rootfs.tar 缺少 ${member}——容器内安装未完成" >&2
     exit 1
   fi
