@@ -162,6 +162,8 @@ better-sqlite3-multiple-ciphers、`@napi-rs/keyring`、es-git 等原生模块需
 
 **组件预览宿主真机 harness（D87 P3b）**：`node apps/desktop/scripts/run-widget-preview-harness.mjs`（在 `kepcup-test:trixie-xvfb` 里用 `xvfb-run -a` 跑，输出重定向到文件；容器里给 Electron 加 `--no-sandbox` 由脚本处理）——esbuild 把 `apps/desktop/test/electron/widget-preview.harness.ts` 打成 CJS 主进程脚本，在真实 Electron 里跑 `WidgetPreviewHost` 的 18 个用例，每例一行 JSON、末行汇总，失败退出码非零；`KEPCUP_HARNESS_ONLY=<子串>` 只跑匹配的用例。它不在 vitest 里（需要显示服务与真实 Chromium），改了预览宿主、探针、垫片或模板要手动复跑一次。
 
+**用例分布（D90 工作台）**：`packages/shared/test/unit/workbench`（schema / RPC / 事件 / ID / 常量）；`packages/core/test/unit/`——`workbench-migration`、`workbench-stores`、`workbench-service`（状态机矩阵、`when` 口径、排期 / 改期 / 改派、派发、交付结算、对账、移交、actor 与 `butlerDrafted`、更新通知去抖与重试）、`workbench-context`、`workbench-tools`（权限矩阵：本人 / 非本人 / 读过外部内容，扁平参数，effects 分类，去重）、`workbench-section`（`<workbench>` 段与 `section()` 闭合标签中和）、`workbench-update-render`；`packages/core/test/integration/`——`workbench`（私聊 / 群派发、护栏豁免、交付追踪、对账、移交、RPC）、`workbench-butler`（mock LLM 驱动管家工具与权限边界）、`workbench-update`（更新通知不打断在跑任务、更新轮不交付、群里未接手时重试、`inject_task` 带出处）。渲染端 `features/workbench/*.test.ts`、`stores/chat-main-view.svelte.test.ts`。e2e `apps/desktop/test/e2e/workbench.spec.ts`（13 例，按用户要求在 Mac 上跑，见 `todo/workbench.md` §12.4）。
+
 ## 本机容器运行（Linux 开发机）
 
 开发机 glibc 2.35 加载不了 es-git 预编译绑定（需 ≥ 2.38），大部分集成测试在宿主上直接失败。单元 / 集成测试在 Debian 13 镜像 `kepcup-test:trixie` 里跑，e2e 用派生镜像 `kepcup-test:trixie-xvfb`：

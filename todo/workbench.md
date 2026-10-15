@@ -724,3 +724,18 @@ shared 新增（均向后兼容）：`textContent.todoUpdate?: boolean`；`todos
 - **L5 测试**：`purge` 后计时器被清理（断言 `armedTimers`）；`RunsService.turnBotIdsTriggeredBy` 单元（只认对话轮 / 本对话 / 去重 / parts / id 前缀相近）；集成「L5」周期事项两次派发的 run 重叠（更新带较新那次的 `todoRunId`，更新轮不结算任何一个，各由自己的结果轮交付）。
 
 注意：测试用 `TestClock` 时两次派发要拉开时间（`lastRun` 按 `dispatched_at` 排序，同毫秒按 id 决胜）。
+
+**W3 收口（2026-10-15，分支 `t/wb-e2e`，已并入 `t/wb`）**
+
+- 第一阶段（在 `d9ea3fb` 上）：新增 `apps/desktop/test/e2e/workbench.spec.ts`（入口与草稿、备忘 CRUD 与最近删除、闪念转事项 → 指派 → 立即 → 派发卡 → 待验收 → 完成、群无人认领与负责 Bot、定时与关闭主动消息、执行失败重试、自排卡、进行中未读、重启补发、抽屉与取消、窄屏、布局、toast）。在容器 `kepcup-test:trixie-xvfb` 里该 spec 与受影响的既有 spec（schedules、direct-chat、group-chat、composer-draft、narrow-layout、butler-proposal、sidebar-resize）共 30 例全过。
+- e2e 暴露的缺陷 1 项：`streamdown-svelte` 的 Mermaid 组件写了全局 `[data-expanded='true']` 样式，悬停中的 sonner toast 被撑成盖住左栏的整屏白块（`088267a`，`app.css` 还给 sonner 定位，带回归 e2e）。
+- 协调会话追加的小修：执行失败原因转人话（`2419f78`）；工作台排期回执卡不计未读并有侧栏预览（`2ddf69c`，core `countVisibleAfter` 与渲染端 `isSilentOnArrival` 同口径，不动 `lastReadSeq`）；已开始 / 已结束事项的抽屉里时间只读显示（`dfaebda`）。
+- 事项更新通知（`t/wb-update`）合入后，`workbench.spec.ts` 共 13 例在 xvfb 容器里全过（含「进行中事项改说明 → 私聊出现更新卡」）。
+- 最终代码（`7abc0f5` 起）全量单元 / 集成：5177 例，34 失败，失败集合与基线完全一致（33 条环境基线 + `connected-apps-runtime`「listing failure at run start」，后者在工作台改动之前就失败）。typecheck、lint 干净。
+- **全量 e2e 未在本机完成**：用户要求本机不再运行任何拉起 Electron 的测试（含 xvfb），e2e 改到用户把代码同步到 Mac 后执行。第二阶段的子 Agent 已停止，未留下改动。
+
+**待在 Mac 上执行的 e2e**
+
+1. `apps/desktop/test/e2e/workbench.spec.ts` 全部 13 例。其中「重启补发」一例有意等待约 70 秒（迟到超过 `SCHEDULE_LATE_BY_MIN_MS` = 60 秒才标注「延迟派发」），其余单步操作应在 5 秒内有反馈。
+2. 全量 e2e 回归。已知 main 基线失败 3 条：`browser.spec`「删除 Bot 后其浏览器分区数据不存在」、`sandbox.spec`「run status line shows the command description…」、`wiki.spec`「wiki tab: browse the page tree…」（这三条在 Linux 容器里失败，Mac 上可能通过）。
+3. 人工看一遍：工作台全貌（按成员分道、空闲成员条）、事项抽屉（新建 / 已排期 / 进行中 / 待验收）、备忘栏与最近删除、对话里的派发卡与更新卡、明暗主题。
