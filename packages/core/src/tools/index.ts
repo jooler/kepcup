@@ -180,7 +180,14 @@ export interface ResponseToolDeps {
    * 没有。`triggerFromUser` 是本轮的触发是否来自用户本人（settings/context.ts 同一口径，run 开始
    * 时算定），宿主在工具执行处据此强制权限边界（§6.2）。
    */
-  workbench?: { host: WorkbenchToolFacade; triggerFromUser: boolean } | undefined;
+  workbench?:
+    | {
+        host: WorkbenchToolFacade;
+        triggerFromUser: boolean;
+        /** 本 run 是否读过外部内容（执行时实时判断，不含工作台自己的 list_*）。 */
+        touchedExternal?: (() => boolean) | undefined;
+      }
+    | undefined;
   /**
    * Bot 资产移交（D88，docs/design/37）：present（且 `butler` present）时对话轮注册
    * inspect_bot_assets / propose_handover——管家与普通 Bot 都有（P1），参数面按
@@ -1079,6 +1086,7 @@ export function buildResponseTools(input: {
           identity,
           workbench: deps.workbench.host,
           triggerFromUser: deps.workbench.triggerFromUser,
+          touchedExternal: deps.workbench.touchedExternal,
         })
       : [];
 

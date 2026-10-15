@@ -1793,6 +1793,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       getTodo: (id) => todoService!.get(id).todo,
       createTodo: (input) => todoService!.create(input),
       updateTodo: (id, input) => todoService!.update(id, input),
+      startTodo: (id, actor) => todoService!.start(id, actor),
       completeTodo: (id) => todoService!.complete(id),
       cancelTodo: (id) => todoService!.cancel(id),
       listMemos: (filter) => memoService!.list(filter),
@@ -1800,6 +1801,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       updateMemo: (id, patch) => memoService!.update(id, patch),
       deleteMemo: (id) => memoService!.delete(id),
       describeWhen: (row) => scheduleService!.describeWhen(row),
+      isTainted: (botId, conversationId) => taint.isTainted(botId, conversationId),
       describeTime: (ms) => describeTime(ms, clock.now(), workbenchTimeZone),
       contextSection: () => {
         if (todoService === null || memoService === null) return '';
