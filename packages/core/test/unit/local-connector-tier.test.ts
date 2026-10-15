@@ -150,7 +150,7 @@ describe('the manual returned by app_local_connector_guide', () => {
       '不要向用户索要令牌',
       'web_fetch',
       '每一次工具调用都要用户确认',
-      '「设置 → 开发者模式」里手动添加',
+      '「扩展中心 → MCP」里手动添加',
     ]) {
       expect(LOCAL_CONNECTOR_GUIDE, must).toContain(must);
     }

@@ -835,7 +835,21 @@ export class AgentInstaller {
     return withUserPath(process.env, { platform: this.#platform });
   }
 
-  /** system 来源的启动方式（同步 PATH 查找）；未找到 = null。 */
+  /**
+   * system 来源的启动方式（同步 PATH 查找）；未找到 = null。
+   *
+   * A Node-script CLI found on PATH (`.js` / `.mjs` / `.cjs` or a `node`
+   * shebang, see {@link isNodeScript}) runs as `<node> <script> …`: the
+   * env-manager Node when installed (env `{}`), otherwise this runtime's
+   * `process.execPath` with `ELECTRON_RUN_AS_NODE=1`. That variable is set
+   * only in this invocation's `env`; native CLIs get `{}`, and the host env
+   * reaches every agent child through the {@link buildAgentEnv} whitelist,
+   * which never carries `ELECTRON_RUN_AS_NODE` from the KepCup process.
+   * The Electron-as-Node agent itself keeps it in its own `process.env`, so
+   * processes *it* spawns inherit it (only matters if it launches another
+   * Electron app); scrubbing that would need a preload in the child, which is
+   * not worth it for a fallback the env-manager Node normally replaces.
+   */
   systemInvocation(entry: AgentCatalogEntry): AgentInvocation | null {
     const system = entry.distribution.system;
     if (system === undefined) return null;
@@ -848,7 +862,8 @@ export class AgentInstaller {
     const args = [...(system.args ?? [])];
     // Extension-less Node bins (`inkcop-acp` → `…/inkcop-acp.mjs`) need a
     // runtime: GUI PATH often lacks `node`, so run via env-manager Node or
-    // Electron (`ELECTRON_RUN_AS_NODE`) — same pattern as managed npx agents.
+    // Electron (`ELECTRON_RUN_AS_NODE`, this child only) — same pattern as
+    // managed npx agents.
     if (isNodeScript(command)) {
       const node = this.#deps.installedNode?.() ?? null;
       return {

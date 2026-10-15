@@ -43,6 +43,26 @@ describe('widget craft prompts: content only, no preview shell', () => {
     expect(reviewSystemPrompt()).toContain('出现就记 P1');
   });
 
+  it('「不加没要求的操作」只管复刻 / 静态展示；计算器、追踪表照常做交互', () => {
+    const spec = specStageInput(stage);
+    expect(spec).toContain('复刻 / 静态展示类（版式、海报、一段结果）用户没要求操作就不写交互');
+    expect(spec).toContain('计算器、追踪表这类靠操作才能用的组件，照常规划它该有的交互');
+    expect(spec).toContain(
+      '组件本身靠操作使用（计算器、追踪表等），或用户原文要求了操作时，写动作',
+    );
+    expect(spec).not.toContain('用户没要求操作就不写交互。');
+    expect(buildStageInput(stage)).toContain('spec 规划的交互（计算器、追踪表等）要做全');
+    expect(craftSystemPrompt()).toContain('这类复刻 / 静态展示不要另加点击展开');
+    expect(craftSystemPrompt()).toContain('计算器、追踪表、待办、记账这类本身靠操作才能用的组件');
+  });
+
+  it('验收示例用明显的占位文字，不给模型可照抄的具体词', () => {
+    const spec = specStageInput(stage);
+    expect(spec).not.toContain('"textContains": "进展"');
+    expect(spec).toContain('"textContains": "‹标题里的原文›"');
+    expect(spec).toContain('选择器和文字都是占位');
+  });
+
   it('任务规则要求 brief 只描述内容，不要求组件内源码查看', () => {
     const bot: Bot = {
       id: 'bot_1',

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Bot, Message } from '@kepcup/shared';
 import {
   createTestStack,
+  makeBot,
+  makeGroup,
+  sendDrafts,
   waitForEvent,
   waitForMessage,
   waitForRun,
@@ -287,6 +290,29 @@ describe('conversational bot setup (interview)', () => {
     const request = llm.requestsFor('mock-main').at(-1)!;
     expect(JSON.stringify(request.body.messages)).not.toContain('<setup_interview>');
     expect(JSON.stringify(request.body.tools)).not.toContain('save_profile');
+  }, 20_000);
+
+  it('an interviewing bot @-mentioned in a group only gets save_profile (setupSurface group)', async () => {
+    const { core, llm } = await start();
+    const created = (await core.rpc.call('bots.create', { profile: {}, interview: true })) as {
+      bot: Bot;
+    };
+    const other = await makeBot(core, '阿乙');
+    const group = await makeGroup(core, '新成员试用', [created.bot.id, other.id]);
+
+    llm.script('mock-main', [step().replyText('我还在熟悉中，先记下了。')]);
+    await sendDrafts(core, group.id, [{ text: '你好，介绍一下自己', mentions: [created.bot.id] }]);
+    await waitForMessage(
+      core,
+      group.id,
+      (m) => m.senderBotId === created.bot.id && m.kind === 'text',
+    );
+
+    const tools = JSON.stringify(llm.requestsFor('mock-main')[0]!.body.tools);
+    expect(tools).toContain('save_profile');
+    // Question cards and finishing the interview belong to the direct chat.
+    expect(tools).not.toContain('ask_question');
+    expect(tools).not.toContain('finish_setup');
   }, 20_000);
 
   it('finish_setup keeps the placeholder name when the model never saved one', async () => {

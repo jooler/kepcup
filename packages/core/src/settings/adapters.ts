@@ -1784,7 +1784,6 @@ function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-
 function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {

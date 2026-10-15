@@ -136,7 +136,7 @@ export async function probeLocalConnector(
     const mcp = looksLikeMcpInitialize(await response.text().catch(() => ''));
     throw reject(
       mcp
-        ? '该 MCP 服务无需登录即可访问：本机连接只支持需要 OAuth 授权的服务（无需认证的 MCP 服务请在「设置 → 开发者模式」里手动添加）'
+        ? '该 MCP 服务无需登录即可访问：本机连接只支持需要 OAuth 授权的服务（无需认证的 MCP 服务请在「扩展中心 → MCP」里手动添加）'
         : '该地址返回了 200 但不是 MCP 服务端点（initialize 请求没有得到 JSON-RPC 响应），请确认文档里的 MCP 地址',
     );
   }

@@ -17,7 +17,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startFileServer, type TestFileServer } from '@kepcup/testkit';
 import { AGENT_CATALOG, type AgentCatalogEntry } from '@kepcup/shared';
 import {
@@ -738,6 +738,135 @@ describe('AgentInstaller — system CLI', () => {
         version: '0.1.0',
         compatible: true,
       });
+    },
+  );
+
+  /** `inkcop-acp`-style Node script (node shebang, no extension) in `dir`. */
+  function nodeCli(dir: string): string {
+    const file = path.join(dir, 'inkcop-acp');
+    writeFileSync(file, "#!/usr/bin/env node\nprocess.stdout.write('inkcop-acp 0.1.0\\n');\n");
+    chmodSync(file, 0o755);
+    return file;
+  }
+
+  const nodeCliEntry = baseEntry({
+    distribution: {
+      system: { cmd: 'inkcop-acp', detect: ['--version'], versionRange: '>=0.1.0' },
+    },
+  });
+
+  type ExecCall = { command: string; args: string[]; env: NodeJS.ProcessEnv | undefined };
+  function recordingExec(result: Awaited<ReturnType<AgentExec>>): {
+    exec: AgentExec;
+    calls: ExecCall[];
+  } {
+    const calls: ExecCall[] = [];
+    const exec: AgentExec = async (command, args, options) => {
+      calls.push({ command, args, env: options.env });
+      return result;
+    };
+    return { exec, calls };
+  }
+
+  it.skipIf(process.platform === 'win32')(
+    'runs Node system CLIs on the installed env-manager Node without ELECTRON_RUN_AS_NODE',
+    async () => {
+      const dir = tempDir('kepcup-agent-nodecli-');
+      const file = nodeCli(dir);
+      const { exec, calls } = recordingExec({ code: 0, stdout: 'inkcop-acp 0.1.0\n', stderr: '' });
+      const installer = installerFor(tempDir('kepcup-agent-sys-'), {
+        env: { PATH: dir },
+        installedNode: () => '/opt/kepcup/node/bin/node',
+        exec,
+      });
+      expect(installer.systemInvocation(nodeCliEntry)).toEqual({
+        command: '/opt/kepcup/node/bin/node',
+        prefixArgs: [file],
+        args: [],
+        env: {},
+      });
+      expect(await installer.detectSystem(nodeCliEntry)).toMatchObject({
+        found: true,
+        path: file,
+        version: '0.1.0',
+        compatible: true,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.command).toBe('/opt/kepcup/node/bin/node');
+      expect(calls[0]!.args).toEqual([file, '--version']);
+      expect(calls[0]!.env?.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'without an injected env, finds the CLI in ~/.local/bin although PATH lacks it',
+    async () => {
+      const home = tempDir('kepcup-agent-home-');
+      const localBin = path.join(home, '.local', 'bin');
+      mkdirSync(localBin, { recursive: true });
+      const file = nodeCli(localBin);
+      const emptyPath = tempDir('kepcup-agent-emptypath-');
+      vi.stubEnv('HOME', home);
+      vi.stubEnv('PATH', emptyPath);
+      try {
+        const { exec, calls } = recordingExec({ code: 0, stdout: 'inkcop-acp 0.1.0', stderr: '' });
+        // No `env` dep: the production lookup env (process.env + withUserPath).
+        const installer = installerFor(tempDir('kepcup-agent-sys-'), {
+          installedNode: () => null,
+          exec,
+        });
+        expect(installer.systemInvocation(nodeCliEntry)).toMatchObject({
+          command: process.execPath,
+          prefixArgs: [file],
+          env: { ELECTRON_RUN_AS_NODE: '1' },
+        });
+        expect(await installer.detectSystem(nodeCliEntry)).toMatchObject({
+          found: true,
+          path: file,
+          compatible: true,
+        });
+        // The detect child sees the same augmented PATH: the user's entries
+        // first, ~/.local/bin appended as a fallback.
+        const detectPath = (calls[0]!.env?.PATH ?? '').split(':');
+        expect(detectPath[0]).toBe(emptyPath);
+        expect(detectPath).toContain(localBin);
+        expect(calls[0]!.env?.ELECTRON_RUN_AS_NODE).toBe('1');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'a CLI whose version probe fails is found but not compatible',
+    async () => {
+      const { dir, env } = fakeCli('3.14.2');
+      const { exec } = recordingExec({ code: 1, stdout: '', stderr: 'democli: broken install' });
+      const installer = installerFor(tempDir('kepcup-agent-sys-'), { env, exec });
+      expect(await installer.detectSystem(systemEntry())).toEqual({
+        found: true,
+        path: path.join(dir, 'democli'),
+        version: null,
+        versionRange: null,
+        compatible: false,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'a native system CLI never inherits ELECTRON_RUN_AS_NODE from the host env',
+    async () => {
+      const { dir } = fakeCli('3.14.2');
+      const { exec, calls } = recordingExec({ code: 0, stdout: 'democli 3.14.2', stderr: '' });
+      const installer = installerFor(tempDir('kepcup-agent-sys-'), {
+        env: { PATH: dir, ELECTRON_RUN_AS_NODE: '1' },
+        exec,
+      });
+      expect(installer.systemInvocation(systemEntry())?.env).toEqual({});
+      await installer.detectSystem(systemEntry());
+      expect(calls[0]!.command).toBe(path.join(dir, 'democli'));
+      expect(calls[0]!.env?.PATH).toBe(dir);
+      expect(calls[0]!.env?.ELECTRON_RUN_AS_NODE).toBeUndefined();
     },
   );
 });

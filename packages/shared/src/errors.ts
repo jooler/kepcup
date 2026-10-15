@@ -134,7 +134,7 @@ export const ERROR_CODES = [
   'LOCAL_CONNECTOR_REJECTED',
   /** 提案不存在、已被使用或已过期，需要让 Bot 重新发起。 */
   'LOCAL_CONNECTOR_EXPIRED',
-  /** 本机连接的新增需要先在设置里打开开发者模式。 */
+  /** @deprecated 开发者模式门禁已移除，core 不再抛出；仅为兼容旧记录保留。 */
   'DEVELOPER_MODE_REQUIRED',
   /** 授权服务器与 MCP 服务不同站点的提案，`confirm` 缺少 `acknowledgeCrossSiteIssuer`。 */
   'LOCAL_CONNECTOR_ACK_REQUIRED',
