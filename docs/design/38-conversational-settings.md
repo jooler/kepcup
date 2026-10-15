@@ -2,7 +2,7 @@
 
 用户说一句「换个默认模型」「我想让你帮我生成图片」，Bot 先**查**应用能不能做、再**读**清楚要改什么、最后**改**——能直接改的立即生效并留回执，其余在对话里出一张预填好的设置卡，用户操作一次即可。本篇定义设置目录、`settings_search` / `settings_read` / `settings_change` 三个工具、宿主裁定修改档位、消息流里的设置卡与 Bot 续答。
 
-**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
+**状态：P0 已实现（2026-10-13）；P1（组件化扩面）已完成——58 个条目里 46 个有内嵌卡，其余 12 个是永久跳转 / 只读或走专门工具（2026-10-14；2026-10-15 e75b950 移除 `developer.mode` 后为 57 个条目、无内嵌卡 11 个）；合并后审查修复见 §12；P2 评估决策见 §11；P2 已落地（旧 kind 收拢、重开对话核对跳转卡，§5.3 / §4.3；e2e 基线根因与 P3 真实模型验证未做）。** 无 DB 迁移。执行方案与四项拍板见 [todo/conversational-app-setup.md](../../todo/conversational-app-setup.md)；偏差见 [DEVIATIONS](../dev/DEVIATIONS.md) DEV-026（P0 / P1）与 DEV-029（合并后审查修复）；实施记录见 [PROGRESS](../dev/PROGRESS.md)。
 
 
 相关：D58 对话内设置引导（[18](18-inline-setup.md)，失败续跑链与 7 个旧 kind）、D75 对话轮与任务分治（[02](02-execution.md)、[30](30-supervisor-and-tasks.md)，对话轮只读、异步托管动作由宿主确定性执行）、D80 定时提议卡（[todo/schedule-nudges.md](../../todo/schedule-nudges.md)，消息流里的提议卡先例）、D73 连接应用（[29](29-connected-apps.md)，污点）、D72 外部智能体能力包（[28](28-external-agents-acp.md)）、D88 盘点 → 提议（[37](37-bot-asset-handover.md)）。工具目录见 [dev/04](../dev/04-agent-runtime.md)。
@@ -25,13 +25,13 @@
 
 ### 1.1 形态
 
-每个条目（`SettingItem`）：`id`（`组.名字`，小写短横线）、`group`（20 组：models / search / connections / mcp / mail / agents / bot / skills / schedules / profile / browser / group / project / hardware / general / background / unattended / environment / developer / diagnostics）、`title` / `summary` / `enables` / `keywords`（供搜索与「检查能力」）、`scope`（global / bot / group / project）、`owner`（`core` 或 `renderer`——主题、语言、麦克风只存在渲染层 localStorage，core 读不到也写不了）、`fields`（`FieldSpec`：name / label / type `text|number|select|toggle|model|secret|oauth|account` / sensitive / options 来源 / 多选）、`write`（`maxMode`、`via`、`widensPermission`、`wideningMode`）、`card`（`CardKey | null`）、`deepLink`（surface + section + anchor）、`store`（值存在哪：`settings` 点路径 / `bot` / `service` RPC / `renderer` / `none`）、`readOnly`。
+每个条目（`SettingItem`）：`id`（`组.名字`，小写短横线）、`group`（20 组：models / search / connections / mcp / mail / agents / bot / skills / schedules / profile / browser / group / project / hardware / general / background / unattended / environment / developer / diagnostics；`developer` 组 2026-10-15 起无条目，类型保留）、`title` / `summary` / `enables` / `keywords`（供搜索与「检查能力」）、`scope`（global / bot / group / project）、`owner`（`core` 或 `renderer`——主题、语言、麦克风只存在渲染层 localStorage，core 读不到也写不了）、`fields`（`FieldSpec`：name / label / type `text|number|select|toggle|model|secret|oauth|account` / sensitive / options 来源 / 多选）、`write`（`maxMode`、`via`、`widensPermission`、`wideningMode`）、`card`（`CardKey | null`）、`deepLink`（surface + section + anchor）、`store`（值存在哪：`settings` 点路径 / `bot` / `service` RPC / `renderer` / `none`）、`readOnly`。
 
 - `write.via` 指向专门工具的项（`app_request_connection` / `mail_request_setup` / `install_skill` / `request_access` / `schedule` / `watch_create` / `propose_profile_change`）：`settings_read` 告诉 Bot 改用哪个工具，`settings_change` 只回「请改用某工具」、**不代为调用**，各工具自己的门控与审批不被绕过。
 - `write.maxMode` 记**目标**档位；条目没有内嵌组件（`card = null`）时宿主一律兜底成 `link`（见 §3 第 4 步）。`widensPermission` 的条目永不 direct；`wideningMode: 'user-only'` 的条目在**本次值是放宽方向**时升到 user-only（如 Bot 网络策略放开、MCP / 连接逐工具策略放开；放宽与否由适配器按旧值 → 新值判定，未知按放宽）。
 - `DIRECT_ITEM_IDS = models.default-main / models.default-light / bot.model / bot.light-model`。
 
-### 1.2 首批条目（共 58 条，含 7 条能力模型）
+### 1.2 首批条目（共 58 条，含 7 条能力模型；2026-10-15 移除 `developer.mode` 后 57 条）
 
 | 组 | 条目 id | 最宽松档 | 卡片键 |
 |---|---|---|---|
@@ -56,7 +56,7 @@
 | 后台 | `background.tasks` / `background.budget` | confirm | `background-tasks` / `field-editor` |
 | 无人值守 | `unattended.enable`（user-only）/ `unattended.disable`（confirm） | — | `unattended` |
 | 环境 | `environment.toolchains` / `environment.sandbox` / `environment.allowlist` | user-only | `environment-toolchains` / `environment-sandbox` / `environment-allowlist` |
-| 开发者 | `developer.mode` / `.custom-mcp` / `.oauth-clients` / `.mcpb` | link（永久） | 无 |
+| MCP 管理 | `developer.custom-mcp` / `.oauth-clients` / `.mcpb`（2026-10-15 起 `group: 'mcp'`、深链扩展中心「MCP」；`developer.*` id 为兼容保留。原 `developer.mode` 随「设置 → 开发者模式」分区移除，见设计 29 §16.2） | link（永久） | 无 |
 | 诊断 | `diagnostics.status` / `diagnostics.usage` | 只读 | 无 |
 
 删除类动作（删 Bot / 会话 / 浏览器资料 / 邮箱 / MCP / 技能 / 工具链、断开连接、解散群、移除项目、撤销授权、删画像条目）**不是设置**，不入目录，在 `EXCLUDED_SETTING_LOCATIONS` 显式排除表里逐条写明理由；记忆 / 组件 / 知识库 / 「其它」页签是数据或产出物，同样排除。

@@ -83,7 +83,7 @@ D89（[38-conversational-settings.md](38-conversational-settings.md)）在本机
 
 - 集成（response-loop）：无模型失败带 `setup={kind:'main-model'}` 且配置后 `runs.retry` 续跑成功；`generate_image` 未配置能力 → failed + `capability-model`（失败条目带「自动继续」指引），配置后重试不再命中；关闭卡片 → `runs.setupDismissed` 返回 `notified=true` 并唤醒对话轮给新反馈，重复调用 `notified=false`。
 - 单元（media-service）：`testCapability` 的 `keyOverride` 用入参 key 直接探测、不读密钥表。
-- e2e（setup-card.spec，环境不带 `KEPCUP_MOCK_LLM_URL` 模拟全新环境）：访谈回答 → 卡片（无失败横幅）→ 卡片内加厂商 → 确认 → 访谈继续；高级新建 Bot 的消息 → 门禁拦截（草稿保留、无失败 run）→ 卡片完成设置 → 草稿自动发出并得到回复；「测试连接」指向死端口 → 卡片停在第一段且保存禁用 → 修正重测通过 → 保存解锁（成功也不自动跳段）→ 保存进第二段 → 确认续跑。
+- e2e（setup-card.spec，环境不带 `KEPCUP_MOCK_LLM_URL` 模拟全新环境）：访谈回答 → 卡片（无失败横幅）→ 卡片内加厂商 → 确认 → 访谈继续；非访谈 Bot（经测试缝 `__kepcupRpc` 的 `bots.create`，替代 2026-10-15 已移除的侧栏「高级新建」入口，`072a807`）的消息 → 门禁拦截（草稿保留、无失败 run）→ 卡片完成设置 → 草稿自动发出并得到回复；「测试连接」指向死端口 → 卡片停在第一段且保存禁用 → 修正重测通过 → 保存解锁（成功也不自动跳段）→ 保存进第二段 → 确认续跑。
 
 ## 非目标与后续
 

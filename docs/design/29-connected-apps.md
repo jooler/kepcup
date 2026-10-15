@@ -11,7 +11,8 @@
 - 2026-10-10 P2 实施修订：见 DEV-021（开发者档只对 `tier: developer` 的 server 生效、客户端选择顺序与预注册不回退、污点期间写工具的 `mcp_tool` / `egress` 混合规则、污点随委派 / 群聊传递且来源仅目录应用工具、MCPB 设置页安装的同意方式、待追加 scopes 进程内保存、对话轮 / 子代理遇外发确认不等待、只读子代理的发现工具子集等）。正文未改写，相关处以「P2 实施注」标出。
 - 2026-10-10 P3 实施修订：见 DEV-022（发行门禁对快照条目留在客户端、对远端独有条目以验签为准；社区首连确认由 core 强制；目录增量文件客户端暂不消费；随附技能克隆先于审批；MCP Apps 无独立 partition、`visibility` 默认拒绝、界面发起的写入一律要人点、CSP 响应头加 `sandbox` / `frame-ancestors`、ext-apps 钉 1.7.5、`core-port` 握手加 nonce；远端目录字符串进提示词前清洗）。§11.6 的正文已按 spike 结论改写（独立 partition 不可行），其余正文未改写，相关处以「P3 实施注」标出。
 - 2026-10-13 Google 条目（进行中）：目录加入 Google Calendar / Drive（Workspace MCP，预注册 `clientRef: google`，凭据来自环境变量 / 仓库根 `.env`，不入库；Gmail 暂不接入）。发行门禁未放行，详见 todo/connected-apps.md §6.4。**同日暂缓**：两条目加 `hidden: true`，所有构建（含开发构建）均不显示，代码保留，方案待定（范围受限 / CASA / 测试模式 7 天令牌 / 备选 Mac 本机方案）。
-- 2026-10-10 扩展中心修订：见 §16（技能市场升级为「扩展中心」：Skills / 连接 / MCP 三组；自定义入口收进「设置 → 开发者模式」；设置「应用」只管已连接账号）。§9 的界面描述按 §16 改写，D73 第 7 条的「目录 / 已连接 / 自定义」页签随之调整。
+- 2026-10-10 扩展中心修订：见 §16（技能市场升级为「扩展中心」：Skills / 连接 / MCP 三组；自定义入口收进「设置 → 开发者模式」；设置「应用」只管已连接账号）。§9 的界面描述按 §16 改写，D73 第 7 条的「目录 / 已连接 / 自定义」页签随之调整。（「设置 → 开发者模式」一项已被下条取代。）
+- 2026-10-15（e75b950）扩展中心 MCP 全量管理：取代 2026-10-10 的决定 A（自定义入口收进「设置 → 开发者模式」）。「设置 → 开发者模式」分区与设置项 `developer.mode` 移除；自定义 MCP（stdio / HTTP / SSE 新建与编辑）、BYO OAuth 客户端、原始工具定义 / 授权日志、`.mcpb` 安装统一在「扩展中心 → MCP」，不再受开发者模式门禁；旧深链 `mcp` / `developer` 改开扩展中心 MCP。`settings.apps.developerMode` 保留为遗留字段，不再被读作门禁；core 不再抛 `DEVELOPER_MODE_REQUIRED`（错误码仅为兼容保留）。本机连接工具改为对所有 Bot 提供，保存仍须用户在确认卡上点「添加」（§17.1 第 6 条）。§9、§11、§16、§17 正文已按此改写；`developer` **分级**（§11.3）不受影响。
 
 相关：D25（加密与敏感数据）、D37（授权方式，本文扩展）、D41/D42（无人值守）、D44（浏览器工具）、D58（对话内设置引导）、D62（检索供应商密钥命名）、D63（技能安装）、D65（MCP，本文补齐其「OAuth 后续单排」）、D72（外部智能体与能力包、宿主 MCP 桥、目录模式）。
 
@@ -24,13 +25,13 @@
   4. **三层模型**：Connector（目录里的应用定义）→ Connection（用户的一个已授权账号）→ Grant（哪些 Bot 可用该账号）。同一 Bot 对同一 Connector 至多绑定一个 Connection。
   5. **审批按工具风险分级**：分级器与逐工具策略复用已落地的 MCP 实现（`core/mcp/risk.ts` / `policy.ts`，borrowings W5）——注解 + 名字推断（写动词一票否决），其余按规范缺省值取严为破坏性；默认只读免审、写入与破坏性逐次确认；注解是不可信提示，只决定默认值，用户可逐工具覆盖（应用另有「对该 Bot 总是允许」，以 Bot × Connection × 工具为键）。工具定义**按哈希锁定**，首次连接即展示、服务端变更后新/改工具停用待复核（防 rug pull）。
   6. **对话内连接**：Bot 需要某应用而用户尚未连接（或连接过期、需追加权限）时，走 D58 对话内设置卡（`{kind:'connect-app'}`），连接完成后经 `runs.retry` 续跑，体验对标 Grok。**运行时永不自行发起交互授权**，交互授权只由用户在设置页或卡片上触发（§5.6）。
-  7. **与现有 MCP 合流**：设置页「MCP」分区并入新的「应用」分区；用户自填 MCP server 即「自定义应用」，同样可走 OAuth（仅 Streamable HTTP）。（扩展中心修订，§16：「应用」分区只管已连接账号，发现与添加在扩展中心「连接」；自定义 MCP 在「设置 → 开发者模式」。）
+  7. **与现有 MCP 合流**：设置页「MCP」分区并入新的「应用」分区；用户自填 MCP server 即「自定义应用」，同样可走 OAuth（仅 Streamable HTTP）。（扩展中心修订，§16：「应用」分区只管已连接账号，发现与添加在扩展中心「连接」；自定义 MCP 在扩展中心「MCP」组，2026-10-15 前在「设置 → 开发者模式」。）
   8. **对既有决策的修订**（显式列出）：D65「每次调用需用户批准」→ 只读工具默认免审（已由 borrowings W5 落地）；D37「仅这一次 / 本对话内」→ 应用工具新增「对该 Bot 总是允许」（§8.1）。无人值守**不修订** D41：按用户在 W5 中的决定，所有风险档的 MCP / 应用工具在无人值守下自动批准，只以风险提示与审计收紧。
 - **D74 开放平台基座**：
   1. **不发明协议**：工具 = MCP；界面 = MCP Apps（`ui://` 资源，沙箱 iframe）；使用说明 = Agent Skills（`SKILL.md`）；分发元数据 = MCP Registry `server.json`；本地包 = MCPB。KepCup 只在 `_meta` 命名空间 `app.kepcup/*` 下加扩展字段。由此为 ChatGPT / Claude 开发的应用可近乎零改动入驻 KepCup，反之亦然。
   2. **目录 = MCP Registry 子注册表**：KepCup 目录实现官方 Registry 同一 OpenAPI（v0.1），从官方注册表拉取元数据并叠加审核状态、分类、图标与 KepCup 扩展；客户端只消费**签名索引**（内置公钥校验）+ 随应用打包的离线快照。
-  3. **分级信任**：`builtin`（KepCup 策展）/ `verified`（审核通过）/ `community`（自动校验通过）/ `developer`（本机开发者模式，未审核）；默认审批强度随级别递增。
-  4. **本期只建基座**：连接、授权、令牌、策略、目录格式、开发者模式在 P0–P2 交付；开发者门户、提交审核、MCP Apps 渲染、托管授权网关在 P3+，届时只加服务与界面，不改客户端核心契约。
+  3. **分级信任**：`builtin`（KepCup 策展）/ `verified`（审核通过）/ `community`（自动校验通过）/ `developer`（本机添加：MCPB 包、本机连接，未审核）；默认审批强度随级别递增。
+  4. **本期只建基座**：连接、授权、令牌、策略、目录格式、开发者模式（2026-10-15 移除，能力并入扩展中心「MCP」）在 P0–P2 交付；开发者门户、提交审核、MCP Apps 渲染、托管授权网关在 P3+，届时只加服务与界面，不改客户端核心契约。
   5. **服务端统一在 Cloudflare**（域名 `kepcup.com`）：静态资源用 Workers Static Assets，API 用 Workers + D1，签名在 CI 离线完成，托管网关用 `@cloudflare/workers-oauth-provider` + Agents SDK `createMcpHandler`（§15）。
 
 ## 1 业界调研（截至 2026-10）
@@ -322,7 +323,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 - **扩展中心**（原「技能市场」，侧栏左下角入口，§16）：Skills / 连接 / MCP 三组；「连接」组是已适配应用的发现与添加（卡片网格：图标、名称、简介、分级标签；搜索与分类；「连接」按钮直接起授权流程；已连接的显示状态与账号数，「管理」进账号详情）。
 - **设置 ·「应用」分区**（取代并吸收现「MCP」分区，图标沿用 `Plug`）：**只管已连接账号**——按应用分组列出 Connection（账号标签、状态、已授权 Bot、最近使用时间）；详情页：权限范围、逐工具策略、工具变更复核、重新授权、断开。顶部横条跳转扩展中心「连接」。
-- **设置 ·「开发者模式」分区**（§16）：`settings.apps.developerMode` 开关；开启后才出现原「自定义」能力——MCP 配置界面（stdio / HTTP / SSE，HTTP 认证方式「无 / Header / OAuth」）、填写自建 server URL、BYO 客户端面板、原始工具定义与授权日志；条目标注 `developer`。（`.mcpb` 本地包安装不在此：在扩展中心「MCP」。）
+- **扩展中心 ·「MCP」组**（§16）：自定义 MCP 的完整管理，无开关、无门禁——新建 / 编辑（stdio / HTTP / SSE，HTTP 认证方式「无 / Header / OAuth」，可填自建 server URL）、启停、逐工具策略、删除、BYO 客户端面板、原始工具定义与授权日志、`.mcpb` 本地包安装（生成的 server 为 `developer` 分级，§11.3）。2026-10-15 前除 `.mcpb` 外这些都在「设置 → 开发者模式」分区、需先打开开关；该分区已移除。
 - **Bot 面板**：「应用」勾选列表（按 Connector 分组，可选账号），未连接的应用显示「去连接」。
 - **对话内连接卡**：同一组件复用于首次连接、过期重连、step-up；连接成功后卡片收起为一行「已连接 Notion（jyy）」并经 `runs.retry` 续跑。
 - **输入框「+」菜单**（P2）：本对话临时开关某个已授权应用，对标 Grok 的 Connectors 入口。
@@ -360,7 +361,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | Connection / Grant / Token Vault | 完整 | 不变 |
 | Policy（风险分级、锁定、污点） | 完整 | 按分级叠加默认强度 |
 | 目录（打包快照） | 本地 JSON | 增加签名索引同步（§11.4） |
-| 开发者模式（自定义 URL、本地 `.mcpb`） | P2 | 即开发者本地调试环境 |
+| 自定义 MCP（自定义 URL、本地 `.mcpb`；原「开发者模式」，2026-10-15 并入扩展中心「MCP」） | P2 | 即开发者本地调试环境 |
 | 校验器 | 契约测试（内部） | 开放为 CLI `kepcup-app validate` |
 | MCP Apps 宿主 | — | P3 |
 | 托管授权网关 | — | P3+，按需（§11.7） |
@@ -372,7 +373,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | `builtin` | KepCup 策展，随应用发布 | 内部契约测试 | §8.1 默认 | 目录首屏 |
 | `verified` | 第三方提交 | 自动校验 + 人工审核 + 命名空间验证 | §8.1 默认 | 目录，带认证标 |
 | `community` | 第三方提交 | 仅自动校验 | 写入类首次连接时额外提示；不可「总是允许」`write` | 目录「社区」分组，默认折叠 |
-| `developer` | 本机手动添加 | 无 | 全部工具每次确认（可逐工具放宽） | 仅「自定义」 |
+| `developer` | 本机手动添加 | 无 | 全部工具每次确认（可逐工具放宽） | 扩展中心「MCP」（MCPB）/「连接 → 本机自建」（§17） |
 
 - P2 实施注（DEV-021 第 1 项）：`developer` 档只对 `McpServer.tier === 'developer'` 的 server（MCPB 包安装生成）生效；普通自定义 server 保持 W5 默认（只读自动、写 / 破坏性确认）。`destructive` 恒每次确认。
 - 本机连接实施注（DEV-024 第 1 项，§17）：目录连接的 `tier: developer` 现在同样生效——所有工具默认每次确认、没有任何持续授权、授权前必核对完整授权地址（此前目录里没有 `developer` 条目，远端目录也会丢弃它）。
@@ -388,7 +389,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 11.5 开发者流程（P3）
 
-1. 本机开发者模式调试（自定义 URL / 本地 `.mcpb`），KepCup 显示原始工具定义、注解与授权日志。
+1. 本机调试：在扩展中心「MCP」添加自定义 URL / 本地 `.mcpb`，KepCup 显示原始工具定义、注解与授权日志。
 2. `kepcup-app validate`：可达性、授权（用 KepCup 的 CIMD 身份走通一次）、每个工具具备 `title` + 风险注解、读写拆分、名称 ≤64、MCP Apps 的 CSP 声明、隐私政策链接、`server.json` 合法。
 3. 提交：命名空间验证（同 Registry：GitHub 或 DNS/HTTP 挑战）、审核用测试账号、正反用例。
 4. 审核：自动扫描（工具描述注入模式、过宽权限、外链域名）→ `community`；人工审核 → `verified`。
@@ -473,7 +474,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 |---|---|---|
 | **P0 MCP OAuth**（补齐 D65） | 自定义 Streamable HTTP server 支持 OAuth：Auth Engine（发现、CIMD/DCR/手填、PKCE、loopback、`iss`、吊销）、运行时 / 交互授权分离与主动刷新（§5.6）、Token Vault 与 `SecretsService` 脱敏改造、`shell.openExternal`；托管 CIMD 文档 | 用 Notion、Linear 官方 MCP 以「自定义」方式走通连接—调用—刷新—断开；令牌不出现在任何日志 / RPC / 执行记录 |
 | **P1 连接应用 MVP** | 内置目录（首批：Notion、Linear、Atlassian、Sentry、Asana、HubSpot、Canva、Stripe、GitHub〔CIMD 或 KepCup GitHub App〕）、设置「应用」分区、`app_connections`、Bot 授权、风险分级审批、工具锁定、`app_request_connection` + 对话内连接卡、能力包 `apps` | 新用户从对话中「帮我把这个 bug 记到 Linear」→ 连接卡 → 浏览器授权 → 自动续跑并在审批后建出 issue |
-| **P2 大平台与规模化** | Google Workspace / Microsoft 365 / Slack（完成各平台应用注册与审核，或采用 §11.7）、多账号、step-up、污点规则、按需工具加载、MCPB 本地包、开发者模式、`pi-mcp` 升级到支持 2026-07-28 | Google 应用验证通过；10+ 连接时上下文工具数受控 |
+| **P2 大平台与规模化** | Google Workspace / Microsoft 365 / Slack（完成各平台应用注册与审核，或采用 §11.7）、多账号、step-up、污点规则、按需工具加载、MCPB 本地包、开发者模式（2026-10-15 移除，见 §16.2）、`pi-mcp` 升级到支持 2026-07-28 | Google 应用验证通过；10+ 连接时上下文工具数受控 |
 | **P3 开放平台** | 签名目录索引与子注册表服务、`kepcup-app validate`、提交与审核流程、分级展示、MCP Apps 渲染、随附 Skills | 一个已上架 Claude/ChatGPT 目录的第三方应用仅补 `_meta` 即通过校验并在 KepCup 中可用 |
 | P4 企业 | EMA / Cross App Access、托管网关（如需要） | — |
 
@@ -548,18 +549,22 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 | ---- | ---- | ---- |
 | **Skills** | 原技能市场内容原样迁入，行为不变 | `preset-skills/catalog.json`，RPC `skills.presets.*` |
 | **连接** | 已适配的预置连接应用卡片：一键连接 → 账号 → Bot 勾选；已连接显示状态与账号数，「管理」进账号详情；空态「暂无已适配的应用」；**没有**「填 URL」入口 | `apps.catalog.list`（`connectors/catalog.json` + 发行门禁；发行构建只含放行条目，开发构建全部可见） |
-| **MCP** | 已安装 MCP 的管理（启停 / 状态 / 逐工具策略 / 编辑 / 删除）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
+| **MCP** | 自定义 MCP 的完整管理（新建 stdio / HTTP / SSE、启停 / 状态 / 逐工具策略 / 编辑 / 删除、BYO OAuth 客户端、原始工具定义 / 授权日志）+ MCPB 本地包安装；精选清单为空时只显示管理视图 | `settings.mcpServers`、`mcpb.*`；精选清单 `mcp-presets/catalog.json`（首期为空） |
 | **邮件** | IMAP/SMTP 本机邮件通道（非 MCP）：添加账号、绑定 Bot、IDLE/轮询状态（见 [35-mail-channel.md](35-mail-channel.md)，D84） | `mail.*` RPC / `mail_accounts` |
 
-组件复用：「连接」组 = 设置「应用」原「目录」网格（`AppCatalogGrid`）+ `AppConnectionsList` / `AppConnectionDetail`（多账号时先列账号，单账号直接进详情）；「MCP」组 = `McpSection` 的 `manage` 形态 + `McpbInstall`。代码在 `renderer/.../features/extension-center/`。
+组件复用：「连接」组 = 设置「应用」原「目录」网格（`AppCatalogGrid`）+ `AppConnectionsList` / `AppConnectionDetail`（多账号时先列账号，单账号直接进详情）；「MCP」组 = `McpSection` 的 `full` 形态（含 `McpbInstall`、`OAuthClientsPanel`、`McpDevTools`；2026-10-15 前是 `manage` 形态）。代码在 `renderer/.../features/extension-center/`。
 
-### 16.2 决定 A：自定义入口收进「设置 → 开发者模式」
+### 16.2 决定 A：自定义 MCP 全量放在「扩展中心 → MCP」（2026-10-15 修订）
 
-自建 / 填 URL / 手填客户端 / 原始工具定义等「自定义」能力从普通界面撤出，新增设置分区 **开发者模式**（`SettingsSectionId = 'developer'`，导航项始终可见，因为开关在里面）。分区内容：`settings.apps.developerMode` 开关（P2 §6.6 既有字段，默认关）；**开启后**才渲染 `McpSection` 的 `full` 形态（「新建 server」stdio / HTTP / SSE、BYO 客户端面板 `OAuthClientsPanel`、`McpDevTools`）；关闭时只显示说明。落点选择的理由：开发者能力需要一个**始终可达的开关**，而扩展中心「MCP」组面向普通用户，不应出现开关或自定义入口；设置里本来就是「高级项」的位置。
+现行（e75b950）：自建 / 填 URL / 手填客户端 / 原始工具定义等「自定义」能力全部在扩展中心「MCP」组，**不挂开发者模式门禁**——`McpSection` 的 `full` 形态：「添加服务器」（stdio / Streamable HTTP / SSE）、编辑（命令 / 参数 / URL 可改）、BYO 客户端面板 `OAuthClientsPanel`、`McpDevTools`（原始工具定义 / 授权事件日志 / 手动刷新）、`.mcpb` 安装。「连接」组仍**没有**「填 URL」入口（§16.1）。
 
-兼容：代码、RPC、测试保留；已存在的 `settings.mcpServers` 与已建立的连接**不迁移、不删除**，仍可在扩展中心「MCP」组启停 / 编辑 / 删除 / 管理工具策略（OAuth 类自定义 server 的重新连接也在其行内）；`.mcpb` 安装属于「安装本地包」，留在「MCP」组。别名 `openSettings('mcp')` 与旧深链 `openSettings('apps', anchor, 'custom')` 落到「开发者模式」分区（`data-settings-anchor="mcp"` 锚点沿用）。
+- 设置里的「开发者模式」分区（`DeveloperSection`）与导航项移除；设置目录项 `developer.mode` 移除，其余 `developer.*` 项改归 `mcp` 分组、深链指向扩展中心 MCP（设计 38）。
+- 深链兼容：`openSettings('mcp')`、`openSettings('developer')` 与旧的 `openSettings('apps', anchor, 'custom')` 由 shell 改开扩展中心「MCP」组（`settingsSectionOpensExtensionMcp`）；`resolveSettingsSection` 若仍被调用则落到「应用」。
+- `settings.apps.developerMode`：遗留字段，`settings.update` 仍可写（旧客户端不报错），不再被任何门禁读取。错误码 `DEVELOPER_MODE_REQUIRED` 标为 deprecated，core 不再抛出。
+- 原「开发者模式关闭时的收紧」随之取消：扩展中心编辑已有 server 不再锁定命令 / 参数 / URL（`mcpTargetLocked` 恒 false）；`OAUTH_CLIENT_REQUIRED` 时手填客户端表单对目录应用与自定义 server 一律可用（`clientFormMode` 恒 `form`）。保留：自定义 OAuth server 的 URL 换 origin 时，旧令牌随连接重置一并清除（`AppConnectionStore.ensureCustom` 兜底；`settings.update` 路径本来就先断开）。
+- 本机连接工具同步取消门禁，见 §17.1 第 6 条。
 
-开发者模式**关闭**时的收紧（评审后补）：扩展中心「MCP」组里编辑已有 server，命令 / 参数 / URL 只读（名称、启停、密钥值仍可改）；目录应用在 `OAUTH_CLIENT_REQUIRED` 时不给手填客户端表单，只提示「该应用需要预注册客户端，暂不可用」——表单仅在开发者模式开启，或目标是已存在的自定义 server 时出现。另：自定义 OAuth server 的 URL 换 origin 时，旧令牌随连接重置一并清除（`AppConnectionStore.ensureCustom` 兜底；`settings.update` 路径本来就先断开）。
+历史（2026-10-10 原决定，已被上文取代）：自定义能力从普通界面撤出，新增设置分区「开发者模式」（`SettingsSectionId = 'developer'`），开关 `settings.apps.developerMode`（默认关）开启后才渲染 `McpSection` 的 `full` 形态；扩展中心「MCP」组只给 `manage` 形态（无新建入口，关闭时命令 / 参数 / URL 只读），目录应用在 `OAUTH_CLIENT_REQUIRED` 时只提示「暂不可用」。取代原因：自定义 MCP 分在两处（扩展中心管理、设置里新建）、还要先找开关，入口割裂；能力本身的安全语义（审批、风险分级、工具锁定、污点）与入口位置无关。
 
 ### 16.3 决定 B：设置「应用」只管已连接账号
 
@@ -572,7 +577,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 ### 16.5 不变量
 
 - 发行门禁、签名目录、工具锁定、风险分级、污点外发等安全语义不变；「连接」组只是同一份 `apps.catalog.list` 的另一个壳，不放宽过滤。
-- 收紧的是入口可见性，不是能力：开发者模式开启后与此前的「自定义」页签等价。
+- 自定义能力与此前的「自定义」页签等价，只是入口位置变了（2026-10-15 起在扩展中心「MCP」，不再需要开发者模式开关）。
 
 ## 17 本机连接（Local Connectors，2026-10-10）
 
@@ -585,9 +590,9 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 1. **只支持 MCP 远端服务**（`streamable-http`，https 域名）；只有 REST、没有 MCP 的不走本流程（那是技能创作，沙箱里跑）。
 2. **文档是不可信输入**：条目内容以 **core 的探测结果为准**，不以 Bot 的转述为准——Bot 只能提供展示名 / 描述 / 分类 / 文档链接，且经长度限制和控制 / 双向 / 零宽字符清洗；URL、认证方式、范围、域名从不取自 Bot 文本。保存必须经**用户确认卡**，Bot 自己不能保存。
 3. **最低信任等级**：`tier: developer`（§11.3）——全部工具每次确认（只读也是）、用户可逐工具放宽、破坏性恒确认、**没有任何持续授权**（既无 Bot 级也无对话级）；读过其数据即污点（§8.3）。界面标注「本机自建 · 未审核」。无人值守模式（D41，用户整体开启后所有风险档自动批准并审计）对它同样适用——这是用户的全局选择，不在本节收紧。
-4. **认证只支持能自动注册的 OAuth**（授权服务器支持 CIMD 或 DCR，且声明 PKCE S256）。需要预注册密钥、API Key 的不支持；**无需认证的 MCP 服务也不支持**（目录连接底座目前只实现 OAuth，匿名服务走「设置 → 开发者模式」手动添加）。
+4. **认证只支持能自动注册的 OAuth**（授权服务器支持 CIMD 或 DCR，且声明 PKCE S256）。需要预注册密钥、API Key 的不支持；**无需认证的 MCP 服务也不支持**（目录连接底座目前只实现 OAuth，匿名服务请在「扩展中心 → MCP」里手动添加）。
 5. **只存本机**：不进打包目录、不进签名目录、不上传、不同步；**绕过不了发行门禁**——它走独立来源，不是门禁的放行对象（`releaseGate: "local"` 不在任何放行清单里，远端目录也不得使用该门禁值 / 命名空间）。
-6. **仅在开发者模式（§16.2）打开时可新增**：关闭时 Bot 看不到这两个工具、`apps.localConnectors.confirm` 被拒；已建的条目保留，`remove` 任何时候可用。
+6. **对所有 Bot 提供，保存仍须用户确认**（2026-10-15 决定，e75b950）：`app_local_connector_guide` / `app_propose_local_connector` 不再挂开发者模式门禁，只要 core 有本机连接能力就给每个 Bot；提案只生成确认卡（`confirm-local-connector`），落库只经用户点「添加」触发的 `apps.localConnectors.confirm`（第 2 条），Bot 自己仍不能保存。`remove` 任何时候可用。扩展中心「连接」组的「本机自建」区始终显示（空态也显示）。此前（2026-10-10）仅开发者模式开启时可新增：关闭时 Bot 看不到这两个工具、`confirm` 报 `DEVELOPER_MODE_REQUIRED`。
 7. **Bot 不碰账号识别与策略放宽**：不设 `whoami`（账号用自动编号）、`toolPolicy` 为空（只能由用户在连接详情里逐工具调整）。
 
 ### 17.2 数据与接入
@@ -600,7 +605,7 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ### 17.3 Bot 工具与确认卡
 
-仅 `settings.apps.developerMode` 为真时暴露：
+对所有 Bot 暴露（core 注入了本机连接服务即提供；2026-10-15 前仅 `settings.apps.developerMode` 为真时）：
 
 | 工具 | 作用 |
 |---|---|

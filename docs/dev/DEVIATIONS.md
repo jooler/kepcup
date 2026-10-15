@@ -423,6 +423,7 @@
   10. **指引文案**：「设置 → MCP 服务器」「设置 → 应用 中连接账号」「设置的『自定义』页」「设置页检查配置」等改指扩展中心。
   11. **core / shared 契约小改（缺陷修复，向后兼容）**：`apps.connection_status` 事件新增可选 `removed: true`（行被删）；临时行（`connecting` 且无令牌的目录行）不计入 `connectedAccounts` 与 `apps.connections.list`。测试基建新增 `desktop-svelte` vitest 项目（见 PROGRESS「缺陷修复」）。
 
+- **DEV-023 被取代（2026-10-15，`e75b950`）**：第 1、2、9 项（常驻「开发者模式」设置分区、`mcp` 别名 / `custom` 深链落该分区、开发者模式关闭时「MCP」组只读）已被「扩展中心 MCP 全量管理」取代：设置里的「开发者模式」分区与设置目录条目 `developer.mode` 移除；新建 / 编辑自定义 MCP server、BYO OAuth 客户端、原始工具定义与授权日志、`.mcpb` 安装一律在「扩展中心 → MCP」，不再有门禁；旧深链 `mcp` / `developer` 改开扩展中心。`settings.apps.developerMode` 成为遗留字段（保留写接口以免旧客户端报错，不再被任何门禁读取）。第 4 项（「MCP」组只隐藏新建 server 与 BYO 面板）随之失效。设计 29 §16 已同步。
 
 ### DEV-024 本机连接（L0–L3、L5）实现对任务书 / 设计 29 的细化与取舍（D73）
 
@@ -453,6 +454,7 @@
   16. **L4 引入的两处小 core 改动**：`apps.connections.tools` 的有效审批与 `setToolPolicy` 的「变严」判断按条目分级计算（此前本机连接的只读工具在详情页误显示「自动」）；e2e 测试钩子 `KEPCUP_TEST_OAUTH_LOOPBACK`（仅测试钩子构建 + `NODE_ENV=test`，真实 Electron 里没有 createCore 选项可传回环白名单）。
   17. **未做**：真实 Electron 里 DNS 重绑定的端到端（只有可注入解析器的 `createGuardedMcpFetch` 单测）；匿名 MCP 仍不支持（见第 2 项）。
 - 已更新的文档：`docs/design/29-connected-apps.md`（新增 §17、§17.3a、§11.3 旁注）、`docs/guides/add-connected-app.md`（「本机生成」）、`todo/{local-connector-authoring,developer-portal,extension-center,connected-apps-status}.md`、`docs/dev/PROGRESS.md`。
+- **DEV-024 修订（2026-10-15，`e75b950`，已决定）**：本机连接取消开发者模式门禁——core 不再抛 `DEVELOPER_MODE_REQUIRED`（`propose` / `confirm` 去掉门禁检查；错误码仅为兼容保留在 `errors.ts`），orchestrator 对**所有 Bot** 提供 `app_local_connector_guide` / `app_propose_local_connector`。安全边界不变：Bot 只能发起提案，任何条目都要用户在确认卡（`confirm-local-connector`）上点「添加」才落库；`developer` 分级的审批规则（默认每次确认、无持续授权、跨站授权服务器强警告与显式确认）照旧。第 2 项里「匿名服务指向『设置 → 开发者模式』手动添加」改为指向「扩展中心 → MCP」手动添加（该文案的 core 改动在本文撰写时尚未提交）。
 
 ### DEV-025 邮件通道的 IMAP/SMTP 库（设计 35 §11 授权实施期选型）
 
@@ -565,3 +567,18 @@
   - 写后收尾：先撤销授权（MCP、连接），再关浏览器页；每一步各自 try/catch，`settle()` 不抛错、返回失败列表由调用方记日志；宿主写入发生后 `afterUnlock` 放在 `finally` 里，失败只记日志、不当作写入失败。
   - 三方合并 `mergeThreeWay` / `mergePatchOnto` 只读写自有键，`__proto__` / `constructor` 当普通键处理。
   - `settings.cards.complete{auto}` 只在卡片要的事做成时关闭：有建议值的卡要求当前值满足建议值；放宽权限的 user-only 卡没有建议值时，只在放宽方向的变化上关闭。**偏保守**：Bot 想收紧一个会放宽权限的条目（例如把污点保护重新打开）时，卡不会自动关闭，用户点「我已设置好」即可。
+
+### DEV-030 UI 新建的群没有群定位与目录：建群后在哪里设置（`0254e1b`）
+
+- 状态：待决定
+- 阶段：新建群聊改版（2026-10-15，`0254e1b`；取代设计 19 / D60 的对话内四问）
+- 是否阻塞：否
+- 问题：新建群改为主区域顶部点选成员、空回车即 `groups.create` 直接建群（群名为成员名拼接）后，创建时不再收集「本群主要处理什么事务」与工作目录。UI 新建的群 `description` 恒为空，`<conversation_info>` 的「本群主要处理：…」（D60）不会注入，群内 Bot 判断「归不归我」只剩成员名片与群名可依据。目录可在右栏「群详情」的 project 选择器补绑（无创建期引导）；群定位**没有任何编辑入口**，也没有对应的 RPC（`description` 只在 `groups.setup.answer` 里写）。D60 的后端（`groups.setup.*`、orchestrator 四问、`GroupSetupCard`、store 的 `createGroupViaSetup` / `answerGroupSetup` / `cancelGroupSetup`）保留但 UI 不可达。
+- 影响范围：群聊响应质量（`<conversation_info>`）、设计 19 / 01 / 08、右栏 `GroupInfo`、core `groups` / `conversations`。
+- 可选方案：
+  1. 群详情加「群定位」文本框（新增 `groups.update` 一类 RPC 写 `description`），目录继续在群详情绑定 — 改动小、与改名 / 加减成员同处；缺点是用户不一定会去填。
+  2. 建群后在群对话里出一张一次性提示卡（定位 + 目录，可跳过），复用 `GroupSetupCard` 的 purpose / project 两步 — 有引导；缺点是又回到部分向导，和「点选即建」的初衷有张力。
+  3. 不做，群定位让 Bot 从群名与历史推断，并删除 D60 后端 — 最简；缺点是丢掉已验证有用的群语义，且要删除 D60 的代码路径（`description` 列可保留为空，不需要迁移）。
+- 推荐：1（必要时叠加 2 的轻提示）；在决定前保留 D60 后端不删。
+- 决定：（由人工填写）
+- 已更新的文档：`docs/design/19-work-path-and-group-setup.md`、`docs/design/README.md`（D60 行）、`docs/design/{01-conversation,08-project}.md`、`docs/dev/phases/P16-path-and-group-setup.md`、`todo/conversation-work-path.md`。

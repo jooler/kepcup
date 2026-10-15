@@ -93,7 +93,7 @@
 **挂载约定（推荐，待确认 Q1）**
 
 - 工作台创建的任务一律挂到该 Bot 的**私聊**（`conversations.openDirect(botId)`，必要时隐式创建空私聊）。
-- `origin` 新增 `'user'`（用户在工作台 / 未来 UI 手建），与 tool/offer/proposal/commitment 区分；回执卡仍写入该私聊时间线（与现有一致），用户从聊天里也能看见。
+- `origin` 新增 `'user'`（用户在工作台 / 未来 UI 手建），与 tool/offer/proposal/commitment 区分；回执卡**默认**写入该私聊时间线（与现有一致，用户从聊天里也能看见；是否改为静默见 Q6）。
 - **不**在 P0 支持「挂到某个群聊」——群场景继续用群内对话 / 右栏。
 
 **行内交互（UX 澄清，对应口述「点击后该 Bot 就增加…」）**
@@ -116,6 +116,8 @@
 
 与 stickies **分开**：备忘 = 用户个人纯文本笔记，**不**绑对话、**不**浮在消息上、**不**进 Bot 上下文（P0；若以后要「Bot 可读备忘」另开决策）。
 
+备忘也**不是 Bot 记忆**：`memos` 表在主库 `main.db`（`migrations/main`，见 [design/11-storage](../docs/design/11-storage.md)），与各 Bot 的 `bots/{bot_id}/memory.db`（[design/04-memory](../docs/design/04-memory.md) 的记忆条目、FTS / 向量索引）无关，不参与记忆检索、注入与反思。
+
 **布局**
 
 1. 顶部：关键字筛选输入框（本地过滤 title/body；量小不必 FTS）。
@@ -128,10 +130,10 @@
 
 ### 4.1 定时：扩展现有 schedules
 
-**迁移（示例号：下一空号，写时取 main 最新 +1；本文起草时 main 最新 `0036`）**
+**迁移（撰写时为 main `0037`——main 最新 `0036`；合并时按 main 当时最新号 +1 重编）**
 
 - `scheduleOriginSchema` / DB CHECK 增加 `'user'`。
-- 早期阶段可直接改 CHECK（重建约束）；不必双写兼容。
+- SQLite 不能 `ALTER` 已有 CHECK：迁移需**重建 `schedules` 表**（建新表 → 拷数据 → 删旧表 → 改名 → 重建索引）；早期阶段不必双写兼容。
 
 **新 RPC**
 
@@ -209,7 +211,7 @@ apps/desktop/src/renderer/src/lib/features/workbench/
 
 - [ ] 设计落点：`docs/design/` 一小节或本 todo 定稿 + README 决策号
 - [ ] `shell.mainView` + 左栏入口 + 中间区切换（宽屏）
-- [ ] `schedules.create`（origin=`user`）+ origin 迁移 / schema
+- [ ] `schedules.create`（origin=`user`）+ shared `scheduleOriginSchema` 加 `'user'` + main 迁移（撰写时 `0037`，合并时重编）**重建 `schedules` 表**以放宽 origin CHECK（见 §4.1）
 - [ ] 工作台待办：按 Bot 分组列表、全局 +、行内 +、新建表单（预设周期）、取消、空态
 - [ ] 订阅 `schedules.changed`
 - [ ] 单测：create 挂私聊、非法 when、护栏提示；renderer 分组纯函数
@@ -217,7 +219,7 @@ apps/desktop/src/renderer/src/lib/features/workbench/
 
 ### P1 — 备忘 + 窄屏 + 体验
 
-- [ ] `memos` 表 + CRUD RPC + 备忘 tab UI（筛选 / 增删改）
+- [ ] `memos` 表（主库 main 迁移，号随合并重编；非 Bot 记忆，见 §3.4）+ CRUD RPC + 备忘 tab UI（筛选 / 增删改）
 - [ ] 窄屏入口（见 Q4）
 - [ ] 任务卡片点进私聊并定位 / 打开右栏定时页签
 - [ ] 周期「自定义 cron」；可选就地编辑
@@ -251,15 +253,14 @@ apps/desktop/src/renderer/src/lib/features/workbench/
 
 ## 9. 风险与注意
 
-- **主视图分叉**：`shell` 今日假定「唯一主视图 = 对话」；所有 `openSchedules` / 深链 / 窄屏返回要验收「从工作台点对话能回去」。
+- **主视图分叉**：`shell` 今日假定「唯一主视图 = 对话」；所有 `openSchedules` / 深链 / 窄屏返回要验收「从工作台点对话能回去」；改 shell 时注意宽窄切换的 `resetForLayoutChange`。
 - **隐式 openDirect**：可能突然在侧栏冒出空私聊——可接受，或创建任务时若无私聊先 toast 确认（产品偏好）。
-- **Electron PATH / 热更**：与本功能无关；改 shell 时注意宽窄 `resetForLayoutChange`。
 - **origin CHECK**：SQLite 改 CHECK 往往要重建表；早期阶段可直接新迁移重建 `schedules`（数据可清空策略需你点头——或只 ADD 新约束能接受的写法）。
 - **测试纪律**：改 shared 契约后定向 `schedule-*` / 新 memos 单测；收尾再全量。
 
 ## 10. 验收口径（定稿后实施时用）
 
-1. 左栏管家上方可见「工作台」；点击后中间为工作台，侧栏无对话选中（或按 Q3 定稿），URL/状态可回到对话。
+1. 左栏管家上方可见「工作台」；点击后中间为工作台，侧栏无对话选中（按 §3.1 的推荐「清掉对话选中」；若定稿改为保留选中则按定稿），URL/状态可回到对话。
 2. 待办：仅显示有 active 任务的 Bot；+ 选 Bot 后可建单次与周期；任务出现在该 Bot 行；取消后行可消失。
 3. 任务实际挂在该 Bot 私聊，到点行为与现有定时一致（可用现有 schedule 集成测试路径抽验）。
 4. 备忘：增删改 + 关键字筛选可用；与对话 stickies 互不影响。

@@ -78,13 +78,13 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
 
 ## S3 连接并导出工具快照
 
-开发者模式面板列的是**自建的自定义服务器**（`settings.mcpServers`），目录里的预置连接不在其中。所以导出原始工具定义要临时「自建」一个同地址的服务器：
+扩展中心「MCP」组列的是**自建的自定义服务器**（`settings.mcpServers`），目录里的预置连接不在其中。所以导出原始工具定义要临时「自建」一个同地址的服务器：
 
 1. 起开发版（建议隔离数据目录，别动平时用的 `~/.kepcup`）：
    ```
    KEPCUP_HOME=/tmp/kepcup-adapt pnpm dev
    ```
-2. **设置 → 开发者模式**，打开开关 →「添加服务器」，类型选 HTTP，填该家的 MCP 地址，认证选 OAuth，保存后点「连接」（账号持有人在浏览器里登录授权）。
+2. **扩展中心 → MCP**，类型下拉选「Streamable HTTP」→「添加服务器」，填该家的 MCP 地址，认证选「OAuth（浏览器授权）」，保存后点「连接」（账号持有人在浏览器里登录授权）。（2026-10-15 前此入口在「设置 → 开发者模式」且要先开开关；该分区已移除。）
 3. 在该服务器下点「查看原始定义」，复制整段 JSON（含注解）。导出后可以删掉这个临时服务器（目录里的预置连接在 S8 单独验）。
 4. 存为 `packages/core/test/fixtures/connectors/<slug>.tools.json`（**一家一个文件**，原样保存，prettier 已忽略此目录，便于以后 `git diff` 看出上游改了什么）。提交前扫一眼，不要有真实邮箱、工作区名、内部链接（示例性的 `alex@example.com` 没问题）。详见该目录的 [README](../../packages/core/test/fixtures/connectors/README.md)。
 5. 汇总：
@@ -140,7 +140,7 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
        packages/core/test/unit/connector-whoami.test.ts"
    ```
    不要在容器里跑 `pnpm test` / `pnpm install`。已知基线失败见 [dev/05-testing.md](../dev/05-testing.md) 与 [docker-test-runner 说明](../../todo/acp-manual-followups.md)。
-4. `pnpm typecheck`、`pnpm lint`（宿主机；lint 只允许 main 带来的 `debug-dev-pin.spec.ts` 基线错误）。
+4. `pnpm typecheck`、`pnpm lint`（宿主机）。
 
 目录契约测试（`connector-catalog.contract`）会自动检查：schema 合法、slug 与 name 唯一、图标存在且无脚本、`remotes[0]` 是 https、`toolPolicy` 的风险值合法、带 `releaseGate`、预注册条目有 `clientRef`。
 
@@ -181,7 +181,7 @@ S0 评估能不能上 → S1 备账号 → S2 写目录条目 → S3 连接并�
 
 - 做的事是 S0–S3 的一个子集（找 MCP 地址、判断授权方式、探测），但**由 core 的探测结果决定条目内容**，Bot 只提供展示名 / 描述 / 分类 / 文档链接；没有 S4–S9（无 `toolPolicy`、无 `whoami`、无快照、无放行门禁）。
 - 条目是 `tier: developer`（未审核）：每次工具调用都要用户确认、没有持续授权；只存在 `settings.apps.localConnectors`，**永不进 `catalog.json`、签名索引或发行构建**。
-- 前提：设置 → 开发者模式已打开；服务是 https 域名的 Streamable HTTP MCP，授权是支持 CIMD 或 DCR（+ PKCE S256）的 OAuth。需要 API Key / 预注册密钥、匿名服务、只有 REST 的，都不走这条路。
+- 前提（2026-10-15 起不再需要开发者模式，任何 Bot 都能发起）：服务是 https 域名的 Streamable HTTP MCP，授权是支持 CIMD 或 DCR（+ PKCE S256）的 OAuth。需要 API Key / 预注册密钥、匿名服务、只有 REST 的，都不走这条路。
 - 使用：对 Bot 说「帮我接入 XXX，文档在 …」，Bot 会调 `app_local_connector_guide` → `app_propose_local_connector`，对话里出确认卡（MCP 域名大字显示，另有完整地址、认证方式、授权服务器、将请求的范围、风险说明；文档链接只是纯文本）。点「添加」后卡片直接接上连接步骤（授权前先核对完整授权地址 → 首次工具复核），完成后对话自动继续；之后在扩展中心「连接」组底部的「本机自建」区（带「未审核」徽标）管理，「删除」会先确认，再断开全部账号、吊销并清令牌。
 - 授权服务器与 MCP 域名**不是同一个站点**时，卡片会出红色警告并点名两个域名，必须勾选「我了解」才能添加（可能是借用别家的登录来骗取授权）。
 - 提案只在内存里保留 30 分钟，重启后失效（卡片会提示让 Bot 重新发起）；本机条目没有隐私政策与厂商图标（界面用中性占位）。
