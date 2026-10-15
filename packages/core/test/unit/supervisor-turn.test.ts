@@ -176,6 +176,68 @@ describe('which batches share a turn (D75 审查 M1 / M2)', () => {
     expect(canShareTurn(chainA, { ...chainA, messages: [message('A2')] })).toBe(true);
   });
 
+  it('D90 workbench: a dispatch batch has a turn of its own; update notices of the same todo may merge, nothing else', () => {
+    const wb = (todoId: string, update: boolean, runId = 'tdr_1') =>
+      batch(
+        'direct',
+        [
+          message(update ? '【工作台】事项更新：t' : '【工作台】t', {
+            content: {
+              text: update ? '【工作台】事项更新：t' : '【工作台】t',
+              origin: 'workbench',
+              todoId,
+              todoRunId: runId,
+              ...(update ? { todoUpdate: true } : {}),
+            },
+          } as Partial<Message>),
+        ],
+        { reason: 'direct' },
+      );
+    const dispatch = wb('todo_1', false);
+    const updateA1 = wb('todo_1', true);
+    const updateA2 = wb('todo_1', true);
+    const updateB = wb('todo_2', true, 'tdr_2');
+    const user = batch('direct', [message('用户')]);
+    const taskResult = batch('task', [
+      message('结果', { senderType: 'system', kind: 'task_event', taskId: 'run_t1' }),
+    ]);
+    // dispatch: alone, always.
+    expect(canShareTurn(dispatch, dispatch)).toBe(false);
+    expect(canShareTurn(dispatch, updateA1)).toBe(false);
+    expect(canShareTurn(updateA1, dispatch)).toBe(false);
+    expect(canShareTurn(dispatch, user)).toBe(false);
+    // update: merges with the same todo's updates only (never another todo's, a person's words or a task result).
+    expect(canShareTurn(updateA1, updateA2)).toBe(true);
+    expect(canShareTurn(updateA1, updateB)).toBe(false);
+    expect(canShareTurn(updateA1, user)).toBe(false);
+    expect(canShareTurn(user, updateA1)).toBe(false);
+    expect(canShareTurn(updateA1, taskResult)).toBe(false);
+    expect(canShareTurn(taskResult, updateA1)).toBe(false);
+    // A merged pair of the same todo's updates still shares only with that todo's updates.
+    const merged = mergeTriggerBatches([updateA1, updateA2]);
+    expect(canShareTurn(merged, updateA2)).toBe(true);
+    expect(canShareTurn(merged, updateB)).toBe(false);
+    // Buffered behind a running turn: a dispatch of another todo, an update and the user's message are three turns.
+    const started: TriggerBatch[] = [];
+    const box = new Mailbox('bot_1:conv_1', {
+      startRun: (b) => {
+        started.push(b);
+        return `run_${started.length}`;
+      },
+    });
+    box.deliver(user);
+    box.deliver(updateA1);
+    box.deliver(updateA2);
+    box.deliver(updateB);
+    box.deliver(dispatch);
+    box.release();
+    expect(started[1]!.messages.map((m) => m.id)).toEqual([...updateA1.messages, ...updateA2.messages].map((m) => m.id));
+    box.release();
+    expect(started[2]!.messages).toEqual(updateB.messages);
+    box.release();
+    expect(started[3]!.messages).toEqual(dispatch.messages);
+  });
+
   it("a person's words never join a chain-bound batch; system batches may (审查 L-5)", () => {
     const user = batch('direct', [message('用户')]);
     const edit = batch('event', [message('改过的')], { extraAttributes: { event: 'message_edited' } });

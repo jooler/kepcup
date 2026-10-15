@@ -57,7 +57,7 @@ import {
   type DbBackupRecord,
 } from './infra/backup.js';
 import './infra/test-hooks.js';
-import { systemClock, type Clock, type TimerScheduler } from './infra/clock.js';
+import { realTimerScheduler, systemClock, type Clock, type TimerScheduler } from './infra/clock.js';
 import { createEventBus, type EventBus } from './infra/events.js';
 import { withDirectConversationBots } from './infra/conversation-events.js';
 import type { RpcMethodSpec, RpcServerHandle } from './rpc/server.js';
@@ -1777,8 +1777,10 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     let todoService: TodoService | null = null;
     const todoFacade: OrchestratorTodoFacade = {
       titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
-      settleDelivered: (todoRunId, resultMessageId) => {
-        if (resultMessageId !== null) todoService?.settleDelivered(todoRunId, resultMessageId);
+      settleDelivered: (todoRunId, resultMessageId, options) => {
+        if (resultMessageId !== null) {
+          todoService?.settleDelivered(todoRunId, resultMessageId, options);
+        }
       },
       settleUnclaimed: (todoRunId) => todoService?.settleUnclaimed(todoRunId),
       settleFailed: (todoRunId, outcome) => todoService?.settleFailed(todoRunId, outcome),
@@ -2192,9 +2194,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       schedules,
       dispatcher: {
         dispatch: (input) => orchestrator.dispatchWorkbenchMessage(input),
+        dispatchUpdate: (input) => orchestrator.dispatchWorkbenchUpdate(input),
         hasTurnModel: (botId) => orchestrator.hasTurnModel(botId),
       },
       publish: publishEvent,
+      timers: options.timers ?? realTimerScheduler,
     });
     todoService = todos;
     schedules.attachWorkbench(todos);

@@ -427,12 +427,16 @@ describe('系统提示里的 <workbench> 与 BUTLER_RULES', () => {
     // 提议派活时复述标题、说明、执行者、时间，用户同意后再执行；读过外部内容后同样被拒。
     expect(butler).toContain('复述这件事的标题、说明、执行者和时间');
     expect(butler).toContain('读取过外部内容');
+    // 对进行中的事项改说明：执行者收到更新自行决定，不借此改派 / 下新任务。
+    expect(butler).toContain('执行者会收到一条「事项更新」通知，自行决定是否调整做法，不会被打断');
+    expect(butler).toContain('不要借此改派、改期，也不要在说明里塞新任务');
     // 没有注册工作台工具（deps.workbench 缺省）：对话轮的管家规则也不带工作台那几条。
     const noTools = buildSystemPrompt({ ...base, bot: makeBot('butler'), loop: 'turn' });
     expect(noTools).toContain('<butler_rules>');
     expect(noTools).toContain('用户找你闲聊或问简单问题');
     expect(noTools).not.toContain('create_todo');
     expect(noTools).not.toContain('帮我安排 / 排一下');
+    expect(noTools).not.toContain('事项更新');
     const plain = buildSystemPrompt({ ...base, bot: makeBot(), loop: 'turn' });
     expect(plain).not.toContain('create_todo');
     expect(plain).not.toContain('list_memos');

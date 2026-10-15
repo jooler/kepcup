@@ -54,6 +54,27 @@ describe('messageContentSchema（D75 task_event 不串型）', () => {
     expect(textContentSchema.safeParse({ text: 'x', origin: 'bogus' }).success).toBe(false);
   });
 
+  it('工作台事项更新（todoUpdate:true）走 text 分支，与派发共用 origin / todoId / todoRunId，向后兼容（缺省即派发）', () => {
+    const update = {
+      text: '【工作台】事项更新：整理竞品报告\n\n只看国内\n\n（由用户修改；…）',
+      origin: 'workbench',
+      todoId: 'todo_1',
+      todoRunId: 'tdr_1',
+      todoUpdate: true,
+      viaButler: true,
+      butlerDrafted: true,
+    };
+    expect(messageContentSchema.parse(update)).toEqual(update);
+    expect(textContentSchema.safeParse({ ...update, todoUpdate: 'yes' }).success).toBe(false);
+    const dispatch = {
+      text: '【工作台】x',
+      origin: 'workbench',
+      todoId: 'todo_1',
+      todoRunId: 'tdr_1',
+    };
+    expect(messageContentSchema.parse(dispatch)).toEqual(dispatch);
+  });
+
   it('system_event 与 card 不受影响', () => {
     const event = { event: 'run_interrupted', text: '执行被中断', internal: true };
     expect(messageContentSchema.parse(event)).toEqual(event);

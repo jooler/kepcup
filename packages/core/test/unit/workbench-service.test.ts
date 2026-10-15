@@ -64,6 +64,17 @@ interface StubConversation {
   readOnly: boolean;
 }
 
+interface UpdateCall {
+  conversationId: string;
+  text: string;
+  todoId: string;
+  todoRunId: string;
+  viaButler: boolean;
+  butlerDrafted: boolean;
+  leadBotId: string | null;
+  dispatchMessageId: string | null;
+}
+
 interface DispatchCall {
   conversationId: string;
   text: string;
@@ -85,10 +96,12 @@ function makeRig() {
   const members = new Map<string, string[]>();
   const published: Array<{ event: string; payload: unknown }> = [];
   const dispatched: DispatchCall[] = [];
+  const updates: UpdateCall[] = [];
   const enqueued: Array<{ type: string; payload: unknown }> = [];
   const flags = {
     hasModel: true,
     failDispatch: false,
+    failUpdate: false,
     held: false,
     /** Runs inside the dispatcher after the message was appended (before routing returns). */
     onDispatch: null as null | ((call: DispatchCall) => void),
@@ -112,6 +125,7 @@ function makeRig() {
     members,
     published,
     dispatched,
+    updates,
     enqueued,
     pendingJobs,
     cancelledJobs,
@@ -235,9 +249,16 @@ function makeRig() {
         flags.onDispatch?.(call);
         return { message, runId: null, held: flags.held };
       },
+      dispatchUpdate: (input) => {
+        if (flags.failUpdate) throw new Error('update exploded');
+        updates.push({ ...input });
+        messageSeq += 1;
+        return { message: { id: `msg_${messageSeq}` } as Message };
+      },
       hasTurnModel: () => flags.hasModel,
     },
     publish,
+    timers: clock,
   });
   schedules.attachWorkbench(todos);
   schedules.start();
@@ -1598,5 +1619,256 @@ describe('工作台事项：派发标注跟随操作者（actor）', () => {
     rig.clock.setNow(rig.todos.get(todo.id).todo.schedule!.nextFireAt!);
     await rig.fireDue();
     expect(rig.lastDispatch()).toMatchObject({ viaButler: false, butlerDrafted: true });
+  });
+});
+
+describe('事项更新通知（D90：改了已派发事项的文字，通知执行者）', () => {
+  const DEBOUNCE = 10_000;
+  const setup = () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    return rig;
+  };
+  const inProgress = (rig: Rig, extra: { notes?: string; source?: 'user' | 'butler' } = {}) => {
+    const { todo } = rig.todos.create({
+      title: '写周报',
+      notes: extra.notes ?? '原说明',
+      assignee: botAssignee('bot_a'),
+      when: 'now',
+      ...(extra.source !== undefined ? { source: extra.source } : {}),
+    });
+    return { id: todo.id, runId: rig.lastDispatch().todoRunId };
+  };
+
+  it('进行中事项改说明：去抖期过后向在途派发所在对话发一条更新；返回 notified，正文带标题 / 说明 / 修改者', () => {
+    const rig = setup();
+    const { id, runId } = inProgress(rig);
+    const result = rig.todos.update(id, { notes: '改后的说明' });
+    expect(result.notified).toBe(true);
+    // 去抖期内不发。
+    rig.clock.advance(DEBOUNCE - 1);
+    expect(rig.updates).toEqual([]);
+    rig.clock.advance(1);
+    expect(rig.updates).toHaveLength(1);
+    const [sent] = rig.updates;
+    expect(sent).toMatchObject({
+      conversationId: rig.directIdOf('bot_a'),
+      todoId: id,
+      todoRunId: runId,
+      viaButler: false,
+      butlerDrafted: false,
+      leadBotId: null,
+    });
+    expect(sent!.dispatchMessageId).toBe(rig.todos.store.getRun(runId)!.messageId);
+    expect(sent!.text).toBe(
+      '【工作台】事项更新：写周报\n\n改后的说明\n\n（由用户修改；这是对你已在做的这件事的补充，不是新任务；仅供参考，是否调整当前做法由你决定）',
+    );
+    // 事项本身不变：仍在进行中、执行记录仍是同一条在途派发。
+    expect(rig.todos.get(id).todo.status).toBe('in_progress');
+    expect(rig.todos.get(id).runs).toHaveLength(1);
+  });
+
+  it('改标题同样通知；标题与说明都没变（清洗后相同）不通知', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    expect(rig.todos.update(id, { title: '  写周报  ', notes: '原说明' }).notified).toBe(false);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    expect(rig.todos.update(id, { title: '写月报' }).notified).toBe(true);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates[0]!.text.split('\n')[0]).toBe('【工作台】事项更新：写月报');
+  });
+
+  it('说明为空时正文只有标题行和修改者行', () => {
+    const rig = setup();
+    const { id } = inProgress(rig, { notes: '先有说明' });
+    rig.todos.update(id, { notes: '' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates[0]!.text).toBe(
+      '【工作台】事项更新：写周报\n\n（由用户修改；这是对你已在做的这件事的补充，不是新任务；仅供参考，是否调整当前做法由你决定）',
+    );
+  });
+
+  it('去抖：10 秒内连续修改合成一条，带最后的文字，每次修改重新计时', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    rig.todos.update(id, { notes: '第一版' });
+    rig.clock.advance(6_000);
+    rig.todos.update(id, { notes: '第二版' });
+    rig.clock.advance(6_000);
+    rig.todos.update(id, { notes: '第三版' });
+    rig.clock.advance(9_999);
+    expect(rig.updates).toEqual([]);
+    rig.clock.advance(1);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]!.text).toContain('第三版');
+    expect(rig.updates[0]!.text).not.toContain('第一版');
+    // 发出之后的下一次修改是新的一条。
+    rig.todos.update(id, { notes: '第四版' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(2);
+    expect(rig.updates[1]!.text).toContain('第四版');
+  });
+
+  it('去抖期内改回执行者已知的文字：不发', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    rig.todos.update(id, { notes: '临时改一下' });
+    rig.clock.advance(3_000);
+    rig.todos.update(id, { notes: '原说明' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+  });
+
+  it('管家改（任何一次）：通知标注管家、viaButler；事项 source 置 butler，butlerDrafted', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    rig.todos.update(id, { notes: '用户先改', });
+    rig.todos.update(id, { notes: '管家再改一次', actor: 'butler' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]).toMatchObject({ viaButler: true, butlerDrafted: true });
+    expect(rig.updates[0]!.text).toContain('（由管家修改；');
+    expect(rig.todos.get(id).todo.source).toBe('butler');
+  });
+
+  it('管家起草过的事项（source=butler），用户之后改说明：不是 viaButler，但仍 butlerDrafted', () => {
+    const rig = setup();
+    const { id } = inProgress(rig, { source: 'butler' });
+    rig.todos.update(id, { notes: '用户补一句' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates[0]).toMatchObject({ viaButler: false, butlerDrafted: true });
+    expect(rig.updates[0]!.text).toContain('（由用户修改；');
+  });
+
+  it('不通知：草案、未到点的排期、一次性排期；下次派发自然带上新内容', async () => {
+    const rig = setup();
+    const draft = rig.todos.create({ title: '草案' }).todo;
+    const assigned = rig.todos.create({ title: '有执行者的草案', assignee: botAssignee('bot_a') }).todo;
+    const scheduled = rig.todos.create({
+      title: '排期',
+      assignee: botAssignee('bot_a'),
+      when: futureIso(rig, 3_600_000),
+    }).todo;
+    for (const todo of [draft, assigned, scheduled]) {
+      expect(rig.todos.update(todo.id, { notes: '改了' }).notified).toBe(false);
+    }
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    // 到点时派发带的是新内容。
+    rig.clock.advance(3_600_000);
+    await rig.fireDue();
+    expect(rig.lastDispatch().text).toBe('【工作台】排期\n\n改了');
+  });
+
+  it('不通知：已交付、已完成、已取消（交付后改字只改数据）', () => {
+    const rig = setup();
+    const { id, runId } = inProgress(rig);
+    rig.todos.settleDelivered(runId, 'msg_result');
+    expect(rig.todos.get(id).todo.status).toBe('delivered');
+    expect(rig.todos.update(id, { notes: '交付后改' }).notified).toBe(false);
+    rig.todos.complete(id);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+  });
+
+  it('周期事项：停在 scheduled 且最近一次执行仍在途 → 通知；最近一次已交付 → 不通知', async () => {
+    const rig = setup();
+    const { todo } = rig.todos.create({
+      title: '日报',
+      notes: '旧',
+      assignee: botAssignee('bot_a'),
+      when: '0 9 * * *',
+    });
+    // 还没触发过：没有在途派发。
+    expect(rig.todos.update(todo.id, { notes: '新一' }).notified).toBe(false);
+    rig.clock.setNow(todo.schedule!.nextFireAt!);
+    await rig.fireDue();
+    const runId = rig.lastDispatch().todoRunId;
+    expect(rig.todos.get(todo.id).todo.status).toBe('scheduled');
+    expect(rig.todos.update(todo.id, { notes: '新二' }).notified).toBe(true);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]).toMatchObject({ todoId: todo.id, todoRunId: runId });
+    // 交付后再改：不通知，下次到点自然带新内容。
+    rig.todos.settleDelivered(runId, 'msg_result');
+    expect(rig.todos.update(todo.id, { notes: '新三' }).notified).toBe(false);
+  });
+
+  it('去抖期内事项被取消 / 交付 / 又发起新的派发：不发过期的通知', async () => {
+    const rig = setup();
+    const a = inProgress(rig);
+    rig.todos.update(a.id, { notes: '改一' });
+    rig.todos.cancel(a.id);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+
+    const b = inProgress(rig);
+    rig.todos.update(b.id, { notes: '改二' });
+    rig.todos.settleDelivered(b.runId, 'msg_result');
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+
+    // 周期事项：窗口内又起了一次新的派发（新 run 带的是新文字）。
+    const { todo } = rig.todos.create({
+      title: '日报',
+      assignee: botAssignee('bot_a'),
+      when: '0 9 * * *',
+    });
+    rig.clock.setNow(todo.schedule!.nextFireAt!);
+    await rig.fireDue();
+    rig.todos.update(todo.id, { notes: '改三' });
+    rig.todos.settleDelivered(rig.lastDispatch().todoRunId, 'msg_r');
+    rig.todos.start(todo.id);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+  });
+
+  it('update(when:now) 本身就是新一次派发：不再另发更新', () => {
+    const rig = setup();
+    const draft = rig.todos.create({ title: '草案', assignee: botAssignee('bot_a') }).todo;
+    const result = rig.todos.update(draft.id, { notes: '带说明立即开始', when: 'now' });
+    expect(result.notified).toBe(false);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    expect(rig.lastDispatch().text).toContain('带说明立即开始');
+  });
+
+  it('发送失败（对话只读 / 路由抛错）只记日志，不影响事项', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    rig.flags.failUpdate = true;
+    expect(() => {
+      rig.todos.update(id, { notes: '改了' });
+      rig.clock.advance(DEBOUNCE);
+    }).not.toThrow();
+    expect(rig.todos.get(id).todo).toMatchObject({ status: 'in_progress', notes: '改了' });
+
+    const other = inProgress(rig);
+    rig.flags.failUpdate = false;
+    rig.conversations.get(rig.directIdOf('bot_a'))!.readOnly = true;
+    rig.todos.update(other.id, { notes: '又改了' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+  });
+
+  it('群执行者：通知发到群里，带负责 Bot 与派发消息 id（由 orchestrator 找实际响应的 Bot）', () => {
+    const rig = setup();
+    rig.addBot('bot_b', '阿乙');
+    rig.addGroup('conv_g', '产品组', ['bot_a', 'bot_b']);
+    const { todo } = rig.todos.create({
+      title: '群里的事',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_a' },
+      when: 'now',
+    });
+    rig.todos.update(todo.id, { notes: '补充' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]).toMatchObject({
+      conversationId: 'conv_g',
+      leadBotId: 'bot_a',
+      todoRunId: rig.lastDispatch().todoRunId,
+    });
+    expect(rig.updates[0]!.dispatchMessageId).not.toBeNull();
   });
 });
