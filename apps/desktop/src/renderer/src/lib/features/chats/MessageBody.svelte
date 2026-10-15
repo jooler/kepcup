@@ -3,7 +3,7 @@
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
-  import { avatarColorForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { lazyMarkdown } from './markdown-lazy.svelte';
   import Markdown from './Markdown.svelte';
   import { buildMentionTargets, segmentComposerText } from './composer-text';
@@ -99,7 +99,7 @@
         {merge.above ? 'rounded-tr-[6px]' : ''} {merge.below ? 'rounded-br-[6px]' : ''}
         {userBubbleColor ? '' : 'bg-primary text-primary-foreground'}"
       style:background={userBubbleColor?.hex}
-      style:color={userBubbleColor ? avatarColorForeground(userBubbleColor, 'text') : undefined}
+      style:color={userBubbleColor ? avatarOnFillForeground(userBubbleColor) : undefined}
       data-testid="user-bubble"
     >
       {#each userSegments as segment, index (index)}

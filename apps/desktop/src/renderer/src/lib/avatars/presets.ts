@@ -202,8 +202,9 @@ export interface AvatarPresetColor {
    */
   hex: string;
   /**
-   * 填充色之上的前景色（眼睛 / 用户气泡文字 / 输入框按键图标）。只给 var()
-   * 主题色（算不出对比度）；固定色缺省按对比度计算，见 avatarColorForeground。
+   * 填充色之上、随主题取反的前景色。只给 var() 主题色（算不出对比度）：
+   * 用户气泡文字与输入框按键图标见 avatarOnFillForeground；眼睛仍按对比度
+   * 计算，见 avatarColorForeground。
    */
   contrast?: string;
 }
@@ -307,6 +308,15 @@ export function avatarColorForeground(
   if (onLight === null || onDark === null) return AVATAR_FOREGROUND_LIGHT;
   if (onLight >= AVATAR_MIN_CONTRAST[use]) return AVATAR_FOREGROUND_LIGHT;
   return onDark > onLight ? AVATAR_FOREGROUND_DARK : AVATAR_FOREGROUND_LIGHT;
+}
+
+/**
+ * 铺在头像填充色上的前景：用户气泡文字、输入框右侧发送 / 语音键图标。
+ * 第一种「黑白」用对比变量，亮色黑底白字、暗色白底黑字；其余预置色都是
+ * 深色底，无论应用明暗，一律白色。眼睛不走这里（浅底仍改深色）。
+ */
+export function avatarOnFillForeground(color: AvatarPresetColor): string {
+  return color.contrast ?? AVATAR_FOREGROUND_LIGHT;
 }
 
 /** `upload:{fileName}` 的文件名；非上传值返回 null。 */

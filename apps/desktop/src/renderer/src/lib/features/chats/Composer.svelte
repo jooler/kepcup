@@ -23,7 +23,7 @@
     composerNodes,
     mergeMentionTokens,
   } from './composer-editor';
-  import { avatarColorForeground, parsePresetAvatar } from '$lib/avatars/presets';
+  import { avatarOnFillForeground, parsePresetAvatar } from '$lib/avatars/presets';
   import { mediaViewer, type LocalMedia } from './media-viewer.svelte';
   import { composerDrafts, type PendingUpload } from './composer-drafts.svelte';
   import { EMPTY_COMPOSER_DOC, isComposerDocEmpty } from './composer-draft-persist';
@@ -169,13 +169,14 @@
   );
   /**
    * 两键的填色。null 时不覆盖：发送键留主题 primary，语音键留前景色。
-   * 图标色按填充色算出黑 / 白，保证 ≥ 3:1（avatarColorForeground）。
+   * 图标色与用户气泡文字同一规则（avatarOnFillForeground）：黑白随主题取反，
+   * 其余预置色一律白。
    */
   const botAvatarButtonPaint = $derived(
     botAvatarColor
       ? {
           background: botAvatarColor.hex,
-          color: avatarColorForeground(botAvatarColor, 'graphic'),
+          color: avatarOnFillForeground(botAvatarColor),
         }
       : null,
   );
