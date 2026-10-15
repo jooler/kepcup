@@ -14,13 +14,22 @@
 
   let autostart = $state(true);
   let checking = $state(false);
-  /** 工作台开关只跟 settings 走：不与本地 mirror 双向 bind，避免写入往返时被旧快照打回。 */
-  const workbench = $derived(settingsStore.settings?.workbenchEnabled === true);
+  /** 点击后的乐观值；与 store 一致后清掉，避免往返期间被旧快照打回。 */
+  let workbenchOverride = $state<boolean | null>(null);
+  const workbench = $derived(
+    workbenchOverride !== null
+      ? workbenchOverride
+      : settingsStore.settings?.workbenchEnabled === true,
+  );
 
   $effect(() => {
     const settings = settingsStore.settings;
     if (settings) {
       autostart = settings.launchAtLogin;
+      // store 已跟上乐观值 → 放下 override，侧栏与其它订阅直接读 store。
+      if (workbenchOverride !== null && settings.workbenchEnabled === workbenchOverride) {
+        workbenchOverride = null;
+      }
     }
   });
 
@@ -46,9 +55,23 @@
   /**
    * 设置页手动开关：与定时任务数量 / 引导弹窗无关，随时可开可关。
    * 自排任务 >3 且仍关闭时只由 WorkbenchNudge 弹引导，绝不在此按数量强关或拦截。
+   * 写入后核对回读：若 core 未落库（例如进程仍跑着旧 schema），立刻提示并回滚乐观态。
    */
-  function toggleWorkbench(checked: boolean): void {
-    void settingsStore.update({ workbenchEnabled: checked });
+  async function toggleWorkbench(checked: boolean): Promise<void> {
+    workbenchOverride = checked;
+    try {
+      const next = await settingsStore.update({ workbenchEnabled: checked });
+      if (next.workbenchEnabled !== checked) {
+        workbenchOverride = null;
+        toast.error(t('settings.workbenchEnabledPersistFailed'));
+      }
+    } catch (error) {
+      workbenchOverride = null;
+      toast.error(
+        t('settings.workbenchEnabledPersistFailed') +
+          (error instanceof Error && error.message ? `（${error.message}）` : ''),
+      );
+    }
   }
 
   async function checkUpdate(): Promise<void> {
@@ -90,7 +113,7 @@
   <label class="flex items-start gap-3" data-settings-anchor="general-workbench">
     <Checkbox
       checked={workbench}
-      onCheckedChange={(checked) => toggleWorkbench(checked === true)}
+      onCheckedChange={(checked) => void toggleWorkbench(checked === true)}
       data-testid="settings-workbench-enabled"
     />
     <span class="grid gap-0.5">
