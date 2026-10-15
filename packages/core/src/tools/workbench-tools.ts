@@ -38,6 +38,8 @@ export interface WorkbenchTodoInput {
   assignee?: TodoAssignee | null | undefined;
   /** undefined = 不变，null = 清空排期，'now' = 立即开始。 */
   when?: string | null | undefined;
+  /** 操作者：决定派发消息是否带「管家代你安排」。工具层一律显式传 'butler'。 */
+  actor?: 'user' | 'butler' | undefined;
 }
 
 export interface WorkbenchToolFacade {
@@ -54,7 +56,7 @@ export interface WorkbenchToolFacade {
   ): { todo: TodoEntry; warnings: string[] };
   updateTodo(id: string, input: WorkbenchTodoInput): { todo: TodoEntry; warnings: string[] };
   /** 立即开始一条草案 / 已排期事项（周期事项保留周期，只是额外执行一次）。 */
-  startTodo(id: string): TodoEntry;
+  startTodo(id: string, actor: 'user' | 'butler'): TodoEntry;
   completeTodo(id: string): TodoEntry;
   cancelTodo(id: string): TodoEntry;
   listMemos(filter: { query?: string | undefined; trashed?: boolean | undefined }): Memo[];
@@ -221,7 +223,9 @@ function todoLine(todo: TodoEntry, facade: WorkbenchToolFacade): string {
     `执行者：${describeAssignee(todo)}`,
     `时间：${describeTiming(todo, facade)}`,
   ];
-  if (todo.blockedReason !== null) parts.push(`blocked_reason：${todo.blockedReason}`);
+  if (todo.blockedReason !== null) {
+    parts.push(`blocked_reason：${todo.blockedReason.replace(/\s+/g, ' ').trim()}`);
+  }
   parts.push(`最近执行：${describeLastRun(todo, facade)}`);
   if (todo.source === 'butler') parts.push('来源：管家');
   if (todo.notes.trim() !== '') {
@@ -433,6 +437,7 @@ export function buildWorkbenchTools(input: {
             ? { memoId: params.from_memo }
             : {}),
           source: 'butler',
+          actor: 'butler',
         });
         return {
           ok: true,
@@ -524,9 +529,9 @@ export function buildWorkbenchTools(input: {
         if (when === 'now' && workbench.getTodo(params.id).schedule?.kind === 'cron') {
           let warnings: string[] = [];
           if (Object.keys(fields).length > 0) {
-            warnings = workbench.updateTodo(params.id, fields).warnings;
+            warnings = workbench.updateTodo(params.id, { ...fields, actor: 'butler' }).warnings;
           }
-          const todo = workbench.startTodo(params.id);
+          const todo = workbench.startTodo(params.id, 'butler');
           return {
             ok: true,
             content: [
@@ -538,6 +543,7 @@ export function buildWorkbenchTools(input: {
         const { todo, warnings } = workbench.updateTodo(params.id, {
           ...fields,
           ...(when !== undefined ? { when } : {}),
+          actor: 'butler',
         });
         return {
           ok: true,

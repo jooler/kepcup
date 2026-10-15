@@ -594,3 +594,4 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - 文档：dev/04 去掉「经 collaboration 包注入」的说法；**撤销** W2 对 shared `host-capabilities.ts` 的改动（turn 不走外部引擎、task 不注册这些工具，该改动不生效；`butlerTools` 恢复原样，shared 无改动）；「steer 进来的消息不改变 `triggerFromUser`」说明删除（turn 不会被 steer）。
 - 后续（不改，存量问题，不在 D90 范围）：**统一门控**——`delegate_to_bot`、带 @ 的 `send_message`、`start_task` 没有 `triggerFromUser` 门控，非本人触发的管家轮仍能通过这些旧工具把活推给其它 Bot。
 
+- 合入 W1-core 修复轮（`63b0ed9`，无冲突）后接 actor：工具层的 `create_todo` / `update_todo` 以及周期事项分流的 `startTodo` 一律显式传 `actor: 'butler'`（facade 的 `startTodo(id, actor)`），所以管家指派 / 开始用户建的事项，派发也带 `viaButler` 与「（管家代你安排）」；管家起草（`source='butler'`）的事项另带 `butlerDrafted`。测试里依赖 `viaButler` 旧含义的只有「管家建 + 立即开始」那条，含义未变（操作者是管家），并补了 `butlerDrafted` 断言；新增「管家开始用户建的草案 / 周期事项」两条集成测试（带 `viaButler`、不带 `butlerDrafted`）。`list_todos` 对 core 新增的各种 `blocked_reason`（执行失败 / 执行已被取消 / 派发失败 / 对话已删除 / Bot 设置中）原样显示（折叠成一行、在 `<untrusted>` 内）；`<workbench>` 段只计数，这些事项按草案计入。
