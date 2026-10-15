@@ -78,7 +78,10 @@ export interface WorkbenchMessagePort {
     text: string;
     todoId: string;
     todoRunId: string;
+    /** The operation that triggered this dispatch was the butler's. */
     viaButler: boolean;
+    /** The todo was drafted by the butler (`source='butler'`): its notes may carry external content. */
+    butlerDrafted: boolean;
     /** Group assignee's lead bot: the message @-mentions it (explicit target). */
     leadBotId: string | null;
     /** Runs after the message is stored + published, before it is routed to a bot. */
@@ -105,6 +108,13 @@ export interface TodoServiceDeps {
   publish?: ((event: string, payload: unknown) => void) | undefined;
 }
 
+/**
+ * Who performs an operation: the user themselves, or the butler through its tools. It decides how
+ * a dispatch is attributed (「（管家代你安排）」, `viaButler`); the todo's `source` only records who
+ * created it.
+ */
+export type TodoActor = TodoSource;
+
 export interface CreateTodoInput {
   title: string;
   notes?: string | undefined;
@@ -112,7 +122,10 @@ export interface CreateTodoInput {
   /** 'now' | ISO 8601 | cron | null / undefined = not scheduled. */
   when?: string | null | undefined;
   memoId?: string | undefined;
+  /** Who created the todo (stored). Default 'user'. */
   source?: TodoSource | undefined;
+  /** Who performs this call (attributes an immediate dispatch / the schedule). Default = `source`. */
+  actor?: TodoActor | undefined;
 }
 
 export interface UpdateTodoInput {
@@ -122,6 +135,8 @@ export interface UpdateTodoInput {
   assignee?: TodoAssignee | null | undefined;
   /** undefined = unchanged, null = clear the schedule, 'now' = dispatch immediately. */
   when?: string | null | undefined;
+  /** Who performs this call. Default 'user'. */
+  actor?: TodoActor | undefined;
 }
 
 export interface ListTodosInput {
@@ -139,6 +154,8 @@ interface DispatchContext {
    * periodic todo then leaves `scheduled` for `in_progress` instead of staying parked.
    */
   consumeSchedule?: boolean;
+  /** Who triggered this dispatch (a due schedule: whoever last set it). */
+  actor: TodoActor;
 }
 
 const NOW = 'now';
@@ -240,6 +257,7 @@ export class TodoService implements WorkbenchDispatchPort {
     if (input.memoId !== undefined && this.memos.get(input.memoId) === null) {
       throw new AppError('NOT_FOUND', `备忘 ${input.memoId} 不存在`);
     }
+    const actor: TodoActor = input.actor ?? input.source ?? 'user';
     return this.#guard(() => {
       const todo = this.store.insert({
         title,
@@ -251,8 +269,8 @@ export class TodoService implements WorkbenchDispatchPort {
       this.#changed(todo.id);
       let current = todo;
       try {
-        if (when === NOW) current = this.#dispatch(todo, {});
-        else if (when !== null) current = this.#schedule(todo, when);
+        if (when === NOW) current = this.#dispatch(todo, { actor });
+        else if (when !== null) current = this.#schedule(todo, when, undefined, actor);
       } catch (error) {
         // The todo is kept as a draft with the reason; the caller still gets the error.
         this.store.update(todo.id, {
@@ -267,6 +285,7 @@ export class TodoService implements WorkbenchDispatchPort {
   }
 
   update(id: string, input: UpdateTodoInput): { todo: TodoEntry; warnings: string[] } {
+    const actor: TodoActor = input.actor ?? 'user';
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，请先重新打开再修改`);
@@ -317,7 +336,7 @@ export class TodoService implements WorkbenchDispatchPort {
           return assigneeChanged ? this.#applyAssignee(updated, input.assignee!) : updated;
         });
         try {
-          current = this.#dispatch(current, { consumeSchedule: true });
+          current = this.#dispatch(current, { consumeSchedule: true, actor });
         } catch (error) {
           if (assigneeChanged) {
             this.store.update(id, { assignee: todo.assignee, blockedReason: todo.blockedReason });
@@ -338,13 +357,13 @@ export class TodoService implements WorkbenchDispatchPort {
           this.#toDraft(current, { assignee: null, blockedReason: null });
         } else if (typeof when === 'string') {
           if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
-          this.#schedule(current, when);
+          this.#schedule(current, when, undefined, actor);
         } else if (when === null) {
           // 「退回草案」: the schedule goes; a simultaneous reassignment is kept.
           if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
           this.#toDraft(current, { blockedReason: null });
         } else if (assigneeChanged) {
-          this.#reassign(current, input.assignee!);
+          this.#reassign(current, input.assignee!, actor);
         }
       });
       this.#changed(id);
@@ -356,7 +375,7 @@ export class TodoService implements WorkbenchDispatchPort {
   // --- transitions ---------------------------------------------------------------
 
   /** 立即开始: dispatches a draft (or scheduled) todo now; needs an assignee. */
-  start(id: string): TodoEntry {
+  start(id: string, actor: TodoActor = 'user'): TodoEntry {
     const todo = this.#getOrThrow(id);
     if (todo.status !== 'draft' && todo.status !== 'scheduled') {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不能立即开始`);
@@ -368,7 +387,7 @@ export class TodoService implements WorkbenchDispatchPort {
       // Dispatch first: if routing throws, the schedule is still there. A one-off schedule is
       // replaced by this dispatch; a periodic one keeps running (and the todo stays
       // `scheduled`) — compare update `when:'now'`, which ends the periodic schedule.
-      const dispatched = this.#dispatch(this.#getOrThrow(id), {});
+      const dispatched = this.#dispatch(this.#getOrThrow(id), { actor });
       if (schedule !== null && schedule.kind === 'once') this.#cancelSchedules(id);
       return this.toEntry(this.store.get(id) ?? dispatched);
     });
@@ -448,7 +467,7 @@ export class TodoService implements WorkbenchDispatchPort {
   // --- scheduling ------------------------------------------------------------------
 
   /** Creates (or moves) the schedule of `todo` and parks it in `scheduled`. */
-  #schedule(todo: Todo, when: string, timezone?: string): Todo {
+  #schedule(todo: Todo, when: string, timezone: string | undefined, actor: TodoActor): Todo {
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
     const target = this.#targetOf(assignee);
@@ -474,12 +493,14 @@ export class TodoService implements WorkbenchDispatchPort {
         });
         if (existing !== null) this.#deps.schedules.cancel(existing.id, { reassigned: true });
       }
+      // The last actor to set the schedule is who a due dispatch is attributed to.
+      this.store.setScheduledBy(todo.id, actor);
       return this.#move(todo, 'scheduled', { blockedReason: null });
     });
   }
 
   /** Executor changed while draft / scheduled: a live schedule moves to the new target. */
-  #reassign(todo: Todo, assignee: TodoAssignee): Todo {
+  #reassign(todo: Todo, assignee: TodoAssignee, actor: TodoActor): Todo {
     const existing = this.#activeSchedule(todo.id);
     const updated = this.#applyAssignee(todo, assignee);
     if (existing === null) return updated;
@@ -489,7 +510,7 @@ export class TodoService implements WorkbenchDispatchPort {
       this.#cancelSchedules(todo.id);
       return this.#toDraft(updated, { blockedReason: '原定时间已过，请重新选择时间' });
     }
-    return this.#schedule(updated, carried.when, carried.timezone);
+    return this.#schedule(updated, carried.when, carried.timezone, actor);
   }
 
   #applyAssignee(todo: Todo, assignee: TodoAssignee): Todo {
@@ -535,6 +556,8 @@ export class TodoService implements WorkbenchDispatchPort {
           scheduleId: input.scheduleId,
           fireAt: input.fireAt,
           lateByMs: input.lateByMs,
+          // Whoever last set the schedule (an older row without a record: the creator).
+          actor: this.store.scheduledBy(todo.id) ?? todo.source,
         });
       } catch (error) {
         // The executor is gone / unwritable: the todo returns to draft with the reason.
@@ -561,7 +584,8 @@ export class TodoService implements WorkbenchDispatchPort {
     this.#validateAssignee(assignee);
     const target = this.#targetOf(assignee);
     const run = this.store.insertRun({ todoId: todo.id, conversationId: target.conversationId });
-    const viaButler = todo.source === 'butler';
+    const viaButler = context.actor === 'butler';
+    const butlerDrafted = todo.source === 'butler';
     // A periodic todo keeps its `scheduled` parking spot; a one-off becomes in_progress. It
     // moves BEFORE routing: routing can settle synchronously (an empty group → no_claim), and
     // that settlement must find the todo in progress.
@@ -577,6 +601,7 @@ export class TodoService implements WorkbenchDispatchPort {
           todoId: todo.id,
           todoRunId: run.id,
           viaButler,
+          butlerDrafted,
           leadBotId: assignee.kind === 'group' ? assignee.leadBotId : null,
           onAppended: (message) => {
             this.store.updateRun(run.id, { messageId: message.id });
@@ -600,7 +625,7 @@ export class TodoService implements WorkbenchDispatchPort {
 
   #dispatchText(todo: Todo, context: DispatchContext): string {
     const lines = [
-      `${WORKBENCH_DISPATCH_TAG}${todo.title}${todo.source === 'butler' ? WORKBENCH_BUTLER_NOTE : ''}`,
+      `${WORKBENCH_DISPATCH_TAG}${todo.title}${context.actor === 'butler' ? WORKBENCH_BUTLER_NOTE : ''}`,
     ];
     if (todo.notes.trim().length > 0) lines.push('', todo.notes.trim());
     if (context.lateByMs != null && context.fireAt !== undefined) {

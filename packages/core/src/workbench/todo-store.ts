@@ -233,6 +233,21 @@ export class TodoStore {
     return this.get(id);
   }
 
+  /**
+   * Who last set the todo's schedule ('user' | 'butler'); null = never scheduled. Kept out of the
+   * shared `Todo` — it only decides how a due dispatch is attributed. Does not bump `updated_at`.
+   */
+  scheduledBy(id: string): TodoSource | null {
+    const row = this.db.prepare('select scheduled_by from todos where id = ?').get(id) as
+      | { scheduled_by: TodoSource | null }
+      | undefined;
+    return row?.scheduled_by ?? null;
+  }
+
+  setScheduledBy(id: string, actor: TodoSource | null): void {
+    this.db.prepare('update todos set scheduled_by = ? where id = ?').run(actor, id);
+  }
+
   /** Hard delete (cascades todo_runs; schedules.todo_id is set null). Tools never call it. */
   delete(id: string): boolean {
     return this.db.prepare('delete from todos where id = ?').run(id).changes > 0;

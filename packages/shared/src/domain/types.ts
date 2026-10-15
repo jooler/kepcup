@@ -829,10 +829,15 @@ export const textContentSchema = z.object({
   todoId: z.string().optional(),
   todoRunId: z.string().optional(),
   /**
-   * origin = 'workbench' 且事项由管家创建（source = 'butler'）时为 true：派发卡可标「管家代你安排」，
+   * origin = 'workbench' 且触发这次派发的操作是管家做的（actor = 'butler'）时为 true：派发卡可标「管家代你安排」，
    * 记忆反思不把这条文字当作用户原话（D90 §4.4）。
    */
   viaButler: z.boolean().optional(),
+  /**
+   * origin = 'workbench' 且事项由管家起草过（source = 'butler'）时为 true：说明里可能混入管家读到的
+   * 外部内容，执行者上下文按不可信数据包裹（与 viaButler 取并集）；不代表这次派发是管家操作的。
+   */
+  butlerDrafted: z.boolean().optional(),
   /** origin = 'widget'（D87 P4 L3）时发出它的组件与版本：用户经组件回传、确认后发出的消息。 */
   widgetId: z.string().optional(),
   widgetVersion: z.number().int().optional(),

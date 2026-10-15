@@ -1450,10 +1450,12 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         ...(input.when !== undefined ? { when: input.when } : {}),
         ...(input.memoId !== undefined ? { memoId: input.memoId } : {}),
         source: 'user',
+        actor: 'user',
       }),
     ),
     'todos.update': method(todosUpdateInputSchema, todosWriteOutputSchema, async (input) =>
       requireTodos(services).update(input.id, {
+        actor: 'user',
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
@@ -1461,7 +1463,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       }),
     ),
     'todos.start': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
-      todo: requireTodos(services).start(input.id),
+      todo: requireTodos(services).start(input.id, 'user'),
     })),
     'todos.complete': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
       todo: requireTodos(services).complete(input.id),

@@ -1006,6 +1006,7 @@ export class Orchestrator {
     todoId: string;
     todoRunId: string;
     viaButler: boolean;
+    butlerDrafted?: boolean | undefined;
     leadBotId: string | null;
     onAppended?: ((message: Message) => void) | undefined;
   }): { message: Message; runId: string | null; held: boolean } {
@@ -1025,6 +1026,7 @@ export class Orchestrator {
         todoId: input.todoId,
         todoRunId: input.todoRunId,
         ...(input.viaButler ? { viaButler: true } : {}),
+        ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
       },
     });
     this.#deps.publish('message.created', { conversationId: input.conversationId, message });

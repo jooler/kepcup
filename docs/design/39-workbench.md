@@ -138,7 +138,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 派发 = 宿主在目标对话里追加一条**可见消息**，然后按用户消息路由。消息构成：
 
-- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；管家创建的事项另带 `viaButler: true`。
+- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；触发这次派发的操作是管家做的另带 `viaButler: true`（到点派发取最后一次设置排期的操作者）；事项由管家起草过另带 `butlerDrafted: true`（说明按不可信数据对待）。
 - 正文为 `【工作台】标题` + 说明。管家建的事项另加「（管家代你安排）」。
 - 群里指定了负责 Bot 时，加结构化 @。
 - 界面上渲染成「派发卡」而不是普通气泡：标题、说明、「在工作台查看」。

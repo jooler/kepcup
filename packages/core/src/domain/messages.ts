@@ -135,7 +135,14 @@ export interface AppendMessageInput {
    * text messages only (D90): a user message the workbench dispatched on the user's behalf —
    * `origin: 'workbench'` + the todo and its run (rendered as a dispatch card).
    */
-  workbench?: { todoId: string; todoRunId: string; viaButler?: boolean | undefined } | undefined;
+  workbench?:
+    | {
+        todoId: string;
+        todoRunId: string;
+        viaButler?: boolean | undefined;
+        butlerDrafted?: boolean | undefined;
+      }
+    | undefined;
   /**
    * text messages only (D90 §4.5): a reply of a turn that belongs to a dispatched todo — the
    * todo, its run and a title snapshot (「📋 标题」 tag under the bubble).
@@ -380,6 +387,7 @@ export class MessagesService {
                     todoId: input.workbench.todoId,
                     todoRunId: input.workbench.todoRunId,
                     ...(input.workbench.viaButler === true ? { viaButler: true } : {}),
+                    ...(input.workbench.butlerDrafted === true ? { butlerDrafted: true } : {}),
                   }
                 : {}),
               ...(input.scheduleSource !== undefined

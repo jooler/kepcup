@@ -1283,7 +1283,8 @@ export function applyProfileChanges(
  */
 export function isProxiedUserText(message: Message): boolean {
   if (message.kind !== 'text' || !('origin' in message.content)) return false;
-  const content = message.content as { origin?: string; viaButler?: boolean };
-  if (content.origin === 'workbench') return content.viaButler === true;
+  const content = message.content as { origin?: string; viaButler?: boolean; butlerDrafted?: boolean };
+  // A butler-made dispatch, or a todo the butler drafted (its notes may carry external content).
+  if (content.origin === 'workbench') return content.viaButler === true || content.butlerDrafted === true;
   return content.origin === 'delegation' || content.origin === 'widget';
 }

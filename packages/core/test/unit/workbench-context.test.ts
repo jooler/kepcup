@@ -50,6 +50,13 @@ const butlerDispatch = makeMessage({
   todoRunId: 'tdr_1',
   viaButler: true,
 });
+const butlerDrafted = makeMessage({
+  text: '【工作台】整理竞品报告',
+  origin: 'workbench',
+  todoId: 'todo_1',
+  todoRunId: 'tdr_1',
+  butlerDrafted: true,
+});
 const typed = makeMessage({ text: '你好' });
 
 describe('triggerFromUser：工作台派发不算用户本人（与委派代发相同）', () => {
@@ -73,6 +80,13 @@ describe('上下文渲染：派发消息标明来源', () => {
     expect(line).toContain('用户（经工作台派发）]');
     expect(line).toContain('【工作台】整理竞品报告');
     expect(line).not.toContain('<untrusted');
+  });
+
+  it('管家起草、用户亲手派发的事项：同样包进 untrusted，但标「事项由管家起草」而不是「代为安排」', () => {
+    const line = renderMessageLine(butlerDrafted, options);
+    expect(line).toContain('<untrusted source="butler">【工作台】整理竞品报告</untrusted>');
+    expect(line).toContain('事项由管家起草');
+    expect(line).not.toContain('由管家代为安排');
   });
 
   it('管家代为安排的事项：标题和说明包进 <untrusted source="butler">，标明非用户原话并要求按非本人指令处理', () => {
@@ -100,6 +114,8 @@ describe('记忆证据：管家代写的派发不算用户证据（widget / dele
   it('isProxiedUserText：仅 viaButler 的 workbench、delegation、widget 为真；用户亲自写的 workbench 事项为假', () => {
     expect(isProxiedUserText(butlerDispatch)).toBe(true);
     expect(isProxiedUserText(dispatch)).toBe(false);
+    // 管家起草过的事项（用户亲手派发）：说明可能含外部内容，同样不算用户原话。
+    expect(isProxiedUserText(butlerDrafted)).toBe(true);
     expect(isProxiedUserText(typed)).toBe(false);
     expect(isProxiedUserText(makeMessage({ text: 'x', origin: 'delegation', delegatedBy: 'bot_a' }))).toBe(true);
     expect(isProxiedUserText(makeMessage({ text: 'x', origin: 'widget', widgetId: 'w' }))).toBe(true);
@@ -115,6 +131,7 @@ describe('记忆证据：管家代写的派发不算用户证据（widget / dele
     expect(hasUserEvidence(['x'], ctx(typed))).toBe(true);
     expect(hasUserEvidence(['x'], ctx(dispatch))).toBe(true);
     expect(hasUserEvidence(['x'], ctx(butlerDispatch))).toBe(false);
+    expect(hasUserEvidence(['x'], ctx(butlerDrafted))).toBe(false);
     expect(
       hasUserEvidence(['x'], ctx(makeMessage({ text: 'x', origin: 'widget', widgetId: 'w' }))),
     ).toBe(false);
