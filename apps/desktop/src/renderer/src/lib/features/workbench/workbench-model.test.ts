@@ -10,7 +10,6 @@ import {
   effectiveStatus,
   filterMemos,
   groupMembers,
-  idleMembers,
   laneIdOfTodo,
   memoToTodoDraft,
   parseDispatchText,
@@ -202,23 +201,6 @@ describe('buildLanes', () => {
     expect(buildLanes({ todos: [t], schedules: [], bots, groups }).map((l) => l.id)).toEqual([
       'group:g1',
     ]);
-  });
-});
-
-describe('idleMembers', () => {
-  it('没有未结束事项、也没有自排任务的 Bot；管家不算', () => {
-    const idle = idleMembers({
-      todos: [
-        todo('t1', toBot('a')),
-        todo('t2', toBot('b', { status: 'done' })),
-        todo('t3', { assignee: { kind: 'group', conversationId: 'g1', leadBotId: 'c' } }),
-      ],
-      schedules: [self('s1', 'd'), self('s2', 'b', { origin: 'workbench', todoId: 't9' })],
-      bots,
-      groups,
-    });
-    // a 有事项、d 有自排；b 的事项已结束、workbench 排期不算自排；群的负责 Bot c 不算忙。
-    expect(idle.map((m) => m.id)).toEqual(['b', 'c']);
   });
 });
 

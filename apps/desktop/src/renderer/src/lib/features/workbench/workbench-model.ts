@@ -2,7 +2,7 @@ import type { Memo, ScheduleEntry, ScheduleOrigin, TodoEntry, TodoStatus } from 
 import { TODO_NOTES_MAX_CHARS, TODO_TITLE_MAX_CHARS } from '@kepcup/shared';
 
 /**
- * 工作台的纯数据逻辑（D90 §5.2 / §5.4）：事项按成员分道与排序、空闲成员、
+ * 工作台的纯数据逻辑（D90 §5.2 / §5.4）：事项按成员分道与排序、
  * 自排任务归道、备忘的排序 / 本地过滤 / 转事项预填、派发消息正文解析。
  * 不碰 store / RPC，渲染层只负责呈现，单测覆盖这里。
  */
@@ -62,7 +62,7 @@ export function laneIdOfTodo(todo: Pick<TodoEntry, 'assignee'>): string {
 export interface MemberInfo {
   id: string;
   name: string;
-  /** Bot 才有：管家（可被指派，但不进「空闲成员」条）。 */
+  /** Bot 才有：管家（可被指派；执行者选择器里带「管家」后缀）。 */
   isButler?: boolean;
 }
 
@@ -256,19 +256,6 @@ export function closedTodos(todos: readonly TodoEntry[]): TodoEntry[] {
   return todos
     .filter((todo) => !isOpenTodo(todo))
     .sort((a, b) => (b.closedAt ?? b.updatedAt) - (a.closedAt ?? a.updatedAt));
-}
-
-/**
- * 空闲成员：active Bot 中既没有未结束事项、也没有自排 active 定时任务的。
- * 管家不进这一条（它是助理，不是等着派活的员工；仍可在执行者选择器里选）。保持传入顺序。
- */
-export function idleMembers(input: LaneInput): MemberInfo[] {
-  const busy = new Set<string>();
-  for (const todo of input.todos) {
-    if (isOpenTodo(todo) && todo.assignee?.kind === 'bot') busy.add(todo.assignee.botId);
-  }
-  for (const schedule of selfSchedulesOf(input.schedules)) busy.add(schedule.botId as string);
-  return input.bots.filter((bot) => bot.isButler !== true && !busy.has(bot.id));
 }
 
 // ---------------------------------------------------------------------------
