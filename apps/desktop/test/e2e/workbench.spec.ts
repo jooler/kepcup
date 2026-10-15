@@ -472,10 +472,11 @@ test('scheduled todo: receipt card, next-fire display, fires on time even with p
     reflections(llm);
 
     await openWorkbench(page);
-    await page.locator('[data-testid="todo-idle-member"]').filter({ hasText: '阿时' }).click();
+    await quickAdd(page, '汇总周报');
+    await todoCard(page, '汇总周报').click();
     await expect(page.locator('[data-testid="todo-drawer"]')).toBeVisible();
+    await pickAssignee(page, '阿时');
     await expect(page.locator('[data-testid="todo-assignee"]')).toContainText('阿时');
-    await page.locator('[data-testid="todo-title"]').fill('汇总周报');
     await page.locator('[data-testid="todo-when-once"]').click();
     await page
       .locator('[data-testid="todo-when-once-input"]')
@@ -751,8 +752,9 @@ test('drawer: view from chat, dirty-close guard, repeat preset; deleting the exe
     await expect(drawer).toHaveCount(0);
 
     // 周期事项：「重复」预设，卡片显示人话周期与下次时间。
-    await page.locator('[data-testid="todo-idle-member"]').filter({ hasText: '阿删' }).click();
-    await page.locator('[data-testid="todo-title"]').fill('每日站会纪要');
+    await quickAdd(page, '每日站会纪要');
+    await todoCard(page, '每日站会纪要').click();
+    await pickAssignee(page, '阿删');
     await page.locator('[data-testid="todo-when-repeat"]').click();
     await expect(page.locator('[data-testid="todo-when-next"]')).toContainText('下次');
     await page.locator('[data-testid="todo-save"]').click();
@@ -970,7 +972,11 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await expect(page.locator('[data-testid="memo-card"]')).toHaveCount(2);
 
     await quickAdd(page, longTitle);
-    await page.locator('[data-testid="todo-idle-member"]').first().click();
+    await page
+      .locator('[data-testid="todo-lane"][data-lane-kind="unassigned"] [data-testid="todo-lane-add"]')
+      .click();
+    await expect(page.locator('[data-testid="todo-drawer"]')).toBeVisible();
+    await pickAssignee(page, '阿长名字特别特别特别特别特别长的助手');
     await page.locator('[data-testid="todo-title"]').fill(longTitle);
     await page.locator('[data-testid="todo-notes"]').fill(longWord);
     await page.locator('[data-testid="todo-when-once"]').click();

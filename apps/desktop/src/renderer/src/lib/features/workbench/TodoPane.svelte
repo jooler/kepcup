@@ -6,7 +6,6 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { Input } from '$lib/components/ui/input';
-  import MemberAvatar from './MemberAvatar.svelte';
   import TodoCard from './TodoCard.svelte';
   import TodoLane from './TodoLane.svelte';
   import {
@@ -14,7 +13,6 @@
     buildLanes,
     closedTodos,
     groupMembers,
-    idleMembers,
     runningBotSet,
   } from './workbench-model';
   import { rpcErrorText } from './todo-actions';
@@ -24,7 +22,7 @@
 
   /**
    * 事项栏（D90 §5.2，P0 只有「按成员」视图）：快速新建（回车存为草案）→ 成员道
-   * （未指派在前，其后有事的 Bot 与群）→ 空闲成员条 → 最近结束。
+   * （未指派在前，其后有事的 Bot 与群）→ 最近结束。
    */
   const bots = $derived(botMembers(contacts.bots));
   // 会话列表每条消息都会换新数组：只取成员签名（群 id / 标题、在跑的 Bot），签名不变就不重算分道。
@@ -46,9 +44,6 @@
   const running = $derived(new Set(runningSig === '' ? [] : runningSig.split(',')));
   const lanes = $derived(
     buildLanes({ todos: workbench.todos, schedules: workbench.schedules, bots, groups }),
-  );
-  const idle = $derived(
-    idleMembers({ todos: workbench.todos, schedules: workbench.schedules, bots, groups }),
   );
   const closed = $derived(closedTodos(workbench.todos));
 
@@ -108,31 +103,6 @@
     {#each lanes as lane (lane.id)}
       <TodoLane {lane} running={lane.kind === 'bot' && running.has(lane.memberId ?? '')} />
     {/each}
-
-    {#if idle.length > 0}
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-1" data-testid="todo-idle">
-        <span class="text-xs text-muted-foreground">
-          {t('workbench.idle.title')}
-          <span class="opacity-70">· {t('workbench.idle.hint')}</span>
-        </span>
-        {#each idle as member (member.id)}
-          <button
-            type="button"
-            class="inline-flex cursor-pointer items-center gap-1 rounded-full border bg-background py-0.5 pr-2 pl-0.5 text-xs transition-colors hover:bg-accent"
-            title={t('workbench.idle.assign', { name: member.name })}
-            onclick={() => workbench.newTodo({ assignee: { kind: 'bot', botId: member.id } })}
-            data-testid="todo-idle-member"
-            data-bot-id={member.id}
-          >
-            <MemberAvatar kind="bot" id={member.id} name={member.name} class="size-5" />
-            {member.name}
-            {#if running.has(member.id)}
-              <span class="size-1.5 animate-pulse rounded-full bg-emerald-500"></span>
-            {/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
 
     {#if closed.length > 0}
       <div data-testid="todo-closed">
