@@ -341,7 +341,7 @@ export class ScheduleService {
    * (deferred to the quiet end). The tool result relays these to the user.
    */
   fireabilityWarnings(row: Schedule): string[] {
-    const bot = this.#deps.bots.get(row.botId);
+    const bot = row.botId === null ? null : this.#deps.bots.get(row.botId);
     if (bot === null) return [];
     const behavior = bot.profile.behavior;
     const warnings: string[] = [];
@@ -390,7 +390,9 @@ export class ScheduleService {
     if (row.origin !== 'offer') {
       // The user said yes in words and the bot scheduled it directly: the
       // pending offer for the same thing must not create a second one later.
-      this.#resolvePendingOffers(row.botId, row.conversationId, 'superseded', scheduleDisplayTitle(row));
+      if (row.botId !== null) {
+        this.#resolvePendingOffers(row.botId, row.conversationId, 'superseded', scheduleDisplayTitle(row));
+      }
       this.#appendReceipt(row);
     }
     this.#publishChanged(row);
@@ -827,12 +829,15 @@ export class ScheduleService {
 
   #fire(row: Schedule, fireAt: number): void {
     try {
-      const bot = this.#deps.bots.get(row.botId);
+      const botId = row.botId;
+      const bot = botId === null ? null : this.#deps.bots.get(botId);
       const conversation = this.#deps.conversations.get(row.conversationId);
       const isMember =
         conversation !== null &&
-        this.#deps.conversations.memberBotIds(row.conversationId).includes(row.botId);
+        botId !== null &&
+        this.#deps.conversations.memberBotIds(row.conversationId).includes(botId);
       if (
+        botId === null ||
         bot === null ||
         bot.status !== 'active' ||
         conversation === null ||
@@ -848,7 +853,7 @@ export class ScheduleService {
 
       // 承诺作废/撤回后任务取消（任务 6；事件之外的双查兜底）。
       if (row.commitmentId !== null) {
-        const commitment = this.#deps.memory.getItemFor(row.botId, row.commitmentId);
+        const commitment = this.#deps.memory.getItemFor(botId, row.commitmentId);
         if (commitment === null || commitment.status !== 'active') {
           this.#setStatus(row, 'cancelled');
           this.#reload();
@@ -861,7 +866,7 @@ export class ScheduleService {
         behavior: bot.profile.behavior,
         now,
         timeZone: this.#deps.timeZone,
-        sentToday: this.sentProactiveCount(row.botId, now),
+        sentToday: this.sentProactiveCount(botId, now),
         isEvent: false,
       });
       if (verdict.kind === 'defer') {
@@ -878,14 +883,14 @@ export class ScheduleService {
       const lateByMs = now - fireAt;
       const commitmentContent =
         row.commitmentId !== null
-          ? (this.#deps.memory.getItemFor(row.botId, row.commitmentId)?.content ?? null)
+          ? (this.#deps.memory.getItemFor(botId, row.commitmentId)?.content ?? null)
           : null;
       const text =
         row.commitmentId !== null
           ? `承诺到期：${commitmentContent ?? row.note}`
           : `定时任务触发：${row.note}`;
       this.#deps.orchestrator.deliverScheduleToBot({
-        botId: row.botId,
+        botId,
         conversationId: row.conversationId,
         scheduleId: row.id,
         text,
@@ -1206,7 +1211,7 @@ export class ScheduleService {
         : this.store.listActive();
     const now = this.#deps.clock.now();
     return rows.map((row) => {
-      const bot = this.#deps.bots.get(row.botId);
+      const bot = row.botId === null ? null : this.#deps.bots.get(row.botId);
       return {
         ...row,
         botName: bot?.profile.identity.name ?? bot?.name ?? null,
@@ -1228,7 +1233,7 @@ export class ScheduleService {
 
   /** Live guard verdict for an active task that cannot fire right now. */
   #deferredReason(row: Schedule, profile: BotProfile | null, now: number): string | null {
-    if (row.status !== 'active' || profile === null) return null;
+    if (row.status !== 'active' || profile === null || row.botId === null) return null;
     const verdict = this.#verdictFor(profile, row.botId, now);
     return verdict.kind === 'defer' ? guardReasonText(verdict.reason) : null;
   }

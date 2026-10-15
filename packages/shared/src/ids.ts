@@ -48,6 +48,12 @@ export const ID_PREFIXES = {
   mal: 'mal_',
   /** Bot 资产移交（D88，main.db bot_handovers）。 */
   hnd: 'hnd_',
+  /** 工作台事项（D90，main.db todos）。 */
+  todo: 'todo_',
+  /** 工作台事项的一次派发（D90，main.db todo_runs）。 */
+  tdr: 'tdr_',
+  /** 工作台备忘（D90，main.db memos）；与记忆条目 `mem_` 无关。 */
+  memo: 'memo_',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

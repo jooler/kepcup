@@ -67,7 +67,8 @@ export class ScheduleAdapter implements HandoverAdapter {
   }
 
   /** A 私聊里的任务（null = 群里的，或对话已不存在）。 */
-  #isDirectOf(conversationId: string, botId: string): boolean {
+  #isDirectOf(conversationId: string, botId: string | null): boolean {
+    if (botId === null) return false;
     const conversation = this.#deps.conversations.get(conversationId);
     return conversation?.type === 'direct' && conversation.directBotId === botId;
   }
@@ -79,7 +80,9 @@ export class ScheduleAdapter implements HandoverAdapter {
   }
 
   #commitment(row: Schedule): MemoryItem | null {
-    if (row.commitmentId === null || this.#deps.memory === undefined) return null;
+    if (row.commitmentId === null || row.botId === null || this.#deps.memory === undefined) {
+      return null;
+    }
     return this.#deps.memory.get(row.botId, row.commitmentId);
   }
 
@@ -152,7 +155,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     const memory = this.#deps.memory;
     if (this.#resumable(ctx, row)) {
       // Resumed after a crash between the transfer and voiding A's commitment.
-      if (row.commitmentId !== null && memory !== undefined) {
+      if (row.commitmentId !== null && row.botId !== null && memory !== undefined) {
         memory.voidCommitment(row.botId, row.commitmentId);
       }
       return { result: { resumed: true } };
@@ -163,6 +166,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     let commitmentId: string | undefined;
     if (row.commitmentId !== null) {
       if (memory === undefined) throw new Error('当前环境不支持迁移承诺');
+      if (row.botId === null) throw new Error('这条定时任务关联的承诺已失效');
       // 1. B 的承诺副本（按来源记录幂等；上一次没移交成而被作废的不复用，重新复制）。
       let copy = memory.findCopy(ctx.toBot.id, ctx.handoverId, row.commitmentId);
       if (copy === null || copy.status !== 'active') {
@@ -199,7 +203,7 @@ export class ScheduleAdapter implements HandoverAdapter {
       throw error;
     }
     // 3. A 的承诺作废（不再进 <my_state>、不再提醒）。
-    if (row.commitmentId !== null && memory !== undefined) {
+    if (row.commitmentId !== null && row.botId !== null && memory !== undefined) {
       memory.voidCommitment(row.botId, row.commitmentId);
     }
     return {
@@ -215,7 +219,7 @@ export class ScheduleAdapter implements HandoverAdapter {
     const scheduleId = keyId(key, 'schedule') ?? '';
     if (!this.#deps.schedules.transferredTo(scheduleId, ctx.toBot.id)) return false;
     const row = this.#deps.schedules.get(scheduleId);
-    if (row === null || row.commitmentId === null) return true;
+    if (row === null || row.commitmentId === null || row.botId === null) return true;
     // 承诺联动的：本次移交确实给了 B 承诺副本，且 A 的承诺也作废了才算完成。
     if (!this.#resumable(ctx, row)) return false;
     const commitment = this.#deps.memory?.get(row.botId, row.commitmentId) ?? null;

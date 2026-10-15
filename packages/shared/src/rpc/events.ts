@@ -165,6 +165,15 @@ export const schedulesChangedPayloadSchema = z.object({
   scheduleId: z.string(),
 });
 
+/**
+ * A workbench todo was created / changed / dispatched / settled (D90) — also when the
+ * butler changed it in the background: the workbench refetches.
+ */
+export const todosChangedPayloadSchema = z.object({ todoId: z.string() });
+
+/** A workbench memo was created / changed / deleted / restored (D90). */
+export const memosChangedPayloadSchema = z.object({ memoId: z.string() });
+
 // --- P09 events (docs/dev/phases/P09-wiki.md) ----------------------------------
 
 /**
@@ -355,6 +364,8 @@ export const rpcEventSchemas = {
   'skills.changed': skillsChangedPayloadSchema,
   'skills.missing': skillsMissingPayloadSchema,
   'schedules.changed': schedulesChangedPayloadSchema,
+  'todos.changed': todosChangedPayloadSchema,
+  'memos.changed': memosChangedPayloadSchema,
   wiki_ingested: wikiIngestedPayloadSchema,
   wiki_changed: wikiChangedPayloadSchema,
   'mcp.server_status': mcpServerStatusPayloadSchema,

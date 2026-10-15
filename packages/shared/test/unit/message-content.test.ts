@@ -6,6 +6,7 @@ import {
   messageSchema,
   runSchema,
   taskEventContentSchema,
+  textContentSchema,
   triggerReasonSchema,
 } from '../../src/index.js';
 
@@ -39,6 +40,18 @@ describe('messageContentSchema（D75 task_event 不串型）', () => {
     };
     expect(messageContentSchema.parse(delegated)).toEqual(delegated);
     expect(messageContentSchema.parse({ text: 'plain' })).toEqual({ text: 'plain' });
+  });
+
+  it("工作台派发（origin:'workbench'）走 text 分支并保留 todoId / todoRunId", () => {
+    const dispatch = {
+      text: '【工作台】整理竞品报告',
+      origin: 'workbench',
+      todoId: 'todo_1',
+      todoRunId: 'tdr_1',
+    };
+    expect(messageContentSchema.parse(dispatch)).toEqual(dispatch);
+    expect(taskEventContentSchema.safeParse(dispatch).success).toBe(false);
+    expect(textContentSchema.safeParse({ text: 'x', origin: 'bogus' }).success).toBe(false);
   });
 
   it('system_event 与 card 不受影响', () => {
