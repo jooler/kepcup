@@ -37,7 +37,7 @@
       {@const slot = slots[index]}
       {#if slot}
         <span
-          class="absolute overflow-hidden rounded-full ring-2 ring-background"
+          class="absolute overflow-hidden rounded-full"
           style="left:{slot.x}%; top:{slot.y}%; width:{slot.size}%; height:{slot.size}%; transform:translate(-50%,-50%); z-index:{slot.z};"
         >
           <BotAvatar
