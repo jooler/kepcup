@@ -6,7 +6,7 @@
   import {
     AVATAR_COLORS,
     AVATAR_SHAPES,
-    avatarColorForeground,
+    avatarOnFillForeground,
     parsePresetAvatar,
   } from './presets';
 
@@ -40,7 +40,7 @@
   </g>
   <g transform="translate(0 {parsed.shape.eyeDy ?? 0})">
     <g class="bot-eyes-look">
-      <g class="bot-eyes-blink" style:fill={avatarColorForeground(parsed.color)}>
+      <g class="bot-eyes-blink" style:fill={avatarOnFillForeground(parsed.color)}>
         <rect x="33.75" y="37.5" width="10.5" height="23" rx="5.25" />
         <rect x="55.75" y="37.5" width="10.5" height="23" rx="5.25" />
       </g>

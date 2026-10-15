@@ -12,8 +12,9 @@ import {
 } from './presets';
 
 /**
- * 头像色上的前景（眼睛、输入框发送 / 语音键图标、用户气泡文字）按对比度计算：
- * 图标 ≥ 3:1（WCAG 1.4.11），文字 ≥ 4.5:1（1.4.3）。
+ * avatarColorForeground 按对比度在白 / 黑之间选择：图标 ≥ 3:1（WCAG 1.4.11），
+ * 文字 ≥ 4.5:1（1.4.3）。预置眼睛、气泡文字、按键图标走 avatarOnFillForeground：
+ * 第一种「黑白」取对比变量，其余预置色一律白。
  */
 
 const fixedColors = AVATAR_COLORS.filter((color) => color.contrast === undefined);
