@@ -40,6 +40,7 @@
 | main | `0028_widgets.sql` | D81：新表 `widgets` / `widget_versions` / `widget_docs`（Bot 自制交互组件） |
 | main | `0029_widget_queries.sql` | D81 P2：新表 `widget_queries`（命名只读查询模板）+ `widget_versions.queries_sha256` 列 |
 | main | `0036_bot_handover.sql` | D88 P0：新表 `bot_handovers` / `bot_handover_items`；`approvals` 重建（kind 增 `bot_handover`，带全现有 kind）。D87 在另一分支同占 0035，后合入的一方按 main 实况重排 |
+| main | `0037_workbench.sql` | D90：新表 `todos` / `todo_runs` / `memos`；`schedules` 重建（`bot_id` 可空、`origin` 增 `workbench`、增 `todo_id` 外键与索引 `schedules_todo`）。撰写时 main 最新为 0036，合入 main 时按实况重编 |
 
   D73（连接应用）从 main 的下一个空号起编号（不改 runs 库，以目录实况为准）。
 
@@ -186,6 +187,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 - 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, deliveries? }`（`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
 - 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
 - 组件回传（D87 P4 L3）：用户在组件卡上确认后经 `widgets.ui.reply` 发出的用户消息，`text` 消息的 `content_json` 带 `origin: 'widget'` + `widgetId` + `widgetVersion`（同样免加列）；上下文发送者渲染为「用户（经组件 … 发出）」，正文包 `<untrusted source="widget">`；记忆与反思把它当「非用户本人的话」（同委派代发）。
+- 工作台派发（D90）：到点或「立即开始」时宿主在目标对话里追加的用户消息，`text` 消息的 `content_json` 带 `origin: 'workbench'` + `todoId` + `todoRunId`（免加列）；界面渲染为派发卡；`source='butler'` 的事项另加「（管家代你安排）」，记忆与反思不把它当用户原话（同委派代发）。
 - 任务卡（D75 W3）：共享的 `card` 行，`content_json = { cardType: 'task', runId: <任务 id> }`，`task_id` = 任务；`start_task` 与失败任务的重试各写一张。上下文中渲染为一行状态（[design/30](../design/30-supervisor-and-tasks.md) §4.3）。
 - MCP Apps 卡（D73 P3，`cardType: 'mcp_app'`）：共享的 `card` 行，`content_json = { cardType: 'mcp_app', appUi: {…} }`，`appUi` 是描述符（server id、`ui://` URI、工具名、脱敏并截断后的入参 / 结果，入参 ≤ 16 KiB、结果 ≤ 64 KiB 字符，超出丢弃并标记 truncated），**不含 HTML 与令牌**；页面 HTML 只在 core 内存里的一次性资源（128 位随机 id，≤ 64 条、30 分钟滑动 TTL），不落库。上下文中渲染为一行固定文案。
 - 展示卡（D87 P4 L1，`cardType: 'present'`）：`sender_type = 'system'` 的 `card` 行（`run_id` = 发出它的对话轮或任务），`content_json = { cardType: 'present', present: { kind, title, data, botId? } }`，`data` 是 Bot 给的 JSON（按 kind 的 schema 校验，≤64KB），`botId` 是发卡的 Bot；上下文按 kind 回放成紧凑文字（≤1200 字），标明发卡的 Bot、数据包 `<untrusted>`。
@@ -502,12 +504,12 @@ CREATE TABLE public_skills (
 
 D88 移交复制技能（P1，`SkillsService.copyForHandover`，无迁移）：导入的给接手方加一行 `bot_skills`，指向同一 `library_id`（引用计数照常，不重新克隆、不走 `skill_import` 审批）；自写的把目录复制进接手方的 `bots/{id}/skills/{name}/` 并在其仓库提交「从 {A} 复制 {name}」，再加 authored 行。两种都照搬 `status` / `status_reason`（停用的复制后仍停用）；接手方已有同名私有行时不复制。
 
-### schedules（P10）
+### schedules（P10；D90 迁移 0037 重建）
 
 ```sql
 CREATE TABLE schedules (
   id              TEXT PRIMARY KEY,       -- sch_...
-  bot_id          TEXT NOT NULL,
+  bot_id          TEXT,                   -- D90（main 0037）起可空：仅「派给群、未指定负责 Bot」的工作台事项排期行为空，其余来源仍必填（service 校验）
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   kind            TEXT NOT NULL CHECK (kind IN ('once', 'cron')),
   run_at          INTEGER,                -- once
@@ -522,10 +524,15 @@ CREATE TABLE schedules (
   -- D80（main 0022）：
   title           TEXT NOT NULL DEFAULT '',     -- 给用户看的短名；空 = 展示回退到 note 截断
   origin          TEXT NOT NULL DEFAULT 'tool'
-                  CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment'))
+                  CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment', 'workbench')),
+  -- D90（main 0037）：
+  todo_id         TEXT REFERENCES todos(id) ON DELETE SET NULL   -- origin = 'workbench' 时指向事项
 );
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
+CREATE INDEX schedules_todo ON schedules(todo_id);
 ```
+
+0037 按 0021 的写法重建本表（建新表 → 拷数据 → 删旧 → 改名 → 重建索引；SQLite 改不了 CHECK、放宽不了 NOT NULL），旧行原样保留；没有其他表以外键指向 `schedules`。`origin = 'workbench'` 的行到点不走主动消息护栏，由 TodoService 派发（见 [design 39](../design/39-workbench.md) §3.3）；时间只存在 schedule 上，事项表不重复存。凡按 `bot_id` 查的路径对空值天然不命中（`bot_id = ?` 比较），需要 Bot 的逻辑要显式判空。
 
 D80 的回执卡（`schedule_created`）与提议卡（`schedule_offer`）是 messages 里的 system_event，内容 JSON 带 `schedule` 快照 / `offer`（`status`：pending / accepted / declined / superseded / expired），不另建表；拒绝退避按 `offer.decidedAt` 在 7 天窗口内计数。D88 移交定时任务时（`ScheduleService.transferTo`，一个事务）：在 B 的对话里按原字段重建一行并出新回执卡，原行 `cancelled`，原回执卡快照写入 `schedule.handedOverTo = {botId, name}`、文案改为「已移交给 {B}」。交接记录也是 system_event：`bot_handover`（B 私聊）/ `bot_handed_over`（A 私聊），内容带 `handover: {handoverId, fromBotId, fromBotName, toBotId, toBotName, items[]（移交与职责改写）, kept[]（共享 / 复制，移交方仍保留）, note}`。移交时已排队的 `schedule_fire:{旧 id}:*` 作业在同一事务里改投新任务，接手方的新回执卡也在该事务里写入。
 
@@ -590,6 +597,60 @@ CREATE INDEX stickies_conversation ON stickies(conversation_id);
 - 渲染层乐观更新即时上屏，经 `stickies.create / update / delete` 异步落库；拖拽中的高频位置更新只在本地，拖拽结束才落库。
 - `z` 由渲染层发牌（单调递增），启动水合时接到库中最大层号之后。
 - 删除对话时随 `conversations` 行 FK 级联删除（含 `global`：来源对话是所有者）。
+
+### todos / todo_runs / memos（工作台，D90，迁移 0037）
+
+设计见 [design 39](../design/39-workbench.md)。事项（`todos`）是用户派的活；备忘（`memos`）是闪念，不绑对话、不进任何 Bot 的上下文（管家工具除外）。
+
+```sql
+CREATE TABLE todos (
+  id                TEXT PRIMARY KEY,                -- todo_...
+  title             TEXT NOT NULL,                   -- <= 120 字（TODO_TITLE_MAX_CHARS）
+  notes             TEXT NOT NULL DEFAULT '',        -- <= 4000 字（TODO_NOTES_MAX_CHARS）；派发时给执行者
+  assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
+  assignee_group_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL CHECK (status IN
+                      ('draft', 'scheduled', 'in_progress', 'delivered', 'done', 'cancelled')),
+  source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),
+  memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
+  blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  closed_at         INTEGER                          -- done / cancelled 时间
+);
+CREATE INDEX todos_status ON todos(status, updated_at DESC);
+
+CREATE TABLE todo_runs (                              -- 每次派发一条（单次事项通常只有一条）
+  id                TEXT PRIMARY KEY,                -- tdr_...
+  todo_id           TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  conversation_id   TEXT NOT NULL,                   -- 派到的对话（不设 FK：对话删了记录仍可读）
+  message_id        TEXT,                            -- 派发消息
+  status            TEXT NOT NULL CHECK (status IN ('dispatched', 'delivered', 'unclaimed', 'failed')),
+  result_message_id TEXT,                            -- 交付的那条回复
+  dispatched_at     INTEGER NOT NULL,
+  settled_at        INTEGER
+);
+CREATE INDEX todo_runs_todo ON todo_runs(todo_id, dispatched_at DESC);
+
+CREATE TABLE memos (
+  id         TEXT PRIMARY KEY,                       -- memo_...
+  body       TEXT NOT NULL,                          -- <= 10000 字（MEMO_BODY_MAX_CHARS），纯文本
+  pinned     INTEGER NOT NULL DEFAULT 0,
+  source     TEXT NOT NULL CHECK (source IN ('user', 'butler')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER                                 -- 非空 = 在「最近删除」
+);
+CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
+```
+
+- **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'group', conversationId, leadBotId}` / `null`）。`assignee_bot_id` 不设 FK：Bot 行是占位行、id 不复用。
+- **不变式**：有时间 ⇒ 必有执行者；有排期 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行。时间只存在 schedule 上。
+- **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「群已解散」「群里无人认领」……）。
+- **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
+- **备忘**：删除是软删（`deleted_at`），`MEMO_TRASH_RETENTION_MS`（30 天）后在启动时 `MemoStore.purgeTrashed(before)` 物理清理；`memos_live` 同时服务「最近删除」。`todos.memo_id` 不设 FK，备忘清理不影响事项。
+- 检索用 `LIKE`（量级千条以内）。
+- 存储层：`core/src/workbench/todo-store.ts`、`memo-store.ts`（纯持久化；状态机、校验、排期、派发在 TodoService / MemoService）。
 
 ### widgets（Bot 自制交互组件，D81，main 0028）
 
@@ -1025,6 +1086,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
+| todos 中以该对话为群执行者的行 | `assignee_group_id` 置空（FK `ON DELETE SET NULL`）；随后由对账退回 `draft`（原因「群已解散」），`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
@@ -1049,6 +1111,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | 该 Bot 的 agent_sessions（尽力 `session/delete`） | 删除 | D72 P5（`agentSessionsOnBotDeleted`；移出群同理 `agentSessionsOnGroupMemberRemoved`） |
 | 该 Bot 在 skill_library 中引用的版本 | 移除 bot_skills 行；不再被任何 Bot **或 public_skills** 引用的库版本回收（公共技能不随单个 Bot 删除） | P08 |
 | schedules、jobs | 删除 / 取消 | P10 |
+| todos 中以该 Bot 为执行者 / 负责 Bot 的行 | **保留**（事项归用户所有）；对账退回 `draft` 并写 `blocked_reason`（「负责 Bot 已删除」）等用户改派；`todo_runs`、`memos` 不受影响 | D90 |
 | watches（`watch_alert` 作业随 jobs 取消） | 删除 | D79 |
 | mail_account_bots 中该 Bot 的绑定（`mail_accounts` 保留；`mail_alert` 作业随 jobs 取消） | 删除 | D84 |
 | 涉及该 Bot 的 bot_handovers（来源 / 目标） | **保留**作历史；未执行的条目执行时因 Bot 已删除而跳过 | D88 |
@@ -1080,7 +1143,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | 该 Bot 在此群的 grants、待确认 approvals | 撤销 / 取消 | P05 |
 | 该 Bot 在此群的 app_tool_grants（Bot 级授权不受影响） | 撤销（`AppToolGrants.revokeForBotInConversation`） | D73 P1 |
 | 该 Bot 在此群做出的承诺 | 置为 `void` | P07 |
-| 该 Bot 在此群的 schedules | 取消 | P10 |
+| 该 Bot 在此群的 schedules | 取消（含以它为负责 Bot 的工作台排期；对应事项由对账退回 `draft`） | P10 / D90 |
 | 该 Bot 在此群的 watches | 删除 | D79 |
 
 ### 撤回消息
