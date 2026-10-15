@@ -206,6 +206,19 @@ export interface ResponseToolDeps {
    */
   tasks?: TaskToolFacade | undefined;
   /**
+   * D90 事项更新：本轮的触发批全是「事项更新」通知（对已派发事项的补充，不是新任务）时由宿主传入。
+   * `startBlocked`：该事项链上已有在跑的任务时 start_task 返回的错误（null = 放行）；`messageIds`：
+   * inject_task 自动并入 source_message_ids 的更新消息（任务侧据此带上原文与不可信标记）；`todoIds`：
+   * 触发本轮的事项，update_todo 不得再改它们的文字（防自循环）。
+   */
+  updateNotice?:
+    | {
+        messageIds: readonly string[];
+        todoIds: ReadonlySet<string>;
+        startBlocked: () => string | null;
+      }
+    | undefined;
+  /**
    * Bot 自制交互组件（D81，docs/design/32-bot-widgets.md）：present 时任务注册
    * widget_craft / widget_publish（D87；对话轮不注册：组件交付是任务的写行为）。
    */
@@ -1087,6 +1100,9 @@ export function buildResponseTools(input: {
           workbench: deps.workbench.host,
           triggerFromUser: deps.workbench.triggerFromUser,
           touchedExternal: deps.workbench.touchedExternal,
+          ...(deps.updateNotice !== undefined
+            ? { updateNoticeTodoIds: deps.updateNotice.todoIds }
+            : {}),
         })
       : [];
 
@@ -1098,7 +1114,13 @@ export function buildResponseTools(input: {
 
   if (identity.loopType === 'turn') {
     const taskTools =
-      deps.tasks !== undefined ? buildTaskTools({ identity, tasks: deps.tasks }) : [];
+      deps.tasks !== undefined
+        ? buildTaskTools({
+            identity,
+            tasks: deps.tasks,
+            ...(deps.updateNotice !== undefined ? { updateNotice: deps.updateNotice } : {}),
+          })
+        : [];
     return finalize([
       sendMessage,
       skipReply,

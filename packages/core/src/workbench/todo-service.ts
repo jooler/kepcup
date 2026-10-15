@@ -100,7 +100,7 @@ export interface WorkbenchMessagePort {
    * D90 事项更新通知: a visible user message in the conversation of an in-flight dispatch
    * (`todoUpdate: true`, carrying that dispatch's `todoRunId`), routed like a typed one into the
    * executor's mailbox — buffered behind a running turn, never steered into it. Group: @ the bots
-   * that actually answered the dispatch, no triage. Null = nobody to tell (nothing was sent).
+   * that actually answered the dispatch, no triage. Null = nobody to tell yet (nothing was sent).
    */
   dispatchUpdate(input: {
     conversationId: string;
@@ -109,9 +109,11 @@ export interface WorkbenchMessagePort {
     todoRunId: string;
     viaButler: boolean;
     butlerDrafted: boolean;
-    /** The dispatch's lead bot (group assignee), preferred over a guess. */
-    leadBotId: string | null;
-    /** The dispatch message the update follows (to find who answered it in a group). */
+    /**
+     * The dispatch message the update follows. A group update is @-ed to whoever took THAT dispatch
+     * (its @ mentions at the time, plus the bots whose turn it triggered) — never the todo's
+     * current assignee, which may have changed since (periodic todos).
+     */
     dispatchMessageId: string | null;
   }): { message: Message } | null;
   /** Whether the bot has a built-in main model to run a turn on. */
@@ -194,6 +196,8 @@ interface PendingUpdate {
   baseNotes: string;
   /** Any edit of the window was the butler's (the notice is then butler-attributed). */
   byButler: boolean;
+  /** A timer is armed. Unarmed = the last send failed: kept only so the next edit carries `base*`. */
+  armed: boolean;
   cancel: () => void;
 }
 
@@ -452,7 +456,7 @@ export class TodoService implements WorkbenchDispatchPort {
     if (timers === undefined) return false;
     const pending = this.#pendingUpdates.get(after.id);
     const textChanged = before.title !== after.title || before.notes !== after.notes;
-    if (!textChanged) return pending !== undefined;
+    if (!textChanged) return pending?.armed === true;
     const run = this.#inflightRun(after);
     if (run === null) {
       this.#dropPendingUpdate(after.id);
@@ -465,13 +469,21 @@ export class TodoService implements WorkbenchDispatchPort {
       baseTitle: carried?.baseTitle ?? before.title,
       baseNotes: carried?.baseNotes ?? before.notes,
       byButler: (carried?.byButler ?? false) || actor === 'butler',
+      armed: true,
       cancel: () => undefined,
     };
-    next.cancel = timers.setTimer(this.#deps.updateDebounceMs ?? TODO_UPDATE_DEBOUNCE_MS, () =>
-      this.#flushUpdateNotice(after.id),
-    );
     this.#pendingUpdates.set(after.id, next);
+    this.#armUpdateTimer(after.id, next);
     return true;
+  }
+
+  #armUpdateTimer(todoId: string, pending: PendingUpdate): void {
+    const timers = this.#deps.timers;
+    if (timers === undefined) return;
+    pending.armed = true;
+    pending.cancel = timers.setTimer(this.#deps.updateDebounceMs ?? TODO_UPDATE_DEBOUNCE_MS, () =>
+      this.#flushUpdateNotice(todoId),
+    );
   }
 
   #dropPendingUpdate(todoId: string): void {
@@ -481,31 +493,55 @@ export class TodoService implements WorkbenchDispatchPort {
     this.#pendingUpdates.delete(todoId);
   }
 
-  /** Quiet period over: sends the notice if the dispatch is still in flight and the text still differs. */
+  /**
+   * Quiet period over: sends the notice if the dispatch is still in flight and the text still
+   * differs. "What the executor knows" (`base*`) only advances once the notice was delivered: when
+   * nobody could be told yet (a group dispatch nobody has taken up) the timer is re-armed and the
+   * retry goes on until the run settles; a failed send keeps the base for the next edit.
+   */
   #flushUpdateNotice(todoId: string): void {
     const pending = this.#pendingUpdates.get(todoId);
     if (pending === undefined) return;
-    this.#pendingUpdates.delete(todoId);
+    pending.armed = false;
     try {
       const todo = this.store.get(todoId);
-      if (todo === null || todo.assignee === null) return;
+      if (todo === null || todo.assignee === null) {
+        this.#pendingUpdates.delete(todoId);
+        return;
+      }
       const run = this.#inflightRun(todo);
       // The run settled / a newer dispatch started meanwhile: nothing (new) to tell.
-      if (run === null || run.id !== pending.todoRunId) return;
-      if (todo.title === pending.baseTitle && todo.notes === pending.baseNotes) return;
+      if (run === null || run.id !== pending.todoRunId) {
+        this.#pendingUpdates.delete(todoId);
+        return;
+      }
+      if (todo.title === pending.baseTitle && todo.notes === pending.baseNotes) {
+        this.#pendingUpdates.delete(todoId);
+        return;
+      }
       const conversation = this.#deps.conversations.get(run.conversationId);
-      if (conversation === null || conversation.readOnly) return;
-      this.#deps.dispatcher.dispatchUpdate({
+      if (conversation === null || conversation.readOnly) {
+        this.#pendingUpdates.delete(todoId);
+        return;
+      }
+      const sent = this.#deps.dispatcher.dispatchUpdate({
         conversationId: run.conversationId,
         text: this.#updateText(todo, pending.byButler),
         todoId: todo.id,
         todoRunId: run.id,
         viaButler: pending.byButler,
         butlerDrafted: todo.source === 'butler',
-        leadBotId: todo.assignee.kind === 'group' ? todo.assignee.leadBotId : null,
         dispatchMessageId: run.messageId,
       });
+      if (sent === null) {
+        // Nobody to tell yet: try again later, for as long as the dispatch is in flight.
+        this.#armUpdateTimer(todoId, pending);
+        return;
+      }
+      this.#pendingUpdates.delete(todoId);
     } catch (error) {
+      // Kept (unarmed) so the next edit still diffs against what the executor actually saw.
+      pending.cancel = () => undefined;
       this.#deps.logger.warn(
         { todoId, error: error instanceof Error ? error.message : String(error) },
         'todo update notice failed',
@@ -798,23 +834,13 @@ export class TodoService implements WorkbenchDispatchPort {
 
   // --- delivery tracking (called by the orchestrator) ----------------------------------
 
-  /**
-   * An executor's reply settled the dispatched run: delivered, awaiting the user's acceptance.
-   * `fromUpdate`: the settling turn only read a 「事项更新」 notice — it may still close a run that
-   * is in flight (nothing of its chain is open), but its (usually short) reply never replaces the
-   * result of a run that was already delivered.
-   */
-  settleDelivered(
-    todoRunId: string,
-    resultMessageId: string,
-    options: { fromUpdate?: boolean } = {},
-  ): void {
+  /** An executor's reply settled the dispatched run: delivered, awaiting the user's acceptance. */
+  settleDelivered(todoRunId: string, resultMessageId: string): void {
     const run = this.store.getRun(todoRunId);
     if (run === null) return;
     // Later replies of the same chain win (the last settler is the result); a run that already
     // ended otherwise (unclaimed, failed) is not revived.
     if (run.status === 'unclaimed' || run.status === 'failed') return;
-    if (options.fromUpdate === true && run.status === 'delivered') return;
     this.store.updateRun(todoRunId, { status: 'delivered', resultMessageId });
     // Only the latest run moves the todo: a late reply of an older dispatch updates its own run.
     const todo = this.store.get(run.todoId);

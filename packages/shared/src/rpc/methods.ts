@@ -1497,8 +1497,8 @@ export const todosWriteOutputSchema = z.object({
   todo: todoEntrySchema,
   warnings: z.array(z.string()),
   /**
-   * `todos.update`：标题 / 说明变了，且事项有在途的派发，已排好给执行者的「事项更新」通知
-   * （短时间内的连续修改合成一条，稍后发出）。界面据此提示「已通知执行者」。
+   * `todos.update`：标题 / 说明变了，且事项有在途的派发，已排队「事项更新」通知
+   * （短时间内的连续修改合成一条，稍后发出；暂时没有可通知的对象时会重试）。界面据此提示「将通知执行者」。
    */
   notified: z.boolean().optional(),
 });

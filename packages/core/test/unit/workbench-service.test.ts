@@ -71,7 +71,6 @@ interface UpdateCall {
   todoRunId: string;
   viaButler: boolean;
   butlerDrafted: boolean;
-  leadBotId: string | null;
   dispatchMessageId: string | null;
 }
 
@@ -102,6 +101,7 @@ function makeRig() {
     hasModel: true,
     failDispatch: false,
     failUpdate: false,
+    nobodyYet: false,
     held: false,
     /** Runs inside the dispatcher after the message was appended (before routing returns). */
     onDispatch: null as null | ((call: DispatchCall) => void),
@@ -251,6 +251,8 @@ function makeRig() {
       },
       dispatchUpdate: (input) => {
         if (flags.failUpdate) throw new Error('update exploded');
+        // Nobody to tell yet (a group dispatch not taken up): nothing sent.
+        if (flags.nobodyYet) return null;
         updates.push({ ...input });
         messageSeq += 1;
         return { message: { id: `msg_${messageSeq}` } as Message };
@@ -1657,7 +1659,6 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
       todoRunId: runId,
       viaButler: false,
       butlerDrafted: false,
-      leadBotId: null,
     });
     expect(sent!.dispatchMessageId).toBe(rig.todos.store.getRun(runId)!.messageId);
     expect(sent!.text).toBe(
@@ -1852,7 +1853,7 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
     expect(rig.updates).toEqual([]);
   });
 
-  it('群执行者：通知发到群里，带负责 Bot 与派发消息 id（由 orchestrator 找实际响应的 Bot）', () => {
+  it('群执行者：通知发到群里，带派发消息 id（orchestrator 据它的 @ 与触发过的轮次找实际响应的 Bot）', () => {
     const rig = setup();
     rig.addBot('bot_b', '阿乙');
     rig.addGroup('conv_g', '产品组', ['bot_a', 'bot_b']);
@@ -1866,9 +1867,83 @@ describe('事项更新通知（D90：改了已派发事项的文字，通知执�
     expect(rig.updates).toHaveLength(1);
     expect(rig.updates[0]).toMatchObject({
       conversationId: 'conv_g',
-      leadBotId: 'bot_a',
       todoRunId: rig.lastDispatch().todoRunId,
     });
     expect(rig.updates[0]!.dispatchMessageId).not.toBeNull();
+  });
+
+  it('群里派发还没被接手（暂时没人可通知）：发不出去就重试，接手后送达；run 结算了就放弃', () => {
+    const rig = setup();
+    rig.addBot('bot_b', '阿乙');
+    rig.addGroup('conv_g', '产品组', ['bot_a', 'bot_b']);
+    const { todo } = rig.todos.create({
+      title: '群里的事',
+      notes: '原说明',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      when: 'now',
+    });
+    rig.flags.nobodyYet = true;
+    expect(rig.todos.update(todo.id, { notes: '新说明' }).notified).toBe(true);
+    rig.clock.advance(DEBOUNCE);
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    // 有 Bot 接手了：下一次重试送达，带最后的文字。
+    rig.flags.nobodyYet = false;
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]!.text).toContain('新说明');
+    // 送达后不再重发。
+    rig.clock.advance(DEBOUNCE * 3);
+    expect(rig.updates).toHaveLength(1);
+
+    // 一直没人接手、run 结算了：放弃，不再有定时器。
+    const other = rig.todos.create({
+      title: '没人接的事',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      when: 'now',
+    }).todo;
+    const runId = rig.lastDispatch().todoRunId;
+    rig.flags.nobodyYet = true;
+    rig.todos.update(other.id, { notes: '改了' });
+    rig.clock.advance(DEBOUNCE);
+    rig.todos.settleUnclaimed(runId);
+    rig.flags.nobodyYet = false;
+    rig.clock.advance(DEBOUNCE * 3);
+    expect(rig.updates).toHaveLength(1);
+  });
+
+  it('执行者已知的文字只在送达后才推进：发送失败后再改回，仍会按「已知」文字比较', () => {
+    const rig = setup();
+    const { id } = inProgress(rig, { notes: '原说明' });
+    rig.flags.failUpdate = true;
+    rig.todos.update(id, { notes: '甲版' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    // 失败不算送达：改回原文（执行者看到的就是原文）不发；
+    rig.todos.update(id, { notes: '原说明' });
+    rig.flags.failUpdate = false;
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toEqual([]);
+    // 失败后再改成别的：仍然发，且不会因为推进了基线而漏发。
+    rig.flags.failUpdate = true;
+    rig.todos.update(id, { notes: '乙版' });
+    rig.clock.advance(DEBOUNCE);
+    rig.flags.failUpdate = false;
+    rig.todos.update(id, { notes: '丙版' });
+    rig.clock.advance(DEBOUNCE);
+    expect(rig.updates).toHaveLength(1);
+    expect(rig.updates[0]!.text).toContain('丙版');
+  });
+
+  it('硬删（purge）后待发通知被清理，定时器不再触发', () => {
+    const rig = setup();
+    const { id } = inProgress(rig);
+    const idle = rig.clock.armedTimers;
+    rig.todos.update(id, { notes: '改了' });
+    expect(rig.clock.armedTimers).toBe(idle + 1);
+    rig.todos.purge(id);
+    expect(rig.clock.armedTimers).toBe(idle);
+    rig.clock.advance(DEBOUNCE * 2);
+    expect(rig.updates).toEqual([]);
   });
 });

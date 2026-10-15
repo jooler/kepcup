@@ -1777,10 +1777,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     let todoService: TodoService | null = null;
     const todoFacade: OrchestratorTodoFacade = {
       titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
-      settleDelivered: (todoRunId, resultMessageId, options) => {
-        if (resultMessageId !== null) {
-          todoService?.settleDelivered(todoRunId, resultMessageId, options);
-        }
+      settleDelivered: (todoRunId, resultMessageId) => {
+        if (resultMessageId !== null) todoService?.settleDelivered(todoRunId, resultMessageId);
       },
       settleUnclaimed: (todoRunId) => todoService?.settleUnclaimed(todoRunId),
       settleFailed: (todoRunId, outcome) => todoService?.settleFailed(todoRunId, outcome),

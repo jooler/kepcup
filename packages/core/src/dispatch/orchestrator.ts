@@ -283,11 +283,7 @@ export interface OrchestratorTodoFacade {
   /** Title of the todo (「📋 标题」 snapshot); null when it no longer exists. */
   titleOf(todoId: string): string | null;
   /** The executor's reply settled the dispatch: delivered, awaiting the user's acceptance. */
-  settleDelivered(
-    todoRunId: string,
-    resultMessageId: string | null,
-    options?: { fromUpdate?: boolean },
-  ): void;
+  settleDelivered(todoRunId: string, resultMessageId: string | null): void;
   /** The group round ended with nobody taking the dispatch. */
   settleUnclaimed(todoRunId: string): void;
   /** The executor's turn failed or was cancelled: the todo returns to draft with the reason. */
@@ -302,9 +298,10 @@ interface TodoRef {
   todoRunId: string;
   /**
    * Reached only through a 「事项更新」 notice (`todoUpdate`), never through the dispatch itself or
-   * a task started for it. Such a turn may deliver the run (when nothing of its chain is still
-   * open) but a failure / silence of the notice's own turn never settles the run: the dispatch
-   * it refers to is still being worked on.
+   * a task started for it. Such a turn never settles the run, neither delivered nor failed /
+   * unclaimed: only the dispatch turn or a task-result turn of the chain can deliver it — a
+   * short acknowledgement of the update is not a result (and a task finishing while the update
+   * turn runs must be delivered by its own result turn).
    */
   updateOnly?: boolean;
 }
@@ -1062,9 +1059,10 @@ export class Orchestrator {
    * releases the mailbox (D75: batches are never steered into a running turn), so the executor's
    * tasks keep running and the new turn decides from `<tasks>` whether to `inject_task`.
    *
-   * Direct chat: the delivery gate. Group: @ the bots that answered the dispatch (its lead bot,
-   * plus the bots whose turn the dispatch message triggered) — an explicit target, so no triage.
-   * Null = nobody to tell.
+   * Direct chat: the delivery gate. Group: @ the bots that took THAT dispatch (its @ mentions at
+   * the time — the lead bot then, not the todo's current one — plus the bots whose turn the
+   * dispatch message triggered) — an explicit target, so no triage. Null = nobody to tell yet
+   * (the caller retries while the dispatch is in flight).
    */
   dispatchWorkbenchUpdate(input: {
     conversationId: string;
@@ -1073,7 +1071,6 @@ export class Orchestrator {
     todoRunId: string;
     viaButler: boolean;
     butlerDrafted?: boolean | undefined;
-    leadBotId: string | null;
     dispatchMessageId: string | null;
   }): { message: Message } | null {
     const conv = this.#deps.conversations.getOrThrow(input.conversationId);
@@ -1083,13 +1080,16 @@ export class Orchestrator {
     let targets: string[] = [];
     if (conv.type === 'group') {
       const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
+      const dispatched =
+        input.dispatchMessageId === null
+          ? null
+          : this.#deps.messages.getById(input.dispatchMessageId);
+      const mentioned = (dispatched?.mentions ?? []).filter((token) => members.has(token));
       const answered =
         input.dispatchMessageId === null
           ? []
           : this.#deps.runs.turnBotIdsTriggeredBy(conv.id, input.dispatchMessageId);
-      targets = [
-        ...new Set([...(input.leadBotId !== null ? [input.leadBotId] : []), ...answered]),
-      ].filter((botId) => members.has(botId));
+      targets = [...new Set([...mentioned, ...answered])].filter((botId) => members.has(botId));
       // Nobody left who took the dispatch: an @-less message would fall into triage.
       if (targets.length === 0) return null;
     } else if (conv.directBotId === null) {
@@ -2107,11 +2107,8 @@ export class Orchestrator {
     try {
       const refs = this.#todoRefsOfRun(run.id);
       for (const ref of refs) {
-        if (ref.updateOnly === true && run.status !== 'completed') {
-          // The turn that read a 「事项更新」 failed / was cancelled / interrupted: the dispatch it
-          // refers to is still in flight (its tasks keep running), so the run is not failed.
-          continue;
-        }
+        // A turn that only read a 「事项更新」 never settles the run (see TodoRef.updateOnly).
+        if (ref.updateOnly === true) continue;
         if (run.status === 'failed') {
           facade.settleFailed(ref.todoRunId, { kind: 'failed', error: run.error });
           continue;
@@ -2129,22 +2126,26 @@ export class Orchestrator {
         let resultId = run.outputMessageIds[run.outputMessageIds.length - 1] ?? null;
         if (resultId === null) {
           // A silent turn (skip_reply) closing a chain whose earlier turn already replied.
-          const row = this.#deps.db
+          // Replies of an update turn are acknowledgements, not results: skipped.
+          const rows = this.#deps.db
             .prepare(
-              `select id from messages
+              `select id, run_id from messages
                where conversation_id = ? and sender_type = 'bot' and kind = 'text'
                  and json_extract(content_json, '$.todoRunId') = ?
-               order by seq desc limit 1`,
+               order by seq desc limit 20`,
             )
-            .get(run.conversationId, ref.todoRunId) as { id: string } | undefined;
+            .all(run.conversationId, ref.todoRunId) as Array<{ id: string; run_id: string | null }>;
+          const row = rows.find(
+            (candidate) =>
+              candidate.run_id === null ||
+              !this.#todoRefsOfRun(candidate.run_id).some(
+                (r) => r.todoRunId === ref.todoRunId && r.updateOnly === true,
+              ),
+          );
           resultId = row?.id ?? null;
           if (resultId === null) continue;
         }
-        facade.settleDelivered(
-          ref.todoRunId,
-          resultId,
-          ref.updateOnly === true ? { fromUpdate: true } : undefined,
-        );
+        facade.settleDelivered(ref.todoRunId, resultId);
       }
     } catch (error) {
       this.#deps.logger.warn(
@@ -3734,8 +3735,17 @@ export class Orchestrator {
       // D90: a workbench todo's turns carry the 「📋 标题」 tag and the delivery rule.
       const todoSource = isTask ? null : this.#todoSourceOf(batch);
       // D90: the batch carries a 「事项更新」 notice (the todo changed while the executor works on it).
+      // Dispatch batches are exclusive and update batches hold only updates (mailbox canShareTurn), so
+      // "every message" and "some message" agree; every is the safe reading.
       const workbenchUpdate =
-        !isTask && batch.messages.some((m) => this.#workbenchRefOf(m)?.updateOnly === true);
+        !isTask &&
+        batch.messages.length > 0 &&
+        batch.messages.every((m) => this.#workbenchRefOf(m)?.updateOnly === true);
+      const updateRefs = workbenchUpdate
+        ? batch.messages
+            .map((m) => this.#workbenchRefOf(m))
+            .filter((ref): ref is TodoRef => ref !== null)
+        : [];
       // 对话内应用设置（§5.3）：本 run 是否调用过读取不可信内容的工具（tool_call 一发生即置位，
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
       // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
@@ -3857,6 +3867,23 @@ export class Orchestrator {
         // D75 §4.1: the turn's task management (buildResponseTools registers
         // the task tools for turns only).
         tasks: this.#taskHost,
+        // D90: a turn that only read 「事项更新」 notices — host-side guards (no second task for a
+        // todo that already has one running; inject_task carries the notice's text as provenance;
+        // the executor cannot re-edit the todo it was just told about).
+        ...(workbenchUpdate
+          ? {
+              updateNotice: {
+                messageIds: batch.messages.map((m) => m.id),
+                todoIds: new Set(updateRefs.map((ref) => ref.todoId)),
+                startBlocked: (): string | null =>
+                  updateRefs.some((ref) =>
+                    this.#todoChainHasOpenTasks(batch.conversationId, ref.todoRunId, runId),
+                  )
+                    ? '该事项已有在跑的任务：请用 inject_task 转达更新；确需换一种做法，先 cancel_task 再 start_task'
+                    : null,
+              },
+            }
+          : {}),
         ...(mcpEntries.length > 0
           ? {
               mcp: (isTask
@@ -4287,7 +4314,9 @@ export class Orchestrator {
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
-            ...(todoSource !== null ? { workbenchDispatch: true } : {}),
+            // A pure update batch gets the update rule only: its todo is already being worked on, so
+            // the 「新派发：做完给结论」 rule would read the notice as a new assignment.
+            ...(todoSource !== null && !workbenchUpdate ? { workbenchDispatch: true } : {}),
             ...(workbenchUpdate ? { workbenchUpdate: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
