@@ -18,7 +18,6 @@
     Folder,
     FolderPlus,
     Check,
-    LayoutDashboard,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -41,6 +40,7 @@
   import { isButlerConversation } from './butler';
   import { sidebarDialogs } from './sidebar-dialogs.svelte';
   import { sidebarSections } from './sidebar-sections.svelte';
+  import { workbenchIconDarkUrl, workbenchIconLightUrl } from './sidebar-icons';
   import {
     UNASSIGNED_SECTION_ID,
     SECTION_NAME_MAX,
@@ -608,10 +608,23 @@
   </button>
 {/snippet}
 
-<!-- 工作台入口图标（展开/图标两模式共用）：与会话头像同尺寸，行高对齐。 -->
+<!-- 工作台入口图标（展开/图标两模式共用）：与会话头像同尺寸，行高对齐；明暗两套实色稿。 -->
 {#snippet workbenchIcon()}
-  <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted">
-    <LayoutDashboard class="size-5! text-muted-foreground" aria-hidden="true" />
+  <span class="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+    <img
+      src={workbenchIconLightUrl}
+      alt=""
+      class="size-5 dark:hidden"
+      draggable="false"
+      aria-hidden="true"
+    />
+    <img
+      src={workbenchIconDarkUrl}
+      alt=""
+      class="hidden size-5 dark:block"
+      draggable="false"
+      aria-hidden="true"
+    />
   </span>
 {/snippet}
 
