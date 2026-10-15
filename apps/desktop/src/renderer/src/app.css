@@ -197,6 +197,28 @@ html.platform-mac main {
 }
 
 /*
+ * sonner toast 悬停展开时会被置 data-expanded="true"；streamdown-svelte 的 Mermaid 全屏样式写了
+ * 全局的 `[data-expanded='true'] { position: fixed; top/left: 16px; 100vw × 100vh }`（不限定
+ * 在 Mermaid 里），于是任何被悬停展开的 toast 变成盖住左侧栏的整屏白块（toast 总在右下角，
+ * 鼠标常停在上面，工作台抽屉右下角的按钮尤其容易触发）。把 toast 的定位还给 sonner：
+ * 具体值见 svelte-sonner 的 [data-sonner-toast] 规则，这里只撤销泄漏规则改动的那几项。
+ */
+[data-sonner-toast][data-expanded='true'] {
+  position: absolute;
+  margin: 0;
+  z-index: var(--z-index);
+}
+[data-sonner-toast][data-expanded='true'][data-y-position='bottom'] {
+  top: auto;
+}
+@media (min-width: 601px) {
+  [data-sonner-toast][data-expanded='true'][data-x-position='right'],
+  [data-sonner-toast][data-expanded='true'][data-x-position='center'] {
+    left: auto;
+  }
+}
+
+/*
  * 全局弹层拖拽带：body 末尾常驻的隐藏元素（window-drag-band.ts 负责沉底与
  * 激活）。任一全屏浮层（[data-window-overlay]）打开时变成满窗宽的顶部
  * drag 矩形——它在 DOM 里最后，矩形压过浮层的 no-drag，浮层开着窗口也能
