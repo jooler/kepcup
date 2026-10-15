@@ -803,7 +803,13 @@
               </Sidebar.MenuItem>
             </Sidebar.Menu>
           {/if}
-          <Sidebar.Separator class="my-2" data-testid="workbench-nav-separator" />
+          <!-- 不用 Sidebar.Separator：其 data-horizontal 样式对不上 bits-ui 的
+               data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
+          <div
+            role="separator"
+            class="mx-3 my-2 h-px shrink-0 bg-foreground/20 dark:bg-foreground/25"
+            data-testid="workbench-nav-separator"
+          ></div>
         {/if}
         {#if chat.conversations.length === 0}
           {#if !collapsed}
