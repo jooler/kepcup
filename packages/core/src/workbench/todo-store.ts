@@ -108,6 +108,8 @@ export interface UpdateTodoPatch {
   /** null = unassigned. */
   assignee?: TodoAssignee | null;
   status?: TodoStatus;
+  /** Set to 'butler' once the butler rewrote the title / notes (content provenance, see TodoSource). */
+  source?: TodoSource;
   blockedReason?: string | null;
   /** Explicit done / cancelled time; omitted = derived from `status` (set / cleared by the store). */
   closedAt?: number | null;
@@ -216,7 +218,7 @@ export class TodoStore {
     this.db
       .prepare(
         `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_group_id = ?,
-           status = ?, blocked_reason = ?, closed_at = ?, updated_at = ?
+           status = ?, source = ?, blocked_reason = ?, closed_at = ?, updated_at = ?
          where id = ?`,
       )
       .run(
@@ -225,6 +227,7 @@ export class TodoStore {
         botId,
         groupId,
         nextStatus,
+        patch.source ?? current.source,
         patch.blockedReason !== undefined ? patch.blockedReason : current.blockedReason,
         closedAt,
         now,

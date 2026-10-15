@@ -834,7 +834,7 @@ export const textContentSchema = z.object({
    */
   viaButler: z.boolean().optional(),
   /**
-   * origin = 'workbench' 且事项由管家起草过（source = 'butler'）时为 true：说明里可能混入管家读到的
+   * origin = 'workbench' 且事项内容由管家起草或改写过（source = 'butler'）时为 true：说明里可能混入管家读到的
    * 外部内容，执行者上下文按不可信数据包裹（与 viaButler 取并集）；不代表这次派发是管家操作的。
    */
   butlerDrafted: z.boolean().optional(),
@@ -2591,7 +2591,11 @@ export const todoStatusSchema = z.enum([
 ]);
 export type TodoStatus = z.infer<typeof todoStatusSchema>;
 
-/** Who created a todo / memo: the user, or the butler through its tools. */
+/**
+ * Provenance of a todo / memo: the user, or the butler through its tools. For a todo it means
+ * "the content was drafted or rewritten by the butler" — created by it, or its title / notes
+ * changed by it later — so the executor treats the text as untrusted (`butlerDrafted`).
+ */
 export const todoSourceSchema = z.enum(['user', 'butler']);
 export type TodoSource = z.infer<typeof todoSourceSchema>;
 
@@ -2617,6 +2621,7 @@ export const todoSchema = z.object({
   notes: z.string(),
   assignee: todoAssigneeSchema.nullable(),
   status: todoStatusSchema,
+  /** Content provenance (see TodoSource): 'butler' = created by the butler, or its title / notes rewritten by it. */
   source: todoSourceSchema,
   /** Memo this todo was converted from (no FK: memo purge does not touch it). */
   memoId: z.string().nullable(),
