@@ -2312,8 +2312,6 @@ export const zhCN = {
   'workbench.drawer.fieldNotes': '说明（派发时给执行者看）',
   'workbench.drawer.fieldAssignee': '执行者',
   'workbench.drawer.assigneeNone': '未指派',
-  'workbench.drawer.assigneeBots': 'Bot',
-  'workbench.drawer.assigneeGroups': '群',
   'workbench.drawer.butlerSuffix': '（管家）',
   'workbench.drawer.assigneeGone': '{name}（已不可用）',
   'workbench.drawer.fieldLead': '负责 Bot',
