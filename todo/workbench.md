@@ -108,7 +108,7 @@ CREATE TABLE todos (
   title             TEXT NOT NULL,                   -- ≤ 120 字
   notes             TEXT NOT NULL DEFAULT '',        -- ≤ 4000 字；派发时给执行者
   assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
-  assignee_group_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  assignee_group_id TEXT,                            -- 群执行者；不设 FK（见 §12.4：FK 置空会把群事项读成 Bot 执行者）
   status            TEXT NOT NULL CHECK (status IN
                       ('draft','scheduled','in_progress','delivered','done','cancelled')),
   source            TEXT NOT NULL CHECK (source IN ('user','butler')),
@@ -478,7 +478,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 **迁移**：一个文件 `packages/core/migrations/main/0037_workbench.sql`（合入 main 时按实况重编）。
 
 - 新表 `todos` / `todo_runs` / `memos`，按 §4.1 原样建。
-- `schedules` 重建，参照 `0021` 的写法：`bot_id` 改为可空；`origin` CHECK 加 `'workbench'`；增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL`。保留全部列、数据、索引、外键；增加索引 `schedules(todo_id)`。
+- `schedules` 重建，参照 `0021` 的写法：`bot_id` 改为可空；`origin` CHECK 加 `'workbench'`；增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL`；增 `CHECK (bot_id IS NOT NULL OR origin = 'workbench')` 与单向 `CHECK (todo_id IS NULL OR origin = 'workbench')`。保留全部列、数据、索引、外键；增加索引 `schedules(todo_id)`。
 
 **shared 类型**（`packages/shared/src/domain/types.ts`）：
 
@@ -539,3 +539,9 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - `bot_id` 可空的最小修补（判空跳过，行为不变）：`schedule/service.ts`（`fireabilityWarnings`、`#afterCreate`、`#fire`、`listEntries`、`#deferredReason`）、`handover/adapters/schedule.ts`（`#isDirectOf`、`#commitment`、`apply`、`isApplied`）、`ScheduleReceipt.svelte`。§4.2 列的语义改造（`contextSection`、`prepareBotDeletion`、`#fire` 的 workbench 分支等）仍归 W1-core；`#fire` 目前遇到空 `botId` 的行按「目标已不存在」取消，W1-core 加 workbench 分支时需先于此判断处理。
 - 容器内全量：4824 例，4766 通过、36 失败，均不在 W0 引入：沙箱 / projects / skills / workspace-tools / wiki-url 等基线环境项；runs 库已有 0011（`a608ccd`）而 `create-core`、`task-events-migration`、`tool-effects-migration` 仍断言 10；`response-loop`「interim delivery 上限」、`tasks-review-fixes-e`、`environment`「checksum mismatch」、`external-agent-p3`「write task lease」在 W0 起点 `1d5c392` 同样失败；`agents-service`、`connected-apps-runtime`、`web-tools` 为负载偶发，单跑通过。
 
+**W1-core（2026-10-15，分支 `t/wb-core`）**
+
+- 新增：`workbench/todo-service.ts`（状态机迁移表、CRUD / `when` 口径、执行者校验、排期、派发、交付结算、对账、`purge`）、`workbench/memo-service.ts`；`ScheduleService` 的 `createForTodo` / `reschedule` / `retitle` / `attachWorkbench` 与 `#fireWorkbench`（先于空 `botId` 判断）；orchestrator 的 `dispatchWorkbenchMessage` / `hasTurnModel` / 事项来源与交付追踪；`GroupTurnCoordinator.onRoundEnded`；`todos.*` / `memos.*` 绑定与 `start.ts` 装配（启动先清备忘回收站、再对账、再补发）；`lifecycle` 的 `workbench` 钩子。
+- 对 W0 契约的修正（独立审查）：0037 去掉 `todos.assignee_group_id` 的外键（FK 置空会把「群 + 负责 Bot」读成 Bot 执行者）；`schedules` 加 `CHECK (bot_id IS NOT NULL OR origin='workbench')` 与单向 `CHECK (todo_id IS NULL OR origin='workbench')`；`store.insert` 有 `todoId` 时默认 `origin='workbench'`；`todo-store` 的 `closed_at` / `settled_at` 随状态派生；`reassignBot` 只动未关闭事项。
+- 追踪的取舍：回复带 `todoId` / `todoRunId` / `todoTitle`；同链路（`origin_run_id`）还有未结算任务则不交付；静默轮次若同对话更早有带标签的回复，则以那条为结果；群里一轮结束无人响应（`group_no_claim`、全员 `no_action`、被派者全部静默且没起任务）→ `unclaimed`。执行者轮失败只记执行记录（`failed`），事项停在进行中，重试成功仍可交付。
+- 移交：适配器在 `transferTo` 之后通知 TodoService；`schedules.changed` 对账也会让事项跟随排期持有者（崩溃兜底）。没有用 `TodoStore.reassignBot`（它会把该 Bot 的所有事项一起搬走，而移交是按资产条目逐条选的）。

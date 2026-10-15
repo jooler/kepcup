@@ -50,6 +50,10 @@ function describeSchedule(schedule: Schedule, facade: ScheduleToolFacade): strin
       ? `，下次 ${facade.describeWhen({ kind: 'once', runAt: schedule.nextFireAt, cron: null, timezone: schedule.timezone })}`
       : '';
   const raw = schedule.kind === 'cron' ? `（cron「${schedule.cron}」${schedule.timezone}）` : '';
+  if (schedule.origin === 'workbench') {
+    // D90: the user's todo dispatched from the workbench — not the bot's own schedule.
+    return `- [${schedule.id}] ${scheduleDisplayTitle(schedule)}：${facade.describeWhen(schedule)}${raw}${next}。（工作台派给你的：到点宿主会以用户消息把事项发给你，你不能取消它）`;
+  }
   return `- [${schedule.id}] ${scheduleDisplayTitle(schedule)}：${facade.describeWhen(schedule)}${raw}${next}。到点要做：${schedule.note}`;
 }
 

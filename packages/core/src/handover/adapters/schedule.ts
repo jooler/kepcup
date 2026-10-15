@@ -40,6 +40,11 @@ export interface ScheduleAdapterDeps {
     /** The bot's direct chat id (opened when missing). */
     directIdFor(botId: string): string;
   };
+  /**
+   * D90：工作台事项的排期随移交搬走（`origin` 与 `todo_id` 原样保留，见
+   * `ScheduleService.transferTo`），事项的执行者改到接手方。
+   */
+  todos?: { onScheduleTransferred(moved: Schedule): void } | undefined;
   /** 承诺联动（缺省 = 承诺联动的任务不可执行）。 */
   memory?: Pick<HandoverMemoryPort, 'get' | 'findCopy' | 'insertCopy' | 'embed' | 'voidCommitment'>;
 }
@@ -106,7 +111,7 @@ export class ScheduleAdapter implements HandoverAdapter {
       // 换成中性说法（这一项本来就不可执行）。
       const secret = commitment?.privateToBot === true;
       const sensitive = !secret && commitment?.sensitivity === 'sensitive';
-      const where = `${this.#deps.schedules.describeWhen(row)}，${this.#where(row)}`;
+      const where = `${row.origin === 'workbench' ? '工作台事项，' : ''}${this.#deps.schedules.describeWhen(row)}，${this.#where(row)}`;
       return {
         key: `schedule:${row.id}`,
         type: 'schedule' as const,
@@ -202,6 +207,8 @@ export class ScheduleAdapter implements HandoverAdapter {
       if (row.commitmentId !== null) this.#dropOrphanCopy(ctx, row.commitmentId);
       throw error;
     }
+    // 工作台事项：执行者改到接手方（崩溃后重跑时由 TodoService 对账兜底）。
+    if (created.todoId !== null) this.#deps.todos?.onScheduleTransferred(created);
     // 3. A 的承诺作废（不再进 <my_state>、不再提醒）。
     if (row.commitmentId !== null && row.botId !== null && memory !== undefined) {
       memory.voidCommitment(row.botId, row.commitmentId);

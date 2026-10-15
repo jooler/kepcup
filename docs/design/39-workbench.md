@@ -110,6 +110,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 - `origin` CHECK 增 `'workbench'`。
 - 增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL` 与索引。
+- 增 `CHECK (bot_id IS NOT NULL OR origin = 'workbench')` 与单向 `CHECK (todo_id IS NULL OR origin = 'workbench')`（单向：事项硬删会把 `todo_id` 置空，孤儿 workbench 行由对账取消）。
 - `bot_id` 放宽为可空。仅「派给群、未指定负责 Bot」的事项排期行为空，其余来源仍必填（service 层校验）。
 
 `bot_id` 可空的波及面：凡按 Bot 查的路径都要能跳过空值（`listActiveForBot`、`contextSection`、`cancelForBotInConversation`、`prepareBotDeletion`、`fireabilityWarnings` / `#deferredReason`、移交适配器、定时任务列表的 Bot 名）。
@@ -128,7 +129,8 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - **立即开始**：直接 `dispatch`，不建 schedule。
 - **对账**（启动时 + `schedules.changed`）：
   - 状态为 `scheduled` 却没有 active schedule → 退回 `draft`，写入原因。
-  - 执行者 Bot 已删 / 群已删 → 退回 `draft`。
+  - 执行者 Bot 已删 / 群已删或已只读 / 负责 Bot 已删或已移出群 → 退回 `draft`（`assignee_group_id` 不设外键：外键置空会把「群 + 负责 Bot」静默读成 Bot 执行者）。
+  - `origin='workbench'` 的 active 排期若事项已不存在（硬删）或事项不在 `scheduled` → 取消该排期。
   - 不依赖各删除路径都记得调钩子：conversations 的 FK 级联会绕过 service，对账才是兜底。
 - **D88 移交**：移交适配器搬 schedule 时带上 `todo_id`，TodoService 把 `assignee_bot_id` 改到接收方。
 
@@ -136,7 +138,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 派发 = 宿主在目标对话里追加一条**可见消息**，然后按用户消息路由。消息构成：
 
-- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`。
+- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；管家创建的事项另带 `viaButler: true`。
 - 正文为 `【工作台】标题` + 说明。管家建的事项另加「（管家代你安排）」。
 - 群里指定了负责 Bot 时，加结构化 @。
 - 界面上渲染成「派发卡」而不是普通气泡：标题、说明、「在工作台查看」。

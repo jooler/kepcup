@@ -368,6 +368,13 @@ export function reflectionInput(input: {
       // D87 P4 L3：组件代码生成、用户确认发出的文字——不是用户本人写的话，按数据看待。
       return `[${m.id} | 用户经组件发出（组件生成的文字，非用户本人的话）] <untrusted>${neutralizeUntrusted(content.text ?? '')}</untrusted>`;
     }
+    if (m.senderType === 'user' && content?.origin === 'workbench') {
+      // D90：管家创建的事项由宿主代发——标题和说明是管家写的；用户自己创建的事项仍是用户的话。
+      if ((m.content as { viaButler?: boolean }).viaButler === true) {
+        return `[${m.id} | 工作台派发（管家代用户安排的事项，非用户本人的话）] <untrusted>${neutralizeUntrusted(content.text ?? '')}</untrusted>`;
+      }
+      return `[${m.id} | 用户（经工作台派发）] ${content.text ?? ''}`;
+    }
     // D71：委派代发消息是其他 Bot 代用户转交的文字，不是用户本人的话。
     const sender =
       m.senderType === 'user' && content?.origin === 'delegation'

@@ -73,6 +73,8 @@ export interface ResponseToolDeps {
    * carry the 「⏰ 标题」 tag like the final reply. Absent otherwise.
    */
   scheduleSource?: { scheduleId: string; scheduleTitle: string } | undefined;
+  /** D90: the workbench todo the turn replies for — send_message carries the 「📋 标题」 tag too. */
+  todoSource?: { todoId: string; todoRunId: string; todoTitle: string } | undefined;
   /**
    * P05 group chains: validate mention_bot_ids, extend/create the chain and
    * deliver to the targets. Returns a suffix note for the tool result.
@@ -380,6 +382,7 @@ export function buildResponseTools(input: {
         ...(!isTask && deps.scheduleSource !== undefined
           ? { scheduleSource: deps.scheduleSource }
           : {}),
+        ...(!isTask && deps.todoSource !== undefined ? { todoSource: deps.todoSource } : {}),
         // 附件在 append 的同一事务里绑定：绑定失败整笔回滚，不留下无附件的空消息。
         ...(uploaded.length > 0 ? { attachmentIds: uploaded.map((a) => a.id) } : {}),
       });
