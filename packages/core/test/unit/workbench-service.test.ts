@@ -19,7 +19,9 @@ import { ScheduleService } from '../../src/schedule/service.js';
 import {
   BLOCKED_BOT_DELETED,
   BLOCKED_CONVERSATION_DELETED,
+  BLOCKED_CONVERSATION_GONE,
   BLOCKED_GROUP_GONE,
+  BLOCKED_HELD,
   BLOCKED_LEAD_DELETED,
   BLOCKED_LEAD_LEFT,
   BLOCKED_SCHEDULE_CANCELLED,
@@ -82,7 +84,15 @@ function makeRig() {
   const published: Array<{ event: string; payload: unknown }> = [];
   const dispatched: DispatchCall[] = [];
   const enqueued: Array<{ type: string; payload: unknown }> = [];
-  const flags = { hasModel: true, failDispatch: false };
+  const flags = {
+    hasModel: true,
+    failDispatch: false,
+    held: false,
+    /** Runs inside the dispatcher after the message was appended (before routing returns). */
+    onDispatch: null as null | ((call: DispatchCall) => void),
+  };
+  const pendingJobs: Array<{ id: string; type: string }> = [];
+  const cancelledJobs: string[] = [];
   let messageSeq = 0;
 
   const insertConversation = (conv: StubConversation): void => {
@@ -101,6 +111,8 @@ function makeRig() {
     published,
     dispatched,
     enqueued,
+    pendingJobs,
+    cancelledJobs,
     flags,
     addBot(id: string, name = id, behavior: Partial<StubBot['profile']['behavior']> = {}): StubBot {
       const bot: StubBot = {
@@ -185,8 +197,10 @@ function makeRig() {
         enqueued.push(input);
         return 'job_1';
       },
-      pendingByDedupePrefix: () => [],
-      cancelPending: () => {},
+      pendingByDedupePrefix: () => pendingJobs,
+      cancelPending: (id: string) => {
+        cancelledJobs.push(id);
+      },
     } as never,
     runs: {} as never,
     memory: {} as never,
@@ -203,18 +217,20 @@ function makeRig() {
     dispatcher: {
       dispatch: (input) => {
         if (flags.failDispatch) throw new Error('dispatch exploded');
-        dispatched.push({
+        const call: DispatchCall = {
           conversationId: input.conversationId,
           text: input.text,
           todoId: input.todoId,
           todoRunId: input.todoRunId,
           viaButler: input.viaButler,
           leadBotId: input.leadBotId,
-        });
+        };
+        dispatched.push(call);
         messageSeq += 1;
         const message = { id: `msg_${messageSeq}` } as Message;
         input.onAppended?.(message);
-        return { message, runId: null };
+        flags.onDispatch?.(call);
+        return { message, runId: null, held: flags.held };
       },
       hasTurnModel: () => flags.hasModel,
     },
@@ -797,16 +813,90 @@ describe('工作台事项：交付结算', () => {
     expect(rig.todos.get(todo.id).todo.status).toBe('draft');
   });
 
-  it('settleFailed 只记执行记录，事项停在进行中（重试仍可交付）', () => {
+  it('settleFailed：执行记录标 failed，事项退回草案并写「执行失败：原因」/「执行已被取消」，可重新开始', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     const todo = rig.todos.create({ title: 't', assignee: botAssignee('bot_a'), when: 'now' }).todo;
     const runId = rig.lastDispatch().todoRunId;
-    rig.todos.settleFailed(runId);
+    rig.todos.settleFailed(runId, { kind: 'failed', error: 'provider unavailable' });
+    expect(rig.todos.store.getRun(runId)).toMatchObject({ status: 'failed' });
+    expect(rig.todos.store.getRun(runId)!.settledAt).not.toBeNull();
+    expect(rig.todos.get(todo.id).todo).toMatchObject({
+      status: 'draft',
+      blockedReason: '执行失败：provider unavailable',
+      assignee: botAssignee('bot_a'),
+    });
+    // 失败的记录不被迟到的回复复活；用户可以重新开始。
+    rig.todos.settleDelivered(runId, 'msg_late');
     expect(rig.todos.store.getRun(runId)!.status).toBe('failed');
-    expect(rig.todos.get(todo.id).todo.status).toBe('in_progress');
-    rig.todos.settleDelivered(runId, 'msg_retry');
+    expect(rig.todos.start(todo.id).status).toBe('in_progress');
+
+    const second = rig.lastDispatch().todoRunId;
+    rig.todos.settleFailed(second, { kind: 'cancelled' });
+    expect(rig.todos.get(todo.id).todo).toMatchObject({ status: 'draft', blockedReason: '执行已被取消' });
+    // 已结算（交付）的记录不会被后来的失败改写。
+    const third = rig.todos.start(todo.id);
+    expect(third.status).toBe('in_progress');
+    rig.todos.settleDelivered(rig.lastDispatch().todoRunId, 'msg_ok');
+    rig.todos.settleFailed(rig.lastDispatch().todoRunId, { kind: 'failed', error: 'x' });
     expect(rig.todos.get(todo.id).todo.status).toBe('delivered');
+  });
+
+  it('只有该事项最新的一次派发能推进事项：迟到的旧执行记录只更新自己', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const cron = rig.todos.create({ title: 'c', assignee: botAssignee('bot_a'), when: '0 9 * * *' }).todo;
+    rig.todos.start(cron.id);
+    const oldRun = rig.lastDispatch().todoRunId;
+    rig.todos.start(cron.id);
+    const newRun = rig.lastDispatch().todoRunId;
+    expect(newRun).not.toBe(oldRun);
+    rig.todos.settleDelivered(oldRun, 'msg_old');
+    expect(rig.todos.store.getRun(oldRun)).toMatchObject({ status: 'delivered', resultMessageId: 'msg_old' });
+
+    // 一次性事项被退回草案后重新开始：第一次派发的迟到回复不能把第二次的事项推到待验收。
+    const once = rig.todos.create({ title: 'o', assignee: botAssignee('bot_a'), when: 'now' }).todo;
+    const first = rig.lastDispatch().todoRunId;
+    rig.todos.store.update(once.id, { status: 'draft' });
+    rig.todos.start(once.id);
+    const second = rig.lastDispatch().todoRunId;
+    rig.todos.settleDelivered(first, 'msg_stale');
+    expect(rig.todos.get(once.id).todo.status).toBe('in_progress');
+    rig.todos.settleDelivered(second, 'msg_fresh');
+    expect(rig.todos.get(once.id).todo.status).toBe('delivered');
+  });
+
+  it('派发过程中同步结算（空群 → 无人认领）：事项先进入进行中再被退回草案，不会卡在进行中', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addGroup('conv_g', '空群', ['bot_a']);
+    // 路由同步走到 no_claim：编排器在 dispatch 返回之前就调了 settleUnclaimed。
+    rig.flags.onDispatch = (call) => rig.todos.settleUnclaimed(call.todoRunId);
+    const { todo } = rig.todos.create({
+      title: '没人在的群',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      when: 'now',
+    });
+    expect(todo).toMatchObject({ status: 'draft', blockedReason: BLOCKED_UNCLAIMED });
+    expect(todo.lastRun).toMatchObject({ status: 'unclaimed' });
+    // 同样的路径经 start 重新开始。
+    const again = rig.todos.start(todo.id);
+    expect(again).toMatchObject({ status: 'draft', blockedReason: BLOCKED_UNCLAIMED });
+  });
+
+  it('访谈态的执行者：派发被闸口扣住，事项保持进行中并写 blocked_reason，create/update 返回警告；交付后清掉', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.flags.held = true;
+    const { todo, warnings } = rig.todos.create({
+      title: '等设置',
+      assignee: botAssignee('bot_a'),
+      when: 'now',
+    });
+    expect(todo).toMatchObject({ status: 'in_progress', blockedReason: BLOCKED_HELD });
+    expect(warnings).toContain(BLOCKED_HELD);
+    rig.todos.settleDelivered(rig.lastDispatch().todoRunId, 'msg_done');
+    expect(rig.todos.get(todo.id).todo).toMatchObject({ status: 'delivered', blockedReason: null });
   });
 });
 
@@ -828,8 +918,8 @@ describe('工作台事项：对账', () => {
     const rig = makeRig();
     rig.addBot('bot_a', '阿甲');
     const a = rig.todos.create({ title: 'a', assignee: botAssignee('bot_a'), when: futureIso(rig) }).todo;
-    rig.db.prepare("update schedules set status = 'cancelled' where id = ?").run(a.schedule!.id);
     const b = rig.todos.create({ title: 'b', assignee: botAssignee('bot_a'), when: futureIso(rig) }).todo;
+    rig.db.prepare("update schedules set status = 'cancelled' where id = ?").run(a.schedule!.id);
     rig.db.prepare('delete from schedules where id = ?').run(b.schedule!.id);
     expect(rig.todos.reconcile().sort()).toEqual([a.id, b.id].sort());
     expect(rig.todos.get(a.id).todo.status).toBe('draft');
@@ -1188,5 +1278,172 @@ describe('工作台备忘', () => {
     rig.clock.advance(MEMO_TRASH_RETENTION_MS + 1000);
     memos.purgeExpired();
     expect(rig.todos.get(todo.id).todo.memoId).toBe(memo.id);
+  });
+});
+
+describe('工作台事项：审查修复', () => {
+  it('update({assignee, when:null}) 保留改派并退回草案（排期取消）', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const { todo } = rig.todos.create({ title: '周报', assignee: botAssignee('bot_a'), when: futureIso(rig) });
+    const back = rig.todos.update(todo.id, { assignee: botAssignee('bot_b'), when: null }).todo;
+    expect(back).toMatchObject({ status: 'draft', schedule: null, assignee: botAssignee('bot_b') });
+    expect(rig.schedules.store.get(todo.schedule!.id)!.status).toBe('cancelled');
+  });
+
+  it('update 带上与当前相同的执行者不算改动：已派发的事项仍可只改标题', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const { todo } = rig.todos.create({ title: '旧', assignee: botAssignee('bot_a'), when: 'now' });
+    const updated = rig.todos.update(todo.id, { title: '新', assignee: botAssignee('bot_a') }).todo;
+    expect(updated).toMatchObject({ title: '新', status: 'in_progress' });
+    expect(codeOf(() => rig.todos.update(todo.id, { assignee: null }))).toBe('INVALID_INPUT');
+  });
+
+  it('update(when:\'now\')：周期事项「改成立即执行一次」——周期排期结束并派发一次；start 则保留周期', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const cronA = rig.todos.create({ title: 'a', assignee: botAssignee('bot_a'), when: '0 9 * * *' }).todo;
+    const ended = rig.todos.update(cronA.id, { when: 'now' }).todo;
+    expect(ended).toMatchObject({ status: 'in_progress', schedule: null });
+    expect(rig.schedules.store.get(cronA.schedule!.id)!.status).toBe('cancelled');
+    expect(rig.dispatched.filter((d) => d.todoId === cronA.id)).toHaveLength(1);
+
+    const cronB = rig.todos.create({ title: 'b', assignee: botAssignee('bot_a'), when: '0 9 * * *' }).todo;
+    const started = rig.todos.start(cronB.id);
+    expect(started.status).toBe('scheduled');
+    expect(started.schedule).not.toBeNull();
+  });
+
+  it('派发抛错时不破坏不变式：start / update(now) 失败后排期仍在、事项仍是 scheduled、执行者不变', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const { todo } = rig.todos.create({ title: '周报', assignee: botAssignee('bot_a'), when: futureIso(rig) });
+    rig.flags.failDispatch = true;
+    expect(codeOf(() => rig.todos.start(todo.id))).toBe('UNKNOWN');
+    for (const input of [{ when: 'now' }, { assignee: botAssignee('bot_b'), when: 'now' }]) {
+      expect(codeOf(() => rig.todos.update(todo.id, input))).toBe('UNKNOWN');
+    }
+    const after = rig.todos.get(todo.id).todo;
+    expect(after).toMatchObject({ status: 'scheduled', assignee: botAssignee('bot_a') });
+    expect(after.schedule!.id).toBe(todo.schedule!.id);
+    expect(rig.schedules.store.get(todo.schedule!.id)!.status).toBe('active');
+    // 每次失败的派发各留一条 failed 的执行记录。
+    expect(rig.todos.get(todo.id).runs.every((run) => run.status === 'failed')).toBe(true);
+  });
+
+  it('改派时新排期建不出来：旧排期与执行者原样保留（事务回滚）', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const { todo } = rig.todos.create({ title: '周报', assignee: botAssignee('bot_a'), when: futureIso(rig) });
+    const original = rig.schedules.createForTodo.bind(rig.schedules);
+    rig.schedules.createForTodo = () => {
+      throw new Error('create exploded');
+    };
+    expect(codeOf(() => rig.todos.update(todo.id, { assignee: botAssignee('bot_b') }))).toBe('UNKNOWN');
+    rig.schedules.createForTodo = original;
+    const after = rig.todos.get(todo.id).todo;
+    expect(after).toMatchObject({ status: 'scheduled', assignee: botAssignee('bot_a') });
+    expect(after.schedule!.id).toBe(todo.schedule!.id);
+    expect(rig.schedules.store.get(todo.schedule!.id)!.status).toBe('active');
+  });
+
+  it('create(now) 派发失败：事项留作草案并写 blocked_reason，错误照常抛给调用方', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.flags.failDispatch = true;
+    expect(
+      codeOf(() => rig.todos.create({ title: '会失败', assignee: botAssignee('bot_a'), when: 'now' })),
+    ).toBe('UNKNOWN');
+    const [todo] = rig.todos.list();
+    expect(todo).toMatchObject({ status: 'draft', assignee: botAssignee('bot_a') });
+    expect(todo!.blockedReason).toBe('派发失败：dispatch exploded');
+    expect(rig.todos.get(todo!.id).runs).toHaveLength(1);
+    expect(rig.todos.get(todo!.id).runs[0]!.status).toBe('failed');
+  });
+
+  it('操作进行中被跳过的对账，在最外层操作结束后补跑一次', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const other = rig.todos.create({ title: '另一件', assignee: botAssignee('bot_a'), when: futureIso(rig) }).todo;
+    const target = rig.todos.create({ title: '要开始的', assignee: botAssignee('bot_a') }).todo;
+    // 派发期间，另一件的排期被外部取消（schedules.changed 触发对账，但此刻服务正忙）。
+    rig.flags.onDispatch = () => {
+      rig.db.prepare("update schedules set status = 'cancelled' where id = ?").run(other.schedule!.id);
+      expect(rig.todos.reconcile()).toEqual([]);
+      expect(rig.todos.get(other.id).todo.status).toBe('scheduled');
+    };
+    rig.todos.start(target.id);
+    expect(rig.todos.get(other.id).todo).toMatchObject({
+      status: 'draft',
+      blockedReason: BLOCKED_SCHEDULE_CANCELLED,
+    });
+  });
+
+  it('删私聊时进行中的事项：执行记录标 failed，事项退回草案「对话已删除」；onExecutorChanged 不重复发事件', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const { todo } = rig.todos.create({ title: '在做', assignee: botAssignee('bot_a'), when: 'now' });
+    const directId = rig.directIdOf('bot_a');
+    rig.removeConversation(directId);
+    const after = rig.todos.get(todo.id);
+    expect(after.todo).toMatchObject({
+      status: 'draft',
+      blockedReason: BLOCKED_CONVERSATION_GONE,
+      assignee: botAssignee('bot_a'),
+    });
+    expect(after.runs[0]!.status).toBe('failed');
+
+    // 群分支：进行中的群事项同样标记执行记录。
+    rig.addBot('bot_b', '阿乙');
+    rig.addGroup('conv_g', '项目组', ['bot_a', 'bot_b']);
+    const grp = rig.todos.create({
+      title: '群里在做',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
+      when: 'now',
+    }).todo;
+    rig.removeConversation('conv_g');
+    expect(rig.todos.get(grp.id).todo).toMatchObject({ status: 'draft', blockedReason: BLOCKED_GROUP_GONE });
+    expect(rig.todos.get(grp.id).runs[0]!.status).toBe('failed');
+
+    // 删 Bot 后只发一次 todos.changed（reconcile 已发布，onExecutorChanged 不再补发）。
+    const running = rig.todos.create({ title: '另一个在做', assignee: botAssignee('bot_b'), when: 'now' }).todo;
+    rig.published.length = 0;
+    rig.deleteBot('bot_b');
+    rig.todos.onExecutorChanged();
+    expect(
+      rig.published.filter(
+        (e) => e.event === 'todos.changed' && (e.payload as { todoId: string }).todoId === running.id,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('reopen 重新校验执行者：失效则清空并写原因', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    rig.addBot('bot_b', '阿乙');
+    const ok = rig.todos.create({ title: 'ok', assignee: botAssignee('bot_a') }).todo;
+    const stale = rig.todos.create({ title: 'stale', assignee: botAssignee('bot_b') }).todo;
+    rig.todos.cancel(ok.id);
+    rig.todos.cancel(stale.id);
+    rig.deleteBot('bot_b');
+    expect(rig.todos.reopen(ok.id)).toMatchObject({ status: 'draft', assignee: botAssignee('bot_a'), blockedReason: null });
+    expect(rig.todos.reopen(stale.id)).toMatchObject({
+      status: 'draft',
+      assignee: null,
+      blockedReason: BLOCKED_BOT_DELETED,
+    });
+  });
+
+  it('reschedule 取消排队中的旧 schedule_fire 作业（不会在旧时间再触发一次）', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const { todo } = rig.todos.create({ title: '周报', assignee: botAssignee('bot_a'), when: futureIso(rig) });
+    rig.pendingJobs.push({ id: 'job_old', type: 'schedule_fire' }, { id: 'job_other', type: 'other' });
+    rig.todos.update(todo.id, { when: futureIso(rig, 7_200_000) });
+    expect(rig.cancelledJobs).toEqual(['job_old']);
   });
 });

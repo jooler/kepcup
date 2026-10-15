@@ -83,6 +83,10 @@ function baseChecks(
  * Evidence rule for fact/preference memories and every profile proposal:
  * at least one non-recalled USER message must back the claim — content from
  * web pages, files, tool output or other bots never reaches the profile.
+ *
+ * `ctx.getMessage` already reports user-sent messages whose text the user did not write (D71
+ * delegation proxy, D87 widget reply, D90 butler-made workbench dispatch) as `bot` messages —
+ * see `isProxiedUserText` in memory/service.ts — so they never count as user evidence here.
  */
 export function hasUserEvidence(evidenceMessageIds: string[], ctx: WriteCheckContext): boolean {
   return evidenceMessageIds.some((id) => ctx.getMessage(id)?.senderType === 'user');
