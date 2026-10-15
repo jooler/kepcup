@@ -170,21 +170,7 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
       'inspect_bot_assets',
       'propose_handover',
     ],
-    // D90：工作台的事项 / 备忘工具只给管家（权限边界在工具执行处由宿主强制）。
-    butlerTools: [
-      'propose_bot',
-      'propose_group',
-      'propose_team',
-      'suggest_route',
-      'list_todos',
-      'create_todo',
-      'update_todo',
-      'close_todo',
-      'list_memos',
-      'create_memo',
-      'update_memo',
-      'delete_memo',
-    ],
+    butlerTools: ['propose_bot', 'propose_group', 'propose_team', 'suggest_route'],
   }),
   pack({
     id: 'browser',
