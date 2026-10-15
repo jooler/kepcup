@@ -361,6 +361,9 @@ test('memo → todo → assign a bot → start now → dispatch card → deliver
       'data-run-status',
       'delivered',
     );
+    // 已开始的事项：时间只读显示实际派发时刻，没有可选的时间选择器。
+    await expect(page.locator('[data-testid="todo-when-readonly"]')).toContainText('已于');
+    await expect(page.locator('[data-testid="todo-when"]')).toHaveCount(0);
     await shot(page, '08-todo-drawer-delivered');
     await page.locator('[data-testid="todo-drawer-complete"]').click();
     // 已完成的事项收进「最近结束」（默认折叠）。
@@ -488,6 +491,12 @@ test('scheduled todo: receipt card, next-fire display, fires on time even with p
     await expect(card.locator('[data-testid="todo-card-when"]')).toContainText(/今天|明天/);
     // 排期卡不显示「该 Bot 关闭了主动消息」之类的推迟警示——事项不受护栏约束。
     await expect(card.locator('[data-testid="todo-card-blocked"]')).toHaveCount(0);
+    // 回执卡是用户在工作台自己的操作产生的：目标私聊在左栏不冒未读。
+    await expect(
+      page.locator(
+        `[data-testid="conversation-item-${bot.conversationId}"] [data-testid="unread-badge"]`,
+      ),
+    ).toHaveCount(0);
     await shot(page, '13-workbench-scheduled');
 
     // 目标私聊里有回执卡（标题、时间、来源「工作台」）。
@@ -542,9 +551,11 @@ test('failed execution returns the todo to draft with the reason; start retries'
     await expect(page.locator('[data-testid="todo-drawer"]')).toHaveCount(0, { timeout: 15_000 });
 
     const card = todoCard(page, '整理发票');
-    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText('执行失败', {
-      timeout: 90_000,
-    });
+    // 原始 `500: {"message":"…"}` 清洗成一行人话。
+    await expect(card.locator('[data-testid="todo-card-blocked"]')).toContainText(
+      '执行失败：模型服务出错（500）：模型服务暂时不可用',
+      { timeout: 90_000 },
+    );
     await expect(card).toHaveAttribute('data-status', 'draft');
     await shot(page, '14-todo-failed');
 

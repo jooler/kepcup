@@ -2337,6 +2337,8 @@ export const zhCN = {
   'workbench.drawer.nextUnknown': '下次：—',
   'workbench.drawer.needAssignee': '先选择执行者，才能设置时间。',
   'workbench.drawer.whenIncomplete': '时间还没填完整。',
+  'workbench.drawer.whenDispatchedAt': '已于 {when} 派发',
+  'workbench.drawer.whenNeverDispatched': '没有派发过',
   'workbench.drawer.whenLocked': '事项已开始执行，时间和执行者不能再改。',
   'workbench.drawer.closedLocked': '已结束的事项不能编辑，恢复后可再次修改。',
   'workbench.drawer.titleRequired': '标题不能为空。',
