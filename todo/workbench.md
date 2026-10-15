@@ -1,271 +1,526 @@
-# 工作台（Workbench）：左栏入口 + 待办 / 备忘
+# 工作台（Workbench）：事项统筹 + 备忘 + 管家接管
 
-> 状态：**待评审**（2026-10-15；Pengfei 口述需求，实现前先定稿）。
-> 决策编号待分配（合入前以 `docs/design/README.md` 实况为准）。
-> **本期只出方案，不写 UI / 不落库**；评审通过后再开编码。
+> 状态：**已定稿，P0 实施中**（2026-10-15 重写并经用户确认 §8；旧版「按 Bot 列定时任务 + 备忘 tab」整体作废）。实施编排与记录见 §12。
+> 决策编号：拟 **D90**（合入前以 `docs/design/README.md` 实况为准；当前最新 D89）。设计正文定稿后落 `docs/design/39-workbench.md`。
 > 早期阶段：不做向后兼容、不迁旧数据；以当前代码逻辑正确为准。
 
-## 1. 目标
+## 1. 用户视角与目标
 
-给用户一个**不进 Bot 对话**也能总览与管理「定时待办」和「个人备忘」的工作台：
+**心智模型**：每个 Bot 是用户的一名员工，群是一个项目组，管家是用户的助理。用户需要一个**不进任何对话**也能统筹全局的地方：
 
-1. **入口**：左栏管家 Bot **上方**新增「工作台」条目；点击后**中间主体换成工作台视图**，不打开任何对话、不选中任何 Bot。
-2. **待办**：按 Bot 分行展示其定时任务（卡片）；可从工作台给指定 Bot **新增**单次 / 周期任务；无任务的 Bot 不出现。
-3. **备忘**：用户纯文本备忘卡片，基础增删改 + 顶部关键字筛选。
-
-原则：复用现有 schedules 执行链路（到点唤醒 Bot、回执卡、护栏）；工作台是**管理面**，不是第二套调度引擎。备忘与对话内「辅助阅读便签」（stickies）职责分开。
-
-## 2. 现状追溯（2026-10-15 读代码）
-
-| 区域 | 位置 | 结论 |
-| ---- | ---- | ---- |
-| 左栏 / 管家 | `features/sidebar/AppSidebar.svelte`、`butler.ts` | 管家私聊（`systemRole === 'butler'`）固定列表最前、不进分组；点击 = `chat.select(conversationId)` 打开对话 |
-| 主区视图 | `stores/shell.svelte.ts` 注释：「主界面只有对话一个视图」；`App.svelte` → `ChatsArea` → `ChatView` | **没有**第二主视图切换；设置 / 扩展中心是弹框，不是换中间栏 |
-| 窄屏 | `NarrowShell` + 底部 tab（对话 / 通讯录 / 扩展 / 我） | 工作台入口与窄屏信息架构需单独定（见 §7） |
-| 定时任务模型 | `schedules` 表（`0011` + `0022 title/origin`）；`ScheduleService` | `botId` + `conversationId` 绑定；`kind: once \| cron`；`origin ∈ {tool,offer,proposal,commitment}`；到点经 orchestrator 投递 |
-| 定时 RPC | `schedules.list` / `cancel` / `acceptOffer` / `declineOffer` | **没有**用户侧 `schedules.create`；创建只走 Bot 工具 / 提议卡 / 管家 routines / 承诺联动 |
-| 列表 UI | `right-panel/SchedulesPanel.svelte`（私聊右栏 / 群信息 / **设置页总览**） | 已有全局 list + 人话时间 + 两步取消 + `schedules.changed`；**无按 Bot 分行、无新建表单** |
-| when 解析 | `schedule/when.ts` + `createFromWhen` | ISO → 单次，其它 → cron；工具 / 提议 / 例行共用 |
-| 私聊解析 | `conversations.openDirect(botId)` | 幂等拿到该 Bot 的私聊；工作台挂任务应默认挂这里（见 §3.3） |
-| 辅助阅读便签 | `stickies`（选中文本钉出、浮在对话上） | **不是**备忘；带 conversation / position / z；勿复用表或 RPC |
-| 备忘 | — | **不存在**独立备忘模型 / UI |
-
-## 3. 产品形态
-
-### 3.1 入口与导航
-
-```
-左栏（示意）
-┌─────────────────┐
-│ [+] 新建 …      │
-│ 🔍 搜索         │
-│ ★ 工作台  ← NEW │  ← 管家之上；选中态高亮，不像对话行
-│ ─────────────── │
-│ 管家            │
-│ （分组 / 其它对话）│
-└─────────────────┘
-```
-
-- 点击「工作台」：`shell.mainView = 'workbench'`；**不**调用 `chat.select`；可选清掉当前对话选中高亮（或保留侧栏选中但主区仍显示工作台——推荐**清掉对话选中**，避免「以为还在某 Bot」）。
-- 点击任意对话行：`shell.mainView = 'chats'`，恢复现有行为。
-- 工作台打开时右栏：默认不展示 Bot 详情（无当前对话）；窄屏另议。
-- 图标：建议用 `LayoutDashboard` / `Briefcase` 一类，与对话头像行区分；文案 i18n `sidebar.workbench` =「工作台」。
-
-### 3.2 工作台主体
-
-中间栏整页替换 `ChatsArea`：
-
-```
-┌─ 工作台 ─────────────────────────────┐
-│  [ 待办 ]  [ 备忘 ]                   │  ← tabs
-│                                       │
-│  （tab 内容，见下）                    │
-└───────────────────────────────────────┘
-```
-
-状态：`shell.workbenchTab: 'todos' | 'memos'`（默认 `todos`）。
-
-### 3.3 待办 tab
-
-**布局（自上而下）**
-
-1. Tab 条下方、列表上方：**「+」**按钮。
-2. 点击「+」→ 下拉（或 Popover）列出可选 Bot（已创建、非只读；是否含管家见 §7 Q2）→ 选中后展开**新建卡片表单**（可插在列表顶或该 Bot 行内）。
-3. 列表：每个**至少有一条 active 定时任务**的 Bot 一行：
-   - 行头：头像 + 名称（可点：跳转该 Bot 私聊，并 `mainView='chats'`——可选，见 Q3）。
-   - 行内：该 Bot 的任务卡片横排 / 流式排布（复用 `describeScheduleWhen` + `scheduleDisplayTitle`）。
-4. **无 active 任务的 Bot 不渲染**（含管家、空 Bot）。
-5. 空态：尚无任何定时任务 → 插画 / 文案「还没有待办」+ 引导点「+」。
-
-**新建表单字段（P0）**
-
-| 字段 | 说明 |
+| 用户在想什么 | 工作台给什么 |
 | ---- | ---- |
-| 任务内容 | 映射 `note`（到点给 Bot 看的指令）；必填 |
-| 标题 | 可选；映射 `title`（展示短名）；空则展示回退 note 截断 |
-| 类型 | 单次 / 周期性 |
-| 单次时间 | 本地日期时间 → ISO（带用户时区） |
-| 周期 | P0 给常见预设（每天 / 工作日 / 每周某天 / 每月某日 + 时刻）→ 生成 5 段 cron；高级「自定义 cron」可放 P1 |
-| 时区 | 默认用户本地；一般不展示 |
+| **了解现状**：谁在忙、忙什么、什么卡住了、什么等我拍板 | 按员工 / 项目组分道的事项看板；进行中、待验收、需要你处理的汇总 |
+| **思考**：脑子里冒出来的念头先记下 | 备忘（闪念）：一句话即记，随时检索 |
+| **规划**：把念头整理成要做的事，暂不定人定时 | 事项草案：只写「做什么」，执行者、时间都可空 |
+| **调度**：交给谁、什么时候做、做完没 | 指派给 Bot / 群 + 立即 / 定时 / 周期；到点派发，结果回流到工作台待验收 |
+| **托付**：懒得自己点，让助理代管 | 管家拥有事项与备忘的增删改查工具，可代为整理、指派、排期、收尾 |
 
-确认 → RPC 创建 → 列表按 `schedules.changed` 刷新；失败 toast。
+三项需求的落点：
 
-**挂载约定（推荐，待确认 Q1）**
+1. **事项（待办）**：集中展示一切待处理的事。指派给 Bot → 成为该 Bot 的计划任务；指派给群 → 成为该群的计划任务；不指派执行者也不定时间 → 仅留作草案。
+2. **备忘**：用户的闪念记录工具，可转成事项。
+3. **管家接管**：管家可对事项、备忘增删改查，权限边界由宿主强制，不靠提示词自觉。
 
-- 工作台创建的任务一律挂到该 Bot 的**私聊**（`conversations.openDirect(botId)`，必要时隐式创建空私聊）。
-- `origin` 新增 `'user'`（用户在工作台 / 未来 UI 手建），与 tool/offer/proposal/commitment 区分；回执卡**默认**写入该私聊时间线（与现有一致，用户从聊天里也能看见；是否改为静默见 Q6）。
-- **不**在 P0 支持「挂到某个群聊」——群场景继续用群内对话 / 右栏。
+原则：
 
-**行内交互（UX 澄清，对应口述「点击后该 Bot 就增加…」）**
+- **一套计时引擎**：定时继续用 `schedules`（计时、错过补发、唤醒都复用），工作台不另造调度器。
+- **派活是用户的指令，不是 Bot 的主动行为**：到点后以「工作台代你发出」的**可见消息**派给员工，单聊 / 群聊都走现有的用户消息路由（见 §4.4）。
+- **事项归用户所有**：Bot 被删、对话被删，事项不跟着消失，而是退回草案等你改派。
 
-| 操作 | 行为（推荐） |
-| ---- | ------------ |
-| 全局「+」 | 选 Bot → 打开该 Bot 的新建表单 |
-| 行头旁小「+」或点行头空白 | 直接打开**该 Bot** 的新建表单（少一步选 Bot） |
-| 点已有任务卡片 | P0：展开只读详情（人话时间、note、取消）；P1：就地编辑 when/note |
-| 取消 | 两步确认，复用 `schedules.cancel` |
+## 2. 现状（2026-10-15 读代码）
 
-口述里「点击后该 Bot 就增加一个定时任务」按上表拆成「点行 → 出表单 → 确认才创建」，避免误触立即落库。
+| 区域 | 现状 | 对本设计的影响 |
+| ---- | ---- | ---- |
+| 主区 | `App.svelte` 宽屏恒为 `ChatsArea`；`shell.svelte.ts` 注释「主界面只有对话一个视图」；设置 / 扩展中心是弹框 | 需新增主视图切换 |
+| 左栏 | `AppSidebar.svelte`：管家行由 `isButlerConversation` 筛出，固定在分组之上（l.802 起）；点行 = `chat.select(id)`，全仓 13 个调用点 + 启动恢复上次对话 | 工作台入口放管家之上；主视图切换必须收口到一处 |
+| 窄屏 | `NarrowShell` 底部 tab：对话 / 通讯录 / 扩展 / 我 | 见 §5.5 |
+| 定时任务 | `schedules`（0011 + 0022）：`bot_id`、`conversation_id` 均 NOT NULL；`origin ∈ {tool,offer,proposal,commitment}`；无用户侧 create RPC | 事项定时复用此表，需重建（§4.3） |
+| 定时触发 | `#fire` → `evaluateGuard`（主动消息开关 / 免打扰 / 每日上限 5）→ `deliverScheduleToBot`：写 internal `schedule_fired`，**直投该 Bot 邮箱，绕过群路由** | 用户派的活不应受「主动消息」护栏约束；群也不该被绕过——所以事项走另一条派发路径 |
+| 定时结果归属 | 定时轮回复与其派生任务的结果带 `scheduleId`（`orchestrator.ts` `#scheduleSourceOf`） | 「派发 → 交付」的追踪可照搬此链路 |
+| 群路由 | `GroupTurnCoordinator`：有 @ / 回复 → 按目标顺序；无目标 → 全员 triage（`respond`/`not_mine`/`no_action`），无人认领发 `group_no_claim`。群**没有**负责人角色 | 派给群 = 在群里发一条消息，可选 @ 一位负责 Bot |
+| 待处理实体 | 定时任务、提议卡（offer）、任务（runs `loop_type='task'`，`tasks.active` 需 conversationId）、委派、承诺（各 Bot memory.db）、盯梢（watches）、审批（`approvals.list` 可全局） | 工作台汇总时只读引用，不复制 |
+| 管家工具 | turn 工具面 `butlerTools`（`tools/index.ts` l.1050）；`propose_*` / `suggest_route` / `inspect_bot_assets` / `propose_handover`；**没有**任何工具能给别的 Bot 建定时任务 | 新增事项 / 备忘工具，仅管家注册 |
+| 写权限分级 | 设置工具 `effectiveMode`（`settings-catalog/mode.ts`）：`triggerFromUser` 为假（定时、事件、代发消息）一律升级为出卡确认 | 管家事项工具照搬「是否用户本人触发」这一判据（§6.2） |
+| 上下文注入 | `ScheduleService.contextSection` / `WatchService.contextSection` → 系统提示里的分段 | 管家 `<workbench>` 段、员工的「工作台派给你的事」同此模式 |
+| 备忘 | 不存在；`stickies` 是对话内辅助阅读便签（绑对话、浮在消息上） | 新建 `memos`，与 stickies 无关 |
 
-**与设置页 / 右栏的关系**
+## 3. 概念与状态
 
-- 设置里的「定时任务」总览、右栏 `SchedulesPanel` **保留**（对话上下文管理仍有用）。
-- 工作台是**按 Bot 分行 + 可新建**的主入口；设置页可在文案上加「也可在工作台管理」（P1）。
+### 3.1 事项（todo）
 
-### 3.4 备忘 tab
+一件要做的事。字段：标题（必填）、说明（可空，派发时给执行者看）、执行者（空 / Bot / 群[+可选负责 Bot]）、时间（空 / 立即 / 某时 / 周期）、来源（用户 / 管家）、可选来源备忘。
 
-与 stickies **分开**：备忘 = 用户个人纯文本笔记，**不**绑对话、**不**浮在消息上、**不**进 Bot 上下文（P0；若以后要「Bot 可读备忘」另开决策）。
+**不变式**：
 
-备忘也**不是 Bot 记忆**：`memos` 表在主库 `main.db`（`migrations/main`，见 [design/11-storage](../docs/design/11-storage.md)），与各 Bot 的 `bots/{bot_id}/memory.db`（[design/04-memory](../docs/design/04-memory.md) 的记忆条目、FTS / 向量索引）无关，不参与记忆检索、注入与反思。
+- 有时间 ⇒ 必有执行者。选时间而不选人，表单直接要求先选人。
+- 有排期 ⇔ 存在一条 `todo_id` 指向它的 active schedule。时间只存在 schedule 上，事项表不重复存，避免两处不一致。
 
-**布局**
+**状态机**：
 
-1. 顶部：关键字筛选输入框（本地过滤 title/body；量小不必 FTS）。
-2. 「+」新建 → 卡片编辑态（或弹层）。
-3. 卡片网格 / 列表：标题（可选）+ 正文预览 + 更新时间；点开编辑；删除两步确认。
-
-**空态 / 筛选无结果** 分别文案。
-
-## 4. 数据与 RPC
-
-### 4.1 定时：扩展现有 schedules
-
-**迁移（撰写时为 main `0037`——main 最新 `0036`；合并时按 main 当时最新号 +1 重编）**
-
-- `scheduleOriginSchema` / DB CHECK 增加 `'user'`。
-- SQLite 不能 `ALTER` 已有 CHECK：迁移需**重建 `schedules` 表**（建新表 → 拷数据 → 删旧表 → 改名 → 重建索引）；早期阶段不必双写兼容。
-
-**新 RPC**
-
-```
-schedules.create
-  input: {
-    botId: string
-    note: string           // 任务内容
-    title?: string
-    when: string           // ISO 或 cron（与 createFromWhen 同口径）
-    timezone?: string | null
-    // P0 不传 conversationId：服务端 openDirect(botId)
-  }
-  output: { schedule: Schedule }  // 或 ScheduleEntry
+```text
+             指派+定时                 到点派发              执行者交付
+  draft ───────────────▶ scheduled ───────────▶ in_progress ───────────▶ delivered
+  (草案)  ───立即开始──────────────────────────▶   (进行中)               (待验收)
+    ▲            │ 取消排期                          │ 群内无人认领 /           │ 用户：完成
+    │            ▼                                   │ 执行者被删               ▼
+    └──── 退回草案 ◀───────────────────────────────────┘                        done
+  任意未结束状态 ──取消──▶ cancelled                    delivered ──退回──▶ in_progress（附追问）
 ```
 
-实现：`ScheduleService.createFromWhen({ origin: 'user', conversationId: openDirect(...).id, ... })`；沿用护栏 / 回执卡 / `schedules.changed`。
+- **周期事项**：自身停在 `scheduled`，每次触发是一条「执行记录」（`todo_runs`），各自有进行中 / 已交付；卡片显示最近一次的结果。停止周期 = `cancelled`（展示为「已停止」）。
+- **待验收不自动完成**：Bot 说做完了，不等于你认可。用户点「完成」，或告诉管家「这件算完成」。「退回」= 在原对话里追加一条追问并回到进行中（P1）。
+- **退回草案的原因**会记在 `blocked_reason` 里显示，例如「负责 Bot 已删除」「群已解散」「群里无人认领」，等你改派。
 
-**list**：现有 `schedules.list{}` 已够工作台；渲染层按 `botId` group。若需头像 URL 等，可继续用 `botName` + 本地 bots store；不足再扩 `ScheduleEntry`（P1）。
+### 3.2 执行者的语义
 
-**cancel**：现有即可。
+| 执行者 | 派发到哪 | 谁响应 |
+| ---- | ---- | ---- |
+| Bot | 该 Bot 私聊（`openDirect`，幂等；私聊不存在则建并发布会话事件） | 该 Bot |
+| 群 | 该群 | 指定了负责 Bot → 消息带 @，走显式目标；未指定 → 走 triage，谁认领谁做 |
+| 管家 | 管家私聊 | 管家（可以把事项交给管家本人去办，它再自行委派） |
 
-**权限**：桌面端仅本机用户；create/cancel 不经 Bot 审批。Bot 关闭主动消息时：创建仍允许，但 list 的 `deferredReason` / 创建返回护栏提示要可见（复用 `fireabilityWarnings`）。
+暂不支持「我自己」作为执行者（到点提醒用户本人）。列为 P2（§9）。
 
-### 4.2 备忘：新表 `memos`
+### 3.3 与现有「Bot 自己的安排」的关系
+
+Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任务，是**员工自己的安排**，不是你派的活。
+
+- 它们**不**转成事项，避免两份状态。
+- 工作台在该员工的分道里**并列展示**，带来源标签（自排 / 例行 / 承诺 / 提议），可取消、可跳到对话。
+- 它们的到点行为保持不变，仍受主动消息护栏约束。
+
+这样「集中展示」覆盖全部待处理的事，而所有权和语义仍然清楚：**事项 = 你派的活；自排 = 员工自己的日程**。
+
+### 3.4 备忘（memo）
+
+纯文本闪念，一条一段。不绑对话，不进任何 Bot 的上下文。唯一例外：**管家可通过工具读写**（需求 3）。
+
+可置顶，可「转为事项」（新事项记 `memo_id`，备忘保留并显示「已转事项」）。删除进「最近删除」，30 天后清理。管家也能删，因此必须可恢复。
+
+## 4. 数据、服务与派发
+
+### 4.1 新表（main 库迁移；撰写时最新 `0036`，合入时按 main 实况重编）
 
 ```sql
-CREATE TABLE memos (
-  id TEXT PRIMARY KEY,          -- memo_
-  title TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL,            -- 纯文本；上限建议 8_000～20_000 字
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+CREATE TABLE todos (
+  id                TEXT PRIMARY KEY,                -- todo_
+  title             TEXT NOT NULL,                   -- ≤ 120 字
+  notes             TEXT NOT NULL DEFAULT '',        -- ≤ 4000 字；派发时给执行者
+  assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
+  assignee_group_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL CHECK (status IN
+                      ('draft','scheduled','in_progress','delivered','done','cancelled')),
+  source            TEXT NOT NULL CHECK (source IN ('user','butler')),
+  memo_id           TEXT,                            -- 由哪条备忘转来（不设 FK，备忘清理不影响）
+  blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  closed_at         INTEGER                          -- done / cancelled 时间
 );
-CREATE INDEX memos_updated_at ON memos(updated_at DESC);
+CREATE INDEX todos_status ON todos(status, updated_at DESC);
+
+CREATE TABLE todo_runs (                              -- 每次派发一条（单次事项通常只有一条）
+  id                TEXT PRIMARY KEY,                -- tdr_
+  todo_id           TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+  conversation_id   TEXT NOT NULL,                   -- 派到的对话（不设 FK：对话删了记录仍可读）
+  message_id        TEXT,                            -- 派发消息
+  status            TEXT NOT NULL CHECK (status IN ('dispatched','delivered','unclaimed','failed')),
+  result_message_id TEXT,                            -- 交付的那条回复
+  dispatched_at     INTEGER NOT NULL,
+  settled_at        INTEGER
+);
+CREATE INDEX todo_runs_todo ON todo_runs(todo_id, dispatched_at DESC);
+
+CREATE TABLE memos (
+  id         TEXT PRIMARY KEY,                       -- memo_
+  body       TEXT NOT NULL,                          -- ≤ 10000 字，纯文本
+  pinned     INTEGER NOT NULL DEFAULT 0,
+  source     TEXT NOT NULL CHECK (source IN ('user','butler')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER                                 -- 非空 = 在「最近删除」
+);
+CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
 ```
 
-**RPC**
+- 执行者编码：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。
+- 检索：备忘 / 事项量级在千条以内，P0 用 `LIKE`。超过再上 FTS（P2）。
+
+### 4.2 `schedules` 重建
+
+SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写法：建新表 → 拷数据 → 删旧 → 改名 → 重建索引。改动如下：
+
+- `origin` CHECK 增 `'workbench'`。
+- 增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL`。
+- `bot_id` 放宽为可空。仅「派给群、未指定负责 Bot」的事项行为空，其余来源仍必填（service 层校验）。
+
+`bot_id` 可空的波及面要逐一过一遍。凡按 Bot 查的都要能跳过空值：`listActiveForBot`、`contextSection`、`cancelForBotInConversation`、`prepareBotDeletion`、`fireabilityWarnings` / `#deferredReason`、移交适配器 `handover/adapters/schedule.ts`、`SchedulesPanel` 的 `botName`。
+
+### 4.3 TodoService（core 新服务）
+
+职责：事项 CRUD 与状态机、指派校验、排期（调 ScheduleService）、派发、交付追踪、对账。
+
+- **排期**：`ScheduleService.createForTodo({ todoId, botId|null, conversationId, when })`，`origin='workbench'`。
+  - 时间校验沿用 `validateWhen`。
+  - 不走 `#assertFireable` 的 Bot 成员检查（群无负责 Bot 时没有 botId）。改由 TodoService 校验：Bot active、群未只读、负责 Bot 是群成员。
+  - 目标对话里照常插回执卡，文案为「工作台安排：「标题」· 周五 09:00」，状态随 schedule 回写，复用 `#syncCards`。
+- **改期**：新增 `ScheduleService.reschedule(id, when)`，原地更新 `run_at` / `cron` / `next_fire_at` 并回写回执卡。不走「取消 + 重建」，避免时间线堆两张卡。
+- **改派**：取消旧 schedule（回执卡显示「已改派」）后在新对话重建。
+- **到点**：`#fire` 遇 `origin='workbench'` 时，不走 `evaluateGuard`，也不写 internal `schedule_fired`，改调 `todos.dispatch(todoId, { scheduleId, fireAt })`。`next_fire_at` / 单次置 done 的推进照旧。错过补发沿用 `catchUpMissed`，派发消息注明「原定 X，延迟派发」。
+- **立即开始**：直接 `dispatch`，不建 schedule。
+- **对账**（启动时 + `schedules.changed`）：
+  - 状态为 `scheduled` 却没有 active schedule → 退回 `draft`，写入原因。
+  - 执行者 Bot 已删 / 群已删 → 退回 `draft`。
+  - 不依赖各删除路径都记得调钩子：conversations 的 FK 级联会绕过 service，对账才是兜底。
+- **D88 移交**：移交适配器搬 schedule 时带上 `todo_id`，TodoService 把 `assignee_bot_id` 改到接收方。
+
+### 4.4 派发：工作台代你发出
+
+派发 = 宿主在目标对话里追加一条**可见消息**，然后按用户消息路由。消息构成如下：
+
+- `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`。
+- 正文为 `【工作台】标题` + 说明。管家建的事项另加「（管家代你安排）」。
+- 群里指定了负责 Bot 时，加结构化 @。
+- 界面上渲染成「派发卡」而不是普通气泡：标题、说明、「在工作台查看」。
+
+路由：
+
+- 私聊走直聊投递闸口（`#deliverDirectThroughGate`）。
+- 群走 `GroupTurnCoordinator`：有 @ 走显式目标，无 @ 走 triage。
+
+为什么这样做：
+
+- **不受主动消息护栏约束**：派活是用户的指令。Bot 关了主动消息、正处免打扰、今天发够 5 条，都不该让你排的活静默不执行。时间是你选的，即使在深夜，你也是知情的。
+- **群语义自然成立**：群里本来就没有负责人，事项派给群和你在群里发一句话等价，谁认领由现有 triage 决定。
+- **时间线可审计**：员工私聊里能看到「老板什么时候交代了什么」。
+
+几条约束：
+
+- **不算用户本人触发**：与 D71 委派代发相同，`triggerFromUser=false`。执行者在这一轮里做敏感设置写入，仍按「非本人」出卡确认。到点时用户未必在场，不能借派发消息绕过确认。
+- **记忆证据**：`source='butler'` 的事项派发消息不算用户原话。反思不能把它当用户偏好的证据，对齐 D71 的处理。
+- **执行者提示**：系统提示加一条规则：「工作台派发的事项：做完给出明确结论；做不了说明原因与需要什么。」便于用户验收。
+
+### 4.5 交付追踪
+
+照搬 `#scheduleSourceOf` 的链路，泛化出「事项来源」：
+
+- 批次里含 `origin='workbench'` 的消息，或任务的 `origin_run_id` 的触发里含它 → 这一轮属于该 `todoRunId`。
+- 该轮结算时出了可见回复，且同链路没有未结算任务（`runs.origin_run_id` = 该轮且非终态）→ `todo_runs.status='delivered'`，`result_message_id` = 该回复，事项进入 `delivered`。
+- 回复带「📋 标题」标签，对照现有「⏰ 标题」。
+- 群：一轮结束仍无人响应、出现 `group_no_claim` → `unclaimed`，事项退回草案，原因为「群里无人认领」。多个 Bot 响应时，以最后结算者为准，所有回复都挂在执行记录下。
+- 兜底：如果执行者正在跑，消息会被 steer 进当前 run，归属可能落到别的批次。追踪失败时事项停在「进行中」，用户可手动标完成。追踪是增强，不是正确性前提。
+
+### 4.6 RPC 与事件（shared 契约）
 
 | 方法 | 说明 |
 | ---- | ---- |
-| `memos.list` | 全量（按 `updated_at` desc）；P0 无分页 |
-| `memos.create` | `{ title?, body }` → memo |
-| `memos.update` | `{ id, title?, body? }` |
-| `memos.delete` | `{ id }` |
+| `todos.list` | `{ statuses?, assignee?, query?, includeClosedDays? }` → `TodoEntry[]`（含执行者名、下次时间、人话时间、最近一次执行记录、`blocked_reason`）；默认不含 7 天前关闭的 |
+| `todos.get` | `{ id }` → 事项 + 全部执行记录 |
+| `todos.create` | `{ title, notes?, assignee?, when?, memoId? }`；`when`：省略 = 不定时，`'now'` = 立即派发，ISO / cron 与 `createFromWhen` 同口径；返回 `{ todo, warnings }` |
+| `todos.update` | `{ id, title?, notes?, assignee?: … \| null, when?: … \| null }`；`null` = 清空（清执行者会连带清排期，退回草案） |
+| `todos.start` | `{ id }` 立即派发（需已有执行者） |
+| `todos.complete` / `todos.cancel` / `todos.reopen` | 状态迁移；`reopen` 用于从 done / cancelled 恢复为草案 |
+| `memos.list` | `{ query?, trashed? }` |
+| `memos.create` / `memos.update` / `memos.delete` / `memos.restore` | `delete` = 移入最近删除；`update` 支持 `pinned` |
+| `workbench.summary`（P1） | 需要你处理 / 进行中 / 待验收 / 今天的计数与条目（§5.3） |
 
-事件（可选 P0）：`memos.changed`；单窗可先靠 RPC 回写刷新。
+事件：`todos.changed`、`memos.changed`（管家在后台改了，工作台要实时跟上）。`schedules.changed` 保留。
 
-**非目标（备忘）**：Markdown 渲染、附件、标签、加密、同步云端、注入 Bot 上下文、与 stickies 合并。
+## 5. 界面
 
-## 5. UI / 模块结构（建议）
+### 5.1 入口与主视图
 
+- 左栏「工作台」条目放在管家之上，图标 `LayoutDashboard`，`data-testid="workbench-nav"`。折叠态只显示图标。徽标 = 待验收 + 需要你处理的数量（P1）。
+- 新增 `shell.mainView: 'chats' | 'workbench'`，`App.svelte` 按它渲染 `WorkbenchView` 或 `ChatsArea`。
+- **收口不变式**：只在 `chat.select()` 内部置 `mainView='chats'`，所有跳转（侧栏、搜索、通知、深链、卡片跳转）自然回到对话，不逐点修改。点「工作台」只改 `mainView`，**不清** `chat.currentId`，草稿、已读、右栏状态都不受影响。
+- 侧栏对话行的选中高亮改为派生：`mainView==='chats' && id===currentId`。工作台打开时没有对话高亮。
+- 启动默认进对话（保持现状）。`mainView` 不持久化。
+
+### 5.2 工作台布局（宽屏）
+
+```text
+┌ 工作台 ───────────────────────────────────────────────────────────────┐
+│ [需要你处理 2] [进行中 3] [待验收 1] [今天 4] [草案 5]   ← 汇总条，点击即筛选（P1）│
+├──────────────────────────────────────────────┬────────────────────────┤
+│ 事项                     [按成员 | 按时间]      │ 备忘                    │
+│ ┌ + 记一件事…（回车存为草案）───────────────┐  │ ┌ 闪念…（回车保存）────┐ │
+│ └──────────────────────────────────────────┘  │ └─────────────────────┘ │
+│ ▾ 未指派 · 5                                   │ 🔍 搜索                 │
+│   [卡] [卡] [卡] …                              │ 📌 下周和 A 公司谈价…    │
+│ ▾ 🤖 写作助手 · 进行中 1 · 下次 周五 09:00       │ · 试试把周报交给…       │
+│   [事项卡] [事项卡] [自排·例行 每天 08:00]       │ · …                    │
+│ ▾ 👥 产品组 · 待验收 1                          │                        │
+│   [事项卡 @研究员]                              │                        │
+│ ▸ 空闲成员：🤖 翻译 🤖 研究员（点击给他派活）      │ 最近删除                │
+└──────────────────────────────────────────────┴────────────────────────┘
 ```
-apps/desktop/src/renderer/src/lib/features/workbench/
-  WorkbenchView.svelte          # tabs + 出口
-  WorkbenchTodos.svelte         # +、Bot 行、表单
-  WorkbenchMemos.svelte
-  BotScheduleRow.svelte
-  ScheduleCreateForm.svelte     # 单次 / 周期控件
-  MemoCard.svelte
-  workbench.svelte.ts           # 列表缓存、筛选、表单草稿（可选）
+
+- 双栏是有意的：「思考」（备忘）和「规划 / 调度」（事项）同屏，备忘可一键转为事项。窄于阈值时折成「事项 / 备忘」两个 tab。
+- **按成员**（默认，员工视角）：
+  - 第一道为「未指派」，之后是有事的 Bot 和群。Bot 在前，排序依次为：有待验收的、有进行中的、下次时间最近的。
+  - 道头显示忙闲：进行中任务数取自 `runningBotIds` / 任务，再加下次排期时间。
+  - 没有事的 Bot 收进「空闲成员」条，不占道。经理想知道谁有空，点头像即为他新建事项。
+- **按时间**：逾期未交付 / 今天 / 明天 / 本周 / 以后 / 未排期。周期事项按下次触发时间归组。
+- **事项卡**：标题、执行者徽标、人话时间（复用 `describeScheduleWhen`）、状态胶囊、来源徽标（管家）、`blocked_reason` 警示。主操作随状态变化：
+  - 草案：指派 / 立即开始
+  - 已排期：改期
+  - 进行中：打开对话
+  - 待验收：查看结果 / 完成 / 退回
+- **自排卡**（§3.3）：来源徽标、人话时间、`deferredReason` 警示（如「该 Bot 已关闭主动消息」）、取消、打开对话。
+- **事项详情抽屉**（点卡打开，在工作台内从右侧滑出，不跳走）：
+  - 编辑标题和说明。
+  - 执行者选择器：Bot 列表 / 群列表；选群时可选负责 Bot。只列 active Bot 和非只读群，管家可选。
+  - 时间选择器：不定 / 立即 / 某时 / 重复。重复用预设：每天 / 工作日 / 每周几 / 每月几号 + 时刻；自定义 cron 放 P1。实时显示「下次：…」。
+  - 执行记录（每次派发 → 结果摘要 + 跳到对话里那条回复）。
+  - 底部：完成 / 取消 / 退回草案。
+- **派发前提示**：`todos.create` / `update` 返回的 `warnings` 就地显示，例如「该 Bot 未配置模型」「群已只读」。主动消息相关的警告对事项不再出现（§4.4）。
+- 拖拽：备忘拖到某员工道 = 转为事项并指派；草案拖道 = 改派（P1）。
+
+### 5.3 「需要你处理」与「进行中」（P1）
+
+经理最怕「活卡在我这儿而我不知道」。汇总条只读引用现有实体，点条目跳到对应对话里的那张卡：
+
+| 汇总 | 来源 |
+| ---- | ---- |
+| 需要你处理 | 待决审批（`approvals.list` 全局）、等你回答的任务提问（runs `awaiting_input`）、待你答复的定时提议卡（offer pending）、群里无人认领 |
+| 进行中 | 进行中的事项 + 全局活跃任务（需新增不带 conversationId 的 `tasks.active` 变体） |
+| 待验收 / 今天 / 草案 | 事项本身 |
+
+由 `workbench.summary` 一次聚合返回，监听相关事件去抖刷新。
+
+### 5.4 备忘栏
+
+- 顶部常驻输入框：回车保存，Shift+回车换行，存完清空并保持焦点，连续记录不打断。
+- 列表：置顶在前，其余按更新时间倒序。卡片正文最多显示 6 行，显示相对时间和来源徽标（管家记的）。
+- 操作：编辑（原地）、置顶、转为事项（打开事项抽屉并预填：首行作标题，全文作说明）、删除。
+- 搜索：本地即时过滤，空态和无结果分别给文案。
+- 「最近删除」：可恢复，30 天后启动时清理。
+- 全局快捷键（如 Ctrl/Cmd+Shift+M），在任何界面弹出闪念输入（P1）。
+
+### 5.5 窄屏（P1）
+
+底部 tab 增加「工作台」，变为 5 个 tab。工作台是经理的「首页」，地位等同于对话，不应该藏在对话列表顶部。单栏内用「事项 / 备忘」切换，事项详情走全屏详情层（复用窄屏详情层与返回手势）。
+
+## 6. 管家接管
+
+### 6.1 工具（仅管家注册，turn 工具面）
+
+| 工具 | 参数 | 说明 |
+| ---- | ---- | ---- |
+| `list_todos` | `status?`、`assignee?`、`query?`、`limit?` | 只读；结果包 `untrustedBlock`（标题 / 说明可能来自网页摘录） |
+| `create_todo` | `title`、`notes?`、`assignee?`（`{bot}` / `{group, lead_bot?}`）、`when?`（`now` / ISO / cron）、`from_memo?` | 不填执行者和时间即为草案 |
+| `update_todo` | `id` + 任意字段；`assignee: null` / `when: null` 为清空 | 改派、改期、退回草案 |
+| `close_todo` | `id`、`outcome: 'done' \| 'cancelled'`、`reason?` | 收尾；不提供硬删除 |
+| `list_memos` | `query?`、`limit?`、`include_trashed?` | 只读，`untrustedBlock` |
+| `create_memo` / `update_memo` | `body` / `id, body?, pinned?` | 「帮我记一下…」 |
+| `delete_memo` | `id` | 移入最近删除，可恢复 |
+
+工具注册清单要同步更新：`effects/classify.ts` 全部归为 `local`；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`。
+
+### 6.2 权限边界（宿主强制）
+
+判据与设置工具的 `effectiveMode` 一致，看这一轮是不是用户本人触发（`triggerFromUser`）：
+
+| 操作 | 用户本人触发的一轮 | 非本人触发（定时、事件、委派回执、代发） |
+| ---- | ---- | ---- |
+| 读取（`list_*`） | ✅ | ✅ |
+| 记备忘、建草案（无执行者、无时间） | ✅ 直接执行 | ✅ 直接执行（无副作用，可撤回） |
+| 指派、排期、立即开始、改派、改期 | ✅ 直接执行 | ❌ 拒绝，提示「需要用户确认，请在回复里向用户提议」 |
+| 收尾（完成 / 取消）、删除备忘 | ✅ 直接执行 | ❌ 同上 |
+
+理由：「让别的员工动起来」和「删东西」只在用户当面交代时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替你派活。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。
+
+**可见性**：
+
+- 管家的写操作都带 `source='butler'` 标记。工作台卡片显示「管家」徽标，`todos.changed` 让工作台实时刷新。
+- 管家私聊里，工具调用照常显示在活动记录中，管家在回复里说明改了什么。
+- 备忘可从「最近删除」恢复，事项的「已取消」可 `reopen`。管家犯错都能撤回。
+
+### 6.3 管家的工作台上下文
+
+管家每一轮的系统提示注入一个精简的 `<workbench>` 段，写法对照 `contextSection`，只放计数和要紧条目，不放全文：
+
+```text
+<workbench>
+草案 5 条（最早 3 天前）；待验收 1 条：「整理竞品报告」（研究员，昨天交付）
+进行中 2 条；今天排期 2 条；逾期未交付 0 条
+备忘 23 条（最近：今天 10:12「下周和 A 公司谈价…」）
+需要细节用 list_todos / list_memos。
+</workbench>
 ```
 
-改动锚点：
+提示词补充（`BUTLER_RULES`）：
 
-- `shell.svelte.ts`：`mainView`、`workbenchTab`、`openWorkbench()`；`resetForLayoutChange` 时复位策略写清。
-- `App.svelte` / `NarrowShell.svelte`：`mainView==='workbench'` 时渲染 `WorkbenchView` 替代 `ChatsArea`。
-- `AppSidebar.svelte`：管家块**之上**插入工作台 MenuItem（折叠态只有图标）；`data-testid="workbench-nav"`。
-- i18n：`sidebar.workbench`、`workbench.*`。
-- e2e：新建工作台用例（入口切换、创建单次任务出现在对应 Bot 行、无任务 Bot 不显示、备忘 CRUD + 筛选）。
+- 用户说「记一下 / 别忘了」→ 记备忘，或建草案。有明确的人和时间才建排期事项。
+- 「帮我安排 / 排一下」→ 先看草案和各员工忙闲（`list_todos` + `list_bots`），给出指派方案；用户点头后再落地。
+- 事项与委派的区别：用户要求「在这里等结果」用 `delegate_to_bot`；「交给谁去办、回头看」用事项。
 
-## 6. 实施阶段
+### 6.4 员工侧（P1）
 
-### P0 — 壳 + 待办只读/新建/取消（建议先做）
+被指派的 Bot 在自己的 `schedules` 上下文段里能看到「工作台派给你的事项」（标题 + 时间），这样被问到「你周五要干嘛」时答得上来。员工**不能**改事项，状态由宿主根据交付推进。
 
-- [ ] 设计落点：`docs/design/` 一小节或本 todo 定稿 + README 决策号
-- [ ] `shell.mainView` + 左栏入口 + 中间区切换（宽屏）
-- [ ] `schedules.create`（origin=`user`）+ shared `scheduleOriginSchema` 加 `'user'` + main 迁移（撰写时 `0037`，合并时重编）**重建 `schedules` 表**以放宽 origin CHECK（见 §4.1）
-- [ ] 工作台待办：按 Bot 分组列表、全局 +、行内 +、新建表单（预设周期）、取消、空态
-- [ ] 订阅 `schedules.changed`
-- [ ] 单测：create 挂私聊、非法 when、护栏提示；renderer 分组纯函数
-- [ ] e2e：入口 → 建单次 → 列表可见 → 取消
+## 7. 实施阶段
 
-### P1 — 备忘 + 窄屏 + 体验
+### P0：事项闭环 + 备忘 + 管家工具（宽屏）
 
-- [ ] `memos` 表（主库 main 迁移，号随合并重编；非 Bot 记忆，见 §3.4）+ CRUD RPC + 备忘 tab UI（筛选 / 增删改）
-- [ ] 窄屏入口（见 Q4）
-- [ ] 任务卡片点进私聊并定位 / 打开右栏定时页签
-- [ ] 周期「自定义 cron」；可选就地编辑
-- [ ] 设置页定时总览文案指向工作台
+- [ ] 设计正文 `docs/design/39-workbench.md` + README 决策 D90（编号以合入时为准）
+- [ ] 迁移：`todos` / `todo_runs` / `memos` 新表；`schedules` 重建（`origin` 加 `workbench`、加 `todo_id`、`bot_id` 可空）
+- [ ] shared：类型、schema、RPC 契约、事件；`scheduleOriginSchema` 加 `'workbench'`；`textContent.origin` 加 `'workbench'` + `todoId`
+- [ ] core：
+  - TodoService：CRUD、状态机、校验、对账
+  - ScheduleService：`createForTodo` / `reschedule`；`#fire` 增加 workbench 分支；处理 `bot_id` 可空的波及点（§4.2）
+  - 派发：私聊闸口 / 群协调器
+  - MemoService（含最近删除清理）
+  - RPC 绑定
+- [ ] 交付追踪（§4.5）：`todo_runs` 进入 delivered / unclaimed；回复打「📋 标题」标签
+- [ ] 管家工具 7 个 + 权限边界 + `<workbench>` 段 + `BUTLER_RULES` 补充 + 工具注册清单同步
+- [ ] renderer：
+  - `shell.mainView` 与 `chat.select` 收口
+  - 左栏入口
+  - `WorkbenchView`：按成员视图、快速新建、事项卡、详情抽屉（时间预设）、自排卡、空闲成员条
+  - 备忘栏（含最近删除）
+  - 派发卡 / 回执卡的 `workbench` 渲染
+- [ ] 测试（先定向、后全量，见 AGENTS.md）：
+  - 状态机迁移表驱动测试
+  - 派发不受护栏约束（主动消息关闭仍派发）
+  - 群派发走 triage / @
+  - 无人认领退回草案
+  - 删 Bot / 删对话后对账退回草案
+  - 移交带走 `todo_id`
+  - 管家工具在非本人触发轮里拒绝写操作
+  - 备忘软删与恢复
+  - 迁移重建后保留旧行
+- [ ] e2e：入口切换且不丢对话草稿；记闪念 → 转事项 → 指派 Bot + 立即开始 → 私聊出现派发卡 → 交付后进入待验收 → 完成
 
-### P2 — 可选增强（本期不排期）
+### P1：现状感知 + 体验
 
-- [ ] 待办按「下次触发」全局时间线视图（打通 Bot 维度）
-- [ ] 备忘 Markdown / 置顶 / 颜色
-- [ ] 工作台内看到 watches（借用）摘要
-- [ ] Bot 只读引用备忘（需单独隐私决策）
+- [ ] `workbench.summary` + 汇总条（需要你处理 / 进行中 / 待验收 / 今天 / 草案）+ 左栏徽标；全局 `tasks.active`
+- [ ] 按时间视图；拖拽转事项 / 改派
+- [ ] 「退回」= 原对话追问并回到进行中
+- [ ] 窄屏第 5 个 tab
+- [ ] 闪念全局快捷键
+- [ ] 员工侧上下文（§6.4）
+- [ ] 自定义 cron；盯梢（watches）在员工道内只读展示
+- [ ] 设置页「定时任务」总览改为跳转工作台（设置里不再重复一份）
 
-## 7. 待你确认的问题（⚠）
+### P2：可选增强（本期不排期）
 
-1. **Q1 任务挂载对话**：是否同意 P0 **一律挂该 Bot 私聊**（`openDirect`）？若某 Bot 只有群、无私聊，是否允许工作台隐式建空私聊？（推荐：允许。）
-2. **Q2 管家是否可被选为任务归属？** 推荐：可以（管家也有 schedules）；列表无任务时管家行仍隐藏。
-3. **Q3 点 Bot 行头**：跳转私聊，还是仅展开/折叠该行任务？推荐：行头点击 = 跳转私聊；折叠用行头旁 chevron。
-4. **Q4 窄屏**：底部 tab 加「工作台」，还是仅在「对话」列表顶插入入口、点进详情层式全屏工作台？推荐：列表顶入口 + 全屏工作台（少改 tab 信息架构）。
-5. **Q5 设置页「定时任务」总览**：保留 / 改为跳转工作台 / P1 再藏。推荐：P0 保留。
-6. **Q6 创建后是否在私聊插入回执卡**：与现网 `origin=tool/offer/...` 一致出卡，还是 `user` 静默（只出现在工作台）？推荐：**出卡**（时间线可审计）；若嫌吵可改为静默。
-7. **Q7 备忘是否需要标题字段**：正文必填 + 标题可选，还是仅正文？推荐：标题可选。
-8. **Q8 「点击卡片区域增加任务」**：是否接受「点行头旁 + / 全局 + → 表单 → 确认」而不要「点一下立刻建空任务」？
+- [ ] 执行者「我自己」：到点在管家私聊出确定性提醒卡 + 系统通知，不调模型
+- [ ] 截止时间（与执行时间分开），逾期高亮
+- [ ] 管家晨报 / 周回顾例行（读工作台，只提建议，遵守 §6.2）
+- [ ] 备忘 `#标签`、FTS
+- [ ] 事项活动日志（谁在何时改了什么，含管家）
 
-## 8. 非目标（本期）
+## 8. 决策状态
 
-- 不在工作台里聊天、改 Bot 人设、管 Skills / MCP。
-- 不重做调度引擎、不改到点投递语义。
-- 不把 stickies 改造成备忘。
-- 不做多用户 / 云同步备忘。
-- 不在 P0 做群聊归属选择、不在 P0 做任务编辑（只建 + 取消）。
+**已定（2026-10-15，用户确认）**：
 
-## 9. 风险与注意
+1. **派发方式**（§4.4）：到点以「工作台代你发出」的可见消息派给员工，不受主动消息开关、免打扰、每日上限约束。
+2. **管家权限边界**（§6.2）：非本人触发的一轮里，管家只能读、记、起草，不能派活、收尾、删除。
 
-- **主视图分叉**：`shell` 今日假定「唯一主视图 = 对话」；所有 `openSchedules` / 深链 / 窄屏返回要验收「从工作台点对话能回去」；改 shell 时注意宽窄切换的 `resetForLayoutChange`。
-- **隐式 openDirect**：可能突然在侧栏冒出空私聊——可接受，或创建任务时若无私聊先 toast 确认（产品偏好）。
-- **origin CHECK**：SQLite 改 CHECK 往往要重建表；早期阶段可直接新迁移重建 `schedules`（数据可清空策略需你点头——或只 ADD 新约束能接受的写法）。
-- **测试纪律**：改 shared 契约后定向 `schedule-*` / 新 memos 单测；收尾再全量。
+**按推荐默认实施（用户未单独表态，可随时改口）**：
 
-## 10. 验收口径（定稿后实施时用）
+3. **待验收需手动完成**（§3.1）：不自动完成；如果嫌多，P1 提供「全部标为完成」。影响 P0。
+4. **窄屏入口**：底部增加第 5 个 tab「工作台」。P1 才涉及。
+5. **设置页定时总览**：P1 改为跳转工作台。
 
-1. 左栏管家上方可见「工作台」；点击后中间为工作台，侧栏无对话选中（按 §3.1 的推荐「清掉对话选中」；若定稿改为保留选中则按定稿），URL/状态可回到对话。
-2. 待办：仅显示有 active 任务的 Bot；+ 选 Bot 后可建单次与周期；任务出现在该 Bot 行；取消后行可消失。
-3. 任务实际挂在该 Bot 私聊，到点行为与现有定时一致（可用现有 schedule 集成测试路径抽验）。
-4. 备忘：增删改 + 关键字筛选可用；与对话 stickies 互不影响。
-5. 相关单测 / e2e 绿；typecheck 干净。
+## 9. 非目标（本期）
 
----
+- 不在工作台里聊天、改 Bot 人设、管 Skills / MCP / 连接。
+- 不重做调度引擎；Bot 自排定时任务的到点语义不变。
+- 不把 stickies 改造成备忘；备忘不进普通 Bot 的上下文。
+- 不做多用户 / 云同步、事项依赖关系、甘特图、子任务。
+- 普通 Bot 不能操作事项和备忘（只有管家可以）。
 
-**下一步**：请过一遍 §7 问题并点头或改口径；通过后按 P0 → P1 编码，并把结论回写 `docs/design/` + 决策表。
+## 10. 风险
+
+- **`schedules` 重建 + `bot_id` 可空**：波及面集中在按 Bot 查询的路径（§4.2 已列）。迁移测试要覆盖旧行原样保留、索引和 FK 完好。
+- **深夜派发**：不受免打扰约束意味着凌晨的事项会准时执行并产生消息。这是用户自己选的时间。界面在选择免打扰时段内的时间时给一行提示即可，不拦截。
+- **交付追踪的边界**：steer 合批、群多人响应时，归属可能不准。设计上降级为「停在进行中、可手动完成」，不影响正确性。
+- **管家误操作**：靠 §6.2 的触发判据、软删除、`reopen` 与来源徽标兜底。
+- **并发会话**：本仓库有多会话并行开发，迁移号以合入时 main 实况为准重编。
+
+## 11. 验收口径
+
+1. 左栏管家上方有「工作台」，点击后主区切换。从工作台点任意对话 / 搜索结果 / 通知都能回到对话，原对话草稿不丢。
+2. 记一条闪念，转为事项，指派给 Bot 并「立即开始」：该 Bot 私聊出现派发卡并开始执行；交付后事项进入待验收，可跳到结果，标完成后关闭。
+3. 同一事项改为指派给群且不指定负责 Bot：群内走 triage。没有 Bot 认领时，事项退回草案，显示「群里无人认领」。
+4. 定时 / 周期事项在 Bot 关闭主动消息时仍按时派发；Bot 自排的定时任务仍受护栏约束（行为不变）。
+5. 删除执行者 Bot 后，其事项退回草案并显示原因；D88 移交后，事项执行者随之变更。
+6. 对管家说「把草案里的竞品分析交给研究员，周五早上 9 点做」，工作台实时出现排期；管家自己的定时轮尝试派活时被拒绝，改为提建议。
+7. 备忘增删改、置顶、搜索、最近删除恢复可用；管家可记、查、改、删备忘，删除可恢复。
+8. 相关单测 / e2e 通过；typecheck、lint 干净。
+
+## 12. 实施编排（P0）
+
+### 12.1 分支与 worktree
+
+- 集成分支 `t/wb`，worktree `/home/jyy/wt/kepcup-wb`（从 main 拉出）。W0 直接在这里做。
+- 并行工作流各自开 worktree `/home/jyy/wt/kepcup-wb-<ws>`，分支 `t/wb-<ws>`，从 `t/wb` 拉出。完成后由协调会话合入 `t/wb`。
+- 合入 `main` 须经用户确认；不 push。
+- 测试规则见 AGENTS.md（先定向、后全量），容器运行见 `docs/dev/05-testing.md`「本机容器运行」。判定标准是「失败集合不超出基线」。
+
+### 12.2 波次
+
+| 波次 | 工作流 | 范围 | 依赖 |
+| ---- | ---- | ---- | ---- |
+| 0 | **W0 契约** | 迁移、shared 类型 / RPC / 事件 / 常量、core 存储层（store）、`bot_id` 可空的编译期波及修补、设计文档 39 + README D90 + `docs/dev/03-data-model.md` | — |
+| 1 | **W1-core** | TodoService / MemoService、ScheduleService 改造（§4.3）、派发（§4.4）、交付追踪（§4.5）、对账、移交适配、RPC 绑定与 `start.ts` 装配、执行者提示规则 | W0 |
+| 1 | **W1-ui** | §5 P0 全部界面（主视图收口、入口、按成员视图、事项卡与详情抽屉、自排卡、空闲成员条、备忘栏、派发卡 / 回执卡渲染、i18n），渲染端单测 | W0（只依赖 shared 契约，与 W1-core 并行） |
+| 2 | **W2-butler** | §6.1–§6.3：7 个工具、权限边界、`<workbench>` 段、`BUTLER_RULES`、工具注册清单 | W1-core 合入后 |
+| 3 | **W3 收口** | e2e（§7 P0 最后一条）、全量回归、文档同步（PROGRESS、本节记录） | 全部 |
+
+每批合入 `t/wb` 后安排一次独立审查（审查者不是作者），修复后再进入下一波。
+
+### 12.3 W0 契约（后续工作流按此编码，名称不得自行改动）
+
+**迁移**：一个文件 `packages/core/migrations/main/0037_workbench.sql`（合入 main 时按实况重编）。
+
+- 新表 `todos` / `todo_runs` / `memos`，按 §4.1 原样建。
+- `schedules` 重建，参照 `0021` 的写法：`bot_id` 改为可空；`origin` CHECK 加 `'workbench'`；增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL`。保留全部列、数据、索引、外键；增加索引 `schedules(todo_id)`。
+
+**shared 类型**（`packages/shared/src/domain/types.ts`）：
+
+- `todoStatusSchema = z.enum(['draft','scheduled','in_progress','delivered','done','cancelled'])`
+- `todoSourceSchema = z.enum(['user','butler'])`
+- `todoAssigneeSchema = z.discriminatedUnion('kind', [{ kind:'bot', botId }, { kind:'group', conversationId, leadBotId: string|null }])`
+- `todoSchema`：`{ id, title, notes, assignee: todoAssigneeSchema.nullable(), status, source, memoId: string|null, blockedReason: string|null, createdAt, updatedAt, closedAt: number|null }`
+- `todoRunStatusSchema = z.enum(['dispatched','delivered','unclaimed','failed'])`
+- `todoRunSchema`：`{ id, todoId, conversationId, messageId: string|null, status, resultMessageId: string|null, dispatchedAt, settledAt: number|null }`
+- `todoEntrySchema = todoSchema.extend({ assigneeName: string|null, leadBotName: string|null, schedule: { id, kind, runAt, cron, timezone, nextFireAt } | null, lastRun: todoRunSchema.nullable() })`
+- `memoSchema`：`{ id, body, pinned: boolean, source: todoSourceSchema, createdAt, updatedAt, deletedAt: number|null }`
+- `scheduleOriginSchema` 加 `'workbench'`；`scheduleSchema.botId` 改为 `z.string().nullable()`；增 `todoId: z.string().nullable()`。
+- `textContentSchema.origin`（现为 `['delegation','task','widget']`）加 `'workbench'`；增可选 `todoId`、`todoRunId`。
+- 常量（`packages/shared/src/constants.ts`）：`TODO_TITLE_MAX_CHARS = 120`、`TODO_NOTES_MAX_CHARS = 4000`、`MEMO_BODY_MAX_CHARS = 10_000`、`MEMO_TRASH_RETENTION_MS = 30 天`、`TODO_CLOSED_VISIBLE_MS = 7 天`。
+
+**RPC 契约**（`packages/shared/src/rpc/methods.ts`，入参 / 出参均为 zod schema）：
+
+| 方法 | input | output |
+| ---- | ---- | ---- |
+| `todos.list` | `{ statuses?: TodoStatus[], query?: string, includeClosed?: boolean }` | `{ todos: TodoEntry[] }` |
+| `todos.get` | `{ id }` | `{ todo: TodoEntry, runs: TodoRun[] }` |
+| `todos.create` | `{ title, notes?, assignee?: TodoAssignee \| null, when?: string \| null, memoId? }` | `{ todo: TodoEntry, warnings: string[] }` |
+| `todos.update` | `{ id, title?, notes?, assignee?: TodoAssignee \| null, when?: string \| null }` | `{ todo: TodoEntry, warnings: string[] }` |
+| `todos.start` | `{ id }` | `{ todo: TodoEntry }` |
+| `todos.complete` / `todos.cancel` / `todos.reopen` | `{ id }` | `{ todo: TodoEntry }` |
+| `memos.list` | `{ query?: string, trashed?: boolean }` | `{ memos: Memo[] }` |
+| `memos.create` | `{ body }` | `{ memo: Memo }` |
+| `memos.update` | `{ id, body?, pinned? }` | `{ memo: Memo }` |
+| `memos.delete` / `memos.restore` | `{ id }` | `{ memo: Memo }` |
+
+`when` 的口径：`'now'` = 立即派发；ISO 8601 = 单次；其它按 cron 解析（同 `createFromWhen`）；`null` = 清空排期；省略 = 不变（create 时即不定时）。
+
+**事件**（`packages/shared/src/rpc/events.ts`）：`todos.changed: { todoId: string }`、`memos.changed: { memoId: string }`。
+
+**core 存储层**（`packages/core/src/workbench/`）：
+
+- `todo-store.ts`：todos / todo_runs 的行映射与增删改查 SQL。
+- `memo-store.ts`：含 `purgeTrashed(before)`。
+- 单测覆盖行映射、迁移（旧 schedules 行原样保留、新 CHECK 拒绝未知 origin、`bot_id` 可空）。
+
+**`bot_id` 可空的编译期波及**：shared 改为可空后，core 与 renderer 的类型错误由 W0 做最小修补（判空跳过，行为不变），让分支能构建。语义改造（§4.2 列表）归 W1-core。
+
+### 12.4 实施记录
+
+（各波次合入后在此追加：提交、测试结果、偏差。）
