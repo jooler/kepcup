@@ -276,26 +276,32 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | `create_memo` / `update_memo` | `body` / `id, body?, pinned?` | 「帮我记一下…」 |
 | `delete_memo` | `id` | 移入最近删除，可恢复 |
 
-工具注册清单要同步更新：`effects/classify.ts` 的写工具归为 `local`、`list_*` 归为 `none`（`READ_ONLY_TOOLS` 里的工具必须是 `none`，tool-effects 单测强制）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`；shared `collaboration` 能力包的 `butlerTools` 加入全部八个（外部 Agent 的桥只注入属于某个包的工具）；`settings/context.ts`：`list_*` 读用户写的内容，登记为不可信，写工具登记为可信。
+工具注册清单要同步更新：`effects/classify.ts` 的写工具归为 `local`、`list_*` 归为 `none`（`READ_ONLY_TOOLS` 里的工具必须是 `none`，tool-effects 单测强制）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`；`settings/context.ts`：`list_*` 读用户写的内容，登记为不可信，写工具登记为可信。`create_todo` / `update_todo` 的 effects 分类参数敏感：`when === 'now'`（让另一个 Bot 立刻动起来）为 `external`，其余 `local`。
 
 落地（W2-butler）：
 
-- 工具在 `tools/workbench-tools.ts`，经 `ResponseToolDeps.workbench = { host, triggerFromUser }` 注册，仅当 `butler.isButler`、仅对话轮。工具执行处再用 `host.isButler(identity.botId)` 核对调用者（同 `dispatch/butler.ts` 的 `systemRole === 'butler'` 检查）。
+- 工具在 `tools/workbench-tools.ts`，经 `ResponseToolDeps.workbench = { host, triggerFromUser, touchedExternal }` 注册，仅当 `butler.isButler`、仅对话轮（外部引擎的 turn 不存在，task 面不注册；shared 的能力包不含这些工具）。工具执行处再用 `host.isButler(identity.botId)` 核对调用者（同 `dispatch/butler.ts` 的 `systemRole === 'butler'` 检查）。
 - `triggerFromUser` 由 orchestrator 在 run 开始时算定：`settings/context.ts` 的 `triggerFromUser(batch)` 且触发原因 ∈ `SETTING_DIRECT_TRIGGERS`，即 `effectiveMode` 的 `userTriggered` 口径；与设置工具共用同一份 `fromUser`。
-- 参数名 snake_case：`assignee` 为 `{ bot_id }` 或 `{ group_id, lead_bot_id? }`；`close_todo.reason` 只回显给管家，不写入事项（事项没有对应字段）。
+- 参数名 snake_case：`assignee` 为 `{ bot_id }` 或 `{ group_id, lead_bot_id? }`；`close_todo.reason` 只回显给管家，不写入事项（事项没有对应字段）。参数是扁平结构：`assignee: { bot_id? , group_id?, lead_bot_id? }` 加 `clear_assignee`，`when` 加 `clear_when`（不用嵌套联合 / null，兼容更多 OpenAI 兼容服务商）。写工具的结果只回 id 与状态，不回显标题 / 执行者名。
 
 ### 5.2 权限边界（宿主强制）
 
-判据与设置工具的 `effectiveMode` 一致，看这一轮是不是用户本人触发（`triggerFromUser`）：
+判据与设置工具的 `effectiveMode` 一致，看这一轮是不是用户本人触发（`triggerFromUser`），再加一条「本轮是否读过外部内容」：
 
-| 操作 | 用户本人触发的一轮 | 非本人触发（定时、事件、委派回执、代发） |
-| ---- | ---- | ---- |
-| 读取（`list_*`） | 允许 | 允许 |
-| 记备忘、建草案（无执行者、无时间） | 直接执行 | 直接执行（无副作用，可撤回） |
-| 指派、排期、立即开始、改派、改期 | 直接执行 | 拒绝，提示「需要用户确认，请在回复里向用户提议」 |
-| 收尾（完成 / 取消）、删除备忘 | 直接执行 | 同上 |
+| 操作 | 用户本人触发，且本轮没读过外部内容 | 用户本人触发，但本轮读过外部内容 | 非本人触发（定时、事件、委派回执、代发） |
+| ---- | ---- | ---- | ---- |
+| 读取（`list_*`） | 允许 | 允许 | 允许 |
+| 记备忘、置顶备忘 | 直接执行 | 直接执行 | 直接执行（可撤回） |
+| 改备忘正文（整段覆盖，不可恢复） | 直接执行 | 直接执行 | 拒绝 |
+| 建草案（无执行者、无时间）、改草案的标题和说明 | 直接执行 | 直接执行 | 直接执行（无副作用，可撤回） |
+| 指派、排期、立即开始、改派、改期 | 直接执行 | 拒绝，要求先向用户复述 | 拒绝，提示「需要用户确认，请在回复里向用户提议」 |
+| 收尾（完成 / 取消）、删除备忘 | 直接执行 | 拒绝，同上 | 拒绝，同上 |
 
-理由：「让别的员工动起来」和「删东西」只在用户当面交代时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替用户派活。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。
+**读过外部内容**：本 run 已经调用过会带进外部内容的工具（邮件、网页、附件、连接应用、MCP、历史消息搜索等，口径同设置工具的 `touchedUntrusted`，含触发消息自带附件），或该对话处于 D73 污点期。**工作台自己的 `list_todos` / `list_memos` 不算**（它们在设置的工具分类里仍按不可信处理，但对工作台工具不算污点，否则「列出草案再安排」走不通）。执行时实时判断，读外部内容可以发生在同一轮的工具调用之间。被拒绝的文案：「本轮读取过外部内容（邮件 / 网页 / 附件等），不能直接执行；请向用户复述要做的事（标题、说明、执行者、时间），用户确认后再执行」。
+
+理由：「让别的员工动起来」和「删东西」只在用户当面交代、且管家没被外部内容左右时由管家直接执行。管家自己的晨报、定时整理只能提建议和起草，不会半夜替用户派活；读了邮件 / 网页之后同理，要先把要做的事（含可能混入外部内容的说明）摆给用户过目。被拒绝时，管家在回复里列出建议，用户一句「好，就这么办」就是用户本人触发的下一轮，不必新造审批卡。改备忘正文是整段覆盖且不可恢复，比删除（进最近删除，可恢复）更危险，所以非本人触发的轮只允许改置顶。
+
+**周期事项上的 `update_todo(when:'now')`**：工具语义是「额外执行一次、保留周期」（走 `start`）；要停掉周期用 `close_todo` 或 `clear_when`。界面上「把重复改成立即」的语义是结束周期，由 core 的 `update(when:'now')` 实现；两处刻意不同。
 
 **可见性**：
 
