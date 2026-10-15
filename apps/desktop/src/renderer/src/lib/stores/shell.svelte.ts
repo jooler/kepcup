@@ -8,7 +8,10 @@ import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections
 import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
-import { resolveSettingsSection } from '$lib/features/settings/sections';
+import {
+  resolveSettingsSection,
+  settingsSectionOpensExtensionMcp,
+} from '$lib/features/settings/sections';
 import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layout';
 
 export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
@@ -25,8 +28,8 @@ class ShellState {
    */
   settingsAnchor = $state<string | null>(null);
   /**
-   * 「应用」分区要落在的页签（D73 §5.9：目录 / 已连接 / 自定义）；`mcp` 别名固定落
-   * 「自定义」。SettingsDialog 经 resolveSettingsSection 消费。
+   * 「应用」分区旧页签参数（目录 / 已连接 / 自定义）；`custom` / `mcp` / `developer`
+   * 由 openSettings 改开扩展中心 MCP。SettingsDialog 经 resolveSettingsSection 消费。
    */
   settingsAppsTab = $state<AppsTab | null>(null);
   /** 右栏（Bot 详情）默认收起，保持界面简单；只在用户点击顶部药丸时展开。 */
@@ -63,13 +66,19 @@ class ShellState {
 
   /**
    * 打开设置弹框，可指定初始分组与分组内锚点（如「模型 → 默认模型」）；`apps` 分组可
-   * 再带一个旧页签参数：`custom` 落「开发者模式」分区，其余忽略（「应用」= 已连接账号管理）。
+   * 再带一个旧页签参数：`custom` / `mcp` / `developer` 改开扩展中心 MCP，其余忽略
+   * （「应用」= 已连接账号管理）。
    *
    * 窄屏重路由（33-narrow-layout）：不打开弹框——不带分区落到 NarrowSettings
    * 分组列表页，带分区直达该分组详情页；「通讯录」「用户画像」是底部 tab，
    * 深链直接切 tab。
    */
   openSettings(section?: SettingsSectionId, anchor?: string, appsTab?: AppsTab): void {
+    if (section !== undefined && settingsSectionOpensExtensionMcp(section, appsTab)) {
+      this.closeSettings();
+      this.openExtensionCenter('mcp');
+      return;
+    }
     if (narrowLayout.narrow) {
       if (section === undefined) {
         this.narrowSettingsSection = null;

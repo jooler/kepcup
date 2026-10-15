@@ -280,10 +280,7 @@ describe('catalog queries', () => {
       'models.default-main',
       'models.default-light',
     ]);
-    expect(itemIdsForSettingsPaths(['apps'])).toEqual([
-      'connections.taint-guard',
-      'developer.mode',
-    ]);
+    expect(itemIdsForSettingsPaths(['apps'])).toEqual(['connections.taint-guard']);
     expect(itemIdsForSettingsPaths(['nothingHere'])).toEqual([]);
     expect(itemIdsForBotPaths(['runtime.model'])).toEqual(['bot.model']);
     expect(itemIdsForBotPaths(['runtime'])).toContain('bot.network');
@@ -317,10 +314,10 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
   it('scans the real settings UI', () => {
     // 宽松扫描也必须扫到已知位置，否则说明扫描规则失效。
     expect(scan.settingsSections).toEqual(
-      expect.arrayContaining(['general', 'models', 'developer']),
+      expect.arrayContaining(['general', 'models', 'apps']),
     );
     expect(scan.anchors).toEqual(
-      expect.arrayContaining(['default-models', 'web-search', 'apps-connected', 'mcp', 'agent-*']),
+      expect.arrayContaining(['default-models', 'web-search', 'apps-connected', 'agent-*']),
     );
     expect(scan.anchorSections['default-models']).toBe('models');
     expect(scan.extensionCenterTabs).toEqual(['skills', 'connections', 'mcp', 'mail']);

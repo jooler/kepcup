@@ -34,12 +34,6 @@ async function waitReady(page: Page): Promise<void> {
   }
 }
 
-async function openSettings(page: Page, section: string): Promise<void> {
-  await page.locator('[data-testid="user-menu-trigger"]').click();
-  await page.locator('[data-testid="menu-settings"]').click();
-  await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
-  await page.locator(`[data-testid="settings-nav-${section}"]`).click();
-}
 
 declare global {
   interface Window {
@@ -47,7 +41,7 @@ declare global {
   }
 }
 
-test('local connectors: hidden until developer mode; Bot proposal → card → add → listed (未审核, once) → delete; cancel discards', async () => {
+test('local connectors: section always visible; Bot proposal → card → add → listed (未审核, once) → delete; cancel discards', async () => {
   test.setTimeout(300_000);
   const llm = await startMockLlm();
   const fake = await startFakeOAuthMcpServer({ dcrEnabled: true });
@@ -74,22 +68,10 @@ test('local connectors: hidden until developer mode; Bot proposal → card → a
     const rpc = (method: string, input?: unknown) =>
       page.evaluate(([m, i]) => window.__kepcupRpc(m as string, i), [method, input] as const);
 
-    // --- 开发者模式关闭：没有「本机自建」区 ------------------------------------------------
+    // --- 「本机自建」区始终可见（空态）----------------------------------------------------
     await page.locator('[data-testid="extension-center-button"]').click();
     await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
     await expect(dialog.locator('[data-testid="apps-catalog"]')).toBeVisible({ timeout: 30_000 });
-    await expect(dialog.locator('[data-testid="local-connectors-section"]')).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden({ timeout: 15_000 });
-
-    // --- 打开开发者模式：区块出现（空态）--------------------------------------------------
-    await openSettings(page, 'developer');
-    await page.locator('[data-testid="mcp-dev-mode"]').click();
-    await expect(page.locator('[data-testid="mcp-add"]')).toBeVisible({ timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
-    await page.locator('[data-testid="extension-center-button"]').click();
-    await dialog.locator('[data-testid="extension-center-tab-connections"]').click();
     await expect(dialog.locator('[data-testid="local-connectors-section"]')).toBeVisible({
       timeout: 15_000,
     });
@@ -247,11 +229,6 @@ test('local connectors: a cross-site authorization server gets a red warning and
     });
     const page = await app.firstWindow();
     await waitReady(page);
-    await openSettings(page, 'developer');
-    await page.locator('[data-testid="mcp-dev-mode"]').click();
-    await expect(page.locator('[data-testid="mcp-add"]')).toBeVisible({ timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
 
     await createBotAndOpenChat(page, '小跨');
     llm.script('mock-main', [

@@ -208,18 +208,13 @@ export class LocalConnectors implements LocalConnectorSource {
     });
   }
 
-  developerMode(): boolean {
-    return this.#deps.settings.get().apps.developerMode;
-  }
-
   // --- 提案 -----------------------------------------------------------------------------
 
   /**
-   * 探测并生成提案。抛 `DEVELOPER_MODE_REQUIRED` / `LOCAL_CONNECTOR_REJECTED`（message = 具体原因）。
+   * 探测并生成提案。抛 `LOCAL_CONNECTOR_REJECTED`（message = 具体原因）。
    * 条目内容只取自探测结果和清洗后的展示文本，绝不取 Bot 转述的认证 / 范围 / 域名。
    */
   async propose(input: ProposeInput, context: ProposeContext): Promise<ProposeResult> {
-    this.#requireDeveloperMode();
     const reject = (message: string): AppError => new AppError('LOCAL_CONNECTOR_REJECTED', message);
     this.#rateLimit(context, reject);
 
@@ -378,14 +373,13 @@ export class LocalConnectors implements LocalConnectorSource {
   }
 
   /**
-   * 用户在确认卡上点「添加」：一次性消费提案并落库。开发者模式关闭 → `DEVELOPER_MODE_REQUIRED`；
+   * 用户在确认卡上点「添加」：一次性消费提案并落库。
    * 提案不存在 / 已用过 / 过期 → `LOCAL_CONNECTOR_EXPIRED`。
    */
   confirm(
     proposalId: string,
     options: { acknowledgeCrossSiteIssuer?: boolean | undefined } = {},
   ): { connectorId: string; title: string } {
-    this.#requireDeveloperMode();
     const proposal = this.#proposals.get(proposalId);
     if (proposal === undefined || proposal.expiresAt <= this.#deps.clock.now()) {
       this.#proposals.delete(proposalId);
@@ -489,15 +483,6 @@ export class LocalConnectors implements LocalConnectorSource {
   }
 
   // --- 内部 -----------------------------------------------------------------------------
-
-  #requireDeveloperMode(): void {
-    if (!this.developerMode()) {
-      throw new AppError(
-        'DEVELOPER_MODE_REQUIRED',
-        '本机连接需要先在「设置 → 开发者模式」里打开开发者模式',
-      );
-    }
-  }
 
   #allowlisted(raw: string): boolean {
     if (this.#deps.loopbackAllowlist.length === 0) return false;

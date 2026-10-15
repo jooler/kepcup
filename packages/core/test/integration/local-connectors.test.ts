@@ -226,55 +226,26 @@ async function pendingCard(env: Env, skipIds: string[] = []): Promise<Approval> 
   );
 }
 
-describe('developer mode gate', () => {
-  it('off: neither tool is offered, propose is refused, confirm is rejected; remove still works; on: both appear', async () => {
+describe('local connector tools (ungated)', () => {
+  it('tools are offered and propose/confirm work even when apps.developerMode is false', async () => {
     const env = await start({ developerMode: false });
     const { core, llm } = env.stack;
     llm.script('mock-main', [step().inTurn().replyText('在')]);
     await sendBatch(core, env.conversationId, ['你好']);
     await waitForRun(core, env.conversationId, 'completed', { timeoutMs: 30_000 });
     const names = toolNamesOf(llm.requestsFor('mock-main')[0]!);
-    expect(names).not.toContain('app_local_connector_guide');
-    expect(names).not.toContain('app_propose_local_connector');
+    expect(names).toContain('app_local_connector_guide');
+    expect(names).toContain('app_propose_local_connector');
 
-    await expect(
-      local(env).propose(
-        { mcpUrl: env.fake.mcpUrl, title: 'Notes' },
-        { botId: env.botId, conversationId: env.conversationId },
-      ),
-    ).rejects.toMatchObject({ code: 'DEVELOPER_MODE_REQUIRED' });
-    await expect(
-      core.rpc.call('apps.localConnectors.confirm', { proposalId: 'lcp_whatever' }),
-    ).rejects.toMatchObject({ code: 'DEVELOPER_MODE_REQUIRED' });
-    expect(await listOf(env)).toEqual([]);
-
-    // A proposal made while the mode was on cannot be confirmed once it is turned off.
-    await core.rpc.call('settings.update', { apps: { developerMode: true } });
     const card = await proposeCard(env);
-    await core.rpc.call('settings.update', { apps: { developerMode: false } });
-    await expect(
-      core.rpc.call('apps.localConnectors.confirm', { proposalId: card.proposalId }),
-    ).rejects.toMatchObject({ code: 'DEVELOPER_MODE_REQUIRED' });
-    expect(await listOf(env)).toEqual([]);
-
-    // On again: both tools show up (in turns and in tasks).
-    await core.rpc.call('settings.update', { apps: { developerMode: true } });
-    llm.script('mock-main', [step().inTurn().replyText('又在')]);
-    await sendBatch(core, env.conversationId, ['再来']);
-    await waitFor(async () => (llm.requestsFor('mock-main').length >= 2 ? true : null), {
-      label: 'second turn',
-      timeoutMs: 30_000,
-    });
-    const onNames = toolNamesOf(llm.requestsFor('mock-main').at(-1)!);
-    expect(onNames).toContain('app_local_connector_guide');
-    expect(onNames).toContain('app_propose_local_connector');
+    await core.rpc.call('apps.localConnectors.confirm', { proposalId: card.proposalId });
+    expect((await listOf(env)).map((view) => view.connectorId)).toHaveLength(1);
   }, 90_000);
 
-  it('entries survive switching the mode off, stay in the catalog, and remove works while off', async () => {
-    const env = await start();
+  it('entries stay in the catalog and remove works', async () => {
+    const env = await start({ developerMode: false });
     const { core } = env.stack;
     const connectorId = await addLocal(env);
-    await core.rpc.call('settings.update', { apps: { developerMode: false } });
     expect((await listOf(env)).map((view) => view.connectorId)).toEqual([connectorId]);
     expect((await catalogOf(env)).map((entry) => entry.connectorId)).toContain(connectorId);
     await core.rpc.call('apps.localConnectors.remove', { connectorId });

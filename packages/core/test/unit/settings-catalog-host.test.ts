@@ -2032,31 +2032,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(rig.wakes).toHaveLength(0);
   });
 
-  it('仍是 link 的 developer.mode：出卡记下 enabled；没变保持 pending，变了才 applied 并只唤醒一次', async () => {
-    const rig = makeRig();
-    const created = await rig.host.forRun(runCtx(rig)).change({
-      id: 'developer.mode',
-      reason: '打开开发者模式',
-    });
-    expect(created.ok).toBe(true);
-    const card = cards(rig).at(-1)!;
-    expect(cardOf(rig, card.id)).toMatchObject({
-      mode: 'link',
-      state: 'pending',
-      before: { enabled: false },
-    });
-    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'pending', verified: false });
-    expect(rig.wakes).toHaveLength(0);
-
-    const current = rig.settings.get();
-    rig.settings.update({ apps: { ...current.apps, developerMode: true } });
-    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: true });
-    expect(cardOf(rig, card.id).applied).toEqual({ enabled: true });
-    expect(rig.wakes).toHaveLength(1);
-    expect(rig.host.recheckCard(card.id)).toEqual({ state: 'applied', verified: null });
-    expect(rig.wakes).toHaveLength(1);
-  });
-
   it('兜底适配器恒回 configured 的条目（profile.user-facts）不擅自标完成；手动「我已设置好」仍可以', async () => {
     const rig = makeRig();
     const card = appendCard(rig, { itemId: 'profile.user-facts', mode: 'link' });
@@ -2152,7 +2127,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
 
     const globalTarget = { botId: null, conversationId: null, projectId: null };
     const botTarget = { botId: 'bot_a', conversationId: rig.conversationId, projectId: null };
-    const mode = rig.host.read('developer.mode', globalTarget);
     const custom = rig.host.read('developer.custom-mcp', globalTarget);
     const oauth = rig.host.read('developer.oauth-clients', globalTarget);
     const mcpb = rig.host.read('developer.mcpb', globalTarget);
@@ -2161,7 +2135,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     const skills = rig.host.read('skills.install', botTarget);
     const schedule = rig.host.read('schedules.schedule', botTarget);
     const watch = rig.host.read('schedules.watch', botTarget);
-    expect(mode).toMatchObject({ values: { enabled: false } });
     expect(custom).toMatchObject({ values: { count: 1 } });
     expect(oauth).toMatchObject({ values: { count: 2 } });
     expect(mcpb).toMatchObject({ values: { count: 1 } });
@@ -2172,7 +2145,6 @@ describe('settings catalog host: recheck pending link cards on conversation reop
     expect(watch).toMatchObject({ values: { count: 5 } });
 
     const dumped = JSON.stringify({
-      mode,
       custom,
       oauth,
       mcpb,

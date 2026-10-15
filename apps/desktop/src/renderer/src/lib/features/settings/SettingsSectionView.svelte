@@ -15,7 +15,6 @@
   import EmbeddingSection from './EmbeddingSection.svelte';
   import WebSearchSection from './WebSearchSection.svelte';
   import AppsSection from './AppsSection.svelte';
-  import DeveloperSection from './DeveloperSection.svelte';
   import BrowserProfilesSection from './BrowserProfilesSection.svelte';
   import AgentsSection from './AgentsSection.svelte';
   import BackgroundTasksSection from './BackgroundTasksSection.svelte';
@@ -119,9 +118,5 @@
 {:else if section === 'diagnostics'}
   <div data-settings-section="diagnostics">
     <DiagnosticsSection />
-  </div>
-{:else if section === 'developer'}
-  <div data-settings-section="developer">
-    <DeveloperSection />
   </div>
 {/if}

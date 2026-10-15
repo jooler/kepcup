@@ -32,11 +32,11 @@ export function localEntries(entries: readonly AppCatalogEntry[]): AppCatalogEnt
 }
 
 /**
- * 「本机自建」区可见：开发者模式开启，或已经有本机条目（关闭开发者模式后条目保留，
- * 仍可连接 / 管理 / 删除，只是不能新增）。
+ * 「本机自建」区可见：自定义 MCP / 本机连接不再挂开发者模式门禁后始终显示
+ * （空态引导 Bot 提案或等待已有条目）。
  */
-export function localSectionVisible(input: { developerMode: boolean; count: number }): boolean {
-  return input.developerMode || input.count > 0;
+export function localSectionVisible(_input: { developerMode: boolean; count: number }): boolean {
+  return true;
 }
 
 // --- 确认卡 --------------------------------------------------------------------------

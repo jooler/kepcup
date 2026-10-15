@@ -27,7 +27,7 @@ describe('closeSettings 统一收起宽屏弹框与窄屏设置页（审查 #2�
     setNarrow(true);
     shell.openSettings('apps');
     expect(shell.narrowSettingsOpen).toBe(true);
-    // AppsSection / DeveloperSection：先 closeSettings 再 openExtensionCenter。
+    // AppsSection / 扩展中心跳转：先 closeSettings 再 openExtensionCenter。
     shell.closeSettings();
     shell.openExtensionCenter('connections');
     expect(shell.narrowSettingsOpen).toBe(false);
@@ -97,6 +97,24 @@ describe('窄屏设置页返回（审查 #11d）', () => {
 });
 
 describe('窄屏深链路由', () => {
+  it('openSettings(mcp/developer/apps+custom) 改开扩展中心 MCP，不打开设置', () => {
+    shell.settingsOpen = true;
+    shell.openSettings('mcp');
+    expect(shell.settingsOpen).toBe(false);
+    expect(shell.extensionCenterOpen).toBe(true);
+    expect(shell.extensionCenterTab).toBe('mcp');
+
+    shell.extensionCenterOpen = false;
+    shell.openSettings('developer');
+    expect(shell.extensionCenterOpen).toBe(true);
+    expect(shell.extensionCenterTab).toBe('mcp');
+
+    shell.extensionCenterOpen = false;
+    shell.openSettings('apps', undefined, 'custom');
+    expect(shell.extensionCenterOpen).toBe(true);
+    expect(shell.extensionCenterTab).toBe('mcp');
+  });
+
   it('openSettings("contacts") 在窄屏切通讯录 tab，不打开设置页', () => {
     setNarrow(true);
     shell.openSettings('contacts');

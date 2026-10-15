@@ -1172,11 +1172,11 @@ export const zhCN = {
   'extensionCenter.tabs.mail': '邮件',
   'extensionCenter.connections.back': '返回应用列表',
   'extensionCenter.mcp.hint':
-    '管理已安装的 MCP 工具服务器：启用 / 停用、逐工具风险与策略，也可安装 .mcpb 本地包。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。',
+    '添加与管理 MCP 工具服务器（命令、网址或 .mcpb 本地包），并可配置手填 OAuth 客户端。启用后，在 Bot 编辑里勾选即可让该 Bot 使用其工具；每次调用默认需要批准。常用应用请到「连接」分组添加。',
   'extensionCenter.mcp.targetLocked':
-    '命令、参数与地址在这里只读；需要修改请先在「设置 → 开发者模式」中开启开发者模式。名称、启用状态与密钥值仍可修改。',
+    '命令、参数与地址当前不可修改。',
   'extensionCenter.mcp.empty':
-    '还没有安装 MCP 服务器。可以安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
+    '还没有安装 MCP 服务器。可在下方新建（stdio / HTTP / SSE），或安装 .mcpb 本地包；常用应用请到「连接」分组添加。',
   'skillMarket.description':
     '为所有 Bot 添加开箱即用的办公技能：安装一次，每个 Bot 都能发现并调用。装完可在技能面板管理。',
   'skillMarket.searchPlaceholder': '搜索技能',
@@ -1779,7 +1779,7 @@ export const zhCN = {
   'apps.local.card.crossSiteBody':
     '服务域名是 {mcp}，但它使用的登录授权服务器是 {issuer}。如果你并不知道它们有关联，这可能是借用别家的登录来骗取授权。',
   'apps.local.card.crossSiteAck': '我了解授权服务器属于另一个站点，仍要添加',
-  'apps.local.error.developerMode': '添加本机连接需要先在「设置 → 开发者模式」里打开开发者模式。',
+  'apps.local.error.developerMode': '添加本机连接失败：当前环境不允许（开发者模式相关限制已移除，若仍看到此提示请重启应用）。',
   'apps.local.error.rejected': '没有通过校验，未添加',
   'apps.local.section.title': '本机自建',
   'apps.local.section.hint':

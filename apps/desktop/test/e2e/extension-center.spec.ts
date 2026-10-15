@@ -5,13 +5,11 @@ import { expect, test, type ElectronApplication, type Page, _electron } from '@p
 import { startMockLlm } from '@kepcup/testkit';
 
 /**
- * 扩展中心分组 e2e（X1–X4，设计 29 §16）：
- * - 三个分组：Skills / 连接 / MCP；
+ * 扩展中心分组 e2e：
+ * - 四个分组：Skills / 连接 / MCP / 邮件；
  * - 「连接」只有目录卡片，没有「填 URL」入口；
- * - 「MCP」是已安装 MCP 的管理视图，没有「新建 server」入口，已有 server 的地址 / 命令在
- *   开发者模式关闭时只读；
- * - 自定义入口只在「设置 → 开发者模式」打开后出现；设置「应用」只管已连接账号，
- *   并能跳到扩展中心「连接」。
+ * - 「MCP」可新建 server、管理已安装项、配置 BYO OAuth 客户端（不再挂开发者模式）；
+ * - 设置「应用」只管已连接账号，并能跳到扩展中心「连接」；设置里不再有「开发者模式」分区。
  *
  * 目录来源说明：测试构建下 core 默认用**空目录**（start.ts 在 test hooks + NODE_ENV=test 且没设
  * `KEPCUP_CONNECTORS` 时强制空源），发行门禁的 define 只在 `scripts/dist.mjs` 打包时注入，
@@ -43,7 +41,7 @@ async function openSettings(page: Page, section: string): Promise<void> {
   await page.locator(`[data-testid="settings-nav-${section}"]`).click();
 }
 
-test('extension center: three groups, no free-form URL entry, custom MCP only behind developer mode', async () => {
+test('extension center: groups, no free-form URL in 连接, full MCP management without developer mode', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-extcenter-'));
@@ -93,12 +91,11 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
     await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
     await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
 
-    // MCP：管理视图（可装 .mcpb），没有新建 server / BYO 客户端入口。
+    // MCP：完整管理（可新建 server / BYO 客户端 / .mcpb），不依赖开发者模式。
     await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
     await expect(dialog.locator('[data-testid="mcp-section"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-empty"]')).toBeVisible();
-    await expect(dialog.locator('[data-testid="mcp-add"]')).toHaveCount(0);
-    await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="mcp-dev-mode"]')).toHaveCount(0);
 
     // 键盘：方向键切换分组。
@@ -123,18 +120,8 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
     await expect(page.locator('[data-testid="apps-tabs"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="mcp-section"]')).toHaveCount(0);
 
-    // 设置 → 开发者模式：默认关，自定义入口隐藏；打开后出现。
-    await page.locator('[data-testid="settings-nav-developer"]').click();
-    await expect(page.locator('[data-testid="developer-section"]')).toBeVisible();
-    await expect(page.locator('[data-testid="developer-off-hint"]')).toBeVisible();
-    await expect(page.locator('[data-testid="mcp-add"]')).toHaveCount(0);
-    await page.locator('[data-testid="mcp-dev-mode"]').click();
-    await expect(page.locator('[data-testid="mcp-add"]')).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('[data-testid="mcp-new-kind"]')).toBeVisible();
-
-    // 关掉再看：入口重新隐藏。
-    await page.locator('[data-testid="mcp-dev-mode"]').click();
-    await expect(page.locator('[data-testid="mcp-add"]')).toHaveCount(0, { timeout: 15_000 });
+    // 设置里不再有「开发者模式」分区。
+    await expect(page.locator('[data-testid="settings-nav-developer"]')).toHaveCount(0);
 
     // 应用分区的横条 → 扩展中心「连接」分组（设置弹框先收起）。
     await page.locator('[data-testid="settings-nav-apps"]').click();
@@ -151,7 +138,7 @@ test('extension center: three groups, no free-form URL entry, custom MCP only be
   }
 });
 
-test('extension center: non-empty catalog renders cards in 连接; existing MCP server target is read-only without developer mode', async () => {
+test('extension center: non-empty catalog renders cards in 连接; existing MCP server target is editable', async () => {
   test.setTimeout(240_000);
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), 'kepcup-e2e-extcenter2-'));
@@ -204,7 +191,7 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     await expect(dialog.locator('[data-testid="apps-catalog-panel-notion"]')).toBeVisible();
 
     // 一个已有的 HTTP MCP server（直接经 core RPC 写入；渲染端设置快照不监听该变更，重载页面后可见）：
-    // 开发者模式关闭时，编辑表单里地址只读。
+    // 编辑表单里地址可改（不再挂开发者模式门禁）。
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden({ timeout: 15_000 });
     await page.evaluate(() =>
@@ -224,30 +211,16 @@ test('extension center: non-empty catalog renders cards in 连接; existing MCP 
     );
     await page.reload();
     await waitReady(page);
-    const openMcpEdit = async (): Promise<void> => {
-      await page.locator('[data-testid="extension-center-button"]').click();
-      await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
-      await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible({
-        timeout: 30_000,
-      });
-      await dialog.locator('[data-testid="mcp-edit-ro"]').click();
-    };
-    await openMcpEdit();
-    await expect(dialog.locator('[data-testid="mcp-target-locked"]')).toBeVisible();
-    await expect(dialog.locator('#mcp-url')).toHaveAttribute('readonly', '');
-    await expect(dialog.locator('#mcp-name')).not.toHaveAttribute('readonly', '');
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden({ timeout: 15_000 });
-
-    // 在「设置 → 开发者模式」开启后，同一个表单可编辑。
-    await openSettings(page, 'developer');
-    await page.locator('[data-testid="mcp-dev-mode"]').click();
-    await expect(page.locator('[data-testid="mcp-add"]')).toBeVisible({ timeout: 15_000 });
-    await page.keyboard.press('Escape');
-    await expect(page.locator('[data-testid="settings-dialog"]')).toHaveCount(0);
-    await openMcpEdit();
+    await page.locator('[data-testid="extension-center-button"]').click();
+    await dialog.locator('[data-testid="extension-center-tab-mcp"]').click();
+    await expect(dialog.locator('[data-testid="mcp-server-ro"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(dialog.locator('[data-testid="mcp-add"]')).toBeVisible();
+    await dialog.locator('[data-testid="mcp-edit-ro"]').click();
     await expect(dialog.locator('[data-testid="mcp-target-locked"]')).toHaveCount(0);
     await expect(dialog.locator('#mcp-url')).not.toHaveAttribute('readonly', '');
+    await expect(dialog.locator('#mcp-name')).not.toHaveAttribute('readonly', '');
   } finally {
     await app?.close();
     await llm.stop();

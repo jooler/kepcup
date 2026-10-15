@@ -19,7 +19,7 @@
    * shell.settingsSection 直接落在目标分组，带 anchor 时再滚到分组内的
    * [data-settings-anchor]（如「模型 → 默认模型」）。沙箱与访问白名单并入
    *「环境」，定时任务并入「无人值守」；「应用」只管已连接账号（发现与添加在扩展中心）；
-   * 自定义 MCP 服务器在「开发者模式」分区（`mcp` 仍作为分区别名经 resolveSettingsSection 落到那里）。
+   * 自定义 MCP 服务器在「扩展中心 → MCP」（`mcp` / `developer` 深链由 shell.openSettings 改开扩展中心）。
    *
    * 分区清单 / 内容视图与窄屏设置页（NarrowSettings）共用（settings-sections-list /
    * SettingsSectionView）；窄屏不再打开本弹框（shell.openSettings 重路由到
