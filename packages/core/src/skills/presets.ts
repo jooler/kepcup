@@ -220,11 +220,10 @@ export class SkillPresetsService {
       const summary = truncateForPrompt(preset.entry.summary, 120);
       return `- ${preset.name}（preset_id: ${preset.entry.id}，v${preset.entry.version}）：${summary}`;
     });
+    // 正文即可：外层 <recommended_skills> 标签由 system-prompt 的 section() 加。
     return [
-      '<recommended_skills>',
       '以下是应用内置推荐技能（尚未安装）。需要处理它们擅长的文件或任务时，用 install_skill 工具传对应的 preset_id 请求用户授权安装；安装完成后即可像普通技能一样使用。',
       ...lines,
-      '</recommended_skills>',
     ].join('\n');
   }
 
