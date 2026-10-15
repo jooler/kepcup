@@ -58,18 +58,19 @@ NODE_SHA="$(grep "  ${NODE_TAR}\$" /tmp/SHASUMS256.txt | awk '{print $1}')"
 echo "${NODE_SHA}  /tmp/node.tar.xz" | sha256sum -c - >/dev/null
 tar -xJf /tmp/node.tar.xz -C /opt/kepcup/node --strip-components=1
 rm -f /tmp/node.tar.xz /tmp/SHASUMS256.txt
+# debian:12-slim 没有系统 npm；用刚解压的官方 Node。
+export PATH="/opt/kepcup/node/bin:${PATH}"
 
 echo "[3/5] @anthropic-ai/sandbox-runtime ${SRT_VERSION} + uv ${UV_VERSION}"
 npm install --prefix /opt/kepcup --ignore-scripts "@anthropic-ai/sandbox-runtime@${SRT_VERSION}"
-UV_TAR="uv-${UV_VERSION}-${UV_TRIPLET}.tar.gz"
-curl -fsSL -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_TAR}"
-curl -fsSL -o /tmp/uv-checksums.txt "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_VERSION}-checksums.txt"
-UV_SHA="$(grep "  ${UV_TAR}\$" /tmp/uv-checksums.txt | awk '{print $1}')"
-[ -n "${UV_SHA}" ] || { echo "install-inside-debian: checksums 中找不到 ${UV_TAR}" >&2; exit 1; }
-echo "${UV_SHA}  /tmp/uv.tar.gz" | sha256sum -c - >/dev/null
-tar -xzf /tmp/uv.tar.gz -C /tmp
-install -m 0755 "/tmp/uv-${UV_VERSION}-${UV_TRIPLET}/uv" /opt/kepcup/bin/uv
-rm -rf /tmp/uv.tar.gz /tmp/uv-checksums.txt "/tmp/uv-${UV_VERSION}-${UV_TRIPLET}"
+# astral-sh/uv 发行物文件名不含版本号：uv-<triplet>.tar.gz + 同名 .sha256。
+UV_TAR="uv-${UV_TRIPLET}.tar.gz"
+curl -fsSL -o "/tmp/${UV_TAR}" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_TAR}"
+curl -fsSL -o "/tmp/${UV_TAR}.sha256" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_TAR}.sha256"
+(cd /tmp && sha256sum -c "${UV_TAR}.sha256" >/dev/null)
+tar -xzf "/tmp/${UV_TAR}" -C /tmp
+install -m 0755 "/tmp/uv-${UV_TRIPLET}/uv" /opt/kepcup/bin/uv
+rm -rf "/tmp/${UV_TAR}" "/tmp/${UV_TAR}.sha256" "/tmp/uv-${UV_TRIPLET}"
 
 echo "[4/5] shim scripts"
 install -m 0755 /src/kepcup-sandbox.cjs /opt/kepcup/bin/kepcup-sandbox

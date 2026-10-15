@@ -35,7 +35,9 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT_DIR="$(cd "${HERE}/../../resources/wsl" && pwd)"
+# resources/wsl 是 CI 产物目录，仓库里通常只有 .gitkeep；必须先 mkdir 再 cd。
+OUT_DIR="$(cd "${HERE}/../../resources" && pwd)/wsl"
+mkdir -p "${OUT_DIR}"
 STAGING="$(mktemp -d)"
 trap 'rm -rf "${STAGING}"' EXIT
 
@@ -43,11 +45,9 @@ trap 'rm -rf "${STAGING}"' EXIT
 readonly DEBIAN_IMAGE="debian:12-slim"          # 升级时同时把 digest 钉进 CI（docker pull + docker image inspect）
 readonly NODE_VERSION="24.21.0"                 # 与 packages/core/src/env/catalog.ts NODE_VERSION 一致
 readonly NODE_ARCH="linux-x64"                  # CI 产物同时构建 linux-arm64 时改此值并重跑
-readonly NODE_SHA256="<SHASUMS256.txt 官方值，构建时校验>"  # CI 步骤先抓 https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt 核对
-readonly SRT_VERSION="0.0.78"                   # 与 apps/desktop package.json 的 @anthropic-ai/sandbox-runtime 一致
-readonly UV_VERSION="0.12.21"                   # 发行版内 uv（uv python install 用，见 env/distro.ts）
+readonly SRT_VERSION="0.0.78"                   # 与 packages/core 的 @anthropic-ai/sandbox-runtime 一致
+readonly UV_VERSION="0.12.21"                   # 发行版内 uv（uv python install 用，见 env/distro.ts）；Node/uv 校验在 install-inside-debian.sh 拉取官方 checksum
 
-mkdir -p "${OUT_DIR}"
 ROOT="${STAGING}/rootfs"
 mkdir -p "${ROOT}"
 
