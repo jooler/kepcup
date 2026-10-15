@@ -192,6 +192,19 @@ describe('<workbench> 段内容', () => {
     expect(text.length).toBeLessThan(600);
   });
 
+  it('因 blocked_reason 退回草案的事项（执行失败 / 对话已删除 / Bot 设置中 …）照常计入草案', () => {
+    const text = section(
+      [
+        todo({ id: 'a', blockedReason: '执行失败：模型服务不可用', createdAt: NOW - 2 * DAY }),
+        todo({ id: 'b', blockedReason: '该 Bot 正在设置中，完成设置后才会处理' }),
+        todo({ id: 'c', blockedReason: '对话已删除' }),
+      ],
+      [],
+    );
+    expect(text).toContain('草案 3 条（最早 2 天前）');
+    expect(text).not.toContain('执行失败');
+  });
+
   it('只有备忘（没有事项）也出段', () => {
     const text = section([], [memo()]);
     expect(text).toContain('草案 0 条');

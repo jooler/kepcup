@@ -229,7 +229,9 @@ describe('权限边界：用户本人触发 vs 非本人触发', () => {
     expect(dispatch.senderType).toBe('user');
     expect(dispatch.content).toMatchObject({
       origin: 'workbench',
+      // 操作者是管家（viaButler），草案也是管家起草的（butlerDrafted，说明里可能带外部内容）。
       viaButler: true,
+      butlerDrafted: true,
     });
     expect((dispatch.content as { text: string }).text).toContain('【工作台】整理竞品报告');
     expect((dispatch.content as { text: string }).text).toContain('（管家代你安排）');
@@ -253,7 +255,9 @@ describe('权限边界：用户本人触发 vs 非本人触发', () => {
     const workerRequest = llm
       .requestsFor('mock-main')
       .find((r) => r.lastUserText().includes('【工作台】整理竞品报告'))!;
-    expect(workerRequest.lastUserText()).toContain('<untrusted source="butler">【工作台】整理竞品报告');
+    expect(workerRequest.lastUserText()).toContain(
+      '<untrusted source="butler">【工作台】整理竞品报告',
+    );
     expect(workerRequest.lastUserText()).toContain('由管家代为安排，非用户原话');
   }, 40_000);
 
@@ -527,4 +531,64 @@ describe('权限边界：用户本人触发 vs 非本人触发', () => {
       expect(messagesText(last)).not.toContain(WORKBENCH_EXTERNAL_CONTENT_MESSAGE);
     }, 40_000);
   });
+});
+
+describe('操作者标注：管家开始用户建的事项', () => {
+  const toolResults = (r: MockChatRequest): number =>
+    (r.body.messages ?? []).filter((m) => m.role === 'tool').length;
+
+  async function butlerStarts(
+    todoInput: Record<string, unknown>,
+    prompt: string,
+  ): Promise<{ stack: TestStack; todo: TodoEntry; dispatch: Message }> {
+    const stack = await start();
+    const { core, llm } = stack;
+    const { conversationId } = await ensureButler(stack);
+    const worker = await makeBot(core, '阿研');
+    const workerChat = await openDirect(core, worker.id);
+    const { todo } = (await core.rpc.call('todos.create', {
+      ...todoInput,
+      assignee: { kind: 'bot', botId: worker.id },
+    })) as { todo: TodoEntry };
+    expect(todo.source).toBe('user');
+    llm.script('mock-main', [
+      step()
+        .expect((r) => r.lastUserText().includes(prompt) && toolResults(r) === 0)
+        .replyToolCall('update_todo', { id: todo.id, when: 'now' }),
+      step()
+        .expect((r) => r.lastUserText().includes(prompt) && toolResults(r) === 1)
+        .replyText('已经开始了。'),
+      step()
+        .expect((r) => r.lastUserText().includes('【工作台】'))
+        .replyText('收到。'),
+    ]);
+    llm.script('mock-light', reflections(4));
+    await sendBatch(core, conversationId, [prompt]);
+    const dispatch = await waitFor(
+      async () => workbenchMessages(await listAllMessages(core, workerChat.id))[0] ?? null,
+      { label: 'dispatch of the todo the butler started' },
+    );
+    return { stack, todo, dispatch };
+  }
+
+  it('用户建的草案（已有执行者）被管家 update_todo(when:now) 开始：派发带 viaButler 与「（管家代你安排）」，不带 butlerDrafted', async () => {
+    const { dispatch } = await butlerStarts({ title: '整理周报' }, '现在就开始整理周报那件事');
+    const content = dispatch.content as Record<string, unknown>;
+    expect(content).toMatchObject({ origin: 'workbench', viaButler: true });
+    expect(content).not.toHaveProperty('butlerDrafted');
+    expect(content['text']).toContain('（管家代你安排）');
+  }, 40_000);
+
+  it('用户建的周期事项被管家 update_todo(when:now) 开始（走 start）：额外执行一次、周期保留，派发同样带管家标注', async () => {
+    const { stack, todo, dispatch } = await butlerStarts(
+      { title: '每周一的周报', when: '0 9 * * 1' },
+      '这周的周报现在就跑一次',
+    );
+    const content = dispatch.content as Record<string, unknown>;
+    expect(content).toMatchObject({ origin: 'workbench', viaButler: true });
+    expect(content['text']).toContain('（管家代你安排）');
+    const after = (await todosOf(stack)).find((t) => t.id === todo.id)!;
+    expect(after.status).toBe('scheduled');
+    expect(after.schedule).not.toBeNull();
+  }, 40_000);
 });

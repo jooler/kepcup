@@ -114,8 +114,8 @@ function makeRig(): Rig {
         warnings: [],
       };
     },
-    startTodo: (id) => {
-      record('startTodo', id);
+    startTodo: (id, actor) => {
+      record('startTodo', id, actor);
       return { ...find(id), status: 'in_progress' };
     },
     completeTodo: (id) => {
@@ -539,12 +539,12 @@ describe('update_todo', () => {
     expect((await call('update_todo', { id: 'todo_1', clear_assignee: true })).ok).toBe(true);
     expect((await call('update_todo', { id: 'todo_1', when: 'now' })).ok).toBe(true);
     expect(rig.calls.map((c) => c.args[1])).toEqual([
-      { title: '新标题' },
-      { assignee: { kind: 'bot', botId: 'bot_2' } },
-      { when: '0 9 * * 1' },
-      { when: null },
-      { assignee: null },
-      { when: 'now' },
+      { title: '新标题', actor: 'butler' },
+      { assignee: { kind: 'bot', botId: 'bot_2' }, actor: 'butler' },
+      { when: '0 9 * * 1', actor: 'butler' },
+      { when: null, actor: 'butler' },
+      { assignee: null, actor: 'butler' },
+      { when: 'now', actor: 'butler' },
     ]);
   });
 
@@ -871,7 +871,9 @@ describe('update_todo：扁平的 clear_* 与周期事项的 when="now"', () => 
     rig.calls.length = 0;
     await call('update_todo', { id: 'todo_cron', when: 'now', notes: '这次重点看价格' });
     expect(rig.calls.map((c) => c.method)).toEqual(['updateTodo', 'startTodo']);
-    expect(rig.calls[0]!.args[1]).toEqual({ notes: '这次重点看价格' });
+    expect(rig.calls[0]!.args[1]).toEqual({ notes: '这次重点看价格', actor: 'butler' });
+    // 开始周期事项（用户建的）也以管家为操作者：派发消息要带「管家代你安排」。
+    expect(rig.calls[1]).toEqual({ method: 'startTodo', args: ['todo_cron', 'butler'] });
     // 传给 update 的字段里没有 when：周期不会被「改成立即」结束。
     expect(JSON.stringify(rig.calls[0]!.args)).not.toContain('"when"');
   });
@@ -895,10 +897,10 @@ describe('update_todo：扁平的 clear_* 与周期事项的 when="now"', () => 
     const { call, byName } = toolsFor(rig, { triggerFromUser: true });
     await call('update_todo', { id: 'todo_once', when: 'now' });
     expect(rig.calls.map((c) => c.method)).toEqual(['updateTodo']);
-    expect(rig.calls[0]!.args[1]).toEqual({ when: 'now' });
+    expect(rig.calls[0]!.args[1]).toEqual({ when: 'now', actor: 'butler' });
     rig.calls.length = 0;
     await call('update_todo', { id: 'todo_cron', clear_when: true });
-    expect(rig.calls[0]!.args[1]).toEqual({ when: null });
+    expect(rig.calls[0]!.args[1]).toEqual({ when: null, actor: 'butler' });
     // 工具说明里写清楚了。
     const description = byName['update_todo']!.description;
     expect(description).toContain('额外执行一次、保留周期');
@@ -1015,5 +1017,76 @@ describe('update_memo：非本人触发的一轮只能改置顶', () => {
     expect(rig.calls).toEqual([{ method: 'updateMemo', args: ['memo_1', { pinned: true }] }]);
     const user = toolsFor(rig, { triggerFromUser: true });
     expect((await user.call('update_memo', { id: 'memo_1', body: '改过' })).ok).toBe(true);
+  });
+});
+
+describe('操作者 actor：工具层一律显式传 butler（派发标注「管家代你安排」跟随操作者）', () => {
+  it('create_todo / update_todo / startTodo 都带 actor: butler，包括用户建的事项被管家开始或改派', async () => {
+    const rig = makeRig();
+    rig.state.todos = [
+      todo({
+        id: 'todo_user',
+        source: 'user',
+        status: 'draft',
+        assignee: { kind: 'bot', botId: 'bot_1' },
+      }),
+      todo({
+        id: 'todo_cron',
+        source: 'user',
+        status: 'scheduled',
+        assignee: { kind: 'bot', botId: 'bot_1' },
+        schedule: {
+          id: 'sch_1',
+          kind: 'cron',
+          runAt: null,
+          cron: '0 9 * * 1',
+          timezone: 'Asia/Shanghai',
+          nextFireAt: NOW + 1000,
+        },
+      }),
+    ];
+    const { call } = toolsFor(rig, { triggerFromUser: true });
+    await call('create_todo', { title: '新的', assignee: { bot_id: 'bot_1' }, when: 'now' });
+    await call('update_todo', { id: 'todo_user', when: 'now' });
+    await call('update_todo', { id: 'todo_user', assignee: { bot_id: 'bot_2' } });
+    await call('update_todo', { id: 'todo_cron', when: 'now' });
+    expect(rig.calls.map((c) => c.method)).toEqual([
+      'createTodo',
+      'updateTodo',
+      'updateTodo',
+      'startTodo',
+    ]);
+    expect(rig.calls[0]!.args[0]).toMatchObject({ source: 'butler', actor: 'butler' });
+    expect(rig.calls[1]!.args[1]).toMatchObject({ when: 'now', actor: 'butler' });
+    expect(rig.calls[2]!.args[1]).toMatchObject({ actor: 'butler' });
+    expect(rig.calls[3]!.args).toEqual(['todo_cron', 'butler']);
+  });
+});
+
+describe('blocked_reason 取值在 list_todos 里的显示', () => {
+  it('core 新增的各种原因（含带错误详情的）原样出现在 blocked_reason 后，位于 <untrusted> 内', async () => {
+    const reasons = [
+      '执行失败：模型服务不可用',
+      '执行已被取消',
+      '派发失败：目标对话只读',
+      '对话已删除',
+      '该 Bot 正在设置中，完成设置后才会处理',
+      '执行者 Bot 已删除',
+    ];
+    const rig = makeRig();
+    rig.state.todos = reasons.map((reason, index) =>
+      todo({ id: `todo_b${index}`, title: `事项${index}`, blockedReason: reason }),
+    );
+    const result = await toolsFor(rig, { triggerFromUser: false }).call('list_todos', {});
+    expect(result.ok).toBe(true);
+    const inside = /<untrusted>([\s\S]*)<\/untrusted>/.exec(result.content)![1]!;
+    for (const [index, reason] of reasons.entries()) {
+      expect(inside).toContain(`[todo_b${index}] 事项${index}`);
+      expect(inside).toContain(`blocked_reason：${reason}`);
+    }
+    // 一行一条：错误详情里的换行不会把一条拆成多条。
+    rig.state.todos = [todo({ blockedReason: '执行失败：第一行\n第二行' })];
+    const multi = await toolsFor(rig, { triggerFromUser: false }).call('list_todos', {});
+    expect(multi.content.split('\n').filter((line) => line.startsWith('- ['))).toHaveLength(1);
   });
 });
