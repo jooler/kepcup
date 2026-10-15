@@ -257,18 +257,15 @@ export function needsClientCredentials(flow: FlowView | null | undefined): boole
 }
 
 /**
- * 在 OAUTH_CLIENT_REQUIRED 时手填 client_id / secret 的表单是否可用（扩展中心 X3，设计 29 §16）：
- * 开发者模式开启，或目标是已存在的自定义 server（它本来就是用户自己建的，别让它卡死在这一步）
- * → 显示表单；目录应用在开发者模式关闭时只提示「暂不可用」——普通用户不应被引导去自己注册
- * OAuth 客户端。
+ * 在 OAUTH_CLIENT_REQUIRED 时手填 client_id / secret 的表单是否可用。
+ * 自定义 MCP / BYO OAuth 客户端已迁到扩展中心且不再挂开发者模式门禁后，一律给出表单。
  */
-export function clientFormMode(input: {
+export function clientFormMode(_input: {
   target: AppConnectTarget;
   developerMode: boolean;
   customServerExists: boolean;
 }): 'form' | 'unavailable' {
-  if (input.developerMode) return 'form';
-  return input.target.kind === 'custom' && input.customServerExists ? 'form' : 'unavailable';
+  return 'form';
 }
 
 // --- 授权 URL ------------------------------------------------------------------

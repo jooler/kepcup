@@ -1784,14 +1784,6 @@ function watchCountAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function developerModeAdapter(deps: AdapterDeps): ItemAdapter {
-  return {
-    read: () => {
-      const enabled = deps.settings.get().apps.developerMode;
-      return snapshot('configured', { enabled }, enabled ? '已开启' : '未开启');
-    },
-  };
-}
 
 function developerCustomMcpAdapter(deps: AdapterDeps): ItemAdapter {
   return {
@@ -1885,7 +1877,6 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'environment.toolchains': environmentToolchainsAdapter(deps),
     'environment.sandbox': environmentSandboxAdapter(deps),
     'environment.allowlist': environmentAllowlistAdapter(deps),
-    'developer.mode': developerModeAdapter(deps),
     'developer.custom-mcp': developerCustomMcpAdapter(deps),
     'developer.oauth-clients': developerOauthClientsAdapter(deps),
     'developer.mcpb': developerMcpbAdapter(deps),

@@ -103,25 +103,19 @@ describe('clientFormMode（OAUTH_CLIENT_REQUIRED 时的手填客户端表单）'
   const catalogTarget = { kind: 'catalog', connectorId: 'x' } as const;
   const customTarget = { kind: 'custom', serverId: 's' } as const;
 
-  it('目录应用 + 开发者模式关 → 只提示暂不可用', () => {
+  it('一律给出手填表单（不再挂开发者模式门禁）', () => {
     expect(
       clientFormMode({ target: catalogTarget, developerMode: false, customServerExists: false }),
-    ).toBe('unavailable');
-  });
-
-  it('开发者模式开 → 表单', () => {
+    ).toBe('form');
     expect(
       clientFormMode({ target: catalogTarget, developerMode: true, customServerExists: false }),
     ).toBe('form');
-  });
-
-  it('已存在的自定义 server 即使开发者模式关也能手填（不让它卡死）', () => {
     expect(
       clientFormMode({ target: customTarget, developerMode: false, customServerExists: true }),
     ).toBe('form');
     expect(
       clientFormMode({ target: customTarget, developerMode: false, customServerExists: false }),
-    ).toBe('unavailable');
+    ).toBe('form');
   });
 });
 

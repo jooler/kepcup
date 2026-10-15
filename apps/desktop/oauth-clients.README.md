@@ -16,4 +16,4 @@ KepCup 预注册的 OAuth 客户端表（D73 P2 §6.4，设计 29 §5.2）。`pn
   开发态读 `process.env` 与仓库根 `.env`（已 gitignore），`pnpm dist` 以同样规则并入注入表；同名条目覆盖本文件。
   映射表见 `packages/core/src/apps/oauth-clients.ts` 的 `ENV_OAUTH_CLIENTS`（`dist.mjs` 同步一份）。
 - 本文件目前为空：Microsoft / Slack / GitHub 的条目等用户完成平台注册（U3 / U4）后补入。
-- 用户可在「设置 → 应用 → 自定义 → OAuth 客户端」按 issuer 自带客户端（BYO），优先于本表。
+- 用户可在「扩展中心 → MCP → OAuth 客户端」按 issuer 自带客户端（BYO），优先于本表。

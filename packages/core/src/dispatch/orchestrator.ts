@@ -4740,7 +4740,7 @@ export class Orchestrator {
     identity: RunIdentity,
   ): LocalConnectorToolFacade | undefined {
     const local = this.#deps.localConnectors ?? null;
-    if (local === null || !this.#deps.settings.get().apps.developerMode) return undefined;
+    if (local === null) return undefined;
     return {
       guide: () => LOCAL_CONNECTOR_GUIDE,
       propose: async (input, ctx) => {

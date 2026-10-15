@@ -87,9 +87,9 @@
   let newKind = $state<'stdio' | 'http' | 'sse'>('stdio');
   /** W5：展开了逐工具策略的 server。 */
   let toolsOpen = $state<Record<string, boolean>>({});
-  /** D73 P2 §6.6：开发者模式（原始工具定义 / 授权事件日志 / 手动刷新工具）；开关在 DeveloperSection。 */
+  /** 原始工具定义 / 授权事件日志 / 手动刷新：扩展中心 MCP 全量管理形态下始终可用。 */
   const developerMode = $derived(settingsStore.developerMode);
-  /** 扩展中心里编辑已有 server、且未开启开发者模式：连接目标（命令 / 参数 / URL）只读。 */
+  /** 连接目标是否只读（自定义 MCP 迁到扩展中心后恒为 false）。 */
   const targetLocked = $derived(
     mcpTargetLocked({ variant, developerMode, editing: editingId !== null }),
   );
@@ -710,7 +710,7 @@
       {#if toolsOpen[server.id]}
         <McpToolPolicies {server} />
       {/if}
-      {#if variant === 'full' && developerMode}
+      {#if variant === 'full'}
         <McpDevTools {server} />
       {/if}
     </div>

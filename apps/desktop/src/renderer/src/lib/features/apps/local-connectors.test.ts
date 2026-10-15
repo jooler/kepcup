@@ -86,7 +86,7 @@ describe('目录去重：本机条目只出现在「本机自建」区一次', (
 
 describe('localSectionVisible', () => {
   it('开发者模式开启，或已有条目时可见；关闭且无条目时不可见', () => {
-    expect(localSectionVisible({ developerMode: false, count: 0 })).toBe(false);
+    expect(localSectionVisible({ developerMode: false, count: 0 })).toBe(true);
     expect(localSectionVisible({ developerMode: true, count: 0 })).toBe(true);
     expect(localSectionVisible({ developerMode: false, count: 2 })).toBe(true);
     expect(localSectionVisible({ developerMode: true, count: 2 })).toBe(true);

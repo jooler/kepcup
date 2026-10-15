@@ -20,7 +20,7 @@ export const APP_LOCAL_CONNECTOR_GUIDE_TOOL = 'app_local_connector_guide';
 export const APP_PROPOSE_LOCAL_CONNECTOR_TOOL = 'app_propose_local_connector';
 
 /**
- * 本机连接的工具门面（orchestrator 只在 `settings.apps.developerMode` 开启时提供）：
+ * 本机连接的工具门面（扩展中心「连接」分组；不再挂开发者模式门禁）：
  * `guide()` 返回内置手册；`propose()` 经 core 探测并发起确认卡（记下 `confirm-local-connector`
  * 需求）。`setup: true` = 已发起确认，run 随即中断等用户；`ok: false` = 具体拒绝原因。
  */

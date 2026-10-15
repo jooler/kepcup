@@ -9,7 +9,6 @@ import {
   BarChart3,
   BookUser,
   Bot,
-  Code,
   Compass,
   Globe,
   Mic,
@@ -47,7 +46,6 @@ export const settingsSections: SettingsSectionDef[] = [
   { id: 'environment', label: t('settings.navEnvironment'), icon: Monitor },
   { id: 'usage', label: t('settings.navUsage'), icon: BarChart3 },
   { id: 'diagnostics', label: t('settings.navDiagnostics'), icon: Activity },
-  { id: 'developer', label: t('settings.navDeveloper'), icon: Code },
 ];
 
 /** 可见分区：窄屏隐藏「通讯录」「用户画像」（提取为底部 tab，33-narrow-layout）。 */
