@@ -1,3 +1,4 @@
+import { flushSync } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -5,6 +6,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 'chats'；打开工作台只改 mainView、不清 currentId。真实的 chat / shell store
  * （desktop-svelte 项目），core 用最小替身。
  */
+
+const handlers = new Map<string, (payload: unknown) => void>();
+const emit = (event: string, payload: unknown): void => handlers.get(event)?.(payload);
+const state = {
+  lastSeq: 0,
+  lastReadSeq: 0,
+  messages: [] as unknown[],
+  markReadCalls: [] as number[],
+};
 
 const conversation = (id: string) => ({
   id,
@@ -15,23 +25,33 @@ const conversation = (id: string) => ({
   readOnly: false,
   summary: null,
   summaryUptoSeq: 0,
-  lastSeq: 0,
-  lastReadSeq: 0,
+  lastSeq: state.lastSeq,
+  lastReadSeq: state.lastReadSeq,
+  unreadCount: Math.max(0, state.lastSeq - state.lastReadSeq),
   lastMessageAt: null,
   createdAt: 1,
-  bot: null,
+  bot: { id: `bot_${id}`, name: id, status: 'active', avatar: null },
 });
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
     coreStatus: null,
-    onEvent: () => () => undefined,
+    onEvent: (event: string, handler: (payload: unknown) => void) => {
+      handlers.set(event, handler);
+      return () => undefined;
+    },
     call: async (method: string, params?: { id?: string }) => {
       switch (method) {
         case 'conversations.get':
           return { conversation: params?.id === 'missing' ? null : conversation(params?.id ?? '') };
         case 'messages.list':
-          return { messages: [] };
+          return { messages: state.messages };
+        case 'conversations.markRead': {
+          const seq = (params as unknown as { seq: number }).seq;
+          state.markReadCalls.push(seq);
+          state.lastReadSeq = seq;
+          return {};
+        }
         case 'runs.list':
           return { runs: [] };
         case 'tasks.active':
@@ -87,5 +107,74 @@ describe('shell.mainView 与 chat.select', () => {
     chat.beginGroupCompose();
     expect(shell.mainView).toBe('chats');
     expect(chat.composingGroup).toBe(true);
+  });
+});
+
+/**
+ * 工作台期间的已读（D90）：工作台盖住对话区时当前会话不算「在看」——员工的交付回复要在侧栏
+ * 记未读、不调 markRead；回到对话（含重新选同一个会话）后才补标已读并清零。
+ */
+describe('工作台期间的未读与已读', () => {
+  const botMessage = (seq: number) => ({
+    id: `m${seq}`,
+    conversationId: 'cu',
+    seq,
+    senderType: 'bot',
+    senderBotId: 'bot_cu',
+    kind: 'text',
+    status: 'sent',
+    runId: null,
+    replyTo: null,
+    attachments: [],
+    content: { text: `reply ${seq}` },
+    createdAt: seq,
+  });
+
+  beforeEach(() => {
+    shell.mainView = 'chats';
+    state.lastSeq = 0;
+    state.lastReadSeq = 0;
+    state.messages = [];
+    state.markReadCalls.length = 0;
+    chat.start();
+  });
+
+  it('工作台期间到达的回复：记未读、不标已读；回到同一会话后补标已读并清零', async () => {
+    await chat.select('cu');
+    shell.openWorkbench();
+
+    state.lastSeq = 1;
+    state.messages = [botMessage(1)];
+    emit('message.created', { conversationId: 'cu', message: botMessage(1) });
+
+    expect(chat.conversations.find((c) => c.id === 'cu')?.unreadCount).toBe(1);
+    expect(chat.isViewing('cu')).toBe(false);
+    await chat.markRead();
+    expect(state.markReadCalls).toEqual([]);
+
+    // select 同一个 currentId 不会提前返回：重新载入并补标已读。
+    await chat.select('cu');
+    expect(shell.mainView).toBe('chats');
+    expect(state.markReadCalls).toEqual([1]);
+    expect(chat.conversations.find((c) => c.id === 'cu')?.unreadCount).toBe(0);
+    expect(chat.isViewing('cu')).toBe(true);
+  });
+
+  it('对话视图里当前会话到达的回复不记未读（行为不变）', async () => {
+    await chat.select('cu');
+    state.lastSeq = 1;
+    emit('message.created', { conversationId: 'cu', message: botMessage(1) });
+    expect(chat.conversations.find((c) => c.id === 'cu')?.unreadCount ?? 0).toBe(0);
+  });
+
+  it('窄屏没有工作台：mainView 残留 workbench 也照常算在看', async () => {
+    const { narrowLayout } = await import('$lib/features/shell/narrow-layout.svelte');
+    await chat.select('cu');
+    shell.openWorkbench();
+    narrowLayout.windowWidth = 375;
+    flushSync();
+    expect(chat.isViewing('cu')).toBe(true);
+    narrowLayout.windowWidth = 1280;
+    flushSync();
   });
 });

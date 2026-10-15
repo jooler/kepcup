@@ -28,6 +28,11 @@ class ShellState {
    */
   mainView = $state<MainView>('chats');
 
+  /** 工作台此刻真的盖在对话区上：窄屏没有工作台，`mainView` 在窄屏不生效。 */
+  get workbenchShown(): boolean {
+    return this.mainView === 'workbench' && !narrowLayout.narrow;
+  }
+
   openWorkbench(): void {
     this.mainView = 'workbench';
   }
