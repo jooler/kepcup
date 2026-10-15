@@ -79,12 +79,12 @@
 </script>
 
 <div
-  class="flex w-full max-w-[50%] flex-col gap-2 rounded-[22px] bg-muted px-4 py-3"
+  class="flex w-full max-w-[70%] flex-col gap-2 rounded-[16px] bg-muted px-3 py-2"
   data-testid="group-setup-card"
   data-step={step}
   data-answered={answeredText === null ? 'false' : 'true'}
 >
-  <div class="text-sm font-medium" data-testid="group-setup-question">{question}</div>
+  <div class="text-sm" data-testid="group-setup-question">{question}</div>
   {#if answeredText !== null}
     <div
       class="flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-background px-3 py-2 text-sm"
