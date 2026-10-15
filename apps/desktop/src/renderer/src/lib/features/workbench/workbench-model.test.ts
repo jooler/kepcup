@@ -472,6 +472,74 @@ describe('parseDispatchText：core 的实际格式', () => {
   });
 });
 
+describe('parseDispatchText：事项更新（D90，core 的实际格式）', () => {
+  const footer = (by: '用户' | '管家') =>
+    `（由${by}修改；这是对你已在做的这件事的补充，不是新任务；仅供参考，是否调整当前做法由你决定）`;
+
+  it('标题 + 说明 + 末尾修改者行：修改者行取出，不进说明', () => {
+    expect(
+      parseDispatchText(`【工作台】事项更新：整理竞品\n\n只看国内\n第二行\n\n${footer('用户')}`),
+    ).toEqual({
+      title: '整理竞品',
+      notes: '只看国内\n第二行',
+      byButler: false,
+      lateNote: null,
+      update: true,
+      updatedBy: 'user',
+    });
+  });
+
+  it('管家修改：updatedBy=butler，byButler=true', () => {
+    const parsed = parseDispatchText(
+      `【工作台】事项更新：整理竞品\n\n只看国内\n\n${footer('管家')}`,
+    );
+    expect(parsed).toMatchObject({
+      update: true,
+      updatedBy: 'butler',
+      byButler: true,
+      notes: '只看国内',
+    });
+  });
+
+  it('没有说明、只有标题和修改者行', () => {
+    expect(parseDispatchText(`【工作台】事项更新：整理竞品\n\n${footer('用户')}`)).toMatchObject({
+      title: '整理竞品',
+      notes: '',
+      update: true,
+      updatedBy: 'user',
+    });
+  });
+
+  it('容错：缺修改者行 → updatedBy=null；说明里出现类似括号的文字但不在末尾，不被吃掉', () => {
+    expect(parseDispatchText('【工作台】事项更新：T\n\n说明')).toMatchObject({
+      title: 'T',
+      notes: '说明',
+      update: true,
+      updatedBy: null,
+    });
+    const parsed = parseDispatchText(
+      `【工作台】事项更新：T\n\n（由用户修改；示例）后面还有字\n\n${footer('用户')}`,
+    );
+    expect(parsed.notes).toBe('（由用户修改；示例）后面还有字');
+  });
+
+  it('派发正文没有 update 字段；content.todoUpdate 标记优先于正文前缀（标题恰好以「事项更新：」开头的派发）', () => {
+    expect('update' in parseDispatchText('【工作台】整理竞品\n\n说明')).toBe(false);
+    const collide = parseDispatchText('【工作台】事项更新：季度复盘\n\n说明', false);
+    expect(collide).toEqual({
+      title: '事项更新：季度复盘',
+      notes: '说明',
+      byButler: false,
+      lateNote: null,
+    });
+    expect(parseDispatchText('事项更新：T\n\n说明', true)).toMatchObject({
+      title: '事项更新：T',
+      update: true,
+    });
+    expect(parseDispatchText('【工作台】事项更新：T', undefined).update).toBe(true);
+  });
+});
+
 describe('blockedNotice', () => {
   it('失败是错误；草案上的其它原因是警示；非草案上的是说明；已结束 / 无原因不显示', () => {
     const n = (status: TodoEntry['status'], blockedReason: string | null) =>
