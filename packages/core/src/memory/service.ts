@@ -897,7 +897,8 @@ export class MemoryService {
       rerank: this.#retrievalReranker() ?? undefined,
     });
     if (result.items.length === 0) return '';
-    return `<relevant_memories>\n${result.text}\n</relevant_memories>`;
+    // 正文即可：外层 <relevant_memories> 标签由 system-prompt 的 section() 加。
+    return result.text;
   }
 
   // --- lifecycle hooks (03-data-model.md 删除级联) ------------------------------

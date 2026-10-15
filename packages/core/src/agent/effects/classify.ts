@@ -33,6 +33,12 @@ type Rule = EffectClass | ((params: Record<string, unknown>) => EffectClass);
  * 全部 ToolDefinition 名；pi-coding-agent 的 read / write / edit / ls / find /
  * grep / bash）。新增内置工具必须在这里登记。
  */
+/** D90：`when` 是 now（立即派发给执行者；与 core 的 parseWhen 同口径，忽略大小写与首尾空白）→ external，其余 local。 */
+const whenNow: Rule = (params) => {
+  const when = params['when'];
+  return typeof when === 'string' && when.trim().toLowerCase() === 'now' ? 'external' : 'local';
+};
+
 const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   // --- 文件与命令（coding-tools；wiki 维护 / 技能生成各有同名的受限版本）---
   read: 'none',
@@ -186,8 +192,12 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
    * （与 external/capabilities.ts 的 READ_ONLY_TOOLS 一致，tool-effects 单测强制）。
    */
   list_todos: 'none',
-  create_todo: 'local',
-  update_todo: 'local',
+  /**
+   * `when: 'now'` 让另一个 Bot 立刻动起来（宿主追加一条派发消息并触发它的一轮）→ external：崩溃重放
+   * 时要避免重复派发（同 send_message 带 @ 的口径）；草案 / 排期（到点才派发）仍是 local。
+   */
+  create_todo: whenNow,
+  update_todo: whenNow,
   close_todo: 'local',
   list_memos: 'none',
   create_memo: 'local',

@@ -110,8 +110,8 @@ export interface TodoServiceDeps {
 
 /**
  * Who performs an operation: the user themselves, or the butler through its tools. It decides how
- * a dispatch is attributed (「（管家代你安排）」, `viaButler`); the todo's `source` only records who
- * created it.
+ * a dispatch is attributed (「（管家代你安排）」, `viaButler`). The todo's `source` is the content's
+ * provenance: who created it, and 'butler' as soon as the butler wrote or rewrote its title / notes.
  */
 export type TodoActor = TodoSource;
 
@@ -291,6 +291,7 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，请先重新打开再修改`);
     }
     const titleChanged = input.title !== undefined && cleanTitle(input.title) !== todo.title;
+    const notesChanged = input.notes !== undefined && cleanNotes(input.notes) !== todo.notes;
     const when = input.when === undefined ? undefined : parseWhen(input.when);
     // Sending the assignee the todo already has is no change.
     const assigneeChanged =
@@ -318,6 +319,8 @@ export class TodoService implements WorkbenchDispatchPort {
             this.store.update(id, {
               ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
               ...(input.notes !== undefined ? { notes: cleanNotes(input.notes) } : {}),
+              // 内容出处：管家改写过标题 / 说明，之后派发时执行者要按不可信内容对待（butlerDrafted）。
+              ...(actor === 'butler' && (titleChanged || notesChanged) ? { source: 'butler' } : {}),
             }) ?? current;
           const schedule = this.#activeSchedule(id);
           if (schedule !== null && (titleChanged || input.notes !== undefined)) {
