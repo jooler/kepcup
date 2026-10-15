@@ -175,6 +175,20 @@ import {
   wikiRollbackOutputSchema,
   wikiDeletePageInputSchema,
   wikiDeletePageOutputSchema,
+  todosListInputSchema,
+  todosListOutputSchema,
+  todosIdInputSchema,
+  todosGetOutputSchema,
+  todosCreateInputSchema,
+  todosUpdateInputSchema,
+  todosWriteOutputSchema,
+  todosTransitionOutputSchema,
+  memosListInputSchema,
+  memosListOutputSchema,
+  memosIdInputSchema,
+  memosCreateInputSchema,
+  memosUpdateInputSchema,
+  memosMemoOutputSchema,
   schedulesListInputSchema,
   schedulesListOutputSchema,
   schedulesCancelInputSchema,
@@ -215,6 +229,8 @@ import {
 } from '@kepcup/shared';
 import type { CoreServices } from '../start.js';
 import type { WatchService } from '../watch/service.js';
+import type { MemoService } from '../workbench/memo-service.js';
+import type { TodoService } from '../workbench/todo-service.js';
 import type { RpcMethodSpec } from './server.js';
 import type { WslStatusReport } from '../sandbox/wsl/setup.js';
 import { localDateKey } from '../memory/local-date.js';
@@ -1415,6 +1431,69 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       },
     ),
 
+    // --- workbench (D90): todos + memos ---------------------------------------------
+    'todos.list': method(todosListInputSchema, todosListOutputSchema, async (input) => ({
+      todos: requireTodos(services).list({
+        ...(input.statuses !== undefined ? { statuses: input.statuses } : {}),
+        ...(input.query !== undefined ? { query: input.query } : {}),
+        ...(input.includeClosed !== undefined ? { includeClosed: input.includeClosed } : {}),
+      }),
+    })),
+    'todos.get': method(todosIdInputSchema, todosGetOutputSchema, async (input) =>
+      requireTodos(services).get(input.id),
+    ),
+    'todos.create': method(todosCreateInputSchema, todosWriteOutputSchema, async (input) =>
+      requireTodos(services).create({
+        title: input.title,
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+        ...(input.when !== undefined ? { when: input.when } : {}),
+        ...(input.memoId !== undefined ? { memoId: input.memoId } : {}),
+        source: 'user',
+      }),
+    ),
+    'todos.update': method(todosUpdateInputSchema, todosWriteOutputSchema, async (input) =>
+      requireTodos(services).update(input.id, {
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+        ...(input.when !== undefined ? { when: input.when } : {}),
+      }),
+    ),
+    'todos.start': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
+      todo: requireTodos(services).start(input.id),
+    })),
+    'todos.complete': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
+      todo: requireTodos(services).complete(input.id),
+    })),
+    'todos.cancel': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
+      todo: requireTodos(services).cancel(input.id),
+    })),
+    'todos.reopen': method(todosIdInputSchema, todosTransitionOutputSchema, async (input) => ({
+      todo: requireTodos(services).reopen(input.id),
+    })),
+    'memos.list': method(memosListInputSchema, memosListOutputSchema, async (input) => ({
+      memos: requireMemos(services).list({
+        ...(input.query !== undefined ? { query: input.query } : {}),
+        ...(input.trashed !== undefined ? { trashed: input.trashed } : {}),
+      }),
+    })),
+    'memos.create': method(memosCreateInputSchema, memosMemoOutputSchema, async (input) => ({
+      memo: requireMemos(services).create({ body: input.body, source: 'user' }),
+    })),
+    'memos.update': method(memosUpdateInputSchema, memosMemoOutputSchema, async (input) => ({
+      memo: requireMemos(services).update(input.id, {
+        ...(input.body !== undefined ? { body: input.body } : {}),
+        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+      }),
+    })),
+    'memos.delete': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
+      memo: requireMemos(services).delete(input.id),
+    })),
+    'memos.restore': method(memosIdInputSchema, memosMemoOutputSchema, async (input) => ({
+      memo: requireMemos(services).restore(input.id),
+    })),
+
     // --- 辅助阅读便签（main.db stickies；删除对话随 conversations FK 级联） ---
     'stickies.list': method(stickiesListInputSchema, stickiesListOutputSchema, async () => ({
       stickies: domain.stickies.list(),
@@ -1528,6 +1607,16 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   // 设置页原有的专用保存路径（providers.setKey、unattended.*、budget.update……）成功后补发
   // settings.changed（settings.update / bots.update 已在上面按差异补发）。
   return withSettingsChangedEvents(methods, publishSettingsChanged);
+}
+
+function requireTodos(services: CoreServices): TodoService {
+  if (!services.todos) throw new AppError('NOT_IMPLEMENTED', '工作台服务未就绪');
+  return services.todos;
+}
+
+function requireMemos(services: CoreServices): MemoService {
+  if (!services.memos) throw new AppError('NOT_IMPLEMENTED', '工作台服务未就绪');
+  return services.memos;
 }
 
 function requireWatches(services: CoreServices): WatchService {
