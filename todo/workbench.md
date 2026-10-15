@@ -545,3 +545,16 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 - 对 W0 契约的修正（独立审查）：0037 去掉 `todos.assignee_group_id` 的外键（FK 置空会把「群 + 负责 Bot」读成 Bot 执行者）；`schedules` 加 `CHECK (bot_id IS NOT NULL OR origin='workbench')` 与单向 `CHECK (todo_id IS NULL OR origin='workbench')`；`store.insert` 有 `todoId` 时默认 `origin='workbench'`；`todo-store` 的 `closed_at` / `settled_at` 随状态派生；`reassignBot` 只动未关闭事项。
 - 追踪的取舍：回复带 `todoId` / `todoRunId` / `todoTitle`；同链路（`origin_run_id`）还有未结算任务则不交付；静默轮次若同对话更早有带标签的回复，则以那条为结果；群里一轮结束无人响应（`group_no_claim`、全员 `no_action`、被派者全部静默且没起任务）→ `unclaimed`。执行者轮失败只记执行记录（`failed`），事项停在进行中，重试成功仍可交付。
 - 移交：适配器在 `transferTo` 之后通知 TodoService；`schedules.changed` 对账也会让事项跟随排期持有者（崩溃兜底）。没有用 `TodoStore.reassignBot`（它会把该 Bot 的所有事项一起搬走，而移交是按资产条目逐条选的）。
+
+**W2-butler（2026-10-15，分支 `t/wb-butler`）**
+
+- 新增：`tools/workbench-tools.ts`（八个工具，仅管家的对话轮；执行处核对调用者是管家，并按 `triggerFromUser` 强制 §6.2 权限边界）、`workbench/context.ts`（`<workbench>` 段与时间 / 预览辅助）；`ResponseToolDeps.workbench`、`OrchestratorDeps.workbench`（start.ts 的 lazy 门面）；`BUTLER_RULES` 补三条工作台规则 + 权限边界一条。
+- `triggerFromUser` 取法：orchestrator 在 run 开始时算 `fromUser = triggerFromUser(batch.messages, partReasons)`（设置工具共用），工作台工具额外要求 `batch.reason ∈ SETTING_DIRECT_TRIGGERS`，即 `effectiveMode` 的 `userTriggered` 口径；作为布尔值随工具构造传入，不依赖提示词。
+- 偏差：
+  - `list_todos` / `list_memos` 在 `classify.ts` 归 `none` 而非 `local`：`READ_ONLY_TOOLS` 里的工具必须是 `none`（tool-effects 单测强制），与 `list_schedules` 一致；写工具为 `local`。
+  - shared 向后兼容新增：八个工具名加进 `collaboration` 包的 `butlerTools`（外部 Agent 桥只注入属于某个包的工具；管家恒带该包）。
+  - `list_*` 登记为不可信工具（读用户写的内容，调用后同一 run 的设置写入按「接触过不可信内容」处理），写工具为可信。
+  - `close_todo.reason` 只回显给管家，不落库（事项无对应字段）。
+  - 「逾期未交付」口径：进行中且派发超过 24 小时未交付，或排期已过点仍未发出；设计未定义，可调（`WORKBENCH_OVERDUE_MS`）。
+  - 一个 run 中途 steer 进来的消息不改变 `triggerFromUser`（run 开始时算定，偏保守）。
+- 容器内全量：5021 例，4964 通过、35 失败；其中 1 条是本次改 `BUTLER_TASK_RULES` 措辞误伤 `handover` 集成断言（已改回，定向通过），其余 34 条与 W1-core 基线一致（沙箱 / skills / workspace-tools / wiki-url / projects、runs 迁移版本断言、`response-loop` interim、`tasks-review-fixes-e`、`environment`、`external-agent-p3`、`web-tools` 偶发）。
