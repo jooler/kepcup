@@ -16,9 +16,12 @@
   import { selfSchedulesOf } from './workbench-model';
 
   /**
-   * 工作台引导（D90）：Bot 自排定时任务（非 workbench origin）超过 3 个、且侧栏工作台仍关闭、
-   * 且用户未永久关闭引导时，弹出「启用 / 暂不启用」；暂不启用后再说明可到设置打开，点「知道了」
-   * 写入 workbenchNudgeDismissed，两层引导都不再出现。
+   * 工作台引导（D90）：**仅**在「Bot 自排定时任务（非 workbench origin）数量 > 3」且
+   * 「侧栏工作台仍关」且「未永久关闭引导」时弹出「启用 / 暂不启用」。
+   *
+   * 不变式：自排数量**绝不**写回 / 强关 / 拦截 `workbenchEnabled`。设置页「显示工作台」
+   * 可随时手动开关；本组件只在用户点「启用」时写成 true，点「知道了」时只写
+   * `workbenchNudgeDismissed`。
    */
   const THRESHOLD = 3;
 
@@ -28,6 +31,8 @@
 
   const enabled = $derived(settingsStore.settings?.workbenchEnabled === true);
   const dismissed = $derived(settingsStore.settings?.workbenchNudgeDismissed === true);
+  /** 只有数量真正超过阈值才具备弹引导资格（不含等于）。 */
+  const overThreshold = $derived(selfCount > THRESHOLD);
 
   async function refreshCount(): Promise<void> {
     try {
@@ -46,9 +51,10 @@
     return off;
   });
 
-  // 条件满足时进入 offer；已启用 / 已永久关闭 / 数量不够则收起。
+  // 只驱动引导相位：已启用 / 已永久关闭 / 未超阈值 → 收起；否则进入 offer。
+  // 这里不得调用 settingsStore.update，也不得把 workbenchEnabled 打成 false。
   $effect(() => {
-    if (enabled || dismissed || selfCount <= THRESHOLD) {
+    if (enabled || dismissed || !overThreshold) {
       if (phase !== 'idle') phase = 'idle';
       return;
     }
@@ -59,6 +65,7 @@
     if (busy) return;
     busy = true;
     try {
+      // 唯一会打开工作台开关的引导路径；设置页开关是另一条独立路径。
       await settingsStore.update({ workbenchEnabled: true });
       phase = 'idle';
       shell.openWorkbench();
@@ -75,6 +82,7 @@
     if (busy) return;
     busy = true;
     try {
+      // 只持久化「不再引导」；不改 workbenchEnabled。
       await settingsStore.update({ workbenchNudgeDismissed: true });
       phase = 'idle';
     } finally {

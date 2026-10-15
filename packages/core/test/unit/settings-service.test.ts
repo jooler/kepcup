@@ -42,3 +42,24 @@ describe('SettingsService：读取时丢弃已移除厂商的残留配置', () =
     expect(new SettingsService(fakeDb(undefined), CLOCK).get().vendorProviders).toEqual([]);
   });
 });
+
+describe('SettingsService：工作台开关（D90）', () => {
+  it('缺省关闭；update 可自由打开 / 关闭，与定时任务数量无关', () => {
+    let stored: string | undefined;
+    const db = {
+      prepare: () => ({
+        get: () => (stored === undefined ? undefined : { value_json: stored }),
+        run: (_key: string, valueJson: string) => {
+          stored = valueJson;
+        },
+      }),
+    } as never;
+    const service = new SettingsService(db, CLOCK);
+    expect(service.get().workbenchEnabled).toBe(false);
+    expect(service.get().workbenchNudgeDismissed).toBe(false);
+    expect(service.update({ workbenchEnabled: true }).workbenchEnabled).toBe(true);
+    expect(service.get().workbenchEnabled).toBe(true);
+    expect(service.update({ workbenchEnabled: false }).workbenchEnabled).toBe(false);
+  });
+});
+

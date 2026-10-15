@@ -13,14 +13,14 @@
    */
 
   let autostart = $state(true);
-  let workbench = $state(false);
   let checking = $state(false);
+  /** 工作台开关只跟 settings 走：不与本地 mirror 双向 bind，避免写入往返时被旧快照打回。 */
+  const workbench = $derived(settingsStore.settings?.workbenchEnabled === true);
 
   $effect(() => {
     const settings = settingsStore.settings;
     if (settings) {
       autostart = settings.launchAtLogin;
-      workbench = settings.workbenchEnabled;
     }
   });
 
@@ -43,6 +43,10 @@
     void settingsStore.update({ launchAtLogin: checked });
   }
 
+  /**
+   * 设置页手动开关：与定时任务数量 / 引导弹窗无关，随时可开可关。
+   * 自排任务 >3 且仍关闭时只由 WorkbenchNudge 弹引导，绝不在此按数量强关或拦截。
+   */
   function toggleWorkbench(checked: boolean): void {
     void settingsStore.update({ workbenchEnabled: checked });
   }
@@ -85,7 +89,7 @@
   </label>
   <label class="flex items-start gap-3" data-settings-anchor="general-workbench">
     <Checkbox
-      bind:checked={workbench}
+      checked={workbench}
       onCheckedChange={(checked) => toggleWorkbench(checked === true)}
       data-testid="settings-workbench-enabled"
     />

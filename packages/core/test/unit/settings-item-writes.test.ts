@@ -948,4 +948,15 @@ describe('validation and widening fixes (D89 review)', () => {
       adapter.write!(entry, { next: { provider: 'nobody', limit: 2 }, secrets: {} }, rig.target),
     ).toThrow(/没有已接入的厂商/);
   });
+
+  it('general.workbench write toggles freely (not gated by schedule count)', () => {
+    const rig = harness({ workbenchEnabled: false });
+    const entry = item('general.workbench');
+    const adapter = rig.adapters(entry);
+    expect(adapter.read(entry, rig.target, {}).values).toEqual({ enabled: false });
+    adapter.write!(entry, { next: { enabled: true }, secrets: {} }, rig.target);
+    expect(rig.settings().workbenchEnabled).toBe(true);
+    adapter.write!(entry, { next: { enabled: false }, secrets: {} }, rig.target);
+    expect(rig.settings().workbenchEnabled).toBe(false);
+  });
 });
