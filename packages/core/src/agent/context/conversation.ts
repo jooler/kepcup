@@ -319,8 +319,16 @@ export function renderMessageLine(
   switch (message.senderType) {
     case 'user': {
       // D71：委派代发消息——另一个 Bot 代用户转交的任务。
-      const content = message.content as { origin?: string; delegatedBy?: string; widgetId?: string };
-      if (content.origin === 'delegation') {
+      const content = message.content as {
+        origin?: string;
+        delegatedBy?: string;
+        widgetId?: string;
+        viaButler?: boolean;
+      };
+      if (content.origin === 'workbench') {
+        // D90：工作台代用户派发的事项（用户的指令，由宿主发出）。
+        sender = content.viaButler === true ? '用户（经工作台派发，管家代为安排）' : '用户（经工作台派发）';
+      } else if (content.origin === 'delegation') {
         const by = content.delegatedBy ?? '';
         sender = `用户（由 ${options.botNames.get(by) ?? (by || '其他 Bot')} 代为转交）`;
       } else if (content.origin === 'widget') {
