@@ -22,6 +22,18 @@ function codeOf(error: unknown): string | undefined {
 }
 
 /**
+ * RPC 错误的展示文案：INVALID_INPUT 带服务端的具体原因（如「时间在过去」「群已只读」），
+ * 直接展示；其余按错误码映射。
+ */
+export function rpcErrorText(error: unknown, fallback: string): string {
+  const { code, message } = (error ?? {}) as { code?: string; message?: string };
+  if (code === 'INVALID_INPUT' && typeof message === 'string' && message.trim().length > 0) {
+    return message.trim();
+  }
+  return errorText(code, fallback);
+}
+
+/**
  * 迁移一条事项，成功返回最新条目（已写入 store），失败 toast 后返回 null。
  * 「退回草案」没有独立 RPC：已排期的事项清掉 `when` 即退回草案（`todos.update`）。
  */
@@ -35,7 +47,7 @@ export async function transitionTodo(kind: TodoTransition, id: string): Promise<
     toast.success(t(DONE_TEXT[kind]));
     return result.todo;
   } catch (error) {
-    toast.error(errorText(codeOf(error), t('workbench.actionFailed')));
+    toast.error(rpcErrorText(error, t('workbench.actionFailed')));
     return null;
   }
 }

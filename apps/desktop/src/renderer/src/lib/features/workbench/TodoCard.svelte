@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import MemberAvatar from './MemberAvatar.svelte';
   import { describeAt, describeTodoWhen } from './describe';
+  import { effectiveStatus } from './workbench-model';
   import { openTodoConversation, openTodoResult, transitionTodo } from './todo-actions';
   import { workbench } from './workbench.svelte';
 
@@ -31,6 +32,19 @@
       : null,
   );
   const closed = $derived(todo.status === 'done' || todo.status === 'cancelled');
+  // 周期事项自身停在已排期，最近一次执行另有进行中 / 已交付：胶囊仍显示事项状态，下面补一行执行摘要。
+  const runStatus = $derived(effectiveStatus(todo));
+  const periodicRun = $derived(
+    todo.status === 'scheduled' && (runStatus === 'in_progress' || runStatus === 'delivered')
+      ? runStatus
+      : null,
+  );
+  // 取消后排期已清掉、无法再判断是否周期；有过派发记录的取消按「已停止」呈现。
+  const statusText = $derived(
+    todo.status === 'cancelled' && todo.lastRun !== null
+      ? t('workbench.status.stopped')
+      : t(`workbench.status.${todo.status}`),
+  );
   const lastRunNote = $derived(
     todo.lastRun?.status === 'unclaimed'
       ? t('workbench.card.lastRunUnclaimed')
@@ -96,7 +110,7 @@
       class="shrink-0 rounded-md px-1.5 py-0.5 text-xs {PILL[todo.status]}"
       data-testid="todo-card-status"
     >
-      {t(`workbench.status.${todo.status}`)}
+      {statusText}
     </span>
   </div>
 
@@ -134,6 +148,20 @@
     {/if}
   </div>
 
+  {#if periodicRun !== null}
+    <p
+      class="mt-1.5 flex flex-wrap items-center gap-x-2 text-xs {periodicRun === 'delivered'
+        ? 'text-amber-700 dark:text-amber-400'
+        : 'text-emerald-700 dark:text-emerald-400'}"
+      data-testid="todo-card-last-run"
+      data-run-status={todo.lastRun?.status}
+    >
+      {periodicRun === 'delivered'
+        ? t('workbench.card.lastRunDelivered')
+        : t('workbench.card.lastRunInProgress')}
+    </p>
+  {/if}
+
   {#if todo.blockedReason !== null && todo.status === 'draft'}
     <p
       class="mt-1.5 flex items-start gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
@@ -170,6 +198,19 @@
         </Button>
       {/if}
     {:else if todo.status === 'scheduled'}
+      {#if periodicRun !== null}
+        <Button
+          size="xs"
+          variant="outline"
+          onclick={() =>
+            void (periodicRun === 'delivered' ? openTodoResult(todo) : openTodoConversation(todo))}
+          data-testid="todo-card-run-open"
+        >
+          {periodicRun === 'delivered'
+            ? t('workbench.action.viewResult')
+            : t('workbench.action.openChat')}
+        </Button>
+      {/if}
       <Button size="xs" variant="outline" onclick={open} data-testid="todo-card-reschedule">
         {t('workbench.action.reschedule')}
       </Button>

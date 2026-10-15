@@ -8,6 +8,8 @@
     type RepeatPreset,
     type WhenDraft,
     type WhenMode,
+    skipsShortMonths,
+    toLocalInput,
   } from './when-presets';
 
   /**
@@ -21,6 +23,12 @@
     hasAssignee,
     next,
   }: { draft: WhenDraft; disabled?: boolean; hasAssignee: boolean; next: string } = $props();
+
+  // 「某时」不能早于当前这一分钟；切换模式时刷新，免得抽屉开很久后下限过期。
+  const minOnce = $derived.by(() => {
+    void draft.mode;
+    return toLocalInput(Date.now());
+  });
 
   const MODES: WhenMode[] = ['none', 'now', 'once', 'repeat'];
   const MODE_LABEL = {
@@ -101,6 +109,7 @@
       type="datetime-local"
       class="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
       bind:value={draft.onceLocal}
+      min={minOnce}
       {disabled}
       aria-label={t('workbench.drawer.whenOnce')}
       data-testid="todo-when-once-input"
@@ -115,7 +124,7 @@
         <Select.Root type="single" value={draft.preset.kind} onValueChange={setKind} {disabled}>
           <Select.Trigger
             class="w-32"
-            aria-label={t('workbench.drawer.whenRepeat')}
+            aria-label={`${t('workbench.drawer.whenRepeat')}：${t(KIND_LABEL[draft.preset.kind])}`}
             data-testid="todo-when-repeat-kind"
           >
             {t(KIND_LABEL[draft.preset.kind])}
@@ -135,7 +144,7 @@
           >
             <Select.Trigger
               class="w-24"
-              aria-label={t('workbench.drawer.repeatMonthDay')}
+              aria-label={`${t('workbench.drawer.repeatMonthDay')}：${t('workbench.drawer.repeatDayOption', { n: draft.preset.day })}`}
               data-testid="todo-when-month-day"
             >
               {t('workbench.drawer.repeatDayOption', { n: draft.preset.day })}
@@ -181,6 +190,11 @@
     {/if}
   {/if}
 
+  {#if skipsShortMonths(draft)}
+    <p class="text-xs text-muted-foreground" data-testid="todo-when-short-month">
+      {t('workbench.drawer.monthShort')}
+    </p>
+  {/if}
   {#if !hasAssignee}
     <p class="text-xs text-muted-foreground" data-testid="todo-when-need-assignee">
       {t('workbench.drawer.needAssignee')}

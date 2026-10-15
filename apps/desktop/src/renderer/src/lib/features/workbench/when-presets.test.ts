@@ -3,6 +3,8 @@ import {
   cronToPreset,
   draftFromSchedule,
   emptyWhenDraft,
+  isPastOnce,
+  skipsShortMonths,
   fromLocalInput,
   nextFireOfPreset,
   presetToCron,
@@ -123,24 +125,40 @@ describe('whenFromDraft / draftFromSchedule', () => {
   it('现有排期回显：单次 / 可识别的 cron / 自定义 cron / 无', () => {
     const at = new Date(2026, 9, 16, 9, 5).getTime();
     expect(draftFromSchedule(null).mode).toBe('none');
-    expect(draftFromSchedule({ kind: 'once', runAt: at, cron: null })).toMatchObject({
+    expect(
+      draftFromSchedule({ kind: 'once', runAt: at, cron: null, timezone: 'UTC' }),
+    ).toMatchObject({
       mode: 'once',
       onceLocal: '2026-10-16T09:05',
     });
-    expect(draftFromSchedule({ kind: 'cron', runAt: null, cron: '0 8 * * 1-5' })).toMatchObject({
+    expect(
+      draftFromSchedule(
+        { kind: 'cron', runAt: null, cron: '0 8 * * 1-5', timezone: 'Asia/Shanghai' },
+        'Asia/Shanghai',
+      ),
+    ).toMatchObject({
       mode: 'repeat',
       preset: { kind: 'weekdays', time: '08:00' },
       customCron: null,
     });
-    const custom = draftFromSchedule({ kind: 'cron', runAt: null, cron: '*/10 * * * *' });
+    const custom = draftFromSchedule(
+      { kind: 'cron', runAt: null, cron: '*/10 * * * *', timezone: 'Asia/Shanghai' },
+      'Asia/Shanghai',
+    );
     expect(custom).toMatchObject({ mode: 'repeat', customCron: '*/10 * * * *' });
     // 自定义 cron 原样提交，不被预设吃掉。
     expect(whenFromDraft(custom)).toBe('*/10 * * * *');
   });
 
   it('sameWhen：回显后不改动视为相同', () => {
-    const a = draftFromSchedule({ kind: 'cron', runAt: null, cron: '0 9 * * *' });
-    const b = draftFromSchedule({ kind: 'cron', runAt: null, cron: '0 9 * * *' });
+    const a = draftFromSchedule(
+      { kind: 'cron', runAt: null, cron: '0 9 * * *', timezone: 'Asia/Shanghai' },
+      'Asia/Shanghai',
+    );
+    const b = draftFromSchedule(
+      { kind: 'cron', runAt: null, cron: '0 9 * * *', timezone: 'Asia/Shanghai' },
+      'Asia/Shanghai',
+    );
     expect(sameWhen(a, b)).toBe(true);
     expect(sameWhen(a, { ...b, preset: { kind: 'daily', time: '10:00' } })).toBe(false);
   });
@@ -184,5 +202,38 @@ describe('nextFireOfPreset', () => {
 
   it('预设不合法返回 null', () => {
     expect(nextFireOfPreset({ kind: 'weekly', days: [], time: '09:00' }, thu10)).toBeNull();
+  });
+});
+
+describe('时区与过去时间', () => {
+  it('cron 的时区与本机不同：不识别成预设，按只读 cron 回显且原样提交', () => {
+    const draft = draftFromSchedule(
+      { kind: 'cron', runAt: null, cron: '0 9 * * *', timezone: 'America/New_York' },
+      'Asia/Shanghai',
+    );
+    expect(draft).toMatchObject({ mode: 'repeat', customCron: '0 9 * * *' });
+    expect(whenFromDraft(draft)).toBe('0 9 * * *');
+  });
+
+  it('isPastOnce：只看填完整的「某时」', () => {
+    const now = new Date(2026, 9, 15, 10, 0).getTime();
+    const once = (onceLocal: string) => ({ ...emptyWhenDraft(), mode: 'once' as const, onceLocal });
+    expect(isPastOnce(once('2026-10-15T09:59'), now)).toBe(true);
+    expect(isPastOnce(once('2026-10-15T10:00'), now)).toBe(true);
+    expect(isPastOnce(once('2026-10-15T10:01'), now)).toBe(false);
+    expect(isPastOnce(once(''), now)).toBe(false);
+    expect(isPastOnce(emptyWhenDraft(), now)).toBe(false);
+  });
+
+  it('skipsShortMonths：每月 29–31 号', () => {
+    const monthly = (day: number) => ({
+      ...emptyWhenDraft(),
+      mode: 'repeat' as const,
+      preset: { kind: 'monthly' as const, day, time: '09:00' },
+    });
+    expect(skipsShortMonths(monthly(28))).toBe(false);
+    expect(skipsShortMonths(monthly(29))).toBe(true);
+    expect(skipsShortMonths(monthly(31))).toBe(true);
+    expect(skipsShortMonths({ ...monthly(31), mode: 'once' })).toBe(false);
   });
 });

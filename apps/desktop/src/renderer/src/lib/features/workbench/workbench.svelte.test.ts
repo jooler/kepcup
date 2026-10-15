@@ -11,6 +11,7 @@ const calls: Array<{ method: string; params: unknown }> = [];
 const handlers = new Map<string, Set<(payload: unknown) => void>>();
 let todosResult: unknown[] = [];
 let failTodos = false;
+let failMemos = false;
 
 vi.mock('$lib/rpc/client.svelte', () => ({
   core: {
@@ -30,6 +31,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         case 'schedules.list':
           return { schedules: [] };
         case 'memos.list':
+          if (failMemos) throw new Error('boom');
           return { memos: [] };
         default:
           return {};
@@ -38,7 +40,8 @@ vi.mock('$lib/rpc/client.svelte', () => ({
   },
 }));
 
-const { workbench, REFRESH_DEBOUNCE_MS } = await import('./workbench.svelte');
+const { workbench, WorkbenchState, REFRESH_DEBOUNCE_MS, REFRESH_MAX_WAIT_MS, useWorkbenchData } =
+  await import('./workbench.svelte');
 const { shell } = await import('$lib/stores/shell.svelte');
 
 const count = (method: string, match?: (params: unknown) => boolean): number =>
@@ -56,6 +59,7 @@ beforeEach(() => {
   handlers.clear();
   todosResult = [];
   failTodos = false;
+  failMemos = false;
   workbench.todos = [];
   workbench.drawer = null;
   shell.mainView = 'chats';
@@ -171,5 +175,101 @@ describe('就地更新', () => {
     workbench.upsertMemo(memo);
     expect(workbench.trashed).toEqual([]);
     expect(workbench.memos.map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
+describe('经过真实 effect 挂载（WorkbenchView 的用法）', () => {
+  const settle = async (ms = 150): Promise<void> => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      flushSync();
+      await wait(5);
+    }
+  };
+  const subscriptions = (): number => [...handlers.values()].reduce((n, set) => n + set.size, 0);
+  let stop: (() => void) | null = null;
+  const mount = (): void => {
+    stop = $effect.root(() => {
+      useWorkbenchData();
+    });
+    flushSync();
+  };
+  afterEach(() => {
+    stop?.();
+    stop = null;
+  });
+
+  it('正常打开：每份数据只拉一次、三个事件各订阅一次', async () => {
+    mount();
+    await settle();
+    expect(count('todos.list')).toBe(1);
+    expect(count('schedules.list')).toBe(1);
+    expect(count('memos.list')).toBe(1);
+    expect(subscriptions()).toBe(3);
+    expect(workbench.loadState).toBe('ready');
+  });
+
+  it('RPC 报错：进入 error 后不循环重挂 / 重拉', async () => {
+    failTodos = true;
+    mount();
+    await settle(300);
+    expect(workbench.loadState).toBe('error');
+    expect(count('todos.list')).toBe(1);
+    expect(subscriptions()).toBe(3);
+  });
+
+  it('错误态自愈：失败的那份后来成功，loadState 回到 ready', async () => {
+    failMemos = true;
+    mount();
+    await settle();
+    expect(workbench.loadState).toBe('error');
+    failMemos = false;
+    emit('memos.changed', { memoId: 'm' });
+    await settle(REFRESH_DEBOUNCE_MS + 100);
+    expect(workbench.loadState).toBe('ready');
+  });
+
+  it('首次加载期间是 loading；加载过之后重拉不回到 loading', async () => {
+    const fresh = new WorkbenchState();
+    const off = fresh.attach();
+    expect(fresh.loadState).toBe('loading');
+    await settle();
+    expect(fresh.loadState).toBe('ready');
+    emit('todos.changed');
+    await settle(REFRESH_DEBOUNCE_MS + 50);
+    expect(fresh.loadState).toBe('ready');
+    off();
+  });
+
+  it('卸载时关掉抽屉并取消订阅', async () => {
+    mount();
+    await settle();
+    workbench.openTodo('todo_1');
+    stop?.();
+    stop = null;
+    flushSync();
+    expect(workbench.drawer).toBeNull();
+    expect(subscriptions()).toBe(0);
+  });
+
+  it('对话里先开抽屉再切到工作台：挂载不清掉它', async () => {
+    workbench.focusTodo('todo_1');
+    mount();
+    await settle();
+    expect(workbench.drawer).toEqual({ kind: 'edit', todoId: 'todo_1' });
+  });
+});
+
+describe('去抖最大等待', () => {
+  it('事件持续不断时也会在最大等待内刷新', async () => {
+    detach = workbench.attach();
+    await wait(30);
+    calls.length = 0;
+    const end = Date.now() + REFRESH_MAX_WAIT_MS + 400;
+    while (Date.now() < end) {
+      emit('todos.changed');
+      await wait(100);
+    }
+    expect(count('todos.list')).toBeGreaterThanOrEqual(1);
   });
 });

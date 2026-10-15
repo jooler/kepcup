@@ -14,6 +14,7 @@ const state = {
   lastReadSeq: 0,
   messages: [] as unknown[],
   markReadCalls: [] as number[],
+  gate: null as Promise<void> | null,
 };
 
 const conversation = (id: string) => ({
@@ -45,6 +46,7 @@ vi.mock('$lib/rpc/client.svelte', () => ({
         case 'conversations.get':
           return { conversation: params?.id === 'missing' ? null : conversation(params?.id ?? '') };
         case 'messages.list':
+          if (state.gate !== null) await state.gate;
           return { messages: state.messages };
         case 'conversations.markRead': {
           const seq = (params as unknown as { seq: number }).seq;
@@ -176,5 +178,27 @@ describe('工作台期间的未读与已读', () => {
     expect(chat.isViewing('cu')).toBe(true);
     narrowLayout.windowWidth = 1280;
     flushSync();
+  });
+});
+
+describe('慢 select 与用户主动打开工作台', () => {
+  it('select 进行期间用户打开了工作台：结算时不把视图拉回对话', async () => {
+    let release: () => void = () => undefined;
+    state.gate = new Promise<void>((resolve) => (release = resolve));
+    shell.mainView = 'chats';
+    const pending = chat.select('slow');
+    shell.openWorkbench();
+    release();
+    await pending;
+    state.gate = null;
+    expect(shell.mainView).toBe('workbench');
+    // 会话本身照常切过去（再回到对话时看到的就是它）。
+    expect(chat.currentId).toBe('slow');
+  });
+
+  it('之后用户主动点对话行（新的 select）照常回到对话', async () => {
+    shell.openWorkbench();
+    await chat.select('another');
+    expect(shell.mainView).toBe('chats');
   });
 });

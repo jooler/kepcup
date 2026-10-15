@@ -75,6 +75,8 @@
   }
 
   function onEditKeydown(event: KeyboardEvent): void {
+    // 输入法选词中的 Esc / 回车归输入法。
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape') {
       // 控件自己消费 Esc（preventDefault），不让全局 Esc 仲裁再关别的层。
       event.preventDefault();

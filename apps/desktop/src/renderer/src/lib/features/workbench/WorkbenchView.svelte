@@ -4,7 +4,7 @@
   import MemoPane from './MemoPane.svelte';
   import TodoDrawer from './TodoDrawer.svelte';
   import TodoPane from './TodoPane.svelte';
-  import { workbench } from './workbench.svelte';
+  import { useWorkbenchData, workbench } from './workbench.svelte';
 
   /**
    * 工作台（D90，docs/design/39-workbench.md §4）：宽屏主区的第二个视图，不进任何对话也能
@@ -19,7 +19,7 @@
   let tab = $state<'todos' | 'memos'>('todos');
   const tabbed = $derived(width < TABS_BELOW);
 
-  $effect(() => workbench.attach());
+  useWorkbenchData();
 </script>
 
 <div
@@ -27,75 +27,78 @@
   bind:clientWidth={width}
   data-testid="workbench-view"
 >
-  <!-- 顶部带：窗口拖拽区（与聊天区顶部一致），标题与 tab 自身 no-drag。 -->
-  <header class="app-drag flex h-14 shrink-0 items-center gap-3 px-5">
-    <h1 class="text-base font-semibold">{t('workbench.title')}</h1>
-    {#if tabbed}
+  <!-- 抽屉是模态：打开时抽屉之外的工作台内容不可聚焦（inert）。 -->
+  <div class="flex min-h-0 flex-1 flex-col" inert={workbench.drawer !== null}>
+    <!-- 顶部带：窗口拖拽区（与聊天区顶部一致），标题与 tab 自身 no-drag。 -->
+    <header class="app-drag flex h-14 shrink-0 items-center gap-3 px-5">
+      <h1 class="text-base font-semibold">{t('workbench.title')}</h1>
+      {#if tabbed}
+        <div
+          class="app-no-drag ml-auto inline-flex rounded-lg border bg-muted/40 p-0.5"
+          role="tablist"
+        >
+          {#each ['todos', 'memos'] as const as id (id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              class="cursor-pointer rounded-md px-3 py-1 text-xs transition-colors {tab === id
+                ? 'bg-background font-medium shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'}"
+              onclick={() => (tab = id)}
+              data-testid={`workbench-tab-${id}`}
+            >
+              {id === 'todos' ? t('workbench.tabTodos') : t('workbench.tabMemos')}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </header>
+
+    {#if workbench.loadState === 'error'}
       <div
-        class="app-no-drag ml-auto inline-flex rounded-lg border bg-muted/40 p-0.5"
-        role="tablist"
+        class="mx-5 mb-3 flex items-center gap-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+        role="alert"
+        data-testid="workbench-error"
       >
-        {#each ['todos', 'memos'] as const as id (id)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            class="cursor-pointer rounded-md px-3 py-1 text-xs transition-colors {tab === id
-              ? 'bg-background font-medium shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => (tab = id)}
-            data-testid={`workbench-tab-${id}`}
-          >
-            {id === 'todos' ? t('workbench.tabTodos') : t('workbench.tabMemos')}
-          </button>
-        {/each}
+        <span class="flex-1">{t('workbench.loadFailed')}</span>
+        <Button size="xs" variant="outline" onclick={() => void workbench.refreshAll()}>
+          {t('workbench.retry')}
+        </Button>
       </div>
     {/if}
-  </header>
 
-  {#if workbench.loadState === 'error'}
-    <div
-      class="mx-5 mb-3 flex items-center gap-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
-      role="alert"
-      data-testid="workbench-error"
-    >
-      <span class="flex-1">{t('workbench.loadFailed')}</span>
-      <Button size="xs" variant="outline" onclick={() => void workbench.refreshAll()}>
-        {t('workbench.retry')}
-      </Button>
+    <div class="flex min-h-0 flex-1 gap-5 px-5 pb-4">
+      {#if !tabbed || tab === 'todos'}
+        <section
+          class="flex min-h-0 min-w-0 flex-[3] flex-col gap-3"
+          aria-label={t('workbench.todos.title')}
+        >
+          {#if !tabbed}
+            <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
+              {t('workbench.todos.title')}
+            </h2>
+          {/if}
+          <TodoPane />
+        </section>
+      {/if}
+      {#if !tabbed}
+        <div class="w-px shrink-0 bg-border"></div>
+      {/if}
+      {#if !tabbed || tab === 'memos'}
+        <section
+          class="flex min-h-0 min-w-0 flex-[2] flex-col gap-3 {tabbed ? '' : 'max-w-md'}"
+          aria-label={t('workbench.memo.title')}
+        >
+          {#if !tabbed}
+            <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
+              {t('workbench.memo.title')}
+            </h2>
+          {/if}
+          <MemoPane />
+        </section>
+      {/if}
     </div>
-  {/if}
-
-  <div class="flex min-h-0 flex-1 gap-5 px-5 pb-4">
-    {#if !tabbed || tab === 'todos'}
-      <section
-        class="flex min-h-0 min-w-0 flex-[3] flex-col gap-3"
-        aria-label={t('workbench.todos.title')}
-      >
-        {#if !tabbed}
-          <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
-            {t('workbench.todos.title')}
-          </h2>
-        {/if}
-        <TodoPane />
-      </section>
-    {/if}
-    {#if !tabbed}
-      <div class="w-px shrink-0 bg-border"></div>
-    {/if}
-    {#if !tabbed || tab === 'memos'}
-      <section
-        class="flex min-h-0 min-w-0 flex-[2] flex-col gap-3 {tabbed ? '' : 'max-w-md'}"
-        aria-label={t('workbench.memo.title')}
-      >
-        {#if !tabbed}
-          <h2 class="shrink-0 text-sm font-medium text-muted-foreground">
-            {t('workbench.memo.title')}
-          </h2>
-        {/if}
-        <MemoPane />
-      </section>
-    {/if}
   </div>
 
   <TodoDrawer />

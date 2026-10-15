@@ -134,7 +134,13 @@
       />
     </div>
     <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1" data-testid="memo-list">
-      {#if workbench.memos.length === 0}
+      {#if workbench.memos.length === 0 && (workbench.loadState === 'loading' || workbench.loadState === 'idle')}
+        <p class="py-6 text-center text-sm text-muted-foreground" data-testid="memo-loading">
+          {t('workbench.loading')}
+        </p>
+      {:else if workbench.memos.length === 0 && workbench.loadState === 'error'}
+        <!-- 错误提示在视图顶部（带重试），这里不显示「空」 -->
+      {:else if workbench.memos.length === 0}
         <p class="py-6 text-center text-sm text-muted-foreground" data-testid="memo-empty">
           {t('workbench.memo.empty')}
         </p>

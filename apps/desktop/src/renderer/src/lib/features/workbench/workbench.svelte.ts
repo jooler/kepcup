@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import type { Memo, ScheduleEntry, TodoAssignee, TodoEntry } from '@kepcup/shared';
 import { core } from '$lib/rpc/client.svelte';
 import { shell } from '$lib/stores/shell.svelte';
@@ -14,6 +15,8 @@ import { shell } from '$lib/stores/shell.svelte';
 
 /** 事件到刷新之间的去抖（管家连续改多条时合并成一次拉取）。 */
 export const REFRESH_DEBOUNCE_MS = 200;
+/** 去抖的最长等待：事件持续不断时也至少每隔这么久刷新一次。 */
+export const REFRESH_MAX_WAIT_MS = 1000;
 
 export interface TodoPrefill {
   title?: string;
@@ -27,8 +30,10 @@ export type DrawerState = { kind: 'edit'; todoId: string } | { kind: 'new'; pref
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 type Fetcher = () => Promise<unknown>;
+type Part = 'todos' | 'schedules' | 'memos';
+type PartState = 'pending' | 'ok' | 'fail';
 
-class WorkbenchState {
+export class WorkbenchState {
   todos = $state<TodoEntry[]>([]);
   /** `schedules.list` 全量（工作台只用其中非 workbench 来源的自排行）。 */
   schedules = $state<ScheduleEntry[]>([]);
@@ -43,8 +48,13 @@ class WorkbenchState {
 
   #attachCount = 0;
   #detach: Array<() => void> = [];
-  #timers = new Map<string, ReturnType<typeof setTimeout>>();
+  #timers: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+  #firstPending: Record<string, number | undefined> = {};
   #seq: Record<string, number> = {};
+  /** 三份主数据各自最近一次拉取的结果；loadState 由它们重算（任一份成功后可自愈）。 */
+  #parts: Record<Part, PartState> = { todos: 'pending', schedules: 'pending', memos: 'pending' };
+  /** 至少完整加载成功过一次：之后的重拉不再回到「加载中」。普通字段——不进响应式。 */
+  #everLoaded = false;
 
   /** 工作台挂载时调用，返回卸载函数；首次挂载拉全量并订阅事件。 */
   attach(): () => void {
@@ -60,6 +70,7 @@ class WorkbenchState {
   }
 
   #subscribe(): void {
+    this.#parts = { todos: 'pending', schedules: 'pending', memos: 'pending' };
     this.#detach = [
       core.onEvent('todos.changed', () => this.#soon('todos', () => this.refreshTodos())),
       core.onEvent('memos.changed', () => {
@@ -76,21 +87,39 @@ class WorkbenchState {
   #unsubscribe(): void {
     for (const off of this.#detach) off();
     this.#detach = [];
-    for (const timer of this.#timers.values()) clearTimeout(timer);
-    this.#timers.clear();
+    for (const timer of Object.values(this.#timers)) {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    this.#timers = {};
+    this.#firstPending = {};
     this.trashOpen = false;
+    // 离开工作台：抽屉不留到下次进来（对话里的「在工作台查看」是先开抽屉再切视图，
+    // 那条路径发生在挂载之前，不受影响）。
+    this.drawer = null;
   }
 
+  /** 去抖：安静 REFRESH_DEBOUNCE_MS 后执行，但自第一个事件起最多等 REFRESH_MAX_WAIT_MS。 */
   #soon(key: string, run: Fetcher): void {
-    const pending = this.#timers.get(key);
+    const now = Date.now();
+    const pending = this.#timers[key];
     if (pending !== undefined) clearTimeout(pending);
-    this.#timers.set(
-      key,
-      setTimeout(() => {
-        this.#timers.delete(key);
-        void run();
-      }, REFRESH_DEBOUNCE_MS),
-    );
+    const first = this.#firstPending[key] ?? now;
+    this.#firstPending[key] = first;
+    const delay = Math.max(0, Math.min(REFRESH_DEBOUNCE_MS, first + REFRESH_MAX_WAIT_MS - now));
+    this.#timers[key] = setTimeout(() => {
+      this.#timers[key] = undefined;
+      this.#firstPending[key] = undefined;
+      void run();
+    }, delay);
+  }
+
+  #recompute(): void {
+    const states = Object.values(this.#parts);
+    if (states.includes('fail')) this.loadState = 'error';
+    else if (states.every((state) => state === 'ok')) {
+      this.#everLoaded = true;
+      this.loadState = 'ready';
+    } else this.loadState = this.#everLoaded ? 'ready' : 'loading';
   }
 
   /** 迟到的旧响应不覆盖新响应：每类请求一个序号，只认最后发出的。 */
@@ -100,24 +129,30 @@ class WorkbenchState {
     apply: (value: T) => void,
   ): Promise<boolean> {
     const seq = (this.#seq[key] = (this.#seq[key] ?? 0) + 1);
+    const current = (): boolean => this.#seq[key] === seq;
     try {
       const value = await load();
-      if (this.#seq[key] === seq) apply(value);
+      if (current()) {
+        apply(value);
+        this.#settle(key, 'ok');
+      }
       return true;
     } catch (error) {
       console.warn(`[kepcup] workbench ${key} refresh failed`, error);
+      if (current()) this.#settle(key, 'fail');
       return false;
     }
   }
 
+  #settle(key: string, state: PartState): void {
+    if (key !== 'todos' && key !== 'schedules' && key !== 'memos') return;
+    this.#parts[key] = state;
+    this.#recompute();
+  }
+
   async refreshAll(): Promise<void> {
-    if (this.loadState !== 'ready') this.loadState = 'loading';
-    const results = await Promise.all([
-      this.refreshTodos(),
-      this.refreshSchedules(),
-      this.refreshMemos(),
-    ]);
-    this.loadState = results.every(Boolean) ? 'ready' : 'error';
+    if (!this.#everLoaded) this.loadState = 'loading';
+    await Promise.all([this.refreshTodos(), this.refreshSchedules(), this.refreshMemos()]);
   }
 
   refreshTodos(): Promise<boolean> {
@@ -214,3 +249,11 @@ class WorkbenchState {
 }
 
 export const workbench = new WorkbenchState();
+
+/**
+ * 组件里用：挂载期间保持数据与事件订阅。attach 里会读写 store 的响应式状态，必须放进
+ * untrack——否则 effect 把 loadState 等收成依赖，状态一变就卸载重挂，出错时形成死循环。
+ */
+export function useWorkbenchData(): void {
+  $effect(() => untrack(() => workbench.attach()));
+}

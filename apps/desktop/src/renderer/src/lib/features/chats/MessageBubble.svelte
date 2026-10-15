@@ -304,7 +304,8 @@
     <ScheduleCard {message} />
   </div>
 {:else if isWorkbenchDispatch}
-  <div class="flex w-full justify-end py-1" data-testid="dispatch-message">
+  <!-- message-<id>：证据 / 结果跳转（jumpToMessage）按它定位并滚动。 -->
+  <div class="flex w-full justify-end py-1" data-testid={`message-${message.id}`}>
     <DispatchCard {message} />
   </div>
 {:else if isHandoverNote}
