@@ -216,17 +216,17 @@
   </div>
 {:else if appUiCard !== null}
   <!-- D73 P3 MCP Apps 界面卡片：居中信息卡，内含沙箱 iframe -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <McpAppCard messageId={appUiCard.messageId} card={appUiCard.card} />
   </div>
 {:else if widgetCard !== null}
   <!-- D81 Bot 自制交互组件卡：居中信息卡，审查态 + 沙箱 iframe -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <BotWidgetCard messageId={widgetCard.messageId} card={widgetCard.card} />
   </div>
 {:else if presentCard !== null}
   <!-- D87 P4 L1 声明式展示卡：表格 / 图表 / 指标 / 步骤 / 时间线 / 对比 -->
-  <div class="flex justify-center py-1" data-testid="card-message">
+  <div class="flex py-1" data-testid="card-message">
     <PresentCard card={presentCard} />
   </div>
 {:else if watchCard !== null}
