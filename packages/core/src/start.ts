@@ -132,6 +132,8 @@ import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
 import { ScheduleService } from './schedule/service.js';
+import { MemoService } from './workbench/memo-service.js';
+import { TodoService } from './workbench/todo-service.js';
 import { WatchService } from './watch/service.js';
 import { MailService } from './mail/service.js';
 import { HandoverHost } from './dispatch/handover.js';
@@ -152,7 +154,7 @@ import { WikiAdapter } from './handover/adapters/wiki.js';
 import { WidgetAdapter } from './handover/adapters/widget.js';
 import type { HandoverBotWriter } from './handover/adapters/common.js';
 import type { HandoverToolFacade } from './tools/handover-tools.js';
-import type { OrchestratorWatchFacade } from './dispatch/orchestrator.js';
+import type { OrchestratorTodoFacade, OrchestratorWatchFacade } from './dispatch/orchestrator.js';
 import type { ScheduleToolFacade } from './tools/schedule-tools.js';
 import {
   createBrowserHostRpc,
@@ -538,6 +540,10 @@ export interface CoreServices {
   wiki: WikiService | null;
   /** P10 proactive-messaging domain (null while locked / errored). */
   schedules: ScheduleService | null;
+  /** D90 工作台事项 (null while locked / errored). */
+  todos: TodoService | null;
+  /** D90 工作台备忘 (null while locked / errored). */
+  memos: MemoService | null;
   /** W7 确定性监看 (null while locked / errored). */
   watches: WatchService | null;
   /** D84 邮件通道 (null while locked / errored). */
@@ -807,6 +813,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     skillPresets: null,
     wiki: null,
     schedules: null,
+    todos: null,
+    memos: null,
     watches: null,
     mail: null,
     handover: null,
@@ -1762,6 +1770,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     // delivers through the orchestrator's mailboxes); the tool facade
     // delegates lazily.
     let scheduleService: ScheduleService | null = null;
+    // D90: the workbench todo service is constructed after the orchestrator and the schedule
+    // service; the orchestrator's delivery tracking reaches it through this lazy facade.
+    let todoService: TodoService | null = null;
+    const todoFacade: OrchestratorTodoFacade = {
+      titleOf: (todoId) => todoService?.titleOf(todoId) ?? null,
+      settleDelivered: (todoRunId, resultMessageId) => {
+        if (resultMessageId !== null) todoService?.settleDelivered(todoRunId, resultMessageId);
+      },
+      settleUnclaimed: (todoRunId) => todoService?.settleUnclaimed(todoRunId),
+      settleFailed: (todoRunId) => todoService?.settleFailed(todoRunId),
+    };
     const scheduleFacade: ScheduleToolFacade = {
       createFromWhen: (input) => scheduleService!.createFromWhen(input),
       validateWhen: (when, timezone) => scheduleService!.validateWhen(when, timezone),
@@ -2065,6 +2084,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         return mailService ?? undefined;
       },
       handover: handoverFacade,
+      todos: todoFacade,
       settingsCatalog,
       browser: services.browserRpc,
       // 技能安装（docs/design/22-file-skill-routing.md）：install_skill 的
@@ -2125,6 +2145,43 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publish: (event, payload) => events.emit(event as never, payload as never),
     });
     scheduleService = schedules;
+    // D90 workbench: todos (CRUD, scheduling, dispatch, delivery tracking, reconciliation) and
+    // memos. A due workbench schedule dispatches through TodoService (no proactive guardrails).
+    const publishEvent = (event: string, payload: unknown): void =>
+      events.emit(event as never, payload as never);
+    const todos = new TodoService({
+      db: mainDb,
+      clock,
+      logger,
+      bots,
+      conversations,
+      schedules,
+      dispatcher: {
+        dispatch: (input) => orchestrator.dispatchWorkbenchMessage(input),
+        hasTurnModel: (botId) => orchestrator.hasTurnModel(botId),
+      },
+      publish: publishEvent,
+    });
+    todoService = todos;
+    schedules.attachWorkbench(todos);
+    const memos = new MemoService({
+      store: todos.memos,
+      clock,
+      logger,
+      publish: publishEvent,
+    });
+    // A schedule cancelled / ended outside the todo flows (the receipt's cancel button, a
+    // deleted conversation's cascade) leaves its todo `scheduled` without a schedule: reconcile.
+    events.on('schedules.changed', () => {
+      try {
+        todos.reconcile();
+      } catch (error) {
+        logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          'todo reconcile after schedules.changed failed',
+        );
+      }
+    });
     // 应用状态提示（邮件连接中断、监看被暂停…）：推给界面弹一条轻量提示，不落库。
     // 需要用户处理的错误级提示在窗口不在前台时还发一条系统通知。
     const publishAppNotice = (notice: AppNoticePayload): void => {
@@ -2264,6 +2321,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           },
         }),
         new ScheduleAdapter({
+          todos: { onScheduleTransferred: (moved) => todos.onScheduleTransferred(moved) },
           schedules: {
             listActiveForBot: (botId) => schedules.listActiveForBot(botId),
             get: (scheduleId) => schedules.store.get(scheduleId),
@@ -2424,6 +2482,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         prepareBotDeletion: (botId) => schedules.prepareBotDeletion(botId),
         cancelForBotInConversation: (botId, conversationId) =>
           schedules.cancelForBotInConversation(botId, conversationId),
+      },
+      // D90: todos fall back to draft when their executor / group / schedule's conversation goes.
+      workbench: {
+        onConversationDeleting: (conversationId) => todos.onConversationDeleting(conversationId),
+        onExecutorChanged: () => todos.onExecutorChanged(),
       },
       // W7: watches of a deleted conversation / bot (or a bot removed from the group) are removed.
       watches: {
@@ -2612,6 +2675,18 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     jobsRunner.start();
     // P10: fire tasks missed while the app was closed, then arm the single
     // schedule timer (docs/dev/phases/P10-proactive.md 范围: 错过补触发).
+    // D90: memos trashed longer than the retention window go for good; todos whose executor /
+    // schedule vanished while the app was closed fall back to draft BEFORE catch-up dispatches.
+    try {
+      memos.purgeExpired();
+    } catch (error) {
+      warnQuietly('startup memo purge failed', error);
+    }
+    try {
+      todos.reconcile();
+    } catch (error) {
+      warnQuietly('startup todo reconcile failed', error);
+    }
     try {
       schedules.catchUpMissed();
     } catch (error) {
@@ -2693,6 +2768,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.skillPresets = skillPresets;
     services.wiki = wiki;
     services.schedules = schedules;
+    services.todos = todos;
+    services.memos = memos;
     services.watches = watches;
     services.mail = mail;
     services.handover = handover;

@@ -1278,10 +1278,12 @@ export function applyProfileChanges(
 
 /**
  * A user-sent message whose text the user did not write: D71 delegation proxy (another bot
- * wrote it) or D87 P4 L3 widget reply (the widget's code composed it, the user only confirmed).
+ * wrote it), D87 P4 L3 widget reply (the widget's code composed it, the user only confirmed) or
+ * a D90 workbench dispatch of a butler-made todo (the butler wrote the title and notes).
  */
 function isProxiedUserText(message: Message): boolean {
   if (message.kind !== 'text' || !('origin' in message.content)) return false;
-  const origin = (message.content as { origin?: string }).origin;
-  return origin === 'delegation' || origin === 'widget';
+  const content = message.content as { origin?: string; viaButler?: boolean };
+  if (content.origin === 'workbench') return content.viaButler === true;
+  return content.origin === 'delegation' || content.origin === 'widget';
 }

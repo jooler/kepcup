@@ -534,6 +534,7 @@ describe('schedule adapter: commitment moves with its schedule', () => {
           title: '周五前交周报',
           origin: 'commitment',
           commitmentId: 'mem_com',
+          todoId: null,
           status: 'active',
           nextFireAt: 100,
           lastFiredAt: null,

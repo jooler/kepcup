@@ -225,6 +225,13 @@ describe('main 0037 workbench', () => {
     expect(() =>
       db.prepare("update schedules set origin = 'bogus' where id = 'sch_wb'").run(),
     ).toThrow(/CHECK/);
+    // bot_id may only be null for a workbench row; todo_id only belongs on a workbench row.
+    expect(() =>
+      insertSchedule(db, { id: 'sch_nobot', bot_id: null, origin: 'tool' }, true),
+    ).toThrow(/CHECK/);
+    expect(() =>
+      insertSchedule(db, { id: 'sch_tool_todo', bot_id: 'bot_1', origin: 'tool', todo_id: 'todo_1' }, true),
+    ).toThrow(/CHECK/);
     // todo_id must reference an existing todo.
     expect(() =>
       insertSchedule(
@@ -233,7 +240,7 @@ describe('main 0037 workbench', () => {
         true,
       ),
     ).toThrow(/FOREIGN KEY/);
-    // Deleting the todo keeps the schedule and nulls the link.
+    // Deleting the todo keeps the schedule and nulls the link (the one-way CHECK allows it).
     db.prepare("delete from todos where id = 'todo_1'").run();
     expect(db.prepare("select todo_id from schedules where id = 'sch_wb'").get()).toEqual({
       todo_id: null,

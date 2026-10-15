@@ -109,7 +109,7 @@ export interface UpdateTodoPatch {
   assignee?: TodoAssignee | null;
   status?: TodoStatus;
   blockedReason?: string | null;
-  /** done / cancelled time; null = reopened. */
+  /** Explicit done / cancelled time; omitted = derived from `status` (set / cleared by the store). */
   closedAt?: number | null;
 }
 
@@ -203,6 +203,16 @@ export class TodoStore {
     if (current === null) return null;
     const assignee = patch.assignee !== undefined ? patch.assignee : current.assignee;
     const { botId, groupId } = assigneeToColumns(assignee);
+    // closed_at follows the status: set on entering done / cancelled, cleared on leaving them
+    // (an explicit patch value wins).
+    const nextStatus = patch.status ?? current.status;
+    const now = this.clock.now();
+    const derivedClosedAt = !CLOSED_TODO_STATUSES.includes(nextStatus)
+      ? null
+      : CLOSED_TODO_STATUSES.includes(current.status)
+        ? current.closedAt
+        : now;
+    const closedAt = patch.closedAt !== undefined ? patch.closedAt : derivedClosedAt;
     this.db
       .prepare(
         `update todos set title = ?, notes = ?, assignee_bot_id = ?, assignee_group_id = ?,
@@ -214,10 +224,10 @@ export class TodoStore {
         patch.notes ?? current.notes,
         botId,
         groupId,
-        patch.status ?? current.status,
+        nextStatus,
         patch.blockedReason !== undefined ? patch.blockedReason : current.blockedReason,
-        patch.closedAt !== undefined ? patch.closedAt : current.closedAt,
-        this.clock.now(),
+        closedAt,
+        now,
         id,
       );
     return this.get(id);
@@ -274,10 +284,16 @@ export class TodoStore {
     ).map(rowToTodo);
   }
 
-  /** D88 handover: move every todo of `fromBotId` (bot executor or group lead) to `toBotId`. */
+  /**
+   * D88 handover: move every open todo of `fromBotId` (bot executor or group lead) to `toBotId`.
+   * Closed (done / cancelled) todos keep their historical executor.
+   */
   reassignBot(fromBotId: string, toBotId: string): number {
     return this.db
-      .prepare('update todos set assignee_bot_id = ?, updated_at = ? where assignee_bot_id = ?')
+      .prepare(
+        `update todos set assignee_bot_id = ?, updated_at = ?
+         where assignee_bot_id = ? and status not in ('done', 'cancelled')`,
+      )
       .run(toBotId, this.clock.now(), fromBotId).changes;
   }
 
@@ -314,6 +330,13 @@ export class TodoStore {
   updateRun(id: string, patch: UpdateTodoRunPatch): TodoRun | null {
     const current = this.getRun(id);
     if (current === null) return null;
+    // settled_at follows the status: stamped when the run first leaves `dispatched`, cleared
+    // if it goes back (an explicit patch value wins).
+    const nextStatus = patch.status ?? current.status;
+    let settledAt = current.settledAt;
+    if (nextStatus === 'dispatched') settledAt = null;
+    else if (settledAt === null) settledAt = this.clock.now();
+    if (patch.settledAt !== undefined) settledAt = patch.settledAt;
     this.db
       .prepare(
         `update todo_runs set message_id = ?, status = ?, result_message_id = ?, settled_at = ?
@@ -321,9 +344,9 @@ export class TodoStore {
       )
       .run(
         patch.messageId !== undefined ? patch.messageId : current.messageId,
-        patch.status ?? current.status,
+        nextStatus,
         patch.resultMessageId !== undefined ? patch.resultMessageId : current.resultMessageId,
-        patch.settledAt !== undefined ? patch.settledAt : current.settledAt,
+        settledAt,
         id,
       );
     return this.getRun(id);

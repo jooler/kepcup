@@ -66,6 +66,16 @@ export interface UpdateSchedulePatch {
   lastFiredAt?: number | null;
 }
 
+export interface UpdateScheduleTimingPatch {
+  kind?: 'once' | 'cron';
+  runAt?: number | null;
+  cron?: string | null;
+  timezone?: string;
+  nextFireAt?: number | null;
+  title?: string;
+  note?: string;
+}
+
 /**
  * Data access for the schedules table (main.db, docs/dev/03-data-model.md
  * "schedules"). Pure persistence — guardrails, timers and delivery live in
@@ -96,7 +106,9 @@ export class SchedulesStore {
         input.timezone,
         input.note,
         input.title ?? '',
-        input.origin ?? (input.commitmentId ? 'commitment' : 'tool'),
+        // A todo link only makes sense on a workbench row (CHECK todo_id IS NULL OR origin = 'workbench').
+        input.origin ??
+          (input.todoId ? 'workbench' : input.commitmentId ? 'commitment' : 'tool'),
         input.commitmentId ?? null,
         input.todoId ?? null,
         input.nextFireAt,
@@ -129,6 +141,31 @@ export class SchedulesStore {
         patch.status ?? row.status,
         patch.nextFireAt !== undefined ? patch.nextFireAt : row.nextFireAt,
         patch.lastFiredAt !== undefined ? patch.lastFiredAt : row.lastFiredAt,
+        id,
+      );
+    return this.get(id);
+  }
+
+  /**
+   * Edits the timing / title of a row in place (D90 reschedule / retitle); the card
+   * snapshot is rewritten by the service.
+   */
+  updateTiming(id: string, patch: UpdateScheduleTimingPatch): Schedule | null {
+    const row = this.get(id);
+    if (row === null) return null;
+    this.db
+      .prepare(
+        `update schedules set kind = ?, run_at = ?, cron = ?, timezone = ?, next_fire_at = ?,
+           title = ?, note = ? where id = ?`,
+      )
+      .run(
+        patch.kind ?? row.kind,
+        patch.runAt !== undefined ? patch.runAt : row.runAt,
+        patch.cron !== undefined ? patch.cron : row.cron,
+        patch.timezone ?? row.timezone,
+        patch.nextFireAt !== undefined ? patch.nextFireAt : row.nextFireAt,
+        patch.title ?? row.title,
+        patch.note ?? row.note,
         id,
       );
     return this.get(id);
