@@ -5,7 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import MemberAvatar from './MemberAvatar.svelte';
   import { describeAt, describeTodoWhen } from './describe';
-  import { effectiveStatus } from './workbench-model';
+  import { blockedNotice, effectiveStatus } from './workbench-model';
   import { openTodoConversation, openTodoResult, transitionTodo } from './todo-actions';
   import { workbench } from './workbench.svelte';
 
@@ -31,6 +31,7 @@
       ? describeAt(todo.schedule.nextFireAt)
       : null,
   );
+  const blocked = $derived(blockedNotice(todo));
   const closed = $derived(todo.status === 'done' || todo.status === 'cancelled');
   // 周期事项自身停在已排期，最近一次执行另有进行中 / 已交付：胶囊仍显示事项状态，下面补一行执行摘要。
   const runStatus = $derived(effectiveStatus(todo));
@@ -162,13 +163,22 @@
     </p>
   {/if}
 
-  {#if todo.blockedReason !== null && todo.status === 'draft'}
+  {#if blocked !== null}
     <p
-      class="mt-1.5 flex items-start gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
+      class="mt-1.5 flex items-start gap-1 rounded-md px-2 py-0.5 text-xs {blocked.kind === 'error'
+        ? 'bg-destructive/10 text-destructive'
+        : blocked.kind === 'warn'
+          ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+          : 'text-muted-foreground'}"
       data-testid="todo-card-blocked"
+      data-blocked-kind={blocked.kind}
     >
-      <CircleAlert class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-      {t('workbench.card.blocked', { reason: todo.blockedReason })}
+      {#if blocked.kind !== 'note'}
+        <CircleAlert class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+      {/if}
+      {todo.status === 'draft'
+        ? t('workbench.card.blocked', { reason: blocked.reason })
+        : blocked.reason}
     </p>
   {:else if lastRunNote !== null && todo.status === 'scheduled'}
     <p class="mt-1.5 text-xs text-amber-700 dark:text-amber-400">{lastRunNote}</p>

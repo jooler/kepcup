@@ -23,6 +23,22 @@ export function isOpenTodo(todo: Pick<TodoEntry, 'status'>): boolean {
   return todo.status !== 'done' && todo.status !== 'cancelled';
 }
 
+export type BlockedKind = 'error' | 'warn' | 'note';
+
+/**
+ * `blockedReason` 的呈现：执行 / 派发失败是错误；草案上的其它原因（退回草案的说明）是警示；
+ * 非草案状态上的（如进行中的「该 Bot 正在设置中，完成设置后才会处理」）只是说明。
+ * 已结束的事项不显示。
+ */
+export function blockedNotice(
+  todo: Pick<TodoEntry, 'status' | 'blockedReason'>,
+): { kind: BlockedKind; reason: string } | null {
+  const reason = todo.blockedReason;
+  if (reason === null || reason.trim().length === 0 || !isOpenTodo(todo)) return null;
+  if (/^(执行失败|派发失败)/.test(reason)) return { kind: 'error', reason };
+  return { kind: todo.status === 'draft' ? 'warn' : 'note', reason };
+}
+
 export type LaneKind = 'unassigned' | 'bot' | 'group';
 
 export const UNASSIGNED_LANE_ID = 'unassigned';

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Memo, ScheduleEntry, TodoEntry } from '@kepcup/shared';
 import {
   ageOf,
+  blockedNotice,
   botMembers,
   buildLanes,
   closedTodos,
@@ -468,5 +469,23 @@ describe('parseDispatchText：core 的实际格式', () => {
     expect(all.title).toBe('T');
     expect(all.notes).toBe('说明一\n说明二');
     expect(all.lateNote).toContain('延迟派发');
+  });
+});
+
+describe('blockedNotice', () => {
+  it('失败是错误；草案上的其它原因是警示；非草案上的是说明；已结束 / 无原因不显示', () => {
+    const n = (status: TodoEntry['status'], blockedReason: string | null) =>
+      blockedNotice({ status, blockedReason });
+    expect(n('draft', '执行失败：模型不可用')).toEqual({
+      kind: 'error',
+      reason: '执行失败：模型不可用',
+    });
+    expect(n('draft', '派发失败：群已只读')?.kind).toBe('error');
+    expect(n('draft', '执行已被取消')?.kind).toBe('warn');
+    expect(n('draft', '对话已删除')?.kind).toBe('warn');
+    expect(n('in_progress', '该 Bot 正在设置中，完成设置后才会处理')?.kind).toBe('note');
+    expect(n('done', '执行失败：x')).toBeNull();
+    expect(n('draft', null)).toBeNull();
+    expect(n('draft', '  ')).toBeNull();
   });
 });

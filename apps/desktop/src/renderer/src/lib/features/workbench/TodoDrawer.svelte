@@ -27,7 +27,7 @@
     type WhenDraft,
   } from './when-presets';
   import { buildUpdateInput, isInfoWarning, type TodoFormValues } from './todo-form';
-  import { botMembers, groupMembers, type MemberInfo } from './workbench-model';
+  import { blockedNotice, botMembers, groupMembers, type MemberInfo } from './workbench-model';
   import { workbench } from './workbench.svelte';
 
   /**
@@ -480,7 +480,18 @@
       }
       return true;
     } catch (error) {
-      formError = rpcErrorText(error, t('workbench.drawer.saveFailed'));
+      const message = rpcErrorText(error, t('workbench.drawer.saveFailed'));
+      if (drawer?.kind === 'new' && whenValue === 'now') {
+        // 创建即派发失败：事项已按草案保留（core 的约定）。刷新列表让草案出现，提示原因，
+        // 关掉「新建」抽屉——留着再点保存会重复创建。
+        void workbench.refreshTodos();
+        toast.error(message);
+        workbench.closeDrawer();
+        return false;
+      }
+      // 失败也可能已改变事项的状态（如旧排期已取消、退回草案）：刷新让列表与抽屉跟上。
+      if (drawer?.kind === 'edit') void workbench.refreshTodos();
+      formError = message;
       return false;
     } finally {
       saving = false;
@@ -639,12 +650,20 @@
               {/if}
             </div>
           {/if}
-          {#if entry?.blockedReason && status === 'draft'}
+          {#if entry !== null && blockedNotice(entry) !== null}
+            {@const blocked = blockedNotice(entry)!}
             <p
-              class="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+              class="rounded-lg px-3 py-2 text-xs {blocked.kind === 'error'
+                ? 'bg-destructive/10 text-destructive'
+                : blocked.kind === 'warn'
+                  ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                  : 'bg-muted/50 text-muted-foreground'}"
               data-testid="todo-drawer-blocked"
+              data-blocked-kind={blocked.kind}
             >
-              {t('workbench.card.blocked', { reason: entry.blockedReason })}
+              {status === 'draft'
+                ? t('workbench.card.blocked', { reason: blocked.reason })
+                : blocked.reason}
             </p>
           {/if}
           {#if memoId !== null}
