@@ -1,0 +1,1 @@
+# CI builds rootfs.tar + rootfs-manifest.json into this directory (see scripts/build-wsl-rootfs).
