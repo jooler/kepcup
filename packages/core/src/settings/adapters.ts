@@ -666,6 +666,23 @@ function launchAtLoginAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
+function workbenchEnabledAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: () => {
+      const enabled = deps.settings.get().workbenchEnabled;
+      return snapshot('configured', { enabled }, enabled ? '已开启' : '已关闭');
+    },
+    normalize: (_item, values) =>
+      'enabled' in values && bool(values.enabled) === undefined
+        ? { ok: false, message: 'enabled 应为 true / false' }
+        : { ok: true, values },
+    write: (_item, { next }) => {
+      const enabled = bool(next.enabled) ?? false;
+      deps.settings.update({ workbenchEnabled: enabled });
+    },
+  };
+}
+
 function backgroundTasksAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: () => {
@@ -1869,6 +1886,7 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'project.protect-rules': projectRulesAdapter(deps, 'rules'),
     'project.ports': projectRulesAdapter(deps, 'ports'),
     'general.launch-at-login': launchAtLoginAdapter(deps),
+    'general.workbench': workbenchEnabledAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),
     'background.budget': budgetAdapter(deps),
     'unattended.enable': unattendedAdapter(deps, 'enable'),

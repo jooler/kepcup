@@ -1349,6 +1349,15 @@ export const zhCN = {
   'settings.launchAtLogin': '开机自启动',
   'settings.launchAtLoginHint': '登录后 KepCup 在后台运行，Bot 的定时任务与主动消息不中断。',
   'settings.launchAtLoginFailed': '开机自启设置未生效：{reason}',
+  'settings.workbenchEnabled': '显示工作台',
+  'settings.workbenchEnabledHint': '在侧栏显示工作台入口，用来统筹事项与备忘。关闭后入口与分隔线一并隐藏。',
+  'workbench.nudge.title': '定时任务在增多',
+  'workbench.nudge.body': 'Bot 的定时任务已经超过 3 个。打开工作台可以集中查看与安排，更高效。要启用工作台吗？',
+  'workbench.nudge.enable': '启用',
+  'workbench.nudge.later': '暂不启用',
+  'workbench.nudge.dismissTitle': '可以随时打开',
+  'workbench.nudge.dismissBody': '之后若要启用，请到「设置 → 通用」打开「显示工作台」。',
+  'workbench.nudge.gotIt': '知道了',
 
   // --- P13 任务 2: 自动更新（更新提示 UI 留 P13-B，文案键与契约先备） --------
   'update.checkNow': '检查更新',

@@ -295,6 +295,10 @@ export const settingsUpdateInputSchema = z.object({
   providerConcurrency: providerConcurrencySchema.optional(),
   /** P13 任务 3: launch at login (main process applies it to the OS). */
   launchAtLogin: z.boolean().optional(),
+  /** 侧栏工作台入口开关（D90）。 */
+  workbenchEnabled: z.boolean().optional(),
+  /** 工作台引导已永久关闭。 */
+  workbenchNudgeDismissed: z.boolean().optional(),
   /** P13 任务 4: first-run wizard completion flags (partial patch). */
   onboarding: onboardingStatePatchSchema.optional(),
   /** MCP server 列表（D65）：整体覆盖 patch；密钥走 mcp.setSecret，UI 写占位符。 */

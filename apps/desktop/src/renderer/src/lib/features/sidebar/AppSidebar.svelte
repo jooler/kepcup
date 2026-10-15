@@ -24,6 +24,7 @@
   import { toast } from 'svelte-sonner';
   import { stripMarkdown } from '$lib/strip-markdown';
   import { shell } from '$lib/stores/shell.svelte';
+  import { settingsStore } from '$lib/stores/settings.svelte';
   import { chat, type ConversationView } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
@@ -86,6 +87,13 @@
   /** 高亮的对话行：只在对话视图里有（`mainView === 'chats' && id === currentId`，组群输入时无）。 */
   const activeConversationId = $derived(shell.workbenchShown ? null : chat.activeId);
   const workbenchActive = $derived(shell.workbenchShown);
+  /** 设置 → 通用「显示工作台」；未加载快照前按默认关闭，避免闪一下。 */
+  const workbenchNavVisible = $derived(settingsStore.settings?.workbenchEnabled === true);
+
+  $effect(() => {
+    if (workbenchNavVisible) return;
+    if (shell.mainView === 'workbench') shell.mainView = 'chats';
+  });
 
   /**
    * Electron 按 DOM 顺序合并 app-region，后出现的矩形胜出。开始对话面板和
@@ -764,8 +772,8 @@
   <Sidebar.Content class="px-2">
     <Sidebar.Group>
       <Sidebar.GroupContent>
-        {#if !narrow}
-          <!-- 工作台入口（D90）：管家之上，不参与分组；图标模式只剩图标。 -->
+        {#if !narrow && workbenchNavVisible}
+          <!-- 工作台入口（D90）：管家之上，不参与分组；图标模式只剩图标。关闭时入口与分隔线一并隐藏。 -->
           {#if collapsed}
             <Sidebar.Menu class="items-center">
               <Sidebar.MenuItem class="w-auto">
@@ -807,7 +815,7 @@
                data-orientation，h-px 不生效会塌成 0 高；sidebar-border 在亮色侧栏也几乎看不出。 -->
           <div
             role="separator"
-            class="mx-3 my-2 h-px shrink-0 bg-foreground/50"
+            class="mx-3 my-2 h-px shrink-0 bg-foreground/10"
             data-testid="workbench-nav-separator"
           ></div>
         {/if}
