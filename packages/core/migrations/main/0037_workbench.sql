@@ -3,7 +3,7 @@
 -- 1) 新表 todos / todo_runs / memos。
 -- 2) schedules 重建：SQLite 改不了 CHECK、放宽不了 NOT NULL，按 0021 的写法
 --    建新表 → 拷数据 → 删旧 → 改名 → 重建索引。改动：
---      - bot_id 放宽为可空（仅「派给群、未指定负责 Bot」的事项排期行为空）；
+--      - bot_id 放宽为可空（仅「派给群、未指定负责 Bot」的事项排期行为空，CHECK 保证）；
 --      - origin CHECK 增 'workbench'；
 --      - 增 todo_id（指向事项，事项删除时置空）与索引。
 --    没有任何表以外键指向 schedules（对话 / 消息 / run 只存 id），重建安全；
@@ -16,7 +16,7 @@ CREATE TABLE todos (
   title             TEXT NOT NULL,                   -- <= 120 字
   notes             TEXT NOT NULL DEFAULT '',        -- <= 4000 字；派发时给执行者
   assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
-  assignee_group_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  assignee_group_id TEXT,                            -- 群执行者；不设 FK（与 todo_runs.conversation_id 一致）：删群时由 TodoService / 对账退回草案并写「群已解散」，FK 置空会把「群 + 负责 Bot」静默读成 Bot 执行者
   status            TEXT NOT NULL CHECK (status IN
                       ('draft', 'scheduled', 'in_progress', 'delivered', 'done', 'cancelled')),
   source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),
@@ -68,7 +68,10 @@ CREATE TABLE schedules_new (
   title           TEXT NOT NULL DEFAULT '',
   origin          TEXT NOT NULL DEFAULT 'tool'
                     CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment', 'workbench')),
-  todo_id         TEXT REFERENCES todos(id) ON DELETE SET NULL
+  todo_id         TEXT REFERENCES todos(id) ON DELETE SET NULL,
+  -- bot_id 只有事项排期可以为空；todo_id 只会出现在事项排期上（单向：事项硬删会把它置空）。
+  CHECK (bot_id IS NOT NULL OR origin = 'workbench'),
+  CHECK (todo_id IS NULL OR origin = 'workbench')
 );
 
 INSERT INTO schedules_new (id, bot_id, conversation_id, kind, run_at, cron, timezone, note, commitment_id, status, next_fire_at, last_fired_at, created_at, title, origin)

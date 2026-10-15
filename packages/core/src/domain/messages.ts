@@ -131,6 +131,16 @@ export interface AppendMessageInput {
    * title snapshot (「⏰ 标题」 tag under the bubble).
    */
   scheduleSource?: { scheduleId: string; scheduleTitle: string } | undefined;
+  /**
+   * text messages only (D90): a user message the workbench dispatched on the user's behalf —
+   * `origin: 'workbench'` + the todo and its run (rendered as a dispatch card).
+   */
+  workbench?: { todoId: string; todoRunId: string; viaButler?: boolean | undefined } | undefined;
+  /**
+   * text messages only (D90 §4.5): a reply of a turn that belongs to a dispatched todo — the
+   * todo, its run and a title snapshot (「📋 标题」 tag under the bubble).
+   */
+  todoSource?: { todoId: string; todoRunId: string; todoTitle: string } | undefined;
   /** Card messages only: the approval the card belongs to. */
   cardType?: string | undefined;
   approvalId?: string | undefined;
@@ -364,10 +374,25 @@ export class MessagesService {
                     widgetVersion: input.widgetOrigin.version,
                   }
                 : {}),
+              ...(input.workbench !== undefined
+                ? {
+                    origin: 'workbench',
+                    todoId: input.workbench.todoId,
+                    todoRunId: input.workbench.todoRunId,
+                    ...(input.workbench.viaButler === true ? { viaButler: true } : {}),
+                  }
+                : {}),
               ...(input.scheduleSource !== undefined
                 ? {
                     scheduleId: input.scheduleSource.scheduleId,
                     scheduleTitle: input.scheduleSource.scheduleTitle,
+                  }
+                : {}),
+              ...(input.todoSource !== undefined
+                ? {
+                    todoId: input.todoSource.todoId,
+                    todoRunId: input.todoSource.todoRunId,
+                    todoTitle: input.todoSource.todoTitle,
                   }
                 : {}),
             })
