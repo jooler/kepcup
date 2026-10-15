@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
 import {
   GROUP_AVATAR_USER_ID,
+  groupAvatarFaces,
   groupAvatarSlots,
   shadowOffsetTowardCenter,
 } from './group-avatar-layout';
@@ -49,6 +50,20 @@ describe('groupAvatarSlots', () => {
     expect(min).toBeGreaterThanOrEqual(58);
   });
 
+  it('keeps every tile inside the container for any group size and seed', () => {
+    for (let total = 1; total <= GROUP_MEMBER_PREVIEW_MAX; total += 1) {
+      for (const seed of ['a', 'b|c', 'seed-3', 'x'.repeat(20)]) {
+        for (const slot of groupAvatarSlots(total, seed)) {
+          const half = slot.size / 2;
+          expect(slot.x - half).toBeGreaterThanOrEqual(-1e-9);
+          expect(slot.x + half).toBeLessThanOrEqual(100 + 1e-9);
+          expect(slot.y - half).toBeGreaterThanOrEqual(-1e-9);
+          expect(slot.y + half).toBeLessThanOrEqual(100 + 1e-9);
+        }
+      }
+    }
+  });
+
   it('caps a large group at GROUP_MEMBER_PREVIEW_MAX slots', () => {
     expect(GROUP_MEMBER_PREVIEW_MAX).toBeLessThanOrEqual(9);
     const seed = Array.from({ length: 50 }, (_, i) => `m${i}`).join('|');
@@ -75,5 +90,38 @@ describe('shadowOffsetTowardCenter', () => {
 describe('GROUP_AVATAR_USER_ID', () => {
   it('is a stable reserved id', () => {
     expect(GROUP_AVATAR_USER_ID).toBe('__user__');
+  });
+});
+
+describe('groupAvatarFaces', () => {
+  const user = { id: GROUP_AVATAR_USER_ID };
+  const bot = (id: string) => ({ id });
+
+  it('puts the user first, then the bots', () => {
+    expect(groupAvatarFaces([bot('a'), bot('b')], user).map((face) => face.id)).toEqual([
+      GROUP_AVATAR_USER_ID,
+      'a',
+      'b',
+    ]);
+  });
+
+  it('returns nothing when no bot is known, so the caller draws the default group icon', () => {
+    expect(groupAvatarFaces([], user)).toEqual([]);
+    expect(groupAvatarFaces([user], user)).toEqual([]);
+  });
+
+  it('omits the user when none is given and never duplicates one in the members', () => {
+    expect(groupAvatarFaces([bot('a'), user], null).map((face) => face.id)).toEqual(['a']);
+    expect(groupAvatarFaces([user, bot('a')], user).map((face) => face.id)).toEqual([
+      GROUP_AVATAR_USER_ID,
+      'a',
+    ]);
+  });
+
+  it('caps the total, user included, at GROUP_MEMBER_PREVIEW_MAX', () => {
+    const many = Array.from({ length: GROUP_MEMBER_PREVIEW_MAX + 5 }, (_, i) => bot(`b${i}`));
+    const faces = groupAvatarFaces(many, user);
+    expect(faces).toHaveLength(GROUP_MEMBER_PREVIEW_MAX);
+    expect(faces[0]!.id).toBe(GROUP_AVATAR_USER_ID);
   });
 });

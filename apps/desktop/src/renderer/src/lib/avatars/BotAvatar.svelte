@@ -32,9 +32,7 @@
 
   const preset = $derived(parsePresetAvatar(avatar));
   const uploadFile = $derived(parseUploadedAvatar(avatar));
-  const uploadedUrl = $derived(
-    uploadFile === null ? null : avatarImages.url(botId, uploadFile),
-  );
+  const uploadedUrl = $derived(uploadFile === null ? null : avatarImages.url(botId, uploadFile));
   const initial = $derived((name || '?').slice(0, 1).toUpperCase());
   const shadowVars = $derived(
     glyphShadowOffset === null
@@ -42,23 +40,19 @@
       : `--group-avatar-sx:${glyphShadowOffset.x}px; --group-avatar-sy:${glyphShadowOffset.y}px`,
   );
   const glyphShadowClass = $derived(glyphShadowOffset !== null ? 'group-avatar-glyph-shadow' : '');
-  const letterShadowClass = $derived(glyphShadowOffset !== null ? 'group-avatar-letter-shadow' : '');
+  const letterShadowClass = $derived(
+    glyphShadowOffset !== null ? 'group-avatar-letter-shadow' : '',
+  );
 </script>
 
 {#if preset}
   <!-- 群马赛克需要字影溢出：去掉 overflow-hidden，让 drop-shadow 跟形状走。 -->
   <span
-    class="inline-block {klass} shrink-0 rounded-full {glyphShadowOffset
-      ? ''
-      : 'overflow-hidden'}"
+    class="inline-block {klass} shrink-0 rounded-full {glyphShadowOffset ? '' : 'overflow-hidden'}"
     style={shadowVars}
     data-testid={testId}
   >
-    <BotPresetAvatar
-      value={avatar ?? ''}
-      class="size-full {glyphShadowClass}"
-      animated={animated}
-    />
+    <BotPresetAvatar value={avatar ?? ''} class="size-full {glyphShadowClass}" {animated} />
   </span>
 {:else if uploadFile !== null && uploadedUrl !== null}
   <span class="inline-block {klass} shrink-0 overflow-hidden rounded-full" data-testid={testId}>
@@ -71,7 +65,7 @@
     style={shadowVars}
     data-testid={testId}
   >
-    <span class="select-none leading-none {fallbackClass} {letterShadowClass}">{initial}</span>
+    <span class="leading-none select-none {fallbackClass} {letterShadowClass}">{initial}</span>
   </span>
 {:else}
   <Avatar.Root class={klass}>

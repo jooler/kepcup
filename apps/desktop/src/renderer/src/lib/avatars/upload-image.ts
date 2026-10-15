@@ -12,9 +12,7 @@ export async function fileToScaledPngBase64(file: File, max = 256): Promise<stri
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('canvas 2d unavailable');
     ctx.drawImage(bitmap, 0, 0, width, height);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/png'),
-    );
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('png encode failed');
     const bytes = new Uint8Array(await blob.arrayBuffer());
     let binary = '';

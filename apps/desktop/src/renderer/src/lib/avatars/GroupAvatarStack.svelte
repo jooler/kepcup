@@ -4,9 +4,9 @@
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from './BotAvatar.svelte';
   import UserAvatar from './UserAvatar.svelte';
-  import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
   import {
     GROUP_AVATAR_USER_ID,
+    groupAvatarFaces,
     groupAvatarSlots,
     shadowOffsetTowardCenter,
   } from './group-avatar-layout';
@@ -22,22 +22,17 @@
     includeUser?: boolean;
   } = $props();
 
-  const faces = $derived.by(() => {
-    const bots = members.filter((member) => member.id !== GROUP_AVATAR_USER_ID);
-    if (!includeUser) return bots;
-    return [
-      {
-        id: GROUP_AVATAR_USER_ID,
-        name: t('sidebar.userName'),
-        avatar: null as string | null,
-      },
-      ...bots,
-    ];
-  });
-  // 与 core 下发的成员预览同一上限：多了既看不清，也白渲染。
-  const shown = $derived(faces.slice(0, GROUP_MEMBER_PREVIEW_MAX));
-  const seed = $derived(shown.map((member) => member.id).join('|'));
-  const slots = $derived(groupAvatarSlots(shown.length, seed));
+  const faces = $derived(
+    groupAvatarFaces(
+      members,
+      includeUser
+        ? { id: GROUP_AVATAR_USER_ID, name: t('sidebar.userName'), avatar: null as string | null }
+        : null,
+    ),
+  );
+  // 与 core 下发的成员预览同一上限（groupAvatarFaces 内封顶）：多了既看不清，也白渲染。
+  const seed = $derived(faces.map((member) => member.id).join('|'));
+  const slots = $derived(groupAvatarSlots(faces.length, seed));
 </script>
 
 {#if faces.length === 0}
@@ -55,7 +50,7 @@
     data-testid="group-avatar-stack"
     aria-hidden="true"
   >
-    {#each shown as member, index (member.id)}
+    {#each faces as member, index (member.id)}
       {@const slot = slots[index]}
       {#if slot}
         {@const shadow = shadowOffsetTowardCenter(slot)}
