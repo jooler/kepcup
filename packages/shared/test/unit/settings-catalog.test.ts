@@ -22,6 +22,7 @@ import {
   settingItemSchema,
   settingsCoverageProblems,
   settingsSchema,
+  settingsUpdateInputSchema,
   type SettingItem,
   type SettingsUiScan,
 } from '../../src/index.js';
@@ -390,5 +391,21 @@ describe('renderer component map check (for the desktop lane)', () => {
       '卡片键 sensor 在渲染层映射里没有组件',
       '渲染层映射里的 bogus 不是 CARD_KEYS 里的卡片键',
     ]);
+  });
+});
+
+
+describe('general.workbench catalog + update schema (D90)', () => {
+  it('workbenchEnabled defaults off and settings.update keeps the boolean', () => {
+    expect(settingsSchema.parse({}).workbenchEnabled).toBe(false);
+    expect(settingsSchema.parse({}).workbenchNudgeDismissed).toBe(false);
+    const item = getSettingItem('general.workbench');
+    expect(item?.store).toEqual({ kind: 'settings', paths: ['workbenchEnabled'] });
+    expect(itemIdsForSettingsPaths(['workbenchEnabled'])).toContain('general.workbench');
+    const parsed = settingsUpdateInputSchema.parse({ workbenchEnabled: true });
+    expect(parsed.workbenchEnabled).toBe(true);
+    expect(
+      settingsSchema.parse({ ...settingsSchema.parse({}), workbenchEnabled: true }).workbenchEnabled,
+    ).toBe(true);
   });
 });

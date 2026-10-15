@@ -1351,6 +1351,7 @@ export const zhCN = {
   'settings.launchAtLoginFailed': '开机自启设置未生效：{reason}',
   'settings.workbenchEnabled': '显示工作台',
   'settings.workbenchEnabledHint': '在侧栏显示工作台入口，用来统筹事项与备忘。关闭后入口与分隔线一并隐藏。',
+  'settings.workbenchEnabledPersistFailed': '工作台开关未能保存，请重启应用后再试',
   'workbench.nudge.title': '定时任务在增多',
   'workbench.nudge.body': 'Bot 的定时任务已经超过 3 个。打开工作台可以集中查看与安排，更高效。要启用工作台吗？',
   'workbench.nudge.enable': '启用',
