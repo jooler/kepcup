@@ -69,6 +69,7 @@ interface DispatchCall {
   todoId: string;
   todoRunId: string;
   viaButler: boolean;
+  butlerDrafted: boolean;
   leadBotId: string | null;
 }
 
@@ -223,6 +224,7 @@ function makeRig() {
           todoId: input.todoId,
           todoRunId: input.todoRunId,
           viaButler: input.viaButler,
+          butlerDrafted: input.butlerDrafted,
           leadBotId: input.leadBotId,
         };
         dispatched.push(call);
@@ -1445,5 +1447,101 @@ describe('工作台事项：审查修复', () => {
     rig.pendingJobs.push({ id: 'job_old', type: 'schedule_fire' }, { id: 'job_other', type: 'other' });
     rig.todos.update(todo.id, { when: futureIso(rig, 7_200_000) });
     expect(rig.cancelledJobs).toEqual(['job_old']);
+  });
+});
+
+describe('工作台事项：派发标注跟随操作者（actor）', () => {
+  it('用户亲手开始管家起草的事项：不带「管家代你安排」、viaButler 假，但 butlerDrafted 真（说明按不可信处理）', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const draft = rig.todos.create({ title: '草案', assignee: botAssignee('bot_a'), source: 'butler' }).todo;
+    expect(draft.source).toBe('butler');
+    rig.todos.start(draft.id);
+    expect(rig.lastDispatch()).toMatchObject({
+      text: '【工作台】草案',
+      viaButler: false,
+      butlerDrafted: true,
+    });
+  });
+
+  it('管家开始用户建的事项：带「（管家代你安排）」、viaButler 真，butlerDrafted 假', () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const mine = rig.todos.create({ title: '我的事', assignee: botAssignee('bot_a') }).todo;
+    rig.todos.start(mine.id, 'butler');
+    expect(rig.lastDispatch()).toMatchObject({
+      text: '【工作台】我的事（管家代你安排）',
+      viaButler: true,
+      butlerDrafted: false,
+    });
+    // update(when:'now') 同理。
+    const other = rig.todos.create({ title: '另一件', assignee: botAssignee('bot_a') }).todo;
+    rig.todos.update(other.id, { when: 'now', actor: 'butler' });
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: true, butlerDrafted: false });
+    // create 的 actor 缺省取 source（管家建的立即派发带标注）；显式 actor 优先。
+    rig.todos.create({ title: '管家建', assignee: botAssignee('bot_a'), when: 'now', source: 'butler' });
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: true, butlerDrafted: true });
+    rig.todos.create({
+      title: '用户让管家起草',
+      assignee: botAssignee('bot_a'),
+      when: 'now',
+      source: 'butler',
+      actor: 'user',
+    });
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: false, butlerDrafted: true });
+  });
+
+  it('到点派发取「最后一次设置该排期的操作者」：管家排期 → 带标注；用户改期 → 不带；管家起草用户排期 → 不带但 butlerDrafted', async () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const mine = rig.todos.create({ title: '我的事', assignee: botAssignee('bot_a') }).todo;
+    // 管家排期。
+    rig.todos.update(mine.id, { when: futureIso(rig, 60_000), actor: 'butler' });
+    expect(rig.todos.store.scheduledBy(mine.id)).toBe('butler');
+    rig.clock.advance(60_000);
+    await rig.fireDue();
+    expect(rig.lastDispatch()).toMatchObject({
+      text: '【工作台】我的事（管家代你安排）',
+      viaButler: true,
+      butlerDrafted: false,
+    });
+
+    // 管家排期之后用户亲自改期：最后一次设置者是用户。
+    const again = rig.todos.create({ title: '改期的事', assignee: botAssignee('bot_a') }).todo;
+    rig.todos.update(again.id, { when: futureIso(rig, 600_000), actor: 'butler' });
+    rig.todos.update(again.id, { when: futureIso(rig, 120_000) });
+    expect(rig.todos.store.scheduledBy(again.id)).toBe('user');
+    rig.clock.advance(120_000);
+    await rig.fireDue();
+    expect(rig.lastDispatch()).toMatchObject({ text: '【工作台】改期的事', viaButler: false });
+
+    // 管家起草、用户排期。
+    const drafted = rig.todos.create({ title: '管家起草的', assignee: botAssignee('bot_a'), source: 'butler' }).todo;
+    rig.todos.update(drafted.id, { when: futureIso(rig, 60_000) });
+    rig.clock.advance(60_000);
+    await rig.fireDue();
+    expect(rig.lastDispatch()).toMatchObject({
+      text: '【工作台】管家起草的',
+      viaButler: false,
+      butlerDrafted: true,
+    });
+  });
+
+  it('周期事项每次到点都按最后设置者标注', async () => {
+    const rig = makeRig();
+    rig.addBot('bot_a', '阿甲');
+    const { todo } = rig.todos.create({
+      title: '日报',
+      assignee: botAssignee('bot_a'),
+      when: '0 9 * * *',
+      source: 'butler',
+    });
+    rig.clock.setNow(todo.schedule!.nextFireAt!);
+    await rig.fireDue();
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: true });
+    rig.todos.update(todo.id, { when: '0 10 * * *' });
+    rig.clock.setNow(rig.todos.get(todo.id).todo.schedule!.nextFireAt!);
+    await rig.fireDue();
+    expect(rig.lastDispatch()).toMatchObject({ viaButler: false, butlerDrafted: true });
   });
 });

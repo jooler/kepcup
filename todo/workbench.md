@@ -561,6 +561,8 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 11. `settleDelivered` / `settleUnclaimed` / `settleFailed` 只推进事项**最新**的一次派发；`update` 带上相同执行者不算改动；`reopen` 重新校验执行者，失效则清空并写原因。
 12. 对账：`schedules.changed` 只处理 workbench 行、同一 tick 内合并为一次；`onExecutorChanged` 不再重复发布事件；群轮结束的任务检查改为按 `origin_run_id` 精确查询。
 
+13. 派发标注跟随操作者：`create` / `update` 的入参增 `actor?: 'user' | 'butler'`，`start(id, actor = 'user')`；`viaButler` 与「（管家代你安排）」由触发这次派发的操作的 actor 决定，到点派发取「最后一次设置该排期的 actor」（`todos.scheduled_by` 列，不进 shared 的 `Todo`）。`source='butler'`（管家起草过）的事项另带 `butlerDrafted`：与 `viaButler` 取并集决定 untrusted 包裹和记忆证据。RPC 层固定 `'user'`；`create` 的 `actor` 缺省取 `source`。
+
 本地若跑过 W0 版 0037，需要删库重建（0037 在合入 main 之前被原地修改：去掉 `assignee_group_id` 外键、加两条 CHECK）。
 
 
