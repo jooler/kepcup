@@ -9,7 +9,7 @@
   /**
    * 工作台（D90，docs/design/39-workbench.md §4）：宽屏主区的第二个视图，不进任何对话也能
    * 统筹全局。双栏——左事项（按成员分道）、右备忘；窄于阈值时折成「事项 / 备忘」两个 tab。
-   * 事项详情抽屉在本视图内从右侧滑出。数据由 `workbench` store 拉取并订阅
+   * 事项详情以居中弹框打开。数据由 `workbench` store 拉取并订阅
    * todos / memos / schedules 的 changed 事件，只在本视图挂载期间有效。
    */
   /** 本视图宽度低于此值时折成 tab（双栏各留 ≥ 320px 才不挤）。 */
@@ -27,7 +27,7 @@
   bind:clientWidth={width}
   data-testid="workbench-view"
 >
-  <!-- 抽屉是模态：打开时抽屉之外的工作台内容不可聚焦（inert）。 -->
+  <!-- 详情弹框是模态：打开时弹框之外的工作台内容不可聚焦（inert）。 -->
   <div class="flex min-h-0 flex-1 flex-col" inert={workbench.drawer !== null}>
     <!-- 顶部带：窗口拖拽区（与聊天区顶部一致），标题与 tab 自身 no-drag。 -->
     <header class="app-drag flex h-14 shrink-0 items-center gap-3 px-5">

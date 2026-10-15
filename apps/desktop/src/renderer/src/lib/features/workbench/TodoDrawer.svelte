@@ -8,12 +8,19 @@
   import { core } from '$lib/rpc/client.svelte';
   import { chat } from '$lib/stores/chat.svelte';
   import { contacts } from '$lib/stores/contacts.svelte';
+  import { parsePresetAvatar } from '$lib/avatars/presets';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
+  import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
-  import { ESCAPE_PRIORITY, registerEscapeLayer } from '$lib/features/shell/escape-layers';
+  import {
+    UNASSIGNED_SECTION_ID,
+  } from '$lib/features/sidebar/sidebar-sections';
+  import { sidebarSections } from '$lib/features/sidebar/sidebar-sections.svelte';
+  import MemberAvatar from './MemberAvatar.svelte';
   import WhenPicker from './WhenPicker.svelte';
+  import { buildAssigneeSections, type AssigneeOption } from './assignee-sections';
   import { describeAt } from './describe';
   import { openConversation, rpcErrorText, transitionTodo } from './todo-actions';
   import {
@@ -31,8 +38,8 @@
   import { workbench } from './workbench.svelte';
 
   /**
-   * 事项详情抽屉（D90 §5.2）：在工作台内从右侧滑出，新建与编辑共用。
-   * 标题 / 说明 / 执行者（active Bot、非只读群、管家；群可选负责 Bot）/ 时间（WhenPicker）/
+   * 事项详情弹框（D90 §5.2）：居中 Dialog，新建与编辑共用。
+   * 标题 / 说明 / 执行者（按左栏分组；群可选负责 Bot）/ 时间（WhenPicker）/
    * 执行记录 / 底部状态迁移。保存后把 `warnings` 就地显示；没有提示就直接关闭。
    * 已开始执行（进行中 / 待验收）的事项锁定执行者与时间，已结束的整体只读（恢复后再改）。
    */
@@ -52,7 +59,6 @@
     null,
   );
   let titleEl = $state<HTMLInputElement | null>(null);
-  let asideEl = $state<HTMLElement | null>(null);
 
   let title = $state('');
   let notes = $state('');
@@ -99,6 +105,14 @@
   // --- 名单 -----------------------------------------------------------------
   const botOptions = $derived(botMembers(contacts.bots));
   const groupOptions = $derived(groupMembers(chat.conversations, true));
+  const assigneeLayout = $derived(
+    buildAssigneeSections({
+      bots: botOptions,
+      groups: groupOptions,
+      conversations: chat.conversations,
+      sectionsState: sidebarSections.state,
+    }),
+  );
   /** 事项上已有、但已不在可选名单里的执行者（Bot 已删 / 群只读）：保留原值，标注不可用。 */
   const goneAssignee = $derived.by((): { key: string; name: string } | null => {
     const assignee = entry?.assignee;
@@ -132,21 +146,56 @@
     return null;
   }
 
+  function optionLabel(option: AssigneeOption): string {
+    return option.isButler === true
+      ? `${option.name}${t('workbench.drawer.butlerSuffix')}`
+      : option.name;
+  }
+
+  function memberLabel(member: MemberInfo): string {
+    return member.isButler === true
+      ? `${member.name}${t('workbench.drawer.butlerSuffix')}`
+      : member.name;
+  }
+
+  function findAssigneeOption(key: string): AssigneeOption | null {
+    if (key === '') return null;
+    for (const option of assigneeLayout.butler) {
+      if (option.key === key) return option;
+    }
+    for (const section of assigneeLayout.sections) {
+      for (const option of section.items) {
+        if (option.key === key) return option;
+      }
+    }
+    return null;
+  }
+
   const assigneeLabel = $derived.by(() => {
     if (assigneeKey === '') return t('workbench.drawer.assigneeNone');
     if (goneAssignee !== null && goneAssignee.key === assigneeKey) {
       return t('workbench.drawer.assigneeGone', { name: goneAssignee.name });
     }
+    const option = findAssigneeOption(assigneeKey);
+    if (option !== null) return optionLabel(option);
     const id = assigneeKey.slice(assigneeKey.indexOf(':') + 1);
     const pool = assigneeKey.startsWith('bot:') ? botOptions : groupOptions;
     const member = pool.find((item) => item.id === id);
     return member === undefined ? id : memberLabel(member);
   });
 
-  function memberLabel(member: MemberInfo): string {
-    return member.isButler === true
-      ? `${member.name}${t('workbench.drawer.butlerSuffix')}`
-      : member.name;
+  /** Bot 预置头像色（上传 / 占位无色时返回 undefined，名称用默认色）。 */
+  function botNameColor(botId: string): string | undefined {
+    const bot = contacts.bots.find((item) => item.id === botId);
+    return parsePresetAvatar(bot?.avatar ?? null)?.color.hex;
+  }
+
+  function sectionLabel(sectionId: string): string {
+    if (sectionId === UNASSIGNED_SECTION_ID) return t('sidebar.sectionUnassigned');
+    return (
+      sidebarSections.state.sections.find((section) => section.id === sectionId)?.name ??
+      t('sidebar.sectionUnassigned')
+    );
   }
 
   const leadLabel = $derived(
@@ -296,14 +345,6 @@
     groupMembersOf = { ...groupMembersOf, [groupId]: members };
   }
 
-  $effect(() => {
-    if (drawer === null) return;
-    return registerEscapeLayer({
-      priority: ESCAPE_PRIORITY.overlay,
-      onEscape: () => requestClose(),
-    });
-  });
-
   /** 关闭（遮罩 / Esc / 关闭按钮）：表单脏了先确认；确认条开着时 Esc 只收起确认条。 */
   function requestClose(): void {
     if (pendingDiscard !== null) {
@@ -321,25 +362,8 @@
   }
 
   // --- 焦点 -------------------------------------------------------------------
-  // 打开时记住触发元素，关闭后还原焦点；打开后焦点进标题框；Tab 在抽屉内循环。
-  let opener: HTMLElement | null = null;
-  let wasOpen = false;
+  // Dialog 负责焦点陷阱与关闭后还原；打开后把焦点放进标题框。
   let focusedFor: unknown = null;
-  $effect(() => {
-    const open = drawer !== null;
-    untrack(() => {
-      if (open && !wasOpen) opener = document.activeElement as HTMLElement | null;
-      if (!open && wasOpen) {
-        const target = opener;
-        opener = null;
-        focusedFor = null;
-        queueMicrotask(() => {
-          if (target?.isConnected) target.focus();
-        });
-      }
-      wasOpen = open;
-    });
-  });
   $effect(() => {
     const el = titleEl;
     const current = drawer;
@@ -347,27 +371,6 @@
     focusedFor = current;
     el.focus();
   });
-
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-  function trapTab(event: KeyboardEvent): void {
-    if (event.key !== 'Tab' || asideEl === null) return;
-    const items = [...asideEl.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-      (el) => el.getClientRects().length > 0,
-    );
-    if (items.length === 0) return;
-    const first = items[0]!;
-    const last = items[items.length - 1]!;
-    const active = document.activeElement;
-    if (event.shiftKey && (active === first || !asideEl.contains(active))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (active === last || !asideEl.contains(active))) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
 
   // --- 时间提示 ----------------------------------------------------------------
   const nextText = $derived.by((): string => {
@@ -565,48 +568,47 @@
   }
 </script>
 
-{#if drawer !== null}
-  <div class="absolute inset-0 z-30 flex justify-end" data-testid="todo-drawer-layer">
-    <button
-      type="button"
-      class="absolute inset-0 cursor-default bg-black/20"
-      aria-label={t('workbench.drawer.close')}
-      onclick={requestClose}
-      tabindex="-1"
-    ></button>
-    <div
-      bind:this={asideEl}
-      role="dialog"
-      aria-modal="true"
-      tabindex="-1"
-      class="relative flex h-full w-full max-w-md flex-col border-l bg-background shadow-xl"
-      aria-labelledby="todo-drawer-heading"
-      onkeydown={trapTab}
-      data-testid="todo-drawer"
-      data-todo-id={entry?.id ?? ''}
-      data-status={isNew ? 'new' : status}
-    >
-      <header class="flex items-center gap-2 border-b px-4 py-3">
-        <h2 id="todo-drawer-heading" class="min-w-0 flex-1 truncate text-sm font-medium">
-          {isNew ? t('workbench.drawer.titleNew') : t('workbench.drawer.titleEdit')}
-        </h2>
-        {#if !isNew}
-          <span class="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-            {t(`workbench.status.${status}`)}
-          </span>
-        {/if}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={t('workbench.drawer.close')}
-          onclick={requestClose}
-          data-testid="todo-drawer-close"
-        >
-          <X class="size-4" />
-        </Button>
-      </header>
+<Dialog.Root
+  open={drawer !== null}
+  onOpenChange={(open) => {
+    if (!open) requestClose();
+  }}
+>
+  <Dialog.Content
+    class="flex max-h-[85vh] w-full max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
+    showCloseButton={false}
+    data-testid="todo-drawer"
+    data-todo-id={entry?.id ?? ''}
+    data-status={drawer === null ? '' : isNew ? 'new' : status}
+  >
+    <header class="flex shrink-0 items-center gap-2 border-b px-4 py-3">
+      <Dialog.Title
+        id="todo-drawer-heading"
+        class="min-w-0 flex-1 truncate text-sm font-medium"
+      >
+        {drawer === null
+          ? ''
+          : isNew
+            ? t('workbench.drawer.titleNew')
+            : t('workbench.drawer.titleEdit')}
+      </Dialog.Title>
+      {#if drawer !== null && !isNew}
+        <span class="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+          {t(`workbench.status.${status}`)}
+        </span>
+      {/if}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t('workbench.drawer.close')}
+        onclick={requestClose}
+        data-testid="todo-drawer-close"
+      >
+        <X class="size-4" />
+      </Button>
+    </header>
 
-      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+    <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {#if notFound}
           <p class="text-sm text-muted-foreground" data-testid="todo-drawer-notfound">
             {t('workbench.drawer.notFound')}
@@ -732,42 +734,88 @@
                 aria-label={`${t('workbench.drawer.fieldAssignee')}：${assigneeLabel}`}
                 data-testid="todo-assignee"
               >
-                {assigneeLabel}
+                {#if assigneeKey.startsWith('bot:')}
+                  {@const botId = assigneeKey.slice(4)}
+                  <span class="flex min-w-0 flex-1 items-center gap-2">
+                    <MemberAvatar kind="bot" id={botId} name={assigneeLabel} class="size-5" />
+                    <span class="truncate" style:color={botNameColor(botId)}>{assigneeLabel}</span>
+                  </span>
+                {:else if assigneeKey.startsWith('group:')}
+                  {@const groupId = assigneeKey.slice(6)}
+                  <span class="flex min-w-0 flex-1 items-center gap-2">
+                    <MemberAvatar kind="group" id={groupId} name={assigneeLabel} class="size-5" />
+                    <span class="truncate">{assigneeLabel}</span>
+                  </span>
+                {:else}
+                  {assigneeLabel}
+                {/if}
               </Select.Trigger>
               <Select.Content>
-                <Select.Item value={NONE}>{t('workbench.drawer.assigneeNone')}</Select.Item>
+                <Select.Item value={NONE} label={t('workbench.drawer.assigneeNone')}>
+                  {t('workbench.drawer.assigneeNone')}
+                </Select.Item>
                 {#if goneAssignee !== null}
-                  <Select.Item value={goneAssignee.key}>
+                  <Select.Item
+                    value={goneAssignee.key}
+                    label={t('workbench.drawer.assigneeGone', { name: goneAssignee.name })}
+                  >
                     {t('workbench.drawer.assigneeGone', { name: goneAssignee.name })}
                   </Select.Item>
                 {/if}
-                {#if botOptions.length > 0}
-                  <Select.Group>
-                    <Select.GroupHeading>{t('workbench.drawer.assigneeBots')}</Select.GroupHeading>
-                    {#each botOptions as bot (bot.id)}
-                      <Select.Item
-                        value={`bot:${bot.id}`}
-                        data-testid={`todo-assignee-bot-${bot.id}`}
-                      >
-                        {memberLabel(bot)}
-                      </Select.Item>
-                    {/each}
-                  </Select.Group>
-                {/if}
-                {#if groupOptions.length > 0}
-                  <Select.Group>
-                    <Select.GroupHeading>{t('workbench.drawer.assigneeGroups')}</Select.GroupHeading
+                {#if assigneeLayout.butler.length > 0}
+                  {#each assigneeLayout.butler as option (option.key)}
+                    <Select.Item
+                      value={option.key}
+                      label={optionLabel(option)}
+                      data-testid={`todo-assignee-bot-${option.memberId}`}
                     >
-                    {#each groupOptions as group (group.id)}
+                      <span class="flex min-w-0 items-center gap-2">
+                        <MemberAvatar
+                          kind="bot"
+                          id={option.memberId}
+                          name={option.name}
+                          class="size-5"
+                        />
+                        <span class="truncate" style:color={botNameColor(option.memberId)}
+                          >{optionLabel(option)}</span
+                        >
+                      </span>
+                    </Select.Item>
+                  {/each}
+                {/if}
+                {#each assigneeLayout.sections as section (section.id)}
+                  <Select.Group>
+                    {#if assigneeLayout.showHeaders}
+                      <Select.GroupHeading>{sectionLabel(section.id)}</Select.GroupHeading>
+                    {/if}
+                    {#each section.items as option (option.key)}
                       <Select.Item
-                        value={`group:${group.id}`}
-                        data-testid={`todo-assignee-group-${group.id}`}
+                        value={option.key}
+                        label={optionLabel(option)}
+                        data-testid={option.kind === 'bot'
+                          ? `todo-assignee-bot-${option.memberId}`
+                          : `todo-assignee-group-${option.memberId}`}
                       >
-                        {group.name}
+                        <span class="flex min-w-0 items-center gap-2">
+                          <MemberAvatar
+                            kind={option.kind}
+                            id={option.memberId}
+                            name={option.name}
+                            class="size-5"
+                          />
+                          {#if option.kind === 'bot'}
+                            <span
+                              class="truncate"
+                              style:color={botNameColor(option.memberId)}>{optionLabel(option)}</span
+                            >
+                          {:else}
+                            <span class="truncate">{option.name}</span>
+                          {/if}
+                        </span>
                       </Select.Item>
                     {/each}
                   </Select.Group>
-                {/if}
+                {/each}
               </Select.Content>
             </Select.Root>
             {#if selectedGroupId !== null}
@@ -986,6 +1034,5 @@
           </Button>
         {/if}
       </footer>
-    </div>
-  </div>
-{/if}
+  </Dialog.Content>
+</Dialog.Root>
