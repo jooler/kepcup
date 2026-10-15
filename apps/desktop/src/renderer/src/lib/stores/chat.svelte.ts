@@ -849,9 +849,19 @@ class ChatState {
     return result.messages;
   }
 
+  /**
+   * 会话此刻是否真的在用户眼前：对话视图里的当前会话。工作台（D90）盖住对话区时它仍是
+   * `currentId`，但用户看不到——期间到达的回复要算未读，回到对话（`select`）时再补标已读。
+   */
+  isViewing(conversationId: string): boolean {
+    return !shell.workbenchShown && this.currentId === conversationId;
+  }
+
   async #markRead(): Promise<void> {
     const chat = this.#chat;
     if (!chat || chat.conversation.readOnly) return;
+    // 工作台开着时不标已读（MessageList 卸载后一般不会走到这里，仍在此兜底）。
+    if (shell.workbenchShown) return;
     const lastSeq = chat.messages.at(-1)?.seq;
     if (lastSeq === undefined || lastSeq <= chat.conversation.lastReadSeq) return;
     await core.call('conversations.markRead', {
@@ -883,7 +893,7 @@ class ChatState {
             lastSeq: Math.max(c.lastSeq, message.seq),
             lastMessageAt: message.createdAt,
             unreadCount:
-              c.id === this.currentId || message.senderType === 'user'
+              this.isViewing(c.id) || message.senderType === 'user'
                 ? (c.unreadCount ?? 0)
                 : (c.unreadCount ?? 0) + 1,
           }

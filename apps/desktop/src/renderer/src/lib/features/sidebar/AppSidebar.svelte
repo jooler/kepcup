@@ -637,7 +637,7 @@
   {@const preview = previewOf(conversation)}
   {@const showMetaRow =
     preview.length > 0 ||
-    ((conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id) ||
+    ((conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)) ||
     (conversation.runningBotIds?.length ?? 0) > 0 ||
     (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
   <Sidebar.MenuItem>
@@ -670,7 +670,7 @@
           <!-- min-h-4 仅在有内容时撑住一行高度；空条目整行不渲染。 -->
           {#if showMetaRow}
             <span class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
-              {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
+              {#if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
                 <span
                   class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
                   data-testid="unread-badge"
@@ -829,7 +829,7 @@
                       >
                         {permissions.pendingByConversation[conversation.id]}
                       </span>
-                    {:else if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
+                    {:else if (conversation.unreadCount ?? 0) > 0 && !chat.isViewing(conversation.id)}
                       <span
                         class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
                         data-testid="unread-badge"
