@@ -15,7 +15,7 @@ export const APP_REQUEST_CONNECTION_TOOL = 'app_request_connection';
 /** 按需发现（D73 P2 §6.3）：应用工具总数超阈值时取代逐个暴露的两个稳定工具。 */
 export const APP_SEARCH_TOOLS_TOOL = 'app_search_tools';
 export const APP_CALL_TOOL_TOOL = 'app_call_tool';
-/** 本机连接（todo/local-connector-authoring.md §2.3）：仅开发者模式开启时暴露的两个工具。 */
+/** 本机连接（todo/local-connector-authoring.md §2.3）：两个工具（不再挂开发者模式门禁）。 */
 export const APP_LOCAL_CONNECTOR_GUIDE_TOOL = 'app_local_connector_guide';
 export const APP_PROPOSE_LOCAL_CONNECTOR_TOOL = 'app_propose_local_connector';
 
@@ -61,7 +61,7 @@ export interface AppToolFacade {
    * 此时 `app_search_tools` / `app_call_tool` 取代逐个暴露的应用工具（run 内不变）。
    */
   discovery?: AppToolDiscovery | undefined;
-  /** 本机连接工具（开发者模式开启时才存在）。 */
+  /** 本机连接工具。 */
   localConnectors?: LocalConnectorToolFacade | undefined;
 }
 
@@ -121,7 +121,7 @@ export function buildAppTools(input: {
   ];
 }
 
-/** `app_local_connector_guide` + `app_propose_local_connector`（仅开发者模式）。 */
+/** `app_local_connector_guide` + `app_propose_local_connector`。 */
 export function buildLocalConnectorTools(local: LocalConnectorToolFacade): ToolDefinition[] {
   const guide: ToolDefinition<Record<string, never>> = {
     name: APP_LOCAL_CONNECTOR_GUIDE_TOOL,

@@ -73,6 +73,8 @@ function harness(
     forceSettleMs?: number;
     loginMs?: number;
     script?: FakeAgentScript;
+    /** Overrides of the fake installer (system-CLI paths). */
+    installer?: Record<string, unknown>;
   } = {},
 ): Harness {
   const workDir = mkdtempSync(path.join(tmpdir(), 'kepcup-agents-life-'));
@@ -129,6 +131,7 @@ function harness(
       installedVersion.value = entry.version;
       return installed()!;
     },
+    ...options.installer,
   };
   const host = {
     stop: (id: string) => {
@@ -450,5 +453,78 @@ describe('P4-B review: run-noted logout and post-change probing', () => {
     expect(firstReady?.probing).toBe(true);
     await until(() => !h.service.view('slow').probing, 'probe finished');
     expect(h.published.at(-1)?.probing).toBe(false);
+  });
+
+  describe('system CLI missing → AGENT_UNAVAILABLE', () => {
+    const missing = {
+      found: false,
+      path: null,
+      version: null,
+      versionRange: null,
+      compatible: false,
+    };
+    const systemOnly = () =>
+      fakeAgentEntry('slow', {
+        version: '1.0.0',
+        name: 'Slow Agent',
+        distribution: { system: { cmd: 'slow-acp', detect: ['--version'] } },
+      });
+    const both = () =>
+      npxEntry({
+        name: 'Slow Agent',
+        distribution: {
+          npx: { package: 'slow@1.0.0' },
+          system: { cmd: 'slow-acp', detect: ['--version'] },
+        },
+      });
+
+    it('enable: points at the in-app install when one exists', async () => {
+      const h = harness(both(), { installer: { detectSystem: async () => missing } });
+      await expect(h.service.enable('slow', 'system')).rejects.toMatchObject({
+        code: 'AGENT_UNAVAILABLE',
+        message: '未在系统中找到 slow-acp：请先安装其官方 CLI，或改用应用内安装',
+      });
+    });
+
+    it('enable: system-only agents say where the executable must be (Dock note)', async () => {
+      const h = harness(systemOnly(), {
+        installer: {
+          managedKind: () => null,
+          kindFor: () => 'system',
+          detectSystem: async () => missing,
+        },
+      });
+      await expect(h.service.enable('slow')).rejects.toMatchObject({
+        code: 'AGENT_UNAVAILABLE',
+        message:
+          '未在系统中找到 slow-acp：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中（macOS 从程序坞启动时尤其需要）',
+      });
+    });
+
+    it('launch: names the agent; managed vs system-only hints', () => {
+      const managed = harness(both());
+      managed.settings.current = settingsSchema.parse({
+        ...managed.settings.current,
+        agents: { slow: { enabled: true, source: 'system' } },
+      });
+      expect(() => managed.service.resolveLaunch(both())).toThrow(
+        expect.objectContaining({
+          code: 'AGENT_UNAVAILABLE',
+          message:
+            '智能体「Slow Agent」未在系统中找到 slow-acp：请先安装其官方 CLI，或改用应用内安装',
+        }),
+      );
+
+      const systemOnlyHarness = harness(systemOnly(), {
+        installer: { managedKind: () => null, kindFor: () => 'system' },
+      });
+      expect(() => systemOnlyHarness.service.resolveLaunch(systemOnly())).toThrow(
+        expect.objectContaining({
+          code: 'AGENT_UNAVAILABLE',
+          message:
+            '智能体「Slow Agent」未在系统中找到 slow-acp：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中',
+        }),
+      );
+    });
   });
 });

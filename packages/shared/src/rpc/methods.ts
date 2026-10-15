@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
+import { GROUP_TITLE_MAX } from '../domain/group-title.js';
 import {
   widgetPreviewRunInputSchema,
   widgetPreviewRunOutputSchema,
@@ -856,7 +857,7 @@ export const conversationGetOutputSchema = z.object({
 // --- groups (P05) -----------------------------------------------------------
 
 export const groupsCreateInputSchema = z.object({
-  title: z.string().min(1).max(100),
+  title: z.string().min(1).max(GROUP_TITLE_MAX),
   memberBotIds: z.array(z.string().min(1)).min(2),
 });
 export const groupsCreateOutputSchema = z.object({ conversation: conversationSchema });
@@ -898,7 +899,7 @@ export const groupsSetupCancelInputSchema = z.object({ conversationId: z.string(
 export const conversationIdInputSchema = z.object({ conversationId: z.string().min(1) });
 export const groupsRenameInputSchema = z.object({
   conversationId: z.string().min(1),
-  title: z.string().min(1).max(100),
+  title: z.string().min(1).max(GROUP_TITLE_MAX),
 });
 export const groupsRenameOutputSchema = z.object({ conversation: conversationSchema });
 export const groupsAddMembersInputSchema = z.object({
@@ -1739,7 +1740,7 @@ export const rpcMethodSchemas = {
   'apps.catalog.list': { input: voidInput, output: appsCatalogListOutputSchema },
   /**
    * 本机连接（todo/local-connector-authoring.md）：列出 / 确认 Bot 的提案 / 拒绝提案 / 删除条目。
-   * `confirm` 在开发者模式关闭时被拒；`remove` 任何时候都能用（先断开全部连接再删条目）。
+   * 不再受开发者模式门禁；`remove` 任何时候都能用（先断开全部连接再删条目）。
    */
   'apps.localConnectors.list': { input: voidInput, output: appsLocalConnectorsListOutputSchema },
   'apps.localConnectors.confirm': {

@@ -2,13 +2,15 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Run } from '@kepcup/shared';
+import { GROUP_MEMBER_PREVIEW_MAX, type Bot, type Conversation, type Run } from '@kepcup/shared';
 import {
   createTestStack,
+  listMembers,
   listMessages,
   listRuns,
   makeBot,
   makeGroup,
+  openDirect,
   sendDrafts,
   step,
   viaTask,
@@ -109,6 +111,45 @@ describe('group conversations', () => {
       conversationId: conv.id,
     })) as { members: Array<{ bot: { id: string } }> };
     expect(members.members.map((m) => m.bot.id).sort()).toEqual([a.id, b.id, c.id].sort());
+  });
+
+  it('list / get views carry member avatar previews for groups only, capped at GROUP_MEMBER_PREVIEW_MAX', async () => {
+    const { core } = await start();
+    const { a, conv } = await threeBots(core);
+    const direct = await openDirect(core, a.id);
+    const listed = async () =>
+      (
+        (await core.rpc.call('conversations.list')) as {
+          conversations: Array<Conversation>;
+        }
+      ).conversations;
+
+    const previewsOf = (members: Array<{ bot: Bot }>) =>
+      members.map((m) => ({ id: m.bot.id, name: m.bot.name, avatar: m.bot.avatar }));
+    const group = (await listed()).find((c) => c.id === conv.id)!;
+    expect(group.memberPreviews).toEqual(previewsOf(await listMembers(core, conv.id)));
+    expect(group.memberPreviews?.map((p) => p.name).sort()).toEqual(
+      ['阿丙', '阿乙', '阿甲'].sort(),
+    );
+    expect((await listed()).find((c) => c.id === direct.id)!.memberPreviews).toBeUndefined();
+
+    // A big group: only the first GROUP_MEMBER_PREVIEW_MAX members (join order).
+    const extra: Bot[] = [];
+    for (let i = 0; i < GROUP_MEMBER_PREVIEW_MAX; i += 1) {
+      extra.push(await makeBot(core, `成员${i}`));
+    }
+    await core.rpc.call('groups.addMembers', {
+      conversationId: conv.id,
+      botIds: extra.map((bot) => bot.id),
+    });
+    const members = await listMembers(core, conv.id);
+    expect(members.length).toBeGreaterThan(GROUP_MEMBER_PREVIEW_MAX);
+    const expected = previewsOf(members).slice(0, GROUP_MEMBER_PREVIEW_MAX);
+    expect((await listed()).find((c) => c.id === conv.id)!.memberPreviews).toEqual(expected);
+    const got = (await core.rpc.call('conversations.get', { id: conv.id })) as {
+      conversation: Conversation;
+    };
+    expect(got.conversation.memberPreviews).toEqual(expected);
   });
 
   it('@ A → only A executes and no triage request is sent', async () => {

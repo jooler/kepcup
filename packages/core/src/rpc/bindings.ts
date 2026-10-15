@@ -330,11 +330,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
         : null,
     ...(conversation.type === 'group'
       ? {
-          memberPreviews: domain.groups.members(conversation.id).map((member) => ({
-            id: member.bot.id,
-            name: member.bot.name,
-            avatar: member.bot.avatar,
-          })),
+          memberPreviews: domain.groups.memberPreviews(conversation.id),
         }
       : {}),
   });

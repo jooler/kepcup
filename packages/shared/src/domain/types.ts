@@ -730,6 +730,13 @@ export type Settings = z.infer<typeof settingsSchema>;
 export const conversationTypeSchema = z.enum(['direct', 'group']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
+/**
+ * 列表视图里每个群最多带几个成员头像预览（`Conversation.memberPreviews`，按入群
+ * 顺序取前 N 个）。群头像堆叠（GroupAvatarStack）在 40px 内画不下更多，渲染端
+ * 自行拼预览时也应按这个上限截断。
+ */
+export const GROUP_MEMBER_PREVIEW_MAX = 9;
+
 export const conversationSchema = z.object({
   id: z.string(),
   type: conversationTypeSchema,
@@ -755,7 +762,7 @@ export const conversationSchema = z.object({
   bot: botSchema.nullable().optional(),
   /**
    * 群成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
-   * 只在列表/详情视图上补，不入库。
+   * 只在列表/详情视图上补，不入库；至多 {@link GROUP_MEMBER_PREVIEW_MAX} 个。
    */
   memberPreviews: z
     .array(

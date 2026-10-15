@@ -39,7 +39,7 @@ import { fakeCatalogEntry, until } from '../support/catalog-connect-env.js';
 /**
  * 本机连接（todo/local-connector-authoring.md，设计 29 §17），真实 core + testkit 假授权 / MCP 服务器：
  *
- * - 开发者模式关闭：两个工具不暴露、提案与 `confirm` 被拒；
+ * - 开发者模式（遗留开关）关闭时两个工具照常暴露、提案与 `confirm` 照常可用；
  * - 合规提案 → 确认卡（setup 需求）→ 用户确认 → 目录出现（origin local）→ 重试后 Bot 能请求连接；
  * - 拒绝路径、注入文本不改变条目、提案一次性 / TTL；
  * - 本机连接：授权前必核对完整授权地址、每次工具调用都确认且无持续授权、`remove` 无残留。

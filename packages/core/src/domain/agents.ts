@@ -259,6 +259,26 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * AGENT_UNAVAILABLE for a system CLI that is not on PATH (nor ~/.local/bin).
+ * With an in-app install available the hint points there; otherwise it says
+ * where the executable must live (`dockHint`: the macOS Dock-launch note).
+ */
+function systemCliMissingError(
+  cmd: string,
+  hasManaged: boolean,
+  options: { agentName?: string; dockHint?: boolean } = {},
+): AppError {
+  const subject =
+    options.agentName !== undefined
+      ? `智能体「${options.agentName}」未在系统中找到`
+      : '未在系统中找到';
+  const hint = hasManaged
+    ? '或改用应用内安装'
+    : `并确保可执行文件在 PATH 或 ~/.local/bin 中${options.dockHint === true ? '（macOS 从程序坞启动时尤其需要）' : ''}`;
+  return new AppError('AGENT_UNAVAILABLE', `${subject} ${cmd}：请先安装其官方 CLI，${hint}`);
+}
+
 export class AgentsService {
   readonly #deps: AgentsServiceDeps;
   readonly #installing = new Map<string, AgentInstallProgress>();
@@ -570,16 +590,11 @@ export class AgentsService {
     if (this.#source(entry, setting) === 'system') {
       const invocation = installer.systemInvocation(entry);
       if (invocation !== null) return invocation;
-      {
-        const cmd = entry.distribution.system?.cmd ?? '';
-        const hasManaged = installer.managedKind(entry) !== null;
-        throw new AppError(
-          'AGENT_UNAVAILABLE',
-          hasManaged
-            ? `智能体「${entry.name}」未在系统中找到 ${cmd}：请先安装其官方 CLI，或改用应用内安装`
-            : `智能体「${entry.name}」未在系统中找到 ${cmd}：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中`,
-        );
-      }
+      throw systemCliMissingError(
+        entry.distribution.system?.cmd ?? '',
+        installer.managedKind(entry) !== null,
+        { agentName: entry.name },
+      );
     }
     const version = this.#installedVersion(entry, setting);
     const installed = version === null ? null : installer.installed(entry.id, version);
@@ -789,13 +804,10 @@ export class AgentsService {
     if (wanted === 'system' && !this.#deps.launchOverride?.(entry)) {
       const detected = await this.#refreshSystemCli(entry, true);
       if (detected === null || !detected.found) {
-        const cmd = entry.distribution.system?.cmd ?? entry.name;
-        const hasManaged = this.#deps.installer.managedKind(entry) !== null;
-        throw new AppError(
-          'AGENT_UNAVAILABLE',
-          hasManaged
-            ? `未在系统中找到 ${cmd}：请先安装其官方 CLI，或改用应用内安装`
-            : `未在系统中找到 ${cmd}：请先安装其官方 CLI，并确保可执行文件在 PATH 或 ~/.local/bin 中（macOS 从程序坞启动时尤其需要）`,
+        throw systemCliMissingError(
+          entry.distribution.system?.cmd ?? entry.name,
+          this.#deps.installer.managedKind(entry) !== null,
+          { dockHint: true },
         );
       }
       if (!detected.compatible) {

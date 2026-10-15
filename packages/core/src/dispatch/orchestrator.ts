@@ -408,7 +408,7 @@ export interface OrchestratorDeps {
    */
   connectedApps?: ConnectedApps | null;
   /**
-   * 本机连接（todo/local-connector-authoring.md）：开发者模式开启时给 Bot 提供手册 / 提案工具。
+   * 本机连接（todo/local-connector-authoring.md）：给 Bot 提供手册 / 提案工具（不再挂开发者模式门禁）。
    * null / 缺省 = 没有该能力。
    */
   localConnectors?: LocalConnectors | null;
@@ -4750,7 +4750,7 @@ export class Orchestrator {
   }
 
   /**
-   * 本机连接的工具门面（仅开发者模式开启时存在）。`propose` 经 core 探测；通过后把
+   * 本机连接的工具门面。`propose` 经 core 探测；通过后把
    * `confirm-local-connector` 需求写进本 run 的 `setupHit`（工具随即返回 SETUP_REQUIRED，run 中断、
    * 对话里出确认卡）。拒绝原因（`LOCAL_CONNECTOR_REJECTED`）原样回给模型；其余错误上抛。
    */
@@ -4792,10 +4792,7 @@ export class Orchestrator {
               '已发起确认，等待用户：对话里出现了确认卡，用户核对域名后选择添加或取消，本次执行暂停。不要重复提交，也不要让用户把令牌或密码贴给你。',
           };
         } catch (error) {
-          if (
-            error instanceof AppError &&
-            (error.code === 'LOCAL_CONNECTOR_REJECTED' || error.code === 'DEVELOPER_MODE_REQUIRED')
-          ) {
+          if (error instanceof AppError && error.code === 'LOCAL_CONNECTOR_REJECTED') {
             return { ok: false, message: error.message };
           }
           throw error;

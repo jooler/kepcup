@@ -276,16 +276,44 @@ describe('ACP client helpers', () => {
     ).toBe('/opt/npm/codex');
   });
 
-  it('withUserPath prepends ~/.local/bin and Homebrew when present', () => {
+  it('withUserPath appends ~/.local/bin and Homebrew after existing PATH', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
     const localBin = path.join(home, '.local', 'bin');
     mkdirSync(localBin, { recursive: true });
     const dirs = userPathDirs({ home, platform: 'darwin' });
     expect(dirs).toContain(localBin);
     const env = withUserPath({ PATH: '/usr/bin:/bin' }, { home, platform: 'darwin' });
-    expect(env.PATH?.split(':')[0]).toBe(localBin);
+    const parts = env.PATH?.split(':') ?? [];
+    expect(parts.slice(0, 2)).toEqual(['/usr/bin', '/bin']);
+    expect(parts).toContain(localBin);
     // idempotent
     expect(withUserPath(env, { home, platform: 'darwin' }).PATH).toBe(env.PATH);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('withUserPath keeps existing PATH priority: a bundled-bin prepend stays first, no duplicates', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
+    const localBin = path.join(home, '.local', 'bin');
+    const homeBin = path.join(home, 'bin');
+    mkdirSync(localBin, { recursive: true });
+    mkdirSync(homeBin, { recursive: true });
+    const bundled = '/opt/KepCup/resources/bin';
+    // ~/bin is already on PATH (after the system dirs): it must not move up.
+    const current = `${bundled}:/usr/bin:/bin:${homeBin}`;
+    const parts = withUserPath({ PATH: current }, { home, platform: 'linux' }).PATH!.split(':');
+    expect(parts.slice(0, 4)).toEqual([bundled, '/usr/bin', '/bin', homeBin]);
+    expect(parts[0]).toBe(bundled);
+    expect(parts.indexOf(localBin)).toBeGreaterThan(3);
+    expect(parts.filter((dir) => dir === homeBin)).toHaveLength(1);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('userPathDirs / withUserPath are no-ops on win32', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
+    mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+    expect(userPathDirs({ home, platform: 'win32' })).toEqual([]);
+    const env = { Path: 'C:\\Windows\\system32' };
+    expect(withUserPath(env, { home, platform: 'win32' })).toBe(env);
     rmSync(home, { recursive: true, force: true });
   });
 

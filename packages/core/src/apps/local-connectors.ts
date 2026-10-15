@@ -51,7 +51,7 @@ import { probeLocalConnector, type LocalProbeResult } from './local-connector-pr
  *   生成确认卡载荷。Bot 自己不能保存：落库只经 {@link confirm}（RPC，用户在卡片上点「添加」）。
  * - **删除**：先断开该条目的全部连接（吊销 + 清令牌 / DCR 客户端，沿用 `AppDisconnector`），再删条目。
  *
- * 开发者模式关闭时：不能提案、不能确认；已有条目保留；`remove` 任何时候都可用。
+ * 不再受开发者模式门禁；`remove` 任何时候都可用。
  */
 
 /** 内存中同时保留的待确认提案上限（Bot 反复提案不能无限占内存）。 */
@@ -446,7 +446,7 @@ export class LocalConnectors implements LocalConnectorSource {
 
   /**
    * 删除本机条目：先断开它的全部连接（吊销 + 清令牌 / DCR 客户端 / Bot 勾选），再删条目。
-   * 任何时候都可用（含开发者模式已关闭）。幂等：条目不存在 → `NOT_FOUND`。
+   * 任何时候都可用。幂等：条目不存在 → `NOT_FOUND`。
    */
   async remove(connectorId: string): Promise<void> {
     const current = this.#deps.settings.get().apps;

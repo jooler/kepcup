@@ -1,4 +1,10 @@
-import { AppError, newId, type Bot, type Conversation } from '@kepcup/shared';
+import {
+  AppError,
+  GROUP_MEMBER_PREVIEW_MAX,
+  newId,
+  type Bot,
+  type Conversation,
+} from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 import type { BotsService } from './bots.js';
@@ -172,7 +178,9 @@ export class GroupsService {
   members(conversationId: string): GroupMember[] {
     const rows = this.deps.db
       .prepare(
-        'select m.bot_id as bot_id, m.joined_at as joined_at from conversation_members m where m.conversation_id = ? order by m.joined_at',
+        // bot_id breaks join-time ties (a group's founders share one joined_at)
+        // so this order matches memberPreviews() — the avatar layout seeds on it.
+        'select m.bot_id as bot_id, m.joined_at as joined_at from conversation_members m where m.conversation_id = ? order by m.joined_at, m.bot_id',
       )
       .all(conversationId) as MemberRow[];
     const members: GroupMember[] = [];
@@ -181,6 +189,22 @@ export class GroupsService {
       if (bot) members.push({ bot, joinedAt: row.joined_at });
     }
     return members;
+  }
+
+  /**
+   * Avatar previews for list views (`Conversation.memberPreviews`): the first
+   * `limit` members in join order, from one joined query — no per-member
+   * `bots.get` / profile parse on every `conversations.list`.
+   */
+  memberPreviews(
+    conversationId: string,
+    limit: number = GROUP_MEMBER_PREVIEW_MAX,
+  ): Array<{ id: string; name: string; avatar: string | null }> {
+    return this.deps.db
+      .prepare(
+        'select b.id as id, b.name as name, b.avatar as avatar from conversation_members m join bots b on b.id = m.bot_id where m.conversation_id = ? order by m.joined_at, m.bot_id limit ?',
+      )
+      .all(conversationId, limit) as Array<{ id: string; name: string; avatar: string | null }>;
   }
 
   #requireGroup(conversationId: string): Conversation {

@@ -1,5 +1,13 @@
 import { spawn as spawnChild } from 'node:child_process';
-import { accessSync, constants as fsConstants, existsSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  openSync,
+  readSync,
+  closeSync,
+  realpathSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -181,22 +189,30 @@ export function userPathDirs(
   return out;
 }
 
-/** Prepends {@link userPathDirs} onto PATH (idempotent). */
+/**
+ * Appends missing {@link userPathDirs} after the existing PATH (idempotent).
+ * Appending keeps system dirs and any earlier prepend (bundled `rg`) ahead of
+ * user-writable dirs, so these only act as a fallback lookup.
+ */
 export function withUserPath(
   env: NodeJS.ProcessEnv,
   options: { home?: string; platform?: NodeJS.Platform } = {},
 ): NodeJS.ProcessEnv {
   const platform = options.platform ?? process.platform;
   if (platform === 'win32') return env;
+  // POSIX-only (win32 returned above), so ':' rather than path.delimiter.
   const delimiter = ':';
   const extras = userPathDirs(options);
   if (extras.length === 0) return env;
   const key = env.PATH !== undefined ? 'PATH' : env.Path !== undefined ? 'Path' : 'PATH';
   const current = env[key] ?? '';
   const existing = new Set(current.split(delimiter).filter((dir) => dir.length > 0));
-  const prefix = extras.filter((dir) => !existing.has(dir));
-  if (prefix.length === 0) return env;
-  return { ...env, [key]: `${prefix.join(delimiter)}${current.length > 0 ? delimiter : ''}${current}` };
+  const missing = extras.filter((dir) => !existing.has(dir));
+  if (missing.length === 0) return env;
+  return {
+    ...env,
+    [key]: `${current}${current.length > 0 ? delimiter : ''}${missing.join(delimiter)}`,
+  };
 }
 
 /**
