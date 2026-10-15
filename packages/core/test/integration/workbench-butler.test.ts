@@ -249,6 +249,12 @@ describe('权限边界：用户本人触发 vs 非本人触发', () => {
       .find((r) => messagesText(r).includes('已创建事项（id：'));
     expect(toolResult).toBeDefined();
     expect(messagesText(toolResult!)).not.toContain(WORKBENCH_NOT_FROM_USER_MESSAGE);
+    // 管家写的事项到执行者那里是不可信数据：包裹 + 按非本人指令处理（D90 审查修复 7）。
+    const workerRequest = llm
+      .requestsFor('mock-main')
+      .find((r) => r.lastUserText().includes('【工作台】整理竞品报告'))!;
+    expect(workerRequest.lastUserText()).toContain('<untrusted source="butler">【工作台】整理竞品报告');
+    expect(workerRequest.lastUserText()).toContain('由管家代为安排，非用户原话');
   }, 40_000);
 
   it('管家的定时轮：同样的 create_todo（指派 + now）被拒绝、没有派发；记备忘 / 建草案照常；收尾与删备忘被拒', async () => {

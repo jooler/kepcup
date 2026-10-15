@@ -460,6 +460,17 @@ export class RunsService {
     return rows.map(rowToRun);
   }
 
+  /** Whether any task was started by one of these turns (workbench round tracking). */
+  hasTasksOriginatingFrom(runIds: readonly string[]): boolean {
+    if (runIds.length === 0) return false;
+    const row = this.db
+      .prepare(
+        `select 1 as found from runs where loop_type = 'task' and origin_run_id in (${runIds.map(() => '?').join(', ')}) limit 1`,
+      )
+      .get(...runIds);
+    return row !== undefined;
+  }
+
   /** Tasks not yet settled (startup repair, §3.2 / §7.4). */
   listNonTerminalTasks(): Run[] {
     const rows = this.db

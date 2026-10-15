@@ -618,7 +618,8 @@ CREATE TABLE todos (
   blocked_reason    TEXT,                            -- 退回草案的原因（展示用）
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
-  closed_at         INTEGER                          -- done / cancelled 时间
+  closed_at         INTEGER,                         -- done / cancelled 时间
+  scheduled_by      TEXT CHECK (scheduled_by IN ('user', 'butler'))  -- 最后一次设置该事项排期的操作者（到点派发据此标注「管家代你安排」）；不进 shared 的 Todo
 );
 CREATE INDEX todos_status ON todos(status, updated_at DESC);
 
