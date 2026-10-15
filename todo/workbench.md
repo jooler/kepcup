@@ -543,5 +543,23 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的重建写�
 
 - 新增：`workbench/todo-service.ts`（状态机迁移表、CRUD / `when` 口径、执行者校验、排期、派发、交付结算、对账、`purge`）、`workbench/memo-service.ts`；`ScheduleService` 的 `createForTodo` / `reschedule` / `retitle` / `attachWorkbench` 与 `#fireWorkbench`（先于空 `botId` 判断）；orchestrator 的 `dispatchWorkbenchMessage` / `hasTurnModel` / 事项来源与交付追踪；`GroupTurnCoordinator.onRoundEnded`；`todos.*` / `memos.*` 绑定与 `start.ts` 装配（启动先清备忘回收站、再对账、再补发）；`lifecycle` 的 `workbench` 钩子。
 - 对 W0 契约的修正（独立审查）：0037 去掉 `todos.assignee_group_id` 的外键（FK 置空会把「群 + 负责 Bot」读成 Bot 执行者）；`schedules` 加 `CHECK (bot_id IS NOT NULL OR origin='workbench')` 与单向 `CHECK (todo_id IS NULL OR origin='workbench')`；`store.insert` 有 `todoId` 时默认 `origin='workbench'`；`todo-store` 的 `closed_at` / `settled_at` 随状态派生；`reassignBot` 只动未关闭事项。
-- 追踪的取舍：回复带 `todoId` / `todoRunId` / `todoTitle`；同链路（`origin_run_id`）还有未结算任务则不交付；静默轮次若同对话更早有带标签的回复，则以那条为结果；群里一轮结束无人响应（`group_no_claim`、全员 `no_action`、被派者全部静默且没起任务）→ `unclaimed`。执行者轮失败只记执行记录（`failed`），事项停在进行中，重试成功仍可交付。
+- 追踪的取舍：回复带 `todoId` / `todoRunId` / `todoTitle`；同链路（`origin_run_id`）还有未结算任务则不交付；静默轮次若同对话更早有带标签的回复，则以那条为结果；群里一轮结束无人响应（`group_no_claim`、全员 `no_action`、被派者全部静默且没起任务）→ `unclaimed`。执行者轮失败 / 被取消时的处理见下方「审查修复」第 5 条（已改为退回草案，原偏差作废）。
 - 移交：适配器在 `transferTo` 之后通知 TodoService；`schedules.changed` 对账也会让事项跟随排期持有者（崩溃兜底）。没有用 `TodoStore.reassignBot`（它会把该 Bot 的所有事项一起搬走，而移交是按资产条目逐条选的）。
+
+**W1-core 审查修复（2026-10-15）**
+
+1. 合批：`canShareTurn` 让工作台派发批次独占一轮（同 delegation）；`#todoRefsOf*` / `#todoSourceOf` / `#trackTodoDelivery` 改为收集全部 ref、逐个结算（标签取第一个事项的标题）。
+2. 派发先把事项推进到 `in_progress` 再路由，路由抛错时回滚；空群等同步走到无人认领的情况因此能正确退回草案。
+3. `update({assignee, when:null})` 保留改派后再退回草案。
+4. 事务与顺序：`start` / `update(now)` 先派发成功再取消旧排期；改派先建新排期再取消旧排期；纯 DB 多步写入包进 `db.transaction`（路由在事务外）；服务忙时被跳过的对账在最外层操作结束后补跑；`create(when:'now')` 派发失败时事项保留为草案，`blocked_reason` = 「派发失败：原因」，错误照常抛出。
+5. 执行者的 run 失败 / 被取消 / 中断：执行记录标 `failed`，事项（须是该事项最新一次派发）退回草案，`blocked_reason` = 「执行失败：原因」或「执行已被取消」，用户可重新开始；失败的记录不再被迟到的回复复活。群里 `GroupRoundEnd` 增 `failed` 结果，失败不再被误报成「群里无人认领」。（取代上文「失败只标 run failed、事项停在进行中」的偏差。）
+6. 删私聊 / 删群：停留在 dispatched 的执行记录标 failed；进行中的事项退回草案，原因「对话已删除」（群：「群已解散」）。
+7. 管家代写的事项（`viaButler`）：执行者上下文里标题和说明包进 `<untrusted source="butler">`，标明非用户原话、涉及写入 / 外发 / 删除前按非本人指令处理；`WORKBENCH_DISPATCH_RULE` 同步。记忆证据：`MemoryService` 的消息视图（`isProxiedUserText`）把 viaButler 的 workbench、delegation、widget 都当 bot 消息，`hasUserEvidence` 因此不认它们（widget / delegation 原有行为不变）。
+8. `update(when:'now')` 与 `start` 的语义**有意不同**：前者是「改成立即执行一次」，周期事项走这条路会结束周期（取消 cron 排期）并派发一次；后者保留周期排期，事项继续停在 `scheduled`。
+9. `reschedule` 取消已入队的旧 `schedule_fire` 作业。
+10. 执行者在设置访谈中、派发被闸口扣住：`blocked_reason` = 「该 Bot 正在设置中，完成设置后才会处理」，事项保持进行中，create / update 的 warnings 带同一句；交付后清除。
+11. `settleDelivered` / `settleUnclaimed` / `settleFailed` 只推进事项**最新**的一次派发；`update` 带上相同执行者不算改动；`reopen` 重新校验执行者，失效则清空并写原因。
+12. 对账：`schedules.changed` 只处理 workbench 行、同一 tick 内合并为一次；`onExecutorChanged` 不再重复发布事件；群轮结束的任务检查改为按 `origin_run_id` 精确查询。
+
+本地若跑过 W0 版 0037，需要删库重建（0037 在合入 main 之前被原地修改：去掉 `assignee_group_id` 外键、加两条 CHECK）。
+

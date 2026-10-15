@@ -425,6 +425,11 @@ export class ScheduleService {
           },
     );
     if (updated === null) throw new AppError('NOT_FOUND', `定时任务 ${id} 不存在`);
+    // An occurrence of the OLD time may already sit in the job queue (the timer enqueued it,
+    // the runner has not picked it up): it must not fire after the move (cf. transferTo).
+    for (const job of this.#deps.jobs.pendingByDedupePrefix(`schedule_fire:${id}:`)) {
+      if (job.type === 'schedule_fire') this.#deps.jobs.cancelPending(job.id);
+    }
     this.#syncCards(updated);
     this.#reload();
     return updated;

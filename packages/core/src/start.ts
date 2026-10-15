@@ -1779,7 +1779,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         if (resultMessageId !== null) todoService?.settleDelivered(todoRunId, resultMessageId);
       },
       settleUnclaimed: (todoRunId) => todoService?.settleUnclaimed(todoRunId),
-      settleFailed: (todoRunId) => todoService?.settleFailed(todoRunId),
+      settleFailed: (todoRunId, outcome) => todoService?.settleFailed(todoRunId, outcome),
     };
     const scheduleFacade: ScheduleToolFacade = {
       createFromWhen: (input) => scheduleService!.createFromWhen(input),
@@ -2172,15 +2172,23 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // A schedule cancelled / ended outside the todo flows (the receipt's cancel button, a
     // deleted conversation's cascade) leaves its todo `scheduled` without a schedule: reconcile.
-    events.on('schedules.changed', () => {
-      try {
-        todos.reconcile();
-      } catch (error) {
-        logger.warn(
-          { error: error instanceof Error ? error.message : String(error) },
-          'todo reconcile after schedules.changed failed',
-        );
-      }
+    // Only workbench rows matter, and a burst of events in one tick collapses into one pass.
+    let reconcileQueued = false;
+    events.on('schedules.changed', ({ scheduleId }) => {
+      if (schedules.store.get(scheduleId)?.origin !== 'workbench') return;
+      if (reconcileQueued) return;
+      reconcileQueued = true;
+      queueMicrotask(() => {
+        reconcileQueued = false;
+        try {
+          todos.reconcile();
+        } catch (error) {
+          logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'todo reconcile after schedules.changed failed',
+          );
+        }
+      });
     });
     // 应用状态提示（邮件连接中断、监看被暂停…）：推给界面弹一条轻量提示，不落库。
     // 需要用户处理的错误级提示在窗口不在前台时还发一条系统通知。

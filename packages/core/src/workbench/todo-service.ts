@@ -57,6 +57,15 @@ export const BLOCKED_GROUP_GONE = '群已解散';
 export const BLOCKED_SCHEDULE_CANCELLED = '排期已取消';
 export const BLOCKED_CONVERSATION_DELETED = '对话已删除，排期已取消';
 export const BLOCKED_UNCLAIMED = '群里无人认领';
+export const BLOCKED_CONVERSATION_GONE = '对话已删除';
+export const BLOCKED_RUN_CANCELLED = '执行已被取消';
+export const BLOCKED_RUN_FAILED_PREFIX = '执行失败：';
+export const BLOCKED_DISPATCH_FAILED_PREFIX = '派发失败：';
+/** The executor is still in its setup interview: the dispatch waits behind the delivery gate. */
+export const BLOCKED_HELD = '该 Bot 正在设置中，完成设置后才会处理';
+
+/** A todo run that did not deliver because its executor's turn failed / was cancelled. */
+export type TodoRunFailure = { kind: 'failed'; error: string | null } | { kind: 'cancelled' };
 
 /** The dispatch prefix of a workbench message (the first line reads 「【工作台】标题」). */
 export const WORKBENCH_DISPATCH_TAG = '【工作台】';
@@ -74,7 +83,12 @@ export interface WorkbenchMessagePort {
     leadBotId: string | null;
     /** Runs after the message is stored + published, before it is routed to a bot. */
     onAppended?: ((message: Message) => void) | undefined;
-  }): { message: Message; runId: string | null };
+  }): {
+    message: Message;
+    runId: string | null;
+    /** The delivery is held back (the bot is in its setup interview) until setup is done. */
+    held?: boolean | undefined;
+  };
   /** Whether the bot has a built-in main model to run a turn on. */
   hasTurnModel(botId: string): boolean;
 }
@@ -120,6 +134,11 @@ interface DispatchContext {
   scheduleId?: string;
   fireAt?: number;
   lateByMs?: number | null;
+  /**
+   * The caller ends the todo's schedule right after dispatching (update `when:'now'`): a
+   * periodic todo then leaves `scheduled` for `in_progress` instead of staying parked.
+   */
+  consumeSchedule?: boolean;
 }
 
 const NOW = 'now';
@@ -142,6 +161,8 @@ export class TodoService implements WorkbenchDispatchPort {
   readonly #deps: TodoServiceDeps;
   /** > 0 while an operation of this service is mid-flight: reconcile stays out of its way. */
   #busy = 0;
+  /** A reconcile was requested while busy: it runs once the outermost operation ends. */
+  #reconcilePending = false;
 
   constructor(deps: TodoServiceDeps) {
     this.#deps = deps;
@@ -229,9 +250,19 @@ export class TodoService implements WorkbenchDispatchPort {
       });
       this.#changed(todo.id);
       let current = todo;
-      if (when === NOW) current = this.#dispatch(todo, {});
-      else if (when !== null) current = this.#schedule(todo, when);
-      return { todo: this.toEntry(current), warnings: this.#warnings(current) };
+      try {
+        if (when === NOW) current = this.#dispatch(todo, {});
+        else if (when !== null) current = this.#schedule(todo, when);
+      } catch (error) {
+        // The todo is kept as a draft with the reason; the caller still gets the error.
+        this.store.update(todo.id, {
+          blockedReason: `${BLOCKED_DISPATCH_FAILED_PREFIX}${errorText(error)}`,
+        });
+        this.#changed(todo.id);
+        throw error;
+      }
+      const fresh = this.store.get(todo.id) ?? current;
+      return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh) };
     });
   }
 
@@ -242,7 +273,10 @@ export class TodoService implements WorkbenchDispatchPort {
     }
     const titleChanged = input.title !== undefined && cleanTitle(input.title) !== todo.title;
     const when = input.when === undefined ? undefined : parseWhen(input.when);
-    const timingTouched = input.assignee !== undefined || when !== undefined;
+    // Sending the assignee the todo already has is no change.
+    const assigneeChanged =
+      input.assignee !== undefined && !sameAssignee(todo.assignee, input.assignee);
+    const timingTouched = assigneeChanged || when !== undefined;
     // A todo already handed to its executor keeps its executor and time; periodic ones
     // (parked in `scheduled`) stay editable.
     if (timingTouched && todo.status !== 'draft' && todo.status !== 'scheduled') {
@@ -252,45 +286,69 @@ export class TodoService implements WorkbenchDispatchPort {
     if (typeof when === 'string' && nextAssignee === null) {
       throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
     }
-    const assigneeChanged =
-      input.assignee !== undefined && !sameAssignee(todo.assignee, input.assignee);
     if (assigneeChanged && input.assignee !== null && input.assignee !== undefined) {
       this.#validateAssignee(input.assignee);
     }
     if (typeof when === 'string' && when !== NOW) this.#deps.schedules.validateWhen(when);
 
     return this.#guard(() => {
-      let current = todo;
-      if (input.title !== undefined || input.notes !== undefined) {
-        current =
-          this.store.update(id, {
-            ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
-            ...(input.notes !== undefined ? { notes: cleanNotes(input.notes) } : {}),
-          }) ?? current;
-        const schedule = this.#activeSchedule(id);
-        if (schedule !== null && (titleChanged || input.notes !== undefined)) {
-          this.#deps.schedules.retitle(schedule.id, current.title, current.notes);
+      const fields = (): Todo => {
+        let current = todo;
+        if (input.title !== undefined || input.notes !== undefined) {
+          current =
+            this.store.update(id, {
+              ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
+              ...(input.notes !== undefined ? { notes: cleanNotes(input.notes) } : {}),
+            }) ?? current;
+          const schedule = this.#activeSchedule(id);
+          if (schedule !== null && (titleChanged || input.notes !== undefined)) {
+            this.#deps.schedules.retitle(schedule.id, current.title, current.notes);
+          }
         }
-      }
+        return current;
+      };
 
-      if (input.assignee === null) {
-        // Clearing the assignee clears the schedule and sends the todo back to draft.
-        current = this.#toDraft(current, { assignee: null, blockedReason: null });
-      } else if (when === NOW) {
+      if (when === NOW) {
+        // 「改成立即执行一次」: the schedule — a periodic one too — ends and the todo is
+        // dispatched once (unlike `start`, which leaves a periodic schedule running). Routing
+        // stays outside the transaction; the schedule is only cancelled once it succeeded.
+        let current = this.#tx(() => {
+          const updated = fields();
+          return assigneeChanged ? this.#applyAssignee(updated, input.assignee!) : updated;
+        });
+        try {
+          current = this.#dispatch(current, { consumeSchedule: true });
+        } catch (error) {
+          if (assigneeChanged) {
+            this.store.update(id, { assignee: todo.assignee, blockedReason: todo.blockedReason });
+          }
+          this.#changed(id);
+          throw error;
+        }
         this.#cancelSchedules(id);
-        if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
-        current = this.#dispatch(current, {});
-      } else if (typeof when === 'string') {
-        if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
-        current = this.#schedule(current, when);
-      } else if (when === null) {
-        current = this.#toDraft(current, { blockedReason: null });
-      } else if (assigneeChanged && input.assignee !== undefined) {
-        current = this.#reassign(current, input.assignee!);
+        this.#changed(id);
+        const fresh = this.store.get(id) ?? current;
+        return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh) };
       }
 
+      this.#tx(() => {
+        let current = fields();
+        if (assigneeChanged && input.assignee === null) {
+          // Clearing the assignee clears the schedule and sends the todo back to draft.
+          this.#toDraft(current, { assignee: null, blockedReason: null });
+        } else if (typeof when === 'string') {
+          if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
+          this.#schedule(current, when);
+        } else if (when === null) {
+          // 「退回草案」: the schedule goes; a simultaneous reassignment is kept.
+          if (assigneeChanged) current = this.#applyAssignee(current, input.assignee!);
+          this.#toDraft(current, { blockedReason: null });
+        } else if (assigneeChanged) {
+          this.#reassign(current, input.assignee!);
+        }
+      });
       this.#changed(id);
-      const fresh = this.store.get(id) ?? current;
+      const fresh = this.store.get(id) ?? todo;
       return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh) };
     });
   }
@@ -307,10 +365,12 @@ export class TodoService implements WorkbenchDispatchPort {
     this.#validateAssignee(todo.assignee);
     return this.#guard(() => {
       const schedule = this.#activeSchedule(id);
-      // A one-off schedule is replaced by this dispatch; a periodic one keeps running.
-      if (schedule !== null && schedule.kind === 'once') this.#cancelSchedules(id);
+      // Dispatch first: if routing throws, the schedule is still there. A one-off schedule is
+      // replaced by this dispatch; a periodic one keeps running (and the todo stays
+      // `scheduled`) — compare update `when:'now'`, which ends the periodic schedule.
       const dispatched = this.#dispatch(this.#getOrThrow(id), {});
-      return this.toEntry(dispatched);
+      if (schedule !== null && schedule.kind === 'once') this.#cancelSchedules(id);
+      return this.toEntry(this.store.get(id) ?? dispatched);
     });
   }
 
@@ -371,11 +431,15 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不需要重新打开`);
     }
     return this.#guard(() => {
-      this.store.update(id, {
-        status: this.#assertMove(todo, 'draft'),
-        closedAt: null,
-        blockedReason: null,
-      });
+      const reopened =
+        this.store.update(id, {
+          status: this.#assertMove(todo, 'draft'),
+          closedAt: null,
+          blockedReason: null,
+        }) ?? todo;
+      // The executor may be gone since the todo was closed: do not hand back a dead assignee.
+      const problem = this.#executorProblem(reopened);
+      if (problem !== null) this.#dropExecutor(reopened, problem);
       this.#changed(id);
       return this.toEntry(this.#getOrThrow(id));
     });
@@ -388,22 +452,30 @@ export class TodoService implements WorkbenchDispatchPort {
     const assignee = todo.assignee;
     if (assignee === null) throw new AppError('INVALID_INPUT', '设置时间前请先选择执行者');
     const target = this.#targetOf(assignee);
-    const existing = this.#activeSchedule(todo.id);
-    if (existing !== null && existing.conversationId === target.conversationId && existing.botId === target.botId) {
-      this.#deps.schedules.reschedule(existing.id, when, timezone);
-    } else {
-      if (existing !== null) this.#deps.schedules.cancel(existing.id, { reassigned: true });
-      this.#deps.schedules.createForTodo({
-        todoId: todo.id,
-        botId: target.botId,
-        conversationId: target.conversationId,
-        when,
-        ...(timezone !== undefined ? { timezone } : {}),
-        title: todo.title,
-        note: todo.notes,
-      });
-    }
-    return this.#move(todo, 'scheduled', { blockedReason: null });
+    return this.#tx(() => {
+      const existing = this.#activeSchedule(todo.id);
+      if (
+        existing !== null &&
+        existing.conversationId === target.conversationId &&
+        existing.botId === target.botId
+      ) {
+        this.#deps.schedules.reschedule(existing.id, when, timezone);
+      } else {
+        // Create the new one first: if that throws (bad time, gone conversation) the old
+        // schedule is still intact.
+        this.#deps.schedules.createForTodo({
+          todoId: todo.id,
+          botId: target.botId,
+          conversationId: target.conversationId,
+          when,
+          ...(timezone !== undefined ? { timezone } : {}),
+          title: todo.title,
+          note: todo.notes,
+        });
+        if (existing !== null) this.#deps.schedules.cancel(existing.id, { reassigned: true });
+      }
+      return this.#move(todo, 'scheduled', { blockedReason: null });
+    });
   }
 
   /** Executor changed while draft / scheduled: a live schedule moves to the new target. */
@@ -490,28 +562,40 @@ export class TodoService implements WorkbenchDispatchPort {
     const target = this.#targetOf(assignee);
     const run = this.store.insertRun({ todoId: todo.id, conversationId: target.conversationId });
     const viaButler = todo.source === 'butler';
+    // A periodic todo keeps its `scheduled` parking spot; a one-off becomes in_progress. It
+    // moves BEFORE routing: routing can settle synchronously (an empty group → no_claim), and
+    // that settlement must find the todo in progress.
+    const periodic =
+      context.consumeSchedule !== true && this.#activeSchedule(todo.id)?.kind === 'cron';
+    if (!periodic) this.#move(todo, 'in_progress', { blockedReason: null });
+    let held: boolean;
     try {
-      this.#deps.dispatcher.dispatch({
-        conversationId: target.conversationId,
-        text: this.#dispatchText(todo, context),
-        todoId: todo.id,
-        todoRunId: run.id,
-        viaButler,
-        leadBotId: assignee.kind === 'group' ? assignee.leadBotId : null,
-        onAppended: (message) => {
-          this.store.updateRun(run.id, { messageId: message.id });
-        },
-      });
+      held =
+        this.#deps.dispatcher.dispatch({
+          conversationId: target.conversationId,
+          text: this.#dispatchText(todo, context),
+          todoId: todo.id,
+          todoRunId: run.id,
+          viaButler,
+          leadBotId: assignee.kind === 'group' ? assignee.leadBotId : null,
+          onAppended: (message) => {
+            this.store.updateRun(run.id, { messageId: message.id });
+          },
+        }).held === true;
     } catch (error) {
       this.store.updateRun(run.id, { status: 'failed', settledAt: this.#deps.clock.now() });
+      // Roll the move back (a table-bypassing restore; the todo was in `todo.status` a moment ago).
+      if (this.store.get(todo.id)?.status === 'in_progress' && todo.status !== 'in_progress') {
+        this.store.update(todo.id, { status: todo.status, blockedReason: todo.blockedReason });
+      }
       this.#changed(todo.id);
       throw error;
     }
-    // A periodic todo keeps its `scheduled` parking spot; a one-off becomes in_progress.
-    const periodic = this.#activeSchedule(todo.id)?.kind === 'cron';
-    const next = periodic ? todo : this.#move(todo, 'in_progress', { blockedReason: null });
+    if (held && !periodic && this.store.get(todo.id)?.status === 'in_progress') {
+      this.store.update(todo.id, { blockedReason: BLOCKED_HELD });
+    }
     this.#changed(todo.id);
-    return next;
+    return this.store.get(todo.id) ?? todo;
   }
 
   #dispatchText(todo: Todo, context: DispatchContext): string {
@@ -539,18 +623,14 @@ export class TodoService implements WorkbenchDispatchPort {
   settleDelivered(todoRunId: string, resultMessageId: string): void {
     const run = this.store.getRun(todoRunId);
     if (run === null) return;
-    const now = this.#deps.clock.now();
-    // Later replies of the same chain win (the last settler is the result); a run the user
-    // already moved on from (unclaimed → redone) is not revived.
-    if (run.status === 'unclaimed') return;
-    this.store.updateRun(todoRunId, {
-      status: 'delivered',
-      resultMessageId,
-      settledAt: run.settledAt ?? now,
-    });
+    // Later replies of the same chain win (the last settler is the result); a run that already
+    // ended otherwise (unclaimed, failed) is not revived.
+    if (run.status === 'unclaimed' || run.status === 'failed') return;
+    this.store.updateRun(todoRunId, { status: 'delivered', resultMessageId });
+    // Only the latest run moves the todo: a late reply of an older dispatch updates its own run.
     const todo = this.store.get(run.todoId);
-    if (todo !== null && todo.status === 'in_progress') {
-      this.store.update(todo.id, { status: this.#assertMove(todo, 'delivered') });
+    if (todo !== null && todo.status === 'in_progress' && this.#isLatestRun(run)) {
+      this.store.update(todo.id, { status: this.#assertMove(todo, 'delivered'), blockedReason: null });
     }
     this.#changed(run.todoId);
   }
@@ -559,20 +639,36 @@ export class TodoService implements WorkbenchDispatchPort {
   settleUnclaimed(todoRunId: string): void {
     const run = this.store.getRun(todoRunId);
     if (run === null || run.status !== 'dispatched') return;
-    this.store.updateRun(todoRunId, { status: 'unclaimed', settledAt: this.#deps.clock.now() });
+    this.store.updateRun(todoRunId, { status: 'unclaimed' });
     const todo = this.store.get(run.todoId);
-    if (todo !== null && todo.status === 'in_progress') {
+    if (todo !== null && todo.status === 'in_progress' && this.#isLatestRun(run)) {
       this.#move(todo, 'draft', { blockedReason: BLOCKED_UNCLAIMED });
     }
     this.#changed(run.todoId);
   }
 
-  /** The executor's turn failed: recorded on the run; the todo stays in progress (retry may deliver). */
-  settleFailed(todoRunId: string): void {
+  /**
+   * The executor's turn failed or was cancelled: the run is marked failed and the todo returns
+   * to draft with the reason (「执行失败：…」/「执行已被取消」) so the user can start it again.
+   */
+  settleFailed(todoRunId: string, outcome: TodoRunFailure): void {
     const run = this.store.getRun(todoRunId);
     if (run === null || run.status !== 'dispatched') return;
-    this.store.updateRun(todoRunId, { status: 'failed', settledAt: this.#deps.clock.now() });
+    this.store.updateRun(todoRunId, { status: 'failed' });
+    const todo = this.store.get(run.todoId);
+    if (todo !== null && todo.status === 'in_progress' && this.#isLatestRun(run)) {
+      this.#move(todo, 'draft', {
+        blockedReason:
+          outcome.kind === 'cancelled'
+            ? BLOCKED_RUN_CANCELLED
+            : `${BLOCKED_RUN_FAILED_PREFIX}${clip(outcome.error ?? '未知原因')}`,
+      });
+    }
     this.#changed(run.todoId);
+  }
+
+  #isLatestRun(run: TodoRun): boolean {
+    return this.store.lastRun(run.todoId)?.id === run.id;
   }
 
   /** A run row for the tracker: null when the todo or run is gone. */
@@ -588,8 +684,24 @@ export class TodoService implements WorkbenchDispatchPort {
    * Returns the ids of the todos it changed.
    */
   reconcile(): string[] {
-    if (this.#busy > 0) return [];
+    if (this.#busy > 0) {
+      // Mid-operation: the outermost operation runs it when it ends (see #guard).
+      this.#reconcilePending = true;
+      return [];
+    }
     const changed = new Set<string>();
+    // Cancelling a schedule fires `schedules.changed` (which asks for another pass); a second
+    // pass settles whatever the first one's own changes uncovered.
+    for (let pass = 0; pass < 3; pass += 1) {
+      this.#reconcilePending = false;
+      this.#reconcileOnce(changed);
+      if (!this.#reconcilePending) break;
+    }
+    for (const id of changed) this.#changed(id);
+    return [...changed];
+  }
+
+  #reconcileOnce(changed: Set<string>): void {
     this.#busy += 1;
     try {
       for (const todo of this.store.list({ statuses: ['draft', 'scheduled', 'in_progress'] })) {
@@ -614,26 +726,13 @@ export class TodoService implements WorkbenchDispatchPort {
     } finally {
       this.#busy -= 1;
     }
-    for (const id of changed) this.#changed(id);
-    return [...changed];
   }
 
   /** True when the todo was modified. */
   #reconcileTodo(todo: Todo): boolean {
     const problem = this.#executorProblem(todo);
     if (problem !== null) {
-      this.#cancelSchedules(todo.id);
-      const dispatched = this.store.listRuns(todo.id).find((run) => run.status === 'dispatched');
-      if (dispatched !== undefined && todo.status === 'in_progress') {
-        this.store.updateRun(dispatched.id, { status: 'failed', settledAt: this.#deps.clock.now() });
-      }
-      const assignee = todo.assignee;
-      const keepGroup =
-        assignee?.kind === 'group' && (problem === BLOCKED_LEAD_DELETED || problem === BLOCKED_LEAD_LEFT);
-      this.#move(todo, 'draft', {
-        assignee: keepGroup ? { ...assignee, leadBotId: null } : null,
-        blockedReason: problem,
-      });
+      this.#dropExecutor(todo, problem);
       return true;
     }
     const active = this.#deps.schedules.store.listActiveForTodo(todo.id);
@@ -663,6 +762,30 @@ export class TodoService implements WorkbenchDispatchPort {
       return true;
     }
     return false;
+  }
+
+  /**
+   * The executor can no longer take the todo: its schedule is cancelled, its open runs marked
+   * failed, the assignee cleared (a lost lead bot only clears the lead) and the todo returns to
+   * draft with the reason.
+   */
+  #dropExecutor(todo: Todo, problem: string): Todo {
+    this.#cancelSchedules(todo.id);
+    this.#failOpenRuns(todo.id);
+    const assignee = todo.assignee;
+    const keepGroup =
+      assignee?.kind === 'group' && (problem === BLOCKED_LEAD_DELETED || problem === BLOCKED_LEAD_LEFT);
+    return this.#move(todo, 'draft', {
+      assignee: keepGroup ? { ...assignee, leadBotId: null } : null,
+      blockedReason: problem,
+    });
+  }
+
+  /** Marks every still-dispatched run of the todo failed (its executor / conversation is gone). */
+  #failOpenRuns(todoId: string): void {
+    for (const run of this.store.listRuns(todoId)) {
+      if (run.status === 'dispatched') this.store.updateRun(run.id, { status: 'failed' });
+    }
   }
 
   /** The schedule's bot differs from the todo's executor (handover): the todo follows. */
@@ -712,35 +835,48 @@ export class TodoService implements WorkbenchDispatchPort {
    * which would silently turn a group assignee into a bare lead bot.
    */
   onConversationDeleting(conversationId: string): void {
-    this.#guard(() => {
-      const touched = new Set<string>();
-      for (const todo of this.store.listByAssigneeGroup(conversationId)) {
-        if (todo.status === 'done' || todo.status === 'cancelled' || todo.status === 'delivered') {
-          // Closed / awaiting acceptance: keep the record, just drop the dangling group.
-          this.store.update(todo.id, { assignee: null });
-        } else {
-          this.#cancelSchedules(todo.id);
-          this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_GROUP_GONE });
-        }
-        touched.add(todo.id);
-      }
-      // Bot assignees whose schedule lives in this (direct) conversation.
-      for (const schedule of this.#deps.schedules.store.listActiveForConversation(conversationId)) {
-        if (schedule.origin !== 'workbench' || schedule.todoId === null) continue;
-        const todo = this.store.get(schedule.todoId);
-        if (todo === null || touched.has(todo.id)) continue;
-        if (todo.status === 'scheduled') {
-          this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_DELETED });
+    this.#guard(() =>
+      this.#tx(() => {
+        const touched = new Set<string>();
+        for (const todo of this.store.listByAssigneeGroup(conversationId)) {
+          if (todo.status === 'done' || todo.status === 'cancelled' || todo.status === 'delivered') {
+            // Closed / awaiting acceptance: keep the record, just drop the dangling group.
+            this.store.update(todo.id, { assignee: null });
+          } else {
+            this.#cancelSchedules(todo.id);
+            this.#failOpenRuns(todo.id);
+            this.#move(todo, 'draft', { assignee: null, blockedReason: BLOCKED_GROUP_GONE });
+          }
           touched.add(todo.id);
         }
-      }
-      for (const id of touched) this.#changed(id);
-    });
+        // Bot assignees whose schedule lives in this (direct) conversation.
+        for (const schedule of this.#deps.schedules.store.listActiveForConversation(conversationId)) {
+          if (schedule.origin !== 'workbench' || schedule.todoId === null) continue;
+          const todo = this.store.get(schedule.todoId);
+          if (todo === null || touched.has(todo.id)) continue;
+          if (todo.status === 'scheduled') {
+            this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_DELETED });
+            touched.add(todo.id);
+          }
+        }
+        // Dispatched into this conversation and still waiting for the executor: it can never
+        // answer now (a private chat, or a todo whose group was handled above).
+        for (const run of this.store.listOpenRunsForConversation(conversationId)) {
+          this.store.updateRun(run.id, { status: 'failed' });
+          const todo = this.store.get(run.todoId);
+          if (todo !== null && todo.status === 'in_progress') {
+            this.#move(todo, 'draft', { blockedReason: BLOCKED_CONVERSATION_GONE });
+          }
+          touched.add(run.todoId);
+        }
+        for (const id of touched) this.#changed(id);
+      }),
+    );
   }
 
-  /** After a bot or a group membership went away: reconcile picks up the consequences. */
+  /** After a bot or a group membership went away: reconcile picks up (and publishes) the consequences. */
   onExecutorChanged(): void {
-    for (const id of this.reconcile()) this.#changed(id);
+    this.reconcile();
   }
 
   /** D88 handover: the schedule of a todo moved to another bot — the todo's executor follows. */
@@ -798,6 +934,7 @@ export class TodoService implements WorkbenchDispatchPort {
     }
     const schedule = this.#activeSchedule(todo.id);
     if (schedule !== null) warnings.push(...this.#deps.schedules.fireabilityWarnings(schedule));
+    if (todo.status === 'in_progress' && todo.blockedReason === BLOCKED_HELD) warnings.push(BLOCKED_HELD);
     return warnings;
   }
 
@@ -855,7 +992,23 @@ export class TodoService implements WorkbenchDispatchPort {
       return fn();
     } finally {
       this.#busy -= 1;
+      if (this.#busy === 0 && this.#reconcilePending) {
+        // `schedules.changed` asked for a reconcile while this operation ran.
+        try {
+          this.reconcile();
+        } catch (error) {
+          this.#deps.logger.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            'deferred todo reconcile failed',
+          );
+        }
+      }
     }
+  }
+
+  /** Pure-DB multi-step write as one transaction (routing a dispatch stays outside). */
+  #tx<T>(fn: () => T): T {
+    return this.#deps.db.transaction(fn)();
   }
 }
 
@@ -865,6 +1018,14 @@ function parseWhen(when: string | null | undefined): string | null {
   const trimmed = when.trim();
   if (trimmed.length === 0) throw new AppError('INVALID_INPUT', '时间不能为空');
   return trimmed.toLowerCase() === NOW ? NOW : trimmed;
+}
+
+function errorText(error: unknown): string {
+  return clip(error instanceof Error ? error.message : String(error));
+}
+
+function clip(text: string): string {
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
 
 function cleanTitle(title: string): string {

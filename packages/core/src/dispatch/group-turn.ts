@@ -17,16 +17,21 @@ import {
  * - `no_claim`: triage found no responder (the `group_no_claim` prompt, or every bot said
  *   no_action) — nobody took the batch;
  * - `silent`: the targets ran but none produced a visible reply;
+ * - `failed`: nobody replied and an executed turn failed / was cancelled;
  * - `replied`: at least one target replied.
  */
-export interface GroupRoundEnd {
+export type GroupRoundEnd = {
   conversationId: string;
   batchId: string;
   messages: Message[];
-  outcome: 'no_claim' | 'silent' | 'replied';
   /** The runs the round delivered to (empty for `no_claim`). */
   runIds: string[];
-}
+} & (
+  | { outcome: 'no_claim' | 'silent' | 'replied' }
+  | { outcome: 'failed'; failure: GroupRoundFailure }
+);
+
+export type GroupRoundFailure = { kind: 'failed'; error: string | null } | { kind: 'cancelled' };
 
 export interface GroupTurnDeps {
   conversations: ConversationsService;
@@ -88,6 +93,8 @@ interface Turn {
   lastReplier: string | null;
   /** Every run the round delivered to (D90 tracking). */
   runIds: string[];
+  /** The latest failed / cancelled turn of the round (D90 tracking). */
+  failure: GroupRoundFailure | null;
 }
 
 interface PendingBatch {
@@ -173,6 +180,12 @@ export class GroupTurnCoordinator {
     turn.executed.push(run.botId);
     if (run.status === 'completed' && run.outputMessageIds.length > 0) {
       turn.lastReplier = this.#botName(run.botId);
+    } else if (run.status === 'failed') {
+      turn.failure = { kind: 'failed', error: run.error };
+    } else if (run.status === 'interrupted') {
+      turn.failure = { kind: 'failed', error: '执行被中断' };
+    } else if (run.status === 'cancelled') {
+      turn.failure = { kind: 'cancelled' };
     }
     this.#completeCurrent(turn);
   }
@@ -362,6 +375,7 @@ export class GroupTurnCoordinator {
       executed: [],
       lastReplier: null,
       runIds: [],
+      failure: null,
     };
     this.#turns.set(conversationId, turn);
     this.#advance(turn);
@@ -415,13 +429,19 @@ export class GroupTurnCoordinator {
 
   #endTurn(turn: Turn): void {
     this.#turns.delete(turn.conversationId);
-    this.#reportRoundEnd({
+    const base = {
       conversationId: turn.conversationId,
       batchId: turn.batchId,
       messages: turn.messages,
-      outcome: turn.lastReplier !== null ? 'replied' : 'silent',
       runIds: turn.runIds,
-    });
+    };
+    this.#reportRoundEnd(
+      turn.lastReplier !== null
+        ? { ...base, outcome: 'replied' }
+        : turn.failure !== null
+          ? { ...base, outcome: 'failed', failure: turn.failure }
+          : { ...base, outcome: 'silent' },
+    );
     this.#publishTurnState(turn.conversationId);
     this.#drainPending(turn.conversationId);
   }
