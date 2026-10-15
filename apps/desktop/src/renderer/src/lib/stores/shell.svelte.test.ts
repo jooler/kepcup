@@ -171,3 +171,13 @@ describe('对话内设置卡深链：Bot 详情 / 项目设置（todo/conversati
     expect(shell.projectSettingsRequest).toEqual({ anchor: 'project-ports' });
   });
 });
+
+describe('主视图（D90）', () => {
+  it('启动默认是对话；openWorkbench 切到工作台', () => {
+    shell.mainView = 'chats';
+    expect(shell.mainView).toBe('chats');
+    shell.openWorkbench();
+    expect(shell.mainView).toBe('workbench');
+    shell.mainView = 'chats';
+  });
+});

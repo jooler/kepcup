@@ -1,8 +1,8 @@
 /**
- * 全局外壳状态。主界面只有对话一个视图；设置与通讯录都以弹框呈现
- * （通讯录是设置弹框中的一个分组），不再整页替换主区域。
+ * 全局外壳状态。宽屏主区有两个视图：对话（默认）与工作台（D90，`mainView`）；
+ * 设置与通讯录都以弹框呈现（通讯录是设置弹框中的一个分组），不再整页替换主区域。
  * 窄屏（33-narrow-layout）例外：设置改走 NarrowSettings 全屏页，通讯录 /
- * 用户画像直达底部 tab——见 openSettings 的重路由。
+ * 用户画像直达底部 tab——见 openSettings 的重路由；窄屏暂无工作台入口，`mainView` 不生效。
  */
 import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
@@ -17,7 +17,21 @@ import { NARROW_HIDDEN_SETTINGS_SECTIONS } from '$lib/features/shell/narrow-layo
 export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 
+export type MainView = 'chats' | 'workbench';
+
 class ShellState {
+  /**
+   * 宽屏主区当前视图（D90 §5.1，不持久化：启动恒为对话）。收口不变式：只有
+   * `chat.select()` 把它置回 'chats'——侧栏、搜索、通知、深链、卡片跳转都经 select，
+   * 自然回到对话；`openWorkbench` 只改这个值，不清 `chat.currentId`，草稿 / 已读 /
+   * 右栏状态都不受影响。侧栏对话行的选中高亮据此派生（工作台打开时没有对话高亮）。
+   */
+  mainView = $state<MainView>('chats');
+
+  openWorkbench(): void {
+    this.mainView = 'workbench';
+  }
+
   /** 设置弹框是否打开。 */
   settingsOpen = $state(false);
   /** 设置弹框当前分区（左栏条目）。 */

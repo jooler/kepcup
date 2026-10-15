@@ -39,6 +39,7 @@ import { activeRunsOf } from '../features/tasks/task-view';
 import { botMessageMutesRun, isInterimMessage } from '../features/chats/run-status-mute';
 import { sidebarSections } from '../features/sidebar/sidebar-sections.svelte';
 import { settingsStore } from '$lib/stores/settings.svelte';
+import { shell } from '$lib/stores/shell.svelte';
 import { toast } from 'svelte-sonner';
 
 export type ConversationView = Conversation & {
@@ -350,6 +351,8 @@ class ChatState {
       members: [],
     };
     this.currentId = conversationId;
+    // 工作台视图（D90 §5.1）的唯一退出点：与 #chat / currentId 同步切换，不先露出旧会话。
+    shell.mainView = 'chats';
     this.replyTo = null;
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
     // 或群聊），而不是按最近消息时间挑一个。
@@ -414,6 +417,8 @@ class ChatState {
    * 新建一个画像为空的 Bot。空回车才真正创建群。
    */
   beginGroupCompose(): void {
+    // 组群输入条在对话区里：工作台开着时先回到对话区，否则点「新建群聊」看不到任何反应。
+    shell.mainView = 'chats';
     this.composingGroup = true;
     this.composeMemberIds = [];
   }

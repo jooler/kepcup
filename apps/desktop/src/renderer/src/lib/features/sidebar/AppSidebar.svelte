@@ -18,6 +18,7 @@
     Folder,
     FolderPlus,
     Check,
+    LayoutDashboard,
     type LucideIcon,
   } from '@lucide/svelte';
   import { t } from '$lib/i18n';
@@ -65,6 +66,9 @@
    * 新建只保留「+」面板里的对话式新建和新建群聊。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
+   * 工作台入口（D90）在管家之上：只改 `shell.mainView`，不清当前会话；对话行的选中高亮
+   * 据此派生（工作台打开时没有对话高亮）。窄屏（本组件复用为对话 tab）暂不显示入口。
+   *
    * 宽度可拖拽调节（右缘手柄，sidebar-layout）：收窄到 macOS 红绿灯占位宽
    * 即图标模式——顶部搜索隐藏、「+」移到底部（与参考一致），对话只剩头像、
    * 名称/预览走 hover 提示，底部技能市场收成图标。
@@ -78,6 +82,10 @@
   /** 图标模式（拖到最小宽 = 红绿灯占位）：顶部搜索隐藏、「+」落底部、对话只显示头像。 */
   const narrow = $derived(narrowLayout.narrow);
   const collapsed = $derived(narrow ? false : sidebarLayout.collapsed);
+
+  /** 高亮的对话行：只在对话视图里有（`mainView === 'chats' && id === currentId`，组群输入时无）。 */
+  const activeConversationId = $derived(shell.mainView === 'chats' ? chat.activeId : null);
+  const workbenchActive = $derived(shell.mainView === 'workbench');
 
   /**
    * Electron 按 DOM 顺序合并 app-region，后出现的矩形胜出。开始对话面板和
@@ -600,6 +608,13 @@
   </button>
 {/snippet}
 
+<!-- 工作台入口图标（展开/图标两模式共用）：与会话头像同尺寸，行高对齐。 -->
+{#snippet workbenchIcon()}
+  <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted">
+    <LayoutDashboard class="size-5! text-muted-foreground" aria-hidden="true" />
+  </span>
+{/snippet}
+
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'group'}
@@ -641,7 +656,7 @@
       <Sidebar.MenuButton
         class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
           dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
-        isActive={chat.activeId === conversation.id}
+        isActive={activeConversationId === conversation.id}
         onclick={() => void selectConversation(conversation.id)}
         data-testid={`conversation-item-${conversation.id}`}
       >
@@ -738,6 +753,46 @@
   <Sidebar.Content class="px-2">
     <Sidebar.Group>
       <Sidebar.GroupContent>
+        {#if !narrow}
+          <!-- 工作台入口（D90）：管家之上，不参与分组；图标模式只剩图标。 -->
+          {#if collapsed}
+            <Sidebar.Menu class="items-center">
+              <Sidebar.MenuItem class="w-auto">
+                <Tooltip.Root>
+                  <Tooltip.Trigger
+                    class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
+                      transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
+                      dark:data-active:bg-[oklch(0.16_0_0)]"
+                    data-active={workbenchActive ? 'true' : undefined}
+                    aria-label={t('sidebar.workbench')}
+                    onclick={() => shell.openWorkbench()}
+                    data-testid="workbench-nav"
+                  >
+                    {@render workbenchIcon()}
+                  </Tooltip.Trigger>
+                  <Tooltip.Content side="right">{t('sidebar.workbench')}</Tooltip.Content>
+                </Tooltip.Root>
+              </Sidebar.MenuItem>
+            </Sidebar.Menu>
+          {:else}
+            <Sidebar.Menu class="mb-2">
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton
+                  class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
+                    dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
+                  isActive={workbenchActive}
+                  onclick={() => shell.openWorkbench()}
+                  data-testid="workbench-nav"
+                >
+                  {@render workbenchIcon()}
+                  <span class="min-w-0 flex-1 truncate text-left text-sm">
+                    {t('sidebar.workbench')}
+                  </span>
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            </Sidebar.Menu>
+          {/if}
+        {/if}
         {#if chat.conversations.length === 0}
           {#if !collapsed}
             <p class="px-3 py-2 text-xs text-muted-foreground">{t('sidebar.chatsEmpty')}</p>
@@ -753,7 +808,7 @@
                     class="relative flex size-12 cursor-pointer items-center justify-center rounded-xl
                       transition-colors hover:bg-sidebar-accent data-active:bg-[oklch(0.93_0_0)]
                       dark:data-active:bg-[oklch(0.16_0_0)]"
-                    data-active={chat.activeId === conversation.id ? 'true' : undefined}
+                    data-active={activeConversationId === conversation.id ? 'true' : undefined}
                     onclick={() => void selectConversation(conversation.id)}
                     oncontextmenu={(event) => openContextMenu(event, conversation.id)}
                     data-testid={`conversation-item-${conversation.id}`}
