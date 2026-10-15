@@ -117,8 +117,8 @@
   {/if}
 {:else if hasBotText}
   <div
-    class="max-w-full min-w-0 rounded-[18px] bg-muted px-3 py-2 text-sm
-      {merge.above ? 'rounded-tl-[6px]' : ''} {merge.below ? 'rounded-bl-[6px]' : ''}"
+    class="max-w-full min-w-0 rounded-[16px] bg-muted px-3 py-2 text-sm
+      {merge.above ? 'rounded-tl-[5px]' : ''} {merge.below ? 'rounded-bl-[5px]' : ''}"
     data-testid="bot-bubble"
   >
     <div class="streamdown-wrap min-w-0 [&_pre]:rounded-md">

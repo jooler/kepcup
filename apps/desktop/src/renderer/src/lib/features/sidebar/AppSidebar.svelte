@@ -575,7 +575,7 @@
         {@render conversationAvatar(conversation)}
         <span class="grid min-w-0 flex-1 gap-0.5 text-left leading-tight">
           <span class="flex items-center justify-between gap-1">
-            <span class="truncate text-sm font-medium" data-testid="conversation-name">
+            <span class="truncate text-sm" data-testid="conversation-name">
               {nameOf(conversation)}
             </span>
           </span>
@@ -584,7 +584,7 @@
             <span class="flex min-h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
               {#if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
                 <span
-                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
                   data-testid="unread-badge"
                 >
                   {conversation.unreadCount}
@@ -599,7 +599,7 @@
               {/if}
               {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
                 <span
-                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
+                  class="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
                   title={t('sidebar.pendingSuffix')}
                   data-testid="pending-badge"
                 >
@@ -695,7 +695,7 @@
                     {/if}
                     {#if (permissions.pendingByConversation[conversation.id] ?? 0) > 0}
                       <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-medium text-white"
+                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] text-white"
                         title={t('sidebar.pendingSuffix')}
                         data-testid="pending-badge"
                       >
@@ -703,7 +703,7 @@
                       </span>
                     {:else if (conversation.unreadCount ?? 0) > 0 && chat.currentId !== conversation.id}
                       <span
-                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground"
+                        class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground"
                         data-testid="unread-badge"
                       >
                         {conversation.unreadCount}
@@ -716,7 +716,7 @@
                     side="right"
                     class="flex max-w-64 flex-col items-stretch gap-0.5"
                   >
-                    <span class="truncate text-sm font-medium">{nameOf(conversation)}</span>
+                    <span class="truncate text-sm">{nameOf(conversation)}</span>
                     {#if previewOf(conversation).length > 0}
                       <span class="truncate text-xs opacity-80">{previewOf(conversation)}</span>
                     {/if}
