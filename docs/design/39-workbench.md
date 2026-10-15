@@ -277,7 +277,13 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | `create_memo` / `update_memo` | `body` / `id, body?, pinned?` | 「帮我记一下…」 |
 | `delete_memo` | `id` | 移入最近删除，可恢复 |
 
-工具注册清单要同步更新：`effects/classify.ts` 全部归为 `local`；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`。
+工具注册清单要同步更新：`effects/classify.ts` 的写工具归为 `local`、`list_*` 归为 `none`（`READ_ONLY_TOOLS` 里的工具必须是 `none`，tool-effects 单测强制）；`external/capabilities.ts` 的 `READ_ONLY_TOOLS` 加入 `list_*`，`DESTRUCTIVE_TOOLS` 加入 `close_todo`、`delete_memo`；shared `collaboration` 能力包的 `butlerTools` 加入全部八个（外部 Agent 的桥只注入属于某个包的工具）；`settings/context.ts`：`list_*` 读用户写的内容，登记为不可信，写工具登记为可信。
+
+落地（W2-butler）：
+
+- 工具在 `tools/workbench-tools.ts`，经 `ResponseToolDeps.workbench = { host, triggerFromUser }` 注册，仅当 `butler.isButler`、仅对话轮。工具执行处再用 `host.isButler(identity.botId)` 核对调用者（同 `dispatch/butler.ts` 的 `systemRole === 'butler'` 检查）。
+- `triggerFromUser` 由 orchestrator 在 run 开始时算定：`settings/context.ts` 的 `triggerFromUser(batch)` 且触发原因 ∈ `SETTING_DIRECT_TRIGGERS`，即 `effectiveMode` 的 `userTriggered` 口径；与设置工具共用同一份 `fromUser`。
+- 参数名 snake_case：`assignee` 为 `{ bot_id }` 或 `{ group_id, lead_bot_id? }`；`close_todo.reason` 只回显给管家，不写入事项（事项没有对应字段）。
 
 ### 5.2 权限边界（宿主强制）
 

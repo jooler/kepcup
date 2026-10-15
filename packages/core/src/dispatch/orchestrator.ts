@@ -17,6 +17,7 @@ import {
   PROFILE_CHANGE_FOLLOWUP_EVENT,
   TASK_MAX_TURNS,
   TURN_MAX_TURNS,
+  SETTING_DIRECT_TRIGGERS,
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
@@ -183,6 +184,7 @@ import { browserProfileKey, effectiveBrowserProfileId } from '../browser/profile
 import type { MemoryToolFacade } from '../tools/memory-tools.js';
 import type { ScheduleToolFacade } from '../tools/schedule-tools.js';
 import type { WatchToolFacade } from '../tools/watch-tools.js';
+import type { WorkbenchToolFacade } from '../tools/workbench-tools.js';
 import { applyProfileChanges } from '../memory/service.js';
 import {
   createSubagentFacade,
@@ -395,6 +397,11 @@ export interface OrchestratorDeps {
   handover?: HandoverToolFacade | undefined;
   /** D90 工作台：事项派发的交付追踪（lazy facade，缺省 = 不追踪）。 */
   todos?: OrchestratorTodoFacade | undefined;
+  /**
+   * D90 工作台（lazy facade from start.ts）：管家的事项 / 备忘工具与 `<workbench>` 上下文段
+   * （缺省 = 管家没有这些工具）。
+   */
+  workbench?: WorkbenchToolFacade | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -2693,6 +2700,7 @@ export class Orchestrator {
       userProfile?: string;
       myState?: string;
       schedules?: string;
+      workbench?: string;
       watches?: string;
       mailAccounts?: string;
       relevantMemories?: string;
@@ -3620,18 +3628,21 @@ export class Orchestrator {
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
       // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
       const untrusted = { touched: triggerCarriesUntrusted(batch.messages) };
+      // 本 run 的触发是否来自用户本人：设置工具的档位裁定与工作台工具的权限边界（D90 §6.2）共用。
+      // 工作台派发、委派代发、组件回传、定时 / 事件唤醒都不算。
+      const fromUser = triggerFromUser({
+        messages: batch.messages,
+        ...(batch.parts !== undefined
+          ? { partReasons: batch.parts.map((part) => part.reason) }
+          : {}),
+      });
       const settingsFacade =
         this.#deps.settingsCatalog !== undefined
           ? this.#deps.settingsCatalog.forRun({
               identity,
               triggerReason: batch.reason,
               // 任务的触发是 'task'（不在直改白名单里）：来源消息即使是用户的也不算本人直接发起。
-              triggerFromUser: triggerFromUser({
-                messages: batch.messages,
-                ...(batch.parts !== undefined
-                  ? { partReasons: batch.parts.map((part) => part.reason) }
-                  : {}),
-              }),
+              triggerFromUser: fromUser,
               isGroup: conv.type === 'group',
               isButler: bot.systemRole === 'butler',
               touchedUntrusted: () => untrusted.touched,
@@ -3819,11 +3830,17 @@ export class Orchestrator {
       const watchesSection =
         this.#deps.watch?.contextSection(batch.botId, batch.conversationId) ?? '';
       const mailSection = this.#deps.mail?.contextSection(batch.botId) ?? '';
+      // D90 <workbench>: the butler's turn only (counts + the items that need attention).
+      const workbenchSection =
+        !isTask && bot.systemRole === 'butler'
+          ? (this.#deps.workbench?.contextSection() ?? '')
+          : '';
       const memorySections = memoryFacade
         ? {
             userProfile: memoryFacade.profileCardSection(),
             myState: memoryFacade.myStateSection(batch.botId, batch.conversationId),
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
+            ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
             ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
             ...(mailSection.length > 0 ? { mailAccounts: mailSection } : {}),
             relevantMemories: await memoryFacade.relevantMemoriesSection({
@@ -3839,6 +3856,7 @@ export class Orchestrator {
           }
         : {
             ...(schedulesSection.length > 0 ? { schedules: schedulesSection } : {}),
+            ...(workbenchSection.length > 0 ? { workbench: workbenchSection } : {}),
             ...(watchesSection.length > 0 ? { watches: watchesSection } : {}),
             ...(mailSection.length > 0 ? { mailAccounts: mailSection } : {}),
           };
@@ -3865,6 +3883,17 @@ export class Orchestrator {
               }),
           // 管家（D70）：list_bots 人人可用，提议类工具仅管家。
           butler: { host: this.#butlerHost, isButler: bot.systemRole === 'butler' },
+          // D90 工作台：事项 / 备忘工具（仅管家、仅对话轮；权限边界看 fromUser）。
+          ...(this.#deps.workbench !== undefined
+            ? {
+                workbench: {
+                  host: this.#deps.workbench,
+                  // 与 effectiveMode（shared/settings-catalog/mode.ts）同一口径：触发批全是用户本人
+                  // 的普通消息，且触发原因在直改白名单里（direct / mention / reply）。
+                  triggerFromUser: fromUser && SETTING_DIRECT_TRIGGERS.has(batch.reason),
+                },
+              }
+            : {}),
           // D88 资产移交：注册与否随 butler.isButler（tools/index.ts）。
           ...(this.#deps.handover !== undefined ? { handover: this.#deps.handover } : {}),
           // 跨 Bot 委派（D71）：被委派 run 不注册（单跳的真正保障在宿主
