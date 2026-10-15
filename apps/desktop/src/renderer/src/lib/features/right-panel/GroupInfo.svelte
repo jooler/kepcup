@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { Grant } from '@kepcup/shared';
   import type { GroupMemberView } from '$lib/stores/chat.svelte';
-  import { Monitor } from '@lucide/svelte';
+  import { Monitor, Plus, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { contacts } from '$lib/stores/contacts.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { browserPages, hasBrowserPage } from '$lib/stores/browser-pages.svelte';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import ProjectSelector from '$lib/features/projects/ProjectSelector.svelte';
@@ -27,6 +29,53 @@
   const conversation = $derived(chat.current?.conversation ?? null);
 
   let detail = $state<GroupMemberView | null>(null);
+  let titleDraft = $state('');
+  let syncedTitle = $state<string | null>(null);
+  let addOpen = $state(false);
+  let addQuery = $state('');
+
+  const faces = $derived(
+    members.map((member) => ({
+      id: member.bot.id,
+      name: member.bot.name,
+      avatar: member.bot.avatar,
+    })),
+  );
+  const addable = $derived.by(() => {
+    const needle = addQuery.trim().toLowerCase();
+    return contacts.bots.filter((bot) => {
+      if (members.some((member) => member.bot.id === bot.id)) return false;
+      return needle.length === 0 || bot.name.toLowerCase().includes(needle);
+    });
+  });
+
+  $effect(() => {
+    const title =
+      chat.current?.conversation.id === conversationId
+        ? (chat.current.conversation.title ?? '')
+        : '';
+    if (title === syncedTitle) return;
+    syncedTitle = title;
+    titleDraft = title;
+  });
+
+  async function saveTitle(): Promise<void> {
+    const next = titleDraft.trim();
+    const current =
+      chat.current?.conversation.id === conversationId
+        ? (chat.current.conversation.title ?? '')
+        : '';
+    if (next.length === 0) {
+      titleDraft = current;
+      return;
+    }
+    if (next === current) return;
+    await chat.renameGroup(conversationId, next);
+  }
+
+  async function addMember(botId: string): Promise<void> {
+    if (await chat.addGroupMembers(conversationId, [botId])) addQuery = '';
+  }
   // 成员详情弹窗：仅当该 Bot 在本群对话已拉起浏览器时显示「查看浏览器」。
   const detailBrowserOpen = $derived(
     detail !== null && hasBrowserPage(browserPages.pages, detail.bot.id, conversationId),
@@ -54,11 +103,22 @@
 </script>
 
 <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm" data-testid="group-info">
-  <section class="space-y-1">
-    <p class="text-xs text-muted-foreground">{t('group.infoTitle')}</p>
-    <p class="font-medium" data-testid="group-info-title">
-      {chat.current?.conversation.title ?? ''}
-    </p>
+  <section class="flex flex-col items-center gap-3 pt-2">
+    <GroupAvatarStack members={faces} class="size-20" />
+    <input
+      bind:value={titleDraft}
+      maxlength={100}
+      class="w-full border-b border-transparent bg-transparent text-center text-base font-medium outline-none focus:border-border"
+      aria-label={t('group.renameLabel')}
+      data-testid="group-info-title"
+      onkeydown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          void saveTitle();
+        }
+      }}
+      onblur={() => void saveTitle()}
+    />
   </section>
 
   <section class="space-y-2">
@@ -67,7 +127,11 @@
     </p>
     <ul class="space-y-1" data-testid="group-member-cards">
       {#each members as member (member.bot.id)}
-        {@const memberBrowserOpen = hasBrowserPage(browserPages.pages, member.bot.id, conversationId)}
+        {@const memberBrowserOpen = hasBrowserPage(
+          browserPages.pages,
+          member.bot.id,
+          conversationId,
+        )}
         <li
           class="flex items-center gap-1 rounded-md border p-1.5"
           data-testid={`group-member-row-${member.bot.id}`}
@@ -91,6 +155,16 @@
               </span>
             </span>
           </button>
+          <button
+            type="button"
+            class="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={t('group.removeMember')}
+            title={t('group.removeMember')}
+            onclick={() => void chat.removeGroupMember(conversationId, member.bot.id)}
+            data-testid={`group-info-remove-${member.bot.id}`}
+          >
+            <X class="size-3.5" aria-hidden="true" />
+          </button>
           <!-- 与单聊右栏同一套 botId×conversationId：仅该成员在本群开着页面时显示。 -->
           {#if memberBrowserOpen}
             <Button
@@ -108,6 +182,55 @@
         </li>
       {/each}
     </ul>
+    <div>
+      <button
+        type="button"
+        class="flex items-center gap-2 rounded-md px-1 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        onclick={() => (addOpen = !addOpen)}
+        data-testid="group-info-add"
+      >
+        <Plus class="size-4" aria-hidden="true" />
+        {t('group.addMember')}
+      </button>
+      {#if addOpen}
+        <div
+          class="mt-1 rounded-xl border bg-background p-2 shadow-lg"
+          data-testid="group-info-add-menu"
+        >
+          <input
+            bind:value={addQuery}
+            placeholder={t('group.searchBots')}
+            class="mb-1 h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none"
+            data-testid="group-info-add-search"
+          />
+          <ul class="max-h-48 space-y-0.5 overflow-y-auto">
+            {#each addable as bot (bot.id)}
+              <li>
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-sm hover:bg-accent"
+                  onclick={() => void addMember(bot.id)}
+                  data-testid={`group-info-add-option-${bot.id}`}
+                >
+                  <BotAvatar
+                    botId={bot.id}
+                    name={bot.name}
+                    avatar={bot.avatar}
+                    class="size-6"
+                    animated={false}
+                  />
+                  <span class="min-w-0 truncate">{bot.name}</span>
+                </button>
+              </li>
+            {:else}
+              <li class="px-1 py-1.5 text-xs text-muted-foreground">
+                {t('groupCompose.emptyList')}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    </div>
   </section>
 
   <!-- 项目目录（P04）：群目录绑定在对话上，创建期隐藏。 -->

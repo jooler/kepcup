@@ -29,6 +29,7 @@
   import { createBotConversational } from '$lib/features/bot-setup';
   import * as Avatar from '$lib/components/ui/avatar';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
+  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Button } from '$lib/components/ui/button';
@@ -214,8 +215,7 @@
 
   async function openCreateGroup(): Promise<void> {
     plusOpen = false;
-    // 对话内群创建（19/D60）：直接创建「创建中」的群并进入，四问以卡片收集。
-    await chat.createGroupViaSetup();
+    chat.beginGroupCompose();
   }
 
   /**
@@ -520,17 +520,10 @@
   </button>
 {/snippet}
 
-<!-- 会话头像（展开/图标两模式共用）：群聊用绿色 Users 兜底，私聊用 Bot 头像。 -->
+<!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'group'}
-    <Avatar.Root class="size-10">
-      <Avatar.Fallback
-        data-testid="conversation-avatar"
-        class="bg-emerald-600 text-primary-foreground"
-      >
-        <Users class="size-5" aria-hidden="true" />
-      </Avatar.Fallback>
-    </Avatar.Root>
+    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-10" />
   {:else}
     <BotAvatar
       botId={conversation.directBotId ?? conversation.id}
@@ -566,8 +559,8 @@
            毛玻璃，提亮到 0.32 会和透出的底叠在一起，所以改压到 0.16，
            比侧栏底色 0.205 再暗一档。 -->
       <Sidebar.MenuButton
-        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.93_0_0)]
-          dark:data-active:bg-[oklch(0.16_0_0)] [&_svg]:size-auto"
+        class="h-auto min-w-0 flex-1 cursor-pointer gap-2 rounded-lg py-2 pr-4 pl-2 data-active:bg-[oklch(0.98_0_0)]
+          dark:data-active:bg-[oklch(0.5_0_0)] [&_svg]:size-auto"
         isActive={chat.currentId === conversation.id}
         onclick={() => void selectConversation(conversation.id)}
         data-testid={`conversation-item-${conversation.id}`}
@@ -765,7 +758,9 @@
                   <button
                     type="button"
                     class="flex w-full touch-none items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground select-none hover:bg-sidebar-accent hover:text-foreground
-                      {sectionDrag?.id === group.id ? 'cursor-grabbing opacity-50' : 'cursor-pointer'}"
+                      {sectionDrag?.id === group.id
+                      ? 'cursor-grabbing opacity-50'
+                      : 'cursor-pointer'}"
                     aria-expanded={!group.collapsed}
                     data-section-header
                     data-section-id={group.id}
@@ -776,10 +771,7 @@
                   >
                     <span class="min-w-0 flex-1 truncate">{sectionLabel(group.id)}</span>
                     {#if group.collapsed}
-                      <span
-                        class="shrink-0 tabular-nums"
-                        data-testid={`section-count-${group.id}`}
-                      >
+                      <span class="shrink-0 tabular-nums" data-testid={`section-count-${group.id}`}>
                         {group.count}
                       </span>
                     {/if}
@@ -787,11 +779,11 @@
                 {/if}
               {/if}
               {#if !group.collapsed && rows.length > 0}
-          <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
-            {#each rows as conversation (conversation.id)}
-              {@render conversationRow(conversation)}
-            {/each}
-          </Sidebar.Menu>
+                <Sidebar.Menu class={sectionLayout.showHeaders ? 'mt-1' : ''}>
+                  {#each rows as conversation (conversation.id)}
+                    {@render conversationRow(conversation)}
+                  {/each}
+                </Sidebar.Menu>
               {/if}
               {#if sectionLayout.showHeaders && groupIndex === sectionLayout.groups.length - 1 && sectionDrag !== null && sectionDrag.beforeId === null && !dropIsNoop(null, sectionDrag.id)}
                 <div
@@ -959,10 +951,8 @@
     </button>
     <button
       type="button"
-      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
       onclick={openCreateGroup}
-      disabled={contacts.bots.length === 0}
-      title={contacts.bots.length === 0 ? t('sidebar.botsEmpty') : undefined}
       data-testid="start-chat-create-group"
     >
       <span class="flex size-7 items-center justify-center rounded-full bg-muted">

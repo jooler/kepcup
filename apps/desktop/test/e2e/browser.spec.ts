@@ -13,8 +13,6 @@ import {
 } from '@playwright/test';
 import type { WebContentsView } from 'electron';
 import {
-import { createBotAndOpenChat } from './helpers/create-bot';
-
   isTaskRequest,
   startMockLlm,
   startTestWebServer,
@@ -25,6 +23,8 @@ import { createBotAndOpenChat } from './helpers/create-bot';
   type MockLlmStep,
   type TestWebServer,
 } from '@kepcup/testkit';
+import { createBotAndOpenChat } from './helpers/create-bot';
+import { createGroupViaUi } from './helpers/create-group';
 
 // P11 浏览器工具 e2e（docs/dev/phases/P11-browser.md 测试要求）：真实 Electron +
 // 本地网页夹具（startTestWebServer），经 mock 模型的工具调用环驱动真实主进程
@@ -232,33 +232,6 @@ function lastToolContent(llm: MockLlmServer): string {
     if (texts.length > 0) return texts[0]!;
   }
   return '';
-}
-
-async function createGroupViaUi(page: Page, title: string, memberNames: string[]): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="start-chat-create-group"]').click();
-  // 对话内创建（19/D60）：名称 → 主要事务 → 成员 → 目录（跳过）。
-  const card = (step: string) =>
-    page.locator(`[data-testid="group-setup-card"][data-step="${step}"]`);
-  await expect(card('title')).toBeVisible({ timeout: 15_000 });
-  await card('title').locator('[data-testid="group-setup-input"]').fill(title);
-  await card('title').locator('[data-testid="group-setup-submit"]').click();
-  await expect(card('purpose')).toBeVisible({ timeout: 15_000 });
-  await card('purpose').locator('[data-testid="group-setup-input"]').fill('协作处理日常事务');
-  await card('purpose').locator('[data-testid="group-setup-submit"]').click();
-  await expect(card('members')).toBeVisible({ timeout: 15_000 });
-  for (const name of memberNames) {
-    await card('members')
-      .locator('label', { hasText: name })
-      .locator('button[role="checkbox"]')
-      .click();
-  }
-  await card('members').locator('[data-testid="group-setup-submit"]').click();
-  await expect(card('project')).toBeVisible({ timeout: 15_000 });
-  await card('project').locator('[data-testid="group-setup-skip"]').click();
-  await expect(page.locator('[data-testid="conversation-name"]', { hasText: title })).toBeVisible({
-    timeout: 15_000,
-  });
 }
 
 async function mentionAndType(page: Page, botName: string, text: string): Promise<void> {
@@ -1362,7 +1335,9 @@ test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦�
   const { page, llm, web, app } = session;
   /** Visible windows (the main window only; a background page never shows). */
   const visibleWindows = () =>
-    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length);
+    app.evaluate(
+      ({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.isVisible()).length,
+    );
   /** webContents currently showing the fixture server (a kept background page would). */
   const fixturePages = (origin: string) =>
     app.evaluate(
@@ -1443,4 +1418,3 @@ test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦�
     await closeSession(session);
   }
 });
-

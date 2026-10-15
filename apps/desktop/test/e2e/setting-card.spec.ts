@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockChatRequest, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { createGroupViaUi } from './helpers/create-group';
 
 /**
  * 对话内设置卡（todo/conversational-app-setup.md §六，P0「e2e 一条：卡片 → 应用 → Bot 续答」）。
@@ -86,36 +87,6 @@ async function waitReady(page: Page): Promise<void> {
   if (await startBackdrop.isVisible()) {
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
   }
-}
-
-function groupSetupCard(page: Page, stepName: string) {
-  return page.locator(`[data-testid="group-setup-card"][data-step="${stepName}"]`);
-}
-
-async function createGroupViaUi(page: Page, title: string, memberNames: string[]): Promise<void> {
-  await page.locator('[data-testid="new-chat-button"]').click();
-  await page.locator('[data-testid="start-chat-create-group"]').click();
-  await expect(groupSetupCard(page, 'title')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'title').locator('[data-testid="group-setup-input"]').fill(title);
-  await groupSetupCard(page, 'title').locator('[data-testid="group-setup-submit"]').click();
-  await expect(groupSetupCard(page, 'purpose')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'purpose')
-    .locator('[data-testid="group-setup-input"]')
-    .fill('一起调设置');
-  await groupSetupCard(page, 'purpose').locator('[data-testid="group-setup-submit"]').click();
-  await expect(groupSetupCard(page, 'members')).toBeVisible({ timeout: 15_000 });
-  for (const name of memberNames) {
-    await groupSetupCard(page, 'members')
-      .locator('label', { hasText: name })
-      .locator('button[role="checkbox"]')
-      .click();
-  }
-  await groupSetupCard(page, 'members').locator('[data-testid="group-setup-submit"]').click();
-  await expect(groupSetupCard(page, 'project')).toBeVisible({ timeout: 15_000 });
-  await groupSetupCard(page, 'project').locator('[data-testid="group-setup-skip"]').click();
-  await expect(page.locator('[data-testid="conversation-name"]', { hasText: title })).toBeVisible({
-    timeout: 15_000,
-  });
 }
 
 async function mentionAndSend(page: Page, botName: string, text: string): Promise<void> {
@@ -251,4 +222,3 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
     await closeSession(session);
   }
 });
-

@@ -133,6 +133,25 @@ export const botProfileSchema = z.object({
 });
 export type BotProfile = z.infer<typeof botProfileSchema>;
 
+/**
+ * 画像还是空壳：除了名字（和头像）之外，简介、性格、职责、边界都没写。
+ * 群里随手建的 Bot 会是这种状态，单聊里要主动问定位，群聊里则按指令慢慢补。
+ */
+export function isSparseBotProfile(profile: BotProfile): boolean {
+  const texts = [
+    profile.identity.bio,
+    profile.persona.personality,
+    profile.persona.tone,
+    profile.persona.style,
+    profile.persona.values,
+    profile.persona.sample_dialogues,
+    profile.role.expertise,
+    profile.role.responsibilities,
+    ...profile.boundaries,
+  ];
+  return texts.every((text) => text.trim().length === 0);
+}
+
 export const botStatusSchema = z.enum(['active', 'deleted']);
 export type BotStatus = z.infer<typeof botStatusSchema>;
 
@@ -734,6 +753,19 @@ export const conversationSchema = z.object({
   createdAt: z.number(),
   /** Present in list output: the direct bot (single chat). */
   bot: botSchema.nullable().optional(),
+  /**
+   * 群成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
+   * 只在列表/详情视图上补，不入库。
+   */
+  memberPreviews: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        avatar: z.string().nullable(),
+      }),
+    )
+    .optional(),
   unreadCount: z.number().optional(),
   runningBotIds: z.array(z.string()).optional(),
   /**

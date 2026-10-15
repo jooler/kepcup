@@ -2,6 +2,7 @@ export * from './ids.js';
 export * from './errors.js';
 export * from './constants.js';
 export * from './domain/types.js';
+export * from './domain/group-title.js';
 export * from './domain/vendors.js';
 export * from './domain/agent-catalog.js';
 export * from './domain/connector-catalog.js';
