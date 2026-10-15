@@ -229,7 +229,7 @@ import {
 } from './tasks.js';
 import { DELEGATION_RESULT_CARD, DELEGATION_SENT_CARD, DelegationHost } from './delegation.js';
 import { ChainsService } from './chains.js';
-import { GroupTurnCoordinator } from './group-turn.js';
+import { GroupTurnCoordinator, type GroupRoundEnd } from './group-turn.js';
 import { lightModelRefForBot, triageOneBot } from './dispatcher.js';
 import {
   builtinModelRef,
@@ -272,6 +272,21 @@ export interface OrchestratorWatchFacade extends WatchToolFacade {
  * 的放弃分支）：Bot 据此得知用户放弃了配置，给出新的反馈。
  */
 export const SETUP_DISMISSED_EVENT = 'task_setup_dismissed';
+
+/**
+ * D90 workbench (lazy facade from start.ts): the todo a dispatched turn belongs to and the
+ * delivery bookkeeping the orchestrator reports (docs/design/39-workbench.md §3.5).
+ */
+export interface OrchestratorTodoFacade {
+  /** Title of the todo (「📋 标题」 snapshot); null when it no longer exists. */
+  titleOf(todoId: string): string | null;
+  /** The executor's reply settled the dispatch: delivered, awaiting the user's acceptance. */
+  settleDelivered(todoRunId: string, resultMessageId: string | null): void;
+  /** The group round ended with nobody taking the dispatch. */
+  settleUnclaimed(todoRunId: string): void;
+  /** The executor's turn failed. */
+  settleFailed(todoRunId: string): void;
+}
 
 export interface OrchestratorDeps {
   engine: AgentEngine;
@@ -370,6 +385,8 @@ export interface OrchestratorDeps {
    * 管家的 inspect_bot_assets / propose_handover，以及 propose_bot 的可用模型列表。
    */
   handover?: HandoverToolFacade | undefined;
+  /** D90 工作台：事项派发的交付追踪（lazy facade，缺省 = 不追踪）。 */
+  todos?: OrchestratorTodoFacade | undefined;
   /**
    * 对话内应用设置（todo/conversational-app-setup.md）：present 时对话轮与任务都注册
    * settings_search / settings_read / settings_change（按 run 绑定档位裁定上下文），
@@ -874,6 +891,7 @@ export class Orchestrator {
           batchId: input.batchId,
         }),
       publish: (event, payload) => deps.publish(event, payload),
+      onRoundEnded: (info) => this.#onGroupRoundEnded(info),
       triage: (input) =>
         triageOneBot({
           engine: deps.engine,
@@ -957,6 +975,60 @@ export class Orchestrator {
       this.#deliverDirectThroughGate(conv, conv.directBotId, [full], 'direct');
     }
     return { message: full, runId: this.#latestRunId(conversationId, conv.directBotId) };
+  }
+
+  /**
+   * D90 workbench dispatch: the host appends a visible user message on the user's behalf
+   * (`origin: 'workbench'`, with the todo and its run) and routes it exactly like a typed one —
+   * direct chat through the delivery gate, a group through GroupTurnCoordinator (a lead bot is
+   * a structured @, so the round has an explicit target; otherwise triage decides). It is the
+   * user's instruction: no proactive switch, quiet hours or daily cap apply, but the turn is
+   * not "the user themselves" (`triggerFromUser` false, like a D71 delegation).
+   */
+  dispatchWorkbenchMessage(input: {
+    conversationId: string;
+    text: string;
+    todoId: string;
+    todoRunId: string;
+    viaButler: boolean;
+    leadBotId: string | null;
+    onAppended?: ((message: Message) => void) | undefined;
+  }): { message: Message; runId: string | null } {
+    const conv = this.#deps.conversations.getOrThrow(input.conversationId);
+    if (conv.readOnly) {
+      throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
+    }
+    const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const message = this.#deps.messages.append({
+      conversationId: input.conversationId,
+      senderType: 'user',
+      kind: 'text',
+      text: input.text,
+      mentions: input.leadBotId !== null ? [input.leadBotId] : [],
+      batchId,
+      workbench: {
+        todoId: input.todoId,
+        todoRunId: input.todoRunId,
+        ...(input.viaButler ? { viaButler: true } : {}),
+      },
+    });
+    this.#deps.publish('message.created', { conversationId: input.conversationId, message });
+    this.#publishConversation(input.conversationId);
+    input.onAppended?.(message);
+    if (conv.type === 'group') {
+      this.#groupTurns.onUserBatch(input.conversationId, batchId, [message]);
+      return { message, runId: null };
+    }
+    if (conv.directBotId !== null) {
+      this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
+    }
+    return { message, runId: this.#latestRunId(input.conversationId, conv.directBotId) };
+  }
+
+  /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
+  hasTurnModel(botId: string): boolean {
+    if (this.#turnModelRef(botId).length > 0) return true;
+    return this.#agentIdOf(this.#deps.bots.get(botId)).length > 0;
   }
 
   /**
@@ -1817,6 +1889,166 @@ export class Orchestrator {
       );
     }
     return null;
+  }
+
+  // --- workbench delivery tracking (D90, docs/design/39-workbench.md §3.5) -----
+
+  /** The workbench dispatch (todo + run) in a message, if it is one. */
+  #workbenchRefOf(message: Message): { todoId: string; todoRunId: string } | null {
+    if (message.senderType !== 'user' || message.kind !== 'text') return null;
+    const content = message.content as { origin?: string; todoId?: unknown; todoRunId?: unknown };
+    if (content.origin !== 'workbench') return null;
+    if (typeof content.todoId !== 'string' || typeof content.todoRunId !== 'string') return null;
+    return { todoId: content.todoId, todoRunId: content.todoRunId };
+  }
+
+  /**
+   * The todo run a turn belongs to: its trigger holds the workbench dispatch message, or a
+   * task result of a turn that does (`origin_run_id` chain, like `#scheduleSourceOf`).
+   */
+  #todoRefOfRun(runId: string, depth = 0): { todoId: string; todoRunId: string } | null {
+    if (depth > 4) return null;
+    const run = this.#deps.runs.get(runId);
+    if (run === null) return null;
+    const parts = this.#deps.runs.triggerPartsOf(runId) ?? [
+      { reason: run.triggerReason, messageIds: run.triggerMessageIds },
+    ];
+    for (const part of parts) {
+      for (const messageId of part.messageIds) {
+        const message = this.#deps.messages.getById(messageId);
+        if (message === null) continue;
+        const direct = this.#workbenchRefOf(message);
+        if (direct !== null) return direct;
+        if (message.kind === 'task_event' && message.taskId !== null) {
+          const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
+          if (originRunId === null) continue;
+          const found = this.#todoRefOfRun(originRunId, depth + 1);
+          if (found !== null) return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The workbench todo a turn's reply belongs to (「📋 标题」 tag): a batch carrying a dispatch
+   * message, or the result of a task started by such a turn. Null for everything else.
+   */
+  #todoSourceOf(
+    batch: TriggerBatch,
+  ): { todoId: string; todoRunId: string; todoTitle: string } | null {
+    const facade = this.#deps.todos;
+    if (facade === undefined) return null;
+    try {
+      let ref: { todoId: string; todoRunId: string } | null = null;
+      for (const message of batch.messages) {
+        ref = this.#workbenchRefOf(message);
+        if (ref !== null) break;
+        if (message.kind === 'task_event' && message.taskId !== null) {
+          const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
+          ref = originRunId === null ? null : this.#todoRefOfRun(originRunId);
+          if (ref !== null) break;
+        }
+      }
+      if (ref === null) return null;
+      const todoTitle = facade.titleOf(ref.todoId);
+      return todoTitle === null ? null : { ...ref, todoTitle };
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'todo source lookup failed',
+      );
+      return null;
+    }
+  }
+
+  /** Whether a task started (directly or further down the chain) for this todo run is still open. */
+  #todoChainHasOpenTasks(conversationId: string, todoRunId: string, exceptRunId: string): boolean {
+    const open = this.#deps.runs.listTasks({
+      conversationId,
+      statuses: ['queued', 'running', 'waiting_approval', 'waiting_lease'],
+    });
+    return open.some((task) => {
+      if (task.originRunId === null || task.id === exceptRunId) return false;
+      return this.#todoRefOfRun(task.originRunId)?.todoRunId === todoRunId;
+    });
+  }
+
+  /**
+   * A supervisor turn reached a terminal state: if it belongs to a dispatched todo and no task
+   * of the same chain is still open, the todo run is delivered (the reply is the result).
+   * Anything untraceable leaves the todo in progress — tracking is an enhancement.
+   */
+  #trackTodoDelivery(run: Run): void {
+    const facade = this.#deps.todos;
+    if (facade === undefined || run.conversationId === null) return;
+    try {
+      const ref = this.#todoRefOfRun(run.id);
+      if (ref === null) return;
+      if (run.status === 'failed') {
+        // Only the turn that was handed the dispatch itself is the executor's failure.
+        const parts = this.#deps.runs.triggerPartsOf(run.id) ?? [];
+        const direct = parts.some((part) =>
+          part.messageIds.some((id) => {
+            const message = this.#deps.messages.getById(id);
+            return message !== null && this.#workbenchRefOf(message) !== null;
+          }),
+        );
+        if (direct) facade.settleFailed(ref.todoRunId);
+        return;
+      }
+      if (run.status !== 'completed') return;
+      if (this.#todoChainHasOpenTasks(run.conversationId, ref.todoRunId, run.id)) return;
+      let resultId = run.outputMessageIds[run.outputMessageIds.length - 1] ?? null;
+      if (resultId === null) {
+        // A silent turn (skip_reply) closing a chain whose earlier turn already replied.
+        const row = this.#deps.db
+          .prepare(
+            `select id from messages
+             where conversation_id = ? and sender_type = 'bot' and kind = 'text'
+               and json_extract(content_json, '$.todoRunId') = ?
+             order by seq desc limit 1`,
+          )
+          .get(run.conversationId, ref.todoRunId) as { id: string } | undefined;
+        resultId = row?.id ?? null;
+        if (resultId === null) return;
+      }
+      facade.settleDelivered(ref.todoRunId, resultId);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { runId: run.id, error: error instanceof Error ? error.message : String(error) },
+        'todo delivery tracking failed',
+      );
+    }
+  }
+
+  /**
+   * A group round ended (GroupTurnCoordinator): nobody claimed the dispatch (triage found no
+   * responder / `group_no_claim`), or every executed turn stayed silent without starting a task.
+   */
+  #onGroupRoundEnded(info: GroupRoundEnd): void {
+    const facade = this.#deps.todos;
+    if (facade === undefined || info.outcome === 'replied') return;
+    try {
+      const refs = info.messages
+        .map((message) => this.#workbenchRefOf(message))
+        .filter((ref): ref is { todoId: string; todoRunId: string } => ref !== null);
+      if (refs.length === 0) return;
+      if (info.outcome === 'silent') {
+        const started = info.runIds.some((runId) =>
+          this.#deps.runs
+            .listTasks({ conversationId: info.conversationId })
+            .some((task) => task.originRunId === runId),
+        );
+        if (started) return;
+      }
+      for (const ref of refs) facade.settleUnclaimed(ref.todoRunId);
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'group round tracking failed',
+      );
+    }
   }
 
   // --- startup recovery ------------------------------------------------------
@@ -3363,6 +3595,8 @@ export class Orchestrator {
         : undefined;
       // D80: a scheduled turn's messages carry the 「⏰ 标题」 tag.
       const scheduleSource = isTask ? null : this.#scheduleSourceOf(batch);
+      // D90: a workbench todo's turns carry the 「📋 标题」 tag and the delivery rule.
+      const todoSource = isTask ? null : this.#todoSourceOf(batch);
       // 对话内应用设置（§5.3）：本 run 是否调用过读取不可信内容的工具（tool_call 一发生即置位，
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
       // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
@@ -3391,6 +3625,7 @@ export class Orchestrator {
           : undefined;
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
+        ...(todoSource !== null ? { todoSource } : {}),
         messages,
         attachments: this.#deps.attachments,
         runs,
@@ -3886,6 +4121,8 @@ export class Orchestrator {
             ...(connectedAppsSection.length > 0 ? { connectedApps: connectedAppsSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
             ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
+            // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
+            ...(todoSource !== null ? { workbenchDispatch: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
@@ -4011,6 +4248,7 @@ export class Orchestrator {
           text: outcome.finalText,
           runId,
           ...(scheduleSource !== null ? { scheduleSource } : {}),
+          ...(todoSource !== null ? { todoSource } : {}),
         });
         this.#recordBotMessage(runId, message);
       }
@@ -4960,6 +5198,8 @@ export class Orchestrator {
     // Group turns advance on any terminal state (cancelled/failed included)
     // of a supervisor turn — never on a task (D75 design 30 §6.2).
     if (isTerminal(status) && run.loopType === 'turn') this.#groupTurns.onRunSettled(run);
+    // D90: a todo's dispatched turn (or the turn relaying its tasks' results) delivers the todo.
+    if (isTerminal(status) && run.loopType === 'turn') this.#trackTodoDelivery(run);
     // D71：被委派 run 的终态 → A 侧结果卡 + follow-up（按 run_id 匹配）。
     if (isTerminal(status)) {
       try {

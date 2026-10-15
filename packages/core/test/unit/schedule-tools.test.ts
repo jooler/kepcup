@@ -30,6 +30,7 @@ function fakeSchedule(overrides: Partial<Schedule> = {}): Schedule {
     title: '',
     origin: 'tool',
     commitmentId: null,
+    todoId: null,
     status: 'active',
     nextFireAt: 1_000,
     lastFiredAt: null,

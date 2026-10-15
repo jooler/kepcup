@@ -12,6 +12,22 @@ import {
   type TriageDecisionValue,
 } from './dispatcher.js';
 
+/**
+ * How a group round ended for the batch that opened it (D90 delivery tracking):
+ * - `no_claim`: triage found no responder (the `group_no_claim` prompt, or every bot said
+ *   no_action) — nobody took the batch;
+ * - `silent`: the targets ran but none produced a visible reply;
+ * - `replied`: at least one target replied.
+ */
+export interface GroupRoundEnd {
+  conversationId: string;
+  batchId: string;
+  messages: Message[];
+  outcome: 'no_claim' | 'silent' | 'replied';
+  /** The runs the round delivered to (empty for `no_claim`). */
+  runIds: string[];
+}
+
 export interface GroupTurnDeps {
   conversations: ConversationsService;
   bots: BotsService;
@@ -35,6 +51,8 @@ export interface GroupTurnDeps {
     batchId?: string | null;
   }): Message;
   publish<K extends keyof CoreEventsMap>(event: K, payload: CoreEventsMap[K]): void;
+  /** Reports how a round ended (workbench delivery tracking); optional in stripped setups. */
+  onRoundEnded?: ((info: GroupRoundEnd) => void) | undefined;
   /** Runs one bot's triage decision through the scheduler (parallel). */
   triage(input: {
     botId: string;
@@ -68,6 +86,8 @@ interface Turn {
   executed: string[];
   /** Display name of the most recent bot that actually replied. */
   lastReplier: string | null;
+  /** Every run the round delivered to (D90 tracking). */
+  runIds: string[];
 }
 
 interface PendingBatch {
@@ -304,6 +324,13 @@ export class GroupTurnCoordinator {
       );
       return;
     }
+    this.#reportRoundEnd({
+      conversationId,
+      batchId: pending.batchId,
+      messages: pending.messages,
+      outcome: 'no_claim',
+      runIds: [],
+    });
     if (decisions.some((d) => d.decision === 'not_mine')) {
       const members = [...this.#activeMembers(conversationId)];
       this.#deps.appendSystemMessage({
@@ -334,6 +361,7 @@ export class GroupTurnCoordinator {
       awaitingIdle: false,
       executed: [],
       lastReplier: null,
+      runIds: [],
     };
     this.#turns.set(conversationId, turn);
     this.#advance(turn);
@@ -375,6 +403,7 @@ export class GroupTurnCoordinator {
       reason: target.reason,
       ...(afterNote !== undefined ? { afterNote } : {}),
     });
+    if (turn.awaitingRunId !== null) turn.runIds.push(turn.awaitingRunId);
     this.#publishTurnState(turn.conversationId);
   }
 
@@ -386,8 +415,27 @@ export class GroupTurnCoordinator {
 
   #endTurn(turn: Turn): void {
     this.#turns.delete(turn.conversationId);
+    this.#reportRoundEnd({
+      conversationId: turn.conversationId,
+      batchId: turn.batchId,
+      messages: turn.messages,
+      outcome: turn.lastReplier !== null ? 'replied' : 'silent',
+      runIds: turn.runIds,
+    });
     this.#publishTurnState(turn.conversationId);
     this.#drainPending(turn.conversationId);
+  }
+
+  #reportRoundEnd(info: GroupRoundEnd): void {
+    try {
+      this.#deps.onRoundEnded?.(info);
+    } catch (error) {
+      // Tracking never breaks dispatch.
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'group round end hook failed',
+      );
+    }
   }
 
   #drainPending(conversationId: string): void {

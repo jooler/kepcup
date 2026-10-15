@@ -96,7 +96,7 @@ describe('TodoStore', () => {
     ).toEqual({ assignee_bot_id: null, assignee_group_id: null });
   });
 
-  it('sets the group assignee to null when the group conversation is deleted', () => {
+  it('keeps the group assignee when the group conversation is deleted (no FK: TodoService / reconcile own that)', () => {
     db.prepare(
       "insert into conversations (id, type, direct_bot_id, read_only, created_at) values ('conv_g', 'group', null, 0, 0)",
     ).run();
@@ -105,8 +105,49 @@ describe('TodoStore', () => {
       source: 'user',
       assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: null },
     });
+    const lead = store.insert({
+      title: 'b',
+      source: 'user',
+      assignee: { kind: 'group', conversationId: 'conv_g', leadBotId: 'bot_2' },
+    });
     db.prepare("delete from conversations where id = 'conv_g'").run();
-    expect(store.get(todo.id)?.assignee).toBeNull();
+    // Never silently degraded to a bot assignee ("group + lead" read as the lead bot).
+    expect(store.get(todo.id)?.assignee).toEqual({
+      kind: 'group',
+      conversationId: 'conv_g',
+      leadBotId: null,
+    });
+    expect(store.get(lead.id)?.assignee).toEqual({
+      kind: 'group',
+      conversationId: 'conv_g',
+      leadBotId: 'bot_2',
+    });
+  });
+
+  it('derives closed_at from the status: stamped entering done / cancelled, kept while closed, cleared on reopen', () => {
+    const todo = store.insert({ title: 'a', source: 'user' });
+    now = 2_000;
+    expect(store.update(todo.id, { status: 'done' })?.closedAt).toBe(2_000);
+    now = 3_000;
+    // Editing a closed todo does not move the closing time.
+    expect(store.update(todo.id, { title: 'b' })?.closedAt).toBe(2_000);
+    expect(store.update(todo.id, { status: 'cancelled' })?.closedAt).toBe(2_000);
+    expect(store.update(todo.id, { status: 'draft' })?.closedAt).toBeNull();
+    now = 4_000;
+    expect(store.update(todo.id, { status: 'cancelled' })?.closedAt).toBe(4_000);
+  });
+
+  it('reassignBot moves only open todos', () => {
+    const open = store.insert({ title: 'a', source: 'user', assignee: { kind: 'bot', botId: 'bot_1' } });
+    const done = store.insert({
+      title: 'b',
+      source: 'user',
+      assignee: { kind: 'bot', botId: 'bot_1' },
+      status: 'done',
+    });
+    expect(store.reassignBot('bot_1', 'bot_2')).toBe(1);
+    expect(store.get(open.id)?.assignee).toEqual({ kind: 'bot', botId: 'bot_2' });
+    expect(store.get(done.id)?.assignee).toEqual({ kind: 'bot', botId: 'bot_1' });
   });
 
   it('updates fields, bumps updated_at and records closure', () => {
@@ -238,6 +279,21 @@ describe('TodoStore', () => {
         messageId: 'msg_2',
       });
       expect(store.updateRun('tdr_missing', { status: 'failed' })).toBeNull();
+    });
+
+    it('derives settled_at from the status when not given', () => {
+      const todo = store.insert({ title: 'a', source: 'user' });
+      now = 5_000;
+      const run = store.insertRun({ todoId: todo.id, conversationId: 'conv_1' });
+      expect(run.settledAt).toBeNull();
+      now = 5_500;
+      expect(store.updateRun(run.id, { messageId: 'msg_1' })?.settledAt).toBeNull();
+      now = 6_000;
+      expect(store.updateRun(run.id, { status: 'failed' })?.settledAt).toBe(6_000);
+      now = 7_000;
+      // A later result keeps the first settlement time; going back clears it.
+      expect(store.updateRun(run.id, { status: 'delivered', resultMessageId: 'm' })?.settledAt).toBe(6_000);
+      expect(store.updateRun(run.id, { status: 'dispatched' })?.settledAt).toBeNull();
     });
 
     it('lists unsettled runs of one conversation in dispatch order', () => {

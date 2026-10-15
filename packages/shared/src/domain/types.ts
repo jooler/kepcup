@@ -828,6 +828,11 @@ export const textContentSchema = z.object({
    */
   todoId: z.string().optional(),
   todoRunId: z.string().optional(),
+  /**
+   * origin = 'workbench' 且事项由管家创建（source = 'butler'）时为 true：派发卡可标「管家代你安排」，
+   * 记忆反思不把这条文字当作用户原话（D90 §4.4）。
+   */
+  viaButler: z.boolean().optional(),
   /** origin = 'widget'（D87 P4 L3）时发出它的组件与版本：用户经组件回传、确认后发出的消息。 */
   widgetId: z.string().optional(),
   widgetVersion: z.number().int().optional(),

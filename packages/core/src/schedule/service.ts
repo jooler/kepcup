@@ -102,6 +102,37 @@ export interface CreateFromWhenInput {
   origin: ScheduleOrigin;
 }
 
+/**
+ * D90: what a due workbench schedule hands off to. Implemented by TodoService (wired
+ * after both services exist, so the dependency stays one-directional at construction).
+ */
+export interface WorkbenchDispatchPort {
+  /**
+   * Dispatches the todo of a due schedule (visible user message, routed like a user
+   * message). Throws when the todo can no longer be dispatched — the schedule is then
+   * cancelled and the todo falls back to draft.
+   */
+  dispatchScheduled(input: {
+    todoId: string;
+    scheduleId: string;
+    fireAt: number;
+    /** >1 minute late (missed while the app was closed / asleep), else null. */
+    lateByMs: number | null;
+  }): void;
+}
+
+/** Creates a workbench todo's schedule (D90): `when` is ISO 8601 or cron (never 'now'). */
+export interface CreateForTodoInput {
+  todoId: string;
+  /** Null: group assignee without a lead bot. */
+  botId: string | null;
+  conversationId: string;
+  when: string;
+  timezone?: string | null | undefined;
+  title: string;
+  note: string;
+}
+
 /** A validated `when` (D80 validateWhen). */
 export type ParsedWhen =
   | { kind: 'once'; runAt: number; timezone: string }
@@ -145,6 +176,8 @@ export class ScheduleService {
   #started = false;
   /** Set when a tick threw (BR-P10-003): the next re-arm backs off. */
   #tickFailed = false;
+  /** D90: where due workbench schedules go (null until TodoService attaches). */
+  #workbench: WorkbenchDispatchPort | null = null;
 
   constructor(deps: ScheduleServiceDeps) {
     this.#deps = deps;
@@ -153,6 +186,11 @@ export class ScheduleService {
   }
 
   // --- lifecycle -------------------------------------------------------------
+
+  /** D90: attaches the workbench dispatcher (TodoService) after construction. */
+  attachWorkbench(port: WorkbenchDispatchPort): void {
+    this.#workbench = port;
+  }
 
   /** Loads active schedules and arms the single timer (startup). */
   start(): void {
@@ -327,6 +365,85 @@ export class ScheduleService {
       : this.createCron({ ...common, expression: parsed.expression, timezone: parsed.timezone });
   }
 
+  /**
+   * D90 workbench: the schedule of a todo (origin 'workbench'). The caller (TodoService)
+   * validated the assignee — bot active, group writable, lead bot a member — so none of
+   * `#assertFireable`'s checks run here (a group without a lead bot has no bot id at all).
+   * The receipt card in the target conversation reads 「工作台安排：「标题」· 时间」.
+   */
+  createForTodo(input: CreateForTodoInput): Schedule {
+    const parsed = this.validateWhen(input.when, input.timezone);
+    const conversation = this.#deps.conversations.get(input.conversationId);
+    if (!conversation || conversation.readOnly) {
+      throw new AppError('NOT_FOUND', '对话不存在或已删除');
+    }
+    const title = input.title.trim().replace(/\s+/g, ' ');
+    if (title.length === 0) throw new AppError('INVALID_INPUT', '事项标题不能为空');
+    const row = this.store.insert({
+      botId: input.botId,
+      conversationId: input.conversationId,
+      kind: parsed.kind,
+      ...(parsed.kind === 'once'
+        ? { runAt: parsed.runAt, nextFireAt: parsed.runAt }
+        : { cron: parsed.expression, nextFireAt: parsed.nextFireAt }),
+      timezone: parsed.timezone,
+      note: workbenchNote(input.note, title),
+      title,
+      origin: 'workbench',
+      todoId: input.todoId,
+    });
+    this.#reload();
+    this.#afterCreate(row);
+    return row;
+  }
+
+  /**
+   * D90: moves an active workbench schedule to a new time in place (no cancel + rebuild:
+   * the timeline keeps one receipt card), then rewrites the card's time and text.
+   */
+  reschedule(id: string, when: string, timezone?: string | null): Schedule {
+    const row = this.store.get(id);
+    if (row === null) throw new AppError('NOT_FOUND', `定时任务 ${id} 不存在`);
+    if (row.status !== 'active') throw new AppError('INVALID_INPUT', '该任务已结束，无法改期');
+    const parsed = this.validateWhen(when, timezone);
+    const updated = this.store.updateTiming(
+      id,
+      parsed.kind === 'once'
+        ? {
+            kind: 'once',
+            runAt: parsed.runAt,
+            cron: null,
+            timezone: parsed.timezone,
+            nextFireAt: parsed.runAt,
+          }
+        : {
+            kind: 'cron',
+            runAt: null,
+            cron: parsed.expression,
+            timezone: parsed.timezone,
+            nextFireAt: parsed.nextFireAt,
+          },
+    );
+    if (updated === null) throw new AppError('NOT_FOUND', `定时任务 ${id} 不存在`);
+    this.#syncCards(updated);
+    this.#reload();
+    return updated;
+  }
+
+  /** D90: the todo was renamed — the schedule title (and its receipt card) follows. */
+  retitle(id: string, title: string, note?: string): Schedule | null {
+    const row = this.store.get(id);
+    if (row === null) return null;
+    const cleaned = title.trim().replace(/\s+/g, ' ');
+    if (cleaned.length === 0) return row;
+    const updated = this.store.updateTiming(id, {
+      title: cleaned,
+      ...(note !== undefined ? { note: workbenchNote(note, cleaned) } : {}),
+    });
+    if (updated !== null && updated.status === 'active') this.#syncCards(updated);
+    return updated;
+  }
+
   /** The schedule's timing in words (「每个工作日 09:00」), in the user's zone. */
   describeWhen(row: Pick<Schedule, 'kind' | 'runAt' | 'cron' | 'timezone'>): string {
     return describeScheduleWhen(row, {
@@ -345,13 +462,20 @@ export class ScheduleService {
     if (bot === null) return [];
     const behavior = bot.profile.behavior;
     const warnings: string[] = [];
-    if (!behavior.proactive) {
+    // Workbench dispatches are the user's own instruction (D90): the proactive switch and
+    // quiet hours do not hold them back — quiet hours only get a heads-up.
+    const workbench = row.origin === 'workbench';
+    if (!behavior.proactive && !workbench) {
       warnings.push('该 Bot 已关闭主动消息：到点不会发消息，需要用户在 Bot 设置里打开「主动消息」。');
     }
     const window = parseQuietHours(behavior.quiet_hours);
     if (window !== null && row.nextFireAt !== null && inQuietHours(row.nextFireAt, window, this.#deps.timeZone)) {
       const [start, end] = behavior.quiet_hours ?? ['', ''];
-      warnings.push(`触发时间落在免打扰时段（${start}–${end}），会推迟到免打扰结束后再发。`);
+      warnings.push(
+        workbench
+          ? `触发时间落在该 Bot 的免打扰时段（${start}–${end}）：工作台派发不受免打扰限制，会照常在这个时间发出。`
+          : `触发时间落在免打扰时段（${start}–${end}），会推迟到免打扰结束后再发。`,
+      );
     }
     return warnings;
   }
@@ -390,7 +514,8 @@ export class ScheduleService {
     if (row.origin !== 'offer') {
       // The user said yes in words and the bot scheduled it directly: the
       // pending offer for the same thing must not create a second one later.
-      if (row.botId !== null) {
+      // (A workbench row is the user's own todo, not a bot's answer to an offer.)
+      if (row.botId !== null && row.origin !== 'workbench') {
         this.#resolvePendingOffers(row.botId, row.conversationId, 'superseded', scheduleDisplayTitle(row));
       }
       this.#appendReceipt(row);
@@ -410,6 +535,7 @@ export class ScheduleService {
       timezone: row.timezone,
       origin: row.origin,
       status: row.status,
+      ...(row.todoId !== null ? { todoId: row.todoId } : {}),
     };
   }
 
@@ -417,6 +543,10 @@ export class ScheduleService {
   #receiptText(row: Schedule, status: Schedule['status']): string {
     const title = scheduleDisplayTitle(row);
     const when = this.describeWhen(row);
+    if (row.origin === 'workbench') {
+      const suffix = status === 'cancelled' ? '（已取消）' : status === 'done' ? '（已完成）' : '';
+      return `工作台安排：「${title}」· ${when}${suffix}`;
+    }
     if (status === 'cancelled') return `定时任务「${title}」（${when}）已取消`;
     if (status === 'done') return `定时任务「${title}」（${when}）已完成`;
     return row.origin === 'commitment'
@@ -454,7 +584,7 @@ export class ScheduleService {
   }
 
   /** Receipt and accepted-offer cards carry `schedule.id`; their status follows the row. */
-  #syncCards(row: Schedule): void {
+  #syncCards(row: Schedule, cardText?: string): void {
     this.#publishChanged(row);
     if (this.#deps.messages === undefined) return;
     try {
@@ -470,10 +600,23 @@ export class ScheduleService {
         const isOffer = (card?.content as { event?: string } | undefined)?.event === SCHEDULE_OFFER_EVENT;
         this.#deps.db
           .prepare(
-            `update messages set content_json = json_set(content_json, '$.schedule.status', ?, '$.text', ?)
+            `update messages set content_json = json_set(content_json,
+               '$.schedule.status', ?, '$.schedule.kind', ?, '$.schedule.runAt', ?,
+               '$.schedule.cron', ?, '$.schedule.timezone', ?, '$.schedule.title', ?, '$.text', ?)
              where id = ?`,
           )
-          .run(row.status, isOffer ? this.#offerText(row, 'accepted', row.status) : this.#receiptText(row, row.status), id);
+          .run(
+            row.status,
+            row.kind,
+            row.runAt,
+            row.cron,
+            row.timezone,
+            scheduleDisplayTitle(row),
+            isOffer
+              ? this.#offerText(row, 'accepted', row.status)
+              : (cardText ?? this.#receiptText(row, row.status)),
+            id,
+          );
         this.#publishMessageUpdated(id);
       }
     } catch (error) {
@@ -516,7 +659,12 @@ export class ScheduleService {
       lines.push(
         '你在本对话中的有效定时任务（已有的不要重复提议或创建）：',
         untrustedBlock(
-          shown.map((row) => `- [${row.id}] ${scheduleDisplayTitle(row)}：${this.describeWhen(row)}`).join('\n'),
+          shown
+            .map(
+              (row) =>
+                `- [${row.id}] ${scheduleDisplayTitle(row)}：${this.describeWhen(row)}${row.origin === 'workbench' ? '（工作台派给你的，不能自行取消）' : ''}`,
+            )
+            .join('\n'),
         ),
       );
       if (rows.length > shown.length) lines.push(`（另有 ${rows.length - shown.length} 个，用 list_schedules 查看）`);
@@ -827,8 +975,60 @@ export class ScheduleService {
     this.#fire(row, payload.fireAt);
   }
 
+  /**
+   * D90: a due workbench schedule hands the todo to TodoService, which appends the visible
+   * dispatch message. No guardrail (the user's own instruction), no internal
+   * `schedule_fired` event; the once → done / cron → next-occurrence advance is the same.
+   * Must run before the null-bot check below: a group todo without a lead bot has no bot id.
+   */
+  #fireWorkbench(row: Schedule, fireAt: number): void {
+    const port = this.#workbench;
+    if (port === null || row.todoId === null) {
+      this.#deps.logger.warn(
+        { scheduleId: row.id },
+        'workbench schedule fired without a dispatcher or todo; cancelling',
+      );
+      this.#setStatus(row, 'cancelled');
+      this.#reload();
+      return;
+    }
+    const now = this.#deps.clock.now();
+    const lateByMs = now - fireAt;
+    try {
+      port.dispatchScheduled({
+        todoId: row.todoId,
+        scheduleId: row.id,
+        fireAt,
+        lateByMs: isLateEnough(lateByMs) ? lateByMs : null,
+      });
+    } catch (error) {
+      // The todo can no longer be dispatched (gone / cancelled / executor deleted):
+      // TodoService already moved it back to draft; this schedule can never fire again.
+      this.#deps.logger.warn(
+        { scheduleId: row.id, todoId: row.todoId, error: error instanceof Error ? error.message : String(error) },
+        'workbench dispatch failed; cancelling schedule',
+      );
+      this.#setStatus(row, 'cancelled');
+      this.#reload();
+      return;
+    }
+    this.store.update(row.id, { lastFiredAt: now });
+    if (row.kind === 'once') {
+      this.#setStatus(row, 'done');
+    } else {
+      this.store.update(row.id, {
+        nextFireAt: nextCronFireAt(row.cron ?? '', row.timezone, now),
+      });
+    }
+    this.#reload();
+  }
+
   #fire(row: Schedule, fireAt: number): void {
     try {
+      if (row.origin === 'workbench') {
+        this.#fireWorkbench(row, fireAt);
+        return;
+      }
       const botId = row.botId;
       const bot = botId === null ? null : this.#deps.bots.get(botId);
       const conversation = this.#deps.conversations.get(row.conversationId);
@@ -1030,11 +1230,20 @@ export class ScheduleService {
 
   // --- queries & RPC -----------------------------------------------------------
 
-  cancel(id: string): Schedule {
+  cancel(id: string, options: { reassigned?: boolean } = {}): Schedule {
     const row = this.store.get(id);
     if (row === null) throw new AppError('NOT_FOUND', `定时任务 ${id} 不存在`);
     if (row.status !== 'active') throw new AppError('INVALID_INPUT', '该任务已结束，无法取消');
-    this.#setStatus(row, 'cancelled');
+    if (options.reassigned === true && row.origin === 'workbench') {
+      // D90: a reassigned todo's old receipt card reads 「已改派」, not 「已取消」.
+      this.store.update(row.id, { status: 'cancelled', nextFireAt: null });
+      this.#syncCards(
+        { ...row, status: 'cancelled' },
+        `工作台安排：「${scheduleDisplayTitle(row)}」· ${this.describeWhen(row)}（已改派）`,
+      );
+    } else {
+      this.#setStatus(row, 'cancelled');
+    }
     this.#reload();
     return this.store.get(id) ?? row;
   }
@@ -1093,6 +1302,7 @@ export class ScheduleService {
         title: row.title,
         origin: row.origin,
         commitmentId: target.commitmentId ?? null,
+        todoId: row.todoId,
         nextFireAt,
       });
       created = inserted;
@@ -1198,6 +1408,10 @@ export class ScheduleService {
     if (row === null || row.botId !== botId) {
       return { ok: false, message: '定时任务不存在，或不是你创建的任务' };
     }
+    // D90: a todo the user dispatched from the workbench is the user's, not the bot's.
+    if (row.origin === 'workbench') {
+      return { ok: false, message: '这是用户在工作台派的事项，不能自行取消' };
+    }
     if (row.status !== 'active') return { ok: false, message: '该任务已结束' };
     this.#setStatus(row, 'cancelled');
     this.#reload();
@@ -1233,7 +1447,9 @@ export class ScheduleService {
 
   /** Live guard verdict for an active task that cannot fire right now. */
   #deferredReason(row: Schedule, profile: BotProfile | null, now: number): string | null {
+    // Workbench rows are not held back by the proactive guardrails (D90).
     if (row.status !== 'active' || profile === null || row.botId === null) return null;
+    if (row.origin === 'workbench') return null;
     const verdict = this.#verdictFor(profile, row.botId, now);
     return verdict.kind === 'defer' ? guardReasonText(verdict.reason) : null;
   }
@@ -1247,6 +1463,12 @@ export class ScheduleService {
       isEvent: false,
     });
   }
+}
+
+/** The schedule `note` of a workbench row: the todo's notes (clipped), else its title. */
+function workbenchNote(note: string, title: string): string {
+  const cleaned = note.trim();
+  return (cleaned.length > 0 ? cleaned : title).slice(0, NOTE_MAX_CHARS);
 }
 
 function isValidTimeZone(timeZone: string): boolean {

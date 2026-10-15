@@ -526,7 +526,9 @@ CREATE TABLE schedules (
   origin          TEXT NOT NULL DEFAULT 'tool'
                   CHECK (origin IN ('tool', 'offer', 'proposal', 'commitment', 'workbench')),
   -- D90（main 0037）：
-  todo_id         TEXT REFERENCES todos(id) ON DELETE SET NULL   -- origin = 'workbench' 时指向事项
+  todo_id         TEXT REFERENCES todos(id) ON DELETE SET NULL,  -- origin = 'workbench' 时指向事项
+  CHECK (bot_id IS NOT NULL OR origin = 'workbench'),
+  CHECK (todo_id IS NULL OR origin = 'workbench')   -- 单向：事项硬删会把 todo_id 置空
 );
 CREATE INDEX schedules_next ON schedules(status, next_fire_at);
 CREATE INDEX schedules_todo ON schedules(todo_id);
@@ -608,7 +610,7 @@ CREATE TABLE todos (
   title             TEXT NOT NULL,                   -- <= 120 字（TODO_TITLE_MAX_CHARS）
   notes             TEXT NOT NULL DEFAULT '',        -- <= 4000 字（TODO_NOTES_MAX_CHARS）；派发时给执行者
   assignee_bot_id   TEXT,                            -- Bot 执行者；群执行者时 = 可选的负责 Bot
-  assignee_group_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  assignee_group_id TEXT,                            -- 群执行者；不设 FK（删群由 TodoService / 对账处理）
   status            TEXT NOT NULL CHECK (status IN
                       ('draft', 'scheduled', 'in_progress', 'delivered', 'done', 'cancelled')),
   source            TEXT NOT NULL CHECK (source IN ('user', 'butler')),
@@ -644,7 +646,7 @@ CREATE TABLE memos (
 CREATE INDEX memos_live ON memos(deleted_at, pinned DESC, updated_at DESC);
 ```
 
-- **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'group', conversationId, leadBotId}` / `null`）。`assignee_bot_id` 不设 FK：Bot 行是占位行、id 不复用。
+- **执行者编码**：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。shared 层表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'group', conversationId, leadBotId}` / `null`）。`assignee_bot_id` 与 `assignee_group_id` 都不设 FK：Bot 行是占位行、id 不复用；群若用 `ON DELETE SET NULL`，删群后「群 G + 负责 Bot B」会被读成 Bot B 的执行者、「群已解散」的原因也丢了，所以由 TodoService（`lifecycle.deleteConversation` 的显式钩子）与对账处理。
 - **不变式**：有时间 ⇒ 必有执行者；有排期 ⇔ 存在 `schedules.todo_id` 指向该事项的 active 行。时间只存在 schedule 上。
 - **状态**：`draft → scheduled → in_progress → delivered → done`，任意未结束状态可 `cancelled`；`done` / `cancelled` 经 `reopen` 回 `draft`。`blocked_reason` 只在退回草案时写（「负责 Bot 已删除」「群已解散」「群里无人认领」……）。
 - **执行记录**：`todo_runs` 一次派发一条；周期事项每次触发各一条。`conversation_id` 不设 FK，对话删了记录仍可读；`message_id` / `result_message_id` 只存 id。
@@ -1086,7 +1088,7 @@ D88 移交复制 Wiki（P2，`WikiService.copyForHandover`，无迁移）：来�
 | chains | 删除 | P05 |
 | 各 Bot 记忆中 `origin_conversation_id` 为该对话的承诺 | 置为 `void` | P07 |
 | schedules | 删除 | P10 |
-| todos 中以该对话为群执行者的行 | `assignee_group_id` 置空（FK `ON DELETE SET NULL`）；随后由对账退回 `draft`（原因「群已解散」），`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
+| todos 中以该对话为群执行者的行 | 删除前由 TodoService 钩子退回 `draft`（原因「群已解散」）并清执行者；漏掉时启动 / `schedules.changed` 对账兜底（`assignee_group_id` 无 FK，会话不存在或已只读都算）；`todo_runs` 保留（`conversation_id` 无 FK） | D90 |
 | watches | 删除 | D79 |
 | stickies（含 global：来源对话是所有者） | 删除（conversations FK 级联） | 便签持久化 |
 | 在该对话发起的 bot_handovers / bot_handover_items | 删除（conversations FK 级联；待确认的移交卡先随 approvals 取消） | D88 |
