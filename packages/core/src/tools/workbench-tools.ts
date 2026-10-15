@@ -55,7 +55,10 @@ export interface WorkbenchToolFacade {
   createTodo(
     input: WorkbenchTodoInput & { title: string; memoId?: string | undefined; source: 'butler' },
   ): { todo: TodoEntry; warnings: string[] };
-  updateTodo(id: string, input: WorkbenchTodoInput): { todo: TodoEntry; warnings: string[] };
+  updateTodo(
+    id: string,
+    input: WorkbenchTodoInput,
+  ): { todo: TodoEntry; warnings: string[]; notified?: boolean };
   /** 立即开始一条草案 / 已排期事项（周期事项保留周期，只是额外执行一次）。 */
   startTodo(id: string, actor: 'user' | 'butler'): TodoEntry;
   completeTodo(id: string): TodoEntry;
@@ -95,6 +98,15 @@ export const WORKBENCH_EXTERNAL_CONTENT_MESSAGE =
 /** create_todo(now) 的重复派发窗口：这段时间内管家已建过同标题、同执行者且已派出的事项，就不再建。 */
 const DUPLICATE_DISPATCH_WINDOW_MS = 2 * 60_000;
 
+/**
+ * 只改标题 / 说明时任何一轮都放行的事项状态（D90 §6.2）：草案（有无执行者都行）、已排期、进行中。
+ * 已交付 / 已完成 / 已取消仍走闸门。
+ */
+const TEXT_EDIT_OPEN_STATUSES: ReadonlySet<TodoStatus> = new Set([
+  'draft',
+  'scheduled',
+  'in_progress',
+]);
 const LIST_LIMIT_DEFAULT = 30;
 const LIST_LIMIT_MAX = 100;
 const MEMO_LINE_CHARS = 300;
@@ -510,7 +522,8 @@ export function buildWorkbenchTools(input: {
     description:
       '修改一条未关闭的事项：改标题 / 说明，指派或改派执行者（assignee），排期或改期（when）。clear_assignee=true 清空执行者（同时清掉排期，退回草案）；clear_when=true 取消排期（退回草案）。已派发（进行中 / 待验收）的事项不能再改派或改期。' +
       '周期事项（cron 排期）上 when="now" 的意思是「额外执行一次、保留周期」；要停掉周期用 close_todo（outcome="cancelled"）或 clear_when=true。一次性排期的事项 when="now" 则是把它改成现在就开始。' +
-      '改派 / 改期 / 立即开始，以及修改已有执行者或已排期事项的标题和说明（新文字会同步给执行者），只能在用户本人发起、且本轮没读过外部内容（邮件 / 网页 / 附件）的轮次里做；其它情况只能改没有执行者的草案的标题和说明，被拒绝时向用户复述要做的事（标题、说明、执行者、时间）等确认。要清空执行者或排期请用 clear_assignee / clear_when，不要传 null。',
+      '改派 / 改期 / 立即开始只能在用户本人发起、且本轮没读过外部内容（邮件 / 网页 / 附件）的轮次里做，被拒绝时向用户复述要做的事（标题、说明、执行者、时间）等确认。' +
+      '只改标题 / 说明在草案、已排期、进行中的事项上任何一轮都可以：排期的到点时带上新内容；进行中的，执行者会收到一条「事项更新」通知并自行决定是否调整做法（不会被打断）——只用来补充或修正原要求，不要借此改派或下新任务。要清空执行者或排期请用 clear_assignee / clear_when，不要传 null。',
     parameters: Type.Object({
       id: Type.String({ description: '事项 id（形如 todo_...，先用 list_todos 查）' }),
       title: Type.Optional(
@@ -577,10 +590,12 @@ export function buildWorkbenchTools(input: {
           const blocked = actionGate();
           if (blocked !== null) return blocked;
         } else {
-          // 只改标题 / 说明：无执行者的纯草案放行（无副作用）；其它事项（已有执行者或已排期）改文字会
-          // 同步进排期、到点派给执行者，等同派活，走同一道闸门。
+          // 只改标题 / 说明：草案（有无执行者都行）、已排期、进行中的事项任何一轮都放行。文字改动
+          // 只是补充说明——排期的到点时带上新内容，进行中的由宿主发一条「事项更新」给执行者，执行者
+          // 自行判断是否调整做法，不打断它。防线：管家改过文字后事项 source='butler'，派发与更新
+          // 通知都按不可信内容包裹。已交付 / 已完成 / 已取消的事项仍走闸门（core 本身拒绝改已关闭的）。
           const current = workbench.getTodo(params.id);
-          if (current.status !== 'draft' || current.assignee !== null) {
+          if (!TEXT_EDIT_OPEN_STATUSES.has(current.status)) {
             const blocked = actionGate();
             if (blocked !== null) return blocked;
           }
@@ -622,7 +637,7 @@ export function buildWorkbenchTools(input: {
             ].join('\n'),
           };
         }
-        const { todo, warnings } = workbench.updateTodo(params.id, {
+        const { todo, warnings, notified } = workbench.updateTodo(params.id, {
           ...fields,
           ...(when !== undefined ? { when } : {}),
           actor: 'butler',
@@ -631,6 +646,11 @@ export function buildWorkbenchTools(input: {
           ok: true,
           content: [
             `已更新事项（id：${todo.id}）：${statusSentence(todo, workbench)}。`,
+            ...(notified === true
+              ? [
+                  '执行者会收到一条「事项更新」通知，由它自行决定是否调整做法（不会被打断）；这不是新任务，别再另行派活。',
+                ]
+              : []),
             ...warningLines(warnings),
           ].join('\n'),
         };

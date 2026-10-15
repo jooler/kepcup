@@ -829,6 +829,11 @@ export const textContentSchema = z.object({
   todoId: z.string().optional(),
   todoRunId: z.string().optional(),
   /**
+   * origin = 'workbench' 且为 true：这不是派发，而是对「已派发、仍在途」事项的文字更新通知（标题 / 说明变了）。
+   * `todoRunId` 是那次在途派发；界面渲染成「事项更新」卡。它不开启新的交付追踪，也不会让执行记录因这一轮失败 / 静默而被结算。
+   */
+  todoUpdate: z.boolean().optional(),
+  /**
    * origin = 'workbench' 且触发这次派发的操作是管家做的（actor = 'butler'）时为 true：派发卡可标「管家代你安排」，
    * 记忆反思不把这条文字当作用户原话（D90 §4.4）。
    */

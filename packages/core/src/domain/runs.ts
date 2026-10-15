@@ -460,6 +460,23 @@ export class RunsService {
     return rows.map(rowToRun);
   }
 
+  /**
+   * Bots whose supervisor turn was triggered by the message (any part of a merged batch) — in a
+   * group: who took a workbench dispatch, so its update notice can @ them.
+   */
+  turnBotIdsTriggeredBy(conversationId: string, messageId: string): string[] {
+    const needle = JSON.stringify(messageId);
+    const rows = this.db
+      .prepare(
+        `select bot_id from runs
+         where conversation_id = ? and loop_type = 'turn' and bot_id is not null
+           and (instr(trigger_message_ids_json, ?) > 0 or instr(coalesce(trigger_parts_json, ''), ?) > 0)
+         group by bot_id order by min(created_at) asc`,
+      )
+      .all(conversationId, needle, needle) as Array<{ bot_id: string }>;
+    return rows.map((row) => row.bot_id);
+  }
+
   /** Whether any task was started by one of these turns (workbench round tracking). */
   hasTasksOriginatingFrom(runIds: readonly string[]): boolean {
     if (runIds.length === 0) return false;

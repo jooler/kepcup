@@ -141,6 +141,8 @@ export interface AppendMessageInput {
         todoRunId: string;
         viaButler?: boolean | undefined;
         butlerDrafted?: boolean | undefined;
+        /** A text update of an in-flight dispatch (`todoUpdate: true`), not a dispatch. */
+        update?: boolean | undefined;
       }
     | undefined;
   /**
@@ -388,6 +390,7 @@ export class MessagesService {
                     todoRunId: input.workbench.todoRunId,
                     ...(input.workbench.viaButler === true ? { viaButler: true } : {}),
                     ...(input.workbench.butlerDrafted === true ? { butlerDrafted: true } : {}),
+                    ...(input.workbench.update === true ? { todoUpdate: true } : {}),
                   }
                 : {}),
               ...(input.scheduleSource !== undefined

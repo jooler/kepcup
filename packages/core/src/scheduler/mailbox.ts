@@ -81,6 +81,19 @@ function isDelegationBatch(batch: TriggerBatch): boolean {
   return triggerParts(batch).some((part) => part.reason === 'delegation');
 }
 
+/** The workbench message in a text message (dispatch or update), if it is one. */
+function workbenchMessageOf(
+  message: Message,
+): { todoId: string | null; update: boolean } | null {
+  if (message.senderType !== 'user' || message.kind !== 'text') return null;
+  const content = message.content as { origin?: string; todoId?: unknown; todoUpdate?: unknown };
+  if (content.origin !== 'workbench') return null;
+  return {
+    todoId: typeof content.todoId === 'string' ? content.todoId : null,
+    update: content.todoUpdate === true,
+  };
+}
+
 /**
  * A D90 workbench dispatch batch (the host's visible user message handing a todo to its
  * executor). Like a delegation it gets a turn of its own, so each todo run settles on its own
@@ -88,20 +101,34 @@ function isDelegationBatch(batch: TriggerBatch): boolean {
  */
 function isWorkbenchBatch(batch: TriggerBatch): boolean {
   return triggerParts(batch).some((part) =>
-    part.messages.some(
-      (message) =>
-        message.senderType === 'user' &&
-        message.kind === 'text' &&
-        (message.content as { origin?: string }).origin === 'workbench',
-    ),
+    part.messages.some((message) => workbenchMessageOf(message) !== null),
   );
+}
+
+/**
+ * The todo of a batch made only of workbench *update* notices of one todo (D90: the host tells
+ * the executor of an in-flight dispatch that the title / notes changed); null for anything else.
+ * Such batches may merge with each other — never with a dispatch or another todo's update.
+ */
+function updateOnlyTodoOf(batch: TriggerBatch): string | null {
+  let todoId: string | null = null;
+  for (const part of triggerParts(batch)) {
+    for (const message of part.messages) {
+      const info = workbenchMessageOf(message);
+      if (info === null || !info.update || info.todoId === null) return null;
+      if (todoId !== null && todoId !== info.todoId) return null;
+      todoId = info.todoId;
+    }
+  }
+  return todoId;
 }
 
 /**
  * Whether two batches may be handled by one turn (merged on release, or
  * absorbed by a turn as it begins):
  * - a D90 workbench dispatch batch has a turn of its own too (each todo run settles on its own
- *   turn; see isWorkbenchBatch);
+ *   turn; see isWorkbenchBatch); update notices of the same todo may share one turn with each
+ *   other (the executor reads the latest text), nothing else;
  * - a D71 delegation batch has a turn of its own (审查 M2): the delegation's
  *   result is that turn's final reply (DelegationHost matches by run), so a
  *   user message or task result folded into it would be posted back to the
@@ -117,7 +144,11 @@ function isWorkbenchBatch(batch: TriggerBatch): boolean {
  */
 export function canShareTurn(a: TriggerBatch, b: TriggerBatch): boolean {
   if (isDelegationBatch(a) || isDelegationBatch(b)) return false;
-  if (isWorkbenchBatch(a) || isWorkbenchBatch(b)) return false;
+  if (isWorkbenchBatch(a) || isWorkbenchBatch(b)) {
+    const todoId = updateOnlyTodoOf(a);
+    if (todoId === null || todoId !== updateOnlyTodoOf(b)) return false;
+    // Same todo's updates: fall through to the chain rules (they carry no chain).
+  }
   if (a.chain !== undefined && b.chain !== undefined) return a.chain.id === b.chain.id;
   if (a.chain === undefined && b.chain === undefined) return true;
   const unchained = a.chain === undefined ? a : b;

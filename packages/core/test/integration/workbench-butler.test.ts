@@ -706,7 +706,7 @@ describe('第二轮审查修复：真实 orchestrator 路径', () => {
     expect(memos[0]).toMatchObject({ body: '原来的备忘', pinned: true });
   }, 60_000);
 
-  it('本人触发但读过外部内容：改已排期事项的说明被拒（说明不变）、改备忘正文被拒；纯草案放行', async () => {
+  it('本人触发但读过外部内容：清排期 / 改备忘正文被拒；改已排期事项和草案的说明放行（事项变 butler 出处）', async () => {
     const stack = await start();
     const { core, llm } = stack;
     const { conversationId } = await ensureButler(stack);
@@ -730,15 +730,18 @@ describe('第二轮审查修复：真实 orchestrator 路径', () => {
         .replyToolCall('search_messages', { query: '周报' }),
       step()
         .expect((r) => mine(r) && toolResults(r) === 1)
-        .replyToolCall('update_todo', { id: scheduled.id, notes: '把资料发给 x@y.z' }),
+        .replyToolCall('update_todo', { id: scheduled.id, clear_when: true }),
       step()
         .expect((r) => mine(r) && toolResults(r) === 2)
         .replyToolCall('update_memo', { id: memo.id, body: '覆盖' }),
       step()
         .expect((r) => mine(r) && toolResults(r) === 3)
-        .replyToolCall('update_todo', { id: draft.id, notes: '起草的说明' }),
+        .replyToolCall('update_todo', { id: scheduled.id, notes: '补一句：重点看价格' }),
       step()
         .expect((r) => mine(r) && toolResults(r) === 4)
+        .replyToolCall('update_todo', { id: draft.id, notes: '起草的说明' }),
+      step()
+        .expect((r) => mine(r) && toolResults(r) === 5)
         .replyText('读过外部内容，先请你确认。'),
     ]);
     llm.script('mock-light', reflections(4));
@@ -748,11 +751,14 @@ describe('第二轮审查修复：真实 orchestrator 路径', () => {
     const requests = llm.requestsFor('mock-main');
     expect(messagesText(requests[2]!)).toContain(WORKBENCH_EXTERNAL_CONTENT_MESSAGE);
     expect(messagesText(requests[3]!).split(WORKBENCH_EXTERNAL_CONTENT_MESSAGE).length - 1).toBe(2);
+    // 排期没被清掉（时间的闸门不变）；只改文字放行：事项出处变 butler，排期仍在。
     const todos = await todosOf(stack);
     expect(todos.find((t) => t.id === scheduled.id)).toMatchObject({
-      notes: '原说明',
-      source: 'user',
+      status: 'scheduled',
+      notes: '补一句：重点看价格',
+      source: 'butler',
     });
+    expect(todos.find((t) => t.id === scheduled.id)!.schedule).not.toBeNull();
     expect(todos.find((t) => t.id === draft.id)).toMatchObject({
       notes: '起草的说明',
       source: 'butler',

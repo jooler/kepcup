@@ -283,7 +283,11 @@ export interface OrchestratorTodoFacade {
   /** Title of the todo (「📋 标题」 snapshot); null when it no longer exists. */
   titleOf(todoId: string): string | null;
   /** The executor's reply settled the dispatch: delivered, awaiting the user's acceptance. */
-  settleDelivered(todoRunId: string, resultMessageId: string | null): void;
+  settleDelivered(
+    todoRunId: string,
+    resultMessageId: string | null,
+    options?: { fromUpdate?: boolean },
+  ): void;
   /** The group round ended with nobody taking the dispatch. */
   settleUnclaimed(todoRunId: string): void;
   /** The executor's turn failed or was cancelled: the todo returns to draft with the reason. */
@@ -296,6 +300,13 @@ export type TodoRunFailure = { kind: 'failed'; error: string | null } | { kind: 
 interface TodoRef {
   todoId: string;
   todoRunId: string;
+  /**
+   * Reached only through a 「事项更新」 notice (`todoUpdate`), never through the dispatch itself or
+   * a task started for it. Such a turn may deliver the run (when nothing of its chain is still
+   * open) but a failure / silence of the notice's own turn never settles the run: the dispatch
+   * it refers to is still being worked on.
+   */
+  updateOnly?: boolean;
 }
 
 export interface OrchestratorDeps {
@@ -1041,6 +1052,73 @@ export class Orchestrator {
       conv.directBotId !== null &&
       this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
     return { message, runId: this.#latestRunId(input.conversationId, conv.directBotId), held };
+  }
+
+  /**
+   * D90 事项更新通知: tells the executor of an in-flight dispatch that the todo's title / notes
+   * changed. A visible user message (`origin: 'workbench'`, `todoUpdate: true`, the in-flight
+   * dispatch's `todoRunId`), delivered to the mailbox exactly like a typed one: a running
+   * conversation turn does not see it — it is buffered and starts the NEXT turn when the running one
+   * releases the mailbox (D75: batches are never steered into a running turn), so the executor's
+   * tasks keep running and the new turn decides from `<tasks>` whether to `inject_task`.
+   *
+   * Direct chat: the delivery gate. Group: @ the bots that answered the dispatch (its lead bot,
+   * plus the bots whose turn the dispatch message triggered) — an explicit target, so no triage.
+   * Null = nobody to tell.
+   */
+  dispatchWorkbenchUpdate(input: {
+    conversationId: string;
+    text: string;
+    todoId: string;
+    todoRunId: string;
+    viaButler: boolean;
+    butlerDrafted?: boolean | undefined;
+    leadBotId: string | null;
+    dispatchMessageId: string | null;
+  }): { message: Message } | null {
+    const conv = this.#deps.conversations.getOrThrow(input.conversationId);
+    if (conv.readOnly) {
+      throw new AppError('CONVERSATION_READ_ONLY', '该对话为只读');
+    }
+    let targets: string[] = [];
+    if (conv.type === 'group') {
+      const members = new Set(this.#deps.conversations.memberBotIds(conv.id));
+      const answered =
+        input.dispatchMessageId === null
+          ? []
+          : this.#deps.runs.turnBotIdsTriggeredBy(conv.id, input.dispatchMessageId);
+      targets = [
+        ...new Set([...(input.leadBotId !== null ? [input.leadBotId] : []), ...answered]),
+      ].filter((botId) => members.has(botId));
+      // Nobody left who took the dispatch: an @-less message would fall into triage.
+      if (targets.length === 0) return null;
+    } else if (conv.directBotId === null) {
+      return null;
+    }
+    const batchId = `batch_${this.#deps.clock.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const message = this.#deps.messages.append({
+      conversationId: conv.id,
+      senderType: 'user',
+      kind: 'text',
+      text: input.text,
+      mentions: targets,
+      batchId,
+      workbench: {
+        todoId: input.todoId,
+        todoRunId: input.todoRunId,
+        update: true,
+        ...(input.viaButler ? { viaButler: true } : {}),
+        ...(input.butlerDrafted === true ? { butlerDrafted: true } : {}),
+      },
+    });
+    this.#deps.publish('message.created', { conversationId: conv.id, message });
+    this.#publishConversation(conv.id);
+    if (conv.type === 'group') {
+      this.#groupTurns.onUserBatch(conv.id, batchId, [message]);
+    } else if (conv.directBotId !== null) {
+      this.#deliverDirectThroughGate(conv, conv.directBotId, [message], 'direct');
+    }
+    return { message };
   }
 
   /** Whether the bot can run a turn (a built-in main model, or an external agent to route to). */
@@ -1914,10 +1992,19 @@ export class Orchestrator {
   /** The workbench dispatch (todo + run) in a message, if it is one. */
   #workbenchRefOf(message: Message): TodoRef | null {
     if (message.senderType !== 'user' || message.kind !== 'text') return null;
-    const content = message.content as { origin?: string; todoId?: unknown; todoRunId?: unknown };
+    const content = message.content as {
+      origin?: string;
+      todoId?: unknown;
+      todoRunId?: unknown;
+      todoUpdate?: unknown;
+    };
     if (content.origin !== 'workbench') return null;
     if (typeof content.todoId !== 'string' || typeof content.todoRunId !== 'string') return null;
-    return { todoId: content.todoId, todoRunId: content.todoRunId };
+    return {
+      todoId: content.todoId,
+      todoRunId: content.todoRunId,
+      ...(content.todoUpdate === true ? { updateOnly: true } : {}),
+    };
   }
 
   /**
@@ -1931,13 +2018,20 @@ export class Orchestrator {
     for (const message of messages) {
       const direct = this.#workbenchRefOf(message);
       if (direct !== null) {
-        refs.set(direct.todoRunId, direct);
+        // A dispatch beats a notice of the same run (the batch then is the dispatch's own turn).
+        if (direct.updateOnly !== true || !refs.has(direct.todoRunId)) {
+          refs.set(direct.todoRunId, direct);
+        }
         continue;
       }
       if (message.kind === 'task_event' && message.taskId !== null && depth <= 4) {
         const originRunId = this.#deps.runs.get(message.taskId)?.originRunId ?? null;
         if (originRunId === null) continue;
-        for (const ref of this.#todoRefsOfRun(originRunId, depth + 1)) refs.set(ref.todoRunId, ref);
+        // A task's result closes the chain: whether the task was started from the dispatch turn
+        // or from an update turn, this is no longer "only a notice".
+        for (const ref of this.#todoRefsOfRun(originRunId, depth + 1)) {
+          refs.set(ref.todoRunId, { todoId: ref.todoId, todoRunId: ref.todoRunId });
+        }
       }
     }
     return [...refs.values()];
@@ -1974,7 +2068,9 @@ export class Orchestrator {
     try {
       for (const ref of this.#todoRefsOfMessages(batch.messages)) {
         const todoTitle = facade.titleOf(ref.todoId);
-        if (todoTitle !== null) return { ...ref, todoTitle };
+        if (todoTitle !== null) {
+          return { todoId: ref.todoId, todoRunId: ref.todoRunId, todoTitle };
+        }
       }
       return null;
     } catch (error) {
@@ -2011,6 +2107,11 @@ export class Orchestrator {
     try {
       const refs = this.#todoRefsOfRun(run.id);
       for (const ref of refs) {
+        if (ref.updateOnly === true && run.status !== 'completed') {
+          // The turn that read a 「事项更新」 failed / was cancelled / interrupted: the dispatch it
+          // refers to is still in flight (its tasks keep running), so the run is not failed.
+          continue;
+        }
         if (run.status === 'failed') {
           facade.settleFailed(ref.todoRunId, { kind: 'failed', error: run.error });
           continue;
@@ -2039,7 +2140,11 @@ export class Orchestrator {
           resultId = row?.id ?? null;
           if (resultId === null) continue;
         }
-        facade.settleDelivered(ref.todoRunId, resultId);
+        facade.settleDelivered(
+          ref.todoRunId,
+          resultId,
+          ref.updateOnly === true ? { fromUpdate: true } : undefined,
+        );
       }
     } catch (error) {
       this.#deps.logger.warn(
@@ -2058,9 +2163,11 @@ export class Orchestrator {
     const facade = this.#deps.todos;
     if (facade === undefined || info.outcome === 'replied') return;
     try {
+      // A 「事项更新」 notice never settles its run (the dispatch is still being worked on): a
+      // silent / failed notice round is not "unclaimed" and not a failure.
       const refs = info.messages
         .map((message) => this.#workbenchRefOf(message))
-        .filter((ref): ref is TodoRef => ref !== null);
+        .filter((ref): ref is TodoRef => ref !== null && ref.updateOnly !== true);
       if (refs.length === 0) return;
       if (info.outcome === 'failed') {
         for (const ref of refs) facade.settleFailed(ref.todoRunId, info.failure);
@@ -3626,6 +3733,9 @@ export class Orchestrator {
       const scheduleSource = isTask ? null : this.#scheduleSourceOf(batch);
       // D90: a workbench todo's turns carry the 「📋 标题」 tag and the delivery rule.
       const todoSource = isTask ? null : this.#todoSourceOf(batch);
+      // D90: the batch carries a 「事项更新」 notice (the todo changed while the executor works on it).
+      const workbenchUpdate =
+        !isTask && batch.messages.some((m) => this.#workbenchRefOf(m)?.updateOnly === true);
       // 对话内应用设置（§5.3）：本 run 是否调用过读取不可信内容的工具（tool_call 一发生即置位，
       // 见下方 handle.onEvent）；档位裁定在每次工具调用时读它。
       // 触发批带附件（附件正文 / 图片进视觉通道）= 一开始就算接触过不可信内容。
@@ -4178,6 +4288,7 @@ export class Orchestrator {
             ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             ...(todoSource !== null ? { workbenchDispatch: true } : {}),
+            ...(workbenchUpdate ? { workbenchUpdate: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
             // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。

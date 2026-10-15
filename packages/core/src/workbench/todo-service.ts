@@ -14,7 +14,7 @@ import {
   type TodoStatus,
 } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
-import type { Clock } from '../infra/clock.js';
+import type { Clock, TimerScheduler } from '../infra/clock.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { BotsService } from '../domain/bots.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -70,6 +70,10 @@ export type TodoRunFailure = { kind: 'failed'; error: string | null } | { kind: 
 /** The dispatch prefix of a workbench message (the first line reads 「【工作台】标题」). */
 export const WORKBENCH_DISPATCH_TAG = '【工作台】';
 export const WORKBENCH_BUTLER_NOTE = '（管家代你安排）';
+/** The first line of an update notice reads 「【工作台】事项更新：标题」. */
+export const WORKBENCH_UPDATE_TAG = '【工作台】事项更新：';
+/** Quiet period before the update notice of an edited todo goes out (later edits restart it). */
+export const TODO_UPDATE_DEBOUNCE_MS = 10_000;
 
 /** What TodoService needs of the orchestrator to append + route a dispatch message. */
 export interface WorkbenchMessagePort {
@@ -92,6 +96,24 @@ export interface WorkbenchMessagePort {
     /** The delivery is held back (the bot is in its setup interview) until setup is done. */
     held?: boolean | undefined;
   };
+  /**
+   * D90 事项更新通知: a visible user message in the conversation of an in-flight dispatch
+   * (`todoUpdate: true`, carrying that dispatch's `todoRunId`), routed like a typed one into the
+   * executor's mailbox — buffered behind a running turn, never steered into it. Group: @ the bots
+   * that actually answered the dispatch, no triage. Null = nobody to tell (nothing was sent).
+   */
+  dispatchUpdate(input: {
+    conversationId: string;
+    text: string;
+    todoId: string;
+    todoRunId: string;
+    viaButler: boolean;
+    butlerDrafted: boolean;
+    /** The dispatch's lead bot (group assignee), preferred over a guess. */
+    leadBotId: string | null;
+    /** The dispatch message the update follows (to find who answered it in a group). */
+    dispatchMessageId: string | null;
+  }): { message: Message } | null;
   /** Whether the bot has a built-in main model to run a turn on. */
   hasTurnModel(botId: string): boolean;
 }
@@ -106,6 +128,10 @@ export interface TodoServiceDeps {
   dispatcher: WorkbenchMessagePort;
   /** RPC events (todos.changed / conversation.updated). */
   publish?: ((event: string, payload: unknown) => void) | undefined;
+  /** Debounce timers of update notices (tests inject a virtual one). Absent = no notices are sent. */
+  timers?: TimerScheduler | undefined;
+  /** Quiet period before an update notice goes out. Default {@link TODO_UPDATE_DEBOUNCE_MS}. */
+  updateDebounceMs?: number | undefined;
 }
 
 /**
@@ -160,6 +186,17 @@ interface DispatchContext {
 
 const NOW = 'now';
 
+/** An edit of an in-flight todo's title / notes whose notice is still debouncing. */
+interface PendingUpdate {
+  todoRunId: string;
+  /** The text the executor last saw (before the first edit of this window). */
+  baseTitle: string;
+  baseNotes: string;
+  /** Any edit of the window was the butler's (the notice is then butler-attributed). */
+  byButler: boolean;
+  cancel: () => void;
+}
+
 /**
  * Workbench todos (D90, docs/design/39-workbench.md): CRUD and the status machine,
  * assignee validation, scheduling through ScheduleService, dispatch (a visible user message
@@ -180,6 +217,8 @@ export class TodoService implements WorkbenchDispatchPort {
   #busy = 0;
   /** A reconcile was requested while busy: it runs once the outermost operation ends. */
   #reconcilePending = false;
+  /** Update notices waiting out their debounce, by todo id. */
+  readonly #pendingUpdates = new Map<string, PendingUpdate>();
 
   constructor(deps: TodoServiceDeps) {
     this.#deps = deps;
@@ -284,7 +323,16 @@ export class TodoService implements WorkbenchDispatchPort {
     });
   }
 
-  update(id: string, input: UpdateTodoInput): { todo: TodoEntry; warnings: string[] } {
+  /**
+   * `notified`: the title / notes changed on a todo with an in-flight dispatch, so a 「事项更新」
+   * notice for the executor is queued (sent after a quiet period, edits in between merge into
+   * one). Nothing is sent for drafts, schedules not yet due and delivered / closed todos — the
+   * next dispatch simply carries the new text.
+   */
+  update(
+    id: string,
+    input: UpdateTodoInput,
+  ): { todo: TodoEntry; warnings: string[]; notified: boolean } {
     const actor: TodoActor = input.actor ?? 'user';
     const todo = this.#getOrThrow(id);
     if (todo.status === 'done' || todo.status === 'cancelled') {
@@ -350,7 +398,9 @@ export class TodoService implements WorkbenchDispatchPort {
         this.#cancelSchedules(id);
         this.#changed(id);
         const fresh = this.store.get(id) ?? current;
-        return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh) };
+        // The fresh dispatch carries the new text: no notice for an older run.
+        this.#dropPendingUpdate(id);
+        return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh), notified: false };
       }
 
       this.#tx(() => {
@@ -371,8 +421,106 @@ export class TodoService implements WorkbenchDispatchPort {
       });
       this.#changed(id);
       const fresh = this.store.get(id) ?? todo;
-      return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh) };
+      const notified = this.#queueUpdateNotice(todo, fresh, actor);
+      return { todo: this.toEntry(fresh), warnings: this.#warnings(fresh), notified };
     });
+  }
+
+  // --- update notices (D90: tell the executor of an in-flight dispatch what changed) ---
+
+  /** The dispatch of `todo` that is still being worked on, if any. */
+  #inflightRun(todo: Todo): TodoRun | null {
+    if (todo.status === 'in_progress') {
+      // fall through to the run check
+    } else if (todo.status === 'scheduled') {
+      // Only a periodic todo parks in `scheduled` while an earlier run is still out.
+      if (this.#activeSchedule(todo.id)?.kind !== 'cron') return null;
+    } else {
+      return null;
+    }
+    const run = this.store.lastRun(todo.id);
+    return run !== null && run.status === 'dispatched' ? run : null;
+  }
+
+  /**
+   * Queues (or restarts) the debounced notice after the title / notes of `after` changed.
+   * Edits within the quiet period merge: the notice carries the latest text, and is dropped when
+   * the text is back to what the executor saw. Returns whether a notice is pending.
+   */
+  #queueUpdateNotice(before: Todo, after: Todo, actor: TodoActor): boolean {
+    const timers = this.#deps.timers;
+    if (timers === undefined) return false;
+    const pending = this.#pendingUpdates.get(after.id);
+    const textChanged = before.title !== after.title || before.notes !== after.notes;
+    if (!textChanged) return pending !== undefined;
+    const run = this.#inflightRun(after);
+    if (run === null) {
+      this.#dropPendingUpdate(after.id);
+      return false;
+    }
+    const carried = pending !== undefined && pending.todoRunId === run.id ? pending : null;
+    if (pending !== undefined) pending.cancel();
+    const next: PendingUpdate = {
+      todoRunId: run.id,
+      baseTitle: carried?.baseTitle ?? before.title,
+      baseNotes: carried?.baseNotes ?? before.notes,
+      byButler: (carried?.byButler ?? false) || actor === 'butler',
+      cancel: () => undefined,
+    };
+    next.cancel = timers.setTimer(this.#deps.updateDebounceMs ?? TODO_UPDATE_DEBOUNCE_MS, () =>
+      this.#flushUpdateNotice(after.id),
+    );
+    this.#pendingUpdates.set(after.id, next);
+    return true;
+  }
+
+  #dropPendingUpdate(todoId: string): void {
+    const pending = this.#pendingUpdates.get(todoId);
+    if (pending === undefined) return;
+    pending.cancel();
+    this.#pendingUpdates.delete(todoId);
+  }
+
+  /** Quiet period over: sends the notice if the dispatch is still in flight and the text still differs. */
+  #flushUpdateNotice(todoId: string): void {
+    const pending = this.#pendingUpdates.get(todoId);
+    if (pending === undefined) return;
+    this.#pendingUpdates.delete(todoId);
+    try {
+      const todo = this.store.get(todoId);
+      if (todo === null || todo.assignee === null) return;
+      const run = this.#inflightRun(todo);
+      // The run settled / a newer dispatch started meanwhile: nothing (new) to tell.
+      if (run === null || run.id !== pending.todoRunId) return;
+      if (todo.title === pending.baseTitle && todo.notes === pending.baseNotes) return;
+      const conversation = this.#deps.conversations.get(run.conversationId);
+      if (conversation === null || conversation.readOnly) return;
+      this.#deps.dispatcher.dispatchUpdate({
+        conversationId: run.conversationId,
+        text: this.#updateText(todo, pending.byButler),
+        todoId: todo.id,
+        todoRunId: run.id,
+        viaButler: pending.byButler,
+        butlerDrafted: todo.source === 'butler',
+        leadBotId: todo.assignee.kind === 'group' ? todo.assignee.leadBotId : null,
+        dispatchMessageId: run.messageId,
+      });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { todoId, error: error instanceof Error ? error.message : String(error) },
+        'todo update notice failed',
+      );
+    }
+  }
+
+  #updateText(todo: Todo, byButler: boolean): string {
+    const lines = [`${WORKBENCH_UPDATE_TAG}${todo.title}`];
+    if (todo.notes.trim().length > 0) lines.push('', todo.notes.trim());
+    lines.push(
+      '',
+      `（由${byButler ? '管家' : '用户'}修改；这是对你已在做的这件事的补充，不是新任务；仅供参考，是否调整当前做法由你决定）`,
+    );
+    return lines.join('\n');
   }
 
   // --- transitions ---------------------------------------------------------------
@@ -403,6 +551,7 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', `事项${STATUS_LABEL[todo.status]}，不能标为完成`);
     }
     return this.#guard(() => {
+      this.#dropPendingUpdate(id);
       this.#cancelSchedules(id);
       this.store.update(id, {
         status: this.#assertMove(todo, 'done'),
@@ -421,6 +570,7 @@ export class TodoService implements WorkbenchDispatchPort {
       throw new AppError('INVALID_INPUT', `事项已经${STATUS_LABEL[todo.status]}`);
     }
     return this.#guard(() => {
+      this.#dropPendingUpdate(id);
       this.#cancelSchedules(id);
       this.store.update(id, {
         status: this.#assertMove(todo, 'cancelled'),
@@ -439,6 +589,7 @@ export class TodoService implements WorkbenchDispatchPort {
    */
   purge(id: string): boolean {
     return this.#guard(() => {
+      this.#dropPendingUpdate(id);
       this.#cancelSchedules(id);
       const deleted = this.store.delete(id);
       if (deleted) this.#changed(id);
@@ -647,13 +798,23 @@ export class TodoService implements WorkbenchDispatchPort {
 
   // --- delivery tracking (called by the orchestrator) ----------------------------------
 
-  /** An executor's reply settled the dispatched run: delivered, awaiting the user's acceptance. */
-  settleDelivered(todoRunId: string, resultMessageId: string): void {
+  /**
+   * An executor's reply settled the dispatched run: delivered, awaiting the user's acceptance.
+   * `fromUpdate`: the settling turn only read a 「事项更新」 notice — it may still close a run that
+   * is in flight (nothing of its chain is open), but its (usually short) reply never replaces the
+   * result of a run that was already delivered.
+   */
+  settleDelivered(
+    todoRunId: string,
+    resultMessageId: string,
+    options: { fromUpdate?: boolean } = {},
+  ): void {
     const run = this.store.getRun(todoRunId);
     if (run === null) return;
     // Later replies of the same chain win (the last settler is the result); a run that already
     // ended otherwise (unclaimed, failed) is not revived.
     if (run.status === 'unclaimed' || run.status === 'failed') return;
+    if (options.fromUpdate === true && run.status === 'delivered') return;
     this.store.updateRun(todoRunId, { status: 'delivered', resultMessageId });
     // Only the latest run moves the todo: a late reply of an older dispatch updates its own run.
     const todo = this.store.get(run.todoId);
