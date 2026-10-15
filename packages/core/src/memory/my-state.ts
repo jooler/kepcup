@@ -66,7 +66,8 @@ export function first30(text: string): string {
   return text.length > 30 ? `${text.slice(0, 30)}…` : text;
 }
 
+/** `<my_state>` 段的正文；外层标签由 system-prompt 的 `section('my_state', …)` 加。 */
 export function formatMyState(lines: string[]): string {
   if (lines.length === 0) return '';
-  return `<my_state>\n${lines.join('\n')}\n</my_state>`;
+  return lines.join('\n');
 }

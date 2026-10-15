@@ -4180,6 +4180,8 @@ export class Orchestrator {
             ...(todoSource !== null ? { workbenchDispatch: true } : {}),
             // 与 settings_* 工具是否注册同源（toolDeps.settings）。
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
+            // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
+            ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
             // Stable whenever the bot has MCP servers (even if this turn's
             // resolution timed out), so the prompt does not flip between turns.
             ...(!isTask && mcpResolution.hasServers

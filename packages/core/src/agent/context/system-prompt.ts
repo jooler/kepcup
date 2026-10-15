@@ -69,6 +69,11 @@ export interface SystemPromptInput {
    */
   hasSettingsTools?: boolean | undefined;
   /**
+   * 管家的对话轮是否注册了工作台工具（`list_todos` / `create_todo` …，与 `deps.workbench` 同源）。
+   * 缺省 = 没有：管家规则不带工作台那几条，免得提示词指挥不存在的工具。
+   */
+  hasWorkbenchTools?: boolean | undefined;
+  /**
    * D90：本轮属于工作台派发的事项（触发里有「【工作台】」派发消息，或是它引出的任务结果）：
    * 追加一条交付规则；其余轮次不出现。
    */
@@ -175,6 +180,7 @@ function butlerRules(includeWorkbench: boolean): string {
 }
 
 const BUTLER_RULES = butlerRules(true);
+const BUTLER_RULES_NO_WORKBENCH = butlerRules(false);
 
 /**
  * 任务执行（D75）里的管家规则：propose_* / suggest_route / delegate_to_bot
@@ -285,10 +291,12 @@ const TURN_FILE_HANDLING_GUIDANCE = [
 function section(tag: string, body: string): string {
   const trimmed = body.trim();
   if (trimmed.length === 0) return '';
-  // The body (user-written titles, notes, memo text …) must not be able to close — or
-  // reopen — its own section: a literal `</tag` / `<tag` inside it is neutralized.
+  // The body (user-written titles, notes, memo text …) must not be able to close its own
+  // section: a closing tag (`</tag`, `< /tag`, `</ tag`, any case) inside it is neutralized.
+  // Only closing tags can escape the section; opening tags are left alone, so ordinary text
+  // such as `<project>/x` survives. The producers hand over bodies without their own outer tag.
   const safe = trimmed.replace(
-    new RegExp(`<(/?${tag})(?=[\\s>/]|$)`, 'gi'),
+    new RegExp(`<(\\s*/\\s*${tag})(?=[\\s>/]|$)`, 'gi'),
     (_match, name: string) => `<\\${name}`,
   );
   return `<${tag}>\n${safe}\n</${tag}>`;
@@ -467,7 +475,16 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     section('platform_rules', platformRules.join('\n')),
     // 管家规则按循环面取版本：propose_* / suggest_route / delegate_to_bot 只在
     // 对话轮工具面（design 30 §1.2），任务里注入对话轮版会指挥模型调用不存在的工具。
-    section('butler_rules', isButler ? (isTurn ? BUTLER_RULES : BUTLER_TASK_RULES) : ''),
+    section(
+      'butler_rules',
+      isButler
+        ? isTurn
+          ? input.hasWorkbenchTools === true
+            ? BUTLER_RULES
+            : BUTLER_RULES_NO_WORKBENCH
+          : BUTLER_TASK_RULES
+        : '',
+    ),
     section('setup_interview', setupSection),
     section('identity', identityText),
     section('persona', personaText),
