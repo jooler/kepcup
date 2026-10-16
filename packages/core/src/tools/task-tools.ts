@@ -4,6 +4,7 @@ import {
   ASK_USER_FIELDS_MAX,
   ASK_USER_OPTION_MAX_CHARS,
   askUserFieldsSchema,
+  TASK_CAPABILITIES_MAX,
   TASK_INSTRUCTION_MAX_CHARS,
   TASK_SOURCE_MESSAGES_MAX,
   TASK_TITLE_MAX_CHARS,
@@ -37,6 +38,11 @@ export interface StartTaskInput {
   workdir?: 'workspace' | 'project' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
   continuesTaskId?: string | undefined;
+  /**
+   * D91: external capability ids (`<capabilities>` ids such as `app:github`) the task mounts one
+   * by one; omitted / empty = none (the rest stays reachable through `capability_search`).
+   */
+  capabilities?: string[] | undefined;
 }
 
 export interface StartTaskResult {
@@ -50,6 +56,11 @@ export interface StartTaskResult {
    * is returned instead of a duplicate.
    */
   alreadyStarted?: boolean;
+  /**
+   * D91: declared capabilities that are not `ready` right now (expired authorization, disabled …):
+   * accepted, but the task does not mount them.
+   */
+  notReadyCapabilities?: string[];
 }
 
 export interface InjectTaskInput {
@@ -88,6 +99,8 @@ export interface TaskSummary {
   /** Latest visible progress line of the task (clipped), if any. */
   lastProgress: string | null;
   error: string | null;
+  /** D91: the external capability ids the task declared (absent = none). */
+  capabilities?: string[] | undefined;
 }
 
 export interface ForwardTaskResultOutput {
@@ -158,13 +171,22 @@ export function buildAskUserTool(input: {
         fields: Type.Optional(
           Type.Array(
             Type.Object({
-              name: Type.String({ description: '字段键（字母 / 数字 / 下划线），回答 JSON 里用它' }),
+              name: Type.String({
+                description: '字段键（字母 / 数字 / 下划线），回答 JSON 里用它',
+              }),
               label: Type.String({ description: '给用户看的字段名' }),
               type: Type.Union(
-                [Type.Literal('text'), Type.Literal('number'), Type.Literal('date'), Type.Literal('select')],
+                [
+                  Type.Literal('text'),
+                  Type.Literal('number'),
+                  Type.Literal('date'),
+                  Type.Literal('select'),
+                ],
                 { description: 'date 为 YYYY-MM-DD；select 需要 options' },
               ),
-              options: Type.Optional(Type.Array(Type.String(), { description: 'select 的选项（2~12 个）' })),
+              options: Type.Optional(
+                Type.Array(Type.String(), { description: 'select 的选项（2~12 个）' }),
+              ),
               required: Type.Optional(Type.Boolean()),
             }),
             { description: `form 的字段（1~${ASK_USER_FIELDS_MAX} 个）` },
@@ -188,12 +210,20 @@ export function buildAskUserTool(input: {
         const fields = askUserFieldsSchema.safeParse(params.fields);
         if (!fields.success) {
           const issue = fields.error.issues[0];
-          const where = issue !== undefined && issue.path.length > 0 ? `fields.${issue.path.join('.')}：` : '';
+          const where =
+            issue !== undefined && issue.path.length > 0 ? `fields.${issue.path.join('.')}：` : '';
           return fail('INVALID_INPUT', `表单字段不对（${where}${issue?.message ?? '格式错误'}）`);
         }
         try {
-          const answer = await ask(identity, { question, options: [], mode, fields: fields.data }, ctx.signal);
-          return { ok: true, content: answer.startsWith('用户在问题卡上的回答') ? answer : `用户的回答：${answer}` };
+          const answer = await ask(
+            identity,
+            { question, options: [], mode, fields: fields.data },
+            ctx.signal,
+          );
+          return {
+            ok: true,
+            content: answer.startsWith('用户在问题卡上的回答') ? answer : `用户的回答：${answer}`,
+          };
         } catch (error) {
           if (error instanceof AppError) return fail(String(error.code), error.message);
           return fail('INTERNAL', error instanceof Error ? error.message : String(error));
@@ -263,6 +293,17 @@ function sourceIds(value: unknown): string[] | string {
   return ids;
 }
 
+/** D91: `start_task.capabilities` — a string array, trimmed + deduped, at most TASK_CAPABILITIES_MAX. */
+function capabilityIds(value: unknown): string[] | string {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string' || id.trim() === '')) {
+    return 'capabilities 必须是能力 id 字符串数组（取 <capabilities> 里的 id）';
+  }
+  const ids = [...new Set((value as string[]).map((id) => id.trim()))];
+  if (ids.length > TASK_CAPABILITIES_MAX) return `capabilities 最多 ${TASK_CAPABILITIES_MAX} 个`;
+  return ids;
+}
+
 function nonEmpty(value: unknown, field: string, max: number): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new AppError('INVALID_INPUT', `${field} 不能为空`);
@@ -285,6 +326,9 @@ function stateLine(summary: TaskSummary): string {
     parts.push(`停在：${summary.lastProgress}`);
   }
   if (summary.error) parts.push(`错误：${summary.error}`);
+  if (summary.capabilities !== undefined && summary.capabilities.length > 0) {
+    parts.push(`能力：${summary.capabilities.join('、')}`);
+  }
   if (summary.state === 'submitted' || summary.state === 'running') {
     parts.push(`可注入：${summary.injectable ? '是' : '否'}`);
   }
@@ -311,6 +355,7 @@ export function buildTaskTools(input: {
     writes: boolean;
     workdir?: 'workspace' | 'project';
     continues_task_id?: string;
+    capabilities?: string[];
   }> = {
     name: 'start_task',
     description:
@@ -318,6 +363,7 @@ export function buildTaskTools(input: {
       '任务完成后它的结果会交回给你，由你决定怎么告诉用户；过程中只有一条状态通知会更新给用户看（不堆消息）。' +
       'instruction 写清要做什么、要什么结果、约束；source_message_ids 填用户的原消息 id（任务会看到原文与附件）。' +
       'writes=true 表示要改文件（同一目录同时只有一个写任务，其余排队）；只读调研用 writes=false。' +
+      '任务要用 <capabilities> 里的外部能力（连接应用 / 自定义 MCP）时，在 capabilities 里列出它们的 id（如 ["app:github"]）：任务只会挂上你列出的能力，其余能力任务里也能用，但要先查一步，更慢。' +
       '要接着一条已结束的任务重做，用 continues_task_id（先 cancel_task 进行中的那条）。派出后简短告诉用户你去做了什么。',
     parameters: Type.Object(
       {
@@ -336,6 +382,11 @@ export function buildTaskTools(input: {
         ),
         continues_task_id: Type.Optional(
           Type.String({ description: '接续的已结束任务 id：回放它的过程，避免重新踩坑' }),
+        ),
+        capabilities: Type.Optional(
+          Type.Array(Type.String(), {
+            description: `任务要挂的外部能力 id（取 <capabilities> 里的 id，如 app:github、mcp:fs-notes；最多 ${TASK_CAPABILITIES_MAX} 个）。任务只会挂上这里列出的能力；不列的能力任务里也能用，但要先 capability_search，更慢`,
+          }),
         ),
       },
       { additionalProperties: false },
@@ -358,6 +409,8 @@ export function buildTaskTools(input: {
         ) {
           return fail('INVALID_INPUT', 'workdir 只能是 workspace 或 project');
         }
+        const capabilities = capabilityIds(params.capabilities);
+        if (typeof capabilities === 'string') return fail('INVALID_INPUT', capabilities);
         const started = tasks.start(identity, {
           title: nonEmpty(params.title, 'title', TASK_TITLE_MAX_CHARS),
           instruction: nonEmpty(params.instruction, 'instruction', TASK_INSTRUCTION_MAX_CHARS),
@@ -367,6 +420,7 @@ export function buildTaskTools(input: {
           ...(params.continues_task_id !== undefined && params.continues_task_id.trim() !== ''
             ? { continuesTaskId: params.continues_task_id.trim() }
             : {}),
+          ...(capabilities.length > 0 ? { capabilities } : {}),
         });
         const line = started.alreadyStarted
           ? `任务 ${started.taskId} 在被重试的上一轮里已经派出过（${started.state}），没有重复派出。`
@@ -375,9 +429,13 @@ export function buildTaskTools(input: {
             : started.state === 'submitted'
               ? `已派出任务 ${started.taskId}，排队中：${started.queueReason ?? '等待启动'}。`
               : `已派出任务 ${started.taskId}，但它已经结束（${started.state}），详见它的结算条目。`;
+        const notReady =
+          started.notReadyCapabilities !== undefined && started.notReadyCapabilities.length > 0
+            ? `\n注意：能力 ${started.notReadyCapabilities.join('、')} 现在不是可用状态（见 <capabilities> 里的状态），任务里不会挂上它们；需要时先让用户（重新）连接。`
+            : '';
         return {
           ok: true,
-          content: `${line}\n${JSON.stringify({ task_id: started.taskId, state: started.state, queue_reason: started.queueReason })}`,
+          content: `${line}${notReady}\n${JSON.stringify({ task_id: started.taskId, state: started.state, queue_reason: started.queueReason })}`,
         };
       }),
   };

@@ -10,7 +10,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 
 /**
  * mail_request_setup：记下 mail-account 需求并返回 SETUP_REQUIRED（design 18 / D84）。
- * 已有绑定时必须拒绝且不产生 setup，否则保存后续跑会再次弹卡。
+ * D91 后续：已有绑定时不再拒绝——照常产出 mail-account 需求（新增一个邮箱，原有的保持不变）。
  */
 
 const identity: RunIdentity = {
@@ -20,7 +20,12 @@ const identity: RunIdentity = {
   loopType: 'turn',
 };
 
-function toolsWith(setup: { requestSetup: ReturnType<typeof vi.fn> }, bound: unknown[] = []) {
+/** D91：mail_request_setup 始终注册；`bound: true` 时另有五个读写工具。 */
+function toolsWith(
+  setup: { requestSetup: ReturnType<typeof vi.fn> },
+  bound: unknown[] = [],
+  boundFlag = bound.length > 0,
+) {
   const mail = {
     accountsForBot: () => bound,
   } as unknown as MailService;
@@ -28,6 +33,7 @@ function toolsWith(setup: { requestSetup: ReturnType<typeof vi.fn> }, bound: unk
     identity,
     mail,
     gateway: { writeDenial: () => null },
+    bound: boundFlag,
     setup: { requestSetup: setup.requestSetup },
   });
 }
@@ -50,20 +56,20 @@ describe('decideMailSetupRequest', () => {
     expect(decided.message).toContain('已请求用户添加邮箱');
   });
 
-  it('already bound → refuse without requirement (no card)', () => {
+  it('already bound → still a requirement; the message lists the existing mailboxes, says one is added, points at propose_handover', () => {
     const decided = decideMailSetupRequest({
       botId: 'bot_1',
       bound: [{ label: '工作', address: 'me@example.com' }],
-      reason: '再检查一下',
+      provider: 'qq',
+      reason: '再加一个',
     });
-    expect(decided).toMatchObject({
-      ok: false,
-      message: expect.stringContaining('已有绑定邮箱'),
-    });
-    expect(decided).toMatchObject({
-      message: expect.stringContaining('me@example.com'),
-    });
-    expect('requirement' in decided).toBe(false);
+    expect(decided.ok).toBe(true);
+    if (!decided.ok) return;
+    expect(decided.requirement).toEqual({ kind: 'mail-account', provider: 'qq', reason: '再加一个' });
+    expect(decided.message).toContain('me@example.com');
+    expect(decided.message).toContain('新增');
+    expect(decided.message).toContain('propose_handover');
+    expect(decided.message).toContain('不要让用户把授权码贴进聊天');
   });
 
   it('no bot → refuse', () => {
@@ -86,8 +92,37 @@ describe('mail_request_setup', () => {
       identity,
       mail,
       gateway: { writeDenial: () => null },
+      bound: false,
     }).map((tool) => tool.name);
     expect(names).not.toContain(MAIL_REQUEST_SETUP_TOOL);
+    expect(names).toEqual([]);
+  });
+
+  it('D91: unbound → only mail_request_setup; bound → the five tools plus mail_request_setup', () => {
+    const unbound = toolsWith({ requestSetup: vi.fn() }, []).map((tool) => tool.name);
+    expect(unbound).toEqual([MAIL_REQUEST_SETUP_TOOL]);
+    const bound = toolsWith({ requestSetup: vi.fn() }, [
+      { id: 'mal_1', label: '工作', address: 'me@example.com' },
+    ]).map((tool) => tool.name);
+    expect(bound).toEqual([
+      'mail_accounts',
+      'mail_list',
+      'mail_read',
+      'mail_search',
+      'mail_send',
+      MAIL_REQUEST_SETUP_TOOL,
+    ]);
+  });
+
+  it('the tool description invites adding more mailboxes and no longer says "do not call when bound"', () => {
+    const tool = toolsWith({ requestSetup: vi.fn() }).find(
+      (entry) => entry.name === MAIL_REQUEST_SETUP_TOOL,
+    )!;
+    expect(tool.description).toContain('添加（更多）邮箱');
+    expect(tool.description).toContain('propose_handover');
+    expect(tool.description).toContain('不要索要授权码');
+    expect(tool.description).not.toContain('不要调用');
+    expect(tool.description).not.toContain('扩展中心去');
   });
 
   it('unbound → SETUP_REQUIRED', async () => {
@@ -108,37 +143,42 @@ describe('mail_request_setup', () => {
     });
   });
 
-  it('facade refuse (already bound) → no SETUP_REQUIRED', async () => {
-    const requestSetup = vi.fn().mockReturnValue({
-      ok: false,
-      message: '你已有绑定邮箱，无需再弹添加卡',
-    });
-    const tool = toolsWith({ requestSetup }, [
-      { id: 'mal_1', label: '工作', address: 'me@example.com' },
-    ]).find((entry) => entry.name === MAIL_REQUEST_SETUP_TOOL)!;
+  it('facade refuse → no SETUP_REQUIRED (e.g. no bot context)', async () => {
+    const requestSetup = vi.fn().mockReturnValue({ ok: false, message: '当前执行没有 Bot 上下文' });
+    const tool = toolsWith({ requestSetup }, [], false).find(
+      (entry) => entry.name === MAIL_REQUEST_SETUP_TOOL,
+    )!;
     const result = await tool.execute(
       { reason: '再检查' },
       { identity, signal: new AbortController().signal, terminate: () => {}, progress: () => {} },
     );
     expect(requestSetup).toHaveBeenCalled();
-    expect(result).toMatchObject({
-      ok: false,
-      errorCode: 'INVALID_INPUT',
-      content: expect.stringContaining('已有绑定邮箱'),
-    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'INVALID_INPUT' });
     expect(result.errorCode).not.toBe(TOOL_SETUP_REQUIRED);
   });
 
-  it('mail_accounts empty hints to call mail_request_setup', async () => {
-    const tool = toolsWith({ requestSetup: vi.fn() }).find((entry) => entry.name === 'mail_accounts')!;
+  it('bound bot calling the tool → SETUP_REQUIRED (not a refusal)', async () => {
+    const requestSetup = vi.fn().mockReturnValue({ ok: true, message: '已请求用户添加邮箱并交给你：这次会新增一个' });
+    const tool = toolsWith({ requestSetup }, [{ id: 'mal_1', label: '工作', address: 'me@example.com' }]).find(
+      (entry) => entry.name === MAIL_REQUEST_SETUP_TOOL,
+    )!;
+    const result = await tool.execute(
+      { reason: '再加一个' },
+      { identity, signal: new AbortController().signal, terminate: () => {}, progress: () => {} },
+    );
+    expect(result).toMatchObject({ ok: false, errorCode: TOOL_SETUP_REQUIRED });
+  });
+
+  it('mail_accounts only exists when bound; an emptied binding reports no mailbox without pointing at the absent setup tool', async () => {
+    const tool = toolsWith({ requestSetup: vi.fn() }, [], true).find(
+      (entry) => entry.name === 'mail_accounts',
+    )!;
     const result = await tool.execute(
       {},
       { identity, signal: new AbortController().signal, terminate: () => {}, progress: () => {} },
     );
-    expect(result).toMatchObject({
-      ok: true,
-      content: expect.stringContaining('mail_request_setup'),
-    });
+    expect(result).toMatchObject({ ok: true, content: expect.stringContaining('没有交给你的邮箱') });
+    expect(result.content).not.toContain('mail_request_setup');
   });
 
   it('rejects unknown provider before calling the facade', async () => {
@@ -159,6 +199,7 @@ describe('mail_request_setup', () => {
       identity: { ...identity, botId: null },
       mail,
       gateway: { writeDenial: () => null },
+      bound: false,
       setup: { requestSetup },
     }).find((entry) => entry.name === MAIL_REQUEST_SETUP_TOOL)!;
     const noBot = { ...identity, botId: null };

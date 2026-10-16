@@ -55,6 +55,9 @@ const TOOL_VERBS: Record<string, string> = {
   suggest_route: '给出路由建议',
   delegate_to_bot: '转交给其他 Bot',
   cancel_delegation: '取消转交',
+  // D91 能力目录按需发现两件套。
+  capability_search: '查找外部工具',
+  capability_call: '调用外部工具',
 };
 
 export function toolVerb(toolName: string): string | null {

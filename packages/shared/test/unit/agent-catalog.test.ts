@@ -7,11 +7,14 @@ import {
   agentSetupReasonForError,
   agentSetupReasonOf,
   botRuntimeSchema,
+  CAPABILITY_CALL_TOOL,
+  CAPABILITY_SEARCH_TOOL,
   capabilityOfTool,
   defaultCapabilities,
   filterReleasedAgents,
   HOST_CAPABILITIES,
   hostCapabilityIdSchema,
+  isHostToolInjected,
   NEVER_INJECTED_TOOLS,
   parseAgentModelRef,
   resolveCapabilities,
@@ -110,6 +113,19 @@ describe('capability resolution (P2)', () => {
     expect(capabilityOfTool('propose_team')?.id).toBe('collaboration');
     expect(capabilityOfTool('save_profile')).toBeNull();
     expect(capabilityOfTool('bash')).toBeNull();
+  });
+
+  it('D91: the capability pair is shared by the mcp and apps packs — either one injects it', () => {
+    for (const tool of [CAPABILITY_SEARCH_TOOL, CAPABILITY_CALL_TOOL]) {
+      expect(capabilityOfTool(tool)?.id).toBe('mcp');
+      expect(isHostToolInjected(tool, ['core', 'mcp'], [])).toBe(true);
+      expect(isHostToolInjected(tool, ['core', 'apps'], [])).toBe(true);
+      expect(isHostToolInjected(tool, ['core', 'mcp', 'apps'], [])).toBe(true);
+      expect(isHostToolInjected(tool, ['core', 'memory'], [])).toBe(false);
+    }
+    // Pack ownership of everything else is unchanged.
+    expect(isHostToolInjected('app_github_list', ['core', 'mcp'], [])).toBe(false);
+    expect(isHostToolInjected('mcp_srv_x', ['core', 'apps'], [])).toBe(false);
   });
 
   it('uses defaults for null, always keeps core, forces collaboration for the butler', () => {

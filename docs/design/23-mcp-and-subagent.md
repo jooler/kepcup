@@ -33,7 +33,7 @@ HTTP / SSE server 的 `auth` 字段（缺省按同级 `headers` 推断：有 `he
 | `oauth` | 标准 MCP Authorization：KepCup 作为 OAuth 公共客户端走授权码 + PKCE，令牌由宿主保管并自动刷新 | **仅 http（Streamable HTTP）** |
 
 - **OAuth 的用法**：在设置页把认证方式设为 OAuth，点「连接」→ 界面展示授权域名并等用户确认 → 系统浏览器授权 → 回到 KepCup。令牌（access / refresh）只存加密的 `secrets` 表（逐值，`redact` 可掩码），永不进入 RPC 返回、界面、日志、`runs.db`、审计明细、模型上下文或外部智能体进程。客户端身份按「已有 > CIMD > DCR > 手填 client id」自动选择；手填时界面给出需在其平台登记的回调地址（`http://127.0.0.1:{端口}/callback`，固定候选端口）。
-- **运行时只读令牌**：run 里 MCP 连接用的提供者只做「读取 + 临近过期主动刷新 + 401 后刷新一次」，授权失效（无令牌、刷新失败、仍 401、权限不足）**不会**弹浏览器，而是：run 开头 listTools 失败 → 工具不暴露、`<connected_apps>` 提示、不中断；run 中途失败 → `SETUP_REQUIRED` → 对话里的连接卡 → 连接后 `runs.retry` 续跑。授权错误不计入重连失败次数（不会被永久停用），状态为 `mcp.server_status: needs_auth`。
+- **运行时只读令牌**：run 里 MCP 连接用的提供者只做「读取 + 临近过期主动刷新 + 401 后刷新一次」，授权失效（无令牌、刷新失败、仍 401、权限不足）**不会**弹浏览器，而是：run 开头 listTools 失败 → 工具不暴露、`<connected_apps>` 提示（D91 起为 `<capabilities>` 的「需重新连接」状态行）、不中断；run 中途失败 → `SETUP_REQUIRED` → 对话里的连接卡 → 连接后 `runs.retry` 续跑。授权错误不计入重连失败次数（不会被永久停用），状态为 `mcp.server_status: needs_auth`。
 - **改认证方式或 URL = 断开旧连接**：令牌的受众绑定该 server 的 URL，所以 `auth` 从 `oauth` 改成别的、或 `oauth` 的 URL 变了，旧连接先吊销（RFC 7009）并清除令牌，再保存新配置；进行中的授权流程同时取消。
 - **断开与删除**：`apps.disconnect` 吊销并清令牌，自定义 server 的连接行保留为 `not_connected`；删除 server 用 `mcp.removeServer`（连同 `mcp:{id}:*` 密钥、令牌与连接行一并清理）。
 - 风险分级、审批与审计与其他 MCP 工具一致；完整设计见 [29-connected-apps.md](29-connected-apps.md) §5 / §6，实现与偏差见 `docs/dev/02-architecture.md`「连接应用」与 DEV-019。
@@ -62,7 +62,8 @@ HTTP / SSE server 的 `auth` 字段（缺省按同级 `headers` 推断：有 `he
 - **策略**（`settings.mcpServers[].toolPolicies[toolName] = { approval?: 'auto' | 'ask', enabled?: boolean }`，按工具名存，工具列表刷新后保留，已消失的工具在设置页标灰）。有人值守时的决定顺序：逐工具 `approval` > server `autoApprove`（等价于该 server 全部工具 `auto`，可被逐工具 `ask` 收回）> 风险档默认（`read` → 免审，`write` / `destructive` → 每次确认）。`enabled:false` 的工具不注册，调用时也拒绝（`MCP_TOOL_NOT_FOUND`）。
 - **调用时重新解析**：网关每次调用都重读设置并重新判定风险（连接在线时先刷新注解，最多等 5 秒；离线时用已知注解，没见过的工具按 `destructive`，不为判定风险去连接）；server 已在应用级停用、或 Bot 已不再勾选它，进行中的任务也不能再调。
 - **无人值守**：`mcp_tool` 审批在无人值守下**所有风险档**都自动批准（D41 / D53：开关是用户的选择；不拒绝、不排队、不设逐工具无人值守白名单；数据目录底线只作用于命令 / 路径类审批，不涉及 MCP）；例外是任务里的重复调用：去重门先于自动批准，已完成或被用户拒绝过的相同调用不建卡、直接返回，带「上次结果未知」提示的卡不自动批准、等用户（[13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)）。自动批准的审批行 `auto_approved=1`、payload 带 `risk`；审计 `mcp_tool_call` 记 `risk` / `riskSource` / 批准方式（auto / user / unattended）及来源，无人值守时另记「无人值守自动批准（写入 / 破坏性）」。Bot 详情的 MCP 区只要勾选了 server 就常驻提示「无人值守模式下，MCP 工具调用会自动批准执行（包括写入、删除类操作）」；无人值守生效且勾选的 server 含写入 / 破坏性工具（或风险查询失败）时提示改为警示样式并给出数量。
-- **只读 MCP 工具进对话轮与只读子代理**：风险为 `read` 且有效审批为免审的工具也进对话轮（D75）与只读子代理（D66）的工具面，至多 `TURN_MCP_READ_TOOLS_MAX`（20）个（按 server 顺序）；对话轮解析工具面最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS`（3 秒），超时本轮不带 MCP 工具、连接在后台继续。调用时网关再校验一次：此刻已不是「只读 + 免审」→ `RUN_READ_ONLY`（对话轮提示改用 `start_task`）。对话轮系统提示的 `<mcp_tools>` 段（Bot 有既在应用级启用、又被 Bot 勾选的 MCP server——「应用启用 ∩ Bot 勾选」非空——就有）说明本轮可直接调用的个数，以及写入 / 需确认的工具只在任务中可用。只读**任务**（`writes:false`）的工具面不变，仍拿到全部 MCP 工具（写工具照常弹卡）。
+- > **D91 修订**：对话轮不再逐个挂只读 MCP 工具，也不再在 run 开头解析 MCP 工具面（`TURN_MCP_RESOLVE_TIMEOUT_MS` 与 `<mcp_tools>` / `turnMcpNote` 已删）。对话轮的只读快速通道改为稳定两件套 `capability_search` / `capability_call`：索引只含「风险为 `read` 且有效审批为免审」的工具，调用 `capability_search` 时才懒解析（最多等 `CAPABILITY_RESOLVE_TIMEOUT_MS`=10 秒，不计入重连预算），Bot 的能力清单由系统提示的 `<capabilities>` 段给出；任务只挂 `start_task.capabilities` 声明的能力。网关执行期的 `RUN_READ_ONLY` 硬拒不变。以下是被替代的 W5 原文，保留作历史。详见 [40](40-capability-mounting.md) §3、§5。
+- **只读 MCP 工具进对话轮与只读子代理**（D91 前）：风险为 `read` 且有效审批为免审的工具也进对话轮（D75）与只读子代理（D66）的工具面，至多 `TURN_MCP_READ_TOOLS_MAX`（20）个（按 server 顺序）；对话轮解析工具面最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS`（3 秒），超时本轮不带 MCP 工具、连接在后台继续。调用时网关再校验一次：此刻已不是「只读 + 免审」→ `RUN_READ_ONLY`（对话轮提示改用 `start_task`）。对话轮系统提示的 `<mcp_tools>` 段（Bot 有既在应用级启用、又被 Bot 勾选的 MCP server——「应用启用 ∩ Bot 勾选」非空——就有）说明本轮可直接调用的个数，以及写入 / 需确认的工具只在任务中可用。只读**任务**（`writes:false`）的工具面不变，仍拿到全部 MCP 工具（写工具照常弹卡）。
 - **界面**：设置页每个 server 有「工具与审批」展开（风险徽标、判定来源、审批 默认 / 免审批 / 每次确认、启用开关，已消失的工具标灰；`mcp.toolRisks`）；`mcp_tool` 审批卡显示服务器 · 工具、参数与风险徽标，破坏性加警示条，写入 / 破坏性工具的收件方字段逐项完整列出，已批准的卡显示执行结果与回执（见 [13 §审批去重与执行回执](13-permissions.md#审批去重与执行回执d78)）。
 - 运行中把授权收紧（停用 server、移出 Bot、关闭 `autoApprove`、逐工具停用或由免审改为确认）会立即中断受影响的进行中任务，见 [13-permissions.md](13-permissions.md) 与 [30 §7.4](30-supervisor-and-tasks.md#74-崩溃与恢复d49d67)。
 
@@ -89,7 +90,7 @@ OAuth（首期不做；已单排为 D73，P0 已实现自定义 HTTP server 的 
 | 触发 | 主 loop 调用 `delegate_task`；参数见下节模式 |
 | 子 run | `PiEngine.startRun` 嵌套启动，`loopType='subagent'`，落 `runs` 行（可审计、用量独立），**不**产生面向用户的对话消息 |
 | 归属 | 同 Bot、同对话：workspace / project / 网关授权边界原样继承，不扩大沙箱 |
-| 工具集 | 只读研究集：`read` / `grep` / `find` / `ls` / `bash`（沙箱）/ `web_search` / `web_fetch`，以及只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个）；无 `write` / `edit`、无 `send_message` / `skip_reply`、无再委派、无 memory / schedule / browser |
+| 工具集 | 只读研究集：`read` / `grep` / `find` / `ls` / `bash`（沙箱）/ `web_search` / `web_fetch`，以及只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个）；**D91 修订**：这一项改为「任务内联条目中的只读 + 免审批子集（至多 `SUBAGENT_MCP_READ_TOOLS_MAX`=20，由 `TURN_MCP_READ_TOOLS_MAX` 改名）+ 子代理面的只读 `capability_search` / `capability_call`（覆盖任务可达的全部能力中只读 + 免审批的工具）」，不再依赖对话轮的解析结果，见 [40](40-capability-mounting.md) §3、§4.3；无 `write` / `edit`、无 `send_message` / `skip_reply`、无再委派、无 memory / schedule / browser |
 | 结果压缩 | 轻量模型把子 run 过程摘要压缩为 ≤ 4000 字符的结论；子 transcript 全文只落 `run_steps` |
 | 预算 | 每个子 run 独立封顶：轮数、超时、token；超限中止并把已有内容压缩返回 |
 | 可见性 | 对话流不出现子 transcript；`get_run` / run 详情与其他执行记录同级可查 |

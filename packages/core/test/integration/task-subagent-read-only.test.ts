@@ -231,6 +231,7 @@ describe('read-only MCP tools on the subagent surface (W5)', () => {
       instruction: 'TASK-MCP 查一下笔记',
       sourceMessageIds: [],
       writes: false,
+      capabilities: ['mcp:srv1'],
     });
     const sub = await subRunOf(stack, started.taskId);
     await waitFor(

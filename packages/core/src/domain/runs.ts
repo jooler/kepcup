@@ -37,6 +37,7 @@ interface RunRow {
   task_title: string | null;
   task_writes: number | null;
   task_workdir: string | null;
+  task_capabilities: string | null;
   origin_run_id: string | null;
   result_consumed_at: number | null;
   awaiting_input: number;
@@ -110,6 +111,19 @@ function nextErrorJson(
   return withMeta(setup !== null ? { message, setup } : { message });
 }
 
+/** `runs.task_capabilities`（JSON 字符串数组，D91）；NULL / 损坏 = 未声明（null）。 */
+function parseCapabilities(raw: string | null): string[] | null {
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === 'string')
+      ? (parsed as string[])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function rowToRun(row: RunRow): Run {
   const error = row.error_json ? (JSON.parse(row.error_json) as RunErrorJson) : null;
   return {
@@ -141,6 +155,7 @@ function rowToRun(row: RunRow): Run {
     taskTitle: row.task_title,
     taskWrites: row.task_writes === null ? null : row.task_writes === 1,
     taskWorkdir: row.task_workdir,
+    taskCapabilities: parseCapabilities(row.task_capabilities),
     originRunId: row.origin_run_id,
     resultConsumedAt: row.result_consumed_at,
     awaitingInput: row.awaiting_input === 1,
@@ -191,6 +206,8 @@ export class RunsService {
     taskTitle?: string | null;
     taskWrites?: boolean | null;
     taskWorkdir?: string | null;
+    /** D91: external capability ids the task declared (`start_task.capabilities`); omitted = none. */
+    taskCapabilities?: string[] | null;
     /** The supervisor turn that started the task. */
     originRunId?: string | null;
     /** Replay sources (`start_task({continues_task_id})`, D56). */
@@ -204,7 +221,7 @@ export class RunsService {
     const now = this.clock.now();
     this.db
       .prepare(
-        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'insert into runs (id, bot_id, conversation_id, loop_type, status, trigger_reason, trigger_message_ids_json, chain_id, chain_depth, parent_run_id, provider, model, engine, task_title, task_writes, task_workdir, task_capabilities, origin_run_id, continued_from_run_ids_json, trigger_parts_json, retry_of_run_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         id,
@@ -227,6 +244,11 @@ export class RunsService {
             ? 1
             : 0,
         input.taskWorkdir ?? null,
+        input.taskCapabilities !== undefined &&
+          input.taskCapabilities !== null &&
+          input.taskCapabilities.length > 0
+          ? JSON.stringify(input.taskCapabilities)
+          : null,
         input.originRunId ?? null,
         input.continuedFromRunIds !== undefined && input.continuedFromRunIds.length > 0
           ? JSON.stringify(input.continuedFromRunIds)
@@ -278,8 +300,7 @@ export class RunsService {
   /** The stored trigger parts of a turn (null = none stored: a single-part batch). */
   triggerPartsOf(id: string): StoredTriggerPart[] | null {
     const row = this.db.prepare('select trigger_parts_json from runs where id = ?').get(id) as
-      | { trigger_parts_json: string | null }
-      | undefined;
+      { trigger_parts_json: string | null } | undefined;
     if (row?.trigger_parts_json == null) return null;
     try {
       const parsed = JSON.parse(row.trigger_parts_json) as unknown;
@@ -292,8 +313,7 @@ export class RunsService {
   /** The turn a retried turn re-runs (null = not a retry). */
   retryOfRunId(id: string): string | null {
     const row = this.db.prepare('select retry_of_run_id from runs where id = ?').get(id) as
-      | { retry_of_run_id: string | null }
-      | undefined;
+      { retry_of_run_id: string | null } | undefined;
     return row?.retry_of_run_id ?? null;
   }
 

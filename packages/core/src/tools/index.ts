@@ -27,7 +27,7 @@ import {
   type ScheduleToolFacade,
 } from './schedule-tools.js';
 import { buildWatchTools, type WatchToolFacade } from './watch-tools.js';
-import { buildMailTools, type MailSetupFacade } from './mail-tools.js';
+import { buildMailTools, mailBoundFor, type MailSetupFacade } from './mail-tools.js';
 import type { MailService } from '../mail/service.js';
 import { buildBrowserTools } from './browser.js';
 import { buildImageTools, type MediaToolFacade } from './image-tools.js';
@@ -45,6 +45,8 @@ import { buildAskUserTool, buildTaskTools, type TaskToolFacade } from './task-to
 import type { SubagentToolFacade } from '../agent/subagent.js';
 import type { McpToolFacade } from '../mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from './app-tools.js';
+import { buildCapabilityTools } from './capability-tools.js';
+import type { CapabilityDiscovery } from '../capabilities/discovery.js';
 import { buildWidgetTools, type WidgetToolFacade } from './widget-tools.js';
 import { buildPresentTools, type PresentToolFacade } from './present-tools.js';
 import { buildSettingsTools, type SettingsToolFacade } from './settings-tools.js';
@@ -113,10 +115,16 @@ export interface ResponseToolDeps {
    * watch_list / watch_stop——异步托管动作，对话轮与任务都有。
    */
   watch?: WatchToolFacade | undefined;
-  /** D84 邮件通道。读工具随时可用；发信在对话轮被 readOnlyRefusal 拒绝。 */
+  /** D84 邮件通道。发信在对话轮被 readOnlyRefusal 拒绝。 */
   mail?: MailService | undefined;
   /**
-   * 对话内添加邮箱卡（design 18）：present 时注册 mail_request_setup；
+   * D91：Bot 是否已有绑定邮箱（orchestrator run 开头判定一次）。
+   * 假 → 只注册 mail_request_setup；真 → 注册五个读写工具，mail_request_setup 照样注册（可继续添加邮箱）。
+   * 缺省时这里按 `mail.accountsForBot` 现算（单测可省略）。
+   */
+  mailBound?: boolean | undefined;
+  /**
+   * 对话内添加邮箱卡（design 18）：present 时注册 mail_request_setup（有无绑定都一样，D91）；
    * orchestrator 写入 setupHit。缺省则不注册该工具（单测可省略）。
    */
   mailSetup?: MailSetupFacade | undefined;
@@ -156,12 +164,16 @@ export interface ResponseToolDeps {
    */
   subagent?: SubagentToolFacade | undefined;
   /**
-   * MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已按
-   * 「应用 enabled ∩ Bot 选中」构建好的包装工具，直接注册。W5：任务拿全部已
-   * 启用的工具；对话轮拿的是只读工具面（只读 + 有效审批 auto，≤
-   * TURN_MCP_READ_TOOLS_MAX），由 orchestrator 选好。
+   * MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已构建好的包装工具，直接
+   * 注册。D91 起只有任务面逐个挂（挂载哪些能力的工具由 orchestrator 决定）；对话轮不再内联
+   * 外部工具，走下面的 `capabilities` 两件套。
    */
   mcp?: McpToolFacade | undefined;
+  /**
+   * 能力按需发现（D91）：present 时注册 `capability_search` / `capability_call`（对话轮的只读
+   * 快速通道；任务里取用未挂载的能力）。索引范围为空时 orchestrator 不提供。
+   */
+  capabilities?: CapabilityDiscovery | undefined;
   /**
    * 连接应用门面（D73）：present 时注册 app_request_connection（orchestrator 只在 Bot
    * 勾选了 OAuth 自定义应用时提供，其余 Bot 工具集不变）。
@@ -957,6 +969,8 @@ export function buildResponseTools(input: {
           identity,
           mail: deps.mail,
           gateway,
+          // D91：对话轮与任务分支共用这一份（邮箱绑定门控，design 40 §6）。
+          bound: deps.mailBound ?? mailBoundFor(deps.mail, identity.botId),
           ...(deps.mailSetup !== undefined ? { setup: deps.mailSetup } : {}),
         })
       : [];
@@ -1050,9 +1064,11 @@ export function buildResponseTools(input: {
   const delegateTools =
     deps.subagent !== undefined ? buildDelegateTools({ identity, subagent: deps.subagent }) : [];
 
-  // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析
-  // 并按工具面选好（W5：对话轮只有只读 + 免审批的那部分）。
+  // MCP 工具（docs/design/23-mcp-and-subagent.md D65）：orchestrator 已解析并选好（D91：只有
+  // 任务面逐个挂）；两件套是对话轮与任务取用其余能力的稳定入口。
   const mcpTools = deps.mcp?.tools ?? [];
+  const capabilityTools =
+    deps.capabilities !== undefined ? buildCapabilityTools(deps.capabilities) : [];
   // 连接应用（D73）：请求用户（重新）连接已勾选的 OAuth 应用。
   const appTools = deps.apps !== undefined ? buildAppTools({ identity, apps: deps.apps }) : [];
 
@@ -1147,8 +1163,9 @@ export function buildResponseTools(input: {
       ...delegationTools,
       ...butlerTools,
       ...workbenchTools,
-      // W5: read-only MCP tools (call-time re-check in the gateway).
-      ...mcpTools,
+      // D91: a turn mounts no external tool one by one — the read-only quick path is the
+      // capability pair (call-time re-check in the gateway).
+      ...capabilityTools,
       ...appTools,
       ...setupTools,
     ]);
@@ -1193,6 +1210,7 @@ export function buildResponseTools(input: {
       ? [buildListBotsTool({ identity, butler: deps.butler.host })]
       : []),
     ...mcpTools,
+    ...capabilityTools,
     ...appTools,
     ...setupTools,
   ]);
@@ -1239,8 +1257,8 @@ export function emptyToolResult(): ToolResult {
 
 /**
  * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索 +
- * 只读 MCP 工具（W5：只读 + 有效审批 auto，≤ TURN_MCP_READ_TOOLS_MAX，按子
- * run 身份包装好的 `mcp`）。无 write / edit（避免与主 run 的 project 写租约竞
+ * 只读 MCP 工具（W5：只读 + 有效审批 auto，≤ SUBAGENT_MCP_READ_TOOLS_MAX，按子
+ * run 身份包装好的 `mcp`）与能力两件套（D91，按子 run 身份构建、索引限于只读 + auto）。无 write / edit（避免与主 run 的 project 写租约竞
  * 争）、无 send_message / delegate_task（禁止再委派）、无 memory / schedule /
  * browser / skills 工具。
  */
@@ -1256,6 +1274,7 @@ export function buildSubagentResearchTools(input: {
     | 'fsState'
     | 'search'
     | 'mcp'
+    | 'capabilities'
     | 'logger'
   >;
 }): ToolDefinition[] {
@@ -1280,8 +1299,10 @@ export function buildSubagentResearchTools(input: {
         })
       : [];
   const mcpTools = input.deps.mcp?.tools ?? [];
+  const capabilityTools =
+    input.deps.capabilities !== undefined ? buildCapabilityTools(input.deps.capabilities) : [];
   return dropBuiltinNameConflicts(
-    [...coding, ...web, ...mcpTools],
+    [...coding, ...web, ...mcpTools, ...capabilityTools],
     new Set(mcpTools),
     input.deps.logger,
   );

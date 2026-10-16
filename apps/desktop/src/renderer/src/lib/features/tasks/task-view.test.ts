@@ -41,6 +41,15 @@ function view(overrides: Partial<TaskView> = {}): TaskView {
   };
 }
 
+describe('taskCardModel capabilities (D91)', () => {
+  it('shows the declared capability ids; an undeclared task has none', () => {
+    expect(taskCardModel(view()).capabilities).toEqual([]);
+    expect(
+      taskCardModel(view({ capabilities: ['app:github', 'mcp:notes'] })).capabilities,
+    ).toEqual(['app:github', 'mcp:notes']);
+  });
+});
+
 describe('taskCardModel', () => {
   it('a submitted task shows its queue reason and can be cancelled', () => {
     const model = taskCardModel(

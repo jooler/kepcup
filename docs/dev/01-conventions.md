@@ -180,8 +180,12 @@ kepcup/
 | `TASK_EVENT_CONTEXT_MAX_CHARS` | 600 | 最近窗口里任务进度与较早任务条目的截断长度 |
 | `TASK_TRIGGER_RESULT_MAX_CHARS` | 12000 | 触发段里任务结果全文的硬顶 |
 | `GRANT_ABSOLUTE_TTL_MS` | 10 分钟 | 一次性授权的绝对时限（D37 收紧） |
-| `TURN_MCP_READ_TOOLS_MAX` | 20 | 进对话轮 / 只读子代理工具面的只读 MCP 工具数上限（D65） |
-| `TURN_MCP_RESOLVE_TIMEOUT_MS` | 3000 | 对话轮等待解析 MCP 工具面的上限，超时本轮不带 MCP 工具（D65） |
+| `SUBAGENT_MCP_READ_TOOLS_MAX` | 20 | 只读子代理内联的只读 + 免审 MCP 工具数上限（D65 / D91；对话轮不再逐个挂 MCP 工具） |
+| `CAPABILITY_RESOLVE_TIMEOUT_MS` | 10000 | `capability_search` 懒解析能力工具列表时单次调用最多等多久；超时的能力列为「暂时不可达」，连接在后台继续（D91） |
+| `CAPABILITY_UNREACHABLE_COOLDOWN_MS` | 30000 | 某能力列工具失败后同一 run 内的冷却：冷却期内 search 直接报「暂时不可达」，不重连（D91 评审） |
+| `CAPABILITY_SEARCH_RESULTS_MAX` | 20 | `capability_search` 一次最多返回的工具数（D91） |
+| `TASK_CAPABILITIES_MAX` | 8 | `start_task.capabilities` 去重后的数量上限（D91） |
+| `EXTERNAL_TOOLS_INLINE_MAX` | 40 | 任务声明的能力的已启用工具总数超过它则一个都不内联、全部走两件套（D91） |
 | `BROWSER_NO_PROGRESS_LIMIT` | 3 | 同一浏览器动作连续几次页面不变后拦下下一次（D77） |
 | `BROWSER_USER_CONTROL_IDLE_MS` | 600000 | 用户接管页面后无任何输入多久自动交还给 Bot（D77） |
 | `BROWSER_HANDBACK_COALESCE_MS` | 30000 | 同一任务在该时长内只收到一次「用户已交还浏览器控制」注入（D77） |

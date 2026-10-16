@@ -5,11 +5,7 @@ import {
   enabledServers,
   type McpServer,
 } from '../../src/mcp/service.js';
-import {
-  mcpReceiptOf,
-  selectReadOnlyMcpEntries,
-  type McpToolEntry,
-} from '../../src/mcp/tools.js';
+import { mcpReceiptOf, selectReadOnlyMcpEntries, type McpToolEntry } from '../../src/mcp/tools.js';
 import { recipientFields, RECIPIENT_VALUE_MAX_CHARS } from '../../src/mcp/recipients.js';
 import { decideMcpTool } from '../../src/mcp/policy.js';
 import { classifyRiskDetailed } from '../../src/mcp/risk.js';
@@ -54,7 +50,11 @@ describe('serversForBot', () => {
   });
 });
 
-function entryOf(server: McpServer, name: string, annotations?: Record<string, boolean>): McpToolEntry {
+function entryOf(
+  server: McpServer,
+  name: string,
+  annotations?: Record<string, boolean>,
+): McpToolEntry {
   return {
     server,
     tool: { name, inputSchema: { type: 'object' }, ...(annotations ? { annotations } : {}) },
@@ -63,9 +63,12 @@ function entryOf(server: McpServer, name: string, annotations?: Record<string, b
   };
 }
 
-describe('selectReadOnlyMcpEntries (W5 turn / read-only subagent surface)', () => {
+describe('selectReadOnlyMcpEntries (W5 read-only subagent surface; D91: the turn no longer mounts tools)', () => {
   it('keeps read + auto tools only, in server order, and counts the rest as omitted', () => {
-    const a = { ...serverOf('a', true), toolPolicies: { list_asked: { approval: 'ask' as const } } };
+    const a = {
+      ...serverOf('a', true),
+      toolPolicies: { list_asked: { approval: 'ask' as const } },
+    };
     const b = { ...serverOf('b', true), autoApprove: true };
     const entries = [
       entryOf(a, 'list_files'),
@@ -80,7 +83,7 @@ describe('selectReadOnlyMcpEntries (W5 turn / read-only subagent surface)', () =
     expect(picked.omitted).toBe(3);
   });
 
-  it('caps at TURN_MCP_READ_TOOLS_MAX (first N in server order)', () => {
+  it('caps at SUBAGENT_MCP_READ_TOOLS_MAX (first N in server order)', () => {
     const server = serverOf('s', true);
     const entries = Array.from({ length: 25 }, (_, i) => entryOf(server, `get_item_${i}`));
     const picked = selectReadOnlyMcpEntries(entries);

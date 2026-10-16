@@ -1,4 +1,37 @@
-import { settingsDeepEqual, type McpServer, type SettingValues } from '@kepcup/shared';
+import {
+  MCP_SERVER_ID_PATTERN,
+  settingsDeepEqual,
+  type McpServer,
+  type SettingValues,
+} from '@kepcup/shared';
+
+/**
+ * 新建 MCP 服务器的 id（D91 后续）：`mcp_` + 时间戳的 36 进制，表单不让用户填 id；
+ * 满足 shared 的 `MCP_SERVER_ID_PATTERN`（保存时 core 的参数校验也认这条规则）。
+ */
+export function newMcpServerId(now: number = Date.now()): string {
+  return `mcp_${now.toString(36)}`;
+}
+
+/** 保存前的 id 校验（与 core 的参数校验同一条规则；不合规时界面提示 `settings.mcpIdInvalid`）。 */
+export function isValidMcpServerId(id: string): boolean {
+  return MCP_SERVER_ID_PATTERN.test(id);
+}
+
+/** `McpServer.description` 的长度上限（与 shared schema 一致）。 */
+export const MCP_DESCRIPTION_MAX = 200;
+
+/**
+ * 保存前规整用途说明（D91）：首尾空白去掉、截到上限；空串视为没填（字段整个去掉，
+ * 目录行回到缺省文案）。表单里的输入框可能给出 `''` / 全空白，不能原样落盘。
+ */
+export function withNormalizedDescription<T extends { description?: string | undefined }>(
+  server: T,
+): T {
+  const { description, ...rest } = server;
+  const text = (description ?? '').trim().slice(0, MCP_DESCRIPTION_MAX).trim();
+  return (text.length === 0 ? rest : { ...rest, description: text }) as T;
+}
 
 /**
  * 出卡时 before（带 focus 的读快照）里的服务 id。user-only 会把整份预填清空，

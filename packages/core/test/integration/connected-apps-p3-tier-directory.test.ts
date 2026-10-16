@@ -319,6 +319,7 @@ describe('community tier: first connect and write-tool durations', () => {
     const conv = await openDirect(core, bot.id);
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step().replyToolCall('app_notes_create_note', { title: 'one' }),

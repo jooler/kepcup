@@ -70,7 +70,7 @@ CREATE TABLE settings (
 
 外部智能体（D72，design/28）在同一设置 JSON 中增加：`agents`（目录 id → `{enabled, installedVersion?, source: 'managed'|'system', loadUserConfig}`，本机启用状态；P1 只用 `enabled`）、`customAgents`（自定义目录条目，预留，本期不读取）、`experimental.externalAgents`（实验开关，默认 `false`；关时 RPC 拒绝把 Bot 设为外部 Agent）、`backgroundAgentId?`（P6：无内置模型时后台 loop 选用的 Agent；缺省 / '' = 自动——只用该 Bot 自己的 Agent，不换用别家；画像整理 / 群聊摘要只在明确指定时运行）、`backgroundTasks`（P6：`{agentEnabled=true（false = 后台任务不用 Agent，照旧跳过）, agentSkillAuthoring=false, groupMentionOnly=true（经 Agent 的群聊判断需用户关掉此项）}`；`settings.update` 部分 patch 合并）。均在设置 JSON 行内，无迁移。Agent 并发不另设字段，沿用 `providerConcurrency['agent:{id}']`。
 
-MCP 与浏览器资料同在设置 JSON：`mcpServers`（D65，server 列表，每项可带逐工具策略 `toolPolicies?: Record<toolName, {approval?: 'auto'|'ask', enabled?}>`）、`browserProfiles`（D77，共享浏览器资料 `[{id: 'bpf_…', name, createdAt}]`，缺省 `[]`；只经 `browserProfiles.*` RPC 写，`settings.update` 不接受）。Bot 运行配置 `browser_profile`（`''` = 私有；指向不存在的资料按私有处理）。均无迁移。
+MCP 与浏览器资料同在设置 JSON：`mcpServers`（D65，server 列表；每项 `id` 受 `MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/` 约束〔D91 后续：字母 / 数字开头，其后字母、数字、`.` `_` `-`，1–64 个字符；写路径〔`settings.update`、`SettingsService.update`〕不合规直接拒绝，读路径 `SettingsService.get()` 逐条校验、丢弃不合规条目并 warn，不让一条坏数据拖垮整份设置，无迁移；它会拼进工具名 `mcp_{id}_{tool}`、能力 id `mcp:{id}`、`custom:{id}` 连接 id 与 secrets 键〕，每项可带逐工具策略 `toolPolicies?: Record<toolName, {approval?: 'auto'|'ask', enabled?}>`），D91 起每项还可带用途说明 `description?: string`（≤200 字符，扩展中心「MCP」表单填写；进系统提示 `<capabilities>` 目录行〔经 `oneLine` 清洗〕，缺省时目录行写固定缺省文案；只进提示词、不参与任何权限判断；无迁移）、`browserProfiles`（D77，共享浏览器资料 `[{id: 'bpf_…', name, createdAt}]`，缺省 `[]`；只经 `browserProfiles.*` RPC 写，`settings.update` 不接受）。Bot 运行配置 `browser_profile`（`''` = 私有；指向不存在的资料按私有处理）。均无迁移。
 
 ### secrets（P01）
 
@@ -184,7 +184,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 
 - 撤回：`status = 'recalled'`，清空正文，从 `messages_fts` 删除；Bot 不可见。
 - 编辑：更新正文与 `edited_at`，`status = 'edited'`，同步更新 `messages_fts`。
-- 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, deliveries? }`（`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
+- 私有任务条目（D75，[design/30](../design/30-supervisor-and-tasks.md) §2.4）：`kind = 'task_event'`、`sender_type = 'system'`、`owner_bot_id` = 任务所属 Bot，内容 `{ taskId, phase: brief | inject | cancel | question | result | failure, text, sourceMessageIds?, status?, error?, delivery?, questionMessageId?, title?, writes?, continuesTaskId?, capabilities?, deliveries? }`（`capabilities`〔D91〕：brief 条目带的任务声明能力 id，任务卡 / `<tasks>` 段可见；`deliveries`：终态条目被投递给对话轮的次数，宿主用 `json_set` 计数，达到 `TASK_REDELIVER_MAX_ATTEMPTS` 放弃，审查批 E）。写入走 `MessagesService.appendTaskEvent`：终态 phase（`result` / `failure`）撞唯一索引不报错，返回已存条目（`created: false`）。正文照常写 `messages_fts`（FTS 表结构不变，按视角过滤在查询时 join `messages.owner_bot_id`）。用户可见读路径（`isVisibleToUser` / `listVisible`）排除 `task_event` 与 `owner_bot_id` 非空的行。
 - 任务发出的可见中间说明：`text` 消息，`content_json` 带 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例，免加列）；`forward_task_result` 原文转发的结果是同形的 Bot 消息（`run_id` = 发起转发的对话轮，用以判定「已转发过」）。
 - 组件回传（D87 P4 L3）：用户在组件卡上确认后经 `widgets.ui.reply` 发出的用户消息，`text` 消息的 `content_json` 带 `origin: 'widget'` + `widgetId` + `widgetVersion`（同样免加列）；上下文发送者渲染为「用户（经组件 … 发出）」，正文包 `<untrusted source="widget">`；记忆与反思把它当「非用户本人的话」（同委派代发）。
 - 工作台派发（D90）：到点或「立即开始」时宿主在目标对话里追加的用户消息，`text` 消息的 `content_json` 带 `origin: 'workbench'` + `todoId` + `todoRunId`（免加列）；界面渲染为派发卡；操作者是管家时另加「（管家代你安排）」（`viaButler`），`source='butler'`（内容由管家起草或改写过）的事项另带 `butlerDrafted`，两者都让记忆与反思不把它当用户原话、执行者上下文按不可信包裹（同委派代发）。
@@ -950,6 +950,7 @@ CREATE TABLE runs (
   awaiting_input       INTEGER NOT NULL DEFAULT 0, -- 0006：running 下等待用户输入（design/30 §2.4.6）
   trigger_parts_json   TEXT,           -- 0008：对话轮触发批的各来源段 [{reason, messageIds, extraAttributes?}]；NULL = 旧行或单段批
   retry_of_run_id      TEXT,           -- 0008：重试出来的对话轮指向被重试的那一轮
+  task_capabilities    TEXT,           -- runs 0012（D91）：任务声明的外部能力 id 的 JSON 数组（`["app:github","mcp:notes"]`）；非任务 run 与未声明的任务为 NULL
   created_at           INTEGER NOT NULL,
   started_at           INTEGER,
   ended_at             INTEGER
@@ -961,6 +962,7 @@ CREATE INDEX runs_by_parent ON runs(parent_run_id);  -- 0009：台账沿续接�
 ```
 
 - 任务（D75，[design/30](../design/30-supervisor-and-tasks.md) §3.4）就是 `loop_type = 'task'` 的 runs 行，不另建表；任务的 submitted 用现有状态 `queued` 表示；对话轮为 `loop_type = 'turn'`。`continued_from_run_ids_json` 复用为 `start_task({continues_task_id})` 的回放来源。查询入口：`RunsService.listTasks` / `listNonTerminalTasks` / `listUnconsumedTerminalTasks`（终态且 `result_consumed_at IS NULL`）。外部智能体 Bot 的任务在创建时就记 `engine` / `provider = 'agent:{id}'`（门禁未过、引擎未启动就失败的任务也显示正确的引擎）。
+- 任务声明的能力（D91，runs 迁移 0012，[design/40](../design/40-capability-mounting.md) §4）：`task_capabilities` 是 `start_task.capabilities` 校验、去重后的能力 id（`app:{connectorSlug}` / `mcp:{serverId}`）JSON 数组，空数组存 NULL。`continues_task_id` 的新任务存「被接续任务的能力 ∪ 本次声明」；`runs.retry` 沿用行上的值；宿主自己派的任务（design 30 §8.4 降级）不写。任务启动时与当前能力目录求交后才决定挂什么，所以这里只是「声明」，不保证都挂上了。`Run.taskCapabilities: string[] | null` 经 `Run` / `TaskView.capabilities` 暴露给渲染层。
 - 对话轮：`trigger_parts_json` 让重试按来源段重建合并批（各段保留自己的 reason 与属性，`RunsService.triggerPartsOf`）；`runs.setTrigger` 在对话轮开始执行、吸收缓冲批后更新触发记录（吸收了 @ 连锁批时一并写 `chain_id` / `chain_depth`，审查批 E）。`retry_of_run_id`（`RunsService.retryOfRunId`）：重试出来的对话轮派出的任务，与被重试那一轮（及更早的重试链）派出的同名任务视为同一个，不重复派出。
 - 外部 Agent 的 run（D72）：`provider = 'agent:{id}'`、`model` 为伪 ref `agent:{id}/{model|default}`（调度器并发键随之落到 `agent:{id}`）、`engine = 'agent:{id}'`；`run_steps` 的事件形状与内置引擎逐字段一致（续接、反思、中间说明都读它）。
 

@@ -430,6 +430,7 @@ describe('W3 revoke → interrupt running tasks', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         taskSteps: [
           step().replyToolCall('mcp_srv1_post_note', { text: '记一笔' }),
           step().replyText('记好了'),

@@ -414,7 +414,8 @@ describe('settings catalog: mode context helpers', () => {
       'browser_open',
       'mcp_srv_lookup',
       'app_github_list_repos',
-      'app_call_tool',
+      'capability_search',
+      'capability_call',
       'get_attachment',
     ]) {
       expect(isUntrustedReadTool(name), name).toBe(true);

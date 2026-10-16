@@ -133,6 +133,7 @@ describe('W2 tool effect ledger (integration)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         taskSteps: [
           step().replyToolCall('browser_open', { url: 'https://shop.example/' }),
           step().replyToolCall('browser_snapshot', {}),
@@ -190,6 +191,7 @@ describe('W2 tool effect ledger (integration)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         taskSteps: [
           step().replyToolCall('browser_open', { url: 'https://shop.example/' }),
           step().replyToolCall('browser_click', { ref: 'e1' }),

@@ -729,6 +729,7 @@ describe('a local connection behaves as the least trusted tier', () => {
     // Task: read, write, write again, destructive — each one asks, and only "once" is on offer.
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: [`app:${connectorId}`],
         writes: true,
         taskSteps: [
           step().replyToolCall(`app_${connectorId}_list_notes`, {}),
@@ -808,6 +809,7 @@ describe('a local connection behaves as the least trusted tier', () => {
     });
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: [`app:${connectorId}`],
         writes: true,
         taskSteps: [
           step().replyToolCall(`app_${connectorId}_list_notes`, {}),
@@ -880,7 +882,7 @@ describe('a local connection behaves as the least trusted tier', () => {
       timeoutMs: 30_000,
     });
     const last = llm.requestsFor('mock-main')[seenRequests]!;
-    expect(promptOf(last)).not.toContain('<connected_apps>');
+    expect(promptOf(last)).not.toContain('<capabilities>');
     expect(toolNamesOf(last).some((name) => name.startsWith(`app_${connectorId}_`))).toBe(false);
   }, 180_000);
 

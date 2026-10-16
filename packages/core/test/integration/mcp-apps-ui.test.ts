@@ -79,6 +79,7 @@ async function start(
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:app1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_app1_show_dashboard', { topic: '销量' }),
@@ -182,6 +183,7 @@ describe('card creation', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:app1'],
         writes: false,
         taskSteps: [step().replyToolCall('mcp_app1_refresh_data', {}), step().replyText('ok')],
         relay: '好了',

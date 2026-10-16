@@ -32,8 +32,8 @@ import { fakeCatalogEntry, until } from '../support/catalog-connect-env.js';
  *   works; the connect requests only the default scopes first; a second insufficient_scope in the
  *   same conversation within 30 minutes is a plain failure (no card), another conversation gets a
  *   card again.
- * - on-demand discovery: more than APP_TOOLS_INLINE_MAX app tools → only the summary + the two
- *   stable tools; `app_call_tool` goes through the same gateway as a direct call.
+ * - on-demand discovery: more than EXTERNAL_TOOLS_INLINE_MAX app tools → only the summary + the two
+ *   stable tools; `capability_call` goes through the same gateway as a direct call.
  */
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -226,6 +226,7 @@ describe('§6.1 step-up', () => {
     // 1. write_note needs `write`: the server answers 403 insufficient_scope.
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [step().replyToolCall('app_notes_write_note', { text: 'hi' })],
       }),
@@ -283,6 +284,7 @@ describe('§6.1 step-up', () => {
     //    30-minute window: a plain failure text — no SETUP_REQUIRED, no setup, no card.
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step().replyToolCall('app_notes_admin_op', {}),
@@ -307,6 +309,7 @@ describe('§6.1 step-up', () => {
     const group = await makeGroup(core, '项目群', [bot.id, other.id]);
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [step().replyToolCall('app_notes_admin_op', {})],
       }),
@@ -342,6 +345,7 @@ describe('§6.1 step-up: a dismissed card is not a dead end', () => {
     const seen = new Set<string>();
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [step().replyToolCall('app_notes_write_note', { text: 'hi' })],
       }),
@@ -395,7 +399,7 @@ const MANY_TOOLS: FakeMcpTool[] = [
 ];
 
 describe('§6.3 on-demand tool discovery', () => {
-  it('over the threshold: summary + the two stable tools; app_call_tool uses the real gateway path; refused for disabled / locked / unknown tools', async () => {
+  it('over the threshold: summary + the two stable tools; capability_call uses the real gateway path; refused for disabled / locked / unknown tools', async () => {
     const env = await start(MANY_TOOLS, { default: [], write: [] });
     const { core, llm, fake } = env;
     const services = core.services;
@@ -413,6 +417,7 @@ describe('§6.3 on-demand tool discovery', () => {
     let namesRun1: string[] = [];
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step()
@@ -420,27 +425,28 @@ describe('§6.3 on-demand tool discovery', () => {
               namesRun1 = toolNamesOf(req);
               const prompt = promptOf(req);
               return (
-                namesRun1.includes('app_search_tools') &&
-                namesRun1.includes('app_call_tool') &&
+                namesRun1.includes('capability_search') &&
+                namesRun1.includes('capability_call') &&
                 namesRun1.includes('app_request_connection') &&
                 !namesRun1.some((n) => n.startsWith('app_notes_')) &&
-                prompt.includes('<connected_apps>') &&
-                prompt.includes('工具按需发现')
+                prompt.includes('<capabilities>') &&
+                prompt.includes('其余能力的工具没有逐个列出') &&
+                !prompt.includes('本任务已挂上')
               );
             })
-            .replyToolCall('app_search_tools', { query: 'bug report' }),
+            .replyToolCall('capability_search', { query: 'bug report' }),
           // Arguments are validated against the real tool's schema: no card, no server call.
-          step().replyToolCall('app_call_tool', { name: 'app_notes_file_issue', arguments: {} }),
+          step().replyToolCall('capability_call', { name: 'app_notes_file_issue', arguments: {} }),
           // Found by description only (the name says "issue").
-          step().replyToolCall('app_call_tool', {
+          step().replyToolCall('capability_call', {
             name: 'app_notes_file_issue',
             arguments: { title: '登录页崩溃' },
           }),
           // Disabled by the user: not in the Bot's set.
-          step().replyToolCall('app_call_tool', { name: 'app_notes_archive_all', arguments: {} }),
+          step().replyToolCall('capability_call', { name: 'app_notes_archive_all', arguments: {} }),
           // Never existed / another Bot's / raw server name.
-          step().replyToolCall('app_call_tool', { name: 'app_other_thing', arguments: {} }),
-          step().replyToolCall('app_call_tool', { name: 'file_issue', arguments: {} }),
+          step().replyToolCall('capability_call', { name: 'app_other_thing', arguments: {} }),
+          step().replyToolCall('capability_call', { name: 'file_issue', arguments: {} }),
           step().replyText('完成'),
         ],
         relay: '好了',
@@ -463,13 +469,13 @@ describe('§6.3 on-demand tool discovery', () => {
     await env.call('approvals.decide', { id: card.id, approve: true, duration: 'once' });
     const run1 = await nextTask(env, conv.id, 'completed', seen);
 
-    const search = (await toolResults(env, run1.id, 'app_search_tools'))[0]!.payload;
+    const search = (await toolResults(env, run1.id, 'capability_search'))[0]!.payload;
     expect(search['ok']).toBe(true);
     expect(String(search['content'])).toContain('app_notes_file_issue');
     expect(String(search['content'])).toContain('Create a bug report');
     expect(String(search['content'])).toContain('<untrusted>');
     expect(String(search['content'])).not.toContain('archive_all');
-    const calls = await toolResults(env, run1.id, 'app_call_tool');
+    const calls = await toolResults(env, run1.id, 'capability_call');
     expect(calls.map((c) => [c.payload['ok'], c.payload['errorCode'] ?? null])).toEqual([
       [false, 'INVALID_INPUT'],
       [true, null],
@@ -529,6 +535,7 @@ describe('§6.3 on-demand tool discovery', () => {
     let namesRun2: string[] = [];
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [
           step()
@@ -536,9 +543,9 @@ describe('§6.3 on-demand tool discovery', () => {
               namesRun2 = toolNamesOf(req);
               return true;
             })
-            .replyToolCall('app_search_tools', { query: 'lookup_03' }),
-          step().replyToolCall('app_call_tool', { name: 'app_notes_lookup_03', arguments: {} }),
-          step().replyToolCall('app_call_tool', { name: 'app_notes_extra_2', arguments: {} }),
+            .replyToolCall('capability_search', { query: 'lookup_03' }),
+          step().replyToolCall('capability_call', { name: 'app_notes_lookup_03', arguments: {} }),
+          step().replyToolCall('capability_call', { name: 'app_notes_extra_2', arguments: {} }),
           step().replyText('完成'),
         ],
         relay: '第二次好了',
@@ -548,9 +555,9 @@ describe('§6.3 on-demand tool discovery', () => {
     const run2 = await nextTask(env, conv.id, 'completed', seen);
     expect(namesRun2.sort()).toEqual(namesRun1.sort());
     expect(
-      String((await toolResults(env, run2.id, 'app_search_tools'))[0]!.payload['content']),
+      String((await toolResults(env, run2.id, 'capability_search'))[0]!.payload['content']),
     ).toContain('没有匹配');
-    const calls2 = await toolResults(env, run2.id, 'app_call_tool');
+    const calls2 = await toolResults(env, run2.id, 'capability_call');
     expect(calls2.map((c) => [c.payload['ok'], c.payload['errorCode'] ?? null])).toEqual([
       [false, 'MCP_TOOL_NOT_FOUND'],
       [true, null],
@@ -581,6 +588,7 @@ describe('§6.3 on-demand tool discovery', () => {
     const seen = new Set<string>();
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step()
@@ -590,9 +598,9 @@ describe('§6.3 on-demand tool discovery', () => {
               return (
                 names.includes('app_notes_list_notes') &&
                 names.includes('app_notes_create_note') &&
-                !names.includes('app_search_tools') &&
-                !names.includes('app_call_tool') &&
-                !prompt.includes('工具按需发现')
+                !names.includes('capability_search') &&
+                !names.includes('capability_call') &&
+                !prompt.includes('其余能力的工具没有逐个列出')
               );
             })
             .replyText('完成'),
@@ -602,5 +610,115 @@ describe('§6.3 on-demand tool discovery', () => {
     ]);
     await sendBatch(core, conv.id, ['看看笔记']);
     await nextTask(env, conv.id, 'completed', seen);
+  }, 180_000);
+});
+
+// --- D91 follow-up: retry after connecting a new app declares it ---------------------------
+
+describe('D91: connecting an app after a task asked for it → the retry declares it', () => {
+  const NOTES_TOOLS: FakeMcpTool[] = [
+    { name: 'list_notes', description: 'List notes', annotations: { readOnlyHint: true } },
+  ];
+
+  it('task → app_request_connection → connect (grants the initiating bot) → runs.retry: task_capabilities has app:notes and app_notes_* is inline', async () => {
+    const env = await start(NOTES_TOOLS, { default: [], write: [] });
+    const { core, llm } = env;
+    const bot = await makeBot(core, '小应');
+    const conv = await openDirect(core, bot.id);
+    const seen = new Set<string>();
+    llm.script('mock-main', [
+      ...viaTask({
+        writes: false,
+        taskSteps: [
+          step().replyToolCall('app_request_connection', { connector: 'notes', reason: '查笔记' }),
+          step().replyText('等用户连接'),
+        ],
+      }),
+      step().inTurn().replyText('请在对话里连接'),
+    ]);
+    await sendBatch(core, conv.id, ['查一下我的笔记']);
+    const failed = await nextTask(env, conv.id, 'failed', seen);
+    expect(failed.setup).toEqual({
+      kind: 'connect-app',
+      target: { kind: 'catalog', connectorId: 'notes' },
+      reason: 'not_connected',
+    });
+    // The task declared nothing (the bot had no such app): the failed run carries no declaration.
+    expect(failed.taskCapabilities).toBeNull();
+    await waitFor(
+      async () =>
+        (await listRuns(core, conv.id)).some(
+          (r) => r.loopType === 'turn' && r.status === 'completed',
+        )
+          ? true
+          : null,
+      { label: 'waking turn', timeoutMs: 30_000 },
+    );
+
+    // The card's connect carries the card's bot (`grantBotId`): the connection lands in that
+    // bot's `app_connection_ids` by the existing grant path — nothing extra is needed.
+    const connectionId = await connectApp(env, { grantBotId: bot.id });
+    expect(
+      core.services.domain!.bots.get(bot.id)!.profile.runtime.app_connection_ids,
+    ).toContain(connectionId);
+
+    llm.script('mock-main', [
+      step()
+        .inTask()
+        .expect((req) => toolNamesOf(req).includes('app_notes_list_notes'))
+        .replyToolCall('app_notes_list_notes', {}),
+      step().inTask().replyText('查到了'),
+      step().inTurn().replyText('笔记如下'),
+    ]);
+    const retried = ((await env.call('runs.retry', { runId: failed.id })) as { run: Run }).run;
+    expect(retried.taskCapabilities).toEqual(['app:notes']);
+    const done = await nextTask(env, conv.id, 'completed', seen);
+    expect(done.id).toBe(retried.id);
+    expect(done.taskCapabilities).toEqual(['app:notes']);
+    // Inline: the declared app's tool was in the task's own tool list (not via the pair).
+    const results = await toolResults(env, done.id, 'app_notes_list_notes');
+    expect(results[0]!.payload['ok']).toBe(true);
+    // A second retry of the same failed task is the idempotent one (no second merge / task).
+    const again = ((await env.call('runs.retry', { runId: failed.id })) as { run: Run }).run;
+    expect(again.id).toBe(retried.id);
+  }, 240_000);
+
+  it('a conversation turn that hits connect-app is unaffected: the retried turn is no task and declares nothing', async () => {
+    const env = await start(NOTES_TOOLS, { default: [], write: [] });
+    const { core, llm } = env;
+    const bot = await makeBot(core, '小应');
+    const conv = await openDirect(core, bot.id);
+    llm.script('mock-main', [
+      step()
+        .inTurn()
+        .replyToolCall('app_request_connection', { connector: 'notes', reason: '查笔记' }),
+      step().inTurn().replyText('请在对话里连接'),
+    ]);
+    await sendBatch(core, conv.id, ['查一下我的笔记']);
+    const failedTurn = await waitFor(
+      async () =>
+        (await listRuns(core, conv.id)).find(
+          (r) => r.loopType === 'turn' && r.status === 'failed',
+        ) ?? null,
+      { label: 'turn fails with setup', timeoutMs: 30_000 },
+    );
+    expect(failedTurn.setup).toMatchObject({
+      kind: 'connect-app',
+      target: { kind: 'catalog', connectorId: 'notes' },
+    });
+    await connectApp(env, { grantBotId: bot.id });
+    llm.script('mock-main', [step().inTurn().replyText('连好了，笔记在这')]);
+    await env.call('runs.retry', { runId: failedTurn.id });
+    await waitFor(
+      async () =>
+        (await listRuns(core, conv.id)).find(
+          (r) =>
+            r.loopType === 'turn' && r.status === 'completed' && r.id !== failedTurn.id,
+        ) ?? null,
+      { label: 'retried turn completes', timeoutMs: 30_000 },
+    );
+    const all = await listRuns(core, conv.id);
+    expect(all.filter((r) => r.loopType === 'task')).toHaveLength(0);
+    expect(all.every((r) => r.taskCapabilities === null)).toBe(true);
   }, 180_000);
 });

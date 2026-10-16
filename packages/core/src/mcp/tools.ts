@@ -3,7 +3,7 @@ import { toLlmContent, type CallToolResult, type Tool as McpTool } from '@earend
 import {
   TOOL_OUTPUT_MAX_CHARS,
   sanitizeDisplayText,
-  TURN_MCP_READ_TOOLS_MAX,
+  SUBAGENT_MCP_READ_TOOLS_MAX,
   type AppAuthReason,
   type McpServer,
   type SetupRequirement,
@@ -28,9 +28,9 @@ import { untrustedBlock } from '../infra/data-boundary.js';
  * 审批（网关 mcpToolCall：tool policy > server autoApprove > 风险档默认）、
  * 审计、结果 `<untrusted>` 包裹 + 脱敏 + 截断、图片块走 ToolResult.images。
  *
- * W5：两种工具面——任务（全部已启用的工具）与只读工具面（对话轮 / 只读子
- * 代理：只放风险 read 且有效审批 auto 的工具，最多 TURN_MCP_READ_TOOLS_MAX
- * 个）。`enabled:false` 的工具两边都不注册。调用时网关重新解析风险与策略。
+ * W5：两种工具面——任务（全部已启用的工具）与只读工具面（只读子代理：
+ * 只放风险 read 且有效审批 auto 的工具，最多 SUBAGENT_MCP_READ_TOOLS_MAX 个；D91 起
+ * 对话轮不再内联外部工具，改走 `capability_search` / `capability_call`）。`enabled:false` 的工具两边都不注册。调用时网关重新解析风险与策略。
  */
 
 /**
@@ -57,17 +57,12 @@ export interface McpToolUiSink {
 export interface McpToolFacade {
   /** Orchestrator 预先解析并构建好的 MCP 包装工具（ready to register）。 */
   readonly tools: ToolDefinition[];
-  /**
-   * 只读工具面上没放进来的已启用 MCP 工具数（非只读 / 需确认 / 超出上限）；
-   * > 0 时对话轮系统提示说明「更多 MCP 工具在任务中可用」。任务面恒为 0。
-   */
-  readonly omitted?: number;
 }
 
 /**
- * 因授权问题本次没能列出工具的 server（D73）：run 开头 listTools 遇到
- * `AppAuthRequiredError` 时收集（不再只记日志）——工具不暴露，但提示词的
- * `<connected_apps>` 标为「需重新连接」，模型可调用 `app_request_connection`。
+ * 因授权问题本次没能列出工具的 server（D73）：解析工具列表时遇到
+ * `AppAuthRequiredError` 时收集（不再只记日志）——工具不暴露，任务提示词的 `<capabilities>`
+ * 标为「需重新连接」、能力按需发现的结果里也如实说明，模型可调用 `app_request_connection`（D91）。
  */
 export interface McpUnavailableServer {
   serverId: string;
@@ -101,6 +96,11 @@ export type McpToolFilter = (
 export interface McpToolResolution {
   entries: McpToolEntry[];
   unavailable: McpUnavailableServer[];
+  /**
+   * D91：列工具失败（连不上 / 超时，非授权问题）的 server id。能力按需发现据此把对应能力
+   * 报为「暂时不可达」，而不是「没有工具」。
+   */
+  failed: string[];
   /** 工具锁定拦下的工具（无锁定或全部已批准时为空数组）。 */
   locked: McpLockedServer[];
 }
@@ -141,6 +141,7 @@ export async function resolveMcpToolEntries(input: {
   const { servers, mcp, logger } = input;
   const entries: McpToolEntry[] = [];
   const unavailable: McpUnavailableServer[] = [];
+  const failed: string[] = [];
   const locked: McpLockedServer[] = [];
   const taken = new Set<string>();
   for (const server of servers) {
@@ -164,6 +165,7 @@ export async function resolveMcpToolEntries(input: {
         { serverId: server.id, error: error instanceof Error ? error.message : String(error) },
         'mcp server unavailable; skipping its tools',
       );
+      failed.push(server.id);
       continue;
     }
     if (input.toolFilter !== undefined) {
@@ -223,17 +225,16 @@ export async function resolveMcpToolEntries(input: {
       });
     }
   }
-  return { entries, unavailable, locked };
+  return { entries, unavailable, failed, locked };
 }
 
 /**
- * 只读工具面（对话轮 / 只读子代理）的工具：只读且有效审批为 auto（被用户改成
- * ask 的只读工具不进——对话轮是秒级的，不在对话轮里等审批），按 server 顺序取
- * 前 `max` 个。`omitted` = 其余已启用工具数。
+ * 只读工具面（只读子代理）的工具：只读且有效审批为 auto（被用户改成 ask 的只读工具不进——
+ * 子代理里不等审批），按 server 顺序取前 `max` 个。`omitted` = 其余已启用工具数。
  */
 export function selectReadOnlyMcpEntries(
   entries: McpToolEntry[],
-  max: number = TURN_MCP_READ_TOOLS_MAX,
+  max: number = SUBAGENT_MCP_READ_TOOLS_MAX,
 ): { entries: McpToolEntry[]; omitted: number } {
   const eligible = entries.filter((entry) => allowedOnReadOnlySurface(entry.decision));
   const selected = eligible.slice(0, Math.max(0, max));

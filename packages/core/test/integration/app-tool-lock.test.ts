@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AppConnectionStatusPayload, McpServer } from '@kepcup/shared';
 import {
   createTestStack,
+  listRuns,
   makeBot,
   openDirect,
   sendBatch,
@@ -116,19 +117,32 @@ async function selectServer(stack: TestStack, serverIds: string[]) {
   return { bot, conv };
 }
 
-function toolsOfTurn(stack: TestStack, index: number): string {
-  return JSON.stringify(stack.llm.requestsFor('mock-main')[index]!.body.tools ?? []);
-}
-
-async function oneTurn(stack: TestStack, conversationId: string, text: string) {
-  stack.llm.script('mock-main', [step().replyText('好')]);
-  const before = stack.llm.requestsFor('mock-main').length;
+/**
+ * D91: a turn mounts no external tool; it finds them through `capability_search` (which opens the
+ * connection and refreshes the tool lock). One turn that searches; returns what the search found.
+ */
+async function oneTurn(stack: TestStack, conversationId: string, text: string): Promise<string> {
+  const known = new Set((await listRuns(stack.core, conversationId)).map((r) => r.id));
+  stack.llm.script('mock-main', [
+    step().replyToolCall('capability_search', { query: '' }),
+    step().replyText('好'),
+  ]);
   await sendBatch(stack.core, conversationId, [text]);
-  await waitFor(() => (stack.llm.requestsFor('mock-main').length > before ? true : null), {
-    label: 'turn request',
-  });
-  await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
-  return before;
+  const run = await waitFor(
+    async () =>
+      (await listRuns(stack.core, conversationId)).find(
+        (r) => !known.has(r.id) && r.loopType === 'turn' && r.status === 'completed',
+      ) ?? null,
+    { label: 'search turn completed', timeoutMs: 30_000 },
+  );
+  const steps = (await stack.core.rpc.call('runs.steps', { runId: run.id })) as {
+    steps: Array<{ type: string; payload: Record<string, unknown> }>;
+  };
+  return String(
+    steps.steps.find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_search',
+    )?.payload['content'] ?? '',
+  );
 }
 
 describe('rug pull: an approved tool whose definition changes disappears until reviewed', () => {
@@ -146,7 +160,7 @@ describe('rug pull: an approved tool whose definition changes disappears until r
     const { conv } = await selectServer(stack, ['srv1']);
 
     const first = await oneTurn(stack, conv.id, '看看笔记');
-    expect(toolsOfTurn(stack, first)).toContain('mcp_srv1_list_notes');
+    expect(first).toContain('mcp_srv1_list_notes');
 
     // The server rewrites list_notes / echo and announces tools/list_changed.
     await stack.mcp.callTool(stack.mcp.listServers()[0]!, 'flip', {});
@@ -170,7 +184,7 @@ describe('rug pull: an approved tool whose definition changes disappears until r
 
     // The Bot's next turn no longer sees the tool; the held-back tools are reported alongside.
     const second = await oneTurn(stack, conv.id, '再看看笔记');
-    expect(toolsOfTurn(stack, second)).not.toContain('mcp_srv1_list_notes');
+    expect(second).not.toContain('mcp_srv1_list_notes');
     const resolution = await resolveMcpToolEntries({
       servers: stack.mcp.serversForBot(['srv1']),
       mcp: stack.mcp,
@@ -193,7 +207,7 @@ describe('rug pull: an approved tool whose definition changes disappears until r
     // Review: approve list_notes only -> it is back; echo stays held; status stays tools_changed.
     stack.lock.approve(CONN, ['list_notes']);
     const third = await oneTurn(stack, conv.id, '第三次');
-    expect(toolsOfTurn(stack, third)).toContain('mcp_srv1_list_notes');
+    expect(third).toContain('mcp_srv1_list_notes');
     expect(stack.services.apps!.store.get(CONN)!.status).toBe('tools_changed');
     stack.lock.approve(CONN, 'all');
     expect(stack.services.apps!.store.get(CONN)!.status).toBe('connected');
@@ -210,6 +224,7 @@ describe('rug pull: an approved tool whose definition changes disappears until r
     stack.llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_srv1_flip', {}),
@@ -258,7 +273,7 @@ describe('a server added after the baseline is locked until the tested list is s
     expect(held.entries).toEqual([]);
     expect(held.locked[0]!.tools.map((t) => t.name).sort()).toEqual(['echo', 'flip', 'list_notes']);
     const first = await oneTurn(stack, conv.id, '看看');
-    expect(toolsOfTurn(stack, first)).not.toContain('mcp_srv1_');
+    expect(first).not.toContain('mcp_srv1_');
 
     stack.lock.approveAfterTest(saved, tools);
     const open = await resolveMcpToolEntries({
@@ -275,7 +290,7 @@ describe('a server added after the baseline is locked until the tested list is s
     expect(open.locked).toEqual([]);
     expect(stack.services.apps!.store.get(CONN)!.status).toBe('connected');
     const second = await oneTurn(stack, conv.id, '再看');
-    expect(toolsOfTurn(stack, second)).toContain('mcp_srv1_list_notes');
+    expect(second).toContain('mcp_srv1_list_notes');
   }, 90_000);
 });
 

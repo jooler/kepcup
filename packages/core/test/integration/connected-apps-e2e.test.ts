@@ -187,6 +187,7 @@ async function runEcho(e2e: E2E, text: string): Promise<Record<string, unknown>>
   llm.script(
     'mock-main',
     viaTask({
+      capabilities: [`mcp:${e2e.serverId}`],
       writes: false,
       taskSteps: [step().replyToolCall(e2e.toolName, { text }), step().replyText('完成')],
       relay: '好了',
@@ -302,7 +303,7 @@ describe.each<RegistrationPath>(['cimd', 'dcr', 'manual'])(
       llm.script('mock-main', [
         step()
           .inTurn()
-          .expect((req) => promptOf(req).includes('<connected_apps>'))
+          .expect((req) => promptOf(req).includes('<capabilities>'))
           .replyText('应用已断开'),
       ]);
       await sendBatch(core, e2e.conversationId, ['还能用应用吗']);

@@ -1042,7 +1042,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     runMigrations(runsDb, migrationDirs.runs, { logger });
 
     // --- domain services ---------------------------------------------------
-    const settings = new SettingsService(mainDb, clock);
+    const settings = new SettingsService(mainDb, clock, logger);
     const secrets = new SecretsService({ db: mainDb, masterKey, clock, logger });
     // Warm the redaction cache so run-step payloads are scrubbed from boot.
     for (const name of secrets.names()) secrets.getValue(name);

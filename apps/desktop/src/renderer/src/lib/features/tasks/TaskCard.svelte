@@ -126,6 +126,11 @@
       </span>
     </div>
 
+    {#if model.capabilities.length > 0}
+      <p class="mt-1 truncate text-xs text-muted-foreground" data-testid="task-capabilities">
+        {t('task.capabilities', { list: model.capabilities.join('、') })}
+      </p>
+    {/if}
     {#if model.queueReason !== null}
       <p class="mt-1.5 text-xs text-amber-700 dark:text-amber-400" data-testid="task-queue-reason">
         {model.queueReason.length > 0

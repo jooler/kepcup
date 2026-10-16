@@ -269,6 +269,8 @@ export interface AppendTaskEventInput {
   title?: string | undefined;
   writes?: boolean | undefined;
   continuesTaskId?: string | undefined;
+  /** D91: brief — the external capability ids the task declared. */
+  capabilities?: string[] | undefined;
   /** Overrides the creation time (defaults to the clock). */
   at?: number | undefined;
 }
@@ -423,8 +425,12 @@ export class MessagesService {
                   ? {
                       watchId: input.cardWatch.watchId,
                       watchEvent: input.cardWatch.watchEvent,
-                      ...(input.cardWatch.watchSeq !== undefined ? { watchSeq: input.cardWatch.watchSeq } : {}),
-                      ...(input.cardWatch.watchKey !== undefined ? { watchKey: input.cardWatch.watchKey } : {}),
+                      ...(input.cardWatch.watchSeq !== undefined
+                        ? { watchSeq: input.cardWatch.watchSeq }
+                        : {}),
+                      ...(input.cardWatch.watchKey !== undefined
+                        ? { watchKey: input.cardWatch.watchKey }
+                        : {}),
                       ...(input.cardWatch.watchSummary !== undefined
                         ? { watchSummary: input.cardWatch.watchSummary }
                         : {}),
@@ -435,12 +441,18 @@ export class MessagesService {
                       mailAccountId: input.cardMail.mailAccountId,
                       mailEvent: input.cardMail.mailEvent,
                       mailKey: input.cardMail.mailKey,
-                      ...(input.cardMail.mailUid !== undefined ? { mailUid: input.cardMail.mailUid } : {}),
-                      ...(input.cardMail.mailFrom !== undefined ? { mailFrom: input.cardMail.mailFrom } : {}),
+                      ...(input.cardMail.mailUid !== undefined
+                        ? { mailUid: input.cardMail.mailUid }
+                        : {}),
+                      ...(input.cardMail.mailFrom !== undefined
+                        ? { mailFrom: input.cardMail.mailFrom }
+                        : {}),
                       ...(input.cardMail.mailSubject !== undefined
                         ? { mailSubject: input.cardMail.mailSubject }
                         : {}),
-                      ...(input.cardMail.mailDate !== undefined ? { mailDate: input.cardMail.mailDate } : {}),
+                      ...(input.cardMail.mailDate !== undefined
+                        ? { mailDate: input.cardMail.mailDate }
+                        : {}),
                       ...(input.cardMail.mailSummary !== undefined
                         ? { mailSummary: input.cardMail.mailSummary }
                         : {}),
@@ -457,7 +469,9 @@ export class MessagesService {
                 ...(input.questionMode !== undefined && input.questionMode !== 'single'
                   ? { questionMode: input.questionMode }
                   : {}),
-                ...(input.questionFields !== undefined ? { questionFields: input.questionFields } : {}),
+                ...(input.questionFields !== undefined
+                  ? { questionFields: input.questionFields }
+                  : {}),
                 ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
                 ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),
@@ -592,6 +606,9 @@ export class MessagesService {
       ...(input.title !== undefined ? { title: input.title } : {}),
       ...(input.writes !== undefined ? { writes: input.writes } : {}),
       ...(input.continuesTaskId !== undefined ? { continuesTaskId: input.continuesTaskId } : {}),
+      ...(input.capabilities !== undefined && input.capabilities.length > 0
+        ? { capabilities: input.capabilities }
+        : {}),
     };
     const write = this.db.transaction((): { message: Message; created: boolean } => {
       if (terminal) {

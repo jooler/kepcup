@@ -153,6 +153,8 @@ interface AgentCatalogEntry {
 | `mcp`                 | 补位   | 该 Bot 勾选的用户 MCP server 工具（D65，`mcp_server_ids`）                                                                      | 随 Bot 勾选 | —                  | —                              |
 
 
+> **D91 修订（能力包表）**：新两件套 `capability_search` / `capability_call` 在 `HOST_CAPABILITIES` 里登记为 `mcp` 与 `apps` 两包**共有**的精确名（`sharedTools`）：任一包被选中即注入，两包都不选则没有；声明能力的内联工具照旧按前缀归包（`mcp_*` → `mcp`，`app_*` → `apps`）。两件套的索引只含被选中包的条目（只选 `mcp` → 只含自定义 MCP；只选 `apps` → 只含目录连接），由 orchestrator 构建外部引擎任务的两件套时按包过滤。表中 `mcp` 行的「该 Bot 勾选的用户 MCP server 工具」同时改为「任务声明的能力的内联工具 + 两件套」。邮件包 `mail` 的工具随绑定变化（`mail_request_setup` 始终注入，有绑定时另加五个读写工具，2026-10-16 后续修订取消了二者互斥），设置页的预估数按登记的 6 个计。见 [40](40-capability-mounting.md) §6、§7。
+
 - 外部 Agent 下**永不注入**：`read/write/edit/grep/find/ls/bash`、`request_access`、`request_unsandboxed`、`acquire_project_write`、`delegate_task`（与原生能力或宿主机制冲突）。
 - 默认值计算：`core` 必选；其余 = 默认注入的包 − Agent 描述符 `nativeCapabilities` 覆盖的包。用户可任意增减（`core` 除外）；为已有原生能力的 Agent 勾选补位包时按 §4.2 原生优先注入（UI 提示「该 Agent 自带此能力，注入后仅作兜底」）。
 - 前置配置缺失的包仍可勾选，UI 标「未配置」；调用时走既有 `SETUP_REQUIRED` → 对话内设置卡（D58/D68）。

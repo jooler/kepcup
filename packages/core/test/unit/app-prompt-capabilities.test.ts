@@ -120,7 +120,7 @@ describe('global tool-name dedupe (tools/index.ts)', () => {
         fsState: {} as never,
         environment: { request: async () => ({}), offeredItems: () => [] } as never,
         apps: { requestConnection: () => ({ ok: true, message: 'ok' }) },
-        mcp: { tools: [impostor, stub('mcp_s_echo')], omitted: 0 },
+        mcp: { tools: [impostor, stub('mcp_s_echo')] },
         logger: { warn: (_fields, msg) => warnings.push(msg) },
       } as never,
     });
@@ -154,22 +154,21 @@ describe('built-in engine prompt', () => {
     timeZone: 'UTC',
     now: new Date(0),
   } as never;
-  const connectedApps = '- GitHub（账号 work，connection_id: conn_gh）：可用';
+  const capabilities = '- app:github（GitHub，账号 work）：可用';
   const availableApps = '- Notion（connector: notion）—— 笔记';
 
-  it('adds <connected_apps> and <available_apps> plus the app_request_connection platform rule', () => {
+  it('adds <capabilities> and <available_apps> plus the app_request_connection platform rule', () => {
     for (const loop of ['task', 'turn'] as const) {
       const prompt = buildSystemPrompt({
         ...(input as object),
         loop,
-        connectedApps,
+        capabilities,
         availableApps,
+        hasAppRequestTool: true,
       } as never);
-      expect(prompt).toContain('<connected_apps>');
+      expect(prompt).toContain('<capabilities>');
       expect(prompt).toContain('<available_apps>');
-      expect(prompt.indexOf('<available_apps>')).toBeGreaterThan(
-        prompt.indexOf('<connected_apps>'),
-      );
+      expect(prompt.indexOf('<available_apps>')).toBeGreaterThan(prompt.indexOf('<capabilities>'));
       expect(prompt).toContain(`${APP_REQUEST_CONNECTION_RULE}`);
       expect(prompt).toContain('需要未连接或需重连的应用时调用 app_request_connection');
       // Numbered like the other rules.
@@ -180,14 +179,26 @@ describe('built-in engine prompt', () => {
   it('carries neither the sections nor the rule when the bot has no app context', () => {
     for (const loop of ['task', 'turn'] as const) {
       const prompt = buildSystemPrompt({ ...(input as object), loop } as never);
-      expect(prompt).not.toContain('<connected_apps>');
+      expect(prompt).not.toContain('<capabilities>');
       expect(prompt).not.toContain('<available_apps>');
       expect(prompt).not.toContain('app_request_connection');
     }
-    // Just available apps is enough to need the rule.
-    expect(buildSystemPrompt({ ...(input as object), availableApps } as never)).toContain(
-      APP_REQUEST_CONNECTION_RULE,
-    );
+    // The rule follows the tool registration (hasAppRequestTool), not the section text.
+    expect(
+      buildSystemPrompt({ ...(input as object), availableApps, hasAppRequestTool: true } as never),
+    ).toContain(APP_REQUEST_CONNECTION_RULE);
+  });
+
+  it('D91 n1: a bot with <capabilities> but no app_request_connection tool (stdio MCP only) gets no connection rule', () => {
+    for (const loop of ['task', 'turn'] as const) {
+      const prompt = buildSystemPrompt({
+        ...(input as object),
+        loop,
+        capabilities: '- mcp:notes（笔记）：可用',
+      } as never);
+      expect(prompt).toContain('<capabilities>');
+      expect(prompt).not.toContain('app_request_connection');
+    }
   });
 });
 
@@ -327,6 +338,29 @@ describe('ACP prompt', () => {
     expect(without).not.toContain('app_request_connection');
   });
 
+  it('D91: the capability pair has its own rule (only when both tools are injected) and no <tool_policy> line', () => {
+    const pair = ['capability_search', 'capability_call'];
+    const withPair = buildAgentSessionPrompt({
+      bot: BOT,
+      conversation: CONV,
+      tools: toolsFor(['send_message', ...pair]),
+    });
+    expect(withPair).toContain(
+      '先用 mcp__kepcup__capability_search 查找，再用 mcp__kepcup__capability_call 调用',
+    );
+    const onlyOne = buildAgentSessionPrompt({
+      bot: BOT,
+      conversation: CONV,
+      tools: toolsFor(['send_message', 'capability_search']),
+    });
+    expect(onlyOne).not.toContain('capability_search');
+    // Neither pack's supplement policy claims the shared pair.
+    expect(buildAgentToolPolicy(toolsFor(['send_message', ...pair]))).not.toContain('capability_');
+    expect(buildAgentToolPolicy(toolsFor(['send_message', ...pair, 'mcp_s_x']))).not.toContain(
+      'capability_',
+    );
+  });
+
   it('<tool_policy> lists the apps pack as host-only (no "use your native" wording)', () => {
     const policy = buildAgentToolPolicy(toolsFor(['send_message', 'app_github_list_repos']));
     expect(policy).toContain('已连接的第三方应用');
@@ -338,17 +372,17 @@ describe('ACP prompt', () => {
   it('run context carries both app sections (after <recommended_skills>) and omits them when empty', () => {
     const base = { timeZone: 'UTC', now: new Date(0), permission: 'ask' as never };
     const empty = buildAgentRunContext(base);
-    expect(empty).not.toContain('<connected_apps>');
+    expect(empty).not.toContain('<capabilities>');
     expect(empty).not.toContain('<available_apps>');
     const full = buildAgentRunContext({
       ...base,
       recommendedSkills: '- x',
-      connectedApps: '- GitHub（账号 work，connection_id: conn_gh）：可用',
+      capabilities: '- app:github（GitHub，账号 work）：可用',
       availableApps: '- Notion（connector: notion）—— 笔记',
     });
-    expect(full).toContain('<connected_apps>');
+    expect(full).toContain('<capabilities>');
     expect(full).toContain('<available_apps>');
-    expect(full.indexOf('<connected_apps>')).toBeGreaterThan(full.indexOf('<recommended_skills>'));
-    expect(full.indexOf('<available_apps>')).toBeGreaterThan(full.indexOf('<connected_apps>'));
+    expect(full.indexOf('<capabilities>')).toBeGreaterThan(full.indexOf('<recommended_skills>'));
+    expect(full.indexOf('<available_apps>')).toBeGreaterThan(full.indexOf('<capabilities>'));
   });
 });

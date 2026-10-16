@@ -1,4 +1,5 @@
 import {
+  CAPABILITY_DISCOVERY_TOOLS,
   capabilityOfTool,
   isHostToolInjected,
   NEVER_INJECTED_TOOLS,
@@ -35,12 +36,12 @@ export function buildExternalAgentTools(input: {
    */
   maxNameLength?: number;
 }): ToolDefinition[] {
-  const selected = new Set<string>(input.capabilities);
   const tools: ToolDefinition[] = [];
   for (const tool of input.responseTools) {
     if (NEVER_INJECTED_TOOLS.includes(tool.name)) continue;
     const capability = capabilityOfTool(tool.name);
-    if (capability === null || !selected.has(capability.id)) continue;
+    if (capability === null) continue;
+    // 所属包已选中（D91：capability_search / capability_call 为 mcp / apps 共有，任一选中即注入）。
     if (!isHostToolInjected(tool.name, input.capabilities, input.optIns ?? [])) continue;
     const name =
       input.maxNameLength !== undefined ? fitToolName(tool.name, input.maxNameLength) : tool.name;
@@ -49,7 +50,9 @@ export function buildExternalAgentTools(input: {
       name,
       description:
         // 连接应用没有「自带同类能力」可言（宿主是唯一入口），不加原生优先前缀。
-        capability.category === 'supplement' && capability.id !== 'apps'
+        capability.category === 'supplement' &&
+        capability.id !== 'apps' &&
+        !CAPABILITY_DISCOVERY_TOOLS.includes(tool.name)
           ? `${SUPPLEMENT_TOOL_DESCRIPTION_PREFIX}${tool.description}`
           : tool.description,
     });
@@ -97,7 +100,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'list_memos',
   'watch_list',
   'list_bots',
-  'app_search_tools',
+  'capability_search',
   'web_search',
   'web_fetch',
   'browser_snapshot',

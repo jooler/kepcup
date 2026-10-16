@@ -96,7 +96,7 @@
 | 组        | 工具                                                                                                                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
-| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） |
+| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） **D91 修订**：这一项改为只读两件套 `capability_search` / `capability_call`（Bot 的外部能力清单在系统提示的 `<capabilities>` 段，对话轮不再逐个挂 MCP / 应用工具、run 开头不再连服务器），见 [40](40-capability-mounting.md) §3、§5。 |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
 | 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89：档位由宿主裁定，写入与出设置卡均由宿主确定性执行，见 [38](38-conversational-settings.md)）、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；不设步数上限（见 DEV-017）                                                                                       |
@@ -117,7 +117,7 @@
 | 触发          | 对话轮的 `start_task`（唯一入口）                                                                                              |
 | 并发          | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（建议 3）、全局 `TASK_CONCURRENCY_GLOBAL`；单个对话轮最多起 `TASK_START_MAX_PER_TURN`（建议 2）个 |
 | 引擎          | 内置 pi 或该 Bot 配置的外部 Agent（§8）                                                                                         |
-| 工具面         | 现有完整响应工具面（文件、命令、浏览器、媒体、MCP、连接应用、技能、`delegate_task` / `collect_delegate_results`、交互执行、`send_message`），外加 `ask_user`（§2.4.6）；去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议；`send_message` 不能 @ 群成员 |
+| 工具面         | 现有完整响应工具面（文件、命令、浏览器、媒体、MCP、连接应用、技能、`delegate_task` / `collect_delegate_results`、交互执行、`send_message`），外加 `ask_user`（§2.4.6）；去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议；`send_message` 不能 @ 群成员 **D91 修订**：外部能力（MCP、连接应用）不再整批挂——只挂 `start_task.capabilities` 声明的能力（声明工具总数 > `EXTERNAL_TOOLS_INLINE_MAX`=40 则不内联），其余能力经 `capability_search` / `capability_call` 两件套兜底；邮件工具按绑定门控（[35](35-mail-channel.md)），见 [40](40-capability-mounting.md) §4。 |
 | 可写          | 消息（中间说明，直达可见流）；私有时间线（最终结果 / 失败 / 提问条目，§2.4）；`workdir` 内文件、授权范围内的其他路径 |
 | 寿命          | 默认 ephemeral（D49）；可标 durable（D67）——长任务才是 journal 的真实适用对象                                                             |
 | 上限          | `TASK_MAX_WALL_MS`（等用户回答问题卡的时间不计入，§2.4.6）、`TASK_TOKEN_BUDGET`（外部 Agent 按轮数 / 时长折算）                                                          |
@@ -321,12 +321,14 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 | 工具            | 参数                                                                       | 宿主校验                                                                   | 返回                                                        |
 | ------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------- |
-| `start_task`  | `title`、`instruction`、`source_message_ids`、`writes`、`workdir?`、`continues_task_id?`、`engine?` | 本轮起数未超 `TASK_START_MAX_PER_TURN`；对话级并发未满；`source_message_ids` 属于本对话；`loop_type='turn'`（任务内调用一律拒绝） | `task_id` + 初始状态（`running` 或 `submitted` 及排队原因） |
+| `start_task`  | `title`、`instruction`、`source_message_ids`、`writes`、`workdir?`、`continues_task_id?`、`engine?`、`capabilities?`（D91） | 本轮起数未超 `TASK_START_MAX_PER_TURN`；对话级并发未满；`source_message_ids` 属于本对话；`loop_type='turn'`（任务内调用一律拒绝） | `task_id` + 初始状态（`running` 或 `submitted` 及排队原因） |
 | `inject_task` | `task_id`、`text`、`source_message_ids?` | task 属于本（Bot, 对话）且在 `running` | `delivered`（已注入当前轮）/ `queued`（Agent 不支持 steering，任务结束后生效） |
 | `cancel_task` | `task_id`、`reason`                                                       | 同上，允许 `submitted` / `running`                                          | 取消确认 + 已产生改动的摘要                                           |
 | `list_tasks`  | —                                                                        | —                                                                      | 进行中 + 窗口内已结算的任务（id、标题、状态、启动时间、错误、是否可注入；进度不进模型）          |
 | `forward_task_result` | `task_id` | task 属于本（Bot, 对话）、已 `completed`、结果非空、未转发过 | 已发出的可见消息 id（Bot 身份、带任务归属，正文 = 结果条目全文） |
 
+
+> **D91 修订（`start_task.capabilities`）**：可选 `string[]`（取 `<capabilities>` 段里的能力 id，如 `app:github` / `mcp:{serverId}`；去重后 ≤ `TASK_CAPABILITIES_MAX`=8）。宿主按该 Bot 当前能力目录校验，不存在的 id → `INVALID_INPUT` 并列出可用 id；状态非 `ready` 的能力允许声明但结果里会说明不会挂上。校验通过后落库 `runs.task_capabilities`（JSON 数组，非任务为 NULL），任务简报（brief 事件）与 `TaskView` 带 `capabilities`，任务卡与 `<tasks>` 行可见；`continues_task_id` 取被接续任务能力与本次声明的并集；`runs.retry` 沿用行上已存的声明；宿主自己派的任务（§8.4 降级）不声明。任务启动时只解析、只挂「声明 ∩ 当前目录且 ready」的能力，未声明的能力仍可经任务面两件套取用。详见 [40](40-capability-mounting.md) §4。
 
 路由决策集合保持前四个；`forward_task_result` 是转述动作，不是路由（§6.1）。「重新执行」= `cancel_task` 然后 `start_task({continues_task_id})`：宿主按 D56 预算把被取消任务的 `run_steps` 回放进新任务上下文（读过哪些文件、试过什么、为什么停），避免重新踩坑。不设 `restart` 原语——它会要求「取消与启动原子化」，而取消在外部 Agent 上有不可忽略的时延（§8.3）。
 

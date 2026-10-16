@@ -262,16 +262,16 @@ ACP 执行的 run 一律按读过不可信内容处理（§3），所以即使�
 三条规则目前的注入条件与内容（`system-prompt.ts`）：
 
 - `SETTINGS_RULE`（`settings/prompt.ts`）：`hasSettingsTools === true` 时追加进 `TURN_PLATFORM_RULES` / `PLATFORM_RULES`；ACP 侧在 `AGENT_PLATFORM_RULES` 里注入了 `settings_change` 用这一条，只有只读工具时用 `SETTINGS_READ_ONLY_RULE`（`unlessTools` 互斥）。
-- `APP_REQUEST_CONNECTION_RULE`（`apps/prompt.ts`）：对话轮只在已有 `<connected_apps>` 或 `<available_apps>` 段落时追加；ACP 按工具 `app_request_connection` 门控。
-- `mailRequestSetupRule`（`mail/prompt.ts`）：`hasMail === true` 时追加；普通 Bot 与管家措辞不同（移交只能由持有者或管家发起，D88）；ACP 用不含管家分支的 `MAIL_REQUEST_SETUP_RULE`，按工具 `mail_request_setup` 门控。
+- `APP_REQUEST_CONNECTION_RULE`（`apps/prompt.ts`）：**D91 修订**——原按 `<connected_apps>` / `<available_apps>` 段落是否存在追加，现与 `app_request_connection` 是否注册同源（`SystemPromptInput.hasAppRequestTool`，orchestrator 的 `#appToolFacade` 非空）；只接了 stdio MCP 的 Bot 有 `<capabilities>` 但没有该工具，规则不再出现。ACP 按工具 `app_request_connection` 门控。
+- `mailRequestSetupRule`（`mail/prompt.ts`）：`hasMail === true` 时追加（**D91 修订**：`hasMail` 改为 `hasMailSetup`，该规则随 `mail_request_setup` 注册而出现——有 mail 就有，有无绑定邮箱都一样，后续修订，见 [40](40-capability-mounting.md) §6）；普通 Bot 与管家措辞不同（移交只能由持有者或管家发起，D88）；ACP 用不含管家分支的 `MAIL_REQUEST_SETUP_RULE`，按工具 `mail_request_setup` 门控。
 
 并进去会丢掉的差异，逐条核对后**都还在、且各有作用**：
 
-1. **邮件规则的紧迫措辞**：「还没有绑定邮箱时**立刻**调用 mail_request_setup，不要先口头确认」——通用设置规则是「先 search 再 read 最后 change」的从容三步；把邮件并进去，模型很容易退化成先问「要我打开配置卡吗？」。这条措辞正是为了防那个退化。
+1. **邮件规则的紧迫措辞**：「用户要接管 / 添加（更多）邮箱时**立刻**调用 mail_request_setup，不要先口头确认」——通用设置规则是「先 search 再 read 最后 change」的从容三步；把邮件并进去，模型很容易退化成先问「要我打开配置卡吗？」。这条措辞正是为了防那个退化。
 2. **应用规则的条件出现**：只在上下文里有应用段落时注入；并进常驻设置规则后，没有任何应用的对话也会一直带着连接指引。
 3. **管家与普通 Bot 的移交句不同**：合并稿要么两句都带（更长），要么按角色再分叉两个变体（等于没省）。
 4. **ACP 只读设置是另一条规则**：合并后 ACP 需要「只读设置 + 邮件（无管家）+ 应用」的第三个组合变体，组合数不降反升。
-5. **三者的注入门控独立**（`hasSettingsTools` / 应用段落存在 / `hasMail`）：合并成一条就得按并集注入——在更多上下文里变长，与「缩短常驻提示词」的初衷相反。
+5. **三者的注入门控独立**（`hasSettingsTools` / 应用段落存在 / `hasMail`，D91 起为 `hasMailSetup`）：合并成一条就得按并集注入——在更多上下文里变长，与「缩短常驻提示词」的初衷相反。
 
 **结论：现在不并。** 三条加起来约 400 字，合并可省的只有重复的引导词（约几十字），却要以上述差异为赌注；方案要求拿合并前后的**模型行为**对比（不是字数），P3 才具备对比条件。P3 要看的证据（都观察到了再考虑重提）：
 

@@ -388,6 +388,7 @@ describe('A4 ui:false is enforced', () => {
     });
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: [`app:${connectorId}`],
         writes: false,
         taskSteps: [
           step().replyToolCall(`app_${connectorId}_list_notes`, {}),
