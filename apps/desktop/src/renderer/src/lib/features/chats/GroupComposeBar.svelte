@@ -139,9 +139,9 @@
   }
 </script>
 
-<div class="app-no-drag mx-auto w-full max-w-2xl" data-testid="group-compose">
+<div class="app-no-drag w-full" data-testid="group-compose">
   <div
-    class="flex min-h-12 flex-wrap items-center gap-1.5 rounded-2xl border bg-background px-3 py-2 shadow-xl"
+    class="flex min-h-12 flex-wrap items-center gap-1.5 px-3 py-2"
   >
     <span class="shrink-0 text-sm text-muted-foreground">{t('groupCompose.to')}</span>
     {#each selected as bot (bot.id)}
@@ -197,13 +197,13 @@
   </div>
 
   <div
-    class="mt-1 rounded-2xl border bg-background py-1 shadow-xl"
+    class="mt-1 rounded-2xl border bg-background py-1 shadow-xl max-w-md"
     data-testid="group-compose-menu"
   >
     {#if filtered.length > 0}
       <div
         id={LISTBOX_ID}
-        class="max-h-80 overflow-y-auto"
+        class="max-h-80 overflow-y-auto p-1"
         role="listbox"
         aria-label={t('groupCompose.listLabel')}
       >
@@ -214,7 +214,7 @@
             role="option"
             aria-selected={index === highlight}
             tabindex="-1"
-            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent {index ===
+            class="flex w-full items-center gap-2 px-2 py-1 rounded-sm text-left text-sm hover:bg-accent {index ===
             highlight
               ? 'bg-accent'
               : ''}"
