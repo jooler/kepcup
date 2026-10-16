@@ -1,3 +1,11 @@
 {
-  "approved": ["notion", "linear"]
+  "approved": [
+    "notion",
+    "linear",
+    "atlassian",
+    "sentry",
+    "canva",
+    "stripe",
+    "cloudflare"
+  ]
 }
