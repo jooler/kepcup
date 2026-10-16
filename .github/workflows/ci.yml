@@ -81,7 +81,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       # End-to-end tests from P01 (docs/dev/05-testing.md, CI matrix).
-      # Headless Electron on Linux runs inside xvfb.
+      # Headless Electron on Linux runs inside xvfb; sandbox-dependent specs
+      # (mcp-apps cards, sandbox, wiki 抓取) additionally need bwrap/socat + the
+      # Ubuntu 24.04 userns sysctl, same as the "Enable sandboxing" step in the
+      # test job above.
+      - name: Enable sandboxing (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+          SECCOMP=$(find node_modules -path '*/sandbox-runtime/vendor/seccomp/x64/apply-seccomp' -type f | head -1)
+          if [ -n "$SECCOMP" ]; then
+            chmod +x "$SECCOMP"
+          else
+            echo "::warning::apply-seccomp not found after install; sandboxed e2e specs will fail"
+          fi
       - name: Install xvfb (Linux)
         if: matrix.os == 'ubuntu-24.04'
         run: sudo apt-get update && sudo apt-get install -y xvfb
