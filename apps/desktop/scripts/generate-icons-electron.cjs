@@ -25,11 +25,13 @@ if (!resourcesDir || !svgPath) {
 }
 
 // 品牌图比例（Apple Big Sur 图标网格）：
-// - macOS 变体：图形占画布 824/1024 ≈ 80.5%、四周透明留白、圆角 185.4/824 ——
-//   与系统其它图标在 Dock 里视觉同大（满幅会比邻居大一圈）。
+// - macOS 变体：图形占画布 824/1024 ≈ 80.5%、四周透明留白。
+//   圆角用 CSS border-radius（圆弧）。Apple HIG 写 continuous 185.4/824≈22.5%，
+//   但同值圆弧在 Dock 里会比系统/Cursor 等邻居更「圆」；按 Cursor.icns 实测
+//   硬边约 18.5%（76/411），Electron 栅格化后取 164.8/824≈20.0% 与邻居视觉对齐。
 // - 满幅变体（win/linux）：任务栏惯例尽量占满（VS Code 等），圆角 22.5%。
 const BIGSUR_SHAPE_RATIO = 824 / 1024;
-const BIGSUR_RADIUS_RATIO = 185.4 / 824;
+const BIGSUR_RADIUS_RATIO = 164.8 / 824; // ≈0.200，对齐 Cursor Dock 观感（非 HIG 22.5%）
 const FULLBLEED_RADIUS_RATIO = 230 / 1024;
 
 function baseSvg() {
