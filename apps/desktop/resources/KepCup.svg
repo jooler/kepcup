@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512"
      role="img" aria-label="KepCup bubble bar">
-  <!-- bg: deep orange -->
-  <rect width="512" height="512" fill="#C2410C"/>
+  <defs>
+    <!-- bg: top black → bottom #25003D -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000000"/>
+      <stop offset="1" stop-color="#25003D"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
 
   <!-- hollow message bubble: single stroked centerline path
        Body visual outer ~(101,100)–(410,348), R≈48; stroke=22 → centerline inset 11

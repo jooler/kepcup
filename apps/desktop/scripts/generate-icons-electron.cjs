@@ -43,7 +43,7 @@ function baseSvg() {
  */
 function traySvg() {
   return baseSvg()
-    .replace('<rect width="512" height="512" fill="#C2410C"/>', '')
+    .replace('<rect width="512" height="512" fill="url(#bg)"/>', '')
     .replaceAll('#FFFFFF', '#000000')
     .replace(
       'width="1024" height="1024" viewBox="0 0 512 512"',
@@ -72,7 +72,7 @@ function pageHtml(svg, canvas, imgSize, radiusPx) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** 中心点不透明（品牌图=实心橙底，托盘剪影=中心圆点），否则视为空白帧。 */
+/** 中心点不透明（品牌图=渐变底，托盘剪影=中心圆点），否则视为空白帧。 */
 function assertNotBlank(image, label) {
   const { width, height } = image.getSize();
   const buf = image.toBitmap();
