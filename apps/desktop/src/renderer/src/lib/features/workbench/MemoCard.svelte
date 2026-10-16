@@ -42,6 +42,8 @@
 
   function writeDom(text: string): void {
     if (bodyEl === null || bodyEl.textContent === text) return;
+    // contenteditable：直接写 textContent，避免 Svelte 重绘打断光标。
+    // eslint-disable-next-line svelte/no-dom-manipulating
     bodyEl.textContent = text;
   }
 
@@ -56,6 +58,7 @@
     focused = false;
     draft = memo.body;
     seededId = id;
+    // eslint-disable-next-line svelte/no-dom-manipulating
     el.textContent = memo.body;
   });
 

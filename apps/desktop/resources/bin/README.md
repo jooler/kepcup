@@ -14,3 +14,9 @@
 Ubuntu 24.04 / Debian 12 / Fedora 间通用的静态构建（Ubuntu/Debian 的
 bubblewrap、socat 均动态链接 glibc，跨发行版复制不可靠）。当前在 Linux 上
 通过系统 PATH 解析，缺失时沙箱探测失败并在设置页提示安装命令。
+
+## Windows（win-x64 / win-arm64）
+
+暂无随包 `rg`（沙箱走 WSL 发行版工具链）。目录里放 `.keep`，避免 electron-builder
+`extraResources` 跳过空目录，导致 afterPack 找不到 `resources/bin/win-{arch}`。
+宿主 `rg` 仍经系统 PATH 兜底。
