@@ -1,0 +1,692 @@
+[
+  {
+    "name": "search-designs",
+    "title": "search-designs",
+    "description": "search-designs (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-design",
+    "title": "get-design",
+    "description": "get-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-design-pages",
+    "title": "get-design-pages",
+    "description": "get-design-pages (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-design-content",
+    "title": "get-design-content",
+    "description": "get-design-content (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-presenter-notes",
+    "title": "get-presenter-notes",
+    "description": "get-presenter-notes (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-export-formats",
+    "title": "get-export-formats",
+    "description": "get-export-formats (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-create-design-async-job",
+    "title": "get-create-design-async-job",
+    "description": "get-create-design-async-job (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-assets",
+    "title": "get-assets",
+    "description": "get-assets (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "list-comments",
+    "title": "list-comments",
+    "description": "list-comments (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "list-replies",
+    "title": "list-replies",
+    "description": "list-replies (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "list-folder-items",
+    "title": "list-folder-items",
+    "description": "list-folder-items (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search-folders",
+    "title": "search-folders",
+    "description": "search-folders (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "resolve-shortlink",
+    "title": "resolve-shortlink",
+    "description": "resolve-shortlink (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-generate-image-job",
+    "title": "get-generate-image-job",
+    "description": "get-generate-image-job (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-separate-image-layers-job",
+    "title": "get-separate-image-layers-job",
+    "description": "get-separate-image-layers-job (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-brand-template-dataset",
+    "title": "get-brand-template-dataset",
+    "description": "get-brand-template-dataset (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-design-dataset",
+    "title": "get-design-dataset",
+    "description": "get-design-dataset (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search-brand-templates",
+    "title": "search-brand-templates",
+    "description": "search-brand-templates (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "list-brand-kits",
+    "title": "list-brand-kits",
+    "description": "list-brand-kits (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get-design-thumbnail",
+    "title": "get-design-thumbnail",
+    "description": "get-design-thumbnail (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "help",
+    "title": "help",
+    "description": "help (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "generate-design",
+    "title": "generate-design",
+    "description": "generate-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-design-from-candidate",
+    "title": "create-design-from-candidate",
+    "description": "create-design-from-candidate (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-design",
+    "title": "create-design",
+    "description": "create-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "copy-design",
+    "title": "copy-design",
+    "description": "copy-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "merge-designs",
+    "title": "merge-designs",
+    "description": "merge-designs (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "export-design",
+    "title": "export-design",
+    "description": "export-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "upload-asset-from-url",
+    "title": "upload-asset-from-url",
+    "description": "upload-asset-from-url (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-upload-url",
+    "title": "create-upload-url",
+    "description": "create-upload-url (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "comment-on-design",
+    "title": "comment-on-design",
+    "description": "comment-on-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "reply-to-comment",
+    "title": "reply-to-comment",
+    "description": "reply-to-comment (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-folder",
+    "title": "create-folder",
+    "description": "create-folder (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "move-item-to-folder",
+    "title": "move-item-to-folder",
+    "description": "move-item-to-folder (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "generate-image",
+    "title": "generate-image",
+    "description": "generate-image (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "remove-background",
+    "title": "remove-background",
+    "description": "remove-background (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "separate-image-layers",
+    "title": "separate-image-layers",
+    "description": "separate-image-layers (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "import-design-from-url",
+    "title": "import-design-from-url",
+    "description": "import-design-from-url (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "autofill-design",
+    "title": "autofill-design",
+    "description": "autofill-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-design-from-brand-template",
+    "title": "create-design-from-brand-template",
+    "description": "create-design-from-brand-template (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "create-brand-template-draft",
+    "title": "create-brand-template-draft",
+    "description": "create-brand-template-draft (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "publish-brand-template",
+    "title": "publish-brand-template",
+    "description": "publish-brand-template (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "resize-design",
+    "title": "resize-design",
+    "description": "resize-design (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "start-editing-transaction",
+    "title": "start-editing-transaction",
+    "description": "start-editing-transaction (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "perform-editing-operations",
+    "title": "perform-editing-operations",
+    "description": "perform-editing-operations (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "commit-editing-transaction",
+    "title": "commit-editing-transaction",
+    "description": "commit-editing-transaction (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "cancel-editing-transaction",
+    "title": "cancel-editing-transaction",
+    "description": "cancel-editing-transaction (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  }
+]

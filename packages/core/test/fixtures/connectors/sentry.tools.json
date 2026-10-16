@@ -1,0 +1,212 @@
+[
+  {
+    "name": "find_organizations",
+    "title": "find_organizations",
+    "description": "find_organizations (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "find_projects",
+    "title": "find_projects",
+    "description": "find_projects (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_issues",
+    "title": "search_issues",
+    "description": "search_issues (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_errors",
+    "title": "search_errors",
+    "description": "search_errors (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_traces",
+    "title": "search_traces",
+    "description": "search_traces (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_logs",
+    "title": "search_logs",
+    "description": "search_logs (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_metrics",
+    "title": "search_metrics",
+    "description": "search_metrics (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_profiles",
+    "title": "search_profiles",
+    "description": "search_profiles (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_replays",
+    "title": "search_replays",
+    "description": "search_replays (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_sentry_resource",
+    "title": "get_sentry_resource",
+    "description": "get_sentry_resource (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "analyze_issue_with_seer",
+    "title": "analyze_issue_with_seer",
+    "description": "analyze_issue_with_seer (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "find_dropped_events",
+    "title": "find_dropped_events",
+    "description": "find_dropped_events (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_sentry_tools",
+    "title": "search_sentry_tools",
+    "description": "search_sentry_tools (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "execute_sentry_tool",
+    "title": "execute_sentry_tool",
+    "description": "execute_sentry_tool (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  }
+]

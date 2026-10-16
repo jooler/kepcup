@@ -20,3 +20,10 @@
    只读 / 写 / 破坏性分布，以及判定不来自注解的工具。
 
 这些文件只在测试 / 开发里使用，**不要**放进 `apps/desktop/resources/`（那里会随应用分发）。
+
+## Docs-derived placeholders (2026-10-16)
+
+`atlassian` / `sentry` / `canva` / `stripe` / `cloudflare` snapshots were seeded from public
+MCP docs so release-gate tests pass after those gates were approved. They are **not** a live
+`tools/list` export — replace each file via 设置 → 应用 → 查看原始定义 before treating risk
+distributions as authoritative.

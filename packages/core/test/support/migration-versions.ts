@@ -10,3 +10,9 @@ export function mainVersionsAfter(after: number): number[] {
   const latest = migrationTargetVersion(migrationsUrl('main'));
   return Array.from({ length: latest - after }, (_, index) => after + 1 + index);
 }
+
+export function runsVersionsAfter(after: number): number[] {
+  const latest = migrationTargetVersion(migrationsUrl('runs'));
+  return Array.from({ length: latest - after }, (_, index) => after + 1 + index);
+}
+

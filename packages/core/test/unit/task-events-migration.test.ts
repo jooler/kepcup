@@ -7,7 +7,7 @@ import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infr
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
-import { mainVersionsAfter } from '../support/migration-versions.js';
+import { mainVersionsAfter, runsVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * main 0018_task_events / runs 0006_tasks（D75，docs/design/30 §2.4.2 / §3.4）。
@@ -170,7 +170,7 @@ describe('runs 0006 tasks 迁移', () => {
     );
     const applied = runMigrations(db, migrationsUrl('runs'));
     // 0007 (D75 W2) renames the old 'response' loop type to 'turn'.
-    expect(applied.map((m) => m.version)).toEqual([6, 7, 8, 9, 10]);
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(5));
     expect(db.prepare("select * from runs where id = 'run_old'").get()).toMatchObject({
       loop_type: 'turn',
       engine: 'builtin',
