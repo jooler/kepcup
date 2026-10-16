@@ -1,9 +1,11 @@
-import type {
-  AppToolDefinition,
-  AppToolState,
-  AppToolView,
-  McpToolPolicy,
-  SettingValues,
+import {
+  matchCatalogConnection,
+  type AppToolDefinition,
+  type AppToolState,
+  type AppToolView,
+  type CatalogConnectionRef,
+  type McpToolPolicy,
+  type SettingValues,
 } from '@kepcup/shared';
 import type { MessageKey } from '$lib/i18n';
 
@@ -109,6 +111,26 @@ export function toolPolicyTarget(
   return { connectionId, toolName };
 }
 
+function settingText(values: SettingValues | null | undefined, key: string): string {
+  const value = values?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * 设置卡上的连接引用 → 真实连接 id。user-only 会清空预填，所以先看 before；
+ * 模型常把目录 slug（`cloudflare`）或账号名写进来，能唯一对上才用。
+ */
+export function policyCardConnectionId(
+  before: SettingValues | null | undefined,
+  prefill: SettingValues | null | undefined,
+  connections: readonly CatalogConnectionRef[],
+): string | null {
+  const raw = settingText(before, 'connection') || settingText(prefill, 'connection');
+  if (raw.length === 0) return null;
+  const hit = matchCatalogConnection(raw, connections);
+  return hit.ok ? hit.id : null;
+}
+
 // --- 定义对比 ------------------------------------------------------------------
 
 export type DiffKind = 'same' | 'add' | 'del';
@@ -191,9 +213,7 @@ export function diffLines(before: readonly string[], after: readonly string[]): 
     for (let i = a.length - 1; i >= 0; i--) {
       for (let j = b.length - 1; j >= 0; j--) {
         lcs[i]![j] =
-          a[i] === b[j]
-            ? lcs[i + 1]![j + 1]! + 1
-            : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+          a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
       }
     }
     middle = [];

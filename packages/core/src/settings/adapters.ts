@@ -3,6 +3,7 @@ import {
   AppError,
   CAPABILITY_SETTING_IDS,
   interpretAppConnectionSelection,
+  matchCatalogConnection,
   VENDOR_DESCRIPTORS,
   chatModelOptions,
   isVendorId,
@@ -1380,11 +1381,30 @@ function toolPolicyWidens(before: SettingValues | null, proposed: SettingValues)
 function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, _target, focus) => {
-      const connection = str(focus?.connection);
-      const tool = str(focus?.tool);
+      const rawConnection = str(focus?.connection);
+      const rawTool = str(focus?.tool);
+      const rows = deps.appConnections?.list() ?? null;
+      let connection = rawConnection;
+      let connectorId: string | undefined;
+      if (rawConnection !== undefined && rows !== null) {
+        const hit = matchCatalogConnection(rawConnection, rows);
+        if (hit.ok) {
+          connection = hit.id;
+          connectorId = rows.find((row) => row.id === hit.id)?.connectorId;
+        }
+      }
+      const toolNames =
+        rawTool === undefined
+          ? []
+          : [
+              rawTool,
+              ...(connectorId !== undefined && rawTool.startsWith(`app_${connectorId}_`)
+                ? [rawTool.slice(`app_${connectorId}_`.length)]
+                : []),
+            ];
       const located: SettingValues = {};
       if (connection !== undefined && connection.length > 0) located.connection = connection;
-      if (tool !== undefined && tool.length > 0) located.tool = tool;
+      if (rawTool !== undefined && rawTool.length > 0) located.tool = toolNames[0] ?? rawTool;
       const hasTarget = located.connection !== undefined && located.tool !== undefined;
       if (!hasTarget) {
         return snapshot(
@@ -1396,15 +1416,21 @@ function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
       if (deps.appConnections === undefined) {
         return snapshot('unknown', located, '状态未知');
       }
-      const found = deps.appConnections.peekTool(String(located.connection), String(located.tool));
+      let found: CatalogToolPolicyView | null = null;
+      let matchedTool = String(located.tool);
+      for (const name of toolNames) {
+        const candidate = deps.appConnections.peekTool(String(located.connection), name);
+        if (candidate !== null) {
+          found = candidate;
+          matchedTool = name;
+          break;
+        }
+      }
       if (found === null) return snapshot('unconfigured', located, '没有这条工具');
+      located.tool = matchedTool;
       const policy = catalogPolicyOf(found);
       const word = policy === 'allow' ? '直接允许' : policy === 'deny' ? '已禁用' : '每次询问';
-      return snapshot(
-        'configured',
-        { ...located, policy },
-        `「${clean(String(located.tool), 40)}」${word}`,
-      );
+      return snapshot('configured', { ...located, policy }, `「${clean(matchedTool, 40)}」${word}`);
     },
     options: (field) => {
       if (field.options !== 'connections' || deps.appConnections === undefined) return [];

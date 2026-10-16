@@ -35,13 +35,12 @@
   import {
     TOOL_POLICY_CHOICES,
     TOOL_STATE_LABEL_KEYS,
-    choiceForCatalogPolicy,
     diffStats,
+    policyCardConnectionId,
     policyForChoice,
     splitTools,
     toolDefinitionDiff,
     toolPolicyChoice,
-    toolPolicyTarget,
     type ToolPolicyChoice,
   } from './app-tools';
 
@@ -62,7 +61,7 @@
     embedded = false,
     before = null,
     prefill = null,
-    onSaved,
+    onSaved: _onSaved,
   }: {
     connectionId?: string;
     onBack?: () => void;
@@ -74,7 +73,9 @@
     onSaved?: () => void;
   } = $props();
 
-  const embeddedTarget = $derived(embedded ? toolPolicyTarget(before) : null);
+  const embeddedConnectionId = $derived(
+    embedded ? policyCardConnectionId(before, prefill, appsStore.connections) : null,
+  );
 
   const connection = $derived(
     appsStore.connections.find((item) => item.id === connectionId) ?? null,
@@ -181,38 +182,14 @@
     }
   }
 
-  const embeddedTools = $derived(
-    embeddedTarget === null ? null : appDetailStore.toolsFor(embeddedTarget.connectionId),
-  );
-  const embeddedTool = $derived(
-    embeddedTarget === null
-      ? null
-      : (embeddedTools?.tools.find((tool) => tool.toolName === embeddedTarget.toolName) ?? null),
-  );
-  const embeddedConnection = $derived(
-    embeddedTarget === null
-      ? null
-      : (appsStore.connections.find((item) => item.id === embeddedTarget.connectionId) ?? null),
-  );
-  let policyChoice = $state<ToolPolicyChoice | null>(null);
-  let policyChoiceFor = $state<string | null>(null);
   let policyLoadError = $state<string | null>(null);
-  let savingEmbedded = $state(false);
-
-  const embeddedChoice = $derived.by((): ToolPolicyChoice => {
-    if (embeddedTool === null || embeddedTarget === null) return 'default';
-    const key = `${embeddedTarget.connectionId}\n${embeddedTool.toolName}`;
-    if (policyChoiceFor === key && policyChoice !== null) return policyChoice;
-    return choiceForCatalogPolicy(prefill?.policy) ?? toolPolicyChoice(embeddedTool);
-  });
 
   $effect(() => {
     if (!embedded) return;
-    const id = embeddedTarget?.connectionId ?? null;
-    if (id === null) return;
-    policyLoadError = null;
+    const id = embeddedConnectionId;
     appsStore.start();
     appDetailStore.start();
+    if (id === null) return;
     untrack(() => {
       void appDetailStore.loadTools(id).then(
         () => {
@@ -220,39 +197,19 @@
         },
         (error: unknown) => {
           policyLoadError = rpcError(error);
-          toast.error(policyLoadError, { id: `tool-policy-load-${id}` });
         },
       );
     });
   });
 
-  function pickEmbeddedPolicy(next: ToolPolicyChoice): void {
-    if (embeddedTarget === null) return;
-    policyChoice = next;
-    policyChoiceFor = `${embeddedTarget.connectionId}\n${embeddedTarget.toolName}`;
-  }
-
-  async function saveEmbeddedPolicy(): Promise<void> {
-    if (embeddedTarget === null || embeddedTool === null || savingEmbedded) return;
-    savingEmbedded = true;
-    try {
-      await appDetailStore.setToolPolicy(
-        embeddedTarget.connectionId,
-        embeddedTool.toolName,
-        policyForChoice(embeddedChoice),
-      );
-      onSaved?.();
-    } catch (error) {
-      toast.error(rpcError(error));
-    } finally {
-      savingEmbedded = false;
-    }
-  }
-
-  async function changePolicy(tool: AppToolView, choice: ToolPolicyChoice): Promise<void> {
+  async function changePolicy(
+    tool: AppToolView,
+    choice: ToolPolicyChoice,
+    targetId: string = connectionId,
+  ): Promise<void> {
     savingPolicy = tool.toolName;
     try {
-      await appDetailStore.setToolPolicy(connectionId, tool.toolName, policyForChoice(choice));
+      await appDetailStore.setToolPolicy(targetId, tool.toolName, policyForChoice(choice));
     } catch (error) {
       toast.error(rpcError(error));
     } finally {
@@ -325,426 +282,442 @@
 </script>
 
 {#if embedded}
+  {@const embeddedToolsView =
+    embeddedConnectionId === null ? null : appDetailStore.toolsFor(embeddedConnectionId)}
+  {@const embeddedSplit = splitTools(embeddedToolsView?.tools ?? [])}
+  {@const embeddedRow =
+    embeddedConnectionId === null
+      ? null
+      : (appsStore.connections.find((item) => item.id === embeddedConnectionId) ?? null)}
   <div class="space-y-2" data-testid="tool-policy-embedded">
-    {#if embeddedTarget === null}
-      <p class="text-xs text-muted-foreground" data-testid="tool-policy-missing">
-        {t('settingCard.toolPolicy.missing')}
-      </p>
-    {:else if policyLoadError !== null && embeddedTools === null}
-      <p class="text-xs text-destructive" data-testid="tool-policy-load-error">{policyLoadError}</p>
-    {:else if embeddedTools === null}
+    {#if embeddedConnectionId === null && !appsStore.loaded}
       <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
-    {:else if embeddedTool === null}
-      <p class="text-xs text-muted-foreground" data-testid="tool-policy-not-found">
-        {t('settingCard.toolPolicy.notFound')}
+    {:else if embeddedConnectionId === null}
+      <p class="text-xs text-destructive" data-testid="tool-policy-load-error">
+        {t('chats.errorCode.APP_CONNECTION_NOT_FOUND')}
       </p>
+    {:else if policyLoadError !== null && embeddedToolsView === null}
+      <p class="text-xs text-destructive" data-testid="tool-policy-load-error">{policyLoadError}</p>
     {:else}
-      <p class="text-xs text-muted-foreground">
-        {embeddedConnection?.label ?? embeddedTarget.connectionId}
-      </p>
-      <div class="flex flex-wrap items-center gap-2 text-xs">
-        <code class="rounded bg-muted px-1.5 py-0.5">{embeddedTool.toolName}</code>
-        {#if embeddedTool.title !== undefined && embeddedTool.title !== embeddedTool.toolName}
-          <span class="truncate text-muted-foreground">{embeddedTool.title}</span>
-        {/if}
-        <McpRiskBadge risk={embeddedTool.risk} testid="tool-policy-risk" />
-      </div>
-      <label class="flex items-center gap-2 text-xs">
-        <span class="text-muted-foreground">{t('apps.detail.policy')}</span>
-        <select
-          class="h-7 rounded-md border border-input bg-background px-2 text-xs"
-          value={embeddedChoice}
-          disabled={savingEmbedded}
-          onchange={(event) => pickEmbeddedPolicy(event.currentTarget.value as ToolPolicyChoice)}
-          data-testid="tool-policy-choice"
-        >
-          {#each TOOL_POLICY_CHOICES as option (option)}
-            <option value={option}>{policyLabel(option, embeddedTool)}</option>
-          {/each}
-        </select>
-      </label>
-      <div class="flex justify-end">
-        <Button
-          size="sm"
-          disabled={savingEmbedded}
-          onclick={() => void saveEmbeddedPolicy()}
-          data-testid="tool-policy-save"
-        >
-          {t('settingCard.apply')}
-        </Button>
-      </div>
-    {/if}
-  </div>
-{:else}
-<div class="space-y-4" data-testid="apps-detail" data-connection-id={connectionId}>
-  <Button size="sm" variant="ghost" class="-ml-2" onclick={onBack} data-testid="apps-detail-back">
-    <ArrowLeft class="size-4" aria-hidden="true" />
-    {t('apps.detail.back')}
-  </Button>
-
-  {#if connection === null}
-    <p class="text-sm text-muted-foreground" data-testid="apps-detail-missing">
-      {t('apps.detail.notFound')}
-    </p>
-  {:else}
-    {@const badge = statusBadge(connection.status)}
-    <!-- 头部：应用 / 账号 / 状态 -->
-    <div
-      class="flex items-start gap-3 rounded-xl border px-4 py-3.5"
-      data-testid="apps-detail-header"
-    >
-      {#if icon !== null}
-        <img src={icon} alt="" class="size-10 shrink-0 rounded-lg" />
-      {:else}
-        <div
-          class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-base font-medium text-muted-foreground"
-          aria-hidden="true"
-        >
-          {appInitial(title)}
-        </div>
-      {/if}
-      <div class="min-w-0 flex-1 space-y-2">
-        <div class="flex flex-wrap items-center gap-1.5">
-          <span class="text-sm font-medium" data-testid="apps-detail-title">{title}</span>
-          <Badge
-            variant={badge.tone === 'ok' ? 'default' : 'outline'}
-            class={`text-[10px] ${BADGE_TONE_CLASSES[badge.tone]}`}
-            data-testid="apps-detail-status"
-            data-status={connection.status}
-          >
-            {t(badge.labelKey)}
-          </Badge>
-          {#if entry?.origin === 'local'}
-            <!-- 本机自建（设计 29 §17）：未审核，所有工具默认每次确认 -->
-            <Badge
-              variant="outline"
-              class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
-              title={t('apps.local.badgeHint')}
-              data-testid="apps-detail-local-badge"
-            >
-              {t('apps.local.badge')}
-            </Badge>
-          {/if}
-        </div>
-        <div class="grid gap-1.5">
-          <Label for="apps-detail-label" class="text-xs">{t('apps.detail.label')}</Label>
-          <div class="flex items-center gap-2">
-            <Input
-              id="apps-detail-label"
-              class="h-8 max-w-xs"
-              bind:value={labelDraft}
-              placeholder={t('apps.connected.defaultLabel')}
-              onkeydown={(event) => {
-                if (event.key === 'Enter') void saveLabel();
-              }}
-              data-testid="apps-detail-label"
-            />
-            {#if labelDirty}
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={busy}
-                onclick={() => void saveLabel()}
-                data-testid="apps-detail-label-save"
-              >
-                {t('apps.detail.labelSave')}
-              </Button>
-            {/if}
-          </div>
-        </div>
-        <label class="flex items-start gap-2 text-xs" data-testid="apps-detail-disable">
-          <Checkbox
-            checked={connection.status === 'disabled'}
-            disabled={busy}
-            onCheckedChange={(checked) => void setDisabled(checked === true)}
-            data-testid="apps-detail-disable-checkbox"
-          />
-          <span>
-            {t('apps.detail.disable')}
-            <span class="block text-muted-foreground">{t('apps.detail.disableHint')}</span>
-          </span>
-        </label>
-      </div>
-    </div>
-
-    <ConnectedSkillsPrompt {connectionId} testid="apps-detail-skills" />
-
-    <!-- 权限 -->
-    <section class="space-y-1.5" data-testid="apps-detail-scopes">
-      <h4 class="text-xs font-medium">{t('apps.detail.scopes')}</h4>
-      {#if connection.scopes.length === 0}
-        <p class="text-xs text-muted-foreground">{t('apps.detail.scopesEmpty')}</p>
-      {:else}
-        <div class="flex flex-wrap gap-1">
-          {#each connection.scopes as scope (scope)}
-            <code class="rounded bg-muted px-1.5 py-0.5 text-[11px]">{scope}</code>
-          {/each}
-        </div>
-      {/if}
-    </section>
-
-    <!-- 待复核 -->
-    {#if split.pending.length > 0}
-      <section
-        class="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3"
-        data-testid="apps-detail-pending"
-      >
-        <h4 class="text-xs font-medium">
-          {t('apps.detail.pendingTitle', { count: split.pending.length })}
-        </h4>
-        <p class="text-xs text-muted-foreground">{t('apps.detail.pendingHint')}</p>
-        <ul class="space-y-2">
-          {#each split.pending as tool (tool.toolName)}
-            {@const lines = toolDefinitionDiff(tool)}
-            {@const stats = diffStats(lines)}
-            <li
-              class="space-y-1.5 rounded-lg border bg-background px-3 py-2"
-              data-testid={`apps-detail-pending-${tool.toolName}`}
-            >
-              <div class="flex flex-wrap items-center gap-2 text-xs">
-                <Checkbox
-                  checked={selected[tool.toolName] === true}
-                  disabled={reviewing}
-                  onCheckedChange={(checked) =>
-                    (selected = { ...selected, [tool.toolName]: checked === true })}
-                  data-testid={`apps-detail-pending-select-${tool.toolName}`}
-                />
-                <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
-                  {tool.toolName}
-                </code>
-                {#if tool.title !== undefined && tool.title !== tool.toolName}
-                  <span class="text-muted-foreground">{tool.title}</span>
-                {/if}
-                <McpRiskBadge
-                  risk={tool.risk}
-                  testid={`apps-detail-pending-risk-${tool.toolName}`}
-                />
-                <Badge variant="outline" class={`text-[10px] ${BADGE_TONE_CLASSES.warn}`}>
-                  {t(TOOL_STATE_LABEL_KEYS[tool.state])}
-                </Badge>
-              </div>
-              <details class="text-xs">
-                <summary class="cursor-pointer text-muted-foreground select-none">
-                  {tool.approvedDefinition === null
-                    ? t('apps.detail.diffNew')
-                    : t('apps.detail.diffStats', { added: stats.added, removed: stats.removed })}
-                </summary>
-                <pre
-                  class="mt-1.5 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-relaxed"
-                  data-testid={`apps-detail-diff-${tool.toolName}`}>{#each lines as line, index (index)}<span
-                      class={line.kind === 'add'
-                        ? 'block bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
-                        : line.kind === 'del'
-                          ? 'block bg-destructive/10 text-destructive line-through decoration-destructive/40'
-                          : 'block text-muted-foreground'}
-                      data-kind={line.kind}
-                      >{line.kind === 'add'
-                        ? '+ '
-                        : line.kind === 'del'
-                          ? '- '
-                          : '  '}{line.text}</span
-                    >{/each}</pre>
-              </details>
-            </li>
-          {/each}
-        </ul>
-        <div class="flex items-center gap-2">
-          <Button
-            size="sm"
-            disabled={reviewing || selectedNames.length === 0}
-            onclick={() => void review(selectedNames)}
-            data-testid="apps-detail-accept-selected"
-          >
-            {t('apps.detail.acceptSelected', { count: selectedNames.length })}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={reviewing}
-            onclick={() => void review(split.pending.map((tool) => tool.toolName))}
-            data-testid="apps-detail-accept-all"
-          >
-            {t('apps.detail.acceptAll')}
-          </Button>
-        </div>
-      </section>
-    {/if}
-
-    <!-- 工具表 -->
-    <section class="space-y-1.5" data-testid="apps-detail-tools">
-      <h4 class="text-xs font-medium">{t('apps.detail.tools')}</h4>
+      <p class="text-xs text-muted-foreground">{embeddedRow?.label ?? embeddedConnectionId}</p>
       <p class="text-xs text-muted-foreground">{t('apps.detail.toolsHint')}</p>
-      {#if toolsView === null}
+      {#if embeddedToolsView === null}
         <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
-      {:else if toolsView.tools.length === 0}
+      {:else if embeddedSplit.approved.length === 0}
         <p class="text-xs text-muted-foreground" data-testid="apps-detail-tools-empty">
           {t('apps.detail.toolsEmpty')}
         </p>
       {:else}
         <div class="divide-y rounded-lg border">
-          {#each split.approved as tool (tool.toolName)}
+          {#each embeddedSplit.approved as tool (tool.toolName)}
             {@const choice = toolPolicyChoice(tool)}
             <div
               class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
               data-testid={`apps-detail-tool-${tool.toolName}`}
-              data-exposed={tool.exposed}
             >
               <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
                 {tool.toolName}
               </code>
               {#if tool.title !== undefined && tool.title !== tool.toolName}
-                <span class="truncate text-muted-foreground">{tool.title}</span>
+                <span class="min-w-0 truncate text-muted-foreground">{tool.title}</span>
               {/if}
               <McpRiskBadge risk={tool.risk} testid={`apps-detail-tool-risk-${tool.toolName}`} />
               <span class="text-muted-foreground">{t(TOOL_STATE_LABEL_KEYS[tool.state])}</span>
-              <div class="ml-auto flex items-center gap-3">
-                <label class="flex items-center gap-1">
-                  <span class="text-muted-foreground">{t('apps.detail.policy')}</span>
-                  <select
-                    class="h-7 rounded-md border border-input bg-background px-2 text-xs"
-                    value={choice}
-                    disabled={savingPolicy === tool.toolName}
-                    onchange={(event) =>
-                      void changePolicy(tool, event.currentTarget.value as ToolPolicyChoice)}
-                    data-testid={`apps-detail-tool-policy-${tool.toolName}`}
-                  >
-                    {#each TOOL_POLICY_CHOICES as option (option)}
-                      <option value={option}>{policyLabel(option, tool)}</option>
-                    {/each}
-                  </select>
-                </label>
-                <span
-                  class="flex items-center gap-1 {tool.exposed
-                    ? 'text-emerald-700 dark:text-emerald-400'
-                    : 'text-muted-foreground'}"
-                  title={tool.exposed ? t('apps.detail.exposed') : t('apps.detail.hidden')}
-                  data-testid={`apps-detail-tool-exposed-${tool.toolName}`}
+              <label class="ml-auto flex items-center gap-1">
+                <span class="text-muted-foreground">{t('apps.detail.policy')}</span>
+                <select
+                  class="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                  value={choice}
+                  disabled={savingPolicy === tool.toolName}
+                  onchange={(event) =>
+                    void changePolicy(
+                      tool,
+                      event.currentTarget.value as ToolPolicyChoice,
+                      embeddedConnectionId,
+                    )}
+                  data-testid={`apps-detail-tool-policy-${tool.toolName}`}
                 >
-                  {#if tool.exposed}
-                    <Eye class="size-3.5" aria-hidden="true" />
-                  {:else}
-                    <EyeOff class="size-3.5" aria-hidden="true" />
-                  {/if}
-                  <span class="sr-only">
-                    {tool.exposed ? t('apps.detail.exposed') : t('apps.detail.hidden')}
-                  </span>
-                </span>
-              </div>
+                  {#each TOOL_POLICY_CHOICES as option (option)}
+                    <option value={option}>{policyLabel(option, tool)}</option>
+                  {/each}
+                </select>
+              </label>
             </div>
           {/each}
         </div>
       {/if}
-    </section>
+    {/if}
+  </div>
+{:else}
+  <div class="space-y-4" data-testid="apps-detail" data-connection-id={connectionId}>
+    <Button size="sm" variant="ghost" class="-ml-2" onclick={onBack} data-testid="apps-detail-back">
+      <ArrowLeft class="size-4" aria-hidden="true" />
+      {t('apps.detail.back')}
+    </Button>
 
-    <!-- 持续授权 -->
-    <section class="space-y-1.5" data-testid="apps-detail-grants">
-      <h4 class="text-xs font-medium">{t('apps.detail.grants')}</h4>
-      <p class="text-xs text-muted-foreground">{t('apps.detail.grantsHint')}</p>
-      {#if grants === null}
-        <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
-      {:else if grants.length === 0}
-        <p class="text-xs text-muted-foreground" data-testid="apps-detail-grants-empty">
-          {t('apps.detail.grantsEmpty')}
-        </p>
-      {:else}
-        <ul class="divide-y rounded-lg border">
-          {#each grants as grant (grant.id)}
-            <li
-              class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
-              data-testid={`apps-detail-grant-${grant.id}`}
-            >
-              <span class="font-medium">{grantBotName(grant)}</span>
-              <code class="rounded bg-muted px-1.5 py-0.5">{grant.toolName}</code>
-              <Badge variant="outline" class="text-[10px]">
-                {grant.conversationId === null
-                  ? t('apps.detail.grantBotLevel')
-                  : t('apps.detail.grantConversation')}
-              </Badge>
-              <Button
-                size="sm"
-                variant="ghost"
-                class="ml-auto h-7 text-destructive hover:text-destructive"
-                disabled={revoking === grant.id}
-                onclick={() => void revoke(grant.id)}
-                data-testid={`apps-detail-grant-revoke-${grant.id}`}
-              >
-                {t('apps.detail.revoke')}
-              </Button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-
-    <!-- 重新连接 / 断开 -->
-    <section class="space-y-2 border-t pt-3" data-testid="apps-detail-actions">
-      <div class="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          onclick={() => (reconnectOpen = !reconnectOpen)}
-          data-testid="apps-detail-reconnect"
-        >
-          {reconnectOpen ? t('apps.catalog.close') : t('apps.detail.reconnect')}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          class="text-destructive hover:text-destructive"
-          disabled={disconnecting}
-          onclick={() => (confirmOpen = true)}
-          data-testid="apps-detail-disconnect"
-        >
-          {t('apps.detail.disconnect')}
-        </Button>
-      </div>
-      {#if reconnectOpen}
-        <div class="space-y-2 rounded-lg border px-3 py-2.5">
-          <p class="text-xs text-muted-foreground">{t('apps.detail.reconnectHint')}</p>
-          <ConnectAppPanel
-            target={{ kind: 'catalog', connectorId: connection.connectorId }}
-            reconnectConnectionId={connection.id}
-            scopes={connection.scopes.length > 0 ? connection.scopes : undefined}
-            name={title}
-            allowDisconnect={false}
-            onDone={() => {
-              reconnectOpen = false;
-              void appDetailStore.load(connectionId).catch(() => undefined);
-            }}
-            testid="apps-detail-reconnect-panel"
-          />
-        </div>
-      {/if}
-    </section>
-  {/if}
-</div>
-
-<Dialog bind:open={confirmOpen}>
-  <DialogContent data-testid="apps-detail-disconnect-dialog">
-    <DialogHeader>
-      <DialogTitle>{t('apps.detail.disconnectTitle', { name: title })}</DialogTitle>
-      <DialogDescription>
-        {t('apps.detail.disconnectBody')}
-        <span class="mt-1 block" data-testid="apps-detail-disconnect-impact">
-          {impact.botNames.length > 0
-            ? t('apps.detail.disconnectAffected', { bots: impact.botNames.join('、') })
-            : t('apps.detail.disconnectNoBots')}
-        </span>
-      </DialogDescription>
-    </DialogHeader>
-    <DialogFooter>
-      <Button variant="outline" onclick={() => (confirmOpen = false)}>
-        {t('apps.detail.cancel')}
-      </Button>
-      <Button
-        variant="destructive"
-        disabled={disconnecting}
-        onclick={() => void disconnect()}
-        data-testid="apps-detail-disconnect-confirm"
+    {#if connection === null}
+      <p class="text-sm text-muted-foreground" data-testid="apps-detail-missing">
+        {t('apps.detail.notFound')}
+      </p>
+    {:else}
+      {@const badge = statusBadge(connection.status)}
+      <!-- 头部：应用 / 账号 / 状态 -->
+      <div
+        class="flex items-start gap-3 rounded-xl border px-4 py-3.5"
+        data-testid="apps-detail-header"
       >
-        {t('apps.detail.confirmDisconnect')}
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
+        {#if icon !== null}
+          <img src={icon} alt="" class="size-10 shrink-0 rounded-lg" />
+        {:else}
+          <div
+            class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-base font-medium text-muted-foreground"
+            aria-hidden="true"
+          >
+            {appInitial(title)}
+          </div>
+        {/if}
+        <div class="min-w-0 flex-1 space-y-2">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-sm font-medium" data-testid="apps-detail-title">{title}</span>
+            <Badge
+              variant={badge.tone === 'ok' ? 'default' : 'outline'}
+              class={`text-[10px] ${BADGE_TONE_CLASSES[badge.tone]}`}
+              data-testid="apps-detail-status"
+              data-status={connection.status}
+            >
+              {t(badge.labelKey)}
+            </Badge>
+            {#if entry?.origin === 'local'}
+              <!-- 本机自建（设计 29 §17）：未审核，所有工具默认每次确认 -->
+              <Badge
+                variant="outline"
+                class="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-400"
+                title={t('apps.local.badgeHint')}
+                data-testid="apps-detail-local-badge"
+              >
+                {t('apps.local.badge')}
+              </Badge>
+            {/if}
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="apps-detail-label" class="text-xs">{t('apps.detail.label')}</Label>
+            <div class="flex items-center gap-2">
+              <Input
+                id="apps-detail-label"
+                class="h-8 max-w-xs"
+                bind:value={labelDraft}
+                placeholder={t('apps.connected.defaultLabel')}
+                onkeydown={(event) => {
+                  if (event.key === 'Enter') void saveLabel();
+                }}
+                data-testid="apps-detail-label"
+              />
+              {#if labelDirty}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onclick={() => void saveLabel()}
+                  data-testid="apps-detail-label-save"
+                >
+                  {t('apps.detail.labelSave')}
+                </Button>
+              {/if}
+            </div>
+          </div>
+          <label class="flex items-start gap-2 text-xs" data-testid="apps-detail-disable">
+            <Checkbox
+              checked={connection.status === 'disabled'}
+              disabled={busy}
+              onCheckedChange={(checked) => void setDisabled(checked === true)}
+              data-testid="apps-detail-disable-checkbox"
+            />
+            <span>
+              {t('apps.detail.disable')}
+              <span class="block text-muted-foreground">{t('apps.detail.disableHint')}</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <ConnectedSkillsPrompt {connectionId} testid="apps-detail-skills" />
+
+      <!-- 权限 -->
+      <section class="space-y-1.5" data-testid="apps-detail-scopes">
+        <h4 class="text-xs font-medium">{t('apps.detail.scopes')}</h4>
+        {#if connection.scopes.length === 0}
+          <p class="text-xs text-muted-foreground">{t('apps.detail.scopesEmpty')}</p>
+        {:else}
+          <div class="flex flex-wrap gap-1">
+            {#each connection.scopes as scope (scope)}
+              <code class="rounded bg-muted px-1.5 py-0.5 text-[11px]">{scope}</code>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <!-- 待复核 -->
+      {#if split.pending.length > 0}
+        <section
+          class="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3"
+          data-testid="apps-detail-pending"
+        >
+          <h4 class="text-xs font-medium">
+            {t('apps.detail.pendingTitle', { count: split.pending.length })}
+          </h4>
+          <p class="text-xs text-muted-foreground">{t('apps.detail.pendingHint')}</p>
+          <ul class="space-y-2">
+            {#each split.pending as tool (tool.toolName)}
+              {@const lines = toolDefinitionDiff(tool)}
+              {@const stats = diffStats(lines)}
+              <li
+                class="space-y-1.5 rounded-lg border bg-background px-3 py-2"
+                data-testid={`apps-detail-pending-${tool.toolName}`}
+              >
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                  <Checkbox
+                    checked={selected[tool.toolName] === true}
+                    disabled={reviewing}
+                    onCheckedChange={(checked) =>
+                      (selected = { ...selected, [tool.toolName]: checked === true })}
+                    data-testid={`apps-detail-pending-select-${tool.toolName}`}
+                  />
+                  <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
+                    {tool.toolName}
+                  </code>
+                  {#if tool.title !== undefined && tool.title !== tool.toolName}
+                    <span class="text-muted-foreground">{tool.title}</span>
+                  {/if}
+                  <McpRiskBadge
+                    risk={tool.risk}
+                    testid={`apps-detail-pending-risk-${tool.toolName}`}
+                  />
+                  <Badge variant="outline" class={`text-[10px] ${BADGE_TONE_CLASSES.warn}`}>
+                    {t(TOOL_STATE_LABEL_KEYS[tool.state])}
+                  </Badge>
+                </div>
+                <details class="text-xs">
+                  <summary class="cursor-pointer text-muted-foreground select-none">
+                    {tool.approvedDefinition === null
+                      ? t('apps.detail.diffNew')
+                      : t('apps.detail.diffStats', { added: stats.added, removed: stats.removed })}
+                  </summary>
+                  <pre
+                    class="mt-1.5 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-relaxed"
+                    data-testid={`apps-detail-diff-${tool.toolName}`}>{#each lines as line, index (index)}<span
+                        class={line.kind === 'add'
+                          ? 'block bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
+                          : line.kind === 'del'
+                            ? 'block bg-destructive/10 text-destructive line-through decoration-destructive/40'
+                            : 'block text-muted-foreground'}
+                        data-kind={line.kind}
+                        >{line.kind === 'add'
+                          ? '+ '
+                          : line.kind === 'del'
+                            ? '- '
+                            : '  '}{line.text}</span
+                      >{/each}</pre>
+                </details>
+              </li>
+            {/each}
+          </ul>
+          <div class="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={reviewing || selectedNames.length === 0}
+              onclick={() => void review(selectedNames)}
+              data-testid="apps-detail-accept-selected"
+            >
+              {t('apps.detail.acceptSelected', { count: selectedNames.length })}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={reviewing}
+              onclick={() => void review(split.pending.map((tool) => tool.toolName))}
+              data-testid="apps-detail-accept-all"
+            >
+              {t('apps.detail.acceptAll')}
+            </Button>
+          </div>
+        </section>
+      {/if}
+
+      <!-- 工具表 -->
+      <section class="space-y-1.5" data-testid="apps-detail-tools">
+        <h4 class="text-xs font-medium">{t('apps.detail.tools')}</h4>
+        <p class="text-xs text-muted-foreground">{t('apps.detail.toolsHint')}</p>
+        {#if toolsView === null}
+          <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
+        {:else if toolsView.tools.length === 0}
+          <p class="text-xs text-muted-foreground" data-testid="apps-detail-tools-empty">
+            {t('apps.detail.toolsEmpty')}
+          </p>
+        {:else}
+          <div class="divide-y rounded-lg border">
+            {#each split.approved as tool (tool.toolName)}
+              {@const choice = toolPolicyChoice(tool)}
+              <div
+                class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
+                data-testid={`apps-detail-tool-${tool.toolName}`}
+                data-exposed={tool.exposed}
+              >
+                <code class="rounded bg-muted px-1.5 py-0.5" title={tool.description}>
+                  {tool.toolName}
+                </code>
+                {#if tool.title !== undefined && tool.title !== tool.toolName}
+                  <span class="truncate text-muted-foreground">{tool.title}</span>
+                {/if}
+                <McpRiskBadge risk={tool.risk} testid={`apps-detail-tool-risk-${tool.toolName}`} />
+                <span class="text-muted-foreground">{t(TOOL_STATE_LABEL_KEYS[tool.state])}</span>
+                <div class="ml-auto flex items-center gap-3">
+                  <label class="flex items-center gap-1">
+                    <span class="text-muted-foreground">{t('apps.detail.policy')}</span>
+                    <select
+                      class="h-7 rounded-md border border-input bg-background px-2 text-xs"
+                      value={choice}
+                      disabled={savingPolicy === tool.toolName}
+                      onchange={(event) =>
+                        void changePolicy(tool, event.currentTarget.value as ToolPolicyChoice)}
+                      data-testid={`apps-detail-tool-policy-${tool.toolName}`}
+                    >
+                      {#each TOOL_POLICY_CHOICES as option (option)}
+                        <option value={option}>{policyLabel(option, tool)}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  <span
+                    class="flex items-center gap-1 {tool.exposed
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : 'text-muted-foreground'}"
+                    title={tool.exposed ? t('apps.detail.exposed') : t('apps.detail.hidden')}
+                    data-testid={`apps-detail-tool-exposed-${tool.toolName}`}
+                  >
+                    {#if tool.exposed}
+                      <Eye class="size-3.5" aria-hidden="true" />
+                    {:else}
+                      <EyeOff class="size-3.5" aria-hidden="true" />
+                    {/if}
+                    <span class="sr-only">
+                      {tool.exposed ? t('apps.detail.exposed') : t('apps.detail.hidden')}
+                    </span>
+                  </span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <!-- 持续授权 -->
+      <section class="space-y-1.5" data-testid="apps-detail-grants">
+        <h4 class="text-xs font-medium">{t('apps.detail.grants')}</h4>
+        <p class="text-xs text-muted-foreground">{t('apps.detail.grantsHint')}</p>
+        {#if grants === null}
+          <p class="text-xs text-muted-foreground">{t('apps.detail.toolsLoading')}</p>
+        {:else if grants.length === 0}
+          <p class="text-xs text-muted-foreground" data-testid="apps-detail-grants-empty">
+            {t('apps.detail.grantsEmpty')}
+          </p>
+        {:else}
+          <ul class="divide-y rounded-lg border">
+            {#each grants as grant (grant.id)}
+              <li
+                class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
+                data-testid={`apps-detail-grant-${grant.id}`}
+              >
+                <span class="font-medium">{grantBotName(grant)}</span>
+                <code class="rounded bg-muted px-1.5 py-0.5">{grant.toolName}</code>
+                <Badge variant="outline" class="text-[10px]">
+                  {grant.conversationId === null
+                    ? t('apps.detail.grantBotLevel')
+                    : t('apps.detail.grantConversation')}
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  class="ml-auto h-7 text-destructive hover:text-destructive"
+                  disabled={revoking === grant.id}
+                  onclick={() => void revoke(grant.id)}
+                  data-testid={`apps-detail-grant-revoke-${grant.id}`}
+                >
+                  {t('apps.detail.revoke')}
+                </Button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      <!-- 重新连接 / 断开 -->
+      <section class="space-y-2 border-t pt-3" data-testid="apps-detail-actions">
+        <div class="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onclick={() => (reconnectOpen = !reconnectOpen)}
+            data-testid="apps-detail-reconnect"
+          >
+            {reconnectOpen ? t('apps.catalog.close') : t('apps.detail.reconnect')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="text-destructive hover:text-destructive"
+            disabled={disconnecting}
+            onclick={() => (confirmOpen = true)}
+            data-testid="apps-detail-disconnect"
+          >
+            {t('apps.detail.disconnect')}
+          </Button>
+        </div>
+        {#if reconnectOpen}
+          <div class="space-y-2 rounded-lg border px-3 py-2.5">
+            <p class="text-xs text-muted-foreground">{t('apps.detail.reconnectHint')}</p>
+            <ConnectAppPanel
+              target={{ kind: 'catalog', connectorId: connection.connectorId }}
+              reconnectConnectionId={connection.id}
+              scopes={connection.scopes.length > 0 ? connection.scopes : undefined}
+              name={title}
+              allowDisconnect={false}
+              onDone={() => {
+                reconnectOpen = false;
+                void appDetailStore.load(connectionId).catch(() => undefined);
+              }}
+              testid="apps-detail-reconnect-panel"
+            />
+          </div>
+        {/if}
+      </section>
+    {/if}
+  </div>
+
+  <Dialog bind:open={confirmOpen}>
+    <DialogContent data-testid="apps-detail-disconnect-dialog">
+      <DialogHeader>
+        <DialogTitle>{t('apps.detail.disconnectTitle', { name: title })}</DialogTitle>
+        <DialogDescription>
+          {t('apps.detail.disconnectBody')}
+          <span class="mt-1 block" data-testid="apps-detail-disconnect-impact">
+            {impact.botNames.length > 0
+              ? t('apps.detail.disconnectAffected', { bots: impact.botNames.join('、') })
+              : t('apps.detail.disconnectNoBots')}
+          </span>
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" onclick={() => (confirmOpen = false)}>
+          {t('apps.detail.cancel')}
+        </Button>
+        <Button
+          variant="destructive"
+          disabled={disconnecting}
+          onclick={() => void disconnect()}
+          data-testid="apps-detail-disconnect-confirm"
+        >
+          {t('apps.detail.confirmDisconnect')}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 {/if}
