@@ -151,6 +151,13 @@ await esbuild.build({
   minify: true,
   sourcemap: false,
   outfile,
+  // package.json is type:module, so Electron utilityProcess loads this as ESM.
+  // Bundled CJS deps still emit esbuild's __require shim for node builtins
+  // (child_process/fs/...); without a real require in scope the shim throws
+  // "Dynamic require of \"child_process\" is not supported" and core never starts.
+  banner: {
+    js: "import { createRequire as __kepcupCreateRequire } from 'node:module';const require = __kepcupCreateRequire(import.meta.url);",
+  },
   // The workspace core package is bundled from its compiled dist; every third
   // party dependency stays external and ships in the asar's node_modules.
   alias: { '@kepcup/core': path.join(repoDir, 'packages/core/dist/index.js') },
@@ -188,10 +195,18 @@ await esbuild.build({
 });
 
 // 3. Migrations ride with the bundle.
+// Layout must match import.meta.url after esbuild collapses core into
+// out/main/core-entry/index.js:
+//   start.ts migrationsUrl → ../migrations/${kind}  → out/main/migrations
+//   memory/manager.ts      → ../../migrations/memory → out/migrations/memory
+const migrationsSrc = path.join(repoDir, 'packages/core/migrations');
 const migrationsOut = path.join(appDir, 'out/migrations');
+const migrationsNextToBundle = path.join(appDir, 'out/main/migrations');
 rmSync(migrationsOut, { recursive: true, force: true });
-cpSync(path.join(repoDir, 'packages/core/migrations'), migrationsOut, { recursive: true });
-console.log('[dist] migrations copied to out/migrations');
+rmSync(migrationsNextToBundle, { recursive: true, force: true });
+cpSync(migrationsSrc, migrationsOut, { recursive: true });
+cpSync(migrationsSrc, migrationsNextToBundle, { recursive: true });
+console.log('[dist] migrations copied to out/migrations and out/main/migrations');
 
 // 3b. D72 stdio ↔ HTTP MCP proxy: run by a child process (Electron's Node),
 //     resolved next to the bundle (core resolveStdioProxyPath) and unpacked
