@@ -753,7 +753,7 @@ describe('settings catalog host: settings_change and cards', () => {
       ['search', { enabled: true, approval: 'auto' }],
     ]);
     const appConnections: AdapterDeps['appConnections'] = {
-      list: () => [{ id: 'conn-1', label: 'Notion' }],
+      list: () => [{ id: 'conn-1', connectorId: 'notion', label: 'Notion' }],
       peekTool: (connectionId, toolName) => {
         if (connectionId !== 'conn-1') return null;
         const tool = tools.get(toolName);
@@ -845,12 +845,17 @@ describe('settings catalog host: settings_change and cards', () => {
       expected: cardOf(rig, tightCard!.id).before,
       messageId: tightCard!.id,
     });
-    expect(applied).toMatchObject({ status: 'applied', values: { server: 'notes', enabled: false } });
+    expect(applied).toMatchObject({
+      status: 'applied',
+      values: { server: 'notes', enabled: false },
+    });
     expect(rig.settings.get().mcpServers.find((server) => server.id === 'notes')).toMatchObject({
       enabled: false,
       toolPolicies: { search: { approval: 'ask' } },
     });
-    expect(rig.settings.get().mcpServers.find((server) => server.id === 'off')?.enabled).toBe(false);
+    expect(rig.settings.get().mcpServers.find((server) => server.id === 'off')?.enabled).toBe(
+      false,
+    );
     expect(rig.mcpRevoked).toEqual([['notes']]);
     expect(cardOf(rig, tightCard!.id).state).toBe('applied');
 
@@ -949,7 +954,12 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(result.content).toContain('空白卡');
     const id = messageIdIn(result.content);
     const card = cardOf(rig, id);
-    expect(card).toMatchObject({ mode: 'user-only', proposed: null, state: 'pending', before: null });
+    expect(card).toMatchObject({
+      mode: 'user-only',
+      proposed: null,
+      state: 'pending',
+      before: null,
+    });
     expect(JSON.stringify(card)).not.toContain('env_row_');
     expect(JSON.stringify(card)).not.toContain('python');
     const read = rig.host.forRun(runCtx(rig)).read('environment.toolchains', undefined);
@@ -1075,7 +1085,10 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(read.content).not.toContain('rm -rf');
     expect(read.content).not.toContain('npm test');
     // 打开对话时的自动核对：名单没变 → 保持 pending，不唤醒。
-    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({
+      state: 'pending',
+      verified: false,
+    });
     await expect(
       rig.host.applyItem({
         itemId: 'environment.allowlist',
@@ -1087,7 +1100,10 @@ describe('settings catalog host: settings_change and cards', () => {
     expect(cardOf(rig, id).state).toBe('pending');
     entries[0] = { id: 'alw_leak', pattern: 'rm -rf /secret', enabled: true };
     // 自动核对限频：30 秒内同一张卡不再核对。
-    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({
+      state: 'pending',
+      verified: false,
+    });
     rig.clock.advance(31_000);
     // 名单变了（概要条数不同）→ 自动核对结卡并唤醒一次。
     expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'applied', verified: true });
@@ -1366,14 +1382,12 @@ describe('settings catalog host: review fixes', () => {
 
   it('#5 with a messageId the target must match the card', async () => {
     const rig = makeRig();
-    const result = await rig.host
-      .forRun(runCtx(rig, { isButler: true }))
-      .change({
-        id: 'bot.model',
-        values: { model: 'custom:mock/mock-alt' },
-        reason: '换',
-        botId: 'bot_b',
-      });
+    const result = await rig.host.forRun(runCtx(rig, { isButler: true })).change({
+      id: 'bot.model',
+      values: { model: 'custom:mock/mock-alt' },
+      reason: '换',
+      botId: 'bot_b',
+    });
     const id = messageIdIn(result.content);
     await expect(
       rig.host.applyItem({
@@ -1455,13 +1469,11 @@ describe('settings catalog host: review fixes', () => {
   it('#10 agents.external: CAS per agent, a concurrent change to another agent is no conflict', async () => {
     const rig = makeRig();
     rig.settings.update({ agents: { 'agent-a': { enabled: true } } as never });
-    const result = await rig.host
-      .forRun(runCtx(rig))
-      .change({
-        id: 'agents.external',
-        values: { agent: 'agent-b', enabled: true },
-        reason: '用 B',
-      });
+    const result = await rig.host.forRun(runCtx(rig)).change({
+      id: 'agents.external',
+      values: { agent: 'agent-b', enabled: true },
+      reason: '用 B',
+    });
     const id = messageIdIn(result.content);
     const card = cardOf(rig, id);
     expect(card.before).toEqual({ agent: 'agent-b', enabled: false });
@@ -1518,13 +1530,10 @@ const CHANGE_MAIN_ALT = {
   reason: '换模型',
 };
 
-
 describe('settings catalog host: D89 review round 2', () => {
   function withServer(rig: Rig): void {
     rig.settings.update({
-      mcpServers: [
-        { id: 'srv', name: 'Srv', transport: 'stdio', command: 'echo', enabled: true },
-      ],
+      mcpServers: [{ id: 'srv', name: 'Srv', transport: 'stdio', command: 'echo', enabled: true }],
       browserProfiles: [{ id: 'bpf_work', name: 'Work', createdAt: 1 }],
     } as never);
     const bot = rig.bots.get('bot_a')!;
@@ -1541,7 +1550,7 @@ describe('settings catalog host: D89 review round 2', () => {
     } as Bot);
   }
 
-  it('bot.mcp-servers: a confirm card; applying the removal revokes the bot\'s MCP access after the write', async () => {
+  it("bot.mcp-servers: a confirm card; applying the removal revokes the bot's MCP access after the write", async () => {
     const rig = makeRig({ realBotProfiles: true });
     withServer(rig);
     const result = await rig.host.forRun(runCtx(rig)).change({
@@ -1658,7 +1667,11 @@ describe('settings catalog host: D89 review round 2', () => {
       expect(result.content).toContain('空白卡');
       expect(result.content).toContain('没有采用');
       const card = cardOf(rig, messageIdIn(result.content));
-      expect(card).toMatchObject({ mode: 'user-only', proposed: null, target: { projectId: 'proj_1' } });
+      expect(card).toMatchObject({
+        mode: 'user-only',
+        proposed: null,
+        target: { projectId: 'proj_1' },
+      });
       expect(JSON.stringify(card)).not.toContain('/home/alice');
     }
   });
@@ -1771,7 +1784,11 @@ describe('settings catalog host: D89 review round 2', () => {
     });
     expect(language.content).toContain('language 只能是 zh-CN');
     await expect(
-      rig.host.applyItem({ itemId: 'general.language', values: { language: 'fr' }, expected: null }),
+      rig.host.applyItem({
+        itemId: 'general.language',
+        values: { language: 'fr' },
+        expected: null,
+      }),
     ).rejects.toThrow(/只能是 zh-CN/);
     await expect(
       rig.host.applyItem({ itemId: 'general.theme', values: { theme: 'neon' }, expected: null }),
@@ -1789,9 +1806,7 @@ describe('settings catalog host: D89 review round 2', () => {
   it('required:true on a user-only item carries the located target (before) for the setup card', async () => {
     const rig = makeRig();
     rig.settings.update({
-      mcpServers: [
-        { id: 'off', name: 'Off', transport: 'stdio', command: 'echo', enabled: false },
-      ],
+      mcpServers: [{ id: 'off', name: 'Off', transport: 'stdio', command: 'echo', enabled: false }],
     } as never);
     const ctx = runCtx(rig, { loopType: 'task' });
     const result = await rig.host.forRun(ctx).change({
@@ -1832,7 +1847,9 @@ describe('settings catalog host: D89 review round 3', () => {
         settings: {
           get: () =>
             ({
-              mcpServers: [{ id: 'srv', name: 'S', transport: 'stdio', command: 'x', enabled: true }],
+              mcpServers: [
+                { id: 'srv', name: 'S', transport: 'stdio', command: 'x', enabled: true },
+              ],
               browserProfiles: [{ id: 'bpf', name: 'B', createdAt: 1 }],
               experimental: { externalAgents: false },
             }) as never,
@@ -1920,7 +1937,11 @@ describe('settings catalog host: D89 review round 3', () => {
       ...bot,
       profile: {
         ...bot.profile,
-        runtime: { ...bot.profile.runtime, network_policy: 'allowlist', network_allowlist: ['a.com'] },
+        runtime: {
+          ...bot.profile.runtime,
+          network_policy: 'allowlist',
+          network_allowlist: ['a.com'],
+        },
       },
     } as Bot);
     const result = await rig.host.forRun(runCtx(rig)).change({
@@ -1937,7 +1958,10 @@ describe('settings catalog host: D89 review round 3', () => {
       expected: null,
       target: { botId: 'bot_a' },
     });
-    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({
+      state: 'pending',
+      verified: false,
+    });
     expect(rig.wakes).toHaveLength(0);
     rig.clock.advance(31_000);
     await rig.host.applyItem({
@@ -1964,7 +1988,10 @@ describe('settings catalog host: D89 review round 3', () => {
       values: { provider: 'dashscope', model: 'dashscope/qwen-image', apiKey: SECRET },
       expected: null,
     });
-    expect(rig.host.completeCard(id, { auto: true })).toEqual({ state: 'pending', verified: false });
+    expect(rig.host.completeCard(id, { auto: true })).toEqual({
+      state: 'pending',
+      verified: false,
+    });
     rig.clock.advance(31_000);
     await rig.host.applyItem({
       itemId: 'capability.image',

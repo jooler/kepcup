@@ -287,6 +287,7 @@ describe('ConnectorCatalog (runtime loader)', () => {
       'sentry',
       'canva',
       'stripe',
+      'cloudflare',
     ]);
     const some = new ConnectorCatalog({ env: {}, approvedGates: ['linear', 'stripe'] });
     expect(some.list().map((entry) => connectorMetaOf(entry).slug)).toEqual(['linear', 'stripe']);
@@ -297,14 +298,14 @@ describe('ConnectorCatalog (runtime loader)', () => {
 
   it('dev/test builds (constant undefined) do not filter; an injected constant does', () => {
     expect(connectorReleaseGates()).toBeNull();
-    expect(new ConnectorCatalog({ env: {} }).list()).toHaveLength(6);
+    expect(new ConnectorCatalog({ env: {} }).list()).toHaveLength(7);
     vi.stubGlobal('__KEPCUP_CONNECTOR_RELEASE_GATES__', []);
     expect(connectorReleaseGates()).toEqual([]);
     expect(new ConnectorCatalog({ env: {} }).list()).toEqual([]);
     vi.stubGlobal('__KEPCUP_CONNECTOR_RELEASE_GATES__', ['notion']);
     expect(new ConnectorCatalog({ env: {} }).list().map((e) => e.name)).toEqual(['com.notion/mcp']);
     // An explicit null from the caller still wins (tests that need everything).
-    expect(new ConnectorCatalog({ env: {}, approvedGates: null }).list()).toHaveLength(6);
+    expect(new ConnectorCatalog({ env: {}, approvedGates: null }).list()).toHaveLength(7);
   });
 
   it('skips broken entries and duplicate slugs with warnings, keeps the rest', () => {

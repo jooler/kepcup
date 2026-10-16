@@ -19,6 +19,7 @@ function harness(
   environment?: AdapterDeps['environment'],
   sandbox?: AdapterDeps['sandbox'],
   allowlist?: AdapterDeps['allowlist'],
+  appConnections?: AdapterDeps['appConnections'],
 ) {
   let settings = settingsSchema.parse({
     providerConcurrency: { default: 4, openai: 2 },
@@ -101,6 +102,7 @@ function harness(
     ...(environment !== undefined ? { environment } : {}),
     ...(sandbox !== undefined ? { sandbox } : {}),
     ...(allowlist !== undefined ? { allowlist } : {}),
+    ...(appConnections !== undefined ? { appConnections } : {}),
     publish: () => undefined,
   };
   const adapters = buildItemAdapters(deps);
@@ -119,14 +121,22 @@ describe('P1 setting item writes', () => {
   it('concurrency write keeps per-provider limits', () => {
     const rig = harness();
     const adapter = rig.adapters(item('models.concurrency'));
-    adapter.write!(item('models.concurrency'), { next: { provider: 'default', limit: 6 }, secrets: {} }, rig.target);
+    adapter.write!(
+      item('models.concurrency'),
+      { next: { provider: 'default', limit: 6 }, secrets: {} },
+      rig.target,
+    );
     expect(rig.settings().providerConcurrency).toEqual({ default: 6, openai: 2 });
   });
 
   it('embedding configure resets dim and does not touch other settings', () => {
     const rig = harness();
     const adapter = rig.adapters(item('models.embedding-local'));
-    adapter.write!(item('models.embedding-local'), { next: { source: 'local' }, secrets: {} }, rig.target);
+    adapter.write!(
+      item('models.embedding-local'),
+      { next: { source: 'local' }, secrets: {} },
+      rig.target,
+    );
     expect(rig.configured).toEqual(['local']);
     expect(rig.settings().embedding).toMatchObject({ source: 'local', dim: null });
     expect(rig.settings().providerConcurrency.default).toBe(4);
@@ -136,7 +146,11 @@ describe('P1 setting item writes', () => {
     const rig = harness();
     const adapter = rig.adapters(item('bot.network'));
     expect(
-      adapter.valuesWiden!(item('bot.network'), { policy: 'none', allowlist: [] }, { policy: 'open' }),
+      adapter.valuesWiden!(
+        item('bot.network'),
+        { policy: 'none', allowlist: [] },
+        { policy: 'open' },
+      ),
     ).toBe(true);
     expect(
       adapter.valuesWiden!(
@@ -145,9 +159,9 @@ describe('P1 setting item writes', () => {
         { policy: 'allowlist', allowlist: ['example.com', 'other.test'] },
       ),
     ).toBe(true);
-    expect(
-      adapter.valuesWiden!(item('bot.network'), { policy: 'open' }, { policy: 'none' }),
-    ).toBe(false);
+    expect(adapter.valuesWiden!(item('bot.network'), { policy: 'open' }, { policy: 'none' })).toBe(
+      false,
+    );
     adapter.write!(
       item('bot.network'),
       { next: { policy: 'allowlist', allowlist: ['example.com'] }, secrets: {} },
@@ -176,12 +190,51 @@ describe('P1 setting item writes', () => {
     expect(rig.bot.profile.runtime.model).toBe('custom:mock/mock-main');
   });
 
+  it('bot.apps accepts a connector slug and keeps grants the bot already has', () => {
+    const rows = [
+      { id: 'conn-1', connectorId: 'notion', label: 'Notion' },
+      { id: 'conn_cf', connectorId: 'cloudflare', label: 'Cloudflare' },
+    ];
+    const rig = harness({}, {}, undefined, undefined, undefined, {
+      list: () => rows,
+      peekTool: () => null,
+    });
+    const adapter = rig.adapters(item('bot.apps'));
+    expect(adapter.options!(item('bot.apps').fields[0]!, item('bot.apps'), rig.target)).toEqual([
+      { value: 'conn-1', label: 'Notion' },
+      { value: 'conn_cf', label: 'Cloudflare' },
+    ]);
+    adapter.write!(
+      item('bot.apps'),
+      { next: { connections: ['cloudflare'] }, secrets: {} },
+      rig.target,
+    );
+    expect(rig.bot.profile.runtime.app_connection_ids).toEqual(['conn-1', 'conn_cf']);
+    adapter.write!(
+      item('bot.apps'),
+      { next: { connections: ['conn_cf'] }, secrets: {} },
+      rig.target,
+    );
+    expect(rig.bot.profile.runtime.app_connection_ids).toEqual(['conn_cf']);
+    expect(() =>
+      adapter.write!(
+        item('bot.apps'),
+        { next: { connections: ['missing'] }, secrets: {} },
+        rig.target,
+      ),
+    ).toThrow(/连接 missing 不存在或已删除/);
+  });
+
   it('switching a bot onto an external agent is widening; dropping to read-only is not', () => {
     const rig = harness();
     const adapter = rig.adapters(item('bot.agent'));
-    expect(adapter.valuesWiden!(item('bot.agent'), { agent: '', permission: 'workspace' }, { agent: 'codex' })).toBe(
-      true,
-    );
+    expect(
+      adapter.valuesWiden!(
+        item('bot.agent'),
+        { agent: '', permission: 'workspace' },
+        { agent: 'codex' },
+      ),
+    ).toBe(true);
     expect(
       adapter.valuesWiden!(
         item('bot.agent'),
@@ -207,9 +260,17 @@ describe('P1 setting item writes', () => {
     const adapter = rig.adapters(item('bot.skills'));
     const before = adapter.read(item('bot.skills'), rig.target, { skill: 'note' });
     expect(before.values).toEqual({ skill: 'note', enabled: false, scope: 'private' });
-    adapter.write!(item('bot.skills'), { next: { skill: 'note', enabled: true }, secrets: {} }, rig.target);
+    adapter.write!(
+      item('bot.skills'),
+      { next: { skill: 'note', enabled: true }, secrets: {} },
+      rig.target,
+    );
     expect(rig.skills.enabled).toEqual(['note']);
-    adapter.write!(item('bot.skills'), { next: { skill: 'note', enabled: false }, secrets: {} }, rig.target);
+    adapter.write!(
+      item('bot.skills'),
+      { next: { skill: 'note', enabled: false }, secrets: {} },
+      rig.target,
+    );
     expect(rig.skills.disabled).toEqual(['note']);
   });
 
@@ -226,16 +287,25 @@ describe('P1 setting item writes', () => {
     expect(snapshot.summary).toContain('公共技能');
     const overview = adapter.read(entry, rig.target);
     expect(overview.summary).toContain('另有 1 个公共技能');
-    const normalized = adapter.normalize!(entry, { skill: 'shared-pdf', enabled: false }, rig.target);
+    const normalized = adapter.normalize!(
+      entry,
+      { skill: 'shared-pdf', enabled: false },
+      rig.target,
+    );
     expect(normalized).toMatchObject({ ok: false });
     expect(normalized.ok ? '' : normalized.message).toContain('技能页');
     expect(() =>
-      adapter.write!(entry, { next: { skill: 'shared-pdf', enabled: false }, secrets: {} }, rig.target),
+      adapter.write!(
+        entry,
+        { next: { skill: 'shared-pdf', enabled: false }, secrets: {} },
+        rig.target,
+      ),
     ).toThrow(/公共技能/);
     expect(rig.skills.disabled).toEqual([]);
     expect(
-      adapter.options!(entry.fields[0]!, entry, rig.target).find((option) => option.value === 'shared-pdf')
-        ?.label,
+      adapter.options!(entry.fields[0]!, entry, rig.target).find(
+        (option) => option.value === 'shared-pdf',
+      )?.label,
     ).toContain('只能在技能页管理');
   });
 });
@@ -347,7 +417,10 @@ describe('group and project setting reads', () => {
 describe('project protect-rule redaction', () => {
   function rules(denyRead: string[], denyWrite: string[]) {
     const deps: AdapterDeps = {
-      settings: { get: () => settingsSchema.parse({}), update: (next) => settingsSchema.parse(next) },
+      settings: {
+        get: () => settingsSchema.parse({}),
+        update: (next) => settingsSchema.parse(next),
+      },
       secrets: { hasValue: () => false, setValue: () => undefined },
       providers: { list: () => [], setKey: () => undefined },
       bots: { get: () => null },
@@ -428,7 +501,7 @@ describe('connection tool policy reads', () => {
   }
 
   const notion = {
-    list: () => [{ id: 'conn-1', label: 'Notion 工作区' }],
+    list: () => [{ id: 'conn-1', connectorId: 'notion', label: 'Notion 工作区' }],
     peekTool: (connectionId: string, toolName: string) =>
       connectionId === 'conn-1' && toolName === 'search'
         ? { policy: { approval: 'auto' as const }, enabled: true, approval: 'auto' as const }
@@ -459,9 +532,13 @@ describe('connection tool policy reads', () => {
     });
     expect(missing.status).toBe('unconfigured');
     expect(missing.values).toEqual({ connection: 'conn-1', tool: 'gone' });
-    expect(adapter.options!(item('connections.tool-policy').fields[0]!, item('connections.tool-policy'), target)).toEqual([
-      { value: 'conn-1', label: 'Notion 工作区' },
-    ]);
+    expect(
+      adapter.options!(
+        item('connections.tool-policy').fields[0]!,
+        item('connections.tool-policy'),
+        target,
+      ),
+    ).toEqual([{ value: 'conn-1', label: 'Notion 工作区' }]);
   });
 
   it('keeps the ids when the connection service is not wired', () => {
@@ -540,7 +617,7 @@ describe('installed MCP server reads', () => {
     });
   });
 
-  it('writes only this server\'s enabled flag on the latest list and revokes after the lock', async () => {
+  it("writes only this server's enabled flag on the latest list and revokes after the lock", async () => {
     const revoked: Array<{ previous: string[]; next: string[] }> = [];
     const { adapters, settings } = harness({
       mcpServers: [
@@ -598,7 +675,11 @@ describe('installed MCP server reads', () => {
         { id: 'fresh', name: 'Fresh', transport: 'stdio', command: 'echo', enabled: true },
       ],
     });
-    const effects = live.write!(entry, { next: { server: 'notes', enabled: false }, secrets: {} }, target);
+    const effects = live.write!(
+      entry,
+      { next: { server: 'notes', enabled: false }, secrets: {} },
+      target,
+    );
     expect(stored.mcpServers.map((server) => [server.id, server.enabled])).toEqual([
       ['notes', false],
       ['off', false],
@@ -704,10 +785,14 @@ describe('environment toolchains read adapter', () => {
   ];
 
   it('counts installed and failed-or-missing, keeps values null, and omits install ids', () => {
-    const { adapters } = harness({}, {}, {
-      listInstalls: () => rows,
-      systemStatuses: () => system,
-    });
+    const { adapters } = harness(
+      {},
+      {},
+      {
+        listInstalls: () => rows,
+        systemStatuses: () => system,
+      },
+    );
     const adapter = adapters(item('environment.toolchains'));
     const snapshot = adapter.read(item('environment.toolchains'), target);
     expect(adapter.write).toBeUndefined();
@@ -720,26 +805,40 @@ describe('environment toolchains read adapter', () => {
   });
 
   it('is configured only when nothing failed or is missing', () => {
-    const healthy = harness({}, {}, {
-      listInstalls: () => [{ id: 'env_row_ok', status: 'installed' }],
-      systemStatuses: () => [{ available: true }],
-    });
-    expect(healthy.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+    const healthy = harness(
+      {},
+      {},
+      {
+        listInstalls: () => [{ id: 'env_row_ok', status: 'installed' }],
+        systemStatuses: () => [{ available: true }],
+      },
+    );
+    expect(
+      healthy.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target),
+    ).toMatchObject({
       status: 'configured',
       values: null,
       summary: '已安装 2 项，失败或缺失 0 项',
     });
     const empty = harness({}, {}, { listInstalls: () => [], systemStatuses: () => [] });
-    expect(empty.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+    expect(
+      empty.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target),
+    ).toMatchObject({
       status: 'configured',
       values: null,
       summary: '已安装 0 项，失败或缺失 0 项',
     });
-    const broken = harness({}, {}, {
-      listInstalls: () => [{ id: 'env_row_bad', status: 'failed' }],
-      systemStatuses: () => [{ available: false }],
-    });
-    expect(broken.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toMatchObject({
+    const broken = harness(
+      {},
+      {},
+      {
+        listInstalls: () => [{ id: 'env_row_bad', status: 'failed' }],
+        systemStatuses: () => [{ available: false }],
+      },
+    );
+    expect(
+      broken.adapters(item('environment.toolchains')).read(item('environment.toolchains'), target),
+    ).toMatchObject({
       status: 'unconfigured',
       values: null,
       summary: '已安装 0 项，失败或缺失 2 项',
@@ -748,7 +847,9 @@ describe('environment toolchains read adapter', () => {
 
   it('stays unconfigured when the environment service is not wired', () => {
     const { adapters } = harness();
-    expect(adapters(item('environment.toolchains')).read(item('environment.toolchains'), target)).toEqual({
+    expect(
+      adapters(item('environment.toolchains')).read(item('environment.toolchains'), target),
+    ).toEqual({
       status: 'unconfigured',
       values: null,
       secrets: {},
@@ -846,7 +947,9 @@ describe('environment allowlist read adapter', () => {
   });
 
   it('never reports configured: enabled built-ins (the default) say nothing about the command the bot needs', () => {
-    expect(read({ list: () => [{ enabled: true, builtin: true }] }).snapshot.status).toBe('unknown');
+    expect(read({ list: () => [{ enabled: true, builtin: true }] }).snapshot.status).toBe(
+      'unknown',
+    );
     expect(read({ list: () => [] }).snapshot).toEqual({
       status: 'unknown',
       values: null,
@@ -870,19 +973,35 @@ describe('validation and widening fixes (D89 review)', () => {
     const rig = harness();
     const entry = item('bot.network');
     const adapter = rig.adapters(entry);
-    expect(adapter.valuesWiden!(entry, { policy: 'none', allowlist: [] }, { allowlist: ['evil.com'] })).toBe(
-      true,
-    );
     expect(
-      adapter.valuesWiden!(entry, { policy: 'none', allowlist: ['example.com'] }, { policy: 'none', allowlist: ['evil.com'] }),
+      adapter.valuesWiden!(entry, { policy: 'none', allowlist: [] }, { allowlist: ['evil.com'] }),
     ).toBe(true);
     expect(
-      adapter.valuesWiden!(entry, { policy: 'allowlist', allowlist: ['a.com', 'b.com'] }, { allowlist: ['a.com'] }),
+      adapter.valuesWiden!(
+        entry,
+        { policy: 'none', allowlist: ['example.com'] },
+        { policy: 'none', allowlist: ['evil.com'] },
+      ),
+    ).toBe(true);
+    expect(
+      adapter.valuesWiden!(
+        entry,
+        { policy: 'allowlist', allowlist: ['a.com', 'b.com'] },
+        { allowlist: ['a.com'] },
+      ),
     ).toBe(false);
-    adapter.write!(entry, { next: { policy: 'none', allowlist: ['evil.com'] }, secrets: {} }, rig.target);
+    adapter.write!(
+      entry,
+      { next: { policy: 'none', allowlist: ['evil.com'] }, secrets: {} },
+      rig.target,
+    );
     expect(rig.bot.profile.runtime.network_policy).toBe('none');
     expect(rig.bot.profile.runtime.network_allowlist).toEqual(['example.com']);
-    adapter.write!(entry, { next: { policy: 'allowlist', allowlist: ['ok.test'] }, secrets: {} }, rig.target);
+    adapter.write!(
+      entry,
+      { next: { policy: 'allowlist', allowlist: ['ok.test'] }, secrets: {} },
+      rig.target,
+    );
     expect(rig.bot.profile.runtime.network_allowlist).toEqual(['ok.test']);
   });
 
@@ -907,7 +1026,11 @@ describe('validation and widening fixes (D89 review)', () => {
       },
       publish: () => undefined,
     });
-    const effects = adapters(entry).write!(entry, { next: { servers: [] }, secrets: {} }, rig.target);
+    const effects = adapters(entry).write!(
+      entry,
+      { next: { servers: [] }, secrets: {} },
+      rig.target,
+    );
     expect(rig.bot.profile.runtime.mcp_server_ids).toEqual([]);
     expect(settled).toEqual([]);
     expect(effects).toMatchObject({ changedItemIds: ['bot.mcp-servers'] });
@@ -922,7 +1045,8 @@ describe('validation and widening fixes (D89 review)', () => {
       settings: { get: rig.settings, update: () => rig.settings() },
       secrets: { hasValue: () => false, setValue: () => undefined },
       providers: {
-        list: () => [{ id: 'openai', name: 'OpenAI', kind: 'builtin', models: [], hasKey: true }] as never,
+        list: () =>
+          [{ id: 'openai', name: 'OpenAI', kind: 'builtin', models: [], hasKey: true }] as never,
         setKey: () => undefined,
       },
       bots: { get: () => null },
@@ -934,11 +1058,17 @@ describe('validation and widening fixes (D89 review)', () => {
       agentCatalog: () => [{ id: 'codex', name: 'Codex' }] as never,
       publish: () => undefined,
     })(entry);
-    expect(adapter.normalize!(entry, { provider: 'openai', limit: 3 }, rig.target)).toMatchObject({ ok: true });
-    expect(adapter.normalize!(entry, { provider: 'agent:codex', limit: 3 }, rig.target)).toMatchObject({
+    expect(adapter.normalize!(entry, { provider: 'openai', limit: 3 }, rig.target)).toMatchObject({
       ok: true,
     });
-    expect(adapter.normalize!(entry, { provider: '__proto__', limit: 3 }, rig.target)).toMatchObject({
+    expect(
+      adapter.normalize!(entry, { provider: 'agent:codex', limit: 3 }, rig.target),
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(
+      adapter.normalize!(entry, { provider: '__proto__', limit: 3 }, rig.target),
+    ).toMatchObject({
       ok: false,
     });
     expect(adapter.normalize!(entry, { provider: 'openai', limit: 99 }, rig.target)).toMatchObject({

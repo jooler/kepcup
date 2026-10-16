@@ -663,8 +663,12 @@ export class AppConnectionsService {
   }
 
   /** 目录连接（不含自定义 MCP），供设置目录的连接选项。 */
-  catalogConnectionOptions(): Array<{ id: string; label: string }> {
-    return this.#deps.store.list().map((row) => ({ id: row.id, label: row.label }));
+  catalogConnectionOptions(): Array<{ id: string; label: string; connectorId: string }> {
+    return this.#deps.store.list().map((row) => ({
+      id: row.id,
+      label: row.label,
+      connectorId: row.connectorId,
+    }));
   }
 
   /**

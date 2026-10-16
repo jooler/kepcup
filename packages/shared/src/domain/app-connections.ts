@@ -103,3 +103,61 @@ export const appToolGrantViewSchema = z.object({
   createdAt: z.number(),
 });
 export type AppToolGrantView = z.infer<typeof appToolGrantViewSchema>;
+
+/** 一条目录连接，供设置卡把模型填写的引用解析成连接 id。 */
+export interface CatalogConnectionRef {
+  id: string;
+  connectorId: string;
+  label: string;
+}
+
+export type AppConnectionSelection =
+  | { ok: true; ids: string[] }
+  | { ok: false; connectionId: string; reason: 'missing' | 'ambiguous' };
+
+function sameRef(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/**
+ * 把一条引用解析成连接 id：已经是 id 则原样；否则按应用 slug 或账号名（忽略大小写）匹配。
+ * 对上多个账号时不猜。
+ */
+export function matchCatalogConnection(
+  ref: string,
+  connections: readonly CatalogConnectionRef[],
+): { ok: true; id: string } | { ok: false; reason: 'missing' | 'ambiguous' } {
+  const exact = connections.find((row) => row.id === ref);
+  if (exact !== undefined) return { ok: true, id: exact.id };
+  const matches = connections.filter(
+    (row) => sameRef(row.connectorId, ref) || (row.label.length > 0 && sameRef(row.label, ref)),
+  );
+  const ids = [...new Set(matches.map((row) => row.id))];
+  const only = ids[0];
+  if (ids.length === 1 && only !== undefined) return { ok: true, id: only };
+  if (ids.length > 1) return { ok: false, reason: 'ambiguous' };
+  return { ok: false, reason: 'missing' };
+}
+
+/**
+ * 设置卡「授权给这个 Bot」提交的连接列表。
+ * 每一项都是已有连接 id 时，按完整名单替换（空列表 = 全部收回）。
+ * 夹着应用 slug 或账号名时，解析后追加到这个 Bot 现有的授权上——模型常只写 slug
+ * （如 `cloudflare`），若按完整名单替换会把别的应用授权清掉。
+ */
+export function interpretAppConnectionSelection(
+  current: readonly string[],
+  wanted: readonly string[],
+  connections: readonly CatalogConnectionRef[],
+): AppConnectionSelection {
+  const known = new Set(connections.map((row) => row.id));
+  if (wanted.every((ref) => known.has(ref))) return { ok: true, ids: [...wanted] };
+  const ids: string[] = [];
+  for (const ref of wanted) {
+    const hit = matchCatalogConnection(ref, connections);
+    if (!hit.ok) return { ok: false, connectionId: ref, reason: hit.reason };
+    ids.push(hit.id);
+  }
+  const kept = current.filter((id) => known.has(id));
+  return { ok: true, ids: [...new Set([...kept, ...ids])] };
+}
