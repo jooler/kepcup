@@ -38,7 +38,12 @@
     saveTimer = null;
   }
 
-  onDestroy(() => clearTimer());
+  // 卸载（切 tab / 换视图）时聚焦元素被移除不一定触发 blur：防抖窗口内的改动在此补存，不丢。
+  onDestroy(() => {
+    const pending = saveTimer !== null;
+    clearTimer();
+    if (pending && dirty) void persist();
+  });
 
   function writeDom(text: string): void {
     if (bodyEl === null || bodyEl.textContent === text) return;

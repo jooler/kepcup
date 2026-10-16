@@ -142,7 +142,7 @@ export function matchCatalogConnection(
 /**
  * 设置卡「授权给这个 Bot」提交的连接列表。
  * 每一项都是已有连接 id 时，按完整名单替换（空列表 = 全部收回）。
- * 夹着应用 slug 或账号名时，解析后追加到这个 Bot 现有的授权上——模型常只写 slug
+ * 夹着应用 slug 或账号名时，解析后追加到这个 Bot 现有的授权上（同应用的旧账号被顶替）——模型常只写 slug
  * （如 `cloudflare`），若按完整名单替换会把别的应用授权清掉。
  */
 export function interpretAppConnectionSelection(
@@ -158,6 +158,10 @@ export function interpretAppConnectionSelection(
     if (!hit.ok) return { ok: false, connectionId: ref, reason: hit.reason };
     ids.push(hit.id);
   }
-  const kept = current.filter((id) => known.has(id));
+  // 同一应用至多一个账号：新选的账号顶替这个 Bot 已授权的同应用账号（与 grantConnection 一致），
+  // 否则追加后会被 Bot 校验以「同一个应用只能授权一个账号」拒掉。
+  const connectorOf = new Map(connections.map((row) => [row.id, row.connectorId]));
+  const incoming = new Set(ids.map((id) => connectorOf.get(id)));
+  const kept = current.filter((id) => known.has(id) && !incoming.has(connectorOf.get(id)));
   return { ok: true, ids: [...new Set([...kept, ...ids])] };
 }

@@ -277,10 +277,15 @@ if (!process.env.CSC_LINK && !process.env.CSC_NAME) {
 // collector would otherwise fall back to npm on a pnpm workspace and OOM. Tip it
 // toward pnpm; apps/desktop/package.json also carries packageManager for file detection.
 if (!process.env.npm_config_user_agent?.includes('pnpm')) {
-  env.npm_config_user_agent = 'pnpm/11.22.0 npm/? node/' + process.version.slice(1);
+  const pnpmVersion = (
+    JSON.parse(readFileSync(path.join(appDir, 'package.json'), 'utf8')).packageManager ?? ''
+  ).replace(/^pnpm@/, '');
+  env.npm_config_user_agent = `pnpm/${pnpmVersion} npm/? node/${process.version.slice(1)}`;
 }
 if (!process.env.NODE_OPTIONS?.includes('max-old-space-size')) {
-  env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--max-old-space-size=8192'].filter(Boolean).join(' ');
+  env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--max-old-space-size=8192']
+    .filter(Boolean)
+    .join(' ');
 }
 // BR-P13-003: publishing is ALWAYS an explicit, separate action — never an
 // implicit side effect of a build. electron-builder would otherwise publish
