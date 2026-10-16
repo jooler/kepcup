@@ -152,7 +152,10 @@ test('project selection, switching block while running; no changes card after wr
     await page.locator('[data-testid="composer-input"]').fill('写一个文件');
     await page.locator('[data-testid="composer-input"]').press('ControlOrMeta+Enter');
 
-    await expect(page.getByText('写好了')).toBeVisible({ timeout: 120_000 });
+    // 侧栏预览与消息气泡都带这句话：只认气泡。
+    await expect(
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '写好了' }).first(),
+    ).toBeVisible({ timeout: 120_000 });
     expect(existsSync(path.join(project, 'demo.txt'))).toBe(true);
     await expect(page.locator('[data-testid="run-changes-card"]')).toHaveCount(0);
     expect(readFileSync(path.join(project, 'README.md'), 'utf8')).toBe('# demo\n');
