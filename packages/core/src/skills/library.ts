@@ -325,7 +325,17 @@ export class SkillImporter {
 
   /** 丢弃 staging（拒绝 / 取消 / 已落位后的清理）。 */
   discard(prepared: PreparedImport): void {
-    rmSync(prepared.stagingDir, { recursive: true, force: true });
+    // Best-effort: on Windows the clone's pack files can stay locked for a
+    // moment (EPERM/EBUSY). A failed cleanup must not fail an import that
+    // already landed; boot cleanup clears whatever is left.
+    try {
+      rmSync(prepared.stagingDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+      this.#deps.logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'skill import: staging cleanup failed',
+      );
+    }
   }
 
   /** Conversation notice after a failed finalize (best-effort, BR-P08-004). */

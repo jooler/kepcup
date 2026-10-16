@@ -285,10 +285,16 @@ export class ApprovalsService {
     return new Promise<ApprovalOutcome>((resolve) => {
       const onAbort = () => {
         options.signal?.removeEventListener('abort', onAbort);
-        this.#resolvePending(approval.id, {
-          approval: this.#markCancelled(approval.id),
-          decision: 'cancelled',
-        });
+        let cancelled: Approval;
+        try {
+          cancelled = this.#markCancelled(approval.id);
+        } catch (error) {
+          // A run released during shutdown aborts after the database closed:
+          // nothing is left to cancel, and throwing here is an unhandled error.
+          if (!this.#db.open) return;
+          throw error;
+        }
+        this.#resolvePending(approval.id, { approval: cancelled, decision: 'cancelled' });
       };
       if (options.signal !== undefined) {
         options.signal.addEventListener('abort', onAbort, { once: true });

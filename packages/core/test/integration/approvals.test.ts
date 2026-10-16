@@ -587,7 +587,8 @@ describe('access approvals for file tools (P03)', () => {
 });
 
 describe('confirm mode (sandbox unavailable, P03)', () => {
-  it('requires a command approval for non-allowlisted commands and executes after approval', async () => {
+  // `touch` is a POSIX command; Windows runs shell commands in WSL2 (P12), not on the CI host.
+  it.skipIf(process.platform === 'win32')('requires a command approval for non-allowlisted commands and executes after approval', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
     const bot = await makeBot(core, '小确');
     const conv = await openDirect(core, bot.id);

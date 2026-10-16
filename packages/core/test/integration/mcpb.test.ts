@@ -161,6 +161,9 @@ describe('mcpb integration', () => {
       userConfig: { api_key: 'sk-card' },
       conversationId: conv.id,
     }) as Promise<{ serverId: string }>;
+    // If an assertion below fails first, the stack closes under this pending call;
+    // its rejection would otherwise surface as an unhandled error and mask the failure.
+    install.catch(() => {});
 
     const approval = await waitFor(async () => {
       const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {

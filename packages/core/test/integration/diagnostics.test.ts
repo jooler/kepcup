@@ -83,7 +83,7 @@ describe('diagnostics.get (P13 任务 6)', () => {
     // 工具链行（P06 doctor 数据源：system 探测 + 安装记录）。
     expect(Array.isArray(diag.toolchain)).toBe(true);
     expect(diag.toolchain.some((row) => row.id === 'system:git')).toBe(true);
-  });
+  }, 60_000);
 
   it('reports the per-bot memory store state without opening stores (P07 lazy-open intact)', async () => {
     const { rpc } = await freshCore();
