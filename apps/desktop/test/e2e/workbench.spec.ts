@@ -81,6 +81,9 @@ async function waitReady(page: Page): Promise<void> {
   const startBackdrop = page.locator('[data-testid="start-chat-backdrop"]');
   if (await startBackdrop.isVisible())
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
+  // 设置「显示工作台」默认关闭（8b053df）：入口与分隔线隐藏，这里的用例都要先打开它。
+  await rpc(page, 'settings.update', { workbenchEnabled: true });
+  await expect(page.locator('[data-testid="workbench-nav"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function openWorkbench(page: Page): Promise<void> {
