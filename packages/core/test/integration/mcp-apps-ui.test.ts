@@ -10,6 +10,7 @@ import {
   step,
   viaTask,
   waitFor,
+  waitForMessage,
   waitForRun,
   type FakeMcpAppServer,
   type FakeMcpAppServerOptions,
@@ -161,6 +162,13 @@ describe('card creation', () => {
     // The UI resource is read lazily on open, not at card time.
     expect(env.fake.resourceReads).toBe(0);
     // The bot's context carries one fixed line for the card — never the descriptor or the page.
+    // The relay turn (the first request that carries it) runs after the task: wait for its reply.
+    await waitForMessage(
+      env.stack.core,
+      env.conversationId,
+      (m) => m.kind === 'text' && m.senderBotId === env.botId && m.content['text'] === '好了',
+      { timeoutMs: 30_000 },
+    );
     const requests = JSON.stringify(env.stack.llm.requestsFor('mock-main').map((r) => r.body));
     expect(requests).toContain('已向用户显示一张应用界面卡片');
     expect(requests).not.toContain('ui://');

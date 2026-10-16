@@ -359,11 +359,21 @@ describe('environment manager (P06)', () => {
     expect(readdirSync(paths.cacheDownloadsDir)).toEqual([]);
 
     // 失败也投递事件给申请的 Bot（任务 4：成功或失败后投递）。
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 60_000 });
-    const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 20 })) as {
-      runs: Run[];
-    };
-    expect(runs.runs.filter((r) => r.triggerReason === 'event').length).toBe(1);
+    // 等的是 event 触发的 run 本身：对话里原先那个 turn run 早已 completed，
+    // 只等「有 completed 的 run」会在 event run 创建前就返回（CI 上的竞态）。
+    await waitFor(
+      async () => {
+        const runs = (await core.rpc.call('runs.list', { conversationId: conv.id, limit: 20 })) as {
+          runs: Run[];
+        };
+        return runs.runs.find((r) => r.triggerReason === 'event' && r.status === 'completed')
+          ? runs.runs
+          : null;
+      },
+      { label: 'completed event-triggered run', timeoutMs: 60_000 },
+    ).then((runs) => {
+      expect(runs.filter((r) => r.triggerReason === 'event').length).toBe(1);
+    });
   }, 120_000);
 
   it('re-requesting an installed item returns the path immediately without a new approval', async () => {

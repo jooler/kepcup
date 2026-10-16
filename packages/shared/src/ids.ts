@@ -1,4 +1,8 @@
-import { ulid } from 'ulid';
+import { monotonicFactory } from 'ulid';
+
+// Monotonic: ids minted within one millisecond still sort in creation order, so
+// `order by … id desc` tie-breaks (latest run, newest row) are deterministic.
+const ulid = monotonicFactory();
 
 /** ID prefixes per docs/dev/01-conventions.md ("ID conventions"). */
 export const ID_PREFIXES = {

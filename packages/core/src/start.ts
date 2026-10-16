@@ -624,15 +624,6 @@ const CONSOLIDATION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /** Weekly wiki lint due-check cadence (P09; the job itself gates to one week). */
 const WIKI_LINT_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
-/** Holder so services.close() can clear the doctor timer created later. */
-const envDoctorTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
-/** Holder for the consolidation due-check timer (P07). */
-const consolidationTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
-/** Holder for the wiki lint due-check timer (P09). */
-const wikiLintTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
-/** Set by close() so late best-effort callbacks stop touching dead resources. */
-const servicesClosed: { closed: boolean } = { closed: false };
-
 /**
  * Assembles the whole core service: paths, logger, keystore, master key,
  * encrypted databases, domain services and the response-loop machinery.
@@ -642,6 +633,16 @@ const servicesClosed: { closed: boolean } = { closed: false };
  * a new key is never generated in that case.
  */
 export async function createCoreServices(options: CoreServicesOptions = {}): Promise<CoreServices> {
+  // Per-instance (not module state): every core built later in the same process —
+  // each test builds many — must not inherit an earlier core's close().
+  /** Holder so services.close() can clear the doctor timer created later. */
+  const envDoctorTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
+  /** Holder for the consolidation due-check timer (P07). */
+  const consolidationTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
+  /** Holder for the wiki lint due-check timer (P09). */
+  const wikiLintTimerRef: { timer: NodeJS.Timeout | null } = { timer: null };
+  /** Set by close() so late best-effort callbacks stop touching dead resources. */
+  const servicesClosed: { closed: boolean } = { closed: false };
   const env = options.env ?? process.env;
   const clock = options.clock ?? systemClock;
   const envHome = env.KEPCUP_HOME;

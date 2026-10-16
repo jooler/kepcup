@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -332,7 +333,31 @@ export class SrtSandboxBackend implements SandboxBackend {
   }
 
   #toSrtFilesystem(policy: SandboxPolicy): SandboxRuntimeConfig['filesystem'] {
-    return srtFilesystemFor(policy);
+    const filesystem = srtFilesystemFor(policy);
+    const helperDirs = this.#seccompHelperDirs();
+    if (helperDirs.length === 0 || filesystem === undefined) return filesystem;
+    return { ...filesystem, allowRead: [...(filesystem.allowRead ?? []), ...helperDirs] };
+  }
+
+  /**
+   * Linux: srt runs its `apply-seccomp` helper *inside* the bwrap namespace, so
+   * the directory it lives in must stay readable there. A checkout or install
+   * under the (denied) user home would otherwise hide it and every command
+   * would die with `apply-seccomp: No such file or directory` (exit 127).
+   */
+  #seccompHelperDirs(): string[] {
+    if (this.#opts.platform !== 'linux') return [];
+    const dirs = new Set<string>();
+    const bundled = this.#opts.bundledBinDir;
+    if (bundled !== null && existsSync(path.join(bundled, 'apply-seccomp'))) dirs.add(bundled);
+    try {
+      const entry = createRequire(import.meta.url).resolve('@anthropic-ai/sandbox-runtime');
+      const vendor = path.join(path.dirname(entry), '..', 'vendor', 'seccomp');
+      if (existsSync(vendor)) dirs.add(path.normalize(vendor));
+    } catch {
+      // Bundled build without the package on disk: srt then uses its own copy.
+    }
+    return [...dirs];
   }
 
   /**

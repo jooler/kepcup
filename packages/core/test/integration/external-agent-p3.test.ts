@@ -720,7 +720,8 @@ describe('external agents in a project (P3: config confirmation, explicit lease,
       () =>
         tasks
           .list(builtinTurn)
-          .find((task) => task.state === 'submitted' && task.queueReason === '等写入租约') ?? null,
+          .find((task) => task.state === 'submitted' && task.queueReason?.startsWith('等写入租约') === true,
+          ) ?? null,
       { label: 'built-in task waiting for the lease', timeoutMs: 30_000 },
     );
     expect(domain(stack).runs.getOrThrow(waiting.taskId)).toMatchObject({

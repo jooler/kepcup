@@ -709,15 +709,10 @@ describe('L5 / L6: task views and question cards', () => {
       label: 'execution finished',
     });
     const view = orchestrator(stack).tasks.view(taskId)!;
-    expect(view.changes).toMatchObject({ kind: 'workspace', files: ['notes/a.txt'] });
-    const counted = queries.length;
+    // Change summaries on task views were retired: never attached, never queried.
+    expect(view.changes).toBeNull();
     for (let i = 0; i < 3; i += 1) orchestrator(stack).tasks.view(taskId);
-    expect(queries.length).toBe(counted);
-    expect(queries.every((sql) => sql.includes('conversation_id = ?'))).toBe(true);
-    const plan = prepare(`explain query plan ${queries[0]!}`).all('c', 'r') as Array<{
-      detail: string;
-    }>;
-    expect(plan.map((row) => row.detail).join(' ')).toContain('audit_log_by_conv');
+    expect(queries).toEqual([]);
   }, 60_000);
 
   it('a question whose private entry cannot be written leaves a void card, never a clickable one', async () => {
