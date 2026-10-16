@@ -25,7 +25,16 @@ const { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } 
 const os = require('node:os');
 const path = require('node:path');
 
-const PLATFORM_DIR_NAME = { mac: 'darwin', win: 'win', linux: 'linux' };
+/** Map electron-builder / Node platform ids → resources/bin/{os}-{arch} dir prefix. */
+const PLATFORM_DIR_NAME = {
+  mac: 'darwin',
+  darwin: 'darwin',
+  mas: 'darwin',
+  win: 'win',
+  windows: 'win', // Platform.WINDOWS.name (NOT "win")
+  win32: 'win',
+  linux: 'linux',
+};
 
 /** 产物中绝不允许出现的测试路径标记（P13 注意事项「产物剔除」）。 */
 const FORBIDDEN_MARKERS = [
@@ -52,10 +61,31 @@ function findForbiddenMarker(text) {
   return FORBIDDEN_MARKERS.find((marker) => text.includes(marker)) ?? null;
 }
 
+/**
+ * Resolve the resources/bin/{os}-{arch} OS segment for this pack context.
+ * Prefer electronPlatformName (darwin|win32|linux|mas); fall back to
+ * packager.platform.name (mac|windows|linux). Never default to darwin — a
+ * wrong guess makes Windows afterPack look for bin/darwin-*.
+ */
+function platformDirName(context) {
+  const ep = context.electronPlatformName;
+  if (typeof ep === 'string' && PLATFORM_DIR_NAME[ep]) {
+    return PLATFORM_DIR_NAME[ep];
+  }
+  const p = context.packager && context.packager.platform;
+  const name = typeof p === 'string' ? p : p && p.name;
+  const mapped = typeof name === 'string' ? PLATFORM_DIR_NAME[name] : undefined;
+  if (!mapped) {
+    throw new Error(
+      `[pack] unknown platform for bin dir: electronPlatformName=${ep} packager.platform=${name}`,
+    );
+  }
+  return mapped;
+}
+
+/** @deprecated use platformDirName; kept name only if anything imported it. */
 function platformName(context) {
-  // context.packager.platform is a Platform instance ({name: 'mac'|'linux'|'win'}).
-  const p = context.packager.platform;
-  return typeof p === 'string' ? p : p.name;
+  return platformDirName(context);
 }
 
 function archName(context) {
@@ -139,7 +169,7 @@ function packagedExecutable(context, appBundle) {
 
 function beforePack(context) {
   const projectDir = context.packager.projectDir;
-  const dirName = PLATFORM_DIR_NAME[platformName(context)] ?? 'darwin';
+  const dirName = platformDirName(context);
   const arch = archName(context);
   // extraResources 的 from 源目录不存在时 electron-builder 直接报错——确保目录存在。
   const binDir = path.join(projectDir, 'resources', 'bin', `${dirName}-${arch}`);
@@ -187,7 +217,7 @@ function afterPack(context) {
   }
 
   // 平台二进制布局（core-host.bundledBinEnv 按 process.resourcesPath/bin/{os}-{arch} 注入）。
-  const dirName = PLATFORM_DIR_NAME[platformName(context)] ?? 'darwin';
+  const dirName = platformDirName(context);
   const binDir = path.join(resourcesPath, 'bin', `${dirName}-${archName(context)}`);
   if (!existsSync(binDir)) {
     throw new Error(`[pack] 缺少平台二进制目录 ${binDir}`);
@@ -240,4 +270,6 @@ module.exports = {
   findForbiddenMarker,
   assertQueryDriverUnpacked,
   smokeQueryDriver,
+  platformDirName,
+  PLATFORM_DIR_NAME,
 };

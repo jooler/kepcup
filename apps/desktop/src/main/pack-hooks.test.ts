@@ -11,6 +11,10 @@ const hooks = require('../../scripts/pack-hooks.cjs') as {
   findForbiddenMarker(text: string): string | null;
   assertQueryDriverUnpacked(resourcesPath: string, platform: string, arch: string): string;
   smokeQueryDriver(execPath: string, driverEntry: string): unknown;
+  platformDirName(context: {
+    electronPlatformName?: string;
+    packager?: { platform?: string | { name?: string } };
+  }): string;
 };
 
 describe('afterPack forbidden markers', () => {
@@ -85,5 +89,19 @@ describe('afterPack query driver checks', () => {
     } finally {
       rmSync(resources, { recursive: true, force: true });
     }
+  });
+});
+
+describe('platformDirName', () => {
+  test('maps electronPlatformName and packager.platform.name without defaulting to darwin', () => {
+    expect(hooks.platformDirName({ electronPlatformName: 'win32' })).toBe('win');
+    expect(hooks.platformDirName({ electronPlatformName: 'darwin' })).toBe('darwin');
+    expect(hooks.platformDirName({ electronPlatformName: 'linux' })).toBe('linux');
+    expect(hooks.platformDirName({ electronPlatformName: 'mas' })).toBe('darwin');
+    // electron-builder Platform.WINDOWS.name is "windows", not "win"
+    expect(hooks.platformDirName({ packager: { platform: { name: 'windows' } } })).toBe('win');
+    expect(hooks.platformDirName({ packager: { platform: { name: 'mac' } } })).toBe('darwin');
+    expect(hooks.platformDirName({ packager: { platform: 'win32' } })).toBe('win');
+    expect(() => hooks.platformDirName({})).toThrow(/unknown platform/);
   });
 });
