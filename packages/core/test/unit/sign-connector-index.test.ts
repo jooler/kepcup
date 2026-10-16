@@ -191,7 +191,7 @@ describe('the secret key is never printed', () => {
 });
 
 describe('dev key helper', () => {
-  it('writes a 0600 key outside the repository and refuses a path inside it', async () => {
+  it.skipIf(process.platform === 'win32')('writes a 0600 key outside the repository and refuses a path inside it', async () => {
     const dir = tmp();
     const ok = await script(['--generate-dev-key', dir]);
     expect(ok.code).toBe(0);

@@ -21,7 +21,7 @@ describe('sanitizeDownloadName', () => {
     expect(sanitizeDownloadName('a/b/c.txt')).toBe('c.txt');
     // basename splits on the platform separator; the other one is replaced.
     // (posix keeps 'a\b.txt' whole → 'a_b.txt'; win32 basename → 'b.txt'.)
-    expect(sanitizeDownloadName('a\\b.txt')).toMatch(/^[ab][_.]b\.txt$/);
+    expect(sanitizeDownloadName('a\\b.txt')).toMatch(/^(?:[ab][_.])?b\.txt$/);
     expect(sanitizeDownloadName('weird:name?.txt')).toBe('weird_name_.txt');
   });
 

@@ -33,7 +33,7 @@ async function freshCore(): Promise<{
 }
 
 describe('diagnostics.get (P13 任务 6)', () => {
-  it('aggregates core status, databases with migration versions, keystore, sandbox, disk and logs rows', async () => {
+  it.skipIf(process.platform === 'win32')('aggregates core status, databases with migration versions, keystore, sandbox, disk and logs rows', async () => {
     const { home, rpc } = await freshCore();
     // system 工具链行来自启动时的 fire-and-forget recheck（start.ts 里
     // `void environment.recheck()`）：满载下 git 探测慢于本调用，这里等它

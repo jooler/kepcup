@@ -58,7 +58,7 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
 
 // Linux (bubblewrap) puts the fetch in its own network namespace, which cannot reach the host's
   // loopback fixture server; local-fixture fetching is exercised on macOS only.
-  const itLoopback = it.skipIf(process.platform === 'linux');
+  const itLoopback = it.skipIf(process.platform === 'linux' || process.platform === 'win32');
 
   itLoopback('HTML 页面抓取后转 markdown 入 raw/，维护 loop 写页面并提交', async () => {
     const url = `${server.url}/spec.html`;

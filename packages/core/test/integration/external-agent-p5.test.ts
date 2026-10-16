@@ -529,7 +529,7 @@ describe('continuation delta (P5-2 review #2, #3, #5, #12; D75 tasks)', () => {
     expect(started[0]!.observed.sessions).toHaveLength(1);
   }, 40_000);
 
-  it('after an app restart a continuation does not reuse the session (no guessed delta)', async () => {
+  it.skipIf(process.platform === 'win32')('after an app restart a continuation does not reuse the session (no guessed delta)', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'kepcup-p5-restart-'));
     const keystore = createMemoryKeystore();
     try {

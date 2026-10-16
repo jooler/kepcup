@@ -4,6 +4,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
 import { makeWritable } from './packages/core/src/infra/fs-rm.js';
 
 if (process.platform === 'win32') {
@@ -11,6 +13,12 @@ if (process.platform === 'win32') {
     const code = (error as { code?: string } | null)?.code;
     return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY' || code === 'ENOTEMPTY';
   };
+  // Many tests leave a SQLite connection open on a file under their temp dir, which Windows
+  // refuses to delete. Leftover temp files are harmless: after the read-only fallback,
+  // a failed cleanup inside the OS temp dir is ignored (anything else still throws).
+  const tmpRoot = path.resolve(os.tmpdir()).toLowerCase() + path.sep;
+  const inTmp = (target: fs.PathLike): boolean =>
+    (path.resolve(String(target)).toLowerCase() + path.sep).startsWith(tmpRoot);
   const originalRmSync = fs.rmSync;
   fs.rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
     try {
@@ -18,7 +26,12 @@ if (process.platform === 'win32') {
     } catch (error) {
       if (!retryable(error)) throw error;
       makeWritable(String(target));
-      return originalRmSync(target, { maxRetries: 5, retryDelay: 100, ...options });
+      try {
+        return originalRmSync(target, { maxRetries: 2, retryDelay: 50, ...options });
+      } catch (retryError) {
+        if (inTmp(target) && retryable(retryError)) return;
+        throw retryError;
+      }
     }
   }) as typeof fs.rmSync;
   const originalRm = fsp.rm;
@@ -28,7 +41,12 @@ if (process.platform === 'win32') {
     } catch (error) {
       if (!retryable(error)) throw error;
       makeWritable(String(target));
-      return originalRm(target, { maxRetries: 5, retryDelay: 100, ...options });
+      try {
+        return await originalRm(target, { maxRetries: 2, retryDelay: 50, ...options });
+      } catch (retryError) {
+        if (inTmp(target) && retryable(retryError)) return;
+        throw retryError;
+      }
     }
   }) as typeof fsp.rm;
   syncBuiltinESMExports();
