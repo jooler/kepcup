@@ -146,7 +146,8 @@ MSIX 不需要代码签名证书：提交时可以不签名，商店会重签。
 
 发版前需要确认或补齐的事项：
 
-- [ ] **首跑验证**：第一次发版（建议 `0.1.0`）时观察 release.yml 全流程。重点看：Windows 上 `scripts/dist.mjs` 用 `spawnSync('pnpm')`（不经 shell），runner 上只有 `pnpm.cmd` 时会 ENOENT，这种情况改成用 `process.execPath` 直接跑 electron-builder 的 CLI；Windows 在 x64 runner 上交叉编译 arm64 原生模块；`-c.appx.*` 覆盖项生效；`macos-15-intel` 上原生模块重编译；合并后的 `latest-mac.yml` 在 Intel 和 Apple Silicon 两种 Mac 上都能更新。
+- [ ] **首跑验证**：第一次发版（建议 `0.1.0`）时观察 release.yml 全流程。重点看：Windows 在 x64 runner 上交叉编译 arm64 原生模块；`-c.appx.*` 覆盖项生效；`macos-15-intel` 上原生模块重编译；合并后的 `latest-mac.yml` 在 Intel 和 Apple Silicon 两种 Mac 上都能更新。
+  - 已修：`scripts/dist.mjs` 用 `process.execPath` 直接跑 `electron-vite` / `electron-builder` CLI（避免 Windows 上 `spawnSync('pnpm')` 找不到 `pnpm.cmd`）；Linux `executableName: KepCup`（避免 AppImage 因 `@kepcup/desktop` 含 `@` 失败）。
 - [ ] **自动更新端到端**：装 `0.1.0` → 发 `0.1.1` → 三平台确认能收到更新并安装（[todo/cross-platform-acceptance.md](../../todo/cross-platform-acceptance.md) P13「自动更新端到端」）。
 - [ ] **商店版开机自启**：MSIX 里 `app.setLoginItemSettings` 不生效，需要在清单里声明 StartupTask（electron-builder `appx.customExtensionsPath`），运行时改用 StartupTask API。在此之前，商店版设置页的「开机自启」开关不起作用。
 - [ ] **商店版更新界面**：应用内更新关闭后状态一直是 idle，点「检查更新」会显示「已是最新」，容易误导。商店/Flatpak 版应该显示「由 Microsoft Store 更新」。

@@ -121,9 +121,12 @@ win:
 
 # --- Linux：AppImage + deb，x64 与 arm64 ----------------------------------------
 # deb 默认名用 package.json 的 name（@kepcup/desktop），斜杠会把文件写进子目录。
+# Linux executableName 默认取自 package name（会变成 @kepcupdesktop），AppImage
+# 拒绝路径里的 @；显式对齐 productName（见 electron-builder PlatformSpecificBuildOptions）。
 deb:
   artifactName: kepcup_${version}_${arch}.${ext}
 linux:
+  executableName: KepCup
   target:
     - target: AppImage
       arch: [x64, arm64]

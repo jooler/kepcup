@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +43,8 @@ const repoDir = path.dirname(path.dirname(appDir));
 
 const builderArgs = process.argv.slice(2);
 
+const require = createRequire(import.meta.url);
+
 function run(command, args, env = {}) {
   const result = spawnSync(command, args, {
     cwd: appDir,
@@ -49,14 +52,26 @@ function run(command, args, env = {}) {
     shell: false,
     env: { ...process.env, ...env },
   });
+  if (result.error) {
+    throw new Error(`${command} ${args.join(' ')} failed: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(' ')} failed with exit code ${result.status}`);
   }
 }
 
+/** Resolve a package's CLI and run it with process.execPath (no pnpm.cmd / shell). */
+function runPackageBin(packageName, binRelative, args, env = {}) {
+  const pkgJson = require.resolve(`${packageName}/package.json`);
+  const cli = path.join(path.dirname(pkgJson), binRelative);
+  run(process.execPath, [cli, ...args], env);
+}
+
 // 1. electron-vite build with the packaged define.
+// Windows CI: spawnSync('pnpm') without shell cannot find pnpm.cmd (exit code null).
+// Invoke the local CLI via node instead (docs/dev/06-release.md 首跑验证).
 console.log('[dist] electron-vite build (KEPCUP_PACKAGE_BUILD=1)');
-run('pnpm', ['exec', 'electron-vite', 'build'], { KEPCUP_PACKAGE_BUILD: '1' });
+runPackageBin('electron-vite', 'bin/electron-vite.js', ['build'], { KEPCUP_PACKAGE_BUILD: '1' });
 
 // 2. Bundle the core service entry with the test-only paths eliminated and the
 //    agent catalog release gates pinned (D72: entries whose `releaseGate` is
@@ -266,5 +281,5 @@ if (!process.env.CSC_LINK && !process.env.CSC_NAME) {
 // job (release.yml 的注释 publish job) that invokes electron-builder with an
 // explicit --publish mode itself.
 console.log(`[dist] electron-builder ${builderArgs.join(' ')} --publish never`);
-run('pnpm', ['exec', 'electron-builder', ...builderArgs, '--publish', 'never'], env);
+runPackageBin('electron-builder', 'cli.js', [...builderArgs, '--publish', 'never'], env);
 console.log('[dist] done — artifacts in apps/desktop/release/');
