@@ -1,11 +1,28 @@
 import { join } from 'node:path';
-import { app, BrowserWindow, nativeImage, type BrowserWindowConstructorOptions } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  nativeImage,
+  screen,
+  type BrowserWindowConstructorOptions,
+} from 'electron';
 import { APP_NAME, appIconPath } from './app-brand';
+import {
+  captureWindowState,
+  loadWindowState,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  resolveWindowOptions,
+  saveWindowState,
+  WINDOW_STATE_FILE,
+} from './window-state';
 
 export interface MainWindowOptions {
   preloadPath: string;
   isQuitting: () => boolean;
 }
+
+const SAVE_DEBOUNCE_MS = 400;
 
 export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   const webPreferences: BrowserWindowConstructorOptions['webPreferences'] = {
@@ -15,15 +32,26 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     nodeIntegration: false,
   };
 
+  const statePath = join(app.getPath('userData'), WINDOW_STATE_FILE);
+  const saved = loadWindowState(statePath);
+  const displays = screen.getAllDisplays().map((d) => d.bounds);
+  const resolved = resolveWindowOptions(saved, displays, {
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+  });
+
   const win = new BrowserWindow({
-    width: 1280,
-    height: 840,
+    width: resolved.width,
+    height: resolved.height,
+    ...(resolved.x !== undefined && resolved.y !== undefined
+      ? { x: resolved.x, y: resolved.y }
+      : {}),
     // 允许窄到手机宽度（375）：扩展中心等弹框在小窗口仍可用，不再按桌面布局设下限。
     // 窄屏形态在 <640 进入（≥680 退出，滞回）；680~959 的宽屏三栏区间不再有 960 的下限兜底，
     // 由渲染端保证聊天区可用宽度：侧栏宽度按窗口夹取、放不下并排右栏时 Bot 详情改走全屏覆盖层
     //（renderer sidebar-layout.ts 的 WIDE_CHAT_MIN_WIDTH / rightPanelFits）。
-    minWidth: 375,
-    minHeight: 600,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     title: APP_NAME,
     // win/linux：dev 窗口图标继承 electron.exe 的通用图标，任务栏/Alt-Tab 会
@@ -46,10 +74,49 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
     webPreferences,
   });
 
+  if (resolved.maximized) {
+    win.maximize();
+  }
+
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const persist = (): void => {
+    const state = captureWindowState(win);
+    if (!state) return;
+    try {
+      saveWindowState(statePath, state);
+    } catch {
+      // Disk full / permissions — next successful save will overwrite.
+    }
+  };
+
+  const persistSoon = (): void => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persist();
+    }, SAVE_DEBOUNCE_MS);
+  };
+
+  const persistNow = (): void => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    persist();
+  };
+
+  win.on('resize', persistSoon);
+  win.on('move', persistSoon);
+  win.on('maximize', persistSoon);
+  win.on('unmaximize', persistSoon);
+
   win.on('ready-to-show', () => win.show());
 
   // Tray-resident: closing the window only hides it (02-architecture.md).
+  // Persist before hide/destroy so the next show/launch restores this frame.
   win.on('close', (event) => {
+    persistNow();
     if (!options.isQuitting()) {
       event.preventDefault();
       win.hide();
