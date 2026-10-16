@@ -525,7 +525,7 @@ describe('response loop', () => {
   // Interim texts are capped at INTERIM_TEXT_MAX_PER_RUN (8) per run. Long
   // narrated work is a task's; its final text is the private result the
   // waking turn relays. A turn itself has no step ceiling.
-  it('interim delivery is capped at eight per run and the overflow stays in run steps only', async () => {
+  it('task interim prose updates last_progress only; all assistant steps stay in the run log', async () => {
     const { core, llm } = await start();
     const script = Array.from({ length: 9 }, (_, i) =>
       step().replyTextAndToolCall(`中间说明 ${i + 1}`, 'search_messages', { query: `q${i + 1}` }),
@@ -541,13 +541,12 @@ describe('response loop', () => {
 
     const botMessages = (await listMessages(core, conv.id)).filter((m) => m.senderBotId === bot.id);
     const texts = botMessages.map((m) => ('text' in m.content ? m.content.text : ''));
-    // The turn's acknowledgement races the task's first narration.
+    // Task loops no longer stack interim chat bubbles — status lives on runs.last_progress
+    // (cleared on successful settle). Chat only keeps the turn ack and the final relay.
     expect(texts).toContain('开始');
-    expect(texts.filter((t) => t !== '开始')).toEqual([
-      ...Array.from({ length: 8 }, (_, i) => `中间说明 ${i + 1}`),
-      '最终结果',
-    ]);
-    // 全部 10 条 assistant 消息仍完整进入执行记录（含第 9 条中间说明）。
+    expect(texts.filter((t) => t !== '开始')).toEqual(['最终结果']);
+    expect(run.lastProgress ?? null).toBeNull();
+    // 全部 10 条 assistant 消息仍完整进入执行记录（含未进对话的中间说明）。
     const stepsResult = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string }>;
     };

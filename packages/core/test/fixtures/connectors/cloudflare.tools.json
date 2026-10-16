@@ -1,0 +1,62 @@
+[
+  {
+    "name": "docs",
+    "title": "docs",
+    "description": "docs (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search",
+    "title": "search",
+    "description": "search (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "execute",
+    "title": "execute",
+    "description": "execute (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "whoami",
+    "title": "whoami",
+    "description": "whoami (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

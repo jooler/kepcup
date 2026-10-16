@@ -1,0 +1,317 @@
+[
+  {
+    "name": "atlassianUserInfo",
+    "title": "atlassianUserInfo",
+    "description": "atlassianUserInfo (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "getAccessibleAtlassianResources",
+    "title": "getAccessibleAtlassianResources",
+    "description": "getAccessibleAtlassianResources (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "discover",
+    "title": "discover",
+    "description": "discover (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "executeRead",
+    "title": "executeRead",
+    "description": "executeRead (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "executeWrite",
+    "title": "executeWrite",
+    "description": "executeWrite (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "executeDestructive",
+    "title": "executeDestructive",
+    "description": "executeDestructive (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "getJiraIssue",
+    "title": "getJiraIssue",
+    "description": "getJiraIssue (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "createJiraIssue",
+    "title": "createJiraIssue",
+    "description": "createJiraIssue (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "editJiraIssue",
+    "title": "editJiraIssue",
+    "description": "editJiraIssue (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "transitionJiraIssue",
+    "title": "transitionJiraIssue",
+    "description": "transitionJiraIssue (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "addOrEditJiraIssueComment",
+    "title": "addOrEditJiraIssueComment",
+    "description": "addOrEditJiraIssueComment (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "searchJiraIssuesUsingJql",
+    "title": "searchJiraIssuesUsingJql",
+    "description": "searchJiraIssuesUsingJql (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "getConfluenceContent",
+    "title": "getConfluenceContent",
+    "description": "getConfluenceContent (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "createConfluenceContent",
+    "title": "createConfluenceContent",
+    "description": "createConfluenceContent (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "updateConfluenceContent",
+    "title": "updateConfluenceContent",
+    "description": "updateConfluenceContent (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "searchConfluence",
+    "title": "searchConfluence",
+    "description": "searchConfluence (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "getTeamworkGraphContext",
+    "title": "getTeamworkGraphContext",
+    "description": "getTeamworkGraphContext (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "getTeamworkGraphObject",
+    "title": "getTeamworkGraphObject",
+    "description": "getTeamworkGraphObject (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "addTeamworkGraphContext",
+    "title": "addTeamworkGraphContext",
+    "description": "addTeamworkGraphContext (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search",
+    "title": "search",
+    "description": "search (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "getLoomVideo",
+    "title": "getLoomVideo",
+    "description": "getLoomVideo (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  }
+]

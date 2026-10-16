@@ -7,6 +7,7 @@ import { openDatabase, closeDatabase, type SqliteDatabase } from '../../src/infr
 import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
+import { runsVersionsAfter } from '../support/migration-versions.js';
 
 /**
  * runs 0009_tool_effects（W2 外部副作用台账，todo/borrowings-from-personal-agents.md）：
@@ -61,8 +62,13 @@ describe('runs 0009 tool_effects 迁移', () => {
     const stepsBefore = db.prepare('select * from run_steps').all();
 
     const applied = runMigrations(db, migrationsUrl('runs'));
-    expect(applied.map((m) => m.version)).toEqual([9, 10]);
-    expect(db.prepare('select * from runs').all()).toEqual(runsBefore);
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(8));
+    // Later migrations (e.g. 0011 last_progress) may add nullable columns; row identity stays.
+    const runsAfter = db.prepare('select * from runs').all() as Array<Record<string, unknown>>;
+    expect(runsAfter).toHaveLength(runsBefore.length);
+    for (const [index, before] of (runsBefore as Array<Record<string, unknown>>).entries()) {
+      expect(runsAfter[index]).toMatchObject(before);
+    }
     expect(db.prepare('select * from run_steps').all()).toEqual(stepsBefore);
     // Forward-only, no backfill: old runs have no ledger rows.
     expect(db.prepare('select count(*) as n from tool_effects').get()).toEqual({ n: 0 });
@@ -106,7 +112,7 @@ describe('runs 0010 tool_effects approval index', () => {
     `);
     const before = db.prepare('select * from tool_effects order by id').all();
     const applied = runMigrations(db, migrationsUrl('runs'));
-    expect(applied.map((m) => m.version)).toEqual([10]);
+    expect(applied.map((m) => m.version)).toEqual(runsVersionsAfter(9));
     expect(db.prepare('select * from tool_effects order by id').all()).toEqual(before);
     expect(indexNames(db, 'tool_effects')).toContain('tool_effects_by_approval');
     const plan = db

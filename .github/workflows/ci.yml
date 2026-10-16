@@ -40,6 +40,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # sign-connector-index (and schema imports) need @kepcup/shared dist.
+      - run: pnpm --filter @kepcup/shared run build
       # Sandbox tests (P02) need user namespaces on Ubuntu 24.04 (AppArmor)
       # and srt's Linux dependencies; see docs/dev/05-testing.md "CI 矩阵".
       - name: Enable sandboxing (Ubuntu)
@@ -50,6 +52,14 @@ jobs:
           # apps/desktop/resources/bin/ is preferred via SandboxRuntimeConfig.ripgrep,
           # system rg is the PATH fallback when the bundle is missing.
           sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+          # srt's vendor seccomp helper must be executable; missing bit → ENOENT inside bwrap.
+          SECCOMP=$(find node_modules -path '*/sandbox-runtime/vendor/seccomp/x64/apply-seccomp' -type f | head -1)
+          if [ -n "$SECCOMP" ]; then
+            chmod +x "$SECCOMP"
+            ls -la "$SECCOMP"
+          else
+            echo "::warning::apply-seccomp not found after install; Linux sandbox tests will fail"
+          fi
       # Unit & integration tests run with Electron as the Node runtime so
       # native modules load; see docs/dev/05-testing.md.
       - run: pnpm test

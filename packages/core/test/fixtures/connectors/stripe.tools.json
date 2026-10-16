@@ -1,0 +1,227 @@
+[
+  {
+    "name": "stripe_api_search",
+    "title": "stripe_api_search",
+    "description": "stripe_api_search (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stripe_api_details",
+    "title": "stripe_api_details",
+    "description": "stripe_api_details (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stripe_api_read",
+    "title": "stripe_api_read",
+    "description": "stripe_api_read (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stripe_api_write",
+    "title": "stripe_api_write",
+    "description": "stripe_api_write (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_stripe_account_info",
+    "title": "get_stripe_account_info",
+    "description": "get_stripe_account_info (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "atlas_company_formation",
+    "title": "atlas_company_formation",
+    "description": "atlas_company_formation (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stripe_analytics",
+    "title": "stripe_analytics",
+    "description": "stripe_analytics (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_balance_summary",
+    "title": "get_balance_summary",
+    "description": "get_balance_summary (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "convert_currency",
+    "title": "convert_currency",
+    "description": "convert_currency (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "send_money",
+    "title": "send_money",
+    "description": "send_money (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "setup_recipient",
+    "title": "setup_recipient",
+    "description": "setup_recipient (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "transfer_money",
+    "title": "transfer_money",
+    "description": "transfer_money (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "search_stripe_documentation",
+    "title": "search_stripe_documentation",
+    "description": "search_stripe_documentation (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stripe_implementation_planner",
+    "title": "stripe_implementation_planner",
+    "description": "stripe_implementation_planner (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "send_stripe_feedback",
+    "title": "send_stripe_feedback",
+    "description": "send_stripe_feedback (docs-derived snapshot for release-gate tests; re-export from live tools/list when available)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  }
+]

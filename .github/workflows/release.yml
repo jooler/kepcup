@@ -178,7 +178,14 @@ jobs:
           # dist.mjs 在无 CSC_LINK/CSC_NAME 时会关 CSC_IDENTITY_AUTO_DISCOVERY，所以要导出 CSC_NAME。
           if [ "${{ matrix.platform }}" = "mac" ]; then
             unset CSC_LINK CSC_KEY_PASSWORD
-            CSC_NAME=$(security find-identity -v -p codesigning 2>/dev/null | awk -F\" '/Developer ID Application/ { print $2; exit }')
+            # electron-builder rejects CSC_NAME that still has the
+            # "Developer ID Application:" prefix — strip it.
+            CSC_NAME=$(security find-identity -v -p codesigning 2>/dev/null | awk -F\" '/Developer ID Application/ {
+              name=$2
+              sub(/^Developer ID Application:[[:space:]]*/, "", name)
+              print name
+              exit
+            }')
             if [ -z "$CSC_NAME" ]; then
               echo "::error::No Developer ID Application identity in keychain after import-codesign-certs"
               exit 1
