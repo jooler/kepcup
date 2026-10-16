@@ -518,7 +518,10 @@ describe('widget craft loop (D87)', () => {
   });
 
   it('时限：停在 BUILD → 对已写的文件补一次检查，合格就交付最佳版本并注明', async () => {
-    const h = harness({ timeoutMs: 50 });
+    // 时限只负责把 hold 的 BUILD 阶段停下来，语义与数值无关；给足余量，
+    // 让前两个阶段（真实的草稿写入 + run/usage 落库）在满载的 CI 上先走完、
+    // index.html 落盘（50ms 会和阶段启动竞速，Windows CI 上停在了写文件之前）。
+    const h = harness({ timeoutMs: 2_000 });
     h.engine.add('SPEC', specScript).add(
       'BUILD',
       async (tools) => {
