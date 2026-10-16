@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { tick } from 'svelte';
   import { t } from '$lib/i18n';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -30,24 +30,31 @@
   const narrow = $derived(narrowLayout.narrow);
   const sections = $derived(visibleSettingsSections(narrow));
 
-  let activeSection = $state<SectionId>('general');
+  let clickedSection = $state<SectionId | null>(null);
   let contentEl: HTMLElement | undefined = $state();
 
-  const activeLabel = $derived(settingsSectionLabel(activeSection));
-
-  // 每次打开：展开别名后落在指定分组（无条目的 id 兜底回 general——窄屏下
-  // 通讯录 / 用户画像深链即落这里，入口本身已在底部 tab）。
-  // 只依赖「打开 / 请求的分组」：sections 随宽窄形态变化，若被追踪，宽屏弹框开着时
-  // 拉窄会让本 effect 重跑、把用户当前所在分区重置回 general。
-  $effect(() => {
-    if (!shell.settingsOpen) return;
+  const requestedSection = $derived.by(() => {
     const resolved = resolveSettingsSection(
       shell.settingsSection,
       shell.settingsAppsTab ?? undefined,
     );
-    activeSection = untrack(() => sections).some((section) => section.id === resolved.section)
+    return sections.some((section) => section.id === resolved.section)
       ? resolved.section
-      : 'general';
+      : ('general' as SectionId);
+  });
+  const activeSection = $derived(clickedSection ?? requestedSection);
+  const activeLabel = $derived(
+    settingsSectionLabel(activeSection),
+  );
+
+  // 每次打开：展开别名后落在指定分组（无条目的 id 兜底回 general——窄屏下
+  // 通讯录 / 用户画像深链即落这里，入口本身已在底部 tab）。分区同步取自
+  // store 的派生值，不用延迟 effect 回写：回写与用户点别的分区的点击存在
+  // 竞态（弹框刚开时 effect 尚未押上，点击先改了本地状态，随后被重置回
+  // 打开时请求的分区）。点过的分区记进 clickedSection，关闭时清空。
+  $effect(() => {
+    if (shell.settingsOpen) return;
+    clickedSection = null;
   });
 
   // 锚点滚动：目标分区渲染完成后滚到 [data-settings-anchor]，然后复位（anchor-scroll.ts，
@@ -84,7 +91,7 @@
             {activeSection === section.id
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
-          onclick={() => (activeSection = section.id)}
+          onclick={() => (clickedSection = section.id)}
           data-testid={`settings-nav-${section.id}`}
         >
           <Icon class="size-4" />

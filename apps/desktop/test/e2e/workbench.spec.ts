@@ -218,21 +218,32 @@ test('memos: add, edit, pin, search, delete and restore from recently deleted', 
     );
 
     // 编辑：点正文即改，防抖保存；Esc 放弃未保存改动。
+    // 正文改掉后 hasText 就匹配不到了：用 cards 的 data-memo-id 稳住定位。
     const coffeeBody = card('买咖啡豆').locator('[data-testid="memo-body"]');
     await coffeeBody.click();
     await expect(coffeeBody).toBeFocused();
     await coffeeBody.fill('买咖啡豆和滤纸');
-    await expect(card('买咖啡豆和滤纸')).toBeVisible({ timeout: 5_000 });
+    // 等第一笔编辑落盘（500ms 防抖）：否则 Escape 回滚到的是旧值。
+    await expect(coffeeBody).toContainText('买咖啡豆和滤纸', { timeout: 5_000 });
+    await page.waitForTimeout(700);
+    const coffeeCardId = await page
+      .locator('[data-testid="memo-card"]')
+      .filter({ has: page.locator('[data-testid="memo-body"]', { hasText: '买咖啡豆和滤纸' }) })
+      .getAttribute('data-memo-id');
+    expect(coffeeCardId).toMatch(/.+/);
+    const coffeeCard = page.locator(`[data-memo-id="${coffeeCardId}"]`);
+    const editedBody = coffeeCard.locator('[data-testid="memo-body"]');
     // Esc 放弃编辑。
-    const editedBody = card('买咖啡豆和滤纸').locator('[data-testid="memo-body"]');
     await editedBody.click();
     await editedBody.fill('不会保存的改动');
     await editedBody.press('Escape');
-    await expect(card('买咖啡豆和滤纸')).toBeVisible();
-    await expect(card('不会保存的改动')).toHaveCount(0);
+    await expect(coffeeCard.locator('[data-testid="memo-body"]')).toContainText('买咖啡豆和滤纸');
+    await expect(page.locator('[data-testid="memo-body"]', { hasText: '不会保存的改动' })).toHaveCount(
+      0,
+    );
 
     // 置顶：被改过的「买咖啡豆和滤纸」排到最前并带 data-pinned。
-    await card('买咖啡豆和滤纸').locator('[data-testid="memo-pin"]').click();
+    await coffeeCard.locator('[data-testid="memo-pin"]').click();
     await expect(page.locator('[data-testid="memo-card"]').first()).toHaveAttribute(
       'data-pinned',
       'true',

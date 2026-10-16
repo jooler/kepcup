@@ -166,14 +166,20 @@ test('local connectors: section always visible; Bot proposal → card → add �
     await expect(dialog).toBeHidden({ timeout: 15_000 });
 
     // --- 另一条提案点「取消」：卡片收起，提案作废 ------------------------------------------
+    // 收起连接步骤会走 runs.setupDismissed，先唤醒一轮对话（告诉用户配置没完成）。
+    // 这轮必须有自己的剧本，否则它会吃掉下面那条提案步骤，随后的「再来一次」
+    // 打到没有步骤的 mock-main，界面就是「执行失败：500」。
+    llm.script('mock-main', [step().inTurn().replyText('这次先不加了。')]);
+    await page.locator('[data-testid="setup-card-dismiss"]').click();
+    await expect(page.locator('[data-testid="chat-view"]').getByText('这次先不加了。')).toBeVisible(
+      { timeout: 60_000 },
+    );
     llm.script('mock-main', [
       step().inTurn().replyToolCall('app_propose_local_connector', {
         mcpUrl: fake.mcpUrl,
         title: 'E2E 笔记',
       }),
     ]);
-    // 先收起上一次留下的失败卡（添加后对话仍停在连接步骤）。
-    await page.locator('[data-testid="setup-card-dismiss"]').click();
     await composer.fill('再来一次');
     await composer.press('ControlOrMeta+Enter');
     await expect(card).toBeVisible({ timeout: 60_000 });

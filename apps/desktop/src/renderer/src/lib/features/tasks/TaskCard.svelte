@@ -14,7 +14,6 @@
   import { chat } from '$lib/stores/chat.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
-  import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { taskCardModel } from './task-view';
@@ -145,12 +144,10 @@
       </p>
     {/if}
     {#if pendingApprovals.length > 0}
-      <div class="mt-2 space-y-2" data-testid="task-pending-approvals">
-        <p class="text-xs text-amber-700 dark:text-amber-400">{t('task.waitingApproval')}</p>
-        {#each pendingApprovals as approval (approval.id)}
-          <ApprovalCard {approval} />
-        {/each}
-      </div>
+      <!-- 中途权限卡只在输入区上方的停靠区渲染（12-ui-layout 焦点三），卡上只留提示。 -->
+      <p class="mt-2 text-xs text-amber-700 dark:text-amber-400" data-testid="task-pending-approvals"
+        >{t('task.waitingApproval')}</p
+      >
     {/if}
     {#if model.progress !== null}
       <p class="mt-1.5 line-clamp-2 text-xs text-muted-foreground" data-testid="task-progress">

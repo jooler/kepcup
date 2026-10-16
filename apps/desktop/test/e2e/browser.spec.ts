@@ -1245,9 +1245,10 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
       await bindProject(app, page, project);
       await openProfileTab(page);
       if (name === '共甲') {
-        // 键盘在下拉里移动选项：只出确认，不保存。
-        await profileSelect.focus();
-        await page.keyboard.press('ArrowDown');
+        // 切换只进待确认、不自动保存（change 驱动 pending）。
+        // 原生 <select> 对 macOS 上未展开的下拉按 ArrowDown 不触发 change，
+        // 这里用 selectOption 走同一条 onchange → 确认条路径。
+        await profileSelect.selectOption(profileId);
         await expect(switchConfirm).toBeVisible();
         await page.waitForTimeout(1_000); // 超过自动保存的防抖：未确认不保存
         await page.locator('[data-testid="bot-browser-profile-confirm-no"]').click();

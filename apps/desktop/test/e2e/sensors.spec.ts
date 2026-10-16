@@ -28,12 +28,26 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page; home: s
   });
   const page = await app.firstWindow();
   await expect(page.locator('[data-testid="app-shell"]')).toBeVisible({ timeout: 60_000 });
-  // 管家补建后「+」面板可能异步弹出，全屏 backdrop 会挡住设置入口。
+  // 空态启动尾巴（restoreLast 判空 → autoOpenStartPanel）会在 app-shell 出现
+  // 之后才拉起「+」面板，全屏 backdrop 会挡住设置入口；点掉后可能又被下一轮
+  // 弹出盖住。在这里反复点掉，直到静置 1.5s 仍无弹出（上限 15s）。
   const startBackdrop = page.locator('[data-testid="start-chat-backdrop"]');
-  if (await startBackdrop.isVisible()) {
+  let quiet = false;
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (!(await startBackdrop.isVisible())) {
+      const reopened = await startBackdrop
+        .waitFor({ state: 'visible', timeout: 1_500 })
+        .then(() => true)
+        .catch(() => false);
+      if (!reopened) {
+        quiet = true;
+        break;
+      }
+    }
     await startBackdrop.click({ timeout: 2_000 }).catch(() => {});
   }
-  await expect(startBackdrop).toHaveCount(0);
+  expect(quiet).toBe(true);
   await page.locator('[data-testid="user-menu-trigger"]').click();
   await page.locator('[data-testid="menu-settings"]').click();
   await expect(page.locator('[data-testid="settings-page-content"]')).toBeVisible();
@@ -55,7 +69,8 @@ test('microphone card: enabled by default, test shows a live level meter', async
 
     const toggle = page.locator('[data-testid="sensor-test-toggle-microphone"]');
     await toggle.click();
-    await expect(toggle).toHaveText('停止测试');
+    // ensureAccess + getUserMedia 在满载机器上可能超过默认 5s 才翻转文案。
+    await expect(toggle).toHaveText('停止测试', { timeout: 15_000 });
     // 伪麦克风持续发出蜂鸣：电平条宽度应 > 0。
     await expect
       .poll(
@@ -72,7 +87,7 @@ test('microphone card: enabled by default, test shows a live level meter', async
     );
 
     await toggle.click();
-    await expect(toggle).toHaveText('测试麦克风');
+    await expect(toggle).toHaveText('测试麦克风', { timeout: 15_000 });
     await expect(page.locator('[data-testid="sensor-level-microphone"]')).toHaveCSS('width', '0px');
   } finally {
     await app.close();
@@ -95,7 +110,7 @@ test('camera card: off by default, preview works once enabled and releases the d
 
     await toggle.click();
     const video = page.locator('[data-testid="sensor-preview-camera"]');
-    await expect(video).toBeVisible();
+    await expect(video).toBeVisible({ timeout: 15_000 });
     await expect
       .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).videoWidth), {
         timeout: 15_000,

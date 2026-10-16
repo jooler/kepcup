@@ -173,11 +173,12 @@ test('start a task → task card → progress attributed → inject line → res
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(botBubble(page, '好的，我去整理笔记')).toBeVisible({ timeout: 30_000 });
     await expect(card).toHaveAttribute('data-task-state', 'running', { timeout: 30_000 });
-    // Its progress reached the conversation, attributed to the task.
-    await expect(botBubble(page, '先写第一份笔记')).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-testid="task-origin"]').first()).toContainText(
-      '任务「整理笔记」的进度',
-    );
+    // Its progress reached the task card (single status overlay: task loops
+    // share `runs.last_progress`, per design 30 §6.1 — never stacked bubbles;
+    // origin bubbles are reserved for results relayed by the turn).
+    await expect(card.locator('[data-testid="task-progress"]')).toContainText('先写第一份笔记', {
+      timeout: 30_000,
+    });
     await expect.poll(() => held.consumed, { timeout: 30_000 }).toBe(true);
     const taskId = await taskIdOf(page, '整理笔记');
     expect(taskId).toMatch(/^run_/);
