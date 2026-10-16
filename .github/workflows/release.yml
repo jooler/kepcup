@@ -146,6 +146,16 @@ jobs:
             echo "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
             echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           fi
+      # Import into the login keychain instead of letting electron-builder create a temp
+      # keychain + set-key-partition-list (flakes with SecKeychainUnlock on macos-latest arm64).
+      # Secrets are present on this repo (arm64/x64 have signed before). If MAC_CSC_LINK
+      # is ever cleared, this step fails loudly instead of producing an unsigned release.
+      - name: Import macOS signing certificate
+        if: matrix.platform == 'mac'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MAC_CSC_LINK }}
+          p12-password: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
       - name: Build distributable
         working-directory: apps/desktop
         env:
@@ -163,10 +173,43 @@ jobs:
         run: |
           # 机密缺失时 Actions 给的是空字符串，electron-builder 在 mac 上会把 "" 当成证书路径而失败。
           [ -n "${CSC_LINK:-}" ] || unset CSC_LINK CSC_KEY_PASSWORD
+          # mac：证书已由 import-codesign-certs 进 keychain。再传 CSC_LINK 会另建临时
+          # keychain，arm64 runner 上 set-key-partition-list 常报 SecKeychainUnlock。
+          # dist.mjs 在无 CSC_LINK/CSC_NAME 时会关 CSC_IDENTITY_AUTO_DISCOVERY，所以要导出 CSC_NAME。
+          if [ "${{ matrix.platform }}" = "mac" ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+            CSC_NAME=$(security find-identity -v -p codesigning 2>/dev/null | awk -F\" '/Developer ID Application/ { print $2; exit }')
+            if [ -z "$CSC_NAME" ]; then
+              echo "::error::No Developer ID Application identity in keychain after import-codesign-certs"
+              exit 1
+            fi
+            export CSC_NAME
+            echo "Using signing identity: $CSC_NAME"
+          fi
           # 没有 APPLE_API_KEY 时不公证；只留 ID/ISSUER 会让 electron-builder 报「三项缺一」。
           [ -n "${APPLE_API_KEY:-}" ] || unset APPLE_API_KEY_ID APPLE_API_ISSUER
           read -ra args <<< "${{ matrix.args }}"
-          node scripts/dist.mjs "${args[@]}"
+          # staple code 68（CloudKit 断线）与偶发签名失败：mac 最多重试 3 次。
+          max_attempts=1
+          if [ "${{ matrix.platform }}" = "mac" ]; then max_attempts=3; fi
+          attempt=1
+          while true; do
+            set +e
+            node scripts/dist.mjs "${args[@]}"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              break
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              exit "$status"
+            fi
+            echo "::warning::mac build attempt $attempt failed (exit $status); retrying (staple/keychain flakes)..."
+            attempt=$((attempt + 1))
+            rm -rf release/mac release/mac-arm64 release/mac-universal \
+              release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml 2>/dev/null || true
+            sleep $((attempt * 20))
+          done
           if [ "${{ matrix.platform }}" = "win" ] && [ -n "$MSSTORE_IDENTITY_NAME" ]; then
             # 商店 MSIX 单独构建、不签名（商店重签；用 Windows 证书签会因发布者不符而失败），
             # 输出到 release-store/ 以免覆盖上面的 NSIS 产物。

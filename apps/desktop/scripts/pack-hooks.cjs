@@ -21,7 +21,7 @@
  */
 
 const { spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -177,6 +177,13 @@ function beforePack(context) {
     mkdirSync(binDir, { recursive: true });
     console.warn(
       `[pack] created empty extraResources source dir: ${path.relative(projectDir, binDir)}`,
+    );
+  }
+  // electron-builder FileSet skips empty directories — a marker keeps win-* (no rg yet) in the package.
+  if (readdirSync(binDir).length === 0) {
+    writeFileSync(path.join(binDir, '.keep'), '');
+    console.warn(
+      `[pack] wrote .keep under ${path.relative(projectDir, binDir)} so extraResources copies the dir`,
     );
   }
   if (dirName === 'win') {
