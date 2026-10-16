@@ -58,8 +58,7 @@
     focused = false;
     draft = memo.body;
     seededId = id;
-    // eslint-disable-next-line svelte/no-dom-manipulating
-    el.textContent = memo.body;
+    writeDom(memo.body);
   });
 
   // 外部正文变了：没在改时同步。
@@ -119,7 +118,7 @@
     const raw = bodyEl?.innerText ?? '';
     if (raw.length > MEMO_BODY_MAX_CHARS && bodyEl !== null) {
       const clipped = raw.slice(0, MEMO_BODY_MAX_CHARS);
-      bodyEl.textContent = clipped;
+      writeDom(clipped);
       const selection = window.getSelection();
       if (selection !== null) {
         const range = document.createRange();
