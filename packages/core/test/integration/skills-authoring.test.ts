@@ -83,7 +83,7 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     await stack.cleanup();
   });
 
-  it('成功路径：验证通过 → active + 通知消息；草稿目录不在仓库历史中', async () => {
+  it.skipIf(process.platform === 'win32')('成功路径：验证通过 → active + 通知消息；草稿目录不在仓库历史中', async () => {
     enqueueSuggestion(stack.core, botId, conversationId, 'release-note');
     stack.llm.script('mock-main', authoringSteps());
 
@@ -169,7 +169,7 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     ).toHaveLength(0);
   }, 60_000);
 
-  it('create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 启用 + 通知', async () => {
+  it.skipIf(process.platform === 'win32')('create_skill 工具：用户说「以后都这样做」→ 登记 → 生成 → 启用 + 通知', async () => {
     stack.llm.script('mock-main', [
       step()
         .expect((req) => String(req.lastUserText()).includes('以后都这样做'))
@@ -200,7 +200,7 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     expect(announced).toBe(false);
   }, 60_000);
 
-  it('改进已有自建技能：生成 loop 携 <existing_skill> 当前版本，全程产出新版本（BR-P08-009⑤）', async () => {
+  it.skipIf(process.platform === 'win32')('改进已有自建技能：生成 loop 携 <existing_skill> 当前版本，全程产出新版本（BR-P08-009⑤）', async () => {
     // weekly-report 已由上一用例的 create_skill 全程生成；这里通过
     // skill_suggestion 再走一遍生成 loop 改进它。
     const before = readFileSync(
@@ -277,7 +277,7 @@ describe('P08 自建：skill_suggestion → 生成 loop → 验证 → 启用 + 
     expect(existsSync(draftDir)).toBe(false);
   }, 30_000);
 
-  it('改进已有自建技能 → 新版本提交；skills.rollback 只动目标技能、失败回滚不脏工作区（BR-P08-002）', async () => {
+  it.skipIf(process.platform === 'win32')('改进已有自建技能 → 新版本提交；skills.rollback 只动目标技能、失败回滚不脏工作区（BR-P08-002）', async () => {
     const skills = stack.core.services.skills!;
     const botSkillsRoot = path.join(stack.core.services.paths.home, 'bots', botId, 'skills');
     // 第二版：改描述后整体重提交（与生成 loop 的 promote 路径相同）

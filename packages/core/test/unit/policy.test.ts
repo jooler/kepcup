@@ -46,7 +46,7 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readWrite).toContain(workspace());
   });
 
-  it('keeps a real toolchain root read-only when it exists', () => {
+  it.skipIf(process.platform === 'win32')('keeps a real toolchain root read-only when it exists', () => {
     const policy = policyFor({ mode: 'open', allowDomains: [] });
     // /usr exists on macOS and Linux CI runners.
     expect(policy.readOnly).toContain('/usr');

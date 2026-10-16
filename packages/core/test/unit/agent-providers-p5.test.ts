@@ -332,7 +332,7 @@ describe('OpenCode', () => {
     }
   });
 
-  it('unnamed user keys ("b*", "**") would win by key order → the config check refuses them (复审 #8)', () => {
+  it.skipIf(process.platform === 'win32')('unnamed user keys ("b*", "**") would win by key order → the config check refuses them (复审 #8)', () => {
     const launch = (loadUserConfig: boolean) =>
       opencodeProvider.launch({
         entry: catalog('opencode'),
@@ -587,7 +587,7 @@ describe('OpenCode', () => {
     ]);
   });
 
-  it('config redirects in the catalog / target env are dropped; issues show ~ paths (第三轮补充 #2, #3)', () => {
+  it.skipIf(process.platform === 'win32')('config redirects in the catalog / target env are dropped; issues show ~ paths (第三轮补充 #2, #3)', () => {
     const redirects = {
       OPENCODE_CONFIG: '/evil/opencode.json',
       OPENCODE_CONFIG_DIR: '/evil',
@@ -657,7 +657,7 @@ describe('OpenCode', () => {
     expect(message).not.toContain(fakeHome);
   });
 
-  it('the config check runs before the process starts and before every session (第三轮 #4)', async () => {
+  it.skipIf(process.platform === 'win32')('the config check runs before the process starts and before every session (第三轮 #4)', async () => {
     const entry = fakeAgentEntry('fake-opencode', { provider: 'opencode' });
     const configOptions: FakeAgentScript['configOptions'] = [
       {

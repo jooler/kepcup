@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 
 import { initRepository, openRepository, type Repository } from 'es-git';

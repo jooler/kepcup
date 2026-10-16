@@ -6,9 +6,9 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
-  rmSync,
   statSync,
 } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { AppError } from '@kepcup/shared';

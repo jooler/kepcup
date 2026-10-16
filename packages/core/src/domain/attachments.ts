@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError, newId, type Attachment } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';

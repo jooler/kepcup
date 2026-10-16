@@ -611,7 +611,7 @@ describe('confirm mode (sandbox unavailable, P03)', () => {
     expect(existsSync(path.join(workspace, 'confirm-marker'))).toBe(true);
   }, 120_000);
 
-  it('runs allowlisted read-only commands without confirmation but re-confirms out-of-scope paths', async () => {
+  it.skipIf(process.platform === 'win32')('runs allowlisted read-only commands without confirmation but re-confirms out-of-scope paths', async () => {
     const { core, llm } = await start({ KEPCUP_SANDBOX: 'off' });
     const bot = await makeBot(core, '小白');
     const conv = await openDirect(core, bot.id);

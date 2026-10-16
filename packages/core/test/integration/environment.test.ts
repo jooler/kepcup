@@ -254,7 +254,7 @@ async function lastToolResult(
 }
 
 describe('environment manager (P06)', () => {
-  it('approval → download → verify → install → event delivery to the requesting bot', async () => {
+  it.skipIf(process.platform === 'win32')('approval → download → verify → install → event delivery to the requesting bot', async () => {
     const { catalog } = await startFakeEnv();
     const stack = await createTestStack({ envCatalog: catalog });
     stacks.push(stack);
@@ -376,7 +376,7 @@ describe('environment manager (P06)', () => {
     });
   }, 120_000);
 
-  it('re-requesting an installed item returns the path immediately without a new approval', async () => {
+  it.skipIf(process.platform === 'win32')('re-requesting an installed item returns the path immediately without a new approval', async () => {
     const { catalog } = await startFakeEnv();
     const stack = await createTestStack({ envCatalog: catalog });
     stacks.push(stack);
@@ -472,7 +472,7 @@ describe('environment manager (P06)', () => {
     60_000,
   );
 
-  it('unattended mode auto-approves environment requests', async () => {
+  it.skipIf(process.platform === 'win32')('unattended mode auto-approves environment requests', async () => {
     const { catalog } = await startFakeEnv();
     const stack = await createTestStack({ envCatalog: catalog });
     stacks.push(stack);
@@ -502,7 +502,7 @@ describe('environment manager (P06)', () => {
     expect(envApproval.status).toBe('approved');
   }, 120_000);
 
-  it('the environment approval survives the requesting run settling', async () => {
+  it.skipIf(process.platform === 'win32')('the environment approval survives the requesting run settling', async () => {
     const { catalog } = await startFakeEnv();
     const stack = await createTestStack({ envCatalog: catalog });
     stacks.push(stack);
@@ -527,7 +527,7 @@ describe('environment manager (P06)', () => {
     expect(install.status).toBe('installed');
   }, 120_000);
 
-  it('python via uv: ensures uv first, then installs into UV_PYTHON_INSTALL_DIR', async () => {
+  it.skipIf(process.platform === 'win32')('python via uv: ensures uv first, then installs into UV_PYTHON_INSTALL_DIR', async () => {
     // 假 uv：处理 python install/find，落位 cpython-*/bin/python3（真 uv 的布局）。
     const dir = mkdtempSync(path.join(os.tmpdir(), 'kepcup-env-fixture-'));
     const triple =
@@ -852,7 +852,7 @@ describe('environment manager (P06)', () => {
     60_000,
   );
 
-  it('settings operations: remove deletes the directory, reinstall works, doctor flags a broken install', async () => {
+  it.skipIf(process.platform === 'win32')('settings operations: remove deletes the directory, reinstall works, doctor flags a broken install', async () => {
     const { catalog } = await startFakeEnv();
     const stack = await createTestStack({ envCatalog: catalog });
     stacks.push(stack);

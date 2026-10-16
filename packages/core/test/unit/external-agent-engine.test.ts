@@ -276,7 +276,7 @@ describe('ACP client helpers', () => {
     ).toBe('/opt/npm/codex');
   });
 
-  it('withUserPath appends ~/.local/bin and Homebrew after existing PATH', () => {
+  it.skipIf(process.platform === 'win32')('withUserPath appends ~/.local/bin and Homebrew after existing PATH', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
     const localBin = path.join(home, '.local', 'bin');
     mkdirSync(localBin, { recursive: true });
@@ -291,7 +291,7 @@ describe('ACP client helpers', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('withUserPath keeps existing PATH priority: a bundled-bin prepend stays first, no duplicates', () => {
+  it.skipIf(process.platform === 'win32')('withUserPath keeps existing PATH priority: a bundled-bin prepend stays first, no duplicates', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'kepcup-userpath-'));
     const localBin = path.join(home, '.local', 'bin');
     const homeBin = path.join(home, 'bin');

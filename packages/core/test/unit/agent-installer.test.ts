@@ -352,7 +352,7 @@ describe('AgentInstaller — npx', () => {
     expect(call.args.slice(1, 2)).toEqual(['ci']);
     expect(call.args).toContain('--ignore-scripts');
     expect(call.env).toMatchObject({
-      PATH: '/opt/kepcup/node/bin:/usr/bin',
+      PATH: ['/opt/kepcup/node/bin', '/usr/bin'].join(path.delimiter),
       HOME: '/home/u',
       npm_config_ignore_scripts: 'true',
       npm_config_cache: path.join(root, 'npm-cache'),

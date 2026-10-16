@@ -12,10 +12,10 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { rmSync } from '../../infra/fs-rm.js';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';

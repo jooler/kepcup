@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError, RUN_MAX_TURNS, WIKI_SOURCE_INLINE_MAX_CHARS } from '@kepcup/shared';
 

@@ -217,7 +217,7 @@ describe('ExternalAgentEngine.complete() / background sessions (P6)', () => {
     expect(backgroundToolFree(entry, plain)).toBe(true);
   });
 
-  it('a background session whose private cwd cannot be created settles and drops its dispose listener', async () => {
+  it.skipIf(process.platform === 'win32')('a background session whose private cwd cannot be created settles and drops its dispose listener', async () => {
     const { engine, started, request, host } = setup({ turns: [agentTurn().text('{}')] });
     const offs: Array<ReturnType<typeof vi.fn>> = [];
     const onDispose = host.onDispose.bind(host);

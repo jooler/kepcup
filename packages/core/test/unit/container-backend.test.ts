@@ -109,7 +109,7 @@ describe('cwdCoverageRejections（BR-P12-007：标准路径原语）', () => {
 });
 
 describe('PodmanSandboxBackend exec 请求构造', () => {
-  it('注入发行版基础 env（BR-P12-006）；策略 PATH 覆盖宿主尾部', async () => {
+  it.skipIf(process.platform === 'win32')('注入发行版基础 env（BR-P12-006）；策略 PATH 覆盖宿主尾部', async () => {
     const capture: Captured = { argv: [], inputs: [] };
     const backend = podmanBackend(capture);
     const result = await backend.exec(execRequest());

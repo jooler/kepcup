@@ -1,4 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError, type Bot } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';

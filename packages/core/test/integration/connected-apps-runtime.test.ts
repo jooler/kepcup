@@ -10,6 +10,7 @@ import {
   step,
   viaTask,
   waitFor,
+  waitForMessage,
   waitForRun,
   type FakeOAuthMcpServer,
   type MockChatRequest,
@@ -320,6 +321,14 @@ describe('listing failure at run start', () => {
       .find((r) => promptOf(r).includes('<task_brief'))!;
     expect(toolNamesOf(taskRequest)).toContain('app_request_connection');
     expect(h.shellCalls).toEqual([]);
+    // Let the failed task's relay turn finish before scripting the next phase: a turn
+    // still running would take steps of the next script.
+    await waitForMessage(
+      h.stack.core,
+      h.conversationId,
+      (m) => m.kind === 'text' && m.content['text'] === '请先连接应用',
+      { timeoutMs: 30_000 },
+    );
 
     // An id outside the Bot's selection is refused without a card.
     h.stack.llm.script('mock-main', [

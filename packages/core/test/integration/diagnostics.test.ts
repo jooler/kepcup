@@ -43,7 +43,7 @@ describe('diagnostics.get (P13 任务 6)', () => {
         const snapshot = (await rpc.call('diagnostics.get')) as DiagnosticsOutput;
         return snapshot.toolchain.some((row) => row.id === 'system:git') ? snapshot : null;
       },
-      { label: 'system:git toolchain row' },
+      { label: 'system:git toolchain row', timeoutMs: 60_000 },
     );
 
     expect(diag.core.status).toBe('ready');

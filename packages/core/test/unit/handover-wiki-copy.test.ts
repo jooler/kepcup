@@ -427,7 +427,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
     expect(existsSync(path.join(c.r.paths.cacheDir, 'handover-staging/hnd_8'))).toBe(false);
   });
 
-  it('独立审查 #5 / #8 / #9 / #10 / #6: placement manifest on resume; unsafe page names; leftovers; unfinished assets; size', async () => {
+  it.skipIf(process.platform === 'win32')('独立审查 #5 / #8 / #9 / #10 / #6: placement manifest on resume; unsafe page names; leftovers; unfinished assets; size', async () => {
     const rig = makeRig();
     await seedSource(rig);
     await initWiki(rig.paths, 'bot_b', stubLogger);

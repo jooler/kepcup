@@ -125,7 +125,7 @@ describe('P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执
     expect(existsSync(path.join(libDir, '.git'))).toBe(false);
   }, 60_000);
 
-  it('下一次执行：提示词出现技能描述；模型读 SKILL.md 并沙箱执行脚本', async () => {
+  it.skipIf(process.platform === 'win32')('下一次执行：提示词出现技能描述；模型读 SKILL.md 并沙箱执行脚本', async () => {
     const list = (await stack.core.rpc.call('skills.list', { botId })) as {
       skills: SkillEntry[];
     };
@@ -184,7 +184,7 @@ describe('P08 Skills：git 导入 → 审批 → 安装 → 加载 → 沙箱执
     expect((bashResult!.payload as { content: string }).content).toContain('hello-from-skill');
   }, 60_000);
 
-  it('沙箱内写技能目录失败（只读）', async () => {
+  it.skipIf(process.platform === 'win32')('沙箱内写技能目录失败（只读）', async () => {
     const list = (await stack.core.rpc.call('skills.list', { botId })) as {
       skills: SkillEntry[];
     };
@@ -421,7 +421,13 @@ describe('P08 Skills：多技能仓库列出候选；ref 锁定', () => {
     const { spawnSync } = await import('node:child_process');
     const oidA = repo.commitOid(); // 打标签时的提交
     spawnSync('git', ['-C', repo.repoDir, 'tag', 'v1']);
-    spawnSync('git', ['-C', repo.repoDir, 'tag', '-a', 'ann1', '-m', 'annotated', oidA]);
+    // An annotated tag needs a committer identity (CI runners have none configured).
+    const tagged = spawnSync('git', [
+      '-C', repo.repoDir,
+      '-c', 'user.name=KepCup Test', '-c', 'user.email=test@kepcup.invalid',
+      'tag', '-a', 'ann1', '-m', 'annotated', oidA,
+    ]);
+    expect(tagged.status, String(tagged.stderr)).toBe(0);
     // 标签之后仓库前进到 B：修复前 ref 导入会记下 B（默认分支 tip）
     repo.commitFiles({ 'one/CHANGELOG.md': '# v1 之后的新提交' }, 'commit B');
     expect(repo.commitOid()).not.toBe(oidA);

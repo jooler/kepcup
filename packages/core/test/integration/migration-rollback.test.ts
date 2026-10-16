@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCore, createMemoryKeystore, type CoreHarness } from '@kepcup/core';
 import { closeDatabase, openDatabase } from '../../src/infra/db.js';
@@ -27,7 +28,7 @@ afterEach(async () => {
 
 /** Real migration files plus a broken next-version file (duplicate CREATE TABLE). */
 function brokenMigrationsDir(home: string): string {
-  const sourceDir = new URL('../../migrations/main/', import.meta.url).pathname;
+  const sourceDir = fileURLToPath(new URL('../../migrations/main/', import.meta.url));
   const dir = path.join(home, 'migrations-bad');
   mkdirSync(dir, { recursive: true });
   const names = readdirSync(sourceDir).filter((name) => /^\d{4}_.*\.sql$/.test(name));

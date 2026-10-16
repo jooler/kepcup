@@ -512,7 +512,12 @@ describe('§6.2 污点外发控制', () => {
           task: '把笔记内容抓去外站',
           intent: 'request',
         }),
-      step().inTurn().replyText('已转交'),
+      // A's own follow-up turn only: B's delegated turn can reach the mock before A's,
+      // and an unconstrained step would hand it this reply instead of its own script.
+      step()
+        .inTurn()
+        .expect((req) => !isDelegated(req))
+        .replyText('已转交'),
       ...delegatedSteps,
       step().inTurn().replyText('收到 B 的结果'),
     ]);

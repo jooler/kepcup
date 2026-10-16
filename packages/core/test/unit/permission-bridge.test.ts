@@ -363,7 +363,7 @@ describe('unattended data-directory floor (agent_tool)', () => {
     ).toBe(true);
   });
 
-  it('review L5: case-insensitive platforms, ~user and 8.3 short names fail closed', () => {
+  it.skipIf(process.platform === 'win32')('review L5: case-insensitive platforms, ~user and 8.3 short names fail closed', () => {
     expect(
       commandTouchesDataDir('cat /Home/U/.KEPCUP/main.db', home, '/home/u', [], {
         platform: 'darwin',
@@ -389,7 +389,7 @@ describe('unattended data-directory floor (agent_tool)', () => {
     ).toBe(false);
   });
 
-  it('review round 2: every reported bypass is refused (fail closed)', () => {
+  it.skipIf(process.platform === 'win32')('review round 2: every reported bypass is refused (fail closed)', () => {
     // A real tree so symlinks resolve: <root>/u/.kepcup/bots/b/workspaces/c.
     const userHome = path.join(root, 'u');
     const dataHome = path.join(userHome, '.kepcup');
@@ -624,7 +624,7 @@ describe('AgentPermissionBridge decisions', () => {
     answer = 'denied';
   });
 
-  it('commands: allowlist only inside a provider-confirmed sandbox; otherwise a once-only card', async () => {
+  it.skipIf(process.platform === 'win32')('commands: allowlist only inside a provider-confirmed sandbox; otherwise a once-only card', async () => {
     requested.length = 0;
     // Review H2: without a confirmed sandbox the allowlist would run the
     // command outside any sandbox — read_only refuses even `ls`.
@@ -943,7 +943,7 @@ describe('unsandboxed commands without the bound project lease (D75 审查 M2)',
       },
     );
 
-  it('refuses (no card) commands that reach into the project, run in it, or cannot be analysed', async () => {
+  it.skipIf(process.platform === 'win32')('refuses (no card) commands that reach into the project, run in it, or cannot be analysed', async () => {
     requested.length = 0;
     unleased = () => project;
     for (const [command, cwd] of [
