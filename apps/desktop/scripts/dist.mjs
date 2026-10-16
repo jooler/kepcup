@@ -273,6 +273,15 @@ const env = {};
 if (!process.env.CSC_LINK && !process.env.CSC_NAME) {
   env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 }
+// We invoke electron-builder via `node …/cli.js` (not `pnpm exec`), so its module
+// collector would otherwise fall back to npm on a pnpm workspace and OOM. Tip it
+// toward pnpm; apps/desktop/package.json also carries packageManager for file detection.
+if (!process.env.npm_config_user_agent?.includes('pnpm')) {
+  env.npm_config_user_agent = 'pnpm/11.22.0 npm/? node/' + process.version.slice(1);
+}
+if (!process.env.NODE_OPTIONS?.includes('max-old-space-size')) {
+  env.NODE_OPTIONS = [process.env.NODE_OPTIONS, '--max-old-space-size=8192'].filter(Boolean).join(' ');
+}
 // BR-P13-003: publishing is ALWAYS an explicit, separate action — never an
 // implicit side effect of a build. electron-builder would otherwise publish
 // on its own whenever it runs in CI on a tag push with a GH_TOKEN present

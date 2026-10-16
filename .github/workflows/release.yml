@@ -149,6 +149,8 @@ jobs:
       - name: Build distributable
         working-directory: apps/desktop
         env:
+          # electron-builder's node module collector (and npm ls fallback) OOMs at ~2GB on macOS runners.
+          NODE_OPTIONS: --max-old-space-size=8192
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || matrix.platform == 'win' && secrets.WIN_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || matrix.platform == 'win' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
