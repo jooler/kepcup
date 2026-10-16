@@ -532,6 +532,22 @@ describe('connection tool policy reads', () => {
     });
     expect(missing.status).toBe('unconfigured');
     expect(missing.values).toEqual({ connection: 'conn-1', tool: 'gone' });
+    const cloudflare = rig({
+      list: () => [
+        { id: 'conn-1', connectorId: 'notion', label: 'Notion 工作区' },
+        { id: 'conn_cf', connectorId: 'cloudflare', label: 'Cloudflare' },
+      ],
+      peekTool: (connectionId, toolName) =>
+        connectionId === 'conn_cf' && toolName === 'search'
+          ? { policy: null, enabled: true, approval: 'ask' as const }
+          : null,
+    });
+    expect(
+      cloudflare.read(item('connections.tool-policy'), target, {
+        connection: 'cloudflare',
+        tool: 'app_cloudflare_search',
+      }).values,
+    ).toEqual({ connection: 'conn_cf', tool: 'search', policy: 'ask' });
     expect(
       adapter.options!(
         item('connections.tool-policy').fields[0]!,

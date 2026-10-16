@@ -12,7 +12,9 @@
   import { toast } from 'svelte-sonner';
   import { t, errorText } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { permissions } from '$lib/stores/permissions.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
+  import ApprovalCard from '$lib/features/approvals/ApprovalCard.svelte';
   import { Button } from '$lib/components/ui/button';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
   import { taskCardModel } from './task-view';
@@ -37,6 +39,11 @@
 
   const task = $derived(tasks.byId[taskId] ?? null);
   const model = $derived(task !== null ? taskCardModel(task) : null);
+  const pendingApprovals = $derived(
+    Object.values(permissions.approvals)
+      .filter((approval) => approval.runId === taskId && approval.status === 'pending')
+      .sort((a, b) => a.createdAt - b.createdAt),
+  );
   const ownerName = $derived(
     task?.botId != null && chat.current?.conversation.type === 'group'
       ? chat.botName(task.botId)
@@ -77,7 +84,6 @@
       busy = false;
     }
   }
-
 </script>
 
 {#if task === null || model === null}
@@ -133,6 +139,14 @@
         {t('task.awaitingInput')}
       </p>
     {/if}
+    {#if pendingApprovals.length > 0}
+      <div class="mt-2 space-y-2" data-testid="task-pending-approvals">
+        <p class="text-xs text-amber-700 dark:text-amber-400">{t('task.waitingApproval')}</p>
+        {#each pendingApprovals as approval (approval.id)}
+          <ApprovalCard {approval} />
+        {/each}
+      </div>
+    {/if}
     {#if model.progress !== null}
       <p class="mt-1.5 line-clamp-2 text-xs text-muted-foreground" data-testid="task-progress">
         {t('task.lastProgress', { text: model.progress })}
@@ -175,7 +189,6 @@
     {:else if model.errorLine !== null}
       <p class="mt-1.5 text-xs text-muted-foreground" data-testid="task-error">{model.errorLine}</p>
     {/if}
-
 
     {#if model.setupHint}
       <p class="mt-1.5 text-xs text-muted-foreground">{t('task.setupHint')}</p>

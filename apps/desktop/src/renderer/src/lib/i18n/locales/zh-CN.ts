@@ -1016,6 +1016,7 @@ export const zhCN = {
   'task.queued': '排队中：{reason}',
   'task.waitingStart': '排队中，即将开始',
   'task.awaitingInput': '等待你回答它的问题',
+  'task.waitingApproval': '需要你确认后，这个任务才能继续',
   'task.lastProgress': '最近：{text}',
   'task.injected': '已把新指令转给此任务：{text}',
   'task.injectNotDelivered': '（未送达：任务已在收尾，需要时可让 Bot 接着重做）',
@@ -1350,10 +1351,12 @@ export const zhCN = {
   'settings.launchAtLoginHint': '登录后 KepCup 在后台运行，Bot 的定时任务与主动消息不中断。',
   'settings.launchAtLoginFailed': '开机自启设置未生效：{reason}',
   'settings.workbenchEnabled': '显示工作台',
-  'settings.workbenchEnabledHint': '在侧栏显示工作台入口，用来统筹事项与备忘。关闭后入口与分隔线一并隐藏。',
+  'settings.workbenchEnabledHint':
+    '在侧栏显示工作台入口，用来统筹事项与备忘。关闭后入口与分隔线一并隐藏。',
   'settings.workbenchEnabledPersistFailed': '工作台开关未能保存，请重启应用后再试',
   'workbench.nudge.title': '定时任务在增多',
-  'workbench.nudge.body': 'Bot 的定时任务已经超过 3 个。打开工作台可以集中查看与安排，更高效。要启用工作台吗？',
+  'workbench.nudge.body':
+    'Bot 的定时任务已经超过 3 个。打开工作台可以集中查看与安排，更高效。要启用工作台吗？',
   'workbench.nudge.enable': '启用',
   'workbench.nudge.later': '暂不启用',
   'workbench.nudge.dismissTitle': '可以随时打开',
@@ -2251,7 +2254,8 @@ export const zhCN = {
   'workbench.drawer.monthShort': '没有该日的月份不会执行。',
   'workbench.drawer.loadFailed': '事项加载失败。',
   'workbench.drawer.discardTitle': '有未保存的修改。',
-  'workbench.drawer.discardTimeOnly': '「立即开始」只保存标题、说明和执行者，未保存的时间设置会被放弃。',
+  'workbench.drawer.discardTimeOnly':
+    '「立即开始」只保存标题、说明和执行者，未保存的时间设置会被放弃。',
   'workbench.drawer.discardContinue': '放弃并继续',
   'workbench.drawer.discardBack': '继续编辑',
   'workbench.tabTodos': '事项',
@@ -2350,7 +2354,8 @@ export const zhCN = {
   'workbench.drawer.save': '保存',
   'workbench.drawer.saved': '已保存',
   'workbench.drawer.savedNotified': '已保存，将通知执行者',
-  'workbench.drawer.notifyHint': '事项已在执行：保存后会把新的标题 / 说明通知执行者，由它决定是否调整做法，不会打断它。',
+  'workbench.drawer.notifyHint':
+    '事项已在执行：保存后会把新的标题 / 说明通知执行者，由它决定是否调整做法，不会打断它。',
   'workbench.drawer.saveFailed': '保存失败',
   'workbench.drawer.warnings': '提示',
   'workbench.drawer.runs': '执行记录',

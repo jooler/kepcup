@@ -13,6 +13,7 @@ import {
   policyForChoice,
   splitTools,
   toolDefinitionDiff,
+  policyCardConnectionId,
   toolPolicyChoice,
   toolPolicyTarget,
 } from './app-tools';
@@ -98,11 +99,24 @@ describe('policies', () => {
   });
 
   it('locates the tool from the before snapshot, not from a missing prefill', () => {
-    expect(
-      toolPolicyTarget({ connection: 'conn-1', tool: 'search', policy: 'deny' }),
-    ).toEqual({ connectionId: 'conn-1', toolName: 'search' });
+    expect(toolPolicyTarget({ connection: 'conn-1', tool: 'search', policy: 'deny' })).toEqual({
+      connectionId: 'conn-1',
+      toolName: 'search',
+    });
     expect(toolPolicyTarget({ policy: 'allow' })).toBeNull();
     expect(toolPolicyTarget(null)).toBeNull();
+  });
+
+  it('resolves a connector slug on a policy card to the one matching connection', () => {
+    const connections = [
+      { id: 'conn_nt', connectorId: 'notion', label: 'Notion' },
+      { id: 'conn_cf', connectorId: 'cloudflare', label: 'Cloudflare' },
+    ];
+    expect(
+      policyCardConnectionId({ connection: 'cloudflare', tool: 'search' }, null, connections),
+    ).toBe('conn_cf');
+    expect(policyCardConnectionId(null, { connection: 'conn_cf' }, connections)).toBe('conn_cf');
+    expect(policyCardConnectionId({ connection: 'github' }, null, connections)).toBeNull();
   });
 });
 
