@@ -26,6 +26,16 @@ describe('interpretAppConnectionSelection', () => {
     expect(interpretAppConnectionSelection(['conn_nt'], [], rows)).toEqual({ ok: true, ids: [] });
   });
 
+  it('swaps the bot’s existing account of the same app instead of keeping both', () => {
+    const two = [...rows, { id: 'conn_cf_2', connectorId: 'cloudflare', label: '其他账号' }];
+    expect(
+      interpretAppConnectionSelection(['conn_cf', 'conn_nt'], ['conn_cf_2', 'notion'], two),
+    ).toEqual({
+      ok: true,
+      ids: ['conn_cf_2', 'conn_nt'],
+    });
+  });
+
   it('does not guess when a slug matches more than one account', () => {
     const two = [...rows, { id: 'conn_cf_2', connectorId: 'cloudflare', label: '其他账号' }];
     expect(interpretAppConnectionSelection(['conn_nt'], ['cloudflare'], two)).toEqual({

@@ -21,7 +21,15 @@
  */
 
 const { spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -83,11 +91,6 @@ function platformDirName(context) {
   return mapped;
 }
 
-/** @deprecated use platformDirName; kept name only if anything imported it. */
-function platformName(context) {
-  return platformDirName(context);
-}
-
 function archName(context) {
   // context.arch is electron-builder's numeric Arch enum; map it (the target
   // arch — NOT process.arch, which differs when one config pass builds both
@@ -117,7 +120,9 @@ function assertQueryDriverUnpacked(resourcesPath, platform, arch) {
     const prebuild = path.join(packageDir, 'prebuilds', `${platform}-${arch}.node`);
     const built = path.join(packageDir, 'build', 'Release', 'better_sqlite3.node');
     if (!existsSync(prebuild) && !existsSync(built)) {
-      throw new Error(`[pack] 组件查询驱动缺少 ${platform}-${arch} 原生库（${prebuild} 或 ${built}）`);
+      throw new Error(
+        `[pack] 组件查询驱动缺少 ${platform}-${arch} 原生库（${prebuild} 或 ${built}）`,
+      );
     }
   }
   return entry;
@@ -135,8 +140,8 @@ function smokeQueryDriver(execPath, driverEntry) {
     'const Database = require(process.argv[1]);',
     "const key = 'key=\"x\\'' + '5a'.repeat(32) + '\\'\"';",
     'const w = new Database(process.argv[2]);',
-    "w.pragma(\"cipher='chacha20'\"); w.pragma(key);",
-    "w.exec(\"create table t (v text); insert into t values ('ok')\"); w.close();",
+    'w.pragma("cipher=\'chacha20\'"); w.pragma(key);',
+    'w.exec("create table t (v text); insert into t values (\'ok\')"); w.close();',
     'const r = new Database(process.argv[2], { readonly: true, fileMustExist: true });',
     "r.pragma(\"cipher='chacha20'\"); r.pragma(key); r.pragma('query_only = ON');",
     "process.stdout.write(JSON.stringify(r.prepare('select v from t').get()) + '\\n');",
@@ -162,7 +167,8 @@ function smokeQueryDriver(execPath, driverEntry) {
 /** 产物里的 Electron 可执行文件。 */
 function packagedExecutable(context, appBundle) {
   const name = context.packager.appInfo.productFilename;
-  if (appBundle !== undefined) return path.join(context.appOutDir, appBundle, 'Contents', 'MacOS', name);
+  if (appBundle !== undefined)
+    return path.join(context.appOutDir, appBundle, 'Contents', 'MacOS', name);
   if (context.electronPlatformName === 'win32') return path.join(context.appOutDir, `${name}.exe`);
   return path.join(context.appOutDir, context.packager.executableName ?? name.toLowerCase());
 }
@@ -250,14 +256,17 @@ function afterPack(context) {
   }
   // 组件查询子进程的 SQLite 驱动（D81 §6.1）：整包解出 + 目标平台原生库；能在本机
   // 运行产物时（目标平台 = 构建机平台）再跑一次真实查询。
-  const driverPlatform = context.electronPlatformName === 'mas' ? 'darwin' : context.electronPlatformName;
+  const driverPlatform =
+    context.electronPlatformName === 'mas' ? 'darwin' : context.electronPlatformName;
   const driverEntry = assertQueryDriverUnpacked(resourcesPath, driverPlatform, archName(context));
   if (driverPlatform === process.platform && archName(context) === process.arch) {
     const row = smokeQueryDriver(packagedExecutable(context, appBundle), driverEntry);
     if (row === null || typeof row !== 'object' || row.v !== 'ok') {
       throw new Error(`[pack] 组件查询驱动冒烟读回异常：${JSON.stringify(row)}`);
     }
-    console.log('[pack] 组件查询驱动冒烟通过（Electron Node 模式加载 app.asar.unpacked 驱动，加密库读写）。');
+    console.log(
+      '[pack] 组件查询驱动冒烟通过（Electron Node 模式加载 app.asar.unpacked 驱动，加密库读写）。',
+    );
   } else {
     console.warn(
       `[pack] 跨平台构建（${driverPlatform}-${archName(context)}），跳过组件查询驱动的运行冒烟；` +

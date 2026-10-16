@@ -35,3 +35,6 @@ apps/desktop/release-store/
 
 .apiresearch
 .claude/worktrees/
+
+# macOS
+.DS_Store
