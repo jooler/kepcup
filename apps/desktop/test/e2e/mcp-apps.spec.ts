@@ -84,11 +84,12 @@ async function startSession(): Promise<Session> {
 }
 
 async function closeSession(session: Session): Promise<void> {
+  console.error(`[keep-home] ${session.home}`);
   await session.app.close();
   await session.llm.stop();
   await session.fake.stop();
   await new Promise<void>((resolve) => session.blocked.server.close(() => resolve()));
-  await rm(session.home, { recursive: true, force: true });
+  if (!process.env.KEPCUP_KEEP_E2E_HOME) await rm(session.home, { recursive: true, force: true });
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -190,6 +191,8 @@ async function openCard(session: Session): Promise<Frame> {
     'mock-main',
     viaTask({
       writes: false,
+      // D91: 任务只挂它声明的能力；卡片场景用假连接 app1 的 MCP 工具。
+      capabilities: ['mcp:app1'],
       taskSteps: [
         step().replyToolCall('mcp_app1_show_dashboard', { topic: '销量' }),
         step().replyText('看板已显示'),
@@ -218,23 +221,24 @@ async function openCard(session: Session): Promise<Frame> {
           conversationId: id,
         })) as { messages: Array<{ kind: string; content: { cardType?: string } }> };
         const { runs } = (await window.__kepcupRpc('runs.list', { conversationId: id })) as {
-          runs: Array<{ id: string; loopType: string; status: string }>;
+          runs: Array<{ id: string; loopType: string; status: string; error?: string }>;
         };
         const steps: unknown[] = [];
-        for (const run of runs.filter((r) => r.loopType === 'task')) {
+        for (const run of runs.filter((r) => r.loopType !== 'reflection')) {
           const out = (await window.__kepcupRpc('runs.steps', { runId: run.id })) as {
             steps: Array<{ type: string; payload: Record<string, unknown> }>;
           };
-          steps.push(
-            ...out.steps
-              .filter((step) => step.type === 'tool_result' || step.type === 'tool_call')
-              .map((step) => JSON.stringify(step.payload).slice(0, 400)),
-          );
+          steps.push(...out.steps.map((step) => `${run.loopType}|${JSON.stringify(step).slice(0, 500)}`));
         }
+        const reflectionErrors = runs
+          .filter((r) => r.loopType === 'reflection')
+          .map((r) => `${r.status}:${r.error ?? ''}`)
+          .slice(0, 3);
         return JSON.stringify({
           cards: messages.map((m) => `${m.kind}:${m.content.cardType ?? ''}`),
           runs: runs.map((r) => `${r.loopType}:${r.status}`),
           steps,
+          reflectionErrors,
         });
       })
       .catch((dumpError: unknown) => String(dumpError));

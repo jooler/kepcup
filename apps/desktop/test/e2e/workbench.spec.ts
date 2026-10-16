@@ -58,6 +58,12 @@ async function startSession(prefix: string): Promise<Session> {
   const home = await mkdtemp(path.join(tmpdir(), prefix));
   const app = await launchApp(home, llm.url);
   const page = await app.firstWindow();
+  // resolveWindowOptions 把默认窗口钳制到显示器内：CI 的 Xvfb（默认 640×480）
+  // 和部分 runner 的显示空间会让窗口落进 WorkbenchView 的 tab 形态（<760px），
+  // memo-pane 不渲染。工作台用例统一钉 1280×840 内容尺寸，避免按显示器赌宽窄。
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(1280, 840);
+  });
   return { app, page, home, llm };
 }
 

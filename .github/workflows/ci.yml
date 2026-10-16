@@ -105,5 +105,15 @@ jobs:
       - name: Run e2e (macOS / Windows)
         if: matrix.os != 'ubuntu-24.04'
         run: pnpm test:e2e
+      # playwright failure snapshots (error-context.md) are written to
+      # test-results; without them a failing runner's page state is invisible.
+      - name: Upload e2e failure snapshots
+        if: failure() && matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results-${{ matrix.os }}
+          path: apps/desktop/test-results
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Sandbox tests arrive with P02 (docs/dev/05-testing.md, CI matrix).
