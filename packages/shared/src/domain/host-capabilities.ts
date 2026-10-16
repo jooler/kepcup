@@ -89,6 +89,11 @@ export interface HostCapabilityDescriptor {
   tools: readonly string[];
   /** 按前缀归入本包的工具（`browser_*`）。 */
   toolPrefixes: readonly string[];
+  /**
+   * 与别的包共有的精确名（D91：`capability_search` / `capability_call` 为 `mcp` 与 `apps` 共有）：
+   * 任一共有它的包被选中即注入。`capabilityOfTool` 以登记表里第一个包为准（类别 / 描述前缀用）。
+   */
+  sharedTools: readonly string[];
   /** 仅管家（D70）额外拿到、且对管家必选的专属工具。 */
   butlerTools: readonly string[];
   default: HostCapabilityDefault;
@@ -108,6 +113,7 @@ function pack(
   return {
     tools: [],
     toolPrefixes: [],
+    sharedTools: [],
     butlerTools: [],
     overlapsNative: null,
     prerequisite: null,
@@ -116,6 +122,17 @@ function pack(
     i18nKey: `agents.capabilities.${input.id}`,
   };
 }
+
+/**
+ * 能力目录的按需发现两件套（D91，design 40 §3 / §7）：对话轮与任务里取用外部能力（连接应用 /
+ * 自定义 MCP）的稳定入口，归 `mcp` 与 `apps` 两包共有。
+ */
+export const CAPABILITY_SEARCH_TOOL = 'capability_search';
+export const CAPABILITY_CALL_TOOL = 'capability_call';
+export const CAPABILITY_DISCOVERY_TOOLS: readonly string[] = [
+  CAPABILITY_SEARCH_TOOL,
+  CAPABILITY_CALL_TOOL,
+];
 
 export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
   pack({
@@ -241,11 +258,23 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
   }),
   // 工具集合 = 该 Bot 勾选的用户 MCP server（D65 `mcp_server_ids`），动态；
   // 包装后的工具名为 `mcp_{serverId}_{tool}`（core `mcpToolName`）。
-  pack({ id: 'mcp', category: 'supplement', default: 'follow_bot', toolPrefixes: ['mcp_'] }),
+  pack({
+    id: 'mcp',
+    category: 'supplement',
+    default: 'follow_bot',
+    toolPrefixes: ['mcp_'],
+    sharedTools: CAPABILITY_DISCOVERY_TOOLS,
+  }),
   // 连接应用（D73，design 29 §10）：工具集合 = 该 Bot 勾选的目录连接（`app_connection_ids`），
   // 动态；工具名 `app_{slug}_{tool}`，宿主自有的 `app_request_connection` 同前缀。
   // 工具在宿主执行（令牌留在宿主、审批 / 风险策略与内置引擎同一网关）。
-  pack({ id: 'apps', category: 'supplement', default: 'follow_bot', toolPrefixes: ['app_'] }),
+  pack({
+    id: 'apps',
+    category: 'supplement',
+    default: 'follow_bot',
+    toolPrefixes: ['app_'],
+    sharedTools: CAPABILITY_DISCOVERY_TOOLS,
+  }),
   // 邮件通道（D84）：IMAP/SMTP，不是 MCP。工具只作用于该 Bot 已绑定的邮箱。
   pack({
     id: 'mail',
@@ -319,7 +348,9 @@ export function capabilityOfTool(toolName: string): HostCapabilityDescriptor | n
   return (
     HOST_CAPABILITIES.find(
       (capability) =>
-        capability.tools.includes(toolName) || capability.butlerTools.includes(toolName),
+        capability.tools.includes(toolName) ||
+        capability.butlerTools.includes(toolName) ||
+        capability.sharedTools.includes(toolName),
     ) ??
     HOST_CAPABILITIES.find((capability) =>
       capability.toolPrefixes.some((prefix) => toolName.startsWith(prefix)),
@@ -384,7 +415,14 @@ export function isHostToolInjected(
   optIns: readonly string[],
 ): boolean {
   const capability = capabilityOfTool(toolName);
-  if (capability === null || !capabilities.includes(capability.id)) return false;
+  if (capability === null) return false;
+  // D91：共有工具（capability_search / capability_call）任一所属包选中即注入。
+  const selected = HOST_CAPABILITIES.some(
+    (entry) =>
+      capabilities.includes(entry.id) &&
+      (entry.id === capability.id || entry.sharedTools.includes(toolName)),
+  );
+  if (!selected) return false;
   const optIn = optInOfTool(toolName);
   return optIn === null || optIns.includes(optIn.id);
 }

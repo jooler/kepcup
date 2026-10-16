@@ -178,13 +178,26 @@ export const AVAILABLE_APPS_MAX = 30;
 /** `<available_apps>` 里为本机连接保留的位置（其余由预置 / 目录条目补满 {@link AVAILABLE_APPS_MAX}）。 */
 export const AVAILABLE_LOCAL_MAX = 10;
 /**
- * 应用工具「按需发现」阈值（D73 P2 §6.3，design 29 §7）：Bot 全部目录连接可暴露的应用工具
- * 总数超过它时，不再把这些工具逐个放进工具列表，只注入 `<connected_apps>` 摘要 + 两个稳定
- * 工具 `app_search_tools` / `app_call_tool`（run 内工具列表不变）。
+ * 外部工具内联阈值（D91，由 D73 P2 §6.3 的 `APP_TOOLS_INLINE_MAX` 改名）：任务面上被挂载的
+ * 应用工具总数超过它时，这些工具不再逐个放进工具列表，改走两件套 `capability_search` /
+ * `capability_call`（run 内工具列表不变）。
  */
-export const APP_TOOLS_INLINE_MAX = 40;
-/** `app_search_tools` 一次最多返回的工具数。 */
-export const APP_SEARCH_RESULTS_MAX = 20;
+export const EXTERNAL_TOOLS_INLINE_MAX = 40;
+/** `capability_search` 一次最多返回的工具数（D91，由 `APP_SEARCH_RESULTS_MAX` 改名）。 */
+export const CAPABILITY_SEARCH_RESULTS_MAX = 20;
+/**
+ * `capability_search` 懒解析能力工具列表时单次调用最多等多久（D91）。超时的能力在结果里列为
+ * 「暂时不可达」，连接在后台继续，下一次搜索命中缓存。
+ */
+export const CAPABILITY_RESOLVE_TIMEOUT_MS = 10_000;
+/**
+ * 某个能力列工具失败（连不上 / 超时）后，同一 run 内多久不再为它重连（D91 评审 p1）：冷却期内
+ * `capability_search` 直接报「暂时不可达」。`McpService` 对对话轮（countFailure:false）的失败既不计预算
+ * 也不退避，永久不可达的服务器会让每次 search 都重连、白等一轮连接超时。
+ */
+export const CAPABILITY_UNREACHABLE_COOLDOWN_MS = 30_000;
+/** `start_task.capabilities` 去重后的数量上限（D91）。 */
+export const TASK_CAPABILITIES_MAX = 8;
 /**
  * 权限追加（step-up）计数窗口（D73 P2 §6.1，design 29 §5.4）：（对话, 连接）在该窗口内至多
  * 出一张 step-up 卡，超出时工具结果为普通失败文本。
@@ -195,15 +208,11 @@ export const MCP_RECONNECT_MAX = 3;
 /** Tools list cache TTL for HTTP servers that announce tool-list-change poorly. */
 export const MCP_TOOL_LIST_CACHE_MS = 5 * 60_000;
 /**
- * W5：对话轮 / 只读子代理工具面最多放多少个只读 MCP 工具（按 server 顺序取前
- * N 个；其余在任务中可用，系统提示里说明）。每轮请求都带这些 schema。
+ * W5 / D91：只读子代理工具面最多内联多少个只读 MCP 工具（按 server 顺序取前 N 个；其余经
+ * 子代理的 `capability_search` / `capability_call` 取用）。每次请求都带这些 schema。
+ * 对话轮不再内联外部工具（D91），所以只有任务内的子代理用到它。
  */
-export const TURN_MCP_READ_TOOLS_MAX = 20;
-/**
- * W5：对话轮等待 MCP 工具列表（懒连接 + tools/list）的上限。对话轮是秒级的：
- * 超时则本轮不带 MCP 工具，连接在后台继续，下一轮命中缓存。
- */
-export const TURN_MCP_RESOLVE_TIMEOUT_MS = 3_000;
+export const SUBAGENT_MCP_READ_TOOLS_MAX = 20;
 
 // --- In-loop interim messages (loop 中间过程投送, todo/loop-interim-updates.md) ---
 

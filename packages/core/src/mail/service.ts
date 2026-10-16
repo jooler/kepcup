@@ -183,6 +183,18 @@ export class MailService {
     const endpoint = resolveEndpoint(input);
     // 先验 Bot：无效就别测连、别落库（否则 RPC 报错了账号却已经在库里，重试还会重复创建）。
     if (input.botIds !== undefined) this.#assertBots(input.botIds);
+    // D91 后续：Bot 可以继续添加更多邮箱（追加绑定）；同一地址已绑给该 Bot 就别再建一个重复账号
+    // （两个账号监听同一个信箱会让新信提醒重复，也让 account_id 按地址解析有歧义）。
+    for (const botId of input.botIds ?? []) {
+      const same = this.accountsForBot(botId).find(
+        (account) => account.address.toLowerCase() === endpoint.address.toLowerCase(),
+      );
+      if (same !== undefined) {
+        throw new AppError('INVALID_INPUT', `这个 Bot 已绑定邮箱 ${same.address}，不用重复添加`, {
+          accountId: same.id,
+        });
+      }
+    }
     await this.test(input);
     // 测连期间 Bot 可能被删：落库前再核一次，之后到启动之间没有 await。
     if (input.botIds !== undefined) this.#assertBots(input.botIds);

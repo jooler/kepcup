@@ -1,5 +1,4 @@
 import {
-  APP_TOOLS_INLINE_MAX,
   AVAILABLE_APPS_MAX,
   AVAILABLE_LOCAL_MAX,
   connectorMetaOf,
@@ -21,7 +20,7 @@ import type { ToolLockService } from './tool-lock.js';
 /**
  * 连接应用的工具暴露门面（D73 P1 §5.7，design 29 §6 / §7）：把「Bot 勾选的目录连接」解析为
  * 运行时要用的东西——合成的 MCP server（`id = connectionId`）、每个连接的绑定（slug / 账号 /
- * 风险与审批决定）、提示词里的 `<connected_apps>` / `<available_apps>` 数据。
+ * 风险与审批决定）、提示词里的 `<capabilities>`（D91）/ `<available_apps>` 数据。
  *
  * 只做读取与纯计算，不连接任何 server、不改任何状态。工具定义锁定（`approved_hash ===
  * current_hash`、未被停用）的过滤仍由 `ToolLockService` 经 `mcp.toolFilter` 在
@@ -40,15 +39,6 @@ const EXPOSABLE_STATUSES: ReadonlySet<AppConnectionStatus> = new Set([
 
 export function isExposableStatus(status: AppConnectionStatus): boolean {
   return EXPOSABLE_STATUSES.has(status);
-}
-
-/**
- * 按需发现（D73 P2 §6.3，design 29 §7）：Bot 全部目录连接可暴露的应用工具总数 `count`（锁定 /
- * 停用过滤之后）超过 {@link APP_TOOLS_INLINE_MAX} 时，应用工具不再逐个进工具列表，只注入
- * `<connected_apps>` 摘要 + `app_search_tools` / `app_call_tool`。run 开头决定一次，run 内不变。
- */
-export function appToolsDeferred(count: number): boolean {
-  return count > APP_TOOLS_INLINE_MAX;
 }
 
 /** 一个已授权连接的解析视图（连接行 + 目录条目）。 */
@@ -88,7 +78,7 @@ export interface AppServerBinding extends AppToolContext {
 export interface BotAppsExposure {
   /** 参与工具解析的合成 server（可用状态的连接）。 */
   servers: McpServer[];
-  /** 本 Bot 勾选且可解析的全部连接（含不可用状态的），供 `<connected_apps>` 状态行。 */
+  /** 本 Bot 勾选且可解析的全部连接（含不可用状态的），供 `<capabilities>` 状态行与连接请求。 */
   views: ConnectedAppView[];
 }
 
@@ -148,6 +138,14 @@ export class ConnectedApps {
       description: entry.description,
       tier: connectorMetaOf(entry).tier,
     };
+  }
+
+  /**
+   * 连接行此刻的状态（目录连接与 `custom:{serverId}` 自定义连接都可查）；没有连接行 = null。
+   * 纯读取，供能力目录（D91）给自定义 OAuth MCP 定状态。
+   */
+  connectionStatus(connectionId: string): AppConnectionStatus | null {
+    return this.#deps.store.get(connectionId)?.status ?? null;
   }
 
   /** 是否是（可解析的）目录连接 id。 */

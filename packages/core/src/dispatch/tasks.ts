@@ -7,6 +7,7 @@ import {
   type AskUserValues,
   BROWSER_HANDBACK_COALESCE_MS,
   CONTINUATION_REPLAY_TOKEN_BUDGET,
+  TASK_CAPABILITIES_MAX,
   TASK_CONCURRENCY_GLOBAL,
   TASK_CONCURRENCY_PER_CONVERSATION,
   TASK_FAILURE_DIGEST_TOKEN_BUDGET,
@@ -28,6 +29,7 @@ import {
   type TaskView,
   type ToolEffect,
 } from '@kepcup/shared';
+import { capabilityIdOfSetup } from '../capabilities/catalog.js';
 import { buildRunDigest, type DigestEffect } from '../agent/context/continuation.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 import { neutralizeUntrusted } from '../infra/data-boundary.js';
@@ -274,6 +276,12 @@ export interface TaskHostDeps {
    * fails before its engine starts still shows the right engine.
    */
   taskEngine?(botId: string): string | null;
+  /**
+   * D91 (design 40 §4.1): the bot's current capability catalog, reduced to what `start_task`
+   * validation needs (id + whether it is `ready`). Narrow on purpose — the host never depends on
+   * the orchestrator. Absent = no catalog: a task declaring capabilities is refused.
+   */
+  capabilitiesOf?(botId: string): Array<{ id: string; ready: boolean }>;
   /**
    * D75 W3 (design 30 §4.3): pushes a task's card / status-line view
    * (`task.updated`). Absent = no UI (unit tests).
@@ -669,6 +677,26 @@ export class TaskHost implements TaskToolFacade {
         );
       }
     }
+    // D91: declared capabilities must exist in the bot's current catalog (a non-ready one is
+    // accepted but not mounted — the tool result says so); a continuation inherits the continued
+    // task's capabilities (design 40 §4.1).
+    const declared = input.capabilities ?? [];
+    const catalog = this.#deps.capabilitiesOf?.(botId) ?? [];
+    const unknown = declared.filter((id) => !catalog.some((entry) => entry.id === id));
+    if (unknown.length > 0) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `capabilities 里有不存在的能力 id：${unknown.join('、')}。可用的 id：${
+          catalog.length > 0
+            ? catalog.map((entry) => entry.id).join('、')
+            : '（该 Bot 没有接入外部能力）'
+        }`,
+      );
+    }
+    const capabilities = [...new Set([...(continues?.taskCapabilities ?? []), ...declared])];
+    const notReady = declared.filter((id) =>
+      catalog.some((entry) => entry.id === id && !entry.ready),
+    );
     const workdir = this.#deps.resolveWorkdir(botId, conversationId, input.workdir);
     // Persist first (§3.1): a crash after this line leaves a submitted row that
     // is re-queued on restart; a crash before it means no task at all.
@@ -681,6 +709,7 @@ export class TaskHost implements TaskToolFacade {
       taskTitle: title,
       taskWrites: input.writes,
       taskWorkdir: workdir,
+      ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: identity.runId,
       ...this.#engineFields(botId),
       ...(continues !== null ? { continuedFromRunIds: [continues.id] } : {}),
@@ -696,6 +725,7 @@ export class TaskHost implements TaskToolFacade {
       title,
       writes: input.writes,
       ...(continues !== null ? { continuesTaskId: continues.id } : {}),
+      ...(capabilities.length > 0 ? { capabilities } : {}),
     });
     this.#appendCard(task);
     this.#pump();
@@ -705,9 +735,19 @@ export class TaskHost implements TaskToolFacade {
     // terminal state (its entry tells the rest).
     const current = this.#deps.runs.get(task.id) ?? task;
     if (current.status === 'queued') {
-      return { taskId: task.id, state: 'submitted', queueReason: this.#queueReason(current) };
+      return {
+        taskId: task.id,
+        state: 'submitted',
+        queueReason: this.#queueReason(current),
+        ...(notReady.length > 0 ? { notReadyCapabilities: notReady } : {}),
+      };
     }
-    return { taskId: task.id, state: taskState(current.status), queueReason: null };
+    return {
+      taskId: task.id,
+      state: taskState(current.status),
+      queueReason: null,
+      ...(notReady.length > 0 ? { notReadyCapabilities: notReady } : {}),
+    };
   }
 
   /**
@@ -780,7 +820,8 @@ export class TaskHost implements TaskToolFacade {
       sourceMessageIds: sources.map((message) => message.id),
       delivery,
     });
-    const fallback = options.onNotDelivered !== undefined ? { onNotDelivered: options.onNotDelivered } : {};
+    const fallback =
+      options.onNotDelivered !== undefined ? { onNotDelivered: options.onNotDelivered } : {};
     // Steered at attach; a failure there downgrades the entry to queued.
     if (buffer && launched !== undefined) {
       launched.buffered.push({ text: steerText(), entryId: entry.id, ...fallback });
@@ -945,7 +986,9 @@ export class TaskHost implements TaskToolFacade {
       text: question,
       options,
       ...(input.mode !== undefined && input.mode !== 'single' ? { questionMode: input.mode } : {}),
-      ...(input.mode === 'form' && input.fields !== undefined ? { questionFields: input.fields } : {}),
+      ...(input.mode === 'form' && input.fields !== undefined
+        ? { questionFields: input.fields }
+        : {}),
       taskId: task.id,
       ...(task.botId !== null ? { taskBotId: task.botId } : {}),
       runId: task.id,
@@ -1196,6 +1239,7 @@ export class TaskHost implements TaskToolFacade {
       setup: task.setup ?? null,
       continuesTaskId,
       continuedByTaskId: continuedBy,
+      ...(task.taskCapabilities !== null ? { capabilities: task.taskCapabilities } : {}),
       errorReason: task.errorReason ?? null,
       reviewRequired: this.#needsReview(task),
     };
@@ -1417,6 +1461,7 @@ export class TaskHost implements TaskToolFacade {
     });
     const title = task.taskTitle ?? brief.title ?? '';
     const writes = task.taskWrites === true;
+    const capabilities = this.#retryCapabilities(task);
     const retried = this.#deps.runs.create({
       botId,
       conversationId,
@@ -1426,6 +1471,9 @@ export class TaskHost implements TaskToolFacade {
       taskTitle: title,
       taskWrites: writes,
       taskWorkdir: task.taskWorkdir,
+      // D91: a retry keeps the capabilities the failed task declared (plus the app it just got
+      // connected, see #retryCapabilities).
+      ...(capabilities.length > 0 ? { taskCapabilities: capabilities } : {}),
       originRunId: task.originRunId,
       ...this.#engineFields(botId),
       continuedFromRunIds: [task.id],
@@ -1441,6 +1489,7 @@ export class TaskHost implements TaskToolFacade {
       title,
       writes,
       continuesTaskId: task.id,
+      ...(capabilities.length > 0 ? { capabilities } : {}),
     });
     // Later instructions the failed task got (folded into the new brief).
     for (const inject of events) {
@@ -1459,6 +1508,27 @@ export class TaskHost implements TaskToolFacade {
     this.publishUpdate(retried.id);
     this.publishUpdate(task.id);
     return this.#deps.runs.get(retried.id) ?? retried;
+  }
+
+  /**
+   * D91 后续：重试沿用失败任务的能力声明；若它是因 `connect-app` 需求（`app_request_connection`，或
+   * 调用应用工具时授权失效）而失败，用户在对话里连好后重试，把那个应用 / 自定义 MCP 的能力 id 并入声明
+   * （否则新应用不在声明里，续跑的任务只能经 `capability_search` / `capability_call` 访问它）。宿主挂载时
+   * 仍取「声明 ∩ 当前目录 ready」，所以并入一个尚未就绪的 id 是安全的。已声明则不重复；并入后超过
+   * `TASK_CAPABILITIES_MAX` 则不并入（warn）。
+   */
+  #retryCapabilities(task: Run): string[] {
+    const declared = task.taskCapabilities ?? [];
+    const connected = capabilityIdOfSetup(task.setup);
+    if (connected === null || declared.includes(connected)) return [...declared];
+    if (declared.length + 1 > TASK_CAPABILITIES_MAX) {
+      this.#deps.logger.warn(
+        { taskId: task.id, capability: connected, max: TASK_CAPABILITIES_MAX },
+        'retry would exceed the task capability cap: the newly connected capability was not declared',
+      );
+      return [...declared];
+    }
+    return [...declared, connected];
   }
 
   // --- recovery, reconciliation, reaper (§3.2, §7.4) --------------------------
@@ -1524,7 +1594,10 @@ export class TaskHost implements TaskToolFacade {
    * the row stays as it is and the outcome waits in #unsettled for `sweep`
    * (never re-launched meanwhile). Null = left pending.
    */
-  #recoverySettle(task: Run, outcome: { status: 'cancelled' | 'interrupted'; error: string }): Run | null {
+  #recoverySettle(
+    task: Run,
+    outcome: { status: 'cancelled' | 'interrupted'; error: string },
+  ): Run | null {
     if (task.botId !== null && task.conversationId !== null) {
       const written = this.#safeAppend({
         conversationId: task.conversationId,
@@ -1730,7 +1803,9 @@ export class TaskHost implements TaskToolFacade {
     const statuses: RunStatus[] = ['running', 'waiting_approval', 'waiting_lease'];
     // W8: a browser profile switch only concerns the tasks that used the browser.
     const browserScope = event.scope === 'browser_profile';
-    const reason: TaskInterruptReason = browserScope ? 'browser_profile_changed' : 'permission_revoked';
+    const reason: TaskInterruptReason = browserScope
+      ? 'browser_profile_changed'
+      : 'permission_revoked';
     let count = 0;
     this.#pumpHeld += 1;
     try {
@@ -2356,7 +2431,9 @@ export class TaskHost implements TaskToolFacade {
     const conversationId = run.conversationId;
     const title = run.taskTitle ?? run.id;
     const what =
-      run.status === 'completed' ? '已经完成，但它的结果' : `${run.status === 'interrupted' ? '中断' : '失败'}了，这个情况`;
+      run.status === 'completed'
+        ? '已经完成，但它的结果'
+        : `${run.status === 'interrupted' ? '中断' : '失败'}了，这个情况`;
     this.#safely(() => {
       const notice = this.#deps.messages.append({
         conversationId,
@@ -2523,6 +2600,7 @@ export class TaskHost implements TaskToolFacade {
       injectable: !terminal,
       lastProgress,
       error: task.error,
+      ...(task.taskCapabilities !== null ? { capabilities: task.taskCapabilities } : {}),
     };
   }
 }

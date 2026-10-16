@@ -133,8 +133,9 @@ describe('createCore (integration)', () => {
     // + 0008 turn trigger parts / retry origin (D75 审查 L3 / L6)
     // + 0009 外部副作用台账 tool_effects（borrowings W2）
     // + 0010 tool_effects.approval_id 部分索引（borrowings W4 复查）
-    // + 0011 task last_progress（单一状态通知）。
-    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(11);
+    // + 0011 task last_progress（单一状态通知）
+    // + 0012 task_capabilities（D91 任务声明能力）。
+    expect(services.runsDb!.pragma('user_version', { simple: true })).toBe(12);
     const runsTables = services
       .runsDb!.prepare("select name from sqlite_master where type='table'")
       .all() as Array<{ name: string }>;

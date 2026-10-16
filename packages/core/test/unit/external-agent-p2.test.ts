@@ -165,6 +165,31 @@ describe('capability packs (buildExternalAgentTools)', () => {
     expect(names).toContain('propose_team');
   });
 
+  it('D91: the capability pair is injected when either mcp or apps is selected, without the supplement prefix', () => {
+    const responseTools = stubTools(['send_message', 'capability_search', 'capability_call']);
+    for (const pack of ['mcp', 'apps'] as const) {
+      const tools = buildExternalAgentTools({ responseTools, capabilities: ['core', pack] });
+      expect(tools.map((tool) => tool.name)).toEqual([
+        'send_message',
+        'capability_search',
+        'capability_call',
+      ]);
+      expect(tools.find((tool) => tool.name === 'capability_search')!.description).toBe(
+        'capability_search 原描述',
+      );
+    }
+    expect(
+      buildExternalAgentTools({ responseTools, capabilities: ['core', 'memory'] }).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(['send_message']);
+    expect(toolAnnotations('capability_search')).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(toolAnnotations('capability_call').readOnlyHint).toBe(false);
+  });
+
   it('removing image_generation drops the tool and its prompt mentions; core stays', () => {
     const all = resolveCapabilities(null, FAKE).filter((id) => id !== 'image_generation');
     const capabilities = resolveCapabilities(
@@ -569,7 +594,9 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
           .text('好'),
       ],
     });
-    expect((await engine.startRun(spec({ permission: 'workspace' })).done).status).toBe('completed');
+    expect((await engine.startRun(spec({ permission: 'workspace' })).done).status).toBe(
+      'completed',
+    );
     expect(modes()).toEqual(['workspace-write']);
     expect(started[0]!.observed.configSets).toEqual([
       { sessionId: 'fake-session-1', configId: 'mode', value: 'workspace-write' },

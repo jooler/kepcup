@@ -103,6 +103,7 @@ describe('mcp response loop', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_srv1_echo', { text: '审批测试' }),
@@ -125,7 +126,10 @@ describe('mcp response loop', () => {
     );
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
 
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const run = await waitForRun(core, conv.id, 'completed', {
+      timeoutMs: 30_000,
+      loopType: 'task',
+    });
     // The turn was not offered the MCP tool; the (read-only) task was.
     const [turnRequest] = llm.requestsFor('mock-main').filter((r) => !isTaskRequest(r));
     expect(JSON.stringify(turnRequest!.body.tools ?? [])).not.toContain('mcp_srv1_echo');
@@ -162,6 +166,7 @@ describe('mcp response loop', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_srv1_echo', { text: '再试' }),
@@ -215,6 +220,7 @@ describe('mcp response loop', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_srv1_echo', args),
@@ -228,7 +234,12 @@ describe('mcp response loop', () => {
     const approval = await waitFor(
       async () => {
         const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-          approvals: Array<{ id: string; kind: string; status: string; payload: Record<string, unknown> }>;
+          approvals: Array<{
+            id: string;
+            kind: string;
+            status: string;
+            payload: Record<string, unknown>;
+          }>;
         };
         return list.approvals.find((a) => a.kind === 'mcp_tool' && a.status === 'pending') ?? null;
       },
@@ -238,7 +249,10 @@ describe('mcp response loop', () => {
     expect(approval.payload['recipients']).toEqual([{ key: 'to', value: to }]);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
 
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const run = await waitForRun(core, conv.id, 'completed', {
+      timeoutMs: 30_000,
+      loopType: 'task',
+    });
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
@@ -294,6 +308,7 @@ describe('mcp response loop', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_srv1_echo', { text: '免审批' }),
@@ -303,7 +318,10 @@ describe('mcp response loop', () => {
       }),
     );
     await sendBatch(core, conv.id, ['直接调用']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const run = await waitForRun(core, conv.id, 'completed', {
+      timeoutMs: 30_000,
+      loopType: 'task',
+    });
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
@@ -352,7 +370,9 @@ rl.on('line', (line) => {
 });
 `;
 
-async function makeAnnotatedConfig(toolPolicies?: Record<string, { approval?: 'auto' | 'ask'; enabled?: boolean }>) {
+async function makeAnnotatedConfig(
+  toolPolicies?: Record<string, { approval?: 'auto' | 'ask'; enabled?: boolean }>,
+) {
   const dir = await mkdtemp(path.join(tmpdir(), 'mcp-loop-ann-'));
   tempDirs.push(dir);
   const scriptPath = path.join(dir, 'server.cjs');
@@ -370,13 +390,15 @@ async function makeAnnotatedConfig(toolPolicies?: Record<string, { approval?: 'a
   };
 }
 
-async function annotatedStack(toolPolicies?: Record<string, { approval?: 'auto' | 'ask'; enabled?: boolean }>) {
+async function annotatedStack(
+  toolPolicies?: Record<string, { approval?: 'auto' | 'ask'; enabled?: boolean }>,
+) {
   const server = await makeAnnotatedConfig(toolPolicies);
   const stack = await createTestStack();
   stacks.push({ cleanup: stack.cleanup });
   await stack.core.rpc.call('settings.update', { mcpServers: [server] });
-  // Pre-warm the stdio connection so the turn-side resolution (bounded by
-  // TURN_MCP_RESOLVE_TIMEOUT_MS) never depends on a slow CI spawn.
+  // Pre-warm the stdio connection so the lazy resolution in capability_search (bounded by
+  // CAPABILITY_RESOLVE_TIMEOUT_MS) never depends on a slow CI spawn.
   const mcp = stack.core.services.mcp!;
   await mcp.listTools(mcp.listServers()[0]!);
   const bot = await makeBot(stack.core, '小笔');
@@ -388,34 +410,75 @@ async function annotatedStack(toolPolicies?: Record<string, { approval?: 'auto' 
   return { ...stack, server, bot, conv };
 }
 
-function systemText(req: { body: { messages?: Array<{ role: string; content?: unknown }> } }): string {
-  return JSON.stringify((req.body.messages ?? []).filter((m) => m.role === 'system' || m.role === 'developer'));
+function systemText(req: {
+  body: { messages?: Array<{ role: string; content?: unknown }> };
+}): string {
+  return JSON.stringify(
+    (req.body.messages ?? []).filter((m) => m.role === 'system' || m.role === 'developer'),
+  );
 }
 
-describe('read-only MCP tools on the turn (W5)', () => {
-  it('a turn calls a read-only MCP tool directly — no task, no approval, untrusted result', async () => {
-    const { core, llm, conv } = await annotatedStack();
+describe('read-only MCP tools on the turn (W5, D91: via the capability pair)', () => {
+  /** The calls made to the McpService's `listTools` from now on. */
+  function spyListTools(stack: { core: { services: { mcp?: unknown } } }): { count: number } {
+    const mcp = stack.core.services.mcp as { listTools: (...args: unknown[]) => Promise<unknown> };
+    const spy = { count: 0 };
+    const original = mcp.listTools.bind(mcp);
+    mcp.listTools = (...args: unknown[]) => {
+      spy.count += 1;
+      return original(...args);
+    };
+    return spy;
+  }
+
+  it('a turn lists no mcp_* tool and resolves nothing at run start; capability_search → capability_call reads a tool — no task, no approval, untrusted result', async () => {
+    const stack = await annotatedStack();
+    const { core, llm, conv } = stack;
+    const listCalls = spyListTools(stack);
+    const held = step().hold().replyToolCall('capability_search', { query: 'notes' });
     llm.script('mock-main', [
-      step().replyToolCall('mcp_srv1_list_notes', {}),
+      held,
+      step().replyToolCall('capability_call', { name: 'mcp_srv1_list_notes', arguments: {} }),
       step().replyText('你有这些笔记'),
     ]);
     await sendBatch(core, conv.id, ['我有哪些笔记？']);
+    await waitFor(() => (llm.requestsFor('mock-main').length > 0 ? true : null), {
+      label: 'turn request held',
+      timeoutMs: 20_000,
+    });
+    // D91: run start resolved nothing (zero listTools) — the first model request is already out.
+    expect(listCalls.count).toBe(0);
+    held.release();
     const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
     expect(run.loopType).toBe('turn');
+    // The lazy resolution happened on the search, once.
+    expect(listCalls.count).toBeGreaterThan(0);
 
     const [turnRequest] = llm.requestsFor('mock-main');
     const tools = JSON.stringify(turnRequest!.body.tools ?? []);
-    expect(tools).toContain('mcp_srv1_list_notes');
-    // The write tool stays a task's; the prompt says so.
-    expect(tools).not.toContain('mcp_srv1_create_note');
-    expect(systemText(turnRequest!)).toContain('<mcp_tools>');
-    expect(systemText(turnRequest!)).toContain('start_task');
+    expect(tools).toContain('capability_search');
+    expect(tools).toContain('capability_call');
+    expect(tools).not.toContain('mcp_srv1_');
+    const system = systemText(turnRequest!);
+    expect(system).toContain('<capabilities>');
+    expect(system).toContain('mcp:srv1');
+    expect(system).toContain('start_task');
+    expect(system).not.toContain('<mcp_tools>');
 
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
+    const search = steps.steps.find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_search',
+    );
+    expect(search?.payload['ok']).toBe(true);
+    const searchText = String(search!.payload['content']);
+    expect(searchText).toContain('mcp_srv1_list_notes');
+    // The write tool is a task's: not indexed, and the note says so.
+    expect(searchText).not.toContain('mcp_srv1_create_note');
+    expect(searchText).toContain('另有 1 个写入 / 需用户批准的工具只在任务中可用');
     const result = steps.steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_list_notes',
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_call',
     );
     expect(result?.payload['ok']).toBe(true);
     expect(String(result!.payload['content']).startsWith('<untrusted>')).toBe(true);
@@ -425,31 +488,74 @@ describe('read-only MCP tools on the turn (W5)', () => {
       approvals: Array<{ kind: string }>;
     };
     expect(approvals.approvals).toHaveLength(0);
+    // The ledger grades the dispatcher by the tool it called: a read leaves no row.
+    expect(core.services.domain!.effects.listForRun(run.id)).toEqual([]);
     const audit = core.services.domain!.audit.listByConversation(conv.id, 50);
     const call = audit.find((a) => a.action === 'mcp_tool_call');
     expect(call?.detail).toMatchObject({ toolName: 'list_notes', risk: 'read', approval: 'auto' });
   }, 60_000);
 
-  it('a read tool switched to ask is not on the turn surface', async () => {
-    const { core, llm, conv } = await annotatedStack({ list_notes: { approval: 'ask' } });
-    llm.script('mock-main', [step().replyText('我去派个任务查')]);
-    await sendBatch(core, conv.id, ['我有哪些笔记？']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
-    const [turnRequest] = llm.requestsFor('mock-main');
-    expect(JSON.stringify(turnRequest!.body.tools ?? [])).not.toContain('mcp_srv1_');
-    expect(systemText(turnRequest!)).toContain('另有 2 个 MCP 工具只在任务中可用');
+  it('a write tool named through capability_call is refused: it is not in the index', async () => {
+    const { core, llm, conv } = await annotatedStack();
+    llm.script('mock-main', [
+      step().replyToolCall('capability_search', { query: '' }),
+      step().replyToolCall('capability_call', { name: 'mcp_srv1_create_note', arguments: {} }),
+      step().replyText('写入要派任务'),
+    ]);
+    await sendBatch(core, conv.id, ['新建一条笔记']);
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const result = steps.steps.find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_call',
+    );
+    expect(result?.payload['ok']).toBe(false);
+    expect(result?.payload['errorCode']).toBe('MCP_TOOL_NOT_FOUND');
+    expect(
+      core.services
+        .domain!.audit.listByConversation(conv.id, 50)
+        .some((a) => a.action === 'mcp_tool_call'),
+    ).toBe(false);
   }, 60_000);
 
-  it('the turn re-checks at call time: a tool switched to ask mid-turn returns RUN_READ_ONLY', async () => {
-    const { core, llm, conv, server } = await annotatedStack();
-    const held = step().hold().replyToolCall('mcp_srv1_list_notes', {});
-    llm.script('mock-main', [held, step().replyText('那我派任务')]);
+  it('a read tool switched to ask is not in the turn index', async () => {
+    const { core, llm, conv } = await annotatedStack({ list_notes: { approval: 'ask' } });
+    llm.script('mock-main', [
+      step().replyToolCall('capability_search', { query: '' }),
+      step().replyText('我去派个任务查'),
+    ]);
     await sendBatch(core, conv.id, ['我有哪些笔记？']);
-    await waitFor(() => (llm.requestsFor('mock-main').length > 0 ? true : null), {
-      label: 'turn request held',
+    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const [turnRequest] = llm.requestsFor('mock-main');
+    expect(JSON.stringify(turnRequest!.body.tools ?? [])).not.toContain('mcp_srv1_');
+    const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const search = steps.steps.find(
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_search',
+    );
+    const text = String(search!.payload['content']);
+    expect(text).not.toContain('mcp_srv1_list_notes');
+    expect(text).toContain('另有 2 个写入 / 需用户批准的工具只在任务中可用');
+  }, 60_000);
+
+  it('the turn re-checks at call time: a tool switched to ask after the search returns RUN_READ_ONLY', async () => {
+    const { core, llm, conv, server } = await annotatedStack();
+    const held = step()
+      .hold()
+      .replyToolCall('capability_call', { name: 'mcp_srv1_list_notes', arguments: {} });
+    llm.script('mock-main', [
+      step().replyToolCall('capability_search', { query: 'notes' }),
+      held,
+      step().replyText('那我派任务'),
+    ]);
+    await sendBatch(core, conv.id, ['我有哪些笔记？']);
+    await waitFor(() => (llm.requestsFor('mock-main').length > 1 ? true : null), {
+      label: 'second turn request held',
       timeoutMs: 20_000,
     });
-    // The surface was built with list_notes; the user switches it to ask now.
+    // The index was built with list_notes; the user switches it to ask now.
     await core.rpc.call('settings.update', {
       mcpServers: [{ ...server, toolPolicies: { list_notes: { approval: 'ask' } } }],
     });
@@ -459,7 +565,7 @@ describe('read-only MCP tools on the turn (W5)', () => {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
     const result = steps.steps.find(
-      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_list_notes',
+      (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_call',
     );
     expect(result?.payload['ok']).toBe(false);
     expect(result?.payload['errorCode']).toBe('RUN_READ_ONLY');
@@ -476,22 +582,32 @@ describe('read-only MCP tools on the turn (W5)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [step().replyToolCall('mcp_srv1_create_note', {}), step().replyText('建好了')],
         relay: '好了',
       }),
     );
     await sendBatch(core, conv.id, ['新建一条笔记']);
-    const run = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000, loopType: 'task' });
+    const run = await waitForRun(core, conv.id, 'completed', {
+      timeoutMs: 30_000,
+      loopType: 'task',
+    });
     const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
       steps: Array<{ type: string; payload: Record<string, unknown> }>;
     };
     expect(
-      steps.steps.find((s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_create_note')
-        ?.payload['ok'],
+      steps.steps.find(
+        (s) => s.type === 'tool_result' && s.payload['toolName'] === 'mcp_srv1_create_note',
+      )?.payload['ok'],
     ).toBe(true);
     const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-      approvals: Array<{ kind: string; status: string; autoApproved: boolean; payload: Record<string, unknown> }>;
+      approvals: Array<{
+        kind: string;
+        status: string;
+        autoApproved: boolean;
+        payload: Record<string, unknown>;
+      }>;
     };
     const mcpApprovals = list.approvals.filter((a) => a.kind === 'mcp_tool');
     expect(mcpApprovals).toHaveLength(1);
@@ -506,7 +622,9 @@ describe('read-only MCP tools on the turn (W5)', () => {
       note: '无人值守自动批准（写入）',
     });
     expect(
-      audit.find((a) => a.action === 'approval_auto' && a.detail['kind'] === 'mcp_tool')?.detail['risk'],
+      audit.find((a) => a.action === 'approval_auto' && a.detail['kind'] === 'mcp_tool')?.detail[
+        'risk'
+      ],
     ).toBe('write');
   }, 60_000);
 
@@ -515,6 +633,7 @@ describe('read-only MCP tools on the turn (W5)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:srv1'],
         writes: false,
         taskSteps: [step().replyToolCall('mcp_srv1_create_note', {}), step().replyText('建好了')],
         relay: '好了',
@@ -524,7 +643,12 @@ describe('read-only MCP tools on the turn (W5)', () => {
     const approval = await waitFor(
       async () => {
         const list = (await core.rpc.call('approvals.list', { conversationId: conv.id })) as {
-          approvals: Array<{ id: string; kind: string; status: string; payload: Record<string, unknown> }>;
+          approvals: Array<{
+            id: string;
+            kind: string;
+            status: string;
+            payload: Record<string, unknown>;
+          }>;
         };
         return list.approvals.find((a) => a.kind === 'mcp_tool' && a.status === 'pending') ?? null;
       },

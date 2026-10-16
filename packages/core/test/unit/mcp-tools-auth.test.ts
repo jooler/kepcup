@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { McpServer, SetupRequirement } from '@kepcup/shared';
 
 import { AppAuthRequiredError } from '../../src/apps/auth/errors.js';
-import { connectedAppsSectionBody } from '../../src/apps/prompt.js';
+import { buildCapabilityCatalog, markUnavailable } from '../../src/capabilities/catalog.js';
+import { capabilitiesPromptBody } from '../../src/capabilities/prompt.js';
 import { buildSystemPrompt, buildAgentRunContext } from '../../src/agent/context/system-prompt.js';
 import { buildMcpTools, resolveMcpToolEntries } from '../../src/mcp/tools.js';
 import { buildAppTools, type AppToolFacade } from '../../src/tools/app-tools.js';
@@ -12,7 +13,12 @@ import { TOOL_SETUP_REQUIRED } from '../../src/tools/image-tools.js';
 /** D73 §4.8: authorization problems in tool listing / tool calls / prompts. */
 
 const logger = { warn() {} };
-const identity = { runId: 'run_1', botId: 'bot_1', conversationId: 'conv_1', loopType: 'task' as const };
+const identity = {
+  runId: 'run_1',
+  botId: 'bot_1',
+  conversationId: 'conv_1',
+  loopType: 'task' as const,
+};
 const ctx = { signal: new AbortController().signal, runId: 'run_1' } as never;
 
 function server(id: string, name = id, auth: McpServer['auth'] = 'oauth'): McpServer {
@@ -27,7 +33,11 @@ function server(id: string, name = id, auth: McpServer['auth'] = 'oauth'): McpSe
   };
 }
 
-const ECHO_TOOL = { name: 'echo', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } };
+const ECHO_TOOL = {
+  name: 'echo',
+  inputSchema: { type: 'object' },
+  annotations: { readOnlyHint: true },
+};
 
 function fakeMcp(handlers: {
   listTools?: (server: McpServer) => unknown[];
@@ -77,7 +87,11 @@ describe('resolveMcpToolEntries: authorization failures are collected, not just 
     const mcp = {
       listTools: async () => {
         throw new Error('listing failed', {
-          cause: new AppAuthRequiredError({ connectionId: 'custom:a', reason: 'scope', scopes: ['x', 'y'] }),
+          cause: new AppAuthRequiredError({
+            connectionId: 'custom:a',
+            reason: 'scope',
+            scopes: ['x', 'y'],
+          }),
         });
       },
     } as never;
@@ -91,7 +105,8 @@ describe('resolveMcpToolEntries: authorization failures are collected, not just 
       servers: [server('a'), server('b')],
       mcp: fakeMcp({
         listTools: (s) => {
-          if (s.id === 'a') throw new AppAuthRequiredError({ connectionId: 'custom:a', reason: 'not_connected' });
+          if (s.id === 'a')
+            throw new AppAuthRequiredError({ connectionId: 'custom:a', reason: 'not_connected' });
           return [ECHO_TOOL];
         },
       }),
@@ -144,7 +159,11 @@ describe('wrapMcpTool: AppAuthRequiredError → connect-app setup + SETUP_REQUIR
     const scoped = await toolWith(
       () => {
         throw new Error('call failed', {
-          cause: new AppAuthRequiredError({ connectionId: 'custom:a', reason: 'scope', scopes: ['write'] }),
+          cause: new AppAuthRequiredError({
+            connectionId: 'custom:a',
+            reason: 'scope',
+            scopes: ['write'],
+          }),
         });
       },
       (requirement) => hits.push(requirement),
@@ -171,26 +190,44 @@ describe('wrapMcpTool: AppAuthRequiredError → connect-app setup + SETUP_REQUIR
   });
 });
 
-describe('<connected_apps> prompt section', () => {
+describe('<capabilities> prompt section (D91)', () => {
   const unavailable = [
     { serverId: 'a', serverName: 'No\ntion', connectionId: 'custom:a', reason: 'expired' as const },
-    { serverId: 'b', serverName: 'Linear', connectionId: 'custom:b', reason: 'not_connected' as const },
+    {
+      serverId: 'b',
+      serverName: 'Linear',
+      connectionId: 'custom:b',
+      reason: 'not_connected' as const,
+    },
   ];
+  /** Two custom OAuth servers whose connections the run-time listing found unusable. */
+  function sectionBody(entries: ReturnType<typeof markUnavailable>): string {
+    return capabilitiesPromptBody({ entries, surface: 'task', hasDiscovery: false });
+  }
+  const catalog = buildCapabilityCatalog({
+    connectedApps: { forBot: () => ({ servers: [], views: [] }), connectionStatus: () => null },
+    mcp: { serversForBot: () => [server('a', 'No\ntion'), server('b', 'Linear')] },
+    appConnectionIds: [],
+    mcpServerIds: ['a', 'b'],
+  });
 
-  it('lists only apps needing reconnection with the app_request_connection rule; empty → empty', () => {
-    expect(connectedAppsSectionBody([])).toBe('');
-    const body = connectedAppsSectionBody(unavailable);
-    expect(body).toContain('No tion（connection_id: custom:a）：授权已失效');
-    expect(body).toContain('Linear（connection_id: custom:b）：尚未连接');
+  it('marks capabilities needing reconnection with the app_request_connection rule; empty → empty', () => {
+    expect(sectionBody([])).toBe('');
+    const body = sectionBody(markUnavailable(catalog.entries, unavailable));
+    expect(body).toContain('- mcp:a（No tion）：授权已失效，需重新连接（connection_id: custom:a）');
+    expect(body).toContain('- mcp:b（Linear）：尚未连接，需重新连接（connection_id: custom:b）');
     expect(body).toContain('app_request_connection');
     expect(body).toContain('不要让用户粘贴令牌');
   });
 
   it('buildAgentRunContext carries the section only when given', () => {
     const base = { timeZone: 'UTC', now: new Date(0), permission: 'ask' as never };
-    expect(buildAgentRunContext(base)).not.toContain('<connected_apps>');
-    const withApps = buildAgentRunContext({ ...base, connectedApps: connectedAppsSectionBody(unavailable) });
-    expect(withApps).toContain('<connected_apps>');
+    expect(buildAgentRunContext(base)).not.toContain('<capabilities>');
+    const withApps = buildAgentRunContext({
+      ...base,
+      capabilities: sectionBody(markUnavailable(catalog.entries, unavailable)),
+    });
+    expect(withApps).toContain('<capabilities>');
     expect(withApps).toContain('custom:a');
   });
 
@@ -203,12 +240,12 @@ describe('<connected_apps> prompt section', () => {
       skills: '- demo: skill',
     } as never;
     const empty = buildSystemPrompt(input);
-    expect(empty).not.toContain('<connected_apps>');
+    expect(empty).not.toContain('<capabilities>');
     const withApps = buildSystemPrompt({
       ...(input as object),
-      connectedApps: connectedAppsSectionBody(unavailable),
+      capabilities: sectionBody(markUnavailable(catalog.entries, unavailable)),
     } as never);
-    expect(withApps.indexOf('<connected_apps>')).toBeGreaterThan(withApps.indexOf('<skills>'));
+    expect(withApps.indexOf('<capabilities>')).toBeGreaterThan(withApps.indexOf('<skills>'));
     expect(withApps).toContain('app_request_connection');
   });
 });
@@ -219,7 +256,13 @@ function minimalProfile() {
     persona: { personality: '', tone: '', style: '', values: '', sample_dialogues: '' },
     role: { expertise: '', responsibilities: '' },
     boundaries: [],
-    runtime: { model: '', light_model: '', network_policy: 'open', network_allowlist: [], mcp_server_ids: [] },
+    runtime: {
+      model: '',
+      light_model: '',
+      network_policy: 'open',
+      network_allowlist: [],
+      mcp_server_ids: [],
+    },
     behavior: {},
   };
 }

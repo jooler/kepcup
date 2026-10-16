@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { McpServer } from '@kepcup/shared';
-import { editedServerForSave, mcpServerId } from './mcp-server-patch';
+import { mcpServerSchema, type McpServer } from '@kepcup/shared';
+import {
+  editedServerForSave,
+  isValidMcpServerId,
+  mcpServerId,
+  newMcpServerId,
+  withNormalizedDescription,
+} from './mcp-server-patch';
 
 function server(id: string, patch: Partial<McpServer> = {}): McpServer {
   return {
@@ -61,3 +67,56 @@ describe('MCP edit form save (D89 review: only edited fields, guarded fields sta
   });
 });
 
+
+describe('MCP 用途说明（D91 McpServer.description）', () => {
+  it('normalizes on save: trims, caps at 200, and drops an empty value', () => {
+    expect(withNormalizedDescription(server('s', { description: '  笔记检索  ' })).description).toBe(
+      '笔记检索',
+    );
+    expect('description' in withNormalizedDescription(server('s', { description: '   ' }))).toBe(false);
+    expect('description' in withNormalizedDescription(server('s'))).toBe(false);
+    expect(withNormalizedDescription(server('s', { description: 'x'.repeat(250) })).description).toHaveLength(
+      200,
+    );
+  });
+
+  it('an edit that only fills the description keeps the live guarded fields', () => {
+    const initial = server('s');
+    const live = server('s', { enabled: false });
+    const edited = { ...initial, description: '本地笔记检索' };
+    expect(editedServerForSave(live, initial, edited)).toEqual({
+      ...live,
+      description: '本地笔记检索',
+    });
+  });
+
+  it('clearing the description removes it from the saved entry', () => {
+    const initial = server('s', { description: '旧说明' });
+    const live = server('s', { description: '旧说明' });
+    const { description: _drop, ...cleared } = initial;
+    void _drop;
+    const saved = editedServerForSave(live, initial, cleared)!;
+    expect('description' in saved).toBe(false);
+  });
+});
+
+describe('MCP server id (D91 follow-up: schema-constrained charset)', () => {
+  it('the form never asks for an id: the generated one satisfies the shared rule and the schema', () => {
+    for (const now of [0, 1, Date.now(), 2 ** 52]) {
+      const id = newMcpServerId(now);
+      expect(id).toMatch(/^mcp_[0-9a-z]+$/);
+      expect(isValidMcpServerId(id)).toBe(true);
+      expect(mcpServerSchema.safeParse(server(id)).success).toBe(true);
+    }
+  });
+
+  it('the save-time guard accepts the shared charset and rejects what the schema rejects', () => {
+    for (const id of ['notes', 'fs-notes.v2', 'mcpb_0a1b2c3d4e5f', '9x']) {
+      expect(isValidMcpServerId(id), id).toBe(true);
+    }
+    for (const id of ['', ' a', 'a b', 'x</capabilities>', 'a:b', '_a', 'a'.repeat(65)]) {
+      expect(isValidMcpServerId(id), id).toBe(false);
+      expect(mcpServerSchema.safeParse({ ...server('ok'), id }).success).toBe(false);
+    }
+  });
+});

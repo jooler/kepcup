@@ -69,13 +69,13 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   request_environment: 'local',
   /** 连接应用（D73）：只记下本 run 的 setup 需求（run 中断、对话出连接卡），与 request_* 同类。 */
   app_request_connection: 'local',
-  /** 按需发现（D73 P2 §6.3）：只在本 run 的工具集里搜索，无副作用。 */
-  app_search_tools: 'none',
+  /** 能力按需发现（D91，由 D73 P2 §6.3 泛化）：只在本 run 的能力范围里搜索，无副作用。 */
+  capability_search: 'none',
   /**
    * 分发器：被调工具的风险只有调用时才知道（静态词表无从分级）→ 按外部副作用保守登记；
-   * 真实工具返回的回执 / 不确定结果照常进台账。
+   * 真实工具返回的回执 / 不确定结果照常进台账（经 `mcpOf` 按被调工具细分）。
    */
-  app_call_tool: 'external',
+  capability_call: 'external',
   /** 本机连接：手册只读；提案只记下确认卡需求，落库须用户确认，Bot 侧无外部副作用。 */
   app_local_connector_guide: 'none',
   app_propose_local_connector: 'local',

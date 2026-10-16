@@ -64,6 +64,7 @@ async function start(): Promise<Env> {
   llm.script(
     'mock-main',
     viaTask({
+      capabilities: ['mcp:app1'],
       writes: false,
       taskSteps: [step().replyToolCall('mcp_app1_show_dashboard', {}), step().replyText('ok')],
       relay: '好了',

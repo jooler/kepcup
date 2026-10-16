@@ -371,9 +371,24 @@ export const mcpServerSourceSchema = z.object({
 });
 export type McpServerSource = z.infer<typeof mcpServerSourceSchema>;
 
+/**
+ * MCP server id 的字符集（D91 后续）：字母 / 数字开头，其后字母、数字、`.` `_` `-`，共 1–64 个字符。
+ * id 会拼进工具名（`mcp_{id}_{tool}`）、能力 id（`mcp:{id}`）、系统提示的 `<capabilities>` 目录行、
+ * `custom:{id}` 连接 id 与 secrets 键，所以在参数校验层就拒绝带 `<` `>`、空白、引号等的值。
+ * 生成的 id（`mcp_{时间}` / `mcpb_{hex}` / 预置清单的 `[a-z0-9-]` id）都满足。
+ */
+export const MCP_SERVER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const MCP_SERVER_ID_MESSAGE =
+  'MCP 服务器 ID 只能包含字母、数字、点、下划线和连字符，以字母或数字开头，最长 64 个字符';
+
 const mcpServerObjectSchema = z.object({
-  id: z.string().min(1).max(64),
+  id: z.string().regex(MCP_SERVER_ID_PATTERN, MCP_SERVER_ID_MESSAGE),
   name: z.string().min(1).max(100),
+  /**
+   * 用途说明（D91，design 40 §2.3）：用户在扩展中心填的一句话，进系统提示的 `<capabilities>` 目录行
+   * （经 oneLine 清洗）。只进提示词，不参与任何权限判断；缺省时目录行写固定的缺省文案。
+   */
+  description: z.string().max(200).optional(),
   transport: mcpServerTransportSchema,
   /** stdio：可执行命令（如 npx / node / python）。 */
   command: z.string().max(2000).optional(),
@@ -1086,7 +1101,7 @@ export const TERMINAL_TASK_EVENT_PHASES: ReadonlySet<TaskEventPhase> = new Set([
  * task_event 内容（D75 §2.4.1）。`sourceMessageIds` 指向用户原消息（简报 /
  * 追加带原文兜底）；`status` / `error` 用于 failure；`delivery` 用于 inject；
  * `questionMessageId` 用于 question（对应的可见问题卡）；`title` / `writes` /
- * `continuesTaskId` 用于 brief。
+ * `continuesTaskId` / `capabilities`（D91）用于 brief。
  */
 export const taskEventContentSchema = z.object({
   taskId: z.string(),
@@ -1102,6 +1117,8 @@ export const taskEventContentSchema = z.object({
   title: z.string().optional(),
   writes: z.boolean().optional(),
   continuesTaskId: z.string().optional(),
+  /** brief 条目：D91 任务声明的外部能力 id（任务卡 / 简报可见；落库在 runs.task_capabilities）。 */
+  capabilities: z.array(z.string()).optional(),
   /**
    * Terminal entries (result / failure): how many times the host handed the
    * entry to the bot (D75 审查 M4, capped by TASK_REDELIVER_MAX_ATTEMPTS).
@@ -1422,6 +1439,11 @@ export const runSchema = z.object({
   taskWrites: z.boolean().nullable().default(null),
   /** 解析后的任务工作目录。 */
   taskWorkdir: z.string().nullable().default(null),
+  /**
+   * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
+   * 非任务 run 与宿主自己派的任务（未声明）为 null。
+   */
+  taskCapabilities: z.array(z.string()).nullable().default(null),
   /** 派出该任务的对话轮。 */
   originRunId: z.string().nullable().default(null),
   /** 任务结果被对话轮消费的时间（§3.2）；未消费为 null。 */
@@ -2830,6 +2852,8 @@ export const taskViewSchema = z.object({
   continuesTaskId: z.string().nullable(),
   /** The task that retried / continued this one, if any. */
   continuedByTaskId: z.string().nullable(),
+  /** D91：任务声明挂载的外部能力 id（`start_task.capabilities`）；缺省 = 未声明。 */
+  capabilities: z.array(z.string()).optional(),
   /** 机器可读的中断原因（Run.errorReason），如 `permission_revoked`（W3）。 */
   errorReason: z.string().nullable().optional(),
   /**

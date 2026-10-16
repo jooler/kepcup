@@ -111,7 +111,7 @@ describe('system prompt assembly', () => {
       timeZone: TIME_ZONE,
       now: new Date('2026-09-29T08:00:00Z'),
       loop: 'turn' as const,
-      hasMail: true,
+      hasMailSetup: true,
     };
     const forButler = buildSystemPrompt({ ...common, bot: butler });
     expect(forButler).toContain('from_bot_id 填原来负责的 Bot');
@@ -120,9 +120,26 @@ describe('system prompt assembly', () => {
     expect(forBot).toContain('你自己不能替对方提移交');
     expect(forBot).not.toContain('from_bot_id 填原来负责的 Bot');
     // No mail surface → no rule at all.
-    expect(buildSystemPrompt({ ...common, hasMail: false, bot: butler })).not.toContain(
+    expect(buildSystemPrompt({ ...common, hasMailSetup: false, bot: butler })).not.toContain(
       'mail_request_setup',
     );
+  });
+
+  it('D91: the mail setup rule follows hasMailSetup only (the host sets it whenever mail exists — bound or not)', () => {
+    const common = {
+      bot: makeBot('bot_self', '小艾'),
+      conversation: makeConversation(),
+      timeZone: TIME_ZONE,
+      now: new Date('2026-09-29T08:00:00Z'),
+      loop: 'turn' as const,
+    };
+    expect(buildSystemPrompt({ ...common, hasMailSetup: true })).toContain('mail_request_setup');
+    expect(buildSystemPrompt(common)).not.toContain('mail_request_setup');
+    // The task surface follows the same gate.
+    expect(buildSystemPrompt({ ...common, loop: 'task', hasMailSetup: true })).toContain(
+      'mail_request_setup',
+    );
+    expect(buildSystemPrompt({ ...common, loop: 'task' })).not.toContain('mail_request_setup');
   });
 
   it('non-butler bots get no butler rules section', () => {

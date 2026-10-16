@@ -19,11 +19,18 @@ function untrusted(text: string): string {
 }
 
 function taskLine(task: TaskSummary, now: number): string {
-  const parts = [`[${task.taskId}] ${untrusted(task.title)}`, task.state, task.writes ? '写' : '只读'];
+  const parts = [
+    `[${task.taskId}] ${untrusted(task.title)}`,
+    task.state,
+    task.writes ? '写' : '只读',
+  ];
   parts.push(`派出 ${ago(now - task.createdAt)}`);
   if (task.state === 'submitted') parts.push(`排队中（${task.queueReason ?? '等待启动'}）`);
   if (task.awaitingInput) parts.push('等待用户输入（问题卡已发给用户）');
   if (task.error) parts.push(`错误：${untrusted(task.error)}`);
+  if (task.capabilities !== undefined && task.capabilities.length > 0) {
+    parts.push(`能力：${task.capabilities.join('、')}`);
+  }
   parts.push(`可注入：${task.injectable ? '是' : '否'}`);
   return parts.join('  ');
 }

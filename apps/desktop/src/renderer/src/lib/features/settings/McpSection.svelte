@@ -17,7 +17,14 @@
   import McpToolPolicies from './McpToolPolicies.svelte';
   import McpbInstall from './McpbInstall.svelte';
   import McpDevTools from './McpDevTools.svelte';
-  import { editedServerForSave, mcpServerId } from './mcp-server-patch';
+  import {
+    editedServerForSave,
+    isValidMcpServerId,
+    MCP_DESCRIPTION_MAX,
+    mcpServerId,
+    newMcpServerId,
+    withNormalizedDescription,
+  } from './mcp-server-patch';
   import { applySettingItem } from '$lib/features/settings-card/apply';
   import OAuthClientsPanel from './OAuthClientsPanel.svelte';
 
@@ -179,7 +186,7 @@
   }
 
   function emptyDraft(kind: 'stdio' | 'http' | 'sse'): Draft {
-    const id = `mcp_${Date.now().toString(36)}`;
+    const id = newMcpServerId();
     return {
       id,
       name: '',
@@ -326,6 +333,10 @@
     if (draft === null) return;
     const hashesToApprove = approveTools ? draftTestHashes : null;
     flushPendingEntries();
+    if (!isValidMcpServerId(draft.id)) {
+      toast.error(t('settings.mcpIdInvalid'));
+      return;
+    }
     if (draft.name.trim().length === 0) {
       toast.error(t('settings.mcpNameRequired'));
       return;
@@ -342,7 +353,7 @@
     try {
       const serverId = draft.id;
       const { secretDrafts, ...draftServer } = draft;
-      const server = withAuth(draftServer);
+      const server = withNormalizedDescription(withAuth(draftServer));
       // 切到 OAuth / 无认证后被丢弃的 header：其已存密钥一并清掉，不留孤儿。
       const keptHeaders = new Set(Object.keys(server.headers ?? {}));
       const droppedHeaders = Object.keys(draftServer.headers ?? {}).filter(
@@ -598,6 +609,11 @@
             </label>
           </div>
         </div>
+        {#if server.description}
+          <p class="text-xs text-muted-foreground" data-testid={`mcp-description-${server.id}`}>
+            {server.description}
+          </p>
+        {/if}
         <div class="flex flex-wrap items-center gap-2">
           <label class="flex items-center gap-1.5 text-xs" data-testid={`mcp-auto-${server.id}`}>
             <Checkbox
@@ -726,6 +742,19 @@
               </select>
             </div>
           {/if}
+        </div>
+
+        <div class="grid gap-1.5">
+          <Label for="mcp-description">{t('settings.mcpDescriptionLabel')}</Label>
+          <Input
+            id="mcp-description"
+            class="h-9"
+            maxlength={MCP_DESCRIPTION_MAX}
+            bind:value={draft.description}
+            placeholder={t('settings.mcpDescriptionPlaceholder')}
+            data-testid="mcp-description-input"
+          />
+          <p class="text-xs text-muted-foreground">{t('settings.mcpDescriptionHint')}</p>
         </div>
 
         {#if draft.transport === 'stdio'}

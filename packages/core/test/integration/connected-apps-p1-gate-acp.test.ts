@@ -37,7 +37,7 @@ import { fakeCatalogEntry, until } from '../support/catalog-connect-env.js';
  * 4. An external-agent Bot with the `apps` pack (default: follows the Bot) sees the app tools on
  *    the host bridge: `tools/list` carries risk-consistent annotations (read → readOnlyHint,
  *    destructive → destructiveHint), every `mcp__{bridge}__{name}` fits 64 characters, the run
- *    context carries `<connected_apps>` / `<available_apps>`, and a write call through the bridge
+ *    context carries `<capabilities>` / `<available_apps>`, and a write call through the bridge
  *    raises the same `mcp_tool` card (account identity, durations) as the built-in engine.
  * 5. Bot validation: two accounts of one connector → INVALID_INPUT; deleting a connection strips it
  *    from every Bot; deleting a Bot revokes its grants; an app tool spelled like a built-in tool
@@ -217,6 +217,7 @@ function turnStartsTask(
           instruction: input.instruction,
           source_message_ids: [source.id],
           writes: input.writes ?? false,
+          capabilities: ['app:notes'],
         };
       }),
     step()
@@ -348,10 +349,9 @@ describe('§5.11 ACP: an external-agent Bot with the apps pack', () => {
       ]),
     );
     const prompt = observed.prompts[0]!.text;
-    expect(prompt).toContain('<connected_apps>');
-    expect(prompt).toContain(
-      `Notes（账号 ${ACCOUNT.email}，connection_id: ${connectionId}）：可用`,
-    );
+    expect(prompt).toContain('<capabilities>');
+    expect(prompt).toContain(`- app:notes（Notes，账号 ${ACCOUNT.email}）：可用`);
+    expect(prompt).toContain('本任务已挂上：app:notes（工具名以 app_notes_ 开头）');
     expect(prompt).toContain('<available_apps>');
     expect(prompt).toContain('Wiki（connector: wiki）');
     expect(prompt).toContain(`mcp__${server.name}__app_request_connection`);
@@ -451,17 +451,32 @@ describe('§5.11 Bot validation and global tool-name dedupe', () => {
     // Connector `request` + tool `connection` → `app_request_connection`.
     await connectApp(env, { grantBotId: bot.id, slug: 'request' });
     const conv = await openDirect(core, bot.id);
-    llm.script('mock-main', [step().inTurn().replyText('在')]);
+    // D91: a turn mounts no external tool — the read tool is found through the capability pair, and
+    // the impostor never shows up in the index either.
+    llm.script('mock-main', [
+      step().inTurn().replyToolCall('capability_search', { query: '' }),
+      step().inTurn().replyText('在'),
+    ]);
     await sendBatch(core, conv.id, ['你好']);
-    await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
+    const turn = await waitForRun(core, conv.id, 'completed', { timeoutMs: 30_000 });
     const request = llm.requestsFor('mock-main')[0]!;
     const named = toolsOf(request).filter((t) => t.name === 'app_request_connection');
     expect(named).toHaveLength(1);
     expect(named[0]!.description).toContain('请用户连接或重新连接一个应用');
     expect(named[0]!.description).not.toContain('Connection impostor');
-    // The other tools of that connector are untouched (read tool on the turn surface).
-    expect(toolsOf(request).map((t) => t.name)).toContain('app_request_list_notes');
-    expect(promptOf(request)).toContain('Request（账号');
+    expect(toolsOf(request).map((t) => t.name)).not.toContain('app_request_list_notes');
+    const steps = (await core.rpc.call('runs.steps', { runId: turn.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const found = String(
+      steps.steps.find(
+        (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_search',
+      )!.payload['content'],
+    );
+    expect(found).toContain('app_request_list_notes');
+    expect(found).not.toContain('"app_request_connection"');
+    expect(found).not.toContain('Connection impostor');
+    expect(promptOf(request)).toContain('- app:request（Request，账号');
     // The collision was logged.
     const logsDir = core.services.paths.logsDir;
     await waitFor(

@@ -278,7 +278,7 @@ export interface ToolDefinition<P = unknown> {
   /** Set on wrapped MCP tools (mcp/tools.ts); survives renames for external agents. */
   mcp?: McpToolOrigin;
   /**
-   * 调度型工具（`app_call_tool`）：按本次调用的参数解析被调 MCP 工具的来源，效果台账据此分级
+   * 调度型工具（`capability_call`，D91）：按本次调用的参数解析被调 MCP 工具的来源，效果台账据此分级
    * （静态 `mcp` 不适用——同一个工具对象会调到风险各异的目标）。
    */
   mcpOf?(params: P): McpToolOrigin | undefined;

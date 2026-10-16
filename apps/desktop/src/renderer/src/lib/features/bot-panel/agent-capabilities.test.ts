@@ -65,6 +65,12 @@ describe('agent capability packs (Bot runtime form)', () => {
   });
 });
 
+describe('邮件包预估（D91 邮箱门控）', () => {
+  it('mail_request_setup 始终注册、五个读写工具在有绑定时再加，预估按登记的 6 个计', () => {
+    expect(toolCountOf('mail')).toBe(6);
+  });
+});
+
 describe('包内选项（settings:change，todo/conversational-app-setup.md §5.3 第 7 条）', () => {
   it('settings 包默认注入、三个工具；修改设置默认关闭（行里只计两个）', () => {
     expect(toolCountOf('settings')).toBe(3);

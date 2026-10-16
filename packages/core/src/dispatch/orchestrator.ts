@@ -21,7 +21,7 @@ import {
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_EVENT,
   SUMMARY_TRIGGER_UNSUMMARIZED,
-  TURN_MCP_RESOLVE_TIMEOUT_MS,
+  EXTERNAL_TOOLS_INLINE_MAX,
   BUILTIN_ENGINE,
   CONTINUATION_WINDOW_MS,
   agentEngineKey,
@@ -95,7 +95,6 @@ import {
   mapToolNames,
   buildAgentSessionPrompt,
   buildSystemPrompt,
-  turnMcpNote,
 } from '../agent/context/system-prompt.js';
 import {
   buildConversationContext,
@@ -148,20 +147,27 @@ import {
   type ResponseToolDeps,
 } from '../tools/index.js';
 import { TOOL_SETUP_REQUIRED, type MediaToolFacade } from '../tools/image-tools.js';
-import { decideMailSetupRequest, type MailSetupFacade } from '../tools/mail-tools.js';
 import {
-  buildAppDiscoveryTools,
-  type AppToolFacade,
-  type LocalConnectorToolFacade,
-} from '../tools/app-tools.js';
+  decideMailSetupRequest,
+  mailBoundFor,
+  type MailSetupFacade,
+} from '../tools/mail-tools.js';
+import type { AppToolFacade, LocalConnectorToolFacade } from '../tools/app-tools.js';
 import { allowedOnReadOnlySurface } from '../mcp/policy.js';
-import { availableAppsPromptBody, connectedAppsPromptBody } from '../apps/prompt.js';
+import { availableAppsPromptBody } from '../apps/prompt.js';
 import { LOCAL_CONNECTOR_GUIDE } from '../apps/local-connector-guide.js';
 import type { LocalConnectors } from '../apps/local-connectors.js';
-import { buildAppToolDiscovery, type AppToolDiscovery } from '../apps/discovery.js';
+import {
+  buildCapabilityCatalog,
+  markUnavailable,
+  readyCapabilities,
+  type CapabilityCatalog,
+  type CapabilityEntry,
+} from '../capabilities/catalog.js';
+import { capabilitiesPromptBody } from '../capabilities/prompt.js';
+import { createCapabilityDiscovery, type CapabilityDiscovery } from '../capabilities/discovery.js';
 import { AppStepUpLimiter, stepUpConnectionOf } from '../apps/step-up.js';
 import {
-  appToolsDeferred,
   isExposableStatus,
   type BotAppsExposure,
   type ConnectedAppView,
@@ -195,10 +201,10 @@ import {
   resolveMcpToolEntries,
   selectReadOnlyMcpEntries,
   wrapMcpToolEntries,
-  type McpLockedServer,
   type McpUnavailableServer,
   type McpToolEntry,
   type McpToolFacade,
+  type McpToolResolution,
   type McpToolUiSink,
 } from '../mcp/tools.js';
 import type { McpService } from '../mcp/service.js';
@@ -443,8 +449,8 @@ export interface OrchestratorDeps {
    */
   mcp?: McpService | null;
   /**
-   * D73 P1 连接应用：Bot 勾选的目录连接 → 合成 server / 工具命名 / 风险决定 / 提示词两段
-   * （`<connected_apps>` / `<available_apps>`）。null / 缺省 = 没有目录连接能力。
+   * D73 P1 连接应用：Bot 勾选的目录连接 → 合成 server / 工具命名 / 风险决定 / 能力目录与
+   * `<available_apps>` 数据（D91：`<capabilities>` / `<available_apps>`）。null / 缺省 = 没有目录连接能力。
    */
   connectedApps?: ConnectedApps | null;
   /**
@@ -829,6 +835,16 @@ export class Orchestrator {
       taskEngine: (botId) => {
         const agentId = this.#agentIdOf(deps.bots.get(botId));
         return agentId.length > 0 ? agentEngineKey(agentId) : null;
+      },
+      // D91: start_task validates declared capability ids against the bot's current catalog
+      // (pure read — nothing connects).
+      capabilitiesOf: (botId) => {
+        const bot = deps.bots.get(botId);
+        if (bot === null) return [];
+        return this.#capabilityCatalog(bot).entries.map((entry) => ({
+          id: entry.id,
+          ready: entry.status === 'ready',
+        }));
       },
       launchSlot: (task) => {
         const agentId = this.#agentIdOf(task.botId !== null ? deps.bots.get(task.botId) : null);
@@ -2456,84 +2472,59 @@ export class Orchestrator {
     return { bot, conversationId: conversation.id, created };
   }
 
+  /** D91: the bot's capability catalog (pure read of its profile selections; nothing connects). */
+  #capabilityCatalog(bot: Bot): CapabilityCatalog {
+    return buildCapabilityCatalog({
+      connectedApps: this.#deps.connectedApps ?? null,
+      mcp: this.#deps.mcp ?? null,
+      appConnectionIds: bot.profile.runtime.app_connection_ids,
+      mcpServerIds: bot.profile.runtime.mcp_server_ids,
+      logger: this.#deps.logger,
+    });
+  }
+
   /**
-   * W5: the bot's enabled MCP tools (app-enabled ∩ bot-selected servers,
-   * `enabled:false` tools dropped). A task waits for the lists; a turn waits
-   * at most TURN_MCP_RESOLVE_TIMEOUT_MS and goes without MCP tools otherwise
-   * (the connection keeps going in the background and the next turn hits the
-   * cache).
+   * D91: lists the given capabilities' tools (lazy connection + cache; locked / disabled tools
+   * dropped). The tool surface of a *task* waits for all lists and counts connect failures toward
+   * the reconnect budget; a turn never resolves anything at run start (its tools come lazily from
+   * `capability_search`, see {@link #capabilityDiscovery}).
    */
-  async #mcpEntriesFor(
-    serverIds: string[],
-    isTask: boolean,
-    appConnectionIds: readonly string[] = [],
-  ): Promise<{
-    entries: McpToolEntry[];
-    /** D73: servers whose tools could not be listed because they need (re)connecting. */
-    unavailable: McpUnavailableServer[];
-    /** D73 P1: tools held back by the tool-definition lock (new / changed, not yet reviewed). */
-    locked: McpLockedServer[];
-    /** D73 P1: the bot's authorized catalog connections (every status, for `<connected_apps>`). */
-    apps: BotAppsExposure;
-    hasServers: boolean;
-    resolved: boolean;
-  }> {
+  async #resolveCapabilityTools(
+    servers: McpServer[],
+    countFailures: boolean,
+  ): Promise<McpToolResolution> {
     const mcp = this.#deps.mcp;
-    const noApps: BotAppsExposure = { servers: [], views: [] };
-    // D73 P1: catalog connections the bot has selected. Only usable states contribute
-    // servers (expired / needs_scope / … expose no tools and only show up as status lines);
-    // the synthesized server id IS the connection id (McpService resolves it).
-    const apps =
-      this.#deps.connectedApps != null && appConnectionIds.length > 0
-        ? this.#deps.connectedApps.forBot(appConnectionIds)
-        : noApps;
-    if (mcp == null || (serverIds.length === 0 && apps.servers.length === 0)) {
-      return { entries: [], unavailable: [], locked: [], apps, hasServers: false, resolved: true };
-    }
-    const servers = [...mcp.serversForBot(serverIds), ...apps.servers];
-    if (servers.length === 0) {
-      return { entries: [], unavailable: [], locked: [], apps, hasServers: false, resolved: true };
+    if (mcp == null || servers.length === 0) {
+      return { entries: [], unavailable: [], failed: [], locked: [] };
     }
     const connectedApps = this.#deps.connectedApps ?? null;
-    // Only a task's connect failures count toward MCP_RECONNECT_MAX: turns
-    // resolve on every message and must not drain the budget tasks rely on.
-    const resolving = resolveMcpToolEntries({
+    return resolveMcpToolEntries({
       servers,
       mcp,
       logger: this.#deps.logger,
-      countFailures: isTask,
+      countFailures,
       toolFilter: mcp.toolFilter,
       ...(connectedApps !== null
         ? { appBindingFor: (server: McpServer) => connectedApps.bindingFor(server.id) }
         : {}),
     });
-    if (isTask) return { ...(await resolving), apps, hasServers: true, resolved: true };
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), TURN_MCP_RESOLVE_TIMEOUT_MS);
-      timer.unref?.();
+  }
+
+  /**
+   * D91 (design 40 §7): which kinds of external capabilities an external-agent task may reach —
+   * `apps` pack ↔ catalog connections, `mcp` pack ↔ custom MCP servers. Null = no filtering (the
+   * agent entry is gone; the run fails later on its own).
+   */
+  #externalCapabilityKinds(bot: Bot, agentId: string): Set<'app' | 'mcp'> | null {
+    const entry = findAgentEntry(this.#deps.agentCatalog?.() ?? [], agentId);
+    if (entry === null) return null;
+    const packs = resolveCapabilities(bot.profile.runtime.agent.capabilities, entry, {
+      isButler: bot.systemRole === 'butler',
     });
-    try {
-      const resolution = await Promise.race([resolving, timeout]);
-      if (resolution === null) {
-        resolving.catch(() => {});
-        this.#deps.logger.warn(
-          { serverIds },
-          'mcp tool lists not ready within the turn budget; turn runs without MCP tools',
-        );
-        return {
-          entries: [],
-          unavailable: [],
-          locked: [],
-          apps,
-          hasServers: true,
-          resolved: false,
-        };
-      }
-      return { ...resolution, apps, hasServers: true, resolved: true };
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+    const kinds = new Set<'app' | 'mcp'>();
+    if (packs.includes('apps')) kinds.add('app');
+    if (packs.includes('mcp')) kinds.add('mcp');
+    return kinds;
   }
 
   /** Environment tool facade: real manager when wired, fail-closed stub otherwise. */
@@ -2818,8 +2809,8 @@ export class Orchestrator {
     wikiTopics: string;
     skills: string;
     recommendedSkills: string;
-    /** D73: `<connected_apps>` body (apps needing reconnection); '' = omitted. */
-    connectedApps?: string;
+    /** D91: `<capabilities>` body (connected apps + custom MCP servers); '' = omitted. */
+    capabilities?: string;
     /** D73 P1: `<available_apps>` body (catalog apps without an authorized connection); '' = omitted. */
     availableApps?: string;
     conversationText: string;
@@ -3018,9 +3009,10 @@ export class Orchestrator {
           ...(input.recommendedSkills.length > 0
             ? { recommendedSkills: input.recommendedSkills }
             : {}),
-          // The sections name `app_request_connection`: spelled the way this agent sees it.
-          ...(input.connectedApps !== undefined && input.connectedApps.length > 0
-            ? { connectedApps: mapAppToolNames(input.connectedApps) }
+          // The sections name `app_request_connection` and the capability pair: spelled the way
+          // this agent sees them.
+          ...(input.capabilities !== undefined && input.capabilities.length > 0
+            ? { capabilities: mapAppToolNames(input.capabilities) }
             : {}),
           ...(input.availableApps !== undefined && input.availableApps.length > 0
             ? { availableApps: mapAppToolNames(input.availableApps) }
@@ -3634,27 +3626,71 @@ export class Orchestrator {
         allowDomains: bot.profile.runtime.network_allowlist,
       };
       const environmentFacade = this.#environmentFacade();
-      // D65 MCP：应用 enabled ∩ Bot 选中 的 server → 工具（首次使用懒连接）。
-      // W5：任务拿全部已启用工具；对话轮与只读子代理只拿只读 + 免审批的前
-      // TURN_MCP_READ_TOOLS_MAX 个（调用时网关再校验）。对话轮最多等
-      // TURN_MCP_RESOLVE_TIMEOUT_MS：连接慢就本轮不带，下一轮命中缓存。
-      const mcpResolution = await this.#mcpEntriesFor(
-        bot.profile.runtime.mcp_server_ids,
-        isTask,
-        bot.profile.runtime.app_connection_ids,
+      // D91 能力目录：Bot 接入的外部能力（连接应用 / 自定义 MCP），纯读 DB / 内存，**不连接、
+      // 不列工具**——对话轮 run 开头因此零 listTools。对话轮的外部工具只经 `capability_search` /
+      // `capability_call` 懒解析取用；任务只挂 start_task 声明的能力（超 EXTERNAL_TOOLS_INLINE_MAX
+      // 的、连不上的声明能力，以及未声明的 ready 能力，都走任务面两件套）。
+      const catalog = this.#capabilityCatalog(bot);
+      // 外部智能体只拿它选中的能力包对应的能力（apps ↔ 目录连接，mcp ↔ 自定义 MCP；design 40 §7）。
+      const externalKinds =
+        isTask && agentId.length > 0 ? this.#externalCapabilityKinds(bot, agentId) : null;
+      const scopeCaps = readyCapabilities(catalog.entries).filter(
+        (entry) => externalKinds === null || externalKinds.has(entry.kind),
       );
-      // D73 P2 §6.3: over APP_TOOLS_INLINE_MAX catalog-app tools in total → they are not inlined;
-      // the model gets the <connected_apps> summary + app_search_tools / app_call_tool instead
-      // (decided once per run, so the tool list is fixed within it). Custom MCP tools stay inline.
-      const allAppEntries = mcpResolution.entries.filter((entry) => entry.app !== undefined);
-      const appsDeferred = appToolsDeferred(allAppEntries.length);
-      const mcpEntries = appsDeferred
-        ? mcpResolution.entries.filter((entry) => entry.app === undefined)
-        : mcpResolution.entries;
-      const readOnlyMcp = selectReadOnlyMcpEntries(mcpEntries);
-      const subAppEntries = appsDeferred
-        ? allAppEntries.filter((entry) => allowedOnReadOnlySurface(entry.decision))
+      // D91 P1（design 40 §4.2）：任务只解析、只挂「start_task 声明 ∩ 当前目录且 ready」的能力
+      // （Bot 在任务排队期间取消勾选的，目录里已没有，自然不挂）；等它们的工具列表（计入重连预算）。
+      // 未声明的 ready 能力不连接，留给任务面两件套懒解析。顺序沿用旧行为：自定义 MCP 在前，目录连接在后。
+      const declaredIds = new Set(isTask ? (exec.task.taskCapabilities ?? []) : []);
+      const declaredCaps = scopeCaps.filter((entry) => declaredIds.has(entry.id));
+      const taskResolution = isTask
+        ? await this.#resolveCapabilityTools(
+            [
+              ...declaredCaps.filter((entry) => entry.kind === 'mcp'),
+              ...declaredCaps.filter((entry) => entry.kind === 'app'),
+            ].map((entry) => entry.server),
+            true,
+          )
+        : null;
+      const taskEntries = taskResolution?.entries ?? [];
+      // D91: more than EXTERNAL_TOOLS_INLINE_MAX enabled tools across the declared capabilities →
+      // none of them is inlined; they are all reached through the capability pair (decided once
+      // per run, so the tool list is fixed within it).
+      const declaredDeferred = taskEntries.length > EXTERNAL_TOOLS_INLINE_MAX;
+      const mcpEntries = declaredDeferred ? [] : taskEntries;
+      const authFailedIds = new Set(taskResolution?.unavailable.map((item) => item.serverId));
+      const failedIds = new Set(taskResolution?.failed);
+      // 已解析好的声明能力（两件套直接复用 taskEntries，不再连接）。
+      const resolvedIds = new Set(
+        declaredCaps
+          .map((entry) => entry.server.id)
+          .filter((id) => !authFailedIds.has(id) && !failedIds.has(id)),
+      );
+      // 任务面两件套的范围 = 任务可达但没逐个挂的能力：被推迟的声明能力 + 列工具失败的声明能力
+      // （懒解析可重试）+ 未声明的 ready 能力（真正懒解析）。授权已失效的声明能力不进（提示里有重连说明）。
+      const taskDiscoveryCaps = isTask
+        ? scopeCaps.filter(
+            (entry) =>
+              !authFailedIds.has(entry.server.id) &&
+              (!declaredIds.has(entry.id) || declaredDeferred || failedIds.has(entry.server.id)),
+          )
+        : scopeCaps;
+      const mountedIds = isTask
+        ? declaredCaps
+            .filter(
+              (entry) =>
+                !declaredDeferred &&
+                !authFailedIds.has(entry.server.id) &&
+                !failedIds.has(entry.server.id),
+            )
+            .map((entry) => entry.id)
         : [];
+      // 外部智能体的 `<capabilities>` 只列它选中的能力包对应的能力（与 scopeCaps 同一口径），
+      // 不展示它用不到的（apps 包没选就不列目录连接，mcp 包没选就不列自定义 MCP）。
+      const promptCapabilities: CapabilityEntry[] = (
+        taskResolution !== null
+          ? markUnavailable(catalog.entries, taskResolution.unavailable)
+          : catalog.entries
+      ).filter((entry) => externalKinds === null || externalKinds.has(entry.kind));
       const wrapMcp = (ident: RunIdentity, entries: McpToolEntry[]) =>
         this.#deps.mcp != null
           ? wrapMcpToolEntries({
@@ -3674,30 +3710,61 @@ export class Orchestrator {
               },
             })
           : [];
-      // D73 §5.6: apps that need reconnecting are named in <connected_apps> (their tools
-      // are not offered); the model can ask the user via app_request_connection.
-      const connectedAppsSection = connectedAppsPromptBody({
-        views: mcpResolution.apps.views,
-        unavailable: mcpResolution.unavailable,
-        discovery: appsDeferred,
+      // 授权问题（任务解析时、或对话轮 / 任务里 capability_search 懒解析时发现）：`app_request_connection`
+      // 据此认得需要重连的连接（目录状态之外的实时信号，如令牌被撤销但连接行仍是 connected）。
+      const unavailableApps: McpUnavailableServer[] = [...(taskResolution?.unavailable ?? [])];
+      const onAuthRequired = (unavailable: McpUnavailableServer): void => {
+        if (!unavailableApps.some((item) => item.serverId === unavailable.serverId)) {
+          unavailableApps.push(unavailable);
+        }
+      };
+      // 对话轮：索引 = 全部 ready 能力里「只读且有效审批 auto」的工具（网关执行期另硬拒写入）。
+      // 任务：索引 = 被推迟 / 暂时不可达的能力的全部已启用工具。
+      const discovery: CapabilityDiscovery | undefined =
+        this.#deps.mcp != null && taskDiscoveryCaps.length > 0
+          ? createCapabilityDiscovery({
+              surface: isTask ? 'task' : 'turn',
+              capabilities: taskDiscoveryCaps,
+              resolve: async (servers) => {
+                const cachedIds = isTask
+                  ? new Set(servers.filter((server) => resolvedIds.has(server.id)).map((s) => s.id))
+                  : new Set<string>();
+                const fresh = servers.filter((server) => !cachedIds.has(server.id));
+                const resolved = await this.#resolveCapabilityTools(fresh, isTask);
+                return {
+                  ...resolved,
+                  entries: [
+                    ...taskEntries.filter((entry) => cachedIds.has(entry.server.id)),
+                    ...resolved.entries,
+                  ],
+                };
+              },
+              wrap: (entries) => wrapMcp(identity, entries),
+              include: isTask ? () => true : (entry) => allowedOnReadOnlySurface(entry.decision),
+              onAuthRequired,
+              now: () => this.#deps.clock.now(),
+              logger: this.#deps.logger,
+            })
+          : undefined;
+      // D91: the sub-runs' inline read-only subset comes from the task's own resolution (a turn has
+      // none), and their discovery covers every reachable capability, read-only + auto only.
+      const subInline = selectReadOnlyMcpEntries(mcpEntries).entries;
+      const capabilitiesSection = capabilitiesPromptBody({
+        entries: promptCapabilities,
+        surface: isTask ? 'task' : 'turn',
+        mounted: mountedIds,
+        hasDiscovery: discovery !== undefined,
       });
       // D73 P1 §5.7: catalog apps this bot has no authorized connection for (gate-filtered, ≤30).
-      const availableEntries =
-        this.#deps.connectedApps?.availableFor(mcpResolution.apps.views) ?? [];
+      const availableEntries = this.#deps.connectedApps?.availableFor(catalog.apps.views) ?? [];
       const availableAppsSection = availableAppsPromptBody(availableEntries);
       const appFacade = this.#appToolFacade(
         setupHit,
         bot.profile.runtime.mcp_server_ids,
-        mcpResolution.unavailable,
-        mcpResolution.apps,
+        unavailableApps,
+        catalog.apps,
         availableEntries,
         identity,
-        appsDeferred
-          ? buildAppToolDiscovery({
-              entries: allAppEntries,
-              tools: wrapMcp(identity, allAppEntries),
-            })
-          : undefined,
       );
       const memoryFacade = this.#deps.memory;
       // Explicit delegation (spreading a class instance drops its methods).
@@ -3779,6 +3846,9 @@ export class Orchestrator {
               },
             })
           : undefined;
+      // D91：邮箱绑定门控，run 开头判定一次（决定要不要注册五个读写工具）。
+      const mailBound =
+        this.#deps.mail !== undefined && mailBoundFor(this.#deps.mail, identity.botId);
       const toolDeps: ResponseToolDeps = {
         ...(scheduleSource !== null ? { scheduleSource } : {}),
         ...(todoSource !== null ? { todoSource } : {}),
@@ -3807,6 +3877,7 @@ export class Orchestrator {
         ...(this.#deps.mail !== undefined
           ? {
               mail: this.#deps.mail,
+              mailBound,
               mailSetup: this.#mailSetupFacade(setupHit, identity),
             }
           : {}),
@@ -3884,16 +3955,12 @@ export class Orchestrator {
               },
             }
           : {}),
+        // D91: only a task mounts external tools one by one (a turn has none); the capability pair
+        // is the turn's read-only quick path and the task's way to the rest.
         ...(mcpEntries.length > 0
-          ? {
-              mcp: (isTask
-                ? { tools: wrapMcp(identity, mcpEntries), omitted: 0 }
-                : {
-                    tools: wrapMcp(identity, readOnlyMcp.entries),
-                    omitted: readOnlyMcp.omitted,
-                  }) satisfies McpToolFacade,
-            }
+          ? { mcp: { tools: wrapMcp(identity, mcpEntries) } satisfies McpToolFacade }
           : {}),
+        ...(discovery !== undefined ? { capabilities: discovery } : {}),
         // D66 宿主 SubAgent：减配子 run + 结果压缩回传（见 agent/subagent.ts），
         // 子 run 挂在本 run 上，本 run 结束时 #closeSubagents。
         subagent: this.#registerSubagents(
@@ -3927,23 +3994,32 @@ export class Orchestrator {
                     secrets: this.#deps.secrets,
                     fsState: this.#fsState,
                     ...(this.#deps.search !== undefined ? { search: this.#deps.search } : {}),
-                    // W5: read-only MCP tools, wrapped with the sub run's identity.
-                    // D73 P2 §6.3: with the app tools deferred, the sub run gets the same two
-                    // discovery tools over the read-only + auto subset only (the gateway also
-                    // refuses anything else on a sub run).
+                    // W5 / D91: the task's read-only inline subset, wrapped with the sub run's
+                    // identity, plus the capability pair over read-only + auto tools only (the
+                    // gateway also refuses anything else on a sub run).
                     ...(() => {
-                      const subTools = [
-                        ...wrapMcp(subIdentity, readOnlyMcp.entries),
-                        ...(subAppEntries.length > 0
-                          ? buildAppDiscoveryTools(
-                              buildAppToolDiscovery({
-                                entries: subAppEntries,
-                                tools: wrapMcp(subIdentity, subAppEntries),
-                              }),
-                            )
-                          : []),
-                      ];
-                      return subTools.length > 0 ? { mcp: { tools: subTools } } : {};
+                      const subTools = wrapMcp(subIdentity, subInline);
+                      // 任务可达的全部能力（声明的 + 未声明的 ready 能力；授权已失效的不再去连）。
+                      const subCaps = scopeCaps.filter(
+                        (entry) => !authFailedIds.has(entry.server.id),
+                      );
+                      const subDiscovery =
+                        this.#deps.mcp != null && subCaps.length > 0
+                          ? createCapabilityDiscovery({
+                              surface: 'subagent',
+                              capabilities: subCaps,
+                              resolve: (servers) => this.#resolveCapabilityTools(servers, false),
+                              wrap: (entries) => wrapMcp(subIdentity, entries),
+                              include: (entry) => allowedOnReadOnlySurface(entry.decision),
+                              exclude: new Set(subInline.map((entry) => entry.name)),
+                              now: () => this.#deps.clock.now(),
+                              logger: this.#deps.logger,
+                            })
+                          : undefined;
+                      return {
+                        ...(subTools.length > 0 ? { mcp: { tools: subTools } } : {}),
+                        ...(subDiscovery !== undefined ? { capabilities: subDiscovery } : {}),
+                      };
                     })(),
                   },
                 }),
@@ -4172,7 +4248,7 @@ export class Orchestrator {
               wikiTopics: wikiTopicsSection,
               skills: skillsSection,
               recommendedSkills: recommendedSkillsSection,
-              connectedApps: connectedAppsSection,
+              capabilities: capabilitiesSection,
               availableApps: availableAppsSection,
               conversationText: `${contextAndContinuation}\n\n${triggerContent}`,
               batch,
@@ -4310,9 +4386,12 @@ export class Orchestrator {
             ...(recommendedSkillsSection.length > 0
               ? { recommendedSkills: recommendedSkillsSection }
               : {}),
-            ...(connectedAppsSection.length > 0 ? { connectedApps: connectedAppsSection } : {}),
+            ...(capabilitiesSection.length > 0 ? { capabilities: capabilitiesSection } : {}),
             ...(availableAppsSection.length > 0 ? { availableApps: availableAppsSection } : {}),
-            ...(this.#deps.mail !== undefined ? { hasMail: true } : {}),
+            // D91：mail_request_setup 有 mail 就注册（有无绑定都一样，与工具注册同源）；五个读写工具另按绑定门控。
+            ...(this.#deps.mail !== undefined ? { hasMailSetup: true } : {}),
+            // D91: the app_request_connection rule only with the tool (appFacade is what registers it).
+            ...(appFacade !== undefined ? { hasAppRequestTool: true } : {}),
             // D90: only a turn that belongs to a dispatched workbench todo gets the delivery rule.
             // A pure update batch gets the update rule only: its todo is already being worked on, so
             // the 「新派发：做完给结论」 rule would read the notice as a new assignment.
@@ -4322,17 +4401,6 @@ export class Orchestrator {
             ...(settingsFacade !== undefined ? { hasSettingsTools: true } : {}),
             // 管家的工作台规则只在确实注册了工作台工具时带（toolDeps.workbench）。
             ...(this.#deps.workbench !== undefined ? { hasWorkbenchTools: true } : {}),
-            // Stable whenever the bot has MCP servers (even if this turn's
-            // resolution timed out), so the prompt does not flip between turns.
-            ...(!isTask && mcpResolution.hasServers
-              ? {
-                  mcpTurnNote: turnMcpNote(
-                    mcpResolution.resolved
-                      ? { onSurface: readOnlyMcp.entries.length, omitted: readOnlyMcp.omitted }
-                      : null,
-                  ),
-                }
-              : {}),
           }),
         messages: [
           {
@@ -5070,7 +5138,6 @@ export class Orchestrator {
     apps: BotAppsExposure,
     availableEntries: readonly ConnectorCatalogEntry[],
     identity: RunIdentity,
-    discovery?: AppToolDiscovery,
   ): AppToolFacade | undefined {
     const mcp = this.#deps.mcp;
     const connectedApps = this.#deps.connectedApps ?? null;
@@ -5121,7 +5188,6 @@ export class Orchestrator {
       !isExposableStatus(view.connection.status) ||
       unavailable.some((entry) => entry.connectionId === view.connection.id);
     return {
-      ...(discovery !== undefined ? { discovery } : {}),
       ...(localConnectors !== undefined ? { localConnectors } : {}),
       requestConnection: (input) => {
         // 1) A catalog connector the bot has no (usable) connection for.
@@ -5168,15 +5234,24 @@ export class Orchestrator {
         if (server === undefined) {
           return {
             ok: false,
-            message: `没有可连接的应用「${input.connectionId ?? input.serverId ?? ''}」：只能请求连接你已被授权使用的 OAuth 应用（见 <connected_apps>）`,
+            message: `没有可连接的应用「${input.connectionId ?? input.serverId ?? ''}」：只能请求连接你已被授权使用的 OAuth 应用（见 <capabilities>）`,
           };
         }
         const hit = unavailable.find((entry) => entry.serverId === server.id);
+        // D91: no run-start listing any more — without a live auth failure the connection row's
+        // state says why (never connected / needs more scope / otherwise expired).
+        const rowStatus = connectedApps?.connectionStatus(customConnectionId(server.id)) ?? null;
         setupHit.requirement = {
           kind: 'connect-app',
           target: { kind: 'custom', serverId: server.id },
           connectionId: customConnectionId(server.id),
-          reason: hit?.reason ?? 'expired',
+          reason:
+            hit?.reason ??
+            (rowStatus === 'not_connected'
+              ? 'not_connected'
+              : rowStatus === 'needs_scope'
+                ? 'scope'
+                : 'expired'),
           ...(hit?.scopes !== undefined ? { scopes: hit.scopes } : {}),
         };
         return {

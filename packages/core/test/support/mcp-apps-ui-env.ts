@@ -126,6 +126,7 @@ export async function startCatalogUiEnv(): Promise<CatalogUiEnv> {
   llm.script(
     'mock-main',
     viaTask({
+      capabilities: ['app:notes'],
       writes: false,
       taskSteps: [step().replyToolCall('app_notes_show_dashboard', {}), step().replyText('完成')],
       relay: '好了',

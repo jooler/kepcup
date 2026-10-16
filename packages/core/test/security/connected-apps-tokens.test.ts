@@ -153,7 +153,7 @@ describe('connected apps: token plaintext never leaves the Token Vault', () => {
       knownIds: string[],
     ): Promise<Run> => {
       llm.script('mock-main', [
-        ...viaTask({ writes: false, taskSteps }),
+        ...viaTask({ capabilities: ['mcp:oapp'], writes: false, taskSteps }),
         step().inTurn().replyText('收到'),
       ]);
       await sendBatch(core, conv.id, ['调用应用']);

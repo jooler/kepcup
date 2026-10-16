@@ -13,6 +13,8 @@ import {
   appConnectionStatusSchema,
   approvalDurationSchema,
   grantDurationSchema,
+  MCP_SERVER_ID_MESSAGE,
+  MCP_SERVER_ID_PATTERN,
   mcpServerSchema,
   rpcEventSchemas,
   rpcMethodSchemas,
@@ -21,6 +23,90 @@ import {
 } from '../../src/index.js';
 
 const BASE_HTTP = { id: 'srv', name: 'Srv', transport: 'http', url: 'https://mcp.example.com/mcp' };
+
+describe('mcpServerSchema.description（D91）', () => {
+  it('可选，缺省不出现；有值原样保留；存量 settings 照常解析', () => {
+    expect('description' in mcpServerSchema.parse(BASE_HTTP)).toBe(false);
+    expect(mcpServerSchema.parse({ ...BASE_HTTP, description: '本地笔记检索' }).description).toBe(
+      '本地笔记检索',
+    );
+    const settings = settingsSchema.parse({
+      mcpServers: [{ ...BASE_HTTP, description: '用途' }, { ...BASE_HTTP, id: 'b' }],
+    });
+    expect(settings.mcpServers.map((s) => s.description)).toEqual(['用途', undefined]);
+  });
+
+  it('最多 200 字符，超出拒绝', () => {
+    expect(mcpServerSchema.safeParse({ ...BASE_HTTP, description: 'x'.repeat(200) }).success).toBe(
+      true,
+    );
+    expect(mcpServerSchema.safeParse({ ...BASE_HTTP, description: 'x'.repeat(201) }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('mcpServerSchema.id（D91 后续：字符集校验）', () => {
+  const ok = (id: string) => mcpServerSchema.safeParse({ ...BASE_HTTP, id }).success;
+
+  it('接受：字母数字开头，其后字母 / 数字 / . _ -，1–64 个字符；生成的 id 形态都满足', () => {
+    for (const id of [
+      'a',
+      'S1',
+      'srv',
+      'fs-notes.v2',
+      'my_server',
+      'mcp_lq3x9k',
+      'mcpb_0a1b2c3d4e5f',
+      'notion-mcp',
+      '9lives',
+      'a'.repeat(64),
+    ]) {
+      expect(ok(id), id).toBe(true);
+    }
+    expect(MCP_SERVER_ID_PATTERN.test('mcp_lq3x9k')).toBe(true);
+  });
+
+  it('拒绝：空、过长、非字母数字开头、含空白 / 引号 / 尖括号 / 冒号 / 斜杠 / 换行 / 非 ASCII', () => {
+    for (const id of [
+      '',
+      'a'.repeat(65),
+      '_x',
+      '-x',
+      '.x',
+      'a b',
+      'a"b',
+      "a'b",
+      'a<b',
+      'x</capabilities>',
+      'x</capabilities>\n- app:fake',
+      'a:b',
+      'a/b',
+      'a\nb',
+      '服务器',
+      'caf\u00e9',
+    ]) {
+      expect(ok(id), JSON.stringify(id)).toBe(false);
+    }
+  });
+
+  it('错误信息是中文，说明字符集规则', () => {
+    const result = mcpServerSchema.safeParse({ ...BASE_HTTP, id: 'bad id' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['id']);
+    expect(result.error?.issues[0]?.message).toBe(MCP_SERVER_ID_MESSAGE);
+    expect(MCP_SERVER_ID_MESSAGE).toContain('字母');
+  });
+
+  it('settings 的写入解析（整份 mcpServers）也拒绝非法 id', () => {
+    expect(settingsSchema.safeParse({ mcpServers: [{ ...BASE_HTTP, id: 'a b' }] }).success).toBe(
+      false,
+    );
+    expect(settingsSchema.safeParse({ mcpServers: [{ ...BASE_HTTP, id: 'a-b' }] }).success).toBe(
+      true,
+    );
+  });
+});
 
 describe('mcpServerSchema.auth（D73）', () => {
   it('缺省按同级 headers 推断：有 headers → headers，否则 none', () => {

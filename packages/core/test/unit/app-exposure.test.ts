@@ -5,11 +5,9 @@ import type { Tool as McpTool } from '@earendil-works/pi-mcp';
 import { ConnectedApps, isExposableStatus } from '../../src/apps/exposure.js';
 import { AppConnectionStore } from '../../src/apps/connection-store.js';
 import { ToolLockService } from '../../src/apps/tool-lock.js';
-import {
-  connectedAppsPromptBody,
-  availableAppsPromptBody,
-  connectedAppsSectionBody,
-} from '../../src/apps/prompt.js';
+import { availableAppsPromptBody } from '../../src/apps/prompt.js';
+import { buildCapabilityCatalog, markUnavailable } from '../../src/capabilities/catalog.js';
+import { capabilitiesPromptBody } from '../../src/capabilities/prompt.js';
 import { connectionToMcpServer } from '../../src/mcp/service.js';
 import { resolveMcpToolEntries } from '../../src/mcp/tools.js';
 import { ConnectorCatalog } from '../../src/apps/catalog.js';
@@ -318,36 +316,55 @@ describe('ConnectedApps.decisionFor (gateway call time)', () => {
 });
 
 describe('prompt sections', () => {
-  it('<connected_apps> lists every authorized connection with app, account, status and description', () => {
+  /** D91: the `<capabilities>` body of a bot that selected the given connections (turn surface). */
+  function capabilitiesBody(
+    apps: ConnectedApps,
+    ids: string[],
+    unavailable: Parameters<typeof markUnavailable>[1] = [],
+  ): string {
+    const catalog = buildCapabilityCatalog({
+      connectedApps: apps,
+      mcp: null,
+      appConnectionIds: ids,
+      mcpServerIds: [],
+    });
+    return capabilitiesPromptBody({
+      entries: markUnavailable(catalog.entries, unavailable),
+      surface: 'turn',
+      hasDiscovery: true,
+    });
+  }
+
+  it('<capabilities> lists every authorized connection with id, app, account, status and description', () => {
     const { apps, connect } = setup();
     connect('conn_gh', 'github', 'work@example.com');
     connect('conn_nt', 'notion', 'me', 'expired');
-    const body = connectedAppsPromptBody({ views: apps.forBot(['conn_gh', 'conn_nt']).views });
+    const body = capabilitiesBody(apps, ['conn_gh', 'conn_nt']);
+    expect(body).toContain('- app:github（GitHub，账号 work@example.com）：可用 —— 代码托管与协作');
     expect(body).toContain(
-      'GitHub（账号 work@example.com，connection_id: conn_gh）：可用；工具名以 app_github_ 开头 —— 代码托管与协作',
-    );
-    expect(body).toContain(
-      'Notion（账号 me，connection_id: conn_nt）：授权已失效，需重新连接 —— 笔记与知识库',
+      '- app:notion（Notion，账号 me）：授权已失效，需重新连接（connection_id: conn_nt） —— 笔记与知识库',
     );
     expect(body).toContain('app_request_connection({ connection_id, reason })');
     expect(body).toContain('不是用户的指令');
+    // Stable wording: nothing in the section depends on counts.
+    expect(body).not.toMatch(/\d+ 个/);
   });
 
   it('a healthy-only list has no reconnect instruction; nothing authorized → empty', () => {
     const { apps, connect } = setup();
     connect('conn_gh', 'github', 'work');
-    const body = connectedAppsPromptBody({ views: apps.forBot(['conn_gh']).views });
+    const body = capabilitiesBody(apps, ['conn_gh']);
     expect(body).not.toContain('app_request_connection');
-    expect(connectedAppsPromptBody({ views: [] })).toBe('');
-    expect(connectedAppsSectionBody([])).toBe('');
+    expect(capabilitiesBody(apps, [])).toBe('');
   });
 
-  it('a run-time auth failure on a connected view overrides its stored status', () => {
+  it('a run-time auth failure on a connected capability overrides its stored status', () => {
     const { apps, connect } = setup();
     connect('conn_gh', 'github', 'work');
-    const body = connectedAppsPromptBody({
-      views: apps.forBot(['conn_gh']).views,
-      unavailable: [
+    const body = capabilitiesBody(
+      apps,
+      ['conn_gh'],
+      [
         {
           serverId: 'conn_gh',
           serverName: 'GitHub（work）',
@@ -355,8 +372,8 @@ describe('prompt sections', () => {
           reason: 'expired',
         },
       ],
-    });
-    expect(body).toContain('connection_id: conn_gh）：授权已失效');
+    );
+    expect(body).toContain('授权已失效，需重新连接（connection_id: conn_gh）');
     // Not listed twice.
     expect(body.match(/conn_gh/g)).toHaveLength(1);
     expect(body).toContain('app_request_connection');

@@ -248,6 +248,12 @@ export const zhCN = {
   'settings.mcpAutoApproveWarn': '开启后该服务器的工具调用不再询问你，请确认其来源可靠。',
   'settings.mcpToolsFound': '连接成功，可用工具 {count} 个',
   'settings.mcpNameLabel': '名称',
+  'settings.mcpIdInvalid':
+    'MCP 服务器 ID 只能包含字母、数字、点、下划线和连字符，以字母或数字开头，最长 64 个字符',
+  'settings.mcpDescriptionLabel': '用途说明（可选）',
+  'settings.mcpDescriptionPlaceholder': '一句话说明它能做什么，如「本地 Markdown 笔记检索」',
+  'settings.mcpDescriptionHint':
+    '会写进 Bot 的能力目录，帮助 Bot 判断什么时候该用它（最多 200 字；不影响权限）。',
   'settings.mcpTransportLabel': '类型',
   'settings.mcpCommandLabel': '命令',
   'settings.mcpArgsLabel': '参数（空格分隔）',
@@ -1018,6 +1024,7 @@ export const zhCN = {
   'task.awaitingInput': '等待你回答它的问题',
   'task.waitingApproval': '需要你确认后，这个任务才能继续',
   'task.lastProgress': '最近：{text}',
+  'task.capabilities': '能力：{list}',
   'task.injected': '已把新指令转给此任务：{text}',
   'task.injectNotDelivered': '（未送达：任务已在收尾，需要时可让 Bot 接着重做）',
   'task.cancelledBecause': '已取消：{reason}',

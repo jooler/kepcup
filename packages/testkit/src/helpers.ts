@@ -1,5 +1,11 @@
 import { rm } from 'node:fs/promises';
-import { BUILTIN_AGENT_RUNTIME, type Bot, type Conversation, type Message, type Run } from '@kepcup/shared';
+import {
+  BUILTIN_AGENT_RUNTIME,
+  type Bot,
+  type Conversation,
+  type Message,
+  type Run,
+} from '@kepcup/shared';
 import type { CoreHarness } from '@kepcup/core';
 import { startMockLlm, step, type MockLlmServer, type MockLlmStep } from './mock-llm.js';
 import { createTestCore, createTestHome, type CreateTestCoreOptions } from './fixtures.js';
@@ -79,7 +85,9 @@ export async function createTestStack(
     ...(options.agentLaunch !== undefined ? { agentLaunch: options.agentLaunch } : {}),
     ...(options.agentSpawn !== undefined ? { agentSpawn: options.agentSpawn } : {}),
     ...(options.shellRpc !== undefined ? { shellRpc: options.shellRpc } : {}),
-    ...(options.widgetPreviewRpc !== undefined ? { widgetPreviewRpc: options.widgetPreviewRpc } : {}),
+    ...(options.widgetPreviewRpc !== undefined
+      ? { widgetPreviewRpc: options.widgetPreviewRpc }
+      : {}),
     ...(options.oauthLoopbackAllowlist !== undefined
       ? { oauthLoopbackAllowlist: options.oauthLoopbackAllowlist }
       : {}),
@@ -358,6 +366,8 @@ export function viaTask(input: {
   instruction?: string;
   writes?: boolean;
   sourceMessageIds?: string[];
+  /** D91: capability ids the task mounts (`start_task.capabilities`, e.g. `mcp:srv1`). */
+  capabilities?: string[];
   /** The turn's reply after start_task (default '好的，我去处理。'). */
   ack?: string;
   /** The waking turn's reply relaying the result. */
@@ -371,8 +381,11 @@ export function viaTask(input: {
         instruction: input.instruction ?? '按用户的消息完成这件事',
         source_message_ids: input.sourceMessageIds ?? [],
         writes: input.writes ?? true,
+        ...(input.capabilities !== undefined ? { capabilities: input.capabilities } : {}),
       }),
-    step().inTurn().replyText(input.ack ?? '好的，我去处理。'),
+    step()
+      .inTurn()
+      .replyText(input.ack ?? '好的，我去处理。'),
     ...input.taskSteps.map((taskStep) => taskStep.inTask()),
     ...(input.relay !== undefined ? [step().inTurn().replyText(input.relay)] : []),
   ];

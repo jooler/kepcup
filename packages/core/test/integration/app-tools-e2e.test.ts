@@ -154,7 +154,7 @@ async function resultOf(env: Env, runId: string, toolName: string) {
 }
 
 const taskOf = (env: Env, steps: ReturnType<typeof step>[], relay = '好了') =>
-  viaTask({ writes: true, taskSteps: steps, relay });
+  viaTask({ capabilities: ['app:notes'], writes: true, taskSteps: steps, relay });
 
 describe('exposure and approvals', () => {
   it('names the tools app_{slug}_{tool}; reads run free; writes ask with identity + 3 durations; "bot" grants stop the card', async () => {
@@ -268,21 +268,35 @@ describe('exposure and approvals', () => {
     expect(decided.approvals.find((a) => a.id === card.id)!.decision).toEqual({ duration: 'once' });
   }, 120_000);
 
-  it('the read-only turn surface keeps only read + auto app tools', async () => {
+  it('the turn mounts no app tool one by one: the capability pair finds only read + auto app tools (D91)', async () => {
     const env = await start();
     const { core, llm } = env.stack;
-    llm.script('mock-main', [step().inTurn().replyText('在')]);
+    llm.script('mock-main', [
+      step().inTurn().replyToolCall('capability_search', { query: '' }),
+      step().inTurn().replyText('在'),
+    ]);
     await sendBatch(core, env.conversationId, ['你好']);
-    await waitForRun(core, env.conversationId, 'completed', { timeoutMs: 30_000 });
+    const run = await waitForRun(core, env.conversationId, 'completed', { timeoutMs: 30_000 });
     const request = llm.requestsFor('mock-main')[0]!;
     const names = toolNamesOf(request);
-    expect(names).toContain('app_notes_list_notes');
-    expect(names).not.toContain('app_notes_create_note');
-    expect(names).not.toContain('app_notes_delete_all');
+    expect(names).toContain('capability_search');
+    expect(names).toContain('capability_call');
+    expect(names.some((n) => n.startsWith('app_notes_'))).toBe(false);
     const prompt = promptOf(request);
-    expect(prompt).toContain('<connected_apps>');
-    expect(prompt).toContain('Notes（账号 jyy@example.com');
-    expect(prompt).toContain('工具名以 app_notes_ 开头');
+    expect(prompt).toContain('<capabilities>');
+    expect(prompt).toContain('- app:notes（Notes，账号 jyy@example.com）：可用');
+    const steps = (await core.rpc.call('runs.steps', { runId: run.id })) as {
+      steps: Array<{ type: string; payload: Record<string, unknown> }>;
+    };
+    const found = String(
+      steps.steps.find(
+        (s) => s.type === 'tool_result' && s.payload['toolName'] === 'capability_search',
+      )!.payload['content'],
+    );
+    expect(found).toContain('app_notes_list_notes');
+    expect(found).not.toContain('app_notes_create_note');
+    expect(found).not.toContain('app_notes_delete_all');
+    expect(found).toContain('另有 2 个写入 / 需用户批准的工具只在任务中可用');
   }, 60_000);
 
   it('a task gets all three tools; once the connection expires none is offered and the prompt says so', async () => {
@@ -290,6 +304,7 @@ describe('exposure and approvals', () => {
     const { core, llm } = env.stack;
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step()
@@ -320,7 +335,7 @@ describe('exposure and approvals', () => {
     expect(toolNamesOf(request).some((n) => n.startsWith('app_notes_'))).toBe(false);
     expect(toolNamesOf(request)).toContain('app_request_connection');
     expect(promptOf(request)).toContain(
-      `connection_id: ${env.connectionId}）：授权已失效，需重新连接`,
+      `授权已失效，需重新连接（connection_id: ${env.connectionId}）`,
     );
   }, 120_000);
 

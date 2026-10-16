@@ -258,11 +258,13 @@ pi-mcp 默认适配器在 401（刷新失败）或 `403 insufficient_scope` 时�
 
 ## 7 工具暴露与上下文
 
+> **D91 修订**：本节的「按需发现」泛化为**能力目录与按需挂载**（[40](40-capability-mounting.md)）。`<connected_apps>` 段改为 `<capabilities>`（同时覆盖连接应用 `app:{slug}` 与自定义 MCP `mcp:{serverId}`，只读 DB / 内存、不连服务器；`<available_apps>` 不变）；`app_search_tools` / `app_call_tool` 改名并泛化为 `capability_search` / `capability_call`（覆盖应用与自定义 MCP，懒解析）；`APP_TOOLS_INLINE_MAX` 改名 `EXTERNAL_TOOLS_INLINE_MAX`（仍为 40，范围从「全部应用工具」变成「任务声明的能力」）。对话轮不再逐个挂应用工具，任务只挂 `start_task.capabilities` 声明的能力，其余经两件套。下文保留原文作历史，凡提到旧名字处以 40 为准。
+
 - **工具命名**：`app_{slug}_{toolName}`，sanitize 为 `[A-Za-z0-9_-]`、**≤50 字符**（外部智能体经宿主桥看到的是 `mcp__kepcup__{name}`，需留出 13 字符，部分厂商上限 64）；`app_` 前缀为连接应用保留，宿主自有的应用类工具（`app_request_connection`、`app_search_tools`、`app_call_tool`）也用此前缀，使 `capabilityOfTool` 能归入 `apps` 能力包。注册时新增与内置工具名的冲突检查（现 `mcp/tools.ts` 只在 MCP 工具之间去重），冲突则拒绝并告警。自定义应用保持 `mcp_{serverId}_{tool}`。
 - **结果处理**：与 D65 同管道——`<untrusted>` 包裹、`TOOL_OUTPUT_MAX_CHARS` 截断、`secrets.redact`、图片块走 `ToolResult.images`。此外**工具输出中的远程图片 / 链接不自动渲染进对话**（markdown 图片外泄是经典通道），Bot 转述时链接以纯文本呈现。
-- **系统提示词**：新增 `<connected_apps>` 段，列出该 Bot 已授权的应用名称、账号标签与一句用途；新增 `<available_apps>` 段，列出目录中**尚未连接**的应用（名称 + 一句话，≤30 条，不含工具清单）。
+- **系统提示词**（D91：`<connected_apps>` 已改为 `<capabilities>`）：新增 `<connected_apps>` 段，列出该 Bot 已授权的应用名称、账号标签与一句用途；新增 `<available_apps>` 段，列出目录中**尚未连接**的应用（名称 + 一句话，≤30 条，不含工具清单）。
 - **请求连接工具** `app_request_connection({ connector?, connection_id?, reason })`：Bot 判断需要某个未连接应用、或已授权连接需重新连接时调用；返回 `SETUP_REQUIRED` `{kind:'connect-app', connectorId, connectionId?, reason}` → 对话内连接卡（含应用图标、将申请的权限、「连接后授权给当前 Bot」默认勾选）→ 完成后 `runs.retry` 续跑（D58 既有链路，§5.6）。Bot 不得以文字引导用户去别处填令牌。
-- **工具面控制**：沿用每服务器工具数上限（`MCP_TOOLS_PER_SERVER_MAX`）；连接多了之后工具清单会膨胀，P2 引入「按需发现」。因 PiEngine 在 run 开始时固定工具列表、宿主桥亦按会话下发，不做 run 中途挂载，而是：工具总数超过阈值的连接只注入 `<connected_apps>` 摘要 + 两个稳定工具 `app_search_tools(query)`（返回匹配工具的名称、说明与参数 schema）与 `app_call_tool(name, args)`（分发器，按被调工具自身的风险走审批与锁定）——工具列表在 run 内保持不变。
+- **工具面控制**：沿用每服务器工具数上限（`MCP_TOOLS_PER_SERVER_MAX`）；连接多了之后工具清单会膨胀，P2 引入「按需发现」（D91 起泛化为能力目录，见上）。因 PiEngine 在 run 开始时固定工具列表、宿主桥亦按会话下发，不做 run 中途挂载，而是：工具总数超过阈值的连接只注入 `<connected_apps>` 摘要 + 两个稳定工具 `app_search_tools(query)`（返回匹配工具的名称、说明与参数 schema）与 `app_call_tool(name, args)`（分发器，按被调工具自身的风险走审批与锁定）——工具列表在 run 内保持不变。
   - P2 实施注（DEV-021 第 8 项）：阈值 `APP_TOOLS_INLINE_MAX`=40（按全部目录应用工具总数，run 开头决定一次），`app_call_tool` 转给与直接暴露时同一个包装工具，只读子代理拿的发现工具限于只读 + 免审子集。
 
 ## 8 审批、策略与安全

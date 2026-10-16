@@ -813,6 +813,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '你好' }),
@@ -885,6 +886,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '在吗' }),
@@ -914,6 +916,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '1' }),
@@ -941,6 +944,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     const { core, llm, conv } = await w4Stack();
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '早' }),
@@ -949,6 +953,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
         relay: 'W4-RELAY-4A',
       }),
       ...viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '早' }),
@@ -976,6 +981,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '夜' }),
@@ -1030,6 +1036,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '取消' }),
@@ -1063,6 +1070,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
         source_message_ids: [],
         writes: false,
         continues_task_id: task.id,
+        capabilities: ['mcp:chat'],
       }),
       step().inTurn().replyText('好的'),
       step().inTask().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '取消' }),
@@ -1126,6 +1134,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
       first.llm.script(
         'mock-main',
         viaTask({
+        capabilities: ['mcp:chat'],
           writes: false,
           taskSteps: [
             step().replyToolCall('mcp_chat_send_message', { to: 'ann@example.com', text: '退出' }),
@@ -1181,6 +1190,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         taskSteps: [
           step().replyToolCall('request_unsandboxed', { command: 'echo w4-repeat', reason: '同步' }),
           step().replyToolCall('request_unsandboxed', { command: 'echo w4-repeat', reason: '同步' }),
@@ -1216,6 +1226,7 @@ describe('approval effect dedupe and receipts (W4)', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:chat'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_chat_flaky_send', { to: 'ann@example.com', text: '超时' }),

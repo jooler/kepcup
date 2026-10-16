@@ -51,6 +51,8 @@ export interface TaskCardModel {
   needsReview: boolean;
   /** Retired with the change summary — always false. */
   canRevert: boolean;
+  /** D91：任务声明要用的能力 id（`app:github` / `mcp:notes`）；没声明 = 空。 */
+  capabilities: string[];
   clip(text: string): string;
 }
 
@@ -95,6 +97,7 @@ export function taskCardModel(task: TaskView): TaskCardModel {
     canRetry,
     needsReview: canRetry && task.state === 'interrupted' && task.reviewRequired === true,
     canRevert: false,
+    capabilities: task.capabilities ?? [],
     clip: (text) => clipLine(text),
   };
 }

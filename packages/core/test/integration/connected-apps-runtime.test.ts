@@ -143,6 +143,7 @@ describe('connected app tool calls', () => {
     h.stack.llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:oapp'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_oapp_echo', { text: 'first' }),
@@ -168,6 +169,7 @@ describe('connected app tool calls', () => {
     h.stack.llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['mcp:oapp'],
         writes: false,
         taskSteps: [
           step().replyToolCall('mcp_oapp_echo', { text: 'second' }),
@@ -196,6 +198,7 @@ describe('connected app tool calls', () => {
     const issued = h.connect();
     h.stack.llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['mcp:oapp'],
         writes: false,
         taskSteps: [
           // The run started with a working connection (tools listed). Right before the call the
@@ -267,7 +270,7 @@ describe('connected app tool calls', () => {
 });
 
 describe('listing failure at run start', () => {
-  it('does not abort the run: tools are withheld, <connected_apps> names the server, app_request_connection raises the card', async () => {
+  it('does not abort the run: tools are withheld, <capabilities> names the server, app_request_connection raises the card', async () => {
     const h = await start();
     // Not connected: no tokens at all.
     h.services.apps!.store.ensureCustom(SERVER_ID, {
@@ -277,14 +280,15 @@ describe('listing failure at run start', () => {
     h.stack.llm.script('mock-main', [
       step()
         .inTurn()
-        .expect((req) => promptOf(req).includes('<connected_apps>'))
+        .expect((req) => promptOf(req).includes('<capabilities>'))
         .replyText('收到，但应用还没连接'),
     ]);
     await sendBatch(h.stack.core, h.conversationId, ['随便聊聊']);
     await waitForRun(h.stack.core, h.conversationId, 'completed', { timeoutMs: 20_000 });
     const turnRequest = h.stack.llm.requestsFor('mock-main')[0]!;
     expect(promptOf(turnRequest)).toContain('connection_id: custom:oapp');
-    expect(promptOf(turnRequest)).toContain('尚未连接');
+    expect(promptOf(turnRequest)).toContain('mcp:oapp');
+    expect(promptOf(turnRequest)).toContain('需重新连接');
     expect(toolNamesOf(turnRequest)).toContain('app_request_connection');
     expect(toolNamesOf(turnRequest).some((name) => name.startsWith('mcp_oapp_'))).toBe(false);
     // The not-connected server cost nothing: no request reached it, no failure was counted.
@@ -293,10 +297,11 @@ describe('listing failure at run start', () => {
     // A task that needs the app asks the user via app_request_connection → connect-app setup.
     h.stack.llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['mcp:oapp'],
         writes: false,
         taskSteps: [
           step()
-            .expect((req) => promptOf(req).includes('<connected_apps>'))
+            .expect((req) => promptOf(req).includes('<capabilities>'))
             .replyToolCall('app_request_connection', {
               connection_id: CONN,
               reason: '需要读取应用数据',
@@ -321,18 +326,19 @@ describe('listing failure at run start', () => {
       .find((r) => promptOf(r).includes('<task_brief'))!;
     expect(toolNamesOf(taskRequest)).toContain('app_request_connection');
     expect(h.shellCalls).toEqual([]);
-    // Let the failed task's relay turn finish before scripting the next phase: a turn
-    // still running would take steps of the next script.
+    // The failed task wakes a turn that tells the user; let it finish before the next message so
+    // the two do not share one batch (and one scripted step).
     await waitForMessage(
       h.stack.core,
       h.conversationId,
-      (m) => m.kind === 'text' && m.content['text'] === '请先连接应用',
+      (m) => JSON.stringify(m.content).includes('请先连接应用'),
       { timeoutMs: 30_000 },
     );
 
     // An id outside the Bot's selection is refused without a card.
     h.stack.llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['mcp:oapp'],
         writes: false,
         taskSteps: [
           step().replyToolCall('app_request_connection', { connection_id: 'custom:not-mine' }),
@@ -355,14 +361,17 @@ describe('listing failure at run start', () => {
     expect(result!.payload['errorCode']).toBe('INVALID_INPUT');
   }, 90_000);
 
-  it('a connected server is not listed in <connected_apps> and does not get the request tool when no oauth server is selected', async () => {
+  it('a connected server is listed in <capabilities> as available, with no reconnect instruction', async () => {
     const h = await start();
     h.connect();
     h.stack.llm.script('mock-main', [step().inTurn().replyText('在')]);
     await sendBatch(h.stack.core, h.conversationId, ['你好']);
     await waitForRun(h.stack.core, h.conversationId, 'completed', { timeoutMs: 20_000 });
     const request = h.stack.llm.requestsFor('mock-main')[0]!;
-    expect(promptOf(request)).not.toContain('<connected_apps>');
+    expect(promptOf(request)).toContain('<capabilities>');
+    expect(promptOf(request)).toContain('- mcp:oapp');
+    expect(promptOf(request)).not.toContain('需重新连接');
+    expect(promptOf(request)).not.toContain('connection_id: custom:oapp');
   }, 60_000);
 });
 

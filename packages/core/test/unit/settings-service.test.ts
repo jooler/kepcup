@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SettingsService } from '../../src/domain/settings.js';
 
 
@@ -63,3 +63,66 @@ describe('SettingsService：工作台开关（D90）', () => {
   });
 });
 
+
+describe('SettingsService：MCP 服务器 id 校验（D91 后续）', () => {
+  const server = (id: string) => ({
+    id,
+    name: id || 'n',
+    transport: 'http',
+    url: 'https://mcp.example.com/mcp',
+    enabled: true,
+  });
+
+  it('读路径：个别非法 id 的条目被丢弃并告警，合法条目与其余设置照常读出', () => {
+    const stored = {
+      defaultMainModel: 'a/b',
+      mcpServers: [server('good'), server('x</capabilities>'), server('also.good'), server('a b')],
+    };
+    const warn = vi.fn();
+    const service = new SettingsService(fakeDb(JSON.stringify(stored)), CLOCK, { warn });
+    const settings = service.get();
+    expect(settings.mcpServers.map((entry) => entry.id)).toEqual(['good', 'also.good']);
+    expect(settings.defaultMainModel).toBe('a/b');
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(warn.mock.calls)).toContain('x</capabilities>');
+    // get() is called all the time: the same bad entry is warned about only once.
+    service.get();
+    service.get();
+    expect(warn).toHaveBeenCalledTimes(2);
+    // Without a logger the read still works.
+    expect(
+      new SettingsService(fakeDb(JSON.stringify(stored)), CLOCK).get().mcpServers,
+    ).toHaveLength(2);
+  });
+
+  it('读路径：没有非法条目时不动；缺 mcpServers 时为空', () => {
+    const stored = { mcpServers: [server('a'), server('b')] };
+    expect(new SettingsService(fakeDb(JSON.stringify(stored)), CLOCK).get().mcpServers).toHaveLength(
+      2,
+    );
+    expect(new SettingsService(fakeDb(JSON.stringify({})), CLOCK).get().mcpServers).toEqual([]);
+  });
+
+  it('写路径：update 拒绝非法 id（不写库）；合法 id 写入，下次保存时读路径丢弃的条目不再写回', () => {
+    let stored: string | undefined = JSON.stringify({ mcpServers: [server('bad id'), server('ok')] });
+    const db = {
+      prepare: () => ({
+        get: () => (stored === undefined ? undefined : { value_json: stored }),
+        run: (_key: string, valueJson: string) => {
+          stored = valueJson;
+        },
+      }),
+    } as never;
+    const service = new SettingsService(db, CLOCK);
+    const before = stored;
+    expect(() =>
+      service.update({ mcpServers: [server('x</capabilities>')] as never }),
+    ).toThrow();
+    expect(stored).toBe(before);
+    service.update({ mcpServers: [...service.get().mcpServers, server('next') as never] });
+    expect(JSON.parse(stored!).mcpServers.map((entry: { id: string }) => entry.id)).toEqual([
+      'ok',
+      'next',
+    ]);
+  });
+});

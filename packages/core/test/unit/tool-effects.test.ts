@@ -152,6 +152,7 @@ function scannedBuiltinToolNames(): string[] {
       'app-tools.ts',
       'browser.ts',
       'butler-tools.ts',
+      'capability-tools.ts',
       'delegate-tools.ts',
       'delegation-tools.ts',
       'handover-tools.ts',

