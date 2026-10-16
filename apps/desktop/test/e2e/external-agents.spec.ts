@@ -141,7 +141,8 @@ async function openProfileTab(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="profile-tab"]')).toBeVisible();
 }
 
-/** Bot 运行配置：主模型下拉改选智能体（首次切换弹让渡说明）。 */
+/** Bot 运行配置：主模型下拉改选智能体（首次切换弹让渡说明；`apps` 包勾选时
+ * 还有一张一次性 ACP 说明卡，遮罩会挡住后续一切点击——都要关掉）。 */
 async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   await openProfileTab(page);
   const profile = page.locator('[data-testid="profile-tab"]');
@@ -149,6 +150,11 @@ async function switchBotToAgent(page: Page, agentId = 'fake'): Promise<void> {
   const dialog = page.locator('[data-testid="bot-agent-switch-dialog"]');
   if (await dialog.isVisible({ timeout: 3_000 }).catch(() => false)) {
     await page.locator('[data-testid="bot-agent-switch-confirm"]').click();
+  }
+  const notice = page.locator('[data-testid="apps-acp-notice"]');
+  if (await notice.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    await page.locator('[data-testid="apps-acp-notice-confirm"]').click();
+    await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCount(0);
   }
   await expect(profile.locator('[data-testid="bot-agent-settings"]')).toBeVisible();
   // 右栏表单自动保存（500ms 防抖）：等它落盘再发消息。

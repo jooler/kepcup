@@ -770,12 +770,15 @@
                       data-testid={`todo-assignee-bot-${option.memberId}`}
                     >
                       <span class="flex min-w-0 items-center gap-2">
-                        <MemberAvatar
-                          kind="bot"
-                          id={option.memberId}
-                          name={option.name}
-                          class="size-5"
-                        />
+                        <!-- 头像首字是装饰：role=option 的可访问名须等于执行者名（label/断言按名字匹配）。 -->
+                        <span class="shrink-0" aria-hidden="true">
+                          <MemberAvatar
+                            kind="bot"
+                            id={option.memberId}
+                            name={option.name}
+                            class="size-5"
+                          />
+                        </span>
                         <span class="truncate" style:color={botNameColor(option.memberId)}
                           >{optionLabel(option)}</span
                         >
@@ -797,12 +800,15 @@
                           : `todo-assignee-group-${option.memberId}`}
                       >
                         <span class="flex min-w-0 items-center gap-2">
-                          <MemberAvatar
-                            kind={option.kind}
-                            id={option.memberId}
-                            name={option.name}
-                            class="size-5"
-                          />
+                          <!-- 头像首字是装饰：role=option 的可访问名须等于执行者名。 -->
+                          <span class="shrink-0" aria-hidden="true">
+                            <MemberAvatar
+                              kind={option.kind}
+                              id={option.memberId}
+                              name={option.name}
+                              class="size-5"
+                            />
+                          </span>
                           {#if option.kind === 'bot'}
                             <span
                               class="truncate"

@@ -25,10 +25,13 @@ export async function createGroupViaUi(
   ).toBeVisible({ timeout: 15_000 });
   if (title === autoTitle) return;
 
-  if (!(await page.locator('[data-testid="group-info"]').isVisible())) {
+  // 只有右栏收起时才展开；前一个对话留下的右栏内容可能还没切到群信息面板，
+  // 此时不能点 toggle（那一下会把开着但内容未切换的右栏收起来，输入框就再也不出现）。
+  if (!(await page.locator('[data-testid="right-panel"]').isVisible())) {
     await page.locator('[data-testid="right-panel-toggle"]').click();
   }
   const titleInput = page.locator('[data-testid="group-info-title"]');
+  await expect(titleInput).toBeVisible({ timeout: 15_000 });
   await titleInput.fill(title);
   await titleInput.press('Enter');
   await expect(page.locator('[data-testid="conversation-name"]', { hasText: title })).toBeVisible({
