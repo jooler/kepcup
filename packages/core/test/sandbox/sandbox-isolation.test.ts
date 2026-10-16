@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -20,6 +21,22 @@ import type { RunIdentity } from '../../src/agent/types.js';
  */
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 const d = supported ? describe : describe.skip;
+
+/**
+ * Linux (bubblewrap) hides a denied path behind an empty tmpfs instead of
+ * refusing the syscall: reads fail with ENOENT and raise no violation event,
+ * and a write under a denied directory succeeds inside a throw-away tmpfs that
+ * never reaches the host. The cases below assert the host-visible outcome there.
+ */
+const linux = process.platform === 'linux';
+
+function readDenied(result: SandboxExecResult): boolean {
+  return (
+    result.violations.some((v) => v.line.includes('file-read')) ||
+    result.stderr.includes('Operation not permitted') ||
+    (linux && result.stderr.includes('No such file or directory'))
+  );
+}
 
 // Long timeout: the first probe initializes the sandbox (proxies + trial run).
 const TIMEOUT = 180_000;
@@ -86,17 +103,12 @@ d('sandbox escape cases (P02 安全用例集)', () => {
     for (const probe of probeFiles) {
       const result = await bash(`cat "${probe}"`);
       expect(result.exitCode, `${probe} should be unreadable: ${result.stderr}`).not.toBe(0);
-      const denied =
-        result.violations.some((v) => v.line.includes('file-read')) ||
-        result.stderr.includes('Operation not permitted');
-      expect(denied, `expected a sandbox denial for ${probe}: ${result.stderr}`).toBe(true);
+      expect(readDenied(result), `expected a sandbox denial for ${probe}: ${result.stderr}`).toBe(true);
     }
     // ~/.kepcup/main.db equivalent: the test data home's main.db exists.
     const dbResult = await bash(`cat ${resolvePaths(home).mainDbPath}`);
     expect(dbResult.exitCode).not.toBe(0);
-    expect(
-      dbResult.violations.some((v) => v.line.includes('file-read')) || dbResult.stderr.includes('Operation not permitted'),
-    ).toBe(true);
+    expect(readDenied(dbResult), dbResult.stderr).toBe(true);
   });
 
   it('denies reading arbitrary locations of the user home from inside the sandbox', { timeout: TIMEOUT }, async () => {
@@ -104,11 +116,20 @@ d('sandbox escape cases (P02 安全用例集)', () => {
     // Listing the real user home must fail with a read denial (BR-P02-001 /
     // BR-P02-004): the data home being denied does not imply home isolation.
     const ls = await bash('ls "$HOME"');
-    expect(ls.exitCode, `ls "$HOME" should be denied: ${ls.stderr}`).not.toBe(0);
-    expect(
-      ls.violations.some((v) => v.line.includes('file-read')) || ls.stderr.includes('Operation not permitted'),
-      `expected a sandbox denial for the user home: ${ls.stderr}`,
-    ).toBe(true);
+    if (linux) {
+      // The home is an empty tmpfs; only the ancestors of paths re-allowed for
+      // reading (srt's own seccomp helper, which may live under the home) remain.
+      const helper = createRequire(import.meta.url).resolve('@anthropic-ai/sandbox-runtime');
+      const leaked = readdirSync(os.homedir()).filter(
+        (entry) =>
+          ls.stdout.split('\n').includes(entry) &&
+          !helper.startsWith(path.join(os.homedir(), entry) + path.sep),
+      );
+      expect(leaked, `ls "$HOME" must not list the real home: ${ls.stdout}`).toEqual([]);
+    } else {
+      expect(ls.exitCode, `ls "$HOME" should be denied: ${ls.stderr}`).not.toBe(0);
+      expect(readDenied(ls), `expected a sandbox denial for the user home: ${ls.stderr}`).toBe(true);
+    }
 
     // A non-sensitive, existing file directly under the home is equally denied.
     const probeFiles = ['.gitconfig', '.zshrc', '.bashrc', '.vimrc', '.profile']
@@ -125,11 +146,11 @@ d('sandbox escape cases (P02 安全用例集)', () => {
     workspace();
     const outside = path.join(resolvePaths(home).home, 'escape-probe');
     const result = await bash(`touch "${outside}"`);
-    expect(result.exitCode).not.toBe(0);
+    if (!linux) expect(result.exitCode).not.toBe(0);
     expect(existsSync(outside)).toBe(false);
     const homeProbe = path.join(os.homedir(), 'kepcup-escape-probe');
     const result2 = await bash(`touch "${homeProbe}"`);
-    expect(result2.exitCode).not.toBe(0);
+    if (!linux) expect(result2.exitCode).not.toBe(0);
     expect(existsSync(homeProbe)).toBe(false);
   });
 
@@ -145,7 +166,8 @@ d('sandbox escape cases (P02 安全用例集)', () => {
     expect(result.stdout).not.toContain('theirs');
   });
 
-  it('reports violations for denied file reads', { timeout: TIMEOUT }, async () => {
+  // No violation stream on Linux (see `linux` above): a denied read is just ENOENT.
+  it.skipIf(linux)('reports violations for denied file reads', { timeout: TIMEOUT }, async () => {
     workspace();
     // The macOS/Linux violation monitors stream asynchronously: a fast
     // command can exit before its violation lands in the store, so retry

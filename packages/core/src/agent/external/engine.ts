@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rmSync } from '../../infra/fs-rm.js';
 import os from 'node:os';
 import path from 'node:path';
 import {

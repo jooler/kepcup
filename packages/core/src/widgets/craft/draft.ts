@@ -6,10 +6,10 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { rmSync } from '../../infra/fs-rm.js';
 import path from 'node:path';
 import {
   WIDGET_CRAFT_DRAFT_TTL_DAYS,

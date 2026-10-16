@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 import type { RunIdentity, ToolContext } from '@kepcup/core';
 import { buildBrowserTools } from '../../src/tools/browser.js';
@@ -196,7 +197,9 @@ describe('browser tools (tool layer on a fake host)', () => {
     expect((ensure?.input as { networkContext: { allowLoopback: boolean } }).networkContext).toEqual({
       allowLoopback: false,
     });
-    expect((ensure?.input as { downloadsDir: string }).downloadsDir).toBe('/tmp/ws/downloads');
+    expect((ensure?.input as { downloadsDir: string }).downloadsDir).toBe(
+      path.join('/tmp/ws', 'downloads'),
+    );
   });
 
   test('press rejects unsupported keys before touching the host', async () => {

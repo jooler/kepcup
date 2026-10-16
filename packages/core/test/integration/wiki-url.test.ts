@@ -56,7 +56,11 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
     await server.stop();
   });
 
-  it('HTML 页面抓取后转 markdown 入 raw/，维护 loop 写页面并提交', async () => {
+// Linux (bubblewrap) puts the fetch in its own network namespace, which cannot reach the host's
+  // loopback fixture server; local-fixture fetching is exercised on macOS only.
+  const itLoopback = it.skipIf(process.platform === 'linux');
+
+  itLoopback('HTML 页面抓取后转 markdown 入 raw/，维护 loop 写页面并提交', async () => {
     const url = `${server.url}/spec.html`;
     stack.llm.script('mock-main', [
       step()
@@ -136,7 +140,7 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
     expect(history.history).toHaveLength(2);
   }, 120_000);
 
-  it('allowlist 网络策略下非名单内主机直接拒绝（任务失败，无抓取）', async () => {
+  itLoopback('allowlist 网络策略下非名单内主机直接拒绝（任务失败，无抓取）', async () => {
     const servedBefore = server.requestsServed();
     const url = `${server.url}/doc.md`;
     stack.llm.script('mock-main', [

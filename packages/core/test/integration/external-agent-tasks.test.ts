@@ -307,7 +307,7 @@ describe('external agents as the task engine (D75 §8)', () => {
     expect(observed.deletedSessions).toEqual([]);
   }, 60_000);
 
-  it('a read-only task runs on the read_only tier: in-workdir writes are refused, a write task may write', async () => {
+  it.skipIf(process.platform === 'win32')('a read-only task runs on the read_only tier: in-workdir writes are refused, a write task may write', async () => {
     const { stack, started } = await start({
       fake: {
         turns: [

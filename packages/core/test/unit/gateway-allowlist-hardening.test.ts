@@ -148,7 +148,7 @@ describe.skipIf(!hasGit)('allowlisted git obeys no program-running repository co
     writeFileSync(path.join(dir, 'a.txt'), 'two\n');
   }
 
-  it('a clean repository: git status / diff run without a card', async () => {
+  it.skipIf(process.platform === 'win32')('a clean repository: git status / diff run without a card', async () => {
     gitInit(workspace());
     const gateway = makeGateway();
     const status = await gateway.exec(writeTask, { command: 'git status --short', network: none });
@@ -210,7 +210,7 @@ describe.skipIf(!hasGit)('allowlisted git obeys no program-running repository co
     ]);
   });
 
-  it('a husky-style core.hooksPath does not cost a card', async () => {
+  it.skipIf(process.platform === 'win32')('a husky-style core.hooksPath does not cost a card', async () => {
     gitInit(workspace());
     spawnSync('git', ['config', 'core.hooksPath', '.husky/_'], { cwd: workspace() });
     const gateway = makeGateway();

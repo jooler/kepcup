@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { rmSync } from './infra/fs-rm.js';
 import { Buffer } from 'node:buffer';
 import os from 'node:os';
 import { spawn } from 'node:child_process';

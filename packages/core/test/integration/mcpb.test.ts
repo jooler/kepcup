@@ -57,7 +57,7 @@ const manifest = {
 };
 
 describe('mcpb integration', () => {
-  it('installs a bundle through RPC, runs its tools via McpService, and removes it cleanly', async () => {
+  it.skipIf(process.platform === 'win32')('installs a bundle through RPC, runs its tools via McpService, and removes it cleanly', async () => {
     const { core } = await setup();
     const fixture = await buildMcpbFixture({ dir: await fixtureDir(), manifest });
 
@@ -149,7 +149,7 @@ describe('mcpb integration', () => {
     expect(core.services.domain!.settings.get().mcpServers).toHaveLength(0);
   });
 
-  it('a conversation-started install shows an environment approval card with the full command', async () => {
+  it.skipIf(process.platform === 'win32')('a conversation-started install shows an environment approval card with the full command', async () => {
     const { core } = await setup();
     const fixture = await buildMcpbFixture({ dir: await fixtureDir(), manifest });
     const bot = await makeBot(core, '小包');

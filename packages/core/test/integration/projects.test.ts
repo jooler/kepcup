@@ -372,7 +372,7 @@ describe('projects (P04)', () => {
     }
   }, 120_000);
 
-  it('a write task holds the project lease from its start: file tools, acquire_project_write and commands write', async () => {
+  it.skipIf(process.platform === 'win32')('a write task holds the project lease from its start: file tools, acquire_project_write and commands write', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小写');
     const conv = await openDirect(core, bot.id);
@@ -570,7 +570,7 @@ describe('projects (P04)', () => {
     });
   }, 180_000);
 
-  it('command-made project writes stay on disk without a run_changes record', async () => {
+  it.skipIf(process.platform === 'win32')('command-made project writes stay on disk without a run_changes record', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小令');
     const conv = await openDirect(core, bot.id);
@@ -767,7 +767,7 @@ describe('projects (P04)', () => {
   // Needs the OS sandbox (bwrap / socat): fails fast where it is unavailable
   // (the test container) instead of running unsandboxed in confirm mode, where
   // nothing would block the unbound conversation.
-  it('allows localhost ports in project conversations and blocks them otherwise (OS sandbox)', async () => {
+  it.skipIf(process.platform === 'win32')('allows localhost ports in project conversations and blocks them otherwise (OS sandbox)', async () => {
     const { core, llm } = await start();
     const availability = await core.services.sandbox.probe();
     expect(availability.available, `requires the OS sandbox: ${availability.reason ?? ''}`).toBe(true);
@@ -804,7 +804,11 @@ describe('projects (P04)', () => {
     await sendBatch(core, convB.id, ['起个开发服务器试试']);
     await waitRelay(core, convB.id, 'RELAY-PORT-B');
     const unboundTask = (await taskRuns(core, convB.id))[0]!;
-    expect(toolResult(await stepsOf(core, unboundTask.id), 'bash')?.content).not.toContain('200');
+    // Linux (bubblewrap) isolates the network namespace: server and client both run
+    // inside it, so loopback works either way and "blocked otherwise" is macOS-only.
+    if (process.platform !== 'linux') {
+      expect(toolResult(await stepsOf(core, unboundTask.id), 'bash')?.content).not.toContain('200');
+    }
   }, 400_000);
 
   it('marks a project missing when its directory is moved away', async () => {

@@ -51,7 +51,7 @@ async function stepsOf(core: TestStack['core'], runId: string) {
 }
 
 describe('workspace and coding tools', () => {
-  it('writes a script, executes it in the sandbox and reads the output', async () => {
+  it.skipIf(process.platform === 'win32')('writes a script, executes it in the sandbox and reads the output', async () => {
     const { core, llm } = await start();
     llm.script(
       'mock-main',
@@ -202,7 +202,7 @@ describe('workspace and coding tools', () => {
     expect(existsSync(path.join(workspace, 'sandbox-off-marker'))).toBe(false);
   }, 90_000);
 
-  it('records exec and fs_write entries in audit_log', async () => {
+  it.skipIf(process.platform === 'win32')('records exec and fs_write entries in audit_log', async () => {
     const { core, llm } = await start();
     llm.script(
       'mock-main',
@@ -324,8 +324,11 @@ describe('workspace and coding tools', () => {
     );
     expect(bashResult).toBeDefined();
     const content = String(bashResult!.payload['content']);
-    // The violation summary reaches the model through the tool result.
-    expect(content).toContain('被沙箱拦截');
+    // The violation summary reaches the model through the tool result. Linux
+    // (bubblewrap) hides the denied path instead: there is no violation, just ENOENT.
+    expect(content).toContain(
+      process.platform === 'linux' ? 'No such file or directory' : '被沙箱拦截',
+    );
     expect(bashResult!.payload['ok']).toBe(false);
   }, 180_000);
 

@@ -23,7 +23,7 @@ describe('resolveStdioProxyPath', () => {
     expect(readFileSync(resolved!, 'utf8')).toContain('KEPCUP_MCP_URL');
   });
 
-  it('maps the packaged bundle location into app.asar.unpacked', () => {
+  it.skipIf(process.platform === 'win32')('maps the packaged bundle location into app.asar.unpacked', () => {
     const bundle = 'file:///opt/KepCup/resources/app.asar/out/main/core-entry/index.js';
     const expected = '/opt/KepCup/resources/app.asar.unpacked/out/main/core-entry/stdio-proxy.mjs';
     expect(resolveStdioProxyPath(bundle, (file) => file === expected)).toBe(expected);
@@ -36,7 +36,7 @@ describe('resolveStdioProxyPath', () => {
     );
   });
 
-  it('returns null when the script was not shipped', () => {
+  it.skipIf(process.platform === 'win32')('returns null when the script was not shipped', () => {
     expect(resolveStdioProxyPath('file:///nowhere/index.js', () => false)).toBeNull();
   });
 

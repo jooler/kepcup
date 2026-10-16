@@ -2,9 +2,9 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  rmSync,
   statSync,
 } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import {
   AppError,

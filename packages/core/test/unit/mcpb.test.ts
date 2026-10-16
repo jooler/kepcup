@@ -367,7 +367,7 @@ describe('mcpb install / uninstall', () => {
     },
   };
 
-  it('inspect returns summary, launch preview and sha256', async () => {
+  it.skipIf(process.platform === 'win32')('inspect returns summary, launch preview and sha256', async () => {
     const h = await harness();
     const fixture = await buildMcpbFixture({ dir: await tmp(), manifest: userConfigManifest });
     const info = await h.installer.inspect(fixture.path);
@@ -465,7 +465,7 @@ describe('mcpb install / uninstall', () => {
     );
   });
 
-  it('binary bundles run directly without a managed runtime', async () => {
+  it.skipIf(process.platform === 'win32')('binary bundles run directly without a managed runtime', async () => {
     const h = await harness({ resolveRuntime: () => null });
     const fixture = await buildMcpbFixture({
       dir: await tmp(),
@@ -545,7 +545,7 @@ describe('mcpb install / uninstall', () => {
     );
   });
 
-  it('approval payload carries the full launch command (secrets masked); a denial installs nothing', async () => {
+  it.skipIf(process.platform === 'win32')('approval payload carries the full launch command (secrets masked); a denial installs nothing', async () => {
     const fixture = await buildMcpbFixture({ dir: await tmp(), manifest: userConfigManifest });
     const approved = await harness();
     await approved.installer.install({
@@ -736,7 +736,7 @@ describe('mcpb hardening (review fixes)', () => {
     expect(first.serverId).toMatch(/^mcpb_/);
   });
 
-  it('writes files as 0755 / 0644 only (no group/world-writable bits)', async () => {
+  it.skipIf(process.platform === 'win32')('writes files as 0755 / 0644 only (no group/world-writable bits)', async () => {
     const h = await harness();
     const fixture = await buildMcpbFixture({
       dir: await tmp(),

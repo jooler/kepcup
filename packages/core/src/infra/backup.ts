@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { rmSync } from './fs-rm.js';
 import path from 'node:path';
 import { AppError, MAIN_DB_BACKUPS_TO_KEEP } from '@kepcup/shared';
 import type { SqliteDatabase } from './db.js';

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import {
   AppError,

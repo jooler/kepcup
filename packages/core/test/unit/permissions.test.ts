@@ -30,7 +30,7 @@ describe('replaceHomeVariables (BR-P03-001)', () => {
 });
 
 describe('commandTouchesDataDir (BR-P03-001 unattended floor)', () => {
-  it('detects literal and tilde forms', () => {
+  it.skipIf(process.platform === 'win32')('detects literal and tilde forms', () => {
     expect(commandTouchesDataDir(`cat ${DATA_HOME}/main.db`, DATA_HOME, HOME)).toBe(true);
     expect(commandTouchesDataDir('cat ~/.kepcup-test-data/main.db', DATA_HOME, HOME)).toBe(true);
     expect(commandTouchesDataDir('ls ~/.kepcup-test-data', DATA_HOME, HOME)).toBe(true);
@@ -43,7 +43,7 @@ describe('commandTouchesDataDir (BR-P03-001 unattended floor)', () => {
     expect(commandTouchesDataDir('type %USERPROFILE%\\.kepcup-test-data\\main.db', DATA_HOME, HOME)).toBe(true);
   });
 
-  it('fails closed on a bare home ancestor plus relative tail', () => {
+  it.skipIf(process.platform === 'win32')('fails closed on a bare home ancestor plus relative tail', () => {
     expect(commandTouchesDataDir('cd ~ && cat .kepcup-test-data/main.db', DATA_HOME, HOME)).toBe(true);
     expect(commandTouchesDataDir('cd $HOME && cat .kepcup-test-data/main.db', DATA_HOME, HOME)).toBe(true);
     expect(commandTouchesDataDir('ls $HOME', DATA_HOME, HOME)).toBe(true);

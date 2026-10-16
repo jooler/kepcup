@@ -36,8 +36,20 @@ export default defineConfig({
     pool: 'forks',
     projects: [
       { test: { name: 'shared', include: ['packages/shared/test/**/*.test.ts'] } },
-      { test: { name: 'core', include: ['packages/core/test/**/*.test.ts'] } },
-      { test: { name: 'testkit', include: ['packages/testkit/test/**/*.test.ts'] } },
+      {
+        test: {
+          name: 'core',
+          include: ['packages/core/test/**/*.test.ts'],
+          setupFiles: ['./vitest.setup.ts'],
+        },
+      },
+      {
+        test: {
+          name: 'testkit',
+          include: ['packages/testkit/test/**/*.test.ts'],
+          setupFiles: ['./vitest.setup.ts'],
+        },
+      },
       {
         test: {
           name: 'app-validator',

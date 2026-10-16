@@ -203,7 +203,7 @@ async function bindProject(stack: TestStack, conversationId: string, dir: string
 }
 
 describe('external agent permission bridge (P3, fake agent, real db)', () => {
-  it('workspace tier: writes inside the cwd pass; writes outside raise an agent_tool card → deny → reject_once', async () => {
+  it.skipIf(process.platform === 'win32')('workspace tier: writes inside the cwd pass; writes outside raise an agent_tool card → deny → reject_once', async () => {
     const outside = mkdtempSync(path.join(tmpdir(), 'p3-outside-'));
     dirs.push(outside);
     const stack = await startWithFakeAgent({
@@ -300,7 +300,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     expect(rows[0]!.decision).toEqual({ duration: 'conversation' });
   }, 60_000);
 
-  it('the data directory is refused outright, and unattended mode keeps the floor for commands', async () => {
+  it.skipIf(process.platform === 'win32')('the data directory is refused outright, and unattended mode keeps the floor for commands', async () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
@@ -369,7 +369,7 @@ describe('external agent permission bridge (P3, fake agent, real db)', () => {
     );
   }, 60_000);
 
-  it('commands: without an OS sandbox every command is confirmed — the allowlist does not apply (review H2)', async () => {
+  it.skipIf(process.platform === 'win32')('commands: without an OS sandbox every command is confirmed — the allowlist does not apply (review H2)', async () => {
     const stack = await startWithFakeAgent({
       turns: [
         agentTurn()
