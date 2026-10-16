@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Bot, SettingValues } from '@kepcup/shared';
+  import { interpretAppConnectionSelection, type Bot, type SettingValues } from '@kepcup/shared';
   import { untrack } from 'svelte';
   import { toast } from 'svelte-sonner';
   import { t } from '$lib/i18n';
@@ -8,6 +8,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { agentsStore } from '$lib/stores/agents.svelte';
   import { appsStore } from '$lib/stores/apps.svelte';
+  import { isCatalogConnection } from '$lib/features/bot-panel/bot-apps';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Label } from '$lib/components/ui/label';
@@ -72,14 +73,16 @@
   let allowlist = $state(
     untrack(() => {
       const wanted = seeded?.allowlist;
-      if (Array.isArray(wanted)) return wanted.filter((entry) => typeof entry === 'string').join('\n');
+      if (Array.isArray(wanted))
+        return wanted.filter((entry) => typeof entry === 'string').join('\n');
       return (runtime?.network_allowlist ?? []).join('\n');
     }),
   );
   let servers = $state<string[]>(
     untrack(() => {
       const wanted = seeded?.servers;
-      if (Array.isArray(wanted)) return wanted.filter((entry): entry is string => typeof entry === 'string');
+      if (Array.isArray(wanted))
+        return wanted.filter((entry): entry is string => typeof entry === 'string');
       return [...(runtime?.mcp_server_ids ?? [])];
     }),
   );
@@ -92,11 +95,14 @@
       return [...(runtime?.app_connection_ids ?? [])];
     }),
   );
+  let connectionPrefillApplied = false;
   let agentId = $state(
     untrack(() => (typeof seeded?.agent === 'string' ? seeded.agent : (runtime?.agent.id ?? ''))),
   );
   let agentModel = $state(
-    untrack(() => (typeof seeded?.model === 'string' ? seeded.model : (runtime?.agent.model ?? ''))),
+    untrack(() =>
+      typeof seeded?.model === 'string' ? seeded.model : (runtime?.agent.model ?? ''),
+    ),
   );
   let permission = $state(
     untrack(() => {
@@ -131,6 +137,26 @@
     ) {
       permission = current.agent.permission;
     }
+  });
+
+  // 模型常把应用 slug（如 cloudflare）写进预填。连接列表到了之后解析成连接 id 并勾上，
+  // 同时保留这个 Bot 已经有的授权。只处理一次，避免用户随后取消勾选被写回去。
+  $effect(() => {
+    if (itemId !== 'bot.apps' || connectionPrefillApplied) return;
+    const wanted = seeded?.connections;
+    const known = appsStore.connections.filter(isCatalogConnection);
+    if (!Array.isArray(wanted) || known.length === 0 || runtime === null) return;
+    const refs = wanted.filter((entry): entry is string => typeof entry === 'string');
+    const interpreted = interpretAppConnectionSelection(runtime.app_connection_ids, refs, known);
+    connectionPrefillApplied = true;
+    if (!interpreted.ok) {
+      if (interpreted.reason === 'ambiguous') {
+        const ids = new Set(known.map((row) => row.id));
+        connections = runtime.app_connection_ids.filter((id) => ids.has(id));
+      }
+      return;
+    }
+    connections = interpreted.ids;
   });
 
   $effect(() => {
@@ -264,7 +290,8 @@
           <label class="flex items-center gap-2 text-sm">
             <Checkbox
               checked={servers.includes(server.id)}
-              onCheckedChange={(checked) => (servers = toggle(servers, server.id, checked === true))}
+              onCheckedChange={(checked) =>
+                (servers = toggle(servers, server.id, checked === true))}
               data-testid={`${testid}-mcp-${server.id}`}
             />
             {server.name}

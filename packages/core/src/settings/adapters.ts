@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   AppError,
   CAPABILITY_SETTING_IDS,
+  interpretAppConnectionSelection,
   VENDOR_DESCRIPTORS,
   chatModelOptions,
   isVendorId,
@@ -164,7 +165,7 @@ export interface AdapterDeps {
    * 那条 RPC 在策略变严时会中断正在使用该连接的任务，写锁里只调服务方法会丢掉这段。
    */
   appConnections?: {
-    list(): ReadonlyArray<{ id: string; label: string }>;
+    list(): ReadonlyArray<{ id: string; label: string; connectorId: string }>;
     peekTool(connectionId: string, toolName: string): CatalogToolPolicyView | null;
   };
   unattended?: { effective(): UnattendedState; disable(reason?: string): UnattendedState };
@@ -972,7 +973,9 @@ function browserProfileAdapter(deps: AdapterDeps): ItemAdapter {
       const profileId = botField(deps, target, (bot) => bot.profile.runtime.browser_profile);
       if (profileId === null) return snapshot('unknown', null, 'Bot 不存在');
       if (profileId.length === 0) return snapshot('configured', { profile: '' }, '私有资料');
-      const shared = deps.settings.get().browserProfiles.find((profile) => profile.id === profileId);
+      const shared = deps.settings
+        .get()
+        .browserProfiles.find((profile) => profile.id === profileId);
       return snapshot(
         'configured',
         { profile: profileId },
@@ -1143,6 +1146,13 @@ function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
         `授权了 ${ids.length} 个连接`,
       );
     },
+    options: (field) => {
+      if (field.options !== 'connections' || deps.appConnections === undefined) return [];
+      return deps.appConnections.list().map((row) => ({
+        value: row.id,
+        label: clean(row.label.length > 0 ? row.label : row.connectorId),
+      }));
+    },
     normalize: (_item, values) => {
       if (!('connections' in values)) return { ok: true, values };
       const connections = asStringList(values.connections);
@@ -1153,10 +1163,31 @@ function botAppsAdapter(deps: AdapterDeps): ItemAdapter {
     write: (_item, { next }, target) => {
       const connections = asStringList(next.connections);
       if (connections === undefined) throw new AppError('INVALID_INPUT', '需要给出连接列表');
-      // 连接是否存在由 bots.update 校验（与 Bot 配置表单同一条路径）。
+      const rows = deps.appConnections?.list();
+      // 模型常把目录 slug（如 cloudflare）填进 connections。能唯一对上已连接账号时解析成
+      // 连接 id，并追加到现有授权上；全是连接 id 时仍按完整名单替换。
+      let ids = connections;
+      if (rows !== undefined) {
+        const bot = requireBot(deps, target);
+        const interpreted = interpretAppConnectionSelection(
+          bot.profile.runtime.app_connection_ids,
+          connections,
+          rows,
+        );
+        if (!interpreted.ok) {
+          throw new AppError(
+            'INVALID_INPUT',
+            interpreted.reason === 'ambiguous'
+              ? `「${interpreted.connectionId}」对应多个账号，请选择具体的一个`
+              : `连接 ${interpreted.connectionId} 不存在或已删除`,
+            { connectionId: interpreted.connectionId },
+          );
+        }
+        ids = interpreted.ids;
+      }
       return writeRuntime(deps, target, (runtime) => ({
         ...runtime,
-        app_connection_ids: connections,
+        app_connection_ids: ids,
       }));
     },
   };
@@ -1436,8 +1467,7 @@ function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
       const ids = deps.conversations?.memberBotIds?.(conversationId);
       if (ids === undefined) return snapshot('unknown', null, '状态未知');
       const names = ids.map((id) => clean(deps.bots.get(id)?.name ?? id, 30));
-      const summary =
-        names.length === 0 ? '还没有成员' : clean(names.join('、'), SUMMARY_MAX);
+      const summary = names.length === 0 ? '还没有成员' : clean(names.join('、'), SUMMARY_MAX);
       return snapshot('configured', { bots: [...ids] }, summary);
     },
     options: () =>
@@ -1507,7 +1537,8 @@ export function redactPathPattern(
 function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
   return {
     read: (_item, target) => {
-      const project = target.projectId !== null ? (deps.projects?.get(target.projectId) ?? null) : null;
+      const project =
+        target.projectId !== null ? (deps.projects?.get(target.projectId) ?? null) : null;
       if (project === null) return snapshot('unknown', null, '当前对话没有绑定项目');
       if (kind === 'ports') {
         const ports = (project.allowedPorts ?? []).map(([from, to]) =>
@@ -1524,7 +1555,9 @@ function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAd
       const redact = (patterns: readonly string[]): string[] =>
         patterns
           .slice(0, PROTECT_PATTERNS_SHOWN)
-          .map((pattern) => redactPathPattern(pattern, project.path ?? null, deps.homeDir ?? homedir()));
+          .map((pattern) =>
+            redactPathPattern(pattern, project.path ?? null, deps.homeDir ?? homedir()),
+          );
       const { denyRead, denyWrite } = project.protectRules;
       return snapshot(
         'configured',
