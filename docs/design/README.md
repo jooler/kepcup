@@ -50,6 +50,7 @@
 | [38-conversational-settings.md](38-conversational-settings.md) | 对话内应用设置（**P0 已实现，2026-10-13；待审查收口**）：设置目录（`settings-catalog`，唯一事实来源，58 条）+ `settings_search` / `settings_read` / `settings_change` 三个工具渐进披露；宿主裁定修改档位（direct / confirm / form / user-only / link，只收紧不放宽）；消息流设置卡 `setting_card`（回执 + 撤销、条目级 CAS、顶替 / 每 run 上限 / 拒绝退避 / 7 天过期）；落定后唤醒 Bot 一次；与 D58 失败续跑链并存（`kind:'setting'`）；ACP 能力包 `settings`（`settings:change` 选项）；P1 组件化扩面、P2 收拢旧 7 个 kind 未开工 |
 | [39-workbench.md](39-workbench.md) | 工作台（**已定稿，实施中**）：对话之外统筹全局——事项（待办 + 定时派活，指派给 Bot / 群，状态 draft→scheduled→in_progress→delivered→done）、备忘（闪念，可转事项）、管家接管（`list/create/update/close_todo`、`list/create/update/delete_memo`）；复用 `schedules` 计时（重建：`bot_id` 可空、`origin` 增 `workbench`、增 `todo_id`），到点以「工作台代你发出」的可见用户消息派发，不受主动消息护栏约束；交付追踪回流待验收；管家写权限按「是否用户本人触发」由宿主强制（D90） |
 | [40-capability-mounting.md](40-capability-mounting.md) | 能力目录与按需挂载（**已实现**）：对话轮只拿 `<capabilities>` 能力目录 + 只读两件套 `capability_search` / `capability_call`，不逐个挂外部工具；`start_task.capabilities` 声明能力，任务只挂声明的能力、其余经两件套兜底；无绑定邮箱不挂邮件工具（D91） |
+| [41-project-team.md](41-project-team.md) | 项目组（**草案 v0.1，待讨论，未定稿、未入决策表**）：把群聊升级为协作空间——群 = 项目组（会话行 + `lead_bot_id` 负责人，不新增 type / 实体）；沟通 = 现有群聊；负责人默认接收未 `@` 的消息（取代广播判断，无负责人回落）；模块框架（`TEAM_MODULES` 注册表 + 宿主强制写权限声明，看板 / 文档 / OKR / 日历下期）；顶栏 tab + 右上功能区，群聊撤右栏并迁入「项目详情」；双轮选成员；含读码发现的连锁缺口（任务结算唤醒的轮次不继承 `@` 连锁） |
 
 ## 尚未讨论（暂不入文档）
 
