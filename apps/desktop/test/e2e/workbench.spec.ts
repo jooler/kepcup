@@ -94,6 +94,14 @@ async function openWorkbench(page: Page): Promise<void> {
 /** 左栏点会话行（按 id）。 */
 async function openRow(page: Page, conversationId: string): Promise<void> {
   await page.locator(`[data-testid="conversation-item-${conversationId}"]`).click();
+  // chat.select 要连做多个 RPC（get/messages/runs 页）后才落 currentId，
+  // 期间 chat-view 可见但仍是旧会话：必须等到行高亮切换，否则紧随其后的
+  // fill 会打在旧会话的输入框里（慢机器上草稿会串号或被 setContent 丢弃）。
+  await expect(page.locator(`[data-testid="conversation-item-${conversationId}"]`)).toHaveAttribute(
+    'data-active',
+    'true',
+    { timeout: 15_000 },
+  );
   await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });
 }
 
