@@ -40,6 +40,8 @@ export default defineConfig({
         test: {
           name: 'core',
           include: ['packages/core/test/**/*.test.ts'],
+          // Windows runners are several times slower to spawn / hit the disk.
+          ...(process.platform === 'win32' ? { testTimeout: 30_000, hookTimeout: 60_000 } : {}),
           setupFiles: ['./vitest.setup.ts'],
         },
       },

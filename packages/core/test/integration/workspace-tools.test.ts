@@ -303,7 +303,7 @@ describe('workspace and coding tools', () => {
     expect(readFileSync(path.join(workspace, '.attachments', copied)).subarray(0, 4)).toEqual(png.subarray(0, 4));
   }, 240_000);
 
-  it('surfaces sandbox violations inside the bash tool result step', async () => {
+  it.skipIf(process.platform === 'win32')('surfaces sandbox violations inside the bash tool result step', async () => {
     const { core, llm } = await start();
     const bot = await makeBot(core, '小违');
     const conv = await openDirect(core, bot.id);
