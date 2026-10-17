@@ -214,4 +214,33 @@ rg -n 'wiki_ingest:\$\{botId|wiki_lint:\$\{bot' packages/core/src
 
 ## 9. 实施记录
 
-（执行智能体在此填写：分支、提交列表、观察到的槽位占用情形、测试结果、偏差编号。）
+- **分支**：`feat/project/wp9-wiki-core`（基于集成分支早期点，含 WP0-2 / WP1 / WP2。**未 rebase**：主集成分支其后的 WP3 改动（`events.ts`、`orchestrator.ts` 等）的合入冲突由总调度处理；本分支收口以自身现状为准）。
+- **接续说明**：前代理完成步骤 1-2 并提交 `a32afff`（shared `WikiOwner` / `wikiOwnerKey`、`infra/paths.ts` 项目路径助手与 owner 泛化助手、`crypto.wikiDbKeyInfo`、`wiki/index-store.ts` / `index-manager.ts` / `assets.ts`、jobs `lastDoneAtFor` + `cancelPendingByBotInConversation` 及 4 个单测）；步骤 3-7 以约 22 个未提交半成品遗留（wiki/ 服务层、jobs runner、lifecycle、orchestrator、start、bindings、tools、shared rpc、desktop store 与 e2e、integration wiki-project）。本代理逐块核对其与任务书一致性，补齐缺口、修正偏差并收口。半成品相互咬合无法拆成多个可构建提交，按 README §1.5 合成一个实现提交（本条即说明）。
+- **提交列表**：
+  - `a32afff` `feat(shared,core): wiki owner foundations for project wikis (D92 T1b WP9 steps 1-2)`
+  - `ab58b5f` `feat(shared,core)!: generalize wiki domain to owners — project wikis (D92 T1b WP9 steps 3-7)`
+  - 文档提交（本条 + README §7 + DEVIATIONS）。
+- **半成品的核对结论与修正**（本代理改动）：
+  1. `handover/adapters/wiki.ts` 遗漏 owner 化：复制完成后仍发布 `{ botId }` 形态的 `wiki_changed` → 改为 `{ owner: { kind: 'bot', id } }`（漏改的 `handover-adapters-p2.test.ts` 断言一并修正）。
+  2. `external-agent-p6.test.ts` 的 wiki_lint 用例仍入队旧 payload（无 `owner`）→ 按 breaking 契约更新（job 终态 failed→done 复核通过）。
+  3. 重复来源跳过分支的台账登记改为**仅新增 source 记录时提交**：完全相同的 (type, ref) 重复提交只重写相同字节、不产生空提交（`ensureLedgerEntry` 返回是否追加）。
+  4. `app.notice` 失败提示文案按 owner 种类区分「项目 Wiki / Wiki」。
+  5. 清理 4 处未使用 import（lint）。
+  6. `wiki-project.test.ts` 三处测试 bug 修正（`runs` 表在 `runsDb` 不在 `mainDb`；`wiki.tree` 输出形状是 `{ pages }`；重启对账用例两个 stack 须共用同一 memory keystore），并补齐 N 的维护 loop 脚本、体检到点用的 done 行回拨、M 的 memory.db 只含私有页面的断言。
+  7. 新增缺失测试：`test/integration/wiki-remove-source.test.ts`（ACL 全表、删除级联、去重、移出成员后仍可删）、`test/integration/wiki-project-lifecycle.test.ts`（删项目 / 移出成员 / 删 Bot）。
+- **关键取舍**（任务书未明说、由本代理判断）：
+  1. `removeSource` 的 ACL 拒绝用 `INVALID_INPUT`（仓库无 `FORBIDDEN` 错误码，按 WP 指示不新增）；Bot owner → `NOT_SUPPORTED`；来源不存在 → `NOT_FOUND`。
+  2. 用户提交来源的终态失败通知经 `app.notice`（key `wiki-ingest-failed:{jobId}`，warning，不落库）；Bot 提交的沿用内部事件 `wiki_ingest_failed` 唤醒执行者。该内部事件是消息文本通道（`deliverEventToBot(botId, conversationId, event, text)`），无结构化 payload 可带 `owner`——归属按 `createdBy` 分流已即 WP「同样带 owner」的意图。
+  3. renderer 最小编译修复只动了 `stores/wiki.svelte.ts`（`WikiTab.svelte` 全部经 store 调用，无需改动）；`wiki_changed` 订阅按 `owner.kind==='bot' && owner.id===当前 botId` 过滤，界面行为不变。
+- **观察到的槽位占用**（§8）：全局后台并发 `BACKGROUND_LOOP_CONCURRENCY = 2`。一个项目的 N 个成员同时入库时，被认领的 job 在互斥队列里等锁，最多占满 2 个后台槽位（N>2 时其余仍 pending 不占槽），期间同项目的维护串行推进、其它后台 loop（记忆整理等）被推迟。WP 接受，未做调度。
+- **验收清单核对**：
+  - rg 自检 #1：非空，3 处命中逐一核对为预期——`service.ts` `enqueueIngest` 的执行者字段（WP §2 明文保留）、`ingest.ts` `resolveSource` 内部 identity、`bindings.ts` `skills.import`（非 wiki 方法）→ 记 **DEV-032**；`wikiBotIdInputSchema` / `storeFor(botId` / `botWikiRoot(deps` 在 wiki/ 与 rpc/ 下零命中。
+  - rg 自检 #2：空（去重键全部 `wikiOwnerKey` 形态）。
+  - 迁移目录：**0 个新增**（DDL 内嵌 `wiki/index-manager.ts` 并写 `PRAGMA user_version = 1`，与 `migrations/memory/0002` 的一致性由 `wiki-index-store.test.ts` 保证）。
+  - 项目 wiki 全链路 / Bot wiki 隔离 / handover 复制不变 / RPC 与事件 owner 化 / renderer 行为不变：由下述测试覆盖。
+- **测试结果**：
+  - typecheck：shared / core / desktop（含 svelte-check）全过；`pnpm lint` 过。
+  - 定向：unit 8 文件 59 例（wiki-owner 5、wiki-index-store 6、wiki-assets 5、jobs-last-done-for 4、wiki 22、wiki-maintenance-delete 4、wiki-source-sniff 6、handover-wiki-copy 7）全绿；integration `wiki.test` 21、`wiki-url` 3、`handover-p2` 7、`wiki-project` 9、`wiki-remove-source` 3、`wiki-project-lifecycle` 3、`external-agent-p6`、`handover-adapters-p2` 全绿；desktop 单测 767 全绿。
+  - 全量（收口一次）：5406 通过 / 2 失败 / 24 skip——2 例均为前代理改写遗漏的测试文件（`external-agent-p6` 旧 wiki_lint payload、`handover-adapters-p2` 旧 `wiki_changed` 断言），已修复并单跑复核通过，不超基线。
+  - e2e（`wiki.spec` / `handover.spec` 的 owner 入参已改）未在本 WP 运行（§6 未列；e2e 归 T1a 收口）。
+- **偏差**：DEV-032（验收自检 rg#1 的解读）。无其它 WP 偏差。
