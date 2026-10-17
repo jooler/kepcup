@@ -11,6 +11,7 @@ import { newId } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { CoreLogger } from '../infra/logger.js';
 import { segmentForFts, buildFtsOrQuery } from '../infra/text-segment.js';
+import { WikiIndexStore } from '../wiki/index-store.js';
 
 const require = createRequire(import.meta.url);
 
@@ -131,11 +132,14 @@ export class MemoryStore {
   #vecLoaded = false;
   /** load() failed on this connection; do not touch memory_vec again. */
   #vecLoadFailed = false;
+  /** The wiki_fts slice lives in the same memory.db (P09); delegated, not duplicated. */
+  readonly #wikiIndex: WikiIndexStore;
 
   constructor(deps: MemoryStoreDeps) {
     this.#db = deps.db;
     this.#clock = deps.clock;
     this.#logger = deps.logger;
+    this.#wikiIndex = new WikiIndexStore(deps.db);
   }
 
   /** The owning bot (set by MemoryDbManager.for via withBot). */
@@ -574,59 +578,38 @@ export class MemoryStore {
     this.#db.prepare('delete from memory_vec where item_rowid = ?').run(BigInt(rowid));
   }
 
-  // --- wiki_fts (P09; every write goes through text-segment) -------------------
+  // --- wiki_fts (P09; delegated to WikiIndexStore, same memory.db) --------------
 
   /** Replaces the index row of one wiki page (incremental maintenance update). */
   wikiUpsertPage(pagePath: string, title: string, content: string): void {
-    this.#db.prepare('delete from wiki_fts where page_path = ?').run(pagePath);
-    this.#db
-      .prepare('insert into wiki_fts (segmented_text, page_path, title) values (?, ?, ?)')
-      .run(segmentForFts(`${title}\n${content}`), pagePath, title);
+    this.#wikiIndex.wikiUpsertPage(pagePath, title, content);
   }
 
   wikiDeletePage(pagePath: string): void {
-    this.#db.prepare('delete from wiki_fts where page_path = ?').run(pagePath);
+    this.#wikiIndex.wikiDeletePage(pagePath);
   }
 
   /** Drops every wiki page row (rollback / full reindex). */
   wikiClearPages(): void {
-    this.#db.prepare('delete from wiki_fts').run();
+    this.#wikiIndex.wikiClearPages();
   }
 
-  /**
-   * Wiki page search (wiki_search tool / wiki.search RPC): OR composition +
-   * bm25 ranking (same Chinese-recall rationale as memory retrieval, P07) with
-   * an FTS5 snippet as the hit preview.
-   */
+  /** Wiki page search (wiki_search tool / wiki.search RPC). */
   wikiSearch(
     queryText: string,
     limit: number,
   ): Array<{ path: string; title: string; snippet: string }> {
-    const query = buildFtsOrQuery(queryText);
-    if (query === null) return [];
-    const rows = this.#db
-      .prepare(
-        `select page_path, title, snippet(wiki_fts, 0, '「', '」', ' … ', 24) as snippet
-         from wiki_fts where wiki_fts match ? order by bm25(wiki_fts) limit ?`,
-      )
-      .all(query, limit) as Array<{ page_path: string; title: string; snippet: string }>;
-    return rows.map((row) => ({ path: row.page_path, title: row.title, snippet: row.snippet }));
+    return this.#wikiIndex.wikiSearch(queryText, limit);
   }
 
   /** Distinct indexed page count (bot-deletion dialog preview). */
   wikiPageCount(): number {
-    const row = this.#db.prepare('select count(distinct page_path) as n from wiki_fts').get() as {
-      n: number;
-    };
-    return row.n;
+    return this.#wikiIndex.wikiPageCount();
   }
 
   /** All indexed page paths (startup FTS reconciliation, BR-P09-009). */
   wikiPagePaths(): string[] {
-    const rows = this.#db.prepare('select distinct page_path from wiki_fts').all() as Array<{
-      page_path: string;
-    }>;
-    return rows.map((row) => row.page_path);
+    return this.#wikiIndex.wikiPagePaths();
   }
 
   /** Test/IPC surface: the raw connection stays internal otherwise. */

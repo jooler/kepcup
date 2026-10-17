@@ -376,7 +376,9 @@ test('handover P2: wiki copied in the background, then the retire button deletes
     await expect(progress.locator('[data-testid="handover-item-copied"]')).toHaveText(
       '已复制 2 页',
     );
-    const tree = (await rpc(page, 'wiki.tree', { botId: beta.bot.id })) as {
+    const tree = (await rpc(page, 'wiki.tree', {
+      owner: { kind: 'bot', id: beta.bot.id },
+    })) as {
       pages: Array<{ path: string }>;
     };
     expect(tree.pages.map((entry) => entry.path).sort()).toEqual([

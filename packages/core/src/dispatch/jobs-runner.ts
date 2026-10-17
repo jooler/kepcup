@@ -24,6 +24,7 @@ import type { SkillsService } from '../skills/registry.js';
 import { runWikiIngestJob } from '../wiki/ingest.js';
 import { runWikiLintJob } from '../wiki/lint.js';
 import type { WikiService } from '../wiki/service.js';
+import type { WikiIndexFor } from '../wiki/fts.js';
 import type { ScheduleService } from '../schedule/service.js';
 import type { WatchService } from '../watch/service.js';
 import type { MailService } from '../mail/service.js';
@@ -66,6 +67,8 @@ export interface JobsRunnerDeps {
   skills?: SkillsService | undefined;
   /** P09 wiki domain (wiki_ingest / wiki_lint / wiki_suggestion consumers). */
   wiki?: WikiService | undefined;
+  /** Per-owner wiki_fts resolver (D92 T1b: bot memory.db / project wiki.db). */
+  wikiIndexFor?: WikiIndexFor | undefined;
   /** P10 schedule domain (schedule_fire consumer). */
   schedules?: ScheduleService | undefined;
   /** W7 watch domain (watch_alert consumer). */
@@ -278,6 +281,7 @@ export class JobsRunner {
           return;
         }
         const outcome = wiki.enqueueIngest({
+          owner: { kind: 'bot', id: job.bot_id },
           botId: job.bot_id,
           conversationId: job.conversation_id,
           source: {
@@ -285,6 +289,7 @@ export class JobsRunner {
             ref: payload.ref ?? '',
             note: payload.note ?? '',
           },
+          createdBy: { kind: 'bot', id: job.bot_id },
         });
         if (!outcome.ok) {
           this.#deps.logger.info(
@@ -314,7 +319,7 @@ export class JobsRunner {
           secrets: this.#deps.secrets,
           usage: this.#deps.usage,
           gateway: this.#deps.gateway,
-          memory: this.#deps.memory,
+          indexFor: this.#requireWikiIndexFor(),
           wiki: this.#deps.wiki,
           orchestrator: this.#deps.orchestrator,
           publish: (event, payload) => {
@@ -341,7 +346,8 @@ export class JobsRunner {
           secrets: this.#deps.secrets,
           usage: this.#deps.usage,
           gateway: this.#deps.gateway,
-          memory: this.#deps.memory,
+          indexFor: this.#requireWikiIndexFor(),
+          conversations: this.#deps.conversations,
           wiki: this.#deps.wiki,
           jobs: this.#deps.jobs,
           publish: (event, payload) => {
@@ -403,6 +409,13 @@ export class JobsRunner {
       throw new Error('wiki domain not wired; cannot run wiki suggestion');
     }
     return this.#deps.wiki;
+  }
+
+  #requireWikiIndexFor(): WikiIndexFor {
+    if (this.#deps.wikiIndexFor === undefined) {
+      throw new Error('wiki domain not wired; cannot resolve the wiki index');
+    }
+    return this.#deps.wikiIndexFor;
   }
 
   /**

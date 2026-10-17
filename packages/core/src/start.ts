@@ -132,6 +132,7 @@ import { SkillImporter } from './skills/library.js';
 import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
+import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
 import { MemoService } from './workbench/memo-service.js';
 import { TodoService } from './workbench/todo-service.js';
@@ -541,6 +542,8 @@ export interface CoreServices {
   skillPresets: SkillPresetsService | null;
   /** P09 wiki domain (null while locked / errored). */
   wiki: WikiService | null;
+  /** D92 T1b WP9: project wiki wiki.db connection pool (null with the wiki domain). */
+  wikiIndexes: WikiIndexManager | null;
   /** P10 proactive-messaging domain (null while locked / errored). */
   schedules: ScheduleService | null;
   /** D90 工作台事项 (null while locked / errored). */
@@ -825,6 +828,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     skillImporter: null,
     skillPresets: null,
     wiki: null,
+    wikiIndexes: null,
     schedules: null,
     todos: null,
     memos: null,
@@ -899,6 +903,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.memory?.closeAll();
       } catch {
         // Connections may already be gone (bot deletion race); nothing to do.
+      }
+      try {
+        services.wikiIndexes?.closeAll();
+      } catch {
+        // Same posture as memory: nothing to do on a close race.
       }
       try {
         await services.apps?.shutdown();
@@ -1559,8 +1568,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
-    // per-bot maintenance mutex, RPC reads and weekly lint scheduling (the
+    // per-owner maintenance mutex, RPC reads and weekly lint scheduling (the
     // ingest/lint job runners consume it in jobs-runner).
+    const wikiIndexes = new WikiIndexManager({
+      paths,
+      masterKey,
+      clock: () => clock.now(),
+      logger,
+    });
     const wiki = new WikiService({
       paths,
       clock,
@@ -1568,7 +1583,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       bots,
       conversations,
-      memory,
+      indexFor: (owner) =>
+        owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
+      publish: (event, payload) => events.emit(event as never, payload as never),
     });
     const gateway = new ToolGateway({
       paths,
@@ -2136,9 +2153,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {
-        topicsSection: (botId) => wiki.topicsSection(botId),
-        search: (botId, query, limit) => wiki.search(botId, query, limit),
-        readPage: (botId, pagePath) => wiki.readPage(botId, pagePath),
+        topicsSection: (owner) => wiki.topicsSection(owner),
+        search: (owner, query, limit) => wiki.search(owner, query, limit),
+        readPage: (owner, pagePath) => wiki.readPage(owner, pagePath),
         enqueueIngest: (input) => wiki.enqueueIngest(input),
       },
       schedule: scheduleFacade,
@@ -2436,18 +2453,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         new MemoryAdapter({ memory: handoverMemory, clock: () => clock.now() }),
         // P2：Wiki 与组件在后台 handover_copy 作业里复制。
         new WikiAdapter({
+          // D92 T1b WP9: handover stays bot-only — every call pins the bot owner.
           wiki: {
-            exists: (botId) => wiki.exists(botId),
+            exists: (botId) => wiki.exists({ kind: 'bot', id: botId }),
             pageStats: (botId) => wiki.pageStats(botId),
-            tree: (botId) => wiki.tree(botId),
+            tree: (botId) => wiki.tree({ kind: 'bot', id: botId }),
             pageTitle: (botId, pagePath) => {
               try {
-                return wiki.readPage(botId, pagePath).title;
+                return wiki.readPage({ kind: 'bot', id: botId }, pagePath).title;
               } catch {
                 return pagePath;
               }
             },
-            search: (botId, query, limit) => wiki.search(botId, query, limit),
+            search: (botId, query, limit) => wiki.search({ kind: 'bot', id: botId }, query, limit),
             copySize: (botId, pages) => wiki.copySize(botId, pages),
             pageConflict: (fromBotId, toBotId, pagePath) =>
               wiki.pageConflict(fromBotId, toBotId, pagePath),
@@ -2551,7 +2569,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       wiki: {
         prepareBotDeletion: (botId) => wiki.prepareBotDeletion(botId),
-        wikiPageCount: (botId) => wiki.pageCount(botId),
+        prepareProjectDeletion: (projectId) => wiki.prepareProjectDeletion(projectId),
+        wikiPageCount: (botId) => wiki.pageCount({ kind: 'bot', id: botId }),
+      },
+      wikiIndex: {
+        closeProject: (projectId) => wikiIndexes.closeProject(projectId),
       },
       schedules: {
         deleteForConversation: (conversationId) => schedules.deleteForConversation(conversationId),
@@ -2617,6 +2639,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       paths,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wiki,
+      wikiIndexFor: (owner) =>
+        owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
       schedules,
       watches,
       mail,
@@ -2843,6 +2867,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.skillImporter = skillImporter;
     services.skillPresets = skillPresets;
     services.wiki = wiki;
+    services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;
     services.todos = todos;
     services.memos = memos;
