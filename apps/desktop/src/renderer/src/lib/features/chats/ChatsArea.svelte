@@ -10,9 +10,10 @@
   // 右栏的开合由聊天区顶部的 Bot 药丸接管（收起时药丸内出现「>」提示）。
   // 并排右栏放不下时（窗口窄于 聊天区最小宽 + 右栏最小宽 + 侧栏，sidebar-layout.ts）一律不
   // 渲染：Bot 药丸改开全屏 Bot 详情覆盖层（BotDetailOverlay），聊天区永远留得出可用宽度。
-  // 组群输入期间主区域不是任何会话：不挂上一会话的右栏（收起偏好不变）。
+  // While the project compose is open the main area is not any conversation:
+  // do not mount the previous conversation's right panel (collapse pref unchanged).
   const rightCollapsed = $derived(
-    shell.rightPanelCollapsed || !sidebarLayout.panelFits || chat.composingGroup,
+    shell.rightPanelCollapsed || !sidebarLayout.panelFits || chat.composingProject,
   );
   // 窄屏（33-narrow-layout）：单栏，右栏不常驻——Bot 详情经顶部药丸以全屏
   // 覆盖层呈现（NarrowShell 渲染，不走这里的 Resizable 分栏）。

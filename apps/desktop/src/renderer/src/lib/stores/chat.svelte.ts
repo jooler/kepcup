@@ -27,6 +27,13 @@ import { sendGateRequirement } from '../features/chats/send-gate';
 import { restoredFailedRun, showsFailure } from '../features/chats/setup-continue';
 import { resolveConversationBot } from '../features/chats/conversation-bot';
 import {
+  composeAddMember,
+  composeBackToLead,
+  composeRemoveMember,
+  composeSelectLead,
+  type ComposeState,
+} from '../features/chats/project-compose';
+import {
   clearLastConversationId,
   loadLastConversationId,
   saveLastConversationId,
@@ -82,8 +89,15 @@ const PAGE_SIZE = 60;
 class ChatState {
   conversations = $state<ConversationView[]>([]);
   currentId = $state<string | null>(null);
-  /** 新建群聊：主区域顶部的成员输入，尚未落库。 */
-  composingGroup = $state(false);
+  /**
+   * New-project compose: the two-round input at the top of the main area,
+   * not yet persisted. Round 1 picks the lead (single), round 2 the members
+   * (multi). `composeMemberIds` does NOT include the lead; both are merged
+   * only in the projects.create payload.
+   */
+  composingProject = $state(false);
+  composePhase = $state<ComposeState['phase']>('lead');
+  composeLeadId = $state<string | null>(null);
   composeMemberIds = $state<string[]>([]);
   /** Ids of bots that currently have a running loop, per conversation. */
   runningByConversation = $state<Record<string, string[]>>({});
@@ -129,11 +143,12 @@ class ChatState {
   }
 
   /**
-   * 左栏高亮的会话：组群输入打开时主区域不再是 currentId 那个会话，不高亮它
-   * （currentId 本身保留，取消组群后回到原会话）。
+   * Conversation highlighted in the sidebar: while the project compose is open
+   * the main area no longer shows the currentId conversation, so do not
+   * highlight it (currentId itself is kept; cancelling returns to it).
    */
   get activeId(): string | null {
-    return this.composingGroup ? null : this.currentId;
+    return this.composingProject ? null : this.currentId;
   }
 
   /**
@@ -225,7 +240,10 @@ class ChatState {
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
       this.#pruneSidebarSections();
       if (this.#chat?.conversation.directBotId === data.id) this.close();
-      // 正在组群的成员里有它：移出，免得用一个已删除的 Bot 建群。
+      // It is part of an in-flight project compose: a picked lead goes back to
+      // round 1 (chosen members kept), members are dropped — never build the
+      // project around a deleted bot.
+      if (this.composeLeadId === data.id) this.backToLeadPhase();
       if (this.composeMemberIds.includes(data.id)) this.removeComposeMember(data.id);
     });
     core.onEvent('project.turn', (payload) => {
@@ -319,7 +337,7 @@ class ChatState {
       conversation: ConversationView | null;
     };
     if (!result.conversation) return;
-    this.cancelGroupCompose();
+    this.cancelProjectCompose();
     this.#upsertConversation(result.conversation);
     const messages = await this.#loadLatest(conversationId);
     // D75: several tasks may be in flight next to the turns — look further back.
@@ -412,59 +430,83 @@ class ChatState {
     }
   }
 
-  // --- group management (P05) --------------------------------------------------
+  // --- project compose (D92 §11.1: two-round creation, lead first) -------------
 
-  /**
-   * 新建群聊：主区域顶部展开成员输入，点选已有 Bot，或回车用输入的名字
-   * 新建一个画像为空的 Bot。空回车才真正创建群。
-   */
-  beginGroupCompose(): void {
-    // 组群输入条在对话区里：工作台开着时先回到对话区，否则点「新建群聊」看不到任何反应。
-    shell.mainView = 'chats';
-    this.composingGroup = true;
-    this.composeMemberIds = [];
+  #composeState(): ComposeState {
+    return { phase: this.composePhase, leadId: this.composeLeadId, memberIds: this.composeMemberIds };
   }
 
-  cancelGroupCompose(): void {
-    this.composingGroup = false;
-    this.composeMemberIds = [];
+  #setComposeState(next: ComposeState): void {
+    this.composePhase = next.phase;
+    this.composeLeadId = next.leadId;
+    this.composeMemberIds = next.memberIds;
+  }
+
+  /**
+   * New project: open the two-round compose at the top of the main area —
+   * round 1 picks the lead (single), round 2 the members (multi). Pick an
+   * existing bot, or press Enter on a typed name to create an empty-profile
+   * bot.
+   */
+  beginProjectCompose(): void {
+    // The compose view lives in the chats area: leave the workbench first,
+    // otherwise clicking "new project" would show no reaction at all.
+    shell.mainView = 'chats';
+    this.composingProject = true;
+    this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
+  }
+
+  cancelProjectCompose(): void {
+    this.composingProject = false;
+    this.#setComposeState({ phase: 'lead', leadId: null, memberIds: [] });
+  }
+
+  /** Round-1 pick: enter the members round (a bot picked from the members leaves them). */
+  selectComposeLead(botId: string): void {
+    this.#setComposeState(composeSelectLead(this.#composeState(), botId));
+  }
+
+  /** Back to round 1 to re-pick the lead; the chosen members are kept. */
+  backToLeadPhase(): void {
+    this.#setComposeState(composeBackToLead(this.#composeState()));
   }
 
   addComposeMember(botId: string): void {
-    if (this.composeMemberIds.includes(botId)) return;
-    this.composeMemberIds = [...this.composeMemberIds, botId];
+    this.#setComposeState(composeAddMember(this.#composeState(), botId));
   }
 
   removeComposeMember(botId: string): void {
-    this.composeMemberIds = this.composeMemberIds.filter((id) => id !== botId);
+    this.#setComposeState(composeRemoveMember(this.#composeState(), botId));
   }
 
   /**
-   * 空回车：用成员名拼接群名并创建。只算通讯录里还在的 Bot（删除事件与
-   * 通讯录刷新之间可能有残留 id），不足 2 人时不创建。
+   * Empty-Enter commit: only bots still in the roster count (a deletion event
+   * may land before the roster refresh); without the lead or with fewer than
+   * one valid member, do not create. The title joins "lead, members…" with the
+   * lead first. `memberBotIds` includes the lead.
    */
-  async commitGroupCompose(): Promise<boolean> {
+  async commitProjectCompose(): Promise<boolean> {
+    const lead =
+      this.composeLeadId === null
+        ? undefined
+        : contacts.bots.find((bot) => bot.id === this.composeLeadId);
     const members = this.composeMemberIds
       .map((id) => contacts.bots.find((bot) => bot.id === id))
       .filter((bot) => bot !== undefined);
-    if (members.length < 2) return false;
-    const ids = members.map((bot) => bot.id);
-    const names = members.map((bot) => bot.name);
-    const title = projectTitleFromMemberNames(names);
+    if (lead === undefined || members.length < 1) return false;
+    const title = projectTitleFromMemberNames([lead.name, ...members.map((bot) => bot.name)]);
     try {
-      // WP5 replaces this with the two-round lead selection
-      const leadBotId = ids[0]!;
       const result = (await core.call('projects.create', {
         title,
-        leadBotId,
-        memberBotIds: ids,
+        leadBotId: lead.id,
+        memberBotIds: [lead.id, ...members.map((bot) => bot.id)],
       })) as { conversation: Conversation };
-      this.cancelGroupCompose();
+      this.cancelProjectCompose();
       await this.refresh();
       await this.select(result.conversation.id);
       return true;
     } catch (error) {
-      toast.error(errorText(errorCode(error), t('group.createFailed')));
+      toast.error(errorText(errorCode(error), t('project.createFailed')));
       return false;
     }
   }

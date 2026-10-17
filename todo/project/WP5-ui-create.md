@@ -175,3 +175,22 @@ rg -n "composingGroup|beginGroupCompose|cancelGroupCompose|commitGroupCompose|Gr
 ## 9. 实施记录
 
 （执行智能体在此填写：分支、提交列表、手工冒烟、偏差编号。）
+
+- **分支**：`feat/project/wp5-ui-create`（本 WP 接续前一执行智能体的未提交半成品收口：半成品已覆盖 §4 步骤 1–5 的主体——`project-compose.ts` / `ProjectComposeBar.svelte` / store 契约 / 入口 / i18n 均按任务书落地；本次核对逐块确认与任务书一致，补齐了三处小缺口：① 新增/改写的代码注释按 [01-conventions](../../docs/dev/01-conventions.md) 统一为英文（`chat.svelte.ts` 新方法注释、`ProjectComposeBar.svelte`、`ChatView` / `ChatsArea` / `NarrowShell` 改动处注释）；② 通讯录删除 Bot 事件里补负责人分支（`composeLeadId === data.id` → `backToLeadPhase()`，成员移出为半成品已有）；③ 无其他逻辑改动）。stash 快照 `WP5 leftover snapshot` 与收口内容一致，仅作保底，未取用。
+- **提交**：
+  - `0f3ec73` feat(desktop): two-round project compose — pick the lead first, then the members (D92 T1a WP5)（13 文件，+796/−474）
+  - docs 提交（本实施记录 + README §7 + DEV-034）。
+- **测试**：
+  - `pnpm --filter @kepcup/desktop typecheck` ✓（tsc node + svelte-check 0 错 0 警）；`pnpm lint` ✓。
+  - `node scripts/run-tests.mjs run apps/desktop/src/renderer/src/lib/features/chats/project-compose.test.ts` ✓ 17 例（composePool 去管家、候选过滤含排除负责人、lead 四种回车、members 七场景、四个状态转换、stepHighlight）。
+  - `node scripts/run-tests.mjs run --project desktop` ✓ 82 文件 775 例全绿（WP5 不跑全量）。
+  - e2e 未写未改（`group-compose.spec.ts` / `helpers/create-group.ts` 留 WP8，本 WP 期间允许失败）。
+- **手工冒烟**（以一次性 Playwright `_electron` 驱动替身完成——临时 spec 跑完即删、未入库；等价于任务书要求的逐项操作）：临时 home + mock LLM 启动 → 「+」→「新建项目组」→ `project-compose-view` 可见且无 `chat-view`；第一轮：`data-phase="lead"`、标签「负责人」、placeholder 正确、空回车提示「请先选择项目负责人」、输入新名字回车新建 Bot 并成为负责人（负责人芯片头像 + Crown + 「负责人」徽标）；第二轮：`data-phase="members"`、标签「成员」、点选候选加入芯片；Backspace（输入空）先删最后一位成员、无成员时退回第一轮；负责人芯片 ✕ 退回第一轮时**已选成员保留**；Esc 取消；重开后选负责人 + 选成员空回车建组并进入会话，RPC 核对 `type='project'`、`leadBotId` 为所选负责人、标题 `烟测甲, 烟测乙`（负责人排首位）；候选列表无管家（对 `bots.list` 的 systemRole 非空者逐一断言无 option）；窗口拉窄到 400px 后经 `narrow-back-button` 回列表页，创建入口与双轮流程同样可用。冒烟期间发现的两处均为替身脚本自身步骤编排问题（成员保留断言走 Backspace 路径永远空成员——保留语义只存在于负责人芯片 ✕ 路径；连删两位成员需三次 Backspace），非应用缺陷。
+- **偏差**：DEV-034（验收 rg 自检在 `apps/desktop/test/e2e/` 下非空——`!test/**` glob 语义排除不了子目录 test，命中全部为 §5 明令留 WP8 的两个文件；按「src 无残留」解读执行）。另记两点非偏差说明：① 负责人芯片 ✕ 在 §4.12 清单之外加了 `data-testid="project-compose-back-to-lead"`（§4.12 未给该按钮 testid，e2e/组件需要一个稳定定位点，未改动清单内任何 testid）；② 冒烟用 Playwright 驱动替身代替纯手工 `pnpm dev` 点按，覆盖面与 §5 清单一致。
+- **验收清单核对**：
+  - [x] 自检 rg：`apps/desktop/src` 与非 e2e 路径零命中；e2e 两文件命中见 DEV-034。
+  - [x] 创建需要负责人 + ≥ 1 位成员；`projects.create` 的 `memberBotIds` 含负责人（`[leadId, ...memberIds]`，commit 处拼接）；标题 `projectTitleFromMemberNames([负责人, ...成员])`，冒烟实测「烟测甲, 烟测乙」。
+  - [x] 候选池无管家（`composePool` 去管家后再过滤，单测 + 冒烟双验证）；选已在成员里的 Bot 当负责人会把它从成员移除（`composeSelectLead` 单测覆盖）；Backspace 三种行为符合 §4 步骤 6（冒烟覆盖）。
+  - [x] `project-compose.test.ts` 覆盖步骤 1 全部场景并通过；desktop `typecheck` / `lint` / 单测绿。
+  - [x] 实施记录已填（含手工冒烟结果）。
+- **WP1 临时负责人消除**：`commitProjectCompose` 里 `leadBotId = ids[0]` 与 `// WP5 replaces` 注释已删（rg 自检含 `WP5 replaces` 模式，零命中）。
