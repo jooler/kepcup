@@ -1079,7 +1079,7 @@ export class SkillsService {
       if (existsSync(target)) rmSync(target, { recursive: true, force: true });
       // Pathspec-limited checkout: only skills/{name} is written back.
       repo.checkoutTree(commit.asObject(), { force: true, path: name });
-      authoredGitCommit(root, `rollback ${name} to ${commitOid.slice(0, 10)}`, this.#deps.logger);
+      await authoredGitCommit(root, `rollback ${name} to ${commitOid.slice(0, 10)}`, this.#deps.logger);
       this.publishChanged(botId);
       return this.entryFor(botId, name)!;
     });

@@ -1002,6 +1002,13 @@ async function overflowing(page: Page, rootSelector: string): Promise<string[]> 
       // 输入框自己内部滚动，不算撑破。
       if (box.tagName === 'INPUT' || box.tagName === 'TEXTAREA') continue;
       if (style.overflowX === 'auto' || style.overflowX === 'scroll') continue;
+      // 设计内截断（省略号）不是撑破；窄窗口下 lane 名等靠它收敛。
+      if (
+        style.textOverflow === 'ellipsis' &&
+        style.whiteSpace === 'nowrap' &&
+        style.overflowX === 'hidden'
+      )
+        continue;
       if (box.scrollWidth > box.clientWidth + 1 && box.clientWidth > 0) {
         const id = box.getAttribute('data-testid') ?? '';
         found.push(

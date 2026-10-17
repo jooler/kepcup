@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -756,8 +756,20 @@ export class BrowserHost {
       // Session may already be gone; the directory removal below still runs.
     }
     if (options.removeDir) {
+      // 先强制落盘再删目录：Windows 上 Chromium 把残余数据在删除后的一拍
+      // 落盘重建目录，晚扫一遍兜底；句柄残留已由 removeDirTolerant 退避消化。
+      try {
+        target.flushStorageData();
+      } catch {
+        // Session already gone.
+      }
       for (const dir of partitionDirs(this.#sessionRoot, partition)) {
         await removeDirTolerant(dir);
+      }
+      // 兜底清扫：迟到的 flush 可能刚重建了目录，稍候再扫一次。
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      for (const dir of partitionDirs(this.#sessionRoot, partition)) {
+        if (existsSync(dir)) await removeDirTolerant(dir);
       }
     }
   }
