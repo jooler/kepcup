@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { AppError, WIKI_SOURCE_MAX_BYTES, wikiOwnerSchema, type WikiOwner } from '@kepcup/shared';
+import { AppError, WIKI_SOURCE_MAX_BYTES, WIKI_TEXT_SOURCE_MAX_CHARS, wikiOwnerSchema, type WikiOwner } from '@kepcup/shared';
 
 import { wikiRawDir, wikiRoot } from '../infra/paths.js';
 import type { ConversationsService } from '../domain/conversations.js';
@@ -57,7 +57,7 @@ export interface IngestOutcome {
 interface IngestPayload {
   owner: WikiOwner;
   createdBy: WikiAssetCreator;
-  sourceType: 'attachment' | 'url' | 'file';
+  sourceType: 'attachment' | 'url' | 'file' | 'text';
   ref: string;
   note: string;
 }
@@ -142,7 +142,7 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
               createdBy: payload.createdBy,
               sourceRecord: {
                 type: payload.sourceType,
-                ref: payload.ref,
+                ref: ledgerRefOf(payload.sourceType, payload.ref),
                 conversationId: job.conversation_id,
                 at: deps.clock.now(),
               },
@@ -202,7 +202,7 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
           createdBy: payload.createdBy,
           sourceRecord: {
             type: payload.sourceType,
-            ref: payload.ref,
+            ref: ledgerRefOf(payload.sourceType, payload.ref),
             conversationId: job.conversation_id,
             at: deps.clock.now(),
           },
@@ -329,7 +329,12 @@ function parsePayload(payloadJson: string): IngestPayload {
     throw new AppError('INVALID_INPUT', 'wiki ingest payload 缺少有效的 createdBy');
   }
   const sourceType = raw.sourceType;
-  if (sourceType !== 'attachment' && sourceType !== 'url' && sourceType !== 'file') {
+  if (
+    sourceType !== 'attachment' &&
+    sourceType !== 'url' &&
+    sourceType !== 'file' &&
+    sourceType !== 'text'
+  ) {
     throw new AppError('INVALID_INPUT', `未知的入库来源类型：${String(sourceType)}`);
   }
   return {
@@ -354,8 +359,29 @@ interface LedgerInput {
   bytes: number;
   rawRelPath: string;
   createdBy: WikiAssetCreator;
-  sourceRecord: { type: 'attachment' | 'file' | 'url'; ref: string; conversationId: string | null; at: number };
+  sourceRecord: { type: 'attachment' | 'file' | 'url' | 'text'; ref: string; conversationId: string | null; at: number };
   now: number;
+}
+
+/**
+ * The ledger's `ref` of one submission: the full reference for attachment /
+ * file / URL sources; for a pasted `text` source only an 80-char preview —
+ * the body itself lives in `raw/`, the ledger must not duplicate it.
+ */
+export function ledgerRefOf(sourceType: 'attachment' | 'file' | 'url' | 'text', ref: string): string {
+  return sourceType === 'text' ? ref.trim().slice(0, 80) : ref;
+}
+
+/**
+ * File name of a pasted `text` source (D92 T1b WP10): `note-{yyyyMMdd-HHmmss}.md`,
+ * UTC like every other wiki stamp.
+ */
+export function textSourceFileName(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return (
+    `note-${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+    `-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}.md`
+  );
 }
 
 /**
@@ -402,6 +428,30 @@ async function resolveSource(
   deps: WikiIngestJobDeps,
   input: { botId: string; conversationId: string | null; sourceType: string; ref: string },
 ): Promise<ResolvedSource> {
+  if (input.sourceType === 'text') {
+    // D92 T1b WP10: a user-pasted body — the ref IS the content. Validated at
+    // enqueue time; re-checked here so a hand-crafted job payload cannot smuggle
+    // an oversized body past the RPC boundary.
+    const text = input.ref.trim();
+    if (text.length === 0) {
+      throw new AppError('INVALID_INPUT', '文本内容为空');
+    }
+    if (text.length > WIKI_TEXT_SOURCE_MAX_CHARS) {
+      throw new AppError('INVALID_INPUT', `文本超过长度上限（${WIKI_TEXT_SOURCE_MAX_CHARS} 字）`);
+    }
+    const bytes = Buffer.from(text, 'utf8');
+    assertSize(bytes.length, '粘贴文本');
+    const fileName = textSourceFileName(new Date(deps.clock.now()));
+    return {
+      bytes,
+      name: fileName,
+      mime: 'text/markdown',
+      kind: 'text',
+      converted: null,
+      description: `粘贴文本 ${fileName}`,
+    };
+  }
+
   if (input.sourceType === 'attachment') {
     const attachment = deps.attachments.get(input.ref);
     if (attachment === null) {

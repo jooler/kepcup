@@ -1578,6 +1578,9 @@ export const jobTypeSchema = z.enum([
   'mail_alert',
   // D88 P2：Bot 资产移交的后台阶段（Wiki 页、组件复制；去重键 handover_copy:{handoverId}）。
   'handover_copy',
+  // D92 T1b WP10：删除项目 wiki 来源（异步托管动作；去重键
+  // wiki_remove_source:{ownerKey}:{sourceId}）。不调用任何模型。
+  'wiki_remove_source',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 

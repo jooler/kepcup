@@ -12,6 +12,7 @@ import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import {
   AppError,
+  WIKI_TEXT_SOURCE_MAX_CHARS,
   WIKI_TOPICS_TOKEN_BUDGET,
   canManageEntry,
   wikiOwnerKey,
@@ -174,7 +175,8 @@ export interface WikiCopyOutcome {
 export type WikiSourceType = 'attachment' | 'url' | 'file';
 
 export interface WikiEnqueueSource {
-  sourceType: WikiSourceType;
+  /** `text` is user-only (pasted body, D92 T1b WP10) — never a tool enum value. */
+  sourceType: WikiSourceType | 'text';
   ref: string;
   note: string;
 }
@@ -251,6 +253,16 @@ export class WikiService {
     const cleanedRef = input.source.ref.trim();
     if (cleanedRef.length === 0) {
       return { ok: false, message: 'ref 不能为空' };
+    }
+    if (source.sourceType === 'text') {
+      // D92 T1b WP10: pasted text is a user-only source — the wiki_enqueue tool
+      // never carries this enum value, so a bot here is a programming misuse.
+      if (input.createdBy.kind !== 'user') {
+        throw new AppError('INVALID_INPUT', '粘贴文本来源只能由用户提交');
+      }
+      if (cleanedRef.length > WIKI_TEXT_SOURCE_MAX_CHARS) {
+        return { ok: false, message: `文本超过长度上限（${WIKI_TEXT_SOURCE_MAX_CHARS} 字）` };
+      }
     }
     if (source.sourceType === 'url') {
       try {
@@ -580,6 +592,47 @@ export class WikiService {
         { owner: wikiOwnerKey(owner), sourceId, actor: actor.role },
         'wiki source removed',
       );
+    });
+  }
+
+  /**
+   * Registers a `wiki_remove_source` job and returns immediately (D92 T1b
+   * WP10): the deletion needs the project wiki's maintenance mutex, which a
+   * minutes-long maintenance may hold — tools and RPC must never block on it.
+   * The checks here are fast-fail only; the job re-validates existence and ACL
+   * under the mutex at execution time. `bot_id` of the job is the project lead
+   * (attribution only — the job calls no model).
+   */
+  enqueueRemoveSource(input: {
+    owner: WikiOwner;
+    sourceId: string;
+    actor: { role: WikiActorRole; botId?: string };
+    leadBotId: string;
+    conversationId: string;
+  }): void {
+    const { owner, sourceId, actor } = input;
+    if (owner.kind !== 'project') {
+      throw new AppError('NOT_SUPPORTED', 'Bot wiki 没有来源台账');
+    }
+    if (input.conversationId !== owner.id) {
+      throw new AppError('INVALID_INPUT', '来源删除必须登记在项目会话里');
+    }
+    const entry = readLedger(this.wikiRoot(owner), this.#deps.logger).find(
+      (asset) => asset.id === sourceId,
+    );
+    if (entry === undefined) {
+      throw new AppError('NOT_FOUND', '来源不存在或已删除');
+    }
+    if (!canManageEntry('wiki', actor.role, entry.createdBy, actor.botId)) {
+      throw new AppError('INVALID_INPUT', '只能删除自己添加的来源');
+    }
+    this.#deps.jobs.enqueue({
+      type: 'wiki_remove_source',
+      botId: input.leadBotId,
+      conversationId: input.conversationId,
+      payload: { owner, sourceId, actor },
+      priority: 2,
+      dedupeKey: `wiki_remove_source:${wikiOwnerKey(owner)}:${sourceId}`,
     });
   }
 
