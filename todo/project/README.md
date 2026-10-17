@@ -452,7 +452,7 @@ rg -n "<旧名>" packages apps scripts docs todo -g '!node_modules' -g '!**/dist
 
 | WP | 状态 | 分支 / 提交 | 测试结果 | 偏差 |
 |---|---|---|---|---|
-| WP0-1 | 未开始 | | | |
+| WP0-1 | 已完成 | `feat/project/migration`：`120374f`（改名+迁移+测试）、`2cd4df4`（文档）、实施记录提交 | typecheck 三包通过；定向测试（迁移 / 任务 / 外部智能体 / 权限桥等 30 文件）全绿；全量 5303 通过 / 2 失败（`tool-effects-migration` 断言按列名映射修正后复跑通过；`skills-authoring` 为基线环境项，单跑通过），不超基线 | 无（未新增 DEVIATIONS） |
 | WP0-2 | 未开始 | | | |
 | WP1 | 未开始 | | | |
 | WP2 | 未开始 | | | |

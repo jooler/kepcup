@@ -129,4 +129,58 @@ rg -n "task_workdir" packages -g '!**/dist/**'     # 只允许出现在历史迁
 
 ## 9. 实施记录
 
-（执行智能体在此填写：分支、提交列表、§4.3 冲突处理记录、测试结果、偏差编号。）
+### 分支与提交
+
+- 分支：`feat/project/migration`（按用户指示直接在该集成分支实施，未另拉任务书头部的 `feat/project/wp0-1-cwd`；不 push）。
+- 提交（3 个，均为纯改名 / 记录，无行为改动）：
+  1. `refactor(core,shared): rename D75 task execution root workdir to cwd (D92 T0-1)`——迁移 `runs/0013_task_cwd.sql`、shared 契约、core 源码、renderer 测试、全部相关测试与新增迁移测试；
+  2. `docs(design,dev): follow workdir to cwd rename in task docs (D92 T0-1)`——设计 02 / 30 / 28 与 dev 02 / 03 / 04；
+  3. `docs(todo): record WP0-1 implementation and progress`——本记录与 README §7。
+
+### 开工核对（§3）
+
+- `git status` 干净；runs 最新迁移 `0012_task_capabilities.sql`，编号符合预期，新增 `0013_task_cwd.sql`（内容与任务书 §5.1 逐字一致）。
+- 基线统计：`191 hits in 46 files`（任务书调研值约 190，吻合）。
+
+### §4.3 命名冲突处理（permission-bridge.ts，逐处）
+
+| 位置 | 处理 |
+|---|---|
+| `isolationFor(identity, workdir)` | 参数改 `cwd`；原局部 `const cwd = canonicalPath(workdir)` 改名 `normalizedCwd`（规范化后的会话根） |
+| `#isAgentConfig` | 原局部 `cwd`（agent 配置文件判定的基准根）改名 `sessionCwd`，取 `roots.cwdRoots[0] ?? canonicalPath(ctx.cwd)` |
+| `#decideExec` | 原局部 `cwd`（命令工作目录）改名 `commandCwd`；`#ask` 卡片与 reject/审计 extra 的**协议键名保持 `cwd`**，值为 `commandCwd`（`{ command, cwd: commandCwd }`） |
+| `#pathVerdict` | 匹配到的工作根局部 `workdir` 改名 `cwdRoot` |
+| 协议层 | ACP `session/new` 的 `cwd`、审批卡 payload 的 `cwd`、会话指纹里的 `cwd` 键本来就叫 `cwd`，未动 |
+
+### 按「标识符表示任务执行根目录就改」判断规则处理、任务书未逐项列出的改名（登记）
+
+- `TaskSummary.workdir` → `TaskSummary.cwd`（`core/src/tools/task-tools.ts`；`TaskHost.#summary` 填充）——与 `LaunchedTask.workdir → cwd` 同一规则。
+- `#agentRunSetup` 入参 `workdir: string` → `cwd`（orchestrator 内部私有方法；会话指纹取值随之，键名 `cwd` 不变）。
+- 测试内局部变量 / harness 字段 `workdir` → `cwd`：`test/contract/agent-provider.contract.ts`（harness 字段与 `runSpec` 参数）、`external-agent-p2/p5/p6`、`agent-providers-p5`、`agent-parallel-sessions`、`agent-review-p5-1`、`permission-bridge.test.ts` 的 `decide(..., workdir = project)` 默认参数、`supervisor-turn.test.ts` / `task-tools-capabilities.test.ts` 的 `TaskSummary` 夹具字段。
+- 测试内 LLM 可见字符串：`tasks-agent-review-fixes.test.ts` 的任务说明 `'NULL-WORKDIR 改一下'` → `'NULL-CWD 改一下'`（及对应用例名 `null-cwd`），`start_task` mock 调用参数 `workdir:` → `cwd:`（`tasks-review-fixes`、`tasks-agent-review-fixes`）；testkit 无 `workdir` 引用，无需改。
+- 与改名配套的测试断言调整（非放宽）：`tool-effects-migration.test.ts` 的 0008→最新升级对比按 0013 的列名映射快照键（`task_workdir` → `task_cwd`，值原样），断言意图（既有行保留）不变。
+
+### 迁移与版本断言
+
+- 新增 `packages/core/test/unit/task-cwd-migration.test.ts`：runs 建到版本 12 → 插入带 `task_workdir` 值的 run 行 → 应用全量迁移 → 断言 `applied` = `runsVersionsAfter(12)`、`task_cwd` 值保留（含 null 行）、`pragma table_info` 无 `task_workdir`、旧列名写入报 `no such column`。
+- `create-core.test.ts` runs 版本断言 `toBe(12)` → `toBe(13)`；`task-events-migration.test.ts` 全量迁移后的列断言 `task_workdir: null` → `task_cwd: null`。
+
+### 测试结果
+
+- typecheck：`shared build+typecheck`、`core build+typecheck`、`desktop typecheck`（含 svelte-check）全部通过。
+- 定向（全绿）：`task-cwd-migration`（1）、`task-events-migration`（3）、`create-core`（9）、`tasks`（10）、`permission-bridge`（29）、`external-agent-engine` + `external-agent-p5`（93）、`runs-tasks` / `task-tools-capabilities` / `supervisor-turn` / `llm-router` / `permission-bridge-taint`（58）、`external-agent-p2` / `external-agent-p6` / `agent-parallel-sessions` / `agent-providers-p5` / `agent-review-p5-1`（72）、`agent-providers`（contract，170）、`tasks-review-fixes{,-e,-f}` + `tasks-agent-review-fixes` + `workspace-lease` + `task-cards`（47）、`group-chat` + `external-agent-p3` + `external-agent-tasks` + `supervisor-review-fixes`（54）、shared `message-content`（8）、desktop `task-view`（17）、`tool-effects-migration`（2，修正后）。
+- 全量（收口一次，`node scripts/run-tests.mjs run`）：**5303 通过 / 2 失败 / 23 跳过**。两例失败：`tool-effects-migration`（上述断言调整后复跑通过，已含在修正提交里）；`skills-authoring`「改进已有自建技能 → rollback」单跑复跑通过（基线记录的环境 / 负载偶发项，属 05-testing.md 基线集合）。失败集合不超出基线。
+
+### 验收清单自检（§7 逐条）
+
+- `rg -n -i "workdir" packages apps scripts -g '!node_modules' -g '!**/dist/**' -g '!**/migrations/**'`：输出仅剩 §4.2 允许项——`agents.ts` / `start.ts` / `agents-lifecycle.test.ts` 的 `workDir`（Agent 探测缓存目录）、`backend-container.ts` / `container-backend.test.ts` 的 Lima `--workdir`、`project/service.ts` / `checkpoints.ts` 的 `repo.workdir()`（es-git）、`agent-spike` 脚本，以及新迁移测试 `task-cwd-migration.test.ts` 内按任务书 §5.7 要求写入 / 断言的旧列名字符串（该测试必须以旧列名建 0013 之前的行）。
+- `rg -n "task_workdir" packages -g '!**/dist/**'`：仅 `runs/0006_tasks.sql`（历史迁移，未动）与 `0013_task_cwd.sql`（改名语句本身）+ 新迁移测试（见上）。
+- `taskWorkdir` / `workdirKind` / `resolveWorkdir` / `describeWorkdir`：仓库内 0 处。
+- `start_task` 参数名为 `cwd`（TypeBox schema、描述与校验文案 `'cwd 只能是 workspace 或 project'`）；`<task_brief … cwd="…">`（构造点唯一，`dispatch/tasks.ts`）。
+- 新迁移与 `task-cwd-migration.test.ts` 存在并通过；`create-core.test.ts` runs 版本断言为 13。
+- `git diff --stat` 核对：源码改动全部为标识符 / 注释 / SQL 列名改名，无逻辑增删；新增文件仅迁移、迁移测试与记录。
+
+### 偏差
+
+- 无新增 DEVIATIONS（编号仍至 DEV-030）：改名未迫使任何行为改动。
+- 分支名与任务书头部不同（`feat/project/migration` vs `feat/project/wp0-1-cwd`）：用户在派工时明确指示直接用前者，属编排决定，不记 DEVIATIONS。
