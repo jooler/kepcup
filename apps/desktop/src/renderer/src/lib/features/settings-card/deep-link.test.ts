@@ -48,12 +48,22 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
     expect(settingDeepLinkAction(project.deepLink, {}, 'conv_g')).toEqual({
       kind: 'project-detail',
       conversationId: 'conv_g',
+      section: 'members',
       anchor: 'project-members',
     });
     expect(
       settingDeepLinkAction(project.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
     ).toMatchObject({
       conversationId: 'conv_x',
+    });
+    // 深链 section 不在 PROJECT_DETAIL_SECTIONS 里时退回概览（不认识的分区总能打开详情页）。
+    expect(
+      settingDeepLinkAction({ surface: 'project-detail', section: 'nonsense' }, {}, 'conv_g'),
+    ).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'overview',
+      anchor: null,
     });
     const workdir = getSettingItem('workdir.ports')!;
     expect(settingDeepLinkAction(workdir.deepLink, {}, 'conv_1')).toEqual({

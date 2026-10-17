@@ -553,10 +553,13 @@
     sidebarSections.toggle(sectionId);
   }
 
-  function openGroupSettings(): void {
+  /** 右键「项目详情」（WP6 §4 步骤 6）：进入该项目组并打开内容区的详情页。 */
+  async function openProjectDetail(): Promise<void> {
     if (!contextMenu) return;
-    sidebarDialogs.openGroupSettings(contextMenu.conversationId);
+    const conversationId = contextMenu.conversationId;
     closeContextMenu();
+    await chat.select(conversationId);
+    shell.openProjectSettings();
   }
 
   function openRename(): void {
@@ -1242,9 +1245,9 @@
     {#if contextConversation?.type === 'project'}
       {@render contextItem(
         Settings2,
-        t('group.settings'),
-        openGroupSettings,
-        'context-group-settings',
+        t('sidebar.projectDetail'),
+        openProjectDetail,
+        'context-project-settings',
       )}
     {:else if contextConversation?.bot?.status === 'active'}
       {@render contextItem(Pencil, t('sidebar.renameBot'), openRename, 'context-rename-bot')}

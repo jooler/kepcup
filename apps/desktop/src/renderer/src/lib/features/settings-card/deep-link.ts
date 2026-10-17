@@ -1,4 +1,9 @@
-import type { SettingDeepLink, SettingTarget } from '@kepcup/shared';
+import {
+  PROJECT_DETAIL_SECTIONS,
+  type ProjectSettingsSection,
+  type SettingDeepLink,
+  type SettingTarget,
+} from '@kepcup/shared';
 import type { SettingsSectionId } from '../settings/sections';
 import { EXTENSION_CENTER_TABS, type ExtensionCenterTab } from '../extension-center/tabs';
 
@@ -32,7 +37,8 @@ export type SettingDeepLinkAction =
   | { kind: 'extension-center'; tab: ExtensionCenterTab }
   /** 右栏 Bot 详情的页签；`botId` 与当前会话的 Bot 不同时先打开该 Bot 的单聊。 */
   | { kind: 'bot-panel'; tab: string; anchor: string | null; botId: string | null }
-  | { kind: 'project-detail'; conversationId: string | null; anchor: string | null }
+  /** 项目详情页的分区（∈ PROJECT_DETAIL_SECTIONS）。 */
+  | { kind: 'project-detail'; conversationId: string | null; section: ProjectSettingsSection; anchor: string | null }
   | { kind: 'workdir-dialog'; anchor: string | null };
 
 /**
@@ -63,13 +69,19 @@ export function settingDeepLinkAction(
       };
     case 'bot-panel':
       return { kind: 'bot-panel', tab: link.section, anchor, botId: target.botId ?? null };
-    case 'project-detail':
-      // WP7 replaces this with the project detail page (shell.openProjectSettings).
+    case 'project-detail': {
+      // 项目详情页（内容区，WP6 起）：section ∈ PROJECT_DETAIL_SECTIONS；锚点在
+      // WP7 的真实详情页里消费（过渡壳只到分区）。
+      const section = (PROJECT_DETAIL_SECTIONS as readonly string[]).includes(link.section)
+        ? (link.section as ProjectSettingsSection)
+        : 'overview';
       return {
         kind: 'project-detail',
         conversationId: target.conversationId ?? conversationId,
+        section,
         anchor,
       };
+    }
     case 'workdir-dialog':
       return { kind: 'workdir-dialog', anchor };
   }
