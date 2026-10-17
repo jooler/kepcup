@@ -396,6 +396,11 @@ export const WIKI_LINT_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const WIKI_SOURCE_MAX_BYTES = 10_000_000;
 /** Inline cap for source text embedded into the maintenance-loop prompt (P09). */
 export const WIKI_SOURCE_INLINE_MAX_CHARS = 20_000;
+/**
+ * Cap for a user-pasted `text` source (D92 T1b WP10): the body rides inside the
+ * RPC input / job payload, so it gets a char cap instead of the byte cap.
+ */
+export const WIKI_TEXT_SOURCE_MAX_CHARS = 200_000;
 
 /** Per-provider model-call concurrency limit (adjustable in settings). */
 export const PROVIDER_CONCURRENCY_DEFAULT = 4;

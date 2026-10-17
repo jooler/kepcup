@@ -15,7 +15,8 @@ export type WikiAssetCreator = { kind: 'user' } | { kind: 'bot'; id: string };
 
 /** One submission record of one asset (same content from more places appends here). */
 export interface WikiAssetSourceRecord {
-  type: 'attachment' | 'file' | 'url';
+  /** `text` = a user-pasted body (D92 T1b WP10; `ref` stores an 80-char preview). */
+  type: 'attachment' | 'file' | 'url' | 'text';
   ref: string;
   /** Conversation that carried the submission (project id for a project wiki); null when unknown. */
   conversationId: string | null;
@@ -49,7 +50,7 @@ export const wikiAssetCreatorSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const wikiAssetSourceRecordSchema = z.object({
-  type: z.enum(['attachment', 'file', 'url']),
+  type: z.enum(['attachment', 'file', 'url', 'text']),
   ref: z.string(),
   conversationId: z.string().nullable(),
   at: z.number(),

@@ -23,6 +23,7 @@ import { runSkillAuthoringJob } from '../skills/authoring.js';
 import type { SkillsService } from '../skills/registry.js';
 import { runWikiIngestJob } from '../wiki/ingest.js';
 import { runWikiLintJob } from '../wiki/lint.js';
+import { runWikiRemoveSourceJob } from '../wiki/remove-source-job.js';
 import type { WikiService } from '../wiki/service.js';
 import type { WikiIndexFor } from '../wiki/fts.js';
 import type { ScheduleService } from '../schedule/service.js';
@@ -167,6 +168,7 @@ export class JobsRunner {
     const budgetBotId = provider.startsWith('agent:') ? this.#routeBotId(job) : job.bot_id;
     if (
       !RESPONSE_TRIGGER_JOBS.has(job.type) &&
+      !NO_MODEL_JOBS.has(job.type) &&
       this.#deps.budget !== undefined &&
       budgetBotId !== null &&
       this.#deps.budget.exceeded(budgetBotId)
@@ -388,6 +390,14 @@ export class JobsRunner {
         }
         await this.#deps.handover.runCopyJob(job);
         return;
+      case 'wiki_remove_source':
+        // D92 T1b WP10: delete one project-wiki source under the maintenance
+        // mutex. Calls no model; ACL / NOT_FOUND failures settle as done.
+        if (this.#deps.wiki === undefined) {
+          throw new Error('wiki domain not wired; cannot run wiki_remove_source');
+        }
+        await runWikiRemoveSourceJob({ wiki: this.#deps.wiki, logger: this.#deps.logger, job });
+        return;
       case 'event_delivery':
         // P10 (BR-P10-006): an event response trigger parked for quiet hours —
         // persistent across restarts; re-checks happen in the orchestrator.
@@ -426,6 +436,8 @@ export class JobsRunner {
   #providerFor(job: JobRow): string {
     // D88 P2: the handover copy makes no model calls — never take a model provider's slot.
     if (job.type === 'handover_copy') return 'host:handover_copy';
+    // D92 T1b WP10: same for wiki_remove_source — a file/git-only action.
+    if (job.type === 'wiki_remove_source') return 'host:wiki_remove_source';
     const purpose = JOB_PURPOSES[job.type];
     const router = this.#deps.router;
     if (purpose !== undefined && router !== undefined) {
@@ -471,6 +483,13 @@ const RESPONSE_TRIGGER_JOBS: ReadonlySet<string> = new Set([
   'watch_alert',
   'mail_alert',
 ]);
+
+/**
+ * D92 T1b WP10: jobs that run no model at all (file / git work only). Their
+ * `bot_id` is attribution, not billing — exempt from the daily background
+ * budget so an exhausted lead budget never delays a source removal.
+ */
+const NO_MODEL_JOBS: ReadonlySet<string> = new Set(['wiki_remove_source']);
 
 /** Job types that stay pending forever (none since P09 consumed wiki_suggestion). */
 const JOBS_LEFT_PENDING: readonly string[] = [];
