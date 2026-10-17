@@ -12,7 +12,7 @@
   import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
   import MessageList from './MessageList.svelte';
   import Composer from './Composer.svelte';
-  import GroupComposeBar from './GroupComposeBar.svelte';
+  import ProjectComposeBar from './ProjectComposeBar.svelte';
   import SetupRequiredCard from './SetupRequiredCard.svelte';
   import MediaLightbox from './MediaLightbox.svelte';
   import StickiesLayer from './StickiesLayer.svelte';
@@ -78,12 +78,13 @@
   let composerDockHeight = $state(0);
 </script>
 
-{#if chat.composingGroup}
-  <!-- 整个组群视图是拖拽区（与空态一致）；输入条与候选列表自身 app-no-drag，
-       写在后面，重叠处 no-drag 胜出。 -->
-  <div class="app-drag relative h-full min-h-0 min-w-0 flex-1" data-testid="group-compose-view">
+{#if chat.composingProject}
+  <!-- The whole compose view is a drag area (like the empty state); the compose
+       bar and its candidate list are app-no-drag themselves, declared later so
+       no-drag wins where they overlap. -->
+  <div class="app-drag relative h-full min-h-0 min-w-0 flex-1" data-testid="project-compose-view">
     <div class="absolute inset-x-0 top-0 z-30 px-4 pt-3 {narrow && isMac ? 'pl-20' : ''}">
-      <GroupComposeBar />
+      <ProjectComposeBar />
     </div>
   </div>
 {:else if !current}
