@@ -6,6 +6,7 @@
  */
 import type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections';
 import type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
+import { PROJECT_MODULES, type ProjectModuleId, type ProjectSettingsSection } from '@kepcup/shared';
 import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
 import { sidebarLayout } from '$lib/features/sidebar/sidebar-layout.svelte';
 import {
@@ -18,6 +19,9 @@ export type { AppsTab, SettingsSectionId } from '$lib/features/settings/sections
 export type { ExtensionCenterTab } from '$lib/features/extension-center/tabs';
 
 export type MainView = 'chats' | 'workbench';
+
+/** 项目组会话内容区的模块视图（D92 41 §11.2）；'settings' 是项目详情页。 */
+export type ProjectView = 'chat' | 'wiki' | 'board' | 'okr' | 'calendar' | 'settings';
 
 class ShellState {
   /**
@@ -61,6 +65,33 @@ class ShellState {
   settingsAppsTab = $state<AppsTab | null>(null);
   /** 右栏（Bot 详情）默认收起，保持界面简单；只在用户点击顶部药丸时展开。 */
   rightPanelCollapsed = $state(true);
+
+  /**
+   * 项目组会话内容区的当前视图（内存，不持久化）：'chat' 是沟通 tab，'settings'
+   * 是 ⚙ 打开的项目详情页（内容区页面，不是对话框），其余是模块 tab。收口不变式
+   * （与 mainView 同一条）：只有 `chat.select()` / `leaveCurrent()` 把它置回
+   * 'chat'——通知 / 搜索 / 卡片跳转都经 select，自然落到沟通；单聊不读它。
+   */
+  projectView = $state<ProjectView>('chat');
+  /** 项目详情页当前分区（设置目录深链 project-detail/<section> 用）。 */
+  projectSettingsSection = $state<ProjectSettingsSection>('overview');
+
+  /** 打开项目详情页（内容区）；section 缺省回「概览」。 */
+  openProjectSettings(section?: ProjectSettingsSection): void {
+    this.projectView = 'settings';
+    this.projectSettingsSection = section ?? 'overview';
+  }
+
+  /**
+   * 切到某个项目模块 tab：注册表里 `status !== 'available'` 的模块（board /
+   * okr / calendar，planned）直接忽略；已是当前视图则不动。
+   */
+  openProjectModule(id: ProjectModuleId): void {
+    const module = PROJECT_MODULES.find((entry) => entry.id === id);
+    if (module === undefined || module.status !== 'available') return;
+    if (this.projectView === id) return;
+    this.projectView = id;
+  }
   /**
    * 启动时一个 Bot 都没有：左栏「+」面板自动下拉展开引导新建；
    * AppSidebar 消费后即复位。
