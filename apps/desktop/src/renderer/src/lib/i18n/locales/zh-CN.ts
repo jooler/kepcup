@@ -63,6 +63,7 @@ export const zhCN = {
   'chats.errorCode.GIT_CLI_MISSING': '本机未安装 git 命令行',
   'chats.errorCode.STALE_FILE': '文件已被外部修改，请让 Bot 重新读取',
   'chats.errorCode.LEASE_HELD': 'Bot 正在修改该工作目录，请稍后再试',
+  'chats.errorCode.PROJECT_LEAD_REQUIRED': '请先更换项目负责人',
   'chats.errorCode.INTERNAL': '内部错误',
   // D75（design 30 §2.1 / §5.1）：对话只读、写操作在任务里做。
   'chats.errorCode.RUN_READ_ONLY':
