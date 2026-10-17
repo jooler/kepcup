@@ -639,3 +639,14 @@
 - 处理：改为独立提交 `f6c747d` 完成**导出名纯改名**（无任何行为改动，符合 README §1.5「纯改名独立提交」）；WP7 §9 实施记录已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
 - 决定：（由人工确认）
 - 已更新的文档：`todo/project/WP7-ui-settings-page.md` §9 实施记录（提交列表与偏差段）。
+
+### DEV-036 WP8 步骤 5 表 ① 要求断言路由阶段状态行，但 WP6 落地的可见性条件使该阶段永不显示：随断言修复了组件行为（审查补记）
+
+- 状态：已落实（审查补记）
+- 阶段：群聊→项目组 WP8（`feat/project/migration`，`c6b15b6`，2026-10-18）
+- 是否阻塞：否
+- 问题：WP8 §4 步骤 5 表 ① 要求断言 `project-turn-status` 在路由阶段可见且文案「正在确认由谁回复」；但 WP6 落地的 `ProjectTurnStatusLine` 可见性条件 `phase!=='idle' && (currentBotId!==null || queue.length>0)` 与 WP3 的 `project.turn` 载荷矛盾——路由阶段恰是 `currentBotId=null`、`queue=[]`（`dispatch/project-turn.ts` 载荷构造），状态行在路由阶段永不渲染。属 README §1.6「WP 假设与代码现实不成立」。
+- 影响范围：仅该组件的可见性行为；无命名 / 契约 / 后端变化。
+- 处理：`c6b15b6` 把条件改为「routing 阶段恒显示；运行阶段至少一个目标（当前或排队）才显示」，e2e 断言按 WP 表落实；WP8 §8 已登记该落地决定，本条补齐 §1.6 要求的 DEVIATIONS 登记。
+- 决定：（由人工确认）
+- 已更新的文档：`todo/project/WP8-ui-copy-e2e.md` §8 实施记录。
