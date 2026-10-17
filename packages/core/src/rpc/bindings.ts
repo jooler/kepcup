@@ -166,7 +166,6 @@ import {
   skillsPresetsInstallOutputSchema,
   skillsPurgeMissingInputSchema,
   skillsPurgeMissingOutputSchema,
-  wikiBotIdInputSchema,
   wikiTreeOutputSchema,
   wikiPageInputSchema,
   wikiPageOutputSchema,
@@ -177,6 +176,7 @@ import {
   wikiRollbackOutputSchema,
   wikiDeletePageInputSchema,
   wikiDeletePageOutputSchema,
+  wikiOwnerInputSchema,
   todosListInputSchema,
   todosListOutputSchema,
   todosIdInputSchema,
@@ -255,7 +255,7 @@ import {
   withSettingsChangedEvents,
 } from './settings-bindings.js';
 import { applyBotProfileUpdate, createPermissionEffects } from '../settings/bot-profile-update.js';
-import type { LoopType } from '@kepcup/shared';
+import type { LoopType, WikiOwner } from '@kepcup/shared';
 
 const voidInput = z.void();
 
@@ -306,6 +306,19 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
   const domain = services.domain!;
   const orchestrator = services.orchestrator!;
   const publish = services.events.emit.bind(services.events);
+  /**
+   * D92 T1b WP9: a project wiki owner must be a live project conversation —
+   * anything else is NOT_FOUND (bot owners need no lookup).
+   */
+  const wikiOwnerOf = (owner: WikiOwner): WikiOwner => {
+    if (owner.kind === 'project') {
+      const conversation = domain.conversations.get(owner.id);
+      if (conversation === null || conversation.type !== 'project') {
+        throw new AppError('NOT_FOUND', '项目组不存在');
+      }
+    }
+    return owner;
+  };
   /**
    * W3 / W8：收回授权 → 中断受影响的任务并推「已中断 N 个进行中的任务」。与设置目录的条目适配器
    * 共用同一份实现（settings/bot-profile-update.ts）。
@@ -1392,21 +1405,23 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       async (input) => ({ purged: services.skills!.purgeMissing(input.name) }),
     ),
 
-    // --- wiki (P09) --------------------------------------------------------
-    'wiki.tree': method(wikiBotIdInputSchema, wikiTreeOutputSchema, async (input) => ({
-      pages: services.wiki!.tree(input.botId),
+    // --- wiki (P09; owner-generalized D92 T1b WP9 — a project owner must be a
+    // live project conversation; from RPC the actor is the user, so the
+    // entry-level ACL does not apply to deletePage / rollback) ----------------
+    'wiki.tree': method(wikiOwnerInputSchema, wikiTreeOutputSchema, async (input) => ({
+      pages: services.wiki!.tree(wikiOwnerOf(input.owner)),
     })),
     'wiki.page': method(wikiPageInputSchema, wikiPageOutputSchema, async (input) =>
-      services.wiki!.readPage(input.botId, input.path),
+      services.wiki!.readPage(wikiOwnerOf(input.owner), input.path),
     ),
     'wiki.search': method(wikiSearchInputSchema, wikiSearchOutputSchema, async (input) => ({
-      hits: services.wiki!.search(input.botId, input.query, input.limit ?? 20),
+      hits: services.wiki!.search(wikiOwnerOf(input.owner), input.query, input.limit ?? 20),
     })),
-    'wiki.history': method(wikiBotIdInputSchema, wikiHistoryOutputSchema, async (input) => ({
-      history: await services.wiki!.history(input.botId),
+    'wiki.history': method(wikiOwnerInputSchema, wikiHistoryOutputSchema, async (input) => ({
+      history: await services.wiki!.history(wikiOwnerOf(input.owner)),
     })),
     'wiki.rollback': method(wikiRollbackInputSchema, wikiRollbackOutputSchema, async (input) => {
-      await services.wiki!.rollback(input.botId, input.commitOid);
+      await services.wiki!.rollback(wikiOwnerOf(input.owner), input.commitOid);
       return { ok: true as const };
     }),
     // 用户在右栏删除一页：同样是追加式新提交（可回滚恢复），与维护互斥。
@@ -1414,7 +1429,7 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       wikiDeletePageInputSchema,
       wikiDeletePageOutputSchema,
       async (input) => {
-        await services.wiki!.deletePage(input.botId, input.path);
+        await services.wiki!.deletePage(wikiOwnerOf(input.owner), input.path);
         return { ok: true as const };
       },
     ),

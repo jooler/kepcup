@@ -242,7 +242,7 @@ import {
   type LlmRoute,
   type LlmRouter,
 } from '../agent/llm-router.js';
-import type { BotCard } from '@kepcup/shared';
+import type { BotCard, WikiOwner } from '@kepcup/shared';
 import type { InstalledToolchain } from '../env/manager.js';
 import type { ToolEffectsStore } from '../agent/effects/store.js';
 
@@ -470,21 +470,25 @@ export interface OrchestratorDeps {
   widgetCraft?: { cancelStageRun(runId: string, reason?: string): boolean } | null;
 }
 
-/** The slice of the wiki domain the response loop consumes. */
+/** The slice of the wiki domain the response loop consumes (owner-based since
+ * D92 T1b WP9; the loop only ever passes its own bot's owner — tool-level
+ * `scope` is WP10). */
 export interface OrchestratorWikiFacade {
   /** <wiki_topics> section body (index.md titles), '' when no wiki. */
-  topicsSection(botId: string): string;
+  topicsSection(owner: WikiOwner): string;
   /** wiki_search / wiki_read / wiki_enqueue backends. */
   search(
-    botId: string,
+    owner: WikiOwner,
     query: string,
     limit: number,
   ): Array<{ path: string; title: string; snippet: string }>;
-  readPage(botId: string, path: string): { path: string; title: string; content: string };
+  readPage(owner: WikiOwner, path: string): { path: string; title: string; content: string };
   enqueueIngest(input: {
+    owner: WikiOwner;
     botId: string;
     conversationId: string | null;
     source: { sourceType: 'attachment' | 'url' | 'file'; ref: string; note: string };
+    createdBy: { kind: 'user' } | { kind: 'bot'; id: string };
   }): { ok: boolean; message: string };
 }
 
@@ -3975,7 +3979,8 @@ export class Orchestrator {
       // D63：未安装的预置技能列表（install_skill 的匹配来源）。
       const recommendedSkillsSection = this.#deps.skills?.recommendedSkillsSection() ?? '';
       // P09: <wiki_topics> — index.md titles, budget-truncated (04 段 11).
-      const wikiTopicsSection = this.#deps.wiki?.topicsSection(batch.botId) ?? '';
+      const wikiTopicsSection =
+        this.#deps.wiki?.topicsSection({ kind: 'bot', id: batch.botId }) ?? '';
       const triggerImages = this.#triggerImages(batch.messages);
       const responseTools = buildResponseTools({
         identity,
@@ -4102,8 +4107,10 @@ export class Orchestrator {
           ...(this.#deps.wiki !== undefined
             ? {
                 wiki: {
-                  search: (botId, query, limit) => this.#deps.wiki!.search(botId, query, limit),
-                  readPage: (botId, pagePath) => this.#deps.wiki!.readPage(botId, pagePath),
+                  // D92 T1b WP9: the loop tools only address the bot's own wiki
+                  // (tool-level scope selection is WP10); the facade is owner-based.
+                  search: (owner, query, limit) => this.#deps.wiki!.search(owner, query, limit),
+                  readPage: (owner, pagePath) => this.#deps.wiki!.readPage(owner, pagePath),
                   enqueueIngest: (input) => this.#deps.wiki!.enqueueIngest(input),
                 },
               }

@@ -23,6 +23,7 @@ import { appCatalogChangedPayloadSchema } from '../domain/local-connectors.js';
 import { watchEntrySchema } from '../domain/watches.js';
 import { mailAccountSchema } from '../domain/mail.js';
 import { handoverViewSchema } from '../domain/handover.js';
+import { wikiOwnerSchema } from '../domain/wiki.js';
 
 export const coreStatusSchema = z.enum(['starting', 'ready', 'locked', 'error']);
 export type CoreStatus = z.infer<typeof coreStatusSchema>;
@@ -189,6 +190,9 @@ export const memosChangedPayloadSchema = z.object({ memoId: z.string() });
  * tells the user the material has been read (docs 任务 3).
  */
 export const wikiIngestedPayloadSchema = z.object({
+  /** The wiki that received the material (D92 T1b WP9). */
+  owner: wikiOwnerSchema,
+  /** The executor that ran the ingest (the submitting member for a project wiki). */
   botId: z.string(),
   /** Conversation that requested the ingest; null when it had none. */
   conversationId: z.string().nullable(),
@@ -199,10 +203,11 @@ export const wikiIngestedPayloadSchema = z.object({
 });
 
 /**
- * The bot's wiki content changed in any way (BR-P09-012): ingest completion,
- * dedupe skip or lint commit. The renderer refreshes the open Wiki tab on it.
+ * One wiki's content changed in any way (BR-P09-012): ingest completion,
+ * dedupe skip, lint commit or source removal. The renderer refreshes the open
+ * Wiki tab on it (filtered to the owner it is showing).
  */
-export const wikiChangedPayloadSchema = z.object({ botId: z.string() });
+export const wikiChangedPayloadSchema = z.object({ owner: wikiOwnerSchema });
 
 /** MCP server 连接状态（D65）：设置页状态展示与失败告警。 */
 export const mcpServerStatusPayloadSchema = z.object({
