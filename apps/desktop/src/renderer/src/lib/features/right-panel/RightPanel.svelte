@@ -37,7 +37,7 @@
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
 
   const conversation = $derived(chat.current?.conversation ?? null);
-  const isGroup = $derived(conversation?.type === 'project');
+  const isProject = $derived(conversation?.type === 'project');
   const bot = $derived(chat.current?.conversation.bot ?? null);
   browserPages.start();
   // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。
@@ -297,7 +297,7 @@
   >
     <div class="app-no-drag flex items-center gap-1">
       <!-- P11 任务 5: 查看该 Bot 在当前对话中的浏览器页面（直聊才有单一 Bot）。 -->
-      {#if !isGroup && bot?.status === 'active' && conversation && browserOpen}
+      {#if !isProject && bot?.status === 'active' && conversation && browserOpen}
         <Button
           variant="outline"
           size="sm"
@@ -324,7 +324,7 @@
     </div>
   </header>
 
-  {#if isGroup}
+  {#if isProject}
     <GroupInfo conversationId={conversation!.id} />
   {:else if !bot}
     <div class="flex flex-1 items-center justify-center p-6">

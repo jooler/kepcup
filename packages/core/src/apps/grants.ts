@@ -11,7 +11,7 @@ import { assertGrantAllowedForTier } from './tier.js';
  *
  * 撤销 = 写 `revoked_at`（保留行作审计）。清理：
  * - Bot 删除 → {@link AppToolGrants.revokeForBot}（`LifecycleService.deleteBot`）；
- * - Bot 被移出群 → {@link AppToolGrants.revokeForBotInConversation}（`removeGroupMember`）；
+ * - Bot 被移出项目组 → {@link AppToolGrants.revokeForBotInConversation}（`removeProjectMember`）；
  * - 对话删除 / 连接删除 → 外键 `ON DELETE CASCADE`。
  */
 

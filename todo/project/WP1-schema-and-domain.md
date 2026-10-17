@@ -320,6 +320,9 @@ rg -n "setupState|setup_state|GROUP_SETUP|group_setup_question|group_created|Gro
 - `8926bd7` feat(core): migration runner FK-off mode and main 0039/0040 project conversations migrations（`infra/migrate.ts` 指令支持 + `migrate-fk-off.test.ts` + `0039` / `0040` + `project-conversations-migration.test.ts` + `workbench-migration` / `create-core` 版本断言更新）。
 - `ea36bf8` feat(shared,core,desktop)!: group -> project team domain（shared 契约、`ProjectsService`、生命周期负责人守卫、RPC、D60 后端删除、renderer 最小修复、testkit `makeProject`、全部测试改造与新增）。
 - 文档提交：本文件实施记录 + todo/project/README §7 进度表。
+- 审查提交：`isGroup → isProject` 补全（见下「审查修订」）。
+
+> 提交历史说明（2026-10-17 阶段审查）：最初的迁移提交在删除 `groups.ts` / `GroupSetupCard.svelte`、改名 `group-title.ts` 的**同时**没有改它们的消费方（`start.ts`、`index.ts` 等），导致该提交单独 checkout 时不可编译（违反「每个提交必须可构建」）。审查时重排为上面的形态：迁移提交只含运行器 + 迁移 + 迁移测试；领域文件删除 / 改名并入领域提交。`ea36bf8` 的树与原 `951c861` 完全一致。
 
 **迁移编号**：开工时 main 最新为 `0038`，故 `0039_project_prepare.sql` / `0040_project_conversations.sql` 按任务书编号使用，无顺延。`create-core` main 断言 38 → 40；`workbench-migration` `[37, 38]` → `[37, 38, 39, 40]`；另 `workdirs-rename-migration` 的 `toEqual([38])` → `[38, 39, 40]`（以实况为准）。
 
@@ -332,7 +335,8 @@ rg -n "setupState|setup_state|GROUP_SETUP|group_setup_question|group_created|Gro
 | `packages/core/test/integration/project-chat.test.ts` | redistribute 用例 `it.skip` + `// removed in WP3`（本 WP 唯一允许的跳过）；`threeBots` 显式 `leadBotId: 阿丙`（多个用例删除 / 移出阿甲 / 阿乙） | WP3 |
 | `packages/shared/src/settings-catalog/items.ts` | 目录条目 `group.title` / `group.members` 的 `store.methods` 改为 `projects.update` / `projects.addMembers` / `projects.removeMember`；**条目 id / scope / surface 未动** | WP4 |
 | `packages/core/src/dispatch/group-turn.ts` | 仍产生 `group_no_claim`；渲染层只显示文字（`MessageBubble.svelte` 的点选重发 UI 已删，`t('group.noClaimHint')` i18n 键随之删除） | WP3 |
-| 渲染层文件名 | `GroupComposeBar` / `group-compose` / `GroupAvatarStack` / `group-avatar-layout` / `GroupInfo` / `GroupSettingsDialog` 文件名未改（WP5–WP7）；仅类型 `GroupMemberView` → `ProjectMemberView`、常量 `PROJECT_MEMBER_PREVIEW_MAX` | WP5–WP7 |
+| 渲染层文件名 | `GroupComposeBar` / `group-compose` / `GroupAvatarStack` / `group-avatar-layout` / `GroupInfo` / `GroupSettingsDialog` 文件名未改（WP5–WP7）；store 的 `composingGroup` / `beginGroupCompose` / `cancelGroupCompose` / `commitGroupCompose` 状态与方法名未改（§4.11 的 `composingProject` 等）；仅类型 `GroupMemberView` → `ProjectMemberView`、常量 `PROJECT_MEMBER_PREVIEW_MAX` | WP5–WP7 |
+| `GROUP_MENTION_PREFIX`（`'group:'`） | 群提及 token **持久化在 `messages.mentions_json` 里**（composer 写入、`agent/context/conversation.ts` 解析）；改名需迁移历史消息，且 §4.3 迁移表未列 | WP4（随「'group' 残留」清点） |
 | 提示词 / 管家 / 工作台 / 记忆库 | `suggest_route` 的 `route: 'group'`、`butlerProposalPayloadSchema` 的 `'group'` 分支、`TodoAssignee` 的 `'group'`、`memory_items.origin` 持久化 `'group'`、`<conversation_info>` 的「群聊」文案与 `my-state` 的「群聊」标签均未动（比较对象已改为 `'project'`） | WP4 |
 
 **测试结果**（2026-10-17，macOS arm64 宿主）：
@@ -351,6 +355,13 @@ rg -n "setupState|setup_state|GROUP_SETUP|group_setup_question|group_created|Gro
 - `ProjectsService.setLead` 对「目标非成员 / 管家 / 非 active」分别给 `NOT_FOUND 该 Bot 不是项目成员`、`INVALID_INPUT 管家不能加入项目组`、`NOT_FOUND Bot {id} 不存在或已删除`；「同一个人」原样返回不发消息（任务书明确）。
 - `create` / `addMembers` 均在校验通过后于事务内写行；`addMembers` 的事务外按新增成员逐个写 `project_member_joined` 系统消息（写法参照 `workdir/service.ts` `#systemMessage`：`messages.append` + `events.emit('message.created')`，由 start.ts 的 `appendSystemEvent` 闭包注入）。
 - `agents.ts` 的 `'group' in item`（Agent 目录的分组形态）、`widgets/check/report.ts` 的 `groups` 局部变量、UI 库 `*-group` 组件等「别的含义的 group」按 README §4.1 未动。
-- `GROUP_MENTION_PREFIX`（`'group:'` @ 群提及 token，**持久化在 mentions_json 里的数据格式**）本 WP 未改名：任务书未列，且改名需要数据迁移，留给后续 WP 决定。
+- `GROUP_MENTION_PREFIX`（`'group:'` @ 群提及 token，**持久化在 mentions_json 里的数据格式**）本 WP 未改名：任务书未列，且改名需要数据迁移，留给 WP4 随「'group' 残留」清点决定（已登记进上方临时处理清单）。
+
+**审查修订**（2026-10-17 阶段审查，随审查提交合入）：
+
+- 补全 §4.1 的 `isGroup → isProject` 纯改名（原实施只改了 `memory/retrieve.ts`）：`SettingModeContext.isGroup`（shared `settings-catalog/mode.ts`，规则代号 `'group'` 是独立契约未动）、`SettingsRunContext.isGroup`（core `settings/host.ts`）、orchestrator 的上下文构造与 `#deliverInterimTexts` 参数、渲染层 6 个组件的局部 `isGroup` / `isGroupChat`，及对应测试。`memory-store.test.ts` 里漏改的 `filters: { isGroup: false }` 一并修正（core/shared 的 typecheck 不含 test 目录，此类漏改编译期不可见）。
+- `shared/src/constants.ts` 删 `GROUP_SETUP_*` 时把下一段 JSDoc 的 `/**` 挤到了上一行行尾，恢复排版。
+- `core/src/apps/grants.ts` 头注释里的旧方法名 `removeGroupMember` → `removeProjectMember`。
+- 提交历史重排（见上方「提交历史说明」），三个提交各自可构建。
 
 **偏差**：无（未新增 DEVIATIONS 条目；WP 与代码现实无冲突）。

@@ -60,7 +60,7 @@
   const item = $derived(getSettingItem(content.itemId));
   const view = $derived(settingCardView(content));
   const pending = $derived(content.state === 'pending');
-  const isGroup = $derived(chat.current?.conversation.type === 'project');
+  const isProject = $derived(chat.current?.conversation.type === 'project');
   /** bot 范围条目的作用 Bot：卡片 target，缺省为出卡的 Bot。 */
   const targetBotId = $derived(content.target.botId ?? content.botId);
 
@@ -250,7 +250,7 @@
       <p class="font-medium break-words" data-testid="setting-card-title">
         {item?.title ?? content.itemId}
         <span class="text-xs font-normal text-muted-foreground">
-          · {t(`settingCard.view.${view}`)}{#if isGroup}
+          · {t(`settingCard.view.${view}`)}{#if isProject}
             · {chat.botName(content.botId)}{/if}
         </span>
       </p>

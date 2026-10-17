@@ -101,7 +101,7 @@
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const isGroup = $derived(chat.current?.conversation.type === 'project');
+  const isProject = $derived(chat.current?.conversation.type === 'project');
   const replyTo = $derived(chat.replyTo);
   const replyToName = $derived(
     replyTo === null
@@ -134,7 +134,7 @@
   const stacked = $derived(multiline || pendingUploads.length > 0);
 
   const placeholder = $derived(
-    isGroup ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
+    isProject ? t('composer.mentionPlaceholder') : t('composer.placeholder'),
   );
 
   /**
@@ -153,7 +153,7 @@
       // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；群聊的成员是
       // 主力候选，不排除。
       excludeBotIds:
-        isGroup || chat.current?.conversation.directBotId == null
+        isProject || chat.current?.conversation.directBotId == null
           ? []
           : [chat.current.conversation.directBotId],
     }),

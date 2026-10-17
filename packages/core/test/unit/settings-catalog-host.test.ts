@@ -341,7 +341,7 @@ function runCtx(
     identity,
     triggerReason: over.triggerReason ?? (identity.loopType === 'task' ? 'task' : 'direct'),
     triggerFromUser: over.triggerFromUser ?? identity.loopType !== 'task',
-    isGroup: over.isGroup ?? identity.conversationId === rig.groupId,
+    isProject: over.isProject ?? identity.conversationId === rig.groupId,
     isButler: over.isButler ?? false,
     touchedUntrusted: over.touchedUntrusted ?? (() => over.untrusted === true),
     ...(over.externalEngine !== undefined ? { externalEngine: over.externalEngine } : {}),
