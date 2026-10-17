@@ -156,4 +156,53 @@ rg -n "群聊|群成员|群里|本群|群内|建群|解散群|新建群" apps/de
 
 ## 8. 实施记录
 
-（执行智能体在此填写：分支、提交列表、`rg` 自检的例外说明、e2e 结果、偏差编号。）
+**2026-10-18 · 直接在集成分支 `feat/project/migration` 上开发（调度方指定，T1a 收口 WP）。**
+
+### 提交列表（自 `9449dba` 起）
+
+| 提交 | 内容 |
+|---|---|
+| `ffea525` | refactor(desktop)!: `git mv GroupTurnStatusLine.svelte → ProjectTurnStatusLine.svelte` + testid `group-turn-status/queue/single → project-turn-*` + MessageList 引用同步（纯改名独立提交，步骤 1.1） |
+| `adb1941` | refactor(desktop,shared,core)!: 文案收尾（步骤 1.2–1.5）——i18n `approvals.butlerGroup* → butlerProject*`（§2 表逐字）、`route.openGroup → openProject`、`composer.mentionGroup → mentionProject`、`agents.background.groupMentionOnly* → projectMentionOnly*`、`usage.loop.triage` 值 →「路由判断」、`butlerTeamTitle` →「管家提议：批量创建 Bot」；testid `background-tasks-group-mention-only → background-tasks-project-mention-only`、`route-open-group → route-open-project`；设置字段 `backgroundTasks.groupMentionOnly → projectMentionOnly`（shared schema + settings.update 入参 + core llm-router + 两处 core 测试 + 渲染端，语义不变）；中文措辞清扫（含注释：群聊/群成员/建群等 → 项目组措辞，逐文件人工核对非聊天群含义未动） |
+| `8916aa4` | feat(desktop): 协作暂停卡（步骤 2）——`stores/episodes.svelte.ts`（byId/load/resume/stop/pausedCount + `episode.updated` 订阅，App.svelte start）、`EpisodePausedCard.svelte`（paused/active/stopped/unknown 四态、pendingHint、请求中禁用）、MessageBubble `episode_paused` 分支、ProjectHeader 徽标 `pendingOf + pausedCount`、i18n `episode.*` 5 键、单测 `episodes.svelte.test.ts` 6 例 |
+| `dc96550` | feat(desktop): 审批卡负责人下拉（步骤 3）——`proposalType==='project'` 待决卡渲染 `select`（选项 = memberBotIds，默认 payload.leadBotId，testid `approval-butler-project-lead`）、成员列表只读带负责人标记、批准时改过才带 `leadBotId`（decide 第 8 参）、已决卡显示 decision.leadBotId ?? payload.leadBotId；路由卡改名已随 `adb1941` 完成 |
+| `6ddbf86` | feat(core): 测试缝（步骤 4）——`episodeLimitsFromEnv`（`dispatch/episodes.ts` 旁，`KEPCUP_TEST_EPISODE_LIMITS="hops,pair"`，逐段忽略非法/非正数）+ start.ts 仅 `__KEPCUP_TEST_HOOKS__` 为真时读取、优先于 WP2 的 `KEPCUP_EPISODE_HOP_BREAKER/PAIR` 单项缝（integration 测试继续用后者）；单测 4 例 |
+| `7f84790` | refactor(desktop)!: `git mv helpers/create-group.ts → create-project.ts`、`createProjectViaUi(page, title, memberNames, leadName = memberNames[0])` 双轮流程 + 4 个既有 spec 的机械调用点同步（纯改名提交） |
+| `ed2808f` | test(desktop)!: `git mv group-chat.spec.ts → project-chat.spec.ts`（去 no-claim 点选、状态行断言 `project-turn-*`、详情页改名/目标/成员/设负责人/移出置灰/两步删除）+ `git mv group-compose.spec.ts → project-compose.spec.ts`（双轮全键盘流 + 候选无管家 + 成员轮候选无负责人） |
+| `c6b15b6` | test(desktop): 新增 `project-shell.spec.ts`（§4 步骤 5 表 ①–⑧）／`project-routing.spec.ts`（网关 route/self/none、续接 respond/not_mine、显式 @ 旁路，请求计数区分「你的名片：」vs「成员名册：」）／`episode-breaker.spec.ts`（`KEPCUP_TEST_EPISODE_LIMITS=2,2`、暂停卡三态、徽标、resume 补投、stop 后 M 无新回合）；同提交修 `ProjectTurnStatusLine` 可见性：路由阶段（phase='routing' 且无目标）此前被 `currentBotId/queue` 条件挡死，「正在确认由谁回复」永不显示——改为 routing 阶段即显示（§4 步骤 5 表 ① 的必经改写，见下「落地决定」） |
+| `0cf42cc` | test(desktop): 既有 spec 适配——setting-card（mode-reason 断言 群聊→项目组）、memory（删除走 `context-project-settings` → 详情页两步删除）、browser（`bindWorkdir` 项目组走 ⚙ 概览分区、绑定断言移到回沟通后）、workbench（no-claim 语义换成「@ 总落负责人 + skip_reply → 草案 +『项目里无人回应』+ 无 no-claim 卡 + 指定负责 Bot 送达」，断言未删）、butler-proposal（新增 propose_project 改负责人批准用例）、external-agents（mention-only testid 一处） |
+| `6d1ebe7` | test(desktop): 首轮实跑修正——@ 弹层必须先点选再补文本（连续 pressSequentially 会把候选过滤空）、详情页成员行断言收窄到 `project-member-row-*`（picker 候选 `<li>` 同容器）、窄屏 ⚙ 从沟通视图出发（切换键语义）、新用例关首启向导、tab 横向滚动在 420px 断言（600px 五个 tab 可能放得下） |
+| `517c8c1` | docs(desktop): SchedulesPanel 过期注释（group-info section → 项目详情页分区；§6 rg#1 命中） |
+| （本提交） | docs(todo): 本实施记录 + README §7 进度行 |
+
+每个提交均通过 `pnpm --filter @kepcup/desktop typecheck`（shared/core 改动先行 `run build`）。
+
+### `rg` 自检例外说明（§6 两条）
+
+- rg#1（`apps packages`，排除 node_modules/dist）：加 `-g '!**/migrations/**'` 后**为空**。按 §6 原样命令（不排 migrations）剩 1 处：`packages/core/migrations/main/0014_conversation_setup.sql:1` 注释「群创建 / group-setup 文档名」——**历史迁移 SQL，README §1.7 明令不改**（WP8 §3 核对时已知）。
+- rg#2（中文措辞扫描 `apps/desktop/src`）：**为空**，无例外。「对话分组」（sidebar 分组）、`handover.group.*`、`profile-groups` 等非聊天群含义未动（逐一核对过命中列表）。
+
+### 新名字与落地决定登记（§4 未列出者）
+
+- **设置字段 `backgroundTasks.groupMentionOnly → projectMentionOnly`**：WP8 §4 步骤 1.2 的表只列了 i18n key 与 testid，但 §6 rg#1 的模式 `groupMentionOnly` 会命中 shared schema / settings.update 入参 / core llm-router / 两处 core 测试；该字段语义就是「项目组仅 @ 响应」，按「聊天群含义的 group 改掉」规则一并改名（无行为变化，`.catch` 默认吸收旧值）。
+- **`ProjectTurnStatusLine` 路由阶段可见性修正**（`c6b15b6`）：原条件 `phase!=='idle' && (currentBotId!==null || queue.length>0)` 使 `turn.routing`（「正在确认由谁回复…」，WP6 落的文案）永不显示——路由阶段恰是 currentBotId=null、queue=[]。§4 步骤 5 表 ① 明确要求断言该阶段的 `project-turn-status` + 阶段文案，属 UI 与 WP 契约的既有缺陷，改为 routing 阶段恒显示。
+- e2e 落地细节（不涉命名）：Electron 下 `page.setViewportSize` 不生效，窄屏用既有 `resizeWindow`（BrowserWindow.setSize，narrow-layout.spec 同法）；tab 横向滚动断言在 420px 做（600px 五个 tab 实测可能放得下，420 与 WP6 冒烟口径一致）；§4 步骤 5 表 ⑥ 授权区按 WP 允许的兜底路径只断言空态 `project-grants-empty`（无现成授权夹具：grants 只能经 access 审批流产生，browser.spec 的授权在单聊右栏），「一步可达」以 ⚙ → nav-grants 两击结构断言。
+- 新 i18n key：`episode.resume/stop/resumed/stopped/pendingHint`（§2 表）、`approvals.butlerProject*` 5 键、`route.openProject`、`composer.mentionProject`、`agents.background.projectMentionOnly(+Hint)`、`schedules.workbenchProject`（前序 WP 已落，本 WP 核对文案一致）。
+
+### 验证（T1a 收口，§5 顺序）
+
+- `pnpm --filter @kepcup/shared run build && pnpm --filter @kepcup/core run build`：通过；`pnpm typecheck`（三包）：0 errors；`pnpm lint`：通过。
+- `node scripts/run-tests.mjs run --project desktop`：86 文件 800 例全绿；`--project desktop-svelte`：14 文件 88 例全绿（新增 episodes store 6 例）；core 定向：`episode-limits-from-env` 4、`episodes-breaker` 2、`episodes-rpc` 3、`llm-router` 15、`external-agent-p6` 4 全绿。
+- `pnpm build` 后逐个 e2e：`project-compose` 1/1、`project-chat` 2/2、`project-shell` 1/1、`project-routing` 1/1、`episode-breaker` 1/1、`butler-proposal` 2/2、`setting-card` 1/1、`memory` 4/4、`browser` 14/14、`narrow-layout` 2/2、`external-agents` 4/4 全绿；`workbench` 12 过 1 败——败的是既有用例 `layout: long text does not overflow; tabs below the width threshold`（900px 折 tab 形态之争，本机窗口尺寸语义），**与 WP8 无关已实证**：把该 spec 换回 `9449dba`（WP8 之前）版本单跑同样失败（本 WP 改的是同文件另一个用例 group dispatch，12 过里含它）。
+- 全量 `pnpm test`（收口一次）：**499 文件 5526 通过 / 0 失败 / 23 skip**（1 spec 文件 skip），不超基线。
+- 旧 `group-*` spec 与 `helpers/create-group.ts` 已不存在（§6 清单末项）。
+
+### 偏差
+
+无新增 DEVIATIONS（编号未推进，仍停在 DEV-035）。两处按 WP 字面会走不通的落地（`page.setViewportSize` 在 Electron 不生效 → resizeWindow；600px 下 tab 可能不溢出 → 420px 断言）与 rg#1 的历史迁移 SQL 命中，均已在上文登记，属 §1.3「由你判断」范畴，不构成设计冲突。
+
+### 遗留（顺延）
+
+- WP10：Wiki tab 真实视图（`project-shell.spec` ① 对 wiki 仍断言占位 `project-module-placeholder`）、删除确认框补 wiki 来源数 / 页面数。
+- WP11：文档同步（`docs/dev/01-conventions.md` 常量 / ID 表、PROGRESS）。
+- 既有环境项：`workbench.spec` 的 layout 宽度形态用例在本机失败（WP8 前即失败，见上）；browser / sandbox 等沙箱类按 05-testing 基线口径本机未复跑全部。
