@@ -21,7 +21,7 @@ const USER_DIRECT: SettingModeContext = {
   triggerFromUser: true,
   runTouchedUntrusted: false,
   tainted: false,
-  isGroup: false,
+  isProject: false,
   targetsOtherBot: false,
   isButler: false,
   loopType: 'turn',
@@ -52,7 +52,7 @@ function* allContexts(loops: readonly LoopType[] = LOOPS): Generator<SettingMode
     for (const triggerFromUser of BOOLS)
       for (const runTouchedUntrusted of BOOLS)
         for (const tainted of BOOLS)
-          for (const isGroup of BOOLS)
+          for (const isProject of BOOLS)
             for (const targetsOtherBot of BOOLS)
               for (const isButler of BOOLS)
                 for (const loopType of loops) {
@@ -61,7 +61,7 @@ function* allContexts(loops: readonly LoopType[] = LOOPS): Generator<SettingMode
                     triggerFromUser,
                     runTouchedUntrusted,
                     tainted,
-                    isGroup,
+                    isProject,
                     targetsOtherBot,
                     isButler,
                     loopType,
@@ -92,7 +92,7 @@ describe('effectiveMode: exhaustive matrix on a direct-whitelisted item', () => 
         const clean =
           !context.runTouchedUntrusted &&
           !context.tainted &&
-          !context.isGroup &&
+          !context.isProject &&
           !context.targetsOtherBot;
         expected = userTrigger && clean ? 'direct' : 'confirm';
       }
@@ -147,7 +147,7 @@ describe('effectiveMode: invariants over every catalog item', () => {
         expect(rank(mode), entry.id).toBeGreaterThanOrEqual(rank(entry.write.maxMode));
         if (mode === 'direct') {
           expect((DIRECT_ITEM_IDS as readonly string[]).includes(entry.id)).toBe(true);
-          expect(context.triggerFromUser && !context.isGroup && !context.tainted).toBe(true);
+          expect(context.triggerFromUser && !context.isProject && !context.tainted).toBe(true);
         }
         if (entry.owner === 'renderer' || entry.write.widensPermission) {
           expect(mode).not.toBe('direct');
@@ -204,7 +204,7 @@ describe('effectiveMode: individual rules', () => {
   });
 
   it('group chats only get cards (§5.3 第 3 条)', () => {
-    expect(effectiveMode(item('models.default-light'), ctx({ isGroup: true }))).toMatchObject({
+    expect(effectiveMode(item('models.default-light'), ctx({ isProject: true }))).toMatchObject({
       mode: 'confirm',
       rules: ['group'],
       reason: '群聊中只能出卡，不能直接修改',
@@ -226,7 +226,7 @@ describe('effectiveMode: individual rules', () => {
       item('bot.model'),
       ctx({
         triggerReason: 'scheduled',
-        isGroup: true,
+        isProject: true,
         tainted: true,
         targetsOtherBot: true,
         isButler: true,
@@ -433,7 +433,7 @@ describe('effectiveMode: individual rules', () => {
 
   it('dedicated-tool items redirect, read-only items link, before any other rule', () => {
     expect(
-      effectiveMode(item('mail.account'), ctx({ loopType: 'reflection', isGroup: true })),
+      effectiveMode(item('mail.account'), ctx({ loopType: 'reflection', isProject: true })),
     ).toEqual({
       mode: 'redirect',
       acceptValues: false,

@@ -111,7 +111,7 @@ export interface SettingsRunContext {
   triggerReason: TriggerReason | null;
   /** 触发批的发送者是用户本人（`triggerFromUser`，settings/context.ts）。 */
   triggerFromUser: boolean;
-  isGroup: boolean;
+  isProject: boolean;
   isButler: boolean;
   /** 本 run 已调用过读取不可信内容的工具（随 run 推进而变；触发批带附件时一开始就为真）。 */
   touchedUntrusted: () => boolean;
@@ -262,7 +262,7 @@ export class SettingsCatalogHost {
       triggerFromUser: ctx.triggerFromUser,
       runTouchedUntrusted: ctx.externalEngine === true || ctx.touchedUntrusted(),
       tainted,
-      isGroup: ctx.isGroup,
+      isProject: ctx.isProject,
       targetsOtherBot: item.scope === 'bot' && target.botId !== null && target.botId !== botId,
       isButler: ctx.isButler,
       loopType: ctx.identity.loopType as SharedLoopType,

@@ -36,8 +36,8 @@ export interface SettingModeContext {
   runTouchedUntrusted: boolean;
   /** D73 污点（按（Bot, 对话）计），与上一项取并集。 */
   tainted: boolean;
-  /** 群聊（§5.3 第 3 条）。 */
-  isGroup: boolean;
+  /** 项目组会话（§5.3 第 3 条）。 */
+  isProject: boolean;
   /** 改的是别的 Bot 的配置（§5.3 第 4 条）：普通 Bot 拒绝，管家最多出卡。 */
   targetsOtherBot: boolean;
   /** 管家（D70）。 */
@@ -160,7 +160,7 @@ export function effectiveMode(item: SettingItem, ctx: SettingModeContext): Setti
   const floors: Array<[SettingModeRule, boolean, SettingWriteMode]> = [
     ['trigger', !userTriggered, 'confirm'],
     ['untrusted', ctx.runTouchedUntrusted || ctx.tainted, 'confirm'],
-    ['group', ctx.isGroup, 'confirm'],
+    ['group', ctx.isProject, 'confirm'],
     ['other-bot', ctx.targetsOtherBot, 'confirm'],
     ['widens', item.write.widensPermission, 'confirm'],
     ['renderer', item.owner === 'renderer', 'confirm'],

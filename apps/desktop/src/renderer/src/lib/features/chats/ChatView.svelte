@@ -28,7 +28,7 @@
   const confirmMode = $derived(
     current !== null && permissions.sandbox !== null && !permissions.sandbox.available,
   );
-  const isGroup = $derived(current?.conversation.type === 'project');
+  const isProject = $derived(current?.conversation.type === 'project');
   // 访谈目录闸门（19/D59）：目录卡未答期间输入禁用——回答只能经卡片提交。
   const pathGateClosed = $derived.by(() => {
     const c = current;
@@ -51,7 +51,7 @@
   const headerTitle = $derived(
     current === null
       ? ''
-      : isGroup
+      : isProject
         ? (current.conversation.title ?? '')
         : // 已删除 Bot 的占位行 name 为空串，回退其 id（设计/01：显示为 id）。
           current.conversation.bot?.name ||
@@ -131,7 +131,7 @@
             : t('chatHeader.collapsePanel')}
         data-testid="right-panel-toggle"
       >
-        {#if isGroup}
+        {#if isProject}
           <GroupAvatarStack members={groupFaces} class="size-8" />
         {:else}
           <BotAvatar
@@ -142,7 +142,7 @@
             fallbackClass="text-[10px]"
           />
         {/if}
-        <span class="truncate pr-1.5 {isGroup ? 'max-w-md' : 'max-w-48'}">{headerTitle}</span>
+        <span class="truncate pr-1.5 {isProject ? 'max-w-md' : 'max-w-48'}">{headerTitle}</span>
         {#if panelCollapsed && !panelOverlay}
           <!-- 展开提示只在 hover 时浮现（参考 Grok），展开态不再显示箭头。
                外层宽度 0 → 内容宽（6px 间距 + 14px 图标）撑开按钮，-ml-1.5 抵消按钮自身的

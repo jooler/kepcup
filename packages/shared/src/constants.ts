@@ -258,7 +258,8 @@ export const SETUP_QUESTION_EVENT = 'bot_setup_question';
  * D59): the direct-chat delivery gate holds every user message until this
  * card is answered (directory chosen or skipped).
  */
-export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';/**
+export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';
+/**
  * Bot 内部事务事件名集合（docs/design/01-conversation.md 消息原则）：这些事件
  * 只服务 Bot 自己的执行与知识/环境管理，不是对话内容——消息写入侧带
  * `internal` 标记，读取侧按标记或本集合（历史存量行没有标记）一起过滤。

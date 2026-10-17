@@ -82,7 +82,7 @@
   );
   // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
   // （不再渲染名字/时间行）。
-  const isGroupChat = $derived(chat.current?.conversation.type === 'project');
+  const isProjectChat = $derived(chat.current?.conversation.type === 'project');
   /** Sender's stored avatar (preset / upload), falling back to initials. */
   const senderBot = $derived(
     message.senderBotId === null
@@ -193,7 +193,7 @@
   data-highlighted={chat.highlightMessageId === message.id ? 'true' : 'false'}
   oncontextmenu={openMenu}
 >
-  {#if !isUser && isGroupChat}
+  {#if !isUser && isProjectChat}
     <BotAvatar
       botId={message.senderBotId ?? ''}
       {name}

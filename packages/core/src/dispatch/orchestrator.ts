@@ -3701,7 +3701,7 @@ export class Orchestrator {
               triggerReason: batch.reason,
               // 任务的触发是 'task'（不在直改白名单里）：来源消息即使是用户的也不算本人直接发起。
               triggerFromUser: fromUser,
-              isGroup: conv.type === 'project',
+              isProject: conv.type === 'project',
               isButler: bot.systemRole === 'butler',
               touchedUntrusted: () => untrusted.touched,
               // 外部智能体的原生工具不经宿主分类、会话跨 run 保留：整个 run 按不可信处理。
@@ -5263,13 +5263,13 @@ export class Orchestrator {
   #deliverInterimTexts(
     runId: string,
     batch: TriggerBatch,
-    isGroup: boolean,
+    isProject: boolean,
     handle: RunHandle,
     /** D75 §6.1: non-null = task run; status overlay instead of chat bubbles. */
     taskId: string | null = null,
   ): () => void {
     let delivered = 0;
-    const max = isGroup ? INTERIM_TEXT_MAX_PER_RUN_GROUP : INTERIM_TEXT_MAX_PER_RUN;
+    const max = isProject ? INTERIM_TEXT_MAX_PER_RUN_GROUP : INTERIM_TEXT_MAX_PER_RUN;
     return handle.onEvent((event) => {
       if (event.type !== 'assistant') return;
       const { text, stopReason } = event.payload as { text?: string; stopReason?: string };
