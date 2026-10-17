@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -119,12 +119,31 @@ export function partitionDirs(root: string, partition: string): string[] {
   return raw === lower ? [lower] : [lower, raw];
 }
 
+/** Windows 下「改出局」目录的固定后缀；BrowserHost 启动时统一清扫。 */
+const REMOVING_SUFFIX = '.removing';
+
+/**
+ * Windows 上 Chromium 会话仍持有分区树内 sqlite/leveldb 的打开句柄时，
+ * 整树 unlink 每个文件都会失败（r7 诊断：删除后目录分毫未动，非迟到
+ * flush 重建）。同卷 rename 不受内容句柄影响 —— 先把目录改名出局，
+ * tombstone 视角立刻消失；真正释放留给句柄消失后的启动清扫。
+ */
+function renamePartitionOut(dir: string): boolean {
+  try {
+    renameSync(dir, dir + REMOVING_SUFFIX);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Windows 上 Chromium 的磁盘存储句柄可能清空后仍短暂持锁（EBUSY/EPERM）：
  * 递归删除失败就退避重试到窗口耗尽（正常第一拍即成功）。删除失败本身不
  * 阻断删除 Bot 的 UX —— 调用方不把删除目录的失败视为删除失败。
  */
 async function removeDirTolerant(dir: string): Promise<void> {
+  if (renamePartitionOut(dir)) return;
   const deadline = Date.now() + 8_000;
   for (;;) {
     try {
@@ -133,6 +152,25 @@ async function removeDirTolerant(dir: string): Promise<void> {
     } catch {
       if (Date.now() >= deadline) return;
       await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+/** 启动清扫：上次会话「改出局」的分区目录，句柄已释放时会被真正删除。 */
+function sweepRemovedPartitions(root: string): void {
+  const partitionsRoot = path.join(root, 'Partitions');
+  let entries: string[];
+  try {
+    entries = readdirSync(partitionsRoot);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.endsWith(REMOVING_SUFFIX)) continue;
+    try {
+      rmSync(path.join(partitionsRoot, name), { recursive: true, force: true, maxRetries: 24, retryDelay: 250 });
+    } catch {
+      // 仍被占用就留给下一次启动；绝不阻塞启动流程。
     }
   }
 }
@@ -182,6 +220,7 @@ export class BrowserHost {
   constructor(env: NodeJS.ProcessEnv, options: BrowserHostOptions = {}) {
     this.#sessionRoot = sessionDataRoot(env);
     this.#options = options;
+    sweepRemovedPartitions(this.#sessionRoot);
   }
 
   // --- lifecycle ------------------------------------------------------------
