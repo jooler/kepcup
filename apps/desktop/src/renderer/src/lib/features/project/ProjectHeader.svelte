@@ -3,6 +3,7 @@
   import { ChevronLeft, Settings } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
+  import { episodes } from '$lib/stores/episodes.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
   import { shell } from '$lib/stores/shell.svelte';
   import { narrowLayout } from '$lib/features/shell/narrow-layout.svelte';
@@ -48,7 +49,10 @@
     chatTabBadge({
       messages: current?.messages ?? [],
       seenSeq,
-      pendingApprovals: permissions.pendingOf(current?.conversation.id).length,
+      // 暂停中的协作回合也需要用户处理（WP8）：与待审批一起计入沟通徽标。
+      pendingApprovals:
+        permissions.pendingOf(current?.conversation.id).length +
+        episodes.pausedCount(current?.conversation.id),
     }),
   );
 

@@ -8,6 +8,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
+  import { episodes } from '$lib/stores/episodes.svelte';
   import { workdirs } from '$lib/stores/workdirs.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
@@ -135,6 +136,8 @@
     contacts.start();
     settingsStore.start();
     permissions.start();
+    // 协作回合（暂停卡的 episode.updated 事件接线）。
+    episodes.start();
     workdirs.start();
     environmentStore.start();
     void bootstrap();

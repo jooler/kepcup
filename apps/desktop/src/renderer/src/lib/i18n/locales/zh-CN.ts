@@ -610,6 +610,12 @@ export const zhCN = {
   'changes.diffTitle': '改动对比（{runId}）',
   'changes.diffUnavailable': '该检查点已超出保留期，无法显示 diff。',
   'project.createFailed': '创建项目组失败',
+  // 协作暂停卡（D92 41 §7.3，WP8）：熔断暂停的回合
+  'episode.resume': '继续',
+  'episode.stop': '停止',
+  'episode.resumed': '已继续协作',
+  'episode.stopped': '已停止协作',
+  'episode.pendingHint': '有 {count} 条待投递',
   // 项目组外壳（D92 41 §11.2，WP6）：顶栏、模块 tab、成员弹层与沟通徽标
   'project.untitled': '未命名项目组',
   'project.module.chat': '沟通',
