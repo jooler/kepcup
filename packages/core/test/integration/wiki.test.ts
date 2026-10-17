@@ -86,6 +86,11 @@ async function latestRunId(core: CoreHarness, conversationId: string): Promise<s
   return result.runs[0]?.id ?? null;
 }
 
+/** RPC owner shape of one bot's private wiki (D92 T1b WP9). */
+function botOwner(botId: string): { kind: 'bot'; id: string } {
+  return { kind: 'bot', id: botId };
+}
+
 function wikiRoot(core: CoreHarness, botId: string): string {
   return path.join(core.services.paths.home, 'bots', botId, 'wiki');
 }
@@ -211,7 +216,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
     );
 
     // 一次提交（init + ingest），提交信息为 log 记录。
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ oid: string; message: string }>;
     };
     expect(history.history).toHaveLength(2);
@@ -220,7 +225,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
 
     // wiki.search（wiki_search 工具的同一 FTS 通道）能查到。
     const search = (await stack.core.rpc.call('wiki.search', {
-      botId,
+      owner: botOwner(botId),
       query: '部署流程',
     })) as { hits: Array<{ path: string; title: string; snippet: string }> };
     expect(search.hits.length).toBeGreaterThanOrEqual(1);
@@ -246,7 +251,7 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
     ).toBe(false);
 
     // <wiki_topics> 的源头是 index.md（topics 段由它提取）：入库后即可检索。
-    const index = (await stack.core.rpc.call('wiki.page', { botId, path: 'index.md' })) as {
+    const index = (await stack.core.rpc.call('wiki.page', { owner: botOwner(botId), path: 'index.md' })) as {
       title: string;
       content: string;
     };
@@ -329,10 +334,11 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
   }, 60_000);
 
   it('相同来源重复入库被跳过（无新提交、无重复 raw 文件、事件标记 skipped）', async () => {
-    const historyBefore = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const historyBefore = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: unknown[];
     };
     const skippedEvent = waitForEvent<{
+      owner: { kind: 'bot'; id: string };
       botId: string;
       conversationId: string | null;
       rawPath: string | null;
@@ -341,10 +347,10 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
       timeoutMs: 30_000,
     });
     // BR-P09-012: the UI-refresh event fires for ingest completions too.
-    const changedEvent = waitForEvent<{ botId: string }>(
+    const changedEvent = waitForEvent<{ owner: { kind: string; id: string } }>(
       stack.core,
       'wiki_changed',
-      (p) => p.botId === botId,
+      (p) => p.owner.kind === 'bot' && p.owner.id === botId,
       { timeoutMs: 30_000 },
     );
     stack.llm.script('mock-main', [
@@ -365,9 +371,9 @@ describe('P09 Wiki：入库全流程（附件 → raw → 页面 → 提交 → 
     // BR-P09-012: the skipped path falls back to the direct chat like the
     // success path — conversationId is never null here.
     expect(event.conversationId).toBe(conversationId);
-    expect(await changedEvent).toEqual({ botId });
+    expect(await changedEvent).toEqual({ owner: botOwner(botId) });
 
-    const historyAfter = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const historyAfter = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: unknown[];
     };
     expect(historyAfter.history).toHaveLength(historyBefore.history.length);
@@ -526,10 +532,10 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
     );
     // BR-P09-012: ingest completion publishes the UI-refresh event（先消费
     // 入库的那次，体检的那次由第二个监听器单独验证）。
-    const ingestChangedEvent = waitForEvent<{ botId: string }>(
+    const ingestChangedEvent = waitForEvent<{ owner: { kind: string; id: string } }>(
       stack.core,
       'wiki_changed',
-      (p) => p.botId === botId,
+      (p) => p.owner.kind === 'bot' && p.owner.id === botId,
       { timeoutMs: 120_000 },
     );
     stack.llm.script('mock-main', [
@@ -570,11 +576,11 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 1);
     expect(rawFiles(stack.core, botId)).toHaveLength(1);
-    expect(await ingestChangedEvent).toEqual({ botId });
+    expect(await ingestChangedEvent).toEqual({ owner: botOwner(botId) });
   }, 120_000);
 
   it('回滚：页面内容恢复（新提交，不改写历史），FTS 同步回退', async () => {
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ oid: string; message: string; createdAt: number }>;
     };
     // init + ingest = 2；回滚到 init 提交（页面尚不存在）。
@@ -582,11 +588,11 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
     const initCommit = history.history[1]!;
     expect(existsSync(path.join(wikiRoot(stack.core, botId), 'pages/temporary.md'))).toBe(true);
 
-    await stack.core.rpc.call('wiki.rollback', { botId, commitOid: initCommit.oid });
+    await stack.core.rpc.call('wiki.rollback', { owner: botOwner(botId), commitOid: initCommit.oid });
 
     // 页面恢复为 init 内容（temporary.md 消失），历史多一次提交。
     expect(existsSync(path.join(wikiRoot(stack.core, botId), 'pages/temporary.md'))).toBe(false);
-    const after = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const after = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ oid: string; message: string }>;
     };
     expect(after.history).toHaveLength(3);
@@ -597,12 +603,12 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
     expect(log).toContain('回滚到');
     // FTS 同步回退：检索不再命中已回退页面；页面树为空。
     const search = (await stack.core.rpc.call('wiki.search', {
-      botId,
+      owner: botOwner(botId),
       query: 'TemporaryDoc',
     })) as { hits: unknown[] };
     expect(search.hits).toHaveLength(0);
     expect(
-      ((await stack.core.rpc.call('wiki.tree', { botId })) as { pages: unknown[] }).pages,
+      ((await stack.core.rpc.call('wiki.tree', { owner: botOwner(botId) })) as { pages: unknown[] }).pages,
     ).toHaveLength(0);
     // 工作区干净（无脏状态）。
     const { spawnSync } = await import('node:child_process');
@@ -617,7 +623,7 @@ describe('P09 Wiki：入库；回滚；生命周期', () => {
     await stack.core.rpc.call('conversations.delete', { id: conversationId });
     expect(existsSync(path.join(wikiRoot(stack.core, botId), '.git'))).toBe(true);
     const page = (await stack.core.rpc.call('wiki.page', {
-      botId,
+      owner: botOwner(botId),
       path: 'index.md',
     })) as { content: string };
     expect(page.content).toContain('目录');
@@ -906,9 +912,15 @@ describe('P09 Wiki：来源消息为遗留已撤回状态时的入库任务防�
         type: 'wiki_ingest',
         botId: bot.id,
         conversationId,
-        payload: { sourceType: 'attachment', ref: upload.attachment.id, note: '' },
+        payload: {
+          owner: botOwner(bot.id),
+          createdBy: { kind: 'bot', id: bot.id },
+          sourceType: 'attachment',
+          ref: upload.attachment.id,
+          note: '',
+        },
         priority: 2,
-        dedupeKey: `wiki_ingest:${bot.id}:attachment:${upload.attachment.id}`,
+        dedupeKey: `wiki_ingest:bot:${bot.id}:attachment:${upload.attachment.id}`,
         runAfter: Date.now() + 30_000,
       });
       // 把附件挂上一条真实用户消息后，直接把该消息置为遗留已撤回状态
@@ -948,7 +960,7 @@ describe('P09 Wiki：来源消息为遗留已撤回状态时的入库任务防�
       expect(rawFiles(stack.core, bot.id)).toHaveLength(0);
       // initWiki 先于 resolveSource（目录骨架存在），但没有页面被写入。
       expect(existsSync(path.join(wikiRoot(stack.core, bot.id), 'pages', 'late.md'))).toBe(false);
-      const history = (await stack.core.rpc.call('wiki.history', { botId: bot.id })) as {
+      const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(bot.id) })) as {
         history: Array<{ message: string }>;
       };
       expect(history.history).toHaveLength(1); // 只有 wiki: init
@@ -998,7 +1010,7 @@ describe('P09 Wiki：wiki_read 路径限定反例（BR-P09-007）', () => {
       await waitJobDone(stack.core, 'wiki_ingest', 1);
 
       const page = (await stack.core.rpc.call('wiki.page', {
-        botId: bot.id,
+        owner: botOwner(bot.id),
         path: 'pages/path.md',
       })) as {
         content: string;
@@ -1007,7 +1019,7 @@ describe('P09 Wiki：wiki_read 路径限定反例（BR-P09-007）', () => {
 
       const rejects = (pagePath: string, code: string): Promise<unknown> =>
         expect(
-          stack.core.rpc.call('wiki.page', { botId: bot.id, path: pagePath }),
+          stack.core.rpc.call('wiki.page', { owner: botOwner(bot.id), path: pagePath }),
         ).rejects.toMatchObject({ code });
       // 越界：目录穿越与绝对路径。
       await rejects('pages/../../memory.db', 'INVALID_INPUT');
@@ -1023,7 +1035,7 @@ describe('P09 Wiki：wiki_read 路径限定反例（BR-P09-007）', () => {
       // 存在但缺失：NOT_FOUND。
       await rejects('pages/missing.md', 'NOT_FOUND');
       const index = (await stack.core.rpc.call('wiki.page', {
-        botId: bot.id,
+        owner: botOwner(bot.id),
         path: 'index.md',
       })) as {
         content: string;
@@ -1076,7 +1088,7 @@ describe('P09 Wiki：log.md 只追加的强制（BR-P09-008）', () => {
       expect(log.startsWith(WIKI_LOG_TEMPLATE)).toBe(true);
       expect(log).toContain('违规修复');
       expect(log).not.toContain('旧记录统统不要了');
-      const history = (await stack.core.rpc.call('wiki.history', { botId: bot.id })) as {
+      const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(bot.id) })) as {
         history: Array<{ message: string }>;
       };
       expect(history.history[0]!.message).toBe('wiki: ingest 附件 rewrite.md');
@@ -1140,14 +1152,14 @@ describe('P09 Wiki：回滚与在途维护的互斥（BR-P09-010）', () => {
             : null,
         { label: 'maintenance loop held on mock', timeoutMs: 30_000 },
       );
-      const history = (await stack.core.rpc.call('wiki.history', { botId: bot.id })) as {
+      const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(bot.id) })) as {
         history: Array<{ oid: string; message: string }>;
       };
       expect(history.history).toHaveLength(1);
 
       // 并发回滚：必须排队（不与维护 loop 并发进入同一 git 仓库）。
       const rollbackPromise = stack.core.rpc
-        .call('wiki.rollback', { botId: bot.id, commitOid: history.history[0]!.oid })
+        .call('wiki.rollback', { owner: botOwner(bot.id), commitOid: history.history[0]!.oid })
         .catch((error) => error);
       await new Promise((resolve) => setTimeout(resolve, 800));
       expect(await commitCount(stack.core, bot.id)).toBe(1); // 回滚未执行
@@ -1156,7 +1168,7 @@ describe('P09 Wiki：回滚与在途维护的互斥（BR-P09-010）', () => {
       await waitJobDone(stack.core, 'wiki_ingest', 1);
       await rollbackPromise;
       // 维护完成后回滚才执行：历史为 init → ingest → rollback。
-      const after = (await stack.core.rpc.call('wiki.history', { botId: bot.id })) as {
+      const after = (await stack.core.rpc.call('wiki.history', { owner: botOwner(bot.id) })) as {
         history: Array<{ message: string }>;
       };
       expect(after.history).toHaveLength(3);
@@ -1277,7 +1289,7 @@ describe('P09 Wiki：启动 FTS 对账（BR-P09-009）', () => {
       first.core.services.memory!.storeFor(botId).wikiClearPages();
       expect(
         (
-          (await first.core.rpc.call('wiki.search', { botId, query: 'ReconcileDoc' })) as {
+          (await first.core.rpc.call('wiki.search', { owner: botOwner(botId), query: 'ReconcileDoc' })) as {
             hits: unknown[];
           }
         ).hits,
@@ -1289,12 +1301,14 @@ describe('P09 Wiki：启动 FTS 对账（BR-P09-009）', () => {
       const second = await createTestStack({ home, keystore });
       try {
         const search = (await second.core.rpc.call('wiki.search', {
-          botId,
+          owner: botOwner(botId),
           query: 'ReconcileDoc',
         })) as { hits: Array<{ path: string }> };
         expect(search.hits.length).toBeGreaterThanOrEqual(1);
         expect(search.hits[0]!.path).toBe('pages/reconcile.md');
-        const tree = (await second.core.rpc.call('wiki.tree', { botId })) as { pages: unknown[] };
+        const tree = (await second.core.rpc.call('wiki.tree', {
+          owner: botOwner(botId),
+        })) as { pages: unknown[] };
         expect(tree.pages).toHaveLength(1);
       } finally {
         await second.cleanup();
@@ -1359,7 +1373,7 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
     await stack.core.rpc.call('messages.send', { conversationId, text: '学一下待删资料' });
     await waitForRun(stack.core, conversationId, 'completed', { timeoutMs: 30_000 });
     await waitJobDone(stack.core, 'wiki_ingest', 1);
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ oid: string; message: string }>;
     };
     expect(history.history).toHaveLength(2); // init + ingest
@@ -1370,7 +1384,7 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
     stack.core.services.domain!.jobs.enqueue({
       type: 'wiki_lint',
       botId,
-      payload: { trigger: 'test' },
+      payload: { owner: botOwner(botId), trigger: 'test' },
       priority: 2,
     });
     stack.llm.script('mock-main', [
@@ -1389,11 +1403,11 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
     // 页面从工作区与检索索引中消失；历史多一次提交。
     expect(existsSync(path.join(wikiRoot(stack.core, botId), 'pages/deletable.md'))).toBe(false);
     const search = (await stack.core.rpc.call('wiki.search', {
-      botId,
+      owner: botOwner(botId),
       query: 'DeleteTargetDoc',
     })) as { hits: unknown[] };
     expect(search.hits).toHaveLength(0);
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ message: string }>;
     };
     expect(history.history).toHaveLength(3);
@@ -1403,12 +1417,12 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
   }, 60_000);
 
   it('回滚到入库提交：被删除的页面恢复，FTS 重新命中', async () => {
-    await stack.core.rpc.call('wiki.rollback', { botId, commitOid: ingestOid });
+    await stack.core.rpc.call('wiki.rollback', { owner: botOwner(botId), commitOid: ingestOid });
     expect(
       readFileSync(path.join(wikiRoot(stack.core, botId), 'pages/deletable.md'), 'utf8'),
     ).toContain('DeleteTargetDoc');
     const search = (await stack.core.rpc.call('wiki.search', {
-      botId,
+      owner: botOwner(botId),
       query: 'DeleteTargetDoc',
     })) as { hits: Array<{ path: string }> };
     expect(search.hits.length).toBeGreaterThanOrEqual(1);
@@ -1416,14 +1430,14 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
   }, 60_000);
 
   it('wiki.deletePage：界面删除走新提交，FTS 移除，log 记录；保护条目拒绝', async () => {
-    await stack.core.rpc.call('wiki.deletePage', { botId, path: 'pages/deletable.md' });
+    await stack.core.rpc.call('wiki.deletePage', { owner: botOwner(botId), path: 'pages/deletable.md' });
     expect(existsSync(path.join(wikiRoot(stack.core, botId), 'pages/deletable.md'))).toBe(false);
     const search = (await stack.core.rpc.call('wiki.search', {
-      botId,
+      owner: botOwner(botId),
       query: 'DeleteTargetDoc',
     })) as { hits: unknown[] };
     expect(search.hits).toHaveLength(0);
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
+    const history = (await stack.core.rpc.call('wiki.history', { owner: botOwner(botId) })) as {
       history: Array<{ oid: string; message: string }>;
     };
     expect(history.history[0]!.message).toBe('wiki: delete pages/deletable.md');
@@ -1434,7 +1448,7 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
     // 作用域与保护条目：index/log/SCHEMA/目录本身/穿越/缺失全部拒绝。
     const rejects = (pagePath: string, code: string): Promise<unknown> =>
       expect(
-        stack.core.rpc.call('wiki.deletePage', { botId, path: pagePath }),
+        stack.core.rpc.call('wiki.deletePage', { owner: botOwner(botId), path: pagePath }),
       ).rejects.toMatchObject({ code });
     await rejects('index.md', 'INVALID_INPUT');
     await rejects('log.md', 'INVALID_INPUT');
@@ -1444,7 +1458,7 @@ describe('P09 Wiki：页面删除（维护 loop delete 工具与 wiki.deletePage
     await rejects('pages/missing.md', 'NOT_FOUND');
 
     // 再一次回滚：删除依旧可恢复（与维护 loop 的删除同一恢复路径）。
-    await stack.core.rpc.call('wiki.rollback', { botId, commitOid: ingestOid });
+    await stack.core.rpc.call('wiki.rollback', { owner: botOwner(botId), commitOid: ingestOid });
     expect(
       readFileSync(path.join(wikiRoot(stack.core, botId), 'pages/deletable.md'), 'utf8'),
     ).toContain('DeleteTargetDoc');

@@ -141,6 +141,7 @@ import {
   wikiSearchHitSchema,
   type ProviderInfo,
 } from '../domain/types.js';
+import { wikiOwnerSchema } from '../domain/wiki.js';
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
@@ -1395,14 +1396,15 @@ export const skillsPurgeMissingOutputSchema = z.object({
   purged: z.number().int().nonnegative(),
 });
 
-// --- wiki (P09) ---------------------------------------------------------------
+// --- wiki (P09; owner-generalized in D92 T1b WP9 — breaking, no compat) --------
 
-export const wikiBotIdInputSchema = z.object({ botId: z.string().min(1) });
+export const wikiOwnerInputSchema = z.object({ owner: wikiOwnerSchema });
+export type WikiOwnerInput = z.infer<typeof wikiOwnerInputSchema>;
 export const wikiTreeOutputSchema = z.object({ pages: z.array(wikiPageSchema) });
 export type WikiTreeOutput = z.infer<typeof wikiTreeOutputSchema>;
 /** Paths are wiki-root relative; `index.md` plus everything under `pages/`. */
 export const wikiPageInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   path: z.string().min(1).max(500),
 });
 export const wikiPageOutputSchema = z.object({
@@ -1412,7 +1414,7 @@ export const wikiPageOutputSchema = z.object({
 });
 export type WikiPageOutput = z.infer<typeof wikiPageOutputSchema>;
 export const wikiSearchInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   query: z.string().min(1).max(500),
   limit: z.number().int().min(1).max(50).optional(),
 });
@@ -1421,15 +1423,15 @@ export type WikiSearchOutput = z.infer<typeof wikiSearchOutputSchema>;
 export const wikiHistoryOutputSchema = z.object({ history: z.array(wikiHistoryEntrySchema) });
 export type WikiHistoryOutput = z.infer<typeof wikiHistoryOutputSchema>;
 export const wikiRollbackInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   commitOid: z.string().min(1),
 });
 export const wikiRollbackOutputSchema = z.object({ ok: z.literal(true) });
-/** Same input shape as wiki.page: `{ botId, path }`, path strictly under pages/.
+/** Same input shape as wiki.page: `{ owner, path }`, path strictly under pages/.
  * Standalone schema (not an alias): the two methods' contracts must evolve
  * independently. */
 export const wikiDeletePageInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   path: z.string().min(1).max(500),
 });
 export const wikiDeletePageOutputSchema = z.object({ ok: z.literal(true) });
@@ -2120,10 +2122,10 @@ export const rpcMethodSchemas = {
     output: skillsPurgeMissingOutputSchema,
   },
 
-  'wiki.tree': { input: wikiBotIdInputSchema, output: wikiTreeOutputSchema },
+  'wiki.tree': { input: wikiOwnerInputSchema, output: wikiTreeOutputSchema },
   'wiki.page': { input: wikiPageInputSchema, output: wikiPageOutputSchema },
   'wiki.search': { input: wikiSearchInputSchema, output: wikiSearchOutputSchema },
-  'wiki.history': { input: wikiBotIdInputSchema, output: wikiHistoryOutputSchema },
+  'wiki.history': { input: wikiOwnerInputSchema, output: wikiHistoryOutputSchema },
   'wiki.rollback': { input: wikiRollbackInputSchema, output: wikiRollbackOutputSchema },
   'wiki.deletePage': { input: wikiDeletePageInputSchema, output: wikiDeletePageOutputSchema },
 

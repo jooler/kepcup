@@ -462,6 +462,6 @@ rg -n "<旧名>" packages apps scripts docs todo -g '!node_modules' -g '!**/dist
 | WP6 | 未开始 | | | |
 | WP7 | 未开始 | | | |
 | WP8 | 未开始 | | | |
-| WP9 | 未开始 | | | |
+| WP9 | 已完成 | `feat/project/wp9-wiki-core`：`a32afff`（steps 1-2：shared WikiOwner、paths、WikiIndexStore/Manager、台账 assets、jobs lastDoneAtFor + 4 个单测）、`ab58b5f`（steps 3-7：wiki 服务 owner 泛化 + 台账/removeSource ACL、ingest/maintenance/lint、lifecycle、start 装配、RPC/事件 breaking、renderer 最小修复 + 3 个新集成测试 + 既有测试改写）、实施记录提交（接续前代理半成品收口，见 WP9 实施记录） | typecheck 三包 + lint 通过；定向全绿（wiki 单测 8 文件 59 例、integration wiki 21 / wiki-url 3 / handover-p2 7 / wiki-project 9 / wiki-remove-source 3 / wiki-project-lifecycle 3 等、desktop 767）；全量 5406 通过 / 2 失败（均为漏改的旧形态测试文件，修复后单跑通过）/ 24 skip，不超基线 | DEV-032 |
 | WP10 | 未开始 | | | |
 | WP11 | 未开始 | | | |

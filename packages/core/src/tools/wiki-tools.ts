@@ -1,20 +1,30 @@
+
 import { Type } from '@earendil-works/pi-ai';
+import type { WikiOwner } from '@kepcup/shared';
 import { untrustedBlock } from '../infra/data-boundary.js';
 import type { RunIdentity, ToolDefinition, ToolResult } from '../agent/types.js';
 
-/** The slice of WikiService the response-loop tools consume. */
+/** The slice of WikiService the response-loop tools consume (owner-based; the
+ * tool-level `scope` selection is WP10 — the loop only reaches its own wiki). */
 export interface WikiToolFacade {
   search(
-    botId: string,
+    owner: WikiOwner,
     query: string,
     limit: number,
   ): Array<{ path: string; title: string; snippet: string }>;
-  readPage(botId: string, path: string): { path: string; title: string; content: string };
+  readPage(owner: WikiOwner, path: string): { path: string; title: string; content: string };
   enqueueIngest(input: {
+    owner: WikiOwner;
     botId: string;
     conversationId: string | null;
     source: { sourceType: 'attachment' | 'url' | 'file'; ref: string; note: string };
+    createdBy: { kind: 'user' } | { kind: 'bot'; id: string };
   }): { ok: boolean; message: string };
+}
+
+/** This phase the loop tools only ever address the bot's own wiki (WP10 adds scope). */
+function ownWiki(botId: string): WikiOwner {
+  return { kind: 'bot', id: botId };
 }
 
 const WIKI_SEARCH_RESULT_MAX = 20;
@@ -45,7 +55,7 @@ export function buildWikiTools(input: {
         return { ok: false, content: '当前执行没有所属 Bot', errorCode: 'INVALID_INPUT' };
       }
       const hits = wiki.search(
-        identity.botId,
+        ownWiki(identity.botId),
         params.query,
         Math.min(50, Math.max(1, Math.floor(params.limit ?? WIKI_SEARCH_RESULT_MAX))),
       );
@@ -72,7 +82,7 @@ export function buildWikiTools(input: {
         return { ok: false, content: '当前执行没有所属 Bot', errorCode: 'INVALID_INPUT' };
       }
       try {
-        const page = wiki.readPage(identity.botId, params.path);
+        const page = wiki.readPage(ownWiki(identity.botId), params.path);
         return {
           ok: true,
           content: untrustedBlock(`# ${page.title}\n\n${page.content}`),
@@ -106,18 +116,25 @@ export function buildWikiTools(input: {
       if (identity.botId === null) {
         return { ok: false, content: '当前执行没有所属 Bot', errorCode: 'INVALID_INPUT' };
       }
-      const outcome = wiki.enqueueIngest({
-        botId: identity.botId,
-        conversationId: identity.conversationId,
-        source: {
-          sourceType: params.source_type,
-          ref: params.ref,
-          note: params.note,
-        },
-      });
-      return outcome.ok
-        ? { ok: true, content: outcome.message }
-        : { ok: false, content: outcome.message, errorCode: 'INVALID_INPUT' };
+      try {
+        const outcome = wiki.enqueueIngest({
+          owner: ownWiki(identity.botId),
+          botId: identity.botId,
+          conversationId: identity.conversationId,
+          source: {
+            sourceType: params.source_type,
+            ref: params.ref,
+            note: params.note,
+          },
+          createdBy: { kind: 'bot', id: identity.botId },
+        });
+        return outcome.ok
+          ? { ok: true, content: outcome.message }
+          : { ok: false, content: outcome.message, errorCode: 'INVALID_INPUT' };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, content: message, errorCode: 'INVALID_INPUT' };
+      }
     },
   };
 
