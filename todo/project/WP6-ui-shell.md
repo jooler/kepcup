@@ -215,3 +215,61 @@ rg -n "GroupAvatarStack|group-avatar-layout|group-avatar-stack|context-group-set
 ## 9. 实施记录
 
 （执行智能体在此填写：分支、提交列表、过渡壳登记、手工冒烟结果、偏差编号。）
+
+**2026-10-18 · 直接在集成分支 `feat/project/migration` 上开发（调度方指定，本 WP 无并行项）。**
+
+### 提交列表（自 `f385f61` 起）
+
+| 提交 | 内容 |
+|---|---|
+| `406c962` | feat(desktop): shell 的 `ProjectView`/`projectSettingsSection` 状态与 `openProjectModule`/`openProjectSettings`、`chat.select()`/`leaveCurrent()` 重置；`transcript-visibility.ts`（MessageList 过滤抽取为 `isVisibleInTranscript`）；`project-tabs.ts` / `project-chat-badge.ts` 纯逻辑；单测 `shell-project.svelte.test.ts`(6)、`transcript-visibility.test.ts`(7)、`project-chat-badge.test.ts`(6)、`project-tabs.test.ts`(4) |
+| `51c6d53` | refactor(desktop)!: 纯改名 `GroupAvatarStack → ProjectAvatarStack`、`group-avatar-layout → project-avatar-layout`（含 `GROUP_AVATAR_USER_ID → PROJECT_AVATAR_USER_ID`、`groupAvatarFaces/Slots → projectAvatarFaces/Slots`、接口 `GroupAvatarSlot → ProjectAvatarSlot`、根 testid `group-avatar-stack → project-avatar-stack`），`git mv` + 消费端机械同步（AppSidebar 仅取改名 hunk；ChatView 在该提交里只做最小机械摘除头像堆叠用法，snippet 重构留给下一提交）。独立提交、单提交 typecheck 通过 |
+| `6c7ee28` | feat(desktop): 项目组外壳——ChatView `chatBody` snippet 一份两渲染、MessageList `topInset` prop（单聊默认 56px 不变）、`features/project/` 六组件（ProjectView/Header/Tabs/MembersMenu/ModulePlaceholder/ProjectSettingsPage）、ChatsArea 项目组不渲染右栏、RightPanel 删群聊分支、BotDetailOverlay 项目组自动收起、侧栏右键「项目详情」直达、SidebarDialogs 摘除 GroupSettingsDialog、设置卡 `project-detail` 深链改走 `shell.openProjectSettings(section)`、i18n 增删 |
+| （本提交） | docs(todo): 本实施记录 + README §7 进度行 |
+
+### 过渡壳登记（WP7 替换 / 接手项）
+
+- `apps/desktop/src/renderer/src/lib/features/project/ProjectSettingsPage.svelte` 是**过渡壳**（文件头有 `// Transitional shell` 注释）：正文直接渲染旧 `GroupInfo.svelte`（改名、成员、授权撤销、工作目录、定时/监看都可用），顶部一行 `project.header.settings` 小标题。**WP7 整体替换**，别在 GroupInfo 上加新功能。
+- `GroupInfo.svelte` / `GroupSettingsDialog.svelte` 仍在（设置卡 embedded 模式还在用后者；右栏与 SidebarDialogs 已不再挂它们），WP7 删除。
+- 设置卡 `project-detail` 深链：`deep-link.ts` 的 action 增加了 `section`（校验 ∈ `PROJECT_DETAIL_SECTIONS`，不认识退 `'overview'`），`open-deep-link.ts` 改为「必要时 `chat.select` → `shell.openProjectSettings(section)`」。`anchor` 已随 action 传到但过渡壳未消费——**WP7 在真实详情页里消费 anchor**（`project-settings-nav-<section>` / `data-settings-anchor`）。判断依据：WP6 §4 步骤 6 删除 `sidebarDialogs.openGroupSettings` 后该调用点无法编译，而 deep-link.ts 原注释即指向 `shell.openProjectSettings`，属完成 WP6 自检（`openGroupSettings` 零残留）的必经改写，不是行为分歧。
+- `projectSettingsSection` 状态与 `project-settings-nav-<section>` 等 testid 本 WP 只落状态与深链，分区导航 UI 由 WP7 画。
+
+### §4 未列出的新名字登记
+
+- 接口 `ProjectAvatarSlot`（原 `GroupAvatarSlot`，随文件改名按相邻风格取）。
+- testid：`project-members-manage`（弹层底部「管理成员…」按钮）、`project-member-option-<botId>`（弹层添加区候选行）。§4.12 已列的 `project-member-row-<botId>` 在顶栏弹层与详情页（WP7）各在自己的容器内使用。
+- `chatTabBadge` 的 approvals 参数口径：徽标场景传空表（`isVisibleInTranscript(message)` 缺省 `{}`）——待审批的回执卡由琥珀色 pending 圆点提示，不计入未读数（WP 固定了 `chatTabBadge` 入参形状，无审批快照可传）。
+- `ProjectHeader` 内私有常量 `STACK_MAX = 5`（头像堆叠最多画 5 个 + `+N`）。
+- 纯逻辑文件间用相对导入（`../chats/transcript-visibility`）：纯逻辑单测跑在 desktop 项目（无 `$lib` 别名），与 `chat.svelte.ts` 的既有混用风格一致。
+
+### 手工冒烟（§5 ①–⑧，全部实际驱动）
+
+方式：一次性 Playwright `_electron` spec（临时放 `apps/desktop/test/e2e/wp6-smoke.tmp.spec.ts`，驱动 `pnpm build` 产物 + mock LLM + RPC 测试缝，**跑完即删、未提交**）。结果 8/8 通过（6.5s）：
+
+1. ① 双轮创建项目组后看到实心两行顶栏：沟通 tab 激活（`data-active`）、Wiki 可点、board/OKR/日历 `disabled` + `data-disabled="true"`；右侧头像堆叠与 ⚙ 存在；根节点 `chat-view[data-project="true"]`。
+2. ② 输入草稿「草稿保留验证」→ 切 Wiki（`project-module-placeholder[data-module="wiki"]` 出现，`composer-dock` 仍 attached）→ 切回：草稿文本还在（contenteditable 未卸载）。
+3. ③ 停在 Wiki 视图，经 RPC `messages.send` 发 `@研究员`（mock LLM 回真实 Bot 消息）→ 沟通 tab 出现 `project-tab-badge-chat[data-kind="unread"]`；切回沟通后徽标消失。
+4. ④ 成员弹层：三行成员、负责人行带「负责人」徽标；搜索「测试官」点候选成功入列（`conversation.updated` 自动刷新）；Esc 关闭、再次打开后点弹层外部关闭。
+5. ⑤ ⚙ → 内容区出现 `project-settings-page` + 旧 `group-info`（改名生效同步到 `project-title`、授权区在）；⚙ `aria-pressed="true"`；点沟通 tab 返回。
+6. ⑥ 项目组下 `right-panel` / `right-panel-toggle` 均不存在；打开单聊：药丸在、右栏可开合（`right-panel` 出现后可 `right-panel-hide` 收起）。
+7. ⑦ 窗口缩到 420px：项目组头部有返回按钮（复用 `narrow-back-button`）、tab 行 `scrollWidth > clientWidth`（横向可滚动）、堆叠与 ⚙ 可用、详情页可往返。
+8. ⑧ 恢复 1280px 后侧栏右键 → `context-project-settings` → 选中该项目组且内容区直接是详情页（`project-view[data-view="settings"]`）。
+
+未自动化的部分：头像堆叠的视觉重叠（`-space-x-2` + ring）与负责人冠标样式、`+N` 计数（本组 4 人未溢出）——代码走查确认类名与 WP §4 步骤 4 一致；`MessageList` 的 `topInset` 默认 56px 由单测与既有单聊布局回归（desktop 单测全绿 + ⑥ 单聊核对）覆盖。
+
+### 测试与验证
+
+- `pnpm --filter @kepcup/desktop typecheck`：0 errors / 0 warnings；`pnpm lint`：通过。
+- `node scripts/run-tests.mjs run --project desktop`：85 文件 792 例全绿（新增 WP6 单测 23 例含在其中；含改名的 `project-avatar-layout.test.ts` 19 例中的一部分与 `deep-link.test.ts` 更新）。
+- §7 自检 `rg -n "GroupAvatarStack|group-avatar-layout|group-avatar-stack|context-group-settings|groupSettingsId|openGroupSettings|isGroup" apps/desktop/src`：空。
+- 未跑全量 `pnpm test`（WP6 收口不要求）；未写未改 e2e（WP8 统一，旧 group-* e2e 允许失败）。
+
+### 偏差
+
+无新增 DEVIATIONS（编号未推进，仍停在 DEV-034）。唯一超出 WP 字面的改动是设置卡 `project-detail` 深链的落地方式（见上文「过渡壳登记」第 3 条），属 WP6 自检要求的必然后果，方向与 deep-link.ts 原注释一致。
+
+### 遗留（顺延）
+
+- WP7：真实项目详情页（替换 GroupInfo 过渡壳与 GroupSettingsDialog 的 embedded 模式）、`ProjectMembersEditor`、分区导航 `project-settings-nav-<section>`、深链 anchor 消费、删 Bot 阻止 UI。
+- WP8：`GroupTurnStatusLine` → `ProjectTurnStatusLine` 改名、`group-*` e2e 重写为 `project-*`、文案收尾。
+- WP10：Wiki tab 的真实视图（本 WP 为 `ModulePlaceholder` 的 `wikiSoon`）。
