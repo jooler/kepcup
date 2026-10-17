@@ -5,7 +5,7 @@ import { sameWhen, whenFromDraft, type WhenDraft } from './when-presets';
 export interface TodoFormValues {
   title: string;
   notes: string;
-  /** 内部编码 `''` / `bot:<id>` / `group:<id>`——只用来判断是否变了。 */
+  /** 内部编码 `''` / `bot:<id>` / `project:<id>`——只用来判断是否变了。 */
   assigneeKey: string;
   leadBotId: string;
   assignee: TodoAssignee | null;

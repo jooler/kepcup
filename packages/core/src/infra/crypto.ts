@@ -28,6 +28,11 @@ export function memoryDbKeyInfo(botId: string): string {
   return `db:memory:${botId}`;
 }
 
+/** Project wiki index database info (D92 T1b WP9): `db:wiki:<projectId>`. */
+export function wikiDbKeyInfo(projectId: string): string {
+  return `db:wiki:${projectId}`;
+}
+
 export function generateMasterKey(): Buffer {
   return randomBytes(MASTER_KEY_BYTES);
 }

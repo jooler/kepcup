@@ -32,7 +32,7 @@
   );
   const isOffer = $derived(content.event === SCHEDULE_OFFER_EVENT);
   const offer = $derived(content.offer ?? null);
-  const isGroup = $derived(chat.current?.conversation.type === 'group');
+  const isProject = $derived(chat.current?.conversation.type === 'project');
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const ISO = /^\d{4}-\d{2}-\d{2}/;
   const offerWhen = $derived.by(() => {
@@ -75,10 +75,10 @@
   data-testid={isOffer ? `schedule-offer-${message.id}` : `schedule-receipt-${message.id}`}
 >
   {#if !isOffer && content.schedule !== undefined}
-    <ScheduleReceipt schedule={content.schedule} testid="schedule-receipt" showBot={isGroup} />
+    <ScheduleReceipt schedule={content.schedule} testid="schedule-receipt" showBot={isProject} />
   {:else if offer !== null}
     {#if offer.status === 'accepted' && content.schedule !== undefined}
-      <ScheduleReceipt schedule={content.schedule} testid="schedule-receipt" showBot={isGroup} />
+      <ScheduleReceipt schedule={content.schedule} testid="schedule-receipt" showBot={isProject} />
     {:else}
       <div class="flex items-start gap-2" data-offer-status={offerStatus}>
         <AlarmClockPlus
@@ -90,7 +90,7 @@
         <div class="min-w-0 flex-1">
           <p class="whitespace-pre-wrap">{offer.question}</p>
           <p class="mt-0.5 text-xs text-muted-foreground">
-            {offerWhen} · {offer.title}{#if isGroup} · {chat.botName(offer.botId)}{/if}
+            {offerWhen} · {offer.title}{#if isProject} · {chat.botName(offer.botId)}{/if}
           </p>
           {#if offerStatus !== 'pending'}
             <p class="mt-1 text-xs text-muted-foreground" data-testid="schedule-offer-result">

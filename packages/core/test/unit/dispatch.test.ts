@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@kepcup/shared';
-import { explicitTargets, sortResponders, type TriageDecision } from '../../src/dispatch/dispatcher.js';
+import { explicitTargets } from '../../src/dispatch/dispatcher.js';
 
 let seq = 0;
 let now = 1_700_000_000_000;
@@ -89,21 +89,5 @@ describe('explicitTargets (P05 显式目标)', () => {
   it('skips recalled messages', () => {
     const batch = [msg({ status: 'recalled', mentions: ['bot_A'] })];
     expect(explicitTargets(batch, MEMBERS, () => null)).toEqual([]);
-  });
-});
-
-describe('sortResponders (P05 判断排序)', () => {
-  function decision(botId: string, confidence: number, decision: TriageDecision['decision'] = 'respond'): TriageDecision {
-    return { botId, decision, confidence };
-  }
-
-  it('sorts by confidence descending', () => {
-    const sorted = sortResponders([decision('bot_A', 0.6), decision('bot_B', 0.9), decision('bot_C', 0.75)]);
-    expect(sorted.map((d) => d.botId)).toEqual(['bot_B', 'bot_C', 'bot_A']);
-  });
-
-  it('keeps input order for equal confidences', () => {
-    const sorted = sortResponders([decision('bot_A', 0.5), decision('bot_B', 0.9), decision('bot_C', 0.5)]);
-    expect(sorted.map((d) => d.botId)).toEqual(['bot_B', 'bot_A', 'bot_C']);
   });
 });

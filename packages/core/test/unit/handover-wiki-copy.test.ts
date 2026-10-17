@@ -15,7 +15,8 @@ import { openRepository } from 'es-git';
 import type { Clock } from '../../src/infra/clock.js';
 import { botWikiRoot, botWikiStoreRoot, resolvePaths } from '../../src/infra/paths.js';
 import { WikiService } from '../../src/wiki/service.js';
-import type { WikiFtsStore } from '../../src/wiki/fts.js';
+import type { WikiIndex } from '../../src/wiki/fts.js';
+import type { WikiOwner } from '@kepcup/shared';
 import { initWiki } from '../../src/wiki/init.js';
 import { commitWikiTree } from '../../src/wiki/git.js';
 import { pageReferences } from '../../src/wiki/copy.js';
@@ -35,7 +36,7 @@ afterAll(() => {
 const stubLogger = { info() {}, warn() {}, error() {}, debug() {}, child: () => stubLogger };
 
 /** In-memory wiki_fts of one bot (search = substring over title + content). */
-class FakeFts implements WikiFtsStore {
+class FakeFts implements WikiIndex {
   readonly pages = new Map<string, { title: string; content: string }>();
   wikiUpsertPage(pagePath: string, title: string, content: string): void {
     this.pages.set(pagePath, { title, content });
@@ -68,6 +69,11 @@ interface Rig {
   alive: Set<string>;
 }
 
+/** Bot-owner shorthand (D92 T1b WP9). */
+function botOwner(botId: string): WikiOwner {
+  return { kind: 'bot', id: botId };
+}
+
 function makeRig(): Rig {
   const home = path.join(dir, `home-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(home, { recursive: true });
@@ -86,22 +92,23 @@ function makeRig(): Rig {
         return 'job_x';
       },
       lastDoneAt: () => 0,
+      lastDoneAtFor: () => 0,
     },
     bots: {
       get: (id) => (alive.has(id) ? { id, status: 'active' } : null),
       listActive: () => [...alive].map((id) => ({ id })),
     },
     conversations: { get: () => null, memberBotIds: () => [] },
-    memory: {
-      storeFor: (botId) => {
-        let store = fts.get(botId);
-        if (store === undefined) {
-          store = new FakeFts();
-          fts.set(botId, store);
-        }
-        return store;
-      },
+    indexFor: (owner) => {
+      const key = owner.id;
+      let store = fts.get(key);
+      if (store === undefined) {
+        store = new FakeFts();
+        fts.set(key, store);
+      }
+      return store;
     },
+    publish: () => {},
   });
   return { wiki, paths, fts, enqueued, alive };
 }
@@ -121,7 +128,7 @@ const ASSET = 'ast_3f9a0c0123456789abcdef01';
 
 /** A's wiki: three pages (one in a topic dir), raw text, a D85 asset with store files. */
 async function seedSource(rig: Rig): Promise<string> {
-  await initWiki(rig.paths, 'bot_a', stubLogger);
+  await initWiki(rig.paths, botOwner('bot_a'), stubLogger);
   const root = botWikiRoot(rig.paths, 'bot_a');
   write(
     root,
@@ -167,7 +174,7 @@ async function seedSource(rig: Rig): Promise<string> {
 
 /** B's wiki with a different page at a path A also has. */
 async function seedTarget(rig: Rig): Promise<void> {
-  await initWiki(rig.paths, 'bot_b', stubLogger);
+  await initWiki(rig.paths, botOwner('bot_b'), stubLogger);
   const root = botWikiRoot(rig.paths, 'bot_b');
   write(root, 'pages/shared.md', '# 共享页\n\nB 自己的版本。\n');
   await commitWikiTree(root, 'b seed');
@@ -280,7 +287,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
       expect.objectContaining({
         type: 'wiki_lint',
         botId: 'bot_b',
-        dedupeKey: 'wiki_lint:bot_b:handover',
+        dedupeKey: 'wiki_lint:bot:bot_b:handover',
       }),
     ]);
     expect(existsSync(path.join(rig.paths.cacheDir, 'handover-staging/hnd_1'))).toBe(false);
@@ -306,7 +313,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
   it('crash leftovers: a page placed but not committed is committed on the resumed run; stale staging is replaced', async () => {
     const rig = makeRig();
     await seedSource(rig);
-    await initWiki(rig.paths, 'bot_b', stubLogger);
+    await initWiki(rig.paths, botOwner('bot_b'), stubLogger);
     const a = botWikiRoot(rig.paths, 'bot_a');
     const b = botWikiRoot(rig.paths, 'bot_b');
     // The previous attempt died after renaming one page into place (uncommitted) and
@@ -331,7 +338,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
   it('a referenced raw file B already has with other bytes is kept (reported); a deleted target refuses', async () => {
     const rig = makeRig();
     await seedSource(rig);
-    await initWiki(rig.paths, 'bot_b', stubLogger);
+    await initWiki(rig.paths, botOwner('bot_b'), stubLogger);
     const b = botWikiRoot(rig.paths, 'bot_b');
     write(b, 'raw/20261002-bbbbbbbbbbbb-rules.md', 'B 的不同内容');
     const outcome = await rig.wiki.copyForHandover({
@@ -430,7 +437,7 @@ describe('D88 P2 wiki copy: WikiService.copyForHandover', () => {
   it.skipIf(process.platform === 'win32')('独立审查 #5 / #8 / #9 / #10 / #6: placement manifest on resume; unsafe page names; leftovers; unfinished assets; size', async () => {
     const rig = makeRig();
     await seedSource(rig);
-    await initWiki(rig.paths, 'bot_b', stubLogger);
+    await initWiki(rig.paths, botOwner('bot_b'), stubLogger);
     const a = botWikiRoot(rig.paths, 'bot_a');
     const b = botWikiRoot(rig.paths, 'bot_b');
     const copy = (handoverId: string, pages: string[]) =>

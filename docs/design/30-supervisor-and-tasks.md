@@ -10,7 +10,7 @@
 
 执行方案与实施记录见 [todo/supervisor-and-tasks.md](../../todo/supervisor-and-tasks.md)。**已实现**（2026-10-08，W0–W4 与审查修复；执行模型的现行描述见 [02-execution.md](02-execution.md)）。实现期对本文的细化已折入下文，凡标「（见 DEV-0xx）」的条目记在 [dev/DEVIATIONS.md](../dev/DEVIATIONS.md)，2026-10-08 经用户确认；第 1 节的「现有实现」与第 10 节的改动指路保留为实施前的分析。
 
-相关：D2（执行中注入，本文修订）、D5（群聊顺序响应，本文修订）、D29/D30（写入租约与检查点，本文扩展）、D37（授权有效期，本文收紧）、D48/D54/D55（Bot 发消息、中间说明、状态行）、D49/D67（中断与 durable，本文改适用对象）、D56（Loop 续接，本文修订）、D58（对话内设置）、D66（SubAgent，本文降级其定位）、D70/D71（管家与跨 Bot 委派，本文照搬其状态机与回贴范式）、D72（外部智能体引擎，本文化简其让渡面）、[01-conversation.md](01-conversation.md)「消息原则」（内部事务，本文扩展为按 Bot 归属的私有条目）。
+相关：D2（执行中注入，本文修订）、D5（项目组顺序响应，本文修订）、D29/D30（写入租约与检查点，本文扩展）、D37（授权有效期，本文收紧）、D48/D54/D55（Bot 发消息、中间说明、状态行）、D49/D67（中断与 durable，本文改适用对象）、D56（Loop 续接，本文修订）、D58（对话内设置）、D66（SubAgent，本文降级其定位）、D70/D71（管家与跨 Bot 委派，本文照搬其状态机与回贴范式）、D72（外部智能体引擎，本文化简其让渡面）、[01-conversation.md](01-conversation.md)「消息原则」（内部事务，本文扩展为按 Bot 归属的私有条目）。
 
 ## 决策
 
@@ -19,13 +19,13 @@
   2. **职责切分即权限切分**：**写操作与长时工作只发生在任务里，对话轮只读**。对话轮的工具面 = 对话核心 + 只读上下文查询 + 任务管理 + 异步托管动作（委派、定时、Wiki 入库、管家提议）；任务的工具面 = 现有完整工具面。由此对话轮不需要写租约、不需要沙箱升级、不需要命令审批，跑得勤也不危险。
   3. **串行的是对话轮，不是执行**。每个（Bot, 对话）同时最多一个对话轮（mailbox 不变，D2 的「执行中收到新消息」语义由「无条件注入当前 loop」改为「进入下一个对话轮，由 Bot 决定」）；任务在对话轮之外，受对话级与全局并发封顶。
   4. **路由决策是枚举化的工具调用**，不是自由文本：`start_task` / `inject_task` / `cancel_task` / `list_tasks`，宿主逐项校验归属与配额。「重新执行」= `cancel_task` + `start_task({continues_task_id})`，不设独立原语。
-  5. **写互斥用租约，不用物理隔离**：同一 workdir 同时最多一个写任务（写租约扩到 workspace），只读任务不限并发。**git worktree 隔离明确不做**（§9.1 四条理由），任务模型只留 `workdir` 这一个口子，日后换隔离策略不动执行模型。
+  5. **写互斥用租约，不用物理隔离**：同一 cwd 同时最多一个写任务（写租约扩到 workspace），只读任务不限并发。**git worktree 隔离明确不做**（§9.1 四条理由），任务模型只留 `cwd` 这一个口子，日后换隔离策略不动执行模型。
   6. **可靠性的全部是「任务必有结算」**：任务先落盘再启动；结果条目是结算的事实来源——**先写私有结果 / 失败条目（main.db），再写任务终态（runs.db）**，两库不能同一事务，靠「每任务至多一条终态条目」的唯一索引幂等 + 启动修复补齐；唤醒对话轮按 at-least-once 投递，对话轮终态时标记消费，启动对账 + reaper 补投未消费的结果（宁可重复一次，不可静默丢失）。拆分后最严重的用户可见故障不是慢，而是沉默——整个状态机围绕消除沉默设计。
   7. **消息所有权：进度直达，结果经对话轮转述**。任务的中间说明（过程叙事）直接进对话，带任务归属；任务的最终结果**不直接发给用户**，而是写入 Bot 的私有时间线（§2.4）并唤醒对话轮，由对话轮结合历史决定怎么告诉用户——转述、`forward_task_result` 原文转发，或连同下一步一起说。正式交付永远只从对话轮这一个出口出，不需要「不要复述」之类的补救指令。**对话轮被唤醒是宿主确定性判断**（§3.3）。
   8. **路由必须留痕**：`start_task` / `inject_task` / `cancel_task` 在对话中生成并重绘任务卡。无声路由是禁止的——用户发出的指令去了哪里，必须看得见。
-  9. **对 D72 的化简**：**对话轮固定走内置引擎，外部 Agent 只作任务引擎**。`runtime.agent` 的语义从「Bot 的引擎」变为「Bot 的任务引擎」。人设 / 记忆 / 路由 / 审批 / 群聊 / 委派 / 提示词逐轮刷新不再让渡；「`delegate_task` 不提供」这条让渡消失（并行由宿主任务层提供，不依赖 Agent 自身支持）。无内置模型的用户按 §8.4 两级降级，并显式承认那是降级。
+  9. **对 D72 的化简**：**对话轮固定走内置引擎，外部 Agent 只作任务引擎**。`runtime.agent` 的语义从「Bot 的引擎」变为「Bot 的任务引擎」。人设 / 记忆 / 路由 / 审批 / 项目组沟通 / 委派 / 提示词逐轮刷新不再让渡；「`delegate_task` 不提供」这条让渡消失（并行由宿主任务层提供，不依赖 Agent 自身支持）。无内置模型的用户按 §8.4 两级降级，并显式承认那是降级。
   10. **深度 1**：任务不能再派任务（同 D71 单跳理由——链式结算是真正难的部分）。任务内部照常可用 D66 `delegate_task` 或外部 Agent 自带的子代理。
-  11. **Bot 私有时间线（UX / GX）= 同一张消息表上的一层归属**：Bot 与任务之间的往返（交代、追加、取消、提问、结果、失败）作为 `kind='task_event'` 的消息写进对话本身的消息表，带 `owner_bot_id`——只进该 Bot 的上下文，不进用户可见流，也不进群里其他 Bot 的上下文。Bot 看到的历史 = 对话可见消息 ∪ 自己的私有往返，按 `seq` 天然交错成一条时间线：单聊即 UX，群聊即 GX，**不另建列表**。任务内部的工具调用与模型往返仍只在 `run_steps`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享，不改归属。
+  11. **Bot 私有时间线（UX / GX）= 同一张消息表上的一层归属**：Bot 与任务之间的往返（交代、追加、取消、提问、结果、失败）作为 `kind='task_event'` 的消息写进对话本身的消息表，带 `owner_bot_id`——只进该 Bot 的上下文，不进用户可见流，也不进项目组里其他 Bot 的上下文。Bot 看到的历史 = 对话可见消息 ∪ 自己的私有往返，按 `seq` 天然交错成一条时间线：单聊即 UX，项目组即 GX，**不另建列表**。任务内部的工具调用与模型往返仍只在 `run_steps`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享，不改归属。
 
 
 
@@ -46,7 +46,7 @@
 | 结算后回注对话                 | 后台子 run settle → `onFollowUp` → `#injectDelegateFollowUp`              | `packages/core/src/dispatch/orchestrator.ts` `#injectDelegateFollowUp` |
 | 任务状态机 + settle 钩子 + 结果卡      | D71 委派：`submitted/working/completed/failed/cancelled` + `onRunSettled` | `packages/core/src/dispatch/delegation.ts`                             |
 | 执行体 = 可审计单元             | `runs` 表（`loop_type` / `engine` / `continued_from_run_ids`）            | `packages/core/src/domain/runs.ts`                                     |
-| 写互斥 + 排队 + 前后快照         | `ensureWriteLease` / `waiting_lease` / 影子仓库检查点                         | `packages/core/src/project/service.ts`                                 |
+| 写互斥 + 排队 + 前后快照         | `ensureWriteLease` / `waiting_lease` / 影子仓库检查点                         | `packages/core/src/workdir/service.ts`                                 |
 | 任务过程回放                  | D56 的 `buildRunDigest`                                                 | `packages/core/src/agent/context/continuation.ts`                      |
 | Bot 私有时间线的形状           | 同一张消息表两条读路径：Bot 上下文读 `list()`（含内部事务），用户 UI 读 `listVisible()`，内部事务不推 `message.created` | `packages/core/src/domain/messages.ts` `isVisibleToUser` / `listVisible`；orchestrator `#appendSystemMessage` |
 
@@ -81,7 +81,7 @@
 | 项           | 规定                                               |
 | ----------- | ------------------------------------------------ |
 | `loop_type` | `'turn'`（替代今天的 `'response'`）                     |
-| 触发          | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑、网页监看条件满足（D79，`watch`） |
+| 触发          | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）通过、定时、事件、D71 委派、任务结果 / 失败条目（§2.4）、设置完成续跑、网页监看条件满足（D79，`watch`） |
 | 并发          | 每（Bot, 对话）同时最多一个（mailbox 不变）；调度优先级沿用今天的响应 run 规则 |
 | 引擎          | **固定内置 pi**（§8.4 降级除外）                           |
 | 轮次上限        | 不设（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的（动手或连续多步）用 `start_task`；没派任务也不因步数失败 |
@@ -96,9 +96,9 @@
 | 组        | 工具                                                                                                                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | 对话核心     | `send_message`、`skip_reply`、`forward_task_result`（原文转发任务结果，§6.1）                                                         |
-| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / project 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） **D91 修订**：这一项改为只读两件套 `capability_search` / `capability_call`（Bot 的外部能力清单在系统提示的 `<capabilities>` 段，对话轮不再逐个挂 MCP / 应用工具、run 开头不再连服务器），见 [40](40-capability-mounting.md) §3、§5。 |
+| 只读查询     | `search_messages`、`get_messages_around`、`get_attachment`、`list_my_runs`、`get_run`、workspace / workdir 只读读取（read / ls / grep / find）；该 Bot 风险为只读且免审批的 MCP 工具（至多 `TURN_MCP_READ_TOOLS_MAX` 个，D65，见 [23](23-mcp-and-subagent.md)） **D91 修订**：这一项改为只读两件套 `capability_search` / `capability_call`（Bot 的外部能力清单在系统提示的 `<capabilities>` 段，对话轮不再逐个挂 MCP / 应用工具、run 开头不再连服务器），见 [40](40-capability-mounting.md) §3、§5。 |
 | 任务管理     | `start_task`、`inject_task`、`cancel_task`、`list_tasks`                                                                                           |
-| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89：档位由宿主裁定，写入与出设置卡均由宿主确定性执行，见 [38](38-conversational-settings.md)）、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_team` / `propose_group` / `suggest_route`；`list_bots` |
+| 异步托管动作   | `delegate_to_bot`、`cancel_delegation`、定时任务、网页监看（`watch_create` / `watch_list` / `watch_stop`，D79）、Wiki 入库请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89：档位由宿主裁定，写入与出设置卡均由宿主确定性执行，见 [38](38-conversational-settings.md)）、记忆候选（`propose_profile_change` 在对话轮里非阻塞提交）、技能生成请求（`create_skill`，只登记 `skill_authoring` 后台作业，生成、验证、启用都在后台 loop 里完成；见 DEV-013）；管家另有 `propose_bot` / `propose_bots` / `propose_project` / `suggest_route`；`list_bots` |
 | 轻量检索（可选） | `web_search` / `web_fetch`，按 Bot 配置开关；不设步数上限（见 DEV-017）                                                                                       |
 
 
@@ -118,7 +118,7 @@
 | 并发          | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（建议 3）、全局 `TASK_CONCURRENCY_GLOBAL`；单个对话轮最多起 `TASK_START_MAX_PER_TURN`（建议 2）个 |
 | 引擎          | 内置 pi 或该 Bot 配置的外部 Agent（§8）                                                                                         |
 | 工具面         | 现有完整响应工具面（文件、命令、浏览器、媒体、MCP、连接应用、技能、`delegate_task` / `collect_delegate_results`、交互执行、`send_message`），外加 `ask_user`（§2.4.6）；去掉任务管理、`delegate_to_bot` / `cancel_delegation` 与管家提议；`send_message` 不能 @ 群成员 **D91 修订**：外部能力（MCP、连接应用）不再整批挂——只挂 `start_task.capabilities` 声明的能力（声明工具总数 > `EXTERNAL_TOOLS_INLINE_MAX`=40 则不内联），其余能力经 `capability_search` / `capability_call` 两件套兜底；邮件工具按绑定门控（[35](35-mail-channel.md)），见 [40](40-capability-mounting.md) §4。 |
-| 可写          | 消息（中间说明，直达可见流）；私有时间线（最终结果 / 失败 / 提问条目，§2.4）；`workdir` 内文件、授权范围内的其他路径 |
+| 可写          | 消息（中间说明，直达可见流）；私有时间线（最终结果 / 失败 / 提问条目，§2.4）；`cwd` 内文件、授权范围内的其他路径 |
 | 寿命          | 默认 ephemeral（D49）；可标 durable（D67）——长任务才是 journal 的真实适用对象                                                             |
 | 上限          | `TASK_MAX_WALL_MS`（等用户回答问题卡的时间不计入，§2.4.6）、`TASK_TOKEN_BUDGET`（外部 Agent 按轮数 / 时长折算）                                                          |
 | 深度          | 1：任务内不得 `start_task`（执行期按 `loop_type` 校验）                                                                            |
@@ -129,7 +129,7 @@
 ### 2.3 一次完整的交互
 
 ```text
-用户：把这个项目的测试补全
+用户：把这个工作目录的测试补全
   → 对话轮 #1（内置引擎，几秒）
       start_task({ title:'补全测试', instruction:…, source_message_ids:[m_101], writes:true })
           → task A（submitted → running）；私有时间线记「你→任务 A（交代）」
@@ -157,7 +157,7 @@ task B 完成 → 私有时间线记「任务 B→你（结果）」（先于终
 
 ### 2.4 上下文与输入：Bot 私有时间线
 
-把 Bot 当成一个真人 X：X 记得自己和用户 U 说过什么（UX），也记得自己交代过任务什么、任务回了什么；在群 G 里，X 另有一份（GX）。X 收到新消息时，结合这份历史决定直接回复、派活、追加还是取消。本节规定这份历史怎么存、怎么读。
+把 Bot 当成一个真人 X：X 记得自己和用户 U 说过什么（UX），也记得自己交代过任务什么、任务回了什么；在项目组里，X 另有一份（GX）。X 收到新消息时，结合这份历史决定直接回复、派活、追加还是取消。本节规定这份历史怎么存、怎么读。
 
 **结论：不另建列表。** UX / GX 就是对话消息表在「Bot X」视角下的读法：
 
@@ -190,7 +190,7 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 - `messages` 增列 `task_id TEXT NULL`（`task_event` 与任务卡、任务问题卡填）：按任务查条目，并建唯一索引 `(task_id) WHERE kind='task_event' AND json_extract(content_json, '$.phase') IN ('result','failure')`（表达式部分索引，加密构建下可用）保证**每个任务至多一条终态条目**（`result` / `failure`），供 §3.2 的幂等写入与启动修复使用。
 - `messages.kind` 增 `'task_event'`（表级 CHECK 需重建表，早期阶段可接受）。内容 `{ taskId, phase: 'brief'|'inject'|'cancel'|'question'|'result'|'failure', text, sourceMessageIds?, status?, error? }`，`sender_type='system'`。
 - 可见的任务进度消息：`textContentSchema` 增 `origin: 'task'` + `taskId`（照 D71 `origin: 'delegation'` 的先例落 `content_json`，免加列）。
-- **范围**：`owner_bot_id` 只用于 `task_event`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享、不迁移——它们多数影响群共享的 project / 环境，不是某个 Bot 的思考过程。
+- **范围**：`owner_bot_id` 只用于 `task_event`。现有内部事务（wiki / 环境 / 技能 / 调度 / 凭据）保持对话共享、不迁移——它们多数影响项目组共享的 workdir / 环境，不是某个 Bot 的思考过程。
 
 #### 2.4.3 读取：按视角的统一读法，所有读路径都走它
 
@@ -199,7 +199,7 @@ UX / GX(X) = 对话中对用户可见的消息（用户发言、Bot 回复、任
 | 用户（UI 列表、实时推送、未读数、会话预览） | `owner_bot_id IS NULL` 且非内部事务；`task_event` 一律不推送 `message.created` |
 | Bot X（上下文、触发、工具查询） | `owner_bot_id IS NULL OR owner_bot_id = X` |
 
-必须覆盖的读路径：上下文构建（`list` → `listForBot`）、`search_messages`（FTS 查询 join `messages` 按 `owner_bot_id` 过滤，FTS 表结构不变）、`get_messages_around`、外部 Agent 会话增量（`buildConversationDelta`）、群聊判断输入、反思输入、会话列表预览与未读数。**任何一处漏掉都是 Bot 间泄露**——群里 Y 用 `search_messages` 就能搜出 X 与任务的往返。因此加一组契约测试：构造多 Bot 群对话，断言每条私有条目在 owner 以外的所有视角、所有读路径下都不可见。
+必须覆盖的读路径：上下文构建（`list` → `listForBot`）、`search_messages`（FTS 查询 join `messages` 按 `owner_bot_id` 过滤，FTS 表结构不变）、`get_messages_around`、外部 Agent 会话增量（`buildConversationDelta`）、路由判断输入、反思输入、会话列表预览与未读数。**任何一处漏掉都是 Bot 间泄露**——项目组里 Y 用 `search_messages` 就能搜出 X 与任务的往返。因此加一组契约测试：构造多 Bot 项目组对话，断言每条私有条目在 owner 以外的所有视角、所有读路径下都不可见。
 
 **对话滚动摘要只摘共享行**（`owner_bot_id IS NULL`）：摘要是对话级的一份、群里所有 Bot 共用，摘进私有条目就等于泄露。私有条目滑出最近窗口后，历史任务的事实由任务登记（`list_tasks` / `get_run`）与反思记忆承担（§12 第 3 点）。
 
@@ -220,7 +220,7 @@ Bot X 的上下文里，三类与任务相关的行分别渲染为：
 
 任务不读 X 的完整时间线，只读与自己相关的部分：
 
-- **系统层**：人设、画像、记忆、Wiki 目录、Skills、project / workspace 信息——与对话轮同源；
+- **系统层**：人设、画像、记忆、Wiki 目录、Skills、workdir / workspace 信息——与对话轮同源；
 - **对话层**：共享行（摘要 + 最近窗口），**不含**其他任务的私有往返（任务之间互不干扰；需要别的任务的结论，由对话轮写进交代）；
 - **简报**：本任务的交代条目——`instruction` 加上 `source_message_ids` 指向的**用户原消息原文**，附件与图片（D61）原样带入。`instruction` 是对话轮的转述，转述会丢细节，原文兜底；
 - 本任务后续的追加条目同样带原文；`continues_task_id` 时按 D56 预算回放来源任务的过程（§7.1）。
@@ -229,7 +229,7 @@ Bot X 的上下文里，三类与任务相关的行分别渲染为：
 
 - 任务调用 `ask_user({ question, options })`（只在任务工具面；1～6 个候选答案）：宿主写一张可见问题卡（`system_event`，`event='task_question'`，绑定 `task_id`）与一条私有 `question` 条目，任务在 `running` 下标 `awaiting_input`，`<tasks>` 段与任务卡可见；这次工具调用阻塞到有回答为止，同一任务同时只能有一个未答的问题。`question` 不唤醒对话轮。每个候选答案不超过 `ASK_USER_OPTION_MAX_CHARS`（200）字。问题卡的条目先于卡片推送写入；条目写不进去时卡片作废（显示「提问没有成功，问题作废」），不会留下一张没人在等的可点卡片。
 - **等待不占资源也不计时**（审查批 E）：阻塞期间任务经 `Scheduler.yieldSlotWhile` 让出 provider 名额（与等租约同一机制，回答后优先拿回），等待时间——直到拿回名额为止——不计入 `TASK_MAX_WALL_MS`；等待期间被取消的任务不再排队拿名额，直接收尾（当场放掉写租约与位置，最终审查 M-1）；超过 `TASK_QUESTION_TTL_MS`（24 小时）没有回答，任务收到「用户未回答，按你自己的判断继续」并继续，问题卡显示「（超时未回答）」，私有时间线记一条追加条目。写租约**保留**：任务的文件改到一半，中途换别的写者会在半成品上工作；用户可以在任务卡上取消。
-- **问题卡在上下文里归属提问的任务**（审查批 E H1）：问题与选项是任务的模型输出（可能被它读到的内容带偏），所有 Bot 的上下文、群聊判断输入、外部 Agent 增量与对话摘要里都渲染为「Bot X（任务 t_…）向用户提问」并整段包在 `<untrusted>` 里（含提问方自己），不是「系统」行。
+- **问题卡在上下文里归属提问的任务**（审查批 E H1）：问题与选项是任务的模型输出（可能被它读到的内容带偏），所有 Bot 的上下文、路由判断输入、外部 Agent 增量与对话摘要里都渲染为「Bot X（任务 t_…）向用户提问」并整段包在 `<untrusted>` 里（含提问方自己），不是「系统」行。
 - 用户点选卡上的选项（RPC `tasks.answer`）→ 答案**直接注入该任务**，不经对话轮（与审批卡同理），记为一条 `inject` 条目，卡片显示所选答案。
 - 用户用自由文本回答 → 进对话轮，对话轮从 `<tasks>` 看到哪个任务在等输入，用 `inject_task` 转交（带 `source_message_ids`）：对一个正在等问题的任务，`inject_task` 就是回答——它解除阻塞并作为 `ask_user` 的返回值交给任务，而不是作为 steering 注入；转交的文本带上 `source_message_ids` 指向的用户原消息（附件行等，与普通追加相同），问题卡上只显示转交的文本。
 - 任务被取消 / 结束时未答的问题作废。外部智能体任务没有 `ask_user`（不在任何宿主能力包内）。
@@ -265,7 +265,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 - **写**：`runs` 在 runs.db、`messages` 在 main.db，是两个 SQLite 文件，**不能同一事务**。次序固定为：**先写终态条目（`result` / `failure`，main.db），再写任务终态（runs.db）**。终态条目受「每任务至多一条」唯一索引约束，重复写入按冲突忽略（幂等）。
 - **修复**：启动时对每个非终态任务先查有无终态条目——**有**，按条目把任务行补成对应终态（`result` → `completed`，`failure` → 条目记录的状态），不是 `interrupted`；**没有**，才按 D49 标 `interrupted` 并补写 `failure` 条目。两步之间任意一处崩溃都收敛到一致状态。
-- **投**：事务提交后，把该条目作为触发批交给该（Bot, 对话）的 mailbox（`TriggerBatch.reason='task'`）。条目是一条真实消息，`mailbox.deliver` 对空批的直接返回不会吞掉它。对话轮运行中到达的条目进 mailbox 缓冲，release 时合并为下一轮的一个批——多个任务同时结算只唤醒一轮；一个对话轮开始执行时还会把创建之后才缓冲进来的批一并吸收（它可能在调度器里排过队），重新投递的一批结果因此也只唤醒一轮。吸收与合并只发生在「能同轮」的批之间（审查批 E）：D71 委派批独占一个对话轮（被委派的对话轮不吸收别的批，委派批也不被吸收进别的轮——委派结果就是那一轮的最终回复）；绑定到不同 @ 连锁的批不同轮；带用户消息（含编辑通知）的未绑定批不与连锁批同轮（否则用户的话继承连锁的层数与预算，到层数上限时回应用户的 @ 被丢，最终审查 L-5；任务结果、事件等系统批可以）；吸收了连锁批的对话轮把连锁绑定（同一连锁取最深层数）写到 run 行，层数上限与连锁 token 预算照常生效。不能同轮的批留在缓冲里，下一轮处理。已被消费的结果条目在吸收时丢弃（重试的对话轮自己的触发除外）。
+- **投**：事务提交后，把该条目作为触发批交给该（Bot, 对话）的 mailbox（`TriggerBatch.reason='task'`）。条目是一条真实消息，`mailbox.deliver` 对空批的直接返回不会吞掉它。对话轮运行中到达的条目进 mailbox 缓冲，release 时合并为下一轮的一个批——多个任务同时结算只唤醒一轮；一个对话轮开始执行时还会把创建之后才缓冲进来的批一并吸收（它可能在调度器里排过队），重新投递的一批结果因此也只唤醒一轮。吸收与合并只发生在「能同轮」的批之间（审查批 E / M1 / M2）：D71 委派批独占一个对话轮（被委派的对话轮不吸收别的批，委派批也不被吸收进别的轮——委派结果就是那一轮的最终回复）；绑定到不同协作回合的批不同轮；带用户消息（含编辑通知）的未绑定批不与回合批同轮（否则回合暂停会吞掉用户的回答，最终审查 L-5；任务结果、事件等系统批可以）；吸收了回合批的对话轮把回合绑定（`episode_id` / `episode_hop`，同一回合取最深 hop）写到 run 行，熔断阈值照常生效。**任务结算唤醒的对话轮在唤醒时**按任务起源轮（`origin_run_id`）解析并继承其协作回合（D92：发起任务的那一轮可能在任务启动之后才首次 `@`、才建立回合；起源轮没有回合则被唤醒的轮也不绑定）。不能同轮的批留在缓冲里，下一轮处理。已被消费的结果条目在吸收时丢弃（重试的对话轮自己的触发除外）。
 - **消费**（见 DEV-014）：触发批里含该条目的对话轮**处理了这次触发**（引擎已启动；或 §8.4 降级已确定性路由；或因缺设置失败、设置卡完成后会以同一触发重试）**且**终态为 `completed` / `failed`（含 `skip_reply`）时，宿主写任务行的 `result_consumed_at`。启动前被取消、Bot 停用 / 对话只读而直接返回、被用户或更新闸门取消、中断、引擎启动前崩溃的对话轮**不消费**，由对账按 at-least-once 补投——它们根本没有处理这条结果，就此标记消费等于静默丢失。代价：用户取消正在转述结果的对话轮后，结果会在补投窗口后再出现一次。
 - **对账**：启动时与 reaper 周期（`TASK_SETTLE_SWEEP_MS`）扫描「终态 AND `result_consumed_at IS NULL`」且应唤醒（§3.3）的任务，重新投递其结果条目；已投递、但 `TASK_REDELIVER_AFTER_MS` 内仍未被消费的不重复投递，超过即重投；Bot 已持有的结果不补投：已开始执行、或已创建但还排在调度器里的对话轮触发里带着的结果，以及缓冲在该 mailbox 里等下一轮的结果（它们会被消费；补投会让下一轮再转述一遍）——持有期间也不计数、不放弃。每次真正交给 mailbox 的投递计数（记在终态条目上；投递时抛错的不算），达到上限按上文放弃（最终审查 L-3）。
 
@@ -304,7 +304,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 | --------------------- | -------------------------------------------- |
 | `task_title`          | 卡片与 `<tasks>` 段的标题（由 `start_task` 给出）        |
 | `task_writes`         | 是否写任务（决定租约与网关裁决）                             |
-| `task_workdir`        | 工作目录（`workspace` / `project` / 任务私有子目录的解析结果） |
+| `task_cwd`            | 执行根目录（`workspace` / `workdir` / 任务私有子目录的解析结果） |
 | `origin_run_id`       | 派出它的对话轮                                      |
 | `result_consumed_at` | §3.2 的消费标记：触发批含其结果条目、且处理了这次触发的对话轮到达 `completed` / `failed` 时写入 |
 | `awaiting_input`     | 任务在 `running` 下等用户回答问题卡（§2.4.6） |
@@ -321,7 +321,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 | 工具            | 参数                                                                       | 宿主校验                                                                   | 返回                                                        |
 | ------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------- |
-| `start_task`  | `title`、`instruction`、`source_message_ids`、`writes`、`workdir?`、`continues_task_id?`、`engine?`、`capabilities?`（D91） | 本轮起数未超 `TASK_START_MAX_PER_TURN`；对话级并发未满；`source_message_ids` 属于本对话；`loop_type='turn'`（任务内调用一律拒绝） | `task_id` + 初始状态（`running` 或 `submitted` 及排队原因） |
+| `start_task`  | `title`、`instruction`、`source_message_ids`、`writes`、`cwd?`、`continues_task_id?`、`engine?`、`capabilities?`（D91） | 本轮起数未超 `TASK_START_MAX_PER_TURN`；对话级并发未满；`source_message_ids` 属于本对话；`loop_type='turn'`（任务内调用一律拒绝） | `task_id` + 初始状态（`running` 或 `submitted` 及排队原因） |
 | `inject_task` | `task_id`、`text`、`source_message_ids?` | task 属于本（Bot, 对话）且在 `running` | `delivered`（已注入当前轮）/ `queued`（Agent 不支持 steering，任务结束后生效） |
 | `cancel_task` | `task_id`、`reason`                                                       | 同上，允许 `submitted` / `running`                                          | 取消确认 + 已产生改动的摘要                                           |
 | `list_tasks`  | —                                                                        | —                                                                      | 进行中 + 窗口内已结算的任务（id、标题、状态、启动时间、错误、是否可注入；进度不进模型）          |
@@ -375,21 +375,21 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 ### 5.1 规则
 
 - **只读任务**：不取租约，受对话级与全局并发封顶。
-- **写任务**：启动前取 `workdir` 根的写租约，**整个任务持有**（与 D72 外部 Agent 的 `pin` 语义一致）；取不到就停在 `submitted`，在卡片与 `<tasks>` 段中显示排队原因。
-- **同一 workdir 同时最多一个写任务**，跨对话生效（D29 的语义不变，只是把适用面从 project 扩到 workspace）。实现上第二个写任务在**任务层**就被拦住（`TaskHost` 按 workdir 判定）：它停在 `submitted`、不去申请租约，卡片、状态行与 `<tasks>` 段显示「等写入租约（任务 … 持有）」；持有方任务结束或被取消后才启动。
+- **写任务**：启动前取 `cwd` 根的写租约，**整个任务持有**（与 D72 外部 Agent 的 `pin` 语义一致）；取不到就停在 `submitted`，在卡片与 `<tasks>` 段中显示排队原因。
+- **同一 cwd 同时最多一个写任务**，跨对话生效（D29 的语义不变，只是把适用面从 workdir 扩到 workspace）。实现上第二个写任务在**任务层**就被拦住（`TaskHost` 按 cwd 判定）：它停在 `submitted`、不去申请租约，卡片、状态行与 `<tasks>` 段显示「等写入租约（任务 … 持有）」；持有方任务结束或被取消后才启动。
 - **「强制收回」对任务层排队不起作用**（见 DEV-015）：D29 / BR-P04-001 的强制收回针对在 `ensureWriteLease` 上排队的等待者；任务层排队的写任务根本不在租约上等，对它点强制收回只会让持有方任务失去写权限，排队任务仍要等持有方结束。因此强制收回只对租约层的等待出现（写任务启动前被非任务持有者——宿主伪身份等——挡住，仍是 `lease.waiting`）；任务层排队的放行方式是在持有方任务的卡片上取消（或等它结束）。跨对话时用户需切到持有方对话去取消；「强制收回 = 取消持有租约的写任务」作为备选。
-- **强制收回 = 持有方任务失去写权限**（审查批 E）：收回立刻关掉持有方写任务的租约窗口（改动记录只含它自己的改动），并把该任务记为「租约已被收回」——之后它的写入（文件工具、命令的可写挂载、`acquire_project_write`、它的子代理）由网关以 `RUN_READ_ONLY`「写入租约已被用户收回」拒绝，任务照常跑完（可以读、可以交回结果，说明哪些改动没做成），**不会**在下一次写入时悄悄重新取得租约。只钉住的租约（写任务、D72 外部 Agent 的 run）如此；不钉住的执行（宿主伪身份等）收回后再写会开新窗口，其改动记录跨窗口累积（`run_changes` 每个文件记首个窗口前 / 末个窗口后的快照，回退恢复前者、按后者检测冲突；别人夹在两个窗口之间改过的文件按冲突处理）。
+- **强制收回 = 持有方任务失去写权限**（审查批 E）：收回立刻关掉持有方写任务的租约窗口（改动记录只含它自己的改动），并把该任务记为「租约已被收回」——之后它的写入（文件工具、命令的可写挂载、`acquire_workdir_write`、它的子代理）由网关以 `RUN_READ_ONLY`「写入租约已被用户收回」拒绝，任务照常跑完（可以读、可以交回结果，说明哪些改动没做成），**不会**在下一次写入时悄悄重新取得租约。只钉住的租约（写任务、D72 外部 Agent 的 run）如此；不钉住的执行（宿主伪身份等）收回后再写会开新窗口，其改动记录跨窗口累积（`run_changes` 每个文件记首个窗口前 / 末个窗口后的快照，回退恢复前者、按后者检测冲突；别人夹在两个窗口之间改过的文件按冲突处理）。
 - 工具网关对 `task_writes=false` 的任务**硬拒写路径**（执行期校验，不只靠不注册工具）。
 
 
 
 ### 5.2 租约要扩到 workspace
 
-今天 `#leaseTarget` 只认 project：不涉及 project 的路径直接抛「该路径不涉及 project，无需写入租约」（`packages/core/src/project/service.ts` `#leaseTarget`）。串行 mailbox 一直在替它兜底——自由对话里同一时刻只有一个 loop，所以 workspace 没有并发写。拆分后这个兜底消失，必须补：
+今天 `#leaseTarget` 只认 workdir：不涉及 workdir 的路径直接抛「该路径不涉及 workdir，无需写入租约」（`packages/core/src/workdir/service.ts` `#leaseTarget`）。串行 mailbox 一直在替它兜底——自由对话里同一时刻只有一个 loop，所以 workspace 没有并发写。拆分后这个兜底消失，必须补：
 
 - 新增租约键 `ws:{botId}:{conversationId}`，对应 `bots/{botId}/workspaces/{conversationId}/`。
 - `waiting_lease` 状态、`lease.waiting` 事件、排队 UI 全部复用。
-- workspace 没有影子仓库检查点（那是 project 的能力），所以 workspace 写任务被取消时只能给出「改了哪些文件」，**不提供整次回退**——这一点要在取消卡上如实说明，不要假装有回退。
+- workspace 没有影子仓库检查点（那是 workdir 的能力），所以 workspace 写任务被取消时只能给出「改了哪些文件」，**不提供整次回退**——这一点要在取消卡上如实说明，不要假装有回退。
 
 
 
@@ -401,10 +401,10 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 |---|---|---|
 | 为回复留名额 | N > 1 时只读任务只在占用 < N−1 时启动；已持租约的写任务（`leaseHeld`，优先级 0）在占用 < N 且任务合计占用 < N−1 时启动；N = 1 不预留 | **不预留**：对话轮固定走内置引擎，Agent 的名额全归任务（上限随 `features.parallelSessions`，不支持即 1） |
 | 借用 | 厂商被占满且全部被任务占用时，优先级 0 的回复可借 1 个名额——配置上限 N 实际可到 N+1 | **不借用**：上限是进程能同时服务的会话数，不是可借的额度 |
-| 启动封顶 | 对话级 / 全局 / 每对话轮起数 / 同 workdir 一个写任务 | 另按 `agent:{id}` 封顶启动：超出的任务停在 `submitted`（「等智能体并发额度」），不占任务名额、不持租约 |
+| 启动封顶 | 对话级 / 全局 / 每对话轮起数 / 同 cwd 一个写任务 | 另按 `agent:{id}` 封顶启动：超出的任务停在 `submitted`（「等智能体并发额度」），不占任务名额、不持租约 |
 
 - **等租约时让出名额**：run 在作业内排队等写租约期间把调度名额让出，取得租约后先于排队作业拿回（`SlotYieldingLeaseService` + `Scheduler.yieldSlotWhile`，同一作业的并行等待按深度计数）。持名额者从不等租约，持租约者只等会前进的作业。写任务在提交调度器**之前**取租约（等待期间行仍是 `queued`），被取消时当场释放租约与位置。
-- **顺序约束**：「`agent:*` 不预留、不借用」只在对话轮从不跑在 Agent 上时成立。唯一还落在 `agent:*` 上的优先级 0 作业是经 Agent 的群聊判断：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（见 DEV-014）。将来若有对话轮再跑在 Agent 上（§8.4 第 1 级），必须恢复 Agent 的回复预留名额。
+- **顺序约束**：「`agent:*` 不预留、不借用」只在对话轮从不跑在 Agent 上时成立。唯一还落在 `agent:*` 上的优先级 0 作业是经 Agent 的项目组路由判断（`projectMentionOnly` 关掉时）：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（见 DEV-014）。将来若有对话轮再跑在 Agent 上（§8.4 第 1 级），必须恢复 Agent 的回复预留名额。
 
 ### 5.4 为什么不是物理隔离
 
@@ -415,7 +415,7 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 而且**并行需求的大头本来是只读的**——研究、分析、读代码、review、查资料。D66 把后台子 agent 定成只读研究集不是偷懒，是同一个判断。先把「只读无限并行 + 写串行」做扎实，并行能力的收益已经拿到大部分。
 
-## 6 消息、群聊与界面
+## 6 消息、项目组与界面
 
 
 
@@ -435,18 +435,18 @@ submitted   行已落盘，尚未启动（等写租约 / 等并发额度 / 等 A
 
 **原文转发**：长报告、代码清单、表格这类结果，让对话轮重新生成既费输出 token 又可能失真。对话轮调用 `forward_task_result(task_id)`，宿主把结果条目全文作为一条可见消息发出（Bot 身份、带任务归属），对话轮的最终回复只写衔接（「详情如上，要我顺手改掉吗？」）。转不转发由对话轮决定，宿主不替它判断。
 
-### 6.2 群聊
+### 6.2 项目组沟通
 
-- 群轮次（D5「按顺序执行，后执行者能看到前者回复并可放弃」）在**对话轮**终态推进，不等任务。
-- 取舍要显式记录：Bot A 的对话轮说完「我去查一下」就让位给 Bot B，此时 A 的任务还没出结果，B 看到的只是 A 的表态而非结论。这弱化了 D5 的「看到前者回复」语义。本文接受这个弱化——替代方案是群轮次等任务，那等于把阻塞搬回群聊。
-- 任务不参与群轮次，不充当群成员（与 D66 / D71 一致）。
-- **GX**：群里每个 Bot 的私有往返只进它自己的上下文（§2.4）；其他 Bot 看到的是它的任务进度与对话轮的转述——与真人在群里说「我去查一下」→「查到了，是这样」一致。
+- 项目组轮次（D5「按顺序执行，后执行者能看到前者回复并可放弃」）在**对话轮**终态推进，不等任务；推进由 `ProjectTurnCoordinator` 负责（[02](02-execution.md#项目组沟通的响应)）：显式 `@` / 回复直接定目标；没有 `@` 的用户消息走「上一位回话者续接判断 → 负责人网关（self / 静默 route / none）→ 兜底不变式」，不再做全员轻量判断。
+- 取舍要显式记录：Bot A 的对话轮说完「我去查一下」就让位给 Bot B，此时 A 的任务还没出结果，B 看到的只是 A 的表态而非结论。这弱化了 D5 的「看到前者回复」语义。本文接受这个弱化——替代方案是项目组轮次等任务，那等于把阻塞搬回沟通。
+- 任务不参与项目组轮次，不充当项目组成员（与 D66 / D71 一致）；**任务结算唤醒的对话轮在唤醒时继承协作回合**（§3.2「投」），回合的 Bot 间 `@` 触发受熔断约束（`EPISODE_HOP_BREAKER` 12 / `EPISODE_PINGPONG_BREAKER` 8，暂停卡）。
+- **GX**：项目组里每个 Bot 的私有往返只进它自己的上下文（§2.4）；其他 Bot 看到的是它的任务进度与对话轮的转述——与真人在项目组里说「我去查一下」→「查到了，是这样」一致。
 
 
 
 ### 6.3 界面
 
-- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：project 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败或中断的任务可重试——中断且续接链有已完成 / 结果未知的外部副作用时为「检查后重试」，§7.4；缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
+- 对话内：任务卡（标题、状态、排队原因、等待用户输入、最近进度、注入行〔含「未送达」〕、取消按钮；取消后附改动摘要：workdir 写任务给计数与整次回退，workspace 写任务只列文件工具写过的文件并如实说明没有回退；失败或中断的任务可重试——中断且续接链有已完成 / 结果未知的外部副作用时为「检查后重试」，§7.4；缺设置的交给对话内设置卡）与任务问题卡（§2.4.6）。**已实现**。
 - 状态行（D55）：对话轮保留自己的一行；进行中的任务合并为另一行——一个任务显示标题 + 当前活动，多个任务显示条数 + 最近活动、可展开；排队中的写任务在**租约层**等待时保留「强制收回」按钮（任务层排队不给，见 §5.1）。任务过程只保留**一条**状态通知（状态行 / 任务卡 `lastProgress`，覆盖写；成功清空、未完成保留）。**已实现**。
 - Bot 详情栏 / 对话头部：进行中任务数。**未实现**。
 - 执行记录页：任务与对话轮分列（`loop_type` 已有），任务详情显示 `origin_run_id` 与 `continues_task_id` 的链路。**未实现**（任务卡已显示接续关系）。
@@ -578,7 +578,7 @@ D72 现有的框架是「换掉 Bot 的整个 loop」，代价写在它的让渡
 1. **用** `backgroundAgentId` **的** `complete()` **跑对话轮**（D72 P6 的一次性精简会话）：对话轮的决策是结构化的、短的，适合这条路；代价是每轮一次会话冷启。**未实现**：需要为对话轮另造一套结构化决策协议，作为后续独立项（见 DEV-011）。
 2. **关闭路由判断**（已实现，见 DEV-011）：对话轮不调模型，`engine='builtin'`、宿主确定性路由后以 `completed` 结算——结果条目经 `forward_task_result` 同一路径原文转发，失败 / 中断发一条简短说明；其余新消息（按来源标注「用户的新消息」「编辑」「系统事件」「定时」等）**注入**进行中的任务，与今天的「执行中注入」一致；注入没送达（Agent 不支持或异步拒绝 steering、缓冲后未被收下）就另起一个任务，没有进行中的任务就派一个（写权限随 Agent 档位，写任务按租约排在后面）。原文「排队到任务结束」会让用户在任务期间说的话完全无效，且与「等价于今天的行为」自相矛盾，故按注入实现。没有「直接回答」「取消」这类判断，路由留痕只靠任务卡。
 
-同一降级链也适用于群聊判断、摘要、反思等后台 loop（D72 P6 已有安排）。
+同一降级链也适用于项目组路由判断、摘要、反思等后台 loop（D72 P6 已有安排）。
 
 ### 8.5 外部 Agent 会话按任务分（修订 D72 的会话复用）
 
@@ -588,7 +588,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 - **不用并行槽位会话池**：池化会让不同任务的上下文在同一会话里接力，增量与已见记录失去「同一条任务谱系」的含义；只有 `continues_task_id` 这种显式接续才值得复用。
 - **继承**：`start_task({continues_task_id})` 在旧任务释放后（D72 的「占有后才 await / 忙碌会话不可复用」已保证不会与旧任务并用）把旧行的 `task_id` 改为新任务（单条 `UPDATE … WHERE task_id = 旧`，失败即新建）；指纹不一致照旧新建。
 - **生命周期**：任务结算后会话行保留 `CONTINUATION_WINDOW_MS` 供接续，超时由 reaper `session/close` + 删行；删除对话 / Bot / 移出群的级联已按行遍历（`listByConversation` / `listByBot` 逐行 `session/delete` + 删行），一对话多行无需改；进程崩溃仍保留行、下次 resume / load。
-- **并发**：任务并发 = `min(TASK_CONCURRENCY_*, agent:{id} 并发)`；`agent:{id}` 并发缺省由 `features.parallelSessions` 决定（不支持 → 1，见 §8.2）。对话轮固定内置，Agent 的名额全归任务、不为回复预留（§5.3）；后台 loop 在上限 > 1 时仍为非后台工作保留一个。经 Agent 的群聊判断从提交起计超时、到时按「仅 @ / 回复响应」放行，不会排在长任务后面几小时（见 DEV-014）。
+- **并发**：任务并发 = `min(TASK_CONCURRENCY_*, agent:{id} 并发)`；`agent:{id}` 并发缺省由 `features.parallelSessions` 决定（不支持 → 1，见 §8.2）。对话轮固定内置，Agent 的名额全归任务、不为回复预留（§5.3）；后台 loop 在上限 > 1 时仍为非后台工作保留一个。经 Agent 的项目组路由判断从提交起计超时、到时按「仅 @ / 回复响应」放行，不会排在长任务后面几小时（见 DEV-014）。
 - **迁移**：项目早期不保留旧行（D72 期的行直接清空，下次新建会话）；迁移编号见 [dev/03 §迁移](../dev/03-data-model.md#迁移)（D73 从 main 的下一个空号起编号）。
 - **改动面**：迁移、`domain/agent-sessions.ts`（`upsert` 冲突键、`get` 按任务）、orchestrator 两处 `sessionKey` 与 `#agentRunSetup` / `#recordAgentSession`、engine 的保留会话匹配与 `discardSession`、`mcp-bridge` 的 token 键、`lifecycle.ts`；估 **+0.5–1 周，计入 T5**。
 
@@ -600,14 +600,14 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 
 「每个任务一个 worktree」看起来能根治并行写。它确实把**物理竞争**转成**merge 冲突**（冲突变得可见、可审查、可延后），但在 KepCup 的具体约束下当不了默认方案，四条理由按严重性排列：
 
-1. **它要写用户的** `.git`**，而这条底线已经画过并付过实现代价。** `git worktree add` 会在用户仓库的 `.git/worktrees/` 下建目录、建 ref/分支，并在新目录写 gitlink。而 [08-project.md](08-project.md#权限与保护) 规定 `.git/config`、`.git/hooks` 沙箱内不可写，`git init` / `git remote add` 这类改写 git 配置的操作必须由核心服务在沙箱外代为执行且**每次用户确认**（D31）；`packages/core/src/project/checkpoints.ts` 的影子仓库为了不往项目里写一个 gitlink，专门绕了 `noDotgitDir` + `core.worktree` 的弯，注释写明「Nothing is ever written inside the project itself」。worktree 不是加个功能，是推翻这条不变量。
-2. **整套路径门禁锚在单个** `project.path` **上。** 沙箱读写挂载（`sandbox/policy.ts`）、网关路径判定、租约目标（`#leaseTarget`）、`protectRules` / `denyRead` 的 glob 拼接、bash 的 cwd——全部从 `boundProject(conversationId)` 的单一路径推导。worktree 在另一个路径，对这套栈来说就是「project 之外」：没有写挂载、没有租约、`denyRead` **规则不匹配**。最后一条是安全问题而非功能缺失：用户给 `.env` 配的 deny-read 在 worktree 副本上静默失效。要支持就得把「project = 一个路径」改造成「project = 一个身份 + 一组路径」，逐处改、逐处补测试，漏一处是一个洞。
-3. **检查点与回退 UX 对不上。** 影子仓库是一个 project 一个、`core.worktree` 指向 `project.path`、per-project mutex 串行；`run_changes` 存影子仓库的 commit oid；改动摘要卡片 / 查看 diff / 整次回退都挂在 project 上。worktree 里的改动不进这套——用户看不见也退不了。要么每个 worktree 一个影子仓库（那「整次回退」退什么？worktree？归并结果？归并前的 project？），要么 worktree 任务没有检查点。
+1. **它要写用户的** `.git`**，而这条底线已经画过并付过实现代价。** `git worktree add` 会在用户仓库的 `.git/worktrees/` 下建目录、建 ref/分支，并在新目录写 gitlink。而 [08-workdir.md](08-workdir.md#权限与保护) 规定 `.git/config`、`.git/hooks` 沙箱内不可写，`git init` / `git remote add` 这类改写 git 配置的操作必须由核心服务在沙箱外代为执行且**每次用户确认**（D31）；`packages/core/src/workdir/checkpoints.ts` 的影子仓库为了不往工作目录里写一个 gitlink，专门绕了 `noDotgitDir` + `core.worktree` 的弯，注释写明「Nothing is ever written inside the workdir itself」。worktree 不是加个功能，是推翻这条不变量。
+2. **整套路径门禁锚在单个** `workdir.path` **上。** 沙箱读写挂载（`sandbox/policy.ts`）、网关路径判定、租约目标（`#leaseTarget`）、`protectRules` / `denyRead` 的 glob 拼接、bash 的 cwd——全部从 `boundWorkdir(conversationId)` 的单一路径推导。worktree 在另一个路径，对这套栈来说就是「workdir 之外」：没有写挂载、没有租约、`denyRead` **规则不匹配**。最后一条是安全问题而非功能缺失：用户给 `.env` 配的 deny-read 在 worktree 副本上静默失效。要支持就得把「workdir = 一个路径」改造成「workdir = 一个身份 + 一组路径」，逐处改、逐处补测试，漏一处是一个洞。
+3. **检查点与回退 UX 对不上。** 影子仓库是一个 workdir 一个、`core.worktree` 指向 `workdir.path`、per-workdir mutex 串行；`run_changes` 存影子仓库的 commit oid；改动摘要卡片 / 查看 diff / 整次回退都挂在 workdir 上。worktree 里的改动不进这套——用户看不见也退不了。要么每个 worktree 一个影子仓库（那「整次回退」退什么？worktree？归并结果？归并前的 workdir？），要么 worktree 任务没有检查点。
 4. **新 worktree 开箱即废。** worktree 只有被跟踪的文件：`node_modules`、`.env`、本地配置、构建产物一个都没有，任务第一步就是 `pnpm install`（分钟级或直接失败），测试因缺 `.env` 跑不起来。更要紧的是 worktree 从某个 commit 起，**用户工作区里未提交的改动不在里面**——而「照着现在这个状态继续改」恰恰是最常见的请求。
 
 次级问题：干扰用户自己的 git（分支已在别处 checkout 则 checkout 不了；崩溃后残留 `.git/worktrees` 需要 prune / reaper）；归并必须成为一等公民（谁解冲突、冲突时任务算成功还是失败、归并失败后 worktree 留还是删）。
 
-**留的口子**：任务模型里有 `task_workdir`。日后若确实需要物理隔离，按「独立子目录 → worktree」的顺序作**独立决策**推进，只换 workdir 提供者 + 加一个归并步骤，不动执行模型。
+**留的口子**：任务模型里有 `task_cwd`。日后若确实需要物理隔离，按「独立子目录 → worktree」的顺序作**独立决策**推进，只换 cwd 提供者 + 加一个归并步骤，不动执行模型。
 
 ### 9.2 CoW 目录克隆（不作为架构依赖）
 
@@ -643,7 +643,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | [04-memory.md](04-memory.md)                               | 反思登记时机（§7.2）                                                                                                                                                                                                         |
 | [13-permissions.md](13-permissions.md)                     | D37「仅这一次」收紧为单次工具调用 + 绝对时限（§7.3）                                                                                                                                                                                      |
 | [12-ui-layout.md](12-ui-layout.md)                         | 任务卡、任务列表、状态行语义（§6.3）                                                                                                                                                                                                 |
-| [08-project.md](08-project.md)                             | D29 写租约适用面扩到 workspace（§5.2）                                                                                                                                                                                         |
+| [08-workdir.md](08-workdir.md)                             | D29 写租约适用面扩到 workspace（§5.2）                                                                                                                                                                                         |
 | [01-conversation.md](01-conversation.md) | 「消息原则」扩展：`task_event` 私有条目（`owner_bot_id`）只进 owner Bot 的上下文；现有内部事务保持对话共享；所有读路径按视角过滤，对话摘要只摘共享行（§2.4） |
 
 
@@ -660,7 +660,7 @@ D72 P5 的会话复用是为**串行 run** 设计的：`agent_sessions` 唯一�
 | `packages/core/src/dispatch/orchestrator.ts`      | 已改为 `#startTurn` + 共用执行骨架 `#executeRun(runId, RunExecution)`（`kind: 'turn' \| 'task'`）+ `#startTask`，任务层在新的 `dispatch/tasks.ts`；`#steerRunningRun` / `#pendingSteers` 已删除，任务的注入经 `TaskRunControl` |
 | `packages/core/src/agent/subagent.ts`             | `SubagentHost` 已删除（任务层 `TaskHost` 在 `dispatch/tasks.ts` 新写）；`delegate_task` 的后台模式改为父 run 内的并行分支 + `collect_delegate_results` |
 | `packages/core/src/dispatch/delegation.ts`        | 状态机、settle 钩子、结果卡的**参照实现**（禁止复述 follow-up 不沿用） |
-| `packages/core/src/project/service.ts`            | `#leaseTarget` 支持 workspace 键                                                                                                                                                                  |
+| `packages/core/src/workdir/service.ts`            | `#leaseTarget` 支持 workspace 键                                                                                                                                                                  |
 | `packages/core/src/agent/external/engine.ts`      | `steer()`（D72 P5，已落地）的异步拒绝映射为 `queued`；保留会话匹配与 `discardSession` 按任务键（§8.5）；`features.parallelSessions`（D72 已加）决定 `agent:{id}` 并发 |
 | `agent_sessions`（main 迁移）+ `domain/agent-sessions.ts` + `mcp-bridge.ts` + `domain/lifecycle.ts` | 加 `task_id`、唯一索引与 `upsert` 冲突键含任务；`sessionKey` / 桥 token 按任务键（删除级联已逐行处理，§8.5） |
 | `packages/core/src/agent/context/continuation.ts` | 自动续接（L1 窗口 + L2 仲裁）已整体移除，只留 `buildRunDigest`；`continues_task_id` 的回放经 `dispatch/tasks.ts` `buildTaskReplaySegment` |

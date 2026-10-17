@@ -103,7 +103,7 @@ describe('start_task capabilities (D91)', () => {
           state: 'running',
           status: 'running',
           writes: false,
-          workdir: null,
+          cwd: null,
           createdAt: 0,
           endedAt: null,
           queueReason: null,

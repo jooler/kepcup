@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LeaseService } from '../../src/project/lease.js';
+import { LeaseService } from '../../src/workdir/lease.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
 import { SlotYieldingLeaseService } from '../../src/scheduler/slot-yielding-lease.js';
 
@@ -192,7 +192,7 @@ describe('Scheduler × write leases: no hold-and-wait (D75 审查 H2)', () => {
   const identity = (runId: string) => ({ runId, botId: 'b', conversationId: 'c', loopType: 'turn' as const });
 
   /**
-   * The reviewed deadlock: a write task T took the project lease and queues
+   * The reviewed deadlock: a write task T took the workdir lease and queues
    * for a slot; a response run R holds the slot and then waits for the lease.
    */
   async function contend(limit: number, leases: LeaseService, scheduler: Scheduler) {

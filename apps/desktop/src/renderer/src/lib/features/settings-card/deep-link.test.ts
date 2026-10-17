@@ -36,7 +36,7 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
     });
   });
 
-  it('Bot 面板带作用 Bot；群设置缺省用卡片所在会话；项目设置带锚点', () => {
+  it('Bot 面板带作用 Bot；项目设置缺省用卡片所在会话；工作目录设置带锚点', () => {
     const bot = getSettingItem('bot.network')!;
     expect(settingDeepLinkAction(bot.deepLink, { botId: 'bot_b' }, 'conv_1')).toEqual({
       kind: 'bot-panel',
@@ -44,21 +44,46 @@ describe('settingDeepLinkAction（设置卡「在设置中打开」）', () => {
       anchor: 'bot-network',
       botId: 'bot_b',
     });
-    const group = getSettingItem('group.members')!;
-    expect(settingDeepLinkAction(group.deepLink, {}, 'conv_g')).toEqual({
-      kind: 'group-dialog',
+    const project = getSettingItem('project.members')!;
+    expect(settingDeepLinkAction(project.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
       conversationId: 'conv_g',
-      anchor: 'group-members',
+      section: 'members',
+      anchor: 'project-members',
+    });
+    // 概览的目标锚点与成员分区的负责人锚点（WP7 真实详情页里的 data-settings-anchor）。
+    const goal = getSettingItem('project.goal')!;
+    expect(settingDeepLinkAction(goal.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'overview',
+      anchor: 'project-goal',
+    });
+    const lead = getSettingItem('project.lead')!;
+    expect(settingDeepLinkAction(lead.deepLink, {}, 'conv_g')).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'members',
+      anchor: 'project-lead',
     });
     expect(
-      settingDeepLinkAction(group.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
+      settingDeepLinkAction(project.deepLink, { conversationId: 'conv_x' }, 'conv_g'),
     ).toMatchObject({
       conversationId: 'conv_x',
     });
-    const project = getSettingItem('project.ports')!;
-    expect(settingDeepLinkAction(project.deepLink, {}, 'conv_1')).toEqual({
-      kind: 'project-dialog',
-      anchor: 'project-ports',
+    // 深链 section 不在 PROJECT_DETAIL_SECTIONS 里时退回概览（不认识的分区总能打开详情页）。
+    expect(
+      settingDeepLinkAction({ surface: 'project-detail', section: 'nonsense' }, {}, 'conv_g'),
+    ).toEqual({
+      kind: 'project-detail',
+      conversationId: 'conv_g',
+      section: 'overview',
+      anchor: null,
+    });
+    const workdir = getSettingItem('workdir.ports')!;
+    expect(settingDeepLinkAction(workdir.deepLink, {}, 'conv_1')).toEqual({
+      kind: 'workdir-dialog',
+      anchor: 'workdir-ports',
     });
   });
 });

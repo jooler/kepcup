@@ -44,7 +44,7 @@ function setup(answer: 'allow' | 'deny' = 'allow') {
     identity,
     browser: host,
     workspacePath: '/tmp/ws',
-    projectPath: null,
+    workdirPath: null,
     egress,
   });
   const ctx: ToolContext = {
@@ -144,7 +144,7 @@ describe('browser tools: taint egress gate', () => {
       identity,
       browser: host,
       workspacePath: '/tmp/ws',
-      projectPath: null,
+      workdirPath: null,
     });
     const ctx: ToolContext = {
       identity,

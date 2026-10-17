@@ -167,7 +167,9 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     id: 'wiki',
     category: 'host',
     default: 'inject',
-    tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'],
+    // D92 T1b WP10: wiki_remove_source is project-conversation-only (its
+    // registration is decided per run by tools/wiki-tools.ts).
+    tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],
   }),
   pack({
     id: 'schedule',
@@ -187,7 +189,7 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
       'inspect_bot_assets',
       'propose_handover',
     ],
-    butlerTools: ['propose_bot', 'propose_group', 'propose_team', 'suggest_route'],
+    butlerTools: ['propose_bot', 'propose_project', 'propose_bots', 'suggest_route'],
   }),
   pack({
     id: 'browser',
@@ -314,7 +316,7 @@ export const NEVER_INJECTED_TOOLS: readonly string[] = [
   'bash',
   'request_access',
   'request_unsandboxed',
-  'acquire_project_write',
+  'acquire_workdir_write',
   'delegate_task',
   // D66 后台分支的取回（D75 §1.2）：与 delegate_task 成对，外部 Agent 无分支可取。
   'collect_delegate_results',

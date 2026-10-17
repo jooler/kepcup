@@ -83,7 +83,7 @@ export interface SessionContext {
    * `session/request_permission`，由权限桥裁决（未污点时照样自动放行、污点期间
    * 弹外发卡）。Agent 自己的「沙箱内命令自动放行」（Claude
    * `autoAllowBashIfSandboxed`）会让宿主看不到命令、污点外发控制形同虚设，而
-   * 污点可能在会话中途出现（应用工具、邮件、群里别的 Bot、委派继承），会话
+   * 污点可能在会话中途出现（应用工具、邮件、项目组里别的 Bot、委派继承），会话
    * 选项又不能中途改——所以污点控制开着时一律由宿主裁决。随 `_meta` 进会话
    * 指纹，开关变化后会话不再复用。缺省 = Agent 自己放行（与 f2b9627 一致）。
    */
@@ -240,7 +240,7 @@ export interface AgentProvider {
    * 的 `forbiddenModes` 优先。
    */
   safeModes?: readonly string[];
-  /** 无法关闭、需确认的 project 内 Agent 配置文件（P3）。 */
+  /** 无法关闭、需确认的 workdir 内 Agent 配置文件（P3）。 */
   agentSideConfigFiles: string[];
   /**
    * 错误分类（todo 附录 A.4 第 1 条）：各家「未登录 / 未安装 / 不兼容」的

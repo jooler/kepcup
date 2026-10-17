@@ -3,7 +3,6 @@ import {
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_OPTIONS_MAX,
   SETUP_QUESTION_OPTIONS_MIN,
-  type GroupSetupStep,
 } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { PROFILE_CHANGE_FIELDS } from './memory-tools.js';
@@ -44,17 +43,6 @@ export const SETUP_PATH_QUESTION =
 /** setupAnswer text recorded when the user skips the directory question. */
 export const SETUP_PATH_SKIP_TEXT = '暂不设置工作目录';
 
-/**
- * Group-creation questions per step (docs/design/19 D60): all deterministic,
- * zero model calls — cards carry the step, the UI renders the matching form.
- */
-export const GROUP_SETUP_QUESTIONS: Record<GroupSetupStep, string> = {
-  title: '请给这个群起个名字。',
-  purpose: '这个群主要用来处理什么事务？（群里的 Bot 会以此了解自己的定位）',
-  members: '请选择加入这个群的成员（至少 2 个）。',
-  project: '最后，请为这个群选择一个工作目录（之后随时可以再改）。',
-};
-
 /** The slice of BotsService (plus event publishing) the setup tools need. */
 export interface SetupToolFacade {
   /** Applies extracted fields to the bot profile directly + publishes bot.updated. */
@@ -81,14 +69,14 @@ export function buildSetupTools(input: {
   setup: SetupToolFacade;
   /**
    * 'butler'（D70）：管家访谈是同一机制的变体——只问用户的领域与场景，以
-   * propose_team 收尾；管家 Profile 是固定模板，不注册 save_profile。
+   * propose_bots 收尾；管家 Profile 是固定模板，不注册 save_profile。
    */
   variant?: 'bot' | 'butler';
   /**
-   * 群聊里只留 save_profile：空画像按群里的指令补全，不在群里发问卷、
-   * 也不在群里结束访谈（单聊才问定位）。
+   * 项目组里只留 save_profile：空画像按项目组里的指令补全，不在项目组里发
+   * 问卷、也不在项目组里结束访谈（单聊才问定位）。
    */
-  surface?: 'direct' | 'group';
+  surface?: 'direct' | 'project';
 }): ToolDefinition[] {
   const { identity, setup } = input;
   const butler = input.variant === 'butler';
@@ -182,7 +170,7 @@ export function buildSetupTools(input: {
   const finishSetup: ToolDefinition<Record<string, never>> = {
     name: 'finish_setup',
     description: butler
-      ? '结束管家访谈但不提议组队：仅在用户明确表示现在不需要组建 Bot 团队时使用（正常情况下用 propose_team 提交提议，访谈会自动结束）。'
+      ? '结束管家访谈但不提议组队：仅在用户明确表示现在不需要组建 Bot 团队时使用（正常情况下用 propose_bots 提交提议，访谈会自动结束）。'
       : '结束你的初始化访谈：调用后你进入正常运行状态（访谈指引与 setup 工具随即失效）。请在向用户确认信息已保存后再调用。',
     parameters: Type.Object({}),
     execute: async () => {
@@ -196,7 +184,7 @@ export function buildSetupTools(input: {
     },
   };
 
-  if (input.surface === 'group' && !butler) return [saveProfile];
+  if (input.surface === 'project' && !butler) return [saveProfile];
   return butler ? [askQuestion, finishSetup] : [saveProfile, askQuestion, finishSetup];
 }
 
@@ -209,7 +197,7 @@ export function questionCapReached(variant: 'bot' | 'butler' = 'bot'): {
     ok: false,
     message:
       variant === 'butler'
-        ? `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请根据已了解的情况直接调用 propose_team 提出组队建议。`
+        ? `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请根据已了解的情况直接调用 propose_bots 提出组队建议。`
         : `已达 ${SETUP_MAX_QUESTIONS} 个问题的上限，不能再提问：请直接调用 save_profile 保存已有信息，然后调用 finish_setup 结束访谈。`,
   };
 }

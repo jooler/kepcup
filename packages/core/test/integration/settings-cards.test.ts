@@ -4,7 +4,7 @@ import {
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -212,7 +212,7 @@ describe('conversational app settings', () => {
     const { core, llm } = await start();
     const a = await makeBot(core, '阿甲');
     const b = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '项目群', [a.id, b.id]);
+    const conv = await makeProject(core, '项目群', [a.id, b.id]);
     llm.script('mock-main', [
       step().replyToolCall('settings_change', CHANGE_MAIN),
       step().replyText('群里只能出卡，请确认'),
@@ -220,7 +220,7 @@ describe('conversational app settings', () => {
     await sendDrafts(core, conv.id, [{ text: '把默认模型换成轻量的', mentions: [a.id] }]);
     const { card } = await waitForCard(core, conv.id);
     expect(card).toMatchObject({ botId: a.id, mode: 'confirm', state: 'pending' });
-    expect(card.modeReason).toContain('群聊中只能出卡');
+    expect(card.modeReason).toContain('项目组中只能出卡');
     expect((await settingsOf(core)).defaultMainModel).toBe('custom:mock/mock-main');
   }, 30_000);
 

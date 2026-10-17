@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
-import { GROUP_TITLE_MAX } from '../domain/group-title.js';
+import { PROJECT_TITLE_MAX } from '../domain/project-title.js';
 import {
   widgetPreviewRunInputSchema,
   widgetPreviewRunOutputSchema,
@@ -102,14 +102,15 @@ import {
   embeddingStatusSchema,
   envInstallSchema,
   envSystemStatusSchema,
+  episodeSchema,
   grantSchema,
   memoryItemSchema,
   messageSchema,
   onboardingStatePatchSchema,
   profileCardSchema,
   profileItemSchema,
-  projectProtectRulesSchema,
-  projectSchema,
+  workdirProtectRulesSchema,
+  workdirSchema,
   runChangeSchema,
   providerConcurrencySchema,
   runSchema,
@@ -140,12 +141,14 @@ import {
   wikiSearchHitSchema,
   type ProviderInfo,
 } from '../domain/types.js';
+import { wikiOwnerSchema } from '../domain/wiki.js';
 import { modelCapabilitySchema, vendorProviderSchema } from '../domain/vendors.js';
 import { agentIdSchema } from '../domain/agent-catalog.js';
 import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
   BROWSER_PROFILE_NAME_MAX_CHARS,
   MEMO_BODY_MAX_CHARS,
+  PROJECT_GOAL_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
   WATCH_SELECTOR_MAX_CHARS,
@@ -324,7 +327,7 @@ export const settingsUpdateInputSchema = z.object({
     .object({
       agentEnabled: z.boolean().optional(),
       agentSkillAuthoring: z.boolean().optional(),
-      groupMentionOnly: z.boolean().optional(),
+      projectMentionOnly: z.boolean().optional(),
     })
     .optional(),
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */
@@ -353,7 +356,7 @@ export const settingsItemsApplyInputSchema = z.object({
    * `conflict`、不写入。null = 不比对（设置页直接保存、渲染层条目）。
    */
   expected: settingValuesSchema.nullable(),
-  /** 作用对象（bot / group / project 条目必填对应 id）。 */
+  /** 作用对象（bot / group / workdir 条目必填对应 id）。 */
   target: settingTargetSchema.optional(),
   /** 从设置卡应用时带卡片消息 id：成功后卡片标 applied 并唤醒 Bot（§6.2）。 */
   messageId: z.string().min(1).optional(),
@@ -812,6 +815,8 @@ export const botsDeletionPreviewOutputSchema = z.object({
   memoryItems: z.number().int(),
   wikiPages: z.number().int(),
   skills: z.number().int(),
+  /** Projects this bot leads (D92 T1a): the lead must be replaced first. */
+  ledProjects: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
 });
 export const interviewStartOutputSchema = z.object({
   conversationId: z.string().min(1),
@@ -838,7 +843,7 @@ export const interviewAnswerOutputSchema = z.object({
   message: messageSchema,
 });
 /**
- * 访谈目录卡作答（docs/design/19 D59）：path 非空 = 选择目录（绑定 project），
+ * 访谈目录卡作答（docs/design/19 D59）：path 非空 = 选择目录（绑定 workdir），
  * null = 暂不设置。作答后缓冲的用户消息才一起投递给 Bot（首个响应 run）。
  */
 export const interviewAnswerPathInputSchema = z.object({
@@ -869,77 +874,64 @@ export const conversationGetOutputSchema = z.object({
   conversation: conversationSchema.nullable(),
 });
 
-// --- groups (P05) -----------------------------------------------------------
+// --- projects (P05 groups → D92 T1a project teams) ---------------------------
 
-export const groupsCreateInputSchema = z.object({
-  title: z.string().min(1).max(GROUP_TITLE_MAX),
-  memberBotIds: z.array(z.string().min(1)).min(2),
-});
-export const groupsCreateOutputSchema = z.object({ conversation: conversationSchema });
-/**
- * 对话内群创建（docs/design/19 D60）：start 创建创建中的群并下发第一问；
- * answer 按 step 推进（title/purpose 文本、members 成员列表、project 目录或
- * 跳过），全程零模型调用；cancel 级联删除该对话。
- */
-export const groupsSetupStartInputSchema = z.void();
-export const groupsSetupStartOutputSchema = z.object({ conversation: conversationSchema });
-export const groupsSetupAnswerInputSchema = z.discriminatedUnion('step', [
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('title'),
-    text: z.string().min(1).max(100),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('purpose'),
-    text: z.string().min(1).max(500),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('members'),
-    botIds: z.array(z.string().min(1)).min(2),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('project'),
-    path: z.string().min(1).nullable(),
-  }),
-]);
-export const groupsSetupAnswerOutputSchema = z.object({
-  conversation: conversationSchema,
-  /** true = 最后一步已作答，群创建完成。 */
-  done: z.boolean(),
-});
-export const groupsSetupCancelInputSchema = z.object({ conversationId: z.string().min(1) });
-export const conversationIdInputSchema = z.object({ conversationId: z.string().min(1) });
-export const groupsRenameInputSchema = z.object({
+export const projectsCreateInputSchema = z
+  .object({
+    title: z.string().min(1).max(PROJECT_TITLE_MAX),
+    goal: z.string().max(PROJECT_GOAL_MAX_CHARS).optional(),
+    leadBotId: z.string().min(1),
+    memberBotIds: z.array(z.string().min(1)).min(2),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.memberBotIds.includes(input.leadBotId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['leadBotId'],
+        message: '负责人必须是项目成员',
+      });
+    }
+  });
+export const projectsCreateOutputSchema = z.object({ conversation: conversationSchema });
+export const projectsSetLeadInputSchema = z.object({
   conversationId: z.string().min(1),
-  title: z.string().min(1).max(GROUP_TITLE_MAX),
+  botId: z.string().min(1),
 });
-export const groupsRenameOutputSchema = z.object({ conversation: conversationSchema });
-export const groupsAddMembersInputSchema = z.object({
+export const projectsSetLeadOutputSchema = z.object({ conversation: conversationSchema });
+export const projectsUpdateInputSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    title: z.string().min(1).max(PROJECT_TITLE_MAX).optional(),
+    goal: z.string().max(PROJECT_GOAL_MAX_CHARS).nullable().optional(),
+  })
+  .refine((input) => input.title !== undefined || input.goal !== undefined, {
+    message: '至少修改一项（title 或 goal）',
+  });
+export const projectsUpdateOutputSchema = z.object({ conversation: conversationSchema });
+export const conversationIdInputSchema = z.object({ conversationId: z.string().min(1) });
+export const projectsAddMembersInputSchema = z.object({
   conversationId: z.string().min(1),
   botIds: z.array(z.string().min(1)).min(1),
 });
-export const groupsRemoveMemberInputSchema = z.object({
+export const projectsRemoveMemberInputSchema = z.object({
   conversationId: z.string().min(1),
   botId: z.string().min(1),
 });
-export const groupMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
-export type GroupMember = z.infer<typeof groupMemberSchema>;
+export const projectMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
+export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export const conversationsMembersInputSchema = z.object({ conversationId: z.string().min(1) });
 export const conversationsMembersOutputSchema = z.object({
-  members: z.array(groupMemberSchema),
+  members: z.array(projectMemberSchema),
 });
-/**
- * Clicking a bot in the "no Bot claimed this" system message re-dispatches the
- * original batch as if the user had @-ed that bot.
- */
-export const groupsRedistributeInputSchema = z.object({
-  conversationId: z.string().min(1),
-  batchId: z.string().min(1),
-  botId: z.string().min(1),
-});
+
+// --- episodes (D92 T1a collaboration rounds) ----------------------------------
+
+export const episodesGetInputSchema = z.object({ id: z.string().min(1) });
+export const episodesGetOutputSchema = z.object({ episode: episodeSchema });
+export const episodesResumeInputSchema = episodesGetInputSchema;
+export const episodesResumeOutputSchema = episodesGetOutputSchema;
+export const episodesStopInputSchema = episodesGetInputSchema;
+export const episodesStopOutputSchema = episodesGetOutputSchema;
 
 // --- messages -------------------------------------------------------------
 
@@ -1156,6 +1148,11 @@ export const approvalsDecideInputSchema = z.object({
    * bot = a denial.
    */
   handoverSelection: z.array(z.string().min(1)).optional(),
+  /**
+   * `butler_proposal` with `proposalType: 'project'` only (D92 T1a WP4): the lead the user
+   * picked on the card; must be one of the payload's `memberBotIds`.
+   */
+  leadBotId: z.string().min(1).optional(),
 });
 export const approvalsDecideOutputSchema = z.object({ approval: approvalSchema });
 
@@ -1239,47 +1236,47 @@ export const unattendedSummaryOutputSchema = z.object({
   items: z.array(unattendedSummaryItemSchema),
 });
 
-// --- projects (P04) ---------------------------------------------------------
+// --- workdirs (P04) ---------------------------------------------------------
 
-export const projectsListOutputSchema = z.object({ projects: z.array(projectSchema) });
-export const projectsGetInputSchema = z.object({ id: z.string().min(1) });
-export const projectsGetOutputSchema = z.object({ project: projectSchema.nullable() });
-export const projectsSelectInputSchema = z.object({
+export const workdirsListOutputSchema = z.object({ workdirs: z.array(workdirSchema) });
+export const workdirsGetInputSchema = z.object({ id: z.string().min(1) });
+export const workdirsGetOutputSchema = z.object({ workdir: workdirSchema.nullable() });
+export const workdirsSelectInputSchema = z.object({
   conversationId: z.string().min(1),
   /** realpath of the picked directory; core re-realpaths and validates. */
   path: z.string().min(1),
 });
-export const projectsSelectOutputSchema = z.object({ project: projectSchema });
-export const projectsUnbindInputSchema = z.object({ conversationId: z.string().min(1) });
-export const projectsUpdateInputSchema = z.object({
+export const workdirsSelectOutputSchema = z.object({ workdir: workdirSchema });
+export const workdirsUnbindInputSchema = z.object({ conversationId: z.string().min(1) });
+export const workdirsUpdateInputSchema = z.object({
   id: z.string().min(1),
-  // 名称不可改：项目名固定为所选文件夹的名字（bind 时取 basename）。
-  protectRules: projectProtectRulesSchema.optional(),
+  // 名称不可改：工作目录名固定为所选文件夹的名字（bind 时取 basename）。
+  protectRules: workdirProtectRulesSchema.optional(),
   allowedPorts: z
     .array(z.tuple([z.number().int().min(1).max(65535), z.number().int().min(1).max(65535)]))
     .nullable()
     .optional(),
 });
-export const projectsRemoveInputSchema = z.object({ id: z.string().min(1) });
-export const projectsDiffInputSchema = z.object({ runId: z.string().min(1) });
-export const projectsDiffOutputSchema = z.object({
+export const workdirsRemoveInputSchema = z.object({ id: z.string().min(1) });
+export const workdirsDiffInputSchema = z.object({ runId: z.string().min(1) });
+export const workdirsDiffOutputSchema = z.object({
   change: runChangeSchema.nullable(),
   /** Unified diff (before → after); empty when nothing changed or reverted. */
   diffText: z.string(),
 });
-export const projectsRevertInputSchema = z.object({
+export const workdirsRevertInputSchema = z.object({
   runId: z.string().min(1),
   /** Confirmed after a previous call reported conflicts. */
   force: z.boolean().optional(),
 });
-export const projectsRevertOutputSchema = z.object({
+export const workdirsRevertOutputSchema = z.object({
   ok: z.boolean(),
   /** Files changed after the after-snapshot; revert refused while non-empty and force is not set. */
   conflicts: z.array(z.string()),
   reverted: z.array(z.string()),
 });
-export const projectsRevokeLeaseInputSchema = z.object({ conversationId: z.string().min(1) });
-export const projectsRevokeLeaseOutputSchema = z.object({ revoked: z.boolean() });
+export const workdirsRevokeLeaseInputSchema = z.object({ conversationId: z.string().min(1) });
+export const workdirsRevokeLeaseOutputSchema = z.object({ revoked: z.boolean() });
 
 // --- environment (P06) -------------------------------------------------------
 
@@ -1404,14 +1401,15 @@ export const skillsPurgeMissingOutputSchema = z.object({
   purged: z.number().int().nonnegative(),
 });
 
-// --- wiki (P09) ---------------------------------------------------------------
+// --- wiki (P09; owner-generalized in D92 T1b WP9 — breaking, no compat) --------
 
-export const wikiBotIdInputSchema = z.object({ botId: z.string().min(1) });
+export const wikiOwnerInputSchema = z.object({ owner: wikiOwnerSchema });
+export type WikiOwnerInput = z.infer<typeof wikiOwnerInputSchema>;
 export const wikiTreeOutputSchema = z.object({ pages: z.array(wikiPageSchema) });
 export type WikiTreeOutput = z.infer<typeof wikiTreeOutputSchema>;
 /** Paths are wiki-root relative; `index.md` plus everything under `pages/`. */
 export const wikiPageInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   path: z.string().min(1).max(500),
 });
 export const wikiPageOutputSchema = z.object({
@@ -1421,7 +1419,7 @@ export const wikiPageOutputSchema = z.object({
 });
 export type WikiPageOutput = z.infer<typeof wikiPageOutputSchema>;
 export const wikiSearchInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   query: z.string().min(1).max(500),
   limit: z.number().int().min(1).max(50).optional(),
 });
@@ -1430,18 +1428,59 @@ export type WikiSearchOutput = z.infer<typeof wikiSearchOutputSchema>;
 export const wikiHistoryOutputSchema = z.object({ history: z.array(wikiHistoryEntrySchema) });
 export type WikiHistoryOutput = z.infer<typeof wikiHistoryOutputSchema>;
 export const wikiRollbackInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   commitOid: z.string().min(1),
 });
 export const wikiRollbackOutputSchema = z.object({ ok: z.literal(true) });
-/** Same input shape as wiki.page: `{ botId, path }`, path strictly under pages/.
+/** Same input shape as wiki.page: `{ owner, path }`, path strictly under pages/.
  * Standalone schema (not an alias): the two methods' contracts must evolve
  * independently. */
 export const wikiDeletePageInputSchema = z.object({
-  botId: z.string().min(1),
+  owner: wikiOwnerSchema,
   path: z.string().min(1).max(500),
 });
 export const wikiDeletePageOutputSchema = z.object({ ok: z.literal(true) });
+
+// --- wiki sources (D92 T1b WP10; project wikis only — bot wikis have no ledger) ---
+
+/** The submitter of one source: the user, or a bot with its current name. */
+export const wikiSourceCreatorViewSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('user') }),
+  z.object({ kind: z.literal('bot'), id: z.string().min(1), name: z.string().nullable() }),
+]);
+export type WikiSourceCreatorView = z.infer<typeof wikiSourceCreatorViewSchema>;
+/** `name` is the bot's current name; null when deleted (the UI shows the id). */
+export const wikiSourceViewSchema = z.object({
+  id: z.string(),
+  fileName: z.string(),
+  bytes: z.number().int().nonnegative(),
+  kind: z.enum(['text', 'html']),
+  createdBy: wikiSourceCreatorViewSchema,
+  sources: z.array(
+    z.object({
+      type: z.enum(['attachment', 'file', 'url', 'text']),
+      ref: z.string(),
+      at: z.number(),
+    }),
+  ),
+  createdAt: z.number(),
+});
+export type WikiSourceView = z.infer<typeof wikiSourceViewSchema>;
+export const wikiSourcesOutputSchema = z.object({ sources: z.array(wikiSourceViewSchema) });
+export type WikiSourcesOutput = z.infer<typeof wikiSourcesOutputSchema>;
+/** `ref` is the URL, or the pasted body (≤ WIKI_TEXT_SOURCE_MAX_CHARS). */
+export const wikiAddSourceInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  sourceType: z.enum(['url', 'text']),
+  ref: z.string(),
+  note: z.string().max(2000).optional(),
+});
+export const wikiAddSourceOutputSchema = z.object({ ok: z.literal(true) });
+export const wikiDeleteSourceInputSchema = z.object({
+  owner: wikiOwnerSchema,
+  sourceId: z.string().min(1),
+});
+export const wikiDeleteSourceOutputSchema = z.object({ ok: z.literal(true) });
 
 // --- schedules (P10) -------------------------------------------------------------
 
@@ -1496,7 +1535,7 @@ export const todosUpdateInputSchema = z.object({
   assignee: todoAssigneeSchema.nullable().optional(),
   when: todoWhenSchema.optional(),
 });
-/** `warnings`: pre-dispatch hints rendered in place ("该 Bot 未配置模型" / "群已只读"). */
+/** `warnings`: pre-dispatch hints rendered in place ("该 Bot 未配置模型" / "项目组已只读"). */
 export const todosWriteOutputSchema = z.object({
   todo: todoEntrySchema,
   warnings: z.array(z.string()),
@@ -1561,7 +1600,7 @@ export const stickiesDeleteOutputSchema = okOutputSchema;
 // Served by the MAIN process on port B; the core's browser tools are the
 // client (docs/dev/02-architecture.md 端口 B: 核心服务请求平台能力).
 
-/** Loopback (127.0.0.1/localhost) is reachable only with a bound project. */
+/** Loopback (127.0.0.1/localhost) is reachable only with a bound workdir. */
 export const browserNetworkContextSchema: z.ZodType<BrowserNetworkContext> = z.object({
   allowLoopback: z.boolean(),
 });
@@ -1974,24 +2013,23 @@ export const rpcMethodSchemas = {
     output: conversationsMembersOutputSchema,
   },
 
-  'groups.create': { input: groupsCreateInputSchema, output: groupsCreateOutputSchema },
-  /** 对话内群创建（19/D60）：start 建创建中的群并下发第一问，answer 推进四步。 */
-  'groups.setup.start': {
-    input: groupsSetupStartInputSchema,
-    output: groupsSetupStartOutputSchema,
+  'projects.create': { input: projectsCreateInputSchema, output: projectsCreateOutputSchema },
+  'projects.setLead': {
+    input: projectsSetLeadInputSchema,
+    output: projectsSetLeadOutputSchema,
   },
-  'groups.setup.answer': {
-    input: groupsSetupAnswerInputSchema,
-    output: groupsSetupAnswerOutputSchema,
+  'projects.update': {
+    input: projectsUpdateInputSchema,
+    output: projectsUpdateOutputSchema,
   },
-  'groups.setup.cancel': { input: groupsSetupCancelInputSchema, output: okOutput },
-  'groups.rename': { input: groupsRenameInputSchema, output: groupsRenameOutputSchema },
-  'groups.addMembers': {
-    input: groupsAddMembersInputSchema,
+  'projects.addMembers': {
+    input: projectsAddMembersInputSchema,
     output: conversationsMembersOutputSchema,
   },
-  'groups.removeMember': { input: groupsRemoveMemberInputSchema, output: okOutput },
-  'groups.redistribute': { input: groupsRedistributeInputSchema, output: okOutput },
+  'projects.removeMember': { input: projectsRemoveMemberInputSchema, output: okOutput },
+  'episodes.get': { input: episodesGetInputSchema, output: episodesGetOutputSchema },
+  'episodes.resume': { input: episodesResumeInputSchema, output: episodesResumeOutputSchema },
+  'episodes.stop': { input: episodesStopInputSchema, output: episodesStopOutputSchema },
 
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },
@@ -2050,17 +2088,17 @@ export const rpcMethodSchemas = {
     output: unattendedSummaryOutputSchema,
   },
 
-  'projects.list': { input: voidInput, output: projectsListOutputSchema },
-  'projects.get': { input: projectsGetInputSchema, output: projectsGetOutputSchema },
-  'projects.select': { input: projectsSelectInputSchema, output: projectsSelectOutputSchema },
-  'projects.unbind': { input: projectsUnbindInputSchema, output: okOutput },
-  'projects.update': { input: projectsUpdateInputSchema, output: projectsGetOutputSchema },
-  'projects.remove': { input: projectsRemoveInputSchema, output: okOutput },
-  'projects.diff': { input: projectsDiffInputSchema, output: projectsDiffOutputSchema },
-  'projects.revert': { input: projectsRevertInputSchema, output: projectsRevertOutputSchema },
-  'projects.revokeLease': {
-    input: projectsRevokeLeaseInputSchema,
-    output: projectsRevokeLeaseOutputSchema,
+  'workdirs.list': { input: voidInput, output: workdirsListOutputSchema },
+  'workdirs.get': { input: workdirsGetInputSchema, output: workdirsGetOutputSchema },
+  'workdirs.select': { input: workdirsSelectInputSchema, output: workdirsSelectOutputSchema },
+  'workdirs.unbind': { input: workdirsUnbindInputSchema, output: okOutput },
+  'workdirs.update': { input: workdirsUpdateInputSchema, output: workdirsGetOutputSchema },
+  'workdirs.remove': { input: workdirsRemoveInputSchema, output: okOutput },
+  'workdirs.diff': { input: workdirsDiffInputSchema, output: workdirsDiffOutputSchema },
+  'workdirs.revert': { input: workdirsRevertInputSchema, output: workdirsRevertOutputSchema },
+  'workdirs.revokeLease': {
+    input: workdirsRevokeLeaseInputSchema,
+    output: workdirsRevokeLeaseOutputSchema,
   },
 
   'environment.list': { input: voidInput, output: environmentListOutputSchema },
@@ -2130,12 +2168,15 @@ export const rpcMethodSchemas = {
     output: skillsPurgeMissingOutputSchema,
   },
 
-  'wiki.tree': { input: wikiBotIdInputSchema, output: wikiTreeOutputSchema },
+  'wiki.tree': { input: wikiOwnerInputSchema, output: wikiTreeOutputSchema },
   'wiki.page': { input: wikiPageInputSchema, output: wikiPageOutputSchema },
   'wiki.search': { input: wikiSearchInputSchema, output: wikiSearchOutputSchema },
-  'wiki.history': { input: wikiBotIdInputSchema, output: wikiHistoryOutputSchema },
+  'wiki.history': { input: wikiOwnerInputSchema, output: wikiHistoryOutputSchema },
   'wiki.rollback': { input: wikiRollbackInputSchema, output: wikiRollbackOutputSchema },
   'wiki.deletePage': { input: wikiDeletePageInputSchema, output: wikiDeletePageOutputSchema },
+  'wiki.sources': { input: wikiOwnerInputSchema, output: wikiSourcesOutputSchema },
+  'wiki.addSource': { input: wikiAddSourceInputSchema, output: wikiAddSourceOutputSchema },
+  'wiki.deleteSource': { input: wikiDeleteSourceInputSchema, output: wikiDeleteSourceOutputSchema },
 
   'schedules.list': { input: schedulesListInputSchema, output: schedulesListOutputSchema },
   'schedules.cancel': { input: schedulesCancelInputSchema, output: schedulesCancelOutputSchema },
@@ -2148,7 +2189,7 @@ export const rpcMethodSchemas = {
     output: schedulesDeclineOfferOutputSchema,
   },
 
-  // D90 工作台：事项（派给 Bot / 群，到点由宿主代发）与备忘。
+  // D90 工作台：事项（派给 Bot / 项目组，到点由宿主代发）与备忘。
   'todos.list': { input: todosListInputSchema, output: todosListOutputSchema },
   'todos.get': { input: todosIdInputSchema, output: todosGetOutputSchema },
   'todos.create': { input: todosCreateInputSchema, output: todosWriteOutputSchema },
@@ -2402,14 +2443,11 @@ const APP_METHODS = [
   'conversations.delete',
   'conversations.markRead',
   'conversations.members',
-  'groups.create',
-  'groups.setup.start',
-  'groups.setup.answer',
-  'groups.setup.cancel',
-  'groups.rename',
-  'groups.addMembers',
-  'groups.removeMember',
-  'groups.redistribute',
+  'projects.create',
+  'projects.setLead',
+  'projects.update',
+  'projects.addMembers',
+  'projects.removeMember',
   'messages.list',
   'messages.edit',
   'messages.send',
@@ -2446,15 +2484,15 @@ const APP_METHODS = [
   'unattended.enable',
   'unattended.disable',
   'unattended.summary',
-  'projects.list',
-  'projects.get',
-  'projects.select',
-  'projects.unbind',
-  'projects.update',
-  'projects.remove',
-  'projects.diff',
-  'projects.revert',
-  'projects.revokeLease',
+  'workdirs.list',
+  'workdirs.get',
+  'workdirs.select',
+  'workdirs.unbind',
+  'workdirs.update',
+  'workdirs.remove',
+  'workdirs.diff',
+  'workdirs.revert',
+  'workdirs.revokeLease',
   'environment.list',
   'environment.remove',
   'environment.recheck',
@@ -2498,6 +2536,9 @@ const APP_METHODS = [
   'wiki.history',
   'wiki.rollback',
   'wiki.deletePage',
+  'wiki.sources',
+  'wiki.addSource',
+  'wiki.deleteSource',
   'schedules.list',
   'schedules.cancel',
   'todos.list',

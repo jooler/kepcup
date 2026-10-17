@@ -9,8 +9,8 @@
   /**
    * P10 scheduled-task list (docs/dev/phases/P10-proactive.md 任务 7). One
    * component, three surfaces: the direct-chat right-panel tab (current
-   * conversation), the group-info section (every member bot's tasks) and the
-   * settings overview (no conversationId = all schedules).
+   * conversation), the project details page's schedules section (every member
+   * bot's tasks) and the settings overview (no conversationId = all schedules).
    */
   let {
     conversationId = undefined,
@@ -26,7 +26,7 @@
 
   let entries = $state<ScheduleEntry[]>([]);
   let loading = $state(false);
-  /** Two-step cancel: the entry awaiting confirmation (WikiTab rollback precedent). */
+  /** Two-step cancel: the entry awaiting confirmation (WikiBrowser rollback precedent). */
   let cancelTarget = $state<string | null>(null);
   let cancelling = $state(false);
 
@@ -93,7 +93,7 @@
   function ownerText(entry: ScheduleEntry): string {
     if (entry.botId !== null) return entry.botName ?? entry.botId;
     const group = chat.conversations.find((conversation) => conversation.id === entry.conversationId);
-    return t('schedules.workbenchGroup', { name: group?.title ?? entry.conversationId });
+    return t('schedules.workbenchProject', { name: group?.title ?? entry.conversationId });
   }
 
   function whenText(entry: ScheduleEntry): string {

@@ -367,7 +367,7 @@ export class ApprovalsService {
           typeof payload['cwd'] === 'string' && payload['cwd'].length > 0 ? payload['cwd'] : null,
         exemptDirs: workspace !== null ? [workspace] : [],
       }).safe;
-    // git_remote (P04): the command text and the cwd (the project path) both
+    // git_remote (P04): the command text and the cwd (the workdir path) both
     // go through the same floor — a data-directory reference in a remote URL
     // or argument must not auto-approve either.
     const gitRemoteTouchesDataDir =
@@ -478,6 +478,8 @@ export class ApprovalsService {
     routineSelection?: string[],
     /** D88 `bot_handover`: item keys the user kept (incl. `resp:to` / `resp:from`). */
     handoverSelection?: string[],
+    /** D92 T1a WP4: the lead the user picked on a project proposal card (must be a payload member). */
+    leadBotId?: string,
   ): Approval {
     const approval = this.get(id);
     if (!approval) throw new AppError('APPROVAL_NOT_FOUND', `审批 ${id} 不存在`);
@@ -507,7 +509,7 @@ export class ApprovalsService {
       }
       if (approve) {
         keptRoutines = validateRoutineSelection(approval.payload, routineSelection);
-        // Routines without a bot selection keep every bot (validated above: not a group).
+        // Routines without a bot selection keep every bot (validated above: not a project).
         keptSelection ??= (approval.payload['bots'] as unknown[]).map((_, index) => index);
       }
     }
@@ -523,6 +525,20 @@ export class ApprovalsService {
         keptHandover = checked.kept;
         if (checked.kept.length === 0 && !checked.createsBot) approve = false;
       }
+    }
+    // D92 T1a WP4: the lead the user picked on a project proposal card; only a project
+    // proposal accepts it and it must stay one of the payload's members.
+    let keptLead: string | undefined;
+    if (leadBotId !== undefined) {
+      if (approval.kind !== 'butler_proposal') {
+        throw new AppError('INVALID_INPUT', '只有管家提议卡支持改选负责人');
+      }
+      const parsed = butlerProposalPayloadSchema.safeParse(approval.payload);
+      const data = parsed.success ? parsed.data : null;
+      if (data === null || data.proposalType !== 'project' || !data.memberBotIds.includes(leadBotId)) {
+        throw new AppError('INVALID_INPUT', '改选的负责人必须是提议的成员之一（仅建项目组提议支持）');
+      }
+      keptLead = leadBotId;
     }
     // D73 duration degradation: a wider choice is honoured only where the card
     // offered it (`payload.durations`). `bot` ("always for this bot") exists for
@@ -550,7 +566,7 @@ export class ApprovalsService {
       throw new AppError('INVALID_INPUT', '缺少授权有效期（once / conversation）');
     }
     const now = this.#deps.clock.now();
-    const decision: ApprovalDecision | null =
+    let decision: ApprovalDecision | null =
       approve && keptHandover !== undefined
         ? { handoverSelection: keptHandover }
         : approve && duration !== undefined
@@ -561,6 +577,11 @@ export class ApprovalsService {
                 ...(keptRoutines !== undefined ? { routineSelection: keptRoutines } : {}),
               }
             : null;
+    // D92 T1a WP4: a changed lead is recorded alongside the rest of the decision (a
+    // plain approval otherwise writes null).
+    if (approve && keptLead !== undefined) {
+      decision = decision === null ? { leadBotId: keptLead } : { ...decision, leadBotId: keptLead };
+    }
     this.#db
       .prepare('update approvals set status = ?, decision_json = ?, decided_at = ? where id = ?')
       .run(approve ? 'approved' : 'denied', decision ? JSON.stringify(decision) : null, now, id);
@@ -819,7 +840,7 @@ export class ApprovalsService {
   }
 
   /**
-   * D72 project-side agent config confirmations the user approved for one
+   * D72 workdir-side agent config confirmations the user approved for one
    * bot in one conversation (`agent_tool` subtype `config`), newest first.
    * Targeted by subtype (not capped by other approvals, review L6);
    * unattended auto-approvals never count as remembered (review M2).
@@ -1473,11 +1494,11 @@ function describeButlerProposal(payload: Record<string, unknown>): string {
   const parsed = butlerProposalPayloadSchema.safeParse(payload);
   if (!parsed.success) return '提议';
   const data = parsed.data;
-  if (data.proposalType === 'group') {
-    return `提议建群「${data.title}」（${data.memberBotIds.length} 位成员）`;
+  if (data.proposalType === 'project') {
+    return `提议建项目组「${data.title}」`;
   }
   const names = data.bots.map((bot) => bot.name).join('、');
-  return data.proposalType === 'team' ? `提议组建团队：${names}` : `提议新建 Bot：${names}`;
+  return data.proposalType === 'bots' ? `提议组建团队：${names}` : `提议新建 Bot：${names}`;
 }
 
 /**
@@ -1510,7 +1531,7 @@ function describeAgentTool(payload: Record<string, unknown>, untrusted = false):
   const title = wrap(data.title);
   switch (data.kind) {
     case 'config':
-      return `在此项目中运行智能体「${agent}」（将加载项目内的智能体配置：${where}）`;
+      return `在此工作目录中运行智能体「${agent}」（将加载工作目录内的智能体配置：${where}）`;
     case 'execute':
       return `经智能体「${agent}」执行命令：${data.command !== undefined ? wrap(data.command) : title}`;
     case 'read':
@@ -1758,13 +1779,13 @@ const AGENT_TOOL_FLOOR_FIELDS = agentToolApprovalPayloadSchema.pick({
 /**
  * `approvals.decide` selection of a butler proposal (D70): indexes into
  * payload.bots, deduplicated and sorted; any index outside the proposal is
- * rejected. Group proposals have nothing to pick.
+ * rejected. Project proposals have nothing to pick.
  */
 function validateButlerSelection(payload: Record<string, unknown>, selection: number[]): number[] {
   const parsed = butlerProposalPayloadSchema.safeParse(payload);
   if (!parsed.success) throw new AppError('INVALID_INPUT', '提议内容无效');
-  if (parsed.data.proposalType === 'group') {
-    throw new AppError('INVALID_INPUT', '建群提议不支持勾选条目');
+  if (parsed.data.proposalType === 'project') {
+    throw new AppError('INVALID_INPUT', '建项目组提议不支持勾选条目');
   }
   const count = parsed.data.bots.length;
   const kept = [...new Set(selection)].sort((a, b) => a - b);
@@ -1806,8 +1827,8 @@ function validateHandoverSelection(
 function validateRoutineSelection(payload: Record<string, unknown>, selection: string[]): string[] {
   const parsed = butlerProposalPayloadSchema.safeParse(payload);
   if (!parsed.success) throw new AppError('INVALID_INPUT', '提议内容无效');
-  if (parsed.data.proposalType === 'group') {
-    throw new AppError('INVALID_INPUT', '建群提议没有例行事项');
+  if (parsed.data.proposalType === 'project') {
+    throw new AppError('INVALID_INPUT', '建项目组提议没有例行事项');
   }
   const bots = parsed.data.bots;
   const kept = new Set<string>();

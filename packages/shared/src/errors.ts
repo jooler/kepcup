@@ -58,9 +58,9 @@ export const ERROR_CODES = [
    * （task_writes=false）的写路径（文件写、会写入的命令）一律拒绝。
    */
   'RUN_READ_ONLY',
-  // projects
-  'PROJECT_MISSING',
-  'PROJECT_SWITCH_BLOCKED',
+  // workdirs
+  'WORKDIR_MISSING',
+  'WORKDIR_SWITCH_BLOCKED',
   'GIT_CLI_MISSING',
   // environment (P06)
   'ENV_ITEM_UNKNOWN',
@@ -99,6 +99,8 @@ export const ERROR_CODES = [
   'MCP_SERVER_FAILED',
   // butler & delegation (D70 / D71)
   'BOT_UNDELETABLE',
+  // project team (D92 T1a, docs/design/41-project-team.md)
+  'PROJECT_LEAD_REQUIRED',
   // external agents (D72)
   'NOT_SUPPORTED',
   'AGENT_UNAVAILABLE',

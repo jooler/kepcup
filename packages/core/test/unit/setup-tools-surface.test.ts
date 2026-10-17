@@ -25,7 +25,7 @@ describe('buildSetupTools surface', () => {
   });
 
   it('only lets a group interview save the profile', () => {
-    expect(buildSetupTools({ identity, setup, surface: 'group' }).map((tool) => tool.name)).toEqual(
+    expect(buildSetupTools({ identity, setup, surface: 'project' }).map((tool) => tool.name)).toEqual(
       ['save_profile'],
     );
   });

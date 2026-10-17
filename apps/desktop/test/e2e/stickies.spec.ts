@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 interface Session {
   app: ElectronApplication;
@@ -38,13 +39,22 @@ async function startSession(prefix: string): Promise<Session> {
   const llm = await startMockLlm();
   const home = await mkdtemp(path.join(tmpdir(), prefix));
   const { app, page } = await launchApp({ home, llmUrl: llm.url });
+  // Windows CI 的沙箱（WSL2 CLI 在、私有发行版未导入）不可用 → 对话顶部
+  // 悬浮「逐条确认模式」banner（z-30，居中），恰好罩住便签默认落点
+  // （chat 宽 - 288 - 24，y 64 + 28n）的手柄；把窗口加宽到 runner 上限让
+  // 落点离开 banner 的横向覆盖带（windows runner 为 1920×1080）。
+  if (process.platform === 'win32') {
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1920, 1080);
+    });
+  }
   return { app, page, home, llm };
 }
 
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -107,8 +117,9 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     await expect(toolbar.locator('[data-testid="pin-global"]')).toHaveCount(0);
 
     // pin：便签出现在当前对话，内容即选中文本。
-    await toolbar.locator('[data-testid="pin-conversation"]').click();
-    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 5_000 });
+    // 选中期间流式气泡可能整体重挂导致工具栏短暂 detached，重试到稳态为止。
+    await toolbar.locator('[data-testid="pin-conversation"]').click({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 30_000 });
     await expect(page.locator('[data-testid="stickie-card"]')).toContainText(
       '这是一段可以被钉住的回复内容',
     );

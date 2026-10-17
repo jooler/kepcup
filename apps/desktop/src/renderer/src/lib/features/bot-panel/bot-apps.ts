@@ -135,7 +135,7 @@ export function selectAppConnection(
 }
 
 /**
- * 对话卡「连接后授权给当前 Bot」的渲染端兜底（§5.8 群聊：core 只认第一个
+ * 对话卡「连接后授权给当前 Bot」的渲染端兜底（§5.8 项目组：core 只认第一个
  * `apps.connect` 的 `grantBotId`，后加入同一流程的卡片完成后自己补写 Profile）：
  * 已包含则返回 null（无需写），否则返回加入（并替换同应用旧账号）后的 Profile。
  */

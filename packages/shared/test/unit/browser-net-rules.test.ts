@@ -79,7 +79,7 @@ describe('decideBrowserRequest', () => {
     expect(decision.action).toBe('allow');
   });
 
-  test('loopback allowed only with a bound project', () => {
+  test('loopback allowed only with a bound workdir', () => {
     const request = {
       host: '127.0.0.1',
       addresses: ['127.0.0.1'],
@@ -123,7 +123,7 @@ describe('decideBrowserRequest', () => {
         host: address,
         addresses: [address],
         scheme: 'http:',
-        context: ALLOWED, // even a bound project never unlocks these
+        context: ALLOWED, // even a bound workdir never unlocks these
       });
       expect(decision.action).toBe('cancel');
       expect(decision.reason).toBe(reason);
@@ -151,7 +151,7 @@ describe('decideBrowserRequest', () => {
   });
 
   test('blockReasonText renders stable Chinese reasons', () => {
-    expect(blockReasonText('loopback-not-allowed')).toContain('project');
+    expect(blockReasonText('loopback-not-allowed')).toContain('workdir');
     expect(blockReasonText('metadata-address')).toContain('元数据');
   });
 });

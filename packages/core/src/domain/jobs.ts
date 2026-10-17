@@ -1,4 +1,4 @@
-import { newId, type JobType } from '@kepcup/shared';
+import { newId, type JobType, type WikiOwner } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
@@ -274,5 +274,37 @@ export class JobsService {
       )
       .get(botId, ...types) as { t: number | null };
     return row.t ?? 0;
+  }
+
+  /**
+   * {@linkcode lastDoneAt} by wiki owner (D92 T1b WP9): a bot owner is the bot's
+   * own rows; a project owner is the project conversation's rows whose payload
+   * carries `owner.kind === 'project'` (bot-keyed jobs in the same conversation
+   * must not reset the project wiki's lint clock). Requires SQLite JSON1.
+   */
+  lastDoneAtFor(owner: WikiOwner, types: readonly string[]): number {
+    if (owner.kind === 'bot') return this.lastDoneAt(owner.id, types);
+    const placeholders = types.map(() => '?').join(',');
+    const row = this.db
+      .prepare(
+        `select max(updated_at) as t from jobs
+         where conversation_id = ? and status = 'done' and type in (${placeholders})
+           and json_extract(payload_json, '$.owner.kind') = 'project'`,
+      )
+      .get(owner.id, ...types) as { t: number | null };
+    return row.t ?? 0;
+  }
+
+  /**
+   * Cancels one bot's pending jobs of one type in one conversation
+   * (D92 T1b WP9: a member removed from a project loses its queued wiki ingests;
+   * already-done ingests and their sources stay).
+   */
+  cancelPendingByBotInConversation(botId: string, conversationId: string, type: string): number {
+    return this.db
+      .prepare(
+        "update jobs set status = 'cancelled', updated_at = ? where bot_id = ? and conversation_id = ? and type = ? and status = 'pending'",
+      )
+      .run(this.clock.now(), botId, conversationId, type).changes;
   }
 }

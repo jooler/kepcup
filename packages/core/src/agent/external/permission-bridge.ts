@@ -170,15 +170,15 @@ const CONFIG_HASH_MAX_ENTRIES = 5_000;
 const CONFIG_HASH_MAX_BYTES = 32 * 1024 * 1024;
 
 /**
- * project 内 Agent 侧配置（AGENTS.md、`.codex/` …）的内容哈希（安全审查
+ * workdir 内 Agent 侧配置（AGENTS.md、`.codex/` …）的内容哈希（安全审查
  * M2 / 复核第 2 轮）：文件内容与目录树计入；符号链接按 realpath 跟随、哈希
  * 被指向的内容。凡是无法完整确认的——超出上限（5000 项 / 32MB）、链接指向
- * project 之外、读不到——返回一次性的随机值：永不与已记住的哈希相等，即
+ * workdir 之外、读不到——返回一次性的随机值：永不与已记住的哈希相等，即
  * 每次运行都重新确认（fail closed）。
  */
 export function hashAgentConfigFiles(root: string, names: readonly string[]): string {
   const hash = createHash('sha256');
-  const projectRoot = canonicalPath(root);
+  const workdirRoot = canonicalPath(root);
   const seen = new Set<string>();
   let entries = 0;
   let bytes = 0;
@@ -205,12 +205,12 @@ export function hashAgentConfigFiles(root: string, names: readonly string[]): st
         unverifiable = true;
         return;
       }
-      // A link out of the project (or a cycle) cannot be vouched for.
-      if (!isInsidePath(target, projectRoot) || seen.has(target)) {
+      // A link out of the workdir (or a cycle) cannot be vouched for.
+      if (!isInsidePath(target, workdirRoot) || seen.has(target)) {
         unverifiable = true;
         return;
       }
-      hash.update(`link:${relative}:${path.relative(projectRoot, target)}\n`);
+      hash.update(`link:${relative}:${path.relative(workdirRoot, target)}\n`);
       seen.add(target);
       visit(target, relative);
       return;
@@ -321,12 +321,12 @@ export interface AgentPermissionBridgeDeps {
   /** secrets.redact：卡片上的命令 / 标题先脱敏（L1）。 */
   redact?(text: string): string;
   /**
-   * 对话绑定的可用 project 根——仅当该身份**不持有**它的写入租约时（D75 审查
-   * M2：工作目录为 workspace 的写任务、只读 run 等）；持有或没有 project →
-   * null。沙箱外命令一经批准就能写任何地方，可能触及这个 project 的命令
-   * 一律拒绝（不弹卡），否则 project 会在没有租约与检查点的情况下被改写。
+   * 对话绑定的可用 workdir 根——仅当该身份**不持有**它的写入租约时（D75 审查
+   * M2：工作目录为 workspace 的写任务、只读 run 等）；持有或没有 workdir →
+   * null。沙箱外命令一经批准就能写任何地方，可能触及这个 workdir 的命令
+   * 一律拒绝（不弹卡），否则 workdir 会在没有租约与检查点的情况下被改写。
    */
-  unleasedProject?(identity: RunIdentity): string | null;
+  unleasedWorkdir?(identity: RunIdentity): string | null;
   /**
    * D73 P2 污点外发控制（design 29 §8.3）：(Bot, 对话) 读取过连接应用数据后，网络类请求
    * （fetch 类工具、agent 沙箱内自动放行的命令）降为逐次确认（`egress` 卡）。缺省 = 不降级。
@@ -349,8 +349,8 @@ export interface PermissionRequestContext {
   entry: AgentCatalogEntry;
   provider: AgentProvider;
   tier: AgentPermissionTier;
-  /** 会话 cwd（project 或 workspace）。 */
-  workdir: string;
+  /** 会话 cwd（workdir 或 workspace）。 */
+  cwd: string;
   /** run 的取消信号：挂起的审批随之 cancelled。 */
   signal: AbortSignal;
   bridge: SessionBridge | null;
@@ -362,7 +362,7 @@ export interface AgentPermissionHandler {
     request: AcpRequestPermissionRequest,
     ctx: PermissionRequestContext,
   ): Promise<PermissionVerdict>;
-  isolationFor(identity: RunIdentity, workdir: string): AgentIsolation;
+  isolationFor(identity: RunIdentity, cwd: string): AgentIsolation;
   /**
    * 建会话时：沙箱内命令是否必须经宿主裁决（`SessionContext.hostGatesSandboxedExec`）。
    * 缺省（测试替身）= 交给 Agent 自己放行。
@@ -378,7 +378,7 @@ type PathVerdict =
 
 interface Roots {
   dataHome: string;
-  workdirs: string[];
+  cwdRoots: string[];
   skillDirs: string[];
   /** 数据目录里可以触及的目录（无人值守底线的例外）。 */
   exempt: string[];
@@ -399,11 +399,11 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
    * 不可写：cwd 在数据目录外时是整个数据目录，否则（cwd = workspace）是其中
    * 的数据库、日志、备份、toolchains/ 与技能目录——沙箱缺省只允许写 cwd。
    */
-  isolationFor(identity: RunIdentity, workdir: string): AgentIsolation {
-    const roots = this.#roots(identity, workdir);
+  isolationFor(identity: RunIdentity, cwd: string): AgentIsolation {
+    const roots = this.#roots(identity, cwd);
     const paths = this.#deps.paths;
-    const cwd = canonicalPath(workdir);
-    const cwdInside = isInsidePath(cwd, roots.dataHome);
+    const normalizedCwd = canonicalPath(cwd);
+    const cwdInside = isInsidePath(normalizedCwd, roots.dataHome);
     return {
       dataHome: roots.dataHome,
       denyRead: [roots.dataHome],
@@ -486,7 +486,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       return allow('auto', 'host bridge tool');
     }
 
-    const roots = this.#roots(ctx.identity, ctx.workdir);
+    const roots = this.#roots(ctx.identity, ctx.cwd);
     // A sandboxed command asking to reach a host (Claude Code's sandbox proxy):
     // the network side of sandboxed exec, judged before the generic categories.
     const networkHost = ctx.provider.sandboxNetworkHost?.(toolCall as AcpToolCallLike) ?? null;
@@ -540,7 +540,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         if (ctx.tier === 'read_only') return reject('auto', '只读档：无法识别的工具请求一律拒绝');
         return this.#ask(request, ctx, classified, roots, {
           kind: 'other',
-          locations: this.#resolveAll(classified.paths, ctx.workdir),
+          locations: this.#resolveAll(classified.paths, ctx.cwd),
           durations: ['once'],
           reason: '无法识别的工具权限请求',
         });
@@ -569,7 +569,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       });
     }
     // Deduplicated after resolution (`a.txt` and `/proj/a.txt` are one path).
-    const resolved = this.#resolveAll(classified.paths, ctx.workdir);
+    const resolved = this.#resolveAll(classified.paths, ctx.cwd);
     // Review H1: a write the agent asks about although it lies in the cwd
     // (Codex only asks for writes its sandbox refuses) hides the real target.
     const escapes =
@@ -611,13 +611,13 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     const norm = (p: string) => this.#norm(p);
     const candidate = norm(target);
     // 1. Working directories (cwd + this run's workspace).
-    const workdir = roots.workdirs.find((dir) => isInsidePath(candidate, norm(dir)));
-    if (workdir !== undefined) {
+    const cwdRoot = roots.cwdRoots.find((dir) => isInsidePath(candidate, norm(dir)));
+    if (cwdRoot !== undefined) {
       if (mode === 'read') return { kind: 'allow' };
       if (ctx.tier === 'read_only') return { kind: 'reject', reason: '只读档：不允许写入' };
       // Never silently: the repository's own .git (hooks run outside any
       // sandbox) and the agent's own config files (hooks, MCP commands …).
-      const relative = path.relative(norm(workdir), candidate).split(path.sep);
+      const relative = path.relative(norm(cwdRoot), candidate).split(path.sep);
       if (relative.includes('.git')) {
         return { kind: 'ask', reason: '写入仓库的 .git 目录（含 hooks）需确认', sensitive: true };
       }
@@ -658,16 +658,16 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         // target cannot be written during an external run.
         return {
           kind: 'reject',
-          reason: '外部智能体 run 只能写入其工作目录（其他 project 需要另取写入租约）',
+          reason: '外部智能体 run 只能写入其工作目录（其他 workdir 需要另取写入租约）',
         };
     }
   }
 
   /** `candidate` is (inside) one of the provider's agent-side config files of the cwd. */
   #isAgentConfig(ctx: PermissionRequestContext, roots: Roots, candidate: string): boolean {
-    const cwd = this.#norm(roots.workdirs[0] ?? canonicalPath(ctx.workdir));
+    const sessionCwd = this.#norm(roots.cwdRoots[0] ?? canonicalPath(ctx.cwd));
     return ctx.provider.agentSideConfigFiles.some((name) =>
-      isInsidePath(candidate, this.#norm(path.join(cwd, name.replace(/[\\/]+$/, '')))),
+      isInsidePath(candidate, this.#norm(path.join(sessionCwd, name.replace(/[\\/]+$/, '')))),
     );
   }
 
@@ -689,17 +689,17 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
         reason: '执行请求未给出命令',
       });
     }
-    const cwd = this.#resolve(classified.commandCwd ?? ctx.workdir, ctx.workdir);
+    const commandCwd = this.#resolve(classified.commandCwd ?? ctx.cwd, ctx.cwd);
     const norm = (p: string) => this.#norm(p);
     // Review H3: a command working directory inside the data directory (other
     // than this run's workspace / skill dirs) is the same hard floor as paths.
     if (
-      isInsidePath(norm(cwd), norm(roots.dataHome)) &&
-      !roots.exempt.some((dir) => isInsidePath(norm(cwd), norm(dir)))
+      isInsidePath(norm(commandCwd), norm(roots.dataHome)) &&
+      !roots.exempt.some((dir) => isInsidePath(norm(commandCwd), norm(dir)))
     ) {
-      return reject('auto', '命令工作目录位于应用数据目录内', { command, cwd });
+      return reject('auto', '命令工作目录位于应用数据目录内', { command, cwd: commandCwd });
     }
-    const cwdInScope = roots.workdirs.some((dir) => isInsidePath(norm(cwd), norm(dir)));
+    const cwdInScope = roots.cwdRoots.some((dir) => isInsidePath(norm(commandCwd), norm(dir)));
     // Only a command the provider confirms inside its own OS sandbox is ever
     // exempt (review H2): the read-only allowlist would otherwise run it
     // outside any sandbox — Codex's command requests always are.
@@ -714,7 +714,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
           this.#pathVerdict(
             { ...ctx, tier: 'read_only' },
             roots,
-            this.#resolve(candidate, cwd),
+            this.#resolve(candidate, commandCwd),
             'read',
           ).kind === 'allow',
       });
@@ -760,30 +760,30 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       );
     }
     // Past here the command runs outside any sandbox once approved. Without
-    // the bound project's lease (审查 M2) it must provably stay out of the
-    // project — the same fail-closed analysis, with the project as the
+    // the bound workdir's lease (审查 M2) it must provably stay out of the
+    // workdir — the same fail-closed analysis, with the workdir as the
     // forbidden root (cwd inside it, an argument into / above it, or anything
     // it cannot vouch for: refused, no card).
-    const unleased = this.#unleasedProject(ctx.identity);
+    const unleased = this.#unleasedWorkdir(ctx.identity);
     if (unleased === 'unknown') {
-      return reject('auto', '无法确认本次执行是否持有 project 写入租约：沙箱外命令不予执行', {
+      return reject('auto', '无法确认本次执行是否持有 workdir 写入租约：沙箱外命令不予执行', {
         command,
-        cwd,
+        cwd: commandCwd,
       });
     }
     if (unleased !== null) {
       const touches = unattendedCommandVerdict(command, {
         dataHome: unleased,
         homeDir: this.#deps.homeDir ?? os.homedir(),
-        cwd,
+        cwd: commandCwd,
         exemptDirs: [],
         platform: this.#platform,
       });
       if (!touches.safe) {
         return reject(
           'auto',
-          '本次执行没有持有对话 project 的写入租约：可能触及该 project（或无法静态分析）的沙箱外命令不予执行',
-          { command, cwd },
+          '本次执行没有持有对话 workdir 的写入租约：可能触及该 workdir（或无法静态分析）的沙箱外命令不予执行',
+          { command, cwd: commandCwd },
         );
       }
     }
@@ -799,7 +799,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     const analysis = unattendedCommandVerdict(command, {
       dataHome: roots.dataHome,
       homeDir: this.#deps.homeDir ?? os.homedir(),
-      cwd,
+      cwd: commandCwd,
       exemptDirs: workspace !== null ? [workspace] : [],
       platform: this.#platform,
     });
@@ -807,7 +807,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       kind: 'execute',
       locations: [],
       command,
-      cwd,
+      cwd: commandCwd,
       durations: ['once'],
       reason: analysis.safe
         ? base
@@ -892,14 +892,14 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       : reject(via, '污点期间的网络类请求被拒绝', extra);
   }
 
-  /** The unleased bound project (see deps); 'unknown' = the lookup failed (fail closed). */
-  #unleasedProject(identity: RunIdentity): string | null | 'unknown' {
+  /** The unleased bound workdir (see deps); 'unknown' = the lookup failed (fail closed). */
+  #unleasedWorkdir(identity: RunIdentity): string | null | 'unknown' {
     try {
-      return this.#deps.unleasedProject?.(identity) ?? null;
+      return this.#deps.unleasedWorkdir?.(identity) ?? null;
     } catch (error) {
       this.#deps.logger.warn(
         { error: error instanceof Error ? error.message : String(error) },
-        'agent permission project lookup failed',
+        'agent permission workdir lookup failed',
       );
       return 'unknown';
     }
@@ -941,7 +941,7 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
       ...(card.command !== undefined
         ? { command: clean(card.command, AGENT_TOOL_COMMAND_MAX_CHARS) }
         : {}),
-      cwd: card.cwd ?? ctx.workdir,
+      cwd: card.cwd ?? ctx.cwd,
       options: request.options.map((option) => ({
         optionId: option.optionId,
         name: option.name,
@@ -1025,19 +1025,19 @@ export class AgentPermissionBridge implements AgentPermissionHandler {
     );
   }
 
-  #roots(identity: RunIdentity, workdir: string): Roots {
+  #roots(identity: RunIdentity, cwd: string): Roots {
     const dataHome = canonicalPath(this.#deps.paths.home);
     const workspace = this.#deps.gateway.workspacePath(identity);
-    const workdirs = [
-      canonicalPath(workdir),
+    const cwdRoots = [
+      canonicalPath(cwd),
       ...(workspace !== null ? [canonicalPath(workspace)] : []),
     ];
     const skillDirs =
       identity.botId !== null ? this.#deps.skillDirs(identity.botId).map(canonicalPath) : [];
-    const exempt = [...new Set([...workdirs, ...skillDirs])].filter((dir) =>
+    const exempt = [...new Set([...cwdRoots, ...skillDirs])].filter((dir) =>
       isInsidePath(this.#norm(dir), this.#norm(dataHome)),
     );
-    return { dataHome, workdirs: [...new Set(workdirs)], skillDirs, exempt };
+    return { dataHome, cwdRoots: [...new Set(cwdRoots)], skillDirs, exempt };
   }
 
   /** Resolved + deduplicated (review M5: one card row per real path). */

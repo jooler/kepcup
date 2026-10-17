@@ -74,7 +74,7 @@ import { JobsService } from './domain/jobs.js';
 import { RunsService } from './domain/runs.js';
 import { UsageService } from './domain/usage.js';
 import { LifecycleService } from './domain/lifecycle.js';
-import { GroupsService } from './domain/groups.js';
+import { ProjectsService } from './domain/projects.js';
 import { DelegationsService } from './domain/delegations.js';
 import { ProvidersService } from './domain/providers.js';
 import { AuditService } from './domain/audit.js';
@@ -84,9 +84,9 @@ import { BrowserProfilesService } from './browser/profiles.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
-import { CheckpointService } from './project/checkpoints.js';
-import { ProjectRuntime } from './project/service.js';
-import { ProjectsService } from './domain/projects.js';
+import { CheckpointService } from './workdir/checkpoints.js';
+import { WorkdirRuntime } from './workdir/service.js';
+import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
   createEnhancedSandboxBackend,
@@ -117,6 +117,7 @@ import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { SlotYieldingLeaseService } from './scheduler/slot-yielding-lease.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
+import { episodeLimitsFromEnv } from './dispatch/episodes.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
 import { EnvManager } from './env/manager.js';
 import { ENV_CATALOG, loadCatalogOverride } from './env/catalog.js';
@@ -132,6 +133,7 @@ import { SkillImporter } from './skills/library.js';
 import { SkillsService } from './skills/registry.js';
 import { SkillPresetsService } from './skills/presets.js';
 import { WikiService } from './wiki/service.js';
+import { WikiIndexManager } from './wiki/index-manager.js';
 import { ScheduleService } from './schedule/service.js';
 import { MemoService } from './workbench/memo-service.js';
 import { TodoService } from './workbench/todo-service.js';
@@ -468,7 +470,7 @@ export interface CoreDomainServices {
   runs: RunsService;
   usage: UsageService;
   lifecycle: LifecycleService;
-  groups: GroupsService;
+  projects: ProjectsService;
   /** 跨 Bot 委派行（D71）。 */
   delegations: DelegationsService;
   providers: ProvidersService;
@@ -476,7 +478,7 @@ export interface CoreDomainServices {
   approvals: ApprovalsService;
   allowlist: AllowlistService;
   unattended: UnattendedService;
-  projects: ProjectsService;
+  workdirs: WorkdirsService;
 }
 
 export interface CoreServices {
@@ -506,8 +508,8 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
-  /** Project runtime (P04): binding, leases, checkpoints, git remote. */
-  projectRuntime: ProjectRuntime | null;
+  /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
+  workdirRuntime: WorkdirRuntime | null;
   /** P06 environment manager (null while locked / errored). */
   environment: EnvManager | null;
   /** P07 memory & profile domain (null while locked / errored). */
@@ -541,6 +543,8 @@ export interface CoreServices {
   skillPresets: SkillPresetsService | null;
   /** P09 wiki domain (null while locked / errored). */
   wiki: WikiService | null;
+  /** D92 T1b WP9: project wiki wiki.db connection pool (null with the wiki domain). */
+  wikiIndexes: WikiIndexManager | null;
   /** P10 proactive-messaging domain (null while locked / errored). */
   schedules: ScheduleService | null;
   /** D90 工作台事项 (null while locked / errored). */
@@ -693,6 +697,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const wslFixtureScenario = __KEPCUP_TEST_HOOKS__ ? wslFixtureScenarioFromEnv(env) : null;
   // D72 P6 e2e seam: testkit fake ACP agent from the environment (test builds only).
   const fakeAgentSeam = __KEPCUP_TEST_HOOKS__ ? fakeAcpAgentSeamFromEnv(env) : null;
+  // D92 T1a WP8 e2e seam: KEPCUP_TEST_EPISODE_LIMITS="hops,pair" overrides the
+  // episode breaker thresholds (episode-breaker.spec scripts a short ping-pong
+  // instead of 12/8 live mentions). Test-hook builds only: the packaged
+  // artifact folds this whole expression away.
+  const episodeLimitsSeam = __KEPCUP_TEST_HOOKS__ === true ? episodeLimitsFromEnv(env) : undefined;
   const extraAgentEntries = options.agentCatalog ?? fakeAgentSeam?.catalog ?? [];
   const agentLaunch = options.agentLaunch ?? fakeAgentSeam?.launch;
   const wslRunner: WslRunner =
@@ -700,8 +709,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     (wslFixtureScenario !== null
       ? createWslFixtureRunner(wslFixtureScenario)
       : createWslRunner(env));
+  // KEPCUP_WSL_PROMPT=off（e2e seam，同 KEPCUP_ONBOARDING）：真实 Windows CI
+  // runner 上 WSL 未就绪时首启「沙箱准备」提示框常开，盖住 backdrop 拦掉后续
+  // 一切点击；off 即不创建 WslSetup（`sandbox.wslStatus` 回 applicable=false，
+  // 提示框与向导走平台降级展示）。fixture 场景不读这个 seam，sandbox-wizard
+  // 用例照常走真实路径。字符串必须留在 start.ts（打包产物 FORBIDDEN_MARKERS
+  // 依赖 __KEPCUP_TEST_HOOKS__ 折叠把它 DCE 掉）。
+  const wslSetupSuppressedByTestSeam =
+    __KEPCUP_TEST_HOOKS__ === true && env.KEPCUP_WSL_PROMPT === 'off';
   const wslSetup =
-    wslFixtureScenario !== null || process.platform === 'win32'
+    wslFixtureScenario !== null ||
+    (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
       : null;
   const sandbox = createSandboxBackend({
@@ -802,7 +820,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
-    projectRuntime: null,
+    workdirRuntime: null,
     environment: null,
     memory: null,
     media: null,
@@ -816,6 +834,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     skillImporter: null,
     skillPresets: null,
     wiki: null,
+    wikiIndexes: null,
     schedules: null,
     todos: null,
     memos: null,
@@ -890,6 +909,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         services.memory?.closeAll();
       } catch {
         // Connections may already be gone (bot deletion race); nothing to do.
+      }
+      try {
+        services.wikiIndexes?.closeAll();
+      } catch {
+        // Same posture as memory: nothing to do on a close race.
       }
       try {
         await services.apps?.shutdown();
@@ -1066,21 +1090,39 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     const avatars = new BotAvatarService({ paths, clock, bots });
     const conversations = new ConversationsService(mainDb, clock);
     const messages = new MessagesService(mainDb, clock);
-    // 群域服务先于 orchestrator 构造（19/D60 对话内群创建由 orchestrator 调用）；
-    // removeMemberCascade 闭包引用其后的 lifecycle（仅运行期触发，无 TDZ 问题）。
-    // 显式类型标注打断 groups → lifecycle → orchestrator → groups 的推断环。
-    const groups: GroupsService = new GroupsService({
+    // 项目组域服务先于 orchestrator 构造；removeMemberCascade 闭包引用其后的
+    // lifecycle（仅运行期触发，无 TDZ 问题）。显式类型标注打断 projects →
+    // lifecycle → orchestrator → projects 的推断环。
+    const projects: ProjectsService = new ProjectsService({
       db: mainDb,
       clock,
       conversations,
       bots,
       removeMemberCascade: (conversationId, botId) =>
-        lifecycle.removeGroupMember(conversationId, botId),
+        lifecycle.removeProjectMember(conversationId, botId),
       publishConversation: (conversationId) => {
         const conversation = conversations.get(conversationId);
         if (conversation) events.emit('conversation.updated', { conversation });
       },
+      // 可见系统消息（负责人更换 / 成员加入）：与 workdir/service.ts 的
+      // #systemMessage 同一写法与发布方式。
+      appendSystemEvent: ({ conversationId, event, text }) => {
+        const message = messages.append({
+          conversationId,
+          senderType: 'system',
+          kind: 'system_event',
+          event,
+          text,
+        });
+        events.emit('message.created', { conversationId, message });
+      },
+      workdirLabelOf: (conversationId) => {
+        const conversation = conversations.get(conversationId);
+        if (conversation === null || conversation.workdirId === null) return null;
+        return workdirsService.get(conversation.workdirId)?.name ?? null;
+      },
     });
+    bots.attachLeadProjectGuard((botId) => projects.ledProjectsOf(botId));
     const stickies = new StickiesService(mainDb, clock);
     const delegations = new DelegationsService(mainDb, clock);
     const attachments = new AttachmentsService({ db: mainDb, paths, clock });
@@ -1284,7 +1326,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publishBotUpdated: (bot) => events.emit('bot.updated', { bot }),
     });
     const allowlist = new AllowlistService({ db: mainDb, clock, osPlatform: process.platform });
-    const projectsService = new ProjectsService({ db: mainDb, clock });
+    const workdirsService = new WorkdirsService({ db: mainDb, clock });
 
     // Port-B events travel on the same bus; the process entry forwards the
     // platform.* names to the main process (startCoreProcess wires this).
@@ -1329,12 +1371,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
     const leases = new SlotYieldingLeaseService();
-    const projectRuntime = new ProjectRuntime({
+    const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,
       clock,
       logger,
-      projects: projectsService,
+      workdirs: workdirsService,
       conversations,
       messages,
       runs,
@@ -1428,14 +1470,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       catalogEntry: (slug) => connectorCatalog.get(slug),
     });
     // P12 红线：register the mountable directories once the domain services
-    // exist (data home + bound projects + active grants).
+    // exist (data home + bound workdirs + active grants).
     const mountRegistration: MountRegistration = {
       registeredWindowsPaths: () => {
         const registered = new Set<string>([paths.home]);
         for (const conversation of conversations.list()) {
-          if (conversation.projectId === null) continue;
-          const project = projectsService.get(conversation.projectId);
-          if (project !== null) registered.add(canonicalPath(project.path));
+          if (conversation.workdirId === null) continue;
+          const workdir = workdirsService.get(conversation.workdirId);
+          if (workdir !== null) registered.add(canonicalPath(workdir.path));
         }
         for (const grantPath of grants.listActivePaths()) registered.add(canonicalPath(grantPath));
         return [...registered];
@@ -1532,8 +1574,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
     });
     // P09 wiki: before the gateway-independent orchestrator wiring; owns the
-    // per-bot maintenance mutex, RPC reads and weekly lint scheduling (the
+    // per-owner maintenance mutex, RPC reads and weekly lint scheduling (the
     // ingest/lint job runners consume it in jobs-runner).
+    const wikiIndexes = new WikiIndexManager({
+      paths,
+      masterKey,
+      clock: () => clock.now(),
+      logger,
+    });
     const wiki = new WikiService({
       paths,
       clock,
@@ -1541,7 +1589,9 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       jobs,
       bots,
       conversations,
-      memory,
+      indexFor: (owner) =>
+        owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
+      publish: (event, payload) => events.emit(event as never, payload as never),
     });
     const gateway = new ToolGateway({
       paths,
@@ -1559,7 +1609,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       grants,
       allowlist,
       unattended,
-      projects: projectRuntime,
+      workdirs: workdirRuntime,
       environment: {
         toolchainPathPrefix: (platform) => environment.toolchainPathPrefix(platform),
         toolchainsRoot: () => paths.toolchainsDir,
@@ -1704,11 +1754,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       allowlist,
       skillDirs: (botId) => skills.readableDirs(botId),
       redact: (text) => secrets.redact(text),
-      // D75 审查 M2: the bound project when this run does not hold its lease.
-      unleasedProject: (identity) => {
-        const project = projectRuntime.boundProject(identity.conversationId);
-        if (project === null || project.status !== 'available') return null;
-        return projectRuntime.holdsLease(identity, project.path) ? null : project.path;
+      // D75 审查 M2: the bound workdir when this run does not hold its lease.
+      unleasedWorkdir: (identity) => {
+        const workdir = workdirRuntime.boundWorkdir(identity.conversationId);
+        if (workdir === null || workdir.status !== 'available') return null;
+        return workdirRuntime.holdsLease(identity, workdir.path) ? null : workdir.path;
       },
       logger,
     });
@@ -1977,13 +2027,16 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           settingsPermissionEffects.revokeMcpServerChanges(previous, next),
       },
       conversations,
-      groups: {
-        rename: (conversationId, title) => {
-          groups.rename(conversationId, title);
+      projects: {
+        update: (conversationId, patch) => {
+          projects.update(conversationId, patch);
+        },
+        setLead: (conversationId, botId) => {
+          projects.setLead(conversationId, botId);
         },
       },
-      projects: {
-        get: (id) => projectsService.get(id),
+      workdirs: {
+        get: (id) => workdirsService.get(id),
       },
       appConnections: {
         list: () => appConnections.catalogConnectionOptions(),
@@ -2057,7 +2110,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       gateway,
       bots,
       conversations,
-      groups,
+      projects,
       delegations,
       messages,
       attachments,
@@ -2068,12 +2121,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       approvals,
       grants,
-      projects: projectRuntime,
+      workdirs: workdirRuntime,
       sandbox,
       clock,
       logger,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      triageTimeoutMs: parseTriageTimeoutMs(env),
+      judgementTimeoutMs: parseTriageTimeoutMs(env),
+      // The e2e seam (test-hook builds only) wins over the per-part integration seam.
+      episodeLimits:
+        episodeLimitsSeam !== undefined && Object.keys(episodeLimitsSeam).length > 0
+          ? episodeLimitsSeam
+          : parseEpisodeLimits(env),
       publish: (event, payload) => events.emit(event, payload as never),
       environment,
       memory,
@@ -2108,10 +2166,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {
-        topicsSection: (botId) => wiki.topicsSection(botId),
-        search: (botId, query, limit) => wiki.search(botId, query, limit),
-        readPage: (botId, pagePath) => wiki.readPage(botId, pagePath),
+        topicsSection: (owner, options) => wiki.topicsSection(owner, options),
+        search: (owner, query, limit) => wiki.search(owner, query, limit),
+        readPage: (owner, pagePath) => wiki.readPage(owner, pagePath),
         enqueueIngest: (input) => wiki.enqueueIngest(input),
+        enqueueRemoveSource: (input) => wiki.enqueueRemoveSource(input),
+        listSources: (owner) =>
+          wiki.listSources(owner).map((entry) => ({
+            id: entry.id,
+            createdBy: entry.createdBy,
+          })),
+        botName: (botId) => bots.get(botId)?.name ?? null,
+        projectContext: (conversationId) => {
+          const conversation = conversations.get(conversationId);
+          if (conversation === null || conversation.type !== 'project') return null;
+          return {
+            conversationId,
+            leadBotId: conversation.leadBotId ?? null,
+            memberBotIds: conversations.memberBotIds(conversationId),
+          };
+        },
       },
       schedule: scheduleFacade,
       watch: watchFacade,
@@ -2239,7 +2313,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     };
     // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
     // （browser.fetchText），用 Bot 的生效浏览器资料（W8）；本机地址只在对话
-    // 绑定了 project 时可访问（与浏览器工具同一规则）。
+    // 绑定了 workdir 时可访问（与浏览器工具同一规则）。
     const watches = new WatchService({
       db: mainDb,
       clock,
@@ -2252,8 +2326,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       fetcher: services.browserRpc,
       profileKeyFor: (botId) => browserProfiles.profileKeyFor(botId),
       allowLoopback: (conversationId) => {
-        const project = projectRuntime.boundProject(conversationId);
-        return project !== null && project.status === 'available';
+        const workdir = workdirRuntime.boundWorkdir(conversationId);
+        return workdir !== null && workdir.status === 'available';
       },
       deliverAlert: (input) => orchestrator.deliverWatchAlertToBot(input),
       publish: (event, payload) => events.emit(event as never, payload as never),
@@ -2408,18 +2482,19 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         new MemoryAdapter({ memory: handoverMemory, clock: () => clock.now() }),
         // P2：Wiki 与组件在后台 handover_copy 作业里复制。
         new WikiAdapter({
+          // D92 T1b WP9: handover stays bot-only — every call pins the bot owner.
           wiki: {
-            exists: (botId) => wiki.exists(botId),
+            exists: (botId) => wiki.exists({ kind: 'bot', id: botId }),
             pageStats: (botId) => wiki.pageStats(botId),
-            tree: (botId) => wiki.tree(botId),
+            tree: (botId) => wiki.tree({ kind: 'bot', id: botId }),
             pageTitle: (botId, pagePath) => {
               try {
-                return wiki.readPage(botId, pagePath).title;
+                return wiki.readPage({ kind: 'bot', id: botId }, pagePath).title;
               } catch {
                 return pagePath;
               }
             },
-            search: (botId, query, limit) => wiki.search(botId, query, limit),
+            search: (botId, query, limit) => wiki.search({ kind: 'bot', id: botId }, query, limit),
             copySize: (botId, pages) => wiki.copySize(botId, pages),
             pageConflict: (fromBotId, toBotId, pagePath) =>
               wiki.pageConflict(fromBotId, toBotId, pagePath),
@@ -2474,6 +2549,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runsDb,
       bots,
       conversations,
+      projects,
       messages,
       attachments,
       jobs,
@@ -2482,8 +2558,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       abortRunsForBot: (id) => orchestrator.abortRunsForBot(id),
       abortRunsForBotInConversation: (botId, conversationId) =>
         orchestrator.abortRunsForBotInConversation(botId, conversationId),
-      onGroupMemberRemoved: (botId, conversationId) =>
-        orchestrator.groupMemberRemoved(botId, conversationId),
+      onProjectMemberRemoved: (botId, conversationId) =>
+        orchestrator.projectMemberRemoved(botId, conversationId),
       delegations: {
         onConversationDeleted: (conversationId) =>
           orchestrator.delegationsOnConversationDeleted(conversationId),
@@ -2505,14 +2581,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         onConversationDeleted: (conversationId) =>
           orchestrator.agentSessionsOnConversationDeleted(conversationId),
         prepareBotDeletion: (botId) => orchestrator.agentSessionsOnBotDeleted(botId),
-        onGroupMemberRemoved: (botId, conversationId) =>
-          orchestrator.agentSessionsOnGroupMemberRemoved(botId, conversationId),
+        onProjectMemberRemoved: (botId, conversationId) =>
+          orchestrator.agentSessionsOnProjectMemberRemoved(botId, conversationId),
       },
       memory: {
         onConversationDeleted: (conversationId, memberBotIds) =>
           memory.onConversationDeleted(conversationId, memberBotIds),
-        onGroupMemberRemoved: (botId, conversationId) =>
-          memory.onGroupMemberRemoved(botId, conversationId),
+        onProjectMemberRemoved: (botId, conversationId) =>
+          memory.onProjectMemberRemoved(botId, conversationId),
         prepareBotDeletion: (botId) => memory.prepareBotDeletion(botId),
         memoryItemCount: (botId) => memory.memoryItemCount(botId),
       },
@@ -2522,7 +2598,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       },
       wiki: {
         prepareBotDeletion: (botId) => wiki.prepareBotDeletion(botId),
-        wikiPageCount: (botId) => wiki.pageCount(botId),
+        prepareProjectDeletion: (projectId) => wiki.prepareProjectDeletion(projectId),
+        wikiPageCount: (botId) => wiki.pageCount({ kind: 'bot', id: botId }),
+      },
+      wikiIndex: {
+        closeProject: (projectId) => wikiIndexes.closeProject(projectId),
       },
       schedules: {
         deleteForConversation: (conversationId) => schedules.deleteForConversation(conversationId),
@@ -2588,6 +2668,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       paths,
       publish: (event, payload) => events.emit(event as never, payload as never),
       wiki,
+      wikiIndexFor: (owner) =>
+        owner.kind === 'bot' ? memory.storeFor(owner.id) : wikiIndexes.forProject(owner.id),
       schedules,
       watches,
       mail,
@@ -2751,7 +2833,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.browserRpc.onBound(() => watches.wake());
     // Checkpoint retention sweep (docs/dev/phases/P04-project.md): background,
     // best-effort — a swept repo only makes old reverts report unavailable.
-    void projectRuntime
+    void workdirRuntime
       .applyRetention()
       .then((swept) => {
         if (swept.length > 0) logger.info({ swept }, 'checkpoint retention applied');
@@ -2790,7 +2872,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       runs,
       usage,
       lifecycle,
-      groups,
+      projects,
       delegations,
       providers,
       audit,
@@ -2798,13 +2880,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       allowlist,
       unattended,
-      projects: projectsService,
+      workdirs: workdirsService,
       effects,
       revocations,
       browserProfiles,
     };
     services.orchestrator = orchestrator;
-    services.projectRuntime = projectRuntime;
+    services.workdirRuntime = workdirRuntime;
     services.environment = environment;
     services.memory = memory;
     services.media = media;
@@ -2814,6 +2896,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.skillImporter = skillImporter;
     services.skillPresets = skillPresets;
     services.wiki = wiki;
+    services.wikiIndexes = wikiIndexes;
     services.schedules = schedules;
     services.todos = todos;
     services.memos = memos;
@@ -2887,7 +2970,8 @@ function parseCurationDelayMs(env: NodeJS.ProcessEnv): number | undefined {
 }
 
 /**
- * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS (the
+ * Test hook: KEPCUP_TRIAGE_TIMEOUT_MS overrides TRIAGE_TIMEOUT_MS for the
+ * routing judgements (D92 T1a: the continuation check and the lead gate; the
  * constants.ts default stays the single source of truth for production).
  */
 function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
@@ -2895,6 +2979,23 @@ function parseTriageTimeoutMs(env: NodeJS.ProcessEnv): number | undefined {
   if (raw === undefined || raw.length === 0) return undefined;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * Test hook (D92 T1a WP2): KEPCUP_EPISODE_HOP_BREAKER / KEPCUP_EPISODE_PAIR_BREAKER
+ * override the episode breaker thresholds (integration tests script a short
+ * ping-pong instead of 12/8 live mentions). Unset parts fall back to the
+ * shared constants.
+ */
+function parseEpisodeLimits(
+  env: NodeJS.ProcessEnv,
+): { hops?: number; pair?: number } | undefined {
+  const hops = Number(env.KEPCUP_EPISODE_HOP_BREAKER);
+  const pair = Number(env.KEPCUP_EPISODE_PAIR_BREAKER);
+  const limits: { hops?: number; pair?: number } = {};
+  if (Number.isFinite(hops) && hops > 0) limits.hops = Math.floor(hops);
+  if (Number.isFinite(pair) && pair > 0) limits.pair = Math.floor(pair);
+  return limits.hops !== undefined || limits.pair !== undefined ? limits : undefined;
 }
 
 /**

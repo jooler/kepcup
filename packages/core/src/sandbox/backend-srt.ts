@@ -57,7 +57,7 @@ export function srtFilesystemFor(policy: SandboxPolicy): SandboxRuntimeConfig['f
 /** Exposed for policy unit tests; srt shapes never leave this module. */
 export function srtNetworkConfigFor(policy: SandboxPolicy): SrtNetworkConfig {
   const { domains, resolvedAddresses } = alwaysDeniedDomainEntries();
-  // A project-bound conversation may listen on and reach localhost (dev
+  // A workdir-bound conversation may listen on and reach localhost (dev
   // servers): srt's allowLocalBinding opens bind/inbound/loopback-outbound
   // in the sandbox profile, and the loopback deny entries must leave the
   // proxy blocklists. Loopback traffic itself bypasses the proxy via

@@ -12,7 +12,7 @@ import {
   fakeAgentSpawner,
   isTaskRequest,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -684,7 +684,7 @@ describe('agent sessions of tasks (P5-2 re-review 复审 #1, #7; D75 §8.5)', ()
     });
     const bot = await agentBot(stack, 'fake');
     const other = await makeBot(stack.core, '旁人');
-    const group = await makeGroup(stack.core, '群', [bot.id, other.id]);
+    const group = await makeProject(stack.core, '群', [bot.id, other.id]);
     stack.llm.script('mock-main', [
       ...dispatch(stack, () => group.id, '问一下', { instruction: 'TASK-GROUP 回答' }),
     ]);
@@ -742,7 +742,7 @@ describe('agent sessions of tasks (P5-2 re-review 复审 #1, #7; D75 §8.5)', ()
       );
       const bot = await agentBot(stack, 'fake-restore');
       const other = await makeBot(stack.core, '旁人');
-      const group = await makeGroup(stack.core, '群', [bot.id, other.id]);
+      const group = await makeProject(stack.core, '群', [bot.id, other.id]);
       const groupId = () => group.id;
       stack.llm.script('mock-main', [
         ...dispatch(stack, groupId, '第一问', { instruction: 'TASK-ONE 回答' }),

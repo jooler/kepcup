@@ -14,7 +14,7 @@
   3. **能力注入可选**：KepCup 的宿主能力（记忆、Wiki、定时、浏览器、检索、图像 / 语音 / 视频生成、图片理解、语音转写、委派、技能、宿主操作、用户 MCP 等）按**能力包**组织，经**宿主 MCP 桥**注入外部 Agent。Bot 使用外部 Agent 时，用户逐包勾选注入哪些能力；默认值 = 「该 Agent 不具备的能力全部注入」（由 Agent 描述符声明其原生能力，未知按不具备处理）。对话核心能力（`send_message` / `skip_reply` / 消息与执行记录查询）必选。能力包分两类：**宿主语义类**（对话、记忆、Wiki、定时、协作、技能、宿主操作）以 KepCup 工具为准，Agent 不得用自带的近似手段替代；**补位类**（检索、浏览器、图像 / 语音 / 视频生成、图片理解、语音转写、用户 MCP）**原生优先**——注入的补位工具在工具描述与平台规则中都明确标为「仅当你没有等价的内置能力，或内置能力不可用 / 失败时才使用」（§4.2）。
   4. **可扩展的 Agent 供应商**：每个 Agent 是一个 **Provider**（目录条目 + 可选的行为覆盖模块），通用 ACP Provider 覆盖协议标准部分，各家只写差异（启动参数、指令注入方式、权限模式映射、原生能力、条款提示）；不支持 ACP 的 Agent 以**进程内协议垫片**（把其私有协议翻译为 ACP 语义）接入同一管道。新增 Agent = 加一个目录条目 + 一个 Provider 模块 + 在登记表里加一行，并通过统一的 Provider 契约测试。
   5. **本期 Agent**：Claude Agent、Codex、OpenCode、DeepSeek Harness、Cursor、Google Antigravity（ACP 均已具备，ACP Registry 均已收录）；Antigravity 因其条款禁止第三方软件使用 Google 个人账号登录，**只开放 API key / Vertex / Enterprise 登录方式**（个人订阅登录在 Provider 层过滤）；ZCode 无 ACP，原计划以进程内垫片接入；P0 只读评估曾认为可完整覆盖，P5 实现前复核推翻（订阅鉴权须由宿主读取 / 中转凭据）→ 按「不能完整覆盖即放弃」**已放弃**（`docs/dev/DEVIATIONS.md` DEV-008，§9.2）。
-  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、群聊、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能以「实验」开关发布。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
+  6. **不变的原则**：换的是 loop，不换 Bot——对话、mailbox、执行记录、续接、中间说明、人设 / 记忆 / Wiki / Skills 注入、项目组沟通、委派、审批与审计全部留在宿主；外部 Agent 自带的文件 / 命令工具在其**自身沙箱**内运行，权限请求进入 KepCup 的分级与审批卡；**KepCup 不接触、不存储、不中转**任何订阅凭据，登录走厂商官方流程，进程使用厂商**未修改**的官方二进制。功能以「实验」开关发布。**Claude Agent 在开发期间与其他 Agent 同等对待（默认可启用、全部功能走通）**，是否随发行版发布在发行前由产品确认后决定（目录条目带 `releaseGate`，未放行时发行构建不收录该条目，代码保留）（§9.3）。
 
 
 
@@ -23,11 +23,11 @@
 > **D75 修订**：拆分为「对话轮 + 任务」后，**对话轮固定走内置引擎，外部 Agent 只作任务引擎**（`runtime.agent` 的语义从「Bot 的引擎」变为「Bot 的**任务**引擎」）。下表随之变化：
 > - `delegate_task`（D66）不提供 → **该让渡消失**：并行由宿主任务层提供，不依赖 Agent 自身能力；
 > - 每次请求前刷新系统提示词「降级」→ **仅任务内降级**，对话轮（人设 / 画像 / 记忆 / Wiki 目录 / Skills）逐轮刷新；
-> - 人设 / 记忆 / 对话上下文 / 群聊 / 委派 / 审批「保留」→ 不再依赖提示词注入的保真度，它们本就运行在内置的对话轮里；
+> - 人设 / 记忆 / 对话上下文 / 项目组沟通 / 委派 / 审批「保留」→ 不再依赖提示词注入的保真度，它们本就运行在内置的对话轮里；
 > - `features.parallelSessions`（**D72 已实现**，2026-10-08）：指同一 Agent 进程里**多个会话**能否同时有 prompt 在途（AgentHost 让同一 Agent 的会话共用一个进程）；「每会话同一时刻一个 prompt」是所有 ACP Agent 的通用行为，与此无关。按锁定版本源码实证：Claude / Codex / OpenCode / DeepSeek Harness 为 true；Cursor（闭源，随包 JS 看似支持但从严）、Antigravity 与通用 ACP 为 false（见 §9.2）；false 的 Agent 并发恒为 1（用户覆盖也钳到 1）、不跑后台任务——D75 的任务并发同样以此为上限；
 > - steering 不支持时 `inject_task` 返回 `queued`；异步拒绝（`onSteerRejected`）同样把该条注入记为 `queued`（任务卡显示「未送达」），对话轮可改用 `cancel_task` + `start_task({continues_task_id})`；取消 = `session/cancel`、不杀进程，重启优先走会话继承（冷启动有实测代价）；
 > - **会话按任务分**（main 迁移 0019）：`agent_sessions` 唯一键加 `task_id`（`''` = 非任务 run 的行），每个任务独占会话行、桥 token 与已见记录；任务行的会话键 = `bot:conv:agent:task:{会话行 id}`——键随会话行而不是任务 id，继承只改行的 `task_id`、键与 token 随行沿用（见 DEV-010）。`continues_task_id` 在旧任务执行结束后单条 `UPDATE` 继承其行，指纹不符照旧新建；仍在执行（含被 reaper 驱逐、尚未退场）的旧任务的会话不被继承。结算后的任务会话保留 `CONTINUATION_WINDOW_MS`（30 分钟），之后由 reaper `session/close` 并删行。任务的对话增量只取共享行；被确认的注入与 `forward_task_result` 原文转发的消息记为该会话已见。
-> - 只读任务强制 `read_only` 档；任务 cwd = `task_workdir`，写任务的租约由任务层在启动前取得；workdir 为 workspace 的任务不注入 `<project>` 段，其沙箱外命令若触及未持租约的 project 一律拒绝（不弹卡）。
+> - 只读任务强制 `read_only` 档；任务 cwd = `task_cwd`，写任务的租约由任务层在启动前取得；cwd 为 workspace 的任务不注入 `<workdir>` 段，其沙箱外命令若触及未持租约的 workdir 一律拒绝（不弹卡）。
 > - 并发：`agent:{id}` 的名额全归任务——不为回复预留、回复也不借用；任务层另按 `agent:{id}` 封顶启动，超出的停在 submitted（「等智能体并发额度」）。
 > - 无内置模型的用户：只实现「关闭路由判断」一级——对话轮不调模型、宿主确定性路由：结果原文转发，新消息注入进行中的任务、注入没送达就另起任务，没有进行中的任务就派一个；经 `complete()` 跑对话轮未实现（见 DEV-011）。**明确是降级**。
 > - 外部智能体任务没有 `ask_user`（不在任何能力包内）；D56 回放随自动续接一并移除，任务之间只有 `continues_task_id` 的显式回放。
@@ -39,15 +39,15 @@
 
 | 能力                                                      | 外部 Agent 下        | 方式                                                                                                                              |
 | ------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 人设、用户画像、记忆、Wiki 目录、Skills 列表、project / workspace / 授权信息 | 保留                | 会话级提示词 + 每个 run 的 prompt 动态段（§5）                                                                                                |
+| 人设、用户画像、记忆、Wiki 目录、Skills 列表、workdir / workspace / 授权信息 | 保留                | 会话级提示词 + 每个 run 的 prompt 动态段（§5）                                                                                                |
 | 对话上下文、触发段、续接（D56）                                       | 保留                | 首条 prompt；会话复用时只发增量（§7）                                                                                                         |
 | 执行中注入新消息（D2）                                            | 视 Agent 而定        | ACP `_session/steering` 扩展（Claude / Codex 支持，须带 `idleBehavior:'promptRequired'`）；不支持的 Agent 回落为 run 结束后再投递（现有 pending steer 机制） |
 | 中间说明投送（D54）、最终回复自动发送（D48）                               | 保留                | `agent_message_chunk` 按工具调用边界切分                                                                                                 |
 | 宿主能力（记忆、Wiki、定时、浏览器、媒体生成、委派…）                           | 保留，**按 Bot 可选注入** | 宿主 MCP 桥 + 能力包（§4）                                                                                                              |
-| 群聊、@ 连锁（D4）、管家与委派（D70/D71）                              | 保留                | 引擎无关；连锁预算按轮数折算                                                                                                                  |
+| 项目组沟通、协作回合（Bot 间 `@`，D92）、管家与委派（D70/D71）          | 保留                | 引擎无关（协作回合与熔断由宿主记账）                                                                                                                  |
 | 写入租约（D29）、检查点与回退（D30）                                   | 保留，粒度变粗           | run 开工前显式取租约、**整个 run 持有**；检查点为租约起止的前后快照                                                                                        |
-| 文件 / 命令工具                                               | **让渡**            | 用 Agent 自带工具；KepCup 沙箱、网关路径检查、project `protectRules`、Bot `network_policy` 都不覆盖（§6）                                              |
-| project 以外路径的读取保密（D36）                                  | **让渡**            | Agent 沙箱一般允许全盘只读；只对应用数据目录显式拒读                                                                                                   |
+| 文件 / 命令工具                                               | **让渡**            | 用 Agent 自带工具；KepCup 沙箱、网关路径检查、workdir `protectRules`、Bot `network_policy` 都不覆盖（§6）                                              |
+| workdir 以外路径的读取保密（D36）                                  | **让渡**            | Agent 沙箱一般允许全盘只读；只对应用数据目录显式拒读                                                                                                   |
 | 每次请求前刷新系统提示词                                            | **降级**            | 只能每个 run 刷新一次                                                                                                                   |
 | 费用核算与预算                                                 | **降级**            | 订阅制无单价；只记 token（若上报）与轮数 / 时长上限                                                                                                  |
 | `delegate_task`（D66）、durable 恢复（D67）                    | 不提供               | Agent 自带子代理；ACP run 一律 ephemeral（D49）                                                                                           |
@@ -155,7 +155,7 @@ interface AgentCatalogEntry {
 
 > **D91 修订（能力包表）**：新两件套 `capability_search` / `capability_call` 在 `HOST_CAPABILITIES` 里登记为 `mcp` 与 `apps` 两包**共有**的精确名（`sharedTools`）：任一包被选中即注入，两包都不选则没有；声明能力的内联工具照旧按前缀归包（`mcp_*` → `mcp`，`app_*` → `apps`）。两件套的索引只含被选中包的条目（只选 `mcp` → 只含自定义 MCP；只选 `apps` → 只含目录连接），由 orchestrator 构建外部引擎任务的两件套时按包过滤。表中 `mcp` 行的「该 Bot 勾选的用户 MCP server 工具」同时改为「任务声明的能力的内联工具 + 两件套」。邮件包 `mail` 的工具随绑定变化（`mail_request_setup` 始终注入，有绑定时另加五个读写工具，2026-10-16 后续修订取消了二者互斥），设置页的预估数按登记的 6 个计。见 [40](40-capability-mounting.md) §6、§7。
 
-- 外部 Agent 下**永不注入**：`read/write/edit/grep/find/ls/bash`、`request_access`、`request_unsandboxed`、`acquire_project_write`、`delegate_task`（与原生能力或宿主机制冲突）。
+- 外部 Agent 下**永不注入**：`read/write/edit/grep/find/ls/bash`、`request_access`、`request_unsandboxed`、`acquire_workdir_write`、`delegate_task`（与原生能力或宿主机制冲突）。
 - 默认值计算：`core` 必选；其余 = 默认注入的包 − Agent 描述符 `nativeCapabilities` 覆盖的包。用户可任意增减（`core` 除外）；为已有原生能力的 Agent 勾选补位包时按 §4.2 原生优先注入（UI 提示「该 Agent 自带此能力，注入后仅作兜底」）。
 - 前置配置缺失的包仍可勾选，UI 标「未配置」；调用时走既有 `SETUP_REQUIRED` → 对话内设置卡（D58/D68）。
 - 内置引擎不受影响（仍拿到全部工具）。
@@ -204,23 +204,23 @@ interface AgentCatalogEntry {
 | 层         | 注入方式（由 Provider 声明）                                                                          | 内容                                                                                                                                 |
 | --------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | 会话级（相对静态） | `meta-append`（Claude：`_meta.systemPrompt.append`）或 `prompt-prefix`（会话首个 prompt 前置段，复用会话时不重发） | ACP 版 `<platform_rules>` 与 `<tool_policy>`（随注入能力变化，§4.2）、`<identity>`、`<persona>`、`<conversation_info>`                            |
-| run 级（动态） | 每个 run 的 prompt 首个 text 块                                                                    | `<user_profile>`、`<my_state>`、`<relevant_memories>`、`<project>`、`<workspace>`、`<access>`、`<wiki_topics>`、`<skills>`、对话上下文段、续接段、触发段 |
+| run 级（动态） | 每个 run 的 prompt 首个 text 块                                                                    | `<user_profile>`、`<my_state>`、`<relevant_memories>`、`<workdir>`、`<workspace>`、`<access>`、`<wiki_topics>`、`<skills>`、对话上下文段、续接段、触发段 |
 
 
 - 进程级配置（Codex `CODEX_CONFIG`、OpenCode `OPENCODE_CONFIG_CONTENT`）一个进程所有会话共用，**不能**承载 Bot 人设；只放全局覆盖项（审批 / 沙箱 / 关闭外部指令文件回退）。
-- **不加载 Agent 侧配置**（默认）：Claude `settingSources: []`（`project` 来源会加载仓库 `.claude/settings.json` 的 hooks——沙箱外执行——与 allow 规则——绕过权限桥）；OpenCode 关闭 CLAUDE.md 回退（`OPENCODE_DISABLE_CLAUDE_CODE`*）。无法关闭的（Codex 加载 project `.codex/config.toml` 与 `AGENTS.md`，OpenCode 加载 `AGENTS.md` 与全局配置）由 Provider 声明，project 含此类文件时首次运行前弹框确认，且 `<project>` 段不重复注入 Agent 自己会读的文件。
+- **不加载 Agent 侧配置**（默认）：Claude `settingSources: []`（`workdir` 来源会加载仓库 `.claude/settings.json` 的 hooks——沙箱外执行——与 allow 规则——绕过权限桥）；OpenCode 关闭 CLAUDE.md 回退（`OPENCODE_DISABLE_CLAUDE_CODE`*）。无法关闭的（Codex 加载 workdir `.codex/config.toml` 与 `AGENTS.md`，OpenCode 加载 `AGENTS.md` 与全局配置）由 Provider 声明，workdir 含此类文件时首次运行前弹框确认，且 `<workdir>` 段不重复注入 Agent 自己会读的文件。
 - 图片附件（D61）在 `promptCapabilities.image` 为真时作为 ACP `image` 块，否则降级为文本行。
 
 
 
 ## 6 原生工具的隔离与权限
 
-外部 Agent 的文件 / 命令工具在**其进程内直接操作真实文件系统**（已核对：claude-agent-acp、codex-acp 都不调用 ACP 客户端的 `fs/`* / `terminal/*`）。D35 / D27、project `protectRules`、Bot `network_policy` 对这些工具不成立。补偿措施（Provider 负责把档位映射到各家的模式 / 配置）：
+外部 Agent 的文件 / 命令工具在**其进程内直接操作真实文件系统**（已核对：claude-agent-acp、codex-acp 都不调用 ACP 客户端的 `fs/`* / `terminal/*`）。D35 / D27、workdir `protectRules`、Bot `network_policy` 对这些工具不成立。补偿措施（Provider 负责把档位映射到各家的模式 / 配置）：
 
 
 | 措施               | 规定                                                                                                                                                                             |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 工作目录             | `cwd` = 对话绑定的 project，未绑定则 workspace（位于 `~/.kepcup` 内）；不传 `additionalDirectories`                                                                                              |
+| 工作目录             | `cwd` = 对话绑定的 workdir，未绑定则 workspace（位于 `~/.kepcup` 内）；不传 `additionalDirectories`                                                                                              |
 | Agent 自身沙箱       | 有 OS 沙箱的 Agent 必须开启（Claude 原生沙箱 + `denyRead`/`denyWrite` 覆盖 `~/.kepcup` 其余部分；Codex `workspace-write`）；**永不**使用 bypass / auto / dontAsk / full-access 一类模式（Provider 层过滤，UI 不出现） |
 | 无 OS 沙箱的 Agent   | （如 OpenCode、DeepSeek Harness、Cursor、Antigravity）`workspace` 档下工作目录内编辑可放行，但**每条命令都弹卡**（等同 D39 逐条确认），经其权限配置（如 `OPENCODE_PERMISSION`）强制命令走询问                                         |
 | 权限档位             | `read_only` · `workspace`（默认）· `ask`（编辑前确认：文件工具写入与联网读取逐次确认；沙箱内命令及其写入自动放行，f2b9627）；`preview` 档 Agent 默认 `ask`；收到 `current_mode_update` 偏离档位时改回并审计；各档实际行为见 [13 档位表](13-permissions.md#外部智能体引擎d72) |
@@ -228,10 +228,10 @@ interface AgentCatalogEntry {
 | PermissionBridge | `mcp__kepcup__*` 直接放行（桥内另走网关审批）；路径优先级「cwd 与技能目录 → 应用数据目录其余部分（拒绝）→ 网关 `checkPath`」；工作目录内按档位；越界读写弹 `agent_tool` 卡（复用 D37：仅这一次 / 本对话内）；命令命中内置白名单（D40）放行（自定义条目在只读档与污点期间不算），否则弹卡且只有「仅这一次」；看不懂的请求弹卡      |
 | 选项映射             | 只按 Provider 声明的 **optionId 白名单**选 `allow_once` / `reject_once`；不选 `allow_always`、不选任何会切换模式的选项                                                                                  |
 | 无人值守（D41）        | `agent_tool` 自动批准并审计，但并入数据目录底线：命令或路径触及应用数据目录（workspace / 技能目录除外）时拒绝                                                                                                            |
-| 写入租约 / 检查点       | project 绑定且档位可写时，run 开工前显式取租约（现有租约是首次写工具调用时懒取），整 run 持有，前后快照照常                                                                                                                 |
+| 写入租约 / 检查点       | workdir 绑定且档位可写时，run 开工前显式取租约（现有租约是首次写工具调用时懒取），整 run 持有，前后快照照常                                                                                                                 |
 | Windows          | 无沙箱的 Agent 强制 `ask`；日后可选在 KepCup 的 WSL 发行版中运行 Agent                                                                                                                            |
 | 读取让渡（披露）    | Agent 沙箱的**读**多半不受限：Codex 的 read-only / workspace-write 沙箱可不经请求读取整台电脑（含应用数据目录里其他 Bot 的 workspace、技能、日志）；Claude 原生沙箱的 `denyRead` 只约束 Bash，Read 工具越界靠权限请求。联网读取（WebFetch / WebSearch，`kind: fetch`）在只读 / 工作区档自动放行（外泄通道）。两者在 Bot 首次切换弹框与 Bot 详情中明示；「加载我的个人配置」开启后个人配置中的放行规则与钩子绕过权限桥，设置页醒目警告 |
-| Agent 侧配置       | project 内 Agent 自读且无法关闭的配置（`agentSideConfigFiles`）首次运行前确认，按内容哈希记住到对话（内容变化重新确认，无人值守的自动批准不算记住）；Agent 对这些文件与仓库 `.git/` 的写入一律弹卡 |
+| Agent 侧配置       | workdir 内 Agent 自读且无法关闭的配置（`agentSideConfigFiles`）首次运行前确认，按内容哈希记住到对话（内容变化重新确认，无人值守的自动批准不算记住）；Agent 对这些文件与仓库 `.git/` 的写入一律弹卡 |
 | 命令               | 只读白名单只对 Provider 确认「在其自身沙箱内运行」的命令生效（Codex 只为越出沙箱的命令发请求 → 恒弹卡）；命令工作目录位于数据目录（workspace / 技能目录除外）直接拒绝 |
 
 
@@ -246,7 +246,7 @@ interface AgentCatalogEntry {
 - **长耗时宿主工具**：桥调用超过 `AGENT_BRIDGE_TOOL_DETACH_MS`（45 s，低于 Codex 不可调的约 60 s MCP 超时）先应答「已转入后台」并继续执行；prompt 结束后 run 等待其完成，再以 follow-up prompt 把结果送回同一会话、同一 run（等待用户审批的工具因此不会被超时取消）。等待与 follow-up 都受 run 自身的时间上限约束（自 run 开始算；follow-up 只得到剩余时间，有下限）：到期中止仍在后台的调用，只发一次报告超时的 follow-up 即结算。
 - **跨会话并发**（2026-10-08）：同一 Agent 的所有会话共用一个进程，同一时刻有几个会话在跑 prompt 由 `features.parallelSessions` 决定——声明 true（经锁定版本源码核对：会话表、逐会话的取消 / 轮次状态、没有进程级「当前 prompt」，§9.2）的 Agent 按 `agent:{id}` 并发上限（缺省 `AGENT_DEFAULT_CONCURRENCY`）并行；false 的 Agent 并发恒为 1，用户在设置里调高也被钳到 1（fail-safe，设置页显示生效值）。调度器、后台路由与设置视图共用 `providers/index.ts` 的 `agentConcurrency()`。
 - **执行记录**：`runs.engine`（`builtin` | `agent:{id}`）、`runs.agent_session_id`。
-- **中断 / 删除**：进程退出或崩溃 → 活跃 run 失败（应用退出时按 D49 标中断）；该会话不再留在（已不存在的）进程里、桥 token 吊销，但会话行保留，下次 run 经 `session/resume` / `session/load` 恢复（Provider / Agent 不支持则新建）——崩溃本身不算「中毒」；只有 run 在崩溃前已因自身原因中毒（超时、取消后不应答、会话设置调用不应答、模式纠偏失败）才删行；对话 / Bot 删除或移出群时 `session/delete`（Agent 支持且会话仍开在活进程里时，尽力而为）并删行；删除发生在会话建立 / 恢复期间（级联时会话尚不存在）时，会话建好后 orchestrator 拒绝记录并丢弃它——不发 prompt、释放时 `session/delete`；复核期间的进程崩溃同样不算中毒；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
+- **中断 / 删除**：进程退出或崩溃 → 活跃 run 失败（应用退出时按 D49 标中断）；该会话不再留在（已不存在的）进程里、桥 token 吊销，但会话行保留，下次 run 经 `session/resume` / `session/load` 恢复（Provider / Agent 不支持则新建）——崩溃本身不算「中毒」；只有 run 在崩溃前已因自身原因中毒（超时、取消后不应答、会话设置调用不应答、模式纠偏失败）才删行；对话 / Bot 删除或移出项目组时 `session/delete`（Agent 支持且会话仍开在活进程里时，尽力而为）并删行；删除发生在会话建立 / 恢复期间（级联时会话尚不存在）时，会话建好后 orchestrator 拒绝记录并丢弃它——不发 prompt、释放时 `session/delete`；复核期间的进程崩溃同样不算中毒；Agent 自己的磁盘历史不归 KepCup 管理，删除提示中说明。
 
 
 
@@ -257,13 +257,13 @@ interface AgentCatalogEntry {
 - **后台 loop**（P6 已实现，P6 审查修复后）：有内置模型则照旧；只有外部 Agent 时由 `agent/llm-router.ts` 改走外部 Agent。`complete()` 用一次性精简会话（Claude 替换式系统提示词字符串、`tools: []`、`settingSources: []`；以新建的空私有临时目录作 cwd、结束即删；不挂宿主桥、不复用任何会话、结束即 `session/close`），只输出 JSON（Schema 写进系统提示词），复用 `structured.ts` 文本 JSON 回退 + zod，**只在输出无法解析时**重试 1 次（重试提示「只输出 JSON」；调用失败 / 超时 / 取消不重试）；Wiki 维护 / 技能生成这类带工具的 loop 以同样的后台精简会话 `startRun`（时限 `AGENT_BACKGROUND_RUN_TIMEOUT_MS`，10 分钟），工具只经宿主桥注入，原生工具的权限请求不弹卡、一律拒绝。
   - **后台会话没有原生工具**：只有 Provider 声明 `backgroundNoNativeTools`（经核对能为该会话完全关闭原生工具）的 Agent 可用于后台——本期只有 Claude（`tools: []`，会话级）与 testkit 假 Agent；引擎对其他 Agent 拒绝开后台会话（第二道防线）。私有临时 cwd 只说明工作目录不是用户 workspace，**不等于**读不到用户文件：能否读取取决于工具——后台会话没有原生工具，只能经宿主桥工具（受网关 / 数据目录规则约束）访问。OpenCode 1.18.35 理论上可用 `"*":"deny"` + 只放行 `{server}_*` 关掉全部原生工具（`Permission.disabled` 对末条命中为 `"*"`/deny 的工具直接下架，离线核对内嵌源码），但其权限配置是进程级（`OPENCODE_CONFIG_CONTENT`），需要单独的后台进程，本期不做（届时后台会话同样先过 Provider 的 `checkConfig`——引擎在每次建 / 恢复 / 复用会话前都调用，后台会话走同一路径）；Codex / Cursor / DeepSeek Harness / Antigravity 未核实能否关闭，均不可用于后台。
   - **合格条件**（`agentBackgroundBlocker`，设置页逐个列出原因）：上一条；未开启「加载我的个人配置」（OpenCode / Cursor 按进程加载个人配置，Claude 虽是会话级也一并排除，从严）；能同进程并行会话（`features.parallelSessions`，否则「该智能体未验证可并行会话」）；并发上限 ≥ 2。
-  - **不跨厂商**：「自动」**只用该 Bot 自己的 Agent**，不可用即跳过，永不换用别家；无所属 Bot 的任务（画像整理——跨 Bot 的全局画像；群聊摘要）只在设置里**明确指定**后台 Agent 时运行；明确指定的 Agent 处理所有 Bot 的后台任务，不可用时跳过、不换用别家。设置页说明会发给所选厂商的内容（Bot 记忆、全局画像、对话内容与摘要、Wiki 资料）并消耗订阅额度。
+  - **不跨厂商**：「自动」**只用该 Bot 自己的 Agent**，不可用即跳过，永不换用别家；无所属 Bot 的任务（画像整理——跨 Bot 的全局画像；项目组对话的摘要）只在设置里**明确指定**后台 Agent 时运行；明确指定的 Agent 处理所有 Bot 的后台任务，不可用时跳过、不换用别家。设置页说明会发给所选厂商的内容（Bot 记忆、全局画像、对话内容与摘要、Wiki 资料）并消耗订阅额度。
   - **调度**：调度器对 `agent:*` 键上的后台任务（priority 2）至多用 并发-1 个名额（总在用数 < 并发-1 才启动），为对话 / 定时响应（priority 0/1）留一个；并发为 1 时不预留（路由器本就不把后台任务派给并发 1 的 Agent）。`JobsRunner` 的调度键只在路由到 Agent 时用 `agent:{id}`，内置路由保持 P6 前的键（全局轻量 / 主模型的厂商）；直聊摘要按其 Bot 取路由。
-  - **群聊判断**：默认不经 Agent（`backgroundTasks.groupMentionOnly` 默认开 = 仅 @ / 回复响应）；用户关掉后才跑：时限 `AGENT_TRIAGE_TIMEOUT_MS`（60 s，超时 `no_action`）、同一 Bot 在同一群每 `AGENT_TRIAGE_MIN_INTERVAL_MS`（2 分钟）至多判断一次（期间仅 @ / 回复）、计入该 Bot 的每日后台预算（用完即不跑；内置模型的群聊判断仍不计）。
+  - **项目组路由判断**：默认不经 Agent（`backgroundTasks.projectMentionOnly` 默认开 = 仅 @ / 回复响应）；用户关掉后才跑：时限 `AGENT_TRIAGE_TIMEOUT_MS`（60 s，超时 `no_action`）、同一 Bot 在同一项目组每 `AGENT_TRIAGE_MIN_INTERVAL_MS`（2 分钟）至多判断一次（期间仅 @ / 回复）、计入该 Bot 的每日后台预算（用完即不跑；内置模型的路由判断仍不计）。
   - 续接 L2 仲裁关闭；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS`（5）次触发一跑（按 Bot / 对话计数，进程内，归零即删计数）；技能生成默认关。设置页「后台任务」：自动 / 指定 Agent / 关闭；哪些用途仍走内置模型按全局主 / 轻量模型逐用途提示。
-  - **用量与预算**：用量照常记 `agent:{id}`（未报 token 记零行）；连锁预算与每日后台预算都把零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算（`complete()` 每次调用一行——多轮也只按一轮计；后台 run 每个模型轮一行）。Agent 路由的直聊摘要与记忆整理行记在所属 Bot 名下（计入其每日预算，`JobsRunner` 也按它推迟）；画像整理、群聊摘要无所属 Bot，不计入任何 Bot 的预算。内置路由的归属不变。
+  - **用量与预算**：用量照常记 `agent:{id}`（未报 token 记零行）；每日后台预算把零 token 行按 `AGENT_TURN_BUDGET_TOKENS` 折算（协作回合已无 token 预算，D92）（`complete()` 每次调用一行——多轮也只按一轮计；后台 run 每个模型轮一行）。Agent 路由的直聊摘要与记忆整理行记在所属 Bot 名下（计入其每日预算，`JobsRunner` 也按它推迟）；画像整理、项目组对话摘要无所属 Bot，不计入任何 Bot 的预算。内置路由的归属不变。
   - **核心关闭**：后台会话（`complete()`、后台 run）在 `AgentHost.dispose()` 时以失败结算（`AGENT_UNAVAILABLE`）并删除临时目录，调用方不会永远等待；对话 run 照旧不结算（重启恢复标中断）。
-  - **待用户确认的默认**（P6 审查修复，协调会话按保守原则决定）：只有 Claude 可用于后台；开启「加载我的个人配置」即不可用于后台；「自动」只用 Bot 自己的 Agent，画像整理 / 群聊摘要需明确指定；群聊判断默认不经 Agent；并发须 ≥ 2；上述时限与节流值。
+  - **待用户确认的默认**（P6 审查修复，协调会话按保守原则决定）：只有 Claude 可用于后台；开启「加载我的个人配置」即不可用于后台；「自动」只用 Bot 自己的 Agent，画像整理 / 项目组对话摘要需明确指定；项目组路由判断默认不经 Agent；并发须 ≥ 2；上述时限与节流值。
 
 
 
@@ -343,7 +343,7 @@ interface AgentProvider {
   permissionOptions: { allowOnce: string[]; rejectOnce: string[] }; // optionId 白名单
   toolName(server: string, tool: string): string;                  // 平台规则里引用工具的写法
   features: { steering: boolean; loadSession: boolean; resume: boolean; osSandbox: boolean; httpMcp: boolean; parallelSessions: boolean }; // parallelSessions：同进程多会话可同时有 prompt 在途（只凭锁定版本源码实证声明，§9.2）
-  agentSideConfigFiles: string[];                                  // 无法关闭、需确认的 project 内配置文件
+  agentSideConfigFiles: string[];                                  // 无法关闭、需确认的 workdir 内配置文件
   forbiddenModes?: string[]; safeModes?: string[];                 // 叠加 / 豁免全局禁止模式表（Antigravity 禁 auto_edit；Cursor 的 agent 与 Codex 同名不同义）
   authMethods?(advertised: AuthMethod[]): AuthMethod[];            // 过滤 / 排序登录方式（如 Antigravity 去掉 oauth-personal）
   classifyError?(err: unknown, phase: 'initialize' | 'session' | 'prompt'): 'auth_required' | 'not_installed' | 'incompatible' | 'other'; // 各家未登录的错误形态不同（todo 附录 A.4）
@@ -398,10 +398,10 @@ interface AgentProvider {
 2. Bot 运行配置可在内置模型与已启用 Agent 间切换；切到 Agent 后可选模型、权限档位与能力包；切回内置模型后行为与改动前一致（内置引擎全部测试不变）。
 3. 能力包：取消勾选 `image_generation` 后该 Bot 的 Agent 看不到 `generate_image`、平台规则不再提及；勾选 `memory` 时 `remember` 往返成功；默认勾选与 Agent 原生能力声明一致。
 4. 只有 Codex（或 OpenCode + Copilot / ChatGPT）订阅、无 API key 的新用户：完成引导后能与 Bot 单聊，Bot 记得用户画像、能发附件、能 `remember`；后台摘要 / 反思不报错。
-5. 绑定 project 的对话中外部 Agent 改文件：开工前取得租约、结束后有检查点 diff 可回退；越界写弹 `agent_tool` 卡，拒绝后 Agent 收到拒绝；无 OS 沙箱的 Agent 每条命令弹卡。
+5. 绑定 workdir 的对话中外部 Agent 改文件：开工前取得租约、结束后有检查点 diff 可回退；越界写弹 `agent_tool` 卡，拒绝后 Agent 收到拒绝；无 OS 沙箱的 Agent 每条命令弹卡。
 6. 执行中追加消息：支持 steering 的 Agent 当前 run 内生效；不支持的在 run 结束后续投；不产生脱离 run 的 Agent 输出。
 7. 未启用 / 未登录时发消息：对话内出现 Agent 设置卡，完成后原 run 自动续跑。
-8. 群聊中多种 Agent 与内置 Bot 混合：@、顺序响应、`skip_reply`、跨 Bot 委派正确。
+8. 项目组中多种 Agent 与内置 Bot 混合：@、顺序响应、`skip_reply`、跨 Bot 委派正确。
 9. KepCup 数据目录与日志中不存在任何订阅凭据；Agent 对应用数据目录（其 workspace 与技能目录除外）的读写请求一律被拒绝（含无人值守）；Claude 不加载仓库内 `.claude/` 配置。
 10. 原生优先：为自带联网搜索的 Agent 勾选 `web` 包后，工具描述带「[补充能力]」前缀、`<tool_policy>` 点名其原生工具；默认情况下该包不勾选。宿主优先：要求「记住」时调用 `remember` 而不是写文件。
 11. 新增一个仅用通用 Provider 的测试 Agent（testkit fake agent 作为目录条目）不改 core 其他代码即可被启用、被 Bot 选用并通过契约测试。

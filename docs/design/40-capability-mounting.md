@@ -25,7 +25,7 @@
 | 解析时机 | 每个 run 开头 `resolveMcpToolEntries` 逐 server `listTools`（懒连接 + 缓存）；任务等全部，对话轮最多等 `TURN_MCP_RESOLVE_TIMEOUT_MS`=3s，超时本轮没有 MCP 工具 | 对话轮每轮先连服务器；慢服务器拖慢所有对话 |
 | 对话轮工具面 | `selectReadOnlyMcpEntries`：只读 + auto，最多 `TURN_MCP_READ_TOOLS_MAX`=20 个逐个挂；`turnMcpNote` 只说「另有 N 个在任务中可用」 | 工具面随接入数增长；自定义 MCP 没有用途摘要 |
 | 任务工具面 | Bot 勾选的全部已启用工具；目录应用工具总数 > `APP_TOOLS_INLINE_MAX`=40 时改为 `app_search_tools` / `app_call_tool`，自定义 MCP 始终逐个挂 | 任务总背着全部能力；按需发现只覆盖应用 |
-| `start_task` | title / instruction / source_message_ids / writes / workdir / continues_task_id | 派任务时无法表达要用哪些能力 |
+| `start_task` | title / instruction / source_message_ids / writes / cwd / continues_task_id | 派任务时无法表达要用哪些能力 |
 | 子代理 | `buildSubagentResearchTools`：只读文件 + web + 对话轮同款只读 MCP 子集 | 跟着对话轮的解析结果走 |
 | 提示词 | `<connected_apps>`（目录连接状态行 + 规则）、`<available_apps>`、`turnMcpNote`、`<mail_accounts>` | 三套写法，自定义 MCP 只有一句话 |
 | 邮箱 | `deps.mail` 存在即挂五个读写工具 + `mail_request_setup` | 没绑邮箱的 Bot 也背着五个必然失败的工具 |

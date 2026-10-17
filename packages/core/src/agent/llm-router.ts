@@ -25,7 +25,7 @@ import type { AgentEngine, RunSpec } from './types.js';
  * 引擎（行为与 P6 之前完全一致）；没有 → 外部 Agent：`settings.backgroundAgentId`
  * 明确指定的那个，或（缺省「自动」）**只用该 Bot 自己的 Agent**——永不换用
  * 别家（审查 S2：数据只流向用户为该 Bot 选用或明确指定的厂商）；无所属 Bot 的
- * 任务（画像整理是跨 Bot 的全局画像、群聊摘要）只在明确指定时运行。都没有、
+ * 任务（画像整理是跨 Bot 的全局画像、项目组摘要）只在明确指定时运行。都没有、
  * 被关闭或不合格 → null（调用方照旧优雅跳过 = P4 兜底）。
  *
  * 合格（`agentBackgroundBlocker`，审查 S1 / C1）：Provider 能为后台会话完全关闭
@@ -34,8 +34,8 @@ import type { AgentEngine, RunSpec } from './types.js';
  * 并发上限至少 2（调度器给后台任务至多 并发-1 个名额）。
  *
  * 只有外部 Agent 时的降配：技能生成默认关
- * （`backgroundTasks.agentSkillAuthoring`）；群聊判断默认不跑
- * （`backgroundTasks.groupMentionOnly` 默认开），用户关掉后也受每日后台预算
+ * （`backgroundTasks.agentSkillAuthoring`）；路由判断默认不跑
+ * （`backgroundTasks.projectMentionOnly` 默认开），用户关掉后也受每日后台预算
  * 与节流约束（`admit`）；反思 / 摘要每 `AGENT_BACKGROUND_EVERY_N_RUNS` 次一跑。
  */
 
@@ -77,7 +77,7 @@ type BuiltinRule = 'light_for_bot' | 'main_for_bot' | 'app_light' | 'app_main';
 const BUILTIN_RULES: Readonly<Record<ModelPurpose, BuiltinRule>> = {
   // 对话轮 / 任务：Bot 主模型 → 全局主模型。
   conversation: 'main_for_bot',
-  // 群聊判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
+  // 路由判断 / SubAgent 压缩：Bot 轻量 → 全局轻量 → Bot 主 → 全局主。
   triage: 'light_for_bot',
   subagent_compaction: 'light_for_bot',
   // Wiki 维护 / 技能生成：Bot 主模型 → 全局主模型。
@@ -161,7 +161,7 @@ export interface LlmRouterDeps {
   /** Provider 登记表（后台合格判断）；缺省 PROVIDERS。 */
   providers?: ProviderRegistry;
   /**
-   * 该 Bot 今日后台预算是否已用完（审查 C2：经 Agent 的群聊判断计入每日后台
+   * 该 Bot 今日后台预算是否已用完（审查 C2：经 Agent 的路由判断计入每日后台
    * 预算，用完即只响应 @ / 回复）；缺省不检查。
    */
   budgetExceeded?: (botId: string) => boolean;
@@ -173,7 +173,7 @@ export class LlmRouter {
   readonly #deps: LlmRouterDeps;
   /** 降频计数（进程内；重启后从头计；回到 0 即删除，审查 C8）。 */
   readonly #counters = new Map<string, number>();
-  /** 经 Agent 的群聊判断上次放行时间（`botId:conversationId`，进程内）。 */
+  /** 经 Agent 的路由判断上次放行时间（`botId:conversationId`，进程内）。 */
   readonly #triageAt = new Map<string, number>();
 
   constructor(deps: LlmRouterDeps) {
@@ -209,7 +209,7 @@ export class LlmRouter {
   }
 
   /**
-   * 经 Agent 的群聊判断（审查 C2）：同一 `botId:conversationId` 每
+   * 经 Agent 的路由判断（审查 C2）：同一 `botId:conversationId` 每
    * AGENT_TRIAGE_MIN_INTERVAL_MS 至多放行一次；期间该 Bot 只响应 @ / 回复。
    */
   #admitTriage(key: string): boolean {
@@ -247,7 +247,7 @@ export class LlmRouter {
     if (purpose === 'skill_authoring' && !tasks.agentSkillAuthoring) return null;
     if (purpose === 'triage') {
       // Opt-in only (审查 C2), and charged to the bot's daily background budget.
-      if (tasks.groupMentionOnly) return null;
+      if (tasks.projectMentionOnly) return null;
       if (bot !== null && this.#deps.budgetExceeded?.(bot.id) === true) return null;
     }
     const viewOf = this.#deps.agentView;

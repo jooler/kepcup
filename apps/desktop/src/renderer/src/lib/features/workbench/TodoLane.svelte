@@ -11,7 +11,7 @@
   /**
    * 一条成员道（D90 §5.2）：道头 = 头像 + 名称 + 忙闲（待验收 / 进行中 / 已排期 / 草案计数、
    * 正在执行的圆点、下次时间）；道内先事项卡、后自排卡。点道头折叠。
-   * `running`：该 Bot 此刻有 loop 在跑（侧栏 runningBotIds 同源）；群道没有。
+   * `running`：该 Bot 此刻有 loop 在跑（侧栏 runningBotIds 同源）；项目组道没有。
    */
   let { lane, running = false }: { lane: WorkbenchLane; running?: boolean } = $props();
 
@@ -39,7 +39,7 @@
       assignee:
         lane.kind === 'bot'
           ? { kind: 'bot', botId: lane.memberId }
-          : { kind: 'group', conversationId: lane.memberId, leadBotId: null },
+          : { kind: 'project', projectId: lane.memberId, leadBotId: null },
     });
   }
 </script>

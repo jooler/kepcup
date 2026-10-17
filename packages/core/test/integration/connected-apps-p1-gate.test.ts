@@ -15,7 +15,7 @@ import {
   createTestStack,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -481,7 +481,7 @@ describe('§5.11 end to end: request → connect card → authorize → review �
 
     // 4. Another conversation of the same Bot: the standing grant covers it — no card.
     const other = await makeBot(core, '旁观');
-    const group = await makeGroup(core, '项目群', [bot.id, other.id]);
+    const group = await makeProject(core, '项目群', [bot.id, other.id]);
     llm.script('mock-main', [
       ...viaTask({
         capabilities: ['app:notes'],
@@ -667,7 +667,7 @@ describe('§5.11 risk tiers (W5 classification + catalog overlay)', () => {
 
     // The conversation grant covers this conversation only: the same write in another one asks.
     const other = await makeBot(core, '旁观');
-    const group = await makeGroup(core, '群', [bot.id, other.id]);
+    const group = await makeProject(core, '群', [bot.id, other.id]);
     llm.script('mock-main', [
       ...viaTask({
         capabilities: ['app:notes'],

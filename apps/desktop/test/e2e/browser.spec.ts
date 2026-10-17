@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { inflateSync } from 'node:zlib';
@@ -24,7 +24,8 @@ import {
   type TestWebServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 // P11 浏览器工具 e2e（docs/dev/phases/P11-browser.md 测试要求）：真实 Electron +
 // 本地网页夹具（startTestWebServer），经 mock 模型的工具调用环驱动真实主进程
@@ -76,7 +77,7 @@ async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
   await session.web.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -119,36 +120,49 @@ async function openConversation(page: Page, title: string): Promise<void> {
 }
 
 /** Forces the native directory picker to return `dir` and binds it (P04 flow). */
-async function bindProject(app: ElectronApplication, page: Page, dir: string): Promise<void> {
+async function bindWorkdir(app: ElectronApplication, page: Page, dir: string): Promise<void> {
   await app.evaluate(({ dialog }, target) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (dialog as any).showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
   }, dir);
-  // 项目选择器在右栏：群对话是群信息面板（选择器直接可见），单聊在「配置」tab
-  // （右栏收起时先展开）。
-  const groupInfo = page.locator('[data-testid="group-info"]');
-  const tabs = page.locator('[data-testid="right-panel-tabs"]');
-  if (!(await groupInfo.isVisible()) && !(await tabs.isVisible())) {
-    await page.locator('[data-testid="right-panel-toggle"]').click();
-  }
-  if (!(await groupInfo.isVisible())) {
+  // 工作目录选择器的位置：项目组在 ⚙ 详情页的概览分区（无右栏）；单聊在右栏
+  // 「配置」tab（右栏收起时先展开）。
+  let inProjectSettings = false;
+  if (await page.locator('[data-testid="project-header"]').isVisible()) {
+    await page.locator('[data-testid="project-settings-button"]').click();
+    await expect(page.locator('[data-testid="project-workdir"]')).toBeVisible({ timeout: 15_000 });
+    inProjectSettings = true;
+  } else {
+    const tabs = page.locator('[data-testid="right-panel-tabs"]');
+    if (!(await tabs.isVisible())) {
+      await page.locator('[data-testid="right-panel-toggle"]').click();
+    }
     await tabs.locator('text=配置').click();
   }
-  await page.locator('[data-testid="project-selector-trigger"]').click();
-  await page.locator('[data-testid="project-pick-new"]').click();
-  await expect(page.locator('[data-testid="project-selector-name"]')).toContainText(
+  await page.locator('[data-testid="workdir-selector-trigger"]').click();
+  await page.locator('[data-testid="workdir-pick-new"]').click();
+  await expect(page.locator('[data-testid="workdir-selector-name"]')).toContainText(
     path.basename(dir),
     { timeout: 15_000 },
   );
-  await expect(
-    page.locator('[data-testid="system-message"]').filter({ hasText: '项目已绑定' }),
-  ).toHaveCount(1, { timeout: 15_000 });
   // 绑定后选择弹框保持打开（方便继续权限设置）；后续对话流程前先 Esc 关闭。
+  // 项目组随后回沟通视图（输入坞只在沟通里）——「已绑定」系统消息在沟通里才渲染。
   await page.keyboard.press('Escape');
-  await expect(page.locator('[data-testid="project-picker-dialog"]')).not.toBeVisible();
+  await expect(page.locator('[data-testid="workdir-picker-dialog"]')).not.toBeVisible();
+  if (inProjectSettings) {
+    await page.locator('[data-testid="project-tab-chat"]').click();
+    await expect(page.locator('[data-testid="project-view"]')).toHaveAttribute(
+      'data-view',
+      'chat',
+      { timeout: 15_000 },
+    );
+  }
+  await expect(
+    page.locator('[data-testid="system-message"]').filter({ hasText: '工作目录已绑定' }),
+  ).toHaveCount(1, { timeout: 15_000 });
 }
 
-function makeProjectDir(prefix: string): string {
+function makeWorkdirDir(prefix: string): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n');
   return dir;
@@ -351,7 +365,7 @@ test('打开本地网页与快照、点击、输入并提交表单，页面内�
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小览');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-proj-'));
 
     // 打开 + 快照：标题/URL/元素引用/页面文本进入模型请求，整体有 <untrusted> 边界。
     await runOnce(
@@ -408,7 +422,7 @@ test('302 重定向后的 URL 只出现在 untrusted 边界内（BR-P11-001）',
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小转');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-redir-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-redir-proj-'));
 
     // /redirect 302 → /redirected：真实宿主报告的落点 URL 完全由目标页面控制。
     await runOnce(
@@ -448,7 +462,7 @@ test('window.open 的非 http(s) 目标不导航页面；http(s) 弹窗仍同页
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小窗');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-pop-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-pop-proj-'));
 
     await runOnce(
       page,
@@ -496,7 +510,7 @@ test('下载链接的文件落到 workspace/downloads', async () => {
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小载');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-dl-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-dl-proj-'));
 
     await runOnce(
       page,
@@ -553,13 +567,13 @@ test('不同 Bot 的 cookie 互不可见；同一 Bot 跨对话共享登录', as
     await waitReady(page);
     await createBotAndOpenChat(page, '阿甲');
     await createBotAndOpenChat(page, '阿乙');
-    // 本机夹具页面只有绑定 project 的对话能打开：给每个用到的对话都绑定。
-    const project = makeProjectDir('kepcup-e2e-browser-cookie-proj-');
-    await bindProject(session.app, page, project); // 当前对话 = 阿乙
+    // 本机夹具页面只有绑定 workdir 的对话能打开：给每个用到的对话都绑定。
+    const workdir = makeWorkdirDir('kepcup-e2e-browser-cookie-proj-');
+    await bindWorkdir(session.app, page, workdir); // 当前对话 = 阿乙
 
     // 阿甲设置 cookie（同一分区持续存在）。
     await openConversation(page, '阿甲');
-    await bindProject(session.app, page, project);
+    await bindWorkdir(session.app, page, workdir);
     await runOnce(
       page,
       llm,
@@ -582,22 +596,22 @@ test('不同 Bot 的 cookie 互不可见；同一 Bot 跨对话共享登录', as
       '乙看不到',
     );
 
-    // 同一 Bot（阿甲）跨对话：群对话共享同一分区。
-    await createGroupViaUi(page, '浏览组', ['阿甲', '阿乙']);
-    await bindProject(session.app, page, project); // 群对话
+    // 同一 Bot（阿甲）跨对话：项目组会话共享同一分区。
+    await createProjectViaUi(page, '浏览组', ['阿甲', '阿乙']);
+    await bindWorkdir(session.app, page, workdir); // 项目组会话
     llm.script(
       'mock-main',
       toolRun(
         'browser_open',
         { url: `${web.url}/cookie-read` },
         'fixture_sid=SID1234',
-        '群里也共享',
+        '项目组里也共享',
       ),
     );
     await mentionAndType(page, '阿甲', ' 再读一次');
     await page.locator('[data-testid="composer-input"]').press('Meta+Enter');
     await expect(
-      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '群里也共享' }),
+      page.locator('[data-testid="bot-bubble"]').filter({ hasText: '项目组里也共享' }),
     ).toBeVisible({ timeout: 90_000 });
   } catch (error) {
     dumpRequests(llm, testInfo);
@@ -616,7 +630,7 @@ test('127.0.0.1 未绑定被拦截、绑定后放行；192.168 与 169.254 恒�
     await waitReady(page);
     await createBotAndOpenChat(page, '小网');
 
-    // 未绑定 project：loopback 被拦截，请求从未到达本地服务器。
+    // 未绑定 workdir：loopback 被拦截，请求从未到达本地服务器。
     const before = web.requestsServed();
     await runOnce(
       page,
@@ -627,7 +641,7 @@ test('127.0.0.1 未绑定被拦截、绑定后放行；192.168 与 169.254 恒�
     expect(web.requestsServed()).toBe(before);
 
     // 绑定后：同一 URL 放行，服务器真实服务了页面。
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-net-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-net-proj-'));
     await runOnce(
       page,
       llm,
@@ -636,7 +650,7 @@ test('127.0.0.1 未绑定被拦截、绑定后放行；192.168 与 169.254 恒�
     );
     await expect.poll(() => web.requestsServed() > before).toBe(true);
 
-    // 绑定了 project 也不放行：内网 IP 与云元数据地址恒拦。
+    // 绑定了 workdir 也不放行：内网 IP 与云元数据地址恒拦。
     await runOnce(
       page,
       llm,
@@ -670,7 +684,7 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿删');
-    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-del-proj-'));
+    await bindWorkdir(app, page, makeWorkdirDir('kepcup-e2e-browser-del-proj-'));
 
     // 触发真实分区写入（cookie）后强制落盘，确认目录先存在。
     await runOnce(
@@ -703,7 +717,9 @@ test('删除 Bot 后其浏览器分区数据不存在', async () => {
     await card.locator('[data-testid^="bot-delete-"]').click();
     await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeVisible();
     await page.locator('[data-testid="bot-delete-confirm"]').click();
-    await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeHidden({ timeout: 15_000 });
+    // 删除 RPC 串了一整条级联（runs/jobs/wiki/browser wipe……），windows 上
+    // 清文件系统慢：确认框回弹窗口给足 60s，后续 poll 才有意义。
+    await expect(page.locator('[data-testid="bot-delete-dialog"]')).toBeHidden({ timeout: 60_000 });
     await expect.poll(() => partitionEntries(home, partition).length, { timeout: 30_000 }).toBe(0);
     // tombstone：迟到的 ensurePage 被拒绝，目录不会复活。
     await expect.poll(() => partitionEntries(home, partition).length, { timeout: 5_000 }).toBe(0);
@@ -724,7 +740,7 @@ test('查看窗口显示 Bot 当前页面；关闭后回到隐藏托管且不中
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿看');
-    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-view-proj-'));
+    await bindWorkdir(app, page, makeWorkdirDir('kepcup-e2e-browser-view-proj-'));
 
     // Bot 先打开页面（隐藏托管中）。
     await runOnce(
@@ -852,7 +868,7 @@ test('技术点①：隐藏页面的截图非空白（像素多样性）', async
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小照');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-shot-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-shot-proj-'));
 
     await runOnce(
       page,
@@ -903,7 +919,7 @@ test('技术点③：大页面 AXTree 输出按上限截断（150 元素 / 4000 
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小量');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-large-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-large-proj-'));
 
     await runOnce(
       page,
@@ -935,7 +951,7 @@ test('W1：SPA 重渲染后点旧 ref → REF_STALE 且无副作用；密码框�
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '小稳');
-    await bindProject(session.app, page, makeProjectDir('kepcup-e2e-browser-w1-proj-'));
+    await bindWorkdir(session.app, page, makeWorkdirDir('kepcup-e2e-browser-w1-proj-'));
 
     await runOnce(
       page,
@@ -1050,7 +1066,7 @@ test('W8 自动接管：查看窗口里点击 → Bot 点击被拒（BROWSER_USE
   try {
     await waitReady(page);
     await createBotAndOpenChat(page, '阿接');
-    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-takeover-proj-'));
+    await bindWorkdir(app, page, makeWorkdirDir('kepcup-e2e-browser-takeover-proj-'));
     await runOnce(
       page,
       llm,
@@ -1222,8 +1238,8 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     await createBotAndOpenChat(page, '共甲');
     await createBotAndOpenChat(page, '共乙');
     await createBotAndOpenChat(page, '私丙');
-    const project = makeProjectDir('kepcup-e2e-browser-shared-proj-');
-    await bindProject(app, page, project); // 当前对话 = 私丙
+    const workdir = makeWorkdirDir('kepcup-e2e-browser-shared-proj-');
+    await bindWorkdir(app, page, workdir); // 当前对话 = 私丙
 
     // 设置 › 浏览器资料：新建共享资料。
     await openBrowserProfilesSettings(page);
@@ -1242,7 +1258,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
     const switchConfirm = page.locator('[data-testid="bot-browser-profile-confirm"]');
     for (const name of ['共甲', '共乙']) {
       await openConversation(page, name);
-      await bindProject(app, page, project);
+      await bindWorkdir(app, page, workdir);
       await openProfileTab(page);
       if (name === '共甲') {
         // 切换只进待确认、不自动保存（change 驱动 pending）。
@@ -1305,12 +1321,13 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
       .poll(() => partitionEntries(home, `shared-${profileId}`).length, { timeout: 15_000 })
       .toBeGreaterThan(0);
 
-    // 删除共享资料（行内确认）→ 目录被清；两个 Bot 回到私有。
+    // 删除共享资料（行内确认）→ 目录被清；两个 Bot 回到私有（删除 RPC 的
+    // 文件系统级联在 windows 上慢，同 browser-delete 的 60s 窗口）。
     await openBrowserProfilesSettings(page);
     await item.locator('[data-testid="browser-profile-delete"]').click();
     await item.locator('[data-testid="browser-profile-confirm-yes"]').click();
     await expect(page.locator('[data-testid="browser-profiles-empty"]')).toBeVisible({
-      timeout: 15_000,
+      timeout: 60_000,
     });
     await closeSettings(page);
     await expect
@@ -1329,7 +1346,7 @@ test('W8 共享浏览器资料：同一共享资料的两个 Bot 共用 cookie�
   }
 });
 
-test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦截记为失败；绑定 project 后本机页可读并提醒', async () => {
+test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦截记为失败；绑定 workdir 后本机页可读并提醒', async () => {
   const testInfo = test.info();
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-browser-watch-');
@@ -1384,8 +1401,8 @@ test('W7 监看后台页：不显示窗口、取完即关；内网地址被拦�
     expect(web.requestsServed()).toBe(before);
     expect(await visibleWindows()).toBe(windowsBefore);
 
-    // 2) 绑定 project 后本机地址放行：contains 条件首检即满足 → 提醒卡 + 唤醒对话轮。
-    await bindProject(app, page, makeProjectDir('kepcup-e2e-browser-watch-proj-'));
+    // 2) 绑定 workdir 后本机地址放行：contains 条件首检即满足 → 提醒卡 + 唤醒对话轮。
+    await bindWorkdir(app, page, makeWorkdirDir('kepcup-e2e-browser-watch-proj-'));
     llm.script('mock-main', [
       step()
         .expect((req) => req.lastUserText().includes('盯一下本机页面'))

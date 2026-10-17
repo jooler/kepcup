@@ -31,7 +31,7 @@ export interface HandoverEntry {
 /** 盘点参数（记忆 / Wiki 的查询，P1 / P2 起使用）。 */
 export interface InventoryQuery {
   memoryQuery?: string | undefined;
-  /** 群聊里盘点：敏感记忆不作候选（同检索的群聊过滤）。 */
+  /** 项目组里盘点：敏感记忆不作候选（同检索的项目组过滤）。 */
   excludeSensitiveMemory?: boolean | undefined;
   wikiQuery?: string | undefined;
 }

@@ -36,7 +36,7 @@ import { ensureAgentProcessCwd, resolvePaths } from '../../src/infra/paths.js';
  * （safeModes ⊆ 全局禁止表、只有 Cursor 豁免 `agent`）、Cursor 私有配置目录、
  * dsh 只带 id 的权限请求由引擎补全（H2）、dsh 错误匹配收窄、安装后 chmod 的
  * 窄化钩子（H3）、Agent 进程私有 cwd（M1）。OpenCode 的配置层覆盖（H1）在
- * agent-providers-p5.test.ts，project 配置确认向上到 git 根在
+ * agent-providers-p5.test.ts，workdir 配置确认向上到 git 根在
  * integration/external-agent-p3.test.ts。
  */
 
@@ -105,7 +105,7 @@ describe('DeepSeek Harness (H2 / LOW)', () => {
 
   it('a permission request carrying only the id is completed from the call updates', async () => {
     const entry: AgentCatalogEntry = fakeAgentEntry('fake-dsh', { provider: 'dsh' });
-    const workdir = tempDir('kepcup-h2-');
+    const cwd = tempDir('kepcup-h2-');
     const started: FakeAcpAgentHandle[] = [];
     const script: FakeAgentScript = {
       turns: [
@@ -158,7 +158,7 @@ describe('DeepSeek Harness (H2 / LOW)', () => {
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: { agentId: entry.id, permission: 'ask', capabilities: [], sessionKey: 'b:c:dsh' },
     }).done;
     expect(outcome.status).toBe('completed');

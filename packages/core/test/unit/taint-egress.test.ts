@@ -19,6 +19,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 import { buildWebTools } from '../../src/tools/web-tools.js';
 import { buildWatchTools } from '../../src/tools/watch-tools.js';
 import { openRealMainDb, type RealMainDb } from '../support/real-secrets.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * D73 P2 §6.2 污点外发控制（docs/design/29 §8.3），真库 + 桩：
@@ -70,7 +71,7 @@ interface HarnessOptions {
   sandbox?: SandboxBackend;
   answer?: 'approved' | 'denied';
   duration?: ApprovalDuration;
-  projects?: unknown;
+  workdirs?: unknown;
   allowlistExempt?: boolean;
 }
 
@@ -82,8 +83,11 @@ async function harness(options: HarnessOptions = {}) {
     )
     .run();
   env.db
-    .prepare("insert into conversations (id, type, created_at) values ('conv_1', 'group', 1)")
+    .prepare(
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+    )
     .run();
+  insertProjectConversation(env.db, { id: 'conv_1', leadBotId: 'bot_lead' });
   const settings = { taintGuard: options.taintGuard ?? true };
   const taint = new TaintService({
     db: env.db,
@@ -124,10 +128,10 @@ async function harness(options: HarnessOptions = {}) {
     unattended: {
       effective: () => ({ enabled: options.unattended === true }),
     } as unknown as GatewayDeps['unattended'],
-    projects: (options.projects ?? {
+    workdirs: (options.workdirs ?? {
       policyInfo: () => null,
       writeDenial: () => null,
-    }) as GatewayDeps['projects'],
+    }) as GatewayDeps['workdirs'],
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -557,8 +561,8 @@ describe('bash and git_remote', () => {
   });
 
   it('git_remote carries a taint hint', async () => {
-    // ProjectRuntime.gitRemote is stubbed to call straight into requestApproval.
-    const projects = {
+    // WorkdirRuntime.gitRemote is stubbed to call straight into requestApproval.
+    const workdirs = {
       writeDenial: () => null,
       gitRemote: async (
         _identity: RunIdentity,
@@ -569,7 +573,7 @@ describe('bash and git_remote', () => {
         return { exitCode: 0, output: '' };
       },
     };
-    const h = await harness({ projects });
+    const h = await harness({ workdirs });
     await h.gateway.gitRemote(task, { operation: 'push', args: [], reason: '' });
     expect(h.requests[0]!.kind).toBe('git_remote');
     expect(h.requests[0]!.payload['tainted']).toBeUndefined();

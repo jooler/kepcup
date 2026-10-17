@@ -131,25 +131,30 @@ const STATUS_LABEL: Record<TodoStatus, string> = {
 const RUN_STATUS_LABEL = {
   dispatched: '已派发，等待交付',
   delivered: '已交付',
-  unclaimed: '群里无人认领',
+  unclaimed: '项目里无人回应',
   failed: '执行失败',
 } as const;
 
 /**
  * 执行者：扁平对象（部分 OpenAI 兼容服务商不接受嵌套的 anyOf / null）；只填 bot_id，或只填
- * group_id（可带 lead_bot_id），形状在 execute 里校验。
+ * project_id（可带 lead_bot_id），形状在 execute 里校验。
  */
 const assigneeSchema = Type.Object(
   {
     bot_id: Type.Optional(Type.String({ description: '派给一个 Bot（先用 list_bots 查 id）' })),
-    group_id: Type.Optional(Type.String({ description: '派给一个群（对话 id，形如 conv_...）' })),
+    project_id: Type.Optional(
+      Type.String({ description: '派给一个项目组（会话 id，形如 conv_...）' }),
+    ),
     lead_bot_id: Type.Optional(
-      Type.String({ description: '派给群时可指定群里的负责 Bot；不填 = 群里自己决定谁认领' }),
+      Type.String({
+        description:
+          '派给项目组时可指定负责 Bot（须是项目组成员）；不填 = @ 项目负责人（项目负责人也不在时项目内自行认领）',
+      }),
     ),
   },
   {
     additionalProperties: false,
-    description: '执行者：只填 bot_id，或只填 group_id（可再加 lead_bot_id）',
+    description: '执行者：只填 bot_id，或只填 project_id（可再加 lead_bot_id）',
   },
 );
 
@@ -179,20 +184,20 @@ function failure(error: unknown, prefix: string): ToolResult {
 /** 工具入参里的执行者 → TodoAssignee；null / undefined = 没填；形状不对返回说明。 */
 function parseAssignee(raw: unknown): TodoAssignee | undefined | string {
   if (raw === undefined || raw === null) return undefined;
-  const usage = 'assignee 要么只填 bot_id，要么只填 group_id（可再加 lead_bot_id）';
+  const usage = 'assignee 要么只填 bot_id，要么只填 project_id（可再加 lead_bot_id）';
   if (typeof raw !== 'object' || Array.isArray(raw)) return usage;
-  const value = raw as { bot_id?: unknown; group_id?: unknown; lead_bot_id?: unknown };
+  const value = raw as { bot_id?: unknown; project_id?: unknown; lead_bot_id?: unknown };
   const given = (field: unknown): field is string => field !== undefined && field !== null;
   const hasBot = given(value.bot_id);
-  const hasGroup = given(value.group_id);
-  if (hasBot === hasGroup) return usage;
+  const hasProject = given(value.project_id);
+  if (hasBot === hasProject) return usage;
   if (hasBot) {
-    if (given(value.lead_bot_id)) return 'lead_bot_id 只能和 group_id 一起用';
+    if (given(value.lead_bot_id)) return 'lead_bot_id 只能和 project_id 一起用';
     if (typeof value.bot_id !== 'string' || value.bot_id.trim() === '') return 'bot_id 不能为空';
     return { kind: 'bot', botId: value.bot_id.trim() };
   }
-  if (typeof value.group_id !== 'string' || value.group_id.trim() === '') {
-    return 'group_id 不能为空';
+  if (typeof value.project_id !== 'string' || value.project_id.trim() === '') {
+    return 'project_id 不能为空';
   }
   if (
     given(value.lead_bot_id) &&
@@ -201,8 +206,8 @@ function parseAssignee(raw: unknown): TodoAssignee | undefined | string {
     return 'lead_bot_id 不能为空字符串（不指定就不要填）';
   }
   return {
-    kind: 'group',
-    conversationId: value.group_id.trim(),
+    kind: 'project',
+    projectId: value.project_id.trim(),
     leadBotId: typeof value.lead_bot_id === 'string' ? value.lead_bot_id.trim() : null,
   };
 }
@@ -216,7 +221,7 @@ function normalizeWhen(raw: string): string {
 function sameAssignee(a: TodoAssignee | null, b: TodoAssignee | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.kind === 'bot') return b.kind === 'bot' && a.botId === b.botId;
-  return b.kind === 'group' && a.conversationId === b.conversationId && a.leadBotId === b.leadBotId;
+  return b.kind === 'project' && a.projectId === b.projectId && a.leadBotId === b.leadBotId;
 }
 
 function clampLimit(limit: number | undefined): number {
@@ -229,9 +234,9 @@ function describeAssignee(todo: TodoEntry): string {
   if (todo.assignee.kind === 'bot') {
     return `${todo.assigneeName ?? '（已删除的 Bot）'}（${todo.assignee.botId}）`;
   }
-  const group = `群「${todo.assigneeName ?? '（已解散）'}」（${todo.assignee.conversationId}）`;
-  if (todo.assignee.leadBotId === null) return group;
-  return `${group}，负责 Bot：${todo.leadBotName ?? '（已删除）'}（${todo.assignee.leadBotId}）`;
+  const project = `项目组「${todo.assigneeName ?? '（已删除）'}」（${todo.assignee.projectId}）`;
+  if (todo.assignee.leadBotId === null) return project;
+  return `${project}，负责 Bot：${todo.leadBotName ?? '（已删除）'}（${todo.assignee.leadBotId}）`;
 }
 
 function describeTiming(todo: TodoEntry, facade: WorkbenchToolFacade): string {
@@ -370,7 +375,7 @@ export function buildWorkbenchTools(input: {
         }),
       ),
       assignee: Type.Optional(
-        Type.String({ description: '只看某个执行者：Bot id、群 id，或名字里的关键词' }),
+        Type.String({ description: '只看某个执行者：Bot id、项目组会话 id，或名字里的关键词' }),
       ),
       query: Type.Optional(Type.String({ description: '标题或说明里的关键词' })),
       limit: Type.Optional(
@@ -403,7 +408,7 @@ export function buildWorkbenchTools(input: {
                 ? []
                 : todo.assignee.kind === 'bot'
                   ? [todo.assignee.botId]
-                  : [todo.assignee.conversationId, todo.assignee.leadBotId ?? ''];
+                  : [todo.assignee.projectId, todo.assignee.leadBotId ?? ''];
             return (
               ids.some((id) => id.toLowerCase() === needle) ||
               (todo.assigneeName ?? '').toLowerCase().includes(needle) ||

@@ -11,7 +11,7 @@ import { keyId } from './common.js';
 
 /**
  * 网页监看（D88 P1，设计 37 §3）：只能移交，规则同定时任务——A 私聊里的改到 B 的私聊，
- * 群里的留在原群（B 必须是成员，否则不可执行）。行就地改归属（`WatchService.transferTo`，
+ * 项目组里的留在原项目组（B 必须是成员，否则不可执行）。行就地改归属（`WatchService.transferTo`，
  * 同一个 id、一个事务）：last_hash / last_quiet_hash / 提醒序号原样保留，B 不会把 A 已经
  * 提醒过的变化再提醒一次；排队中的提醒作业一并改到 B 名下。暂停状态照搬。
  */
@@ -23,7 +23,7 @@ export interface WatchAdapterDeps {
     countLiveForBot(botId: string): number;
     transferTo(watchId: string, target: { botId: string; conversationId: string }): Watch;
     profileKeyFor(botId: string): string;
-    /** 在这个对话里检查网页时能否访问本机地址（项目绑定决定）。 */
+    /** 在这个对话里检查网页时能否访问本机地址（工作目录绑定决定）。 */
     allowsLoopback(conversationId: string): boolean;
   };
   conversations: {
@@ -73,7 +73,7 @@ export class WatchAdapter implements HandoverAdapter {
   #where(row: Watch): string {
     if (this.#isDirectOf(row.conversationId, row.botId)) return '私聊';
     const conversation = this.#deps.conversations.get(row.conversationId);
-    return `群「${conversation?.title ?? row.conversationId}」`;
+    return `项目组「${conversation?.title ?? row.conversationId}」`;
   }
 
   #entry(row: Watch): HandoverEntry {
@@ -87,7 +87,7 @@ export class WatchAdapter implements HandoverAdapter {
       }`,
       actions: ['move'],
       defaultAction: 'move',
-      // 网址、条件文字由模型 / 用户写；群名来自用户。
+      // 网址、条件文字由模型 / 用户写；项目组名来自用户。
       external: true,
     };
   }
@@ -110,10 +110,10 @@ export class WatchAdapter implements HandoverAdapter {
       return `${ctx.toName} 的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`;
     }
     if (this.#isDirectOf(row.conversationId, row.botId)) {
-      // 私聊的监看会改到 B 的私聊，能否访问本机地址随之改按 B 私聊的项目绑定。本机网址在
+      // 私聊的监看会改到 B 的私聊，能否访问本机地址随之改按 B 私聊的工作目录绑定。本机网址在
       // 两边规则不同时不移交（宁可不交，也不让它悄悄变得能 / 不能访问本机）。
       if (isLoopbackUrl(row.source.url) && this.#loopbackDiffers(ctx, row)) {
-        return `这个监看看的是本机地址，${ctx.toName} 的私聊对本机地址的访问规则（项目绑定）与这边不同，不能移交`;
+        return `这个监看看的是本机地址，${ctx.toName} 的私聊对本机地址的访问规则（工作目录绑定）与这边不同，不能移交`;
       }
       return null;
     }
@@ -122,7 +122,9 @@ export class WatchAdapter implements HandoverAdapter {
     const member =
       ctx.toBot !== null &&
       this.#deps.conversations.memberBotIds(row.conversationId).includes(ctx.toBot.id);
-    return member ? null : `${ctx.toName} 不在群「${conversation.title ?? conversation.id}」里`;
+    return member
+      ? null
+      : `${ctx.toName} 不在项目组「${conversation.title ?? conversation.id}」里`;
   }
 
   async apply(
@@ -148,7 +150,7 @@ export class WatchAdapter implements HandoverAdapter {
     return `把网页监看 ${entry.label}（${entry.detail}）移交给 ${toName}，接着上次的检查结果继续，不会重复提醒`;
   }
 
-  /** B 私聊（新建目标 = 还没有项目绑定）与监看现在所在对话的本机访问规则是否不同。 */
+  /** B 私聊（新建目标 = 还没有工作目录绑定）与监看现在所在对话的本机访问规则是否不同。 */
   #loopbackDiffers(ctx: HandoverContext, row: Watch): boolean {
     const here = this.#deps.watches.allowsLoopback(row.conversationId);
     const there =
@@ -178,7 +180,7 @@ export class WatchAdapter implements HandoverAdapter {
       !isLoopbackUrl(row.source.url) &&
       this.#loopbackDiffers(ctx, row)
     ) {
-      out.push(`之后能否访问本机地址改按 ${ctx.toName} 私聊的项目绑定决定`);
+      out.push(`之后能否访问本机地址改按 ${ctx.toName} 私聊的工作目录绑定决定`);
     }
     return out;
   }

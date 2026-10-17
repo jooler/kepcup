@@ -6,7 +6,7 @@ import {
   createTestStack,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -376,13 +376,18 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
 
       clock.advance(40 * 60_000);
       await expectNoScheduledRun(stack.core, quietConv.id);
-      const deferred = service.store.get(
-        service.listForBotInConversation(quietBot.id, quietConv.id)[0]!.id,
+      // 推迟由异步 schedule_fire 任务落地（jobs runner 有轮询延迟，慢 runner
+      // 上会先到断言）：轮询推迟态而不是吃固定睡窗。
+      const deferred = await waitFor(
+        () => {
+          const row = service.listForBotInConversation(quietBot.id, quietConv.id)[0];
+          return row !== undefined && row.nextFireAt !== null ? row : null;
+        },
+        { label: 'quiet-hours deferral' },
       );
-      expect(deferred?.status).toBe('active');
-      expect(deferred?.nextFireAt).toBeGreaterThan(clock.now());
+      expect(deferred.status).toBe('active');
       // 推迟目标 ≈ 免打扰结束时刻（90 分钟处，±2 分钟容忍跨时区取整）
-      expect(Math.abs(deferred!.nextFireAt! - (clock.now() - 40 * 60_000 + 90 * 60_000))).toBeLessThanOrEqual(
+      expect(Math.abs(deferred.nextFireAt! - (clock.now() - 40 * 60_000 + 90 * 60_000))).toBeLessThanOrEqual(
         2 * 60_000,
       );
       // 列表 API 给出推迟原因（任务 7 界面口径）
@@ -432,8 +437,13 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       });
       clock.advance(5 * 60_000);
       await expectNoScheduledRun(stack.core, capConv.id, 1200, [seed.id]);
-      const capDeferred = service.listForBotInConversation(capBot.id, capConv.id)[0];
-      expect(capDeferred).toBeDefined();
+      const capDeferred = await waitFor(
+        () => {
+          const row = service.listForBotInConversation(capBot.id, capConv.id)[0];
+          return row !== undefined && row.nextFireAt !== null ? row : null;
+        },
+        { label: 'daily-cap deferral' },
+      );
       // 推迟目标 = 下一个本地零点（时区敏感，直接按实现同源函数计算期望）。
       expect(capDeferred!.nextFireAt).toBe(nextLocalMidnight(clock.now(), machineTz));
       const capListed = (await stack.core.rpc.call('schedules.list', {})) as {
@@ -542,7 +552,9 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       const member = await makeBot(stack.core, '阿移');
       const other = await makeBot(stack.core, '阿留');
       const victim = await makeBot(stack.core, '阿删');
-      const group = await makeGroup(stack.core, '项目群', [member.id, other.id]);
+      const group = await makeProject(stack.core, '项目群', [member.id, other.id], {
+        leadBotId: other.id,
+      });
       const victimConv = await openDirect(stack.core, victim.id);
       const service = schedulesOf(stack);
 
@@ -560,7 +572,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       });
 
       // 移出群：该 Bot 在此群的任务取消（03-data-model 从群中移除 Bot）。
-      await stack.core.rpc.call('groups.removeMember', { conversationId: group.id, botId: member.id });
+      await stack.core.rpc.call('projects.removeMember', { conversationId: group.id, botId: member.id });
       const memberRows = service.store.listActiveForBotInConversation(member.id, group.id);
       expect(memberRows).toHaveLength(0);
       const cancelled = service.store
@@ -688,7 +700,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
     try {
       const owner = await makeBot(stack.core, '阿主');
       const outsider = await makeBot(stack.core, '阿客');
-      const group = await makeGroup(stack.core, '共有群', [owner.id, outsider.id]);
+      const group = await makeProject(stack.core, '共有群', [owner.id, outsider.id]);
       const service = schedulesOf(stack);
       const created = service.createOnce({
         botId: owner.id,
@@ -726,7 +738,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       const companion = await makeBot(stack.core, '阿群');
       const convA = await openDirect(stack.core, bot.id);
       // 单 Bot 只有一个单聊：第二个任务放同 Bot 的群聊（上限按 Bot 计）
-      const convB = await makeGroup(stack.core, '阿额的群', [bot.id, companion.id]);
+      const convB = await makeProject(stack.core, '阿额的群', [bot.id, companion.id]);
       await stack.core.rpc.call('bots.update', {
         id: bot.id,
         profile: {

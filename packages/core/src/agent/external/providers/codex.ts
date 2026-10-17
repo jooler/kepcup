@@ -17,8 +17,8 @@ import { genericAcpProvider } from './generic-acp.js';
  *   review：AI 审核员代替宿主审批）与 `agent-full-access`；workspace-write 下
  *   发来的命令请求都是越出沙箱的提权 → 宿主一律弹卡（`execSandboxed` 恒 false）；
  *   Codex 沙箱的读不受限（全盘可读），这是让渡项；
- * - 无法关闭的 project 配置：`AGENTS.md`、`.codex/`（P3 首次运行前弹框确认；
- *   `<project>` 段不重复注入 AGENTS.md）；
+ * - 无法关闭的 workdir 配置：`AGENTS.md`、`.codex/`（P3 首次运行前弹框确认；
+ *   `<workdir>` 段不重复注入 AGENTS.md）；
  * - 未登录：`session/new` 即报 -32000（todo 附录 A.4）；
  * - MCP 仅 http；MCP 工具的 `tool_call` 不带 `name`，结构化名取自适配器构造的
  *   `rawInput: {server, tool, arguments}`（待登录后 spike 实测确认；MCP 审批

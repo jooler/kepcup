@@ -7,7 +7,7 @@ import type { RunIdentity } from '../agent/types.js';
 /**
  * Bot 工具的媒体素材解析（docs/design/25-capability-tools.md）：understand_image
  * 与 transcribe_audio 的来源二选一——对话附件 id（`att_` 前缀，校验归属当前
- * 对话）或 workspace/project 内路径（走网关读权限检查）。附件 mime 自带，路径
+ * 对话）或 workspace/workdir 内路径（走网关读权限检查）。附件 mime 自带，路径
  * 按扩展名推断。
  */
 

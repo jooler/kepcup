@@ -7,7 +7,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 
 import { resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, isGitControlPath, type GatewayDeps } from '../../src/gateway/index.js';
-import { ProjectRuntime } from '../../src/project/service.js';
+import { WorkdirRuntime } from '../../src/workdir/service.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { AllowlistService } from '../../src/permissions/allowlist.js';
 import { resolveExecutable, riskyGitConfigKeys } from '../../src/permissions/git-config-risk.js';
@@ -44,7 +44,7 @@ function makeGateway(): ToolGateway {
       run_id text, approval_id text, created_at integer not null, revoked_at integer
     );
   `);
-  const projects = new ProjectRuntime({
+  const workdirs = new WorkdirRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
     leases: { keyOf: (runId: string) => (runId === 'run_write' ? `ws:${BOT}:${CONV}` : null) },
@@ -67,7 +67,7 @@ function makeGateway(): ToolGateway {
     grants: new GrantsService({ db: grantsDb as never, clock: { now: () => Date.now() } }),
     allowlist,
     unattended: { effective: () => ({ enabled: false }) } as unknown as GatewayDeps['unattended'],
-    projects,
+    workdirs,
     taint: {
       mark: () => {},
       guard: () => (tainted ? { firstAt: 1, expiresAt: Date.now() + 60_000 } : null),

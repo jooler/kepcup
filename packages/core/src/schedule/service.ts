@@ -1222,7 +1222,7 @@ export class ScheduleService {
     return deleted;
   }
 
-  /** 移出群：该 Bot 在此群的任务取消。 */
+  /** 移出项目组：该 Bot 在此项目组的任务取消。 */
   cancelForBotInConversation(botId: string, conversationId: string): number {
     this.#resolvePendingOffers(botId, conversationId, 'expired');
     const cancelled = this.store.cancelForBotInConversation(botId, conversationId);
@@ -1255,7 +1255,7 @@ export class ScheduleService {
 
   /**
    * D88 移交：把一条 active 定时任务改由另一个 Bot 负责——在 `conversationId`（B 的私聊，
-   * 或 B 也在的群）里按原字段重建（title / note / kind / cron / run_at / timezone / origin，
+   * 或 B 也在的项目组）里按原字段重建（title / note / kind / cron / run_at / timezone / origin，
    * 待触发的那一次照旧），出一张新回执卡；原任务取消，其回执卡快照标「已移交给 {B}」。
    * 重建、取消、新回执卡与已排队的触发作业改投在同一事务里：崩溃后不会两边都有、也不会
    * 两边都没有，接手方也不会缺回执卡；已经排进队列（`schedule_fire:{旧 id}:*`）的那一次

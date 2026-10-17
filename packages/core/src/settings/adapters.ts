@@ -45,7 +45,7 @@ import type { Bot } from '@kepcup/shared';
 export interface SettingTargetRef {
   botId: string | null;
   conversationId: string | null;
-  projectId: string | null;
+  workdirId: string | null;
 }
 
 /** 条目的当前状态（脱敏）。 */
@@ -93,7 +93,7 @@ export interface ItemAdapter {
    */
   write?(item: SettingItem, write: ItemWrite, target: SettingTargetRef): void | ItemWriteEffects;
   /**
-   * 只用于 Bot 的提议（`settings_change`）：把 Bot 给的值整理成「建议值」——例如群成员只能加、
+   * 只用于 Bot 的提议（`settings_change`）：把 Bot 给的值整理成「建议值」——例如项目成员只能加、
    * 不能借预填移除。用户在卡上亲手保存（`settings.items.apply`）不经过这里。
    */
   proposal?(item: SettingItem, values: SettingValues, snapshot: ItemSnapshot): SettingValues;
@@ -116,7 +116,7 @@ export interface AdapterDeps {
   providers: { list(): ProviderInfo[]; setKey(provider: string, key: string): void };
   bots: {
     get(id: string): Bot | null;
-    /** 群成员选项。缺省时卡片仍用通讯录，读适配器不列可选值。 */
+    /** 项目成员选项。缺省时卡片仍用通讯录，读适配器不列可选值。 */
     listActive?(): readonly Bot[];
   };
   /**
@@ -143,17 +143,23 @@ export interface AdapterDeps {
     revokeChanges(previous: readonly McpServer[], next: readonly McpServer[]): void;
   };
   conversations?: {
-    get(id: string): { title: string | null; type: string } | null;
+    get(id: string): {
+      title: string | null;
+      type: string;
+      goal?: string | null;
+      leadBotId?: string | null;
+    } | null;
     memberBotIds?(id: string): readonly string[];
   };
-  /** 群名。与设置页 `groups.rename` 同一方法；缺省时不能由宿主写。 */
-  groups?: {
-    rename(conversationId: string, title: string): void;
-  };
-  /** 项目保护规则与端口（只读；写入留在项目设置组件）。 */
+  /** 项目组名称 / 目标 / 负责人。与设置页的 projects.* RPC 同一方法；缺省时不能由宿主写。 */
   projects?: {
+    update(conversationId: string, patch: { title?: string; goal?: string | null }): void;
+    setLead(conversationId: string, botId: string): void;
+  };
+  /** 工作目录保护规则与端口（只读；写入留在工作目录设置组件）。 */
+  workdirs?: {
     get(id: string): {
-      /** 项目目录（只用于把规则里的绝对路径脱敏成 `<project>/…`，不进快照）。 */
+      /** 工作目录（只用于把规则里的绝对路径脱敏成 `<workdir>/…`，不进快照）。 */
       path?: string | null;
       protectRules: { denyRead: readonly string[]; denyWrite: readonly string[] };
       allowedPorts: ReadonlyArray<readonly [number, number]> | null;
@@ -1443,20 +1449,27 @@ function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function groupConversation(
+/** The project conversation of this target, or null (not a project / no conversation). */
+function projectConversation(
   deps: AdapterDeps,
   target: SettingTargetRef,
-): { title: string | null; type: string } | null {
+): {
+  title: string | null;
+  type: string;
+  goal?: string | null;
+  leadBotId?: string | null;
+} | null {
   if (target.conversationId === null) return null;
-  return deps.conversations?.get(target.conversationId) ?? null;
+  const conversation = deps.conversations?.get(target.conversationId) ?? null;
+  return conversation !== null && conversation.type === 'project' ? conversation : null;
 }
 
-function groupTitleAdapter(deps: AdapterDeps): ItemAdapter {
+function projectTitleAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
-      const conversation = groupConversation(deps, target);
-      if (conversation === null || conversation.type !== 'group') {
-        return snapshot('unknown', null, '当前不是群聊');
+      const conversation = projectConversation(deps, target);
+      if (conversation === null) {
+        return snapshot('unknown', null, '该会话不是项目组');
       }
       const title = clean(conversation.title ?? '', 60);
       return snapshot('configured', { title }, title.length > 0 ? title : '（未命名）');
@@ -1466,43 +1479,71 @@ function groupTitleAdapter(deps: AdapterDeps): ItemAdapter {
       const title = str(values.title);
       return title !== undefined && title.length > 0
         ? { ok: true, values: { ...values, title } }
-        : { ok: false, message: '群名不能为空' };
+        : { ok: false, message: '项目名称不能为空' };
     },
     write: (_item, { next }, target) => {
       const title = str(next.title);
       if (title === undefined || title.length === 0) {
-        throw new AppError('INVALID_INPUT', '群名不能为空');
+        throw new AppError('INVALID_INPUT', '项目名称不能为空');
       }
-      if (target.conversationId === null || deps.groups === undefined) {
-        throw new AppError('NOT_IMPLEMENTED', '群服务未就绪');
+      if (target.conversationId === null || deps.projects === undefined) {
+        throw new AppError('NOT_IMPLEMENTED', '项目组服务未就绪');
       }
-      deps.groups.rename(target.conversationId, title);
+      deps.projects.update(target.conversationId, { title });
     },
   };
 }
 
-function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
+function projectGoalAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
-      const conversationId = target.conversationId;
-      if (conversationId === null) return snapshot('unknown', null, '当前不是群聊');
-      const conversation = deps.conversations?.get(conversationId) ?? null;
-      if (conversation === null || conversation.type !== 'group') {
-        return snapshot('unknown', null, '当前不是群聊');
+      const conversation = projectConversation(deps, target);
+      if (conversation === null) {
+        return snapshot('unknown', null, '该会话不是项目组');
       }
-      const ids = deps.conversations?.memberBotIds?.(conversationId);
+      const goal = clean(conversation.goal ?? '', 200);
+      return snapshot('configured', { goal }, goal.length > 0 ? goal : '（未填写）');
+    },
+    normalize: (_item, values) => {
+      if (!('goal' in values)) return { ok: true, values };
+      const goal = str(values.goal);
+      return goal !== undefined && goal.length > 0
+        ? { ok: true, values: { ...values, goal } }
+        : { ok: false, message: '项目目标不能为空' };
+    },
+    write: (_item, { next }, target) => {
+      const goal = str(next.goal);
+      if (goal === undefined || goal.length === 0) {
+        throw new AppError('INVALID_INPUT', '项目目标不能为空');
+      }
+      if (target.conversationId === null || deps.projects === undefined) {
+        throw new AppError('NOT_IMPLEMENTED', '项目组服务未就绪');
+      }
+      deps.projects.update(target.conversationId, { goal });
+    },
+  };
+}
+
+function projectMembersAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const conversation = projectConversation(deps, target);
+      if (conversation === null || target.conversationId === null) {
+        return snapshot('unknown', null, '该会话不是项目组');
+      }
+      const ids = deps.conversations?.memberBotIds?.(target.conversationId);
       if (ids === undefined) return snapshot('unknown', null, '状态未知');
       const names = ids.map((id) => clean(deps.bots.get(id)?.name ?? id, 30));
       const summary = names.length === 0 ? '还没有成员' : clean(names.join('、'), SUMMARY_MAX);
       return snapshot('configured', { bots: [...ids] }, summary);
     },
     options: () =>
-      (deps.bots.listActive?.() ?? []).map((bot) => ({
-        value: bot.id,
-        label: clean(bot.name),
-      })),
-    // Bot 只能提议「拉谁进群」：建议值 = 现有成员 ∪ Bot 给的。移出成员只能由用户在卡上亲手取消
-    // 勾选（卡片把「将移出」单独列出来），预填永远不会少掉现有成员。
+      // 管家不加入项目组（D92 T1a）：可选项只有领域 Bot。
+      (deps.bots.listActive?.() ?? [])
+        .filter((bot) => bot.systemRole !== 'butler')
+        .map((bot) => ({ value: bot.id, label: clean(bot.name) })),
+    // Bot 只能提议「拉谁进项目组」：建议值 = 现有成员 ∪ Bot 给的。移出成员只能由用户在卡上亲手
+    // 取消勾选（卡片把「将移出」单独列出来），预填永远不会少掉现有成员。
     proposal: (_item, values, current) => {
       if (!('bots' in values)) return values;
       const existing = Array.isArray(current.values?.bots)
@@ -1510,6 +1551,55 @@ function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
         : [];
       const proposed = asStringList(values.bots) ?? [];
       return { ...values, bots: [...new Set([...existing, ...proposed])] };
+    },
+  };
+}
+
+function projectLeadAdapter(deps: AdapterDeps): ItemAdapter {
+  return {
+    read: (_item, target) => {
+      const conversation = projectConversation(deps, target);
+      if (conversation === null || target.conversationId === null) {
+        return snapshot('unknown', null, '该会话不是项目组');
+      }
+      const leadBotId = conversation.leadBotId ?? null;
+      const name = leadBotId !== null ? (deps.bots.get(leadBotId)?.name ?? leadBotId) : null;
+      return snapshot('configured', leadBotId === null ? null : { botId: leadBotId }, name ?? '（未设置）');
+    },
+    options: (_field, _item, target) => {
+      if (target.conversationId === null) return [];
+      const ids = deps.conversations?.memberBotIds?.(target.conversationId) ?? [];
+      // 选项 = 本项目成员（管家不加入项目组，天然不在成员里）。
+      return ids
+        .map((id) => ({ value: id, label: clean(deps.bots.get(id)?.name ?? id) }))
+        .filter((option) => deps.bots.get(option.value)?.systemRole !== 'butler');
+    },
+    normalize: (_item, values, target) => {
+      if (!('botId' in values)) return { ok: true, values };
+      const botId = str(values.botId);
+      if (botId === undefined) return { ok: false, message: '缺少负责人 botId' };
+      const bot = deps.bots.get(botId);
+      if (bot === null) return { ok: false, message: '负责人 Bot 不存在' };
+      if (bot.systemRole === 'butler') {
+        return { ok: false, message: '管家不能当项目负责人' };
+      }
+      if (
+        target.conversationId !== null &&
+        !deps.conversations?.memberBotIds?.(target.conversationId)?.includes(botId)
+      ) {
+        return { ok: false, message: '负责人必须是项目组成员' };
+      }
+      return { ok: true, values: { ...values, botId } };
+    },
+    write: (_item, { next }, target) => {
+      const botId = str(next.botId);
+      if (botId === undefined || botId.length === 0) {
+        throw new AppError('INVALID_INPUT', '缺少负责人 botId');
+      }
+      if (target.conversationId === null || deps.projects === undefined) {
+        throw new AppError('NOT_IMPLEMENTED', '项目组服务未就绪');
+      }
+      deps.projects.setLead(target.conversationId, botId);
     },
   };
 }
@@ -1536,18 +1626,18 @@ function stripPrefix(pattern: string, prefix: string): string | null {
 }
 
 /**
- * 一条保护规则的脱敏形状：项目目录下 → `<project>/…`，家目录下 → `~/…`，其余绝对路径只留最后一段
+ * 一条保护规则的脱敏形状：工作目录下 → `<workdir>/…`，家目录下 → `~/…`，其余绝对路径只留最后一段
  * （`…/文件名`）；相对的 glob（`*.pem`、`.git/config`）原样。都过 `sanitizeDisplayText` 并截短。
  */
 export function redactPathPattern(
   pattern: string,
-  projectRoot: string | null,
+  workdirRoot: string | null,
   homeDir: string | null,
 ): string {
   let shape = pattern;
-  if (projectRoot !== null) {
-    const rest = stripPrefix(pattern, projectRoot);
-    if (rest !== null) shape = rest.length > 0 ? `<project>/${rest}` : '<project>';
+  if (workdirRoot !== null) {
+    const rest = stripPrefix(pattern, workdirRoot);
+    if (rest !== null) shape = rest.length > 0 ? `<workdir>/${rest}` : '<workdir>';
   }
   if (shape === pattern && homeDir !== null) {
     const rest = stripPrefix(pattern, homeDir);
@@ -1560,14 +1650,14 @@ export function redactPathPattern(
   return clean(shape, PROTECT_PATTERN_MAX);
 }
 
-function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
+function workdirRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
   return {
     read: (_item, target) => {
-      const project =
-        target.projectId !== null ? (deps.projects?.get(target.projectId) ?? null) : null;
-      if (project === null) return snapshot('unknown', null, '当前对话没有绑定项目');
+      const workdir =
+        target.workdirId !== null ? (deps.workdirs?.get(target.workdirId) ?? null) : null;
+      if (workdir === null) return snapshot('unknown', null, '当前对话没有绑定工作目录');
       if (kind === 'ports') {
-        const ports = (project.allowedPorts ?? []).map(([from, to]) =>
+        const ports = (workdir.allowedPorts ?? []).map(([from, to]) =>
           from === to ? `${from}` : `${from}-${to}`,
         );
         return snapshot(
@@ -1577,14 +1667,14 @@ function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAd
         );
       }
       // 读也要脱敏（方案 §七）：规则可能写成本机绝对路径——只回条数和脱敏后的形状
-      // （家目录 → `~`、项目目录 → `<project>`、其余绝对路径只留文件名），每条截短、条数封顶。
+      // （家目录 → `~`、工作目录 → `<workdir>`、其余绝对路径只留文件名），每条截短、条数封顶。
       const redact = (patterns: readonly string[]): string[] =>
         patterns
           .slice(0, PROTECT_PATTERNS_SHOWN)
           .map((pattern) =>
-            redactPathPattern(pattern, project.path ?? null, deps.homeDir ?? homedir()),
+            redactPathPattern(pattern, workdir.path ?? null, deps.homeDir ?? homedir()),
           );
-      const { denyRead, denyWrite } = project.protectRules;
+      const { denyRead, denyWrite } = workdir.protectRules;
       return snapshot(
         'configured',
         { denyRead: redact(denyRead), denyWrite: redact(denyWrite) },
@@ -1940,10 +2030,12 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'bot.apps': botAppsAdapter(deps),
     'bot.skills': botSkillsAdapter(deps),
     'bot.agent': botAgentAdapter(deps),
-    'group.title': groupTitleAdapter(deps),
-    'group.members': groupMembersAdapter(deps),
-    'project.protect-rules': projectRulesAdapter(deps, 'rules'),
-    'project.ports': projectRulesAdapter(deps, 'ports'),
+    'project.title': projectTitleAdapter(deps),
+    'project.goal': projectGoalAdapter(deps),
+    'project.members': projectMembersAdapter(deps),
+    'project.lead': projectLeadAdapter(deps),
+    'workdir.protect-rules': workdirRulesAdapter(deps, 'rules'),
+    'workdir.ports': workdirRulesAdapter(deps, 'ports'),
     'general.launch-at-login': launchAtLoginAdapter(deps),
     'general.workbench': workbenchEnabledAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),

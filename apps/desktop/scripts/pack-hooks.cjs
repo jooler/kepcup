@@ -56,6 +56,8 @@ const FORBIDDEN_MARKERS = [
   'KEPCUP_FILE_KEYSTORE_PATH',
   // P13-B 首启引导 e2e seam（KEPCUP_ONBOARDING=off，main/index.ts）
   'KEPCUP_ONBOARDING',
+  // P12-B Windows 沙箱提示 e2e seam（KEPCUP_WSL_PROMPT=off，start.ts）
+  'KEPCUP_WSL_PROMPT',
   // D72 P6 外部智能体 e2e seam（假 ACP Agent，start.ts fakeAcpAgentSeamFromEnv）
   'KEPCUP_FAKE_ACP_AGENT_BIN',
   'KEPCUP_FAKE_ACP_AGENT_SCRIPT',

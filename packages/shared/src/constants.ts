@@ -3,16 +3,25 @@
  * These constants must not be duplicated elsewhere in code.
  */
 
+import type { TriggerReason } from './domain/types.js';
+
 /** Max number of recent messages injected into context. */
 export const RECENT_MESSAGES_MAX = 30;
 /** Token budget for injected recent messages. */
 export const RECENT_MESSAGES_TOKEN_BUDGET = 4000;
 /** Update the rolling summary when unsummarized messages exceed this count. */
 export const SUMMARY_TRIGGER_UNSUMMARIZED = 50;
-/** Max depth of bot-to-bot @ chains. */
-export const BOT_CHAIN_MAX_DEPTH = 3;
-/** Total token budget shared by one bot-to-bot chain. */
-export const BOT_CHAIN_TOKEN_BUDGET = 200_000;
+/**
+ * Circuit breaker of one collaboration episode (D92 T1a): at most this many
+ * bot-initiated triggers are delivered per round; the next one pauses the
+ * episode (the pending trigger is kept, not dropped).
+ */
+export const EPISODE_HOP_BREAKER = 12;
+/**
+ * Same-pair breaker: at most this many bot-initiated triggers between one
+ * unordered bot pair per round (≈ 4 ping-pong rounds); the next one pauses.
+ */
+export const EPISODE_PINGPONG_BREAKER = 8;
 /** Group-chat triage timeout in ms. */
 export const TRIAGE_TIMEOUT_MS = 20_000;
 /** Recent messages considered by group-chat triage. */
@@ -33,8 +42,8 @@ export const RELEVANT_MEMORY_TOKEN_BUDGET = 600;
 export const WIKI_TOPICS_TOKEN_BUDGET = 200;
 /** Skills list token budget. */
 export const SKILLS_LIST_TOKEN_BUDGET = 500;
-/** Project info budget (incl. AGENTS.md). */
-export const PROJECT_CONTEXT_TOKEN_BUDGET = 1500;
+/** Workdir info budget (incl. AGENTS.md). */
+export const WORKDIR_CONTEXT_TOKEN_BUDGET = 1500;
 /** Max characters of a single tool output returned to the model. */
 export const TOOL_OUTPUT_MAX_CHARS = 30_000;
 /**
@@ -98,9 +107,9 @@ export const DELEGATION_TASK_MAX_CHARS = 4000;
  * conversations may still hold such internal system messages.)
  */
 export const DELEGATION_FOLLOWUP_EVENT = 'delegation_result';
-/** Bounds of a butler `propose_team` proposal (D70). */
-export const BUTLER_TEAM_SIZE_MIN = 3;
-export const BUTLER_TEAM_SIZE_MAX = 5;
+/** Bounds of a butler `propose_bots` proposal (D70; D92 T1a renamed the tool). */
+export const PROPOSE_BOTS_MIN = 3;
+export const PROPOSE_BOTS_MAX = 5;
 /** system_event name of the butler's route card (D70 suggest_route). */
 export const ROUTE_SUGGESTION_EVENT = 'route_suggestion';
 /** system_event name of the follow-up injected into the butler after a proposal is decided (D70). */
@@ -243,6 +252,22 @@ export const CONTINUATION_TOOL_RESULT_INLINE_MAX_CHARS = 200;
 /** Truncation length for assistant prose and steer/progress texts in the digest. */
 export const CONTINUATION_TEXT_MAX_CHARS = 160;
 
+// --- Project team (D92 T1a, docs/design/41-project-team.md) ----------------------
+
+/** 项目目标（conversations.goal）的长度上限（projects.create / projects.update）。 */
+export const PROJECT_GOAL_MAX_CHARS = 4000;
+/**
+ * 「上一位回话者」P 的连续窗口（D92 T1a 路由）：P 的最近一条可见 Bot 回复距今
+ * 超过它就不做续接判断，直接进负责人网关。
+ */
+export const ROUTING_CONTINUATION_WINDOW_MS = 30 * 60_000;
+/** 续接判断的认领阈值：P 说 respond 且置信度 ≥ 它才算续接（初值，待实测）。 */
+export const ROUTING_CONTINUATION_MIN_CONFIDENCE = 0.6;
+/** 负责人网关 `route` 一次最多路由到的成员数（超出截断）。 */
+export const ROUTING_ROUTE_TARGETS_MAX = 3;
+/** 必答原因（D92 T1a 路由）：该轮工具面摘掉 skip_reply，宿主保证必有可见回复或失败态。 */
+export const MUST_REPLY_REASONS: readonly TriggerReason[] = ['routed', 'lead_fallback'];
+
 // --- Conversational bot setup (setup interview) ---------------------------------
 
 /** system_event name of a setup-interview question card (options carry the candidates). */
@@ -254,11 +279,6 @@ export const SETUP_QUESTION_EVENT = 'bot_setup_question';
  * card is answered (directory chosen or skipped).
  */
 export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';
-/** system_event name of a group-creation question card (content carries the step). */
-export const GROUP_SETUP_QUESTION_EVENT = 'group_setup_question';
-/** Ordered steps of the conversational group creation (docs/design/19, D60). */
-export const GROUP_SETUP_STEPS = ['title', 'purpose', 'members', 'project'] as const;
-export type GroupSetupStep = (typeof GROUP_SETUP_STEPS)[number];
 /**
  * Bot 内部事务事件名集合（docs/design/01-conversation.md 消息原则）：这些事件
  * 只服务 Bot 自己的执行与知识/环境管理，不是对话内容——消息写入侧带
@@ -281,6 +301,9 @@ export const INTERNAL_SYSTEM_EVENTS: ReadonlySet<string> = new Set([
   'watch_alert',
   // D84：新邮件唤醒 Bot 的触发消息（用户看到的是邮件卡）。
   'mail_alert',
+  // D92 T1a：用户停止了协作回合（episode_stopped）——只进 Bot 的上下文，
+  // 用户看到的是自己点过的停止按钮，不再需要一条消息。
+  'episode_stopped',
 ]);
 /** Hard cap of questions one setup interview may ask (soft target: 3~5). */
 export const SETUP_MAX_QUESTIONS = 5;
@@ -309,8 +332,8 @@ export const SKILL_PROMPT_DESCRIPTION_MAX_CHARS = 200;
 export const SKILL_SCAN_FILES_MAX = 200;
 /** Checkpoint retention in days. */
 export const CHECKPOINT_RETENTION_DAYS = 30;
-/** Default per-project protection rules (docs/dev/phases/P04-project.md). */
-export const PROJECT_DEFAULT_PROTECT_RULES = {
+/** Default per-workdir protection rules (docs/dev/phases/P04-project.md). */
+export const WORKDIR_DEFAULT_PROTECT_RULES = {
   denyRead: ['.env', '.env.*', '*.pem', '*.key', '*.p12', 'id_rsa*'],
   denyWrite: [],
 } as const;
@@ -326,10 +349,10 @@ export const MEMORY_DB_POOL_MAX = 8;
 export const CONSOLIDATION_LOCAL_HOUR = 3;
 /** Items per consolidation batch (docs/dev/04-agent-runtime.md "记忆整理"). */
 export const MEMORY_CONSOLIDATION_BATCH = 50;
-/** Cap for the <project> context top-level listing (two levels). */
-export const PROJECT_CONTEXT_MAX_ENTRIES = 200;
-/** Max recent projects shown in the selector. */
-export const PROJECTS_RECENT_LIMIT = 10;
+/** Cap for the <workdir> context top-level listing (two levels). */
+export const WORKDIR_CONTEXT_MAX_ENTRIES = 200;
+/** Max recent workdirs shown in the selector. */
+export const WORKDIRS_RECENT_LIMIT = 10;
 /** Max proactive messages per bot per day (Profile may override). */
 export const MAX_PROACTIVE_PER_DAY = 5;
 /**
@@ -373,6 +396,11 @@ export const WIKI_LINT_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const WIKI_SOURCE_MAX_BYTES = 10_000_000;
 /** Inline cap for source text embedded into the maintenance-loop prompt (P09). */
 export const WIKI_SOURCE_INLINE_MAX_CHARS = 20_000;
+/**
+ * Cap for a user-pasted `text` source (D92 T1b WP10): the body rides inside the
+ * RPC input / job payload, so it gets a char cap instead of the byte cap.
+ */
+export const WIKI_TEXT_SOURCE_MAX_CHARS = 200_000;
 
 /** Per-provider model-call concurrency limit (adjustable in settings). */
 export const PROVIDER_CONCURRENCY_DEFAULT = 4;
@@ -563,9 +591,10 @@ export const AGENT_CANCEL_GRACE_MS = 10_000;
  */
 export const AGENT_DEFAULT_CONCURRENCY = 2;
 /**
- * Chain-budget equivalent of one external-agent model round whose tokens the
- * agent did not report (subscription agents often report none, P5): the bot
- * chain budget (BOT_CHAIN_TOKEN_BUDGET) then allows about 20 such rounds.
+ * Bookkeeping value for one external-agent model round that reported no
+ * tokens (subscription agents often report none, P5): the agent engine's
+ * zero-usage rows charge one round at this value. It is not a budget of any
+ * kind — episode breakers (D92 T1a) count triggers, not tokens.
  */
 export const AGENT_TURN_BUDGET_TOKENS = 10_000;
 /**

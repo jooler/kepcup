@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
-import { createGroupViaUi } from './helpers/create-group';
+import { createProjectViaUi } from './helpers/create-project';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P07 e2e (docs/dev/phases/P07-memory.md 测试要求「端到端」): the right-panel
@@ -75,7 +76,7 @@ async function startSession(prefix: string, curationDelayMs?: string): Promise<S
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -234,7 +235,7 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
     await createBotAndOpenChat(page, '阿乙');
     // A second bot so the group can be created (needs >= 2 members).
     await createBotAndOpenChat(page, '阿丙');
-    await createGroupViaUi(page, '产品组', ['阿乙', '阿丙']);
+    await createProjectViaUi(page, '产品组', ['阿乙', '阿丙']);
 
     // 阿乙 remembers something in the group (evidence lives in the group).
     llm.script('mock-main', [
@@ -260,15 +261,17 @@ test('evidence of a deleted conversation shows 来源对话已删除', async () 
       timeout: 30_000,
     });
 
-    // Delete the group conversation (group settings via the context menu).
+    // Delete the project conversation (project details via the context menu).
     await page
       .locator('li', { hasText: '产品组' })
       .locator('[data-testid^="conversation-row-"]')
       .click({ button: 'right' });
-    await page.locator('[data-testid="context-group-settings"]').click();
-    await expect(page.locator('[data-testid="group-settings-dialog"]')).toBeVisible();
-    await page.locator('[data-testid="group-delete-begin"]').click();
-    await page.locator('[data-testid="group-delete-confirm"]').click();
+    await page.locator('[data-testid="context-project-settings"]').click();
+    await expect(page.locator('[data-testid="project-settings-page"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.locator('[data-testid="project-delete-begin"]').click();
+    await page.locator('[data-testid="project-delete-confirm"]').click();
     await expect(page.locator('[data-testid="chat-empty"]')).toBeVisible({ timeout: 15_000 });
 
     // Open 阿乙's direct chat; the memory survives with its group evidence.

@@ -142,6 +142,8 @@ class PermissionsState {
     routineSelection?: string[],
     /** bot_handover only (D88): kept item keys (incl. "resp:to" / "resp:from"). */
     handoverSelection?: string[],
+    /** butler_proposal `project` only (D92 T1a WP4): the lead the user picked on the card. */
+    leadBotId?: string,
   ): Promise<void> {
     try {
       const result = (await core.call('approvals.decide', {
@@ -152,6 +154,7 @@ class PermissionsState {
         ...(payloadHash !== undefined ? { payloadHash } : {}),
         ...(routineSelection !== undefined ? { routineSelection } : {}),
         ...(handoverSelection !== undefined ? { handoverSelection } : {}),
+        ...(leadBotId !== undefined ? { leadBotId } : {}),
       })) as { approval: Approval };
       this.#upsert(result.approval);
       this.#recount(result.approval.conversationId);

@@ -1,7 +1,7 @@
 import {
   BOT_HANDED_OVER_EVENT,
   BOT_HANDOVER_EVENT,
-  GROUP_MENTION_PREFIX,
+  PROJECT_MENTION_PREFIX,
   RECENT_MESSAGES_MAX,
   RECENT_MESSAGES_TOKEN_BUDGET,
   SCHEDULE_CREATED_EVENT,
@@ -261,14 +261,14 @@ function renderTaskQuestionLine(
 }
 
 /**
- * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），群出
- * 「标题（群聊）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
- * 不在本群的 Bot 或其他群聊的场合。
+ * 提及图例里一个 token 的可读形式：Bot 出名字（未知/已删出裸 id），项目组出
+ * 「标题（项目组）」。正文里的 `@名字` 靠它被模型准确理解——尤其是引用了
+ * 不在本项目组的 Bot 或其他项目组的场合。
  */
 function mentionTokenLabel(token: string, options: RenderMessageOptions): string {
-  if (token.startsWith(GROUP_MENTION_PREFIX)) {
+  if (token.startsWith(PROJECT_MENTION_PREFIX)) {
     const title = options.mentionLabels?.get(token);
-    return title !== undefined ? `${title}（群聊）` : '某群聊';
+    return title !== undefined ? `${title}（项目组）` : '某项目组';
   }
   return options.botNames.get(token) ?? token;
 }
@@ -388,8 +388,8 @@ export function renderMessageLine(
           )
           .join('、')}）`
       : '';
-  // 提及图例：结构化 mentions（Bot id / group:<会话 id>）补成显式说明，
-  // 模型不用猜 `@名字` 各指什么（composer 侧约定见 shared GROUP_MENTION_PREFIX）。
+  // 提及图例：结构化 mentions（Bot id / project:<会话 id>）补成显式说明，
+  // 模型不用猜 `@名字` 各指什么（composer 侧约定见 shared PROJECT_MENTION_PREFIX）。
   const mentionSuffix =
     message.senderType === 'user' && message.mentions.length > 0
       ? `（提及：${message.mentions
@@ -489,6 +489,11 @@ export function buildTriggerSegment(input: TriggerSegmentInput): string {
   if (input.reason === 'delegation') {
     lines.push(delegationWakeHint(input.extraAttributes?.['intent']));
   }
+  // D92 T1a routing: silent routing's four delivery reasons carry a host note.
+  const wakeHint = projectWakeHint(input.reason);
+  if (wakeHint !== null) {
+    lines.push(wakeHint);
+  }
   return `<trigger reason="${input.reason}"${attrs}>\n${lines.join('\n')}\n</trigger>`;
 }
 
@@ -504,4 +509,24 @@ export function delegationWakeHint(intent: unknown): string {
     return '（宿主说明：这是另一个 Bot 代用户转交给你的提问。你这一轮的最终回复会作为答复贴回给对方：直接给出完整答复，不要只说「我去查」。信息不足时直接向用户提问。）';
   }
   return '（宿主说明：这是另一个 Bot 代用户转交给你的请求。能用只读查询完成的，在这一轮的最终回复里给出完整结果，它会贴回给对方；需要动手的用 start_task 派任务——任务结束后，它们的结果会自动贴回给对方，你这一轮只需简短说明去做了什么。不要只回复「收到」。）';
+}
+
+/**
+ * The four silent-routing delivery reasons' host note (D92 T1a routing,
+ * design 41 §6.3 必答回合): the turn is told why it was woken and whether it
+ * must answer. Other reasons get no note (null).
+ */
+export function projectWakeHint(reason: TriggerBatch['reason']): string | null {
+  switch (reason) {
+    case 'continuation':
+      return '（宿主说明：用户这条消息没有 @ 任何人。你是最近与用户交流的成员，宿主判断它是在延续你们的对话。如果你认为与你无关，可以调用 skip_reply。）';
+    case 'routed':
+      return '（宿主说明：项目负责人判断这条消息与你有关。请直接回应用户，像你自己认为与己有关一样自然作答，不要提及被转交或负责人的判断。你必须给出回应。）';
+    case 'routed_also':
+      return '（宿主说明：项目负责人判断这条消息也与你有关，前面的成员可能已经回复（见最近消息）。如果没有需要补充的，调用 skip_reply；不要提及被转交。）';
+    case 'lead_fallback':
+      return '（宿主说明：用户这条消息没有 @ 任何人，也没有成员认领，由你作为项目负责人处理。请直接回应：自己回答，或在回复中 @ 合适的成员并写清要他做什么。你必须给出回应。）';
+    default:
+      return null;
+  }
 }

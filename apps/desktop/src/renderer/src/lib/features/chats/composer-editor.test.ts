@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MarkdownManager } from '@tiptap/markdown';
-import { groupMentionToken } from '@kepcup/shared';
+import { projectMentionToken } from '@kepcup/shared';
 import { buildMentionTargets, type MentionTarget } from './composer-text';
 import {
   collectMentionTokens,
@@ -9,7 +9,7 @@ import {
   mergeMentionTokens,
 } from './composer-editor';
 
-/** 与 Composer 相同的提及注册表（成员阿甲 + 外部 Bot + 一个群）。 */
+/** 与 Composer 相同的提及注册表（成员阿甲 + 外部 Bot + 一个项目组）。 */
 const targets: MentionTarget[] = buildMentionTargets({
   memberBots: [],
   allBots: [
@@ -24,7 +24,7 @@ const targets: MentionTarget[] = buildMentionTargets({
       updatedAt: 0,
     },
   ],
-  groups: [{ id: 'conv_g1', title: '项目讨论组' }],
+  projects: [{ id: 'conv_g1', title: '项目讨论组' }],
 });
 
 const manager = new MarkdownManager({ extensions: [...composerNodes, composerMention] });
@@ -90,7 +90,7 @@ describe('mention token collection', () => {
         {
           type: 'paragraph',
           content: [
-            { type: 'mention', attrs: { id: groupMentionToken('conv_g1'), label: '项目讨论组' } },
+            { type: 'mention', attrs: { id: projectMentionToken('conv_g1'), label: '项目讨论组' } },
             { type: 'text', text: ' 和 ' },
             { type: 'mention', attrs: { id: 'bot_jia', label: '阿甲' } },
             { type: 'mention', attrs: { id: 'bot_jia', label: '阿甲' } },
@@ -98,7 +98,7 @@ describe('mention token collection', () => {
         },
       ],
     };
-    expect(collectMentionTokens(doc)).toEqual([groupMentionToken('conv_g1'), 'bot_jia']);
+    expect(collectMentionTokens(doc)).toEqual([projectMentionToken('conv_g1'), 'bot_jia']);
   });
 
   it('merge = 文档节点 ∪ 正文手打名称的正则解析', () => {
@@ -113,7 +113,7 @@ describe('mention token collection', () => {
     };
     expect(mergeMentionTokens(doc, '后面补一句 @项目讨论组', targets)).toEqual([
       'bot_jia',
-      groupMentionToken('conv_g1'),
+      projectMentionToken('conv_g1'),
     ]);
   });
 

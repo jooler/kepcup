@@ -1,17 +1,17 @@
 # 39 工作台（Workbench）：事项统筹 + 备忘 + 管家接管
 
-用户需要一个**不进任何对话**也能统筹全局的地方：看清谁在忙什么、把念头整理成要做的事、把活派给 Bot 或群、让管家代为整理。工作台在对话之外提供三样东西：事项（待办 + 定时派活）、备忘（闪念）、管家对二者的增删改查。决策：**D90**。
+用户需要一个**不进任何对话**也能统筹全局的地方：看清谁在忙什么、把念头整理成要做的事、把活派给 Bot 或项目组、让管家代为整理。工作台在对话之外提供三样东西：事项（待办 + 定时派活）、备忘（闪念）、管家对二者的增删改查。决策：**D90**。
 
 **状态：已定稿，实施中**（2026-10-15 定稿并经用户确认 §6 的两项关键决策；旧版「按 Bot 列定时任务 + 备忘 tab」整体作废）。实施编排与记录见 [todo/workbench.md](../../todo/workbench.md)。早期阶段，不做向后兼容、不迁旧数据，以当前代码逻辑正确为准。
 
-相关：D80（定时任务的自然引导，[todo/schedule-nudges.md](../../todo/schedule-nudges.md)）、D71 / D70（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D88（资产移交，[37](37-bot-asset-handover.md)）、D89（对话内设置的触发判据，[38](38-conversational-settings.md)）、[03-bot.md](03-bot.md)、[01-conversation.md](01-conversation.md)（群聊）、[02-execution.md](02-execution.md)（群路由与执行）。
+相关：D80（定时任务的自然引导，[todo/schedule-nudges.md](../../todo/schedule-nudges.md)）、D71 / D70（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D88（资产移交，[37](37-bot-asset-handover.md)）、D89（对话内设置的触发判据，[38](38-conversational-settings.md)）、[03-bot.md](03-bot.md)、[01-conversation.md](01-conversation.md)（项目组）、[02-execution.md](02-execution.md)（项目组路由与执行）、D92（项目组负责人，[41](41-project-team.md) §12.3）。
 
 ## 决策
 
 - **D90 工作台**：
-  1. **心智模型**：每个 Bot 是用户的一名员工，群是一个项目组，管家是用户的助理。工作台是经理的看板，不是又一个对话。
+  1. **心智模型**：每个 Bot 是用户的一名员工，项目组是一个团队（派给项目组的活默认落项目负责人），管家是用户的助理。工作台是经理的看板，不是又一个对话。
   2. **一套计时引擎**：事项的定时复用 `schedules`（计时、错过补发、唤醒都复用），工作台不另造调度器。时间只存在 schedule 上，事项表不重复存。
-  3. **派活是用户的指令，不是 Bot 的主动行为**：到点后宿主以「工作台代你发出」的**可见用户消息**把活派给员工，走现有的用户消息路由（私聊 / 群）。**不受**主动消息开关、免打扰、每日上限约束；`triggerFromUser=false`，执行者在这一轮里做敏感写入仍按「非本人」出卡确认。
+  3. **派活是用户的指令，不是 Bot 的主动行为**：到点后宿主以「工作台代你发出」的**可见用户消息**把活派给员工，走现有的用户消息路由（私聊 / 项目组）。**不受**主动消息开关、免打扰、每日上限约束；`triggerFromUser=false`，执行者在这一轮里做敏感写入仍按「非本人」出卡确认。
   4. **事项归用户所有**：Bot 被删、对话被删，事项不跟着消失，而是退回草案等用户改派。
   5. **事项 ≠ Bot 自己的安排**：Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任务不转成事项，仍受主动消息护栏约束；工作台只在员工分道里并列展示。**事项 = 你派的活；自排 = 员工自己的日程。**
   6. **待验收不自动完成**：Bot 说做完了不等于用户认可；用户点「完成」或告诉管家。
@@ -28,12 +28,12 @@
 | **了解现状**：谁在忙、忙什么、什么卡住了、什么等我拍板 | 按员工 / 项目组分道的事项看板；进行中、待验收、需要你处理的汇总 |
 | **思考**：脑子里冒出来的念头先记下 | 备忘（闪念）：一句话即记，随时检索 |
 | **规划**：把念头整理成要做的事，暂不定人定时 | 事项草案：只写「做什么」，执行者、时间都可空 |
-| **调度**：交给谁、什么时候做、做完没 | 指派给 Bot / 群 + 立即 / 定时 / 周期；到点派发，结果回流到工作台待验收 |
+| **调度**：交给谁、什么时候做、做完没 | 指派给 Bot / 项目组 + 立即 / 定时 / 周期；到点派发，结果回流到工作台待验收 |
 | **托付**：懒得自己点，让助理代管 | 管家拥有事项与备忘的增删改查工具，可代为整理、指派、排期、收尾 |
 
 三项需求的落点：
 
-1. **事项（待办）**：集中展示一切待处理的事。指派给 Bot → 成为该 Bot 的计划任务；指派给群 → 成为该群的计划任务；不指派执行者也不定时间 → 仅留作草案。
+1. **事项（待办）**：集中展示一切待处理的事。指派给 Bot → 成为该 Bot 的计划任务；指派给项目组 → 成为该项目组的计划任务；不指派执行者也不定时间 → 仅留作草案。
 2. **备忘**：用户的闪念记录工具，可转成事项。
 3. **管家接管**：管家可对事项、备忘增删改查，权限边界由宿主强制，不靠提示词自觉。
 
@@ -41,7 +41,7 @@
 
 ### 2.1 事项（todo）
 
-一件要做的事。字段：标题（必填，≤ 120 字）、说明（可空，≤ 4000 字，派发时给执行者看）、执行者（空 / Bot / 群[+可选负责 Bot]）、时间（空 / 立即 / 某时 / 周期）、来源（用户 / 管家）、可选来源备忘。
+一件要做的事。字段：标题（必填，≤ 120 字）、说明（可空，≤ 4000 字，派发时给执行者看）、执行者（空 / Bot / 项目组[+可选负责 Bot]）、时间（空 / 立即 / 某时 / 周期）、来源（用户 / 管家）、可选来源备忘。
 
 **不变式**：
 
@@ -54,7 +54,7 @@
              指派+定时                 到点派发              执行者交付
   draft ───────────────▶ scheduled ───────────▶ in_progress ───────────▶ delivered
   (草案)  ───立即开始──────────────────────────▶   (进行中)               (待验收)
-    ▲            │ 取消排期                          │ 群内无人认领 /           │ 用户：完成
+    ▲            │ 取消排期                          │ 项目里无人回应 /           │ 用户：完成
     │            ▼                                   │ 执行者被删               ▼
     └──── 退回草案 ◀───────────────────────────────────┘                        done
   任意未结束状态 ──取消──▶ cancelled                    delivered ──退回──▶ in_progress（附追问）
@@ -62,7 +62,7 @@
 
 - **周期事项**：自身停在 `scheduled`，每次触发是一条「执行记录」（`todo_runs`），各自有进行中 / 已交付；卡片显示最近一次的结果。停止周期 = `cancelled`（展示为「已停止」）。
 - **待验收不自动完成**：用户点「完成」，或告诉管家「这件算完成」。「退回」= 在原对话里追加一条追问并回到进行中。
-- **退回草案的原因**记在 `blocked_reason` 里显示，例如「负责 Bot 已删除」「群已解散」「群里无人认领」，等用户改派。
+- **退回草案的原因**记在 `blocked_reason` 里显示，例如「负责 Bot 已删除」「项目组已解散」「项目里无人回应」，等用户改派。
 - `done` / `cancelled` 可经 `reopen` 恢复为草案；已关闭超过 7 天的事项默认不出现在列表里（`includeClosed` 可取回）。
 
 ### 2.2 执行者的语义
@@ -70,10 +70,10 @@
 | 执行者 | 派发到哪 | 谁响应 |
 | ---- | ---- | ---- |
 | Bot | 该 Bot 私聊（`openDirect`，幂等；私聊不存在则建并发布会话事件） | 该 Bot |
-| 群 | 该群 | 指定了负责 Bot → 消息带 @，走显式目标；未指定 → 走 triage，谁认领谁做 |
+| 项目组 | 该项目组的沟通 | 消息带结构化 @ **生效负责人**（指派时覆盖的负责 Bot，缺省项目负责人），走显式目标；负责人可自己作答或 `@` 合适的成员布置 |
 | 管家 | 管家私聊 | 管家（可以把事项交给管家本人去办，它再自行委派） |
 
-群没有负责人角色：事项派给群与用户在群里发一句话等价，谁认领由现有群路由（`GroupTurnCoordinator` 的 triage）决定。暂不支持「我自己」作为执行者（到点提醒用户本人），列为后续增强。
+项目组有负责人（D92）：派给项目组不再做「谁认领」的 triage，宿主按生效负责人解析 `@`（`assignee.leadBotId ?? conversation.leadBotId`），整轮没有任何可见回复 → 事项退回草案（`todo_runs.status='unclaimed'`，原因「项目里无人回应」）。暂不支持「我自己」作为执行者（到点提醒用户本人），列为后续增强。
 
 ### 2.3 与 Bot 自己的安排的关系
 
@@ -97,11 +97,11 @@ Bot 通过 `schedule` 工具、提议卡、例行事项、承诺建的定时任�
 
 main 库三张新表（迁移 `0037_workbench`，字段见 [dev/03-data-model.md](../dev/03-data-model.md)）：
 
-- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`（内容出处：用户建的，或内容由管家起草 / 改写过，见 §5.2）；执行者编码在 `assignee_bot_id` + `assignee_group_id` 上。
+- `todos`：事项。`status ∈ {draft, scheduled, in_progress, delivered, done, cancelled}`，`source ∈ {user, butler}`（内容出处：用户建的，或内容由管家起草 / 改写过，见 §5.2）；执行者编码在 `assignee_bot_id` + `assignee_project_id` 上（main 0042 改名）。
 - `todo_runs`：每次派发一条（单次事项通常只有一条）。`status ∈ {dispatched, delivered, unclaimed, failed}`；`conversation_id` 不设外键，对话删了记录仍可读。
 - `memos`：备忘。`deleted_at` 非空 = 在「最近删除」。
 
-执行者编码：Bot 执行者 = `assignee_bot_id` 非空、`assignee_group_id` 空；群执行者 = `assignee_group_id` 非空（`assignee_bot_id` 可选，作负责 Bot）；都空 = 未指派。shared 层统一表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'group', conversationId, leadBotId}` / `null`）。
+执行者编码：Bot 执行者 = `assignee_bot_id` 非空、`assignee_project_id` 空；项目组执行者 = `assignee_project_id` 非空（`assignee_bot_id` 可选，作覆盖的负责 Bot）；都空 = 未指派。shared 层统一表示为 `TodoAssignee`（`{kind:'bot', botId}` / `{kind:'project', projectId, leadBotId}` / `null`）。`leadBotId` 记指派时解析的负责人，派发时再按会话现状取生效负责人。
 
 检索：备忘 / 事项量级在千条以内，用 `LIKE`；超过再考虑 FTS。
 
@@ -112,7 +112,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - `origin` CHECK 增 `'workbench'`。
 - 增 `todo_id TEXT REFERENCES todos(id) ON DELETE SET NULL` 与索引。
 - 增 `CHECK (bot_id IS NOT NULL OR origin = 'workbench')` 与单向 `CHECK (todo_id IS NULL OR origin = 'workbench')`（单向：事项硬删会把 `todo_id` 置空，孤儿 workbench 行由对账取消）。
-- `bot_id` 放宽为可空。仅「派给群、未指定负责 Bot」的事项排期行为空，其余来源仍必填（service 层校验）。
+- `bot_id` 放宽为可空（保留口径）；派给项目组的事项排期时若能解析到负责人则记该 Bot，派发时再取生效负责人（执行者覆盖项优先，缺省项目负责人）。
 
 `bot_id` 可空的波及面：凡按 Bot 查的路径都要能跳过空值（`listActiveForBot`、`contextSection`、`cancelForBotInConversation`、`prepareBotDeletion`、`fireabilityWarnings` / `#deferredReason`、移交适配器、定时任务列表的 Bot 名）。
 
@@ -122,7 +122,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 - **排期**：`ScheduleService.createForTodo({ todoId, botId|null, conversationId, when })`，`origin='workbench'`。
   - 时间校验沿用 `validateWhen`；`when` 的口径同 `createFromWhen`：`'now'` = 立即派发，ISO 8601 = 单次，其它按 cron 解析。
-  - 不走 `#assertFireable` 的 Bot 成员检查（群无负责 Bot 时没有 botId）。改由 TodoService 校验：Bot active、群未只读、负责 Bot 是群成员。
+  - 不走 `#assertFireable` 的 Bot 成员检查。改由 TodoService 校验：Bot active、项目组未只读、覆盖的负责 Bot 是项目组成员。
   - 目标对话里照常插回执卡，文案「工作台安排：「标题」· 周五 09:00」，状态随 schedule 回写。
 - **改期**：`ScheduleService.reschedule(id, when)` 原地更新 `run_at` / `cron` / `next_fire_at` 并回写回执卡，不走「取消 + 重建」，避免时间线堆两张卡。
 - **改派**：取消旧 schedule（回执卡显示「已改派」）后在新对话重建。
@@ -130,7 +130,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - **立即开始**：直接 `dispatch`，不建 schedule。
 - **对账**（启动时 + `schedules.changed`）：
   - 状态为 `scheduled` 却没有 active schedule → 退回 `draft`，写入原因。
-  - 执行者 Bot 已删 / 群已删或已只读 / 负责 Bot 已删或已移出群 → 退回 `draft`（`assignee_group_id` 不设外键：外键置空会把「群 + 负责 Bot」静默读成 Bot 执行者）。
+  - 执行者 Bot 已删 / 项目组已删或已只读 / 负责 Bot 已删或已移出项目组 → 退回 `draft`（`assignee_project_id` 不设外键：外键置空会把「项目组 + 负责 Bot」静默读成 Bot 执行者）。
   - `origin='workbench'` 的 active 排期若事项已不存在（硬删）或事项不在 `scheduled` → 取消该排期。
   - 不依赖各删除路径都记得调钩子：conversations 的 FK 级联会绕过 service，对账才是兜底。
 - **D88 移交**：移交适配器搬 schedule 时带上 `todo_id`，TodoService 把 `assignee_bot_id` 改到接收方。
@@ -141,18 +141,18 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 - `senderType='user'`，`textContent.origin='workbench'`，带 `todoId` / `todoRunId`；触发这次派发的操作是管家做的另带 `viaButler: true`（到点派发取最后一次设置排期的操作者）；事项由管家起草过另带 `butlerDrafted: true`（说明按不可信数据对待）。
 - 正文为 `【工作台】标题` + 说明。管家建的事项另加「（管家代你安排）」。
-- 群里指定了负责 Bot 时，加结构化 @。
+- 派给项目组时加结构化 @ 生效负责人（执行者覆盖项优先，缺省项目负责人）。
 - 界面上渲染成「派发卡」而不是普通气泡：标题、说明、「在工作台查看」。
 
 路由：
 
 - 私聊走直聊投递闸口（`#deliverDirectThroughGate`）。
-- 群走 `GroupTurnCoordinator`：有 @ 走显式目标，无 @ 走 triage。
+- 项目组走 `ProjectTurnCoordinator`：派发带结构化 @，是显式目标——不进续接判断与负责人网关（静默路由只处理没有 `@` 的用户消息）。
 
 为什么这样做：
 
 - **不受主动消息护栏约束**：派活是用户的指令。Bot 关了主动消息、正处免打扰、今天发够 5 条，都不该让用户排的活静默不执行。时间是用户选的，即使在深夜，用户也是知情的。
-- **群语义自然成立**：群里本来就没有负责人，事项派给群与在群里发一句话等价，谁认领由现有 triage 决定。
+- **项目组语义自然成立**：派给项目组默认 `@` 负责人——由负责人调度成员本来就是它的职责（D92 K5：项目内不套「仅用户本人触发」闸门；宿主强制不受影响，`triggerFromUser=false` 照常）。
 - **时间线可审计**：员工私聊里能看到「老板什么时候交代了什么」。
 
 约束：
@@ -168,7 +168,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - **何时发**：标题或说明实际变化（清洗后不同；用户或管家改都算），且有在途派发——状态 `in_progress`，或周期事项停在 `scheduled`、最近一次 `todo_run` 仍是 `dispatched`（须有 cron 排期）。草案、未到点的排期、已交付 / 已关闭的事项只改数据，下次派发自然带新内容；`update(when:'now')` 本身是新一次派发，不另发。
 - **形式**：在那次派发所在的对话追加可见 user 消息，`origin:'workbench'` + `todoId` + `todoRunId`（在途派发的那条）+ `todoUpdate: true`（shared 可选字段，缺省即派发）。正文 `【工作台】事项更新：标题` + 空行 + 说明 + 空行 + `（由用户 / 管家修改；这是对你已在做的这件事的补充，不是新任务；仅供参考，是否调整当前做法由你决定）`。管家改的 / 事项由管家起草的带 `viaButler` / `butlerDrafted`，执行者上下文按 `<untrusted source="butler">` 包裹，口径同派发。界面渲染成派发卡的变体「事项更新」卡，标出是谁改的。
 - **去抖**：同一事项静默 10 秒后只发一条，带最后的文字（每次修改重新计时；改回执行者已知的文字不发）；发出时再核对在途派发还在、没换成新一次派发。`todos.update` 返回 `notified` 表示已排上。
-- **路由与「不打断」**：私聊走直聊投递闸口；群里 @ 那次派发实际响应的 Bot（那条派发消息当时的 @ 提及，即当时的负责 Bot，加上被它触发过对话轮的 Bot，周期事项不取当前 assignee；显式目标，不再 triage；暂时没有可 @ 的成员就不发，每 10 秒重试到有人接手或这次派发结算为止）。D75 的 mailbox 保证对话轮在跑时新批次缓冲到下一轮，不被 steer 进去；任务独立于对话轮继续跑；下一轮对话轮从 `<tasks>` 看到在跑的任务，自行决定要不要 `inject_task`（纯更新批次的轮只带「事项更新」规则，不带派活规则）。宿主兜底：这一轮里事项链上已有在跑的任务时 `start_task` 返回错误（要换做法须先 `cancel_task`）；`inject_task` 自动把本轮的更新消息并入 `source_message_ids`，任务侧经上下文渲染拿到原文与 `<untrusted>` 标记；执行者不得对触发本轮的事项再 `update_todo` 改文字（防自循环）。工作台批次在 mailbox 的 `canShareTurn` 里不与别的批次同轮，唯一例外是同一事项的更新批次之间可合批。
+- **路由与「不打断」**：私聊走直聊投递闸口；项目组里 @ 那次派发实际响应的 Bot（那条派发消息当时的 @ 提及，即当时的生效负责人，加上被它触发过对话轮的 Bot，周期事项不取当前 assignee；显式目标；暂时没有可 @ 的成员就不发，每 10 秒重试到有人接手或这次派发结算为止）。D75 的 mailbox 保证对话轮在跑时新批次缓冲到下一轮，不被 steer 进去；任务独立于对话轮继续跑；下一轮对话轮从 `<tasks>` 看到在跑的任务，自行决定要不要 `inject_task`（纯更新批次的轮只带「事项更新」规则，不带派活规则）。宿主兜底：这一轮里事项链上已有在跑的任务时 `start_task` 返回错误（要换做法须先 `cancel_task`）；`inject_task` 自动把本轮的更新消息并入 `source_message_ids`，任务侧经上下文渲染拿到原文与 `<untrusted>` 标记；执行者不得对触发本轮的事项再 `update_todo` 改文字（防自循环）。工作台批次在 mailbox 的 `canShareTurn` 里不与别的批次同轮，唯一例外是同一事项的更新批次之间可合批。
 - **与交付追踪**：见 §3.5，更新属于同一次执行记录。
 
 ### 3.5 交付追踪
@@ -179,9 +179,9 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - 该轮结算时出了可见回复，且同链路没有未结算任务（`runs.origin_run_id` = 该轮且非终态）→ `todo_runs.status='delivered'`，`result_message_id` = 该回复，事项进入 `delivered`。
 - 回复带「📋 标题」标签，对照现有「⏰ 标题」。
 - 执行者的轮失败 / 被取消 → 执行记录 `failed`，事项退回草案，原因为「执行失败：…」/「执行已被取消」，用户可重新开始。
-- 群：一轮结束仍无人响应、出现 `group_no_claim` → `unclaimed`，事项退回草案，原因为「群里无人认领」。多个 Bot 响应时，以最后结算者为准，所有回复都挂在执行记录下。
+- 项目组：一轮结束仍没有任何可见回复 → `unclaimed`，事项退回草案，原因为「项目里无人回应」（D92 起派发总 @ 生效负责人且必答，通常只有执行者失败 / 被取消才会走到；不再有「无人认领」卡与点选重发）。多个 Bot 响应时，以最后结算者为准，所有回复都挂在执行记录下。
 - 兜底：执行者正在跑时消息会被 steer 进当前 run，归属可能落到别的批次。追踪失败时事项停在「进行中」，用户可手动标完成。**追踪是增强，不是正确性前提。**
-- 事项更新带的是在途派发的 `todoRunId`，更新引出的轮次和任务属于同一次执行记录，沿用「同链路没有未结算任务才交付」。**只经由更新消息归属的轮一律不结算该记录**：不交付（一句「收到」的确认不是结果，更新轮运行期间任务刚好完成时也由结果轮交付）、失败 / 被取消 / 中断不判失败、群里静默不当成「无人认领」；静默轮结算时回退找最近一条带标签回复也跳过更新轮的回复。任务结果引出的轮是正常交付。
+- 事项更新带的是在途派发的 `todoRunId`，更新引出的轮次和任务属于同一次执行记录，沿用「同链路没有未结算任务才交付」。**只经由更新消息归属的轮一律不结算该记录**：不交付（一句「收到」的确认不是结果，更新轮运行期间任务刚好完成时也由结果轮交付）、失败 / 被取消 / 中断不判失败、项目组里静默不当成「无人回应」；静默轮结算时回退找最近一条带标签回复也跳过更新轮的回复。任务结果引出的轮是正常交付。
 
 ### 3.6 RPC 与事件（shared 契约）
 
@@ -198,10 +198,10 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | `memos.update` | `{ id, body?, pinned? }` | `{ memo: Memo }` |
 | `memos.delete` / `memos.restore` | `{ id }`；`delete` = 移入最近删除 | `{ memo: Memo }` |
 
-- `TodoEntry` = 事项 + `assigneeName` / `leadBotName`（Bot 名或群名）+ 当前 active `schedule`（`id` / `kind` / `runAt` / `cron` / `timezone` / `nextFireAt`，无排期为 `null`）+ `lastRun`。人话时间由界面用 `describeScheduleWhen` 渲染。
+- `TodoEntry` = 事项 + `assigneeName` / `leadBotName`（Bot 名或项目组名）+ 当前 active `schedule`（`id` / `kind` / `runAt` / `cron` / `timezone` / `nextFireAt`，无排期为 `null`）+ `lastRun`。人话时间由界面用 `describeScheduleWhen` 渲染。
 - `when` 的口径：`'now'` = 立即派发；ISO 8601 = 单次；其它按 cron 解析（同 `createFromWhen`）；`null` = 清空排期；省略 = 不变（create 时即不定时）。`assignee: null` = 清空执行者，会连带清排期、退回草案。
 - `notified`（仅 `todos.update`）：标题 / 说明变了且有在途派发，已排队给执行者的「事项更新」通知；界面提示「已保存，将通知执行者」（§3.4）。
-- `warnings` 就地显示在界面上，例如「该 Bot 未配置模型」「群已只读」。主动消息相关的警告对事项不再出现（§3.4）。
+- `warnings` 就地显示在界面上，例如「该 Bot 未配置模型」「项目组已只读」。主动消息相关的警告对事项不再出现（§3.4）。
 - 事件：`todos.changed { todoId }`、`memos.changed { memoId }`（管家在后台改了，工作台要实时跟上）。`schedules.changed` 保留。
 - 汇总方法 `workbench.summary`（需要你处理 / 进行中 / 待验收 / 今天的计数与条目）属于后续增强，不在首批契约内。
 
@@ -236,15 +236,15 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 - 双栏是有意的：「思考」（备忘）和「规划 / 调度」（事项）同屏，备忘可一键转为事项。窄于阈值时折成「事项 / 备忘」两个 tab。
 - **按成员**（默认，员工视角）：
-  - 第一道为「未指派」，之后是有事的 Bot 和群。Bot 在前，排序依次为：有待验收的、有进行中的、下次时间最近的。
+  - 第一道为「未指派」，之后是有事的 Bot 和项目组。Bot 在前，排序依次为：有待验收的、有进行中的、下次时间最近的。
   - 道头显示忙闲：进行中任务数取自 `runningBotIds` / 任务，再加下次排期时间。
-  - 没有打开事项的 Bot / 群不占道；需要派活时从详情弹框的执行者选择器里选。
+  - 没有打开事项的 Bot / 项目组不占道；需要派活时从详情弹框的执行者选择器里选。
 - **按时间**：逾期未交付 / 今天 / 明天 / 本周 / 以后 / 未排期。周期事项按下次触发时间归组。
 - **事项卡**：标题、执行者徽标、人话时间、状态胶囊、来源徽标（管家）、`blocked_reason` 警示。主操作随状态变化：草案 → 指派 / 立即开始；已排期 → 改期；进行中 → 打开对话；待验收 → 查看结果 / 完成 / 退回。
 - **自排卡**（§2.3）：来源徽标、人话时间、`deferredReason` 警示（如「该 Bot 已关闭主动消息」）、取消、打开对话。
 - **事项详情弹框**（点卡打开，居中 Dialog，不跳走）：
   - 编辑标题和说明。
-  - 执行者选择器：Bot 列表 / 群列表；选群时可选负责 Bot。只列 active Bot 和非只读群，管家可选。
+  - 执行者选择器：Bot 列表 / 项目组列表；选项目组时可覆盖负责 Bot（缺省项目负责人）。只列 active Bot 和非只读项目组，管家可选。
   - 时间选择器：不定 / 立即 / 某时 / 重复。重复用预设：每天 / 工作日 / 每周几 / 每月几号 + 时刻；自定义 cron 属后续增强。实时显示「下次：…」。
   - 执行记录（每次派发 → 结果摘要 + 跳到对话里那条回复）。
   - 底部：完成 / 取消 / 退回草案。
@@ -257,7 +257,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 | 汇总 | 来源 |
 | ---- | ---- |
-| 需要你处理 | 待决审批（`approvals.list` 全局）、等你回答的任务提问（runs `awaiting_input`）、待你答复的定时提议卡（offer pending）、群里无人认领 |
+| 需要你处理 | 待决审批（`approvals.list` 全局）、等你回答的任务提问（runs `awaiting_input`）、待你答复的定时提议卡（offer pending）、项目里无人回应 |
 | 进行中 | 进行中的事项 + 全局活跃任务（需新增不带 conversationId 的 `tasks.active` 变体） |
 | 待验收 / 今天 / 草案 | 事项本身 |
 
@@ -283,7 +283,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 | 工具 | 参数 | 说明 |
 | ---- | ---- | ---- |
 | `list_todos` | `status?`、`assignee?`、`query?`、`limit?` | 只读；结果包 `untrustedBlock`（标题 / 说明可能来自网页摘录） |
-| `create_todo` | `title`、`notes?`、`assignee?`（`{bot}` / `{group, lead_bot?}`）、`when?`（`now` / ISO / cron）、`from_memo?` | 不填执行者和时间即为草案 |
+| `create_todo` | `title`、`notes?`、`assignee?`（`{bot_id}` / `{project_id, lead_bot_id?}`）、`when?`（`now` / ISO / cron）、`from_memo?` | 不填执行者和时间即为草案 |
 | `update_todo` | `id` + 任意字段；清空用 `clear_assignee` / `clear_when`（传 `null` 返回 invalid） | 改派、改期、退回草案 |
 | `close_todo` | `id`、`outcome: 'done' \| 'cancelled'`、`reason?` | 收尾；不提供硬删除 |
 | `list_memos` | `query?`、`limit?`、`include_trashed?` | 只读，`untrustedBlock` |
@@ -296,7 +296,7 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 
 - 工具在 `tools/workbench-tools.ts`，经 `ResponseToolDeps.workbench = { host, triggerFromUser, touchedExternal }` 注册，仅当 `butler.isButler`、仅对话轮（外部引擎的 turn 不存在，task 面不注册；shared 的能力包不含这些工具）。工具执行处再用 `host.isButler(identity.botId)` 核对调用者（同 `dispatch/butler.ts` 的 `systemRole === 'butler'` 检查）。
 - `triggerFromUser` 由 orchestrator 在 run 开始时算定：`settings/context.ts` 的 `triggerFromUser(batch)` 且触发原因 ∈ `SETTING_DIRECT_TRIGGERS`，即 `effectiveMode` 的 `userTriggered` 口径；与设置工具共用同一份 `fromUser`。
-- 参数名 snake_case：`assignee` 为 `{ bot_id }` 或 `{ group_id, lead_bot_id? }`；`close_todo.reason` 只回显给管家，不写入事项（事项没有对应字段）。参数是扁平结构：`assignee: { bot_id? , group_id?, lead_bot_id? }` 加 `clear_assignee`，`when` 加 `clear_when`（不用嵌套联合 / null，兼容更多 OpenAI 兼容服务商）。写工具的结果只回 id 与状态，不回显标题 / 执行者名。
+- 参数名 snake_case：`assignee` 为 `{ bot_id }` 或 `{ project_id, lead_bot_id? }`（`lead_bot_id` 只能与 `project_id` 同用）；`close_todo.reason` 只回显给管家，不写入事项（事项没有对应字段）。参数是扁平结构：`assignee: { bot_id? , project_id?, lead_bot_id? }` 加 `clear_assignee`，`when` 加 `clear_when`（不用嵌套联合 / null，兼容更多 OpenAI 兼容服务商）。写工具的结果只回 id 与状态，不回显标题 / 执行者名。
 
 ### 5.2 权限边界（宿主强制）
 
@@ -378,12 +378,13 @@ SQLite 改不了 CHECK，也放宽不了 NOT NULL，所以按 0021 的写法重�
 - 不重做调度引擎；Bot 自排定时任务的到点语义不变。
 - 不把 stickies 改造成备忘；备忘不进普通 Bot 的上下文。
 - 不做多用户 / 云同步、事项依赖关系、甘特图、子任务。
+- 不做看板视图：事项按项目组的看板列视图保持**预研**（下期），与事项的关系、前置的路径作用域写租约见 [41 §10.3](41-project-team.md#103-下期模块预研不在本期)。
 - 普通 Bot 不能操作事项和备忘（只有管家可以）。
 
 ## 风险
 
 - **`schedules` 重建 + `bot_id` 可空**：波及面集中在按 Bot 查询的路径（§3.2 已列）。迁移测试覆盖旧行原样保留、索引和 FK 完好。
 - **深夜派发**：不受免打扰约束意味着凌晨的事项会准时执行并产生消息。这是用户自己选的时间；界面在选择免打扰时段内的时间时给一行提示即可，不拦截。
-- **交付追踪的边界**：steer 合批、群多人响应时，归属可能不准。设计上降级为「停在进行中、可手动完成」，不影响正确性。
+- **交付追踪的边界**：steer 合批、项目组多人响应时，归属可能不准。设计上降级为「停在进行中、可手动完成」，不影响正确性。
 - **管家误操作**：靠 §5.2 的触发判据、软删除、`reopen` 与来源徽标兜底。
 - **更新通知的取舍**：去抖意味着改完后约 10 秒才通知，期间执行者仍按旧文字做；改动在窗口内就被做完交付时不再通知。通知只是补充，执行者可以不采纳；应用在窗口内退出会丢这条通知（数据已保存，执行者没收到）。

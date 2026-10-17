@@ -2,18 +2,15 @@ import { AppError, newId, type Conversation } from '@kepcup/shared';
 import type { SqliteDatabase } from '../infra/db.js';
 import type { Clock } from '../infra/clock.js';
 
-/** conversations.setup_state 的唯一取值：群创建问答进行中（design/19 D60）。 */
-export const CONVERSATION_SETUP_CREATING = 'creating';
-
 interface ConversationRow {
   id: string;
-  type: 'direct' | 'group';
+  type: 'direct' | 'project';
   title: string | null;
-  description: string | null;
+  goal: string | null;
   direct_bot_id: string | null;
-  project_id: string | null;
+  lead_bot_id: string | null;
+  workdir_id: string | null;
   read_only: 0 | 1;
-  setup_state: string | null;
   summary: string | null;
   summary_upto_seq: number;
   last_seq: number;
@@ -27,13 +24,11 @@ export function conversationRowToConversation(row: ConversationRow): Conversatio
     id: row.id,
     type: row.type,
     title: row.title,
-    ...(row.description !== null ? { description: row.description } : {}),
+    ...(row.goal !== null ? { goal: row.goal } : {}),
     directBotId: row.direct_bot_id,
-    projectId: row.project_id,
+    leadBotId: row.lead_bot_id,
+    workdirId: row.workdir_id,
     readOnly: row.read_only === 1,
-    ...(row.setup_state === CONVERSATION_SETUP_CREATING
-      ? { setupState: CONVERSATION_SETUP_CREATING }
-      : {}),
     summary: row.summary,
     summaryUptoSeq: row.summary_upto_seq,
     lastSeq: row.last_seq,
@@ -111,18 +106,11 @@ export class ConversationsService {
       .run(readOnly ? 1 : 0, conversationId);
   }
 
-  /** Binds or unbinds the conversation's project (P04; null clears). */
-  setProject(conversationId: string, projectId: string | null): void {
+  /** Binds or unbinds the conversation's workdir (P04; null clears). */
+  setWorkdir(conversationId: string, workdirId: string | null): void {
     this.db
-      .prepare('update conversations set project_id = ? where id = ?')
-      .run(projectId, conversationId);
-  }
-
-  /** Marks (or clears) the conversational creation flow state (design/19 D60). */
-  setSetupState(conversationId: string, state: 'creating' | null): void {
-    this.db
-      .prepare('update conversations set setup_state = ? where id = ?')
-      .run(state, conversationId);
+      .prepare('update conversations set workdir_id = ? where id = ?')
+      .run(workdirId, conversationId);
   }
 
   /** Direct conversations of a bot (read-only ones included). */

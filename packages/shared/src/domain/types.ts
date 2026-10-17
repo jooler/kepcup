@@ -135,7 +135,7 @@ export type BotProfile = z.infer<typeof botProfileSchema>;
 
 /**
  * 画像还是空壳：除了名字（和头像）之外，简介、性格、职责、边界都没写。
- * 群里随手建的 Bot 会是这种状态，单聊里要主动问定位，群聊里则按指令慢慢补。
+ * 项目组里随手建的 Bot 会是这种状态，单聊里要主动问定位，项目组里则按指令慢慢补。
  */
 export function isSparseBotProfile(profile: BotProfile): boolean {
   const texts = [
@@ -189,6 +189,8 @@ export interface BotCard {
   name: string;
   bio: string;
   role: string;
+  /** D92 T1a: true on the project lead's card inside a project conversation. */
+  isLead?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -601,12 +603,12 @@ export const backgroundTasksSettingsSchema = z
     /** 只有外部 Agent 时也运行技能生成（最耗额度，默认关）。 */
     agentSkillAuthoring: z.boolean().default(false).catch(false),
     /**
-     * 只有外部 Agent 时群聊只在被 @ / 回复时响应（不跑群聊判断）。默认开
-     * （审查 C2）：群聊判断经 Agent 只在用户明确关掉此项后运行。
+     * 只有外部 Agent 时项目组只在被 @ / 回复时响应（不跑路由判断）。默认开
+     * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
      */
-    groupMentionOnly: z.boolean().default(true).catch(true),
+    projectMentionOnly: z.boolean().default(true).catch(true),
   })
-  .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true });
+  .catch({ agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
 /**
@@ -731,7 +733,7 @@ export const settingsSchema = z.object({
   experimental: experimentalSettingsSchema.prefault({}),
   /**
    * 无内置模型时后台 loop 选用的 Agent（P6）；缺省 / '' = 自动：只用该 Bot
-   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、群聊
+   * 自己的 Agent（不换用别家，审查 S2）；无所属 Bot 的任务（画像整理、项目组
    * 摘要）只在这里明确指定了 Agent 时运行。
    */
   backgroundAgentId: z.string().optional().catch(undefined),
@@ -752,31 +754,28 @@ export type Settings = z.infer<typeof settingsSchema>;
 // Conversation / message / attachment
 // ---------------------------------------------------------------------------
 
-export const conversationTypeSchema = z.enum(['direct', 'group']);
+export const conversationTypeSchema = z.enum(['direct', 'project']);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 /**
- * 列表视图里每个群最多带几个成员头像预览（`Conversation.memberPreviews`，按入群
- * 顺序取前 N 个）。群头像堆叠（GroupAvatarStack）在 40px 内画不下更多，渲染端
+ * 列表视图里每个项目组最多带几个成员头像预览（`Conversation.memberPreviews`，按入群
+ * 顺序取前 N 个）。头像堆叠（ProjectAvatarStack）在 40px 内画不下更多，渲染端
  * 自行拼预览时也应按这个上限截断。
  */
-export const GROUP_MEMBER_PREVIEW_MAX = 9;
+export const PROJECT_MEMBER_PREVIEW_MAX = 9;
 
 export const conversationSchema = z.object({
   id: z.string(),
   type: conversationTypeSchema,
   title: z.string().nullable(),
-  /** 群定位（本群主要处理什么事务，docs/design/19 D60）；单聊为空。 */
-  description: z.string().nullable().optional(),
+  /** 项目目标（该项目主要处理什么事务）；单聊恒为空。 */
+  goal: z.string().nullable().optional(),
   directBotId: z.string().nullable(),
-  /** Currently bound project (P04); null = none. */
-  projectId: z.string().nullable(),
+  /** 项目负责人；project 恒非空，direct 恒为空。 */
+  leadBotId: z.string().nullable().optional(),
+  /** Currently bound workdir (P04); null = none. */
+  workdirId: z.string().nullable(),
   readOnly: z.boolean(),
-  /**
-   * 对话创建流程状态（docs/design/19 D60）：'creating' = 群创建问答进行中
-   * （输入禁用、Bot 不被唤醒）；null/缺省 = 正常。旧数据行无此列。
-   */
-  setupState: z.literal('creating').nullable().optional(),
   summary: z.string().nullable(),
   summaryUptoSeq: z.number(),
   lastSeq: z.number(),
@@ -786,8 +785,8 @@ export const conversationSchema = z.object({
   /** Present in list output: the direct bot (single chat). */
   bot: botSchema.nullable().optional(),
   /**
-   * 群成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
-   * 只在列表/详情视图上补，不入库；至多 {@link GROUP_MEMBER_PREVIEW_MAX} 个。
+   * 项目成员的头像预览（侧栏与顶部药丸堆叠用）。单聊缺省；
+   * 只在列表/详情视图上补，不入库；至多 {@link PROJECT_MEMBER_PREVIEW_MAX} 个。
    */
   memberPreviews: z
     .array(
@@ -898,6 +897,11 @@ export const textContentSchema = z.object({
 export const systemEventContentSchema = z.object({
   event: z.string(),
   text: z.string(),
+  /**
+   * 协作暂停卡（event = episode_paused，D92 T1a）：指向被熔断暂停的回合，
+   * 界面上的「继续 / 停止」据此调用 episodes.resume / episodes.stop。
+   */
+  episodeId: z.string().optional(),
   /** Bot candidates rendered as clickable actions (e.g. group no-claim prompt). */
   botIds: z.array(z.string()).optional(),
   /** The user batch this event refers to (e.g. re-dispatch after a click). */
@@ -908,11 +912,6 @@ export const systemEventContentSchema = z.object({
    * answer input that the UI always provides.
    */
   options: z.array(z.string()).optional(),
-  /**
-   * Group-creation question step (event = group_setup_question, docs/design/19
-   * D60): which form the card renders — 'title' | 'purpose' | 'members' | 'project'.
-   */
-  step: z.string().optional(),
   /**
    * 任务提问卡（D75 §2.4.6，event = task_question）：用户的回答（点选的选项，
    * 或对话轮经 inject_task 转交的自由文本）；未答时缺省。
@@ -937,11 +936,11 @@ export const systemEventContentSchema = z.object({
   internal: z.boolean().optional(),
   /**
    * 管家路由卡（D70，event = route_suggestion）：建议去哪——直聊某个 Bot、
-   * 去某个已有群，或由管家转交（delegate，需用户点「交给它处理」确认）。
+   * 去某个已有项目组，或由管家转交（delegate，需用户点「交给它处理」确认）。
    */
   route: z
     .object({
-      kind: z.enum(['bot', 'group', 'delegate']),
+      kind: z.enum(['bot', 'project', 'delegate']),
       botId: z.string().optional(),
       conversationId: z.string().optional(),
       /** delegate 时要转交的事（用户确认后管家据此委派）。 */
@@ -955,7 +954,7 @@ export const systemEventContentSchema = z.object({
   schedule: z
     .object({
       id: z.string(),
-      /** Null for a workbench todo assigned to a group without a lead bot (D90). */
+      /** Null for a workbench todo assigned to a project (its dispatch @-mentions the lead). */
       botId: z.string().nullable(),
       title: z.string(),
       note: z.string(),
@@ -1183,19 +1182,19 @@ export const messageSchema = z.object({
 export type Message = z.infer<typeof messageSchema>;
 
 /**
- * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id（dispatcher 据此
- * 路由），群聊提及带前缀（群不是响应者，只作引用展示——`members.has` 查不到
- * 该 token，调度层天然忽略；AI 文本渲染时经它补「（群聊）」图例）。
+ * 消息 `mentions` 数组里的 token 约定：Bot 提及用裸 bot id，项目组提及带前缀
+ * （项目组不是响应者，只作引用展示——`members.has` 查不到该 token，调度层天然
+ * 忽略；AI 文本渲染时经它补「（项目组）」图例）。
  */
-export const GROUP_MENTION_PREFIX = 'group:';
+export const PROJECT_MENTION_PREFIX = 'project:';
 
-export function groupMentionToken(conversationId: string): string {
-  return `${GROUP_MENTION_PREFIX}${conversationId}`;
+export function projectMentionToken(conversationId: string): string {
+  return `${PROJECT_MENTION_PREFIX}${conversationId}`;
 }
 
-export function parseMentionToken(token: string): { kind: 'bot' | 'group'; id: string } {
-  if (token.startsWith(GROUP_MENTION_PREFIX)) {
-    return { kind: 'group', id: token.slice(GROUP_MENTION_PREFIX.length) };
+export function parseMentionToken(token: string): { kind: 'bot' | 'project'; id: string } {
+  if (token.startsWith(PROJECT_MENTION_PREFIX)) {
+    return { kind: 'project', id: token.slice(PROJECT_MENTION_PREFIX.length) };
   }
   return { kind: 'bot', id: token };
 }
@@ -1207,9 +1206,19 @@ export function parseMentionToken(token: string): { kind: 'bot' | 'group'; id: s
 export const triggerReasonSchema = z.enum([
   'direct',
   'mention',
-  'broadcast',
   'reply',
-  'chain',
+  /** 项目组里另一个 Bot @ 了你（Bot 可见 @ 的触发，D92 T1a 协作回合）。 */
+  'bot_mention',
+  /** 上一位回话者 P 续接（D92 T1a 路由）：宿主判断消息在延续 P 的对话 / 工作。 */
+  'continuation',
+  /** 负责人网关那次轻量调用对应的 triage 类 run 的 trigger_reason（不是投递原因）。 */
+  'routing_gate',
+  /** 静默路由的首个目标（负责人网关转给成员），必答。 */
+  'routed',
+  /** 同一次路由的其余目标，可 skip_reply。 */
+  'routed_also',
+  /** 负责人兜底（网关 self，或路由产生的整轮无回复），必答。 */
+  'lead_fallback',
   'scheduled',
   'event',
   'background',
@@ -1420,9 +1429,12 @@ export const runSchema = z.object({
    * 刷新后不再恢复提示；缺省表示未关闭。
    */
   failureDismissed: z.boolean().optional(),
-  /** Bot-to-bot @ chain this run belongs to (P05); null outside chains. */
-  chainId: z.string().nullable(),
-  chainDepth: z.number().nullable(),
+  /**
+   * 协作回合（episode）绑定（D92 T1a）：本 run 属于哪个回合、在该回合的
+   * 第几跳（发起 @ 的根 run 为 0，每次 Bot 发起的触发 +1）；回合外的 run 为 null。
+   */
+  episodeId: z.string().nullable(),
+  episodeHop: z.number().nullable(),
   /**
    * Delegating parent run of a SubAgent sub run（D66/D67 ownership，
    * docs/design/24-durable-execution.md journal「subagent: child_run_id +
@@ -1438,7 +1450,7 @@ export const runSchema = z.object({
   /** 写任务（租约与网关裁决）；非任务为 null。 */
   taskWrites: z.boolean().nullable().default(null),
   /** 解析后的任务工作目录。 */
-  taskWorkdir: z.string().nullable().default(null),
+  taskCwd: z.string().nullable().default(null),
   /**
    * D91：任务声明要挂的外部能力 id（`start_task.capabilities`，如 `app:github` / `mcp:{serverId}`）；
    * 非任务 run 与宿主自己派的任务（未声明）为 null。
@@ -1455,6 +1467,31 @@ export const runSchema = z.object({
   endedAt: z.number().nullable(),
 });
 export type Run = z.infer<typeof runSchema>;
+
+// ---------------------------------------------------------------------------
+// Episodes (D92 T1a collaboration rounds)
+// ---------------------------------------------------------------------------
+
+export const episodeStatusSchema = z.enum(['active', 'paused', 'stopped']);
+export type EpisodeStatus = z.infer<typeof episodeStatusSchema>;
+
+/**
+ * 协作回合（episode，D92 T1a）：一条用户消息批引出的全部 run 的因果树。
+ * `hops` 是本回合已放行的 Bot 发起触发数；熔断（总数 / 同对往还超限）后
+ * 回合进入 `paused`，未投递的触发记在 `pending_json`，等用户继续或停止。
+ */
+export const episodeSchema = z.object({
+  id: z.string(),
+  conversationId: z.string(),
+  status: episodeStatusSchema,
+  /** Bot 发起的触发总数（放行计数，熔断清零后重新累计）。 */
+  hops: z.number(),
+  pausedAt: z.number().nullable(),
+  /** 熔断时未投递的触发条数（resume 时按序投递）。 */
+  pendingCount: z.number(),
+  createdAt: z.number(),
+});
+export type Episode = z.infer<typeof episodeSchema>;
 
 export const runStepSchema = z.object({
   id: z.string(),
@@ -1541,6 +1578,9 @@ export const jobTypeSchema = z.enum([
   'mail_alert',
   // D88 P2：Bot 资产移交的后台阶段（Wiki 页、组件复制；去重键 handover_copy:{handoverId}）。
   'handover_copy',
+  // D92 T1b WP10：删除项目 wiki 来源（异步托管动作；去重键
+  // wiki_remove_source:{ownerKey}:{sourceId}）。不调用任何模型。
+  'wiki_remove_source',
 ]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
@@ -1611,12 +1651,12 @@ export const approvalKindSchema = z.enum([
   'profile_change',
   /** MCP 工具调用审批（D65）：server 名 + 工具名 + 参数摘要。 */
   'mcp_tool',
-  /** 管家提议（D70）：组队 / 建 Bot / 建群，用户确认后确定性创建。 */
+  /** 管家提议（D70）：组队 / 建 Bot / 建项目组，用户确认后确定性创建。 */
   'butler_proposal',
   /**
    * 外部智能体的工具权限请求（D72 P3，design 28 §6）：ACP
    * `session/request_permission` 经权限桥分级后需要用户确认的部分；子类型
-   * `config` 是 project 内 Agent 侧配置文件的首次运行确认。
+   * `config` 是 workdir 内 Agent 侧配置文件的首次运行确认。
    */
   'agent_tool',
   /**
@@ -1718,7 +1758,7 @@ export const gitRemoteApprovalPayloadSchema = z.object({
   operation: z.enum(['push', 'pull', 'fetch', 'clone', 'remote_add', 'init']),
   /** Extra CLI arguments, one entry per argument (no shell quoting involved). */
   args: z.array(z.string()).default([]),
-  /** Working directory for the command (the project path). */
+  /** Working directory for the command (the workdir path). */
   cwd: z.string().default(''),
   reason: z.string().default(''),
   /** D73 P2: raised while the (bot, conversation) is tainted by connected-app data (design 29 §8.3). */
@@ -1832,7 +1872,7 @@ export type EgressApprovalPayload = z.infer<typeof egressApprovalPayloadSchema>;
 
 /**
  * Payload of an `agent_tool` approval（D72，design 28 §6）：外部智能体原生工具
- * 的权限请求（读 / 写 / 执行 / 其他），或子类型 `config`（project 内 Agent
+ * 的权限请求（读 / 写 / 执行 / 其他），或子类型 `config`（workdir 内 Agent
  * 侧配置文件的首次运行确认）。`locations` 是已解析的绝对路径；`command` 是
  * 命令原文；`options` 是 Agent 提供的选项（只做展示与审计，宿主只按 Provider
  * 白名单选 allow_once / reject_once）。`durations` 为空或只含 `once` 时卡片
@@ -1868,8 +1908,8 @@ export const agentToolApprovalPayloadSchema = z.object({
    * 排除，其余数据目录路径 / 命令一律拒绝。
    */
   exemptDirs: z.array(z.string()).default([]),
-  /** 子类型 config：project 路径（记住到对话时按它匹配）。 */
-  projectPath: z.string().optional(),
+  /** 子类型 config：workdir 路径（记住到对话时按它匹配）。 */
+  workdirPath: z.string().optional(),
   /** 子类型 config：配置文件内容哈希（内容变化即重新确认）。 */
   configHash: z.string().optional(),
   /**
@@ -1912,12 +1952,14 @@ export type ButlerProposedBot = z.infer<typeof butlerProposedBotSchema>;
 
 /**
  * Payload of a `butler_proposal` approval (D70, docs/design/27): one kind for
- * the three proposal shapes — `team` (BUTLER_TEAM_SIZE_MIN..MAX bots), `bot`
- * (exactly one) and `group` (title / description / existing member bots).
+ * the three proposal shapes — `bots` (PROPOSE_BOTS_MIN..MAX bots), `bot`
+ * (exactly one) and `project` (title / goal / lead bot / existing member bots;
+ * D92 T1a WP4: the card carries the lead and the user may change it via
+ * `approvals.decide` with `leadBotId`).
  */
 export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', [
   z.object({
-    proposalType: z.literal('team'),
+    proposalType: z.literal('bots'),
     bots: z.array(butlerProposedBotSchema),
     note: z.string().default(''),
   }),
@@ -1927,9 +1969,11 @@ export const butlerProposalPayloadSchema = z.discriminatedUnion('proposalType', 
     note: z.string().default(''),
   }),
   z.object({
-    proposalType: z.literal('group'),
+    proposalType: z.literal('project'),
     title: z.string(),
-    description: z.string().default(''),
+    goal: z.string().default(''),
+    /** The proposed lead; the user's decision may override it (must stay a member). */
+    leadBotId: z.string(),
     memberBotIds: z.array(z.string()),
     reason: z.string().default(''),
   }),
@@ -1984,6 +2028,11 @@ export const approvalDecisionSchema = z.object({
    * selectable on the card.
    */
   handoverSelection: z.array(z.string()).optional(),
+  /**
+   * `butler_proposal` with `proposalType: 'project'` only (D92 T1a WP4): the lead the user
+   * picked on the card, overriding `payload.leadBotId` (always a payload member).
+   */
+  leadBotId: z.string().optional(),
   /** Set when status = 'failed': why the post-approval action errored (P08). */
   error: z.string().optional(),
 });
@@ -2114,36 +2163,36 @@ export const allowlistEntrySchema = z.object({
 export type AllowlistEntry = z.infer<typeof allowlistEntrySchema>;
 
 // ---------------------------------------------------------------------------
-// Projects (P04, docs/design/08-project.md)
+// Workdirs (P04, docs/design/08-workdir.md)
 // ---------------------------------------------------------------------------
 
 /**
- * Per-project file protection rules (globs relative to the project root).
+ * Per-workdir file protection rules (globs relative to the workdir root).
  * A pattern without `/` matches any depth by file name (`*.pem`); a pattern
- * with `/` is anchored to the project root (`.git/config`).
+ * with `/` is anchored to the workdir root (`.git/config`).
  */
-export const projectProtectRulesSchema = z.object({
+export const workdirProtectRulesSchema = z.object({
   denyRead: z.array(z.string().max(200)).max(100),
   denyWrite: z.array(z.string().max(200)).max(100),
 });
-export type ProjectProtectRules = z.infer<typeof projectProtectRulesSchema>;
+export type WorkdirProtectRules = z.infer<typeof workdirProtectRulesSchema>;
 
-export const projectStatusSchema = z.enum(['available', 'missing']);
-export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+export const workdirStatusSchema = z.enum(['available', 'missing']);
+export type WorkdirStatus = z.infer<typeof workdirStatusSchema>;
 
-export const projectSchema = z.object({
+export const workdirSchema = z.object({
   id: z.string(),
-  /** realpath of the project directory. */
+  /** realpath of the workdir directory. */
   path: z.string(),
   name: z.string(),
-  protectRules: projectProtectRulesSchema,
+  protectRules: workdirProtectRulesSchema,
   /** Inclusive port ranges the sandbox may reach on localhost; null =不限. */
   allowedPorts: z.array(z.tuple([z.number().int(), z.number().int()])).nullable(),
-  status: projectStatusSchema,
+  status: workdirStatusSchema,
   createdAt: z.number(),
   lastUsedAt: z.number(),
 });
-export type Project = z.infer<typeof projectSchema>;
+export type Workdir = z.infer<typeof workdirSchema>;
 
 /** One changed file of a checkpointed run (docs/dev/03-data-model.md "run_changes"). */
 export const runChangeFileSchema = z.object({
@@ -2163,7 +2212,7 @@ export type RunChangeFile = z.infer<typeof runChangeFileSchema>;
 
 export const runChangeSchema = z.object({
   runId: z.string(),
-  projectId: z.string(),
+  workdirId: z.string(),
   conversationId: z.string().nullable(),
   beforeOid: z.string(),
   afterOid: z.string().nullable(),
@@ -2244,7 +2293,7 @@ export type MemoryStatus = z.infer<typeof memoryStatusSchema>;
 
 export const memorySourceSchema = z.enum(['explicit', 'inferred']);
 export const memorySensitivitySchema = z.enum(['normal', 'sensitive']);
-export const memoryOriginSchema = z.enum(['private', 'group']);
+export const memoryOriginSchema = z.enum(['private', 'project']);
 export type MemorySource = z.infer<typeof memorySourceSchema>;
 export type MemorySensitivity = z.infer<typeof memorySensitivitySchema>;
 export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
@@ -2576,7 +2625,7 @@ export type ScheduleOrigin = z.infer<typeof scheduleOriginSchema>;
 export const scheduleSchema = z.object({
   id: z.string(),
   /**
-   * Null only for a workbench todo assigned to a group without a lead bot
+   * Null only for a workbench todo assigned to a project
    * (D90); every other origin keeps it set (service-level check).
    */
   botId: z.string().nullable(),
@@ -2637,15 +2686,16 @@ export const todoSourceSchema = z.enum(['user', 'butler']);
 export type TodoSource = z.infer<typeof todoSourceSchema>;
 
 /**
- * Executor of a todo. `bot` = that bot's direct chat; `group` = that group
- * (`leadBotId` = optional lead bot, which the dispatch message @-mentions).
- * No assignee at all = unassigned draft (the todo's `assignee` is null).
+ * Executor of a todo. `bot` = that bot's direct chat; `project` = that project
+ * conversation (`leadBotId` = optional override of the lead bot the dispatch
+ * message @-mentions; null = the project's own lead — D92 T1a WP4). No
+ * assignee at all = unassigned draft (the todo's `assignee` is null).
  */
 export const todoAssigneeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('bot'), botId: z.string().min(1) }),
   z.object({
-    kind: z.literal('group'),
-    conversationId: z.string().min(1),
+    kind: z.literal('project'),
+    projectId: z.string().min(1),
     leadBotId: z.string().min(1).nullable(),
   }),
 ]);
@@ -2662,7 +2712,7 @@ export const todoSchema = z.object({
   source: todoSourceSchema,
   /** Memo this todo was converted from (no FK: memo purge does not touch it). */
   memoId: z.string().nullable(),
-  /** Why the todo fell back to draft ("群里无人认领" / "负责 Bot 已删除"…); display only. */
+  /** Why the todo fell back to draft ("项目里无人回应" / "负责 Bot 已删除"…); display only. */
   blockedReason: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -2692,9 +2742,9 @@ export type TodoRun = z.infer<typeof todoRunSchema>;
 
 /** todos.list / get row: the todo plus what the workbench renders alongside. */
 export const todoEntrySchema = todoSchema.extend({
-  /** Bot name (bot assignee) or group title (group assignee); null when unassigned / gone. */
+  /** Bot name (bot assignee) or project title (project assignee); null when unassigned / gone. */
   assigneeName: z.string().nullable(),
-  /** Name of the lead bot of a group assignee. */
+  /** Name of the lead bot actually in effect (the assignee override, else the project lead). */
   leadBotName: z.string().nullable(),
   /** The active schedule of the todo (time lives only there); null = not scheduled. */
   schedule: z
@@ -2786,14 +2836,14 @@ export const taskStateSchema = z.enum([
 export type TaskStateView = z.infer<typeof taskStateSchema>;
 
 /**
- * Changes a write task left behind (cancel card, §4.3 / §5.2): a project task
- * has a checkpoint (summary + whole-run revert through `projects.revert` with
+ * Changes a write task left behind (cancel card, §4.3 / §5.2): a workdir task
+ * has a checkpoint (summary + whole-run revert through `workdirs.revert` with
  * the task id); a workspace task has none — only the files its file tools
  * wrote are listed, and the card says plainly there is no revert.
  */
 export const taskChangesSchema = z.discriminatedUnion('kind', [
   z.object({
-    kind: z.literal('project'),
+    kind: z.literal('workdir'),
     added: z.number().int(),
     modified: z.number().int(),
     deleted: z.number().int(),
@@ -2826,8 +2876,8 @@ export const taskViewSchema = z.object({
   state: taskStateSchema,
   status: runStatusSchema,
   writes: z.boolean(),
-  /** Where it works: the bound project or the bot's workspace. */
-  workdirKind: z.enum(['project', 'workspace']).nullable(),
+  /** Where it works: the bound workdir or the bot's workspace. */
+  cwdKind: z.enum(['workdir', 'workspace']).nullable(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */
   queueReason: z.string().nullable(),
   awaitingInput: z.boolean(),

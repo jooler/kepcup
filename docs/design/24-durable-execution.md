@@ -4,7 +4,7 @@
 
 Journal 与 resume 落在 KepCup 自有 `runs` / `run_steps` 与工具网关之上，由 Orchestrator 执行；`PiEngine` 仍只跑 LLM loop。语义参考 Pi Durable 的 effect sandwich、`replay`、`requestId` 与 memo，不整包替换引擎。
 
-相关：D2（soft steer，[02-execution.md](02-execution.md)）、D21（pi 封装在 `AgentEngine` 之后，[09-tech-stack.md](09-tech-stack.md)）、D30（Project 检查点，[08-project.md](08-project.md)）、D48（消息可见性）、D54（中间过程投送）、D56（Loop 续接）、D65/D66（MCP / SubAgent）。
+相关：D2（soft steer，[02-execution.md](02-execution.md)）、D21（pi 封装在 `AgentEngine` 之后，[09-tech-stack.md](09-tech-stack.md)）、D30（Workdir 检查点，[08-workdir.md](08-workdir.md)）、D48（消息可见性）、D54（中间过程投送）、D56（Loop 续接）、D65/D66（MCP / SubAgent）。
 
 ## 决策
 
@@ -52,7 +52,7 @@ D49 不再解读为「一切 run 永不恢复」，而改为「默认 ephemeral 
 ### 用户控制
 
 - 系统消息说明「已从断点继续」，或「写操作曾中断，Bot 正在确认」。
-- 提供 **继续** / **放弃**。放弃则 run 进入 `cancelled`，释放 project 写租约（D29/D30），不再 resume。
+- 提供 **继续** / **放弃**。放弃则 run 进入 `cancelled`，释放 workdir 写租约（D29/D30），不再 resume。
 - 可选产品策略：durable 首次恢复需用户点「继续」（更稳），或启动时静默 resume（更顺）。首期建议：**自动 resume，对话内可放弃**。
 
 ## 4 Journal 模型（在现有 runs 上收紧）
@@ -92,7 +92,7 @@ run (ephemeral | durable)
 
 `effects` 表：`(effect_id PRIMARY KEY, run_id, tool_name, result_json, created_at)`。
 
-Project 写入继续配合 D30 影子 git。tool settle 记录 before/after oid，恢复时模型可见「磁盘可能已改」。
+Workdir 写入继续配合 D30 影子 git。tool settle 记录 before/after oid，恢复时模型可见「磁盘可能已改」。
 
 ## 6 与现有子系统的边界
 

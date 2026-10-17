@@ -78,7 +78,7 @@ describe('buildSandboxPolicy', () => {
     expect(policy.readOnly).toContain('/tmp/granted-read');
   });
 
-  it('read-only run (D75): workspace, leased project and write grants are all read-only', () => {
+  it('read-only run (D75): workspace, leased workdir and write grants are all read-only', () => {
     const writeGrant = {
       id: 'grt_w',
       botId: 'bot_1',
@@ -97,13 +97,13 @@ describe('buildSandboxPolicy', () => {
       workspacePath: workspace(),
       network: { mode: 'none' as const, allowDomains: [] },
       grants: [writeGrant],
-      project: { path: '/tmp/ro-project', hasLease: true, denyReadGlobs: [] },
+      workdir: { path: '/tmp/ro-workdir', hasLease: true, denyReadGlobs: [] },
     };
     const writable = buildSandboxPolicy(input);
-    expect(writable.readWrite).toEqual(expect.arrayContaining([workspace(), '/tmp/ro-project', '/tmp/granted-write']));
+    expect(writable.readWrite).toEqual(expect.arrayContaining([workspace(), '/tmp/ro-workdir', '/tmp/granted-write']));
 
     const policy = buildSandboxPolicy({ ...input, readOnlyRun: true });
-    for (const dir of [workspace(), '/tmp/ro-project', '/tmp/granted-write']) {
+    for (const dir of [workspace(), '/tmp/ro-workdir', '/tmp/granted-write']) {
       expect(policy.readWrite).not.toContain(dir);
       expect(policy.readOnly).toContain(dir);
     }

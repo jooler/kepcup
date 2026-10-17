@@ -68,10 +68,12 @@ describe('settings catalog integrity', () => {
       'schedules.schedule',
       'schedules.watch',
       'profile.user-facts',
-      'group.title',
-      'group.members',
-      'project.protect-rules',
-      'project.ports',
+      'project.title',
+      'project.goal',
+      'project.members',
+      'project.lead',
+      'workdir.protect-rules',
+      'workdir.ports',
       'hardware.microphone',
       'hardware.camera',
       'general.theme',
@@ -124,8 +126,8 @@ describe('settings catalog integrity', () => {
         'environment.allowlist',
         'environment.sandbox',
         'environment.toolchains',
-        'project.ports',
-        'project.protect-rules',
+        'workdir.ports',
+        'workdir.protect-rules',
         'unattended.enable',
       ].sort(),
     );
@@ -170,7 +172,7 @@ describe('settings catalog integrity', () => {
   it('matches the store scope: bot items store on the bot, global items never do', () => {
     for (const entry of items) {
       if (entry.store.kind === 'bot') expect(entry.scope, entry.id).toBe('bot');
-      if (entry.scope === 'group' || entry.scope === 'project') {
+      if (entry.scope === 'project' || entry.scope === 'workdir') {
         expect(entry.store.kind, entry.id).toBe('service');
       }
     }
@@ -285,7 +287,7 @@ describe('catalog queries', () => {
     expect(itemIdsForSettingsPaths(['nothingHere'])).toEqual([]);
     expect(itemIdsForBotPaths(['runtime.model'])).toEqual(['bot.model']);
     expect(itemIdsForBotPaths(['runtime'])).toContain('bot.network');
-    expect(itemIdsForServiceMethod('groups.rename')).toEqual(['group.title']);
+    expect(itemIdsForServiceMethod('projects.update')).toEqual(['project.title', 'project.goal']);
     expect(itemIdsForServiceMethod('unattended.enable')).toEqual(['unattended.enable']);
   });
 
@@ -366,7 +368,9 @@ describe('UI coverage (§4.3 测试一 / 测试二 shared 部分)', () => {
     for (const anchor of PENDING_DESKTOP_ANCHORS) expect(scan.anchors).not.toContain(anchor);
     // 登记为待补、界面上却已经有了：提示删掉登记（desktop 已补齐 bot-model，借它构造）。
     expect(scan.anchors).toContain('bot-model');
-    expect(settingsCoverageProblems(scan, { pendingAnchors: ['bot-model'] })).toEqual([
+    expect(
+      settingsCoverageProblems(scan, { pendingAnchors: [...PENDING_DESKTOP_ANCHORS, 'bot-model'] }),
+    ).toEqual([
       '待补锚点 bot-model 已存在：从 PENDING_DESKTOP_ANCHORS 删掉',
     ]);
   });

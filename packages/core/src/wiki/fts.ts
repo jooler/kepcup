@@ -1,9 +1,13 @@
+import type { WikiOwner } from '@kepcup/shared';
+
 /**
- * The slice of the per-bot memory store the wiki module consumes. memory.db
- * owns `wiki_fts` (docs/dev/03-data-model.md); MemoryStore implements this
- * interface and every write segments text through infra/text-segment.ts.
+ * The FTS slice every wiki index implements (P09, extracted from MemoryStore
+ * in D92 T1b WP9). Bots keep `wiki_fts` in their `memory.db` (MemoryStore
+ * satisfies this structurally); every project wiki owns a dedicated
+ * `wiki.db` (WikiIndexStore). All writes segment text through
+ * infra/text-segment.ts (docs/dev/03-data-model.md "wiki_fts").
  */
-export interface WikiFtsStore {
+export interface WikiIndex {
   wikiUpsertPage(pagePath: string, title: string, content: string): void;
   wikiDeletePage(pagePath: string): void;
   wikiClearPages(): void;
@@ -16,7 +20,5 @@ export interface WikiFtsStore {
   wikiPagePaths(): string[];
 }
 
-/** Per-bot access to the FTS store (MemoryService satisfies this). */
-export interface WikiFtsFacade {
-  storeFor(botId: string): WikiFtsStore;
-}
+/** Resolves the FTS index of one wiki owner (bot → memory.db, project → wiki.db). */
+export type WikiIndexFor = (owner: WikiOwner) => WikiIndex;

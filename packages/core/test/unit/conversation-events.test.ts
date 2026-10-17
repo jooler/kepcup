@@ -19,7 +19,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     type: 'direct',
     title: null,
     directBotId: 'bot_1',
-    projectId: null,
+    workdirId: null,
     readOnly: false,
     summary: null,
     summaryUptoSeq: 0,
@@ -59,7 +59,7 @@ describe('withDirectConversationBots', () => {
     bus.emit('conversation.updated', { conversation: conversation({ bot: other }) });
     bus.emit('conversation.updated', { conversation: conversation({ bot: null }) });
     bus.emit('conversation.updated', {
-      conversation: conversation({ type: 'group', directBotId: null }),
+      conversation: conversation({ type: 'project', directBotId: null }),
     });
     expect(seen.map((c) => c.bot)).toEqual([other, null, undefined]);
 

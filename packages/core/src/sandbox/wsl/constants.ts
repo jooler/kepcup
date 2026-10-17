@@ -58,7 +58,7 @@ export const WSL_MOUNT_ROOT = '/mnt/kepcup';
  * Windows host data directory mounted into the distro? No — nothing of
  * `~/.kepcup` is mounted wholesale (automount is disabled and the data
  * directory is never exposed); only individually registered directories
- * (workspace / project / grants / toolchains / skills) are mounted under
+ * (workspace / workdir / grants / toolchains / skills) are mounted under
  * WSL_MOUNT_ROOT, each keyed by a content hash of its canonical path.
  */
 

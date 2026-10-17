@@ -30,7 +30,7 @@ function tool(name: string): ToolDefinition {
     identity,
     browser: fake,
     workspacePath: '/tmp/ws',
-    projectPath: null,
+    workdirPath: null,
   });
   const found = tools.find((t) => t.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
@@ -42,7 +42,7 @@ function makeTools(host = fake) {
     identity,
     browser: host,
     workspacePath: '/tmp/ws',
-    projectPath: null,
+    workdirPath: null,
   });
 }
 
@@ -53,7 +53,7 @@ function toolOn(host: BrowserHostRpc, name: string, runId = identity.runId): Too
     identity: { ...identity, runId },
     browser: host,
     workspacePath: '/tmp/ws',
-    projectPath: null,
+    workdirPath: null,
   }).find((t) => t.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return found as ToolDefinition;
@@ -124,7 +124,7 @@ describe('browser tools (tool layer on a fake host)', () => {
       textTruncated: false,
     });
     const result = await execute(
-      buildBrowserTools({ identity, browser: host, workspacePath: '/tmp/ws', projectPath: null }).find(
+      buildBrowserTools({ identity, browser: host, workspacePath: '/tmp/ws', workdirPath: null }).find(
         (t) => t.name === 'browser_open',
       )!,
       { url: 'https://trusted.example/' },
@@ -240,13 +240,13 @@ describe('browser tools (tool layer on a fake host)', () => {
         identity,
         browser: host,
         workspacePath: '/tmp/ws',
-        projectPath: null,
+        workdirPath: null,
       }).find((t) => t.name === 'browser_open')!,
       { url: 'https://intranet.example/' },
     );
     expect(result.ok).toBe(false);
     expect(result.errorCode).toBe('BROWSER_BLOCKED');
-    expect(result.content).toContain('绑定 project');
+    expect(result.content).toContain('绑定 workdir');
   });
 
   test('a page closed right after the action: ok (action done), PAGE_CLOSED reopen hint, no replay (W1)', async () => {
@@ -254,7 +254,7 @@ describe('browser tools (tool layer on a fake host)', () => {
     const host = createFakeBrowserHost();
     host.failWith('browser.snapshot', new AppError('BROWSER_PAGE_CLOSED', '浏览器页面已关闭'));
     const result = await execute(
-      buildBrowserTools({ identity, browser: host, workspacePath: '/tmp/ws', projectPath: null }).find(
+      buildBrowserTools({ identity, browser: host, workspacePath: '/tmp/ws', workdirPath: null }).find(
         (t) => t.name === 'browser_open',
       )!,
       { url: 'https://x.example/' },
@@ -583,7 +583,7 @@ describe('browser tools (tool layer on a fake host)', () => {
         identity,
         browser: host,
         workspacePath: '/tmp/ws',
-        projectPath: null,
+        workdirPath: null,
         profileKey: () => key,
       });
       const snapshot = tools.find((t) => t.name === 'browser_snapshot') as ToolDefinition;
@@ -609,7 +609,7 @@ describe('browser tools (tool layer on a fake host)', () => {
       identity: { ...identity, botId: null, conversationId: null },
       browser: fake,
       workspacePath: '/tmp/ws',
-      projectPath: null,
+      workdirPath: null,
     });
     expect(tools).toEqual([]);
   });

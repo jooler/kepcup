@@ -21,7 +21,7 @@ export interface SandboxNetworkPolicy {
   /** Domains reachable in `allowlist` mode; ignored otherwise. */
   allowDomains: string[];
   /**
-   * Conversation bound to a project: the sandbox may listen on and reach
+   * Conversation bound to a workdir: the sandbox may listen on and reach
    * localhost ports (dev servers, docs/design/10-sandbox.md "网络").
    */
   allowLocalhost?: boolean;

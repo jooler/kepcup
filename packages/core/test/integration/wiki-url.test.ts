@@ -134,9 +134,9 @@ describe('P09 Wiki：URL 来源在沙箱中抓取（本地 http 夹具）', () =
 
     // 抓取在沙箱内完成：数据目录对抓取命令不可见（curl 只回传 stdout）。
     expect(existsSync(path.join(wikiRoot(stack.core, botId), 'pages/spec.md'))).toBe(true);
-    const history = (await stack.core.rpc.call('wiki.history', { botId })) as {
-      history: Array<{ message: string }>;
-    };
+    const history = (await stack.core.rpc.call('wiki.history', {
+      owner: { kind: 'bot', id: botId },
+    })) as { history: Array<{ message: string }> };
     expect(history.history).toHaveLength(2);
   }, 120_000);
 

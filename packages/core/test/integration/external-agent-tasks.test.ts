@@ -307,7 +307,7 @@ describe('external agents as the task engine (D75 §8)', () => {
     expect(observed.deletedSessions).toEqual([]);
   }, 60_000);
 
-  it.skipIf(process.platform === 'win32')('a read-only task runs on the read_only tier: in-workdir writes are refused, a write task may write', async () => {
+  it.skipIf(process.platform === 'win32')('a read-only task runs on the read_only tier: in-cwd writes are refused, a write task may write', async () => {
     const { stack, started } = await start({
       fake: {
         turns: [
@@ -316,7 +316,7 @@ describe('external agents as the task engine (D75 §8)', () => {
         ],
       },
     });
-    // The bot's own tier is workspace (in-workdir edits pass).
+    // The bot's own tier is workspace (in-cwd edits pass).
     const bot = await agentBot(stack, 'fake');
     const conv = await openDirect(stack.core, bot.id);
 

@@ -157,8 +157,8 @@ describe('the clamp end to end (fake agent refusing concurrent prompts)', () => 
   const SERIAL = fakeAgentEntry('serial', { releaseGate: 'serial-test' });
 
   function setup(resolver: (config: Readonly<Record<string, number | undefined>>) => number) {
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-parallel-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-parallel-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const script: FakeAgentScript = {
       serialPrompts: true,
@@ -200,7 +200,7 @@ describe('the clamp end to end (fake agent refusing concurrent prompts)', () => 
       },
       tools: [],
       limits: { maxTurns: 60 },
-      workdir,
+      cwd,
       external: {
         agentId: SERIAL.id,
         permission: 'read_only',

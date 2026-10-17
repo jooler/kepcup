@@ -40,7 +40,7 @@ import { ExternalAgentEngine } from '../../src/agent/external/engine.js';
 import { AgentHost } from '../../src/agent/external/host.js';
 import { claudeProvider } from '../../src/agent/external/providers/claude.js';
 import { CODEX_PROCESS_CONFIG, codexProvider } from '../../src/agent/external/providers/codex.js';
-import { buildProjectSection } from '../../src/project/context.js';
+import { buildWorkdirSection } from '../../src/workdir/context.js';
 import type { RunSpec, ToolDefinition } from '../../src/agent/types.js';
 
 /**
@@ -65,7 +65,7 @@ const RESPONSE_TOOL_NAMES = [
   'get_run',
   'request_access',
   'request_unsandboxed',
-  'acquire_project_write',
+  'acquire_workdir_write',
   'git_remote',
   'request_environment',
   'read',
@@ -103,7 +103,7 @@ const RESPONSE_TOOL_NAMES = [
   'delegate_to_bot',
   'cancel_delegation',
   'list_bots',
-  'propose_team',
+  'propose_bots',
   'mcp_srv1_lookup',
   'save_profile',
 ];
@@ -162,7 +162,7 @@ describe('capability packs (buildExternalAgentTools)', () => {
     const remember = tools.find((tool) => tool.name === 'remember')!;
     expect(remember.description).toBe('remember 原描述');
     // Butler-only tools ride with the collaboration pack.
-    expect(names).toContain('propose_team');
+    expect(names).toContain('propose_bots');
   });
 
   it('D91: the capability pair is injected when either mcp or apps is selected, without the supplement prefix', () => {
@@ -269,7 +269,7 @@ describe('ACP prompts', () => {
     expect(session).toContain('mcp__kepcup__remember');
     expect(session).toContain('mcp__kepcup__skip_reply');
     expect(session).not.toMatch(/(?<![\w])remember(?![\w])/);
-    for (const banned of ['request_access', 'acquire_project_write', 'delegate_task']) {
+    for (const banned of ['request_access', 'acquire_workdir_write', 'delegate_task']) {
       expect(session).not.toContain(banned);
     }
     expect(session).toContain('<identity>');
@@ -347,15 +347,15 @@ describe('ACP prompts', () => {
     expect(corePolicy).toContain('mcp__kepcup__send_message');
   });
 
-  it('<project> skips the guide files the agent reads itself', async () => {
+  it('<workdir> skips the guide files the agent reads itself', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-proj-'));
     try {
       writeFileSync(path.join(dir, 'AGENTS.md'), 'AGENTS 约定');
       writeFileSync(path.join(dir, 'CLAUDE.md'), 'CLAUDE 约定');
       mkdirSync(path.join(dir, 'src'));
-      const builtin = await buildProjectSection({ path: dir, budget: 4_000, isIgnored: null });
+      const builtin = await buildWorkdirSection({ path: dir, budget: 4_000, isIgnored: null });
       expect(builtin!.body).toContain('AGENTS 约定');
-      const codex = await buildProjectSection({
+      const codex = await buildWorkdirSection({
         path: dir,
         budget: 4_000,
         isIgnored: null,
@@ -398,8 +398,8 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
 
   function setup(provider: 'claude' | 'codex', script: FakeAgentScript) {
     const entry = fakeAgentEntry(`fake-${provider}`, { provider });
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p2-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-p2-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const host = new AgentHost({
       logger,
@@ -423,7 +423,7 @@ describe('Claude / Codex providers (fake agent scripts)', () => {
       promptParts: { session: 'SESSION-PROMPT', run: 'RUN-CONTEXT', conversation: 'TRIGGER' },
       tools: [],
       limits: { maxTurns: 42 },
-      workdir,
+      cwd,
       external: {
         agentId: entry.id,
         permission: 'read_only',

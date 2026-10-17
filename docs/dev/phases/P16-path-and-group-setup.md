@@ -1,6 +1,6 @@
 # P16 对话工作路径与群创建
 
-设计依据：[design/19-work-path-and-group-setup.md](../../design/19-work-path-and-group-setup.md)（D59、D60）、[design/08-project.md](../../design/08-project.md)。
+设计依据：[design/19-work-path-and-group-setup.md](../../design/19-work-path-and-group-setup.md)（D59、D60）、[design/08-project.md](../../design/08-workdir.md)。
 
 依赖：P04（project 绑定）、P05（群聊）、P15（对话式新建与对话内引导的既有范式）。
 

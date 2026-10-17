@@ -15,8 +15,8 @@ import type { RunsService } from '../domain/runs.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { ToolGateway } from '../gateway/index.js';
 import type { SandboxNetworkPolicy } from '../sandbox/types.js';
-import type { ProjectRuntime } from '../project/service.js';
-import type { GitRemoteOperation } from '../project/git-remote.js';
+import type { WorkdirRuntime } from '../workdir/service.js';
+import type { GitRemoteOperation } from '../workdir/git-remote.js';
 import { buildCodingTools } from './coding-tools.js';
 import { buildMemoryTools, type MemoryToolFacade } from './memory-tools.js';
 import { buildSetupTools, type SetupToolFacade } from './setup-tools.js';
@@ -62,10 +62,10 @@ export interface ResponseToolDeps {
   gateway: ToolGateway;
   /** Created before tools run ("首次执行时创建"). */
   workspacePath: string;
-  /** Bound project directory (null = none); base for relative paths + bash. */
-  projectPath: string | null;
-  /** Project runtime for lease / git remote tools (P04). */
-  projects: ProjectRuntime;
+  /** Bound workdir directory (null = none); base for relative paths + bash. */
+  workdirPath: string | null;
+  /** Workdir runtime for lease / git remote tools (P04). */
+  workdirs: WorkdirRuntime;
   network: SandboxNetworkPolicy;
   /** Per-run read hashes; released when the run settles. */
   fsState: FileReadState;
@@ -83,6 +83,12 @@ export interface ResponseToolDeps {
    * deliver to the targets. Returns a suffix note for the tool result.
    */
   onMentionBots?: (mentionBotIds: string[], message: Message) => string;
+  /**
+   * D92 T1a routing (design 41 §6.3 必答回合): a must-reply turn (its trigger
+   * has a `MUST_REPLY_REASONS` part — `routed` / `lead_fallback`) gets no
+   * `skip_reply`: the host guarantees a visible reply or a failure state.
+   */
+  mustReply?: boolean | undefined;
   /**
    * P06 environment manager facade: request host-level tool installs.
    * Narrow interface so tools never touch the DB layer directly.
@@ -140,8 +146,8 @@ export interface ResponseToolDeps {
    * 'interviewing' 时提供，注册 save_profile / finish_setup 两个专属工具。
    */
   setup?: SetupToolFacade | undefined;
-  /** 访谈工具面：群聊只注册 save_profile。缺省按单聊。 */
-  setupSurface?: 'direct' | 'group' | undefined;
+  /** 访谈工具面：项目组只注册 save_profile。缺省按单聊。 */
+  setupSurface?: 'direct' | 'project' | undefined;
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）：present 时注册
    * generate_image 工具；未配置能力时工具返回 SETUP_REQUIRED，由
@@ -183,8 +189,8 @@ export interface ResponseToolDeps {
   logger?: { warn(fields: Record<string, unknown>, msg: string): void } | undefined;
   /**
    * 管家宿主（D70，docs/design/27-butler-and-delegation.md）：present 时所有
-   * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_team /
-   * propose_bot / propose_group。
+   * Bot 注册只读 list_bots；`isButler` 为真时再注册 propose_bots /
+   * propose_bot / propose_project。
    */
   butler?: { host: ButlerToolFacade; isButler: boolean } | undefined;
   /**
@@ -347,7 +353,7 @@ export function buildResponseTools(input: {
         ? {}
         : {
             mention_bot_ids: Type.Optional(
-              Type.Array(Type.String(), { description: '要 @ 的 Bot id（群聊）' }),
+              Type.Array(Type.String(), { description: '要 @ 的 Bot id（项目组）' }),
             ),
           }),
       reply_to: Type.Optional(Type.String({ description: '引用回复的消息 id' })),
@@ -366,7 +372,7 @@ export function buildResponseTools(input: {
       const uploaded = [];
       for (const filePath of params.attachment_paths ?? []) {
         // Only a path this run may read right now: a grantable one (outside the
-        // workspace / project, sensitive locations) is never read and uploaded
+        // workspace / workdir, sensitive locations) is never read and uploaded
         // without the user's approval (审查 pre-existing HIGH).
         const decision = gateway.checkPath(identity, filePath, 'read');
         if (decision.kind === 'forbidden') {
@@ -404,8 +410,8 @@ export function buildResponseTools(input: {
           };
         }
       }
-      // D75 §6.2: a task is no group member — it never @-mentions bots (no
-      // chain either; chain budgets count turns only).
+      // D75 §6.2: a task is no project member — it never @-mentions bots
+      // (episodes count turns' visible @ triggers only, D92 T1a).
       const mentionIds = isTask ? [] : (params.mention_bot_ids ?? []);
       const message = deps.messages.append({
         conversationId: identity.conversationId,
@@ -689,11 +695,11 @@ export function buildResponseTools(input: {
       let cwd: string | undefined;
       if (params.cwd !== undefined) {
         const decision = gateway.checkPath(identity, params.cwd, 'read');
-        const base = deps.projectPath ?? deps.workspacePath;
+        const base = deps.workdirPath ?? deps.workspacePath;
         if (decision.kind !== 'allowed' || !decision.resolvedPath.startsWith(base)) {
           return {
             ok: false,
-            content: 'cwd 必须位于当前 project 或 workspace 内',
+            content: 'cwd 必须位于当前 workdir 或 workspace 内',
             errorCode: 'INVALID_INPUT',
           };
         }
@@ -729,35 +735,35 @@ export function buildResponseTools(input: {
     },
   };
 
-  const acquireProjectWrite: ToolDefinition<{ reason?: string }> = {
-    name: 'acquire_project_write',
+  const acquireWorkdirWrite: ToolDefinition<{ reason?: string }> = {
+    name: 'acquire_workdir_write',
     description:
-      '申请 project 写入租约。执行会改动 project 文件的命令（安装依赖、格式化等）前必须先调用；使用 write / edit 工具时会自动申请，无需重复调用。租约被其他执行持有时会排队等待。',
+      '申请 workdir 写入租约。执行会改动 workdir 文件的命令（安装依赖、格式化等）前必须先调用；使用 write / edit 工具时会自动申请，无需重复调用。租约被其他执行持有时会排队等待。',
     parameters: Type.Object({
       reason: Type.Optional(Type.String({ description: '申请原因，会展示给用户' })),
     }),
     execute: async (params, ctx) => {
-      const project = deps.projects.boundProject(identity.conversationId);
-      if (project === null) {
+      const workdir = deps.workdirs.boundWorkdir(identity.conversationId);
+      if (workdir === null) {
         return {
           ok: false,
-          content: '当前对话未绑定 project，无需申请写入租约',
+          content: '当前对话未绑定 workdir，无需申请写入租约',
           errorCode: 'INVALID_INPUT',
         };
       }
-      if (project.status === 'missing') {
+      if (workdir.status === 'missing') {
         return {
           ok: false,
-          content: `项目目录不存在（可能被移动或删除）：${project.path}`,
-          errorCode: 'PROJECT_MISSING',
+          content: `工作目录不存在（可能被移动或删除）：${workdir.path}`,
+          errorCode: 'WORKDIR_MISSING',
         };
       }
       try {
-        await deps.projects.ensureWriteLease(identity, project.path, {
+        await deps.workdirs.ensureWriteLease(identity, workdir.path, {
           signal: ctx.signal,
-          reason: params.reason ?? '申请 project 写入租约',
+          reason: params.reason ?? '申请 workdir 写入租约',
         });
-        return { ok: true, content: `已取得 ${project.name} 的写入租约，可以执行改动项目的命令。` };
+        return { ok: true, content: `已取得 ${workdir.name} 的写入租约，可以执行改动工作目录的命令。` };
       } catch (error) {
         if (error instanceof AppError && error.code === 'APPROVAL_DENIED') {
           return { ok: false, content: '执行已取消，未取得租约', errorCode: 'APPROVAL_DENIED' };
@@ -806,8 +812,8 @@ export function buildResponseTools(input: {
           const hints: Record<string, string> = {
             APPROVAL_DENIED: '用户拒绝或取消了该 git 远程操作。不要重试，改为询问用户。',
             GIT_CLI_MISSING: '本机未安装 git 命令行。请告知用户安装 git 后重试。',
-            PROJECT_MISSING: '项目目录不存在，无法执行 git 操作。',
-            INVALID_INPUT: '当前对话未绑定 project，无法执行 git 远程操作。',
+            WORKDIR_MISSING: '工作目录不存在，无法执行 git 操作。',
+            INVALID_INPUT: '当前对话未绑定 workdir，无法执行 git 远程操作。',
           };
           return {
             ok: false,
@@ -888,7 +894,7 @@ export function buildResponseTools(input: {
   const coding = buildCodingTools(identity, {
     gateway,
     workspacePath: deps.workspacePath,
-    projectPath: deps.projectPath,
+    workdirPath: deps.workdirPath,
     network: deps.network,
     secrets: deps.secrets,
     fsState: deps.fsState,
@@ -983,7 +989,7 @@ export function buildResponseTools(input: {
           identity,
           browser: deps.browser,
           workspacePath: deps.workspacePath,
-          projectPath: deps.projectPath,
+          workdirPath: deps.workdirPath,
           ...browserProfileKeyOption(deps.browserProfileKey, identity.botId),
           // D73 P2: tainted bots confirm every navigation / submit-like action (design 29 §8.3).
           egress: (input, options) => gateway.egressCheck(identity, input, options),
@@ -1139,7 +1145,8 @@ export function buildResponseTools(input: {
         : [];
     return finalize([
       sendMessage,
-      skipReply,
+      // A must-reply routed turn (D92 T1a) gets no skip_reply at all.
+      ...(deps.mustReply === true ? [] : [skipReply]),
       searchMessages,
       getMessagesAround,
       getAttachment,
@@ -1181,7 +1188,7 @@ export function buildResponseTools(input: {
     getRun,
     requestAccess,
     requestUnsandboxed,
-    acquireProjectWrite,
+    acquireWorkdirWrite,
     gitRemote,
     requestEnvironment,
     ...coding,
@@ -1258,7 +1265,7 @@ export function emptyToolResult(): ToolResult {
 /**
  * Subagent 减配研究工具集（D66）：read/grep/find/ls + 沙箱 bash + 联网检索 +
  * 只读 MCP 工具（W5：只读 + 有效审批 auto，≤ SUBAGENT_MCP_READ_TOOLS_MAX，按子
- * run 身份包装好的 `mcp`）与能力两件套（D91，按子 run 身份构建、索引限于只读 + auto）。无 write / edit（避免与主 run 的 project 写租约竞
+ * run 身份包装好的 `mcp`）与能力两件套（D91，按子 run 身份构建、索引限于只读 + auto）。无 write / edit（避免与主 run 的 workdir 写租约竞
  * 争）、无 send_message / delegate_task（禁止再委派）、无 memory / schedule /
  * browser / skills 工具。
  */
@@ -1268,7 +1275,7 @@ export function buildSubagentResearchTools(input: {
     ResponseToolDeps,
     | 'gateway'
     | 'workspacePath'
-    | 'projectPath'
+    | 'workdirPath'
     | 'network'
     | 'secrets'
     | 'fsState'
@@ -1283,7 +1290,7 @@ export function buildSubagentResearchTools(input: {
     {
       gateway: input.deps.gateway,
       workspacePath: input.deps.workspacePath,
-      projectPath: input.deps.projectPath,
+      workdirPath: input.deps.workdirPath,
       network: input.deps.network,
       secrets: input.deps.secrets,
       fsState: input.deps.fsState,

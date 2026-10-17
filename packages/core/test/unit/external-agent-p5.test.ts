@@ -36,16 +36,11 @@ import type {
   ToolDefinition,
 } from '../../src/agent/types.js';
 import { Scheduler } from '../../src/scheduler/scheduler.js';
-import { openDatabase } from '../../src/infra/db.js';
-import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
-import { migrationsUrl } from '../../src/start.js';
-import { runMigrations } from '../../src/infra/migrate.js';
-import { UsageService } from '../../src/domain/usage.js';
 
 /**
  * 外部智能体 P5 第二部分（todo §8.1）：steering、会话复用（同进程 / resume /
  * load / 新建、指纹、桥 token 随会话）、用量（turn / session 口径、缺失记轮数、
- * 连锁预算）、子代理调用不切分、状态行标题、桥工具转入后台 + follow-up、
+ * 零用量行按轮记账）、子代理调用不切分、状态行标题、桥工具转入后台 + follow-up、
  * 丢弃会话、调度器并发缺省。
  */
 
@@ -97,8 +92,8 @@ async function setup(
     };
   } = {},
 ) {
-  const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
-  dirs.push(workdir);
+  const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-p5-'));
+  dirs.push(cwd);
   const started: FakeAcpAgentHandle[] = [];
   const host = new AgentHost({
     logger,
@@ -147,7 +142,7 @@ async function setup(
       },
       tools: [],
       limits: { maxTurns: 60 },
-      workdir,
+      cwd,
       ...overrides,
       external: {
         agentId: FAKE.id,
@@ -158,7 +153,7 @@ async function setup(
       },
     };
   };
-  return { engine, host, started, spec, workdir, bridge };
+  return { engine, host, started, spec, cwd, bridge };
 }
 
 function collect(handle: RunHandle): EngineEvent[] {
@@ -548,7 +543,7 @@ describe('external agent usage (P5)', () => {
     ]);
   });
 
-  it('missing usage records one zero entry per model round; the chain budget counts rounds', async () => {
+  it('missing usage records one zero entry per model round, charged at AGENT_TURN_BUDGET_TOKENS', async () => {
     const { engine, started, spec } = await setup({
       turns: [
         agentTurn()
@@ -568,54 +563,6 @@ describe('external agent usage (P5)', () => {
     expect(handle.tokensSoFar()).toBe(2 * AGENT_TURN_BUDGET_TOKENS);
   });
 
-  it('UsageService.sumForRuns charges token-less agent rows per round', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'kepcup-usage-'));
-    dirs.push(dir);
-    const db = openDatabase({
-      path: path.join(dir, 'main.db'),
-      key: deriveKey(Buffer.alloc(32, 7), KEY_INFO.mainDb),
-    });
-    try {
-      runMigrations(db, migrationsUrl('main'));
-      const usage = new UsageService(db, { now: () => 1 } as never);
-      const base = { botId: null, conversationId: null, loopType: 'turn' as const };
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      usage.record({
-        ...base,
-        runId: 'r1',
-        provider: 'agent:fake',
-        model: 'default',
-        inputTokens: 30,
-        outputTokens: 5,
-      });
-      usage.record({
-        ...base,
-        runId: 'r2',
-        provider: 'openai',
-        model: 'x',
-        inputTokens: 0,
-        outputTokens: 0,
-      });
-      expect(usage.sumForRuns(['r1', 'r2'])).toBe(2 * AGENT_TURN_BUDGET_TOKENS + 35);
-    } finally {
-      db.close();
-    }
-  });
 });
 
 describe('event mapping details (P5)', () => {
@@ -807,8 +754,8 @@ describe('scheduler and providers (P5)', () => {
 describe('shim transport (design 28 §10 `connect`)', () => {
   it('drives an in-process ACP agent the provider builds over the agent process', async () => {
     const entry = { ...FAKE, id: 'fake-shim', provider: 'shim-test', transport: 'shim' as const };
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-shim-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-shim-'));
+    dirs.push(cwd);
     const seen: string[] = [];
     const procs: Array<{ kill(): void }> = [];
     const providers: ProviderRegistry = {
@@ -860,7 +807,7 @@ describe('shim transport (design 28 §10 `connect`)', () => {
       messages: [{ role: 'user', content: '经垫片', timestamp: 0 }],
       tools: [],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: { agentId: entry.id, permission: 'read_only', capabilities: [], sessionKey: 'k' },
     }).done;
     expect(outcome).toMatchObject({ status: 'completed', finalText: '来自垫片' });
@@ -1086,8 +1033,8 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
           });
         }),
     };
-    const workdir = mkdtempSync(path.join(tmpdir(), 'kepcup-deadline-'));
-    dirs.push(workdir);
+    const cwd = mkdtempSync(path.join(tmpdir(), 'kepcup-deadline-'));
+    dirs.push(cwd);
     const started: FakeAcpAgentHandle[] = [];
     const host = new AgentHost({
       logger,
@@ -1126,7 +1073,7 @@ describe('kept session trust (P5-2 review #1, #4, #9, #10, #11, #16, #18)', () =
       messages: [{ role: 'user', content: 'go', timestamp: 0 }],
       tools: [tool],
       limits: { maxTurns: 10 },
-      workdir,
+      cwd,
       external: {
         agentId: FAKE.id,
         permission: 'read_only',

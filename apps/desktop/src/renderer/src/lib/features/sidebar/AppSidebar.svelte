@@ -31,7 +31,7 @@
   import { onboarding } from '$lib/stores/onboarding.svelte';
   import { createBotConversational } from '$lib/features/bot-setup';
   import BotAvatar from '$lib/avatars/BotAvatar.svelte';
-  import GroupAvatarStack from '$lib/avatars/GroupAvatarStack.svelte';
+  import ProjectAvatarStack from '$lib/avatars/ProjectAvatarStack.svelte';
   import UserAvatar from '$lib/avatars/UserAvatar.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Sidebar from '$lib/components/ui/sidebar';
@@ -64,7 +64,7 @@
    * 预览（无消息且无未读/执行中/待确认信号时预览行整行不渲染，只剩名称与头像
    * 垂直居中）。管理操作（移动到分组 / 重命名 / 复制会话 id / 群设置 / 删除）
    * 收进右键上下文菜单，不再有常驻「…」按钮。
-   * 新建只保留「+」面板里的对话式新建和新建群聊。搜索按钮打开全局
+   * 新建只保留「+」面板里的对话式新建和新建项目组。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
    * 工作台入口（D90）在管家之上：只改 `shell.mainView`，不清当前会话；对话行的选中高亮
@@ -214,13 +214,10 @@
     return stripMarkdown(raw);
   }
 
-  /** 条目标题（图标模式的 hover 提示同源）：群聊用标题，私聊用 Bot 名。 */
+  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名。 */
   function nameOf(conversation: ConversationView): string {
-    return conversation.type === 'group'
-      ? (conversation.title ??
-          (conversation.setupState === 'creating'
-            ? t('groupSetup.creatingTitle')
-            : conversation.id))
+    return conversation.type === 'project'
+      ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
   }
 
@@ -239,9 +236,9 @@
     await createBotConversational();
   }
 
-  async function openCreateGroup(): Promise<void> {
+  async function openCreateProject(): Promise<void> {
     plusOpen = false;
-    chat.beginGroupCompose();
+    chat.beginProjectCompose();
   }
 
   /**
@@ -556,10 +553,13 @@
     sidebarSections.toggle(sectionId);
   }
 
-  function openGroupSettings(): void {
+  /** 右键「项目详情」（WP6 §4 步骤 6）：进入该项目组并打开内容区的详情页。 */
+  async function openProjectDetail(): Promise<void> {
     if (!contextMenu) return;
-    sidebarDialogs.openGroupSettings(contextMenu.conversationId);
+    const conversationId = contextMenu.conversationId;
     closeContextMenu();
+    await chat.select(conversationId);
+    shell.openProjectSettings();
   }
 
   function openRename(): void {
@@ -634,10 +634,10 @@
   />
 {/snippet}
 
-<!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
+<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
-  {#if conversation.type === 'group'}
-    <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
+  {#if conversation.type === 'project'}
+    <ProjectAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
       botId={conversation.directBotId ?? conversation.id}
@@ -1109,13 +1109,13 @@
     <button
       type="button"
       class="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
-      onclick={openCreateGroup}
-      data-testid="start-chat-create-group"
+      onclick={openCreateProject}
+      data-testid="start-chat-create-project"
     >
       <span class="flex size-7 items-center justify-center rounded-full bg-muted">
         <Users class="size-4" />
       </span>
-      {t('sidebar.createGroup')}
+      {t('sidebar.createProject')}
     </button>
   </div>
   {#if plusBots.length > 0}
@@ -1242,12 +1242,12 @@
         <ChevronRight class="size-3.5 text-muted-foreground" />
       </button>
     {/if}
-    {#if contextConversation?.type === 'group' && contextConversation.setupState !== 'creating'}
+    {#if contextConversation?.type === 'project'}
       {@render contextItem(
         Settings2,
-        t('group.settings'),
-        openGroupSettings,
-        'context-group-settings',
+        t('sidebar.projectDetail'),
+        openProjectDetail,
+        'context-project-settings',
       )}
     {:else if contextConversation?.bot?.status === 'active'}
       {@render contextItem(Pencil, t('sidebar.renameBot'), openRename, 'context-rename-bot')}

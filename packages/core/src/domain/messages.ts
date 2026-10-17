@@ -89,6 +89,11 @@ export interface AppendMessageInput {
   /** task_id column (task_event only); defaults to `taskEvent.taskId`. */
   taskId?: string | null | undefined;
   event?: string | undefined;
+  /**
+   * system_event extras：协作暂停卡指向的回合（episode_paused，D92 T1a），
+   * 界面上的继续 / 停止按它调用 episodes.resume / episodes.stop。
+   */
+  episodeId?: string | undefined;
   /** system_event extras: clickable bot candidates / related batch (P05). */
   botIds?: string[] | undefined;
   /**
@@ -105,12 +110,10 @@ export interface AppendMessageInput {
   /** system_event extras (task_question, D87 P4 L2): multi / form question cards. */
   questionMode?: AskUserMode | undefined;
   questionFields?: AskUserField[] | undefined;
-  /** system_event extras: group-creation question step (group_setup_question). */
-  step?: string | undefined;
   /** system_event extras: butler route card target (route_suggestion, D70). */
   route?:
     | {
-        kind: 'bot' | 'group' | 'delegate';
+        kind: 'bot' | 'project' | 'delegate';
         botId?: string | undefined;
         conversationId?: string | undefined;
         task?: string | undefined;
@@ -316,7 +319,7 @@ function userVisibleFilter(): { sql: string; params: string[] } {
  * wiki 入库、环境安装、技能导入、调度触发、凭据处理——不是对话内容。带
  * `internal` 标记或属于 INTERNAL_SYSTEM_EVENTS（历史存量行没有标记）的
  * system_event 只进 Bot 的上下文与触发，不进用户可见的消息流；其余消息
- * （用户/Bot 发言、移交进度卡、访谈卡、群聊认领提示、执行中断等）都可见。
+ * （用户/Bot 发言、移交进度卡、访谈卡、项目组认领提示、执行中断等）都可见。
  * 中途权限弹窗（访问、命令、MCP 等）只在输入区上方弹出，不进用户可见流；
  * 例外是带 `record` 标记的折叠记录：自动决定的卡（无人值守，用户从没在 dock
  * 里见过它）与外发 / 污点相关的卡（D73 留痕）。技能导入、环境安装、移交等
@@ -462,6 +465,7 @@ export class MessagesService {
             : JSON.stringify({
                 event: input.event ?? '',
                 text: input.text ?? '',
+                ...(input.episodeId !== undefined ? { episodeId: input.episodeId } : {}),
                 ...(input.botIds !== undefined ? { botIds: input.botIds } : {}),
                 ...(input.internal ? { internal: true } : {}),
                 ...(input.relatedBatchId !== undefined ? { batchId: input.relatedBatchId } : {}),
@@ -473,7 +477,6 @@ export class MessagesService {
                   ? { questionFields: input.questionFields }
                   : {}),
                 ...(input.taskBotId !== undefined ? { taskBotId: input.taskBotId } : {}),
-                ...(input.step !== undefined ? { step: input.step } : {}),
                 ...(input.route !== undefined ? { route: input.route } : {}),
                 ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
                 ...(input.offer !== undefined ? { offer: input.offer } : {}),
@@ -660,6 +663,26 @@ export class MessagesService {
   getById(id: string): Message | null {
     const row = this.db.prepare('select * from messages where id = ?').get(id) as
       MessageRow | undefined;
+    if (!row) return null;
+    const message = messageRowToMessage(row);
+    message.attachments = this.attachmentsFor(message.id);
+    return message;
+  }
+
+  /**
+   * Latest visible (shared, non-recalled) text message sent by a bot: routing's
+   * "last replier" (D92 T1a). Private task_event-style rows are excluded by the
+   * shared filter; a task's interim progress text (`origin:'task'`) counts —
+   * it means the bot is working for the user. Null when the conversation has
+   * no bot message.
+   */
+  lastVisibleBotMessage(conversationId: string): Message | null {
+    const row = this.db
+      .prepare(
+        "select * from messages where conversation_id = ? and sender_type = 'bot' and kind = 'text' " +
+          'and owner_bot_id is null and status != \'recalled\' order by seq desc limit 1',
+      )
+      .get(conversationId) as MessageRow | undefined;
     if (!row) return null;
     const message = messageRowToMessage(row);
     message.attachments = this.attachmentsFor(message.id);

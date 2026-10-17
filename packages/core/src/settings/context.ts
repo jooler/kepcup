@@ -8,7 +8,7 @@ import { SETTING_DIRECT_TRIGGERS, type Message, type TriggerReason } from '@kepc
 /**
  * 触发批是否「用户本人发起」：批里每条消息都是用户本人发的普通消息——不是组件回传
  * （`origin: 'widget'`）、不是跨 Bot 代发（`origin: 'delegation'`），也没有系统事件或其他 Bot
- * 的发言（群聊里其他 Bot 的 mention / reply、邮件 / 监看 / 定时唤醒的内部事件都会让它为 false）。
+ * 的发言（项目组里其他 Bot 的 mention / reply、邮件 / 监看 / 定时唤醒的内部事件都会让它为 false）。
  * 合并批（D75 §3.2）的每一部分的触发原因也都必须在直改白名单里。空批 = false。
  */
 export function triggerFromUser(input: {
@@ -53,13 +53,15 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'memory_feedback',
   'get_user_profile',
   'wiki_enqueue',
+  // D92 T1b WP10: a hosted write registering a queued removal (receipt only).
+  'wiki_remove_source',
   // 提问 / 提议（结果是用户的决定或宿主回执）
   'ask_user',
   'ask_question',
   'propose_profile_change',
-  'propose_team',
+  'propose_bots',
   'propose_bot',
-  'propose_group',
+  'propose_project',
   'propose_handover',
   'suggest_route',
   'save_profile',
@@ -84,7 +86,7 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'edit',
   'delete',
   'request_access',
-  'acquire_project_write',
+  'acquire_workdir_write',
   'request_environment',
   'create_skill',
   'generate_image',

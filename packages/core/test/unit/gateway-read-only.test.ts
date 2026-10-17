@@ -7,7 +7,7 @@ import Database from 'better-sqlite3-multiple-ciphers';
 
 import { canonicalPath, resolvePaths, workspacePathFor } from '../../src/infra/paths.js';
 import { ToolGateway, type GatewayDeps } from '../../src/gateway/index.js';
-import { ProjectRuntime } from '../../src/project/service.js';
+import { WorkdirRuntime } from '../../src/workdir/service.js';
 import { GrantsService } from '../../src/permissions/grants.js';
 import { buildCodingTools } from '../../src/tools/coding-tools.js';
 import { buildResponseTools } from '../../src/tools/index.js';
@@ -20,7 +20,7 @@ import type { RunIdentity, ToolContext, ToolDefinition } from '../../src/agent/t
 
 /**
  * D75 W1-C：执行期只读（docs/design/30 §2.1、§5.1）与「仅这一次」= 单次工具
- * 调用（§7.3）。网关是真的（ToolGateway + ProjectRuntime.writeDenial +
+ * 调用（§7.3）。网关是真的（ToolGateway + WorkdirRuntime.writeDenial +
  * GrantsService），其余依赖为桩。
  */
 
@@ -103,7 +103,7 @@ function makeGrants(): GrantsService {
 }
 
 function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('test')): ToolGateway {
-  const projects = new ProjectRuntime({
+  const workdirs = new WorkdirRuntime({
     runs: { get: (id: string) => runRows.get(id) ?? null },
     conversations: { get: () => null },
     // Only the live write task holds its (pinned) lease.
@@ -133,7 +133,7 @@ function makeGateway(sandbox: SandboxBackend = new UnavailableSandboxBackend('te
       match: (command: string) => ({ exempt: command.startsWith('ls'), reason: 'stub' }),
     } as unknown as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
-    projects,
+    workdirs,
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -158,7 +158,7 @@ function codingTools(gateway: ToolGateway, identity: RunIdentity): Map<string, T
   const tools = buildCodingTools(identity, {
     gateway,
     workspacePath: workspace(),
-    projectPath: null,
+    workdirPath: null,
     network: { mode: 'none', allowDomains: [] },
     secrets: { redact: (text: string) => text } as never,
     fsState: new FileReadState(),
@@ -601,8 +601,8 @@ describe('tools that write behind the gateway refuse for read-only runs (D75 rev
         renderOptions: {},
         gateway,
         workspacePath: workspace(),
-        projectPath: null,
-        projects: {},
+        workdirPath: null,
+        workdirs: {},
         network: { mode: 'none', allowDomains: [] },
         fsState: new FileReadState(),
         onBotMessage: () => {},

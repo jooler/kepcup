@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 interface LaunchedApp {
   app: ElectronApplication;
@@ -50,7 +51,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -314,7 +315,7 @@ test('deleting the conversation removes it; deleting the bot removes its entry a
     await page.locator('[data-testid="bot-delete-confirm"]').click();
     await expect(
       page.locator('li[data-testid^="bot-card-"]').filter({ hasText: '小明' }),
-    ).toBeHidden();
+    ).toBeHidden({ timeout: 60_000 });
 
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="settings-dialog"]')).toBeHidden();
