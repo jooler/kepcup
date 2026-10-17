@@ -4,15 +4,15 @@
 
 ## 1. 一句话现状
 
-11 个 WP 中的 **9 个已完成并经阶段审查修复**：WP0-1 / WP0-2 / WP1 / WP2 / WP3 / WP9 / WP4 / WP5 / WP6，全部汇入集成分支 `feat/project/migration`（HEAD `84b6c86`）。剩余 **WP7 → WP8（T1a 收口）→ WP10（T1b 收口）→ WP11**。每提交可构建；最后一次全量 `pnpm test` 于 WP4 收口：5475 通过 / 0 失败 / 23 skip（不超基线）；WP6 收口后 desktop 定向 85 文件 792 例全绿（WP6/WP7 均不要求全量，按约定 WP8 收口会跑）。
+11 个 WP 中的 **10 个已完成并经阶段审查修复**：WP0-1 / WP0-2 / WP1 / WP2 / WP3 / WP9 / WP4 / WP5 / WP6 / WP7，全部汇入集成分支 `feat/project/migration`（HEAD `aea4559`）。剩余 **WP8（T1a 收口，跑全量）→ WP10（T1b 收口，跑全量）→ WP11**。每提交可构建；最后一次全量 `pnpm test` 于 WP4 收口：5475 通过 / 0 失败 / 23 skip（不超基线）；WP7 收口后定向 desktop 86 文件 800 例、shared 29 文件 338 例全绿。
 
 ## 2. 分支与提交拓扑
 
 - 集成分支：`feat/project/migration`（未 push，合入 main 由用户决定）。
-- 线性史（旧→新）：`5d9e933` 任务书 → WP0-1 `120374f` → WP0-2 `f162702` → 审查 `448fd6c` → WP1 `8926bd7`/`ea36bf8`/`9f1e98a`/审查 `b896b0a` → WP2 `d724a07`/`0e1d88d` → WP3 `dcdaeaa`/`c5c60a3` → WP9（分支合入）`596a834` → C1+D 审查 `050a01a` → WP4 `e7013fa`/`748d63d`/`f86e3b1` → WP5（分支合入）`6f42e49` → 交接文档 `f385f61` → WP6 `406c962`/`51c6d53`/`6c7ee28`/`f2a777a` → 审查 `08ef7b8`/`84b6c86`。
+- 线性史（旧→新）：`5d9e933` 任务书 → WP0-1 `120374f` → WP0-2 `f162702` → 审查 `448fd6c` → WP1 `8926bd7`/`ea36bf8`/`9f1e98a`/审查 `b896b0a` → WP2 `d724a07`/`0e1d88d` → WP3 `dcdaeaa`/`c5c60a3` → WP9（分支合入）`596a834` → C1+D 审查 `050a01a` → WP4 `e7013fa`/`748d63d`/`f86e3b1` → WP5（分支合入）`6f42e49` → 交接文档 `f385f61` → WP6 `406c962`/`51c6d53`/`6c7ee28`/`f2a777a` → 审查 `08ef7b8`/`84b6c86` → 交接文档 `9eaec88` → WP7 `8909675`/`f93b8f9`/`943b342`/`f6c747d`/`054451d`/`9d47aac`/`cda8dca`/`c20feb2` → 审查 `aea4559`。
 - 边界指针（只读锚点，便于 diff/回溯）：`feat/project/wp0-1`、`wp0-2`、`wp1`、`wp2-episodes`、`wp3-routing`、`wp9-wiki-merged`(=596a834)、`wp4-integrations`、`wp5-ui-create`(=wp5-ui-create-done, 已合入)。
 - worktree：`/Users/pengfeilee/www/kepcup-wp9`（分支 wp9-wiki-core，已合入）、`/Users/pengfeilee/www/kepcup-wp5`（分支 wp5-ui-create，已合入）。两处工作区干净，可 `git worktree remove` 回收；后续并行 WP（建议 WP6 与 WP7 前置核对期）可照此再开。
-- stash 仅 1 条：`recovered: external workbench seam stash`——**别的会话**（ci/e2e-flaky-fixes）的 workbench 在途工作保险副本，与其自有提交 `006078ae` 冗余，**不要 pop 到本分支**，保留或交还原会话。
+- stash 仅 1 条：`recovered: external workbench seam stash`——**别的会话**（ci/e2e-flaky-fixes）的 workbench 在途工作保险副本，与其自有提交 `006078ae` 冗余，**不要 pop 到本分支**，保留或交还原会话。（WP7 期间被执行代理误 pop 过一次，已原样重新 push 回 stash：消息与内容一致，底层 hash 有变。）
 
 ## 3. 已完成 WP 与审查结论
 
@@ -27,19 +27,19 @@
 | WP4 | 提示词规则/propose_project、propose_bots、suggest_route/工作台/设置目录四卡/迁移 main 0042+memory 0003/'group' 残留清零 | `e7013fa`/`748d63d`/`f86e3b1` | 通过（零问题） |
 | WP5 | 双轮创建 UI（先负责人后成员）+ ProjectComposeBar + store 契约 §4.11 | `0f3ec73`/`b4511d6` | 通过（零问题） |
 | WP6 | 项目组外壳：两行实心顶栏/模块 tab/成员弹层/撤右栏/侧栏改名/`ProjectAvatarStack`/过渡壳详情页 + 深链改走 `openProjectSettings` | `406c962`/`51c6d53`/`6c7ee28`/`f2a777a` | 通过（修 ChatsArea 缩进 `08ef7b8` + 实施记录勘误 `84b6c86`；纯改名提交夹带过渡态行为变化已备案不重写历史） |
+| WP7 | 真实详情页五分区 + `ProjectMembersEditor`/`ProjectMemberPicker` + 四设置卡内嵌与深链 + 删 GroupInfo/GroupSettingsDialog + 删 Bot 阻止负责人 | `8909675`/`f93b8f9`/`943b342`/`f6c747d`/`054451d`/`9d47aac`/`cda8dca`/`c20feb2` | 通过（补记 DEV-035 `aea4559`；代码零缺陷） |
 
 各 WP 细节、测试清单、表外命名登记均在各任务书文件末尾「实施记录」。
 
 ## 4. 剩余工作与建议执行序
 
-依赖（README §3）现状：WP7 等 WP6✓+WP4✓（可开工）；WP8 等 WP3✓/WP4✓/WP7；WP10 等 WP9✓/WP6✓/WP4✓/WP7；WP11 最后。
+依赖（README §3）现状：WP8 等 WP3✓/WP4✓/WP5–WP7✓（可开工）；WP10 等 WP9✓/WP6✓/WP4✓/WP7✓，即只等 WP8 或与之并行无文件交集部分；WP11 最后。
 
-1. **WP7（ui-settings-page）**：项目详情页 + `ProjectMembersEditor` + 设置卡内嵌（WP4 的 `PENDING_DESKTOP_ANCHORS` 四锚点转正后删除、审批卡只读负责人行转正、`GroupInfo`/`GroupSettingsDialog` 替换——WP1/WP4/WP6 登记顺延；WP6 留下的 `ProjectSettingsPage.svelte` 过渡壳（内嵌旧 GroupInfo）整体替换，删 `GroupInfo.svelte`/`GroupSettingsDialog.svelte`）。
-2. **WP8（ui-copy-e2e，T1a 收口）**：文案改名清尾（DEV-033 登记的审批卡 testid 等）、协作暂停卡 UI（episode-paused-card）、e2e 重写（`group-chat.spec.ts`/`group-compose.spec.ts` 旧文件仍是旧名，DEV-034；helpers/create-group.ts→create-project.ts 等）。**收口跑全量**。
-3. **WP10（wiki-surface，T1b 收口）**：wiki_search/read/enqueue/remove_source 工具暴露、Wiki tab、删除确认框；testid 自行定义并列全；补跑 WP9 登记未跑的 e2e（wiki.spec/handover.spec 入参已改）。**收口跑全量**。
-4. **WP11（docs-sync）**：01-conventions 常量表全面同步（多 WP 顺手做了部分）、docs/design 各文件 D92 横幅清理与正文改写（41 号定稿为正文）、README §7 收尾、ID 表。注意 `docs/design/40-capability-mounting.md`、`todo/supervisor-and-tasks.md` 等旧措辞（WP0-1 实施记录登记过）。
+1. **WP8（ui-copy-e2e，T1a 收口）**：文案改名清尾（DEV-033 登记的审批卡 testid——注意 WP7 已把 `approval-butler-group*` 改为 `approval-butler-project-*`）、协作暂停卡 UI（episode-paused-card）、`GroupTurnStatusLine` 与 `group-turn-*` testid→`project-turn-*`、e2e 重写（`group-chat.spec.ts`/`group-compose.spec.ts` 旧文件仍是旧名，DEV-034；helpers/create-group.ts→create-project.ts 等；WP7 顺延的 `project-member-add-option-*` 候选 testid）。**收口跑全量**。
+2. **WP10（wiki-surface，T1b 收口）**：wiki_search/read/enqueue/remove_source 工具暴露、Wiki tab、删除确认框（补 wiki 来源数 / 页面数，WP7 顺延）；testid 自行定义并列全；补跑 WP9 登记未跑的 e2e（wiki.spec/handover.spec 入参已改）。**收口跑全量**。
+3. **WP11（docs-sync）**：01-conventions 常量表全面同步（多 WP 顺手做了部分）、docs/design 各文件 D92 横幅清理与正文改写（41 号定稿为正文）、README §7 收尾、ID 表。注意 `docs/design/40-capability-mounting.md`、`todo/supervisor-and-tasks.md` 等旧措辞（WP0-1 实施记录登记过）。
 
-并行建议：仅 WP10 的非 UI 部分与 WP7 无文件交集时可考虑并行，其余顺序做最稳；同一时间同模块不得并行（README §3）。
+其余顺序做最稳；同一时间同模块不得并行（README §3）。
 
 ## 5. 已登记偏差（docs/dev/DEVIATIONS.md）
 
@@ -47,8 +47,9 @@
 - **DEV-032**（WP9）：验收 rg 自检 3 处命中核对为预期（enqueueIngest 执行者字段等）。
 - **DEV-033**（WP4）：验收 rg 剩余 13 处 = 审批卡 testid / GroupSettingsDialog 锚点 / linear.tools.json 外部字段 / 0042 夹具，归 WP7/WP8。
 - **DEV-034**（WP5）：rg 自检按「src 零残留」解读（原命令排除模式罩不住 test/e2e），命中全为 WP8 顺延项。
+- **DEV-035**（WP7）：`group-members.ts`→`project-members.ts` 的 `git mv` 无从执行（文件已被 WP4 改名，仅剩导出名），以纯改名独立提交 `f6c747d` 收口，最终命名契约全达成。
 
-后续编号从 **DEV-035** 起。
+后续编号从 **DEV-036** 起。
 
 ## 6. 执行方式（本线已验证有效的协议）
 
