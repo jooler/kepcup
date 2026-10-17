@@ -1,5 +1,7 @@
 # 27 管家 Bot 与跨 Bot 委派（Butler + A→B Delegation）
 
+> **D92 修订（已定稿，待实施）**：管家工具改名：`propose_team` → `propose_bots`、`propose_group` → `propose_project`（载荷带负责人，审批卡上可改）、`suggest_route` 的 `group` → `project`；管家**不进项目组**（D70 开放决策 #8 收口为「不加入」）；`BUTLER_TEAM_SIZE_*` → `PROPOSE_BOTS_*`。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 用户面对多个领域 Bot 时，需要一个**固定入口**来组队、分诊与代办；领域 Bot 之间也需要在**不离开当前对话**的前提下把任务交给另一个联系人执行。本文规定：**Butler（管家）** 与 **跨 Bot 委派（A→B）** 两套产品能力。二者**已实现**；委派的 intent 与跟随任务结果见 §3.6。
 
 决策：D70（Butler）、D71（A→B 委派）。执行方案见 [todo/butler-and-delegation.md](../../todo/butler-and-delegation.md)。

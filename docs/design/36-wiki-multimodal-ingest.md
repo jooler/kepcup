@@ -1,5 +1,7 @@
 # 36 Wiki 多模态入库与派生血缘
 
+> **D92 修订（已定稿，待实施）**：项目 wiki 首次落地本文 `raw/_assets/*.json` 台账的**文本子集**（`createdBy`、`sources[]`、`storage:'git'`）与 `wiki.deleteAsset` 的文本子集（`removeSource`）；wiki 所有者泛化为 `bot | project`。二进制 / 派生部分仍按本文，未实施。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 用户会把 PDF、图片、视频、音频交给 Bot「学一下」。现有 Wiki 能把附件/文件字节落入 `raw/`，但维护 loop 对非文本几乎读不到内容；PDF 靠 MinerU 技能「人工导出再 enqueue」半闭环，**派生 Markdown 与原始文件没有一等公民血缘**。本篇给出完整、可靠的多模态入库方案：二进制原件存在 git 之外、可真删除；派生文本进 git 并与原件互链；派生由宿主在独立通道确定性执行、可断点续跑，缺环境时阻塞并引导而不是烧掉重试次数。决策：**D85**。
 
 **状态：已定稿，待实施。** 调研与代码摸底：2026-10-12。产品拍板（同日）：P0 视频必须含关键帧；`file` 来源单源上限 **2GB**；MinerU **宿主派生**；`wiki_vec` 留 **P1**；设置提供「Wiki 媒体派生」总开关（默认开）。同日按代码审查修订（见修订记录）：二进制移出 git、按来源拆分上限、ASR 分片进 P0、派生拆为独立 job、按资产状态去重与续跑。

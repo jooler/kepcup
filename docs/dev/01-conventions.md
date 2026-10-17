@@ -1,5 +1,7 @@
 # 01 工程规范
 
+> **D92 修订（已定稿，待实施）**：ID 前缀 `prj_` → `wkd_`（工作目录）、`chn_` → `epi_`（协作回合）；新增 / 删除的常量见 todo/project/README.md §4.8。见 [41-project-team.md](../design/41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 ## 技术栈与版本
 
 所有依赖锁定精确版本。下表中“版本要求”是选型约束，具体版本号在 P00 中确定并写入 `package.json`。

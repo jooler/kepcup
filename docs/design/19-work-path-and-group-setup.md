@@ -1,5 +1,7 @@
 # 19 对话工作路径与群创建（Work Path & Group Setup）
 
+> **D92 修订（已定稿，待实施）**：D60 对话内四问后端与创建流程**整体删除**（创建必须选负责人）；群目录改为项目组的工作目录，在项目详情页设置；`conversations.description` 改名 `goal`（项目目标，补上 DEV-030 缺的编辑入口）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 ## 概念：一个对话对应一个工作路径
 
 工作路径（project）的**绑定单位是对话**，不是 Bot：

@@ -1,5 +1,7 @@
 # 13 访问授权（软隔离）
 
+> **D92 修订（已定稿，待实施）**：术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 ## 原则
 
 - 与各类编程 Agent 一致：**默认范围小，越界时向用户申请授权，批准后继续。**

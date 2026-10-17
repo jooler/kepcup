@@ -1,5 +1,7 @@
 # 04 Agent 运行时规范
 
+> **D92 修订（已定稿，待实施）**：提示词新增项目负责人 / 成员规则与项目 wiki 主题段；触发段新增 `continuation / routed / routed_also / lead_fallback` 说明；群聊判断改为续接判断 + 负责人网关。术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](../design/41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 设计依据：[design/02-execution.md](../design/02-execution.md)、[design/30-supervisor-and-tasks.md](../design/30-supervisor-and-tasks.md)、[design/04-memory.md](../design/04-memory.md)、[design/09-tech-stack.md](../design/09-tech-stack.md#agent-looppi)、[design/14-models-and-browser.md](../design/14-models-and-browser.md)。
 
 ## pi 的封装

@@ -1,5 +1,7 @@
 # 08 Project
 
+> **D92 修订（已定稿，待实施）**：本文的 Project（目录）已改称 **workdir（工作目录）**，文件将改名为 `08-workdir.md`（WP0-2）；`projects` 表 → `workdirs`，`conversations.project_id` → `workdir_id`；`project` 一词改用于新概念「项目组」。群聊的目录绑定随之成为项目组的工作目录（在项目详情页设置）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 ## 概念
 
 - Project 是用户选择的一个本地目录，是**用户的工作空间**。Bot 在其中拥有完整的代码编辑能力。

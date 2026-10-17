@@ -1,5 +1,7 @@
 # 30 对话轮与任务（Supervisor + Tasks）
 
+> **D92 修订（已定稿，待实施）**：`chain` → `episode`（任务结算唤醒的轮次在唤醒时继承协作回合）；`GroupTurnCoordinator` → `ProjectTurnCoordinator`（路由改为续接判断 + 负责人网关）；§6.2「群聊」小节在实施后改写。术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
+
 今天 Bot 的一次响应既是**对话轮次**又是**执行单元**：用户发消息 → 起一个 loop → loop 既干活又说话 → loop 结束才算这一轮结束。由此派生三个问题：
 
 1. **对话被执行阻塞**。长任务期间 Bot 不是「在忙」，而是「不在」——它的唯一 loop 正在跑工具，用户说什么都只能作为注入塞进那个 loop，由那个 loop 顺手处理。
