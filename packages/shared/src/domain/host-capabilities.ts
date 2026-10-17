@@ -167,7 +167,9 @@ export const HOST_CAPABILITIES: readonly HostCapabilityDescriptor[] = [
     id: 'wiki',
     category: 'host',
     default: 'inject',
-    tools: ['wiki_search', 'wiki_read', 'wiki_enqueue'],
+    // D92 T1b WP10: wiki_remove_source is project-conversation-only (its
+    // registration is decided per run by tools/wiki-tools.ts).
+    tools: ['wiki_search', 'wiki_read', 'wiki_enqueue', 'wiki_remove_source'],
   }),
   pack({
     id: 'schedule',

@@ -2166,10 +2166,26 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
         recommendedSkillsSection: () => skillPresets.promptSection(),
       },
       wiki: {
-        topicsSection: (owner) => wiki.topicsSection(owner),
+        topicsSection: (owner, options) => wiki.topicsSection(owner, options),
         search: (owner, query, limit) => wiki.search(owner, query, limit),
         readPage: (owner, pagePath) => wiki.readPage(owner, pagePath),
         enqueueIngest: (input) => wiki.enqueueIngest(input),
+        enqueueRemoveSource: (input) => wiki.enqueueRemoveSource(input),
+        listSources: (owner) =>
+          wiki.listSources(owner).map((entry) => ({
+            id: entry.id,
+            createdBy: entry.createdBy,
+          })),
+        botName: (botId) => bots.get(botId)?.name ?? null,
+        projectContext: (conversationId) => {
+          const conversation = conversations.get(conversationId);
+          if (conversation === null || conversation.type !== 'project') return null;
+          return {
+            conversationId,
+            leadBotId: conversation.leadBotId ?? null,
+            memberBotIds: conversations.memberBotIds(conversationId),
+          };
+        },
       },
       schedule: scheduleFacade,
       watch: watchFacade,

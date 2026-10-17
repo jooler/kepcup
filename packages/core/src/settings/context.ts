@@ -53,6 +53,8 @@ export const TRUSTED_TOOLS: ReadonlySet<string> = new Set([
   'memory_feedback',
   'get_user_profile',
   'wiki_enqueue',
+  // D92 T1b WP10: a hosted write registering a queued removal (receipt only).
+  'wiki_remove_source',
   // 提问 / 提议（结果是用户的决定或宿主回执）
   'ask_user',
   'ask_question',
