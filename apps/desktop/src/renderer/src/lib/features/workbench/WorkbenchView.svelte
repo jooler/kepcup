@@ -21,10 +21,19 @@
   // 空间可能小于默认窗口（mac runner 只有 1024×677），双栏里 memo 侧收不进
   // 而走 tab。工作台用例经 localStorage 强制双栏形态，断言与显示空间解耦；
   // 真实产品行为（按宽度取舍）仍由 narrow-layout / workbench 布局用例覆盖。
-  const forcedWide =
-    __KEPCUP_TEST_HOOKS__ === true &&
-    window.localStorage.getItem('kepcup.e2e.workbenchWide') === '1';
-  const tabbed = $derived(!forcedWide && width < TABS_BELOW);
+  // localStorage 不是响应式源，无依赖的 derived 只在首算后缓存（不再随
+  // width 重读）；所以用 effect 维护 tabbed：基准仅 width（有依赖，会在每次
+  // 尺寸变化时重跑），seam 值在重跑中重读——布局用例「先撤 seam 再 resize」
+  // 也能即时生效。生产构建把条件里的 TEST_HOOKS 常量折叠为 false，
+  // getItem 分支被 DCE，不会进产物。
+  let tabbed = $state(false);
+  $effect(() => {
+    const forcedWide =
+      __KEPCUP_TEST_HOOKS__ === true
+        ? window.localStorage.getItem('kepcup.e2e.workbenchWide') === '1'
+        : false;
+    tabbed = !forcedWide && width < TABS_BELOW;
+  });
 
   useWorkbenchData();
 </script>
@@ -33,6 +42,8 @@
   class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-background"
   bind:clientWidth={width}
   data-testid="workbench-view"
+  data-width={width}
+  data-tabbed={String(tabbed)}
 >
   <!-- 详情弹框是模态：打开时弹框之外的工作台内容不可聚焦（inert）。 -->
   <div class="flex min-h-0 flex-1 flex-col" inert={workbench.drawer !== null}>

@@ -97,8 +97,13 @@
         core.call('budget.get') as Promise<{ tokens: number }>,
       ]);
       entries = summary.entries;
+      // 编辑中的草稿不被刷新覆盖（慢返回的旧值会顶掉刚保存的新值）：
+      // draft 仍等于上次已知预算（或首次加载前的空态）时视为未编辑，才允许
+      // 跟随服务端值。
+      if (budgetTokens === null || budgetDraft === String(budgetTokens)) {
+        budgetDraft = String(budget.tokens);
+      }
       budgetTokens = budget.tokens;
-      budgetDraft = String(budget.tokens);
     } finally {
       loading = false;
     }
