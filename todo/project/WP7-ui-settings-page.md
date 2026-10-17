@@ -171,4 +171,63 @@ rg -n "GroupInfo|GroupSettingsDialog|groupMemberPlan|GroupMemberPlan|group-membe
 
 ## 9. 实施记录
 
-（执行智能体在此填写：分支、提交列表、手工冒烟结果、偏差编号。）
+**2026-10-18 · 直接在集成分支 `feat/project/migration` 上开发（调度方指定，UI 链无并行项）。**
+
+### 提交列表（自 `9eaec88` 起）
+
+| 提交 | 内容 |
+|---|---|
+| `8909675` | feat(desktop): store 新增 `updateProjectGoal`（`projects.update` goal 可 null）/ `setProjectLead`（`projects.setLead` + reloadMembers），失败统一 `toast.error(errorText(...))`；`chats.errorCode.PROJECT_LEAD_REQUIRED` =「请先更换项目负责人」（步骤 1） |
+| `f93b8f9` | feat(desktop): `ProjectMemberPicker.svelte`（composePool 去管家 + excludeIds + composeCandidates 过滤，候选 `${testid}-option-<botId>`，输入 keydown 全部 stopPropagation，空态 `project.members.noAddable`）；`ProjectMembersMenu` 内联搜索块改用它（Esc 经捕获阶段仍可关弹层）（步骤 2） |
+| `943b342` | feat(desktop): 真实 `ProjectSettingsPage`（五分区 + 左导航 + `projectSettingsSection` 驱动滚动 + 非法会话收口回沟通）、`ProjectMembersEditor`（负责人置顶带标、设为负责人、移出置灰、成员名片弹框、底部 picker）、`project-settings-model.ts`（planTitleSave / planGoalSave 纯逻辑 + 8 例单测）、i18n `projectSettings.*`；**同一提交内删空 `PENDING_DESKTOP_ANCHORS` 四锚点**（锚点与登记必须同步，否则 shared 覆盖测试红）（步骤 3–4 + 步骤 5.5 提前合入） |
+| `f6c747d` | refactor(desktop)!: `groupMemberPlan`/`GroupMemberPlan` → `projectMemberPlan`/`ProjectMemberPlan` 纯改名（独立提交，断言不变）。**说明：文件本身早已叫 `project-members.ts`（前序 WP 已 mv），WP 预期的 `git mv` 无从执行，本提交完成的是导出名改名**（步骤 6 前半） |
+| `054451d` | feat(desktop): 四个设置卡内嵌 `ProjectTitleCard`/`ProjectGoalCard`/`ProjectLeadCard`/`ProjectMembersCard`（`expected`/`onConflict`/`messageId` 并发语义照搬旧 embedded 分支；名册经 composePool 排除管家）；`SettingCardEmbed` 四分支替换、`card-components.ts` 登记、`open-deep-link.ts` project-detail 分支消费 anchor（`revealDialogAnchor`）、`deep-link.test.ts` 增 goal/lead 锚点断言、i18n `settingCard.project.*`（步骤 5） |
+| `9d47aac` | refactor(desktop)!: 删 `GroupInfo.svelte` / `GroupSettingsDialog.svelte`；删 `group.*` 19 个与 `settingCard.group.*` 3 个 i18n key（rg 逐一确认无引用）；shared coverage 删 `group-*` 锚点排除项（排除表不得指向已不存在位置）；`ApprovalCard` 的 `approval-butler-group*` 四个 testid 改 `approval-butler-project*`（否则 §7 自检 rg 永不为空，见「新名字登记」）（步骤 6 后半） |
+| `cda8dca` | feat(desktop): `bots.deletionPreview` 的 `ledProjects` 进 `contacts` store 类型；三处删除确认框（ContactsSection / RightPanel / RetireBotButton）在 `ledProjects.length > 0` 时不渲染「确认删除」，改列项目 + 每项「去更换」（关确认框 → 必要时关设置弹框 → `chat.select` → `shell.openProjectSettings('members')`）；i18n `contacts.deleteBlockedLead` / `deleteGoReplace`（步骤 7） |
+| （本提交） | docs(todo): 本实施记录 + README §7 进度行 |
+
+每个提交均通过 `pnpm --filter @kepcup/desktop typecheck`（shared 改动先行 `run build`）。
+
+### §4 / §2 未列出的新名字登记
+
+- i18n：`projectSettings.changeLead`（「更换」，概览负责人行的文字链接——§2 表未给该文案的 key，渲染层不得硬编码中文）；设置卡成员行数用 WP6 既有 `project.members.count`（顶替被删的 `group.memberCount`）。
+- `ProjectMemberPicker` 候选行 testid 规则 `${testid}-option-<botId>`：顶栏弹层候选由 WP6 的 `project-member-option-<botId>` 变为 `project-member-add-option-<botId>`（输入框 testid 保持 `project-member-add`，与 WP7 §4 步骤 2 一致；e2e 由 WP8 重写，不受影响）。
+- `ApprovalCard` 管家提议卡 testid：`approval-butler-group` / `-group-title` / `-group-lead` / `-group-members` → `approval-butler-project` / `-project-title` / `-project-lead` / `-project-members`。依据：§7 自检命令的 `group-title` / `group-members` 模式会命中这两个旧 testid，而它们语义就是「提议的项目组标题/成员」（T1a `group→project` 的一部分），§4.12 未列、按相邻风格取名；无任何测试引用旧名（rg 确认）。
+- 删 Bot 拦截 UI 的 testid：容器 `bot-delete-lead-blocked` / `bot-remove-lead-blocked` / `handover-retire-lead-blocked`（各跟随所在对话框前缀），「去更换」按钮 `<前缀>-go-replace-<conversationId>`。
+- `features/project/project-settings-model.ts`：`planTitleSave` / `planGoalSave` / `TitleSaveAction` / `GoalSaveAction`（§5 要求的纯函数，名字按相邻 `project-*.ts` 风格取）。
+- `PENDING_DESKTOP_ANCHORS` 保留为空数组（基础设施常量，测试仍遍历它），注释更新为「WP7 已删除」。
+- 详情页成员弹层与编辑器共用 `project-member-add` 输入 testid（两处容器不同，§4.12 只定义一次，按 WP7 §4 步骤 4 用 `project-member-add` 前缀）。
+
+### 手工冒烟（§5 ①–⑧）
+
+方式与 WP5/WP6 相同：一次性 Playwright `_electron` spec（临时放 `apps/desktop/test/e2e/wp7-smoke.tmp.spec.ts`，驱动 `pnpm build` 产物 + mock LLM + `__kepcupRpc` 测试缝；跑完即删、未提交）。单个用例串行覆盖，结果 **6.5 项全过（8.6s）**：
+
+1. ① ⚙ → `project-settings-page` 出现，五分区 `project-settings-section-*` 与五导航 `project-settings-nav-*` 齐全；窗口压到 1280×520 使内容溢出后点 nav-danger → 危险区滚入容器可视区（末分区受内容末端限制，滚到极限即达，属 scrollIntoView 语义）；点 nav-overview → 概览回到顶部（top < 160px）。授权分区空态 `project-grants-empty` 渲染。
+2. ② `project-title-input` 填「新官网改版」回车（失焦保存）→ 顶栏 `project-title` 即时变文字；`project-goal-input` 填目标 + `project-goal-save` → 经 RPC `conversations.get` 核对 title/goal 均已落库。（「Bot 下一轮上下文看到新目标」未跑真实回合：目标注入 `<conversation_info>` 属 WP4 提示词链，已有 system-prompt 单测覆盖，此处以落库为准。）
+3. ③ `project-member-remove-<负责人>` disabled；移出测试官 → 成员行 3→2；`project-make-lead-<研究员>` → 概览 `project-lead-badge` 所在行换人、成员区研究员行带「负责人」且其移出按钮 disabled。
+4. ⑤ nav-schedules → `project-schedules` / `project-watches` 两个面板渲染（空态）。
+5. ⑧ 通讯录删「研究员」（现任负责人）→ 确认框无 `bot-delete-confirm`，出现 `bot-delete-lead-blocked`（count=1）+ 项目行；点 `bot-delete-go-replace-<id>` → 设置弹框关闭、回到该项目组详情页且成员分区滚入视野（该链路即深链 `openProjectSettings(section)` 的同一入口）。
+6. ⑥ nav-danger → `project-delete-begin` → `project-delete-confirm-box` → 「取消」收起 → 再展开 → `project-delete-confirm` → 详情页与侧栏会话行消失（两步确认闭环）。
+
+未自动化的部分（代码走查结论）：
+- ④ 授权撤销的「生效」：授权分组 / 撤销按钮逻辑逐行移植自 `GroupInfo`（原右栏授权 tab 有 approvals.spec e2e 覆盖同源代码）；「一步可达」为结构性（⚙ 直达 + 授权分区即导航第二项），冒烟已实测空态渲染。
+- ⑦ 设置卡内嵌：无法不经 Bot 回合稳定产出 `project.*` 设置卡（设置卡由 core 设置宿主下发）；组件映射 / 内嵌可用性由 `card-components.test.ts`（CARD_KEYS ↔ 组件 ↔ import 三方核对）与 `cardEmbeddable` 用例覆盖，深链解析由 `deep-link.test.ts`（含 goal/lead 锚点、未知 section 兜底、全目录遍历）覆盖，锚点消费走查（`open-deep-link.ts` → `revealDialogAnchor(document, anchor)`，页面锚点为静态字面量）。
+- 成员名片弹框（`project-member-detail`）与浏览器「显示」按钮：markup 移植，未在冒烟里点开（显隐规则与 GroupInfo 同一套 `hasBrowserPage`）。
+
+### 测试与验证
+
+- `pnpm --filter @kepcup/shared run build && typecheck`：通过；`pnpm --filter @kepcup/desktop typecheck`：0 errors / 0 warnings；`pnpm lint`：通过；`pnpm fmt:check`：与基线 diff 为零（无新增告警）。
+- `node scripts/run-tests.mjs run --project desktop`：86 文件 800 例全绿（WP6 基线 85/792；新增 `project-settings-model.test.ts` 8 例，`deep-link.test.ts` 扩了断言）。
+- `node scripts/run-tests.mjs run packages/shared`：29 文件 338 例全绿（含 settings-catalog 覆盖 / 待补锚点扫描）；另跑 core `settings-adapters-project.test.ts` 8 例全绿。
+- §7 自检 `rg -n "GroupInfo|GroupSettingsDialog|groupMemberPlan|GroupMemberPlan|group-members|group-title|settingCard\.group|Transitional shell|WP7 replaces|renameGroup|addGroupMembers|removeGroupMember" apps packages …`：空。
+- 未跑全量 `pnpm test`（WP7 收口不要求）；未写未改 e2e（WP8 统一）。
+
+### 偏差
+
+无新增 DEVIATIONS（编号仍停在 DEV-034）。两处超出 WP 字面的落地决定（均已在上面登记）：`approval-butler-group*` testid 改名（§7 自检为空的必经改写）、`group-members.ts` 的 `git mv` 因文件已在前序 WP 改名而替换为「导出名纯改名独立提交」。
+
+### 遗留（顺延）
+
+- WP8：`GroupTurnStatusLine` → `ProjectTurnStatusLine`、`group-*` e2e 重写为 `project-*`（本 WP 变更了顶栏弹层候选 testid `project-member-add-option-*`、提议卡 `approval-butler-project-*`，重写时按新名取）、文案收尾。
+- WP10：删除确认框补 wiki 来源数 / 页面数（`projectSettings.deleteBody` 旁）；Wiki tab 真实视图。
+- 可选优化（不阻塞）：详情页导航窄屏（< md）隐藏，只靠分区滚动；如需窄屏分区入口可后续补。
