@@ -5,8 +5,12 @@
   let { conversationId }: { conversationId: string } = $props();
 
   const turn = $derived(chat.turnByConversation[conversationId] ?? null);
+  // 路由阶段（正在确认由谁回复）本身就要显示：静默路由可能持续数秒，用户
+  // 需要知道消息已被接住；运行阶段至少有一个目标（当前或排队）才显示。
   const visible = $derived(
-    turn !== null && turn.phase !== 'idle' && (turn.currentBotId !== null || turn.queue.length > 0),
+    turn !== null &&
+      (turn.phase === 'routing' ||
+        (turn.phase !== 'idle' && (turn.currentBotId !== null || turn.queue.length > 0))),
   );
   const currentName = $derived(turn?.currentBotId !== null && turn?.currentBotId !== undefined ? chat.botName(turn.currentBotId) : '');
   const queueNames = $derived(
