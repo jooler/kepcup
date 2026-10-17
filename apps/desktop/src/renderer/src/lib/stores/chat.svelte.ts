@@ -539,6 +539,40 @@ class ChatState {
     }
   }
 
+  /**
+   * Update the project goal (D92 §11.3 overview section). `goal: null` clears
+   * it. The returned conversation flows into the sidebar list; the open chat
+   * follows it via the same upsert (the `conversation.updated` event repeats it).
+   */
+  async updateProjectGoal(conversationId: string, goal: string | null): Promise<boolean> {
+    try {
+      const result = (await core.call('projects.update', { conversationId, goal })) as {
+        conversation: Conversation;
+      };
+      this.#upsertConversation(result.conversation);
+      return true;
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
+    }
+  }
+
+  /** Hand the lead crown to another member bot (D92 §5: every project has one). */
+  async setProjectLead(conversationId: string, botId: string): Promise<boolean> {
+    try {
+      const result = (await core.call('projects.setLead', { conversationId, botId })) as {
+        conversation: Conversation;
+      };
+      this.#upsertConversation(result.conversation);
+      // The lead badge sits on member rows; refresh them right away.
+      await this.reloadMembers();
+      return true;
+    } catch (error) {
+      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
+      return false;
+    }
+  }
+
   async addProjectMembers(conversationId: string, botIds: string[]): Promise<boolean> {
     try {
       await core.call('projects.addMembers', { conversationId, botIds });
