@@ -35,8 +35,37 @@ describe('0013 public_skills 迁移', () => {
     //    的 conversations 新列，一并摘除才能原样重放）
     runMigrations(db, migrationsUrl('main'));
     db.exec('drop table public_skills;');
-    db.exec('alter table conversations drop column description;');
-    db.exec('alter table conversations drop column setup_state;');
+    // 0040 重建了 conversations（goal / lead_bot_id、删 description / setup_state）：
+    // 回退到 0002 的原始形态（project_id 也在其中），FK 关闭下重建，回放时才能原样重放。
+    db.pragma('foreign_keys = OFF');
+    db.exec(`create table conversations_old (
+      id                TEXT PRIMARY KEY,
+      type              TEXT NOT NULL CHECK (type IN ('direct', 'group')),
+      title             TEXT,
+      direct_bot_id     TEXT REFERENCES bots(id),
+      project_id        TEXT,
+      read_only         INTEGER NOT NULL DEFAULT 0,
+      summary           TEXT,
+      summary_upto_seq  INTEGER NOT NULL DEFAULT 0,
+      last_seq          INTEGER NOT NULL DEFAULT 0,
+      last_read_seq     INTEGER NOT NULL DEFAULT 0,
+      last_message_at   INTEGER,
+      created_at        INTEGER NOT NULL
+    );`);
+    db.exec(
+      `insert into conversations_old
+         (id, type, title, direct_bot_id, project_id, read_only, summary, summary_upto_seq,
+          last_seq, last_read_seq, last_message_at, created_at)
+       select id, type, title, direct_bot_id, workdir_id, read_only, summary, summary_upto_seq,
+              last_seq, last_read_seq, last_message_at, created_at
+         from conversations;`,
+    );
+    db.exec('drop table conversations;');
+    db.exec('alter table conversations_old rename to conversations;');
+    db.exec(
+      "create unique index conversations_one_direct_per_bot on conversations(direct_bot_id) where type = 'direct' and read_only = 0;",
+    );
+    db.pragma('foreign_keys = ON');
     // 0016（管家与委派）的新增物同样摘除，回放时才能原样重建。
     db.exec('drop table delegations;');
     db.exec('drop index bots_one_active_butler;');
@@ -95,7 +124,7 @@ describe('0013 public_skills 迁移', () => {
     db.exec('drop table bot_handovers;');
     // main 0038（D92 T0-2）的改名同样回退，回放时才能原样重放。
     db.exec('alter table workdirs rename to projects;');
-    db.exec('alter table conversations rename column workdir_id to project_id;');
+    // conversations 的 project_id 已在上面的回退重建中恢复；这里只回退 run_changes。
     db.exec('alter table run_changes rename column workdir_id to project_id;');
     // main 0030（直发，无待发送队列）已删掉 drafts 表与 attachments.draft_id，
     // 而 0018 的 attachments 重建按列名引用 draft_id——按 0002 的原始形态补回，

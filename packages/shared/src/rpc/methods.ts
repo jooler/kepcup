@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { agentCatalogEntrySchema } from '../domain/agent-catalog.js';
 import { askUserValuesSchema } from '../domain/ask-user.js';
-import { GROUP_TITLE_MAX } from '../domain/group-title.js';
+import { PROJECT_TITLE_MAX } from '../domain/project-title.js';
 import {
   widgetPreviewRunInputSchema,
   widgetPreviewRunOutputSchema,
@@ -146,6 +146,7 @@ import type { BrowserNetworkContext } from '../browser/net-rules.js';
 import {
   BROWSER_PROFILE_NAME_MAX_CHARS,
   MEMO_BODY_MAX_CHARS,
+  PROJECT_GOAL_MAX_CHARS,
   TODO_NOTES_MAX_CHARS,
   TODO_TITLE_MAX_CHARS,
   WATCH_SELECTOR_MAX_CHARS,
@@ -812,6 +813,8 @@ export const botsDeletionPreviewOutputSchema = z.object({
   memoryItems: z.number().int(),
   wikiPages: z.number().int(),
   skills: z.number().int(),
+  /** Projects this bot leads (D92 T1a): the lead must be replaced first. */
+  ledProjects: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
 });
 export const interviewStartOutputSchema = z.object({
   conversationId: z.string().min(1),
@@ -869,76 +872,54 @@ export const conversationGetOutputSchema = z.object({
   conversation: conversationSchema.nullable(),
 });
 
-// --- groups (P05) -----------------------------------------------------------
+// --- projects (P05 groups → D92 T1a project teams) ---------------------------
 
-export const groupsCreateInputSchema = z.object({
-  title: z.string().min(1).max(GROUP_TITLE_MAX),
-  memberBotIds: z.array(z.string().min(1)).min(2),
-});
-export const groupsCreateOutputSchema = z.object({ conversation: conversationSchema });
-/**
- * 对话内群创建（docs/design/19 D60）：start 创建创建中的群并下发第一问；
- * answer 按 step 推进（title/purpose 文本、members 成员列表、workdir 目录或
- * 跳过），全程零模型调用；cancel 级联删除该对话。
- */
-export const groupsSetupStartInputSchema = z.void();
-export const groupsSetupStartOutputSchema = z.object({ conversation: conversationSchema });
-export const groupsSetupAnswerInputSchema = z.discriminatedUnion('step', [
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('title'),
-    text: z.string().min(1).max(100),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('purpose'),
-    text: z.string().min(1).max(500),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('members'),
-    botIds: z.array(z.string().min(1)).min(2),
-  }),
-  z.object({
-    conversationId: z.string().min(1),
-    step: z.literal('workdir'),
-    path: z.string().min(1).nullable(),
-  }),
-]);
-export const groupsSetupAnswerOutputSchema = z.object({
-  conversation: conversationSchema,
-  /** true = 最后一步已作答，群创建完成。 */
-  done: z.boolean(),
-});
-export const groupsSetupCancelInputSchema = z.object({ conversationId: z.string().min(1) });
-export const conversationIdInputSchema = z.object({ conversationId: z.string().min(1) });
-export const groupsRenameInputSchema = z.object({
+export const projectsCreateInputSchema = z
+  .object({
+    title: z.string().min(1).max(PROJECT_TITLE_MAX),
+    goal: z.string().max(PROJECT_GOAL_MAX_CHARS).optional(),
+    leadBotId: z.string().min(1),
+    memberBotIds: z.array(z.string().min(1)).min(2),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.memberBotIds.includes(input.leadBotId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['leadBotId'],
+        message: '负责人必须是项目成员',
+      });
+    }
+  });
+export const projectsCreateOutputSchema = z.object({ conversation: conversationSchema });
+export const projectsSetLeadInputSchema = z.object({
   conversationId: z.string().min(1),
-  title: z.string().min(1).max(GROUP_TITLE_MAX),
+  botId: z.string().min(1),
 });
-export const groupsRenameOutputSchema = z.object({ conversation: conversationSchema });
-export const groupsAddMembersInputSchema = z.object({
+export const projectsSetLeadOutputSchema = z.object({ conversation: conversationSchema });
+export const projectsUpdateInputSchema = z
+  .object({
+    conversationId: z.string().min(1),
+    title: z.string().min(1).max(PROJECT_TITLE_MAX).optional(),
+    goal: z.string().max(PROJECT_GOAL_MAX_CHARS).nullable().optional(),
+  })
+  .refine((input) => input.title !== undefined || input.goal !== undefined, {
+    message: '至少修改一项（title 或 goal）',
+  });
+export const projectsUpdateOutputSchema = z.object({ conversation: conversationSchema });
+export const conversationIdInputSchema = z.object({ conversationId: z.string().min(1) });
+export const projectsAddMembersInputSchema = z.object({
   conversationId: z.string().min(1),
   botIds: z.array(z.string().min(1)).min(1),
 });
-export const groupsRemoveMemberInputSchema = z.object({
+export const projectsRemoveMemberInputSchema = z.object({
   conversationId: z.string().min(1),
   botId: z.string().min(1),
 });
-export const groupMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
-export type GroupMember = z.infer<typeof groupMemberSchema>;
+export const projectMemberSchema = z.object({ bot: botSchema, joinedAt: z.number() });
+export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export const conversationsMembersInputSchema = z.object({ conversationId: z.string().min(1) });
 export const conversationsMembersOutputSchema = z.object({
-  members: z.array(groupMemberSchema),
-});
-/**
- * Clicking a bot in the "no Bot claimed this" system message re-dispatches the
- * original batch as if the user had @-ed that bot.
- */
-export const groupsRedistributeInputSchema = z.object({
-  conversationId: z.string().min(1),
-  batchId: z.string().min(1),
-  botId: z.string().min(1),
+  members: z.array(projectMemberSchema),
 });
 
 // --- messages -------------------------------------------------------------
@@ -1974,24 +1955,20 @@ export const rpcMethodSchemas = {
     output: conversationsMembersOutputSchema,
   },
 
-  'groups.create': { input: groupsCreateInputSchema, output: groupsCreateOutputSchema },
-  /** 对话内群创建（19/D60）：start 建创建中的群并下发第一问，answer 推进四步。 */
-  'groups.setup.start': {
-    input: groupsSetupStartInputSchema,
-    output: groupsSetupStartOutputSchema,
+  'projects.create': { input: projectsCreateInputSchema, output: projectsCreateOutputSchema },
+  'projects.setLead': {
+    input: projectsSetLeadInputSchema,
+    output: projectsSetLeadOutputSchema,
   },
-  'groups.setup.answer': {
-    input: groupsSetupAnswerInputSchema,
-    output: groupsSetupAnswerOutputSchema,
+  'projects.update': {
+    input: projectsUpdateInputSchema,
+    output: projectsUpdateOutputSchema,
   },
-  'groups.setup.cancel': { input: groupsSetupCancelInputSchema, output: okOutput },
-  'groups.rename': { input: groupsRenameInputSchema, output: groupsRenameOutputSchema },
-  'groups.addMembers': {
-    input: groupsAddMembersInputSchema,
+  'projects.addMembers': {
+    input: projectsAddMembersInputSchema,
     output: conversationsMembersOutputSchema,
   },
-  'groups.removeMember': { input: groupsRemoveMemberInputSchema, output: okOutput },
-  'groups.redistribute': { input: groupsRedistributeInputSchema, output: okOutput },
+  'projects.removeMember': { input: projectsRemoveMemberInputSchema, output: okOutput },
 
   'messages.list': { input: messagesListInputSchema, output: messagesListOutputSchema },
   'messages.edit': { input: messagesEditInputSchema, output: messagesListOutputSchema },
@@ -2402,14 +2379,11 @@ const APP_METHODS = [
   'conversations.delete',
   'conversations.markRead',
   'conversations.members',
-  'groups.create',
-  'groups.setup.start',
-  'groups.setup.answer',
-  'groups.setup.cancel',
-  'groups.rename',
-  'groups.addMembers',
-  'groups.removeMember',
-  'groups.redistribute',
+  'projects.create',
+  'projects.setLead',
+  'projects.update',
+  'projects.addMembers',
+  'projects.removeMember',
   'messages.list',
   'messages.edit',
   'messages.send',

@@ -2,14 +2,14 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GROUP_MEMBER_PREVIEW_MAX, type Bot, type Conversation, type Run } from '@kepcup/shared';
+import { PROJECT_MEMBER_PREVIEW_MAX, type Bot, type Conversation, type Run } from '@kepcup/shared';
 import {
   createTestStack,
   listMembers,
   listMessages,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -78,42 +78,50 @@ async function threeBots(core: TestStack['core']) {
   const a = await makeBot(core, '阿甲');
   const b = await makeBot(core, '阿乙');
   const c = await makeBot(core, '阿丙');
-  const conv = await makeGroup(core, '项目讨论', [a.id, b.id, c.id]);
+  // The lead is 阿丙 (a filler member): other cases delete / remove 阿甲 or
+  // 阿乙, which the lead guard (D92 T1a) would refuse.
+  const conv = await makeProject(core, '项目讨论', [a.id, b.id, c.id], {
+    leadBotId: c.id,
+  });
   return { a, b, c, conv };
 }
 
-describe('group conversations', () => {
+describe('project conversations', () => {
   it('creates, renames and manages members; creation requires at least 2 members', async () => {
     const { core } = await start();
     const { a, b, c, conv } = await threeBots(core);
-    expect(conv.type).toBe('group');
+    expect(conv.type).toBe('project');
     expect(conv.title).toBe('项目讨论');
 
     await expect(
-      core.rpc.call('groups.create', { title: 'x', memberBotIds: [a.id] }),
+      core.rpc.call('projects.create', {
+        title: 'x',
+        leadBotId: a.id,
+        memberBotIds: [a.id],
+      }),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
 
-    const renamed = (await core.rpc.call('groups.rename', {
+    const renamed = (await core.rpc.call('projects.update', {
       conversationId: conv.id,
       title: '新群名',
     })) as { conversation: { title: string } };
     expect(renamed.conversation.title).toBe('新群名');
 
     const d = await makeBot(core, '阿丁');
-    const added = (await core.rpc.call('groups.addMembers', {
+    const added = (await core.rpc.call('projects.addMembers', {
       conversationId: conv.id,
       botIds: [d.id],
     })) as { members: Array<{ bot: { id: string } }> };
     expect(added.members.map((m) => m.bot.id).sort()).toEqual([a.id, b.id, c.id, d.id].sort());
 
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: d.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: d.id });
     const members = (await core.rpc.call('conversations.members', {
       conversationId: conv.id,
     })) as { members: Array<{ bot: { id: string } }> };
     expect(members.members.map((m) => m.bot.id).sort()).toEqual([a.id, b.id, c.id].sort());
   });
 
-  it('list / get views carry member avatar previews for groups only, capped at GROUP_MEMBER_PREVIEW_MAX', async () => {
+  it('list / get views carry member avatar previews for groups only, capped at PROJECT_MEMBER_PREVIEW_MAX', async () => {
     const { core } = await start();
     const { a, conv } = await threeBots(core);
     const direct = await openDirect(core, a.id);
@@ -133,18 +141,18 @@ describe('group conversations', () => {
     );
     expect((await listed()).find((c) => c.id === direct.id)!.memberPreviews).toBeUndefined();
 
-    // A big group: only the first GROUP_MEMBER_PREVIEW_MAX members (join order).
+    // A big group: only the first PROJECT_MEMBER_PREVIEW_MAX members (join order).
     const extra: Bot[] = [];
-    for (let i = 0; i < GROUP_MEMBER_PREVIEW_MAX; i += 1) {
+    for (let i = 0; i < PROJECT_MEMBER_PREVIEW_MAX; i += 1) {
       extra.push(await makeBot(core, `成员${i}`));
     }
-    await core.rpc.call('groups.addMembers', {
+    await core.rpc.call('projects.addMembers', {
       conversationId: conv.id,
       botIds: extra.map((bot) => bot.id),
     });
     const members = await listMembers(core, conv.id);
-    expect(members.length).toBeGreaterThan(GROUP_MEMBER_PREVIEW_MAX);
-    const expected = previewsOf(members).slice(0, GROUP_MEMBER_PREVIEW_MAX);
+    expect(members.length).toBeGreaterThan(PROJECT_MEMBER_PREVIEW_MAX);
+    const expected = previewsOf(members).slice(0, PROJECT_MEMBER_PREVIEW_MAX);
     expect((await listed()).find((c) => c.id === conv.id)!.memberPreviews).toEqual(expected);
     const got = (await core.rpc.call('conversations.get', { id: conv.id })) as {
       conversation: Conversation;
@@ -338,7 +346,8 @@ describe('group conversations', () => {
     llm.releaseAll();
   }, 20_000);
 
-  it('clicking a bot in the no-claim message re-dispatches the batch as an @', async () => {
+  // removed in WP3
+  it.skip('clicking a bot in the no-claim message re-dispatches the batch as an @', async () => {
     const { core, llm } = await start();
     const { a, conv } = await threeBots(core);
 
@@ -400,7 +409,7 @@ describe('group conversations', () => {
     const { a, b, c, conv } = await threeBots(core);
     const d = await makeBot(core, '阿丁');
     const e = await makeBot(core, '阿戊');
-    await core.rpc.call('groups.addMembers', { conversationId: conv.id, botIds: [d.id, e.id] });
+    await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [d.id, e.id] });
 
     const chainStep = (name: string, targetId: string) =>
       step()
@@ -537,7 +546,7 @@ describe('group conversations', () => {
     ]);
     await waitForBotRun(core, conv.id, a.id, 'running');
     await waitFor(() => (llm.requestsFor('mock-main').length >= 1 ? true : null), { label: 'A request' });
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: b.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
     llm.releaseAll();
     await waitForBotRun(core, conv.id, a.id, 'completed');
     await waitFor(
@@ -547,7 +556,7 @@ describe('group conversations', () => {
 
     // Case 2: A running; A removed -> its run is cancelled, next member continues.
     const b2 = await makeBot(core, '阿乙二号');
-    await core.rpc.call('groups.addMembers', { conversationId: conv.id, botIds: [b2.id] });
+    await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [b2.id] });
     llm.script('mock-main', [
       step().expect((r) => systemText(r).includes('名字：阿甲')).hold().replyText('阿甲将被取消'),
       step().expect((r) => systemText(r).includes('名字：阿乙二号')).replyText('阿乙二号接棒'),
@@ -557,7 +566,7 @@ describe('group conversations', () => {
     ]);
     await waitForBotRun(core, conv.id, a.id, 'running');
     await waitFor(() => (llm.requestsFor('mock-main').length >= 2 ? true : null), { label: 'A second request' });
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: a.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: a.id });
     const aRun = await waitForBotRun(core, conv.id, a.id, 'cancelled');
     expect(aRun).toBeTruthy();
     await waitForBotRun(core, conv.id, b2.id, 'completed');
@@ -631,7 +640,7 @@ describe('group conversations', () => {
         (p.approval.payload as { path?: string } | undefined)?.path === realpathSync(outsideFile2),
     );
 
-    await core.rpc.call('groups.removeMember', { conversationId: conv.id, botId: b.id });
+    await core.rpc.call('projects.removeMember', { conversationId: conv.id, botId: b.id });
 
     expect(existsSync(workspaceDir)).toBe(false);
     grants = (await core.rpc.call('grants.list', { conversationId: conv.id })) as {
@@ -648,7 +657,7 @@ describe('group conversations', () => {
     ).toBe(true);
 
     // Re-added: the bot reads the FULL history again (search finds pre-removal messages).
-    await core.rpc.call('groups.addMembers', { conversationId: conv.id, botIds: [b.id] });
+    await core.rpc.call('projects.addMembers', { conversationId: conv.id, botIds: [b.id] });
     llm.script('mock-main', [
       step().expect((r) => systemText(r).includes('名字：阿乙')).replyToolCall('search_messages', { query: 'zebra_marker' }),
       step().expect((r) => systemText(r).includes('名字：阿乙')).replyText('查到了历史消息'),
@@ -976,7 +985,7 @@ describe('group conversations', () => {
       (p) => p.id === a.id,
     );
     await core.rpc.call('bots.delete', { id: a.id });
-    expect((await groupUpdated).conversation.type).toBe('group');
+    expect((await groupUpdated).conversation.type).toBe('project');
     await deleted;
 
     const members = (await core.rpc.call('conversations.members', {

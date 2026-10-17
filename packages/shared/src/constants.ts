@@ -243,6 +243,11 @@ export const CONTINUATION_TOOL_RESULT_INLINE_MAX_CHARS = 200;
 /** Truncation length for assistant prose and steer/progress texts in the digest. */
 export const CONTINUATION_TEXT_MAX_CHARS = 160;
 
+// --- Project team (D92 T1a, docs/design/41-project-team.md) ----------------------
+
+/** 项目目标（conversations.goal）的长度上限（projects.create / projects.update）。 */
+export const PROJECT_GOAL_MAX_CHARS = 4000;
+
 // --- Conversational bot setup (setup interview) ---------------------------------
 
 /** system_event name of a setup-interview question card (options carry the candidates). */
@@ -253,13 +258,7 @@ export const SETUP_QUESTION_EVENT = 'bot_setup_question';
  * D59): the direct-chat delivery gate holds every user message until this
  * card is answered (directory chosen or skipped).
  */
-export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';
-/** system_event name of a group-creation question card (content carries the step). */
-export const GROUP_SETUP_QUESTION_EVENT = 'group_setup_question';
-/** Ordered steps of the conversational group creation (docs/design/19, D60). */
-export const GROUP_SETUP_STEPS = ['title', 'purpose', 'members', 'workdir'] as const;
-export type GroupSetupStep = (typeof GROUP_SETUP_STEPS)[number];
-/**
+export const BOT_SETUP_PATH_QUESTION_EVENT = 'bot_setup_path_question';/**
  * Bot 内部事务事件名集合（docs/design/01-conversation.md 消息原则）：这些事件
  * 只服务 Bot 自己的执行与知识/环境管理，不是对话内容——消息写入侧带
  * `internal` 标记，读取侧按标记或本集合（历史存量行没有标记）一起过滤。

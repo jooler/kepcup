@@ -1125,7 +1125,7 @@ export class TodoService implements WorkbenchDispatchPort {
     }
     const conversation: Conversation | null = this.#deps.conversations.get(assignee.conversationId);
     if (conversation === null) throw new AppError('NOT_FOUND', '群不存在或已解散');
-    if (conversation.type !== 'group') throw new AppError('INVALID_INPUT', '只能派给群聊或 Bot');
+    if (conversation.type !== 'project') throw new AppError('INVALID_INPUT', '只能派给群聊或 Bot');
     if (conversation.readOnly) throw new AppError('CONVERSATION_READ_ONLY', '该群已只读，不能派发');
     if (assignee.leadBotId !== null) {
       const lead = this.#deps.bots.get(assignee.leadBotId);

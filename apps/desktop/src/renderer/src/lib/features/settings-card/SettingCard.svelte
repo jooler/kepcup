@@ -60,7 +60,7 @@
   const item = $derived(getSettingItem(content.itemId));
   const view = $derived(settingCardView(content));
   const pending = $derived(content.state === 'pending');
-  const isGroup = $derived(chat.current?.conversation.type === 'group');
+  const isGroup = $derived(chat.current?.conversation.type === 'project');
   /** bot 范围条目的作用 Bot：卡片 target，缺省为出卡的 Bot。 */
   const targetBotId = $derived(content.target.botId ?? content.botId);
 

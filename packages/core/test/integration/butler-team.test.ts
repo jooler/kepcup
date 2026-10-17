@@ -368,9 +368,11 @@ describe('butler interview + team proposal (D70 P2)', () => {
     llm.script('mock-main', [step().replyText('群建好了。')]);
     await core.rpc.call('approvals.decide', { id: approval.id, approve: true });
     const group = await waitFor(() =>
-      core.services.domain!.conversations.list().find((c) => c.type === 'group' && c.title === '发布小组'),
+      core.services.domain!.conversations.list().find((c) => c.type === 'project' && c.title === '发布小组'),
     );
-    expect(group.description).toBe('负责版本发布的准备与复盘');
+    expect(group.goal).toBe('负责版本发布的准备与复盘');
+    // WP1 temporary: the proposal carries no lead yet — the first member leads.
+    expect(group.leadBotId).toBe(a.id);
     expect(core.services.domain!.conversations.memberBotIds(group.id).sort()).toEqual(
       [a.id, b.id].sort(),
     );

@@ -42,6 +42,7 @@ import { CLASSIFIED_BUILTIN_TOOLS } from '../../src/agent/effects/classify.js';
 import { renderSettingCardLine } from '../../src/settings/render.js';
 import { buildSettingsTools } from '../../src/tools/settings-tools.js';
 import type { RunIdentity } from '../../src/agent/types.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * 对话内应用设置的 core 宿主（todo/conversational-app-setup.md §4.1 / §5 / §6）：条目级 CAS、
@@ -124,14 +125,13 @@ function makeRig(
   const clock = { now: () => now, advance: (ms: number) => void (now += ms) };
   const conversationId = `conv_${rigCount}`;
   const groupId = `group_${rigCount}`;
-  for (const [id, type] of [
-    [conversationId, 'direct'],
-    [groupId, 'group'],
-  ] as const) {
-    db.prepare(
-      'insert into conversations (id, type, last_seq, created_at) values (?, ?, 0, ?)',
-    ).run(id, type, now);
-  }
+  db.prepare(
+    'insert into conversations (id, type, last_seq, created_at) values (?, ?, 0, ?)',
+  ).run(conversationId, 'direct', now);
+  db.prepare(
+    "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_a', 'A', '{}', 'active', 0, 0)",
+  ).run();
+  insertProjectConversation(db, { id: groupId, title: '项目群', leadBotId: 'bot_a' });
   const settings = new SettingsService(db, clock);
   settings.update({
     customProviders: [
@@ -269,7 +269,7 @@ function makeRig(
         id === conversationId
           ? { title: null, type: 'direct', workdirId: extras.workdirId ?? null }
           : id === groupId
-            ? { title: '项目群', type: 'group', workdirId: null }
+            ? { title: '项目群', type: 'project', workdirId: null }
             : null,
       memberBotIds: (id) => (id === groupId ? ['bot_a'] : []),
     },

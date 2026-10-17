@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
+import { PROJECT_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
 import {
   GROUP_AVATAR_USER_ID,
   groupAvatarFaces,
@@ -51,7 +51,7 @@ describe('groupAvatarSlots', () => {
   });
 
   it('keeps every tile inside the container for any group size and seed', () => {
-    for (let total = 1; total <= GROUP_MEMBER_PREVIEW_MAX; total += 1) {
+    for (let total = 1; total <= PROJECT_MEMBER_PREVIEW_MAX; total += 1) {
       for (const seed of ['a', 'b|c', 'seed-3', 'x'.repeat(20)]) {
         for (const slot of groupAvatarSlots(total, seed)) {
           const half = slot.size / 2;
@@ -64,12 +64,12 @@ describe('groupAvatarSlots', () => {
     }
   });
 
-  it('caps a large group at GROUP_MEMBER_PREVIEW_MAX slots', () => {
-    expect(GROUP_MEMBER_PREVIEW_MAX).toBeLessThanOrEqual(9);
+  it('caps a large group at PROJECT_MEMBER_PREVIEW_MAX slots', () => {
+    expect(PROJECT_MEMBER_PREVIEW_MAX).toBeLessThanOrEqual(9);
     const seed = Array.from({ length: 50 }, (_, i) => `m${i}`).join('|');
     const slots = groupAvatarSlots(50, seed);
-    expect(slots).toHaveLength(GROUP_MEMBER_PREVIEW_MAX);
-    expect(new Set(slots.map((slot) => slot.z)).size).toBe(GROUP_MEMBER_PREVIEW_MAX);
+    expect(slots).toHaveLength(PROJECT_MEMBER_PREVIEW_MAX);
+    expect(new Set(slots.map((slot) => slot.z)).size).toBe(PROJECT_MEMBER_PREVIEW_MAX);
     expect(groupAvatarSlots(0, '')).toEqual([]);
   });
 });
@@ -118,10 +118,10 @@ describe('groupAvatarFaces', () => {
     ]);
   });
 
-  it('caps the total, user included, at GROUP_MEMBER_PREVIEW_MAX', () => {
-    const many = Array.from({ length: GROUP_MEMBER_PREVIEW_MAX + 5 }, (_, i) => bot(`b${i}`));
+  it('caps the total, user included, at PROJECT_MEMBER_PREVIEW_MAX', () => {
+    const many = Array.from({ length: PROJECT_MEMBER_PREVIEW_MAX + 5 }, (_, i) => bot(`b${i}`));
     const faces = groupAvatarFaces(many, user);
-    expect(faces).toHaveLength(GROUP_MEMBER_PREVIEW_MAX);
+    expect(faces).toHaveLength(PROJECT_MEMBER_PREVIEW_MAX);
     expect(faces[0]!.id).toBe(GROUP_AVATAR_USER_ID);
   });
 });

@@ -6,7 +6,7 @@ import {
   createTestStack,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendDrafts,
   step,
@@ -552,7 +552,9 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       const member = await makeBot(stack.core, '阿移');
       const other = await makeBot(stack.core, '阿留');
       const victim = await makeBot(stack.core, '阿删');
-      const group = await makeGroup(stack.core, '项目群', [member.id, other.id]);
+      const group = await makeProject(stack.core, '项目群', [member.id, other.id], {
+        leadBotId: other.id,
+      });
       const victimConv = await openDirect(stack.core, victim.id);
       const service = schedulesOf(stack);
 
@@ -570,7 +572,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       });
 
       // 移出群：该 Bot 在此群的任务取消（03-data-model 从群中移除 Bot）。
-      await stack.core.rpc.call('groups.removeMember', { conversationId: group.id, botId: member.id });
+      await stack.core.rpc.call('projects.removeMember', { conversationId: group.id, botId: member.id });
       const memberRows = service.store.listActiveForBotInConversation(member.id, group.id);
       expect(memberRows).toHaveLength(0);
       const cancelled = service.store
@@ -698,7 +700,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
     try {
       const owner = await makeBot(stack.core, '阿主');
       const outsider = await makeBot(stack.core, '阿客');
-      const group = await makeGroup(stack.core, '共有群', [owner.id, outsider.id]);
+      const group = await makeProject(stack.core, '共有群', [owner.id, outsider.id]);
       const service = schedulesOf(stack);
       const created = service.createOnce({
         botId: owner.id,
@@ -736,7 +738,7 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       const companion = await makeBot(stack.core, '阿群');
       const convA = await openDirect(stack.core, bot.id);
       // 单 Bot 只有一个单聊：第二个任务放同 Bot 的群聊（上限按 Bot 计）
-      const convB = await makeGroup(stack.core, '阿额的群', [bot.id, companion.id]);
+      const convB = await makeProject(stack.core, '阿额的群', [bot.id, companion.id]);
       await stack.core.rpc.call('bots.update', {
         id: bot.id,
         profile: {

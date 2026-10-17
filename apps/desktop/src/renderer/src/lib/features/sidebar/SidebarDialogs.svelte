@@ -28,7 +28,7 @@
   const deleteTargetName = $derived.by(() => {
     const conversation = chat.conversations.find((c) => c.id === ui.deleteTargetId);
     if (conversation === undefined) return ui.deleteTargetId ?? '';
-    return conversation.type === 'group'
+    return conversation.type === 'project'
       ? (conversation.title ?? ui.deleteTargetId ?? '')
       : (conversation.bot?.name ?? conversation.directBotId ?? '');
   });

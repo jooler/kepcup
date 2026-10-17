@@ -15,7 +15,7 @@ import {
   isTaskRequest,
   listAllMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   step,
@@ -344,7 +344,7 @@ describe('bot asset handover (D88 P0)', () => {
       },
     });
     const alphaDirect = await openDirect(core, alpha.id);
-    const group = await makeGroup(core, '周报群', [alpha.id, other.id]);
+    const group = await makeProject(core, '周报群', [alpha.id, other.id]);
     const schedules = core.services.schedules!;
     const daily = schedules.createFromWhen({
       botId: alpha.id,

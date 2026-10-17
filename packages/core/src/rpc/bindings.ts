@@ -56,18 +56,14 @@ import {
   conversationsMarkReadOutputSchema,
   conversationIdInputSchema,
   conversationsMembersOutputSchema,
-  groupsCreateInputSchema,
-  groupsCreateOutputSchema,
-  groupsSetupStartInputSchema,
-  groupsSetupStartOutputSchema,
-  groupsSetupAnswerInputSchema,
-  groupsSetupAnswerOutputSchema,
-  groupsSetupCancelInputSchema,
-  groupsRenameInputSchema,
-  groupsRenameOutputSchema,
-  groupsAddMembersInputSchema,
-  groupsRemoveMemberInputSchema,
-  groupsRedistributeInputSchema,
+  projectsCreateInputSchema,
+  projectsCreateOutputSchema,
+  projectsSetLeadInputSchema,
+  projectsSetLeadOutputSchema,
+  projectsUpdateInputSchema,
+  projectsUpdateOutputSchema,
+  projectsAddMembersInputSchema,
+  projectsRemoveMemberInputSchema,
   messagesListInputSchema,
   messagesListOutputSchema,
   messagesEditInputSchema,
@@ -344,9 +340,9 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
       conversation.directBotId !== null
         ? (domain.bots.get(conversation.directBotId) ?? null)
         : null,
-    ...(conversation.type === 'group'
+    ...(conversation.type === 'project'
       ? {
-          memberPreviews: domain.groups.memberPreviews(conversation.id),
+          memberPreviews: domain.projects.memberPreviews(conversation.id),
         }
       : {}),
   });
@@ -719,17 +715,17 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     ),
     'bots.delete': method(botIdInputSchema, okOutputSchema, async (input) => {
       // Captured BEFORE deleteBot: the cascade drops the member rows, so the
-      // affected groups are unenumerable afterwards — their open member lists
+      // affected projects are unenumerable afterwards — their open member lists
       // still need the push (deleted bot leaves the cards / @ popup and its
       // history messages render under its id, docs/design/01-conversation.md).
-      const groupIds = domain.lifecycle.groupConversationIdsOf(input.id);
+      const projectIds = domain.lifecycle.projectConversationIdsOf(input.id);
       await domain.lifecycle.deleteBot(input.id);
       publish('bot.deleted', { id: input.id });
       // Direct conversations just turned read-only; push their new state.
       for (const conversation of domain.conversations.listDirectByBot(input.id)) {
         publish('conversation.updated', { conversation });
       }
-      for (const conversationId of groupIds) {
+      for (const conversationId of projectIds) {
         const conversation = domain.conversations.get(conversationId);
         if (conversation) publish('conversation.updated', { conversation });
       }
@@ -793,54 +789,46 @@ export function bindAppMethods(services: CoreServices): Record<string, RpcMethod
     'conversations.members': method(
       conversationIdInputSchema,
       conversationsMembersOutputSchema,
-      async (input) => ({ members: domain.groups.members(input.conversationId) }),
+      async (input) => ({ members: domain.projects.members(input.conversationId) }),
     ),
 
-    'groups.create': method(groupsCreateInputSchema, groupsCreateOutputSchema, async (input) => ({
-      conversation: domain.groups.create(input),
-    })),
-    /**
-     * 对话内群创建（19/D60）：start 创建创建中的群并下发第一问；answer 按
-     * 步推进（零模型调用）；cancel 级联删除该对话。
-     */
-    'groups.setup.start': method(
-      groupsSetupStartInputSchema,
-      groupsSetupStartOutputSchema,
-      async () => ({
-        conversation: conversationView(orchestrator.beginGroupSetup()),
+    'projects.create': method(
+      projectsCreateInputSchema,
+      projectsCreateOutputSchema,
+      async (input) => ({ conversation: domain.projects.create(input) }),
+    ),
+    'projects.setLead': method(
+      projectsSetLeadInputSchema,
+      projectsSetLeadOutputSchema,
+      async (input) => ({
+        conversation: domain.projects.setLead(input.conversationId, input.botId),
       }),
     ),
-    'groups.setup.answer': method(
-      groupsSetupAnswerInputSchema,
-      groupsSetupAnswerOutputSchema,
-      async (input) => {
-        const { conversation, done } = orchestrator.answerGroupSetup(input);
-        return { conversation: conversationView(conversation), done };
-      },
+    'projects.update': method(
+      projectsUpdateInputSchema,
+      projectsUpdateOutputSchema,
+      async (input) => ({
+        conversation: domain.projects.update(input.conversationId, {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        }),
+      }),
     ),
-    'groups.setup.cancel': method(groupsSetupCancelInputSchema, okOutputSchema, async (input) => {
-      await domain.lifecycle.deleteConversation(input.conversationId);
-      publish('conversation.deleted', { id: input.conversationId });
-      return { ok: true as const };
-    }),
-    'groups.rename': method(groupsRenameInputSchema, groupsRenameOutputSchema, async (input) => ({
-      conversation: domain.groups.rename(input.conversationId, input.title),
-    })),
-    'groups.addMembers': method(
-      groupsAddMembersInputSchema,
+    'projects.addMembers': method(
+      projectsAddMembersInputSchema,
       conversationsMembersOutputSchema,
       async (input) => ({
-        members: await domain.groups.addMembers(input.conversationId, input.botIds),
+        members: await domain.projects.addMembers(input.conversationId, input.botIds),
       }),
     ),
-    'groups.removeMember': method(groupsRemoveMemberInputSchema, okOutputSchema, async (input) => {
-      await domain.groups.removeMember(input.conversationId, input.botId);
-      return { ok: true as const };
-    }),
-    'groups.redistribute': method(groupsRedistributeInputSchema, okOutputSchema, async (input) => {
-      orchestrator.redistributeBatch(input.conversationId, input.batchId, input.botId);
-      return { ok: true as const };
-    }),
+    'projects.removeMember': method(
+      projectsRemoveMemberInputSchema,
+      okOutputSchema,
+      async (input) => {
+        await domain.projects.removeMember(input.conversationId, input.botId);
+        return { ok: true as const };
+      },
+    ),
 
     'messages.list': method(messagesListInputSchema, messagesListOutputSchema, async (input) => ({
       // 内部事务事件在 SQL 层（listVisible，isVisibleToUser 的存储层镜像）

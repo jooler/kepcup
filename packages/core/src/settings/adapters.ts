@@ -146,9 +146,9 @@ export interface AdapterDeps {
     get(id: string): { title: string | null; type: string } | null;
     memberBotIds?(id: string): readonly string[];
   };
-  /** 群名。与设置页 `groups.rename` 同一方法；缺省时不能由宿主写。 */
-  groups?: {
-    rename(conversationId: string, title: string): void;
+  /** 项目组名称。与设置页 `projects.update` 同一方法；缺省时不能由宿主写。 */
+  projects?: {
+    update(conversationId: string, patch: { title?: string; goal?: string | null }): void;
   };
   /** 工作目录保护规则与端口（只读；写入留在工作目录设置组件）。 */
   workdirs?: {
@@ -1443,7 +1443,7 @@ function toolPolicyAdapter(deps: AdapterDeps): ItemAdapter {
   };
 }
 
-function groupConversation(
+function projectConversation(
   deps: AdapterDeps,
   target: SettingTargetRef,
 ): { title: string | null; type: string } | null {
@@ -1454,8 +1454,8 @@ function groupConversation(
 function groupTitleAdapter(deps: AdapterDeps): ItemAdapter {
   return {
     read: (_item, target) => {
-      const conversation = groupConversation(deps, target);
-      if (conversation === null || conversation.type !== 'group') {
+      const conversation = projectConversation(deps, target);
+      if (conversation === null || conversation.type !== 'project') {
         return snapshot('unknown', null, '当前不是群聊');
       }
       const title = clean(conversation.title ?? '', 60);
@@ -1473,10 +1473,10 @@ function groupTitleAdapter(deps: AdapterDeps): ItemAdapter {
       if (title === undefined || title.length === 0) {
         throw new AppError('INVALID_INPUT', '群名不能为空');
       }
-      if (target.conversationId === null || deps.groups === undefined) {
+      if (target.conversationId === null || deps.projects === undefined) {
         throw new AppError('NOT_IMPLEMENTED', '群服务未就绪');
       }
-      deps.groups.rename(target.conversationId, title);
+      deps.projects.update(target.conversationId, { title });
     },
   };
 }
@@ -1487,7 +1487,7 @@ function groupMembersAdapter(deps: AdapterDeps): ItemAdapter {
       const conversationId = target.conversationId;
       if (conversationId === null) return snapshot('unknown', null, '当前不是群聊');
       const conversation = deps.conversations?.get(conversationId) ?? null;
-      if (conversation === null || conversation.type !== 'group') {
+      if (conversation === null || conversation.type !== 'project') {
         return snapshot('unknown', null, '当前不是群聊');
       }
       const ids = deps.conversations?.memberBotIds?.(conversationId);

@@ -3,7 +3,6 @@ import {
   SETUP_MAX_QUESTIONS,
   SETUP_QUESTION_OPTIONS_MAX,
   SETUP_QUESTION_OPTIONS_MIN,
-  type GroupSetupStep,
 } from '@kepcup/shared';
 import type { RunIdentity, ToolDefinition } from '../agent/types.js';
 import { PROFILE_CHANGE_FIELDS } from './memory-tools.js';
@@ -44,17 +43,6 @@ export const SETUP_PATH_QUESTION =
 /** setupAnswer text recorded when the user skips the directory question. */
 export const SETUP_PATH_SKIP_TEXT = '暂不设置工作目录';
 
-/**
- * Group-creation questions per step (docs/design/19 D60): all deterministic,
- * zero model calls — cards carry the step, the UI renders the matching form.
- */
-export const GROUP_SETUP_QUESTIONS: Record<GroupSetupStep, string> = {
-  title: '请给这个群起个名字。',
-  purpose: '这个群主要用来处理什么事务？（群里的 Bot 会以此了解自己的定位）',
-  members: '请选择加入这个群的成员（至少 2 个）。',
-  workdir: '最后，请为这个群选择一个工作目录（之后随时可以再改）。',
-};
-
 /** The slice of BotsService (plus event publishing) the setup tools need. */
 export interface SetupToolFacade {
   /** Applies extracted fields to the bot profile directly + publishes bot.updated. */
@@ -88,7 +76,7 @@ export function buildSetupTools(input: {
    * 群聊里只留 save_profile：空画像按群里的指令补全，不在群里发问卷、
    * 也不在群里结束访谈（单聊才问定位）。
    */
-  surface?: 'direct' | 'group';
+  surface?: 'direct' | 'project';
 }): ToolDefinition[] {
   const { identity, setup } = input;
   const butler = input.variant === 'butler';
@@ -196,7 +184,7 @@ export function buildSetupTools(input: {
     },
   };
 
-  if (input.surface === 'group' && !butler) return [saveProfile];
+  if (input.surface === 'project' && !butler) return [saveProfile];
   return butler ? [askQuestion, finishSetup] : [saveProfile, askQuestion, finishSetup];
 }
 

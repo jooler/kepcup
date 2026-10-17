@@ -54,7 +54,7 @@ export class ChainsService {
   mention(identity: RunIdentity, mentionBotIds: string[], message: Message): string {
     if (identity.botId === null || identity.conversationId === null) return '';
     const conversation = this.deps.conversations.get(identity.conversationId);
-    if (!conversation || conversation.type !== 'group') {
+    if (!conversation || conversation.type !== 'project') {
       return '（仅群聊中可以 @ 其他 Bot，本次 @ 未触发任何人）';
     }
     const members = new Set(this.deps.conversations.memberBotIds(conversation.id));

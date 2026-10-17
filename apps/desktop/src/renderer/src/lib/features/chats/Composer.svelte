@@ -101,7 +101,7 @@
   let activeRecording: ActiveRecording | null = null;
   let maxRecordingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const isGroup = $derived(chat.current?.conversation.type === 'group');
+  const isGroup = $derived(chat.current?.conversation.type === 'project');
   const replyTo = $derived(chat.replyTo);
   const replyToName = $derived(
     replyTo === null
@@ -147,7 +147,7 @@
       memberBots: (chat.current?.members ?? []).map((m) => m.bot),
       allBots: contacts.bots,
       groups: chat.conversations
-        .filter((c) => c.type === 'group')
+        .filter((c) => c.type === 'project')
         .map((c) => ({ id: c.id, title: c.title })),
       currentConversationId: chat.current?.conversation.id ?? null,
       // 单聊里排除当前对话的 Bot 自己（@ 自己没有意义）；群聊的成员是

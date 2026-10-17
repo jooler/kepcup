@@ -78,17 +78,17 @@
 
   async function saveTitle(): Promise<void> {
     if (title.trim().length === 0) return;
-    await chat.renameGroup(conversationId, title.trim());
+    await chat.renameProject(conversationId, title.trim());
   }
 
   async function addMember(): Promise<void> {
     if (addBotId.length === 0) return;
-    await chat.addGroupMembers(conversationId, [addBotId]);
+    await chat.addProjectMembers(conversationId, [addBotId]);
     addBotId = '';
   }
 
   async function removeMember(botId: string): Promise<void> {
-    await chat.removeGroupMember(conversationId, botId);
+    await chat.removeProjectMember(conversationId, botId);
   }
 
   async function deleteGroup(): Promise<void> {
@@ -176,9 +176,9 @@
     try {
       // 按当前成员重新算：卡片挂着期间别处拉进群的 Bot 不会被移出，移出只来自用户亲手取消勾选。
       const { toAdd, toRemove } = memberPlan;
-      if (toAdd.length > 0 && !(await chat.addGroupMembers(conversationId, toAdd))) return;
+      if (toAdd.length > 0 && !(await chat.addProjectMembers(conversationId, toAdd))) return;
       for (const id of toRemove) {
-        if (!(await chat.removeGroupMember(conversationId, id))) return;
+        if (!(await chat.removeProjectMember(conversationId, id))) return;
       }
       onSaved?.();
     } finally {

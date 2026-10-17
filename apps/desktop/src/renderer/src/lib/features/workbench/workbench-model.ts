@@ -281,16 +281,13 @@ export function groupMembers(
     type: string;
     title: string | null;
     readOnly: boolean;
-    setupState?: string | null | undefined;
   }>,
   assignableOnly = false,
 ): MemberInfo[] {
   return conversations
     .filter(
       (conversation) =>
-        conversation.type === 'group' &&
-        conversation.setupState !== 'creating' &&
-        (!assignableOnly || !conversation.readOnly),
+        conversation.type === 'project' && (!assignableOnly || !conversation.readOnly),
     )
     .map((conversation) => ({ id: conversation.id, name: conversation.title ?? conversation.id }));
 }

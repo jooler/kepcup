@@ -10,6 +10,7 @@ import type { MessagesService } from './messages.js';
 import type { AttachmentsService } from './attachments.js';
 import type { JobsService } from './jobs.js';
 import type { BotsService } from './bots.js';
+import type { ProjectsService } from './projects.js';
 import type { GrantsService } from '../permissions/grants.js';
 import type { SqliteDatabase } from '../infra/db.js';
 
@@ -20,6 +21,9 @@ export interface LifecycleDeps {
   runsDb: SqliteDatabase;
   bots: BotsService;
   conversations: ConversationsService;
+  /** Project membership lookups for the lead guard (D92 T1a). */
+  projects: ProjectsService;
+
   messages: MessagesService;
   attachments: AttachmentsService;
   jobs: JobsService;
@@ -27,10 +31,10 @@ export interface LifecycleDeps {
   /** Aborts active runs of a conversation / bot before rows are removed. */
   abortRunsForConversation(conversationId: string): Promise<void>;
   abortRunsForBot(botId: string): Promise<void>;
-  /** Cancels one bot's runs in one conversation (P05 group removal). */
+  /** Cancels one bot's runs in one conversation (P05 member removal). */
   abortRunsForBotInConversation(botId: string, conversationId: string): void;
-  /** Notifies the group turn coordinator that a member left (P05). */
-  onGroupMemberRemoved(botId: string, conversationId: string): void;
+  /** Notifies the project turn coordinator that a member left (P05). */
+  onProjectMemberRemoved(botId: string, conversationId: string): void;
   /**
    * D71 cross-bot delegations: active ones touching the deleted conversation /
    * bot end as `cancelled` (rows kept; B's run aborted). Runs BEFORE the run
@@ -44,7 +48,7 @@ export interface LifecycleDeps {
     | undefined;
   /**
    * D73 P1 app-tool grants (`app_tool_grants`): a deleted bot loses all of them, a bot
-   * removed from a group loses the ones scoped to that conversation. Conversation
+   * removed from a project loses the ones scoped to that conversation. Conversation
    * deletion cascades through the foreign key. No-op when absent.
    */
   appGrants?:
@@ -55,8 +59,8 @@ export interface LifecycleDeps {
     | undefined;
   /**
    * D73 P2 taint rows (`app_taint`, no foreign keys): a deleted conversation loses all of its
-   * rows, a deleted bot the rows of its own direct conversations (its group rows keep the
-   * group's taint until they expire). No-op when absent.
+   * rows, a deleted bot the rows of its own direct conversations (its project rows keep the
+   * project's taint until they expire). No-op when absent.
    */
   taint?:
     | {
@@ -68,7 +72,7 @@ export interface LifecycleDeps {
   memory?:
     | {
         onConversationDeleted(conversationId: string, memberBotIds: string[]): void;
-        onGroupMemberRemoved(botId: string, conversationId: string): void;
+        onProjectMemberRemoved(botId: string, conversationId: string): void;
         prepareBotDeletion(botId: string): void;
         /** Deletion-dialog count; 0 without opening a missing database. */
         memoryItemCount(botId: string): number;
@@ -99,11 +103,11 @@ export interface LifecycleDeps {
     | undefined;
   /**
    * D90 workbench todos (no-op when absent): a deleted conversation / bot or a bot removed from
-   * a group sends the todos that depended on it back to draft with a reason.
+   * a project sends the todos that depended on it back to draft with a reason.
    */
   workbench?:
     | {
-        /** Before the conversation row goes (the group FK is `ON DELETE SET NULL`). */
+        /** Before the conversation row goes (the project FK is `ON DELETE SET NULL`). */
         onConversationDeleting(conversationId: string): void;
         /** After the bot / membership change took effect. */
         onExecutorChanged(): void;
@@ -142,7 +146,7 @@ export interface LifecycleDeps {
     | {
         onConversationDeleted(conversationId: string): void;
         prepareBotDeletion(botId: string): void;
-        onGroupMemberRemoved(botId: string, conversationId: string): void;
+        onProjectMemberRemoved(botId: string, conversationId: string): void;
       }
     | undefined;
   /**
@@ -226,8 +230,8 @@ export class LifecycleService {
       );
     }
 
-    // D90: todos assigned to this group (or scheduled in it) fall back to draft before the FK
-    // nulls their group column and the schedules disappear.
+    // D90: todos assigned to this project (or scheduled in it) fall back to draft before the FK
+    // nulls their assignee column and the schedules disappear.
     this.#cascade('workbench conversation cascade failed', { conversationId }, () =>
       this.deps.workbench?.onConversationDeleting(conversationId),
     );
@@ -305,6 +309,13 @@ export class LifecycleService {
     if (bot.systemRole === 'butler') {
       throw new AppError('BOT_UNDELETABLE', '管家不能删除');
     }
+    // D92 T1a：项目组负责人不可删除——先更换负责人（同管家守卫，任何级联之前）。
+    const ledProjects = this.deps.projects.ledProjectsOf(botId);
+    if (ledProjects.length > 0) {
+      throw new AppError('PROJECT_LEAD_REQUIRED', this.#leadBlockMessage(ledProjects), {
+        projects: ledProjects,
+      });
+    }
 
     // D71: delegations this bot sent or received end before its runs abort.
     try {
@@ -321,10 +332,11 @@ export class LifecycleService {
       this.deps.agentSessions?.prepareBotDeletion(botId),
     );
 
-    // Group memberships go first so the turn coordinator skips the bot in
-    // every group it was in (docs/dev/03-data-model.md 删除 Bot, P05 row).
-    const groupIds = this.groupConversationIdsOf(botId);
-    for (const conversationId of groupIds) this.deps.onGroupMemberRemoved(botId, conversationId);
+    // Project memberships go first so the turn coordinator skips the bot in
+    // every project it was in (docs/dev/03-data-model.md 删除 Bot, P05 row).
+    const projectIds = this.projectConversationIdsOf(botId);
+    for (const conversationId of projectIds)
+      this.deps.onProjectMemberRemoved(botId, conversationId);
     this.deps.mainDb.prepare('delete from conversation_members where bot_id = ?').run(botId);
     this.#cascade('app tool grant bot cascade failed', { botId }, () =>
       this.deps.appGrants?.revokeForBot(botId),
@@ -447,58 +459,58 @@ export class LifecycleService {
   }
 
   /**
-   * Removes one bot from one group and runs the per-conversation cascade
+   * Removes one bot from one project and runs the per-conversation cascade
    * (docs/dev/03-data-model.md "从群中移除 Bot", P05): cancel its runs in this
    * conversation, delete the member row, revoke this pair's grants, delete
    * this pair's workspace. History messages stay (sender keeps its name).
    */
-  async removeGroupMember(conversationId: string, botId: string): Promise<void> {
+  async removeProjectMember(conversationId: string, botId: string): Promise<void> {
     this.deps.bots.getOrThrow(botId);
     this.deps.conversations.getOrThrow(conversationId);
 
-    this.deps.onGroupMemberRemoved(botId, conversationId);
-    this.#cascade('agent session group-removal cascade failed', { botId, conversationId }, () =>
-      this.deps.agentSessions?.onGroupMemberRemoved(botId, conversationId),
+    this.deps.onProjectMemberRemoved(botId, conversationId);
+    this.#cascade('agent session project-removal cascade failed', { botId, conversationId }, () =>
+      this.deps.agentSessions?.onProjectMemberRemoved(botId, conversationId),
     );
 
-    // P07: the bot's commitments made in this group are voided.
+    // P07: the bot's commitments made in this project are voided.
     try {
-      this.deps.memory?.onGroupMemberRemoved(botId, conversationId);
+      this.deps.memory?.onProjectMemberRemoved(botId, conversationId);
     } catch (error) {
       this.deps.logger.warn(
         { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
-        'memory group-removal cascade failed',
+        'memory project-removal cascade failed',
       );
     }
 
-    // P10: the bot's schedules in this group are cancelled
+    // P10: the bot's schedules in this project are cancelled
     // (03-data-model.md 从群中移除 Bot).
     try {
       this.deps.schedules?.cancelForBotInConversation(botId, conversationId);
     } catch (error) {
       this.deps.logger.warn(
         { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
-        'schedule group-removal cascade failed',
+        'schedule project-removal cascade failed',
       );
     }
-    // W7: the bot's watches in this group are deleted.
+    // W7: the bot's watches in this project are deleted.
     try {
       this.deps.watches?.removeForBotInConversation(botId, conversationId);
     } catch (error) {
       this.deps.logger.warn(
         { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
-        'watch group-removal cascade failed',
+        'watch project-removal cascade failed',
       );
     }
 
-    // P11: the bot's page for this group is closed (permanent — the pair's
+    // P11: the bot's page for this project is closed (permanent — the pair's
     // workspace dies here too).
     try {
       await this.deps.browser?.closeForBotInConversation(botId, conversationId);
     } catch (error) {
       this.deps.logger.warn(
         { botId, conversationId, error: error instanceof Error ? error.message : String(error) },
-        'browser group-removal cascade failed',
+        'browser project-removal cascade failed',
       );
     }
 
@@ -506,7 +518,7 @@ export class LifecycleService {
       .prepare('delete from conversation_members where conversation_id = ? and bot_id = ?')
       .run(conversationId, botId);
     this.deps.grants.revokeForBotInConversation(botId, conversationId);
-    this.#cascade('app tool grant group-removal cascade failed', { botId, conversationId }, () =>
+    this.#cascade('app tool grant project-removal cascade failed', { botId, conversationId }, () =>
       this.deps.appGrants?.revokeForBotInConversation(botId, conversationId),
     );
     this.deps.mainDb
@@ -517,22 +529,22 @@ export class LifecycleService {
       force: true,
     });
 
-    this.#cascade('workbench group-removal cascade failed', { botId, conversationId }, () =>
+    this.#cascade('workbench project-removal cascade failed', { botId, conversationId }, () =>
       this.deps.workbench?.onExecutorChanged(),
     );
-    this.deps.logger.info({ conversationId, botId }, 'group member removed');
+    this.deps.logger.info({ conversationId, botId }, 'project member removed');
   }
 
   /**
-   * Group conversation ids the bot currently belongs to. Public because the
+   * Project conversation ids the bot currently belongs to. Public because the
    * RPC layer must capture them BEFORE deleteBot drops the member rows —
-   * afterwards the affected groups are unenumerable, yet their open member
+   * afterwards the affected projects are unenumerable, yet their open member
    * lists still need a conversation.updated push (deleted bot renders as id).
    */
-  groupConversationIdsOf(botId: string): string[] {
+  projectConversationIdsOf(botId: string): string[] {
     const rows = this.deps.mainDb
       .prepare(
-        "select c.id as id from conversations c join conversation_members m on m.conversation_id = c.id where m.bot_id = ? and c.type = 'group'",
+        "select c.id as id from conversations c join conversation_members m on m.conversation_id = c.id where m.bot_id = ? and c.type = 'project'",
       )
       .all(botId) as Array<{ id: string }>;
     return rows.map((r) => r.id);
@@ -545,6 +557,7 @@ export class LifecycleService {
     memoryItems: number;
     wikiPages: number;
     skills: number;
+    ledProjects: Array<{ id: string; title: string | null }>;
   } {
     const { mainDb } = this.deps;
     const conversations = mainDb
@@ -559,6 +572,12 @@ export class LifecycleService {
       memoryItems: this.deps.memory?.memoryItemCount(botId) ?? 0,
       wikiPages: this.deps.wiki?.wikiPageCount(botId) ?? 0,
       skills: this.deps.skills?.skillCount(botId) ?? 0,
+      ledProjects: this.deps.projects.ledProjectsOf(botId),
     };
+  }
+
+  #leadBlockMessage(led: Array<{ id: string; title: string | null }>): string {
+    const names = led.map((project) => project.title ?? project.id).join('、');
+    return `该 Bot 是 ${led.length} 个项目组的负责人，请先更换：${names}`;
   }
 }

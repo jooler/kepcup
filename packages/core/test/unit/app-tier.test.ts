@@ -18,6 +18,7 @@ import { resolvePaths } from '../../src/infra/paths.js';
 import { UnavailableSandboxBackend } from '../../src/sandbox/types.js';
 import type { RunIdentity } from '../../src/agent/types.js';
 import { openRealMainDb, type RealMainDb } from '../support/real-secrets.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * 分级信任落地（D73 P3 §7.2）：`community` 的写入类工具不提供「对该 Bot 总是允许」，
@@ -125,10 +126,13 @@ async function harness(answer: { duration?: ApprovalDuration } = {}, tool = deci
       "insert into app_connections (id, connector_id, label, status, created_at, updated_at) values ('conn_gh', 'github', 'g', 'connected', 1, 1)",
     )
     .run();
+  env.db
+    .prepare(
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+    )
+    .run();
   for (const id of ['conv_1', 'conv_2']) {
-    env.db
-      .prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)")
-      .run(id);
+    insertProjectConversation(env.db, { id, leadBotId: 'bot_lead' });
   }
   const grants = new AppToolGrants({ db: env.db, clock: env.clock });
   const requests: Array<{ kind: string; payload: Record<string, unknown> }> = [];

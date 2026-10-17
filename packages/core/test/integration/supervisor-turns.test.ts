@@ -9,7 +9,7 @@ import {
   isTaskRequest,
   listMessages,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -476,7 +476,7 @@ describe('D75 supervisor turns (W2)', () => {
     const { core, llm } = stack;
     const x = await makeBot(core, '阿甲');
     const y = await makeBot(core, '阿乙');
-    const conv = await makeGroup(core, '测试群', [x.id, y.id]);
+    const conv = await makeProject(core, '测试群', [x.id, y.id]);
     const xTask = step().inTask().hold().replyText('RESULT-X 查好了');
     llm.script('mock-main', [
       // X's turn (first target) starts a task and replies at once.

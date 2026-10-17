@@ -285,7 +285,7 @@ describe('catalog queries', () => {
     expect(itemIdsForSettingsPaths(['nothingHere'])).toEqual([]);
     expect(itemIdsForBotPaths(['runtime.model'])).toEqual(['bot.model']);
     expect(itemIdsForBotPaths(['runtime'])).toContain('bot.network');
-    expect(itemIdsForServiceMethod('groups.rename')).toEqual(['group.title']);
+    expect(itemIdsForServiceMethod('projects.update')).toEqual(['group.title']);
     expect(itemIdsForServiceMethod('unattended.enable')).toEqual(['unattended.enable']);
   });
 

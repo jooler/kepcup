@@ -23,6 +23,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 import type { RunsService } from '../../src/domain/runs.js';
 import type { CoreLogger } from '../../src/infra/logger.js';
 import { reflectionInput } from '../../src/memory/reflection.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * DelegationHost（D71）的拒绝清单 / 单跳 / 群降级 / 截断：真实 main.db +
@@ -279,14 +280,12 @@ describe('DelegationHost (D71)', () => {
     const rig = makeRig();
     const c = rig.bots.create({ identity: { name: '丙' } });
     const groupId = 'conv_group_1';
-    rig.db
-      .prepare("insert into conversations (id, type, title, created_at) values (?, 'group', '群', 1)")
-      .run(groupId);
-    for (const botId of [rig.a.id, rig.b.id]) {
-      rig.db
-        .prepare('insert into conversation_members (conversation_id, bot_id, joined_at) values (?, ?, 1)')
-        .run(groupId, botId);
-    }
+    insertProjectConversation(rig.db, {
+      id: groupId,
+      title: '群',
+      leadBotId: rig.a.id,
+      memberBotIds: [rig.a.id, rig.b.id],
+    });
     const inGroup = rig.host.delegate(rig.identity('run_g', rig.a.id, groupId), {
       botId: rig.b.id,
       task: 'x',

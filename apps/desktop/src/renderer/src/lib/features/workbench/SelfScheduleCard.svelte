@@ -30,7 +30,7 @@
   /** 在群里安排的任务：标注来源群（私聊里的不标）。 */
   const groupName = $derived.by(() => {
     const conversation = chat.conversations.find((item) => item.id === schedule.conversationId);
-    return conversation?.type === 'group' ? (conversation.title ?? conversation.id) : null;
+    return conversation?.type === 'project' ? (conversation.title ?? conversation.id) : null;
   });
   let confirming = $state(false);
   let cancelling = $state(false);

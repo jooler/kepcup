@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { GROUP_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
+  import { PROJECT_MEMBER_PREVIEW_MAX } from '@kepcup/shared';
   import { ChevronLeft, ChevronRight, MessageSquare, X } from '@lucide/svelte';
   import { t } from '$lib/i18n';
   import { chat } from '$lib/stores/chat.svelte';
@@ -28,10 +28,7 @@
   const confirmMode = $derived(
     current !== null && permissions.sandbox !== null && !permissions.sandbox.available,
   );
-  const isGroup = $derived(current?.conversation.type === 'group');
-  // 对话内群创建进行中（19/D60）：输入禁用（workdir 选择器在右栏，由 GroupInfo
-  // 在创建期隐藏），标题用占位名。
-  const creating = $derived(current?.conversation.setupState === 'creating');
+  const isGroup = $derived(current?.conversation.type === 'project');
   // 访谈目录闸门（19/D59）：目录卡未答期间输入禁用——回答只能经卡片提交。
   const pathGateClosed = $derived.by(() => {
     const c = current;
@@ -49,17 +46,13 @@
     return !c.messages.some((m) => m.seq > card.seq && m.senderType === 'user');
   });
   const composerHint = $derived(
-    creating
-      ? t('groupSetup.composerHint')
-      : pathGateClosed
-        ? t('chats.setupPathGateHint')
-        : undefined,
+    pathGateClosed ? t('chats.setupPathGateHint') : undefined,
   );
   const headerTitle = $derived(
     current === null
       ? ''
       : isGroup
-        ? (current.conversation.title ?? t('groupSetup.creatingTitle'))
+        ? (current.conversation.title ?? '')
         : // 已删除 Bot 的占位行 name 为空串，回退其 id（设计/01：显示为 id）。
           current.conversation.bot?.name ||
           current.conversation.bot?.id ||
@@ -75,7 +68,7 @@
   const panelOverlay = $derived(sidebarLayout.panelAsOverlay);
   const isMac = /Mac/i.test(navigator.platform);
   const groupFaces = $derived(
-    (current?.members ?? []).slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
+    (current?.members ?? []).slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -273,7 +266,7 @@
         </div>
       {/if}
       <Composer
-        readOnly={current.conversation.readOnly || creating || pathGateClosed}
+        readOnly={current.conversation.readOnly || pathGateClosed}
         readOnlyHint={composerHint}
         centered={!hasMessages}
       />

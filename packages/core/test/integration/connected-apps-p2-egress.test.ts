@@ -7,7 +7,7 @@ import {
   createTestStack,
   listRuns,
   makeBot,
-  makeGroup,
+  makeProject,
   openDirect,
   sendBatch,
   sendDrafts,
@@ -305,7 +305,7 @@ describe('§6.2 污点外发控制', () => {
     await env.call('settings.update', { apps: { taintGuard: true } });
 
     // 5. Taint is per (bot, conversation): a group the bot never read app data in is clean.
-    const group = await makeGroup(core, '群', [bot.id, other.id]);
+    const group = await makeProject(core, '群', [bot.id, other.id]);
     llm.script(
       'mock-main',
       viaTask({

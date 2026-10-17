@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
-import { groupTitleFromMemberNames } from '@kepcup/shared';
+import { projectTitleFromMemberNames } from '@kepcup/shared';
 import { startMockLlm, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, dismissStartPanel, rpc } from './helpers/create-bot';
 import { rmHomeTolerant } from './helpers/home-cleanup';
@@ -73,7 +73,7 @@ async function groupConversations(
   const { conversations } = (await rpc(page, 'conversations.list')) as {
     conversations: Array<{ id: string; type: string; title: string | null }>;
   };
-  return conversations.filter((conversation) => conversation.type === 'group');
+  return conversations.filter((conversation) => conversation.type === 'project');
 }
 
 test('group compose: Esc cancels, needs 2 members, Backspace removes, Enter creates a Bot, empty Enter creates the group', async () => {
@@ -138,7 +138,7 @@ test('group compose: Esc cancels, needs 2 members, Backspace removes, Enter crea
     expect(await groupConversations(page)).toHaveLength(0);
 
     // ≥2 人空回车：以成员名拼接的群名建群并打开。
-    const title = groupTitleFromMemberNames(['阿甲', '阿丙']);
+    const title = projectTitleFromMemberNames(['阿甲', '阿丙']);
     await input.press('Enter');
     await expect(view).toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator('[data-testid="chat-view"]')).toBeVisible({ timeout: 15_000 });

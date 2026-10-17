@@ -32,7 +32,7 @@
   );
   const isOffer = $derived(content.event === SCHEDULE_OFFER_EVENT);
   const offer = $derived(content.offer ?? null);
-  const isGroup = $derived(chat.current?.conversation.type === 'group');
+  const isGroup = $derived(chat.current?.conversation.type === 'project');
   const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const ISO = /^\d{4}-\d{2}-\d{2}/;
   const offerWhen = $derived.by(() => {

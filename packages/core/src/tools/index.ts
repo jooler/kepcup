@@ -141,7 +141,7 @@ export interface ResponseToolDeps {
    */
   setup?: SetupToolFacade | undefined;
   /** 访谈工具面：群聊只注册 save_profile。缺省按单聊。 */
-  setupSurface?: 'direct' | 'group' | undefined;
+  setupSurface?: 'direct' | 'project' | undefined;
   /**
    * 图像生成后端（docs/design/18-inline-setup.md）：present 时注册
    * generate_image 工具；未配置能力时工具返回 SETUP_REQUIRED，由

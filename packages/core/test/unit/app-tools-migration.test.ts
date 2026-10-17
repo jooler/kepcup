@@ -8,6 +8,7 @@ import { deriveKey, KEY_INFO } from '../../src/infra/crypto.js';
 import { migrationsUrl } from '../../src/start.js';
 import { runMigrations } from '../../src/infra/migrate.js';
 import { mainVersionsAfter } from '../support/migration-versions.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * 0026_app_tools（D73 P1）：app_connection_tools / app_tool_grants 与
@@ -57,7 +58,10 @@ function insertConnection(db: SqliteDatabase, id: string): void {
 }
 
 function insertConversation(db: SqliteDatabase, id: string): void {
-  db.prepare("insert into conversations (id, type, created_at) values (?, 'group', 1)").run(id);
+  db.prepare(
+    "insert or ignore into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+  ).run();
+  insertProjectConversation(db, { id, leadBotId: 'bot_lead' });
 }
 
 describe('0026 app_tools 迁移', () => {

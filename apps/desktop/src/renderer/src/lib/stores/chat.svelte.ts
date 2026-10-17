@@ -1,12 +1,12 @@
 import type { Bot, Conversation, Message, Run, SetupRequirement } from '@kepcup/shared';
 import {
-  GROUP_MEMBER_PREVIEW_MAX,
-  groupTitleFromMemberNames,
+  PROJECT_MEMBER_PREVIEW_MAX,
+  projectTitleFromMemberNames,
   isSparseBotProfile,
 } from '@kepcup/shared';
 import type { ComposerReplyRef } from '../features/chats/composer-draft-persist';
 
-export interface GroupMemberView {
+export interface ProjectMemberView {
   bot: Bot;
   joinedAt: number;
 }
@@ -74,7 +74,7 @@ interface CurrentChat {
   loadingEarlier: boolean;
   hasEarlier: boolean;
   /** Group members (group conversations only). */
-  members: GroupMemberView[];
+  members: ProjectMemberView[];
 }
 
 const PAGE_SIZE = 60;
@@ -161,7 +161,7 @@ class ChatState {
       this.#upsertConversation(this.#withDirectBot(data.conversation));
       // Membership may have changed; member cards drive the @ popup and the
       // group info panel, so refresh them for the open group.
-      if (data.conversation.type === 'group' && data.conversation.id === this.currentId) {
+      if (data.conversation.type === 'project' && data.conversation.id === this.currentId) {
         void this.reloadMembers();
       }
     });
@@ -369,7 +369,7 @@ class ChatState {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (this.#noteLastMessage(conversationId, messages[i]!)) break;
     }
-    if (result.conversation.type === 'group') await this.reloadMembers();
+    if (result.conversation.type === 'project') await this.reloadMembers();
     else await this.#startSparseInterview(result.conversation);
     await this.#markRead();
     await permissions.loadForConversation(conversationId);
@@ -378,10 +378,10 @@ class ChatState {
   /** Reloads the current group's member cards. */
   async reloadMembers(): Promise<void> {
     const chatState = this.#chat;
-    if (!chatState || chatState.conversation.type !== 'group') return;
+    if (!chatState || chatState.conversation.type !== 'project') return;
     const result = (await core.call('conversations.members', {
       conversationId: chatState.conversation.id,
-    })) as { members: GroupMemberView[] };
+    })) as { members: ProjectMemberView[] };
     chatState.members = result.members;
     this.#syncMemberPreviews(chatState.conversation.id, result.members);
   }
@@ -397,9 +397,9 @@ class ChatState {
     }
   }
 
-  #syncMemberPreviews(conversationId: string, members: GroupMemberView[]): void {
+  #syncMemberPreviews(conversationId: string, members: ProjectMemberView[]): void {
     // 与 core 下发的 memberPreviews 同一上限（左栏群头像只画这么多）。
-    const memberPreviews = members.slice(0, GROUP_MEMBER_PREVIEW_MAX).map((member) => ({
+    const memberPreviews = members.slice(0, PROJECT_MEMBER_PREVIEW_MAX).map((member) => ({
       id: member.bot.id,
       name: member.bot.name,
       avatar: member.bot.avatar,
@@ -450,10 +450,13 @@ class ChatState {
     if (members.length < 2) return false;
     const ids = members.map((bot) => bot.id);
     const names = members.map((bot) => bot.name);
-    const title = groupTitleFromMemberNames(names);
+    const title = projectTitleFromMemberNames(names);
     try {
-      const result = (await core.call('groups.create', {
+      // WP5 replaces this with the two-round lead selection
+      const leadBotId = ids[0]!;
+      const result = (await core.call('projects.create', {
         title,
+        leadBotId,
         memberBotIds: ids,
       })) as { conversation: Conversation };
       this.cancelGroupCompose();
@@ -463,43 +466,6 @@ class ChatState {
     } catch (error) {
       toast.error(errorText(errorCode(error), t('group.createFailed')));
       return false;
-    }
-  }
-
-  /*
-   * 对话内群创建（19/D60）的入口已由 GroupComposeBar 取代；下面两个方法只服务
-   * 库里遗留的「创建中」群对话（GroupSetupCard 仍渲染这些卡片）。
-   */
-  async answerGroupSetup(
-    conversationId: string,
-    step: 'title' | 'purpose' | 'members' | 'workdir',
-    value: string | string[] | null,
-  ): Promise<boolean> {
-    const payload =
-      step === 'members'
-        ? { conversationId, step, botIds: value as string[] }
-        : step === 'workdir'
-          ? { conversationId, step, path: value as string | null }
-          : { conversationId, step, text: value as string };
-    try {
-      await core.call('groups.setup.answer', payload);
-      await this.reloadMembers();
-      return true;
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
-      return false;
-    }
-  }
-
-  /** 放弃创建：级联删除该「创建中」的群对话（消息极少，无历史负担）。 */
-  async cancelGroupSetup(conversationId: string): Promise<void> {
-    try {
-      await core.call('groups.setup.cancel', { conversationId });
-      this.conversations = this.conversations.filter((c) => c.id !== conversationId);
-      this.#pruneSidebarSections();
-      if (this.currentId === conversationId) this.close();
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }
   }
 
@@ -515,9 +481,9 @@ class ChatState {
     }
   }
 
-  async renameGroup(conversationId: string, title: string): Promise<boolean> {
+  async renameProject(conversationId: string, title: string): Promise<boolean> {
     try {
-      const result = (await core.call('groups.rename', { conversationId, title })) as {
+      const result = (await core.call('projects.update', { conversationId, title })) as {
         conversation: Conversation;
       };
       this.#upsertConversation(result.conversation);
@@ -528,9 +494,9 @@ class ChatState {
     }
   }
 
-  async addGroupMembers(conversationId: string, botIds: string[]): Promise<boolean> {
+  async addProjectMembers(conversationId: string, botIds: string[]): Promise<boolean> {
     try {
-      await core.call('groups.addMembers', { conversationId, botIds });
+      await core.call('projects.addMembers', { conversationId, botIds });
       await this.reloadMembers();
       return true;
     } catch (error) {
@@ -539,29 +505,14 @@ class ChatState {
     }
   }
 
-  async removeGroupMember(conversationId: string, botId: string): Promise<boolean> {
+  async removeProjectMember(conversationId: string, botId: string): Promise<boolean> {
     try {
-      await core.call('groups.removeMember', { conversationId, botId });
+      await core.call('projects.removeMember', { conversationId, botId });
       await this.reloadMembers();
       return true;
     } catch (error) {
       toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
       return false;
-    }
-  }
-
-  /** Silent-message click: re-dispatch the stored batch as an explicit @. */
-  async redistribute(batchId: string, botId: string): Promise<void> {
-    const chatState = this.#chat;
-    if (!chatState) return;
-    try {
-      await core.call('groups.redistribute', {
-        conversationId: chatState.conversation.id,
-        batchId,
-        botId,
-      });
-    } catch (error) {
-      toast.error(errorText(errorCode(error), t('chats.errorCode.INTERNAL')));
     }
   }
 

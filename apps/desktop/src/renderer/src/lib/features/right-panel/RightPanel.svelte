@@ -37,7 +37,7 @@
   import { nextFrame, revealSettingsAnchor } from '$lib/features/settings/anchor-scroll';
 
   const conversation = $derived(chat.current?.conversation ?? null);
-  const isGroup = $derived(conversation?.type === 'group');
+  const isGroup = $derived(conversation?.type === 'project');
   const bot = $derived(chat.current?.conversation.bot ?? null);
   browserPages.start();
   // 仅当该 Bot 在当前对话里已拉起浏览器页面时显示「查看浏览器」。

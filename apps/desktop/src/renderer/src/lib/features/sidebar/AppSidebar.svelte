@@ -216,11 +216,8 @@
 
   /** 条目标题（图标模式的 hover 提示同源）：群聊用标题，私聊用 Bot 名。 */
   function nameOf(conversation: ConversationView): string {
-    return conversation.type === 'group'
-      ? (conversation.title ??
-          (conversation.setupState === 'creating'
-            ? t('groupSetup.creatingTitle')
-            : conversation.id))
+    return conversation.type === 'project'
+      ? (conversation.title ?? conversation.id)
       : (conversation.bot?.name ?? conversation.directBotId ?? conversation.id);
   }
 
@@ -636,7 +633,7 @@
 
 <!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
-  {#if conversation.type === 'group'}
+  {#if conversation.type === 'project'}
     <GroupAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />
   {:else}
     <BotAvatar
@@ -1242,7 +1239,7 @@
         <ChevronRight class="size-3.5 text-muted-foreground" />
       </button>
     {/if}
-    {#if contextConversation?.type === 'group' && contextConversation.setupState !== 'creating'}
+    {#if contextConversation?.type === 'project'}
       {@render contextItem(
         Settings2,
         t('group.settings'),

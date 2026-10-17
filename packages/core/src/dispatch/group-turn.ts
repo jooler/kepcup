@@ -100,7 +100,7 @@ interface Turn {
 interface PendingBatch {
   batchId: string;
   messages: Message[];
-  /** groups.redistribute click: force this single target. */
+  /** Stored no-claim re-dispatch: force this single target (the RPC is gone in WP1; the flow dies in WP3). */
   forcedTarget?: string;
 }
 

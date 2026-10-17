@@ -264,11 +264,11 @@ export class HandoverHost implements HandoverToolFacade {
     const wikiQuery = input.wikiQuery?.trim() ?? '';
     // 群聊里盘点：敏感记忆不作候选（同检索的群聊过滤，passesFilters）——候选内容会进群里的
     // 上下文。
-    const inGroup = this.#deps.conversations.get(initiator.conversationId)?.type === 'group';
+    const isProject = this.#deps.conversations.get(initiator.conversationId)?.type === 'project';
     const entries = this.#deps.registry
       .inventory(bot.id, {
         memoryQuery: memoryQuery.length > 0 ? memoryQuery : undefined,
-        excludeSensitiveMemory: inGroup,
+        excludeSensitiveMemory: isProject,
         wikiQuery: wikiQuery.length > 0 ? wikiQuery : undefined,
       })
       // DEV-020：模型条目只给管家（普通 Bot 不能改接手方的模型）。

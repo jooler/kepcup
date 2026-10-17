@@ -19,6 +19,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 import { buildWebTools } from '../../src/tools/web-tools.js';
 import { buildWatchTools } from '../../src/tools/watch-tools.js';
 import { openRealMainDb, type RealMainDb } from '../support/real-secrets.js';
+import { insertProjectConversation } from '../support/projects.js';
 
 /**
  * D73 P2 §6.2 污点外发控制（docs/design/29 §8.3），真库 + 桩：
@@ -82,8 +83,11 @@ async function harness(options: HarnessOptions = {}) {
     )
     .run();
   env.db
-    .prepare("insert into conversations (id, type, created_at) values ('conv_1', 'group', 1)")
+    .prepare(
+      "insert into bots (id, name, profile_json, status, created_at, updated_at) values ('bot_lead', 'lead', '{}', 'active', 0, 0)",
+    )
     .run();
+  insertProjectConversation(env.db, { id: 'conv_1', leadBotId: 'bot_lead' });
   const settings = { taintGuard: options.taintGuard ?? true };
   const taint = new TaintService({
     db: env.db,

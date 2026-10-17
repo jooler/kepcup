@@ -408,7 +408,8 @@ export class MemoryService {
       subject: null,
       source: 'explicit',
       evidence: this.#evidenceFrom(input.triggerMessages, null),
-      origin: conversation?.type === 'group' ? 'group' : 'private',
+      // stored value stays 'group' until WP4 migrates memory.db
+      origin: conversation?.type === 'project' ? 'group' : 'private',
       originConversationId: conversationId,
       confidence: 1,
       sensitivity: 'normal',
@@ -483,7 +484,8 @@ export class MemoryService {
       subject: candidate.subject ?? null,
       source: candidate.source,
       evidence: this.#evidenceFrom(messages, candidate.evidenceRunId),
-      origin: conversation?.type === 'group' ? 'group' : 'private',
+      // stored value stays 'group' until WP4 migrates memory.db
+      origin: conversation?.type === 'project' ? 'group' : 'private',
       originConversationId: conversationId,
       confidence: candidate.confidence,
       sensitivity: candidate.sensitivity,
@@ -676,7 +678,7 @@ export class MemoryService {
       embedder: this.currentEmbedder(),
       queryText: query,
       filters: {
-        isGroup: conversation?.type === 'group',
+        isProject: conversation?.type === 'project',
         now: this.#deps.clock.now(),
       },
       ...(kind !== undefined ? {} : {}),
@@ -891,7 +893,7 @@ export class MemoryService {
       embedder: this.currentEmbedder(),
       queryText: input.queryText,
       filters: {
-        isGroup: conversation?.type === 'group',
+        isProject: conversation?.type === 'project',
         now: this.#deps.clock.now(),
       },
       rerank: this.#retrievalReranker() ?? undefined,
@@ -921,8 +923,8 @@ export class MemoryService {
     }
   }
 
-  /** Removing a bot from a group voids its commitments made in that group. */
-  onGroupMemberRemoved(botId: string, conversationId: string): void {
+  /** Removing a bot from a project voids its commitments made in that project. */
+  onProjectMemberRemoved(botId: string, conversationId: string): void {
     if (!this.#manager.exists(botId)) return;
     const voided = this.storeFor(botId).voidCommitmentsOfConversation(conversationId);
     for (const commitmentId of voided) {
