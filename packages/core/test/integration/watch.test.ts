@@ -142,7 +142,7 @@ describe('W7 确定性监看（集成，可控时钟 + 假后台页）', () => {
       expect(row.lastMatched).toBe(false);
       expect(row.alertSeq).toBe(0);
       expect(row.nextCheckAt).toBe(clock.now() + 300_000);
-      // The fetch used the bot's private profile and no loopback (no project).
+      // The fetch used the bot's private profile and no loopback (no workdir).
       const fetchCall = browser.calls.find((c) => c.method === 'browser.fetchText')!;
       expect(fetchCall.input).toMatchObject({
         botId: bot.id,

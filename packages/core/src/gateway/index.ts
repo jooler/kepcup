@@ -25,7 +25,7 @@ import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
 import type { AllowlistService } from '../permissions/allowlist.js';
 import type { UnattendedService } from '../permissions/unattended.js';
-import type { ProjectRuntime } from '../project/service.js';
+import type { WorkdirRuntime } from '../workdir/service.js';
 import type { McpToolDecision } from '../mcp/policy.js';
 import type { AppToolGrants } from '../apps/grants.js';
 import type { AppToolContext } from '../apps/exposure.js';
@@ -62,8 +62,8 @@ export interface GatewayDeps {
   grants: GrantsService;
   allowlist: AllowlistService;
   unattended: UnattendedService;
-  /** Project runtime (P04): binding lookups, write leases, policy input. */
-  projects: ProjectRuntime;
+  /** Workdir runtime (P04): binding lookups, write leases, policy input. */
+  workdirs: WorkdirRuntime;
   /**
    * P06 installed toolchains: PATH prefix for sandbox + confirm mode, the
    * read-only toolchains root, and use tracking. Optional so the gateway
@@ -258,7 +258,7 @@ const MCP_RISK_LABELS: Record<McpToolDecision['risk'], string> = {
  * file writes get RUN_READ_ONLY, commands run with a read-only policy.
  *
  * Access order in checkPath: workspace → data directory (never grantable) →
- * bound project (read per protect rules; write needs the lease) → active
+ * bound workdir (read per protect rules; write needs the lease) → active
  * grants → sensitive locations (needs_grant, prominent warning) →
  * system/toolchain roots (read allowed, write needs a grant) → everything
  * else needs_grant.
@@ -303,9 +303,9 @@ export class ToolGateway {
     return workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId);
   }
 
-  /** The bound project of the identity's conversation (null when none). */
-  boundProject(identity: RunIdentity) {
-    return this.#deps.projects.boundProject(identity.conversationId);
+  /** The bound workdir of the identity's conversation (null when none). */
+  boundWorkdir(identity: RunIdentity) {
+    return this.#deps.workdirs.boundWorkdir(identity.conversationId);
   }
 
   /** Creates the workspace on first use ("首次执行时创建"). */
@@ -322,12 +322,12 @@ export class ToolGateway {
    * D75 §2.1 / §5.1: null when the identity may write, else the readable
    * reason. Only turns, tasks and the sub runs they own (`subagent`, resolved
    * to the owning run) can be read-only; the run lookup lives with the
-   * write-lease authority (ProjectRuntime.writeDenial).
+   * write-lease authority (WorkdirRuntime.writeDenial).
    */
   writeDenial(identity: RunIdentity): string | null {
     const { loopType } = identity;
     if (loopType !== 'turn' && loopType !== 'task' && loopType !== 'subagent') return null;
-    return this.#deps.projects.writeDenial(identity);
+    return this.#deps.workdirs.writeDenial(identity);
   }
 
   /**
@@ -358,9 +358,9 @@ export class ToolGateway {
     }
     const paths = this.#deps.paths;
     const expanded = expandTilde(inputPath);
-    // Relative paths resolve against the project when one is bound
-    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 project 为基准).
-    const base = this.#deps.projects.boundProject(identity.conversationId)?.path ?? workspace;
+    // Relative paths resolve against the workdir when one is bound
+    // (docs/dev/04-agent-runtime.md "工具目录": 相对路径以 workdir 为基准).
+    const base = this.#deps.workdirs.boundWorkdir(identity.conversationId)?.path ?? workspace;
     const absolute = path.isAbsolute(expanded)
       ? path.resolve(expanded)
       : path.resolve(base, expanded);
@@ -415,22 +415,22 @@ export class ToolGateway {
       return { kind: 'forbidden', resolvedPath: resolved, reason: '应用数据目录不可访问' };
     }
 
-    // 3. The bound project: reads follow the protect rules; writes require
+    // 3. The bound workdir: reads follow the protect rules; writes require
     //    this run to hold the write lease (P04).
-    const project = this.#deps.projects.boundProject(identity.conversationId);
-    if (project !== null && isInsidePath(resolvedNorm, norm(project.path))) {
-      if (this.#deps.projects.matchesProtectRule(project, resolved, mode)) {
+    const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+    if (workdir !== null && isInsidePath(resolvedNorm, norm(workdir.path))) {
+      if (this.#deps.workdirs.matchesProtectRule(workdir, resolved, mode)) {
         return {
           kind: 'forbidden',
           resolvedPath: resolved,
           reason:
             mode === 'read'
-              ? '被项目保护规则禁止读取（可在权限设置中调整）'
-              : '被项目保护规则禁止写入（可在权限设置中调整）',
+              ? '被工作目录保护规则禁止读取（可在权限设置中调整）'
+              : '被工作目录保护规则禁止写入（可在权限设置中调整）',
         };
       }
       if (mode === 'read') return { kind: 'allowed', resolvedPath: resolved };
-      if (this.#deps.projects.holdsLease(identity, project.path)) {
+      if (this.#deps.workdirs.holdsLease(identity, workdir.path)) {
         // Lease first (a grant never replaces it), then the git control files.
         if (isGitControlPath(resolvedNorm)) return this.#gitControlDecision(identity, resolved);
         return { kind: 'allowed', resolvedPath: resolved };
@@ -438,7 +438,7 @@ export class ToolGateway {
       return {
         kind: 'needs_lease',
         resolvedPath: resolved,
-        reason: 'project 写入需要先取得写入租约',
+        reason: 'workdir 写入需要先取得写入租约',
       };
     }
 
@@ -492,7 +492,7 @@ export class ToolGateway {
 
   /**
    * A write to a repository control file (`isGitControlPath`) inside the
-   * workspace / the leased project: allowed only under a write grant the user
+   * workspace / the leased workdir: allowed only under a write grant the user
    * gave for it (or a parent), else a sensitive access card.
    */
   #gitControlDecision(identity: RunIdentity, resolved: string): PathDecision {
@@ -571,10 +571,10 @@ export class ToolGateway {
         `${decision.reason}：${inputPath}`,
       );
     }
-    // Project writes go through the write lease, not an access approval
-    // (docs/design/08-project.md "并发：写入租约") — acquire, then re-check.
+    // Workdir writes go through the write lease, not an access approval
+    // (docs/design/08-workdir.md "并发：写入租约") — acquire, then re-check.
     if (decision.kind === 'needs_lease') {
-      await this.#deps.projects.ensureWriteLease(identity, decision.resolvedPath, {
+      await this.#deps.workdirs.ensureWriteLease(identity, decision.resolvedPath, {
         signal: options.signal,
         reason,
       });
@@ -720,10 +720,10 @@ export class ToolGateway {
       if (enhancedAvailability.available) backend = this.#deps.enhanced;
     }
     const availability = await backend.probe();
-    const project = this.#deps.projects.policyInfo(identity);
-    // Bound conversation: commands default to the project directory and the
+    const workdir = this.#deps.workdirs.policyInfo(identity);
+    // Bound conversation: commands default to the workdir directory and the
     // sandbox permits listening on / reaching localhost (dev servers).
-    const cwd = project !== null ? project.path : workspace;
+    const cwd = workdir !== null ? workdir.path : workspace;
     // P06: installed toolchains join every command — sandbox policy env and
     // confirm-mode overlay use the same childEnvFor allowlist + overlay.
     const toolchainPrefix = this.#deps.environment?.toolchainPathPrefix(this.#platform) ?? null;
@@ -767,16 +767,16 @@ export class ToolGateway {
         workspacePath: workspace,
         network: {
           ...req.network,
-          allowLocalhost: project !== null,
-          allowedPorts: project?.allowedPorts ?? undefined,
+          allowLocalhost: workdir !== null,
+          allowedPorts: workdir?.allowedPorts ?? undefined,
         },
         grants,
-        project:
-          project !== null
+        workdir:
+          workdir !== null
             ? {
-                path: project.path,
-                hasLease: project.hasLease,
-                denyReadGlobs: project.denyReadGlobs,
+                path: workdir.path,
+                hasLease: workdir.hasLease,
+                denyReadGlobs: workdir.denyReadGlobs,
               }
             : undefined,
         ...(toolchainPrefix !== null ? { toolchainPathPrefix: toolchainPrefix } : {}),
@@ -800,8 +800,8 @@ export class ToolGateway {
         violations: result.violations.length,
         network: req.network.mode,
         grants: grants.length,
-        project: project !== null,
-        lease: project !== null ? project.hasLease : null,
+        workdir: workdir !== null,
+        lease: workdir !== null ? workdir.hasLease : null,
         backend: backend.kind,
         ...(readOnlyReason !== null ? { readOnlyRun: true } : {}),
       });
@@ -920,8 +920,8 @@ export class ToolGateway {
     const roots: string[] = [];
     const workspace = this.workspacePath(identity);
     if (workspace !== null) roots.push(workspace, resolveStandingPath(workspace));
-    const project = this.#deps.projects.boundProject(identity.conversationId);
-    if (project !== null) roots.push(project.path, resolveStandingPath(project.path));
+    const workdir = this.#deps.workdirs.boundWorkdir(identity.conversationId);
+    if (workdir !== null) roots.push(workdir.path, resolveStandingPath(workdir.path));
     return [...new Set(roots)];
   }
 
@@ -986,7 +986,7 @@ export class ToolGateway {
     if (readOnlyReason !== null) {
       throw new AppError('RUN_READ_ONLY', `${readOnlyReason}（不能执行 git 远程操作）`);
     }
-    return this.#deps.projects.gitRemote(identity, input, {
+    return this.#deps.workdirs.gitRemote(identity, input, {
       signal: options.signal,
       requestApproval: async (payload) => {
         // D73 P2: git_remote already asks every time — while tainted the card says so.

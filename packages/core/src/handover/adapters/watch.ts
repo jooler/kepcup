@@ -23,7 +23,7 @@ export interface WatchAdapterDeps {
     countLiveForBot(botId: string): number;
     transferTo(watchId: string, target: { botId: string; conversationId: string }): Watch;
     profileKeyFor(botId: string): string;
-    /** 在这个对话里检查网页时能否访问本机地址（项目绑定决定）。 */
+    /** 在这个对话里检查网页时能否访问本机地址（工作目录绑定决定）。 */
     allowsLoopback(conversationId: string): boolean;
   };
   conversations: {
@@ -110,10 +110,10 @@ export class WatchAdapter implements HandoverAdapter {
       return `${ctx.toName} 的监看已达上限（每个 Bot 最多 ${WATCH_MAX_PER_BOT} 个）`;
     }
     if (this.#isDirectOf(row.conversationId, row.botId)) {
-      // 私聊的监看会改到 B 的私聊，能否访问本机地址随之改按 B 私聊的项目绑定。本机网址在
+      // 私聊的监看会改到 B 的私聊，能否访问本机地址随之改按 B 私聊的工作目录绑定。本机网址在
       // 两边规则不同时不移交（宁可不交，也不让它悄悄变得能 / 不能访问本机）。
       if (isLoopbackUrl(row.source.url) && this.#loopbackDiffers(ctx, row)) {
-        return `这个监看看的是本机地址，${ctx.toName} 的私聊对本机地址的访问规则（项目绑定）与这边不同，不能移交`;
+        return `这个监看看的是本机地址，${ctx.toName} 的私聊对本机地址的访问规则（工作目录绑定）与这边不同，不能移交`;
       }
       return null;
     }
@@ -148,7 +148,7 @@ export class WatchAdapter implements HandoverAdapter {
     return `把网页监看 ${entry.label}（${entry.detail}）移交给 ${toName}，接着上次的检查结果继续，不会重复提醒`;
   }
 
-  /** B 私聊（新建目标 = 还没有项目绑定）与监看现在所在对话的本机访问规则是否不同。 */
+  /** B 私聊（新建目标 = 还没有工作目录绑定）与监看现在所在对话的本机访问规则是否不同。 */
   #loopbackDiffers(ctx: HandoverContext, row: Watch): boolean {
     const here = this.#deps.watches.allowsLoopback(row.conversationId);
     const there =
@@ -178,7 +178,7 @@ export class WatchAdapter implements HandoverAdapter {
       !isLoopbackUrl(row.source.url) &&
       this.#loopbackDiffers(ctx, row)
     ) {
-      out.push(`之后能否访问本机地址改按 ${ctx.toName} 私聊的项目绑定决定`);
+      out.push(`之后能否访问本机地址改按 ${ctx.toName} 私聊的工作目录绑定决定`);
     }
     return out;
   }

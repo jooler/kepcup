@@ -8,7 +8,7 @@
   import { settingsStore } from '$lib/stores/settings.svelte';
   import { environmentStore } from '$lib/stores/environment.svelte';
   import { permissions } from '$lib/stores/permissions.svelte';
-  import { projects } from '$lib/stores/projects.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import { updateStore } from '$lib/stores/update.svelte';
   import { appNotices } from '$lib/stores/app-notices.svelte';
   import { onboarding } from '$lib/stores/onboarding.svelte';
@@ -135,7 +135,7 @@
     contacts.start();
     settingsStore.start();
     permissions.start();
-    projects.start();
+    workdirs.start();
     environmentStore.start();
     void bootstrap();
   });
@@ -154,7 +154,7 @@
       settingsStore.refresh(),
       permissions.refreshUnattended(),
       permissions.refreshSandbox(),
-      projects.refresh(),
+      workdirs.refresh(),
       stickies.load(),
     ]);
     const restored = await chat.restoreLast();

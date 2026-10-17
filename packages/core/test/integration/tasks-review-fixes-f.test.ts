@@ -153,7 +153,7 @@ describe('M-1: a write task cancelled while waiting on the user unwinds without 
     ]);
 
     const workspaceKey = `ws:${bot.id}:${conv.id}`;
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const taskIdentity = (runId: string): RunIdentity => ({
       runId,
       botId: bot.id,

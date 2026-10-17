@@ -175,7 +175,7 @@ describe('main 0037 workbench', () => {
     expect(before[0]).not.toHaveProperty('todo_id');
 
     const applied = runMigrations(db, migrationsUrl('main'));
-    expect(applied.map((m) => m.version)).toEqual([37]);
+    expect(applied.map((m) => m.version)).toEqual([37, 38]);
 
     const after = db.prepare('select * from schedules order by id').all() as Array<
       Record<string, unknown>

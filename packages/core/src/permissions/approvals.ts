@@ -367,7 +367,7 @@ export class ApprovalsService {
           typeof payload['cwd'] === 'string' && payload['cwd'].length > 0 ? payload['cwd'] : null,
         exemptDirs: workspace !== null ? [workspace] : [],
       }).safe;
-    // git_remote (P04): the command text and the cwd (the project path) both
+    // git_remote (P04): the command text and the cwd (the workdir path) both
     // go through the same floor — a data-directory reference in a remote URL
     // or argument must not auto-approve either.
     const gitRemoteTouchesDataDir =
@@ -819,7 +819,7 @@ export class ApprovalsService {
   }
 
   /**
-   * D72 project-side agent config confirmations the user approved for one
+   * D72 workdir-side agent config confirmations the user approved for one
    * bot in one conversation (`agent_tool` subtype `config`), newest first.
    * Targeted by subtype (not capped by other approvals, review L6);
    * unattended auto-approvals never count as remembered (review M2).
@@ -1510,7 +1510,7 @@ function describeAgentTool(payload: Record<string, unknown>, untrusted = false):
   const title = wrap(data.title);
   switch (data.kind) {
     case 'config':
-      return `在此项目中运行智能体「${agent}」（将加载项目内的智能体配置：${where}）`;
+      return `在此工作目录中运行智能体「${agent}」（将加载工作目录内的智能体配置：${where}）`;
     case 'execute':
       return `经智能体「${agent}」执行命令：${data.command !== undefined ? wrap(data.command) : title}`;
     case 'read':

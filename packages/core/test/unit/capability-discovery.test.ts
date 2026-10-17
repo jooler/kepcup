@@ -522,7 +522,7 @@ describe('buildSubagentResearchTools (D91)', () => {
       deps: {
         gateway: {} as never,
         workspacePath: '/tmp/ws',
-        projectPath: null,
+        workdirPath: null,
         network: { mode: 'open', allowDomains: [] } as never,
         secrets: {} as never,
         fsState: {} as never,

@@ -253,7 +253,7 @@ function bootstrap(): void {
     if (window === null) return null;
     const result = await dialog.showOpenDialog(window, {
       properties: ['openDirectory', 'createDirectory'],
-      message: '选择要作为 project 的目录',
+      message: '选择要作为工作目录的目录',
     });
     return result.canceled || result.filePaths.length === 0 ? null : (result.filePaths[0] ?? null);
   });

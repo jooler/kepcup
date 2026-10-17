@@ -15,7 +15,7 @@ export const ID_PREFIXES = {
   stp: 'stp_',
   mem: 'mem_',
   prf: 'prf_',
-  prj: 'prj_',
+  wkd: 'wkd_',
   grt: 'grt_',
   apr: 'apr_',
   sch: 'sch_',

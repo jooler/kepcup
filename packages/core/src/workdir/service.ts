@@ -7,16 +7,16 @@ import {
   CHECKPOINT_RETENTION_DAYS,
   newId,
   type LoopType as SharedLoopType,
-  type Project,
+  type Workdir,
   type RunChangeFile,
 } from '@kepcup/shared';
 import { isInsidePath } from '../sandbox/sensitive-paths.js';
 import type { RunIdentity } from '../agent/types.js';
 import type { LeaseHolder, LeaseService } from './lease.js';
 import type { CheckpointService } from './checkpoints.js';
-import { buildProjectSection, PROJECT_SECTION_BUDGET } from './context.js';
+import { buildWorkdirSection, WORKDIR_SECTION_BUDGET } from './context.js';
 import { gitCliAvailable, runGitRemote, type GitRemoteOperation } from './git-remote.js';
-import type { ProjectsService } from '../domain/projects.js';
+import type { WorkdirsService } from '../domain/workdirs.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { MessagesService } from '../domain/messages.js';
 import type { RunsService } from '../domain/runs.js';
@@ -28,12 +28,12 @@ import type { CoreLogger } from '../infra/logger.js';
 import { canonicalPath, workspacePathFor, type AppPaths } from '../infra/paths.js';
 import type { CoreEventsMap } from '../start-types.js';
 
-export interface ProjectRuntimeDeps {
+export interface WorkdirRuntimeDeps {
   db: SqliteDatabase;
   paths: AppPaths;
   clock: Clock;
   logger: CoreLogger;
-  projects: ProjectsService;
+  workdirs: WorkdirsService;
   conversations: ConversationsService;
   messages: MessagesService;
   runs: RunsService;
@@ -52,18 +52,18 @@ export interface ProjectRuntimeDeps {
 
 export interface LeaseTarget {
   /**
-   * The bound project root, an authorized directory, or the workspace key
+   * The bound workdir root, an authorized directory, or the workspace key
    * `ws:{botId}:{conversationId}` (D75 §5.2, see workspaceLeaseKey).
    */
   key: string;
-  /** Set when the lease key is the bound project (checkpoints apply). */
-  project: Project | null;
+  /** Set when the lease key is the bound workdir (checkpoints apply). */
+  workdir: Workdir | null;
 }
 
 /**
  * D75 §5.2: lease key of a bot's workspace in one conversation
  * (`bots/{botId}/workspaces/{conversationId}/`). Not a path, so it never
- * collides with project / grant keys in leaseKeysConflict; workspaces have
+ * collides with workdir / grant keys in leaseKeysConflict; workspaces have
  * no shadow-repo checkpoints (no `before`/`after`, no revert).
  */
 export function workspaceLeaseKey(botId: string, conversationId: string): string {
@@ -105,26 +105,26 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
 
 interface RunLeaseState {
   key: string;
-  project: Project | null;
+  workdir: Workdir | null;
   beforeOid: string | null;
   /**
    * D72（安全审查 M6）：外部智能体 run 开工前取得、整 run 持有的租约——
-   * 该 run 内不能被别的租约目标替换（否则原 project 的「后」快照过早，而
+   * 该 run 内不能被别的租约目标替换（否则原 workdir 的「后」快照过早，而
    * Agent 仍在写它）。
    */
   pinned?: boolean;
 }
 
 /**
- * Project runtime (docs/dev/phases/P04-project.md): binding lifecycle, write
+ * Workdir runtime (docs/dev/phases/P04-project.md): binding lifecycle, write
  * leases with waiting/running state transitions, and git remote execution.
  * Change-summary cards / run_changes persistence / whole-run revert UX are
  * retired — disk writes stay; lease windows no longer snapshot or record.
  * The gateway consults it for path decisions and sandbox policy input; RPC
  * binds user actions here. Diff/revert RPCs remain only for legacy rows.
  */
-export class ProjectRuntime {
-  readonly #deps: ProjectRuntimeDeps;
+export class WorkdirRuntime {
+  readonly #deps: WorkdirRuntimeDeps;
   /** Lease window currently tracked per run (one entry per acquire). */
   readonly #runLeases = new Map<string, RunLeaseState>();
   /**
@@ -139,22 +139,22 @@ export class ProjectRuntime {
    */
   readonly #acquiring = new Map<string, { key: string; promise: Promise<LeaseTarget> }>();
 
-  constructor(deps: ProjectRuntimeDeps) {
+  constructor(deps: WorkdirRuntimeDeps) {
     this.#deps = deps;
   }
 
   // --- lookups ---------------------------------------------------------------
 
-  /** The conversation's bound project with status refreshed from disk. */
-  boundProject(conversationId: string | null): Project | null {
+  /** The conversation's bound workdir with status refreshed from disk. */
+  boundWorkdir(conversationId: string | null): Workdir | null {
     if (conversationId === null) return null;
     const conv = this.#deps.conversations.get(conversationId);
-    if (conv === null || conv.projectId === null) return null;
-    const project = this.#deps.projects.get(conv.projectId);
-    if (project === null) return null;
-    const refreshed = this.#deps.projects.refreshStatus(project.id);
-    if (refreshed.status !== project.status) {
-      this.#deps.publish('project.updated', { project: refreshed });
+    if (conv === null || conv.workdirId === null) return null;
+    const workdir = this.#deps.workdirs.get(conv.workdirId);
+    if (workdir === null) return null;
+    const refreshed = this.#deps.workdirs.refreshStatus(workdir.id);
+    if (refreshed.status !== workdir.status) {
+      this.#deps.publish('workdir.updated', { workdir: refreshed });
     }
     return refreshed;
   }
@@ -199,52 +199,52 @@ export class ProjectRuntime {
     return null;
   }
 
-  /** True when the run currently holds the given project's write lease. */
-  holdsLease(identity: RunIdentity, projectPath: string): boolean {
-    return this.#deps.leases.heldKey(identity.runId, [projectPath]) !== null;
+  /** True when the run currently holds the given workdir's write lease. */
+  holdsLease(identity: RunIdentity, workdirPath: string): boolean {
+    return this.#deps.leases.heldKey(identity.runId, [workdirPath]) !== null;
   }
 
-  /** Sandbox policy input for the executing identity (null = no project). */
+  /** Sandbox policy input for the executing identity (null = no workdir). */
   policyInfo(identity: RunIdentity): {
     path: string;
     hasLease: boolean;
-    allowedPorts: Project['allowedPorts'];
+    allowedPorts: Workdir['allowedPorts'];
     denyReadGlobs: string[];
   } | null {
-    const project = this.boundProject(identity.conversationId);
-    if (project === null || project.status === 'missing') return null;
+    const workdir = this.boundWorkdir(identity.conversationId);
+    if (workdir === null || workdir.status === 'missing') return null;
     return {
-      path: project.path,
-      hasLease: this.holdsLease(identity, project.path),
-      allowedPorts: project.allowedPorts,
-      denyReadGlobs: this.denyReadGlobs(project),
+      path: workdir.path,
+      hasLease: this.holdsLease(identity, workdir.path),
+      allowedPorts: workdir.allowedPorts,
+      denyReadGlobs: this.denyReadGlobs(workdir),
     };
   }
 
-  /** Absolute glob patterns of the project's deny-read rules (policy denyRead). */
-  denyReadGlobs(project: Project): string[] {
+  /** Absolute glob patterns of the workdir's deny-read rules (policy denyRead). */
+  denyReadGlobs(workdir: Workdir): string[] {
     const patterns: string[] = [];
-    for (const pattern of project.protectRules.denyRead) {
+    for (const pattern of workdir.protectRules.denyRead) {
       if (pattern.includes('/')) {
-        patterns.push(`${project.path}/${pattern}`);
+        patterns.push(`${workdir.path}/${pattern}`);
       } else {
         // Slash-less patterns match the file name at any depth.
-        patterns.push(`${project.path}/${pattern}`);
-        patterns.push(`${project.path}/**/${pattern}`);
+        patterns.push(`${workdir.path}/${pattern}`);
+        patterns.push(`${workdir.path}/**/${pattern}`);
       }
     }
     return patterns;
   }
 
-  /** True when `resolvedPath` hits a protection rule of the project. */
-  matchesProtectRule(project: Project, resolvedPath: string, mode: 'read' | 'write'): boolean {
-    return matchProtectRule(project.protectRules, project.path, resolvedPath, mode);
+  /** True when `resolvedPath` hits a protection rule of the workdir. */
+  matchesProtectRule(workdir: Workdir, resolvedPath: string, mode: 'read' | 'write'): boolean {
+    return matchProtectRule(workdir.protectRules, workdir.path, resolvedPath, mode);
   }
 
   // --- lease orchestration ---------------------------------------------------
 
   /**
-   * Acquires the write lease covering `resolvedPath`: the bound project root,
+   * Acquires the write lease covering `resolvedPath`: the bound workdir root,
    * the identity's own workspace (`ws:{botId}:{conversationId}`, D75 §5.2),
    * or the longest covering write grant outside both. Parks the run in
    * `waiting_lease` (publishing `lease.waiting`) while queued. Aborting the
@@ -270,7 +270,7 @@ export class ProjectRuntime {
     if (denial !== null) throw new AppError('RUN_READ_ONLY', denial);
     const target = this.#leaseTarget(identity, resolvedPath);
     if (target === null) {
-      throw new AppError('INVALID_INPUT', '该路径不涉及 project 或 workspace，无需写入租约');
+      throw new AppError('INVALID_INPUT', '该路径不涉及 workdir 或 workspace，无需写入租约');
     }
     // Same run, same key, already being acquired (parallel write / edit
     // calls): join it. A second acquisition would release the run's lease
@@ -332,7 +332,7 @@ export class ProjectRuntime {
     // Change cards and run_changes persistence were retired.
     this.#runLeases.set(identity.runId, {
       key: target.key,
-      project: target.project,
+      workdir: target.workdir,
       beforeOid: null,
       ...(options.pin === true ? { pinned: true } : {}),
     });
@@ -354,78 +354,78 @@ export class ProjectRuntime {
 
   // --- binding (RPC) -----------------------------------------------------------
 
-  select(conversationId: string, dir: string): Project {
+  select(conversationId: string, dir: string): Workdir {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
     this.#assertNoActiveRuns(conversationId);
-    const project = this.#deps.projects.ensureByPath(dir, this.#deps.paths.home);
-    const previousId = conv.projectId;
-    this.#deps.conversations.setProject(conversationId, project.id);
-    const previous = previousId !== null ? this.#deps.projects.get(previousId) : null;
-    const label = `${project.name}（${project.path}）`;
-    if (previousId === project.id) {
-      this.#systemMessage(conversationId, `项目已确认为 ${label}`);
+    const workdir = this.#deps.workdirs.ensureByPath(dir, this.#deps.paths.home);
+    const previousId = conv.workdirId;
+    this.#deps.conversations.setWorkdir(conversationId, workdir.id);
+    const previous = previousId !== null ? this.#deps.workdirs.get(previousId) : null;
+    const label = `${workdir.name}（${workdir.path}）`;
+    if (previousId === workdir.id) {
+      this.#systemMessage(conversationId, `工作目录已确认为 ${label}`);
     } else if (previousId === null) {
-      this.#systemMessage(conversationId, `项目已绑定为 ${label}`);
+      this.#systemMessage(conversationId, `工作目录已绑定为 ${label}`);
       this.#systemMessage(
         conversationId,
         '授权范围：此对话中的所有 Bot 都可以读写该目录；写入按租约串行执行。目录中的 .env、*.pem 等敏感文件默认不可读，可在权限设置中调整。',
       );
     } else {
-      this.#systemMessage(conversationId, `项目已从 ${previous?.name ?? previousId} 切换为 ${label}`);
+      this.#systemMessage(conversationId, `工作目录已从 ${previous?.name ?? previousId} 切换为 ${label}`);
     }
-    this.#deps.logger.info({ conversationId, projectId: project.id }, 'project bound');
+    this.#deps.logger.info({ conversationId, workdirId: workdir.id }, 'workdir bound');
     this.#deps.onBindingChanged?.(conversationId, true);
-    return project;
+    return workdir;
   }
 
   unbind(conversationId: string): void {
     const conv = this.#deps.conversations.getOrThrow(conversationId);
-    if (conv.projectId === null) return;
+    if (conv.workdirId === null) return;
     this.#assertNoActiveRuns(conversationId);
-    const project = this.#deps.projects.get(conv.projectId);
-    this.#deps.conversations.setProject(conversationId, null);
-    this.#systemMessage(conversationId, `已取消项目绑定（${project?.name ?? conv.projectId}）`);
+    const workdir = this.#deps.workdirs.get(conv.workdirId);
+    this.#deps.conversations.setWorkdir(conversationId, null);
+    this.#systemMessage(conversationId, `已取消工作目录绑定（${workdir?.name ?? conv.workdirId}）`);
     // Open pages lose loopback access immediately (P11 setNetworkContext).
     this.#deps.onBindingChanged?.(conversationId, false);
   }
 
-  update(projectId: string, patch: Parameters<ProjectsService['update']>[1]): Project {
-    const project = this.#deps.projects.update(projectId, patch);
-    this.#deps.publish('project.updated', { project });
-    return project;
+  update(workdirId: string, patch: Parameters<WorkdirsService['update']>[1]): Workdir {
+    const workdir = this.#deps.workdirs.update(workdirId, patch);
+    this.#deps.publish('workdir.updated', { workdir });
+    return workdir;
   }
 
   /** Remove-from-recent cascade (docs/dev/03-data-model.md): records, checkpoints, bindings. */
-  async remove(projectId: string): Promise<void> {
-    const project = this.#deps.projects.getOrThrow(projectId);
-    const bound = this.#deps.projects.conversationsBound(projectId);
-    // 与绑定切换同一门闩：执行中的对话不能移除 project（BR-P04-002）——
+  async remove(workdirId: string): Promise<void> {
+    const workdir = this.#deps.workdirs.getOrThrow(workdirId);
+    const bound = this.#deps.workdirs.conversationsBound(workdirId);
+    // 与绑定切换同一门闩：执行中的对话不能移除 workdir（BR-P04-002）——
     // 否则进行中写入失去策略、影子仓被删导致 after 快照失败。
     for (const conversationId of bound) {
       this.#assertNoActiveRuns(conversationId);
     }
     for (const conversationId of bound) {
-      this.#deps.conversations.setProject(conversationId, null);
-      this.#systemMessage(conversationId, `项目 ${project.name} 已从最近列表移除，绑定已取消`);
+      this.#deps.conversations.setWorkdir(conversationId, null);
+      this.#systemMessage(conversationId, `工作目录 ${workdir.name} 已从最近列表移除，绑定已取消`);
       this.#deps.publish('conversation.updated', {
         conversation: this.#deps.conversations.getOrThrow(conversationId),
       });
     }
-    await this.#deps.checkpoints.forget(projectId);
-    this.#deps.projects.remove(projectId);
-    this.#deps.publish('project.removed', { id: projectId });
-    this.#deps.logger.info({ projectId }, 'project removed');
+    await this.#deps.checkpoints.forget(workdirId);
+    this.#deps.workdirs.remove(workdirId);
+    this.#deps.publish('workdir.removed', { id: workdirId });
+    this.#deps.logger.info({ workdirId }, 'workdir removed');
   }
 
   /**
-   * User force-revoke of the lease held on the conversation's project. The
+   * User force-revoke of the lease held on the conversation's workdir. The
    * holder's lease window is closed first so a later settle of the revoked
    * run cannot re-take a pinned lease (BR-P04-001 / design 30 §5.1).
    */
   async revokeLease(conversationId: string): Promise<boolean> {
-    const project = this.boundProject(conversationId);
-    if (project === null) return false;
-    const holder = this.#deps.leases.holderOf(project.path);
+    const workdir = this.boundWorkdir(conversationId);
+    if (workdir === null) return false;
+    const holder = this.#deps.leases.holderOf(workdir.path);
     if (holder === null) return false;
     // A pinned holder (a write task) loses its write permission for good
     // (design 30 §5.1): its next write fails instead of re-taking the lease
@@ -445,11 +445,11 @@ export class ProjectRuntime {
 
   /** Run-change record for context rendering; null when absent. */
   changesOf(runId: string) {
-    return this.#deps.projects.getChange(runId);
+    return this.#deps.workdirs.getChange(runId);
   }
 
-  async diff(runId: string): Promise<{ change: ReturnType<ProjectsService['getChange']>; diffText: string }> {
-    const change = this.#deps.projects.getChange(runId);
+  async diff(runId: string): Promise<{ change: ReturnType<WorkdirsService['getChange']>; diffText: string }> {
+    const change = this.#deps.workdirs.getChange(runId);
     if (change === null) return { change: null, diffText: '' };
     if (change.revertedAt !== null || change.afterOid === null) {
       return { change, diffText: '' };
@@ -461,7 +461,7 @@ export class ProjectRuntime {
       for (const file of change.files) {
         parts.push(
           await this.#deps.checkpoints.diffText(
-            change.projectId,
+            change.workdirId,
             file.beforeOid ?? change.beforeOid,
             file.afterOid ?? change.afterOid,
             file.path,
@@ -472,24 +472,24 @@ export class ProjectRuntime {
     }
     return {
       change,
-      diffText: await this.#deps.checkpoints.diffText(change.projectId, change.beforeOid, change.afterOid),
+      diffText: await this.#deps.checkpoints.diffText(change.workdirId, change.beforeOid, change.afterOid),
     };
   }
 
   async revert(runId: string, force: boolean): Promise<{ ok: boolean; conflicts: string[]; reverted: string[] }> {
-    const change = this.#deps.projects.getChange(runId);
+    const change = this.#deps.workdirs.getChange(runId);
     if (change === null || change.afterOid === null) {
       throw new AppError('NOT_FOUND', '该执行没有可回退的改动记录');
     }
     if (change.revertedAt !== null) {
       throw new AppError('INVALID_INPUT', '该执行的改动已经回退过');
     }
-    const project = this.#deps.projects.getOrThrow(change.projectId);
-    if (!existsSync(project.path)) {
-      throw new AppError('PROJECT_MISSING', `项目目录不存在：${project.path}`);
+    const workdir = this.#deps.workdirs.getOrThrow(change.workdirId);
+    if (!existsSync(workdir.path)) {
+      throw new AppError('WORKDIR_MISSING', `工作目录不存在：${workdir.path}`);
     }
 
-    const conflicts = await this.#revertConflicts(project.id, change.files, change.afterOid);
+    const conflicts = await this.#revertConflicts(workdir.id, change.files, change.afterOid);
     // Changed by someone else between two of this run's lease windows:
     // restoring the run's `before` would undo theirs too.
     for (const file of change.files) {
@@ -499,28 +499,28 @@ export class ProjectRuntime {
       return { ok: false, conflicts, reverted: [] };
     }
 
-    // Reverting mutates the project: it needs the write lease.
+    // Reverting mutates the workdir: it needs the write lease.
     const identity: RunIdentity = {
       runId: `revert_${newId('run').slice(4)}`,
       botId: null,
       conversationId: change.conversationId,
       loopType: 'host',
     };
-    const holder = this.#deps.leases.holderOf(project.path);
+    const holder = this.#deps.leases.holderOf(workdir.path);
     if (holder !== null) {
-      throw new AppError('LEASE_HELD', 'Bot 正在修改该项目，请先取消或等待其完成');
+      throw new AppError('LEASE_HELD', 'Bot 正在修改该工作目录，请先取消或等待其完成');
     }
-    await this.#deps.leases.acquire(identity, project.path);
+    await this.#deps.leases.acquire(identity, workdir.path);
 
     const reverted: string[] = [];
     try {
       for (const file of change.files) {
-        const absolute = path.join(project.path, file.path);
+        const absolute = path.join(workdir.path, file.path);
         if (file.change === 'added') {
           rmSync(absolute, { force: true });
         } else {
           const content = await this.#deps.checkpoints.readFileAt(
-            project.id,
+            workdir.id,
             file.beforeOid ?? change.beforeOid,
             file.path,
           );
@@ -534,11 +534,11 @@ export class ProjectRuntime {
         reverted.push(file.path);
       }
     } finally {
-      const after = await this.#deps.checkpoints.snapshot(project);
+      const after = await this.#deps.checkpoints.snapshot(workdir);
       this.#deps.leases.release(identity.runId);
-      this.#deps.projects.recordChange({
+      this.#deps.workdirs.recordChange({
         runId: identity.runId,
-        projectId: project.id,
+        workdirId: workdir.id,
         conversationId: change.conversationId,
         beforeOid: change.afterOid,
         afterOid: after.oid,
@@ -548,7 +548,7 @@ export class ProjectRuntime {
         })),
       });
     }
-    this.#deps.projects.markReverted(runId);
+    this.#deps.workdirs.markReverted(runId);
     if (change.conversationId !== null) {
       this.#systemMessage(
         change.conversationId,
@@ -559,16 +559,16 @@ export class ProjectRuntime {
   }
 
   async #revertConflicts(
-    projectId: string,
+    workdirId: string,
     files: RunChangeFile[],
     afterOid: string,
   ): Promise<string[]> {
-    const projectPath = this.#deps.projects.getOrThrow(projectId).path;
+    const workdirPath = this.#deps.workdirs.getOrThrow(workdirId).path;
     const conflicts: string[] = [];
     for (const file of files) {
-      const absolute = path.join(projectPath, file.path);
+      const absolute = path.join(workdirPath, file.path);
       const current = existsSync(absolute) ? readFileSync(absolute) : null;
-      const after = await this.#deps.checkpoints.readFileAt(projectId, file.afterOid ?? afterOid, file.path);
+      const after = await this.#deps.checkpoints.readFileAt(workdirId, file.afterOid ?? afterOid, file.path);
       if (!((current === null && after === null) || (current !== null && after !== null && current.equals(after)))) {
         conflicts.push(file.path);
       }
@@ -583,12 +583,12 @@ export class ProjectRuntime {
     input: { operation: GitRemoteOperation; args: string[]; reason: string },
     options: { signal?: AbortSignal; requestApproval: (payload: Record<string, unknown>) => Promise<'approved' | 'denied' | 'cancelled'> },
   ): Promise<{ exitCode: number | null; output: string }> {
-    const project = this.boundProject(identity.conversationId);
-    if (project === null) {
-      throw new AppError('INVALID_INPUT', '当前对话未绑定 project，无法执行 git 远程操作');
+    const workdir = this.boundWorkdir(identity.conversationId);
+    if (workdir === null) {
+      throw new AppError('INVALID_INPUT', '当前对话未绑定 workdir，无法执行 git 远程操作');
     }
-    if (project.status === 'missing') {
-      throw new AppError('PROJECT_MISSING', `项目目录不存在：${project.path}`);
+    if (workdir.status === 'missing') {
+      throw new AppError('WORKDIR_MISSING', `工作目录不存在：${workdir.path}`);
     }
     if (!gitCliAvailable()) {
       throw new AppError('GIT_CLI_MISSING', '系统未安装 git 命令行，无法执行远程操作');
@@ -596,14 +596,14 @@ export class ProjectRuntime {
     const outcome = await options.requestApproval({
       operation: input.operation,
       args: input.args,
-      cwd: project.path,
+      cwd: workdir.path,
       reason: input.reason,
     });
     if (outcome !== 'approved') {
       throw new AppError('APPROVAL_DENIED', '用户未批准该 git 远程操作');
     }
     const result = await runGitRemote({
-      cwd: project.path,
+      cwd: workdir.path,
       operation: input.operation,
       args: input.args,
       signal: options.signal,
@@ -613,23 +613,23 @@ export class ProjectRuntime {
 
   // --- prompt --------------------------------------------------------------------
 
-  /** `<project>` system prompt section (null when nothing bound). */
+  /** `<workdir>` system prompt section (null when nothing bound). */
   async promptSection(
     conversationId: string | null,
     options: { skipGuideFiles?: readonly string[] } = {},
   ): Promise<string | null> {
-    const project = this.boundProject(conversationId);
-    if (project === null || project.status !== 'available') return null;
+    const workdir = this.boundWorkdir(conversationId);
+    if (workdir === null || workdir.status !== 'available') return null;
     // Ignore verdicts come from the shadow repo (libgit2, exact semantics);
     // it is created lazily here — it lives in the data directory only.
-    const repo = await this.#deps.checkpoints.ensureOpen(project);
+    const repo = await this.#deps.checkpoints.ensureOpen(workdir);
     const isIgnored =
-      repo !== null && project.path === (repo.workdir()?.replace(/\/+$/, '') ?? project.path)
+      repo !== null && workdir.path === (repo.workdir()?.replace(/\/+$/, '') ?? workdir.path)
         ? (relative: string) => repo.isPathIgnored(relative)
         : null;
-    const section = await buildProjectSection({
-      path: project.path,
-      budget: PROJECT_SECTION_BUDGET,
+    const section = await buildWorkdirSection({
+      path: workdir.path,
+      budget: WORKDIR_SECTION_BUDGET,
       isIgnored,
       ...(options.skipGuideFiles !== undefined ? { skipGuideFiles: options.skipGuideFiles } : {}),
     });
@@ -649,13 +649,13 @@ export class ProjectRuntime {
   // --- internals -----------------------------------------------------------------
 
   #leaseTarget(identity: RunIdentity, resolvedPath: string): LeaseTarget | null {
-    const project = this.boundProject(identity.conversationId);
+    const workdir = this.boundWorkdir(identity.conversationId);
     if (
-      project !== null &&
-      project.status === 'available' &&
-      isInsidePath(resolvedPath, project.path)
+      workdir !== null &&
+      workdir.status === 'available' &&
+      isInsidePath(resolvedPath, workdir.path)
     ) {
-      return { key: project.path, project };
+      return { key: workdir.path, workdir };
     }
     // D75 §5.2: the identity's own workspace (realpath-normalized on both
     // sides; the data home is canonical already, the workspace may not exist).
@@ -664,22 +664,22 @@ export class ProjectRuntime {
         workspacePathFor(this.#deps.paths, identity.botId, identity.conversationId),
       );
       if (isInsidePath(canonicalPath(resolvedPath), workspace)) {
-        return { key: workspaceLeaseKey(identity.botId, identity.conversationId), project: null };
+        return { key: workspaceLeaseKey(identity.botId, identity.conversationId), workdir: null };
       }
     }
-    // Outside the project: the longest covering write grant defines the key.
+    // Outside the workdir: the longest covering write grant defines the key.
     const grants = this.#deps.grants
       .listEffective(identity)
       .filter((g) => g.access === 'write' && isInsidePath(resolvedPath, g.path))
       .sort((a, b) => b.path.length - a.path.length);
     const grant = grants[0];
-    return grant !== undefined ? { key: grant.path, project: null } : null;
+    return grant !== undefined ? { key: grant.path, workdir: null } : null;
   }
 
   #assertNoActiveRuns(conversationId: string): void {
     // P07 起：对话 run 之外还有后台反思 run（轻量模型、无工具、不触碰
-    // project）——只有对话轮与任务（D75，任务可能正写 project）应阻止切换 /
-    // 移除 project。
+    // workdir）——只有对话轮与任务（D75，任务可能正写 workdir）应阻止切换 /
+    // 移除 workdir。
     const active = this.#deps.runs
       .listActiveByConversation(conversationId)
       .filter(
@@ -687,8 +687,8 @@ export class ProjectRuntime {
       );
     if (active.length > 0) {
       throw new AppError(
-        'PROJECT_SWITCH_BLOCKED',
-        '有 Bot 正在执行，无法切换 project；请等待执行结束或先取消',
+        'WORKDIR_SWITCH_BLOCKED',
+        '有 Bot 正在执行，无法切换 workdir；请等待执行结束或先取消',
       );
     }
   }
@@ -698,7 +698,7 @@ export class ProjectRuntime {
       conversationId,
       senderType: 'system',
       kind: 'system_event',
-      event: 'project',
+      event: 'workdir',
       text,
     });
     this.#deps.publish('message.created', { conversationId, message });
@@ -717,18 +717,18 @@ export class ProjectRuntime {
 /**
  * Protect-rule matching (docs/dev/phases/P04-project.md): a rule without `/`
  * matches the file name at any depth (`*.pem`); a rule with `/` is anchored
- * to the project root and also covers everything beneath a matching
+ * to the workdir root and also covers everything beneath a matching
  * directory (`.git/hooks`).
  */
 export function matchProtectRule(
-  rules: Project['protectRules'],
-  projectPath: string,
+  rules: Workdir['protectRules'],
+  workdirPath: string,
   resolvedPath: string,
   mode: 'read' | 'write',
 ): boolean {
   const patterns = mode === 'read' ? rules.denyRead : rules.denyWrite;
   if (patterns.length === 0) return false;
-  const rel = path.relative(projectPath, resolvedPath).replaceAll('\\', '/');
+  const rel = path.relative(workdirPath, resolvedPath).replaceAll('\\', '/');
   if (rel.length === 0 || rel.startsWith('..')) return false;
   const name = rel.split('/').pop() ?? rel;
   for (const pattern of patterns) {

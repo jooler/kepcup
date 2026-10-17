@@ -29,7 +29,7 @@
     current !== null && permissions.sandbox !== null && !permissions.sandbox.available,
   );
   const isGroup = $derived(current?.conversation.type === 'group');
-  // 对话内群创建进行中（19/D60）：输入禁用（project 选择器在右栏，由 GroupInfo
+  // 对话内群创建进行中（19/D60）：输入禁用（workdir 选择器在右栏，由 GroupInfo
   // 在创建期隐藏），标题用占位名。
   const creating = $derived(current?.conversation.setupState === 'creating');
   // 访谈目录闸门（19/D59）：目录卡未答期间输入禁用——回答只能经卡片提交。

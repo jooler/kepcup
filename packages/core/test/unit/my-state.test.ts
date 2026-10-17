@@ -21,7 +21,7 @@ function conversation(overrides: Partial<Conversation>): Conversation {
     type: 'direct',
     title: null,
     directBotId: 'bot_1',
-    projectId: null,
+    workdirId: null,
     readOnly: false,
     summary: null,
     summaryUptoSeq: 0,

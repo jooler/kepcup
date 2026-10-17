@@ -226,14 +226,14 @@ class ShellState {
   }
 
   /**
-   * 请求打开当前会话所绑项目的「项目设置」对话框（可带锚点）：ProjectSelector（Bot 配置页签 /
-   * 群信息里）消费并复位；会话还没绑项目时改开项目选择框。
+   * 请求打开当前会话所绑工作目录的「工作目录设置」对话框（可带锚点）：WorkdirSelector（Bot 配置页签 /
+   * 群信息里）消费并复位；会话还没绑工作目录时改开选择框。
    */
-  projectSettingsRequest = $state<{ anchor: string | null } | null>(null);
+  workdirSettingsRequest = $state<{ anchor: string | null } | null>(null);
 
-  openProjectSettings(anchor?: string): void {
+  openWorkdirSettings(anchor?: string): void {
     this.openBotPanel('profile');
-    this.projectSettingsRequest = { anchor: anchor ?? null };
+    this.workdirSettingsRequest = { anchor: anchor ?? null };
   }
 }
 

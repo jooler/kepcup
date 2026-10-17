@@ -28,7 +28,7 @@ const api = {
       /** P13 任务 4: false only via the e2e seam; packaged builds are always true. */
       onboardingVisible: boolean;
     }> => ipcRenderer.invoke('platform:info'),
-    /** System directory picker (project selector); null when cancelled. */
+    /** System directory picker (workdir selector); null when cancelled. */
     selectDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectDirectory'),
     /** System file picker (D73 P2 MCPB install); null when cancelled. */
     selectFile: (extensions: string[]): Promise<string | null> =>

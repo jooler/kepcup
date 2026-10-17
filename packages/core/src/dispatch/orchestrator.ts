@@ -137,7 +137,7 @@ import type { SettingsService } from '../domain/settings.js';
 import type { SecretsService } from '../domain/secrets.js';
 import type { ApprovalsService } from '../permissions/approvals.js';
 import type { GrantsService } from '../permissions/grants.js';
-import type { ProjectRuntime } from '../project/service.js';
+import type { WorkdirRuntime } from '../workdir/service.js';
 import type { SandboxBackend } from '../sandbox/types.js';
 import type { CoreEventsMap } from '../start-types.js';
 import {
@@ -366,7 +366,7 @@ export interface OrchestratorDeps {
   secrets: SecretsService;
   approvals: ApprovalsService;
   grants: GrantsService;
-  projects: ProjectRuntime;
+  workdirs: WorkdirRuntime;
   sandbox: SandboxBackend;
   clock: Clock;
   logger: CoreLogger;
@@ -728,16 +728,16 @@ export class Orchestrator {
         });
       },
       resolveCwd: (botId, conversationId, requested) => {
-        const project = deps.projects.boundProject(conversationId);
-        const available = project !== null && project.status === 'available';
-        if (requested === 'project') {
-          if (!available) throw new AppError('INVALID_INPUT', '本对话没有可用的 project');
-          return project.path;
+        const workdir = deps.workdirs.boundWorkdir(conversationId);
+        const available = workdir !== null && workdir.status === 'available';
+        if (requested === 'workdir') {
+          if (!available) throw new AppError('INVALID_INPUT', '本对话没有可用的 workdir');
+          return workdir.path;
         }
         if (requested === 'workspace' || !available) {
           return workspacePathFor(deps.paths, botId, conversationId);
         }
-        return project.path;
+        return workdir.path;
       },
       onSettled: (run, executorActive) => {
         deps.grants.expireForRun(run.id);
@@ -746,7 +746,7 @@ export class Orchestrator {
         // aborted tool may still be writing); it releases the lease itself.
         if (!executorActive) {
           this.#fsState.release(run.id);
-          void deps.projects.releaseRun(run.id).catch(() => {});
+          void deps.workdirs.releaseRun(run.id).catch(() => {});
         }
         deps.publish('run.status', { run });
         if (run.conversationId !== null) this.#publishConversation(run.conversationId);
@@ -762,7 +762,7 @@ export class Orchestrator {
       },
       releaseExecution: (runId) => {
         this.#fsState.release(runId);
-        void deps.projects.releaseRun(runId).catch(() => {});
+        void deps.workdirs.releaseRun(runId).catch(() => {});
       },
       // W3 interrupt (permission revoked): the task's and its sub runs' cards go.
       cancelPendingApprovals: (runIds) =>
@@ -1212,7 +1212,7 @@ export class Orchestrator {
   #setupPathGateClosed(conversationId: string, botId: string): boolean {
     const bot = this.#deps.bots.get(botId);
     if (bot?.setupState !== 'interviewing') return false;
-    // 管家访谈（D70）不绑定 project：没有目录卡，首答直接投递。
+    // 管家访谈（D70）不绑定 workdir：没有目录卡，首答直接投递。
     if (bot.systemRole === 'butler') return false;
     // 访谈尚未开始（interview.start 未跑，如创建后立刻打字的极端竞态）：
     // 无首问可缓冲，不设闸。
@@ -1240,7 +1240,7 @@ export class Orchestrator {
   }
 
   /**
-   * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 project（复用手动
+   * 访谈目录卡作答（docs/design/19 D59）：path 非空 → 绑定 workdir（复用手动
    * 绑定的系统消息通路）；随后落 setupAnswer 用户消息（选择或跳过），并把
    * 首问卡之后缓冲的全部用户消息一次性投递——首个响应 run 由此开始。
    */
@@ -1272,7 +1272,7 @@ export class Orchestrator {
       throw new AppError('INVALID_INPUT', '目录问题已作答，不能重复提交');
     }
     if (path !== null) {
-      this.#deps.projects.select(conversationId, path);
+      this.#deps.workdirs.select(conversationId, path);
     }
     const message = this.#deps.messages.append({
       conversationId,
@@ -1332,7 +1332,7 @@ export class Orchestrator {
   /**
    * 群创建问答推进：每步校验「正是当前待答步骤」（幂等，重复提交拒绝）、
    * 落 setupAnswer 用户消息（不渲染气泡，卡片显示已答态）、发下一问；成员
-   * 步作答即写成员行，project 步绑定后 finalize（名称/定位一次性生效）。
+   * 步作答即写成员行，workdir 步绑定后 finalize（名称/定位一次性生效）。
    * 全程不触发任何 dispatch。
    */
   answerGroupSetup(
@@ -1340,7 +1340,7 @@ export class Orchestrator {
       | { conversationId: string; step: 'title'; text: string }
       | { conversationId: string; step: 'purpose'; text: string }
       | { conversationId: string; step: 'members'; botIds: string[] }
-      | { conversationId: string; step: 'project'; path: string | null },
+      | { conversationId: string; step: 'workdir'; path: string | null },
   ): { conversation: Conversation; done: boolean } {
     const conversationId = input.conversationId;
     const conv = this.#deps.conversations.getOrThrow(conversationId);
@@ -1360,7 +1360,7 @@ export class Orchestrator {
           return input.text.trim();
         case 'members':
           return input.botIds.map((id) => this.#deps.bots.get(id)?.name ?? id).join('、');
-        case 'project':
+        case 'workdir':
           return input.path ?? SETUP_PATH_SKIP_TEXT;
       }
     })();
@@ -1372,8 +1372,8 @@ export class Orchestrator {
     if (input.step === 'members') {
       this.#deps.groups.addMembers(conversationId, input.botIds);
     }
-    if (input.step === 'project' && input.path !== null) {
-      this.#deps.projects.select(conversationId, input.path);
+    if (input.step === 'workdir' && input.path !== null) {
+      this.#deps.workdirs.select(conversationId, input.path);
     }
     const message = this.#deps.messages.append({
       conversationId,
@@ -1503,7 +1503,7 @@ export class Orchestrator {
       this.#deps.approvals.cancelPendingForRun(runId);
       // Checkpoint after-snapshot + lease release; the run's own unwind is
       // idempotent on both.
-      void this.#deps.projects.releaseRun(runId).catch(() => {});
+      void this.#deps.workdirs.releaseRun(runId).catch(() => {});
       return run;
     }
     // D66：子 run 不在 #activeRuns，经父 run 的门面中止；它自己的 unwind
@@ -1515,7 +1515,7 @@ export class Orchestrator {
         this.#subagentFacades.get(run.parentRunId)?.abortSubRun(runId, 'user cancelled');
       }
       this.#deps.approvals.cancelPendingForRun(runId);
-      void this.#deps.projects.releaseRun(runId).catch(() => {});
+      void this.#deps.workdirs.releaseRun(runId).catch(() => {});
       return this.#deps.runs.get(runId) ?? run;
     }
     // D87：制作 loop 的阶段 run 由制作服务持有：取消它 = 中止整次制作，阶段 run 由自己的
@@ -1532,7 +1532,7 @@ export class Orchestrator {
     // Queued but not started: cancel directly.
     this.#cancelledBeforeStart.add(runId);
     this.#deps.approvals.cancelPendingForRun(runId);
-    void this.#deps.projects.releaseRun(runId).catch(() => {});
+    void this.#deps.workdirs.releaseRun(runId).catch(() => {});
     return this.#settleRun(runId, 'cancelled', null);
   }
 
@@ -2787,7 +2787,7 @@ export class Orchestrator {
    * D72 外部 Agent run 的准备（design 28 §4–§5）：按能力包过滤宿主工具，生成
    * 会话级提示词（ACP 版平台规则 + `<tool_policy>` + 身份 / 人设 / 对话信息，
    * 工具名经 Provider 映射）与 run 级动态段（只读上下文与能力包解耦，照常
-   * 注入；`<project>` 跳过 Agent 自己会读的约定文件）。
+   * 注入；`<workdir>` 跳过 Agent 自己会读的约定文件）。
    */
   async #agentRunSetup(input: {
     bot: Bot;
@@ -2796,7 +2796,7 @@ export class Orchestrator {
     identity: RunIdentity;
     responseTools: ToolDefinition[];
     workspacePath: string;
-    hasProject: boolean;
+    hasWorkdir: boolean;
     memorySections: {
       userProfile?: string;
       myState?: string;
@@ -2960,8 +2960,8 @@ export class Orchestrator {
         hostToolOf,
       );
     const access = await this.#accessPromptInfo(input.identity);
-    const project = input.hasProject
-      ? await this.#deps.projects.promptSection(conversation.id, {
+    const workdir = input.hasWorkdir
+      ? await this.#deps.workdirs.promptSection(conversation.id, {
           skipGuideFiles: provider.agentSideConfigFiles,
         })
       : null;
@@ -2996,7 +2996,7 @@ export class Orchestrator {
           timeZone: this.#deps.timeZone,
           now: new Date(this.#deps.clock.now()),
           permission,
-          ...(project !== null ? { project } : {}),
+          ...(workdir !== null ? { workdir } : {}),
           workspace: {
             path: input.workspacePath,
             entries: this.#deps.gateway.workspaceTopLevel(input.workspacePath),
@@ -3165,32 +3165,32 @@ export class Orchestrator {
   }
 
   /**
-   * D72 P3 project 闸门（design 28 §6）：
-   * 1. Agent 侧配置确认——project 根下有 Provider 声明的、Agent 自己会读且
-   *    无法关闭的配置（AGENTS.md、.codex/ …）时，首次在此 project 运行前弹
+   * D72 P3 workdir 闸门（design 28 §6）：
+   * 1. Agent 侧配置确认——workdir 根下有 Provider 声明的、Agent 自己会读且
+   *    无法关闭的配置（AGENTS.md、.codex/ …）时，首次在此 workdir 运行前弹
    *    `agent_tool`（子类型 config）卡；批准记住到对话（同 Bot、同 Agent、
-   *    同 project，文件集合未增加即不再问）；
-   * 2. 显式租约——档位可写时 run 开工前取 project 写入租约（排队时 run 进
+   *    同 workdir，文件集合未增加即不再问）；
+   * 2. 显式租约——档位可写时 run 开工前取 workdir 写入租约（排队时 run 进
    *    waiting_lease），整 run 持有，结算照常 releaseRun（前后快照 → 改动卡 /
    *    回退可用）。
    * 返回 'cancelled' 时 run 已被 cancelRun 结算。
    */
-  async #agentProjectGate(input: {
+  async #agentWorkdirGate(input: {
     runId: string;
     identity: RunIdentity;
     botId: string;
     conversationId: string;
     agentId: string;
     agentName: string;
-    projectPath: string;
+    workdirPath: string;
     configFiles: readonly string[];
     writable: boolean;
   }): Promise<'ok' | 'denied' | 'cancelled'> {
     // Agents look for their config from the session directory up to the git
     // worktree root (OpenCode, Codex AGENTS.md …, P5 审查 H1): so does the gate.
-    const searchRoot = gitRootAbove(input.projectPath) ?? input.projectPath;
+    const searchRoot = gitRootAbove(input.workdirPath) ?? input.workdirPath;
     const found: string[] = [];
-    for (const dir of directoryChain(searchRoot, input.projectPath)) {
+    for (const dir of directoryChain(searchRoot, input.workdirPath)) {
       for (const name of input.configFiles) {
         const bare = name.replace(/[\\/]+$/, '');
         if (!existsSync(nodePath.join(dir, bare))) continue;
@@ -3212,7 +3212,7 @@ export class Orchestrator {
           return (
             payload.success &&
             payload.data.agentId === input.agentId &&
-            payload.data.projectPath === input.projectPath &&
+            payload.data.workdirPath === input.workdirPath &&
             payload.data.configHash === configHash
           );
         });
@@ -3220,22 +3220,22 @@ export class Orchestrator {
         const payload: AgentToolApprovalPayload = {
           agentId: input.agentId,
           agentName: input.agentName,
-          title: '加载项目内的智能体配置',
+          title: '加载工作目录内的智能体配置',
           kind: 'config',
           toolKind: '',
           locations:
-            searchRoot === input.projectPath
+            searchRoot === input.workdirPath
               ? found
               : found.map((name) => nodePath.join(searchRoot, name)),
-          cwd: input.projectPath,
+          cwd: input.workdirPath,
           options: [],
           durations: ['conversation'],
           reason:
             '这些文件由智能体自己读取（可能包含指令、钩子或权限规则，可能放宽智能体的权限），KepCup 无法关闭' +
-            (searchRoot === input.projectPath ? '' : '；含项目上层直到 git 根目录中的同类文件'),
+            (searchRoot === input.workdirPath ? '' : '；含工作目录上层直到 git 根目录中的同类文件'),
           sensitive: false,
           exemptDirs: [],
-          projectPath: input.projectPath,
+          workdirPath: input.workdirPath,
           configHash,
         };
         const outcome = await this.#deps.approvals.request(input.identity, 'agent_tool', payload);
@@ -3246,8 +3246,8 @@ export class Orchestrator {
     }
     if (!input.writable) return 'ok';
     try {
-      await this.#deps.projects.ensureWriteLease(input.identity, input.projectPath, {
-        reason: '外部智能体在 project 内执行（整 run 持有写入租约）',
+      await this.#deps.workdirs.ensureWriteLease(input.identity, input.workdirPath, {
+        reason: '外部智能体在 workdir 内执行（整 run 持有写入租约）',
         // No other lease target may replace it during the run (review M6).
         pin: true,
       });
@@ -3256,7 +3256,7 @@ export class Orchestrator {
       throw error;
     }
     if (this.#cancelledBeforeStart.delete(input.runId)) {
-      await this.#deps.projects.releaseRun(input.runId).catch(() => {});
+      await this.#deps.workdirs.releaseRun(input.runId).catch(() => {});
       return 'cancelled';
     }
     return 'ok';
@@ -3347,7 +3347,7 @@ export class Orchestrator {
         const root = task.taskCwd ?? workspacePathFor(this.#deps.paths, botId, conversationId);
         control.waiting('等写入租约');
         try {
-          await this.#deps.projects.ensureWriteLease(
+          await this.#deps.workdirs.ensureWriteLease(
             { runId: task.id, botId, conversationId, loopType: 'task' },
             root,
             { pin: true, signal: control.signal, reason: `任务「${brief.title}」` },
@@ -3355,7 +3355,7 @@ export class Orchestrator {
         } catch (error) {
           // Cancelled while waiting: the host already settled the task.
           if (control.signal.aborted) return;
-          // Project roots and the bot's own workspace both have lease targets
+          // Workdir roots and the bot's own workspace both have lease targets
           // (design 30 §5.2); anything else must fail rather than run unleased.
           throw error;
         }
@@ -3367,7 +3367,7 @@ export class Orchestrator {
       // write lease and the task's place now, not when the job would start.
       const onAbort = (): void => {
         if (started || !this.#deps.scheduler.cancelQueued(key)) return;
-        void this.#deps.projects
+        void this.#deps.workdirs
           .releaseRun(task.id)
           .catch(() => {})
           .finally(() => control.finish());
@@ -3408,7 +3408,7 @@ export class Orchestrator {
     } finally {
       if (!submitted) {
         // Lease taken before a stop / failure: release it with the slot.
-        await this.#deps.projects.releaseRun(task.id).catch(() => {});
+        await this.#deps.workdirs.releaseRun(task.id).catch(() => {});
         control.finish();
       }
     }
@@ -3620,7 +3620,7 @@ export class Orchestrator {
 
       const workspacePath = workspacePathFor(this.#deps.paths, batch.botId, batch.conversationId);
       this.#deps.gateway.ensureWorkspace(identity);
-      const project = this.#deps.projects.boundProject(batch.conversationId);
+      const workdir = this.#deps.workdirs.boundWorkdir(batch.conversationId);
       const network = {
         mode: bot.profile.runtime.network_policy,
         allowDomains: bot.profile.runtime.network_allowlist,
@@ -3859,8 +3859,8 @@ export class Orchestrator {
         renderOptions,
         gateway: this.#deps.gateway,
         workspacePath,
-        projectPath: project !== null && project.status === 'available' ? project.path : null,
-        projects: this.#deps.projects,
+        workdirPath: workdir !== null && workdir.status === 'available' ? workdir.path : null,
+        workdirs: this.#deps.workdirs,
         network,
         fsState: this.#fsState,
         environment: environmentFacade,
@@ -3988,8 +3988,8 @@ export class Orchestrator {
                   deps: {
                     gateway: this.#deps.gateway,
                     workspacePath,
-                    projectPath:
-                      project !== null && project.status === 'available' ? project.path : null,
+                    workdirPath:
+                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
                     network,
                     secrets: this.#deps.secrets,
                     fsState: this.#fsState,
@@ -4028,8 +4028,8 @@ export class Orchestrator {
                   buildSubagentSystemPrompt({
                     botName: bot.profile.identity.name || bot.name,
                     workspacePath,
-                    projectPath:
-                      project !== null && project.status === 'available' ? project.path : null,
+                    workdirPath:
+                      workdir !== null && workdir.status === 'available' ? workdir.path : null,
                     timeZone: this.#deps.timeZone,
                     now: new Date(this.#deps.clock.now()),
                   }),
@@ -4223,15 +4223,15 @@ export class Orchestrator {
       // D72 外部 Agent Bot（design 28 §4–§5）：能力包决定注入哪些宿主工具（经
       // 宿主 MCP 桥）；提示词拆成会话级（ACP 版平台规则 + <tool_policy> + 身份 /
       // 人设 / 对话信息）、run 级动态段与对话段。内置引擎不受影响。
-      // The agent's cwd: the bound project, else the workspace; a D75 task
+      // The agent's cwd: the bound workdir, else the workspace; a D75 task
       // works in its resolved cwd (§3.4 task_cwd).
-      const projectPath = project !== null && project.status === 'available' ? project.path : null;
+      const workdirPath = workdir !== null && workdir.status === 'available' ? workdir.path : null;
       // A task without a recorded cwd works in the workspace — the root
-      // #startTask leased — never in an unleased project (审查 L6).
+      // #startTask leased — never in an unleased workdir (审查 L6).
       const agentCwd =
         exec.kind === 'task'
           ? (exec.task.taskCwd ?? workspacePath)
-          : (projectPath ?? workspacePath);
+          : (workdirPath ?? workspacePath);
       const agentRun =
         agentId.length > 0
           ? await this.#agentRunSetup({
@@ -4241,9 +4241,9 @@ export class Orchestrator {
               identity,
               responseTools,
               workspacePath,
-              // The <project> section only when the agent works in it (a
+              // The <workdir> section only when the agent works in it (a
               // workspace-cwd task does not, 审查 L10).
-              hasProject: projectPath !== null && agentCwd === projectPath,
+              hasWorkdir: workdirPath !== null && agentCwd === workdirPath,
               memorySections,
               wikiTopics: wikiTopicsSection,
               skills: skillsSection,
@@ -4272,20 +4272,20 @@ export class Orchestrator {
                 : {}),
             })
           : null;
-      // D72 P3（design 28 §6）：project 内有 Agent 自己会读、无法关闭的配置
-      // 文件时，首次在此 project 运行前确认（记住到对话）；project 绑定且档位
+      // D72 P3（design 28 §6）：workdir 内有 Agent 自己会读、无法关闭的配置
+      // 文件时，首次在此 workdir 运行前确认（记住到对话）；workdir 绑定且档位
       // 可写时开工前显式取写入租约、整 run 持有（结算照常 releaseRun）。
-      // A D75 task runs there only when its cwd is the project; a write
+      // A D75 task runs there only when its cwd is the workdir; a write
       // task already holds its (pinned) write lease from #startTask (§5.1).
-      if (agentRun !== null && projectPath !== null && agentCwd === projectPath) {
-        const gate = await this.#agentProjectGate({
+      if (agentRun !== null && workdirPath !== null && agentCwd === workdirPath) {
+        const gate = await this.#agentWorkdirGate({
           runId,
           identity,
           botId: batch.botId,
           conversationId: batch.conversationId,
           agentId,
           agentName: agentRun.agentName,
-          projectPath,
+          workdirPath,
           configFiles: agentRun.agentSideConfigFiles,
           writable: !isTask && agentRun.permission !== 'read_only',
         });
@@ -4293,8 +4293,8 @@ export class Orchestrator {
           // Cancelled while waiting: cancelRun already settled a turn;
           // a stopped task is settled by its host (this settle is a no-op then).
           if (gate === 'denied') {
-            await this.#deps.projects.releaseRun(runId).catch(() => {});
-            settle('failed', '用户未确认在此项目中加载智能体自身的配置文件，本次未执行');
+            await this.#deps.workdirs.releaseRun(runId).catch(() => {});
+            settle('failed', '用户未确认在此工作目录中加载智能体自身的配置文件，本次未执行');
           } else if (isTask) {
             settle('cancelled', null);
           }
@@ -4373,7 +4373,7 @@ export class Orchestrator {
             timeZone: this.#deps.timeZone,
             now: new Date(this.#deps.clock.now()),
             ...(conv.type === 'group' ? { members: this.#memberCards(conv.id) } : {}),
-            project: (await this.#deps.projects.promptSection(batch.conversationId)) ?? undefined,
+            workdir: (await this.#deps.workdirs.promptSection(batch.conversationId)) ?? undefined,
             workspace: {
               path: workspacePath,
               entries: this.#deps.gateway.workspaceTopLevel(workspacePath),
@@ -4540,7 +4540,7 @@ export class Orchestrator {
       // Close the lease window before settling: the after-snapshot writes the
       // changes summary card, which must land after the bot's final message.
       try {
-        await this.#deps.projects.releaseRun(runId);
+        await this.#deps.workdirs.releaseRun(runId);
       } catch (error) {
         this.#deps.logger.warn(
           { runId, error: error instanceof Error ? error.message : String(error) },
@@ -4605,7 +4605,7 @@ export class Orchestrator {
       }
       // No-op when the run got past handle.done (closed there).
       await this.#closeSubagents(runId).catch(() => {});
-      await this.#deps.projects.releaseRun(runId).catch(() => {});
+      await this.#deps.workdirs.releaseRun(runId).catch(() => {});
       this.#fsState.release(runId);
       settle('failed', error instanceof Error ? error.message : String(error));
     } finally {
@@ -4613,7 +4613,7 @@ export class Orchestrator {
       await this.#closeSubagents(runId).catch(() => {});
       if (exec.kind === 'task') {
         // Idempotent; covers the early returns. Then the slot / write target frees.
-        await this.#deps.projects.releaseRun(runId).catch(() => {});
+        await this.#deps.workdirs.releaseRun(runId).catch(() => {});
         this.#fsState.release(runId);
         exec.control.finish();
       } else {
@@ -5539,12 +5539,12 @@ export class Orchestrator {
   #describeTaskCwd(
     task: Run,
     _withChanges: boolean,
-  ): { kind: 'project' | 'workspace'; changes: TaskChanges | null } {
+  ): { kind: 'workdir' | 'workspace'; changes: TaskChanges | null } {
     const workspace =
       task.botId !== null && task.conversationId !== null
         ? workspacePathFor(this.#deps.paths, task.botId, task.conversationId)
         : null;
-    const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'project' : 'workspace';
+    const kind = task.taskCwd !== null && task.taskCwd !== workspace ? 'workdir' : 'workspace';
     // Change summary / file list / revert on the task card was retired —
     // never attach changes (disk writes still happen).
     return { kind, changes: null };

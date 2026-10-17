@@ -19,7 +19,7 @@ export const settingGroupSchema = z.enum([
   'profile',
   'browser',
   'group',
-  'project',
+  'workdir',
   'hardware',
   'general',
   'background',
@@ -30,8 +30,8 @@ export const settingGroupSchema = z.enum([
 ]);
 export type SettingGroup = z.infer<typeof settingGroupSchema>;
 
-/** 作用范围：全局 / 某个 Bot / 某个群 / 某个项目。 */
-export const settingScopeSchema = z.enum(['global', 'bot', 'group', 'project']);
+/** 作用范围：全局 / 某个 Bot / 某个群 / 某个工作目录。 */
+export const settingScopeSchema = z.enum(['global', 'bot', 'group', 'workdir']);
 export type SettingScope = z.infer<typeof settingScopeSchema>;
 
 /**
@@ -190,8 +190,8 @@ export const CARD_KEYS = [
   'group-title',
   /** 群成员（`GroupSettingsDialog` 的成员片段；组件自己调 groups RPC）。 */
   'group-members',
-  /** 项目保护规则 / 放行端口（`ProjectSettingsDialog`，user-only，组件自己保存）。 */
-  'project-settings',
+  /** 工作目录保护规则 / 放行端口（`WorkdirSettingsDialog`，user-only，组件自己保存）。 */
+  'workdir-settings',
   /** 一条连接工具的策略（`AppConnectionDetail` 片段；组件自己 `setToolPolicy`）。 */
   'tool-policy',
   /** 一个已安装 MCP 服务的启用开关（`McpSection` 片段；组件自己 `settings.update`）。 */
@@ -213,7 +213,7 @@ export type CardKey = z.infer<typeof cardKeySchema>;
  * - `settings`：`shell.openSettings(section, anchor)`，section 是设置弹框分区 id；
  * - `extension-center`：`openExtensionCenter(section)`，section 是扩展中心页签；
  * - `bot-panel`：右栏 Bot 详情，section 是页签 value；
- * - `group-dialog` / `project-dialog`：群设置 / 项目设置对话框（section 固定为对话框名）。
+ * - `group-dialog` / `workdir-dialog`：群设置 / 工作目录设置对话框（section 固定为对话框名）。
  * anchor 是 `data-settings-anchor` 的值；缺省 = 只到分区。
  */
 export const settingSurfaceSchema = z.enum([
@@ -221,7 +221,7 @@ export const settingSurfaceSchema = z.enum([
   'extension-center',
   'bot-panel',
   'group-dialog',
-  'project-dialog',
+  'workdir-dialog',
 ]);
 export type SettingSurface = z.infer<typeof settingSurfaceSchema>;
 

@@ -541,7 +541,7 @@ export function runAgentProviderContract(target: ContractTarget): void {
               options: permissionOptions,
             })
             .permission('p2', 'Write /etc/passwd', { options: permissionOptions })
-            // A user / project MCP server called "kepcup" is not the bridge.
+            // A user / workdir MCP server called "kepcup" is not the bridge.
             .permission('p3', 'impostor', {
               name: 'mcp__kepcup__send_message',
               options: permissionOptions,

@@ -6,9 +6,9 @@ import path from 'node:path';
 import { initRepository, openRepository, type Repository } from 'es-git';
 import type { RunChangeFile } from '@kepcup/shared';
 
-import type { Project } from '@kepcup/shared';
+import type { Workdir } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';
-import { projectCheckpointsPath } from '../infra/paths.js';
+import { workdirCheckpointsPath } from '../infra/paths.js';
 import type { CoreLogger } from '../infra/logger.js';
 
 const SIGNATURE = { name: 'kepcup', email: 'checkpoints@localhost' } as const;
@@ -28,15 +28,15 @@ function iterate<T>(iterator: { next(): IteratorResult<T, unknown> }): Generator
 }
 
 /**
- * Checkpoint snapshots (docs/design/08-project.md "检查点与回退"): one shadow
- * repository per project under the data directory, its `core.worktree` aimed
- * at the project. Nothing is ever written inside the project itself —
+ * Checkpoint snapshots (docs/design/08-workdir.md "检查点与回退"): one shadow
+ * repository per workdir under the data directory, its `core.worktree` aimed
+ * at the workdir. Nothing is ever written inside the workdir itself —
  * initialization goes through the repo's own config, never a `.git` gitlink.
  */
 export class CheckpointService {
   readonly #paths: AppPaths;
   readonly #logger: CoreLogger;
-  /** Opens/init/commits are serialized per project (index state is shared). */
+  /** Opens/init/commits are serialized per workdir (index state is shared). */
   readonly #mutexes = new Map<string, Promise<unknown>>();
 
   constructor(deps: { paths: AppPaths; logger: CoreLogger }) {
@@ -44,44 +44,44 @@ export class CheckpointService {
     this.#logger = deps.logger;
   }
 
-  checkpointsPath(projectId: string): string {
-    return projectCheckpointsPath(this.#paths, projectId);
+  checkpointsPath(workdirId: string): string {
+    return workdirCheckpointsPath(this.#paths, workdirId);
   }
 
-  exists(projectId: string): boolean {
-    return existsSync(this.checkpointsPath(projectId));
+  exists(workdirId: string): boolean {
+    return existsSync(this.checkpointsPath(workdirId));
   }
 
   /** Opens (or lazily creates) the shadow repo; keeps `core.worktree` current. */
-  async #repo(project: Project): Promise<Repository> {
-    const dir = this.checkpointsPath(project.id);
+  async #repo(workdir: Workdir): Promise<Repository> {
+    const dir = this.checkpointsPath(workdir.id);
     if (!existsSync(dir)) {
       mkdirSync(path.dirname(dir), { recursive: true });
       // Bare init at `checkpoints.git` (noDotgitDir keeps the gitdir exactly
       // there — libgit2 would otherwise append `/.git/`); core.bare=false +
-      // core.worktree then aim it at the project. No `.git` gitlink is ever
-      // created inside the project (docs/dev/phases/P04-project.md 底线).
+      // core.worktree then aim it at the workdir. No `.git` gitlink is ever
+      // created inside the workdir (docs/dev/phases/P04-project.md 底线).
       const created = await initRepository(dir, { bare: true, noDotgitDir: true });
       created.config().setString('core.bare', 'false');
-      created.config().setString('core.worktree', project.path);
-      this.#logger.info({ projectId: project.id }, 'checkpoint repo initialized');
+      created.config().setString('core.worktree', workdir.path);
+      this.#logger.info({ workdirId: workdir.id }, 'checkpoint repo initialized');
     }
     const repo = await openRepository(dir);
-    if (repo.workdir()?.replace(/\/+$/, '') !== project.path) {
-      repo.config().setString('core.worktree', project.path);
+    if (repo.workdir()?.replace(/\/+$/, '') !== workdir.path) {
+      repo.config().setString('core.worktree', workdir.path);
     }
     return repo;
   }
 
   /**
-   * Commits the current worktree state. Respects the project's `.gitignore`
-   * (libgit2) and never includes the project's own `.git/`. Cost note: the
-   * first snapshot of a huge project is O(files); later ones only re-stat
+   * Commits the current worktree state. Respects the workdir's `.gitignore`
+   * (libgit2) and never includes the workdir's own `.git/`. Cost note: the
+   * first snapshot of a huge workdir is O(files); later ones only re-stat
    * (measured 15s first vs 0.2s repeat on 50k files, see PROGRESS P04).
    */
-  async snapshot(project: Project): Promise<{ oid: string; treeId: string }> {
-    const run = this.#chain(project.id, async () => {
-      const repo = await this.#repo(project);
+  async snapshot(workdir: Workdir): Promise<{ oid: string; treeId: string }> {
+    const run = this.#chain(workdir.id, async () => {
+      const repo = await this.#repo(workdir);
       const index = repo.index();
       index.addAll(['.']);
       index.write();
@@ -105,8 +105,8 @@ export class CheckpointService {
   }
 
   /** Files changed between two snapshot commits, sorted by path. */
-  async diffFiles(projectId: string, beforeOid: string, afterOid: string): Promise<RunChangeFile[]> {
-    const repo = await this.#repoForRead(projectId);
+  async diffFiles(workdirId: string, beforeOid: string, afterOid: string): Promise<RunChangeFile[]> {
+    const repo = await this.#repoForRead(workdirId);
     if (repo === null) return [];
     const diff = repo.diffTreeToTree(this.#commitTree(repo, beforeOid), this.#commitTree(repo, afterOid));
     const files: RunChangeFile[] = [];
@@ -128,12 +128,12 @@ export class CheckpointService {
    * `filePath` limits it to one file.
    */
   async diffText(
-    projectId: string,
+    workdirId: string,
     beforeOid: string,
     afterOid: string,
     filePath?: string,
   ): Promise<string> {
-    const dir = this.checkpointsPath(projectId);
+    const dir = this.checkpointsPath(workdirId);
     if (!existsSync(dir)) return '';
     // es-git's diff.print() drops the +/-/space line prefixes (verified on
     // 0.7.0, see PROGRESS P04), so the patch text comes from the system git
@@ -178,8 +178,8 @@ export class CheckpointService {
   }
 
   /** Content of `filePath` inside a snapshot commit; null when absent. */
-  async readFileAt(projectId: string, oid: string, filePath: string): Promise<Buffer | null> {
-    const repo = await this.#repoForRead(projectId);
+  async readFileAt(workdirId: string, oid: string, filePath: string): Promise<Buffer | null> {
+    const repo = await this.#repoForRead(workdirId);
     if (repo === null) return null;
     const entry = this.#commitTree(repo, oid).getPath(filePath);
     if (entry === null || entry.type() !== 'Blob') return null;
@@ -187,8 +187,8 @@ export class CheckpointService {
   }
 
   /** True when the commit exists in the shadow repo (retention may drop it). */
-  async hasCommit(projectId: string, oid: string): Promise<boolean> {
-    const repo = await this.#repoForRead(projectId);
+  async hasCommit(workdirId: string, oid: string): Promise<boolean> {
+    const repo = await this.#repoForRead(workdirId);
     if (repo === null) return false;
     try {
       repo.getCommit(oid);
@@ -199,17 +199,17 @@ export class CheckpointService {
   }
 
   /** Opens the shadow repo read-only, creating nothing (null when absent). */
-  async openForRead(projectId: string): Promise<Repository | null> {
-    return this.#repoForRead(projectId);
+  async openForRead(workdirId: string): Promise<Repository | null> {
+    return this.#repoForRead(workdirId);
   }
 
   /** Opens (creating if needed) the shadow repo — used for ignore verdicts. */
-  async ensureOpen(project: Project): Promise<Repository | null> {
+  async ensureOpen(workdir: Workdir): Promise<Repository | null> {
     try {
-      return await this.#repo(project);
+      return await this.#repo(workdir);
     } catch (error) {
       this.#logger.warn(
-        { projectId: project.id, error: error instanceof Error ? error.message : String(error) },
+        { workdirId: workdir.id, error: error instanceof Error ? error.message : String(error) },
         'checkpoint repo open failed',
       );
       return null;
@@ -225,7 +225,7 @@ export class CheckpointService {
    */
   async applyRetention(now: number, retentionDays: number): Promise<string[]> {
     const swept: string[] = [];
-    const root = path.join(this.#paths.home, 'projects');
+    const root = path.join(this.#paths.home, 'workdirs');
     if (!existsSync(root)) return swept;
     const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
     for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -248,11 +248,11 @@ export class CheckpointService {
     return swept;
   }
 
-  async forget(projectId: string): Promise<void> {
-    // Remove the whole per-project directory ({home}/projects/{projectId});
+  async forget(workdirId: string): Promise<void> {
+    // Remove the whole per-workdir directory ({home}/workdirs/{workdirId});
     // checkpoints.git is its only content.
-    rmSync(path.dirname(this.checkpointsPath(projectId)), { recursive: true, force: true });
-    this.#mutexes.delete(projectId);
+    rmSync(path.dirname(this.checkpointsPath(workdirId)), { recursive: true, force: true });
+    this.#mutexes.delete(workdirId);
   }
 
   // --- internals -------------------------------------------------------------
@@ -266,17 +266,17 @@ export class CheckpointService {
   }
 
   /** Read-only open: null when the shadow repo does not exist. */
-  async #repoForRead(projectId: string): Promise<Repository | null> {
-    const dir = this.checkpointsPath(projectId);
+  async #repoForRead(workdirId: string): Promise<Repository | null> {
+    const dir = this.checkpointsPath(workdirId);
     if (!existsSync(dir)) return null;
     return openRepository(dir);
   }
 
-  #chain<T>(projectId: string, body: () => Promise<T>): Promise<T> {
-    const previous = this.#mutexes.get(projectId) ?? Promise.resolve();
+  #chain<T>(workdirId: string, body: () => Promise<T>): Promise<T> {
+    const previous = this.#mutexes.get(workdirId) ?? Promise.resolve();
     const next = previous.then(body, body);
     this.#mutexes.set(
-      projectId,
+      workdirId,
       next.catch(() => {}),
     );
     return next;

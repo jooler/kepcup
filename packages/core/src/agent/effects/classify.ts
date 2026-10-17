@@ -65,7 +65,7 @@ const BUILTIN_EFFECTS: Readonly<Record<string, Rule>> = {
   /** git push / pull / fetch / clone…：沙箱外、用用户凭据访问远端。 */
   git_remote: 'external',
   request_access: 'local',
-  acquire_project_write: 'local',
+  acquire_workdir_write: 'local',
   request_environment: 'local',
   /** 连接应用（D73）：只记下本 run 的 setup 需求（run 中断、对话出连接卡），与 request_* 同类。 */
   app_request_connection: 'local',

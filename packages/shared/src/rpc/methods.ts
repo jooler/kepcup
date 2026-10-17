@@ -108,8 +108,8 @@ import {
   onboardingStatePatchSchema,
   profileCardSchema,
   profileItemSchema,
-  projectProtectRulesSchema,
-  projectSchema,
+  workdirProtectRulesSchema,
+  workdirSchema,
   runChangeSchema,
   providerConcurrencySchema,
   runSchema,
@@ -353,7 +353,7 @@ export const settingsItemsApplyInputSchema = z.object({
    * `conflict`、不写入。null = 不比对（设置页直接保存、渲染层条目）。
    */
   expected: settingValuesSchema.nullable(),
-  /** 作用对象（bot / group / project 条目必填对应 id）。 */
+  /** 作用对象（bot / group / workdir 条目必填对应 id）。 */
   target: settingTargetSchema.optional(),
   /** 从设置卡应用时带卡片消息 id：成功后卡片标 applied 并唤醒 Bot（§6.2）。 */
   messageId: z.string().min(1).optional(),
@@ -838,7 +838,7 @@ export const interviewAnswerOutputSchema = z.object({
   message: messageSchema,
 });
 /**
- * 访谈目录卡作答（docs/design/19 D59）：path 非空 = 选择目录（绑定 project），
+ * 访谈目录卡作答（docs/design/19 D59）：path 非空 = 选择目录（绑定 workdir），
  * null = 暂不设置。作答后缓冲的用户消息才一起投递给 Bot（首个响应 run）。
  */
 export const interviewAnswerPathInputSchema = z.object({
@@ -878,7 +878,7 @@ export const groupsCreateInputSchema = z.object({
 export const groupsCreateOutputSchema = z.object({ conversation: conversationSchema });
 /**
  * 对话内群创建（docs/design/19 D60）：start 创建创建中的群并下发第一问；
- * answer 按 step 推进（title/purpose 文本、members 成员列表、project 目录或
+ * answer 按 step 推进（title/purpose 文本、members 成员列表、workdir 目录或
  * 跳过），全程零模型调用；cancel 级联删除该对话。
  */
 export const groupsSetupStartInputSchema = z.void();
@@ -901,7 +901,7 @@ export const groupsSetupAnswerInputSchema = z.discriminatedUnion('step', [
   }),
   z.object({
     conversationId: z.string().min(1),
-    step: z.literal('project'),
+    step: z.literal('workdir'),
     path: z.string().min(1).nullable(),
   }),
 ]);
@@ -1239,47 +1239,47 @@ export const unattendedSummaryOutputSchema = z.object({
   items: z.array(unattendedSummaryItemSchema),
 });
 
-// --- projects (P04) ---------------------------------------------------------
+// --- workdirs (P04) ---------------------------------------------------------
 
-export const projectsListOutputSchema = z.object({ projects: z.array(projectSchema) });
-export const projectsGetInputSchema = z.object({ id: z.string().min(1) });
-export const projectsGetOutputSchema = z.object({ project: projectSchema.nullable() });
-export const projectsSelectInputSchema = z.object({
+export const workdirsListOutputSchema = z.object({ workdirs: z.array(workdirSchema) });
+export const workdirsGetInputSchema = z.object({ id: z.string().min(1) });
+export const workdirsGetOutputSchema = z.object({ workdir: workdirSchema.nullable() });
+export const workdirsSelectInputSchema = z.object({
   conversationId: z.string().min(1),
   /** realpath of the picked directory; core re-realpaths and validates. */
   path: z.string().min(1),
 });
-export const projectsSelectOutputSchema = z.object({ project: projectSchema });
-export const projectsUnbindInputSchema = z.object({ conversationId: z.string().min(1) });
-export const projectsUpdateInputSchema = z.object({
+export const workdirsSelectOutputSchema = z.object({ workdir: workdirSchema });
+export const workdirsUnbindInputSchema = z.object({ conversationId: z.string().min(1) });
+export const workdirsUpdateInputSchema = z.object({
   id: z.string().min(1),
-  // 名称不可改：项目名固定为所选文件夹的名字（bind 时取 basename）。
-  protectRules: projectProtectRulesSchema.optional(),
+  // 名称不可改：工作目录名固定为所选文件夹的名字（bind 时取 basename）。
+  protectRules: workdirProtectRulesSchema.optional(),
   allowedPorts: z
     .array(z.tuple([z.number().int().min(1).max(65535), z.number().int().min(1).max(65535)]))
     .nullable()
     .optional(),
 });
-export const projectsRemoveInputSchema = z.object({ id: z.string().min(1) });
-export const projectsDiffInputSchema = z.object({ runId: z.string().min(1) });
-export const projectsDiffOutputSchema = z.object({
+export const workdirsRemoveInputSchema = z.object({ id: z.string().min(1) });
+export const workdirsDiffInputSchema = z.object({ runId: z.string().min(1) });
+export const workdirsDiffOutputSchema = z.object({
   change: runChangeSchema.nullable(),
   /** Unified diff (before → after); empty when nothing changed or reverted. */
   diffText: z.string(),
 });
-export const projectsRevertInputSchema = z.object({
+export const workdirsRevertInputSchema = z.object({
   runId: z.string().min(1),
   /** Confirmed after a previous call reported conflicts. */
   force: z.boolean().optional(),
 });
-export const projectsRevertOutputSchema = z.object({
+export const workdirsRevertOutputSchema = z.object({
   ok: z.boolean(),
   /** Files changed after the after-snapshot; revert refused while non-empty and force is not set. */
   conflicts: z.array(z.string()),
   reverted: z.array(z.string()),
 });
-export const projectsRevokeLeaseInputSchema = z.object({ conversationId: z.string().min(1) });
-export const projectsRevokeLeaseOutputSchema = z.object({ revoked: z.boolean() });
+export const workdirsRevokeLeaseInputSchema = z.object({ conversationId: z.string().min(1) });
+export const workdirsRevokeLeaseOutputSchema = z.object({ revoked: z.boolean() });
 
 // --- environment (P06) -------------------------------------------------------
 
@@ -1561,7 +1561,7 @@ export const stickiesDeleteOutputSchema = okOutputSchema;
 // Served by the MAIN process on port B; the core's browser tools are the
 // client (docs/dev/02-architecture.md 端口 B: 核心服务请求平台能力).
 
-/** Loopback (127.0.0.1/localhost) is reachable only with a bound project. */
+/** Loopback (127.0.0.1/localhost) is reachable only with a bound workdir. */
 export const browserNetworkContextSchema: z.ZodType<BrowserNetworkContext> = z.object({
   allowLoopback: z.boolean(),
 });
@@ -2050,17 +2050,17 @@ export const rpcMethodSchemas = {
     output: unattendedSummaryOutputSchema,
   },
 
-  'projects.list': { input: voidInput, output: projectsListOutputSchema },
-  'projects.get': { input: projectsGetInputSchema, output: projectsGetOutputSchema },
-  'projects.select': { input: projectsSelectInputSchema, output: projectsSelectOutputSchema },
-  'projects.unbind': { input: projectsUnbindInputSchema, output: okOutput },
-  'projects.update': { input: projectsUpdateInputSchema, output: projectsGetOutputSchema },
-  'projects.remove': { input: projectsRemoveInputSchema, output: okOutput },
-  'projects.diff': { input: projectsDiffInputSchema, output: projectsDiffOutputSchema },
-  'projects.revert': { input: projectsRevertInputSchema, output: projectsRevertOutputSchema },
-  'projects.revokeLease': {
-    input: projectsRevokeLeaseInputSchema,
-    output: projectsRevokeLeaseOutputSchema,
+  'workdirs.list': { input: voidInput, output: workdirsListOutputSchema },
+  'workdirs.get': { input: workdirsGetInputSchema, output: workdirsGetOutputSchema },
+  'workdirs.select': { input: workdirsSelectInputSchema, output: workdirsSelectOutputSchema },
+  'workdirs.unbind': { input: workdirsUnbindInputSchema, output: okOutput },
+  'workdirs.update': { input: workdirsUpdateInputSchema, output: workdirsGetOutputSchema },
+  'workdirs.remove': { input: workdirsRemoveInputSchema, output: okOutput },
+  'workdirs.diff': { input: workdirsDiffInputSchema, output: workdirsDiffOutputSchema },
+  'workdirs.revert': { input: workdirsRevertInputSchema, output: workdirsRevertOutputSchema },
+  'workdirs.revokeLease': {
+    input: workdirsRevokeLeaseInputSchema,
+    output: workdirsRevokeLeaseOutputSchema,
   },
 
   'environment.list': { input: voidInput, output: environmentListOutputSchema },
@@ -2446,15 +2446,15 @@ const APP_METHODS = [
   'unattended.enable',
   'unattended.disable',
   'unattended.summary',
-  'projects.list',
-  'projects.get',
-  'projects.select',
-  'projects.unbind',
-  'projects.update',
-  'projects.remove',
-  'projects.diff',
-  'projects.revert',
-  'projects.revokeLease',
+  'workdirs.list',
+  'workdirs.get',
+  'workdirs.select',
+  'workdirs.unbind',
+  'workdirs.update',
+  'workdirs.remove',
+  'workdirs.diff',
+  'workdirs.revert',
+  'workdirs.revokeLease',
   'environment.list',
   'environment.remove',
   'environment.recheck',

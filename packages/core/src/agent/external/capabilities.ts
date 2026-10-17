@@ -158,7 +158,7 @@ export function bridgeToolMeta(
 
 /**
  * A fresh bridge server name for one agent session (`kepcup_<8hex>`): a user /
- * project MCP server called `kepcup` cannot pose as the host bridge.
+ * workdir MCP server called `kepcup` cannot pose as the host bridge.
  */
 /**
  * The bridge server name of a reusable agent session (P5): derived from its

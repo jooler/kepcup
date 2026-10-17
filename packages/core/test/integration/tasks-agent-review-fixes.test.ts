@@ -29,7 +29,7 @@ import type { RunHandle, RunIdentity, RunSpec } from '../../src/agent/types.js';
  * 启动（超出的留在 submitted、不取租约）、L4 steer 确认后剪除 / 被拒按 FIFO
  * 匹配、L5 被 reaper 驱逐但未结束的执行仍算「执行中」、L6 无 cwd 的任务
  * 在 workspace 执行（与租约一致）、L8 引擎启动后的崩溃先中止引擎、L10
- * workspace 工作目录的 Agent 任务不带 <project> 段。
+ * workspace 工作目录的 Agent 任务不带 <workdir> 段。
  */
 
 const stacks: TestStack[] = [];
@@ -272,14 +272,14 @@ async function agentBot(stack: TestStack, agentId: string): Promise<Bot> {
   return ((await stack.core.rpc.call('bots.update', { id: bot.id, profile })) as { bot: Bot }).bot;
 }
 
-async function bindProject(stack: TestStack, conversationId: string): Promise<string> {
-  const dir = mkdtempSync(path.join(tmpdir(), 'tasks-review-c-project-'));
+async function bindWorkdir(stack: TestStack, conversationId: string): Promise<string> {
+  const dir = mkdtempSync(path.join(tmpdir(), 'tasks-review-c-workdir-'));
   dirs.push(dir);
   writeFileSync(path.join(dir, 'README.md'), '# p\n');
-  const bound = (await stack.core.rpc.call('projects.select', { conversationId, path: dir })) as {
-    project: { path: string };
+  const bound = (await stack.core.rpc.call('workdirs.select', { conversationId, path: dir })) as {
+    workdir: { path: string };
   };
-  return bound.project.path;
+  return bound.workdir.path;
 }
 
 function workspaceOf(stack: TestStack, botId: string, conversationId: string): string {
@@ -291,11 +291,11 @@ function userMessage(stack: TestStack, conversationId: string, text: string): Me
 }
 
 describe('L6 / L10: an agent task works where it is leased, and is told so', () => {
-  it('a write task without a recorded cwd runs in the workspace, not the unleased project', async () => {
+  it('a write task without a recorded cwd runs in the workspace, not the unleased workdir', async () => {
     const { stack, started } = await agentStack({ fake: { turns: [agentTurn().sleep(20)] } });
     const bot = await agentBot(stack, 'fake');
     const conv = await openDirect(stack.core, bot.id);
-    const projectPath = await bindProject(stack, conv.id);
+    const workdirPath = await bindWorkdir(stack, conv.id);
     const { runs, messages } = domain(stack);
     // A task row from before cwds were recorded (task_cwd null).
     const task = runs.create({
@@ -322,15 +322,15 @@ describe('L6 / L10: an agent task works where it is leased, and is told so', () 
     tasksOf(stack).resume();
     await waitStatus(stack, task.id, ['completed'], 'null-cwd task completed');
     const cwd = started[0]!.observed.sessions[0]!.cwd;
-    expect(cwd).not.toBe(projectPath);
+    expect(cwd).not.toBe(workdirPath);
     expect(cwd).toBe(workspaceOf(stack, bot.id, conv.id));
   }, 60_000);
 
-  it('a workspace-cwd task in a project conversation gets no <project> section', async () => {
+  it('a workspace-cwd task in a workdir conversation gets no <workdir> section', async () => {
     const { stack, started } = await agentStack({ fake: { turns: [agentTurn().sleep(20)] } });
     const bot = await agentBot(stack, 'fake');
     const conv = await openDirect(stack.core, bot.id);
-    await bindProject(stack, conv.id);
+    await bindWorkdir(stack, conv.id);
     const source = userMessage(stack, conv.id, '在 workspace 里整理一下');
     const t = tasksOf(stack).start(turnIdentity(bot.id, conv.id), {
       title: '整理',
@@ -343,7 +343,7 @@ describe('L6 / L10: an agent task works where it is leased, and is told so', () 
     const prompt = started[0]!.observed.prompts[0]!.text;
     expect(started[0]!.observed.sessions[0]!.cwd).toBe(workspaceOf(stack, bot.id, conv.id));
     expect(prompt).toContain('WS-TASK');
-    expect(prompt).not.toContain('<project>');
+    expect(prompt).not.toContain('<workdir>');
     expect(prompt).toContain('你的工作目录就是这个 workspace');
   }, 60_000);
 });

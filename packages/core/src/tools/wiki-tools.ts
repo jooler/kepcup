@@ -91,7 +91,7 @@ export function buildWikiTools(input: {
   }> = {
     name: 'wiki_enqueue',
     description:
-      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 project 中的文件路径）。后台维护 loop 会阅读资料、更新页面并提交；这是你自己的知识库整理，完成后无需向用户播报，wiki_search 直接就能检索到新内容。',
+      '登记一个 Wiki 入库任务（用户说“学一下这份文档”或你认为某资料值得沉淀时使用）。来源：attachment（附件 id）、url（网页地址）、file（workspace 或 workdir 中的文件路径）。后台维护 loop 会阅读资料、更新页面并提交；这是你自己的知识库整理，完成后无需向用户播报，wiki_search 直接就能检索到新内容。',
     parameters: Type.Object({
       source_type: Type.Union(
         ['attachment', 'url', 'file'].map((t) => Type.Literal(t)),

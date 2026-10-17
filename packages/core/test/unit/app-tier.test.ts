@@ -162,7 +162,7 @@ async function harness(answer: { duration?: ApprovalDuration } = {}, tool = deci
     grants: {} as GatewayDeps['grants'],
     allowlist: {} as GatewayDeps['allowlist'],
     unattended: {} as GatewayDeps['unattended'],
-    projects: {} as GatewayDeps['projects'],
+    workdirs: {} as GatewayDeps['workdirs'],
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],

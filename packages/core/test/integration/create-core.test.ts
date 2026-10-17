@@ -116,8 +116,9 @@ describe('createCore (integration)', () => {
     // （widget_versions.check_status / check_summary_json）；0036 = D88 Bot 资产移交
     // （bot_handovers / bot_handover_items，approvals.kind 增加 bot_handover）；
     // 0037 = D90 工作台（todos / todo_runs / memos，schedules 重建：bot_id 可空、
-    // origin 加 workbench、todo_id）。
-    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(37);
+    // origin 加 workbench、todo_id）；0038 = D92 T0-2（projects 改名 workdirs，
+    // project_id 改名 workdir_id）。
+    expect(services.mainDb!.pragma('user_version', { simple: true })).toBe(38);
     const versionColumns = (
       services.mainDb!.prepare('pragma table_info(widget_versions)').all() as Array<{
         name: string;

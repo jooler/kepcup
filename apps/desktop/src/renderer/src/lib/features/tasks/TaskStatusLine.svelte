@@ -4,7 +4,7 @@
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { chat, type ActiveRunView } from '$lib/stores/chat.svelte';
-  import { projects } from '$lib/stores/projects.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import { tasks } from '$lib/stores/tasks.svelte';
   import { toolVerb } from '../chats/tool-labels';
   import { taskStatusSummary, type TaskActivity } from './task-view';
@@ -14,7 +14,7 @@
    * 显示本对话**进行中任务**的活动——一条任务时是它的标题与当前活动；多条
    * 时是条数与最近活动，点击展开逐条列表。与对话轮的状态行同处消息流末尾、
    * 同样只有绿点与文字；任务的消息落库时整行让位，下一个活动再出现。
-   * 不在这里取消（取消在任务卡上）；等待项目租约时附「强制收回」。
+   * 不在这里取消（取消在任务卡上）；等待工作目录租约时附「强制收回」。
    */
   let { entries }: { entries: ActiveRunView[] } = $props();
 
@@ -51,11 +51,11 @@
     entries.find(
       (entry) =>
         (entry.run.status === 'waiting_lease' || entry.run.status === 'queued') &&
-        projects.leaseWaiting[entry.run.id] !== undefined,
+        workdirs.leaseWaiting[entry.run.id] !== undefined,
     ) ?? null,
   );
   const lease = $derived(
-    leaseEntry !== null ? projects.leaseWaiting[leaseEntry.run.id] : undefined,
+    leaseEntry !== null ? workdirs.leaseWaiting[leaseEntry.run.id] : undefined,
   );
   const holderName = $derived(
     lease !== undefined
@@ -68,9 +68,9 @@
   async function revokeLease(): Promise<void> {
     const conversationId = leaseEntry?.run.conversationId ?? null;
     if (conversationId === null) return;
-    const revoked = await projects.revokeLease(conversationId);
-    if (revoked) toast.success(t('projects.leaseRevoked'));
-    else toast.info(t('projects.leaseNothing'));
+    const revoked = await workdirs.revokeLease(conversationId);
+    if (revoked) toast.success(t('workdirs.leaseRevoked'));
+    else toast.info(t('workdirs.leaseNothing'));
   }
 </script>
 
@@ -115,7 +115,7 @@
           {#if lease !== undefined}
             <span class="inline-flex items-center gap-1.5" data-testid="lease-waiting-text">
               <Hourglass class="size-3.5 animate-pulse" aria-hidden="true" />
-              {t('projects.leaseWaiting', { name: holderName })}
+              {t('workdirs.leaseWaiting', { name: holderName })}
             </span>
           {:else}
             {t('task.statusOne', { title: latest.title, activity: latest.activity })}
@@ -130,7 +130,7 @@
           onclick={() => void revokeLease()}
           data-testid="lease-revoke"
         >
-          {t('projects.leaseRevoke')}
+          {t('workdirs.leaseRevoke')}
         </Button>
       {/if}
     </div>

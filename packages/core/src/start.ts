@@ -84,9 +84,9 @@ import { BrowserProfilesService } from './browser/profiles.js';
 import { ApprovalsService } from './permissions/approvals.js';
 import { AllowlistService } from './permissions/allowlist.js';
 import { UnattendedService } from './permissions/unattended.js';
-import { CheckpointService } from './project/checkpoints.js';
-import { ProjectRuntime } from './project/service.js';
-import { ProjectsService } from './domain/projects.js';
+import { CheckpointService } from './workdir/checkpoints.js';
+import { WorkdirRuntime } from './workdir/service.js';
+import { WorkdirsService } from './domain/workdirs.js';
 import {
   createSandboxBackend,
   createEnhancedSandboxBackend,
@@ -476,7 +476,7 @@ export interface CoreDomainServices {
   approvals: ApprovalsService;
   allowlist: AllowlistService;
   unattended: UnattendedService;
-  projects: ProjectsService;
+  workdirs: WorkdirsService;
 }
 
 export interface CoreServices {
@@ -506,8 +506,8 @@ export interface CoreServices {
   /** Null while locked / errored (no business services are constructed). */
   domain: CoreDomainServices | null;
   orchestrator: Orchestrator | null;
-  /** Project runtime (P04): binding, leases, checkpoints, git remote. */
-  projectRuntime: ProjectRuntime | null;
+  /** Workdir runtime (P04): binding, leases, checkpoints, git remote. */
+  workdirRuntime: WorkdirRuntime | null;
   /** P06 environment manager (null while locked / errored). */
   environment: EnvManager | null;
   /** P07 memory & profile domain (null while locked / errored). */
@@ -811,7 +811,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     keystoreKind: 'unavailable',
     domain: null,
     orchestrator: null,
-    projectRuntime: null,
+    workdirRuntime: null,
     environment: null,
     memory: null,
     media: null,
@@ -1293,7 +1293,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       publishBotUpdated: (bot) => events.emit('bot.updated', { bot }),
     });
     const allowlist = new AllowlistService({ db: mainDb, clock, osPlatform: process.platform });
-    const projectsService = new ProjectsService({ db: mainDb, clock });
+    const workdirsService = new WorkdirsService({ db: mainDb, clock });
 
     // Port-B events travel on the same bus; the process entry forwards the
     // platform.* names to the main process (startCoreProcess wires this).
@@ -1338,12 +1338,12 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     });
     // D75 审查 H2: lease waits give their scheduler slot back (attached below).
     const leases = new SlotYieldingLeaseService();
-    const projectRuntime = new ProjectRuntime({
+    const workdirRuntime = new WorkdirRuntime({
       db: mainDb,
       paths,
       clock,
       logger,
-      projects: projectsService,
+      workdirs: workdirsService,
       conversations,
       messages,
       runs,
@@ -1437,14 +1437,14 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       catalogEntry: (slug) => connectorCatalog.get(slug),
     });
     // P12 红线：register the mountable directories once the domain services
-    // exist (data home + bound projects + active grants).
+    // exist (data home + bound workdirs + active grants).
     const mountRegistration: MountRegistration = {
       registeredWindowsPaths: () => {
         const registered = new Set<string>([paths.home]);
         for (const conversation of conversations.list()) {
-          if (conversation.projectId === null) continue;
-          const project = projectsService.get(conversation.projectId);
-          if (project !== null) registered.add(canonicalPath(project.path));
+          if (conversation.workdirId === null) continue;
+          const workdir = workdirsService.get(conversation.workdirId);
+          if (workdir !== null) registered.add(canonicalPath(workdir.path));
         }
         for (const grantPath of grants.listActivePaths()) registered.add(canonicalPath(grantPath));
         return [...registered];
@@ -1568,7 +1568,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       grants,
       allowlist,
       unattended,
-      projects: projectRuntime,
+      workdirs: workdirRuntime,
       environment: {
         toolchainPathPrefix: (platform) => environment.toolchainPathPrefix(platform),
         toolchainsRoot: () => paths.toolchainsDir,
@@ -1713,11 +1713,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       allowlist,
       skillDirs: (botId) => skills.readableDirs(botId),
       redact: (text) => secrets.redact(text),
-      // D75 审查 M2: the bound project when this run does not hold its lease.
-      unleasedProject: (identity) => {
-        const project = projectRuntime.boundProject(identity.conversationId);
-        if (project === null || project.status !== 'available') return null;
-        return projectRuntime.holdsLease(identity, project.path) ? null : project.path;
+      // D75 审查 M2: the bound workdir when this run does not hold its lease.
+      unleasedWorkdir: (identity) => {
+        const workdir = workdirRuntime.boundWorkdir(identity.conversationId);
+        if (workdir === null || workdir.status !== 'available') return null;
+        return workdirRuntime.holdsLease(identity, workdir.path) ? null : workdir.path;
       },
       logger,
     });
@@ -1991,8 +1991,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
           groups.rename(conversationId, title);
         },
       },
-      projects: {
-        get: (id) => projectsService.get(id),
+      workdirs: {
+        get: (id) => workdirsService.get(id),
       },
       appConnections: {
         list: () => appConnections.catalogConnectionOptions(),
@@ -2077,7 +2077,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       secrets,
       approvals,
       grants,
-      projects: projectRuntime,
+      workdirs: workdirRuntime,
       sandbox,
       clock,
       logger,
@@ -2248,7 +2248,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     };
     // W7 确定性监看：一个进程内 worker 按 next_check_at 检查；后台页经端口 B
     // （browser.fetchText），用 Bot 的生效浏览器资料（W8）；本机地址只在对话
-    // 绑定了 project 时可访问（与浏览器工具同一规则）。
+    // 绑定了 workdir 时可访问（与浏览器工具同一规则）。
     const watches = new WatchService({
       db: mainDb,
       clock,
@@ -2261,8 +2261,8 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       fetcher: services.browserRpc,
       profileKeyFor: (botId) => browserProfiles.profileKeyFor(botId),
       allowLoopback: (conversationId) => {
-        const project = projectRuntime.boundProject(conversationId);
-        return project !== null && project.status === 'available';
+        const workdir = workdirRuntime.boundWorkdir(conversationId);
+        return workdir !== null && workdir.status === 'available';
       },
       deliverAlert: (input) => orchestrator.deliverWatchAlertToBot(input),
       publish: (event, payload) => events.emit(event as never, payload as never),
@@ -2760,7 +2760,7 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     services.browserRpc.onBound(() => watches.wake());
     // Checkpoint retention sweep (docs/dev/phases/P04-project.md): background,
     // best-effort — a swept repo only makes old reverts report unavailable.
-    void projectRuntime
+    void workdirRuntime
       .applyRetention()
       .then((swept) => {
         if (swept.length > 0) logger.info({ swept }, 'checkpoint retention applied');
@@ -2807,13 +2807,13 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       approvals,
       allowlist,
       unattended,
-      projects: projectsService,
+      workdirs: workdirsService,
       effects,
       revocations,
       browserProfiles,
     };
     services.orchestrator = orchestrator;
-    services.projectRuntime = projectRuntime;
+    services.workdirRuntime = workdirRuntime;
     services.environment = environment;
     services.memory = memory;
     services.media = media;

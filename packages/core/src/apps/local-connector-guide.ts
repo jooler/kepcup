@@ -33,7 +33,7 @@ export const LOCAL_CONNECTOR_GUIDE = `# 本机连接手册
    - mcpUrl：MCP 服务器完整地址（https，不带用户名密码、不带 ? 查询串和 # 片段）；
    - title：展示名，简短（不超过 60 字）；
    - description：一句话说明能做什么（可选，不超过 200 字）；
-   - category：分类（可选）：productivity、development、project、design、payments、crm、communication、data、other；
+   - category：分类（可选）：productivity、development、workdir、design、payments、crm、communication、data、other；
    - docUrl：你读的文档地址（可选，仅作展示，不会被自动打开）。
 4. **核心会自己探测这个地址**（不登录、不带任何令牌），连接信息以探测结果为准——你转述的认证方式、范围、域名都不会被采用。探测不通过时工具会直接告诉你具体原因，如实转告用户，不要换个地址反复试探。
 5. 探测通过后，对话里会出现一张**确认卡**，由用户核对 MCP 域名等信息后决定「添加」或「取消」。**你不能替用户保存，也不能绕过这张卡。** 此时本次执行会暂停。

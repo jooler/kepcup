@@ -769,8 +769,8 @@ export const conversationSchema = z.object({
   /** 群定位（本群主要处理什么事务，docs/design/19 D60）；单聊为空。 */
   description: z.string().nullable().optional(),
   directBotId: z.string().nullable(),
-  /** Currently bound project (P04); null = none. */
-  projectId: z.string().nullable(),
+  /** Currently bound workdir (P04); null = none. */
+  workdirId: z.string().nullable(),
   readOnly: z.boolean(),
   /**
    * 对话创建流程状态（docs/design/19 D60）：'creating' = 群创建问答进行中
@@ -910,7 +910,7 @@ export const systemEventContentSchema = z.object({
   options: z.array(z.string()).optional(),
   /**
    * Group-creation question step (event = group_setup_question, docs/design/19
-   * D60): which form the card renders — 'title' | 'purpose' | 'members' | 'project'.
+   * D60): which form the card renders — 'title' | 'purpose' | 'members' | 'workdir'.
    */
   step: z.string().optional(),
   /**
@@ -1616,7 +1616,7 @@ export const approvalKindSchema = z.enum([
   /**
    * 外部智能体的工具权限请求（D72 P3，design 28 §6）：ACP
    * `session/request_permission` 经权限桥分级后需要用户确认的部分；子类型
-   * `config` 是 project 内 Agent 侧配置文件的首次运行确认。
+   * `config` 是 workdir 内 Agent 侧配置文件的首次运行确认。
    */
   'agent_tool',
   /**
@@ -1718,7 +1718,7 @@ export const gitRemoteApprovalPayloadSchema = z.object({
   operation: z.enum(['push', 'pull', 'fetch', 'clone', 'remote_add', 'init']),
   /** Extra CLI arguments, one entry per argument (no shell quoting involved). */
   args: z.array(z.string()).default([]),
-  /** Working directory for the command (the project path). */
+  /** Working directory for the command (the workdir path). */
   cwd: z.string().default(''),
   reason: z.string().default(''),
   /** D73 P2: raised while the (bot, conversation) is tainted by connected-app data (design 29 §8.3). */
@@ -1832,7 +1832,7 @@ export type EgressApprovalPayload = z.infer<typeof egressApprovalPayloadSchema>;
 
 /**
  * Payload of an `agent_tool` approval（D72，design 28 §6）：外部智能体原生工具
- * 的权限请求（读 / 写 / 执行 / 其他），或子类型 `config`（project 内 Agent
+ * 的权限请求（读 / 写 / 执行 / 其他），或子类型 `config`（workdir 内 Agent
  * 侧配置文件的首次运行确认）。`locations` 是已解析的绝对路径；`command` 是
  * 命令原文；`options` 是 Agent 提供的选项（只做展示与审计，宿主只按 Provider
  * 白名单选 allow_once / reject_once）。`durations` 为空或只含 `once` 时卡片
@@ -1868,8 +1868,8 @@ export const agentToolApprovalPayloadSchema = z.object({
    * 排除，其余数据目录路径 / 命令一律拒绝。
    */
   exemptDirs: z.array(z.string()).default([]),
-  /** 子类型 config：project 路径（记住到对话时按它匹配）。 */
-  projectPath: z.string().optional(),
+  /** 子类型 config：workdir 路径（记住到对话时按它匹配）。 */
+  workdirPath: z.string().optional(),
   /** 子类型 config：配置文件内容哈希（内容变化即重新确认）。 */
   configHash: z.string().optional(),
   /**
@@ -2114,36 +2114,36 @@ export const allowlistEntrySchema = z.object({
 export type AllowlistEntry = z.infer<typeof allowlistEntrySchema>;
 
 // ---------------------------------------------------------------------------
-// Projects (P04, docs/design/08-project.md)
+// Workdirs (P04, docs/design/08-workdir.md)
 // ---------------------------------------------------------------------------
 
 /**
- * Per-project file protection rules (globs relative to the project root).
+ * Per-workdir file protection rules (globs relative to the workdir root).
  * A pattern without `/` matches any depth by file name (`*.pem`); a pattern
- * with `/` is anchored to the project root (`.git/config`).
+ * with `/` is anchored to the workdir root (`.git/config`).
  */
-export const projectProtectRulesSchema = z.object({
+export const workdirProtectRulesSchema = z.object({
   denyRead: z.array(z.string().max(200)).max(100),
   denyWrite: z.array(z.string().max(200)).max(100),
 });
-export type ProjectProtectRules = z.infer<typeof projectProtectRulesSchema>;
+export type WorkdirProtectRules = z.infer<typeof workdirProtectRulesSchema>;
 
-export const projectStatusSchema = z.enum(['available', 'missing']);
-export type ProjectStatus = z.infer<typeof projectStatusSchema>;
+export const workdirStatusSchema = z.enum(['available', 'missing']);
+export type WorkdirStatus = z.infer<typeof workdirStatusSchema>;
 
-export const projectSchema = z.object({
+export const workdirSchema = z.object({
   id: z.string(),
-  /** realpath of the project directory. */
+  /** realpath of the workdir directory. */
   path: z.string(),
   name: z.string(),
-  protectRules: projectProtectRulesSchema,
+  protectRules: workdirProtectRulesSchema,
   /** Inclusive port ranges the sandbox may reach on localhost; null =不限. */
   allowedPorts: z.array(z.tuple([z.number().int(), z.number().int()])).nullable(),
-  status: projectStatusSchema,
+  status: workdirStatusSchema,
   createdAt: z.number(),
   lastUsedAt: z.number(),
 });
-export type Project = z.infer<typeof projectSchema>;
+export type Workdir = z.infer<typeof workdirSchema>;
 
 /** One changed file of a checkpointed run (docs/dev/03-data-model.md "run_changes"). */
 export const runChangeFileSchema = z.object({
@@ -2163,7 +2163,7 @@ export type RunChangeFile = z.infer<typeof runChangeFileSchema>;
 
 export const runChangeSchema = z.object({
   runId: z.string(),
-  projectId: z.string(),
+  workdirId: z.string(),
   conversationId: z.string().nullable(),
   beforeOid: z.string(),
   afterOid: z.string().nullable(),
@@ -2786,14 +2786,14 @@ export const taskStateSchema = z.enum([
 export type TaskStateView = z.infer<typeof taskStateSchema>;
 
 /**
- * Changes a write task left behind (cancel card, §4.3 / §5.2): a project task
- * has a checkpoint (summary + whole-run revert through `projects.revert` with
+ * Changes a write task left behind (cancel card, §4.3 / §5.2): a workdir task
+ * has a checkpoint (summary + whole-run revert through `workdirs.revert` with
  * the task id); a workspace task has none — only the files its file tools
  * wrote are listed, and the card says plainly there is no revert.
  */
 export const taskChangesSchema = z.discriminatedUnion('kind', [
   z.object({
-    kind: z.literal('project'),
+    kind: z.literal('workdir'),
     added: z.number().int(),
     modified: z.number().int(),
     deleted: z.number().int(),
@@ -2826,8 +2826,8 @@ export const taskViewSchema = z.object({
   state: taskStateSchema,
   status: runStatusSchema,
   writes: z.boolean(),
-  /** Where it works: the bound project or the bot's workspace. */
-  cwdKind: z.enum(['project', 'workspace']).nullable(),
+  /** Where it works: the bound workdir or the bot's workspace. */
+  cwdKind: z.enum(['workdir', 'workspace']).nullable(),
   /** Why a submitted task waits (等写入租约 / 等并发额度 / 等智能体并发额度 …). */
   queueReason: z.string().nullable(),
   awaitingInput: z.boolean(),

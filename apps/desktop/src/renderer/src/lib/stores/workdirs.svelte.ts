@@ -1,36 +1,36 @@
-import type { Project } from '@kepcup/shared';
+import type { Workdir } from '@kepcup/shared';
 import { errorText, t } from '$lib/i18n';
 import { core } from '$lib/rpc/client.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * P04 client state: recent projects (selector), the bound project of the
+ * P04 client state: recent workdirs (selector), the bound workdir of the
  * current conversation and per-run lease-waiting info (status line +
  * force-revoke). Mirrors core events; refetches on conversation switch.
  */
-class ProjectsState {
-  recent = $state<Project[]>([]);
+class WorkdirsState {
+  recent = $state<Workdir[]>([]);
   /** runId -> lease waiting info (holder names the blocking bot). */
   leaseWaiting = $state<
     Record<string, { path: string; holderBotId: string | null; holderConversationId: string | null }>
   >({});
   #started = false;
 
-  /** The bound project of a conversation, resolved against the recent list. */
-  boundOf(conversationId: string | null | undefined, projectId: string | null | undefined): Project | null {
+  /** The bound workdir of a conversation, resolved against the recent list. */
+  boundOf(conversationId: string | null | undefined, workdirId: string | null | undefined): Workdir | null {
     void conversationId;
-    if (!projectId) return null;
-    return this.recent.find((p) => p.id === projectId) ?? null;
+    if (!workdirId) return null;
+    return this.recent.find((p) => p.id === workdirId) ?? null;
   }
 
   start(): void {
     if (this.#started) return;
     this.#started = true;
-    core.onEvent('project.updated', (payload) => {
-      const data = payload as { project: Project };
-      this.#upsert(data.project);
+    core.onEvent('workdir.updated', (payload) => {
+      const data = payload as { workdir: Workdir };
+      this.#upsert(data.workdir);
     });
-    core.onEvent('project.removed', (payload) => {
+    core.onEvent('workdir.removed', (payload) => {
       const data = payload as { id: string };
       this.recent = this.recent.filter((p) => p.id !== data.id);
     });
@@ -61,16 +61,16 @@ class ProjectsState {
   }
 
   async refresh(): Promise<void> {
-    const result = (await core.call('projects.list')) as { projects: Project[] };
-    this.recent = result.projects;
+    const result = (await core.call('workdirs.list')) as { workdirs: Workdir[] };
+    this.recent = result.workdirs;
   }
 
   async select(conversationId: string, path: string): Promise<void> {
     try {
-      const result = (await core.call('projects.select', { conversationId, path })) as {
-        project: Project;
+      const result = (await core.call('workdirs.select', { conversationId, path })) as {
+        workdir: Workdir;
       };
-      this.#upsert(result.project);
+      this.#upsert(result.workdir);
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
       throw error;
@@ -86,11 +86,11 @@ class ProjectsState {
 
   async update(
     id: string,
-    patch: { protectRules?: Project['protectRules']; allowedPorts?: Project['allowedPorts'] },
+    patch: { protectRules?: Workdir['protectRules']; allowedPorts?: Workdir['allowedPorts'] },
   ): Promise<void> {
     try {
-      const result = (await core.call('projects.update', { id, ...patch })) as { project: Project };
-      this.#upsert(result.project);
+      const result = (await core.call('workdirs.update', { id, ...patch })) as { workdir: Workdir };
+      this.#upsert(result.workdir);
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
       throw error;
@@ -99,7 +99,7 @@ class ProjectsState {
 
   async remove(id: string): Promise<void> {
     try {
-      await core.call('projects.remove', { id });
+      await core.call('workdirs.remove', { id });
     } catch (error) {
       toast.error(errorText(codeOf(error), t('chats.errorCode.INTERNAL')));
       throw error;
@@ -108,7 +108,7 @@ class ProjectsState {
 
   async revokeLease(conversationId: string): Promise<boolean> {
     try {
-      const result = (await core.call('projects.revokeLease', { conversationId })) as {
+      const result = (await core.call('workdirs.revokeLease', { conversationId })) as {
         revoked: boolean;
       };
       return result.revoked;
@@ -118,13 +118,13 @@ class ProjectsState {
     }
   }
 
-  #upsert(project: Project): void {
-    const index = this.recent.findIndex((p) => p.id === project.id);
+  #upsert(workdir: Workdir): void {
+    const index = this.recent.findIndex((p) => p.id === workdir.id);
     if (index >= 0) {
-      this.recent[index] = project;
+      this.recent[index] = workdir;
       this.recent = [...this.recent];
     } else {
-      this.recent = [project, ...this.recent];
+      this.recent = [workdir, ...this.recent];
     }
   }
 }
@@ -133,4 +133,4 @@ function codeOf(error: unknown): string | undefined {
   return (error as { code?: string } | undefined)?.code;
 }
 
-export const projects = new ProjectsState();
+export const workdirs = new WorkdirsState();

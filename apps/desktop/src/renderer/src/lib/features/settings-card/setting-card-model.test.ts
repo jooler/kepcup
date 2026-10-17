@@ -257,7 +257,7 @@ describe('卡片形态的分发', () => {
     expect(hostApplies(item('capability.image'), 'form', { provider: 'dashscope' })).toBe(false);
     expect(hostApplies(item('group.title'), 'confirm', { title: '新群名' })).toBe(false);
     expect(hostApplies(item('group.members'), 'confirm', { bots: ['bot_b'] })).toBe(false);
-    expect(hostApplies(item('project.protect-rules'), 'user-only', { denyRead: [] })).toBe(false);
+    expect(hostApplies(item('workdir.protect-rules'), 'user-only', { denyRead: [] })).toBe(false);
     expect(
       hostApplies(item('connections.tool-policy'), 'confirm', {
         connection: 'conn-1',

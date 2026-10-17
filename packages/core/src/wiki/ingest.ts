@@ -45,7 +45,7 @@ export interface IngestOutcome {
 
 /**
  * Wiki ingest job (任务 3): resolve the source (attachment copy / workspace or
- * project file copy within access range / sandboxed URL fetch), store the raw
+ * workdir file copy within access range / sandboxed URL fetch), store the raw
  * material under `raw/` (dated + content-hashed file name, same-hash skip),
  * run the maintenance loop, commit once and update wiki_fts. 入库是 Bot 自己
  * 的知识库整理：成功不出现在对话里（只有 wiki_ingested / wiki_changed 总线
@@ -243,7 +243,7 @@ async function resolveSource(
     if (input.conversationId === null) {
       throw new AppError('INVALID_INPUT', '文件入库需要发起对话，无法确定可访问范围');
     }
-    // 在可访问范围内（workspace / project / 有效授权）才允许复制。
+    // 在可访问范围内（workspace / workdir / 有效授权）才允许复制。
     const identity = {
       runId: `wiki_${deps.clock.now()}`,
       botId: input.botId,

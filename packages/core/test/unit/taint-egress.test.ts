@@ -70,7 +70,7 @@ interface HarnessOptions {
   sandbox?: SandboxBackend;
   answer?: 'approved' | 'denied';
   duration?: ApprovalDuration;
-  projects?: unknown;
+  workdirs?: unknown;
   allowlistExempt?: boolean;
 }
 
@@ -124,10 +124,10 @@ async function harness(options: HarnessOptions = {}) {
     unattended: {
       effective: () => ({ enabled: options.unattended === true }),
     } as unknown as GatewayDeps['unattended'],
-    projects: (options.projects ?? {
+    workdirs: (options.workdirs ?? {
       policyInfo: () => null,
       writeDenial: () => null,
-    }) as GatewayDeps['projects'],
+    }) as GatewayDeps['workdirs'],
     platform: 'linux',
     readOnlyRootsOverride: [],
     sensitiveOverride: [],
@@ -557,8 +557,8 @@ describe('bash and git_remote', () => {
   });
 
   it('git_remote carries a taint hint', async () => {
-    // ProjectRuntime.gitRemote is stubbed to call straight into requestApproval.
-    const projects = {
+    // WorkdirRuntime.gitRemote is stubbed to call straight into requestApproval.
+    const workdirs = {
       writeDenial: () => null,
       gitRemote: async (
         _identity: RunIdentity,
@@ -569,7 +569,7 @@ describe('bash and git_remote', () => {
         return { exitCode: 0, output: '' };
       },
     };
-    const h = await harness({ projects });
+    const h = await harness({ workdirs });
     await h.gateway.gitRemote(task, { operation: 'push', args: [], reason: '' });
     expect(h.requests[0]!.kind).toBe('git_remote');
     expect(h.requests[0]!.payload['tainted']).toBeUndefined();

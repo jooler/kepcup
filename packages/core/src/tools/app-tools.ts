@@ -139,7 +139,7 @@ export function buildLocalConnectorTools(local: LocalConnectorToolFacade): ToolD
       category: Type.Optional(
         Type.String({
           description:
-            '分类：productivity、development、project、design、payments、crm、communication、data、other',
+            '分类：productivity、development、workdir、design、payments、crm、communication、data、other',
         }),
       ),
       docUrl: Type.Optional(

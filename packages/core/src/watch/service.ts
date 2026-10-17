@@ -67,7 +67,7 @@ export interface WatchServiceDeps {
   fetcher: WatchFetcher;
   /** W8: the bot's effective browser profile key (`bot:{id}` / `shared:{id}`). */
   profileKeyFor: (botId: string) => string;
-  /** Browser network rule: loopback only with a bound project (design 14 网络). */
+  /** Browser network rule: loopback only with a bound workdir (design 14 网络). */
   allowLoopback: (conversationId: string) => boolean;
   /** Wakes one turn of the bot (internal `watch_alert` event, reason `watch`). */
   deliverAlert: (input: { botId: string; conversationId: string; text: string }) => void;
@@ -472,7 +472,7 @@ export class WatchService {
     return this.#deps.profileKeyFor(botId);
   }
 
-  /** D88 校验：在这个对话里检查网页时能否访问本机地址（项目绑定决定）。 */
+  /** D88 校验：在这个对话里检查网页时能否访问本机地址（工作目录绑定决定）。 */
   allowsLoopback(conversationId: string): boolean {
     return this.#deps.allowLoopback(conversationId);
   }

@@ -45,7 +45,7 @@ import type { Bot } from '@kepcup/shared';
 export interface SettingTargetRef {
   botId: string | null;
   conversationId: string | null;
-  projectId: string | null;
+  workdirId: string | null;
 }
 
 /** 条目的当前状态（脱敏）。 */
@@ -150,10 +150,10 @@ export interface AdapterDeps {
   groups?: {
     rename(conversationId: string, title: string): void;
   };
-  /** 项目保护规则与端口（只读；写入留在项目设置组件）。 */
-  projects?: {
+  /** 工作目录保护规则与端口（只读；写入留在工作目录设置组件）。 */
+  workdirs?: {
     get(id: string): {
-      /** 项目目录（只用于把规则里的绝对路径脱敏成 `<project>/…`，不进快照）。 */
+      /** 工作目录（只用于把规则里的绝对路径脱敏成 `<workdir>/…`，不进快照）。 */
       path?: string | null;
       protectRules: { denyRead: readonly string[]; denyWrite: readonly string[] };
       allowedPorts: ReadonlyArray<readonly [number, number]> | null;
@@ -1536,18 +1536,18 @@ function stripPrefix(pattern: string, prefix: string): string | null {
 }
 
 /**
- * 一条保护规则的脱敏形状：项目目录下 → `<project>/…`，家目录下 → `~/…`，其余绝对路径只留最后一段
+ * 一条保护规则的脱敏形状：工作目录下 → `<workdir>/…`，家目录下 → `~/…`，其余绝对路径只留最后一段
  * （`…/文件名`）；相对的 glob（`*.pem`、`.git/config`）原样。都过 `sanitizeDisplayText` 并截短。
  */
 export function redactPathPattern(
   pattern: string,
-  projectRoot: string | null,
+  workdirRoot: string | null,
   homeDir: string | null,
 ): string {
   let shape = pattern;
-  if (projectRoot !== null) {
-    const rest = stripPrefix(pattern, projectRoot);
-    if (rest !== null) shape = rest.length > 0 ? `<project>/${rest}` : '<project>';
+  if (workdirRoot !== null) {
+    const rest = stripPrefix(pattern, workdirRoot);
+    if (rest !== null) shape = rest.length > 0 ? `<workdir>/${rest}` : '<workdir>';
   }
   if (shape === pattern && homeDir !== null) {
     const rest = stripPrefix(pattern, homeDir);
@@ -1560,14 +1560,14 @@ export function redactPathPattern(
   return clean(shape, PROTECT_PATTERN_MAX);
 }
 
-function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
+function workdirRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAdapter {
   return {
     read: (_item, target) => {
-      const project =
-        target.projectId !== null ? (deps.projects?.get(target.projectId) ?? null) : null;
-      if (project === null) return snapshot('unknown', null, '当前对话没有绑定项目');
+      const workdir =
+        target.workdirId !== null ? (deps.workdirs?.get(target.workdirId) ?? null) : null;
+      if (workdir === null) return snapshot('unknown', null, '当前对话没有绑定工作目录');
       if (kind === 'ports') {
-        const ports = (project.allowedPorts ?? []).map(([from, to]) =>
+        const ports = (workdir.allowedPorts ?? []).map(([from, to]) =>
           from === to ? `${from}` : `${from}-${to}`,
         );
         return snapshot(
@@ -1577,14 +1577,14 @@ function projectRulesAdapter(deps: AdapterDeps, kind: 'rules' | 'ports'): ItemAd
         );
       }
       // 读也要脱敏（方案 §七）：规则可能写成本机绝对路径——只回条数和脱敏后的形状
-      // （家目录 → `~`、项目目录 → `<project>`、其余绝对路径只留文件名），每条截短、条数封顶。
+      // （家目录 → `~`、工作目录 → `<workdir>`、其余绝对路径只留文件名），每条截短、条数封顶。
       const redact = (patterns: readonly string[]): string[] =>
         patterns
           .slice(0, PROTECT_PATTERNS_SHOWN)
           .map((pattern) =>
-            redactPathPattern(pattern, project.path ?? null, deps.homeDir ?? homedir()),
+            redactPathPattern(pattern, workdir.path ?? null, deps.homeDir ?? homedir()),
           );
-      const { denyRead, denyWrite } = project.protectRules;
+      const { denyRead, denyWrite } = workdir.protectRules;
       return snapshot(
         'configured',
         { denyRead: redact(denyRead), denyWrite: redact(denyWrite) },
@@ -1942,8 +1942,8 @@ export function buildItemAdapters(deps: AdapterDeps): (item: SettingItem) => Ite
     'bot.agent': botAgentAdapter(deps),
     'group.title': groupTitleAdapter(deps),
     'group.members': groupMembersAdapter(deps),
-    'project.protect-rules': projectRulesAdapter(deps, 'rules'),
-    'project.ports': projectRulesAdapter(deps, 'ports'),
+    'workdir.protect-rules': workdirRulesAdapter(deps, 'rules'),
+    'workdir.ports': workdirRulesAdapter(deps, 'ports'),
     'general.launch-at-login': launchAtLoginAdapter(deps),
     'general.workbench': workbenchEnabledAdapter(deps),
     'background.tasks': backgroundTasksAdapter(deps),

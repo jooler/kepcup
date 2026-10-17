@@ -78,8 +78,8 @@ const isTaskRequest = (marker: string) => (req: MockChatRequest) =>
 const isWakeRequest = (req: MockChatRequest) =>
   req.lastUserText().includes('<trigger reason="task"');
 
-function makeProjectDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'tasks-review-project-'));
+function makeWorkdirDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'tasks-review-workdir-'));
   dirs.push(dir);
   writeFileSync(path.join(dir, 'README.md'), '# p\n');
   return dir;
@@ -136,10 +136,10 @@ function fakeHandle(steerOk: boolean): TaskRunHandle & { steered: string[] } {
 
 describe('H2: write lease × scheduler slot never deadlock', () => {
   for (const limit of [1, 2]) {
-    // D75 W2: the old competitor — a response run calling acquire_project_write
+    // D75 W2: the old competitor — a response run calling acquire_workdir_write
     // and waiting for the lease while holding a slot — is now a turn, which is
     // read-only and never waits on a lease. Its closest task counterpart, a
-    // write task pinned to its workspace asking for the project lease mid-run,
+    // write task pinned to its workspace asking for the workdir lease mid-run,
     // is refused at once (one pinned lease target per task), so the
     // hold-and-wait cycle cannot form: T still gets its slot.
     it(`provider limit ${limit}: no hold-and-wait between a queued write task and other runs`, async () => {
@@ -152,19 +152,19 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
       const botB = await makeBot(core, '乙');
       const convA = await openDirect(core, botA.id);
       const convB = await openDirect(core, botB.id);
-      const dir = makeProjectDir();
-      const bound = (await core.rpc.call('projects.select', {
+      const dir = makeWorkdirDir();
+      const bound = (await core.rpc.call('workdirs.select', {
         conversationId: convA.id,
         path: dir,
-      })) as { project: { path: string } };
-      await core.rpc.call('projects.select', { conversationId: convB.id, path: dir });
-      const projectPath = bound.project.path;
+      })) as { workdir: { path: string } };
+      await core.rpc.call('workdirs.select', { conversationId: convB.id, path: dir });
+      const workdirPath = bound.workdir.path;
 
       const isR = isTaskRequest('R-WRITE');
       const rHeld = step()
         .expect(isR)
         .hold()
-        .replyToolCall('acquire_project_write', { reason: 'R 改项目' });
+        .replyToolCall('acquire_workdir_write', { reason: 'R 改项目' });
       const isBusy = (req: MockChatRequest) => req.lastUserText().includes('BUSY-H2');
       const busyHeld = step().expect(isBusy).hold().replyText('忙完了');
       llm.script('mock-main', [
@@ -200,14 +200,14 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         { label: 'all slots taken' },
       );
 
-      // T (conversation A): write task on the same project — takes the lease,
+      // T (conversation A): write task on the same workdir — takes the lease,
       // then queues for a slot (none free).
       const t = tasksOf(stack).start(turnIdentity(botA.id, convA.id), {
         title: '改项目',
         instruction: 'TASK-H2 改 README',
         sourceMessageIds: [],
         writes: true,
-        cwd: 'project',
+        cwd: 'workdir',
       });
       expect(t.state).toBe('submitted');
       const tIdentity: RunIdentity = {
@@ -216,9 +216,9 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
         conversationId: convA.id,
         loopType: 'task',
       };
-      const runtime = core.services.projectRuntime!;
-      await waitFor(() => (runtime.holdsLease(tIdentity, projectPath) ? true : null), {
-        label: 'T holds the project lease',
+      const runtime = core.services.workdirRuntime!;
+      await waitFor(() => (runtime.holdsLease(tIdentity, workdirPath) ? true : null), {
+        label: 'T holds the workdir lease',
       });
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(runOf(stack, t.taskId).status).toBe('queued'); // waiting for a slot
@@ -235,7 +235,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
       await waitRun(stack, t.taskId, ['completed'], 'T completed');
       busyHeld.release();
       expect(entries(stack, t.taskId).at(-1)).toMatchObject({ phase: 'result' });
-      expect(runtime.holdsLease(tIdentity, projectPath)).toBe(false);
+      expect(runtime.holdsLease(tIdentity, workdirPath)).toBe(false);
     }, 60_000);
   }
 
@@ -263,7 +263,7 @@ describe('H2: write lease × scheduler slot never deadlock', () => {
       writes: true,
     });
     const workspaceKey = `ws:${bot.id}:${conv.id}`;
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const identity: RunIdentity = {
       runId: t.taskId,
       botId: bot.id,
@@ -567,19 +567,19 @@ describe('LOW-8: a failed task can be retried (setup card auto-continue, design 
 // whose trigger carried it (supervisor-turns.test.ts).
 
 describe('round 2 (审查复核)', () => {
-  it('#1 two parallel write acquisitions of one run on a contested project both succeed after the holder releases', async () => {
+  it('#1 two parallel write acquisitions of one run on a contested workdir both succeed after the holder releases', async () => {
     const stack = await start();
     const { core } = stack;
     const bot = await makeBot(core, '甲');
     const conv = await openDirect(core, bot.id);
     const otherBot = await makeBot(core, '乙');
     const other = await openDirect(core, otherBot.id);
-    const dir = makeProjectDir();
-    const bound = (await core.rpc.call('projects.select', { conversationId: conv.id, path: dir })) as {
-      project: { path: string };
+    const dir = makeWorkdirDir();
+    const bound = (await core.rpc.call('workdirs.select', { conversationId: conv.id, path: dir })) as {
+      workdir: { path: string };
     };
-    await core.rpc.call('projects.select', { conversationId: other.id, path: dir });
-    const projectPath = bound.project.path;
+    await core.rpc.call('workdirs.select', { conversationId: other.id, path: dir });
+    const workdirPath = bound.workdir.path;
     const { runs } = domain(stack);
     // D75 W2: writers are write tasks (a turn — the old response run — is
     // read-only and refused by ensureWriteLease).
@@ -597,19 +597,19 @@ describe('round 2 (审查复核)', () => {
       runs.update(run.id, { status: 'running' });
       return { runId: run.id, botId, conversationId, loopType: 'task' };
     };
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const holder = runFor(otherBot.id, other.id);
-    await runtime.ensureWriteLease(holder, path.join(projectPath, 'h.txt'));
+    await runtime.ensureWriteLease(holder, path.join(workdirPath, 'h.txt'));
     const writer = runFor(bot.id, conv.id);
     // Two parallel write / edit tool calls of one run (gateway → ensureWriteLease).
-    const first = runtime.ensureWriteLease(writer, path.join(projectPath, 'a.txt'));
-    const second = runtime.ensureWriteLease(writer, path.join(projectPath, 'b.txt'));
+    const first = runtime.ensureWriteLease(writer, path.join(workdirPath, 'a.txt'));
+    const second = runtime.ensureWriteLease(writer, path.join(workdirPath, 'b.txt'));
     const settled = Promise.allSettled([first, second]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     await runtime.releaseRun(holder.runId);
     const results = await settled;
     expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
-    expect(runtime.holdsLease(writer, projectPath)).toBe(true);
+    expect(runtime.holdsLease(writer, workdirPath)).toBe(true);
     await runtime.releaseRun(writer.runId);
   }, 60_000);
 

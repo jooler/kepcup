@@ -283,7 +283,7 @@ describe('built-in patterns', () => {
   const VERSION_PROBE_PROGRAMS = new Set([
     'node', 'npm', 'python', 'python3', 'pip', 'pip3', 'tsc', 'eslint', 'prettier', 'ruby', 'php',
   ]);
-  /** Programs that proxy to a project-pinned toolchain or run project code. */
+  /** Programs that proxy to a workdir-pinned toolchain or run workdir code. */
   const FORBIDDEN_PROGRAMS = [
     'pnpm', 'yarn', 'corepack', 'bun', 'deno', 'npx', 'cargo', 'rustc', 'rustup', 'go', 'uv',
     'poetry', 'pipx', 'gradle', 'gradlew', 'mvn', 'make', 'bash', 'sh', 'zsh', 'env', 'xargs',

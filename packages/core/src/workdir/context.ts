@@ -2,40 +2,40 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import type { Repository } from 'es-git';
-import { PROJECT_CONTEXT_MAX_ENTRIES, PROJECT_CONTEXT_TOKEN_BUDGET } from '@kepcup/shared';
+import { WORKDIR_CONTEXT_MAX_ENTRIES, WORKDIR_CONTEXT_TOKEN_BUDGET } from '@kepcup/shared';
 
 import { truncateToBudget } from '../agent/tokens.js';
 
 /**
- * `<project>` context section (docs/design/08-project.md "上下文注入"):
+ * `<workdir>` context section (docs/design/08-workdir.md "上下文注入"):
  * path, a two-level top-of-tree listing that respects `.gitignore` (verdicts
- * come from the shadow repo's libgit2), the project's own git status (read
+ * come from the shadow repo's libgit2), the workdir's own git status (read
  * through es-git, never written) and the root `AGENTS.md` (preferred) /
  * `CLAUDE.md`.
  */
 
-export interface ProjectContextInput {
+export interface WorkdirContextInput {
   path: string;
   budget: number;
   /** libgit2 ignore verdict (shadow repo); null = no ignore filtering. */
   isIgnored: ((relativePath: string) => boolean) | null;
   /**
-   * 项目约定文件中由外部智能体自己读取的（D72 `provider.agentSideConfigFiles`，
+   * 工作目录约定文件中由外部智能体自己读取的（D72 `provider.agentSideConfigFiles`，
    * 如 Codex 的 `AGENTS.md`）：不再重复注入；其余候选照常注入。
    */
   skipGuideFiles?: readonly string[];
 }
 
-export interface ProjectContextSection {
+export interface WorkdirContextSection {
   title: string;
   body: string;
 }
 
 /** Two-level, `.gitignore`-aware listing (capped). */
 export function topTwoLevels(
-  projectPath: string,
-  isIgnored: ProjectContextInput['isIgnored'],
-  maxEntries = PROJECT_CONTEXT_MAX_ENTRIES,
+  workdirPath: string,
+  isIgnored: WorkdirContextInput['isIgnored'],
+  maxEntries = WORKDIR_CONTEXT_MAX_ENTRIES,
 ): string[] {
   const ignored = (relative: string): boolean => {
     if (isIgnored === null) return false;
@@ -48,14 +48,14 @@ export function topTwoLevels(
   const entries: string[] = [];
   let rootNames: string[];
   try {
-    rootNames = readdirSync(projectPath).sort((a, b) => a.localeCompare(b));
+    rootNames = readdirSync(workdirPath).sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }
   for (const name of rootNames) {
     if (entries.length >= maxEntries) break;
     if (name === '.git') continue;
-    const full = path.join(projectPath, name);
+    const full = path.join(workdirPath, name);
     let isDir: boolean;
     try {
       isDir = statSync(full).isDirectory();
@@ -88,15 +88,15 @@ export function topTwoLevels(
   return entries;
 }
 
-export interface ProjectGitStatus {
+export interface WorkdirGitStatus {
   branch: string | null;
   dirtyCount: number;
   headSummary: string | null;
 }
 
-/** Reads the project's own git repo (read-only); null when not a repo. */
-export async function projectGitStatus(projectPath: string): Promise<ProjectGitStatus | null> {
-  const dotGit = path.join(projectPath, '.git');
+/** Reads the workdir's own git repo (read-only); null when not a repo. */
+export async function workdirGitStatus(workdirPath: string): Promise<WorkdirGitStatus | null> {
+  const dotGit = path.join(workdirPath, '.git');
   if (!existsSync(dotGit)) return null;
   const { openRepository } = await import('es-git');
   let repo: Repository;
@@ -133,19 +133,19 @@ function drainStatuses(repo: Repository): string[] {
   return paths;
 }
 
-/** Builds the `<project>` prompt section, or null when there is no project. */
-export async function buildProjectSection(input: ProjectContextInput): Promise<ProjectContextSection | null> {
-  const { path: projectPath, budget } = input;
-  const lines: string[] = [`项目目录：${projectPath}`, '文件工具与命令的默认工作目录是项目目录。'];
+/** Builds the `<workdir>` prompt section, or null when there is no workdir. */
+export async function buildWorkdirSection(input: WorkdirContextInput): Promise<WorkdirContextSection | null> {
+  const { path: workdirPath, budget } = input;
+  const lines: string[] = [`工作目录：${workdirPath}`, '文件工具与命令默认在此工作目录下执行。'];
 
-  const entries = topTwoLevels(projectPath, input.isIgnored);
+  const entries = topTwoLevels(workdirPath, input.isIgnored);
   lines.push(
     entries.length > 0
       ? `顶层结构（两层，遵守 .gitignore）：\n${entries.join('\n')}`
       : '顶层结构：（空）',
   );
 
-  const git = await projectGitStatus(projectPath);
+  const git = await workdirGitStatus(workdirPath);
   if (git !== null) {
     lines.push(
       `git 状态：${git.branch !== null ? `分支 ${git.branch}` : '（游离 HEAD）'}${
@@ -156,14 +156,14 @@ export async function buildProjectSection(input: ProjectContextInput): Promise<P
 
   // Agents that read some guide themselves skip it (D72); the next candidate
   // is still injected — intended: e.g. Codex reads AGENTS.md but not
-  // CLAUDE.md, so a project with both still shows Codex its CLAUDE.md here.
+  // CLAUDE.md, so a workdir with both still shows Codex its CLAUDE.md here.
   const guideName = ['AGENTS.md', 'CLAUDE.md']
     .filter((name) => !(input.skipGuideFiles ?? []).includes(name))
-    .find((name) => existsSync(path.join(projectPath, name)));
+    .find((name) => existsSync(path.join(workdirPath, name)));
   if (guideName !== undefined) {
     try {
-      const raw = readFileSync(path.join(projectPath, guideName), 'utf8');
-      lines.push(`${guideName} 内容（项目约定，必须遵守）：\n${raw}`);
+      const raw = readFileSync(path.join(workdirPath, guideName), 'utf8');
+      lines.push(`${guideName} 内容（工作目录约定，必须遵守）：\n${raw}`);
     } catch {
       // unreadable guide — skip
     }
@@ -171,10 +171,10 @@ export async function buildProjectSection(input: ProjectContextInput): Promise<P
 
   const truncated = truncateToBudget(lines.join('\n'), budget);
   return {
-    title: 'project',
+    title: 'workdir',
     body: truncated.truncated ? `${truncated.text}\n（已截断）` : truncated.text,
   };
 }
 
 /** Budget used for the section (kept next to its builder). */
-export const PROJECT_SECTION_BUDGET = PROJECT_CONTEXT_TOKEN_BUDGET;
+export const WORKDIR_SECTION_BUDGET = WORKDIR_CONTEXT_TOKEN_BUDGET;

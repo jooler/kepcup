@@ -198,7 +198,7 @@ describe('ACP client helpers', () => {
   });
 
   it('only allows this session\'s bridge server and the run\'s tools (no impersonation)', () => {
-    // A user / project MCP server literally named "kepcup".
+    // A user / workdir MCP server literally named "kepcup".
     expect(
       decidePermission(request('x', 'mcp__kepcup__send_message'), genericAcpProvider, bridged)
         .decision,

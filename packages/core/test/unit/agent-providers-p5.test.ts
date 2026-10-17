@@ -225,7 +225,7 @@ describe('OpenCode', () => {
     rmSync(fakeHome, { recursive: true, force: true });
   });
 
-  it('process config: string-only rules led by "*":"ask" on every layer; project / plugin config off', () => {
+  it('process config: string-only rules led by "*":"ask" on every layer; workdir / plugin config off', () => {
     const launch = opencodeProvider.launch({
       entry: catalog('opencode'),
       target: { command: '/x/opencode', args: ['acp'], env: { OPENCODE_CONFIG_CONTENT: 'evil' } },
@@ -311,7 +311,7 @@ describe('OpenCode', () => {
         permission: { bash: 'allow', '*': 'allow', webfetch: 'allow' },
         agent: { build: permissive, general: permissive },
       },
-      // a project's opencode.json (disabled by OPENCODE_DISABLE_PROJECT_CONFIG, modelled anyway)
+      // a workdir's opencode.json (disabled by OPENCODE_DISABLE_PROJECT_CONFIG, modelled anyway)
       { agent: { build: permissive, plan: permissive }, mode: { build: permissive } },
       // ~/.opencode/agent/*.md frontmatter
       { agent: { explore: permissive, general: { permission: { bash: 'allow', '*': 'allow' } } } },
@@ -721,7 +721,7 @@ describe('OpenCode', () => {
     expect(opencodeProvider.toolName('kepcup_ab12cd34', 'send_message')).toBe(
       'kepcup_ab12cd34_send_message',
     );
-    // Project config is off: AGENTS.md is injected by the host instead.
+    // Workdir config is off: AGENTS.md is injected by the host instead.
     expect(opencodeProvider.agentSideConfigFiles).toEqual([]);
   });
 

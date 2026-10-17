@@ -672,21 +672,21 @@ describe('group conversations', () => {
     rmSync(outsideDir, { recursive: true, force: true });
   }, 60_000);
 
-  it('a group-bound project is shared by all members and still lease-protected', async () => {
+  it('a group-bound workdir is shared by all members and still lease-protected', async () => {
     const { core, llm } = await start();
     const { a, b, conv } = await threeBots(core);
 
-    const projectDir = realpathSync(mkdtempSync(path.join(tmpdir(), 'group-project-')));
-    const selected = (await core.rpc.call('projects.select', {
+    const workdirDir = realpathSync(mkdtempSync(path.join(tmpdir(), 'group-workdir-')));
+    const selected = (await core.rpc.call('workdirs.select', {
       conversationId: conv.id,
-      path: projectDir,
-    })) as { project: { id: string; path: string } };
-    expect(selected.project.path).toBe(projectDir);
+      path: workdirDir,
+    })) as { workdir: { id: string; path: string } };
+    expect(selected.workdir.path).toBe(workdirDir);
 
     // One script for the whole scenario: script() replaces the queue, so the
     // held step for A must live in the same queue as B's later steps.
     // D75 W2: writes happen in write tasks (a turn is read-only) — each bot's
-    // turn starts one; the tasks contend for the project lease.
+    // turn starts one; the tasks contend for the workdir lease.
     const isA = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿甲');
     const isB = (r: Parameters<typeof systemText>[0]) => systemText(r).includes('名字：阿乙');
     const [aStart, aAck, aWrite, aFinal, aRelay] = viaTask({
@@ -717,19 +717,19 @@ describe('group conversations', () => {
     ]);
     await sendDrafts(core, conv.id, [{ text: '建一个文件', mentions: [a.id] }]);
     await waitFor(
-      () => (existsSync(path.join(projectDir, 'from-group.txt')) ? true : null),
+      () => (existsSync(path.join(workdirDir, 'from-group.txt')) ? true : null),
       { label: 'A group write' },
     );
 
     // While A's write task still holds the lease, B's write task (direct
-    // conversation bound to the same project) waits for it, still submitted.
+    // conversation bound to the same workdir) waits for it, still submitted.
     const direct = await (async () => {
       const result = (await core.rpc.call('conversations.openDirect', { botId: b.id })) as {
         conversation: { id: string };
       };
       return result.conversation;
     })();
-    await core.rpc.call('projects.select', { conversationId: direct.id, path: projectDir });
+    await core.rpc.call('workdirs.select', { conversationId: direct.id, path: workdirDir });
     await sendDrafts(core, direct.id, [{ text: '你也写一个' }]);
     // The task host keeps one write task per cwd (across conversations):
     // B's task stays submitted, its queue reason names A's task (the old
@@ -764,8 +764,8 @@ describe('group conversations', () => {
       { label: 'B task completes after lease' },
     );
     expect(bRun).toBeTruthy();
-    expect(existsSync(path.join(projectDir, 'from-direct.txt'))).toBe(true);
-    rmSync(projectDir, { recursive: true, force: true });
+    expect(existsSync(path.join(workdirDir, 'from-direct.txt'))).toBe(true);
+    rmSync(workdirDir, { recursive: true, force: true });
   }, 60_000);
 
   it('group.turn events report triage, current bot and queue', async () => {

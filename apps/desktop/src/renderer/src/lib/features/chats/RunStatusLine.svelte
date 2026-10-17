@@ -3,7 +3,7 @@
   import { t } from '$lib/i18n';
   import { Button } from '$lib/components/ui/button';
   import { chat, type ActiveRunView } from '$lib/stores/chat.svelte';
-  import { projects } from '$lib/stores/projects.svelte';
+  import { workdirs } from '$lib/stores/workdirs.svelte';
   import { toast } from 'svelte-sonner';
   import { toolVerb } from './tool-labels';
 
@@ -12,7 +12,7 @@
   const run = $derived(entry.run);
 
   const isQueued = $derived(run.status === 'queued');
-  const lease = $derived(run.status === 'waiting_lease' ? projects.leaseWaiting[run.id] : undefined);
+  const lease = $derived(run.status === 'waiting_lease' ? workdirs.leaseWaiting[run.id] : undefined);
   const holderName = $derived(
     lease !== undefined
       ? (chat.conversations.find((c) => c.id === lease.holderConversationId)?.bot?.name ??
@@ -38,9 +38,9 @@
   async function revokeLease(): Promise<void> {
     const conversationId = run.conversationId;
     if (conversationId === null) return;
-    const revoked = await projects.revokeLease(conversationId);
-    if (revoked) toast.success(t('projects.leaseRevoked'));
-    else toast.info(t('projects.leaseNothing'));
+    const revoked = await workdirs.revokeLease(conversationId);
+    if (revoked) toast.success(t('workdirs.leaseRevoked'));
+    else toast.info(t('workdirs.leaseNothing'));
   }
 </script>
 
@@ -58,7 +58,7 @@
       {#if lease !== undefined}
         <span class="inline-flex items-center gap-1.5" data-testid="lease-waiting-text">
           <Hourglass class="size-3.5 animate-pulse" aria-hidden="true" />
-          {t('projects.leaseWaiting', { name: holderName })}
+          {t('workdirs.leaseWaiting', { name: holderName })}
         </span>
       {:else}
         {isQueued ? t('runStatus.queued') : label}
@@ -72,7 +72,7 @@
         onclick={() => void revokeLease()}
         data-testid="lease-revoke"
       >
-        {t('projects.leaseRevoke')}
+        {t('workdirs.leaseRevoke')}
       </Button>
     {/if}
   </div>

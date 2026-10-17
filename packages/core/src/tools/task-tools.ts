@@ -34,8 +34,8 @@ export interface StartTaskInput {
   sourceMessageIds: string[];
   /** Write task: takes the cwd write lease for its whole run (§5.1). */
   writes: boolean;
-  /** Cwd root; default = the bound project when available, else the workspace. */
-  cwd?: 'workspace' | 'project' | undefined;
+  /** Cwd root; default = the bound workdir when available, else the workspace. */
+  cwd?: 'workspace' | 'workdir' | undefined;
   /** Replay this settled task's process into the new one (D56 budget, §7.1). */
   continuesTaskId?: string | undefined;
   /**
@@ -353,7 +353,7 @@ export function buildTaskTools(input: {
     instruction: string;
     source_message_ids: string[];
     writes: boolean;
-    cwd?: 'workspace' | 'project';
+    cwd?: 'workspace' | 'workdir';
     continues_task_id?: string;
     capabilities?: string[];
   }> = {
@@ -376,8 +376,8 @@ export function buildTaskTools(input: {
         }),
         writes: Type.Boolean({ description: 'true = 会修改文件的写任务；false = 只读任务' }),
         cwd: Type.Optional(
-          Type.Union([Type.Literal('workspace'), Type.Literal('project')], {
-            description: '工作目录：project（对话绑定的项目，缺省时有项目即用项目）或 workspace',
+          Type.Union([Type.Literal('workspace'), Type.Literal('workdir')], {
+            description: '工作目录：workdir（对话绑定的工作目录，缺省时有绑定即用）或 workspace',
           }),
         ),
         continues_task_id: Type.Optional(
@@ -402,8 +402,8 @@ export function buildTaskTools(input: {
         const ids = sourceIds(params.source_message_ids);
         if (typeof ids === 'string') return fail('INVALID_INPUT', ids);
         if (typeof params.writes !== 'boolean') return fail('INVALID_INPUT', 'writes 必须是布尔值');
-        if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'project') {
-          return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 project');
+        if (params.cwd !== undefined && params.cwd !== 'workspace' && params.cwd !== 'workdir') {
+          return fail('INVALID_INPUT', 'cwd 只能是 workspace 或 workdir');
         }
         const capabilities = capabilityIds(params.capabilities);
         if (typeof capabilities === 'string') return fail('INVALID_INPUT', capabilities);

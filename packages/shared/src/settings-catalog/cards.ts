@@ -64,12 +64,12 @@ export const SETTING_CARD_TERMINAL_STATES: ReadonlySet<SettingCardState> = new S
 
 /**
  * 卡片作用对象（条目 `scope` 决定哪个非空）：`bot` 项 → 被修改的 Bot；`group` 项 → 群会话；
- * `project` 项 → 项目；`global` 项全空。卡片所在的对话由消息行给出，不重复。
+ * `workdir` 项 → 工作目录；`global` 项全空。卡片所在的对话由消息行给出，不重复。
  */
 export const settingTargetSchema = z.object({
   botId: z.string().optional(),
   conversationId: z.string().optional(),
-  projectId: z.string().optional(),
+  workdirId: z.string().optional(),
 });
 export type SettingTarget = z.infer<typeof settingTargetSchema>;
 

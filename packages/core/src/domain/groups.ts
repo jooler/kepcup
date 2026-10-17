@@ -99,7 +99,7 @@ export class GroupsService {
   }
 
   /**
-   * 群创建完成落点（project 步作答后由 orchestrator 调用）：名称与定位描述
+   * 群创建完成落点（workdir 步作答后由 orchestrator 调用）：名称与定位描述
    * 一次性写入、清 setup_state；标题校验与 create 一致。
    */
   finalizeSetup(

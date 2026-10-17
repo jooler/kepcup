@@ -12,18 +12,18 @@ import { mountpointFor } from '../../src/sandbox/wsl/paths.js';
 import type { SandboxPolicy } from '../../src/sandbox/types.js';
 
 /**
- * 红线单测（P12 任务 5）：挂载参数严格校验，只接受已登记的 project /
+ * 红线单测（P12 任务 5）：挂载参数严格校验，只接受已登记的 workdir /
  * 授权目录 / 应用数据目录根。任何未登记路径（模拟上游任何 bug 产生的策略
  * 路径）都必须被拒绝并使整条命令 fail-closed。
  */
 
 const DATA_HOME = 'C:\\Users\\me\\.kepcup';
 const WORKSPACE = `${DATA_HOME}\\bots\\bot_1\\workspaces\\conv_1`;
-const PROJECT = 'C:\\code\\my-project';
+const WORKDIR = 'C:\\code\\my-workdir';
 const GRANT = 'D:\\shared\\docs';
 
 const registration: MountRegistration = {
-  registeredWindowsPaths: () => [DATA_HOME, PROJECT, GRANT],
+  registeredWindowsPaths: () => [DATA_HOME, WORKDIR, GRANT],
 };
 
 function policy(overrides: Partial<SandboxPolicy> = {}): SandboxPolicy {
@@ -87,7 +87,7 @@ describe('resolvePolicyMounts — 红线：未登记路径拒绝', () => {
 
   it('SKIPS host home toolchain readOnly roots the backend keeps out of the image (BR-P12-003)', () => {
     // On a Windows machine with ~/.cargo etc., buildSandboxPolicy puts those
-    // directories into readOnly; the WSL backend does not project them (the
+    // directories into readOnly; the WSL backend does not workdir them (the
     // distro ships its own toolchains) — they must be skipped, not rejected.
     const cargo = 'C:\\Users\\me\\.cargo';
     const resolved = resolvePolicyMounts(policy({ readOnly: [GRANT, cargo] }), {
@@ -124,21 +124,21 @@ describe('resolvePolicyMounts — 红线：未登记路径拒绝', () => {
   });
 
   it('upgrades a ro mount to rw when the same path needs both', () => {
-    const resolved = resolvePolicyMounts(policy({ readOnly: [PROJECT], readWrite: [WORKSPACE, PROJECT] }), opts);
-    expect(resolved.entries.find((entry) => entry.source === PROJECT)!.mode).toBe('rw');
+    const resolved = resolvePolicyMounts(policy({ readOnly: [WORKDIR], readWrite: [WORKSPACE, WORKDIR] }), opts);
+    expect(resolved.entries.find((entry) => entry.source === WORKDIR)!.mode).toBe('rw');
   });
 
   it('treats case variants of the same Windows path as ONE planned mount (BR-P12-008)', () => {
     const plan = planMounts(
-      policy({ readOnly: [PROJECT], readWrite: [WORKSPACE, PROJECT.toLowerCase()] }),
+      policy({ readOnly: [WORKDIR], readWrite: [WORKSPACE, WORKDIR.toLowerCase()] }),
       opts,
     );
     expect(plan.rejections).toEqual([]);
-    // Exactly two mounts: workspace + the project once (not once per spelling).
+    // Exactly two mounts: workspace + the workdir once (not once per spelling).
     expect(plan.mounts).toHaveLength(2);
-    const projectMount = plan.mounts.find((m) => m.source.toLowerCase() === PROJECT.toLowerCase())!;
-    expect(projectMount.mode).toBe('rw'); // the rw entry upgrades the ro one
-    expect(projectMount.mountpoint).toBe(mountpointFor(PROJECT));
+    const workdirMount = plan.mounts.find((m) => m.source.toLowerCase() === WORKDIR.toLowerCase())!;
+    expect(workdirMount.mode).toBe('rw'); // the rw entry upgrades the ro one
+    expect(workdirMount.mountpoint).toBe(mountpointFor(WORKDIR));
   });
 });
 
@@ -162,7 +162,7 @@ describe('planMounts — distro policy mapping', () => {
     expect(plan.mounts.map((m) => m.source)).toEqual([WORKSPACE]);
   });
 
-  it('forwards denyRead entries that fall inside a mount (project protect rules)', () => {
+  it('forwards denyRead entries that fall inside a mount (workdir protect rules)', () => {
     const plan = planMounts(policy({ denyRead: [`${WORKSPACE}\\secrets`] }), opts);
     // 根 deny 在前（BR-P12-001），计划内的保护规则映射跟在其后（更具体的条目）。
     expect(plan.distroDenyReads).toEqual(['/mnt/kepcup', '/home/kepcup', `${plan.mounts[0]!.mountpoint}/secrets`]);

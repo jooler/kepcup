@@ -149,7 +149,7 @@ export interface AcpToolCallLike {
 
 /**
  * 宿主 MCP 桥 server 名的前缀。实际名字按会话随机（`kepcup_<8hex>`，见
- * `capabilities.ts` 的 `newHostServerName`）：用户 / 项目里同名的 MCP server
+ * `capabilities.ts` 的 `newHostServerName`）：用户 / 工作目录里同名的 MCP server
  * 无法冒充宿主桥（被自动放行、镜像被隐藏），Codex 也不会因同名去重而丢掉桥。
  */
 export const HOST_MCP_SERVER_PREFIX = 'kepcup';

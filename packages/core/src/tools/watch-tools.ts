@@ -82,7 +82,7 @@ export function buildWatchTools(input: {
     description:
       `盯着一个网页，条件满足时才唤醒你（检查由宿主在后台确定性执行，不花模型调用；用你的浏览器资料，已登录的网站可用）。` +
       `适合「降价了 / 有货了 / 页面更新了告诉我」。条件边沿触发：上次不满足、这次满足才提醒一次；changed 是页面有实质变化（忽略「3 分钟前」之类的相对时间）。` +
-      `检查间隔不短于 ${WATCH_MIN_INTERVAL_SEC / 60} 分钟。只访问用户给的网址；内网地址被拦截，本机地址仅在对话绑定了 project 时可访问。创建后对话里会出现监看卡，不需要用户确认。`,
+      `检查间隔不短于 ${WATCH_MIN_INTERVAL_SEC / 60} 分钟。只访问用户给的网址；内网地址被拦截，本机地址仅在对话绑定了 workdir 时可访问。创建后对话里会出现监看卡，不需要用户确认。`,
     parameters: Type.Object({
       url: Type.String({ description: '要监看的 http(s) 网址' }),
       selector: Type.Optional(

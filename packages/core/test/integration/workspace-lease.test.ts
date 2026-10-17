@@ -16,7 +16,7 @@ import type { RunIdentity } from '../../src/agent/types.js';
 /**
  * D75 W1-C：workspace 写租约（docs/design/30 §5.2）——两个写任务抢同一个
  * workspace，第二个 waiting_lease + lease.waiting，第一个释放后拿到；
- * 只读身份取租约被拒（RUN_READ_ONLY）；project 租约键不受影响。
+ * 只读身份取租约被拒（RUN_READ_ONLY）；workdir 租约键不受影响。
  */
 
 const stacks: TestStack[] = [];
@@ -62,7 +62,7 @@ describe('workspace write lease (D75 §5.2)', () => {
     const { core } = stack;
     const bot = await makeBot(core, '写手');
     const conv = await openDirect(core, bot.id);
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const runs = core.services.domain!.runs;
     const workspace = workspacePathFor(resolvePaths(core.services.paths.home), bot.id, conv.id);
     const a = taskIdentity(stack, bot.id, conv.id, true);
@@ -70,7 +70,7 @@ describe('workspace write lease (D75 §5.2)', () => {
 
     // A pins the workspace root for the whole task (W1-A contract).
     const held = await runtime.ensureWriteLease(a, workspace, { pin: true });
-    expect(held).toEqual({ key: `ws:${bot.id}:${conv.id}`, project: null });
+    expect(held).toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
     // Re-acquiring (any path inside the same workspace) passes straight through.
     await expect(runtime.ensureWriteLease(a, path.join(workspace, 'sub', 'f.txt'))).resolves.toEqual(held);
 
@@ -94,7 +94,7 @@ describe('workspace write lease (D75 §5.2)', () => {
 
     // A ends (the settle path releases the lease) → B is promoted.
     await runtime.releaseRun(a.runId);
-    await expect(bAcquire).resolves.toEqual({ key: `ws:${bot.id}:${conv.id}`, project: null });
+    await expect(bAcquire).resolves.toEqual({ key: `ws:${bot.id}:${conv.id}`, workdir: null });
     expect(runs.get(b.runId)?.status).toBe('running');
     // No checkpoint for workspaces: releasing B records no run_changes.
     await runtime.releaseRun(b.runId);
@@ -106,7 +106,7 @@ describe('workspace write lease (D75 §5.2)', () => {
     const { core } = stack;
     const bot = await makeBot(core, '排队');
     const conv = await openDirect(core, bot.id);
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const workspace = workspacePathFor(resolvePaths(core.services.paths.home), bot.id, conv.id);
     const a = taskIdentity(stack, bot.id, conv.id, true);
     const b = taskIdentity(stack, bot.id, conv.id, true);
@@ -118,23 +118,23 @@ describe('workspace write lease (D75 §5.2)', () => {
     await runtime.releaseRun(a.runId);
   }, 60_000);
 
-  it('different workspaces (other bot / other conversation) and the project do not collide', async () => {
+  it('different workspaces (other bot / other conversation) and the workdir do not collide', async () => {
     const stack = await start();
     const { core } = stack;
     const botX = await makeBot(core, '甲');
     const botY = await makeBot(core, '乙');
     const convX = await openDirect(core, botX.id);
     const convY = await openDirect(core, botY.id);
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const home = resolvePaths(core.services.paths.home);
-    // Bind first: a running task blocks switching projects (like a response run).
-    const projectDir = mkdtempSync(path.join(tmpdir(), 'ws-lease-project-'));
-    dirs.push(projectDir);
-    writeFileSync(path.join(projectDir, 'README.md'), '# p\n');
-    const bound = (await core.rpc.call('projects.select', {
+    // Bind first: a running task blocks switching workdirs (like a response run).
+    const workdirDir = mkdtempSync(path.join(tmpdir(), 'ws-lease-workdir-'));
+    dirs.push(workdirDir);
+    writeFileSync(path.join(workdirDir, 'README.md'), '# p\n');
+    const bound = (await core.rpc.call('workdirs.select', {
       conversationId: convX.id,
-      path: projectDir,
-    })) as { project: { path: string } };
+      path: workdirDir,
+    })) as { workdir: { path: string } };
     const x = taskIdentity(stack, botX.id, convX.id, true);
     const y = taskIdentity(stack, botY.id, convY.id, true);
     await runtime.ensureWriteLease(x, workspacePathFor(home, botX.id, convX.id), { pin: true });
@@ -148,14 +148,14 @@ describe('workspace write lease (D75 §5.2)', () => {
       runtime.ensureWriteLease(z, workspacePathFor(home, botY.id, convY.id)),
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' });
 
-    // Project paths keep their own key (the project root, with a checkpoint)
+    // Workdir paths keep their own key (the workdir root, with a checkpoint)
     // while X still holds its workspace: no collision.
     await expect(
-      core.rpc.call('projects.select', { conversationId: convX.id, path: projectDir }),
-    ).rejects.toMatchObject({ code: 'PROJECT_SWITCH_BLOCKED' });
-    const projectTarget = await runtime.ensureWriteLease(z, path.join(bound.project.path, 'a.txt'));
-    expect(projectTarget.key).toBe(bound.project.path);
-    expect(projectTarget.project).not.toBeNull();
+      core.rpc.call('workdirs.select', { conversationId: convX.id, path: workdirDir }),
+    ).rejects.toMatchObject({ code: 'WORKDIR_SWITCH_BLOCKED' });
+    const workdirTarget = await runtime.ensureWriteLease(z, path.join(bound.workdir.path, 'a.txt'));
+    expect(workdirTarget.key).toBe(bound.workdir.path);
+    expect(workdirTarget.workdir).not.toBeNull();
     await runtime.releaseRun(z.runId);
     await runtime.releaseRun(x.runId);
     await runtime.releaseRun(y.runId);
@@ -166,7 +166,7 @@ describe('workspace write lease (D75 §5.2)', () => {
     const { core } = stack;
     const bot = await makeBot(core, '只读');
     const conv = await openDirect(core, bot.id);
-    const runtime = core.services.projectRuntime!;
+    const runtime = core.services.workdirRuntime!;
     const workspace = workspacePathFor(resolvePaths(core.services.paths.home), bot.id, conv.id);
     const readTask = taskIdentity(stack, bot.id, conv.id, false);
     const turn: RunIdentity = { runId: 'run_turn_x', botId: bot.id, conversationId: conv.id, loopType: 'turn' };

@@ -104,7 +104,7 @@ describe('setup path gate (D59)', () => {
     expect(run.triggerMessageIds).toHaveLength(2);
   }, 20_000);
 
-  it('choosing a directory binds the project before the run starts', async () => {
+  it('choosing a directory binds the workdir before the run starts', async () => {
     const { core, llm } = await start();
     const conversationId = await createInterviewConversation(core);
     const dir = tmpDir();
@@ -114,13 +114,13 @@ describe('setup path gate (D59)', () => {
     await core.rpc.call('bots.interview.answerPath', { conversationId, path: dir });
     await waitForRun(core, conversationId, 'completed');
 
-    // 绑定发生在 run 之前：<project> 段进入系统提示，对话绑定可查。
+    // 绑定发生在 run 之前：<workdir> 段进入系统提示，对话绑定可查。
     const request = llm.requestsFor('mock-main')[0]!;
-    expect(JSON.stringify(request.body.messages)).toContain('<project>');
+    expect(JSON.stringify(request.body.messages)).toContain('<workdir>');
     const conversation = (await core.rpc.call('conversations.get', { id: conversationId })) as {
       conversation: Conversation;
     };
-    expect(conversation.conversation.projectId).not.toBeNull();
+    expect(conversation.conversation.workdirId).not.toBeNull();
 
     // 绑定系统消息 + setupAnswer 消息都在卡片之后。
     const all = messagesOf(core, conversationId);
@@ -129,7 +129,7 @@ describe('setup path gate (D59)', () => {
         (m) =>
           m.kind === 'system_event' &&
           'text' in m.content &&
-          m.content.text.includes('项目已绑定为'),
+          m.content.text.includes('工作目录已绑定为'),
       ),
     ).toBe(true);
 
@@ -230,18 +230,18 @@ describe('conversational group creation (D60)', () => {
     await waitForMessage(
       core,
       conversationId,
-      (m) => m.kind === 'system_event' && 'step' in m.content && m.content.step === 'project',
+      (m) => m.kind === 'system_event' && 'step' in m.content && m.content.step === 'workdir',
     );
     const finished = (await core.rpc.call('groups.setup.answer', {
       conversationId,
-      step: 'project',
+      step: 'workdir',
       path: dir,
     })) as { conversation: Conversation; done: boolean };
     expect(finished.done).toBe(true);
     expect(finished.conversation.setupState ?? null).toBeNull();
     expect(finished.conversation.title).toBe('项目讨论组');
     expect(finished.conversation.description).toBe('每周同步项目进展与风险');
-    expect(finished.conversation.projectId).not.toBeNull();
+    expect(finished.conversation.workdirId).not.toBeNull();
 
     // 全程零模型调用 + 完成后不自动触发任何 run。
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -298,7 +298,7 @@ describe('conversational group creation (D60)', () => {
       step: 'members',
       botIds: [a.id, b.id],
     });
-    await core.rpc.call('groups.setup.answer', { conversationId, step: 'project', path: null });
+    await core.rpc.call('groups.setup.answer', { conversationId, step: 'workdir', path: null });
 
     // 首条用户消息触发响应 run：<conversation_info> 携带群定位。
     llm.script('mock-light', [
