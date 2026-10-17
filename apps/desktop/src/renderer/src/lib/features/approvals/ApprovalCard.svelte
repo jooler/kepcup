@@ -424,7 +424,7 @@
                     ? agentToolTitle
                     : approval.kind === 'butler_proposal'
                       ? butlerProposal?.proposalType === 'project'
-                        ? t('approvals.butlerGroupTitle')
+                        ? t('approvals.butlerProjectTitle')
                         : butlerProposal?.proposalType === 'bot'
                           ? t('approvals.butlerBotTitle')
                           : t('approvals.butlerTeamTitle')
@@ -833,18 +833,18 @@
       {#if butlerProposal.proposalType === 'project'}
         <!-- WP4 编译修复：负责人一行只读展示，卡上改负责人的下拉与文案归 WP8 -->
         <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="approval-butler-project">
-          <span class="text-muted-foreground">{t('approvals.butlerGroupName')}</span>
+          <span class="text-muted-foreground">{t('approvals.butlerProjectName')}</span>
           <span data-testid="approval-butler-project-title">{butlerProposal.title}</span>
           {#if butlerProposal.goal.length > 0}
-            <span class="text-muted-foreground">{t('approvals.butlerGroupPurpose')}</span>
+            <span class="text-muted-foreground">{t('approvals.butlerProjectGoal')}</span>
             <span class="break-all">{butlerProposal.goal}</span>
           {/if}
-          <span class="text-muted-foreground">{t('approvals.butlerGroupLead')}</span>
+          <span class="text-muted-foreground">{t('approvals.butlerProjectLead')}</span>
           <span data-testid="approval-butler-project-lead">
             {contacts.bots.find((bot) => bot.id === butlerProposal.leadBotId)?.name ??
               butlerProposal.leadBotId}
           </span>
-          <span class="text-muted-foreground">{t('approvals.butlerGroupMembers')}</span>
+          <span class="text-muted-foreground">{t('approvals.butlerProjectMembers')}</span>
           <span data-testid="approval-butler-project-members">
             {butlerProposal.memberBotIds
               .map((id) => contacts.bots.find((bot) => bot.id === id)?.name ?? id)

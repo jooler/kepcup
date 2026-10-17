@@ -327,7 +327,7 @@ export const settingsUpdateInputSchema = z.object({
     .object({
       agentEnabled: z.boolean().optional(),
       agentSkillAuthoring: z.boolean().optional(),
-      groupMentionOnly: z.boolean().optional(),
+      projectMentionOnly: z.boolean().optional(),
     })
     .optional(),
   /** 新建 Bot 的默认外部 Agent（onboarding 订阅分支）；'' 清除。 */

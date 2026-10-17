@@ -64,7 +64,7 @@
    * 预览（无消息且无未读/执行中/待确认信号时预览行整行不渲染，只剩名称与头像
    * 垂直居中）。管理操作（移动到分组 / 重命名 / 复制会话 id / 群设置 / 删除）
    * 收进右键上下文菜单，不再有常驻「…」按钮。
-   * 新建只保留「+」面板里的对话式新建和新建群聊。搜索按钮打开全局
+   * 新建只保留「+」面板里的对话式新建和新建项目组。搜索按钮打开全局
    * 搜索弹框（Bot/会话/设置条目，Cmd+K 同效；搜索层与侧栏触发的模态对话框挂在 App 根）。设置与通讯录打开全局设置弹框。
    *
    * 工作台入口（D90）在管家之上：只改 `shell.mainView`，不清当前会话；对话行的选中高亮
@@ -214,7 +214,7 @@
     return stripMarkdown(raw);
   }
 
-  /** 条目标题（图标模式的 hover 提示同源）：群聊用标题，私聊用 Bot 名。 */
+  /** 条目标题（图标模式的 hover 提示同源）：项目组用标题，私聊用 Bot 名。 */
   function nameOf(conversation: ConversationView): string {
     return conversation.type === 'project'
       ? (conversation.title ?? conversation.id)
@@ -634,7 +634,7 @@
   />
 {/snippet}
 
-<!-- 会话头像（展开/图标两模式共用）：群聊用成员头像堆叠，私聊用 Bot 头像。 -->
+<!-- 会话头像（展开/图标两模式共用）：项目组用成员头像堆叠，私聊用 Bot 头像。 -->
 {#snippet conversationAvatar(conversation: ConversationView)}
   {#if conversation.type === 'project'}
     <ProjectAvatarStack members={conversation.memberPreviews ?? []} class="size-11" />

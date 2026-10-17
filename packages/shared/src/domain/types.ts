@@ -606,9 +606,9 @@ export const backgroundTasksSettingsSchema = z
      * 只有外部 Agent 时项目组只在被 @ / 回复时响应（不跑路由判断）。默认开
      * （审查 C2）：路由判断经 Agent 只在用户明确关掉此项后运行。
      */
-    groupMentionOnly: z.boolean().default(true).catch(true),
+    projectMentionOnly: z.boolean().default(true).catch(true),
   })
-  .catch({ agentEnabled: true, agentSkillAuthoring: false, groupMentionOnly: true });
+  .catch({ agentEnabled: true, agentSkillAuthoring: false, projectMentionOnly: true });
 export type BackgroundTasksSettings = z.infer<typeof backgroundTasksSettingsSchema>;
 
 /**

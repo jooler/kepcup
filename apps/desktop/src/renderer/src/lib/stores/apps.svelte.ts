@@ -254,7 +254,7 @@ class AppsState {
 
   /**
    * 发起连接（`apps.connect`）。同一目标并发调用 core 会返回同一 flowId（后到的
-   * `grantBotId` 不生效——群聊里第二张卡片完成后自行补写 Profile，见
+   * `grantBotId` 不生效——项目组里第二张卡片完成后自行补写 Profile，见
    * ConnectAppSetupBody）；这里把该 flowId 挂到目标上。`connectionId` = 重新授权
    * 既有的目录连接（过期 / 追加权限）而不是新建账号。返回 flowId，供面板追踪。
    */

@@ -15,7 +15,7 @@
   /**
    * 设置页「后台任务」（D72 P6，docs/design/28-external-agents-acp.md §8）：
    * 没有内置模型时后台 loop 用哪个外部智能体（自动 = 只用 Bot 自己的 / 指定 /
-   * 关闭）与降配项（技能生成默认关、群聊仅 @ 响应默认开）。哪些用途仍走内置
+   * 关闭）与降配项（技能生成默认关、项目组仅 @ 响应默认开）。哪些用途仍走内置
    * 模型按两个默认模型逐用途提示；不能用于后台的智能体列出原因（审查 S1）。
    */
 
@@ -40,13 +40,13 @@
     settings?.backgroundTasks ?? {
       agentEnabled: true,
       agentSkillAuthoring: false,
-      groupMentionOnly: true,
+      projectMentionOnly: true,
     },
   );
   /**
    * 仍走内置模型的用途（与 core llm-router 的内置取法一致，按全局默认模型
    * 估算；Bot 自己配置的模型另算）：有主模型 → 全部；只有轻量模型 → 摘要、
-   * 反思、记忆整理、群聊判断。
+   * 反思、记忆整理、路由判断。
    */
   const builtinScope = $derived.by((): 'all' | 'light' | 'none' => {
     if ((settings?.defaultMainModel ?? '').length > 0) return 'all';
@@ -179,17 +179,17 @@
         >
       </span>
     </label>
-    <label class="flex items-start gap-2 text-sm" data-testid="background-tasks-group-mention-only">
+    <label class="flex items-start gap-2 text-sm" data-testid="background-tasks-project-mention-only">
       <Checkbox
-        checked={tasks.groupMentionOnly}
+        checked={tasks.projectMentionOnly}
         disabled={busy}
         onCheckedChange={(checked) =>
-          void save({ backgroundTasks: { ...tasks, groupMentionOnly: checked === true } })}
+          void save({ backgroundTasks: { ...tasks, projectMentionOnly: checked === true } })}
       />
       <span class="space-y-0.5">
-        <span class="block">{t('agents.background.groupMentionOnly')}</span>
+        <span class="block">{t('agents.background.projectMentionOnly')}</span>
         <span class="block text-xs text-muted-foreground"
-          >{t('agents.background.groupMentionOnlyHint')}</span
+          >{t('agents.background.projectMentionOnlyHint')}</span
         >
       </span>
     </label>

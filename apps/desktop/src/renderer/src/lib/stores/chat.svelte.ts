@@ -236,7 +236,7 @@ class ChatState {
     core.onEvent('bot.deleted', (payload) => {
       const data = payload as { id: string };
       // 已删除 Bot 的只读直聊不再进左栏（03-data-model 数据保留不变，UI 表现
-      // 删除效果）；群聊历史里它经 botName 回退为其 id。
+      // 删除效果）；项目组历史里它经 botName 回退为其 id。
       this.conversations = this.conversations.filter((c) => c.directBotId !== data.id);
       this.#pruneSidebarSections();
       if (this.#chat?.conversation.directBotId === data.id) this.close();
@@ -305,7 +305,7 @@ class ChatState {
   }
 
   /**
-   * 启动恢复：优先精确恢复上次查看的会话（私聊或群聊，localStorage 记忆，
+   * 启动恢复：优先精确恢复上次查看的会话（私聊或项目组，localStorage 记忆，
    * last-conversation-persist）；id 已失效（会话被删/Bot 被删转只读）或从未
    * 打开过则退回「最近 lastMessageAt」启发式；从没聊过则打开第一个 Bot 的
    * 直聊；一个 Bot 都没有（跳过了初始化向导）时不打开任何会话，交由调用方
@@ -378,7 +378,7 @@ class ChatState {
     shell.projectSettingsSection = 'overview';
     this.replyTo = null;
     // 记住「上次查看的会话」：重启/刷新后 restoreLast 精确回到这里（私聊
-    // 或群聊），而不是按最近消息时间挑一个。
+    // 或项目组），而不是按最近消息时间挑一个。
     saveLastConversationId(globalThis.localStorage ?? null, conversationId);
     // 重新打开对话：对 pending 的 link 卡核对一次（P2，design 38 §4.3）。
     this.#recheckPendingLinkCards(messages);
@@ -600,7 +600,7 @@ class ChatState {
     this.currentId = null;
     this.replyTo = null;
     this.highlightMessageId = null;
-    // 会话消失（删除会话/删除 Bot/放弃建群）才走到这里：记忆一并清除，
+    // 会话消失（删除会话/删除 Bot/放弃建项目组）才走到这里：记忆一并清除，
     // 下次启动按启发式恢复，而不是指着一个不存在的 id。
     clearLastConversationId(globalThis.localStorage ?? null);
     // 门禁置起的缺设置卡是「本次发送动作」的即时引导：离开会话即撤销
@@ -792,7 +792,7 @@ class ChatState {
 
   /**
    * 卡片内完成设置后的继续：core 失败路径（failedRun.setup）→ 收起横幅并
-   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 群聊 / 图像工具）。
+   * 自动重试原 run（原触发消息照常续跑，覆盖访谈回答 / 项目组 / 图像工具）。
    * 发送门禁路径无事可做——消息内容一直留在输入框，用户再按一次发送。
    */
   async continueAfterSetup(): Promise<void> {

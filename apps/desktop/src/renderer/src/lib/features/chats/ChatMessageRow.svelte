@@ -26,7 +26,7 @@
 
   /**
    * 普通对话消息行（用户 / Bot 文本消息）：负责布局与交互——用户消息反向
-   * 排列、群聊头像列、引用行、已编辑标记、hover 操作（引用/复制/固定/编辑）与
+   * 排列、项目组头像列、引用行、已编辑标记、hover 操作（引用/复制/固定/编辑）与
    * 右键菜单、证据跳转高亮。气泡内容与附件分别委托 MessageBody /
    * MessageAttachments（附件在上、正文在下）：后续多模态支持（图片、音
    * 频、视频等）只扩展那两层，本行的布局与操作保持稳定。merge 为连排信
@@ -80,7 +80,7 @@
       ? { id: message.content.todoId, title: message.content.todoTitle }
       : null,
   );
-  // 头像只在群聊出现：单聊双方都是纯气泡（UI 改版）；群聊里头像即发送者身份
+  // 头像只在项目组出现：单聊双方都是纯气泡（UI 改版）；项目组里头像即发送者身份
   // （不再渲染名字/时间行）。
   const isProjectChat = $derived(chat.current?.conversation.type === 'project');
   /** Sender's stored avatar (preset / upload), falling back to initials. */

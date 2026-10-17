@@ -18,7 +18,7 @@
   }: {
     members: Array<{ id: string; name: string; avatar?: string | null }>;
     class?: string;
-    /** 群聊始终含当前用户；个别场景可关掉。 */
+    /** 项目组始终含当前用户；个别场景可关掉。 */
     includeUser?: boolean;
   } = $props();
 

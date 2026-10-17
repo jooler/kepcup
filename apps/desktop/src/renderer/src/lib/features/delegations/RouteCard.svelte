@@ -22,7 +22,7 @@
   );
   const route = $derived(content.route ?? null);
   const botName = $derived(route?.botId ? chat.botName(route.botId) : '');
-  const groupTitle = $derived(
+  const projectTitle = $derived(
     route?.conversationId
       ? (chat.conversations.find((c) => c.id === route.conversationId)?.title ?? '')
       : '',
@@ -34,7 +34,7 @@
     if (route?.botId) await chat.openDirect(route.botId);
   }
 
-  async function openGroup(): Promise<void> {
+  async function openProject(): Promise<void> {
     if (route?.conversationId) await chat.select(route.conversationId);
   }
 
@@ -63,8 +63,8 @@
   {#if route !== null}
     <div class="mt-2 flex flex-wrap justify-end gap-2">
       {#if route.kind === 'project'}
-        <Button size="sm" class="h-7" onclick={() => void openGroup()} data-testid="route-open-group"
-          >{t('route.openGroup', { name: groupTitle })}</Button
+        <Button size="sm" class="h-7" onclick={() => void openProject()} data-testid="route-open-project"
+          >{t('route.openProject', { name: projectTitle })}</Button
         >
       {:else if route.kind === 'bot'}
         <Button size="sm" class="h-7" onclick={() => void openBot()} data-testid="route-open-bot"

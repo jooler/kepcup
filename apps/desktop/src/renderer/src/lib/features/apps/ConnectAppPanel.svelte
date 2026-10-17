@@ -83,7 +83,7 @@
     allowDisconnect?: boolean;
     /**
      * 本面板观察到流程 `done` 时回调一次（对话卡据此 `continueAfterSetup`）。
-     * `grantBotId` = 本次勾选要授权的 Bot（未勾选 / 无 Bot 为 null）；群聊里后加入同一流程
+     * `grantBotId` = 本次勾选要授权的 Bot（未勾选 / 无 Bot 为 null）；项目组里后加入同一流程
      * 的卡片据此自行补写 Profile（core 只认第一个 `apps.connect` 的 grantBotId）。
      */
     onDone?:

@@ -45,7 +45,7 @@
     if (isRenderableText) lazyMarkdown.start();
   });
   /**
-   * 用户气泡跟随对话 Bot 的预置头像色（单聊取 direct bot，群聊没有单一
+   * 用户气泡跟随对话 Bot 的预置头像色（单聊取 direct bot，项目组没有单一
    * Bot，维持默认主色）。第一种「黑白」是 var() 主题变量，亮/暗风格下
    * 黑白互换，文字用其对比色；其余固定色一律白字。
    */
