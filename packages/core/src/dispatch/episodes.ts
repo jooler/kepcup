@@ -64,6 +64,26 @@ function pairKey(a: string, b: string): string {
   return [a, b].sort().join('|');
 }
 
+/**
+ * e2e test seam (D92 T1a WP8): `KEPCUP_TEST_EPISODE_LIMITS="hops,pair"`
+ * (e.g. "2,2") overrides both breaker thresholds so an e2e run can trip the
+ * breaker with a short scripted ping-pong. Only read behind
+ * `__KEPCUP_TEST_HOOKS__` (start.ts folds the whole call away in packaged
+ * builds); malformed or non-positive values are ignored part by part — the
+ * shared constants stay the single source of truth for production.
+ */
+export function episodeLimitsFromEnv(env: NodeJS.ProcessEnv): { hops?: number; pair?: number } {
+  const raw = env.KEPCUP_TEST_EPISODE_LIMITS;
+  if (raw === undefined || raw.length === 0) return {};
+  const parts = raw.split(',');
+  const limits: { hops?: number; pair?: number } = {};
+  const hops = Number(parts[0]);
+  const pair = Number(parts[1]);
+  if (Number.isFinite(hops) && hops > 0) limits.hops = Math.floor(hops);
+  if (Number.isFinite(pair) && pair > 0) limits.pair = Math.floor(pair);
+  return limits;
+}
+
 function parseJson(raw: string, fallback: unknown): unknown {
   try {
     return JSON.parse(raw);
