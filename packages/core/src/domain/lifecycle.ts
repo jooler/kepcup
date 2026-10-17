@@ -296,7 +296,8 @@ export class LifecycleService {
     // Run-change records (P04) have no FK on conversation_id; the workdir's
     // files and shadow repository are untouched (docs/dev/03-data-model.md).
     mainDb.prepare('delete from run_changes where conversation_id = ?').run(conversationId);
-    // Chains cascade via FK (P05).
+    // Episodes and the rest of the conversation-scoped rows cascade via FK
+    // (D92 T1a WP2: episodes.conversation_id ON DELETE CASCADE).
     mainDb.prepare('delete from conversations where id = ?').run(conversationId);
     this.deps.attachments.deleteConversationFiles(conversationId);
     this.#deleteConversationWorkspaces(conversationId);
