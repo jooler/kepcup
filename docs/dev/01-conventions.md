@@ -71,7 +71,7 @@ kepcup/
         start.ts               # 启动：路径、日志、密钥、数据库、迁移、各服务、RPC
         infra/                 # paths、logger、crypto、keystore、db、migrate、events、clock
         rpc/                   # RPC 路由：把契约方法绑定到服务
-        domain/                # bots、conversations、messages、drafts、attachments、projects、settings ...
+        domain/                # bots、conversations、messages、drafts、attachments、workdirs、settings ...
         dispatch/              # 分发器：@ 解析、群聊判断、顺序执行、Bot 间连锁
         scheduler/             # 优先级调度、mailbox、厂商并发限制、定时触发
         agent/                 # AgentEngine（pi 封装）、上下文组装、提示词模板
@@ -79,7 +79,7 @@ kepcup/
         gateway/               # 工具网关：执行身份、路径检查、审批挂起、审计
         permissions/           # grants、审批请求、命令白名单、无人值守模式
         sandbox/               # 沙箱接口、srt 后端、策略生成、逐条确认执行器、WSL 与增强后端
-        project/               # 写入租约、检查点、保护规则、project 上下文
+        workdir/               # 写入租约、检查点、保护规则、workdir 上下文
         memory/                # 记忆、用户画像、检索、向量服务、各后台 loop 的业务逻辑
         wiki/  skills/  env/  browser/  usage/  schedule/
       migrations/
@@ -97,7 +97,7 @@ kepcup/
 - `packages/shared` 与 `packages/core` 在运行时按包入口消费**编译产物**（`dist/`，主进程 externalize 依赖；vitest 经 alias 直测 src）。根目录 `pnpm dev` 已先重建两者再启动应用；dev 会话中途改动这两个包后，需 `pnpm --filter @kepcup/core run build`（shared 同理）并重启应用才生效，否则界面是新的而核心服务仍是旧产物。
 - 界面（renderer）只能通过 `lib/rpc` 调用核心服务，不得直接访问文件系统、数据库或 Node API。
 - `apps/desktop/src/main` 不包含业务逻辑，只做 Electron 平台能力的桥接（窗口、托盘、对话框、通知、电源事件、浏览器托管）。
-- 核心服务内的模块依赖方向：`rpc → domain / dispatch / scheduler → agent / tools → gateway → permissions / sandbox / project → infra`。禁止反向依赖；需要反向通知时用事件总线（`infra/events`）。
+- 核心服务内的模块依赖方向：`rpc → domain / dispatch / scheduler → agent / tools → gateway → permissions / sandbox / workdir → infra`。禁止反向依赖；需要反向通知时用事件总线（`infra/events`）。
 
 ## 编码规范
 
@@ -124,7 +124,7 @@ kepcup/
 | 执行步骤 | `stp_` | |
 | 记忆条目 | `mem_` | |
 | 画像条目 | `prf_` | |
-| Project | `prj_` | |
+| 工作目录 | `wkd_` | |
 | 授权 | `grt_` | |
 | 审批请求 | `apr_` | |
 | 定时任务 | `sch_` | |
@@ -166,7 +166,7 @@ kepcup/
 | `RELEVANT_MEMORY_TOKEN_BUDGET` | 600 | 相关记忆预算 |
 | `WIKI_TOPICS_TOKEN_BUDGET` | 200 | Wiki 主题目录预算 |
 | `SKILLS_LIST_TOKEN_BUDGET` | 500 | Skills 列表预算 |
-| `PROJECT_CONTEXT_TOKEN_BUDGET` | 1500 | project 信息预算（含 AGENTS.md） |
+| `WORKDIR_CONTEXT_TOKEN_BUDGET` | 1500 | 工作目录信息预算（含 AGENTS.md） |
 | `TOOL_OUTPUT_MAX_CHARS` | 30000 | 单次工具输出返回给模型的最大字符数，超出截断并注明 |
 | `RUN_MAX_TURNS` | 60 | 单次执行的最大轮数 |
 | `SKILL_AUTHOR_REPEAT_THRESHOLD` | 2 | 同类任务成功多少次后建议自建技能 |

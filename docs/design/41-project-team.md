@@ -4,7 +4,7 @@
 
 早期阶段的工程原则（用户 2026-10-17 确认，本文所有取舍据此）：**不保证旧数据可用、不做向后兼容；允许大规模替换变量、方法、文件夹、文档名；以语义准确、框架坚实为唯一目标。**
 
-相关：D4 / D5（群 `@` 连锁与响应，[02](02-execution.md#群聊响应)）、D9（Wiki 隔离，[05](05-wiki-and-skills.md)）、D28（Project 目录，[08](08-project.md)）、D60（群创建，[19](19-work-path-and-group-setup.md)）、D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D85（Wiki 多模态，[36](36-wiki-multimodal-ingest.md)）、D89（对话内设置，[38](38-conversational-settings.md)）、D90（工作台，[39](39-workbench.md)）、DEV-030（群定位无编辑入口，[DEVIATIONS](../dev/DEVIATIONS.md)）。
+相关：D4 / D5（群 `@` 连锁与响应，[02](02-execution.md#群聊响应)）、D9（Wiki 隔离，[05](05-wiki-and-skills.md)）、D28（Project 目录，[08](08-workdir.md)）、D60（群创建，[19](19-work-path-and-group-setup.md)）、D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D85（Wiki 多模态，[36](36-wiki-multimodal-ingest.md)）、D89（对话内设置，[38](38-conversational-settings.md)）、D90（工作台，[39](39-workbench.md)）、DEV-030（群定位无编辑入口，[DEVIATIONS](../dev/DEVIATIONS.md)）。
 
 ## 0 摘要
 
@@ -124,7 +124,7 @@ CREATE TABLE conversations (
 |---|---|---|---|
 | 发言 / 响应 | ✓ | ✓；网关兜底必答（§6） | 被 `@`、被路由、续接时响应 |
 | 项目信息（名称、目标、工作目录、成员、负责人） | ✓ | ✗ | ✗ |
-| 工作目录读写 | ✓ | ✓ | ✓（保护规则全员一致；写入租约同 [08](08-project.md)） |
+| 工作目录读写 | ✓ | ✓ | ✓（保护规则全员一致；写入租约同 [08](08-workdir.md)） |
 | Wiki 读 | ✓ | ✓ | ✓ 全部 |
 | Wiki 添加来源 | ✓ | ✓ | ✓ |
 | Wiki 删除来源 | 全部 | 全部 | 仅自己创建的 |
@@ -317,7 +317,7 @@ Wiki tab（`WikiTab.svelte` 泛化 `owner`）：左侧页面树 + 搜索，右�
 
 ### 9.1 工作目录
 
-- 机制不变：目录绑在对话上（`conversations.workdir_id`），项目内所有成员读写，保护规则（`.env*` 等）全员一致，写入租约同 [08](08-project.md)。**授权随成员关系自动成立**，无需逐个授权。
+- 机制不变：目录绑在对话上（`conversations.workdir_id`），项目内所有成员读写，保护规则（`.env*` 等）全员一致，写入租约同 [08](08-workdir.md)。**授权随成员关系自动成立**，无需逐个授权。
 - 目录**可选**；在项目详情页设置与更换；有 Bot 正在执行时不能切换（沿用）。
 - **新成员加入已绑目录的项目组** → 沟通里落一条系统消息「{Bot} 已加入，获得工作目录 {名称} 的读写权限」（沿用「项目已切换」的先例）。无需加入前确认（K10）。
 
@@ -549,7 +549,7 @@ WP11：设计与开发文档同步（含删除各文档顶部的「D92 修订」
 | [01](01-conversation.md) | 「群聊」整节改为项目组 / 沟通；成员变动补负责人规则 |
 | [02](02-execution.md#群聊响应) | 「群聊响应」整节重写（路由）；「Bot 之间的触发」改为协作回合与熔断；D5 修订 |
 | [05](05-wiki-and-skills.md) | D9 修订；项目 wiki 小节 |
-| [08](08-project.md) → `08-workdir.md` | 改名与措辞；新成员加入提示；目录入口改到项目详情 |
+| [08](08-workdir.md) → `08-workdir.md` | 改名与措辞；新成员加入提示；目录入口改到项目详情 |
 | [12](12-ui-layout.md) | 布局：项目组无右栏、两行顶栏 / tab、双轮创建、详情页；删 `GroupInfo` 描述 |
 | [13](13-permissions.md)、[30](30-supervisor-and-tasks.md) | `project` → `workdir`、`workdir` → `cwd` 措辞；30 的连锁与群轮次小节 |
 | [19](19-work-path-and-group-setup.md) | D60 残留删除；创建说明改写（可能并入 41 后删除） |

@@ -9,7 +9,7 @@
 - **两层 loop**：对话轮（`loop_type='turn'`）由消息 / 定时 / 事件 / 任务结算触发，秒级，发完回复即结算；任务（`loop_type='task'`）只由对话轮的 `start_task` 派出，分钟到小时级，多条可并行。**对话轮永不等待任务**——任务结算是一个事件，按宿主的确定性条件唤醒下一个对话轮。
 - **职责切分即权限切分**：写操作与长时工作只发生在任务里；对话轮只读，执行期由工具网关硬拒一切写路径（`RUN_READ_ONLY`），不只靠不注册工具。只读任务（`task_writes=false`）同样硬拒写。
 - 对话记录与执行过程分离：过程存入执行记录（Run / `run_steps`），只有 Bot 发出的消息进入对话；Bot 与自己任务之间的往返作为**私有条目**进对话消息表，只给该 Bot 看（见「上下文注入」）。
-- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的 project 范围内工作；任务的工作目录（`task_cwd`）在派出时确定：缺省为绑定且可用的 project，否则 workspace，也可由 `start_task({cwd})` 指定。
+- 工作目录：对话轮与任务都在该 Bot 专属于该对话的 workspace（`{bot_id}/workspaces/{conversation_id}/`）与绑定的工作目录（workdir）范围内工作；任务的工作目录（`task_cwd`）在派出时确定：缺省为绑定且可用的工作目录（workdir），否则 workspace，也可由 `start_task({cwd})` 指定。
 - Loop 框架使用 pi（[09-tech-stack.md](09-tech-stack.md#agent-looppi)）。**对话轮固定走内置引擎**（Bot 的内置主模型）；任务走 Bot 配置的引擎——内置 pi，或外部智能体（D72，`runtime.agent` 即 Bot 的**任务引擎**，见 [28-external-agents-acp.md](28-external-agents-acp.md)）。
 
 ## 对话轮与任务
@@ -55,9 +55,9 @@
 ### 写互斥：租约，而不是物理隔离
 
 - 只读任务不取租约、不限 cwd 并发（仍受上述配额封顶）。
-- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 project 是项目根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-project.md](08-project.md#并发写入租约)）。
+- 写任务启动前取 cwd 根的写租约并**整个任务持有**（`ensureWriteLease(…, { pin: true })`）；租约键对 workdir 是目录根，对 workspace 是 `ws:{botId}:{conversationId}`（D29 扩到 workspace，[08-project.md](08-workdir.md#并发写入租约)）。
 - 同一 cwd 的第二个写任务在**任务层**排队（跨对话生效）：停在 submitted，卡片与 `<tasks>` 段显示「等写入租约（任务 … 持有）」，持有方任务结束或被取消后才启动。它不去申请租约，因此「强制收回」对这种排队不起作用，只对租约层的等待（被非任务持有者挡住）出现（见 DEV-015）。对一个持有租约的写任务点强制收回，它就失去写权限：之后的写入以「写入租约已被用户收回」失败，不会悄悄重新取得租约（[30 §5.1](30-supervisor-and-tasks.md#51-规则)）。
-- workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；project 写任务照常有改动摘要与整次回退（D30）。
+- workspace 没有影子仓库检查点：workspace 写任务被取消时只列出它的文件工具写过的文件，不提供整次回退；workdir 写任务照常有改动摘要与整次回退（D30）。
 - git worktree / CoW 隔离明确不做（[30 §9](30-supervisor-and-tasks.md#9-非目标)）。
 
 ### 调度器与名额
@@ -204,7 +204,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 | 层 | 对话轮 | 任务 |
 |---|---|---|
-| 系统层 | 对话轮版 `<platform_rules>` + 人设、画像、记忆、我的状态、对话类型 / 群成员、project、workspace、Wiki 目录、Skills | 任务版 `<platform_rules>`，其余同源 |
+| 系统层 | 对话轮版 `<platform_rules>` + 人设、画像、记忆、我的状态、对话类型 / 群成员、workdir、workspace、Wiki 目录、Skills | 任务版 `<platform_rules>`，其余同源 |
 | 对话层 | 滚动摘要 + 最近消息，**含本 Bot 的私有任务条目**，按 `seq` 交错 | 滚动摘要 + 最近消息，**只含共享行**（不含任何任务的私有往返） |
 | 续接 / 任务段 | `<tasks>`：本对话进行中与排队中的任务（标题、状态、读写、派出时间、排队原因、等待用户输入、错误、可否注入；不含过程进度），确定性生成 | `continues_task_id` 时的 `<continuation>` |
 | 触发层 | 每个来源批一个 `<trigger reason="…">`；任务结果条目全文进触发段（硬顶 `TASK_TRIGGER_RESULT_MAX_CHARS`，超过给开头并提示用 `forward_task_result`） | `<task_brief>`：标题、`instruction`、`source_message_ids` 指向的**用户原消息原文**（附件与图片照触发批方式带入）、启动前收到的追加指令 |
