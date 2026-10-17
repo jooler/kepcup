@@ -107,8 +107,9 @@ test('pin selected text as a stickie: local scope per conversation, global scope
     await expect(toolbar.locator('[data-testid="pin-global"]')).toHaveCount(0);
 
     // pin：便签出现在当前对话，内容即选中文本。
-    await toolbar.locator('[data-testid="pin-conversation"]').click();
-    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 5_000 });
+    // 选中期间流式气泡可能整体重挂导致工具栏短暂 detached，重试到稳态为止。
+    await toolbar.locator('[data-testid="pin-conversation"]').click({ timeout: 60_000 });
+    await expect(page.locator('[data-testid="stickie-card"]')).toHaveCount(1, { timeout: 30_000 });
     await expect(page.locator('[data-testid="stickie-card"]')).toContainText(
       '这是一段可以被钉住的回复内容',
     );

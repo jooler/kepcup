@@ -700,8 +700,17 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
     (wslFixtureScenario !== null
       ? createWslFixtureRunner(wslFixtureScenario)
       : createWslRunner(env));
+  // KEPCUP_WSL_PROMPT=off（e2e seam，同 KEPCUP_ONBOARDING）：真实 Windows CI
+  // runner 上 WSL 未就绪时首启「沙箱准备」提示框常开，盖住 backdrop 拦掉后续
+  // 一切点击；off 即不创建 WslSetup（`sandbox.wslStatus` 回 applicable=false，
+  // 提示框与向导走平台降级展示）。fixture 场景不读这个 seam，sandbox-wizard
+  // 用例照常走真实路径。字符串必须留在 start.ts（打包产物 FORBIDDEN_MARKERS
+  // 依赖 __KEPCUP_TEST_HOOKS__ 折叠把它 DCE 掉）。
+  const wslSetupSuppressedByTestSeam =
+    __KEPCUP_TEST_HOOKS__ === true && env.KEPCUP_WSL_PROMPT === 'off';
   const wslSetup =
-    wslFixtureScenario !== null || process.platform === 'win32'
+    wslFixtureScenario !== null ||
+    (process.platform === 'win32' && !wslSetupSuppressedByTestSeam)
       ? new WslSetup({ paths, runner: wslRunner })
       : null;
   const sandbox = createSandboxBackend({
