@@ -3,7 +3,7 @@ import { rmSync } from '../infra/fs-rm.js';
 import path from 'node:path';
 import { AppError } from '@kepcup/shared';
 import type { AppPaths } from '../infra/paths.js';
-import { workspacePathFor } from '../infra/paths.js';
+import { projectRoot, workspacePathFor } from '../infra/paths.js';
 import type { CoreLogger } from '../infra/logger.js';
 import type { ConversationsService } from './conversations.js';
 import type { MessagesService } from './messages.js';
@@ -90,7 +90,18 @@ export interface LifecycleDeps {
   wiki?:
     | {
         prepareBotDeletion(botId: string): void;
+        /** D92 T1b WP9: drains the project wiki's maintenance mutex. */
+        prepareProjectDeletion(projectId: string): Promise<void>;
         wikiPageCount(botId: string): number;
+      }
+    | undefined;
+  /**
+   * D92 T1b WP9 project wiki index connections: a deleted project's wiki.db is
+   * closed BEFORE its directory (and the file with it) is removed.
+   */
+  wikiIndex?:
+    | {
+        closeProject(projectId: string): void;
       }
     | undefined;
   /** P10 schedule cascades (删除/取消任务), no-op when absent. */
@@ -256,6 +267,20 @@ export class LifecycleService {
       );
     }
 
+    // D92 T1b WP9: a project wiki's in-flight maintenance keeps owning the
+    // wiki until it settles — drain the mutex before the rows / directory go
+    // (queued wiki jobs are cancelled right below).
+    if (conv.type === 'project') {
+      try {
+        await this.deps.wiki?.prepareProjectDeletion(conversationId);
+      } catch (error) {
+        this.deps.logger.warn(
+          { conversationId, error: error instanceof Error ? error.message : String(error) },
+          'wiki project cleanup failed',
+        );
+      }
+    }
+
     // Jobs are cancelled BEFORE the run rows: a reflection job claimed in
     // between would otherwise re-create a run row after the delete (P07).
     this.deps.jobs.cancelByConversation(conversationId);
@@ -275,6 +300,15 @@ export class LifecycleService {
     mainDb.prepare('delete from conversations where id = ?').run(conversationId);
     this.deps.attachments.deleteConversationFiles(conversationId);
     this.#deleteConversationWorkspaces(conversationId);
+
+    // D92 T1b WP9: the project wiki (git), wiki-store and wiki.db die together
+    // with the project; the pooled connection closes BEFORE the file is removed.
+    if (conv.type === 'project') {
+      this.#cascade('project wiki index close failed', { conversationId }, () =>
+        this.deps.wikiIndex?.closeProject(conversationId),
+      );
+      rmSync(projectRoot(this.deps.paths, conversationId), { recursive: true, force: true });
+    }
 
     this.deps.logger.info({ conversationId, type: conv.type }, 'conversation deleted');
   }
@@ -513,6 +547,11 @@ export class LifecycleService {
         'browser project-removal cascade failed',
       );
     }
+
+    // D92 T1b WP9: the removed member's queued project wiki ingests die with
+    // the membership; already-ingested sources stay (executor-pays already
+    // spent). Its jobs in OTHER conversations are untouched.
+    this.deps.jobs.cancelPendingByBotInConversation(botId, conversationId, 'wiki_ingest');
 
     this.deps.mainDb
       .prepare('delete from conversation_members where conversation_id = ? and bot_id = ?')

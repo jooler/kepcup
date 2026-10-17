@@ -262,9 +262,9 @@ describe('background loops on an external agent (P6 llm-router)', () => {
     stack.core.services.domain!.jobs.enqueue({
       type: 'wiki_lint',
       botId: bot.id,
-      payload: { trigger: 'weekly' },
+      payload: { owner: { kind: 'bot', id: bot.id }, trigger: 'weekly' },
       priority: 2,
-      dedupeKey: `wiki_lint:${bot.id}`,
+      dedupeKey: `wiki_lint:bot:${bot.id}:weekly`,
     });
     await waitFor(
       () => {

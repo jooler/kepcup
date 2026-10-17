@@ -18,8 +18,11 @@ class WikiState {
 		if (this.#started) return;
 		this.#started = true;
 		core.onEvent('wiki_changed', (payload) => {
-			const data = payload as { botId: string };
-			if (data.botId === this.#loadedFor) void this.load(data.botId, true);
+			// D92 T1b WP9: the right panel shows one bot's wiki — filter by owner.
+			const data = payload as { owner?: { kind: string; id: string } };
+			if (data.owner?.kind === 'bot' && data.owner.id === this.#loadedFor) {
+				void this.load(data.owner.id, true);
+			}
 		});
 	}
 
@@ -27,7 +30,9 @@ class WikiState {
 		if (!force && this.#loadedFor === botId && this.botId === botId) return;
 		this.loading = true;
 		try {
-			const result = (await core.call('wiki.tree', { botId })) as { pages: WikiPage[] };
+			const result = (await core.call('wiki.tree', {
+			owner: { kind: 'bot', id: botId },
+		})) as { pages: WikiPage[] };
 			this.pages = result.pages;
 			this.botId = botId;
 			this.#loadedFor = botId;
@@ -40,7 +45,7 @@ class WikiState {
 		botId: string,
 		path: string,
 	): Promise<{ path: string; title: string; content: string }> {
-		return (await core.call('wiki.page', { botId, path })) as {
+		return (await core.call('wiki.page', { owner: { kind: 'bot', id: botId }, path })) as {
 			path: string;
 			title: string;
 			content: string;
@@ -48,14 +53,15 @@ class WikiState {
 	}
 
 	async search(botId: string, query: string): Promise<WikiSearchHit[]> {
-		const result = (await core.call('wiki.search', { botId, query })) as {
-			hits: WikiSearchHit[];
-		};
+		const result = (await core.call('wiki.search', {
+			owner: { kind: 'bot', id: botId },
+			query,
+		})) as { hits: WikiSearchHit[] };
 		return result.hits;
 	}
 
 	async history(botId: string): Promise<WikiHistoryEntry[]> {
-		const result = (await core.call('wiki.history', { botId })) as {
+		const result = (await core.call('wiki.history', { owner: { kind: 'bot', id: botId } })) as {
 			history: WikiHistoryEntry[];
 		};
 		return result.history;
@@ -63,13 +69,13 @@ class WikiState {
 
 	/** Rollback creates a NEW commit (history grows); the tree reloads after. */
 	async rollback(botId: string, commitOid: string): Promise<void> {
-		await core.call('wiki.rollback', { botId, commitOid });
+		await core.call('wiki.rollback', { owner: { kind: 'bot', id: botId }, commitOid });
 		await this.load(botId, true);
 	}
 
 	/** Delete creates a NEW commit too (recoverable via rollback); reload after. */
 	async deletePage(botId: string, path: string): Promise<void> {
-		await core.call('wiki.deletePage', { botId, path });
+		await core.call('wiki.deletePage', { owner: { kind: 'bot', id: botId }, path });
 		await this.load(botId, true);
 	}
 }

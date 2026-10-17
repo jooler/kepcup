@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { AppError, WIKI_SOURCE_MAX_BYTES } from '@kepcup/shared';
+import { AppError, WIKI_SOURCE_MAX_BYTES, wikiOwnerSchema, type WikiOwner } from '@kepcup/shared';
 
-import { botWikiRawDir, botWikiRoot } from '../infra/paths.js';
+import { wikiRawDir, wikiRoot } from '../infra/paths.js';
 import type { ConversationsService } from '../domain/conversations.js';
 import type { JobsService, JobRow } from '../domain/jobs.js';
 import type { MessagesService } from '../domain/messages.js';
@@ -13,6 +13,7 @@ import type { Clock } from '../infra/clock.js';
 import { initWiki } from './init.js';
 import { openRepository } from 'es-git';
 import {
+  contentSha256,
   fetchUrlInSandbox,
   findRawByHash,
   shortHash,
@@ -22,6 +23,15 @@ import {
 } from './source.js';
 import { htmlToMarkdown, looksLikeHtml } from './html-to-markdown.js';
 import { inlineTextFor, runWikiMaintenance, type WikiMaintenanceDeps } from './maintenance.js';
+import {
+  appendSource,
+  assetIdOf,
+  readLedger,
+  writeLedgerEntry,
+  type WikiAssetCreator,
+  type WikiAssetEntry,
+} from './assets.js';
+import { commitWikiTree } from './git.js';
 import { JOB_MAX_ATTEMPTS } from '../domain/jobs.js';
 
 export interface WikiIngestJobDeps extends WikiMaintenanceDeps {
@@ -43,38 +53,53 @@ export interface IngestOutcome {
   changedPages: string[];
 }
 
+/** Parsed wiki_ingest payload (owner-less historic payloads are rejected). */
+interface IngestPayload {
+  owner: WikiOwner;
+  createdBy: WikiAssetCreator;
+  sourceType: 'attachment' | 'url' | 'file';
+  ref: string;
+  note: string;
+}
+
 /**
- * Wiki ingest job (任务 3): resolve the source (attachment copy / workspace or
- * workdir file copy within access range / sandboxed URL fetch), store the raw
- * material under `raw/` (dated + content-hashed file name, same-hash skip),
- * run the maintenance loop, commit once and update wiki_fts. 入库是 Bot 自己
- * 的知识库整理：成功不出现在对话里（只有 wiki_ingested / wiki_changed 总线
- * 事件驱动 UI），终态失败才以 internal 事件触发 Bot 用自己的话向用户交代。
- * The whole flow is serialized per bot through the wiki service mutex.
+ * Wiki ingest job (任务 3; owner-generalized in D92 T1b WP9): resolve the
+ * source (attachment copy / workspace or workdir file copy within access
+ * range / sandboxed URL fetch), store the raw material under `raw/` (dated +
+ * content-hashed file name, same-hash skip), run the maintenance loop, commit
+ * once and update the owner's wiki_fts. Project wikis additionally register
+ * the source in the `raw/_assets` ledger (createdBy, sources) and the loop
+ * runs as the SUBMITTING member (executor-pays, design 41 §8.4). 入库是 Bot
+ * 自己的知识库整理：成功不出现在对话里（只有 wiki_ingested / wiki_changed 总线
+ * 事件驱动 UI），终态失败才交代——Bot 提交的经内部事件用自己的话向用户交代，
+ * 用户提交的走 app.notice 轻量提示。The whole flow is serialized per owner
+ * through the wiki service mutex.
  */
 export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
   const { job } = deps;
   if (job.bot_id === null) {
     throw new AppError('INVALID_INPUT', 'wiki ingest requires a bot');
   }
-  const botId = job.bot_id;
+  const botId = job.bot_id; // the executor (member bot for a project wiki)
   const bot = deps.bots.get(botId);
   if (bot === null || bot.status !== 'active') return; // deleted mid-queue
 
-  const payload = JSON.parse(job.payload_json) as {
-    sourceType?: string;
-    ref?: string;
-    note?: string;
-  };
-  const sourceType = payload.sourceType;
-  if (sourceType !== 'attachment' && sourceType !== 'url' && sourceType !== 'file') {
-    throw new AppError('INVALID_INPUT', `未知的入库来源类型：${String(sourceType)}`);
+  const payload = parsePayload(job.payload_json);
+  const owner = payload.owner;
+
+  // The executor must still belong to the project (a member removed after
+  // enqueueing loses its queued ingests; cancelPendingByBotInConversation
+  // covers the queued rows, this covers the claim window).
+  if (owner.kind === 'project') {
+    if (deps.conversations.get(owner.id) === null) return; // project deleted mid-queue
+    if (!deps.conversations.memberBotIds(owner.id).includes(botId)) {
+      throw new AppError('INVALID_INPUT', '执行者已不是该项目组的成员，入库作废');
+    }
   }
-  const ref = payload.ref ?? '';
-  const note = payload.note ?? '';
 
   // Conversation may have been deleted between enqueue and now; the
   // notification falls back to the bot's direct chat (authoring precedent).
+  // For a project wiki it is the project conversation itself.
   const triggerConversationId =
     job.conversation_id !== null && deps.conversations.get(job.conversation_id) !== null
       ? job.conversation_id
@@ -82,59 +107,131 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
 
   let outcome: IngestOutcome;
   try {
-    outcome = await deps.wiki.runExclusively(botId, async () => {
-      await initWiki(deps.paths, botId, deps.logger);
-      const root = botWikiRoot(deps.paths, botId);
-      const rawDir = botWikiRawDir(deps.paths, botId);
+    outcome = await deps.wiki.runExclusively(owner, async () => {
+      await initWiki(deps.paths, owner, deps.logger);
+      const root = wikiRoot(deps.paths, owner);
+      const rawDir = wikiRawDir(deps.paths, owner);
 
       // --- resolve the source into raw bytes --------------------------------
-      const source = await resolveSource(deps, { botId, conversationId: triggerConversationId, sourceType, ref });
+      const source = await resolveSource(deps, {
+        botId,
+        conversationId: triggerConversationId,
+        sourceType: payload.sourceType,
+        ref: payload.ref,
+      });
 
       // --- raw/ (append-only): dated + hashed name, same-hash skip ----------
+      const sha256 = contentSha256(source.bytes);
+      const assetId = assetIdOf(sha256);
       const hash12 = shortHash(source.bytes);
       const existing = findRawByHash(rawDir, hash12);
-      let rawName = existing;
-      if (rawName === null) {
-        rawName = rawFileName(new Date(deps.clock.now()), hash12, source.name);
-        writeFileSync(path.join(rawDir, rawName), source.bytes);
-        deps.logger.info({ botId, rawFile: rawName, bytes: source.bytes.length }, 'wiki raw stored');
-      } else {
+      if (existing !== null) {
         // Same content already present. Skipped only when a previous
         // maintenance already committed it; an uncommitted leftover (a failed
         // attempt) is reused so the retry still produces the pages.
-        const committed = await isRawCommitted(root, `raw/${rawName}`);
+        const committed = await isRawCommitted(root, `raw/${existing}`);
         if (committed) {
-          deps.logger.info({ botId, rawFile: rawName }, 'wiki ingest skipped: same source hash');
+          if (owner.kind === 'project' && isLedgerKind(source.kind)) {
+            const { appended } = ensureLedgerEntry(root, {
+              assetId,
+              sha256,
+              sourceKind: source.kind,
+              fileName: source.name,
+              bytes: source.bytes.length,
+              rawRelPath: `raw/${existing}`,
+              createdBy: payload.createdBy,
+              sourceRecord: {
+                type: payload.sourceType,
+                ref: payload.ref,
+                conversationId: job.conversation_id,
+                at: deps.clock.now(),
+              },
+              now: deps.clock.now(),
+            });
+            // The ledger change joins the history with one small commit (the
+            // original itself is already committed); an exact repeat (same
+            // type + ref already recorded) writes identical bytes — no commit.
+            if (appended) {
+              await commitWikiTree(root, `wiki: 登记重复来源 ${assetId}`);
+            }
+          }
+          deps.logger.info(
+            { owner: `${owner.kind}:${owner.id}`, rawFile: existing },
+            'wiki ingest skipped: same source hash',
+          );
           const fallbackConversation =
             triggerConversationId ?? deps.conversations.openDirect(botId).conversation.id;
           deps.publish('wiki_ingested', {
+            owner,
             botId,
             conversationId: fallbackConversation,
-            rawPath: `raw/${rawName}`,
+            rawPath: `raw/${existing}`,
             skipped: true,
           });
-          deps.publish('wiki_changed', { botId });
+          deps.publish('wiki_changed', { owner });
           return {
             skipped: true,
-            rawRelPath: `raw/${rawName}`,
+            rawRelPath: `raw/${existing}`,
             conversationId: fallbackConversation,
             changedPages: [],
           } satisfies IngestOutcome;
         }
       }
 
+      let rawName = existing;
+      if (rawName === null) {
+        rawName = rawFileName(new Date(deps.clock.now()), hash12, source.name);
+        writeFileSync(path.join(rawDir, rawName), source.bytes);
+        deps.logger.info(
+          { owner: `${owner.kind}:${owner.id}`, rawFile: rawName, bytes: source.bytes.length },
+          'wiki raw stored',
+        );
+      }
+
+      // --- project ledger (D85 §3.2 text subset; before the loop so the
+      // maintenance commit carries the original and the ledger together) -----
+      let ledgerEntry: WikiAssetEntry | null = null;
+      if (owner.kind === 'project' && isLedgerKind(source.kind)) {
+        ledgerEntry = ensureLedgerEntry(root, {
+          assetId,
+          sha256,
+          sourceKind: source.kind,
+          fileName: source.name,
+          bytes: source.bytes.length,
+          rawRelPath: `raw/${rawName}`,
+          createdBy: payload.createdBy,
+          sourceRecord: {
+            type: payload.sourceType,
+            ref: payload.ref,
+            conversationId: job.conversation_id,
+            at: deps.clock.now(),
+          },
+          now: deps.clock.now(),
+        }).entry;
+      }
+
       // --- maintenance loop ---------------------------------------------------
       const maintenance = await runWikiMaintenance(deps, {
         kind: 'ingest',
         input: {
+          owner,
           botId,
           conversationId: triggerConversationId,
           sourceDescription: source.description,
-          note,
+          note: payload.note,
           rawRelPath: `raw/${rawName}`,
           inlineText: inlineTextFor(source.kind, source.bytes, source.converted),
           sourceKind: source.kind,
           sourceName: source.name,
+          ...(ledgerEntry !== null
+            ? {
+                assetId: ledgerEntry.id,
+                submitterLabel:
+                  payload.createdBy.kind === 'user'
+                    ? '用户'
+                    : (deps.bots.get(payload.createdBy.id)?.name ?? payload.createdBy.id),
+              }
+            : {}),
         },
       });
 
@@ -145,12 +242,13 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
       const targetConversation =
         triggerConversationId ?? deps.conversations.openDirect(botId).conversation.id;
       deps.publish('wiki_ingested', {
+        owner,
         botId,
         conversationId: targetConversation,
         rawPath: `raw/${rawName}`,
         skipped: false,
       });
-      deps.publish('wiki_changed', { botId });
+      deps.publish('wiki_changed', { owner });
       return {
         skipped: false,
         rawRelPath: `raw/${rawName}`,
@@ -159,22 +257,32 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
       } satisfies IngestOutcome;
     });
   } catch (error) {
-    // BR-P09-005: a terminally failed ingest must reach the requesting bot
-    // instead of only the jobs table (P06 BR-P06-002 precedent) — the user
-    // asked for this material, so the bot should say so in its own words.
-    // Retryable failures stay silent until the last attempt so the user is
-    // not spammed. 内部事务原则：触发消息对用户隐藏（internal），可见的只有
-    // Bot 自己的一句话交代。
-    if (job.attempts >= JOB_MAX_ATTEMPTS && triggerConversationId !== null) {
+    // BR-P09-005: a terminally failed ingest must reach the requesting side
+    // instead of only the jobs table (P06 BR-P06-002 precedent) — retryable
+    // failures stay silent until the last attempt so nobody is spammed.
+    // Bot-submitted sources wake the bot with an internal event (it explains
+    // in its own words); user-submitted ones get an app.notice (no message
+    // rows — D92 T1b).
+    if (job.attempts >= JOB_MAX_ATTEMPTS) {
       const message = error instanceof Error ? error.message : String(error);
       try {
-        deps.orchestrator.deliverEventToBot(
-          botId,
-          triggerConversationId,
-          'wiki_ingest_failed',
-          `你之前登记的一次 Wiki 入库失败了（来源：${ref.slice(0, 120)}；原因：${message.slice(0, 300)}），资料没有进入你的知识库。请用一句话告诉用户这份资料这次没能整理成功，不要复述技术细节；之后可以直接重试。`,
-          { internal: true },
-        );
+        if (payload.createdBy.kind === 'bot') {
+          if (triggerConversationId !== null) {
+            deps.orchestrator.deliverEventToBot(
+              botId,
+              triggerConversationId,
+              'wiki_ingest_failed',
+              `你之前登记的一次 Wiki 入库失败了（来源：${payload.ref.slice(0, 120)}；原因：${message.slice(0, 300)}），资料没有进入${owner.kind === 'project' ? '项目' : '你的'}知识库。请用一句话告诉用户这份资料这次没能整理成功，不要复述技术细节；之后可以直接重试。`,
+              { internal: true },
+            );
+          }
+        } else if (triggerConversationId !== null) {
+          deps.publish('app.notice', {
+            key: `wiki-ingest-failed:${job.id}`,
+            level: 'warning',
+            text: `${owner.kind === 'project' ? '项目 Wiki' : 'Wiki'} 入库失败：${payload.ref.slice(0, 120)}（原因：${message.slice(0, 200)}）`,
+          });
+        }
       } catch (notifyError) {
         deps.logger.warn(
           { botId, jobId: job.id, error: notifyError instanceof Error ? notifyError.message : String(notifyError) },
@@ -186,9 +294,97 @@ export async function runWikiIngestJob(deps: WikiIngestJobDeps): Promise<void> {
   }
 
   deps.logger.info(
-    { botId, jobId: job.id, skipped: outcome.skipped, changed: outcome.changedPages.length },
+    {
+      owner: `${owner.kind}:${owner.id}`,
+      botId,
+      jobId: job.id,
+      skipped: outcome.skipped,
+      changed: outcome.changedPages.length,
+    },
     'wiki ingest job finished',
   );
+}
+
+/** Parses and validates the ingest payload (breaking: owner + createdBy required). */
+function parsePayload(payloadJson: string): IngestPayload {
+  const raw = JSON.parse(payloadJson) as {
+    owner?: unknown;
+    createdBy?: unknown;
+    sourceType?: unknown;
+    ref?: unknown;
+    note?: unknown;
+  };
+  const owner = wikiOwnerSchema.safeParse(raw.owner);
+  if (!owner.success) {
+    throw new AppError('INVALID_INPUT', 'wiki ingest payload 缺少有效的 owner');
+  }
+  const createdByRaw = raw.createdBy as { kind?: unknown; id?: unknown } | undefined;
+  const createdBy: WikiAssetCreator | null =
+    createdByRaw?.kind === 'user'
+      ? { kind: 'user' }
+      : createdByRaw?.kind === 'bot' && typeof createdByRaw.id === 'string' && createdByRaw.id.length > 0
+        ? { kind: 'bot', id: createdByRaw.id }
+        : null;
+  if (createdBy === null) {
+    throw new AppError('INVALID_INPUT', 'wiki ingest payload 缺少有效的 createdBy');
+  }
+  const sourceType = raw.sourceType;
+  if (sourceType !== 'attachment' && sourceType !== 'url' && sourceType !== 'file') {
+    throw new AppError('INVALID_INPUT', `未知的入库来源类型：${String(sourceType)}`);
+  }
+  return {
+    owner: owner.data,
+    createdBy,
+    sourceType,
+    ref: typeof raw.ref === 'string' ? raw.ref : '',
+    note: typeof raw.note === 'string' ? raw.note : '',
+  };
+}
+
+/** Only text-like sources get a ledger entry this phase (D85 binary/derive is out of scope). */
+function isLedgerKind(kind: SourceKind): kind is 'text' | 'html' {
+  return kind === 'text' || kind === 'html';
+}
+
+interface LedgerInput {
+  assetId: string;
+  sha256: string;
+  sourceKind: 'text' | 'html';
+  fileName: string;
+  bytes: number;
+  rawRelPath: string;
+  createdBy: WikiAssetCreator;
+  sourceRecord: { type: 'attachment' | 'file' | 'url'; ref: string; conversationId: string | null; at: number };
+  now: number;
+}
+
+/**
+ * Appends the submission to the asset's ledger entry, creating the entry when
+ * this content is new. `createdBy` stays the FIRST creator on repeats.
+ * Persists via {@link writeLedgerEntry}; `appended` is true when a new source
+ * record was added (an exact repeat only rewrites identical bytes).
+ */
+function ensureLedgerEntry(root: string, input: LedgerInput): { entry: WikiAssetEntry; appended: boolean } {
+  const existing = readLedger(root).find((entry) => entry.id === input.assetId);
+  const entry: WikiAssetEntry = existing ?? {
+    id: input.assetId,
+    sha256: input.sha256,
+    kind: input.sourceKind,
+    fileName: input.fileName,
+    bytes: input.bytes,
+    storage: 'git',
+    rawRelPath: input.rawRelPath,
+    createdBy: input.createdBy,
+    sources: [],
+    status: 'maintained',
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
+  const appended = appendSource(entry, input.sourceRecord, input.now);
+  if (appended || existing === undefined) {
+    writeLedgerEntry(root, entry);
+  }
+  return { entry, appended };
 }
 
 interface ResolvedSource {
