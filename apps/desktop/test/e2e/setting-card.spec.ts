@@ -13,7 +13,7 @@ import { rmHomeTolerant } from './helpers/home-cleanup';
  *
  * ① 单聊、用户本人直接发起 → 白名单项（默认主模型）direct：宿主立即改、出回执卡
  *    「原来 → 现在」；点「撤销」经同一套 CAS 写回，卡片标 reverted（不唤醒 Bot）。
- * ② 群聊 → 同一类白名单项（默认轻量模型）被收紧为 confirm：卡片展示「当前 → 建议」，
+ * ② 项目组 → 同一类白名单项（默认轻量模型）被收紧为 confirm：卡片展示「当前 → 建议」，
  *    在卡上「应用」（settings.items.apply，expected = 出卡时的当前值）→ 卡片标 applied，
  *    宿主写 setting_card_resolved 唤醒该 Bot 续答。
  *
@@ -126,7 +126,7 @@ function settingCard(page: Page, itemId: string) {
   return page.locator(`[data-setting-card="${itemId}"]`).last();
 }
 
-test('setting card: direct receipt can be undone; a group confirm card is applied and wakes the bot', async () => {
+test('setting card: direct receipt can be undone; a project confirm card is applied and wakes the bot', async () => {
   test.setTimeout(300_000);
   const session = await startSession('kepcup-e2e-setting-card-');
   const { page, llm } = session;
@@ -170,7 +170,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
     await expect(receipt.locator('[data-testid="setting-card-state"]')).toHaveText('已撤销');
     await expect(receipt.locator('[data-testid="setting-card-undo"]')).toHaveCount(0);
 
-    // --- ② 群聊：同类白名单项被收紧为 confirm → 卡上应用 → Bot 被唤醒续答 -------------------
+    // --- ② 项目组：同类白名单项被收紧为 confirm → 卡上应用 → Bot 被唤醒续答 -------------------
     await createBotAndOpenChat(page, '阿乙');
     await createProjectViaUi(page, '设置讨论组', ['阿甲', '阿乙']);
 
@@ -184,7 +184,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
         }),
       step()
         .expect((req) => !isReflection(req) && !JSON.stringify(req.body).includes('用户已应用'))
-        .replyText('群聊里只能出卡，请在卡片上确认。'),
+        .replyText('项目组里只能出卡，请在卡片上确认。'),
       step()
         .expect((req) => !isReflection(req) && JSON.stringify(req.body).includes('用户已应用'))
         .replyText('好了，轻量模型已经换成主模型。'),
@@ -200,7 +200,7 @@ test('setting card: direct receipt can be undone; a group confirm card is applie
     await expect(card.locator('[data-testid="setting-card-reason"]')).toContainText(
       '轻量工作也用主模型',
     );
-    await expect(card.locator('[data-testid="setting-card-mode-reason"]')).toContainText('群聊');
+    await expect(card.locator('[data-testid="setting-card-mode-reason"]')).toContainText('项目组');
     await expect(card.locator('[data-testid="setting-card-diff"]')).toContainText('Mock Light');
     await expect(card.locator('[data-testid="setting-card-diff"]')).toContainText('Mock Main');
     await expect(
