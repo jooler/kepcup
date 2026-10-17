@@ -1,7 +1,5 @@
 # 02 执行模型
 
-> **D92 修订（已定稿，待实施）**：「群聊响应」整节被重写：没有 `@` 的用户消息 → 上一位回话者续接判断 → 负责人网关（`self` / 静默 `route` / `none`），取消全员广播判断与 `group_no_claim`；Bot 间 `@` 连锁（深度 3 / 200k 预算）改为**协作回合 + 熔断**（任务结算唤醒的轮次继承回合）；D5 修订。触发原因 `broadcast`、`chain` 删除，新增 `continuation / routed / routed_also / lead_fallback / bot_mention`。术语变更：Project（目录）改称 **workdir（工作目录）**；任务执行根目录原来的 `workdir` 改称 **`cwd`**；群聊改称**项目组**（`group` → `project`）。见 [41-project-team.md](41-project-team.md)、[todo/project](../../todo/project/README.md)；实施完成后由 WP11 改写正文并删除本提示，实施前以本提示与 41 为准。
-
 > **D75 重写（2026-10-08）**：Bot 的一次响应拆为**对话轮**（沟通与调度，只读，每〔Bot, 对话〕串行）与**任务**（执行，完整工具面，可并行）两层。本文描述已实现的执行模型；拆分的决策与理由见 [30-supervisor-and-tasks.md](30-supervisor-and-tasks.md)，实现细节见 [dev/02-architecture.md](../dev/02-architecture.md) 与 [dev/04-agent-runtime.md](../dev/04-agent-runtime.md)。标「待确认」的条目是实现期的细化，记在 [dev/DEVIATIONS.md](../dev/DEVIATIONS.md)，尚待用户确认。
 
 ## 基本原则
@@ -16,7 +14,7 @@
 
 | 项 | 对话轮（turn） | 任务（task） |
 |---|---|---|
-| 触发 | 用户消息批、`@` / 回复、群聊判断通过、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
+| 触发 | 用户消息批、`@` / 回复、项目组路由（续接 / 网关）、定时、事件、D71 委派、任务结果 / 失败条目、设置完成后重试 | 对话轮的 `start_task`（唯一入口）；失败任务经设置卡重试、或用户在任务卡上重试失败 / 中断的任务时由宿主派出接续任务 |
 | 串行 / 并发 | 每（Bot, 对话）同时最多一个（mailbox） | 对话级 `TASK_CONCURRENCY_PER_CONVERSATION`（3）、全局 `TASK_CONCURRENCY_GLOBAL`（8）、单个对话轮最多派 `TASK_START_MAX_PER_TURN`（2）个；同一 cwd 同时最多一个写任务 |
 | 引擎 | 固定内置（无内置模型时见「无内置模型的 Bot」） | 内置 pi 或该 Bot 的外部智能体 |
 | 轮数 / 时限 | 不设步数上限（`TURN_MAX_TURNS=0`）。提示词要求 Bot 自行估计工作量：轻的直接答，重的用 `start_task`；没派任务也不因步数失败 | 无步数上限（`TASK_MAX_TURNS=0`）；`TASK_MAX_WALL_MS`（4 小时，等用户回答问题卡的时间不计入）与 `TASK_TOKEN_BUDGET`（2M）超限由 reaper 强制 `failed` |
@@ -48,7 +46,7 @@
 
 - 每个「Bot + 对话」一个 mailbox，同一时刻最多一个对话轮。空闲时 `deliver` 新建对话轮（runs 行 `queued`）并提交调度器。
 - **对话轮运行中到达的批不再 steer 进对话轮**，而是缓冲；对话轮结算、mailbox 释放时，缓冲的批合并为**一个**批，启动下一个对话轮。合并后每个来源批保留自己的 `reason` 与属性（触发段里各占一个 `<trigger>`），同一条消息只出现一次、取最新内容。多个任务同时结算因此只唤醒一轮。
-- **对话轮开始执行时吸收缓冲**：对话轮从创建到真正开始执行之间可能排在调度器里；开始执行时（先让出一个微任务，使同一时刻的投递先落进缓冲）它把 mailbox 里已缓冲、能与它同轮的批并入自己的触发，并重新读取每条触发消息（取最新编辑、去掉已撤回的、去掉已被消费的任务结果），同步更新 runs 行的触发记录（`trigger_parts_json`；吸收了 @ 连锁批时连同连锁绑定，层数上限照常生效）。不能同轮的批留到下一轮：D71 委派批独占一轮（委派结果就是那一轮的最终回复），不同 @ 连锁的批不同轮（审查批 E），带用户消息的未绑定批也不与连锁批同轮（最终审查 L-5）。此后上下文同步构建，它的上下文里不会出现「下一轮的触发」。
+- **对话轮开始执行时吸收缓冲**：对话轮从创建到真正开始执行之间可能排在调度器里；开始执行时（先让出一个微任务，使同一时刻的投递先落进缓冲）它把 mailbox 里已缓冲、能与它同轮的批并入自己的触发，并重新读取每条触发消息（取最新编辑、去掉已撤回的、去掉已被消费的任务结果），同步更新 runs 行的触发记录（`trigger_parts_json`；吸收了 `@` 触发批时连同回合绑定，熔断阈值照常生效）。不能同轮的批留到下一轮：D71 委派批独占一轮（委派结果就是那一轮的最终回复），绑定到**不同协作回合**的批不同轮（审查批 M1），带用户消息的未绑定批也不与回合批同轮（最终审查 L-5：否则回合暂停会吞掉用户的回答）。此后上下文同步构建，它的上下文里不会出现「下一轮的触发」。
 - 不做防抖：用户自己决定何时发出，触发发送即直发投递（[01-conversation.md](01-conversation.md#输入与发送)）。
 - workspace 的并发写不再由串行 mailbox 兜底，改由写入租约承担（下文）。
 
@@ -66,9 +64,9 @@
 
 | 作业 | 优先级 | 调度键 / 厂商 |
 |---|---|---|
-| 用户触发的对话轮（任一来源批为 direct / mention / reply / broadcast / delegation / task） | 0 | mailbox 键；内置主模型的厂商 |
-| 群聊判断 | 0 | — |
-| 定时、事件、连锁触发的对话轮 | 1 | 同上 |
+| 用户触发的对话轮（任一来源批为 direct / mention / reply / continuation / routed / routed_also / lead_fallback / delegation / task） | 0 | mailbox 键；内置主模型的厂商 |
+| 项目组路由判断（续接判断、负责人网关） | 0 | — |
+| 定时、事件、协作回合内 `@` 触发的对话轮 | 1 | 同上 |
 | 只读任务 | 1 | `task:{id}`；Bot 的任务引擎（外部智能体为 `agent:{id}`） |
 | 写任务（已持有租约） | 0（`leaseHeld`） | 同上 |
 | 后台 loop | 2 | — |
@@ -77,7 +75,7 @@
 
 - **为回复留一个名额**：N > 1 时，只读任务只在占用 < N−1 时启动；已持租约的写任务在占用 < N 且任务合计占用 < N−1 时启动（它挡着等同一租约的其他写入者，不能被回复饿死，但任务合计仍不拿走最后一个名额）。N = 1 时不预留。
 - **借用（M3）**：当该厂商被占满、且所有占用都是任务时，一个优先级 0 的回复可以借 1 个名额——配置上限 N 在全被任务占用时实际可到 N+1。任务跑几小时且不可抢占，借用保证回复不被饿死。
-- **外部智能体（`agent:{id}`）**：上限取 Agent 的并发（`features.parallelSessions` 不支持即恒为 1）。对话轮从不跑在 Agent 上，所以 Agent 的名额全归任务：**不为回复预留、回复也不借用**（上限是进程能同时服务的会话数，不是可借的额度）。TaskHost 另按 `agent:{id}` 封顶**启动**：超出的任务停在 submitted（「等智能体并发额度」），不占任务名额、不持租约。后台 loop 在 Agent 上限 > 1 时仍为非后台工作留一个。唯一还会落在 `agent:*` 上的优先级 0 作业是经 Agent 的群聊判断：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（见 DEV-014）。
+- **外部智能体（`agent:{id}`）**：上限取 Agent 的并发（`features.parallelSessions` 不支持即恒为 1）。对话轮从不跑在 Agent 上，所以 Agent 的名额全归任务：**不为回复预留、回复也不借用**（上限是进程能同时服务的会话数，不是可借的额度）。TaskHost 另按 `agent:{id}` 封顶**启动**：超出的任务停在 submitted（「等智能体并发额度」），不占任务名额、不持租约。后台 loop 在 Agent 上限 > 1 时仍为非后台工作留一个。唯一还会落在 `agent:*` 上的优先级 0 作业是经 Agent 的项目组路由判断（`projectMentionOnly` 关掉时）：其超时从**提交**起算，到时按「仅 @ / 回复响应」放行并撤出队列（见 DEV-014）。
 - **等租约时让出名额**：作业内的 run 排队等写租约时把调度名额让出，取得租约后先于排队作业拿回名额（`SlotYieldingLeaseService` + `Scheduler.yieldSlotWhile`）。持名额者从不等租约，持租约者只等会前进的作业，二者不会形成持有并等待的死锁。
 
 ## 任务的结算
@@ -91,7 +89,7 @@ queued（submitted：等并发额度 / 等写入租约 / 等智能体并发额�
   → running（可带 awaiting_input）
       → completed    结果已写入私有时间线（skip_reply 时结果为空）
       → failed       执行失败（含结构化 setup 失败、超时 / 超预算被强制结束）
-      → cancelled    cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot / 移出群 / 更新闸门
+      → cancelled    cancel_task / 用户在卡片上取消 / 关对话 / 删 Bot / 移出项目组 / 更新闸门
       → interrupted  进程退出或崩溃；运行中用户收紧授权或切换浏览器资料（D78，见 30 §7.4）
 ```
 
@@ -119,7 +117,7 @@ Run
   conversation_id
   loop_type             -- turn | task | subagent | triage | reflection | ...
   trigger_message_ids[]
-  trigger_reason        -- direct | mention | broadcast | reply | chain | scheduled | event | delegation | task | watch
+  trigger_reason        -- direct | mention | reply | bot_mention | continuation | routing_gate | routed | routed_also | lead_fallback | scheduled | event | background | delegation | task | watch | mail
   trigger_parts         -- 对话轮合并批的各来源段（重试按段重建）
   retry_of_run_id       -- 重试出来的对话轮指向被重试的那一轮
   status
@@ -164,7 +162,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 | 对话轮的最终回复 | 「我开始处理了」「这个直接答你」、任务结果的转述 | 自动作为可见消息发出；为空时不发送（D48） |
 | 任务的中间说明 | 带工具调用的回复里的说明文字（D54） | **单一状态通知**（覆盖写，状态行 / 任务卡）；不堆气泡；成功清空、未完成保留；**不进入对话轮 / 任务的模型上下文** |
 | 任务的最终文本 | 这件事的交付物 | 写入私有 `result` 条目，唤醒对话轮；由对话轮转述、`forward_task_result` 原文转发，或连同下一步一起说 |
-| `send_message` | @ 其他成员、发附件、主动分多条 | 对话轮与任务都可用；任务不能 @ 群成员（无 `mention_bot_ids`） |
+| `send_message` | @ 其他成员、发附件、主动分多条 | 对话轮与任务都可用；任务不能 @ 项目组成员（无 `mention_bot_ids`） |
 
 - 不需要回复时调用 `skip_reply` 结束执行；在任务里等于「没有需要交回的结果」（空结果，不唤醒）。
 - @ 其他 Bot 只能通过 `send_message` 的结构化参数；文本中的「@名字」不触发任何 Bot。
@@ -188,8 +186,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 | 对话轮 | 用户消息、定时、事件、委派、任务结算 | 消息；任务（派出 / 注入 / 取消）；记忆候选、Wiki 入库请求、定时任务、技能生成请求、应用设置（`settings_search` / `settings_read` / `settings_change`，D89，[38](38-conversational-settings.md)：改设置由宿主按目录与情境裁定档位并出回执卡 / 设置卡，对话轮与任务都有）等异步托管动作；**不可写文件、不可执行命令** | 0 / 1 |
 | 任务 | 对话轮 `start_task` | 消息（中间说明）；私有时间线（结果 / 失败 / 提问）；写任务：cwd 内文件与授权范围内的其他路径 | 写任务 0，只读任务 1 |
 | SubAgent 子代理 | 任务内调用 `delegate_task`（前台 / 后台分支 / fan-out） | 不写用户消息；只读研究工具；过程落执行记录（`loop_type='subagent'`） | 随父任务 |
-| 群聊判断 | 群消息未 @ 任何 Bot | 不写，仅返回判断结果 | 0 |
-| 反思 | 对话轮或任务 `completed` 后 | 本 Bot 记忆、用户画像提案 | 2 |
+| 路由判断 | 项目组里没有 @ 任何 Bot 的用户消息（续接判断、负责人网关；`projectMentionOnly` 开启时不经外部智能体） | 不写，仅返回判断结果 | 0 || 反思 | 对话轮或任务 `completed` 后 | 本 Bot 记忆、用户画像提案 | 2 |
 | 记忆整理 | 每天 | 本 Bot 记忆 | 2 |
 | 画像整理（全局唯一） | 收到画像提案、定期 | 共享用户画像 | 2 |
 | Wiki 维护 | 入库队列、定期体检 | 本 Bot Wiki | 2 |
@@ -204,12 +201,12 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 | 层 | 对话轮 | 任务 |
 |---|---|---|
-| 系统层 | 对话轮版 `<platform_rules>` + 人设、画像、记忆、我的状态、对话类型 / 群成员、workdir、workspace、Wiki 目录、Skills | 任务版 `<platform_rules>`，其余同源 |
+| 系统层 | 对话轮版 `<platform_rules>` + 人设、画像、记忆、我的状态、对话类型 / 成员名片（项目组另注入负责人 / 成员规则与项目 wiki 主题）、workdir、workspace、Wiki 目录、Skills | 任务版 `<platform_rules>`，其余同源 |
 | 对话层 | 滚动摘要 + 最近消息，**含本 Bot 的私有任务条目**，按 `seq` 交错 | 滚动摘要 + 最近消息，**只含共享行**（不含任何任务的私有往返） |
 | 续接 / 任务段 | `<tasks>`：本对话进行中与排队中的任务（标题、状态、读写、派出时间、排队原因、等待用户输入、错误、可否注入；不含过程进度），确定性生成 | `continues_task_id` 时的 `<continuation>` |
 | 触发层 | 每个来源批一个 `<trigger reason="…">`；任务结果条目全文进触发段（硬顶 `TASK_TRIGGER_RESULT_MAX_CHARS`，超过给开头并提示用 `forward_task_result`） | `<task_brief>`：标题、`instruction`、`source_message_ids` 指向的**用户原消息原文**（附件与图片照触发批方式带入）、启动前收到的追加指令 |
 
-- **Bot 私有时间线**：Bot 与任务之间的往返（交代 / 追加 / 取消 / 提问 / 结果 / 失败）记为 `kind='task_event'`、带 `owner_bot_id` 的消息，只进 owner Bot 的上下文，不进用户可见流，也不进群里其他 Bot 的上下文；单聊即 UX，群聊即 GX，不另建列表。所有读路径按视角过滤，对话摘要只摘共享行（[30 §2.4](30-supervisor-and-tasks.md#24-上下文与输入bot-私有时间线)）。
+- **Bot 私有时间线**：Bot 与任务之间的往返（交代 / 追加 / 取消 / 提问 / 结果 / 失败）记为 `kind='task_event'`、带 `owner_bot_id` 的消息，只进 owner Bot 的上下文，不进用户可见流，也不进项目组里其他 Bot 的上下文；单聊即 UX，项目组即 GX，不另建列表。所有读路径按视角过滤，对话摘要只摘共享行（[30 §2.4](30-supervisor-and-tasks.md#24-上下文与输入bot-私有时间线)）。
 - 最近窗口里的任务条目与任务进度按 `TASK_EVENT_CONTEXT_MAX_CHARS` 截断，全文用 `get_messages_around` 取。
 - 任务卡在上下文中渲染为一行状态（「任务卡 t_…（Bot）「<untrusted>标题</untrusted>」：进行中，…」；标题是模型起的，按数据对待），不含交代或结果全文。
 - 记忆相关的注入细则见 [04-memory.md](04-memory.md#注入方式)。
@@ -223,25 +220,44 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 | `get_attachment` | 获取附件：文本返回内容；其他类型复制到 workspace `.attachments/`（只读 run 也可，宿主代为复制且限定在该目录） |
 | `list_my_runs` / `get_run` | 查询自己的对话轮与任务记录 |
 
-## 群聊响应
+## 项目组沟通的响应
 
-### 指定响应
+项目组（`conversations.type='project'`）的沟通模块由 `ProjectTurnCoordinator`（`dispatch/project-turn.ts`）推进。每条用户消息必有结局：一条可见回复、一个明确的静默（网关 `none`）、或失败态（界面内联显示并可重试）；没有全员广播，「无人认领」不存在——负责人是兜底（D92，设计全貌见 [41 §6](41-project-team.md#6-沟通路由)）。
 
-- 用户 @ 了某个 Bot，或引用回复了某个 Bot 的消息：由被指定的 Bot 直接响应。
+### 决策顺序
 
-### 未指定时
+```text
+工作台派发（forcedTarget / 结构化 @ 负责人）   → 该 Bot
+显式目标（@ / 回复某个 Bot 的消息）            → 这些 Bot，按出现顺序
+否则 → 路由阶段（ProjectTurnCoordinator）：
+  ① P = 最近一条可见 Bot 回复的作者
+        （须是在场成员、非负责人、在 ROUTING_CONTINUATION_WINDOW_MS（30 分钟）内；
+          P 即负责人或不存在则跳过 ②）
+  ② P 续接判断（轻量调用，复用 runLightJudgement；P 视角输入，含它自己的私有任务时间线）
+        认领（respond 且置信度 ≥ ROUTING_CONTINUATION_MIN_CONFIDENCE 0.6）
+          → P 的对话轮（trigger_reason=continuation），结束；负责人不被唤醒
+  ③ 否则（无 P / P 说与己无关 / P 超时或失败）→ 负责人网关（dispatch/lead-gate.ts）
+        self  → 负责人完整对话轮（lead_fallback），必须回应
+        route → 目标成员的对话轮，静默（routed / routed_also），目标必须回应
+        none  → 静默结束（仅限纯致谢 / 寒暄 / 无需任何人回应）
+  ④ 兜底不变式：一轮结束没有任何可见回复且网关结论不是 none → 负责人兜底一次（lead_fallback）；
+        网关超时 / 失败 / 输出非法，一律按 self
+```
 
-1. 唤醒群内所有 Bot，各自先做一次**轻量判断**（只看最近几条消息，并带上「最近的对话对象」提示），结果为三种之一：要响应 / 需要有人处理但不归我 / 不需要任何人回应。
-2. 判断为「要响应」的 Bot **按顺序执行对话轮**；后执行的 Bot 能看到前者的回复，觉得已被回答可以放弃。**群轮次在对话轮终态推进，不等任务**：Bot A 说完「我去查一下」就让位给 Bot B，B 看到的是 A 的表态而非结论（D5 的有意弱化，[30 §6.2](30-supervisor-and-tasks.md#62-群聊)）。任务不参与群轮次。
-3. 所有判断结束（设超时）后，如果没有 Bot 响应，且至少一个 Bot 认为「需要有人处理但不归我」，则在对话中插入一条系统消息，附可点击的 Bot 列表，请用户指定。
-4. 对「大家好」「谢谢」这类无需回应的消息，不弹出提示。
-5. 按顺序响应的过程中，如果某个 Bot 被删除或移出群，其对话轮与任务中断，跳过它继续下一个。
-6. 轮次进行中新发出的批**不再抄送（steer）给正在响应的 Bot**：它们等本轮结束后按 @ / 判断重新分派给相关的 Bot（正在响应的 Bot 在上下文里看得到它们）。
+- **静默路由只选「谁来答」**：投递给目标的是用户原话，不携带负责人写的任何内容；`route` 的多个目标按顺序响应，**第一个目标必答**（`routed`），其后目标可 `skip_reply`（`routed_also`）；必答轮的工具面**摘掉** `skip_reply`（`MUST_REPLY_REASONS = ['routed', 'lead_fallback']`）。被路由的成员不能再转手（静默路由只有网关能做）。
+- **负责人网关**是一次轻量结构化调用（负责人的轻量模型）：输入触发批、最近消息、项目目标、成员名片与 P 的结论理由，输出 `{ decision: 'self' | 'route' | 'none', targets?, reason }`，`targets` 只能取在场的非负责人成员（≤ `ROUTING_ROUTE_TARGETS_MAX` 3 个）；`none` 只给纯致谢、寒暄、无需任何人回应的消息，拿不准一律 `self`。它的 run 记 `trigger_reason='routing_gate'`，不是投递原因。
+- **界面无痕迹**：路由阶段显示「正在确认由谁回复」状态行（`project.turn` 的 `routing` 阶段），`route` 之后只显示目标成员的状态行，全程不出现负责人，也没有「负责人转交」的消息或卡片。留痕在执行记录里（触发原因与网关 `reason`），可审计。
+- **触发原因**（`trigger_reason`）：投递原因 `direct / mention / reply / bot_mention / continuation / routed / routed_also / lead_fallback / scheduled / event / background / delegation / task / watch / mail`。`continuation` = P 续接；`routed` = 静默路由的首个目标（必答）；`routed_also` = 同次路由的其余目标（可 `skip_reply`）；`lead_fallback` = 负责人兜底（必答）；`bot_mention` = 项目组里另一个 Bot `@` 了你（原 `chain`）。`routing_gate` 只写在网关轻量调用的 run 行上。`broadcast` 已删除（没有全员广播）。`continuation / routed / routed_also / lead_fallback` 视为用户在等待（调度优先级 0）；`bot_mention` 保持优先级 1。
+- **可见 `@` 交办仍在**：负责人在自己的对话轮里 `send_message(mention_bot_ids)` 布置具体工作（写清交付物），计入协作回合与熔断；静默路由不计（它是宿主按用户消息做的）。
+- 轮次进行中新发出的批**不再抄送（steer）给正在响应的 Bot**：它们等本轮结束后按同一决策顺序重新分派（正在响应的 Bot 在上下文里看得到它们）。
 
-### Bot 之间的触发
+### 协作回合与熔断
 
-- Bot 的发言默认不广播唤醒其他 Bot，只有对话轮明确 @ 另一个 Bot 时才触发；任务不能 @ 群成员。
-- 设置最大连锁层数（例如 3 层）和总预算上限，防止无限循环。
+Bot 之间的自动往返不再有硬性深度与 token 预算（`BOT_CHAIN_MAX_DEPTH` / `BOT_CHAIN_TOKEN_BUDGET` 已删除），改为**协作回合（episode）+ 熔断**：
+
+- **回合** = 一条用户消息批（或工作台派发 / 定时触发）引出的全部 run 的因果树；每个对话轮 run 带 `episode_id`。Bot 的可见 `@` 触发的对话轮继承发起 run 的回合并 `episode_hop + 1`；**任务结算唤醒的对话轮在唤醒时**按任务起源轮解析并继承回合（修复「隔一个任务就重置深度与预算」的防环缺口）；任务与子代理 run 自身不绑定回合；新的用户消息在首次 Bot 发起 `@` 时才懒创建回合。
+- **熔断**（`dispatch/episodes.ts`）：同一回合内 Bot 发起的触发最多放行 `EPISODE_HOP_BREAKER`（12）次、同一无序 Bot 对之间最多放行 `EPISODE_PINGPONG_BREAKER`（8）次（约 4 个来回），任一先到即暂停：停止投递后续 `@` 触发（未投递的记在回合行 `pending_json`，不丢弃），发起 Bot 的 `send_message` 返回「协作已暂停」，对话里出现**协作暂停卡**（「协作已自动往返 N 次，已暂停」）。`继续` 投递 pending 并清零计数（`episodes.resume`）；`停止` 丢弃 pending 并向相关 Bot 发内部事件「用户已停止本次协作」（`episodes.stop`）。暂停卡不进 `approvals`，无人值守不自动继续；应用重启后 pending 随回合行保留。
+- **项目组轮次在对话轮终态推进，不等任务**：Bot A 说完「我去查一下」就让位，后一个 Bot 看到的是 A 的表态而非结论（D5 的有意弱化，[30 §6.2](30-supervisor-and-tasks.md#62-项目组沟通)）。任务不参与轮次推进。
 
 ## 任务内的嵌套子代理（D66）
 
@@ -255,7 +271,7 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 
 ## 跨 Bot 委派（A→B，D71）
 
-`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。委派带 `intent`：`request`（默认）在 B 那一轮派出任务时跟随这些任务、贴回各任务结果的拼接，否则贴回该轮最终回复；`question` 取 B 那一轮的最终回复；`fyi` 投递即完成、不回贴。同群且 A/B 均在场时降级为 D4 `@`。细节见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务)。
+`delegate_to_bot` 属于**对话轮**工具面：把事情交给**另一个联系人 Bot**（[27-butler-and-delegation.md](27-butler-and-delegation.md)）。B 私聊出现带「由 A 代你发出」标签的用户代发消息，触发 B 的**对话轮**；B 的投递闸门「邮箱空闲」指 B 没有进行中的对话轮。委派带 `intent`：`request`（默认）在 B 那一轮派出任务时跟随这些任务、贴回各任务结果的拼接，否则贴回该轮最终回复；`question` 取 B 那一轮的最终回复；`fyi` 投递即完成、不回贴。同一项目组且 A/B 均在场时降级为 D4 `@`。细节见 [27 §3.6](27-butler-and-delegation.md#36-intent-与跟随任务)。
 
 ## MCP 工具
 
@@ -285,8 +301,8 @@ D56 的自动续接（30 分钟窗口直接回放 + 24 小时内轻量模型仲�
 - **提醒上限**：每个监看滚动 24 小时内最多提醒 `WATCH_MAX_ALERTS_PER_DAY`（24）次（行上记最近的提醒时间）。超出的那次边沿**不唤醒**，同一事务里把监看改为暂停并弹一条状态提示「提醒过于频繁（24 小时内超过 24 次），已暂停；可放宽条件或延长间隔后恢复」（`app.notice`，键 `watch-paused:{id}`，不落库、不贴卡）；这次观察照常记下，恢复后不会补发；恢复时 24 小时窗口清零。
 - **失败**：取页失败（被拦截、超时、HTTP ≥ 400、被重定向到别的站点（多半是登录页）、选择器无匹配、页面无文本、数值条件找不到数字）计一次失败，`failures + 1`、`next_check_at = now + max(5, min(60, 2^failures))` 分钟（5 / 5 / 8 / 16 / 32 / 60——重试不早于间隔下限）；连续 `WATCH_PAUSE_AFTER_FAILURES`（5）次后监看**暂停**，弹一条状态提示（`app.notice`，键 `watch-paused:{id}`，不贴卡），用户在右栏点「恢复」后清零并立即检查（恢复 / 停止 / 删除监看时撤掉提示）。成功检查清零失败计数。**浏览器宿主未连接不算失败**（启动时端口尚未接上、宿主断开）：不计数、不写错误，`WATCH_HOST_UNAVAILABLE_RETRY_MS`（1 分钟）后重试，宿主一接上立即检查；电脑从休眠唤醒后也立即检查到期的监看。
 - **并发**：用户的暂停 / 恢复 / 停止与检查都按 `version` 做 CAS；检查进行中用户动了监看，检查结果作废、用户的操作生效。同一批到期的监看逐个检查前重读该行，已不是进行中、尚未到期或版本变了的跳过。
-- **可见与管理**：右栏「定时任务」标签与群信息里，定时任务列表下面是该对话的**网页监看**列表（条件、间隔、上次检查、提醒次数、最近失败原因；暂停 / 恢复 / 停止）；监看卡按监看行实时重绘，可「全部监看」与两步「停止监看」（对话里只有创建卡与提醒卡；暂停等状态变化走 `app.notice`，监看行带最近错误与「恢复」）。RPC `watches.list{conversationId?}` / `get` / `pause` / `resume` / `stop`，事件 `watch.updated{watch, removed?}`（检查、提醒、用户操作、删除都推）。对话轮与任务的上下文有 `<watches>` 段（本 Bot 在本对话未停止的监看，`<untrusted>`）。
-- **生命周期**：删除对话、删除 Bot、把 Bot 移出群时其监看一并删除；检查时发现 Bot / 对话 / 成员关系已不在也删除。已停止的监看行保留、不再显示。存储见 [dev/03 §watches](../dev/03-data-model.md#watchesd79main-0023)。
+- **可见与管理**：项目详情页「定时与监看」分区与单聊右栏「定时任务」标签里，定时任务列表下面是该对话的**网页监看**列表（条件、间隔、上次检查、提醒次数、最近失败原因；暂停 / 恢复 / 停止）；监看卡按监看行实时重绘，可「全部监看」与两步「停止监看」（对话里只有创建卡与提醒卡；暂停等状态变化走 `app.notice`，监看行带最近错误与「恢复」）。RPC `watches.list{conversationId?}` / `get` / `pause` / `resume` / `stop`，事件 `watch.updated{watch, removed?}`（检查、提醒、用户操作、删除都推）。对话轮与任务的上下文有 `<watches>` 段（本 Bot 在本对话未停止的监看，`<untrusted>`）。
+- **生命周期**：删除对话、删除 Bot、把 Bot 移出项目组时其监看一并删除；检查时发现 Bot / 对话 / 成员关系已不在也删除。已停止的监看行保留、不再显示。存储见 [dev/03 §watches](../dev/03-data-model.md#watchesd79main-0023)。
 - **已知限制**：正文按 `innerText` 取，纯 canvas、需滚动才加载的内容取不到；客户端渲染的页面只多等 1 秒；HTTP 状态只看主框架，不看页面内部接口的错误；数字不识别欧式写法（1.299,00）、汉字数字、万 / 亿 / k 与科学计数；没有「立即检查」按钮（恢复即立即检查）；唤醒消息已落库、但投递进信箱前进程崩溃时，这一轮是否补跑取决于对话轮的通用恢复。安全边界（以 Bot 的浏览器登录身份做无人值守 GET、DNS 重绑定）见 [14 §监看后台页](14-models-and-browser.md#监看后台页d79)。
 
 ## 撤回与编辑

@@ -1,10 +1,10 @@
 # 41 项目组（Project）：从群聊到协作空间
 
-**状态：已定稿，待实施（2026-10-17，用户逐项确认 §1.2 的 K1–K18；决策编号 D92）**。实施编排与逐 WP 任务书见 [todo/project/README.md](../../todo/project/README.md)（给执行智能体用，**行为与固定名称以它为准**；本文是设计动机与全貌）。v0.1 的「最小改动」路线（只加一列、代码保持 `group`）整体作废。§18 是实施中可调的默认项。
+**状态：已实施（2026-10-18，T1a 项目组核心与 T1b 项目 wiki 均已收口；实施编排与各 WP 实施记录见 [todo/project/README.md](../../todo/project/README.md)，实施中偏离设计处已随 DEV-031–DEV-036 与各 WP 记录写进正文相应小节）。决策编号 D92（2026-10-17 用户逐项确认 K1–K18）。§18 的默认项已按实施结果校正。
 
 早期阶段的工程原则（用户 2026-10-17 确认，本文所有取舍据此）：**不保证旧数据可用、不做向后兼容；允许大规模替换变量、方法、文件夹、文档名；以语义准确、框架坚实为唯一目标。**
 
-相关：D4 / D5（群 `@` 连锁与响应，[02](02-execution.md#群聊响应)）、D9（Wiki 隔离，[05](05-wiki-and-skills.md)）、D28（Project 目录，[08](08-workdir.md)）、D60（群创建，[19](19-work-path-and-group-setup.md)）、D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D85（Wiki 多模态，[36](36-wiki-multimodal-ingest.md)）、D89（对话内设置，[38](38-conversational-settings.md)）、D90（工作台，[39](39-workbench.md)）、DEV-030（群定位无编辑入口，[DEVIATIONS](../dev/DEVIATIONS.md)）。
+相关：D4 / D5（群 `@` 连锁与响应，[02](02-execution.md#群聊响应)）、D9（Wiki 隔离，[05](05-wiki-and-skills.md)）、D28（Project 目录，[08](08-workdir.md)）、D60（群创建，[19](19-work-path-and-group-setup.md)）、D70 / D71（管家与委派，[27](27-butler-and-delegation.md)）、D75（对话轮与任务，[30](30-supervisor-and-tasks.md)）、D85（Wiki 多模态，[36](36-wiki-multimodal-ingest.md)）、D89（对话内设置，[38](38-conversational-settings.md)）、D90（工作台，[39](39-workbench.md)）、DEV-030（群定位无编辑入口 → 已落实为「详情页编辑项目目标」，[DEVIATIONS](../dev/DEVIATIONS.md)）。
 
 ## 0 摘要
 
@@ -147,7 +147,7 @@ CREATE TABLE conversations (
 ### 6.2 决策顺序
 
 ```text
-forcedTarget（工作台派发）                 → 该 Bot
+工作台派发（结构化 @ 生效负责人；`forcedTarget` 为可选快路径，DEV-031） → 该 Bot
 显式目标（@ / 回复某个 Bot 的消息）          → 这些 Bot，按出现顺序
 否则 → 路由阶段：
   ① P = 最近一条可见 Bot 回复的作者
@@ -178,13 +178,13 @@ forcedTarget（工作台派发）                 → 该 Bot
 
 **必答回合。**
 
-- `trigger_reason` 新增 `continuation`（P 续接）、`routed`（被路由的**首个**目标，必答）、`routed_also`（同一次路由的其余目标，可 `skip_reply`）、`lead_fallback`（负责人兜底，必答）；另有 `routing_gate`，**只**写在网关那次轻量调用的 run 行上，不是投递原因。四个投递原因的触发段都带宿主说明（原文见 todo WP3 步骤 8）：`routed` →「负责人判断这条消息与你有关，请直接回应用户，不要提及被转交」；`lead_fallback` →「没有成员认领，这条消息由你处理」。`chain` 改名 `bot_mention`、`broadcast` 删除。
+- `trigger_reason` 新增 `continuation`（P 续接）、`routed`（被路由的**首个**目标，必答）、`routed_also`（同一次路由的其余目标，可 `skip_reply`）、`lead_fallback`（网关 `self` 与路由产生的整轮无回复兜底共用，负责人完整对话轮，必答）；另有 `routing_gate`，**只**写在网关那次轻量调用的 run 行上，不是投递原因。四个投递原因的触发段都带宿主说明（原文见 todo WP3 步骤 8）：`routed` →「负责人判断这条消息与你有关，请直接回应用户，不要提及被转交」；`lead_fallback` →「没有成员认领，这条消息由你处理」。`chain` 改名 `bot_mention`、`broadcast` 删除。
 - 必答 = 该轮工具面**摘掉** `skip_reply`（原因属于 `MUST_REPLY_REASONS = ['routed', 'lead_fallback']`；合并批只要有一个必答部分就必答），而不是只靠提示词。被路由的成员**不能再转手**（静默路由只有网关能做，它没有这个工具）。
 - 轮次结算时若整轮没有可见回复且网关结论非 `none` → 宿主触发 `lead_fallback`（每轮至多一次）。负责人兜底轮自己失败 → 走现有失败态与重试。
 
 **界面反馈。**
 
-- 路由阶段（P 判断、网关判断）沿用现有「正在确认由谁回复」状态行（`group.turn` 的 `triaging` 阶段，改名 `routing`）；`route` 之后只显示目标成员的状态行，**全程不出现负责人**。
+- 路由阶段（P 判断、网关判断）显示「正在确认由谁回复」状态行（`project.turn` 的 `routing` 阶段）；`route` 之后只显示目标成员的状态行，**全程不出现负责人**。实施修正（DEV-036）：状态行组件最初把路由阶段（`currentBotId=null`、`queue=[]`）挡成永不显示，随 e2e 断言修复为「routing 阶段恒显示」。
 - 不出现任何「负责人转交」的消息或卡片。路由留痕在**执行记录**里：触发原因 `routed`、`routed_by`、网关的 `reason`——对用户不可见，可审计、可据此调参。
 - `group_no_claim` 卡与「点选成员重新分发」（`groups.redistribute`）一并删除。
 
@@ -208,7 +208,7 @@ forcedTarget（工作台派发）                 → 该 Bot
 
 ### 6.5 其他入口
 
-- **工作台派发**：`dispatchWorkbenchMessage` 的 `leadBotId` 缺省取项目负责人，仍是带 `@` 的显式目标（§12.3）。
+- **工作台派发**：`dispatchWorkbenchMessage` 走结构化 @ 生效负责人（执行者覆盖项优先，缺省项目负责人；`PendingBatch.forcedTarget` 分支按 WP 字面保留为等价快路径，生产代码无调用方——DEV-031）。
 - **用户编辑消息**：沿用现有重触发路径，走同一决策顺序。
 - **新批次在路由阶段到达**：沿用现有 `#pending` 排队，等本轮结束再分派。
 
@@ -237,7 +237,7 @@ forcedTarget（工作台派发）                 → 该 Bot
 
 ### 7.3 熔断
 
-- 触发条件（精确语义）：同一回合内 Bot 发起的触发**最多放行 `EPISODE_HOP_BREAKER`（初值 12）次，第 13 次被暂停**；同一无序 Bot 对之间**最多放行 `EPISODE_PINGPONG_BREAKER`（初值 8）次触发（约 4 个来回），第 9 次被暂停**；两个条件任一先到即暂停。初值待实测，目标是正常协作永远碰不到，病态循环不会静默烧钱。
+- 触发条件（精确语义）：同一回合内 Bot 发起的触发**最多放行 `EPISODE_HOP_BREAKER`（12）次，第 13 次被暂停**；同一无序 Bot 对之间**最多放行 `EPISODE_PINGPONG_BREAKER`（8）次触发（约 4 个来回），第 9 次被暂停**；两个条件任一先到即暂停。目标是正常协作永远碰不到，病态循环不会静默烧钱；集成测试经 `KEPCUP_EPISODE_HOP_BREAKER` / `KEPCUP_EPISODE_PAIR_BREAKER` 环境变量压低阈值，e2e 用测试钩子专用的 `KEPCUP_TEST_EPISODE_LIMITS`。
 - 触发后：**停止投递**后续 Bot 发起的触发，不丢弃——未投递的 `@` 记在回合行的 `pending_json` 上；发起 `@` 的 Bot 的工具返回「协作已暂停，等待用户确认是否继续」；对话里出现一张**协作暂停卡**：「协作已自动往返 N 次，是否继续？」`[继续]` `[停止]`。
 - `继续`：投递 pending，hop 计数清零（再往返 N 次才会再触发）；`停止`：丢弃 pending，向相关 Bot 发一条内部事件「用户停止了本次协作」。
 - 暂停卡**不进** `approvals`（避免重建 `kind` CHECK），是系统卡 + `episodes.resume / stop` RPC；**无人值守模式不自动继续**（它是保险丝，不是审批）；应用重启后 pending 随回合行保留。
@@ -287,13 +287,13 @@ CREATE TABLE episodes (
 
 - **执行者付费**：成员 `wiki_enqueue` 的入库，维护 loop 以**该成员**的身份运行（模型 `main_for_bot`、用量与后台每日预算记在该成员名下）；用户添加的来源与定期体检以**负责人**身份运行。
 - job 行：`bot_id` = 执行者，`conversation_id` = 项目 id，payload 带 `owner: { kind: 'project', id }`；去重键 `wiki_ingest:project:{id}:{sourceType}:{ref…}`。
-- 互斥队列保证串行；排队中的 job 不应占满全局 job 槽位（实现时按 owner 单独排队，见 §17 风险）。
+- 互斥队列保证串行。**实施取舍（WP9）**：没有做按 owner 的单独排队——后台全局并发 `BACKGROUND_LOOP_CONCURRENCY = 2`，同项目多成员同时入库时，被认领等锁的 job 至多占满 2 个后台槽位（其余仍 pending 不占槽），期间同项目维护串行推进、其它后台 loop 被推迟。本期接受，未做调度。
 
 ### 8.5 工具、读写与可信度
 
 - **复用既有三件套，加** `scope`：`wiki_search { scope: 'mine' | 'project' | 'all' }`（默认 `all`，结果标注来源）、`wiki_read`（按检索返回的引用读取）、`wiki_enqueue { scope }`（**默认** `mine`——发布到共享空间必须是有意为之）。仅在项目对话里出现 `project` / `all`。
 - **新增** `wiki_remove_source`（异步托管动作，同 `wiki_enqueue` 的非阻塞范式）：Bot 只能删自己创建的来源，负责人删任意；入队时与执行时各校验一次 ACL；执行 = 移除原件 + 台账，提交，并登记一次体检清理悬空引用（即 D85 §6 的 `wiki.deleteAsset` 的文本子集，本期首次实现）。**走 job（`wiki_remove_source`，不调用模型、不受预算延后）而不是同步执行**：删除要拿项目 wiki 的互斥锁，而锁可能正被一次几分钟的维护持有，工具与 RPC 都不能阻塞等它；界面靠 `wiki_changed` 刷新。
-- 用户从界面添加来源：网址或**粘贴文本**（新增只给用户用的 `text` 来源类型，`wiki_enqueue` 工具不开放）；本期不做界面上传文件——用户要入库文件，对 Bot 说「存到项目 wiki」，由 Bot 用 `wiki_enqueue` 的 file / attachment 类型入库。
+- 用户从界面添加来源：网址或**粘贴文本**（`text` 来源类型**只给用户**：`wiki_enqueue` 工具的 `source_type` 枚举不含它，`enqueueIngest` 对 `text` 要求 `createdBy.kind==='user'`；台账 `sources[].type` 联合含 `text`，`ref` 只存正文前 80 字预览，长度上限 `WIKI_TEXT_SOURCE_MAX_CHARS` = 200 000）；本期不做界面上传文件——用户要入库文件，对 Bot 说「存到项目 wiki」，由 Bot 用 `wiki_enqueue` 的 file / attachment 类型入库。
 - **可信度**：用户创建的来源可信；Bot 创建的来源，以及由它参与综合的页面，其他 Bot 读取时包进 `<untrusted source="project_wiki">` 并标注创建者；页面按出处判定——全部出处为用户才算可信。
 - **提示词**：项目对话注入项目 wiki 的主题段（取自项目 `index.md`），不设人为预算；Bot 的个人主题段不变。
 
@@ -305,7 +305,7 @@ CREATE TABLE episodes (
 
 ### 8.7 界面
 
-Wiki tab（`WikiTab.svelte` 泛化 `owner`）：左侧页面树 + 搜索，右侧阅读；「来源」子视图列出所有来源与创建者徽标，用户可添加（粘贴文本 / URL / 文件 / 附件）、按权限删除；历史 / 回滚 / 体检仅用户与负责人可见。`wiki.*` RPC 入参 `{botId}` → `{ owner: { kind: 'bot', botId } \| { kind: 'project', projectId } }`；新增 `wiki.addSource`、`wiki.sources`、`wiki.deleteSource`；事件 `wiki_changed` 带 owner。
+项目组的 Wiki tab = `features/wiki/WikiBrowser.svelte`（原单聊右栏 `WikiTab` 纯改名泛化 `owner`，单聊右栏仍用同一组件）+ `ProjectWikiView`；左侧页面树 + 搜索，右侧阅读；「来源」面板（`WikiSourcesPanel`）列出所有来源与创建者徽标（用户显示「你」、Bot 显示名字、已删除 Bot 显示 id），用户可添加网址 / 粘贴文本、按权限删除（删除中状态机：30 秒超时还原）；历史 / 回滚沿用。`wiki.*` RPC 入参 `{botId}` → `{ owner: { kind: 'bot', botId } \| { kind: 'project', projectId } }`；已落地 `wiki.addSource`、`wiki.sources`、`wiki.deleteSource`；事件 `wiki_changed` 带 owner。删除项目组确认框列出 wiki 来源数 / 页面数。
 
 ### 8.8 工作量与风险（来自代码盘点）
 
@@ -444,7 +444,7 @@ export const PROJECT_MODULES = [
 项目 wiki：{主题段}                       ← 有内容才出现，不设预算
 ```
 
-另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue scope=project`。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。
+另按调用者身份追加规则：**负责人**（`PROJECT_LEAD_RULES`，写法参照 `BUTLER_RULES`）——未 `@` 的消息由你兜底接收；先理解目标再决定自己答还是 `@` 合适的成员并写清交付物；成员能独立完成的不要自己做；收到成员汇报后向用户汇总；需要用户拍板时直接问；你的权力限于本项目组。**成员**（`PROJECT_MEMBER_RULES`）——负责人是谁；被用户 / 负责人 `@`、被续接、被路由时响应；完成后 `@` 负责人汇报结论与产出位置；归属不清时问负责人；团队需要共享的结论用 `wiki_enqueue scope=project`。提示词按 (Bot, 对话) 在 run 构建时拼装，**不写进 Bot Profile**，也不用 `system_role`。项目 wiki 主题段（`<project_wiki_topics>`，位于 `<wiki_topics>` 之后，**不设预算**）除对话轮外也注入任务与外部智能体会话——任务要读得到团队知识目录。
 
 ### 12.2 管家
 
@@ -515,7 +515,7 @@ WP9（后端：owner 泛化、项目级索引、台账、ACL、维护身份）�
 
 ### 文档
 
-WP11：设计与开发文档同步（含删除各文档顶部的「D92 修订」提示并改写正文）。
+WP11：设计与开发文档同步（删除各文档顶部的 D92 横幅并把正文改写成现状；已完成）。
 
 ### 下期
 
@@ -568,7 +568,7 @@ WP11：设计与开发文档同步（含删除各文档顶部的「D92 修订」
 2. `conversations` **是枢纽表**：重建要小心 FK 与索引；按 0018 / 0037 的写法并加迁移测试。
 3. **路由质量依赖轻量模型**：误路由、续接判断过于自信。对策：P 认领要过置信度阈值；任何失败按 `self`；兜底不变式；用户随时可 `@` 纠正；执行记录里留 `reason` 便于调参。
 4. **负责人单点**：未 `@` 且 P 不认领的消息都进网关，网关是轻量调用，完整轮只在 `self` 时发生；成本与上下文由所用模型自己的窗口决定，不另设上限。
-5. **熔断阈值**：初值 12 / 4 为猜测，目标是正常协作碰不到；需要实测。
+5. **熔断阈值**：12 / 8（成对约 4 个来回），目标是正常协作碰不到；e2e 与集成用测试缝压低验证，实测调参仍待线上数据。
 6. **项目内自动化的提示注入**：成员读恶意内容 → 汇报污染负责人 / 写入 wiki 来源污染其他成员。缓解：静默路由不携带 Bot 写的内容；Bot 写入的 wiki 来源与页面读取时标 `<untrusted>`；权力半径限定项目内、审批 / 沙箱闸门不豁免；熔断拦失控往返。这是缓解不是消除。
 7. **静默路由对用户不透明**：用户看不到谁把消息转给了成员。对策：执行记录里可审计；若将来需要，可加一个默认关闭的「显示由负责人转交」设置。
 8. **项目 wiki 的三处险点**（§8.8）：FTS 与存储布局、执行者付费与单写入者队列的归因 / 预算、来源 ACL 与删除的并发正确性；另有排队 job 不应占满全局槽位。
@@ -580,13 +580,15 @@ WP11：设计与开发文档同步（含删除各文档顶部的「D92 修订」
 
 关键决策已全部确认（§1.2 的 K1–K18）。以下是按推荐默认推进、实施中可改口的项：
 
-| # | 默认 |
+以上默认项均已按原样实施（2026-10-18），校正与落地口径：
+
+| # | 默认 → 实施结果 |
 |---|---|
-| 1 | P 的连续窗口 30 分钟；网关与续接判断用轻量模型；各阈值初值见 §6.3 / §7.3，实测后调 |
-| 2 | `wiki_enqueue` 默认 `scope=mine`，发布到项目必须显式 |
-| 3 | 维护身份「执行者付费」：成员入库用成员身份，用户来源与体检用负责人身份 |
-| 4 | 未实现模块 tab 灰显「即将推出」（不隐藏），状态由注册表一行翻转 |
-| 5 | 项目详情页状态不持久化；`chat.select()` 时回到沟通 |
-| 6 | 创建时不收集项目目标与目录；详情页编辑（补 DEV-030） |
-| 7 | 日历 / OKR 写权限为负责人 |
-| 8 | 熔断暂停卡不进 `approvals`，无人值守不自动继续 |
+| 1 | 窗口 30 分钟、轻量模型照实施；阈值落为 `ROUTING_CONTINUATION_MIN_CONFIDENCE` 0.6、熔断 12 / 8（§17.5 勘误） |
+| 2 | `wiki_enqueue` 默认 `scope=mine`、`wiki_search` 项目组里默认 `all`（结果带 `[project]` / `[mine]` 前缀） |
+| 3 | 「执行者付费」照实施；`enqueueIngest` 保留 `botId` 为执行者字段（WP9） |
+| 4 | 照实施（`PROJECT_MODULES.status='planned'` 灰显 + `ModulePlaceholder`） |
+| 5 | 照实施（`shell.projectView` 内存态，`chat.select()` 重置） |
+| 6 | 照实施；**DEV-030 已落实**：项目目标在详情页「概览」编辑（`projects.update`） |
+| 7 | 注册表 `write:'lead'` 照录（模块下期） |
+| 8 | 照实施（系统卡 + `episodes.resume/stop`，无人值守不自动继续） |
