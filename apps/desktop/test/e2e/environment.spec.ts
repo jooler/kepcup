@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -14,6 +14,7 @@ import {
   type TestFileServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P06 e2e (docs/dev/phases/P06-environment.md 测试要求): the environment
@@ -112,7 +113,7 @@ async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
   await session.fileServer.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

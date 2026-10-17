@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -20,6 +20,7 @@ import {
   type MockLlmServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat, rpc } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * D73 P3 §7.5 MCP Apps rendering in the real Electron app (security gate): a tool result with
@@ -89,7 +90,7 @@ async function closeSession(session: Session): Promise<void> {
   await session.llm.stop();
   await session.fake.stop();
   await new Promise<void>((resolve) => session.blocked.server.close(() => resolve()));
-  if (!process.env.KEPCUP_KEEP_E2E_HOME) await rm(session.home, { recursive: true, force: true });
+  if (!process.env.KEPCUP_KEEP_E2E_HOME) await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {

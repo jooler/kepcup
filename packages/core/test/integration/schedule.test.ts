@@ -376,13 +376,18 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
 
       clock.advance(40 * 60_000);
       await expectNoScheduledRun(stack.core, quietConv.id);
-      const deferred = service.store.get(
-        service.listForBotInConversation(quietBot.id, quietConv.id)[0]!.id,
+      // 推迟由异步 schedule_fire 任务落地（jobs runner 有轮询延迟，慢 runner
+      // 上会先到断言）：轮询推迟态而不是吃固定睡窗。
+      const deferred = await waitFor(
+        () => {
+          const row = service.listForBotInConversation(quietBot.id, quietConv.id)[0];
+          return row !== undefined && row.nextFireAt !== null ? row : null;
+        },
+        { label: 'quiet-hours deferral' },
       );
-      expect(deferred?.status).toBe('active');
-      expect(deferred?.nextFireAt).toBeGreaterThan(clock.now());
+      expect(deferred.status).toBe('active');
       // 推迟目标 ≈ 免打扰结束时刻（90 分钟处，±2 分钟容忍跨时区取整）
-      expect(Math.abs(deferred!.nextFireAt! - (clock.now() - 40 * 60_000 + 90 * 60_000))).toBeLessThanOrEqual(
+      expect(Math.abs(deferred.nextFireAt! - (clock.now() - 40 * 60_000 + 90 * 60_000))).toBeLessThanOrEqual(
         2 * 60_000,
       );
       // 列表 API 给出推迟原因（任务 7 界面口径）
@@ -432,8 +437,13 @@ describe('P10 主动消息与调度（集成，可控时钟）', () => {
       });
       clock.advance(5 * 60_000);
       await expectNoScheduledRun(stack.core, capConv.id, 1200, [seed.id]);
-      const capDeferred = service.listForBotInConversation(capBot.id, capConv.id)[0];
-      expect(capDeferred).toBeDefined();
+      const capDeferred = await waitFor(
+        () => {
+          const row = service.listForBotInConversation(capBot.id, capConv.id)[0];
+          return row !== undefined && row.nextFireAt !== null ? row : null;
+        },
+        { label: 'daily-cap deferral' },
+      );
       // 推迟目标 = 下一个本地零点（时区敏感，直接按实现同源函数计算期望）。
       expect(capDeferred!.nextFireAt).toBe(nextLocalMidnight(clock.now(), machineTz));
       const capListed = (await stack.core.rpc.call('schedules.list', {})) as {

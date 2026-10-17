@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
@@ -10,6 +10,7 @@ import {
   type TestFileServer,
 } from '@kepcup/testkit';
 import { createBotAndOpenChat, rpc } from './helpers/create-bot';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P09 e2e (docs/dev/phases/P09-wiki.md 测试要求「端到端」): the right-panel
@@ -88,7 +89,7 @@ async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
   await session.server.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -140,6 +141,13 @@ async function dumpWikiDiag(page: Page): Promise<void> {
   try {
     const sandbox = await rpc(page, 'sandbox.status', { probe: false });
     console.warn(`[wiki-diag] sandbox.status ${JSON.stringify(sandbox)}`);
+    const { bots } = (await rpc(page, 'bots.list')) as {
+      bots: Array<{ id: string; name: string; status: string }>;
+    };
+    for (const bot of bots) {
+      const tree = (await rpc(page, 'wiki.tree', { botId: bot.id })) as unknown;
+      console.warn(`[wiki-diag] bot ${bot.name}(${bot.status}) tree ${JSON.stringify(tree)}`);
+    }
     const { conversations } = (await rpc(page, 'conversations.list')) as {
       conversations: Array<{ id: string; botId: string | null; title?: string }>;
     };

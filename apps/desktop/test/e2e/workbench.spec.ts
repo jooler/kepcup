@@ -5,6 +5,7 @@ import { expect, test, type ElectronApplication, type Page, _electron } from '@p
 import { startMockLlm, step, type MockLlmServer } from '@kepcup/testkit';
 import { createBotAndOpenChat, openConversationByName, rpc } from './helpers/create-bot';
 import { createGroupViaUi } from './helpers/create-group';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * 工作台（D90，docs/design/39-workbench.md）端到端：真实 Electron + 真实 core，模型用 mock LLM
@@ -83,7 +84,7 @@ async function startSession(prefix: string): Promise<Session> {
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
   await session.llm.stop();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -1072,6 +1073,19 @@ test('layout: long text does not overflow; tabs below the width threshold', asyn
     await resizeWindow(app, 900, 760);
     await expect(page.locator('[data-testid="workbench-tab-memos"]')).toBeVisible({
       timeout: 15_000,
+    }).catch(async (error) => {
+      const probe = await page.evaluate(() => ({
+        seam: window.localStorage.getItem('kepcup.e2e.workbenchWide'),
+        inner: window.innerWidth,
+        view: document.querySelector('[data-testid="workbench-view"]')?.clientWidth,
+        attrs: (() => {
+          const el = document.querySelector('[data-testid="workbench-view"]');
+          if (!el) return null;
+          return { width: el.getAttribute('data-width'), tabbed: el.getAttribute('data-tabbed') };
+        })(),
+      }));
+      console.warn(`[layout-probe] ${JSON.stringify(probe)}`);
+      throw error;
     });
     await expect(page.locator('[data-testid="memo-pane"]')).toHaveCount(0);
     expect(await overflowing(page, '[data-testid="workbench-view"]')).toEqual([]);

@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Page, _electron } from '@playwright/test';
+import { rmHomeTolerant } from './helpers/home-cleanup';
 
 /**
  * P13 任务 6 诊断页 e2e（设置页「诊断」分区）。
@@ -36,7 +37,7 @@ async function startSession(prefix: string): Promise<Session> {
 
 async function closeSession(session: Session): Promise<void> {
   await session.app.close();
-  await rm(session.home, { recursive: true, force: true });
+  await rmHomeTolerant(session.home);
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -103,7 +104,11 @@ test('diagnostics section renders every status row; opening the logs directory r
       process.platform === 'win32' ? 'wsl' : 'srt',
       { timeout: 60_000 },
     );
-    await expect(page.locator('[data-testid="diagnostics-toolchain"]')).toContainText('git');
+    await expect(page.locator('[data-testid="diagnostics-toolchain"]')).toContainText('git', {
+      // doctor 的系统项探测逐项跑 where/--version（每项最长 10s），慢机器上
+      // 5s 默认窗拿到的是「还没有条目」的空态。
+      timeout: 60_000,
+    });
 
     // 「在文件管理器中打开」：mock 主进程 shell.showItemInFolder（能力能力面，
     // 与 dialog.showOpenDialog 的 mock 先例同一方式），点击后断言被调用且
