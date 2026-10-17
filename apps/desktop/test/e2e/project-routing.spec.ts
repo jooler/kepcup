@@ -182,12 +182,13 @@ test('project routing: gate routes to member, continuation claims, gate self/non
         .replyText('丙直达'),
     ]);
     await composer.click();
-    await composer.pressSequentially('@阿丙 直达问题');
+    await composer.pressSequentially('@阿丙');
     await page
       .locator('[data-testid="mention-popup"] button')
       .filter({ hasText: '阿丙' })
       .first()
       .click();
+    await composer.pressSequentially(' 直达问题');
     await composer.press('Meta+Enter');
     await expect(bubbles.filter({ hasText: '丙直达' })).toBeVisible({ timeout: 60_000 });
     expect(bubbles).toHaveCount(bubblesBefore + 1);

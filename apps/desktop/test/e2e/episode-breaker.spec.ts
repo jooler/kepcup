@@ -102,6 +102,20 @@ async function botIdOf(page: Page, name: string): Promise<string> {
   return bots.find((bot) => bot.name === name)?.id ?? '';
 }
 
+/** @ 提及（弹层点选）后补打文本并发送。 */
+async function mentionAndSend(page: Page, botName: string, text: string): Promise<void> {
+  const composer = page.locator('[data-testid="composer-input"]');
+  await composer.click();
+  await composer.pressSequentially(`@${botName}`);
+  await page
+    .locator('[data-testid="mention-popup"] button')
+    .filter({ hasText: botName })
+    .first()
+    .click();
+  await composer.pressSequentially(text);
+  await composer.press('Meta+Enter');
+}
+
 /** M 的回合 run 数（loop_type=turn）——「停止后不再投递」用它判定。 */
 async function memberTurnRuns(page: Page, conversationId: string, botId: string): Promise<number> {
   const { runs } = (await rpc(page, 'runs.list', { conversationId, limit: 100 })) as {
@@ -133,14 +147,7 @@ test('episode breaker: pause card, resume re-delivers, stop ends the round', asy
 
     // 第一轮 ping-pong：L@M（1）→ M@L（2）→ L@M 第 3 次触发熔断（2,2 阈值）。
     llm.script('mock-main', pingPong(aId, bId, '第一轮'));
-    await composer.click();
-    await composer.pressSequentially('@阿甲 开始协作');
-    await page
-      .locator('[data-testid="mention-popup"] button')
-      .filter({ hasText: '阿甲' })
-      .first()
-      .click();
-    await composer.press('Meta+Enter');
+    await mentionAndSend(page, '阿甲', ' 开始协作');
 
     // 切到 Wiki tab：熔断发生时沟通 tab 出徽标（用户在其他模块也不会漏掉）。
     await page.locator('[data-testid="project-tab-wiki"]').click();
@@ -178,14 +185,7 @@ test('episode breaker: pause card, resume re-delivers, stop ends the round', asy
 
     // 再触发一次熔断（计数已清零，重跑同一脚本）：新暂停卡出现。
     llm.script('mock-main', pingPong(aId, bId, '第二轮'));
-    await composer.click();
-    await composer.pressSequentially('@阿甲 继续协作');
-    await page
-      .locator('[data-testid="mention-popup"] button')
-      .filter({ hasText: '阿甲' })
-      .first()
-      .click();
-    await composer.press('Meta+Enter');
+    await mentionAndSend(page, '阿甲', ' 继续协作');
     await expect(cards).toHaveCount(2, { timeout: 60_000 });
     await expect(cards.last()).toHaveAttribute('data-status', 'paused');
 
