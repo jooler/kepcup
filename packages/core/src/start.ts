@@ -117,6 +117,7 @@ import type { LaunchTarget } from './agent/external/types.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { SlotYieldingLeaseService } from './scheduler/slot-yielding-lease.js';
 import { Orchestrator } from './dispatch/orchestrator.js';
+import { episodeLimitsFromEnv } from './dispatch/episodes.js';
 import { JobsRunner } from './dispatch/jobs-runner.js';
 import { EnvManager } from './env/manager.js';
 import { ENV_CATALOG, loadCatalogOverride } from './env/catalog.js';
@@ -696,6 +697,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
   const wslFixtureScenario = __KEPCUP_TEST_HOOKS__ ? wslFixtureScenarioFromEnv(env) : null;
   // D72 P6 e2e seam: testkit fake ACP agent from the environment (test builds only).
   const fakeAgentSeam = __KEPCUP_TEST_HOOKS__ ? fakeAcpAgentSeamFromEnv(env) : null;
+  // D92 T1a WP8 e2e seam: KEPCUP_TEST_EPISODE_LIMITS="hops,pair" overrides the
+  // episode breaker thresholds (episode-breaker.spec scripts a short ping-pong
+  // instead of 12/8 live mentions). Test-hook builds only: the packaged
+  // artifact folds this whole expression away.
+  const episodeLimitsSeam = __KEPCUP_TEST_HOOKS__ === true ? episodeLimitsFromEnv(env) : undefined;
   const extraAgentEntries = options.agentCatalog ?? fakeAgentSeam?.catalog ?? [];
   const agentLaunch = options.agentLaunch ?? fakeAgentSeam?.launch;
   const wslRunner: WslRunner =
@@ -2121,7 +2127,11 @@ export async function createCoreServices(options: CoreServicesOptions = {}): Pro
       logger,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       judgementTimeoutMs: parseTriageTimeoutMs(env),
-      episodeLimits: parseEpisodeLimits(env),
+      // The e2e seam (test-hook builds only) wins over the per-part integration seam.
+      episodeLimits:
+        episodeLimitsSeam !== undefined && Object.keys(episodeLimitsSeam).length > 0
+          ? episodeLimitsSeam
+          : parseEpisodeLimits(env),
       publish: (event, payload) => events.emit(event, payload as never),
       environment,
       memory,
